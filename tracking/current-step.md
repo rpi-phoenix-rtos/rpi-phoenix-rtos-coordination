@@ -2,26 +2,24 @@
 
 ## Metadata
 
-- Step ID: `STEP-0015`
-- Title: Move AArch64 timer IRQ knowledge behind the timer HAL
+- Step ID: `STEP-0016`
+- Title: Add AArch64 architectural timer sysreg helpers
 - Status: `in_progress`
 - Date: `2026-03-20`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- remove the hard compile-time timer IRQ dependency from the common AArch64 GICv2 code by moving timer IRQ knowledge behind the timer HAL API, while preserving the current `aarch64a53-zynqmp` behavior
+- add the smallest reusable set of AArch64 architectural timer system-register helpers needed for a future generic ARM timer backend, while preserving the current `aarch64a53-zynqmp` behavior
 
 ## Scope
 
 In scope:
 
-- update `phoenix-rtos-kernel/hal/timer.h`
-- update `phoenix-rtos-kernel/hal/aarch64/interrupts_gicv2.c`
-- update `phoenix-rtos-kernel/hal/aarch64/zynqmp/timer.c`
-- add a timer IRQ query to the timer HAL API
-- switch the common AArch64 GICv2 trace-suppression logic to use that timer HAL query instead of the `TIMER_IRQ_ID` macro
-- preserve the current ZynqMP runtime behavior and build results
+- update `phoenix-rtos-kernel/hal/aarch64/aarch64.h`
+- add helper accessors for the AArch64 architectural timer registers needed by a future generic timer backend
+- keep the change small, header-only, and kernel-only
+- validate that the existing `aarch64a53-zynqmp-qemu` build still succeeds after the helper addition
 
 Out of scope:
 
@@ -37,16 +35,14 @@ Out of scope:
 
 ## Expected Files Or Subsystems
 
-- `sources/phoenix-rtos-kernel/hal/timer.h`
-- `sources/phoenix-rtos-kernel/hal/aarch64/interrupts_gicv2.c`
-- `sources/phoenix-rtos-kernel/hal/aarch64/zynqmp/timer.c`
+- `sources/phoenix-rtos-kernel/hal/aarch64/aarch64.h`
 - copied-buildroot AArch64 validation workflow
 - tracking files and manifest updates after validation
 
 ## Acceptance Criteria
 
-- the common AArch64 GICv2 code no longer depends directly on `TIMER_IRQ_ID`
-- the timer HAL exposes an IRQ query, and the current ZynqMP AArch64 timer backend implements it
+- reusable AArch64 helpers exist for the first architectural timer registers needed by a generic timer backend
+- the change remains small and does not introduce a new runtime path yet
 - `TARGET=aarch64a53-zynqmp-qemu ./phoenix-rtos-build/build.sh clean host core project` still succeeds inside `phoenix-dev` using the copied buildroot
 
 ## Validation Plan
@@ -61,13 +57,13 @@ Out of scope:
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-20-aarch64-runtime-step-scope.md`
+  `manifests/2026-03-20-aarch64-timer-irq-api.md`
 
 ## Notes
 
 - Risks:
-  this is a preparatory runtime step, not the generic ARM timer implementation itself
+  this is preparatory helper work only, not the generic ARM timer backend itself
 - Dependencies:
-  completed DTB preparation series and the runtime-step scope decision from `STEP-0014`
+  completed timer IRQ HAL split from `STEP-0015`
 - User-visible control point before next step:
-  present the exact timer HAL API change, validation command, and resulting commit before moving into generic timer runtime code
+  present the exact helper set, validation command, and resulting commit before moving into generic timer runtime code
