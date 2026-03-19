@@ -175,6 +175,7 @@ This file indexes the most important websites, repositories, documents, and sour
 - `drivers/spi/spi-bcm2835.c`
 - `drivers/mailbox/bcm2835-mailbox.c`
 - `drivers/dma/bcm2835-dma.c`
+- `drivers/clocksource/arm_arch_timer.c`
 - `drivers/clocksource/bcm2835_timer.c`
 - `drivers/watchdog/bcm2835_wdt.c`
 - `drivers/gpu/drm/vc4/*`
