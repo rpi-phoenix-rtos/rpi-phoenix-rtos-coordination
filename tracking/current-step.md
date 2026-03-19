@@ -2,73 +2,72 @@
 
 ## Metadata
 
-- Step ID: `STEP-0014`
-- Title: Define the first runtime-oriented kernel step after DTB preparation
+- Step ID: `STEP-0015`
+- Title: Move AArch64 timer IRQ knowledge behind the timer HAL
 - Status: `in_progress`
 - Date: `2026-03-20`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- define and bound the first runtime-oriented kernel change needed after the current DTB preparation series, so the next implementation step stays small and explicitly chooses between a generic ARM timer path and broader AArch64 target/platform work
+- remove the hard compile-time timer IRQ dependency from the common AArch64 GICv2 code by moving timer IRQ knowledge behind the timer HAL API, while preserving the current `aarch64a53-zynqmp` behavior
 
 ## Scope
 
 In scope:
 
-- update `phoenix-rtos-kernel/hal/aarch64/dtb.c`
-- inspect the current AArch64 kernel runtime dependencies after the completed DTB parser steps
-- compare the narrowest next-step options:
-  - a generic ARM architectural timer implementation path
-  - a broader generic AArch64 target or platform split
-- select one small next implementation step with explicit touched files, validation lane, and acceptance criteria
-- keep this as a planning and scoping step only
+- update `phoenix-rtos-kernel/hal/timer.h`
+- update `phoenix-rtos-kernel/hal/aarch64/interrupts_gicv2.c`
+- update `phoenix-rtos-kernel/hal/aarch64/zynqmp/timer.c`
+- add a timer IRQ query to the timer HAL API
+- switch the common AArch64 GICv2 trace-suppression logic to use that timer HAL query instead of the `TIMER_IRQ_ID` macro
+- preserve the current ZynqMP runtime behavior and build results
 
 Out of scope:
 
-- implementation of the selected runtime step itself
 - adding a new QEMU target
+- adding generic ARM timer runtime code
 - adding PL011 console code
-- changing `plo`
 - Raspberry Pi-specific code
 
 ## Expected Repositories
 
+- `phoenix-rtos-kernel`
 - coordination repo
-- likely `phoenix-rtos-kernel`
 
 ## Expected Files Or Subsystems
 
-- AArch64 kernel HAL timer and console paths
-- `hal/aarch64/Makefile`
-- `hal/aarch64/zynqmp/timer.c`
-- `hal/aarch64/zynqmp/console.c`
-- tracking files and manifest updates for the chosen next step
+- `sources/phoenix-rtos-kernel/hal/timer.h`
+- `sources/phoenix-rtos-kernel/hal/aarch64/interrupts_gicv2.c`
+- `sources/phoenix-rtos-kernel/hal/aarch64/zynqmp/timer.c`
+- copied-buildroot AArch64 validation workflow
+- tracking files and manifest updates after validation
 
 ## Acceptance Criteria
 
-- the next runtime-oriented kernel step is explicitly scoped with exact touched files, rationale, validation command, and success criteria
-- the selected next step is narrow enough to implement and validate in one controlled follow-up session
+- the common AArch64 GICv2 code no longer depends directly on `TIMER_IRQ_ID`
+- the timer HAL exposes an IRQ query, and the current ZynqMP AArch64 timer backend implements it
+- `TARGET=aarch64a53-zynqmp-qemu ./phoenix-rtos-build/build.sh clean host core project` still succeeds inside `phoenix-dev` using the copied buildroot
 
 ## Validation Plan
 
 - Build:
-  not applicable for this planning step
+  refresh the copied buildroot, then run the existing `aarch64a53-zynqmp-qemu` build path in `phoenix-dev`
 - Emulator:
-  inspect the current QEMU `virt` timer and console dependencies as needed to choose the narrowest next step
+  not applicable
 - Hardware:
   not applicable
 
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-20-aarch64-dtb-timer-metadata.md`
+  `manifests/2026-03-20-aarch64-runtime-step-scope.md`
 
 ## Notes
 
 - Risks:
-  the next runtime step is the first one that can widen materially, so it must be explicitly bounded before any new code lands
+  this is a preparatory runtime step, not the generic ARM timer implementation itself
 - Dependencies:
-  completed DTB preparation series for GIC, serial, and timer metadata, plus a working AArch64 validation toolchain in `phoenix-dev`
+  completed DTB preparation series and the runtime-step scope decision from `STEP-0014`
 - User-visible control point before next step:
-  present the exact selected runtime step before moving into timer implementation, console implementation, or target-definition work
+  present the exact timer HAL API change, validation command, and resulting commit before moving into generic timer runtime code
