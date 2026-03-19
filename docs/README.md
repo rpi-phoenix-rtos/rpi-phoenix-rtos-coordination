@@ -16,6 +16,9 @@ This directory is the long-lived knowledge base for the Phoenix RTOS Raspberry P
 - `git-repository-strategy.md`
   Local multi-repo workflow, branch and commit policy, and integration manifest discipline.
 
+- `host-macos-apple-silicon.md`
+  Host-environment strategy for this specific workstation, including macOS-vs-Linux-VM task split and setup guidance.
+
 - `platforms/raspberry-pi-4.md`
   Pi 4-specific boot, hardware, driver, and testing notes.
 

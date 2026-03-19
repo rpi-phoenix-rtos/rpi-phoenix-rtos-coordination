@@ -22,6 +22,7 @@ Then determine:
 - whether the task is common AArch64 work, Pi 4 work, Pi 5 work, or test/lab work
 - whether the change should first be validated in QEMU, on hardware, or both
 - what the commit boundary for this step will be
+- whether the work should run on the macOS host or in the Linux VM
 
 ## 2. Session Scoping Rule
 

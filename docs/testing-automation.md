@@ -11,6 +11,11 @@ The port should be developed in a way that supports long, semi-autonomous or aut
 - reproducible artifacts
 - clear separation between emulator confidence and hardware confidence
 
+For this workstation specifically, also optimize for:
+
+- a clear split between macOS host responsibilities and Linux VM responsibilities
+- minimal dependence on VM USB passthrough
+
 ## 2. Existing Phoenix Test Infrastructure
 
 Phoenix already provides useful infrastructure:
@@ -110,6 +115,18 @@ Even with incomplete peripherals, `raspi4b` can still help validate:
 - GPIO/I2C/SPI interrupt reliability
 - final storage timing behavior
 
+## 4.4 Host versus VM execution on macOS Apple Silicon
+
+On this machine, the recommended default is:
+
+- build and authoritative QEMU runs in a Linux arm64 VM
+- USB serial and power control on the macOS host
+
+Reason:
+
+- Phoenix build assumptions are Linux-shaped
+- macOS host access to directly attached lab devices is simpler than passing them into Apple-Virtualization VMs
+
 ## 5. Real Hardware Lab Design
 
 ## 5.1 Controller host
@@ -120,6 +137,11 @@ Recommended:
 - x86_64 or arm64 is fine
 - stable USB subsystem
 - enough ports for UART adapters and relay control
+
+For this specific workstation, treat the controller as a split system:
+
+- macOS host for directly attached lab devices
+- Linux VM for build and lab-network services
 
 ## 5.2 Required lab hardware
 
@@ -144,7 +166,7 @@ Later for Pi 5:
 
 If full media switching is unavailable:
 
-1. host builds image
+1. host or Linux VM builds image
 2. host writes image to removable SD/USB media
 3. host power-cycles DUT
 4. host captures UART
@@ -193,11 +215,22 @@ Recommended setup:
 - a known-good fallback boot tree
 - a way to switch a board back to local-media boot for recovery
 
+On this workstation, the preferred implementation is:
+
+- Linux VM serves DHCP and TFTP over a bridged `socket_vmnet` interface
+- macOS host captures UART and drives relays
+
 Recommended staged use:
 
 1. use local media while the first `plo` boot path is fragile
 2. once `plo` reliably starts from firmware, switch the board to network boot for rapid iteration
 3. later reduce moving parts further by letting `plo` load the kernel or userspace artifacts over the network when that is simpler than repackaging media images
+
+If bridged VM networking is unstable on the exact host release or hardware adapter combination:
+
+1. keep building in the VM
+2. move DHCP/TFTP serving to the macOS host or to a separate controller
+3. keep UART and power control on the host
 
 ## 6. Image Build and Deployment Workflow
 

@@ -199,7 +199,42 @@ Re-verify:
 - exact QEMU version behavior
 - supported `raspi4b` devices
 
-## 9. Auxiliary Bare-Metal Reference
+## 9. Host and VM Tooling References
+
+- Lima overview:
+  <https://lima-vm.io/docs/>
+
+- Lima `vz` VM type:
+  <https://lima-vm.io/docs/config/vmtype/vz/>
+
+- Lima network overview:
+  <https://lima-vm.io/docs/config/network/>
+
+- Lima VMNet networks:
+  <https://lima-vm.io/docs/config/network/vmnet/>
+
+- Lima `limactl sudoers` for `socket_vmnet`:
+  <https://lima-vm.io/docs/reference/limactl_sudoers/>
+
+- Docker Desktop for Mac:
+  <https://docs.docker.com/desktop/setup/install/mac-install/>
+
+- Docker Desktop virtual machine manager overview:
+  <https://docs.docker.com/desktop/features/vmm/>
+
+- Docker CLI binaries note for macOS:
+  <https://docs.docker.com/engine/install/binaries/>
+
+- Colima project:
+  <https://github.com/abiosoft/colima>
+
+- Tart quick start:
+  <https://tart.run/quick-start/>
+
+- Lume overview:
+  <https://cua.ai/docs/lume>
+
+## 10. Auxiliary Bare-Metal Reference
 
 - RPi4 OS bare-metal tutorial:
   <https://www.rpi4os.com/>
@@ -212,12 +247,14 @@ Useful mainly for:
 
 Do not treat it as an architectural authority for Phoenix.
 
-## 10. Time-Sensitive Topics Requiring Fresh Browsing
+## 11. Time-Sensitive Topics Requiring Fresh Browsing
 
 Before implementing features that depend on them, re-check:
 
 - Raspberry Pi EEPROM and bootloader behavior
 - Raspberry Pi 4 network boot, TFTP, and `boot.img` behavior
+- Lima networking and `socket_vmnet` behavior on current macOS
+- Docker Desktop support policy and Apple Silicon behavior if Docker is introduced
 - current Pi 4 / Pi 5 firmware options
 - QEMU Raspberry Pi emulation status
 - Pi 5 RP1 Linux driver state

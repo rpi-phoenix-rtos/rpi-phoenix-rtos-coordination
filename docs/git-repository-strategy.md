@@ -40,6 +40,7 @@ Notes:
 - keep the upstream repos as sibling directories under `sources/`
 - do not copy their contents into this coordination repo
 - do not use git submodules initially unless there is a specific operational need that plain sibling clones cannot satisfy
+- on this workstation, keep `sources/` on the macOS filesystem and mount it into the Linux VM rather than hiding the primary working copy inside the VM disk
 
 ## 3. Why Not Start With Submodules
 

@@ -11,9 +11,10 @@ Use this skill when making implementation changes for the Raspberry Pi port.
 
 1. `docs/status.md`
 2. `docs/implementation-dossier.md`
-3. `docs/platforms/raspberry-pi-4.md`
-4. `docs/platforms/raspberry-pi-5.md` only if the task touches Pi 5
-5. `docs/source-artifacts.md`
+3. `docs/host-macos-apple-silicon.md`
+4. `docs/platforms/raspberry-pi-4.md`
+5. `docs/platforms/raspberry-pi-5.md` only if the task touches Pi 5
+6. `docs/source-artifacts.md`
 
 ## Workflow
 
@@ -22,8 +23,9 @@ Use this skill when making implementation changes for the Raspberry Pi port.
 3. Keep the final design aligned with:
    `Raspberry Pi firmware -> plo -> syspage -> kernel -> user-space drivers`
 4. If the current code is too `zynqmp`-specific, fix that before adding Raspberry Pi-specific hacks.
-5. Validate first in a fast emulator lane if possible, then on real hardware.
-6. Update the docs if you discover new constraints, addresses, boot requirements, or regressions.
+5. On this workstation, prefer Linux VM execution for builds and normal QEMU work.
+6. Validate first in a fast emulator lane if possible, then on real hardware.
+7. Update the docs if you discover new constraints, addresses, boot requirements, or regressions.
 
 ## Hard Rules
 
