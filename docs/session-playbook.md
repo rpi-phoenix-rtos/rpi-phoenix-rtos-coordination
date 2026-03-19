@@ -10,11 +10,12 @@ Before touching code, re-read:
 2. `docs/status.md`
 3. `docs/repository-work-breakdown.md`
 4. `docs/git-repository-strategy.md`
-5. the relevant platform note:
+5. `docs/manual-operator-instructions.md`
+6. the relevant platform note:
    - `docs/platforms/raspberry-pi-4.md`
    - `docs/platforms/raspberry-pi-5.md`
-6. `docs/testing-automation.md`
-7. `docs/source-artifacts.md`
+7. `docs/testing-automation.md`
+8. `docs/source-artifacts.md`
 
 Then determine:
 
@@ -86,6 +87,8 @@ Preferred destinations:
   `docs/status.md`
 - architecture or phased plan:
   `docs/implementation-dossier.md`
+- manual or operator-facing setup:
+  `docs/manual-operator-instructions.md`
 - board-specific facts:
   `docs/platforms/*.md`
 - important links or exact code paths:
@@ -143,11 +146,12 @@ Before ending a session:
 
 1. update `docs/status.md`
 2. update any more specific document that changed in meaning
-3. add any new upstream links or code paths to `docs/source-artifacts.md`
-4. update or create an integration manifest if code changed
-5. commit the coordination-repo updates
-6. note what was validated and what was not validated
-7. note the next smallest sensible task
+3. update `docs/manual-operator-instructions.md` if any new manual step or operator requirement was discovered
+4. add any new upstream links or code paths to `docs/source-artifacts.md`
+5. update or create an integration manifest if code changed
+6. commit the coordination-repo updates
+7. note what was validated and what was not validated
+8. note the next smallest sensible task
 
 ## 10. Long-Run Project Rule
 

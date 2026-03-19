@@ -33,6 +33,8 @@ Make future sessions cheaper and less error-prone.
   `docs/status.md`
 - architecture and staged plan:
   `docs/implementation-dossier.md`
+- manual prerequisites, operator setup, and human-only steps:
+  `docs/manual-operator-instructions.md`
 - board-specific notes:
   `docs/platforms/*.md`
 - testing and lab design:

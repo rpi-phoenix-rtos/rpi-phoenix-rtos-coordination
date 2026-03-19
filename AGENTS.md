@@ -18,10 +18,11 @@ Before making code changes in future sessions, read these files in order:
 3. `docs/repository-work-breakdown.md`
 4. `docs/git-repository-strategy.md`
 5. `docs/host-macos-apple-silicon.md`
-6. `docs/platforms/raspberry-pi-4.md`
-7. `docs/testing-automation.md`
-8. `docs/session-playbook.md`
-9. `docs/source-artifacts.md`
+6. `docs/manual-operator-instructions.md`
+7. `docs/platforms/raspberry-pi-4.md`
+8. `docs/testing-automation.md`
+9. `docs/session-playbook.md`
+10. `docs/source-artifacts.md`
 
 Read `docs/platforms/raspberry-pi-5.md` when the task touches Pi 5 or RP1.
 Read `skills/README.md` when choosing a local project skill.
@@ -62,6 +63,7 @@ Use them as follows:
 ## Documentation Maintenance Rules
 
 - Update `docs/status.md` after every substantial implementation session.
+- Update `docs/manual-operator-instructions.md` whenever a new manual prerequisite, physical setup step, bootloader action, recovery procedure, or operator-only task is discovered.
 - Update `docs/source-artifacts.md` whenever a new upstream document, repository, driver, or code path becomes important.
 - When a document contains a statement that may age quickly, add an explicit `Re-verify:` note.
 - Prefer citing exact upstream repo paths and official documentation URLs over vague prose.

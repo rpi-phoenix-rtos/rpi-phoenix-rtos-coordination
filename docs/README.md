@@ -19,6 +19,9 @@ This directory is the long-lived knowledge base for the Phoenix RTOS Raspberry P
 - `host-macos-apple-silicon.md`
   Host-environment strategy for this specific workstation, including macOS-vs-Linux-VM task split and setup guidance.
 
+- `manual-operator-instructions.md`
+  Human-facing runbook for all currently known manual prerequisites, physical setup steps, and operator-provided inputs.
+
 - `platforms/raspberry-pi-4.md`
   Pi 4-specific boot, hardware, driver, and testing notes.
 
