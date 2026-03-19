@@ -12,7 +12,9 @@ Use this skill when the main output is knowledge preservation rather than code.
 1. `AGENTS.md`
 2. `docs/README.md`
 3. `docs/status.md`
-4. `docs/source-artifacts.md`
+4. `docs/execution-control.md`
+5. `tracking/current-step.md`
+6. `docs/source-artifacts.md`
 
 ## Main Goal
 
@@ -37,6 +39,8 @@ Make future sessions cheaper and less error-prone.
   `docs/manual-operator-instructions.md`
 - style, quality, and upstream-review rules:
   `docs/code-quality-and-upstreaming.md`
+- active-step control and step history:
+  `tracking/*.md`
 - board-specific notes:
   `docs/platforms/*.md`
 - testing and lab design:

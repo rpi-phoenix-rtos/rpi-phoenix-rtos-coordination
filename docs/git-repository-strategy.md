@@ -10,6 +10,7 @@ Its role:
 
 - store long-lived documentation
 - store agent playbooks
+- store step-tracking state
 - store integration manifests and session state
 - describe how the upstream Phoenix repositories fit together
 

@@ -25,6 +25,9 @@ This directory is the long-lived knowledge base for the Phoenix RTOS Raspberry P
 - `code-quality-and-upstreaming.md`
   Coding-style, readability, warning, review, and upstreamability rules for future implementation work.
 
+- `execution-control.md`
+  Process rules for step-by-step tracking, acceptance criteria, control points, and reporting.
+
 - `platforms/raspberry-pi-4.md`
   Pi 4-specific boot, hardware, driver, and testing notes.
 
@@ -43,3 +46,11 @@ This directory is the long-lived knowledge base for the Phoenix RTOS Raspberry P
 ## Skill Playbooks
 
 The `skills/` directory contains local project playbooks for future agents. Read [`../skills/README.md`](../skills/README.md) first, then open the specific `SKILL.md` that matches the task.
+
+## Tracking
+
+Implementation progress is tracked in the `tracking/` directory:
+
+- `tracking/current-step.md`
+- `tracking/step-history.md`
+- `tracking/step-template.md`

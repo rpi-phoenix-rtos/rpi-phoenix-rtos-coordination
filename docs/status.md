@@ -12,6 +12,10 @@ Documentation readiness:
 
 - ready
 
+Tracking readiness:
+
+- ready
+
 Execution readiness on the current workstation:
 
 - not yet complete
