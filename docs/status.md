@@ -6,6 +6,26 @@
 - Implementation state: not started
 - Documentation baseline prepared: 2026-03-19
 
+## Implementation Readiness
+
+Documentation readiness:
+
+- ready
+
+Execution readiness on the current workstation:
+
+- not yet complete
+
+Known remaining start-gate tasks before the first implementation step:
+
+1. install the missing host tools listed in `docs/manual-operator-instructions.md`
+2. create and verify the `phoenix-dev` Linux VM described in `docs/host-macos-apple-silicon.md`
+3. clone the Phoenix upstream repositories into `sources/`
+4. create the first baseline integration manifest under `manifests/`
+5. verify one clean Phoenix Linux build in the VM
+
+Once those five tasks are complete, implementation can start immediately with Milestone A.
+
 ## Strategic Decisions Already Made
 
 - First real target is Raspberry Pi 4 Model B.

@@ -11,8 +11,9 @@ Use this skill when something that used to work stops working, or when two envir
 
 1. `docs/status.md`
 2. `docs/testing-automation.md`
-3. the relevant platform document
-4. `docs/source-artifacts.md`
+3. `docs/host-macos-apple-silicon.md`
+4. the relevant platform document
+5. `docs/source-artifacts.md`
 
 ## Workflow
 

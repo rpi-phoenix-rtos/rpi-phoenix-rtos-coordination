@@ -10,13 +10,14 @@ Before touching code, re-read:
 2. `docs/status.md`
 3. `docs/repository-work-breakdown.md`
 4. `docs/git-repository-strategy.md`
-5. `docs/manual-operator-instructions.md`
-6. `docs/code-quality-and-upstreaming.md`
-7. the relevant platform note:
+5. `docs/host-macos-apple-silicon.md`
+6. `docs/manual-operator-instructions.md`
+7. `docs/code-quality-and-upstreaming.md`
+8. the relevant platform note:
    - `docs/platforms/raspberry-pi-4.md`
    - `docs/platforms/raspberry-pi-5.md`
-8. `docs/testing-automation.md`
-9. `docs/source-artifacts.md`
+9. `docs/testing-automation.md`
+10. `docs/source-artifacts.md`
 
 Then determine:
 
@@ -66,9 +67,10 @@ Re-read at least:
 1. `docs/status.md`
 2. `docs/repository-work-breakdown.md`
 3. `docs/git-repository-strategy.md`
-4. `docs/testing-automation.md`
-5. the relevant platform note
-6. any document you updated earlier in the same session
+4. `docs/host-macos-apple-silicon.md`
+5. `docs/testing-automation.md`
+6. the relevant platform note
+7. any document you updated earlier in the same session
 
 Also re-open the specific upstream source files currently being mirrored or ported.
 
