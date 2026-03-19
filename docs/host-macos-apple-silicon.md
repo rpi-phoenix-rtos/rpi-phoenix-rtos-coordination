@@ -442,6 +442,7 @@ Additional recommended VM packages:
 - Keep the hardware recovery path host-controlled even if builds move into a VM.
 - Record the exact host and VM versions used in manifests once implementation begins.
 - Re-verify Lima networking behavior and Raspberry Pi bootloader behavior when enabling network boot for the first time.
+- Run the authoritative build and warning-quality checks in Linux, not only on the macOS host.
 
 ## 12. Reference Documents
 

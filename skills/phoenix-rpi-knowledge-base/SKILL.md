@@ -35,6 +35,8 @@ Make future sessions cheaper and less error-prone.
   `docs/implementation-dossier.md`
 - manual prerequisites, operator setup, and human-only steps:
   `docs/manual-operator-instructions.md`
+- style, quality, and upstream-review rules:
+  `docs/code-quality-and-upstreaming.md`
 - board-specific notes:
   `docs/platforms/*.md`
 - testing and lab design:

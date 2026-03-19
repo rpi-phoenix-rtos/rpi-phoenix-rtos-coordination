@@ -4,6 +4,8 @@ This document translates the architecture plan into concrete upstream Phoenix re
 
 Use it to decide where a task belongs before editing code.
 
+Before editing, also apply the rules in `docs/code-quality-and-upstreaming.md`.
+
 ## 1. Repository Roles
 
 ### `phoenix-rtos-kernel`

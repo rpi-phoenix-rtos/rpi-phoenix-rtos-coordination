@@ -24,6 +24,7 @@ Rules:
 4. After each successful step, commit the changes in every touched upstream repository.
 5. After cross-repository steps, update the coordination repository to record the exact integration state and test outcome.
 6. Prefer multi-repo coordination through manifests and documentation in this repository, not by collapsing Phoenix into a synthetic monorepo.
+7. Keep every code step small, readable, warning-clean, and stylistically aligned with neighboring Phoenix sources.
 
 ## 1. Core Architecture Decision
 
@@ -206,13 +207,15 @@ Tasks:
 4. Define the local multi-repo clone and manifest strategy.
 5. Choose the first real-device flashing/update workflow.
 6. Define the preferred long-run Pi 4 network-boot test loop and the fallback SD or USB recovery path.
-7. Prepare CI jobs that can at least build and assemble images without hardware.
+7. Define quality gates for code style, warnings, and reviewability before feature work starts.
+8. Prepare CI jobs that can at least build and assemble images without hardware.
 
 Success criteria:
 
 - reproducible host setup
 - repeatable image generation
 - explicit per-step commit and manifest discipline
+- explicit per-step code-quality discipline
 - clear artifact naming and locations
 
 ## Phase 1: Generic AArch64 cleanup

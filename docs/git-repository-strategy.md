@@ -100,6 +100,8 @@ After the step passes its success criteria:
 
 Do not allow large piles of validated but uncommitted work to accumulate.
 
+Before each upstream-repo commit, run the local quality checklist from `docs/code-quality-and-upstreaming.md`.
+
 ## 6. Multi-Repo Change Order
 
 When one logical step spans multiple repositories, commit in dependency order where possible:

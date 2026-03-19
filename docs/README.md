@@ -22,6 +22,9 @@ This directory is the long-lived knowledge base for the Phoenix RTOS Raspberry P
 - `manual-operator-instructions.md`
   Human-facing runbook for all currently known manual prerequisites, physical setup steps, and operator-provided inputs.
 
+- `code-quality-and-upstreaming.md`
+  Coding-style, readability, warning, review, and upstreamability rules for future implementation work.
+
 - `platforms/raspberry-pi-4.md`
   Pi 4-specific boot, hardware, driver, and testing notes.
 

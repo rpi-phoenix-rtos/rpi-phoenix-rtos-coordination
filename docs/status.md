@@ -18,6 +18,7 @@
 - QEMU is a fast gate, not a replacement for real hardware.
 - Pi 4 network boot is a preferred later-stage real-hardware deployment path for fast iteration once bootloader setup and DHCP/TFTP infrastructure are ready; SD or USB media remains the fallback and recovery path.
 - This project runs on a macOS Apple Silicon workstation. The recommended execution model is macOS host for coordination and hardware control, plus a Linux arm64 VM as the primary Phoenix build and emulation environment.
+- Future code must favor upstreamability: small diffs, Phoenix-native style, warning-clean builds, and no gratuitous reformatting.
 
 ## Most Important Technical Findings
 
@@ -27,6 +28,7 @@
 - Phoenix's existing test runner is already structured for UART-driven DUT automation and can be extended for Raspberry Pi targets.
 - Phoenix officially documents Linux build flows and Linux package prerequisites; native macOS builds should not be treated as the primary path.
 - On the current host, Homebrew, Xcode, QEMU, `dtc`, `uv`, `expect`, and `jq` are already present; Lima, Docker, Colima, Tart, and common UART helper tools are not yet installed.
+- Phoenix upstream style is conservative and review-oriented: file headers, tabs in C, localized `clang-format off/on`, direct control flow, `static const` hardware tables, and warning-clean builds enforced by `-Werror` in `phoenix-rtos-build/Makefile.common`.
 - Pi 4 uses BCM2711 with GIC-400, PL011, BCM2711 PCIe, VL805 xHCI over PCIe, GENET Ethernet, and Broadcom SDHCI.
 - Pi 5 uses BCM2712 plus RP1, with most I/O behind a PCIe-connected southbridge-like peripheral controller.
 

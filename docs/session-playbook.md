@@ -11,11 +11,12 @@ Before touching code, re-read:
 3. `docs/repository-work-breakdown.md`
 4. `docs/git-repository-strategy.md`
 5. `docs/manual-operator-instructions.md`
-6. the relevant platform note:
+6. `docs/code-quality-and-upstreaming.md`
+7. the relevant platform note:
    - `docs/platforms/raspberry-pi-4.md`
    - `docs/platforms/raspberry-pi-5.md`
-7. `docs/testing-automation.md`
-8. `docs/source-artifacts.md`
+8. `docs/testing-automation.md`
+9. `docs/source-artifacts.md`
 
 Then determine:
 
@@ -50,10 +51,11 @@ For each substantial task:
 2. read the exact Linux or BSD reference files involved
 3. update the plan in plain language
 4. make the smallest coherent change
-5. run the fastest validation lane available
-6. capture artifacts and classify failures
-7. commit each touched upstream repository once the step succeeds
-8. update the docs or integration manifest if any new fact or constraint was discovered
+5. simplify the patch until it matches nearby Phoenix style and remains easy to review
+6. run the fastest validation lane available
+7. capture artifacts and classify failures
+8. commit each touched upstream repository once the step succeeds
+9. update the docs or integration manifest if any new fact or constraint was discovered
 
 ## 4. Context-Compaction Recovery
 
@@ -89,6 +91,8 @@ Preferred destinations:
   `docs/implementation-dossier.md`
 - manual or operator-facing setup:
   `docs/manual-operator-instructions.md`
+- style, review, and quality rules:
+  `docs/code-quality-and-upstreaming.md`
 - board-specific facts:
   `docs/platforms/*.md`
 - important links or exact code paths:
@@ -147,11 +151,12 @@ Before ending a session:
 1. update `docs/status.md`
 2. update any more specific document that changed in meaning
 3. update `docs/manual-operator-instructions.md` if any new manual step or operator requirement was discovered
-4. add any new upstream links or code paths to `docs/source-artifacts.md`
-5. update or create an integration manifest if code changed
-6. commit the coordination-repo updates
-7. note what was validated and what was not validated
-8. note the next smallest sensible task
+4. update `docs/code-quality-and-upstreaming.md` if a new reliable style or quality rule was learned
+5. add any new upstream links or code paths to `docs/source-artifacts.md`
+6. update or create an integration manifest if code changed
+7. commit the coordination-repo updates
+8. note what was validated and what was not validated
+9. note the next smallest sensible task
 
 ## 10. Long-Run Project Rule
 

@@ -78,6 +78,7 @@ This file indexes the most important websites, repositories, documents, and sour
 - `phoenix-rtos-build/build.sh`
 - `phoenix-rtos-build/build-core-aarch64a53-zynqmp.sh`
 - `phoenix-rtos-build/target/aarch64.mk`
+- `phoenix-rtos-build/Makefile.common`
 - `phoenix-rtos-project/_targets/aarch64a53/zynqmp/build.project`
 - `phoenix-rtos-project/_targets/aarch64a53/zynqmp/preinit.plo.yaml`
 - `phoenix-rtos-project/_targets/aarch64a53/zynqmp/user.plo.yaml`
@@ -259,3 +260,12 @@ Before implementing features that depend on them, re-check:
 - QEMU Raspberry Pi emulation status
 - Pi 5 RP1 Linux driver state
 - Pi 5 BSD support state
+
+## 12. Local Style Anchors Already Observed
+
+These are useful style anchors when writing new code:
+
+- `phoenix-rtos-kernel/hal/aarch64/hal.c`
+- `plo/hal/aarch64/zynqmp/hal.c`
+- `phoenix-rtos-devices/tty/zynq-uart/zynq-uart.c`
+- `phoenix-rtos-build/Makefile.common`

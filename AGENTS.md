@@ -19,10 +19,11 @@ Before making code changes in future sessions, read these files in order:
 4. `docs/git-repository-strategy.md`
 5. `docs/host-macos-apple-silicon.md`
 6. `docs/manual-operator-instructions.md`
-7. `docs/platforms/raspberry-pi-4.md`
-8. `docs/testing-automation.md`
-9. `docs/session-playbook.md`
-10. `docs/source-artifacts.md`
+7. `docs/code-quality-and-upstreaming.md`
+8. `docs/platforms/raspberry-pi-4.md`
+9. `docs/testing-automation.md`
+10. `docs/session-playbook.md`
+11. `docs/source-artifacts.md`
 
 Read `docs/platforms/raspberry-pi-5.md` when the task touches Pi 5 or RP1.
 Read `skills/README.md` when choosing a local project skill.
@@ -57,6 +58,7 @@ Use them as follows:
 - After every successful implementation step, commit the relevant changes in every touched upstream repository and then commit the coordination-repo documentation or manifest update that records the tested integration state.
 - Manage Phoenix as multiple sibling git repositories, not as a rewritten monorepo. Keep repository coordination in this repo through documentation and manifest files.
 - On this workstation, treat Linux as the authoritative build and emulation environment. Use macOS natively for coordination, editing, and hardware control; use a Linux VM for Phoenix builds and most QEMU runs unless a task is explicitly documented as safe on the host.
+- Optimize all future code for readability and upstreamability: keep changes small, consistent with nearby Phoenix code, warning-clean, and free of gratuitous formatting churn.
 - Do not bury important findings in chat history. Update the docs when new constraints, addresses, boot flows, test commands, or risks are discovered.
 - If context becomes tight after a long session, re-read at least `docs/status.md`, `docs/repository-work-breakdown.md`, `docs/testing-automation.md`, and the relevant platform note before proceeding.
 
@@ -64,6 +66,7 @@ Use them as follows:
 
 - Update `docs/status.md` after every substantial implementation session.
 - Update `docs/manual-operator-instructions.md` whenever a new manual prerequisite, physical setup step, bootloader action, recovery procedure, or operator-only task is discovered.
+- Update `docs/code-quality-and-upstreaming.md` whenever a new subsystem-specific style rule, review preference, or reliable quality check becomes known.
 - Update `docs/source-artifacts.md` whenever a new upstream document, repository, driver, or code path becomes important.
 - When a document contains a statement that may age quickly, add an explicit `Re-verify:` note.
 - Prefer citing exact upstream repo paths and official documentation URLs over vague prose.

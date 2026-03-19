@@ -51,6 +51,7 @@ Fastest checks, run on every meaningful change:
 - build-script/unit tests
 - DTB parser unit tests
 - target config validation
+- warning-clean build verification for touched targets
 
 ## Tier 2: generic AArch64 emulator checks
 
@@ -345,6 +346,11 @@ For transient or unstable components, log:
 - firmware files used
 - QEMU version
 - relevant `config.txt` settings
+
+For code-quality-sensitive steps, also keep:
+
+- build logs showing warning-clean status for touched targets
+- the exact commit SHAs validated
 
 ## 12. AI-Agent Workflow Recommendations
 
