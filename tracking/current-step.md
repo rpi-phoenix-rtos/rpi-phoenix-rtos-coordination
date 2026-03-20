@@ -2,26 +2,29 @@
 
 ## Metadata
 
-- Step ID: `STEP-0134`
-- Title: Instrument `dummyfs` lifecycle visibility on the kernel console
+- Step ID: `STEP-0136`
+- Title: Instrument root-dummyfs lookup visibility
 - Status: `in_progress`
 - Date: `2026-03-20`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- determine whether the `devfs` dummyfs instance reaches its main loop and receives the first `mtLookup` message before `pl011-tty` stalls in the shared name-resolution path
+- determine whether the blocked later `lookup("devfs", ...)` call is still waiting on the root dummyfs instance rather than on the later non-filesystem `devfs` instance
 
 ## Scope
 
 In scope:
 
 - `sources/phoenix-rtos-filesystems/dummyfs/srv.c`
-- add narrow `debug()` markers around:
-  - the non-filesystem namespace `portRegister()` success path for `devfs`
-  - the post-mount `initialized` boundary
-  - the first `mtLookup` receive / response path
-- keep the markers bounded so they can stay reviewable and easy to revert if they stop being useful
+- extend the existing bounded `dummyfs` marker set so it can distinguish:
+  - the root dummyfs instance
+  - the non-filesystem `devfs` instance
+- add or relabel only the minimum markers needed around:
+  - root-instance `initialized`
+  - root-instance first `mtLookup` receive / response
+  - preserved non-filesystem `devfs` startup markers
+- keep the patch local, bounded, and diagnostic in nature
 - validate on both the generic and Pi 4 DTB-backed QEMU lanes
 
 Out of scope:
@@ -47,14 +50,14 @@ Out of scope:
 
 ## Acceptance Criteria
 
-- at least one lane exposes whether `dummyfs` reaches its initialized main loop before `pl011-tty` stalls
-- at least one lane exposes whether the first `mtLookup` is received and responded to by `dummyfs`
+- the generic lane exposes whether the blocked later `lookup("devfs", ...)` path reaches the root dummyfs instance
+- the generic lane distinguishes root dummyfs activity from the already-observed later non-filesystem `devfs` startup
 - neither lane regresses from current known-good startup output
 
 ## Validation Plan
 
 - Review:
-  confirm that the patch stays local to `dummyfs` visibility and does not change mount order or namespace policy
+  confirm that the patch stays local to `dummyfs` visibility labels and does not change mount order or namespace policy
 - Build:
   rebuild the affected filesystem and project lanes in `phoenix-dev`
 - Emulator:
@@ -67,13 +70,13 @@ Out of scope:
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-20-aarch64-pl011-delayed-devfs-retry-window.md`
+  `manifests/2026-03-20-aarch64-dummyfs-nonfs-startup-visibility.md`
 
 ## Notes
 
 - Risks:
   avoid turning bounded visibility markers into long-lived logging churn
 - Dependencies:
-  completed `STEP-0132` delayed-`devfs` retry result
+  completed `STEP-0134` non-filesystem `dummyfs` startup visibility result
 - User-visible control point before next step:
-  after this step lands, the next bounded move should come from concrete `dummyfs` lifecycle evidence rather than more `pl011-tty`-side speculation
+  after this step lands, the next bounded move should come from concrete root-versus-devfs lookup evidence rather than more timing speculation
