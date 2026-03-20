@@ -197,6 +197,9 @@ On this machine, the recommended default is:
   `scripts/prepare-buildroot.sh --copy-components`; the current rsync-based
   workflow can fail with `some files vanished before they could be transferred
   (code 24)` if two refreshes race the same destination path
+- do not run two Phoenix target builds concurrently against the same copied
+  buildroot path; generic and Pi 4 builds race on shared host-artifact paths
+  such as `_build/host-generic-pc`
 
 Reason:
 

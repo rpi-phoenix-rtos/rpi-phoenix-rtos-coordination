@@ -441,6 +441,15 @@ Start-gate status:
 - the current ambiguity is now narrower:
   - `psh` may be looping on failed `lookup("/")`, or
   - `psh` may not be reaching that syscall path yet
+- the first-result `psh` root-lookup trace is now complete and decisive on both
+  lanes:
+  - generic prints `syscalls: psh root lookup -22`
+  - Pi 4 prints `syscalls: psh root lookup -22`
+- the shared blocker is therefore no longer “missing rootfs” but a shared
+  `lookup()` contract failure returning `EINVAL`
+- copied-buildroot validation must be run sequentially per target; concurrent
+  generic and Pi 4 builds against the same copied buildroot race on shared
+  host-artifact paths such as `_build/host-generic-pc`
 - local QEMU `10.2.2` `hw/intc/arm_gic.c` does not expose an explicit
   CPU-interface read case for offset `0x28`, so older `AHPPIR` experiments
   should not be treated as authoritative outside the exact runtime context in

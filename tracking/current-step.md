@@ -2,76 +2,77 @@
 
 ## Metadata
 
-- Step ID: `STEP-0239`
-- Title: Implement bounded first-result visibility for `psh` `lookup("/")`
+- Step ID: `STEP-0240`
+- Title: Scope the smallest shared `lookup()`-contract review
 - Status: `planned`
 - Date: `2026-03-21`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- distinguish “`psh` failed `lookup("/")` and is looping” from “`psh` never
-  reached that syscall at all” using one bounded first-result trace
+- choose the smallest next review step that can explain the shared
+  `lookup("/") -> -22` result on generic and Pi 4
 
 ## Scope
 
 In scope:
 
-- review the current `psh` startup path in `psh.c` and `pshapp.c`
-- update the current `psh` root-lookup trace to print on the first result,
-  including failure
-- rebuild the generic and Pi 4 QEMU lanes
-- record the first observed result code
+- inspect the `lookup()` user/kernel contract across `psh`, libphoenix, and the
+  kernel lookup path
+- identify the narrowest likely root cause for `-EINVAL`
+- document the exact next implementation step
 
 Out of scope:
 
-- changing behavior
-- broad syscall tracing
+- behavior changes
+- broad runtime tracing
 - real hardware work
 - Pi 5 or RP1 work
 
 ## Expected Repositories
 
-- `phoenix-rtos-kernel`
 - coordination repo
 
 ## Expected Files Or Subsystems
 
-- `sources/phoenix-rtos-kernel/syscalls.c`
+- likely `sources/libphoenix`
+- likely `sources/phoenix-rtos-utils/psh/psh.c`
+- likely `sources/phoenix-rtos-kernel/syscalls.c`
+- likely `sources/phoenix-rtos-kernel/proc/name.c`
 - `docs/status.md`
+- `docs/testing-automation.md`
 - `manifests/`
 - `tracking/current-step.md`
 - `tracking/step-history.md`
 
 ## Acceptance Criteria
 
-- generic QEMU exposes the first `psh` root-lookup result
-- Pi 4 QEMU is rerun too if the result remains on the shared path
-- the result narrows the next move to one concrete follow-up
+- the selected next step names the exact source files to review
+- the review narrows the likely root cause of the shared `-EINVAL`
+- the result names one concrete implementation follow-up
 
 ## Validation Plan
 
-- Emulator:
-  - rebuild generic `virt`
-  - rerun generic QEMU
-  - rerun Pi 4 QEMU if the result remains shared
+- Analysis only:
+  - inspect the `lookup()` wrapper and kernel-side expectations
+  - verify whether `lookup("/", NULL, &oid)` is a valid call form
 - Hardware:
   not applicable
 
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-21-aarch64-psh-root-lookup-result-scope.md`
+  `manifests/2026-03-21-aarch64-psh-root-lookup-result.md`
 
 ## Notes
 
 - Risks:
-  keep the next trace one-time and `/`-specific so the syscall path stays quiet
+  do not jump straight into a fix before the user/kernel `lookup()` contract is
+  re-read
 - Dependencies:
-  completed `STEP-0238` first-attempt `psh` root-lookup trace scope
+  completed `STEP-0239` first-result visibility for `psh` `lookup("/")`
 - Source reminder:
-  both lanes prove `psh` reaches user mode but still do not prove any observed
-  root-lookup result
+  both lanes now prove the first observed `psh` root lookup result is `-22`
 - User-visible control point before next step:
-  after this step lands, the next follow-up should depend on the first observed
-  `psh` root-lookup result code
+  after this scope step lands, the next implementation patch should target the
+  shared `lookup()` contract mismatch only
