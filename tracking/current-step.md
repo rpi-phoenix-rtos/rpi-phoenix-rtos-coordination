@@ -2,33 +2,31 @@
 
 ## Metadata
 
-- Step ID: `STEP-0069`
-- Title: Implement stdout-path-aware generic AArch64 console selection
+- Step ID: `STEP-0070`
+- Title: Define first generic userspace build-unblock step after kernel banner milestone
 - Status: `in_progress`
 - Date: `2026-03-20`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- implement the smallest clean fix that makes the generic AArch64 kernel choose the correct early console UART on QEMU `virt,secure=on` and rerun the smoke lane
+- define the smallest repo-local change that starts removing the temporary generic-QEMU build-lane workarounds after the first visible kernel-banner milestone
 
 ## Scope
 
 In scope:
 
-- add an AArch64 DTB helper that prefers `chosen.stdout-path` when it identifies a parsed PL011 serial node
-- switch the generic kernel console to use that helper
-- rebuild the generic kernel plus project/image lane in `phoenix-dev`
-- rerun `timeout 10s ./scripts/aarch64a53-generic-qemu.sh`
-- record the earliest post-fix result
+- inspect the remaining generic-target build blockers in `libphoenix`, `phoenix-rtos-filesystems`, `phoenix-rtos-devices`, and `phoenix-rtos-utils`
+- choose the smallest first repo to unblock without dragging in board-specific device assumptions
+- keep the step planning-only and stop before code changes
 
 Out of scope:
 
-- broad generic DTB parser redesign
-- non-generic AArch64 console changes
+- broad generic userspace enablement across multiple repos
+- Pi 4 board-specific code
+- implementation code in this planning step
 - Raspberry Pi-specific code
 - `phoenix-rtos-tests` target additions
-- fixing any later runtime issue beyond documenting it
 
 ## Expected Repositories
 
@@ -38,40 +36,41 @@ Out of scope:
 
 ## Expected Files Or Subsystems
 
-- `phoenix-rtos-kernel/hal/aarch64/dtb.c`
-- `phoenix-rtos-kernel/hal/aarch64/dtb.h`
-- `phoenix-rtos-kernel/hal/aarch64/generic/console.c`
+- `libphoenix/arch/aarch64/reboot.c`
+- `phoenix-rtos-filesystems/_targets/`
+- `phoenix-rtos-devices/_targets/`
+- `phoenix-rtos-utils/_targets/`
 - `docs/status.md`
 - tracking files and manifest updates for this step
-- smoke output captured from the copied buildroot in `phoenix-dev`
+- build-target inventory findings captured from the working tree
 
 ## Acceptance Criteria
 
-- the DTB layer exposes a preferred console serial based on `chosen.stdout-path` when available
-- the generic kernel console uses that helper instead of `serials[0]`
-- the rerun records whether the kernel now reaches visible output or what the next earliest runtime failure is
+- the result names the smallest first repo-local generic build-unblock step to apply next
+- the result explains why that repo is preferred over the other current blockers
+- the step remains planning-only
 
 ## Validation Plan
 
 - Review:
-  inspect the DTB serial enumeration path, generic console init, and the local QEMU `stdout-path` evidence as needed during result analysis
+  inspect the remaining generic-target blockers and the contents of the existing `aarch64a53-zynqmp` target makefiles
 - Build:
-  rebuild the generic kernel and project/image artifacts in `phoenix-dev`
+  not applicable
 - Emulator:
-  run `timeout 10s ./scripts/aarch64a53-generic-qemu.sh` inside the copied buildroot in `phoenix-dev`
+  not applicable
 - Hardware:
   not applicable
 
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-20-aarch64-generic-qemu-stdout-path-scope.md`
+  `manifests/2026-03-20-aarch64-generic-qemu-stdout-path-fix.md`
 
 ## Notes
 
 - Risks:
-  the result must stay as one DTB-helper plus generic-console selection step and must not silently turn into broader kernel instrumentation or AArch64 bring-up
+  the result must stay as one build-unblock planning step and must not silently turn into multi-repo implementation work
 - Dependencies:
-  completed implementation step `STEP-0068`
+  completed implementation step `STEP-0069`
 - User-visible control point before next step:
-  after this rerun lands, the next slice should be the smallest runtime-fix step implied by the earliest observed post-console-selection result
+  after this planning step lands, the next slice should be the selected first repo-local generic userspace build-unblock change
