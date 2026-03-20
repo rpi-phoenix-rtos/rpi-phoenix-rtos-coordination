@@ -226,7 +226,7 @@ Start-gate status:
 - the Pi 4 lane also prints repeated assembly markers such as `AAA333` and a later `A3`, which strongly suggests that multiple cores are taking the same generic loader EL3 handoff path during the Pi 4 `-smp 4` run.
 - generic `virt -smp 4` now confirms that repeated EL3 handoff markers are a generic multi-core loader behavior, not the Pi 4 failure by themselves, because the generic lane still reaches the kernel banner and later startup logs.
 - the current generic kernel target still declares `NUM_CPUS 1U` in `phoenix-rtos-kernel/hal/aarch64/generic/config.h`, so handing off multiple loader CPUs into this target is at least a design mismatch even though generic `virt -smp 4` happens to boot.
-- the next bounded split should therefore move to the earliest kernel entry point after the EL3 transfer rather than to a speculative loader secondary-core containment change.
+- the next bounded follow-up should now be a controlled generic loader secondary-core containment experiment, because the current generic kernel target still declares `NUM_CPUS 1U` while the generic loader releases trapped non-boot CPUs into the shared EL handoff path on `-smp 4` lanes.
 - the next concrete Pi 4 boot blocker is now loader MMIO addressing: `sources/plo/hal/aarch64/generic/config.h` still hardcodes QEMU `virt` UART and GIC base addresses, so the current Pi 4 `kernel8.img` would still talk to the wrong MMIO blocks on real hardware until those addresses are made board-overridable.
 - generic `plo` now accepts project-local MMIO base overrides for UART0 and GICv2 while preserving the current QEMU `virt` defaults, and the generic `virt` smoke lane still boots after that change.
 - the current Pi 4 firmware handoff no longer appears to have a raw loader placement mismatch: `kernel_address=0x40080000` in the Pi 4 `config.txt` matches `ADDR_PLO 0x40080000` in `plo/ld/aarch64a53-generic.ldt`.
@@ -239,8 +239,10 @@ Start-gate status:
 
 ## Immediate Next Implementation Milestones
 
-1. Split the assembly-side Pi 4 EL handoff boundary so the `raspi4b` lane clearly shows whether it stops inside `hal_exitToEL1()` before `eret`, at the `eret` itself, or only in the first kernel instructions after the transition.
-2. Use that result to choose the next smallest Pi 4-specific loader or kernel bring-up step, then confirm the same boundary moves on the `raspi4b` lane.
+1. Keep non-boot CPUs parked across the current generic loader handoff and rerun both `virt -smp 4` and Pi 4 `raspi4b -smp 4`.
+2. Use that result to choose the next smallest Pi 4-specific follow-up:
+   - earliest kernel-entry visibility
+   - or the next board-specific handoff / MMIO step if the boundary moves
 3. Bring the Pi 4 QEMU lane back past the loader handoff and into the same kernel / user-space startup band already reached with the generic fast lane.
 4. Bring the Pi 4 QEMU lane from loader success to a usable shell or equivalent stable console-ready state.
 5. Once the fast lanes reach stable console readiness, switch the next bounded steps back to firmware-bundle completeness and first real-device smoke preparation.
