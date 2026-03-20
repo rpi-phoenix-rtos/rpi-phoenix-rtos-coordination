@@ -2,27 +2,29 @@
 
 ## Metadata
 
-- Step ID: `STEP-0102`
-- Title: Define the first optional Pi 4 DTB staging hook
+- Step ID: `STEP-0103`
+- Title: Add the first optional Pi 4 DTB staging hook
 - Status: `in_progress`
 - Date: `2026-03-20`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- identify the smallest project-local follow-up that can make Pi 4 DTB staging possible without forcing an external DTB file into every build
+- add the smallest project-local DTB staging hook that allows a Pi 4 board DTB to be staged when provided, while keeping the default build self-contained
 
 ## Scope
 
 In scope:
 
-- inspect the new Pi 4 boot-tree staging result
-- choose the smallest project-local DTB staging hook that keeps builds reproducible without requiring a checked-in external DTB blob
-- stop before implementing that hook
+- update `phoenix-rtos-project/_projects/aarch64a53-generic-rpi4b/build.project`
+- accept an optional externally provided Pi 4 DTB path or project-local DTB file
+- stage the DTB into `_boot/aarch64a53-generic-rpi4b/rpi4b/` only when available
+- keep the no-hardware default build green when no DTB is supplied
 
 Out of scope:
 
 - DTB generation from external trees
+- checked-in imported Linux DTB blobs
 - broad loader or kernel Pi 4 support
 - real-hardware-only validation
 - Pi 5 or RP1 work
@@ -35,24 +37,25 @@ Out of scope:
 
 ## Expected Files Or Subsystems
 
-- `phoenix-rtos-project/_projects/aarch64a53-generic-rpi4b/*`
+- `phoenix-rtos-project/_projects/aarch64a53-generic-rpi4b/build.project`
 - `_boot/aarch64a53-generic-rpi4b/rpi4b/`
 - Pi 4 boot-staging documentation and manifest updates
 - `docs/status.md`
+- `docs/manual-operator-instructions.md`
 - tracking files and manifest updates for this step
 
 ## Acceptance Criteria
 
-- the next DTB-related follow-up is selected from the staged-boot-tree state
-- the follow-up stays as one small implementation commit where possible
-- the selected step keeps the Pi 4 lane project-local and build-safe
+- the Pi 4 project stages a board DTB when one is explicitly provided
+- the default no-DTB build still succeeds and still stages the existing boot tree
+- the DTB hook remains project-local and does not add a required external dependency to every build
 
 ## Validation Plan
 
 - Review:
-  inspect the staged boot-tree result and documented Pi 4 DTB expectations together
+  inspect the DTB hook for minimality and optional behavior
 - Build:
-  use the current project-local build shape to choose the smallest useful DTB follow-up
+  run the Pi 4 build once without a DTB to confirm the default lane still works
 - Emulator:
   not applicable
 - Hardware:
@@ -61,13 +64,13 @@ Out of scope:
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-20-aarch64-rpi4b-firmware-staging.md`
+  `manifests/2026-03-20-aarch64-rpi4b-dtb-hook-scope.md`
 
 ## Notes
 
 - Risks:
-  the result must stay as a localized planning step and must not silently widen into broad firmware-asset bundling or loader handoff work
+  the result must stay as one localized DTB-staging step and must not silently widen into external-tree fetching or loader handoff work
 - Dependencies:
-  completed implementation step `STEP-0101`
+  completed planning step `STEP-0102`
 - User-visible control point before next step:
-  after the next DTB hook is selected, the implementation should stay project-local unless a stronger dependency emerges
+  after the DTB hook lands, the next follow-up should be chosen from the remaining firmware-handoff blocker or from concrete DTB consumption needs
