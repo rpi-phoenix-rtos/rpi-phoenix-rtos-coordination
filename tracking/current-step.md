@@ -2,25 +2,25 @@
 
 ## Metadata
 
-- Step ID: `STEP-0236`
-- Title: Scope the smallest kernel-side `psh` root-lookup success trace
+- Step ID: `STEP-0237`
+- Title: Implement bounded `psh` root-lookup success visibility
 - Status: `planned`
 - Date: `2026-03-21`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- choose the smallest next hook after first user execution that can prove
-  whether `psh` gets past its `lookup("/")` wait loop
+- prove whether `psh` gets past its `lookup("/")` wait loop using one bounded
+  kernel-side marker
 
 ## Scope
 
 In scope:
 
 - review the current `psh` startup path in `psh.c` and `pshapp.c`
-- inspect the earliest `psh`-specific syscall-side hook after first execution
-- prefer a one-time root-lookup success trace over a broader open-path trace
-- document the exact next implementation step
+- add the selected one-time `psh` root-lookup success marker
+- rebuild the generic and Pi 4 QEMU lanes
+- record whether either lane resolves `/` successfully
 
 Out of scope:
 
@@ -31,11 +31,12 @@ Out of scope:
 
 ## Expected Repositories
 
+- `phoenix-rtos-kernel`
 - coordination repo
 
 ## Expected Files Or Subsystems
 
-- likely `sources/phoenix-rtos-kernel/syscalls.c`
+- `sources/phoenix-rtos-kernel/syscalls.c`
 - `docs/status.md`
 - `manifests/`
 - `tracking/current-step.md`
@@ -43,33 +44,34 @@ Out of scope:
 
 ## Acceptance Criteria
 
-- the selected next patch traces one exact `psh` root-lookup success condition
-- the scope names the source file and the exact trigger condition
-- the result narrows the next move to one concrete implementation step
+- generic QEMU proves whether `psh` resolves `/`
+- Pi 4 QEMU is rerun too if the result remains on the shared path
+- the result narrows the next move to one concrete follow-up
 
 ## Validation Plan
 
-- Analysis only:
-  - inspect `syscalls_lookup()` and related path-resolution helpers
-  - choose the smallest `psh`-filtered `lookup("/")` success marker
+- Emulator:
+  - rebuild generic `virt`
+  - rerun generic QEMU
+  - rerun Pi 4 QEMU if the generic result remains shared
 - Hardware:
   not applicable
 
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-21-aarch64-psh-first-user-schedule.md`
+  `manifests/2026-03-21-aarch64-psh-root-lookup-scope.md`
 
 ## Notes
 
 - Risks:
-  avoid widening into generic pathname tracing when the next question is only
-  whether `psh` sees `/`
+  keep the trace one-time and `psh`-filtered so it does not flood the syscall
+  path
 - Dependencies:
-  completed `STEP-0235` `psh` first-user-schedule visibility
+  completed `STEP-0236` `psh` root-lookup success trace scope
 - Source reminder:
   both lanes now prove `psh` reaches user mode, so the next split should move
   to the earliest `psh`-specific syscall result
 - User-visible control point before next step:
-  after this scope step lands, the next patch should add one `psh`-filtered
-  root-lookup marker only
+  after this step lands, the next follow-up should depend on whether `psh`
+  resolves `/` at all
