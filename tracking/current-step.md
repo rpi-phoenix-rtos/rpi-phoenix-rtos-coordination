@@ -2,29 +2,28 @@
 
 ## Metadata
 
-- Step ID: `STEP-0095`
-- Title: Add a direct PL011 `/dev/tty0` registration banner
+- Step ID: `STEP-0096`
+- Title: Define the first generic startup-timing test after the missing `/dev/tty0` banner
 - Status: `in_progress`
 - Date: `2026-03-20`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- add the smallest direct diagnostic that can prove whether `pl011-tty` reaches successful `/dev/tty0` registration
+- identify the smallest non-hardware runtime step that can test whether `pl011-tty` is starting before the generic `/dev` namespace is ready
 
 ## Scope
 
 In scope:
 
-- update `phoenix-rtos-devices/tty/pl011-tty/pl011-tty.c`
-- emit a raw PL011 banner immediately after successful `/dev/tty0` registration
-- rebuild the needed generic artifacts and rerun the generic QEMU smoke lane
+- inspect the updated smoke evidence where neither `/dev/tty0` nor `_PATH_CONSOLE` success banners appear
+- use the local `create_dev()` and `dummyfs -D` behavior to choose the smallest startup-timing test
+- stop before implementing that test
 
 Out of scope:
 
-- broader `pl011-tty` refactoring
-- failure-path diagnostics
-- `psh` or script-behavior changes
+- all upstream source changes
+- broad driver refactoring
 - Pi 4 board-specific code
 - Raspberry Pi-specific code
 - `phoenix-rtos-tests` target additions
@@ -46,31 +45,31 @@ Out of scope:
 
 ## Acceptance Criteria
 
-- `pl011-tty` emits a raw banner only after successful `/dev/tty0` registration
-- the needed artifacts are rebuilt and repackaged
-- the generic QEMU smoke lane is rerun from the refreshed image
+- the next runtime step is selected from the current create-dev boundary
+- the follow-up stays as one small implementation commit where possible
+- the selected step is more likely to move the generic QEMU lane forward than another equally blind diagnostic
 
 ## Validation Plan
 
 - Review:
-  inspect the `pl011-tty` diagnostic change and keep it minimal and localized
+  inspect the current runtime evidence together with `create_dev()` and `dummyfs` startup behavior
 - Build:
-  rebuild `phoenix-rtos-devices all` and the generic `host project image` lane in `phoenix-dev`
+  use the local source evidence to choose the smallest useful follow-up
 - Emulator:
-  rerun `timeout 12s ./scripts/aarch64a53-generic-qemu.sh`
+  not applicable
 - Hardware:
   not applicable
 
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-20-aarch64-generic-tty0-diagnostic-scope.md`
+  `manifests/2026-03-20-aarch64-generic-tty0-diagnostic.md`
 
 ## Notes
 
 - Risks:
-  the result must stay as one localized diagnostic step and must not silently turn into broader console-driver or shell refactoring
+  the result must stay as a localized planning step and must not silently turn into speculative broad runtime changes
 - Dependencies:
-  completed implementation step `STEP-0094`
+  completed implementation step `STEP-0095`
 - User-visible control point before next step:
-  after the diagnostic lands, the next follow-up should be chosen from the new smoke output
+  after the next test is selected, the implementation should stay narrow and directly tied to the observed startup boundary
