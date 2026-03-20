@@ -237,7 +237,8 @@ Start-gate status:
 - the official Raspberry Pi 4 specifications page remains the authority for this CPU identity: BCM2711, quad-core Cortex-A72 (ARM v8) 64-bit SoC, so future Pi 4 target naming, CPU assumptions, and runtime validation should stay centered on the A72 lane.
 - the next bounded implementation step should therefore enable a real Cortex-A72-capable generic target path, starting with removal of the first hard `aarch64a53` generic naming assumptions in `plo`.
 - that first A72-enabling groundwork is now complete in `plo`: generic loader config can select `phoenix-aarch64a72-generic.elf` plus `ld/aarch64a72-generic.ldt`, while the existing A53 generic lanes still build cleanly.
-- the next bounded implementation step is now the first actual `aarch64a72-generic-rpi4b` scaffold.
+- the first local `aarch64a72-generic-rpi4b` scaffold is now in place across build, project, filesystems, devices, and utils, and the new A72 Pi 4 build plus the preserved A53 generic QEMU and Pi 4 builds all complete successfully in `phoenix-dev`.
+- the next bounded implementation step is now runtime validation of the A72 Pi 4 lane under `qemu-system-aarch64 -M raspi4b`, using the official firmware DTB and comparing the earliest visible boundary against the A53 diagnostic lane.
 - the next concrete Pi 4 boot blocker is now loader MMIO addressing: `sources/plo/hal/aarch64/generic/config.h` still hardcodes QEMU `virt` UART and GIC base addresses, so the current Pi 4 `kernel8.img` would still talk to the wrong MMIO blocks on real hardware until those addresses are made board-overridable.
 - generic `plo` now accepts project-local MMIO base overrides for UART0 and GICv2 while preserving the current QEMU `virt` defaults, and the generic `virt` smoke lane still boots after that change.
 - the current Pi 4 firmware handoff no longer appears to have a raw loader placement mismatch: `kernel_address=0x40080000` in the Pi 4 `config.txt` matches `ADDR_PLO 0x40080000` in `plo/ld/aarch64a53-generic.ldt`.
@@ -250,11 +251,11 @@ Start-gate status:
 
 ## Immediate Next Implementation Milestones
 
-1. Remove the first hard `aarch64a53` generic naming assumptions so an `aarch64a72-generic` target family can exist cleanly.
-2. Add the first minimal `aarch64a72-generic` target scaffold for Pi 4 and validate that it builds.
-3. Re-run the Pi 4 QEMU lane under the A72-capable target path and compare the early-kernel boundary against the current diagnostic lane.
-4. Bring the Pi 4 QEMU lane back into the same kernel / user-space startup band already reached with the generic fast lane.
-5. Once the fast lanes reach stable console readiness, switch the next bounded steps back to firmware-bundle completeness and first real-device smoke preparation.
+1. Re-run the Pi 4 QEMU lane under the A72-capable target path and compare the early-kernel boundary against the current diagnostic lane.
+2. Bring the Pi 4 QEMU lane back into the same kernel / user-space startup band already reached with the generic fast lane.
+3. Replace the remaining generic-QEMU MMIO assumptions in the Pi 4 loader/kernel handoff path as the runtime evidence dictates.
+4. Once the Pi 4 fast lane reaches stable console readiness, switch the next bounded steps back to firmware-bundle completeness and first real-device smoke preparation.
+5. Preserve the A53 generic lanes only as regressions and diagnostics while Pi 4 work moves to the A72 identity.
 
 ## Pi 4 Success Criteria for "Phase 1"
 
