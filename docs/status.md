@@ -118,6 +118,7 @@ Start-gate status:
 - the new `pl011-tty` scaffold now builds directly on `aarch64a53-generic-qemu`; the next fast-lane decision is how to integrate it with the generic target in the smallest useful way.
 - that integration choice is now fixed: the next smallest fast-lane step is to add `pl011-tty` to the generic devices target defaults before wiring board-specific base addresses or `user.plo`.
 - `pl011-tty` is now in the generic devices default component set; the next smallest blocker is the missing generic-QEMU `board_config.h` wiring for its PL011 base address and clock.
+- local QEMU `virt,secure=on` inspection now pins those board-config values: the usable non-secure PL011 is at `0x09000000` and its fixed clock is `24 MHz`.
 - Phoenix upstream style is conservative and review-oriented: file headers, tabs in C, localized `clang-format off/on`, direct control flow, `static const` hardware tables, and warning-clean builds enforced by `-Werror` in `phoenix-rtos-build/Makefile.common`.
 - Pi 4 uses BCM2711 with GIC-400, PL011, BCM2711 PCIe, VL805 xHCI over PCIe, GENET Ethernet, and Broadcom SDHCI.
 - Pi 5 uses BCM2712 plus RP1, with most I/O behind a PCIe-connected southbridge-like peripheral controller.
