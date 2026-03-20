@@ -2,28 +2,28 @@
 
 ## Metadata
 
-- Step ID: `STEP-0096`
-- Title: Define the first generic startup-timing test after the missing `/dev/tty0` banner
+- Step ID: `STEP-0097`
+- Title: Add a short generic `user.plo` wait before `pl011-tty`
 - Status: `in_progress`
 - Date: `2026-03-20`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- identify the smallest non-hardware runtime step that can test whether `pl011-tty` is starting before the generic `/dev` namespace is ready
+- add the smallest startup-timing change that can test whether `pl011-tty` is starting before the generic `/dev` namespace is ready
 
 ## Scope
 
 In scope:
 
-- inspect the updated smoke evidence where neither `/dev/tty0` nor `_PATH_CONSOLE` success banners appear
-- use the local `create_dev()` and `dummyfs -D` behavior to choose the smallest startup-timing test
-- stop before implementing that test
+- update `phoenix-rtos-project/_targets/aarch64a53/generic/user.plo.yaml`
+- insert one short `wait` after `dummyfs;-N;devfs;-D` and before `pl011-tty`
+- rebuild the needed generic artifacts and rerun the generic QEMU smoke lane
 
 Out of scope:
 
-- all upstream source changes
-- broad driver refactoring
+- driver refactoring
+- multiple wait entries or larger boot-script reshaping
 - Pi 4 board-specific code
 - Raspberry Pi-specific code
 - `phoenix-rtos-tests` target additions
@@ -45,31 +45,31 @@ Out of scope:
 
 ## Acceptance Criteria
 
-- the next runtime step is selected from the current create-dev boundary
-- the follow-up stays as one small implementation commit where possible
-- the selected step is more likely to move the generic QEMU lane forward than another equally blind diagnostic
+- the generic `user.plo` adds one short wait only between `dummyfs` and `pl011-tty`
+- the needed artifacts are rebuilt and repackaged
+- the generic QEMU smoke lane is rerun from the refreshed image
 
 ## Validation Plan
 
 - Review:
-  inspect the current runtime evidence together with `create_dev()` and `dummyfs` startup behavior
+  inspect the script change and keep it limited to one startup-timing test
 - Build:
-  use the local source evidence to choose the smallest useful follow-up
+  rebuild the generic `host project image` lane in `phoenix-dev`
 - Emulator:
-  not applicable
+  rerun `timeout 12s ./scripts/aarch64a53-generic-qemu.sh`
 - Hardware:
   not applicable
 
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-20-aarch64-generic-tty0-diagnostic.md`
+  `manifests/2026-03-20-aarch64-generic-devfs-wait-scope.md`
 
 ## Notes
 
 - Risks:
-  the result must stay as a localized planning step and must not silently turn into speculative broad runtime changes
+  the result must stay as one localized timing test and must not silently turn into broader boot-script experimentation
 - Dependencies:
-  completed implementation step `STEP-0095`
+  completed implementation step `STEP-0096`
 - User-visible control point before next step:
-  after the next test is selected, the implementation should stay narrow and directly tied to the observed startup boundary
+  after the timing test lands, the next follow-up should be chosen from the new smoke output

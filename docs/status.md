@@ -130,6 +130,7 @@ Start-gate status:
 - that follow-up diagnostic now also ran, and the new `pl011-tty: console ready` banner never appears even after a 20-second QEMU run; the current fast-lane boundary is therefore between `pl011_init()` completion and successful console-device registration.
 - the next selected split point is successful `/dev/tty0` registration, because it is the immediate runtime boundary before `_PATH_CONSOLE` registration in `pl011-tty`.
 - that `/dev/tty0` diagnostic also stayed absent, so the current fast-lane boundary is now between `pl011_init()` completion and the first successful `create_dev()` call; local `create_dev()` and `dummyfs -D` source inspection makes a startup-order race the next bounded hypothesis to test.
+- the selected next runtime test is now a single `wait 500` between `dummyfs;-N;devfs;-D` and `pl011-tty` in the generic `user.plo`, because it is the smallest change that can test the observed `/dev` namespace readiness hypothesis.
 - Phoenix upstream style is conservative and review-oriented: file headers, tabs in C, localized `clang-format off/on`, direct control flow, `static const` hardware tables, and warning-clean builds enforced by `-Werror` in `phoenix-rtos-build/Makefile.common`.
 - Pi 4 uses BCM2711 with GIC-400, PL011, BCM2711 PCIe, VL805 xHCI over PCIe, GENET Ethernet, and Broadcom SDHCI.
 - Pi 5 uses BCM2712 plus RP1, with most I/O behind a PCIe-connected southbridge-like peripheral controller.
