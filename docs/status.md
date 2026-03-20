@@ -127,6 +127,7 @@ Start-gate status:
 - that diagnostic choice is now fixed as a raw PL011 startup banner from `pl011-tty`, because it is the smallest high-signal test that stays repo-local and does not require broader kernel tracing.
 - that diagnostic now passes: `pl011-tty: started` appears on the generic QEMU console, proving that the packaged userspace path reaches the PL011 driver on the non-secure UART.
 - the next smallest unknown is now `/dev/console` readiness, and the selected follow-up is a second raw PL011 banner emitted only after successful console-device registration.
+- that follow-up diagnostic now also ran, and the new `pl011-tty: console ready` banner never appears even after a 20-second QEMU run; the current fast-lane boundary is therefore between `pl011_init()` completion and successful console-device registration.
 - Phoenix upstream style is conservative and review-oriented: file headers, tabs in C, localized `clang-format off/on`, direct control flow, `static const` hardware tables, and warning-clean builds enforced by `-Werror` in `phoenix-rtos-build/Makefile.common`.
 - Pi 4 uses BCM2711 with GIC-400, PL011, BCM2711 PCIe, VL805 xHCI over PCIe, GENET Ethernet, and Broadcom SDHCI.
 - Pi 5 uses BCM2712 plus RP1, with most I/O behind a PCIe-connected southbridge-like peripheral controller.
