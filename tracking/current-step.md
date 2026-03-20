@@ -2,54 +2,54 @@
 
 ## Metadata
 
-- Step ID: `STEP-0021`
-- Title: Define the first directly selectable common AArch64 timer backend step
+- Step ID: `STEP-0022`
+- Title: Add AArch64 timer-backend selection scaffolding
 - Status: `in_progress`
 - Date: `2026-03-20`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- define and bound the first directly selectable common AArch64 timer backend step now that timer-source selection is exposed explicitly by the DTB API
+- make the AArch64 kernel build able to select the timer backend explicitly without changing current runtime behavior, so the eventual common generic timer backend has a clean insertion point
 
 ## Scope
 
 In scope:
 
-- inspect the current AArch64 timer preparation work after `STEP-0020`
-- choose the first directly selectable common timer backend shape
-- select the smallest exact touched-file set for that backend step
-- keep this as a planning and scoping step only
+- add an explicit timer-backend object hook in the common AArch64 kernel Makefile
+- move current ZynqMP timer object selection behind that hook
+- preserve the existing ZynqMP runtime path and current build output
+- validate the existing `aarch64a53-zynqmp-qemu` build in `phoenix-dev`
 
 Out of scope:
 
 - adding a new QEMU target
-- implementing the selected backend itself
+- implementing the common generic timer runtime backend itself
+- changing timer IRQ or wakeup semantics
 - adding PL011 console code
 - Raspberry Pi-specific code
 
 ## Expected Repositories
 
+- `phoenix-rtos-kernel`
 - coordination repo
-- likely `phoenix-rtos-kernel`
 
 ## Expected Files Or Subsystems
 
-- `hal/aarch64/dtb.c`
-- `hal/aarch64/dtb.h`
-- `hal/aarch64/aarch64.h`
-- likely a new common AArch64 timer source file or Makefile hook
-- tracking files and manifest updates for the chosen next step
+- `hal/aarch64/Makefile`
+- `hal/aarch64/zynqmp/Makefile`
+- tracking files and manifest updates for this step
 
 ## Acceptance Criteria
 
-- the first directly selectable common AArch64 timer backend step is explicitly scoped with exact touched files, rationale, validation command, and success criteria
-- the selected next step is narrow enough to implement and validate in one controlled follow-up session
+- the common AArch64 kernel Makefile exposes an explicit timer-backend object hook
+- the current ZynqMP timer backend is still selected through that hook
+- the existing `aarch64a53-zynqmp-qemu` build still succeeds in `phoenix-dev`
 
 ## Validation Plan
 
 - Build:
-  not applicable
+  refresh the copied buildroot and rebuild `TARGET=aarch64a53-zynqmp-qemu` with `./phoenix-rtos-build/build.sh clean host core project`
 - Emulator:
   not applicable
 - Hardware:
@@ -58,13 +58,13 @@ Out of scope:
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-20-aarch64-dtb-timer-source-selection.md`
+  `manifests/2026-03-20-aarch64-direct-timer-backend-step-scope.md`
 
 ## Notes
 
 - Risks:
-  the next timer backend step is the first one that will add substantial new runtime logic outside the current ZynqMP path
+  the step must not accidentally introduce runtime behavior changes while only restructuring the build selection path
 - Dependencies:
-  completed DTB timer-source selection step from `STEP-0020`
+  completed backend-scoping step from `STEP-0021`
 - User-visible control point before next step:
-  present the exact selected backend step before introducing the first directly selectable common timer implementation
+  after this scaffold lands, the next step should target either a narrow timer-path correctness fix or the first small piece of common backend logic, but not both at once
