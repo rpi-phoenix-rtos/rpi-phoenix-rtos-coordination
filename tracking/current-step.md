@@ -2,30 +2,33 @@
 
 ## Metadata
 
-- Step ID: `STEP-0196`
-- Title: Scope the first Pi 4 patched-lane timer follow-up
+- Step ID: `STEP-0197`
+- Title: Force the Pi 4 patched lane to the physical timer
 - Status: `in_progress`
 - Date: `2026-03-20`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- select the smallest runtime follow-up after the automated Pi 4 QEMU DTB
-  memory hook, with focus on the current post-`dummyfs` timer or wakeup stall
+- run the smallest code experiment after the automated Pi 4 QEMU DTB memory
+  hook by forcing the Pi 4 patched lane from the current virtual timer choice
+  to the non-secure physical timer
 
 ## Scope
 
 In scope:
 
-- review the current patched-lane evidence without widening into implementation
-- identify the single highest-signal next runtime experiment
-- keep the focus on timer-source, timer-interrupt, or wakeup delivery only
-- update manifests and docs with the chosen next move
+- keep the experiment limited to timer-source selection
+- prefer a bounded Pi 4 A72 diagnostic override over a permanent common-policy
+  change on the first try
+- validate the automated Pi 4 QEMU-patched lane after the source change
+- update manifests and docs with the result
 
 Out of scope:
 
-- new implementation code
-- broader VM or scheduler changes
+- broader timer redesign
+- GIC redesign
+- scheduler or VM changes
 - firmware-bundle or real-device work
 - real-hardware-only validation
 - Pi 5 or RP1 work
@@ -38,46 +41,50 @@ Out of scope:
 
 ## Expected Files Or Subsystems
 
-- Pi 4 A72 patched-lane runtime evidence after `dummyfs: devfs initialized`
-- the current timer-source, GIC, and wakeup diagnostics
-- manifests and tracking updates for this planning step
+- `sources/phoenix-rtos-kernel/hal/aarch64/dtb.c`
+- timer-source selection policy or its bounded diagnostic override
+- Pi 4 A72 patched-lane runtime evidence after the source change
+- manifests and tracking updates for this implementation step
 
 ## Acceptance Criteria
 
-- one concrete next runtime experiment is selected
-- that experiment stays inside the current Pi 4 patched-lane timer or wakeup
-  boundary
-- the result is documented precisely enough that the next code change can start
-  without reopening broader DTB or VM scope
+- the generic lane remains healthy
+- the automated Pi 4 patched lane clearly reports either:
+  - resumed timer dispatch or tty wakeup progress
+  - or a negative result that rules out timer-source choice as the blocker
+- the result narrows the next step to one concrete interrupt-delivery or
+  wakeup follow-up
 
 ## Validation Plan
 
 - Review:
-  inspect the current runtime evidence and keep the next step limited to one
-  timer or wakeup follow-up
+  inspect the timer-source change for minimality and keep it limited to this
+  one bounded experiment
 - Build:
-  not applicable
+  - `LIBPHOENIX_DEVEL_MODE=n TARGET=aarch64a53-generic-qemu ./phoenix-rtos-build/build.sh clean host core project image`
+  - `LIBPHOENIX_DEVEL_MODE=n RPI4B_DTB_PATH=$HOME/external/raspberrypi-firmware/boot/bcm2711-rpi-4-b.dtb RPI4B_QEMU_MEMORY_SIZE=80000000 TARGET=aarch64a72-generic-rpi4b ./phoenix-rtos-build/build.sh clean host core project image`
 - Emulator:
-  not applicable
+  - run the generic `virt` fast lane
+  - run the automated Pi 4 A72 `raspi4b` lane
 - Hardware:
   not applicable
 
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-20-aarch64-rpi4b-qemu-dtb-memory-hook.md`
+  `manifests/2026-03-20-aarch64-rpi4b-post-dummyfs-timer-scope.md`
 
 ## Notes
 
 - Risks:
-  do not let the next move widen into generic timer redesign or broad Pi 4
-  subsystem work before one narrow runtime experiment is selected
+  do not widen this into a permanent timer-policy rewrite before the bounded Pi
+  4 experiment proves it is necessary
 - Dependencies:
-  completed `STEP-0195` automated Pi 4 QEMU DTB memory hook
+  completed `STEP-0196` timer follow-up scoping
 - Source reminder:
   official Raspberry Pi kernel DTS files on `rpi-6.19.y` and `rpi-7.0.y` are currently identical for Pi 4 and keep `memory@0` bootloader-filled plus `stdout-path` on `serial1` (aux UART); Raspberry Pi documentation also confirms that firmware applies overlays and `dtparam`s before handing the merged DTB to the OS; this step specifically targets the root memory-node cell layout, not UART alias handling
 - Architecture reminder:
   Raspberry Pi 4 Model B is based on BCM2711 with a quad-core Cortex-A72 CPU; treat `aarch64a53-generic-rpi4b` only as a temporary diagnostic lane and keep new target work centered on `aarch64a72-generic-rpi4b`
 - User-visible control point before next step:
-  after this planning step lands, the next bounded move should be exactly one
-  code experiment in the current Pi 4 patched-lane timer or wakeup path
+  after this step lands, the next bounded move should be exactly one follow-up
+  based on whether the physical-timer experiment restores dispatch

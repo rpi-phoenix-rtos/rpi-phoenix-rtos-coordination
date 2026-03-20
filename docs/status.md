@@ -288,6 +288,11 @@ Start-gate status:
     - `dummyfs: devfs initialized`
   - then stalls before any visible `gic: timer dispatch`, `threads: timer irq`,
     or `pl011-tty: tty0 wake`
+- the next bounded runtime experiment is now selected too:
+  - the current common policy prefers the virtual timer first
+  - the Pi 4 patched lane currently reports `gtimer: source virtual irq 27`
+  - the next smallest follow-up is to force the Pi 4 patched lane to the
+    non-secure physical timer and compare whether dispatch resumes
 - the next concrete Pi 4 boot blocker is now loader MMIO addressing: `sources/plo/hal/aarch64/generic/config.h` still hardcodes QEMU `virt` UART and GIC base addresses, so the current Pi 4 `kernel8.img` would still talk to the wrong MMIO blocks on real hardware until those addresses are made board-overridable.
 - generic `plo` now accepts project-local MMIO base overrides for UART0 and GICv2 while preserving the current QEMU `virt` defaults, and the generic `virt` smoke lane still boots after that change.
 - the current Pi 4 firmware handoff no longer appears to have a raw loader placement mismatch: `kernel_address=0x40080000` in the Pi 4 `config.txt` matches `ADDR_PLO 0x40080000` in `plo/ld/aarch64a53-generic.ldt`.
@@ -300,7 +305,7 @@ Start-gate status:
 
 ## Immediate Next Implementation Milestones
 
-1. Select the single highest-signal runtime follow-up for the Pi 4 patched lane, starting with the missing timer-dispatch or wakeup evidence after `dummyfs`.
+1. Run the bounded physical-timer experiment on the Pi 4 patched lane.
 2. Bring the Pi 4 QEMU lane back into the same kernel / user-space startup band already reached with the generic fast lane.
 3. Replace the remaining generic-QEMU MMIO assumptions in the Pi 4 loader/kernel handoff path as the runtime evidence dictates.
 4. Once the Pi 4 fast lane reaches stable console readiness, switch the next bounded steps back to firmware-bundle completeness and first real-device smoke preparation.
