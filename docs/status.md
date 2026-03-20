@@ -115,6 +115,7 @@ Start-gate status:
 - in `phoenix-rtos-devices`, the first missing layer for that console path is now confirmed: `_targets/Makefile.aarch64a53-generic` does not exist yet, so the next repo-local unblock is target scaffolding before PL011 driver code.
 - `phoenix-rtos-devices` now exposes that generic AArch64 target scaffold and validates successfully for `aarch64a53-generic-qemu`; the next fast-lane blocker is the first reusable PL011 tty driver slice itself.
 - that first PL011 slice is now explicitly scoped as a single-instance polling `pl011-tty` driver with `libtty`, `libklog`, `/dev/tty0`, and `/dev/console`, configured first through `board_config.h`.
+- the new `pl011-tty` scaffold now builds directly on `aarch64a53-generic-qemu`; the next fast-lane decision is how to integrate it with the generic target in the smallest useful way.
 - Phoenix upstream style is conservative and review-oriented: file headers, tabs in C, localized `clang-format off/on`, direct control flow, `static const` hardware tables, and warning-clean builds enforced by `-Werror` in `phoenix-rtos-build/Makefile.common`.
 - Pi 4 uses BCM2711 with GIC-400, PL011, BCM2711 PCIe, VL805 xHCI over PCIe, GENET Ethernet, and Broadcom SDHCI.
 - Pi 5 uses BCM2712 plus RP1, with most I/O behind a PCIe-connected southbridge-like peripheral controller.

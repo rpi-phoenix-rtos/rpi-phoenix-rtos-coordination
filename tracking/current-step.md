@@ -2,23 +2,23 @@
 
 ## Metadata
 
-- Step ID: `STEP-0081`
-- Title: Implement the first polling PL011 tty driver scaffold
+- Step ID: `STEP-0082`
+- Title: Define the first generic PL011 target-integration step
 - Status: `in_progress`
 - Date: `2026-03-20`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- add the first reusable polling PL011 tty driver scaffold needed for generic QEMU `virt` and early Raspberry Pi 4 console work
+- identify the smallest generic-target integration step for the new `pl011-tty` driver
 
 ## Scope
 
 In scope:
 
-- add a new `phoenix-rtos-devices/tty/pl011-tty/` driver directory
-- keep the first version single-instance and polling-based
-- validate the new driver directly on the generic target
+- inspect the current generic devices target and build flow
+- confirm whether the next smallest step is target default-component integration, board-config population, or broader core-lane validation
+- select the narrowest useful follow-up
 
 Out of scope:
 
@@ -39,20 +39,20 @@ Out of scope:
 - `phoenix-rtos-devices/tty/pl011-tty/*`
 - `docs/status.md`
 - tracking files and manifest updates for this step
-- direct code references and, if needed, direct generic-target validation output
+- direct build or target-selection evidence if needed
 
 ## Acceptance Criteria
 
-- the new `pl011-tty` driver builds directly for `aarch64a53-generic-qemu`
-- the driver stays single-instance and polling-based in this first slice
-- the change stays inside `phoenix-rtos-devices`
+- the next step is selected from actual generic-target integration constraints
+- the follow-up remains one small commit where possible
+- the selected step advances the generic QEMU fast lane rather than unrelated cleanup
 
 ## Validation Plan
 
 - Review:
-  inspect the new driver against nearby tty-driver style and keep the first slice minimal
+  inspect the new driver and generic target file together and keep the selected integration slice minimal
 - Build:
-  validate `phoenix-rtos-devices` directly for `aarch64a53-generic-qemu` in `phoenix-dev`
+  use direct repo or broader generic build evidence only as needed to choose the next smallest integration step
 - Emulator:
   not applicable
 - Hardware:
@@ -61,13 +61,13 @@ Out of scope:
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-20-aarch64-pl011-tty-scope.md`
+  `manifests/2026-03-20-aarch64-pl011-tty.md`
 
 ## Notes
 
 - Risks:
-  the result must stay as one repo-local PL011 driver scaffold and must not silently turn into interrupt support, DT parsing, or generic-QEMU `user.plo` integration
+  the result must stay as an integration-planning step and must not silently turn into multi-repo runtime bring-up
 - Dependencies:
-  completed implementation step `STEP-0080`
+  completed implementation step `STEP-0081`
 - User-visible control point before next step:
-  after the driver scaffold lands, the next step should scope the first generic target integration of that driver
+  after the integration step is selected, the follow-up implementation should stay narrow and validation-driven
