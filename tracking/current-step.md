@@ -30,17 +30,16 @@ Out of scope:
 ## Expected Repositories
 
 - coordination repo
-- `phoenix-rtos-devices`
+- `phoenix-rtos-project`
 
 ## Expected Files Or Subsystems
 
-- `phoenix-rtos-project/_targets/aarch64a53/generic/user.plo.yaml`
-- comparable QEMU `user.plo` files
-- `phoenix-rtos-devices/tty/pl011-tty/*`
+- `phoenix-rtos-project/_projects/aarch64a53-generic-rpi4b/*`
+- `phoenix-rtos-project/_targets/aarch64a53/generic/*`
+- Pi 4 boot-staging documentation and manifest updates
 - `docs/status.md`
 - tracking files and manifest updates for this step
-- generic QEMU smoke output
-- generic utils packaging expectations
+- Raspberry Pi firmware boot requirements already documented in this repo
 
 ## Acceptance Criteria
 
