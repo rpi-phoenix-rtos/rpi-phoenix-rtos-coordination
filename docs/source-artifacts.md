@@ -83,6 +83,7 @@ This file indexes the most important websites, repositories, documents, and sour
 ### Kernel
 
 - `phoenix-rtos-kernel/hal/aarch64/hal.c`
+- `phoenix-rtos-kernel/hal/aarch64/_init.S`
 - `phoenix-rtos-kernel/hal/aarch64/dtb.c`
 - `phoenix-rtos-kernel/hal/aarch64/aarch64.h`
 - `phoenix-rtos-kernel/hal/aarch64/interrupts_gicv2.c`
@@ -91,6 +92,7 @@ This file indexes the most important websites, repositories, documents, and sour
 - `phoenix-rtos-kernel/hal/aarch64/zynqmp/config.h`
 - `phoenix-rtos-kernel/hal/aarch64/zynqmp/console.c`
 - `phoenix-rtos-kernel/hal/aarch64/zynqmp/timer.c`
+- `phoenix-rtos-kernel/proc/threads.c`
 
 ### Loader
 

@@ -2,30 +2,29 @@
 
 ## Metadata
 
-- Step ID: `STEP-0022`
-- Title: Add AArch64 timer-backend selection scaffolding
+- Step ID: `STEP-0023`
+- Title: Make AArch64 GICv2 handler registration PPI-safe
 - Status: `in_progress`
 - Date: `2026-03-20`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- make the AArch64 kernel build able to select the timer backend explicitly without changing current runtime behavior, so the eventual common generic timer backend has a clean insertion point
+- remove the SPI-shaped CPU-targeting assumption from common AArch64 GICv2 handler registration for non-SPI interrupts so a future PPI-backed architectural timer fits the interrupt layer cleanly
 
 ## Scope
 
 In scope:
 
-- add an explicit timer-backend object hook in the common AArch64 kernel Makefile
-- move current ZynqMP timer object selection behind that hook
-- preserve the existing ZynqMP runtime path and current build output
+- update common AArch64 GICv2 handler registration so it applies CPU targeting only to SPI interrupts
+- preserve existing SPI behavior and the current ZynqMP build lane
 - validate the existing `aarch64a53-zynqmp-qemu` build in `phoenix-dev`
 
 Out of scope:
 
 - adding a new QEMU target
 - implementing the common generic timer runtime backend itself
-- changing timer IRQ or wakeup semantics
+- changing timer wakeup semantics
 - adding PL011 console code
 - Raspberry Pi-specific code
 
@@ -36,14 +35,13 @@ Out of scope:
 
 ## Expected Files Or Subsystems
 
-- `hal/aarch64/Makefile`
-- `hal/aarch64/zynqmp/Makefile`
+- `hal/aarch64/interrupts_gicv2.c`
 - tracking files and manifest updates for this step
 
 ## Acceptance Criteria
 
-- the common AArch64 kernel Makefile exposes an explicit timer-backend object hook
-- the current ZynqMP timer backend is still selected through that hook
+- common AArch64 GICv2 handler registration applies CPU targeting only to SPI interrupts
+- the change is limited to interrupt-registration semantics and does not widen into a broader GIC rewrite
 - the existing `aarch64a53-zynqmp-qemu` build still succeeds in `phoenix-dev`
 
 ## Validation Plan
@@ -58,13 +56,13 @@ Out of scope:
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-20-aarch64-direct-timer-backend-step-scope.md`
+  `manifests/2026-03-20-aarch64-timer-backend-selection-hook.md`
 
 ## Notes
 
 - Risks:
-  the step must not accidentally introduce runtime behavior changes while only restructuring the build selection path
+  the step must not accidentally widen into per-CPU interrupt enablement or timer runtime behavior changes
 - Dependencies:
-  completed backend-scoping step from `STEP-0021`
+  completed timer-backend selection step from `STEP-0022`
 - User-visible control point before next step:
-  after this scaffold lands, the next step should target either a narrow timer-path correctness fix or the first small piece of common backend logic, but not both at once
+  after this fix lands, re-scope the next generic-timer runtime step against the remaining CPU-affine wakeup constraint instead of widening into a full architectural timer backend immediately
