@@ -102,7 +102,7 @@ Start-gate status:
 
 ## Immediate Next Implementation Milestones
 
-1. Implement the explicit AArch64 public timer hook.
+1. Implement the explicit AArch64 timer-implementation override hook.
 2. Define the first public common AArch64 timer-HAL wrapper step.
 3. Implement that selected public timer-HAL wrapper step in one narrow patch.
 4. Implement a generic AArch64 FDT parser suitable for Raspberry Pi DTBs.
