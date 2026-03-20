@@ -2,29 +2,31 @@
 
 ## Metadata
 
-- Step ID: `STEP-0065`
-- Title: Mount `ram0` PHFS in generic pre-init and rerun smoke command
+- Step ID: `STEP-0067`
+- Title: Generate generic QEMU `system.dtb`, load it in `user.plo`, and rerun smoke command
 - Status: `in_progress`
 - Date: `2026-03-20`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- apply the smallest generic pre-init change needed to let `plo` open `user.plo` from the RAM-backed loader image and rerun the smoke command
+- apply the smallest generic QEMU DTB handoff change needed to satisfy the AArch64 kernel early-init contract and rerun the smoke command
 
 ## Scope
 
 In scope:
 
-- add `phfs ram0 4.0 raw` to the generic AArch64 pre-init script
+- generate `virt,secure=on,gic-version=2` DTB output into `${PREFIX_ROOTFS}/etc/system.dtb` during the generic QEMU project build
+- add `blob {{ env.BOOT_DEVICE }} /etc/system.dtb ddr` to the generic AArch64 user script
 - refresh the copied buildroot as needed
+- rebuild the generic project/image artifacts in `phoenix-dev`
 - rerun `timeout 10s ./scripts/aarch64a53-generic-qemu.sh` in `phoenix-dev`
 - record the earliest post-fix result
 
 Out of scope:
 
-- broader NVM layout changes
-- `plo` code changes
+- broader DTB-passing redesign between `plo` and the kernel
+- `plo` or kernel source changes
 - `phoenix-rtos-tests` target additions
 - Raspberry Pi-specific code
 - fixing any later runtime issue beyond documenting it
@@ -39,22 +41,23 @@ Out of scope:
 
 - `phoenix-rtos-project/_targets/aarch64a53/generic/preinit.plo.yaml`
 - `phoenix-rtos-project/_targets/aarch64a53/generic/user.plo.yaml`
+- `phoenix-rtos-project/_projects/aarch64a53-generic-qemu/build.project`
 - `docs/status.md`
 - tracking files and manifest updates for this step
 - smoke output captured from the copied buildroot in `phoenix-dev`
 
 ## Acceptance Criteria
 
-- the generic pre-init mounts `ram0` as raw PHFS before calling `user.plo`
-- the unchanged smoke command is rerun successfully
-- the result records whether `plo` now opens `user.plo` or what the next earliest runtime failure is
+- the generic QEMU project produces `${PREFIX_ROOTFS}/etc/system.dtb` during the current project/image lane
+- the generic user script loads `system.dtb` before `go!`
+- the rerun records whether the kernel now reaches visible early output or what the next earliest runtime failure is
 
 ## Validation Plan
 
 - Review:
-  inspect the generic pre-init and comparable RAM-backed PHFS target patterns as needed during result analysis
+  inspect the generic QEMU build path, AArch64 kernel DTB requirement, and current user-script handoff as needed during result analysis
 - Build:
-  refresh the copied buildroot if needed
+  rebuild the generic project/image artifacts in `phoenix-dev`
 - Emulator:
   run `timeout 10s ./scripts/aarch64a53-generic-qemu.sh` inside the copied buildroot in `phoenix-dev`
 - Hardware:
@@ -63,13 +66,13 @@ Out of scope:
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-20-aarch64-generic-qemu-phfs-fix-scope.md`
+  `manifests/2026-03-20-aarch64-generic-qemu-dtb-fix-scope.md`
 
 ## Notes
 
 - Risks:
-  the result must stay as one pre-init PHFS setup change plus one rerun and must not silently turn into broader generic bring-up
+  the result must stay as one generic project-local DTB handoff fix plus one rerun and must not silently turn into broader kernel or loader redesign
 - Dependencies:
-  completed implementation step `STEP-0064`
+  completed implementation step `STEP-0066`
 - User-visible control point before next step:
-  after this rerun lands, the next slice should be the smallest runtime-fix step implied by the earliest observed post-PHFS result
+  after this rerun lands, the next slice should be the smallest runtime-fix step implied by the earliest observed post-DTB result
