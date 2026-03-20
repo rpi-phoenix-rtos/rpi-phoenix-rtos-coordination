@@ -144,6 +144,7 @@ Start-gate status:
 - generic `plo` now handles EL1, EL2, and EL3 entry in one localized AArch64 assembly path, and the same generic QEMU image now reaches visible loader, kernel, and early userspace output in all three entry modes.
 - the remaining caveat on that path is diagnostic rather than boot-blocking: generic non-EL3 loader exception-context save is not yet independently hardened, so the currently validated result is the normal no-fault fast path.
 - the next concrete Pi 4 blocker is no longer raw exception level entry; it is payload staging after firmware boots `kernel8.img`, because the current Pi 4 boot tree still does not provide the generic `ram0`-backed `loader.disk` medium that the existing AArch64 generic preinit path expects.
+- the next selected Pi 4 step is to reuse that existing generic `ram0` path rather than adding storage code: stage `loader.disk` in the Pi 4 boot tree and have Raspberry Pi firmware preload it to `0x48000000`, which matches generic `plo` `RAM_ADDR`.
 - Phoenix upstream style is conservative and review-oriented: file headers, tabs in C, localized `clang-format off/on`, direct control flow, `static const` hardware tables, and warning-clean builds enforced by `-Werror` in `phoenix-rtos-build/Makefile.common`.
 - Pi 4 uses BCM2711 with GIC-400, PL011, BCM2711 PCIe, VL805 xHCI over PCIe, GENET Ethernet, and Broadcom SDHCI.
 - Pi 5 uses BCM2712 plus RP1, with most I/O behind a PCIe-connected southbridge-like peripheral controller.

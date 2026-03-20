@@ -104,6 +104,8 @@ This file indexes the most important websites, repositories, documents, and sour
 ### Loader
 
 - `plo/hal/aarch64/Makefile`
+- `plo/hal/aarch64/generic/_init.S`
+- `plo/hal/aarch64/generic/config.h`
 - `plo/hal/aarch64/zynqmp/hal.c`
 - `plo/hal/aarch64/zynqmp/console.c`
 - `plo/cmds/script.c`
@@ -119,6 +121,12 @@ This file indexes the most important websites, repositories, documents, and sour
 - `phoenix-rtos-build/build-core-aarch64a53-zynqmp.sh`
 - `phoenix-rtos-build/target/aarch64.mk`
 - `phoenix-rtos-build/Makefile.common`
+- `phoenix-rtos-project/_targets/aarch64a53/generic/build.project`
+- `phoenix-rtos-project/_targets/aarch64a53/generic/preinit.plo.yaml`
+- `phoenix-rtos-project/_targets/aarch64a53/generic/user.plo.yaml`
+- `phoenix-rtos-project/_projects/aarch64a53-generic-rpi4b/build.project`
+- `phoenix-rtos-project/_projects/aarch64a53-generic-rpi4b/config.txt`
+- `phoenix-rtos-project/_projects/aarch64a53-generic-rpi4b/user.plo.yaml`
 - `phoenix-rtos-project/_targets/aarch64a53/zynqmp/build.project`
 - `phoenix-rtos-project/_targets/aarch64a53/zynqmp/preinit.plo.yaml`
 - `phoenix-rtos-project/_targets/aarch64a53/zynqmp/user.plo.yaml`
@@ -145,6 +153,7 @@ This file indexes the most important websites, repositories, documents, and sour
 
 - Raspberry Pi configuration and boot documentation:
   <https://www.raspberrypi.com/documentation/computers/config_txt.html>
+  Important sections: `initramfs`, `ramfsfile`, `ramfsaddr`, `auto_initramfs`
 
 - Raspberry Pi configuration landing page:
   <https://www.raspberrypi.com/documentation/computers/configuration.html>
