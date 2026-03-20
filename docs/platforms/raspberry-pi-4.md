@@ -7,7 +7,7 @@ Pi 4 is materially easier than Pi 5 because the essential board I/O is not deleg
 Important properties:
 
 - SoC: BCM2711
-- CPU: Cortex-A72 class, 64-bit capable
+- CPU: Broadcom BCM2711 quad-core Cortex-A72 (ARM v8) 64-bit SoC
 - interrupt controller: GIC-400
 - standard UART: PL011
 - Ethernet: Broadcom GENET v5

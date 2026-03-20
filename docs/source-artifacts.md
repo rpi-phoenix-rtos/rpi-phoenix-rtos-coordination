@@ -231,6 +231,9 @@ This file indexes the most important websites, repositories, documents, and sour
 
 ## 5. Raspberry Pi Hardware Documents
 
+- Raspberry Pi 4 Model B official specifications:
+  <https://www.raspberrypi.com/products/raspberry-pi-4-model-b/specifications/>
+
 - BCM2711 ARM Peripherals:
   <https://datasheets.raspberrypi.com/bcm2711/bcm2711-peripherals.pdf>
 
