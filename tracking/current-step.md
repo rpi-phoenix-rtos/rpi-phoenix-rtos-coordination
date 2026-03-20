@@ -2,32 +2,33 @@
 
 ## Metadata
 
-- Step ID: `STEP-0205`
-- Title: Scope the Pi 4 timer-group experiment
+- Step ID: `STEP-0206`
+- Title: Force the Pi 4 timer IRQ into Group 0
 - Status: `in_progress`
 - Date: `2026-03-20`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- choose the smallest follow-up after the private-pending-state probe failed to
-  explain the Pi 4 timer delivery gap
+- add one bounded timer-group override so the Pi 4 A72 lane can be tested with
+  the same visible timer group as the working generic lane
 
 ## Scope
 
 In scope:
 
-- review the current generic and Pi 4 timer registration differences
-- identify one bounded timer-group follow-up
-- keep the next move on the timer-to-GIC seam and out of broad interrupt
-  redesign
-- update manifests and docs with the chosen next move
+- keep the change diagnostic-only
+- make the timer IRQ group board-overridable without changing the default for
+  other targets
+- force Group 0 only on the Pi 4 A72 lane
+- validate the generic `virt` guardrail lane and the Pi 4 A72 patched lane
+- update manifests and docs with the result
 
 Out of scope:
 
-- implementation code
 - scheduler or VM changes
 - broad interrupt-controller redesign
+- permanent interrupt policy changes beyond the bounded experiment
 - Pi 5 or RP1 work
 
 ## Expected Repositories
@@ -37,45 +38,49 @@ Out of scope:
 
 ## Expected Files Or Subsystems
 
-- generic and Pi 4 timer registration evidence
-- current timer group-setting logic in `interrupts_gicv2.c`
-- manifests and tracking updates for this planning step
+- `sources/phoenix-rtos-kernel/hal/aarch64/interrupts_gicv2.c`
+- `sources/phoenix-rtos-kernel/hal/aarch64/generic/config.h`
+- `sources/phoenix-rtos-project/_projects/aarch64a72-generic-rpi4b/board_config.h`
+- timer registration and dispatch evidence on both lanes
+- manifests and tracking updates for this implementation step
 
 ## Acceptance Criteria
 
-- one concrete timer-group experiment is selected
-- that experiment stays on the current timer-to-GIC boundary
-- the result is documented precisely enough that the next code change can start
-  without reopening timer-source scope
+- the generic lane remains healthy
+- the Pi 4 A72 lane clearly reports timer registration in Group 0
+- the result narrows the next step to one concrete follow-up after the timer
+  group variable has been tested
 
 ## Validation Plan
 
 - Review:
-  inspect current runtime evidence and keep the next move limited to one
-  timer-group follow-up
+  inspect the override change for minimality and keep it limited to one
+  bounded timer-group experiment
 - Build:
-  not applicable
+  - `LIBPHOENIX_DEVEL_MODE=n TARGET=aarch64a53-generic-qemu ./phoenix-rtos-build/build.sh clean host core project image`
+  - `LIBPHOENIX_DEVEL_MODE=n RPI4B_DTB_PATH=$HOME/external/raspberrypi-firmware/boot/bcm2711-rpi-4-b.dtb RPI4B_QEMU_MEMORY_SIZE=80000000 TARGET=aarch64a72-generic-rpi4b ./phoenix-rtos-build/build.sh clean host core project image`
 - Emulator:
-  not applicable
+  - run the generic `virt` fast lane
+  - run the automated Pi 4 A72 `raspi4b` lane
 - Hardware:
   not applicable
 
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-20-aarch64-rpi4b-private-pending-readback.md`
+  `manifests/2026-03-20-aarch64-rpi4b-timer-group-scope.md`
 
 ## Notes
 
 - Risks:
-  do not widen the next move into broad interrupt work before one bounded
-  timer-group experiment is selected
+  do not widen this into active interrupt redesign before the bounded
+  timer-group override reports whether Group 1 is the last blocking variable
 - Dependencies:
-  completed `STEP-0204` private-pending-state readback
+  completed `STEP-0205` timer-group scoping
 - Source reminder:
   official Raspberry Pi kernel DTS files on `rpi-6.19.y` and `rpi-7.0.y` are currently identical for Pi 4 and keep `memory@0` bootloader-filled plus `stdout-path` on `serial1` (aux UART); Raspberry Pi documentation also confirms that firmware applies overlays and `dtparam`s before handing the merged DTB to the OS; this step specifically targets the root memory-node cell layout, not UART alias handling
 - Architecture reminder:
   Raspberry Pi 4 Model B is based on BCM2711 with a quad-core Cortex-A72 CPU; treat `aarch64a53-generic-rpi4b` only as a temporary diagnostic lane and keep new target work centered on `aarch64a72-generic-rpi4b`
 - User-visible control point before next step:
-  after this planning step lands, the next bounded move should be exactly one
-  timer-group experiment based on the generic `grp 0` vs Pi 4 `grp 1` evidence
+  after this step lands, the next bounded move should be exactly one follow-up
+  based on whether forcing Group 0 restores timer dispatch on Pi 4
