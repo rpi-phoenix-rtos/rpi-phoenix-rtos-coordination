@@ -2,23 +2,23 @@
 
 ## Metadata
 
-- Step ID: `STEP-0085`
-- Title: Wire generic QEMU PL011 values into `board_config.h`
+- Step ID: `STEP-0086`
+- Title: Define the first generic `user.plo` integration step for `dummyfs` and `pl011-tty`
 - Status: `in_progress`
 - Date: `2026-03-20`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- give the generic QEMU project board config the PL011 base and clock values needed by `pl011-tty`
+- identify the smallest `user.plo` change that lets the generic QEMU image bring up `dummyfs` before `pl011-tty`
 
 ## Scope
 
 In scope:
 
-- update `_projects/aarch64a53-generic-qemu/board_config.h`
-- keep the change limited to the PL011 driver contract
-- validate the generic devices build with the populated board config
+- inspect current generic and comparable QEMU `user.plo` sequences
+- choose the smallest ordering and component set that can make `/dev/console` creation viable
+- stop before editing `user.plo`
 
 Out of scope:
 
@@ -34,24 +34,25 @@ Out of scope:
 
 ## Expected Files Or Subsystems
 
-- `phoenix-rtos-project/_projects/aarch64a53-generic-qemu/board_config.h`
+- `phoenix-rtos-project/_targets/aarch64a53/generic/user.plo.yaml`
+- comparable QEMU `user.plo` files
 - `phoenix-rtos-devices/tty/pl011-tty/*`
 - `docs/status.md`
 - tracking files and manifest updates for this step
-- direct generic devices build output
+- direct script references and, if needed, runtime evidence
 
 ## Acceptance Criteria
 
-- the generic QEMU board config now defines the PL011 base and clock expected by `pl011-tty`
-- the generic devices build remains green with the populated board config
-- the change stays narrow and does not touch `user.plo`
+- the smallest `user.plo` integration step is selected from actual script patterns
+- the follow-up stays as one small implementation commit where possible
+- the selected step advances the generic QEMU fast lane directly
 
 ## Validation Plan
 
 - Review:
-  inspect the board-config change against the `pl011-tty` contract and keep it minimal
+  inspect current generic and comparable QEMU `user.plo` scripts and keep the selected sequence minimal
 - Build:
-  validate `phoenix-rtos-devices all` directly for `aarch64a53-generic-qemu` in `phoenix-dev`
+  use direct build or runtime evidence only as needed to choose the smallest useful `user.plo` step
 - Emulator:
   not applicable
 - Hardware:
@@ -60,13 +61,13 @@ Out of scope:
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-20-aarch64-pl011-board-config-scope.md`
+  `manifests/2026-03-20-aarch64-pl011-board-config.md`
 
 ## Notes
 
 - Risks:
-  the result must stay as one narrow board-config step and must not silently turn into `user.plo` integration or smoke-lane debugging
+  the result must stay as a `user.plo` planning step and must not silently turn into generic shell bring-up in one jump
 - Dependencies:
-  completed implementation step `STEP-0084`
+  completed implementation step `STEP-0085`
 - User-visible control point before next step:
-  after the board-config wiring lands, the next step should scope the first runtime image integration of `pl011-tty`
+  after the `user.plo` step is selected, the follow-up implementation should stay narrow and validation-driven
