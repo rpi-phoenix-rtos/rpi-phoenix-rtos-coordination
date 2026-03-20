@@ -2,38 +2,34 @@
 
 ## Metadata
 
-- Step ID: `STEP-0141`
-- Title: Scope kernel sleep / wakeup programming visibility
+- Step ID: `STEP-0142`
+- Title: Instrument kernel sleep / wakeup visibility
 - Status: `in_progress`
 - Date: `2026-03-20`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- define the smallest next kernel-side diagnostic step that can prove whether the stalled retry path reaches sleep enqueue and wakeup programming in `proc/threads.c`
+- determine whether the stalled retry path reaches sleep enqueue, wakeup programming, and timer-interrupt delivery inside the common thread manager
 
 ## Scope
 
 In scope:
 
-- inspect the common sleep path around:
-  - `proc_threadNanoSleep()`
-  - `_proc_threadSleepAbs()`
-  - `_threads_programWakeup()`
-- pick the minimum visibility point that can distinguish:
-  - never enqueued for sleep
-  - enqueued but wakeup not programmed
-  - wakeup programmed but interrupt not delivered
-- keep the next implementation step localized to one kernel subsystem
-- preserve the current generic and Pi 4 QEMU validation lanes
+- `sources/phoenix-rtos-kernel/proc/threads.c`
+- add tightly filtered, one-time kernel markers for:
+  - the first relevant `proc_threadNanoSleep()` request
+  - the corresponding `_threads_programWakeup()` programming path
+  - the first `threads_timeintr()` delivery point
+- keep the current retry timing and scheduler behavior unchanged
+- validate on the generic `virt` lane first, then on the Pi 4 DTB-backed `raspi4b` lane
 
 Out of scope:
 
 - broad timer backend refactoring
-- immediate service-order workarounds
 - changing `pl011-tty` retry semantics
+- changing device-start order
 - changing scheduler policy
-- adding real-hardware-only diagnostics
 - real-hardware-only validation
 - Pi 5 or RP1 work
 - `phoenix-rtos-tests` integration
@@ -46,22 +42,26 @@ Out of scope:
 ## Expected Files Or Subsystems
 
 - `sources/phoenix-rtos-kernel/proc/threads.c`
-- manifests and tracking updates for the scope decision
+- relevant generic and Pi 4 QEMU smoke notes
+- manifests and tracking updates for this implementation step
 
 ## Acceptance Criteria
 
-- the next implementation step is narrowed to one specific kernel visibility point
-- the decision is justified against the current runtime evidence from `STEP-0140`
-- the resulting scope avoids broad timer or scheduler churn
+- the generic lane exposes whether the blocked retry path reaches sleep enqueue
+- the generic lane exposes whether `_threads_programWakeup()` runs for that sleep
+- the generic lane exposes whether a corresponding timer interrupt reaches `threads_timeintr()`
+- neither QEMU lane regresses from current known-good boot output
 
 ## Validation Plan
 
 - Review:
-  inspect the current common sleep / wake path and record the smallest justified visibility point
+  confirm the patch stays localized to `proc/threads.c` and only adds filtered visibility markers
 - Build:
-  not applicable
+  rebuild the affected generic and Pi 4 project lanes in `phoenix-dev`
 - Emulator:
-  not applicable
+  rerun:
+  - generic `virt`
+  - Pi 4 DTB-backed `raspi4b`
 - Hardware:
   not applicable
 
@@ -73,8 +73,8 @@ Out of scope:
 ## Notes
 
 - Risks:
-  avoid jumping prematurely from a proven sleep-stall symptom into a broad timer rewrite
+  avoid turning early-boot sleep instrumentation into broad scheduler logging churn
 - Dependencies:
-  completed `STEP-0140` wake-return visibility result
+  completed `STEP-0141` scope decision
 - User-visible control point before next step:
-  after this scope step lands, the next implementation patch should add only the minimum kernel-side marker needed to prove whether sleep enqueue and wakeup programming happen at runtime
+  after this step lands, the next bounded move should come from direct evidence about whether the common sleep path fails before wakeup programming or after timer arming
