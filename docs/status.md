@@ -135,6 +135,7 @@ Start-gate status:
 - the first Pi 4-specific scaffold step is now fixed: start with a project-local `aarch64a53-generic-rpi4b` layered on top of the existing generic target, rather than widening the target matrix before board-local overrides are in place.
 - that first Pi 4 scaffold is now implemented and build-validated in `phoenix-dev`; the new `aarch64a53-generic-rpi4b` project provides Pi 4 board-local overrides while intentionally deferring the real firmware-facing DTB and boot-partition staging decisions to the next step.
 - that next Pi 4 staging decision is now fixed: emit a firmware-facing boot directory with a project-local `config.txt` and renamed raw `plo` image before widening into DTB import or firmware-handoff code.
+- that firmware-facing staging step is now implemented and build-validated; `_boot/aarch64a53-generic-rpi4b/rpi4b/` now contains `config.txt` and `kernel8.img`, while DTB staging and EL3-only loader entry remain the next two concrete blockers.
 - Phoenix upstream style is conservative and review-oriented: file headers, tabs in C, localized `clang-format off/on`, direct control flow, `static const` hardware tables, and warning-clean builds enforced by `-Werror` in `phoenix-rtos-build/Makefile.common`.
 - Pi 4 uses BCM2711 with GIC-400, PL011, BCM2711 PCIe, VL805 xHCI over PCIe, GENET Ethernet, and Broadcom SDHCI.
 - Pi 5 uses BCM2712 plus RP1, with most I/O behind a PCIe-connected southbridge-like peripheral controller.

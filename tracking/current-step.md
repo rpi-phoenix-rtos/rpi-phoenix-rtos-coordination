@@ -2,30 +2,27 @@
 
 ## Metadata
 
-- Step ID: `STEP-0101`
-- Title: Stage the first Pi 4 firmware boot-tree artifacts
+- Step ID: `STEP-0102`
+- Title: Define the first optional Pi 4 DTB staging hook
 - Status: `in_progress`
 - Date: `2026-03-20`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- add the smallest project-local boot-tree staging step that produces firmware-visible Pi 4 boot artifacts from the current scaffold
+- identify the smallest project-local follow-up that can make Pi 4 DTB staging possible without forcing an external DTB file into every build
 
 ## Scope
 
 In scope:
 
-- update `phoenix-rtos-project/_projects/aarch64a53-generic-rpi4b/build.project`
-- stage a Pi 4 boot directory under `_boot/aarch64a53-generic-rpi4b/`
-- add a project-local `config.txt`
-- copy the raw `plo` image under a firmware-facing kernel filename
-- document the remaining DTB and firmware-handoff blockers in the manifest
+- inspect the new Pi 4 boot-tree staging result
+- choose the smallest project-local DTB staging hook that keeps builds reproducible without requiring a checked-in external DTB blob
+- stop before implementing that hook
 
 Out of scope:
 
-- FAT image generation
-- DTB generation or import
+- DTB generation from external trees
 - broad loader or kernel Pi 4 support
 - real-hardware-only validation
 - Pi 5 or RP1 work
@@ -38,8 +35,7 @@ Out of scope:
 
 ## Expected Files Or Subsystems
 
-- `phoenix-rtos-project/_projects/aarch64a53-generic-rpi4b/build.project`
-- `phoenix-rtos-project/_projects/aarch64a53-generic-rpi4b/config.txt`
+- `phoenix-rtos-project/_projects/aarch64a53-generic-rpi4b/*`
 - `_boot/aarch64a53-generic-rpi4b/rpi4b/`
 - Pi 4 boot-staging documentation and manifest updates
 - `docs/status.md`
@@ -47,16 +43,16 @@ Out of scope:
 
 ## Acceptance Criteria
 
-- the Pi 4 project stages a firmware-facing boot directory in `_boot`
-- the staged directory contains a project-local `config.txt` and a renamed raw `plo` image
-- the no-hardware Pi 4 build lane still succeeds in `phoenix-dev`
+- the next DTB-related follow-up is selected from the staged-boot-tree state
+- the follow-up stays as one small implementation commit where possible
+- the selected step keeps the Pi 4 lane project-local and build-safe
 
 ## Validation Plan
 
 - Review:
-  inspect the staged artifact names and config choices against the documented Raspberry Pi firmware behavior
+  inspect the staged boot-tree result and documented Pi 4 DTB expectations together
 - Build:
-  run `LIBPHOENIX_DEVEL_MODE=n TARGET=aarch64a53-generic-rpi4b ./phoenix-rtos-build/build.sh host core project image` in `phoenix-dev`
+  use the current project-local build shape to choose the smallest useful DTB follow-up
 - Emulator:
   not applicable
 - Hardware:
@@ -65,13 +61,13 @@ Out of scope:
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-20-aarch64-rpi4b-firmware-staging-scope.md`
+  `manifests/2026-03-20-aarch64-rpi4b-firmware-staging.md`
 
 ## Notes
 
 - Risks:
-  the result must stay as one localized boot-staging step and must not silently widen into DTB import or loader handoff work
+  the result must stay as a localized planning step and must not silently widen into broad firmware-asset bundling or loader handoff work
 - Dependencies:
-  completed planning step `STEP-0100`
+  completed implementation step `STEP-0101`
 - User-visible control point before next step:
-  after the staging step lands, the next follow-up should be selected from the staged artifact gap, not from broad board bring-up wishlisting
+  after the next DTB hook is selected, the implementation should stay project-local unless a stronger dependency emerges
