@@ -2,75 +2,72 @@
 
 ## Metadata
 
-- Step ID: `STEP-0103`
-- Title: Add the first optional Pi 4 DTB staging hook
+- Step ID: `STEP-0104`
+- Title: Define the first generic loader entry step for Pi 4 firmware handoff
 - Status: `in_progress`
 - Date: `2026-03-20`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- add the smallest project-local DTB staging hook that allows a Pi 4 board DTB to be staged when provided, while keeping the default build self-contained
+- bound the smallest useful `plo` change that removes the current EL3-only boot-entry assumption from the Pi 4 path while preserving the existing generic and ZynqMP validation lanes
 
 ## Scope
 
 In scope:
 
-- update `phoenix-rtos-project/_projects/aarch64a53-generic-rpi4b/build.project`
-- accept an optional externally provided Pi 4 DTB path or project-local DTB file
-- stage the DTB into `_boot/aarch64a53-generic-rpi4b/rpi4b/` only when available
-- keep the no-hardware default build green when no DTB is supplied
+- inspect generic AArch64 `plo` entry and exit paths in `hal/aarch64/generic/_init.S`
+- confirm the exact EL3-only assumptions that currently block Raspberry Pi firmware boot
+- define the smallest next implementation step and its validation lane
+- keep the selected next step narrow enough to remain loader-local
 
 Out of scope:
 
-- DTB generation from external trees
-- checked-in imported Linux DTB blobs
-- broad loader or kernel Pi 4 support
+- broad Raspberry Pi-specific driver work
+- kernel Pi 4 enablement
+- DTB import policy changes beyond the now-completed staging hook
 - real-hardware-only validation
 - Pi 5 or RP1 work
-- `phoenix-rtos-tests` target additions
+- changes to `phoenix-rtos-tests`
 
 ## Expected Repositories
 
 - coordination repo
-- `phoenix-rtos-project`
 
 ## Expected Files Or Subsystems
 
-- `phoenix-rtos-project/_projects/aarch64a53-generic-rpi4b/build.project`
-- `_boot/aarch64a53-generic-rpi4b/rpi4b/`
-- Pi 4 boot-staging documentation and manifest updates
-- `docs/status.md`
-- `docs/manual-operator-instructions.md`
-- tracking files and manifest updates for this step
+- `plo/hal/aarch64/generic/_init.S`
+- `plo/hal/aarch64/generic/hal.c`
+- generic QEMU `virt` validation notes
+- documentation and manifest updates for this planning step
 
 ## Acceptance Criteria
 
-- the Pi 4 project stages a board DTB when one is explicitly provided
-- the default no-DTB build still succeeds and still stages the existing boot tree
-- the DTB hook remains project-local and does not add a required external dependency to every build
+- the current generic loader EL3-only entry and exit constraints are explicitly documented from source inspection
+- the next implementation step is fixed as one bounded loader-local change rather than a broad bring-up bucket
+- the chosen validation path is defined and includes a non-hardware lane if feasible
 
 ## Validation Plan
 
 - Review:
-  inspect the DTB hook for minimality and optional behavior
+  inspect `plo` generic entry and exit assembly and the current generic QEMU invocation
 - Build:
-  run the Pi 4 build once without a DTB to confirm the default lane still works
-- Emulator:
   not applicable
+- Emulator:
+  define whether QEMU `virt,secure=off` can serve as the first EL2-style validation lane
 - Hardware:
   not applicable
 
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-20-aarch64-rpi4b-dtb-hook-scope.md`
+  `manifests/2026-03-20-aarch64-rpi4b-dtb-hook.md`
 
 ## Notes
 
 - Risks:
-  the result must stay as one localized DTB-staging step and must not silently widen into external-tree fetching or loader handoff work
+  the next implementation step must not silently widen into full Raspberry Pi bootloader support, DTB parsing, or kernel work
 - Dependencies:
-  completed planning step `STEP-0102`
+  completed implementation step `STEP-0103`
 - User-visible control point before next step:
-  after the DTB hook lands, the next follow-up should be chosen from the remaining firmware-handoff blocker or from concrete DTB consumption needs
+  once the first loader-entry step is defined, the next action should be a single `plo` implementation patch that can be validated in builds and, if possible, in generic QEMU

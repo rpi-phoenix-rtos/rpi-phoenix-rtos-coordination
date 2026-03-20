@@ -259,6 +259,25 @@ If forks are used, also configure:
 - `origin` as the writable fork
 - `upstream` as the official Phoenix repository
 
+### Current optional Pi 4 DTB input for staged boot trees
+
+For the current `aarch64a53-generic-rpi4b` boot-tree staging flow, a Pi 4 DTB is optional during ordinary no-hardware builds but will be needed for realistic firmware boot-media preparation.
+
+Current accepted inputs are:
+
+- environment variable `RPI4B_DTB_PATH` pointing to a board DTB file
+- project-local file:
+  `sources/phoenix-rtos-project/_projects/aarch64a53-generic-rpi4b/bcm2711-rpi-4-b.dtb`
+
+Current staged output path:
+
+- `_boot/aarch64a53-generic-rpi4b/rpi4b/bcm2711-rpi-4-b.dtb`
+
+Current practical rule:
+
+- ordinary no-hardware validation may omit the DTB
+- before the first realistic Pi 4 firmware-boot test, the operator or agent must provide a real `bcm2711-rpi-4-b.dtb` through one of the two inputs above unless the boot flow is later changed and this document is updated
+
 ## 5. What Must Be Provided For Real-Device Testing
 
 The following physical items are currently required to run tests on an actual Raspberry Pi board.
