@@ -103,7 +103,16 @@ Phoenix's current AArch64 emulation lane is tied to a ZynqMP target and Xilinx-f
 
 ## 4.2 Why `raspi4b` is still useful
 
-Even with incomplete peripherals, `raspi4b` can still help validate:
+Re-verify this section against the exact QEMU version in use.
+
+On the current workstation baseline:
+
+- `qemu-system-aarch64 -machine help` inside `phoenix-dev` does not list `raspi4b`
+- current pre-hardware Pi 4 validation is therefore limited to:
+  - generic `virt` runtime validation
+  - Pi 4 image and artifact inspection
+
+If a future QEMU build does expose `raspi4b`, it can still help validate:
 
 - image loading assumptions
 - early UART path

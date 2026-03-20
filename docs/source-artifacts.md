@@ -256,6 +256,11 @@ Re-verify:
 - exact QEMU version behavior
 - supported `raspi4b` devices
 
+Current local finding to preserve:
+
+- `qemu-system-aarch64 -machine help` inside `phoenix-dev` currently lists `raspi0`, `raspi1ap`, `raspi2b`, `raspi3ap`, and `raspi3b`, but not `raspi4b`
+- on this workstation, pre-hardware Pi 4 validation must therefore stay on generic `virt` plus Pi 4 artifact inspection until either real hardware is used or a newer QEMU build provides `raspi4b`
+
 ## 9. Host and VM Tooling References
 
 - Lima overview:

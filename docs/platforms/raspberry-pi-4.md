@@ -234,7 +234,14 @@ The Linux DT notes a DMA limitation around the first 3 GB for BCM2711 PCIe. Any 
 
 ### QEMU mismatch
 
-QEMU `raspi4b` exists, but peripheral fidelity is incomplete. Do not close bring-up tasks based only on QEMU.
+Re-verify this against the exact QEMU build in use.
+
+On the current `phoenix-dev` workstation baseline, `qemu-system-aarch64 -machine help` does not list `raspi4b` at all. The practical no-hardware Pi 4 lane is therefore:
+
+- generic `virt` runtime validation for shared AArch64 code paths
+- Pi 4 image-shape and artifact inspection
+
+If `raspi4b` becomes available in a future QEMU build, still do not close Pi 4 bring-up tasks based only on QEMU because peripheral fidelity remains incomplete.
 
 ### Firmware assumptions
 
