@@ -2,41 +2,41 @@
 
 ## Metadata
 
-- Step ID: `STEP-0234`
-- Title: Scope the smallest below-stdio `psh` process-entry visibility step
+- Step ID: `STEP-0235`
+- Title: Implement bounded `psh` first-user-schedule visibility
 - Status: `planned`
 - Date: `2026-03-21`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- choose the smallest non-shell-stdio visibility step after the negative
-  cross-lane `psh` marker result
+- prove whether the spawned `psh` process ever reaches first user execution
+  using one bounded kernel-side marker
 
 ## Scope
 
 In scope:
 
 - review the current `psh` startup path in `psh.c` and `pshapp.c`
-- inspect the smallest kernel-side hooks below shell-visible stdio
-- choose one exact hook that can prove whether the spawned `psh` process ever
-  reaches first user execution
-- document the selected next implementation step
+- add the selected one-time `psh` user-schedule marker
+- rebuild the generic and Pi 4 QEMU lanes
+- record whether either lane reaches the first-user-execution boundary
 
 Out of scope:
 
 - changing behavior
+- broad scheduler tracing
 - real hardware work
 - Pi 5 or RP1 work
 
 ## Expected Repositories
 
+- `phoenix-rtos-kernel`
 - coordination repo
 
 ## Expected Files Or Subsystems
 
-- likely `sources/phoenix-rtos-kernel/proc/threads.c`
-- likely `sources/phoenix-rtos-kernel/proc/process.c`
+- `sources/phoenix-rtos-kernel/proc/threads.c`
 - `docs/status.md`
 - `manifests/`
 - `tracking/current-step.md`
@@ -44,33 +44,34 @@ Out of scope:
 
 ## Acceptance Criteria
 
-- the selected next patch uses one exact below-stdio hook only
-- the scope names the source file and the specific condition to trace
-- the result narrows the next move to one concrete implementation step
+- generic QEMU proves whether `psh` reaches first user execution
+- Pi 4 QEMU is rerun too if the result stays on the shared path
+- the result narrows the next move to one concrete follow-up
 
 ## Validation Plan
 
-- Analysis only:
-  - inspect scheduler and exec paths for the first user-mode entry point
-  - prefer a one-time `psh`-specific first-schedule or first-exec marker
+- Emulator:
+  - rebuild generic `virt`
+  - rerun generic QEMU
+  - rerun Pi 4 QEMU if the generic result remains in the shared path
 - Hardware:
   not applicable
 
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-21-aarch64-psh-startup-visibility.md`
+  `manifests/2026-03-21-aarch64-psh-first-user-schedule-scope.md`
 
 ## Notes
 
 - Risks:
-  do not widen into broad scheduler tracing when one `psh`-specific hook should
-  be enough
+  keep the trace one-time and `psh`-specific so the scheduler output stays
+  readable
 - Dependencies:
-  completed `STEP-0233` `psh` startup visibility
+  completed `STEP-0234` below-stdio `psh` process-entry visibility scope
 - Source reminder:
-  neither lane shows any `psh:` marker at all, so shell-visible stdio is not
-  yet a trustworthy boundary marker
+  neither lane shows any `psh:` marker at all, so the next split has to happen
+  below shell-visible stdio
 - User-visible control point before next step:
-  after this scope step lands, the next patch should add one kernel-side marker
-  only and should avoid reopening earlier boot paths
+  after this step lands, the next follow-up should depend on whether `psh`
+  reaches first user execution at all
