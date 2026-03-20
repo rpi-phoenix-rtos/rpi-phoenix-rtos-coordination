@@ -162,6 +162,8 @@ Start-gate status:
 - the next fast-lane blocker is now shared between the generic and Pi 4 QEMU lanes: both reach `pl011-tty: started` but not `tty0` or console readiness, so the next smallest step should target shared `pl011-tty` registration rather than more Pi 4 DTB or loader work.
 - a bounded driver-local `create_dev()` retry experiment in `pl011-tty` did not change either QEMU lane, so that patch was reverted and should not be reused as if it were a proven fix.
 - the next smallest high-signal step is now raw UART-side registration diagnostics in `pl011-tty`, because current stderr-only failure paths are not visible on the captured QEMU serial output.
+- raw UART-side `pl011-tty` diagnostics now prove that both the generic and Pi 4 DTB-backed QEMU lanes reach `pl011-tty: register tty0` and then stop before either success or failure is reported.
+- the current shared blocker is therefore inside the common `create_dev("/dev/tty0")` path, not in the driver-local code before or after that call.
 - the next concrete Pi 4 boot blocker is now loader MMIO addressing: `sources/plo/hal/aarch64/generic/config.h` still hardcodes QEMU `virt` UART and GIC base addresses, so the current Pi 4 `kernel8.img` would still talk to the wrong MMIO blocks on real hardware until those addresses are made board-overridable.
 - generic `plo` now accepts project-local MMIO base overrides for UART0 and GICv2 while preserving the current QEMU `virt` defaults, and the generic `virt` smoke lane still boots after that change.
 - the current Pi 4 firmware handoff no longer appears to have a raw loader placement mismatch: `kernel_address=0x40080000` in the Pi 4 `config.txt` matches `ADDR_PLO 0x40080000` in `plo/ld/aarch64a53-generic.ldt`.
