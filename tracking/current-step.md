@@ -2,64 +2,61 @@
 
 ## Metadata
 
-- Step ID: `STEP-0129`
-- Title: Implement bounded post-lookup `create_dev()` diagnostics visible on stdout
+- Step ID: `STEP-0134`
+- Title: Instrument `dummyfs` lifecycle visibility on the kernel console
 - Status: `in_progress`
 - Date: `2026-03-20`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- add the smallest user-space diagnostics that can show whether `create_dev("/dev/tty0")` blocks between the successful `lookup("devfs", ...)` return and the final `msgSend()` call
+- determine whether the `devfs` dummyfs instance reaches its main loop and receives the first `mtLookup` message before `pl011-tty` stalls in the shared name-resolution path
 
 ## Scope
 
 In scope:
 
-- `sources/libphoenix/unistd/file.c`
-- add minimal diagnostics after the successful `lookup("devfs", ...)` return
-- prefer a visibility path that does not depend on the user-space `debug()` syscall path
-- distinguish:
-  - post-lookup return
-  - post-path-splitting progress
-  - final `msgSend()` entry / return
-- keep the patch reviewable, bounded, and temporary-diagnostic in nature
+- `sources/phoenix-rtos-filesystems/dummyfs/srv.c`
+- add narrow `debug()` markers around:
+  - the non-filesystem namespace `portRegister()` success path for `devfs`
+  - the post-mount `initialized` boundary
+  - the first `mtLookup` receive / response path
+- keep the markers bounded so they can stay reviewable and easy to revert if they stop being useful
 - validate on both the generic and Pi 4 DTB-backed QEMU lanes
 
 Out of scope:
 
-- broad Pi 4 peripheral-debug work
-- new board-specific DTB work
-- broad init-sequencing redesign across loader scripts and services
+- broad `dummyfs` lifecycle refactoring
+- loader-script or service-order changes
+- broad `pl011-tty` redesign
 - real-hardware-only validation
 - Pi 5 or RP1 work
 - `phoenix-rtos-tests` integration
-- speculative functional fixes beyond the diagnostics themselves
 - broad refactoring of `create_dev()` semantics
 
 ## Expected Repositories
 
-- `sources/libphoenix`
+- `sources/phoenix-rtos-filesystems`
 - coordination repo
 
 ## Expected Files Or Subsystems
 
-- `sources/libphoenix/unistd/file.c`
+- `sources/phoenix-rtos-filesystems/dummyfs/srv.c`
 - relevant generic and Pi 4 QEMU smoke notes
 - manifests and tracking updates for this implementation step
 
 ## Acceptance Criteria
 
-- the next QEMU run produces at least one new post-lookup marker after the already-known `create_dev: lookup done` generic marker
-- the markers distinguish whether the current boundary is in user-space path preparation or at final `msgSend()` entry / return
+- at least one lane exposes whether `dummyfs` reaches its initialized main loop before `pl011-tty` stalls
+- at least one lane exposes whether the first `mtLookup` is received and responded to by `dummyfs`
 - neither lane regresses from current known-good startup output
 
 ## Validation Plan
 
 - Review:
-  confirm that the patch stays local to `create_dev()` and only adds narrow diagnostics
+  confirm that the patch stays local to `dummyfs` visibility and does not change mount order or namespace policy
 - Build:
-  rebuild the affected device and project lanes in `phoenix-dev`
+  rebuild the affected filesystem and project lanes in `phoenix-dev`
 - Emulator:
   rerun:
   - generic `virt`
@@ -70,13 +67,13 @@ Out of scope:
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-20-aarch64-create-dev-syscall-diagnostics.md`
+  `manifests/2026-03-20-aarch64-pl011-delayed-devfs-retry-window.md`
 
 ## Notes
 
 - Risks:
-  avoid turning shared libc code into a large permanent debug scaffold
+  avoid turning bounded visibility markers into long-lived logging churn
 - Dependencies:
-  completed `STEP-0128`
+  completed `STEP-0132` delayed-`devfs` retry result
 - User-visible control point before next step:
-  after this step lands, the next bounded move should come from concrete post-lookup progress on the two QEMU lanes
+  after this step lands, the next bounded move should come from concrete `dummyfs` lifecycle evidence rather than more `pl011-tty`-side speculation

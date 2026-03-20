@@ -167,6 +167,11 @@ Start-gate status:
 - a bounded `libphoenix`-side `debug()` probe inside `create_dev()` produced no visible new markers on either QEMU lane and was reverted; that `debug()` path is not a useful early-boot visibility mechanism here.
 - kernel-side syscall diagnostics now prove that the generic QEMU lane returns from `lookup("devfs", ...)` before hanging, and never reaches the final `msgSend()` marker for `tty0`; the live boundary is therefore between lookup return and final `msgSend()` entry inside `create_dev()`.
 - the Pi 4 DTB-backed lane still does not show kernel-side markers, so the generic lane remains the authoritative fast diagnostic lane for this early `create_dev()` blocker.
+- a temporary stdout-visible probe inside `libphoenix/create_dev()` also produced no visible new markers on either QEMU lane and was reverted; plain fd-1 writes are therefore not a useful early visibility path here either.
+- a local raw `pl011-tty` helper now proves that the first `lookup("devfs", ...)` fails quickly on both the generic and Pi 4 DTB-backed QEMU lanes, so the first `/dev/tty0` registration attempt does not reach the create-message path at boot time.
+- a temporary `dummyfs` experiment that removed the non-filesystem namespace `write(1, "", 0)` wait changed nothing on either lane and was reverted, so that startup gate is not the blocker behind the missing `devfs` lookup result.
+- the bounded `pl011-tty` retry-window experiment is now complete on both QEMU lanes: each lane reaches `pl011-tty: tty0 lookup retry` and then stalls before either `lookup ok` or `lookup failed`, which means a later `lookup("devfs", ...)` call is now blocking instead of returning promptly.
+- the next bounded blocker is therefore no longer inside the first raw `pl011-tty` helper branch itself; it is whether the `dummyfs` `devfs` instance reaches its main loop and actually receives or responds to the later `mtLookup` message.
 - the next concrete Pi 4 boot blocker is now loader MMIO addressing: `sources/plo/hal/aarch64/generic/config.h` still hardcodes QEMU `virt` UART and GIC base addresses, so the current Pi 4 `kernel8.img` would still talk to the wrong MMIO blocks on real hardware until those addresses are made board-overridable.
 - generic `plo` now accepts project-local MMIO base overrides for UART0 and GICv2 while preserving the current QEMU `virt` defaults, and the generic `virt` smoke lane still boots after that change.
 - the current Pi 4 firmware handoff no longer appears to have a raw loader placement mismatch: `kernel_address=0x40080000` in the Pi 4 `config.txt` matches `ADDR_PLO 0x40080000` in `plo/ld/aarch64a53-generic.ldt`.
@@ -179,11 +184,11 @@ Start-gate status:
 
 ## Immediate Next Implementation Milestones
 
-1. Define the first emulated generic AArch64 smoke lane.
-2. Run the first end-to-end generic `virt` boot attempt.
-3. Trim the remaining generic QEMU boot blockers one by one until there is stable `plo` and kernel output.
-4. Add the matching emulated test target and smoke harness once the QEMU invocation and success signal stabilize.
-5. Reuse the proven generic `virt` boot pieces as the immediate template for the first Raspberry Pi 4 `plo` path.
+1. Instrument `dummyfs` with bounded kernel-console visibility markers so the fast lanes can distinguish “`devfs` never started” from “`devfs` started but is not servicing lookup”.
+2. Use those markers to trim the remaining `tty0` registration blocker one small step at a time on both the generic and Pi 4 DTB-backed QEMU lanes.
+3. Reach successful `/dev/tty0` and `/dev/console` registration on the generic fast lane, then confirm the same boundary moves on the Pi 4 DTB-backed lane.
+4. Bring the Pi 4 QEMU lane from `pl011-tty: started` to a usable shell or equivalent stable console-ready state.
+5. Once the fast lanes reach stable console readiness, switch the next bounded steps back to firmware-bundle completeness and first real-device smoke preparation.
 
 ## Pi 4 Success Criteria for "Phase 1"
 

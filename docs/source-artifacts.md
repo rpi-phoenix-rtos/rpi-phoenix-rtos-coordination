@@ -99,6 +99,9 @@ This file indexes the most important websites, repositories, documents, and sour
 - `phoenix-rtos-kernel/hal/aarch64/zynqmp/config.h`
 - `phoenix-rtos-kernel/hal/aarch64/zynqmp/console.c`
 - `phoenix-rtos-kernel/hal/aarch64/zynqmp/timer.c`
+- `phoenix-rtos-kernel/proc/name.c`
+- `phoenix-rtos-kernel/proc/msg.c`
+- `phoenix-rtos-kernel/syscalls.c`
 - `phoenix-rtos-kernel/proc/threads.c`
 
 ### Loader
@@ -149,6 +152,23 @@ This file indexes the most important websites, repositories, documents, and sour
 - `phoenix-rtos-filesystems/ext2/*`
 - `phoenix-rtos-filesystems/jffs2/*`
 - `phoenix-rtos-filesystems/dummyfs/*`
+
+### Early userspace boot blocker paths
+
+- `libphoenix/unistd/file.c`
+  Important because `create_dev()` currently gates `/dev/tty0` and `/dev/console` registration.
+
+- `phoenix-rtos-devices/tty/pl011-tty/pl011-tty.c`
+  Important because the current fast lane uses raw UART-side diagnostics here to bound the first console-registration blocker.
+
+- `phoenix-rtos-filesystems/dummyfs/srv.c`
+  Important because the `devfs` instance is started here with `dummyfs -N devfs -D`, and the next fast diagnostic step targets its non-filesystem namespace registration and `mtLookup` servicing path.
+
+- `phoenix-rtos-kernel/proc/name.c`
+  Important because `proc_portLookup()` performs the kernel-side cached lookup and forwards `mtLookup` messages to the registered server port.
+
+- `phoenix-rtos-kernel/proc/msg.c`
+  Important because `proc_send()` blocks until the destination server receives and responds, which is the current reason a non-responsive `devfs` lookup can stall the caller.
 
 ## 4. Raspberry Pi Official Documentation
 
