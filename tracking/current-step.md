@@ -2,23 +2,23 @@
 
 ## Metadata
 
-- Step ID: `STEP-0091`
-- Title: Add a direct PL011 startup banner to `pl011-tty`
+- Step ID: `STEP-0092`
+- Title: Define the first console-ready diagnostic step after `pl011-tty: started`
 - Status: `in_progress`
 - Date: `2026-03-20`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- add the smallest direct userspace-start diagnostic that can prove whether the generic runtime path reaches `pl011-tty`
+- identify the smallest next diagnostic that can prove whether `pl011-tty` reaches `/dev/console` readiness after startup
 
 ## Scope
 
 In scope:
 
-- update `phoenix-rtos-devices/tty/pl011-tty/pl011-tty.c`
-- emit a raw PL011 banner after the UART mapping and configuration succeed
-- rebuild the needed generic artifacts and rerun the generic QEMU smoke lane
+- inspect the new smoke result that includes `pl011-tty: started`
+- choose the smallest follow-up diagnostic that distinguishes “driver started” from “console fully ready”
+- stop before implementing that diagnostic
 
 Out of scope:
 
@@ -44,16 +44,16 @@ Out of scope:
 
 ## Acceptance Criteria
 
-- `pl011-tty` emits a raw startup banner on the generic QEMU path
-- the needed artifacts are rebuilt and repackaged
-- the generic QEMU smoke lane is rerun from the refreshed image
+- the next diagnostic step is selected from the new smoke evidence
+- the follow-up stays as one small implementation commit where possible
+- the selected step advances the generic QEMU fast lane directly
 
 ## Validation Plan
 
 - Review:
-  inspect the `pl011-tty` diagnostic change and keep it minimal and localized
+  inspect the new smoke boundary and keep the selected follow-up diagnostic minimal
 - Build:
-  rebuild the needed generic artifacts in `phoenix-dev`
+  use the current runtime evidence and nearby driver code to choose the smallest useful follow-up
 - Emulator:
   not applicable
 - Hardware:
@@ -62,13 +62,13 @@ Out of scope:
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-20-aarch64-generic-userspace-diagnostic-scope.md`
+  `manifests/2026-03-20-aarch64-generic-userspace-diagnostic.md`
 
 ## Notes
 
 - Risks:
-  the result must stay as one localized diagnostic step and must not silently turn into broader console-driver refactoring
+  the result must stay as a localized diagnostic-planning step and must not silently turn into broader console-driver refactoring
 - Dependencies:
-  completed implementation step `STEP-0090`
+  completed implementation step `STEP-0091`
 - User-visible control point before next step:
-  after the diagnostic step lands, the next step should be chosen from the new smoke output
+  after the next diagnostic step is selected, the follow-up implementation should stay narrow and validation-driven
