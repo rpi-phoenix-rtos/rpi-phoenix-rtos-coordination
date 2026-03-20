@@ -21,11 +21,12 @@ Before making code changes in future sessions, read these files in order:
 6. `docs/manual-operator-instructions.md`
 7. `docs/code-quality-and-upstreaming.md`
 8. `docs/execution-control.md`
-9. `tracking/current-step.md`
-10. `docs/platforms/raspberry-pi-4.md`
-11. `docs/testing-automation.md`
-12. `docs/session-playbook.md`
-13. `docs/source-artifacts.md`
+9. `docs/unattended-agent-mode.md`
+10. `tracking/current-step.md`
+11. `docs/platforms/raspberry-pi-4.md`
+12. `docs/testing-automation.md`
+13. `docs/session-playbook.md`
+14. `docs/source-artifacts.md`
 
 Read `docs/platforms/raspberry-pi-5.md` when the task touches Pi 5 or RP1.
 Read `skills/README.md` when choosing a local project skill.
@@ -61,6 +62,7 @@ Use them as follows:
 - After every successful implementation step, commit the relevant changes in every touched upstream repository and then commit the coordination-repo documentation or manifest update that records the tested integration state.
 - Manage Phoenix as multiple sibling git repositories, not as a rewritten monorepo. Keep repository coordination in this repo through documentation and manifest files.
 - Use the disposable local buildroot prepared by `scripts/prepare-buildroot.sh` for `phoenix-rtos-project` builds; do not turn nested submodule clones into the primary working model.
+- If the user explicitly authorizes unattended work, the agent may continue across normal step boundaries only under the rules in `docs/unattended-agent-mode.md`; those rules do not relax step sizing, validation, or commit discipline.
 - On this workstation, treat Linux as the authoritative build and emulation environment. Use macOS natively for coordination, editing, and hardware control; use a Linux VM for Phoenix builds and most QEMU runs unless a task is explicitly documented as safe on the host.
 - Optimize all future code for readability and upstreamability: keep changes small, consistent with nearby Phoenix code, warning-clean, and free of gratuitous formatting churn.
 - Do not bury important findings in chat history. Update the docs when new constraints, addresses, boot flows, test commands, or risks are discovered.

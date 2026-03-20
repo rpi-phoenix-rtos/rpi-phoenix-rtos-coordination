@@ -36,6 +36,16 @@ The following are currently required.
   - GitHub authentication configured
   - writable fork or branch permissions available
 
+### Additional requirements for unattended overnight runs
+
+If the user wants the agent to continue unattended for a long period:
+
+- leave the host machine powered on
+- leave the Linux VM available
+- avoid host actions that would interrupt the Codex session, the VM, or mounted workspace paths
+- understand that the unattended run must still stop when a manual step, hardware step, or ambiguous architectural choice is reached
+- if recurring automation is used to resume work, confirm that the workspace path remains valid and writable for the duration of that run
+
 ### Documentation baseline
 
 Before implementation begins, the operator or agent should confirm the current docs exist and are being used:

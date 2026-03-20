@@ -14,12 +14,13 @@ Before touching code, re-read:
 6. `docs/manual-operator-instructions.md`
 7. `docs/code-quality-and-upstreaming.md`
 8. `docs/execution-control.md`
-9. `tracking/current-step.md`
-10. the relevant platform note:
+9. `docs/unattended-agent-mode.md`
+10. `tracking/current-step.md`
+11. the relevant platform note:
    - `docs/platforms/raspberry-pi-4.md`
    - `docs/platforms/raspberry-pi-5.md`
-11. `docs/testing-automation.md`
-12. `docs/source-artifacts.md`
+12. `docs/testing-automation.md`
+13. `docs/source-artifacts.md`
 
 Then determine:
 
@@ -31,6 +32,7 @@ Then determine:
 - whether the work fits the currently active step without widening scope
 - whether the disposable local buildroot needs to be refreshed with `scripts/prepare-buildroot.sh` before any `phoenix-rtos-project` build
 - whether the task needs the linked or copied buildroot mode
+- whether the user has explicitly authorized unattended continuation
 
 ## 2. Session Scoping Rule
 
@@ -64,6 +66,23 @@ For each substantial task:
 9. commit each touched upstream repository once the step succeeds
 10. update the docs, tracker, or integration manifest if any new fact or constraint was discovered
 
+## 3A. Unattended Loop
+
+When the user has explicitly authorized unattended work, the session may continue beyond a normal step boundary only if the rules in `docs/unattended-agent-mode.md` are satisfied.
+
+That means:
+
+1. finish the active step cleanly
+2. commit all touched upstream repos
+3. commit the coordination-repo closeout
+4. define the next small step in `tracking/current-step.md`
+5. continue only if the new step:
+   - stays in the same safe lane
+   - needs no manual action
+   - has a clear validation path
+
+If those conditions do not hold, stop with the repo in a clean tracked state.
+
 ## 4. Context-Compaction Recovery
 
 If the session becomes long or context is compacted, do not rely on chat memory.
@@ -75,10 +94,11 @@ Re-read at least:
 3. `docs/git-repository-strategy.md`
 4. `docs/host-macos-apple-silicon.md`
 5. `docs/execution-control.md`
-6. `tracking/current-step.md`
-7. `docs/testing-automation.md`
-8. the relevant platform note
-9. any document you updated earlier in the same session
+6. `docs/unattended-agent-mode.md`
+7. `tracking/current-step.md`
+8. `docs/testing-automation.md`
+9. the relevant platform note
+10. any document you updated earlier in the same session
 
 Also re-open the specific upstream source files currently being mirrored or ported.
 
@@ -170,6 +190,7 @@ Before ending a session:
 8. commit the coordination-repo updates
 9. note what was validated and what was not validated
 10. note the next smallest sensible task
+11. if the session was unattended, confirm the stop reason is obvious from the docs or tracker state
 
 ## 10. Long-Run Project Rule
 

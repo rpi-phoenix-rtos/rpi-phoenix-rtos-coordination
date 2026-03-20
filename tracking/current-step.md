@@ -2,59 +2,56 @@
 
 ## Metadata
 
-- Step ID: `STEP-0017`
-- Title: Define the first common AArch64 generic timer backend step
+- Step ID: `STEP-0018`
+- Title: Add unattended long-running session workflow
 - Status: `in_progress`
 - Date: `2026-03-20`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- define and bound the first common AArch64 generic timer backend step now that the DTB timer metadata, timer IRQ HAL seam, and timer sysreg helpers exist
+- add explicit unattended-session workflow rules so future long-running overnight sessions can continue step-by-step without waiting at every normal step boundary
 
 ## Scope
 
 In scope:
 
-- inspect the current AArch64 timer-related preparation work in `phoenix-rtos-kernel`
-- choose the first generic timer backend shape:
-  - common helper backend
-  - directly selectable common timer implementation
-- choose the first timer source policy for arm64 generic bring-up
-- select one small next implementation step with exact touched files and validation lane
-- keep this as a planning and scoping step only
+- add a dedicated unattended-mode workflow document
+- wire unattended mode into the main repo reading and control documents
+- document hard stop conditions for overnight sessions
+- update the operator runbook with unattended-session prerequisites
+- keep this as a coordination-repo workflow step only
 
 Out of scope:
 
-- adding a new QEMU target
-- implementing the selected generic timer backend step itself
-- adding PL011 console code
-- Raspberry Pi-specific code
+- technical Phoenix implementation work
+- new upstream repo code changes
 
 ## Expected Repositories
 
 - coordination repo
-- likely `phoenix-rtos-kernel`
 
 ## Expected Files Or Subsystems
 
-- `hal/aarch64/aarch64.h`
-- `hal/aarch64/dtb.c`
-- `hal/timer.h`
-- likely a new common AArch64 timer source file or header
-- tracking files and manifest updates for the chosen next step
+- `AGENTS.md`
+- `docs/execution-control.md`
+- `docs/session-playbook.md`
+- `docs/manual-operator-instructions.md`
+- `docs/unattended-agent-mode.md`
+- tracking files and manifest updates
 
 ## Acceptance Criteria
 
-- the first generic AArch64 timer backend step is explicitly scoped with exact touched files, rationale, validation command, and success criteria
-- the selected next step is narrow enough to implement and validate in one controlled follow-up session
+- unattended mode is explicitly documented and opt-in
+- the repo now defines when the agent may auto-continue and when it must stop
+- the operator runbook documents the known prerequisites for unattended runs
 
 ## Validation Plan
 
 - Build:
-  not applicable for this planning step
+  not applicable
 - Emulator:
-  inspect current timer source assumptions as needed to choose the narrowest backend step
+  not applicable
 - Hardware:
   not applicable
 
@@ -66,8 +63,8 @@ Out of scope:
 ## Notes
 
 - Risks:
-  the first generic timer backend is the first substantial new AArch64 runtime code path after the DTB preparation series, so it must be explicitly bounded before it is introduced
+  the workflow change must not weaken the existing step-by-step control model
 - Dependencies:
-  completed DTB timer metadata work, timer IRQ HAL split, and timer sysreg helper step
+  existing execution-control and session-playbook docs
 - User-visible control point before next step:
-  present the exact selected generic timer backend step before introducing the first common AArch64 timer implementation
+  resume the technical AArch64 timer track only after the unattended workflow is committed cleanly

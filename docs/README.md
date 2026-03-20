@@ -28,6 +28,9 @@ This directory is the long-lived knowledge base for the Phoenix RTOS Raspberry P
 - `execution-control.md`
   Process rules for step-by-step tracking, acceptance criteria, control points, and reporting.
 
+- `unattended-agent-mode.md`
+  Additional rules for explicitly authorized long-running unattended sessions, including auto-continue conditions and stop conditions.
+
 - `platforms/raspberry-pi-4.md`
   Pi 4-specific boot, hardware, driver, and testing notes.
 

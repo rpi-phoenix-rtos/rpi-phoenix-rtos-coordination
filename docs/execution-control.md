@@ -225,3 +225,18 @@ If you want maximum control, use this policy:
 - the agent must propose the next step before starting it
 
 That gives you coarse-grained approval without forcing constant interruptions.
+
+## 14. Explicit Unattended Mode
+
+If the user explicitly authorizes unattended work, the agent may continue past a normal step boundary without waiting for user approval, but only under the rules in `docs/unattended-agent-mode.md`.
+
+The key constraint is:
+
+- unattended mode changes the pause behavior at step boundaries
+- it does not change step size, validation, commit, or documentation requirements
+
+In unattended mode the agent should still prefer:
+
+- one upstream implementation repo at a time
+- one small concept per step
+- a planning step before any significant subsystem or repo-family transition
