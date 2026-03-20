@@ -85,15 +85,17 @@ Start-gate status:
 - The first directly selectable common AArch64 timer backend step is now explicitly scoped: a full architectural timer backend is still premature because the current scheduler wakeup path can reprogram the timer from non-CPU0 contexts, so the next safe code steps must keep separating build and interrupt-path assumptions before changing runtime timer behavior.
 - The common AArch64 kernel Makefile now exposes an explicit timer-backend selection hook, and the current ZynqMP timer backend still builds cleanly through that hook on the existing `aarch64a53-zynqmp-qemu` lane.
 - Common AArch64 GICv2 handler registration now avoids SPI-style CPU retargeting for SGI/PPI interrupts, removing one interrupt-layer mismatch before a future architectural timer IRQ delivered as a PPI.
+- Common AArch64 code now exposes a targeted SGI helper in addition to the broadcast helper, but the next timer-runtime step still requires an explicit SGI reservation and notification contract.
+- The generic `hal/tlb/tlb.c` shared-work-plus-SGI pattern is not currently wired into AArch64 builds, so future AArch64 timer-update notifications cannot simply reuse that machinery without additional integration work.
 - Phoenix upstream style is conservative and review-oriented: file headers, tabs in C, localized `clang-format off/on`, direct control flow, `static const` hardware tables, and warning-clean builds enforced by `-Werror` in `phoenix-rtos-build/Makefile.common`.
 - Pi 4 uses BCM2711 with GIC-400, PL011, BCM2711 PCIe, VL805 xHCI over PCIe, GENET Ethernet, and Broadcom SDHCI.
 - Pi 5 uses BCM2712 plus RP1, with most I/O behind a PCIe-connected southbridge-like peripheral controller.
 
 ## Immediate Next Implementation Milestones
 
-1. Add a targeted AArch64 SGI helper for future CPU0-directed timer wakeup updates.
-2. Re-scope the first narrow common AArch64 timer runtime step against the remaining CPU-affine wakeup constraint.
-3. Implement that selected timer runtime step in one narrow patch.
+1. Define the first CPU0-directed timer wakeup-notification step around an explicit SGI reservation and handler contract.
+2. Implement that selected timer notification or wakeup-routing step in one narrow patch.
+3. Re-scope the first common AArch64 architectural-timer runtime backend step on top of that notification path.
 4. Implement a generic AArch64 FDT parser suitable for Raspberry Pi DTBs.
 5. Add a Raspberry Pi 4 `plo` platform with PL011 UART, MMU, GICv2, and a real boot path from Raspberry Pi firmware.
 

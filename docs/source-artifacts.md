@@ -88,8 +88,10 @@ This file indexes the most important websites, repositories, documents, and sour
 - `phoenix-rtos-kernel/hal/aarch64/aarch64.h`
 - `phoenix-rtos-kernel/hal/aarch64/interrupts_gicv2.c`
 - `phoenix-rtos-kernel/hal/aarch64/Makefile`
+- `phoenix-rtos-kernel/hal/Makefile`
 - `phoenix-rtos-kernel/hal/timer.h`
 - `phoenix-rtos-kernel/hal/tlb/tlb.c`
+- `phoenix-rtos-kernel/hal/tlb/Makefile`
 - `phoenix-rtos-kernel/hal/aarch64/zynqmp/config.h`
 - `phoenix-rtos-kernel/hal/aarch64/zynqmp/console.c`
 - `phoenix-rtos-kernel/hal/aarch64/zynqmp/timer.c`

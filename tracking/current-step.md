@@ -2,55 +2,56 @@
 
 ## Metadata
 
-- Step ID: `STEP-0024`
-- Title: Add targeted AArch64 SGI helper for future timer updates
-- Status: `in_progress`
+- Step ID: `STEP-0025`
+- Title: Define the first CPU0-directed timer wakeup-notification step
+- Status: `ready`
 - Date: `2026-03-20`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- expose a targeted AArch64 SGI helper so later timer-path work can notify CPU 0 directly when a non-CPU0 context needs the wakeup timer reprogrammed
+- define the first narrow timer-path change that will let non-CPU0 contexts request CPU0 wakeup-timer reprogramming once the common architectural timer backend starts to become real
 
 ## Scope
 
 In scope:
 
-- add a targeted AArch64 SGI helper alongside the existing broadcast helper
-- update the common CPU interface declaration used by the kernel to include that helper
-- preserve existing behavior and validate the current ZynqMP build lane
-- validate the existing `aarch64a53-zynqmp-qemu` build in `phoenix-dev`
+- inspect the current AArch64 SGI and timer preparation state after `STEP-0024`
+- determine how a timer-update notification should reserve or reuse an interrupt number
+- determine which component should own the first CPU0-directed notification handler
+- select the smallest exact file set for the first runtime-oriented timer-notification patch
+- keep this as a planning and scoping step only
 
 Out of scope:
 
 - adding a new QEMU target
-- using the new helper from the timer or scheduler code
+- implementing the timer-notification path itself
+- changing timer or scheduler runtime behavior
 - implementing the common generic timer runtime backend itself
-- changing timer wakeup semantics
 - adding PL011 console code
 - Raspberry Pi-specific code
 
 ## Expected Repositories
 
-- `phoenix-rtos-kernel`
 - coordination repo
+- likely `phoenix-rtos-kernel`
 
 ## Expected Files Or Subsystems
 
-- `hal/cpu.h`
 - `hal/aarch64/interrupts_gicv2.c`
-- tracking files and manifest updates for this step
+- `hal/timer.h`
+- `proc/threads.c`
+- tracking files and manifest updates for the chosen next step
 
 ## Acceptance Criteria
 
-- AArch64 exposes a targeted SGI helper in addition to the existing broadcast helper
-- the helper is limited to generic SGI send plumbing and does not yet change timer or scheduler behavior
-- the existing `aarch64a53-zynqmp-qemu` build still succeeds in `phoenix-dev`
+- the first CPU0-directed timer wakeup-notification step is explicitly scoped with exact touched files, ownership, interrupt-number strategy, and validation command
+- the selected next step is narrow enough to implement and validate in one controlled follow-up session
 
 ## Validation Plan
 
 - Build:
-  refresh the copied buildroot and rebuild `TARGET=aarch64a53-zynqmp-qemu` with `./phoenix-rtos-build/build.sh clean host core project`
+  not applicable
 - Emulator:
   not applicable
 - Hardware:
@@ -59,13 +60,13 @@ Out of scope:
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-20-aarch64-gicv2-ppi-safe-handler-registration.md`
+  `manifests/2026-03-20-aarch64-targeted-sgi-helper.md`
 
 ## Notes
 
 - Risks:
-  the step must not widen into new SGI users or timer behavior changes
+  the next runtime step now depends on an explicit SGI reservation and handler-ownership decision rather than on another isolated helper function
 - Dependencies:
-  completed PPI-safe handler-registration step from `STEP-0023`
+  completed targeted-SGI helper step from `STEP-0024`
 - User-visible control point before next step:
-  after this helper lands, re-scope the first timer runtime step around explicit CPU0-directed wakeup-update notification instead of trying to drop in the full architectural timer backend at once
+  the next runtime-oriented code change should not begin until this step records the exact SGI/notification contract to use
