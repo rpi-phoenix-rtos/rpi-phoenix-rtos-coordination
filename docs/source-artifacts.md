@@ -281,7 +281,9 @@ Current local finding to preserve:
 
 - packaged `/usr/bin/qemu-system-aarch64` inside `phoenix-dev` is `8.2.2` and does not list `raspi4b`
 - VM-local `/home/witoldbolt.guest/tools/qemu-10.2.2/bin/qemu-system-aarch64` is `10.2.2` and does list `raspi4b`
-- the first Phoenix Pi 4 `raspi4b` smoke under QEMU `10.2.2` required `-smp 4` and then timed out with no serial output, so the current blocker is now emulated boot progress rather than QEMU board availability
+- the first Phoenix Pi 4 `raspi4b` smoke under QEMU `10.2.2` required `-smp 4` and then timed out with no serial output, so the current blocker moved into emulated boot progress rather than QEMU board availability
+- current local QEMU `10.2.2` `raspi4b` does not support `dumpdtb`; direct `-machine raspi4b,dumpdtb=...` fails with `This machine doesn't have an FDT`
+- current Pi 4 QEMU validation therefore needs an explicit external DTB source
 
 ## 9. Host and VM Tooling References
 

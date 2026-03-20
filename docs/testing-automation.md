@@ -129,15 +129,17 @@ What `raspi4b` currently helps validate:
 Current local `raspi4b` smoke result:
 
 - `raspi4b` requires at least `-smp 4`
-- the current Phoenix Pi 4 image starts under QEMU `10.2.2` but produces no serial output before timeout with either:
-  - `-serial mon:stdio`
-  - `-nographic -monitor none`
+- direct raw-image boot timed out with no serial output
+- `plo.elf` as `-kernel` now reaches visible loader output
+- with an explicit Pi 4 DTB passed through `RPI4B_DTB_PATH`, the current lane reaches:
+  - `pl011-tty: started`
+- current local QEMU `10.2.2` `raspi4b` does not support `dumpdtb`, so this lane currently needs an explicit external DTB input
 
 Inference:
 
 - the environment blocker is gone
-- the next blocker is inside the emulated Pi 4 boot path itself
-- likely causes now include direct-kernel load semantics, early entry assumptions, or UART visibility rather than missing QEMU board support
+- the Pi 4 path is now well past raw image placement and early multi-core startup
+- the next blocker is inside the shared post-`pl011-tty: started` console-readiness path rather than basic board bring-up
 
 Official QEMU `raspi4b` expectations to preserve:
 

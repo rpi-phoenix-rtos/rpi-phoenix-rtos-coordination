@@ -2,34 +2,34 @@
 
 ## Metadata
 
-- Step ID: `STEP-0120`
-- Title: Validate the Pi 4 QEMU lane with an explicit DTB passed through `RPI4B_DTB_PATH`
+- Step ID: `STEP-0122`
+- Title: Scope the smallest `pl011-tty` console-readiness implementation step
 - Status: `in_progress`
 - Date: `2026-03-20`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- prove or reject DTB-backed kernel handoff as the next Pi 4 QEMU blocker by rebuilding the current Pi 4 project with an explicit DTB and rerunning the `plo.elf` smoke
+- choose the smallest shared implementation step that can move both the generic QEMU lane and the Pi 4 DTB-backed QEMU lane beyond `pl011-tty: started`
 
 ## Scope
 
 In scope:
 
-- generate a DTB from the current `raspi4b` QEMU model
-- rebuild `aarch64a53-generic-rpi4b` with `RPI4B_DTB_PATH` pointing to that DTB
-- rerun the Pi 4 `plo.elf` QEMU smoke from the rebuilt artifacts
-- document whether the lane advances to kernel output or a more specific next blocker
+- inspect the current `pl011-tty` registration path and the already documented generic boundary around `create_dev()`
+- compare the generic and Pi 4 DTB-backed runtime evidence
+- select one small follow-up patch in shared userspace/device code if possible
+- keep the next step bounded to console readiness rather than broad shell or devfs redesign
 
 Out of scope:
 
 - broad Pi 4 peripheral-debug work
-- broad kernel DTB-parser changes unless the validation proves they are immediately required
-- project-source changes unless the validation proves a tiny helper patch is strictly required
+- new board-specific DTB work unless the console-readiness review proves it is still implicated
+- broad init-sequencing redesign across loader scripts and services
 - real-hardware-only validation
 - Pi 5 or RP1 work
 - `phoenix-rtos-tests` integration
-- changing the approved Pi 4 `plo.elf` QEMU handoff shape
+- unrelated kernel early-console work unless it is shown to be smaller than the shared `pl011-tty` fix
 
 ## Expected Repositories
 
@@ -37,37 +37,37 @@ Out of scope:
 
 ## Expected Files Or Subsystems
 
-- Pi 4 staged DTB and loader payload artifacts in the disposable buildroot
-- relevant Pi 4 QEMU smoke notes
-- manifests and tracking updates for this validation step
+- `sources/phoenix-rtos-devices/tty/pl011-tty/pl011-tty.c`
+- relevant generic and Pi 4 QEMU smoke notes
+- manifests and tracking updates for this planning step
 
 ## Acceptance Criteria
 
-- the Pi 4 validation build is rerun with an explicit DTB
-- the Pi 4 `plo.elf` QEMU lane yields a more informative post-alias result than the current no-kernel-output boundary
-- the next step is selected from DTB-backed runtime evidence rather than from artifact comparison alone
+- the next patch target is explicit
+- the patch is small enough for one reviewable implementation step
+- the choice is backed by the current shared runtime boundary rather than by speculation
 
 ## Validation Plan
 
 - Review:
-  confirm that the rebuilt Pi 4 payload now includes `system.dtb`
+  inspect the current `pl011-tty` registration path and compare it with the existing runtime diagnostics
 - Build:
-  rebuild `aarch64a53-generic-rpi4b` in `phoenix-dev` with `RPI4B_DTB_PATH`
+  not required
 - Emulator:
-  rerun the Pi 4 `raspi4b` `plo.elf` QEMU smoke and compare the result against `STEP-0118`
+  use the completed generic and Pi 4 QEMU results as the runtime basis for step selection
 - Hardware:
   not applicable
 
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-20-aarch64-rpi4b-dtb-backed-qemu-scope.md`
+  `manifests/2026-03-20-aarch64-console-readiness-scope.md`
 
 ## Notes
 
 - Risks:
-  keep this as a validation step first; do not widen into a large project-helper patch before the DTB-backed result is known
+  do not widen this into a large init-order investigation before the smallest shared `pl011-tty` step is identified
 - Dependencies:
-  completed `STEP-0119`
+  completed `STEP-0121`
 - User-visible control point before next step:
-  after this step lands, the next bounded move should come from the DTB-backed Pi 4 QEMU result rather than from generic comparison alone
+  after this step lands, the next bounded move should be one small implementation patch in the shared console path
