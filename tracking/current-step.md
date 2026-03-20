@@ -2,27 +2,27 @@
 
 ## Metadata
 
-- Step ID: `STEP-0075`
-- Title: Make `libphoenix` AArch64 reboot support generic
+- Step ID: `STEP-0076`
+- Title: Define the next generic full-build unblock after `libphoenix`
 - Status: `in_progress`
 - Date: `2026-03-20`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- apply the next smallest generic AArch64 source change that removes a hard build blocker without pulling in board-device policy
+- identify the next smallest blocker in the broader generic `host project image` lane after the `libphoenix` reboot unblock
 
 ## Scope
 
 In scope:
 
-- remove the unused ZynqMP-only include guard and generic-target `#error` from `libphoenix/arch/aarch64/reboot.c`
-- validate `libphoenix` directly for `aarch64a53-generic-qemu` in `phoenix-dev`
-- stop before changing any other repo
+- refresh the copied buildroot in `phoenix-dev`
+- rerun the broader generic `host project image` lane
+- record the first remaining blocker and select the next smallest safe step
 
 Out of scope:
 
-- changes in `phoenix-rtos-devices`
+- all upstream source changes
 - Pi 4 board-specific code
 - Raspberry Pi-specific code
 - `phoenix-rtos-tests` target additions
@@ -30,28 +30,25 @@ Out of scope:
 ## Expected Repositories
 
 - coordination repo
-- `phoenix-rtos-project`
-- `plo`
 
 ## Expected Files Or Subsystems
 
-- `libphoenix/arch/aarch64/reboot.c`
 - `docs/status.md`
 - tracking files and manifest updates for this step
-- direct generic-target build output from `libphoenix`
+- generic `host project image` build output
 
 ## Acceptance Criteria
 
-- `libphoenix` no longer hard-errors on non-ZynqMP AArch64 targets
-- `libphoenix` validates directly on `aarch64a53-generic-qemu`
-- the result records the next smallest remaining generic-lane blocker
+- the broader generic `host project image` lane is rerun from the current baseline
+- the first remaining blocker is identified from real build output
+- the next code step is selected with one-repo-local scope where possible
 
 ## Validation Plan
 
 - Review:
-  inspect `libphoenix/arch/aarch64/reboot.c` and keep the change minimal
+  inspect the failing build output and keep the selected follow-up step narrow
 - Build:
-  validate `libphoenix` directly for `aarch64a53-generic-qemu` in `phoenix-dev`
+  rerun the broader generic `host project image` lane in `phoenix-dev`
 - Emulator:
   not applicable
 - Hardware:
@@ -60,13 +57,13 @@ Out of scope:
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-20-aarch64-generic-libphoenix-reboot-scope.md`
+  `manifests/2026-03-20-aarch64-generic-libphoenix-reboot.md`
 
 ## Notes
 
 - Risks:
-  the result must stay as one repo-local unblock step and must not silently turn into multi-repo implementation work
+  the result must stay as a discovery-and-scoping step and must not silently turn into multi-repo implementation work
 - Dependencies:
-  completed implementation step `STEP-0074`
+  completed implementation step `STEP-0075`
 - User-visible control point before next step:
-  after this repo-local unblock lands, the next slice should be the next smallest remaining generic-lane blocker
+  after the next blocker is identified, the follow-up implementation step should stay repo-local and validation-driven
