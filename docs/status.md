@@ -97,9 +97,9 @@ Start-gate status:
 
 ## Immediate Next Implementation Milestones
 
-1. Define the first backend behavior-helper step on top of the generic timer backend-state layer.
-2. Implement that selected behavior-helper step in one narrow patch.
-3. Re-scope the first common AArch64 architectural-timer runtime backend step on top of the helper layer, backend state, and CPU0 wakeup-notification path.
+1. Implement the first backend wait-to-ticks helper on top of the generic timer backend-state layer.
+2. Define the first backend timer-register wrapper step on top of the backend state and conversion helpers.
+3. Implement that selected timer-register wrapper step in one narrow patch.
 4. Implement a generic AArch64 FDT parser suitable for Raspberry Pi DTBs.
 5. Add a Raspberry Pi 4 `plo` platform with PL011 UART, MMU, GICv2, and a real boot path from Raspberry Pi firmware.
 

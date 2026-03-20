@@ -2,15 +2,15 @@
 
 ## Metadata
 
-- Step ID: `STEP-0032`
-- Title: Implement backend-state time conversion helpers
+- Step ID: `STEP-0034`
+- Title: Implement backend-state wait-to-ticks helper
 - Status: `in_progress`
 - Date: `2026-03-20`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- add the first backend-state behavior helpers for reading the selected timer count and converting it to microseconds
+- add the first backend-state forward-conversion helper for turning relative microseconds into architectural timer ticks
 
 ## Scope
 
@@ -18,7 +18,7 @@ In scope:
 
 - update `hal/aarch64/gtimer_backend.h`
 - update `hal/aarch64/gtimer_backend.c`
-- add state-based count-reading and microsecond conversion helpers
+- add a state-based helper for converting relative microseconds to timer ticks
 - validate the existing `aarch64a53-zynqmp-qemu` build in `phoenix-dev`
 
 Out of scope:
@@ -26,7 +26,8 @@ Out of scope:
 - adding a new QEMU target
 - changing the active timer backend for any target
 - implementing the public generic `hal_timer*` entry points
-- implementing timer interrupt registration or wakeup programming
+- programming timer or control registers
+- implementing timer interrupt registration
 - adding PL011 console code
 - Raspberry Pi-specific code
 
@@ -43,8 +44,9 @@ Out of scope:
 
 ## Acceptance Criteria
 
-- the backend-state layer exposes helpers for raw count reads, count-to-microseconds conversion, and current microsecond reads
-- the helpers use the selected source and frequency stored in backend state
+- the backend-state layer exposes a helper that converts a relative wait time in microseconds to timer ticks
+- the helper uses the frequency stored in backend state rather than open-coded call-site math
+- the helper stays computational only and does not program timer registers
 - the existing `aarch64a53-zynqmp-qemu` build still succeeds in `phoenix-dev`
 
 ## Validation Plan
@@ -59,13 +61,13 @@ Out of scope:
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-20-aarch64-gtimer-backend-behavior-scope.md`
+  `manifests/2026-03-20-aarch64-gtimer-wait-to-ticks-scope.md`
 
 ## Notes
 
 - Risks:
-  the step must stay read-only with respect to timer behavior and must not start programming timers yet
+  the step must stay read-only with respect to timer register programming and must not start arming the timer yet
 - Dependencies:
-  completed scoping step from `STEP-0031`
+  completed scoping step from `STEP-0033`
 - User-visible control point before next step:
-  after this step lands, the next slice can target interrupt or wakeup behavior, but not both at once
+  after this step lands, the next slice can target timer-register wrappers or timer-arming policy, but not both at once
