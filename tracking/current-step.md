@@ -3,23 +3,23 @@
 ## Metadata
 
 - Step ID: `STEP-0174`
-- Title: Scope earliest kernel-entry visibility on Pi 4
+- Title: Scope single-core handoff experiment for the generic target
 - Status: `in_progress`
 - Date: `2026-03-20`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- define the smallest next visibility step that distinguishes whether the Pi 4 official-DTB lane reaches the first instructions of kernel `_start` after the EL3 `eret`
+- determine whether the next highest-signal step should be a controlled secondary-core containment experiment in the generic loader, given that the generic kernel target still declares `NUM_CPUS 1U`
 
 ## Scope
 
 In scope:
 
-- review the earliest kernel AArch64 entry path:
-  - `phoenix-rtos-kernel/hal/aarch64/_init.S`
-  - any generic early console assumptions needed for a tiny raw marker
-- select one bounded earliest-entry visibility step
+- review the generic single-core assumptions and handoff behavior:
+  - `phoenix-rtos-kernel/hal/aarch64/generic/config.h`
+  - `plo/hal/aarch64/generic/_init.S`
+- decide whether the next bounded step should keep non-boot CPUs trapped for the current generic target during handoff
 - update manifests and docs with the scoped next step
 
 Out of scope:
@@ -38,20 +38,23 @@ Out of scope:
 
 ## Expected Files Or Subsystems
 
-- earliest kernel entry notes
+- generic single-core target assumptions
+- generic loader secondary-core handoff notes
 - Pi 4 QEMU post-`eret` boundary notes
 - manifests and tracking updates for this planning step
 
 ## Acceptance Criteria
 
 - the generic `virt -smp 4` result is reflected in the scoped next step
-- the next implementation step is narrowed to one earliest-kernel-entry visibility change
-- the scoped next step is specific enough to divide post-`eret` failure from later kernel initialization
+- the next implementation step is narrowed to either:
+  - a controlled secondary-core containment experiment
+  - or an earliest-kernel-entry visibility change
+- the scoped next step is specific enough to justify that choice
 
 ## Validation Plan
 
 - Review:
-  inspect the earliest kernel `_start` path and its feasibility for a tiny raw marker
+  inspect the generic kernel CPU-count assumption and the loader secondary-core release path
 - Build:
   not applicable
 - Emulator:
@@ -67,8 +70,8 @@ Out of scope:
 ## Notes
 
 - Risks:
-  avoid widening into large kernel instrumentation instead of a tiny earliest-entry probe
+  avoid changing secondary-core behavior without grounding it in the current single-core generic target assumptions
 - Dependencies:
   completed `STEP-0173` generic multi-core loader handoff validation
 - User-visible control point before next step:
-  after this step lands, the next bounded move should be a tiny earliest-kernel-entry probe rather than a speculative secondary-core containment change
+  after this step lands, the next bounded move should be justified either as a single-core containment experiment or as a tiny earliest-kernel-entry probe, based on the documented target assumptions
