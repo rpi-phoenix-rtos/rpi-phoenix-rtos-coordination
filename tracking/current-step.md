@@ -2,56 +2,55 @@
 
 ## Metadata
 
-- Step ID: `STEP-0026`
-- Title: Implement CPU0-directed timer wakeup notification
+- Step ID: `STEP-0027`
+- Title: Define the first source-agnostic AArch64 timer helper step
 - Status: `in_progress`
 - Date: `2026-03-20`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- implement the first narrow timer-path change that lets non-CPU0 contexts request CPU0 wakeup-timer reprogramming without changing the timer backend itself yet
+- define the first narrow common AArch64 architectural timer helper step that removes the physical-versus-virtual timer sysreg split from future backend code
 
 ## Scope
 
 In scope:
 
-- reserve `TIMER_WAKEUP_IRQ` in the AArch64 interrupt definitions
-- add a guarded remote wakeup-notification path in `proc/threads.c`
-- coalesce remote wakeup requests and handle them on CPU 0 under `threads_common.spinlock`
-- validate the existing `aarch64a53-zynqmp-qemu` build in `phoenix-dev`
+- inspect the current AArch64 architectural timer helpers and DTB source-selection API after `STEP-0026`
+- choose the first source-agnostic helper shape for physical-versus-virtual timer operations
+- select the smallest exact touched-file set for that helper step
+- keep this as a planning and scoping step only
 
 Out of scope:
 
 - adding a new QEMU target
+- implementing the selected helper step itself
 - changing the timer backend implementation itself
-- widening into generic IPI policy or TLB integration
 - implementing the common generic timer runtime backend itself
 - adding PL011 console code
 - Raspberry Pi-specific code
 
 ## Expected Repositories
 
-- `phoenix-rtos-kernel`
 - coordination repo
+- likely `phoenix-rtos-kernel`
 
 ## Expected Files Or Subsystems
 
-- `hal/aarch64/arch/interrupts.h`
-- `proc/threads.c`
-- tracking files and manifest updates for this step
+- `hal/aarch64/aarch64.h`
+- `hal/aarch64/dtb.h`
+- possibly a new common AArch64 timer-helper header
+- tracking files and manifest updates for the chosen next step
 
 ## Acceptance Criteria
 
-- AArch64 reserves `TIMER_WAKEUP_IRQ` explicitly for the wakeup notification path
-- `proc/threads.c` coalesces remote wakeup requests and notifies CPU 0 through the targeted SGI helper
-- CPU 0 handles that notification by recomputing the wakeup deadline under the scheduler spinlock
-- the existing `aarch64a53-zynqmp-qemu` build still succeeds in `phoenix-dev`
+- the first source-agnostic AArch64 timer helper step is explicitly scoped with exact touched files, rationale, validation command, and success criteria
+- the selected helper step is narrow enough to implement and validate in one controlled follow-up session
 
 ## Validation Plan
 
 - Build:
-  refresh the copied buildroot and rebuild `TARGET=aarch64a53-zynqmp-qemu` with `./phoenix-rtos-build/build.sh clean host core project`
+  not applicable
 - Emulator:
   not applicable
 - Hardware:
@@ -60,13 +59,13 @@ Out of scope:
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-20-aarch64-timer-wakeup-notification-step-scope.md`
+  `manifests/2026-03-20-aarch64-cpu0-wakeup-timer-notification.md`
 
 ## Notes
 
 - Risks:
-  the step must remain scheduler-local and avoid widening into a broader architectural timer backend change
+  the next step must not turn into a full generic backend or duplicate the backend policy already encoded in the DTB API
 - Dependencies:
-  completed scoping step from `STEP-0025`
+  completed CPU0 wakeup-notification step from `STEP-0026`
 - User-visible control point before next step:
-  after this step lands, the next work should either tighten the wakeup contract or start the smallest architectural timer backend slice, but not both at once
+  the next code change should introduce only the smallest source-agnostic timer helper layer, not the full backend
