@@ -104,16 +104,21 @@ Start-gate status:
 - `phoenix-rtos-plo` now provides that first generic AArch64 loader scaffold, and `aarch64a53-generic` builds `plo` directly as `plo-aarch64a53-generic.elf` in the VM-local copied buildroot.
 - the current generic loader fast lane is intentionally QEMU-`virt`-oriented and EL3-centric, assumes preconfigured PL011 state, and uses a polling architectural-counter timer inside `plo` to avoid widening the first runtime lane before the project entry point exists.
 - the first generic QEMU project entry point is now explicitly scoped around a RAM-backed `loader.disk` loaded into `ram0` on QEMU `virt`; that was selected because the new generic `plo` path already has `ram-storage`, while generic flash, SD, and virtio boot paths do not exist yet.
+- `phoenix-rtos-project` now provides that first generic AArch64 QEMU entry point, and the current project/image validation lane produces `_boot/aarch64a53-generic-qemu/plo.elf` plus `loader.disk` in `phoenix-dev`.
+- the current project/image lane still uses a temporary narrower validation path:
+  - prebuild the kernel directly for `aarch64a53-generic-qemu`
+  - run `LIBPHOENIX_DEVEL_MODE=n TARGET=aarch64a53-generic-qemu ./phoenix-rtos-build/build.sh host project image`
+  - this is temporary until generic-target support exists in `libphoenix`, `phoenix-rtos-filesystems`, `phoenix-rtos-devices`, and `phoenix-rtos-utils`
 - Phoenix upstream style is conservative and review-oriented: file headers, tabs in C, localized `clang-format off/on`, direct control flow, `static const` hardware tables, and warning-clean builds enforced by `-Werror` in `phoenix-rtos-build/Makefile.common`.
 - Pi 4 uses BCM2711 with GIC-400, PL011, BCM2711 PCIe, VL805 xHCI over PCIe, GENET Ethernet, and Broadcom SDHCI.
 - Pi 5 uses BCM2712 plus RP1, with most I/O behind a PCIe-connected southbridge-like peripheral controller.
 
 ## Immediate Next Implementation Milestones
 
-1. Introduce the first `aarch64a53-generic-qemu` project target and runtime script on QEMU `virt`.
-2. Add the matching emulated test target and smoke lane.
-3. Start the first end-to-end generic `virt` boot iterations.
-4. Trim the remaining generic QEMU boot blockers one by one until there is stable `plo` and kernel output.
+1. Define the first emulated generic AArch64 smoke lane.
+2. Run the first end-to-end generic `virt` boot attempt.
+3. Trim the remaining generic QEMU boot blockers one by one until there is stable `plo` and kernel output.
+4. Add the matching emulated test target and smoke harness once the QEMU invocation and success signal stabilize.
 5. Reuse the proven generic `virt` boot pieces as the immediate template for the first Raspberry Pi 4 `plo` path.
 
 ## Pi 4 Success Criteria for "Phase 1"
