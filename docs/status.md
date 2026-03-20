@@ -101,17 +101,19 @@ Start-gate status:
 - `phoenix-rtos-build` now recognizes `aarch64a53-generic` and provides a matching generic AArch64 core-build entry point.
 - `phoenix-rtos-kernel` now provides a first generic AArch64 platform scaffold, and the generic kernel target links successfully in the VM-local copied buildroot when validated with a temporary empty `board_config.h` shim via `PROJECT_PATH`.
 - the first generic AArch64 `plo` scaffold is now explicitly bounded to one target-local linker template plus minimal `_init`, HAL, console, timer, and interrupt files, and it should be validated first through a direct `make -C plo base_noimg` lane in `phoenix-dev`.
+- `phoenix-rtos-plo` now provides that first generic AArch64 loader scaffold, and `aarch64a53-generic` builds `plo` directly as `plo-aarch64a53-generic.elf` in the VM-local copied buildroot.
+- the current generic loader fast lane is intentionally QEMU-`virt`-oriented and EL3-centric, assumes preconfigured PL011 state, and uses a polling architectural-counter timer inside `plo` to avoid widening the first runtime lane before the project entry point exists.
 - Phoenix upstream style is conservative and review-oriented: file headers, tabs in C, localized `clang-format off/on`, direct control flow, `static const` hardware tables, and warning-clean builds enforced by `-Werror` in `phoenix-rtos-build/Makefile.common`.
 - Pi 4 uses BCM2711 with GIC-400, PL011, BCM2711 PCIe, VL805 xHCI over PCIe, GENET Ethernet, and Broadcom SDHCI.
 - Pi 5 uses BCM2712 plus RP1, with most I/O behind a PCIe-connected southbridge-like peripheral controller.
 
 ## Immediate Next Implementation Milestones
 
-1. Implement the first `plo`-side generic AArch64 scaffold.
-2. Introduce an `aarch64a53-generic-qemu` project entry point on QEMU `virt`.
+1. Define the first `aarch64a53-generic-qemu` project entry-point step.
+2. Introduce the first `aarch64a53-generic-qemu` project target and runtime script on QEMU `virt`.
 3. Add the matching emulated test target and smoke lane.
-4. Add the first runtime check for the generic timer plus PL011 path together.
-5. Start the first end-to-end generic `virt` boot iterations and trim the remaining boot blockers one by one.
+4. Start the first end-to-end generic `virt` boot iterations.
+5. Trim the remaining generic QEMU boot blockers one by one until there is stable `plo` and kernel output.
 
 ## Pi 4 Success Criteria for "Phase 1"
 

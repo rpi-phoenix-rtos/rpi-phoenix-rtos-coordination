@@ -2,56 +2,57 @@
 
 ## Metadata
 
-- Step ID: `STEP-0055`
-- Title: Implement first `plo`-side generic AArch64 scaffold
+- Step ID: `STEP-0056`
+- Title: Define first `aarch64a53-generic-qemu` project entry-point step
 - Status: `in_progress`
 - Date: `2026-03-20`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- add the first compile-oriented generic AArch64 `plo` scaffold needed before a real `aarch64a53-generic-qemu` project target can be introduced
+- identify the smallest `phoenix-rtos-project` step needed to turn the new generic AArch64 kernel and `plo` targets into a first runnable `aarch64a53-generic-qemu` entry point
 
 ## Scope
 
 In scope:
 
-- add the first generic AArch64 `plo` platform directory and minimal loader HAL files
-- add the first generic AArch64 `plo` linker template
-- keep the scaffold QEMU-`virt`-oriented and single-path, with minimal console, timer, and interrupt support
-- validate the new generic `plo` target through a direct `make -C plo base_noimg` lane in `phoenix-dev`
+- inspect the existing `phoenix-rtos-project` target layout, scripts, and boot artifacts around QEMU targets
+- choose the first concrete generic project file set and runtime command
+- keep the step planning-only and stop before implementation code
 
 Out of scope:
 
-- `phoenix-rtos-project` target or run-script additions
+- implementation code in upstream Phoenix repositories
 - `phoenix-rtos-tests` target additions
 - Raspberry Pi-specific code
-- full DTB-driven loader discovery or storage support
+- solving runtime boot bugs in this planning step
 
 ## Expected Repositories
 
-- `phoenix-rtos-plo`
 - coordination repo
 
 ## Expected Files Or Subsystems
 
-- `phoenix-rtos-plo/hal/aarch64/generic/`
-- `phoenix-rtos-plo/ld/aarch64a53-generic.ldt`
+- `docs/status.md`
+- tracking files and manifest updates for this step
+- `phoenix-rtos-project/_targets/aarch64a53/generic-qemu/`
+- `phoenix-rtos-project/_projects/aarch64a53-generic-qemu/`
+- `phoenix-rtos-project/scripts/aarch64a53-generic-qemu.sh`
 - `docs/status.md`
 - tracking files and manifest updates for this step
 
 ## Acceptance Criteria
 
-- `aarch64a53-generic` can build `plo` directly with `make -C plo base_noimg` in the copied buildroot
-- the first generic `plo` scaffold provides the minimal HAL, `_init`, timer, interrupt, console, and linker-template coverage needed by the loader
-- the result stays compile-oriented and does not widen into `phoenix-rtos-project` or test-target work
+- the selected project step identifies the exact generic QEMU project files needed first
+- the selected project step has a realistic first runtime command for QEMU `virt`
+- the result explains why the project entry-point step should move before the emulated test target
 
 ## Validation Plan
 
 - Review:
-  compare the new generic AArch64 `plo` scaffold with the existing `zynqmp` and other minimal `plo` platforms
+  inspect the existing project-side QEMU target layout and the new generic AArch64 boot components
 - Build:
-  refresh the copied buildroot and run a direct `plo` generic build with a temporary empty `board_config.h` shim via `PROJECT_PATH`
+  not applicable
 - Emulator:
   not applicable
 - Hardware:
@@ -60,13 +61,13 @@ Out of scope:
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-20-aarch64-plo-generic-scaffold-scope.md`
+  `manifests/2026-03-20-aarch64-plo-generic-scaffold.md`
 
 ## Notes
 
 - Risks:
-  the first generic `plo` scaffold must stay compile-oriented and must not widen into a full generic QEMU project in the same patch
+  the result must stay as one project-entry planning step and must not silently turn into a multi-repo implementation patch
 - Dependencies:
-  completed planning step `STEP-0054`
+  completed implementation step `STEP-0055`
 - User-visible control point before next step:
-  after this implementation step lands, the next slice should be the first `aarch64a53-generic-qemu` project entry-point step
+  after this planning step lands, the next slice should be the selected first project implementation step for the generic QEMU lane
