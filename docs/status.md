@@ -112,6 +112,7 @@ Start-gate status:
 - `libphoenix` now builds successfully for `aarch64a53-generic-qemu`, and its AArch64 reboot helper now handles both the ZynqMP and generic `platformctl_t` layouts cleanly.
 - the broader generic `host project image` lane now succeeds again from the current copied-buildroot baseline; the next fastest blocker is therefore back in generic QEMU runtime progress rather than in project-build plumbing.
 - the refreshed generic QEMU smoke lane is still kernel-only by construction: the current generic `user.plo` loads only the kernel and DTB, and the next fast-lane blocker is the missing userspace console path built around a reusable PL011 tty driver.
+- in `phoenix-rtos-devices`, the first missing layer for that console path is now confirmed: `_targets/Makefile.aarch64a53-generic` does not exist yet, so the next repo-local unblock is target scaffolding before PL011 driver code.
 - Phoenix upstream style is conservative and review-oriented: file headers, tabs in C, localized `clang-format off/on`, direct control flow, `static const` hardware tables, and warning-clean builds enforced by `-Werror` in `phoenix-rtos-build/Makefile.common`.
 - Pi 4 uses BCM2711 with GIC-400, PL011, BCM2711 PCIe, VL805 xHCI over PCIe, GENET Ethernet, and Broadcom SDHCI.
 - Pi 5 uses BCM2712 plus RP1, with most I/O behind a PCIe-connected southbridge-like peripheral controller.

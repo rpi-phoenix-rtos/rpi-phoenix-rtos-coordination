@@ -2,23 +2,23 @@
 
 ## Metadata
 
-- Step ID: `STEP-0078`
-- Title: Define the first generic AArch64 devices-target step for the PL011 console path
+- Step ID: `STEP-0079`
+- Title: Add the generic AArch64 devices target makefile
 - Status: `in_progress`
 - Date: `2026-03-20`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- identify the smallest repo-local `phoenix-rtos-devices` step that prepares the first reusable PL011 console path for generic QEMU and Raspberry Pi 4
+- add the minimal `phoenix-rtos-devices` target file needed to unblock generic-target validation before PL011 driver work
 
 ## Scope
 
 In scope:
 
-- inspect the current `phoenix-rtos-devices` target layout and nearby tty-driver patterns
-- identify the smallest generic AArch64 devices-target change needed before a PL011 driver can be integrated
-- stop before changing driver source code
+- add `_targets/Makefile.aarch64a53-generic`
+- keep the file intentionally minimal and free of PL011 driver policy
+- validate `phoenix-rtos-devices` directly on the generic target
 
 Out of scope:
 
@@ -34,23 +34,23 @@ Out of scope:
 
 ## Expected Files Or Subsystems
 
+- `phoenix-rtos-devices/_targets/*`
 - `docs/status.md`
 - tracking files and manifest updates for this step
-- `phoenix-rtos-devices/_targets/*`
-- direct generic devices-target build output if needed for scoping
+- direct generic devices-target build output
 
 ## Acceptance Criteria
 
-- the smallest generic devices-target step is selected from actual repo structure
-- the step keeps scope inside `phoenix-rtos-devices` where possible
-- the follow-up implementation step is narrow enough to land as one repo-local commit
+- `_targets/Makefile.aarch64a53-generic` exists
+- `phoenix-rtos-devices` validates directly for `aarch64a53-generic-qemu`
+- the change stays repo-local and does not include PL011 driver source yet
 
 ## Validation Plan
 
 - Review:
-  inspect `phoenix-rtos-devices` target files and nearby tty-driver patterns
+  inspect the new target file against nearby generic target-file patterns
 - Build:
-  use direct `phoenix-rtos-devices` target validation only if it helps confirm the smallest missing target-layer piece
+  validate `phoenix-rtos-devices` directly for `aarch64a53-generic-qemu` in `phoenix-dev`
 - Emulator:
   not applicable
 - Hardware:
@@ -59,13 +59,13 @@ Out of scope:
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-20-aarch64-generic-runtime-unblock-scope.md`
+  `manifests/2026-03-20-aarch64-generic-devices-target-scope.md`
 
 ## Notes
 
 - Risks:
-  the result must stay as a `phoenix-rtos-devices` discovery-and-scoping step and must not silently turn into multi-repo implementation work
+  the result must stay as one repo-local target-file step and must not silently turn into PL011 driver implementation
 - Dependencies:
-  completed implementation step `STEP-0077`
+  completed implementation step `STEP-0078`
 - User-visible control point before next step:
-  after the devices-target step is selected, the follow-up implementation step should stay repo-local and validation-driven
+  after the target file lands, the next step should scope the first PL011 driver slice
