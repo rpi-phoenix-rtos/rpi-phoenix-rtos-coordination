@@ -166,6 +166,20 @@ This file indexes the most important websites, repositories, documents, and sour
 - Raspberry Pi 4 boot security whitepaper:
   <https://pip.raspberrypi.com/categories/685-whitepapers-app-notes-compliance-guides/documents/RP-004651-WP/Raspberry-Pi-4-Boot-Security.pdf>
 
+- Raspberry Pi firmware repository boot tree:
+  <https://github.com/raspberrypi/firmware/tree/master/boot>
+  Useful for:
+  - `start4.elf`
+  - `fixup4.dat`
+  - `start4db.elf`
+  - `fixup4db.dat`
+  - `start4cd.elf`
+  - `fixup4cd.dat`
+  - `bcm2711-rpi-4-b.dtb`
+  Re-verify:
+  - exact filenames required by the current Pi 4 bootloader release
+  - whether a specific test baseline should pin the firmware repo commit rather than using the moving `master` branch
+
 ## 5. Raspberry Pi Hardware Documents
 
 - BCM2711 ARM Peripherals:

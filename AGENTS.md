@@ -55,6 +55,8 @@ Use them as follows:
 - Prefer native Phoenix bring-up over UEFI-assisted boot for the final design.
 - A temporary firmware-assisted or state-inheriting debug path is acceptable only if it is clearly documented as transitional.
 - Treat Raspberry Pi firmware behavior, EEPROM settings, QEMU support status, and Linux/BSD support matrices as temporally unstable. Re-check online before depending on them.
+- When Pi 4 firmware files are needed for staged boot media or real-device tests, agents may fetch the required files from the Raspberry Pi firmware repository boot tree:
+  `https://github.com/raspberrypi/firmware/tree/master/boot`
 - Keep the Phoenix boot model intact where possible:
   `Raspberry Pi firmware -> plo -> syspage -> kernel -> user-space servers/drivers`
 - Work in narrow, phase-gated steps. Do not advance to the next major step until the current step has explicit success criteria, validation evidence, and documentation updates.

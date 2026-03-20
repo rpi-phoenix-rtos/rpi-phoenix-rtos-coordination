@@ -297,6 +297,8 @@ Current accepted firmware inputs are:
 - environment variable `RPI4B_FIRMWARE_DIR` pointing to a directory with Raspberry Pi firmware files
 - project-local directory:
   `sources/phoenix-rtos-project/_projects/aarch64a53-generic-rpi4b/firmware`
+- files fetched from the Raspberry Pi firmware repository boot tree:
+  <https://github.com/raspberrypi/firmware/tree/master/boot>
 
 Before the first realistic Pi 4 firmware boot attempt, the operator must provide a known-good Raspberry Pi 4 firmware-file set containing at least the files required by the current bootloader release, typically including files such as:
 
@@ -311,6 +313,7 @@ Current practical rule:
 
 - do not assume the staged Phoenix Pi 4 tree is bootable on bare media by itself
 - pair the staged Phoenix files with a known-good Raspberry Pi firmware-file set from the same validation baseline
+- for this project, future agents are explicitly allowed to download the needed Pi 4 firmware files from `raspberrypi/firmware` `boot/` when that is the most direct way to produce a testable boot tree
 - re-verify the exact required firmware filenames against the current Raspberry Pi bootloader release before depending on them
 - optional debug firmware files such as `start4db.elf`, `fixup4db.dat`, `start4cd.elf`, and `fixup4cd.dat` may also be staged when present
 
