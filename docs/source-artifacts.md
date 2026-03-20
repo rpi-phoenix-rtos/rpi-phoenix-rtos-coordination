@@ -384,6 +384,17 @@ This file indexes the most important websites, repositories, documents, and sour
   - observed size: `56373` bytes
   - current important decompiled finding:
     - `memory@0 { reg = <0x00 0x00 0x00>; }`
+  - current confirmed structural findings:
+    - root:
+      - `#address-cells = 2`
+      - `#size-cells = 1`
+    - `/soc`:
+      - `#address-cells = 1`
+      - `#size-cells = 1`
+      - `ranges = <0x7e000000 0x0 0xfe000000 0x1800000 0x7c000000 0x0 0xfc000000 0x2000000 0x40000000 0x0 0xff800000 0x800000>`
+    - `/soc/interrupt-controller@40041000`:
+      - `compatible = "arm,gic-400"`
+      - `reg = <0x40041000 0x1000 0x40042000 0x2000 0x40044000 0x2000 0x40046000 0x2000>`
   Important because:
   - Raspberry Pi firmware normally customizes this DTB at boot, but direct `qemu-system-aarch64 -M raspi4b` validation currently uses the file without firmware-time customization
   Re-verify:
@@ -501,6 +512,26 @@ Current local finding to preserve:
 - current local QEMU `10.2.2` `raspi4b` does not support `dumpdtb`; direct `-machine raspi4b,dumpdtb=...` fails with `This machine doesn't have an FDT`
 - current Pi 4 QEMU validation therefore needs an explicit external DTB source
 - current Pi 4 QEMU validation also does not include Raspberry Pi firmware DTB customization, so the payload DTB may need explicit QEMU-only fixes such as a non-zero `memory@0/reg` value
+- local QEMU gdbstub is now a proven diagnostic path for this port:
+  - QEMU docs:
+    <https://www.qemu.org/docs/master/system/gdb.html>
+  - GDB remote docs:
+    <https://sourceware.org/gdb/current/onlinedocs/gdb.html/Connecting.html>
+- local `10.2.2` QEMU source path for the current GIC model:
+  - `/home/witoldbolt.guest/src/qemu-10.2.2/hw/intc/arm_gic.c`
+  - current important fact:
+    the CPU-interface read switch exposes `HPPIR` at `0x18` and `ABPR` at
+    `0x1c`, but no explicit read case for `0x28` `AHPPIR`
+- current decisive pre-map breakpoint result at `_hal_interruptsInit + 64`:
+  - generic `virt`:
+    - `gicd = 0x08000000`
+    - `gicc = 0x08010000`
+  - Pi 4 before the bounded `dtb.c` fix:
+    - `gicd = 0x0`
+    - `gicc = 0x0`
+  - Pi 4 after the bounded `dtb.c` fix:
+    - `gicd = 0xff841000`
+    - `gicc = 0xff842000`
 
 Important Raspberry Pi kernel-source findings to preserve:
 

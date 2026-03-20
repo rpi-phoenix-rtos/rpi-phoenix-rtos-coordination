@@ -118,6 +118,8 @@ Current `raspi4b` use:
 
 - use the VM-local `10.2.2` binary for Pi 4-specific smoke runs
 - keep generic `virt` as the authoritative fast lane for common AArch64 work
+- for narrow EL / DTB / GIC / timer blockers, prefer a bounded QEMU gdbstub
+  inspection before adding another diagnostic print patch
 
 What `raspi4b` currently helps validate:
 
@@ -142,16 +144,22 @@ Current local `raspi4b` smoke result:
 - current automated Pi 4 QEMU build hook:
   - set `RPI4B_QEMU_MEMORY_SIZE=80000000` together with `RPI4B_DTB_PATH=.../bcm2711-rpi-4-b.dtb`
   - this patches `/memory@0/reg` in the staged DTB copies during the build
-  - the current automated lane then reaches `vm: map init done` and later
-    stalls after `dummyfs: devfs initialized`
+  - after the bounded `dtb.c` GIC discovery fix, the current automated lane now
+    reaches:
+    - `gic: timer dispatch`
+    - `threads: timer irq`
+    - `pl011-tty: console ready`
+    - `main: Starting syspage programs ...`
+    - `dummyfs: initialized`
 
 Inference:
 
 - the environment blocker is gone
 - the Pi 4 path is now well past raw image placement, early multi-core startup, and early kernel console initialization
-- the remaining fast-lane blocker is now after `dummyfs: devfs initialized`
-- the next bounded blocker to investigate is timer or wakeup delivery on the
-  patched Pi 4 lane rather than raw DTB staging
+- the previous timer-delivery blocker is now solved for the current Pi 4 QEMU
+  lane
+- the next bounded blocker is now later boot progress after
+  `dummyfs: initialized`, not early timer or GIC discovery
 
 Official QEMU `raspi4b` expectations to preserve:
 
@@ -160,6 +168,15 @@ Official QEMU `raspi4b` expectations to preserve:
   - `PWM`
   - `PCIE Root Port`
   - `GENET Ethernet Controller`
+
+Current debugger note to preserve:
+
+- `phoenix-dev` now has `gdb-multiarch 15.1`
+- a proven current stop point for Pi 4 bring-up is `_hal_interruptsInit + 64`,
+  immediately after `dtb_getGIC()` and before `_pmap_halMapDevice()`
+- local `10.2.2` `hw/intc/arm_gic.c` does not expose an explicit CPU-interface
+  read case for offset `0x28`, so `AHPPIR`-style probes should be cross-checked
+  against source before being treated as architectural truth
 
 ## 4.3 What QEMU should never be the sole authority for
 

@@ -393,6 +393,32 @@ Start-gate status:
 - the next Pi 4 deployment blocker is now firmware-file completeness rather than loader placement: the staged `_boot/.../rpi4b/` tree still lacks Raspberry Pi firmware files, so it is not yet a self-contained first-partition boot bundle.
 - the Pi 4 project now accepts an operator-supplied Raspberry Pi firmware directory through `RPI4B_FIRMWARE_DIR` or `_projects/aarch64a53-generic-rpi4b/firmware` and stages required firmware files such as `start4.elf` and `fixup4.dat` into `_boot/.../rpi4b/` while keeping default no-firmware builds green.
 - future agents are explicitly allowed to source Pi 4 firmware files and the board DTB from the Raspberry Pi firmware repository boot tree at `https://github.com/raspberrypi/firmware/tree/master/boot` when that is the most direct path to a testable boot bundle; the exact required file set should still be re-verified against the active Pi 4 firmware baseline.
+- `gdb-multiarch` `15.1` is now installed in `phoenix-dev`, and the QEMU gdbstub is now a proven low-level inspection lane for the current Pi 4 bring-up work.
+- the decisive Pi 4 QEMU blocker was not timer policy after all; it was DTB GIC discovery:
+  - at `_hal_interruptsInit + 64`, generic returned pre-map
+    `gicd = 0x08000000`, `gicc = 0x08010000`
+  - the same Pi 4 breakpoint originally returned
+    `gicd = 0x0`, `gicc = 0x0`
+- the bounded `hal/aarch64/dtb.c` fix is now in place:
+  - shallow `/soc/interrupt-controller@...` nodes are recognized
+  - `/soc` GIC `reg` tuples are decoded through `/soc` cell widths and
+    `ranges` translation
+  - the old non-`/soc` fallback path remains intact
+- after that fix, the same Pi 4 pre-map breakpoint now returns:
+  - `gicd = 0xff841000`
+  - `gicc = 0xff842000`
+- the Pi 4 `raspi4b` QEMU lane now reaches the same early boot band as the
+  generic lane, including:
+  - `gic: timer dispatch`
+  - `threads: timer irq`
+  - `pl011-tty: tty0 ready`
+  - `pl011-tty: console ready`
+  - `main: Starting syspage programs ...`
+  - `dummyfs: initialized`
+- local QEMU `10.2.2` `hw/intc/arm_gic.c` does not expose an explicit
+  CPU-interface read case for offset `0x28`, so older `AHPPIR` experiments
+  should not be treated as authoritative outside the exact runtime context in
+  which they were observed.
 - Phoenix upstream style is conservative and review-oriented: file headers, tabs in C, localized `clang-format off/on`, direct control flow, `static const` hardware tables, and warning-clean builds enforced by `-Werror` in `phoenix-rtos-build/Makefile.common`.
 - Pi 4 uses BCM2711 with GIC-400, PL011, BCM2711 PCIe, VL805 xHCI over PCIe, GENET Ethernet, and Broadcom SDHCI.
 - Pi 5 uses BCM2712 plus RP1, with most I/O behind a PCIe-connected southbridge-like peripheral controller.

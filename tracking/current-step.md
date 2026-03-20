@@ -2,32 +2,32 @@
 
 ## Metadata
 
-- Step ID: `STEP-0216`
-- Title: Scope the Pi 4 GIC CPU-interface alias probe
-- Status: `in_progress`
+- Step ID: `STEP-0227`
+- Title: Scope one bounded later-boot Pi 4 parity check
+- Status: `planned`
 - Date: `2026-03-20`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- select the smallest next follow-up that can explain why Pi 4 QEMU reports
-  `gtimer: hppir 0` while the timer still never dispatches
+- choose the smallest next comparison that identifies the first Pi 4 blocker
+  after the now-working early GIC / timer / console path
 
 ## Scope
 
 In scope:
 
-- review the completed `GICC_HPPIR` result on both lanes
-- decide whether the next one-variable probe should be `GICC_AHPPIR` or an
-  equally narrow CPU-interface/security-view readback
-- keep the selected follow-up limited to one additional GIC CPU-interface
-  observation
+- review the new generic-versus-Pi4 runtime parity through
+  `dummyfs: initialized`
+- choose one bounded later-boot comparison or visibility step
+- keep the next move outside the already-fixed early GIC / timer path
+- prefer a read-only or minimally invasive step if possible
 
 Out of scope:
 
-- implementing the next probe in this planning step
-- new timer-programming changes
-- broad interrupt-controller redesign
+- new kernel or loader behavior changes
+- real hardware work
+- broad test-framework redesign
 - Pi 5 or RP1 work
 
 ## Expected Repositories
@@ -36,44 +36,42 @@ Out of scope:
 
 ## Expected Files Or Subsystems
 
-- completed `GICC_HPPIR` probe evidence
-- Pi 4 QEMU `bcm2838.c` timer wiring notes
-- manifests and tracking updates for this implementation step
+- `docs/status.md`
+- `docs/testing-automation.md`
+- manifests and tracking updates for this scope step
 
 ## Acceptance Criteria
 
-- the next runtime hypothesis is narrowed to one concrete CPU-interface
-  follow-up
-- the selected follow-up names the exact register or view to probe
-- no implementation work is mixed into this planning step
+- the next later-boot step is narrowed to one concrete question
+- the selected question is explicitly outside the solved early GIC path
+- the step remains aligned with getting the first Pi 4 boot as quickly as
+  possible
 
 ## Validation Plan
 
 - Review:
-  compare the generic `hppir 1023` result with the Pi 4 `hppir 0` result and
-  select the smallest explanatory follow-up
-- Build:
-  not applicable
-- Emulator:
-  not applicable
+  inspect the current generic and Pi 4 runtime evidence after the DTB fix
+- Evidence:
+  - use `manifests/2026-03-20-aarch64-pi4-gic-dtb-fix.md`
+  - compare the latest generic and Pi 4 QEMU traces after `dummyfs: initialized`
 - Hardware:
   not applicable
 
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-20-aarch64-rpi4b-gic-cpu-interface.md`
+  `manifests/2026-03-20-aarch64-pi4-gic-dtb-fix.md`
 
 ## Notes
 
 - Risks:
-  do not widen this into interrupt-policy changes before another read-only
-  CPU-interface split is tried
+  do not re-open the solved early GIC path unless new evidence forces it
 - Dependencies:
-  completed `STEP-0215` Pi 4 GIC CPU-interface pending probe
+  completed `STEP-0226` Pi 4 GIC DTB discovery fix
 - Source reminder:
-  local QEMU `10.2.2` source proves that `raspi4b` wires `GTIMER_PHYS`
-  directly to GIC PPI 14 in `hw/arm/bcm2838.c`
+  Pi 4 now reaches `pl011-tty: console ready` and `dummyfs: initialized` under
+  `raspi4b` QEMU
 - User-visible control point before next step:
-  after this scope lands, the next bounded move should add only one more
-  CPU-interface or alias-view readback
+  after this step lands, the next implementation move should be chosen by the
+  first observed later-boot mismatch between generic and Pi 4, not by old timer
+  hypotheses
