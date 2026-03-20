@@ -128,6 +128,23 @@ Reason:
 - Phoenix build assumptions are Linux-shaped
 - macOS host access to directly attached lab devices is simpler than passing them into Apple-Virtualization VMs
 
+## 4.5 Loader script timing caveat
+
+Avoid using the PLO `wait` command as a passive timing delay in unattended lanes.
+
+Current local source and runtime evidence:
+
+- `plo/cmds/wait.c` implements `wait` by polling `lib_consoleGetc()`
+- on the current generic AArch64 QEMU lane, `wait 500` produced:
+  - `Waiting for input,   400 [ms]`
+  - `Can't get data from console.`
+  - `Please reset plo and set console to device.`
+
+Implication:
+
+- `wait` is an interactive loader console command, not a generic boot-script sleep primitive
+- do not use it as a startup race workaround in unattended QEMU or automated hardware flows unless console input is intentionally configured and validated
+
 ## 5. Real Hardware Lab Design
 
 ## 5.1 Controller host

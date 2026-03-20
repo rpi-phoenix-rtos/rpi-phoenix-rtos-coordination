@@ -109,6 +109,7 @@ This file indexes the most important websites, repositories, documents, and sour
 - `plo/cmds/script.c`
 - `plo/cmds/kernel.c`
 - `plo/cmds/app.c`
+- `plo/cmds/wait.c`
 - `plo/phfs/phfs.h`
 
 ### Build and target definitions
