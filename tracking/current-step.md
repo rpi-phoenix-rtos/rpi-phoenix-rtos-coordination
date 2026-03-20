@@ -2,31 +2,31 @@
 
 ## Metadata
 
-- Step ID: `STEP-0231`
-- Title: Implement the bounded interactive console probe
+- Step ID: `STEP-0232`
+- Title: Scope the smallest `psh`-local startup visibility step
 - Status: `planned`
-- Date: `2026-03-20`
+- Date: `2026-03-21`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- determine whether `psh` is already live and responsive on the console after
-  the successful syspage spawns
+- choose the smallest `psh`-local visibility patch that can divide the current
+  post-spawn silence into one concrete later-boot boundary
 
 ## Scope
 
 In scope:
 
-- run the generic QEMU lane in an interactive PTY session
-- send bounded console input after boot output quiets
-- if generic responds, repeat the same probe on Pi 4
-- document the result and the next bounded follow-up
+- review the current `psh` startup path in `psh.c` and `pshapp.c`
+- choose the minimum set of one-line markers needed to split the current stall
+- document the exact next implementation step and why it is the narrowest useful
+  move
 
 Out of scope:
 
-- new kernel or loader behavior changes
+- changing shell behavior
+- kernel or loader behavior changes
 - real hardware work
-- broad test-framework redesign
 - Pi 5 or RP1 work
 
 ## Expected Repositories
@@ -36,37 +36,40 @@ Out of scope:
 ## Expected Files Or Subsystems
 
 - `docs/status.md`
-- manifests and tracking updates for this implementation step
+- `manifests/`
+- `tracking/current-step.md`
+- `tracking/step-history.md`
 
 ## Acceptance Criteria
 
-- generic clearly shows whether console input reaches a live shell
-- Pi 4 is probed too if the generic lane proves interactive
-- the result narrows the next later-boot move to one concrete follow-up
+- the selected next patch is limited to `psh` startup visibility only
+- the plan explicitly names the exact source file(s) and markers to add
+- the result narrows the next move to one concrete implementation step
 
 ## Validation Plan
 
-- Emulator:
-  - run generic `virt` in an interactive PTY-backed session
-  - send a minimal command such as newline or `help`
-  - repeat on Pi 4 if generic responds
+- Analysis only:
+  - inspect `sources/phoenix-rtos-utils/psh/psh.c`
+  - inspect `sources/phoenix-rtos-utils/psh/pshapp/pshapp.c`
 - Hardware:
   not applicable
 
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-21-aarch64-later-boot-interactive-probe-scope.md`
+  `manifests/2026-03-21-aarch64-later-boot-interactive-probe.md`
 
 ## Notes
 
 - Risks:
-  do not re-open the solved early GIC path unless new evidence forces it
+  avoid widening into speculative shell fixes before visibility narrows the
+  boundary
 - Dependencies:
-  completed `STEP-0230` later-boot interactive-probe scope
+  completed `STEP-0231` later-boot interactive-console probe
 - Source reminder:
-  generic and Pi 4 both already spawn `psh`, so the next question is whether it
-  is alive on the console
+  generic already echoes input but shows no shell response, so the next split
+  must happen inside the `psh` path itself
 - User-visible control point before next step:
-  after this step lands, the next implementation move should depend on whether
-  the console is already interactive or still needs later-boot visibility
+  after this scope step lands, the next implementation patch should stay in
+  `psh` only and should not reopen kernel-side traces unless new evidence
+  forces it

@@ -415,6 +415,15 @@ Start-gate status:
   - `pl011-tty: console ready`
   - `main: Starting syspage programs ...`
   - `dummyfs: initialized`
+- bounded syspage spawn visibility now proves that both generic and Pi 4 lanes
+  successfully spawn:
+  - `dummyfs`
+  - `pl011-tty`
+  - `psh`
+- the first bounded interactive generic PTY probe now shows that serial input
+  is echoed back but still produces no visible shell prompt or command output
+- the active later-boot boundary is therefore now inside the shared `psh`
+  startup path rather than in the kernel syspage spawn loop
 - local QEMU `10.2.2` `hw/intc/arm_gic.c` does not expose an explicit
   CPU-interface read case for offset `0x28`, so older `AHPPIR` experiments
   should not be treated as authoritative outside the exact runtime context in
