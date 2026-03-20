@@ -2,15 +2,15 @@
 
 ## Metadata
 
-- Step ID: `STEP-0036`
-- Title: Implement backend-state timer-register wrappers
+- Step ID: `STEP-0038`
+- Title: Implement backend-state timer-arming helper
 - Status: `in_progress`
 - Date: `2026-03-20`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- add backend-state wrappers for control access and relative timer programming through the selected architectural timer source
+- add the first backend-state helper that arms the selected architectural timer for a relative wakeup
 
 ## Scope
 
@@ -18,8 +18,9 @@ In scope:
 
 - update `hal/aarch64/gtimer_backend.h`
 - update `hal/aarch64/gtimer_backend.c`
-- add state-based wrappers for control register reads and writes
-- add a state-based wrapper for relative timer programming in ticks
+- add a state-based helper that converts a relative wait to timer ticks
+- clamp positive waits away from zero programmed ticks
+- program the selected timer and enable it unmasked through the backend wrappers
 - validate the existing `aarch64a53-zynqmp-qemu` build in `phoenix-dev`
 
 Out of scope:
@@ -28,7 +29,7 @@ Out of scope:
 - changing the active timer backend for any target
 - implementing the public generic `hal_timer*` entry points
 - implementing timer interrupt registration
-- adding timer-arming policy or wakeup semantics
+- adding disable or cancellation semantics
 - adding PL011 console code
 - Raspberry Pi-specific code
 
@@ -45,9 +46,10 @@ Out of scope:
 
 ## Acceptance Criteria
 
-- the backend-state layer exposes state-keyed wrappers for control register access and relative timer programming
-- the wrappers use the timer source stored in backend state rather than open-coded source dispatch at future call sites
-- the wrappers do not introduce public `hal_timer*` integration or timer-arming policy
+- the backend-state layer exposes a helper that arms the selected timer for a relative wait in microseconds
+- positive waits are not programmed as zero timer ticks
+- the helper enables the selected timer unmasked through the backend wrappers
+- the helper does not introduce public `hal_timer*` integration or IRQ registration
 - the existing `aarch64a53-zynqmp-qemu` build still succeeds in `phoenix-dev`
 
 ## Validation Plan
@@ -62,13 +64,13 @@ Out of scope:
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-20-aarch64-gtimer-register-wrapper-scope.md`
+  `manifests/2026-03-20-aarch64-gtimer-arming-scope.md`
 
 ## Notes
 
 - Risks:
-  the step must not grow into timer-arming policy; it should stay as a thin backend-state wrapper layer only
+  the step must not grow into public HAL takeover or IRQ registration; it should stay as a backend-local arming helper only
 - Dependencies:
-  completed scoping step from `STEP-0035`
+  completed scoping step from `STEP-0037`
 - User-visible control point before next step:
-  after this step lands, the next slice can target timer-arming policy or interrupt registration, but not both at once
+  after this step lands, the next slice can target IRQ registration or public timer-HAL wiring, but not both at once

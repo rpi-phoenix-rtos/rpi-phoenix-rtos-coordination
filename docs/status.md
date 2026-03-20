@@ -99,9 +99,9 @@ Start-gate status:
 
 ## Immediate Next Implementation Milestones
 
-1. Implement the first backend timer-register wrapper step on top of the backend state and conversion helpers.
-2. Define the first backend timer-arming policy step on top of the backend wrappers.
-3. Implement that selected timer-arming policy step in one narrow patch.
+1. Implement the first backend timer-arming policy step on top of the backend wrappers.
+2. Define the first backend IRQ-registration helper step.
+3. Implement that selected IRQ-registration helper step in one narrow patch.
 4. Implement a generic AArch64 FDT parser suitable for Raspberry Pi DTBs.
 5. Add a Raspberry Pi 4 `plo` platform with PL011 UART, MMU, GICv2, and a real boot path from Raspberry Pi firmware.
 
