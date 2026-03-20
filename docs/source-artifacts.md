@@ -132,9 +132,17 @@ This file indexes the most important websites, repositories, documents, and sour
 - `phoenix-rtos-project/_targets/aarch64a53/generic/build.project`
 - `phoenix-rtos-project/_targets/aarch64a53/generic/preinit.plo.yaml`
 - `phoenix-rtos-project/_targets/aarch64a53/generic/user.plo.yaml`
+- `phoenix-rtos-project/_targets/build.common`
+  Important because `b_mkscript_user()` currently aliases each `app` payload by
+  `basename(path)`, which matters when the same binary must be staged twice
+  under different boot aliases.
 - `phoenix-rtos-project/_projects/aarch64a53-generic-rpi4b/build.project`
 - `phoenix-rtos-project/_projects/aarch64a53-generic-rpi4b/config.txt`
 - `phoenix-rtos-project/_projects/aarch64a53-generic-rpi4b/user.plo.yaml`
+- `phoenix-rtos-project/_projects/aarch64a53-generic-qemu/build.project`
+- `phoenix-rtos-project/_projects/aarch64a53-generic-qemu/user.plo.yaml`
+- `phoenix-rtos-project/_projects/aarch64a72-generic-rpi4b/build.project`
+- `phoenix-rtos-project/_projects/aarch64a72-generic-rpi4b/user.plo.yaml`
 - `phoenix-rtos-project/_targets/aarch64a53/zynqmp/build.project`
 - `phoenix-rtos-project/_targets/aarch64a53/zynqmp/preinit.plo.yaml`
 - `phoenix-rtos-project/_targets/aarch64a53/zynqmp/user.plo.yaml`
@@ -179,6 +187,15 @@ This file indexes the most important websites, repositories, documents, and sour
 
 - `phoenix-rtos-kernel/proc/threads.c`
   Important because `proc_threadNanoSleep()` and `_threads_programWakeup()` now define the next bounded diagnostic target after both fast lanes proved that the first retry path sleeps and never wakes.
+
+- `phoenix-rtos-utils/psh/psh.c`
+  Important because `main()` waits on `lookup("/")`, dispatches into `pshapp`,
+  and now provides the current shell-side visibility markers.
+
+- `phoenix-rtos-utils/psh/pshapp/pshapp.c`
+  Important because `psh_run()` currently bounds the next blocker:
+  both fast lanes now reach `psh_ttyopen(_PATH_CONSOLE)` but exit before
+  `psh: tty ready`.
 
 - `phoenix-rtos-kernel/hal/aarch64/gtimer_backend.c`
   Important because the next bounded timer diagnostic needs to expose which common AArch64 timer source and IRQ are selected from the DTB before the missing wakeup interrupt should arrive.

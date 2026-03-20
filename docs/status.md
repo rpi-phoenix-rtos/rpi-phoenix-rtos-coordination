@@ -447,6 +447,24 @@ Start-gate status:
   - Pi 4 prints `syscalls: psh root lookup -22`
 - the shared blocker is therefore no longer “missing rootfs” but a shared
   `lookup()` contract failure returning `EINVAL`
+- the root-dummyfs fast-lane image fix is now in place in
+  `phoenix-rtos-project`:
+  - both generic and Pi 4 start a root `dummyfs-root` instance before the
+    existing `dummyfs;-N;devfs;-D` instance
+  - the extra boot alias is necessary because
+    `phoenix-rtos-project/_targets/build.common:b_mkscript_user()` aliases each
+    `app` payload by basename, so two `dummyfs` payloads collide in `plo`
+- both fast lanes now recover past the old rootfs stall and print:
+  - `name: register /`
+  - `dummyfs: root initialized`
+  - `syscalls: psh root lookup 0`
+  - `psh: root ready`
+  - `psh: app run`
+  - `psh: run enter`
+  - `psh: tty open`
+  - `psh: app done`
+- the next shared later-boot blocker is therefore inside
+  `psh_ttyopen("/dev/console")`, before `psh: tty ready`
 - copied-buildroot validation must be run sequentially per target; concurrent
   generic and Pi 4 builds against the same copied buildroot race on shared
   host-artifact paths such as `_build/host-generic-pc`
@@ -460,10 +478,10 @@ Start-gate status:
 
 ## Immediate Next Implementation Milestones
 
-1. Restore the Pi 4 QEMU fast lane after the local-controller detour.
-2. Run one new bounded experiment on the direct GTIMER-to-GIC PPI 14 path seen in QEMU `bcm2838.c`.
-3. Bring the Pi 4 QEMU lane back into the same kernel / user-space startup band already reached with the generic fast lane.
-4. Once the Pi 4 fast lane reaches stable console readiness, switch the next bounded steps back to firmware-bundle completeness and first real-device smoke preparation.
+1. Expose the first shared `psh_ttyopen("/dev/console")` failure result on the generic and Pi 4 fast lanes.
+2. Fix the smallest shared console-open blocker that follows from that result.
+3. Drive both fast lanes from `psh: tty open` to `psh: tty ready`, then to `psh: readcmd`.
+4. Once the Pi 4 fast lane reaches stable interactive shell readiness, switch the next bounded steps back to firmware-bundle completeness and first real-device smoke preparation.
 
 ## Pi 4 Success Criteria for "Phase 1"
 
