@@ -297,6 +297,11 @@ This file indexes the most important websites, repositories, documents, and sour
   bit `1` for `ARM_IRQLOCAL0_CNTPNS` and checks `ARM_LOCAL_IRQ_PENDING0`
   before dispatching the local physical timer path.
 
+- `external/circle/lib/sysinit.cpp`
+  Important because Circle writes `ARM_LOCAL_PRESCALER = 39768216U` on Pi 4,
+  which is now the next bounded local-block follow-up after the route-enable
+  experiment alone failed to change local pending or GIC dispatch.
+
 - `external/circle/lib/bcmmailbox.cpp`
 - `external/circle/lib/bcmpropertytags.cpp`
 - `external/circle/lib/bcmframebuffer.cpp`

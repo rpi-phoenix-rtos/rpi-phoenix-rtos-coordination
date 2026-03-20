@@ -2,32 +2,30 @@
 
 ## Metadata
 
-- Step ID: `STEP-0209`
-- Title: Implement the Pi 4 local interrupt routing experiment
-- Status: `planned`
+- Step ID: `STEP-0210`
+- Title: Scope the Pi 4 local prescaler experiment
+- Status: `in_progress`
 - Date: `2026-03-20`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- add one bounded Pi 4-only local interrupt controller routing hook for the
-  non-secure physical timer path and capture the resulting local pending-state
-  evidence
+- select the smallest next local interrupt controller follow-up now that the
+  route-enable write alone is proven insufficient on the Pi 4 A72 lane
 
 ## Scope
 
 In scope:
 
-- add a Pi 4-only local interrupt controller base hook
-- enable `ARM_LOCAL_TIMER_INT_CONTROL0` bit `1` for the physical timer path on
-  core 0
-- extend the existing bounded timer probe with one local pending readback from
-  `ARM_LOCAL_IRQ_PENDING0`
-- validate the Pi 4 A72 patched lane and use the generic guardrail lane if the
-  common code path is touched
+- review the completed local-route-enable results
+- review the remaining Circle local interrupt controller setup
+- decide whether the next one-variable experiment should be the local
+  prescaler write or another equally narrow local-block setting
+- keep the selected follow-up limited to one additional local-block variable
 
 Out of scope:
 
+- implementing the next local-block experiment in this planning step
 - scheduler or VM changes
 - broad interrupt-controller redesign
 - Pi 5 or RP1 work
@@ -35,57 +33,52 @@ Out of scope:
 ## Expected Repositories
 
 - coordination repo
-- `phoenix-rtos-kernel`
-- `phoenix-rtos-project`
+- coordination repo
 
 ## Expected Files Or Subsystems
 
 - Pi 4 timer registration evidence after the restore
 - Circle local-interrupt reference paths
-- `sources/phoenix-rtos-kernel/hal/aarch64/interrupts_gicv2.c`
-- `sources/phoenix-rtos-kernel/hal/aarch64/gtimer_timer.c`
-- `sources/phoenix-rtos-kernel/hal/aarch64/generic/config.h`
-- `sources/phoenix-rtos-project/_projects/aarch64a72-generic-rpi4b/board_config.h`
+- `external/circle/lib/sysinit.cpp`
+- `external/circle/include/circle/bcm2836.h`
+- completed Pi 4 local-route-enable evidence
 - manifests and tracking updates for this implementation step
 
 ## Acceptance Criteria
 
-- the Pi 4 lane clearly reports whether the local route enable changed
-  `ARM_LOCAL_IRQ_PENDING0` or GIC dispatch behavior
-- the generic guardrail lane remains healthy if common code is touched
-- the result narrows the next move to one concrete follow-up on the same seam
+- the next runtime hypothesis is narrowed to one concrete prescaler or local
+  block follow-up
+- the selected follow-up names the intended register, value, files, and
+  validation evidence
+- no new implementation work is mixed into this planning step
 
 ## Validation Plan
 
 - Review:
-  inspect that the change stays bounded to the Pi 4 local timer-routing path
+  compare the completed route-enable result with Circle's remaining local block
+  setup
 - Build:
-  - `LIBPHOENIX_DEVEL_MODE=n TARGET=aarch64a53-generic-qemu ./phoenix-rtos-build/build.sh clean host core project image`
-  - `LIBPHOENIX_DEVEL_MODE=n RPI4B_DTB_PATH=$HOME/external/raspberrypi-firmware/boot/bcm2711-rpi-4-b.dtb RPI4B_QEMU_MEMORY_SIZE=80000000 TARGET=aarch64a72-generic-rpi4b ./phoenix-rtos-build/build.sh clean host core project image`
+  not applicable
 - Emulator:
-  - run the Pi 4 A72 `raspi4b` lane and compare:
-    - `ARM_LOCAL_IRQ_PENDING0` readback
-    - `gtimer: pending`
-    - `gic: timer dispatch`
-  - run the generic `virt` guardrail lane if the common path changes
+  not applicable
 - Hardware:
   not applicable
 
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-20-aarch64-rpi4b-local-interrupt-routing-scope.md`
+  `manifests/2026-03-20-aarch64-rpi4b-local-interrupt-routing.md`
 
 ## Notes
 
 - Risks:
-  do not widen this into full BCM2711 local-interrupt support or SMP work
+  do not widen this into emulator-theory work or full local-controller support
 - Dependencies:
-  completed `STEP-0208` local-interrupt-routing scope
+  completed `STEP-0209` local interrupt routing experiment
 - Source reminder:
   official Raspberry Pi kernel DTS files on `rpi-6.19.y` and `rpi-7.0.y` are currently identical for Pi 4 and keep `memory@0` bootloader-filled plus `stdout-path` on `serial1` (aux UART); Raspberry Pi documentation also confirms that firmware applies overlays and `dtparam`s before handing the merged DTB to the OS; this step specifically targets the root memory-node cell layout, not UART alias handling
 - Architecture reminder:
   Raspberry Pi 4 Model B is based on BCM2711 with a quad-core Cortex-A72 CPU; treat `aarch64a53-generic-rpi4b` only as a temporary diagnostic lane and keep new target work centered on `aarch64a72-generic-rpi4b`
 - User-visible control point before next step:
-  after this step lands, the next bounded move should depend only on whether
-  the local route-enable changes local pending or GIC-dispatch evidence
+  after this scope lands, the next bounded move should change exactly one
+  remaining local-block variable
