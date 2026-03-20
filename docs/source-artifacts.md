@@ -106,6 +106,7 @@ This file indexes the most important websites, repositories, documents, and sour
 - `plo/hal/aarch64/Makefile`
 - `plo/hal/aarch64/generic/_init.S`
 - `plo/hal/aarch64/generic/config.h`
+- `plo/ld/aarch64a53-generic.ldt`
 - `plo/hal/aarch64/zynqmp/hal.c`
 - `plo/hal/aarch64/zynqmp/console.c`
 - `plo/cmds/script.c`
