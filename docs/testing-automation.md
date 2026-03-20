@@ -176,6 +176,10 @@ On this machine, the recommended default is:
 - USB serial and power control on the macOS host
 - use VM-local source-built QEMU for Pi 4 board emulation rather than relying on the Ubuntu package version
 - when using non-interactive `limactl shell ... bash -lc` build commands, export `PATH="$HOME/phoenix-toolchains/aarch64-phoenix/bin:$PATH"` explicitly before Phoenix AArch64 builds
+- do not refresh the same copied buildroot concurrently with
+  `scripts/prepare-buildroot.sh --copy-components`; the current rsync-based
+  workflow can fail with `some files vanished before they could be transferred
+  (code 24)` if two refreshes race the same destination path
 
 Reason:
 

@@ -302,6 +302,15 @@ This file indexes the most important websites, repositories, documents, and sour
   which is now the next bounded local-block follow-up after the route-enable
   experiment alone failed to change local pending or GIC dispatch.
 
+- local QEMU 10.2.2 source:
+  - `/home/witoldbolt.guest/src/qemu-10.2.2/hw/arm/bcm2838.c`
+    Important because it wires Pi 4 `GTIMER_PHYS` directly to GIC PPI 14 in
+    the `raspi4b` model.
+  - `/home/witoldbolt.guest/src/qemu-10.2.2/hw/intc/bcm2836_control.c`
+    Important because it proves QEMU does model the BCM2836 local interrupt
+    controller, but that block is not on the active Pi 4 physical timer path
+    used by `bcm2838.c`.
+
 - `external/circle/lib/bcmmailbox.cpp`
 - `external/circle/lib/bcmpropertytags.cpp`
 - `external/circle/lib/bcmframebuffer.cpp`
