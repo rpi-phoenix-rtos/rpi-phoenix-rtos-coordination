@@ -98,17 +98,20 @@ Start-gate status:
 - The AArch64 build now exposes an explicit public timer-implementation hook while keeping ZynqMP selected, so the next common timer step can focus on the first public `hal_timer*` wrapper file instead of reopening build glue.
 - The AArch64 build now also exposes an explicit timer-implementation override hook, so the first common public timer file can be validated without replacing the default ZynqMP timer selection.
 - The kernel now provides a common public AArch64 timer implementation file in `hal/aarch64/gtimer_timer.c`, and the existing copied-buildroot `aarch64a53-zynqmp-qemu` lane still builds successfully in `phoenix-dev` when that file is selected through `AARCH64_TIMER_IMPL_OVERRIDE`.
+- `phoenix-rtos-build` now recognizes `aarch64a53-generic` and provides a matching generic AArch64 core-build entry point.
+- `phoenix-rtos-kernel` now provides a first generic AArch64 platform scaffold, and the generic kernel target links successfully in the VM-local copied buildroot when validated with a temporary empty `board_config.h` shim via `PROJECT_PATH`.
+- the first generic AArch64 `plo` scaffold is now explicitly bounded to one target-local linker template plus minimal `_init`, HAL, console, timer, and interrupt files, and it should be validated first through a direct `make -C plo base_noimg` lane in `phoenix-dev`.
 - Phoenix upstream style is conservative and review-oriented: file headers, tabs in C, localized `clang-format off/on`, direct control flow, `static const` hardware tables, and warning-clean builds enforced by `-Werror` in `phoenix-rtos-build/Makefile.common`.
 - Pi 4 uses BCM2711 with GIC-400, PL011, BCM2711 PCIe, VL805 xHCI over PCIe, GENET Ethernet, and Broadcom SDHCI.
 - Pi 5 uses BCM2712 plus RP1, with most I/O behind a PCIe-connected southbridge-like peripheral controller.
 
 ## Immediate Next Implementation Milestones
 
-1. Define the first non-Xilinx generic AArch64 QEMU `virt` milestone under the boot-first fast lane.
-2. Add build-system recognition for a generic `aarch64a53` target family member.
-3. Add minimal generic kernel platform scaffolding that can build outside `zynqmp`.
-4. Add the first reusable PL011 console path needed by both `virt` and Pi 4 bring-up.
-5. Introduce an `aarch64a53-generic-qemu` project and test entry point.
+1. Implement the first `plo`-side generic AArch64 scaffold.
+2. Introduce an `aarch64a53-generic-qemu` project entry point on QEMU `virt`.
+3. Add the matching emulated test target and smoke lane.
+4. Add the first runtime check for the generic timer plus PL011 path together.
+5. Start the first end-to-end generic `virt` boot iterations and trim the remaining boot blockers one by one.
 
 ## Pi 4 Success Criteria for "Phase 1"
 

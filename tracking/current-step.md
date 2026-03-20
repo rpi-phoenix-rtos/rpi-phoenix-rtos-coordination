@@ -2,51 +2,56 @@
 
 ## Metadata
 
-- Step ID: `STEP-0048`
-- Title: Define first non-Xilinx generic AArch64 QEMU `virt` milestone
+- Step ID: `STEP-0055`
+- Title: Implement first `plo`-side generic AArch64 scaffold
 - Status: `in_progress`
 - Date: `2026-03-20`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- define the first concrete milestone and first code step for a generic AArch64 QEMU `virt` path that can later be reused for Raspberry Pi 4 bring-up
+- add the first compile-oriented generic AArch64 `plo` scaffold needed before a real `aarch64a53-generic-qemu` project target can be introduced
 
 ## Scope
 
 In scope:
 
-- inspect the current build, project, and test scaffolding around AArch64 QEMU targets
-- decide which repository should move first for the generic `virt` path
-- select the first concrete code step under the boot-first policy
+- add the first generic AArch64 `plo` platform directory and minimal loader HAL files
+- add the first generic AArch64 `plo` linker template
+- keep the scaffold QEMU-`virt`-oriented and single-path, with minimal console, timer, and interrupt support
+- validate the new generic `plo` target through a direct `make -C plo base_noimg` lane in `phoenix-dev`
 
 Out of scope:
 
-- implementation code in upstream Phoenix repositories
-- introducing the new target in this planning step
-- adding Raspberry Pi-specific code in this planning step
+- `phoenix-rtos-project` target or run-script additions
+- `phoenix-rtos-tests` target additions
+- Raspberry Pi-specific code
+- full DTB-driven loader discovery or storage support
 
 ## Expected Repositories
 
+- `phoenix-rtos-plo`
 - coordination repo
 
 ## Expected Files Or Subsystems
 
+- `phoenix-rtos-plo/hal/aarch64/generic/`
+- `phoenix-rtos-plo/ld/aarch64a53-generic.ldt`
 - `docs/status.md`
 - tracking files and manifest updates for this step
 
 ## Acceptance Criteria
 
-- the chosen milestone explicitly identifies the first non-Xilinx AArch64 QEMU target shape
-- the chosen first code step is small, repo-scoped, and has a realistic validation lane
-- the result explains why that first code step was selected over nearby alternatives
+- `aarch64a53-generic` can build `plo` directly with `make -C plo base_noimg` in the copied buildroot
+- the first generic `plo` scaffold provides the minimal HAL, `_init`, timer, interrupt, console, and linker-template coverage needed by the loader
+- the result stays compile-oriented and does not widen into `phoenix-rtos-project` or test-target work
 
 ## Validation Plan
 
 - Review:
-  inspect the current build/project/test files and record the selected milestone and first code step
+  compare the new generic AArch64 `plo` scaffold with the existing `zynqmp` and other minimal `plo` platforms
 - Build:
-  not applicable
+  refresh the copied buildroot and run a direct `plo` generic build with a temporary empty `board_config.h` shim via `PROJECT_PATH`
 - Emulator:
   not applicable
 - Hardware:
@@ -55,13 +60,13 @@ Out of scope:
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-20-boot-first-fast-lane-policy.md`
+  `manifests/2026-03-20-aarch64-plo-generic-scaffold-scope.md`
 
 ## Notes
 
 - Risks:
-  the result must stay as one milestone-selection step and must not silently turn into a multi-repo implementation patch
+  the first generic `plo` scaffold must stay compile-oriented and must not widen into a full generic QEMU project in the same patch
 - Dependencies:
-  completed planning step `STEP-0047`
+  completed planning step `STEP-0054`
 - User-visible control point before next step:
-  after this planning step lands, the next slice should be the selected first code step for the generic `virt` path
+  after this implementation step lands, the next slice should be the first `aarch64a53-generic-qemu` project entry-point step
