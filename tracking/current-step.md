@@ -2,43 +2,41 @@
 
 ## Metadata
 
-- Step ID: `STEP-0240`
-- Title: Scope the smallest shared `lookup()`-contract review
+- Step ID: `STEP-0241`
+- Title: Implement the smallest root-dummyfs fast-lane image change
 - Status: `planned`
 - Date: `2026-03-21`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- choose the smallest next review step that can explain the shared
-  `lookup("/") -> -22` result on generic and Pi 4
+- make `/` exist on the generic and Pi 4 fast lanes with the smallest image
+  definition change
 
 ## Scope
 
 In scope:
 
-- inspect the `lookup()` user/kernel contract across `psh`, libphoenix, and the
-  kernel lookup path
-- identify the narrowest likely root cause for `-EINVAL`
-- document the exact next implementation step
+- add a plain root `dummyfs` syspage app before the existing `devfs` app on the
+  fast lanes
+- rebuild generic and Pi 4 images
+- verify that the root-lookup blocker moves forward
 
 Out of scope:
 
-- behavior changes
-- broad runtime tracing
-- real hardware work
+- unrelated project restructuring
 - Pi 5 or RP1 work
+- real hardware work
 
 ## Expected Repositories
 
+- `phoenix-rtos-project`
 - coordination repo
 
 ## Expected Files Or Subsystems
 
-- likely `sources/libphoenix`
-- likely `sources/phoenix-rtos-utils/psh/psh.c`
-- likely `sources/phoenix-rtos-kernel/syscalls.c`
-- likely `sources/phoenix-rtos-kernel/proc/name.c`
+- `sources/phoenix-rtos-project/_projects/aarch64a53-generic-qemu/user.plo.yaml`
+- `sources/phoenix-rtos-project/_projects/aarch64a72-generic-rpi4b/user.plo.yaml`
 - `docs/status.md`
 - `docs/testing-automation.md`
 - `manifests/`
@@ -47,32 +45,35 @@ Out of scope:
 
 ## Acceptance Criteria
 
-- the selected next step names the exact source files to review
-- the review narrows the likely root cause of the shared `-EINVAL`
-- the result names one concrete implementation follow-up
+- generic QEMU gets past the current root-lookup stall
+- Pi 4 QEMU is rerun too if the change stays in the shared fast lane
+- the result narrows the next move to one concrete follow-up
 
 ## Validation Plan
 
 - Analysis only:
-  - inspect the `lookup()` wrapper and kernel-side expectations
-  - verify whether `lookup("/", NULL, &oid)` is a valid call form
+  not applicable
+- Emulator:
+  - rebuild generic `virt`
+  - rerun generic QEMU
+  - rerun Pi 4 QEMU if the result remains shared
 - Hardware:
   not applicable
 
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-21-aarch64-psh-root-lookup-result.md`
+  `manifests/2026-03-21-aarch64-rootfs-gap-scope.md`
 
 ## Notes
 
 - Risks:
-  do not jump straight into a fix before the user/kernel `lookup()` contract is
-  re-read
+  keep the change limited to the fast-lane image definition and avoid mixing it
+  with unrelated `psh` or kernel fixes
 - Dependencies:
-  completed `STEP-0239` first-result visibility for `psh` `lookup("/")`
+  completed `STEP-0240` shared `lookup()`-contract review
 - Source reminder:
-  both lanes now prove the first observed `psh` root lookup result is `-22`
+  both lanes currently start `devfs` but no root dummyfs instance
 - User-visible control point before next step:
-  after this scope step lands, the next implementation patch should target the
-  shared `lookup()` contract mismatch only
+  after this step lands, the next follow-up should depend on how far the boot
+  advances once `/` exists
