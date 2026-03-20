@@ -2,32 +2,29 @@
 
 ## Metadata
 
-- Step ID: `STEP-0042`
-- Title: Implement explicit AArch64 public timer hook
+- Step ID: `STEP-0043`
+- Title: Define first validated public common AArch64 timer wrapper step
 - Status: `in_progress`
 - Date: `2026-03-20`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- split the AArch64 timer build glue so the public timer implementation object is selected explicitly without changing current runtime behavior
+- choose the smallest validated path for the first public common AArch64 `hal_timer*` wrapper step without switching the current ZynqMP target prematurely
 
 ## Scope
 
 In scope:
 
-- update `hal/aarch64/Makefile`
-- update `hal/aarch64/zynqmp/Makefile`
-- introduce a dedicated hook for the public timer implementation object
-- keep the current ZynqMP timer implementation selected through the new hook
-- validate the existing `aarch64a53-zynqmp-qemu` build in `phoenix-dev`
+- inspect the new public timer-implementation hook after `STEP-0042`
+- inspect the current AArch64 timer entry points and selection constraints
+- choose the smallest file set and validation lane for the first public common AArch64 timer wrapper step
 
 Out of scope:
 
 - adding a new QEMU target
-- changing the selected runtime timer implementation for any target
 - implementing the common public `hal_timer*` wrapper file itself
-- changing timer runtime behavior
+- changing any selected runtime timer implementation
 - adding PL011 console code
 - Raspberry Pi-specific code
 
@@ -38,21 +35,21 @@ Out of scope:
 
 ## Expected Files Or Subsystems
 
-- `hal/aarch64/gtimer_backend.h`
-- `hal/aarch64/gtimer_backend.c`
+- `hal/aarch64/Makefile`
+- `hal/aarch64/zynqmp/Makefile`
+- `hal/aarch64/zynqmp/timer.c`
 - tracking files and manifest updates for this step
 
 ## Acceptance Criteria
 
-- the AArch64 build exposes a dedicated hook for the public timer implementation object
-- the current ZynqMP timer implementation is still selected through that hook
-- the step does not change timer runtime behavior or switch any target to a common timer implementation
-- the existing `aarch64a53-zynqmp-qemu` build still succeeds in `phoenix-dev`
+- the next public common AArch64 timer wrapper step is scoped explicitly
+- the selected next step has a clear validation lane and exact file set
+- the selected next step avoids premature target switching or uncontrolled multi-repo expansion
 
 ## Validation Plan
 
 - Build:
-  refresh the copied buildroot and rebuild `TARGET=aarch64a53-zynqmp-qemu` with `./phoenix-rtos-build/build.sh clean host core project`
+  not applicable for this planning step
 - Emulator:
   not applicable
 - Hardware:
@@ -61,13 +58,13 @@ Out of scope:
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-20-aarch64-public-timer-hook-scope.md`
+  `manifests/2026-03-20-aarch64-public-timer-hook.md`
 
 ## Notes
 
 - Risks:
-  the step must stay build-structure-only and must not also add the common public timer implementation file
+  the first public wrapper step can easily sprawl into build, target, and runtime changes at once; the main job here is to stop that from happening
 - Dependencies:
-  completed scoping step from `STEP-0041`
+  completed implementation step `STEP-0042`
 - User-visible control point before next step:
-  after this step lands, the next slice can target the first common public timer-HAL wrapper file without reopening build glue
+  after this planning step lands, the next implementation slice should be one narrow public-wrapper step with a specific validation strategy
