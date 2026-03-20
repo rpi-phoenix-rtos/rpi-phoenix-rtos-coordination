@@ -2,32 +2,35 @@
 
 ## Metadata
 
-- Step ID: `STEP-0164`
-- Title: Validate Pi 4 QEMU lane with an official firmware DTB
+- Step ID: `STEP-0165`
+- Title: Scope Pi 4 loader user-script execution visibility
 - Status: `in_progress`
 - Date: `2026-03-20`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- determine whether replacing the current stub Pi 4 DTB with an official Raspberry Pi firmware DTB moves the `raspi4b` QEMU lane beyond the current `tty0 lookup retry` boundary
+- define the smallest next diagnostic step that distinguishes whether the Pi 4 `raspi4b` lane now stalls before opening `user.plo`, while reading it, or while executing its first commands after the official firmware DTB replaced the old stub
 
 ## Scope
 
 In scope:
 
-- acquire an official `bcm2711-rpi-4-b.dtb` from the Raspberry Pi firmware repository
-- record the exact firmware repo revision used for the validation
-- rebuild the Pi 4 project with `RPI4B_DTB_PATH` pointing to that DTB
-- rerun the Pi 4 `raspi4b` QEMU lane
-- update manifests and docs with the exact DTB source used
+- review the generated Pi 4 pre-init and `user.plo` scripts from the validated official-DTB build
+- review the narrow loader paths that own that boundary:
+  - `plo/cmds/call.c`
+  - `plo/cmds/kernel.c`
+  - `plo/phfs/phfs.c`
+  - `phoenix-rtos-project/_targets/aarch64a53/generic/preinit.plo.yaml`
+- select one bounded visibility step that will expose which phase of `call ram0 user.plo` blocks on the Pi 4 lane
+- update manifests and docs with the scoped next step
 
 Out of scope:
 
-- kernel or loader code changes
-- any new interrupt-controller policy changes
-- changing `pl011-tty` retry semantics
-- changing scheduler policy
+- loader or kernel code changes
+- changing Pi 4 image layout
+- changing DTB content or selection
+- rerunning the generic `virt` lane unless the scope review proves it is needed
 - real-hardware-only validation
 - Pi 5 or RP1 work
 - `phoenix-rtos-tests` integration
@@ -38,38 +41,37 @@ Out of scope:
 
 ## Expected Files Or Subsystems
 
-- external Raspberry Pi firmware DTB source
-- relevant generic and Pi 4 QEMU smoke notes
-- manifests and tracking updates for this implementation step
+- `plo` loader call / script / PHFS path notes
+- Pi 4 QEMU loader-script boundary notes
+- manifests and tracking updates for this planning step
 
 ## Acceptance Criteria
 
-- the exact firmware DTB source and revision are recorded
-- the Pi 4 validation uses a real firmware DTB rather than the current stub
-- the Pi 4 result shows whether a real DTB moves the lane beyond `tty0 lookup retry`
+- the reviewed loader paths are explicitly recorded
+- the next implementation step is narrowed to one loader visibility change
+- the scoped next step is specific enough to expose which phase of `call ram0 user.plo` blocks on Pi 4
 
 ## Validation Plan
 
 - Review:
-  confirm the DTB comes from the official Raspberry Pi firmware repository and record the exact revision used
+  inspect the generated Pi 4 scripts and the narrow loader call / file-read code paths
 - Build:
-  rebuild the Pi 4 project in `phoenix-dev` with `RPI4B_DTB_PATH` pointing to that DTB
+  not applicable
 - Emulator:
-  rerun:
-  - Pi 4 DTB-backed `raspi4b`
+  not applicable
 - Hardware:
   not applicable
 
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-20-aarch64-plo-entry-el-experiment.md`
+  `manifests/2026-03-20-aarch64-rpi4b-official-dtb-validation.md`
 
 ## Notes
 
 - Risks:
-  avoid mixing input-quality validation with new code changes
+  avoid widening into generic loader refactors before the Pi 4 `call` boundary is explicitly split
 - Dependencies:
-  completed `STEP-0163` scope decision
+  completed `STEP-0164` official firmware DTB validation
 - User-visible control point before next step:
-  after this step lands, the next bounded move should come from whether the real Pi 4 DTB shifts the `raspi4b` lane or whether a different Pi 4-specific blocker remains
+  after this step lands, the next bounded move should be a single `plo` visibility patch in the `call` path rather than another broad Pi 4 experiment

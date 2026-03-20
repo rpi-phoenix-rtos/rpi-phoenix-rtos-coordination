@@ -113,10 +113,13 @@ This file indexes the most important websites, repositories, documents, and sour
 - `plo/hal/aarch64/zynqmp/hal.c`
 - `plo/hal/aarch64/zynqmp/console.c`
 - `plo/cmds/script.c`
+- `plo/cmds/call.c`
 - `plo/cmds/kernel.c`
 - `plo/cmds/app.c`
 - `plo/cmds/wait.c`
+- `plo/phfs/phfs.c`
 - `plo/phfs/phfs.h`
+- `plo/devices/ram-storage/ramdrv.c`
 
 ### Build and target definitions
 
@@ -217,6 +220,13 @@ This file indexes the most important websites, repositories, documents, and sour
   Re-verify:
   - exact filenames required by the current Pi 4 bootloader release
   - whether a specific test baseline should pin the firmware repo commit rather than using the moving `master` branch
+
+- Current validated Pi 4 firmware DTB source for the `raspi4b` QEMU lane:
+  - repo commit: `63ad7e7980b030cb4649ecedf2255c9226e5a1e8`
+  - path: `boot/bcm2711-rpi-4-b.dtb`
+  - observed size: `56373` bytes
+  Re-verify:
+  - before using this exact commit as a long-lived baseline, because the firmware repository is a moving target
 
 ## 5. Raspberry Pi Hardware Documents
 
