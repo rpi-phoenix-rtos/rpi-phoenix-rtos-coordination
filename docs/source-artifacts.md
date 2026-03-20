@@ -88,6 +88,8 @@ This file indexes the most important websites, repositories, documents, and sour
 - `phoenix-rtos-kernel/hal/aarch64/aarch64.h`
 - `phoenix-rtos-kernel/hal/aarch64/gtimer.c`
 - `phoenix-rtos-kernel/hal/aarch64/gtimer.h`
+- `phoenix-rtos-kernel/hal/aarch64/gtimer_backend.c`
+- `phoenix-rtos-kernel/hal/aarch64/gtimer_backend.h`
 - `phoenix-rtos-kernel/hal/aarch64/interrupts_gicv2.c`
 - `phoenix-rtos-kernel/hal/aarch64/Makefile`
 - `phoenix-rtos-kernel/hal/Makefile`

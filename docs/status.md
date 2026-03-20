@@ -90,6 +90,7 @@ Start-gate status:
 - AArch64 now reserves `TIMER_WAKEUP_IRQ` and the scheduler can coalesce remote wakeup requests and redirect wakeup-deadline recomputation back to CPU 0, removing the main scheduler-side blocker for a future CPU-local architectural timer backend.
 - The common AArch64 build now compiles a source-keyed `gtimer` helper layer, so the next backend work can focus on backend state and policy instead of raw physical-versus-virtual sysreg branching.
 - The common AArch64 build now also compiles a generic timer backend-state layer that owns the selected source, IRQ, and frequency, so the next backend work can add behavior helpers without redoing state discovery.
+- The backend-state layer now exposes raw-count, count-to-microseconds, and current-time helpers, so the next backend work can focus on forward conversion and wakeup programming instead of reopening current-time reads.
 - Phoenix upstream style is conservative and review-oriented: file headers, tabs in C, localized `clang-format off/on`, direct control flow, `static const` hardware tables, and warning-clean builds enforced by `-Werror` in `phoenix-rtos-build/Makefile.common`.
 - Pi 4 uses BCM2711 with GIC-400, PL011, BCM2711 PCIe, VL805 xHCI over PCIe, GENET Ethernet, and Broadcom SDHCI.
 - Pi 5 uses BCM2712 plus RP1, with most I/O behind a PCIe-connected southbridge-like peripheral controller.
