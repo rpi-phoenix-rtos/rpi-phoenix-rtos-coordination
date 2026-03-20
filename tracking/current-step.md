@@ -2,28 +2,26 @@
 
 ## Metadata
 
-- Step ID: `STEP-0074`
-- Title: Define smallest generic AArch64 `libphoenix` reboot-support step
+- Step ID: `STEP-0075`
+- Title: Make `libphoenix` AArch64 reboot support generic
 - Status: `in_progress`
 - Date: `2026-03-20`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- define the next smallest generic AArch64 source change that removes a hard build blocker without pulling in board-device policy
+- apply the next smallest generic AArch64 source change that removes a hard build blocker without pulling in board-device policy
 
 ## Scope
 
 In scope:
 
-- inspect `libphoenix/arch/aarch64/reboot.c`
-- determine whether the current non-ZynqMP `#error` can be removed cleanly for the generic target
-- choose the narrowest safe `libphoenix` change
-- keep the step planning-only
+- remove the unused ZynqMP-only include guard and generic-target `#error` from `libphoenix/arch/aarch64/reboot.c`
+- validate `libphoenix` directly for `aarch64a53-generic-qemu` in `phoenix-dev`
+- stop before changing any other repo
 
 Out of scope:
 
-- implementation code in this planning step
 - changes in `phoenix-rtos-devices`
 - Pi 4 board-specific code
 - Raspberry Pi-specific code
@@ -40,20 +38,20 @@ Out of scope:
 - `libphoenix/arch/aarch64/reboot.c`
 - `docs/status.md`
 - tracking files and manifest updates for this step
-- `libphoenix` blocker analysis
+- direct generic-target build output from `libphoenix`
 
 ## Acceptance Criteria
 
-- the result names the smallest safe `libphoenix` change to apply next
-- the result explains why that change is preferred over defining a generic device target first
-- the step remains planning-only
+- `libphoenix` no longer hard-errors on non-ZynqMP AArch64 targets
+- `libphoenix` validates directly on `aarch64a53-generic-qemu`
+- the result records the next smallest remaining generic-lane blocker
 
 ## Validation Plan
 
 - Review:
-  inspect `libphoenix/arch/aarch64/reboot.c` and the generic-target build blockers
+  inspect `libphoenix/arch/aarch64/reboot.c` and keep the change minimal
 - Build:
-  not applicable
+  validate `libphoenix` directly for `aarch64a53-generic-qemu` in `phoenix-dev`
 - Emulator:
   not applicable
 - Hardware:
@@ -62,13 +60,13 @@ Out of scope:
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-20-aarch64-generic-utils-target.md`
+  `manifests/2026-03-20-aarch64-generic-libphoenix-reboot-scope.md`
 
 ## Notes
 
 - Risks:
   the result must stay as one repo-local unblock step and must not silently turn into multi-repo implementation work
 - Dependencies:
-  completed implementation step `STEP-0073`
+  completed implementation step `STEP-0074`
 - User-visible control point before next step:
-  after this planning step lands, the next slice should be the selected `libphoenix` change
+  after this repo-local unblock lands, the next slice should be the next smallest remaining generic-lane blocker
