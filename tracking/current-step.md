@@ -2,75 +2,78 @@
 
 ## Metadata
 
-- Step ID: `STEP-0113`
-- Title: Stage operator-supplied Raspberry Pi firmware files into the Pi 4 boot tree
+- Step ID: `STEP-0114`
+- Title: Refresh the Linux VM QEMU lane to a `raspi4b`-capable stable release
 - Status: `in_progress`
 - Date: `2026-03-20`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- implement the smallest project-local step that lets the Pi 4 staged boot tree include operator-supplied Raspberry Pi firmware files
+- replace the current Ubuntu-packaged QEMU-only Pi 4 emulation limitation with a documented VM-local QEMU lane that can emulate `raspi4b`
 
 ## Scope
 
 In scope:
 
-- update `phoenix-rtos-project/_projects/aarch64a53-generic-rpi4b/build.project`
-- add an optional firmware-directory input for the Pi 4 project
-- copy the supplied Raspberry Pi firmware files into `_boot/aarch64a53-generic-rpi4b/rpi4b/`
-- keep default no-firmware builds green
+- verify the current Ubuntu 24.04 packaged QEMU limitation in `phoenix-dev`
+- build and install a newer QEMU side-by-side in VM-local storage
+- prefer the latest stable QEMU release that is practical on `2026-03-20`
+- validate that the newer QEMU exposes a `raspi4b` machine
+- attempt one first Pi 4-oriented no-hardware smoke invocation with the new QEMU binary
+- update the host/testing/manual docs with the exact QEMU strategy and binary path
 
 Out of scope:
 
-- broad Pi 4 storage-driver work
-- changes to the already validated Pi 4 `plo` MMIO override path
-- kernel Pi 4 driver enablement
-- bundling a DTB source into the repo
-- FAT image packaging or SD writing automation
+- replacing the Ubuntu package with mixed third-party apt repositories
+- broad Pi 4 peripheral-debug work beyond a first smoke attempt
 - real-hardware-only validation
 - Pi 5 or RP1 work
 - `phoenix-rtos-tests` integration
+- changing the existing packaged QEMU-based generic `virt` lane
 
 ## Expected Repositories
 
 - coordination repo
-- `phoenix-rtos-project`
 
 ## Expected Files Or Subsystems
 
-- `phoenix-rtos-project/_projects/aarch64a53-generic-rpi4b/build.project`
-- staged `_boot/aarch64a53-generic-rpi4b/rpi4b/` contents
+- `docs/host-macos-apple-silicon.md`
+- `docs/testing-automation.md`
 - `docs/manual-operator-instructions.md`
-- manifests and tracking updates for this implementation step
+- `docs/source-artifacts.md`
+- manifests and tracking updates for this environment step
 
 ## Acceptance Criteria
 
-- the Pi 4 project accepts an operator-supplied firmware directory input
-- when that input is supplied, the expected firmware files are staged into `_boot/aarch64a53-generic-rpi4b/rpi4b/`
-- default no-firmware builds remain green
+- the documented `phoenix-dev` packaged QEMU limitation is confirmed with concrete version and machine-list evidence
+- a newer VM-local QEMU stable build exists at a documented path
+- the newer binary exposes `raspi4b` in `-machine help`
+- at least one first Pi 4-oriented no-hardware smoke invocation is run with the new binary and its result is documented, even if the boot is incomplete
 
 ## Validation Plan
 
 - Review:
-  inspect the firmware staging path for minimality and confirm it does not interfere with ordinary no-hardware builds
+  inspect the selected QEMU strategy for minimal blast radius and confirm the packaged Ubuntu QEMU path remains available as fallback
 - Build:
-  run the Pi 4 project build
+  build and install the newer QEMU in VM-local storage
 - Emulator:
-  not required
+  run `qemu-system-aarch64 --version`
+  run `qemu-system-aarch64 -machine help`
+  attempt one Pi 4 boot or smoke invocation with the staged Phoenix Pi 4 artifacts
 - Hardware:
   not applicable
 
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-20-aarch64-rpi4b-firmware-file-staging-scope.md`
+  `manifests/2026-03-20-aarch64-rpi4b-firmware-file-staging.md`
 
 ## Notes
 
 - Risks:
-  the step must stay at artifact staging only and must not silently widen into FAT-image generation, media writing, or bootloader policy changes
+  keep the new QEMU side-by-side and VM-local; do not destabilize the existing packaged QEMU lane or widen this step into unrelated Pi 4 bootloader design changes
 - Dependencies:
-  completed planning step `STEP-0112`
+  completed `STEP-0113`
 - User-visible control point before next step:
-  after this step lands, the next bounded decision should come from whether to package the staged Pi 4 boot tree into a reproducible FAT image or move directly to the first real-board smoke attempt
+  after this step lands, the next bounded decision should come from the first `raspi4b` smoke result: either trim the first emulated boot blocker or, if the smoke is already useful, turn it into a repeatable documented QEMU lane
