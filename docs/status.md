@@ -374,6 +374,13 @@ Start-gate status:
 - so the local-controller detour is not on the active Pi 4 QEMU timer path,
   and the next bounded move should restore that fast lane baseline before
   resuming direct GTIMER-to-GIC debugging
+- that fast-lane restore is now complete:
+  - Pi 4 QEMU is back to `gic: timer handler set grp 1 en 1`
+  - Pi 4 QEMU again reports only `gtimer: pending 0` and
+    `gtimer: ppi pending 0`
+  - no local-controller traces remain in the active fast lane
+- the next direct-GIC split should now probe the CPU-interface pending view
+  itself through `GICC_HPPIR`
 - the next concrete Pi 4 boot blocker is now loader MMIO addressing: `sources/plo/hal/aarch64/generic/config.h` still hardcodes QEMU `virt` UART and GIC base addresses, so the current Pi 4 `kernel8.img` would still talk to the wrong MMIO blocks on real hardware until those addresses are made board-overridable.
 - generic `plo` now accepts project-local MMIO base overrides for UART0 and GICv2 while preserving the current QEMU `virt` defaults, and the generic `virt` smoke lane still boots after that change.
 - the current Pi 4 firmware handoff no longer appears to have a raw loader placement mismatch: `kernel_address=0x40080000` in the Pi 4 `config.txt` matches `ADDR_PLO 0x40080000` in `plo/ld/aarch64a53-generic.ldt`.
