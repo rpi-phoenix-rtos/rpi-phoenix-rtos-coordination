@@ -226,7 +226,10 @@ Start-gate status:
 - the Pi 4 lane also prints repeated assembly markers such as `AAA333` and a later `A3`, which strongly suggests that multiple cores are taking the same generic loader EL3 handoff path during the Pi 4 `-smp 4` run.
 - generic `virt -smp 4` now confirms that repeated EL3 handoff markers are a generic multi-core loader behavior, not the Pi 4 failure by themselves, because the generic lane still reaches the kernel banner and later startup logs.
 - the current generic kernel target still declares `NUM_CPUS 1U` in `phoenix-rtos-kernel/hal/aarch64/generic/config.h`, so handing off multiple loader CPUs into this target is at least a design mismatch even though generic `virt -smp 4` happens to boot.
-- the next bounded follow-up should now be a controlled generic loader secondary-core containment experiment, because the current generic kernel target still declares `NUM_CPUS 1U` while the generic loader releases trapped non-boot CPUs into the shared EL handoff path on `-smp 4` lanes.
+- the generic secondary-core containment experiment is now complete: generic `plo` keeps non-boot CPUs parked across the current handoff, generic `virt -smp 4` still reaches the kernel banner, and Pi 4 `raspi4b -smp 4` now shows only a single `A3` before timing out.
+- secondary-core release was therefore not the root cause of the Pi 4 failure after the EL3 transfer; it was only adding noisy repeated handoff markers.
+- the next bounded split is now the earliest visible generic AArch64 kernel entry point after that single `A3` marker.
+- the earliest-kernel-entry visibility step is now scoped: add a raw PL011 marker at generic kernel `_start`, using project `board_config.h` for the early UART base on both generic QEMU and Pi 4, and keep the change limited to `hal/aarch64/_init.S` plus generic config glue.
 - the next concrete Pi 4 boot blocker is now loader MMIO addressing: `sources/plo/hal/aarch64/generic/config.h` still hardcodes QEMU `virt` UART and GIC base addresses, so the current Pi 4 `kernel8.img` would still talk to the wrong MMIO blocks on real hardware until those addresses are made board-overridable.
 - generic `plo` now accepts project-local MMIO base overrides for UART0 and GICv2 while preserving the current QEMU `virt` defaults, and the generic `virt` smoke lane still boots after that change.
 - the current Pi 4 firmware handoff no longer appears to have a raw loader placement mismatch: `kernel_address=0x40080000` in the Pi 4 `config.txt` matches `ADDR_PLO 0x40080000` in `plo/ld/aarch64a53-generic.ldt`.
@@ -239,10 +242,10 @@ Start-gate status:
 
 ## Immediate Next Implementation Milestones
 
-1. Keep non-boot CPUs parked across the current generic loader handoff and rerun both `virt -smp 4` and Pi 4 `raspi4b -smp 4`.
-2. Use that result to choose the next smallest Pi 4-specific follow-up:
-   - earliest kernel-entry visibility
-   - or the next board-specific handoff / MMIO step if the boundary moves
+1. Add the smallest earliest-kernel-entry marker on the generic AArch64 kernel path and rerun both `virt` and Pi 4 `raspi4b`.
+2. Use that result to divide the Pi 4 failure into:
+   - failure before kernel `_start`
+   - or failure inside the first generic kernel instructions after `_start`
 3. Bring the Pi 4 QEMU lane back past the loader handoff and into the same kernel / user-space startup band already reached with the generic fast lane.
 4. Bring the Pi 4 QEMU lane from loader success to a usable shell or equivalent stable console-ready state.
 5. Once the fast lanes reach stable console readiness, switch the next bounded steps back to firmware-bundle completeness and first real-device smoke preparation.
