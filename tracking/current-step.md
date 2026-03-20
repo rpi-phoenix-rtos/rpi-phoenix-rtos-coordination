@@ -2,29 +2,28 @@
 
 ## Metadata
 
-- Step ID: `STEP-0027`
-- Title: Define the first source-agnostic AArch64 timer helper step
+- Step ID: `STEP-0028`
+- Title: Implement common AArch64 `gtimer` helper layer
 - Status: `in_progress`
 - Date: `2026-03-20`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- define the first narrow common AArch64 architectural timer helper step that removes the physical-versus-virtual timer sysreg split from future backend code
+- add a compiled common AArch64 `gtimer` helper layer that hides the physical-versus-virtual timer sysreg split from future backend code while preserving current runtime behavior
 
 ## Scope
 
 In scope:
 
-- inspect the current AArch64 architectural timer helpers and DTB source-selection API after `STEP-0026`
-- choose the first source-agnostic helper shape for physical-versus-virtual timer operations
-- select the smallest exact touched-file set for that helper step
-- keep this as a planning and scoping step only
+- add `hal/aarch64/gtimer.h`
+- add `hal/aarch64/gtimer.c`
+- compile the helper in the current common AArch64 build
+- preserve the existing ZynqMP runtime path and validate the existing `aarch64a53-zynqmp-qemu` build in `phoenix-dev`
 
 Out of scope:
 
 - adding a new QEMU target
-- implementing the selected helper step itself
 - changing the timer backend implementation itself
 - implementing the common generic timer runtime backend itself
 - adding PL011 console code
@@ -32,25 +31,26 @@ Out of scope:
 
 ## Expected Repositories
 
+- `phoenix-rtos-kernel`
 - coordination repo
-- likely `phoenix-rtos-kernel`
 
 ## Expected Files Or Subsystems
 
-- `hal/aarch64/aarch64.h`
-- `hal/aarch64/dtb.h`
-- possibly a new common AArch64 timer-helper header
-- tracking files and manifest updates for the chosen next step
+- `hal/aarch64/Makefile`
+- `hal/aarch64/gtimer.h`
+- `hal/aarch64/gtimer.c`
+- tracking files and manifest updates for this step
 
 ## Acceptance Criteria
 
-- the first source-agnostic AArch64 timer helper step is explicitly scoped with exact touched files, rationale, validation command, and success criteria
-- the selected helper step is narrow enough to implement and validate in one controlled follow-up session
+- the common AArch64 build now compiles a `gtimer` helper layer
+- the helper layer exposes source-keyed access for counter reads, control reads and writes, timer programming, and source naming
+- the existing `aarch64a53-zynqmp-qemu` build still succeeds in `phoenix-dev`
 
 ## Validation Plan
 
 - Build:
-  not applicable
+  refresh the copied buildroot and rebuild `TARGET=aarch64a53-zynqmp-qemu` with `./phoenix-rtos-build/build.sh clean host core project`
 - Emulator:
   not applicable
 - Hardware:
@@ -59,13 +59,13 @@ Out of scope:
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-20-aarch64-cpu0-wakeup-timer-notification.md`
+  `manifests/2026-03-20-aarch64-gtimer-helper-step-scope.md`
 
 ## Notes
 
 - Risks:
-  the next step must not turn into a full generic backend or duplicate the backend policy already encoded in the DTB API
+  the step must remain helper-only and must not introduce duplicate public timer-backend policy
 - Dependencies:
-  completed CPU0 wakeup-notification step from `STEP-0026`
+  completed scoping step from `STEP-0027`
 - User-visible control point before next step:
-  the next code change should introduce only the smallest source-agnostic timer helper layer, not the full backend
+  after this helper layer lands, the next step should either start a generic backend skeleton on top of it or stop for re-scoping
