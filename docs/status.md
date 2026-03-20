@@ -381,6 +381,12 @@ Start-gate status:
   - no local-controller traces remain in the active fast lane
 - the next direct-GIC split should now probe the CPU-interface pending view
   itself through `GICC_HPPIR`
+- that `GICC_HPPIR` probe is now complete:
+  - generic lane reports `gtimer: hppir 1023` after a successful dispatch
+  - Pi 4 QEMU lane reports `gtimer: hppir 0` while dispatch is still absent
+- the next bounded follow-up should stay read-only and explain the Pi 4
+  CPU-interface view, most likely by probing the alias or alternate pending
+  register path before changing any timer or interrupt policy
 - the next concrete Pi 4 boot blocker is now loader MMIO addressing: `sources/plo/hal/aarch64/generic/config.h` still hardcodes QEMU `virt` UART and GIC base addresses, so the current Pi 4 `kernel8.img` would still talk to the wrong MMIO blocks on real hardware until those addresses are made board-overridable.
 - generic `plo` now accepts project-local MMIO base overrides for UART0 and GICv2 while preserving the current QEMU `virt` defaults, and the generic `virt` smoke lane still boots after that change.
 - the current Pi 4 firmware handoff no longer appears to have a raw loader placement mismatch: `kernel_address=0x40080000` in the Pi 4 `config.txt` matches `ADDR_PLO 0x40080000` in `plo/ld/aarch64a53-generic.ldt`.
