@@ -2,27 +2,25 @@
 
 ## Metadata
 
-- Step ID: `STEP-0173`
-- Title: Validate generic multi-core loader handoff behavior
+- Step ID: `STEP-0174`
+- Title: Scope earliest kernel-entry visibility on Pi 4
 - Status: `in_progress`
 - Date: `2026-03-20`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- determine whether the repeated Pi 4 assembly handoff markers are a Pi 4-specific effect or the generic result of releasing multiple loader CPUs into the same kernel entry path
+- define the smallest next visibility step that distinguishes whether the Pi 4 official-DTB lane reaches the first instructions of kernel `_start` after the EL3 `eret`
 
 ## Scope
 
 In scope:
 
-- reuse the current validated generic build artifacts with the new assembly markers
-- rerun generic `virt` with `-smp 4`
-- compare the generic `virt` `-smp 4` output against:
-  - generic `virt` `-smp 1`
-  - Pi 4 `raspi4b` `-smp 4`
-- record whether repeated assembly handoff markers or a missing kernel banner also appear on generic multi-core `virt`
-- update manifests and docs with the result
+- review the earliest kernel AArch64 entry path:
+  - `phoenix-rtos-kernel/hal/aarch64/_init.S`
+  - any generic early console assumptions needed for a tiny raw marker
+- select one bounded earliest-entry visibility step
+- update manifests and docs with the scoped next step
 
 Out of scope:
 
@@ -40,37 +38,37 @@ Out of scope:
 
 ## Expected Files Or Subsystems
 
-- generic and Pi 4 multi-core QEMU handoff notes
-- manifests and tracking updates for this validation step
+- earliest kernel entry notes
+- Pi 4 QEMU post-`eret` boundary notes
+- manifests and tracking updates for this planning step
 
 ## Acceptance Criteria
 
-- the generic `virt` `-smp 4` run is recorded
-- the result clearly says whether multi-core loader handoff failure is generic or Pi 4-specific
-- the next step is chosen from that result rather than from speculation alone
+- the generic `virt -smp 4` result is reflected in the scoped next step
+- the next implementation step is narrowed to one earliest-kernel-entry visibility change
+- the scoped next step is specific enough to divide post-`eret` failure from later kernel initialization
 
 ## Validation Plan
 
 - Review:
-  compare the exact marker sequences across the three emulator runs
+  inspect the earliest kernel `_start` path and its feasibility for a tiny raw marker
 - Build:
-  not applicable if existing validated build artifacts remain available
+  not applicable
 - Emulator:
-  rerun:
-  - generic `virt` with `-smp 4`
+  not applicable
 - Hardware:
   not applicable
 
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-20-aarch64-rpi4b-el-exit-visibility.md`
+  `manifests/2026-03-20-aarch64-generic-qemu-smp4-handoff-validation.md`
 
 ## Notes
 
 - Risks:
-  avoid changing loader semantics before proving whether the multi-core symptom is generic
+  avoid widening into large kernel instrumentation instead of a tiny earliest-entry probe
 - Dependencies:
-  completed `STEP-0172` assembly-side Pi 4 EL-exit visibility
+  completed `STEP-0173` generic multi-core loader handoff validation
 - User-visible control point before next step:
-  after this step lands, the next bounded move should either be a controlled secondary-core containment experiment or an earliest-kernel-entry probe, depending on whether generic `virt -smp 4` reproduces the same failure
+  after this step lands, the next bounded move should be a tiny earliest-kernel-entry probe rather than a speculative secondary-core containment change
