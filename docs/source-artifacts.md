@@ -182,6 +182,9 @@ This file indexes the most important websites, repositories, documents, and sour
 - `phoenix-rtos-kernel/hal/aarch64/gtimer_timer.c`
   Important because `hal_timerRegister()` and `hal_timerSetWakeup()` are now the narrowest common AArch64 timer arming path after `proc/threads.c` proved that sleep enqueue and wakeup programming are reached on the generic lane.
 
+- `phoenix-rtos-kernel/hal/aarch64/interrupts_gicv2.c`
+  Important because the next bounded diagnostic needs to prove whether the selected timer IRQ is actually registered in GICv2 and whether it is ever dispatched before control would reach `threads_timeintr()`.
+
 ## 4. Raspberry Pi Official Documentation
 
 - Raspberry Pi configuration and boot documentation:
