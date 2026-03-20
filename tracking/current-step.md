@@ -2,23 +2,23 @@
 
 ## Metadata
 
-- Step ID: `STEP-0090`
-- Title: Define the first generic userspace-start diagnostic step
+- Step ID: `STEP-0091`
+- Title: Add a direct PL011 startup banner to `pl011-tty`
 - Status: `in_progress`
 - Date: `2026-03-20`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- identify the smallest diagnostic step that can prove whether generic userspace startup is reaching the packaged console path
+- add the smallest direct userspace-start diagnostic that can prove whether the generic runtime path reaches `pl011-tty`
 
 ## Scope
 
 In scope:
 
-- inspect the updated smoke result after packaging `dummyfs`, `pl011-tty`, and `psh`
-- choose the smallest runtime diagnostic that can distinguish “userspace not reached” from “userspace reached but silent”
-- stop before implementing that diagnostic
+- update `phoenix-rtos-devices/tty/pl011-tty/pl011-tty.c`
+- emit a raw PL011 banner after the UART mapping and configuration succeed
+- rebuild the needed generic artifacts and rerun the generic QEMU smoke lane
 
 Out of scope:
 
@@ -44,16 +44,16 @@ Out of scope:
 
 ## Acceptance Criteria
 
-- the next diagnostic step is selected from the updated smoke evidence
-- the follow-up stays as one small implementation commit where possible
-- the selected step advances the generic QEMU fast lane directly
+- `pl011-tty` emits a raw startup banner on the generic QEMU path
+- the needed artifacts are rebuilt and repackaged
+- the generic QEMU smoke lane is rerun from the refreshed image
 
 ## Validation Plan
 
 - Review:
-  inspect the updated runtime state and keep the selected diagnostic minimal
+  inspect the `pl011-tty` diagnostic change and keep it minimal and localized
 - Build:
-  use existing runtime evidence and nearby code patterns to choose the smallest useful diagnostic
+  rebuild the needed generic artifacts in `phoenix-dev`
 - Emulator:
   not applicable
 - Hardware:
@@ -62,13 +62,13 @@ Out of scope:
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-20-aarch64-generic-psh.md`
+  `manifests/2026-03-20-aarch64-generic-userspace-diagnostic-scope.md`
 
 ## Notes
 
 - Risks:
-  the result must stay as a diagnostic-planning step and must not silently turn into multi-change bring-up
+  the result must stay as one localized diagnostic step and must not silently turn into broader console-driver refactoring
 - Dependencies:
-  completed implementation step `STEP-0089`
+  completed implementation step `STEP-0090`
 - User-visible control point before next step:
-  after the diagnostic step is selected, the follow-up implementation should stay narrow and validation-driven
+  after the diagnostic step lands, the next step should be chosen from the new smoke output
