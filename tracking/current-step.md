@@ -2,26 +2,30 @@
 
 ## Metadata
 
-- Step ID: `STEP-0100`
-- Title: Define the first Pi 4 firmware-facing boot-staging step
+- Step ID: `STEP-0101`
+- Title: Stage the first Pi 4 firmware boot-tree artifacts
 - Status: `in_progress`
 - Date: `2026-03-20`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- identify the smallest project-local artifact step that moves the new Pi 4 scaffold toward a firmware-bootable SD/boot-partition layout
+- add the smallest project-local boot-tree staging step that produces firmware-visible Pi 4 boot artifacts from the current scaffold
 
 ## Scope
 
 In scope:
 
-- inspect the newly validated Pi 4 project scaffold together with Raspberry Pi firmware boot requirements already documented in this repo
-- choose the smallest next project-local staging step that can prepare firmware-visible boot artifacts without real hardware
-- stop before implementing that staging step
+- update `phoenix-rtos-project/_projects/aarch64a53-generic-rpi4b/build.project`
+- stage a Pi 4 boot directory under `_boot/aarch64a53-generic-rpi4b/`
+- add a project-local `config.txt`
+- copy the raw `plo` image under a firmware-facing kernel filename
+- document the remaining DTB and firmware-handoff blockers in the manifest
 
 Out of scope:
 
+- FAT image generation
+- DTB generation or import
 - broad loader or kernel Pi 4 support
 - real-hardware-only validation
 - Pi 5 or RP1 work
@@ -34,25 +38,25 @@ Out of scope:
 
 ## Expected Files Or Subsystems
 
-- `phoenix-rtos-project/_projects/aarch64a53-generic-rpi4b/*`
-- `phoenix-rtos-project/_targets/aarch64a53/generic/*`
+- `phoenix-rtos-project/_projects/aarch64a53-generic-rpi4b/build.project`
+- `phoenix-rtos-project/_projects/aarch64a53-generic-rpi4b/config.txt`
+- `_boot/aarch64a53-generic-rpi4b/rpi4b/`
 - Pi 4 boot-staging documentation and manifest updates
 - `docs/status.md`
 - tracking files and manifest updates for this step
-- Raspberry Pi firmware boot requirements already documented in this repo
 
 ## Acceptance Criteria
 
-- the next Pi 4 boot-staging step is selected from current scaffold and documented firmware facts
-- the follow-up stays as one small implementation commit where possible
-- the selected step directly improves the path to a first Pi 4 firmware -> `plo` boot attempt
+- the Pi 4 project stages a firmware-facing boot directory in `_boot`
+- the staged directory contains a project-local `config.txt` and a renamed raw `plo` image
+- the no-hardware Pi 4 build lane still succeeds in `phoenix-dev`
 
 ## Validation Plan
 
 - Review:
-  inspect the Pi 4 scaffold outputs and documented firmware requirements together
+  inspect the staged artifact names and config choices against the documented Raspberry Pi firmware behavior
 - Build:
-  use local project state and already-collected Raspberry Pi documentation to choose the smallest useful staging follow-up
+  run `LIBPHOENIX_DEVEL_MODE=n TARGET=aarch64a53-generic-rpi4b ./phoenix-rtos-build/build.sh host core project image` in `phoenix-dev`
 - Emulator:
   not applicable
 - Hardware:
@@ -61,13 +65,13 @@ Out of scope:
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-20-aarch64-rpi4b-project-scaffold.md`
+  `manifests/2026-03-20-aarch64-rpi4b-firmware-staging-scope.md`
 
 ## Notes
 
 - Risks:
-  the result must stay as a localized planning step and must not silently widen into a broad firmware-packaging or loader-port batch
+  the result must stay as one localized boot-staging step and must not silently widen into DTB import or loader handoff work
 - Dependencies:
-  completed implementation step `STEP-0099`
+  completed planning step `STEP-0100`
 - User-visible control point before next step:
-  after the next staging step is selected, implementation should stay project-local unless a stronger firmware or loader dependency emerges
+  after the staging step lands, the next follow-up should be selected from the staged artifact gap, not from broad board bring-up wishlisting
