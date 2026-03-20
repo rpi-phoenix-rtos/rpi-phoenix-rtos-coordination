@@ -151,6 +151,7 @@ Start-gate status:
 - the next concrete Pi 4 boot blocker is now loader MMIO addressing: `sources/plo/hal/aarch64/generic/config.h` still hardcodes QEMU `virt` UART and GIC base addresses, so the current Pi 4 `kernel8.img` would still talk to the wrong MMIO blocks on real hardware until those addresses are made board-overridable.
 - generic `plo` now accepts project-local MMIO base overrides for UART0 and GICv2 while preserving the current QEMU `virt` defaults, and the generic `virt` smoke lane still boots after that change.
 - the current Pi 4 firmware handoff no longer appears to have a raw loader placement mismatch: `kernel_address=0x40080000` in the Pi 4 `config.txt` matches `ADDR_PLO 0x40080000` in `plo/ld/aarch64a53-generic.ldt`.
+- the next Pi 4 deployment blocker is now firmware-file completeness rather than loader placement: the staged `_boot/.../rpi4b/` tree still lacks Raspberry Pi firmware files, so it is not yet a self-contained first-partition boot bundle.
 - Phoenix upstream style is conservative and review-oriented: file headers, tabs in C, localized `clang-format off/on`, direct control flow, `static const` hardware tables, and warning-clean builds enforced by `-Werror` in `phoenix-rtos-build/Makefile.common`.
 - Pi 4 uses BCM2711 with GIC-400, PL011, BCM2711 PCIe, VL805 xHCI over PCIe, GENET Ethernet, and Broadcom SDHCI.
 - Pi 5 uses BCM2712 plus RP1, with most I/O behind a PCIe-connected southbridge-like peripheral controller.

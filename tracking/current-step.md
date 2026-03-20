@@ -2,32 +2,32 @@
 
 ## Metadata
 
-- Step ID: `STEP-0111`
-- Title: Make generic `plo` MMIO base addresses board-overridable for Pi 4
+- Step ID: `STEP-0113`
+- Title: Stage operator-supplied Raspberry Pi firmware files into the Pi 4 boot tree
 - Status: `in_progress`
 - Date: `2026-03-20`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- implement the smallest loader-side step that stops Pi 4 `kernel8.img` from assuming QEMU `virt` UART and GIC base addresses
+- implement the smallest project-local step that lets the Pi 4 staged boot tree include operator-supplied Raspberry Pi firmware files
 
 ## Scope
 
 In scope:
 
-- update `plo/hal/aarch64/generic/config.h`
-- update `phoenix-rtos-project/_projects/aarch64a53-generic-rpi4b/board_config.h`
-- add optional board-config override macros for generic `plo` UART0, GIC distributor, and GIC CPU-interface base addresses
-- preserve the current QEMU `virt` defaults when no board overrides are supplied
+- update `phoenix-rtos-project/_projects/aarch64a53-generic-rpi4b/build.project`
+- add an optional firmware-directory input for the Pi 4 project
+- copy the supplied Raspberry Pi firmware files into `_boot/aarch64a53-generic-rpi4b/rpi4b/`
+- keep default no-firmware builds green
 
 Out of scope:
 
 - broad Pi 4 storage-driver work
-- DTB propagation, which is now complete
+- changes to the already validated Pi 4 `plo` MMIO override path
 - kernel Pi 4 driver enablement
-- runtime Pi 4 timer, mailbox, or framebuffer support
-- firmware policy changes unrelated to `plo` MMIO addressing
+- bundling a DTB source into the repo
+- FAT image packaging or SD writing automation
 - real-hardware-only validation
 - Pi 5 or RP1 work
 - `phoenix-rtos-tests` integration
@@ -35,44 +35,42 @@ Out of scope:
 ## Expected Repositories
 
 - coordination repo
-- `plo`
 - `phoenix-rtos-project`
 
 ## Expected Files Or Subsystems
 
-- `plo/hal/aarch64/generic/config.h`
-- `phoenix-rtos-project/_projects/aarch64a53-generic-rpi4b/board_config.h`
-- generic QEMU `plo` smoke lane
-- Pi 4 project-local build artifacts
+- `phoenix-rtos-project/_projects/aarch64a53-generic-rpi4b/build.project`
+- staged `_boot/aarch64a53-generic-rpi4b/rpi4b/` contents
+- `docs/manual-operator-instructions.md`
 - manifests and tracking updates for this implementation step
 
 ## Acceptance Criteria
 
-- generic `plo` now accepts optional board-config MMIO base overrides for UART0 and GICv2
-- the generic QEMU build and smoke lane remain green with default values
-- the Pi 4 project now compiles `plo` with Pi 4-specific MMIO addresses instead of the generic QEMU hardcoded set
+- the Pi 4 project accepts an operator-supplied firmware directory input
+- when that input is supplied, the expected firmware files are staged into `_boot/aarch64a53-generic-rpi4b/rpi4b/`
+- default no-firmware builds remain green
 
 ## Validation Plan
 
 - Review:
-  inspect the override path for minimality and confirm that the QEMU default path is still the fallback
+  inspect the firmware staging path for minimality and confirm it does not interfere with ordinary no-hardware builds
 - Build:
-  run both the generic QEMU and Pi 4 project builds
+  run the Pi 4 project build
 - Emulator:
-  rerun the known-good generic QEMU smoke lane
+  not required
 - Hardware:
   not applicable
 
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-20-aarch64-rpi4b-plo-address-override-scope.md`
+  `manifests/2026-03-20-aarch64-rpi4b-firmware-file-staging-scope.md`
 
 ## Notes
 
 - Risks:
-  the step must stay at the config/address-override layer and must not silently widen into timer, DTB parsing, or full Pi 4 interrupt-controller bring-up
+  the step must stay at artifact staging only and must not silently widen into FAT-image generation, media writing, or bootloader policy changes
 - Dependencies:
-  completed planning step `STEP-0110`
+  completed planning step `STEP-0112`
 - User-visible control point before next step:
-  after this step lands, the next bounded decision should come from the remaining first-boot blockers in the Pi 4 loader or kernel path rather than from more artifact-only staging work
+  after this step lands, the next bounded decision should come from whether to package the staged Pi 4 boot tree into a reproducible FAT image or move directly to the first real-board smoke attempt

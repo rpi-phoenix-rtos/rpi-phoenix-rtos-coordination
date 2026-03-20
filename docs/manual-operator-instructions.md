@@ -278,6 +278,21 @@ Current practical rule:
 - ordinary no-hardware validation may omit the DTB
 - before the first realistic Pi 4 firmware-boot test, the operator or agent must provide a real `bcm2711-rpi-4-b.dtb` through one of the two inputs above unless the boot flow is later changed and this document is updated
 
+### Required Raspberry Pi firmware-file input for real Pi 4 boot attempts
+
+The current staged Pi 4 boot tree is still not self-contained unless Raspberry Pi firmware files are provided separately.
+
+Before the first realistic Pi 4 firmware boot attempt, the operator must provide a known-good Raspberry Pi 4 firmware-file set containing at least the files required by the current bootloader release, typically including files such as:
+
+- `start4.elf`
+- `fixup4.dat`
+
+Current practical rule:
+
+- do not assume the staged Phoenix Pi 4 tree is bootable on bare media by itself
+- pair the staged Phoenix files with a known-good Raspberry Pi firmware-file set from the same validation baseline
+- re-verify the exact required firmware filenames against the current Raspberry Pi bootloader release before depending on them
+
 ### Current staged Pi 4 firmware boot-tree contents
 
 The current early Pi 4 firmware-facing boot tree now stages:
@@ -292,6 +307,7 @@ Current payload rule:
 - `config.txt` uses `initramfs loader.disk 0x48000000`
 - this matches generic `plo` `RAM_ADDR`
 - when preparing real Pi 4 boot media from the staged tree, keep `loader.disk` beside `kernel8.img`; it is no longer only a QEMU-side artifact
+- the current staged tree still also needs Raspberry Pi firmware files; `config.txt`, `kernel8.img`, `loader.disk`, and the DTB are not sufficient by themselves
 
 ## 5. What Must Be Provided For Real-Device Testing
 
