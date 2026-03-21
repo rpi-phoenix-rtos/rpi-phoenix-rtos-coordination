@@ -2,26 +2,25 @@
 
 ## Metadata
 
-- Step ID: `STEP-0329`
-- Title: Scope the first compile-only Pi 4 xHCI HCD skeleton and discovery stub
+- Step ID: `STEP-0333`
+- Title: Scope the smallest first runtime-safe xHCI initialization slice
 - Status: `in_progress`
 - Date: `2026-03-21`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- define the first compile-only Pi 4 xHCI HCD skeleton slice and discovery
-  stub that should follow the new VL805 fast-path constants without widening
-  into staged runtime USB support
+- define the smallest runtime-safe xHCI initialization slice that should follow
+  the new A72 USB build glue without widening into staged keyboard support
 
 ## Scope
 
 In scope:
 
-- reviewing the remaining gap between the new Pi 4 VL805 fast-path constants
-  and the first compile-valid xHCI code
-- selecting the smallest xHCI slice that can compile without forcing the live
-  Pi 4 image to stage an unready USB host binary
+- reviewing the remaining gap between the new A72 USB build outputs and the
+  first runtime-meaningful xHCI behavior
+- selecting the smallest xHCI init slice that can move beyond `-ENOSYS`
+  without staging `/sbin/usb` into the live Pi 4 image yet
 - preserving the current HDMI text-console baseline and the deferred SD export
 
 Out of scope:
@@ -41,7 +40,8 @@ Out of scope:
 
 ## Expected Files Or Subsystems
 
-- `sources/phoenix-rtos-devices/usb/`
+- `sources/phoenix-rtos-devices/usb/xhci/`
+- `sources/phoenix-rtos-usb/usb/`
 - `docs/status.md`
 - `docs/source-artifacts.md`
 - `tracking/current-step.md`
@@ -50,22 +50,22 @@ Out of scope:
 
 ## Acceptance Criteria
 
-- the first xHCI skeleton step is explicitly bounded and justified against the
-  current Phoenix USB stack plus the current Circle Pi 4 xHCI reference
+- the first runtime-safe xHCI init step is explicitly bounded and justified
+  against the current Phoenix USB HCD model plus the new A72 build outputs
 - the next step does not stage an unready USB runtime path on the live Pi 4
   image
-- the tracking docs clearly state the exact remaining gap after the new VL805
-  fast-path constants
+- the tracking docs clearly state the exact remaining gap after the new A72 USB
+  build-glue step
 
 ## Validation Plan
 
-- source inspection against the current Phoenix USB HCD model plus the existing
-  Circle Pi 4 xHCI reference
+- source inspection against the current xHCI skeleton, A72 USB build outputs,
+  and the Pi 4 fast-path references
 
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-21-rpi4b-vl805-fastpath-constants.md`
+  `manifests/2026-03-21-aarch64a72-usb-build-glue.md`
 
 ## Notes
 
@@ -73,7 +73,7 @@ Out of scope:
   do not stage a USB host binary that would fail the current Pi 4 boot path
   just because the first xHCI code compiles
 - Dependencies:
-  completed `STEP-0328` Pi 4 VL805 fast-path constants
+  completed `STEP-0332` A72 USB build glue
 - User-visible control point before next step:
   after this step lands, the repo should clearly show the exact smallest
   xHCI skeleton move and why it comes before staged runtime USB support
@@ -86,7 +86,12 @@ Current scope finding:
   outbound PCIe window
 - the current Phoenix USB stack already provides the generic HCD, hub,
   enumeration, and keyboard-driver layers
+- the first compile-valid xHCI skeleton and discovery stub now exist, and the
+  generic USB host binary also now compiles cleanly on the Pi 4 A72 lane after
+  the `uintptr_t` fix in `phoenix-rtos-usb`
+- the normal A72 build flow now also produces `/sbin/usb` and `/sbin/usbkbd`
+  without staging them into the live Pi 4 image
 - the remaining gap is now narrower:
-  the first compile-valid xHCI HCD skeleton and discovery stub before any
-  staged runtime USB host path can be treated as meaningful
+  the xHCI runtime path still stops at `-ENOSYS`, so the next useful move is a
+  first runtime-safe initialization slice before staging anything
 - Pi 4 `raspi4b` QEMU is still not expected to validate that real xHCI path

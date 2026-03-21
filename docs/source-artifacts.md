@@ -916,6 +916,13 @@ Current Pi 4 xHCI fast-path reference note:
   `0x00030058` after the PCIe reset path and before enabling the device
 - Phoenix now records the fixed BDF/class/MMIO assumptions in the Pi 4 board
   config, but no xHCI runtime code uses them yet
+- `phoenix-rtos-usb/usb/usb.c` also needed one generic AArch64 portability fix
+  before the A72 USB host binary could compile cleanly:
+  pass the message-thread port value through `uintptr_t`, not `int`
+- the A72 build flow now also mirrors the IA32-style USB build structure in a
+  bounded way:
+  build `libusb`, build the A72 USB device pieces, then build the USB host
+  binary against `libusbxhci` and `libusbdrv-usbkbd`
 
 Current preserved clue:
 

@@ -90,6 +90,16 @@ Start-gate status:
   contract taken from Circle:
   fixed downstream BDF, fixed xHCI class code, and MMIO through the outbound
   PCIe window.
+- the first compile-valid Pi 4 xHCI code now also exists:
+  a `libusbxhci` skeleton plus a Pi 4 discovery stub, validated together with
+  the `usbkbd` pieces and the Phoenix USB host binary on the A72 lane.
+- that validation also exposed and fixed the first generic AArch64 USB-host
+  portability issue in `phoenix-rtos-usb`:
+  `usb.c` now passes the message-thread port value through `uintptr_t`.
+- the normal `aarch64a72-generic` build now also produces the USB host and
+  keyboard artifacts:
+  `/sbin/usb` and `/sbin/usbkbd`, while the live Pi 4 image script still does
+  not stage them.
 
 ## Most Important Technical Findings
 
@@ -141,6 +151,13 @@ Start-gate status:
   also explicit:
   the first compile-valid xHCI HCD skeleton before any staged runtime USB host
   path is attempted on Pi 4.
+- after the new compile-valid xHCI step, the remaining gap is narrower again:
+  the normal `aarch64a72-generic` build flow still does not build these USB
+  pieces by default before any staged runtime USB host path is attempted.
+- after the new A72 USB build-glue step, the remaining gap is narrower again:
+  the xHCI runtime path still returns `-ENOSYS`, so the next useful work item
+  is the first runtime-safe xHCI initialization slice rather than more build
+  glue.
 - Pi 4 `raspi4b` QEMU is not expected to validate that PCIe milestone, because
   the emulator still lacks the relevant PCIe root-port support.
 - The strongest currently available no-hardware validation for the new
