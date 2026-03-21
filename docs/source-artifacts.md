@@ -216,6 +216,8 @@ This file indexes the most important websites, repositories, documents, and sour
   indexed-config backend as well as the later host-bridge initialization work.
   It now also contains the first BCM2711 backend-local reset and `MISC_CTRL`
   preparation hook.
+  It also now contains the first BCM2711 link-state gating step:
+  `PERST` release, link/RC-mode sampling, and downstream-access gating.
 
 - `phoenix-rtos-devices/pcie/server/Makefile`
   Important because it now carries the backend-selection build flag for the
@@ -484,6 +486,9 @@ This file indexes the most important websites, repositories, documents, and sour
   The same file also provides the current reference sequence for:
   bridge reset handling, SerDes IDDQ clear, revision read, and early
   `PCIE_MISC_MISC_CTRL` preparation before outbound-window setup and link-up.
+  It is also the reference for:
+  `PERST` release, 100 ms settle wait, link-up checks, and RC-mode checks
+  before downstream enumeration is treated as meaningful.
 
 - `phoenix-rtos-corelibs/libgraph/graph.h`
 - `phoenix-rtos-corelibs/libgraph/graph.c`

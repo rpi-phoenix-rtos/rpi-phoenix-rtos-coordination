@@ -193,8 +193,11 @@ Current implementation note:
 - the first BCM2711 host-bridge preparation slice now also exists:
   reset sequencing, SerDes IDDQ clear, revision read, and early `MISC_CTRL`
   preparation
+- the first BCM2711 link-state slice now also exists:
+  `PERST` release, settle wait, and link / RC-mode sampling with downstream
+  access gated on that sampled state
 - the next bounded Pi 4 transport slice is therefore outbound-window setup and
-  link bring-up, not xHCI
+  root-bridge shaping, not xHCI
 
 This work is also strategically useful later because it builds Phoenix PCIe and xHCI capabilities that Pi 5 will also need.
 
