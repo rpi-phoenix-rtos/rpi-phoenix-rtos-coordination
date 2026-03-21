@@ -541,15 +541,15 @@ Start-gate status:
     - `(psh)% help`
     - `Available commands:`
     - returned `(psh)%`
-  - generic `virt` does not yet succeed with the current runtime launch:
-    - the log reaches echoed `help`
-    - `Available commands:` does not appear
-    - the prompt does not return
-- the strongest current reason for that generic-only gap is the validation
-  launch mode, not Phoenix source:
-  the generic lane still uses `-serial mon:stdio`, which is likely muxing
-  stdin in a way that works for passive boot logs but not for automated shell
-  command injection
+  - generic `virt` now also succeeds after a runtime-only launch fix:
+    - switching from `-serial mon:stdio -serial null -display none`
+      to `-nographic -monitor none`
+    - `(psh)% help`
+    - `Available commands:`
+    - returned `(psh)%`
+- the first command-level smoke is therefore now common to both fast QEMU
+  lanes, and the earlier generic-only failure is confirmed to have been a QEMU
+  stdio-launch issue rather than a Phoenix shell bug
 - debugger-first is now the recorded policy for QEMU runtime triage:
   future sessions should start with a bounded gdbstub inspection and only add
   source-level probes after documenting why GDB cannot answer the current
@@ -567,9 +567,9 @@ Start-gate status:
 
 ## Immediate Next Implementation Milestones
 
-1. Remove the generic `virt` stdin-path limitation so the same interactive shell smoke works on both fast lanes.
-2. Turn the prompt-reaching fast lane into a reusable QEMU command-validation loop.
-3. With the first Pi 4 QEMU command path already proven, switch the next bounded steps back toward boot-media completeness and first real-device smoke preparation.
+1. Turn the now-working `help` shell smoke into a reusable QEMU command-validation helper.
+2. Extend the fast lane from prompt reachability to one or two deterministic shell-level checks.
+3. With the first Pi 4 QEMU command path now proven, switch the next bounded steps back toward boot-media completeness and first real-device smoke preparation.
 4. Keep the new prompt-reaching lane stable while avoiding new diagnosis-only probe accumulation.
 
 ## Pi 4 Success Criteria for "Phase 1"
