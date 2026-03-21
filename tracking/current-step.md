@@ -2,31 +2,31 @@
 
 ## Metadata
 
-- Step ID: `STEP-0289`
-- Title: Refresh the host-visible Pi 4 SD image after the HDMI firmware refinement
+- Step ID: `STEP-0291`
+- Title: Assemble and export the refreshed Pi 4 SD image
 - Status: `planned`
 - Date: `2026-03-21`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- update the host-visible Pi 4 SD image artifact so the first real board trial
-  uses the newly refined HDMI firmware config
+- refresh the host-visible Pi 4 SD image so the first board trial uses the
+  latest HDMI firmware refinement
 
 ## Scope
 
 In scope:
 
-- rerun the existing Pi 4 SD-image export helper
-- verify the host-visible image path
-- record the refreshed artifact checksum
-- update the operator-facing docs and status if needed
+- rerun `scripts/assemble-rpi4b-sdimg.sh`
+- rerun `scripts/export-rpi4b-sdimg.sh`
+- record the new host artifact checksum
+- update docs/status if the exported artifact path remains the same
 
 Out of scope:
 
-- changing image layout
 - flashing the image
 - real hardware execution
+- further image-layout changes
 
 ## Expected Repositories
 
@@ -34,8 +34,9 @@ Out of scope:
 
 ## Expected Files Or Subsystems
 
+- `scripts/assemble-rpi4b-sdimg.sh`
 - `scripts/export-rpi4b-sdimg.sh`
-- `artifacts/rpi4b/`
+- `artifacts/rpi4b/rpi4b-sd.img`
 - `docs/manual-operator-instructions.md`
 - `docs/status.md`
 - `manifests/`
@@ -44,16 +45,15 @@ Out of scope:
 
 ## Acceptance Criteria
 
-- the host-visible `artifacts/rpi4b/rpi4b-sd.img` is refreshed from the latest
-  VM-local image
+- the VM-local Pi 4 SD image is rebuilt
+- the host-visible `artifacts/rpi4b/rpi4b-sd.img` is refreshed
 - the refreshed image checksum is recorded
-- the docs make it clear that the exported image now includes the HDMI firmware
-  refinement
+- the docs clearly point the operator to the refreshed image path
 
 ## Validation Plan
 
 - Build:
-  use the already rebuilt Pi 4 VM-local image
+  use the already refreshed VM-local Pi 4 boot artifacts
 - Emulator:
   not applicable
 - Hardware:
@@ -67,9 +67,9 @@ Out of scope:
 ## Notes
 
 - Risks:
-  avoid folding artifact export into flashing or hardware testing
+  avoid mixing export refresh with board execution
 - Dependencies:
-  completed `STEP-0288` refreshed-image handoff scoping
+  completed `STEP-0290` corrected image-refresh scoping
 - User-visible control point before next step:
-  after this step lands, the next bounded move can start the first manual Pi 4
-  board trial or scope one more small pre-hardware refinement
+  after this step lands, the next bounded move can start the manual Pi 4 board
+  trial or scope one more tiny pre-hardware refinement
