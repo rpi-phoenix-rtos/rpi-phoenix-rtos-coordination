@@ -912,6 +912,10 @@ Current Pi 4 xHCI fast-path reference note:
   - `XHCI_PCIE_FUNC = 0`
   - `XHCI_PCI_CLASS_CODE = 0x0c0330`
   - MMIO through the outbound PCIe window
+- the first Phoenix Pi 4 xHCI runtime slice now mirrors only the earliest part
+  of that model:
+  map the fixed MMIO window and validate `CAPLENGTH` / `HCIVERSION` before any
+  reset or enumeration logic
 - Circle also issues firmware property tag `PROPTAG_NOTIFY_XHCI_RESET`
   `0x00030058` after the PCIe reset path and before enabling the device
 - Phoenix now records the fixed BDF/class/MMIO assumptions in the Pi 4 board

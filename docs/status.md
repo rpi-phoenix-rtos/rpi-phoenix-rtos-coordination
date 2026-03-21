@@ -158,6 +158,11 @@ Start-gate status:
   the xHCI runtime path still returns `-ENOSYS`, so the next useful work item
   is the first runtime-safe xHCI initialization slice rather than more build
   glue.
+- after the new runtime-safe xHCI init step, the remaining gap is narrower
+  again:
+  the Pi 4 xHCI path now maps MMIO and validates the capability header, so the
+  next useful work item is the first controller-reset and operational-readiness
+  slice rather than more discovery or build glue.
 - Pi 4 `raspi4b` QEMU is not expected to validate that PCIe milestone, because
   the emulator still lacks the relevant PCIe root-port support.
 - The strongest currently available no-hardware validation for the new
