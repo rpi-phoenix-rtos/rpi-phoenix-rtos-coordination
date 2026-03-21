@@ -2,33 +2,30 @@
 
 ## Metadata
 
-- Step ID: `STEP-0270`
-- Title: Implement the Pi 4 firmware-boot-tree assembly helper
+- Step ID: `STEP-0272`
+- Title: Implement the Pi 4 FAT firmware-image helper
 - Status: `planned`
 - Date: `2026-03-21`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- implement the smallest helper that assembles a firmware-visible Pi 4 boot
-  tree from the current staged artifacts
+- implement the smallest helper that turns the assembled Pi 4 boot tree into a
+  portable FAT firmware image
 
 ## Scope
 
 In scope:
 
-- add one helper script for Pi 4 firmware-boot-tree assembly
-- take as input:
-  - the staged `rpi4b/` output tree
-  - a firmware directory provided by the operator or environment
-- produce one assembled boot-tree directory without flashing media
+- add one helper script for Pi 4 FAT-image assembly
+- use the assembled `rpi4b-bootfs` directory as input
+- build one image artifact without flashing media
 
 Out of scope:
 
 - changing Phoenix source code
 - SD-card writing
 - network boot setup
-- boot-media work
 - real hardware work
 
 ## Expected Repositories
@@ -42,6 +39,8 @@ Out of scope:
 - `scripts/qemu-shell-smoke.sh`
 - Pi 4 firmware staging references
 - Pi 4 `_boot/aarch64a72-generic-rpi4b/rpi4b/` outputs
+- assembled `rpi4b-bootfs` tree
+- FAT-image tools available in `phoenix-dev`
 - `docs/status.md`
 - `manifests/`
 - `tracking/current-step.md`
@@ -49,34 +48,32 @@ Out of scope:
 
 ## Acceptance Criteria
 
-- the helper assembles a Pi 4 boot tree from staged outputs plus firmware files
-- the output location and required inputs are documented by the helper itself
+- the helper builds one FAT firmware image from the assembled boot tree
+- the output path is printed or otherwise easy to inspect
 - no Phoenix upstream repo changes are introduced
 
 ## Validation Plan
 
 - Artifact validation:
-  run the helper against a known firmware directory and inspect the assembled
-  output tree
+  run the helper and inspect the created image plus its file listing
 - Matching:
-  confirm the output contains both firmware files and the staged Phoenix Pi 4
-  files
+  confirm the image contains the expected firmware and Phoenix boot files
 - Hardware:
   not applicable
 
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-21-aarch64-rpi4b-firmware-artifact-scope.md`
+  `manifests/2026-03-21-aarch64-rpi4b-fat-image-scope.md`
 
 ## Notes
 
 - Risks:
   avoid widening into general deployment or storage work
 - Dependencies:
-  completed `STEP-0269` firmware-artifact scoping
+  completed `STEP-0271` FAT-image scoping
 - Source reminder:
   the next step should leverage the current shell confidence, not revisit it
 - User-visible control point before next step:
-  after this helper lands, the next step can validate the assembled output or
-  move toward media/image generation
+  after this helper lands, the next step can validate or reuse the image
+  artifact instead of a loose directory tree

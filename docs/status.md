@@ -566,6 +566,11 @@ Start-gate status:
   - `echo -h`
   - `Usage: echo [options] [string]`
   - returned `(psh)%`
+- the first no-hardware Pi 4 firmware-artifact helper is now in place:
+  - `scripts/assemble-rpi4b-bootfs.sh`
+- it assembles a firmware-visible boot tree containing the staged Phoenix Pi 4
+  files plus Raspberry Pi firmware files under:
+  - `/home/witoldbolt.guest/phoenix-buildroots/phoenix-rtos-project-copy/_boot/aarch64a72-generic-rpi4b/rpi4b-bootfs`
 - debugger-first is now the recorded policy for QEMU runtime triage:
   future sessions should start with a bounded gdbstub inspection and only add
   source-level probes after documenting why GDB cannot answer the current
@@ -583,7 +588,7 @@ Start-gate status:
 
 ## Immediate Next Implementation Milestones
 
-1. Pivot from shell-depth work back toward the actual Pi 4 boot path, starting with firmware-style boot artifact assembly.
+1. Turn the assembled Pi 4 firmware boot tree into a single portable firmware-partition artifact.
 2. Keep the current QEMU shell smoke baseline stable:
   `help` plus the validated external-applet follow-up `echo -h`.
 3. Use the current QEMU shell confidence to drive the next bounded steps toward boot-media completeness and first real-device smoke preparation.

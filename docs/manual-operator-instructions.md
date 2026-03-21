@@ -343,6 +343,10 @@ Current payload rule:
 - this matches generic `plo` `RAM_ADDR`
 - when preparing real Pi 4 boot media from the staged tree, keep `loader.disk` beside `kernel8.img`; it is no longer only a QEMU-side artifact
 - the current staged tree still also needs Raspberry Pi firmware files; `config.txt`, `kernel8.img`, `loader.disk`, and the DTB are not sufficient by themselves
+- the current no-hardware assembly helper is:
+  - [scripts/assemble-rpi4b-bootfs.sh](/Users/witoldbolt/phoenix-rpi/scripts/assemble-rpi4b-bootfs.sh)
+- by default it assembles a firmware-visible Pi 4 boot tree inside the VM at:
+  - `/home/witoldbolt.guest/phoenix-buildroots/phoenix-rtos-project-copy/_boot/aarch64a72-generic-rpi4b/rpi4b-bootfs`
 
 ## 5. What Must Be Provided For Real-Device Testing
 
