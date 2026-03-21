@@ -2,27 +2,28 @@
 
 ## Metadata
 
-- Step ID: `STEP-0352`
-- Title: Implement the smallest xHCI memory-allocation step for `DCBAA` and the command ring
+- Step ID: `STEP-0354`
+- Title: Implement the smallest xHCI register-programming step for `DCBAA`, `CRCR`, and `CONFIG`
 - Status: `in_progress`
 - Date: `2026-03-22`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- implement the next bounded xHCI memory-allocation step after the new
-  operational-layout baseline without widening into active controller
-  programming
+- implement the next bounded xHCI register-programming step after the new
+  command-space allocation baseline without widening into full host-controller
+  operation
 
 ## Scope
 
 In scope:
 
 - extracting:
-  - `DCBAA` allocation
-  - command ring allocation
-- validating only the smallest memory-layout constraints needed before later
-  controller programming
+  - `DCBAAP` programming
+  - `CRCR` programming
+  - `CONFIG` programming
+- validating only the smallest controller-setup constraints needed before later
+  run-state or event-ring work
 - preserving the current compile-valid, unstaged USB-host baseline on the Pi 4
 
 Out of scope:
@@ -39,6 +40,8 @@ Out of scope:
 - actual command-ring programming
 - doorbell writes
 - interrupter programming
+- `RUN/STOP` transition
+- device enumeration
 
 ## Expected Repositories
 
@@ -58,9 +61,9 @@ Out of scope:
 
 ## Acceptance Criteria
 
-- `xhci` allocates and records the first controller-owned memory objects
-- the new checks stay pre-register-programming, pre-doorbell,
-  pre-interrupt-enable, and pre-enumeration
+- `xhci` programs the first controller memory-layout registers
+- the new checks stay pre-run, pre-doorbell, pre-interrupt-enable, and
+  pre-enumeration
 - the full `aarch64a72-generic-rpi4b` build remains clean with the live staged
   Pi 4 image unchanged
 
@@ -72,16 +75,15 @@ Out of scope:
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-22-xhci-memory-layout.md`
+  `manifests/2026-03-22-xhci-command-space.md`
 
 ## Notes
 
 - Risks:
-  do not widen the step into actual register programming, doorbell writes,
-  interrupter work, or root-port logic just because the memory objects now
-  exist
+  do not widen the step into `RUN/STOP`, doorbell writes, interrupter work, or
+  root-port logic just because the controller memory objects now exist
 - Dependencies:
-  completed `STEP-0351` xHCI memory-allocation scope
+  completed `STEP-0353` xHCI register-programming scope
 - User-visible control point before next step:
-  after this step lands, `xhci` should own the first controller memory objects
-  needed for later programming, but should still make no host-operation claim
+  after this step lands, `xhci` should bind the first command-space objects to
+  the controller, but should still make no host-operation claim

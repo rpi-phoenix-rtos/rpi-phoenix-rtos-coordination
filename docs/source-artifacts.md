@@ -248,6 +248,8 @@ This file indexes the most important websites, repositories, documents, and sour
   stream array size.
   It now also extracts the first operational memory-layout register state:
   `CRCR` and `DCBAAP`, with minimal reserved-bit and non-`AC64` sanity checks.
+  It now also allocates the first controller-owned memory objects:
+  a 4K-aligned `DCBAA` page and a 64K-aligned first command-ring block.
   The current code intentionally remains pre-root-hub, pre-ring, and
   pre-enumeration.
 

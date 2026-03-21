@@ -109,6 +109,9 @@ Start-gate status:
 - the Pi 4 xHCI path now also extracts the first operational-register memory
   layout state needed before later controller programming:
   `CRCR` and `DCBAAP`.
+- the Pi 4 xHCI path now also allocates the first controller-owned memory
+  objects needed for later controller setup:
+  one `DCBAA` page and one first command-ring backing block.
 - that validation also exposed and fixed the first generic AArch64 USB-host
   portability issue in `phoenix-rtos-usb`:
   `usb.c` now passes the message-thread port value through `uintptr_t`.
@@ -135,6 +138,9 @@ Start-gate status:
 - after the new operational-register layout step, the next clean seam is no
   longer more capability decoding; it is the first controller-owned memory
   allocation step for `DCBAA` and the command ring.
+- after the new memory-allocation step, the next clean seam is the first real
+  xHCI register-programming step:
+  `DCBAAP`, `CRCR`, and `CONFIG`.
 
 ## Most Important Technical Findings
 
