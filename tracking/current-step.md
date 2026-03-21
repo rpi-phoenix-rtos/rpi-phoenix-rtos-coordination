@@ -2,26 +2,26 @@
 
 ## Metadata
 
-- Step ID: `STEP-0319`
-- Title: Scope the smallest outbound-window and root-bridge shaping step
+- Step ID: `STEP-0321`
+- Title: Scope the smallest root-bridge memory-window and downstream-bus exposure step
 - Status: `in_progress`
 - Date: `2026-03-21`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- define the smallest BCM2711 outbound-window and root-bridge shaping slice
-  that should follow the new link-state gating step without widening into xHCI
-  or claiming downstream enumeration
+- define the smallest BCM2711 root-bridge memory-window and downstream-bus
+  exposure slice that should follow the new outbound-window / root-bridge
+  shaping step without widening into xHCI
 
 ## Scope
 
 In scope:
 
-- reviewing the remaining gap between the new BCM2711 link-state gating step
-  and meaningful downstream enumeration
+- reviewing the remaining gap between the new outbound-window / root-bridge
+  shaping step and meaningful downstream enumeration
 - selecting the smallest next slice that can follow without widening into xHCI
-  or downstream enumeration
+  or endpoint-driver work
 - preserving the current HDMI text-console baseline and the deferred SD export
 
 Out of scope:
@@ -47,38 +47,39 @@ Out of scope:
 
 ## Acceptance Criteria
 
-- the next outbound-window / root-bridge step is explicitly bounded and
-  justified against the current Phoenix and Circle references
-- the next step does not widen into xHCI or claim live downstream enumeration
+- the next root-bridge memory-window / downstream-bus step is explicitly
+  bounded and justified against the current Phoenix and Circle references
+- the next step does not widen into xHCI or endpoint-driver work
 - the tracking docs clearly state the exact remaining gap after the new
-  link-state gating step
+  outbound-window / root-bridge shaping step
 
 ## Validation Plan
 
 - source inspection against the current Phoenix PCIe stack plus the existing
-  Circle reference for BCM2711 outbound-window setup and root-bridge shaping
+  Circle reference for BCM2711 bridge memory-window setup and downstream-bus
+  exposure
 
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-21-bcm2711-link-state-gating.md`
+  `manifests/2026-03-21-bcm2711-outbound-root-shape.md`
 
 ## Notes
 
 - Risks:
-  do not jump straight into xHCI or overclaim that config-space access alone
-  or sampled link-state alone implies meaningful downstream enumeration
+  do not jump straight into xHCI or overclaim that outbound-window shaping
+  alone implies meaningful downstream enumeration
 - Dependencies:
-  completed `STEP-0318` BCM2711 link-state gating
+  completed `STEP-0320` BCM2711 outbound-window and root-bridge shaping
 - User-visible control point before next step:
   after this step lands, the repo should clearly show the exact smallest
-  outbound-window / root-bridge move and why it comes before xHCI
+  bridge memory-window / downstream-bus move and why it comes before xHCI
 
 Current scope finding:
 
 - the BCM2711 backend now supplies config-space access, early host-bridge prep,
-  and link-state gating for downstream accesses
+  link-state gating, and one outbound window plus root-bridge class shaping
 - the remaining gap is now narrower:
-  outbound-window setup and root-bridge shaping before downstream enumeration
-  can be treated as meaningful
+  root-bridge memory-window programming and downstream-bus exposure before
+  downstream enumeration can be treated as meaningful
 - Pi 4 `raspi4b` QEMU is still not expected to validate that real PCIe step

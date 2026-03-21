@@ -218,6 +218,9 @@ This file indexes the most important websites, repositories, documents, and sour
   preparation hook.
   It also now contains the first BCM2711 link-state gating step:
   `PERST` release, link/RC-mode sampling, and downstream-access gating.
+  It also now contains the first outbound-window and root-bridge shaping step:
+  outbound window 0 programming, RC BAR2 programming, and root-bridge class
+  shaping behind the sampled link-state gate.
 
 - `phoenix-rtos-devices/pcie/server/Makefile`
   Important because it now carries the backend-selection build flag for the
@@ -230,6 +233,8 @@ This file indexes the most important websites, repositories, documents, and sour
   PL011 target.
   It also now carries the BCM2711 PCIe host-base and host-window size
   constants used by the first indexed-config backend step.
+  It also now carries the first outbound-window constants derived from the
+  current Circle Pi 4 memory-map reference.
 
 - `phoenix-rtos-project/_projects/aarch64a72-generic-rpi4b/build.project`
   Important because the Pi 4 A72 project now exports
@@ -489,6 +494,9 @@ This file indexes the most important websites, repositories, documents, and sour
   It is also the reference for:
   `PERST` release, 100 ms settle wait, link-up checks, and RC-mode checks
   before downstream enumeration is treated as meaningful.
+  It is also the current reference for:
+  outbound window 0 programming and root-bridge class-code shaping on Pi 4
+  once sampled link state is acceptable.
 
 - `phoenix-rtos-corelibs/libgraph/graph.h`
 - `phoenix-rtos-corelibs/libgraph/graph.c`
