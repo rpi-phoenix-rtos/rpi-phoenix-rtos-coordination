@@ -103,6 +103,15 @@ Required for all meaningful milestones:
 - USB
 - soak tests
 
+Current practical note for the first Pi 4 hardware attempt without USB-TTL:
+
+- if the lab does not have UART capture yet, the first SD-card boot attempt may
+  still be worth doing as an artifact-deployment check
+- but do not treat that result as a milestone-grade hardware validation, because
+  the current bring-up path is still primarily observable through UART and QEMU
+- in that lab shape, the next technical priority after artifact preparation
+  should be alternate observability, not repeated blind boot attempts
+
 ## 4. QEMU Strategy
 
 ## 4.1 Why generic `virt` should exist

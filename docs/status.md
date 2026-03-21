@@ -606,6 +606,11 @@ Start-gate status:
   - `d480e6d35d91a6e9b4d56971fd8973feb45140d570c099ee4c638fa5179cb0bc`
 - the project now has a host-visible flashable Pi 4 SD-card image artifact for
   the first manual hardware trial
+- the operator runbook now includes an explicit macOS flashing workflow for:
+  - `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
+- the docs now also state the current first-boot limitation clearly:
+  without USB-TTL serial, the first hardware trial is useful as an
+  artifact-deployment check but not yet as a strong runtime-validation milestone
 - the currently available real-hardware lab is weaker than the ideal UART lab:
   microSD plus HDMI plus Ethernet plus USB keyboard or mouse are available, but
   no USB-TTL adapter is currently available
@@ -630,13 +635,14 @@ Start-gate status:
 
 ## Immediate Next Implementation Milestones
 
-1. Document the first macOS flashing workflow for the host-visible Pi 4 SD-card
-   image artifact.
-2. Update the operator-facing runbook for the current no-UART hardware lab.
-3. Keep the current QEMU shell smoke baseline stable:
+1. Scope the smallest alternate-observability step for a Pi 4 lab without
+   USB-TTL serial.
+2. Keep the current QEMU shell smoke baseline stable:
   `help` plus the validated external-applet follow-up `echo -h`.
-4. Use the current QEMU shell confidence to drive the next bounded steps toward boot-media completeness and first real-device smoke preparation.
-5. Keep the new prompt-reaching lane stable while avoiding new diagnosis-only probe accumulation.
+3. Use the current QEMU shell confidence to drive the next bounded steps toward
+   a visible first real-device signal beyond UART-only diagnostics.
+4. Keep the new prompt-reaching lane stable while avoiding new diagnosis-only
+   probe accumulation.
 
 ## Pi 4 Success Criteria for "Phase 1"
 

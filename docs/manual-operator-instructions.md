@@ -373,6 +373,34 @@ Current payload rule:
 - current validated exported full-image SHA-256:
   - `d480e6d35d91a6e9b4d56971fd8973feb45140d570c099ee4c638fa5179cb0bc`
 
+### Current first macOS flashing workflow
+
+Use this only with the current host-visible full-disk artifact:
+
+- `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
+
+Recommended manual sequence on macOS:
+
+1. refresh the exported artifact if needed:
+   - [scripts/export-rpi4b-sdimg.sh](/Users/witoldbolt/phoenix-rpi/scripts/export-rpi4b-sdimg.sh)
+2. identify the target SD card:
+   - `diskutil list`
+3. unmount the whole target disk:
+   - `diskutil unmountDisk /dev/diskN`
+4. write the image to the raw device:
+   - `sudo dd if=/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img of=/dev/rdiskN bs=4m`
+5. flush and eject the card:
+   - `sync`
+   - `diskutil eject /dev/diskN`
+
+Critical cautions:
+
+- replace `diskN` with the actual SD-card device node from `diskutil list`
+- use the whole-disk node, not a partition node like `diskNs1`
+- writing this image overwrites the current contents of the target card
+- prefer `/dev/rdiskN` over `/dev/diskN` for faster raw writes on macOS
+- re-verify the target disk before running `dd`
+
 ## 5. What Must Be Provided For Real-Device Testing
 
 The following physical items are currently required to run tests on an actual Raspberry Pi board.
@@ -418,6 +446,21 @@ The following physical items are currently required to run tests on an actual Ra
   - visible firmware-side signs of life on HDMI if any
   - later alternate observability work before broad hardware debugging
 
+### Current first-boot expectations for the no-UART lab
+
+- the first manual SD-card boot attempt should currently be treated as a media
+  deployment and gross boot-behavior check, not as a strong milestone
+  validation step
+- at the current project state, a successful runtime shell on HDMI, keyboard,
+  mouse, or network is not yet a documented expectation
+- lack of visible HDMI output does not yet cleanly distinguish:
+  - firmware boot failure
+  - `plo` failure
+  - kernel boot with only UART-visible output
+  - later runtime failure before a visible display path exists
+- until the project adds an alternate observability path, silent behavior on a
+  no-UART board should be treated as low-information
+
 ## 6. Known Manual Wiring Requirements
 
 For early UART-driven bring-up, the operator must connect the Raspberry Pi UART correctly.
@@ -459,7 +502,31 @@ Before the first hardware boot attempt, the operator must:
    - spare boot media
    - or a known-good network boot tree
 
-## 8. Additional Manual Steps For Network Boot
+## 8. First Manual Pi 4 Trial In The Current No-UART Lab
+
+For the current lab shape, the first practical manual trial is:
+
+1. export the current full disk image:
+   - [scripts/export-rpi4b-sdimg.sh](/Users/witoldbolt/phoenix-rpi/scripts/export-rpi4b-sdimg.sh)
+2. flash the image to microSD using the workflow above
+3. insert the card into the Pi 4
+4. attach:
+   - HDMI
+   - Ethernet if desired
+   - USB keyboard if desired
+5. power on the board
+6. record the gross result:
+   - any visible HDMI behavior
+   - ACT LED behavior if observed
+   - whether the board appears to reboot repeatedly or stay powered
+
+Do not over-interpret the result:
+
+- the current software path is still primarily observed through UART in QEMU
+- keyboard, display, and network are not yet validated as first-boot success
+  signals on real hardware
+
+## 9. Additional Manual Steps For Network Boot
 
 These are not required on day one, but they are known likely operator tasks for the later fast-iteration lab setup.
 
@@ -481,7 +548,7 @@ When this setup is first enabled, record:
 - the exact DHCP or TFTP configuration path
 - the recovery procedure if network boot fails
 
-## 9. Required Manual Steps During Ongoing Implementation
+## 10. Required Manual Steps During Ongoing Implementation
 
 After each successful implementation step, the operator or agent must ensure:
 
@@ -490,7 +557,7 @@ After each successful implementation step, the operator or agent must ensure:
 3. the integration manifest is updated with tested SHAs
 4. this file is updated if any new operator action, physical prerequisite, one-time setup task, or recovery step was discovered
 
-## 10. Update Policy For This File
+## 11. Update Policy For This File
 
 This file must be updated whenever the project learns any new manual requirement, including:
 
