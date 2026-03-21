@@ -347,6 +347,10 @@ Current payload rule:
   - [scripts/assemble-rpi4b-bootfs.sh](/Users/witoldbolt/phoenix-rpi/scripts/assemble-rpi4b-bootfs.sh)
 - by default it assembles a firmware-visible Pi 4 boot tree inside the VM at:
   - `/home/witoldbolt.guest/phoenix-buildroots/phoenix-rtos-project-copy/_boot/aarch64a72-generic-rpi4b/rpi4b-bootfs`
+- the current FAT-image helper is:
+  - [scripts/assemble-rpi4b-bootfs-img.sh](/Users/witoldbolt/phoenix-rpi/scripts/assemble-rpi4b-bootfs-img.sh)
+- by default it assembles a portable FAT image inside the VM at:
+  - `/home/witoldbolt.guest/phoenix-buildroots/phoenix-rtos-project-copy/_boot/aarch64a72-generic-rpi4b/rpi4b-bootfs.img`
 
 ## 5. What Must Be Provided For Real-Device Testing
 

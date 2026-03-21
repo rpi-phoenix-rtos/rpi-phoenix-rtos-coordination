@@ -2,24 +2,25 @@
 
 ## Metadata
 
-- Step ID: `STEP-0272`
-- Title: Implement the Pi 4 FAT firmware-image helper
+- Step ID: `STEP-0273`
+- Title: Scope the smallest post-FAT-image real-device artifact step
 - Status: `planned`
 - Date: `2026-03-21`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- implement the smallest helper that turns the assembled Pi 4 boot tree into a
-  portable FAT firmware image
+- define the smallest next artifact step after the new Pi 4 FAT boot image
 
 ## Scope
 
 In scope:
 
-- add one helper script for Pi 4 FAT-image assembly
-- use the assembled `rpi4b-bootfs` directory as input
-- build one image artifact without flashing media
+- review the current FAT image plus loose boot tree outputs
+- decide whether the next artifact should be:
+  - a full SD-card image
+  - a documented direct-use FAT artifact
+- keep the step artifact- and workflow-focused, not hardware-execution-focused
 
 Out of scope:
 
@@ -41,6 +42,7 @@ Out of scope:
 - Pi 4 `_boot/aarch64a72-generic-rpi4b/rpi4b/` outputs
 - assembled `rpi4b-bootfs` tree
 - FAT-image tools available in `phoenix-dev`
+- assembled `rpi4b-bootfs.img`
 - `docs/status.md`
 - `manifests/`
 - `tracking/current-step.md`
@@ -48,32 +50,34 @@ Out of scope:
 
 ## Acceptance Criteria
 
-- the helper builds one FAT firmware image from the assembled boot tree
-- the output path is printed or otherwise easy to inspect
-- no Phoenix upstream repo changes are introduced
+- one concrete next artifact decision is selected
+- the reasons are tied to the current boot chain and operator workflow
+- the next step remains no-hardware and artifact-focused
 
 ## Validation Plan
 
-- Artifact validation:
-  run the helper and inspect the created image plus its file listing
-- Matching:
-  confirm the image contains the expected firmware and Phoenix boot files
+- Artifact review:
+  compare the assembled boot tree and the FAT image against the intended first
+  real-device workflow
+- Documentation review:
+  update the operator guidance to reflect the selected next artifact path
 - Hardware:
   not applicable
 
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-21-aarch64-rpi4b-fat-image-scope.md`
+  `manifests/2026-03-21-aarch64-rpi4b-fat-image-helper.md`
 
 ## Notes
 
 - Risks:
   avoid widening into general deployment or storage work
 - Dependencies:
-  completed `STEP-0271` FAT-image scoping
+  completed `STEP-0272` FAT-image helper implementation
 - Source reminder:
   the next step should leverage the current shell confidence, not revisit it
 - User-visible control point before next step:
-  after this helper lands, the next step can validate or reuse the image
-  artifact instead of a loose directory tree
+  after this scope lands, the next step should either build one larger media
+  image or explicitly bless the current FAT image as the first device-facing
+  artifact
