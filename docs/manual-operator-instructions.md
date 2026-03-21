@@ -351,6 +351,12 @@ Current payload rule:
   - [scripts/assemble-rpi4b-bootfs-img.sh](/Users/witoldbolt/phoenix-rpi/scripts/assemble-rpi4b-bootfs-img.sh)
 - by default it assembles a portable FAT image inside the VM at:
   - `/home/witoldbolt.guest/phoenix-buildroots/phoenix-rtos-project-copy/_boot/aarch64a72-generic-rpi4b/rpi4b-bootfs.img`
+- the current host-side export helper is:
+  - [scripts/export-rpi4b-fat-image.sh](/Users/witoldbolt/phoenix-rpi/scripts/export-rpi4b-fat-image.sh)
+- by default it exports that FAT image into the host workspace at:
+  - `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-bootfs.img`
+- current validated exported-image SHA-256:
+  - `fab57080ef7c770ac9346cfd9e86b6ef71c31d47559fe0bd955bee6b71d3a108`
 
 ## 5. What Must Be Provided For Real-Device Testing
 
@@ -360,24 +366,42 @@ The following physical items are currently required to run tests on an actual Ra
 
 - Raspberry Pi 4 Model B board
 - stable power supply for the board
-- USB-UART adapter that uses 3.3 V TTL serial
 - boot media:
   - microSD card initially
   - optional USB storage later
-- Ethernet connection for the board
+- a way to write the prepared image to the microSD card from the host
 
 ### Strongly recommended hardware
 
+- USB-UART adapter that uses 3.3 V TTL serial
+- Ethernet connection for the board
+- HDMI display
+- USB keyboard
+
+### Optional but useful hardware
+
+- USB mouse
 - controllable power relay or smart USB power switch
 - dedicated USB Ethernet adapter for the Pi boot network
 - spare boot media for recovery
 - a second DUT later if Pi 5 work needs to proceed without disturbing Pi 4 stabilization
-
-### Optional but useful hardware
-
 - SD mux or programmable SD switch
 - HDMI capture for display-oriented debugging later
 - breakout wiring labeled per DUT to reduce operator mistakes
+
+### Current practical note when no USB-UART adapter is available
+
+- the project can still progress to the first Pi 4 SD-card boot attempt without
+  UART
+- however, the current Phoenix bring-up path is still primarily validated
+  through PL011 serial, not through a validated HDMI or network-visible runtime
+- until framebuffer or network-level observability is implemented and tested,
+  lack of UART should be treated as a major reduction in failure visibility
+- in that no-UART lab shape, prioritize:
+  - correct image assembly
+  - correct SD-card writing
+  - visible firmware-side signs of life on HDMI if any
+  - later alternate observability work before broad hardware debugging
 
 ## 6. Known Manual Wiring Requirements
 
@@ -403,14 +427,17 @@ Re-verify if a future board configuration or overlay changes the active UART rou
 
 Before the first hardware boot attempt, the operator must:
 
-1. connect the UART adapter and confirm the host can see the serial device
-2. connect power in a way that can be safely cycled
-3. prepare boot media or confirm network-boot infrastructure is not yet in use
-4. attach Ethernet if the test expects it
+1. write the currently selected Pi 4 image artifact to microSD or otherwise
+   prepare the boot medium
+2. if a UART adapter is available:
+   - connect it and confirm the host can see the serial device
+3. connect power in a way that can be safely cycled
+4. attach HDMI if the current test is expected to use display-visible behavior
+5. attach Ethernet if the test expects it
 5. record the DUT identity:
    - board model
    - board revision if known
-   - serial adapter path
+   - serial adapter path if present
    - MAC address if known
 6. confirm a recovery path exists:
    - known-good SD image

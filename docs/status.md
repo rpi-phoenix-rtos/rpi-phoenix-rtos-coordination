@@ -578,6 +578,22 @@ Start-gate status:
 - that FAT image is now the selected first real-device artifact for Pi 4; a
   larger SD-card image is deferred until the project actually needs more than
   the firmware-visible boot partition
+- the operator-facing handoff is now also in place:
+  - `scripts/export-rpi4b-fat-image.sh`
+- it exports the current Pi 4 FAT image into a stable host-visible path:
+  - `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-bootfs.img`
+- the current validated exported-image SHA-256 is:
+  - `fab57080ef7c770ac9346cfd9e86b6ef71c31d47559fe0bd955bee6b71d3a108`
+- the immediate remaining operator gap is now SD-card usability rather than VM
+  artifact access, because the current exported file is a raw FAT filesystem
+  image rather than a full flashable disk image
+- the currently available real-hardware lab is weaker than the ideal UART lab:
+  microSD plus HDMI plus Ethernet plus USB keyboard or mouse are available, but
+  no USB-TTL adapter is currently available
+- that means the first hardware-oriented steps should prioritize boot-media
+  usability and alternate observability paths, while keeping explicit notes
+  that early runtime failures may remain low-visibility until UART, framebuffer,
+  or network-level visibility improves
 - debugger-first is now the recorded policy for QEMU runtime triage:
   future sessions should start with a bounded gdbstub inspection and only add
   source-level probes after documenting why GDB cannot answer the current
@@ -595,11 +611,13 @@ Start-gate status:
 
 ## Immediate Next Implementation Milestones
 
-1. Improve operator-facing handling and documentation around the current Pi 4 FAT boot image artifact.
-2. Keep the current QEMU shell smoke baseline stable:
+1. Turn the current exported Pi 4 FAT image into a full SD-card image artifact
+   so the first manual hardware trial is a normal flash operation.
+2. Update the operator-facing runbook for the current no-UART hardware lab.
+3. Keep the current QEMU shell smoke baseline stable:
   `help` plus the validated external-applet follow-up `echo -h`.
-3. Use the current QEMU shell confidence to drive the next bounded steps toward boot-media completeness and first real-device smoke preparation.
-4. Keep the new prompt-reaching lane stable while avoiding new diagnosis-only probe accumulation.
+4. Use the current QEMU shell confidence to drive the next bounded steps toward boot-media completeness and first real-device smoke preparation.
+5. Keep the new prompt-reaching lane stable while avoiding new diagnosis-only probe accumulation.
 
 ## Pi 4 Success Criteria for "Phase 1"
 
