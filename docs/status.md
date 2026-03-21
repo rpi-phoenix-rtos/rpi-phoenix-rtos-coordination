@@ -562,6 +562,10 @@ Start-gate status:
 - the next candidate, `echo codex-smoke-echo`, is also not a valid proof shape:
   the token appears in the echoed command line itself, so it still does not
   independently prove applet stdout
+- the first clean external-applet smoke is now proven on both fast lanes with:
+  - `echo -h`
+  - `Usage: echo [options] [string]`
+  - returned `(psh)%`
 - debugger-first is now the recorded policy for QEMU runtime triage:
   future sessions should start with a bounded gdbstub inspection and only add
   source-level probes after documenting why GDB cannot answer the current
@@ -579,9 +583,10 @@ Start-gate status:
 
 ## Immediate Next Implementation Milestones
 
-1. Extend the fast lane from the built-in `help` smoke to one deterministic external-applet shell check whose output is distinct from the command echo.
-2. Keep the new `scripts/qemu-shell-smoke.sh` baseline stable while adding one more shell-level proof point.
-3. With the first Pi 4 QEMU command path now proven and scripted, switch the next bounded steps back toward boot-media completeness and first real-device smoke preparation.
+1. Pivot from shell-depth work back toward the actual Pi 4 boot path, starting with firmware-style boot artifact assembly.
+2. Keep the current QEMU shell smoke baseline stable:
+  `help` plus the validated external-applet follow-up `echo -h`.
+3. Use the current QEMU shell confidence to drive the next bounded steps toward boot-media completeness and first real-device smoke preparation.
 4. Keep the new prompt-reaching lane stable while avoiding new diagnosis-only probe accumulation.
 
 ## Pi 4 Success Criteria for "Phase 1"
