@@ -102,6 +102,7 @@ This file indexes the most important websites, repositories, documents, and sour
 - `phoenix-rtos-kernel/hal/aarch64/zynqmp/timer.c`
 - `phoenix-rtos-kernel/proc/name.c`
 - `phoenix-rtos-kernel/proc/msg.c`
+- `phoenix-rtos-kernel/posix/posix.c`
 - `phoenix-rtos-kernel/syscalls.c`
 - `phoenix-rtos-kernel/proc/threads.c`
 
@@ -184,6 +185,10 @@ This file indexes the most important websites, repositories, documents, and sour
 
 - `phoenix-rtos-kernel/proc/msg.c`
   Important because `proc_send()` blocks until the destination server receives and responds, which is the current reason a non-responsive `devfs` lookup can stall the caller.
+
+- `phoenix-rtos-kernel/posix/posix.c`
+  Important because `open()` currently reaches `posix_open()`, and
+  `posix_open()` uses `proc_lookup()` directly rather than `syscalls_lookup()`.
 
 - `phoenix-rtos-kernel/proc/threads.c`
   Important because `proc_threadNanoSleep()` and `_threads_programWakeup()` now define the next bounded diagnostic target after both fast lanes proved that the first retry path sleeps and never wakes.

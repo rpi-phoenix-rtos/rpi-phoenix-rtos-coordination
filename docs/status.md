@@ -465,6 +465,20 @@ Start-gate status:
   - `psh: app done`
 - the next shared later-boot blocker is therefore inside
   `psh_ttyopen("/dev/console")`, before `psh: tty ready`
+- the bounded `psh_ttyopen()` failure trace is now complete and identical on
+  both lanes:
+  - generic prints `psh: tty open fail open -2`
+  - Pi 4 prints `psh: tty open fail open -2`
+- the next shared blocker is therefore even narrower:
+  `open("/dev/console", O_RDWR) -> -ENOENT` despite
+  `pl011-tty: console ready`
+- the first kernel-side `/dev/console` lookup experiment is now also bounded:
+  - a `syscalls_lookup()` trace for `/dev/console` never fires on the generic
+    fast lane
+  - source review of `phoenix-rtos-kernel/posix/posix.c:posix_open()` explains
+    why: the open path goes through `proc_lookup()` directly
+- the next bounded trace should therefore move to `posix_open()` or
+  `proc_lookup()` rather than adding more noise to `syscalls_lookup()`
 - copied-buildroot validation must be run sequentially per target; concurrent
   generic and Pi 4 builds against the same copied buildroot race on shared
   host-artifact paths such as `_build/host-generic-pc`
