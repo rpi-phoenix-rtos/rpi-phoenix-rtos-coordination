@@ -90,6 +90,14 @@ Circle-derived note:
   - property-mailbox framebuffer allocation
   - coherent low-memory request buffers
   - firmware-driven display sizing and display selection on Pi 4
+- Phoenix now also has the first transport-independent USB keyboard foundation:
+  `phoenix-rtos-devices/tty/usbkbd/` provides a generic HID boot-keyboard
+  class driver and `/dev/kbdN` interface, so the remaining Pi 4 gap is no
+  longer “no keyboard logic exists” but “PCIe plus xHCI transport is still
+  missing”
+- the current Pi 4 A72 project also enables a minimal `pl011-tty` bridge for
+  `/dev/kbd0`, so once transport exists the existing HDMI text console can take
+  keyboard input through the same `libtty` discipline path
 - Circle also confirms that USB keyboard support on Pi 4 is not an early
   shortcut:
   its path depends on PCIe plus VL805 xHCI before HID keyboard support is even

@@ -56,6 +56,8 @@ Start-gate status:
 - The first acceptable real-device artifact handoff should now be based on a
   Pi 4 image with HDMI text console output, not on the earlier stage-panel-only
   artifact.
+- USB keyboard work is now explicitly split into a generic HID class-driver
+  track and a later Pi 4 transport track through BCM2711 PCIe plus VL805 xHCI.
 
 ## Most Important Technical Findings
 
@@ -64,6 +66,27 @@ Start-gate status:
   `pl011-tty` mirrors transmitted bytes into the firmware-allocated framebuffer,
   the background is black, and white glyphs are visible in the expected text
   rows.
+- The first reusable USB keyboard foundation now exists in
+  `phoenix-rtos-devices/tty/usbkbd/`: it is a generic USB HID boot-keyboard
+  class driver that exposes `/dev/kbdN` and translates interrupt-IN boot
+  reports into shell-usable cooked bytes.
+- `pl011-tty` now also has a small optional `/dev/kbd0` reader bridge on the
+  Pi 4 A72 project path, so once a USB host transport exists the current HDMI
+  text console can become interactive without another console-architecture
+  rewrite.
+- That keyboard step does not solve Pi 4 transport yet. Real Pi 4 keyboard
+  input still depends on later BCM2711 PCIe and VL805 xHCI work.
+- After the first transport scoping pass, the smallest next Pi 4 USB milestone
+  is now explicitly BCM2711 PCIe root-complex bring-up plus ECAM enumeration;
+  xHCI should come only after that link and config-space foundation exists.
+- Pi 4 `raspi4b` QEMU is not expected to validate that PCIe milestone, because
+  the emulator still lacks the relevant PCIe root-port support.
+- The strongest currently available no-hardware validation for the new
+  keyboard driver is component-level AArch64 compilation with the existing
+  `aarch64-phoenix` toolchain.
+- A stronger IA32 EHCI host build lane exists in principle, but `phoenix-dev`
+  does not yet have an `i386-pc-phoenix` toolchain, so the current VM cannot
+  validate the full `ia32-generic-qemu` build script end to end.
 - Two distinct bugs had to be fixed to reach that milestone:
   - generic AArch64 kernel `_init.S` still used pre-graphics hardcoded syspage
     offsets

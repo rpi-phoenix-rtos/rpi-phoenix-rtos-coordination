@@ -194,6 +194,25 @@ This file indexes the most important websites, repositories, documents, and sour
 
 - `phoenix-rtos-devices/tty/pl011-tty/pl011-tty.c`
   Important because the current fast lane uses raw UART-side diagnostics here to bound the first console-registration blocker.
+  It is also now the place where the optional `/dev/kbd0` bridge feeds cooked
+  USB-keyboard bytes into the shared `libtty` path for Pi 4.
+
+- `phoenix-rtos-devices/tty/usbkbd/usbkbd.c`
+  Important because it is now the first generic Phoenix USB HID boot-keyboard
+  class-driver foundation.
+
+- `phoenix-rtos-devices/tty/usbkbd/srv.c`
+  Important because it provides the process-driver wrapper for the same USB
+  keyboard logic.
+
+- `phoenix-rtos-devices/tty/usbkbd/Makefile`
+  Important because it exposes both `libusbdrv-usbkbd` and `usbkbd`, matching
+  Phoenix's existing USB class-driver structure.
+
+- `phoenix-rtos-project/_projects/aarch64a72-generic-rpi4b/board_config.h`
+  Important because the current Pi 4 A72 project now opts into the
+  `PL011_TTY_KBD_PATH` bridge policy without forcing that behavior on every
+  PL011 target.
 
 - `phoenix-rtos-filesystems/dummyfs/srv.c`
   Important because the `devfs` instance is started here with `dummyfs -N devfs -D`, and the next fast diagnostic step targets its non-filesystem namespace registration and `mtLookup` servicing path.
@@ -255,6 +274,11 @@ This file indexes the most important websites, repositories, documents, and sour
 - `phoenix-rtos-kernel/include/arch/ia32/ia32.h`
   Important because it is the current reference definition for `pctl_graphmode`
   and the framebuffer geometry contract used by the existing Phoenix fbcon path.
+
+- Re-verify:
+  the `phoenix-dev` VM currently has `aarch64-phoenix` installed but still
+  lacks `i386-pc-phoenix`, so IA32 EHCI-based USB-host validation remains
+  environment-limited unless that second toolchain is added.
 
 ## 4. Raspberry Pi Official Documentation
 
