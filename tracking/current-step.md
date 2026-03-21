@@ -2,29 +2,29 @@
 
 ## Metadata
 
-- Step ID: `STEP-0277`
-- Title: Implement the smallest full Pi 4 SD-card image helper
+- Step ID: `STEP-0278`
+- Title: Scope the smallest host-visible Pi 4 SD-card image handoff step
 - Status: `planned`
 - Date: `2026-03-21`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- implement the smallest helper that turns the current Pi 4 boot payload into a
-  normal flashable SD-card image
+- select the smallest next step that makes the new Pi 4 full disk image
+  directly usable from the macOS host
 
 ## Scope
 
 In scope:
 
-- add one helper that wraps the current `rpi4b-bootfs.img` in a one-partition
-  MBR disk image
-- validate the partition table and the embedded FAT payload
-- keep the step no-hardware and operator-facing
+- decide whether the next bounded move should export the VM-local Pi 4 full disk
+  image, fold export into the builder, or jump straight to flashing guidance
+- keep the step artifact-only and no-hardware
+- keep the decision aligned with the current host or operator path
 
 Out of scope:
 
-- adding persistent-rootfs partitions
+- implementing the host-visible export helper itself
 - changing Phoenix source code
 - real hardware execution
 
@@ -34,10 +34,10 @@ Out of scope:
 
 ## Expected Files Or Subsystems
 
-- `scripts/assemble-rpi4b-bootfs-img.sh`
-- exported `artifacts/rpi4b/rpi4b-bootfs.img`
-- VM-local `rpi4b-bootfs.img`
-- new full-image helper
+- VM-local `rpi4b-sd.img`
+- `scripts/assemble-rpi4b-sdimg.sh`
+- current host-visible artifact directory
+- current manual hardware instructions
 - `docs/status.md`
 - `manifests/`
 - `tracking/current-step.md`
@@ -45,35 +45,29 @@ Out of scope:
 
 ## Acceptance Criteria
 
-- the helper produces one full Pi 4 disk image suitable for normal SD-card
-  flashing workflows
-- the resulting image has a valid MBR plus one bootable FAT partition
-- the embedded FAT partition still contains the expected firmware-visible boot
-  file set
+- the next artifact handoff step is selected explicitly
+- the selection preserves the current small-step artifact flow rather than
+  widening into flashing automation or real hardware execution
 - no Phoenix upstream repo changes are introduced
 
 ## Validation Plan
 
-- Helper validation:
-  run the new full-image helper
-- Layout validation:
-  inspect the resulting partition table inside `phoenix-dev`
-- Payload validation:
-  inspect the embedded FAT partition contents from the resulting disk image
+- inspect the current VM-local `rpi4b-sd.img` output and operator workflow gap
+- confirm whether host visibility is the next smallest missing link
 - Hardware:
   not applicable
 
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-21-aarch64-rpi4b-sdimg-scope.md`
+  `manifests/2026-03-21-aarch64-rpi4b-sdimg-helper.md`
 
 ## Notes
 
 - Risks:
-  avoid widening into persistent-storage or multi-partition runtime work
+  avoid widening into SD-writing automation or first-hardware smoke execution
 - Dependencies:
-  completed `STEP-0276` SD-card image scoping
+  completed `STEP-0277` full SD-card image helper
 - User-visible control point before next step:
-  after this helper lands, the next bounded move can export that SD-card image
-  to the host and document the first actual flashing workflow
+  after the scope decision, the next bounded code step can add one host-visible
+  export helper for the full SD-card image

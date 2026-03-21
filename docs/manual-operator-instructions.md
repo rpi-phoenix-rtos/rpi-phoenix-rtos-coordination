@@ -357,6 +357,15 @@ Current payload rule:
   - `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-bootfs.img`
 - current validated exported-image SHA-256:
   - `fab57080ef7c770ac9346cfd9e86b6ef71c31d47559fe0bd955bee6b71d3a108`
+- the current full-disk-image helper is:
+  - [scripts/assemble-rpi4b-sdimg.sh](/Users/witoldbolt/phoenix-rpi/scripts/assemble-rpi4b-sdimg.sh)
+- by default it assembles a VM-local Pi 4 SD-card image at:
+  - `/home/witoldbolt.guest/phoenix-buildroots/phoenix-rtos-project-copy/_boot/aarch64a72-generic-rpi4b/rpi4b-sd.img`
+- current validated layout:
+  - DOS partition table
+  - one bootable FAT32 partition
+  - partition start sector `2048`
+  - embedded FAT offset `1048576`
 
 ## 5. What Must Be Provided For Real-Device Testing
 

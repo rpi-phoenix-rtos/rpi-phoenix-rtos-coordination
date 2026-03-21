@@ -587,6 +587,17 @@ Start-gate status:
 - the immediate remaining operator gap is now SD-card usability rather than VM
   artifact access, because the current exported file is a raw FAT filesystem
   image rather than a full flashable disk image
+- that gap is now partly closed too:
+  - `scripts/assemble-rpi4b-sdimg.sh`
+- it produces a VM-local full Pi 4 disk image at:
+  - `/home/witoldbolt.guest/phoenix-buildroots/phoenix-rtos-project-copy/_boot/aarch64a72-generic-rpi4b/rpi4b-sd.img`
+- the current validated layout is:
+  - DOS partition table
+  - one bootable FAT32 partition
+  - partition start sector `2048`
+  - embedded FAT offset `1048576`
+- the immediate remaining operator gap is now host visibility for that full
+  disk image rather than image shape
 - the currently available real-hardware lab is weaker than the ideal UART lab:
   microSD plus HDMI plus Ethernet plus USB keyboard or mouse are available, but
   no USB-TTL adapter is currently available
@@ -611,8 +622,8 @@ Start-gate status:
 
 ## Immediate Next Implementation Milestones
 
-1. Turn the current exported Pi 4 FAT image into a full SD-card image artifact
-   so the first manual hardware trial is a normal flash operation.
+1. Export the new Pi 4 full disk image into a stable host-visible artifact
+   path so the first manual hardware trial is a normal flash operation.
 2. Update the operator-facing runbook for the current no-UART hardware lab.
 3. Keep the current QEMU shell smoke baseline stable:
   `help` plus the validated external-applet follow-up `echo -h`.
