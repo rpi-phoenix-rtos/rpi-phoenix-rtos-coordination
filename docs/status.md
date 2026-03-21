@@ -93,6 +93,12 @@ Start-gate status:
 - the first compile-valid Pi 4 xHCI code now also exists:
   a `libusbxhci` skeleton plus a Pi 4 discovery stub, validated together with
   the `usbkbd` pieces and the Phoenix USB host binary on the A72 lane.
+- the Pi 4 xHCI path now also extracts the next controller-shape fields after
+  the first reset/readiness checks:
+  max slots, max scratchpad buffers, and context size.
+- the Pi 4 xHCI path now also extracts the next controller register-layout
+  facts needed before later interrupter or ring work:
+  doorbell and runtime-register offsets.
 - that validation also exposed and fixed the first generic AArch64 USB-host
   portability issue in `phoenix-rtos-usb`:
   `usb.c` now passes the message-thread port value through `uintptr_t`.
@@ -100,6 +106,14 @@ Start-gate status:
   keyboard artifacts:
   `/sbin/usb` and `/sbin/usbkbd`, while the live Pi 4 image script still does
   not stage them.
+- after the new xHCI capability-shape step, the remaining controller gap is
+  narrower again:
+  register-layout facts such as doorbell and runtime offsets should be
+  extracted before any future interrupter, ring, or root-hub work.
+- after the new register-layout step, the remaining controller gap is narrower
+  again:
+  pre-interrupt capability limits such as max interrupters and ERST sizing
+  should be extracted before any future event-ring work.
 
 ## Most Important Technical Findings
 
@@ -138,6 +152,9 @@ Start-gate status:
   transport gap is narrower again: root-bridge memory-window programming and
   downstream-bus exposure before downstream enumeration can be treated as
   meaningful.
+- after the new xHCI capability-shape step, the remaining xHCI gap is narrower
+  again: register-layout facts such as doorbell and runtime offsets should be
+  extracted before any future interrupter or ring work is attempted.
 - after the new bridge-exposure step, the remaining transport gap is narrower
   again: first meaningful downstream endpoint visibility before any xHCI-
   specific work can be treated as meaningful.

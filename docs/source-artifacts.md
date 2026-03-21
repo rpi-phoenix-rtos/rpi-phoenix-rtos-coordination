@@ -230,6 +230,19 @@ This file indexes the most important websites, repositories, documents, and sour
   BCM2711 indexed-config path without forcing that backend onto other PCIe
   targets.
 
+- `phoenix-rtos-devices/usb/xhci/xhci.c`
+  Important because it now contains the compile-valid Pi 4 xHCI discovery and
+  early-controller path.
+  It now maps MMIO, validates the capability header, performs the first
+  bounded controller reset, validates 4K page support and non-zero port count,
+  and now also extracts the next controller-shape facts needed before later
+  host-operation work:
+  max slots, max scratchpad-buffer count, and context size.
+  It now also extracts the doorbell and runtime-register offsets needed before
+  later interrupter or ring design.
+  The current code intentionally remains pre-root-hub, pre-ring, and
+  pre-enumeration.
+
 - `phoenix-rtos-project/_projects/aarch64a72-generic-rpi4b/board_config.h`
   Important because the current Pi 4 A72 project now opts into the
   `PL011_TTY_KBD_PATH` bridge policy without forcing that behavior on every
