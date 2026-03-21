@@ -696,8 +696,27 @@ These are the current high-signal common AArch64 paths for the early generic and
 - `plo/hal/aarch64/generic/_init.S`
 - `plo/hal/aarch64/generic/interrupts.c`
 - `plo/hal/aarch64/generic/hal.c`
+- `plo/hal/aarch64/generic/video.c`
 - `plo/hal/aarch64/zynqmp/_init.S`
 - `phoenix-rtos-kernel/proc/threads.c`
+
+Current Pi 4 HDMI / mailbox reference paths:
+
+- local QEMU source:
+  - `/home/witoldbolt.guest/src/qemu-10.2.2/hw/misc/bcm2835_property.c`
+  - `/home/witoldbolt.guest/src/qemu-10.2.2/hw/display/bcm2835_fb.c`
+  - `/home/witoldbolt.guest/src/qemu-10.2.2/hw/arm/raspi.c`
+- local external reference repos:
+  - `external/rpi4-osdev/part5-framebuffer/mb.c`
+  - `external/rpi4-osdev/part5-framebuffer/fb.c`
+  - `external/circle/lib/bcmmailbox.cpp`
+  - `external/circle/lib/bcmframebuffer.cpp`
+
+Important current conclusion:
+
+- on the Pi 4 A72 fast lane, the mailbox/property request buffer must currently
+  live in low physical memory for the early `plo` framebuffer path to work
+  under `raspi4b` QEMU
 
 Current preserved clue:
 

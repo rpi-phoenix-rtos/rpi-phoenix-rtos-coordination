@@ -214,9 +214,32 @@ Current debugger note to preserve:
     addresses inside `open()`
   - this was enough to prove the current shared `/dev/console` blocker is
     `resolve_path() -> NULL`, not a missing `sys_open()` reachability issue
+- a third proven use of the QEMU gdbstub is now Pi 4 framebuffer triage:
+  - on the current A72 Pi 4 lane, stop in `plo` `video_init()` at the inlined
+    mailbox-call site rather than adding print probes
+  - if a framebuffer property request looks structurally correct but stays
+    unanswered, test the exact same request via a low physical bounce buffer
+    before changing logic
+  - this method proved that the original high `plo` request buffer above
+    `0x40000000` was the blocker, while a redirected low buffer at
+    `0x02000000` produced a valid framebuffer allocation response
 - local `10.2.2` `hw/intc/arm_gic.c` does not expose an explicit CPU-interface
   read case for offset `0x28`, so `AHPPIR`-style probes should be cross-checked
   against source before being treated as architectural truth
+
+Current Pi 4 HDMI QEMU validation shape:
+
+- build the Pi 4 lane with:
+  - `RPI4B_DTB_PATH=.../bcm2711-rpi-4-b.dtb`
+  - `RPI4B_QEMU_MEMORY_SIZE=80000000`
+- run `raspi4b` QEMU with a real display backend such as `-display vnc=:<n>`
+- use the QEMU monitor `screendump` command instead of a human-only GUI check
+- confirm the captured PPM is not black and contains:
+  - bright top-left marker pixels around `(240, 240, 240)`
+  - filled background pixels around `(160, 96, 48)`
+
+This is the current automated-friendly regression signature for the first Pi 4
+HDMI visibility path.
 
 ## 4.3 What QEMU should never be the sole authority for
 

@@ -2,29 +2,31 @@
 
 ## Metadata
 
-- Step ID: `STEP-0283`
-- Title: Implement the first Pi 4 `plo` mailbox-framebuffer visibility step
+- Step ID: `STEP-0284`
+- Title: Scope the smallest automated regression check for the Pi 4 HDMI visibility path
 - Status: `planned`
 - Date: `2026-03-21`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- implement the smallest Pi 4-specific non-UART visibility step that can show
-  HDMI-side life signs before widening into full display or networking support
+- define the smallest next step that turns the new Pi 4 `plo` HDMI visibility
+  path into a repeatable regression check rather than a one-off manual QEMU
+  experiment
 
 ## Scope
 
 In scope:
 
-- add minimal Raspberry Pi mailbox property-call support in `plo`
-- allocate one simple framebuffer on the Pi 4 path
-- produce one visible framebuffer-side signal under `raspi4b` QEMU if possible
-- keep the step limited to early visibility, not full runtime display support
+- define one automated-friendly validation shape for the current early HDMI path
+- keep the step limited to the existing `plo` marker visibility behavior
+- prefer a coordination-repo helper or documented smoke path over wider source
+  work
 
 Out of scope:
 
 - runtime framebuffer console support
+- new framebuffer rendering logic
 - real hardware execution
 - broad graphics, USB, or network bring-up
 
@@ -34,46 +36,42 @@ Out of scope:
 
 ## Expected Files Or Subsystems
 
-- `docs/manual-operator-instructions.md`
 - `docs/testing-automation.md`
-- `docs/platforms/raspberry-pi-4.md`
-- current Pi 4 source and reference notes for mailbox, framebuffer, and early
-  network possibilities
-- `sources/plo`
-- current Pi 4 `board_config.h`
 - `docs/status.md`
+- `scripts/`
 - `manifests/`
 - `tracking/current-step.md`
 - `tracking/step-history.md`
 
 ## Acceptance Criteria
 
-- the Pi 4 path performs one minimal mailbox property transaction in `plo`
-- the step produces one visible HDMI-side sign of life or one tightly bounded
-  negative result under `raspi4b` QEMU
-- no Phoenix upstream repo changes are introduced
+- the next implementation move is reduced to one explicit regression-check
+  shape for the current Pi 4 HDMI marker
+- the step does not widen into new framebuffer or firmware logic
+- the result records what exact artifact or pixel signature the automated check
+  should validate
 
 ## Validation Plan
 
-- build the Pi 4 image after the change
-- validate first in `raspi4b` QEMU
-- use GDB-first debugging if the expected visible path does not appear
+- Build:
+  not applicable
+- Emulator:
+  not applicable
 - Hardware:
   not applicable
 
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-21-aarch64-rpi4b-no-uart-observability-scope.md`
+  `manifests/2026-03-21-aarch64-rpi4b-plo-hdmi-visibility.md`
 
 ## Notes
 
 - Risks:
-  avoid widening into full framebuffer console plumbing or general graphics
-  support
+  avoid widening into a runtime display subsystem or a broad test harness
 - Dependencies:
-  completed `STEP-0282` no-UART observability scoping
+  completed `STEP-0283` Pi 4 `plo` HDMI visibility
 - User-visible control point before next step:
-  after this step lands, the next bounded move can either refine the mailbox
-  framebuffer signal or start threading that graphmode data into later runtime
-  consumers
+  after this step lands, the next bounded move should either implement the
+  agreed regression helper or pivot to the smallest real-hardware HDMI
+  readiness refinement

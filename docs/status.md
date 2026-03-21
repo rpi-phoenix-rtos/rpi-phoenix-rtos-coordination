@@ -615,6 +615,27 @@ Start-gate status:
   start with a `plo`-side Raspberry Pi mailbox framebuffer step, because it is
   visible on HDMI, testable under `raspi4b`, and narrower than early networking
   or full runtime display plumbing
+- that HDMI observability step is now implemented and validated under
+  `raspi4b` QEMU:
+  - `plo` performs a Raspberry Pi mailbox property transaction
+  - allocates a framebuffer
+  - paints a visible marker rectangle in the upper-left corner
+- the decisive constraint discovered during that step is now explicit:
+  the current generic `plo` link address places a static mailbox request buffer
+  above `0x40000000`, and that high buffer failed on the Pi 4 `raspi4b` lane;
+  a bounded gdbstub experiment proved that redirecting the exact same request
+  buffer to low physical memory (`0x02000000`) immediately produced a valid
+  framebuffer allocation response
+- the implemented source fix therefore keeps the mailbox/framebuffer logic but
+  moves the Pi 4 property-request buffer into a board-provided low physical
+  window instead of widening into broader graphics changes
+- the currently validated Pi 4 HDMI fast-lane signature is:
+  - framebuffer size `1024 x 768`
+  - bright top-left marker pixels such as `(0, 0) -> (240, 240, 240)`
+  - filled background pixels such as `(639, 479) -> (160, 96, 48)`
+- this is still an early `plo` visibility path only:
+  it is not yet a runtime display console, windowing path, or general graphics
+  subsystem
 - an important constraint on that choice is now explicit:
   Phoenix already has `plo` `graphmode` state, but the current AArch64 kernel
   path does not yet expose an IA32-style `pctl_graphmode` consumer, so the
@@ -646,11 +667,15 @@ Start-gate status:
 1. Scope the smallest alternate-observability step for a Pi 4 lab without
    USB-TTL serial.
    Result: selected `plo` mailbox framebuffer as the next bounded path.
-2. Keep the current QEMU shell smoke baseline stable:
+2. Keep the new Pi 4 HDMI visibility path stable and regression-testable.
+   Result: the next bounded move should automate the current QEMU
+   framebuffer-marker validation rather than widening immediately into a runtime
+   console.
+3. Keep the current QEMU shell smoke baseline stable:
   `help` plus the validated external-applet follow-up `echo -h`.
-3. Use the current QEMU shell confidence to drive the next bounded steps toward
+4. Use the current QEMU shell confidence to drive the next bounded steps toward
    a visible first real-device signal beyond UART-only diagnostics.
-4. Keep the new prompt-reaching lane stable while avoiding new diagnosis-only
+5. Keep the new prompt-reaching lane stable while avoiding new diagnosis-only
    probe accumulation.
 
 ## Pi 4 Success Criteria for "Phase 1"

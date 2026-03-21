@@ -73,6 +73,17 @@ Minimum `plo` support on Pi 4:
 5. DTB handoff parsing
 6. image loading from a simple medium
 
+Current early-HDMI note:
+
+- the first validated HDMI path is now a `plo`-side mailbox/property
+  framebuffer allocation plus a painted marker rectangle
+- on the current Pi 4 A72 fast lane, a mailbox request buffer located inside
+  the generic high-linked `plo` image range failed under `raspi4b` QEMU
+- a bounded gdbstub experiment proved that the exact same request succeeds when
+  redirected to low physical memory (`0x02000000`)
+- treat low physical request-buffer placement as part of the current Pi 4 early
+  framebuffer contract until a later step proves a cleaner generic solution
+
 Minimum kernel support on Pi 4:
 
 1. GICv2

@@ -438,8 +438,12 @@ The following physical items are currently required to run tests on an actual Ra
   UART
 - however, the current Phoenix bring-up path is still primarily validated
   through PL011 serial, not through a validated HDMI or network-visible runtime
-- until framebuffer or network-level observability is implemented and tested,
-  lack of UART should be treated as a major reduction in failure visibility
+- the first `plo`-side HDMI visibility path is now implemented and validated in
+  QEMU, but real-hardware HDMI still needs to be treated as an early
+  observability aid rather than a full runtime success signal
+- until framebuffer or network-level observability is implemented and tested
+  further on hardware, lack of UART should still be treated as a major
+  reduction in failure visibility
 - in that no-UART lab shape, prioritize:
   - correct image assembly
   - correct SD-card writing
@@ -453,6 +457,11 @@ The following physical items are currently required to run tests on an actual Ra
   validation step
 - at the current project state, a successful runtime shell on HDMI, keyboard,
   mouse, or network is not yet a documented expectation
+- the first positive HDMI sign currently worth looking for is earlier and much
+  smaller:
+  - `plo` should paint a full-screen filled background
+  - with a bright rectangle in the upper-left corner
+  - before widening into any runtime display expectations
 - lack of visible HDMI output does not yet cleanly distinguish:
   - firmware boot failure
   - `plo` failure
@@ -519,6 +528,13 @@ For the current lab shape, the first practical manual trial is:
    - any visible HDMI behavior
    - ACT LED behavior if observed
    - whether the board appears to reboot repeatedly or stay powered
+
+Current specific HDMI sign to record if present:
+
+- full-screen filled background
+- bright upper-left rectangle
+- whether that image is stable, flashes briefly, or disappears during later
+  boot progress
 
 Do not over-interpret the result:
 
