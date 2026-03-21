@@ -2,45 +2,46 @@
 
 ## Metadata
 
-- Step ID: `STEP-0252`
-- Title: Scope the smallest `resolve_path("/dev/console")` failure split
+- Step ID: `STEP-0253`
+- Title: Scope the smallest pre-`psh` `/dev` namespace fix
 - Status: `planned`
 - Date: `2026-03-21`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- determine the smallest next seam inside libphoenix path canonicalization now
-  that GDB has proved `open()` is reached and `resolve_path("/dev/console")`
-  returns `NULL`
+- identify the smallest fast-lane image or startup change that makes `/dev`
+  resolvable before the shell opens `/dev/console`
 
 ## Scope
 
 In scope:
 
-- inspect `resolve_path()` / `_resolve_abspath()` source and contract
-- allow one tiny runtime split only if source review leaves one ambiguity that
-  cannot be settled from the code
+- inspect existing Phoenix project patterns for pre-shell `devfs` binding
+- inspect whether `psh` applets can provide a minimal pre-shell `mkdir` and
+  `bind` path without widening into new utilities
+- select one small project-local fix
 
 Out of scope:
 
-- source changes outside minimal path-resolution inspection
-- shell-policy changes
-- console-device selection changes
-- unrelated kernel or project changes
-- Pi 5 or RP1 work
+- kernel name-resolution changes
+- libphoenix path-resolution changes
+- `psh` console-policy changes
+- unrelated Pi 4 peripheral work
 - real hardware work
 
 ## Expected Repositories
 
 - coordination repo
+- `sources/phoenix-rtos-project`
 
 ## Expected Files Or Subsystems
 
-- `sources/libphoenix/unistd/dir.c`
-- `sources/libphoenix/unistd/file.c`
+- `sources/phoenix-rtos-project/_projects/aarch64a53-generic-qemu/*`
+- `sources/phoenix-rtos-project/_projects/aarch64a72-generic-rpi4b/*`
+- `sources/phoenix-rtos-filesystems/dummyfs/srv.c`
+- `sources/phoenix-rtos-utils/psh/*`
 - `docs/status.md`
-- `docs/testing-automation.md`
 - `docs/source-artifacts.md`
 - `manifests/`
 - `tracking/current-step.md`
@@ -48,35 +49,36 @@ Out of scope:
 
 ## Acceptance Criteria
 
-- the inspection identifies one concrete next seam inside `resolve_path()` or
-  `_resolve_abspath()`
-- the selected follow-up does not widen the work beyond the shared fast lane
-- the result is captured in one manifest and the next active step
+- one concrete smallest fix is selected for making `/dev` visible before the
+  shell starts
+- the selected fix stays in project composition or startup wiring
+- the result is captured in one manifest and the next implementation step
 
 ## Validation Plan
 
 - Analysis:
-  source review of `libphoenix` path-resolution code
+  source review of `dummyfs`, `psh`, and current project files
 - Emulator:
-  optional only if source review still leaves one unresolved boundary
+  not required unless the source review leaves one ambiguity about applet or
+  startup behavior
 - Hardware:
   not applicable
 
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-21-aarch64-gdb-console-open-path.md`
+  `manifests/2026-03-21-aarch64-resolve-path-dev-seam.md`
 
 ## Notes
 
 - Risks:
-  avoid widening back into kernel or `psh` tracing now that the failing seam is
-  known to be inside libphoenix canonicalization
+  avoid widening into shell redesign when the current issue appears to be
+  namespace setup
 - Dependencies:
-  completed `STEP-0251` GDB-backed call-path inspection
+  completed `STEP-0252` `/dev` resolve-path seam analysis
 - Source reminder:
-  current live result is `stat() -> -1`, `resolve_path() -> NULL`, no
-  `sys_open()`
+  both the `stat()` and direct `open()` path-resolution calls fail at
+  intermediate `/dev`, not at `console`
 - User-visible control point before next step:
-  after this step lands, the next follow-up should depend on the smallest
-  failing branch inside `resolve_path()` / `_resolve_abspath()`
+  after this scope step lands, the next step should be a project-local startup
+  change, not another kernel or libc probe

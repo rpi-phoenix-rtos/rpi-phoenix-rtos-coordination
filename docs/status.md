@@ -499,6 +499,20 @@ Start-gate status:
   canonicalization path for `/dev/console`
 - the earlier silent libphoenix trace is therefore a visibility limitation of
   that trace path, not evidence that `open()` was skipped
+- a second bounded QEMU gdbstub pass now proves the failure is even earlier
+  than the `console` leaf:
+  - the first `resolve_path()` call reached from `stat()` fails with
+    `errno = ENOENT`, `partial = "/dev"`, `is_leaf = 0`
+  - the second `resolve_path()` call reached directly from `open()` fails the
+    same way, also at intermediate `/dev`, even with `allow_missing_leaf = 1`
+- the shared fast-lane blocker is therefore:
+  `lookup("/dev") -> -ENOENT` inside libphoenix path resolution
+- source review of `dummyfs` and project files makes the likely reason explicit:
+  - the root `dummyfs-root` instance auto-populates only `/syspage`
+  - the `dummyfs;-N;devfs;-D` instance registers `devfs` in the non-filesystem
+    namespace, not at `/dev`
+  - the current generic and Pi 4 fast-lane projects do not stage the usual
+    pre-shell `devfs -> /dev` bind path used by established projects
 - debugger-first is now the recorded policy for QEMU runtime triage:
   future sessions should start with a bounded gdbstub inspection and only add
   source-level probes after documenting why GDB cannot answer the current
@@ -516,8 +530,8 @@ Start-gate status:
 
 ## Immediate Next Implementation Milestones
 
-1. Inspect why `resolve_path("/dev/console", ..., allow_missing_leaf = 1)` returns `NULL` on both the generic and Pi 4 fast lanes.
-2. Fix the smallest shared `resolve_path()` or `_resolve_abspath()` blocker that follows from that result.
+1. Create `/dev` and bind `devfs` into the filesystem namespace before launching the fast-lane shell.
+2. Validate that both generic and Pi 4 QEMU move past `psh: tty open fail open -2`.
 3. Drive both fast lanes from `psh: tty open` to `psh: tty ready`, then to `psh: readcmd`.
 4. Once the Pi 4 fast lane reaches stable interactive shell readiness, switch the next bounded steps back to firmware-bundle completeness and first real-device smoke preparation.
 

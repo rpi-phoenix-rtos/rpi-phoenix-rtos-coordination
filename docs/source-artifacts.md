@@ -547,6 +547,10 @@ Current local finding to preserve:
     bounded gdbstub inspection on the generic fast lane proved that
     `psh_ttyopen("/dev/console")` reaches libphoenix `open()`, `stat()` returns
     `-1`, `resolve_path()` returns `NULL`, and `sys_open()` is never reached
+  - current tighter late-userspace proof point:
+    a second bounded gdbstub pass proved both the `stat()` and direct `open()`
+    `resolve_path()` calls fail at intermediate `/dev` lookup with
+    `errno = ENOENT`, before the `console` leaf is reached
 - local `10.2.2` QEMU source path for the current GIC model:
   - `/home/witoldbolt.guest/src/qemu-10.2.2/hw/intc/arm_gic.c`
   - current important fact:
@@ -566,6 +570,20 @@ Current local finding to preserve:
 Important Raspberry Pi kernel-source findings to preserve:
 
 - prefer the Raspberry Pi kernel DTS/DTSI files over decompiled DTBs when the question is board intent or which properties are expected to be firmware-filled
+
+Important Phoenix filesystem / shell findings to preserve:
+
+- `sources/phoenix-rtos-filesystems/dummyfs/srv.c:48`
+  `fetch_modules()` only auto-populates `/syspage` in the root dummyfs
+  instance
+- `sources/phoenix-rtos-filesystems/dummyfs/srv.c:245`
+  `dummyfs;-N;devfs;-D` registers `devfs` in the non-filesystem namespace; it
+  does not make `/dev` appear in the root filesystem by itself
+- established Phoenix project overlays commonly use:
+  `W /bin/bind devfs /dev`
+  in `rootfs-overlay/etc/rc.psh`
+- the current fast-lane generic and Pi 4 projects do not yet stage an
+  equivalent pre-shell `/dev` bind path
 - `raspberrypi/linux` `rpi-6.12.y` and `rpi-6.19.y` both contain:
   - `arch/arm/boot/dts/broadcom/bcm2711-rpi.dtsi`
     - `memory@0` comment: `Will be filled by the bootloader`
