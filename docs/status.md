@@ -112,6 +112,13 @@ Start-gate status:
 - the Pi 4 xHCI path now also allocates the first controller-owned memory
   objects needed for later controller setup:
   one `DCBAA` page and one first command-ring backing block.
+- the current QEMU boot validation result is now explicit:
+  - generic `virt` shell smoke still passes
+  - Pi 4 `raspi4b` shell smoke also passes, but only on a DTB-prepared image
+    built with:
+    - `RPI4B_DTB_PATH`
+    - `RPI4B_QEMU_MEMORY_SIZE=80000000`
+  - the Pi 4 HDMI smoke also passes on that same DTB-prepared image
 - that validation also exposed and fixed the first generic AArch64 USB-host
   portability issue in `phoenix-rtos-usb`:
   `usb.c` now passes the message-thread port value through `uintptr_t`.
@@ -141,6 +148,9 @@ Start-gate status:
 - after the new memory-allocation step, the next clean seam is the first real
   xHCI register-programming step:
   `DCBAAP`, `CRCR`, and `CONFIG`.
+- QEMU still cannot validate the real Pi 4 USB keyboard path itself, because
+  the current `raspi4b` machine does not expose the BCM2711 PCIe root-port path
+  needed for VL805 xHCI bring-up.
 
 ## Most Important Technical Findings
 

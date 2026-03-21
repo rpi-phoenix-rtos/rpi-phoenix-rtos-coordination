@@ -13,10 +13,11 @@
     Pi 4 text-console lane now mirrors serial output into the framebuffer and
     is slower than the earlier panel-only path
 - current status note for `rpi4b`:
-  - the helper needs one bounded re-verification step after the HDMI
-    text-console milestone, because a fresh clean rerun reached `psh`, echoed
-    `help`, and then did not complete the expected `Available commands:` round
-    trip before timeout
+  - the helper passes on the current lane, but only when the Pi 4 image has
+    been rebuilt with an explicit Pi 4 DTB and the QEMU memory-node patch
+    applied through:
+    - `RPI4B_DTB_PATH`
+    - `RPI4B_QEMU_MEMORY_SIZE=80000000`
 - expected success markers:
   - `(psh)% help`
   - `Available commands:`
@@ -193,6 +194,9 @@ Current local `raspi4b` smoke result:
     - `pl011-tty: console ready`
     - `main: Starting syspage programs ...`
     - `dummyfs: initialized`
+  - with the same DTB-prepared image, the current Pi 4 shell smoke now also
+    completes the `help` round-trip and returns to `(psh)%`
+  - the Pi 4 HDMI smoke also passes on that DTB-prepared image
 
 Inference:
 
@@ -210,6 +214,11 @@ Official QEMU `raspi4b` expectations to preserve:
   - `PWM`
   - `PCIE Root Port`
   - `GENET Ethernet Controller`
+- implication for the current Phoenix Pi 4 USB work:
+  - QEMU `raspi4b` is still not a meaningful validation lane for the real
+    BCM2711 PCIe -> VL805 xHCI path
+  - current QEMU can validate that the USB/xHCI source changes did not break
+    boot, but not that Pi 4 USB keyboard transport actually works
 
 Current debugger note to preserve:
 

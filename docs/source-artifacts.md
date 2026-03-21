@@ -266,6 +266,9 @@ This file indexes the most important websites, repositories, documents, and sour
   Important because the Pi 4 A72 project now exports
   `PCI_EXPRESS_BCM2711_INDEXED_CFG=y`, which is the first build-level backend
   selection hook for BCM2711 PCIe work.
+  It also now carries the documented Pi 4 QEMU DTB build knobs:
+  `RPI4B_DTB_PATH` and `RPI4B_QEMU_MEMORY_SIZE`, which are required for the
+  current passing Pi 4 `raspi4b` shell and HDMI smokes.
 
 - `phoenix-rtos-filesystems/dummyfs/srv.c`
   Important because the `devfs` instance is started here with `dummyfs -N devfs -D`, and the next fast diagnostic step targets its non-filesystem namespace registration and `mtLookup` servicing path.
