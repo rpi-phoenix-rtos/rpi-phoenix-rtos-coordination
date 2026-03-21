@@ -186,6 +186,8 @@ When the failure is inside a QEMU lane:
   trace code
 - only add source-level probes after the debugger path has been shown
   insufficient for the specific boundary being investigated
+- if a temporary source-level probe disproves its hypothesis, remove it before
+  closing or committing the step
 
 ## 9. Session Close Checklist
 

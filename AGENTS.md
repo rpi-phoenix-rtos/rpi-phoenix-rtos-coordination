@@ -67,6 +67,7 @@ Use them as follows:
 - If the user explicitly authorizes unattended work, the agent may continue across normal step boundaries only under the rules in `docs/unattended-agent-mode.md`; those rules do not relax step sizing, validation, or commit discipline.
 - On this workstation, treat Linux as the authoritative build and emulation environment. Use macOS natively for coordination, editing, and hardware control; use a Linux VM for Phoenix builds and most QEMU runs unless a task is explicitly documented as safe on the host.
 - When debugging runtime behavior under QEMU, prefer GDB through the QEMU gdbstub before changing source code to add probes, traces, or debug prints. Only add source-level runtime instrumentation after documenting why the GDB-first path is insufficient for the current question.
+- If a code change is introduced only to probe, diagnose, or verify a hypothesis and that hypothesis turns out false, remove that diagnostic code before the step is closed or committed. Keep only the code changes that are actually required by the confirmed fix or design.
 - Optimize all future code for readability and upstreamability: keep changes small, consistent with nearby Phoenix code, warning-clean, and free of gratuitous formatting churn.
 - When the user explicitly prioritizes the first Raspberry Pi 4 boot, use a boot-first fast lane:
   prefer the smallest steps that unlock common timer runtime validation, generic QEMU `virt`, PL011 console reuse, `plo` boot, and Pi 4 kernel handoff; defer generic cleanup that is not on that path.

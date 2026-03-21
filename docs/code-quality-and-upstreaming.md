@@ -142,6 +142,7 @@ If a temporary workaround is necessary:
 - document it as transitional
 - explain what the final design should replace it with
 - avoid letting temporary debug aids become architecture
+- remove diagnostic-only code when the hypothesis it tested turns out false
 
 Examples:
 
@@ -189,6 +190,8 @@ A step should not be treated as complete until the following are true.
 - a second pass is made to simplify names, control flow, or helper boundaries before committing
 - when debugging in a QEMU lane, the gdbstub is tried before source-level
   runtime probes are added
+- if a probe or trace was added only to test a hypothesis and the hypothesis was
+  false, that probe is removed before the step is closed
 - dead debug prints and temporary scaffolding are removed before the step is closed
 - unrelated edits are removed from the diff
 
@@ -204,6 +207,8 @@ Before committing, check:
 - are error and cleanup paths easy to follow?
 - if this change adds runtime probes for a QEMU-only debugging question, was a
   bounded gdbstub session already tried first?
+- if a diagnostic code path was added for hypothesis testing, did the commit
+  remove it when the hypothesis failed?
 - are there any temporary debug paths that should not be committed?
 - would an upstream maintainer understand why this change belongs in this layer?
 

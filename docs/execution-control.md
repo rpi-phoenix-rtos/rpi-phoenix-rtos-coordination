@@ -78,6 +78,8 @@ If the step is about a runtime blocker in a QEMU lane, it should also define:
 - whether a bounded gdbstub session can answer the question before code changes
 - why any planned source-level debug instrumentation is necessary if the
   debugger-first path is being skipped
+- how any temporary diagnostic code will be removed if the tested hypothesis is
+  disproved
 
 ## 5. Acceptance Criteria Rules
 

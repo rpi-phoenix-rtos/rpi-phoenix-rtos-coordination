@@ -180,6 +180,8 @@ Current debugger note to preserve:
     known state variables over broad single-step sessions
   - only add runtime instrumentation if the needed state is not reachable or
     not intelligible through the debugger alone
+  - if a temporary runtime probe only disproves a hypothesis, remove it before
+    the step is closed and do not let it accumulate in the tree
 - a proven current stop point for Pi 4 bring-up is `_hal_interruptsInit + 64`,
   immediately after `dtb_getGIC()` and before `_pmap_halMapDevice()`
 - a second proven use of the QEMU gdbstub is later userspace triage on the
