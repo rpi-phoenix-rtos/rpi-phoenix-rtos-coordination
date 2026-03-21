@@ -441,6 +441,10 @@ The following physical items are currently required to run tests on an actual Ra
 - the first `plo`-side HDMI visibility path is now implemented and validated in
   QEMU, but real-hardware HDMI still needs to be treated as an early
   observability aid rather than a full runtime success signal
+- the current Pi 4 image now also enables two firmware-stage HDMI settings in
+  `config.txt` for the first board trial:
+  - `hdmi_force_hotplug=1`
+  - `disable_overscan=1`
 - until framebuffer or network-level observability is implemented and tested
   further on hardware, lack of UART should still be treated as a major
   reduction in failure visibility
@@ -462,6 +466,10 @@ The following physical items are currently required to run tests on an actual Ra
   - `plo` should paint a full-screen filled background
   - with a bright rectangle in the upper-left corner
   - before widening into any runtime display expectations
+- the current image tries to make that more likely and more legible by:
+  - forcing HDMI output mode even if hotplug detection is flaky
+  - disabling firmware overscan so the upper-left marker is less likely to be
+    cropped
 - lack of visible HDMI output does not yet cleanly distinguish:
   - firmware boot failure
   - `plo` failure

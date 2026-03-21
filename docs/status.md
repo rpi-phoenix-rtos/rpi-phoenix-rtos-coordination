@@ -637,9 +637,21 @@ Start-gate status:
   - `scripts/qemu-rpi4b-hdmi-smoke.sh`
   - it runs the existing Pi 4 QEMU lane, captures a framebuffer dump, and
     validates the current marker and background pixels
+- the next smallest real-board refinement is now also implemented at the
+  firmware staging layer:
+  - the Pi 4 project `config.txt` now adds `hdmi_force_hotplug=1`
+  - and `disable_overscan=1`
+- this is intentionally narrow:
+  - force HDMI mode even if hotplug detection is flaky
+  - avoid default firmware overscan cropping of the upper-left marker
+  - do not widen yet into explicit fixed HDMI modes or broader safe-mode
+    bundles
 - this is still an early `plo` visibility path only:
   it is not yet a runtime display console, windowing path, or general graphics
   subsystem
+- that firmware refinement is now build-validated too:
+  the rebuilt staged Pi 4 boot artifact contains both added `config.txt`
+  lines in `_boot/aarch64a72-generic-rpi4b/rpi4b/config.txt`
 - an important constraint on that choice is now explicit:
   Phoenix already has `plo` `graphmode` state, but the current AArch64 kernel
   path does not yet expose an IA32-style `pctl_graphmode` consumer, so the

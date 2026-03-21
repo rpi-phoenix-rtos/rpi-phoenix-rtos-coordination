@@ -2,82 +2,74 @@
 
 ## Metadata
 
-- Step ID: `STEP-0287`
-- Title: Implement the Pi 4 firmware-stage HDMI refinement
+- Step ID: `STEP-0289`
+- Title: Refresh the host-visible Pi 4 SD image after the HDMI firmware refinement
 - Status: `planned`
 - Date: `2026-03-21`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- improve the odds and interpretability of the first real Pi 4 HDMI trial by
-  making the smallest firmware-stage `config.txt` refinement selected in
-  `STEP-0286`
+- update the host-visible Pi 4 SD image artifact so the first real board trial
+  uses the newly refined HDMI firmware config
 
 ## Scope
 
 In scope:
 
-- update the Pi 4 project `config.txt`
-- add:
-  - `hdmi_force_hotplug=1`
-  - `disable_overscan=1`
-- rebuild the Pi 4 artifacts
-- verify the staged firmware-visible `config.txt`
-- update the operator and source-reference docs
+- rerun the existing Pi 4 SD-image export helper
+- verify the host-visible image path
+- record the refreshed artifact checksum
+- update the operator-facing docs and status if needed
 
 Out of scope:
 
-- fixed explicit `hdmi_group` / `hdmi_mode`
-- runtime framebuffer console support
+- changing image layout
+- flashing the image
 - real hardware execution
-- broad display-policy tuning
 
 ## Expected Repositories
 
-- `phoenix-rtos-project`
 - coordination repo
 
 ## Expected Files Or Subsystems
 
-- `sources/phoenix-rtos-project/_projects/aarch64a72-generic-rpi4b/config.txt`
+- `scripts/export-rpi4b-sdimg.sh`
+- `artifacts/rpi4b/`
 - `docs/manual-operator-instructions.md`
 - `docs/status.md`
-- `docs/source-artifacts.md`
 - `manifests/`
 - `tracking/current-step.md`
 - `tracking/step-history.md`
 
 ## Acceptance Criteria
 
-- the Pi 4 project `config.txt` contains the two selected HDMI refinements
-- the Pi 4 image build succeeds
-- the staged Pi 4 firmware `config.txt` contains those lines
-- the docs record why these settings are enabled and what they are expected to
-  improve on the first real board trial
+- the host-visible `artifacts/rpi4b/rpi4b-sd.img` is refreshed from the latest
+  VM-local image
+- the refreshed image checksum is recorded
+- the docs make it clear that the exported image now includes the HDMI firmware
+  refinement
 
 ## Validation Plan
 
 - Build:
-  rebuild `aarch64a72-generic-rpi4b` in `phoenix-dev`
+  use the already rebuilt Pi 4 VM-local image
 - Emulator:
-  not required for this firmware-only refinement
+  not applicable
 - Hardware:
   not applicable
 
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-21-aarch64-rpi4b-hdmi-smoke-helper.md`
+  `manifests/2026-03-21-aarch64-rpi4b-hdmi-firmware-refinement.md`
 
 ## Notes
 
 - Risks:
-  avoid expanding this into a broad compatibility matrix of HDMI firmware
-  options
+  avoid folding artifact export into flashing or hardware testing
 - Dependencies:
-  completed `STEP-0286` HDMI firmware-refinement scoping
+  completed `STEP-0288` refreshed-image handoff scoping
 - User-visible control point before next step:
-  after this step lands, the next bounded move can start using the refined
-  image for the first real Pi 4 HDMI trial or scope the next smallest
-  real-hardware visibility refinement
+  after this step lands, the next bounded move can start the first manual Pi 4
+  board trial or scope one more small pre-hardware refinement

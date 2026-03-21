@@ -224,6 +224,12 @@ This file indexes the most important websites, repositories, documents, and sour
   <https://www.raspberrypi.com/documentation/computers/config_txt.html>
   Important sections: `initramfs`, `ramfsfile`, `ramfsaddr`, `auto_initramfs`
 
+- Raspberry Pi legacy `config.txt` options:
+  <https://www.raspberrypi.com/documentation/computers/legacy_config_txt.html>
+  Important because the current early bare-metal-style Pi 4 HDMI staging still
+  depends on firmware-era HDMI options such as `hdmi_force_hotplug` and
+  `disable_overscan`.
+
 - Raspberry Pi configuration landing page:
   <https://www.raspberrypi.com/documentation/computers/configuration.html>
 
@@ -717,6 +723,12 @@ Important current conclusion:
 - on the Pi 4 A72 fast lane, the mailbox/property request buffer must currently
   live in low physical memory for the early `plo` framebuffer path to work
   under `raspi4b` QEMU
+- for the first real Pi 4 no-UART HDMI trial, the current firmware staging also
+  intentionally enables:
+  - `hdmi_force_hotplug=1`
+  - `disable_overscan=1`
+  based on the current official Raspberry Pi legacy `config.txt` HDMI
+  documentation
 
 Current preserved clue:
 
