@@ -209,6 +209,12 @@ This file indexes the most important websites, repositories, documents, and sour
   Important because it exposes both `libusbdrv-usbkbd` and `usbkbd`, matching
   Phoenix's existing USB class-driver structure.
 
+- `phoenix-rtos-devices/pcie/server/pcie.c`
+  Important because the platform-agnostic PCIe scan path now uses a small
+  server-local config-space backend interface instead of hardcoding direct ECAM
+  access throughout the scan logic. This is now the seam for a later BCM2711
+  indexed-config backend.
+
 - `phoenix-rtos-project/_projects/aarch64a72-generic-rpi4b/board_config.h`
   Important because the current Pi 4 A72 project now opts into the
   `PL011_TTY_KBD_PATH` bridge policy without forcing that behavior on every
@@ -449,6 +455,14 @@ This file indexes the most important websites, repositories, documents, and sour
 - `external/circle/lib/macb.cpp`
   Important because they are later-stage references for Pi 4 PCIe and network
   subsystems.
+
+- `external/circle/include/circle/bcmpciehostbridge.h`
+- `external/circle/include/circle/bcm2711.h`
+- `external/circle/include/circle/memorymap64.h`
+  Important because they give the key BCM2711 host-bridge constants and memory
+  window assumptions behind Circle's PCIe implementation. They are now the
+  main external references for the first Phoenix BCM2711 indexed config-space
+  backend slice.
 
 - `phoenix-rtos-corelibs/libgraph/graph.h`
 - `phoenix-rtos-corelibs/libgraph/graph.c`

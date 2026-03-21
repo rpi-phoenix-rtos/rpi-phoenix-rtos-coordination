@@ -58,6 +58,10 @@ Start-gate status:
   artifact.
 - USB keyboard work is now explicitly split into a generic HID class-driver
   track and a later Pi 4 transport track through BCM2711 PCIe plus VL805 xHCI.
+- the platform-agnostic Phoenix PCIe server scan path no longer hardcodes
+  direct ECAM access throughout its logic; it now goes through a small
+  server-local config-space backend interface, which is the first enabling
+  step toward a BCM2711 indexed-config backend.
 
 ## Most Important Technical Findings
 
@@ -79,11 +83,25 @@ Start-gate status:
 - After the first transport scoping pass, the smallest next Pi 4 USB milestone
   is now explicitly BCM2711 PCIe root-complex bring-up plus ECAM enumeration;
   xHCI should come only after that link and config-space foundation exists.
+- after the first enabling transport refactor, the next bounded PCIe move is
+  no longer “make the server less ECAM-shaped”; it is “add the first
+  BCM2711-specific indexed config-space backend behind the new server-local
+  interface”.
 - Pi 4 `raspi4b` QEMU is not expected to validate that PCIe milestone, because
   the emulator still lacks the relevant PCIe root-port support.
 - The strongest currently available no-hardware validation for the new
   keyboard driver is component-level AArch64 compilation with the existing
   `aarch64-phoenix` toolchain.
+- the strongest currently available no-hardware validation for the new PCIe
+  server abstraction is:
+  - representative `pcie` server compilation on the ZynqMP/Xilinx-targeted
+    lane with the correct project include path
+  - fresh Pi 4 A72 full-build regression validation from a disposable temp
+    buildroot
+- the full `aarch64a53-zynqmp-qemu` project build is currently blocked by an
+  unrelated kernel issue outside the PCIe step:
+  `hal/aarch64/interrupts_gicv2.c` references `TIMER_IRQ_GROUP` without a
+  definition on that lane
 - A stronger IA32 EHCI host build lane exists in principle, but `phoenix-dev`
   does not yet have an `i386-pc-phoenix` toolchain, so the current VM cannot
   validate the full `ia32-generic-qemu` build script end to end.
