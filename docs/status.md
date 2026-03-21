@@ -603,7 +603,7 @@ Start-gate status:
 - it exports the current Pi 4 full disk image into:
   - `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
 - the current validated exported full-image SHA-256 is:
-  - `d480e6d35d91a6e9b4d56971fd8973feb45140d570c099ee4c638fa5179cb0bc`
+  - `acfdb8c251be03a716cdd9811b151c412de1e3a11c24db76ed5a476d8fc8f107`
 - the project now has a host-visible flashable Pi 4 SD-card image artifact for
   the first manual hardware trial
 - the operator runbook now includes an explicit macOS flashing workflow for:
@@ -652,6 +652,17 @@ Start-gate status:
 - that firmware refinement is now build-validated too:
   the rebuilt staged Pi 4 boot artifact contains both added `config.txt`
   lines in `_boot/aarch64a72-generic-rpi4b/rpi4b/config.txt`
+- the host-visible Pi 4 SD-card artifact has now been refreshed through the
+  full helper chain after that firmware change, so
+  `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
+  is the current flashable image that includes the HDMI refinement
+- Circle has now been reviewed in detail as a Pi 4 external reference:
+  - it strongly confirms the current Phoenix early-HDMI direction:
+    low-memory mailbox property requests plus firmware-allocated framebuffer
+  - it also confirms that Pi 4 USB keyboard support is not a near-term shortcut
+    for the current lab, because Circle reaches it through BCM2711 PCIe plus
+    VL805 xHCI before HID keyboard handling
+  - the detailed review is now captured in `docs/circle-reference-review.md`
 - an important constraint on that choice is now explicit:
   Phoenix already has `plo` `graphmode` state, but the current AArch64 kernel
   path does not yet expose an IA32-style `pctl_graphmode` consumer, so the
@@ -689,7 +700,9 @@ Start-gate status:
   `help` plus the validated external-applet follow-up `echo -h`.
 4. Use the current QEMU shell confidence to drive the next bounded steps toward
    a visible first real-device signal beyond UART-only diagnostics.
-5. Keep the new prompt-reaching lane stable while avoiding new diagnosis-only
+5. Use the Circle review to keep the next bounded move on the HDMI-visible path
+   rather than prematurely widening into PCIe, xHCI, or USB keyboard work.
+6. Keep the new prompt-reaching lane stable while avoiding new diagnosis-only
    probe accumulation.
 
 ## Pi 4 Success Criteria for "Phase 1"

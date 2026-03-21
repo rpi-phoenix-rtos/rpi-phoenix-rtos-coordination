@@ -84,6 +84,19 @@ Current early-HDMI note:
 - treat low physical request-buffer placement as part of the current Pi 4 early
   framebuffer contract until a later step proves a cleaner generic solution
 
+Circle-derived note:
+
+- Circle independently validates the same early Pi 4 video direction:
+  - property-mailbox framebuffer allocation
+  - coherent low-memory request buffers
+  - firmware-driven display sizing and display selection on Pi 4
+- Circle also confirms that USB keyboard support on Pi 4 is not an early
+  shortcut:
+  its path depends on PCIe plus VL805 xHCI before HID keyboard support is even
+  reachable
+- for the current no-UART lab, that means the next small steps should stay
+  HDMI-visible first and treat USB keyboard as a later PCIe/xHCI milestone
+
 Minimum kernel support on Pi 4:
 
 1. GICv2

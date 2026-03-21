@@ -267,6 +267,10 @@ This file indexes the most important websites, repositories, documents, and sour
   Pi 4 AArch64 startup, physical-timer, GIC-400, DTB, mailbox, PCIe, USB, and
   later Pi 5 RP1 support. This is the strongest external bare-metal reference
   for current Pi 4 boot-first work.
+  Current review focus:
+  - `docs/circle-reference-review.md`
+  - early Pi 4 mailbox/framebuffer sequencing
+  - later Pi 4 PCIe plus xHCI plus HID keyboard sequencing
 
 - `markCwatson/rpi-os`:
   <https://github.com/markCwatson/rpi-os>
@@ -346,8 +350,26 @@ This file indexes the most important websites, repositories, documents, and sour
 - `external/circle/lib/bcmmailbox.cpp`
 - `external/circle/lib/bcmpropertytags.cpp`
 - `external/circle/lib/bcmframebuffer.cpp`
-  Important because they are later-stage references for mailbox property calls
-  and framebuffer bring-up.
+  Important because they show the exact property-mailbox contract Circle uses:
+  coherent low-memory request buffer, bus-address submission, barriers, and
+  minimal framebuffer allocation tags.
+
+- `external/circle/lib/screen.cpp`
+- `external/circle/include/circle/screen.h`
+  Important because they show Circle's layering from framebuffer allocation to
+  text-console rendering, which is a useful later reference for Phoenix runtime
+  framebuffer console work.
+
+- `external/circle/include/circle/usb/usbhcidevice.h`
+- `external/circle/lib/usb/xhcidevice.cpp`
+- `external/circle/lib/usb/usbdevicefactory.cpp`
+- `external/circle/lib/usb/usbkeyboard.cpp`
+- `external/circle/lib/input/keyboardbehaviour.cpp`
+- `external/circle/lib/input/keyboardbuffer.cpp`
+  Important because they prove that Pi 4 USB keyboard support in Circle sits on
+  top of PCIe plus xHCI, then HID keyboard handling, then cooked input
+  behavior. This is the main reason USB keyboard remains a later Phoenix
+  milestone than current HDMI-visible bring-up.
 
 - `external/circle/lib/bcmpciehostbridge.cpp`
 - `external/circle/lib/macb.cpp`

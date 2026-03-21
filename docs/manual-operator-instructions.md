@@ -371,7 +371,11 @@ Current payload rule:
 - by default it exports that disk image into the host workspace at:
   - `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
 - current validated exported full-image SHA-256:
-  - `d480e6d35d91a6e9b4d56971fd8973feb45140d570c099ee4c638fa5179cb0bc`
+  - `acfdb8c251be03a716cdd9811b151c412de1e3a11c24db76ed5a476d8fc8f107`
+- the current exported full-disk artifact includes the latest firmware-stage
+  HDMI refinement:
+  - `hdmi_force_hotplug=1`
+  - `disable_overscan=1`
 
 ### Current first macOS flashing workflow
 

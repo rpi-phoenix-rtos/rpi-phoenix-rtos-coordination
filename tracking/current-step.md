@@ -2,47 +2,42 @@
 
 ## Metadata
 
-- Step ID: `STEP-0293`
-- Title: Rerun the full Pi 4 artifact-refresh chain
+- Step ID: `STEP-0296`
+- Title: Scope the smallest post-Circle Pi 4 HDMI refinement
 - Status: `planned`
 - Date: `2026-03-21`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- refresh the host-visible Pi 4 SD image completely so the first board trial
-  uses the latest HDMI firmware refinement
+- select the smallest next technical step after the Circle review, with bias
+  toward HDMI-visible progress for the first manual Pi 4 trial
 
 ## Scope
 
 In scope:
 
-- rerun:
-  - `scripts/assemble-rpi4b-bootfs.sh`
-  - `scripts/assemble-rpi4b-bootfs-img.sh`
-  - `scripts/assemble-rpi4b-sdimg.sh`
-  - `scripts/export-rpi4b-sdimg.sh`
-- record the refreshed host-visible checksum
-- update the docs/status with the new artifact hash
+- use the new Circle review to choose the next bounded Pi 4 step
+- prefer a tiny HDMI-visible refinement over broader subsystem work
+- keep the step selection compatible with the current no-UART real-board lab
 
 Out of scope:
 
-- flashing
-- real hardware execution
-- new firmware or runtime logic
+- PCIe bring-up
+- xHCI bring-up
+- USB keyboard implementation
+- broad runtime graphics support
 
 ## Expected Repositories
 
 - coordination repo
+- possibly `plo`
+- possibly `phoenix-rtos-project`
 
 ## Expected Files Or Subsystems
 
-- `scripts/assemble-rpi4b-bootfs.sh`
-- `scripts/assemble-rpi4b-bootfs-img.sh`
-- `scripts/assemble-rpi4b-sdimg.sh`
-- `scripts/export-rpi4b-sdimg.sh`
-- `artifacts/rpi4b/rpi4b-sd.img`
-- `docs/manual-operator-instructions.md`
+- `docs/circle-reference-review.md`
+- `docs/platforms/raspberry-pi-4.md`
 - `docs/status.md`
 - `manifests/`
 - `tracking/current-step.md`
@@ -50,16 +45,14 @@ Out of scope:
 
 ## Acceptance Criteria
 
-- the full helper chain completes
-- `artifacts/rpi4b/rpi4b-sd.img` is refreshed
-- the new checksum is recorded
-- the docs clearly indicate that the exported image now includes the HDMI
-  firmware refinement
+- exactly one small next step is selected
+- the selected step is explicitly justified against the Circle findings
+- the result stays narrow and practical for the current lab setup
 
 ## Validation Plan
 
 - Build:
-  use the already rebuilt Pi 4 project outputs as the chain input
+  not applicable
 - Emulator:
   not applicable
 - Hardware:
@@ -68,14 +61,15 @@ Out of scope:
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-21-aarch64-rpi4b-hdmi-firmware-refinement.md`
+  `manifests/2026-03-21-circle-pi4-video-usb-review.md`
 
 ## Notes
 
 - Risks:
-  avoid mixing artifact refresh with flashing or board execution
+  avoid widening into PCIe or xHCI work just because Circle contains it
 - Dependencies:
-  completed `STEP-0292` full artifact-refresh scoping
+  completed `STEP-0295` Circle review
 - User-visible control point before next step:
-  after this step lands, the next bounded move can start the manual Pi 4 board
-  trial or scope one more tiny pre-hardware refinement
+  after this step lands, the next bounded move should either implement one
+  small HDMI-oriented refinement or declare readiness for the first manual Pi 4
+  trial
