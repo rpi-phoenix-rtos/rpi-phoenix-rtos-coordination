@@ -112,6 +112,10 @@ Start-gate status:
 - the Pi 4 xHCI path now also allocates the first controller-owned memory
   objects needed for later controller setup:
   one `DCBAA` page and one first command-ring backing block.
+- the Pi 4 xHCI path now also performs the first bounded controller
+  register-programming step:
+  `DCBAAP`, `CRCR`, and `CONFIG` are written from the previously allocated
+  command-space objects and then read back for sanity checks.
 - the current QEMU boot validation result is now explicit:
   - generic `virt` shell smoke still passes
   - Pi 4 `raspi4b` shell smoke also passes, but only on a DTB-prepared image
@@ -148,9 +152,16 @@ Start-gate status:
 - after the new memory-allocation step, the next clean seam is the first real
   xHCI register-programming step:
   `DCBAAP`, `CRCR`, and `CONFIG`.
+- after the new register-programming step, the next clean xHCI seam is no
+  longer passive controller setup; it is the first pre-run operational step
+  beyond command-space binding.
 - QEMU still cannot validate the real Pi 4 USB keyboard path itself, because
   the current `raspi4b` machine does not expose the BCM2711 PCIe root-port path
   needed for VL805 xHCI bring-up.
+- the requested post-xHCI QEMU validation also exposed a separate Pi 4 shell
+  startup issue:
+  generic shell smoke still passes, Pi 4 HDMI smoke still passes, but the Pi 4
+  shell smoke now stalls before `(psh)%`.
 
 ## Most Important Technical Findings
 
@@ -231,6 +242,11 @@ Start-gate status:
   the Pi 4 xHCI path now validates 4K page support and a non-zero port count,
   so the next useful work item remains inside structural xHCI capability state
   rather than firmware or PCIe plumbing.
+- after the post-xHCI Pi 4 GDB pass, the current non-xHCI runtime blocker is
+  also narrower:
+  `resolve_path("/dev/console")` now succeeds on the Pi 4 lane, but
+  `open("/dev/console")` still returns `-1` across all five `psh_ttyopen()`
+  retries, so the next smallest move is a shell-side retry-policy refinement.
 - Pi 4 `raspi4b` QEMU is not expected to validate that PCIe milestone, because
   the emulator still lacks the relevant PCIe root-port support.
 - The strongest currently available no-hardware validation for the new

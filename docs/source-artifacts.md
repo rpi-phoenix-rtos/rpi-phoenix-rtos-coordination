@@ -250,6 +250,9 @@ This file indexes the most important websites, repositories, documents, and sour
   `CRCR` and `DCBAAP`, with minimal reserved-bit and non-`AC64` sanity checks.
   It now also allocates the first controller-owned memory objects:
   a 4K-aligned `DCBAA` page and a 64K-aligned first command-ring block.
+  It now also performs the first bounded controller register-programming step:
+  writes `DCBAAP`, `CRCR`, and `CONFIG`, then reads them back and validates the
+  programmed state.
   The current code intentionally remains pre-root-hub, pre-ring, and
   pre-enumeration.
 
