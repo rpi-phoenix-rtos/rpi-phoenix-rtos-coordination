@@ -2,24 +2,24 @@
 
 ## Metadata
 
-- Step ID: `STEP-0403`
-- Title: Await the first real Pi 4 board result
+- Step ID: `STEP-0404`
+- Title: Implement the Pi 4 first-trial report helper
 - Status: `in_progress`
 - Date: `2026-03-22`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- hold the project at the actual hardware-execution boundary until the first Pi
-  4 board result is available
+- add one final non-destructive helper that generates a prefilled first-trial
+  report file from the current artifact state
 
 ## Scope
 
 In scope:
 
-- waiting for the first real Raspberry Pi 4 board result
-- preserving the exact handoff artifact, checklist, and helper set
-- preventing speculative pre-hardware drift
+- one small report-template generation helper
+- keeping the helper tied to the current Pi 4 artifact
+- documenting the helper in the existing runbook
 
 Out of scope:
 
@@ -35,6 +35,7 @@ Out of scope:
 
 - `docs/manual-operator-instructions.md`
 - `docs/pi4-first-hardware-trial.md`
+- `scripts/`
 - `docs/status.md`
 - `tracking/current-step.md`
 - `tracking/step-history.md`
@@ -43,27 +44,26 @@ Out of scope:
 
 ## Acceptance Criteria
 
-- the current handoff set is preserved
-- the hardware dependency is explicit
-- no speculative runtime or operator-side work is implied before the board
-  result arrives
+- one report helper exists and produces a prefilled report file
+- the runbook points at that helper
+- no runtime behavior is changed
 
 ## Validation Plan
 
-- review the current exported artifact, checklist, and helper references
-- confirm that the next stronger lane is now the actual board boot only
+- run the helper and inspect the generated output file
+- confirm the file contains the current image path and checksum
 
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-22-rpi4b-hardware-boundary.md`
+  `manifests/2026-03-22-rpi4b-report-helper-scope.md`
 
 ## Notes
 
 - Risks:
-  avoid resuming speculative pre-hardware work without board evidence
+  avoid widening this into a larger reporting system
 - Dependencies:
-  completed `STEP-0402` hardware-boundary review
+  completed `STEP-0403` report-helper scope
 - User-visible control point before next step:
   after this step, the next bounded move should be the user's first board boot
-  result
+  result or report file
