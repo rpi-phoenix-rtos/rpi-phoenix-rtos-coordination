@@ -542,6 +542,8 @@ For the current lab shape, the first practical manual trial is:
      [artifacts/rpi4b/rpi4b-sd.img](/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img)
    - current SHA-256:
      `475d8d21cdc00d2c2fc79819fe02bdcc946b5ee75329b503198dda7ac16877c3`
+   - focused trial checklist:
+     [pi4-first-hardware-trial.md](/Users/witoldbolt/phoenix-rpi/docs/pi4-first-hardware-trial.md)
 2. flash the image to microSD using the workflow above
 3. insert the card into the Pi 4
 4. attach:

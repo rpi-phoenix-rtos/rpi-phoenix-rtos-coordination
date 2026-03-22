@@ -1100,6 +1100,8 @@ Current Pi 4 xHCI fast-path reference note:
   `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
   SHA-256:
   `475d8d21cdc00d2c2fc79819fe02bdcc946b5ee75329b503198dda7ac16877c3`
+- the dedicated operator-facing first board-trial checklist is:
+  `/Users/witoldbolt/phoenix-rpi/docs/pi4-first-hardware-trial.md`
 
 Current preserved clue:
 

@@ -59,6 +59,10 @@ This directory is the long-lived knowledge base for the Phoenix RTOS Raspberry P
   Detailed implementation-oriented review of Circle's Pi 4 mailbox/framebuffer
   and USB-keyboard paths, with explicit sequencing guidance for Phoenix.
 
+- `pi4-first-hardware-trial.md`
+  Focused first-board-trial checklist and result template for the current Pi 4
+  HDMI plus USB-keyboard image.
+
 ## Skill Playbooks
 
 The `skills/` directory contains local project playbooks for future agents. Read [`../skills/README.md`](../skills/README.md) first, then open the specific `SKILL.md` that matches the task.

@@ -2,24 +2,24 @@
 
 ## Metadata
 
-- Step ID: `STEP-0396`
-- Title: Scope the smallest structured operator-facing Pi 4 first-trial checklist step
+- Step ID: `STEP-0398`
+- Title: Scope the smallest result-to-next-step classification aid for the first board trial
 - Status: `in_progress`
 - Date: `2026-03-22`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- define the smallest operator-facing artifact that will make the first Pi 4
-  HDMI plus USB-keyboard trial produce actionable evidence
+- define the smallest operator-facing addition that will map each first-trial
+  outcome to the next bounded implementation move
 
 ## Scope
 
 In scope:
 
-- scoping a dedicated first-trial checklist or report template
-- keeping the step operator-facing and evidence-focused
-- improving the handoff without adding speculative code work
+- scoping a small outcome-interpretation aid
+- keeping the step limited to post-trial classification guidance
+- improving the next-agent handoff after the first board run
 
 Out of scope:
 
@@ -34,7 +34,7 @@ Out of scope:
 ## Expected Files Or Subsystems
 
 - `docs/manual-operator-instructions.md`
-- `docs/`
+- `docs/pi4-first-hardware-trial.md`
 - `docs/status.md`
 - `tracking/current-step.md`
 - `tracking/step-history.md`
@@ -43,20 +43,18 @@ Out of scope:
 
 ## Acceptance Criteria
 
-- the next operator-facing artifact is explicitly identified
-- the artifact is justified as improving evidence quality rather than changing
-  runtime behavior
-- no speculative code-side blocker is invented
+- the next operator-facing refinement is explicitly identified
+- it stays documentation-only
+- it improves result interpretation rather than runtime behavior
 
 ## Validation Plan
 
-- review the current runbook and identify the smallest missing operator-facing
-  structure for the first board trial
+- inspect the checklist and identify the smallest missing interpretation aid
 
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-22-rpi4b-first-manual-trial-scope.md`
+  `manifests/2026-03-22-rpi4b-first-trial-checklist.md`
 
 ## Notes
 
@@ -64,7 +62,7 @@ Out of scope:
   avoid widening the next move into runtime source changes before the first
   hardware result
 - Dependencies:
-  completed `STEP-0395` first manual-trial scope
+  completed `STEP-0397` checklist implementation
 - User-visible control point before next step:
-  after this step, the next bounded move should be either a checklist/template
-  implementation or the actual board boot
+  after this step, the next bounded move should be either one small
+  interpretation aid or the actual board boot

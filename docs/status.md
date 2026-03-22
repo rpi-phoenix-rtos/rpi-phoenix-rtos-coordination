@@ -260,6 +260,10 @@ Start-gate status:
   `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
   with SHA-256:
   `475d8d21cdc00d2c2fc79819fe02bdcc946b5ee75329b503198dda7ac16877c3`
+- the first real-device execution handoff is now also structured in:
+  `/Users/witoldbolt/phoenix-rpi/docs/pi4-first-hardware-trial.md`
+  so the first board result can be reported in a form that directly maps to the
+  next bounded implementation step
 
 ## Most Important Technical Findings
 
