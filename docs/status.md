@@ -184,6 +184,12 @@ Start-gate status:
   the Pi 4 xHCI path now programs and reads back `ERSTSZ`, `ERSTBA`, and
   `ERDP` for interrupter `0`, so the next clean seam is command-ring layout
   initialization rather than more event-ring plumbing.
+- that command-ring layout step is now also in place:
+  the Pi 4 xHCI path now initializes a real command-ring layout with a final
+  link TRB and initial cycle-state contract.
+- the current Pi 4 xHCI discovery contract still reports `irq = 0`, so the next
+  clean seam is a single-command polled no-op submission path rather than
+  interrupt-enable work.
 
 ## Most Important Technical Findings
 

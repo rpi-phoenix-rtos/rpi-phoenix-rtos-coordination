@@ -2,31 +2,31 @@
 
 ## Metadata
 
-- Step ID: `STEP-0366`
-- Title: Implement the smallest xHCI command-ring layout initialization step
+- Step ID: `STEP-0368`
+- Title: Implement the smallest polled xHCI command-submission step
 - Status: `in_progress`
 - Date: `2026-03-22`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- turn the allocated command-ring backing memory into a minimal valid xHCI ring
-  layout without yet submitting commands
+- prove the first end-to-end controller command path through the command ring,
+  doorbell `0`, and event ring using polling only
 
 ## Scope
 
 In scope:
 
-- adding the final command-ring link TRB
-- establishing the initial command-ring cycle-state contract in memory
-- validating the link TRB target and ring geometry
-- keeping the step pre-doorbell, pre-interrupt-enable, and pre-enumeration
+- enqueueing a single command no-op TRB
+- ringing doorbell `0`
+- polling the event ring for a command-completion event
+- validating that the completion corresponds to the submitted command
 
 Out of scope:
 
-- ringing the command doorbell
-- enabling interrupts
+- interrupt-driven completions
 - root-hub logic or enumeration
+- USB keyboard device bring-up
 - SD-image export or checksum refresh
 - manual hardware execution
 - unrelated shell, console, or PCIe changes
@@ -47,31 +47,31 @@ Out of scope:
 
 ## Acceptance Criteria
 
-- the xHCI path now records a minimal valid command-ring memory layout with:
-  - a final link TRB
-  - a stable initial cycle-state contract
-- the step stays pre-doorbell, pre-interrupt-enable, and pre-enumeration
+- the xHCI path can complete one bounded command through:
+  - command ring
+  - doorbell `0`
+  - event ring
+- the step stays polled and pre-enumeration
 - the full `aarch64a72-generic-rpi4b` build still succeeds
 
 ## Validation Plan
 
 - fresh `aarch64a72-generic-rpi4b` build from the copied VM-local buildroot in
   `phoenix-dev`
-- no live-image or QEMU behavior change is required beyond preserved build
-  success because the xHCI path still returns `-ENOSYS`
+- preserve the staged Pi 4 image composition until this path is further proven
 
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-22-xhci-command-ring-layout-scope.md`
+  `manifests/2026-03-22-xhci-polled-command-scope.md`
 
 ## Notes
 
 - Risks:
-  avoid mixing command submission policy into what should still be a memory-only
-  ring-layout step
+  avoid widening directly into full enumeration; keep the first command path to
+  one internal no-op command with polled completion
 - Dependencies:
-  completed `STEP-0365` xHCI command-ring layout scope
+  completed `STEP-0367` xHCI polled-command scope
 - User-visible control point before next step:
-  the next implementation step should still keep the staged Pi 4 image
-  behavior unchanged while making the future command path less speculative
+  the next implementation step should answer a concrete question:
+  whether the current Pi 4 xHCI path can complete one command at all

@@ -318,6 +318,11 @@ This file indexes the most important websites, repositories, documents, and sour
   here once the Pi 4 shell startup race was solved, restoring clean generic and
   Pi 4 shell-smoke output.
 
+- `phoenix-rtos-devices/usb/xhci/phy-aarch64a72-generic.c`
+  Important because the current Pi 4 xHCI discovery stub still advertises
+  `.irq = 0`, which makes the next realistic bounded bring-up step a polled
+  command path rather than interrupt-enable work.
+
 - `phoenix-rtos-kernel/hal/aarch64/gtimer_backend.c`
   Important because the next bounded timer diagnostic needs to expose which common AArch64 timer source and IRQ are selected from the DTB before the missing wakeup interrupt should arrive.
 
