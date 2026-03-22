@@ -2,32 +2,32 @@
 
 ## Metadata
 
-- Step ID: `STEP-0387`
-- Title: Scope the smallest xHCI interrupt-IN endpoint step
+- Step ID: `STEP-0388`
+- Title: Implement the bounded xHCI interrupt-IN endpoint ownership/configuration step
 - Status: `in_progress`
 - Date: `2026-03-22`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- choose the smallest real interrupt-endpoint seam needed after the new bounded
-  control-transfer support
+- implement the smallest real interrupt-endpoint seam needed after the new
+  bounded control-transfer support
 
 ## Scope
 
 In scope:
 
-- deciding which first interrupt-endpoint responsibility should be implemented
-  next
-- keeping the next move as narrow as possible
-- using the existing Phoenix USB host and `usbkbd` flow to justify the chosen
-  seam
+- adding the minimum state needed for one interrupt-IN endpoint on the current
+  direct-root-port child
+- deriving endpoint identity from the current `usb_pipe_t`
+- allocating one transfer ring and populating one endpoint context
+- issuing one bounded `Configure Endpoint` command
 
 Out of scope:
 
 - generic endpoint-0 transfer support
 - implementing the next interrupt-endpoint path yet
-- interrupt-IN endpoint work
+- interrupt transfer submission or completion delivery
 - staging `/sbin/usb` or `/sbin/usbkbd` on the Pi 4 image
 
 ## Expected Repositories
@@ -51,14 +51,19 @@ Out of scope:
 
 ## Acceptance Criteria
 
-- the next interrupt-endpoint seam is explicitly chosen and documented
-- the choice is justified against the existing Phoenix USB host and `usbkbd`
-  call paths
-- the chosen next step stays narrow and below live Pi 4 image staging
+- `xhci` can allocate and remember one interrupt-IN endpoint ring for the
+  current child device
+- `xhci` can populate the matching endpoint context and complete one bounded
+  `Configure Endpoint` command
+- a fresh full `aarch64a72-generic-rpi4b` build still passes
+- the Pi 4 shell smoke still passes because the live image path remains
+  unchanged
 
 ## Validation Plan
 
-- code reading and bounded source-path analysis only
+- fresh Pi 4 A72 build in `phoenix-dev` using the standard copied-buildroot
+  path
+- Pi 4 shell smoke after rebuild, because the live image path remains unchanged
 
 ## Rollback / Baseline
 
@@ -68,10 +73,10 @@ Out of scope:
 ## Notes
 
 - Risks:
-  avoid widening the next move into generic interrupt scheduling or full device
-  enumeration too early
+  avoid widening the step into interrupt transfer submission or generic
+  multi-endpoint support too early
 - Dependencies:
-  completed `STEP-0386` bounded control-write/no-data support
+  completed `STEP-0387` bounded interrupt-endpoint scope
 - User-visible control point before next step:
-  after this scope step, the next bounded move should be the first interrupt
-  endpoint responsibility that still blocks keyboard report delivery
+  after this step, the next bounded move should be whichever transfer-submission
+  or completion-delivery seam still blocks keyboard reports
