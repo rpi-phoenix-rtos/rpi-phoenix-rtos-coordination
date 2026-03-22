@@ -2,33 +2,31 @@
 
 ## Metadata
 
-- Step ID: `STEP-0359`
-- Title: Scope the smallest xHCI pre-run operational step beyond command-space register programming
+- Step ID: `STEP-0360`
+- Title: Implement the smallest xHCI run-state self-test beyond command-space binding
 - Status: `in_progress`
 - Date: `2026-03-22`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- define the next bounded xHCI move after `DCBAAP`, `CRCR`, and `CONFIG`
-  programming, keeping the controller still pre-interrupt, pre-doorbell, and
-  pre-enumeration
+- add the first bounded operational-state validation after `DCBAAP`, `CRCR`,
+  and `CONFIG` programming without yet claiming a usable host controller
 
 ## Scope
 
 In scope:
 
-- deciding the smallest safe post-programming xHCI seam
-- checking the current `xhci.c` controller state against the xHCI bring-up
-  sequence
-- choosing one bounded operational step that is still meaningful without real
-  hardware feedback
-- documenting the acceptance criteria for that step
+- adding the first `RUN/STOP` self-test for the xHCI controller
+- verifying halted-state transition into run and back into halt
+- rejecting immediate host/system error states during that self-test
+- keeping `xhci_init()` non-production by still returning `-ENOSYS`
 
 Out of scope:
 
-- implementing xHCI controller changes in this step
-- event-ring, interrupter, root-hub, or enumeration logic
+- event-ring or interrupter allocation/programming
+- doorbell use, command submission, or root-hub logic
+- USB-device enumeration
 - SD-image export or checksum refresh
 - manual hardware execution
 - unrelated shell, console, or PCIe changes
@@ -49,29 +47,33 @@ Out of scope:
 
 ## Acceptance Criteria
 
-- the next xHCI step is narrowed to one specific operational-register or
-  run-state slice
-- the scoped step stays pre-interrupt, pre-doorbell, and pre-enumeration
-- the scope is grounded in the current `xhci.c` state rather than in generic
-  USB design prose
+- the xHCI path can:
+  - observe halted state after reset
+  - clear halted state by setting `RUN/STOP`
+  - return to halted state after clearing `RUN/STOP`
+- the step stays pre-event-ring, pre-interrupt-enable, pre-doorbell, and
+  pre-enumeration
+- the full `aarch64a72-generic-rpi4b` build still succeeds
 
 ## Validation Plan
 
-- inspect the current `xhci.c` implementation and the existing project notes
-- cross-check the next seam against the already extracted xHCI controller state
+- fresh `aarch64a72-generic-rpi4b` build from the copied VM-local buildroot in
+  `phoenix-dev`
+- no live-image or QEMU behavior change is required beyond preserved build
+  success because the xHCI path still returns `-ENOSYS`
 
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-22-pi4-shell-smoke-probe-cleanup.md`
+  `manifests/2026-03-22-xhci-run-state-scope.md`
 
 ## Notes
 
 - Risks:
-  avoid widening straight into event rings or enumeration before a smaller
-  controller-run-state step is isolated
+  avoid silently relying on unsupported controller state if `HCHalted` or host
+  error bits do not behave as expected
 - Dependencies:
-  completed `STEP-0358` shell-smoke probe cleanup
+  completed `STEP-0359` xHCI run-state scope
 - User-visible control point before next step:
-  the next implementation step should touch only one narrow xHCI operational
-  seam and keep the current QEMU boot baselines intact
+  the next implementation step should still leave the staged Pi 4 image
+  behavior unchanged while strengthening controller-state validation
