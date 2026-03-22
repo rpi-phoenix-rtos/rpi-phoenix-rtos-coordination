@@ -202,10 +202,14 @@ Start-gate status:
 - the first xHCI init-success seam is now also in the tree:
   `xhci_init()` no longer deliberately returns `-ENOSYS` after the current
   roothub-ready controller setup sequence
+- the first xHCI roothub status-delivery seam is now also in the tree:
+  the Pi 4 path now has a bounded temporary polling thread that completes the
+  pending root-hub interrupt transfer when `xhci_getHubStatus()` reports change
+  bits on the current no-IRQ path
 - the project is still not ready for interactive real-device USB testing:
   the live Pi 4 image still does not stage `/sbin/usb` or `/sbin/usbkbd`, and
-  the next concrete blocker is roothub status delivery on the current Pi 4
-  no-IRQ xHCI path, followed by non-roothub transfer support.
+  the next concrete blocker is non-roothub xHCI transfer support for
+  child-device enumeration after the roothub.
 
 ## Most Important Technical Findings
 

@@ -1019,6 +1019,14 @@ Current Pi 4 xHCI fast-path reference note:
   the discovery stub still reports `irq = 0`, so port-change notification will
   need either a temporary polling path or a later real interrupt path before
   live `usb` staging can react to keyboard plug events
+- that temporary bridge is now also in the tree:
+  `phoenix-rtos-devices/usb/xhci/xhci.c` now starts a small status thread after
+  successful init and completes the pending root-hub interrupt transfer when
+  `xhci_getHubStatus()` reports change bits
+- the next xHCI blocker is now past the roothub:
+  child-device enumeration still has no non-roothub transfer path, so the next
+  seam is the first real xHCI device-enumeration step after root-hub status
+  delivery
 
 Current preserved clue:
 
