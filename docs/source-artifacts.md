@@ -1039,9 +1039,16 @@ Current Pi 4 xHCI fast-path reference note:
   - one bounded per-slot input context allocation
   - one bounded EP0 ring backing allocation
   - one `DCBAA[slotId]` binding for the enabled slot
+- the next bounded `Address Device` prerequisite is now also in the tree:
+  `phoenix-rtos-devices/usb/xhci/xhci.c` now also has:
+  - USB-speed to PSI mapping for the current Phoenix USB speed model
+  - EP0 max-packet selection for low/full/high speed
+  - an initialized EP0 ring layout with a final link TRB
+  - a bounded direct-root-port input-context preparation helper
 - the next concrete xHCI blocker is now narrower:
-  Phoenix still lacks the first `Address Device` context-population step and
-  the endpoint-0 control/data path that must follow it
+  before the first bounded `Address Device` wrapper, Phoenix must decide how
+  its HCD-assigned USB address maps onto the xHCI slot ID returned by
+  `Enable Slot`
 
 Current preserved clue:
 

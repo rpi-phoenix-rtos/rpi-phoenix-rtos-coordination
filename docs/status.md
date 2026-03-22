@@ -216,10 +216,18 @@ Start-gate status:
   - one input context
   - one endpoint-0 ring backing block
   - one bound `DCBAA[slotId]` entry
+- the next bounded `Address Device` prerequisite is now also in the tree:
+  the Pi 4 xHCI path now prepares the minimum direct-root-port child context
+  state derived from the Phoenix `usb_dev_t` contract:
+  - EP0 ring layout with final link TRB
+  - input-control `AddContextFlags`
+  - slot-context root-hub port, speed, and context entries
+  - EP0 dequeue pointer, error count, type, max packet, and average TRB length
 - the project is still not ready for interactive real-device USB testing:
   the live Pi 4 image still does not stage `/sbin/usb` or `/sbin/usbkbd`, and
-  the next concrete blocker is the first minimal `Address Device`
-  context-preparation step and the endpoint-0 control path that must follow it.
+  the next concrete blocker is the address-ownership contract between Phoenix
+  USB enumeration and xHCI slot IDs before the first bounded
+  `Address Device` command path.
 
 ## Most Important Technical Findings
 

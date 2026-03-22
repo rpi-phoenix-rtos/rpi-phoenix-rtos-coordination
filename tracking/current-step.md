@@ -2,29 +2,28 @@
 
 ## Metadata
 
-- Step ID: `STEP-0379`
-- Title: Scope the smallest xHCI context-population step before `Address Device`
+- Step ID: `STEP-0381`
+- Title: Scope the smallest xHCI address-contract step before `Address Device`
 - Status: `in_progress`
 - Date: `2026-03-22`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- define the smallest context-preparation move after per-slot memory ownership,
-  aimed at the minimum slot/input/EP0 fields Phoenix needs before a bounded
-  `Address Device` command
+- define the smallest correct bridge between Phoenix USB enumeration and xHCI
+  slot-based addressing before implementing the first bounded
+  `Address Device` command path
 
 ## Scope
 
 In scope:
 
-- selecting the minimum subset of slot/input/EP0 context fields needed before
-  `Address Device`
-- deciding whether the first context-preparation seam should include:
-  - slot context fields from `usb_dev_t`
-  - EP0 max-packet and dequeue-pointer fields
-  - EP0 ring layout initialization
-- keeping the scope strictly below non-roothub control-transfer execution
+- deciding how Phoenix `REQ_SET_ADDRESS` should map onto xHCI `Address Device`
+- deciding whether the next seam should:
+  - honor the Phoenix-requested USB address directly
+  - couple the USB address to the xHCI slot ID
+  - add a bounded translation contract in the HCD path
+- keeping the scope below generic endpoint-0 transfer execution
 
 Out of scope:
 
@@ -47,28 +46,31 @@ Out of scope:
 
 ## Acceptance Criteria
 
-- the next bounded xHCI move is explicitly selected
-- the selected seam stays below command execution and below endpoint-0
-  transfers
-- the step explains which concrete context fields Phoenix should populate first
+- the next bounded `Address Device` move is explicitly selected
+- the selected seam explains the USB-address versus slot-ID contract
+- the scope stays below generic endpoint-0 transfer execution and below broad
+  enumeration
 
 ## Validation Plan
 
-- source review of the current Phoenix xHCI path and Phoenix USB device model
+- source review of the current Phoenix USB enumeration path and the current
+  xHCI child-device state
 - no code changes required for the planning step itself
 
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-22-xhci-slot-space.md`
+  `manifests/2026-03-22-xhci-context-population.md`
 
 ## Notes
 
 - Risks:
-  avoid jumping directly into a large mixed step that combines context
-  population, command execution, and endpoint-0 transfers
+  avoid implementing `Address Device` on a wrong address contract that would
+  fight Phoenix's current HCD address allocator
 - Dependencies:
-  completed `STEP-0378` xHCI slot-space allocation and DCBAA binding
+  completed `STEP-0380` xHCI context preparation for the first direct-root-port
+  child path
 - User-visible control point before next step:
-  the next implementation step should identify the minimum concrete fields
-  Phoenix needs in the input and endpoint-0 contexts before `Address Device`
+  the next implementation step should say whether the first bounded
+  `Address Device` wrapper uses slot ID as the effective USB address or
+  introduces an explicit translation rule
