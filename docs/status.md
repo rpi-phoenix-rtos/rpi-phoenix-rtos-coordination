@@ -227,11 +227,18 @@ Start-gate status:
   the Pi 4 xHCI path now handles only non-roothub `REQ_SET_ADDRESS` under an
   explicit temporary equality contract:
   requested USB address must match the enabled slot ID
+- the first bounded non-`SET_ADDRESS` xHCI endpoint-0 transfer is now also in
+  the tree:
+  the Pi 4 xHCI path now executes a synchronous polled EP0
+  `REQ_GET_DESCRIPTOR` control read for the first direct-root-port child under
+  the current temporary slot-ID-equals-address contract
+- that bounded descriptor-read path is also non-regression-validated:
+  a fresh full `aarch64a72-generic-rpi4b` build passes and the Pi 4 shell smoke
+  still passes after the xHCI change
 - the project is still not ready for interactive real-device USB testing:
   the live Pi 4 image still does not stage `/sbin/usb` or `/sbin/usbkbd`, and
-  the next concrete blocker is the first non-`SET_ADDRESS` endpoint-0 control
-  path needed for descriptor reads after the new bounded `Address Device`
-  support.
+  the next concrete blocker is the first post-enumeration control-write path
+  needed by real drivers after the new bounded descriptor-read support.
 
 ## Most Important Technical Findings
 

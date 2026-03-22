@@ -1051,9 +1051,20 @@ Current Pi 4 xHCI fast-path reference note:
   - handles non-roothub `REQ_SET_ADDRESS`
   - requires the temporary slot-ID-equals-address contract explicitly instead
     of silently rewriting addresses
-- the next concrete xHCI blocker is now narrower:
-  after `SET_ADDRESS`, Phoenix still lacks the first non-`SET_ADDRESS`
-  endpoint-0 control path needed for descriptor reads
+- the first bounded non-`SET_ADDRESS` EP0 child-device transfer is now also in
+  the tree:
+  `phoenix-rtos-devices/usb/xhci/xhci.c` now:
+  - emits setup/data/status TRBs on the EP0 ring
+  - rings the slot doorbell for endpoint `0`
+  - polls the current event ring for a transfer completion event
+  - handles only non-roothub `REQ_GET_DESCRIPTOR` control-IN requests for the
+    first direct-root-port child under the temporary slot-ID-equals-address
+    contract
+- the next concrete xHCI blocker is now after descriptor reads:
+  real drivers such as `phoenix-rtos-devices/tty/usbkbd/usbkbd.c` call
+  `usb_setConfiguration()` and then class-specific control writes
+  (`CLASS_REQ_SET_PROTOCOL`, `CLASS_REQ_SET_IDLE`), so the next bounded xHCI
+  seam should start with `REQ_SET_CONFIGURATION`
 
 Current preserved clue:
 

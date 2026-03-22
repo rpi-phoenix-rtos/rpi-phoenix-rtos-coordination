@@ -2,41 +2,44 @@
 
 ## Metadata
 
-- Step ID: `STEP-0383`
-- Title: Scope the smallest non-`SET_ADDRESS` xHCI endpoint-0 control-transfer step
+- Step ID: `STEP-0385`
+- Title: Scope the smallest xHCI post-enumeration control-write step
 - Status: `in_progress`
 - Date: `2026-03-22`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- define the smallest non-`SET_ADDRESS` endpoint-0 control-transfer seam after
-  the new bounded `Address Device` path
+- choose the smallest real post-enumeration control-write seam needed by
+  `usbkbd` after the new bounded descriptor-read path
 
 ## Scope
 
 In scope:
 
-- deciding the smallest control-transfer subset needed after `SET_ADDRESS`
-- deciding whether the next seam should start with:
-  - `GET_DESCRIPTOR`
-  - setup-stage TRBs only
-  - a bounded single-control-read path for device descriptor bytes
-- keeping the scope below broad generic control-transfer support
+- deciding which first non-roothub control write should be implemented next
+- keeping the next move as narrow as possible
+- using the existing Phoenix USB enumeration and `usbkbd` call paths to justify
+  the chosen seam
 
 Out of scope:
 
-- broad generic control-transfer support
-- broad xHCI enumeration or generic transfer support
+- implementing the next control-write path yet
+- generic endpoint-0 transfer support
+- interrupt-IN endpoint work
 - staging `/sbin/usb` or `/sbin/usbkbd` on the Pi 4 image
-- SD-image export or manual hardware execution
 
 ## Expected Repositories
 
+- `phoenix-rtos-devices`
 - coordination repo
 
 ## Expected Files Or Subsystems
 
+- `sources/phoenix-rtos-devices/usb/xhci/xhci.c`
+- `sources/phoenix-rtos-usb/usb/dev.c`
+- `sources/phoenix-rtos-usb/libusb/driver.c`
+- `sources/phoenix-rtos-devices/tty/usbkbd/usbkbd.c`
 - `tracking/current-step.md`
 - `tracking/step-history.md`
 - `docs/status.md`
@@ -45,28 +48,26 @@ Out of scope:
 
 ## Acceptance Criteria
 
-- the next bounded endpoint-0 transfer move is explicitly selected
-- the selected seam stays below broad generic transfer support
-- the step explains which first control-transfer subset should land next
+- the next post-`GET_DESCRIPTOR` seam is explicitly chosen and documented
+- the choice is justified against the actual Phoenix USB and `usbkbd` call
+  paths
+- the chosen next step stays narrow and still below live Pi 4 image staging
 
 ## Validation Plan
 
-- source review of the current Phoenix USB enumeration flow and current xHCI
-  child-device state
-- no code changes required for the planning step itself
+- code reading and bounded source-path analysis only
 
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-22-xhci-address-device.md`
+  `manifests/2026-03-22-xhci-get-descriptor.md`
 
 ## Notes
 
 - Risks:
-  avoid jumping directly into a broad generic control-transfer engine when only
-  a bounded descriptor-read seam is needed next
+  avoid widening the next move into a generic control-transfer engine too early
 - Dependencies:
-  completed `STEP-0382` bounded `Address Device` support for `REQ_SET_ADDRESS`
+  completed `STEP-0384` bounded `REQ_GET_DESCRIPTOR` control-read support
 - User-visible control point before next step:
-  the next implementation step should name the smallest concrete endpoint-0
-  control subset Phoenix needs to get beyond `SET_ADDRESS`
+  after this scope step, the next bounded move should be the first real control
+  write actually required by the existing Phoenix USB host and `usbkbd` flow
