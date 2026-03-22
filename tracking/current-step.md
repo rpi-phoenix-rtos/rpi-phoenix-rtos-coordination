@@ -2,31 +2,32 @@
 
 ## Metadata
 
-- Step ID: `STEP-0360`
-- Title: Implement the smallest xHCI run-state self-test beyond command-space binding
+- Step ID: `STEP-0361`
+- Title: Scope the smallest xHCI event-ring allocation step
 - Status: `in_progress`
 - Date: `2026-03-22`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- add the first bounded operational-state validation after `DCBAAP`, `CRCR`,
-  and `CONFIG` programming without yet claiming a usable host controller
+- define the next bounded xHCI step after the run-state self-test, keeping the
+  controller still pre-register-programmed event delivery and pre-enumeration
 
 ## Scope
 
 In scope:
 
-- adding the first `RUN/STOP` self-test for the xHCI controller
-- verifying halted-state transition into run and back into halt
-- rejecting immediate host/system error states during that self-test
-- keeping `xhci_init()` non-production by still returning `-ENOSYS`
+- choosing the smallest event-ring preparation slice after the run-state step
+- checking the current `xhci.c` state against the already extracted runtime
+  register and capability data
+- deciding whether the next narrow move is event-ring memory allocation,
+  register programming, or another smaller prerequisite
+- documenting the acceptance criteria for that move
 
 Out of scope:
 
-- event-ring or interrupter allocation/programming
-- doorbell use, command submission, or root-hub logic
-- USB-device enumeration
+- implementing xHCI code in this step
+- root-hub, doorbell, or enumeration logic
 - SD-image export or checksum refresh
 - manual hardware execution
 - unrelated shell, console, or PCIe changes
@@ -47,33 +48,30 @@ Out of scope:
 
 ## Acceptance Criteria
 
-- the xHCI path can:
-  - observe halted state after reset
-  - clear halted state by setting `RUN/STOP`
-  - return to halted state after clearing `RUN/STOP`
-- the step stays pre-event-ring, pre-interrupt-enable, pre-doorbell, and
+- the next xHCI move is narrowed to one specific event-ring preparation slice
+- the scoped step stays pre-interrupt-enable, pre-doorbell, and
   pre-enumeration
-- the full `aarch64a72-generic-rpi4b` build still succeeds
+- the choice is grounded in the current `xhci.c` state and extracted runtime
+  register facts
 
 ## Validation Plan
 
-- fresh `aarch64a72-generic-rpi4b` build from the copied VM-local buildroot in
-  `phoenix-dev`
-- no live-image or QEMU behavior change is required beyond preserved build
-  success because the xHCI path still returns `-ENOSYS`
+- inspect the current `xhci.c` implementation and extracted xHCI runtime facts
+- cross-check the next seam against the existing project notes and Circle
+  register definitions already in the knowledge base
 
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-22-xhci-run-state-scope.md`
+  `manifests/2026-03-22-xhci-run-state.md`
 
 ## Notes
 
 - Risks:
-  avoid silently relying on unsupported controller state if `HCHalted` or host
-  error bits do not behave as expected
+  avoid jumping straight into interrupts or event delivery before the required
+  event-ring memory and runtime-register prerequisites are isolated
 - Dependencies:
-  completed `STEP-0359` xHCI run-state scope
+  completed `STEP-0360` xHCI run-state self-test
 - User-visible control point before next step:
-  the next implementation step should still leave the staged Pi 4 image
-  behavior unchanged while strengthening controller-state validation
+  the next implementation step should still be a narrow preparatory xHCI slice
+  rather than a broad USB-host enablement jump

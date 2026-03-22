@@ -172,6 +172,10 @@ Start-gate status:
 - after that cleanup, the next clean xHCI seam is again explicit:
   the first pre-run operational step beyond `DCBAAP`, `CRCR`, and `CONFIG`
   programming.
+- that run-state step is now also in place:
+  the Pi 4 xHCI path can validate a bounded halted-to-run-to-halted controller
+  transition while still returning `-ENOSYS`, so the next clean seam is event-
+  ring preparation rather than more run-state guessing.
 
 ## Most Important Technical Findings
 
