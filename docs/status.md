@@ -209,10 +209,17 @@ Start-gate status:
 - the first post-roothub child-device seam is now also in the tree:
   the Pi 4 xHCI path now executes a bounded `Enable Slot` command, validates
   the returned completion event, and captures the slot ID
+- the next bounded child-device prerequisite is now also in the tree:
+  the Pi 4 xHCI path now allocates the first per-slot controller-owned memory
+  objects behind the returned slot ID:
+  - one device context
+  - one input context
+  - one endpoint-0 ring backing block
+  - one bound `DCBAA[slotId]` entry
 - the project is still not ready for interactive real-device USB testing:
   the live Pi 4 image still does not stage `/sbin/usb` or `/sbin/usbkbd`, and
-  the next concrete blocker is the first `Address Device` and endpoint-0
-  control path after `Enable Slot`.
+  the next concrete blocker is the first minimal `Address Device`
+  context-preparation step and the endpoint-0 control path that must follow it.
 
 ## Most Important Technical Findings
 

@@ -1032,9 +1032,16 @@ Current Pi 4 xHCI fast-path reference note:
   - a small reusable internal command-execution helper
   - command-completion slot-ID extraction
   - a bounded `Enable Slot` command path
+- the next bounded child-device prerequisite is now also in the tree:
+  `phoenix-rtos-devices/usb/xhci/xhci.c` now also has:
+  - minimal slot/input/device/endpoint context structures for 32-byte contexts
+  - one bounded per-slot device context allocation
+  - one bounded per-slot input context allocation
+  - one bounded EP0 ring backing allocation
+  - one `DCBAA[slotId]` binding for the enabled slot
 - the next concrete xHCI blocker is now narrower:
-  Phoenix still lacks the first `Address Device` step and the endpoint-0
-  control/data path that must follow it
+  Phoenix still lacks the first `Address Device` context-population step and
+  the endpoint-0 control/data path that must follow it
 
 Current preserved clue:
 
