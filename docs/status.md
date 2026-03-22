@@ -180,6 +180,10 @@ Start-gate status:
   the Pi 4 xHCI path now allocates one event-ring segment and one ERST block
   and populates the first ERST entry for interrupter `0`, so the next clean
   seam is runtime-register programming for that event-ring state.
+- that event-ring runtime-register step is now also in place:
+  the Pi 4 xHCI path now programs and reads back `ERSTSZ`, `ERSTBA`, and
+  `ERDP` for interrupter `0`, so the next clean seam is command-ring layout
+  initialization rather than more event-ring plumbing.
 
 ## Most Important Technical Findings
 

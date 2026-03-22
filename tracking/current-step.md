@@ -2,29 +2,31 @@
 
 ## Metadata
 
-- Step ID: `STEP-0364`
-- Title: Implement the smallest xHCI runtime-register programming step for the new event ring
+- Step ID: `STEP-0366`
+- Title: Implement the smallest xHCI command-ring layout initialization step
 - Status: `in_progress`
 - Date: `2026-03-22`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- bind the already allocated event-ring structures into the xHCI runtime
-  register block for interrupter `0`
+- turn the allocated command-ring backing memory into a minimal valid xHCI ring
+  layout without yet submitting commands
 
 ## Scope
 
 In scope:
 
-- programming `ERSTSZ`, `ERSTBA`, and `ERDP` for interrupter `0`
-- reading the same registers back and validating the programmed values
-- keeping the step pre-interrupt-enable, pre-doorbell, and pre-enumeration
+- adding the final command-ring link TRB
+- establishing the initial command-ring cycle-state contract in memory
+- validating the link TRB target and ring geometry
+- keeping the step pre-doorbell, pre-interrupt-enable, and pre-enumeration
 
 Out of scope:
 
-- setting interrupter enable bits
-- doorbell use, command submission, root-hub logic, or enumeration
+- ringing the command doorbell
+- enabling interrupts
+- root-hub logic or enumeration
 - SD-image export or checksum refresh
 - manual hardware execution
 - unrelated shell, console, or PCIe changes
@@ -45,12 +47,10 @@ Out of scope:
 
 ## Acceptance Criteria
 
-- the xHCI path records the programmed runtime-register state for interrupter
-  `0`:
-  - one-entry `ERSTSZ`
-  - `ERSTBA`
-  - `ERDP`
-- the step stays pre-interrupt-enable, pre-doorbell, and pre-enumeration
+- the xHCI path now records a minimal valid command-ring memory layout with:
+  - a final link TRB
+  - a stable initial cycle-state contract
+- the step stays pre-doorbell, pre-interrupt-enable, and pre-enumeration
 - the full `aarch64a72-generic-rpi4b` build still succeeds
 
 ## Validation Plan
@@ -63,15 +63,15 @@ Out of scope:
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-22-xhci-event-ring-programming-scope.md`
+  `manifests/2026-03-22-xhci-command-ring-layout-scope.md`
 
 ## Notes
 
 - Risks:
-  avoid enabling runtime event delivery before the runtime-register state is
-  cleanly programmed and read back
+  avoid mixing command submission policy into what should still be a memory-only
+  ring-layout step
 - Dependencies:
-  completed `STEP-0363` xHCI event-ring programming scope
+  completed `STEP-0365` xHCI command-ring layout scope
 - User-visible control point before next step:
   the next implementation step should still keep the staged Pi 4 image
-  behavior unchanged while strengthening controller event-delivery preparation
+  behavior unchanged while making the future command path less speculative
