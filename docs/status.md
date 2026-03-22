@@ -206,10 +206,13 @@ Start-gate status:
   the Pi 4 path now has a bounded temporary polling thread that completes the
   pending root-hub interrupt transfer when `xhci_getHubStatus()` reports change
   bits on the current no-IRQ path
+- the first post-roothub child-device seam is now also in the tree:
+  the Pi 4 xHCI path now executes a bounded `Enable Slot` command, validates
+  the returned completion event, and captures the slot ID
 - the project is still not ready for interactive real-device USB testing:
   the live Pi 4 image still does not stage `/sbin/usb` or `/sbin/usbkbd`, and
-  the next concrete blocker is non-roothub xHCI transfer support for
-  child-device enumeration after the roothub.
+  the next concrete blocker is the first `Address Device` and endpoint-0
+  control path after `Enable Slot`.
 
 ## Most Important Technical Findings
 

@@ -1027,6 +1027,14 @@ Current Pi 4 xHCI fast-path reference note:
   child-device enumeration still has no non-roothub transfer path, so the next
   seam is the first real xHCI device-enumeration step after root-hub status
   delivery
+- that first post-roothub child-device seam is now also in the tree:
+  `phoenix-rtos-devices/usb/xhci/xhci.c` now has:
+  - a small reusable internal command-execution helper
+  - command-completion slot-ID extraction
+  - a bounded `Enable Slot` command path
+- the next concrete xHCI blocker is now narrower:
+  Phoenix still lacks the first `Address Device` step and the endpoint-0
+  control/data path that must follow it
 
 Current preserved clue:
 
