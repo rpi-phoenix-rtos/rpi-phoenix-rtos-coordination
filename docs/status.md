@@ -256,6 +256,10 @@ Start-gate status:
   the live Pi 4 image now stages `/sbin/usb`, the Pi 4 QEMU shell smoke still
   passes after that integration, and the next concrete blocker is real-device
   validation of the new HDMI plus USB-keyboard path.
+- the first refreshed real-device Pi 4 SD-card artifact is now exported at:
+  `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
+  with SHA-256:
+  `475d8d21cdc00d2c2fc79819fe02bdcc946b5ee75329b503198dda7ac16877c3`
 
 ## Most Important Technical Findings
 

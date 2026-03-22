@@ -538,12 +538,16 @@ For the current lab shape, the first practical manual trial is:
 
 1. export the current full disk image:
    - [scripts/export-rpi4b-sdimg.sh](/Users/witoldbolt/phoenix-rpi/scripts/export-rpi4b-sdimg.sh)
+   - current exported artifact:
+     [artifacts/rpi4b/rpi4b-sd.img](/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img)
+   - current SHA-256:
+     `475d8d21cdc00d2c2fc79819fe02bdcc946b5ee75329b503198dda7ac16877c3`
 2. flash the image to microSD using the workflow above
 3. insert the card into the Pi 4
 4. attach:
    - HDMI
+   - USB keyboard
    - Ethernet if desired
-   - USB keyboard if desired
 5. power on the board
 6. record the gross result:
    - any visible HDMI behavior
@@ -555,6 +559,7 @@ Current specific HDMI sign to record if present:
 - early top-left progress panel if it appears
 - later black background with white text glyphs
 - any readable Phoenix boot lines or `(psh)%` prompt
+- whether typing on the USB keyboard changes the visible shell state
 - whether the picture is stable, flashes briefly, or disappears during later
   boot progress
 

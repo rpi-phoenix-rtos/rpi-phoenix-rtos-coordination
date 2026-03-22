@@ -1096,6 +1096,10 @@ Current Pi 4 xHCI fast-path reference note:
   integration point for the linked-host-driver keyboard path
 - after that live-image integration, the next concrete blocker is no longer
   image staging but real-device validation of the HDMI plus USB-keyboard path
+- the current exported real-device handoff image is:
+  `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
+  SHA-256:
+  `475d8d21cdc00d2c2fc79819fe02bdcc946b5ee75329b503198dda7ac16877c3`
 
 Current preserved clue:
 
