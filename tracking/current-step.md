@@ -2,25 +2,24 @@
 
 ## Metadata
 
-- Step ID: `STEP-0395`
-- Title: Scope the first manual Raspberry Pi 4 HDMI plus USB-keyboard execution step
+- Step ID: `STEP-0396`
+- Title: Scope the smallest structured operator-facing Pi 4 first-trial checklist step
 - Status: `in_progress`
 - Date: `2026-03-22`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- define the first bounded real-device execution step after exporting the Pi 4
-  HDMI plus USB-keyboard SD-card image
+- define the smallest operator-facing artifact that will make the first Pi 4
+  HDMI plus USB-keyboard trial produce actionable evidence
 
 ## Scope
 
 In scope:
 
-- defining the next manual validation step on real Raspberry Pi 4 hardware
-- keeping the next move explicitly operator-facing
-- confirming that the current software-side work is handed off as a board-trial
-  image rather than widened into speculative new code work
+- scoping a dedicated first-trial checklist or report template
+- keeping the step operator-facing and evidence-focused
+- improving the handoff without adding speculative code work
 
 Out of scope:
 
@@ -35,6 +34,7 @@ Out of scope:
 ## Expected Files Or Subsystems
 
 - `docs/manual-operator-instructions.md`
+- `docs/`
 - `docs/status.md`
 - `tracking/current-step.md`
 - `tracking/step-history.md`
@@ -43,27 +43,28 @@ Out of scope:
 
 ## Acceptance Criteria
 
-- the next move is explicitly identified as manual board execution
-- the docs point at the exported SD image and its checksum
-- no additional code-side blocker is claimed without new board evidence
+- the next operator-facing artifact is explicitly identified
+- the artifact is justified as improving evidence quality rather than changing
+  runtime behavior
+- no speculative code-side blocker is invented
 
 ## Validation Plan
 
-- review the current exported-artifact state and operator runbook
-- confirm that the next stronger lane requires manual hardware execution
+- review the current runbook and identify the smallest missing operator-facing
+  structure for the first board trial
 
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-22-rpi4b-sdimg-refresh.md`
+  `manifests/2026-03-22-rpi4b-first-manual-trial-scope.md`
 
 ## Notes
 
 - Risks:
-  avoid widening the next move into speculative source changes before the first
+  avoid widening the next move into runtime source changes before the first
   hardware result
 - Dependencies:
-  completed `STEP-0394` SD-image refresh implementation step
+  completed `STEP-0395` first manual-trial scope
 - User-visible control point before next step:
-  after this step, the next bounded move should be the user's first board boot
-  result or a newly discovered operator-side blocker
+  after this step, the next bounded move should be either a checklist/template
+  implementation or the actual board boot
