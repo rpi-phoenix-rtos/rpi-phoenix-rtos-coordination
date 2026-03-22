@@ -37,6 +37,10 @@ Do not assume UART visibility is available.
 
 1. Flash the SD image using the existing macOS workflow from
    [manual-operator-instructions.md](/Users/witoldbolt/phoenix-rpi/docs/manual-operator-instructions.md).
+   Before writing the card, run:
+   - [scripts/verify-rpi4b-sdimg.sh](/Users/witoldbolt/phoenix-rpi/scripts/verify-rpi4b-sdimg.sh)
+   If helpful, print the exact flash commands with:
+   - [scripts/print-rpi4b-macos-flash-commands.sh](/Users/witoldbolt/phoenix-rpi/scripts/print-rpi4b-macos-flash-commands.sh) `diskN`
 2. Insert the microSD card into the Pi 4.
 3. Connect HDMI.
 4. Connect one USB keyboard directly to the Pi 4.

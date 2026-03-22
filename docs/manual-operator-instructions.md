@@ -393,13 +393,17 @@ Recommended manual sequence on macOS:
 
 1. refresh the exported artifact if needed:
    - [scripts/export-rpi4b-sdimg.sh](/Users/witoldbolt/phoenix-rpi/scripts/export-rpi4b-sdimg.sh)
-2. identify the target SD card:
+2. verify the exported artifact before flashing:
+   - [scripts/verify-rpi4b-sdimg.sh](/Users/witoldbolt/phoenix-rpi/scripts/verify-rpi4b-sdimg.sh)
+3. if you want the exact commands printed for a chosen disk identifier:
+   - [scripts/print-rpi4b-macos-flash-commands.sh](/Users/witoldbolt/phoenix-rpi/scripts/print-rpi4b-macos-flash-commands.sh) `diskN`
+4. identify the target SD card:
    - `diskutil list`
-3. unmount the whole target disk:
+5. unmount the whole target disk:
    - `diskutil unmountDisk /dev/diskN`
-4. write the image to the raw device:
+6. write the image to the raw device:
    - `sudo dd if=/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img of=/dev/rdiskN bs=4m`
-5. flush and eject the card:
+7. flush and eject the card:
    - `sync`
    - `diskutil eject /dev/diskN`
 
@@ -410,6 +414,9 @@ Critical cautions:
 - writing this image overwrites the current contents of the target card
 - prefer `/dev/rdiskN` over `/dev/diskN` for faster raw writes on macOS
 - re-verify the target disk before running `dd`
+- the new helper scripts are intentionally non-destructive:
+  - the verification helper only checks path, size, and SHA-256
+  - the flash helper only prints commands and does not write to the disk
 
 ## 5. What Must Be Provided For Real-Device Testing
 

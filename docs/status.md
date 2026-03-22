@@ -264,6 +264,9 @@ Start-gate status:
   `/Users/witoldbolt/phoenix-rpi/docs/pi4-first-hardware-trial.md`
   so the first board result can be reported in a form that directly maps to the
   next bounded implementation step
+- the operator-side handoff now also includes two non-destructive macOS helpers:
+  - `/Users/witoldbolt/phoenix-rpi/scripts/verify-rpi4b-sdimg.sh`
+  - `/Users/witoldbolt/phoenix-rpi/scripts/print-rpi4b-macos-flash-commands.sh`
 
 ## Most Important Technical Findings
 
