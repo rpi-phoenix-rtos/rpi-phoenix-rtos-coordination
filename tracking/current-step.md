@@ -2,32 +2,30 @@
 
 ## Metadata
 
-- Step ID: `STEP-0361`
-- Title: Scope the smallest xHCI event-ring allocation step
+- Step ID: `STEP-0362`
+- Title: Implement the smallest xHCI event-ring allocation step
 - Status: `in_progress`
 - Date: `2026-03-22`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- define the next bounded xHCI step after the run-state self-test, keeping the
-  controller still pre-register-programmed event delivery and pre-enumeration
+- add the first event-ring memory foundation needed before runtime interrupter
+  register programming
 
 ## Scope
 
 In scope:
 
-- choosing the smallest event-ring preparation slice after the run-state step
-- checking the current `xhci.c` state against the already extracted runtime
-  register and capability data
-- deciding whether the next narrow move is event-ring memory allocation,
-  register programming, or another smaller prerequisite
-- documenting the acceptance criteria for that move
+- allocating one event-ring segment
+- allocating one ERST block for interrupter 0
+- populating one ERST entry that points at the allocated event-ring segment
+- recording the corresponding physical addresses and event-ring TRB count
 
 Out of scope:
 
-- implementing xHCI code in this step
-- root-hub, doorbell, or enumeration logic
+- runtime-register programming for `ERSTSZ`, `ERSTBA`, or `ERDP`
+- interrupt-enable, doorbell, root-hub, or enumeration logic
 - SD-image export or checksum refresh
 - manual hardware execution
 - unrelated shell, console, or PCIe changes
@@ -48,30 +46,33 @@ Out of scope:
 
 ## Acceptance Criteria
 
-- the next xHCI move is narrowed to one specific event-ring preparation slice
-- the scoped step stays pre-interrupt-enable, pre-doorbell, and
-  pre-enumeration
-- the choice is grounded in the current `xhci.c` state and extracted runtime
-  register facts
+- the xHCI path records:
+  - one aligned event-ring segment
+  - one aligned ERST block
+  - one populated ERST entry for interrupter 0
+- the step stays pre-runtime-register-programming, pre-interrupt-enable,
+  pre-doorbell, and pre-enumeration
+- the full `aarch64a72-generic-rpi4b` build still succeeds
 
 ## Validation Plan
 
-- inspect the current `xhci.c` implementation and extracted xHCI runtime facts
-- cross-check the next seam against the existing project notes and Circle
-  register definitions already in the knowledge base
+- fresh `aarch64a72-generic-rpi4b` build from the copied VM-local buildroot in
+  `phoenix-dev`
+- no live-image or QEMU behavior change is required beyond preserved build
+  success because the xHCI path still returns `-ENOSYS`
 
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-22-xhci-run-state.md`
+  `manifests/2026-03-22-xhci-event-ring-allocation-scope.md`
 
 ## Notes
 
 - Risks:
-  avoid jumping straight into interrupts or event delivery before the required
-  event-ring memory and runtime-register prerequisites are isolated
+  avoid silently introducing event-ring layout assumptions that are broader than
+  one-segment, one-interrupter preparation
 - Dependencies:
-  completed `STEP-0360` xHCI run-state self-test
+  completed `STEP-0361` xHCI event-ring allocation scope
 - User-visible control point before next step:
-  the next implementation step should still be a narrow preparatory xHCI slice
-  rather than a broad USB-host enablement jump
+  the next implementation step should still leave the staged Pi 4 image
+  behavior unchanged while preparing the first event-delivery structures
