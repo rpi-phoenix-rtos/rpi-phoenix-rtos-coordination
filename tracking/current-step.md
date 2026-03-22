@@ -2,30 +2,29 @@
 
 ## Metadata
 
-- Step ID: `STEP-0362`
-- Title: Implement the smallest xHCI event-ring allocation step
+- Step ID: `STEP-0364`
+- Title: Implement the smallest xHCI runtime-register programming step for the new event ring
 - Status: `in_progress`
 - Date: `2026-03-22`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- add the first event-ring memory foundation needed before runtime interrupter
-  register programming
+- bind the already allocated event-ring structures into the xHCI runtime
+  register block for interrupter `0`
 
 ## Scope
 
 In scope:
 
-- allocating one event-ring segment
-- allocating one ERST block for interrupter 0
-- populating one ERST entry that points at the allocated event-ring segment
-- recording the corresponding physical addresses and event-ring TRB count
+- programming `ERSTSZ`, `ERSTBA`, and `ERDP` for interrupter `0`
+- reading the same registers back and validating the programmed values
+- keeping the step pre-interrupt-enable, pre-doorbell, and pre-enumeration
 
 Out of scope:
 
-- runtime-register programming for `ERSTSZ`, `ERSTBA`, or `ERDP`
-- interrupt-enable, doorbell, root-hub, or enumeration logic
+- setting interrupter enable bits
+- doorbell use, command submission, root-hub logic, or enumeration
 - SD-image export or checksum refresh
 - manual hardware execution
 - unrelated shell, console, or PCIe changes
@@ -46,12 +45,12 @@ Out of scope:
 
 ## Acceptance Criteria
 
-- the xHCI path records:
-  - one aligned event-ring segment
-  - one aligned ERST block
-  - one populated ERST entry for interrupter 0
-- the step stays pre-runtime-register-programming, pre-interrupt-enable,
-  pre-doorbell, and pre-enumeration
+- the xHCI path records the programmed runtime-register state for interrupter
+  `0`:
+  - one-entry `ERSTSZ`
+  - `ERSTBA`
+  - `ERDP`
+- the step stays pre-interrupt-enable, pre-doorbell, and pre-enumeration
 - the full `aarch64a72-generic-rpi4b` build still succeeds
 
 ## Validation Plan
@@ -64,15 +63,15 @@ Out of scope:
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-03-22-xhci-event-ring-allocation-scope.md`
+  `manifests/2026-03-22-xhci-event-ring-programming-scope.md`
 
 ## Notes
 
 - Risks:
-  avoid silently introducing event-ring layout assumptions that are broader than
-  one-segment, one-interrupter preparation
+  avoid enabling runtime event delivery before the runtime-register state is
+  cleanly programmed and read back
 - Dependencies:
-  completed `STEP-0361` xHCI event-ring allocation scope
+  completed `STEP-0363` xHCI event-ring programming scope
 - User-visible control point before next step:
-  the next implementation step should still leave the staged Pi 4 image
-  behavior unchanged while preparing the first event-delivery structures
+  the next implementation step should still keep the staged Pi 4 image
+  behavior unchanged while strengthening controller event-delivery preparation

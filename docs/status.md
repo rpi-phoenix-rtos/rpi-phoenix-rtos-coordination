@@ -176,6 +176,10 @@ Start-gate status:
   the Pi 4 xHCI path can validate a bounded halted-to-run-to-halted controller
   transition while still returning `-ENOSYS`, so the next clean seam is event-
   ring preparation rather than more run-state guessing.
+- that first event-ring memory step is now also in place:
+  the Pi 4 xHCI path now allocates one event-ring segment and one ERST block
+  and populates the first ERST entry for interrupter `0`, so the next clean
+  seam is runtime-register programming for that event-ring state.
 
 ## Most Important Technical Findings
 
