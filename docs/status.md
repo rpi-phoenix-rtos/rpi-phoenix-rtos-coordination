@@ -25,14 +25,20 @@ Latest rebuild and retest:
   stub:
   `phoenix-armstub8-rpi4.bin` is now staged through `config.txt` as
   `armstub=phoenix-armstub8-rpi4.bin`
+- the next real-hardware early-boot clue is now tighter:
+  the Pi 4 `plo` board config had still been using the DT bus addresses
+  `0x40041000` / `0x40042000` for GICv2, while real ARM-visible bare-metal
+  code uses the high-peripheral aliases `0xff841000` / `0xff842000`
+- the active Pi 4 image now also includes that GIC correction in
+  `board_config.h`
 - the Pi 4 bootfs and SD-image assembly helpers now also carry that armstub
   into the exported host-visible image
 - the rebuilt current Pi 4 exported SD-card artifact is:
   `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
 - current validated Pi 4 SD-image SHA-256:
-  `9fc6dd1b5c6a5da81aa62c980f5abbc68f165183a0efa084881cb81202d38e24`
+  `254712ec591df30ec2368d783e4ad3c9ddf50f80613faad64c340bf8a1fa9ec3`
 - current rebuild manifest:
-  `manifests/2026-04-08-pi4-armstub-rebuild.md`
+  `manifests/2026-04-08-pi4-gic-high-address-rebuild.md`
 - current practical Pi 4 QEMU note:
   after restarting `phoenix-dev`, regenerate `/tmp/rpi4b-dtb/bcm2711-rpi-4-b.dtb`
   with `/Users/witoldbolt/phoenix-rpi/scripts/prepare-rpi4b-dtb.sh`

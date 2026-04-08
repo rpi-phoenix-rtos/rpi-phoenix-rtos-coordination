@@ -2,8 +2,8 @@
 
 ## Metadata
 
-- Step ID: `STEP-0415`
-- Title: Await the next Pi 4 board retry on the armstub rebuild
+- Step ID: `STEP-0417`
+- Title: Await the next Pi 4 board retry on the corrected GIC-address image
 - Status: `in_progress`
 - Date: `2026-04-08`
 - Milestone / phase: `Phase 1`
@@ -11,8 +11,8 @@
 ## Objective
 
 - hold the project at the next justified real-hardware boundary and collect the
-  first board evidence from the refreshed Pi 4 SD image that now includes the
-  custom `phoenix-armstub8-rpi4.bin` handoff stub
+  first board evidence from the refreshed Pi 4 SD image that now corrects the
+  ARM-visible GIC addresses used by `plo`
 
 ## Scope
 
@@ -58,12 +58,12 @@ Out of scope:
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-04-08-pi4-armstub-rebuild.md`
+  `manifests/2026-04-08-pi4-gic-high-address-rebuild.md`
 
 ## Notes
 
 - Current exported image SHA-256:
-  `9fc6dd1b5c6a5da81aa62c980f5abbc68f165183a0efa084881cb81202d38e24`
-- The previous low-placement experiment is closed as false.
-- The next stronger signal must come from the real board, not from more QEMU-
-  only source changes.
+  `254712ec591df30ec2368d783e4ad3c9ddf50f80613faad64c340bf8a1fa9ec3`
+- Trigger:
+  the custom armstub rebuild left the real Pi 4 behavior unchanged
+- The next stronger signal must now come from the real board again.

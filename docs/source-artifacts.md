@@ -1099,7 +1099,7 @@ Current Pi 4 xHCI fast-path reference note:
 - the current exported real-device handoff image is:
   `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
   SHA-256:
-  `9fc6dd1b5c6a5da81aa62c980f5abbc68f165183a0efa084881cb81202d38e24`
+  `254712ec591df30ec2368d783e4ad3c9ddf50f80613faad64c340bf8a1fa9ec3`
 - the dedicated operator-facing first board-trial checklist is:
   `/Users/witoldbolt/phoenix-rpi/docs/pi4-first-hardware-trial.md`
 - the current macOS-side first-trial helpers are:
@@ -1109,7 +1109,7 @@ Current Pi 4 xHCI fast-path reference note:
 - the current Pi 4 DTB regeneration helper for `phoenix-dev` is:
   - `/Users/witoldbolt/phoenix-rpi/scripts/prepare-rpi4b-dtb.sh`
 - the current exported Pi 4 SD-image SHA-256 is:
-  `9fc6dd1b5c6a5da81aa62c980f5abbc68f165183a0efa084881cb81202d38e24`
+  `254712ec591df30ec2368d783e4ad3c9ddf50f80613faad64c340bf8a1fa9ec3`
 - the first real Pi 4 board evidence for the earlier image was:
   - firmware could read the SD card and reach the rainbow screen
   - the board then stayed on the rainbow forever with no Phoenix-visible output
@@ -1134,6 +1134,13 @@ Current Pi 4 xHCI fast-path reference note:
     Raspberry Pi/Circle `armstub8-rpi4` lineage
   - `scripts/assemble-rpi4b-bootfs.sh` now carries
     `phoenix-armstub8-rpi4.bin` into the exported FAT and SD images
+- the next concrete real-hardware MMIO clue is now also resolved in the image:
+  - Raspberry Pi Linux DTS uses bus-visible GIC addresses
+    `0x40041000` / `0x40042000`
+  - Circle bare-metal Pi 4 code uses ARM-visible aliases
+    `0xff841000` / `0xff842000`
+  - the active Phoenix Pi 4 `board_config.h` now uses those ARM-visible GIC
+    aliases for `plo`
 
 Current preserved clue:
 
