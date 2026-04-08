@@ -86,6 +86,26 @@ Latest rebuild and retest:
     working Circle / `rpi4-bare-metal` armstubs, so a fuller early register
     setup experiment is now the strongest next radical option if the current
     board image stays black
+- on `2026-04-08`, that low-level survey was expanded with an additional
+  cross-check pass across U-Boot, Ultibo, historical Pi 4 Linux boot notes,
+  and a final targeted online search
+  The most useful new deltas are:
+  - U-Boot independently matches the Linux downstream `ranges`, timer PPI
+    ordering, Cortex-A72 `spin-table` description, and Pi 4 PCIe / GENET node
+    placement
+  - Ultibo documents that the activity LED is on GPIO 42, which now makes a
+    GPIO42 toggle one of the best earliest no-UART sign-of-life proofs for the
+    next real-board diagnostic image
+  - Ultibo also warns that the effective interrupt-controller path can depend
+    on the DTB and firmware behavior, not only the `enable_gic` config value,
+    so a bounded controller-selection proof is now justified if the board
+    remains black
+  - NuttX's successful `0x480000` load address is now explicitly categorized as
+    a U-Boot-specific kernel placement, not evidence against the firmware-native
+    `0x80000` bare-metal convention
+  - the historical `sakaki-/bcm2711-kernel` config now serves as time-sensitive
+    evidence that early Pi 4 64-bit Linux often paired `enable_gic=1` with an
+    explicit `armstub8-gic.bin`
 
 Latest sync and retest history:
 

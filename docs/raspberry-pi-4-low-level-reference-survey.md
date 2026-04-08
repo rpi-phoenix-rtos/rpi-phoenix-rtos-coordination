@@ -22,10 +22,11 @@ Use the following priority order when facts disagree:
 
 1. official Raspberry Pi documentation and the BCM2711 peripherals PDF
 2. Raspberry Pi Linux DTS sources
-3. Circle's Pi 4 armstub and platform support
-4. NuttX Pi 4 porting notes
-5. focused bare-metal references with explicit Pi 4 scope
-6. blogs, forums, and Stack Overflow
+3. U-Boot BCM2711 DTS and historically relevant downstream Linux boot configs
+4. Circle's Pi 4 armstub and platform support
+5. NuttX Pi 4 porting notes
+6. focused bare-metal references with explicit Pi 4 scope
+7. blogs, forums, and Stack Overflow
 
 Practical ranking for the sources reviewed in this step:
 
@@ -33,6 +34,7 @@ Practical ranking for the sources reviewed in this step:
   - BCM2711 peripherals PDF
   - Raspberry Pi Linux DTS files
   - Raspberry Pi firmware boot tree
+  - U-Boot `bcm2711.dtsi`
   - Circle
   - NuttX BCM2711 porting case study
 - Good but narrower:
@@ -44,6 +46,7 @@ Practical ranking for the sources reviewed in this step:
     This repo explicitly says it contains errors and should not be treated as a
     primary truth source.
 - Supplementary / lower-signal for early boot:
+  - Ultibo Pi 4 platform notes
   - CircuitPython broadcom port
   - generic GPIO blog posts
   - OSDev and Raspberry Pi forum threads
@@ -106,6 +109,10 @@ translation model:
 - `0x7c000000 -> 0xfc000000` for BCM2711-specific peripherals
 - `0x40000000 -> 0xff800000` for ARM-local peripherals
 
+U-Boot `arch/arm/dts/bcm2711.dtsi` independently matches the same three
+translation ranges, which makes the alias model significantly harder to dismiss
+as a Linux-only quirk.
+
 Implication for Phoenix:
 
 - DTB parser logic must honor `/soc` `ranges`
@@ -154,7 +161,29 @@ Implication for Phoenix:
 - staged Pi 4 images should continue to treat the firmware boot tree as the
   authoritative source of firmware binaries and board DTBs
 
-### 5.2 Normal AArch64 load convention
+### 5.2 Historical Pi 4 Linux boot helpers are useful, but not final truth
+
+The historical `sakaki-/bcm2711-kernel` project is useful because it captures
+an early Pi 4 64-bit Linux boot shape that explicitly required:
+
+- `enable_gic=1`
+- `armstub=armstub8-gic.bin`
+
+It also temporarily clamped memory with `total_mem=1024`.
+
+Implication for Phoenix:
+
+- this is useful evidence that early Pi 4 64-bit kernels sometimes needed an
+  explicit GIC-aware armstub pairing
+- it should be treated as historical and time-sensitive, not as a current
+  canonical firmware contract
+- `total_mem=1024` should not be copied into Phoenix unless there is a tightly
+  scoped experiment that clearly justifies it
+- likewise, NuttX's successful `0x480000` Pi 4 load address is evidence for a
+  U-Boot-based kernel placement, not a contradiction of the firmware-native
+  `0x80000` bare-metal convention
+
+### 5.3 Normal AArch64 load convention
 
 Across Circle, `rpi-os`, `rpi4-osdev`, and the Rust tutorials, the normal Pi 4
 bare-metal AArch64 kernel image convention is:
@@ -177,7 +206,7 @@ Implication for Phoenix:
 - if the current Phoenix loader model keeps failing on hardware, reverting to a
   more firmware-native boot shape remains a valid radical experiment
 
-### 5.3 `kernel_old=1` is not a safe default
+### 5.4 `kernel_old=1` is not a safe default
 
 This is one of the most important stale-tutorial traps.
 
@@ -194,7 +223,7 @@ Implication for Phoenix:
 - only use it for a tightly scoped experiment if the exact objective requires
   it and the firmware behavior is re-verified
 
-### 5.4 `arm_peri_high` is real, but easy to misuse
+### 5.5 `arm_peri_high` is real, but easy to misuse
 
 Official Raspberry Pi documentation states:
 
@@ -220,6 +249,33 @@ Re-verify:
 - whether the firmware DTB and custom armstub interact differently after future
   EEPROM updates
 
+### 5.6 Interrupt-controller selection depends on more than one knob
+
+Official Raspberry Pi documentation says:
+
+- `enable_gic=1` is the Pi 4 default
+- `enable_gic=0` routes interrupts through the legacy controller instead
+
+Ultibo's Pi 4 platform notes add an important nuance:
+
+- when no suitable DTB is present, current firmware may still select the legacy
+  controller
+- when a DTB containing a compatible GIC node is present, firmware may enable
+  the GIC regardless of `enable_gic=0`
+- if software configures the GIC while the legacy controller is actually
+  active, the board can hang on the four-color screen with no useful runtime
+  output
+
+Implication for Phoenix:
+
+- `enable_gic=1` alone should not be treated as sufficient proof that the GIC
+  path is really active
+- the staged DTB, firmware-selected DTB, and armstub behavior may all
+  participate in the controller-selection result
+- if the current black-screen real-board failure persists, a bounded
+  controller-selection proof or self-test is justified before widening other
+  early-boot hypotheses
+
 ## 6. CPU Entry, EL Setup, and SMP Facts
 
 ### 6.1 Secondary-core release conventions
@@ -234,6 +290,7 @@ There is strong agreement on the Pi 4 secondary-core release locations:
 Sources:
 
 - Linux `bcm2711.dtsi` `cpu-release-addr`
+- U-Boot `bcm2711.dtsi`
 - Circle Pi 4 armstub layout
 - `rpi4-bare-metal` armstub layout
 - OSDev bare-bones article
@@ -318,6 +375,14 @@ Circle provides the clearest concrete IRQ identity:
 - `GIC_PPI(14)` is the Pi 4 non-secure physical timer
 - that resolves to IRQ `30`
 
+U-Boot `bcm2711.dtsi` independently confirms the standard ARMv8 timer PPI
+ordering:
+
+- `13` secure physical
+- `14` non-secure physical
+- `11` virtual
+- `10` hypervisor
+
 Implication for Phoenix:
 
 - the current Pi 4 preference for the non-secure physical timer remains the
@@ -370,7 +435,27 @@ Implication for Phoenix:
 - BCM2711 GPIO and UART pinmux work should prefer the newer pull-control
   registers, not the legacy ones
 
-### 8.2 PL011 versus mini-UART
+### 8.2 The Pi 4 activity LED is on GPIO 42
+
+Ultibo's Pi 4 platform notes explicitly state:
+
+- the Pi 4 activity LED is connected to GPIO pin `42`
+
+This is valuable because it gives Phoenix a hardware-visible earliest-entry
+proof technique that does not depend on:
+
+- UART
+- mailbox/framebuffer success
+- GIC delivery
+
+Implication for Phoenix:
+
+- a bounded GPIO42 toggle experiment is now one of the highest-value next
+  earliest-entry diagnostics for the real board
+- this should be preferred over more speculative framebuffer-only debugging if
+  the next armstub experiment still stays black
+
+### 8.3 PL011 versus mini-UART
 
 The sources show two common early-serial patterns:
 
@@ -432,6 +517,26 @@ Implication for Phoenix:
   produce a real-hardware failure even if it appears to work in a simplified
   emulation path
 
+### 9.3 U-Boot confirms the practical Pi 4 platform shape
+
+The current U-Boot `bcm2711.dtsi` independently confirms several Pi 4 facts
+already relied on by Phoenix:
+
+- top-level `interrupt-parent = <&gicv2>`
+- `/soc` `ranges` matching Linux downstream translation
+- `timer { compatible = "arm,armv8-timer"; ... }`
+- AArch64 CPUs described as `arm,cortex-a72`
+- AArch64 CPUs using `spin-table` release addresses
+- PCIe host at `pcie@7d500000`
+- GENET at `ethernet@7d580000`
+
+Implication for Phoenix:
+
+- these are now cross-checked against both Linux downstream DTS and U-Boot
+  rather than depending on a single tree
+- the remaining uncertainty is not the basic board layout, but the exact
+  earliest runtime handoff on the real board
+
 ## 10. PCIe, USB, and Later Bring-Up Facts
 
 Even though the current blocker is earlier than PCIe or xHCI, the survey also
@@ -446,6 +551,10 @@ Linux `bcm2711.dtsi` confirms:
 - host interrupts map through GIC SPI lines beginning at `143`
 
 This matches the current Phoenix Pi 4 PCIe assumptions closely.
+
+U-Boot `bcm2711.dtsi` independently confirms the same Pi 4 PCIe node placement
+and shows the same outbound-window style rooted at `0xf8000000`, which adds a
+second primary-source-style check for the current Phoenix PCIe constants.
 
 ### 10.2 VL805 and USB
 
@@ -505,9 +614,13 @@ The survey makes these the most justified next moves:
 
 1. Add an even earlier Pi 4-specific visible diagnostic path before the current
    `plo` HDMI initialization.
-2. Try a fuller Circle-style / `setup_more_regs` armstub experiment rather than
+2. Prefer GPIO42 activity-LED proof as the very first hardware-visible signal
+   if the next image is still silent.
+3. Try a fuller Circle-style / `setup_more_regs` armstub experiment rather than
    more ad hoc address changes.
-3. Consider a NuttX-style earliest-entry proof technique:
+4. Consider an Ultibo-style bounded controller-selection self-test if the GIC
+   versus legacy path remains ambiguous on the real board.
+5. Keep NuttX's GPIO-first diagnostic lesson in mind:
    toggle one GPIO or LED line immediately to prove that the first C or
    assembly path is reached, independent of UART availability.
 
@@ -526,10 +639,14 @@ Official and primary:
 
 High-value implementation references:
 
+- U-Boot `bcm2711.dtsi`:
+  <https://github.com/u-boot/u-boot/blob/master/arch/arm/dts/bcm2711.dtsi>
 - Circle:
   <https://github.com/rsta2/circle>
 - NuttX BCM2711 porting case study:
   <https://nuttx.apache.org/docs/latest/guides/porting-case-studies/bcm2711-rpi4b.html>
+- `sakaki-/bcm2711-kernel`:
+  <https://github.com/sakaki-/bcm2711-kernel>
 - Rust Raspberry Pi OS tutorials:
   <https://github.com/rust-embedded/rust-raspberrypi-OS-tutorials>
 - `rhythm16/rpi4-bare-metal`:
@@ -554,6 +671,10 @@ Supplementary / explanatory:
 
 Lower-value for the current earliest-boot problem, but still worth remembering:
 
+- Ultibo Pi 4 platform notes:
+  <https://ultibo.org/wiki/Unit_PlatformRPi4>
+- Ultibo Pi 4 boot notes:
+  <https://ultibo.org/wiki/Unit_BootRPi4>
 - Ultibo Core:
   <https://github.com/ultibohub/Core/tree/master>
 - BOOTBOOT:

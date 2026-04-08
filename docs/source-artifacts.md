@@ -442,6 +442,35 @@ This file indexes the most important websites, repositories, documents, and sour
   as wrong load addresses, wrong GIC version assumptions, and using GPIO as an
   earliest-entry proof when UART setup is still broken.
 
+- U-Boot `bcm2711.dtsi`:
+  <https://github.com/u-boot/u-boot/blob/master/arch/arm/dts/bcm2711.dtsi>
+  Local clone: `/Users/witoldbolt/phoenix-rpi/external/u-boot`
+  Important because it independently confirms the Linux downstream Pi 4 address
+  translation ranges, ARMv8 timer PPI ordering, Cortex-A72 `spin-table` CPU
+  description, and the practical PCIe plus GENET node shape.
+
+- `sakaki-/bcm2711-kernel`:
+  <https://github.com/sakaki-/bcm2711-kernel>
+  Local clone: `/Users/witoldbolt/phoenix-rpi/external/bcm2711-kernel`
+  Important because it preserves a historically relevant early 64-bit Pi 4
+  Linux boot shape using `enable_gic=1` and `armstub8-gic.bin`.
+  Caution:
+  treat it as historical evidence, not a current canonical firmware contract.
+
+- Ultibo Pi 4 platform notes:
+  <https://ultibo.org/wiki/Unit_PlatformRPi4>
+  Important because they document two high-value Pi 4 bring-up facts:
+  - the activity LED is on GPIO 42
+  - interrupt-controller selection may depend on the DTB and firmware state,
+    not just the `enable_gic` config knob
+
+- Ultibo Pi 4 boot notes:
+  <https://ultibo.org/wiki/Unit_BootRPi4>
+  Important because they preserve another historical Pi 4 boot model and
+  describe the firmware-established entry assumptions used by Ultibo's own
+  boot code. Treat the exact CPU-mode details as implementation-specific and
+  time-sensitive.
+
 - OSDev `Raspberry Pi Bare Bones`:
   <https://wiki.osdev.org/Raspberry_Pi_Bare_Bones>
   Important because it is a compact tertiary reference for AArch64 Pi 3 or 4
@@ -473,6 +502,25 @@ This file indexes the most important websites, repositories, documents, and sour
   It also contains a broader `setup_more_regs` path than the current Phoenix
   custom Pi 4 armstub, which makes it a concrete candidate for the next radical
   earliest-entry experiment if the current board image stays black.
+
+- `external/u-boot/arch/arm/dts/bcm2711.dtsi`
+  Important because it independently confirms:
+  - `/soc` `ranges`
+  - ARMv8 timer PPI ordering
+  - AArch64 `spin-table` CPU release addresses
+  - the Pi 4 PCIe and GENET node shape
+  This makes it the best cross-check after Raspberry Pi Linux DTS when there
+  is doubt about whether a fact is Linux-specific or board-generic.
+
+- `external/bcm2711-kernel/README.md`
+  Important because it preserves a historically real Pi 4 64-bit Linux boot
+  combination:
+  - `enable_gic=1`
+  - `armstub=armstub8-gic.bin`
+  - temporary `total_mem=1024`
+  Use this only as evidence that explicit GIC-aware armstub pairing mattered in
+  early Pi 4 Linux bring-up; do not copy the memory clamp into Phoenix by
+  default.
 
 - `external/rpi4-bare-metal/config.txt`
   Important because it shows one real Pi 4 bare-metal configuration using:
@@ -517,6 +565,13 @@ This file indexes the most important websites, repositories, documents, and sour
 - `external/circle/include/circle/bcm2711int.h`
   Important because it defines `ARM_IRQLOCAL0_CNTPNS = GIC_PPI(14)`, confirming
   that the Pi 4 non-secure physical timer IRQ is `30`.
+
+- Ultibo `Unit_PlatformRPi4`
+  Important because it adds two durable Pi 4 debugging facts that are easy to
+  miss in the other trees:
+  - the activity LED is on GPIO 42
+  - if the firmware leaves the legacy interrupt controller active while software
+    assumes the GIC, the board can hang on the four-color screen
 
 - `external/circle/include/circle/bcm2836.h`
   Important because it defines the Pi 4 local interrupt controller base

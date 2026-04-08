@@ -26,6 +26,9 @@ Important official behavior from Raspberry Pi documentation:
 - `boot_load_flags` exists for custom firmware on Pi 4 and disables some compatibility checks.
 - `uart_2ndstage=1` enables more boot UART logging.
 - The FAT boot partition remains the normal firmware-visible entry point.
+- `enable_gic=1` is the documented default, but the newer low-level survey now
+  records that real controller selection may still depend on the DTB and
+  armstub combination on the card, not only on that single config value.
 
 Re-verify:
 
@@ -88,6 +91,12 @@ Minimum `plo` support on Pi 4:
 4. PL011 UART output
 5. DTB handoff parsing
 6. image loading from a simple medium
+
+Earliest real-board diagnostic note:
+
+- the Pi 4 activity LED is on GPIO 42
+- that makes GPIO42 one of the best no-UART earliest-entry proof points if the
+  board still stays black before the current HDMI path becomes visible
 
 Current early-HDMI note:
 
