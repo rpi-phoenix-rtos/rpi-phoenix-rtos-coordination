@@ -1316,7 +1316,7 @@ Current Pi 4 xHCI fast-path reference note:
 - the current exported real-device handoff image is:
   `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
   SHA-256:
-  `44085197192f5578759269813c3aa38a8adcf04b18bc0092ec509b8fa5543920`
+  `acea299fb225edb0293b4d022b9b19d984fe51627a168bd69c403442590b757d`
 - the dedicated operator-facing first board-trial checklist is:
   `/Users/witoldbolt/phoenix-rpi/docs/pi4-first-hardware-trial.md`
 - the current macOS-side first-trial helpers are:
@@ -1326,7 +1326,7 @@ Current Pi 4 xHCI fast-path reference note:
 - the current Pi 4 DTB regeneration helper for `phoenix-dev` is:
   - `/Users/witoldbolt/phoenix-rpi/scripts/prepare-rpi4b-dtb.sh`
 - the current exported Pi 4 SD-image SHA-256 is:
-  `44085197192f5578759269813c3aa38a8adcf04b18bc0092ec509b8fa5543920`
+  `acea299fb225edb0293b4d022b9b19d984fe51627a168bd69c403442590b757d`
 - the current SD-image export lesson is now explicit:
   - the VM-local Pi 4 SD image may be valid even when the host-visible copy is
     corrupt
@@ -1337,6 +1337,10 @@ Current Pi 4 xHCI fast-path reference note:
   - the custom Pi 4 armstub drives GPIO42 high on the primary core
   - if the ACT LED stays off on the real board, the failure is still before or
     inside the current earliest custom armstub path
+- the current next board-visible split in that image is:
+  - `plo` `_startc()` drives GPIO42 low
+  - if the ACT LED ends the attempt off, the board reached early `plo` entry
+    and the remaining failure is later
 - the first real Pi 4 board evidence for the earlier image was:
   - firmware could read the SD card and reach the rainbow screen
   - the board then stayed on the rainbow forever with no Phoenix-visible output

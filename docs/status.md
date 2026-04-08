@@ -8,6 +8,27 @@
 
 Latest rebuild and retest:
 
+- on `2026-04-08`, the first post-armstub Pi 4 LED split was implemented
+  later than the custom armstub, in `plo` `_startc()`:
+  - the custom armstub still drives GPIO42 high first
+  - `_startc()` now drives GPIO42 low as the first persistent post-armstub
+    loader milestone
+- this changes the next real-board interpretation rule:
+  - ACT LED stays on:
+    the board reached the custom armstub but did not reach `_startc()`
+  - ACT LED turns on and then ends up off:
+    the board reached `_startc()` and the remaining failure is later in early
+    `plo`
+- the old assembly-path version of this probe was removed instead of being
+  committed, because it did not improve the Pi 4 QEMU lane and was only a
+  hypothesis probe
+- the Pi 4 A72 rebuild passed and a refreshed SD image was exported and
+  re-verified on macOS
+- refreshed exported Pi 4 SD-image SHA-256:
+  `acea299fb225edb0293b4d022b9b19d984fe51627a168bd69c403442590b757d`
+- current manifest:
+  `manifests/2026-04-08-pi4-plo-entry-led-proof.md`
+
 - on `2026-04-08`, the first retry on the corrected FAT-verified exported
   image produced the first real post-fix Pi 4 board movement:
   - the ACT LED now turns on and stays on
@@ -39,9 +60,9 @@ Latest rebuild and retest:
 - the refreshed exported Pi 4 SD-card artifact is:
   `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
 - current validated Pi 4 SD-image SHA-256:
-  `44085197192f5578759269813c3aa38a8adcf04b18bc0092ec509b8fa5543920`
+  `acea299fb225edb0293b4d022b9b19d984fe51627a168bd69c403442590b757d`
 - current export-fix manifest:
-  `manifests/2026-04-08-pi4-sdimg-export-fix.md`
+  `manifests/2026-04-08-pi4-plo-entry-led-proof.md`
 - the current image content still corresponds to the latest Pi 4 earliest-entry
   GPIO42 armstub proof; this step fixed only the host-side exported copy
 
