@@ -390,6 +390,17 @@ This file indexes the most important websites, repositories, documents, and sour
 
 ## 5. External Bare-Metal Reference Repositories
 
+- `rhythm16/rpi4-bare-metal`:
+  <https://github.com/rhythm16/rpi4-bare-metal>
+  Local clone: `/Users/witoldbolt/phoenix-rpi/external/rpi4-bare-metal`
+  Important because it is an explicitly Pi 4-focused bare-metal repo that
+  documents several real BCM2711-specific corrections:
+  newer-firmware `kernel_old=1` breakage, `GPIO_PUP_PDN_CNTRL_REG*` use, and a
+  larger Pi 4 armstub with EL3 timer and GIC preparation.
+  Caution:
+  the repo README explicitly warns that it contains errors, so use it as a
+  secondary reference behind official docs, Linux DTS, and Circle.
+
 - `sypstraw/rpi4-osdev`:
   <https://github.com/sypstraw/rpi4-osdev>
   Local clone: `/Users/witoldbolt/phoenix-rpi/external/rpi4-osdev`
@@ -417,6 +428,20 @@ This file indexes the most important websites, repositories, documents, and sour
   quick sanity reference, but its timer and interrupt path is still based on
   the legacy system timer and legacy IRQ controller.
 
+- `rust-embedded/rust-raspberrypi-OS-tutorials`:
+  <https://github.com/rust-embedded/rust-raspberrypi-OS-tutorials>
+  Local clone:
+  `/Users/witoldbolt/phoenix-rpi/external/rust-raspberrypi-os-tutorials`
+  Important because it is a clean reference for Pi 4 MMIO aliases, Pi 4-vs-Pi
+  3 GPIO differences, and the normal `0x80000` AArch64 firmware load
+  convention.
+
+- NuttX BCM2711 porting case study:
+  <https://nuttx.apache.org/docs/latest/guides/porting-case-studies/bcm2711-rpi4b.html>
+  Important because it records concrete early-porting pitfalls on Pi 4, such
+  as wrong load addresses, wrong GIC version assumptions, and using GPIO as an
+  earliest-entry proof when UART setup is still broken.
+
 - OSDev `Raspberry Pi Bare Bones`:
   <https://wiki.osdev.org/Raspberry_Pi_Bare_Bones>
   Important because it is a compact tertiary reference for AArch64 Pi 3 or 4
@@ -436,6 +461,36 @@ This file indexes the most important websites, repositories, documents, and sour
     encoding reference, not a wholesale port of NetBSD wsfont management
 
 ## 6. External Reference Source Paths
+
+- `external/rpi4-bare-metal/armstub/src/armstub8.S`
+  Important because it is the strongest non-Circle external armstub reference
+  for Pi 4:
+  - `LOCAL_CONTROL = 0xff800000`
+  - `LOCAL_PRESCALER = 0xff800008`
+  - `GIC_DISTB = 0xff841000`
+  - `GIC_CPUB = 0xff842000`
+  - `OSC_FREQ = 54000000`
+  It also contains a broader `setup_more_regs` path than the current Phoenix
+  custom Pi 4 armstub, which makes it a concrete candidate for the next radical
+  earliest-entry experiment if the current board image stays black.
+
+- `external/rpi4-bare-metal/config.txt`
+  Important because it shows one real Pi 4 bare-metal configuration using:
+  - `armstub=armstub8.bin`
+  - `arm_peri_high=0`
+  - `enable_gic=1`
+  and its README explicitly warns that `kernel_old=1` broke on newer firmware.
+
+- `external/rpi4-bare-metal/include/peripherals/irq.h`
+  Important because it confirms the ARM-visible GIC aliases:
+  - `GIC_BASE = 0xff840000`
+  - `GICD_BASE = 0xff841000`
+  - `GICC_BASE = 0xff842000`
+
+- `external/rpi4-bare-metal/include/peripherals/gpio.h`
+  Important because it confirms the BCM2711 GPIO ARM-visible base
+  `0xfe200000` and includes both the legacy and BCM2711 pull-control register
+  layout, making the Pi 4 GPIO register difference explicit.
 
 - `external/rpi4-osdev/part1-bootstrapping/boot.S`
   Important because it shows the simplest Pi 4 `_start` sequence: `mpidr_el1`,
@@ -562,6 +617,31 @@ This file indexes the most important websites, repositories, documents, and sour
   Important because it is a compact Pi 4 EL3-to-EL1 handoff example with
   explicit `SCR_EL3`, `HCR_EL2`, and `SPSR_EL3` programming.
 
+- `external/rpi-os/src/linker.ld`
+  Important because it reinforces the standard AArch64 firmware load convention
+  of linking the image for `0x80000`.
+
+- `external/rpi-os/include/arm/base.h`
+  Important because it states the Pi 4 low-peripheral-mode base directly as
+  `PBASE = 0xFE000000`.
+
+- `external/rust-raspberrypi-os-tutorials/15_virtual_mem_part3_precomputed_tables/kernel/src/bsp/raspberrypi/memory.rs`
+  Important because it gives a clean Pi 4 physical MMIO map with:
+  - GPIO at `0xfe200000`
+  - PL011 at `0xfe201000`
+  - GIC distributor at `0xff841000`
+  - GIC CPU interface at `0xff842000`
+
+- `external/rust-raspberrypi-os-tutorials/05_drivers_gpio_uart/src/bsp/device_driver/bcm/bcm2xxx_gpio.rs`
+  Important because it makes the BCM2711 GPIO pull-control difference explicit:
+  Pi 4 uses `GPIO_PUP_PDN_CNTRL_REG*`, while the older `GPPUD` /
+  `GPPUDCLK` path is BCM2837-specific.
+
+- `external/rust-raspberrypi-os-tutorials/05_drivers_gpio_uart/README.md`
+  Important because it documents Pi 4 real-hardware bring-up using
+  `start4.elf`, `fixup4.dat`, `bcm2711-rpi-4-b.dtb`, and a minimal Pi 4
+  `config.txt` with `arm_64bit=1` and `init_uart_clock=48000000`.
+
 - `external/rpi-os/src/irq.S`
   Important because it provides a short vector-table and save-restore example
   for EL1 exception handling.
@@ -613,6 +693,12 @@ This file indexes the most important websites, repositories, documents, and sour
   Re-verify:
   - exact filenames required by the current Pi 4 bootloader release
   - whether a specific test baseline should pin the firmware repo commit rather than using the moving `master` branch
+
+- Raspberry Pi 4 low-level survey:
+  `docs/raspberry-pi-4-low-level-reference-survey.md`
+  Important because it consolidates the official address-map facts, Linux DTS
+  `ranges`, armstub expectations, timer and GIC constants, and the current
+  stale-tutorial traps into one reusable board dossier.
 
 - Current validated Pi 4 firmware DTB source for the `raspi4b` QEMU lane:
   - repo commit: `63ad7e7980b030cb4649ecedf2255c9226e5a1e8`
@@ -696,6 +782,14 @@ This file indexes the most important websites, repositories, documents, and sour
 - `drivers/media/platform/raspberrypi/rp1_cfe/*`
 
 ## 7. BSD and Other OS References
+
+- CircuitPython broadcom port:
+  <https://github.com/adafruit/circuitpython/tree/main/ports/broadcom>
+  Important later because it is an active BCM2711-capable board-support tree,
+  though current upstream release notes still describe the broadcom port as
+  alpha. Current conclusion:
+  more useful for later peripheral-driver ideas than for the current earliest
+  Pi 4 boot blocker.
 
 - FreeBSD hardware support notes:
   <https://www.freebsd.org/releases/14.4R/hardware/>
@@ -871,6 +965,37 @@ Useful mainly for:
 - rough low-level Raspberry Pi bring-up patterns
 
 Do not treat it as an architectural authority for Phoenix.
+
+- Code Embedded GPIO note:
+  <https://www.codeembedded.com/blog/raspberry_pi_gpio/>
+  Useful only as a lightweight explanatory note that repeats the Pi 4 GPIO
+  base `0xFE200000`. Do not prefer it over the BCM2711 peripherals PDF or
+  Linux DTS.
+
+- BOOTBOOT:
+  <https://gitlab.com/bztsrc/bootboot>
+  Supplementary only. Useful as a generic loader comparison, but not a better
+  fit than native Pi firmware plus `plo` for the current Phoenix boot design.
+
+- Ultibo Core:
+  <https://github.com/ultibohub/Core/tree/master>
+  Supplementary only. Potential later board-support reference, but not a
+  higher-signal earliest-boot source than Circle or Raspberry Pi Linux DTS.
+
+- OSDev Pi 4 thread:
+  <https://forum.osdev.org/viewtopic.php?t=56115>
+  Supplementary only. Useful for community boot-stub discussion, not as a
+  primary source of constants.
+
+- Stack Overflow peripheral-base discussion:
+  <https://stackoverflow.com/questions/77205909/raspberry-pi-4-bcm2711-peripheral-base-address-differs-in-documentation-from-har>
+  Supplementary only. Useful as a reminder that the BCM2711 datasheet and
+  ARM-visible low-peripheral aliases are easy to confuse.
+
+- Raspberry Pi forum thread:
+  <https://forums.raspberrypi.com/viewtopic.php?t=377875>
+  Supplementary only. Use only after checking official documentation or Linux
+  sources.
 
 ## 11. Time-Sensitive Topics Requiring Fresh Browsing
 

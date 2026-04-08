@@ -70,6 +70,22 @@ Latest rebuild and retest:
   `memory@0 { reg = <0 0 0>; }`, so future work should not treat the
   build-time DTB blob as equivalent to the firmware-patched live DTB passed at
   boot
+- on `2026-04-08`, a dedicated low-level Pi 4 reference survey was added in:
+  `docs/raspberry-pi-4-low-level-reference-survey.md`
+  It consolidates the current cross-source facts that matter most for the next
+  real-hardware boot-debug step:
+  - official BCM2711 and Linux DTS translation from bus addresses to
+    ARM-visible low-peripheral aliases
+  - the corrected Pi 4 GIC aliases `0xff841000` / `0xff842000`
+  - the local timer and prescaler aliases `0xff800000` / `0xff800008`
+  - `CNTFRQ_EL0 = 54000000`
+  - the fact that build-time `system.dtb` is not equivalent to the live
+    firmware-patched DTB
+  - the remaining high-probability gap:
+    the current custom Phoenix Pi 4 armstub is still smaller than the known
+    working Circle / `rpi4-bare-metal` armstubs, so a fuller early register
+    setup experiment is now the strongest next radical option if the current
+    board image stays black
 
 Latest sync and retest history:
 

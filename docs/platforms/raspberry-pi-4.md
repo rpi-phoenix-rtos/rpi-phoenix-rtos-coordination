@@ -50,6 +50,22 @@ Important observations from DT:
 - mailbox interrupts are routed through GIC
 - SDHCI, SPI, I2C, system timer, PCIe, GENET, and xHCI interrupt wiring is explicitly described
 
+Low-level reference note:
+
+- for the consolidated boot, MMIO alias, timer, GIC, GPIO, and firmware facts
+  now gathered from official docs plus the external Pi 4 bare-metal references,
+  consult `docs/raspberry-pi-4-low-level-reference-survey.md`
+- current high-confidence address translation model from Linux DTS:
+  - `0x7e000000 -> 0xfe000000`
+  - `0x7c000000 -> 0xfc000000`
+  - `0x40000000 -> 0xff800000`
+- current high-confidence Pi 4 early constants:
+  - `LOCAL_CONTROL = 0xff800000`
+  - `LOCAL_PRESCALER = 0xff800008`
+  - `GICD = 0xff841000`
+  - `GICC = 0xff842000`
+  - `CNTFRQ_EL0 = 54000000`
+
 ## 4. CPU and SMP Notes
 
 Pi 4 secondary CPUs are described in DT with:

@@ -59,6 +59,11 @@ This directory is the long-lived knowledge base for the Phoenix RTOS Raspberry P
   with notes on what is immediately useful and what should not be cargo-culted
   into the Phoenix port.
 
+- `raspberry-pi-4-low-level-reference-survey.md`
+  Consolidated low-level Pi 4 boot, MMIO, GIC, timer, DTB, GPIO, and source
+  ranking notes drawn from official docs, Linux DTS, Circle, NuttX, and the
+  curated external bare-metal references.
+
 - `circle-reference-review.md`
   Detailed implementation-oriented review of Circle's Pi 4 mailbox/framebuffer
   and USB-keyboard paths, with explicit sequencing guidance for Phoenix.
