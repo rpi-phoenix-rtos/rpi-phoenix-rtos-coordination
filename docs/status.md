@@ -8,6 +8,38 @@
 
 Latest rebuild and retest:
 
+- on `2026-04-08`, the real Pi 4 board retry on the temporary late-`plo`
+  `_init.S` GPIO42 split image produced:
+  - both red and green LEDs on
+  - blank screen
+  - no keyboard-visible reaction
+- that closed the temporary late-`plo` hypothesis cleanly:
+  the board still does not reach the late `_init.S` split point, so that
+  diagnostic probe was removed instead of being committed
+
+- on `2026-04-08`, the active Pi 4 image moved the next persistent GPIO42
+  transition back into the custom firmware armstub, at the final primary-core
+  handoff point:
+  - the custom armstub still drives GPIO42 high first
+  - the primary-core armstub path now drives GPIO42 low just before branching
+    to `kernel8.img`
+  - if the ACT LED stays on, the failure is still before that final armstub
+    handoff point
+  - if the ACT LED ends off, the board reached that final armstub handoff
+    point and the remaining failure is later
+- the disproved `_startc()` LED proof has now been removed from `plo`
+- the Pi 4 A72 rebuild passed, the direct Pi 4 QEMU serial-log sanity lane
+  still reaches:
+  - `go!`
+  - `hal: jump exit el1`
+  - kernel markers `A3` and `KLM`
+- the refreshed exported Pi 4 SD image is still:
+  `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
+- current validated Pi 4 SD-image SHA-256:
+  `f6abd64a6dcd9e254a224c73d2402c4d33e09f52eec6da36418d903e31ffddac`
+- current manifest:
+  `manifests/2026-04-08-pi4-pre-kernel-branch-led-proof.md`
+
 - on `2026-04-08`, the first post-armstub Pi 4 LED split was implemented
   later than the custom armstub, in `plo` `_startc()`:
   - the custom armstub still drives GPIO42 high first

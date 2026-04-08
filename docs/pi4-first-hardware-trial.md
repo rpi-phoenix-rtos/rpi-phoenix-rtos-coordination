@@ -19,7 +19,7 @@ Use this image:
 
 Current SHA-256:
 
-- `acea299fb225edb0293b4d022b9b19d984fe51627a168bd69c403442590b757d`
+- `f6abd64a6dcd9e254a224c73d2402c4d33e09f52eec6da36418d903e31ffddac`
 
 This image supersedes the earlier Pi 4 trial images that used the temporary
 firmware-default low-placement experiment:
@@ -41,10 +41,13 @@ This image now intentionally uses:
     existing timer and GIC setup
   - on Raspberry Pi 4 this should make the ACT LED turn on if the custom
     armstub executes
-- first post-armstub GPIO42 proof:
-  - `plo` `_startc()` now drives GPIO42 low
-  - if the ACT LED ends the boot attempt off, the board reached `_startc()`
-    and the remaining failure is later in early `plo`
+- current next armstub-handoff GPIO42 proof:
+  - the primary-core armstub path now drives GPIO42 low just before branching
+    to `kernel8.img`
+  - if the ACT LED ends the boot attempt off, the board reached the final
+    armstub handoff point and the remaining failure is later than that branch
+  - if the ACT LED stays on, the failure is still earlier than the final
+    armstub handoff point
 - Pi 4 `plo` GIC base aliases:
   - `0xff841000`
   - `0xff842000`
@@ -122,7 +125,7 @@ Copy this block into the next report or chat message:
 ```text
 Pi 4 first hardware trial
 Image: artifacts/rpi4b/rpi4b-sd.img
-SHA256: acea299fb225edb0293b4d022b9b19d984fe51627a168bd69c403442590b757d
+SHA256: f6abd64a6dcd9e254a224c73d2402c4d33e09f52eec6da36418d903e31ffddac
 Board revision:
 Display:
 Keyboard:

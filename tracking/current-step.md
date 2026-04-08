@@ -2,67 +2,80 @@
 
 ## Metadata
 
-- Step ID: `STEP-0432`
-- Title: Retry the Pi 4 board boot on the post-armstub `plo` LED-split image
-- Status: `in_progress`
+- Step ID: `STEP-0435`
+- Title: Await the next Pi 4 board retry on the pre-kernel-branch armstub LED image
+- Status: `pending`
 - Date: `2026-04-08`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- retry the Pi 4 board with the image that now distinguishes custom armstub
-  reachability from early `plo` `_startc()` reachability
+- collect the next real-hardware answer after proving that:
+  - the custom armstub executes on the board
+  - late `plo` `_init.S` is still not reached
 
 ## Scope
 
 In scope:
 
 - flashing the refreshed Pi 4 SD image
-- observing the next board result with the new two-stage ACT LED semantics
-- classifying the result before widening the boot diagnosis again
+- booting the real Pi 4 board
+- recording the final ACT LED state, blank-or-visible HDMI result, and any
+  keyboard-visible reaction
 
 Out of scope:
 
-- wide boot redesigns
-- unrelated USB, PCIe, or runtime shell work
-- new runtime experiments before the new board result arrives
+- new code changes before the next board result
+- unrelated runtime, USB, or framebuffer changes
 
 ## Expected Repositories
 
-- none unless the new board result requires the next implementation step
+- coordination repo
 
 ## Expected Files Or Subsystems
 
 - `tracking/current-step.md`
+- `tracking/step-history.md`
+- `docs/status.md`
 - `docs/pi4-first-hardware-trial.md`
 - `docs/manual-operator-instructions.md`
+- `docs/source-artifacts.md`
+- `manifests/2026-04-08-pi4-pre-kernel-branch-led-proof.md`
 
 ## Acceptance Criteria
 
-- the refreshed image is flashed to the whole SD-card device
-- the board result records whether the ACT LED:
-  - stays on
-  - or turns on and later ends off
-- the next implementation step is chosen from that split
+- the next board retry reports one of:
+  - ACT LED stays on
+  - ACT LED ends off
+- the result is paired with:
+  - screen state
+  - any keyboard-visible reaction
+- the next implementation step can then choose between:
+  - earlier armstub diagnosis
+  - branch-to-kernel diagnosis
+  - earliest `plo`/kernel-entry diagnosis
 
 ## Validation Plan
 
-- run `scripts/verify-rpi4b-sdimg.sh`
-- flash the whole-card image
-- boot the board and capture:
-  - final ACT LED state
-  - screen state
-  - any keyboard-visible effect
+- rewrite the SD card from the refreshed exported image
+- boot the real Pi 4 and observe ACT LED, screen, and keyboard behavior
 
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `manifests/2026-04-08-pi4-plo-entry-led-proof.md`
+  `manifests/2026-04-08-pi4-pre-kernel-branch-led-proof.md`
 
 ## Notes
 
-- The current exported image SHA-256 is:
-  `acea299fb225edb0293b4d022b9b19d984fe51627a168bd69c403442590b757d`.
-- The expected split is now:
-  - ACT LED stays on: failure before `_startc()`
-  - ACT LED ends off: `_startc()` reached, failure later in early `plo`
+- The temporary late-`_init.S` proof image was already tested on the board and
+  disproved:
+  the final ACT LED still stayed on, so the late `plo` split was removed
+  instead of being committed.
+- In the current image:
+  - the custom armstub still drives GPIO42 high first
+  - the primary-core armstub path now drives GPIO42 low just before branching
+    to `kernel8.img`
+  - final ACT LED on means the failure is still before that final armstub
+    handoff point
+  - final ACT LED off means the branch-site handoff was reached and the next
+    failure is later

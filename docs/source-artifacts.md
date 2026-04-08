@@ -1316,7 +1316,7 @@ Current Pi 4 xHCI fast-path reference note:
 - the current exported real-device handoff image is:
   `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
   SHA-256:
-  `acea299fb225edb0293b4d022b9b19d984fe51627a168bd69c403442590b757d`
+  `f6abd64a6dcd9e254a224c73d2402c4d33e09f52eec6da36418d903e31ffddac`
 - the dedicated operator-facing first board-trial checklist is:
   `/Users/witoldbolt/phoenix-rpi/docs/pi4-first-hardware-trial.md`
 - the current macOS-side first-trial helpers are:
@@ -1326,7 +1326,7 @@ Current Pi 4 xHCI fast-path reference note:
 - the current Pi 4 DTB regeneration helper for `phoenix-dev` is:
   - `/Users/witoldbolt/phoenix-rpi/scripts/prepare-rpi4b-dtb.sh`
 - the current exported Pi 4 SD-image SHA-256 is:
-  `acea299fb225edb0293b4d022b9b19d984fe51627a168bd69c403442590b757d`
+  `f6abd64a6dcd9e254a224c73d2402c4d33e09f52eec6da36418d903e31ffddac`
 - the current SD-image export lesson is now explicit:
   - the VM-local Pi 4 SD image may be valid even when the host-visible copy is
     corrupt
@@ -1338,9 +1338,19 @@ Current Pi 4 xHCI fast-path reference note:
   - if the ACT LED stays off on the real board, the failure is still before or
     inside the current earliest custom armstub path
 - the current next board-visible split in that image is:
-  - `plo` `_startc()` drives GPIO42 low
-  - if the ACT LED ends the attempt off, the board reached early `plo` entry
-    and the remaining failure is later
+  - the primary-core custom armstub path drives GPIO42 low just before
+    branching to `kernel8.img`
+  - if the ACT LED ends the attempt off, the board reached the final armstub
+    handoff point and the remaining failure is later
+  - if the ACT LED stays on, the failure is still earlier than that handoff
+    point
+- the most recent real Pi 4 board result on the temporary late-`plo` proof
+  image was:
+  - both red and green LEDs on
+  - blank screen
+  - no keyboard-visible reaction
+  - therefore the late `plo` `_init.S` split was disproved and removed rather
+    than being committed
 - the first real Pi 4 board evidence for the earlier image was:
   - firmware could read the SD card and reach the rainbow screen
   - the board then stayed on the rainbow forever with no Phoenix-visible output
