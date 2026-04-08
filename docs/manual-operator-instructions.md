@@ -374,13 +374,16 @@ Current payload rule:
 - by default it exports that disk image into the host workspace at:
   - `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
 - current validated exported full-image SHA-256:
-  - `1c3bc4f6c474baad547059801ba49ea4c2de31c088aea3b1ef68fc7b8eb2924f`
+  - `9fc6dd1b5c6a5da81aa62c980f5abbc68f165183a0efa084881cb81202d38e24`
 - the current exported full-disk artifact includes the latest firmware-stage
   early handoff state:
-  - Pi 4 A72 `plo` linked at the real firmware default 64-bit kernel load
-    address range instead of the older generic `0x40080000` placement
-  - no forced `kernel_address` override in `config.txt`
-  - no `boot_load_flags=0x1` override in `config.txt`
+  - Pi 4 A72 `plo` restored to the last coherent high-DDR placement used by
+    the current Phoenix `plo` memory map
+  - `config.txt` again uses:
+    - `kernel_address=0x40080000`
+    - `boot_load_flags=0x1`
+  - `config.txt` now also uses:
+    - `armstub=phoenix-armstub8-rpi4.bin`
   - `disable_splash=1` kept so the firmware rainbow does not hide the handoff
 - the current exported full-disk artifact also includes the latest HDMI staging
   state:
@@ -406,7 +409,7 @@ Recommended manual sequence on macOS:
 2. verify the exported artifact before flashing:
    - [scripts/verify-rpi4b-sdimg.sh](/Users/witoldbolt/phoenix-rpi/scripts/verify-rpi4b-sdimg.sh)
    - current expected SHA-256:
-     `1c3bc4f6c474baad547059801ba49ea4c2de31c088aea3b1ef68fc7b8eb2924f`
+     `9fc6dd1b5c6a5da81aa62c980f5abbc68f165183a0efa084881cb81202d38e24`
 3. if you want the exact commands printed for a chosen disk identifier:
    - [scripts/print-rpi4b-macos-flash-commands.sh](/Users/witoldbolt/phoenix-rpi/scripts/print-rpi4b-macos-flash-commands.sh) `diskN`
 4. if you want a prefilled first-trial report file before you start:
@@ -562,7 +565,7 @@ For the current lab shape, the first practical manual trial is:
    - current exported artifact:
      [artifacts/rpi4b/rpi4b-sd.img](/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img)
    - current SHA-256:
-     `1c3bc4f6c474baad547059801ba49ea4c2de31c088aea3b1ef68fc7b8eb2924f`
+     `9fc6dd1b5c6a5da81aa62c980f5abbc68f165183a0efa084881cb81202d38e24`
    - focused trial checklist:
      [pi4-first-hardware-trial.md](/Users/witoldbolt/phoenix-rpi/docs/pi4-first-hardware-trial.md)
 2. flash the image to microSD using the workflow above

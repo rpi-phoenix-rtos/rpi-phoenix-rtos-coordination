@@ -1099,7 +1099,7 @@ Current Pi 4 xHCI fast-path reference note:
 - the current exported real-device handoff image is:
   `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
   SHA-256:
-  `1c3bc4f6c474baad547059801ba49ea4c2de31c088aea3b1ef68fc7b8eb2924f`
+  `9fc6dd1b5c6a5da81aa62c980f5abbc68f165183a0efa084881cb81202d38e24`
 - the dedicated operator-facing first board-trial checklist is:
   `/Users/witoldbolt/phoenix-rpi/docs/pi4-first-hardware-trial.md`
 - the current macOS-side first-trial helpers are:
@@ -1109,20 +1109,31 @@ Current Pi 4 xHCI fast-path reference note:
 - the current Pi 4 DTB regeneration helper for `phoenix-dev` is:
   - `/Users/witoldbolt/phoenix-rpi/scripts/prepare-rpi4b-dtb.sh`
 - the current exported Pi 4 SD-image SHA-256 is:
-  `1c3bc4f6c474baad547059801ba49ea4c2de31c088aea3b1ef68fc7b8eb2924f`
+  `9fc6dd1b5c6a5da81aa62c980f5abbc68f165183a0efa084881cb81202d38e24`
 - the first real Pi 4 board evidence for the earlier image was:
   - firmware could read the SD card and reach the rainbow screen
   - the board then stayed on the rainbow forever with no Phoenix-visible output
   - after removing the forced `kernel_address` and `boot_load_flags` directly
     on-card, the board instead hung on a black screen with no Phoenix-visible
     output
-- the bounded response to that evidence is now in-tree:
-  - `plo/ld/aarch64a72-generic.ldt` now links the Pi 4 A72 loader at
-    `0x00200000`
-  - `phoenix-rtos-project/_projects/aarch64a72-generic-rpi4b/config.txt` no
-    longer forces `kernel_address` or `boot_load_flags`
-  - `disable_splash=1` remains enabled so the firmware splash does not mask the
-    earliest post-handoff screen state
+- the first bounded response to that evidence turned out false:
+  - moving the Pi 4 A72 loader to `0x00200000` caused Pi 4 QEMU to fail inside
+    `plo` with `Cannot allocate memory for 'phoenix-aarch64a72-generic.elf'`
+  - that proved the current Phoenix `plo` memory map still depends on the older
+    high-DDR load model
+- the active bounded response is now:
+  - `plo/ld/aarch64a72-generic.ldt` is restored to the coherent high-placement
+    model
+  - `phoenix-rtos-project/_projects/aarch64a72-generic-rpi4b/config.txt`
+    again uses:
+    - `kernel_address=0x40080000`
+    - `boot_load_flags=0x1`
+    - `armstub=phoenix-armstub8-rpi4.bin`
+  - `phoenix-rtos-project/_projects/aarch64a72-generic-rpi4b/phoenix-armstub8-rpi4.S`
+    now provides a Pi-4-specific firmware handoff stub derived from the
+    Raspberry Pi/Circle `armstub8-rpi4` lineage
+  - `scripts/assemble-rpi4b-bootfs.sh` now carries
+    `phoenix-armstub8-rpi4.bin` into the exported FAT and SD images
 
 Current preserved clue:
 

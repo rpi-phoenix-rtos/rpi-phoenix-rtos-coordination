@@ -11,7 +11,7 @@ tmp_file="${out_file}.tmp"
 mkdir -p "$out_dir"
 
 limactl shell -y "$vm" -- test -f "$remote_image"
-limactl shell -y "$vm" -- cat "$remote_image" > "$tmp_file"
+limactl copy --backend=scp "${vm}:${remote_image}" "$tmp_file"
 mv "$tmp_file" "$out_file"
 
 printf 'Exported: %s\n' "$out_file"

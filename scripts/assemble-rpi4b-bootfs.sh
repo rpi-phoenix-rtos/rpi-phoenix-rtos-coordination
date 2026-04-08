@@ -22,7 +22,7 @@ for req in start4.elf fixup4.dat; do
 	fi
 done
 
-for req in config.txt kernel8.img loader.disk; do
+for req in config.txt kernel8.img loader.disk phoenix-armstub8-rpi4.bin; do
 	if [ ! -f \"\$staged_dir/\$req\" ]; then
 		printf 'missing staged file: %s\n' \"\$staged_dir/\$req\" >&2
 		exit 1
@@ -36,6 +36,7 @@ cp -f \"\$firmware_dir/fixup4.dat\" \"\$out_dir/\"
 cp -f \"\$staged_dir/config.txt\" \"\$out_dir/\"
 cp -f \"\$staged_dir/kernel8.img\" \"\$out_dir/\"
 cp -f \"\$staged_dir/loader.disk\" \"\$out_dir/\"
+cp -f \"\$staged_dir/phoenix-armstub8-rpi4.bin\" \"\$out_dir/\"
 
 if [ -f \"\$staged_dir/bcm2711-rpi-4-b.dtb\" ]; then
 	cp -f \"\$staged_dir/bcm2711-rpi-4-b.dtb\" \"\$out_dir/\"

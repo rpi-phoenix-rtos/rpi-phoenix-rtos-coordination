@@ -19,14 +19,21 @@ Use this image:
 
 Current SHA-256:
 
-- `1c3bc4f6c474baad547059801ba49ea4c2de31c088aea3b1ef68fc7b8eb2924f`
+- `9fc6dd1b5c6a5da81aa62c980f5abbc68f165183a0efa084881cb81202d38e24`
 
-This image supersedes the earlier Pi 4 trial images that used:
+This image supersedes the earlier Pi 4 trial images that used the temporary
+firmware-default low-placement experiment:
+
+- no custom `armstub`
+- no longer-coherent low `ADDR_PLO=0x200000` placement assumptions
+
+This image now intentionally uses:
 
 - `kernel_address=0x40080000`
 - `boot_load_flags=0x1`
+- `armstub=phoenix-armstub8-rpi4.bin`
 
-Do not reuse those on-card edits. Reflash the whole image instead.
+Do not reuse older on-card `config.txt` edits. Reflash the whole image instead.
 
 ## Hardware Setup
 
@@ -97,7 +104,7 @@ Copy this block into the next report or chat message:
 ```text
 Pi 4 first hardware trial
 Image: artifacts/rpi4b/rpi4b-sd.img
-SHA256: 1c3bc4f6c474baad547059801ba49ea4c2de31c088aea3b1ef68fc7b8eb2924f
+SHA256: 9fc6dd1b5c6a5da81aa62c980f5abbc68f165183a0efa084881cb81202d38e24
 Board revision:
 Display:
 Keyboard:
