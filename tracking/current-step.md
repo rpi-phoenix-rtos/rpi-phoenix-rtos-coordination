@@ -2,55 +2,66 @@
 
 ## Metadata
 
-- Step ID: `STEP-0429`
-- Title: Retry the Pi 4 board boot on the FAT-verified exported image
+- Step ID: `STEP-0430`
+- Title: Scope the first post-armstub Pi 4 visible milestone
 - Status: `in_progress`
 - Date: `2026-04-08`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- re-run the next real Pi 4 board boot using the now-correct host-visible SD
-  image whose FAT boot partition has been verified on macOS
+- choose and implement the smallest next no-UART, no-HDMI-independent visible
+  proof after the now-confirmed custom Pi 4 armstub entry
 
 ## Scope
 
 In scope:
 
-- flashing the corrected Pi 4 SD image to the real board's microSD card
-- observing the first board result on the corrected exported image
-- classifying the result and using it to choose the next bounded boot step
+- classifying the latest Pi 4 board result:
+  - ACT LED on and steady
+  - blank screen
+  - no keyboard-visible input effect
+- selecting the smallest next hardware-visible milestone later than armstub
+- preparing the next code step around early `plo` entry rather than earlier
+  firmware media or armstub reachability
 
 Out of scope:
 
-- unrelated image-export or host-artifact work
-- wide bring-up changes before the board result is classified
+- wide boot redesigns
+- unrelated USB, PCIe, or runtime shell work
 
 ## Expected Repositories
 
-- none unless the board result uncovers the next implementation step
+- coordination repo
+- likely `plo`
+- possibly `phoenix-rtos-project`
 
 ## Expected Files Or Subsystems
 
 - `tracking/current-step.md`
+- `tracking/step-history.md`
+- `docs/status.md`
 - `docs/pi4-first-hardware-trial.md`
-- `docs/manual-operator-instructions.md`
+- `phoenix-armstub8-rpi4.S`
+- `plo/hal/aarch64/generic/_init.S`
+- `plo/hal/aarch64/generic/hal.c`
 
 ## Acceptance Criteria
 
-- the corrected image is flashed to the card without using the partition node
-- the board result is captured in enough detail to classify:
-  - screen state
-  - ACT LED state
-  - keyboard-visible reaction
-- the next smallest implementation step is chosen from that evidence
+- the earlier board result is explicitly classified as post-armstub failure
+- the next smallest visible proof point is selected and documented
+- the selected next step stays independent of UART and framebuffer availability
 
 ## Validation Plan
 
-- run `scripts/verify-rpi4b-sdimg.sh`
-- flash the corrected image to the whole SD-card device
-- boot the Pi 4 and record the observed result with
-  `docs/pi4-first-hardware-trial.md`
+- use the current board evidence:
+  - ACT LED steady on
+  - no screen output
+  - no keyboard-visible reaction
+- compare the current earliest-entry proof locations in:
+  - the custom Pi 4 armstub
+  - early `plo` entry
+- choose the smallest later milestone that can be signaled on the same ACT LED
 
 ## Rollback / Baseline
 
@@ -59,6 +70,8 @@ Out of scope:
 
 ## Notes
 
-- The host-side SD-image export corruption is now fixed.
-- The current exported image SHA-256 is:
-  `44085197192f5578759269813c3aa38a8adcf04b18bc0092ec509b8fa5543920`.
+- The latest board result proves that the custom Pi 4 armstub now executes.
+- The next useful split is no longer "firmware reached our armstub or not?".
+- The next useful split is:
+  - armstub runs but `plo` entry never begins
+  - `plo` entry begins but later early init fails

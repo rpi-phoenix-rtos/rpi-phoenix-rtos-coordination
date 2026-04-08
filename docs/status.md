@@ -8,6 +8,18 @@
 
 Latest rebuild and retest:
 
+- on `2026-04-08`, the first retry on the corrected FAT-verified exported
+  image produced the first real post-fix Pi 4 board movement:
+  - the ACT LED now turns on and stays on
+  - the screen still stays blank
+  - USB keyboard input still has no visible effect
+- that is the strongest real-hardware clue so far:
+  the custom Pi 4 armstub is now executing on the board, so the remaining
+  failure is later than the earliest firmware-to-armstub boundary
+- the next bounded diagnostic move should therefore stop targeting firmware
+  media or armstub entry itself and instead prove the first post-armstub
+  transition into early `plo`
+
 - on `2026-04-08`, the current Pi 4 host-visible SD-card artifact was audited
   after a failed macOS mount attempt, and the problem turned out to be
   host-side export corruption rather than a bad VM-local build
