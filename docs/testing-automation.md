@@ -136,6 +136,10 @@ Current practical note for the first Pi 4 hardware attempt without USB-TTL:
 - for the current slower Pi 4 telemetry image, record at least `70` seconds and
   preferably `90` seconds from power-on so the full checkpoint sequence can be
   decoded from one clip
+- when a timing-sensitive LED video is analyzed later, verify the actual frame
+  rate with `ffprobe` instead of trusting the recording mode label alone; the
+  `IMG_0005.mov` Pi 4 retry clip was expected to be `60 fps` but was actually
+  encoded at `30.01 fps`
 - current intended timing for that slower protocol:
   - about `0.4s` LED on per pulse
   - about `0.4s` LED off between pulses inside one group

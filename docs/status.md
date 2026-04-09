@@ -8,6 +8,27 @@
 
 Latest rebuild and retest:
 
+- on `2026-04-09`, the next hardware retry video `IMG_0005.mov` tightened the
+  same early `plo` conclusion again:
+  - `ffprobe` shows the clip is actually `30.01 fps`, not `60 fps`
+  - the strongest left-side ACT windows were:
+    - `0.79s - 5.86s`
+    - `6.89s - 7.29s`
+    - `8.09s - 8.12s` (weak / near-threshold)
+    - `10.12s - 10.52s`
+    - `11.36s - 11.72s`
+    - `14.59s - 14.96s`
+    - `15.79s - 16.19s`
+    - `16.99s - 17.39s`
+  - the durable conclusion is not that the pulse count itself became clearer
+  - the durable conclusion is that no visible activity extends into the time
+    range expected for completion of checkpoint `5`
+  - so the current failure is now best classified as:
+    - after checkpoint `4` (`plo _start` entry)
+    - before checkpoint `5` (after register clearing)
+- the next bounded response should therefore move the split into the current
+  `_start` register-clearing block itself, not later EL-path code
+
 - on `2026-04-09`, the latest `IMG_0004.mov` `60 fps` hardware video was
   mapped onto the slower GPIO42 telemetry timeline:
   - the highest-confidence green-on windows were:

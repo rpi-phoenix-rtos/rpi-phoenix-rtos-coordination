@@ -1367,6 +1367,14 @@ Current Pi 4 xHCI fast-path reference note:
 - the current active bounded response is therefore the post-stage-`4`
   `plo _start` split inside `hal/aarch64/generic/_init.S`, not another
   armstub-only change
+- the next retry video `IMG_0005.mov` preserved that same conclusion after the
+  post-stage-`4` split image:
+  - `ffprobe` shows the file is actually `30.01 fps`
+  - the strongest visible ACT windows end at about `17.39s`
+  - no later visible activity extends into the expected completion range for
+    checkpoint `5`
+  - the current failure therefore appears to be after stage `4` and before the
+    post-register-clear stage `5`
 - the most recent real Pi 4 board result on the temporary late-`plo` proof
   image was:
   - both red and green LEDs on
