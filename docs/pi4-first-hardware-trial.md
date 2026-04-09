@@ -19,7 +19,7 @@ Use this image:
 
 Current SHA-256:
 
-- `e5f8662aca8c859464bed6c23e9742afd196bf1136a09f453e9c975e06b6441c`
+- `6d6b4d7dd84f237f3e8dab1764f8be34b29b4e4d46d6f92ad30aee1869a2acdc`
 
 This image supersedes the earlier Pi 4 trial images that used the temporary
 firmware-default low-placement experiment:
@@ -36,24 +36,22 @@ This image now intentionally uses:
   - local timer control / prescaler
   - `CNTFRQ_EL0 = 54000000`
   - GIC group-1 setup through the ARM-visible aliases
-- earliest-entry GPIO42 proof:
-  - the custom armstub now drives GPIO42 high on the primary core before the
-    existing timer and GIC setup
-  - on Raspberry Pi 4 this should make the ACT LED turn on if the custom
-    armstub executes
-- current next armstub-handoff GPIO42 proof:
-  - the primary-core armstub path now drives GPIO42 low just before branching
-    to `kernel8.img`
-  - the current image now pairs that split with a direct jump to
-    `0x40080000`, instead of using the firmware-patched `kernel_entry32` slot
-  - if the board now moves past the earlier reset behavior, the raw
-    `kernel8.img` versus firmware-entry mismatch was the blocker
-- current earliest post-branch `plo` GPIO42 proof:
-  - generic AArch64 `plo` `_start` now performs a Pi-4-only GPIO42 pattern at
-    the very top of `_start`
-  - that pattern runs before register clearing and exception-level setup
-  - if the board reaches that point, the ACT LED sequence should now differ
-    from the fixed-address armstub-only image
+- structured GPIO42 telemetry protocol:
+  - the earlier one-off ACT-LED proofs were removed
+  - the current image now emits numbered pulse groups separated by longer off
+    gaps
+  - the current checkpoint map is:
+    - `1`: armstub primary-core entry
+    - `2`: armstub after early timer / GIC preparation
+    - `3`: armstub just before the fixed-address jump to `plo`
+    - `4`: earliest generic AArch64 `plo` `_start`
+    - `5`: `plo` EL3 path selected
+    - `6`: `plo` EL2 path selected
+    - `7`: `plo` EL1 path selected
+    - `8`: `plo` `start_common`
+    - `9`: `plo` core-0 branch to `_startc`
+  - the goal of the next board trial is no longer “did one probe move?”
+  - the goal is “what is the highest completed numbered checkpoint?”
 - Pi 4 `plo` GIC base aliases:
   - `0xff841000`
   - `0xff842000`
@@ -87,19 +85,21 @@ Do not assume UART visibility is available.
 4. Connect one USB keyboard directly to the Pi 4.
 5. Optionally connect Ethernet.
 6. Power on the board.
-7. Wait at least 60 seconds before classifying a silent result.
-8. If text or prompt appears, try:
+7. Start a high-framerate close-up video before power-on and keep both LEDs in
+   frame for at least 20 seconds.
+8. Wait at least 60 seconds before classifying a silent result.
+9. If text or prompt appears, try:
    - `help`
    - `ps`
    - `ls /`
-9. Record the outcome using the template below.
+10. Record the outcome using the template below.
 
 ## Expected Positive Signs
 
 Any of these are useful:
 
-- ACT LED turns on and stays on after the initial firmware blink
-- ACT LED turns on first, then ends the attempt off
+- clearly separated numbered ACT-LED pulse groups
+- a highest completed checkpoint that can be counted from the video
 - visible top-left early panel from `plo`
 - black background with white text
 - readable Phoenix boot output
@@ -147,7 +147,9 @@ HDMI result:
 - prompt seen: yes/no
 
 ACT LED result:
-- stayed off / brief firmware blink only / turns on and stays on / turns on then ends off / other
+- attach or summarize the LED video
+- highest completed checkpoint group:
+- final LED state after the pulse groups:
 
 Keyboard result:
 - no visible effect / partial / full
@@ -162,6 +164,26 @@ LED / reboot behavior:
 
 Additional notes:
 ```
+
+## Current LED Telemetry Interpretation Rule
+
+Count complete pulse groups separated by the longer off gaps.
+
+- highest completed `1` only:
+  armstub started but did not reach the post-setup armstub checkpoint
+- highest completed `2`:
+  armstub reached early timer / GIC setup but not the final pre-`plo` handoff
+- highest completed `3`:
+  armstub reached the final fixed-address jump point but `plo` stage `4` was
+  not observed
+- highest completed `4`:
+  earliest generic AArch64 `plo` `_start` was entered
+- highest completed `5`, `6`, or `7`:
+  `plo` reached exception-level dispatch and selected EL3, EL2, or EL1
+- highest completed `8`:
+  `plo` reached `start_common`
+- highest completed `9`:
+  `plo` reached the core-0 branch to `_startc`
 
 ## Next-Agent Interpretation Rule
 

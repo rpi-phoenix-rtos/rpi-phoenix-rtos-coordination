@@ -8,6 +8,43 @@
 
 Latest rebuild and retest:
 
+- on `2026-04-09`, the tighter LED-only hardware video from the current Pi 4
+  image proved the old one-off GPIO42 probes were no longer sufficient:
+  - the ACT LED sequence is now more complex than a simple armstub-only loop
+  - the late short pulse pattern strongly suggests control reaches earliest
+    generic AArch64 `plo` `_start`
+  - but the exact failing checkpoint is still ambiguous from one-off probes
+- the active response is now a structured GPIO42 telemetry image, not another
+  moved single probe:
+  - one pulse group per checkpoint, separated by longer off gaps
+  - current checkpoint map:
+    - `1`: armstub primary-core entry
+    - `2`: armstub after early timer / GIC preparation
+    - `3`: armstub just before the fixed-address jump to `plo`
+    - `4`: earliest generic AArch64 `plo` `_start`
+    - `5`: `plo` EL3 path selected
+    - `6`: `plo` EL2 path selected
+    - `7`: `plo` EL1 path selected
+    - `8`: `plo` `start_common`
+    - `9`: `plo` core-0 branch to `_startc`
+- validation summary for that telemetry image:
+  - Pi 4 A72 rebuild: pass
+  - generic QEMU shell smoke: pass
+  - direct Pi 4 QEMU serial sanity still reaches:
+    - `go!`
+    - `hal: jump exit el1`
+    - `A3`
+    - `KLM`
+  - later direct Pi 4 QEMU prompt gating is still constrained by the known
+    QEMU-only DTB / memory-node mismatch when the artifact is built for real
+    firmware boot instead of the QEMU-patched DTB lane
+- the refreshed exported Pi 4 telemetry image is:
+  `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
+- current validated Pi 4 SD-image SHA-256:
+  `6d6b4d7dd84f237f3e8dab1764f8be34b29b4e4d46d6f92ad30aee1869a2acdc`
+- current manifest:
+  `manifests/2026-04-09-pi4-led-telemetry-protocol.md`
+
 - on `2026-04-09`, the next real Pi 4 board retry on the fixed-address
   armstub image produced:
   - no HDMI output

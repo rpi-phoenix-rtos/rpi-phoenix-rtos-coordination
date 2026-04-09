@@ -385,7 +385,7 @@ Current payload rule:
 - by default it exports that disk image into the host workspace at:
   - `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
 - current validated exported full-image SHA-256:
-  - `e5f8662aca8c859464bed6c23e9742afd196bf1136a09f453e9c975e06b6441c`
+  - `6d6b4d7dd84f237f3e8dab1764f8be34b29b4e4d46d6f92ad30aee1869a2acdc`
 - the current exported full-disk artifact includes the latest firmware-stage
   early handoff state:
   - Pi 4 A72 `plo` restored to the last coherent high-DDR placement used by
@@ -400,23 +400,21 @@ Current payload rule:
     - local timer control and prescaler setup
     - `CNTFRQ_EL0 = 54000000`
     - early GIC group-1 distributor / CPU-interface enablement
-  - that custom Pi 4 armstub now also performs the current earliest-entry
-    board-visible proof:
-    - drives GPIO42 high on the primary core
-    - should make the ACT LED turn on if the custom armstub executes
-  - the current next bounded handoff experiment is now:
-    - the primary-core armstub path still drives GPIO42 low just before the
-      final handoff
-    - but the armstub now jumps directly to `0x40080000` instead of using the
-      firmware-patched `kernel_entry32` slot
-    - this is a deliberate real-hardware experiment for the current raw
-      `plo`-as-`kernel8.img` boot model
-  - the current next post-branch split now moves into `plo` itself:
-    - generic AArch64 `plo` `_start` now performs a Pi-4-only GPIO42 pattern
-      at the very top of `_start`
-    - the pattern runs before register clearing and exception-level setup
-    - this is the smallest current test of whether the fixed-address branch
-      reaches `plo` at all on real hardware
+  - that custom Pi 4 armstub plus earliest generic AArch64 `plo` path now use
+    a structured GPIO42 telemetry protocol instead of one-off probes
+  - the current checkpoint map is:
+    - `1`: armstub primary-core entry
+    - `2`: armstub after early timer / GIC preparation
+    - `3`: armstub just before the fixed-address jump to `plo`
+    - `4`: earliest generic AArch64 `plo` `_start`
+    - `5`: `plo` EL3 path selected
+    - `6`: `plo` EL2 path selected
+    - `7`: `plo` EL1 path selected
+    - `8`: `plo` `start_common`
+    - `9`: `plo` core-0 branch to `_startc`
+  - each checkpoint is emitted as one pulse group separated by longer off gaps
+  - the armstub still uses the current fixed-address jump to `0x40080000`
+    instead of the firmware-patched `kernel_entry32` slot
   - Pi 4 `plo` now also uses the ARM-visible GICv2 aliases:
     - `0xff841000`
     - `0xff842000`
@@ -446,7 +444,7 @@ Recommended manual sequence on macOS:
 2. verify the exported artifact before flashing:
    - [scripts/verify-rpi4b-sdimg.sh](/Users/witoldbolt/phoenix-rpi/scripts/verify-rpi4b-sdimg.sh)
    - current expected SHA-256:
-     `e5f8662aca8c859464bed6c23e9742afd196bf1136a09f453e9c975e06b6441c`
+     `6d6b4d7dd84f237f3e8dab1764f8be34b29b4e4d46d6f92ad30aee1869a2acdc`
 3. if you want the exact commands printed for a chosen disk identifier:
    - [scripts/print-rpi4b-macos-flash-commands.sh](/Users/witoldbolt/phoenix-rpi/scripts/print-rpi4b-macos-flash-commands.sh) `diskN`
 4. if you want a prefilled first-trial report file before you start:
@@ -524,7 +522,19 @@ The following physical items are currently required to run tests on an actual Ra
   - correct image assembly
   - correct SD-card writing
   - visible firmware-side signs of life on HDMI if any
-  - later alternate observability work before broad hardware debugging
+  - structured ACT-LED telemetry and video capture before broader code changes
+
+### Current no-UART LED-video rule
+
+For the current Pi 4 hardware loop without UART:
+
+- start recording before power-on
+- keep both LEDs in frame continuously
+- prefer at least `60 fps`
+- keep recording for at least `20` seconds
+- use the ACT LED pulse groups as the authoritative earliest boot evidence
+- do not summarize the result only as “green on/off”; preserve the full pulse
+  sequence whenever possible
 
 ### Current first-boot expectations for the no-UART lab
 
@@ -603,7 +613,7 @@ For the current lab shape, the first practical manual trial is:
    - current exported artifact:
      [artifacts/rpi4b/rpi4b-sd.img](/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img)
    - current SHA-256:
-     `e5f8662aca8c859464bed6c23e9742afd196bf1136a09f453e9c975e06b6441c`
+     `6d6b4d7dd84f237f3e8dab1764f8be34b29b4e4d46d6f92ad30aee1869a2acdc`
    - focused trial checklist:
      [pi4-first-hardware-trial.md](/Users/witoldbolt/phoenix-rpi/docs/pi4-first-hardware-trial.md)
 2. flash the image to microSD using the workflow above
@@ -615,7 +625,7 @@ For the current lab shape, the first practical manual trial is:
 5. power on the board
 6. record the gross result:
    - any visible HDMI behavior
-   - ACT LED behavior if observed
+   - ACT LED pulse groups from a high-framerate close-up video
    - whether the board appears to reboot repeatedly or stay powered
 
 Current specific HDMI sign to record if present:

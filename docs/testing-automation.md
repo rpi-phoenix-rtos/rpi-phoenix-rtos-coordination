@@ -131,6 +131,8 @@ Current practical note for the first Pi 4 hardware attempt without USB-TTL:
   the current bring-up path is still primarily observable through UART and QEMU
 - in that lab shape, the next technical priority after artifact preparation
   should be alternate observability, not repeated blind boot attempts
+- the current preferred no-UART observability path is now structured GPIO42
+  ACT-LED telemetry plus high-framerate video capture, not one-off LED probes
 
 ## 4. QEMU Strategy
 
@@ -200,6 +202,11 @@ Current local `raspi4b` smoke result:
   - after removal of the stale kernel `create_dev` probes, both shell-smoke
     helpers are clean again and no longer rely on filtering past obsolete
     debug noise
+  - when the active artifact is instead a real-device telemetry image built
+    without `RPI4B_QEMU_MEMORY_SIZE=80000000`, treat the Pi 4 QEMU prompt gate
+    as non-authoritative; use the direct serial sanity markers
+    (`go!`, `hal: jump exit el1`, `A3`, `KLM`) to confirm that the telemetry
+    change did not break the earlier Pi 4 handoff path
 
 Inference:
 

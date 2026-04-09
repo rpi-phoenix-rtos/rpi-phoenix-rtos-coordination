@@ -1326,7 +1326,7 @@ Current Pi 4 xHCI fast-path reference note:
 - the current Pi 4 DTB regeneration helper for `phoenix-dev` is:
   - `/Users/witoldbolt/phoenix-rpi/scripts/prepare-rpi4b-dtb.sh`
 - the current exported Pi 4 SD-image SHA-256 is:
-  `e5f8662aca8c859464bed6c23e9742afd196bf1136a09f453e9c975e06b6441c`
+  `6d6b4d7dd84f237f3e8dab1764f8be34b29b4e4d46d6f92ad30aee1869a2acdc`
 - the current SD-image export lesson is now explicit:
   - the VM-local Pi 4 SD image may be valid even when the host-visible copy is
     corrupt
@@ -1339,23 +1339,20 @@ Current Pi 4 xHCI fast-path reference note:
     partition itself, not only file size and SHA-256
   - do not fall back to `scp`, `sftp`, `rsync`, `limactl copy`, streamed `dd`,
     or manual `cat` pipelines for this artifact
-- the current earliest-entry board-visible proof in that image is:
-  - the custom Pi 4 armstub drives GPIO42 high on the primary core
-  - if the ACT LED stays off on the real board, the failure is still before or
-    inside the current earliest custom armstub path
-- the current next board-visible split in that image is:
-  - the primary-core custom armstub path drives GPIO42 low just before
-    branching to `kernel8.img`
-  - the current image now also bypasses the firmware-patched `kernel_entry32`
-    slot and jumps directly to `0x40080000`
-  - this is now the smallest active test of whether the previous LED-reset
-    sequence was caused by the raw `kernel8.img` versus firmware-entry mismatch
-- the current next post-branch split in that image is now:
-  - generic AArch64 `plo` `_start` performs a Pi-4-only GPIO42 pattern at the
-    very top of `_start`
-  - it runs before register clearing and exception-level setup
-  - it is now the smallest active test of whether the fixed-address branch
-    reaches `plo` at all on real hardware
+- the current earliest-entry no-UART diagnostic path is now a structured
+  GPIO42 telemetry protocol rather than one-off probes
+- current checkpoint map:
+  - `1`: armstub primary-core entry
+  - `2`: armstub after early timer / GIC preparation
+  - `3`: armstub just before the fixed-address jump to `plo`
+  - `4`: earliest generic AArch64 `plo` `_start`
+  - `5`: `plo` EL3 path selected
+  - `6`: `plo` EL2 path selected
+  - `7`: `plo` EL1 path selected
+  - `8`: `plo` `start_common`
+  - `9`: `plo` core-0 branch to `_startc`
+- each checkpoint is one pulse group separated by a longer off gap so a single
+  high-framerate LED video can reveal the highest completed stage
 - the most recent real Pi 4 board result on the temporary late-`plo` proof
   image was:
   - both red and green LEDs on
