@@ -8,6 +8,42 @@
 
 Latest rebuild and retest:
 
+- on `2026-04-10`, the active Pi 4 response to the decoded stage-`3` boundary
+  was implemented and rebuilt:
+  - the custom Pi 4 armstub no longer clears the primary-path argument
+    registers before the fixed-address branch
+  - it now also inserts:
+    - `dsb sy`
+    - `ic iallu`
+    - `dsb sy`
+    - `isb`
+    immediately before branching to `0x40080000`
+  - earliest generic AArch64 `plo _start` no longer uses a helper call for
+    stage `4`; stage `4` is now emitted inline through direct GPIO writes at
+    the first `_start` instruction
+- validation summary for the stage-`3 -> 4` handoff-hardened image:
+  - Pi 4 A72 rebuild: pass
+  - generic AArch64 rebuild: pass
+  - generic QEMU shell log still reaches runtime and `help`
+  - direct Pi 4 QEMU serial sanity on the real-device build still reaches:
+    - `call: exec go!`
+    - `go: enter`
+    - `hal: jump exit el1`
+    - `A3`
+    - `KLM`
+    - later `Exception #37`
+  - bootfs assembly: pass
+  - FAT image assembly: pass
+  - SD-image assembly: pass
+  - canonical SD-image export: pass
+  - FAT-aware host verification: pass
+- the refreshed exported handoff-hardened image is:
+  `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
+- current validated Pi 4 SD-image SHA-256:
+  `4b9c967c9381e8935998a19eb1a976c43b440dd57da4c5fab489763f729a6835`
+- current manifest:
+  `manifests/2026-04-10-pi4-stage34-handoff-hardening.md`
+
 - on `2026-04-10`, the first real-board retry on the compact stage-code image
   produced a materially clearer decode than the earlier count-based protocol:
   - `ffprobe` confirms `IMG_7135.mov` is truly `59.94 fps`

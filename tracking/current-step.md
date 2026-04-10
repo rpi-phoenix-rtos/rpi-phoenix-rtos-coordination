@@ -2,79 +2,75 @@
 
 ## Metadata
 
-- Step ID: `STEP-0450`
-- Title: Split the Pi 4 failure between armstub stage `3` and earliest `plo` stage `4`
+- Step ID: `STEP-0451`
+- Title: Await the next Pi 4 board retry on the stage-`3 -> 4` handoff-hardened image
 - Status: `in_progress`
 - Date: `2026-04-10`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- explain why the compact stage-code image reaches armstub stage `3` but does
-  not emit earliest generic `plo` stage `4`
-- choose the smallest next experiment that distinguishes:
-  - failure before the fixed-address branch target is entered
-  - failure at the first instructions of generic `plo _start`
-  - reset or re-entry that hides stage `4`
+- run the next real Pi 4 retry on the handoff-hardened image
+- determine whether the fixed-address armstub branch now reaches the first
+  generic `plo` instruction on real hardware
+- distinguish:
+  - still failing before generic `plo`
+  - entering generic `plo` but failing immediately after the inline stage `4`
+  - or progressing farther into the existing stage-code map
 
 ## Scope
 
 In scope:
 
-- analysis of the compact stage-code video result
-- the next bounded early-handoff experiment between stage `3` and stage `4`
-- rebuilding and re-exporting the Pi 4 image after that experiment
+- flashing the refreshed image
+- recording one new close ACT-LED video
+- decoding whether inline stage `4` now appears
 
 Out of scope:
 
-- unrelated `currentEL`, EL-path, USB, framebuffer, DTB, or later-runtime work
+- broader EL-path, USB, framebuffer, or DTB work before the next video
 
 ## Expected Repositories
 
-- `sources/plo`
-- `sources/phoenix-rtos-project`
 - coordination repo
 
 ## Expected Files Or Subsystems
 
-- `/Users/witoldbolt/phoenix-rpi/sources/phoenix-rtos-project/_projects/aarch64a72-generic-rpi4b/phoenix-armstub8-rpi4.S`
-- `/Users/witoldbolt/phoenix-rpi/sources/plo/hal/aarch64/generic/_init.S`
-- `/Users/witoldbolt/phoenix-rpi/docs/status.md`
+- `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
+- `/Users/witoldbolt/phoenix-rpi/docs/pi4-first-hardware-trial.md`
+- `/Users/witoldbolt/phoenix-rpi/docs/manual-operator-instructions.md`
 - `/Users/witoldbolt/phoenix-rpi/tracking/current-step.md`
 
 ## Acceptance Criteria
 
-- the current compact-stage video result is preserved in the knowledge base
-- the next experiment is explicitly centered on the stage `3 -> 4` seam
-- the next image should answer whether generic `plo` is entered at all
+- the operator flashes the refreshed image
+- the next video is sufficient to answer whether stage `4` now appears
+- the resulting analysis narrows the seam beyond the old stage `3 -> 4` ambiguity
 
 ## Validation Plan
 
-- use the decoded `IMG_7135.mov` result as the current hardware baseline
-- preserve the usual rebuild, export, and FAT-aware verification flow for the
-  next image
+- current code/image baseline already validated:
+  - Pi 4 A72 rebuild: pass
+  - generic AArch64 rebuild: pass
+  - generic QEMU shell path still reaches runtime and `help`
+  - direct Pi 4 QEMU serial sanity: pass
+  - canonical export: pass
+  - FAT-aware verifier: pass
 
 ## Rollback / Baseline
 
 - Known-good manifest or commit set:
-  `/Users/witoldbolt/phoenix-rpi/manifests/2026-04-10-pi4-compact-stage-code-currentel-split.md`
+  `/Users/witoldbolt/phoenix-rpi/manifests/2026-04-10-pi4-stage34-handoff-hardening.md`
 
 ## Notes
 
-- `IMG_7135.mov` is genuinely high-framerate:
-  `ffprobe` reports `60000/1001` nominal rate and about `30.21s` duration.
-- The later ACT windows decode cleanly as compact stage-code bursts:
-  - around `8.44s - 10.79s`: stage `1` / `00001`
-  - around `11.28s - 13.61s`: stage `2` / `00010`
-  - around `14.10s - 16.53s`: stage `3` / `00011`
-- No later stage-`4` sync burst is visible after stage `3`.
-- There is earlier green activity at about `1.95s - 7.42s`, but it does not
-  fit the sync-plus-`5`-bit structure and is therefore treated as pre-telemetry
-  firmware / media activity, not as a valid decoded Phoenix stage.
-- The current strongest interpretation is now:
-  - armstub primary-core entry is reached
-  - armstub timer / GIC prep is reached
-  - armstub reaches the final fixed-address pre-`plo` branch point
-  - earliest generic `plo` stage `4` is not observed
-  - so the active failure band moves back from `currentEL` to the stage
-    `3 -> 4` handoff itself
+- The previous `IMG_7135.mov` result decoded only stages `1`, `2`, and `3`.
+- The active response in this image is:
+  - preserve the primary armstub path argument registers
+  - insert `dsb sy; ic iallu; dsb sy; isb` immediately before `br 0x40080000`
+  - replace the old helper-call stage `4` emission with an inline direct-GPIO
+    stage `4` emitter at the first `_start` instruction in generic `plo`
+- Current refreshed exported image:
+  `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
+- Current validated SHA-256:
+  `4b9c967c9381e8935998a19eb1a976c43b440dd57da4c5fab489763f729a6835`

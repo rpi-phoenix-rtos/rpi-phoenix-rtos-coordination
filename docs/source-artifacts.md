@@ -1316,7 +1316,7 @@ Current Pi 4 xHCI fast-path reference note:
 - the current exported real-device handoff image is:
   `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
   SHA-256:
-  `cada5a0cf3c5ce41a2197cc4296e81ed43b6b671d878660e3e303e16098ab60c`
+  `4b9c967c9381e8935998a19eb1a976c43b440dd57da4c5fab489763f729a6835`
 - the dedicated operator-facing first board-trial checklist is:
   `/Users/witoldbolt/phoenix-rpi/docs/pi4-first-hardware-trial.md`
 - the current macOS-side first-trial helpers are:
@@ -1326,7 +1326,7 @@ Current Pi 4 xHCI fast-path reference note:
 - the current Pi 4 DTB regeneration helper for `phoenix-dev` is:
   - `/Users/witoldbolt/phoenix-rpi/scripts/prepare-rpi4b-dtb.sh`
 - the current exported Pi 4 SD-image SHA-256 is:
-  `cada5a0cf3c5ce41a2197cc4296e81ed43b6b671d878660e3e303e16098ab60c`
+  `4b9c967c9381e8935998a19eb1a976c43b440dd57da4c5fab489763f729a6835`
 - the current SD-image export lesson is now explicit:
   - the VM-local Pi 4 SD image may be valid even when the host-visible copy is
     corrupt
@@ -1341,6 +1341,12 @@ Current Pi 4 xHCI fast-path reference note:
     or manual `cat` pipelines for this artifact
 - the current earliest-entry no-UART diagnostic path is now a compact GPIO42
   stage-code protocol rather than one-off probes or count-based pulse groups
+- the current bounded response to the decoded stage-`3` boundary is:
+  - preserve the primary armstub path argument registers through the final
+    fixed-address branch
+  - execute `dsb sy; ic iallu; dsb sy; isb` immediately before that branch
+  - emit stage `4` inline at the first generic `plo _start` instruction rather
+    than through the helper call path
 - the current protocol format is:
   - one sync pulse
   - then `5` fixed-width bits, MSB first

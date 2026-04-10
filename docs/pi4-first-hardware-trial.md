@@ -19,7 +19,7 @@ Use this image:
 
 Current SHA-256:
 
-- `cada5a0cf3c5ce41a2197cc4296e81ed43b6b671d878660e3e303e16098ab60c`
+- `4b9c967c9381e8935998a19eb1a976c43b440dd57da4c5fab489763f729a6835`
 
 This image supersedes the earlier Pi 4 trial images that used the temporary
 firmware-default low-placement experiment:
@@ -36,6 +36,13 @@ This image now intentionally uses:
   - local timer control / prescaler
   - `CNTFRQ_EL0 = 54000000`
   - GIC group-1 setup through the ARM-visible aliases
+- handoff hardening at the stage-`3 -> 4` seam:
+  - the primary armstub path no longer clears `x0..x3` before the fixed-address
+    branch
+  - the armstub now inserts `dsb sy; ic iallu; dsb sy; isb` immediately before
+    the branch to `0x40080000`
+  - earliest generic `plo _start` now emits stage `4` inline, without relying
+    on the stage-emitter helper call
 - compact GPIO42 telemetry protocol:
   - the earlier one-off ACT-LED proofs and later count-based pulse groups were
     removed
@@ -151,7 +158,7 @@ Copy this block into the next report or chat message:
 ```text
 Pi 4 first hardware trial
 Image: artifacts/rpi4b/rpi4b-sd.img
-SHA256: cada5a0cf3c5ce41a2197cc4296e81ed43b6b671d878660e3e303e16098ab60c
+SHA256: 4b9c967c9381e8935998a19eb1a976c43b440dd57da4c5fab489763f729a6835
 Board revision:
 Display:
 Keyboard:
