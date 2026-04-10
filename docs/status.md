@@ -8,6 +8,43 @@
 
 Latest rebuild and retest:
 
+- on `2026-04-10`, the Pi 4 stage-`3` seam was widened into a dense armstub
+  signature map so the next board video can identify the failing instruction
+  band directly:
+  - the late armstub seam now emits:
+    - `23`: late seam entered
+    - `24`: fixed target address loaded
+    - `25`: first signature word read
+    - `26`: second signature word read
+    - `27`: first expected signature constant loaded
+    - `28`: first compare passed
+    - `29`: second expected signature constant loaded
+    - `30`: second compare passed
+    - `4`: signature verified before branch
+    - `31`: mismatch halt
+  - the armstub now also installs an EL2 exception vector and emits:
+    - `0`: EL2 exception trap during that seam
+  - later `plo` stages remain stable from stage `5` onward
+  - Pi 4 A72 rebuild from refreshed copied buildroot: pass
+  - direct Pi 4 QEMU serial sanity still reaches:
+    - `call: exec go!`
+    - `go: enter`
+    - `hal: jump exit el1`
+    - `A3`
+    - `KLM`
+    - later `Exception #37`
+  - bootfs assembly: pass
+  - FAT image assembly: pass
+  - SD-image assembly: pass
+  - canonical SD-image export: pass
+  - FAT-aware host verifier: pass
+- refreshed exported dense-armstub image:
+  `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
+- current validated Pi 4 SD-image SHA-256:
+  `6b349fe6c2afe11ea0fdeb5d9fc874eb5ae1b990ee83d42c48f10662445875e8`
+- current manifest:
+  `manifests/2026-04-10-pi4-dense-armstub-signature-map.md`
+
 - on `2026-04-10`, the next real Pi 4 retry clip `IMG_7138.mov` tightened the
   fixed-target-signature result without yet reaching a new later stage:
   - `ffprobe` confirms the clip is effectively `59.92 fps`

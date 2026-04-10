@@ -1316,7 +1316,7 @@ Current Pi 4 xHCI fast-path reference note:
 - the current exported real-device handoff image is:
   `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
   SHA-256:
-  `8ef476644f8fce5b5937096125421a218b8a67b0513b0fa4c0ab7e6592585e3e`
+  `6b349fe6c2afe11ea0fdeb5d9fc874eb5ae1b990ee83d42c48f10662445875e8`
 - the dedicated operator-facing first board-trial checklist is:
   `/Users/witoldbolt/phoenix-rpi/docs/pi4-first-hardware-trial.md`
 - the current macOS-side first-trial helpers are:
@@ -1326,7 +1326,7 @@ Current Pi 4 xHCI fast-path reference note:
 - the current Pi 4 DTB regeneration helper for `phoenix-dev` is:
   - `/Users/witoldbolt/phoenix-rpi/scripts/prepare-rpi4b-dtb.sh`
 - the current exported Pi 4 SD-image SHA-256 is:
-  `8ef476644f8fce5b5937096125421a218b8a67b0513b0fa4c0ab7e6592585e3e`
+  `6b349fe6c2afe11ea0fdeb5d9fc874eb5ae1b990ee83d42c48f10662445875e8`
 - the current SD-image export lesson is now explicit:
   - the VM-local Pi 4 SD image may be valid even when the host-visible copy is
     corrupt
@@ -1363,6 +1363,19 @@ Current Pi 4 xHCI fast-path reference note:
     - before fixed-target address load
     - after first signature-word read
     - after second signature-word read
+- that bounded response is now implemented in the current image:
+  - `23`: late seam entered
+  - `24`: fixed target address loaded
+  - `25`: first signature word read
+  - `26`: second signature word read
+  - `27`: first expected signature constant loaded
+  - `28`: first compare passed
+  - `29`: second expected signature constant loaded
+  - `30`: second compare passed
+  - `4`: signature verified before branch
+  - `31`: mismatch halt
+  - `0`: EL2 exception trap during the seam
+  - the later `plo` map remains stable from stage `5` onward
 - the current protocol format is:
   - one sync pulse
   - then `5` fixed-width bits, MSB first

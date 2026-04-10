@@ -177,9 +177,18 @@ Current practical note for the first Pi 4 hardware attempt without USB-TTL:
   - treat that early activity as preamble noise unless it decodes into a later
     valid contiguous Phoenix stage run
 - current fixed-target-signature split:
+  - stage `23`: late armstub seam entered
+  - stage `24`: fixed target address loaded
+  - stage `25`: first signature word read
+  - stage `26`: second signature word read
+  - stage `27`: first expected signature constant loaded
+  - stage `28`: first compare passed
+  - stage `29`: second expected signature constant loaded
+  - stage `30`: second compare passed
   - stage `4`: armstub verified the expected `plo` signature at
     `0x40080000 + 0x4`
   - stage `31`: armstub did not find that signature and halted before branch
+  - stage `0`: EL2 exception trap during the dense armstub seam
   - later stages are now:
     - `5`: fixed-address Pi 4 entry veneer at branch target
     - `6`: first instruction of old generic `_start` body (`_start_real`)

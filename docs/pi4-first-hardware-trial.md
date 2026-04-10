@@ -19,7 +19,7 @@ Use this image:
 
 Current SHA-256:
 
-- `8ef476644f8fce5b5937096125421a218b8a67b0513b0fa4c0ab7e6592585e3e`
+- `6b349fe6c2afe11ea0fdeb5d9fc874eb5ae1b990ee83d42c48f10662445875e8`
 
 This image supersedes the earlier Pi 4 trial images that used the temporary
 firmware-default low-placement experiment:
@@ -45,6 +45,16 @@ This image now intentionally uses:
     `0x40080000 + 0x4` before branching
     - stage `4`: signature verified
     - stage `31`: signature mismatch, halt before branch
+  - the armstub now also carries a dense late seam ladder:
+    - stage `23`: late seam entered after stage `3`
+    - stage `24`: fixed target address loaded
+    - stage `25`: first signature word read
+    - stage `26`: second signature word read
+    - stage `27`: first expected signature constant loaded
+    - stage `28`: first compare passed
+    - stage `29`: second expected signature constant loaded
+    - stage `30`: second compare passed
+    - stage `0`: EL2 exception trap during the seam
   - fixed-address Pi 4 entry now uses:
     - stage `5` inline in tiny veneer at raw branch target
     - stage `6` inline at first instruction of old generic `_start` body
@@ -63,6 +73,14 @@ This image now intentionally uses:
     - `1` / `00001`: armstub primary-core entry
     - `2` / `00010`: armstub after early timer / GIC preparation
     - `3` / `00011`: armstub just before the fixed-address jump to `plo`
+    - `23` / `10111`: late seam entered
+    - `24` / `11000`: fixed target address loaded
+    - `25` / `11001`: first signature word read
+    - `26` / `11010`: second signature word read
+    - `27` / `11011`: first expected signature constant loaded
+    - `28` / `11100`: first compare passed
+    - `29` / `11101`: second expected signature constant loaded
+    - `30` / `11110`: second compare passed
     - `4` / `00100`: armstub verified `plo` signature at `0x40080000`
     - `5` / `00101`: fixed-address Pi 4 entry veneer at branch target
     - `6` / `00110`: first instruction of old generic `_start` body
@@ -83,6 +101,7 @@ This image now intentionally uses:
     - `21` / `10101`: core-0 branch to `_startc`
     - `22` / `10110`: unexpected-EL trap path
     - `31` / `11111`: armstub signature mismatch before branch, hard halt
+    - `0` / `00000`: EL2 exception trap during the seam
   - the goal of the next board trial is to identify the highest completed
     stage code, not to count approximate pulse envelopes
 - Pi 4 `plo` GIC base aliases:
@@ -178,7 +197,7 @@ Copy this block into the next report or chat message:
 ```text
 Pi 4 first hardware trial
 Image: artifacts/rpi4b/rpi4b-sd.img
-SHA256: 8ef476644f8fce5b5937096125421a218b8a67b0513b0fa4c0ab7e6592585e3e
+SHA256: 6b349fe6c2afe11ea0fdeb5d9fc874eb5ae1b990ee83d42c48f10662445875e8
 Board revision:
 Display:
 Keyboard:
@@ -227,9 +246,14 @@ Current stage meanings:
   still in the custom armstub path before generic `plo` runs
 - highest completed `4`:
   armstub verified the expected `plo` signature before branching
+- highest completed `23`, `24`, `25`, `26`, `27`, `28`, `29`, or `30`:
+  use the dense late armstub seam map to pinpoint the exact failing
+  instruction band before the branch
 - highest completed `31`:
   armstub did not find the expected signature at `0x40080000` and halted
   before the branch
+- highest completed `0`:
+  the armstub took an EL2 exception during the dense late seam
 - highest completed `5`:
   fixed-address Pi 4 entry veneer at raw branch target was entered
 - highest completed `6`:

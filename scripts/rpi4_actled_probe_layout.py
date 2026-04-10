@@ -28,15 +28,15 @@ class LayoutDef:
     notes: tuple[str, ...]
 
 
-CURRENT_LAYOUT_NAME = "pi4_fixed_entry_trampoline_2026_04_10"
+CURRENT_LAYOUT_NAME = "pi4_dense_armstub_signature_map_2026_04_10"
 
 
 _CURRENT_LAYOUT = LayoutDef(
     name=CURRENT_LAYOUT_NAME,
-    description="Pi 4 compact GPIO42 telemetry after fixed-target signature verification was added before the dedicated fixed-address entry trampoline",
+    description="Pi 4 compact GPIO42 telemetry with dense armstub-side signature-check probes and EL2 exception telemetry before the dedicated fixed-address entry trampoline",
     code_bits=5,
     sync_pulses=1,
-    stage_order=tuple(range(1, 23)),
+    stage_order=(1, 2, 3, 23, 24, 25, 26, 27, 28, 29, 30, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22),
     stages={
         1: StageDef(
             code=1,
@@ -58,6 +58,62 @@ _CURRENT_LAYOUT = LayoutDef(
             meaning="Custom armstub reached the fixed-address branch into plo.",
             source_file="/Users/witoldbolt/phoenix-rpi/sources/phoenix-rtos-project/_projects/aarch64a72-generic-rpi4b/phoenix-armstub8-rpi4.S",
             source_symbol="gpio42_stage3",
+        ),
+        23: StageDef(
+            code=23,
+            label="armstub late seam entry",
+            meaning="Primary-core armstub entered the dense signature-check band after stage 3.",
+            source_file="/Users/witoldbolt/phoenix-rpi/sources/phoenix-rtos-project/_projects/aarch64a72-generic-rpi4b/phoenix-armstub8-rpi4.S",
+            source_symbol="primary_cpu_late",
+        ),
+        24: StageDef(
+            code=24,
+            label="armstub fixed target loaded",
+            meaning="Loaded the fixed branch target address into x4.",
+            source_file="/Users/witoldbolt/phoenix-rpi/sources/phoenix-rtos-project/_projects/aarch64a72-generic-rpi4b/phoenix-armstub8-rpi4.S",
+            source_symbol="primary_cpu_late",
+        ),
+        25: StageDef(
+            code=25,
+            label="armstub first signature word read",
+            meaning="Read the first signature word from the fixed target.",
+            source_file="/Users/witoldbolt/phoenix-rpi/sources/phoenix-rtos-project/_projects/aarch64a72-generic-rpi4b/phoenix-armstub8-rpi4.S",
+            source_symbol="primary_cpu_late",
+        ),
+        26: StageDef(
+            code=26,
+            label="armstub second signature word read",
+            meaning="Read the second signature word from the fixed target.",
+            source_file="/Users/witoldbolt/phoenix-rpi/sources/phoenix-rtos-project/_projects/aarch64a72-generic-rpi4b/phoenix-armstub8-rpi4.S",
+            source_symbol="primary_cpu_late",
+        ),
+        27: StageDef(
+            code=27,
+            label="armstub signature0 constant loaded",
+            meaning="Loaded the first expected signature constant.",
+            source_file="/Users/witoldbolt/phoenix-rpi/sources/phoenix-rtos-project/_projects/aarch64a72-generic-rpi4b/phoenix-armstub8-rpi4.S",
+            source_symbol="primary_cpu_late",
+        ),
+        28: StageDef(
+            code=28,
+            label="armstub signature0 compare passed",
+            meaning="The first signature-word compare passed.",
+            source_file="/Users/witoldbolt/phoenix-rpi/sources/phoenix-rtos-project/_projects/aarch64a72-generic-rpi4b/phoenix-armstub8-rpi4.S",
+            source_symbol="primary_cpu_late",
+        ),
+        29: StageDef(
+            code=29,
+            label="armstub signature1 constant loaded",
+            meaning="Loaded the second expected signature constant.",
+            source_file="/Users/witoldbolt/phoenix-rpi/sources/phoenix-rtos-project/_projects/aarch64a72-generic-rpi4b/phoenix-armstub8-rpi4.S",
+            source_symbol="primary_cpu_late",
+        ),
+        30: StageDef(
+            code=30,
+            label="armstub signature1 compare passed",
+            meaning="The second signature-word compare passed, before the final stage-4 signature-ok marker.",
+            source_file="/Users/witoldbolt/phoenix-rpi/sources/phoenix-rtos-project/_projects/aarch64a72-generic-rpi4b/phoenix-armstub8-rpi4.S",
+            source_symbol="primary_cpu_late",
         ),
         4: StageDef(
             code=4,
@@ -199,14 +255,22 @@ _CURRENT_LAYOUT = LayoutDef(
             source_file="/Users/witoldbolt/phoenix-rpi/sources/phoenix-rtos-project/_projects/aarch64a72-generic-rpi4b/phoenix-armstub8-rpi4.S",
             source_symbol="gpio42_stage31",
         ),
+        0: StageDef(
+            code=0,
+            label="armstub el2 exception",
+            meaning="An EL2 exception vector was taken during the armstub diagnostic seam and the handler halted after emitting code 0.",
+            source_file="/Users/witoldbolt/phoenix-rpi/sources/phoenix-rtos-project/_projects/aarch64a72-generic-rpi4b/phoenix-armstub8-rpi4.S",
+            source_symbol="armstub_exception",
+        ),
     },
     notes=(
         "Compact GPIO42 protocol: one sync pulse, then 5 bits MSB-first.",
         "Short on-time encodes 0, long on-time encodes 1.",
         "Long off gap separates stage bursts.",
-        "This layout supersedes the earlier dedicated fixed-entry-trampoline map by inserting a pre-branch target-signature verification stage.",
+        "This layout supersedes the earlier dedicated fixed-entry-trampoline map by inserting dense armstub-side probes around the fixed-target signature reads.",
         "Initial ACT LED activity during firmware SD-card reads is preamble noise and must be ignored unless it decodes into a later valid contiguous Phoenix stage run.",
-        "Stage 31 is a special terminal fault stage, not part of the normal contiguous boot sequence.",
+        "Stage 31 is a special terminal mismatch stage, not part of the normal contiguous boot sequence.",
+        "Stage 0 is a special EL2 exception-fault stage, not part of the normal contiguous boot sequence.",
     ),
 )
 

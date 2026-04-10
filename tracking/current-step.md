@@ -2,38 +2,31 @@
 
 ## Metadata
 
-- Step ID: `STEP-0458`
-- Title: Split the armstub pre-signature-read band after stage `3`
+- Step ID: `STEP-0459`
+- Title: Await the next Pi 4 board retry on the dense armstub signature-map image
 - Status: `in_progress`
 - Date: `2026-04-10`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- distinguish the three remaining possibilities inside the narrow armstub seam
-  after stage `3`:
-  - fault before even loading the fixed `0x40080000` target
-  - fault on the first or second signature-memory read
-  - successful reads followed by a signature mismatch path
-- keep the LED-analysis toolchain as the default readout path for the next
-  board retry
+- collect the next board retry on the dense armstub image and use the much
+  finer armstub-side telemetry to isolate the failing instruction band tightly
+  enough that the next code step can be an actual boot fix rather than another
+  broad instrumentation round
 
 ## Scope
 
 In scope:
 
-- add one or two special armstub-only stage codes between:
-  - stage `3`
-  - first fixed-target read
-  - second fixed-target read
-  - existing stage `31` mismatch halt
-- keep the later `plo` stage map stable
+- decode the next board video against the dense armstub map
+- classify the exact highest completed late armstub stage before changing more
+  boot logic
 
 Out of scope:
 
 - unrelated EL-path, framebuffer, DTB, or USB work
-- redesigning the whole Pi 4 boot model before the first fixed-target read
-  seam is answered
+- redesigning the whole Pi 4 boot model before the dense armstub map is tested
 
 ## Expected Repositories
 
@@ -51,18 +44,19 @@ Out of scope:
 
 ## Acceptance Criteria
 
-- the next image adds narrower armstub-side checkpoints without shifting the
-  later `plo` stage map again
-- the next board video can distinguish whether failure occurs:
-  - before fixed-target address load
-  - on the first or second target-memory read
-  - on the signature-mismatch halt path
+- the refreshed dense-probe image is rebuilt, exported, and FAT-verified
+- the next board video can distinguish:
+  - failure before the late armstub seam starts
+  - failure on fixed-target address load
+  - failure on first or second signature-word read
+  - first compare mismatch versus second compare mismatch
+  - failure after both compares pass but before successful `plo` veneer entry
+  - EL2 exception trap during that band
 
 ## Validation Plan
 
-- rebuild Pi 4 image
-- rerun the strongest no-hardware gates
 - board retry plus LED decode
+- use the resulting exact boundary to choose the first non-diagnostic boot fix
 
 ## Rollback / Baseline
 
@@ -71,14 +65,19 @@ Out of scope:
 
 ## Notes
 
-- current confirmed decode from `IMG_7138.mov`:
-  - best contiguous Phoenix run:
-    - stage `3`
-  - no later valid stage `4`
-  - no valid stage `31`
-  - unmatched earlier `16` and later `26` bursts are treated as noise, not the
-    main run
+- the dense armstub signature-map image is now built:
+  - `23`: late seam entered
+  - `24`: fixed target address loaded
+  - `25`: first signature word read
+  - `26`: second signature word read
+  - `27`: first expected signature constant loaded
+  - `28`: first compare passed
+  - `29`: second expected signature constant loaded
+  - `30`: second compare passed
+  - `4`: signature verified before branch
+  - `31`: mismatch halt
+  - `0`: EL2 exception trap
 - current exported SD-image SHA-256:
-  - `8ef476644f8fce5b5937096125421a218b8a67b0513b0fa4c0ab7e6592585e3e`
+  - `6b349fe6c2afe11ea0fdeb5d9fc874eb5ae1b990ee83d42c48f10662445875e8`
 - initial SD-read LED chatter remains firmware preamble noise and should be
   ignored unless it participates in a later valid contiguous Phoenix decode
