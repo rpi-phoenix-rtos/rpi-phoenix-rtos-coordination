@@ -1457,6 +1457,16 @@ Current Pi 4 xHCI fast-path reference note:
     - `FIQS` marker at offset `0xd4`
   - `scripts/assemble-rpi4b-bootfs.sh` now carries
     `phoenix-armstub8-rpi4.bin` into the exported FAT and SD images
+  - `/Users/witoldbolt/phoenix-rpi/scripts/analyze-rpi4-actled-video.py`
+    is now the canonical raw decoder for Pi 4 ACT-LED hardware videos; it
+    auto-detects the LED region in the current cropped static clips and emits
+    standardized JSON
+  - `/Users/witoldbolt/phoenix-rpi/scripts/rpi4_actled_probe_layout.py`
+    is now the source of truth for the current GPIO42 stage layout; future
+    probe changes must update this file together with the assembly changes
+  - `/Users/witoldbolt/phoenix-rpi/scripts/interpret-rpi4-actled-analysis.py`
+    now maps the analyzer JSON onto the current probe layout and reports the
+    highest completed stage plus the next missing stage
 - the next concrete real-hardware MMIO clue is now also resolved in the image:
   - Raspberry Pi Linux DTS uses bus-visible GIC addresses
     `0x40041000` / `0x40042000`

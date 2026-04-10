@@ -149,10 +149,19 @@ Current practical note for the first Pi 4 hardware attempt without USB-TTL:
   - a longer off gap separates stage bursts
 - use the host-side decoder script for current hardware LED clips:
   - [scripts/analyze-rpi4-actled-video.py](/Users/witoldbolt/phoenix-rpi/scripts/analyze-rpi4-actled-video.py)
-  - current default cropped-LED ROI:
-    - `92,108,117,118`
+  - it now auto-detects the ACT LED ROI for the current cropped static clips,
+    so a fixed hardcoded ROI is no longer the primary workflow
+  - interpret the JSON output with:
+    - [scripts/interpret-rpi4-actled-analysis.py](/Users/witoldbolt/phoenix-rpi/scripts/interpret-rpi4-actled-analysis.py)
+    - [scripts/rpi4_actled_probe_layout.py](/Users/witoldbolt/phoenix-rpi/scripts/rpi4_actled_probe_layout.py)
   - example:
-    - `scripts/analyze-rpi4-actled-video.py /path/to/IMG_xxxx.mov`
+    - `scripts/analyze-rpi4-actled-video.py --pretty /path/to/IMG_xxxx.mov > /tmp/pi4-led.json`
+    - `scripts/interpret-rpi4-actled-analysis.py /tmp/pi4-led.json`
+- current validated `IMG_7137.mov` result from that toolchain:
+  - best contiguous decoded run reaches stage `3`
+  - no later valid stage `4` is seen
+  - so the active real-hardware failure band is still the stage-`3 -> 4`
+    fixed-address handoff seam
 - current post-`IMG_7136.mov` telemetry split:
   - stages `1`, `2`, and `3` still decode cleanly
   - no valid stage `4` appears on the handoff-hardened image

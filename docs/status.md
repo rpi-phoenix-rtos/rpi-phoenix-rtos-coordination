@@ -8,6 +8,37 @@
 
 Latest rebuild and retest:
 
+- on `2026-04-10`, the Pi 4 ACT-LED hardware-video workflow was rebuilt into a
+  reusable analyzer-plus-layout-plus-interpreter toolchain:
+  - raw analyzer:
+    `/Users/witoldbolt/phoenix-rpi/scripts/analyze-rpi4-actled-video.py`
+  - current probe-layout source of truth:
+    `/Users/witoldbolt/phoenix-rpi/scripts/rpi4_actled_probe_layout.py`
+  - matcher / interpreter:
+    `/Users/witoldbolt/phoenix-rpi/scripts/interpret-rpi4-actled-analysis.py`
+  - the analyzer now auto-detects the ACT LED region in the current pre-cropped
+    static videos and emits standardized JSON instead of ad hoc text
+  - `IMG_7137.mov` now decodes through that toolchain as:
+    - best contiguous run:
+      - stage `3` / `00011`
+    - next missing expected stage:
+      - stage `4` / `00100`
+    - one unmatched false-positive group:
+      - stage `16` / `10000`
+  - `IMG_7136.mov` under the current layout still decodes the shared common
+    prefix:
+    - stage `1`
+    - stage `2`
+    - stage `3`
+    with no later stage `4`, which is a useful backward-compatibility sanity
+    check rather than a negative control
+  - the active failure band therefore remains:
+    - armstub stage `3` reached
+    - fixed-address `plo` entry stage `4` still not observed
+    - so the next code step should stay on the stage-`3 -> 4` seam
+- current manifest:
+  `manifests/2026-04-10-pi4-led-analysis-toolchain.md`
+
 - on `2026-04-10`, the stage-`3 -> 4` seam was split again with a dedicated
   fixed-address Pi 4 entry trampoline:
   - generic AArch64 `plo _start` now starts with a tiny veneer at the fixed

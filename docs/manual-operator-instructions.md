@@ -561,10 +561,15 @@ For the current Pi 4 hardware loop without UART:
 - use the ACT LED stage-code bursts as the authoritative earliest boot evidence
 - do not summarize the result only as “green on/off”; preserve the full pulse
   sequence whenever possible
-- for cropped LED-only clips, the current host-side decoder can be used with:
+- for cropped LED-only clips, the current host-side decode workflow is:
   - [scripts/analyze-rpi4-actled-video.py](/Users/witoldbolt/phoenix-rpi/scripts/analyze-rpi4-actled-video.py)
-  - current default ROI:
-    - `92,108,117,118`
+  - [scripts/interpret-rpi4-actled-analysis.py](/Users/witoldbolt/phoenix-rpi/scripts/interpret-rpi4-actled-analysis.py)
+  - [scripts/rpi4_actled_probe_layout.py](/Users/witoldbolt/phoenix-rpi/scripts/rpi4_actled_probe_layout.py)
+  - the analyzer now auto-detects the ACT LED region for the current static
+    cropped clips; a hardcoded ROI is no longer the preferred path
+  - preferred command sequence:
+    - `scripts/analyze-rpi4-actled-video.py --pretty /path/to/IMG_xxxx.mov > /tmp/pi4-led.json`
+    - `scripts/interpret-rpi4-actled-analysis.py /tmp/pi4-led.json`
 
 ### Current first-boot expectations for the no-UART lab
 

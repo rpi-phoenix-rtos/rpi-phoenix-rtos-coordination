@@ -116,8 +116,13 @@ Do not assume UART visibility is available.
    frame for at least 60 seconds.
    If convenient, record 90 seconds so the full compact `1..21` sequence still
    fits even if the board progresses farther than expected.
-   The current host-side decoder is:
+   The current host-side decode workflow is:
    - [scripts/analyze-rpi4-actled-video.py](/Users/witoldbolt/phoenix-rpi/scripts/analyze-rpi4-actled-video.py)
+   - [scripts/interpret-rpi4-actled-analysis.py](/Users/witoldbolt/phoenix-rpi/scripts/interpret-rpi4-actled-analysis.py)
+   - [scripts/rpi4_actled_probe_layout.py](/Users/witoldbolt/phoenix-rpi/scripts/rpi4_actled_probe_layout.py)
+   Recommended use:
+   - `scripts/analyze-rpi4-actled-video.py --pretty /path/to/IMG_xxxx.mov > /tmp/pi4-led.json`
+   - `scripts/interpret-rpi4-actled-analysis.py /tmp/pi4-led.json`
 8. Wait at least 60 seconds before classifying a silent result.
 9. If text or prompt appears, try:
    - `help`
