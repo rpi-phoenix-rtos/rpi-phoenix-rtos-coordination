@@ -36,6 +36,9 @@ Latest rebuild and retest:
     - armstub stage `3` reached
     - fixed-address `plo` entry stage `4` still not observed
     - so the next code step should stay on the stage-`3 -> 4` seam
+  - next planned implementation move:
+    - verify from the armstub that the expected `plo` entry signature is
+      really present at `0x40080000` before taking the fixed branch
   - preserved interpretation rule:
     - the initial ACT LED chatter during Raspberry Pi firmware SD-card reads
       is pre-Phoenix activity and should be ignored unless it is part of a

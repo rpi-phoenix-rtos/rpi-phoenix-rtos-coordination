@@ -2,58 +2,62 @@
 
 ## Metadata
 
-- Step ID: `STEP-0455`
-- Title: Use tool-confirmed stage-`3 -> 4` seam to design the next Pi 4 boot fix
+- Step ID: `STEP-0456`
+- Title: Verify fixed handoff target contents before the Pi 4 stage-`3 -> 4` branch
 - Status: `in_progress`
 - Date: `2026-04-10`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- use the new standardized LED-analysis toolchain result from `IMG_7137.mov`
-  to choose the next smallest code change at the confirmed stage-`3 -> 4`
-  handoff seam
-- preserve the new tooling as the default path for future hardware-video
-  iterations
+- distinguish the two remaining stage-`3 -> 4` possibilities:
+  - `plo` is not actually present at `0x40080000`
+  - `plo` is present there, but execution still fails before stage `4`
+- preserve the new LED-analysis toolchain as the default readout path for the
+  next board retry
 
 ## Scope
 
 In scope:
 
-- interpreting the confirmed current result:
-  - stage `3` reached
-  - stage `4` still not observed
-- planning the next smallest code-side experiment at that seam
+- add one armstub-side target-memory verification step before the fixed branch
+- compare the fixed target against a deliberate `plo` entry signature
+- optionally record the firmware-patched `kernel_entry32` slot as a secondary
+  clue if that can be done without widening the step too much
 
 Out of scope:
 
-- changing the probe tooling again unless a real defect is found in it
-- unrelated USB, framebuffer, or DTB work
+- unrelated EL-path, framebuffer, DTB, or USB work
+- redesigning the whole Pi 4 boot model before the target-memory question is
+  answered
 
 ## Expected Repositories
 
+- `phoenix-rtos-project`
+- `plo`
 - coordination repo
-- likely next: `phoenix-rtos-project` and/or `plo`
 
 ## Expected Files Or Subsystems
 
-- `/Users/witoldbolt/phoenix-rpi/scripts/analyze-rpi4-actled-video.py`
-- `/Users/witoldbolt/phoenix-rpi/scripts/rpi4_actled_probe_layout.py`
-- `/Users/witoldbolt/phoenix-rpi/scripts/interpret-rpi4-actled-analysis.py`
 - `/Users/witoldbolt/phoenix-rpi/sources/phoenix-rtos-project/_projects/aarch64a72-generic-rpi4b/phoenix-armstub8-rpi4.S`
 - `/Users/witoldbolt/phoenix-rpi/sources/plo/hal/aarch64/generic/_init.S`
+- `/Users/witoldbolt/phoenix-rpi/scripts/rpi4_actled_probe_layout.py`
+- `/Users/witoldbolt/phoenix-rpi/docs/status.md`
+- `/Users/witoldbolt/phoenix-rpi/tracking/current-step.md`
 
 ## Acceptance Criteria
 
-- next code-side experiment is chosen from the confirmed stage-`3 -> 4`
-  boundary, not from vague LED eyeballing
-- the toolchain remains the documented default for the next hardware retry
+- the next hardware image can answer whether the fixed handoff target memory at
+  `0x40080000` contains the expected `plo` entry signature before branching
+- the next board video can distinguish:
+  - missing or wrong load target
+  - valid target contents but failed execution after branch
 
 ## Validation Plan
 
-- use the current `IMG_7137.mov` decode as the baseline
-- carry the tooling forward unchanged for the next board retry unless a tool
-  defect is discovered
+- rebuild Pi 4 image
+- rerun the standard no-hardware gates
+- use the current LED-analysis toolchain on the next board video
 
 ## Rollback / Baseline
 
@@ -62,9 +66,8 @@ Out of scope:
 
 ## Notes
 
-- best contiguous decoded run from `IMG_7137.mov`:
+- current confirmed decode from `IMG_7137.mov`:
   - stage `3`: armstub before fixed jump
-- next missing expected stage:
-  - stage `4`: fixed entry veneer
-- one unmatched false-positive group currently decodes as stage `16`; the
-  interpreter now treats that as noise instead of the primary result
+  - no valid later stage `4`
+- initial SD-read LED chatter remains firmware preamble noise and should be
+  ignored unless it participates in a later valid contiguous Phoenix decode
