@@ -2,26 +2,29 @@
 
 ## Metadata
 
-- Step ID: `STEP-0459`
-- Title: Await the next Pi 4 board retry on the dense armstub signature-map image
+- Step ID: `STEP-0460`
+- Title: Split the Pi 4 dense armstub seam around the first fixed-target read
 - Status: `in_progress`
 - Date: `2026-04-10`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- collect the next board retry on the dense armstub image and use the much
-  finer armstub-side telemetry to isolate the failing instruction band tightly
-  enough that the next code step can be an actual boot fix rather than another
-  broad instrumentation round
+- use the new `IMG_0012.mov` dense-map result to attack the first fixed-target
+  read band directly, because the current board evidence now reaches stage
+  `24` and stops before the first read-complete stage `25`
 
 ## Scope
 
 In scope:
 
-- decode the next board video against the dense armstub map
-- classify the exact highest completed late armstub stage before changing more
-  boot logic
+- split or harden the exact band between:
+  - `24`: fixed target address loaded
+  - `25`: first signature word read
+- decide whether the next change should be:
+  - a finer pre/post-read probe
+  - a no-call inline marker around the first read
+  - or an actual replacement of the fixed-target read strategy
 
 Out of scope:
 
@@ -44,19 +47,17 @@ Out of scope:
 
 ## Acceptance Criteria
 
-- the refreshed dense-probe image is rebuilt, exported, and FAT-verified
-- the next board video can distinguish:
-  - failure before the late armstub seam starts
-  - failure on fixed-target address load
-  - failure on first or second signature-word read
-  - first compare mismatch versus second compare mismatch
-  - failure after both compares pass but before successful `plo` veneer entry
-  - EL2 exception trap during that band
+- the next code step narrows the live seam around the first signature-word read
+- the next board video can distinguish whether the failure is:
+  - on the first fixed-target read itself
+  - immediately after the first read but before the stage-`25` emission
+  - or later, with the current stage-`25` absence explained as decode loss
 
 ## Validation Plan
 
+- use the already-collected `IMG_0012.mov` decode as the current boundary
+- rebuild one narrower or more robust first-read experiment
 - board retry plus LED decode
-- use the resulting exact boundary to choose the first non-diagnostic boot fix
 
 ## Rollback / Baseline
 
@@ -65,19 +66,16 @@ Out of scope:
 
 ## Notes
 
-- the dense armstub signature-map image is now built:
-  - `23`: late seam entered
+- `IMG_0012.mov` on the dense-map image decodes as the current best contiguous
+  Phoenix run:
+  - `2`: armstub after timer/GIC
+  - `3`: armstub before fixed jump
+  - `23`: late seam entry
   - `24`: fixed target address loaded
+- the next expected stage is:
   - `25`: first signature word read
-  - `26`: second signature word read
-  - `27`: first expected signature constant loaded
-  - `28`: first compare passed
-  - `29`: second expected signature constant loaded
-  - `30`: second compare passed
-  - `4`: signature verified before branch
-  - `31`: mismatch halt
-  - `0`: EL2 exception trap
-- current exported SD-image SHA-256:
+- no later valid stage `25`, `31`, or `0` was seen in the main run
+- one lone later unmatched stage `27` burst exists, but it is not currently
+  trusted as the main run because the contiguous `25 -> 26` prefix is absent
+- current exported SD-image SHA-256 remains:
   - `6b349fe6c2afe11ea0fdeb5d9fc874eb5ae1b990ee83d42c48f10662445875e8`
-- initial SD-read LED chatter remains firmware preamble noise and should be
-  ignored unless it participates in a later valid contiguous Phoenix decode

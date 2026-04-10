@@ -8,6 +8,36 @@
 
 Latest rebuild and retest:
 
+- on `2026-04-10`, the first board retry on the dense armstub signature-map
+  image moved the live failure band forward again:
+  - input clip:
+    `/Users/witoldbolt/Downloads/IMG_0012.mov`
+  - effective clip rate:
+    about `59.92 fps`
+  - auto-detected ACT LED ROI:
+    - `156,162,286,269`
+  - the best contiguous Phoenix run now reaches:
+    - `2`: armstub after timer/GIC
+    - `3`: armstub before fixed jump
+    - `23`: late seam entry
+    - `24`: fixed target address loaded
+  - the next expected stage is still missing:
+    - `25`: first signature word read
+  - no later valid:
+    - `25`
+    - `31`
+    - `0`
+    appears in the main contiguous run
+  - one later unmatched valid stage:
+    - `27`
+    was decoded, but the current interpreter correctly leaves it outside the
+    main run because the contiguous `25 -> 26` prefix is absent
+  - the active failure band therefore narrows again:
+    - target address load completed
+    - first signature-word read is now the next live boundary
+- current manifest:
+  `manifests/2026-04-10-pi4-img0012-dense-signature-analysis.md`
+
 - on `2026-04-10`, the Pi 4 stage-`3` seam was widened into a dense armstub
   signature map so the next board video can identify the failing instruction
   band directly:
