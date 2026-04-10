@@ -49,3 +49,8 @@
   - armstub stage `3` reached
   - fixed-entry `plo` stage `4` still not observed
 - next code work should stay on the stage-`3 -> 4` seam
+- preserved interpretation rule:
+  - initial ACT LED chatter during firmware SD-card reads is pre-Phoenix
+    preamble noise
+  - ignore that activity unless it participates in a later valid contiguous
+    Phoenix stage decode

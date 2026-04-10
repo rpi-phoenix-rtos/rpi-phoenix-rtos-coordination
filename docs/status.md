@@ -36,6 +36,10 @@ Latest rebuild and retest:
     - armstub stage `3` reached
     - fixed-address `plo` entry stage `4` still not observed
     - so the next code step should stay on the stage-`3 -> 4` seam
+  - preserved interpretation rule:
+    - the initial ACT LED chatter during Raspberry Pi firmware SD-card reads
+      is pre-Phoenix activity and should be ignored unless it is part of a
+      later valid contiguous decoded Phoenix run
 - current manifest:
   `manifests/2026-04-10-pi4-led-analysis-toolchain.md`
 

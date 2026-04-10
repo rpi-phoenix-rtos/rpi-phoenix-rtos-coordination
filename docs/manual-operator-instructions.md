@@ -570,6 +570,11 @@ For the current Pi 4 hardware loop without UART:
   - preferred command sequence:
     - `scripts/analyze-rpi4-actled-video.py --pretty /path/to/IMG_xxxx.mov > /tmp/pi4-led.json`
     - `scripts/interpret-rpi4-actled-analysis.py /tmp/pi4-led.json`
+  - interpretation rule:
+    - the initial ACT LED activity caused by Raspberry Pi firmware reading the
+      SD card is pre-Phoenix noise
+    - ignore that early preamble unless it decodes into a later valid
+      contiguous Phoenix stage sequence
 
 ### Current first-boot expectations for the no-UART lab
 

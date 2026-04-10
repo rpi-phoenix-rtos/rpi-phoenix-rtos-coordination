@@ -123,6 +123,11 @@ Do not assume UART visibility is available.
    Recommended use:
    - `scripts/analyze-rpi4-actled-video.py --pretty /path/to/IMG_xxxx.mov > /tmp/pi4-led.json`
    - `scripts/interpret-rpi4-actled-analysis.py /tmp/pi4-led.json`
+   Interpretation rule:
+   - the initial ACT LED chatter during firmware SD-card reads is not Phoenix
+     telemetry
+   - ignore that preamble unless it becomes part of a later valid contiguous
+     Phoenix stage run
 8. Wait at least 60 seconds before classifying a silent result.
 9. If text or prompt appears, try:
    - `help`

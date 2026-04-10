@@ -162,6 +162,11 @@ Current practical note for the first Pi 4 hardware attempt without USB-TTL:
   - no later valid stage `4` is seen
   - so the active real-hardware failure band is still the stage-`3 -> 4`
     fixed-address handoff seam
+- important interpretation rule:
+  - the initial ACT LED chatter seen while Raspberry Pi firmware reads the
+    SD card is not Phoenix telemetry
+  - treat that early activity as preamble noise unless it decodes into a later
+    valid contiguous Phoenix stage run
 - current post-`IMG_7136.mov` telemetry split:
   - stages `1`, `2`, and `3` still decode cleanly
   - no valid stage `4` appears on the handoff-hardened image

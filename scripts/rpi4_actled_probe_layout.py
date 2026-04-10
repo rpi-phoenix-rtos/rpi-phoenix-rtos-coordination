@@ -191,6 +191,7 @@ _CURRENT_LAYOUT = LayoutDef(
         "Short on-time encodes 0, long on-time encodes 1.",
         "Long off gap separates stage bursts.",
         "Only IMG_7137.mov and later clips match this exact layout.",
+        "Initial ACT LED activity during firmware SD-card reads is preamble noise and must be ignored unless it decodes into a later valid contiguous Phoenix stage run.",
     ),
 )
 
