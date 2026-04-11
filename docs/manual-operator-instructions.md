@@ -389,6 +389,8 @@ Current payload rule:
     through a text-safe `limactl shell ... base64 | base64 -d` path, then runs
     the host-side FAT-aware verifier against those VM-derived values before
     replacing the exported artifact
+  - it now also writes the canonical verifier sidecar:
+    - `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img.meta.txt`
   - do not improvise with `scp`, `sftp`, `rsync`, `limactl copy`, streamed
     `dd`, or manual `cat` pipelines for this artifact
   - those earlier ad hoc paths already produced corrupted host-visible copies
@@ -503,6 +505,8 @@ Recommended manual sequence on macOS:
    - [scripts/verify-rpi4b-sdimg.sh](/Users/witoldbolt/phoenix-rpi/scripts/verify-rpi4b-sdimg.sh)
    - current expected SHA-256:
      `610dbbfd0192760f061395f7e85573261b85b18857bea426e6adab4930468698`
+   - the verifier now reads expected size and SHA-256 from the adjacent
+     export-generated `.meta.txt` sidecar by default
 3. if you want the exact commands printed for a chosen disk identifier:
    - [scripts/print-rpi4b-macos-flash-commands.sh](/Users/witoldbolt/phoenix-rpi/scripts/print-rpi4b-macos-flash-commands.sh) `diskN`
 4. if you want a prefilled first-trial report file before you start:
@@ -527,6 +531,8 @@ Critical cautions:
 - the new helper scripts are intentionally non-destructive:
   - the verification helper checks path, size, SHA-256, the FAT boot-sector
     signature, and a directory listing at the embedded partition offset
+  - if the verifier reports missing expected metadata, refresh the export first
+    instead of treating it as image corruption
   - the flash helper only prints commands and does not write to the disk
 
 ## 5. What Must Be Provided For Real-Device Testing

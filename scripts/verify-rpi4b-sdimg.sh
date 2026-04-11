@@ -3,11 +3,32 @@
 set -euo pipefail
 
 image_path="${RPI4B_SDIMG_PATH:-/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img}"
-expected_sha256="${RPI4B_SDIMG_SHA256:-6932d3a31fc0fee1494295c4e9d0587c689b7cde20a6fb1907d86164e9815883}"
-expected_size="${RPI4B_SDIMG_SIZE:-69206016}"
+meta_path="${RPI4B_SDIMG_META:-${image_path}.meta.txt}"
+expected_sha256="${RPI4B_SDIMG_SHA256:-}"
+expected_size="${RPI4B_SDIMG_SIZE:-}"
 
 if [ ! -f "$image_path" ]; then
 	printf 'missing image: %s\n' "$image_path" >&2
+	exit 1
+fi
+
+if [ -z "$expected_sha256" ] || [ -z "$expected_size" ]; then
+	if [ -f "$meta_path" ]; then
+		while IFS='=' read -r key value; do
+			case "$key" in
+				sha256)
+					[ -z "$expected_sha256" ] && expected_sha256="$value"
+					;;
+				size)
+					[ -z "$expected_size" ] && expected_size="$value"
+					;;
+			esac
+		done < "$meta_path"
+	fi
+fi
+
+if [ -z "$expected_sha256" ] || [ -z "$expected_size" ]; then
+	printf 'missing expected image metadata: set RPI4B_SDIMG_SHA256/RPI4B_SDIMG_SIZE or provide %s\n' "$meta_path" >&2
 	exit 1
 fi
 
@@ -42,6 +63,7 @@ PY
 )"
 
 printf 'Image: %s\n' "$image_path"
+printf 'Meta:   %s\n' "$meta_path"
 printf 'Size:  %s\n' "$actual_size"
 printf 'SHA256: %s\n' "$actual_sha256"
 printf 'FAT offset: %s\n' "$partition_offset"

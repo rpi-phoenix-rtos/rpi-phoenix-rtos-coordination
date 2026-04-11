@@ -226,6 +226,6 @@ fi
 "${repo_root}/scripts/export-rpi4b-sdimg.sh"
 
 exported_sha="$(shasum -a 256 "${repo_root}/artifacts/rpi4b/rpi4b-sd.img" | awk '{print $1}')"
-RPI4B_SDIMG_SHA256="${exported_sha}" "${repo_root}/scripts/verify-rpi4b-sdimg.sh"
+"${repo_root}/scripts/verify-rpi4b-sdimg.sh"
 
 printf 'Exported SHA256: %s\n' "${exported_sha}"

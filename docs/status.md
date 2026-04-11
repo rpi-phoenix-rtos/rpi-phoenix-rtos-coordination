@@ -8,6 +8,28 @@
 
 Latest rebuild and retest:
 
+- on `2026-04-11`, the canonical Pi 4 SD-image verifier was fixed after a
+  false mismatch was reported on the current exported image:
+  - symptom:
+    - `scripts/verify-rpi4b-sdimg.sh` reported a SHA-256 mismatch against an
+      old historical checksum even though the image itself matched the latest
+      export
+  - root cause:
+    - the verifier still hardcoded the old checksum
+    - the export helper did not persist its VM-derived checksum for later
+      standalone verifier runs
+  - fix:
+    - `scripts/export-rpi4b-sdimg.sh` now writes:
+      `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img.meta.txt`
+    - `scripts/verify-rpi4b-sdimg.sh` now reads expected size and SHA-256 from
+      that sidecar by default
+    - `scripts/rebuild-rpi4b-fast.sh` now exercises the normal verifier path
+      after export instead of injecting temporary checksum overrides
+  - validation:
+    - shell syntax checks for all three helpers: pass
+    - refreshed export: pass
+    - standalone verifier on the current image: pass
+
 - on `2026-04-11`, the first real Pi 4 UART capture produced the decisive boot
   fact the earlier LED-only loop could not prove:
   - firmware-side UART reached:

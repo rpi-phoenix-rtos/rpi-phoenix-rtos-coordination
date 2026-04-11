@@ -105,6 +105,13 @@ Current recommended command sequence:
   - [scripts/summarize-rpi4b-uart-log.py](/Users/witoldbolt/phoenix-rpi/scripts/summarize-rpi4b-uart-log.py) `/path/to/log`
   - current summary helper now classifies `TR0..TR3` as `phoenix_trampoline`
     and a `trampoline-copy` failure class
+- current Pi 4 SD-image verification rule:
+  - `scripts/export-rpi4b-sdimg.sh` now writes
+    `artifacts/rpi4b/rpi4b-sd.img.meta.txt`
+  - `scripts/verify-rpi4b-sdimg.sh` reads expected size and SHA-256 from that
+    sidecar by default
+  - if the sidecar is missing or stale, rerun the canonical export helper
+    before treating a verifier mismatch as image corruption
 
 ## 1. Goals
 

@@ -1364,7 +1364,7 @@ Current Pi 4 xHCI fast-path reference note:
 - the current Pi 4 DTB regeneration helper for `phoenix-dev` is:
   - `/Users/witoldbolt/phoenix-rpi/scripts/prepare-rpi4b-dtb.sh`
 - the current exported Pi 4 SD-image SHA-256 is:
-  `6932d3a31fc0fee1494295c4e9d0587c689b7cde20a6fb1907d86164e9815883`
+  `610dbbfd0192760f061395f7e85573261b85b18857bea426e6adab4930468698`
 - the current SD-image export lesson is now explicit:
   - the VM-local Pi 4 SD image may be valid even when the host-visible copy is
     corrupt
@@ -1373,8 +1373,11 @@ Current Pi 4 xHCI fast-path reference note:
   - it captures remote size and SHA-256 first, uses a text-safe
     `limactl shell ... base64 | base64 -d` path, then runs the FAT-aware
     verifier against those remote values before replacing the host-visible copy
+  - it now also writes the canonical verifier sidecar:
+    - `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img.meta.txt`
   - the current verification helper therefore validates the embedded FAT boot
-    partition itself, not only file size and SHA-256
+    partition itself, not only file size and SHA-256, and by default reads the
+    expected size and SHA-256 from that sidecar
   - do not fall back to `scp`, `sftp`, `rsync`, `limactl copy`, streamed `dd`,
     or manual `cat` pipelines for this artifact
 - the current earliest-entry no-UART diagnostic path is now a compact GPIO42
