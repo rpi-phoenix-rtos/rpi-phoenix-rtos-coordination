@@ -2,49 +2,48 @@
 
 ## Metadata
 
-- Step ID: `STEP-0473`
-- Title: Await the next Pi 4 board retry on the hardened kernel-entry image
+- Step ID: `STEP-0475`
+- Title: Await the next Pi 4 board retry with extended HDMI visibility
 - Status: `in_progress`
 - Date: `2026-04-12`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- verify that the unified 115200 baud UART lane provides readable kernel output
-- confirm that the ACT LED turns solid ON, signaling successful kernel entry
-- observe the first Phoenix kernel banner or identify the next failure site (e.g. DTB parsing, MMU setup)
+- verify that the extended HDMI logs (libklog status, tty0 registration) are visible on the screen
+- confirm the 10-blink userspace heartbeat on the ACT LED
+- capture a successful UART log using the 103448 baud rate (if 115200 remains broken)
+- observe the first Phoenix shell (psh) output on HDMI or UART
 
 ## Scope
 
 In scope:
-- analysis of the next real-device UART capture at 115200 baud
-- analysis of the next ACT LED video to confirm the heartbeat signal
-- classification of the resulting boot stage reached
+- analysis of the next real-device trial results
+- verification of HDMI-mirrored logs
+- verification of userspace-driven LED signals
 
 Out of scope:
-- broad code changes before seeing the next log
-- unrelated peripheral drivers
+- broad kernel or driver changes before seeing the next feedback
 
 ## Acceptance Criteria
 
-- a 115200 baud UART log is captured through the kernel entry boundary
-- the ACT LED behavior is documented (expected: solid ON after plo jump)
-- the kernel banner is seen OR a new early-boot crash is pinpointed
+- the ACT LED blinks 10 times (userspace started)
+- HDMI console shows more than just the initial banner (libklog/tty progress)
+- a readable UART log is captured (either 115200 or 103448)
 
 ## Validation Plan
 
-- analyze the next `rpi4b-uart-YYYYMMDD-HHMMSS.log`
-- decode the next `IMG_XXXX.mov`
-- use the evidence to choose the next boot-hardening or driver-integration step
+- analyze the next log and video/screenshot
+- use the results to choose between baud-rate refinement, devfs/dummyfs debugging, or shell integration
 
 ## Rollback / Baseline
 
-- latest hardened image:
+- latest diagnostic image:
   `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
-  (SHA-256: `19928dd6cdf7fcdd6214aa9289cc38b3d232f5d29536bb9a9d4a95cdd86353db`)
+  (SHA-256: `07a81008c414f2c5f67743bf8a6bd27b9f857e40a0237cea0faa8b66735ff799`)
 
 ## Notes
 
-- the board is confirmed to reach `plo` kernel jump (3 squares on HDMI)
-- the 115200 baud unification via `init_uart_baud` removes the need for dual-profile capture
-- the ACT LED heartbeat provides a high-confidence proof of kernel entry independent of UART
+- the board is confirmed to reach userspace
+- HDMI is now the primary high-confidence diagnostic channel
+- the 103448 baud rate choice by firmware is currently the leading theory for "broken" 115200 logs
