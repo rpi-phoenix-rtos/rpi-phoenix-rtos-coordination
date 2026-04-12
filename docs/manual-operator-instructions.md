@@ -698,12 +698,16 @@ Recommended operator flow:
 
 1. list candidate adapters:
    - [capture-rpi4b-uart.sh](/Users/witoldbolt/phoenix-rpi/scripts/capture-rpi4b-uart.sh) `--list`
-2. start capture before power-on:
-   - [capture-rpi4b-uart.sh](/Users/witoldbolt/phoenix-rpi/scripts/capture-rpi4b-uart.sh) `--device /dev/cu.usbserial-XXXX --label pi4-boot`
-3. exit the terminal tool after the trial with:
+2. start the firmware-side capture before power-on when early EEPROM or
+   firmware evidence matters:
+   - [capture-rpi4b-uart.sh](/Users/witoldbolt/phoenix-rpi/scripts/capture-rpi4b-uart.sh) `--profile firmware --device /dev/cu.usbserial-XXXX --label pi4-firmware`
+3. run a second capture at the post-switch baud when the active question is
+   later Phoenix execution after the firmware PL011 reconfiguration:
+   - [capture-rpi4b-uart.sh](/Users/witoldbolt/phoenix-rpi/scripts/capture-rpi4b-uart.sh) `--profile postswitch --device /dev/cu.usbserial-XXXX --label pi4-postswitch`
+4. exit the terminal tool after the trial with:
    - `Ctrl-T` then `Q` when the helper selected `tio`
    - `Ctrl-A` then `Ctrl-X` when the helper selected `picocom`
-4. summarize the raw log:
+5. summarize the raw log:
    - [summarize-rpi4b-uart-log.py](/Users/witoldbolt/phoenix-rpi/scripts/summarize-rpi4b-uart-log.py) `/path/to/log`
 
 Current UART-output expectations:
@@ -718,16 +722,17 @@ Current UART-output expectations:
   - `TR1`
   - `TR2`
   - `TR3`
-- current observed real-board limitation before the trampoline:
+- current observed real-board UART boundary:
   - the firmware still reprograms PL011 to about `103448.3` Hz
-  - host capture stays readable through that firmware line
-  - if the trampoline runs, it now reinitializes PL011 back to `115200`
-    before `TR0`
+  - a host capture started at `115200` stays readable through that firmware
+    line and then usually loses sync
+  - the current Pi 4 trampoline no longer changes the UART rate after the
+    firmware switch
 - implication:
-  - a missing `TR0` is now stronger evidence that the board never reached the
-    relocatable trampoline entry
-- if only firmware lines appear and none of `TR0..TR3` appear, the current
-  failure is still before the relocatable trampoline entry
+  - use `--profile firmware` for firmware evidence
+  - use `--profile postswitch` for `TR0..TR3` and later Phoenix evidence
+- if a `firmware` log ends at the PL011 baud-switch line, run the matching
+  `postswitch` capture before classifying missing `TR0..TR3`
 - if the board still emits no early firmware text, enable bootloader UART in
   EEPROM on a known-good Raspberry Pi OS card first:
   - `sudo -E rpi-eeprom-config --edit`

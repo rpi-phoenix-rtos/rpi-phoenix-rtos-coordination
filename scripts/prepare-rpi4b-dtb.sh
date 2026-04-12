@@ -4,6 +4,8 @@ set -euo pipefail
 
 vm="${PHOENIX_VM:-phoenix-dev}"
 linux_tree="${RPI4B_LINUX_TREE:-/Users/witoldbolt/phoenix-rpi/external/raspberrypi-linux}"
+firmware_tree="${RPI4B_FIRMWARE_TREE:-/Users/witoldbolt/phoenix-rpi/external/raspberrypi-firmware}"
+firmware_dtb="${RPI4B_FIRMWARE_DTB:-$firmware_tree/boot/bcm2711-rpi-4-b.dtb}"
 project_dtb="${RPI4B_PROJECT_DTB:-/Users/witoldbolt/phoenix-rpi/sources/phoenix-rtos-project/_projects/aarch64a72-generic-rpi4b/bcm2711-rpi-4-b.dtb}"
 source_dtb="${RPI4B_SOURCE_DTB:-}"
 source_dts="${RPI4B_SOURCE_DTS:-$linux_tree/arch/arm/boot/dts/broadcom/bcm2711-rpi-4-b.dts}"
@@ -15,6 +17,7 @@ limactl shell -y "$vm" -- bash -lc "
 set -euo pipefail
 
 linux_tree='$linux_tree'
+firmware_dtb='$firmware_dtb'
 project_dtb='$project_dtb'
 source_dtb='$source_dtb'
 source_dts='$source_dts'
@@ -35,6 +38,10 @@ if [ -n \"\$source_dtb\" ] && [ -f \"\$source_dtb\" ]; then
 	printf 'Using final DTB source: %s\n' \"\$source_dtb\"
 	cp \"\$source_dtb\" \"\$out_dtb\"
 	mode='copy'
+elif [ -f \"\$firmware_dtb\" ]; then
+	printf 'Using official firmware DTB source: %s\n' \"\$firmware_dtb\"
+	cp \"\$firmware_dtb\" \"\$out_dtb\"
+	mode='copy'
 elif [ -f \"\$project_dtb\" ]; then
 	printf 'Using project-local DTB source: %s\n' \"\$project_dtb\"
 	cp \"\$project_dtb\" \"\$out_dtb\"
@@ -51,13 +58,16 @@ elif [ -f \"\$source_dts\" ]; then
 		\"\$source_dts\" | dtc -I dts -O dtb -o \"\$out_dtb\" 2>\"\$stderr_log\"
 	mode='compile'
 else
-	printf 'missing Pi 4 DT source: no final DTB and no DTS found\n' >&2
+	printf 'missing Pi 4 DT source: no final DTB, no firmware DTB and no DTS found\n' >&2
+	printf 'To fix this, you can clone the official firmware repo:\n' >&2
+	printf '  mkdir -p external && git clone --depth 1 https://github.com/raspberrypi/firmware external/raspberrypi-firmware\n' >&2
 	printf 'checked DTB: %s\n' \"\$source_dtb\" >&2
+	printf 'checked firmware DTB: %s\n' \"\$firmware_dtb\" >&2
 	printf 'checked project DTB: %s\n' \"\$project_dtb\" >&2
 	printf 'checked DTS: %s\n' \"\$source_dts\" >&2
 	exit 1
 fi
-
+",old_string:
 if [ \"\$mode\" = 'copy' ]; then
 	dtc -I dtb -O dts -o /dev/null \"\$out_dtb\" 2>>\"\$stderr_log\"
 fi

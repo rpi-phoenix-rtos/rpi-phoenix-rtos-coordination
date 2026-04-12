@@ -1549,6 +1549,10 @@ Current Pi 4 xHCI fast-path reference note:
     - copies the embedded payload to `0x40080000`
     - performs cache maintenance on the copied region
     - branches to the real high-linked `plo`
+    - as of `STEP-0471`, it intentionally keeps the firmware-programmed
+      post-switch PL011 rate so the dedicated host `--profile postswitch`
+      capture lane can observe later Phoenix output without another mid-boot
+      baud discontinuity
   - `phoenix-rtos-project/_projects/aarch64a72-generic-rpi4b/phoenix-armstub8-rpi4.S`
     now provides a Pi-4-specific firmware handoff stub derived from the
     Raspberry Pi/Circle `armstub8-rpi4` lineage
@@ -1592,6 +1596,14 @@ Current Pi 4 xHCI fast-path reference note:
     equivalent to the firmware-updated live DTB yet
   - future real-hardware cleanup should prefer the live firmware DTB path over
     treating the build-time staged blob as authoritative
+  - as of `STEP-0471`, a bounded GDB session against the raw direct Pi 4 QEMU
+    lane also reconfirmed the practical consequence:
+    `/home/witoldbolt.guest/phoenix-buildroots/phoenix-rtos-project-copy/_fs/aarch64a72-generic-rpi4b/root/etc/system.dtb`
+    still decompiles to:
+    - `memory@0 { reg = <0x00 0x00 0x00>; }`
+    - so a raw direct Pi 4 QEMU kernel run without the patched DTB path or a
+      live firmware DTB yields `nBanks = 0` in `_pmap_preinit()` and is not an
+      authoritative proxy for the current real-hardware post-`plo` boundary
 
 Current preserved clue:
 

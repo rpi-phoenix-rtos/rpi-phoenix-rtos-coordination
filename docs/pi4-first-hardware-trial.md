@@ -24,7 +24,7 @@ Use this image:
 
 Current SHA-256:
 
-- `4d9daf70168d6990e7525d0c0accda4a8a1ffed0a5fe62432aab4dcff8e70217`
+- `7544e3e8012ccf9426134d94a8b9d68be52711e9f42291cfd1760801b7e16965`
 
 This image supersedes the earlier Pi 4 trial images that still halted in the
 late custom armstub seam on an empty `kernel_entry32` slot.
@@ -63,6 +63,8 @@ This image now intentionally uses:
   - that trampoline now copies the embedded `plo` payload to `0x40080000`,
     preserves the DTB pointer in `x0`, and only then branches to the real
     high-linked `plo`
+  - the trampoline now intentionally keeps the firmware-programmed post-switch
+    PL011 rate instead of reprogramming UART again
   - the armstub now keeps only `dsb sy; isb` immediately before the final
     branch
   - the firmware DTB pointer is now preserved into earliest generic `plo` and
@@ -153,7 +155,10 @@ Current UART wiring:
 5. Optionally connect Ethernet.
 6. If a USB-TTL cable is available, start UART capture before power-on:
    - [capture-rpi4b-uart.sh](/Users/witoldbolt/phoenix-rpi/scripts/capture-rpi4b-uart.sh) `--list`
-   - [capture-rpi4b-uart.sh](/Users/witoldbolt/phoenix-rpi/scripts/capture-rpi4b-uart.sh) `--device /dev/cu.usbserial-XXXX --label pi4-boot`
+   - firmware-side evidence:
+     [capture-rpi4b-uart.sh](/Users/witoldbolt/phoenix-rpi/scripts/capture-rpi4b-uart.sh) `--profile firmware --device /dev/cu.usbserial-XXXX --label pi4-firmware`
+   - current higher-value post-switch run for the active kernel-entry boundary:
+     [capture-rpi4b-uart.sh](/Users/witoldbolt/phoenix-rpi/scripts/capture-rpi4b-uart.sh) `--profile postswitch --device /dev/cu.usbserial-XXXX --label pi4-postswitch`
    - if you want earlier EEPROM messages than `uart_2ndstage`, enable
      `BOOT_UART=1` in the Raspberry Pi EEPROM on a known-good Raspberry Pi OS
      card first
@@ -179,6 +184,8 @@ Current UART wiring:
    firmware-entry-contract image.
 10. After the trial, summarize the UART log if one was captured:
    - [summarize-rpi4b-uart-log.py](/Users/witoldbolt/phoenix-rpi/scripts/summarize-rpi4b-uart-log.py) `/path/to/log`
+   - if a firmware-profile log stops at the PL011 baud-switch line, the helper
+     now tells you to rerun with `--profile postswitch`
 11. If text or prompt appears, try:
    - `help`
    - `ps`

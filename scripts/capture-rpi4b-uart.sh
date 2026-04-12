@@ -6,6 +6,7 @@ default_image_path="/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img"
 default_output_dir="/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b-uart"
 
 baud="115200"
+baud_set=0
 device=""
 exit_after=""
 label=""
@@ -13,6 +14,7 @@ list_only=0
 log_path=""
 output_dir="$default_output_dir"
 tool="${RPI4B_UART_TOOL:-auto}"
+profile="firmware"
 
 usage() {
 	cat <<'EOF'
@@ -23,6 +25,8 @@ Options:
       explicit serial device, for example /dev/cu.usbserial-0001
   --tool auto|tio|picocom
       serial tool selection, default auto
+  --profile firmware|postswitch
+      capture profile, default firmware
   --baud N
       baud rate, default 115200
   --log PATH
@@ -40,12 +44,32 @@ Options:
       show this help
 
 Notes:
-  - current Raspberry Pi UART lane expects 115200 8N1
+  - firmware profile uses 115200 8N1
+  - postswitch profile uses 103448 8N1 for the current Pi 4 PL011 baud switch
   - preferred device path form on macOS is /dev/cu.*
   - auto mode prefers tio if it is installed, else picocom
   - exit tio with Ctrl-T Q
   - exit picocom with Ctrl-A Ctrl-X
 EOF
+}
+
+apply_profile() {
+	case "$profile" in
+		firmware)
+			if [ "$baud_set" -eq 0 ]; then
+				baud="115200"
+			fi
+			;;
+		postswitch)
+			if [ "$baud_set" -eq 0 ]; then
+				baud="103448"
+			fi
+			;;
+		*)
+			printf 'unknown --profile value: %s\n' "$profile" >&2
+			exit 1
+			;;
+	esac
 }
 
 list_candidates() {
@@ -146,8 +170,13 @@ while [ $# -gt 0 ]; do
 			tool="$2"
 			shift 2
 			;;
+		--profile)
+			profile="$2"
+			shift 2
+			;;
 		--baud)
 			baud="$2"
+			baud_set=1
 			shift 2
 			;;
 		--log)
@@ -196,6 +225,7 @@ if [ "$list_only" -eq 1 ]; then
 	exit 0
 fi
 
+apply_profile
 select_tool
 
 if [ -z "$device" ]; then
@@ -230,6 +260,7 @@ timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)
 serial_device: $device
 serial_tool: $tool
 baud: $baud
+profile: $profile
 image_path: $default_image_path
 image_sha256: $image_sha256
 note: use Ctrl-T Q for tio or Ctrl-A Ctrl-X for picocom
@@ -237,6 +268,7 @@ EOF
 
 printf 'UART device: %s\n' "$device"
 printf 'UART tool:   %s\n' "$tool"
+printf 'UART profile:%s\n' " $profile"
 printf 'UART baud:   %s\n' "$baud"
 printf 'UART log:    %s\n' "$log_path"
 printf 'UART meta:   %s\n' "$meta_path"

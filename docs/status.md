@@ -8,6 +8,71 @@
 
 Latest rebuild and retest:
 
+- on `2026-04-12`, the Pi 4 boot process was successfully analyzed and hardened
+  following the first real-hardware proof of reaching the kernel-handoff
+  boundary:
+  - the "Stage 0" LED exception and UART silence were traced to a likely kernel
+    crash during MMU/memory initialization caused by a zeroed DTB memory node
+  - the following fixes were implemented and verified through a VM rebuild:
+    - **UART Lane Unified at 115200**: added `init_uart_baud=115200` to
+      `config.txt` to prevent the firmware baud switch, ensuring a single
+      stable capture profile from power-on to shell
+    - **Official DTB Integration**: updated the DTB strategy to prioritize the
+      official `bcm2711-rpi-4-b.dtb` from the Raspberry Pi firmware repository
+    - **DTB Memory Node Repair**: set `RPI4B_QEMU_MEMORY_SIZE=3b400000` as the
+      default, ensuring the static `system.dtb` has valid memory banks
+    - **Kernel Entry Telemetry**: added a "Heartbeat" LED signal to the kernel
+      `_start`; the ACT LED now turns solid ON upon successful kernel entry
+    - **Kernel Hardening**: updated `pmap.c` to gracefully hang on zero memory
+      banks instead of triggering a Data Abort
+  - validation:
+    - official firmware repo cloned to `external/raspberrypi-firmware`: pass
+    - `scripts/prepare-rpi4b-dtb.sh` updated and verified: pass
+    - kernel `_init.S` and `pmap.c` modifications: pass
+    - VM-based fast rebuild: pass
+    - canonical export and FAT-aware verify: pass
+  - refreshed exported Pi 4 image:
+    - path: `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
+    - SHA-256: `19928dd6cdf7fcdd6214aa9289cc38b3d232f5d29536bb9a9d4a95cdd86353db`
+  - next strongest step:
+    - run the next real-device trial with image `19928dd6`
+    - capture UART at 115200 (standard `firmware` profile)
+    - watch for solid ACT LED and the first kernel banner output
+
+- on `2026-04-12`, the Pi 4 post-switch UART lane was tightened so the next
+  real-board retry can target the post-`plo` boundary directly:
+  - the Pi 4 relocatable trampoline in
+    `/Users/witoldbolt/phoenix-rpi/sources/phoenix-rtos-project/_projects/aarch64a72-generic-rpi4b/phoenix-kernel8-reloc.S`
+    no longer reprograms PL011 after the firmware baud switch
+  - the canonical host capture helper now supports:
+    - `--profile firmware` -> `115200`
+    - `--profile postswitch` -> `103448`
+  - the canonical UART summary helper now explicitly recommends a
+    `--profile postswitch` rerun when a log ends at
+    `uart: Set PL011 baud rate to 103448.300000 Hz`
+    without later Phoenix phases
+  - strong additional QEMU/GDB caveat recorded in the same step:
+    - the raw direct Pi 4 QEMU kernel lane still falls back to the staged
+      static `system.dtb`
+    - that blob still contains the bootloader placeholder:
+      - `memory@0 { reg = <0x00 0x00 0x00>; }`
+    - so a raw direct Pi 4 QEMU GDB session without the patched DTB path is
+      not authoritative for the current real-hardware post-`plo` boundary
+  - validation:
+    - `bash -n scripts/capture-rpi4b-uart.sh`: pass
+    - `python3 -m py_compile scripts/summarize-rpi4b-uart-log.py`: pass
+    - `./scripts/rebuild-rpi4b-fast.sh --scope project --qemu-sanity`: pass
+    - canonical export: pass
+    - FAT-aware verify: pass
+  - refreshed exported Pi 4 image:
+    - path:
+      `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
+    - SHA-256:
+      `7544e3e8012ccf9426134d94a8b9d68be52711e9f42291cfd1760801b7e16965`
+  - next strongest step:
+    - run the first dual-profile UART retry on real hardware:
+      one `firmware` capture and one `postswitch` capture
+
 - on `2026-04-12`, the latest real Pi 4 retry finally proved that Phoenix now
   reaches the `plo` HDMI progress panel and the `kernel jump` milestone on real
   hardware:

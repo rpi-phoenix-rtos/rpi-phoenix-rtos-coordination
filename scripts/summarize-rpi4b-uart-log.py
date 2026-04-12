@@ -117,6 +117,25 @@ def classify(matches: list[dict[str, object]]) -> str:
     return "unknown"
 
 
+def collect_observations(lines: list[str], matches: list[dict[str, object]]) -> list[str]:
+    observations: list[str] = []
+    stripped = [line for line in lines if line.strip()]
+    phases = {str(m["phase"]) for m in matches}
+
+    saw_baud_switch = any("Set PL011 baud rate to 103448.300000 Hz" in line for line in stripped)
+    saw_postswitch_phoenix = any(
+        phase in phases for phase in ("phoenix_trampoline", "phoenix_plo", "phoenix_kernel", "phoenix_userspace")
+    )
+
+    if saw_baud_switch and not saw_postswitch_phoenix:
+        observations.append(
+            "log reaches the firmware PL011 baud switch but shows no later Phoenix phases; rerun with "
+            "capture-rpi4b-uart.sh --profile postswitch"
+        )
+
+    return observations
+
+
 def collect_matches(lines: list[str]) -> list[dict[str, object]]:
     compiled = [
         (phase, [re.compile(pattern) for pattern in patterns])
@@ -153,6 +172,7 @@ def summarize(path: Path) -> dict[str, object]:
         "first_match_per_phase": phase_first,
         "all_matches": matches,
         "interesting_tail": interesting_tail,
+        "observations": collect_observations(lines, matches),
     }
 
 
@@ -181,6 +201,11 @@ def print_text(summary: dict[str, object]) -> None:
     print("Interesting tail:")
     for line in summary["interesting_tail"]:
         print(f"- {line}")
+    observations = summary["observations"]
+    if observations:
+        print("Observations:")
+        for line in observations:
+            print(f"- {line}")
 
 
 def main() -> int:
