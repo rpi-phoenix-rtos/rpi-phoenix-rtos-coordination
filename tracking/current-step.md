@@ -2,48 +2,48 @@
 
 ## Metadata
 
-- Step ID: `STEP-0481`
-- Title: Await the next Pi 4 board retry with fixed UART and PCIe
+- Step ID: `STEP-0483`
+- Title: Await the next Pi 4 board retry with clean stabilized image
 - Status: `in_progress`
 - Date: `2026-04-12`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- verify that the UART lane is now stable at 115200 baud from kernel entry onward
-- confirm that the PCIe `SError` is resolved and the VL805 firmware notify succeeds
-- observe the Phoenix shell (psh) prompt on the UART console
-- verify if `libklog` messages correctly appear on both HDMI and UART
+- verify that the stable userspace boot path is restored (psh prompt on HDMI)
+- confirm that the legacy LED blinks are gone, resulting in a faster boot process
+- capture a successful UART log using the 103448 baud rate (to verify if our kernel UART init revert helps or hurts)
+- verify that the PCIe `va2pa` fix persists and eliminates the `SError` exception
 
 ## Scope
 
 In scope:
 - analysis of the next real-device trial results
-- verification of fixed UART baud rate
-- verification of PCIe/XHCI initialization success
+- verification of clean boot sequence (no old LED bursts)
+- verification of `psh` accessibility
 
 Out of scope:
 - broad driver changes before seeing the next log
 
 ## Acceptance Criteria
 
-- a readable 115200 baud UART log is captured through kernel entry and userspace
-- the `SError` exception no longer appears in the `pcie` or `usb` threads
-- the `psh` prompt is reachable on the UART
+- `psh` prompt appears on HDMI console
+- no legacy LED diagnostic signals are seen
+- `SError` exception no longer appears in the `pcie` or `usb` threads
 
 ## Validation Plan
 
 - analyze the next log and video/screenshot
-- use the results to choose between USB driver debugging, network integration, or filesystem hardening
+- use the results to choose between final UART baud-rate refinement or first shell-based hardware tests
 
 ## Rollback / Baseline
 
-- latest fixed image:
+- latest clean image:
   `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
-  (SHA-256: `5a251b167f6d6bbfc299bfb8ce1f022c89bb06a171fe44afd1075e1a587327cf`)
+  (SHA-256: `3de5a1f3cbda75fd848bc5627063a6e620775e531f8b2db2c1fd6e96146898f3`)
 
 ## Notes
 
-- the firmware choice of 103448 baud is now overridden by the kernel to 115200
-- PCIe `SError` was traced to invalid `va2pa` usage in mailbox communication
-- HDMI remains active as a secondary diagnostic channel
+- all manual HDMI mirroring was removed to fix the recent regression
+- legacy LED probes were purged to satisfy the speed-up request
+- the PCIe `va2pa` fix is the only significant logic change kept from the previous failed image
