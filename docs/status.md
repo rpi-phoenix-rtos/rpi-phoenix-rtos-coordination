@@ -10,6 +10,38 @@
 
 Latest rebuild and retest:
 
+- on `2026-04-17`, the Pi 4 baseline was made reproducible again and the
+  remaining legacy GPIO42 diagnostics were removed from the committed tree:
+  - committed cleanup landed in:
+    - `phoenix-rtos-project 45e277d`
+    - `phoenix-rtos-kernel 1b55a92f`
+    - `phoenix-rtos-filesystems 1884043`
+    - `plo 7664e6f`
+  - removed from the active Pi 4 path:
+    - custom armstub GPIO42 stage-code telemetry
+    - earliest `plo` ACT-LED telemetry
+    - kernel-entry ACT-LED assertion
+    - the `dummyfs` Stage-5 GPIO42 signal
+    - the stale `PLO_RPI_ACTLED_DIAG` board-config block
+  - validation:
+    - source-repo `git diff --check`: pass
+    - `./scripts/rebuild-rpi4b-fast.sh --qemu-sanity`: pass
+    - canonical export: pass
+    - FAT-aware verify: pass
+  - refreshed exported Pi 4 image:
+    - path: `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
+    - SHA-256: `eff8ca6193da33baeeb5af6c7fee3deefbd6a6243388b5cc708544bab2dd210e`
+  - current operating rule:
+    - use UART at `115200 8N1` as the primary observability lane
+    - use `--profile postswitch` only as a fallback if the firmware still
+      proves it is overriding the configured baud rate
+    - do not expect the old structured GPIO42 Phoenix stage telemetry on this
+      image
+  - next strongest step:
+    - run the next real Pi 4 retry on the cleaned reproducible image
+    - capture UART first
+    - use HDMI output as the secondary visible lane
+
 - on `2026-04-17`, the tracker and repo state were reconciled after several
   April 14-16 updates landed through mixed AI-assisted sessions:
   - the coordination repo had drifted ahead of the actual committed source

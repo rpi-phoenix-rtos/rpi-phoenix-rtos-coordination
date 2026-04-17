@@ -78,12 +78,14 @@
   - start UART capture before board power-on
   - keep the raw log
   - summarize the log after the run instead of trimming it manually
-  - keep ACT-LED video in parallel for current pre-console failures
   - let the helper choose the tool in normal use; it now prefers `tio`
     automatically and falls back to `picocom` only when needed
-  - for the current post-`plo` Pi 4 boundary, prefer two runs:
-    - `--profile firmware` to preserve EEPROM / firmware evidence
-    - `--profile postswitch` to read the post-switch Phoenix path
+  - for the current stabilized Pi 4 image, start with `--profile firmware`
+    because the intended current lane is now `115200` end-to-end
+  - use `--profile postswitch` only as a fallback if a new real-board run still
+    proves the firmware is overriding the configured baud rate
+  - the old structured GPIO42 Phoenix stage telemetry is no longer part of the
+    current stabilized image
 - current Pi 4 firmware/config prerequisites:
   - the Phoenix Pi 4 `config.txt` already sets:
     - `enable_uart=1`
@@ -95,16 +97,11 @@
   - `TR1`: embedded `plo` copy started
   - `TR2`: copy plus cache maintenance complete
   - `TR3`: branch to the real high-linked `plo`
-- current observed UART limitation on the real Pi 4 lane:
-  - the firmware currently reprograms PL011 to about `103448.3` Hz
-  - `tio` and `picocom` captures started at `115200` stay useful up to that
-    baud-change line, then lose sync
-  - the current Pi 4 trampoline no longer reprograms PL011 away from that
-    firmware-set rate
-  - the stable workaround is now canonical:
-    - use `--profile firmware` at `115200` for firmware-side evidence
-    - use `--profile postswitch` at `103448` for `TR0..TR3`, `plo`, and kernel
-      evidence after the switch
+- current expected UART behavior on the stabilized Pi 4 lane:
+  - `config.txt` now requests `init_uart_baud=115200`
+  - the kernel PL011 init path is also hardcoded to `115200`
+  - so the primary expected capture mode is now `115200 8N1`
+  - keep `postswitch` available only as a regression-recovery fallback
 
 Current recommended command sequence:
 
@@ -112,7 +109,8 @@ Current recommended command sequence:
   - [scripts/capture-rpi4b-uart.sh](/Users/witoldbolt/phoenix-rpi/scripts/capture-rpi4b-uart.sh) `--list`
 - capture a firmware-side trial:
   - [scripts/capture-rpi4b-uart.sh](/Users/witoldbolt/phoenix-rpi/scripts/capture-rpi4b-uart.sh) `--profile firmware --device /dev/cu.usbserial-XXXX --label pi4-firmware`
-- capture a post-switch Phoenix trial:
+- if the firmware unexpectedly still switches baud and the `firmware` log cuts
+  off, retry with:
   - [scripts/capture-rpi4b-uart.sh](/Users/witoldbolt/phoenix-rpi/scripts/capture-rpi4b-uart.sh) `--profile postswitch --device /dev/cu.usbserial-XXXX --label pi4-postswitch`
 - if you must force a specific tool:
   - [scripts/capture-rpi4b-uart.sh](/Users/witoldbolt/phoenix-rpi/scripts/capture-rpi4b-uart.sh) `--tool tio ...`
@@ -121,8 +119,8 @@ Current recommended command sequence:
   - [scripts/summarize-rpi4b-uart-log.py](/Users/witoldbolt/phoenix-rpi/scripts/summarize-rpi4b-uart-log.py) `/path/to/log`
   - current summary helper now classifies `TR0..TR3` as `phoenix_trampoline`
     and a `trampoline-copy` failure class
-  - it now also recommends a `--profile postswitch` rerun when a log stops at
-    the firmware PL011 baud switch without later Phoenix phases
+  - it still recommends a `--profile postswitch` rerun when a log stops at the
+    firmware PL011 baud switch without later Phoenix phases
 - current Pi 4 SD-image verification rule:
   - `scripts/export-rpi4b-sdimg.sh` now writes
     `artifacts/rpi4b/rpi4b-sd.img.meta.txt`

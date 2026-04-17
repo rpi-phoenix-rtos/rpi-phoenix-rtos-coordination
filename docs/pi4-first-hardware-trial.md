@@ -13,8 +13,10 @@ not instead of it.
 
 Current strong recommendation:
 
-- when a USB-TTL cable is available, do not use LED-only hardware retries
-- run UART capture and LED video together
+- when a USB-TTL cable is available, use UART as the primary observability lane
+- the old structured GPIO42 Phoenix telemetry is no longer part of the current
+  stabilized image
+- LED video is now optional auxiliary evidence, not the primary decode channel
 
 ## Current Artifact
 
@@ -24,7 +26,7 @@ Use this image:
 
 Current SHA-256:
 
-- `7544e3e8012ccf9426134d94a8b9d68be52711e9f42291cfd1760801b7e16965`
+- `eff8ca6193da33baeeb5af6c7fee3deefbd6a6243388b5cc708544bab2dd210e`
 
 This image supersedes the earlier Pi 4 trial images that still halted in the
 late custom armstub seam on an empty `kernel_entry32` slot.
@@ -40,6 +42,20 @@ This image now intentionally uses:
 - firmware UART options:
   - `enable_uart=1`
   - `uart_2ndstage=1`
+  - `init_uart_baud=115200`
+- kernel PL011 hardcoding at `115200`
+- no legacy Phoenix GPIO42 stage-code telemetry in:
+  - `armstub`
+  - earliest `plo`
+  - kernel `_start`
+  - `dummyfs`
+
+Historical note:
+
+- the detailed GPIO42 stage-code map and the dual-profile `firmware` /
+  `postswitch` serial workflow described later in this file are preserved as
+  historical context from earlier diagnostic images
+- they are not the primary expectation for the current stabilized image
 - custom Pi 4 armstub EL3 preparation:
   - local timer control / prescaler
   - `CNTFRQ_EL0 = 54000000`
