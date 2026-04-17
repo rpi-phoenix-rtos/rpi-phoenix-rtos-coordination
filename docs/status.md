@@ -10,6 +10,81 @@
 
 Latest rebuild and retest:
 
+- on `2026-04-17`, a follow-up artifact audit disproved the “stale SD image”
+  theory for the rollback image:
+  - the exported host image metadata matched
+    `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
+  - `scripts/verify-rpi4b-sdimg.sh` passed
+  - extracting the FAT partition and hashing the staged boot files proved that
+    the exported image contained the same bytes as the current VM build outputs
+    for:
+    - `kernel8.img`
+    - `loader.disk`
+    - `phoenix-armstub8-rpi4.bin`
+    - `config.txt`
+  - conclusion:
+    - the board was not booting an older export
+    - the rollback-plus-Linux-MMU image simply still stopped at `X3`
+- on `2026-04-17`, a bounded QEMU gdbstub session on that exact rollback image
+  then proved:
+  - the current Pi 4 QEMU lane reaches the restored post-MMU seam under
+    emulation
+  - raw address breakpoints hit:
+    - `_core_0_virtual`
+    - `_set_up_vbar_and_stacks`
+    - `main()`
+  - therefore the active hardware-only seam is not “kernel never reaches the
+    higher-half path” under the current image
+  - instead, the seam is Phoenix's runtime TTBR1 activation plus first TTBR1
+    access pattern, which QEMU tolerates and real hardware does not
+- strongest resulting fix applied this session:
+  - restructured
+    `/Users/witoldbolt/phoenix-rpi/sources/phoenix-rtos-kernel/hal/aarch64/_init.S`
+    so the kernel TTBR1 tables are built before MMU-on
+  - `TCR_EL1.EPD1` is now cleared before the initial `msr tcr_el1, ...`
+  - the old runtime TTBR1-activation seam was removed:
+    - no late `bic tcr_el1, #(1 << 23)` path remains
+  - the Linux-derived post-`SCTLR_EL1` sequence remains:
+    - `isb`
+    - `ic iallu`
+    - `dsb nsh`
+    - `isb`
+- why this is the strongest current fix:
+  - Linux arm64 `arch/arm64/kernel/head.S` enables the MMU with both TTBRs
+    already installed and invalidates the local I-cache before branching to the
+    virtual address
+  - the QEMU gdbstub session proved Phoenix's emulated path already survives
+    `_core_0_virtual`, so the remaining unique seam worth removing is the
+    runtime TTBR1 activation itself
+- validation:
+  - `./scripts/rebuild-rpi4b-fast.sh --scope core --qemu-sanity`: pass
+  - direct Pi 4 QEMU run still reaches `psh`
+  - direct generic AArch64 QEMU run still reaches `psh`
+  - canonical export: pass
+  - FAT-aware verify: pass
+- warning surfaced this session:
+  - `./scripts/qemu-shell-smoke.sh generic` hung even though a direct generic
+    QEMU run reached `(psh)%`
+  - current interpretation:
+    - this is harness flakiness in the `expect` smoke helper, not evidence that
+      the common kernel path regressed
+  - do not silently treat that helper result as authoritative until the helper
+    is tightened
+- refreshed exported Pi 4 image:
+  - path: `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
+  - SHA-256: `f65877d5cffc58222198cc71f2841a09b3d183b4fb66b92e9efaa2e52fe171aa`
+- next strongest step:
+  - flash image `f65877d5...`
+  - capture UART with the canonical helper
+  - verify whether the board now moves beyond the old `A2 / KLM / X1 / X2 / X3`
+    seam into the restored post-MMU markers:
+    - `N`
+    - `O`
+    - `P`
+    - `Q`
+    - `R`
+    - `S`
+
 - on `2026-04-17`, the next real-board UART log
   `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b-uart/rpi4b-uart-20260417-223918.log`
   still ended at:

@@ -2,47 +2,50 @@
 
 ## Metadata
 
-- Step ID: `STEP-0506`
-- Title: `Retry Pi 4 on the rolled-back post-MMU UART baseline with Linux-style MMU I-cache sync`
+- Step ID: `STEP-0507`
+- Title: `Retry Pi 4 on the TTBR1-from-start kernel image`
 - Status: `ready`
 - Date: `2026-04-17`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- stop iterating on the regressed `X3`-only kernel line
-- retry the Pi 4 on the last objectively better post-MMU UART baseline
-- validate whether the Linux-style post-`SCTLR_EL1` I-cache invalidation fix
-  restores the proven `N O P Q R S` seam or moves the boundary forward
+- retry the Pi 4 on the restructured kernel MMU-transition image
+- verify whether removing the runtime TTBR1-activation seam restores later
+  post-MMU progress on real hardware
 
 ## Scope
 
 In scope:
 
-- one real-device retry on the refreshed rollback image
+- one real-device retry on the refreshed image
 - UART capture with the canonical helper
 - no LED diagnostics
 - no new source probes before the retry result
 
 Out of scope:
 
+- more kernel probe churn
 - broader userspace tracing
-- new DTB refactors
-- new MMU design changes before this rollback-based retry is tested
+- DTB refactors before this hardware retry
 
 ## Acceptance Criteria
 
-- the refreshed rollback image is tried on real hardware
+- the refreshed image is tried on real hardware
 - the retry captures at least one raw UART log
-- the retry shows whether the board again reaches the recovered late seam:
+- the retry shows whether execution moves beyond:
+  - `A2`
+  - `KLM`
+  - `X1`
+  - `X2`
+  - `X3`
+- the retry proves whether the restored post-MMU seam is reached:
   - `N`
   - `O`
   - `P`
   - `Q`
   - `R`
   - `S`
-- the next engineering change can target one precise sub-band instead of
-  continuing the current probe churn
 
 ## Validation Plan
 
@@ -70,25 +73,22 @@ Out of scope:
 
 - current exported image to test:
   `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
-  (SHA-256: `5eb05cc13844cf6628b1334753e112c59e90303c45feedc9a294bc1760051700`)
+  (SHA-256: `f65877d5cffc58222198cc71f2841a09b3d183b4fb66b92e9efaa2e52fe171aa`)
 
 ## Notes
 
-- the latest failing real-board UART log
-  `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b-uart/rpi4b-uart-20260417-223918.log`
-  still ends at:
+- the stale-image theory has been disproved for the current artifact chain
+- the exact rollback image previously stopped on real hardware at:
   - `A2`
   - `KLM`
   - `X1`
   - `X2`
   - `X3`
-- however, earlier logs `213826` and `215745` objectively reached `... X3NO`
-  on real hardware, so the active strategy is now:
-  - restore that better baseline
-  - keep only one primary-source-backed MMU transition fix on top
-- the current image therefore:
-  - restores the temporary post-MMU PL011 virtual mapping
-  - restores the `N O P Q R S` seam that had already worked on hardware
-  - removes the later regressing syspage and TTBR1 experiments
-  - adds Linux-style local I-cache invalidation immediately after
-    `msr sctlr_el1, x0` when enabling the MMU
+- a bounded Pi 4 QEMU gdbstub session proved that same image still reaches:
+  - `_core_0_virtual`
+  - `_set_up_vbar_and_stacks`
+  - `main()`
+  under emulation
+- the current image therefore removes the remaining Phoenix-specific seam:
+  - TTBR1 is now built and enabled before MMU-on
+  - the late runtime `TCR_EL1` toggle is gone
