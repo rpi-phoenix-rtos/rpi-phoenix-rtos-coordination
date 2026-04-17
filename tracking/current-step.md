@@ -2,45 +2,47 @@
 
 ## Metadata
 
-- Step ID: `STEP-0505`
-- Title: `Retry Pi 4 on the TTBR1 cache-maintenance fix image`
+- Step ID: `STEP-0506`
+- Title: `Retry Pi 4 on the rolled-back post-MMU UART baseline with Linux-style MMU I-cache sync`
 - Status: `ready`
 - Date: `2026-04-17`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- retry the Pi 4 with the refreshed image that removes the invalid post-`ttbr1`
-  raw UART probes and adds explicit TTBR1 page-table cache/TLB maintenance
-- verify whether the active boundary moves past:
-  - the old `... X3` silent gap
-  - the old `... NO` seam
-  - `_set_up_vbar_and_stacks`
-  - earliest `main()`
+- stop iterating on the regressed `X3`-only kernel line
+- retry the Pi 4 on the last objectively better post-MMU UART baseline
+- validate whether the Linux-style post-`SCTLR_EL1` I-cache invalidation fix
+  restores the proven `N O P Q R S` seam or moves the boundary forward
 
 ## Scope
 
 In scope:
 
-- one real-device retry on the refreshed image
+- one real-device retry on the refreshed rollback image
 - UART capture with the canonical helper
-- no LED dependence
-- no new broad tracing before the retry result
+- no LED diagnostics
+- no new source probes before the retry result
 
 Out of scope:
 
-- restoring LED diagnostics
 - broader userspace tracing
-- unrelated DTB/runtime refactors before the next retry
+- new DTB refactors
+- new MMU design changes before this rollback-based retry is tested
 
 ## Acceptance Criteria
 
-- the refreshed image is tried on real hardware
+- the refreshed rollback image is tried on real hardware
 - the retry captures at least one raw UART log
-- the retry shows whether execution moves beyond the old `... X3` silent gap
-  after the TTBR1 maintenance fix
-- the next engineering change can target one precise sub-band of the kernel
-  MMU-to-`main()` path
+- the retry shows whether the board again reaches the recovered late seam:
+  - `N`
+  - `O`
+  - `P`
+  - `Q`
+  - `R`
+  - `S`
+- the next engineering change can target one precise sub-band instead of
+  continuing the current probe churn
 
 ## Validation Plan
 
@@ -52,6 +54,7 @@ Out of scope:
   - `AS0`
   - `TR0..TR3`
   - `hal: jump exit el1`
+  - `A2`
   - `KLM`
   - `X1`
   - `X2`
@@ -67,49 +70,25 @@ Out of scope:
 
 - current exported image to test:
   `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
-  (SHA-256: `725744d23cbd7bf08080c52ec02230269f680cd554ffc8c3d23a27b31f30ec2c`)
+  (SHA-256: `5eb05cc13844cf6628b1334753e112c59e90303c45feedc9a294bc1760051700`)
 
 ## Notes
 
-- the latest real-board UART log
-  `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b-uart/rpi4b-uart-20260417-222617.log`
+- the latest failing real-board UART log
+  `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b-uart/rpi4b-uart-20260417-223918.log`
   still ends at:
   - `A2`
   - `KLM`
   - `X1`
   - `X2`
   - `X3`
-- this, combined with the older status note already recorded in
-  `docs/status.md`, makes the next conclusion explicit:
-  - raw UART probes after the `ttbr1_el1` switch are not a reliable method on
-    this path and have been perturbing bring-up
-  - the remaining stronger hypothesis is real-hardware page-table visibility,
-    not lack of enough breadcrumbs
-- the refreshed image therefore:
-  - removes all post-`ttbr1` raw UART probes from
-    `phoenix-rtos-kernel/hal/aarch64/_init.S`
-  - removes the matching stale early-UART hook from
-    `phoenix-rtos-kernel/main.c`
-  - removes the now-unused `PL011_TTY_EARLY_VADDR` board-config define from
-    `phoenix-rtos-project/_projects/aarch64a72-generic-rpi4b/board_config.h`
-  - adds explicit cache/TLB maintenance for TTBR1 page tables before enabling
-    the `ttbr1` path:
-    - clean D-cache for the kernel TTBR1 tables
-    - `tlbi vmalle1is`
-- the previous regression rollback remains true too:
-  - `_hal_syspageCopied` is back to `SIZE_PAGE`
-- the refreshed image no longer attempts to classify:
-  - `N`
-  - `O`
-  - `U`
-  - `V`
-  - `W`
-  - `Z`
-  - `Y`
-  - `P`
-- instead, the next retry should simply answer whether the TTBR1 fix restores
-  later boot continuity
-    - `W` after `syspage->size` load
-    - `Z` before the first copy iteration
-    - `Y` after the first 8-byte copy iteration
-    - `P` after full copy completion
+- however, earlier logs `213826` and `215745` objectively reached `... X3NO`
+  on real hardware, so the active strategy is now:
+  - restore that better baseline
+  - keep only one primary-source-backed MMU transition fix on top
+- the current image therefore:
+  - restores the temporary post-MMU PL011 virtual mapping
+  - restores the `N O P Q R S` seam that had already worked on hardware
+  - removes the later regressing syspage and TTBR1 experiments
+  - adds Linux-style local I-cache invalidation immediately after
+    `msr sctlr_el1, x0` when enabling the MMU

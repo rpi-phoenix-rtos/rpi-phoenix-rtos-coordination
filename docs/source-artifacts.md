@@ -888,6 +888,7 @@ Current helper implementing that rule:
 
 ### Crucial Pi 4 Linux source paths
 
+- `arch/arm64/kernel/head.S`
 - `arch/arm/boot/dts/broadcom/bcm2711.dtsi`
 - `arch/arm/boot/dts/broadcom/bcm2711-rpi-ds.dtsi`
 - `arch/arm/boot/dts/broadcom/bcm2711-rpi.dtsi`
@@ -904,6 +905,12 @@ Current helper implementing that rule:
 - `drivers/watchdog/bcm2835_wdt.c`
 - `drivers/gpu/drm/vc4/*`
 - `drivers/gpu/drm/v3d/*`
+
+Important because the generic arm64 `__enable_mmu` path is now a primary
+cross-check for Phoenix Pi 4 early-kernel transitions. In particular, Linux
+invalidates the local I-cache immediately after `msr sctlr_el1, x0` and before
+branching to the virtual address; future Phoenix MMU-transition debugging
+should consult this file before inventing new local sequencing experiments.
 
 ### Crucial Pi 5 Linux source paths
 
