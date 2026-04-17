@@ -10,6 +10,87 @@
 
 Latest rebuild and retest:
 
+- on `2026-04-17`, the next reproducible Pi 4 image was rebuilt with the
+  temporary firmware clock-stabilization settings restored:
+  - restored in
+    `/Users/witoldbolt/phoenix-rpi/sources/phoenix-rtos-project/_projects/aarch64a72-generic-rpi4b/config.txt`:
+    - `force_turbo=1`
+    - `core_freq=250`
+  - rationale:
+    - the April 17 cleanup-image retry still reached the same brown
+      three-square `plo` kernel-jump panel
+    - but its `firmware` UART log still cut off at the old firmware baud
+      switch, which disproved the current tracker assumption that plain
+      `115200` had become stable again
+    - the earlier HDMI-text milestone had occurred while those temporary clock
+      settings were active
+  - validation:
+    - `./scripts/rebuild-rpi4b-fast.sh --scope project --qemu-sanity`: pass
+    - Pi 4 shell smoke: pass
+    - Pi 4 HDMI smoke: pass
+    - canonical export: pass
+    - FAT-aware verify: pass
+  - refreshed exported Pi 4 image:
+    - path: `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
+    - SHA-256: `60e0aac62028e25c6f409839103e9cc500231855b8542eb579ea29db4f7e2fd7`
+  - next strongest step:
+    - run the next real Pi 4 retry on image `60e0aac6...`
+    - capture `firmware` UART first
+    - if it still cuts at the firmware baud switch, immediately retry with
+      `--profile postswitch`
+    - compare HDMI against the current brown three-square panel boundary
+
+- on `2026-04-17`, the April 17 real-board retry disproved the current
+  tracker assumption that plain `115200 8N1` is again a stable default UART
+  lane on Pi 4:
+  - live UART from
+    `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b-uart/rpi4b-uart-20260417-173902.log`
+    still stops at:
+    - `uart: Set PL011 baud rate to 103448.300000 Hz`
+    - `uart: Baud rate change done...`
+  - live HDMI still shows the same brown three-square `plo` progress panel as
+    the earlier `video_markKernelJump()` proof:
+    `/var/folders/jt/_gyk57f575q5gl68ltg0_y6w0000gn/T/TemporaryItems/NSIRD_screencaptureui_3WsBjZ/Screenshot 2026-04-17 at 17.40.08.png`
+  - source correlation remains:
+    - all three squares lit in
+      `/Users/witoldbolt/phoenix-rpi/sources/plo/hal/aarch64/generic/video.c`
+      means `video_markKernelJump()` already ran
+    - `video_markKernelJump()` is still called in
+      `/Users/witoldbolt/phoenix-rpi/sources/plo/hal/aarch64/generic/hal.c`
+      immediately before `hal_exitToEL1()`
+  - git-history regression review of the April 13-17 series shows:
+    - the “text on HDMI” period coincided with:
+      - `phoenix-rtos-project b6dab61`
+        `project/rpi4b: stabilize UART clock in config.txt`
+      - `phoenix-rtos-devices 993a8b6`
+        `rpi4b: add HDMI mirroring and userspace heartbeat LED`
+      - `phoenix-rtos-filesystems f3f90bb`
+        `dummyfs: add HDMI tracing for initialization milestones`
+    - later cleanup removed both the temporary HDMI tracing and the temporary
+      clock settings:
+      - `phoenix-rtos-project 06144ef`
+      - `phoenix-rtos-filesystems 4ad91e3`
+      - `phoenix-rtos-devices 540e25b`
+      - `phoenix-rtos-devices f0f97ae`
+  - current strongest interpretation:
+    - the April 17 result is not a regression back to pre-`plo`
+    - the visible regression is partly an observability regression
+    - the current tracker baseline was still wrong, because the firmware baud
+      switch remains active on real hardware
+  - selected next step:
+    - restore the temporary Pi 4 firmware clock settings in `config.txt`
+    - rebuild and export a fresh image
+    - retry on real hardware before reintroducing any broader userspace HDMI
+      tracing
+  - warnings surfaced and not ignored:
+    - `vl805.bin not found`
+    - `pieeprom.upd not found`
+    - `Failed to open command line file 'cmdline.txt'`
+    - `gpioman_get_pin_num: pin DISPLAY_DSI_PORT not defined`
+    - `hdmi_get_state is deprecated`
+    - these warnings remain real, but they do not match the current boundary
+      because real hardware still reaches the `plo` kernel-jump panel
+
 - on `2026-04-17`, the Pi 4 baseline was made reproducible again and the
   remaining legacy GPIO42 diagnostics were removed from the committed tree:
   - committed cleanup landed in:
