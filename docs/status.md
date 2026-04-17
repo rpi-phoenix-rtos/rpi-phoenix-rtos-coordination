@@ -10,6 +10,55 @@
 
 Latest rebuild and retest:
 
+- on `2026-04-17`, the latest real-board UART log
+  `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b-uart/rpi4b-uart-20260417-234142.log`
+  still ended at:
+  - `A2`
+  - `KLM`
+  - `X1`
+  - `X2`
+  - `3C`
+  proving that the current image is live on hardware but still stalls
+  immediately after the `SCTLR_EL1` enable sequence
+- strategy change applied this session:
+  - stop inferring the fault from missing progress markers
+  - install an early exception VBAR before MMU-on in
+    `/Users/witoldbolt/phoenix-rpi/sources/phoenix-rtos-kernel/hal/aarch64/_init.S`
+  - extend the TTBR0 identity map with the 1 GB block containing
+    `PL011_TTY_BASE`
+  - add a compact early exception path that emits:
+    - `EX=`
+    - `ESR=`
+    - `ELR=`
+    - `FAR=`
+    over the physical PL011 path if the CPU takes an exception immediately
+    after `3C`
+- why this is now the strongest next move:
+  - earlier real-board logs on the same day genuinely reached `...X3NO`, so
+    the project is not stuck on a stale-image boundary
+  - the post-MMU UART probes were removed on purpose, which removed the only
+    direct visibility into the faulting seam
+  - the next useful question is no longer “did we get one instruction farther?”
+    but “what exact exception is being taken after MMU-on?”
+- validation:
+  - `./scripts/rebuild-rpi4b-fast.sh --scope core --qemu-sanity`: pass
+  - `./scripts/qemu-shell-smoke.sh rpi4b`: pass
+  - canonical export: pass
+  - FAT-aware verify: pass
+- warning surfaced this session:
+  - the broad `--qemu-sanity` helper still surfaced only the short `A3 / KLM`
+    tail
+  - the explicit Pi 4 shell smoke still reached `(psh)%`
+  - keep treating the explicit shell smoke as the stronger QEMU runtime signal
+- refreshed exported Pi 4 image:
+  - path: `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
+  - SHA-256: `4e873f294f07e6d636390816aac318b51f3ceb55ed85ab4ea9ac594e0fc06204`
+- next strongest step:
+  - flash image `4e873f29...`
+  - capture UART with the canonical helper
+  - inspect whether the next log still stops at `3C` or now emits the first
+    early exception report
+
 - on `2026-04-17`, the next real-board UART log
   `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b-uart/rpi4b-uart-20260417-233128.log`
   still ended at:
