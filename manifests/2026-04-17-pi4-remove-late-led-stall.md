@@ -6,6 +6,10 @@ The first real-board retry on the UART-continuity image proved that UART
 continuity was already fixed, and that the active late boot regression had
 moved forward into the remaining Pi 4 GPIO42 LED diagnostics.
 
+Coordination repo commit:
+
+- `81192db` `phase1: remove pi4 late led stall baseline`
+
 The new real-board log:
 
 - `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b-uart/rpi4b-uart-20260417-205209.log`
