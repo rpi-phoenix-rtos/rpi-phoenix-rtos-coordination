@@ -26,6 +26,7 @@ transition fix on top of it.
 
 ### `phoenix-rtos-kernel`
 
+- commit: `96526288`
 - rolled back the effective `_init.S` / `main.c` state from the later
   post-`ttbr1` / syspage experiments to the earlier `c0fd7ff7`-era baseline
   that had already produced `... X3NO` on real hardware
@@ -45,6 +46,7 @@ transition fix on top of it.
 
 ### `phoenix-rtos-project`
 
+- commit: `5218c40`
 - restored `PL011_TTY_EARLY_VADDR` in the Pi 4 board config so the proven
   post-MMU UART seam is available again
 
