@@ -10,6 +10,39 @@
 
 Latest rebuild and retest:
 
+- on `2026-04-17`, before spending another Pi 4 hardware retry, the early-kernel
+  MMU path was cross-checked again against public arm64 and Raspberry Pi bring-up
+  references:
+  - Linux arm64 `arch/arm64/kernel/head.S`
+  - Raspberry Pi forum TTBR1 / higher-half bring-up discussions
+  - Circle as the strongest Raspberry Pi bare-metal reference implementation
+  - EDK2 / U-Boot as sanity references for generic arm64 boot structure
+  - NuttX BCM2711 bring-up notes
+- strongest result from that cross-check:
+  - the current Phoenix change that builds and enables `TTBR1` before MMU-on is
+    aligned with the mainstream arm64 boot model; it does **not** look like an
+    exotic or suspect deviation anymore
+  - the strongest remaining publicly documented gap in Phoenix's early-kernel
+    path is instead page-table cache maintenance for tables populated while the
+    MMU is off
+- why this matters:
+  - Linux explicitly invalidates or cleans freshly populated page tables before
+    enabling the MMU because speculative cache lines can otherwise leave the page
+    table walker seeing stale contents
+  - Phoenix's current Pi 4 early-kernel path still does:
+    - table writes
+    - `dsb ish`
+    - `isb`
+    - MMU enable
+    without an explicit `dc ...` clean/invalidate pass over the newly written
+    TTBR0 / TTBR1 tables
+  - that is now the strongest well-known, source-backed hypothesis for the
+    hardware-only `A2 / KLM / X1 / X2 / X3` stall
+- practical implication:
+  - before the next real-board retry, the next strongest fix should be to add a
+    Linux-style cache-maintenance pass for the early translation tables rather
+    than adding more probes or running another blind hardware cycle
+
 - on `2026-04-17`, a follow-up artifact audit disproved the “stale SD image”
   theory for the rollback image:
   - the exported host image metadata matched

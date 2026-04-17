@@ -53,6 +53,77 @@ Important current UART facts from the official documentation:
   - `force_turbo=1`
   - `core_freq=250`
 
+## 1.2 Arm64 MMU And Higher-Half Boot References
+
+- Linux arm64 early boot:
+  <https://github.com/torvalds/linux/blob/master/arch/arm64/kernel/head.S>
+
+  Important current facts:
+
+  - Linux prepares both TTBRs before the final virtual switch rather than
+    toggling `TCR_EL1.EPD1` as a late runtime seam
+  - Linux uses the post-`SCTLR_EL1` sequence:
+    - `isb`
+    - `ic iallu`
+    - `dsb nsh`
+    - `isb`
+  - Linux explicitly performs cache maintenance on page tables populated while
+    the MMU is off because speculative cache lines can otherwise leave stale
+    entries visible to the page-table walker
+
+- Raspberry Pi forum: TTBR1 / higher-half bring-up pitfalls:
+  <https://forums.raspberrypi.com/viewtopic.php?t=322671>
+
+  Important current facts:
+
+  - the instruction stream must remain identity-mapped across MMU enable until
+    the explicit branch to the higher-half address
+  - observability immediately after MMU enable should still use the TTBR0 /
+    identity path first
+  - linking the kernel at a high virtual address does not mean the firmware
+    placed the image at a high physical address
+
+- Raspberry Pi forum: generic arm64 TTBR0 / TTBR1 split discussion:
+  <https://forums.raspberrypi.com/viewtopic.php?t=227139>
+
+  Important current facts:
+
+  - TTBR0 is the normal lower-half / identity mapping path during bring-up
+  - TTBR1 is the higher-half / virtual mapping path and is optional until the
+    kernel deliberately switches to it
+
+- Circle Raspberry Pi bare-metal environment:
+  <https://github.com/rsta2/circle>
+
+  Important current facts:
+
+  - Circle remains the strongest public Raspberry Pi bare-metal reference for
+    successful Pi 4 AArch64 bring-up
+  - Circle's published boot flow and required Pi 4 armstub reinforce that Pi 4
+    early-boot sequencing differs enough from generic arm64 that source-backed
+    comparisons are still worth doing before changing Phoenix
+
+- NuttX BCM2711 support and porting notes:
+  <https://nuttx.apache.org/docs/latest/platforms/arm64/bcm2711/index.html>
+  <https://nuttx.apache.org/docs/12.9.0/guides/porting-case-studies/bcm2711-rpi4b.html>
+
+  Important current facts:
+
+  - BCM2711 support is still documented there as experimental
+  - their porting notes reinforce that BCM2711 bring-up is mostly generic
+    arm64/GIC/MMU work plus Pi-4-specific peripheral mapping, not a wholly
+    custom CPU path
+
+- BCM2711 ARM Peripherals PDF:
+  <https://datasheets.raspberrypi.org/bcm2711/bcm2711-peripherals.pdf>
+
+  Important current facts:
+
+  - ARM-visible peripheral and UART behavior still come from the BCM2711
+    peripheral block, not from a Pi-4-specific CPU/MMU exception
+  - the PL011 clocking and peripheral-address model remain useful when checking
+    whether post-MMU MMIO mappings are plausible
+
 ## 2. Phoenix RTOS Upstream Repositories
 
 - Project umbrella:
