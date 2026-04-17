@@ -14,6 +14,12 @@ ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 
 PHASE_PATTERNS = [
     (
+        "phoenix_armstub",
+        [
+            r"\bAS0\b",
+        ],
+    ),
+    (
         "phoenix_trampoline",
         [
             r"\bTR0\b",
@@ -112,6 +118,8 @@ def classify(matches: list[dict[str, object]]) -> str:
         return "plo-boot"
     if "phoenix_trampoline" in phases:
         return "trampoline-copy"
+    if "phoenix_armstub" in phases:
+        return "armstub-handoff"
     if "firmware_second_stage" in phases or "eeprom_bootloader" in phases:
         return "firmware-load"
     return "unknown"
@@ -124,13 +132,22 @@ def collect_observations(lines: list[str], matches: list[dict[str, object]]) -> 
 
     saw_baud_switch = any("Set PL011 baud rate to 103448.300000 Hz" in line for line in stripped)
     saw_postswitch_phoenix = any(
-        phase in phases for phase in ("phoenix_trampoline", "phoenix_plo", "phoenix_kernel", "phoenix_userspace")
+        phase in phases
+        for phase in ("phoenix_armstub", "phoenix_trampoline", "phoenix_plo", "phoenix_kernel", "phoenix_userspace")
     )
+    saw_armstub = "phoenix_armstub" in phases
+    saw_trampoline = "phoenix_trampoline" in phases
 
     if saw_baud_switch and not saw_postswitch_phoenix:
         observations.append(
             "log reaches the firmware PL011 baud switch but shows no later Phoenix phases; rerun with "
             "capture-rpi4b-uart.sh --profile postswitch"
+        )
+
+    if saw_armstub and not saw_trampoline:
+        observations.append(
+            "armstub regained UART at 115200, but the reloc trampoline did not emit TR0..TR3; "
+            "failure is likely between the firmware entry handoff and trampoline entry"
         )
 
     return observations
@@ -186,6 +203,7 @@ def print_text(summary: dict[str, object]) -> None:
         print("- none")
     else:
         for phase in [
+            "phoenix_armstub",
             "phoenix_trampoline",
             "eeprom_bootloader",
             "firmware_second_stage",

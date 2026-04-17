@@ -2,76 +2,83 @@
 
 ## Metadata
 
-- Step ID: `STEP-0494`
-- Title: Await the next Pi 4 retry on the late-seam UART-reset image
+- Step ID: `STEP-0496`
+- Title: `Run the next Pi 4 retry on the UART-continuity image`
 - Status: `ready`
 - Date: `2026-04-17`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- run one new real-device Pi 4 retry on the narrower late-seam image
-- classify the late `plo` -> kernel handoff from the reduced `6..11` GPIO42 map
-- verify whether the earliest kernel UART reset restores readable post-handoff
-  serial output
+- run the next real-board retry on the refreshed image
+- prove whether execution continues from the custom armstub into the reloc
+  trampoline without depending on LED timing
+- keep the retry on one narrow question:
+  does the `firmware -> armstub -> trampoline` UART chain now stay readable?
 
 ## Scope
 
 In scope:
-- one new real-device retry on the refreshed image
+
+- one real-device retry on the refreshed image
+- firmware-profile UART capture
+- fallback postswitch capture only if needed
 - HDMI observation
-- GPIO42 / ACT LED pulse observation or recording
-- UART capture if any output remains visible after the kernel-side `115200`
-  reset
+- narrow classification from `AS0` and `TR0..TR3`
 
 Out of scope:
-- deeper userspace rollback before seeing the new boundary
-- unrelated pre-`plo` boot-model changes
-- another whole-boot LED protocol
+
+- new broad LED probe maps
+- deeper kernel/userspace diagnosis before verifying UART continuity
+- unrelated DTB/runtime refactors
 
 ## Acceptance Criteria
 
-- the refreshed image is tried on real hardware
-- the retry identifies the highest completed checkpoint among the documented
-  late-seam pulse groups
-- the retry also shows whether readable UART resumes at the new earliest kernel
-  reset point
-- the next engineering step can target one narrow seam instead of the whole
-  post-`plo` band
+- the refreshed image is actually tried on real hardware
+- the retry captures at least one raw UART log
+- the retry can distinguish at least:
+  - no post-firmware Phoenix UART
+  - armstub reached, trampoline not reached
+  - trampoline reached
 
 ## Validation Plan
 
-- flash `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
-- observe:
-  - HDMI output
-  - GPIO42 / ACT LED pulse groups
-  - any UART output after the kernel-side `115200` reset
-- if possible, record a close LED video for later analysis
+- on the next board retry:
+  - capture UART with `--profile firmware`
+  - look for `AS0`
+  - look for `TR0..TR3`
+  - use `--profile postswitch` only if the `firmware` run never resumes after
+    the firmware baud switch
 
 ## Rollback / Baseline
 
-- current bounded diagnostic image:
+- current image to test:
   `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
-  (SHA-256: `405396dbd5328393223787288d832cea98ca28c417eacc8b1cbea72d316760a9`)
-- prior restored-clock baseline:
-  `60e0aac62028e25c6f409839103e9cc500231855b8542eb579ea29db4f7e2fd7`
-- this step recorded in:
-  `manifests/2026-04-17-pi4-late-handoff-uart-reset-and-led-rescope.md`
+  (SHA-256: `8d4770cdf96a6af16fb1a1c85c75cdd267aff839caf8998f523dd2dac4a9ee15`)
+- previous late-seam LED/UART-reset image:
+  `405396dbd5328393223787288d832cea98ca28c417eacc8b1cbea72d316760a9`
 
 ## Notes
 
-- prior image analysis with the corrected count-based interpreter suggests the
-  broad `1..10` post-panel map was too perturbing and too noisy to decode
-  reliably
-- the current image keeps only the late seam:
-  - `6` `video_markKernelJump()` entry
-  - `7` `video_markKernelJump()` draw complete
-  - `8` just before `hal_exitToEL1()`
-  - `9` kernel `_start` after earliest UART reinit
-  - `10` kernel `_hal_init()` entry
-  - `11` kernel `main()` after `_hal_init()`
-- earliest kernel `_start` now reprograms PL011 to `115200` before the first
-  kernel UART breadcrumb on the Pi 4 `48 MHz` lane
-- QEMU remains non-regression green on this image:
-  - Pi 4 shell smoke: pass
-  - Pi 4 HDMI smoke: pass
+- the just-closed preparation step is recorded in:
+  `manifests/2026-04-17-pi4-uart-routing-and-continuity-fix.md`
+- official Raspberry Pi docs say Pi 4 should use `disable-bt` or `miniuart-bt`
+  to make PL011 `UART0` primary on `GPIO14/15`
+- the chosen current path is `dtoverlay=miniuart-bt` because it preserves a
+  Bluetooth lane while still making PL011 primary
+- official docs also require a fixed core clock with `miniuart-bt`, which is
+  why the image keeps:
+  - `force_turbo=1`
+  - `core_freq=250`
+- the real firmware still logs:
+  - `uart: Set PL011 baud rate to 103448.300000 Hz`
+- the current fix does not suppress that firmware behavior; it reinitializes
+  PL011 back to `115200` immediately in:
+  - `phoenix-armstub8-rpi4.S`
+  - `phoenix-kernel8-reloc.S`
+- the current first Phoenix-owned breadcrumbs are:
+  - `AS0`
+  - `TR0`
+  - `TR1`
+  - `TR2`
+  - `TR3`

@@ -50,5 +50,21 @@ for opt in start4db.elf fixup4db.dat start4cd.elf fixup4cd.dat; do
 	fi
 done
 
-find \"\$out_dir\" -maxdepth 1 -type f | sort
+rm -rf \"\$out_dir/overlays\"
+mkdir -p \"\$out_dir/overlays\"
+
+if grep -Eq '^dtoverlay=miniuart-bt$' \"\$staged_dir/config.txt\"; then
+	if [ ! -f \"\$firmware_dir/overlays/miniuart-bt.dtbo\" ]; then
+		printf 'missing firmware overlay: %s\n' \"\$firmware_dir/overlays/miniuart-bt.dtbo\" >&2
+		exit 1
+	fi
+
+	cp -f \"\$firmware_dir/overlays/miniuart-bt.dtbo\" \"\$out_dir/overlays/\"
+fi
+
+if [ -d \"\$staged_dir/overlays\" ]; then
+	cp -f \"\$staged_dir/overlays\"/*.dtbo \"\$out_dir/overlays/\" 2>/dev/null || true
+fi
+
+find \"\$out_dir\" -maxdepth 2 -type f | sort
 "

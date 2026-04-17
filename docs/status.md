@@ -10,6 +10,68 @@
 
 Latest rebuild and retest:
 
+- on `2026-04-17`, the current Pi 4 focus shifted back from LED-heavy late
+  seam probing to restoring usable UART continuity across the firmware handoff:
+  - explicit external re-check confirmed the official Raspberry Pi guidance for
+    Pi 4:
+    - `disable-bt` or `miniuart-bt` makes PL011 `UART0` the primary UART on
+      `GPIO14` / `GPIO15`
+    - `miniuart-bt` requires a fixed VPU/core clock such as `force_turbo=1` or
+      `core_freq=250`
+    - `init_uart_clock` defaults to `48000000` for `UART0`
+  - the working hypothesis is now:
+    - we do not need to stop the firmware from switching PL011 to
+      `103448.300000 Hz`
+    - we need to make PL011 the explicit primary UART on Pi 4, then
+      reinitialize it back to `115200` immediately after firmware handoff
+  - implemented in the current refreshed image:
+    - `config.txt` now stages:
+      - `init_uart_clock=48000000`
+      - `dtoverlay=miniuart-bt`
+      - `force_turbo=1`
+      - `core_freq=250`
+    - `build.project` now explicitly stages:
+      - `overlays/miniuart-bt.dtbo`
+    - `phoenix-armstub8-rpi4.S` now reinitializes PL011 to `115200` and emits:
+      - `AS0`
+    - `phoenix-kernel8-reloc.S` now reinitializes PL011 to `115200` and emits:
+      - `TR0`
+      - `TR1`
+      - `TR2`
+      - `TR3`
+    - the host UART summarizer now classifies:
+      - `AS0` as `phoenix_armstub`
+      - `TR0..TR3` as `phoenix_trampoline`
+  - important warning surfaced and fixed:
+    - the first exported image for this UART-routing step was incomplete
+      because the canonical bootfs assembler did not actually carry
+      `overlays/miniuart-bt.dtbo` into the exported FAT image
+    - `scripts/assemble-rpi4b-bootfs.sh` was hardened so the canonical export
+      path now explicitly copies that overlay whenever
+      `dtoverlay=miniuart-bt` is configured
+    - the final exported FAT image was then verified to contain:
+      - `overlays/miniuart-bt.dtbo`
+  - validation:
+    - `./scripts/rebuild-rpi4b-fast.sh --scope project --qemu-sanity`: pass
+    - `scripts/assemble-rpi4b-bootfs.sh`: pass
+    - `scripts/assemble-rpi4b-bootfs-img.sh`: pass
+    - `scripts/assemble-rpi4b-sdimg.sh`: pass
+    - `scripts/export-rpi4b-sdimg.sh`: pass
+    - `scripts/verify-rpi4b-sdimg.sh`: pass
+    - exported FAT image now contains:
+      - `overlays/miniuart-bt.dtbo`
+  - refreshed exported Pi 4 image:
+    - path: `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
+    - SHA-256: `8d4770cdf96a6af16fb1a1c85c75cdd267aff839caf8998f523dd2dac4a9ee15`
+  - next strongest step:
+    - flash image `8d4770cd...`
+    - capture UART with `--profile firmware`
+    - if the firmware baud switch is followed by:
+      - `AS0` only: failure is between armstub handoff and trampoline entry
+      - `TR0..TR3`: UART continuity is restored and the next blocker is later
+    - use `--profile postswitch` only if the `firmware` log never resumes after
+      the firmware baud switch
+
 - on `2026-04-17`, the long ACT-LED clip
   `/Users/witoldbolt/Downloads/IMG_7161.mov` from the earlier broad
   post-panel image was re-analyzed after the host-side LED interpreter was

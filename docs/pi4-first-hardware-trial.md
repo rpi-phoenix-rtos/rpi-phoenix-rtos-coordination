@@ -13,11 +13,10 @@ not instead of it.
 
 Current strong recommendation:
 
-- for the current bounded diagnostic image, use GPIO42 / ACT LED pulses plus
-  HDMI as the primary observability lane
-- keep UART capture in parallel if any output remains visible
-- the active image now uses only the late handoff seam, not the earlier broad
-  `1..10` panel-path map
+- for the current UART-continuity image, use UART as the primary observability
+  lane again
+- keep HDMI in parallel
+- use ACT LED only as fallback
 
 ## Current Artifact
 
@@ -27,10 +26,10 @@ Use this image:
 
 Current SHA-256:
 
-- `405396dbd5328393223787288d832cea98ca28c417eacc8b1cbea72d316760a9`
+- `8d4770cdf96a6af16fb1a1c85c75cdd267aff839caf8998f523dd2dac4a9ee15`
 
-This image supersedes the earlier broad post-panel diagnostic image
-`06c3756584acd2a06f9143caece9fc29b93a61b6fcab84a439e19b0fc3e16868`.
+This image supersedes the earlier late-seam LED image
+`405396dbd5328393223787288d832cea98ca28c417eacc8b1cbea72d316760a9`.
 
 This image now intentionally uses:
 
@@ -44,20 +43,27 @@ This image now intentionally uses:
   - `enable_uart=1`
   - `uart_2ndstage=1`
   - `init_uart_baud=115200`
-- kernel PL011 hardcoding at `115200`
-- earliest kernel `_start` now also reprograms PL011 back to `115200` on the
+- `init_uart_clock=48000000`
+- `dtoverlay=miniuart-bt`
+- temporary Pi 4 clock pinning for UART stability:
+  - `force_turbo=1`
+  - `core_freq=250`
+- firmware overlay staging now explicitly includes:
+  - `overlays/miniuart-bt.dtbo`
+- earliest Pi 4 armstub now reinitializes PL011 back to `115200` and emits:
+  - `AS0`
+- reloc trampoline now reinitializes PL011 back to `115200` and emits:
+  - `TR0`
+  - `TR1`
+  - `TR2`
+  - `TR3`
+- earliest kernel `_start` still reprograms PL011 back to `115200` on the
   Pi 4 `48 MHz` PL011 lane before the first kernel UART breadcrumb
-- bounded Pi 4 GPIO42 pulse checkpoints only at the late seam:
-  - `video_markKernelJump()`
-  - final pre-`hal_exitToEL1()` handoff
-  - kernel `_start`
-  - kernel `_hal_init()`
-  - kernel `main()` immediately after `_hal_init()`
 
 Historical note:
 
-- the older compact GPIO42 stage-code map remains historical context only
-- it is not the active decode layout for this image
+- the older GPIO42 stage maps remain historical context only
+- they are not the active primary decode layout for this image
 - custom Pi 4 armstub EL3 preparation:
   - local timer control / prescaler
   - `CNTFRQ_EL0 = 54000000`
@@ -81,8 +87,8 @@ Historical note:
   - that trampoline now copies the embedded `plo` payload to `0x40080000`,
     preserves the DTB pointer in `x0`, and only then branches to the real
     high-linked `plo`
-  - the trampoline now intentionally keeps the firmware-programmed post-switch
-    PL011 rate instead of reprogramming UART again
+  - a previous experimental image intentionally kept the firmware-programmed
+    post-switch PL011 rate; that is no longer the active UART strategy
   - the armstub now keeps only `dsb sy; isb` immediately before the final
     branch
   - the firmware DTB pointer is now preserved into earliest generic `plo` and
@@ -137,15 +143,6 @@ Historical note:
   - `0xff841000`
   - `0xff842000`
 
-Current bounded pulse map:
-
-- `6`: `video_markKernelJump()` entry
-- `7`: `video_markKernelJump()` draw complete
-- `8`: final pre-`hal_exitToEL1()` handoff
-- `9`: kernel `_start`
-- `10`: kernel `_hal_init()` entry
-- `11`: kernel `main()` immediately after `_hal_init()`
-
 Do not reuse older on-card `config.txt` edits. Reflash the whole image instead.
 
 ## Hardware Setup
@@ -182,40 +179,33 @@ Current UART wiring:
 5. Optionally connect Ethernet.
 6. If a USB-TTL cable is available, start UART capture before power-on:
    - [capture-rpi4b-uart.sh](/Users/witoldbolt/phoenix-rpi/scripts/capture-rpi4b-uart.sh) `--list`
-   - firmware-side evidence:
+   - primary run:
      [capture-rpi4b-uart.sh](/Users/witoldbolt/phoenix-rpi/scripts/capture-rpi4b-uart.sh) `--profile firmware --device /dev/cu.usbserial-XXXX --label pi4-firmware`
-   - current higher-value post-switch run for the active kernel-entry boundary:
+   - only if the firmware-profile run still becomes unreadable after the baud
+     switch with no later `AS0` or `TR0..TR3`:
      [capture-rpi4b-uart.sh](/Users/witoldbolt/phoenix-rpi/scripts/capture-rpi4b-uart.sh) `--profile postswitch --device /dev/cu.usbserial-XXXX --label pi4-postswitch`
    - if you want earlier EEPROM messages than `uart_2ndstage`, enable
      `BOOT_UART=1` in the Raspberry Pi EEPROM on a known-good Raspberry Pi OS
      card first
-7. Start a close ACT-LED video before power-on and keep the LED visible for at
-   least 60 seconds.
+7. Optionally start a close ACT-LED video before power-on for fallback
+   evidence, but do not treat it as the primary lane for this image.
 8. Power on the board.
-9. Keep the video running until the pulse sequence clearly stops.
-   The current host-side decode workflow is:
-   - [scripts/analyze-rpi4-actled-video.py](/Users/witoldbolt/phoenix-rpi/scripts/analyze-rpi4-actled-video.py)
-   - [scripts/interpret-rpi4-actled-analysis.py](/Users/witoldbolt/phoenix-rpi/scripts/interpret-rpi4-actled-analysis.py)
-   - [scripts/rpi4_actled_probe_layout.py](/Users/witoldbolt/phoenix-rpi/scripts/rpi4_actled_probe_layout.py)
-   Recommended use:
-   - `scripts/analyze-rpi4-actled-video.py --pretty /path/to/IMG_xxxx.mov > /tmp/pi4-led.json`
-   - `scripts/interpret-rpi4-actled-analysis.py /tmp/pi4-led.json`
-   Interpretation rule:
-   - on this image, treat the pulses as simple count groups, not compact
-     stage-code bursts
-   - the current host-side LED toolchain again understands the active count map
-   - count the highest clearly completed pulse group after power-on
-10. Wait at least 90 seconds before classifying a silent result on the current
-   image.
-11. After the trial, summarize the UART log if one was captured:
+9. Wait for either readable UART after the firmware handoff or a stable HDMI
+   state. If the current image does not show new UART or HDMI changes within
+   about 90 seconds, classify it as stuck.
+10. After the trial, summarize the UART log if one was captured:
    - [summarize-rpi4b-uart-log.py](/Users/witoldbolt/phoenix-rpi/scripts/summarize-rpi4b-uart-log.py) `/path/to/log`
-   - if a firmware-profile log stops at the PL011 baud-switch line, the helper
-     now tells you to rerun with `--profile postswitch`
-12. If text or prompt appears, try:
+   - the helper now recognizes:
+     - `AS0` as `phoenix_armstub`
+     - `TR0..TR3` as `phoenix_trampoline`
+   - if a firmware-profile log stops at the PL011 baud-switch line and never
+     resumes with `AS0` or `TR0..TR3`, the helper still tells you to rerun with
+     `--profile postswitch`
+11. If text or prompt appears, try:
    - `help`
    - `ps`
    - `ls /`
-13. Record the outcome using the template below.
+12. Record the outcome using the template below.
 
 ## Expected Positive Signs
 
@@ -223,10 +213,9 @@ Any of these are useful:
 
 - early EEPROM bootloader UART output
 - firmware second-stage UART output
+- readable armstub UART `AS0`
 - later Phoenix `plo`, kernel, or shell UART output
 - trampoline UART breadcrumbs `TR0..TR3`
-- clearly separated GPIO42 pulse groups
-- a highest completed checkpoint count from `1..10`
 - visible top-left early panel from `plo`
 - black background with white text
 - readable Phoenix boot output
@@ -248,16 +237,17 @@ Use one primary class:
   prompt appears and at least one command works
 - `reboot-loop`
 
-## Current Pulse Interpretation Rule
+## Current UART Interpretation Rule
 
-- reaches `6` but not `7`:
-  failure is inside or immediately after `video_markKernelJump()`
-- reaches `7` but not `8`:
-  failure is between `video_markKernelJump()` and kernel entry
-- reaches `8` but not `9`:
-  failure is between the final `plo` handoff and the first kernel instruction
-- reaches `9` but not `10`:
-  kernel dies before `_hal_init()`
+- firmware log reaches the `103448.300000 Hz` switch and then resumes with
+  `AS0`:
+  armstub regained UART after the firmware handoff
+- `AS0` appears but no `TR0`:
+  failure is between armstub handoff and trampoline entry
+- `TR0..TR3` appear:
+  reloc trampoline is running and UART continuity is restored into Phoenix
+- `TR3` appears but no later Phoenix text:
+  failure is after the trampoline branch into `plo`
 - reaches `10` but not `11`:
   kernel dies inside `_hal_init()`
 - reaches `11`:

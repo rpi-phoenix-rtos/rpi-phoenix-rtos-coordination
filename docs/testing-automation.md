@@ -80,29 +80,39 @@
   - summarize the log after the run instead of trimming it manually
   - let the helper choose the tool in normal use; it now prefers `tio`
     automatically and falls back to `picocom` only when needed
-  - for the current bounded late-boot diagnostic image, still start with
-    `--profile firmware`
-  - use `--profile postswitch` only as a fallback if a new real-board run still
-    proves the firmware is overriding the configured baud rate
-  - the current active image again uses bounded GPIO42 pulse groups around the
-    final `plo` -> kernel seam, so LED video is again a primary lane for the
-    next retry
+  - for the current Pi 4 UART-continuity image, start with `--profile firmware`
+  - expect the log to become unreadable at the firmware PL011 switch and then
+    become readable again only if the new armstub or trampoline UART reset is
+    working
+  - use `--profile postswitch` only as a fallback if the firmware-profile run
+    still never resumes with later Phoenix breadcrumbs
+  - keep HDMI in parallel
+  - use ACT-LED video only as fallback evidence on this image
 - current Pi 4 firmware/config prerequisites:
   - the Phoenix Pi 4 `config.txt` already sets:
     - `enable_uart=1`
     - `uart_2ndstage=1`
+    - `init_uart_baud=115200`
+    - `init_uart_clock=48000000`
+    - `dtoverlay=miniuart-bt`
+    - `force_turbo=1`
+    - `core_freq=250`
   - if earlier bootloader output is needed, enable Raspberry Pi EEPROM:
     - `BOOT_UART=1`
-- current trampoline UART breadcrumbs to look for on the latest image:
+- current armstub and trampoline UART breadcrumbs to look for on the latest image:
+  - `AS0`: armstub regained PL011 at `115200`
   - `TR0`: relocatable `kernel8.img` entry
   - `TR1`: embedded `plo` copy started
   - `TR2`: copy plus cache maintenance complete
   - `TR3`: branch to the real high-linked `plo`
 - current expected UART behavior on the stabilized Pi 4 lane:
-  - `config.txt` now requests `init_uart_baud=115200`
-  - the kernel PL011 init path is also hardcoded to `115200`
-  - so the primary expected capture mode is now `115200 8N1`
-  - keep `postswitch` available only as a regression-recovery fallback
+  - firmware still retunes PL011 to about `103448.3`
+  - the current fix path does not try to suppress that firmware change
+  - instead, the custom Pi 4 armstub and reloc trampoline now reprogram PL011
+    back to `115200`
+  - so the primary expected capture mode is still `115200 8N1`
+  - the correct success condition is a `firmware`-profile log that resumes with
+    `AS0` and then `TR0..TR3` after the firmware baud-switch line
 
 Current recommended command sequence:
 
@@ -110,16 +120,18 @@ Current recommended command sequence:
   - [scripts/capture-rpi4b-uart.sh](/Users/witoldbolt/phoenix-rpi/scripts/capture-rpi4b-uart.sh) `--list`
 - capture a firmware-side trial:
   - [scripts/capture-rpi4b-uart.sh](/Users/witoldbolt/phoenix-rpi/scripts/capture-rpi4b-uart.sh) `--profile firmware --device /dev/cu.usbserial-XXXX --label pi4-firmware`
-- if the firmware unexpectedly still switches baud and the `firmware` log cuts
-  off, retry with:
+- if the firmware-profile log never resumes with `AS0` or `TR0..TR3`, retry
+  with:
   - [scripts/capture-rpi4b-uart.sh](/Users/witoldbolt/phoenix-rpi/scripts/capture-rpi4b-uart.sh) `--profile postswitch --device /dev/cu.usbserial-XXXX --label pi4-postswitch`
 - if you must force a specific tool:
   - [scripts/capture-rpi4b-uart.sh](/Users/witoldbolt/phoenix-rpi/scripts/capture-rpi4b-uart.sh) `--tool tio ...`
   - [scripts/capture-rpi4b-uart.sh](/Users/witoldbolt/phoenix-rpi/scripts/capture-rpi4b-uart.sh) `--tool picocom ...`
 - summarize:
   - [scripts/summarize-rpi4b-uart-log.py](/Users/witoldbolt/phoenix-rpi/scripts/summarize-rpi4b-uart-log.py) `/path/to/log`
-  - current summary helper now classifies `TR0..TR3` as `phoenix_trampoline`
-    and a `trampoline-copy` failure class
+  - current summary helper now classifies:
+    - `AS0` as `phoenix_armstub`
+    - `TR0..TR3` as `phoenix_trampoline`
+  - it now reports `armstub-handoff` if only `AS0` is seen
   - it still recommends a `--profile postswitch` rerun when a log stops at the
     firmware PL011 baud switch without later Phoenix phases
 - current Pi 4 SD-image verification rule:

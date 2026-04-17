@@ -686,8 +686,9 @@ Current practical rules:
 - current expected serial mode is `115200 8N1`
 - start UART capture before powering the board on
 - preserve the raw log file; summarize it after capture instead of trimming it
-- on the current bounded Pi 4 diagnostic image, GPIO42 / ACT LED pulses are
-  again part of the primary observability lane
+- on the current Pi 4 UART-continuity image, UART is the primary lane again
+- use HDMI in parallel
+- use GPIO42 / ACT LED only as fallback evidence
 - the canonical helper now prefers `tio` automatically when it is installed
 - the helper keeps `picocom` as a fallback when explicitly requested or when
   `--exit-after` is used for local dry runs
@@ -700,7 +701,7 @@ Recommended operator flow:
    - [capture-rpi4b-uart.sh](/Users/witoldbolt/phoenix-rpi/scripts/capture-rpi4b-uart.sh) `--list`
 2. start the normal `115200` capture before power-on:
    - [capture-rpi4b-uart.sh](/Users/witoldbolt/phoenix-rpi/scripts/capture-rpi4b-uart.sh) `--profile firmware --device /dev/cu.usbserial-XXXX --label pi4-firmware`
-3. only if that log still stops at a firmware baud-switch line, rerun with:
+3. only if that log never resumes with `AS0` or `TR0..TR3`, rerun with:
    - [capture-rpi4b-uart.sh](/Users/witoldbolt/phoenix-rpi/scripts/capture-rpi4b-uart.sh) `--profile postswitch --device /dev/cu.usbserial-XXXX --label pi4-postswitch`
 4. exit the terminal tool after the trial with:
    - `Ctrl-T` then `Q` when the helper selected `tio`
@@ -708,37 +709,38 @@ Recommended operator flow:
 5. summarize the raw log:
    - [summarize-rpi4b-uart-log.py](/Users/witoldbolt/phoenix-rpi/scripts/summarize-rpi4b-uart-log.py) `/path/to/log`
 
-Current late-boot bounded LED rule:
+Current fallback LED rule:
 
-- the current image does not use the older compact stage-code ACT protocol
-- it uses simple Pi 4-only pulse groups only at the late handoff seam:
-  - `6`: `video_markKernelJump()` entry
-  - `7`: `video_markKernelJump()` draw complete
-  - `8`: final pre-`hal_exitToEL1()` handoff
-  - `9`: kernel `_start`
-  - `10`: kernel `_hal_init()` entry
-  - `11`: kernel `main()` after `_hal_init()`
-- for the next retry, count the highest clearly completed pulse group
-- if UART remains silent, use that count plus the HDMI state as the primary
-  classification evidence
+- if UART still proves unusable on a given retry, preserve a close ACT-LED
+  video as fallback evidence
+- do not treat LED as the primary decode lane for the current image
 
 Current UART-output expectations:
 
 - the current Phoenix Pi 4 `config.txt` already enables:
   - `enable_uart=1`
   - `uart_2ndstage=1`
+  - `init_uart_baud=115200`
+  - `init_uart_clock=48000000`
+  - `dtoverlay=miniuart-bt`
+  - `force_turbo=1`
+  - `core_freq=250`
 - so a working cable should help even without EEPROM debug, because the
-  firmware second stage and any later Phoenix serial path can become visible
+  firmware second stage, custom armstub, reloc trampoline, and later Phoenix
+  serial path can become visible
 - on the current image, the first Phoenix-owned UART breadcrumbs should now be:
+  - `AS0`
   - `TR0`
   - `TR1`
   - `TR2`
   - `TR3`
 - current expected real-board UART behavior on the stabilized image:
-  - `config.txt` requests `init_uart_baud=115200`
-  - the kernel PL011 init path is also hardcoded to `115200`
-  - so the normal expectation is one readable `115200` capture through later
-    Phoenix boot
+  - firmware still retunes PL011 to about `103448.3`
+  - the current fix path does not try to prevent that firmware switch
+  - instead, the custom Pi 4 armstub and reloc trampoline now reprogram PL011
+    back to `115200`
+  - so the normal expectation is a `firmware`-profile log that resumes after
+    the baud-switch line with `AS0` and then `TR0..TR3`
 - fallback rule:
   - if a `firmware` log still ends at a PL011 baud-switch line, run the
     matching `postswitch` capture before classifying missing later output

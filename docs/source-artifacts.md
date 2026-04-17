@@ -41,6 +41,17 @@ Important current UART facts from the official documentation:
 - `BOOT_UART=1` enables bootloader UART debug on `GPIO14` and `GPIO15`
 - the official receiving terminal configuration is `115200 8N1`
 - `sudo -E rpi-eeprom-config --edit` is the standard EEPROM edit/apply path
+- on Raspberry Pi 4, `disable-bt` or `miniuart-bt` makes PL011 `UART0` the
+  primary UART on `GPIO14` and `GPIO15`
+- `miniuart-bt` requires a fixed VPU core clock such as `force_turbo=1` or
+  `core_freq=250`
+- `init_uart_clock` defaults to `48000000` and applies to `UART0`
+- for the current Phoenix Pi 4 lane, these upstream facts are why the staged
+  boot image now carries:
+  - `dtoverlay=miniuart-bt`
+  - `init_uart_clock=48000000`
+  - `force_turbo=1`
+  - `core_freq=250`
 
 ## 2. Phoenix RTOS Upstream Repositories
 
