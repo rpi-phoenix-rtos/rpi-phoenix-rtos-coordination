@@ -11,6 +11,50 @@
 Latest rebuild and retest:
 
 - on `2026-04-17`, the next real-board UART log
+  `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b-uart/rpi4b-uart-20260417-221842.log`
+  showed no recovery from the prior regression:
+  - the raw tail still ends at:
+    - `A2`
+    - `KLM`
+    - `X1`
+    - `X2`
+    - `X3`
+  - and still does not reach:
+    - `N`
+    - `O`
+    - `U`
+    - `V`
+    - `W`
+    - `Z`
+    - `Y`
+    - `P`
+  - important correction:
+    - rechecking the earlier logs with the same strict standalone-marker method
+      confirmed that the earlier `NO` was real output after `X3`, not a false
+      positive from substring matches
+  - strongest conclusion:
+    - the enlarged `_hal_syspageCopied = 16 * SIZE_PAGE` change is also part
+      of the regression set, because it is the only remaining material
+      difference before the missing `N` marker
+  - follow-up fix applied:
+    - kept the restored post-MMU syspage copy seam and the finer `U V W Z Y P`
+      UART breadcrumbs
+    - reverted `_hal_syspageCopied` back from `16 * SIZE_PAGE` to `SIZE_PAGE`
+      in `/Users/witoldbolt/phoenix-rpi/sources/phoenix-rtos-kernel/hal/aarch64/_init.S`
+  - validation:
+    - `./scripts/rebuild-rpi4b-fast.sh --scope core --qemu-sanity`: pass
+    - canonical export: pass
+    - FAT-aware verify: pass
+  - refreshed exported Pi 4 image:
+    - path: `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
+    - SHA-256: `51d4f610d6bbc7778e5de165add6ff0be908879396da859f75323aef14fb6d8c`
+  - next strongest step:
+    - flash image `51d4f610...`
+    - capture UART with the canonical helper
+    - check first whether the boundary returns to `... NO`, and then whether it
+      advances into `U V W Z Y P`
+
+- on `2026-04-17`, the next real-board UART log
   `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b-uart/rpi4b-uart-20260417-220842.log`
   proved that the previous semantic change was a regression:
   - the raw tail regressed from:

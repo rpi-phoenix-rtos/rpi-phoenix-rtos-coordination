@@ -2,8 +2,8 @@
 
 ## Metadata
 
-- Step ID: `STEP-0503`
-- Title: `Retry Pi 4 on the post-MMU syspage split image`
+- Step ID: `STEP-0504`
+- Title: `Retry Pi 4 after reverting the syspage-buffer regression`
 - Status: `ready`
 - Date: `2026-04-17`
 - Milestone / phase: `Phase 1`
@@ -11,8 +11,8 @@
 ## Objective
 
 - retry the Pi 4 with the refreshed image that restores the original post-MMU
-  syspage copy, keeps the larger backing buffer, and splits the old `O -> P`
-  seam with finer UART breadcrumbs
+  syspage copy seam and also restores the original one-page syspage backing,
+  while keeping the finer UART breadcrumbs inside `O -> P`
 - verify whether the active boundary moves past:
   - the old `... NO` seam
   - post-MMU syspage variable initialization
@@ -40,8 +40,8 @@ Out of scope:
 
 - the refreshed image is tried on real hardware
 - the retry captures at least one raw UART log
-- the retry shows whether the raw tail still stops before `P` or advances
-  through the narrower `OUVWZYP` seam
+- the retry shows whether the raw tail returns from `... X3` to at least
+  `... NO`, or advances further through the narrower `OUVWZYP` seam
 - the next engineering change can target one precise sub-band of the kernel
   MMU-to-`main()` path
 
@@ -70,13 +70,13 @@ Out of scope:
 
 - current exported image to test:
   `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
-  (SHA-256: `4d3d4860eaba47566e0d7c190b2809dc477d80ae8d63fb43b9adee923c742583`)
+  (SHA-256: `51d4f610d6bbc7778e5de165add6ff0be908879396da859f75323aef14fb6d8c`)
 
 ## Notes
 
 - the latest real-board UART log
-  `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b-uart/rpi4b-uart-20260417-220842.log`
-  proved the previous semantic change was a regression:
+  `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b-uart/rpi4b-uart-20260417-221842.log`
+  proved the previous enlarged syspage buffer was also part of the regression:
   - the raw tail regressed from:
     - `A2`
     - `KLM`
@@ -93,11 +93,11 @@ Out of scope:
 - that means:
   - moving the syspage copy before the MMU jump made the live hardware
     boundary earlier
-  - the larger syspage backing buffer may still be useful, but the copy should
-    return to the original post-MMU seam
+  - keeping `_hal_syspageCopied = 16 * SIZE_PAGE` was still enough to hold the
+    boundary at `... X3`, so that BSS-layout change is also not safe yet
 - the refreshed image therefore:
-  - restores the post-MMU copy in `_core_0_virtual`
-  - keeps `_hal_syspageCopied = 16 * SIZE_PAGE`
+  - keeps the restored post-MMU copy in `_core_0_virtual`
+  - reverts `_hal_syspageCopied` back to `SIZE_PAGE`
   - adds finer UART breadcrumbs:
     - `U` after `relOffs` store
     - `V` after `hal_syspage` store
