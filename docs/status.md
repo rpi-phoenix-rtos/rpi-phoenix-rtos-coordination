@@ -10,6 +10,67 @@
 
 Latest rebuild and retest:
 
+- on `2026-04-17`, the next real-board UART log
+  `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b-uart/rpi4b-uart-20260417-211048.log`
+  proved that the no-LED cleanup moved the active boundary again:
+  - the live log now reaches:
+    - `AS0`
+    - `TR0`
+    - `TR1`
+    - `TR2`
+    - `TR3`
+    - `hal: jump entry`
+    - `hal: jump irq off`
+    - `hal: jump exit el1`
+    - `A2`
+    - `KLM`
+  - `A2` is not a kernel marker; it is the `plo` EL2 exit marker in
+    `plo/hal/aarch64/generic/_init.S`
+  - `KLM` are kernel `_start` breadcrumbs in
+    `phoenix-rtos-kernel/hal/aarch64/_init.S`
+  - the absence of:
+    - `main: hal init done`
+    - `Phoenix-RTOS microkernel`
+    - `console: pl011 init done`
+    means the active blocker is now after kernel breadcrumb `M` and before
+    `main()`
+  - strongest root-cause hypothesis:
+    - the current silent gap is in the kernel MMU / `ttbr1` / `_core_0_virtual`
+      / syspage-copy / early-stack handoff band, not in firmware, trampoline,
+      or `plo`
+  - bounded fix applied:
+    - added a fixed temporary post-MMU PL011 virtual mapping
+      (`0xffffffffffe00000`) for Pi 4 kernel diagnostics
+    - added new kernel UART breadcrumbs:
+      - `N` after `ttbr1`-backed post-MMU UART becomes valid
+      - `O` at `_core_0_virtual`
+      - `P` after syspage copy
+      - `Q` after `_set_up_vbar_and_stacks`
+      - `R` immediately before `b main`
+      - `S` at the first instruction of `main()`
+  - validation:
+    - `./scripts/rebuild-rpi4b-fast.sh --scope core --qemu-sanity`: pass
+    - QEMU now reaches:
+      - `hal: jump exit el1`
+      - `A3`
+      - `KLMNOPQRSconsole: pl011 init done`
+    - canonical export: pass
+    - FAT-aware verify: pass
+  - refreshed exported Pi 4 image:
+    - path: `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
+    - SHA-256: `6638e81ec8052beb23bb83a02340b1a1cc3a1e4914ce2c0779b949c04d275c9a`
+  - next strongest step:
+    - flash image `6638e81e...`
+    - capture UART with the canonical helper
+    - classify the next real-board boundary from:
+      - `KLM`
+      - `KLMN`
+      - `KLMNO`
+      - `KLMNOP`
+      - `KLMNOPQ`
+      - `KLMNOPQR`
+      - `KLMNOPQRS`
+
 - on `2026-04-17`, the first real-board retry on the UART-continuity image
   proved that the UART fix already paid back:
   - live log:
