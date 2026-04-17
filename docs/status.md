@@ -10,6 +10,50 @@
 
 Latest rebuild and retest:
 
+- on `2026-04-17`, after the public MMU cross-check, the strongest next
+  source-backed fix was applied in
+  `/Users/witoldbolt/phoenix-rpi/sources/phoenix-rtos-kernel/hal/aarch64/_init.S`:
+  - add a Linux-style pre-MMU cache-maintenance pass over the contiguous early
+    kernel MMU region:
+    - `PMAP_COMMON_KERNEL_TTL2`
+    - `PMAP_COMMON_KERNEL_TTL3`
+    - `PMAP_COMMON_DEVICES_TTL3`
+    - `PMAP_COMMON_SCRATCH_TT`
+    - `PMAP_COMMON_SCRATCH_PAGE`
+  - implementation detail:
+    - a new `_inval_dcache_range` helper uses `dc ivac` over `[x0, x1)` with
+      the cache-line size taken from `CTR_EL0`
+    - the call is placed after all early table writes and before MMU-on
+- why this is now the strongest live fix:
+  - Linux arm64 explicitly invalidates page tables built with the MMU off to
+    remove speculatively loaded cache lines before the page-table walker uses
+    them
+  - the prior Phoenix image still stalled on real hardware at
+    `A2 / KLM / X1 / X2 / X3` even after the `TTBR1`-from-start restructure
+  - no stronger publicly documented BCM2711-specific MMU rule was found in the
+    cross-check against Linux, Circle, Raspberry Pi forum bring-up threads,
+    NuttX, EDK2, and U-Boot
+- validation:
+  - `./scripts/rebuild-rpi4b-fast.sh --scope core --qemu-sanity`: pass
+  - `./scripts/qemu-shell-smoke.sh rpi4b`: pass
+  - canonical export: pass
+  - FAT-aware verify: pass
+- warning surfaced this session:
+  - the `--qemu-sanity` captured tail still showed only `A3` and `KLM`, even
+    though the explicit Pi 4 shell smoke reached `(psh)%`
+  - interpretation:
+    - the broad rebuild helper's captured serial tail is not sufficient by
+      itself to prove the final runtime boundary on this lane
+    - the explicit Pi 4 shell smoke remains the stronger QEMU check here
+- refreshed exported Pi 4 image:
+  - path: `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
+  - SHA-256: `14553eb250414b6b93e72cca44f280aac88d5162fdb57aa7f6ae9a659c3e68b5`
+- next strongest step:
+  - flash image `14553eb2...`
+  - capture UART with the canonical helper
+  - verify whether the hardware path finally moves beyond the old
+    `A2 / KLM / X1 / X2 / X3` seam
+
 - on `2026-04-17`, before spending another Pi 4 hardware retry, the early-kernel
   MMU path was cross-checked again against public arm64 and Raspberry Pi bring-up
   references:
