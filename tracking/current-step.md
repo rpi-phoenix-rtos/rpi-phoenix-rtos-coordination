@@ -2,56 +2,56 @@
 
 ## Metadata
 
-- Step ID: `STEP-0517`
-- Title: `Re-freeze the restored Pi 4 X3NO baseline after the failed O-to-P re-split`
+- Step ID: `STEP-0518`
+- Title: `Verify Pi 4 recovery from UART identity-map and SMP regressions`
 - Status: `in_progress`
-- Date: `2026-04-18`
+- Date: `2026-04-19`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- remove the regressing `U / V / W / Z / Y / P` post-MMU re-split and return
-  the active image to the last objectively better hardware seam
-- rebuild, export, and verify a fresh SD image from the restored `... X3NO`
-  baseline so later retries do not accidentally reuse the regressed image
-- record clearly that the fine `NO -> P` re-split was a negative result on
-  real hardware
+- verify that the fix for `EARLY_UART_DEVICE_BLOCK` (L1 block descriptor)
+  resolves the hang at `X3`
+- verify that enabling SMP for A72 and switching to Non-shareable early boot
+  memory improves stability
+- regain post-MMU UART visibility and ideally proceed to the kernel banner
+- capture diagnostic data if any further early exceptions occur
 
 ## Scope
 
 In scope:
 
-- restoring the kernel early-MMU path to the last better `X3NO` lineage
-- rebuilding, exporting, and verifying the refreshed rollback image
-- recording the real-board regression evidence from the failed re-split image
-- tracker and manifest updates recording the real-board evidence
+- validation of the `phoenix-rtos-kernel` fixes in `_init.S`
+- one rebuilt and re-exported Pi 4 image
+- one real-device UART retry on that image
 
 Out of scope:
 
-- introducing another speculative MMU or post-MMU probe on top of the
-  regressed image
-- restarting broad probe churn from the weaker `3C` baseline
-- unrelated cleanup in `plo`, armstub, DTB parsing, or user-space services
+- broad peripheral driver work
+- unrelated `plo` refactoring
 
 ## Acceptance Criteria
 
-- the regressing `U / V / W / Z / Y / P` split is removed from the active
-  kernel tree
-- a fresh exported SD image exists from the restored `X3NO` lineage
-- the docs record:
-  - the failing log from the re-split image
-  - the refreshed rollback image SHA
-  - the fact that `STEP-0516` is now a disproved hardware experiment
+- the boot process proceeds beyond marker `X3`
+- markers `N` (78) and `O` (79) are visible on real hardware
+- the kernel reaches `main()` or emits a valid exception report (EX=...)
+- the `... X3NO` baseline is not only restored but advanced
 
 ## Validation Plan
 
-- flash image:
-  - `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
-  - SHA-256 `576bacf524d115f8f99361d0434eac32a92d0f1354f8169fb5c7fa24502f39d8`
+- rebuild and flash:
+  `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
 - capture UART with:
   - `/Users/witoldbolt/phoenix-rpi/scripts/capture-rpi4b-uart.sh`
-- summarize with:
-  - `/Users/witoldbolt/phoenix-rpi/scripts/summarize-rpi4b-uart-log.py`
+- inspect for:
+  - `X3`
+  - `N`
+  - `O`
+  - `P`
+  - `Q`
+  - `R`
+  - `S`
+  - kernel banner
 
 ## Rollback / Baseline
 

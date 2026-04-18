@@ -10,6 +10,26 @@
 
 Latest rebuild and retest:
 
+- on `2026-04-19`, the latest real-board UART log
+  `artifacts/rpi4b-uart/rpi4b-uart-20260418-235652.log`
+  showed a persistent hang at `X3` immediately after MMU-on.
+- critical bugs and regressions identified:
+  - **UART Identity Map Table/Block mismatch:** The UART was being mapped in
+    the L1 identity table using a TABLE descriptor (bit 1=1), causing the CPU
+    to walk into garbage data instead of reaching the UART registers.
+  - **Missing SMP bit for A72:** SMP coherency was not enabled for the Pi 4
+    cores, causing issues with `Inner Shareable` memory.
+  - **Removed Zeroing:** A previous fix to zero `PMAP_COMMON_SCRATCH_TT` had
+    been accidentally reverted.
+- fixes applied:
+  - **Fixed L1 identity mapping descriptors** to use BLOCK type for UART.
+  - **Enabled SMP bit in `CPUECTLR_EL1`** for Cortex-A72.
+  - **Restored `SCRATCH_TT` zeroing** and the **early exception handler**.
+  - **Switched `TCR_EL1` to Non-shareable** for early boot robustness.
+- validation:
+  - refreshed Pi 4 image: (pending build and export)
+  - next step: verify progress past `X3` and into `N`, `O`, `P` markers.
+
 - on `2026-04-18`, the fine `NO -> P` re-split image
   `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
   with SHA-256 `ff1b0ca7b4bb89f4f8812537750487566160fc4e583368748976f80b4c200cb4`
