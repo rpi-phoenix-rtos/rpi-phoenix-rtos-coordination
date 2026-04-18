@@ -2,20 +2,20 @@
 
 ## Metadata
 
-- Step ID: `STEP-0514`
-- Title: `Validate the deterministic TTBR0 Pi 4 bootstrap image on real hardware`
+- Step ID: `STEP-0515`
+- Title: `Validate the rollback to the last objectively better Pi 4 MMU seam`
 - Status: `in_progress`
 - Date: `2026-04-18`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- validate on the real Pi 4 that the new deterministic TTBR0 bootstrap map
-  moves the board beyond the long-standing `3C` boundary
-- test a simpler low-memory-first MMU bootstrap model after the identity-first
-  branch-sequencing change proved neutral on hardware
-- keep the software baseline frozen unless the first retry on this image also
-  proves ineffective
+- validate on the real Pi 4 that the selective rollback returns the board to
+  the last objectively better hardware seam, `... X3NO`
+- stop burning retries on the weaker `3C` baseline now that the tracker shows a
+  clear last-better checkpoint in git history
+- use the rollback image as the new comparison point for any fresh follow-up
+  ideas
 
 ## Scope
 
@@ -28,22 +28,22 @@ In scope:
 
 Out of scope:
 
-- restarting broad probe churn without new evidence
+- restarting broad probe churn from the weaker `3C` baseline
 - unrelated cleanup in `plo`, armstub, DTB parsing, or user-space services
 - speculative LED instrumentation unless UART becomes insufficient again
 
 ## Acceptance Criteria
 
-- a real Pi 4 UART log is captured on the deterministic-TTBR0 image
-- that log either proves progress beyond `3C` or establishes a new, better
-  bounded failure seam
+- a real Pi 4 UART log is captured on the rollback image
+- that log either restores the earlier `... X3NO` seam or proves that even the
+  known-better historical path no longer reproduces
 - the docs record the exact image SHA, log path, and resulting next step
 
 ## Validation Plan
 
 - flash image:
   - `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
-  - SHA-256 `f44385750b37adc49bb279156e812e561c61ec8d31b983fae457215cd0fab469`
+  - SHA-256 `be8c2773306870a5b66b75f64677d68d0a344f01ee348d2e1598aea969ca4fb1`
 - capture UART with:
   - `/Users/witoldbolt/phoenix-rpi/scripts/capture-rpi4b-uart.sh`
 - summarize with:
@@ -51,22 +51,26 @@ Out of scope:
 
 ## Rollback / Baseline
 
-- previous neutral hardware retry:
+- recent neutral hardware retries:
   - `phoenix-rtos-kernel 6cd294fd`
-  - image SHA-256 `5ac0d1290867556a78fe19bad048b1cfe98e8c5328053c2d588ed0d8691006fe`
-  - log:
-    `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b-uart/rpi4b-uart-20260418-115137.log`
-- current baseline just completed:
+    image `5ac0d1290867556a78fe19bad048b1cfe98e8c5328053c2d588ed0d8691006fe`
+    log `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b-uart/rpi4b-uart-20260418-115137.log`
   - `phoenix-rtos-kernel 136b4cae`
-  - image SHA-256 `f44385750b37adc49bb279156e812e561c61ec8d31b983fae457215cd0fab469`
-- long-standing observed failing boundary:
-  - `A2`, `KLM`, `X1`, `X2`, `3C`, then silence
+    image `f44385750b37adc49bb279156e812e561c61ec8d31b983fae457215cd0fab469`
+    log `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b-uart/rpi4b-uart-20260418-220352.log`
+- current rollback baseline just completed:
+  - `phoenix-rtos-kernel` restored to the `c0fd7ff7` `_init.S` lineage and
+    committed in this session
+  - `phoenix-rtos-project` restored to the `5218c40` Pi 4 early-UART mapping
+    define and committed in this session
+  - image SHA-256 `be8c2773306870a5b66b75f64677d68d0a344f01ee348d2e1598aea969ca4fb1`
+- target seam to restore:
+  - `A2`, `KLM`, `X1`, `X2`, `X3`, `NO`
 
 ## Notes
 
 - the stale-image theory has already been disproved for this artifact chain
-- `STEP-0513` is now closed by the neutral real-board result:
-  the identity-first branch-sequencing change did not move the hardware
-  boundary at all
-- the new strategy is to simplify the TTBR0 bootstrap map itself, not to keep
-  changing only TTBR1 activation order
+- `STEP-0513` and `STEP-0514` are both closed as hardware-neutral MMU
+  experiments
+- this step intentionally uses git history to return to the last objectively
+  better hardware seam before trying fresh ideas again

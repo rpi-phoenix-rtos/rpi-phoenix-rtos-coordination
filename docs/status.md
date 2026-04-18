@@ -10,6 +10,69 @@
 
 Latest rebuild and retest:
 
+- on `2026-04-18`, the next real-board retry on the deterministic-TTBR0 image
+  also failed to move the boundary:
+  - UART log:
+    `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b-uart/rpi4b-uart-20260418-220352.log`
+  - observed tail:
+    - `A2`
+    - `KLM`
+    - `X1`
+    - `X2`
+    - `3C`
+  - conclusion:
+    - the deterministic TTBR0 bootstrap experiment was also **neutral on real
+      hardware**
+    - the last objectively better hardware state remains the older
+      `... X3NO` seam from:
+      - `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b-uart/rpi4b-uart-20260417-213826.log`
+      - `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b-uart/rpi4b-uart-20260417-215745.log`
+- strongest resulting strategy change:
+  - stop iterating forward from the current `3C` baseline
+  - roll back the early-kernel path to the last objectively better hardware
+    seam instead of continuing with neutral MMU experiments
+  - specifically:
+    - restore `phoenix-rtos-kernel/hal/aarch64/_init.S` to the
+      `c0fd7ff7` lineage that previously reached `... X3NO`
+    - restore the matching Pi 4 early-UART virtual-address define in
+      `phoenix-rtos-project/_projects/aarch64a72-generic-rpi4b/board_config.h`
+      from `5218c40`
+    - keep the later, independent DTB and TLB fixes outside that rollback
+- why this is now the strongest live move:
+  - the tracker already proves that multiple consecutive MMU strategy changes
+    after the `... X3NO` era were neutral or regressing on hardware
+  - Git history gives a clear last-better checkpoint, so continuing forward
+    from a worse state is no longer justified
+  - the rollback is intentionally selective: it restores the last better
+    early-MMU path without discarding later plausible fixes in `dtb.c` and
+    `pmap.c`
+- validation executed on the rollback-to-last-better image:
+  - `./scripts/rebuild-rpi4b-fast.sh --scope core --qemu-sanity`: pass
+  - `./scripts/qemu-shell-smoke.sh rpi4b`: pass
+  - `/bin/bash /Users/witoldbolt/phoenix-rpi/scripts/qemu-rpi4b-hdmi-smoke.sh`:
+    pass
+  - canonical export: pass
+  - FAT-aware verify: pass
+- warning surfaced in this rollback session:
+  - the broad `./scripts/rebuild-rpi4b-fast.sh --scope core --qemu-sanity`
+    helper still only captured the short `A3 / KLM` tail
+  - the explicit Pi 4 shell and HDMI smoke lanes again passed and remain the
+    stronger validation signals for this step
+- refreshed exported Pi 4 rollback image:
+  - path: `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
+  - SHA-256: `be8c2773306870a5b66b75f64677d68d0a344f01ee348d2e1598aea969ca4fb1`
+- known recent Pi 4 hardware-negative results that should not be retried as if
+  they were still open hypotheses:
+  - `6cd294fd` identity-first branch sequencing: neutral on hardware
+  - `136b4cae` deterministic TTBR0 low-memory map: neutral on hardware
+  - the earlier pre-MMU page-table invalidation and TTBR1-from-start line also
+    failed to move the boundary beyond the current `3C` seam
+- next strongest step:
+  - flash image `be8c2773...`
+  - capture UART
+  - verify whether the board returns to the last objectively better
+    `... X3NO` seam before choosing the next fresh idea
+
 - on `2026-04-18`, the first real-board retry on the identity-first image
   disproved that strategy as a practical fix:
   - UART log:
