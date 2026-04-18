@@ -119,6 +119,11 @@ Important current UART facts from the official documentation:
   - the active Phoenix fix on `2026-04-18` intentionally realigns with that
     pattern: stay in the TTBR0 identity alias for the first MMU-on continuation,
     then enable `TTBR1`, then branch to the higher-half path
+  - after the first real-board retry showed that the identity-first branch
+    sequencing was neutral, the next active Phoenix fix shifted one level
+    earlier: simplify the TTBR0 bootstrap map itself so it is deterministic
+    low-memory RAM plus the BCM2711 peripheral block, instead of a sparse map
+    derived from `syspage->pkernel`
 
 - NuttX BCM2711 support and porting notes:
   <https://nuttx.apache.org/docs/latest/platforms/arm64/bcm2711/index.html>

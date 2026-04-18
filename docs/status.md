@@ -10,6 +10,58 @@
 
 Latest rebuild and retest:
 
+- on `2026-04-18`, the first real-board retry on the identity-first image
+  disproved that strategy as a practical fix:
+  - UART log:
+    `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b-uart/rpi4b-uart-20260418-115137.log`
+  - observed tail:
+    - `A2`
+    - `KLM`
+    - `X1`
+    - `X2`
+    - `3C`
+  - conclusion:
+    - the identity-first change in `phoenix-rtos-kernel 6cd294fd` was
+      **neutral on real hardware**
+    - the boundary did not move at all
+    - that result argues against spending more time on subtle TTBR1 timing
+      changes by themselves
+- strongest resulting fix applied immediately after that neutral result:
+  - roll back the identity-first branch sequencing
+  - replace the old sparse TTBR0 bootstrap map derived from
+    `syspage->pkernel` with a deterministic low-memory identity map in
+    `/Users/witoldbolt/phoenix-rpi/sources/phoenix-rtos-kernel/hal/aarch64/_init.S`
+  - the new TTBR0 bootstrap map now covers:
+    - the first `1 GB` of low physical RAM as normal cacheable memory
+    - the `1 GB` block containing `PL011_TTY_BASE` as device memory
+- why this is now the strongest live fix:
+  - the repeated `3C` tail shows the first post-MMU regime is still failing
+  - the old TTBR0 bootstrap map was both sparse and derived from
+    `syspage->pkernel`, making the earliest MMU-on continuation dependent on a
+    more fragile dynamic layout than common Pi 4 references use
+  - the new map is simpler, deterministic, and much closer to the broad
+    TTBR0-first bootstrap style used by Pi 4 bare-metal references
+- validation executed on the new deterministic-TTBR0 image:
+  - `./scripts/rebuild-rpi4b-fast.sh --scope core --qemu-sanity`: pass
+  - `./scripts/qemu-shell-smoke.sh rpi4b`: pass
+  - `/bin/bash /Users/witoldbolt/phoenix-rpi/scripts/qemu-rpi4b-hdmi-smoke.sh`:
+    pass
+  - canonical export: pass
+  - FAT-aware verify: pass
+- warning surfaced in this validation session:
+  - the broad `./scripts/rebuild-rpi4b-fast.sh --scope core --qemu-sanity`
+    helper still only captured the short `A3 / KLM` tail
+  - the explicit Pi 4 shell and HDMI smoke lanes both passed and remain the
+    stronger validation signals for this step
+- refreshed exported Pi 4 image from the deterministic-TTBR0 kernel tree:
+  - path: `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
+  - SHA-256: `f44385750b37adc49bb279156e812e561c61ec8d31b983fae457215cd0fab469`
+- next strongest step:
+  - flash image `f4438575...`
+  - capture a real-board UART log
+  - verify whether the board finally moves beyond `3C` on the simpler TTBR0
+    bootstrap model
+
 - on `2026-04-18`, the Pi 4 kernel early-MMU path was reworked to an
   **identity-first bootstrap flow** in
   `/Users/witoldbolt/phoenix-rpi/sources/phoenix-rtos-kernel/hal/aarch64/_init.S`

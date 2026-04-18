@@ -2,20 +2,20 @@
 
 ## Metadata
 
-- Step ID: `STEP-0513`
-- Title: `Validate the identity-first Pi 4 kernel MMU image on real hardware`
+- Step ID: `STEP-0514`
+- Title: `Validate the deterministic TTBR0 Pi 4 bootstrap image on real hardware`
 - Status: `in_progress`
 - Date: `2026-04-18`
 - Milestone / phase: `Phase 1`
 
 ## Objective
 
-- validate on the real Pi 4 that the newly implemented identity-first kernel
-  MMU bootstrap path moves the board beyond the long-standing `3C` boundary
-- confirm whether the hardware now reaches the restored post-MMU kernel path
-  and normal early console output
-- keep the software baseline frozen unless the first post-fix hardware retry
-  proves the new strategy ineffective
+- validate on the real Pi 4 that the new deterministic TTBR0 bootstrap map
+  moves the board beyond the long-standing `3C` boundary
+- test a simpler low-memory-first MMU bootstrap model after the identity-first
+  branch-sequencing change proved neutral on hardware
+- keep the software baseline frozen unless the first retry on this image also
+  proves ineffective
 
 ## Scope
 
@@ -34,7 +34,7 @@ Out of scope:
 
 ## Acceptance Criteria
 
-- a real Pi 4 UART log is captured on the identity-first image
+- a real Pi 4 UART log is captured on the deterministic-TTBR0 image
 - that log either proves progress beyond `3C` or establishes a new, better
   bounded failure seam
 - the docs record the exact image SHA, log path, and resulting next step
@@ -43,7 +43,7 @@ Out of scope:
 
 - flash image:
   - `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
-  - SHA-256 `5ac0d1290867556a78fe19bad048b1cfe98e8c5328053c2d588ed0d8691006fe`
+  - SHA-256 `f44385750b37adc49bb279156e812e561c61ec8d31b983fae457215cd0fab469`
 - capture UART with:
   - `/Users/witoldbolt/phoenix-rpi/scripts/capture-rpi4b-uart.sh`
 - summarize with:
@@ -51,18 +51,22 @@ Out of scope:
 
 ## Rollback / Baseline
 
-- implementation baseline just completed:
+- previous neutral hardware retry:
   - `phoenix-rtos-kernel 6cd294fd`
   - image SHA-256 `5ac0d1290867556a78fe19bad048b1cfe98e8c5328053c2d588ed0d8691006fe`
-- previous hardware-proven failing boundary:
-  - `A2`, `KLM`, `X1`, `X2`, `3C`, then silence
   - log:
-    `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b-uart/rpi4b-uart-20260418-004543.log`
+    `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b-uart/rpi4b-uart-20260418-115137.log`
+- current baseline just completed:
+  - `phoenix-rtos-kernel 136b4cae`
+  - image SHA-256 `f44385750b37adc49bb279156e812e561c61ec8d31b983fae457215cd0fab469`
+- long-standing observed failing boundary:
+  - `A2`, `KLM`, `X1`, `X2`, `3C`, then silence
 
 ## Notes
 
 - the stale-image theory has already been disproved for this artifact chain
-- `STEP-0512` finished the structural software change; `STEP-0513` is the
-  first real-board proof step on that new baseline
-- if the real board still stops at `3C`, the next move should be based on the
-  new hardware evidence, not a return to the older TTBR1-from-start model
+- `STEP-0513` is now closed by the neutral real-board result:
+  the identity-first branch-sequencing change did not move the hardware
+  boundary at all
+- the new strategy is to simplify the TTBR0 bootstrap map itself, not to keep
+  changing only TTBR1 activation order
