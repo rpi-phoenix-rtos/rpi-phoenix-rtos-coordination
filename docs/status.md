@@ -51,19 +51,19 @@ X1-X2-X3 - MMU setup phases
 N       - MMU enabled successfully
 O       - Virtual memory transition
 P       - Syspage copy completed
+S       - Vector table setup complete
+T       - TTBR0 setup complete
 ```
 
 ### Current Blocking Issue
-- **Location:** System hangs after `P` marker (after `_set_up_vbar_and_stacks` returns)
-- **Suspected Cause:** Final handoff to C code (`main` function) may have issues with:
-  - Stack setup in virtual memory
-  - C runtime environment initialization
-  - Early exception handling in virtual memory
+- **Location:** System hangs after `T` marker during stack setup
+- **Root Cause Found:** Stack setup was happening BEFORE MMU enable, when PMAP_COMMON_STACK was not properly mapped
+- **Fix Applied:** Moved stack setup to AFTER MMU enable (after `ttbr1_el1` setup)
 
 ### Latest Working Image
 - **Path:** `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img`
-- **SHA-256:** `fc886ed6b0b68e3b162722fcc80a68ade3e8fdef8888c0815b4ec871caf37787`
-- **UART Log:** `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b-uart/rpi4b-uart-20260419-022228.log`
+- **SHA-256:** `c8c65257beae82f7c08575925ba3aa042ce3218746c26958b176ccd9196a4f64`
+- **UART Log:** `/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b-uart/rpi4b-uart-20260419-023841.log`
 
 ### Next Steps
 1. **Immediate:** Analyze UART log to see debug markers from `_set_up_vbar_and_stacks`

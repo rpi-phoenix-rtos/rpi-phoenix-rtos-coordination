@@ -70,9 +70,11 @@ Out of scope:
    - Result: Progressed from `N` to `NOP` markers
 
 ### Current State
-- **Last working seam**: `A2 ZK[LSTUMV X1 X2 X3 NOP`
-- **Current hang location**: After `P` marker, in final C handoff
-- **Remaining issue**: Final transition from assembly to C runtime
+- **Last working seam**: `A2 ZK[LSTUMV X1 X2 X3 NOPST`
+- **Current hang location**: After `T` marker, during stack setup in `_set_up_vbar_and_stacks`
+- **Root cause identified**: Stack setup was happening BEFORE MMU enable
+- **Fix applied**: Moved stack setup to AFTER MMU enable
+- **Remaining issue**: Test if the fix resolves the stack setup hang
 
 ## Rollback / Baseline
 
