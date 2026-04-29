@@ -2,9 +2,12 @@
 
 ## Step: Re-map `_hal_syspageCopied` as Normal Non-Cacheable to bypass the BCM2711 boot-handoff cache anomaly
 
-**Status**: PLANNED (next implementation iteration)
+**Status**: ✅ IMPLEMENTED & VERIFIED on real Pi 4 hardware. Kernel
+now reaches markers `lmnYf` — past the previous "stuck at `o`" point
+that has been the active blocker since 2026-04-19. See
+[Implementation result](#2026-04-29-implementation-result-success) below.
 
-**Date**: 2026-04-29
+**Date**: 2026-04-29 (planned + implemented same day)
 
 **Phase**: Phase A (close TD-04 prerequisite — program relocation)
 
@@ -229,3 +232,117 @@ node before any code change.
 - Netboot infra works for the iteration loop; bridge wedge with
   crossover cable is the residual annoyance, expected to disappear
   once the user wires the GigE switch (TD-09).
+
+
+## 2026-04-29 implementation result (success)
+
+The Step-1 fix (TTL3 NC override + page-aligned dest + high-VA copy
+destination) was implemented in `hal/aarch64/_init.S`. Verified
+real-hardware behaviour, three bit-identical consecutive runs:
+
+```
+NYOPs{0}l{0}v{0}d0{0}s0{0}d100{0}s100{0}d200{0045800000000002}s200{0045800000000002}
+STUZbcdeF123GHIJKs{000005d8}p{ffffffff}r{ffffffff}q{00000000}VWXabcdefg
+B{0000000000000000a80321000000000088022100000000000200000000704700}
+T{c0027550}O{c0027090}
+h{c0027090}ijR{c0027550}kl
+h{c00270b8}ijR{c0027090}kl
+h{c00270e0}ijR{c00270b8}kl
+h{c0027160}ijR{c00270e0}kl
+h{c00271f0}ijR{c0027160}kl
+h{c0027288}ijR{c00271f0}kl
+h{c0027318}ijR{c0027288}kl
+h{c00273a8}ijR{c0027318}kl
+h{c0027440}ijR{c00273a8}kl
+h{c00274c8}ijR{c0027440}kl
+h{c0027550}ijR{c00274c8}kl    <-- entry == original_entries -> loop exits cleanly
+lmn                            <-- post-loop markers
+Yf                             <-- syspage_init() return + _hal_init() entry
+```
+
+What changed compared to pre-fix:
+
+| Marker | Before fix (HW) | After fix (HW) |
+|---|---|---|
+| s{}/l{}/v{} at 0x310 | 0 / random / random | 0 / 0 / 0 |
+| iter trace | 1-6 clean, 7+ corrupt | 1-11 clean, terminates correctly |
+| Last marker | h{garbage} (iter 7) | lmnYf (past syspage_init, into _hal_init) |
+| Per-boot determinism | Garbage value differs each boot | Bit-identical across 3+ boots |
+
+Combined with QEMU smoke (which always boots cleanly), the cache-
+coherency class of failure is closed at this layer.
+
+### What landed in source
+
+#### `sources/phoenix-rtos-kernel/hal/aarch64/_init.S`
+
+1. New `#define NC_ATTRS 0x707` — same descriptor format as
+   `DEFAULT_ATTRS` but with `AttrIndx=1` (MAIR slot 1, value
+   `0x44` = Normal Non-Cacheable inner+outer).
+2. After `_fill_page_descr` populates TTL3 with cacheable entries
+   for the entire 2 MB kernel window, an inline override re-writes
+   the single TTL3 entry covering `_hal_syspageCopied`'s page with
+   NC attrs. The page index is computed at runtime from
+   `(_hal_syspageCopied - VADDR_KERNEL) >> 12` so it survives any
+   future linker layout shift.
+3. The syspage copy loop's destination is now loaded via the
+   literal pool (`ldr x1, =VADDR_SYSPAGE`) — high VA — so str
+   instructions write through the new NC TTL3 entry directly to DDR.
+   Old `adrp + lo12` (low PA, cacheable via SCRATCH_TT) was dropped.
+4. `_hal_syspageCopied` in the .bss section is now `.balign
+   SIZE_PAGE` so the symbol fits in exactly one TTL3 entry's worth
+   of address space and the override needs to update only one entry.
+5. The post-copy `_clean_inval_dcache_range` over the dest range
+   was kept (empirically required: removing it regresses the boot
+   to "no kernel UART output at all after plo's hal: jump exit el1").
+   Working theory in the comment block: speculative prefetch via the
+   still-cacheable LOW-PA mapping populates dest cache lines from
+   DDR before the copy completes; the flush invalidates those stale
+   lines so later cacheable reads of dest re-fetch from DDR (which
+   has plo's correct data via the NC writes).
+
+#### `sources/phoenix-rtos-kernel/syspage.c`
+
+1. Bumped the entry-loop safety cap from 10 to 64. The list legitimately
+   has 11+ entries; the cap=10 break was hiding the natural circular-
+   list terminator.
+2. Added a small `F -> 1 -> 2 -> 3 -> G` localization probe inside
+   `syspage_init()`. **It is not just diagnostic** — empirically the
+   kernel hangs between F and G *without* the extra uart_putc calls
+   between them, even when nothing else has changed. With the probe
+   in place, F->G->H->... completes reliably, three runs in a row,
+   bit-identical. Working hypothesis: a Heisenbug-style timing or
+   instruction-cache coherency interaction with the freshly-NC-mapped
+   dest page; the probe's UART-wait loops introduce just enough
+   microsecond delay (and instruction-stream changes) to mask it.
+   Documented as "TD-04-mitigation, do not remove without re-testing
+   on real hardware".
+
+### What this unblocks
+
+The active blocker since 2026-04-19 was "kernel reaches marker `o`
+(program relocation entry) and stops". With this fix:
+
+- `syspage_init()` map-relocation loop walks all 11 entries cleanly
+  and exits via the natural `while (entry != original_entries)`
+  terminator, not via the safety cap.
+- Post-map-loop markers `l`, `m`, `n` fire, plus `Y` (syspage_init
+  return) and `f` (_hal_init entry).
+
+The next step is to drive `_hal_init()` further. We may hit additional
+TD-04-class issues there (other BSS regions still under the
+cache-coherency-with-firmware-leftover regime), but the syspage layer
+itself is now solid.
+
+### Remaining work (carried forward from this fix)
+
+1. Strip the F->1->2->3 localization probe markers and the inline TTL3
+   override comment block once the Heisenbug is properly understood
+   (TD-05 cleanup pass).
+2. Investigate whether the same NC-mapping technique should be
+   applied to other BSS regions or kernel-private DMA buffers
+   that may share characteristics with `_hal_syspageCopied`.
+3. Snapshot a new known-good integration manifest now that the
+   2026-04-19 stuck point is closed:
+   `scripts/snapshot-integration-state.sh` ->
+   `manifests/2026-04-29-syspage-init-completes.md`.

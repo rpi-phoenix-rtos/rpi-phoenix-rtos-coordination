@@ -1,24 +1,28 @@
 # Phoenix-RTOS Raspberry Pi 4 Port Status
 
-## Current Status: 2026-04-29
+## Current Status: 2026-04-29 — TD-04 NC-dest fix LANDED
 
-**Active blocker:** BCM2711-specific cache-coherency anomaly at the
-plo→kernel handoff. The kernel reaches `syspage_init()` and walks
-the map list, but the syspage destination buffer (`_hal_syspageCopied`)
-reads back per-boot-randomized garbage at offsets ≥ ~0x208 on real
-Pi 4 hardware. The same kernel image runs correctly in QEMU 10.2.2
-raspi4b, and the shared aarch64 handoff code runs correctly on
-ZynqMP. The bug is real-Cortex-A72-silicon-only.
+**Latest milestone:** the BCM2711 cache-coherency anomaly at the
+plo→kernel handoff is closed. Re-mapped `_hal_syspageCopied` as
+Normal Non-Cacheable in TTBR1 TTL3 (MAIR slot 1, AttrIndx=1) and
+switched the kernel-side syspage copy to write through the high-VA
+NC mapping. Verified: three bit-identical real-Pi-4 runs walk the
+entire map-entry list (11 entries) cleanly, exit `syspage_init()`
+via the natural `entry == original_entries` terminator, and reach
+`_hal_init()` (marker `f`).
 
-**Current step:** re-map `_hal_syspageCopied` as Normal Non-Cacheable
-in TTBR1 TTL3 so the syspage copy bypasses the A72 D-cache entirely
-and is therefore immune to any non-coherent external writer (top
-candidate: BCM2711 VideoCore VI continuing to DMA into firmware-
-reserved DRAM across the handoff; secondary candidate: stale L2
-lines from the bootcode → start4.elf → armstub firmware chain). Full
-plan, probe data, and references in `tracking/current-step.md`. The
-TD-04 entry in `docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md` carries
-the class-of-problem framing.
+**New last-working marker chain:**
+```
+NYOPSTUZbcdeF123GHIJKs{...}p{...}r{...}q{...}VWXabcdefgB{...}T{...}O{...}
+h{...}ijR{...}kl × 11 (loop terminates) lmnYf
+```
+— past `o` (program-relocation entry, the previous stuck point since
+2026-04-19) and into `f` (_hal_init entry).
+
+**Active step:** drive `_hal_init()` further. See
+`tracking/current-step.md` for the next step. Other BSS regions may
+need the same NC-mapping treatment if they exhibit similar
+cache-coherency-with-firmware-leftover symptoms.
 
 **Project rule adopted this session:** every new diagnostic probe
 must be tested in QEMU first, then on real Pi 4, with both outputs

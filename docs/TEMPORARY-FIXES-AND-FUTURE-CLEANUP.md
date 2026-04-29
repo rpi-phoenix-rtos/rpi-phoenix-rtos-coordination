@@ -90,7 +90,10 @@ mandatory cleanup. Until then, progress on the boot path takes priority.
 
 ## TD-04: BCM2711-specific syspage corruption at the plo→kernel handoff
 
-- **Status:** PENDING (active step — see `tracking/current-step.md`)
+- **Status:** ✅ FIXED at the syspage layer 2026-04-29; one residual
+  Heisenbug (F→G hang masked by an inline UART probe) and one cleanup
+  task (strip the diagnostic probes once the Heisenbug is rooted out)
+  remain. Active blocker since 2026-04-19 is closed.
 - **First observed:** 2026-04 bring-up. Originally tracked under several
   narrower descriptions: "iter-8 hang in `syspage_init` entry sub-loop",
   "non-deterministic post-MMU markers", "circular-list relocation
@@ -134,26 +137,38 @@ mandatory cleanup. Until then, progress on the boot path takes priority.
   meets the ARM64 Linux Boot Protocol contract (MMU off, D-cache off,
   kernel image cleaned to PoC, DMA quiesced) and contains explicit
   Pi-4 platform init that touches the VPU. Both halves are required.
-- **Resolution path (current plan):**
-  1. **Re-map `_hal_syspageCopied` as Normal Non-Cacheable** in TTBR1
-     TTL3 using MAIR slot 1 (already configured as `0x44` =
-     Normal NC). Both writes during the kernel-side copy and reads in
-     `syspage_init()` then bypass the A72 D-cache entirely. This is
-     the standard technique for memory shared with a cache-incoherent
-     producer (DMA descriptor rings, GIC distributor regions, mailbox
-     windows). If the residual corruption disappears, we know the
-     class is fully addressed at this layer.
-  2. **If Step 1 is insufficient** (i.e. an external master is still
-     writing into that DRAM range), relocate `_hal_syspageCopied` above
-     the firmware-reserved DRAM range advertised in the DTB's
-     `/memreserve/` and `/reserved-memory/` nodes, and/or quiesce the
-     VPU via mailbox before plo finishes. Either move closes the bug
-     class for good rather than papering over individual symptoms.
-  3. **Long term**, align plo's exit sequence with the ARM64 Linux
-     Boot Protocol: clean kernel image and DTB to PoC, disable
-     SCTLR.{M,C,I}, then `eret`. This is mostly stylistic given plo
-     already runs cache-off, but it removes a class of "what state is
-     this in?" ambiguity for future ARM64 ports.
+- **Resolution as landed (2026-04-29):**
+  - **Step 1 (DONE):** `_hal_syspageCopied`'s page is now mapped
+    Normal Non-Cacheable in TTBR1 TTL3 (MAIR slot 1, AttrIndx=1).
+    Symbol is `.balign SIZE_PAGE` so it occupies exactly one TTL3
+    entry. The kernel-side copy loop writes via the high-VA literal
+    pool through that NC entry directly to DDR, bypassing the A72
+    D-cache. Real-Pi-4 probes (s/l/v/d0/d100/d200) now return
+    bit-identical correct values across consecutive boots. Map
+    relocation walks all 11 entries cleanly and the kernel reaches
+    `_hal_init()` (marker `f`).
+  - **Step 2 (NOT NEEDED):** an external master writing to the dest
+    PA between plo and kernel reads. Step 1 was sufficient on its
+    own — the class of failure is closed at the cache layer.
+  - **Future hardening (not blocking):** align plo's exit with the
+    full ARM64 Linux Boot Protocol (clean kernel image and DTB to
+    PoC, then disable SCTLR.{M,C,I} before `eret`). Mostly stylistic
+    given plo already runs cache-off, but removes ambiguity for
+    other ARM64 ports.
+
+- **Residual issues carried forward:**
+  - **Heisenbug F→G in `syspage_init()`:** without an inline `F → 1
+    → 2 → 3 → G` UART probe, the kernel hangs immediately after the
+    F marker. With the probe present, F→G→… completes reliably.
+    Working hypothesis: timing or instruction-cache coherency
+    interaction with the freshly NC-mapped dest page that the probe's
+    UART-wait loops mask. Documented as TD-04 mitigation;
+    investigate root cause as a separate step before the TD-05
+    debug-marker cleanup pass.
+  - **TD-05 cleanup:** the F→1→2→3 markers, the s/l/v/d0/s0/d100/
+    s100/d200/s200 probe block in `_init.S`, and the inline TTL3-
+    override comment block all need to be reviewed and either
+    stripped or gated when the bring-up is complete.
 - **Risks of doing nothing:** the iter-7/8 corruption blocks every
   attempt to validate program relocation, which blocks reaching
   `_hal_init()` from `syspage_init()`, which blocks the first full

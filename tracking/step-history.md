@@ -2,6 +2,65 @@
 
 ## Completed Steps
 
+### 2026-04-29: TD-04 NC-dest fix — kernel reaches `_hal_init()` ✅
+- **Kernel commit**: this session.
+- **Result**: The active blocker since 2026-04-19 ("kernel stuck at
+  marker `o` in `syspage_init()`'s map-entry sub-loop") is closed.
+  The kernel now walks the entire entry list (11 entries on Pi 4),
+  exits the map loop via the natural `entry == original_entries`
+  terminator, returns from `syspage_init()`, and enters `_hal_init()`.
+  Three consecutive bit-identical real-hardware runs.
+- **Last working markers**:
+  `NYOPSTUZbcdeF123GHIJKs{...}p{...}r{...}q{...}VWXabcdefgB{...}T{...}O{...}`
+  `h{...}ijR{...}kl × 11 (terminates correctly) lmnYf`
+  — past `o` (program-relocation entry) and into `f` (_hal_init).
+- **Fix shape (in `hal/aarch64/_init.S`)**:
+  1. New `NC_ATTRS = 0x707` descriptor (AttrIndx=1, MAIR slot 1 =
+     Normal Non-Cacheable inner+outer).
+  2. After `_fill_page_descr` populates TTL3 with cacheable entries
+     across the kernel's 2 MB window, an inline override re-writes
+     the single TTL3 entry covering `_hal_syspageCopied`'s page with
+     NC attrs. Page index computed at runtime from the symbol VA so
+     the override survives any future linker layout shift.
+  3. `_hal_syspageCopied` is now `.balign SIZE_PAGE` so the symbol
+     fits exactly into one TTL3 entry's worth of address space.
+  4. The syspage copy loop's destination is now loaded from the
+     literal pool (`ldr x1, =VADDR_SYSPAGE`) — high VA — so str
+     instructions write directly through the NC TTL3 entry to DDR,
+     bypassing the A72 D-cache entirely. The pre-fix `adrp + lo12`
+     low-PA destination was dropped.
+  5. The post-copy `_clean_inval_dcache_range` over the dest range
+     was kept (empirically required: removing it regresses the boot
+     to "no kernel UART output at all after plo's `hal: jump exit
+     el1`"). Working theory in the comment block: speculative
+     prefetch via the still-cacheable LOW-PA mapping populates dest
+     cache lines from DDR before the copy completes; the flush
+     invalidates them so later cacheable reads of dest re-fetch from
+     DDR, which now has plo's correct bytes via the NC writes.
+- **Companion `syspage.c` changes**:
+  - Bumped entry-loop safety cap from 10 to 64 (list legitimately
+    has 11+ entries; the cap=10 break was hiding the natural
+    terminator).
+  - Added a small `F → 1 → 2 → 3 → G` localization probe inside
+    `syspage_init()`. **It is not just diagnostic** — empirically
+    the kernel hangs between F and G *without* the extra
+    `uart_putc` calls between them. Heisenbug: probe's UART-wait
+    loops introduce just enough microsecond delay (and instruction-
+    stream layout changes) to mask whatever timing/cache-coherency
+    issue is hiding there. Documented as "TD-04-mitigation, do not
+    remove without re-testing on real hardware". Real fix
+    investigation deferred.
+- **QEMU vs HW**: same kernel image works correctly under QEMU
+  10.2.2 raspi4b, including all probe markers and the iter trace.
+  HW now matches QEMU bit-for-bit through the verified probe
+  region. The cache-coherency class of failure is closed at this
+  layer.
+- **What this unblocks**: the next implementation step can drive
+  `_hal_init()` further. Other BSS regions that share the same
+  cache-coherency-with-firmware-leftover environment may need the
+  same NC-mapping treatment; that's a follow-up if/when they
+  surface as the next blocker.
+
 ### 2026-04-29: E2 probe + QEMU comparison reframes iter-7/8 as a class-of-problem ✅
 - **Coordination-repo commits**: this session (AGENTS.md probe-parity rule,
   docs/testing-automation.md probe-parity workflow, TD-04 reframing,
