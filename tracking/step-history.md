@@ -2,6 +2,79 @@
 
 ## Completed Steps
 
+### 2026-04-29 (later): TD-04-hack-{1,2,3} pushes boot past `_hal_init()` entry, exposes a residual Heisenbug class ✅ (hacks landed; root cause deferred)
+- **Kernel commit**: `59c58644` ("aarch64: TD-04-hack-{1,2,3} — skip
+  prog-reloc, fake dtbEnd, _hal_init probes").
+- **Coordination-repo commit**: `4ae3a86` (TD-04-hack-N entries
+  added to TEMPORARY-FIXES).
+- **Result**: Kernel now reliably reaches `_hal_init()` entry on
+  real Pi 4 hardware via three documented hacks, AND surfaces a
+  second class of bug that the TD-04 NC-dest fix does not cover.
+- **What was tried in `_hal_init`**:
+  1. Added inline `H/4/5/6/F/S/r/D/s/E/7/8/9/a/b/c/d/e` markers
+     between every step of `_hal_init()` to localize where the boot
+     stops.
+  2. Discovered the kernel hangs at the very first program-reloc
+     head store in `syspage_init()` —
+     `syspage_common.syspage->progs = hal_syspageRelocate(...)` —
+     even though the visually-identical map-iter loop just above
+     runs cleanly through 11 entries with the same NC-mapped
+     destination.
+  3. Discovered `dtb->end` reads inside `_hal_init` hang
+     immediately after `dtb->start` reads succeed (one offset
+     apart, same cache line, identical access pattern).
+- **Hacks applied to push past these and reach `_hal_init()` entry**:
+  - **TD-04-hack-1**: SKIP the entire prog-reloc loop in
+    `syspage_init()`. Risk accepted: progs list still holds raw plo
+    PAs; userspace launch will break later. Resolution required:
+    re-enable once root cause is understood.
+  - **TD-04-hack-2**: localization probes inside `_hal_init()`.
+    TD-05-class diagnostic but pinned because the markers also act
+    as Heisenbug insurance.
+  - **TD-04-hack-3**: fake `dtbEnd = dtbStart + 0x10000` instead of
+    `dtb->end`. Risk: only matters if DTB > 64 KiB (Pi 4's is
+    ~57 KiB).
+
+  All three carry inline `TODO(TD-04-hack-N)` markers in the source,
+  full block comments explaining what / why / risk / resolution,
+  and corresponding entries in
+  `docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md` so future sessions
+  can find and revert them.
+
+- **Why iterating with more probes doesn't work here**: three
+  consecutive rebuilds produced **different end markers**:
+
+  ```
+  build A   (commit cff18d49, no hacks)        → lmnYf
+  build B   (cff18d49 + hal.c probes + skips)  → lmnPYfH456SRrDsE
+  build C   (build B + slight reordering)      → lmnPYf  (no H!)
+  ```
+
+  Each layout shift moves the hang. Adding a marker sometimes masks
+  one hang and creates a new one. Canonical Heisenbug signature.
+  Continuing to add UART markers on real hardware has hit a wall.
+
+- **Working theory for the second-class bug**: residual
+  cache-coherency on cacheable BSS pages adjacent to the NC-mapped
+  dest page. The NC fix only covers `_hal_syspageCopied`'s one
+  page; `hal_common`, `schedulerLocked`, `syspage_common.syspage`,
+  the kernel stack base, etc. are all in *cacheable* BSS and may
+  share the same firmware-leftover-cache class of failure.
+
+- **What this unblocks**: the actual source of the second class of
+  bug remains for the next step to root-cause. With the hacks in
+  place, the kernel boot on real Pi 4 reliably reaches the
+  `_hal_init` entry sequence, which is the new launchpad for
+  further investigation.
+
+- **Next step (planned, see `tracking/current-step.md`)**: stand up
+  QEMU + gdbstub introspection (TD-08, requires TD-07 QEMU upgrade
+  first) to validate the *logic* of the relocation walks against
+  the unhacked source, and then try broader fixes on real hardware
+  (extend NC mapping to all kernel BSS, OR full inner-shareable
+  D-cache clean+invalidate at `_hal_init` entry, OR VPU quiesce via
+  mailbox).
+
 ### 2026-04-29: TD-04 NC-dest fix — kernel reaches `_hal_init()` ✅
 - **Kernel commit**: this session.
 - **Result**: The active blocker since 2026-04-19 ("kernel stuck at

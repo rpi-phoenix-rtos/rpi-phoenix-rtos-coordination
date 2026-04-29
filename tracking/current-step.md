@@ -346,3 +346,138 @@ itself is now solid.
    2026-04-19 stuck point is closed:
    `scripts/snapshot-integration-state.sh` ->
    `manifests/2026-04-29-syspage-init-completes.md`.
+
+
+---
+
+## Step (next): use QEMU + gdbstub to localize the residual Heisenbug
+
+**Status**: PROPOSED. Per-marker probing on real hardware has hit
+diminishing returns; this step is a methodology change, not just a
+new probe.
+
+### What happened in the second half of 2026-04-29
+
+After the TD-04 NC-dest fix landed and the kernel reached
+`_hal_init()` entry (marker `f`), an attempt to drive `_hal_init()`
+further surfaced a **second class of bug** that the NC-dest fix
+does not cover. Three documented hacks were applied to push past
+this second class while documenting it for future cleanup:
+
+- `TD-04-hack-1`: SKIP the program-relocation loop in
+  `syspage_init()`. Without skipping, the very first head store
+  `syspage_common.syspage->progs = hal_syspageRelocate(...)` hangs
+  the kernel — even though the visually-equivalent map-iter loop
+  just above runs cleanly through 11 entries with the same
+  NC-mapped destination.
+- `TD-04-hack-2`: localization probes inside `_hal_init()`. The
+  markers themselves act as Heisenbug insurance: without them the
+  hang shifts.
+- `TD-04-hack-3`: fake `dtbEnd = dtbStart + 0x10000` instead of
+  `dtb->end`. The latter hangs the kernel immediately after
+  `dtb->start` succeeds (one offset apart, same cache line,
+  identical access pattern).
+
+All three are committed in kernel `59c58644` and worktree `4ae3a86`,
+with full TD-04-hack-N entries in
+`docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md` so future sessions can
+find and revert them.
+
+### Why per-marker probing has hit a wall
+
+Three rebuilds in a row of nearly-identical source code produced
+**different end markers**:
+
+```
+build A   (commit cff18d49, no hacks)        → lmnYf
+build B   (cff18d49 + hal.c probes + skips)  → lmnPYfH456SRrDsE
+build C   (build B + slight reordering)      → lmnPYf  (no H!)
+```
+
+Each layout shift moves where the boot stops. Adding more markers
+to localize the next hang sometimes *masks* the previous hang and
+*creates* a new one. Removing markers does the reverse. This is
+the canonical signature of:
+
+- speculative load / instruction prefetch reading from DDR before
+  MMU/cache state is fully settled,
+- cache-line eviction on a *cacheable* BSS page racing with our
+  writes (the NC fix only covers `_hal_syspageCopied`'s page —
+  not `hal_common`, `schedulerLocked`, `syspage_common.syspage`
+  itself, etc.), or
+- TLB stale-entry interaction with the TTL3 NC override.
+
+A single UART per-marker channel cannot disambiguate these without
+either (a) a much larger marker matrix that would itself shift the
+layout further, or (b) introspection into MMU / cache / TLB state
+at each step — which UART markers cannot provide.
+
+### Next move: QEMU + gdbstub introspection (TD-08)
+
+Per the project rule and the existing TD-08 entry in TEMPORARY-FIXES,
+the right tool for this is **QEMU + gdb** (currently TD-07 says we
+need a newer QEMU first; that's the prerequisite). Even though
+QEMU does not reproduce the BCM2711 cache anomaly itself, it lets
+us:
+
+1. Single-step the exact instructions of `_hal_init()` and
+   `syspage_init()`'s prog-reloc loop, on the unmodified source
+   (no hacks, no markers).
+2. Inspect TTBR0 / TTBR1 / TTL3 entries / MAIR / SCTLR state at
+   every step to validate the *logic* of the relocation walks
+   against the gdb-visible state.
+3. Build a minimal kernel ELF (`phoenix-aarch64a72-generic.elf`
+   has DWARF; the stripped one is what gets loaded but the gdb
+   server can use the unstripped one for symbols).
+
+Then on real hardware, with the QEMU-validated logic baseline in
+hand, we can attempt **broader fixes** instead of more per-marker
+probes:
+
+- (a) Extend the NC-dest mapping to cover **all** kernel BSS
+  pages (or at least the pages containing `hal_common`,
+  `schedulerLocked`, the kernel stack base, and the syspage
+  dest) — and check whether the boot reaches a different end
+  point.
+- (b) Issue a full clean+invalidate of the inner-shareable
+  D-cache to PoC at `_hal_init()` entry (matching what
+  Linux's head.S does early), in case stale firmware lines
+  on those pages are the issue.
+- (c) Quiesce the BCM2711 VPU via mailbox before plo finishes,
+  per the original TD-04 working theory's option (C) — only
+  reach for this if (a) and (b) don't help.
+
+### Step ordering
+
+1. **Now → next session prep:** TD-07 — update QEMU inside the
+   phoenix-dev VM to a current stable release. Document the
+   install method.
+2. **Then:** TD-08 — stand up `qemu-system-aarch64 ... -gdb tcp::1234
+   -S` against the same SD image we netboot to hardware, attach
+   `gdb-multiarch` from outside, and walk the syspage_init →
+   _hal_init path with the unhacked source (revert hack-1/-2/-3
+   on a scratch branch for the QEMU run; they aren't needed there).
+3. **After QEMU baseline:** apply (a)/(b)/(c) on real hardware
+   one at a time, per probe-parity rule, with the *same* trace
+   format we already have. Compare end markers between QEMU and
+   HW for each candidate.
+
+### Exit criteria for this step
+
+- A clean kernel boot under QEMU + gdb that reaches at least the
+  same `lmnPYfH456SRr...` markers we see on hardware (or further),
+  with all three TD-04-hack-{1,2,3} workarounds reverted on the
+  test branch.
+- A documented mapping between gdb-visible state and the markers
+  emitted at each hang point on hardware.
+- One of (a)/(b)/(c) confirmed to advance the boot on real
+  hardware, with a corresponding revert of TD-04-hack-{1,2,3}
+  for the part of the boot it unblocks.
+
+### What this step does NOT try to do
+
+- Strip the TD-05 debug-marker scaffolding. That's deliberately
+  deferred until the underlying bug is fixed and the boot is
+  reliable end-to-end without markers.
+- Re-architect plo's exit to fully match the ARM64 Linux Boot
+  Protocol. Stylistic future hardening, separate step.

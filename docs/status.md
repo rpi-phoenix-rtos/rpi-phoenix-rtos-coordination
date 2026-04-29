@@ -1,28 +1,53 @@
 # Phoenix-RTOS Raspberry Pi 4 Port Status
 
-## Current Status: 2026-04-29 — TD-04 NC-dest fix LANDED
+## Current Status: 2026-04-29 — TD-04 NC-dest fix LANDED + three documented hacks reach `_hal_init` entry
 
 **Latest milestone:** the BCM2711 cache-coherency anomaly at the
-plo→kernel handoff is closed. Re-mapped `_hal_syspageCopied` as
-Normal Non-Cacheable in TTBR1 TTL3 (MAIR slot 1, AttrIndx=1) and
-switched the kernel-side syspage copy to write through the high-VA
-NC mapping. Verified: three bit-identical real-Pi-4 runs walk the
-entire map-entry list (11 entries) cleanly, exit `syspage_init()`
-via the natural `entry == original_entries` terminator, and reach
-`_hal_init()` (marker `f`).
+plo→kernel handoff is closed at the syspage-copy layer. Re-mapped
+`_hal_syspageCopied` as Normal Non-Cacheable in TTBR1 TTL3 (MAIR
+slot 1, AttrIndx=1) and switched the kernel-side syspage copy to
+write through the high-VA NC mapping. Verified: three bit-identical
+real-Pi-4 runs walk the entire map-entry list (11 entries) cleanly,
+exit `syspage_init()` via the natural `entry == original_entries`
+terminator, and reach `_hal_init()` (kernel commit `cff18d49`).
 
-**New last-working marker chain:**
+**Second class of bug exposed**, NOT covered by the NC-dest fix:
+attempts to drive `_hal_init()` further surface a Heisenbug-class
+hang (code-layout-sensitive, shifts every rebuild). Three documented
+hacks (TD-04-hack-{1,2,3} in
+`docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md`, kernel commit
+`59c58644`) push past it to reach the `_hal_init()` entry sequence
+on real hardware:
+
+- `TD-04-hack-1`: SKIP `syspage_init()`'s prog-reloc loop.
+- `TD-04-hack-2`: inline localization probes inside `_hal_init()`.
+- `TD-04-hack-3`: fake `dtbEnd = dtbStart + 0x10000`.
+
+Every hack carries a `TODO(TD-04-hack-N)` marker in the source plus
+a full TD entry with risk and resolution requirements.
+
+**Last-working marker chain** (with hacks applied, three consecutive
+identical real-Pi-4 runs):
+
 ```
 NYOPSTUZbcdeF123GHIJKs{...}p{...}r{...}q{...}VWXabcdefgB{...}T{...}O{...}
-h{...}ijR{...}kl × 11 (loop terminates) lmnYf
+h{...}ijR{...}kl × 11 (loop terminates) lmnPYf  [+ inconsistent H/4/5/6/...]
 ```
-— past `o` (program-relocation entry, the previous stuck point since
-2026-04-19) and into `f` (_hal_init entry).
 
-**Active step:** drive `_hal_init()` further. See
-`tracking/current-step.md` for the next step. Other BSS regions may
-need the same NC-mapping treatment if they exhibit similar
-cache-coherency-with-firmware-leftover symptoms.
+— past `o` (the 2026-04-19 stuck point), past `Y` (syspage_init
+return), past `f` (main.c marker before `_hal_init()`), into the
+`_hal_init()` entry sequence. The H/4/5/6/F/S/r/D/s/E/etc. markers
+inside `_hal_init` are present in the binary but fire inconsistently
+across rebuilds — that's the Heisenbug.
+
+**Active step:** stand up QEMU + gdbstub introspection (TD-07
+prerequisite QEMU upgrade, then TD-08) to validate `_hal_init()`
+logic against gdb-visible MMU/cache/TLB state on the unhacked
+source, then try broader real-hardware fixes (extend NC mapping to
+all kernel BSS, OR full inner-shareable D-cache clean+invalidate at
+`_hal_init()` entry, OR VPU quiesce via mailbox). Per-marker probing
+on real hardware has hit a wall — the markers themselves shift the
+layout. Full plan in `tracking/current-step.md`.
 
 **Project rule adopted this session:** every new diagnostic probe
 must be tested in QEMU first, then on real Pi 4, with both outputs
