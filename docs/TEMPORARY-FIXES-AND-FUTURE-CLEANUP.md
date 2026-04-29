@@ -166,9 +166,86 @@ mandatory cleanup. Until then, progress on the boot path takes priority.
     investigate root cause as a separate step before the TD-05
     debug-marker cleanup pass.
   - **TD-05 cleanup:** the F→1→2→3 markers, the s/l/v/d0/s0/d100/
-    s100/d200/s200 probe block in `_init.S`, and the inline TTL3-
-    override comment block all need to be reviewed and either
-    stripped or gated when the bring-up is complete.
+    s100/d200/s200 probe block in `_init.S`, the inline TTL3-
+    override comment block, and the `H/4/5/6/F/S/r/D/s/E/7/8/9/a/
+    b/c/d/e` localization probes inside `_hal_init()` all need to
+    be reviewed and either stripped or gated when the bring-up is
+    complete.
+
+- **TD-04-hack-1: SKIP the program-relocation loop in `syspage_init()`**
+  - **Status:** ACTIVE HACK
+  - **Where:** `sources/phoenix-rtos-kernel/syspage.c`, `syspage_init()`
+    immediately after the map-relocation loop.
+  - **What was done:** Replaced the entire `if (...progs != NULL) {
+    syspage_common.syspage->progs = hal_syspageRelocate(...); ... }`
+    block with a no-op (just emits a `P` marker and skips). The
+    progs list pointers in the copied syspage stay as raw plo PAs.
+  - **Why:** The very first head store
+    `syspage_common.syspage->progs = hal_syspageRelocate(...)` hangs
+    the kernel on real Pi 4 hardware (works fine in QEMU and on
+    ZynqMP with the same code), even though the visually-equivalent
+    map-iter loop just above runs cleanly through all 11 entries
+    with the same NC-mapped destination. Heisenbug-class — slight
+    code-layout changes shift the hang point.
+  - **Risk accepted:** Userspace launch is broken — `prog->start`,
+    `prog->end`, `prog->argv` etc. still hold plo PAs and need
+    relocation before they can be used. Anything that walks the
+    progs list will read wrong data once TTBR0's stale-TLB low-PA
+    coverage is invalidated.
+  - **Resolution requirements:**
+    - Root-cause the Heisenbug. Likely candidates: residual cache
+      coherency on cacheable BSS pages adjacent to the NC dest page;
+      instruction-cache prefetch interaction with the new TTL3
+      mapping; or speculative load via TTBR0 SCRATCH_TT racing with
+      the NC-mapped TTBR1 access.
+    - Restore the prog-reloc loop with whatever pre-store fence /
+      attribute fix unblocks it.
+    - Add a regression test that parses the relocated progs list
+      and validates strings + addresses.
+  - **Marker grep:** `grep -n "TODO(TD-04-hack-1)"
+    sources/phoenix-rtos-kernel/syspage.c`
+
+- **TD-04-hack-2: localization probes inside `_hal_init()`**
+  - **Status:** ACTIVE HACK (TD-05-class diagnostic but pinned in
+    place for now)
+  - **Where:** `sources/phoenix-rtos-kernel/hal/aarch64/hal.c`,
+    `_hal_init()`.
+  - **What was done:** Inline `H, 4, 5, 6, F/S, r, D, s, E, 7, 8,
+    9, a, b, c, d, e` markers via the same TTBR1-mapped early UART
+    that `syspage_init()` uses, between every step of `_hal_init`.
+  - **Why:** Diagnostic, but also empirically the kernel hangs at
+    different points depending on whether these markers are present
+    — same Heisenbug shape as TD-04-hack-1.
+  - **Risk accepted:** Boot-time UART chatter; no functional risk
+    at runtime.
+  - **Resolution requirements:**
+    - Once TD-04-hack-1's root cause is fixed and `_hal_init()`
+      runs reliably without the markers, strip them (or gate them
+      behind a debug flag).
+  - **Marker grep:** `grep -n "TD-04-hack-2"
+    sources/phoenix-rtos-kernel/hal/aarch64/hal.c`
+
+- **TD-04-hack-3: fake `dtbEnd` in `_hal_init()`**
+  - **Status:** ACTIVE HACK
+  - **Where:** `sources/phoenix-rtos-kernel/hal/aarch64/hal.c`,
+    `_hal_init()`'s syspage-dtb branch.
+  - **What was done:** `dtbEnd = dtb->end;` replaced with
+    `dtbEnd = dtbStart + 0x10000;`. The real size will be re-read
+    from the DTB header by `_pmap_preinit()` / DTB parser anyway
+    (DTBs are self-describing).
+  - **Why:** `dtb->end` read hangs the kernel on real Pi 4
+    immediately after `dtb->start` succeeds (one offset apart, same
+    cache line, identical access pattern). Heisenbug shape again.
+  - **Risk accepted:** If anything actually consumes `dtbEnd` as
+    a hard upper bound (rather than re-reading the DTB header),
+    parsing of a >64 KiB DTB would fail. Pi 4's DTB is ~57 KiB —
+    well under the 64 KiB cap.
+  - **Resolution requirements:**
+    - Root-cause why the second word read of `dtb->*` hangs on
+      real Pi 4. Almost certainly the same root as TD-04-hack-1.
+    - Restore `dtbEnd = dtb->end;`.
+  - **Marker grep:** `grep -n "TODO(TD-04-hack-3)"
+    sources/phoenix-rtos-kernel/hal/aarch64/hal.c`
 - **Risks of doing nothing:** the iter-7/8 corruption blocks every
   attempt to validate program relocation, which blocks reaching
   `_hal_init()` from `syspage_init()`, which blocks the first full
