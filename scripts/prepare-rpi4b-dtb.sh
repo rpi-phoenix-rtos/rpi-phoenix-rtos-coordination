@@ -12,6 +12,7 @@ source_dts="${RPI4B_SOURCE_DTS:-$linux_tree/arch/arm/boot/dts/broadcom/bcm2711-r
 out_dir="${RPI4B_DTB_DIR:-/tmp/rpi4b-dtb}"
 out_dtb="${RPI4B_DTB_PATH:-$out_dir/bcm2711-rpi-4-b.dtb}"
 allow_warnings="${RPI4B_DTB_ALLOW_WARNINGS:-0}"
+lint_copied_dtb="${RPI4B_DTB_LINT:-0}"
 
 limactl shell -y "$vm" -- bash -lc "
 set -euo pipefail
@@ -24,6 +25,7 @@ source_dts='$source_dts'
 out_dir='$out_dir'
 out_dtb='$out_dtb'
 allow_warnings='$allow_warnings'
+lint_copied_dtb='$lint_copied_dtb'
 
 mkdir -p \"\$out_dir\"
 stderr_log=\"\$(mktemp)\"
@@ -68,8 +70,10 @@ else
         exit 1
 fi
 
-if [ \"\$mode\" = 'copy' ]; then
+if [ \"\$mode\" = 'copy' ] && [ \"\$lint_copied_dtb\" = '1' ]; then
         dtc -I dtb -O dts -o /dev/null \"\$out_dtb\" 2>>\"\$stderr_log\"
+elif [ \"\$mode\" = 'copy' ]; then
+        printf 'Copied final-form DTB without dtc decompile lint. Set RPI4B_DTB_LINT=1 to audit it.\n'
 fi
 
 if [ -s \"\$stderr_log\" ]; then

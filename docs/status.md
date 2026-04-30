@@ -1,6 +1,46 @@
 # Phoenix-RTOS Raspberry Pi 4 Port Status
 
-## Current Status: 2026-04-19
+## Current Status: 2026-04-30
+
+**Current blocker**: Pi 4 reaches `main()`, completes `syspage_init()`, enters
+the `_hal_init` assembly wrapper, resets the early kernel stack, and then takes
+an exception immediately after marker `R`.
+
+Latest real-device marker boundary:
+
+```text
+... kllmnPYfhR
+```
+
+Latest verified image:
+
+- SHA256: `cf46e5277d6b9bd7e24875b37b034c948911d5cf0624e2faa717f3d9c362115e`
+- UART log: `artifacts/rpi4b-uart/rpi4b-uart-20260430-064643-netboot-exception-esr-halt-rerun.log`
+
+Interpretation:
+
+- `Y`: `syspage_init()` completed.
+- `f`: `main()` is about to call `_hal_init()`.
+- `h`: assembly `_hal_init` wrapper entered.
+- `R`: wrapper reset `SP` to `PMAP_COMMON_STACK + SIZE_INITIAL_KSTACK`.
+- No later diagnostic marker appears; the first direct store after `R` does not
+  complete.
+
+An exception-vector marker proved that the CPU is taking an exception after
+`R`. The current exception reporting is still diagnostic and not clean final
+code; the next task is to decode the fault reliably or fix the underlying early
+stack/high-VA data-store mapping issue.
+
+Netboot/power/UART automation is active. Known lab-process warnings:
+
+- Initial DHCP frequently times out and bridge recovery restarts Lima/socket_vmnet.
+- `tio` lacks timed capture, so the UART helper falls back to `picocom`.
+- `picocom` can briefly leave the UART device locked after capture.
+- HDMI1 EDID warnings are expected when only HDMI0 is connected.
+- Final-form Raspberry Pi firmware DTB is copied without default decompile lint;
+  run with `RPI4B_DTB_LINT=1` when an explicit DTB audit is needed.
+
+## Previous Status: 2026-04-19
 
 **🎉 MAJOR MILESTONE: Map Relocation Completed!**
 

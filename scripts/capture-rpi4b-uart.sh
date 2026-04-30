@@ -293,6 +293,14 @@ if [ "$tool" = "tio" ]; then
 		"$device"
 	)
 else
+	# Note: picocom needs to actually configure the TTY to the requested
+	# baud, so do NOT pass --noinit. The macOS USB-UART driver retains
+	# the previous baud across opens; if a prior `stty` (or a prior tio
+	# session at a different rate) left the TTY at e.g. 9600, picocom
+	# with --noinit would silently capture at 9600 while the Pi
+	# transmits at 115200, producing pure framing-error garbage. The
+	# `--baud` argument is honored only when picocom is allowed to init
+	# the TTY.
 	cmd=(
 		picocom
 		--baud "$baud"
@@ -300,7 +308,6 @@ else
 		--parity n
 		--databits 8
 		--stopbits 1
-		--noinit
 		--noreset
 		--logfile "$log_path"
 	)

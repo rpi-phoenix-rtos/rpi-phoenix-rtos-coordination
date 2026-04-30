@@ -1,12 +1,13 @@
 # Current Implementation Step
 
-## Step: Complete Map Relocation and Debug Program Relocation
+## Step: Diagnose `_hal_init` Stack/Data-Store Exception on Pi 4
 
-**Status**: 🔄 IN PROGRESS
+**Status**: IN PROGRESS
 
-**Date**: 2026-04-19
+**Date**: 2026-04-30
 
 **Commits**: 
+- pending: Pi 4 netboot/UART diagnostics around `_hal_init` stack/data-store exception
 - d1996d8f: Fix infinite loop in entry relocation by using original_entries for loop condition
 - aff01622: Add more detailed markers in entry loop to diagnose infinite loop
 - 2f0b391f: Add detailed debug markers in map relocation loop to pinpoint crash location
@@ -14,6 +15,54 @@
 - b62fe368: Add W and X debug markers to syspage_init() to diagnose crash point
 
 **Note**: Broken commits (1bb7f806, 1c6a5267, 5e74c3c9) have been removed from history
+
+## 2026-04-30 Update
+
+Automated netboot/power/UART testing is now available and was used for the
+current diagnostic loop:
+
+```bash
+./scripts/rebuild-rpi4b-fast.sh
+./scripts/test-cycle-netboot.sh --label <label> --capture-secs <seconds>
+```
+
+Latest verified image in this step:
+
+- SHA256: `cf46e5277d6b9bd7e24875b37b034c948911d5cf0624e2faa717f3d9c362115e`
+- UART log: `artifacts/rpi4b-uart/rpi4b-uart-20260430-064643-netboot-exception-esr-halt-rerun.log`
+
+Current marker boundary:
+
+```text
+... kllmnPYfhR
+```
+
+Meaning:
+
+- `Y`: `syspage_init()` completed.
+- `f`: `main()` reached the point immediately before `_hal_init()`.
+- `h`: assembly `_hal_init` wrapper was entered before the C prologue.
+- `R`: wrapper reset `SP` to the initial kernel stack.
+- No later `q/w/u/W` marker appears, so the first direct data-store probe after
+  `R` does not complete.
+
+An inline exception-vector marker confirmed that the CPU takes an exception
+after `R`; the normal exception path then faults recursively because it saves
+state on the same suspect stack. A later attempt to print a clean ESR marker and
+halt did not produce a clean ESR in the final capture, so the current confirmed
+fact is exception-after-`R`, not yet a decoded syndrome.
+
+Tool/process warnings observed during this step:
+
+- First netboot DHCP attempt often times out; `test-cycle-netboot.sh` recovers
+  by restarting the Lima/socket_vmnet bridge and then DHCP succeeds.
+- `tio` has no timed capture mode in this setup; the canonical helper falls
+  back to `picocom`.
+- `picocom` can briefly leave `/dev/cu.usbserial-201310` locked after a capture;
+  verify with `lsof /dev/cu.usbserial-201310` before rerunning if capture fails.
+- Firmware HDMI1 EDID warnings are expected when only HDMI0 is connected.
+- `prepare-rpi4b-dtb.sh` now defaults to copying the final-form upstream DTB
+  without decompiling/linting it; set `RPI4B_DTB_LINT=1` for explicit DTB audits.
 
 ### Major Achievement
 The system has successfully completed all map relocation in syspage initialization! This represents a massive milestone in the Raspberry Pi 4 bring-up process.
