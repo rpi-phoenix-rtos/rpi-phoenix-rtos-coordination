@@ -1,8 +1,63 @@
 # Phoenix-RTOS Raspberry Pi 4 Port Status
 
-## Current Status: 2026-04-30
+## Current Status: 2026-05-01
 
-**Current blocker**: Pi 4 now reaches user-space process creation and spawns
+**Current blocker**: TD-13 narrowed to `proc_mutexCreate` hang. Every user
+process makes exactly one syscall (`s16` = `phMutexCreate`, called from
+libphoenix `_errno_init`'s `mutexCreate(&errno_common.lock)`) and then
+hangs inside `proc_mutexCreate(attr)` (kernel-side, between markers `'2'`
+and `'3'`). The `vm_mapBelongs()` user-pointer validation is bypassed
+(TD-13-mtxbypass) and the hang persists past it — i.e. it is in one of
+`vm_kmalloc` / `resource_alloc` / `proc_lockInit` / `resource_put`.
+
+Latest verified image:
+
+- Integration manifest: `manifests/2026-05-01-td13-mtxbypass-checkpoint.md`
+- Kernel: `agent/rpi4-program-reloc` @ `39c81236` (TD-13 syscall +
+  phMutexCreate instrumentation)
+- Devices: `master` @ `8984455` (TD-13 pl011-tty progress markers)
+- UART log: `artifacts/rpi4b-uart/rpi4b-uart-20260501-184309-netboot-mtxbypass.log`
+- QEMU smoke: still reaches `(psh)% help` interactively.
+
+Real-device boundary on `mtxbypass.log`:
+
+```text
+main: spawn dummyfs-root → >*15s16 M12main: spawned dummyfs-root (2)
+main: spawn dummyfs       → main: spawned dummyfs (3)        [no SVC trace]
+main: spawn pl011-tty     → >*15s16 M12main: spawned pl011-tty (4)
+main: spawn mkdir         → >*15s16 M12main: spawned mkdir (5)
+main: spawn bind          → >*15s16 M12main: spawned bind (6)
+main: spawn pcie          → >*15s16 M12main: spawned pcie (7)
+main: spawn usb           → >*15s16 M12main: spawned usb (8)
+main: spawn psh           → >*15s16 M12main: spawned psh (9)
+main: spawn loop done, entering proc_reap idle
+[silence]
+```
+
+Probe-marker counts in that log (`MESS:` substring noise excluded):
+
+- `>` (eret to EL0): 7
+- `*15` (EC=0x15 AArch64 SVC): 7
+- `s16` (syscall #16 = phMutexCreate): 7  (only ever this number)
+- `M12` (entry → past validation): 7
+- `M123` (post `proc_mutexCreate` return): **0**
+- `M123K` (success), real `ME` (error): 0 each
+
+The 52 `ME` substrings counted earlier were noise from firmware
+`MESS:00:00:...` boot lines, not probe output.
+
+Next target:
+
+- Add granular markers `a..d` between each call inside `proc_mutexCreate`
+  (`vm_kmalloc`, `resource_alloc`, `proc_lockInit`, `resource_put`) to
+  pinpoint which step blocks. One additional cycle with the existing
+  spawn-cap and capture infrastructure should be enough to isolate the
+  step. Risk is low (one-file edit in `proc/mutex.c`, same probe idiom
+  as M/1/2/3/E/K).
+
+## Previous Status: 2026-04-30
+
+**Previous blocker**: Pi 4 now reaches user-space process creation and spawns
 all syspage programs through `psh`, then stays silent before a shell prompt.
 
 Latest verified image:

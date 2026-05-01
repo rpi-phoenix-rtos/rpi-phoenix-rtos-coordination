@@ -488,6 +488,61 @@ mandatory cleanup. Until then, progress on the boot path takes priority.
      bits; sync external abort → another TD-04-class cache page.
 - **Marker grep:** `grep -n "main: spawn" sources/phoenix-rtos-kernel/main.c`
 
+### TD-13 update 2026-05-01 — narrowed to `proc_mutexCreate`
+
+- `>` pre-eret marker (kernel `c5c21c6e`) confirmed user threads ARE
+  dispatched (one `>` per spawned process, 7/8 fired — `dummyfs` pid
+  3 never SVCs, follow-up).
+- EC probe at top of `_exceptions_dispatch` printing `*HL` for first
+  16 EL0-source synchronous exceptions: 7× `*15` (AArch64 SVC,
+  expected) on real Pi 4; one stray `*11` (AArch32 SVC) seen earlier,
+  not seen in mtxbypass log. PSR setup forces AArch64; `*11` flagged
+  for follow-up but is not the silence cause.
+- Syscall # trace `sNN` (kernel `39c81236`) shows every user process
+  that SVCs makes exactly one syscall, #16 = `phMutexCreate`. Source
+  is libphoenix `_errno_init`'s `mutexCreate(&errno_common.lock)`.
+- M/1/2/3/E/K probe ladder inside `syscalls_phMutexCreate`: 7× `M12`,
+  0× `M123`. Hang is inside `proc_mutexCreate(attr)` itself, not in
+  the validation (TD-13-mtxbypass) and not in stack-arg unpacking.
+- TD-13-mtxbypass active: `vm_mapBelongs(proc, h, sizeof(*h))` and
+  `vm_mapBelongs(proc, attr, sizeof(*attr))` calls in
+  `syscalls_phMutexCreate` are skipped to let probes reach the actual
+  hang point. Risk: kernel can fault on bad user pointers (acceptable
+  while we drive 9 trusted syspage progs). Restore once root cause
+  is fixed.
+- **Conclusion**: silence is **not** a fault, **not** a console-
+  binding issue, and **not** in pointer validation. It is one of
+  these four steps in `proc/mutex.c:51-80`:
+  `vm_kmalloc(sizeof(*mutex))`, `resource_alloc(p, &mutex->resource)`,
+  `proc_lockInit(&mutex->lock, attr, ...)`, `resource_put(...)`.
+  `vm_kmalloc` is the prime suspect (TD-04-class: heap free-list on
+  uncached/stale memory).
+- **Next probe**: granular `a..d` markers between the four calls in
+  `proc_mutexCreate` itself.
+- **Reference log**: `artifacts/rpi4b-uart/rpi4b-uart-20260501-184309-netboot-mtxbypass.log`
+- **Manifest at this checkpoint**: `manifests/2026-05-01-td13-mtxbypass-checkpoint.md`
+- **Marker grep:** `grep -n "TD-13-mtxbypass\|td13_syscall\|TD-13:" sources/phoenix-rtos-kernel/syscalls.c`
+
+### TD-13-mtxbypass: skip `vm_mapBelongs` in `syscalls_phMutexCreate`
+
+- **Status:** ACTIVE HACK (added 2026-05-01)
+- **Where:** `sources/phoenix-rtos-kernel/syscalls.c`
+  `syscalls_phMutexCreate` — both `vm_mapBelongs(proc, h, ...)` and
+  `vm_mapBelongs(proc, attr, ...)` calls commented out.
+- **Why:** Originally suspected the `proc->mapp->lock` acquired
+  inside `vm_mapBelongs` was the wall (TD-04-class lock state). With
+  the bypass we now reach `proc_mutexCreate(attr)`, which proves the
+  hang is deeper. Bypass kept in place as a stepping stone so the
+  deeper investigation is not blocked by re-introducing the lock.
+- **Risk accepted:** Kernel will fault on bad user pointers passed
+  to `phMutexCreate`. Acceptable during bring-up where the only
+  callers are the 9 trusted syspage progs.
+- **Resolution requirements:**
+  - Fix the deeper TD-13 root cause (`proc_mutexCreate` hang).
+  - Re-enable both `vm_mapBelongs` validations.
+  - Verify QEMU smoke and real Pi 4 boot still reach `(psh)% help`.
+- **Marker grep:** `grep -n "TD-13-mtxbypass" sources/phoenix-rtos-kernel/syscalls.c`
+
 ### TD-13-spawn-cap: hard cap on the spawn loop in `main()`
 
 - **Status:** ACTIVE HACK (added 2026-05-01)

@@ -1,12 +1,79 @@
 # Current Implementation Step
 
-## Step: Diagnose Post-Spawn User-Space/Console Handoff on Pi 4
+## Step: Diagnose `proc_mutexCreate` Hang on Pi 4 (TD-13)
 
 **Status**: IN PROGRESS
 
-**Date**: 2026-04-30
+**Date**: 2026-05-01
 
-**Commits**:
+**Manifest**: `manifests/2026-05-01-td13-mtxbypass-checkpoint.md`
+
+**Sibling commits at this checkpoint**:
+- kernel `agent/rpi4-program-reloc` @ `39c81236` — TD-13 syscall + phMutexCreate instrumentation (s16 trace, M/1/2/3/E/K markers, TD-13-mtxbypass)
+- kernel `agent/rpi4-program-reloc` @ `c5c21c6e` — `>` pre-eret marker, EC probe, spawn-cap (TD-13-spawn-cap)
+- devices `master` @ `8984455` — pl011-tty TD13_DBG progress markers via `debug()`
+
+## 2026-05-01 Update — TD-13 narrowed
+
+The previous "user processes are silent after eret" framing has been
+replaced by hard data:
+
+1. Every user process that gets dispatched (eret, `>` marker) does
+   take a real EL0-source synchronous exception with EC=0x15
+   (AArch64 SVC) — `*15` probe.
+2. The first (and only) syscall any user process makes is #16 =
+   `phMutexCreate`, called from libphoenix `_errno_init`'s
+   `mutexCreate(&errno_common.lock)` — `s16` probe.
+3. Inside `syscalls_phMutexCreate`, every process reaches the
+   `proc_mutexCreate(attr)` call (markers `M`, `1`, `2` — the
+   last only printed because TD-13-mtxbypass skips the
+   `vm_mapBelongs` validation), and **none** ever returns from
+   it (no `3`, no `K`, no `E`).
+4. `dummyfs` (pid 3) never even reaches the SVC — it has no `>`,
+   `*`, `s`, or `M` event in the log. Either it never runs, or
+   it crashes between eret and its first SVC. Out of scope for
+   the immediate next probe.
+
+So the wall is one of these four calls inside `proc_mutexCreate`
+(`sources/phoenix-rtos-kernel/proc/mutex.c:51-80`):
+
+```text
+mutex = vm_kmalloc(sizeof(*mutex));   /* candidate a */
+id    = resource_alloc(p, &mutex->resource); /* candidate b */
+proc_lockInit(&mutex->lock, attr, "user.mutex"); /* candidate c */
+resource_put(p, &mutex->resource);    /* candidate d */
+```
+
+`vm_kmalloc` is the front-runner suspect (TD-04-class: heap
+free-list traversal touching uncached/stale memory after the
+syspage handoff). `proc_lockInit` is a close second (initializes a
+spinlock — see TD-11 single-core spinlock).
+
+## Next action
+
+Add `a/b/c/d` UART markers between the four calls in
+`proc_mutexCreate` (same single-byte-PL011-write idiom as the
+existing TD-13 ladder), self-cap to ~32 events, run a single
+netboot test cycle (~60s wait + 30s capture). Decision tree:
+
+- See `Ma` only → `vm_kmalloc` is the wall.
+- See `Mab` only → `resource_alloc` is the wall.
+- See `Mabc` only → `proc_lockInit` is the wall.
+- See `Mabcd` → returns from `proc_mutexCreate` but something
+  later in `syscalls_phMutexCreate` (or the path back through
+  `syscalls_dispatch` / exception return) hangs — distinct
+  problem, fall back to context dump.
+
+## Build/test commands
+
+```bash
+./scripts/rebuild-rpi4b-fast.sh
+./scripts/test-cycle-netboot.sh --label td13-mutex-substep --capture-secs 30 --dhcp-wait-secs 60
+python3 scripts/summarize-rpi4b-uart-log.py artifacts/rpi4b-uart/<latest>.log
+```
+
+## Historical commits leading here
+
 - pending: Pi 4 SError masking, single-core spinlock fix, and post-spawn diagnostics
 - d1996d8f: Fix infinite loop in entry relocation by using original_entries for loop condition
 - aff01622: Add more detailed markers in entry loop to diagnose infinite loop
