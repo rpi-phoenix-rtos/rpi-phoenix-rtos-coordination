@@ -488,6 +488,38 @@ mandatory cleanup. Until then, progress on the boot path takes priority.
      bits; sync external abort → another TD-04-class cache page.
 - **Marker grep:** `grep -n "main: spawn" sources/phoenix-rtos-kernel/main.c`
 
+### TD-13-spawn-cap: hard cap on the spawn loop in `main()`
+
+- **Status:** ACTIVE HACK (added 2026-05-01)
+- **Where:** `sources/phoenix-rtos-kernel/main.c` `main()`, the
+  spawn `do {...} while ((prog = prog->next) != syspage_progList())`.
+- **What was observed:** With the EL0-sync vector restored to normal
+  SVC dispatch (so syscalls work), real Pi 4 spawn loop runs through
+  all 9 progs once correctly (incrementing PIDs 2..9, each with a
+  matching `>` user-mode-entry marker), then keeps printing
+  `main: spawned psh (9)` ~187 000 times until UART capture ends.
+  The "spawn psh" line that should pair with each "spawned psh (9)"
+  iteration is *not* re-emitted — the loop body is being re-entered
+  somewhere after `proc_syspageSpawn` and before
+  `prog = prog->next`. Same code path runs cleanly to `(psh)% help`
+  in QEMU. Smells like another cache-coherency artifact on the
+  prog list head/tail pointer (TD-04 class).
+- **What was done:** Added an `if (++spawnIters >= 32) break;` cap
+  inside the loop. After 32 iterations the kernel prints a
+  `main: TD-13 spawn-cap hit, breaking spawn loop` line and exits
+  the loop into `for (;;) proc_reap();`. Lets the spawned user
+  processes actually get scheduled and produce their own UART
+  output (psh prompt, driver banners, etc.).
+- **Risk accepted:** If the syspage ever ships >32 progs, this
+  silently truncates. Trivial for current rpi4b config (9 progs).
+- **Resolution requirements:**
+  - Root-cause why `psh->next` doesn't return to the head on real
+    hardware (instrument the prog-list before/after the spawn loop;
+    likely needs the same NC-mapping treatment we applied to
+    `_hal_syspageCopied` and `PMAP_COMMON_STACK`).
+  - Restore the natural circular-list terminator and remove the cap.
+- **Marker grep:** `grep -n "TD-13-spawn-cap" sources/phoenix-rtos-kernel/main.c`
+
 ## Priority Ladder
 
 **Blocks "first Pi 4 boots to userspace" milestone (current):**
