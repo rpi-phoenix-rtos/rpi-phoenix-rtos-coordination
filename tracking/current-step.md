@@ -1,12 +1,107 @@
 # Current Implementation Step
 
-## Step: Stabilize Pi 4 user-space IPC race in pl011-tty / psh path (TD-14)
+## Step: Root-cause Pi 4 lookup() IPC slowness (TD-14, Strategy D)
 
-**Status**: IN PROGRESS — incremental fixes landed, intermittent on Pi 4
+**Status**: BLOCKED on Pi 4 silicon — workarounds A+B landed and validated
+on QEMU; real hardware still doesn't reach `(psh)%` within 600 s.
 
-**Date**: 2026-05-02
+**Date**: 2026-05-02 late-evening
 
-**Manifest**: `manifests/2026-05-02-td14-tty0-nonfatal-checkpoint.md`
+**Manifest**: `manifests/2026-05-02-td14-strategy-ab-checkpoint.md`
+
+## What landed today (closes TD-14 on QEMU, partial on Pi 4)
+
+**Strategy A — probe-strip:**
+- libphoenix `43e050d` — drop debug() probes in resolve_path,
+  _readlink_abs, safe_lookup, open, crt0, _libc_init. Also reverts
+  the TD-14-stat-skip workaround.
+- devices `3a3ee35` — drop TD13_DBG macro + all sites, drop poolthr
+  debug() probe.
+- utils `ff9fd9d` — revert TD-13 follow-on psh probes.
+- Effect: QEMU `(psh)%` at log line 264 (was 454 with probes — half
+  the boot time).
+
+**Strategy B — ttyopen non-fatal:**
+- utils `b25b0f8` — `psh_run()` continues with inherited stdio
+  (kernel klog) when `psh_ttyopen` exhausts retry budget. Designed
+  to give a one-way `(psh)%` banner on UART when /dev/console fails.
+
+**Empirical Pi 4 result with A+B:**
+- QEMU: `(psh)%` reached cleanly.
+- Pi 4 with 600 s capture window: still no `(psh)%`. pl011-tty's
+  `createTty0` retry loop iterates ~9 times in 12 minutes of
+  Phoenix runtime — i.e. each `lookup("devfs")` round-trip is
+  ~60 s on real hardware vs <1 ms on QEMU. psh stuck in its
+  `lookup("/")` loop for the same reason.
+
+## The actual blocker is now confirmed
+
+**Kernel `proc_portLookup` → `proc_send` round-trip latency is
+60 000× slower on Pi 4 silicon than on QEMU.** Same kernel image,
+same code path. This is silicon-only. Strategy A and B don't
+address it; they just make boot faster on QEMU and let psh limp
+forward when /dev/console specifically races.
+
+The lookup → mtLookup → proc_send → root-server-receive →
+root-server-respond → proc_send-returns chain is mostly:
+- kernel allocates msg_t (vm_kmalloc — has its own atomic ops)
+- adds to port's kmessages list (spinlock + LIST_ADD)
+- proc_threadWakeup(&p->threads) — wakes recv thread
+- proc_threadWaitInterruptible — sender sleeps
+- recv thread runs proc_recv, sets msg.state = msg_received
+- root server processes mtLookup, calls proc_respond
+- proc_respond wakes sender's wait queue
+- sender returns
+
+Hot suspects on Pi 4 silicon:
+1. **`vm_kmalloc` slowness** — TD-04-class heap-walk on uncached
+   memory. Could explain per-msg allocation cost.
+2. **`proc_threadWakeup` / `proc_threadWaitInterruptible`** — if
+   the wait queue manipulation involves cache-coherent writes that
+   are slow on Pi 4.
+3. **Timer-driven scheduling** — TD-11 single-core spinlocks mask
+   IRQs across critical sections. If timer ticks are slow or
+   missed, scheduler latency balloons.
+4. **VideoCore VI mailbox / GPU traffic** — same class as TD-04;
+   could be invalidating kernel memory mid-operation.
+
+## Next-session plan
+
+**Strategy D, prioritized (cheapest first):**
+
+1. **Time-budget probe at kernel `proc_send` entry/exit.** Capture
+   wall-time per call (RDTSC-equivalent on AArch64 = `mrs CNTPCT_EL0`).
+   If lookup IPC takes 60 s and only 1 ms is "useful work", we've
+   localized the cost to a specific blocking point.
+
+2. **Switch kernel name dcache and key kernel kmalloc heaps to
+   Normal Non-Cacheable (NC) attributes**, same fix that closed
+   TD-04 for `_hal_syspageCopied`. Test: does Pi 4 IPC speed up?
+
+3. **Quiesce VideoCore VI** — dummy mailbox call to stop GPU early
+   in plo or kernel boot. Check whether IPC slowdown disappears.
+
+4. **Strategy C as a fallback** — kernel-side `wait_for_name`
+   primitive that suspends the caller on dcache modification
+   queue rather than busy-polling.
+
+**Strategy E (optional, very pragmatic):** make psh's first run
+write `(psh)%` directly via `debug()` syscall (UART hook in
+kernel) once it knows ttyopen failed. Demonstrates the shell
+process exists and reaches main, even if shell IPC paths can't
+sustain interactive use yet.
+
+## Build/test commands
+
+```bash
+./scripts/rebuild-rpi4b-fast.sh --scope full-clean
+./scripts/qemu-shell-smoke.sh rpi4b
+./scripts/test-cycle-netboot.sh --label <label> --capture-secs 600 --dhcp-wait-secs 90 --skip-server-up
+python3 scripts/summarize-rpi4b-uart-log.py artifacts/rpi4b-uart/<latest>.log
+```
+
+## Previous step framing (early 2026-05-02)
+
 
 ## 2026-05-02 evening update — checkpoint after TD-14 investigation
 

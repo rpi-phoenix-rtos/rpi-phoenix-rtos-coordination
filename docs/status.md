@@ -1,6 +1,92 @@
 # Phoenix-RTOS Raspberry Pi 4 Port Status
 
-## Current Status: 2026-05-02 evening
+## Current Status: 2026-05-02 late-evening
+
+**TD-13 closed. TD-14 narrowed to: kernel `proc_portLookup` IPC is
+materially slower on Pi 4 silicon than QEMU.** Three workarounds
+landed and are validated by QEMU smoke; on real hardware they give
+incremental progress but do not yet produce a `(psh)%` prompt
+within reasonable capture windows.
+
+Strategy A (probe-strip) — landed:
+- libphoenix `master` @ `43e050d` — strip TD-13/TD-14 debug() trace
+  probes (resolve_path, _readlink_abs, safe_lookup, open, crt0,
+  _libc_init); also reverts the TD-14-stat-skip workaround.
+- devices `master` @ `3a3ee35` — strip TD13_DBG macro + all calls,
+  drop poolthr `debug("poolthr enter")`.
+- utils `master` @ `ff9fd9d` — revert psh probe commit.
+- Effect on QEMU: `(psh)%` reaches at log line 264 (was 454+ with
+  probes — boot is materially faster end-to-end).
+
+Strategy B (ttyopen non-fatal) — landed:
+- utils `master` @ `b25b0f8` — `psh_run()` continues with inherited
+  STDIN/STDOUT/STDERR (kernel klog port) when the
+  `psh_ttyopen("/dev/console")` retry budget exhausts. Logs a
+  warning and proceeds. Restores fatal path once IPC is fast.
+
+Pi 4 reality with both A and B applied (600 s capture window:
+`artifacts/rpi4b-uart/rpi4b-uart-20260502-202654-netboot-td14-long-600.log`):
+
+```text
+main: spawned dummyfs-root (2)
+main: spawned dummyfs (3)
+main: spawned pl011-tty (4)
+main: spawned mkdir (5)
+main: spawned bind (7)            [pid 6 was unused / interleaved]
+main: spawned pcie (8)
+main: spawned usb (9)
+main: spawned psh (10)
+main: spawn loop done, entering proc_reap idle
+threads: psh user scheduled
+[≈ 12 minutes elapsed]
+pl011-tty: started
+pl011-tty: register tty0
+pl011-tty: tty0 lookup
+pl011-tty: tty0 lookup retry      [×2 — at i=0 and i=9]
+name: devfs root query             [×15]
+[no "tty0 lookup ok", no "console ready", no "psh: root ready"]
+[no "(psh)%"]
+```
+
+Interpretation: in 12 minutes of Phoenix runtime, pl011-tty's
+`createTty0` retry loop made fewer than ~10 iterations. That's
+~60 s per `lookup("devfs")` round-trip on Pi 4 vs <1 ms on QEMU.
+psh likewise stuck in its `while (lookup("/", ...) < 0)` loop. The
+underlying issue is the kernel's `proc_portLookup` → `proc_send` to
+the root server is slow on real silicon.
+
+QEMU still reaches `(psh)% help` interactively in every smoke run.
+Image SHA256 (post-A-B): `ff79d79d4ab5b6e4d407eda2ea6dcae256dc55fea0333970d31c634e510fc5df`.
+
+What's still pending (next session):
+
+- **Strategy C** — Replace busy-poll `lookup()` retry loops with a
+  kernel-side name-ready notification primitive (condvar that fires
+  when dcache acquires the requested name). Removes both the
+  `usleep` jitter and the per-retry IPC cost.
+- **Strategy D** — Root-cause why each `proc_send` round-trip is so
+  slow on Pi 4. Plausible candidates:
+  - VideoCore VI / GPU mailbox traffic interfering with kernel
+    memory (same class as TD-04 syspage corruption).
+  - Slow timer/interrupt latency on the boot core (TD-11
+    single-core spinlocks may serialize too much).
+  - dummyfs-root's poolthr scheduling latency under contention.
+
+Latest verified images:
+
+- Integration manifest: `manifests/2026-05-02-td14-strategy-ab-checkpoint.md`
+- Kernel: `agent/rpi4-program-reloc` @ `37fcc58e` (unchanged from TD-13)
+- Devices: `master` @ `3a3ee35`
+- Utils: `master` @ `b25b0f8`
+- Libphoenix: `master` @ `43e050d`
+- Image SHA256: `ff79d79d4ab5b6e4d407eda2ea6dcae256dc55fea0333970d31c634e510fc5df`
+
+Reference logs:
+- 600 s no-prompt: `artifacts/rpi4b-uart/rpi4b-uart-20260502-202654-netboot-td14-long-600.log`
+- 240 s no-prompt: `artifacts/rpi4b-uart/rpi4b-uart-20260502-202114-netboot-td14-ttyopen-nonfatal.log`
+- 240 s post-strip baseline: `artifacts/rpi4b-uart/rpi4b-uart-20260502-201349-netboot-td14-stripped-probes.log`
+
+## Previous Status: 2026-05-02 evening
 
 **TD-13 closed. TD-14 reframed: not a single hang point but a
 constellation of TD-04-class IPC fragility on Pi 4.** Each cycle the

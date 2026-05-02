@@ -756,6 +756,52 @@ under TD-13-spawn-cap and the priority ladder.
   slowness is rooted out.
 - **Marker grep:** `grep -n "TD-14-psh-retry" sources/phoenix-rtos-utils/psh/pshapp/pshapp.c`
 
+### TD-14-ttyopen-nonfatal: psh_run continues if /dev/console open fails
+
+- **Status:** ACTIVE WORKAROUND (utils `b25b0f8`, 2026-05-02)
+- **Where:** `sources/phoenix-rtos-utils/psh/pshapp/pshapp.c`,
+  `psh_run()`. The retry loop's `if (err < 0) return err;` is
+  replaced with a warning print and the function continues with
+  whatever stdin/stdout/stderr psh inherited from `posix_clone`
+  (the kernel klog port for syspage-spawned processes).
+- **Why:** When `pl011-tty` registration is slow on Pi 4
+  (TD-14 lookup latency) and psh's
+  `PSH_TTYOPEN_RETRIES * PSH_TTYOPEN_RETRY_US` budget exhausts,
+  we'd rather emit a one-way `(psh)%` on UART (proof of life)
+  than fail psh entirely. Restore the fatal path once IPC
+  slowness is rooted out.
+- **Risk accepted:** Without `/dev/console`, psh has no usable
+  stdin from a terminal. The shell prompt prints but interactive
+  input doesn't work.
+- **Marker grep:** `grep -n "TD-14-ttyopen-nonfatal" sources/phoenix-rtos-utils/psh/pshapp/pshapp.c`
+
+### TD-14-probe-strip: TD-13/TD-14 trace probes removed
+
+- **Status:** RESOLVED 2026-05-02 (libphoenix `43e050d`,
+  devices `3a3ee35`, utils `ff9fd9d`)
+- **Where:** all the `debug()` syscall trace probes added during
+  the TD-14 investigation:
+  - `libphoenix unistd/dir.c` per-component
+    resolve_path / _readlink_abs / safe_lookup tracing.
+  - `libphoenix unistd/file.c` open() console-trace + the related
+    TD-14-stat-skip workaround (now also reverted).
+  - `libphoenix crt0-common.c` + `misc/init.c` startup prints.
+  - `phoenix-rtos-devices/tty/pl011-tty/pl011-tty.c` TD13_DBG()
+    macro and all callsites + standalone poolthr `debug()`.
+  - `phoenix-rtos-utils/psh/psh.c` + `psh/pshapp/pshapp.c` debug
+    probes (committed as a clean revert).
+- **Why removed:** Each probe was an extra `debug()` syscall +
+  UART byte stream. On QEMU they alone slowed `(psh)%` by ~2x
+  (boot reaches the prompt at log line 264 without probes vs 454
+  with). On Pi 4 they added per-IPC overhead that probably
+  contributed to the visible slowness without changing the
+  fundamental rate-limit (which is the kernel `proc_send`
+  round-trip).
+- **Note:** The diagnostic value of these probes was real — they
+  localized TD-13 and reframed TD-14. They're recorded in this
+  document so we can reintroduce them quickly if the next
+  investigation needs the same data.
+
 ### TD-14-startup-settle (NOT TAKEN): initial sleep in pl011-tty `main()`
 
 - **Status:** REJECTED 2026-05-02 — broke QEMU. Recorded so we don't
@@ -833,6 +879,8 @@ under TD-13-spawn-cap and the priority ladder.
 | TD-14-tty0-nonfatal | PENDING | pl011_createTty0 failure is non-fatal |
 | TD-14-pl011-retry | PENDING | createTty0 lookup-devfs retries 50 → 30 |
 | TD-14-psh-retry | PENDING | PSH_TTYOPEN_RETRIES 20 → 200 |
+| TD-14-ttyopen-nonfatal | PENDING | psh_run continues if /dev/console open fails |
+| TD-14-probe-strip | RESOLVED 2026-05-02 | TD-13/TD-14 debug() probes removed |
 
 When resolving an item:
 
