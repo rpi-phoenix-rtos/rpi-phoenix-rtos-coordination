@@ -34,6 +34,12 @@ enable `M|C|I` together in the early transition with fault-register capture, or
 first add a no-call early exception dump if the current handler is still too
 fragile to diagnose cache-enable faults.
 
+Follow-up caution: a no-call early exception-dump rewrite was tried after this
+step and rejected. It passed QEMU but the real Pi run timed out at
+`psh: readcmd` without reaching `(psh)%`; source was reverted and no kernel
+commit was made. Do not retry that diagnostic shape without first proving it
+with a controlled QEMU exception or gdbstub-backed fault capture.
+
 ## Previous Current Status: 2026-05-03 night
 
 **TD-16 alias cleanup progressed without regressing boot.** Kernel

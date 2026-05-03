@@ -272,6 +272,67 @@ TD-16 alias cleanup, but it does not change performance. The TD-16 loops still
 report `dt≈0x883e**`, proving caches remain disabled and the next step must be
 the actual early `M|C|I` transition or better early fault capture around it.
 
+## 2026-05-04 TD-16 step 4 plan — harden early exception dump
+
+Objective: make the temporary early exception vector print ESR/ELR/FAR without
+using stack setup or `bl` calls. Previous cache-enable experiments sometimes
+degenerated into repeated `E` output, which suggests the handler itself can
+refault before completing the diagnostic dump.
+
+In scope:
+- Kernel `hal/aarch64/_init.S` only.
+- Replace `_early_exception_common` with a terminal, no-call UART dump that
+  emits vector slot, `ESR_EL1`, `ELR_EL1`, and `FAR_EL1`.
+- Do not enable caches in this step.
+
+Out of scope:
+- Changing the normal post-bootstrap exception vectors.
+- Interpreting cache-enable faults.
+- Changing runtime scheduling, pmap, or driver code.
+
+Acceptance criteria:
+- Pi 4 fast rebuild/export completes with no compiler, linker, DTB,
+  packaging, or image-verification warnings.
+- QEMU Pi 4 shell smoke reaches `(psh)% help`.
+- Generic QEMU shell smoke reaches `(psh)% help`.
+- Real Pi 4 netboot reaches `(psh)%`, proving the diagnostic path is inert on
+  the non-faulting path.
+
+Rollback baseline:
+- Kernel `5e727dcc`.
+- Coordination repo `4fbb341`.
+
+Result: FAILED and reverted locally; no kernel commit made.
+
+Evidence:
+- First rebuild failed in assembly because numeric macro-local labels expanded
+  into invalid branch targets such as `99145`. The macro labels were corrected
+  to named local labels and the rebuild then passed.
+- Rebuild/export after the label fix produced image SHA256
+  `1559c85756df97bb4d18e4c6fc9702c606a55a7c1e95c3a86d15ecf585c018c1`.
+- QEMU Pi 4 and generic QEMU shell smokes both reached `(psh)% help`.
+- Real Pi 4 netboot with label `td16-early-exdump` did not reach `(psh)%`
+  in 600 s. It reached `psh: readcmd`, then timed out amid heavy interleaved
+  process-spawn/debug output. Log:
+  `artifacts/rpi4b-uart/rpi4b-uart-20260503-222821-netboot-td16-early-exdump.log`.
+
+Warnings observed:
+- Build attempt 1: assembler errors from bad macro label expansion. Fixed in
+  the working tree before validation, then ultimately reverted because the
+  hardware acceptance criterion failed.
+- Real Pi firmware emitted many `xHC-CMD err` diagnostics during SD/USB-MSD
+  probing before network fallback. Netboot and Phoenix startup still
+  proceeded, so this is classified as firmware-stage noise for this run, but
+  it should be watched if USB-MSD probing starts delaying or disrupting future
+  netboot cycles.
+- UART helper used `picocom` and printed `STDIN is not a TTY`; capture was
+  still valid.
+
+Conclusion: do not commit the no-call early exception dump as written. The
+next cache-enable diagnostic should either use QEMU gdbstub first or add a
+smaller fault path that is explicitly tested by forcing a controlled exception
+under QEMU before running on hardware.
+
 ## Sequencing decision for the next session
 
 The user's stated goal is **fully unlocking 4 GiB DRAM and

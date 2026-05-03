@@ -22,6 +22,21 @@
   ESR/ELR/FAR dump if the current exception path remains too fragile for
   cache-enable fault diagnosis.
 
+### 2026-05-04: Reject TD-16 no-call early exception dump ❌
+- **Kernel commit**: none; source reverted to `5e727dcc`
+- **Image tested**: `1559c85756df97bb4d18e4c6fc9702c606a55a7c1e95c3a86d15ecf585c018c1`
+- **UART log**: `artifacts/rpi4b-uart/rpi4b-uart-20260503-222821-netboot-td16-early-exdump.log`
+- **Result**: A no-call early exception-dump rewrite passed rebuild and both
+  QEMU shell smokes after fixing macro-label assembly errors, but real Pi 4
+  did not reach `(psh)%` inside 600 s. The run reached `psh: readcmd`, then
+  timed out amid heavy interleaved process-spawn/debug output.
+- **Warnings**: First build attempt failed with assembler errors caused by bad
+  numeric macro-local labels; fixed before testing. Firmware also emitted many
+  `xHC-CMD err` diagnostics during SD/USB-MSD probing before network fallback.
+- **Decision**: Do not commit this diagnostic path. Future cache-enable fault
+  diagnostics should use QEMU gdbstub first or a smaller controlled-exception
+  test before hardware.
+
 ### 2026-05-02: Bypass TD-14 `devfs` lookup wall ✅
 - **Kernel commit**: `60703368` (`rpi4b: stabilize devfs lookup during TD-14`)
 - **Devices commit**: `63f1d438` (`rpi4b: keep console alias usable during TD-14`)
