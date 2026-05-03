@@ -65,7 +65,69 @@ Then run:
 python3 scripts/summarize-rpi4b-uart-log.py artifacts/rpi4b-uart/<latest>.log
 ```
 
-## 2026-05-03 update — TD-15 phase 1 done, TD-16 opened
+## 2026-05-03 update — TD-16-1 landed; cache-enable attempted, reverted
+
+After landing TD-16-1 measurement probes (kernel `843e6c61` and plo
+`61927ba`), we now have hard data on the Pi 4 slowdown:
+
+- `td16: arm_freq Hz = 0x59682f00` = **1.5 GHz** — firmware confirms
+  the ARM core is at full turbo. CPU is NOT throttled.
+- `td16:cf=0337f980 dt=0000000000872d51` →
+  - cntfrq = **54 MHz** (correct for BCM2711),
+  - dt = **8,858,961 ticks for 1M nops** (~62× slower than physics
+    says it should be at 1.5 GHz with caches enabled).
+
+**The slowdown is caches being disabled in the kernel** — confirmed.
+Not CPU throttling, not timer rate, not power management.
+
+Attempts to enable I-cache + D-cache in `_init.S` were investigated:
+
+1. I+D enable right after `_core_0_virtual:` → **recursive
+   exception loop** on real Pi 4 (`E E E E ...`).
+2. I+D enable just before `b main` → similar fault inside
+   `syspage_init`'s first `hal_syspageAddr()` call.
+3. I-cache only just before `b main` → no fault, per-nop loop is
+   117× faster, but **overall boot doesn't progress meaningfully
+   faster** (480 s capture stalls at the same `kllmnP` marker).
+4. D-cache later in `_hal_init` (after syspage_init completes) →
+   hung QEMU smoke inside `bl hal_cpuInvalDataCacheAll`. Not
+   tested on real Pi 4.
+
+All cache-enable code has been reverted to baseline. The TD-15
+phase 1 + TD-16-1 probes remain in place as documented diagnostic
+infrastructure. The Pi 4 boot reaches `(psh)%` reliably in ~420 s
+capture per the 2026-05-02 manifest.
+
+The detailed findings + hypothesis space are in
+`docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md` under TD-16-cache-enable.
+
+## Sequencing decision for the next session
+
+The user's stated goal is **fully unlocking 4 GiB DRAM and
+correctly controlling VC6 memory access** (TD-15). The slowdown
+investigation (TD-16) is important for quality-of-life, but it's
+not strictly on the critical path for 4 GiB unlock.
+
+Two viable directions:
+
+**Option A: Continue TD-16-cache-enable.** Read Linux's
+`arch/arm64/kernel/head.S` cache-enable sequence for A72 / Pi 4,
+replicate precisely. Add a more-isolated early-exception handler
+that prints ESR_EL1 / ELR_EL1 / FAR_EL1 via direct PL011 MMIO
+(no `bl` calls) so we can see the actual fault. Likely 1-2 more
+Pi cycles to converge.
+
+**Option B: Pivot to TD-15 phases 2-6 for 4 GiB unlock.**
+- Phase 2: move PLO_RPI_MAILBOX_BUFFER_ADDRESS out of ARM-usable RAM.
+- Phase 3: VC4 quiesce mailbox sequence before plo `eret`.
+- Phase 4: DTB `/reserved-memory` + `/soc/dma-ranges` parsing.
+- Phase 5: `total_mem=4096` in `config.txt` + 4 GiB validation.
+- Phase 6: DMA correctness audit across `pcie/xhci`.
+This addresses the user's stated near-term goal directly. Pi 4 is
+slow during validation cycles but each Phase produces visible
+progress on the memory layout work regardless of cache state.
+
+## 2026-05-03 reframe — TD-15 (VC6 hygiene + 4 GiB) is the next investment
 
 The TD-15 phase 1 mailbox-buffer drift probe ran on real Pi 4. Result:
 **`td15:OK`** — the 64-byte pattern plo wrote at PA `0x02000000` was

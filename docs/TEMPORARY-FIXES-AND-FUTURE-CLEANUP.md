@@ -1127,26 +1127,98 @@ under TD-13-spawn-cap and the priority ladder.
 - **Marker grep:** none in source yet (probe code to be added in
   Phase 16-1 below).
 
-## TD-16-1: planned timer measurement probe
+## TD-16-1: timer measurement probe (LANDED 2026-05-03)
 
-- **Status:** PLANNED (not yet implemented).
-- **Where:** kernel `main.c` — alongside the TD-15 phase 1 probe
-  and the existing pre-`syspage_init` early markers, since both
-  the PL011 alias (`0xffffffffffe00000`) and the mailbox alias
-  (`0xffffffffffe01000`) are already mapped at this point.
-- **What to measure:**
-  ```
-  cntfrq = CNTFRQ_EL0
-  t0 = CNTPCT_EL0
-  for (i = 0; i < 0x10_0000; i++) asm("nop");  // ~64 K nops
-  t1 = CNTPCT_EL0
-  print "td16: cntfrq=<hex> dt=<hex>"
-  ```
-- **Decision tree:**
-  - QEMU baseline (~54e6 cntfrq, dt ~ a few hundred): math correct.
-  - Pi 4 cntfrq=54e6 but dt is e.g. 600 → ticks slow by ~1000×.
-  - Pi 4 cntfrq=54000 → CNTFRQ misread; armstub didn't actually
-    write OSC_FREQ.
+- **Status:** LANDED (probe code in main and plo); investigation
+  ongoing.
+- **Where:**
+  - Kernel: `sources/phoenix-rtos-kernel/main.c` — early-marker
+    section right after `'d'` and before `syspage_init()`.
+  - Plo: `sources/plo/hal/aarch64/generic/video.c` —
+    `video_td16QueryArmFreq()` invoked from `video_init()` via VC4
+    mailbox tag 0x30002 (RPI_FIRMWARE_GET_CLOCK_RATE) for clock
+    id 3 (ARM core).
+- **Measurements captured on real Pi 4 (cycle
+  artifacts/rpi4b-uart/rpi4b-uart-20260502-232506-netboot-td16-1-cpu-clock-probe.log):**
+  - `td16: arm_freq Hz = 0x59682f00` = 1,500,000,000 Hz = **1.5 GHz**
+    (firmware confirms ARM core at full turbo; rules out the
+    "CPU is throttled to a tiny fraction of normal" hypothesis).
+  - `td16:cf=0337f980 dt=0000000000872d51` →
+    - cntfrq = 0x0337f980 = **54 MHz** (correct for BCM2711).
+    - dt = 0x0872d51 = **8,858,961 ticks for 1M nops**.
+  - Math: at 1.5 GHz with caches enabled, IPC ~1, the loop should
+    take ~144,000 ticks. Observed value is **~62× higher**, i.e.
+    the kernel is running ~62× slower than physics says it should
+    even though firmware and timer are both correct.
+- **Conclusion:** The slowdown is **caches being disabled in the
+  kernel** for the entire kernel runtime (see TD-16). The CPU
+  frequency, the architectural timer, and the firmware boot are
+  all fine.
+- **Sibling commits:**
+  - kernel `843e6c61` (`aarch64: TD-16-1 timer + CPU-speed probe`)
+  - plo `61927ba` (`rpi4: TD-16-1 plo VC4 mailbox arm_freq query`)
+
+## TD-16-cache-enable: attempted, regressed, reverted (2026-05-03)
+
+- **Status:** INVESTIGATION 2026-05-03; NOT MERGED. Documented for
+  the next session.
+- **What was tried:** Several placements for enabling kernel
+  I-cache and D-cache via `SCTLR_EL1.C` and `SCTLR_EL1.I` after
+  the existing MMU-only enable. All were either harmful or
+  unhelpful on real Pi 4:
+  1. **I+D cache enable right after `_core_0_virtual:` label**
+     (very early): caused a **recursive exception loop** on real
+     Pi 4 (`E E E E ...` spam — early-exception handler trying
+     to print "EX=" but only managing 'E' before refaulting).
+     QEMU survived the same code unchanged.
+  2. **I+D cache enable just before `b main`**: also caused a
+     fault on real Pi 4. Last visible markers: `eF1` from
+     `syspage_init()`, then either silent stall or recursive
+     exception inside the very first IPC `hal_syspageAddr()`.
+  3. **I-cache only just before `b main`** (no D-cache): no
+     fault, and the post-cache-enable nop-loop probe in main.c
+     measured a ~117× speedup (`dt = 0x126eb` vs `0x872d51`).
+     But the **overall boot did not speed up** — both 240 s and
+     480 s captures stalled around `kllmnP` inside
+     `syspage_init`'s map relocation, never reaching `_hal_init`.
+     Unclear whether this is because (a) data accesses still
+     dominate without D-cache or (b) the I-cache enable disturbs
+     timing of the rest of the boot in a subtle way.
+  4. **D-cache enable in `_hal_init` (after syspage_init
+     completed)**: hung *QEMU smoke* inside the
+     `bl hal_cpuInvalDataCacheAll` set/way invalidate loop; never
+     reached the SCTLR write. Did not get a chance to test on
+     real Pi 4.
+- **Hypothesis space (for next session):**
+  - The kernel's `_hal_syspageCopied` page (Normal Non-Cacheable)
+    and `PMAP_COMMON_STACK` pages (also NC per TD-04 fix) coexist
+    with the surrounding kernel BSS mapped Normal cacheable.
+    Enabling D-cache may interact badly with this mixed-attr
+    layout because A72 prefetcher may pull adjacent cacheable
+    lines that aren't strictly mapped, faulting on translation.
+  - `hal_cpuInvalDataCacheAll` may need different parameters on
+    A72 (ccsidr_el1 read with cssselr_el1=0 should give L1, but
+    we may be reading L2).
+  - The `b main` placement is too early — kernel C runtime
+    initialization (BSS zeroing? GOT setup?) may not be ready
+    for cached accesses yet.
+- **Working state restored:** The kernel _init.S has reverted to
+  the baseline (no cache enable). The TD-15 phase 1 + TD-16-1
+  probes remain. Boot is slow but correct, reaching `(psh)%` in
+  ~420 s capture window per the 2026-05-02 manifest.
+- **Next session options:**
+  1. Read Linux kernel's `arch/arm64/kernel/head.S` cache-enable
+     sequence for A72 / Pi 4 and replicate it precisely.
+  2. Trace where the recursive exception originates by adding
+     a slightly different early-exception handler that prints
+     ESR/ELR via direct PL011 mmio writes (no `bl` calls).
+  3. Bypass the slowdown investigation entirely and proceed with
+     TD-15 phases 2-6 in parallel — those address the **4 GiB
+     unlock** which is the user's primary near-term goal. The
+     Pi 4 slow-but-correct boot is acceptable for validation
+     work; the speedup is a quality-of-life improvement.
+
+
 
 ## Priority Ladder
 
