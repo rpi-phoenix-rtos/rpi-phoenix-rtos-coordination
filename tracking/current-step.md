@@ -1,10 +1,76 @@
 # Current Implementation Step
 
-## Step: Cleanup after first real Pi 4 psh prompt (TD-14)
+## Step: TD-16 cache bring-up — no-call exdump landed, fault decoded
 
-**Status**: ACTIVE — Pi 4 reaches the UART shell prompt. Current work is
-TD-16 cache bring-up: remove unsafe bootstrap aliases first, then retry a
-single early MMU/cache transition.
+**Status**: ACTIVE — Pi 4 reaches `(psh)%` reliably; cache enable still
+not active. The latest M+C+I-together attempt produced a clean fault
+decode via the new no-call early exception dump. Next iteration needs a
+VA-range cache invalidation strategy over the kernel image to address
+the suspected A72 erratum #851672.
+
+## 2026-05-04 update — exdump landed, M+C+I fault decoded
+
+Sibling commit:
+- kernel `2a5b6a05` (`aarch64: TD-16 no-call early exception dump +
+  cache-enable fault evidence`).
+
+What changed:
+1. `_early_exception_common` rewritten to use **direct PL011 MMIO writes
+   only** (no `bl`, no literal-pool string walker). Survives faults
+   that previously caused recursive `E E E` spam. The previous agent
+   rejected an exception-dump rewrite of this kind; the user clarified
+   that the "real Pi timed out" observation was the cache-disabled
+   slow boot, not a crash, so the diagnostic value of the dump
+   outweighs its install cost. Real Pi 4 baseline boot reaches
+   `(psh)%` cleanly with zero spurious exceptions
+   (artifacts/rpi4b-uart/rpi4b-uart-20260503-234148-netboot-td16-exdump-baseline.log).
+2. The "do not enable caches here" comment near the MMU enable is
+   updated with the concrete fault the M+C+I-together attempt
+   produced after the alias-safety prep work landed (7f7684c4 +
+   d52f6c3a + 5e727dcc + 1a4eb297):
+
+   ```
+   EX=0000000000000004
+   ESR=0000000002000000          (EC=0, "Unknown reason")
+   ELR=ffffffffc00005ac          (high-VA target of br x0)
+   FAR=0000000000000000
+   ```
+
+   The fault fires at the FIRST instruction the I-cache fetches from
+   the high-VA kernel image after the post-MMU `br x0`. The fetched
+   bytes don't decode as a valid AArch64 instruction. Most plausible
+   cause is **Cortex-A72 erratum #851672** (set/way cache maintenance
+   can leave cache in inconsistent state). The Linux arm64 fix is to
+   use VA-range cache maintenance (`dc civac` / `ic ivau` per cache
+   line) instead of set/way for kernel image regions.
+
+## Next TD-16 step
+
+Replace `bl hal_cpuInvalDataCacheAll` (set/way) in the cache-enable
+sequence with VA-range invalidation over the kernel image, matching
+Linux's `__inval_dcache_area` style:
+- Compute kernel image PA range from syspage.
+- Loop `dc civac` per cache line over that range.
+- Then `ic ivau` per line over the same range.
+- `dsb ish; isb`.
+- THEN flip SCTLR.M | C | I in one write.
+
+If that still faults, the no-call exdump will tell us the new ESR/ELR/
+FAR within seconds.
+
+## Sequencing decision for next session (unchanged from yesterday)
+
+**Option A**: Continue TD-16 with VA-range invalidation. 1-2 cycles to
+converge or definitively rule out cache enable on Pi 4 silicon.
+
+**Option B**: Pivot to TD-15 phases 2-6 for the **4 GiB DRAM unlock**
+goal. Pi 4 is slow during validation (~420 s per cycle to reach
+`(psh)%`) but each phase produces visible progress on the memory
+layout work regardless of cache state. The slowdown is a quality-of-
+life issue, not a critical-path blocker for the user's stated goal.
+
+## Previous step framing
+
 
 **Date**: 2026-05-02 night
 
