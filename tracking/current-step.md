@@ -145,17 +145,40 @@ result log so we can see whether fbcon initialized.
   height vs actual-framebuffer-height mismatch; cosmetic, queued for
   follow-up).
 
+**Stage 4 phase 1b LANDED 2026-05-05** in `phoenix-rtos-devices`
+master `e0a6624`:
+- VT100/ANSI ESC parser in `pl011_fbcon_putc`. Three-state machine
+  handles CSI sequences `[0J`, `[2J`, `[0K`, `[2K`, `[H`, `[r;cH`,
+  `[r;cf`, `[nA`, `[nB`, `[nC`, `[nD`, `[m...` (SGR consumed
+  silently), and `ESC c` (RIS). Up to 8 numeric params per CSI;
+  unknown final bytes silently terminate without rendering as
+  garbage; cursor row/col-clamped on every move.
+- 64-bit framebuffer fill primitive (`pl011_fbcon_fill64`) used by
+  `clearRow` and the new `clearAll`. Halves instruction count vs the
+  previous per-pixel `uint32_t` loop; compiler is free to emit STP
+  for the inner loop.
+- `fbcon_init` now sweeps the entire mapped `fbmemsz` to BG and
+  resets the parser state.
+- Real-Pi netboot
+  (`artifacts/rpi4b-uart/rpi4b-uart-20260505-212124-netboot-stage4-hdmi-grab.log`)
+  reaches `psh: readcmd` and prints **`fbcon: ok`** to UART — the
+  first UART-side confirmation that `pl011_fbcon_init` returned EOK.
+- HDMI visual confirmation pending: needs a Pi-powered grab via the
+  C3-1 USB3 Video device on the macOS host. ffmpeg+avfoundation has
+  been flaky; user provided fallback at
+  https://github.com/houp/simple-video-preview.
+
 **Stage 4 phase 2 (NEXT): USB keyboard input.** Validate xHCI
 bring-up + HID enumeration so `/dev/kbd0` is populated; pl011_kbdthr
 already opens that path and feeds keystrokes into the tty. Real-Pi
 test with a USB keyboard plugged in is the validation step.
 
-**Stage 4 cosmetic follow-ups (queued):**
-- ANSI ESC parser in `pl011_fbcon_putc` — interpret `\x1b[0J`,
-  `\x1b[2J`, `\x1b[H`, `\x1b[r;cH` instead of rendering literally.
-- Full-framebuffer clear in `fbcon_init` — verify graphmode height
-  matches firmware framebuffer dimensions; expand the clear loop if
-  not.
+**Stage 4 cosmetic follow-up still queued:**
+- HDMI screenshot to visually confirm `[0J(psh)%` garbage is gone.
+- Once Stage 1 cache enable is solved, switch the framebuffer fill
+  to use `DC ZVA` (cache-line zero) for ~10× speedup over the current
+  64-bit-store loop. Until then, the line-by-line wipe the user
+  observed is intrinsic to caches-off DDR write throughput.
 
 ### Previous step framing
 
