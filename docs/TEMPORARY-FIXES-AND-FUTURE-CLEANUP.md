@@ -1196,13 +1196,32 @@ under TD-13-spawn-cap and the priority ladder.
 
 ## TD-16-cache-enable: attempted, regressed, reverted (2026-05-03)
 
-- **Status:** PARKED 2026-05-04 after 5 decoded fault iterations.
-  Active Stage 1 step is the architectural restructure (Linux
-  `__enable_mmu` shape), not more invalidation tactics. Iteration
-  log preserved in this entry as evidence that the variation axis
-  is exhausted. See `tracking/current-step.md` "Stage 1 inventory"
-  for the concrete refactor plan.
-- **Stage:** 1.
+- **Status:** PARKED 2026-05-05 after 5 fault iterations + 4
+  Stage 1 architectural-refactor cycles. Both lines of attack
+  (more invalidation tactics; structural Linux `__enable_mmu`
+  refactor) hit the same end-state: silent hang on real Pi 4
+  silicon at the cache-enable transition, no exception fires,
+  QEMU always passes. Resolution requires lab-grade debugging
+  access (JTAG + trace) beyond UART-only iteration scope.
+- **Stage:** 1 (parked). Stages 2 (4 GiB) and 4 (HDMI/USB) advance
+  without it; Stage 3 (SMP) blocks on it because LDXR/STXR
+  cross-core requires cacheable Inner-Shareable memory.
+- **Stage 1 architectural refactor cycles** (working-tree only,
+  no kernel commits landed; `tracking/current-step.md` 2026-05-05
+  has the full iteration table):
+  - Cycle 1 (image `4a5575b3`): all PT/syspage writes pre-MMU,
+    single SCTLR.M\|C\|I flip, TTBR0 NC blocks → silent hang at X3.
+  - Cycle 2 (image `4f8c5ea7`): + TTBR0 blocks Normal Cacheable IS
+    (match TTBR1, fix mismatched-attribute hypothesis) → silent
+    hang at X3.
+  - Cycle 3 (image `1d219133`): + Linux 2-step SCTLR (C+I armed
+    in baseline, M-only at flip) → silent hang at X3.
+  - Cycle 4 (image `823c84bc`): + CPUECTLR_EL1.SMPEN write at EL1
+    → silent hang at L→M (the SMPEN write itself; armstub already
+    sets SMPEN at EL3 and EL1 access likely traps to EL2).
+  - Same recurring point of failure across all 4 cycles strongly
+    suggests a BCM2711 SCU / L2 cache / firmware-coherency-domain
+    interaction not modeled by QEMU.
 - **What was tried:** Several placements for enabling kernel
   I-cache and D-cache via `SCTLR_EL1.C` and `SCTLR_EL1.I` after
   the existing MMU-only enable. All were either harmful or

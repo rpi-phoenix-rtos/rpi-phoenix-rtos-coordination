@@ -1,7 +1,13 @@
 # Roadmap: caches + 4 GiB DRAM + SMP + HDMI/USB console
 
-**Status:** ACTIVE plan as of 2026-05-04. Supersedes ad-hoc step-by-step
-sequencing for these four interconnected goals.
+**Status:** ACTIVE plan as of 2026-05-04, with Stage 1 cache-enable
+parked 2026-05-05 after 4 architectural-refactor cycles all hit silent
+hangs on real Pi 4 (resolution requires JTAG-grade debugging access).
+Stages 2 (4 GiB) and 4 (HDMI/USB) proceed without Stage 1 caches at
+reduced boot speed; Stage 3 (SMP) remains blocked on Stage 1 because
+LDXR/STXR cross-core semantics require cacheable Inner-Shareable
+memory. Supersedes ad-hoc step-by-step sequencing for these four
+interconnected goals.
 
 This document is the single source of truth for the *strategic* trajectory
 toward a fully working Phoenix-RTOS on Raspberry Pi 4. Tactical per-step
@@ -75,7 +81,39 @@ shape we need to fix.
 
 ## Stage plan
 
-### Stage 1 — Cache root cause: Linux `__enable_mmu` shape (1-2 sessions)
+### Stage 1 — Cache root cause: Linux `__enable_mmu` shape (PARKED 2026-05-05)
+
+**Outcome:** 4 architectural-refactor cycles on real Pi 4. Every cycle
+produced a silent hang on real silicon while QEMU passed cleanly. The
+hang point is consistent across all 4 cycles: between the SCTLR write
+that affects cache state and the first post-flip instruction. No
+exception fires; the no-call exception dump produces no output.
+
+This pattern strongly suggests a BCM2711-specific hardware coherency
+interaction (SCU, L2 cache state, or firmware-shared coherency domain)
+that QEMU's cache model doesn't reproduce. Resolution requires
+lab-grade debugging access (JTAG + real-time trace, ARM RealView, or
+equivalent) to observe what the core does in those few instruction
+cycles. **Beyond the scope of UART-only iteration; tracked as a
+future investment session.**
+
+`tracking/current-step.md` 2026-05-05 has the full iteration table
+with image SHAs and per-cycle variants. `_init.S` is back at kernel
+HEAD `49ca0c66` (the cache-disabled validated baseline).
+
+The Stage 1 prereqs that DID land are kept in tree as building
+blocks for any future attempt:
+- VA-range cache helpers (`_clean_inval_dcache_range`,
+  `_inval_dcache_range`, `_inval_icache_range`).
+- No-call early exception dump (kernel `2a5b6a05`).
+- TTBR0 alias safety + early TTBR0 drop + pre-MMU PT invalidation
+  (kernels `7f7684c4`, `d52f6c3a`, `5e727dcc`).
+
+### Stage 1 — original plan (preserved for the future investment session)
+
+The plan below is the architectural target. It's correct but
+empirically the M+C+I or M-after-(C+I) transitions hang on real Pi 4.
+Future work needs JTAG-level diagnosis before retrying.
 
 **Goal:** Eliminate every page-table or syspage write that currently
 happens *after* `SCTLR_EL1.M` is set. Move all such writes into the

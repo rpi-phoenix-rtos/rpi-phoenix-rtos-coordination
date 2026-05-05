@@ -1,18 +1,74 @@
 # Current Implementation Step
 
-## Active step (2026-05-04): Stage 1 — Linux `__enable_mmu` boot restructure
+## Active step (2026-05-05): Stage 2 — 4 GiB DRAM unlock (after Stage 1 cache enable parked)
 
 **Roadmap:** `docs/roadmap-cache-ram-smp.md` (single source of truth for
 the 4-stage trajectory: caches → 4 GiB DRAM → SMP → HDMI/USB).
 
-**Status:** OPEN — preceding 5-iteration cache-enable investigation is
-parked (see "2026-05-04 update — TD-16 VA-range investigation
-captured" below). The pattern is conclusive: every late post-MMU cache
-enable produces a walk-time translation fault on real Pi 4 silicon.
-The architecturally-correct fix is to match Linux arm64
-`__enable_mmu`: complete *all* page-table and syspage writes with the
-MMU off, then atomically flip `SCTLR_EL1.M | C | I` once, then no
-memory writes until `b main`.
+### Stage 1 cache-enable: PARKED after 4 real-Pi cycles (2026-05-04 → 05)
+
+The Stage 1 architectural refactor (Linux `__enable_mmu` shape: all PT
+and syspage writes pre-MMU; single SCTLR.M|C|I flip; no memory writes
+post-flip) was attempted across 4 real-Pi netboot cycles. Every cycle
+produced a silent hang on real Pi 4 silicon while QEMU passed cleanly:
+
+| # | Variant | Image SHA | Real Pi result |
+|---|---|---|---|
+| 1 | All PT/syspage writes pre-MMU; single SCTLR.M\|C\|I flip; TTBR0 RAM blocks NC | `4a5575b3` | Silent hang at X3 (post-flip, pre-`br x0`) |
+| 2 | + TTBR0 RAM blocks switched to Normal Cacheable IS (match TTBR1) | `4f8c5ea7` | Silent hang at X3 |
+| 3 | + Linux 2-step SCTLR (C+I in baseline, M-only at flip) | `1d219133` | Silent hang at X3 |
+| 4 | + CPUECTLR_EL1.SMPEN write at EL1 | `823c84bc` | Silent hang at L→M (SMPEN write itself trapped — armstub already sets SMPEN at EL3, EL1 access likely traps to EL2) |
+
+**Pattern:** all 4 real-Pi cycles hang somewhere between the first
+SCTLR write that affects cache state and the first post-flip
+instruction. No exception fires (no-call exception dump emits
+nothing). QEMU passes every variant. Suggests a BCM2711-specific
+hardware coherency interaction (SCU / L2 cache state / firmware-
+shared coherency domain) that doesn't show up in QEMU's cache model.
+
+**What landed at HEAD `49ca0c66`** (current baseline, restored):
+- VA-range cache helpers: `_clean_inval_dcache_range`,
+  `_inval_dcache_range`, `_inval_icache_range`.
+- No-call early exception dump (kernel `2a5b6a05`).
+- TTBR0 NC-block alias safety (`7f7684c4`).
+- Early TTBR0 drop after syspage copy (`d52f6c3a`).
+- Restored pre-MMU PT invalidation (`5e727dcc`).
+- 5-iteration cache-enable comment block (kernel `49ca0c66`).
+
+The 4 Stage 1 cycles never landed kernel commits — they existed only
+in working-tree experiments. The repo state at the end of Stage 1 is
+identical to its state at the start (kernel HEAD `49ca0c66`, working
+tree clean). The diagnostic infrastructure remains in place for any
+future cache-enable attempt.
+
+**Stage 1 follow-up requires:** lab-grade debugging access (JTAG +
+real-time trace, or ARM RealView equivalent) to observe what the core
+does between the SCTLR.M write and the first post-flip instruction.
+This is beyond the scope of UART-only iteration. Tracked for a
+future investment session in `docs/TEMPORARY-FIXES-AND-FUTURE-
+CLEANUP.md` under TD-16-cache-enable.
+
+### Pivot to Stage 2
+
+Stage 2 (4 GiB DRAM unlock + GPU memory partitioning) is the user's
+explicitly-stated near-term goal and is independent of Stage 1
+caches. With Stage 1 parked, Stage 2 work proceeds at the cache-off
+boot speed (~7 min real-Pi cycle).
+
+Stage 2 phases per `docs/roadmap-cache-ram-smp.md`:
+- Phase 5 (config.txt `total_mem=4096`) — small, fast experiment.
+  Reveals what the firmware/kernel does at full RAM.
+- Phase 4 (DTB-driven memory layout) — the structural fix.
+- Phase 2 (relocate `PLO_RPI_MAILBOX_BUFFER_ADDRESS`) — VC4 mailbox
+  hygiene, enables Phase 3 quiesce.
+- Phase 3 (VC4 quiesce before plo eret).
+- Phase 6 (DMA correctness audit across pcie/xhci).
+
+Order chosen: Phase 5 first (one-line change, low risk, high info
+yield), then Phase 4 (kernel parser work informed by Phase 5), then
+Phases 2/3/6.
+
+### Previous step framing
 
 ### Stage 1 success criteria
 
