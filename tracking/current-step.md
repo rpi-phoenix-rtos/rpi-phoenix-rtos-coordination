@@ -91,13 +91,29 @@ ranges): LANDED 2026-05-05 in kernel `e5b768fa`.**
 - Real-Pi validation deferred to phase 4b (which adds first kernel-
   side use; any parser regression would surface there).
 
-**Phase 4b (kernel allocator integration): NEXT.**
-Wire `dtb_getReservedMemory()` into the page-frame allocator so
-firmware-reserved regions are excluded from kernel/user allocations.
-First real-Pi cycle will validate parser correctness end-to-end.
+**Phase 4b (kernel allocator integration): LANDED 2026-05-05 in
+kernel `832cc1f2`.** First real-Pi PASS in this Stage 2 work
+iteration:
+- `pmap_common.mem.resvRegions[]` cache populated from
+  `dtb_getReservedMemory()` during `_pmap_init`.
+- `_pmap_getPage` walks the cached list and marks pages inside any
+  reserved region `PAGE_OWNER_BOOT` instead of `PAGE_FREE`.
+- Real-Pi netboot:
+  `artifacts/rpi4b-uart/rpi4b-uart-20260505-152214-netboot-stage2-phase4b-allocator-integration.log`
+  reaches `(psh)%`. End-to-end validation that:
+  - Phase 4a parsers populate correctly on the Pi 4 DTB.
+  - Phase 4b allocator path doesn't orphan any page the kernel
+    needs.
 
-**Phase 4c, Phase 2, Phase 3, Phase 6:** queued behind phase 4b. Plo
-SIZE_DDR drop, mailbox-buffer relocation, VC4 quiesce, DMA audit.
+**Phase 4c (NEXT): drop plo's hardcoded `SIZE_DDR = 0x3b400000` in
+`sources/plo/ld/aarch64a72-generic.ldt`; have plo build the syspage
+memory entries from the DTB instead of the LDT constant.** This is
+the last piece for the kernel to actually USE the larger ARM_MEM
+when firmware reports more.
+
+**Phase 2, Phase 3, Phase 6:** queued behind phase 4c. Mailbox-buffer
+relocation (Stage 2 phase 2), VC4 quiesce (phase 3), DMA audit
+across pcie/xhci using `dtb_armToBus()` (phase 6).
 
 ### Previous step framing
 
