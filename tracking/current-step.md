@@ -55,18 +55,51 @@ explicitly-stated near-term goal and is independent of Stage 1
 caches. With Stage 1 parked, Stage 2 work proceeds at the cache-off
 boot speed (~7 min real-Pi cycle).
 
-Stage 2 phases per `docs/roadmap-cache-ram-smp.md`:
-- Phase 5 (config.txt `total_mem=4096`) — small, fast experiment.
-  Reveals what the firmware/kernel does at full RAM.
-- Phase 4 (DTB-driven memory layout) — the structural fix.
-- Phase 2 (relocate `PLO_RPI_MAILBOX_BUFFER_ADDRESS`) — VC4 mailbox
-  hygiene, enables Phase 3 quiesce.
-- Phase 3 (VC4 quiesce before plo eret).
-- Phase 6 (DMA correctness audit across pcie/xhci).
+Stage 2 progress:
 
-Order chosen: Phase 5 first (one-line change, low risk, high info
-yield), then Phase 4 (kernel parser work informed by Phase 5), then
-Phases 2/3/6.
+**Phase 5 (config.txt `total_mem=4096` + `gpu_mem=64`):
+ATTEMPTED → REVERTED.**
+The 2026-05-05 cycle showed:
+- Firmware *ignored* `total_mem=4096` (still reported `Starting ARM
+  with 960MB`). Pi 4 firmware on this board treats the device as
+  1 GiB-aware unless something else (newer firmware, hardware ID
+  detection) says otherwise. Setting `total_mem` higher than detected
+  is a clamp-only parameter on Pi 4 — it cannot enlarge ARM-visible
+  RAM beyond what firmware auto-detects.
+- `gpu_mem=64` (vs the firmware default 76 in 1 GiB-mode) regressed
+  boot: kernel hung at K→L (between SCTLR baseline write and the L
+  marker). Likely cause: HDMI/VC4 firmware needs the larger reserve
+  to keep scanout buffers stable at 1024×768×32bpp.
+- `phoenix-rtos-project` master `4bd9c83` reverts the change (revert
+  of `dd419e1`).
+- True 4 GiB unlock will require either a firmware update or a
+  different mechanism (not just config.txt). Tracked as a follow-up.
+- Phase 5 lesson: kernel-side phase 4 (parse what firmware actually
+  reports via DTB) is the structurally correct path; the firmware-
+  side total_mem trick is unreliable.
+
+**Phase 4a (kernel DTB parsers for /reserved-memory + /soc/dma-
+ranges): LANDED 2026-05-05 in kernel `e5b768fa`.**
+- New `dtb_resvMemRegion_t`, `dtb_dmaRange_t`.
+- New parser state machine for /reserved-memory (root node + child
+  nodes' reg property → up to MAX_RESV_REGIONS=16).
+- /soc/dma-ranges parsing extends the existing `dtb_parseSOC` (same
+  shape as ranges).
+- Public accessors: `dtb_getReservedMemory`, `dtb_getDmaRanges`,
+  `dtb_armToBus(cpuAddr, busAddr)`.
+- Build clean. QEMU rpi4b + generic both reach `(psh)% help`.
+- Real-Pi validation deferred to phase 4b (which adds first kernel-
+  side use; any parser regression would surface there).
+
+**Phase 4b (kernel allocator integration): NEXT.**
+Wire `dtb_getReservedMemory()` into the page-frame allocator so
+firmware-reserved regions are excluded from kernel/user allocations.
+First real-Pi cycle will validate parser correctness end-to-end.
+
+**Phase 4c, Phase 2, Phase 3, Phase 6:** queued behind phase 4b. Plo
+SIZE_DDR drop, mailbox-buffer relocation, VC4 quiesce, DMA audit.
+
+### Previous step framing
 
 ### Previous step framing
 
