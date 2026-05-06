@@ -259,6 +259,43 @@ HDMI grab pending — expected to show banner, klog, and `(psh)% `
 prompt rendered cleanly with firmware splash retreating only from
 cells that received output.
 
+**Phase 1h LANDED 2026-05-06** in `phoenix-rtos-devices` master
+`d67ecd1`: pl011_thr skips usleep when there is work to do (tight-
+polling). Diagnosis: the phase 1f `{Y}/{N}` per-byte UART markers
+revealed pl011_thr drained only 4 chars from libtty across the entire
+600s cycle — `usleep(PL011_TTY_POLL_US=1000)` between iterations
+stretched dramatically with caches off (TD-14 timing variance: 1 ms
+to 43 s for `proc_send`). Fix: only sleep when both RX and TX queues
+are empty AND no wake was set this iteration; otherwise continue
+draining.
+
+**Phase 1h validated on real Pi 4 (image `210f09d0`)** — user-grabbed
+HDMI screenshot shows banner + `fbcon: ok` + **two lines of kernel
+klog** (`threads: create proc=...path=usb...`) rendered on HDMI.
+This is the FIRST cycle where klog content appeared on HDMI; phase
+1c through 1g all had pl011_thr too starved to drain. Archived at
+`artifacts/hdmi/2026-05-06-stage4-phase1h-klog-on-hdmi.png`. The
+`usb: Initializing driver as host-side: usbkbd` log line confirms
+the HID keyboard driver auto-registered into the `usb` server via
+the constructor in usbkbd.c.
+
+**Stage 4 phase 1 (HDMI text console): VALIDATED.** Banner + klog
+both render. Firmware splash retreats only from cells the kernel
+or psh writes to (cosmetic; would be wiped by clearAll once Stage 1
+cache enable lands and DC ZVA becomes affordable).
+
+**Stage 4 phase 2 (USB keyboard) status: PARTIAL.** Driver registered
+into the `usb` binary. Real-Pi cycle with keyboard plugged in
+reached psh: readcmd. No Phoenix-side HID enumeration messages
+visible in UART log (the `HID register` lines all timestamped <100s
+are firmware-phase, not Phoenix). Either Phoenix's USB stack didn't
+re-enumerate the keyboard after firmware released the controller,
+or it did but silently (the existing usb daemon doesn't log
+enumeration verbosely). Need to either:
+- Add diagnostic prints to verify enumeration ran, OR
+- Try typing on the keyboard during a cycle and see if keystrokes
+  appear on UART/HDMI (definitive end-to-end test).
+
 **The `pl011_thr` TX-drain → fbcon mirror path was broken on real Pi 4.**
 User confirmed (2026-05-05): multiple HDMI grabs at different boot
 stages all show only the banner + `fbcon: ok` lines — NEVER any
