@@ -350,6 +350,100 @@ which is a substantial sub-project (probably 1-2 dedicated
 iterations).** Stage 4 phase 1 (HDMI text console) remains
 fully validated.
 
+### Stage 4 phase 2 update (2026-05-06): three working fixes landed; xhci_init reaches allocCommandSpace
+
+Manifest: `manifests/2026-05-06-stage4-phase2-vl805-bme-fix.md`
+Sibling commits: `phoenix-rtos-devices` master `16fb9b9`,
+`phoenix-rtos-usb` master `2a35b16`. (Diagnostic `debug()` markers
+are intentionally still in place — phase 2 is not yet finished.)
+
+**Three working fixes verified on real Pi 4 across multiple netboot
+cycles:**
+
+1. **VL805 BAR0 programming** (`pcie/server/pcie.c`, scanFunc).
+   The bcm2711NotifyXhciReset mailbox call resets the controller
+   and reloads its firmware but does **not** assign BAR0. We now
+   write BAR0 = `PCIE_BCM2711_OUTBOUND_PCIE_BASE` (low+high words)
+   for the VL805 path. Read-back of BAR0 = `0xf8000004` confirmed
+   on UART. Without this, HCIVERSION read returned `0xdead` (BCM2711
+   bridge no-completion default).
+
+2. **PCI command-register BME/MSE enable bug + reorder**
+   (`pcie/server/pcie.c`, scanFunc). The previous form
+       `if (!(cmd & (MSE|MASTER))) { write(cmd|MSE|MASTER); }`
+   only enabled both bits when **both** were already clear. If MSE
+   alone was set (firmware default on VL805), MASTER never got
+   enabled and subsequent MMIO writes to the controller's
+   operational registers were silently dropped. Symptom: DCBAAP /
+   CRCR / CONFIG read back as `0xdeaddead...0xdeaddead` even though
+   capability-region reads worked. Fix: always set both bits and
+   only write back if anything changed.
+
+   Reorder discovery: even with BME+MSE correctly enabled
+   *afterwards*, capability reads later returned `0xdead` again. Doing
+   the cmd-register write **before** the firmware mailbox notify and
+   BAR programming makes the controller stay live through the rest of
+   xhci_init. New order: cmd-enable → mailbox notify → BAR
+   programming.
+
+3. **xhci_init poll-retry around capProbe** (`usb/xhci/xhci.c`,
+   xhci_init). pcie and usb daemons are spawned concurrently from
+   plo's `user.plo.yaml`; the previous one-shot capProbe lost the
+   race. xhci_init now polls capProbe for up to ~5 s on `-ENODEV`
+   before giving up. Per-iteration `xhci: capProbe iter ...`
+   markers confirm the loop progresses through 1-2 ENODEV
+   attempts and then a clean ENOSYS once pcie has finished
+   programming the BAR.
+
+**Verified-passing steps** (image `acf01e80`, label
+`stage4-phase2-cmd-pre-mailbox`, log
+`artifacts/rpi4b-uart/rpi4b-uart-20260506-185130-netboot-stage4-phase2-cmd-pre-mailbox.log`):
+
+- usb-daemon: pre-hub-init → pre-hcd-init
+- usb-hcd: pre ops->init
+- xhci: pre map / post map ok
+- xhci: pre capProbe retry-loop → capProbe iter ENOSYS (ok) → post
+  capProbe
+- xhci: pre reset → post reset
+- xhci: pre validateRuntime → caps dump
+  `caplen=20 ver=0100 p1=05000420 p2=fc000031 cc1=002841eb
+   dboff=00000100 rtsoff=00000200 pagesize=00000001 ctxSz=32 ac64=1`
+  → post validateRuntime (5 ports, 32 slots, 4 interrupters,
+  AC64 supported, 32-byte contexts — all sane)
+- xhci: pre allocCommandSpace → **post allocCommandSpace** but **no
+  pre initCommandRing**.
+
+**Open phase 2 question:** `xhci_allocCommandSpace` is returning
+non-zero. None of its three failure paths have a printed `debug()` /
+`fprintf(stderr,...)` message reaching UART, so it's silently
+returning EOK from the allocator+memset+va2pa block but presumably
+hitting the alignment check at the end, OR returning early in a
+path I haven't covered. The next iteration should reveal it: image
+`df2b1cf6` (next build to deploy) adds `debug()` calls inside each
+allocCommandSpace failure branch plus a value dump of the va/phys
+pairs after `va2pa`. That image is built but not yet test-cycled.
+
+**Phase 2 next session's actionable work:**
+1. Cycle image `df2b1cf6` (label `stage4-phase2-acs-dump`) and read
+   the new allocCommandSpace markers to confirm whether failure is
+   `dcbaa alloc`, `cmdRing alloc`, or `alignment`.
+2. If alignment: fix `usb_allocAligned` so the va2pa-translated
+   physical address respects `XHCI_DCBAA_ALIGN` / `XHCI_CMD_RING_ALIGN`.
+   Most likely culprit: a Phoenix allocator quirk where the va is
+   aligned but the phys is not.
+3. Once allocCommandSpace passes: continue stepping through
+   `programCommandSpace`, `runStateSelftest`, `cmdNoopSelftest`,
+   `cmdEnableSlot` — each is already instrumented. With BME+MSE
+   correctly enabled before mailbox, the DCBAAP/CRCR write-then-
+   read-back mismatch we saw earlier should be resolved.
+4. After `usb-daemon: post-hcd-init` fires: watch for `usbkbd:
+   handleInsertion fired` → ask user to type → keystrokes should
+   appear on UART/HDMI.
+5. After phase 2 closes: REMOVE all the `debug()` instrumentation in
+   `phoenix-rtos-usb/usb/{usb,hcd}.c`, `phoenix-rtos-devices/usb/
+   xhci/xhci.c`, `phoenix-rtos-devices/pcie/server/pcie.c`, and
+   `phoenix-rtos-devices/tty/usbkbd/usbkbd.c` per AGENTS.md.
+
 **The `pl011_thr` TX-drain → fbcon mirror path was broken on real Pi 4.**
 User confirmed (2026-05-05): multiple HDMI grabs at different boot
 stages all show only the banner + `fbcon: ok` lines — NEVER any

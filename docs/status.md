@@ -1,5 +1,43 @@
 # Phoenix-RTOS Raspberry Pi 4 Port Status
 
+## Current Status: 2026-05-06 (Stage 4 phase 2 in progress)
+
+**Stage 4 phase 2 (USB keyboard via VL805 xHCI): three working fixes
+landed; xhci_init reaches `xhci_allocCommandSpace` before failing.**
+
+Manifest: `manifests/2026-05-06-stage4-phase2-vl805-bme-fix.md`.
+Sibling commits:
+- `phoenix-rtos-devices` master `16fb9b9` — VL805 BAR0 program +
+  PCI command-register BME/MSE fix + reorder + xhci_init poll-retry
+  around capProbe + diagnostic instrumentation across xhci_init.
+- `phoenix-rtos-usb` master `2a35b16` — `debug()` milestone markers
+  around hcd_init in `usb/usb.c` and `usb/hcd.c`.
+
+What now reliably works on real Pi 4 (image `acf01e80`, label
+`stage4-phase2-cmd-pre-mailbox`):
+- pcie daemon programs VL805 BAR0 = `0xf8000004`.
+- pcie daemon enables MSE+BME on VL805 BEFORE the firmware mailbox
+  notify (correct order; reverse order leaves controller dead).
+- xhci_init: capProbe succeeds within a couple of retry-loop
+  iterations once BAR is programmed; reset succeeds; validateRuntime
+  passes with sane caps (5 ports, 32 slots, 4 interrupters, AC64,
+  32-byte contexts).
+
+What's still failing:
+- `xhci_allocCommandSpace` returns non-zero with no `fprintf(stderr,...)`
+  reaching UART. Most likely: alignment check fails because Phoenix's
+  `usb_allocAligned` aligns the virtual address but the `va2pa`
+  physical address doesn't satisfy `XHCI_DCBAA_ALIGN`. Image
+  `df2b1cf6` (built but not yet test-cycled — Pi cycle was
+  stopped to commit progress) adds debug() prints inside each branch
+  of allocCommandSpace plus a value-dump of the va/phys pairs after
+  va2pa. Next cycle will identify which branch.
+
+Stage 4 phase 1 (HDMI text console) remains fully validated.
+Diagnostic `debug()` instrumentation is intentionally still present
+in xhci.c, hcd.c, usb.c, pcie.c, usbkbd.c — to be removed once
+phase 2 closes (per AGENTS.md).
+
 ## Strategic trajectory (2026-05-04)
 
 The user named four crucial milestones for a working Pi 4 system:
