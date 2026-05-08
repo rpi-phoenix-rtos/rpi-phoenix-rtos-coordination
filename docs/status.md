@@ -1,5 +1,61 @@
 # Phoenix-RTOS Raspberry Pi 4 Port Status
 
+## Current Status: 2026-05-08 (Round-3 deep-research + Steps 1-2 of canonical-idiom alignment validated; cache enable still blocked on plo-side Step 3)
+
+After Phase A and Phase B both failed in early May, the project ran
+a 10-agent deep-research wave (FreeBSD / NetBSD / OpenBSD / seL4 +
+Genode / ARM ARM authoritative / BCM2711 firmware hand-off / plo-kernel
+handoff / bare-metal Pi 4 forum / diagnostic techniques / Phoenix-port-
+conventions audit). Output: `docs/research/round3-*.md` (10 briefs)
+plus `docs/research/round3-cache-enable-synthesis.md` integrating
+everything.
+
+**Headline finding**: rpi4b deviates from the canonical Phoenix
+A-class plo→kernel handoff on four independent dimensions vs
+imx6ull/zynq7000/zynqmp:
+
+1. plo cache state — canonical: MMU+caches ON; rpi4b: caches OFF
+2. plo flush range — canonical: full DDR; rpi4b: heap only
+3. kernel `_start` `dc isw` — canonical: called; rpi4b: function
+   exists, never called
+4. SCTLR flip — canonical: M|C|I single write; rpi4b: M only
+
+The synthesis proposes a 7-step ordered fix sequence. Steps 1-4 are
+individually no-ops in the current caches-off boot (low-risk per
+step); Step 5 is the actual cache enable.
+
+**Validated and committed in this session**:
+
+- **Kernel Step 1** (`phoenix-rtos-kernel agent/rpi4-program-reloc 763b210a`):
+  call `hal_cpuInvalDataCacheAll` at `_start`; switch
+  `tlbi vmalle1 → tlbi vmalle1is`. Boots through `psh: readcmd`.
+
+- **plo Step 2** (`plo codex/common-aarch64-platform-makefiles c4f6dda`):
+  extend `hal_cpuJump` civac range from heap-only to full DDR.
+  Boots through `psh: readcmd`.
+
+- **Armstub A72 erratum 859971** (`phoenix-rtos-project master 0f6be40`):
+  apply `CPUACTLR_EL1[32] DIS_INSTR_PREFETCH` at EL3 (the kernel-side
+  attempt traps from EL1 on A72 r0p3; ATF applies it at EL3).
+  Critical bit-number correction: 859971 is bit 32, not bit 47.
+
+**Step 5 attempted but failed** (image 0cec8e0d): single SCTLR
+M|C|I write with full canonical barrier ritual. Same X3 hang as
+previous Phase B — boot reaches the pre-flip fence but hangs at
+the SCTLR write itself. Steps 1+2 are no-ops in plo's caches-off
+configuration so they don't change Phase B outcome.
+
+**Step 3 (plo MMU+caches ON, mirroring zynqmp) is the missing
+prerequisite.** Patch drafted in
+`docs/plans/canonical-idiom-step2-step3-plo-patches.md` for
+application in the next session.
+
+Reverted to known-good baseline (image 78c072f3); kernel boots to
+`psh: readcmd` cleanly with Steps 1+2 in. Step 5 diff preserved at
+`docs/plans/canonical-idiom-step5-mci-flip.md`.
+
+Manifest: `manifests/2026-05-08-round3-step12-validated.md`.
+
 ## Current Status: 2026-05-06 (Stage 4 phase 2 in progress)
 
 **Stage 4 phase 2 (USB keyboard via VL805 xHCI): three working fixes

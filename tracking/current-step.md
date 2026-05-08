@@ -350,6 +350,128 @@ which is a substantial sub-project (probably 1-2 dedicated
 iterations).** Stage 4 phase 1 (HDMI text console) remains
 fully validated.
 
+### 2026-05-08: Round-3 deep-research wave + Steps 1-2 of canonical-idiom alignment validated
+
+After Phase A and Phase B both failed in early May, the project ran
+a 10-agent deep-research wave covering FreeBSD, NetBSD, OpenBSD,
+seL4 + Genode, ARM ARM authoritative spec, BCM2711 firmware
+hand-off, plo↔kernel handoff, bare-metal Pi 4 forum/blog deep dive,
+diagnostic techniques, and a Phoenix-port-conventions audit. The
+ten briefs are at `docs/research/round3-*.md` and are integrated
+into `docs/research/round3-cache-enable-synthesis.md`.
+
+**Headline finding** (most actionable): the rpi4b port deviates
+from the canonical Phoenix A-class plo→kernel handoff on four
+independent dimensions, validated against imx6ull/zynq7000/zynqmp
+internal patterns and FreeBSD/NetBSD/seL4 external references:
+
+| # | Dimension | Canonical Phoenix idiom | rpi4b today |
+|---|---|---|---|
+| 1 | plo cache state | MMU+caches ON | caches OFF |
+| 2 | plo flush range | full DDR (+OCRAM) | only `[__heap_base..]` |
+| 3 | kernel `_start` `dc isw` | full set/way invalidate | function exists, not called |
+| 4 | SCTLR flip | M\|C\|I single write | M only |
+
+The synthesis at `docs/research/round3-cache-enable-synthesis.md`
+proposes a 7-step ordered fix sequence; Steps 1–4 are individually
+no-ops in the current caches-off boot (low risk per step), Step 5
+is the actual cache enable, Step 6 retries the RES1 SCTLR baseline,
+Step 7 adds diagnostic instrumentation contingent on Step 5
+hanging.
+
+**Steps validated and committed (2026-05-08):**
+
+- **Step 1** (kernel-side, committed `phoenix-rtos-kernel`
+  `agent/rpi4-program-reloc 763b210a`):
+  - Call `hal_cpuInvalDataCacheAll` at `_start` (function existed
+    but was never called; matches imx6ull/_init.S and
+    zynq7000/_init.S).
+  - Switch `tlbi vmalle1 → tlbi vmalle1is` (Inner-Shareable
+    broadcast; matches BSDs and seL4).
+  - x9 (syspage PA from plo) preserved across the call.
+  - Validated boots through `psh: readcmd` (image f9a64f6a).
+
+- **Step 2** (plo-side, committed `plo`
+  `codex/common-aarch64-platform-makefiles c4f6dda`):
+  - Extend `hal_cpuJump` civac range from `[__heap_base..__heap_limit)`
+    to `[ADDR_DDR..ADDR_DDR+SIZE_DDR)`.
+  - Functionally a no-op while plo runs caches-off; load-bearing
+    once Step 3 lands.
+  - Reference: `plo/hal/aarch64/zynqmp/hal.c:258-259`.
+  - Validated boots through `fbcon: ok` and `psh: readcmd`
+    (image d89d47a0; baseline confirm 78c072f3).
+
+- **Armstub-side A72 erratum 859971** (committed
+  `phoenix-rtos-project` `master 0f6be40`):
+  - Apply `CPUACTLR_EL1[32] DIS_INSTR_PREFETCH` at EL3 in the
+    armstub (between the existing SMPEN write and `bl setup_gic`).
+  - Was previously attempted kernel-side but `S3_1_C15_C2_0` traps
+    from EL1 on A72 r0p3 — ATF applies the same workaround at EL3.
+  - Critical bit-number correction: 859971 is bit 32, not bit 47
+    (which is unrelated SSBD).
+
+**Step 5 attempted but failed** (image 0cec8e0d):
+- Single SCTLR `M|C|I` write with full canonical barrier ritual
+  (`ic ialluis; dsb ish; tlbi vmalle1is; dsb ish; isb;` SCTLR
+  write; `isb; ic ialluis; dsb ish; isb`).
+- Same X3 hang as previous Phase B attempt — boot reaches the
+  pre-flip fence but hangs at the SCTLR write itself, no X4
+  marker. Steps 1+2 are no-ops in caches-off plo so they don't
+  change Phase B outcome.
+- **Conclusion**: Step 3 (plo runs with MMU+caches ON, matching
+  zynqmp idiom) is the missing prerequisite. Without it, plo's
+  writes don't end up in the D-cache, so Step 2's full-DDR civac
+  has no dirty lines to clean, so the kernel still observes
+  whatever the firmware (start4.elf running on VPU) wrote into
+  DRAM directly without ARM-side coherence.
+
+**Reverted to known-good baseline** (image 78c072f3): kernel
+boots to `psh: readcmd` cleanly. The Step 5 diff is preserved at
+`docs/plans/canonical-idiom-step5-mci-flip.md` for re-application
+once Step 3 lands.
+
+**Forward-research and implementation plans on disk** (all
+committed to coord-repo `main`):
+
+Round-3 research (`docs/research/`):
+- `round3-cache-enable-synthesis.md` — integrates all 10 briefs
+- `round3-arm-arm-a72-authoritative.md`
+- `round3-bcm2711-firmware-handoff.md`
+- `round3-freebsd-arm64-rpi4-deep.md`
+- `round3-netbsd-aarch64-rpi4-deep.md`
+- `round3-microkernels-rpi4-handoff.md`
+- `round3-plo-kernel-handoff.md`
+- `round3-phoenix-port-conventions-audit.md` (most actionable)
+- `round3-baremetal-pi4-cache-bugs.md`
+- `round3-diagnostic-techniques.md`
+
+Implementation plans (`docs/plans/`):
+- `00-master-plan.md` — milestone roadmap M1–M13
+- `cache-mmu-smp-impl.md`, `usb-xhci-impl.md`, `gpu-vc6-impl.md`,
+  `ethernet-genet-impl.md`, `wifi-bcm43455-impl.md`,
+  `bluetooth-bcm43455-impl.md`, `gpio-pinctrl-impl.md`,
+  `rtc-thermal-power-impl.md`
+- `armstub-a72-errata-patch.md`, `phase-b-detailed-diff.md`,
+  `phase-a-bisection-ladder.md`, `stage2-4gb-dram-detailed.md`,
+  `a72-errata-sweep.md`,
+  `early-boot-diagnostic-instrumentation.md`,
+  `canonical-idiom-step2-step3-plo-patches.md`,
+  `canonical-idiom-step5-mci-flip.md`,
+  `userspace-demo-apps.md`, `tinyx-x11-demo.md`
+
+Manifest snapshot of current state:
+`manifests/2026-05-08-round3-step12-validated.md`.
+
+**Open before next session**:
+1. Step 3 (plo MMU+caches ON, mirroring zynqmp). The patch is
+   drafted in `docs/plans/canonical-idiom-step2-step3-plo-patches.md`.
+   When applied this should make Step 5 succeed.
+2. If Step 5 still fails after Step 3: apply Step 7 instrumentation
+   (`docs/plans/early-boot-diagnostic-instrumentation.md`) to get
+   rich UART output instead of the cryptic five-letter markers.
+3. Once caches enable: Step 6 (RES1 SCTLR baseline retry),
+   then Stage 2 (4 GiB DRAM) and Stage 3 (SMP).
+
 ### Stage 4 phase 2 update (2026-05-06): three working fixes landed; xhci_init reaches allocCommandSpace
 
 Manifest: `manifests/2026-05-06-stage4-phase2-vl805-bme-fix.md`
