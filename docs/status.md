@@ -1,5 +1,100 @@
 # Phoenix-RTOS Raspberry Pi 4 Port Status
 
+## Current Status: 2026-05-11 (EL2 fault localised — EC=0x00 sync abort after plo MMU+caches enable; root cause hypotheses ranked)
+
+### What works as of today
+
+- armstub (EL3) → plo (EL2) handoff with A72 errata 859971 + SMPEN applied (commit `0f6be40`, `phoenix-armstub8-rpi4.S`)
+- Path A: plo `mmu.c` / `cache.c` dispatch on `currentEL` at runtime — zynqmp unchanged, rpi4b uses `*_EL2` bank (committed in `plo codex/common-aarch64-platform-makefiles e90bdcd`)
+- TCR_EL2 fixup in `mmu_setTranslationRegs`: bit 23 (EL1's EPD1) cleared, IPS placed at bits 18:16 (EL2 layout) instead of 34:32 (EL1 layout)
+- **Staged SCTLR_EL2 writes succeed**: M, then M|I, then M|I|C each followed by ISB. All three completion markers print.
+- plo MMU + I-cache + D-cache active at EL2 — `mem: post-enable` prints
+- `hal_init` continues through `timer_init` cleanly post-MMU
+- `video_init` enters, `hal_memset` on DRAM buffer at 0x02000000 works, `hal_dcacheClean` works, first MMIO read of mailbox status at 0xfe00b898 returns sensible `0x40000000` (mbox_empty=1, mbox_full=0)
+- 2–3 more PL011 `hal_consolePrint` calls succeed past the mailbox status read
+
+### Where the boot hangs and what we measured
+
+A **synchronous exception at VBAR_EL2 + 0x200** (Current EL with SPx, Sync) fires after the `mbox: skip-wait` print. Our instrumented diag vector (replaces the EL3-only `_exceptions_dispatch` so we don't recursively trap) prints:
+
+```
+E
+ESR=0000000002000000   <- EC = 0x00 (Unknown), IL = 1
+ELR=0000000000202600   <- inside video_mailboxCall
+FAR=0000000000000000   <- not set (consistent with EC=0x00)
+SPR=00000000600003c9   <- EL2h, NZ set, DAIF all set
+SCT=0000000030c5183d   <- SCTLR_EL2: M|C|I=1, SA=1, all RES1 forced
+```
+
+Disasm at the ELR:
+
+```
+2025fc: adrp x0, 20c000      <- last 4 bytes of cache line 0x2025c0-0x2025ff
+202600: add  x0, x0, #0x718  <- FIRST instruction of cache line 0x202600-0x20263f  *** ELR_EL2 ***
+202604: bl   hal_consolePrint
+```
+
+The fault PC is exactly at a 64-byte cache-line boundary. The instruction (`add x0, x0, #0x718`, encoded `0x911c6000`) cannot architecturally raise EC=0x00 on its own. So we are observing either (a) the I-cache fetching different bits than what is in RAM, or (b) an unrouted/CONSTRAINED-UNPREDICTABLE event being miscategorised by the CPU as Unknown.
+
+Plo's `hal_consolePrint` is a leaf (no SP push); `video_td16PrintHex32` uses a properly 32-byte-aligned stack frame. SP alignment is ruled out as the cause.
+
+### Ranked hypotheses (synthesis of 6 subagent reports)
+
+**HIGH probability**
+
+1. **HCR_EL2 missing AMO/IMO/FMO**. Plo sets `HCR_EL2 = (1<<31) | (1<<29)` = `RW=1, ATA=1` only. With `AMO=0`, a physical SError targets EL1, but plo runs at EL2 with no EL1 active → CONSTRAINED-UNPREDICTABLE → can surface as a fault that the CPU reports with EC=0x00. U-Boot's `start.S` sets AMO and unmasks SError early; Linux's `init_el2_hcr` macro routes phys SError/IRQ/FIQ to EL2 in nVHE mode. — *fix: HCR_EL2 = `(1<<31) | (1<<29) | (1<<5) | (1<<4) | (1<<3)` (RW, ATA, AMO, IMO, FMO).*
+2. **I-cache aliasing post-SCTLR.I=1 — `dc isw` is not coherency-grade**. ARM ARM D5.10.2 explicitly says set/way ops are for power-down, NOT for I/D coherency. Multiple Pi 4 reports (forum t=345466, OSv #1100) of "ELR at a sane instruction, EC=Unknown" were resolved by adding per-cache-line `dc cvau` + `ic ivau` over the .text range, NOT by `ic iallu` once. Our plo only does `ic iallu` once (before SCTLR.I=1) and `dc isw` once early; if any speculative I-fetch ran into a stale L2 line between SCTLR.I=1 and the fault, the result is garbage decoded as undef. The fault PC being at a fresh 64-byte cache-line fill is consistent. — *fix: after the M|I|C SCTLR write, do `ic iallu; dsb ish; isb`, and ideally walk plo's `[__text_start, __etext)` issuing `dc cvau` + `ic ivau` per cache line.*
+3. **MDCR_EL2 / HSTR_EL2 left at UNKNOWN reset values**. Linux's `init_el2_state` always writes MDCR_EL2 and HSTR_EL2=0 to disable debug-related and CP15 traps. Plo never touches them. An UNKNOWN value could trap a speculative debug uop, surfacing as EC=0x00 from EL2's perspective. — *fix: `msr mdcr_el2, xzr; msr hstr_el2, xzr`.*
+
+**MED probability**
+
+4. **VPIDR_EL2 / VMPIDR_EL2 UNKNOWN**. Linux mirrors `MIDR_EL1 → VPIDR_EL2` and `MPIDR_EL1 → VMPIDR_EL2`. Doesn't directly cause faults, but EL1 code reading MIDR/MPIDR will get garbage if we ever drop to EL1.
+5. **SCTLR_EL2 baseline `0x30c00838` is missing RES1 bit 18 in the *write*** (HW forces it to 1 on read-back, so we observe `0x30c5083d` post-OR). Architecturally writing 0 to a RES1 bit is CONSTRAINED UNPREDICTABLE prior to ARMv8.2. Use `0x30c50838` instead.
+6. **CPTR_EL2 = 0 instead of 0x33ff**. On A72 the RES1 bits force these on read, so semantically equivalent — but mainline's value is the documented-correct one.
+
+**LOW probability (ruled out or weak)**
+
+- A72 erratum 859971 (already applied at EL3 by `phoenix-armstub8-rpi4.S`)
+- A72 erratum 855872 (A53-specific, doesn't apply)
+- SP alignment (hal_consolePrint is leaf; video_td16PrintHex32 aligned)
+- MMU translation/permission fault (FAR=0 rules these out; would be EC=0x21/0x25)
+
+### Next on-device cycle (planned, ready to land when Pi is available)
+
+Single bundled patch addressing items 1–5:
+
+- `plo hal/aarch64/generic/_init.S` `start_el2`:
+  - Mask DAIF defensively (`msr daifSet, #0xf`) before any state writes
+  - Set MDCR_EL2 = 0, HSTR_EL2 = 0
+  - Mirror MIDR_EL1 → VPIDR_EL2, MPIDR_EL1 → VMPIDR_EL2
+  - HCR_EL2 = `(1<<31) | (1<<29) | (1<<5) | (1<<4) | (1<<3)` (RW | ATA | AMO | IMO | FMO)
+  - SCTLR_EL2 baseline = `0x30c50838` (full A72 RES1 mask, no functional bits)
+  - CPTR_EL2 = `0x33ff` (explicit, matches mainline)
+
+- `plo hal/aarch64/generic/hal.c` `hal_memoryInit` after the M|I|C SCTLR write:
+  - Add `ic iallu; dsb ish; isb`
+  - (Optional, if previous still faults) Loop `dc cvau`+`ic ivau` over plo's `[__text_start, __etext)`
+
+Already-built diag infrastructure stays (richer slot-E dump including TTBR0/TCR/MAIR and the 4-byte instruction word at `[ELR_EL2]`) so even if the new patch shifts the fault, we get richer evidence in one cycle.
+
+### Sources (subagent research, today)
+
+- Linux `arch/arm64/include/asm/el2_setup.h` (init_el2_state, init_el2_hcr)
+- U-Boot `arch/arm/cpu/armv8/start.S` and `cache_v8.c`
+- TF-A `lib/cpus/aarch64/cortex_a72.S` (859971, 1319367)
+- Cortex-A72 errata notice ARM-EPM-012079 (relevant items: 832075, 855873, 859971)
+- ARM ARM DDI 0487 §B2.7.2, §D5.10.2, §D13.2.36 (ESR_EL2 EC decode)
+- Pi forum t=345466, t=331894; OSv issue 1100; Zyngier idmap patch series
+- Circle armstub8.S, rust-rpi-tutorials, NetBSD locore_el2.S — all drop EL2→EL1 before MMU; plo is uniquely under-tested by staying at EL2
+
+### Diagnostic state checked in but not committed yet
+
+- `plo/hal/aarch64/generic/_init.S` — diag vector tags (A..P) at each VBAR_EL2 slot + `_slot_e_dump` handler reading ESR/ELR/FAR/SPSR/SCTLR/TTBR0/TCR/MAIR + instruction-word at ELR
+- `plo/hal/aarch64/generic/hal.c` — staged SCTLR_EL2 writes with per-stage markers, hal_init reordered (console_init before hal_memoryInit), `#include "../mmu.h"`
+- `plo/hal/aarch64/mmu.c` — TCR_EL2 fixup, EL-aware sysreg dispatch, pre/post-flip cache barrier ritual in `mmu_enable`
+- `plo/hal/aarch64/generic/video.c` — instrumentation markers + diagnostic mailbox status probe
+- See `manifests/2026-05-11-plo-el2-fault-diagnostic-state.md` for tested image SHA and uncommitted diff list.
+
 ## Current Status: 2026-05-10 (Path A plo MMU/cache EL-aware landed; Step 3 still hangs pending diagnostic instrumentation)
 
 After Steps 1+2 landed on 2026-05-08, Step 3 (plo runs with

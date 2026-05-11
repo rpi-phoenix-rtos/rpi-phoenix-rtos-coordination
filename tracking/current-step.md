@@ -1,6 +1,60 @@
 # Current Implementation Step
 
-## Active step (2026-05-05): Stage 2 — 4 GiB DRAM unlock (after Stage 1 cache enable parked)
+## Active step (2026-05-11): plo MMU+caches at EL2 — root-cause the EC=0x00 sync abort
+
+The previous Stage 1 cache-enable parking note (2026-05-05) is
+superseded: the **kernel-side** cache-enable hang was traced to plo
+running cache-off, which left the kernel unprepared for the
+SCTLR.M|C|I flip. The real blocker is the plo-side EL2 boot path.
+Today we got staged SCTLR_EL2 writes working (M then M|I then M|I|C)
+and observed the boot now reaches `video_init` before taking a
+synchronous exception at VBAR_EL2 + 0x200 (`E\n` tag in the UART log).
+
+The exception register dump (`docs/status.md` 2026-05-11 entry) gave:
+- `ESR_EL2 = 0x02000000` → EC = 0x00 (Unknown), IL = 1
+- `ELR_EL2 = 0x00202600` (inside `video_mailboxCall`, exactly at a
+  64-byte cache-line boundary; the instruction there is a benign
+  `add x0, x0, #0x718` that cannot architecturally raise EC=0x00)
+- `FAR_EL2 = 0` (consistent with EC=0x00)
+- `SPSR_EL2 = 0x600003c9` (EL2h, DAIF all set)
+- `SCTLR_EL2 = 0x30c5183d` (M|C|I = 1, SA = 1, all RES1 forced)
+
+### Next on-device cycle (queued — Pi unavailable until evening)
+
+Single bundled patch addressing the top 5 hypotheses ranked in
+`docs/status.md` 2026-05-11. Touches one file:
+`/Users/witoldbolt/phoenix-rpi/sources/plo/hal/aarch64/generic/_init.S`
+`start_el2` block, plus one more line in
+`/Users/witoldbolt/phoenix-rpi/sources/plo/hal/aarch64/generic/hal.c`
+`hal_memoryInit` after the M|I|C SCTLR write:
+
+- HCR_EL2 |= AMO|IMO|FMO (route phys SError/IRQ/FIQ to EL2 instead of
+  letting them surface as CONSTRAINED-UNPREDICTABLE faults)
+- MDCR_EL2 = 0, HSTR_EL2 = 0 (Linux always clears these from UNKNOWN
+  reset; an UNKNOWN value can trap a speculative debug uop)
+- VPIDR_EL2 = MIDR_EL1, VMPIDR_EL2 = MPIDR_EL1 (Linux mirrors these)
+- SCTLR_EL2 baseline = 0x30c50838 (explicit RES1 bit 18 set in the
+  write; HW already forces it but architectural pedantry)
+- CPTR_EL2 = 0x33ff (matches U-Boot / Linux nVHE value)
+- DAIF mask at top of start_el2 (defense-in-depth)
+- After M|I|C: `ic iallu; dsb ish; isb` (in case I-cache aliasing per
+  ARM ARM D5.10.2 — `dc isw` is for power-down, not coherency)
+
+Already-built diag infrastructure stays (richer slot-E dump). Even
+if the patch shifts the fault, the next cycle will get TTBR0/TCR/MAIR
+and the actual 4 instruction bytes at `[ELR_EL2]` — which decisively
+distinguishes "I-cache feeding garbage" from "real undef instruction".
+
+### Subordinate to the active step
+
+Stage 2 (4 GiB DRAM unlock) work captured in the previous block
+below is still queued but blocked behind plo cache-on, because the
+fbcon/USB/SMP/4GB-RAM unlock cascade needs plo to hand off with
+caches enabled.
+
+---
+
+## Previous active step (2026-05-05): Stage 2 — 4 GiB DRAM unlock (after Stage 1 cache enable parked)
 
 **Roadmap:** `docs/roadmap-cache-ram-smp.md` (single source of truth for
 the 4-stage trajectory: caches → 4 GiB DRAM → SMP → HDMI/USB).
