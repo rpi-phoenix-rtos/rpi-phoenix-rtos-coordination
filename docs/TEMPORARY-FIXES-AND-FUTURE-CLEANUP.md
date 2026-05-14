@@ -73,7 +73,7 @@ mandatory cleanup. Until then, progress on the boot path takes priority.
   - FAIL: `artifacts/rpi4b-uart/rpi4b-uart-20260514-091158-netboot-icache-dcache-cacheable-amap-writable-uncached.log`
     regressed when `amap_map()` was restored to cacheable mappings without
     targeted invalidation.
-  - PASS: `artifacts/rpi4b-uart/rpi4b-uart-20260514-093258-netboot-full-cacheable-user-data-amap-inval-long2.log`
+  - PASS: `artifacts/rpi4b-uart/rpi4b-uart-20260514-094723-netboot-restored-cacheable-user-data-zone-uncached.log`
     reaches `main: spawn loop done, entering proc_reap idle` with cacheable
     `amap` temporary mappings and cacheable writable ELF data.
 - **Resolution requirements:**
@@ -93,22 +93,29 @@ mandatory cleanup. Until then, progress on the boot path takes priority.
   data, and `amap` temporary aliases are cacheable.
 - **Why:** A direct change from `MAP_UNCACHED` to `MAP_NONE` built and booted
   through VM initialization, then faulted while spawning `dummyfs-root`.
-  Symbolization of the failed image:
+  Invalidating the cacheable backing range before writing the zone free-list
+  failed the same way, so this is not fixed by a simple first-use invalidate.
+  Symbolization of the direct-cacheable failed image:
   - `pc=ffffffffc000f07c` -> `_vm_zalloc()` at `vm/zone.c:103`
   - `lr=ffffffffc000f2bc` -> `_kmalloc_alloc()` at `vm/kmalloc.c:66`
+  Symbolization of the invalidate-before-init failed image:
+  - `pc=ffffffffc000f08c` -> `_vm_zalloc()` at `vm/zone.c:117`
+  - `lr=ffffffffc000f2cc` -> `_kmalloc_alloc()` at `vm/kmalloc.c:66`
   The faulting pointer was a garbage zone free-list value
   (`far=6b5cd7e987dd19fb`), so the direct cacheable-zone experiment is rejected.
 - **Validation:**
   - FAIL: `artifacts/rpi4b-uart/rpi4b-uart-20260514-093855-netboot-cacheable-zone-backed-pages.log`
     fails with `Exception #37: Data Abort (EL1)` at `_vm_zalloc()`.
+  - FAIL: `artifacts/rpi4b-uart/rpi4b-uart-20260514-094326-netboot-cacheable-zone-inval-before-init.log`
+    fails with the same `_vm_zalloc()` / garbage free-list pointer shape.
 - **Resolution requirements:**
   - Identify whether stale lines come from freshly allocated zone backing
     pages, free-list writes, or old aliases from prior kernel-page ownership.
   - Add a targeted cache-maintenance point for zone backing pages before first
     cacheable free-list initialization, or keep this mapping uncached with a
     documented performance cost.
-  - Do not repeat the direct `MAP_NONE` zone experiment without a new cache
-    hygiene change.
+  - Do not repeat the direct `MAP_NONE` or invalidate-before-init zone
+    experiments without a materially different cache hygiene change.
 
 ## TD-01: SMP enable disabled on Cortex-A72
 

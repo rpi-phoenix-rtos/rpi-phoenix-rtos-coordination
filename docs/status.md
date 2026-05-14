@@ -23,8 +23,8 @@ main: spawn loop done, entering proc_reap idle
 
 Validated real-Pi run:
 
-* image SHA256: `daf08bbef0aa679b41826da0fafa178f09aefd75ebc0f8a383cfde1f6ba8b389`
-* UART log: `artifacts/rpi4b-uart/rpi4b-uart-20260514-093258-netboot-full-cacheable-user-data-amap-inval-long2.log`
+* image SHA256: `b36d2e7fe4d2ec78728c816fd191d2bce0678be2e00adcca621ac71e0461dfec`
+* UART log: `artifacts/rpi4b-uart/rpi4b-uart-20260514-094723-netboot-restored-cacheable-user-data-zone-uncached.log`
 * no `Exception`, `Data Abort`, `panic`, or `fault` matches after the controlled reboot
 
 ### New cache boundary
@@ -43,7 +43,8 @@ cache-enable workaround:
   boundary.
 * `vm/zone.c`: zone allocator backing pages still need `MAP_UNCACHED`. A
   negative-control test making them cacheable faulted in `_vm_zalloc()` while
-  spawning `dummyfs-root`, with a garbage free-list pointer.
+  spawning `dummyfs-root`, with a garbage free-list pointer. Invalidating the
+  cacheable zone backing range before free-list initialization did not fix it.
 
 Two negative controls were important:
 
@@ -89,7 +90,9 @@ Harden and clean up the cacheable-data fix:
    object-backed sources and freshly allocated destinations.
 2. Diagnose zone allocator page cache hygiene before retrying cacheable
    `vm/zone.c`; direct `MAP_NONE` regressed in
-   `artifacts/rpi4b-uart/rpi4b-uart-20260514-093855-netboot-cacheable-zone-backed-pages.log`.
+   `artifacts/rpi4b-uart/rpi4b-uart-20260514-093855-netboot-cacheable-zone-backed-pages.log`,
+   and invalidate-before-init regressed in
+   `artifacts/rpi4b-uart/rpi4b-uart-20260514-094326-netboot-cacheable-zone-inval-before-init.log`.
 3. Remove or gate the temporary cache-bring-up UART/debug probes once the cache
    policy is stable enough for the next subsystem step.
 

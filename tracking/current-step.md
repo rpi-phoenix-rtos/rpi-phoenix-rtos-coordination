@@ -6,8 +6,8 @@ Real Pi 4 now validates with kernel `SCTLR_EL1.M|C|I` enabled. The current
 stable image reaches all configured userspace spawns and then idles in
 `proc_reap`:
 
-* image SHA256: `daf08bbef0aa679b41826da0fafa178f09aefd75ebc0f8a383cfde1f6ba8b389`
-* UART log: `artifacts/rpi4b-uart/rpi4b-uart-20260514-093258-netboot-full-cacheable-user-data-amap-inval-long2.log`
+* image SHA256: `b36d2e7fe4d2ec78728c816fd191d2bce0678be2e00adcca621ac71e0461dfec`
+* UART log: `artifacts/rpi4b-uart/rpi4b-uart-20260514-094723-netboot-restored-cacheable-user-data-zone-uncached.log`
 * terminal milestone: `main: spawn loop done, entering proc_reap idle`
 
 The active implementation step is now "harden the cacheable-data fix and remove
@@ -25,7 +25,8 @@ Current cache policy:
   remain non-cacheable and bootstrap pmap/common metadata remains NC.
 * `vm/zone.c`: zone backing pages still map `MAP_UNCACHED`. A direct
   cacheable-zone test failed in `_vm_zalloc()` / `_kmalloc_alloc()` with a
-  garbage free-list pointer.
+  garbage free-list pointer; invalidating the cacheable zone backing range
+  before free-list initialization failed the same way.
 
 Next actions, in order:
 
@@ -35,7 +36,8 @@ Next actions, in order:
    marker `A3` for this image and is not authoritative for the current cache
    boundary.
 3. Design a specific zone allocator page cache-hygiene fix before retrying
-   cacheable zone mappings; do not repeat the direct `MAP_NONE` experiment.
+   cacheable zone mappings; do not repeat the direct `MAP_NONE` or
+   invalidate-before-init experiments.
 
 ## Active step (2026-05-13): cache enable parked, baseline reliable
 
