@@ -32,45 +32,54 @@ mandatory cleanup. Until then, progress on the boot path takes priority.
 
 ---
 
-## TD-17: Pi 4 cache-enable data-path uncached mappings
+## TD-17: Pi 4 cache-enable data-path cache hygiene
 
-- **Status:** PENDING
+- **Status:** IN-PROGRESS
 - **Stage:** 1 (cache enable).
 - **First observed:** 2026-05-14 cache-enable session.
 - **Where:** `sources/phoenix-rtos-kernel/vm/amap.c` (`amap_map()`),
   `sources/phoenix-rtos-kernel/proc/process.c` (`process_load32()` and
   `process_load64()`), and the TD-16-related early mapping policy in
   `sources/phoenix-rtos-kernel/hal/aarch64/_init.S`.
-- **What was done:** Kernel `SCTLR_EL1.M|C|I` is enabled on real Pi 4, but
-  the page paths that populate writable user data are deliberately kept
-  uncached:
-  - `amap_map()` maps temporary copy/zero aliases with `MAP_UNCACHED`.
-  - Writable ELF `PT_LOAD` segments are mapped with `MAP_UNCACHED`.
-  - ELF BSS tail mapping is explicit and inherits the writable segment's
-    uncached flag.
+- **What was done:** Kernel `SCTLR_EL1.M|C|I` is enabled on real Pi 4. The
+  first stable cache-on image used broad `MAP_UNCACHED` workarounds for
+  `amap_map()` and writable ELF data. The current narrower fix makes both paths
+  cacheable again and adds targeted AArch64 cache invalidation in
+  `amap_page()`:
+  - Invalidate firmware-loaded object-page aliases before copying from them
+    through cacheable temporary mappings.
+  - Invalidate freshly allocated destination pages before first cacheable
+    zero/copy reuse.
+  - Keep explicit ELF BSS-tail mapping so the anonymous tail is mapped at the
+    intended virtual address; it is cacheable again.
 - **Why:** With D-cache enabled, cacheable writable ELF data corrupted
   `dummyfs` libc state (`atexit_common.head`) and faulted in `_atexit_init()` /
   `_atexit_register()`. Making writable ELF data uncached let all configured
   programs spawn. A negative-control test then proved `amap_map()` also remains
   necessary: restoring `amap` temporary aliases to cacheable immediately
   regressed to repeated EL0 Data Aborts in `dummyfs` `memset`, even while
-  writable ELF mappings stayed uncached.
-- **Risk accepted:** This is correct enough for bring-up and much faster than
-  running with global caches disabled, but it is not the final performance
-  policy. Writable userspace data and anonymous-page copy/zero paths still
-  bypass D-cache.
+  writable ELF mappings stayed uncached. Adding the targeted invalidation then
+  made cacheable `amap` aliases and cacheable writable ELF data pass together
+  on real Pi.
+- **Risk accepted:** The current fix is still AArch64-specific and needs an
+  upstreamable abstraction. It also only invalidates object-backed source
+  aliases, not live shared-anonymous source pages, because invalidating a live
+  dirty user-data source could drop valid data. Shared-anon COW needs a
+  separate audit/test.
 - **Validation:**
   - PASS: `artifacts/rpi4b-uart/rpi4b-uart-20260514-091513-netboot-stable-mmu-dcache-icache-uncached-amap-writable.log`
-    reaches `main: spawn loop done, entering proc_reap idle` with no exception
-    matches after controlled reboot.
+    reached `main: spawn loop done, entering proc_reap idle` with broad
+    uncached data-path workarounds.
   - FAIL: `artifacts/rpi4b-uart/rpi4b-uart-20260514-091158-netboot-icache-dcache-cacheable-amap-writable-uncached.log`
-    regressed when `amap_map()` was restored to cacheable mappings.
+    regressed when `amap_map()` was restored to cacheable mappings without
+    targeted invalidation.
+  - PASS: `artifacts/rpi4b-uart/rpi4b-uart-20260514-093258-netboot-full-cacheable-user-data-amap-inval-long2.log`
+    reaches `main: spawn loop done, entering proc_reap idle` with cacheable
+    `amap` temporary mappings and cacheable writable ELF data.
 - **Resolution requirements:**
-  - Identify the precise page-lifecycle cache maintenance needed before
-    freshly allocated app pages are reused for COW/anonymous memory.
-  - Remove `MAP_UNCACHED` from writable ELF mappings and validate on real Pi.
-  - Remove `MAP_UNCACHED` from `amap_map()` temporary aliases and validate on
-    real Pi.
+  - Generalize the AArch64-specific invalidation hook into an upstreamable VM /
+    page-lifecycle cache-maintenance interface.
+  - Audit and test shared-anonymous COW copy source handling.
   - Keep `SCTLR_EL1.M|C|I` enabled throughout cleanup.
 
 ## TD-01: SMP enable disabled on Cortex-A72

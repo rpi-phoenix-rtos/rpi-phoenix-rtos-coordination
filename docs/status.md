@@ -1,6 +1,6 @@
 # Phoenix-RTOS Raspberry Pi 4 Port Status
 
-## Current Status: 2026-05-14 (MMU + D-cache + I-cache enabled on real Pi 4; user-data cache workaround active)
+## Current Status: 2026-05-14 (MMU + D-cache + I-cache enabled on real Pi 4; cacheable user data validated)
 
 ### What changed
 
@@ -23,34 +23,41 @@ main: spawn loop done, entering proc_reap idle
 
 Validated real-Pi run:
 
-* image SHA256: `68b36c20f66401078bf1c9271f9405d965ed31af94da1e6ea02ea4a608442054`
-* UART log: `artifacts/rpi4b-uart/rpi4b-uart-20260514-091513-netboot-stable-mmu-dcache-icache-uncached-amap-writable.log`
+* image SHA256: `daf08bbef0aa679b41826da0fafa178f09aefd75ebc0f8a383cfde1f6ba8b389`
+* UART log: `artifacts/rpi4b-uart/rpi4b-uart-20260514-093258-netboot-full-cacheable-user-data-amap-inval-long2.log`
 * no `Exception`, `Data Abort`, `panic`, or `fault` matches after the controlled reboot
 
 ### New cache boundary
 
-The successful configuration is not yet the final cache policy. It depends on
-two targeted conservative mappings:
+The successful configuration is now materially narrower than the first
+cache-enable workaround:
 
-* `vm/amap.c`: temporary `amap` copy/zero mappings stay `MAP_UNCACHED`.
-* `proc/process.c`: writable ELF `PT_LOAD` mappings, including explicit BSS
-  tail mappings, stay `MAP_UNCACHED`.
+* `vm/amap.c`: temporary `amap` copy/zero mappings are cacheable again.
+  `amap_page()` invalidates the cacheable source alias for firmware-loaded
+  object pages before copying, and invalidates freshly allocated destination
+  pages before first zero/copy reuse.
+* `proc/process.c`: writable ELF `PT_LOAD` mappings and explicit BSS-tail
+  mappings are cacheable again.
+* `hal/aarch64/_init.S`: kernel flips `SCTLR_EL1.M|C|I`; some early bootstrap
+  mappings and pmap metadata remain non-cacheable as a separate cleanup
+  boundary.
 
 Two negative controls were important:
 
-* Re-enabling `SCTLR_EL1.I` on top of D-cache and the writable-user-data
-  workaround succeeded on real hardware.
+* Re-enabling `SCTLR_EL1.I` on top of D-cache succeeded on real hardware.
 * Restoring `amap` temporary mappings to cacheable immediately regressed to
   repeated EL0 Data Aborts in `dummyfs` `_atexit_init()` / `memset`, even while
   writable user ELF mappings remained uncached. The failing log is
   `artifacts/rpi4b-uart/rpi4b-uart-20260514-091158-netboot-icache-dcache-cacheable-amap-writable-uncached.log`.
+* Adding targeted `amap_page()` invalidation for object-source and fresh
+  destination pages then made both cacheable `amap` aliases and cacheable
+  writable ELF data pass on real Pi.
 
-Working hypothesis: the remaining corruption is caused by stale dirty data
-lines or attribute-aliasing around anonymous page copy/zero and writable ELF
-data/BSS setup. The current workaround keeps that path DDR-coherent while
-allowing instruction fetches and most non-writable mappings to benefit from
-enabled caches. The next cleanup step is to replace these uncached mappings
-with precise cache maintenance at the page-allocation / COW-copy boundary.
+Working hypothesis: the real bug was stale cache lines becoming visible through
+new cacheable aliases when Phoenix reused freshly allocated application pages
+or read firmware-loaded object pages through `amap` temporary mappings. The
+current fix is still AArch64-specific and should be generalized before
+upstreaming, but it no longer keeps writable user data globally uncached.
 
 ### Validation caveats and warnings
 
@@ -73,17 +80,14 @@ with precise cache maintenance at the page-allocation / COW-copy boundary.
 
 ### Immediate next step
 
-Convert the currently broad `MAP_UNCACHED` workarounds into an upstreamable
-cache-maintenance fix:
+Harden and clean up the cacheable-data fix:
 
-1. Add a page-lifecycle cache hygiene point for newly allocated app pages before
-   they are reused for anonymous memory.
-2. Audit COW/object-to-anon copy in `amap_page()` and ELF writable segment
-   setup in `process_load32/64()`.
-3. Remove `MAP_UNCACHED` from writable ELF mappings first; keep `amap`
-   uncached until that passes.
-4. Only after writable ELF data is cacheable, retry cacheable `amap` temporary
-   mappings.
+1. Audit shared-anonymous COW source handling; current invalidation is only for
+   object-backed sources and freshly allocated destinations.
+2. Retry making `vm/zone.c` backing-page mappings cacheable; this remains one
+   of the broader performance workarounds.
+3. Remove or gate the temporary cache-bring-up UART/debug probes once the cache
+   policy is stable enough for the next subsystem step.
 
 ## Current Status: 2026-05-13 (cache enable parked at walker boundary; baseline still boots to psh)
 
