@@ -1,5 +1,44 @@
 # Current Implementation Step
 
+## Active step (2026-05-14): kernel MMU + D-cache + I-cache enabled; cache-policy cleanup active
+
+Real Pi 4 now validates with kernel `SCTLR_EL1.M|C|I` enabled. The current
+stable image reaches all configured userspace spawns and then idles in
+`proc_reap`:
+
+* image SHA256: `68b36c20f66401078bf1c9271f9405d965ed31af94da1e6ea02ea4a608442054`
+* UART log: `artifacts/rpi4b-uart/rpi4b-uart-20260514-091513-netboot-stable-mmu-dcache-icache-uncached-amap-writable.log`
+* terminal milestone: `main: spawn loop done, entering proc_reap idle`
+
+The active implementation step is no longer "can the caches turn on?" but
+"replace the temporary uncached data-path mappings with precise cache
+maintenance while keeping `SCTLR_EL1.C|I` enabled."
+
+Current required temporary cache policy:
+
+* `vm/amap.c`: `amap_map()` must use `MAP_UNCACHED` for page copy/zero
+  temporary mappings. Negative control `icache-dcache-cacheable-amap-writable-uncached`
+  regressed immediately to EL0 Data Abort in `dummyfs` `_atexit_init()` /
+  `memset`.
+* `proc/process.c`: writable ELF `PT_LOAD` mappings are currently
+  `MAP_UNCACHED`, including explicit BSS-tail mappings. This avoided the
+  previous corruption of `atexit_common.head` and allowed all user programs to
+  spawn under D-cache.
+* `hal/aarch64/_init.S`: kernel flips `SCTLR_EL1.M|C|I`; early table-walk attrs
+  remain non-cacheable and bootstrap pmap/common metadata remains NC.
+
+Next actions, in order:
+
+1. Preserve this stable boot state and do not remove the two uncached data-path
+   workarounds until a replacement cache-maintenance point is tested.
+2. Add targeted cache hygiene for freshly allocated app pages and/or COW
+   object-to-anon copy so writable ELF mappings can become cacheable again.
+3. Validate on real Pi after each narrowing step. QEMU rpi4b timed out at
+   marker `A3` for this image and is not authoritative for the current cache
+   boundary.
+4. Once writable ELF mappings pass as cacheable, retry cacheable `amap`
+   temporary mappings.
+
 ## Active step (2026-05-13): cache enable parked, baseline reliable
 
 The cache-enable investigation reached a definitive empirical

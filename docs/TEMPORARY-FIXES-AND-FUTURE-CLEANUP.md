@@ -32,6 +32,47 @@ mandatory cleanup. Until then, progress on the boot path takes priority.
 
 ---
 
+## TD-17: Pi 4 cache-enable data-path uncached mappings
+
+- **Status:** PENDING
+- **Stage:** 1 (cache enable).
+- **First observed:** 2026-05-14 cache-enable session.
+- **Where:** `sources/phoenix-rtos-kernel/vm/amap.c` (`amap_map()`),
+  `sources/phoenix-rtos-kernel/proc/process.c` (`process_load32()` and
+  `process_load64()`), and the TD-16-related early mapping policy in
+  `sources/phoenix-rtos-kernel/hal/aarch64/_init.S`.
+- **What was done:** Kernel `SCTLR_EL1.M|C|I` is enabled on real Pi 4, but
+  the page paths that populate writable user data are deliberately kept
+  uncached:
+  - `amap_map()` maps temporary copy/zero aliases with `MAP_UNCACHED`.
+  - Writable ELF `PT_LOAD` segments are mapped with `MAP_UNCACHED`.
+  - ELF BSS tail mapping is explicit and inherits the writable segment's
+    uncached flag.
+- **Why:** With D-cache enabled, cacheable writable ELF data corrupted
+  `dummyfs` libc state (`atexit_common.head`) and faulted in `_atexit_init()` /
+  `_atexit_register()`. Making writable ELF data uncached let all configured
+  programs spawn. A negative-control test then proved `amap_map()` also remains
+  necessary: restoring `amap` temporary aliases to cacheable immediately
+  regressed to repeated EL0 Data Aborts in `dummyfs` `memset`, even while
+  writable ELF mappings stayed uncached.
+- **Risk accepted:** This is correct enough for bring-up and much faster than
+  running with global caches disabled, but it is not the final performance
+  policy. Writable userspace data and anonymous-page copy/zero paths still
+  bypass D-cache.
+- **Validation:**
+  - PASS: `artifacts/rpi4b-uart/rpi4b-uart-20260514-091513-netboot-stable-mmu-dcache-icache-uncached-amap-writable.log`
+    reaches `main: spawn loop done, entering proc_reap idle` with no exception
+    matches after controlled reboot.
+  - FAIL: `artifacts/rpi4b-uart/rpi4b-uart-20260514-091158-netboot-icache-dcache-cacheable-amap-writable-uncached.log`
+    regressed when `amap_map()` was restored to cacheable mappings.
+- **Resolution requirements:**
+  - Identify the precise page-lifecycle cache maintenance needed before
+    freshly allocated app pages are reused for COW/anonymous memory.
+  - Remove `MAP_UNCACHED` from writable ELF mappings and validate on real Pi.
+  - Remove `MAP_UNCACHED` from `amap_map()` temporary aliases and validate on
+    real Pi.
+  - Keep `SCTLR_EL1.M|C|I` enabled throughout cleanup.
+
 ## TD-01: SMP enable disabled on Cortex-A72
 
 - **Status:** PENDING

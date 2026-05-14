@@ -1,5 +1,90 @@
 # Phoenix-RTOS Raspberry Pi 4 Port Status
 
+## Current Status: 2026-05-14 (MMU + D-cache + I-cache enabled on real Pi 4; user-data cache workaround active)
+
+### What changed
+
+The cache-enable boundary moved substantially forward. The current real Pi 4
+image runs with `SCTLR_EL1.M|C|I` enabled in the kernel, reaches the full
+configured userspace spawn set, and remains alive through the UART capture
+window:
+
+```
+main: spawned dummyfs-root (2)
+main: spawned dummyfs (3)
+main: spawned pl011-tty (4)
+main: spawned mkdir (5)
+main: spawned bind (6)
+main: spawned pcie (7)
+main: spawned usb (8)
+main: spawned psh (9)
+main: spawn loop done, entering proc_reap idle
+```
+
+Validated real-Pi run:
+
+* image SHA256: `68b36c20f66401078bf1c9271f9405d965ed31af94da1e6ea02ea4a608442054`
+* UART log: `artifacts/rpi4b-uart/rpi4b-uart-20260514-091513-netboot-stable-mmu-dcache-icache-uncached-amap-writable.log`
+* no `Exception`, `Data Abort`, `panic`, or `fault` matches after the controlled reboot
+
+### New cache boundary
+
+The successful configuration is not yet the final cache policy. It depends on
+two targeted conservative mappings:
+
+* `vm/amap.c`: temporary `amap` copy/zero mappings stay `MAP_UNCACHED`.
+* `proc/process.c`: writable ELF `PT_LOAD` mappings, including explicit BSS
+  tail mappings, stay `MAP_UNCACHED`.
+
+Two negative controls were important:
+
+* Re-enabling `SCTLR_EL1.I` on top of D-cache and the writable-user-data
+  workaround succeeded on real hardware.
+* Restoring `amap` temporary mappings to cacheable immediately regressed to
+  repeated EL0 Data Aborts in `dummyfs` `_atexit_init()` / `memset`, even while
+  writable user ELF mappings remained uncached. The failing log is
+  `artifacts/rpi4b-uart/rpi4b-uart-20260514-091158-netboot-icache-dcache-cacheable-amap-writable-uncached.log`.
+
+Working hypothesis: the remaining corruption is caused by stale dirty data
+lines or attribute-aliasing around anonymous page copy/zero and writable ELF
+data/BSS setup. The current workaround keeps that path DDR-coherent while
+allowing instruction fetches and most non-writable mappings to benefit from
+enabled caches. The next cleanup step is to replace these uncached mappings
+with precise cache maintenance at the page-allocation / COW-copy boundary.
+
+### Validation caveats and warnings
+
+* `./scripts/rebuild-rpi4b-fast.sh` continued to warn that core repos are
+  dirty. `phoenix-rtos-kernel` contains the active cache work; the dirty
+  `phoenix-rtos-devices` XHCI change predates this step and was not touched.
+* The fast build regenerated the missing Pi 4 DTB by copying the official
+  firmware blob from `external/raspberrypi-firmware/boot/bcm2711-rpi-4-b.dtb`.
+  No dtc lint was run unless `RPI4B_DTB_LINT=1` is set.
+* Netboot still commonly misses first DHCP and recovers by restarting the Lima
+  bridge VM. Lima prints broken-pipe / closed-socket errors during shutdown;
+  recovery succeeded and the Pi then booted from TFTP.
+* `scripts/qemu-shell-smoke.sh rpi4b` timed out in QEMU 10.2.2 at early marker
+  `A3` and did not reach the kernel banner. Treat real Pi UART as authoritative
+  for this step; QEMU rpi4b remains a separate emulator discrepancy.
+* A failed cacheable-`amap` test produced continuous UART exception spam; the
+  watchdog did not stop it cleanly, so the test process had to be killed from
+  the host. The test harness should learn to terminate spammy sessions more
+  reliably.
+
+### Immediate next step
+
+Convert the currently broad `MAP_UNCACHED` workarounds into an upstreamable
+cache-maintenance fix:
+
+1. Add a page-lifecycle cache hygiene point for newly allocated app pages before
+   they are reused for anonymous memory.
+2. Audit COW/object-to-anon copy in `amap_page()` and ELF writable segment
+   setup in `process_load32/64()`.
+3. Remove `MAP_UNCACHED` from writable ELF mappings first; keep `amap`
+   uncached until that passes.
+4. Only after writable ELF data is cacheable, retry cacheable `amap` temporary
+   mappings.
+
 ## Current Status: 2026-05-13 (cache enable parked at walker boundary; baseline still boots to psh)
 
 ### TL;DR of today's session
