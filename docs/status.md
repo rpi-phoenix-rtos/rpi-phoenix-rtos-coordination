@@ -27,6 +27,9 @@ Latest validated real-Pi run:
 * UART log: `artifacts/rpi4b-uart/rpi4b-uart-20260514-154015-netboot-tlbi-fix-stable-cache-policy.log`
 * no `Exception`, `Data Abort`, `panic`, or `fault` matches in the captured
   Phoenix path
+* current restored export from the same source state after reverting the failed
+  zone retry: `artifacts/rpi4b/rpi4b-sd.img` SHA256
+  `2dee8c288549751641e4e4052feb2044b9fc208522f915c07f4165c30eb11651`
 
 Previous validated real-Pi run for the same cache policy before TLBI
 hardening:
@@ -78,6 +81,11 @@ Two negative controls were important:
   (`artifacts/rpi4b-uart/rpi4b-uart-20260514-153601-netboot-cacheable-kheap-tlbi-fix-zone-uncached.log`).
   These heap-cacheability attempts are rejected for now; kernel heap/pmap
   bootstrap metadata remain non-cacheable.
+* Retrying cacheable zone backing pages after TLBI hardening still failed in
+  `_vm_zalloc()` while spawning `dummyfs-root`
+  (`artifacts/rpi4b-uart/rpi4b-uart-20260514-154825-netboot-cacheable-zone-after-tlbi-fix.log`).
+  TLBI ordering is therefore not the root cause of the zone free-list
+  corruption.
 
 Working hypothesis: the real bug was stale cache lines becoming visible through
 new cacheable aliases when Phoenix reused freshly allocated application pages

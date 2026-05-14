@@ -119,6 +119,12 @@ mandatory cleanup. Until then, progress on the boot path takes priority.
   - FAIL: `artifacts/rpi4b-uart/rpi4b-uart-20260514-095141-netboot-cacheable-zone-inval-flush-free-list.log`
     fails earlier in `main_initthr` with corrupted control flow and repeated
     Data Aborts.
+  - FAIL: `artifacts/rpi4b-uart/rpi4b-uart-20260514-154825-netboot-cacheable-zone-after-tlbi-fix.log`
+    repeated the direct cacheable-zone test after TD-19 TLBI hardening and
+    still failed at `_vm_zalloc()` / `_kmalloc_alloc()`
+    (`pc=ffffffffc000f0cc`, `lr=ffffffffc000f30c`,
+    `far=6b5cc7e997dd39f3`). TLBI ordering was therefore not the root cause
+    of zone free-list corruption.
 - **Resolution requirements:**
   - Identify whether stale lines come from freshly allocated zone backing
     pages, free-list writes, or old aliases from prior kernel-page ownership.
