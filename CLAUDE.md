@@ -65,3 +65,14 @@ The harness's static command validator can't allowlist piped, chained, or `cd`-p
 - `./scripts/qemu-debug.sh` (with `--gdb` for state capture) for any QEMU rpi4b iteration
 
 The allowlist in `.claude/settings.json` covers every script above plus `grep`, `rg`, `git add:*`, `git commit:*`. If you need an operation not covered, **add a script wrapper for the operation, then add the script to the allowlist** — do not inline the pipeline. This keeps the permission surface stable across sessions.
+
+## Python tooling
+
+The host macOS Python is PEP 668-managed — **never** run `pip install --user`, never `pip --break-system-packages`. If a helper script needs an additional package (e.g. `pyserial` for `psh-interact.py`), create a local venv with `uv` and install into that:
+
+```
+uv venv .venv
+.venv/bin/python -m pip install pyserial
+```
+
+Then point any wrapper script's shebang or `PYTHON` variable at `.venv/bin/python`. Do not modify the system Python install.

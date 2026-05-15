@@ -1,6 +1,69 @@
 # Phoenix-RTOS Raspberry Pi 4 Port Status
 
-## Current Status: 2026-05-14 (MMU + D-cache + I-cache enabled on real Pi 4; TLBI hardening validated)
+## Current Status: 2026-05-15 (kernel M-only baseline + hygiene fixes; cache enable parked AGAIN after C-3 second pass)
+
+> **Retraction note (2026-05-15 morning).** The 2026-05-14 "M|C|I enabled on
+> real Pi 4" milestone has been retracted. Bisect on 2026-05-15 morning showed
+> the three cache-enable commits (3d9c5574, 3b63677f, f2b7c62f) silently broke
+> user-process execution — every spawned user process exited before its own
+> code could run, even though the kernel logged successful spawns. The shipped
+> milestone criterion ("no fault, reaches `proc_reap` idle") was necessary but
+> not sufficient. All three cache commits were reverted; the kernel returned
+> to M-only baseline. Full retraction analysis is in the commit message of
+> `phoenix-rtos-kernel 5bff6ebb`.
+
+### 2026-05-15 C-3 second pass (parked)
+
+After the retraction, a clean Linux-`__cpu_setup`-style cache enable plan was
+designed (`docs/research/2026-05-15-cache-enable-c-approach-design.md`) and
+re-attempted in steps C-1 through C-7. C-1 (PT pre-MMU construction) and C-2
+(TTBR0 cacheable low-PA aliases) landed cleanly and verified
+M-only-correct. C-3 (single-shot SCTLR.M|C|I write) was attempted in **20
+variants** (c3a–c3t) covering single-shot vs staged enable, cacheable vs
+NC walker mappings, deferred enable from `main.c` after `_hal_init`,
+post-enable VA-range invalidates, double set/way invalidate, and split
+D-only vs I-only enable. **Every variant fails** either at the first
+post-MMU walker read (cacheable-walks case) or at the first post-SCTLR.C=1
+cacheable data access (deferred-enable case).
+
+The leading remaining hypothesis is the **BCM2711 SLC (system L2 cache)** —
+ARM cache-maintenance ops only invalidate the A72 cluster's caches; the
+SLC sits between the cluster and DDR and may hold firmware-era dirty lines
+that surface as stale reads when SCTLR.C=1 enables data caching. Next
+session's first attempt is c3u (disable L1D hardware prefetcher in the
+armstub); if that doesn't fix it, c3y (BCM2711 SLC invalidate via the
+BCM2711-specific controller). Full matrix and planned strategies in the
+research doc.
+
+### Locked-in shipping configuration (boot-correct on real Pi 4)
+
+* armstub: A72 erratum 859971 + 1319367 + SMPEN at EL3 reset
+* plo: M-only, teardown `dc ivac` (discard firmware lines, don't write back)
+* kernel: M-only, `dc isw` (not `cisw`) for cold-start cache invalidate,
+  `_hal_init` asm cleaned up (TD-04-hack-2 probe stores removed)
+* 4 GB DRAM unlocked via `ddrh` map for chunk 2 in syspage
+* HDMI: framebuffer console up (fbcon spawned)
+* SMP smoke: cores 1-3 wake from armstub spin-table, park in WFE
+* Userspace: all 8 expected processes spawn (bind / dummyfs /
+  dummyfs-root / mkdir / pcie / pl011-tty / psh / usb), psh reaches
+  interactive prompt
+
+Verified manifest: `manifests/2026-05-15-cache-hygiene-fixes-m-only.md`.
+
+### Kernel branch state
+
+`agent/rpi4-program-reloc` has commit `f7fe6b39` "deferred cache-enable
+helpers (C-3 work-in-progress)" on top of the boot-correct state. The
+commit adds `hal_cpuEnableDCache` and `hal_cpuEnableICache` asm helpers
+and a late-enable call site in `main.c`. **The call site is intentionally
+left enabled** so the next session resumes at c3t state without
+reconstructing the helpers. To return the kernel to boot-correct, either
+revert `f7fe6b39` or comment out the `hal_cpuEnableICache()` call between
+the 'I' and 'i' UART markers in `main.c`.
+
+---
+
+## Previous Status: 2026-05-14 (MMU + D-cache + I-cache enabled on real Pi 4; TLBI hardening validated) — RETRACTED
 
 ### What changed
 

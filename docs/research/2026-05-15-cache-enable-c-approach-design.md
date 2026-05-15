@@ -392,3 +392,225 @@ Re-engaging cache enable requires either:
 
 Next focus: features that don't depend on caches — full 4 GiB RAM
 unlock, SMP secondary cores, USB+keyboard via PCIe, HDMI text mode.
+
+## 2026-05-15 night — C-3 second pass: deferred-enable strategies (ALL FAILED)
+
+After the morning's `_init.S`-time M|C|I attempts (c3a–c3h) all
+faulted at the first post-MMU walker read, the afternoon pivoted to
+**deferred enable**: keep `_init.S` at M-only (the boot-correct
+baseline) and flip SCTLR_EL1.C / SCTLR_EL1.I from C code in `main.c`
+*after* `_hal_init()` returns. This let the boot reach further than
+ever before — the kernel ran ~3000 lines of M-only init, including
+all the `_hal_init_c` sub-stages (`_pmap_preinit`, `_hal_platformInit`,
+`_hal_consoleInit`, `_hal_exceptionsInit`, `_hal_interruptsInit`,
+`_hal_cpuInit`, `_hal_timerInit`), printed the cyan-coloured
+"hal: console init done", then transitioned to a clean call to
+`hal_cpuEnableDCache` / `hal_cpuEnableICache`.
+
+Every deferred-enable variant tested failed in the **same class** of
+way: the SCTLR.C=1 (or SCTLR.I=1) MSR succeeds, the canonical fences
+complete, the helper returns to main.c — and then the **very next
+cacheable data load** returns stale data (D-cache enable case) or the
+**very next instruction fetch from the helper's tail** returns garbage
+(I-cache enable case). Both manifest as a silent hang — no fault, no
+EX= marker, no further UART output, indistinguishable from a busy-loop
+on a stuck status register.
+
+### Complete c3 attempt matrix
+
+| Test | What changed | Where it stopped | Notes |
+|------|--------------|------------------|-------|
+| c3a | M\|C\|I single MSR in _init.S | EX=4 infinite loop | Vector slot 4 sync exception; handler self-faults at literal-pool load → no ESR/ELR/FAR printed |
+| c3b | M\|C single MSR, TCR cacheable walks | L1 translation fault FAR=0xfe201018 ELR=_init.S:635 (X4 marker) | First post-MMU PL011 access via TTBR0 SCRATCH_TT[3]; walker reads SCRATCH_TT[3] as invalid |
+| c3c | M\|C, TCR cacheable, plo dc ivac fix | Same as c3b | plo `dc civac` → `dc ivac` change alone didn't help |
+| c3d | M\|C, **TCR NC walks** | No fault — but hang at _init.S:1363 (probe store) | NC walks bypass walker D-cache; kernel reaches syspage relocation, hangs in `_hal_init` asm stub on first probe store |
+| c3e | Same as c3d, 480s capture | Same hang at line 1363 | Confirmed hang (not slowness); 240s vs 480s identical |
+| c3f | NC walks, **removed `_hal_init` probe stores** | Hang at `b _hal_init_c` (after 'I' marker) | Asm probes removed; hang moves to `_hal_init_c` C-prologue stack write |
+| c3g | NC walks, **dc cisw → dc isw fix** | Same as c3f | cisw→isw didn't unstick NC-walks hang |
+| c3h | TCR cacheable walks + dc isw | Same as c3b (L1 fault FAR=0xfe201018) | Confirms dc isw vs cisw doesn't affect cacheable-walks fault |
+| c3i | **Baseline verification**: M-only + hygiene fixes (dc isw + _hal_init cleanup), no M\|C | Full boot ✓ (kernel banner, threads, init thread, fbcon, pcie, xhci, psh tty) | The hygiene fixes don't regress M-only |
+| c3j | **Staged** M-then-C (plo's pattern) + cacheable walks | X4/X5/X6/N printed, then L3 fault FAR=0xffffffffc0001890 ELR=_core_0_virtual | Staged enable solved the X4 fault. New fault on first TTBR1 data load on high-VA stream after `br x0`. Same walker-cache pattern, different table. |
+| c3k | Staged M-then-C + NC walks | Same as c3f/c3g (hang at `b _hal_init_c`) | Staging didn't help NC walks case |
+| c3l | **Deferred** C enable in `main.c` after `_hal_init` returns | Breakthrough: kernel runs all of `_hal_init_c`, prints "hal: console init done", enable returns ('c' marker), td16b prints — then hangs at **first hal_consolePrint after enable** ("main: hal init done") | Massive progress vs all earlier attempts. Hang is now squarely a *cacheable-read returns stale data* problem. |
+| c3m | c3l + finer markers around hal_consolePrint | Hang localized between '1' marker (post-td16b) and '2' marker (after hal_consolePrint) | hal_consolePrint is what stalls — likely on a cacheable read of `console_common.uart.base` or the spinlock state |
+| c3n | c3l + **bypass first hal_consolePrint** with direct `*uart=` writes | '1', '2', 'h' all print — then **_usrv_init hangs** | Not specific to hal_consolePrint; any function that reads cacheable kernel data after cache-enable hangs |
+| c3o | Deferred enable moved **after** first hal_consolePrint | First print works M-only, 'C', 'c' both print (enable returns) — then hangs in _usrv_init | Same as c3n: enable itself works, post-enable reads fail |
+| c3p | Add `dc ivac` over kernel 2 MiB VA range after SCTLR.C=1 | Hangs in `hal_cpuEnableDCache` itself (no 'c' marker) | The post-enable invalidate loop hits the same stale-read issue when reading its own literal-pool address constant |
+| c3q | c3p but build addresses via movz/movk (no literal-pool reads) | Still hangs in helper — no 'c' | dc ivac requires walker translation; walker reads PT through cache; circular dependency |
+| c3r | **Double set/way invalidate** (dc isw before AND after SCTLR.C=1) | Helper returns ('c' prints), next access (td16b) hangs | Sequential dc isw works, but doesn't fix the stale-read pattern at the C code level |
+| c3s | **Split**: try `hal_cpuEnableICache` only, no D-cache | Hangs in helper (no 'i' marker) | I-cache enable has the same problem in a different guise |
+| c3t | c3s + add `hal_cpuInvalDataCacheAll` to I-cache helper (cleans L2 unified) | Same as c3s — no 'i' | The extra dc isw doesn't help here either |
+
+### Root-cause hypothesis (still unverified)
+
+All deferred-enable failures share the same shape: **the first
+cacheable access after `SCTLR_EL1.C=1` (or `SCTLR_EL1.I=1`) returns
+stale/wrong data**, even though `hal_cpuInvalDataCacheAll` (Linux-
+style `dc isw` walking all CLIDR levels) was just run.
+
+Three independent hypotheses, in order of decreasing confidence:
+
+1. **BCM2711 system L2 cache (SLC) — most plausible.** Pi 4's
+   BCM2711 SoC has a system-wide L2 cache between the A72 cluster
+   and DDR. ARM cache-maintenance ops (`dc isw`, `dc ivac`,
+   `ic ialluis`) only invalidate the A72 cluster caches — they do
+   not reach the SLC. The VC4 GPU and firmware run with their own
+   caching policy and dirty the SLC during boot; plo and the
+   M-only kernel write through the SLC (NC writes pass through) and
+   reach DDR, so DDR is correct. But when SCTLR.C=1, A72 cacheable
+   reads go *to the SLC*, not directly to DDR — and the SLC may
+   still hold firmware-era dirty lines for the kernel-data PA range.
+   The SLC has its own control interface; BCM2711-specific
+   maintenance is needed (analogous to Linux's `outer_cache.flush_all`
+   hooks on platforms with PL310/PL220 L2 controllers).
+
+2. **A72 hardware data prefetcher.** Even with SCTLR.C=0, the L1D
+   prefetcher may speculatively pull lines into cache during M-only
+   execution. If those lines are tagged with stale data (because the
+   PA in DDR is fresh kernel data but the prefetcher pulled an old
+   value from somewhere else), they'd survive `dc isw` if the
+   set/way walk happens to miss them — and surface on the first
+   post-SCTLR.C=1 read.
+
+3. **A72 errata beyond 859971 / 1319367.** The armstub applies both,
+   which were the documented "wild pointer after cache enable"
+   workarounds. There are more in the Cortex-A72 SDEN that we
+   haven't reviewed for relevance: 794073, 814670, 851141, 855423,
+   1149018, 1786420. ARM-DEN-0013 has the full list.
+
+### Strategies still to try (next session)
+
+Most promising first, then progressively heavier:
+
+**Tier 1: software-only, low-risk**
+
+* **(c3u) Disable L1D hardware prefetcher** via
+  `CPUACTLR_EL1[40:38] = 0b111` (A72 r0p3 disables L1D-prefetch).
+  Must be applied at EL3 in the armstub because CPUACTLR_EL1 traps
+  from EL1 (same place we apply 859971 + 1319367 today). If the
+  prefetcher is responsible for stale-line resurrection, disabling
+  it should let the post-enable reads succeed. Minimal patch:
+  ~6 lines in `phoenix-armstub8-rpi4.S` right after the existing
+  `CPUACTLR_EL1` block. **First thing to try next session.**
+
+* **(c3v) Disable A72 L2 hardware prefetcher** via additional
+  CPUECTLR_EL1 bits. Less commonly disabled but documented as a
+  prefetch source. Same EL3 issue.
+
+* **(c3w) Disable ALL A72 prefetchers + load-pass-DMB**: full
+  set of CPUACTLR_EL1 conservative bits. If even with everything
+  disabled the kernel still hangs, definitive evidence the cause is
+  NOT prefetcher-related.
+
+* **(c3x) Move cache enable to MUCH later in boot**, e.g. inside
+  `proc_threadsInit` right before scheduling first user thread.
+  By then the kernel has done all heavy init; if any data
+  structures still have stale-line hazards, they should all have
+  been *written* by now via NC paths, drained, and have correct
+  DDR contents. Most stalemate-breaker: same fundamental issue
+  but with maximum M-only run-time before the flip.
+
+**Tier 2: BCM2711-specific cache maintenance**
+
+* **(c3y) SLC invalidate via BCM2711-defined sequence.** The
+  BCM2711 datasheet describes the SLC and its control registers
+  (in the "ARM peripherals" region around `0xff800000+`). Need to
+  reverse-engineer or extract from VideoCore firmware / Linux
+  bcm2711 driver code what the SLC invalidate sequence looks like.
+  Linux's `bcm2835-cache` or similar driver, if it exists, is the
+  reference. Add a `_hal_bcm2711SlcInvalidate` function and call
+  it in `hal_cpuEnableDCache` between the dc isw and the SCTLR
+  write. **This is the most likely fix if Tier 1 fails.**
+
+* **(c3z) Configure problematic mappings as Outer-NC.** Add MAIR
+  slot 4 = 0x4F (Inner WB + Outer NC) and use it for KERNEL_TTL3
+  default attrs. With Outer NC the SLC is bypassed; with Inner WB
+  the A72 L1/L2 still caches. Tests the "SLC is the stale-data
+  source" hypothesis directly. Performance hit on cross-core
+  shared state (which currently doesn't matter at NUM_CPUS=1).
+
+**Tier 3: hardware debugger**
+
+* **(c3-jtag) JTAG/SWD on real Pi 4 with OpenOCD.** Single-step
+  through `hal_cpuEnableDCache` and inspect cache + memory state
+  at each instruction. Should pinpoint exactly which read returns
+  stale data and from which cache level. The Pi 4 has a 14-pin
+  JTAG header reachable through soldering or a HAT.
+
+* **(c3-uboot) U-Boot debug stub on Pi 4.** Boot U-Boot first,
+  attach gdb via JTAG or via U-Boot's gdb-server, single-step
+  Phoenix's MMU+cache enable path. U-Boot has known-working A72
+  cache enable that we can compare against.
+
+**Tier 4: defer / acceptance**
+
+* **(c3-accept) Accept M-only for v1 release.** The current M-only
+  kernel boots correctly on real Pi 4 with all expected user
+  processes (8 spawned: bind/dummyfs/dummyfs-root/mkdir/pcie/
+  pl011-tty/psh/usb). It's slow (~30× slower than cacheable would
+  be) but functionally correct. Other features (USB+keyboard,
+  HDMI text, SMP, full 4 GiB RAM) don't depend on cache enable
+  and can land independently. Cache enable becomes a v2 milestone.
+
+### What's currently committed and what's not
+
+**Committed (on respective working branches):**
+* phoenix-rtos-kernel `agent/rpi4-program-reloc`:
+  * `f68d1008` C-1: PT pre-MMU
+  * `3c2fa845` C-2: TTBR0 cacheable
+  * `3d8bb81b` cache-hygiene fixes (dc isw, _hal_init asm cleanup, M-only revert)
+  * `f7fe6b39` deferred cache-enable helpers (this commit, work-in-progress)
+* plo `codex/common-aarch64-platform-makefiles`:
+  * `57254f3` teardown `dc civac` → `dc ivac`
+* coord (phoenix-rpi) `main`:
+  * `4921297` option C: revert cache commits + design doc + M-only rollback manifest
+  * `c0130c2` cache: C-3 experiments concluded; M-only baseline + hygiene fixes manifest
+  * (this commit) cache: C-3 second pass — deferred-enable strategies all hang
+
+**The `f7fe6b39` kernel commit is INTENTIONALLY non-boot-correct.**
+It contains `hal_cpuEnableICache()` enabled in `main.c` after
+`_hal_init()`, which causes the kernel to hang silently. To return
+the kernel to a boot-correct state, comment out the
+`hal_cpuEnableICache()` call site in `main.c` (or revert
+`f7fe6b39`). The intent is to preserve the work-in-progress code
+so the next session starts from c3t state and tries c3u
+(prefetcher disable) without reconstructing the helper functions.
+
+### Action items for next session, in priority order
+
+1. **Implement c3u** (L1D-prefetcher disable in armstub). 6-line
+   patch + rebuild armstub blob + rebuild kernel image + 1 test
+   cycle. ~30 min including verify.
+2. **If c3u fixes it**: commit c3u, restore D-cache enable in
+   `main.c`, run full validation (psh prompt + spawned user
+   processes), commit, write release note.
+3. **If c3u doesn't fix it**: implement c3v then c3w (heavier
+   prefetcher disables).
+4. **If Tier 1 doesn't fix it**: pivot to c3y (BCM2711 SLC
+   invalidate). This is the highest-confidence remaining hypothesis
+   per Linux bcm2711 driver code review.
+5. **If Tier 2 also fails**: stop, document, switch to c3-accept
+   and pursue USB+keyboard / HDMI text / SMP independently. They
+   work fine on M-only — caches are a performance feature, not a
+   correctness gate.
+
+### Files touched during this work (not all committed yet)
+
+* `sources/phoenix-rtos-kernel/hal/aarch64/_init.S` — TCR walker
+  attrs revert to cacheable (Linux standard); SCTLR.M-only enable
+  (C-3 deferred); `hal_cpuInvalDataCacheAll` uses `dc isw`;
+  `_hal_init` asm stub TD-04-hack-2 probes removed;
+  `hal_cpuEnableDCache` + `hal_cpuEnableICache` helpers added
+* `sources/phoenix-rtos-kernel/hal/aarch64/aarch64.h` — declarations
+* `sources/phoenix-rtos-kernel/main.c` — late-enable call site
+  (currently set to `hal_cpuEnableICache` for the c3s/c3t experiments;
+  swap to `hal_cpuEnableDCache` to revisit D-cache enable)
+* `sources/plo/hal/aarch64/generic/hal.c` — teardown
+  `hal_dcacheFlush` → `hal_dcacheInval`
+* `docs/research/2026-05-15-cache-enable-c-approach-design.md` —
+  this file
+* `manifests/2026-05-15-cache-hygiene-fixes-m-only.md` — M-only +
+  hygiene snapshot
+* `manifests/2026-05-15-c3-deferred-enable-wip.md` — current WIP
+  state snapshot (new)
+

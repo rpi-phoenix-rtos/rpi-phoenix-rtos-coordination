@@ -1,124 +1,119 @@
 # Current Implementation Step
 
-## Active step (2026-05-14): kernel MMU + D-cache + I-cache enabled; cache-policy cleanup active
+## Active step (2026-05-15 evening): cache enable parked again — C-3 deferred-enable round
 
-Real Pi 4 now validates with kernel `SCTLR_EL1.M|C|I` enabled. The current
-stable image reaches all configured userspace spawns and then idles in
-`proc_reap`:
+The 2026-05-14 "M|C|I enabled" milestone was retracted on
+2026-05-15 morning after real-Pi bisect showed it broke user-process
+execution (every spawned process silently failed before any user
+code ran). Three kernel commits were reverted (3d9c5574, 3b63677f,
+f2b7c62f) and the kernel returned to the M-only baseline.
 
-* image SHA256: `fb4493c1e1bed1ed7fd5752d8d5657846f97d1da63eaab5fe0239089c07eabac`
-* UART log: `artifacts/rpi4b-uart/rpi4b-uart-20260514-154015-netboot-tlbi-fix-stable-cache-policy.log`
-* terminal milestone: `main: spawn loop done, entering proc_reap idle`
+2026-05-15 morning: C-1 (PT pre-MMU) and C-2 (TTBR0 cacheable
+low-PA aliases) landed cleanly and verified M-only-correct.
 
-The active implementation step is now "harden the cacheable-data fix and remove
-the remaining broad performance workarounds while keeping `SCTLR_EL1.C|I`
-enabled."
+2026-05-15 afternoon-evening: tried 12 numbered C-3 variants
+(c3a–c3l) and 8 more iterations (c3m–c3t), spanning single-shot
+M|C|I, M|C cacheable walks, M|C NC walks, staged M-then-C, plo
+`dc civac → dc ivac`, kernel `dc cisw → dc isw`, `_hal_init` asm
+probe-store cleanup, deferred enable from `main.c`, post-enable
+VA-range invalidate, double set/way invalidate, split D-only vs
+I-only enable. **Every variant fails** either at the first
+post-MMU walker read (cacheable walks) or hangs at the first
+post-SCTLR.C=1 / SCTLR.I=1 cacheable data access (deferred enable).
 
-Current cache policy:
+Cache enable is parked. Re-engaging requires either a hardware
+debugger (JTAG/SWD or U-Boot debug stub) to single-step the
+post-SCTLR-flip behavior, OR a BCM2711-specific SLC (system L2
+cache) invalidate that ARM cache ops don't reach — the leading
+hypothesis for the persistent stale-read pattern.
 
-* `vm/amap.c`: temporary copy/zero aliases are cacheable again.
-  `amap_page()` invalidates object-backed source aliases before copying and
-  freshly allocated destination aliases before first zero/copy reuse.
-* `proc/process.c`: writable ELF `PT_LOAD` mappings and explicit BSS-tail
-  mappings are cacheable again.
-* `hal/aarch64/aarch64.h`, `hal/aarch64/pmap.c`: TLBI now follows the
-  architecturally required `tlbi; dsb; isb` shape, and invalid-to-valid L3 PTE
-  creation invalidates the VA after the descriptor is visible.
-* `hal/aarch64/_init.S`: kernel flips `SCTLR_EL1.M|C|I`; early table-walk attrs
-  remain non-cacheable and bootstrap pmap/common metadata remains NC.
-* `vm/page.c` / initial heap: dynamic kernel heap and bootstrap heap mappings
-  remain non-cacheable. Cacheable `_page_sbrk()` and cacheable
-  initial+dynamic heap experiments stalled during page scanning and are
-  rejected pending a better hypothesis.
-* `vm/zone.c`: zone backing pages still map `MAP_UNCACHED`. A direct
-  cacheable-zone test failed in `_vm_zalloc()` / `_kmalloc_alloc()` with a
-  garbage free-list pointer; invalidating the cacheable zone backing range
-  before free-list initialization failed the same way; invalidate-plus-flush
-  failed earlier in `main_initthr`.
+**Full c3a–c3t attempt matrix + planned next strategies** are in
+[docs/research/2026-05-15-cache-enable-c-approach-design.md](../docs/research/2026-05-15-cache-enable-c-approach-design.md)
+(see "2026-05-15 night — C-3 second pass" section).
 
-Next actions, in order:
+## Locked-in shipping configuration
 
-1. Audit shared-anonymous COW source handling; current invalidation deliberately
-   avoids invalidating live shared anon source pages.
-2. Validate on real Pi after each narrowing step. QEMU rpi4b timed out at
-   marker `A3` for this image and is not authoritative for the current cache
-   boundary.
-3. Diagnose the page-scan stall from cacheable kernel heap mappings before
-   retrying `_page_sbrk()` or initial heap cacheability.
-4. Design a specific zone allocator page cache-hygiene fix before retrying
-   cacheable zone mappings; do not repeat the direct `MAP_NONE` or
-   invalidate-before-init / invalidate-plus-flush experiments.
-
-## Active step (2026-05-13): cache enable parked, baseline reliable
-
-The cache-enable investigation reached a definitive empirical
-boundary today and is parked. The locked-in shipping configuration
-remains the Pi 4 baseline:
+Boot-correct on real Pi 4 in this state:
 
 * armstub: A72 erratum 859971 + **1319367** (CPUACTLR2_EL1[0]=1) +
-  SMPEN, applied at EL3 reset (`phoenix-rtos-project a27bc07`).
-* plo: M-only (MMU on, caches off). Slow but reliable.
-* kernel: M-only. Reliably reaches `(psh)%` prompt on real Pi 4.
-* 4 GB DRAM unlocked via the `ddrh` map for chunk 2 in syspage
-  (`phoenix-rtos-project 42b2db5`).
-* HDMI fully functional — psh prompt visible on connected display.
-* SMP smoke: cores 1-3 wake from the armstub spin-table, print
-  alive marker, park in WFE.
+  SMPEN, applied at EL3 reset.
+* plo: M-only + teardown `dc ivac` (discard firmware-stale L2 lines,
+  do NOT clean over plo's just-loaded kernel image).
+* kernel: M-only + cache-hygiene fixes: `dc cisw → dc isw`,
+  `_hal_init` asm probe-store cleanup. Reliably reaches `(psh)%`
+  prompt and spawns all 8 user processes (bind / dummyfs /
+  dummyfs-root / mkdir / pcie / pl011-tty / psh / usb).
+* 4 GB DRAM unlocked via the `ddrh` map for chunk 2 in syspage.
+* HDMI: framebuffer console up (fbcon spawned).
+* SMP smoke: cores 1-3 wake from armstub spin-table, print alive
+  marker, park in WFE.
 
-Last validated image SHA: see `manifests/2026-05-13-armstub-1319367-final.md`.
+Latest verified manifest:
+`manifests/2026-05-15-cache-hygiene-fixes-m-only.md`.
 
-## Cache enable investigation (parked)
+## C-3 work-in-progress on the kernel branch
 
-Today's session ran **12 numbered iterations** plus diagnostics. The
-critical finding from iter-12-diag (`b597c1f7…1e743807`):
+The kernel branch `agent/rpi4-program-reloc` currently has commit
+`f7fe6b39` "deferred cache-enable helpers (C-3 work-in-progress)"
+on top of the boot-correct state. This commit:
 
-```
-T0:0000000000400703    ← kernel reads TTL3[0] correctly post-MMU+C=1
-T1:0000000000401703    ← kernel reads TTL3[1] correctly post-MMU+C=1
-FAR=ffffffffc0001890   ← but the WALKER reports TTL3[1] as invalid
-```
+* Adds `hal_cpuEnableDCache` and `hal_cpuEnableICache` in
+  `hal/aarch64/_init.S` (asm helpers with the Linux set_sctlr
+  ritual).
+* Adds declarations in `hal/aarch64/aarch64.h`.
+* Adds a late-enable call site in `main.c` after `_hal_init()`,
+  currently invoking `hal_cpuEnableICache()` for the c3s/c3t
+  experiments.
 
-The CPU's data cache returns correct PT entries to a regular `ldr`
-instruction, AND the walker still hits translation-fault-L3 when
-walking the same entries. The walker uses a memory path distinct
-from the regular D-cache view that no `dc ivac` / `dc civac` /
-`tlbi vmalle1is` ordering we tried clears.
+**This commit is intentionally non-boot-correct.** The
+`hal_cpuEnableICache()` call site causes the kernel to hang silently
+after the 'I' UART marker. To return the kernel to boot-correct
+state, either:
 
-Full forensic log + recipe table for iter-7…iter-12 in
-[docs/research/2026-05-13-iter-11-12-cache-walker-finding.md](../docs/research/2026-05-13-iter-11-12-cache-walker-finding.md).
+1. Revert `f7fe6b39` with `git revert f7fe6b39`, or
+2. Comment out the `hal_cpuEnableICache()` call in `main.c`
+   between the 'I' and 'i' markers, leaving the asm helpers in
+   place for future experiments.
 
-## What blocks USB+keyboard
+The intent is to **preserve the C-3 work** so the next session
+starts from the c3t experimental state and can immediately try
+c3u (L1D prefetcher disable in armstub) without reconstructing
+the helper functions.
 
-Looking at the boot log, the kernel's PCIe driver enumerates the
-VL805 device on bus 1 but reads vendor/device IDs as `0000`, and
-all six BARs as raw zero. This is a SEPARATE issue from cache —
-the firmware-to-kernel PCIe state handoff and/or the VL805 mailbox
-reset is not yet wiring the device for kernel access. Worth its
-own session.
+## Next session — priority order
 
-## Next session — what to try
+1. **c3u: L1D prefetcher disable in armstub.** Add 6-line patch
+   to `phoenix-armstub8-rpi4.S` setting `CPUACTLR_EL1[40:38] =
+   0b111` after the existing 859971 + 1319367 block. ~30 min
+   including verify. If this works, restore D-cache enable in
+   `main.c`, run full validation, commit, release note.
+2. **c3v / c3w: heavier prefetcher disables** if c3u alone
+   doesn't fix it.
+3. **c3y: BCM2711 SLC invalidate.** Most likely fix per BCM2711
+   docs / Linux bcm2711 driver review. Adds a
+   `_hal_bcm2711SlcInvalidate` function and calls it inside
+   `hal_cpuEnableDCache`. Requires reading the BCM2711 datasheet
+   sections on the system-cache controller.
+4. **c3-jtag**: hardware debugger setup. Last resort if c3u-c3y
+   all fail.
+5. **c3-accept**: stop cache enable work for v1; pursue
+   USB+keyboard, HDMI text, SMP — they all work fine on M-only.
 
-Highest-signal options (mostly listed in the research note):
+## What blocks USB+keyboard (still separate from cache)
 
-1. **Compare against rust-raspberrypi-OS-tutorials ch15/16** on the
-   same hardware. They run M|C|I on this CPU successfully. Their
-   TCR field set + `__cpu_setup` barrier ordering is the reference.
-2. **Try TCR `SH1/IRGN1/ORGN1 = 0`** (force walker to always read
-   from DRAM, no cache view). Slow but architecturally robust.
-3. **Linear-clean each PT entry with `dsb sy + dc cvac` after every
-   `str`** — pushes lines all the way to PoC rather than just to
-   D-cache.
-4. **Single MSR with M|C|I and zero instructions of speculative
-   surface** between SCTLR prep and write (no UART prints, only
-   `nop`s) — let the architecture handle it as a single transition.
-5. **Investigate PCIe/USB independently** — they don't need cache to
-   work; the BAR-zero / vendor-ID-zero readback suggests a firmware
-   handoff state issue (mailbox reset of VL805 may need to land
-   BEFORE config space reads).
+The kernel's PCIe driver enumerates the VL805 device on bus 1 but
+reads vendor/device IDs as `0000` and all six BARs as raw zero.
+This is a firmware-to-kernel PCIe state handoff and/or VL805
+mailbox reset issue — independent of cache enable. Worth its own
+session once cache is either landed or definitively parked.
 
 ## Subordinate items
 
-* TD-01 …TD-16, TD-plo-dcache, TD-plo-icache, TD-15-mboxprobe,
-  TD-04 — see `docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md` for the
-  current ledger; the cache TDs (TD-16, TD-plo-dcache, TD-plo-icache)
-  remain open.
+* TD-01 … TD-16, TD-plo-dcache, TD-plo-icache, TD-15-mboxprobe,
+  TD-04 — see `docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md`. The
+  cache-related TDs (TD-16, TD-plo-dcache, TD-plo-icache) remain
+  open.
+* TD-04-hack-2 (asm probe stores in `_hal_init`) — REMOVED in
+  kernel `3d8bb81b`. Heisenbug protection turned out to be the
+  hang point under M|C with NC walks; removing the probes made
+  the kernel reach further in deferred-enable trials.
