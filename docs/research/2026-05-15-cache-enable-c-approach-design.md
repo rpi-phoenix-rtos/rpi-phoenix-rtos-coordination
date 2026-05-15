@@ -576,23 +576,38 @@ the kernel to a boot-correct state, comment out the
 so the next session starts from c3t state and tries c3u
 (prefetcher disable) without reconstructing the helper functions.
 
-### Action items for next session, in priority order
+## 2026-05-15 late — c3u/c3v/c3w/c3z follow-up results
 
-1. **Implement c3u** (L1D-prefetcher disable in armstub). 6-line
-   patch + rebuild armstub blob + rebuild kernel image + 1 test
-   cycle. ~30 min including verify.
-2. **If c3u fixes it**: commit c3u, restore D-cache enable in
-   `main.c`, run full validation (psh prompt + spawned user
-   processes), commit, write release note.
-3. **If c3u doesn't fix it**: implement c3v then c3w (heavier
-   prefetcher disables).
-4. **If Tier 1 doesn't fix it**: pivot to c3y (BCM2711 SLC
-   invalidate). This is the highest-confidence remaining hypothesis
-   per Linux bcm2711 driver code review.
-5. **If Tier 2 also fails**: stop, document, switch to c3-accept
-   and pursue USB+keyboard / HDMI text / SMP independently. They
-   work fine on M-only — caches are a performance feature, not a
-   correctness gate.
+The next-session Tier 1/Tier 2 cheap tests were run immediately on real Pi 4.
+
+| Variant | Change | UART result | Conclusion |
+| --- | --- | --- | --- |
+| c3u | Added armstub-side L1D prefetch disable candidate, then retried deferred `hal_cpuEnableDCache()` | D-cache helper returned (`Cc`), but kernel hung before post-cache `td16b` output. Log: `artifacts/rpi4b-uart/rpi4b-uart-20260515-184812-netboot-c3u-l1d-prefetch-disable.log` | Moved past the old no-return helper failure but still hits the first post-enable data-read class. |
+| c3v/c3w | Corrected / stronger A72 prefetch sweep: `CPUACTLR_EL1[56]` disable L1D HW prefetch, `CPUACTLR_EL1[55]` load-pass-store disable, `CPUECTLR_EL1[38]` table-walk descriptor prefetch disable, L2 prefetch distances cleared before SMPEN | Armstub marker changed to `1342`, proving the new EL3 writes executed. Kernel still stopped at `cdegCc`. Log: `artifacts/rpi4b-uart/rpi4b-uart-20260515-185112-netboot-c3vw-a72-prefetch-disable-sweep.log` | CPU prefetchers are unlikely to be the sole cause. |
+| c3z | Added MAIR slot 4 = Normal Inner-WB / Outer-NC and used it for normal kernel page mappings plus TTBR0 low-PA RAM aliases | Boot reached the same kernel point and stopped at `cdegCc`. Log: `artifacts/rpi4b-uart/rpi4b-uart-20260515-185538-netboot-c3z-outer-nc-kernel-map.log` | Simple memory-attribute SLC bypass is insufficient, or the failing path is not controlled by normal-data MAIR attrs alone. |
+
+Process notes:
+
+* The netboot wrapper needed bridge recovery in all hardware runs after the
+  Pi initially failed to DHCP within 25s. Recovery succeeded and the actual
+  Pi logs are valid.
+* Lima emitted `use of closed network connection` / broken-pipe messages
+  while the recovery helper intentionally stopped the VM; these are
+  classified as non-fatal recovery noise.
+* Build helpers copied the final-form Raspberry Pi firmware DTB; no DTS/DTB
+  decompile warnings were emitted.
+
+### Revised action items
+
+1. **c3y: implement real BCM2711 SLC maintenance** if an ARM-visible SLC
+   control path can be identified from BCM2711 docs, Linux, or firmware
+   references. Call it inside `hal_cpuEnableDCache` before `SCTLR.C=1`.
+2. **Assembly-only post-enable probe:** move the post-`SCTLR.C=1` experiment
+   into `_init.S` and keep execution there long enough to read several known
+   kernel literals/data slots and print direct UART markers. This removes C
+   stack frame / compiler literal-pool effects from the failure surface.
+3. **If both fail:** park cache enable again and return the branch to the
+   M-only boot-correct state before doing USB/keyboard/HDMI work.
 
 ### Files touched during this work (not all committed yet)
 
@@ -613,4 +628,3 @@ so the next session starts from c3t state and tries c3u
   hygiene snapshot
 * `manifests/2026-05-15-c3-deferred-enable-wip.md` — current WIP
   state snapshot (new)
-

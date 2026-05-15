@@ -77,6 +77,33 @@ Important current UART facts from the official documentation:
     the MMU is off because speculative cache lines can otherwise leave stale
     entries visible to the page-table walker
 
+- Arm Cortex-A72 MPCore TRM mirror:
+  <https://www.scs.stanford.edu/~zyedidia/docs/arm/cortex_a72.pdf>
+
+  Important current facts:
+
+  - Cortex-A72 has implementation-defined CPUACTLR/CPUECTLR prefetch controls
+    that must be written before SMPEN if used in the Pi 4 armstub path.
+  - The TRM-described conservative prefetch-disable sweep includes disabling
+    load/store hardware prefetch in CPUACTLR and L2/table-walk prefetch in
+    CPUECTLR.
+  - Re-verify against the official Arm TRM portal before upstreaming because
+    mirrors can lag or disappear.
+
+- Trusted Firmware-A Cortex-A72 definitions:
+  <https://git.trustedfirmware.org/TF-A/trusted-firmware-a.git/tree/include/lib/cpus/aarch64/cortex_a72.h>
+  <https://git.trustedfirmware.org/TF-A/trusted-firmware-a.git/tree/lib/cpus/aarch64/cortex_a72.S>
+
+  Important current facts:
+
+  - TF-A names `CORTEX_A72_CPUACTLR_EL1_DISABLE_L1_DCACHE_HW_PFTCH` as bit 56
+    and applies A72 errata workarounds from privileged reset code, matching
+    Phoenix's need to do these writes in the EL3 armstub rather than EL1.
+  - The 2026-05-15 c3v/c3w Phoenix experiment used these definitions to
+    correct the earlier weaker local `CPUACTLR[40:38]` prefetch hypothesis.
+  - Re-verify online before depending on exact macro names or bits because
+    TF-A can reorganize CPU support files.
+
 - FreeBSD arm64 early MMU path:
   <https://cgit.freebsd.org/src/tree/sys/arm64/arm64/locore.S>
 

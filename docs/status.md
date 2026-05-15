@@ -1,6 +1,6 @@
 # Phoenix-RTOS Raspberry Pi 4 Port Status
 
-## Current Status: 2026-05-15 (kernel M-only baseline + hygiene fixes; cache enable parked AGAIN after C-3 second pass)
+## Current Status: 2026-05-15 late (kernel M-only baseline + hygiene fixes; cache enable parked AGAIN after C-3u/c3v/c3w/c3z)
 
 > **Retraction note (2026-05-15 morning).** The 2026-05-14 "M|C|I enabled on
 > real Pi 4" milestone has been retracted. Bisect on 2026-05-15 morning showed
@@ -12,7 +12,7 @@
 > to M-only baseline. Full retraction analysis is in the commit message of
 > `phoenix-rtos-kernel 5bff6ebb`.
 
-### 2026-05-15 C-3 second pass (parked)
+### 2026-05-15 C-3 second pass + late prefetch/SLC-bypass tests (parked)
 
 After the retraction, a clean Linux-`__cpu_setup`-style cache enable plan was
 designed (`docs/research/2026-05-15-cache-enable-c-approach-design.md`) and
@@ -22,18 +22,28 @@ M-only-correct. C-3 (single-shot SCTLR.M|C|I write) was attempted in **20
 variants** (c3a–c3t) covering single-shot vs staged enable, cacheable vs
 NC walker mappings, deferred enable from `main.c` after `_hal_init`,
 post-enable VA-range invalidates, double set/way invalidate, and split
-D-only vs I-only enable. **Every variant fails** either at the first
+D-only vs I-only enable. Later the session also tested c3u/c3v/c3w/c3z:
+L1D prefetch disable, stronger A72 prefetch-disable sweep, and an
+Outer-NC MAIR slot for normal kernel mappings / TTBR0 low-PA RAM aliases.
+**Every variant fails** either at the first
 post-MMU walker read (cacheable-walks case) or at the first post-SCTLR.C=1
 cacheable data access (deferred-enable case).
 
 The leading remaining hypothesis is the **BCM2711 SLC (system L2 cache)** —
 ARM cache-maintenance ops only invalidate the A72 cluster's caches; the
 SLC sits between the cluster and DDR and may hold firmware-era dirty lines
-that surface as stale reads when SCTLR.C=1 enables data caching. Next
-session's first attempt is c3u (disable L1D hardware prefetcher in the
-armstub); if that doesn't fix it, c3y (BCM2711 SLC invalidate via the
-BCM2711-specific controller). Full matrix and planned strategies in the
-research doc.
+that surface as stale reads when SCTLR.C=1 enables data caching. However,
+the simple MAIR Outer-NC bypass test did not move the stop point, so the
+next cache-enable attempt should be either a real BCM2711 SLC maintenance
+sequence or an assembly-only post-enable probe that never returns to C until
+several known data reads have been proven. Full matrix and planned
+strategies are in the research doc.
+
+Latest failed real-Pi cache logs:
+
+* `artifacts/rpi4b-uart/rpi4b-uart-20260515-184812-netboot-c3u-l1d-prefetch-disable.log`
+* `artifacts/rpi4b-uart/rpi4b-uart-20260515-185112-netboot-c3vw-a72-prefetch-disable-sweep.log`
+* `artifacts/rpi4b-uart/rpi4b-uart-20260515-185538-netboot-c3z-outer-nc-kernel-map.log`
 
 ### Locked-in shipping configuration (boot-correct on real Pi 4)
 
@@ -53,13 +63,13 @@ Verified manifest: `manifests/2026-05-15-cache-hygiene-fixes-m-only.md`.
 ### Kernel branch state
 
 `agent/rpi4-program-reloc` has commit `f7fe6b39` "deferred cache-enable
-helpers (C-3 work-in-progress)" on top of the boot-correct state. The
-commit adds `hal_cpuEnableDCache` and `hal_cpuEnableICache` asm helpers
-and a late-enable call site in `main.c`. **The call site is intentionally
-left enabled** so the next session resumes at c3t state without
-reconstructing the helpers. To return the kernel to boot-correct, either
-revert `f7fe6b39` or comment out the `hal_cpuEnableICache()` call between
-the 'I' and 'i' UART markers in `main.c`.
+helpers (C-3 work-in-progress)" on top of the boot-correct state, plus
+late diagnostic deltas for c3v/c3w/c3z. The branch adds
+`hal_cpuEnableDCache` and `hal_cpuEnableICache` asm helpers and a
+late-enable call site in `main.c`. **The call site is intentionally left
+enabled** as WIP state for cache diagnosis and is not boot-correct. To
+return the kernel to boot-correct, either revert the C-3 WIP commits or
+comment out the late cache-enable call in `main.c`.
 
 ---
 
