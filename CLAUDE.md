@@ -43,3 +43,36 @@ The code will be **published publicly**. Optimize for readability and upstreamab
 - For any runtime question answerable by QEMU gdbstub, try that before adding source-level probes.
 - Surface warnings from builds, DTB tooling, or scripts rather than letting them scroll past.
 - You are running in a git worktree under `.claude/worktrees/`. Coordination-repo commits you make here land on the worktree branch; sibling repos are outside the worktree and are committed in place.
+
+## Shell-command discipline (applies to subagents too)
+
+The harness's static command validator can't allowlist piped, chained, or `cd`-prefixed commands; every such command becomes a permission prompt that interrupts the user. The project ships wrapper scripts whose entire surface is statically allowlisted in `.claude/settings.json`. Use them.
+
+**Never write:**
+- `cd <sibling-repo> && git ...` — the harness flags this as "untrusted hook risk"
+- `find <dir> -exec grep ...` — flagged as "command execution"
+- `ls -t … | head | sed …` and other multi-stage pipelines — not allowlistable
+- `sed -n '<range>p' <file>` to read a file slice — `p` flag trips the validator
+
+**Always use instead:**
+- `./scripts/git-siblings.sh <subcmd>` for any git read across coord + sibling repos
+- `./scripts/git-siblings.sh in <repo> <git-subcmd> [args...]` for repo-scoped git reads (covers `log <range>`, `show <sha> -- <paths>`, `show --stat <sha1> <sha2>`, etc.)
+- The **Read tool** (with `offset` + `limit`) for any file slice — never `sed -n`, `head`, or `tail` of source files
+- `./scripts/uart-summary.sh [label|path]` for UART log analysis instead of grep/sed/wc chains
+- `./scripts/uart-list.sh [N] [label]` to list recent UART logs
+- `grep -r <pat> <dir>` (allowlisted as `grep:*`) or `rg <pat>` (allowlisted as `rg:*`) — never `find -exec grep`
+- `./scripts/rebuild-rpi4b-fast.sh` / `./scripts/test-cycle-netboot.sh` / `./scripts/test-cycle-psh-interact.sh` for build + Pi cycles
+- `./scripts/qemu-debug.sh` (with `--gdb` for state capture) for any QEMU rpi4b iteration
+
+The allowlist in `.claude/settings.json` covers every script above plus `grep`, `rg`, `git add:*`, `git commit:*`. If you need an operation not covered, **add a script wrapper for the operation, then add the script to the allowlist** — do not inline the pipeline. This keeps the permission surface stable across sessions.
+
+## Python tooling
+
+The host macOS Python is PEP 668-managed — **never** run `pip install --user`, never `pip --break-system-packages`. If a helper script needs an additional package (e.g. `pyserial` for `psh-interact.py`), create a local venv with `uv` instead and install into that:
+
+```
+uv venv .venv
+.venv/bin/python -m pip install pyserial
+```
+
+Then point any wrapper script's shebang or `PYTHON` variable at `.venv/bin/python`. Do not modify the system Python install.
