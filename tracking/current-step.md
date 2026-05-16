@@ -173,6 +173,73 @@ Real-Pi UART evidence:
 Image SHA256 with PCIe fix:
 `cc6427c63eef8f7b30a824d420b013aa68ece7319eba1b4da55c7b18f147adde`.
 
+### 2026-05-17 00:00 — xhci capProbe non-determinism + CRCR spec fix
+
+Iterated on the xhci init path through several diagnostic + fix
+commits (phoenix-rtos-devices `7bfcff7` then `f25e9a3`):
+
+* **CRCR readback fix**: corrected xhci_programCommandSpace to not
+  validate Command Ring Pointer readback against the written value —
+  per xHCI 1.0 §5.4.5 the CR Pointer (bits 63:6) and write-only
+  control bits (RCS / CS / CA, bits 0:2) read back as zero; only the
+  Command Ring Running bit (bit 3) is readable. The previous check
+  was a spec-required mismatch.
+
+* **Extended capProbe retry window**: 50 × 100 ms = 5 s → 600 × 100 ms
+  = 60 s. On the M-only Pi 4 kernel pcie takes 10-20 s to complete
+  the scan + BAR0 program + xhci-reset mailbox, so the previous
+  window was racing pcie. Per-attempt diag now prints the attempt
+  counter every 50 iters.
+
+* **VL805 firmware settle**: `usleep(200000)` between
+  `bcm2711NotifyXhciReset()` (mailbox call that resets VL805 and
+  reloads its firmware) and BAR0 programming. The mailbox returns
+  early; VL805 firmware reload is async. Without the settle, MMIO
+  reads race the boot ROM → firmware handoff.
+
+* **USBSTS preWrite diag** in xhci_programCommandSpace: reads
+  USBSTS + USBCMD and prints HSE / HCE / CNR — distinguishes
+  "controller in error state" from "bridge returning 0xdead from
+  unreachable MMIO".
+
+**Result**: xhci progression is non-deterministic across boots
+(same image, different stop points). In the best observed run
+(`outbound-window-diag`, image `8a0c362b`) xhci went all the way
+through capProbe → reset → validateRuntime → allocCommandSpace →
+initCommandRing → allocScratchpads → programCommandSpace; the
+mismatch failure was a misread of the spec (the CRCR readback
+"failure" is in fact correct per §5.4.5). In subsequent boots
+with the CRCR fix, xhci consistently gets stuck at `capProbe iter
+ENODEV attempt=0` — the bridge stops returning valid MMIO reads.
+
+**Working hypothesis**: BCM2711 PCIe bridge returns valid MMIO
+reads only when VL805 has recently completed a host-initiated
+transaction. The pcie diag-outbound mmap+read+munmap happens to
+land at the right moment in some runs (probabilistic ordering)
+but on most runs xhci fires its first read before that window
+and the bridge enters a 0xdead-returning state for subsequent
+reads.
+
+**Robust fix (next session)**: implement a config-space ECAM
+polling loop in pcie that waits for VL805 vendor-ID readback to
+return the expected `0x1106` AND then publishes a "USB bus ready"
+sentinel (file in /dev or a posix shared mem flag) that xhci's
+capProbe retry loop checks before attempting MMIO reads. This
+turns the timing problem from a probabilistic race into a
+positive handshake.
+
+Image SHA256 with all xhci/pcie diagnostics:
+`c1bf0dd4e6ec908eb3f01576b726b03749f9afc7423998acce2e662945fe6650`
+
+UART evidence for the session's experiments:
+* `artifacts/rpi4b-uart/rpi4b-uart-20260516-194030-netboot-m-only-stable-baseline-for-usb-work.log` (pre-fix baseline, ENODEV loop)
+* `artifacts/rpi4b-uart/rpi4b-uart-20260516-201321-netboot-pcie-stop-scanning-empty-slots.log` (PCIe empty-slot fix)
+* `artifacts/rpi4b-uart/rpi4b-uart-20260516-203737-netboot-outbound-window-diag.log` (best run: full xhci init path)
+* `artifacts/rpi4b-uart/rpi4b-uart-20260516-211019-netboot-xhci-30s-retry-window.log` (extended retry)
+* `artifacts/rpi4b-uart/rpi4b-uart-20260516-212005-netboot-xhci-usbsts-diag.log` (preWrite diag added)
+* `artifacts/rpi4b-uart/rpi4b-uart-20260516-214321-netboot-xhci-attempt-count-diag.log` (attempt counter)
+* `artifacts/rpi4b-uart/rpi4b-uart-20260516-220213-netboot-xhci-vl805-200ms-settle.log` (200 ms VL805 settle)
+
 ## Prior active step (2026-05-16 morning-afternoon): cache enable C-3 continuation after upstream sync
 
 2026-05-16 upstream-sync checkpoint:
