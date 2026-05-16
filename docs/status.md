@@ -1,6 +1,37 @@
 # Phoenix-RTOS Raspberry Pi 4 Port Status
 
-## Current Status: 2026-05-15 late (kernel M-only baseline + hygiene fixes; cache enable parked AGAIN after C-3u/c3v/c3w/c3z)
+## Current Status: 2026-05-16 (upstream-synced kernel; cache C-3 WIP continues)
+
+The 2026-05-16 upstream sync is complete across the Phoenix sibling
+repositories. `phoenix-rtos-kernel` was the only repository requiring manual
+merge work; its dirty cache/MMU diagnostic state was checkpointed first, then
+`origin/master` was merged into `agent/rpi4-program-reloc` as kernel commit
+`2193fc4b`. The `proc/name.c` conflict was resolved by keeping upstream port
+register/unregister and process-destroy API changes while preserving the local
+TD-14/devfs lookup diagnostics.
+
+Post-merge validation:
+
+* `git diff --check` in `sources/phoenix-rtos-kernel`: clean.
+* `./scripts/rebuild-rpi4b-fast.sh`: passed after cleaning stale Pi-target
+  `libphoenix` build output in the disposable VM buildroot.
+* Verified image SHA256:
+  `242d495bd67079b8e566735c506839e68a9d39d5f112afa5426d31449c883ffa`.
+
+Warning handled: the first post-merge fast rebuild failed at link time with a
+`portRegister` multiple-definition error from stale generated `libphoenix`
+syscall objects. This was not a source conflict; it was a stale incremental
+artifact after the upstream syscall rename to `sys_portRegister`. Future
+fast-rebuild automation should clean dependent libphoenix output when upstream
+syscall headers or generated syscall names change.
+
+Cache state after sync: the branch still contains C-3 diagnostic WIP, not a
+boot-correct shipping cache configuration. The current next hardware test is
+the I-cache-only boundary moved later into `main_initthr()` after
+`_usrv_start()`. D-cache remains parked until the helper and post-enable data
+validation are fixed.
+
+## Previous Status: 2026-05-15 late (kernel M-only baseline + hygiene fixes; cache enable parked AGAIN after C-3u/c3v/c3w/c3z)
 
 > **Retraction note (2026-05-15 morning).** The 2026-05-14 "M|C|I enabled on
 > real Pi 4" milestone has been retracted. Bisect on 2026-05-15 morning showed

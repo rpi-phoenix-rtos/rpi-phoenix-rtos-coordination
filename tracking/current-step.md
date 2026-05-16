@@ -1,6 +1,31 @@
 # Current Implementation Step
 
-## Active step (2026-05-15 late): cache enable parked again — C-3 deferred-enable round
+## Active step (2026-05-16): cache enable C-3 continuation after upstream sync
+
+2026-05-16 upstream-sync checkpoint:
+
+* `sources/phoenix-rtos-kernel` dirty cache/MMU diagnostic WIP was committed as
+  `ef3a0fda` before merging upstream.
+* Upstream `origin/master` was merged into `agent/rpi4-program-reloc` as
+  `2193fc4b`. The only conflict was `proc/name.c`; resolution preserved the
+  local TD-14/devfs lookup diagnostics while accepting upstream port
+  register/unregister and process-destroy API changes.
+* Post-merge `./scripts/rebuild-rpi4b-fast.sh` passed and exported verified
+  image SHA256
+  `242d495bd67079b8e566735c506839e68a9d39d5f112afa5426d31449c883ffa`.
+* Warning handled: the first post-merge fast rebuild exposed stale VM-local
+  `libphoenix` syscall objects (`portRegister` multiple definition). A targeted
+  `make -C libphoenix clean` in the disposable Pi buildroot fixed the build.
+  This should be automated in the fast-rebuild helper for future upstream
+  syscall ABI changes.
+
+Current test boundary after the merge: I-cache-only enable has been moved later
+inside `main_initthr()`, after `_usrv_start()`. The next real-Pi netboot test
+should determine whether I-cache can remain enabled after the user-server
+bootstrap returns. D-cache remains parked; do not enable it until the helper has
+proper post-enable data/cache-maintenance validation.
+
+## Prior active step (2026-05-15 late): cache enable parked again — C-3 deferred-enable round
 
 The 2026-05-14 "M|C|I enabled" milestone was retracted on
 2026-05-15 morning after real-Pi bisect showed it broke user-process

@@ -29,13 +29,12 @@ there for clean-diverged repos:
 - `sources/phoenix-rtos-utils`
 - `sources/plo`
 
-No merge was attempted in `sources/phoenix-rtos-kernel` because the active
-cache/MMU branch is dirty.
+The kernel merge was completed after checkpointing the active cache/MMU WIP.
 
-## Kernel warning
+## Kernel merge resolution
 
 `sources/phoenix-rtos-kernel` has 44 incoming upstream commits on
-`origin/master`. A synthetic merge reports a real content conflict in:
+`origin/master`. The real merge conflicted in:
 
 - `proc/name.c`
 
@@ -50,10 +49,34 @@ Relevant upstream incoming commits touching that path include:
 - `64f2e8eb !syscalls/portRegister: pass string len from userspace`
 - `1c7fac5e posix: add proc_destroy() function`
 
-Recommendation: before any kernel upstream merge, either commit or shelve the
-current dirty cache diagnostics, then resolve the `proc/name.c` conflict in a
-dedicated kernel sync branch. Do not merge upstream directly into the dirty
-cache/MMU working branch.
+Resolution:
+
+- Checkpointed the dirty cache/MMU diagnostic WIP first as
+  `phoenix-rtos-kernel ef3a0fda` (`rpi4b: checkpoint I-cache boundary diagnostics`).
+- Merged `origin/master` into `agent/rpi4-program-reloc` as
+  `phoenix-rtos-kernel 2193fc4b` (`Merge upstream master into rpi4 cache branch`).
+- Kept upstream `proc_portRegister()` / `proc_portUnregister()` API changes,
+  `proc_destroy()`, and upstream unlink behavior fixes.
+- Preserved local TD-14/devfs diagnostics and direct devfs lookup fast path.
+- Added cleanup so unregistering `devfs` clears the cached devfs state.
+
+Validation after merge:
+
+- `git diff --check` in `sources/phoenix-rtos-kernel`: clean.
+- `./scripts/rebuild-rpi4b-fast.sh`: passed after one targeted stale-object
+  cleanup in the VM-local Pi buildroot.
+- Exported/verified image SHA256:
+  `242d495bd67079b8e566735c506839e68a9d39d5f112afa5426d31449c883ffa`.
+
+Warning/process note: the first post-merge fast rebuild failed with a
+`portRegister` multiple-definition link error because the VM-local Pi-target
+`libphoenix` build directory still contained stale generated syscall objects
+from before the upstream `sys_portRegister` rename. The source tree was not
+manually modified; only the target-specific VM build output for `libphoenix`
+was cleaned with `make -C libphoenix clean`, then the canonical fast rebuild
+completed. Future fast-rebuild automation should detect upstream syscall ABI
+changes and clean/rebuild dependent libphoenix objects instead of surfacing a
+stale-object linker failure.
 
 ## Upstream themes to account for
 
