@@ -275,6 +275,55 @@ UART evidence:
 * `artifacts/rpi4b-uart/rpi4b-uart-20260516-223506-netboot-xhci-8s-startup-delay.log`
 * `artifacts/rpi4b-uart/rpi4b-uart-20260516-222020-netboot-xhci-pcie-warmup-loop.log`
 
+### 2026-05-17 00:50 — probe-remap loop confirms per-process bridge state
+
+Added a 5-iteration teardown+remap probe loop at xhci_init() entry
+to test whether re-mapping the BAR window forces a fresh BCM2711
+PCIe bridge translation entry. phoenix-rtos-devices commit `118fe1a`.
+
+Real-Pi UART output:
+
+  xhci: probe-remap try=0 caplen=ad ver=dead
+  xhci: probe-remap try=1 caplen=ad ver=dead
+  xhci: probe-remap try=2 caplen=ad ver=0000
+  xhci: probe-remap try=3 caplen=00 ver=0000
+  xhci: probe-remap try=4 …
+  xhci: capProbe iter ENODEV attempt=0  ← still stuck
+
+The bridge state DOES change between remaps (dead → 0000), but
+NEVER reaches the valid `caplen=0x20 ver=0x0100` that pcie's own
+mmap reads.
+
+**Decisive evidence** that the BCM2711 PCIe bridge maintains state
+per-process / per-translation, and that xhci will never reach a
+working state from a separate process while pcie has already
+serviced VL805 from its own. The bridge does have some shared
+state (the bridge config registers, BAR0 programming) but the
+outbound-window translation that the kernel sets up per-mmap is
+PER-PROCESS in some way.
+
+**Architectural options for next session**, ordered by estimated
+effort / impact:
+
+1. **Merge pcie + xhci into ONE process**. Same address space,
+   same mmap, no cross-process race. Touches plo's
+   `user.plo.yaml` spawn list, pcie main(), usb-daemon main().
+2. **Proxy-mmio service via msg-passing**: pcie owns the mapping;
+   xhci sends "read REG_OFFSET" / "write REG_OFFSET=VALUE"
+   messages. Higher latency per access but no refactor.
+3. **Kernel-level shared bridge translation**: when multiple
+   processes mmap the same outbound-window PA, kernel ensures
+   the bridge sees one translation. Requires vm/map.c or aarch64
+   pmap work.
+4. **BCM2711 bridge config bit** that disables "per-translation
+   lock". Datasheet review needed.
+
+Image SHA256 with probe-remap diagnostic:
+`b714d153e8b2d5ab05c4b0877d02a32ab3639deeab606285a6b8a7ffb73f71ae`.
+
+UART evidence:
+* `artifacts/rpi4b-uart/rpi4b-uart-20260516-225233-netboot-xhci-probe-remap.log`
+
 Image SHA256 with all xhci/pcie diagnostics:
 `c1bf0dd4e6ec908eb3f01576b726b03749f9afc7423998acce2e662945fe6650`
 
