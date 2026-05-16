@@ -54,6 +54,60 @@ shift it back.
 Image SHA256 for the `lmn` boundary build:
 `23b304202f60f0169dfdcd4786b799cea5396bee20010bacf5a5b27adebc4c6e`.
 
+### 2026-05-16 22:00 — reproducibility test: boundary is NON-DETERMINISTIC
+
+Same image (SHA256 23b3042…), two consecutive power-on cycles:
+* Run 1: `…lmn` (spawn loop entry)
+* Run 2: `…ef` (inside posix_init)
+
+UART logs:
+* `artifacts/rpi4b-uart/rpi4b-uart-20260516-192222-netboot-c3-revert-to-text-civac-only.log` (lmn)
+* `artifacts/rpi4b-uart/rpi4b-uart-20260516-194241-netboot-c3-reproducibility-same-image.log` (ef)
+
+**This is decisive evidence for the BCM2711 SLC hypothesis.** The kernel
+binary is byte-identical across the two boots; the only thing that
+changes is the SLC stale state left by firmware (VC4/bootcode.bin/start4.elf/
+armstub run differently each cold boot due to GPU memory layout
+non-determinism). Whichever cache line in the kernel's PA range
+holds firmware residue at boot determines which kernel function the
+I-fetch reads wrong via L2 → SLC → DDR.
+
+ARM cache-maintenance ops (`dc isw`, `dc civac`, `ic ialluis`, etc.)
+only reach the A72 cluster's caches. They cannot invalidate the
+BCM2711 SLC. **No software-only fix using ARM ops alone will be
+deterministic on this SoC.** The only remaining paths:
+
+1. **BCM2711-specific SLC invalidate.** Locate the SLC controller
+   in the BCM2711 datasheet (likely in the AXI/SoC peripheral
+   address range), find the invalidate-all or invalidate-by-range
+   register, write the invalidate sequence. Linux's
+   `arch/arm/mach-bcm/bcm2711_priv.c` or equivalent driver code
+   would be the reference. Requires datasheet study.
+2. **Disable the SLC entirely** via the BCM2711 SLC enable register.
+   Cuts ~30% of expected performance gain but might restore
+   determinism. Same datasheet hunt.
+3. **Boot through U-Boot or another loader** that already
+   invalidates the SLC as part of its kernel handoff. Linux's
+   regular boot path on Pi 4 goes through U-Boot or rpi firmware
+   which does this maintenance.
+4. **Accept the non-determinism and don't enable I-cache or
+   D-cache.** M-only baseline boots correctly every time. The Pi 4
+   M-only kernel reaches `(psh)%` prompt and all 8 expected user
+   processes spawn.
+
+**Decision (2026-05-16 22:00): pivot to non-cache features.**
+
+The cache work is parked at the c3 deferred-I-cache state (kernel
+commit `2ca5df17`, image `23b3042…`) — boot-correct *some* of the
+time but non-deterministic. To return to fully boot-correct, either
+revert `f7fe6b39` (and successors) or comment out the
+`hal_cpuEnableICache()` call site in `main.c` between markers `i`
+and `I`. The cache helpers themselves stay in `_init.S` for future
+SLC work.
+
+Next focus: **USB+keyboard, SMP integration, HDMI text mode** — all
+M-only compatible and independent of the cache enable path.
+
 ## Prior active step (2026-05-16 morning-afternoon): cache enable C-3 continuation after upstream sync
 
 2026-05-16 upstream-sync checkpoint:
