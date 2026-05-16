@@ -1,6 +1,60 @@
 # Current Implementation Step
 
-## Active step (2026-05-16): cache enable C-3 continuation after upstream sync
+## Active step (2026-05-16 evening): C-3 I-cache reaches spawn loop entry; boundary at `n`
+
+After the morning's `43635eca` (`dc civac` to PoC instead of `dc cvau` to
+PoU for kernel text before I-cache enable) reached `…ef` inside
+`posix_init()` and a same-source rebuild shifted the boundary to `…ab`
+inside the first `lib_printf()`, a brief diagnostic round explored
+extending the cache maintenance to cover the post-`_etext` tail of
+the 2 MiB `KERNEL_TTL3` mapping:
+
+* **c3-civac-full-2mib** (extended `dc civac` to cover the entire
+  2 MiB kernel mapping including `.rodata` + `.bss`): regressed the
+  boundary to immediately after the "icache enabled" print, before
+  the next `main_uartMark('a')`. Hypothesis: `dc civac` over `.bss`
+  pages writes any stale firmware-era SLC dirty lines back to DDR,
+  corrupting the kernel-data values that the M-only kernel placed
+  there via NC stores. Reverted.
+
+* **c3-civac-text+ivac-tail** (kept text `dc civac`, added `dc ivac`
+  for the post-`_etext` tail): hard-faulted with Exception #37 Data
+  Abort EL1, ESR=`0x9600014f` = Permission fault level 3 at
+  PA=0xc0024588 (.rodata range). Cause: `_pmap_preinit()` maps
+  `.rodata` with `DESCR_AP2` (RO) and `dc ivac` requires write
+  permission. Reverted.
+
+After reverting both tail-maintenance variants and committing the
+text-only `dc civac` with the documented tail-range constraints as
+`2ca5df17`, the rebuild's natural layout shift moved the boundary
+**much further forward**:
+
+```
+iurstxy2z0Imain_initthr: icache enabled
+abcdmain_initthr: syspage listed
+efgmain_initthr: posix init done
+hjkmain_initthr: posix clone done
+lmn
+```
+
+The boundary is now at the 'n' marker — between `prog = syspage_progList()`
+and the first iteration of the spawn loop body. **The kernel now
+completes `posix_init()` and `posix_clone()` under I-cache** (the
+previous best boundary `…ef` stopped inside `posix_init()`). Real-Pi
+UART log:
+`artifacts/rpi4b-uart/rpi4b-uart-20260516-192222-netboot-c3-revert-to-text-civac-only.log`.
+
+This is a layout effect, not a code change — removing the `'L'`/`'M'`
+markers from the failed tail-maintenance variant shifted subsequent
+code by ~8 bytes, moving the function that lands at the stale-SLC
+PA range to one that the I-fetch happens not to read in this run.
+The layout sensitivity itself is unchanged; a future rebuild may
+shift it back.
+
+Image SHA256 for the `lmn` boundary build:
+`23b304202f60f0169dfdcd4786b799cea5396bee20010bacf5a5b27adebc4c6e`.
+
+## Prior active step (2026-05-16 morning-afternoon): cache enable C-3 continuation after upstream sync
 
 2026-05-16 upstream-sync checkpoint:
 
