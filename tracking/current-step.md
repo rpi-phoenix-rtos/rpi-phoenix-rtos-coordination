@@ -108,6 +108,71 @@ SLC work.
 Next focus: **USB+keyboard, SMP integration, HDMI text mode** — all
 M-only compatible and independent of the cache enable path.
 
+### 2026-05-16 22:30 — PCIe fix lands; xhci capProbe still ENODEV
+
+After disabling the non-deterministic I-cache call site in `main.c`,
+ran the M-only baseline with 480 s capture and the user's HDMI photo
+confirmed that the HDMI text console works end-to-end:
+
+  Phoenix-RTOS HDMI console
+  fbcon: ok
+  st-side: usbkbd
+  threads: create proc=… path=usb …
+
+The boot reaches `(psh)%` prompt cleanly. PCIe driver detects
+VL805 (vendor 1106 / dev 3483 / class 0c0330) and programs BAR0
+to `0xf8000004`. **Then** the driver was previously entering an
+infinite probe loop on empty slots `01:01.0`, `01:02.0`, `01:03.0`
+— each returned `ven=0000 dev=0000` (BCM2711 root complex returns
+all-zeros instead of the spec-mandated `0xffff` for empty slots).
+
+Fixed in `phoenix-rtos-devices 5b20bcb` by treating `vendor_id ==
+0x0000` as an empty-slot indicator alongside `0xffff`:
+
+  pcie/server: treat all-zero vendor as no-device on BCM2711
+
+Real-Pi UART after the fix:
+
+  pcie: 01:00.0 ven=1106 dev=3483 cls=0c0330 hdr=00   ← VL805
+  pcie: VL805 cmd 0000->0006 rb=0006
+  pcie: VL805 BAR0 programmed lo=f8000004 hi=00000000
+  pcie: post-scanBus                                  ← clean exit
+  pcie: exit main
+  …
+  (psh)% xhci: capProbe iter pre / ENODEV (looping)
+
+xhci is still stuck — it can't read valid `CAPLENGTH` /
+`HCIVERSION` from the VL805 BAR0 space. The pcie driver reads
+VL805 capability registers fine through the CONFIG-space ECAM
+path (`pcie: caps caplen=20 ver=0100`), but xhci reads through
+the CPU outbound window (PA `0x600000000` → PCIe bus `0xf8000000`
+per `bcm2711SetOutboundWindow0`). The two access paths are
+independent.
+
+Next-session task: verify the BCM2711 outbound window programming
+in `pcie/server/pcie.c`'s `bcm2711SetOutboundWindow0`. Possible
+issues to check:
+
+* Window enable bit (does the BCM2711 PCIe controller require a
+  separate "enable" write after programming the base/limit?)
+* CPU→PCIe address translation field encoding (BAR0 PCIe-bus
+  address `0xf8000000` may need to be a multiple of window-size
+  granularity)
+* `bcm2711SetRcBar2(bcm, 0u, 0x100000000ull)` — sets the
+  PCIe→CPU inbound window for DMA, but the OUTBOUND CPU→PCIe
+  window is the relevant one here
+* VL805 BAR0 readback validation: program BAR0, then read it
+  back via config space to confirm `0xf8000004` actually sticks
+* Direct CPU read from `0x600000000` via a kernel-side test
+  before xhci runs — distinguishes "outbound window broken"
+  from "VL805 device not responding"
+
+Real-Pi UART evidence:
+`artifacts/rpi4b-uart/rpi4b-uart-20260516-201321-netboot-pcie-stop-scanning-empty-slots.log`
+
+Image SHA256 with PCIe fix:
+`cc6427c63eef8f7b30a824d420b013aa68ece7319eba1b4da55c7b18f147adde`.
+
 ## Prior active step (2026-05-16 morning-afternoon): cache enable C-3 continuation after upstream sync
 
 2026-05-16 upstream-sync checkpoint:
