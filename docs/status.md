@@ -26,10 +26,25 @@ fast-rebuild automation should clean dependent libphoenix output when upstream
 syscall headers or generated syscall names change.
 
 Cache state after sync: the branch still contains C-3 diagnostic WIP, not a
-boot-correct shipping cache configuration. The current next hardware test is
-the I-cache-only boundary moved later into `main_initthr()` after
-`_usrv_start()`. D-cache remains parked until the helper and post-enable data
-validation are fixed.
+boot-correct shipping cache configuration. I-cache-only enable is now deferred
+until `main_initthr()` after `_usrv_start()`. The most useful result on
+2026-05-16 was kernel commit `43635eca`, which strengthened the deferred
+I-cache helper to clean+invalidate high-VA kernel text to PoC (`dc civac`)
+before I-cache invalidation and `SCTLR.I=1`. That moved the real-Pi boundary
+from the first post-I-cache `lib_printf()`/console path to inside
+`posix_init()`:
+
+```
+iurstxy2z0I main_initthr: icache enabled ... abcd main_initthr: syspage listed ... ef
+```
+
+Temporary `posix_init()` markers then changed layout enough to regress the stop
+back to `ab`, so that probe was reverted. Latest rebuilt image after the revert:
+`artifacts/rpi4b/rpi4b-sd.img` SHA256
+`710b10f76654ea65cd9ba5224fa0c798a8042e16ae09f630c37459dfdad88aee`.
+
+D-cache remains parked until the I-cache-only path is stable and no longer
+layout-sensitive.
 
 ## Previous Status: 2026-05-15 late (kernel M-only baseline + hygiene fixes; cache enable parked AGAIN after C-3u/c3v/c3w/c3z)
 

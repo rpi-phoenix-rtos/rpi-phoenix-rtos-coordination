@@ -19,11 +19,46 @@
   This should be automated in the fast-rebuild helper for future upstream
   syscall ABI changes.
 
-Current test boundary after the merge: I-cache-only enable has been moved later
-inside `main_initthr()`, after `_usrv_start()`. The next real-Pi netboot test
-should determine whether I-cache can remain enabled after the user-server
-bootstrap returns. D-cache remains parked; do not enable it until the helper has
-proper post-enable data/cache-maintenance validation.
+2026-05-16 C-3 I-cache continuation after the merge:
+
+* Kernel commit `bfde5f63` added post-I-cache `main_initthr()` markers.
+  Real Pi log
+  `artifacts/rpi4b-uart/rpi4b-uart-20260516-175604-netboot-c3-icache-post-enable-markers.log`
+  stopped at `...I...ab`, before returning from the first
+  post-I-cache `lib_printf()`.
+* Kernel commit `ddccee27` traced `log_write()`; log markers appeared before
+  I-cache but not after the stop, proving the first failure was before
+  `log_write()` entry. That instrumentation was removed in the next fix.
+* Post-enable `ic iallu` (`3b0f298b`) was a negative result: the helper stopped
+  before returning. Pre-enable invalidate-all (`ac66dd49`) was positive: real
+  Pi reached `iurstxy2z0I`, printed `main_initthr: icache enabled`, reached
+  `abcd`, printed `main_initthr: syspage listed`, then stopped before `e`.
+* IRQ/FIQ masking around the I-cache boundary (`3e21a146`) regressed the stop
+  to `abc`; the hypothesis that an immediate timer interrupt caused the
+  post-print stop is rejected.
+* Switching the helper's pre-enable invalidate-all to `ic ialluis`
+  (`b678636f`) did not move the boundary.
+* A console-exit marker (`624b7433`) proved the failure is layout-sensitive:
+  simply adding a marker inside `hal_consolePrint()` moved the stop earlier,
+  inside the first post-I-cache `main_initthr: icache enabled` string. The
+  marker was removed.
+* Stronger high-VA text maintenance (`43635eca`) changed the helper from
+  `dc cvau` clean-to-PoU to `dc civac` clean+invalidate-to-PoC before
+  `ic ivau`/`ic ialluis`. This moved the boundary forward to
+  `...abcd...syspage listed...ef`, i.e. the first confirmed post-I-cache stop
+  is now inside `posix_init()`.
+* A `posix_init()` marker probe (`1a286449`) regressed the boundary back to
+  `ab` due layout sensitivity, so it was reverted as `9aec8c60`.
+
+Latest rebuilt image after reverting the regressing `posix_init()` probe:
+`artifacts/rpi4b/rpi4b-sd.img` SHA256
+`710b10f76654ea65cd9ba5224fa0c798a8042e16ae09f630c37459dfdad88aee`.
+This exact reverted image still needs a clean re-test; the best observed
+boundary for the same code shape before the temporary `posix_init()` probe was
+`...syspage listed...ef`.
+
+D-cache remains parked. Do not enable it until the I-cache-only path is stable
+and no longer layout-sensitive.
 
 ## Prior active step (2026-05-15 late): cache enable parked again — C-3 deferred-enable round
 
