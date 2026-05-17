@@ -1,157 +1,121 @@
 # Current Implementation Step
 
-## Step: Investigate non-cache root causes — boot artifacts and other Phoenix-RTOS early-boot code
+## BREAKTHROUGH 2026-05-17: Pi 4 boots through to psh shell
 
-**Status**: IN PROGRESS — four parallel investigation agents running.
-Kernel cache experiments are PAUSED per user directive.
+**Status**: ✅ FIRST FULL BOOT achieved on real Pi 4 hardware. The
+multi-month MMU+cache crash at `PC=0x400498` (EX=4, ESR=0x02000000)
+is RESOLVED.
 
-**Date**: 2026-05-17
+**Manifest**: `manifests/2026-05-17-pi4-first-boot-to-psh.md`
+**UART proof**: `artifacts/rpi4b-uart/rpi4b-uart-20260517-010011-netboot-armstub-1319367-and-L2CTLR-fix.log`
 
-**Phase**: post-Phase-Z pivot. The cache-enable code paths are now
-known-equivalent to Linux/BSD canonical patterns and STILL fail with
-the same `ESR=0x02000000 / FAR=0x0 / PC=0x400498` exception. Root
-cause must be elsewhere.
+## Root cause (two convergent armstub bugs)
 
-### Why the pivot
+Multi-agent investigation found the actual root cause was in the
+**armstub at EL3, not in the kernel cache code** the project had
+been iterating on for weeks. Two independent bugs:
 
-The previous several sessions exhaustively iterated on cache-enable
-strategies:
+### Bug 1: 1319367 erratum workaround targeted an undefined sysreg
 
-- C-3 series: deferred D-cache enable, deferred I-cache enable, every
-  variant of single-shot vs staged SCTLR writes.
-- Phase Z: align the kernel + plo with the canonical zynqmp aarch64a53
-  pattern (single-shot M|C|I in kernel, plo cache-on with `dc civac`
-  teardown). plo cache-on hangs at the MSR on A72 r0p3 + BCM2711 —
-  reverted. Kernel-only Phase Z (M|C|I + drop TD-04 NC override + drop
-  post-copy clean_inval) still crashes with the same exception.
-- Defensive `dc isw` set/way invalidate immediately before M|C|I (per
-  Linux/U-Boot/ATF/A72-microarch research recommendation): same crash.
+Phoenix's own `docs/plans/a72-errata-sweep.md` line 98 documents
+the canonical Cortex-A72 1319367 fix as `CPUACTLR_EL1[46] = 1`
+(DIS_HW_PAGE_AGGREGATION), per TF-A `cortex_a72.S
+errata_a72_1319367_wa`. The armstub instead wrote
+`CPUACTLR2_EL1[0]` with `CPUACTLR2_EL1` aliased to `S3_1_C15_C2_2` —
+**that encoding is NOT a documented A72 system register**. Writing
+to an undefined impl-defined sysreg can trap silently OR hit
+whatever physical reg lives at that encoding, silently corrupting
+state. The actual 1319367 mitigation never got applied.
 
-Subagent comparisons (Linux/ATF/U-Boot/FreeBSD/NetBSD on A72 vs A53,
-imx6ull-armv7a, zynqmp-aarch64a53, x86) all concluded our cache-enable
-code matches the canonical pattern. None of the other working OS code
-paths branch on MIDR for A72 vs A53. There is no known cache-side
-delta that would make our kernel fail where Linux succeeds.
+### Bug 2: missing BCM2711 L2 RAM timing setup
 
-User directive (verbatim, 2026-05-17 early hours):
+Every other working Pi 4 bare-metal stack writes `L2CTLR_EL1 |= 0x22`
+at EL3 (Data RAM Latency = 3 cycles, Data RAM Setup = 1 cycle).
+Phoenix's armstub did not. The BCM2711 silicon's 1 MB Cortex-A72
+cluster L2 at 1.5 GHz requires this; without it, the FIRST cacheable
+D-side fill after `SCTLR.C=1` can return corrupt data.
 
-> Clearly poking around with different settings of the cache itself is
-> a waste of time (in the longer run) if we do exactly the same things
-> as other OSes and A53 architecture. The problem hides somewhere
-> else! Maybe this is still a GPU related topic — knowing that GPU /
-> VPU on this SoC is very active and accesses the same memory as CPU.
-> Maybe this is related to Ethernet controller memory (we do netboot —
-> so ethernet needs to touch memory from the very beginning). Maybe
-> this is related to some misconfiguration, misalignment of the
-> kernel file, wrong sizing, padding, formatting of the boot
-> artifacts or elements, wrong order of files being loaded, wrong
-> early stage boot loader behavior. Maybe the kernel gets loaded in
-> a broken state from the very beginning and anything we do in the
-> kernel will always be broken. Think outside the box on this.
+Cross-referenced against:
+- raspberrypi/tools/armstubs/armstub8.S (canonical)
+- TF-A plat/rpi/common/aarch64/plat_helpers.S
+- Circle boot/armstub/armstub8.S
 
-### Current failure state (defensive `dc isw` test, 2026-05-17 00:12)
+### Why this is at EL3 not the kernel
 
-UART log:
-`/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b-uart/rpi4b-uart-20260517-001210-netboot-phase-z-defensive-dcisw.log`
+Both CPUACTLR and L2CTLR access traps from EL1 on A72 r0p3. The
+kernel cannot apply these itself — only EL3 code (armstub) can.
+That's why every kernel-side cache-enable variant we tried (M-only,
+M|C|I single-shot, deferred I-cache, set/way pre-flush, etc.) had
+no effect: the actual bug was upstream.
 
-- Firmware boot OK
-- plo console_init / sctlr-M / hal_init done / banner all reached
-- plo→kernel handoff message printed cleanly
-- Kernel emits markers `X2`, `X3` (post-MMU/cache-enable diagnostic
-  markers in `_init.S`)
-- Then immediately: `EX=4, ESR=0x02000000, ELR=0x400498, FAR=0x0`
+## Fix commits
 
-Interpretation: synchronous EL1h exception from current EL with
-SP_EL1 active. EC=0 (Unknown Reason). ELR points to a PA in the
-kernel image (loaded at low PA ~0x400000 before TTBR1 takes over).
-FAR=0 — not a data-abort or instruction-abort with a recoverable
-fault address.
+| Repo | SHA | What |
+|---|---|---|
+| phoenix-rtos-project | `dde9bb5` | armstub: 1319367 register fix + L2CTLR_EL1\|=0x22 |
+| phoenix-rtos-kernel | `72242a05` | _init.S: single-shot M\|C\|I + drop TD-04 NC + drop post-copy flush; main.c: redundant icache-enable wrapped #if 0 |
+| phoenix-rtos-devices | `b5cc6b0` | USB: merge BCM2711 PCIe bridge init into xhci library (canonical single-process Phoenix pattern) |
+| phoenix-rtos-project | `fb771c4` | drop standalone pcie daemon from user.plo.yaml |
+| plo | `cf98b18` | hal.c: document Phase Z1 cache-on hang; M-only baseline retained |
 
-### Active investigation (parallel subagents, launched 2026-05-17)
+## UART evidence (post-fix)
 
-1. **Boot artifact correctness** — config.txt, armstub, kernel image
-   format / alignment / padding, plo+kernel concatenation,
-   Pi-firmware version (start4.elf, fixup4.dat, bootcode.bin), DTB
-   correctness.
-2. **GPU/VPU + GENET concurrent bus masters** — does VC4 firmware
-   retain DMA into ARM memory after handoff? Does GENET leave its
-   descriptor ring armed from netboot? BCM2711 SLC (system L2)
-   shared with VC4 — is it disabled or quiesced?
-3. **Phoenix-RTOS early-boot code outside cache enable** — map
-   PC=0x400498 to exact `_init.S` instruction. Audit vector table
-   placement, identity map coverage of executing PA, stack
-   validity, syspage construction by plo.
-4. **Comparative analysis of working Pi 4 OSes** — Circle,
-   rust-raspberrypi-OS-tutorials, U-Boot, NetBSD/evbarm, TF-A
-   rpi4 platform — what do they all do that we may be missing
-   (pre-MMU CPU config, SLC handling, MMU-enable barriers,
-   stack/VBAR positioning, armstub specifics)?
+- Armstub markers: `1` (859971 + 1319367) → `4` (L2 prefetch policy)
+  → `2` (SMPEN) → **`5` (L2CTLR timing — new)** → `A`/`S0` (EL3 final
+  steps). All print cleanly on real hardware.
+- Kernel markers: `X1` → `X2` → `X3` → `X4` → `X5` all print past the
+  previous crash point at PC=0x400498.
+- Kernel banner: "Phoenix-RTOS microkernel v. 3.3.1 rev. ######## +0"
+- Scheduler runs; init thread spawns dummyfs-root, dummyfs/devfs,
+  pl011-tty, mkdir, bind, usb, psh.
+- `fbcon: ok` — framebuffer console up.
+- `pcie: linkUp=1 rcMode=1` — PCIe link trained.
+- `pcie: 01:00.0 ven=1106 dev=3483 cls=0c0330` — VL805 USB host
+  controller enumerated.
+- `pcie: VL805 BAR0 programmed lo=f8000004` — BAR0 mapped to 0xf8000000.
+- `pcie: diag-outbound caplen=20 ver=0100 hcsparams1=05000420 (KEPT)`
+  — **xHCI capability registers readable** (no more 0xdead pattern;
+  the USB merge work eliminated the cross-process bridge race).
+- `psh: tty open`, `open: console enter` — psh shell waiting on
+  pl011-tty for user input.
+- Zero fault patterns in either of two consecutive UART captures.
 
-### Hypotheses to test (ranked from agent-research-so-far)
+## What's NOT yet working (next-phase /loop goals)
 
-H1. VC4 / VPU continues to DMA into ARM memory after the firmware
-    hands off. The BCM2711 SLC retains coherency state that A72's
-    `dc isw` cannot reach.
+| Goal | Status | What's needed |
+|---|---|---|
+| cache | ✅ kernel reaches all targets via M\|C\|I single-shot | (done) |
+| SMP | ⏳ cores 1-3 spinning in armstub WFE | kernel SMP bring-up |
+| full RAM | ⏳ kernel sees only 948 MB low bank | map the 3008 MB high bank (above the GPU hole at 0x40000000) |
+| USB | ⏳ VL805 enumerated; no HID driver | usb-hub init + USB-HID class driver + key-event plumbing |
+| HDMI | ⏳ fbcon up; no scrolling text yet | text-rendering finalisation + scrollback or alternate output path |
 
-H2. GENET netboot leaves DMA descriptor ring active; subsequent
-    incoming frames (ARP, multicast) DMA into stale buffers that
-    overlap kernel image PA.
+## Open hygiene items
 
-H3. armstub8 misconfigures A72 CPU control registers (CPUACTLR,
-    CPUECTLR) — our armstub uses `S3_1_C15_C2_2` for
-    CPUACTLR2_EL1; ATF uses `S3_1_C15_C0_4`. Even if 1319367 is
-    irrelevant to boot, there may be other A72 r0p3 erratum
-    workarounds we're missing.
+- `psh prompt` not yet seen — UART capture window is 90 s; either
+  extend the window or send keystrokes via psh-interact to get the
+  shell prompt and confirm interactive session works.
+- plo `hal.c` Phase Z1 cache-on still parked at M-only baseline —
+  may now work with the armstub fix; re-test deferred (kernel boot
+  works as-is).
+- Pi 4 `_init.S` shared with zynqmp has diverged enough that
+  aarch64a53 builds no longer compile (Agent #8 finding); may want
+  to factor rpi4b-specific code into `hal/aarch64/rpi4b/` if we want
+  to keep both targets buildable.
+- Phoenix research docs in `docs/research/` contain stale claims
+  about "BCM2711 has no SLC" — Agent #9 found the datasheet page 5
+  explicitly mentions a 1 MB system L2; needs reconciliation.
 
-H4. Phoenix's `_init.S` identity-map TTL1 setup doesn't cover the
-    LOW PA where the kernel is currently executing, so the first
-    page-table walk after M|C|I goes off the rails.
+## Rollback safety
 
-H5. The kernel image itself is misaligned or has wrong padding
-    relative to the plo loader contract — bytes at the
-    instruction position after the MSR-sctlr-write are not what we
-    think they are.
+- Snapshot manifest: `manifests/2026-05-17-pi4-first-boot-to-psh.md`
+- Restore via: `scripts/restore-integration-state.sh manifests/2026-05-17-pi4-first-boot-to-psh.md`
+- All sibling repos clean (no uncommitted state) at snapshot time.
 
-### What's already DONE (so we don't redo)
+## Next focus
 
-- USB merge: phoenix-rtos-devices commit `b5cc6b0`, project commit
-  `fb771c4` — BCM2711 PCIe bridge bring-up + VL805 BAR0
-  programming folded into the xhci library (canonical Phoenix
-  pattern, single-process bus owner). Standalone `pcie` daemon
-  removed from `user.plo.yaml`.
-
-### What stays committed but disabled (do not redo)
-
-- Kernel `main.c`: `hal_cpuEnableICache` call wrapped in `#if 0`
-  (the BCM2711 SLC non-determinism issue we kept hitting). Do not
-  re-enable until the SLC question is settled.
-
-### What needs cleanup AFTER agent results
-
-- Kernel `hal/aarch64/_init.S` Phase Z2/Z3/Z4 changes (single-shot
-  M|C|I, deleted TD-04 NC override, deleted post-copy
-  clean_inval, defensive `dc isw`). These all failed identically.
-  Whether to revert to M-only baseline or keep some pieces depends
-  on what the agents find — wait for their reports.
-
-- plo `hal/aarch64/generic/hal.c` is already reverted to M-only
-  baseline with documentation of the failed Phase Z1 experiment.
-  Leave as-is.
-
-### Exit criteria for this investigation step
-
-- One of H1-H5 (or a new hypothesis surfaced by the agents) is
-  confirmed by a targeted test that does NOT involve cache code
-  changes.
-- A documented next-action plan with concrete code/config edits
-  that target the confirmed root cause.
-
-### Rollback
-
-- Worktree `dazzling-joliot-cd9889`.
-- Kernel branch `agent/rpi4-program-reloc` (ahead of last known-good
-  tag).
-- plo branch `codex/upstream-sync-20260516`.
-- All sibling source changes are uncommitted at the time of writing
-  this step (except the USB merge commits above), so a clean revert
-  is `git restore .` in each repo.
+Pick the highest-leverage `/loop` goal to advance: SMP bring-up
+unlocks 4-core operation, full RAM mapping unlocks process memory
+headroom, USB-HID gets the keyboard working (already enumerated),
+HDMI text-rendering polishes the user-visible output. Cache is no
+longer the blocker.
