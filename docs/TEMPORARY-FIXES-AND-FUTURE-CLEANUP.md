@@ -15,6 +15,8 @@ mandatory cleanup. Until then, progress on the boot path takes priority.
   - `PENDING` — shortcut still active in source
   - `IN-PROGRESS` — cleanup step open against it
   - `RESOLVED` — cleanup committed and validated, record kept as history
+  - `STALE` — doc entry described state that has since changed; entry
+    superseded but kept for historical context
 - **Linking from source.** Every transitional fix in upstream source should
   carry an inline marker: `TODO(TD-NN): <short hint>`. Grep for `TD-NN` to
   find all sites of a given shortcut.
@@ -22,371 +24,342 @@ mandatory cleanup. Until then, progress on the boot path takes priority.
   at the time the entry was written. Re-verify against current source before
   acting — the code changes faster than this doc.
 
+## 2026-05-17 audit summary
+
+A multi-month MMU+cache crash at `PC=0x400498` (EX=4, ESR=0x02000000) was
+**resolved** by two armstub-level bug fixes:
+1. The A72 erratum 1319367 workaround was being applied to an undefined
+   sysreg (`S3_1_C15_C2_2`); moved to the canonical `CPUACTLR_EL1[46]`.
+2. `L2CTLR_EL1 |= 0x22` (Data RAM Latency=3, Setup=1) was missing — every
+   other working Pi 4 bare-metal stack programs this for BCM2711 silicon.
+
+Both fixes are in `phoenix-rtos-project` commit `dde9bb5`. With these,
+caches and MMU are operational, kernel boots through `_init.S` cleanly,
+and user-space reaches the psh shell. Several TD items that were workarounds
+for the cache-off era are now **STALE** or **RESOLVED**. See per-item notes.
+
 ---
 
 ## TD-01: SMP enable disabled on Cortex-A72
 
-- **Status:** PENDING
-- **First observed:** 2026-04 bring-up
-- **Where:** `sources/phoenix-rtos-kernel/hal/aarch64/_init.S`, the
-  `CPUECTLR_EL1` SMPEN block behind `__TARGET_AARCH64A72`.
-- **What was done:** The SMP-enable MSR sequence is commented out and the
-  only remaining effect is the debug markers around it.
-- **Why:** Enabling SMP on A72 produced an early-boot hang; cause not
-  diagnosed yet.
-- **Risk accepted:** A72 coherency behavior with Inner-Shareable memory is
-  undefined without this bit. Current code avoids Inner-Shareable in early
-  boot, which is itself a related transitional compromise.
+- **Status:** SPLIT — SMPEN at EL3 is RESOLVED via armstub; multi-core
+  kernel bring-up is still PENDING.
+- **Where:** `sources/phoenix-rtos-kernel/hal/aarch64/_init.S` line 361 has
+  the original kernel-side SMPEN+CPUACTLR block commented out (just markers
+  remain). The note at lines 362–377 explains the rationale: CPUACTLR /
+  CPUECTLR trap from EL1 on A72, so they must be written at EL3.
+- **EL3 SMPEN (RESOLVED 2026-05-17):** The Phoenix armstub
+  (`_projects/aarch64a72-generic-rpi4b/phoenix-armstub8-rpi4.S`) sets
+  CPUECTLR_EL1.SMPEN at EL3 before `eret` to EL2. Confirmed working
+  end-to-end across multiple cold boots.
+- **Multi-core kernel (PENDING):** Cores 1–3 are woken from the spin-table
+  at PA 0xe0/0xe8/0xf0 only by the SMP-smoke probe in plo's
+  `hal_smpBringupSecondaries`; they print one marker and park in WFE. The
+  kernel does NOT use them — there's no per-CPU scheduler state, no IPI
+  routing through the GIC, and no kernel-side wake/release protocol.
+- **Risk accepted:** all kernel work runs on core 0. This may also be the
+  dominant cause of the multi-minute "boot to psh prompt" slowness observed
+  on real hardware — every IPC round-trip is serialized through one CPU.
 - **Resolution requirements:**
-  - Reproduce the hang with a bounded diagnostic (GDB over QEMU gdbstub, or
-    one minimal marker pair) and capture the fault.
-  - Follow the Cortex-A72 TRM SMP enable sequence; compare against Circle OS
-    and similar bare-metal references.
-  - Re-enable SMP, then switch early boot back to Inner-Shareable and
-    confirm boot on real hardware across multiple cold resets.
+  - Per-CPU scheduler state (run queues, current-thread, exception stacks)
+  - IPI handlers wired through GICv2
+  - Coordinated TLB+cache flush (broadcast invalidate already used)
+  - Wake/release protocol for cores 1–3 (write a non-zero target into
+    the armstub spin-table, sev)
+  - Kernel awareness of CPU count from DTB `/cpus` node
 
 ## TD-02: Pre-MMU cache invalidation disabled
 
-- **Status:** PENDING
-- **First observed:** 2026-04 bring-up
-- **Where:** `sources/phoenix-rtos-kernel/hal/aarch64/_init.S`, the
-  `PMAP_COMMON_KERNEL_TTL2 … PMAP_COMMON_STACK` `_inval_dcache_range` call
-  before MMU enable.
-- **What was done:** The pre-MMU data-cache invalidation sweep is commented
-  out. The code now relies solely on the post-MMU-enable invalidation and
-  on `dsb ish; isb` to make table writes visible.
-- **Why:** Cache maintenance with the MMU disabled hung the board in
-  observed runs. Linux arm64 performs this sweep unconditionally.
-- **Risk accepted:** Speculatively loaded stale lines for the page-table
-  regions can survive into early MMU walks. So far no observed corruption,
-  but that is not a guarantee.
-- **Resolution requirements:**
-  - Identify the A72-specific precondition that makes the generic sequence
-    hang (likely ordering or an earlier missing setup step).
-  - Restore the invalidation, or document the exact reason a narrower form
-    is correct for this platform.
+- **Status:** RESOLVED 2026-05-17.
+- **Where:** `sources/phoenix-rtos-kernel/hal/aarch64/_init.S` line 563
+  (`bl _inval_dcache_range` over the page-table region) and line 351 (the
+  first `bl hal_cpuInvalDataCacheAll` at `_start`).
+- **What changed:** Both cache-maintenance call sites are now LIVE in
+  source, not commented out. The Phase Z work (kernel-side, 2026-05-17)
+  also added a second defensive `bl hal_cpuInvalDataCacheAll` immediately
+  before the M|C|I SCTLR write. With caches operational (armstub fix), the
+  pre-MMU invalidation is no longer a source of hangs.
+- **Doc was stale on this** — entry described "commented out" but the call
+  site has been live since the Phase Z2 work.
 
 ## TD-03: Syspage copy / BSS mapping shortcut
 
-- **Status:** PENDING
-- **First observed:** 2026-04 bring-up
-- **Where:** Interaction between `hal/aarch64/_init.S` (virtual syspage
-  copy) and `syspage.c` (syspage access after MMU enable). BSS region is
-  not reliably mapped in the early MMU page tables.
-- **What was done:** Per `docs/status.md`, syspage access was stabilized by
-  side-stepping the copied-into-BSS location and working with the original
-  syspage. Intent and current source may diverge: **verify before acting.**
-- **Why:** The early MMU page tables did not cover the BSS region into
-  which the syspage was being copied.
-- **Risk accepted:** Any code path that assumes the copied virtual syspage
-  is authoritative may read stale data or wrong addresses.
-- **Resolution requirements:**
-  - Extend early MMU setup to map the BSS region (or move the syspage copy
-    target to an already-mapped region).
-  - Re-enable the canonical syspage copy path and validate that every
-    consumer reads from the virtual location.
-  - Add a syspage integrity check (size and a simple checksum) to the
-    post-copy path.
+- **Status:** STALE — needs re-audit against current `_init.S`.
+- **Original concern:** the early MMU page tables didn't cover the BSS
+  region where the syspage was being copied; access to the copied virtual
+  syspage was unreliable.
+- **What changed:** The Phase Z3 work (2026-05-17) deleted the TD-04 NC
+  override on `_hal_syspageCopied`. The kernel now reads the syspage via
+  the normal cacheable mapping after the M|C|I flip; with armstub fixes
+  in place, this works correctly. Map coverage for BSS is no longer a
+  workaround surface.
+- **Action:** verify that the canonical syspage copy path is used
+  end-to-end and remove the `_init.S` markers / probes that targeted the
+  old broken path. Merge into TD-05 cleanup.
 
 ## TD-04: BCM2711-specific syspage corruption at the plo→kernel handoff
 
-- **Status:** ✅ FIXED at the syspage layer 2026-04-29; one residual
-  Heisenbug (F→G hang masked by an inline UART probe) and one cleanup
-  task (strip the diagnostic probes once the Heisenbug is rooted out)
-  remain. Active blocker since 2026-04-19 is closed.
-- **First observed:** 2026-04 bring-up. Originally tracked under several
-  narrower descriptions: "iter-8 hang in `syspage_init` entry sub-loop",
-  "non-deterministic post-MMU markers", "circular-list relocation
-  divergence". 2026-04-29 reframed all of those as one underlying
-  cache-coherency / boot-handoff anomaly that only manifests on real
-  BCM2711 silicon.
-- **Where:** `sources/phoenix-rtos-kernel/hal/aarch64/_init.S` (the syspage
-  copy loop and surrounding cache maintenance) and
-  `sources/phoenix-rtos-kernel/syspage.c` (the C-level relocation loops
-  that read the copied data). The shared aarch64 kernel handoff code,
-  which works correctly on ZynqMP and on QEMU 10.2.2 raspi4b.
-- **Verified facts (2026-04-29 E2 probe):**
-  - Kernel reads source bytes correctly from plo's heap PA at every
-    offset checked (0, 0x100, 0x200, 0x310). plo and kernel agree on
-    source contents.
-  - Kernel reads destination bytes correctly at offsets 0/0x100/0x200,
-    incorrectly at 0x310 onward. The garbage value at 0x310 differs
-    every boot (e.g. `0xba79ec73…`, `0x2286619f…`, `0x2286419f…` across
-    three runs of the same image).
-  - Both low-PA (`adrp + lo12`) and high-VA (literal pool) reads return
-    the same garbage value, so the TTBR0/TTBR1 mappings agree on the
-    physical address.
-  - The same kernel image in QEMU produces correct values at every
-    offset. The bug is real-Cortex-A72-silicon-only.
-  - plo on rpi4 runs cache-off the entire time
-    (`sources/plo/hal/aarch64/generic/_init.S`: SCTLR_EL3 = `0x30c50838`,
-    SCTLR_EL2 = `0x30c00838`, SCTLR_EL1 = 0). Plo's stores go directly
-    to DDR. So the corruption is *not* "stale plo cache lines".
-- **Working theory:** an external coherent-master writes to the DRAM
-  region containing `_hal_syspageCopied` between plo's stores and the
-  kernel's reads. The top candidate is the BCM2711 VideoCore VI GPU
-  continuing to access mailbox/framebuffer memory after the ARM kernel
-  takes over (Linux on Pi 4 quiesces this with explicit platform init;
-  Phoenix has no equivalent yet). Secondary candidates: stale L2 lines
-  from the bootcode → start4.elf → armstub firmware chain, or in-flight
-  DMA that hasn't drained at plo's `eret`.
-- **Why other Phoenix platforms don't hit it:** ZynqMP plo also runs
-  cache-off and shares the same kernel handoff code, but ZynqMP has
-  no always-running non-coherent peripheral and a single-stage boot.
-- **Why neither Linux nor other OSes hit it on Pi 4:** Linux on Pi 4
-  meets the ARM64 Linux Boot Protocol contract (MMU off, D-cache off,
-  kernel image cleaned to PoC, DMA quiesced) and contains explicit
-  Pi-4 platform init that touches the VPU. Both halves are required.
-- **Resolution as landed (2026-04-29):**
-  - **Step 1 (DONE):** `_hal_syspageCopied`'s page is now mapped
-    Normal Non-Cacheable in TTBR1 TTL3 (MAIR slot 1, AttrIndx=1).
-    Symbol is `.balign SIZE_PAGE` so it occupies exactly one TTL3
-    entry. The kernel-side copy loop writes via the high-VA literal
-    pool through that NC entry directly to DDR, bypassing the A72
-    D-cache. Real-Pi-4 probes (s/l/v/d0/d100/d200) now return
-    bit-identical correct values across consecutive boots. Map
-    relocation walks all 11 entries cleanly and the kernel reaches
-    `_hal_init()` (marker `f`).
-  - **Step 2 (NOT NEEDED):** an external master writing to the dest
-    PA between plo and kernel reads. Step 1 was sufficient on its
-    own — the class of failure is closed at the cache layer.
-  - **Future hardening (not blocking):** align plo's exit with the
-    full ARM64 Linux Boot Protocol (clean kernel image and DTB to
-    PoC, then disable SCTLR.{M,C,I} before `eret`). Mostly stylistic
-    given plo already runs cache-off, but removes ambiguity for
-    other ARM64 ports.
+- **Status:** ROOT CAUSE IDENTIFIED 2026-05-17 — NC workaround REMOVED;
+  underlying defect was in the armstub, not in the syspage path.
+- **Original analysis (2026-04-29):** Real-Pi-4 silicon corrupted bytes
+  at PA `_hal_syspageCopied + 0x310` per-boot-randomized; the cache-off
+  plo's writes seemed to never reach the kernel's view of DDR.
+- **Cache-layer workaround (now reverted, was in tree 2026-04-29 →
+  2026-05-17):** Re-mapped `_hal_syspageCopied`'s page as Normal
+  Non-Cacheable in TTBR1 TTL3 so kernel reads bypassed the A72 D-cache.
+  Empirically masked the symptom.
+- **Real root cause (2026-05-17):** Multi-agent investigation found two
+  unrelated armstub-level bugs:
+  - **1319367 erratum workaround on undefined sysreg.** The armstub
+    wrote `CPUACTLR2_EL1[0]` with `CPUACTLR2_EL1` aliased to
+    `S3_1_C15_C2_2` — not a documented A72 system register. ATF and
+    Phoenix's own `docs/plans/a72-errata-sweep.md` document the canonical
+    fix as `CPUACTLR_EL1[46] = 1`. The undefined-sysreg write either
+    trapped silently or hit a reserved register, corrupting nearby
+    state. With the fix, the A72 erratum is actually mitigated.
+  - **Missing `L2CTLR_EL1 |= 0x22` BCM2711 RAM-timing setup.** The
+    BCM2711's Cortex-A72 cluster L2 cache at 1.5 GHz requires Data RAM
+    Latency=3 cycles + Setup=1 cycle (bits 1 and 5). The Cortex-A72 TRM
+    default of 2 cycles is too tight for BCM2711 silicon; first cacheable
+    D-side fill after `SCTLR.C=1` returned corrupt data. The canonical
+    raspberrypi/tools armstub8, Trusted Firmware-A, and Circle all
+    program this. Phoenix did not, until 2026-05-17.
+  - **Both fixes land in** `phoenix-rtos-project` commit `dde9bb5`
+    (`phoenix-armstub8-rpi4.S`). Two-boot reproducibility verified.
+- **Where the NC workaround was (now removed):** `_init.S` TTL3 override
+  block (Phase Z3 deleted it). The companion post-copy
+  `_clean_inval_dcache_range` (Phase Z4 deleted) and the single-shot
+  M|C|I (Phase Z2 added) all moved together.
+- **Companion hacks status:**
 
-- **Residual issues carried forward:**
-  - **Heisenbug F→G in `syspage_init()`:** without an inline `F → 1
-    → 2 → 3 → G` UART probe, the kernel hangs immediately after the
-    F marker. With the probe present, F→G→… completes reliably.
-    Working hypothesis: timing or instruction-cache coherency
-    interaction with the freshly NC-mapped dest page that the probe's
-    UART-wait loops mask. Documented as TD-04 mitigation;
-    investigate root cause as a separate step before the TD-05
-    debug-marker cleanup pass.
-  - **TD-05 cleanup:** the F→1→2→3 markers, the s/l/v/d0/s0/d100/
-    s100/d200/s200 probe block in `_init.S`, the inline TTL3-
-    override comment block, and the `H/4/5/6/F/S/r/D/s/E/7/8/9/a/
-    b/c/d/e` localization probes inside `_hal_init()` all need to
-    be reviewed and either stripped or gated when the bring-up is
-    complete.
+### TD-04-hack-1: SKIP the program-relocation loop in `syspage_init()`
 
-- **TD-04-hack-1: SKIP the program-relocation loop in `syspage_init()`**
-  - **Status:** ACTIVE HACK
-  - **Where:** `sources/phoenix-rtos-kernel/syspage.c`, `syspage_init()`
-    immediately after the map-relocation loop.
-  - **What was done:** Replaced the entire `if (...progs != NULL) {
-    syspage_common.syspage->progs = hal_syspageRelocate(...); ... }`
-    block with a no-op (just emits a `P` marker and skips). The
-    progs list pointers in the copied syspage stay as raw plo PAs.
-  - **Why:** The very first head store
-    `syspage_common.syspage->progs = hal_syspageRelocate(...)` hangs
-    the kernel on real Pi 4 hardware (works fine in QEMU and on
-    ZynqMP with the same code), even though the visually-equivalent
-    map-iter loop just above runs cleanly through all 11 entries
-    with the same NC-mapped destination. Heisenbug-class — slight
-    code-layout changes shift the hang point.
-  - **Risk accepted:** Userspace launch is broken — `prog->start`,
-    `prog->end`, `prog->argv` etc. still hold plo PAs and need
-    relocation before they can be used. Anything that walks the
-    progs list will read wrong data once TTBR0's stale-TLB low-PA
-    coverage is invalidated.
-  - **Resolution requirements:**
-    - Root-cause the Heisenbug. Likely candidates: residual cache
-      coherency on cacheable BSS pages adjacent to the NC dest page;
-      instruction-cache prefetch interaction with the new TTL3
-      mapping; or speculative load via TTBR0 SCRATCH_TT racing with
-      the NC-mapped TTBR1 access.
-    - Restore the prog-reloc loop with whatever pre-store fence /
-      attribute fix unblocks it.
-    - Add a regression test that parses the relocated progs list
-      and validates strings + addresses.
-  - **Marker grep:** `grep -n "TODO(TD-04-hack-1)"
-    sources/phoenix-rtos-kernel/syspage.c`
+- **Status:** UNVERIFIED — needs re-test now that caches work.
+- **Where:** `sources/phoenix-rtos-kernel/syspage.c` (no `TODO(TD-04-hack-1)`
+  marker remains in current source — `grep` returns 0 matches; the skip
+  may have been removed in a prior cleanup).
+- **Action:** verify the prog-reloc loop is restored and the heisenbug
+  hang is gone. Add a regression test that walks the progs list.
 
-- **TD-04-hack-2: localization probes inside `_hal_init()`**
-  - **Status:** ACTIVE HACK (TD-05-class diagnostic but pinned in
-    place for now)
-  - **Where:** `sources/phoenix-rtos-kernel/hal/aarch64/hal.c`,
-    `_hal_init()`.
-  - **What was done:** Inline `H, 4, 5, 6, F/S, r, D, s, E, 7, 8,
-    9, a, b, c, d, e` markers via the same TTBR1-mapped early UART
-    that `syspage_init()` uses, between every step of `_hal_init`.
-  - **Why:** Diagnostic, but also empirically the kernel hangs at
-    different points depending on whether these markers are present
-    — same Heisenbug shape as TD-04-hack-1.
-  - **Risk accepted:** Boot-time UART chatter; no functional risk
-    at runtime.
-  - **Resolution requirements:**
-    - Once TD-04-hack-1's root cause is fixed and `_hal_init()`
-      runs reliably without the markers, strip them (or gate them
-      behind a debug flag).
-  - **Marker grep:** `grep -n "TD-04-hack-2"
-    sources/phoenix-rtos-kernel/hal/aarch64/hal.c`
+### TD-04-hack-2: localization probes inside `_hal_init()`
 
-- **TD-04-hack-3: fake `dtbEnd` in `_hal_init()`**
-  - **Status:** ACTIVE HACK
-  - **Where:** `sources/phoenix-rtos-kernel/hal/aarch64/hal.c`,
-    `_hal_init()`'s syspage-dtb branch.
-  - **What was done:** `dtbEnd = dtb->end;` replaced with
-    `dtbEnd = dtbStart + 0x10000;`. The real size will be re-read
-    from the DTB header by `_pmap_preinit()` / DTB parser anyway
-    (DTBs are self-describing).
-  - **Why:** `dtb->end` read hangs the kernel on real Pi 4
-    immediately after `dtb->start` succeeds (one offset apart, same
-    cache line, identical access pattern). Heisenbug shape again.
-  - **Risk accepted:** If anything actually consumes `dtbEnd` as
-    a hard upper bound (rather than re-reading the DTB header),
-    parsing of a >64 KiB DTB would fail. Pi 4's DTB is ~57 KiB —
-    well under the 64 KiB cap.
-  - **Resolution requirements:**
-    - Root-cause why the second word read of `dtb->*` hangs on
-      real Pi 4. Almost certainly the same root as TD-04-hack-1.
-    - Restore `dtbEnd = dtb->end;`.
-  - **Marker grep:** `grep -n "TODO(TD-04-hack-3)"
-    sources/phoenix-rtos-kernel/hal/aarch64/hal.c`
-- **Risks of doing nothing:** the iter-7/8 corruption blocks every
-  attempt to validate program relocation, which blocks reaching
-  `_hal_init()` from `syspage_init()`, which blocks the first full
-  boot to userspace. This is the active blocker.
-- **References:**
-  - ARM64 Linux Boot Protocol —
-    https://docs.kernel.org/arch/arm64/booting.html
-  - raspberrypi/tools `armstubs/armstub8.S` (the contract Pi 4 firmware
-    promises) — https://github.com/raspberrypi/tools
-  - ARM tf-issues #205 — set/way safe only for power-down, not handoff
-  - tracking/current-step.md — full probe data, QEMU comparison, plan
+- **Status:** STILL ACTIVE (cleanup candidate).
+- **Where:** `sources/phoenix-rtos-kernel/hal/aarch64/hal.c:97–164` — H, 4,
+  5, 6, F/S, r, D, s, E, 7, 8, 9, a, b, c, d, e markers via the TTBR1
+  early-UART pointer.
+- **Why kept:** Their "Heisenbug insurance" role was a side effect of the
+  cache-off-era bug. With caches working, the markers are pure diagnostic
+  and can be stripped.
+- **Action:** strip or gate behind a debug flag; merge into TD-05.
+
+### TD-04-hack-3: fake `dtbEnd = dtbStart + 0x10000`
+
+- **Status:** STILL ACTIVE.
+- **Where:** `sources/phoenix-rtos-kernel/hal/aarch64/hal.c:142–154`.
+- **Why kept:** `dtb->end` read hung the kernel on real Pi 4 in the
+  cache-off era. With caches operational this may no longer reproduce.
+- **Action:** **test removal in next cycle**. Replace
+  `dtbEnd = dtbStart + 0x10000;` with `dtbEnd = dtb->end;`. If boot
+  still reaches psh tty open, the heisenbug is gone and we can mark
+  resolved. If it hangs, escalate.
 
 ## TD-05: UART debug-marker scaffolding
 
-- **Status:** PENDING
-- **First observed:** 2026-04 bring-up (pervasive)
-- **Where:** `hal/aarch64/_init.S`, `syspage.c`, `main.c`, and related
-  boot-path files.
-- **What was done:** Dozens of `uart_putc` and `uart` ring-buffer writes
-  scattered through the early boot path to produce the
-  `NYOPSTUZbcdeFGVWXabcdefgmklmno` progress trace.
-- **Why:** The trace is how we locate hangs when no other diagnostic is
-  available; there is no working console or fault reporting yet.
-- **Risk accepted:** The markers affect boot timing, burn UART bandwidth,
-  and make diffs noisy. Individual markers are easy to leave behind once
-  they served their purpose.
+- **Status:** STILL PENDING (pervasive cleanup).
+- **Where:** `hal/aarch64/_init.S`, `syspage.c`, `main.c`, `hal.c`, and
+  related boot-path files.
+- **What's there:** dozens of `uart_putc` and direct UART-pointer stores
+  producing the `NYOPSTUZbcdeFGVWXabcdefgmklmno` progress trace, plus the
+  Phase Z markers `X1`–`X5` (kernel SCTLR pre/post), plus the armstub
+  `1`/`2`/`4`/`5`/`A`/`S0` markers.
+- **Risk accepted:** noise + boot time + the markers themselves are part
+  of why the boot output stream is so dense.
 - **Resolution requirements:**
   - Replace ad hoc markers with a compile-time-gated debug macro
-    (`RPI4_BOOT_MARKER(c)`) so they can all be disabled in one place.
-  - Establish a rule that every marker added to test a hypothesis is
-    removed when the hypothesis is disproved (already in
-    [code-quality-and-upstreaming.md](code-quality-and-upstreaming.md)).
-  - Before upstreaming, strip or gate every remaining marker.
+    (`RPI4_BOOT_MARKER(c)`).
+  - Decide what minimum subset stays in tree for ongoing diagnostics
+    (e.g., armstub `1/2/4/5` for "EL3 path complete", kernel `X1–X5` for
+    "post-SCTLR flip").
 
 ## TD-06: DTB handling assumptions
 
-- **Status:** PENDING
-- **First observed:** 2026-04 bring-up
+- **Status:** PENDING — and now actively blocking Goal 3 (full 4 GB RAM).
 - **Where:** `sources/phoenix-rtos-kernel/hal/aarch64/dtb.c`.
-- **What was done:** Early parsing assumes a fixed memory layout, a single
-  known interrupt controller, and limited error paths.
-- **Why:** Early bring-up needed a DTB path with no surprises; robust
-  parsing was not on the critical boot lane.
-- **Risk accepted:** Any future board variant or firmware change silently
-  reuses the fixed assumptions.
+- **What was done:** early parsing assumes a single `/memory@*` node with
+  one `reg` tuple, no `/reserved-memory` handling beyond a static list, and
+  fixed assumptions about address-cells / size-cells.
+- **NEW (2026-05-17):** the Pi 4 4GB hardware reports two memory banks
+  (low 948 MB at 0x00000000 and high 3008 MB at 0x40000000). Linux sees
+  both. Our kernel sees only the low bank because either (a) the static
+  on-disk DTB has only `memory@0` and the firmware-patched runtime DTB
+  also adds `memory@40000000` but we're not receiving the patched version,
+  or (b) our `dtb_parseMemory` doesn't handle a multi-bank tuple.
+- **Action plan:**
+  - Confirm what `/memory*` nodes exist in the runtime DTB by adding a
+    one-shot debug dump in `_dtb_init`.
+  - If the runtime DTB has the high bank but our parser misses it, fix the
+    parser (likely needs to scan ALL `/memory@*` siblings, not just the
+    first one).
+  - If the runtime DTB has only the low bank, look at `config.txt`
+    options or firmware version to expose the high bank.
 - **Resolution requirements:**
-  - Drive memory layout from the actual DTB, not compile-time constants.
+  - Drive memory layout entirely from the actual DTB.
   - Validate required nodes at parse time and fail with a useful message.
-  - Add multi-board support (Pi 4B variants, Pi 5) as the scope expands.
+  - Plan for Pi 4B variants (1/2/4/8 GB), Pi 5, and Pi CM4 carriers.
 
 ---
 
 ## TD-07: Update QEMU inside the phoenix-dev VM to a current stable
 
-- **Status:** PENDING
-- **Where:** apt-installed QEMU inside the Lima VM, used by
-  `scripts/qemu-rpi4b-hdmi-smoke.sh` and `scripts/qemu-shell-smoke.sh`.
-- **What was done:** an older QEMU release was good enough for early
-  bring-up; never refreshed.
-- **Why:** Pi 4 peripheral models in older QEMU are limited; some boot
-  stages don't progress or behave differently than on real hardware.
-- **Resolution requirements:**
-  - Install upstream QEMU 11.x (or newer stable) inside the VM, either
-    via apt-pinning a backports source, source build into `/opt/qemu/`,
-    or a Lima provision script. Document the version + install method.
-  - Verify the `raspi4b` machine model exists, has Cortex-A72 + GIC +
-    PL011 working, and reproduces our SD-boot path far enough to be
-    useful as an introspection target.
+- **Status:** STALE — QEMU 10.2.2 is installed (verified 2026-05-17 by
+  Agent #8 A53-baseline run); current enough for Pi 4 boot up to the
+  point where physical hardware diverges.
+- **Action:** mark RESOLVED unless a newer version is needed for a
+  specific feature (e.g. raspi4b with full GIC / xHCI / GENET models).
 
 ## TD-08: Re-test boot under QEMU + gdbstub for in-flight introspection
 
-- **Status:** PENDING (depends on TD-07)
-- **Where:** QEMU runner scripts and a gdb script we'll add under
-  `scripts/`.
-- **What was done:** real-hardware bring-up gives only UART markers as
-  state. Memory contents at specific markers, register values right
-  before the iter-7/8 corruption, MMU translation tables, and cache
-  state are all opaque.
-- **Why:** QEMU + gdbstub solves this — at the cost of not fully
-  reproducing real-hardware cache/DDR/DMA timing.
-- **Resolution requirements:**
-  - `qemu-system-aarch64 ... -gdb tcp::1234 -S` against the same SD
-    image we use on hardware; attach `gdb-multiarch` from outside.
-  - Walk: pre-handoff syspage region in plo (0x280..0x340, SCTLR,
-    TTBR0/1); post-handoff in kernel _init.S right after MMU enable
-    (same region via low PA and high VA); inside `syspage_init`'s
-    map-entry sub-loop around iter 7's `entry->next` read.
-  - Even if the corruption itself doesn't reproduce in QEMU, validate
-    the *logic* (list shape, struct layout, pointer arithmetic).
+- **Status:** PARTIALLY EXERCISED — Agent #8 ran the A53/zynqmp build
+  under QEMU + gdb to capture SCTLR/TCR/MAIR/TTBR0/TTBR1/VBAR/SP register
+  state at post-SCTLR-flip; current `_init.S` is now rpi4b-specific so a
+  paired A53/A72 build no longer compiles from the same tree.
+- **Action:** kept open for future Pi 4 specific QEMU work
+  (`raspi4b` machine); update when the machine model in QEMU 11+ supports
+  enough peripherals to validate post-cache boot in QEMU.
 
 ## TD-09: Replace en7 crossover cable with an unmanaged ethernet switch
 
-- **Status:** PENDING
-- **Where:** physical cabling between the Mac's en7 USB-C ethernet
-  and the Pi 4 RJ45.
-- **What was done:** direct crossover cable. Works electrically.
-- **Why:** en7's link state mirrors the Pi's PHY directly. Every Pi
-  power-cycle toggles en7 between `active` and `inactive`. socket_vmnet's
-  BPF capture on en7 wedges on a non-trivial fraction of those toggles,
-  and once wedged tends to stay wedged across one or more VM restarts.
-  The watchdog + auto-recovery in `test-cycle-netboot.sh` handles the
-  simple wedge case; a switch eliminates the trigger entirely.
+- **Status:** PENDING — user has the switch but is missing its PSU.
+- **Operational note:** `test-cycle-netboot.sh` has built-in bridge
+  recovery (`netboot-bridge-recover.sh`) that handles the wedge. The
+  separate `test-cycle-psh-interact.sh` does NOT — it uses `exec python3`
+  so its EXIT trap can't fire, and it consistently wedges netboot. **Use
+  only `test-cycle-netboot.sh` until that script is fixed (or the
+  unmanaged switch is installed, which eliminates the trigger entirely).**
+
+## TD-10: USB stack stall after VL805 BAR programming (NEW)
+
+- **Status:** PENDING (new issue, post-armstub-fix discovery).
+- **Where:** `sources/phoenix-rtos-devices/usb/xhci/bcm2711-pcie.c` and
+  `xhci.c`. The usb daemon's xhci HC init enters
+  `bcm2711_pcie_initVL805`, reads VL805's 6 BARs (last log line:
+  `pcie: BAR5 raw=00000000`), then NO further debug output is emitted
+  even in 300-second UART captures.
+- **What works:** VL805 enumerates correctly under firmware (confirmed by
+  Pi boot menu using a connected USB keyboard for SPACE/2 input). The xhci
+  capability registers are readable from our diag-outbound mmap
+  (`caplen=20 ver=0100 hcsparams1=05000420`). So the bus electrical path
+  + bridge translation works.
+- **What stalls:** Either `pcie_scanBus` iterating empty dev slots 1–31
+  on the recursive bus, `cfgio.destroy` munmap, or libtty back-pressure
+  silently dropping subsequent debug output.
+- **Knock-on effect:** `usbkbd` never enumerates the HID keyboard; pl011-
+  tty's `pl011_kbdthr` retries `open(/dev/kbd0)` every 500 ms forever.
 - **Resolution requirements:**
-  - Plug an unmanaged GigE switch between Mac and Pi. en7's link
-    partner becomes the switch (always `active`); Pi power-cycles
-    don't touch the bridge.
-  - User has the switch on hand but is missing its PSU; install when
-    found.
+  - Add `debug()` traces between each scanBus iteration and after
+    cfgio.destroy to localize the silence point.
+  - Replace the 200 ms VL805 firmware-settle `usleep(200000)` with a
+    Vendor-ID polling loop (already noted as a TODO in the comment at
+    `bcm2711-pcie.c:797`).
+
+## TD-11: USB merge (pcie+xhci into one process) (NEW)
+
+- **Status:** RESOLVED 2026-05-17 via `phoenix-rtos-devices` commit
+  `b5cc6b0`.
+- **What was done:** Folded BCM2711 PCIe bridge bring-up + VL805 BAR
+  programming into the xhci library as `bcm2711_pcie_initVL805()`.
+  Eliminated the cross-process bridge translation race that previously
+  caused 0xdead-pattern reads. Standalone `pcie` daemon dropped from
+  `user.plo.yaml` (commit `fb771c4`).
+- **Reference:** see "BCM2711 PCIe bridge translation" in
+  `docs/rpi4-os-development-guide.md`.
+
+## TD-12: Boot speed (NEW)
+
+- **Status:** PENDING — investigation open.
+- **Observed:** with caches operational, kernel boot to `psh: tty open`
+  takes >>90 s of wall time. The first `psh: readcmd` (start of the
+  shell's main loop) does not appear in even 300 s captures. The HDMI
+  prompt does eventually appear (user-confirmed).
+- **Candidates** (in order of plausibility):
+  - **No SMP** — every IPC round-trip serializes through core 0. Phoenix
+    has many short message exchanges in the boot path (psh ↔ pl011-tty,
+    usb daemon ↔ kernel, etc.). With one CPU + libtty cross-process
+    serialization + fbcon mirror per byte, the cumulative cost is
+    measured in minutes. TD-01 multi-core would directly attack this.
+  - **fbcon mirror cost** — `pl011_thr` mirrors every UART TX byte to
+    HDMI; each `drawChar` is 128 stores; each scroll is a 3 MB memmove
+    over uncached framebuffer memory. Per-byte cost is ~10× UART cost.
+  - **libtty buffer back-pressure** — multi-process writers backlog the
+    libtty TX queue; `tcsetattr(TCSAFLUSH)` in `psh_readcmd` waits for
+    the entire queue to drain before changing terminal mode.
+  - **`pl011_kbdthr` 500 ms retry forever** — open(/dev/kbd0) fails
+    until usbkbd attaches (which is blocked by TD-10).
+  - **`usb_hostLookup` 1 s retry** — only matters across processes
+    (usbkbd is in-process so doesn't apply here).
+- **Diagnostic in flight:** added debug checkpoints `pre-calloc cmdhist`,
+  `post-calloc cmdhist`, `pre-loop`, `readcmd-pre-malloc/tcsetattr/...`,
+  `prompt-written` in `psh/pshapp/pshapp.c`. Next test cycle will tell us
+  exactly which library call is slow.
+- **Resolution requirements:**
+  - Add wall-clock timestamps to UART capture (e.g. picocom + `ts` from
+    moreutils or a small awk filter).
+  - Run the checkpoint-instrumented psh and capture > 400 s.
+  - If `tcsetattr` is slow, audit libtty's TCSAFLUSH path.
+  - If checkpoints space out evenly, the system-wide IPC cost is the
+    issue and TD-01 SMP becomes the high-leverage fix.
+
+---
 
 ## Priority Ladder
 
-**Blocks "first Pi 4 boots to userspace" milestone:**
-- TD-04 (currently active — BCM2711 cache-coherency at plo→kernel handoff;
-  next move: re-map `_hal_syspageCopied` as Normal Non-Cacheable)
-- TD-03 (unblocks proper virtual syspage access)
+**Blocks "first Pi 4 boots to a useful state" milestone:**
+- TD-10 (USB stack stall blocks keyboard input)
+- TD-12 (boot speed — slow prompt makes interactive use painful)
 
 **Blocks effective debugging:**
-- TD-09 (netboot loop reliability — is the bottleneck right now)
-- TD-07 → TD-08 (QEMU+gdb introspection of the iter-7/8 corruption)
+- TD-09 (netboot loop reliability — `test-cycle-netboot.sh` self-heals
+  but `test-cycle-psh-interact.sh` wedges; switch eliminates trigger)
 
 **Blocks upstream-ready quality:**
-- TD-05 (debug-marker strip/gate)
-- TD-01 (SMP enable, required for anything beyond single-core)
+- TD-05 (debug-marker strip/gate — many markers from cache-off era)
+- TD-04-hack-2, TD-04-hack-3 (cache-off-era hacks, candidates for
+  removal now)
+- TD-01b (multi-core kernel SMP, also helps boot speed)
 
-**Medium-term:**
-- TD-02 (cache invalidation correctness)
-- TD-06 (DTB robustness, portability)
+**Hardware completeness:**
+- TD-06 (DTB robustness; specifically required for 4 GB RAM exposure —
+  goal 3 of `/loop`)
+
+**Historical / resolved:**
+- TD-01a SMPEN at EL3 — RESOLVED via armstub
+- TD-02 pre-MMU cache invalidation — STALE (doc was out of date; call
+  site is live)
+- TD-04 NC syspage workaround — superseded by armstub fix; NC override
+  removed
+- TD-07 QEMU — STALE (10.2.2 is current enough)
+- TD-11 USB pcie+xhci merge — RESOLVED via `b5cc6b0`
 
 ## Tracking Checklist
 
 | ID | Status | Blocker? |
 | --- | --- | --- |
-| TD-01 | PENDING | multi-core work |
-| TD-02 | PENDING | stability risk |
-| TD-03 | PENDING | milestone |
-| TD-04 | PENDING | active step |
+| TD-01a | RESOLVED | SMPEN at EL3 |
+| TD-01b | PENDING | multi-core kernel work (likely affects TD-12) |
+| TD-02 | RESOLVED (doc was stale) | n/a |
+| TD-03 | STALE (re-audit) | upstream quality |
+| TD-04 | RESOLVED via armstub | n/a |
+| TD-04-hack-1 | UNVERIFIED | cleanup |
+| TD-04-hack-2 | STILL ACTIVE | cleanup (low risk to remove) |
+| TD-04-hack-3 | STILL ACTIVE | cleanup (likely safe to remove) |
 | TD-05 | PENDING | upstream quality |
-| TD-06 | PENDING | portability |
-| TD-07 | PENDING | QEMU debugging |
-| TD-08 | PENDING | QEMU+gdb debugging |
-| TD-09 | PENDING | netboot loop reliability |
+| TD-06 | PENDING | full RAM (4 GB exposure) |
+| TD-07 | STALE | n/a |
+| TD-08 | PARTIALLY EXERCISED | future debugging |
+| TD-09 | PENDING | netboot reliability |
+| TD-10 | PENDING (NEW) | USB enumeration / keyboard |
+| TD-11 | RESOLVED (NEW) | n/a |
+| TD-12 | PENDING (NEW) | boot speed |
 
 When resolving an item:
 
