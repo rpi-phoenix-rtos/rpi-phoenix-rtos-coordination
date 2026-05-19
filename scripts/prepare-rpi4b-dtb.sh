@@ -2,11 +2,26 @@
 
 set -euo pipefail
 
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+host_os="$(uname -s)"
+
 vm="${PHOENIX_VM:-phoenix-dev}"
-linux_tree="${RPI4B_LINUX_TREE:-/Users/witoldbolt/phoenix-rpi/external/raspberrypi-linux}"
-firmware_tree="${RPI4B_FIRMWARE_TREE:-/Users/witoldbolt/phoenix-rpi/external/raspberrypi-firmware}"
-firmware_dtb="${RPI4B_FIRMWARE_DTB:-$firmware_tree/boot/bcm2711-rpi-4-b.dtb}"
-project_dtb="${RPI4B_PROJECT_DTB:-/Users/witoldbolt/phoenix-rpi/sources/phoenix-rtos-project/_projects/aarch64a72-generic-rpi4b/bcm2711-rpi-4-b.dtb}"
+# Default paths: macOS expects external trees under /Users/...; Linux
+# uses the in-tree .bootblobs/ that bootstrap-linux-host.sh stages, and
+# the existing project DTB at sources/phoenix-rtos-project/.
+if [ "$host_os" = "Darwin" ]; then
+	linux_tree="${RPI4B_LINUX_TREE:-/Users/witoldbolt/phoenix-rpi/external/raspberrypi-linux}"
+	firmware_tree="${RPI4B_FIRMWARE_TREE:-/Users/witoldbolt/phoenix-rpi/external/raspberrypi-firmware}"
+	firmware_dtb_default="$firmware_tree/boot/bcm2711-rpi-4-b.dtb"
+	project_dtb_default="/Users/witoldbolt/phoenix-rpi/sources/phoenix-rtos-project/_projects/aarch64a72-generic-rpi4b/bcm2711-rpi-4-b.dtb"
+else
+	linux_tree="${RPI4B_LINUX_TREE:-$repo_root/external/raspberrypi-linux}"
+	firmware_tree="${RPI4B_FIRMWARE_TREE:-$repo_root/.bootblobs/.firmware-checkout}"
+	firmware_dtb_default="$repo_root/.bootblobs/bcm2711-rpi-4-b.dtb"
+	project_dtb_default="$repo_root/sources/phoenix-rtos-project/_projects/aarch64a72-generic-rpi4b/bcm2711-rpi-4-b.dtb"
+fi
+firmware_dtb="${RPI4B_FIRMWARE_DTB:-$firmware_dtb_default}"
+project_dtb="${RPI4B_PROJECT_DTB:-$project_dtb_default}"
 source_dtb="${RPI4B_SOURCE_DTB:-}"
 source_dts="${RPI4B_SOURCE_DTS:-$linux_tree/arch/arm/boot/dts/broadcom/bcm2711-rpi-4-b.dts}"
 out_dir="${RPI4B_DTB_DIR:-/tmp/rpi4b-dtb}"
@@ -14,7 +29,16 @@ out_dtb="${RPI4B_DTB_PATH:-$out_dir/bcm2711-rpi-4-b.dtb}"
 allow_warnings="${RPI4B_DTB_ALLOW_WARNINGS:-0}"
 lint_copied_dtb="${RPI4B_DTB_LINT:-0}"
 
-limactl shell -y "$vm" -- bash -lc "
+# Run the inner script on the build host (Lima VM on macOS, host on Linux).
+run_shell() {
+	if [ "$host_os" = "Darwin" ]; then
+		limactl shell -y "$vm" -- bash -lc "$1"
+	else
+		bash -lc "$1"
+	fi
+}
+
+run_shell "
 set -euo pipefail
 
 linux_tree='$linux_tree'

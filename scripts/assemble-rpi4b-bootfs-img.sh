@@ -2,13 +2,28 @@
 
 set -euo pipefail
 
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+host_os="$(uname -s)"
+
 vm="${PHOENIX_VM:-phoenix-dev}"
-buildroot="${PHOENIX_BUILDROOT:-/home/witoldbolt.guest/phoenix-buildroots/phoenix-rtos-project-copy}"
+if [ "$host_os" = "Darwin" ]; then
+	buildroot="${PHOENIX_BUILDROOT:-/home/witoldbolt.guest/phoenix-buildroots/phoenix-rtos-project-copy}"
+else
+	buildroot="${PHOENIX_BUILDROOT:-$repo_root/.buildroot}"
+fi
 bootfs_dir="${RPI4B_BOOTFS_DIR:-$buildroot/_boot/aarch64a72-generic-rpi4b/rpi4b-bootfs}"
 image_path="${RPI4B_BOOTFS_IMG:-$buildroot/_boot/aarch64a72-generic-rpi4b/rpi4b-bootfs.img}"
 image_size_mb="${RPI4B_BOOTFS_IMG_SIZE_MB:-64}"
 
-limactl shell -y "$vm" -- /bin/bash -lc "
+run_shell() {
+	if [ "$host_os" = "Darwin" ]; then
+		limactl shell -y "$vm" -- /bin/bash -lc "$1"
+	else
+		/bin/bash -lc "$1"
+	fi
+}
+
+run_shell "
 set -euo pipefail
 
 bootfs_dir='$bootfs_dir'

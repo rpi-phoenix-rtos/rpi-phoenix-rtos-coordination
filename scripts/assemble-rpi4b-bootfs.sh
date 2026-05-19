@@ -2,12 +2,28 @@
 
 set -euo pipefail
 
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+host_os="$(uname -s)"
+
 vm="${PHOENIX_VM:-phoenix-dev}"
-buildroot="${PHOENIX_BUILDROOT:-/home/witoldbolt.guest/phoenix-buildroots/phoenix-rtos-project-copy}"
-firmware_dir="${RPI4B_FIRMWARE_DIR:-/home/witoldbolt.guest/external/raspberrypi-firmware/boot}"
+if [ "$host_os" = "Darwin" ]; then
+	buildroot="${PHOENIX_BUILDROOT:-/home/witoldbolt.guest/phoenix-buildroots/phoenix-rtos-project-copy}"
+	firmware_dir="${RPI4B_FIRMWARE_DIR:-/home/witoldbolt.guest/external/raspberrypi-firmware/boot}"
+else
+	buildroot="${PHOENIX_BUILDROOT:-$repo_root/.buildroot}"
+	firmware_dir="${RPI4B_FIRMWARE_DIR:-$repo_root/.bootblobs}"
+fi
 out_dir="${RPI4B_BOOTFS_OUT:-$buildroot/_boot/aarch64a72-generic-rpi4b/rpi4b-bootfs}"
 
-limactl shell -y "$vm" -- /bin/bash -lc "
+run_shell() {
+	if [ "$host_os" = "Darwin" ]; then
+		limactl shell -y "$vm" -- /bin/bash -lc "$1"
+	else
+		/bin/bash -lc "$1"
+	fi
+}
+
+run_shell "
 set -euo pipefail
 
 buildroot='$buildroot'

@@ -24,7 +24,7 @@
 
 set -euo pipefail
 
-repo="${PHOENIX_RPI_ROOT:-/Users/witoldbolt/phoenix-rpi}"
+repo="${PHOENIX_RPI_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 label="${LABEL:-psh-interact}"
 power_settle_secs="${RPI4B_POWER_SETTLE_SECS:-3}"
 skip_server_up=0
