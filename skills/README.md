@@ -1,6 +1,6 @@
 # Local Skill Index
 
-These project-local skills are lightweight playbooks for future Codex sessions. Open the relevant `SKILL.md` manually when the task matches.
+These project-local skills are lightweight playbooks for future implementation sessions. Open the relevant `SKILL.md` manually when the task matches.
 
 ## Available Skills
 

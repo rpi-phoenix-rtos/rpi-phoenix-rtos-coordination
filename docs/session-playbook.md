@@ -1,6 +1,6 @@
 # Session Playbook
 
-This file defines how future Codex sessions should operate so that long implementation efforts remain coherent even after context compaction or multi-session handoff.
+This file defines how future implementation sessions should operate so that long efforts remain coherent even after context compaction or multi-session handoff.
 
 ## 1. Session Start Checklist
 

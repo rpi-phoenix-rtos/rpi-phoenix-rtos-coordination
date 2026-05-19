@@ -66,7 +66,7 @@ Use a Linux arm64 VM as the primary Phoenix development environment.
 Recommended stack:
 
 1. macOS host for:
-   - Codex runs
+   - agent runs
    - editing and documentation
    - git coordination
    - USB serial access
@@ -274,7 +274,7 @@ Recommended source location:
 
 Why:
 
-- Codex runs directly against the host workspace
+- the agent runs directly against the host workspace
 - documentation and git coordination remain simple
 - the VM can build against the same checked-out sources
 

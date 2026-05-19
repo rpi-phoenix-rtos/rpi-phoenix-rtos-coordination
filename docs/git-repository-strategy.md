@@ -109,14 +109,14 @@ For each upstream repository:
 2. add the official repo as `upstream` if the initial clone uses a fork
 3. use `origin` for the writable fork if one exists
 4. keep the default branch clean
-5. do feature work on `codex/...` branches
+5. do feature work on `agent/...` branches (historical branches on `fork/` may still use the `codex/...` prefix; keep them as-is and use `agent/...` for new work)
 
 Recommended branch naming:
 
-- `codex/rpi4-phase1-dtb`
-- `codex/rpi4-phase2-plo-uart`
-- `codex/rpi4-phase3-kernel-boot`
-- `codex/common-aarch64-virt-qemu`
+- `agent/rpi4-phase1-dtb`
+- `agent/rpi4-phase2-plo-uart`
+- `agent/rpi4-phase3-kernel-boot`
+- `agent/common-aarch64-virt-qemu`
 
 ## 5. Commit Discipline
 
@@ -196,10 +196,29 @@ Good uses:
 
 Always preserve at least one known-good integration state in the manifests.
 
+### Tooling
+
+Two helpers automate this:
+
+- `scripts/snapshot-integration-state.sh <slug> [--note "..."]`
+  Generates `manifests/YYYY-MM-DD-<slug>.md` from the current sibling SHAs.
+  Run this after every validated step, before starting the next one.
+- `scripts/restore-integration-state.sh <manifest.md> [--dry-run] [--force]`
+  Checks out every sibling repository to the SHAs recorded in the manifest.
+  Refuses to run when any sibling has uncommitted changes unless `--force` is
+  passed. Leaves sibling repos in detached-HEAD state — create a working
+  branch in each repo before resuming edits.
+
+Each manifest contains a machine-parseable `integration-state-v1` fenced block
+alongside its human-readable table. Do not hand-edit the block; regenerate
+the manifest instead.
+
+### Procedure
+
 If a new step regresses hardware boot:
 
 1. identify the last known-good integration manifest
-2. restore the affected upstream repos to those commits in separate worktrees or clean checkouts
+2. run `scripts/restore-integration-state.sh <manifest.md>` against it
 3. reproduce the regression from that known-good baseline
 
 Do not use destructive git cleanup commands on unrelated work.

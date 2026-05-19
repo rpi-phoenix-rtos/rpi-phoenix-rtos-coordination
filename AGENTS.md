@@ -33,7 +33,7 @@ Read `skills/README.md` when choosing a local project skill.
 
 ## Local Skills
 
-This repository defines project-local skills under `skills/`. They are not part of Codex's global skill registry, so agents must open them manually when relevant.
+This repository defines project-local skills under `skills/`. They are not part of any global skill registry, so agents must open them manually when relevant.
 
 Use them as follows:
 
@@ -82,6 +82,17 @@ Use them as follows:
   canonical helper is first proven insufficient and the docs are updated in the
   same session.
 - When debugging runtime behavior under QEMU, prefer GDB through the QEMU gdbstub before changing source code to add probes, traces, or debug prints. Only add source-level runtime instrumentation after documenting why the GDB-first path is insufficient for the current question.
+- **Probe parity rule:** every new diagnostic probe added to plo or kernel
+  must be tested in QEMU first (`scripts/qemu-shell-smoke.sh rpi4b`), then on
+  real Pi 4 hardware (`scripts/test-cycle-netboot.sh`), with the two outputs
+  compared in `tracking/current-step.md`. Markers that match across QEMU and
+  hardware describe properties of the code; markers that diverge describe
+  properties of real silicon — and that diff is where the diagnostic signal
+  lives. See `docs/testing-automation.md` for the full workflow. This rule
+  was learned the expensive way: the iter-7/8 syspage corruption looked like
+  a code bug for several sessions, until the QEMU comparison proved the
+  copy logic was correct and isolated the failure to a Cortex-A72 cache
+  coherency anomaly that QEMU's functional model does not reproduce.
 - If a code change is introduced only to probe, diagnose, or verify a hypothesis and that hypothesis turns out false, remove that diagnostic code before the step is closed or committed. Keep only the code changes that are actually required by the confirmed fix or design.
 - Optimize all future code for readability and upstreamability: keep changes small, consistent with nearby Phoenix code, warning-clean, and free of gratuitous formatting churn.
 - Treat warnings and non-fatal errors from tools as first-class signals. Surface

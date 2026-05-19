@@ -1,5 +1,46 @@
 # Testing and Automation
 
+## Rule: every new diagnostic probe must be tested in QEMU first, then on real hardware, with the two outputs compared
+
+This is a hard-won rule. The 2026-04-29 E2 probe session demonstrated
+its value: real Pi 4 hardware showed the syspage copy producing
+randomized garbage at offset 0x310 across boots; the same kernel
+image in QEMU (`scripts/qemu-shell-smoke.sh rpi4b`) produced the
+correct value at the same offset. That QEMU baseline is what proved
+the kernel's copy logic + relOffs + page-table mappings + probe
+itself were all correct, and that the bug had to be a real-hardware
+cache-coherency anomaly.
+
+Workflow for any probe-adding change:
+
+1. Edit the probe in the source.
+2. Build with `RPI4B_DTB_ALLOW_WARNINGS=1
+   scripts/rebuild-rpi4b-fast.sh --scope core` (use a wider scope if
+   you touched build infra).
+3. Run **QEMU first**: `scripts/qemu-shell-smoke.sh rpi4b`. Read the
+   probe markers out of `/tmp/pi4-shell-smoke.log` inside the VM.
+   This step takes about 90 s and never wedges the host bridge. It
+   verifies that the probe code itself is well-formed, that the
+   kernel still boots far enough for the probe to fire, and gives a
+   "what would the right answer be" baseline.
+4. Run **real Pi 4** with the same image:
+   `scripts/test-cycle-netboot.sh --label probe-X`. Read the markers
+   from the captured UART log under `artifacts/rpi4b-uart/`.
+5. **Diff the two**: paste the QEMU and HW marker lines side-by-side
+   in `tracking/current-step.md`. Anything that's the same on both
+   is a property of the code; anything that differs is a property of
+   real silicon. That diff is where the actual diagnostic signal
+   lives.
+
+If the probe wedges the kernel in QEMU, fix the probe before going
+to hardware — saves a 5+ minute physical iteration cycle per
+mistake. If it works in QEMU but wedges on hardware, that itself is
+a data point worth a tracker entry.
+
+QEMU is also the cheap way to validate that a fix candidate doesn't
+*break* logic before risking a hardware run that may need bridge
+recovery.
+
 ## Current Fast QEMU Shell Smoke
 
 - use [scripts/qemu-shell-smoke.sh](/Users/witoldbolt/phoenix-rpi/scripts/qemu-shell-smoke.sh) for the current command-level fast-lane check

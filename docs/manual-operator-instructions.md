@@ -42,7 +42,7 @@ If the user wants the agent to continue unattended for a long period:
 
 - leave the host machine powered on
 - leave the Linux VM available
-- avoid host actions that would interrupt the Codex session, the VM, or mounted workspace paths
+- avoid host actions that would interrupt the agent session, the VM, or mounted workspace paths
 - understand that the unattended run must still stop when a manual step, hardware step, or ambiguous architectural choice is reached
 - if recurring automation is used to resume work, confirm that the workspace path remains valid and writable for the duration of that run
 
