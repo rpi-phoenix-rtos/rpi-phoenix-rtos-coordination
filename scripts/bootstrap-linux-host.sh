@@ -31,8 +31,8 @@ VENV_DIR="$PROJECT_DIR/.venv"
 
 GH_USER="${GH_USER:-houp}"
 
-# Branches each sibling repo should track when newly cloned.
-# Keep in sync with the latest manifest in manifests/.
+# Branches each Pi-4-modified sibling repo should track when newly
+# cloned. Keep in sync with the latest manifest in manifests/.
 declare -A SIBLING_BRANCHES=(
 	[phoenix-rtos-kernel]=agent/rpi4-program-reloc
 	[phoenix-rtos-devices]=codex/upstream-sync-20260516
@@ -41,9 +41,22 @@ declare -A SIBLING_BRANCHES=(
 	[libphoenix]=codex/upstream-sync-20260516
 	[plo]=codex/upstream-sync-20260516
 	[phoenix-rtos-filesystems]=codex/upstream-sync-20260516
-	[phoenix-rtos-corelibs]=master
 	[phoenix-rtos-project]=codex/upstream-sync-20260516
 	[phoenix-rtos-build]=codex/upstream-sync-20260516
+)
+
+# Additional sibling repos that phoenix-rtos-project's .gitmodules
+# requires but where we have no Pi-4-specific commits — clone shallow
+# from upstream phoenix-rtos/. These don't have houp/ forks; if you
+# need to push changes, fork manually first.
+UPSTREAM_ONLY_REPOS=(
+	phoenix-rtos-corelibs
+	phoenix-rtos-ports
+	phoenix-rtos-lwip
+	phoenix-rtos-posixsrv
+	phoenix-rtos-tests
+	phoenix-rtos-hostutils
+	phoenix-rtos-doc
 )
 
 # Raspberry Pi firmware blobs we need from raspberrypi/firmware boot

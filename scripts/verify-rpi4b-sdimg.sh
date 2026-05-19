@@ -2,7 +2,8 @@
 
 set -euo pipefail
 
-image_path="${RPI4B_SDIMG_PATH:-/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img}"
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+image_path="${RPI4B_SDIMG_PATH:-$repo_root/artifacts/rpi4b/rpi4b-sd.img}"
 meta_path="${RPI4B_SDIMG_META:-${image_path}.meta.txt}"
 expected_sha256="${RPI4B_SDIMG_SHA256:-}"
 expected_size="${RPI4B_SDIMG_SIZE:-}"
