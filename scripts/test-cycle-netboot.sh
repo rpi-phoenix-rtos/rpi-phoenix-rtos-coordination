@@ -39,6 +39,18 @@ dnsmasq_log="$state_dir/dnsmasq.log"
 skip_bridge_recovery=0
 uart_baud=""
 
+# HDMI grabber options (Linux host only).
+#  - RPI4B_HDMI_GRABBER:    /dev/videoN of the USB grabber (default video4
+#                           on this lab — video0..3 are the laptop webcam).
+#  - RPI4B_HDMI_INTERVAL:   seconds between periodic grabs while Pi is on
+#                           (default 25s). Set to 0 to disable periodic
+#                           capture; the start/end snapshots still run.
+#  - RPI4B_HDMI_DIR:        where to write *.png (default artifacts/hdmi/).
+hdmi_grabber="${RPI4B_HDMI_GRABBER:-/dev/video4}"
+hdmi_interval="${RPI4B_HDMI_INTERVAL:-25}"
+hdmi_dir="${RPI4B_HDMI_DIR:-$repo/artifacts/hdmi}"
+hdmi_pid=""
+
 usage() {
 	cat <<EOF
 Usage: test-cycle-netboot.sh [options]
@@ -83,12 +95,64 @@ else
 	log_path="$log_dir/rpi4b-uart-$ts-netboot.log"
 fi
 
+# HDMI screenshot helpers. The lab has a USB HDMI grabber that shows the
+# Pi 4's framebuffer output (post `fbcon: ok`). Snapshots taken during the
+# cycle let us see what's on-screen at each moment without needing to be
+# physically present, and they cover the gap between `fbcon: ok` on UART
+# and the post-`fbcon: ok` kernel klog drain to `pl011_thr` (which is slow
+# and serialised behind the pcie/xhci scan, so the HDMI view is often the
+# first signal that something happened).
+hdmi_label_base() {
+	local ts
+	ts="$(date -u +%Y%m%d-%H%M%S)"
+	if [ -n "$label" ]; then
+		printf '%s/%s-%s' "$hdmi_dir" "$ts" "$label"
+	else
+		printf '%s/%s' "$hdmi_dir" "$ts"
+	fi
+}
+
+hdmi_grab_one() {
+	local out="$1"
+	[ -e "$hdmi_grabber" ] || return 1
+	ffmpeg -y -loglevel error -f v4l2 -i "$hdmi_grabber" -frames:v 1 "$out" \
+		</dev/null >/dev/null 2>&1 || return 1
+}
+
+start_hdmi_periodic() {
+	local interval="$1"
+	[ "$interval" -gt 0 ] || return 0
+	[ -e "$hdmi_grabber" ] || { printf 'HDMI: grabber %s not present, skipping periodic snapshots\n' "$hdmi_grabber" >&2; return 0; }
+	mkdir -p "$hdmi_dir"
+	(
+		# Run until killed by the cycle's EXIT trap; quietly absorb errors.
+		while sleep "$interval"; do
+			hdmi_grab_one "$(hdmi_label_base)-tick.png" || true
+		done
+	) &
+	hdmi_pid=$!
+}
+
+stop_hdmi_periodic() {
+	if [ -n "$hdmi_pid" ] && kill -0 "$hdmi_pid" 2>/dev/null; then
+		kill "$hdmi_pid" 2>/dev/null || true
+		wait "$hdmi_pid" 2>/dev/null || true
+	fi
+	hdmi_pid=""
+}
+
 # Always power off on exit — Ctrl-C, error, normal completion, anything.
 # Leaving the Pi powered on between cycles corrupts the next boot attempt
 # (EEPROM/SD state, half-loaded firmware in DRAM, etc.), so this is the
-# single most important invariant of the test cycle.
+# single most important invariant of the test cycle. Grab a final HDMI
+# snapshot first (Pi still on) so we see end-state before power-off.
 ensure_powered_off() {
 	local rc=$?
+	stop_hdmi_periodic
+	if [ -e "$hdmi_grabber" ]; then
+		mkdir -p "$hdmi_dir"
+		hdmi_grab_one "$(hdmi_label_base)-final.png" || true
+	fi
 	"$repo/scripts/pi_power_off.sh" >/dev/null 2>&1 || \
 		printf 'WARNING: pi_power_off.sh failed on exit cleanup\n' >&2
 	return "$rc"
@@ -170,6 +234,16 @@ if ! kill -0 "$capture_pid" 2>/dev/null; then
 	wait "$capture_pid" || true
 	printf 'ERROR: UART capture exited before Pi power-on; aborting test cycle\n' >&2
 	exit 1
+fi
+
+# HDMI snapshots: take a "start" frame right after the cycle decides to
+# power on the Pi (will likely be black/static at this exact instant —
+# but it's a useful baseline that confirms the grabber is functioning),
+# then kick off the periodic loop.
+if [ -e "$hdmi_grabber" ]; then
+	mkdir -p "$hdmi_dir"
+	hdmi_grab_one "$(hdmi_label_base)-start.png" || true
+	start_hdmi_periodic "$hdmi_interval"
 fi
 
 # Power on the Pi and watchdog its DHCP. On timeout, recover the
