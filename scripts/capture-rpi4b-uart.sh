@@ -19,6 +19,18 @@ log_path=""
 output_dir="$default_output_dir"
 tool="${RPI4B_UART_TOOL:-auto}"
 profile="firmware"
+# Per-line timestamping (millisecond precision) is OPT-IN via
+# --timestamp. Default OFF because of pipe-buffering issues that drop
+# post-fbcon: ok content during long lab captures. Implementation:
+#   tio     — native --timestamp; stdout has [HH:MM:SS.mmm] prefixes
+#             (BUFFERING BUG: tio 3.9 stdout block-buffers even with
+#             stdbuf -oL, captures stall after the first few seconds.)
+#   picocom — pipe stdout through ts(1) (moreutils); also block-buffers
+#             past the first kilobyte if the Pi UART is slow.
+# When timestamping is on, the log file contains the timestamp-prefixed
+# stream (tio: directly via stdout redirect; picocom: via ts pipe).
+# When off, picocom writes raw bytes to --logfile (lossless).
+timestamp=0
 
 usage() {
 	cat <<'EOF'
@@ -43,6 +55,11 @@ Options:
       list candidate macOS USB serial devices and exit
   --exit-after MSEC
       stop capture after this many milliseconds using the helper watchdog
+  --timestamp
+      enable per-line millisecond timestamps (currently has pipe-buffer
+      issues that drop slow UART content; default: off)
+  --no-timestamp
+      disable per-line millisecond timestamps (default)
   --help
       show this help
 
@@ -162,15 +179,18 @@ have_tool() {
 select_tool() {
 	case "$tool" in
 	auto)
-			if [ -n "$exit_after" ] && have_tool picocom; then
-				# tio exits immediately when this helper runs without an
-				# interactive stdin. For timed lab captures use picocom, but
-				# keep timing in this wrapper instead of picocom --exit-after.
+			# Default: picocom with --logfile (raw bytes to disk, no
+			# timestamps). This is the lossless path that's been
+			# validated against real Pi 4 boots. Timestamping paths
+			# (tio --timestamp or picocom | ts) currently drop slow
+			# UART output past ~1 KB due to pipe buffering — opt in
+			# only when you accept that tradeoff.
+			if [ "$timestamp" -eq 1 ] && have_tool picocom && have_tool ts; then
+				tool="picocom"
+			elif have_tool picocom; then
 				tool="picocom"
 			elif have_tool tio; then
 				tool="tio"
-			elif have_tool picocom; then
-				tool="picocom"
 			else
 				printf 'missing serial tool: neither tio nor picocom is installed\n' >&2
 				exit 1
@@ -228,6 +248,14 @@ while [ $# -gt 0 ]; do
 		--exit-after)
 			exit_after="$2"
 			shift 2
+			;;
+		--no-timestamp)
+			timestamp=0
+			shift
+			;;
+		--timestamp)
+			timestamp=1
+			shift
 			;;
 		--help|-h)
 			usage
@@ -312,6 +340,11 @@ if [ -n "$exit_after" ]; then
 fi
 
 if [ "$tool" = "tio" ]; then
+	# tio's --timestamp adds [HH:MM:SS.mmm] prefixes to every line on
+	# stdout. We redirect stdout to the log file (NOT --log-file, which
+	# writes raw bytes without timestamps). Setup/disconnect messages
+	# from tio itself appear in the log too, but they're tagged with
+	# timestamps so they're easy to ignore in summaries.
 	cmd=(
 		tio
 		--baudrate "$baud"
@@ -321,10 +354,13 @@ if [ "$tool" = "tio" ]; then
 		--stopbits 1
 		--no-reconnect
 		--color none
-		--log
-		--log-file "$log_path"
-		"$device"
 	)
+	if [ "$timestamp" -eq 1 ]; then
+		cmd+=(--timestamp)
+	else
+		cmd+=(--log --log-file "$log_path")
+	fi
+	cmd+=("$device")
 else
 	# Note: picocom needs to actually configure the TTY to the requested
 	# baud, so do NOT pass --noinit. The macOS USB-UART driver retains
@@ -342,14 +378,23 @@ else
 		--databits 8
 		--stopbits 1
 		--noreset
-		--logfile "$log_path"
 	)
-
+	if [ "$timestamp" -ne 1 ]; then
+		# Without timestamps, let picocom write raw bytes to its own
+		# logfile (no pipeline needed).
+		cmd+=(--logfile "$log_path")
+	fi
 	cmd+=("$device")
 fi
 
 if [ -z "$exit_after" ]; then
-	exec "${cmd[@]}"
+	if [ "$tool" = "tio" ] && [ "$timestamp" -eq 1 ]; then
+		exec stdbuf -oL "${cmd[@]}" > "$log_path" 2>&1
+	elif [ "$tool" = "picocom" ] && [ "$timestamp" -eq 1 ]; then
+		exec stdbuf -oL "${cmd[@]}" 2>&1 | ts '[%Y-%m-%d %H:%M:%.S]' > "$log_path"
+	else
+		exec "${cmd[@]}"
+	fi
 fi
 
 case "$exit_after" in
@@ -367,7 +412,22 @@ stdin_fifo="$stdin_dir/stdin"
 mkfifo "$stdin_fifo"
 exec 3<>"$stdin_fifo"
 
-"${cmd[@]}" <"$stdin_fifo" &
+if [ "$tool" = "tio" ] && [ "$timestamp" -eq 1 ]; then
+	# Redirect tio's timestamp-prefixed stdout to the log file directly.
+	# `stdbuf -oL` forces line-buffered stdout so each UART line lands in
+	# the log file immediately; without it glibc switches stdout to a 4 KB
+	# block buffer when it's redirected to a regular file, and the
+	# captured bytes never reach disk before the watchdog kills tio.
+	stdbuf -oL "${cmd[@]}" <"$stdin_fifo" > "$log_path" 2>&1 &
+elif [ "$tool" = "picocom" ] && [ "$timestamp" -eq 1 ]; then
+	# Pipe picocom's stdout through ts(1) to add per-line timestamps.
+	# Watchdog targets the bash subshell pid, which propagates SIGTERM
+	# to the picocom + ts pipeline. ts is line-buffered through pipes,
+	# so no stdbuf wrapping is needed here.
+	(stdbuf -oL "${cmd[@]}" <"$stdin_fifo" 2>&1 | ts '[%Y-%m-%d %H:%M:%.S]' > "$log_path") &
+else
+	"${cmd[@]}" <"$stdin_fifo" &
+fi
 capture_pid=$!
 
 (
