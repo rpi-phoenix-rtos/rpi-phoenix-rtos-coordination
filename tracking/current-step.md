@@ -1,6 +1,85 @@
 # Current Implementation Step
 
-## Active step (2026-05-16 evening): C-3 I-cache reaches spawn loop entry; boundary at `n`
+## Active step (2026-05-20): Linux dev host bring-up complete; ready to validate full netboot cycle on real Pi 4
+
+The 2026-05-16 → 2026-05-17 evening entries below were superseded
+within hours of being written. The cache work that the 2026-05-16
+22:00 entry parked as "non-deterministic, pivot to non-cache" was
+**resolved the next day** by the armstub L2CTLR + 1319367 fix
+(project `dde9bb5`). All cache-enable scaffolding has been deleted
+and the kernel now boots with `SCTLR_EL1.M | C | I` enabled in a
+single write inside `el1_entry`.
+
+The 2026-05-17 → 2026-05-19 baselines have shipped:
+
+- `manifests/2026-05-17-armstub-1319367-and-L2CTLR-fix.md` — armstub fix
+- `manifests/2026-05-17-pi4-first-boot-to-psh.md` — first stable boot
+- `manifests/2026-05-17-pi4-full-4gb-ram-unlocked.md` — 4 GB unlocked
+- `manifests/2026-05-18-td12-pass4-speed-bundle-psh-prompt-fast.md` —
+  TD-12 speed bundle (fast psh)
+- `manifests/2026-05-19-td12-stable-boot-devfs-fastpath-restored.md` —
+  cold-boot devfs race closed
+- `manifests/2026-05-19-td12-stable-plus-pm-sigint.md` — psh `pm`
+  interruptible (current baseline)
+
+### What's active right now (2026-05-20)
+
+The project moved from a macOS+Lima dev host to a dedicated
+Ubuntu 24.04+ x86-64 host. The build/test/analyze pipeline has been
+ported across commits `8d352d1` … `b845a39` (see `docs/status.md`
+2026-05-20 section for the file-by-file rundown).
+
+This session (2026-05-20) finished the last Linux-portability bits:
+
+- `scripts/pi_power_on.sh` / `pi_power_off.sh` — OS-aware dispatch
+  (Apple Home shortcut on macOS, `meross-plug/plug.py` on Linux).
+- `scripts/netboot-bridge-recover.sh` — Linux branch added.
+- Repo-relative path defaults in helpers (`capture-rpi4b-uart.sh`,
+  `uart-list.sh`, `uart-summary.sh`, `git-siblings.sh`,
+  `snapshot-integration-state.sh`, `restore-integration-state.sh`,
+  `psh-interact.py`).
+
+### Immediate next step
+
+Validate the full netboot cycle on real Pi 4 from this Linux host:
+
+1. **Persistent NIC config**: `enx00e04c68013a` pinned to
+   `10.42.0.1/24` via NetworkManager so dnsmasq has a stable interface
+   to bind to across reboots.
+2. **Smoke test**: `./scripts/netboot-server-up.sh` confirms dnsmasq
+   binds; `./scripts/pi_power_on.sh` cycles the Meross plug; UART
+   shows firmware → plo → kernel → `(psh)%`.
+3. **First full cycle**:
+   `./scripts/rebuild-rpi4b-fast.sh && ./scripts/test-cycle-netboot.sh --label first-linux-cycle`.
+   Expected: `(psh)%` in ~55–60 s; image SHA matches `8b3fc0b049a8`
+   baseline if no source touched.
+
+### After Linux host is validated
+
+The open work items from `docs/linux-host-bootstrap.md` "Where the
+current state stands" become the next steps in priority order:
+
+1. **USB keyboard interactive verification** (xhci HC + usbkbd
+   already in `aarch64a72-generic-rpi4b` build target). Runbook:
+   `docs/interactive-verification-runbook.md`.
+2. **fbcon prompt-indent rendering glitch** — live
+   `pl011_fbcon_putc` instrumentation.
+3. **SMP cores 1-3** (TD-01) — cores wake from spin-table and park
+   in WFE; needs active dispatch.
+4. **TD-cleanup sweep** — flip the actually-resolved TD-NN items in
+   `docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md` (TD-04-hack-2/3,
+   TD-12, TD-16-cache-enable, TD-15 phase 5) to RESOLVED with their
+   commit SHAs. Done partially this session; full sweep pending.
+
+---
+
+## Superseded active step (2026-05-16 evening): C-3 I-cache reaches spawn loop entry; boundary at `n`
+
+**This entire section is stale.** The "non-deterministic SLC" decision
+documented in the 2026-05-16 22:00 sub-entry below was reversed on
+2026-05-17 when the armstub L2CTLR + 1319367 fix landed. Caches are
+now enabled in production; the deferred-enable helpers were deleted
+in kernel commit `dccd0aee`. Kept for historical context only.
 
 After the morning's `43635eca` (`dc civac` to PoC instead of `dc cvau` to
 PoU for kernel text before I-cache enable) reached `…ef` inside

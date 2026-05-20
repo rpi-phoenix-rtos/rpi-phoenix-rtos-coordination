@@ -1,6 +1,127 @@
 # Phoenix-RTOS Raspberry Pi 4 Port Status
 
-## Current Status: 2026-05-16 (upstream-synced kernel; cache C-3 WIP continues)
+## Current Status: 2026-05-20 (Linux dev host operational; Pi 4 boots to fast `(psh)%` with caches enabled and 4 GB DRAM)
+
+The Pi 4 port is now well past initial bring-up. Real hardware boots
+reliably to an interactive `(psh)%` prompt in roughly 55–60 s after
+power-on, with caches enabled end-to-end, both DRAM banks visible to
+the kernel, the HDMI framebuffer console (`fbcon: ok`) up, and the
+shell responsive enough that `Ctrl-C` cleanly exits the `pm` builtin
+(`phoenix-rtos-utils b188911`, 2026-05-19).
+
+Authoritative baseline: `manifests/2026-05-19-td12-stable-plus-pm-sigint.md`
+(image SHA `8b3fc0b049a8`, kernel `c8a81d5e`, plo `6a5dfdd`, project
+`dde9bb5`, devices `3899d38`, utils `b188911`, libphoenix `bd61195`).
+
+### The 2026-05-17 cache breakthrough — what actually unblocked things
+
+The pre-2026-05-17 status entries below describe months of cache-enable
+attempts that all failed at the first cacheable load after `SCTLR.C=1`.
+The root cause turned out to be **two missing pieces in the armstub**,
+not the BCM2711 SLC, not Cortex-A72 prefetch behaviour, and not the
+A72 erratum 1319367 workaround Phoenix already had:
+
+1. **`L2CTLR_EL1 |= 0x22`** — BCM2711 requires the A72 cluster L2 cache
+   RAM to use 3-cycle data latency (bit 0) and 1-cycle setup (bit 5).
+   Without this, the very first cacheable D-side fill after `SCTLR.C=1`
+   returns corrupt data. Every other Pi 4 bare-metal stack (TF-A
+   `plat/rpi`, Circle, the canonical raspberrypi/tools armstub) sets
+   these bits. Phoenix did not.
+2. **Erratum 1319367 register-encoding fix** — Phoenix had been writing
+   `S3_1_C15_C2_2` (`CPUACTLR2_EL1[0]`), which is not the documented A72
+   sysreg encoding. The correct workaround per TF-A and Phoenix's own
+   `docs/plans/a72-errata-sweep.md` is `CPUACTLR_EL1[46]=1`
+   (`DIS_HW_PAGE_AGGREGATION`).
+
+Both landed in project commit `dde9bb5` ("rpi4b/armstub: fix 1319367
+register encoding + add L2CTLR_EL1 timing"). Once that was in place,
+kernel commit `72242a05` ("kernel Phase Z works once armstub is fixed")
+collapsed the entire deferred-cache-enable scaffolding back to a
+single `SCTLR_EL1.M | C | I` write in `el1_entry` (see
+`hal/aarch64/_init.S:609-613`). Dead helpers and ~250 lines of TD-04/
+TD-15/TD-16 markers were stripped over the following days (kernel
+`dccd0aee`, `5a2d3a77`, `6c65616f`; plo `c988e6a`, `568f4cf`,
+`6a5dfdd`).
+
+### Current verified behaviour on real Pi 4
+
+| Subsystem | Status | Evidence |
+|---|---|---|
+| armstub → plo → kernel handoff | working with caches on | manifest `2026-05-17-armstub-1319367-and-L2CTLR-fix` |
+| `SCTLR_EL1.M\|C\|I` | enabled in `el1_entry` (single shot) | `hal/aarch64/_init.S:609-613` |
+| 4 GB DRAM | both banks visible (`pmap: nBanks=2`, 948 MB + 3008 MB = 3956 MB) | manifest `2026-05-17-pi4-full-4gb-ram-unlocked`; plo `84ffbea` reads firmware-patched DTB from PA 0xf8 |
+| 8 user processes | spawn (bind, dummyfs, dummyfs-root, mkdir, pl011-tty, psh, usb, mkrootfs) | `2026-05-19-td12-stable-plus-pm-sigint` |
+| `(psh)%` prompt | reached in ~146-line UART log | `2026-05-18-td12-pass4-speed-bundle-psh-prompt-fast` |
+| `fbcon: ok` (HDMI text) | up | linux-host-bootstrap.md |
+| `pm` interruptible | yes (`Ctrl-C` exits cleanly) | utils `b188911` |
+| PL011 RX latency | ~6 ms (one TX batch per `pl011_thr` iteration) | devices `3899d38` |
+| pcie + xhci | merged into single usb daemon process (eliminates cross-process bridge-state race) | project `fb771c4`, devices `b5cc6b0` (new `bcm2711-pcie.c`, 1027 lines) |
+| devfs fast-path | restored after Pass-4 cleanup regression | kernel `c8a81d5e` |
+
+### Open work (per linux-host-bootstrap.md "Open work items")
+
+- **USB keyboard interactive verification** — code chain fully wired
+  (xhci HC in usb daemon, `libusbdrv-usbkbd` built into the a72
+  target via phoenix-rtos-build `f05f148`); needs a runbook walk with
+  a USB keyboard physically attached on real Pi 4 to confirm
+  `/dev/kbd0` materialises and keypresses reach psh. Runbook:
+  `docs/interactive-verification-runbook.md`.
+- **fbcon prompt-indent rendering glitch** — cosmetic; needs live
+  instrumentation of `pl011_fbcon_putc` to capture the bytes between
+  command output and the next prompt.
+- **SMP** — cores 1-3 wake from the armstub spin-table and park in
+  WFE; not actively dispatched. TD-01 still pending. Stage 3 of the
+  cache/RAM/SMP roadmap.
+
+### Linux dev host bring-up (2026-05-20)
+
+Project is now portable to a dedicated Linux x86-64 development host
+without the macOS+Lima VM. Build/test pipeline was migrated across
+five commits (`8d352d1` … `b845a39`):
+
+- `scripts/rebuild-rpi4b-fast.sh`, `assemble-rpi4b-*`,
+  `export-rpi4b-*`, `verify-rpi4b-sdimg.sh`,
+  `prepare-rpi4b-dtb.sh` — OS-aware dispatch (macOS keeps Lima, Linux
+  runs directly on host).
+- `scripts/netboot-server-{up,down}.sh`, `vm-netboot-server.sh` — Linux
+  path invokes dnsmasq directly on the host's dedicated USB-Ethernet
+  NIC (no socket_vmnet, no Lima bridge).
+- `scripts/capture-rpi4b-uart.sh` — Linux device autodetection prefers
+  persistent `/dev/serial/by-id/*` symlinks.
+- `scripts/build-phoenix-toolchain-linux.sh` — new wrapper that builds
+  the aarch64-phoenix toolchain into `$repo/.toolchain/aarch64-phoenix`.
+- `scripts/bootstrap-linux-host.sh` + `docs/linux-host-bootstrap.md` —
+  the on-ramp for fresh Ubuntu 24.04+ x86-64 hosts.
+
+2026-05-20 follow-ups (this session):
+- `scripts/pi_power_on.sh` / `scripts/pi_power_off.sh` — replaced the
+  macOS-only `shortcuts run "Gniazdko..."` calls with an OS-aware
+  dispatch: Darwin keeps Apple Home, Linux drives the Meross outdoor
+  plug via `/home/houp/meross-plug/plug.py`. Verified end-to-end
+  against the actual plug.
+- `scripts/netboot-bridge-recover.sh` — Linux branch added (no VM to
+  restart; bounces dnsmasq + re-ups the NIC).
+- Repo-relative path defaults in `capture-rpi4b-uart.sh`,
+  `uart-list.sh`, `uart-summary.sh`, `git-siblings.sh`,
+  `snapshot-integration-state.sh`, `restore-integration-state.sh`,
+  `psh-interact.py` — replaced hard-coded `/Users/witoldbolt/…`
+  defaults with `$(dirname $0)/..` so the helpers work from any clone
+  location.
+
+The full netboot test cycle on this Linux host is not yet smoke-tested
+end-to-end against real hardware; that's the next step.
+
+### Doc-vs-code drift was significant
+
+The sections below this one (last updated 2026-05-16) describe a state
+where caches were still parked and USB+keyboard were still blocked at
+xhci capProbe ENODEV. Those entries are kept for history but **do not
+reflect the current code state.** The 2026-05-17 → 2026-05-19
+manifests and the recent sibling commit messages are authoritative.
+
+---
+
+## Previous Status: 2026-05-16 (upstream-synced kernel; cache C-3 WIP continues)
 
 The 2026-05-16 upstream sync is complete across the Phoenix sibling
 repositories. `phoenix-rtos-kernel` was the only repository requiring manual

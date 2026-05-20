@@ -7,6 +7,26 @@ accepted during the Raspberry Pi 4 bring-up. Each item has a stable ID
 Ordering rule: once the Pi 4 boots to a usable state, every item here becomes
 mandatory cleanup. Until then, progress on the boot path takes priority.
 
+## 2026-05-20 Catch-up — many TD items are now resolved
+
+The 2026-05-17 armstub fix (project `dde9bb5` — `L2CTLR_EL1 |= 0x22`
+BCM2711 L2 RAM timing + `CPUACTLR_EL1[46]=1` corrected 1319367 register
+encoding) plus kernel `72242a05` ("Phase Z works once armstub is
+fixed") closed the cache-enable line of work. Subsequent cleanup
+passes (kernel `dccd0aee`, `5a2d3a77`, `6c65616f`; plo `c988e6a`,
+`568f4cf`, `6a5dfdd`) deleted the deferred-cache scaffolding and most
+of the TD-04/TD-15/TD-16 diagnostic markers. The 4 GB DRAM unlock
+(project `42b2db5` + plo `84ffbea`) closed TD-12. The
+`Tracking Checklist` at the bottom of this file has been refreshed to
+match.
+
+The per-item narrative sections below are mostly **pre-resolution**
+prose. They are kept for the historical record (each item documents
+*how* it was diagnosed, which matters when a similar class of bug
+shows up later). New status lines have been added under the
+`Tracking Checklist` heading near the bottom; treat that table as the
+authoritative current state.
+
 ## Conventions
 
 - **IDs are stable.** Never re-number. If an item is merged into another,
@@ -1580,37 +1600,45 @@ implementation step is governed by the roadmap.
 
 | ID | Status | Blocker? |
 | --- | --- | --- |
-| TD-01 | PENDING | multi-core work |
-| TD-02 | PENDING | stability risk |
-| TD-03 | PENDING | virtual-syspage cleanup |
-| TD-04 | RESOLVED at syspage layer; hack-2/3 still active | residual cleanup |
-| TD-05 | PENDING | upstream quality |
-| TD-06 | PENDING | portability |
-| TD-07 | PENDING | QEMU debugging |
-| TD-08 | PENDING | QEMU+gdb debugging |
-| TD-09 | PENDING | netboot loop reliability |
-| TD-10 | PENDING | partly hides TD-13 |
-| TD-11 | PENDING | revisit before TD-01 |
-| TD-12 | PENDING | DRAM utilization |
-| TD-13 | RESOLVED at runtime layer (mutex/atomic wall fixed) | residual probe-strip + spawn-cap cleanup |
-| TD-14 | RESOLVED 2026-05-02 | first Pi 4 UART `(psh)%` prompt reached; cleanup remains |
+| TD-01 | PENDING | SMP cores 1-3 park in WFE (TD-01 still open) |
+| TD-02 | RESOLVED by Stage 1 unified pre-MMU sweep | kernel `_init.S` post-armstub-fix shape |
+| TD-03 | RESOLVED by Stage 1 pre-MMU syspage copy | kernel `_init.S` |
+| TD-04 | RESOLVED at syspage layer 2026-04-29; hacks-2/3 RESOLVED 2026-05-17 in kernel `6c65616f` | cleanup complete |
+| TD-04-hack-1 | RESOLVED 2026-04-30 (kernel `0fdf20ca`) | natural prog-reloc loop runs |
+| TD-04-hack-2 | RESOLVED 2026-05-17 (kernel `6c65616f`) | `_hal_init()` debug markers stripped |
+| TD-04-hack-3 | RESOLVED 2026-05-17 (kernel `6c65616f`) | `dtbEnd = dtb->end` restored |
+| TD-05 | LARGELY RESOLVED 2026-05-17→18 (kernel `5a2d3a77`, `334638ee`, `dccd0aee`; plo `c988e6a`, `568f4cf`, `6a5dfdd`) | ~250 lines of debug markers stripped; residual diagnostic prints can be removed case-by-case |
+| TD-06 | PENDING | DTB robustness/portability (partial: plo reads firmware DTB ptr from PA 0xf8) |
+| TD-07 | PENDING | QEMU 11.x installed on Linux host (`/opt/qemu-11`); Lima VM QEMU still old |
+| TD-08 | PENDING | QEMU+gdb debugging not exercised since cache resolved |
+| TD-09 | N/A on Linux host (no socket_vmnet bridge); macOS-only concern |
+| TD-10 | PENDING | SError still masked; needs proper handler |
+| TD-11 | PENDING | revisit alongside TD-01 (SMP) |
+| TD-12 | RESOLVED 2026-05-17 (project `42b2db5` + plo `84ffbea`; manifest `2026-05-17-pi4-full-4gb-ram-unlocked`) | both 4 GB banks visible (`pmap: nBanks=2`, 948 MB + 3008 MB) |
+| TD-13 | RESOLVED at runtime layer | residual cleanup also done in kernel `334638ee` (Pass-4 debug strip) |
+| TD-13-spawn-cap | unknown status | re-verify against current `main.c` |
+| TD-14 | RESOLVED 2026-05-02; refined further by libphoenix `bd61195` + kernel `c8a81d5e` | devfs fast-path predicate restored after Pass-4 regression |
 | TD-14-stat-skip | RESOLVED 2026-05-02 | open() stat skip removed |
-| TD-14-deferred-fbcon | PENDING | pl011-tty defers fbcon to main thread |
-| TD-14-tty0-nonfatal | PENDING | pl011_createTty0 failure is non-fatal |
-| TD-14-pl011-retry | PENDING | createTty0 lookup-devfs retries 50 → 30 |
-| TD-14-psh-retry | PENDING | PSH_TTYOPEN_RETRIES 20 → 200 |
-| TD-14-ttyopen-nonfatal | PENDING | psh_run continues if /dev/console open fails |
-| TD-14-devfs-direct | PENDING | kernel direct OID for `devfs` |
-| TD-14-console-alias | PENDING | PL011 direct `/dev/console` alias and stat support |
-| TD-14-psh-ttyopen-errno | PENDING | psh ttyopen errno diagnostic |
-| TD-14-probe-strip | RESOLVED 2026-05-02 | TD-13/TD-14 debug() probes removed |
-| TD-14-console-open-fastpath | PENDING | narrow `/dev/console` open fast path |
-| TD-14-tiocspgrp-pgrp | PENDING | TIOCSPGRP uses pgrp value directly |
-| TD-14-psh-debug-probes | PENDING | psh early probes use debug syscall |
-| TD-15 | PENDING | **VC6 memory hygiene + 4 GiB unlock; phased plan** |
-| TD-15-mboxprobe | PENDING (phase 1 evidence captured: NO drift) | mailbox-buffer drift probe |
-| TD-16 | OPEN INVESTIGATION | **Pi 4 ~1000× slowdown — timer-driven; suspect CNTFRQ ≠ CNTPCT** |
-| TD-16-1 | LANDED 2026-05-03 | direct CNTFRQ + CNTPCT measurement probe |
+| TD-14-deferred-fbcon | likely RESOLVED via TD-12 speed bundle | re-verify in devices `3899d38` neighborhood |
+| TD-14-tty0-nonfatal | LIKELY STILL ACTIVE (acceptable risk per TD-12 baseline) | re-verify |
+| TD-14-pl011-retry | superseded by TD-12 retry tuning (utils `18aed2a`: 50 × 10 ms) | n/a |
+| TD-14-psh-retry | superseded by TD-12 retry tuning (utils `18aed2a`: 50 × 10 ms) | n/a |
+| TD-14-ttyopen-nonfatal | LIKELY STILL ACTIVE | re-verify against utils `18aed2a` |
+| TD-14-devfs-direct | STILL ACTIVE (fast-path predicate); kernel `c8a81d5e` restored it | works as designed |
+| TD-14-console-alias | LIKELY STILL ACTIVE | re-verify |
+| TD-14-psh-ttyopen-errno | STILL ACTIVE diagnostic | low priority cleanup |
+| TD-14-probe-strip | RESOLVED 2026-05-02 + Pass-4 cleanup 2026-05-18 (kernel `334638ee`, libphoenix `bd61195`, utils `18aed2a`) | all paths stripped |
+| TD-14-console-open-fastpath | STILL ACTIVE | kept post-bringup as designed (strdup short-circuit for `/dev/console`) |
+| TD-14-tiocspgrp-pgrp | STILL ACTIVE (correct semantics) | upstreamable as-is |
+| TD-14-psh-debug-probes | RESOLVED in utils `18aed2a` (Pass-4 strip) | n/a |
+| TD-15 | PARTIALLY RESOLVED | phase 5 (4 GB unlock) done via TD-12 closure; phases 2–4 (VC6 quiesce, DTB-driven memory, dma-ranges) still pending |
+| TD-15-mboxprobe | RESOLVED (no drift confirmed; probe stripped in plo `c988e6a`) | |
+| TD-16 | RESOLVED 2026-05-17 by cache enable (project `dde9bb5` + kernel `72242a05`) | timer math was correct; root cause was caches-off, fixed by armstub L2CTLR + 1319367 re-encoding |
+| TD-16-1 | RESOLVED (probe served its purpose, stripped in plo `c988e6a` + kernel `5a2d3a77`) | |
+| TD-16-cache-enable | RESOLVED 2026-05-17 (project `dde9bb5` armstub L2CTLR + 1319367 encoding fix; kernel `72242a05` single-shot M\|C\|I in `el1_entry`; helper scaffolding deleted in kernel `dccd0aee`) | `SCTLR_EL1.M\|C\|I` enabled inline in `el1_entry` |
+| TD-17 | re-verify | post-armstub-fix may have changed cache-hygiene needs |
+| TD-18 | re-verify | post-armstub-fix may have changed zone allocator behaviour |
+| TD-19 | LIKELY STILL APPLIES (TLBI hardening is generally correct) | upstreamable as-is |
 
 When resolving an item:
 
