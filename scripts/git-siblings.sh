@@ -5,8 +5,8 @@
 # script is statically allowlistable.
 #
 # Sibling roots:
-#   coordination: /Users/witoldbolt/phoenix-rpi
-#   sources/*:    auto-discovered from /Users/witoldbolt/phoenix-rpi/sources
+#   coordination: the repo containing this script (override with $PHOENIX_COORD)
+#   sources/*:    auto-discovered from <coord>/sources/
 #
 # Cross-repo iteration subcommands:
 #   ./scripts/git-siblings.sh status               # one line per repo: status + ahead/behind
@@ -51,7 +51,8 @@
 set -u
 set -o pipefail
 
-COORD="${PHOENIX_COORD:-/Users/witoldbolt/phoenix-rpi}"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+COORD="${PHOENIX_COORD:-$(cd "${script_dir}/.." && pwd)}"
 SRC_ROOT="$COORD/sources"
 
 usage() {

@@ -2,8 +2,12 @@
 
 set -euo pipefail
 
-default_image_path="/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img"
-default_output_dir="/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b-uart"
+# Repo-relative defaults so the helper works from any host (macOS+Lima or
+# Linux dev box). Override via env or --log / --output-dir.
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "${script_dir}/.." && pwd)"
+default_image_path="${RPI4B_SDIMG_PATH:-${repo_root}/artifacts/rpi4b/rpi4b-sd.img}"
+default_output_dir="${RPI4B_UART_DIR:-${repo_root}/artifacts/rpi4b-uart}"
 
 baud="115200"
 baud_set=0

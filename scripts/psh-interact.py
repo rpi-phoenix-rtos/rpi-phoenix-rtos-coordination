@@ -24,10 +24,16 @@ import argparse
 import datetime
 import glob
 import os
+import platform
 import sys
 import time
 
 import serial
+
+# Resolve the coordination repo root from the script location so the log
+# default works on any host (macOS+Lima or Linux dev box).
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_REPO_ROOT = os.path.dirname(_SCRIPT_DIR)
 
 DEFAULT_BAUD = 115200  # matches test-cycle-netboot.sh firmware profile;
 # plo + kernel speak this rate end-to-end despite the firmware
@@ -41,9 +47,19 @@ DEFAULT_COMMANDS = ["help", "ps", "df", "meminfo"]
 
 
 def autodetect_device():
-    candidates = sorted(glob.glob("/dev/cu.usbserial-*"))
+    host_os = platform.system()
+    if host_os == "Darwin":
+        candidates = sorted(glob.glob("/dev/cu.usbserial-*"))
+        if not candidates:
+            sys.exit("no /dev/cu.usbserial-* device found")
+        return candidates[0]
+    # Linux: prefer persistent /dev/serial/by-id/ symlink (survives replug).
+    by_id = sorted(glob.glob("/dev/serial/by-id/*"))
+    if by_id:
+        return by_id[0]
+    candidates = sorted(glob.glob("/dev/ttyUSB*") + glob.glob("/dev/ttyACM*"))
     if not candidates:
-        sys.exit("no /dev/cu.usbserial-* device found")
+        sys.exit("no /dev/ttyUSB* or /dev/ttyACM* device found")
     return candidates[0]
 
 
@@ -84,9 +100,12 @@ def main():
 
     device = args.device or autodetect_device()
     timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    log_path = args.log or (
-        f"/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b-uart/"
-        f"rpi4b-uart-{timestamp}-psh-interact.log"
+    log_path = args.log or os.path.join(
+        os.environ.get(
+            "PHOENIX_UART_DIR",
+            os.path.join(_REPO_ROOT, "artifacts", "rpi4b-uart"),
+        ),
+        f"rpi4b-uart-{timestamp}-psh-interact.log",
     )
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
 

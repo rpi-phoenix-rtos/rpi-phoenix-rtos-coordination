@@ -30,7 +30,8 @@ while [ $# -gt 0 ]; do
 	esac
 done
 
-coord_root="${PHOENIX_COORD_ROOT:-/Users/witoldbolt/phoenix-rpi}"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+coord_root="${PHOENIX_COORD_ROOT:-$(cd "${script_dir}/.." && pwd)}"
 sources_dir="${PHOENIX_SOURCES_DIR:-${coord_root}/sources}"
 [ -d "$sources_dir" ] || die "sources directory not found: $sources_dir"
 

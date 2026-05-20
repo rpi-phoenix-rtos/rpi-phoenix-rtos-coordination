@@ -15,7 +15,9 @@
 set -u
 set -o pipefail
 
-UART_DIR="${PHOENIX_UART_DIR:-/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b-uart}"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "${script_dir}/.." && pwd)"
+UART_DIR="${PHOENIX_UART_DIR:-${repo_root}/artifacts/rpi4b-uart}"
 
 mode="basename"
 if [ $# -ge 1 ] && [ "$1" = "--paths" ]; then

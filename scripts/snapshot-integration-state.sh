@@ -33,7 +33,7 @@ repo_root="$(cd "${script_dir}/.." && pwd)"
 # Resolve the coordination repo (the worktree may be under .claude/worktrees/)
 # Manifests must always land in the non-worktree coordination tree so they are
 # visible to every active session.
-coord_root="${PHOENIX_COORD_ROOT:-/Users/witoldbolt/phoenix-rpi}"
+coord_root="${PHOENIX_COORD_ROOT:-${repo_root}}"
 sources_dir="${PHOENIX_SOURCES_DIR:-${coord_root}/sources}"
 manifests_dir="${coord_root}/manifests"
 
