@@ -20,22 +20,27 @@ hardening the single-core path. Today's net result:
 | test cycle | default capture-secs 90 → 360 s so we no longer false-negative on slow boots | coord `6b3c390` |
 | test cycle | Linux portability (`stat -c %s`) and EEPROM operator workflow doc | coord `d6588a7`, `56b5a8d` |
 
-### SMP status
+### SMP status — Phase A on, NUM_CPUS=1 still
 
-SMP Phase A is **reverted** behind the `PLO_SMP_ENABLE` compile-time
-gate. Previously, with the gate on, secondaries reached
-`_other_core_trap` end-to-end but re-entered it ~100× per boot through
-an unidentified exception path. The earlier hypotheses were:
+`PLO_SMP_ENABLE=1` (project `cf9fbbc`) is now the default for the
+rpi4b build. Cores 1-3 wake via the armstub spin-table two-stage
+release, branch into kernel `_start`, drop through MPIDR check to
+`_other_core_trap`, park on `nCpusStarted` (incremented by primary
+in `_hal_cpuInit`), then run their per-CPU `_set_up_vbar_and_stacks`,
+`_hal_interruptsInitPerCPU`, `_hal_cpuInit` (atomic-incrementing
+`nCpusStarted`) before entering the bare `wfi/b 1b` loop in
+`_other_core_virtual`.
 
-1. Async abort / SError landing in `_early_vector_table` and recovering
-   to `el1_entry`.
-2. VBAR_EL1 not stable across cores (secondaries skip
-   `_set_up_vbar_and_stacks` until late).
-3. plo's `secondary_smoke_entry` being re-invoked via a spurious SEV.
+The previously-observed re-entry pathology (secondaries re-running
+`_other_core_trap` ~100×/boot, visible via per-marker UART prints
+that were since stripped) is silent on UART now. Boot stability
+across 3 cycles holds at 3/3 (`(psh)%` reached) with secondaries
+quiescent.
 
-None of these have been confirmed. Re-enabling Phase A is parked until
-we either reproduce the loop in QEMU gdbstub or add a non-disruptive
-per-core entry counter to localise which path is firing.
+NUM_CPUS is still 1 in `hal/aarch64/generic/config.h`. Phase C
+(scheduler dispatching threads to secondaries) is the next step
+— bumping NUM_CPUS alone is not safe yet because the scheduler
+would queue work on CPUs that are stuck in `wfi/b 1b`.
 
 ### Other open gaps
 
@@ -52,19 +57,31 @@ per-core entry counter to localise which path is firing.
 
 ### Next concrete steps (priority order)
 
-1. **USB: fix `bcm2711NotifyXhciReset` -ENOMEM** so VL805 firmware
-   actually reloads. The `MAP_CONTIGUOUS | MAP_UNCACHED | MAP_ANONYMOUS`
-   mmap for the mailbox message buffer is failing with -12, which
-   means the firmware reset never happens, the controller stays in
-   whatever state Pi 4 boot firmware left it, and xhci_reset times
-   out (rc=-110). Probably needs either a smaller request or an
-   alternate page-allocator entry.
-2. EEPROM operator step (manual): flash
+1. **USB: fix kernel pmap aliasing**. After today's bisect, USB-HCD
+   ops->init -19 is no longer in the PCIe driver — the BCM2711
+   bridge state is intact end-to-end (MISC_CPU_2_PCIE_MEM_WIN0_LO
+   reads back as 0xf8000000). The remaining 0xdead poison xhci sees
+   on its outbound BAR0 reads is a CPU-side TLB/pmap state bug in
+   `sources/phoenix-rtos-kernel/hal/aarch64/pmap.c` triggered by
+   multiple MAP_DEVICE|MAP_PHYSMEM mappings of the same PA. See
+   `docs/notes/2026-05-21-pcie-bridge-ageing-codex.md`.
+
+2. **SMP Phase C → run primary scheduler on a second CPU.**
+   Secondaries already do per-CPU VBAR + GIC + cpuInit in
+   `_other_core_virtual` (Phase B-equivalent) and park in WFI.
+   Next step is to bump `NUM_CPUS=4` and teach the scheduler to
+   dispatch threads to them. This requires:
+   - confirming spinlock.c's NUM_CPUS>1 path works on Pi 4 GICv2
+   - giving secondaries a real entry into the kernel scheduler
+     (currently they `wfi`/`b 1b` forever — they need to call into
+     `proc_threadStart`-like entry that picks up the next runnable
+     thread for their CPU id)
+   - making sure GIC PPIs (timer, IPI) are armed per-CPU
+
+3. **EEPROM operator step (manual)**: flash
    `artifacts/eeprom-netboot/eeprom-prep-sd.img` to recover the ~30 s
    firmware probe time per cycle. Already documented in §9.1 of
    `docs/manual-operator-instructions.md`.
-3. SMP loop diagnosis: prefer QEMU gdbstub before adding marker churn
-   on real hardware.
 
 ## Other near-term work
 
