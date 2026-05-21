@@ -1,60 +1,67 @@
 # Phoenix-RTOS Raspberry Pi 4 Port Status
 
-## Current Status: 2026-05-21 (SMP Phase A: secondaries online; primary still boots to `(psh)%`)
+## Current Status: 2026-05-21 (single-core boot stable 5/5; SMP Phase A still parked behind PLO_SMP_ENABLE gate)
 
-Stage 3 (SMP) bring-up started: cores 1-3 now wake from the armstub
-spin-table via a two-step handoff (plo writes secondary_smoke_entry →
-secondary_handoff polls for kernel entry → kernel `_other_core_trap`
-park), and reach the kernel's bare DAIF-masked WFI loop. Primary boot
-still completes through to `(psh)%` interactive prompt in the standard
-~3.5 min cycle window — secondary activity is benign but verbose.
+Best-ever back-to-back stability for the Pi 4 port: **5 of 5 netboot
+cycles** reach the `(psh)%` interactive prompt within a 360 s capture
+window. Up from a 4/5 best-case baseline earlier today and 2/3 typical
+before this morning's optimization round.
 
 Authoritative baseline:
-`manifests/2026-05-21-smp-phase-a-psh-prompt-reached.md` (image SHA
-`f8e84b95513bf505025621c82c147e4a98754da5df08e1d257b4ceb497d1647b`,
-kernel `e2c95ad6`, plo `f7af1d9`).
+`manifests/2026-05-21-stability-5of5.md` (image SHA
+`6f58b5548a4228b4973316ec316f5e6b9e94c01eef6fac7c72d95107c51799dc`,
+kernel `2690736b`, plo `0ee44df`, devices `486b0a5`).
 
-### Markers visible on UART for this build
+### What changed today
 
-| Marker | Source | Meaning |
-|---|---|---|
-| `hal: smp smoke woke cores 1-3` | plo `hal_smpBringupSecondaries` | plo's first SEV woke cores 1-3 from armstub WFE |
-| `cN: a` (per core) | plo `secondary_smoke_entry` | core ID confirmation from each secondary |
-| `H` | plo `secondary_handoff` | secondary entered the re-armed spin-table polling loop |
-| `hal: smp release-2 → kernel entry` | plo `hal_cpuJump` | plo wrote kernel `_start` PA into spin_cpu1/2/3 |
-| `B` + hex digit | plo `secondary_handoff` exit | secondary saw new spin value, about to `br` to kernel |
-| `t` | kernel `_other_core_trap` | secondary reached the kernel and tripped MPIDR check |
-| `v` | kernel `_other_core_trap` exit | secondary observed `nCpusStarted == 1` and proceeded to virtual |
-| `q` | kernel `_other_core_virtual` WFI return | rare spurious WFI wake (4 per boot — not the loop source) |
+- **PCIe link / VL805 firmware settle now polled** (devices `5a833e0`).
+  Fixed 100 ms PERST + 200 ms VL805 sleeps replaced with bounded
+  polling (2 ms / 5 ms granularity). Typical wins: 70 ms + 195 ms.
+- **xhci register-bit waits tightened** (devices `905b4f8`).
+  `xhci_waitOpBits` and `xhci_portWaitBits` now do a 1 ms tight 50 µs
+  burst before falling back to the original 1 ms cadence. Worst-case
+  timeouts unchanged.
+- **pl011-tty createTty0 retry budget 30 → 5** (devices `486b0a5`).
+  /dev/tty0 has been non-fatal since TD-14, so when devfs lookup is
+  slow we are better off giving up quickly and letting create_dev()
+  handle /dev/console.
+- **test-cycle-netboot default capture-secs 90 → 360 s** (coord
+  `6b3c390`). Empirically the post-fbcon (psh)% prompt can land 60–300 s
+  after `fbcon: ok` depending on TD-14 IPC variance; 360 s gives a
+  comfortable margin.
+- **EEPROM-prep one-shot SD image documented** (coord `56b5a8d`).
+  `scripts/prepare-pi-eeprom-netboot.sh` regenerates the image and the
+  operator can apply the ~30 s firmware-time win on next physical
+  access — see manual-operator-instructions §9.1.
 
-### Linux dev host bring-up still: yes (no regression)
+### Linux dev host bring-up: still nominal
 
 Pi 4 boots end-to-end on this Linux box: build → power-cycle → UART
-capture (picocom --logfile path) → analyze. EEPROM netboot prep image
-generated (256 MB FAT32 ready to flash to SD to make the Pi
-network-first; saves ~30 s per cycle). Test cycle takes HDMI snapshots
-every 25 s during the cycle and a final frame before pi_power_off,
-useful since post-`fbcon: ok` activity drains through pl011-tty's
-fbcon mirror that doesn't always reach UART within the capture window.
+capture (picocom --logfile path) → analyze. Test cycle takes HDMI
+snapshots every 25 s during the cycle and a final frame before
+pi_power_off, useful when post-`fbcon: ok` UART output is interleaved.
 
 ### Open work
 
-- **SMP Phase B (in flight)**: secondary cores currently re-enter
-  `_other_core_trap` ~100 times during a single boot (94 × 'H', 328 ×
-  't'). Root cause not yet identified — bare WFI loop in
-  `_other_core_virtual` proves they're not escaping via WFI return,
-  yet they reach `el1_entry` repeatedly. Suspect a fault path
-  (DAIF.A unmasked somewhere? VBAR not properly re-set per-core?)
-  that returns secondaries to the kernel entry via some exception.
-  Tracking in `tracking/current-step.md`.
-- **PCIe/USB boot-time optimization**: the post-`fbcon: ok` window
-  (pcie scan + xhci HC bringup) still takes ~3 minutes of wall time.
-  Phase D (full 4-core scheduling) is the lever that should compress
-  this most.
-- **UART timestamping**: tio 3.9 with `--timestamp` block-buffers
-  even with `stdbuf -oL`; picocom + ts(1) drops slow lines past the
-  first kilobyte. Infrastructure in place (`--timestamp` flag) but
-  default is off until the buffering issue is resolved.
+- **SMP Phase A still gated off** (PLO_SMP_ENABLE undefined). Phase A
+  was previously known-working end-to-end (cores 1-3 woke and reached
+  kernel `_other_core_trap`) but produced ~100 spurious re-entries per
+  boot via an unidentified exception path; reverted pending root-cause
+  investigation. The plo `secondary_smoke_entry → secondary_park`
+  smoke is still on by default.
+- **USB-HCD `ops->init` failing** with `oerr=-2` on real Pi 4 BCM2711
+  PCIe path. Boot survives (USB isn't on the critical path to psh) but
+  no USB devices are usable. Root cause unknown; PCIe init code now
+  polls properly but xhci itself returns ENOENT somewhere in init.
+- **TD-14 IPC slowness**: lookup("devfs") round trips are bimodal
+  (~11 ms steady state, but rare outliers up to 43 s documented in
+  TEMPORARY-FIXES). Drives the post-fbcon `(psh)%` latency variance.
+  Today's `pl011-tty createTty0` 30 → 5 retry tightening narrows the
+  damage; a real fix would need kernel proc_send investigation.
+- **UART timestamping**: tio 3.9 with `--timestamp` block-buffers even
+  with `stdbuf -oL`; picocom + ts(1) drops slow lines past the first
+  kilobyte. Infrastructure in place (`--timestamp` flag) but default is
+  off until the buffering issue is resolved.
 
 ## Previous Status: 2026-05-20 (Linux dev host operational; Pi 4 boots to fast `(psh)%` with caches enabled and 4 GB DRAM)
 
