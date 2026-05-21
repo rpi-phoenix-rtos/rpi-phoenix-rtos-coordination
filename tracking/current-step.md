@@ -1,62 +1,61 @@
 # Current Implementation Step
 
-## Active step (2026-05-21): SMP Phase B — diagnose and fix the secondary-loop
+## Active step (2026-05-21): single-core boot at 5/5 stability — next, address remaining functional gaps
 
-SMP Phase A is validated end-to-end on real Pi 4: secondary cores
-wake from the armstub spin-table via plo's two-step handoff, reach
-the kernel's `_other_core_trap`, exit its poll, and park in a bare
-WFI loop. Primary boot completes through to `(psh)%`. See manifest
-`2026-05-21-smp-phase-a-psh-prompt-reached.md`.
+The 2026-05-21 morning session shifted from chasing the SMP loop to
+hardening the single-core path. Today's net result:
 
-### The Phase B puzzle
+- 5 of 5 back-to-back netboot cycles reach `(psh)%` at 360 s capture.
+- Authoritative baseline: `manifests/2026-05-21-stability-5of5.md`.
 
-UART markers on a 360s capture from a healthy boot:
+### What landed today
 
-| Marker | Count | Expected |
+| Area | Change | Commit |
 |---|---|---|
-| H (secondary_handoff entry) | 94 | 3 (one per secondary) |
-| B (secondary_handoff poll exit) | 47 | 3 |
-| t (_other_core_trap entry) | 328 | 3 |
-| v (_other_core_trap poll exit) | 64 | 3 |
-| q (WFI returned in _other_core_virtual) | 4 | 0 |
+| PCIe init | PERST settle + VL805 firmware wait now polled, not slept | devices `5a833e0` |
+| xhci waits | `xhci_waitOpBits` + `xhci_portWaitBits` get a 1 ms tight 50 µs burst before the 1 ms slow path | devices `905b4f8` |
+| pl011-tty  | `createTty0` lookup retry budget 30 → 5 (`/dev/tty0` is non-fatal) | devices `486b0a5` |
+| test cycle | default capture-secs 90 → 360 s so we no longer false-negative on slow boots | coord `6b3c390` |
+| test cycle | Linux portability (`stat -c %s`) and EEPROM operator workflow doc | coord `d6588a7`, `56b5a8d` |
 
-So secondaries are looping through plo's `secondary_handoff` and the
-kernel's `_other_core_trap` ~30× per core. The bare WFI loop in
-`_other_core_virtual` is NOT the escape — only 4 spontaneous WFI
-returns in the entire boot, far fewer than the 328 trap entries.
-Something is sending secondaries back to plo's `secondary_smoke_entry`
-or directly to the kernel's `_start` from somewhere other than the
-expected single wake-up path.
+### SMP status
 
-### Hypotheses to test in the next session
+SMP Phase A is **reverted** behind the `PLO_SMP_ENABLE` compile-time
+gate. Previously, with the gate on, secondaries reached
+`_other_core_trap` end-to-end but re-entered it ~100× per boot through
+an unidentified exception path. The earlier hypotheses were:
 
-1. **Async abort / SError**: even with DAIF.A masked at
-   `_other_core_virtual` entry, an exception delivered during the
-   transition from `_other_core_trap` → `_other_core_virtual` (via
-   `ldr x0, =_other_core_virtual; br x0`) might land in the kernel's
-   `_early_vector_table` and recover to `el1_entry`. Verify by adding
-   a per-vector marker.
-2. **VBAR_EL1 not stable across cores**: secondaries inherit the
-   `_early_vector_table` VA from primary's `_set_up_vbar_and_stacks`,
-   but secondaries currently skip `_set_up_vbar_and_stacks` (it's in
-   `_other_core_virtual` which the bare-WFI variant skipped). Their
-   VBAR_EL1 might be whatever was set when they last re-ran
-   `el1_entry`'s `adr x0, _early_vector_table; msr vbar_el1, x0` —
-   should be valid. Verify by reading VBAR_EL1 on entry.
-3. **plo's secondary_smoke_entry is being re-invoked**: somehow the
-   spin_cpuN slot is being re-written with the smoke entry PA after
-   it was cleared, and a spurious SEV wakes the cores back to it.
-   Check by adding a fixed-snapshot marker and seeing if the
-   snapshot's value changes between iterations.
+1. Async abort / SError landing in `_early_vector_table` and recovering
+   to `el1_entry`.
+2. VBAR_EL1 not stable across cores (secondaries skip
+   `_set_up_vbar_and_stacks` until late).
+3. plo's `secondary_smoke_entry` being re-invoked via a spurious SEV.
 
-Plan for next session:
-1. Add MPIDR-stamped diagnostic at `el1_entry` start to confirm
-   entry counts per core.
-2. Try the `_set_up_vbar_and_stacks` + `_hal_interruptsInitPerCPU` +
-   `_hal_cpuInit` path in `_other_core_virtual` again, now that we
-   know secondaries actually reach there at least once.
-3. Once the loop is closed, bump NUM_CPUS to 2, then 4, and let the
-   scheduler dispatch threads to other cores.
+None of these have been confirmed. Re-enabling Phase A is parked until
+we either reproduce the loop in QEMU gdbstub or add a non-disruptive
+per-core entry counter to localise which path is firing.
+
+### Other open gaps
+
+- **USB-HCD `ops->init` fails** with `oerr=-2` (-ENOENT) on real Pi 4
+  BCM2711. Boot survives because USB isn't on the critical path to
+  psh, but no USB devices are usable. Worth chasing as the next big
+  functional win once SMP-loop diagnosis is unblocked.
+- **TD-14 IPC slowness**: lookup("devfs") round trips are bimodal
+  (~11 ms typical, rare outliers up to 43 s). Today's fix masks the
+  symptom in `pl011_createTty0`; the real fix needs kernel-side
+  `proc_send` investigation.
+
+### Next concrete steps (priority order)
+
+1. Triage USB-HCD init -2: add return-code tracing at each step of
+   `xhci_init` to identify which step returns ENOENT.
+2. EEPROM operator step (manual): flash
+   `artifacts/eeprom-netboot/eeprom-prep-sd.img` to recover the ~30 s
+   firmware probe time per cycle. Already documented in §9.1 of
+   `docs/manual-operator-instructions.md`.
+3. SMP loop diagnosis: prefer QEMU gdbstub before adding marker churn
+   on real hardware.
 
 ## Other near-term work
 
