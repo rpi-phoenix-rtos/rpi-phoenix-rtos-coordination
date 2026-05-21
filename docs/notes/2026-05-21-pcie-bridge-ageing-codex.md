@@ -63,3 +63,45 @@ read back `MISC_CPU_2_PCIE_MEM_WIN0_LO/HI` (offsets 0x400c/0x4010 in
 the bridge config window) and log them. That tells us whether the
 bridge state is intact (→ CPU-side pmap bug) or actually disturbed
 (→ need to redo bridge programming after each disturb).
+
+## Diag #2 result (2026-05-21 17:05)
+
+Implemented + ran:
+
+    pcie: pre-reprog  WIN0_LO=0xf8000000 WIN0_HI=0x00000000
+    pcie: post-reprog WIN0_LO=0xf8000000 WIN0_HI=0x00000000
+
+The bridge **still holds** the value we programmed (`0xf8000000`)
+after the mailbox notify and after re-running
+`bcm2711SetOutboundWindow0`. That is exactly the signature Codex
+predicted for mechanism #1: bridge state is intact, so the 0xdead
+poison must be on the CPU/MMU/pmap side, not in the PCIe bridge.
+
+Side effect: in the run with the readback debug active, USB-HCD's
+failure mode shifted from rc=-19 (0xdead poison) to rc=-110
+(xhci_reset timeout). That is consistent with the readback reads
+acting as a TLB/pmap warm-up between scan-callback exit and
+xhci_capProbe — the extra reads of `bcm->base` keep some MMU state
+hot enough that the outbound window mapping is reachable. Without
+the readback, rc=-19 returns in most cycles.
+
+In a 3-cycle reproducibility test the readback workaround was
+**unstable** (2/3 cycles → `(psh)%`, mixed rc=-19/-110), so it
+cannot be adopted as a real fix. The real fix has to be in the
+kernel pmap: when a `MAP_DEVICE | MAP_PHYSMEM` mapping is created
+for an MMIO PA that already has a different live mapping, Phoenix
+must preserve the existing Device-nGnRE attributes and not
+invalidate the TLB entry that other userspace code depends on.
+
+## Conclusion for the current iteration
+
+- The PCIe path is now mostly correct: BCM2711 outbound window
+  programming, mailbox firmware-notify, BAR0, MEM+BME, and
+  re-programming after the firmware reset all run end-to-end.
+- The remaining 0xdead poison is a **kernel-side pmap bug** in
+  Phoenix, not in the PCIe driver. Bridge HW state is intact.
+- Boot stability preserved at 3/3 cycles → `(psh)%` (without the
+  unstable readback diagnostic).
+- USB-HCD does not come up yet; that has to wait for a kernel pmap
+  fix or a fundamentally different mmap strategy (e.g. a single
+  MMIO region claim per process, never re-mapped).
