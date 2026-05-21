@@ -296,7 +296,11 @@ wait "$capture_pid" || true
 if [ -s "$log_path" ]; then
 	printf '\n=== test cycle complete ===\n'
 	printf 'log:   %s\n' "$log_path"
-	printf 'bytes: %s\n' "$(stat -f %z "$log_path")"
+	if [[ "$(uname -s)" == "Darwin" ]]; then
+		printf 'bytes: %s\n' "$(stat -f %z "$log_path")"
+	else
+		printf 'bytes: %s\n' "$(stat -c %s "$log_path")"
+	fi
 else
 	printf '\n=== test cycle complete (log empty) ===\n'
 	printf 'log:   %s\n' "$log_path"
