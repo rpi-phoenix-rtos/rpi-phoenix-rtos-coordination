@@ -854,6 +854,35 @@ When this setup is first enabled, record:
 - the exact DHCP or TFTP configuration path
 - the recovery procedure if network boot fails
 
+### 9.1 Network-first EEPROM update via one-shot SD image
+
+To skip the firmware's ~31 s SD + USB-MSD probe before falling through to
+network boot (each boot today wastes ~30 s on this), update the Pi 4
+EEPROM to `BOOT_ORDER=0xf12` (NETWORK → SD → halt) once. The repo
+generates a ready-to-flash SD image that performs the update for you:
+
+1. Generate or refresh the EEPROM-prep image (uses
+   raspberrypi/rpi-eeprom upstream + custom config):
+
+       ./scripts/prepare-pi-eeprom-netboot.sh
+
+   Output: `artifacts/eeprom-netboot/eeprom-prep-sd.img` (~258 MiB FAT32).
+
+2. Flash that `.img` to a spare microSD card (e.g. with `dd` or Raspberry
+   Pi Imager). Insert the card into the Pi 4. Power on.
+
+3. The green ACT LED will blink rapidly for a few seconds, then enter a
+   steady-blink success pattern (~10 blinks / s). That means the new
+   EEPROM has been programmed.
+
+4. Power off, remove the SD card. From this point on, every netboot
+   cycle skips the SD/USB-MSD probe and saves ~30 s.
+
+Recovery: if anything goes wrong, the Pi 4 supports re-flashing the
+EEPROM from any official Raspberry Pi OS card via
+`rpi-eeprom-update`. Keep one such card handy until the new boot order
+is confirmed-working.
+
 ## 10. Required Manual Steps During Ongoing Implementation
 
 After each successful implementation step, the operator or agent must ensure:
