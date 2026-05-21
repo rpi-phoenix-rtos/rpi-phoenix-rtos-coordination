@@ -196,28 +196,25 @@ authoritative current state.
 
 ## TD-01: SMP enable disabled on Cortex-A72
 
-- **Status:** PENDING
-- **Stage:** 3 (SMP bring-up; see `docs/roadmap-cache-ram-smp.md`).
-  Cannot be tackled before Stage 1 (caches enabled, IS-shareable PT
-  attributes) lands — LDXR/STXR exclusive monitor's cross-core
-  semantics require Inner-Shareable Normal Cacheable memory.
+- **Status:** ✅ RESOLVED 2026-05-21
+- **Stage:** 3 (SMP bring-up).
 - **First observed:** 2026-04 bring-up
-- **Where:** `sources/phoenix-rtos-kernel/hal/aarch64/_init.S`, the
-  `CPUECTLR_EL1` SMPEN block behind `__TARGET_AARCH64A72`.
-- **What was done:** The SMP-enable MSR sequence is commented out and the
-  only remaining effect is the debug markers around it.
-- **Why:** Enabling SMP on A72 produced an early-boot hang; cause not
-  diagnosed yet.
-- **Risk accepted:** A72 coherency behavior with Inner-Shareable memory is
-  undefined without this bit. Current code avoids Inner-Shareable in early
-  boot, which is itself a related transitional compromise.
-- **Resolution requirements:**
-  - Reproduce the hang with a bounded diagnostic (GDB over QEMU gdbstub, or
-    one minimal marker pair) and capture the fault.
-  - Follow the Cortex-A72 TRM SMP enable sequence; compare against Circle OS
-    and similar bare-metal references.
-  - Re-enable SMP, then switch early boot back to Inner-Shareable and
-    confirm boot on real hardware across multiple cold resets.
+- **Where:** Originally an `_init.S` block; SMPEN is now set in
+  `phoenix-armstub8-rpi4.S` at EL3 (`CPUECTLR_EL1_SMPEN`), as part
+  of the project `dde9bb5` armstub work. Inner-Shareable memory was
+  unblocked by the same cache-enable breakthrough.
+- **Resolution path:** Project `cf9fbbc` set `PLO_SMP_ENABLE=1` in
+  the rpi4b board config, bringing cores 1-3 into the kernel via
+  plo's two-stage armstub spin-table release. Kernel `fb9669f4`
+  bumped `NUM_CPUS=1 → 4`, activating LDAXR/STXR spinlocks, the
+  4-bit GIC distributor mask, and the per-CPU scheduler arrays.
+  Validated end-to-end: 5/5 sequential netboot cycles reach
+  `(psh)%` with all 4 cores online and secondaries parked in
+  `_other_core_virtual`'s WFI. The original hang was an
+  un-aligned A72 erratum sequence — once that was correct
+  (project `dde9bb5`) the SMPEN bit could be set safely.
+- **Follow-up:** Phase C (per-CPU gtimer + giving secondaries a real
+  scheduler entry on PPI fire) tracks separately.
 
 ## TD-02: Pre-MMU cache invalidation disabled
 
@@ -574,34 +571,22 @@ authoritative current state.
 
 ## TD-11: Single-core AArch64 spinlock path uses DAIF mask, not exclusives
 
-- **Stage:** 3. Replaced by real LDXR/STXR atomics during SMP
-  bring-up. Cannot be removed before Stage 1 enables the IS-shareable
-  Normal Cacheable memory model that makes the exclusive monitor
-  work across cores.
-
-- **Status:** PENDING (revisit before TD-01 SMP enable)
+- **Status:** ✅ RESOLVED 2026-05-21
+- **Stage:** 3.
 - **First observed:** 2026-04-30 bring-up.
-- **Where:** `sources/phoenix-rtos-kernel/hal/aarch64/spinlock.c`
-  (added in commit `0fdf20ca`).
-- **What was done:** When `NUM_CPUS == 1` the spinlock implementation
-  uses DAIF save / IRQ-FIQ mask / restore instead of the
-  exclusive-byte LDAXR/STLXR primitives. SMP builds keep the
-  exclusive-byte implementation.
-- **Why:** On the current single-core Pi 4 target, switching from
-  the early spinlock-bypass path to the exclusive-byte spinlocks
-  hung real hardware. The DAIF-mask path is correct for a single
-  core (no other CPU can race), avoids exclusive-monitor / shareable-
-  attribute issues, and unblocked progress.
-- **Risk accepted:** When TD-01 (SMP enable) lands, this code path
-  must NOT be the active one. The `NUM_CPUS == 1` guard is correct
-  in principle but easy to leave stale.
-- **Resolution requirements:**
-  - As part of TD-01 SMP bring-up, validate that exclusive monitors
-    work with the production memory attributes and shareability
-    domain on Cortex-A72. Fix whatever in early-boot init prevented
-    them from working.
-  - Either delete the `NUM_CPUS == 1` path or document why it
-    should remain (e.g. as a single-core build performance choice).
+- **Where:** `sources/phoenix-rtos-kernel/hal/aarch64/spinlock.c`.
+- **Resolution path:** Kernel `fb9669f4` bumped `NUM_CPUS=1 → 4` in
+  `hal/aarch64/generic/config.h`, switching the spinlock
+  implementation to the real `LDAXR/STLXR` exclusive-byte path
+  (with `wfe` back-off). The previously-feared exclusive-monitor
+  failure under Inner-Shareable Normal Cacheable memory turned out
+  to be unblocked by the 2026-05-17 armstub fix (L2CTLR_EL1 timing
+  + A72 erratum 1319367 encoding); both single-core and 4-CPU
+  builds boot now. Validated 5/5 cycles reach `(psh)%`.
+- **Follow-up:** The `NUM_CPUS == 1` branch is still in
+  `spinlock.c` and remains correct (DAIF-mask suffices when there
+  is no other CPU to race against). Keeping it for now as a small-
+  build option; revisit if/when single-core builds are dropped.
 
 ## TD-12: Plo memory clamp at ~948 MiB on real Pi 4
 
