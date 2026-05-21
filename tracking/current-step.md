@@ -1,6 +1,75 @@
 # Current Implementation Step
 
-## Active step (2026-05-20): Linux dev host bring-up complete; ready to validate full netboot cycle on real Pi 4
+## Active step (2026-05-21): SMP Phase B — diagnose and fix the secondary-loop
+
+SMP Phase A is validated end-to-end on real Pi 4: secondary cores
+wake from the armstub spin-table via plo's two-step handoff, reach
+the kernel's `_other_core_trap`, exit its poll, and park in a bare
+WFI loop. Primary boot completes through to `(psh)%`. See manifest
+`2026-05-21-smp-phase-a-psh-prompt-reached.md`.
+
+### The Phase B puzzle
+
+UART markers on a 360s capture from a healthy boot:
+
+| Marker | Count | Expected |
+|---|---|---|
+| H (secondary_handoff entry) | 94 | 3 (one per secondary) |
+| B (secondary_handoff poll exit) | 47 | 3 |
+| t (_other_core_trap entry) | 328 | 3 |
+| v (_other_core_trap poll exit) | 64 | 3 |
+| q (WFI returned in _other_core_virtual) | 4 | 0 |
+
+So secondaries are looping through plo's `secondary_handoff` and the
+kernel's `_other_core_trap` ~30× per core. The bare WFI loop in
+`_other_core_virtual` is NOT the escape — only 4 spontaneous WFI
+returns in the entire boot, far fewer than the 328 trap entries.
+Something is sending secondaries back to plo's `secondary_smoke_entry`
+or directly to the kernel's `_start` from somewhere other than the
+expected single wake-up path.
+
+### Hypotheses to test in the next session
+
+1. **Async abort / SError**: even with DAIF.A masked at
+   `_other_core_virtual` entry, an exception delivered during the
+   transition from `_other_core_trap` → `_other_core_virtual` (via
+   `ldr x0, =_other_core_virtual; br x0`) might land in the kernel's
+   `_early_vector_table` and recover to `el1_entry`. Verify by adding
+   a per-vector marker.
+2. **VBAR_EL1 not stable across cores**: secondaries inherit the
+   `_early_vector_table` VA from primary's `_set_up_vbar_and_stacks`,
+   but secondaries currently skip `_set_up_vbar_and_stacks` (it's in
+   `_other_core_virtual` which the bare-WFI variant skipped). Their
+   VBAR_EL1 might be whatever was set when they last re-ran
+   `el1_entry`'s `adr x0, _early_vector_table; msr vbar_el1, x0` —
+   should be valid. Verify by reading VBAR_EL1 on entry.
+3. **plo's secondary_smoke_entry is being re-invoked**: somehow the
+   spin_cpuN slot is being re-written with the smoke entry PA after
+   it was cleared, and a spurious SEV wakes the cores back to it.
+   Check by adding a fixed-snapshot marker and seeing if the
+   snapshot's value changes between iterations.
+
+Plan for next session:
+1. Add MPIDR-stamped diagnostic at `el1_entry` start to confirm
+   entry counts per core.
+2. Try the `_set_up_vbar_and_stacks` + `_hal_interruptsInitPerCPU` +
+   `_hal_cpuInit` path in `_other_core_virtual` again, now that we
+   know secondaries actually reach there at least once.
+3. Once the loop is closed, bump NUM_CPUS to 2, then 4, and let the
+   scheduler dispatch threads to other cores.
+
+## Other near-term work
+
+- **PCIe/USB boot-time optimization (Task #24)**: the post-`fbcon: ok`
+  window takes ~3 min in single-core. Phase D (real SMP) should
+  compress this; until then, identify any per-read settle delays
+  that can be turned into polling.
+- **EEPROM netboot prep**: image already generated at
+  `artifacts/eeprom-netboot/eeprom-prep-sd.img`. Flash to SD and boot
+  the Pi once to switch BOOT_ORDER to network-first; saves ~30 s per
+  test cycle.
+
+## Superseded active step (2026-05-20): Linux dev host bring-up complete; ready to validate full netboot cycle on real Pi 4
 
 The 2026-05-16 → 2026-05-17 evening entries below were superseded
 within hours of being written. The cache work that the 2026-05-16

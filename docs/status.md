@@ -1,6 +1,62 @@
 # Phoenix-RTOS Raspberry Pi 4 Port Status
 
-## Current Status: 2026-05-20 (Linux dev host operational; Pi 4 boots to fast `(psh)%` with caches enabled and 4 GB DRAM)
+## Current Status: 2026-05-21 (SMP Phase A: secondaries online; primary still boots to `(psh)%`)
+
+Stage 3 (SMP) bring-up started: cores 1-3 now wake from the armstub
+spin-table via a two-step handoff (plo writes secondary_smoke_entry →
+secondary_handoff polls for kernel entry → kernel `_other_core_trap`
+park), and reach the kernel's bare DAIF-masked WFI loop. Primary boot
+still completes through to `(psh)%` interactive prompt in the standard
+~3.5 min cycle window — secondary activity is benign but verbose.
+
+Authoritative baseline:
+`manifests/2026-05-21-smp-phase-a-psh-prompt-reached.md` (image SHA
+`f8e84b95513bf505025621c82c147e4a98754da5df08e1d257b4ceb497d1647b`,
+kernel `e2c95ad6`, plo `f7af1d9`).
+
+### Markers visible on UART for this build
+
+| Marker | Source | Meaning |
+|---|---|---|
+| `hal: smp smoke woke cores 1-3` | plo `hal_smpBringupSecondaries` | plo's first SEV woke cores 1-3 from armstub WFE |
+| `cN: a` (per core) | plo `secondary_smoke_entry` | core ID confirmation from each secondary |
+| `H` | plo `secondary_handoff` | secondary entered the re-armed spin-table polling loop |
+| `hal: smp release-2 → kernel entry` | plo `hal_cpuJump` | plo wrote kernel `_start` PA into spin_cpu1/2/3 |
+| `B` + hex digit | plo `secondary_handoff` exit | secondary saw new spin value, about to `br` to kernel |
+| `t` | kernel `_other_core_trap` | secondary reached the kernel and tripped MPIDR check |
+| `v` | kernel `_other_core_trap` exit | secondary observed `nCpusStarted == 1` and proceeded to virtual |
+| `q` | kernel `_other_core_virtual` WFI return | rare spurious WFI wake (4 per boot — not the loop source) |
+
+### Linux dev host bring-up still: yes (no regression)
+
+Pi 4 boots end-to-end on this Linux box: build → power-cycle → UART
+capture (picocom --logfile path) → analyze. EEPROM netboot prep image
+generated (256 MB FAT32 ready to flash to SD to make the Pi
+network-first; saves ~30 s per cycle). Test cycle takes HDMI snapshots
+every 25 s during the cycle and a final frame before pi_power_off,
+useful since post-`fbcon: ok` activity drains through pl011-tty's
+fbcon mirror that doesn't always reach UART within the capture window.
+
+### Open work
+
+- **SMP Phase B (in flight)**: secondary cores currently re-enter
+  `_other_core_trap` ~100 times during a single boot (94 × 'H', 328 ×
+  't'). Root cause not yet identified — bare WFI loop in
+  `_other_core_virtual` proves they're not escaping via WFI return,
+  yet they reach `el1_entry` repeatedly. Suspect a fault path
+  (DAIF.A unmasked somewhere? VBAR not properly re-set per-core?)
+  that returns secondaries to the kernel entry via some exception.
+  Tracking in `tracking/current-step.md`.
+- **PCIe/USB boot-time optimization**: the post-`fbcon: ok` window
+  (pcie scan + xhci HC bringup) still takes ~3 minutes of wall time.
+  Phase D (full 4-core scheduling) is the lever that should compress
+  this most.
+- **UART timestamping**: tio 3.9 with `--timestamp` block-buffers
+  even with `stdbuf -oL`; picocom + ts(1) drops slow lines past the
+  first kilobyte. Infrastructure in place (`--timestamp` flag) but
+  default is off until the buffering issue is resolved.
+
+## Previous Status: 2026-05-20 (Linux dev host operational; Pi 4 boots to fast `(psh)%` with caches enabled and 4 GB DRAM)
 
 The Pi 4 port is now well past initial bring-up. Real hardware boots
 reliably to an interactive `(psh)%` prompt in roughly 55–60 s after
