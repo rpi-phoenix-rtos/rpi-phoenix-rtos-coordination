@@ -11,8 +11,14 @@ Two milestones today on top of the morning's 5/5 boot stability:
    loop in `_other_core_virtual` after their per-CPU VBAR / GIC /
    cpuInit. 3/3 boot cycles reach `(psh)%`; the previous Phase B
    re-entry pathology is silent now that the kernel marker prints
-   have been stripped. NUM_CPUS still 1 — secondaries are quiet
-   passengers until the scheduler is taught to dispatch to them.
+   have been stripped.
+
+   **Follow-up: NUM_CPUS bumped to 4** in
+   `hal/aarch64/generic/config.h` (kernel `fb9669f4`). Activates
+   the real-SMP code paths: LDAXR/STXR spinlocks, 4-bit GIC mask,
+   per-CPU scheduler `current[]` array. 3/3 boot stability holds.
+   Secondaries still WFI in `_other_core_virtual`; teaching them
+   to enter the scheduler is Phase C and the natural next step.
 
 2. **BCM2711 PCIe bridge bisected end-to-end**. Two distinct bugs
    identified and fixed (devices `c94be27`, `1ccfcea`, `cef62e1`):
