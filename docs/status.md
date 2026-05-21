@@ -1,16 +1,50 @@
 # Phoenix-RTOS Raspberry Pi 4 Port Status
 
-## Current Status: 2026-05-21 (single-core boot stable 5/5; SMP Phase A still parked behind PLO_SMP_ENABLE gate)
+## Current Status: 2026-05-21 evening (SMP Phase A re-enabled; cores 1-3 reach kernel, primary still drives all work; PCIe bridge bisected to a kernel pmap bug)
 
-Best-ever back-to-back stability for the Pi 4 port: **5 of 5 netboot
-cycles** reach the `(psh)%` interactive prompt within a 360 s capture
-window. Up from a 4/5 best-case baseline earlier today and 2/3 typical
-before this morning's optimization round.
+Two milestones today on top of the morning's 5/5 boot stability:
+
+1. **SMP Phase A on by default** (project `cf9fbbc`). `PLO_SMP_ENABLE=1`
+   in the rpi4b board config. Cores 1-3 wake via the armstub spin-
+   table two-stage release, branch into kernel `_start`, fall
+   through MPIDR check to `_other_core_trap`, and park in the WFI
+   loop in `_other_core_virtual` after their per-CPU VBAR / GIC /
+   cpuInit. 3/3 boot cycles reach `(psh)%`; the previous Phase B
+   re-entry pathology is silent now that the kernel marker prints
+   have been stripped. NUM_CPUS still 1 — secondaries are quiet
+   passengers until the scheduler is taught to dispatch to them.
+
+2. **BCM2711 PCIe bridge bisected end-to-end**. Two distinct bugs
+   identified and fixed (devices `c94be27`, `1ccfcea`, `cef62e1`):
+   - Reading PCI_VENDOR_ID at bus=1, dev=1, fn=0 tore down the
+     outbound translation. Fixed by capping per-bus device sweep at
+     1 on every bus (PCIe Express is point-to-point).
+   - `cfgio.destroy()` munmapping the bridge config window also
+     poisoned the outbound translation. Worked around by leaking
+     the bridge mapping until process exit.
+   - `bcm2711NotifyXhciReset`'s mailbox mmap was failing silently
+     because `RPI_MAILBOX_BASE_ADDRESS=0xfe00b880` isn't page-aligned.
+     Page-align fix lets firmware-notify actually fire.
+
+   With all PCIe-side bugs fixed, Codex-guided diag #2 confirmed
+   `MISC_CPU_2_PCIE_MEM_WIN0_LO` reads back as `0xf8000000`
+   (our programmed value) — bridge HW state is intact. **The
+   remaining 0xdead poison xhci sees is a CPU-side pmap bug in the
+   Phoenix kernel.** USB-HCD ops->init still fails (rc=-19) and
+   cannot be fixed without kernel-side work. See
+   `docs/notes/2026-05-21-pcie-bridge-ageing-codex.md`.
 
 Authoritative baseline:
-`manifests/2026-05-21-stability-5of5.md` (image SHA
-`6f58b5548a4228b4973316ec316f5e6b9e94c01eef6fac7c72d95107c51799dc`,
-kernel `2690736b`, plo `0ee44df`, devices `486b0a5`).
+`manifests/2026-05-21-smp-phase-a-stable.md` (image SHA
+`ebc1f77d302c9cc67cc97b3142bccbcd0a8390ed9d9172ba21047117ac25768f`,
+kernel `2690736b`, plo `0ee44df`, devices `cef62e1`, project
+`cf9fbbc`).
+
+The 5/5 morning baseline (`manifests/2026-05-21-stability-5of5.md`)
+is still the single-core reference for the pre-SMP regression
+window. Today's added work hasn't disturbed any boot path; if
+problems surface with SMP secondaries online, that manifest is the
+clean fallback target for `restore-integration-state.sh`.
 
 ### What changed today
 
