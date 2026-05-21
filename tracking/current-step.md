@@ -15,6 +15,8 @@ hardening the single-core path. Today's net result:
 | PCIe init | PERST settle + VL805 firmware wait now polled, not slept | devices `5a833e0` |
 | xhci waits | `xhci_waitOpBits` + `xhci_portWaitBits` get a 1 ms tight 50 µs burst before the 1 ms slow path | devices `905b4f8` |
 | pl011-tty  | `createTty0` lookup retry budget 30 → 5 (`/dev/tty0` is non-fatal) | devices `486b0a5` |
+| **xhci/pcie** | **Localised BCM2711 outbound-window poison: scan dev 0 only on secondary bus + don't munmap bridge config window. BAR0 reads now return real xhci registers (0x01000020) instead of 0xdead.** | **devices `c94be27`** |
+| usb-hcd | surface ops->init rc + flush stderr on init failure | usb `aa27592` |
 | test cycle | default capture-secs 90 → 360 s so we no longer false-negative on slow boots | coord `6b3c390` |
 | test cycle | Linux portability (`stat -c %s`) and EEPROM operator workflow doc | coord `d6588a7`, `56b5a8d` |
 
@@ -37,10 +39,12 @@ per-core entry counter to localise which path is firing.
 
 ### Other open gaps
 
-- **USB-HCD `ops->init` fails** with `oerr=-2` (-ENOENT) on real Pi 4
-  BCM2711. Boot survives because USB isn't on the critical path to
-  psh, but no USB devices are usable. Worth chasing as the next big
-  functional win once SMP-loop diagnosis is unblocked.
+- **USB-HCD `ops->init` still fails after bridge fix** with rc=-110
+  (xhci_reset timeout). Root cause now believed to be the upstream
+  `bcm2711NotifyXhciReset` mailbox call returning -ENOMEM on its
+  `MAP_CONTIGUOUS` allocation, leaving VL805 firmware un-reloaded
+  and the controller in a state xhci_reset can't escape. Bridge
+  translation itself is no longer the blocker (devices `c94be27`).
 - **TD-14 IPC slowness**: lookup("devfs") round trips are bimodal
   (~11 ms typical, rare outliers up to 43 s). Today's fix masks the
   symptom in `pl011_createTty0`; the real fix needs kernel-side
@@ -48,8 +52,13 @@ per-core entry counter to localise which path is firing.
 
 ### Next concrete steps (priority order)
 
-1. Triage USB-HCD init -2: add return-code tracing at each step of
-   `xhci_init` to identify which step returns ENOENT.
+1. **USB: fix `bcm2711NotifyXhciReset` -ENOMEM** so VL805 firmware
+   actually reloads. The `MAP_CONTIGUOUS | MAP_UNCACHED | MAP_ANONYMOUS`
+   mmap for the mailbox message buffer is failing with -12, which
+   means the firmware reset never happens, the controller stays in
+   whatever state Pi 4 boot firmware left it, and xhci_reset times
+   out (rc=-110). Probably needs either a smaller request or an
+   alternate page-allocator entry.
 2. EEPROM operator step (manual): flash
    `artifacts/eeprom-netboot/eeprom-prep-sd.img` to recover the ~30 s
    firmware probe time per cycle. Already documented in §9.1 of
