@@ -28,7 +28,7 @@ if [ -f "$repo/.env.local" ]; then
 	set +a
 fi
 
-capture_secs="${RPI4B_NETBOOT_CAPTURE_SECS:-90}"
+capture_secs="${RPI4B_NETBOOT_CAPTURE_SECS:-360}"
 label=""
 power_settle_secs="${RPI4B_POWER_SETTLE_SECS:-3}"
 skip_server_up=0
