@@ -1,8 +1,8 @@
 # Phoenix-RTOS Raspberry Pi 4 Port Status
 
-## Current Status: 2026-05-21 evening (SMP Phase A re-enabled; cores 1-3 reach kernel, primary still drives all work; PCIe bridge bisected to a kernel pmap bug)
+## Current Status: 2026-05-22 (SMP Phase A on; NUM_CPUS=4 active; Phase C step 2 PPI enable in place; secondaries wake on timer ticks)
 
-Two milestones today on top of the morning's 5/5 boot stability:
+Three milestones since the morning's 5/5 stability baseline:
 
 1. **SMP Phase A on by default** (project `cf9fbbc`). `PLO_SMP_ENABLE=1`
    in the rpi4b board config. Cores 1-3 wake via the armstub spin-
@@ -13,12 +13,28 @@ Two milestones today on top of the morning's 5/5 boot stability:
    re-entry pathology is silent now that the kernel marker prints
    have been stripped.
 
-   **Follow-up: NUM_CPUS bumped to 4** in
+   **Follow-up A: NUM_CPUS bumped to 4** in
    `hal/aarch64/generic/config.h` (kernel `fb9669f4`). Activates
    the real-SMP code paths: LDAXR/STXR spinlocks, 4-bit GIC mask,
-   per-CPU scheduler `current[]` array. 3/3 boot stability holds.
-   Secondaries still WFI in `_other_core_virtual`; teaching them
-   to enter the scheduler is Phase C and the natural next step.
+   per-CPU scheduler `current[]` array. 5/5 boot stability holds
+   (manifest `2026-05-21-smp4-5of5-verified.md`).
+
+   **Follow-up B: Phase C step 2 — per-CPU timer PPI enable**
+   (kernel `fbfe3a3f`). Each secondary's `_hal_interruptsInitPerCPU`
+   now flips its own banked bit in `GICD_ISENABLER0` for the
+   architectural timer's PPI (with a spin-wait on
+   `hal_timerIrq()` to ride out the boot-order race against
+   primary's `_hal_timerInit`). Cores 1-3 should now exit their
+   WFI loops on each timer tick and call into `threads_schedule`;
+   `threads_init` already creates one idle thread per CPU at
+   MAX_PRIO. 3/3 boot stability holds.
+
+   What's still missing for "real" SMP scheduling: a way to
+   visually confirm secondaries pick up the idle thread (the
+   one-shot print in `threads_idlethr` was added then reverted
+   because the post-fbcon UART backlog swallows late prints), and
+   eventually a CPU-affinity hint or load-balancing pass so
+   real worker threads actually distribute across CPUs.
 
 2. **BCM2711 PCIe bridge bisected end-to-end**. Two distinct bugs
    identified and fixed (devices `c94be27`, `1ccfcea`, `cef62e1`):
