@@ -201,6 +201,32 @@ the MMU walker reads it, the walker may see stale descriptors.
 This would explain why a LARGER mapping (more table-walks) is
 poisoned but a smaller mapping (fewer walks) succeeds.
 
+## Validated-and-rejected attempts
+
+### dsb sy + isb at the top of xhci_capProbe — REJECTED 2026-05-22
+
+Committed as devices `b3c88ec`, reverted as `de3628b`. 3-cycle
+hardware test showed the barrier *destabilises* boot:
+
+- cycle 1: 13 MB UART log full of garbage bytes (capture caught the
+  boot looping on something)
+- cycle 2: 193 KB partial log without `fbcon: ok`
+- cycle 3: normal 15 KB log with `(psh)%`
+
+Theory: the explicit dsb-sy at the top of xhci_capProbe forces a
+system-wide fence that the BCM2711 PCIe bridge's outbound
+translation state machine isn't prepared to honor mid-init — it
+may interact with whatever bridge-internal pipeline keeps the
+outbound TLB warm during the brief window between scan-callback
+exit and xhci's first register access.
+
+This is a soft strike against Codex hypothesis #1 ("BCM2711 PCIe
+internal outbound-state invalidation triggered by the second
+mapping") — if the bridge was truly cold-cache-sensitive to a
+NEW mapping, an explicit barrier shouldn't have made things worse.
+The barrier may instead be exposing a CPU-side or kernel-side
+race we haven't yet identified.
+
 ## Out of scope
 
 The investigation does not need a fix for the underlying issue
