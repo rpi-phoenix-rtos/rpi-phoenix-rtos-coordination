@@ -16,8 +16,15 @@ This directory is the long-lived knowledge base for the Phoenix RTOS Raspberry P
 - `git-repository-strategy.md`
   Local multi-repo workflow, branch and commit policy, and integration manifest discipline.
 
+- `linux-host-bootstrap.md`
+  Primary host setup guide for the current Linux x86-64 dev box —
+  toolchain, UART capture, dnsmasq+TFTP for netboot, meross-plug
+  power control. Read this first.
+
 - `host-macos-apple-silicon.md`
-  Host-environment strategy for this specific workstation, including macOS-vs-Linux-VM task split and setup guidance.
+  Legacy host strategy for the macOS+Lima workstation the project
+  ran on before the 2026-05-20 migration. Consult only when working
+  on that machine.
 
 - `manual-operator-instructions.md`
   Human-facing runbook for all currently known manual prerequisites, physical setup steps, and operator-provided inputs.
