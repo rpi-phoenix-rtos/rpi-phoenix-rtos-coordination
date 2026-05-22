@@ -150,9 +150,56 @@ In rough order:
    selects `MAIR_IDX_S_ORDERED` which on aarch64 MAIR slot 3
    would need to be programmed correctly — verify it is.
 
-5. **Codex consultation #3**: this analysis + the verified
-   facts list, asking for narrowed hypotheses on ARM-side
-   versus chip-side root cause.
+5. **Codex consultation #3** — DONE (2026-05-22 15:30); response
+   captured below.
+
+## Codex consultation #3 — verbatim ranked hypotheses
+
+1. **BCM2711 PCIe internal outbound-state invalidation, triggered
+   by the second user MAP_DEVICE mapping.** The config-read
+   workaround changing poison into reset timeout points more at
+   bridge/VL805 ordering than raw PTE format. Register readback
+   proves programmed state, not necessarily the bridge's internal
+   translation/cache state. **Diagnostic**: create the final
+   64 KiB RW xHCI BAR mapping inside the known-good PCIe scan
+   callback, read caps there, then pass that exact VA to
+   `xhci_init` with no second mmap. **Files**:
+   `sources/phoenix-rtos-devices/usb/xhci/bcm2711-pcie.c`,
+   `sources/phoenix-rtos-devices/usb/xhci/xhci.c`.
+
+2. **AArch64 pmap table-write visibility bug for dynamically
+   created user mappings.** `pmap.c` writes page tables through
+   cached scratch mappings; `dsb` alone may not clean modified
+   descriptor lines to the point visible to the hardware walker.
+   A larger mapping exercises more freshly written PTEs and
+   possibly new table pages. **Diagnostic**: after every new
+   table descriptor/PTE write, temporarily clean+invalidate the
+   containing page-table cache line/page, then `dsb ish;
+   tlbi ...is; dsb ish; isb`; also log `AT S1E0R`/`PAR_EL1` for
+   all 16 xHCI pages. **Files**:
+   `sources/phoenix-rtos-kernel/hal/aarch64/pmap.c`, possibly
+   `sources/phoenix-rtos-kernel/hal/aarch64/cache.c`.
+
+3. **Different effective access pattern: 64 KiB RW mapping lets
+   xHCI reset/operational writes reach VL805 before the
+   bridge/device is fully synchronized.** The `rc=-110` variant
+   suggests caps can become readable, then reset writes do not
+   complete. That may be an ordering/device-state problem hidden
+   behind the poison symptom. **Diagnostic**: make `xhci_map()`
+   first map only 4 KiB RO and read caps; then map 64 KiB RO;
+   then enable RW only immediately before reset, with
+   config-space read + `dsb sy` between phases. **Files**:
+   `sources/phoenix-rtos-devices/usb/xhci/xhci.c`,
+   `sources/phoenix-rtos-devices/usb/xhci/bcm2711-pcie.c`,
+   secondarily `sources/phoenix-rtos-kernel/hal/aarch64/pmap.c`.
+
+Codex's #2 (pmap table-write visibility through cached scratch
+mappings) is a hypothesis I hadn't fully developed. Worth checking
+on the next hardware session: the scratch_tt mapping in `pmap.c`
+is itself a kernel mapping — if its cache state isn't clean when
+the MMU walker reads it, the walker may see stale descriptors.
+This would explain why a LARGER mapping (more table-walks) is
+poisoned but a smaller mapping (fewer walks) succeeds.
 
 ## Out of scope
 
