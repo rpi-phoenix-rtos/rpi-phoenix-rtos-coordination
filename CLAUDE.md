@@ -17,7 +17,7 @@ Everything else in AGENTS.md's "Mandatory Reading Order" is **conditional** — 
 ## Project layout you should know
 
 - **Coordination repo** (this directory): docs, scripts, tracking, manifests — no Phoenix source code
-- **Sibling upstream repos**: `/Users/witoldbolt/phoenix-rpi/sources/<repo>/` — e.g. `phoenix-rtos-kernel`, `plo`. These are separate git repos, not submodules. Edit and commit there, then record the tested integration state in a new `manifests/*.md` here.
+- **Sibling upstream repos**: `sources/<repo>/` under this repo root (e.g. `sources/phoenix-rtos-kernel`, `sources/plo`). These are separate git repos, not submodules. Edit and commit there, then record the tested integration state in a new `manifests/*.md` here. The repo lives at `/home/houp/phoenix-rpi/` on the current Linux dev host; older docs may reference the macOS path `/Users/witoldbolt/phoenix-rpi/`.
 - **Active kernel branch**: `agent/rpi4-program-reloc` in `sources/phoenix-rtos-kernel`. Known-good rollback tag: `known-good/2026-04-19-map-relocation-complete`.
 - **Build loop**: `./scripts/rebuild-rpi4b-fast.sh` → `./scripts/capture-rpi4b-uart.sh` → `python3 scripts/summarize-rpi4b-uart-log.py <log>`. Do not improvise alternate paths — fix the helper if broken.
 
