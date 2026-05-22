@@ -17,7 +17,9 @@ Before making code changes in future sessions, read these files in order:
 2. `docs/implementation-dossier.md`
 3. `docs/repository-work-breakdown.md`
 4. `docs/git-repository-strategy.md`
-5. `docs/host-macos-apple-silicon.md`
+5. `docs/linux-host-bootstrap.md` — primary dev host (Linux x86-64). Read
+   `docs/host-macos-apple-silicon.md` only if working on a macOS+Lima
+   workstation; the rpi4 workflow has been on Linux since 2026-05-20.
 6. `docs/manual-operator-instructions.md`
 7. `docs/code-quality-and-upstreaming.md`
 8. `docs/execution-control.md`
