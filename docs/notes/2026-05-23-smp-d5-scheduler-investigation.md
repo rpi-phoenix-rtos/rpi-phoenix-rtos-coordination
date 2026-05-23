@@ -198,3 +198,78 @@ Experiment E is the most promising because it explains
 WHY a known-correct serialization (spinlock[27]) fails to
 serialize cpu0 and cpu1's IRQ handlers — they're both
 running with the no-op fake-lock during boot.
+
+## 2026-05-23 #2 update — experiments E and I results, D-7 milestone landed
+
+### Experiment E (kernel `9ffeb85d`) — real spinlocks from day 0
+
+Removed the `hal_started() == 0` fake-spinlock path in
+`hal/aarch64/spinlock.c`; always use ldaxr/stxr real locks
+in SMP builds. Combined with the daifClr + bypass kill switch
+from D-6. **Primary STILL hangs at "hi: primary-ready set".**
+Eliminates the fake-spinlock hypothesis.
+
+The real-spinlock change is kept on HEAD as an independent
+correctness improvement.
+
+### Experiment I (kernel `3976f7ac`) — skip CNTV arm on secondaries
+
+Commented out `bl _hal_timerInitPerCPU` in `_other_core_virtual`.
+The timer PPI bit is still enabled in `GICD_ISENABLER0`, but
+with CNTV disabled the PPI line never asserts, so even
+`daifClr #7` lets the secondary stay in WFI.
+
+**Primary boots cleanly.** Full UART signature on hardware:
+
+    smp: intr cpu0=1 cpu1=1 cpu2=1 cpu3=1
+    smp: ppi  cpu0=0 cpu1=1 cpu2=1 cpu3=1
+    smp: tmr  cpu0=0 cpu1=0 cpu2=0 cpu3=0   <- skipped
+    smp: tick cpu0=N cpu1=0 cpu2=0 cpu3=0
+    fbcon: ok
+    usb-hcd: ops->init fail rc=-19            <- separate USB issue
+
+So the proximate cause of the D-6 hang is **timer-PPI delivery
+on a secondary**, not any of the earlier-investigated paths
+(scheduler hot-path, threads_schedule, hal_started spinlock
+fallback, fake locks, multi-CPU contention, current[] init,
+or idle-thread preallocation).
+
+The "what about IRQ delivery itself disturbs primary?" mystery
+remains. Specifically:
+  - GICC IAR/EOI are banked. Secondary EOI shouldn't reach
+    primary's CPU interface.
+  - The handler-chain in `interrupts_dispatch` reads
+    `interrupts_common.counters[]` / `handlers[]` under the
+    spinlock (now real). cpu0's RW of these doesn't depend on
+    secondary's RW.
+  - With the D-6 bypass kill switch, the secondary returns 0
+    from `threads_timeintr` and never enters
+    `threads_schedule` / pmap_switch / TLBI. Primary still
+    hangs.
+
+Open hypotheses for Phase D-8:
+  H1. Secondary's `_set_up_vbar_and_stacks` writes TTBR0 but
+      doesn't TLBI. Subsequent eret-to-WFI on first IRQ uses
+      stale TLB entries. Possibly fine, possibly not.
+  H2. BCM2711 A72 erratum involving CNTV + multi-core. Linux
+      and Raspberry Pi OS may have a CPUACTLR_EL1 workaround
+      we're missing (we have 1319367 from the armstub, but
+      something else may apply on the kernel side).
+  H3. CNTV_TVAL programming triggers an asynchronous abort or
+      SError that the secondary's exception handler doesn't
+      route correctly — corrupting cpu0 via some shared
+      coherency state.
+  H4. Phoenix-armstub spin-table protocol leaves secondaries
+      with a stale CNTV_CTL value (e.g. EnableMask=1 with stale
+      CVAL) — first arming triggers immediate interrupt before
+      the GIC config is fully consistent across CPUs.
+
+### Decision (2026-05-23)
+
+Lock in the working configuration as a stable milestone (kernel
+`bb5e158f`, manifest
+`manifests/2026-05-23-d7-4cpu-enum-cpu0-scheduler.md`) and
+pivot focus to USB work where there's tractable progress
+(rc=-19 visible in experiment I — first time the USB stack
+gets far enough to report from real hardware). D-8 returns
+once USB and other higher-priority items are advanced.
