@@ -65,6 +65,11 @@ infrastructure works on healthy hardware.
 
 ## Next session's first action
 
+**CRITICAL: `./scripts/pi_power_on.sh` first.** The Pi was
+powered off via Meross outlet at end of this session (~09:30
+local). Until the next iteration powers it back on, no `psh-
+interact` cycle will work — they all assume the Pi is on.
+
 After the Pi gets a real ≥15-minute mains-off recovery period:
 
 1. Boot validate with NUM_CPUS=1 — verify the baseline still
