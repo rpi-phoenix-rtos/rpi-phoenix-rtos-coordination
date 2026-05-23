@@ -109,6 +109,45 @@ handing to kernel.
 **Cost.** Requires plo modification. Highest cost; lowest priority
 unless N..R all fail.
 
+## 2026-05-23 — Experiment N result: SUCCESS
+
+Boot test on kernel `f7481091` (build SHA `2bc79c7d`, log
+`rpi4b-uart-20260523-153720-netboot-d8-expN.log`) confirms:
+
+- All 4 cpus reach `_hal_interruptsInitPerCPU` + `_hal_cpuInit`
+  + `_hal_timerInitPerCPU` (smp:tmr cpu1..3 = 1).
+- Secondaries arm CNTV with the 10-second initial interval and
+  unmask DAIF.
+- Primary completes `hal_cpuReschedule(NULL, NULL)` and runs
+  through vfs/dummyfs/fbcon spawn — fbcon reaches "ok".
+- UART has no panic / fault output through the ~70 s capture.
+
+This proves the D-6 hang is **boot-context window specific**.
+Once primary completes its boot reschedule and main_initthr is
+established, secondary timer IRQs no longer break primary. The
+workaround is to push the first secondary IRQ past the boot
+window.
+
+### Known limitation of this workaround
+
+`threads_timeintr` on a secondary returns 1 (invoke scheduler)
+without calling `_threads_updateWakeup`. CNTV is level-triggered
+(ISTATUS clears only when a new CVAL > CNTVCT is programmed), so
+after the first secondary IRQ at t=10 s the PPI keeps firing —
+the secondary stays in interrupts_dispatch → threads_schedule
+→ idle → next-CNTV-expiry loop. That doesn't break primary (CNTV
+is per-CPU banked), but cpu1..3 won't do useful work.
+
+### Next step (D-9)
+
+To make full SMP USEFUL (cpu1..3 actually run user threads),
+arm cpu1..3's CNTV for the next tick on every secondary
+threads_timeintr. This needs a small change to either
+`_threads_updateWakeup` (drop the cpu_id != 0 early-return for
+the no-IPI case) or directly call hal_timerSetWakeup on the
+secondary path. The change is safe because CNTV is banked and
+hal_timerSetWakeup writes the current CPU's CNTV.
+
 ## Stop conditions
 
 If N succeeds → D-8 is closed by the long-interval workaround.
