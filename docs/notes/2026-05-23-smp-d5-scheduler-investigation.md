@@ -100,3 +100,101 @@ safety) queued. The code at HEAD is stable and the diagnostic
 chain (hi: probes + smp: counters + memory markers in armstub
 and kernel _start) is in place to localise the scheduler issue
 next iteration.
+
+## 2026-05-23 update — D-6 binary search narrows the bug below threads_schedule
+
+Two experiments ran today:
+
+1. `6e7669ca` (cpu1-only `daifClr #7`): cpu1 unmasks IRQ, cpu2/3
+   stay masked. Primary hangs at "hi: primary-ready set" /
+   inside hal_cpuReschedule.
+2. `49d06558` (D-6 bypass kill switch): all secondaries unmask
+   `daifClr #7`, but `hal_smpSkipScheduler=1` makes
+   `threads_timeintr` return 0 on cpu_id != 0 — secondaries
+   never enter `threads_schedule`. Primary STILL hangs at the
+   same point.
+
+The fact that experiment #2 hangs identically eliminates the
+scheduler hot-path itself as the proximate cause. **The break
+happens in IRQ entry/exit mechanics on the secondary CPU
+between vbar_el1 dispatch and the post-EOI eret.** The bug is
+below `threads_schedule` — it is in some interaction between
+secondary IRQ servicing and primary's concurrent execution of
+`main()` / `hal_cpuReschedule`.
+
+Reverted with `c7706f80`. HEAD-1 (`6e7669ca`) holds the cpu1-only
+experiment commit; HEAD is back to D-5 milestone (all secondaries
+parked in WFI with DAIF masked).
+
+### Refined hypothesis list
+
+Eliminated:
+- (#1) Per-CPU current[] not initialised in scheduler entry.
+- (#5) Per-CPU idle threads not pre-assigned.
+- "Multi-CPU contention" — one secondary alone is enough.
+- "threads_schedule SMP-safety" — bypass test still hangs.
+
+Still possible:
+- (#4) `hal_lockScheduler` wfe-spinlock state. Secondary
+  doesn't write `schedulerLocked` in D-6 path (cbz w0,1f
+  skips unlock_scheduler when reschedule=0), but maybe the
+  unconditional `unlock_scheduler` in `.L_el1_syscall` (line
+  240 of `_exceptions.S`) clobbers it when primary EREts —
+  AFTER secondary's `stxr` would have grabbed it later.
+- **NEW: `interrupts_common.spinlock[27]` cache-line
+  contention with `hal_started() == 0`.** When `hal_started`
+  is 0, hal_spinlockSet takes the FAKE-LOCK path (just
+  daifSet, no ldaxr/stxr). Both cpus enter
+  `interrupts_dispatch` with NO real lock, racing on
+  `counters[]`, `handlers[]`, and the call chain. cpu0's
+  first timer IRQ fires concurrently with cpu1's first
+  timer IRQ.
+- **NEW: bic NO_INT in `.L_el1_syscall` (line 221).** This
+  removes the I-mask from saved SPSR of the boot context.
+  After threads_schedule + unlock_scheduler + eret, cpu0
+  unmasks IRQ. The pending timer IRQ fires *immediately*.
+  cpu0 then re-enters `_interrupts_dispatch` with a *boot*
+  context that may have stale fields, leading to undefined
+  state.
+- **NEW: pending PPI bit on cpu0** between
+  `_hal_timerInit` (which programs CNTV) and the FIRST
+  reschedule. CNTV deadline passes long before the
+  reschedule; the IRQ is *queued* on cpu0's GICC the entire
+  time main() runs with DAIF masked. cpu0's
+  `hal_cpuReschedule` + eret to new thread causes the
+  queued IRQ to fire as the very first instruction in the
+  new thread context.
+
+### Smallest next experiments
+
+A. Move `msr daifClr, #7` BEFORE the per-CPU bring-up chain
+   on secondaries — i.e. test whether the failure is in the
+   GIC distributor write paths of `_hal_interruptsInitPerCPU`
+   (vs the IRQ handler itself). Should regress equally
+   if it's GICD; should be clean if it's the handler.
+
+B. Replace `daifClr #7` with `daifClr #4` (unmask SError
+   only, keep I+F masked) and verify primary still works.
+   This separates IRQ servicing from SError handling.
+
+C. Disable the bic NO_INT in `.L_el1_syscall` and observe.
+   This keeps DAIF masked across the boot reschedule and
+   into the new thread context — IRQs only unmask via
+   `_hal_start()` later. If primary survives, the
+   "first-eret-fires-pending-PPI" hypothesis holds.
+
+D. Make primary mask its own timer PPI (gicd disable) until
+   the first scheduler context is fully entered, similar to
+   how Linux defers IPI/PPI enable. Reduces collision with
+   secondary's first IRQ.
+
+E. Audit `hal_started` gating on hal_spinlockSet. If the
+   fake-lock path is incorrect for any spinlock used in
+   IRQ context, real locks must be used from day 0 in SMP
+   mode. interrupts_common.spinlock[n] in particular is
+   problematic.
+
+Experiment E is the most promising because it explains
+WHY a known-correct serialization (spinlock[27]) fails to
+serialize cpu0 and cpu1's IRQ handlers — they're both
+running with the no-op fake-lock during boot.
