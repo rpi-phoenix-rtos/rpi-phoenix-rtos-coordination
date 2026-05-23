@@ -115,8 +115,13 @@ hdmi_label_base() {
 hdmi_grab_one() {
 	local out="$1"
 	[ -e "$hdmi_grabber" ] || return 1
-	ffmpeg -y -loglevel error -f v4l2 -i "$hdmi_grabber" -frames:v 1 "$out" \
-		</dev/null >/dev/null 2>&1 || return 1
+	# Wrap ffmpeg in a 5 s timeout: if another process holds /dev/video4
+	# (e.g. a user-side HDMI preview), the v4l2 open can block indefinitely,
+	# stalling the test cycle. 5 s is plenty for a single-frame capture
+	# when the device is free; on contention we skip the snapshot and
+	# proceed — the UART log is the source of truth, HDMI is a bonus.
+	timeout --foreground 5 ffmpeg -y -loglevel error -f v4l2 -i "$hdmi_grabber" \
+		-frames:v 1 "$out" </dev/null >/dev/null 2>&1 || return 1
 }
 
 start_hdmi_periodic() {
