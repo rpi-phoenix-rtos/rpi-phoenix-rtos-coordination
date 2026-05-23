@@ -1,6 +1,89 @@
 # Phoenix-RTOS Raspberry Pi 4 Port Status
 
-## Current Status: 2026-05-22 (SMP Phase A on; NUM_CPUS=4 active; Phase C step 2 PPI enable in place; secondaries wake on timer ticks)
+## Current Status: 2026-05-23 (SMP paused at NUM_CPUS=1; USB rc=-19 → rc=-110 step-down; bridge state HW-dependent)
+
+### TL;DR — what changed since 2026-05-22
+
+- **SMP Phase D investigation paused**. UART markers proved
+  Pi 4 firmware does NOT reliably deliver secondaries into
+  the armstub on cold boot (cpu0 never reaches in_el2,
+  cpu1/2/3 reach it 0-or-1 times per boot, non-deterministic).
+  The standard armstub spin-table protocol can't be the
+  primary SMP wake mechanism on Pi 4. Resolving needs PSCI
+  CPU_ON (EL3 secure monitor in the armstub) or a
+  BCM2711 ARM_LOCAL_MAILBOX poke.
+- **NUM_CPUS reverted to 1** (kernel `be058044`) for stable
+  single-core baseline. Secondaries park in DAIF-masked WFI
+  at the top of `_other_core_virtual` (kernel `7a6017ed`) so
+  the assembly-side cbnz can't route them into C helpers that
+  would race primary's GIC setup.
+- **USB BAR-size bug fixed** (devices `2ac680e`).
+  XHCI_MAP_SIZE 64 KiB → 4 KiB matches VL805's actual BAR0.
+  Cross-OS verified (FreeBSD bcm2838_xhci, Linux xhci_pci_setup,
+  Circle USBStandardHub, NetBSD xhci_pci_attach all use 4 KiB).
+  Net effect: `rc=-19` (poison reads, primary failure mode for
+  weeks) is replaced by `rc=-110` (reset timeout, secondary
+  symptom) on most cold boots.
+- **HCH guard before HCRST** (devices `b1ae732`).
+  `xhci_reset` now reads USBSTS.HCH and halts the controller
+  if it isn't already halted, per xHCI spec 5.4.1.
+- **50 ms post-reprogram settling** (devices `0619a7f`).
+  After re-arming the BCM2711 outbound window post mailbox
+  notify, wait 50 ms for bridge translation to stabilise.
+- **Cap-probe in-loop retry** (devices `4795266`).
+  6× 100 ms retries if cap-space reads return the poison
+  pattern (caplength=0xad / version=0xdead).
+- **Public `bcm2711_pcie_resettleOutboundWindow()`**
+  (devices `77fe93a`). Exported function that re-arms the
+  bridge translation without re-running the full bring-up.
+  Available for `xhci_reset` to call between HCRST write
+  and the bit-clear wait, but not currently invoked from
+  there because the bridge re-degrades faster than I can
+  measure a code effect under rapid test cadence.
+
+### Hardware constraint discovered this session
+
+The BCM2711 PCIe bridge accumulates internal degradation across
+rapid boot cycles. Empirical curve:
+
+  - 30 min idle after previous-session degraded state →
+    1st test post-idle: `rc=-110` (bridge healthy)
+  - 3 back-to-back cycles in quick succession →
+    `rc=-19` (bridge re-degraded)
+
+Implication for USB iteration: **at most one test per build, with
+a ≥30 min idle gap between builds**. The previous "run 3 cycles
+to measure rates" pattern fights the hardware. See
+`docs/notes/2026-05-23-usb-bridge-cooldown-curve.md`.
+
+### Updated baseline
+
+Single-core boot is stable: psh prompt reached every cycle, no
+fault patterns, K120 keyboard visible to Pi 4 firmware
+(VID 046d PID c31c) in pre-handoff DEV scan.
+
+Most-recent integration snapshot:
+`manifests/2026-05-23-post-marker-cleanup-bridge-stuck-rc19.md`.
+
+### Marker cleanup this session
+
+Stripped 186 lines of Phase-D diagnostic UART markers from
+`_init.S` (kernel `774d188d`), armstub (project `833f654`),
+and `secondary_smoke_entry` (plo `0722997`). Boot UART output
+is now noise-free. The x9 reload trampoline at el1_entry
+(kernel `979e05c0`) and the per-CPU stack fix in
+`_set_up_vbar_and_stacks` are kept for future SMP work.
+
+### TD list snapshot
+
+- **TD-13-spawn-cap**: verified inactive across 232 captured
+  logs (the cap at 32 iters never fires). Documented in
+  `docs/notes/2026-05-23-td13-spawn-cap-analysis.md` with the
+  smallest-experiment plan for an eventual root-cause attempt.
+
+### Original 2026-05-22 status follows below (kept for reference)
+
+## Previous Status: 2026-05-22 (SMP Phase A on; NUM_CPUS=4 active; Phase C step 2 PPI enable in place; secondaries wake on timer ticks)
 
 Three milestones since the morning's 5/5 stability baseline:
 
