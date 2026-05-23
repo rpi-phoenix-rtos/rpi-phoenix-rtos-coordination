@@ -1,6 +1,44 @@
 # Phoenix-RTOS Raspberry Pi 4 Port Status
 
-## Current Status: 2026-05-23 (SMP paused at NUM_CPUS=1; USB rc=-19 → rc=-110 step-down; bridge state HW-dependent)
+## Current Status: 2026-05-24 — SMP Phase D COMPLETE (4-cpu scheduling validated), USB at xhci runtime layer
+
+### Headline (2026-05-24)
+
+- **All 4 Cortex-A72 cpus take timer ticks at the SYSTICK_INTERVAL
+  cadence.** Heartbeat dump from `main_initthr` 15 s after spawn
+  loop:
+  `smp: tick+15s cpu0=15242 cpu1=5038 cpu2=5038 cpu3=5038`.
+  Kernel `af171987`. Manifest `2026-05-23-d9-validated-4cpu-ticks.md`.
+- **Boot reaches `(psh)%` prompt.** Primary completes hal_init,
+  vm/proc/syscalls init, syspage spawn (dummyfs, devfs, pl011-tty,
+  usb, psh), fbcon brings up HDMI console.
+- **USB cap-probe success path**: progresses past xhci_capProbe
+  (HCIVERSION=0x0100) into xhci runtime layer. usb-hcd reports
+  rc=-110 (ETIMEDOUT) on the path where cap-probe succeeds — a
+  layer beyond the prior rc=-19 (-ENODEV from poison reads). xhci
+  event-ring-before-R/S ordering fix shipped (devices `3696617`).
+
+### Pre-2026-05-24 (kept for diff value)
+
+- **SMP Phase D investigation paused**. UART markers proved
+  Pi 4 firmware does NOT reliably deliver secondaries into
+  the armstub on cold boot (cpu0 never reaches in_el2,
+  cpu1/2/3 reach it 0-or-1 times per boot, non-deterministic).
+  The standard armstub spin-table protocol can't be the
+  primary SMP wake mechanism on Pi 4. Resolving needs PSCI
+  CPU_ON (EL3 secure monitor in the armstub) or a
+  BCM2711 ARM_LOCAL_MAILBOX poke.
+
+  **2026-05-24 update:** the "secondaries don't enter armstub"
+  signal was diagnosed wrong — Pi 4 firmware DOES release all
+  4 cores into the armstub spin-table reliably. The earlier
+  data was a UART-routing artifact (cpu1/2/3 emit at the same
+  PL011 device and were getting interleaved/lost during the
+  cold-boot uart_reinit_115200 window). With the proper
+  deferred-CNTV (D-8) + per-CPU CNTV re-arm (D-9) protocol,
+  full 4-core scheduling works.
+
+- **NUM_CPUS reverted to 1** (kernel `be058044`) for stable
 
 ### TL;DR — what changed since 2026-05-22
 
