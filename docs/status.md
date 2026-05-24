@@ -17,6 +17,29 @@
   rc=-110 (ETIMEDOUT) on the path where cap-probe succeeds — a
   layer beyond the prior rc=-19 (-ENODEV from poison reads). xhci
   event-ring-before-R/S ordering fix shipped (devices `3696617`).
+- **USB hardening commits**: HCRST 250 ms (devices `002324e`),
+  cap-probe per-attempt logging (`5598799`), stderr unbuffered
+  (usb `f7dea42`), runStateSelftest removed (`229ee55`), BAR1
+  inbound disabled (`72f30ad`), MISC_CTRL bits matched to Linux
+  (`9bf0ede`), post-mailbox + post-HCRST + pre-R/S bridge
+  resettle (`fccc7ed` + `8d11e99` + `541f48e`), DSB SY around
+  R/S=1 and doorbell (`70e8dc5` + `9ad2eab`), VSR1 LE endian
+  for inbound BAR2 (`3470c54`), HSE/timeout reg dumps (`68260a8`
+  + `763f1cc` + `ceb71d8`).
+- **USB status: statistical**. Boot mode A (~1/3): cap-probe
+  poisoned (rc=-19, no xhci output). Mode B (~1/3): cap-probe
+  OK, R/S=1 sets USBSTS.HSE (rc=-19, "controller error state
+  after run", USBSTS=0x15). Mode C (~1/3): R/S=1 clean,
+  USBSTS=0x10, but NOOP cmd timeout (CRCR_LO=0, event[0]=0,
+  rc=-110). Bridge inbound DMA state appears to be the root
+  variability — needs deeper investigation (post-PERST timing,
+  full SCB1/SCB2 setup, MSI registers).
+- **Plo cold-boot diagnostics**: Cd/Ci/Id/Ii/Md markers between
+  release-2 and kernel _start (plo `b31c50d`); kernel `_start`
+  emits 'K' as first instruction (kernel `92331abe`). Plo
+  switched to set/way D-cache invalidation (plo `54bf7c3`).
+- **Test infra**: ffmpeg HDMI grab wrapped in 5 s timeout
+  (`070c63b`) so v4l2 device contention doesn't hang the cycle.
 
 ### Pre-2026-05-24 (kept for diff value)
 
