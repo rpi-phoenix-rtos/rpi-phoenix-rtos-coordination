@@ -691,33 +691,45 @@ driver lands at: **L** = Linux, **F** = FreeBSD, **U** = U-Boot,
 14. **Enable TX + RX**: `UMAC_CMD |= TX_EN | RX_EN`, set the speed
     bits, optionally `PROMISC` while bringing up.
 
-### Open question: Tier-3 RX (Phoenix, 2026-05-24)
+### Gotcha #2: RDMA's per-ring register layout is MIRRORED from TDMA
 
-This is honest about a still-unresolved issue at the time of writing.
-On the Phoenix port, with everything above in place — `SYS_PORT_CTRL =
-EXT_GPHY`, `UMAC_CMD = TX_EN|RX_EN|SPEED_100|PROMISC`,
-`RBUF_ALIGN_2B`, all 256 RX BDs programmed with valid 32-bit-aligned
-phys addresses — **RX still doesn't deliver**: `RDMA_PROD_INDEX` stays
-at 0 even when host `tcpdump` confirms the bridge is sending unicast
-replies to our successful TX. Things still untried (see Phoenix's
-`memory/project_genet_tier3_open.md` for the live note):
+This is the **second** GENET-specific trap that is not flagged in any of
+the public references (Linux gets it right by construction because the
+macros are split per-direction; if you read the U-Boot driver and
+naively reuse the TDMA per-ring offsets for RDMA you will lose hours).
+Within each per-ring 0x40 register slice:
 
-- Linux's **full DMA-disable handshake** before init: read `DMA_CTRL`,
-  clear `DMA_EN`, poll `DMA_STATUS` until the `DISABLED` bit asserts,
-  then re-enable. The Pi 4 firmware logs a `GENET STOP: 0` message
-  before kernel handoff; that may leave the block in a state that
-  rejects fresh RX init unless the full disable sequence runs.
-- `GR_BRIDGE_CTRL` (`GENET_GR_BRIDGE_OFF = 0x0040`) — Linux touches
-  it during init; we have not yet.
-- 35-bit DMA translation: while `va2pa()` returning a sub-4 GB phys
-  works fine for TX (verified on the wire), it is not certain that
-  RX writes follow the same translation. Some bus paths on BCM2711
-  require an explicit `addr_hi` even when the high 3 bits are 0.
+```
+Per-ring slice offset (within one ring's 0x40 window):
+  0x00:  TDMA = READ_PTR         RDMA = WRITE_PTR
+  0x08:  TDMA = CONS_INDEX (HW)  RDMA = PROD_INDEX (HW)
+  0x0C:  TDMA = PROD_INDEX (SW)  RDMA = CONS_INDEX (SW)
+  0x2C:  TDMA = WRITE_PTR        RDMA = READ_PTR
+```
 
-If you hit the same wall, start by comparing your init order
-**register-write by register-write** against U-Boot's
-`bcmgenet_setup_rx_ring`. The shortest non-Linux RX reference is
-U-Boot's ~600 LOC polling-only driver.
+The producer/consumer pair is at **swapped offsets** for the two
+directions: on TDMA, software writes `PROD_INDEX` at +0x0C and hardware
+writes `CONS_INDEX` at +0x08; on RDMA, hardware writes `PROD_INDEX` at
++0x08 and software writes `CONS_INDEX` at +0x0C. Reusing the TDMA
+offsets verbatim for RDMA reads will tell you that `PROD_INDEX` is
+stuck at zero forever — actually you're reading the SW-written
+`CONS_INDEX` that has never been touched. Hardware is delivering
+frames; you're looking at the wrong register.
+
+If you hit "tcpdump confirms RX frames on the wire but my driver's
+`PROD_INDEX` stays at 0", check this first. Phoenix's GENET port spent
+several iterations chasing legitimate-looking but unrelated fixes
+(`DMA_DISABLE` handshake, `GR_BRIDGE_CTRL`, `RBUF_64B_EN`, XON/XOFF
+thresholds, the full 256-BD aliased ring) before the actual root cause
+turned out to be three lines of bad macro reuse. The `GENET_RDMA_RING_*`
+constants in Phoenix `bcm-genet-regs.h` capture the right offsets;
+copy that table, not the TDMA one.
+
+Once the RX index is read from the right offset, the previously-tried
+"legitimate" fixes (`DMA_DISABLE` handshake, XON/XOFF threshold,
+`RBUF_64B_EN`) all still apply — they are real init steps Linux does
+in the same order. Skipping any of them is fine on first boot but
+likely to break on driver re-init.
 
 ### Reference drivers
 
@@ -1106,24 +1118,179 @@ controller. This is the convention Phoenix already follows on every
 other supported board (imx6ull, imxrt106x/117x, ia32); Pi 4 was the
 outlier that forced re-discovery.
 
-### Worked example: GENET Tier 1 → Tier 3
+### Worked example: GENET Tier 1 → Tier 5c
 
-Three working steps with corresponding Phoenix manifests:
+The full progression for the Phoenix port through to a production-grade
+driver. Each tier ends in a manifest pinning all sibling SHAs and a
+doc note explaining what changed.
 
 - **Tier 1 — link-up.** Map MMIO, read `SYS_REV_CTRL`, reset UMAC,
   MDIO bus + BCM54213PE attach, autoneg, link-up. Manifest:
-  `manifests/2026-05-24-eth-tier1-link-up.md`.
+  `2026-05-24-eth-tier1-link-up.md`.
 - **Tier 2 — TX one packet.** TDMA ring 16, single-slot polled TX,
   `result=0` on a synthetic gratuitous-ARP. Two key fixes that the
   initial implementation got wrong: `SYS_PORT_CTRL = EXT_GPHY` and
   dropping `DMA_OWN` from the TX BD status. Manifest:
-  `manifests/2026-05-24-eth-tier2-tx-ok.md`.
-- **Tier 3 — TX on wire, RX still open.** Host `tcpdump` confirms the
-  TX frame reaches the bridge; the bridge's unicast ARP reply is
-  visible on the host side but the Pi's `RDMA_PROD_INDEX` stays at 0.
-  Open at end-of-session. Manifest:
-  `manifests/2026-05-24-eth-tier3-tx-wire-ok.md`; live notes in
-  Phoenix's `memory/project_genet_tier3_open.md`.
+  `2026-05-24-eth-tier2-tx-ok.md`.
+- **Tier 3 — RX one packet, polled.** Resolved 2026-05-25 after the
+  RDMA-register-mirror finding above. Manifest:
+  `2026-05-25-eth-tier3-rx-ok.md`.
+- **Tier 4 — lwIP integration + ICMP end-to-end.** Static IP
+  `10.42.0.99/24` (autonomous DHCP deferred — see TD-Eth-DHCP), full
+  ARP-request → ARP-reply → ICMP echo-reply chain. 5/5 host pings
+  succeed at 3.7–16.8 ms RTT (polled, with per-RX printf still in
+  place). Two lwip-port wiring fixes were load-bearing:
+  `pbuf_take_at(p, frame, pay_len, ETH_PAD_SIZE)` for RX (lwip's
+  ethernet_input does `pbuf_remove_header(p, 2)` before reading the
+  L2 header — the pbuf must carry 2 bytes of head pad) and matching
+  `pbuf_copy_partial(p, tx_buf, p->tot_len - 2, 2)` on TX (this
+  lwip-port leaves the 2-byte pad ON the pbuf when calling
+  linkoutput). Manifest: `2026-05-25-eth-tier4-icmp-ok.md`.
+- **Tier 5 — IRQ-driven RX.** Replaced the 10 ms RX polling thread
+  with a Phoenix-pattern `interrupt()` handler + cond-driven service
+  thread on `INTRL2_0_RX_DMA_DONE` (GIC SPI 157 = abs IRQ 189). Per-RX
+  printf removed. Result: 5/5 host pings at RTT **0.61–1.17 ms**
+  (avg 0.92 ms) — ~8× faster than Tier 4. The bulk of the improvement
+  was removing the per-frame printf (kernel-klog round-trip dominated
+  per-packet latency); the IRQ-vs-poll shift contributed the
+  remainder. Manifest: `2026-05-25-eth-tier5-irq-rx.md`.
+- **Tier 5 sustained-load smoke.** 4-phase host-side probe:
+  baseline 100 @ 200 ms, fast 500 @ 10 ms, 1400 B jumbo 100 @ 50 ms,
+  10-second `ping -f`. Zero loss across all phases, ~1.66 Kpps
+  sustained in phase 4, worst-case RTT 2.09 ms. No `tx_timeout`, no
+  kernel faults.
+- **Tier 5b — real MAC from VideoCore mailbox; PROMISC off.** The
+  fallback locally-administered MAC plus `CMD_PROMISC` was a Tier-1
+  workaround for the "Pi 4 firmware doesn't pre-program UMAC_MAC0/1"
+  caveat noted in the bring-up section above. Tier 5b plumbs the
+  BCM2835 mailbox property `GET_BOARD_MAC` (tag `0x10003`) directly
+  in `bcm-genet.c`. Validation: host ARP table for `10.42.0.99` now
+  reports `dc:a6:32:*` (real Raspberry Pi Trading Ltd OUI). PROMISC
+  is cleared on the unicast filter path; 5/5 pings still succeed
+  with the unicast filter active. Manifest:
+  `2026-05-25-eth-tier5b-mailbox-mac.md`.
+- **Tier 5c — net-routed observability (UDP diag responder).**
+  Solves the more-general post-fbcon UART silence problem: with the
+  GENET driver running, expose Phoenix internal state over the
+  network. A tiny `port/diag-udp.c` listens on UDP `:9999` and
+  answers a single-byte command with a structured ASCII reply.
+  Sub-commands grew to cover: per-netif stats (`q`), top threads by
+  cpuTime (`t`), 4-thread saturation burn (`b`), Pi 4 GPIO snapshot
+  (`g`), clock+power+thermal+SDHCI register dump (`c`), BCM2711 PM
+  watchdog reboot/halt (`r`/`h`). The pattern generalises beyond Pi 4
+  and is the recommended observability surface for any future
+  multi-threaded Phoenix-on-aarch64 work. Manifest:
+  `2026-05-25-eth-tier5c-diag-udp.md`. See also the "Network-routed
+  observability" subsection below.
+
+### SMP Phase E worked example
+
+SMP Phase D landed earlier (all 4 Cortex-A72 cores wake, complete HAL
+init, dispatch threads, take timer ticks balanced across cores). Phase E
+is the validation question: do the four cores actually pull non-idle
+work independently, or is dispatch all on cpu 0 with cpu 1-3 just
+ticking through idle threads? The diag-udp `t` and `b` sub-commands
+let us answer this rigorously **without UART**.
+
+**Method.** Two paired probes:
+
+1. *Idle endpoint.* Two `t` probes 10 s apart on an otherwise-idle
+   system, decoding the per-thread `cpuTime_us`. If the 4 `[idle]`
+   threads (one per CPU) each accumulate ~10 s of cpuTime in 10 s of
+   wall-clock, the sum is `≈ 4 × Δwall` — which is only achievable
+   if 4 independent schedulers are running, one per core.
+2. *Saturation endpoint.* `b` spawns 4 busy-loop threads inside the
+   lwip-port for 10 s, then paired `t` probes during the burn window
+   measure their cpuTime accumulation. If each burner accumulates
+   `~Δwall × 0.94` (94% of a CPU), `ΣΔcpu ≈ 3.77 × Δwall` —
+   saturation-side proof that 4 cores each picked one up.
+
+**Observed.** Both endpoints validated; closes the validation gap for
+SMP. Manifests: `2026-05-25-smp-phase-e-validated.md`,
+`2026-05-25-smp-phase-e-saturation.md`.
+
+**Bonus finding: per-thread shared-counter false sharing.** The first
+burn implementation used a `volatile unsigned long long counters[4]`
+array (all 4 slots fit in one 64-byte L1 cache line) with naive
+`counter[slot]++` per inner iteration. Across 5 s of confirmed CPU
+activity per burner, only burner 0's counter advanced. The other three
+"stuck at 0" looks like a Phoenix bug but is just textbook false
+sharing — 4 cores hammering one cache line, with non-atomic RMW races
+losing most updates. Padding each slot to its own cache line (one
+`_Alignas(64)` struct per counter) restores plain `volatile ++` to
+ALU-speed throughput across all 4 cores. Documented as
+`TD-Pi4-FalseSharingPenalty` in
+`docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md`; the pattern guide there
+is the suggested reference for any future multi-threaded userspace
+code on Pi 4.
+
+### Network-routed observability
+
+The single biggest accelerator after Tier 4 was the discovery that —
+once ethernet works — we don't need UART for runtime introspection any
+more. Post-fbcon-takeover the pl011 goes silent for userspace prints
+on Phoenix (kernel side keeps writing; userspace stdout routes
+elsewhere). With a netif up, a tiny lwip raw-API UDP responder
+(~140 lines in `port/diag-udp.c`, no extra threads, runs entirely on
+the tcpip-thread) gives us a *better* channel than UART: structured
+output, host-side scripting, no MTU truncation issues, no fbcon
+serialization.
+
+The pattern is broadly applicable to any aarch64 RTOS port:
+
+1. Once a netif is up, listen on UDP `:9999` with `udp_new` + `udp_bind`
+   + `udp_recv`.
+2. Receive callback peeks the first byte of the request, dispatches
+   to a small `diag_format_*` function per command, replies via
+   `udp_sendto` from the same callback.
+3. Each `diag_format_*` reads its target state synchronously (MMIO,
+   syscalls, mailbox property tags) and writes a NUL-terminated
+   text response. Cap at one MTU fragment (1400 B) to avoid IP
+   fragmentation.
+4. Host probes with `echo q | nc -u -w 1 <ip> 9999`.
+
+The `g`/`c`/`s`/`r`/`h`/`t`/`b` Phoenix-specific commands are
+illustrative but not the point — the point is that this is the
+right surface for any platform-level read/write you need to do once
+you can route packets. Phoenix uses it for: lwip stats, thread-cpu
+distribution, GPIO/clock/power/thermal/SDHCI snapshots, the PM
+watchdog reboot, a 4-thread CPU saturation benchmark. New entries
+are one function + one switch case.
+
+### Platform utilities discovered along the way
+
+While building Phoenix's diag-udp responder we exercised several
+Pi 4 platform primitives that any OS porter will eventually want.
+Each is small (~30-80 lines) and worth pulling forward:
+
+- **PM watchdog software reboot** (BCM2711 PM block at `0xfe100000`,
+  PM_RSTC/PM_RSTS/PM_WDOG, password `0x5a000000`). 100 ms-deferred
+  via a one-shot thread so the UDP reply egresses before the
+  countdown fires. Saves ~30 s per test cycle vs an external
+  smart-plug power-cycle. Same code path serves a `halt` via the
+  `PM_RSTS_RASPBERRYPI_HALT = 0x555` magic. Manifest:
+  `2026-05-25-watchdog-software-reboot.md`.
+- **Thermal + throttle telemetry** via mailbox tags `GET_TEMPERATURE`
+  (`0x00030006`), `GET_MAX_TEMPERATURE` (`0x0003000a`), `GET_THROTTLED`
+  (`0x00030046`). The throttle bitfield decodes as bits 0-3 = now
+  active, bits 16-19 = sticky-since-boot, for under-voltage / ARM-cap
+  / throttling / soft-limit. Lab board at idle: SoC 34.5 °C, ceiling
+  85 °C, throttle 0x0.
+- **GPIO Tier 1 snapshot helpers.** `set_fsel(pin, fn)` /
+  `get_fsel(pin)` / `set_pull(pin, code)` over the BCM2711 GPIO block
+  at `0xfe200000`. The 'g' diag command dumps GPFSEL0..5, GPLEV0/1,
+  GPIO_PUP_PDN_CNTRL_REG0..3 — enough to read full pin function and
+  level state. Key Pi 4 finding for SDIO bring-up: GPFSEL3 reads 0
+  at boot (GPIO 34-39 are INPUT, not yet routed to SDIO ALT3=7);
+  PUP_PDN2 has pins 34-39 at pull-up (firmware-correct for idle SDIO
+  bus). So WiFi bus-side bring-up is one GPFSEL3 write + a mailbox
+  `WL_REG_ON` assert.
+- **VideoCore mailbox property channel.** Reusable across all three
+  utilities above plus the GENET Tier 5b MAC fetch. Pi 4 base
+  `0xfe00b880` (non-page-aligned; align down by `_PAGE_SIZE - 1` for
+  mmap), property channel 8, standard request envelope of 8 u32
+  words `[size, REQUEST, tag, val_buf_size, code, ...args, END]`.
+  Response success indicated by `msg[1] == 0x80000000`.
 
 ### Phoenix tooling worth reusing
 
@@ -1138,10 +1305,19 @@ find these helpful:
 - `scripts/test-cycle-netboot.sh` — power-cycle the Pi over a smart
   outlet, serve TFTP, capture UART, recover the netboot bridge on
   DHCP timeout.
+- `scripts/pi_reboot.sh` — once a netif is up, replaces the smart-outlet
+  power-cycle with a `nc -u` to diag-udp's `r` command (BCM2711 PM
+  watchdog). ~30 s faster per iteration.
 - `scripts/uart-summary.sh` / `scripts/uart-list.sh` — UART log
   analysis helpers.
 - `scripts/qemu-debug.sh --gdb` — QEMU rpi4b model with gdbstub for
   early-boot state capture.
+- `sources/phoenix-rtos-lwip/port/diag-udp.c` (~600 LOC) — single
+  source file containing the UDP responder, per-driver stats
+  callback wire-up, watchdog/thermal/GPIO/SDHCI/mailbox helpers,
+  and the 4-thread SMP saturation burner. The smallest concrete
+  example of all the platform primitives the guide discusses,
+  exercised live on every Pi 4 boot.
 
 
 ## Pointers for newcomers
