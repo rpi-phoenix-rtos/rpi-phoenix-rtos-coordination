@@ -1,11 +1,16 @@
 # Current Implementation Step
 
-## Active step (2026-05-25): pick next — SMP Phase E vs. Ethernet hardening vs. WiFi
+## Active step (2026-05-25): pick next — SMP Phase E vs. autonomous DHCP vs. WiFi
 
-Ethernet Tier 5b (mailbox MAC + PROMISC drop) landed today on top of
-the morning's Tier 5. `agent/rpi4-genet` head `79bd607`; manifest
-`manifests/2026-05-25-eth-tier5b-mailbox-mac.md`. ARP shows real OUI
-`dc:a6:32:3c:dd:f1`, ping 5/5 at RTT 0.66–1.42 ms with PROMISC off.
+Ethernet Tier 5c (net-routed observability via UDP diag responder)
+landed today on top of Tier 5 + 5b. `agent/rpi4-genet` head
+`b261265`; manifest `manifests/2026-05-25-eth-tier5c-diag-udp.md`.
+`echo q | nc -u -w 1 10.42.0.99 9999` now returns per-netif counters
++ link + MAC source.
+
+The diag responder unblocks SMP Phase E: extending the `stats`
+callback (or adding a per-cpu equivalent) lets us read per-CPU
+scheduler counters from the host even when pl011 is fbcon-silenced.
 
 Open candidates for the next step:
 

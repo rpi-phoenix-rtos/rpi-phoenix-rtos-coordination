@@ -1607,11 +1607,11 @@ lwip-port concern). Each marker has a `TODO(TD-Eth-…)` comment in source.
   board (Linux and U-Boot both MDIO-poll). Tier 5 keeps the 1 Hz
   `genet_linkPollThread`. Revisit if a future board variant exposes
   the line.
-- **TD-Eth-Stats** — counters (`rx_pkts_seen` / `rx_pkts_dropped` /
-  `tx_pkts` / `tx_timeouts`) exist in `genet_state_t` but aren't
-  surfaced anywhere outside the driver — gdb only. Resolve by
-  routing through a stats syscall, a `/dev` node, or a SIGUSR1
-  driver dump.
+- **TD-Eth-Stats** — RESOLVED 2026-05-25 in lwip `b261265`. Counters
+  are surfaced via the new lwip-port UDP diag responder on port
+  9999. A generic `netif_driver_t.stats` callback (NULL-safe) lets
+  any future driver expose its own counters the same way; the
+  loopback netif is skipped via `NETIF_FLAG_ETHARP`.
 
 ## Tracking Checklist
 
@@ -1660,7 +1660,7 @@ lwip-port concern). Each marker has a `TODO(TD-Eth-…)` comment in source.
 | TD-Eth-MAC | RESOLVED 2026-05-25 (lwip `79bd607`) | mailbox `GET_BOARD_MAC` plumbed in `genet_mboxGetMac()` |
 | TD-Eth-Promisc | RESOLVED 2026-05-25 (lwip `79bd607`) | PROMISC only on `mac_is_fallback` path |
 | TD-Eth-LinkIRQ | PENDING | PHY `INT_B` not routed to GIC SPI on Pi 4 board; MDIO poll is the portable answer |
-| TD-Eth-Stats | PENDING | counters present, surfacing path TBD |
+| TD-Eth-Stats | RESOLVED 2026-05-25 (lwip `b261265`) | surfaced via lwip-port diag UDP responder (port 9999) + per-driver `stats` callback |
 
 When resolving an item:
 

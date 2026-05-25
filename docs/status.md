@@ -1,10 +1,21 @@
 # Phoenix-RTOS Raspberry Pi 4 Port Status
 
-## Current Status: 2026-05-25 — Eth Tier 5b COMPLETE (real MAC from VideoCore mailbox, PROMISC off)
+## Current Status: 2026-05-25 — Eth Tier 5c COMPLETE (net-routed observability)
 
 ### Headline (2026-05-25)
 
-- **Ethernet Tier 5b: real MAC + PROMISC off.** `bcm-genet.c` now
+- **Tier 5c: net-routed observability.** A new lwip-port UDP diag
+  responder on port 9999 surfaces per-netif counters on demand,
+  bypassing the post-fbcon UART silence. The bcm-genet driver hooks
+  it via a new optional `netif_driver_t.stats` callback; the
+  loopback netif (no `netif_alloc` wrapper) is skipped via
+  `NETIF_FLAG_ETHARP`. Validated: counters increment by +101 after
+  100 pings + 1 cold probe. `echo q | nc -u -w 1 10.42.0.99 9999`
+  is now the project's go-to runtime-state probe. Resolves
+  `TD-Eth-Stats`. Manifest `2026-05-25-eth-tier5c-diag-udp.md`,
+  lwip `b261265`.
+
+- **Tier 5b: real MAC + PROMISC off.** `bcm-genet.c` now
   calls the BCM2835 mailbox property channel with `GET_BOARD_MAC`
   (tag `0x10003`) at init. Validated: host ARP shows
   `dc:a6:32:3c:dd:f1` (real Raspberry Pi OUI `dc:a6:32`) for
