@@ -1,16 +1,22 @@
 # Current Implementation Step
 
-## Active step (2026-05-25): pick next — SMP Phase E vs. autonomous DHCP vs. WiFi
+## Active step (2026-05-25): pick next — WiFi vs. autonomous DHCP vs. cpuload bench
 
-Ethernet Tier 5c (net-routed observability via UDP diag responder)
-landed today on top of Tier 5 + 5b. `agent/rpi4-genet` head
-`b261265`; manifest `manifests/2026-05-25-eth-tier5c-diag-udp.md`.
-`echo q | nc -u -w 1 10.42.0.99 9999` now returns per-netif counters
-+ link + MAC source.
+SMP Phase E validated (#29 closed). The diag-udp responder gained a
+`t` query that exposes per-thread cpuTime; idle-thread accumulation
+proves 4 CPUs schedule independently. lwip head `f5687ad` on
+`agent/rpi4-genet`, manifest
+`manifests/2026-05-25-smp-phase-e-validated.md`.
 
-The diag responder unblocks SMP Phase E: extending the `stats`
-callback (or adding a per-cpu equivalent) lets us read per-CPU
-scheduler counters from the host even when pl011 is fbcon-silenced.
+Both major directive items — SMP and high-performance Ethernet — are
+now in a known-good state. Open candidates for the next initiative:
+
+- **WiFi (#36)**: BCM43455 SDIO bring-up. Large but now unblocked.
+- **TD-Eth-DHCP**: autonomous DHCP exchange (lwip-port internals walk).
+- **`cpuload` test binary**: explicit 4-thread busy loop to confirm
+  non-idle dispatch (currently only idle distribution is measured —
+  a saturation test would harden Phase E to cover the full envelope).
+- **USB-HCD (#26)**: still parked pending JTAG.
 
 Open candidates for the next step:
 

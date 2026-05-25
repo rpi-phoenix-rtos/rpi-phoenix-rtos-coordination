@@ -1,8 +1,15 @@
 # Phoenix-RTOS Raspberry Pi 4 Port Status
 
-## Current Status: 2026-05-25 — Eth Tier 5c COMPLETE (net-routed observability)
+## Current Status: 2026-05-25 — SMP Phase E VALIDATED (4-CPU scheduler confirmed)
 
 ### Headline (2026-05-25)
+
+- **SMP Phase E validated.** Per-CPU idle thread cpuTime measured via
+  the new `t` diag query: 4 `[idle]` threads each accumulate cpuTime
+  at ~99.9% of wall-clock; sum ≈ 4× wall-clock proves 4 independent
+  schedulers run on 4 cores. Closes task #29 with a definitive
+  measurement-based pass. Manifest
+  `2026-05-25-smp-phase-e-validated.md`, lwip head `f5687ad`.
 
 - **Tier 5c: net-routed observability.** A new lwip-port UDP diag
   responder on port 9999 surfaces per-netif counters on demand,
