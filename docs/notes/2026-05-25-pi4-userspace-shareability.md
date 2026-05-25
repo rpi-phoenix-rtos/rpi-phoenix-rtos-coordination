@@ -96,22 +96,56 @@ high — anyone writing multi-threaded userspace code on Phoenix-Pi4
 needs to know this. Logged as `TD-Pi4-UserspaceCacheShareability` in
 the TD registry.
 
-## Root cause hypothesis (unverified)
+## Root cause: NOT shareability (initial hypothesis disproven)
 
-Phoenix's `pmap` on aarch64 sets userspace data-page attributes to
-something like `MAIR_ATTR_NORMAL_INNER_WB_OUTER_WB | SH_OUTER` or
-`SH_NONE`. The fix is to flip to `SH_INNER` for any pages that
-might be cross-shared.
+Initial guess was a missing `SH_INNER` on userspace PTEs. Checked
+`sources/phoenix-rtos-kernel/hal/aarch64/pmap.c:446`:
 
-Linux/musl/glibc all assume `SH_INNER` for userspace; that's the
-default on Linux's aarch64 mappings. Phoenix may have inherited a
-single-core assumption from earlier ARMv7 ports.
+```c
+descr = DESCR_PA(pa) | DESCR_VALID | DESCR_TABLE | DESCR_AF | DESCR_ISH;
+```
 
-To confirm: read `MAIR_EL1` and the relevant TTBR entries for a
-userspace VA via gdbstub or QEMU. Or, simpler, write a small kernel
-patch that switches `pmap`'s userspace ATTRIDX/SH bits and re-run
-the diag-udp burn with the plain-volatile version — if counters
-advance, the hypothesis is confirmed.
+`DESCR_ISH` is already set on every page leaf descriptor. Userspace
+pages are inner-shareable. Hardware coherency should propagate
+writes between cores.
+
+## Root cause: most likely false-sharing on a hot cache line
+
+All 4 counter slots (32 bytes total) fit in one 64-byte L1 cache
+line. The old code did 4096 RMW operations per gettime tick from 4
+CPUs simultaneously contending for that same cache line. The new
+code reduced shared-line writes by ~4096× by accumulating into a
+local before publishing.
+
+Numerical evidence from the failing version:
+- 10 s wall-clock burn, ~5 s of cpuTime per burner thread
+- burner0 visible count after 11 s wall = 8192 (exactly 2 inner loops)
+- burners 1–3 visible count = 0
+
+If false sharing is the cause, ~1000–2000 cycles per increment under
+4-way contention; 5 s × 1.5 GHz = 7.5e9 cycles → ~3.7 M increments
+expected per burner. We observed 0. So false sharing alone doesn't
+fully explain the zero visible writes — there's an additional
+unknown factor (compiler optimization? scheduler interaction with
+the volatile semantics? stack corruption? a kernel-side bug).
+
+## Current status
+
+Workaround validated and committed: use C11 atomics + a local
+accumulator, publish once per outer-loop iteration. This is the
+right pattern regardless of root cause — it dodges both false
+sharing and any memory-ordering issue in one stroke.
+
+Root-cause investigation deferred. Suggested next experiments:
+1. Re-run the failing `volatile ++` version with the counters
+   spread across separate cache lines (e.g., `_Alignas(64) struct {
+   volatile unsigned long long c; } slots[4]`). If counters advance,
+   it's pure false sharing.
+2. Compile both versions with `-O0` and check assembly to verify
+   the compiler isn't doing anything unexpected with `volatile T[]`
+   indexed access.
+3. Add an explicit `__atomic_thread_fence(__ATOMIC_SEQ_CST)` after
+   each non-atomic `++` and re-test.
 
 ## Resolution path
 
