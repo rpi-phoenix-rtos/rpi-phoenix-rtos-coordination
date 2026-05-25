@@ -12,10 +12,17 @@ Both major directive items — SMP and high-performance Ethernet — are
 now in a known-good state. Open candidates for the next initiative:
 
 - **WiFi (#36)**: BCM43455 SDIO bring-up. Large but now unblocked.
-  Plan in `docs/wifi-bringup-plan.md`: 6–8 iterations, gated on
-  writing a Pi 4 SDIO host driver (the existing `cyhal_sdio.c`
-  targets i.MX-RT USDHC2). Also requires adding chip-ID 43455 to
-  Phoenix's WHD copy (current list: 43012/22/430/439/909/907).
+  Plan in `docs/wifi-bringup-plan.md`: 6–8 iterations. Tier 0 + 1a/1b
+  scout work done (controller is SDHCI @ 0xfe300000, accessible from
+  userspace, fully clock/power-initialized at boot). Tier 1c is the
+  next concrete step: GPFSEL3 → ALT3 + WL_REG_ON via mailbox + CMD5.
+- **Bluetooth (BCM43455 BT side)**: deferred until WiFi completes.
+  Plan in `docs/bluetooth-bringup-plan.md`. Shares two prerequisites
+  with WiFi (`expgpio` mailbox helper, firmware-blob staging path), so
+  WiFi unblocks BT for free. Pi 4 BT is a standard UART HCI controller
+  on PL011 UART0 — much simpler bring-up than WiFi SDIO. 4-6
+  iterations for Tier 0-2 (raw HCI controller usable), then host stack
+  choice (defer / NimBLE / BTstack).
 - **TD-Eth-DHCP**: autonomous DHCP exchange (lwip-port internals walk).
 - **`cpuload` test binary**: explicit 4-thread busy loop to confirm
   non-idle dispatch (currently only idle distribution is measured —

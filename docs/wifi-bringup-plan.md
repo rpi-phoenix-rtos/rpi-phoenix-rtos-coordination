@@ -1,5 +1,11 @@
 # WiFi (BCM43455) Bring-Up Plan for Phoenix-RTOS on Pi 4
 
+> **Related**: see `docs/bluetooth-bringup-plan.md` for the BT side of the
+> same combo chip. WiFi lands first (higher user-visible value + the
+> shared `expgpio` / mailbox / firmware-blob plumbing carries over to BT
+> for free).
+
+
 **Status**: scout / planning (not yet started).
 **Owner**: open (task #36).
 **Estimated effort**: 6–8 focused iterations spanning multiple sessions.
