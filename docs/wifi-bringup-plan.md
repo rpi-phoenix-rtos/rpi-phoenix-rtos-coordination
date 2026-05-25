@@ -218,10 +218,26 @@ work begins.
 3. ~~Whether to attempt SDHOST or jump straight to Arasan SDHCI~~ —
    SDHCI confirmed as the WiFi controller; SDHOST is the SD card
    path on Pi 4.
-4. **Clock enable mechanism.** Reading SDHCI/EMMC2 high-offset
-   registers (0x40 CAPS, 0xFC VERSION) faulted in the v2 scout —
-   they're clock-gated at boot. Tier 1's first job after MMIO map
-   is to enable the controller clock, likely via VideoCore mailbox
-   property tag `0x00030009` (GET_CLOCK_RATE) / `0x00038002`
-   (SET_CLOCK_RATE) with clock-id `BCM2835_MBOX_CLOCK_EMMC`. Linux
-   does this via the bcm2711 clock manager (`bcm2711-clocks.c`).
+4. ~~Clock enable mechanism.~~ — partially resolved 2026-05-25 (lwip
+   `818ac4a`, `b658bc1`). VideoCore mailbox `GET_CLOCK_RATE` for
+   EMMC (id=1) returns **250 MHz at boot**; EMMC2 (id=12) returns
+   **100 MHz**. Both clocks are already running. SDCard device
+   power state (mailbox `GET_POWER_STATE` device_id=0) is also
+   already **on (0x1)** at boot, and SET(on+wait) is idempotent.
+   Yet SDHCI high-offset register reads (0x40 CAPS, 0xFC VERSION)
+   still fault in the original v2 scout. Mechanism unclear —
+   candidates:
+   - BCM2711 Clock Manager `CM_RESETS` register at `0xfe101000`
+     may hold individual peripherals in reset until explicitly
+     released. Linux's `bcm2711-clocks.c` lists `BCM2711_CLK_EMMC`
+     handled via `bcm2835-cprman.c`.
+   - Phoenix mmap repeated against the same physical page (the v2
+     scout did 4 mmap'd of overlapping pages in 0xfe300000) — could
+     be a transient kernel bug.
+   - The "fault" may not be a fault at all — could be a script
+     race / nc -w 1 timing artifact. The single-mmap 'c' probe in
+     this commit returns data fine.
+   Next experiment: re-add high-offset SDHCI reads to the 'c'
+   probe (single mmap of 0xfe300000 page) and confirm. If they
+   work, the fault was always a script artifact and Tier 1 can
+   start writing the driver immediately.
