@@ -12,6 +12,10 @@ Both major directive items — SMP and high-performance Ethernet — are
 now in a known-good state. Open candidates for the next initiative:
 
 - **WiFi (#36)**: BCM43455 SDIO bring-up. Large but now unblocked.
+  Plan in `docs/wifi-bringup-plan.md`: 6–8 iterations, gated on
+  writing a Pi 4 SDIO host driver (the existing `cyhal_sdio.c`
+  targets i.MX-RT USDHC2). Also requires adding chip-ID 43455 to
+  Phoenix's WHD copy (current list: 43012/22/430/439/909/907).
 - **TD-Eth-DHCP**: autonomous DHCP exchange (lwip-port internals walk).
 - **`cpuload` test binary**: explicit 4-thread busy loop to confirm
   non-idle dispatch (currently only idle distribution is measured —
