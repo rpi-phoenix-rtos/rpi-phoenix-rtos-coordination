@@ -1613,6 +1613,47 @@ lwip-port concern). Each marker has a `TODO(TD-Eth-…)` comment in source.
   any future driver expose its own counters the same way; the
   loopback netif is skipped via `NETIF_FLAG_ETHARP`.
 
+## TD-Pi4-UserspaceCacheShareability — `volatile` insufficient for cross-CPU visibility (2026-05-25)
+
+**Symptom**: in the lwip-port diag-udp 'b' burn handler (commit
+`b750d7e`), 4 burner threads spun on `volatile unsigned long long
+diag_burn_counters[]`. Each thread accumulated ~5 s of kernel-side
+cpuTime in a 5 s wall-clock window (proving all 4 ran on separate
+cores). But only burner 0's counter advanced as seen by the reader
+thread on cpu 0; burners 1–3's counters stayed at 0.
+
+**Hypothesis**: Phoenix's pmap on aarch64 maps userspace data pages
+with cache attributes that don't include inner-shareable, so writes
+from cpu1/2/3 sit in their L1 (or local store buffer) without
+propagating to cpu 0's view. ARM hardware coherency only kicks in
+within the *inner-shareable* domain; pages mapped outer-shareable or
+non-shareable do not coherently propagate writes between cores.
+
+**Confirmation**: replacing `*counter++` with `__atomic_store_n(p,
+new, __ATOMIC_RELEASE)` + the reader-side `__atomic_load_n(p,
+__ATOMIC_ACQUIRE)` made all 4 counters advance at near-identical
+rates (within 0.26%). The atomic store on aarch64 lowers to `stlr`
+(store-release), which on a Cortex-A72 forces a DMB ISH after the
+store — pushing the value to the inner-shareable domain.
+
+**Workaround**: any cross-thread shared state in Phoenix userspace
+on Pi 4 must use C11 atomics, an explicit `__atomic_thread_fence`,
+or a pthread mutex (which internally uses the right barriers).
+`volatile` is **not** sufficient for inter-CPU visibility — it only
+prevents compiler hoisting.
+
+**Resolution path**: confirm whether Phoenix's `pmap` actually maps
+userspace pages outer-shareable / non-shareable on aarch64; if yes,
+fixing this in the kernel (so all pages are inner-shareable by
+default) would remove the workaround requirement and align Phoenix
+with Linux/macOS/Windows behaviour. Until then, this entry should
+be linked from any future SMP-aware userspace code review.
+
+**Reference**: commit `66e54a5` on `agent/rpi4-genet` (the atomic
+fix and its observed before/after numbers) + the doc note
+`docs/notes/2026-05-25-smp-phase-e-saturation.md` which describes
+the initial observation.
+
 ## Tracking Checklist
 
 | ID | Status | Blocker? |
@@ -1661,6 +1702,7 @@ lwip-port concern). Each marker has a `TODO(TD-Eth-…)` comment in source.
 | TD-Eth-Promisc | RESOLVED 2026-05-25 (lwip `79bd607`) | PROMISC only on `mac_is_fallback` path |
 | TD-Eth-LinkIRQ | PENDING | PHY `INT_B` not routed to GIC SPI on Pi 4 board; MDIO poll is the portable answer |
 | TD-Eth-Stats | RESOLVED 2026-05-25 (lwip `b261265`) | surfaced via lwip-port diag UDP responder (port 9999) + per-driver `stats` callback |
+| TD-Pi4-UserspaceCacheShareability | OPEN | `volatile` cross-CPU writes don't propagate on Pi 4 userspace; C11 atomics work. Likely pmap cache-attribute fix needed |
 
 When resolving an item:
 
