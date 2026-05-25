@@ -36,16 +36,20 @@ MAC fetch); the same mailbox interface drives GPIO + power tags.
 
 ## What's NOT in tree
 
-1. **Pi 4 SDIO host driver.** The Pi 4 has two MMC/SDIO controllers:
-   - **EMMC2** (Arasan SDHCI) at `0xfe340000`. On stock Pi 4 boards
-     this is wired to the SD card slot.
-   - **SDHOST** (bcm2835-style controller) at `0xfe300000`. Wired to
-     the WiFi BCM43455 in 4-bit SDIO mode.
-   Linux reference: `drivers/mmc/host/bcm2835.c` (~1500 lines) for
-   the SDHOST controller (legacy bcm2835 path), or
-   `drivers/mmc/host/sdhci-iproc.c` for the SDHCI path. Either is
-   tractable; SDHOST is simpler / Pi-specific and is what Linux
-   uses by default for WiFi on Pi 4.
+1. **Pi 4 SDIO host driver.** The Pi 4 has three MMC/SDIO controllers
+   in the BCM2711 (confirmed via 2026-05-25 diag-udp 's' scout —
+   all three mmap'd successfully and read 0 when idle):
+   - **SDHOST** (bcm2835 legacy) at `0xfe202000`. Used for SD card
+     on Pi 3; on Pi 4 it can drive the SD card or be unused.
+   - **MMC/SDHCI** (Arasan, legacy) at `0xfe300000`. **WiFi BCM43455
+     SDIO interface on Pi 4** per Linux DT
+     (`arch/arm/boot/dts/bcm2711-rpi-4-b.dts`, the `&mmc` node).
+   - **EMMC2** (BCM2711-specific Arasan) at `0xfe340000`. **SD card
+     slot on Pi 4** per the `&emmc2` node.
+   Target for WiFi bring-up: **MMC/SDHCI at 0xfe300000**. Linux
+   reference: `drivers/mmc/host/sdhci-iproc.c` (~600 lines) for
+   the SDHCI-compatible Arasan path, plus the standard SDHCI core
+   in `drivers/mmc/host/sdhci.c`.
 
 2. **WHD chip ID 43455 support.** `whd_chip_constants.c` enumerates
    the supported chip family — current list: 43012, 43022, 43430,
@@ -167,14 +171,11 @@ Tiers 5/6 are the visible "WiFi works" moment.
 
 ## Risks / unknowns
 
-- **SDHOST vs Arasan ambiguity.** The Pi 4 firmware can switch which
-  controller drives WiFi vs SD card via DT pinmux. The default for
-  Linux is SDHOST→WiFi, but if Phoenix's plo or armstub configures
-  pinmux differently, we may inherit Arasan→WiFi. Determine this
-  via the live DT or by reading GPIO ALT functions for bank 34-39
-  before starting Tier 1. **Recommendation**: scout this first with
-  a small one-shot binary that dumps `GPFSEL3/4` and the SDHOST/
-  Arasan controller register zero (presence indicator).
+- **SDHOST vs Arasan ambiguity.** RESOLVED 2026-05-25 via the
+  diag-udp 's' scout (lwip `124a99b`): MMC/SDHCI at `0xfe300000` is
+  the WiFi target per Pi 4 Linux DT. GPFSEL3 reads 0x0 at boot
+  (GPIO 34-39 INPUT), confirming pinctrl hasn't been applied —
+  Phoenix WiFi-Tier 1 will set those pins to ALT3 as part of bring-up.
 - **VideoCore-owned hardware.** Some Pi 4 board variants leave WL_REG_ON
   under VideoCore firmware control until an explicit mailbox call hands
   it over. Linux's `brcmfmac_pcie.c` doesn't deal with this, but Linux
@@ -209,12 +210,18 @@ work begins.
 
 ## Open questions for next iteration
 
-1. Confirm SDHOST vs Arasan controller assignment on the lab Pi 4B.
-   One-shot Pi-side binary that prints `GPFSEL` and the SDHOST
-   register-zero would close this in a single test cycle.
+1. ~~Confirm SDHOST vs Arasan controller assignment on the lab Pi 4B~~ —
+   resolved 2026-05-25: SDHCI at `0xfe300000`.
 2. Decide on the firmware blob staging path (`/lib/firmware/...`
    under dummyfs vs a dedicated devfs node vs embedded into the
    image). Embedded is simplest for early bring-up.
-3. Whether to attempt SDHOST or jump straight to Arasan SDHCI. Linux
-   uses SDHOST by default for Pi 4 WiFi, but SDHCI is more standard
-   and the Phoenix codebase doesn't have either yet.
+3. ~~Whether to attempt SDHOST or jump straight to Arasan SDHCI~~ —
+   SDHCI confirmed as the WiFi controller; SDHOST is the SD card
+   path on Pi 4.
+4. **Clock enable mechanism.** Reading SDHCI/EMMC2 high-offset
+   registers (0x40 CAPS, 0xFC VERSION) faulted in the v2 scout —
+   they're clock-gated at boot. Tier 1's first job after MMIO map
+   is to enable the controller clock, likely via VideoCore mailbox
+   property tag `0x00030009` (GET_CLOCK_RATE) / `0x00038002`
+   (SET_CLOCK_RATE) with clock-id `BCM2835_MBOX_CLOCK_EMMC`. Linux
+   does this via the bcm2711 clock manager (`bcm2711-clocks.c`).
