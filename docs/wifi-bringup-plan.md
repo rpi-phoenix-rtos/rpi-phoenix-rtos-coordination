@@ -94,7 +94,28 @@ checkpoint, each ends in a manifest + doc note).
 - Output: a scout note recording exact file SHAs and licensing
   pointers.
 
-### Tier 1 — SDHOST host driver scaffolding
+### Tier 1a — SDHCI register snapshot (DONE 2026-05-25)
+
+Full SDHCI 3.0 register dump via the diag-udp 'c' probe
+(lwip `a66c25d`):
+
+```
+PRES_STATE   = 0x000f0001   CMD_INHIBIT=1, DAT[3:0]=0xf (lines high)
+HOST/PWR     = 0x00000f00   SD_BUS_POWER=on, 3.3V
+CLK/RST      = 0x000e8707   int clk en+stable, SD clk en, div=0x87
+                            (~926 kHz from 250 MHz base)
+INT_STATUS   = 0x00000000   no pending interrupts
+INT_STAT_EN  = 0x37ff0033   cmd+xfer complete + most errors masked
+CAPS_LO/HI   = 0x00000000   (Arasan quirk; informational)
+HOST_CTRL2   = 0x00000000   no UHS modes
+VERSION      = 0x99020000   vendor 0x99 + SDHCI Spec 3.0
+```
+
+The controller is **fully initialized at boot by VideoCore**. Tier 1
+driver does not need to set up clocks, power, or interrupts —
+it can proceed directly to bus-side bring-up.
+
+### Tier 1 — SDHCI host driver scaffolding
 
 - New `sources/phoenix-rtos-devices/multi/bcm2711-sdhost/` (or as a
   module under an existing multi). MMIO base `0xfe300000`, IRQ 56
