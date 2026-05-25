@@ -237,7 +237,10 @@ work begins.
    - The "fault" may not be a fault at all — could be a script
      race / nc -w 1 timing artifact. The single-mmap 'c' probe in
      this commit returns data fine.
-   Next experiment: re-add high-offset SDHCI reads to the 'c'
-   probe (single mmap of 0xfe300000 page) and confirm. If they
-   work, the fault was always a script artifact and Tier 1 can
-   start writing the driver immediately.
+   ~~Next experiment~~ — RESOLVED 2026-05-25 in lwip `812b0e9`. The
+   v2 scout's empty reply was a multi-mmap probe artifact. With a
+   single mmap of the 0xfe300000 page, all four reads work:
+   `r00=0 caps_lo=0 caps_hi=0 ver=0x99020000`. Non-zero VERSION
+   register confirms controller accessibility. CAPS=0 means the
+   controller is in soft-reset (expected) — Tier 1 driver will
+   issue SOFTWARE_RESET + delay then re-read CAPS.
