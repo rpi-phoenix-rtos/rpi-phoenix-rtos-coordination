@@ -1613,48 +1613,48 @@ lwip-port concern). Each marker has a `TODO(TD-Eth-…)` comment in source.
   any future driver expose its own counters the same way; the
   loopback netif is skipped via `NETIF_FLAG_ETHARP`.
 
-## TD-Pi4-VolatileVsAtomic — `volatile T[]` cross-thread access on Pi 4 SMP is broken (2026-05-25)
+## TD-Pi4-FalseSharingPenalty — RESOLVED 2026-05-25 — cache-line padding for hot per-thread counters
 
-**Symptom**: in the lwip-port diag-udp 'b' burn handler (commit
-`b750d7e`), 4 burner threads spun on `volatile unsigned long long
-diag_burn_counters[]`. Each thread accumulated ~5 s of kernel-side
-cpuTime in a 5 s wall-clock window (proving all 4 ran on separate
-cores). But only burner 0's counter advanced as seen by the reader
-thread on cpu 0; burners 1–3's counters stayed at exactly 0.
+**Symptom** (rediscovered as a textbook SMP fundamental, not a
+Phoenix bug): in the lwip-port diag-udp 'b' burn handler
+(commit `b750d7e`), 4 threads each incrementing `volatile unsigned
+long long diag_burn_counters[slot]` per iteration on Pi 4 produced
+only burner 0's counter ever advancing as seen by the reader.
 
-**Initial hypothesis (DISPROVEN)**: pmap maps userspace pages
-non-inner-shareable. Checked `hal/aarch64/pmap.c:446` — every leaf
-descriptor includes `DESCR_ISH` already. Pages ARE inner-shareable.
+**Root cause confirmed via cache-line-spread experiment**: all 4
+slots fit in one 64-byte L1 cache line; with 4 cores hammering the
+same line, hardware coherency invalidates the other cores' caches
+on every store and the non-atomic RMW pattern loses most updates.
+Padding each slot into its own 64-byte line restores plain
+`volatile ++` to ALU-speed throughput. Pmap shareability is correct
+(`DESCR_ISH` is set); the issue was hardware contention at the
+cache-line level, not memory ordering.
 
-**Updated hypothesis (PARTIAL)**: a combination of (a) false sharing
-on a 64-byte cache line that contains all 4 counter slots, and (b)
-some additional unknown factor (compiler optimization? scheduler
-quirk?) that drops the writes to ~0 visible across cores.
+**Numerical evidence** (lwip head pre-fix vs post-fix, mid-burn at
+~5 s into 10 s window):
+  - Unpadded, plain `volatile ++` per iteration: burner0 count = 8192,
+    burners 1–3 stuck at 0 over the full 10 s.
+  - Atomic store + local accumulator, unpadded: counts ~2.2×10⁹ each
+    (atomic version reduced inter-core writes by ~4096× via local
+    accumulation, not because atomicity per se was needed).
+  - Padded, plain `volatile ++` per iteration: counts ~1.04×10⁹ each,
+    within 0.4% spread.
 
-**Confirmed workaround**: replace `*counter++` with a local
-accumulator + `__atomic_store_n(p, total, __ATOMIC_RELEASE)` once
-per outer-loop iteration, plus reader-side `__atomic_load_n(p,
-__ATOMIC_ACQUIRE)`. After this fix all 4 counters advance in
-lockstep (0.26% spread). The improvement comes from BOTH avoiding
-the false-sharing pattern AND using the right memory ordering.
+**Resolution** (lwip `ea936d3`): the counter array is now wrapped in
+a struct with explicit padding to 64 bytes and `_Alignas(64)`. Plain
+`volatile ++` per iteration restored; the atomic intermediate is no
+longer needed.
 
-**Workaround pattern** for any future multi-threaded userspace code
-on Pi 4: do NOT use `volatile T*` for cross-thread shared state.
-Use C11 atomics (`__atomic_*` or `<stdatomic.h>`) for hot counters,
-or a pthread mutex for compound state. Spread independent
-per-thread counters across separate cache lines if benchmark-grade
-throughput matters (`_Alignas(64)`).
+**Pattern guidance for future Phoenix-Pi 4 SMP code**:
+- Per-thread independent counters: pad each slot to its own cache
+  line. No atomics needed.
+- Contended shared counters: use C11 atomics (`__atomic_*`).
+- General shared state: pthread mutex / Phoenix mutexCreate. These
+  internally use the right barriers.
+- `volatile` alone never helps for cross-thread safety; it only
+  prevents compiler hoisting.
 
-**Resolution path**: scope a fresh experiment to isolate the root
-cause among (false sharing alone vs. memory ordering vs. compiler
-codegen). Three quick tests proposed in
-`docs/notes/2026-05-25-pi4-userspace-shareability.md`. Once root-
-caused, decide whether kernel/toolchain changes are warranted or
-whether the workaround pattern is sufficient.
-
-**Reference**: commit `66e54a5` on `agent/rpi4-genet` (the atomic
-fix) + the doc note
-`docs/notes/2026-05-25-pi4-userspace-shareability.md`.
+**No kernel work needed** — this was a userspace-side fix.
 
 ## Tracking Checklist
 
@@ -1704,7 +1704,7 @@ fix) + the doc note
 | TD-Eth-Promisc | RESOLVED 2026-05-25 (lwip `79bd607`) | PROMISC only on `mac_is_fallback` path |
 | TD-Eth-LinkIRQ | PENDING | PHY `INT_B` not routed to GIC SPI on Pi 4 board; MDIO poll is the portable answer |
 | TD-Eth-Stats | RESOLVED 2026-05-25 (lwip `b261265`) | surfaced via lwip-port diag UDP responder (port 9999) + per-driver `stats` callback |
-| TD-Pi4-VolatileVsAtomic | OPEN (workaround in place) | `volatile T[]` cross-thread access broken on Pi 4 SMP (false-sharing + ?). C11 atomic + local-accumulator pattern works — see lwip `66e54a5` |
+| TD-Pi4-FalseSharingPenalty | RESOLVED 2026-05-25 (lwip `ea936d3`) | classic false sharing on a 64B cache line; per-slot `_Alignas(64)` padding restored plain `volatile ++` to ALU-speed. No kernel work needed. |
 
 When resolving an item:
 

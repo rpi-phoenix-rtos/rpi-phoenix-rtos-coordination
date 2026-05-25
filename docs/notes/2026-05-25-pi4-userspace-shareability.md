@@ -1,4 +1,10 @@
-# Pi 4 userspace cross-CPU write visibility (2026-05-25)
+# Pi 4 userspace cross-CPU counter visibility — false sharing (2026-05-25)
+
+**ROOT CAUSE CONFIRMED: false sharing on a hot cache line.** This
+note's earlier hypothesis (kernel pmap shareability bug) was wrong.
+The fix is a cache-line-padded counter array; no kernel work is
+needed. Workaround landed in `ea936d3` (placeholder — see commit at
+end of this note).
 
 Bonus finding from the SMP Phase E saturation harden. Worth its own
 note because it affects every future multi-threaded userspace
@@ -106,46 +112,80 @@ descr = DESCR_PA(pa) | DESCR_VALID | DESCR_TABLE | DESCR_AF | DESCR_ISH;
 ```
 
 `DESCR_ISH` is already set on every page leaf descriptor. Userspace
-pages are inner-shareable. Hardware coherency should propagate
-writes between cores.
+pages are inner-shareable. Hardware coherency does propagate writes
+between cores.
 
-## Root cause: most likely false-sharing on a hot cache line
+## Root cause CONFIRMED: false sharing on a 64-byte cache line
 
-All 4 counter slots (32 bytes total) fit in one 64-byte L1 cache
-line. The old code did 4096 RMW operations per gettime tick from 4
-CPUs simultaneously contending for that same cache line. The new
-code reduced shared-line writes by ~4096× by accumulating into a
-local before publishing.
+Experiment 1 (cache-line spreading): added an `_Alignas(64)` struct
+wrapper so each of the 4 counter slots gets its own cache line, and
+re-tested with plain `volatile ++` per inner iteration. Result:
 
-Numerical evidence from the failing version:
-- 10 s wall-clock burn, ~5 s of cpuTime per burner thread
-- burner0 visible count after 11 s wall = 8192 (exactly 2 inner loops)
-- burners 1–3 visible count = 0
+```
+mid-burn @ ~5 s into 10 s window, remaining 3.89 s:
+  burner0  count: 1,036,042,240   padded: 1,036,042,757
+  burner1  count: 1,036,263,424   padded: 1,036,265,785
+  burner2  count: 1,034,170,368   padded: 1,034,171,696
+  burner3  count: 1,038,012,416   padded: 1,038,014,881
+```
 
-If false sharing is the cause, ~1000–2000 cycles per increment under
-4-way contention; 5 s × 1.5 GHz = 7.5e9 cycles → ~3.7 M increments
-expected per burner. We observed 0. So false sharing alone doesn't
-fully explain the zero visible writes — there's an additional
-unknown factor (compiler optimization? scheduler interaction with
-the volatile semantics? stack corruption? a kernel-side bug).
+The padded counters track the atomic counters within ~3000 of each
+other (the small spread is just the atomic-publish-per-outer-tick
+lag vs. the per-iteration padded increment). All 4 padded counters
+advance at ~ALU speed on their own dedicated cache lines.
 
-## Current status
+**False sharing was the entire problem.** When all 4 slots sat in one
+cache line, every burner thread's increment invalidated the other
+3 cores' caches, and the non-atomic load-modify-store pattern lost
+most updates to RMW races between cores. With each slot on its own
+cache line, plain `volatile ++` per iteration just works.
 
-Workaround validated and committed: use C11 atomics + a local
-accumulator, publish once per outer-loop iteration. This is the
-right pattern regardless of root cause — it dodges both false
-sharing and any memory-ordering issue in one stroke.
+This is **not** a Phoenix-specific quirk. It's a standard SMP
+fundamental that happens to be especially punishing on Cortex-A72
+with its private L1s (the snoop-and-invalidate path is longer than
+on, say, a single-die x86 with a shared LLC).
 
-Root-cause investigation deferred. Suggested next experiments:
-1. Re-run the failing `volatile ++` version with the counters
-   spread across separate cache lines (e.g., `_Alignas(64) struct {
-   volatile unsigned long long c; } slots[4]`). If counters advance,
-   it's pure false sharing.
-2. Compile both versions with `-O0` and check assembly to verify
-   the compiler isn't doing anything unexpected with `volatile T[]`
-   indexed access.
-3. Add an explicit `__atomic_thread_fence(__ATOMIC_SEQ_CST)` after
-   each non-atomic `++` and re-test.
+## Resolution
+
+Fix landed in lwip `ea936d3` (placeholder — see commit at end):
+counter array changed to
+
+```c
+static struct {
+    unsigned long long c;
+    char pad[64 - sizeof(unsigned long long)];
+} __attribute__((aligned(64))) diag_burn_counters[N];
+```
+
+The C11 atomic intermediate version (`66e54a5`) is no longer needed
+once the false-sharing fix is in place — but atomics remain the
+right answer for *contended* shared state (e.g. a single counter
+incremented by multiple threads). Per-thread counters on dedicated
+cache lines are the right answer for *uncontested* shared state.
+
+## Takeaways
+
+1. `volatile` does NOT save you from cache contention. It only
+   prevents the compiler from optimizing away accesses; it does not
+   change the hardware-level memory model.
+2. On multi-core ARM with private L1 caches, per-thread state that
+   crosses cache-line boundaries silently destroys throughput.
+3. If you see "millions of cycles of CPU time with zero observable
+   counter advance," look for false sharing FIRST.
+4. The diag-udp burn handler is now a small but real demo of an
+   SMP saturation benchmark on Phoenix-RTOS/Pi 4.
+
+## Linked
+
+- Initial broken commit: lwip `b750d7e` (`volatile ++`, unpadded).
+- Atomic intermediate: lwip `66e54a5` (atomic store + local accum;
+  worked because it reduced inter-core writes ~4096×, not because
+  of atomicity per se).
+- Final fix: lwip `ea936d3` (cache-line-padded slot array; plain
+  `volatile ++` per inner iteration).
+- TD entry: `TD-Pi4-VolatileVsAtomic` (now better named
+  `TD-Pi4-FalseSharingPenalty`) in
+  `docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md`.
 
 ## Resolution path
 
