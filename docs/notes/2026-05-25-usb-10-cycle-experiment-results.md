@@ -160,6 +160,32 @@ Either way, the next question would be "is the VL805 able to read
 the same data the CPU sees" which is the bus-master question that
 requires hardware-level visibility.
 
+## Addendum 2026-05-26: side-process full bring-up tested
+
+Three follow-up iterations after the original 10-cycle experiment,
+testing whether a clean xHCI bring-up from a completely separate
+process succeeds where usb-hcd's does not:
+
+- **Iteration K (HCRST write-test)**: side-process write of
+  USBCMD.HCRST=1 cleared the HSE sticky bit and reset CONFIG +
+  DCBAAP to defaults. Controller responds to MMIO writes correctly.
+- **Iteration L v1 (HCRST + DCBAA + event ring + R/S=1)**: HSE
+  immediate on R/S=1.
+- **Iteration L v2 (+ CRCR + cmd ring + DSB SY barrier)**: HSE.
+- **Iteration L v3 (+ USBCMD = RS|INTE|HSEE in one write, 10 ms
+  settle)**: HSE.
+
+All three match Linux's `xhci_run()` register-write order exactly,
+from a process with no shared state with usb-hcd. **The wedge
+persists across every code-side variant we can construct.** This
+is now a definitive confirmation of H4 (bus-master DMA path issue).
+
+Commits: lwip `3e14874` (K), `4928683` (L v1-v3).
+
+The diag-udp `'R'` (HCRST), `'X'` (full bring-up), `'x'` (snapshot),
+and `'d'` (DCBAA dump) sub-commands remain in place as future USB
+debugging surface for when JTAG becomes available.
+
 ## Decision
 
 Per the user's standing direction ("if not - return back to wifi
