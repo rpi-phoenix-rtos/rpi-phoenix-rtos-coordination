@@ -1118,6 +1118,30 @@ controller. This is the convention Phoenix already follows on every
 other supported board (imx6ull, imxrt106x/117x, ia32); Pi 4 was the
 outlier that forced re-discovery.
 
+A follow-up question worth testing — what about *read-only* access to
+xHCI MMIO from a side process? The "USB merge" finding established
+that two writing processes break; reads from a side process haven't
+been characterized. With `diag-udp` (see §"Network-routed
+observability") available, this becomes one UDP probe. See
+`docs/usb-resumption-strategy.md` for the resumption plan that uses
+this and three other hypotheses to revisit the parked USB wedge.
+
+### USB resumption hypotheses (2026-05-25)
+
+USB was parked at the statistical mode A/B/C wedge. The diag-udp
+infrastructure introduced today lets us cheaply test four hypotheses
+before falling back to JTAG:
+
+| H | Hypothesis | Test |
+|---|------------|------|
+| H1 | xHCI cmd-ring TRBs land in a memory domain the VL805's PCIe DMA path doesn't see (same root cause as `TD-Pi4-FalseSharingPenalty`) | diag-udp side-process reads the cmd-ring TRB; if zero, H1 confirmed |
+| H2 | Pi 4 PMIC under-voltage events correlate with mode B (HSE on R/S=1) | diag-udp `GET_THROTTLED` after each failed cycle; correlate with classification |
+| H3 | Side-process MMIO reads of xHCI return 0xdeaddead like writes do | diag-udp xHCI MMIO snapshot; compare to usb-hcd UART trace |
+| H4 | Genuine silicon variability nothing in software can fix | only if H1-H3 are all ruled out |
+
+The plan is documented in `docs/usb-resumption-strategy.md` with
+specific iteration breakdown and decision tree.
+
 ### Worked example: GENET Tier 1 → Tier 5c
 
 The full progression for the Phoenix port through to a production-grade
