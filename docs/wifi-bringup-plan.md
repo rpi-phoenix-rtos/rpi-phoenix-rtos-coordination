@@ -125,28 +125,50 @@ code put RESPONSE_TYPE at bits 1:0 (TRANSFER_MODE territory),
 producing commands with response-type=0 — the controller correctly
 asserted CMD_COMPLETE without sampling the bus. Fix in lwip `868e1f6`.
 
-### Tier 3 — chip enumeration
+### Tier 3 — chip enumeration (DONE 2026-05-25)
 
-Next concrete steps, all CMD-based on the SDHCI we just validated:
+Standard SDIO bring-up worked first-try via the diag-udp `'e'`
+sub-command (lwip `b247d0e`):
 
-1. CMD5 with arg = 0x00ff8000 (or 0x00ffff00 to match the chip's
-   reported window) — repeat until C bit (bit 31) is set, meaning
-   chip is ready.
-2. CMD3 to get the RCA (Relative Card Address).
-3. CMD7 with RCA to select the card.
-4. CMD52 (IO_RW_DIRECT) reads on the CCCR — function 0 register
-   space at SDIO address 0..0x100. Confirms function 1 (BCM43455
-   WiFi backplane) is present.
-5. CMD52 writes to CCCR to enable function 1 (IORx + IEx bits).
-6. CMD52 to set the F0 block size (typically 512).
-7. CMD53 (IO_RW_EXTENDED) bulk read to access F1 backplane registers
-   — pull the chip-ID + revision (which informs which WHD chip-id
-   case to use; spec is 43455 = `bcm4345` family).
+```
+CMD5(0)    resp=30ffff00   (3 IO funcs, voltage 2.0-3.6V)
+CMD5(ocr)  resp=b0ffff00   ready_iters=1  C=1 (chip ready)
+CMD3       resp=00010000   RCA=0x0001
+CMD7(rca)  resp=00001e00   (select OK, state=CMD)
+CMD52(F0r0) resp=00000043  (CCCR rev 0x43 = SDIO 3.00 + CCCR/FBR 1.20)
+```
 
-After Tier 3, the WHD driver (already in tree at
-`sources/phoenix-rtos-lwip/wi-fi/whd/`) can take over — assuming
-WHD chip-id 43455 has been added to the supported family list per
-the plan section above.
+### Tier 4 — CIS + F1 enable + chip-id readback (DONE 2026-05-26)
+
+Single-cycle Tier 4 via the diag-udp `'f'` sub-command (lwip
+to-be-committed). All steps succeeded on the first attempt:
+
+```
+F0 CIS ptr bytes=ac 10 00  -> 0x0010ac
+CIS[0..7]  20 04 d0 02 a6 a9 21 02
+TPL_MANFID vendor=0x02d0 device=0xa9a6  (BCM43455)
+F1 IOEn pre=0x00  set OK  IORDY iters=1 val=0x02  IOEn post=0x02
+F1 SBADDR pre L=00 M=00 H=18  (window already at ChipCommon by default)
+F1 backplane[0..3] = 45 43 26 15  chipid=0x15264345
+  -> chip_id  = 0x4345  (BCM43455 family)
+  -> chip_rev = 6        (BCM43455c0 silicon)
+  -> chip_pkg = 1        (WLBGA)
+```
+
+**Confirmed**: the Pi 4 board chip is **BCM43455c0** with revision 6
+silicon. The SDIO TPL_MANFID device id 0xa9a6 + chip-id 0x4345 +
+chip-rev 6 uniquely identify it among the BCM43xx family. This
+exactly matches what Linux's `brcmfmac` driver expects for the Pi 4
+(`brcmfmac43455-sdio.bin` firmware).
+
+Result file: `artifacts/diag-udp/2026-05-26-wifi-tier4-f.txt`.
+
+### Tier 5 — WHD chip-id 43455 plumb (next)
+
+Now that chip family is positively identified, the WHD driver at
+`sources/phoenix-rtos-lwip/wi-fi/whd/` can be wired up — assuming
+WHD chip-id 43455 has been added to its supported family list per
+the plan section below.
 
 ### Tier 1a — SDHCI register snapshot (DONE 2026-05-25)
 

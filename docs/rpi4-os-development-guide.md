@@ -1309,6 +1309,26 @@ Each is small (~30-80 lines) and worth pulling forward:
   PUP_PDN2 has pins 34-39 at pull-up (firmware-correct for idle SDIO
   bus). So WiFi bus-side bring-up is one GPFSEL3 write + a mailbox
   `WL_REG_ON` assert.
+- **WiFi SDIO Tiers 1c–4 (DONE 2026-05-26).** The full Phoenix-side
+  SDIO bring-up to chip-id readback is implemented as diag-udp
+  sub-commands `'w'/'i'/'e'/'f'`. Pi 4 result: CMD5 returns OCR
+  `0x30ffff00` (3 IO funcs, 2.0-3.6V); CMD3/CMD7 enumerate to
+  RCA=0x0001; CCCR rev byte `0x43` (SDIO 3.00 + CCCR/FBR 1.20);
+  F0 CIS pointer 0x0010ac with first tuple `TPL_MANFID code=0x20
+  vendor=0x02d0 device=0xa9a6`; CCCR 0x02 IOEn write enables Function
+  1 in 1 ms; F1 SBADDR window points at ChipCommon (0x18000000) and
+  reads back chip-id `0x15264345` — chip_id=0x4345, rev=6
+  (BCM43455c0), pkg=1 (WLBGA). The Pi 4 thus carries the **same
+  BCM43455c0** that Linux brcmfmac drives with
+  `brcmfmac43455-sdio.bin`. The critical SDHCI-host bug uncovered
+  along the way was a command-encoding error: RESPONSE_TYPE bits 1:0
+  of the SDHCI COMMAND register live at *dword bits 17:16* (upper
+  half-word of the 32-bit write to offset 0x0C), **not** at dword
+  bits 1:0 (which is TRANSFER_MODE territory). Until that was fixed,
+  every CMD52 issued with response-type 0 and the chip's response
+  was silently discarded — the symptom was clean `CMD_COMPLETE` IRQ
+  with `RESPONSE_0=0x00000000` for every command, mimicking a
+  card-not-responding fault.
 - **VideoCore mailbox property channel.** Reusable across all three
   utilities above plus the GENET Tier 5b MAC fetch. Pi 4 base
   `0xfe00b880` (non-page-aligned; align down by `_PAGE_SIZE - 1` for
