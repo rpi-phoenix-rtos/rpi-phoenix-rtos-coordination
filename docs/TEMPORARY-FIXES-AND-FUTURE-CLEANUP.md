@@ -1581,6 +1581,38 @@ implementation step is governed by the roadmap.
   follow-on closed 2026-04-30 by `0fdf20ca`. Hacks 2 and 3 still
   live as cleanup items above; hack 1 RESOLVED.)
 
+## TD-Eth-* group: BCM2711 GENET / lwip-port followups (Tier 5 era)
+
+Tracked separately from the numeric TD-NN series because they all sit in
+`sources/phoenix-rtos-lwip/drivers/bcm-genet.c` (and one neighbouring
+lwip-port concern). Each marker has a `TODO(TD-Eth-…)` comment in source.
+
+- **TD-Eth-DHCP** — autonomous DHCP exchange. On this lwip-port,
+  `dhcp_start` resets the netif IP to 0.0.0.0 before the DISCOVER
+  reaches the wire. Tier 4/5 workaround: static IP `10.42.0.99/24`
+  assigned in `genet_dhcpStartCb`. Resolve by walking the lwip-port
+  side (tcpip-thread context, DHCP timer setup) rather than the
+  driver.
+- **TD-Eth-MAC** — real MAC from VideoCore. Pi 4 firmware does not
+  push the board MAC into `UMAC_MAC0/MAC1` (unlike Pi 3). Tier 1/5
+  workaround: locally-administered fallback `02:b8:27:eb:00:01`.
+  Resolve by plumbing the BCM2835 mailbox `GET_BOARD_MAC`
+  (tag `0x10003`) from userspace.
+- **TD-Eth-Promisc** — `CMD_PROMISC` is still set in `UMAC_CMD` since
+  the fallback MAC means the unicast filter would drop ARP/ICMP
+  destined for the real board MAC. Resolves naturally once
+  `TD-Eth-MAC` lands.
+- **TD-Eth-LinkIRQ** — link-state interrupts. The BCM54213PE PHY has
+  an `INT_B` output but it isn't routed to a GIC SPI on the Pi 4
+  board (Linux and U-Boot both MDIO-poll). Tier 5 keeps the 1 Hz
+  `genet_linkPollThread`. Revisit if a future board variant exposes
+  the line.
+- **TD-Eth-Stats** — counters (`rx_pkts_seen` / `rx_pkts_dropped` /
+  `tx_pkts` / `tx_timeouts`) exist in `genet_state_t` but aren't
+  surfaced anywhere outside the driver — gdb only. Resolve by
+  routing through a stats syscall, a `/dev` node, or a SIGUSR1
+  driver dump.
+
 ## Tracking Checklist
 
 | ID | Status | Blocker? |
@@ -1624,6 +1656,11 @@ implementation step is governed by the roadmap.
 | TD-17 | re-verify | post-armstub-fix may have changed cache-hygiene needs |
 | TD-18 | re-verify | post-armstub-fix may have changed zone allocator behaviour |
 | TD-19 | LIKELY STILL APPLIES (TLBI hardening is generally correct) | upstreamable as-is |
+| TD-Eth-DHCP | PENDING | lwip-port `dhcp_start` resets netif IP to 0.0.0.0 — needs lwip-side walk |
+| TD-Eth-MAC | PENDING | mailbox `GET_BOARD_MAC` (tag `0x10003`) not yet plumbed from userspace |
+| TD-Eth-Promisc | PENDING (blocked by TD-Eth-MAC) | will close once unicast filter has real MAC to compare against |
+| TD-Eth-LinkIRQ | PENDING | PHY `INT_B` not routed to GIC SPI on Pi 4 board; MDIO poll is the portable answer |
+| TD-Eth-Stats | PENDING | counters present, surfacing path TBD |
 
 When resolving an item:
 

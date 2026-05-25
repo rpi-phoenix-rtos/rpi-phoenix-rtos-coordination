@@ -64,22 +64,26 @@ The harness's static command validator can't allowlist piped, chained, or `cd`-p
 - `./scripts/rebuild-rpi4b-fast.sh` / `./scripts/test-cycle-netboot.sh` / `./scripts/test-cycle-psh-interact.sh` for build + Pi cycles
 - `./scripts/qemu-debug.sh` (with `--gdb` for state capture) for any QEMU rpi4b iteration
 
-### Test-cycle Bash timeouts — ALWAYS set explicitly
+### Test cycles: pick `--capture-secs` for what you need, pass Bash `timeout`
 
-`test-cycle-netboot.sh` typically takes **`capture_secs + ~80 s` wall-clock** (3 s power settle + 25 s DHCP wait + capture window + power-off; add another ~25 s if bridge recovery fires). The Bash tool's default timeout is **120000 ms (2 min)**, which silently SIGTERMs the script before lwip output reaches the picocom log on anything but the shortest captures.
+Two independent timers can truncate a test cycle. Both have to be sized correctly:
+
+1. **`--capture-secs N`** — the inner watchdog inside `capture-rpi4b-uart.sh` kills picocom after N seconds of *picocom runtime*, which starts BEFORE Pi power-on. Wall-clock budget seen by the cycle is roughly:
+   - 3 s power settle + Pi DHCP wait (≤25 s) + bootloader+TFTP+kernel boot (~25 s) + user-space spawn (≤5 s) = **~30–60 s "wasted"** before user-space prints anything.
+   - So *useful capture* of user-space prints = `capture_secs - ~55 s`. To reliably see lwip output you need `capture_secs >= 120`. To see psh prompt + a few seconds of interaction, use 180. Default in the script is 360.
+2. **Bash tool `timeout` parameter** — kills the whole script (incl. EXIT trap → power-off). Default is 120000 ms (2 min); set explicitly when running cycles.
 
 **Rules:**
 
-- For any test cycle, ALWAYS pass an explicit `timeout` to Bash. Minimum: `(capture_secs + 80) * 1000` ms.
-- Defaults to use:
-  - `--capture-secs 60` → `timeout: 240000` (4 min)
-  - `--capture-secs 90` → `timeout: 300000` (5 min)
+- `--capture-secs` should be at least **180** to safely see lwip startup + smoke result, **240+** for sustained capture once stuff is running. Don't go shorter unless you already know exactly what you're looking for and it's pre-`(psh)%`.
+- `timeout` (Bash tool) should be at least `(capture_secs + 80) * 1000` ms. Quick reference:
+  - `--capture-secs 90`  → `timeout: 300000` (5 min)  — too short for lwip; prefer 180+
   - `--capture-secs 180` → `timeout: 360000` (6 min)
   - `--capture-secs 240` → `timeout: 420000` (7 min)
-  - The Bash tool caps at **600000 (10 min)**.
+  - `--capture-secs 360` → `timeout: 600000` (10 min, max)
 - If `run_in_background: true`, you still need the timeout — background bash is also subject to it.
-- A truncated UART log that stops at `smp: tick+15s` with no lwip prints is the unmistakable signature of this exact mistake. Don't blame the script or "the harness"; raise the timeout.
-- If you genuinely need a longer wall-clock budget than 10 min (e.g. running multiple captures back to back), split it into multiple sequential Bash calls rather than one big run.
+- The post-cycle stage health table prints `[✓] lwip started (lwip: genet ...)`. If that's `[✗]` your capture didn't run long enough. Don't blame the script or "the harness"; raise `--capture-secs` first, then `timeout`.
+- If you need >10 min of wall-clock, split into multiple sequential Bash calls.
 
 **Boot-progress observability:** rather than picking a fixed `--capture-secs` and hoping, when iterating on a bug, use:
 

@@ -1,6 +1,23 @@
 # Current Implementation Step
 
-## Active step (2026-05-25): Ethernet Tier 3 — RX into driver
+## Active step (2026-05-25): pick next — SMP Phase E vs. Ethernet hardening vs. WiFi
+
+Ethernet Tier 5 (IRQ-driven RX, productionized) landed today.
+`agent/rpi4-genet` head `789be33`; manifest
+`manifests/2026-05-25-eth-tier5-irq-rx.md`. Host pings 5/5, RTT
+0.612–1.173 ms.
+
+Open candidates for the next step:
+
+- **SMP Phase E (#29)**: validate cross-CPU load distribution under a
+  CPU-bound psh workload. Code is unblocked; needs a measurement
+  experiment on hardware. Aligns with the SMP focus directive.
+- **Eth Tier 5b (open follow-ups)**: autonomous DHCP (lwip-port
+  internals), real MAC from VideoCore mailbox tag 0x10003, link IRQ
+  if a future board variant routes PHY INT_B, stats syscall.
+- **WiFi (#36)**: BCM43455 SDIO bring-up. Now unblocked since
+  Ethernet works (frees the lwip-port path for a second netif).
+- **USB-HCD pmap aliasing (#26)**: still parked pending JTAG access.
 
 Earlier-tier landings since the 2026-05-21 entry below:
 
@@ -13,9 +30,9 @@ Earlier-tier landings since the 2026-05-21 entry below:
   aside until JTAG access is available rather than continue with
   UART-only triage.
 - **Ethernet (started 2026-05-24)**: full network stack bring-up
-  picked up while USB is parked. Tier 0 (scout) and Tier 1 (link-up)
-  and Tier 2 (TX one packet, polled) are validated. Tier 3 (RX one
-  packet) is the active item.
+  picked up while USB is parked. Tiers 0–4 validated through
+  end-to-end ICMP. Tier 5 (IRQ-driven RX, diagnostic cleanup)
+  completed 2026-05-25.
 
 ### Today's Tier-3 state
 

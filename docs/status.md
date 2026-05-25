@@ -1,8 +1,23 @@
 # Phoenix-RTOS Raspberry Pi 4 Port Status
 
-## Current Status: 2026-05-24 — SMP Phase D COMPLETE (4-cpu scheduling validated), USB at xhci runtime layer
+## Current Status: 2026-05-25 — Eth Tier 5 COMPLETE (IRQ-driven RX, ~0.9 ms ping RTT)
 
-### Headline (2026-05-24)
+### Headline (2026-05-25)
+
+- **Ethernet Tier 5 productionization done.** GENET v5 driver now runs
+  RX off `INTRL2_0_RX_DMA_DONE` (GIC SPI 157 = abs IRQ 189) via a
+  Phoenix-pattern `interrupt()` + cond-driven service thread, replacing
+  the 10 ms polling loop. Per-RX diagnostic printf removed. Host pings:
+  `5/5, RTT 0.612–1.173 ms (avg 0.916 ms)` — ~8× faster than Tier 4's
+  3.7–16.8 ms avg 7.4 ms. Manifest `2026-05-25-eth-tier5-irq-rx.md`,
+  lwip `789be33` on `agent/rpi4-genet`.
+- TX completion stays polled (single-slot synchronous, ~12 µs at 1 Gbps
+  — IRQ overhead would dominate). Link state stays on the 1 Hz MDIO
+  poll thread — the BCM54213PE PHY's INT_B pin isn't routed to a usable
+  GIC SPI on the Pi 4 board. Both are tracked in
+  `docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md`.
+
+### Earlier headline (2026-05-24)
 
 - **All 4 Cortex-A72 cpus take timer ticks at the SYSTICK_INTERVAL
   cadence.** Heartbeat dump from `main_initthr` 15 s after spawn
