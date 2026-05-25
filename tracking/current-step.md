@@ -2,10 +2,10 @@
 
 ## Active step (2026-05-25): pick next — SMP Phase E vs. Ethernet hardening vs. WiFi
 
-Ethernet Tier 5 (IRQ-driven RX, productionized) landed today.
-`agent/rpi4-genet` head `789be33`; manifest
-`manifests/2026-05-25-eth-tier5-irq-rx.md`. Host pings 5/5, RTT
-0.612–1.173 ms.
+Ethernet Tier 5b (mailbox MAC + PROMISC drop) landed today on top of
+the morning's Tier 5. `agent/rpi4-genet` head `79bd607`; manifest
+`manifests/2026-05-25-eth-tier5b-mailbox-mac.md`. ARP shows real OUI
+`dc:a6:32:3c:dd:f1`, ping 5/5 at RTT 0.66–1.42 ms with PROMISC off.
 
 Open candidates for the next step:
 

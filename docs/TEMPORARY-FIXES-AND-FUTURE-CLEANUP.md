@@ -1593,15 +1593,15 @@ lwip-port concern). Each marker has a `TODO(TD-Eth-…)` comment in source.
   assigned in `genet_dhcpStartCb`. Resolve by walking the lwip-port
   side (tcpip-thread context, DHCP timer setup) rather than the
   driver.
-- **TD-Eth-MAC** — real MAC from VideoCore. Pi 4 firmware does not
-  push the board MAC into `UMAC_MAC0/MAC1` (unlike Pi 3). Tier 1/5
-  workaround: locally-administered fallback `02:b8:27:eb:00:01`.
-  Resolve by plumbing the BCM2835 mailbox `GET_BOARD_MAC`
-  (tag `0x10003`) from userspace.
-- **TD-Eth-Promisc** — `CMD_PROMISC` is still set in `UMAC_CMD` since
-  the fallback MAC means the unicast filter would drop ARP/ICMP
-  destined for the real board MAC. Resolves naturally once
-  `TD-Eth-MAC` lands.
+- **TD-Eth-MAC** — RESOLVED 2026-05-25 in lwip `79bd607`. Mailbox
+  `GET_BOARD_MAC` (tag `0x10003`) is now called from `bcm-genet.c`'s
+  `genet_mboxGetMac()`. Validated on hardware: ARP table reports
+  `dc:a6:32:3c:dd:f1` (real Pi OUI) for `10.42.0.99`.
+- **TD-Eth-Promisc** — RESOLVED 2026-05-25 in lwip `79bd607`. The
+  driver only sets `CMD_PROMISC` when `state->mac_is_fallback` is
+  true; the mailbox path leaves the unicast filter active. 5/5 pings
+  still succeed (RTT 0.66–1.42 ms), confirming the filter accepts
+  unicast destined for the real board MAC.
 - **TD-Eth-LinkIRQ** — link-state interrupts. The BCM54213PE PHY has
   an `INT_B` output but it isn't routed to a GIC SPI on the Pi 4
   board (Linux and U-Boot both MDIO-poll). Tier 5 keeps the 1 Hz
@@ -1657,8 +1657,8 @@ lwip-port concern). Each marker has a `TODO(TD-Eth-…)` comment in source.
 | TD-18 | re-verify | post-armstub-fix may have changed zone allocator behaviour |
 | TD-19 | LIKELY STILL APPLIES (TLBI hardening is generally correct) | upstreamable as-is |
 | TD-Eth-DHCP | PENDING | lwip-port `dhcp_start` resets netif IP to 0.0.0.0 — needs lwip-side walk |
-| TD-Eth-MAC | PENDING | mailbox `GET_BOARD_MAC` (tag `0x10003`) not yet plumbed from userspace |
-| TD-Eth-Promisc | PENDING (blocked by TD-Eth-MAC) | will close once unicast filter has real MAC to compare against |
+| TD-Eth-MAC | RESOLVED 2026-05-25 (lwip `79bd607`) | mailbox `GET_BOARD_MAC` plumbed in `genet_mboxGetMac()` |
+| TD-Eth-Promisc | RESOLVED 2026-05-25 (lwip `79bd607`) | PROMISC only on `mac_is_fallback` path |
 | TD-Eth-LinkIRQ | PENDING | PHY `INT_B` not routed to GIC SPI on Pi 4 board; MDIO poll is the portable answer |
 | TD-Eth-Stats | PENDING | counters present, surfacing path TBD |
 

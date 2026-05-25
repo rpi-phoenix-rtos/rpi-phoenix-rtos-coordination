@@ -1,9 +1,17 @@
 # Phoenix-RTOS Raspberry Pi 4 Port Status
 
-## Current Status: 2026-05-25 — Eth Tier 5 COMPLETE (IRQ-driven RX, ~0.9 ms ping RTT)
+## Current Status: 2026-05-25 — Eth Tier 5b COMPLETE (real MAC from VideoCore mailbox, PROMISC off)
 
 ### Headline (2026-05-25)
 
+- **Ethernet Tier 5b: real MAC + PROMISC off.** `bcm-genet.c` now
+  calls the BCM2835 mailbox property channel with `GET_BOARD_MAC`
+  (tag `0x10003`) at init. Validated: host ARP shows
+  `dc:a6:32:3c:dd:f1` (real Raspberry Pi OUI `dc:a6:32`) for
+  `10.42.0.99`. PROMISC is now off (the LAA fallback remains for
+  diagnostic mode if the mailbox fails). Still 5/5 pings, RTT
+  0.66–1.42 ms. Resolves `TD-Eth-MAC` and `TD-Eth-Promisc`.
+  Manifest `2026-05-25-eth-tier5b-mailbox-mac.md`, lwip `79bd607`.
 - **Ethernet Tier 5 productionization done.** GENET v5 driver now runs
   RX off `INTRL2_0_RX_DMA_DONE` (GIC SPI 157 = abs IRQ 189) via a
   Phoenix-pattern `interrupt()` + cond-driven service thread, replacing
