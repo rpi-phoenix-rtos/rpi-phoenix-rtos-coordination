@@ -1,9 +1,18 @@
 # Phoenix-RTOS Raspberry Pi 4 Port Status
 
-## Current Status: 2026-05-25 — SMP Phase E VALIDATED (4-CPU scheduler confirmed)
+## Current Status: 2026-05-25 — SMP Phase E HARDENED (idle + saturation endpoints both pass)
 
 ### Headline (2026-05-25)
 
+- **SMP Phase E saturation harden.** Added a `b` (burn) sub-command
+  to the diag-udp responder that spawns 4 busy-loop threads in the
+  lwip-port for 10 s. Mid-burn probe: each burner accumulates ~4.9 s
+  of cpuTime in 5.2 s wall-clock (94% of a CPU each); sum = 3.77×
+  wall-clock — definitive saturation-side proof that all 4 cores
+  pick up a CPU-bound thread. Combined with the earlier idle
+  measurement (sum ≈ 4× wall-clock at idle), Phase E now passes at
+  both endpoints. Manifest `2026-05-25-smp-phase-e-saturation.md`,
+  lwip head `b750d7e`.
 - **SMP Phase E validated.** Per-CPU idle thread cpuTime measured via
   the new `t` diag query: 4 `[idle]` threads each accumulate cpuTime
   at ~99.9% of wall-clock; sum ≈ 4× wall-clock proves 4 independent
