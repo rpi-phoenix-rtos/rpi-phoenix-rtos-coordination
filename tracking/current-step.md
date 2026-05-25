@@ -1,5 +1,70 @@
 # Current Implementation Step
 
+## Active step (2026-05-25): Ethernet Tier 3 — RX into driver
+
+Earlier-tier landings since the 2026-05-21 entry below:
+
+- **SMP**: Phases A–D landed. 4 CPUs enumerated, scheduler dispatches
+  threads to all four, ticks balanced. Phase E (validating actual
+  cross-CPU load distribution under workload) is open as task #29 but
+  unblocked by code; needs a CPU-bound psh experiment on hardware.
+- **USB**: parked at the Tier-2 wedge (cap-probe reaches cmd-ring
+  layer but R/S=1 → HSE intermittently). User decision was to put it
+  aside until JTAG access is available rather than continue with
+  UART-only triage.
+- **Ethernet (started 2026-05-24)**: full network stack bring-up
+  picked up while USB is parked. Tier 0 (scout) and Tier 1 (link-up)
+  and Tier 2 (TX one packet, polled) are validated. Tier 3 (RX one
+  packet) is the active item.
+
+### Today's Tier-3 state
+
+Branch `agent/rpi4-genet` in `sources/phoenix-rtos-lwip`; head
+`7405d0d`.
+
+TX side is solid: smoke-test ARP request to the netboot bridge
+arrives on the wire (verified via host-side tcpdump multiple
+sessions in a row), bridge unicasts an ARP reply back to our MAC.
+
+RX side: ring init (256 BDs, all programmed with dmammap'd phys
+addresses), RBUF passthrough (ALIGN_2B + 64B_EN + CHK_CTRL bits per
+Linux init_umac), EXT_RGMII_OOB_CTRL.OOB_DISABLE set (corrected per
+Linux + Circle), SYS_PORT_CTRL = EXT_GPHY, full Linux-style
+DMA-disable + STATUS-poll before init, two-phase DMA enable, per-ring
+XON/XOFF thresholds at Linux defaults. UMAC_CMD ends up at 0x17
+(TX_EN | RX_EN | SPEED_100 | PROMISC) at link-up.
+
+Yet `RDMA_RING_PROD_INDEX` never advances. The in-driver diagnostic
+captured one strong clue: **BD[0].status changes from 0x00000000 to
+0x007e7f80** at exactly the moment of smoke-TX completion — HW
+touches the BD area but the producer index the SW poller watches
+stays at 0. Length 0x7E ≈ 64-byte RBUF status prefix + 62-byte
+frame ≈ size of the bridge's ARP reply.
+
+Open hypotheses (full list in
+`memory/project_genet_tier3_open.md`):
+
+- PROD_INDEX advancement may be IRQ-gated on this silicon (Pi 4
+  GENET uses INTRL2_0 RX-default-IRQ to "complete" each RX).
+- BD[0] write may be a TX-completion-status leak into the RX BD
+  region (unlikely — different physical SRAM at 0x2000 vs 0x4000).
+- Buffer phys from `va2pa()` may need a different translation on
+  RX-write path than TX-read (BCM2711 sometimes routes them
+  separately).
+
+### Test-cycle observability constraint
+
+A practical blocker on Tier 3 verification is that, late in a
+multi-hour session, the test-cycle script consistently gets SIGTERM'd
+at ~60–90 s, before lwip prints reach the picocom log. Earlier in the
+day cycles run through to the `(psh)%` prompt + lwip output, so the
+budget reset is real but slow.
+
+The Tier 4 (DHCP/ICMP) and beyond plan is on the same branch but
+behind Tier 3.
+
+---
+
 ## Active step (2026-05-21): single-core boot at 5/5 stability — next, address remaining functional gaps
 
 The 2026-05-21 morning session shifted from chasing the SMP loop to
