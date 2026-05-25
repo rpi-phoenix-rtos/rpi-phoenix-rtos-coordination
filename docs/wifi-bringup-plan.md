@@ -100,6 +100,54 @@ checkpoint, each ends in a manifest + doc note).
 - Output: a scout note recording exact file SHAs and licensing
   pointers.
 
+### Tier 2 — first SDIO command/response (DONE 2026-05-25)
+
+CMD0 (GO_IDLE_STATE) + CMD5 (IO_SEND_OP_COND, arg=0) both complete.
+CMD5 returns the BCM43455 OCR:
+
+```
+resp[0] = 0x30ffff00
+        bit 31    C (Card Ready)         = 0 (first probe with arg=0)
+        bits 30:28 NUM_IO_FUNCTIONS      = 3 (F0/F1/F2)
+        bit 27    MP (Memory Present)    = 0 (pure SDIO)
+        bits 23:0 I/O OCR                = 0xffff00 (2.0V-3.6V)
+```
+
+First real SDIO command/response on Phoenix-RTOS/Pi 4. The chip is
+addressable and replies correctly via the SDHCI controller. Manifest:
+`2026-05-25-wifi-tier2-cmd5-ocr.md`.
+
+Root cause of prior all-zero responses (Tier 2 first cut): SDHCI
+command-issue encoding bug. The COMMAND register at offset 0x0E is
+the **upper** 16 bits of the 32-bit dword at offset 0x0C, so its
+RESPONSE_TYPE bits 1:0 live at dword bits 17:16, not 1:0. The old
+code put RESPONSE_TYPE at bits 1:0 (TRANSFER_MODE territory),
+producing commands with response-type=0 — the controller correctly
+asserted CMD_COMPLETE without sampling the bus. Fix in lwip `868e1f6`.
+
+### Tier 3 — chip enumeration
+
+Next concrete steps, all CMD-based on the SDHCI we just validated:
+
+1. CMD5 with arg = 0x00ff8000 (or 0x00ffff00 to match the chip's
+   reported window) — repeat until C bit (bit 31) is set, meaning
+   chip is ready.
+2. CMD3 to get the RCA (Relative Card Address).
+3. CMD7 with RCA to select the card.
+4. CMD52 (IO_RW_DIRECT) reads on the CCCR — function 0 register
+   space at SDIO address 0..0x100. Confirms function 1 (BCM43455
+   WiFi backplane) is present.
+5. CMD52 writes to CCCR to enable function 1 (IORx + IEx bits).
+6. CMD52 to set the F0 block size (typically 512).
+7. CMD53 (IO_RW_EXTENDED) bulk read to access F1 backplane registers
+   — pull the chip-ID + revision (which informs which WHD chip-id
+   case to use; spec is 43455 = `bcm4345` family).
+
+After Tier 3, the WHD driver (already in tree at
+`sources/phoenix-rtos-lwip/wi-fi/whd/`) can take over — assuming
+WHD chip-id 43455 has been added to the supported family list per
+the plan section above.
+
 ### Tier 1a — SDHCI register snapshot (DONE 2026-05-25)
 
 Full SDHCI 3.0 register dump via the diag-udp 'c' probe
