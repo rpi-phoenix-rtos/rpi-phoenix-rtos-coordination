@@ -306,6 +306,39 @@ if [ -s "$log_path" ]; then
 	else
 		printf 'bytes: %s\n' "$(stat -c %s "$log_path")"
 	fi
+
+	# Post-cycle health check. The most common silent failure is that the
+	# CALLER (an agent's Bash tool, or someone's terminal) SIGTERMed the
+	# whole script before the watchdog in capture-rpi4b-uart.sh fired —
+	# e.g. the Claude Code Bash tool's default 120 s timeout cutting off a
+	# 90 s capture that's actually meant to run ~170 s end-to-end. The
+	# symptom is a truncated UART log that stops at the kernel banner or
+	# `smp: tick+15s` without any of the user-space prints we were after.
+	# Flag stage progress explicitly so this is impossible to miss.
+	have_phx_banner=0
+	have_psh_prompt=0
+	have_lwip_line=0
+	if grep -aq "Phoenix-RTOS microkernel" "$log_path"; then have_phx_banner=1; fi
+	if grep -aq "(psh)% " "$log_path"; then have_psh_prompt=1; fi
+	if grep -aq "lwip: genet\|/sbin/lwip " "$log_path"; then have_lwip_line=1; fi
+
+	checkmark() { [ "$1" = 1 ] && printf '✓' || printf '✗'; }
+	printf 'stages:\n'
+	printf '  [%s] kernel banner (Phoenix-RTOS microkernel)\n' "$(checkmark $have_phx_banner)"
+	printf '  [%s] psh prompt    ((psh)%% )\n' "$(checkmark $have_psh_prompt)"
+	printf '  [%s] lwip started  (lwip: genet ...)\n' "$(checkmark $have_lwip_line)"
+
+	if [ "$have_phx_banner" = 1 ] && [ "$have_psh_prompt" = 0 ]; then
+		cat <<'WARN' >&2
+
+WARNING: Phoenix kernel started but psh prompt never appeared in the
+log. Most likely cause: the caller killed this script before the
+capture window completed. If you're an agent calling this via the
+Bash tool, set timeout >= (capture_secs + 80) * 1000 ms. The Bash
+default of 120000 ms cuts off any capture longer than ~40 s after
+DHCP.
+WARN
+	fi
 else
 	printf '\n=== test cycle complete (log empty) ===\n'
 	printf 'log:   %s\n' "$log_path"

@@ -64,6 +64,29 @@ The harness's static command validator can't allowlist piped, chained, or `cd`-p
 - `./scripts/rebuild-rpi4b-fast.sh` / `./scripts/test-cycle-netboot.sh` / `./scripts/test-cycle-psh-interact.sh` for build + Pi cycles
 - `./scripts/qemu-debug.sh` (with `--gdb` for state capture) for any QEMU rpi4b iteration
 
+### Test-cycle Bash timeouts — ALWAYS set explicitly
+
+`test-cycle-netboot.sh` typically takes **`capture_secs + ~80 s` wall-clock** (3 s power settle + 25 s DHCP wait + capture window + power-off; add another ~25 s if bridge recovery fires). The Bash tool's default timeout is **120000 ms (2 min)**, which silently SIGTERMs the script before lwip output reaches the picocom log on anything but the shortest captures.
+
+**Rules:**
+
+- For any test cycle, ALWAYS pass an explicit `timeout` to Bash. Minimum: `(capture_secs + 80) * 1000` ms.
+- Defaults to use:
+  - `--capture-secs 60` → `timeout: 240000` (4 min)
+  - `--capture-secs 90` → `timeout: 300000` (5 min)
+  - `--capture-secs 180` → `timeout: 360000` (6 min)
+  - `--capture-secs 240` → `timeout: 420000` (7 min)
+  - The Bash tool caps at **600000 (10 min)**.
+- If `run_in_background: true`, you still need the timeout — background bash is also subject to it.
+- A truncated UART log that stops at `smp: tick+15s` with no lwip prints is the unmistakable signature of this exact mistake. Don't blame the script or "the harness"; raise the timeout.
+- If you genuinely need a longer wall-clock budget than 10 min (e.g. running multiple captures back to back), split it into multiple sequential Bash calls rather than one big run.
+
+**Boot-progress observability:** rather than picking a fixed `--capture-secs` and hoping, when iterating on a bug, use:
+
+- `./scripts/uart-summary.sh <label>` after the cycle finishes to confirm the boot reached the stage you expected (e.g. `psh prompt`, `pcie running`, `lwip line present`). If a stage is missing, the cycle didn't run long enough — bump `--capture-secs` and the Bash `timeout` together.
+- HDMI snapshots in `artifacts/hdmi/` (`<ts>-<label>-tick.png`) are taken every 25 s by default during the cycle. If the UART log is silent but Pi is up, the snapshots tell you whether the screen reached `fbcon: ok` and what's on it.
+- A `Monitor` armed against the test cycle's task output stream with a `grep --line-buffered` filter on your expected log line wakes the loop as soon as the line lands — don't poll, just arm the monitor and yield.
+
 The allowlist in `.claude/settings.json` covers every script above plus `grep`, `rg`, `git add:*`, `git commit:*`. If you need an operation not covered, **add a script wrapper for the operation, then add the script to the allowlist** — do not inline the pipeline. This keeps the permission surface stable across sessions.
 
 ## Python tooling
