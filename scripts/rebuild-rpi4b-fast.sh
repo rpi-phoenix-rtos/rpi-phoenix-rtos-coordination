@@ -237,6 +237,11 @@ if ! run_build_shell "[ -f '${dtb_path}' ]"; then
 	"${repo_root}/scripts/prepare-rpi4b-dtb.sh"
 fi
 
+# Regenerate the embedded WiFi firmware C array if missing or stale.
+# Emits a zero-length stub if .firmware/ isn't populated, so the lwip
+# build keeps working for non-WiFi developers.
+"${repo_root}/scripts/gen-wifi-fw-c.sh"
+
 if [ "${do_prepare}" -eq 1 ]; then
 	run_build_shell "cd '${repo_root}' && ./scripts/prepare-buildroot.sh --copy-components '${buildroot}'"
 fi
