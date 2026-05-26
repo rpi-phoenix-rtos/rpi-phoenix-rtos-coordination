@@ -6,6 +6,14 @@ buildroots/
 artifacts/
 external/
 
+# Staged non-free firmware blobs (Cypress EULA, redistributable but
+# kept out of git — populate via scripts/stage-bcm43455-firmware.sh)
+.firmware/
+.bootblobs/
+.buildroot/
+.toolchain/
+.env.local
+
 # Claude Code session state (worktrees, per-session settings)
 .claude/
 
