@@ -174,12 +174,22 @@ modify the blob.
 
 ## 6. Phased delivery
 
-| Phase | Scope | Success criterion | UART signature | Estimate |
+P0–P2 status update 2026-05-26: equivalent work has landed in
+`sources/phoenix-rtos-lwip/port/diag-udp.c` as the `'w'/'i'/'e'/'f'`
+diag sub-commands (lwip e3ab254, dfa96b1, b247d0e, b87d314). The
+code lives in lwip-port rather than the canonical
+`sources/phoenix-rtos-devices/sdio/rpi4-sdhci-sdio/` location
+because it began as observability scaffolding (UDP on :9999) before
+the file layout in section 3 was firmed up. P3 work should migrate
+the SDIO + chip code out of diag-udp into a dedicated driver tree
+when the chip-init logic stops fitting in a side-process probe.
+
+| Phase | Scope | Success criterion | UART / UDP signature | Status |
 |---|---|---|---|---|
-| **P0** | Add `WL_REG_ON` GPIO assert, `mmcnr` clock + pinmux, board_config bases | GPIO drives high; SDHCI controller reset clears | `mmcnr: SDHCI v3 detected, reset OK` | 2 weeks |
-| **P1** | CMD0/CMD5/CMD3/CMD7 enumeration, CMD52 R/W to CCCR | RCA assigned, CCCR readable | `mmcnr: card RCA=0x0001, CCCR ver 3` | 2 weeks |
-| **P2** | F1 enable, backplane window, ChipCommon ID readback | `chipid==0x4345 rev 6` | `BCM43455 rev 6 detected on mmcnr` | 1 week |
-| **P3** | SOCRAM init, ARM CR4/CM3 hold, firmware download via CMD53 block writes, NVRAM pack-and-append, ARM release, ready mailbox poll | Chip prints firmware version over BCDC | `cyw43: fw bcm43455c0 7.45.241.x ready` | 4 weeks |
+| **P0** | Add `WL_REG_ON` GPIO assert, `mmcnr` clock + pinmux, board_config bases | GPIO drives high; SDHCI controller reset clears | diag-udp `'w'` reports `WL_REG_ON=1`, GPFSEL3 = ALT3 | **DONE 2026-05-26** |
+| **P1** | CMD0/CMD5/CMD3/CMD7 enumeration, CMD52 R/W to CCCR | RCA assigned, CCCR readable | diag-udp `'e'` reports `RCA=0x0001`, `CCCR ver 0x43` | **DONE 2026-05-26** |
+| **P2** | F1 enable, backplane window, ChipCommon ID readback | `chipid==0x4345 rev 6` | diag-udp `'f'` reports `chipid=0x15264345` (chip=0x4345, rev=6, pkg=1 BCM43455c0) | **DONE 2026-05-26** |
+| **P3** | SOCRAM init, ARM CR4/CM3 hold, firmware download via CMD53 block writes, NVRAM pack-and-append, ARM release, ready mailbox poll | Chip prints firmware version over BCDC | `cyw43: fw bcm43455c0 7.45.241.x ready` | NEXT (~4 weeks) |
 | **P4** | SDPCM/BCDC framing, IOCTL/IOVAR get-set, MAC-from-OTP, scan iovar | Beacons returned from passive scan; MAC matches OTP | `cyw43: mac=dc:a6:32:.. scan: 5 BSSes` | 3 weeks |
 | **P5** | Open-AP join: `WLC_SET_INFRA`, `WLC_SET_SSID`, link-event handling | Linkup event from firmware | `cyw43: associated to "ph-test" ch=6` | 2 weeks |
 | **P6** | lwIP netif: pbuf TX path, RX queue + thread, MAC + MTU registration | ARP and ICMP work to link-local | `enX: link up, IPv4 169.254.x.x` | 2 weeks |

@@ -163,12 +163,35 @@ exactly matches what Linux's `brcmfmac` driver expects for the Pi 4
 
 Result file: `artifacts/diag-udp/2026-05-26-wifi-tier4-f.txt`.
 
-### Tier 5 — WHD chip-id 43455 plumb (next)
+### Tier 5+ — see `docs/plans/wifi-bcm43455-impl.md`
 
-Now that chip family is positively identified, the WHD driver at
-`sources/phoenix-rtos-lwip/wi-fi/whd/` can be wired up — assuming
-WHD chip-id 43455 has been added to its supported family list per
-the plan section below.
+With chip family positively identified, the detailed Tier-5+ work
+(firmware download, ARM core release, SDPCM/BCDC, IOCTL, scan,
+associate, DHCP) follows the existing implementation plan at
+[`docs/plans/wifi-bcm43455-impl.md`](plans/wifi-bcm43455-impl.md).
+
+That plan recommends **Option A — porting NetBSD `bwfm`**
+(BSD-2 licensed FullMAC driver, already validated against BCM43455
+rev 6 silicon on the Pi 4 by NetBSD itself). It explicitly rejects
+extending WHD because:
+
+- WHD master upstream **dropped CYW43455 support**; carrying a
+  fork against a deprecated chip path is a long-term liability.
+- WHD's chip table is Cypress/Infineon-flavoured; 43455 is Broadcom
+  silicon and the constants come from a different source tree
+  (Linux brcmfmac).
+- Phoenix is BSD-3-Clause; bwfm is BSD-2; both are permissive and
+  align with the project's upstreamability goal. WHD is Apache 2.0
+  — workable but heavier on notice/attribution requirements.
+
+P0/P1/P2 of that impl plan (SDHCI + CCCR enumeration + chip-id
+readback) are equivalent to the diag-udp `'w'/'i'/'e'/'f'`
+sub-commands that landed today. Continue work from P3 (firmware
+download via CMD53 + ARM core release).
+
+The salvageable WHD pieces (NVRAM image header, BCM43455 chip
+constants from `whd_chip_constants.c` if any) get folded into the
+new bwfm-derived driver per impl-plan section 7.
 
 ### Tier 1a — SDHCI register snapshot (DONE 2026-05-25)
 
