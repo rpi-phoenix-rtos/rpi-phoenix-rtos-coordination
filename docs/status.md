@@ -1,6 +1,48 @@
 # Phoenix-RTOS Raspberry Pi 4 Port Status
 
-## Current Status: 2026-05-25 — SMP Phase E HARDENED (idle + saturation endpoints both pass)
+## Current Status: 2026-05-27 — SMP fully working; USB + WiFi at deep, well-characterized walls
+
+Subsystem reality (verified this session; see manifest
+`2026-05-27-smp-4core-verified-usb-ngnrne-wifi-pmufix.md`):
+
+- **SMP: FULL 4-core scheduling WORKS.** D-8 (deferred CNTV) + D-9
+  (secondary CNTV re-arm) are live (kernel `af171987`); all 4 A72s arm
+  CNTV and take timer ticks (`smp: tick+15s cpu1=7…` rising), boot reaches
+  `(psh)%`. The old "cpu0-only / CNTV-breaks-primary" notes were a
+  test-timing artifact and are OBSOLETE. Remaining SMP work is
+  hardening/soak, not a fix.
+- **Boot / GENET networking / HDMI fbcon: working.** Pings 5/5 ~0.9 ms RTT;
+  psh interactive.
+- **USB (VL805 xHCI): WALLED — in-place fixes EXHAUSTED.** usb-hcd reaches
+  RUNNING/CRR=1 but the controller posts ZERO events (inbound DMA writes
+  never land); the lwip-port process does an identical bring-up and DOES
+  get events. After exhaustive elimination (scratchpad, ERSTBA order,
+  IMAN/IMOD, USBCMD INTE|HSEE `65a17ec`, MMIO nGnRnE `05ba58b`, buffer
+  flags, cache, timing, full HCRST re-init, bridge re-settle, and a
+  decisive PROOF that the failing+working DMA buffers are interleaved in
+  the SAME physical region) the difference is purely the *process context*
+  of the bring-up — with NO SMMU to explain it. Next: a cross-process
+  architecture (drive the controller from a process distinct from the
+  bridge bring-up, mirroring the working lwip path) or maintainer input.
+  See memory `usb-dma-write-loss`.
+- **WiFi (BCM43455c0 SDIO): MAJOR progress, now at the firmware-execution
+  gate.** Research overturned the earlier "host must force HT" dead-end:
+  brcmfmac releases the CR4 on ALP only and the *firmware* brings up HT
+  itself. Rewrote the bring-up accordingly (`fd4551f`) → CR4 release is now
+  textbook-correct (IoCtrl pre=0x21/post=0x01). Verified correct: firmware
+  load (64/64), rstvec @ backplane 0 (read-back MATCH, `a87b891`), NVRAM
+  trailer (`0xfe5001af`, matches WHD), cold reset, F2 handshake (`cdd9b23`).
+  Yet firmware still does not execute (no HT, no F2-ready, CARD_INTR=0) —
+  a deep gate that mirrors known Linux/OpenWrt 43455-on-Pi4 HT-timeout
+  issues. New reusable tool: `scripts/diag-udp-probe.sh` (`ffb3f08`).
+  See memory `bcm43455-chip-id`.
+
+Active branches: kernel `agent/rpi4-program-reloc`; lwip
+`agent/rpi4-genet`; devices `codex/upstream-sync-20260516`.
+
+---
+
+## Previous Status: 2026-05-25 — SMP Phase E HARDENED (idle + saturation endpoints both pass)
 
 ### Headline (2026-05-25)
 
