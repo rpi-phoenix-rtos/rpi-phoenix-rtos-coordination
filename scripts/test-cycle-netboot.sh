@@ -64,6 +64,11 @@ Usage: test-cycle-netboot.sh [options]
   --baud N                 picocom baud (default 115200; try 103448 if
                            plo output is garbled — start4.elf reprograms
                            PL011 to 103448 right before kernel handoff)
+  --probe CMD              after the Pi reaches "lwip: genet" in the
+                           captured UART, send a single diag-udp probe
+                           (one char like 'q' or 'X') and capture the
+                           reply under artifacts/diag-udp/. Useful for
+                           queries that need the network stack up.
   -h, --help               show this help
 
 Bridge recovery: on DHCP timeout the script invokes
@@ -73,6 +78,7 @@ and lima1) and retries the boot once. After two failures it exits 1.
 EOF
 }
 
+probe_cmd=""
 while [ $# -gt 0 ]; do
 	case "$1" in
 		--label)                 label="$2"; shift 2 ;;
@@ -81,6 +87,7 @@ while [ $# -gt 0 ]; do
 		--dhcp-wait-secs)        dhcp_wait_secs="$2"; shift 2 ;;
 		--skip-bridge-recovery)  skip_bridge_recovery=1; shift ;;
 		--baud)                  uart_baud="$2"; shift 2 ;;
+		--probe)                 probe_cmd="$2"; shift 2 ;;
 		-h|--help)               usage; exit 0 ;;
 		*) printf 'unknown arg: %s\n' "$1" >&2; usage >&2; exit 1 ;;
 	esac
@@ -294,7 +301,31 @@ if [ "$dhcp_wait_secs" -gt 0 ]; then
 	fi
 fi
 
+# Optional: send a single diag-udp probe to the Pi once it reaches
+# lwip-port. Used to query netif state (ip/gw/DHCP flag etc.) inside
+# the capture window without separately wiring up the timing. The
+# probe runs in the background; we wait for it alongside capture_pid.
+probe_pid=""
+if [ -n "$probe_cmd" ]; then
+	(
+		# Wait up to capture_secs for lwip to come up before probing.
+		# The probe script itself does its own ICMP-ready wait.
+		end=$(( $(date +%s) + capture_secs ))
+		while [ "$(date +%s)" -lt "$end" ]; do
+			if [ -s "$log_path" ] && grep -aq "lwip: genet" "$log_path"; then
+				break
+			fi
+			sleep 1
+		done
+		"$repo/scripts/diag-udp-probe.sh" "$probe_cmd" "${label:-cycle}-probe" 30 5 >/dev/null 2>&1 || true
+	) &
+	probe_pid=$!
+fi
+
 wait "$capture_pid" || true
+if [ -n "$probe_pid" ]; then
+	wait "$probe_pid" 2>/dev/null || true
+fi
 
 # 5. Power off handled by EXIT trap.
 
