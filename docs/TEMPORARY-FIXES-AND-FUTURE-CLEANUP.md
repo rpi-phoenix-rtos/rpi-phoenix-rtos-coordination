@@ -619,7 +619,11 @@ authoritative current state.
 
 ## TD-13: Post-spawn user-mode handoff produces no observable output
 
-- **Status:** PENDING (CURRENT ACTIVE BLOCKER, since 2026-04-30)
+- **Status:** ✅ RESOLVED at runtime layer 2026-05-02 (libphoenix `43e050d`,
+  kernel `c8a81d5e`, more in the per-Pass scaffolding strip). Residual
+  diagnostic items are tracked as TD-13-* sub-entries above. Original
+  "CURRENT ACTIVE BLOCKER" wording is historical context; boot reaches
+  `(psh)%` reliably on all current builds.
 - **First observed:** 2026-04-30 bring-up.
 - **Where:** the boundary is between
   `sources/phoenix-rtos-kernel/main.c` (init thread that issues
@@ -1660,7 +1664,7 @@ longer needed.
 
 | ID | Status | Blocker? |
 | --- | --- | --- |
-| TD-01 | PENDING | SMP cores 1-3 park in WFE (TD-01 still open) |
+| TD-01 | ✅ RESOLVED 2026-05-21; full 4-core scheduling validated 2026-05-27 (kernel `af171987` with D-8+D-9) | `NUM_CPUS=4`, secondaries arm CNTV and take timer ticks, `(psh)%` reached |
 | TD-02 | RESOLVED by Stage 1 unified pre-MMU sweep | kernel `_init.S` post-armstub-fix shape |
 | TD-03 | RESOLVED by Stage 1 pre-MMU syspage copy | kernel `_init.S` |
 | TD-04 | RESOLVED at syspage layer 2026-04-29; hacks-2/3 RESOLVED 2026-05-17 in kernel `6c65616f` | cleanup complete |
@@ -1673,7 +1677,7 @@ longer needed.
 | TD-08 | PENDING | QEMU+gdb debugging not exercised since cache resolved |
 | TD-09 | N/A on Linux host (no socket_vmnet bridge); macOS-only concern |
 | TD-10 | PENDING | SError still masked; needs proper handler |
-| TD-11 | PENDING | revisit alongside TD-01 (SMP) |
+| TD-11 | ✅ RESOLVED 2026-05-21 alongside TD-01 (kernel `fb9669f4` activated LDAXR/STXR spinlocks via `NUM_CPUS=4`) | real exclusives are live with 4-core SMP |
 | TD-12 | RESOLVED 2026-05-17 (project `42b2db5` + plo `84ffbea`; manifest `2026-05-17-pi4-full-4gb-ram-unlocked`) | both 4 GB banks visible (`pmap: nBanks=2`, 948 MB + 3008 MB) |
 | TD-13 | RESOLVED at runtime layer | residual cleanup also done in kernel `334638ee` (Pass-4 debug strip) |
 | TD-13-spawn-cap | unknown status | re-verify against current `main.c` |
