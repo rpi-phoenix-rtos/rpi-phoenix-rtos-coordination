@@ -1,6 +1,52 @@
 # Phoenix-RTOS Raspberry Pi 4 Port Status
 
-## Current Status: 2026-05-27 — SMP fully working; USB + WiFi at deep, well-characterized walls
+## Current Status: 2026-05-28 — USB PoC architecture proven mechanically; new finding: rig is flaky
+
+Headline updates since 2026-05-27:
+
+- **USB PoC integration: mechanically complete and committed.** The Phoenix
+  USB host stack now builds into the `lwip-port` process via 6 thin shim
+  files under `port/usb-embed/`. Boot-time `usb;--bridge-only` daemon does
+  ONLY the BCM2711 PCIe bridge bring-up and parks (commits `28bc814`,
+  `29f8cea`, `cfe8aec`, `600081d`); lwip-port-embedded then drives the
+  controller in DRIVE_ONLY mode (commit `77f31bb`).
+- **CRITICAL correction (2026-05-28):** the "X diag rig works ⇒ rig is a
+  reliable baseline" narrative was statistically invalid. Multi-trial
+  benches this session show:
+    - Rig (`diag_format_xhci_bringup`): **2/4 trials succeed** (~50%)
+    - PoC full bring-up: 0/8 trials
+    - PoC DRIVE_ONLY: 0/4 trials
+    - PoC MaxSlotsEn=1: 0/2 trials
+    - PoC contig scratchpad: 0/4 trials
+    - PoC no-bridge-mmap: 0/3 trials
+  The rig has its own ~50% bridge-flakiness signature (`pre USBSTS=0x00`
+  on failure indicates bridge MMIO reads return 0). The PoC's 0% is real
+  divergence beyond the same flakiness mechanism.
+- **One root-cause class FIXED, one new one OPENED:**
+    - FIXED: VL805 retains internal CRCR latch across HCRST. Boot-time
+      daemon programming CRCR + exit caused the next process's HCRST +
+      CRCR write to be silently ignored, producing CCE events whose
+      `parameter` field referenced the FIRST process's cmd-ring PA.
+      Splitting bridge bring-up from controller drive (BRIDGE_ONLY +
+      DRIVE_ONLY) eliminated this class of failure. ERDP readback at
+      cmdExec timeout now matches `eventRingPhys` exactly.
+    - OPEN: the residual 0% PoC pass rate (vs rig's 50%) — single-variable
+      experiments matching the rig (MaxSlotsEn, scratchpad layout, no
+      bridge re-init, no leaked bridge mmap) all gave 0%. Remaining
+      hypothesis: cumulative side effect of `usb_init`'s pre-xhci_init
+      allocations (mutex pool, driver registration, hub_init) vs the
+      rig's clean-slate mmap sequence.
+- Memories updated: `pi4-xhci-crcr-stale-after-hcrst` (new),
+  `usb-dma-write-loss` (rig-is-flaky correction).
+
+USB parked at this point pending a fresh angle (kernel-side
+instrumentation, or literally rewriting `xhci_init`'s allocator path to
+mirror the rig's mmap sequence). SMP + GENET still fully working as
+before; WiFi unchanged at firmware-execution gate.
+
+---
+
+## Previous Status: 2026-05-27 — SMP fully working; USB + WiFi at deep, well-characterized walls
 
 Subsystem reality (verified this session; see manifest
 `2026-05-27-smp-4core-verified-usb-ngnrne-wifi-pmufix.md`):
