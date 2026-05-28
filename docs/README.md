@@ -32,6 +32,13 @@ This directory is the long-lived knowledge base for the Phoenix RTOS Raspberry P
 - `code-quality-and-upstreaming.md`
   Coding-style, readability, warning, review, and upstreamability rules for future implementation work.
 
+- `known-limits.md`
+  Hardware-bounded issues that affect mainline Linux equally —
+  Phoenix cannot fix these in software. Read before re-investigating
+  the USB VL805 or WiFi BCM43455 walls; cited Linux/forum sources
+  inline. Companion to `TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md` which
+  is for Phoenix-internal shortcuts only.
+
 - `execution-control.md`
   Process rules for step-by-step tracking, acceptance criteria, control points, and reporting.
 
