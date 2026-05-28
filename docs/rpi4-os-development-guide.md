@@ -1126,23 +1126,56 @@ observability") available, this becomes one UDP probe. See
 `docs/usb-resumption-strategy.md` for the resumption plan that uses
 this and three other hypotheses to revisit the parked USB wedge.
 
-### USB resumption hypotheses (2026-05-25)
+### USB resumption hypotheses (2026-05-25) — outcomes (2026-05-28)
 
 USB was parked at the statistical mode A/B/C wedge. The diag-udp
-infrastructure introduced today lets us cheaply test four hypotheses
-before falling back to JTAG:
+infrastructure introduced 2026-05-25 let us cheaply test four
+hypotheses before falling back to JTAG:
 
-| H | Hypothesis | Test |
-|---|------------|------|
-| H1 | xHCI cmd-ring TRBs land in a memory domain the VL805's PCIe DMA path doesn't see (same root cause as `TD-Pi4-FalseSharingPenalty`) | diag-udp side-process reads the cmd-ring TRB; if zero, H1 confirmed |
-| H2 | Pi 4 PMIC under-voltage events correlate with mode B (HSE on R/S=1) | diag-udp `GET_THROTTLED` after each failed cycle; correlate with classification |
-| H3 | Side-process MMIO reads of xHCI return 0xdeaddead like writes do | diag-udp xHCI MMIO snapshot; compare to usb-hcd UART trace |
-| H4 | Genuine silicon variability nothing in software can fix | only if H1-H3 are all ruled out |
+| H | Hypothesis | Test | Outcome |
+|---|------------|------|---------|
+| H1 | xHCI cmd-ring TRBs land in a memory domain the VL805's PCIe DMA path doesn't see (same root cause as `TD-Pi4-FalseSharingPenalty`) | diag-udp side-process reads the cmd-ring TRB; if zero, H1 confirmed | **RULED OUT** — cmd TRBs visible; CRR transitions 0→1 but completion never lands in event ring |
+| H2 | Pi 4 PMIC under-voltage events correlate with mode B (HSE on R/S=1) | diag-udp `GET_THROTTLED` after each failed cycle; correlate with classification | **RULED OUT** — `GET_THROTTLED` clean across all failed cycles |
+| H3 | Side-process MMIO reads of xHCI return 0xdeaddead like writes do | diag-udp xHCI MMIO snapshot; compare to usb-hcd UART trace | **RULED OUT** — side-process reads succeed; the per-process bridge state affects DMA writes, not MMIO |
+| H4 | Genuine silicon variability nothing in software can fix | only if H1-H3 are all ruled out | **LEADING CANDIDATE** |
 
-The plan is documented in `docs/usb-resumption-strategy.md` with
-specific iteration breakdown and decision tree.
+**Multi-trial bench, 2026-05-28** (run from
+`sources/phoenix-rtos-lwip/port/main.c` `lwip_embed_usb_thread`):
 
-### Worked example: GENET Tier 1 → Tier 5c
+| Variant | Trials | Succeeded |
+| --- | --- | --- |
+| Full PoC bring-up                | 8 | 0 |
+| PoC DRIVE_ONLY                   | 4 | 0 |
+| PoC MaxSlotsEn=1                 | 2 | 0 |
+| PoC contig scratchpad            | 4 | 0 |
+| PoC no-bridge-mmap (DRIVE_ONLY)  | 3 | 0 |
+| Reference 'X' diag rig           | 4 | 2 |
+
+The 'X' rig and the PoC use byte-identical bridge + xHCI bring-up
+sequences (since the PoC was refactored to call into the rig). The
+single-variable code paths that differ from the rig (MaxSlotsEn,
+scratchpad layout, bridge re-init, leaked bridge mmap) are not the
+culprit. The remaining differences are higher up in the stack
+(`usb_init`'s mutex-pool / driver registration / hub_init allocations
+before xHCI bring-up runs), but the ~50% rig flakiness on the same
+hardware/boot suggests an irreducible **silicon variability floor**.
+
+External corroboration: Pi 4 VL805 silicon flakiness is documented
+publicly. Linux issue
+[raspberrypi/linux#5060](https://github.com/raspberrypi/linux/issues/5060)
+describes USB controller boot-time failure modes on Pi 4; the RPi
+forums reference a 3.3V→nPONRST RC-delay reflow as a known hardware-
+side mitigation for some boards. Hypothesis H4 is currently the best
+explanation for the 0% PoC success rate.
+
+Audited and ruled out as a contributing factor: lwip PR #133 added
+DMA-barrier fixes to the i.MX6ULL `cyhal_sdio.c`, but Pi 4's SDIO
+path is PIO (`SDHCI_DATA_PORT` FIFO, see WiFi P3 below) — there is
+no DMA buffer to fence, so PR #133 has no Pi 4 equivalent.
+
+The plan continues in `docs/usb-resumption-strategy.md`.
+
+### Worked example: GENET Tier 1 → Tier 5d
 
 The full progression for the Phoenix port through to a production-grade
 driver. Each tier ends in a manifest pinning all sibling SHAs and a
@@ -1160,7 +1193,8 @@ doc note explaining what changed.
   RDMA-register-mirror finding above. Manifest:
   `2026-05-25-eth-tier3-rx-ok.md`.
 - **Tier 4 — lwIP integration + ICMP end-to-end.** Static IP
-  `10.42.0.99/24` (autonomous DHCP deferred — see TD-Eth-DHCP), full
+  `10.42.0.99/24` (autonomous DHCP was deferred at this tier — see
+  Tier 5d below for the closure), full
   ARP-request → ARP-reply → ICMP echo-reply chain. 5/5 host pings
   succeed at 3.7–16.8 ms RTT (polled, with per-RX printf still in
   place). Two lwip-port wiring fixes were load-bearing:
@@ -1206,6 +1240,20 @@ doc note explaining what changed.
   multi-threaded Phoenix-on-aarch64 work. Manifest:
   `2026-05-25-eth-tier5c-diag-udp.md`. See also the "Network-routed
   observability" subsection below.
+- **Tier 5d — autonomous DHCP (TD-Eth-DHCP CLOSED 2026-05-28).** With
+  the GENET driver in steady state, `dhcp_start()` was re-enabled in
+  `genet_dhcpStartCb` (previously commented-out because the early-Tier
+  driver lost the first DHCP OFFER frame). End-to-end verification:
+  `dnsmasq` lease file records `dc:a6:32:3c:dd:f1 → 10.42.0.12`, and
+  the diag-udp `q` reply confirms `netif: en1 ip=10.42.0.12 gw=10.42.0.1
+  flags=0x1f UP LINK DHCP rx=5 tx=12 mac_src=mailbox`. The static
+  `10.42.0.99/24` fallback is kept for the dnsmasq-less / raw-cable
+  bring-up case. Two tooling additions made the closure cheap:
+  `scripts/test-cycle-netboot.sh --probe q` runs a background diag-udp
+  probe in the same test cycle, and `scripts/get-pi-ip.sh` resolves
+  the current DHCP-assigned IP by reading
+  `artifacts/netboot/dnsmasq.leases` so probes don't need a hard-coded
+  address. Manifest: `2026-05-28-eth-tier5d-dhcp-closed.md`.
 
 ### SMP Phase E worked example
 
@@ -1232,6 +1280,62 @@ let us answer this rigorously **without UART**.
 **Observed.** Both endpoints validated; closes the validation gap for
 SMP. Manifests: `2026-05-25-smp-phase-e-validated.md`,
 `2026-05-25-smp-phase-e-saturation.md`.
+
+### Worked example: WiFi P3 firmware load
+
+After SDIO Tier 4 (chip-id readback, see "Platform utilities" below)
+the next milestone for BCM43455 is loading the brcmfmac firmware
+into the chip's SOCRAM and releasing the on-chip ARM-CR4 so it
+executes. The arc broke into:
+
+1. **Block-mode CMD53.** Earlier tiers used CMD52 (byte-at-a-time)
+   which is unusable for a 643 KB firmware blob. CMD53 in block
+   mode + 4-bit bus width is the production path. The Phoenix
+   implementation lives in `port/diag-udp.c`
+   (`diag_sdioCmd53Read`/`Write`) and is **PIO**, not DMA — it polls
+   `BUFFER_READ_READY` / `BUFFER_WRITE_READY` and writes 32-bit
+   words to `SDHCI_DATA_PORT`. No host-side DMA buffer is used; the
+   lwip i.MX6ULL `cyhal_sdio.c` DMA path is not on the Pi 4 boot
+   path and PR #133's DMA-barrier fix has no Pi 4 equivalent.
+2. **SBADDR window walk.** F1 SBADDRLOW/MID/HIGH (regs 0x1000A/B/C)
+   relocate the 32 KB backplane window across SOCRAM. The firmware
+   payload writes 32 KB per CMD53, then increments the window
+   pointer and writes the next 32 KB. Multi-block CMD53 with
+   `block_count=64 block_size=512` matches Linux brcmfmac's
+   sdio_bus_txfr granularity.
+3. **NVRAM trailer.** brcmfmac places NVRAM at the end of SOCRAM
+   followed by a 4-byte length word and a "magic" trailer. The
+   length must be written little-endian as bytes (not as a 32-bit
+   word over a misaligned address).
+4. **CR4 reset-vector + AXI resetcore toggle.** The ARM-CR4
+   `ResetVec` register at chip-internal address 0 must contain the
+   firmware's entry point (loaded from the first 4 bytes of the
+   firmware blob — Broadcom firmwares embed the reset vector at
+   offset 0). Then walk to the ARM-CR4 wrapper at 0x18103000 and
+   toggle reset via `ResetCtrl` / `IoCtrl` per AXI Backplane core
+   protocol (assert reset, clock-enable, release reset). Linux's
+   `brcmf_chip_set_active` and Cypress WHD's
+   `whd_chip_armcr4_run` are the cross-stack references.
+
+**Current state.** Steps 1–4 implemented and individually validated.
+The firmware-execution gate — observable readbacks of `CHIPCLKCSR.HT_AVAIL`
+should set to 1 after firmware ALP-to-HT promotion, and the SDIO
+`CARD_INTR` should start firing — is open: HT_AVAIL stays 0 and no
+CARD_INTR. CR4 release sequence appears correct (matching all
+public references inspected), so the leading hypotheses are:
+
+- Firmware blob version mismatch with NVRAM (Cypress firmware/NVRAM
+  pairs must match minor versions; mismatched pairs boot silently
+  but don't enable HT clock).
+- ARM-CR4 wrapper register layout difference between BCM43455
+  revisions — c0 (our chip) vs older revs may have different
+  IoCtrl bit positions.
+- AXI clock-gating: ChipCommon needs `WL_REG_ON` plus a clock
+  request before the CR4 wakeup will hit HT.
+
+Parked behind USB for now; resumes once a USB enumeration is in
+hand to compare two BCM43455-class chip-bring-up paths against the
+same diag-udp infrastructure.
 
 **Bonus finding: per-thread shared-counter false sharing.** The first
 burn implementation used a `volatile unsigned long long counters[4]`
@@ -1348,7 +1452,15 @@ find these helpful:
   refresh.
 - `scripts/test-cycle-netboot.sh` — power-cycle the Pi over a smart
   outlet, serve TFTP, capture UART, recover the netboot bridge on
-  DHCP timeout.
+  DHCP timeout. The `--probe <CMD>` flag spawns a background
+  diag-udp probe inside the same cycle so a single Bash invocation
+  produces both a UART log and a diag-udp reply file under
+  `artifacts/diag-udp/`.
+- `scripts/get-pi-ip.sh` — resolves the Pi's current
+  DHCP-assigned IP from `artifacts/netboot/dnsmasq.leases` (default
+  MAC `dc:a6:32:3c:dd:f1`). Auto-IP is now the default for
+  `scripts/diag-udp-probe.sh`; the static `10.42.0.99` fallback
+  remains for the raw-cable / no-dnsmasq case.
 - `scripts/pi_reboot.sh` — once a netif is up, replaces the smart-outlet
   power-cycle with a `nc -u` to diag-udp's `r` command (BCM2711 PM
   watchdog). ~30 s faster per iteration.
