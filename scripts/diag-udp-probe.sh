@@ -21,10 +21,20 @@ CMD="${1:?usage: diag-udp-probe.sh <cmd-char> <label> [ready_wait_s] [send_timeo
 LABEL="${2:?label required}"
 READY_WAIT="${3:-120}"
 SEND_TMO="${4:-10}"
-IP="${5:-10.42.0.99}"
+IP="${5:-}"
 PORT="${6:-9999}"
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
+
+# If no IP was supplied OR the special value "auto" was supplied, ask the
+# dnsmasq lease file for the Pi's current DHCP-assigned address. The
+# static-IP fallback (10.42.0.99) is unchanged; it remains the easiest
+# default for the static-IP genet path. Auto-discovery is needed only
+# when Phoenix's dhcp_start has cleared the static IP — see TD-Eth-DHCP
+# investigation note in drivers/bcm-genet.c.
+if [ -z "$IP" ] || [ "$IP" = "auto" ]; then
+    IP="$("${REPO}/scripts/get-pi-ip.sh" 2>/dev/null || echo 10.42.0.99)"
+fi
 OUTDIR="${REPO}/artifacts/diag-udp"
 mkdir -p "${OUTDIR}"
 OUT="${OUTDIR}/$(date +%Y-%m-%d-%H%M%S)-${LABEL}.txt"
