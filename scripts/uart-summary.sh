@@ -97,6 +97,11 @@ check_stage "pcie running        " "pcie: enter main|pcie: linkUp"
 check_stage "xhci running        " "xhci: capProbe|xhci: pre reset"
 check_stage "psh tty open        " "psh: tty open|psh: ready"
 check_stage "psh prompt          " "\\(psh\\)%"
+# Network stages — matches test-cycle-netboot.sh's own boot-health probes
+# and surfaces the late-boot subsystems the test-cycle banner doesn't.
+check_stage "lwip started        " "lwip: genet|/sbin/lwip "
+check_stage "genet link up       " "lwip: genet.*link up"
+check_stage "netif has IP        " "static IP 10.42.0|dhcp_start: 0|netif waits for OFFER"
 
 # Section 3: children.
 echo
