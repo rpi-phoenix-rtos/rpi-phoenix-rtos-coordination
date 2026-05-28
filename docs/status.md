@@ -44,6 +44,30 @@ instrumentation, or literally rewriting `xhci_init`'s allocator path to
 mirror the rig's mmap sequence). SMP + GENET still fully working as
 before; WiFi unchanged at firmware-execution gate.
 
+**External research consulted 2026-05-28** validated that BOTH the USB
+and WiFi walls have known hardware-level corollaries in mainline Linux:
+
+- **USB VL805**: Linux issue #5060 + RPi forums document per-board
+  silicon variability on Pi 4; some boards need a hardware RC delay
+  between 3.3V and nPONRST. Mainline Linux also hits VL805 reliability
+  issues. Our ~50% rig flakiness is at least partly silicon. See memory
+  [[vl805-known-silicon-flakiness]].
+- **WiFi BCM43455 firmware execution**: OpenWrt #23069 + multiple
+  forum reports — "HT Avail timeout" before firmware download, software
+  recovery (module reload, unbind/bind) FAILS, only PSU power-cycle
+  restores operation. Matches our exact symptom (HT_AVAIL never set
+  after CR4 release). Hardware-level reset limitation, not Phoenix bug.
+
+Two software improvements this iteration after the research:
+- `bcm2711_pcie_initVL805` DRIVE_ONLY path now returns `-ENODEV` if
+  the PCIe link doesn't come up in 10 s (was silently returning EOK).
+- `xhci_programCommandSpace` register-write order now matches the
+  proven-working 'X' diag rig exactly (CONFIG first, LO-then-HI for
+  64-bit pointers).
+
+Neither fixes the residual 0% PoC pass rate but both narrow the
+diagnostic surface for future investigations.
+
 ---
 
 ## Previous Status: 2026-05-27 — SMP fully working; USB + WiFi at deep, well-characterized walls
