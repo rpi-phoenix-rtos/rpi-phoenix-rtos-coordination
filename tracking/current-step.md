@@ -10,11 +10,17 @@ write-loss persists. Multi-trial bench shows:
 - Proven `X` diag rig: ~50% pass rate (2/4 fresh trials this session)
 
 Every single-variable approximation of the rig (allocator flags,
-scratchpad layout, bridge re-init, leaked bridge mmap, MaxSlotsEn=1)
-gave 0%. The residual divergence must be higher up the stack —
-cumulative side effects of `usb_init`'s pre-`xhci_init` allocations
-vs the rig's clean-slate mmap sequence. Parked here pending a fresh
-angle.
+scratchpad layout, bridge re-init, leaked bridge mmap, MaxSlotsEn=1,
+register-write order, allocate-everything-first reorder) gave 0%.
+The residual divergence must be higher up the stack — cumulative side
+effects of `usb_init`'s pre-`xhci_init` allocations vs the rig's
+clean-slate mmap sequence. Parked here pending a fresh angle.
+
+Code-side hypotheses exhausted from this angle. The remaining serious
+paths require either kernel-side instrumentation (printk in pmap.c
+during MAP_CONTIGUOUS), JTAG-attached VL805 state capture, or
+upstream maintainer input — none feasible inside the autonomous
+loop.
 
 Authoritative current state:
 - USB PoC architecture: committed in coord `cfe8aec`, lwip `77f31bb`,
@@ -45,6 +51,19 @@ preference):
 - **USB: kernel-side instrumentation OR rewrite xhci_init's allocator
   path to literally mirror the rig's mmap sequence.** Large change,
   parked for now.
+
+Code-quality wins delivered during the late-iteration session
+(no committed functional change but documented + clean code):
+
+- `docs/known-limits.md` — consolidates the silicon-bounded walls
+  (VL805 + 43455) with Linux/forum citations
+- `scripts/test-cycle-bench.sh` — multi-trial pass-rate harness
+- `scripts/uart-summary.sh` — net-stage checks (lwip / link / IP)
+- `xhci.c` — allocate-then-program restructure (cleaner flow)
+- `xhci_cmdExec` — removed disproven FRESH-uncached readback (-25 lines)
+- `_init.S` — removed the resolved TD-16 60-line iteration log (-55 lines)
+- Updated CLAUDE.md + docs/TEMPORARY-FIXES tracking-checklist to match
+  the actual resolved-vs-pending state
 
 ## (historical) Active step (2026-05-25): pick next — WiFi vs. autonomous DHCP vs. cpuload bench
 
