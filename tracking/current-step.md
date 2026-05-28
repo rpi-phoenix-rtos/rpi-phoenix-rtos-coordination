@@ -1,6 +1,52 @@
 # Current Implementation Step
 
-## Active step (2026-05-25): pick next — WiFi vs. autonomous DHCP vs. cpuload bench
+## Active step (2026-05-28): USB PoC parked at well-characterized wall; pick next initiative
+
+Today's USB session resolved the stale-CRCR class of bugs (split bridge
+bring-up from controller drive — boot-time `usb;--bridge-only` parks,
+lwip-port-embedded does controller init) but the residual inbound-DMA
+write-loss persists. Multi-trial bench shows:
+- PoC `usb_init` (any variant tested): 0/21 trials succeed
+- Proven `X` diag rig: ~50% pass rate (2/4 fresh trials this session)
+
+Every single-variable approximation of the rig (allocator flags,
+scratchpad layout, bridge re-init, leaked bridge mmap, MaxSlotsEn=1)
+gave 0%. The residual divergence must be higher up the stack —
+cumulative side effects of `usb_init`'s pre-`xhci_init` allocations
+vs the rig's clean-slate mmap sequence. Parked here pending a fresh
+angle.
+
+Authoritative current state:
+- USB PoC architecture: committed in coord `cfe8aec`, lwip `77f31bb`,
+  devices `5b5c70b`/`30f91db`/`600081d`, usb `9aa96a2`/`29f8cea`.
+- Boot still reaches `(psh)%` reliably. SMP / GENET / DHCP / network
+  remain fully working.
+- See docs/status.md 2026-05-28 entry; memory
+  [[pi4-xhci-crcr-stale-after-hcrst]] for the resolved root cause and
+  [[usb-dma-write-loss]] (rig-is-flaky correction) for the open class.
+
+Candidates for the next initiative (priority order pending user
+preference):
+
+- **TD-Eth-DHCP (PENDING in tracking checklist)**: lwip-port walks
+  away from `dhcp_start` without ever finishing the exchange. The
+  netif gets DHCP'd outside our code today (static IP fallback works
+  for testing); making the DHCP client actually complete a full lease
+  would close TD-Eth-DHCP and is well-scoped lwip-port internals work.
+- **SMP soak test**: per docs/status.md, "Remaining SMP work is
+  hardening/soak, not a fix". A long-running CPU-bound workload across
+  4 cores would catch any residual races. The `cpuload` test binary
+  idea from the 2026-05-25 entry is still good.
+- **TD-10 SError handler**: SError currently masked across all early
+  kernel paths. With SMP and userspace stable this is a real
+  observability gap — could mask future regressions.
+- **WiFi P3 firmware-execution gate (#91)**: deep blocker tracked in
+  memory. Mirror of known Linux/OpenWrt issues, not easy.
+- **USB: kernel-side instrumentation OR rewrite xhci_init's allocator
+  path to literally mirror the rig's mmap sequence.** Large change,
+  parked for now.
+
+## (historical) Active step (2026-05-25): pick next — WiFi vs. autonomous DHCP vs. cpuload bench
 
 SMP Phase E validated (#29 closed). The diag-udp responder gained a
 `t` query that exposes per-thread cpuTime; idle-thread accumulation
