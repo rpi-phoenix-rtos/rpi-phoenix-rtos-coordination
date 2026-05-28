@@ -1703,7 +1703,7 @@ longer needed.
 | TD-17 | re-verify | post-armstub-fix may have changed cache-hygiene needs |
 | TD-18 | re-verify | post-armstub-fix may have changed zone allocator behaviour |
 | TD-19 | LIKELY STILL APPLIES (TLBI hardening is generally correct) | upstreamable as-is |
-| TD-Eth-DHCP | PENDING | lwip-port `dhcp_start` resets netif IP to 0.0.0.0 — needs lwip-side walk |
+| TD-Eth-DHCP | ✅ RESOLVED 2026-05-28 (lwip `7f0b495`) | autonomous DHCP verified end-to-end via test-cycle-netboot.sh --probe q + scripts/get-pi-ip.sh; probe captured `netif: en1 ip=10.42.0.12 gw=10.42.0.1 flags=0x1f UP LINK DHCP` (artifact 2026-05-28-...-dhcp-clean-probe.txt) |
 | TD-Eth-MAC | RESOLVED 2026-05-25 (lwip `79bd607`) | mailbox `GET_BOARD_MAC` plumbed in `genet_mboxGetMac()` |
 | TD-Eth-Promisc | RESOLVED 2026-05-25 (lwip `79bd607`) | PROMISC only on `mac_is_fallback` path |
 | TD-Eth-LinkIRQ | PENDING | PHY `INT_B` not routed to GIC SPI on Pi 4 board; MDIO poll is the portable answer |
