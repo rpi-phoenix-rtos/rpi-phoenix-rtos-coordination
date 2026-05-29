@@ -73,8 +73,19 @@ actually belongs to the **rig**. No decidable PoC failure exhibits it.
 ## Concrete bugs in the live driver (`usb/xhci/xhci.c`, `bcm2711-pcie.c`)
 
 Live path is `sources/phoenix-rtos-devices/usb/xhci/{xhci.c,bcm2711-pcie.c}`
-built into `libusbxhci`. The standalone `pcie/server/pcie.c` is **dead
-duplicate code** (daemon not spawned) — remove before public release.
+built into `libusbxhci`. The standalone `pcie/server/pcie.c` daemon is
+**not spawned on rpi4** (not in the boot `*.plo.yaml`), and its BCM2711
+config path duplicates `usb/xhci/bcm2711-pcie.c`.
+
+**Correction (2026-05-29, verified):** `pcie/server/pcie.c` is **NOT
+removable** — it is the live PCIe daemon for the Xilinx/zynqmp targets
+(`pcie/server/Makefile` gates on `PCI_EXPRESS_XILINX_NWL` /
+`PCI_EXPRESS_XILINX_AXI` / `PCI_EXPRESS_INIT_TEBF0808_PHY`). Only its
+`#ifdef PCI_EXPRESS_BCM2711_INDEXED_CFG` portion is redundant-for-rpi4.
+Pruning just that BCM2711 path is a careful cross-target change best done
+in an upstreaming pass with the Phoenix maintainers (who own the Xilinx
+targets) — do NOT delete the file. (The earlier "dead duplicate, remove
+before release" note was imprecise.)
 
 - **Bug #1 (High) — event ring never advanced.** `eventCycleState` is
   set once (`xhci.c:1410`) and never toggled; `cmdExec`/roothub thread
