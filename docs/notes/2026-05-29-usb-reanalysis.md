@@ -168,6 +168,60 @@ the first SError follows narrows the aborting access. Then read back that
 register's response / check the bridge MISC error-status to confirm
 SLVERR vs DECERR. (See TD-10 and memory `pi4-serror-pcie-source`.)
 
+### Localization attempt (2026-05-29 PM) — what we learned
+
+Ran the phase-marker + SError-unmask experiment (diagnostics reverted
+afterward; baseline `bcb64610` restored). Findings:
+
+- **No synchronous aborts at all** (zero EC 0x20/0x21/0x24/0x25 across the
+  whole boot). The error is genuinely a posted-write/fabric **async** abort
+  charged imprecisely — so "the bridge-register *reads* caused it" is wrong
+  attribution. The pre-Phoenix dump reads returned real values (`0x0...`),
+  not `0xdead`, so the RC MMIO reads themselves succeed.
+- With a **log-and-continue** handler (async + far=0 ⇒ `eret`-resume is
+  safe; HDMI + UART both confirmed the boot reaches `(psh)%`), the SErrors
+  are non-fatal: **17 SErrors in two bursts, both in USB bring-up** — (1)
+  the boot daemon's `bcm2711_pcie_initVL805` bridge bring-up, (2) the
+  lwip DRIVE_ONLY path right after `link UP`. **Continuing past them does
+  NOT restore event-posting** (USB still `first event @idx -1`, rc=-110),
+  so the SError and the lost write are correlated-but-not-trivially-one-event.
+- **Marker-timing localization is unreliable here** (imprecise + multi-PE
+  delivery; the UART output garbles under the multi-core SError storm,
+  defeating clean register-value reads). This is the tooling wall until
+  JTAG.
+
+### Codex second opinion (2026-05-29) — ranked + the decisive next step
+
+1. **Most likely: an illegal CPU→PCIe *outbound* access NACK'd by the RC.**
+   Linux `pcie-brcmstb` treats this hardware as *aborting* (not returning
+   all-ones) on bad PCIe accesses, and exposes RC error-report registers at
+   **`0xfd500000 + 0x6004..0x6020`** that latch VALID, CFG-vs-MEM,
+   read-vs-write, the offending address, and cause (timeout / abort / UR /
+   disabled / bad-address). The SError is probably an outbound-traffic
+   symptom (RC regs / PCI config / VL805 BAR MMIO), while the lost
+   event-ring writes are *inbound* DMA — opposite directions, so not
+   automatically the same transaction, but they can share one root cause
+   (bad RC/SCB inbound setup).
+2. **Config discrepancy vs Linux (concrete, testable):** Phoenix programs
+   `RC_BAR2` = **4 GB identity** and `SCB0_SIZE_4G` (encoding 17). But the
+   Pi 4 PCIe wrapper is limited to the **first 3 GB** (`dma-ranges` =
+   `0xc0000000`); Linux builds the inbound viewport from `dma-ranges`
+   (CPU addr 0, power-of-two) **and** sets `SCB*_SIZE` accordingly. A 4 GB
+   aperture / wrong SCB-size on the 3 GB-limited model is a credible cause
+   for inbound writes being dropped while reads work. (The event ring at
+   ~51 MB is inside both apertures, so this is plausible-but-unproven.)
+
+**Decisive next step (no JTAG): read the RC outbound error registers
+cleanly.** A direct UART dump during bring-up is garbled by the SError
+storm. Read them instead **over diag-udp** (UDP reply, no UART garble) once
+the boot settles — the registers *latch* and persist. Add a diag-udp
+command that maps `0xfd500000` and returns `0x6004..0x6020`. If `VALID=1`,
+it gives the exact offending address + CFG/MEM + cause (→ fix outbound
+addressing/sequencing). If it stays clear, pivot to the inbound-decode
+angle: compare Phoenix's `MISC_CTRL` / `RC_BAR2` / `SCB*_SIZE` /
+`dma-ranges`-derived model byte-for-byte against Linux's 3 GB model.
+(Then JTAG, arriving in a few days, can confirm precisely.)
+
 ## Recommended order of work (none requires JTAG)
 
 1. **Read-only experiments first** (cheap, decisive, separate the
