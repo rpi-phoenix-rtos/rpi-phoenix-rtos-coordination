@@ -1122,12 +1122,53 @@ under TD-13-spawn-cap and the priority ladder.
 
 ## TD-15: Pi 4 VideoCore VI memory hygiene + 4 GiB DRAM enablement
 
-- **Status:** PENDING (planned 2026-05-03; supersedes the open
-  question in TD-12 about how to safely unlock the full 4 GiB).
-- **Stage:** 2. Phase 1 (mailbox-buffer drift probe) already LANDED
-  with `td15:OK` evidence. Phases 2-6 are the entire Stage 2
-  workload. Will be tackled with caches enabled (per Stage 1) for
-  fast iteration and meaningful DMA-cacheability validation.
+- **Status:** MOSTLY RESOLVED (reconciled 2026-05-29 against actual code;
+  the prior "PENDING / phases 2-6 are the entire workload" framing was
+  badly stale). Verified-DONE vs genuinely-remaining:
+  - ✅ **Phase 1** (mailbox-buffer drift probe): landed, `td15:OK`.
+  - ✅ **Phase 4 parsing + kernel consumption**: `hal/aarch64/dtb.c` now
+    parses `/memory@0`, **`/reserved-memory`, and `/soc/dma-ranges`**, and
+    exposes `dtb_getMemory`/`dtb_getReservedMemory`/`dtb_getDmaRanges` +
+    an **`dtb_armToBus(cpuAddr,*busAddr)`** helper (`dtb.h`). `pmap.c`
+    **already consumes** both: it builds banks from `dtb_getMemory`
+    (`pmap.c:894`) and marks `dtb_getReservedMemory` regions `PAGE_OWNER_BOOT`
+    (`pmap.c:912`). So "the kernel doesn't know firmware-reserved DRAM" is
+    no longer true.
+  - ✅ **Phase 5** (4 GiB usable): the high 3 GiB is mapped via the `ddrh`
+    syspage chunk (`preinit.plo.yaml`); kernel sees ~3956 MiB. (Firmware
+    still reports 1 GiB; the high chunk is added by plo, not firmware.)
+  - ⏳ **Phase 2** (move mailbox buffer out of `0x02000000`): not done —
+    hygiene only; phase-1 probe already confirmed VC4 isn't writing it
+    post-call, so low value now.
+  - ⏳ **Phase 3** (explicit VC4 quiesce): not done — its original target
+    (TD-04 corruption) is already fixed by the 2026-05-17 armstub cache
+    fix, and the diag rig enumerates USB ~50% with VC4 scanout fully
+    active, so VC4 activity is not corrupting ARM DRAM. Low value, and it
+    risks HDMI; deferred.
+  - ⏳ **Phase 4 (plo side) / Phase 6**: the **syspage memory map is still
+    hardcoded** in `preinit.plo.yaml` (`map ddr 0x00400000 0x3b400000` +
+    `map ddrh 0x40000000 0xfc000000`) rather than derived from the DTB —
+    this is the one genuinely-substantive remainder (it **mis-maps 2 GiB /
+    8 GiB boards**, a real "support all Pi 4 hardware" gap). And drivers
+    populate DMA descriptors with `va2pa()` (identity), not `dtb_armToBus`.
+- **⚠️ HAZARD for whoever finishes phase 6 — do NOT naively wire
+  `dtb_armToBus` into drivers.** GENET DMA works *today* with plain
+  `va2pa()` (identity) because it sits on the `scb` bus; the parsed
+  `/soc/dma-ranges` is the legacy peripheral-bus alias (`0xc0000000`).
+  Applying that translation to GENET would map its buffers to the wrong
+  bus address and **break working Ethernet**. Any arm→bus translation must
+  be applied per-bus, only where a path is actually non-identity, and
+  validated against the working GENET/PCIe paths. (Identity is correct for
+  all current low-DRAM DMA buffers; `dtb_armToBus` matters only for buffers
+  in high memory, which nothing allocates yet.)
+- **SUBSTANTIVE REMAINDER (deferred to careful / non-loop work):** make the
+  plo syspage memory map DTB-driven (derive `ddr`/`ddrh` extents from
+  `/memory@0` instead of hardcoding) so 2/8 GiB boards map correctly. This
+  is boot-critical; snapshot a rollback manifest first
+  (`scripts/restore-integration-state.sh`) and validate end-to-end. Not
+  suitable for blind autonomous-loop iteration.
+- **Stage:** 2. (Phase 1 + the kernel-side phase 4/5 work landed; the
+  remainder is the plo-side DTB-driven layout + low-value hygiene.)
 - **First framed:** 2026-05-03 after the 2026-05-02 Pi 4 `(psh)%`
   prompt landed and the user asked us to handle VideoCore VI
   memory access correctly regardless of whether it also unblocks
@@ -1146,11 +1187,13 @@ under TD-13-spawn-cap and the priority ladder.
     treats the board as ≤1 GiB and reserves 76 MiB for VC4 by
     default. End result: Phoenix sees `MEM ARM: 948 / TOTAL: 1024`
     even on a physical 4 GiB Pi 4B.
-  - `sources/phoenix-rtos-kernel/hal/aarch64/dtb.c` — parses
-    `/memory@0` but does NOT parse `/reserved-memory` or
-    `dma-ranges`. Kernel does not know which DRAM ranges firmware
-    reserved for the VPU or where the ARM↔VC4 BUS PA translation
-    lives.
+  - `sources/phoenix-rtos-kernel/hal/aarch64/dtb.c` — **(UPDATED: now
+    parses `/memory@0`, `/reserved-memory`, AND `/soc/dma-ranges`; exposes
+    `dtb_armToBus` + getters. `pmap.c` consumes memory banks + reserved
+    regions. The original "does NOT parse" text below is obsolete — kept
+    struck-through for diff value.)** ~~parses `/memory@0` but does NOT
+    parse `/reserved-memory` or `dma-ranges`; kernel does not know which
+    DRAM ranges firmware reserved for the VPU.~~
 - **Why it matters even if it does not fix TD-14 IPC slowness:**
   - **Correctness.** Without `/reserved-memory` parsing, any
     enlargement of usable RAM risks placing kernel/user
@@ -1736,7 +1779,7 @@ longer needed.
 | TD-14-console-open-fastpath | STILL ACTIVE | kept post-bringup as designed (strdup short-circuit for `/dev/console`) |
 | TD-14-tiocspgrp-pgrp | STILL ACTIVE (correct semantics) | upstreamable as-is |
 | TD-14-psh-debug-probes | RESOLVED in utils `18aed2a` (Pass-4 strip) | n/a |
-| TD-15 | PARTIALLY RESOLVED | phase 5 (4 GB unlock) done via TD-12 closure; phases 2–4 (VC6 quiesce, DTB-driven memory, dma-ranges) still pending |
+| TD-15 | MOSTLY RESOLVED (2026-05-29) | DONE: phase 1; 4 GiB usable (ddrh); DTB `/memory@0`+`/reserved-memory`+`/soc/dma-ranges` parsed & consumed by pmap; `dtb_armToBus` helper present. REMAINING: plo syspage map still hardcoded (mis-maps 2/8 GiB boards — substantive, deferred to careful work); VC4 quiesce + mailbox-move (low value); drivers use identity va2pa (do NOT naively wire dtb_armToBus — would break GENET, see entry hazard note) |
 | TD-15-mboxprobe | RESOLVED (no drift confirmed; probe stripped in plo `c988e6a`) | |
 | TD-16 | RESOLVED 2026-05-17 by cache enable (project `dde9bb5` + kernel `72242a05`) | timer math was correct; root cause was caches-off, fixed by armstub L2CTLR + 1319367 re-encoding |
 | TD-16-1 | RESOLVED (probe served its purpose, stripped in plo `c988e6a` + kernel `5a2d3a77`) | |
