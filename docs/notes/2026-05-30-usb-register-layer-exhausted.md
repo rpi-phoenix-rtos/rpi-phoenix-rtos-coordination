@@ -81,3 +81,34 @@ everything controller-visible identical. Remaining angles, all still SOFTWARE
 Register-poking and blind statistical benches are NOT the path forward; the
 next experiments are deterministic and target the page/DMA-write layer.
 See memory `usb-dma-write-loss` and `pi4-serror-pcie-source`.
+
+## Fresh-page event-ring retry (2026-05-30, page-provenance leaning REFUTED)
+
+Implemented an in-`xhci_init` retry: on No-Op timeout, halt, re-allocate the
+event ring with FRESH physical pages (leak the old ring so `mmap` can't hand
+back the same frame — a free+realloc reuse would invalidate the test),
+re-program ERST/ERDP, retry up to 8×. Hypothesis: if the failure is specific
+to the PoC's event-ring *pages*, a fresh allocation should start receiving the
+controller's inbound writes.
+
+Result (two builds, free-realloc and leak-realloc): the retry **engaged**
+(`try 1`/`try 2` debug lines captured) and **still failed** — final
+`ops->init fail rc=-110`. Page-provenance is therefore **leaning refuted**
+(fresh event-ring pages do not help), i.e. the failure is process/controller-
+global, not specific to the original frames. CAVEAT: the netboot harness
+degraded badly this session (DHCP catastrophically slow after repeated
+timeout-killed cycles), so neither run captured a clean full `8/8 failed`
+verdict — the captures died mid-retry (~try 2). The retry code was **reverted**
+(unproven + leaks memory = not shippable); re-run with a healthy harness if
+this angle is pursued.
+
+## Decision point (surfaced to user 2026-05-30)
+
+After 5 negative USB iterations this session (inbound-offset, rig-match
+composite, register value-diff, free-realloc + leak-realloc fresh-page retry),
+the well-characterized state is: **register layer exhausted; sub-register
+inbound-DMA-write failure; page-provenance leaning refuted; netboot harness
+broken.** The remaining real software angle is a kernel-side pmap/page-state
+(SLC-residency) instrumentation deep-dive — a major undertaking — and the test
+harness needs repair before ANY further device testing (USB or WiFi). Pausing
+to get the user's steer on the path forward.
