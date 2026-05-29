@@ -4,14 +4,21 @@
 
 Two tracks this session:
 
-1. **TD-10 (SError handler)** — in progress in the kernel
-   (`agent/rpi4-program-reloc`). The SError vectors already route to
-   `_exceptions_dispatch`; the plan is a dedicated dump-and-halt SError
-   handler (the rpi4b build is `NDEBUG`, so the default handler would
-   reboot-loop and hide the dump) plus removal of the three `NO_SERR`
-   masks (cpu.c ×2, `_exceptions.S` hal_jmp ×1). TD-13 notes the mask
-   "may be hiding the actual fault," so unmasking may reveal a
-   real latent bug — that is a feature, not a regression.
+1. **TD-10 (SError handler)** — handler DONE (kernel `bcb64610`); unmask
+   BLOCKED by a real finding. Implemented `exceptions_serrorHandler`
+   (dedicated dump-and-halt, registered for `EXC_SERROR`) — correct
+   dormant infrastructure. Removing the three `NO_SERR` masks was tested
+   on real Pi 4 and **exposed a live external-abort SError source in the
+   BCM2711 PCIe / VL805 USB bring-up** (`esr=0xbf000002`, IDS=1 A72
+   IMP-DEF, imprecise; **isolation-proven**: 0 SErrors with USB disabled,
+   first SError when `usb-hcd ops->init` starts). Exactly the masked fault
+   TD-13 warned about. Unmasking regresses the boot, so `NO_SERR` is kept
+   and TD-10 stays PENDING with that abort as the tracked blocker. The
+   abort is also a **major mechanistic lead for the USB wall** (external
+   abort on a bridge/controller access → "events never post"). See memory
+   `pi4-serror-pcie-source` and `docs/notes/2026-05-29-usb-reanalysis.md`
+   (NEW LEAD section). Verified: production boot (USB on, SError masked,
+   handler present) reaches networking with 0 faults — no regression.
 
 2. **USB re-analysis (three agents) retracts the "silicon flakiness"
    conclusion.** Full detail in `docs/notes/2026-05-29-usb-reanalysis.md`;

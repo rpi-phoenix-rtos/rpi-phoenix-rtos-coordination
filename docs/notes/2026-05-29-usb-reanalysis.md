@@ -132,6 +132,42 @@ duplicate code** (daemon not spawned) — remove before public release.
   DMA-writing a TRB regardless of interrupt delivery, and the failure is
   `USBSTS.HSE`/no-write which precedes any interrupt.
 
+## NEW LEAD (2026-05-29 PM) — external-abort SError during PCIe/USB bring-up
+
+While implementing the TD-10 SError handler, unmasking SError on real Pi 4
+revealed a **live, continuous external-abort SError source in the BCM2711
+PCIe / VL805 bring-up** that was previously invisible (SError had been
+masked across all paths since 2026-04-30).
+
+- Signature: `esr=0xbf000002` (EC=0x2F SError, IL=1, **IDS=1** → A72
+  IMP-DEF syndrome, so EA/AET/DFSC are not architecturally meaningful),
+  `far=0`, imprecise (charged to whatever EL0/EL1 code was running).
+- **Isolation-proven causation:** with the `usb` daemon and the
+  lwip-embedded USB thread both disabled, the boot runs 15+ s with full
+  networking (GENET link up, DHCP) and **zero SErrors**. With USB enabled,
+  the first SError fires exactly when `usb-hcd ops->init` begins, and the
+  earlier kernel init (vm/proc/threads/dummyfs) is SError-free.
+
+**Why this matters for the USB wall:** the PCIe/USB code is issuing a
+memory access (MMIO or config) that the bridge or VL805 NACKs with
+SLVERR/DECERR, surfacing as an imprecise SError. This is a *direct,
+mechanistic* candidate for the long-unexplained "controller runs but
+events never post / inbound DMA writes don't land": if the bridge returns
+an error response on the controller's inbound write (or on a host MMIO/
+config access in the bring-up path), that both loses the write AND raises
+the SError. The entire prior investigation missed this because SError was
+masked — every "DMA write silently lost" framing may actually be "DMA
+write / access externally aborted, abort masked."
+
+**Next experiment to localize it** (read-mostly, no JTAG): temporarily
+unmask SError (revert NO_SERR) and add coarse markers around the phases of
+`bcm2711_pcie_initVL805` and `xhci_init` (PERST/bridge-config / link-wait /
+VL805-config / HCRST / ring-program / R/S). Because the SError is
+imprecise it won't pin a single instruction, but bracketing which *phase*
+the first SError follows narrows the aborting access. Then read back that
+register's response / check the bridge MISC error-status to confirm
+SLVERR vs DECERR. (See TD-10 and memory `pi4-serror-pcie-source`.)
+
 ## Recommended order of work (none requires JTAG)
 
 1. **Read-only experiments first** (cheap, decisive, separate the

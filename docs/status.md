@@ -45,9 +45,23 @@ munmap-per-run to test the recycled-page hazard), then fix the
 timing/DMA variable so any event lands, then a targeted event/command-
 ring rewrite. Neither fix alone is sufficient.
 
+**Same-day finding (TD-10 SError handler → USB lead):** implementing the
+AArch64 SError handler and unmasking SError on real Pi 4 **exposed a live
+external-abort SError source in the BCM2711 PCIe / VL805 USB bring-up**
+(`esr=0xbf000002`, IDS=1 A72 IMP-DEF, imprecise). **Isolation-proven:**
+0 SErrors with USB disabled (boot runs 15+ s, networking up); the first
+SError fires exactly when `usb-hcd ops->init` starts. This was invisible
+for the whole port because SError was masked — it is very likely a
+mechanistic piece of the USB wall (an externally-aborted bridge/controller
+access ⇒ "events never post"). The SError handler is committed as dormant
+infrastructure (kernel `bcb64610`); `NO_SERR` stays until the PCIe abort
+is fixed, so TD-10 stays open with that as the blocker. See memory
+`pi4-serror-pcie-source` and the NEW LEAD section in
+`docs/notes/2026-05-29-usb-reanalysis.md`.
+
 Memories updated: `usb-dma-write-loss` (corrected), `vl805-known-silicon-flakiness`
-(downgraded to SHAKY). SMP / GENET / DHCP / networking unchanged and
-fully working.
+(downgraded to SHAKY), `pi4-serror-pcie-source` (new). SMP / GENET / DHCP /
+networking unchanged and fully working.
 
 ---
 

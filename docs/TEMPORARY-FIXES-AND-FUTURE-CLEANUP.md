@@ -537,7 +537,32 @@ authoritative current state.
 
 ## TD-10: SError masked across all early kernel paths on Pi 4
 
-- **Status:** PENDING
+- **Status:** PENDING — **handler implemented; unmask BLOCKED by a live
+  PCIe/USB external-abort SError source (found 2026-05-29).**
+- **2026-05-29 progress + finding:**
+  - Implemented `exceptions_serrorHandler` (kernel `bcb64610`): a
+    dedicated dump-and-halt SError handler registered for `EXC_SERROR`,
+    always halting with an ESR/ELR/FAR dump (never rebooting). Correct,
+    dormant infrastructure — arms cleanly the moment the abort below is
+    fixed.
+  - Removing `NO_SERR` was tested on real Pi 4 and **revealed a live,
+    continuous external-abort SError source in the BCM2711 PCIe / VL805
+    USB bring-up** — exactly the kind of fault this TD warned masking
+    would hide (cf. TD-13). Signature: `esr=0xbf000002` (EC=0x2F SError,
+    IL=1, `IDS=1` → A72 IMP-DEF syndrome so EA/AET/DFSC are not
+    architecturally meaningful), `far=0`, imprecise (PCs scattered across
+    EL0/EL1). **Isolation-proven:** with the `usb` daemon and the
+    lwip-embedded USB thread disabled, the boot runs 15+ s with full
+    networking and **zero SErrors**; with USB enabled, the first SError
+    fires exactly when `usb-hcd ops->init` begins.
+  - Unmasking before fixing that abort regresses the boot (the handler
+    halts on the first SError), so `NO_SERR` is kept for now. **Blocker:**
+    root-cause the specific PCIe/VL805 access that the bridge NACKs
+    (SLVERR/DECERR). This is tracked jointly with the USB investigation —
+    an external abort on a bridge/controller access is a strong candidate
+    mechanism for the USB "events never post / DMA writes don't land"
+    wall. See `docs/notes/2026-05-29-usb-reanalysis.md` and memory
+    `pi4-serror-pcie-source`.
 - **First observed:** 2026-04-30 bring-up (real Pi 4 only).
 - **Where:** `sources/phoenix-rtos-kernel/hal/aarch64/_exceptions.S`
   (line ~383, the `hal_jmp` userspace branch that sets
