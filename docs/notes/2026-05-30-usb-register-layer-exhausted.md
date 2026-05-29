@@ -1,0 +1,83 @@
+# USB: register-layer value-diff EXHAUSTED — failure is sub-register (inbound DMA write path)
+
+**2026-05-30.** Decisive zero-device-cost value-by-value diff of the working
+diag rig vs the failing boot PoC, both in the **current same-process build**
+(lwip-port). This closes the "is any register/ring field different?" question
+that prior notes *claimed* answered but had only checked in the stale
+cross-process era (Codex flagged those as thin/stale).
+
+## The diff (rig success vs PoC failure)
+
+Rig success (`artifacts/diag-udp/2026-05-27-092210-usb-enum-es3.txt`,
+`...-093223-usb-enum-ad.txt`):
+- `pre USBSTS=0x00000011` (HCH=1, PCD=1)
+- `post USBCMD=0x0000000d USBSTS=0x00000010` (running, PCD=1)
+- `evt[0]@idx0 = 01000000 00000000 01000000 00008801` → **type-34 Port Status
+  Change**, port 1 (autonomous; needs NO inbound read).
+- `evt[1]@idx1 = <cmdRingPA> 00000000 01000000 00008401` → **type-33 Command
+  Completion**, parameter == CmdRng PA → No-Op completed.
+- EnableSlot @idx2 cc=1, AddrDev cc=1. Full enumeration.
+
+PoC failure (current composite build, `usb-rig-match*` trial logs):
+- `pre USBSTS=0x00000011` — IDENTICAL.
+- `post USBCMD=0x0000000d USBSTS=0x00000010` — IDENTICAL.
+- ERSTSZ=1, cmd_ctrl=0x5c01, cycleState=1, internal pointer consistency
+  validated (ERSTBA==erstPhys, ERDP==eventRingPhys, DCBAA[0]==scratchpad) —
+  all as the rig.
+- Event ring: **`first event @idx -1`** — ZERO events. No type-34, no type-33.
+
+## What this proves
+
+- **The register/ring layer is exhausted.** Every controller-visible field
+  (USBCMD, USBSTS, ERSTSZ, ERDP, ERSTBA, CRCR/RCS, DCBAAP, cmd-TRB bytes,
+  cycle state) matches the working rig, in the same process, same boot timing
+  class. There is no missed register.
+- **It is specifically a WRITE-PATH failure.** Both runs have a pending port
+  change (PCD=1) at R/S=1. A type-34 Port Status Change event is posted by the
+  controller **autonomously**, requiring no inbound read of any host
+  structure. The rig gets it; the PoC does not. So "CRR=1 doesn't prove reads
+  work" (Codex) is moot for the headline symptom: the controller's inbound
+  *writes* to the PoC's ring pages do not land, full stop.
+- **The only remaining variable is the physical pages.** Rig rings sit at
+  ~0x335xxxx–0x336xxxx; PoC rings in the same ~51 MB region. Same SoC, same
+  bridge config, same VL805, same process. The VL805's inbound writes reach
+  the rig's pages and not the PoC's.
+
+## Composite experiment result (this session)
+
+Made the PoC byte-match the rig's bring-up (ERDP/ERSTBA written LO-then-HI;
++10 ms pre-R/S settle) — the only two code deltas a full rig-vs-PoC bring-up
+diff found. Result: **2/2 clean trials still `@idx -1`** (plus harness thrash
+from the 10-min Bash cap killing multi-trial benches). The half-order is in
+fact provably inert for our low-memory rings (HI half = 0, so both orders
+yield an identical final register value). Kept the edits only as
+rig-matching hygiene + to correct a false "matches the rig" comment in
+xhci.c; **they are NOT the fix.**
+
+## Where this leaves USB (honest status)
+
+This is the deep wall prior work documented after ~20 elimination iterations.
+The failure is below the register layer: the controller's inbound DMA write
+does not reach the PoC ring's physical pages, while it reaches the rig's, with
+everything controller-visible identical. Remaining angles, all still SOFTWARE
+(per Codex's "not silicon / not JTAG-gated" — the board is known-good):
+
+1. **Same-boot paired-PA capture (decisive, in-reach):** in ONE boot, log the
+   PoC's ring PA (it fails) AND the rig's ring PA via the 'X' command (it
+   succeeds/fails), to confirm the controller writes one PA and not the other
+   in the same boot → narrows the cause to page/allocation provenance vs
+   process/timing/registers. (Needs the netboot harness healthy for DHCP+UDP.)
+2. **Kernel-side page-provenance instrumentation:** log the physical frames
+   the kernel hands the PoC's `usb_allocAligned` mmaps vs the rig's, and check
+   for any cacheable kernel alias / SLC residency difference per
+   allocation history (the user's "per-process kernel memory/spawn state"
+   hint). This is kernel code, no JTAG.
+3. **Allocation-order probe:** the PoC allocates its rings after
+   `usb_memInit`/`hub_init` (a different allocation history than the rig's
+   fresh diag-time mmaps), even though flags + per-structure fresh-mmap match.
+   Test forcing the PoC's ring allocations to mirror the rig's exact
+   alloc sequence/region.
+
+Register-poking and blind statistical benches are NOT the path forward; the
+next experiments are deterministic and target the page/DMA-write layer.
+See memory `usb-dma-write-loss` and `pi4-serror-pcie-source`.
