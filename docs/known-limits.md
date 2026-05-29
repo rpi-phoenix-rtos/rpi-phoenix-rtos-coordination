@@ -7,43 +7,51 @@ developers from re-investigating them.
 
 ## Index
 
-- [USB / VL805 silicon flakiness](#usb--vl805-silicon-flakiness)
+- [USB / VL805 — silicon angle investigated, NOT confirmed as our cause](#usb--vl805--silicon-angle-investigated-not-confirmed-as-our-cause)
 - [WiFi / BCM43455 firmware execution gate](#wifi--bcm43455-firmware-execution-gate)
 - [Eth / PHY INT_B not routed to GIC](#eth--phy-int_b-not-routed-to-gic)
 
 ---
 
-## USB / VL805 silicon flakiness
+## USB / VL805 — silicon angle investigated, NOT confirmed as our cause
 
-**Symptom on Phoenix:** the `X` diag rig has ~50 % pass rate across
-fresh cold boots with no code change between trials. Failures show
-`pre USBSTS=0x00` — bridge MMIO reads return 0 for arbitrary registers,
-indicating the PCIe link / outbound translation is in a bad state.
+> **Correction (2026-05-29).** This entry previously asserted that our
+> USB failures were "silicon flakiness." A three-agent re-analysis of the
+> raw logs (see `docs/notes/2026-05-29-usb-reanalysis.md`) does **not**
+> support that conclusion, and our USB failure is most likely a *software*
+> bug. The entry is kept here only to record the genuine — but separate —
+> mainline-Linux silicon issue and why it is probably **not** our cause.
 
-**Status in mainline Linux:** identical-symptom failures reported at
-mainline scale.
+**The genuine mainline silicon issue (real, but likely not ours):** some
+Pi 4 boards have a documented VL805 reliability problem; a few need a
+hardware RC circuit (~10 ms delay between 3.3V and nPONRST). This is a
+board-level repair, not a software change.
 
 - [Linux #5060 — xHCI host not responding to stop endpoint](https://github.com/raspberrypi/linux/issues/5060)
 - [CM4 VL805 firmware (RC-delay hardware fix)](https://forums.raspberrypi.com/viewtopic.php?t=380969)
 - [u-boot patch: Load Raspberry Pi 4 VL805's firmware](https://patchwork.ozlabs.org/project/uboot/cover/20200629163725.13330-1-nsaenzjulienne@suse.de/)
 - [USB dead on Pi4 — RPi forums #344412](https://forums.raspberrypi.com/viewtopic.php?t=344412)
 
-**Documented fix where it exists:** some affected boards need a
-hardware RC circuit creating ~10 ms delay between 3.3V and nPONRST.
-This is a board-level repair, not a software change.
+**Why it is probably not our cause:** USB keyboard input always works on
+this exact test board under Linux and under the Pi firmware boot menu.
+Our two observed failure populations have software-shaped signatures:
 
-**What Phoenix does today:** `bcm2711_pcie_initVL805`'s DRIVE_ONLY
-path waits for `PCIE_DL_ACTIVE | PHYLINKUP` for up to 10 s and returns
-`-ENODEV` if the link doesn't come up, with MISC_STATUS printed for
-diagnostics. The xhci HCD bails cleanly rather than flailing on dead
-MMIO.
+- *Embedded PoC:* a **100% deterministic** failure — bridge up,
+  controller running (`CRR=1`), but zero events ever DMA-written
+  (`first event @idx -1`). Silicon link-flakiness cannot be deterministic.
+- *`X` diag rig:* intermittent bridge-MMIO-dead (`pre USBSTS=0x00`/`0xdead`),
+  but the runs were 3–6 min apart — inside the project's own documented
+  rapid-cycle bridge-degradation window (`docs/status.md:267-280`), which
+  is a software/cadence cause, not silicon.
 
-**Phoenix-specific bug separate from the silicon issue:** the embedded
-USB host stack PoC fails 0 / 21 trials even when the link is up and
-the controller is in the expected halted state. The rig's 50 % pass
-rate is *silicon flakiness*; the PoC's 0 % is an *additional* bug.
-See memory entries `usb-dma-write-loss` and `vl805-known-silicon-flakiness`
-for the full investigation. Currently parked pending a fresh angle.
+The detailed evidence, the concrete `xhci.c` bugs found (non-spec event
+ring, halt-per-command, recycled-DMA-page cache hazard, inert
+`resettleOutboundWindow` in DRIVE_ONLY), and the corrected pass-rate
+numbers (the old "0/21" was inflated by ~12 truncated captures) are in
+`docs/notes/2026-05-29-usb-reanalysis.md`. USB is therefore an **active
+software investigation**, not a hardware-bounded limit; it should not be
+treated as closed/silicon. See also memory `usb-dma-write-loss`
+(corrected) and `vl805-known-silicon-flakiness` (downgraded to SHAKY).
 
 ## WiFi / BCM43455 firmware execution gate
 

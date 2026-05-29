@@ -1,6 +1,57 @@
 # Phoenix-RTOS Raspberry Pi 4 Port Status
 
-## Current Status: 2026-05-28 — USB PoC architecture proven mechanically; new finding: rig is flaky
+## Current Status: 2026-05-29 — USB re-analysis: "silicon flakiness" retracted; USB is a software bug
+
+A three-agent re-analysis (code-correctness deep-read, cross-OS
+comparison, forensic re-derivation from raw logs) **retracts the
+"silicon flakiness" conclusion** from the 2026-05-28 entry below. Full
+detail: `docs/notes/2026-05-29-usb-reanalysis.md`. Headlines:
+
+- **There are two distinct problems, not one.** The docs merged them.
+    - *Embedded PoC:* **100% deterministic** failure — bridge up,
+      controller running (`CRR=1`), but **zero events ever DMA-written**
+      (`first event @idx -1`). A deterministic failure is not silicon
+      flakiness; it is a software bug.
+    - *`X` diag rig:* intermittent bridge-MMIO-dead (`pre USBSTS=0x00`/
+      `0xdead`). The runs were 3–6 min apart — inside the project's own
+      documented rapid-cycle bridge-degradation window (see the 2026-05-23
+      entry below, "BCM2711 PCIe bridge accumulates internal degradation")
+      — a software/cadence cause, not silicon. The `pre USBSTS=0x00`
+      signature the prior entry pinned on the PoC actually belongs to the
+      **rig**.
+- **"PoC fails 0/21" was inflated.** ~12 of 21 captures were truncated
+  before `usb_init` printed any verdict (powered off / capture too
+  short) — exactly the documented false-negative failure mode. Honest
+  number: **0 of ~18 decidable runs**, ~12 non-evidence.
+- **The rig's 2/4 successes are real** — but enumerate the VIA companion
+  hub (VID 2109), **not** the K120 keyboard (046d:c31c). "Rig works"
+  never demonstrated a working keyboard.
+- **Concrete `xhci.c` bugs found** (live path is `usb/xhci/{xhci.c,
+  bcm2711-pcie.c}`; `pcie/server/pcie.c` is dead duplicate code):
+  non-spec event ring (cycle state never toggled, ring memset/re-read at
+  index 0 — xHCI §4.9.4 violation, blocks command #2); controller
+  halt/restart around every command; recycled-DMA-page cache hazard on a
+  non-coherent fabric (leading non-silicon explanation for the rig's
+  intermittency); `resettleOutboundWindow()` silently inert in
+  DRIVE_ONLY (FIX-3/FIX-19 are dead); `main.c` comment contradicts its
+  own `setenv("USB_HCD_PCIE_DRIVE_ONLY","1")`.
+- **Disproven (stop chasing):** VL805-firmware-not-loaded (`fw_ver @0x50`
+  non-zero, mailbox correctly skipped) and missing-MSI (events are
+  DMA-written and polled; HSE precedes any interrupt).
+
+**Plan (no JTAG needed):** read-only experiments first (trigger rig at
+the PoC's 10 s mark to separate timing from code; allocate-rings-once vs
+munmap-per-run to test the recycled-page hazard), then fix the
+timing/DMA variable so any event lands, then a targeted event/command-
+ring rewrite. Neither fix alone is sufficient.
+
+Memories updated: `usb-dma-write-loss` (corrected), `vl805-known-silicon-flakiness`
+(downgraded to SHAKY). SMP / GENET / DHCP / networking unchanged and
+fully working.
+
+---
+
+## Previous Status: 2026-05-28 — USB PoC architecture proven mechanically; rig flaky (silicon claim RETRACTED 2026-05-29)
 
 Headline updates since 2026-05-27:
 

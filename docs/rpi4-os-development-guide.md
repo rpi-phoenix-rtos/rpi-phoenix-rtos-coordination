@@ -1126,21 +1126,53 @@ observability") available, this becomes one UDP probe. See
 `docs/usb-resumption-strategy.md` for the resumption plan that uses
 this and three other hypotheses to revisit the parked USB wedge.
 
-### USB resumption hypotheses (2026-05-25) — outcomes (2026-05-28)
+### USB resumption hypotheses (2026-05-25) — RE-ANALYZED 2026-05-29
 
-USB was parked at the statistical mode A/B/C wedge. The diag-udp
-infrastructure introduced 2026-05-25 let us cheaply test four
-hypotheses before falling back to JTAG:
+> **Correction (2026-05-29).** The "H4 = silicon variability, LEADING
+> CANDIDATE" conclusion recorded here on 2026-05-28 has been **retracted**.
+> A three-agent re-analysis (forensic re-derivation from the raw UART logs
+> + a code-correctness deep-read of the live driver) found the USB failure
+> is most likely a **software bug**, not silicon. Full detail:
+> `docs/notes/2026-05-29-usb-reanalysis.md`. The original table and bench
+> are kept below for history, annotated.
 
-| H | Hypothesis | Test | Outcome |
-|---|------------|------|---------|
-| H1 | xHCI cmd-ring TRBs land in a memory domain the VL805's PCIe DMA path doesn't see (same root cause as `TD-Pi4-FalseSharingPenalty`) | diag-udp side-process reads the cmd-ring TRB; if zero, H1 confirmed | **RULED OUT** — cmd TRBs visible; CRR transitions 0→1 but completion never lands in event ring |
-| H2 | Pi 4 PMIC under-voltage events correlate with mode B (HSE on R/S=1) | diag-udp `GET_THROTTLED` after each failed cycle; correlate with classification | **RULED OUT** — `GET_THROTTLED` clean across all failed cycles |
-| H3 | Side-process MMIO reads of xHCI return 0xdeaddead like writes do | diag-udp xHCI MMIO snapshot; compare to usb-hcd UART trace | **RULED OUT** — side-process reads succeed; the per-process bridge state affects DMA writes, not MMIO |
-| H4 | Genuine silicon variability nothing in software can fix | only if H1-H3 are all ruled out | **LEADING CANDIDATE** |
+The diag-udp infrastructure cheaply tested four hypotheses:
 
-**Multi-trial bench, 2026-05-28** (run from
-`sources/phoenix-rtos-lwip/port/main.c` `lwip_embed_usb_thread`):
+| H | Hypothesis | Outcome |
+|---|------------|---------|
+| H1 | cmd-ring TRBs in a domain VL805's DMA can't see | RULED OUT — cmd TRBs visible; CRR 0→1 but completion never lands |
+| H2 | PMIC under-voltage correlates with HSE | RULED OUT — `GET_THROTTLED` clean |
+| H3 | Side-process MMIO reads return 0xdeaddead | RULED OUT — side-process reads succeed |
+| H4 | Genuine silicon variability | ~~LEADING CANDIDATE~~ **RETRACTED 2026-05-29 — not supported by the logs** |
+
+**What the 2026-05-29 re-analysis actually found:**
+
+- **Two distinct problems were merged.** The *PoC* fails **100%
+  deterministically** (bridge up, `CRR=1`, `first event @idx -1` — zero
+  events DMA-written); the *rig* fails *intermittently* with a **different**
+  signature (`pre USBSTS=0x00`/`0xdead`, bridge MMIO dead). A deterministic
+  failure is not silicon flakiness.
+- **The bench below is confounded and the "0/21" elsewhere was inflated.**
+  The rig fires minutes post-boot under live GENET traffic; the PoC fires
+  at a fixed 10 s — so the table compares different *conditions*, not two
+  code paths. Separately, ~12 of the "21" PoC trials cited in other docs
+  were truncated before any verdict (powered off / capture too short) and
+  are not evidence; the honest count is 0 of ~18 *decidable* runs.
+- **The rig's 2 successes enumerate the VIA hub (VID 2109), not the K120
+  keyboard** — they never demonstrated a working keyboard.
+- **The rig's intermittency** fits the project's own documented
+  rapid-cycle bridge-degradation window (≥30 min idle needed; the runs
+  were 3–6 min apart) — a software/cadence cause, not silicon.
+- **Concrete `xhci.c` bugs** were found that the silicon framing masked:
+  the event ring is never advanced (cycle state never toggled, ring
+  memset/re-read at index 0 — xHCI §4.9.4 violation, blocks command #2);
+  the controller is halted/restarted around every command; DMA rings are
+  recycled across runs on a non-coherent fabric without a cache-clean
+  (recycled-page hazard — leading non-silicon explanation for the rig's
+  intermittency); `resettleOutboundWindow()` is a silent no-op in the live
+  DRIVE_ONLY path. The VL805-firmware and MSI hypotheses are disproven.
+
+**Original 2026-05-28 bench (kept for history; conditions confounded):**
 
 | Variant | Trials | Succeeded |
 | --- | --- | --- |
@@ -1151,29 +1183,21 @@ hypotheses before falling back to JTAG:
 | PoC no-bridge-mmap (DRIVE_ONLY)  | 3 | 0 |
 | Reference 'X' diag rig           | 4 | 2 |
 
-The 'X' rig and the PoC use byte-identical bridge + xHCI bring-up
-sequences (since the PoC was refactored to call into the rig). The
-single-variable code paths that differ from the rig (MaxSlotsEn,
-scratchpad layout, bridge re-init, leaked bridge mmap) are not the
-culprit. The remaining differences are higher up in the stack
-(`usb_init`'s mutex-pool / driver registration / hub_init allocations
-before xHCI bring-up runs), but the ~50% rig flakiness on the same
-hardware/boot suggests an irreducible **silicon variability floor**.
+The real mainline-Linux VL805 silicon issue
+([raspberrypi/linux#5060](https://github.com/raspberrypi/linux/issues/5060);
+3.3V→nPONRST RC-delay reflow for some boards) is genuine but is **not**
+established as our cause — USB keyboard always works on this exact board
+under Linux and the firmware boot menu.
 
-External corroboration: Pi 4 VL805 silicon flakiness is documented
-publicly. Linux issue
-[raspberrypi/linux#5060](https://github.com/raspberrypi/linux/issues/5060)
-describes USB controller boot-time failure modes on Pi 4; the RPi
-forums reference a 3.3V→nPONRST RC-delay reflow as a known hardware-
-side mitigation for some boards. Hypothesis H4 is currently the best
-explanation for the 0% PoC success rate.
+lwip PR #133 (i.MX6ULL `cyhal_sdio.c` DMA barriers) remains correctly
+ruled out: Pi 4's SDIO path is PIO (`SDHCI_DATA_PORT` FIFO), no DMA
+buffer to fence.
 
-Audited and ruled out as a contributing factor: lwip PR #133 added
-DMA-barrier fixes to the i.MX6ULL `cyhal_sdio.c`, but Pi 4's SDIO
-path is PIO (`SDHCI_DATA_PORT` FIFO, see WiFi P3 below) — there is
-no DMA buffer to fence, so PR #133 has no Pi 4 equivalent.
-
-The plan continues in `docs/usb-resumption-strategy.md`.
+**Next (no JTAG):** read-only experiments first (trigger the rig at the
+PoC's 10 s mark to separate timing from code; allocate-rings-once vs
+munmap-per-run to test the recycled-page hazard), then fix the timing/DMA
+variable so any event lands, then a targeted event/command-ring rewrite.
+See `docs/notes/2026-05-29-usb-reanalysis.md`.
 
 ### Worked example: GENET Tier 1 → Tier 5d
 

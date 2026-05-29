@@ -1,6 +1,47 @@
 # Current Implementation Step
 
-## Active step (2026-05-28): USB PoC parked at well-characterized wall; pick next initiative
+## Active step (2026-05-29): TD-10 SError handler (in progress) + USB re-analysis corrects the record
+
+Two tracks this session:
+
+1. **TD-10 (SError handler)** — in progress in the kernel
+   (`agent/rpi4-program-reloc`). The SError vectors already route to
+   `_exceptions_dispatch`; the plan is a dedicated dump-and-halt SError
+   handler (the rpi4b build is `NDEBUG`, so the default handler would
+   reboot-loop and hide the dump) plus removal of the three `NO_SERR`
+   masks (cpu.c ×2, `_exceptions.S` hal_jmp ×1). TD-13 notes the mask
+   "may be hiding the actual fault," so unmasking may reveal a
+   real latent bug — that is a feature, not a regression.
+
+2. **USB re-analysis (three agents) retracts the "silicon flakiness"
+   conclusion.** Full detail in `docs/notes/2026-05-29-usb-reanalysis.md`;
+   docs/status.md 2026-05-29 entry summarizes. The USB failure is most
+   likely a **software bug**, not silicon. Corrected facts that supersede
+   the 2026-05-28 framing below:
+   - **Two distinct problems**, previously merged: the PoC fails
+     **deterministically** (bridge up, `CRR=1`, `first event @idx -1` —
+     zero events DMA-written); the rig fails **intermittently** with a
+     *different* signature (`pre USBSTS=0x00`/`0xdead`, bridge MMIO dead)
+     in the rapid-cycle degradation window.
+   - **"0/21" was inflated** — ~12 captures were truncated before any
+     verdict. Honest: **0 of ~18 decidable runs**.
+   - The rig's successes enumerate the **VIA hub (VID 2109), not the K120
+     keyboard** — never proved a working keyboard.
+   - Concrete `xhci.c` bugs: non-spec event ring (blocks command #2),
+     halt-per-command, recycled-DMA-page cache hazard, inert
+     `resettleOutboundWindow` in DRIVE_ONLY. VL805-firmware and MSI
+     hypotheses **disproven**.
+   - **Next USB work (no JTAG):** read-only experiments (rig-at-10s;
+     allocate-once vs munmap-per-run) → fix timing/DMA → event-ring
+     rewrite.
+
+---
+
+## (historical) Active step (2026-05-28): USB PoC parked at well-characterized wall; pick next initiative
+
+> Note (2026-05-29): the "silicon flakiness" / "0/21" / "rig is a
+> reliable 50% baseline" framing in this block is **superseded** by the
+> 2026-05-29 re-analysis above. Kept for diff value.
 
 Today's USB session resolved the stale-CRCR class of bugs (split bridge
 bring-up from controller drive — boot-time `usb;--bridge-only` parks,
