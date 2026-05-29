@@ -1,4 +1,33 @@
-# Linux-on-Pi4 reference boot — likely USB ROOT CAUSE: inbound DMA window offset
+# Linux-on-Pi4 reference boot — inbound DMA window offset [REFUTED as our cause]
+
+> **⛔ REFUTED ON HARDWARE (2026-05-30, later same day).** The fix proposed
+> below (program `RC_BAR2` inbound base to bus `0x4_00000000` + offset every
+> xHCI DMA descriptor by `+0x4_00000000` to match Linux's `dma-ranges`) was
+> implemented and tested on the 4 GB board. Result: **byte-identical failure**
+> — `first event @idx -1`, event ring still all `st=0xdeadbeef` sentinels,
+> `rc=-110`. The register readback confirmed the change took effect
+> (`RC_BAR2 LO=0x11 HI=0x4`, `cmd_phys=0x4033ae000`, `evRingPhys=0x4033bc000`,
+> all offset), yet nothing changed. **The inbound-window base was never the
+> discriminating variable.** The change was reverted (it would also have
+> *broken* the diag rig, whose descriptors in `diag-udp.c` still use raw PA).
+>
+> **Why the headline was wrong:** the diag rig succeeds ~50% on the *exact
+> same* RC inbound config (both rig and PoC run in the lwip-port process and
+> inherit the boot daemon's `RC_BAR2`/`SCB0_SIZE_4G`; rings sit ~51 MB, inside
+> both the bus-0 and bus-4G apertures). A working reference on the same config
+> proves inbound writes *do* traverse it — so `RC_BAR2`/`SCB_SIZE`/3 GB-vs-4 GB
+> /`UBUS_REMAP` cannot be the *differential* cause. (Independent Codex audit
+> 2026-05-30 reached the same conclusion from the code.)
+>
+> **What this leaves:** the USB failure is a **code-path bug** between the rig
+> (~50%, enumerates) and the PoC (`usb_init`, 0%, first No-Op never completes)
+> — proven by the same-boot A/B (in-process embed worker ran the rig right
+> after `usb_init` failed in the *same* boot; rig still succeeded 2/4 — see
+> `docs/notes/2026-05-28-usb-poc-exhaustion-session.md` item 10). NOT silicon,
+> NOT cache (fresh-uncached re-read agreed), NOT the inbound window. Next:
+> attack the rig-vs-PoC code-path differences (Codex composite / byte-level
+> first-doorbell state diff). The secondary findings below (board is good;
+> `0x6004–0x6020` fault) remain valid.
 
 **2026-05-30.** Per the user's idea, we netbooted a stock Linux (RPi kernel
 6.18.33-v8+ + a busybox initramfs, built out-of-tree under
