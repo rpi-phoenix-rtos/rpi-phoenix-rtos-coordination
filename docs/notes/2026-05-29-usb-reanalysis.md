@@ -222,6 +222,31 @@ angle: compare Phoenix's `MISC_CTRL` / `RC_BAR2` / `SCB*_SIZE` /
 `dma-ranges`-derived model byte-for-byte against Linux's 3 GB model.
 (Then JTAG, arriving in a few days, can confirm precisely.)
 
+## RC-error-reg read attempt (2026-05-29 evening) — deferred to JTAG; two corrections
+
+Tried to read the RC outbound error regs (`0x6004..0x6020`) to classify the
+abort. The read was defeated **three** ways and is **deferred until JTAG**
+(days away): (1) over diag-udp — blocked by a DHCP regression (below);
+(2) via boot-daemon UART dump — the daemon's `debug()` output is severely
+reordered/buffered relative to other cores and didn't reliably flush;
+(3) the boot-daemon baseline read returned all-zero. A diag-udp `'P'`
+command (lwip `b4217c0`) is committed for the JTAG-day / network-up read.
+
+Two corrections recorded so a future session doesn't re-chase them:
+
+- **`MISC_CTRL=0` / `HARD_DEBUG=0` in the pre-Phoenix dump is normal
+  RESET-state, NOT a dead bridge.** It runs before `bcm2711PrepareHostBridge`
+  deasserts SW_INIT/PERST. Across logs: `MISC_CTRL=0` appears ~110× vs the
+  post-bring-up `0x88003480` ~9×; `MISC_STATUS=0xb0` (link up) confirms the
+  bridge does come up. So the "bridge-MMIO-dead this boot" worry was a
+  misread — there is less per-boot non-determinism than feared.
+- **DHCP regression observed:** with the embedded USB host active, lwip's
+  GENET DHCP looped DHCPDISCOVER→DHCPOFFER every 60 s with **no
+  DHCPREQUEST/DHCPACK** — the netif never got its IP, so the Pi was
+  unreachable by UDP. This **contradicts "TD-Eth-DHCP RESOLVED"** and may be
+  the embedded-USB bring-up activity perturbing lwip's DHCP state machine.
+  Worth a dedicated look (stability goal), tracked separately from USB.
+
 ## Recommended order of work (none requires JTAG)
 
 1. **Read-only experiments first** (cheap, decisive, separate the
