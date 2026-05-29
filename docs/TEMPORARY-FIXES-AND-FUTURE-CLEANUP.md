@@ -1161,12 +1161,31 @@ under TD-13-spawn-cap and the priority ladder.
   validated against the working GENET/PCIe paths. (Identity is correct for
   all current low-DRAM DMA buffers; `dtb_armToBus` matters only for buffers
   in high memory, which nothing allocates yet.)
-- **SUBSTANTIVE REMAINDER (deferred to careful / non-loop work):** make the
-  plo syspage memory map DTB-driven (derive `ddr`/`ddrh` extents from
-  `/memory@0` instead of hardcoding) so 2/8 GiB boards map correctly. This
-  is boot-critical; snapshot a rollback manifest first
-  (`scripts/restore-integration-state.sh`) and validate end-to-end. Not
-  suitable for blind autonomous-loop iteration.
+- **RESIDUAL (investigated 2026-05-29; HARDWARE-BLOCKED, not blind-fixable):**
+  make plo's static `map ddr 0x00400000 0x3b400000` / `map ddrh 0x40000000
+  0xfc000000` (+ `SIZE_DDR` in `aarch64a72-generic.ldt`) DTB-derived. On
+  investigation this is **smaller and less urgent than it sounds**:
+  - The part that matters is **already DTB-driven** — the kernel page
+    allocator is built from `dtb_getMemory()` and the firmware-patched DTB
+    `/memory@0` already reports the full ~4 GiB (kernel logs `page
+    allocator … /4050944KB`). plo's legacy *mailbox* query reports 1 GiB,
+    but that does not gate the kernel allocator.
+  - The residual hardcoded plo `map` only sets up VA mappings / syspage
+    map extents. Whether it actually **breaks** a 2 GiB (over-map) or
+    8 GiB (under-map → allocator may hand out unmapped >4 GiB pages →
+    fault) board is **UNCONFIRMED** — it hinges on an unresolved code
+    question: does the kernel map high physical pages **on demand** (via
+    `pmap_enter` / transient maps, in which case plo's `ddrh` is not the
+    limiter) or rely on plo's static tables? Not yet pinned.
+  - Implementing a DTB-derived plo map **blind is negative EV**: it is
+    boot-critical, targets an unconfirmed failure, and **cannot be
+    validated on the only available board (4 GiB)** — a 2/8 GiB regression
+    would be undetectable here.
+  - **Unblock requirements:** (a) pin the on-demand-vs-plo-tables mapping
+    mechanism (code-read `pmap_enter` + the vm page-access path); AND
+    (b) 2 GiB / 8 GiB Pi 4 hardware to validate. Do it interactively with a
+    board in hand; rollback manifest already snapshotted
+    (`manifests/2026-05-29-pre-td15-dtb-memory.md`).
 - **Stage:** 2. (Phase 1 + the kernel-side phase 4/5 work landed; the
   remainder is the plo-side DTB-driven layout + low-value hygiene.)
 - **First framed:** 2026-05-03 after the 2026-05-02 Pi 4 `(psh)%`
