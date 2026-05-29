@@ -270,6 +270,34 @@ lwip-port `printf` output frequently dropped/reordered; per-boot
 non-determinism. The reliable signal is the xhci `debug()` output
 (`@idx -1` / `rc=-110`) — anchor any future test on *that*.
 
+## Experiment B (concurrent GENET DMA) — RETIRED as the lead (2026-05-29 late)
+
+Re-ran experiment B *fully instrumented* (flood reports TX ok/fail via the
+reliable `debug()` channel):
+
+- **TX direction (clean NEGATIVE):** sidecar broadcast flood confirmed
+  active during the bring-up — `embed-flood: STOP ok=14877 fail=0`
+  (14877 successful sends, 0 failures = sustained GENET TX DMA on the SCB
+  fabric throughout) — yet still `first event @idx -1` / `rc=-110`. So
+  **sustained concurrent GENET TX DMA does NOT enable the VL805 inbound
+  write.**
+- **RX direction (VOID):** a host-side broadcast flood (2.38M packets,
+  ~21k pkts/s) to drive GENET *RX* DMA swamped the Pi's RX IRQ path and
+  stalled the boot before it reached the embedded bring-up — confounded,
+  no result. (A gentler RX rate could be retried, but see below.)
+- **Reframe that retires the hypothesis:** the rig only ever had ~1–2
+  packets around its bring-up (it is *triggered* by one diag-udp packet),
+  i.e. NOT sustained DMA — so "the rig works because GENET DMA is active"
+  was always weak. Combined with the TX negative, the "concurrent GENET
+  DMA enables inbound writes" hypothesis (and the TD-15-ph3 fabric-drain
+  variant, for the GENET case) is **retired as the lead.** The rig's
+  intermittent success is most plausibly its own ~50% bridge flakiness.
+  A single-RX-packet-timed-to-the-critical-window variant remains
+  formally untested but is low-priority; defer to JTAG.
+
+This was the last cheap pre-JTAG USB experiment. The DMA root-cause is now
+**JTAG-gated** (see plan below); further blind boot cycles are low-value.
+
 ## JTAG-day plan (cable arriving in days — the real unlock)
 
 With JTAG, in one session: (1) set a watchpoint / single-step the VL805
