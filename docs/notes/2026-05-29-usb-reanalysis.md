@@ -247,6 +247,39 @@ Two corrections recorded so a future session doesn't re-chase them:
   the embedded-USB bring-up activity perturbing lwip's DHCP state machine.
   Worth a dedicated look (stability goal), tracked separately from USB.
 
+## Experiment B attempt (2026-05-29 evening) — inconclusive; observability-bound
+
+Tested the strongest lead — *active GENET DMA concurrent with the controller
+bring-up* (the only context that ever posted events). Implemented a
+self-contained sidecar in `lwip_embed_usb_thread` that floods broadcast UDP
+(GENET TX DMA, no IP needed) while `usb_init()` runs. Result: still
+`@idx -1` — but **inconclusive, not a clean negative**, because:
+- The captured UART showed **no Phoenix genet link-up at all** (only the
+  firmware netboot DHCP), so the flood likely sent nothing this boot. The
+  flood may even be **self-defeating** (a tight `lwip_sendto` spin can
+  starve the tcpip/genet link thread). Couldn't confirm the flood generated
+  real DMA → the test didn't actually exercise the hypothesis.
+- Reverted (kept tree clean). A correct version must **gate the flood on
+  genet-link-up**, report TX progress over a *reliable* channel (lwip
+  `printf` is frequently lost/reordered on this UART), and run **multi-trial
+  with the `X` rig as control** (single boots are untrustworthy here).
+
+**The pre-JTAG observability walls are now the gating problem**, not ideas:
+diag-udp blocked by DHCP flakiness; boot-daemon UART heavily reordered;
+lwip-port `printf` output frequently dropped/reordered; per-boot
+non-determinism. The reliable signal is the xhci `debug()` output
+(`@idx -1` / `rc=-110`) — anchor any future test on *that*.
+
+## JTAG-day plan (cable arriving in days — the real unlock)
+
+With JTAG, in one session: (1) set a watchpoint / single-step the VL805
+event-ring write and the RC inbound path to see exactly where the inbound
+DMA write is dropped; (2) read the RC outbound error regs `0x6004..0x6020`
+directly (no UART/UDP dependency) to classify any abort; (3) inspect SCB/RC
+inbound decode (`MISC_CTRL` / `RC_BAR2` / `SCB*_SIZE`) live against Linux's
+3 GB model; (4) confirm whether concurrent GENET DMA changes inbound-write
+landing (experiment B) with direct memory inspection rather than UART.
+
 ## Recommended order of work (none requires JTAG)
 
 1. **Read-only experiments first** (cheap, decisive, separate the
