@@ -37,22 +37,27 @@ short is itself an honest finding.
    DMA writes don't land". Being actively worked; see
    `docs/notes/2026-05-29-usb-reanalysis.md` + memory `pi4-serror-pcie-source`.
 
-2. **TD-15 phase 3 — VC/VPU + SCB/SLC fabric quiesce (USB: Possible→Likely;
-   the best *hidden* lead).** The one mechanism consistent with every USB
-   refutation: write-side, fabric-level, environment-dependent. usb-hcd
-   drives at idle early boot; the only process that ever posted events
-   (the lwip 'X' rig) ran with GENET DMA active. Hypothesis: the BCM2711
-   SCB/SLC fabric only drains VL805 inbound writes to DDR when other fabric
-   DMA is concurrently active and/or the VPU is still touching DRAM during
-   early boot. TD-15 phase 3 (explicitly quiesce VC4 before handoff) is the
-   planned work that would test this — and may be the **same fault as
-   TD-10 seen from another angle** (the abort-raising access and the lost
-   write could be one root cause in the RC/SCB inbound path).
-   - Cheap experiment: defer usb-hcd bring-up until *after* GENET DMA is
-     live, and observe whether (a) the TD-10 SError disappears and/or (b)
-     enumeration succeeds. Yes → environmental/fabric (points at phase-3
-     quiesce as the fix); no → fabric-activity ruled out, narrows back to
-     TD-10's specific aborting access.
+2. **TD-15 phase 3 — VC/VPU + SCB/SLC fabric quiesce. DOWNGRADED 2026-05-29
+   from "best hidden lead" to LOW probability for the USB issue.** The
+   subagent ranked it high on the "concurrent fabric DMA enables inbound
+   writes" theory, but three pieces of evidence now argue against it:
+   - **The rig 'X' succeeds ~50% WITH HDMI/VC4 scanout fully active**
+     (fbcon is up before the rig runs). So sustained VC4 fabric DMA
+     demonstrably does NOT block VL805 inbound writes — if VC4 activity
+     were the blocker, the rig could never enumerate.
+   - **Experiment B (2026-05-29) retired the fabric-activity family:** a
+     sustained GENET TX DMA flood confirmed active during the bring-up
+     (14877 sends/0 fail) still gave `@idx -1`.
+   - **Prior authoritative research** (RPi-engineer sources): the VC4
+     SLC/L2 is NOT in the ARM-uncached / PCIe-inbound path; the A72 sees a
+     flat SDRAM map, and Linux makes VL805 work with uncached rings — which
+     is exactly what Phoenix does.
+
+   TD-15 phase 3 remains valid work for its **original** purpose (TD-04-class
+   memory hygiene: stop VC4 background writes from corrupting ARM DRAM; and
+   the dma-ranges ARM↔BUS translation correctness), but it is **not** the
+   USB inbound-write-loss root cause. The USB DMA root-cause is JTAG-gated
+   (see `docs/notes/jtag-day-usb-runbook.md`).
    - (weaker) TD-15 phase 4 dma-ranges: no `arm_to_bus` helper wired in,
      but RC_BAR2 identity is verified correct for the failing low-DRAM
      buffers; only bites buffers outside the verified window. Low priority.
@@ -79,9 +84,14 @@ curiosity that GENET-DMA-being-active is itself part of the USB puzzle
 | TD-05 residual markers | Easy | None | gate behind compile-time macro |
 | TD-14 sub-items | Easy each | None | restore canonical IPC/console paths once IPC latency rooted out |
 
-## Bottom line
+## Bottom line (revised 2026-05-29)
 
-The next TD-10-style lead is **TD-15 phase 3 (VC/VPU + SCB/SLC quiesce)** —
-pursue it jointly with the TD-10 SError localization (RC error-register
-read over diag-udp), since they may be the same RC/SCB inbound-path fault.
-The rest are genuine cleanups with no USB/WiFi/Eth coupling.
+No open TD is a confirmed live lead for the USB inbound-write-loss. TD-10
+(SError) localized the abort to PCIe/USB bring-up but the precise access is
+JTAG-gated. TD-15 phase 3 (VC/VPU quiesce) was initially ranked highest but
+is **downgraded to low probability** (the rig enumerates ~50% with VC4
+scanout active; experiment B retired the fabric-activity family; VC4 SLC is
+not in the PCIe path). The USB DMA root-cause is **JTAG-gated** — see
+`docs/notes/jtag-day-usb-runbook.md`. TD-15's other phases (memory hygiene,
+dma-ranges translation) remain valid port-correctness work but are not the
+USB blocker. The rest are genuine cleanups with no USB/WiFi/Eth coupling.
