@@ -1,9 +1,20 @@
 # Known Hardware-Bounded Limits
 
-This document consolidates Pi 4 platform issues that affect mainline
-Linux and other OSes equally — they are *not* Phoenix-specific bugs
-and cannot be fixed in Phoenix software. The point is to save future
-developers from re-investigating them.
+> **⛔ THE TEST BOARD IS KNOWN-GOOD. "Broken hardware" is NEVER the cause of
+> our bugs.** The specific Pi 4B we test on works correctly under Linux
+> (Raspberry Pi OS) for USB (incl. USB-keyboard input), WiFi, Ethernet, and
+> the rest, and USB keyboard input also works in the firmware boot menu. So
+> every USB / WiFi / PCIe / DMA / peripheral failure under Phoenix is a
+> **Phoenix software bug**, not flaky/defective silicon. Entries below are
+> mainline-Linux/forum **context** only; they must **never** be cited as the
+> explanation for *our* failures. This is a permanent project rule — see
+> `AGENTS.md`. (The USB "silicon flakiness" conclusion was formally
+> retracted on 2026-05-29.)
+
+This document consolidates Pi 4 platform issues reported in mainline
+Linux / other OSes. The point is to save future developers from
+re-investigating the mainline *context* — NOT to license attributing our
+own failures to hardware (see the banner above).
 
 ## Index
 

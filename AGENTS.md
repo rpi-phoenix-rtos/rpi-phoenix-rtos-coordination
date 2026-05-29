@@ -53,6 +53,22 @@ Use them as follows:
 
 ## Project Rules
 
+- **THE TEST BOARD IS KNOWN-GOOD HARDWARE — "broken hardware" is NOT a valid
+  explanation for any Phoenix bug.** The specific Raspberry Pi 4B used for
+  all testing on this project is verified-functional: USB (including USB
+  keyboard input), WiFi, Ethernet, and the other peripherals all work
+  correctly on this exact board under **Linux (Raspberry Pi OS)**, and USB
+  keyboard input also works in the **Raspberry Pi firmware boot menu**.
+  Therefore any USB, WiFi, PCIe, DMA, or peripheral failure we see under
+  Phoenix is a **Phoenix software bug** (our AArch64/plo/driver code, all of
+  which is AI-written with no upstream Phoenix Pi-4 reference), NOT flaky or
+  defective silicon. Do **not** attribute failures to "silicon variability",
+  "board flakiness", "needs an RC reset mod", or similar — that conclusion is
+  ruled out permanently for this board. Mainline Linux/forum reports of Pi-4
+  silicon quirks may be cited as *context*, but never as the cause of *our*
+  failures. If you catch yourself reaching for a hardware-fault explanation,
+  stop: the bug is on our side. (See `docs/known-limits.md`; the USB
+  "silicon flakiness" claim was already formally retracted on 2026-05-29.)
 - Do not start with Raspberry Pi 5 unless the task explicitly requires Pi 5-specific preparation or documentation.
 - Prefer native Phoenix bring-up over UEFI-assisted boot for the final design.
 - A temporary firmware-assisted or state-inheriting debug path is acceptable only if it is clearly documented as transitional.
