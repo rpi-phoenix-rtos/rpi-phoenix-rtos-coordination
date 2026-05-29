@@ -54,7 +54,16 @@ authoritative current state.
 
 ## TD-17: Pi 4 cache-enable data-path cache hygiene
 
-- **Status:** IN-PROGRESS
+- **Status:** ✅ RESOLVED 2026-05-29 (verified in code). The amap temporary
+  mappings (`vm/amap.c:211,214`) and writable ELF loads (`proc/process.c`)
+  now map **cacheable** (`MAP_NONE`, not `MAP_UNCACHED`); no `TODO(TD-17)`
+  markers remain. The underlying cache corruption that forced the uncached
+  workarounds was fixed by the 2026-05-17 armstub L2CTLR_EL1 + A72-1319367
+  fix (project `dde9bb5`), after which the cacheable data path became
+  boot-correct; the current production image reaches `(psh)%` reliably with
+  these cacheable. Any remaining "generalize into an upstreamable VM
+  cache-maintenance interface" work is ordinary upstreaming, not a Pi-4
+  shortcut. Historical investigation kept below for diff value.
 - **Stage:** 1 (cache enable).
 - **First observed:** 2026-05-14 cache-enable session.
 - **Where:** `sources/phoenix-rtos-kernel/vm/amap.c` (`amap_map()`),
@@ -104,7 +113,14 @@ authoritative current state.
 
 ## TD-18: Pi 4 zone allocator backing pages remain uncached
 
-- **Status:** PENDING
+- **Status:** ✅ RESOLVED 2026-05-29 (verified in code). `vm/zone.c:45` now
+  maps the zone backing pages **cacheable** (`MAP_NONE`); no `TODO(TD-18)`
+  markers remain, and the current production image boots reliably to
+  `(psh)%` with cacheable zones. The 2026-05-14 `MAP_NONE` failures
+  documented below predate the 2026-05-17 armstub L2CTLR_EL1 + A72-1319367
+  cache fix (project `dde9bb5`); once that landed, the underlying cache
+  corruption was gone and cacheable zone backing became boot-correct.
+  Historical failure analysis kept below for diff value.
 - **Stage:** 1 (cache enable).
 - **First observed:** 2026-05-14 cacheable-zone negative control.
 - **Where:** `sources/phoenix-rtos-kernel/vm/zone.c` (`_vm_zoneCreate()`).
@@ -1725,8 +1741,8 @@ longer needed.
 | TD-16 | RESOLVED 2026-05-17 by cache enable (project `dde9bb5` + kernel `72242a05`) | timer math was correct; root cause was caches-off, fixed by armstub L2CTLR + 1319367 re-encoding |
 | TD-16-1 | RESOLVED (probe served its purpose, stripped in plo `c988e6a` + kernel `5a2d3a77`) | |
 | TD-16-cache-enable | RESOLVED 2026-05-17 (project `dde9bb5` armstub L2CTLR + 1319367 encoding fix; kernel `72242a05` single-shot M\|C\|I in `el1_entry`; helper scaffolding deleted in kernel `dccd0aee`) | `SCTLR_EL1.M\|C\|I` enabled inline in `el1_entry` |
-| TD-17 | re-verify | post-armstub-fix may have changed cache-hygiene needs |
-| TD-18 | re-verify | post-armstub-fix may have changed zone allocator behaviour |
+| TD-17 | ✅ RESOLVED 2026-05-29 | amap/ELF cacheable (MAP_NONE) in code; boots to psh; armstub fix dde9bb5 removed the corruption |
+| TD-18 | ✅ RESOLVED 2026-05-29 | zone backing cacheable (MAP_NONE, zone.c:45) in code; boots to psh; 2026-05-14 fails predate armstub fix |
 | TD-19 | LIKELY STILL APPLIES (TLBI hardening is generally correct) | upstreamable as-is |
 | TD-Eth-DHCP | ✅ RESOLVED 2026-05-28 (lwip `7f0b495`) | autonomous DHCP verified end-to-end via test-cycle-netboot.sh --probe q + scripts/get-pi-ip.sh; probe captured `netif: en1 ip=10.42.0.12 gw=10.42.0.1 flags=0x1f UP LINK DHCP` (artifact 2026-05-28-...-dhcp-clean-probe.txt) |
 | TD-Eth-MAC | RESOLVED 2026-05-25 (lwip `79bd607`) | mailbox `GET_BOARD_MAC` plumbed in `genet_mboxGetMac()` |
