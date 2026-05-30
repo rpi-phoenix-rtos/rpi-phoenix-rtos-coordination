@@ -128,13 +128,30 @@ boot. Conclusions:
   effectively a later/second bring-up; the boot driver runs at ~46 s with the
   fabric comparatively idle (DHCP not yet bound, no sustained traffic).
 
-**Leading hypothesis (revived, never cleanly tested):** BCM2711 SCB/SLC fabric
-only drains VL805 inbound writes to DRAM when there is concurrent fabric/DMA
-activity. NOTE the prior "ORDERING" test (spawn usb after GENET *link-up*) was
-negative — but link-up ≠ *active RX/TX DMA*; the rig works specifically while a
-packet is in flight. The clean test is to bring up xHCI **while sustained
-GENET traffic is flowing** (e.g. defer `usb_init` until DHCP-bound + drive
-continuous ping/UDP during the No-Op poll), not merely after link-up.
+**Fabric-activity hypothesis — DISPROVEN (do not chase).** I initially read the
+paired capture as implicating concurrent GENET DMA. It does not, and the
+hypothesis was already killed: commit `a4794ee` (phoenix-rtos-lwip) ran a
+**sustained GENET TX flood (14877 sends, confirmed active) DURING the embedded
+xHCI bring-up** and still got `first event @idx -1`. And commit `2b55c99` is
+decisive against ALL context/timing stories: the rig's inline bring-up
+(`diag_format_xhci_bringup`), invoked **from the same early-boot worker thread**
+that `usb_init` runs in, **enumerates a real USB hub end-to-end** (No-Op →
+EnableSlot cc=1 → AddrDev cc=1 → GetDesc len=18 VID=2109 PID=3431) — while
+`usb_init`'s `xhci_init` in that exact context fails 0/N. That rules out
+thread-context, timing, active-DMA, the BRIDGE_ONLY split, and bridge-state
+corruption.
+
+**The solid, stable conclusion (established 2026-05-28, reconfirmed every angle
+this session):** the divergence lives **inside the controller-side bring-up
+code** — `xhci_init`'s helpers vs the rig's inline path. The rig is a *working*
+USB bring-up from the worker context (~50% due to its own bridge flakiness);
+`xhci_init` is ~0% (0 of ~18 decidable — genuinely worse than the rig, not thin-N
+noise: P(0/18 | 50%) ≈ 4e-6). Every controller-visible register matches and the
+ring PAs are adjacent, so the bug is a SUBTLE difference in the bring-up
+sequence/helpers that the MMIO-map→first-No-Op diff did not catch — OR the
+pragmatic route: drive USB via the rig's proven inline path instead of
+`xhci_init`'s helpers (the rig already does full enumeration). This is a
+FINDABLE software bug, not a kernel/fabric/silicon wall.
 
 ## Decision point (surfaced to user 2026-05-30)
 
