@@ -102,6 +102,40 @@ verdict — the captures died mid-retry (~try 2). The retry code was **reverted*
 (unproven + leaks memory = not shippable); re-run with a healthy harness if
 this angle is pursued.
 
+## Same-boot paired-PA capture (2026-05-30) — page-provenance REFUTED; fabric-activity lead
+
+User chose "finish the current thread cleanly." Did the decisive same-boot
+paired capture: one boot where the boot driver's `usb_init` fails AND the 'X'
+rig runs (artifact `artifacts/diag-udp/2026-05-30-102025-paired-rig.txt` +
+boot log `...082018-netboot-paired-poc.log`):
+
+| actor (same boot, same lwip-port process) | event-ring PA | result |
+|---|---|---|
+| boot driver `usb_init` (~46 s) | `0x032f4000` | `@idx -1`, writes LOST |
+| 'X' rig (+84 s) | `0x032ee000` | type-34 + type-33 land, EnableSlot cc=1 |
+
+The two event-ring PAs are **adjacent** (~24 KB apart, same ~51 MB region),
+yet the controller DMA-writes the rig's ring and not the driver's, in the SAME
+boot. Conclusions:
+- **Page-provenance REFUTED** — it is NOT the PA value / physical frame
+  (adjacent addresses, one works one doesn't). (Consistent with the
+  fresh-page retry, which also didn't help; that retry is reverted — it also
+  destabilised the boot, dying at ~46 s, so abandon the in-driver retry.)
+- **Inbound writes are NOT globally dead** — the controller writes DDR fine in
+  this boot (the rig's ring). So it's not a missing bus-master/window/config.
+- The discriminator is the **bring-up CONTEXT**. The rig runs at +84 s *with
+  GENET RX DMA active* (it is receiving the 'X' UDP packet over the net) and is
+  effectively a later/second bring-up; the boot driver runs at ~46 s with the
+  fabric comparatively idle (DHCP not yet bound, no sustained traffic).
+
+**Leading hypothesis (revived, never cleanly tested):** BCM2711 SCB/SLC fabric
+only drains VL805 inbound writes to DRAM when there is concurrent fabric/DMA
+activity. NOTE the prior "ORDERING" test (spawn usb after GENET *link-up*) was
+negative — but link-up ≠ *active RX/TX DMA*; the rig works specifically while a
+packet is in flight. The clean test is to bring up xHCI **while sustained
+GENET traffic is flowing** (e.g. defer `usb_init` until DHCP-bound + drive
+continuous ping/UDP during the No-Op poll), not merely after link-up.
+
 ## Decision point (surfaced to user 2026-05-30)
 
 After 5 negative USB iterations this session (inbound-offset, rig-match
