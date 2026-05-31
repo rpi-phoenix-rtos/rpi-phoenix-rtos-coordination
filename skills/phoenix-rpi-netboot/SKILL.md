@@ -77,8 +77,10 @@ is NOT a boot failure. **Always redirect cycle stdout to a file and read it**
     / "file ... not found (recovery.elf, cmdline.txt, ...)" lines are **normal**
     Pi firmware probing, not errors.
 
-The worker is `scripts/vm-netboot-server.sh {up|down|status}` (legacy name);
-the `netboot-server-{up,down}.sh` wrappers set the Linux env and call it.
+The worker is `scripts/netboot-server.sh {up|down|status}`; the
+`netboot-server-{up,down,restart}.sh` wrappers set the Linux env and call it.
+`netboot-server.sh up` verifies dnsmasq is actually serving DHCP (greps the log
+for `DHCP, IP range`) before returning, so a failed bind/start is caught early.
 
 ## Result analysis
 

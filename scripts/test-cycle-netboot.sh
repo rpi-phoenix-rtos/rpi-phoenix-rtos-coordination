@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
 #
-# One full automated test cycle for Pi 4 netboot:
-#   1. ensure dnsmasq is running inside the phoenix-dev VM (no-op if so)
+# One full automated test cycle for Pi 4 netboot (Linux host, no VM):
+#   1. ensure the host dnsmasq DHCP+TFTP server is up (netboot-server-up.sh)
 #   2. power off (clean slate)
-#   3. power on; watch dnsmasq.log for Pi DHCP within $dhcp_wait_secs.
-#      If silent, the en7 USB-C bridge into the VM is likely stale (this
-#      happens whenever the laptop is undocked from a USB-C hub and the
-#      adapter is replugged): run netboot-bridge-recover.sh (full VM
-#      restart) and retry once.
+#   3. power on; watch dnsmasq.log for the Pi's DHCP within $dhcp_wait_secs.
+#      If silent, restart the netboot server (NIC bounce + fresh dnsmasq,
+#      netboot-server-restart.sh) and retry once — usually the USB-Ethernet
+#      NIC needed a re-up after a replug. NOTE: the SD card must be OUT of
+#      the Pi, or SD+net boot-order contention storms the firmware.
 #   4. capture UART for $capture_secs seconds
 #   5. power off (always — guaranteed by EXIT trap)
 #
-# TFTP serves directly out of the buildroot bootfs tree from inside the
-# VM — no copy step needed. Just rebuild then run this:
+# TFTP serves directly out of the buildroot bootfs tree — no copy step and no
+# SD re-flash. Just rebuild then run this:
 #
 #   ./scripts/rebuild-rpi4b-fast.sh && ./scripts/test-cycle-netboot.sh --label probe
 #
@@ -58,10 +58,10 @@ Usage: test-cycle-netboot.sh [options]
 
   --label TEXT             short label appended to the UART log filename
   --capture-secs N         how long to capture UART (default $capture_secs)
-  --skip-server-up         assume dnsmasq is already running in the VM
+  --skip-server-up         assume the host dnsmasq is already running
   --dhcp-wait-secs N       seconds to wait for Pi DHCP after power-on
                            (default $dhcp_wait_secs); 0 disables the watchdog
-  --skip-bridge-recovery   on DHCP timeout, fail rather than restart the VM
+  --skip-bridge-recovery   on DHCP timeout, fail rather than restart the server
   --baud N                 picocom baud (default 115200; try 103448 if
                            plo output is garbled — start4.elf reprograms
                            PL011 to 103448 right before kernel handoff)
@@ -72,16 +72,16 @@ Usage: test-cycle-netboot.sh [options]
                            queries that need the network stack up.
   --sd-boot                Pi boots Phoenix directly from its SD card: no
                            netboot DHCP/TFTP. Implies --skip-server-up and
-                           --dhcp-wait-secs 0 (no DHCP watchdog / bridge
-                           recovery). Bring the netboot server down first
+                           --dhcp-wait-secs 0 (no DHCP watchdog / server
+                           restart). Bring the netboot server down first
                            (scripts/netboot-server-down.sh) so the firmware
                            falls back to SD. Logs are tagged -sdboot-.
   -h, --help               show this help
 
-Bridge recovery: on DHCP timeout the script invokes
-  scripts/netboot-bridge-recover.sh
-which restarts the VM (re-creating the socket_vmnet bridge between en7
-and lima1) and retries the boot once. After two failures it exits 1.
+Server restart: on DHCP timeout the script invokes
+  scripts/netboot-server-restart.sh
+which bounces the USB-Ethernet NIC and restarts dnsmasq fresh, then retries
+the boot once. After two failures it exits 1.
 EOF
 }
 
@@ -292,12 +292,10 @@ if [ -e "$hdmi_grabber" ]; then
 	start_hdmi_periodic "$hdmi_interval"
 fi
 
-# Power on the Pi and watchdog its DHCP. On timeout, recover the
-# bridge by restarting the VM — but KEEP the Pi powered on across the
-# recovery, so en7 stays "active" (link up) while socket_vmnet rebuilds
-# its BPF capture. Powering the Pi off would make en7 go inactive, and a
-# fresh socket_vmnet that comes up against an inactive en7 wedges the
-# bridge again as soon as link returns.
+# Power on the Pi and watchdog its DHCP. On timeout, restart the netboot
+# server (NIC bounce + fresh dnsmasq) and retry once — the usual cause is the
+# USB-Ethernet NIC needing a re-up after a replug. Keep the Pi powered on
+# across the restart so its link partner stays present.
 pre_lines=$(snapshot_log_lines)
 "$repo/scripts/pi_power_on.sh"
 
@@ -307,16 +305,17 @@ if [ "$dhcp_wait_secs" -gt 0 ]; then
 			printf 'ERROR: DHCP timeout, --skip-bridge-recovery set; aborting\n' >&2
 			exit 1
 		fi
-		printf 'attempting bridge recovery (VM restart, Pi stays on)...\n' >&2
-		"$repo/scripts/netboot-bridge-recover.sh"
-		# After VM restart, dnsmasq.log was appended to by the new
-		# instance — re-snapshot so we only count truly new lines.
+		printf 'attempting netboot server restart (NIC bounce, Pi stays on)...\n' >&2
+		"$repo/scripts/netboot-server-restart.sh"
+		# The restart regenerated dnsmasq.log — re-snapshot so we only
+		# count truly new lines.
 		pre_lines=$(snapshot_log_lines)
 		if ! watch_for_dhcp "$dhcp_wait_secs" "$pre_lines"; then
-			printf 'ERROR: Pi still not DHCPing after VM restart; check\n' >&2
-			printf '  - en7 USB-C ethernet adapter is plugged in\n' >&2
-			printf '  - cable to the Pi is connected\n' >&2
-			printf '  - Pi is being powered (try pi_power_on.sh manually)\n' >&2
+			printf 'ERROR: Pi still not DHCPing after server restart; check\n' >&2
+			printf '  - the USB-Ethernet NIC is plugged in (RPI4B_NETBOOT_IFACE)\n' >&2
+			printf '  - the crossover cable to the Pi is connected\n' >&2
+			printf '  - the SD card is OUT of the Pi (SD+net contention storms boot)\n' >&2
+			printf '  - the Pi is being powered (try pi_power_on.sh manually)\n' >&2
 			exit 1
 		fi
 	fi
