@@ -327,6 +327,40 @@ if [ -n "$probe_pid" ]; then
 	wait "$probe_pid" 2>/dev/null || true
 fi
 
+# Thermal/throttle safeguard. The capture window is done but the Pi is still
+# powered (power-off happens in the EXIT trap), so read the SoC temperature +
+# throttle state via diag-udp 'c' (clocks+thermal). Best-effort: it needs lwip
+# (Ethernet) up, so a stalled/early-failed boot just reports "unreachable" —
+# which itself flags that the boot never reached the network stack. The point
+# is to catch an overheat (e.g. a runaway loop pinning a core) before it can
+# stress the board. Never fails the cycle.
+read_thermal() {
+	local lbl out line temp_mc
+	lbl="${label:-cycle}-thermal"
+	printf '\n[test-cycle] reading SoC thermal/throttle via diag-udp (best-effort)...\n'
+	if ! "$repo/scripts/diag-udp-probe.sh" c "$lbl" 20 5 >/dev/null 2>&1; then
+		printf '[test-cycle] thermal: Pi unreachable via diag-udp (lwip/Ethernet not up?)\n'
+		return 0
+	fi
+	out=$(ls -1t "$repo/artifacts/diag-udp/"*"${lbl}".txt 2>/dev/null | head -1)
+	[ -n "$out" ] || { printf '[test-cycle] thermal: no reply file\n'; return 0; }
+	line=$(grep -E 'thermal: temp_mC=' "$out" 2>/dev/null | head -1)
+	if [ -z "$line" ]; then
+		printf '[test-cycle] thermal: diag-udp replied but no thermal line\n'
+		return 0
+	fi
+	printf '[test-cycle] %s\n' "$line"
+	temp_mc=$(printf '%s' "$line" | sed -n 's/.*temp_mC=\([0-9]\{1,\}\).*/\1/p')
+	if [ -n "$temp_mc" ] && [ "$temp_mc" -ge 80000 ] 2>/dev/null; then
+		printf '[test-cycle] WARNING: SoC temp %s mC (>=80C) — possible runaway/overheat!\n' "$temp_mc" >&2
+	fi
+	if printf '%s' "$line" | grep -q 'throttle-now\|uv-now\|arm-cap-now'; then
+		printf '[test-cycle] WARNING: active throttle/undervoltage flagged in thermal reply\n' >&2
+	fi
+	return 0
+}
+read_thermal || true
+
 # 5. Power off handled by EXIT trap.
 
 if [ -s "$log_path" ]; then
