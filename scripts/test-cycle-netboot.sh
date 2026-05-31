@@ -38,6 +38,7 @@ state_dir="${RPI4B_NETBOOT_STATE_DIR:-$repo/artifacts/netboot}"
 dnsmasq_log="$state_dir/dnsmasq.log"
 skip_bridge_recovery=0
 uart_baud=""
+sd_boot=0
 
 # HDMI grabber options (Linux host only).
 #  - RPI4B_HDMI_GRABBER:    /dev/videoN of the USB grabber (default video4
@@ -69,6 +70,12 @@ Usage: test-cycle-netboot.sh [options]
                            (one char like 'q' or 'X') and capture the
                            reply under artifacts/diag-udp/. Useful for
                            queries that need the network stack up.
+  --sd-boot                Pi boots Phoenix directly from its SD card: no
+                           netboot DHCP/TFTP. Implies --skip-server-up and
+                           --dhcp-wait-secs 0 (no DHCP watchdog / bridge
+                           recovery). Bring the netboot server down first
+                           (scripts/netboot-server-down.sh) so the firmware
+                           falls back to SD. Logs are tagged -sdboot-.
   -h, --help               show this help
 
 Bridge recovery: on DHCP timeout the script invokes
@@ -86,6 +93,7 @@ while [ $# -gt 0 ]; do
 		--skip-server-up)        skip_server_up=1; shift ;;
 		--dhcp-wait-secs)        dhcp_wait_secs="$2"; shift 2 ;;
 		--skip-bridge-recovery)  skip_bridge_recovery=1; shift ;;
+		--sd-boot)               sd_boot=1; shift ;;
 		--baud)                  uart_baud="$2"; shift 2 ;;
 		--probe)                 probe_cmd="$2"; shift 2 ;;
 		-h|--help)               usage; exit 0 ;;
@@ -93,13 +101,26 @@ while [ $# -gt 0 ]; do
 	esac
 done
 
+# SD-card boot: Phoenix loads directly off the Pi's SD card, so there is no
+# netboot DHCP/TFTP. Skip the dnsmasq server-up step and the DHCP watchdog +
+# bridge recovery entirely — otherwise the cycle would power-cycle the Pi
+# repeatedly waiting for a netboot DHCP that never comes (the firmware-retry
+# storm). Bring the netboot server down separately (netboot-server-down.sh)
+# so the firmware falls back to SD.
+if [ "$sd_boot" = 1 ]; then
+	skip_server_up=1
+	dhcp_wait_secs=0
+fi
+
 ts="$(date -u +%Y%m%d-%H%M%S)"
 log_dir="$repo/artifacts/rpi4b-uart"
 mkdir -p "$log_dir"
+boot_kind="netboot"
+[ "$sd_boot" = 1 ] && boot_kind="sdboot"
 if [ -n "$label" ]; then
-	log_path="$log_dir/rpi4b-uart-$ts-netboot-$label.log"
+	log_path="$log_dir/rpi4b-uart-$ts-$boot_kind-$label.log"
 else
-	log_path="$log_dir/rpi4b-uart-$ts-netboot.log"
+	log_path="$log_dir/rpi4b-uart-$ts-$boot_kind.log"
 fi
 
 # HDMI screenshot helpers. The lab has a USB HDMI grabber that shows the
