@@ -70,6 +70,7 @@ scope="auto"
 do_prepare=1
 do_build_artifacts=1
 do_qemu_sanity=0
+with_ports=0
 
 while [ "$#" -gt 0 ]; do
 	case "$1" in
@@ -77,6 +78,13 @@ while [ "$#" -gt 0 ]; do
 			shift
 			[ "$#" -gt 0 ] || die "missing value for --scope"
 			scope="$1"
+			;;
+		--with-ports)
+			# Insert the build.sh `ports` stage (builds phoenix-rtos-ports
+			# entries listed in the project/target ports.yaml, e.g. busybox).
+			# Off by default because the ports compile is slow and most
+			# iterations don't touch ports.
+			with_ports=1
 			;;
 		--build-only)
 			do_build_artifacts=0
@@ -208,6 +216,20 @@ case "${scope}" in
 		;;
 esac
 
+# --with-ports: insert the build.sh `ports` stage just before `project`
+# (ports must be built before the project stages them into the image).
+if [ "${with_ports}" = 1 ]; then
+	new_args=()
+	for arg in "${build_args[@]}"; do
+		if [ "${arg}" = "project" ]; then
+			new_args+=(ports)
+		fi
+		new_args+=("${arg}")
+	done
+	build_args=("${new_args[@]}")
+	scope_reason="${scope_reason}; +ports (busybox etc.)"
+fi
+
 if [ "$host_os" = "Darwin" ]; then
 	printf 'Host:     macOS (using Lima VM %s)\n' "${vm}"
 else
@@ -247,8 +269,12 @@ if [ "${do_prepare}" -eq 1 ]; then
 fi
 
 build_args_str="${build_args[*]}"
+# Prepend the repo's uv venv bin so the build's bare `python3` (used by
+# phoenix-rtos-build/build-ports.sh -> port_manager) finds resolvelib/jinja2/
+# PyYAML/rich from the venv rather than the PEP668-managed system Python. A
+# non-existent PATH entry is harmless, so this is safe even without the venv.
 run_build_shell \
-	"set -euo pipefail; export PATH='${toolchain_path}':\$PATH; cd '${buildroot}'; env RPI4B_DTB_PATH='${dtb_path}' TARGET='${target}' ./phoenix-rtos-build/build.sh ${build_args_str}"
+	"set -euo pipefail; export PATH='${repo_root}/.venv/bin':'${toolchain_path}':\$PATH; cd '${buildroot}'; env RPI4B_DTB_PATH='${dtb_path}' TARGET='${target}' ./phoenix-rtos-build/build.sh ${build_args_str}"
 
 if [ "${do_qemu_sanity}" -eq 1 ]; then
 	# QEMU path differs between hosts. On Darwin we use the in-VM

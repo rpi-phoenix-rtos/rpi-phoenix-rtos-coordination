@@ -200,11 +200,20 @@ stage_pi_firmware() {
 ##############################################################################
 
 setup_python_venv() {
-	if [ -d "$VENV_DIR" ] && "$VENV_DIR/bin/python" -c 'import serial' 2>/dev/null; then
-		log "Python venv already at $VENV_DIR (pyserial present)"
+	# pyserial -> psh-interact.py; the phoenix-rtos-build requirements
+	# (resolvelib/jinja2/PyYAML/rich/...) -> the port_manager used by
+	# build-ports.sh when building userspace ports (busybox etc.). The
+	# rpi4b fast rebuild prepends $VENV_DIR/bin to PATH for the build, so
+	# the build's bare `python3` resolves these here rather than from the
+	# PEP668-managed system Python.
+	local reqs="$PROJECT_DIR/sources/phoenix-rtos-build/requirements.txt"
+	if [ -d "$VENV_DIR" ] \
+		&& "$VENV_DIR/bin/python" -c 'import serial' 2>/dev/null \
+		&& "$VENV_DIR/bin/python" -c 'import resolvelib' 2>/dev/null; then
+		log "Python venv already at $VENV_DIR (pyserial + port_manager deps present)"
 		return 0
 	fi
-	log "Creating Python venv at $VENV_DIR with pyserial"
+	log "Creating Python venv at $VENV_DIR with pyserial + port_manager deps"
 	export PATH="$HOME/.local/bin:$PATH"
 	if ! command -v uv >/dev/null 2>&1; then
 		warn "uv not on PATH yet — re-source ~/.local/bin/env or restart shell"
@@ -213,6 +222,11 @@ setup_python_venv() {
 	uv venv "$VENV_DIR" >/dev/null
 	# uv venvs don't ship with pip; use `uv pip install` instead.
 	uv pip install --python "$VENV_DIR/bin/python" pyserial
+	if [ -f "$reqs" ]; then
+		uv pip install --python "$VENV_DIR/bin/python" -r "$reqs"
+	else
+		warn "port_manager requirements not found at $reqs — ports build may fail"
+	fi
 }
 
 ##############################################################################
