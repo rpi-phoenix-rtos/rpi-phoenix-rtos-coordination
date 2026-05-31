@@ -10,6 +10,9 @@ These project-local skills are lightweight playbooks for future implementation s
 - `skills/phoenix-rpi-hw-test/SKILL.md`
   Use for real-device testing, UART capture, power-control flow, flashing, smoke tests, soak tests, and regression automation on actual hardware.
 
+- `skills/phoenix-rpi-netboot/SKILL.md`
+  Use for the primary autonomous Pi 4 network-boot loop on the Linux host: starting/checking the dnsmasq+TFTP server, power-cycle + UART capture, HDMI grabs, and the SD-out gotcha. Start here for any "boot the Pi and check the result" task.
+
 - `skills/phoenix-rpi-knowledge-base/SKILL.md`
   Use for documentation maintenance, indexing new findings, preserving context, and enriching the long-lived knowledge base.
 
