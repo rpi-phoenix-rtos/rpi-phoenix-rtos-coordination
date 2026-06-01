@@ -200,6 +200,40 @@ usb_mem never sees it (the victim is an lwIP memp struct, not a usb_mem chunk).
 - Step 3 remains the eventual architecture goal, but AFTER the writer is
   understood — then it's a justified refactor, not a blind bet.
 
+## STATE 2026-06-01 (late) — CPU-not-DMA confirmed; network survives; enum-flakiness is the gate
+Forensic results (memory dump at corruption + network probe):
+- **CPU write, not DMA — confirmed.** A deep-enum boot dumped the victim mbox
+  struct; it holds a FOREIGN object full of lwIP-VA pointers into the 0x501xxx
+  memp region (self-referential list head + nearby nodes + a 0x42bfd0 ptr). A
+  device DMA writes HID reports/TRBs, never lwIP VA pointers. So the memp slot
+  was REUSED = use-after-free / stolen memory. The Step-3 "isolate DMA pool"
+  rationale is dead for this bug.
+- **`sys_mbox_free` (mbox.c:79) frees `mbox->ring` but does NOT null it or
+  invalidate the struct** — a concrete UAF candidate: a freed mbox keeps stale
+  fields and, once its memp slot is reused, a later poll reads garbage.
+- **The network SURVIVES**: a probe boot was reachable at 240s (answered 'U'+'k'),
+  eventsSeen=30 (hub enumerated + interrupt-polling), bringupRc=0. So the
+  corruption (when it fires) is likely a SURVIVABLE lwIP glitch caught by the
+  detector's recover-return, NOT a fatal network-killer (the earlier
+  "unreachable" was the now-rate-limited flood + slow-boot timing).
+- **The GATE is flaky DOWNSTREAM enumeration**: the hub ALWAYS comes up, but the
+  kbd/mouse enumerate only ~50% (deep). The hub's single interrupt-URB
+  intermittently misses the boot-time port-change → no downstream enum. This is
+  the #124 single-priv/single-URB interrupt-pipe limitation, and per the advisor
+  is plausibly the SAME bug class as the corruption (two faces). It blocks BOTH
+  reliable enumeration AND a deterministic corruption repro.
+
+**NEXT FOCUS = interrupt-pipe reliability (#124).** Make the hub's interrupt-IN
+delivery reliable (faster in-completion resubmit, multi-URB per pipe, or a
+one-time GET_PORT_STATUS sweep at hub init to catch already-connected devices
+regardless of interrupt timing). That (a) makes kbd/mouse enumerate every boot
+(the user's reliability goal), and (b) gives a deterministic corruption repro to
+then fix the mbox UAF (candidate fix: `sys_mbox_free` set ring=NULL/sz=0 +
+audit who polls a freed netconn mbox). Pending free-vs-steal verdict (MBOXFREED)
+on the next DEEP boot confirms UAF-vs-heap-corruption. Symbol-resolve 0x42bfd0
+via the lwip ELF (.buildroot/_build/.../prog/lwip) — needs a toolchain-nm wrapper
+(not yet allowlisted).
+
 ## Risks
 - If Step 1 = B AND Step 2 transcription also fails → the bug is below the
   bring-up sequence (the live SError `esr=0xbf000002` / bridge-NACK lead,
