@@ -342,6 +342,38 @@ so the low-volume kbd sequence survives (debug() lines survive when volume is
 low — proven). One clean trace > ten counter-probes. Then decide approach from
 what the trace SHOWS, not from a guessed discriminator.
 
+## STEP 3 RESULT (2026-06-01, user-chosen) — builds + DETERMINISTIC repro, but reboot-loops
+Standalone `usb` daemon + `usbkbd`/`usbmouse` processes: BUILDS clean (lwip links
+without USB; the 3 binaries are bundled). Boot-test: the daemon brings up the
+controller + enumerates EVERY boot (deterministic — the repro we lacked!), but
+the **LS keyboard behind the VIA hub's TT fails its ep0 control transfers**
+(`xhci: transfer completion timeout`, xhci.c:2676 in xhci_ep0ControlRead). The
+failed enum is retried UNBOUNDED (~1200 timeouts/boot) and the system
+REBOOT-LOOPS (~85 reboots in 240s; lwip never starts). So Step 3 is currently
+WORSE than embedded (no network) BUT gives a deterministic kbd-enum-failure repro.
+
+This is the SAME core bug across all configs: the LS-kbd-behind-TT control
+transfers don't complete (the #116 TT/route/slot-context path). The standalone
+daemon just exposes it every boot + the unbounded retry makes it catastrophic.
+
+**NEXT (in order):**
+1. **Bound the enum-failure retry** so a failed device doesn't re-enumerate
+   forever → no reboot-loop → the usb daemon fails gracefully and lwip/network
+   survives (proving Step 3's isolation benefit). Find the re-trigger loop:
+   ~1200 control-timeouts/boot ≫ HUB_ENUM_RETRIES, so something re-drives enum
+   (hub port-change not cleared on failure? roothub thread? usb daemon main?).
+   Also: WHY does it reboot (user-process fault vs watchdog starvation vs kernel
+   fault)? Capture an Exception/Data-Abort line or check the watchdog.
+2. **Diagnose the LS-kbd ep0 control timeout** (the real enum fix): the kbd is
+   low-speed behind the HS VIA hub's TT. Its slot context needs correct TT
+   (hub slotId + port), route string, and speed. Capture the daemon's clean UART
+   trace (now deterministic + volume-reduced) of the kbd AddressDevice + first
+   GET_DESCRIPTOR to see where it dies. This is now diagnosable BECAUSE Step 3
+   made it deterministic.
+NB: Step 3 is committed (user's choice + the repro). The reboot-loop is netboot
+(reload-able, no HW harm) but the Pi is unusable until #1. Embedded fallback is
+revertible (uncomment the port/Makefile block + restore the plo lines).
+
 ## Risks
 - If Step 1 = B AND Step 2 transcription also fails → the bug is below the
   bring-up sequence (the live SError `esr=0xbf000002` / bridge-NACK lead,
