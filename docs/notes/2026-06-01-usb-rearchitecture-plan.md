@@ -234,6 +234,34 @@ on the next DEEP boot confirms UAF-vs-heap-corruption. Symbol-resolve 0x42bfd0
 via the lwip ELF (.buildroot/_build/.../prog/lwip) — needs a toolchain-nm wrapper
 (not yet allowlisted).
 
+## STATE 2026-06-01 (later) — found the CORE bug: halt-timeout infinite loop
+Tried the hub initial-port-scan to fix flaky downstream enum. It drove deeper
+enum (eventsSeen 9→96) but exposed two bugs (scan now DISABLED, committed):
+1. **`hub_devConnected` never sets `hub->devs[port-1]=dev`** — device tracking
+   broken; the scan dedup guard is inert; ports double-enumerate.
+2. **Unbounded `xhci: halt transition timeout` loop (106014 lines = HANG /
+   network death)** when downstream (LS kbd behind the VIA hub's TT) enum
+   loops. **This is very likely THE root cause of the ~50% flakiness**: a boot
+   whose kbd enum hits the loop hangs/goes shallow; one that doesn't succeeds
+   (kbd binds — the idemp boot). Pre-scan shallow boots were reachable (not
+   hung); the scan forced enum every boot → made the hang deterministic.
+
+**NEXT FOCUS = fix the halt-timeout loop (the root of flakiness + hang).**
+Concrete leads (no Step-3 needed):
+- `xhci_cmdExec` timeout path (xhci.c ~1829) calls `xhci_enterHaltedState`
+  UNCONDITIONALLY — wrong under `keepRunning=1` (controller is meant to run
+  continuously; the VL805 won't halt cleanly → the timeout flood). Under
+  keepRunning, on a command timeout do NOT halt; just return -ETIMEDOUT.
+- Find + BOUND the caller that retries cmdExec ~unbounded (the 106k count). The
+  flood dominated the log so the trigger context scrolled off; add a one-shot
+  "enum attempt N for slot S" debug() or bound HUB_ENUM_RETRIES-style loops, and
+  capture again (scan re-enabled as a deterministic forcing function).
+- Fix `hub_devConnected` to record `hub->devs[port-1]=dev` on success (and clear
+  on disconnect) so dedup works.
+Then re-enable the hub scan (uncomment hub_notifyScan in hub_conf) → reliable
+kbd/mouse enum every boot. The mbox UAF corruption likely also stems from the
+looping enum churning device/mbox lifetimes — fixing the loop may resolve it.
+
 ## Risks
 - If Step 1 = B AND Step 2 transcription also fails → the bug is below the
   bring-up sequence (the live SError `esr=0xbf000002` / bridge-NACK lead,
