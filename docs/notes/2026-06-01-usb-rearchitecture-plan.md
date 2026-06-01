@@ -262,6 +262,33 @@ Then re-enable the hub scan (uncomment hub_notifyScan in hub_conf) → reliable
 kbd/mouse enum every boot. The mbox UAF corruption likely also stems from the
 looping enum churning device/mbox lifetimes — fixing the loop may resolve it.
 
+## STATE 2026-06-01 (evening) — halt-loop fix landed but NOT the whole hang; scan still off
+Committed two correctness fixes (reliability UNVALIDATED): (a) `xhci_enterHaltedState`
+no-op under keepRunning (halt-timeout-loop fix); (b) `hub_devConnected` records
+`hub->devs[]`. The hub initial-scan is DISABLED again because:
+- The scan-triggered downstream enum FAILS to bind the kbd (`insertions=0`) and
+  ~50% of boots hang, while the INTERRUPT-triggered enum of the same kbd
+  SUCCEEDS (idemp boot bound /dev/kbd0). Same enum code ⇒ timing/state: the scan
+  runs right after hub_conf, likely before the hub TT/ports settle.
+- The enterHaltedState fix did NOT stop the hang ⇒ there is ANOTHER hang source
+  (mbox UAF killing TCP/IP, or a second loop). 
+- One scan-OFF verification boot was also unreachable — AMBIGUOUS (regression
+  from the two fixes vs a slow-boot flake; boot timing is highly variable this
+  session). NOT yet distinguished.
+
+**NEXT (fresh context):**
+1. **Disambiguate**: run a MULTI-boot (3–5) scan-off reachability bench. If
+   reliably reachable ⇒ the fixes are safe + the prior unreachable was a slow-boot
+   flake. If flaky-unreachable ⇒ a fix regressed; bisect (revert enterHaltedState
+   first). This MUST be settled before more feature work.
+2. **Reliability approach** (after #1): the hub-scan needs a settle delay before
+   the downstream enum (let the TT settle), OR abandon the scan and fix the hub
+   INTERRUPT-completion delivery (why the boot-time status-change is missed ~50%).
+3. **The non-enterHaltedState hang source**: instrument/seek a second loop or the
+   mbox UAF actually breaking TCP/IP on the hang boots.
+The committed merged-config milestone (deterministic bring-up + full enum on a
+good boot) remains the rollback baseline (manifest 2026-06-01-usb-merged-config).
+
 ## Risks
 - If Step 1 = B AND Step 2 transcription also fails → the bug is below the
   bring-up sequence (the live SError `esr=0xbf000002` / bridge-NACK lead,
