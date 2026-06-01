@@ -1812,6 +1812,7 @@ longer needed.
 | TD-Eth-LinkIRQ | PENDING | PHY `INT_B` not routed to GIC SPI on Pi 4 board; MDIO poll is the portable answer |
 | TD-Eth-Stats | RESOLVED 2026-05-25 (lwip `b261265`) | surfaced via lwip-port diag UDP responder (port 9999) + per-driver `stats` callback |
 | TD-Pi4-FalseSharingPenalty | RESOLVED 2026-05-25 (lwip `ea936d3`) | classic false sharing on a 64B cache line; per-slot `_Alignas(64)` padding restored plain `volatile ++` to ALU-speed. No kernel work needed. |
+| TD-Git-Branches | PENDING (deferred per user 2026-06-01) | Sibling repos sit on inconsistent branches: `codex/upstream-sync-20260516` (libphoenix, build, devices, filesystems, project, utils, plo), `master` (corelibs, doc, hostutils, ports, posixsrv, tests, usb), `agent/rpi4-program-reloc` (kernel), `agent/rpi4-genet` (lwip). All commits are on each repo's checked-out branch (nothing lost). Single-contributor local-only project → consolidate to one consistent scheme (per-repo `master`, or a shared `rpi4`), merge everything, update rollback tooling (`manifests/*.md` + `scripts/{snapshot,restore}-integration-state.sh` record per-repo branch). Tracked as task #128. Not urgent. |
 
 When resolving an item:
 
