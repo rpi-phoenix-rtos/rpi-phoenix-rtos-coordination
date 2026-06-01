@@ -172,15 +172,33 @@ SHARES the lwIP process heap** (LWIP_EMBED_USB). Two consequences:
    catch it on a deep boot; plus add heap guard bytes around usbkbd allocations to
    localize an overflow. Both still gated on the flaky deep-enum path.
 
-**Recommended next: execute Step 3** (relocate the embedded USB host stack to a
-standalone `usb` daemon): user.plo.yaml plain `usb` line; drop the LWIP_EMBED_USB
-block in port/Makefile + the embed thread in port/main.c; keep usb/xhci/usbkbd/
-usbmouse unchanged. Then re-test: does the full tree still enumerate (it should —
-bring-up + enum are now solid), and does the corruption (a) vanish, (b) move to
-the usb_mem detector (→ USB-side heap overflow confirmed, fix locally), or
-(c) persist in lwIP (→ genuinely a cross-process DMA, revisit). This both advances
-the user's architecture goal AND unblocks the corruption hunt. Keep the rig
-fallback + diagnostics until Step 3 is validated.
+**CORRECTION (advisor, after Step-3 scoping): do NOT do Step 3 yet — identify the
+writer first.** Step 3 changes TWO variables at once — the heap AND the driver
+path (embedded `usblibdrv` → cross-process `procdriver`, which has NEVER run on
+Pi4). A "fix" would be unattributable, and it discards the deterministic repro +
+the mbox detector that names the victim. Worse, the write may not be DMA at all:
+`h=0 sz=0` with `ring` rewritten is a STRUCTURED MULTI-FIELD CPU write
+(use-after-free / init-on-reused memp allocation), not an 8-byte HID DMA (ruled
+out). If it's CPU shared-heap corruption, Step 3 relocates it silently and
+usb_mem never sees it (the victim is an lwIP memp struct, not a usb_mem chunk).
+
+**Next = catch the writer in-place (keep embedded, keep repro+detector):**
+- gdbstub watchpoint on the mbox VA/PA is the ideal (CLAUDE.md: prefer QEMU
+  gdbstub). CAVEAT: QEMU rpi4b almost certainly doesn't emulate the VL805/USB +
+  real keyboard, so the corruption won't reproduce there — verify before relying.
+- Real-HW fallback: mprotect/guard the victim page and report the faulting PC —
+  but the TCP/IP mbox is actively written by lwIP, so naive RO-protect floods on
+  legit writes. Workable variants: (a) redzone/canary bytes around the memp pool
+  block and check them in the detector — canary hit ⇒ sequential overflow (and
+  direction); canary intact but struct corrupted ⇒ wild-write/UAF/DMA;
+  (b) poison-on-free in lwIP memp + USB malloc to catch UAF;
+  (c) a HW debug watchpoint (DBGWVR/DBGWCR) on the mbox PA if the kernel can set
+  one — traps CPU writes (PC), DMA doesn't trap (proves controller).
+- The enum-depth flakiness (deep <50%, hub-only otherwise) is likely the SAME
+  single-priv interrupt-pipe limitation (usbkbd comment), and the corruption only
+  fires on the deep path — possibly one bug. Step 3 wouldn't touch it.
+- Step 3 remains the eventual architecture goal, but AFTER the writer is
+  understood — then it's a justified refactor, not a blind bet.
 
 ## Risks
 - If Step 1 = B AND Step 2 transcription also fails → the bug is below the
