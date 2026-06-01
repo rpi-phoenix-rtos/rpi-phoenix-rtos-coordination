@@ -114,6 +114,28 @@ lwIP networking → Pi unreachable.
   page**, OR a CPU write. The kbd is LOW-SPEED behind a TT (unlike the working
   hub) — its endpoint-context / transfer-ring / TT programming is the differ.
 
+### CONTAINMENT TEST RESULT (2026-06-01) — NEGATIVE → not aliasing
+Clean same-boot capture (both mbox NEW + USBPOOL via atomic debug()): deep-enum
+boot fired the corruption, victim **MBOXPA pa=0x3353a50** (h=0 sz=0 — fields
+ZEROED). USB pool = 48 chunks spanning **0x3294000..0x3311000 then 0x33d3000**.
+**0x3353a50 is in the GAP — NOT inside any pool chunk.** So #26 aliasing is
+RULED OUT (matches advisor's first-principles: mmap+calloc can't share a phys
+page). Further narrowing:
+- The kbd interrupt **data buffer** is `usb_alloc` (pool) — confirmed for the hub
+  (buf=0x33d3260, in-pool). So the kbd 8-byte HID DMA targets the pool, NOT the
+  victim → the corruption is **not** the kbd data-buffer DMA.
+- `h=0 sz=0` (zeroed) is *consistent with* an 8-byte idle-HID write but the kbd
+  data buffer is ruled out, so the zeroing source is elsewhere.
+- Remaining suspects (kbd is LS-behind-TT, unlike the working hub): (1) CPU write
+  / use-after-free of the mbox memory; (2) the kbd slot's **device/output
+  context** PA in the DCBAA programmed wrong → controller writes context to the
+  mbox; (3) event-ring or a transfer TRB with a stray PA. Need a DEEP-enum boot's
+  kbd-slot DMAMAP (buf/ring/dcbaa) — but deep enum is currently <50% (the hub's
+  downstream-connect reporting is itself flaky), which is the observability
+  bottleneck. Per-submit DMAMAP is committed to catch the kbd slot when a deep
+  boot lands. ALSO instrument the kbd slot's device-context PA (allocSlotSpace)
+  and compare to 0x335xxxx.
+
 ### OBSERVABILITY LESSON (cost me ~6 boots — do not repeat)
 The UART is back-pressured; **multiple writers (printf=stdout, debug()=syscall,
 fprintf=stderr) interleave mid-line and garble exactly the multi-value lines you
