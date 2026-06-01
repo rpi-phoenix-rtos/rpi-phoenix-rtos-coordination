@@ -289,6 +289,38 @@ no-op under keepRunning (halt-timeout-loop fix); (b) `hub_devConnected` records
 The committed merged-config milestone (deterministic bring-up + full enum on a
 good boot) remains the rollback baseline (manifest 2026-06-01-usb-merged-config).
 
+## DISAMBIGUATION (2026-06-01 late) — NO regression; state is safe
+2-boot scan-off bench: BOTH reachable (host up +0s), no hang, eventsSeen=8/30,
+insertions=0 (both shallow — interrupt path didn't deliver the downstream connect
+this run). So the committed correctness fixes (enterHaltedState-no-op-under-
+keepRunning + hub devs[] tracking) are SAFE — the earlier scan-off unreachable
+boot was a slow-boot flake or a deep-boot+corruption case, not a hard regression.
+
+### Clean state summary (end of this session)
+- USB bring-up: DETERMINISTIC (committed). Hub enum: RELIABLE.
+- Downstream (kbd/mouse) enum: ~50% (interrupt path misses the boot-time
+  status-change). Shallow boots are reachable + stable.
+- mbox corruption: a CPU use-after-free (reused lwIP memp slot), NOT DMA; survivable
+  (detector recovers). Fired on deep boots; may have contributed to deep-boot
+  network death together with the now-fixed halt-loop.
+- Halt-timeout infinite loop: FIXED (enterHaltedState no-op under keepRunning).
+
+### Two remaining problems + leads (next sessions)
+1. **Reliable downstream enum.** The hub initial-scan (committed, DISABLED) drives
+   it but its enum runs too early (TT not settled) → fails/hangs. Options: add a
+   settle delay before the scanAll enum; OR fix the hub interrupt-completion
+   delivery so the boot-time status-change isn't missed (the root of the ~50%).
+2. **UNTESTED: does a DEEP boot now SURVIVE** (reachable + kbd binds) with the
+   halt-loop fix + scan-off? Both bench boots were shallow. Run several boots
+   (or briefly re-enable the scan as a forcing function) to catch a deep one and
+   check reachability + insertions. If it survives → remaining work is only the
+   ~50% rate (#1). If it still dies → fix the mbox UAF (sys_mbox_free doesn't
+   invalidate; a freed netconn mbox is still polled — lwIP lifetime).
+
+Diagnostic cleanup owed (TD): the aliasing hypothesis was DISPROVED, so the
+USBPOOL (usb/mem.c), DMAMAP (xhci.c), and mbox PA/dump prints can be removed;
+keep the mbox CORRUPT detector + MBOXFREED for the ongoing UAF hunt.
+
 ## Risks
 - If Step 1 = B AND Step 2 transcription also fails → the bug is below the
   bring-up sequence (the live SError `esr=0xbf000002` / bridge-NACK lead,
