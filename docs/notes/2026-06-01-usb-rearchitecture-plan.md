@@ -74,6 +74,62 @@ engine). **Next: confirm reproducibility (multi-trial, n≥4 — the rig was ~50
 flaky, is the clean path stable?), then debug enumeration, then Step 3 (relocate
 out of lwip). The rig is now obsolete for bring-up.**
 
+## Step 2 RESULT (2026-06-01) — FULL ENUMERATION, then a memory-corruption wall
+Two fixes (committed) took the framework path from "controller up, 0 devices"
+to the **entire tree enumerated**:
+1. `keepRunning=1` for the Pi4 non-rig path (xhci.c, before cmdNoopSelftest):
+   halt-per-command left the VL805 halted between commands → next transaction
+   fails (Context State Error) + no Port-Status-Change events → enumeration never
+   started. eventsSeen plateaued at exactly 9.
+2. `xhci_enterRunState` made idempotent via a `running` flag: cmdExec called
+   enterRunState every command; under keepRunning that re-ran FIX-19's RC_BAR2
+   re-settle per command, churning inbound DMA → "transfer completion timeout" at
+   the root-hub interrupt-IN. Skipping it when already running let it through.
+
+Result: root hub → **VIA hub (2109:3431)** → **mouse /dev/mouse0** + **keyboard
+046d:c31c /dev/kbd0**, pl011-tty opened the kbd bridge. No fault.
+
+THEN: a flood of `mbox CORRUPT in tryfetch` — the lwIP TCP/IP **mailbox**
+(port/mbox.c, SAME process as the embedded USB stack) is structurally clobbered
+(`ring`/`sz`/`tail` overwritten with pointer-shaped garbage e.g. 0x435E88)
+**immediately when /dev/kbd0 is opened and the first kbd interrupt-IN URB is
+submitted** (slot=3 ep=3). The mouse pipe was set up too but nothing opened
+/dev/mouse0 → no URB → no corruption. This is the long-standing #121 corruption,
+now ~deterministic (when enum reaches the kbd) instead of intermittent. It kills
+lwIP networking → Pi unreachable.
+
+### Corruption hunt state (advisor-guided)
+- Buffer-alloc hypothesis DISCONFIRMED: the async URB path (`usblibdrv_handleUrb`
+  → `usb_transferAlloc`) DMAs into a `usb_alloc` pool buffer (`t->buffer`), not
+  the plain-heap `dev->report[i]` (that's only the completion copy dest). Ring +
+  buffer + dcbaa + evtRing all use `va2pa` on page-aligned `usb_alloc`/
+  `usb_allocAligned` (MAP_CONTIGUOUS|MAP_UNCACHED) memory.
+- Event-ring sizing is CONSISTENT (256 TRBs, ERST ringSegmentSize=256, ERSTSZ=1)
+  — no static overrun.
+- Aliasing (#26: USB pool physically overlaps lwIP heap) is the LEADING-to-be-
+  ruled-out theory: advisor's first-principles — mmap(ANON)+calloc in one process
+  can't share a physical page unless the kernel allocator is broken (and then
+  everything would corrupt). Cross-boot PAs were merely "nearby" (null hypothesis).
+- **Next (outcome-2): a TRB/ring programmed with a WRONG PA that lands on the mbox
+  page**, OR a CPU write. The kbd is LOW-SPEED behind a TT (unlike the working
+  hub) — its endpoint-context / transfer-ring / TT programming is the differ.
+
+### OBSERVABILITY LESSON (cost me ~6 boots — do not repeat)
+The UART is back-pressured; **multiple writers (printf=stdout, debug()=syscall,
+fprintf=stderr) interleave mid-line and garble exactly the multi-value lines you
+need.** `mbox NEW` survived only because it was single-writer printf at a quiet
+moment. Rules: ONE writer per diagnostic line, single atomic line, leading `\n`;
+and the corruption kills the network so diag-udp can't read post-corruption.
+**Robust path for the next attempt:** either (a) network-readout on a SHALLOW
+boot (no kbd → no corruption → network alive) via a diag-udp command that reports
+USB-pool ranges + mbox PAs + a containment verdict computed in-code; or
+(b) validate-DMA-PA-at-source: bound-check each PA against known USB pool ranges
+*before* programming the TRB, and on a bad PA log it + skip the doorbell so the
+write never happens and the network stays up to read the diagnostic.
+
+Diagnostic instrumentation committed (marked DIAGNOSTIC #129, revert before
+close): xhci DMAMAP dump, mbox PA prints + flood rate-limit, usb/mem USBPOOL log.
+
 ## Risks
 - If Step 1 = B AND Step 2 transcription also fails → the bug is below the
   bring-up sequence (the live SError `esr=0xbf000002` / bridge-NACK lead,
