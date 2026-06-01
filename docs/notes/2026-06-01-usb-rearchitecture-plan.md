@@ -321,6 +321,27 @@ Diagnostic cleanup owed (TD): the aliasing hypothesis was DISPROVED, so the
 USBPOOL (usb/mem.c), DMAMAP (xhci.c), and mbox PA/dump prints can be removed;
 keep the mbox CORRUPT detector + MBOXFREED for the ongoing UAF hunt.
 
+## FALSIFIED HYPOTHESIS + METHOD RESET (2026-06-01, advisor)
+**"Scan-enum fails where interrupt-enum succeeds" is NOT established — do not
+build on it.** Evidence: exactly ONE boot ever bound /dev/kbd0 (the early "idemp"
+boot) and it then corrupted the mbox and died. That is n=1 AND a failure, not a
+working baseline. Every scan variant AND every recent scan-off boot showed
+insertions=0. So the scan-vs-interrupt distinction that drove 4 scan variants is
+likely noise. Don't build variant #5.
+
+**The real blocker is METHOD, not knob choice.** ~6+ boots this session were
+ambiguous because: deep enum ~50%, corruption intermittent, network dies on the
+boots we most need to see, and UART truncates exactly at the kbd-enum stage. You
+cannot tune out of that. Zero net convergence over the last several iterations.
+
+**Required first step before ANY more enum code:** get ONE clean deep-boot trace
+of the kbd-enum sequence (New device → AddressDevice → SET_CONFIG → HID setup →
+bind, or where it dies). To fit it ungarbled in the capture, CUT TRACE VOLUME:
+gate out the high-frequency spam (RC_BAR2 / per-command / roothub-poll debug())
+so the low-volume kbd sequence survives (debug() lines survive when volume is
+low — proven). One clean trace > ten counter-probes. Then decide approach from
+what the trace SHOWS, not from a guessed discriminator.
+
 ## Risks
 - If Step 1 = B AND Step 2 transcription also fails → the bug is below the
   bring-up sequence (the live SError `esr=0xbf000002` / bridge-NACK lead,
