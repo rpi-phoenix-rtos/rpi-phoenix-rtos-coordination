@@ -374,6 +374,33 @@ NB: Step 3 is committed (user's choice + the repro). The reboot-loop is netboot
 (reload-able, no HW harm) but the Pi is unusable until #1. Embedded fallback is
 revertible (uncomment the port/Makefile block + restore the plo lines).
 
+## STEP 3 STABLE (2026-06-01) — reboot-loop FIXED, isolation PROVEN
+Root cause of the reboot-loop: the failing LS-kbd was re-enumerated forever (each
+failed enum resets the port → port-change → re-enum → `transfer completion
+timeout` flood → reset). FIX (committed): per-port enum-failure bound in hub.c
+(`hub->portEnumFails`, give up after HUB_ENUM_GIVEUP=3; cleared on disconnect).
+
+VALIDATED: with the standalone usb daemon, the Pi now boots **STABLE** — reachable,
+**lwIP fully up** (en1 DHCP 100Mbps, rx/tx counting, uptime climbing, NO reboot).
+The kbd/mouse enum failure is now CONTAINED to the usb process; the network
+survives. **This is Step 3's whole point realized: a USB-side failure no longer
+kills lwip.** Rollback manifest: 2026-06-01-usb-standalone-daemon-stable.
+
+State now: bring-up deterministic; hub enumerates; USB isolated in its own daemon;
+system stable + network up; kbd/mouse do NOT yet enumerate (LS-behind-TT ep0
+control-transfer timeout, contained after 3 attempts).
+
+**NEXT = diagnose the LS-kbd ep0 control-transfer timeout (the actual enum fix).**
+Crucially this is now DEBUGGABLE: the bound stops the flood (only 3 attempts), so
+a UART capture shows the kbd's enum attempts cleanly (AddressDevice → SET_ADDRESS
+→ GET_DESCRIPTOR → where it times out) WITHOUT the 100k-line flood, AND the
+network stays up for diag-udp. The kbd is low-speed behind the HS VIA hub's TT;
+suspect its slot-context TT fields (hub slotId + port), route string, or speed.
+Compare a captured failing-kbd AddressDevice/control sequence against the working
+hub/root-hub path. (The diag-udp 'U'/'k' USB counters are gone from lwip now —
+USB is a separate process; if network readout of USB state is wanted later, add a
+small responder to the usb daemon.)
+
 ## Risks
 - If Step 1 = B AND Step 2 transcription also fails → the bug is below the
   bring-up sequence (the live SError `esr=0xbf000002` / bridge-NACK lead,
