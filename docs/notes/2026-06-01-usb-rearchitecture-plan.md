@@ -152,6 +152,36 @@ write never happens and the network stays up to read the diagnostic.
 Diagnostic instrumentation committed (marked DIAGNOSTIC #129, revert before
 close): xhci DMAMAP dump, mbox PA prints + flood rate-limit, usb/mem USBPOOL log.
 
+## DIRECTION (2026-06-01, after ~6 corruption-hunt boots) — go to Step 3
+Deep-enum boots are now <50% and 3 in a row came back shallow (hub only), so the
+in-place kbd-PA capture is observability-starved. Combined with: corruption
+ZEROES the mbox (h=0 sz=0), the kbd DATA buffer is ruled out (it's in-pool), and
+aliasing is ruled out (containment negative) — the leading hypothesis is the
+ORIGINAL #121 one stated in mbox.c: **a libc-heap overflow / use-after-free on
+the USB side clobbers the adjacent lwIP mbox, because the embedded USB stack
+SHARES the lwIP process heap** (LWIP_EMBED_USB). Two consequences:
+1. This is precisely what **Step 3 (USB as a standalone daemon — the user's chosen
+   #129 endgame)** isolates: a USB-side overflow would then hit USB's OWN heap
+   (the usb_mem free-list detector at mem.c:171/182/245 catches it), lwIP/network
+   survives → diag-udp observability is RESTORED, and the bug becomes debuggable
+   in isolation instead of killing the only channel. The advisor's
+   "isolation-relocates-to-silent" caveat is weaker here: usb_mem HAS a detector,
+   and in-place is empirically NOT observable.
+2. The alternative in-place probe (if staying embedded): instrument the LS-kbd
+   slot's device-context PA in xhci_allocSlotSpace (DCBAA[slotId]) via debug() and
+   catch it on a deep boot; plus add heap guard bytes around usbkbd allocations to
+   localize an overflow. Both still gated on the flaky deep-enum path.
+
+**Recommended next: execute Step 3** (relocate the embedded USB host stack to a
+standalone `usb` daemon): user.plo.yaml plain `usb` line; drop the LWIP_EMBED_USB
+block in port/Makefile + the embed thread in port/main.c; keep usb/xhci/usbkbd/
+usbmouse unchanged. Then re-test: does the full tree still enumerate (it should —
+bring-up + enum are now solid), and does the corruption (a) vanish, (b) move to
+the usb_mem detector (→ USB-side heap overflow confirmed, fix locally), or
+(c) persist in lwIP (→ genuinely a cross-process DMA, revisit). This both advances
+the user's architecture goal AND unblocks the corruption hunt. Keep the rig
+fallback + diagnostics until Step 3 is validated.
+
 ## Risks
 - If Step 1 = B AND Step 2 transcription also fails → the bug is below the
   bring-up sequence (the live SError `esr=0xbf000002` / bridge-NACK lead,
