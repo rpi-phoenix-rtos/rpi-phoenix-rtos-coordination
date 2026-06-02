@@ -27,6 +27,18 @@ D-8 `smp:` diagnostic block (main.c) + the residual two-owner UART interleave
 Tooling added this session: `scripts/boot-consistency-study.sh`,
 `scripts/compare-boots.py`, `capture-rpi4b-uart.sh --timestamp` (buffering fix).
 
+**Git cleanup + upstream tracking (2026-06-02).** All uncommitted work across the
+siblings was reviewed and committed (USB-stability #129 in devices/usb, EMMC
+diag #119, lwip diag 'D', docs/tooling). Then every sibling was consolidated onto
+its local `master` (tracking canonical `origin` = phoenix-rtos) via
+`scripts/git-consolidate-repo.sh`; old feature branches (`agent/*`,
+`codex/upstream-sync-20260516`) kept as safety. Zero conflicts; the
+upstream-merged image rebuilt + booted clean (`a830f9e1`, `consolidated-validate`:
+psh, klog on HDMI, networking, USB enum, 0 faults). Going forward, pull upstream
+frequently with `scripts/git-pull-upstream-all.sh` — see
+`docs/upstream-tracking.md`. Manifest:
+`manifests/2026-06-02-consolidated-master-upstream-tracked.md`. NOT pushed.
+
 ---
 
 ## Active step (2026-05-29): TD-10 SError handler (in progress) + USB re-analysis corrects the record
