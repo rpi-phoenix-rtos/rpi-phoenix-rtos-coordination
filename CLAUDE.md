@@ -20,6 +20,7 @@ Everything else in AGENTS.md's "Mandatory Reading Order" is **conditional** — 
 - **Sibling upstream repos**: `sources/<repo>/` under this repo root (e.g. `sources/phoenix-rtos-kernel`, `sources/plo`). These are separate git repos, not submodules. Edit and commit there, then record the tested integration state in a new `manifests/*.md` here. The repo lives at `/home/houp/phoenix-rpi/` on the current Linux dev host; older docs may reference the macOS path `/Users/witoldbolt/phoenix-rpi/`.
 - **Active kernel branch**: `agent/rpi4-program-reloc` in `sources/phoenix-rtos-kernel`. Known-good rollback tag: `known-good/2026-04-19-map-relocation-complete`.
 - **Build loop**: `./scripts/rebuild-rpi4b-fast.sh` → `./scripts/capture-rpi4b-uart.sh` → `python3 scripts/summarize-rpi4b-uart-log.py <log>`. Do not improvise alternate paths — fix the helper if broken.
+  - **Stale-core hazard:** `rebuild-rpi4b-fast.sh --scope auto` (default) runs only `project image` when the sibling repos are **clean**, reusing cached core objects. So after you **commit** (or merge upstream into) a kernel/devices/usb/plo/libphoenix change, an `auto` rebuild can ship a **stale image lacking your change**. After any committed *core* change, rebuild with **`--scope core`** and verify (e.g. `strings .buildroot/_boot/aarch64a72-generic-rpi4b/rpi4b-bootfs/loader.disk | grep <your-change>`). See `docs/notes/2026-06-02-p1-ab-verdict.md`.
 
 ## Rollback discipline
 

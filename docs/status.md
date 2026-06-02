@@ -1,6 +1,6 @@
 # Phoenix-RTOS Raspberry Pi 4 Port Status
 
-## Current Status: 2026-06-02 — Boot observability + speed fixes (P1/P2/P3); USB enum 3/10→10/10
+## Current Status: 2026-06-02 — Boot observability + speed fixes (P1/P2/P3); USB enum still intermittently flaky (A/B: P1 ≠ enum fix)
 
 Three base-system fixes landed and were validated by a 10-boot consistency
 study (post-fix labels `fix01–10` vs pre-fix baseline `boot01–10`). Full detail:
@@ -41,14 +41,18 @@ final frame one md5 (full kernel log) MATCH ×10; `klog attach rc=0` every boot;
 root+devfs pair). Phoenix internal timeline constant (`genet_linkup − plo_banner`
 ≈ 8.6 s); the Δ≈8 s landmark spread is entirely pre-plo firmware/DHCP.
 
-**USB enumeration went 3/10 → 10/10 clean** (xhci_timeout=0, enum_fail=0,
-usbpool=48 on all 10) with the **same hardware** (VIA hub `2109:3431`, Logitech
-kbd `046d:c31c`, PIXART mouse `093a:2510` present in both studies' logs;
-baseline failures were `Enumeration failed despite 3 attempts` = device present).
-The only image delta is P1/P2/P3 and P2/P3 are console-only, so **P1 is the lead
-cause** — removing the ~10 pre-bridge abort-triggering reads (ties to memory
-`pi4-serror-pcie-source`). Not yet confirmed by a controlled A/B (toggle only
-P1); a 7/10→0/10 shift is not sample noise.
+**USB enumeration — CORRECTED (A/B-tested 2026-06-02, see
+`docs/notes/2026-06-02-p1-ab-verdict.md`).** The earlier framing here ("enum went
+3/10→10/10 because of P1") is **WITHDRAWN.** A controlled 8+8 A/B (dump restored
+vs removed, same hardware) gives **arm B (dump) 6/8 pass, arm A (no-dump) 8/8
+pass** — Fisher exact p≈0.47, NOT significant. Re-adding the dump produced only
+~25% failures, nowhere near the 70% pre-fix baseline, so **P1 did NOT cause the
+enum improvement** — that swing was confounded (pre-consolidation code/session/
+cabling differences between the `boot01-10` baseline and `fix01-10`). USB enum is
+**intermittently flaky regardless** (~0–25%), via two intrinsic modes (HCD-init
+`rc=-110` timeout; downstream LS-behind-TT enum-fail) — i.e. the FIX-14 (#78) /
+TD-10 (#144) wall, unchanged. **P1's confirmed win is boot speed (~100 s) +
+observability only**, never an enum fix.
 
 Follow-ups flagged (not bundled): confirm the USB causality by restoring only
 the dump; the residual pl011-tty-vs-kernel two-owner UART interleave during psh
