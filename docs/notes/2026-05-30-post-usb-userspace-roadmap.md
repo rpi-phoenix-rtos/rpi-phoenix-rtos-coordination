@@ -30,9 +30,16 @@ posixsrv is already built + staged but not launched. Add to `user.plo.yaml`, aft
 ```
 Provides: anonymous pipes (`pipe()` is `-ENOSYS` without it), `/dev/null|zero|urandom|
 full`, pseudo-terminals, `tmpfile`, event queues. Prerequisite for the ports.
-Ordering matters (needs dummyfs-root + devfs bound first). Smoke test: a shell
-pipeline `ls | cat` at `(psh)%` (only works with posixsrv) via
-`scripts/test-cycle-psh-interact.sh`. Low-risk, no new kernel work.
+Ordering matters (needs dummyfs-root + devfs bound first). Low-risk, no new kernel work.
+
+**DONE 2026-05-31** (phoenix-rtos-project 9b45b97). Launched, HW-verified stable.
+Validation: `ls /dev` at `(psh)%` lists posixsrv's nodes (`event posix pts`); and
+psh now takes interactive terminal input (before posixsrv it printed "failed to take
+terminal input" — it had no pty; posixsrv's `/dev/pts` provides one). NOTE: the
+originally-planned `ls | cat` pipe smoke test does NOT work, but for an unrelated
+reason — *psh's shell parser doesn't implement the `|` operator* (it passes `|` and
+`cat` as literal argv to `ls`), independent of posixsrv's `pipe()` syscall. Use the
+`/dev`-nodes + interactive-input checks above as the posixsrv smoke test instead.
 
 ## Phase B — busybox in a RAM-loaded rootfs (no new driver) — task #118
 First real port. busybox is arch-generic and the right first target (micropython has

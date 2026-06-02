@@ -30,8 +30,11 @@ while [ "$b" -lt "$n_boots" ]; do
 	printf '=== diag-usbhcd-probe: BOOT %d/%d (settle %ss) ===\n' "$b" "$n_boots" "$settle"
 	"$repo/scripts/pi_power_on.sh" || true
 	sleep "$settle"
-	"$repo/scripts/diag-udp-probe.sh" U "usbhcd-boot-$b" 25 4 || true
-	"$repo/scripts/diag-udp-probe.sh" k "usbhcd-kbd-boot-$b" 20 4 || true
+	# 'D' (devnodes): stat /dev/kbd0 etc. after settle — a capture-timing-
+	# independent "did USB enumerate the keyboard end to end?" check, valid now
+	# that USB is a standalone process (#129; 'U'/'k' read embedded HCD state
+	# that no longer exists). present=1 on /dev/kbd0 == full success this boot.
+	"$repo/scripts/diag-udp-probe.sh" D "usbhcd-devnode-boot-$b" 25 4 || true
 	"$repo/scripts/pi_power_off.sh" >/dev/null 2>&1 || true
 	# Brief cooldown between boots so the VL805/bridge fully power-cycles.
 	if [ "$b" -lt "$n_boots" ]; then
