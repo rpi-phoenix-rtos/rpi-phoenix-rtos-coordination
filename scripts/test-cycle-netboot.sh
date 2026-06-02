@@ -30,6 +30,7 @@ fi
 
 capture_secs="${RPI4B_NETBOOT_CAPTURE_SECS:-360}"
 label=""
+timestamp_flag=""  # set by --timestamp; passthrough to capture-rpi4b-uart.sh for host-side per-line timestamps
 power_settle_secs="${RPI4B_POWER_SETTLE_SECS:-3}"
 skip_server_up=0
 dhcp_wait_secs="${RPI4B_DHCP_WAIT_SECS:-25}"
@@ -95,6 +96,7 @@ while [ $# -gt 0 ]; do
 		--skip-bridge-recovery)  skip_bridge_recovery=1; shift ;;
 		--sd-boot)               sd_boot=1; shift ;;
 		--baud)                  uart_baud="$2"; shift 2 ;;
+		--timestamp)             timestamp_flag="--timestamp"; shift ;;
 		--probe)                 probe_cmd="$2"; shift 2 ;;
 		-h|--help)               usage; exit 0 ;;
 		*) printf 'unknown arg: %s\n' "$1" >&2; usage >&2; exit 1 ;;
@@ -271,6 +273,9 @@ exit_ms=$(( capture_secs * 1000 ))
 capture_args=( --log "$log_path" --exit-after "$exit_ms" )
 if [ -n "$uart_baud" ]; then
 	capture_args+=( --baud "$uart_baud" )
+fi
+if [ -n "$timestamp_flag" ]; then
+	capture_args+=( "$timestamp_flag" )
 fi
 printf 'capturing UART for %ss -> %s\n' "$capture_secs" "$log_path"
 "$repo/scripts/capture-rpi4b-uart.sh" "${capture_args[@]}" &

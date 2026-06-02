@@ -833,6 +833,23 @@ under TD-13-spawn-cap and the priority ladder.
 ## TD-14: `/dev/console` `resolve_path` hang on Pi 4
 
 - **Status:** RESOLVED AS BOOT BLOCKER 2026-05-02; cleanup still pending
+- **2026-06-02 update — observability half RESOLVED (P2/P3).** Two TD-14
+  symptoms are now fixed and validated over a 10-boot study (see
+  `docs/notes/2026-06-02-p1p2p3-postfix-10boot.md`):
+  - *klog never reached HDMI fbcon* (libklog's devfs `/dev/kmsg` drain never
+    attached on Pi 4): replaced by `pl011_klogthr` in `pl011-tty.c`, which
+    attaches DIRECTLY to the kernel log port (oid `{0,0}`) by message instead of
+    resolving a devfs path, and writes the ring to the fbcon only. The kernel
+    `log/log.c` UART mirror is now permanent (raw), so UART is the kernel's own
+    complete log and fbcon gets the same via the direct drain — no double.
+    HDMI now shows the full kernel boot log, byte-identical across 10 boots.
+  - *char-level UART garble from unlocked multi-writer console*: `hal_consolePrint`
+    now takes `console_common.lock`; the contended `syscalls: psh root lookup`
+    trace was removed. UART is exactly 520 lines on all 10 boots.
+  - **Residual TD-14 (still open):** pl011-tty owns the UART independently of the
+    kernel console, so kernel prints and pl011-tty's own UART writes (psh output)
+    can still interleave during psh interaction — the two-owner problem a kernel
+    spinlock can't serialize. Tracked as a follow-up.
 - **First observed:** 2026-05-01 evening, after TD-13 atomic wall lifted.
 - **Where:** `sources/libphoenix/unistd/file.c` `open()` →
   `resolve_path("/dev/console", NULL, 1, 1)`. Last observed marker on

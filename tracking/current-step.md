@@ -1,5 +1,34 @@
 # Current Implementation Step
 
+## Active step (2026-06-02): P1/P2/P3 boot observability + speed fixes — DONE, validated, ready to continue
+
+User directive: solve points 1–3 from the 10-boot consistency study, then repeat
+the study and re-analyze. All three landed and were validated by a fresh 10-boot
+run (`fix01–10`). See `docs/notes/2026-06-02-p1p2p3-postfix-10boot.md`.
+
+- **P1 (done):** deleted the USB-FIX-18 PCIe pre-init bridge-state dump in
+  `usb/xhci/bcm2711-pcie.c`. Boot span 166 s → 66–74 s.
+- **P2 (done):** klog→HDMI fbcon. `log/log.c` mirror permanent (raw, UART source
+  of truth); `pl011-tty` `pl011_klogthr` direct-attaches kernel log port `{0,0}`
+  and drains fbcon-only. HDMI shows full kernel log, identical ×10.
+- **P3 (done):** `hal_consolePrint` takes `console_common.lock`; removed
+  `syscalls: psh root lookup` trace. UART un-garbled (520 lines exact ×10).
+
+**Notable side effect:** USB enumeration 3/10 → 10/10 clean across the post-fix
+study (same hardware). P1 is the lead cause (removed pre-bridge abort-triggering
+reads — ties to `pi4-serror-pcie-source`); not yet confirmed by a controlled A/B.
+
+**Next candidates (user to choose):** (a) controlled A/B to confirm P1→USB
+causality (restore only the dump, re-run); (b) resume the USB re-architecture
+(#129) now that enum is reliable and the console is trustworthy; (c) remove the
+D-8 `smp:` diagnostic block (main.c) + the residual two-owner UART interleave
+(TD-14); (d) TD-13 syspage direct dump (Phase 3 of the boot-stability plan).
+
+Tooling added this session: `scripts/boot-consistency-study.sh`,
+`scripts/compare-boots.py`, `capture-rpi4b-uart.sh --timestamp` (buffering fix).
+
+---
+
 ## Active step (2026-05-29): TD-10 SError handler (in progress) + USB re-analysis corrects the record
 
 Two tracks this session:

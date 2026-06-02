@@ -422,9 +422,12 @@ if [ "$tool" = "tio" ] && [ "$timestamp" -eq 1 ]; then
 elif [ "$tool" = "picocom" ] && [ "$timestamp" -eq 1 ]; then
 	# Pipe picocom's stdout through ts(1) to add per-line timestamps.
 	# Watchdog targets the bash subshell pid, which propagates SIGTERM
-	# to the picocom + ts pipeline. ts is line-buffered through pipes,
-	# so no stdbuf wrapping is needed here.
-	(stdbuf -oL "${cmd[@]}" <"$stdin_fifo" 2>&1 | ts '[%Y-%m-%d %H:%M:%.S]' > "$log_path") &
+	# to the picocom + ts pipeline. BOTH ends must be line-buffered:
+	# picocom's stdout (stdbuf -oL) AND ts's stdout to the log FILE
+	# (stdbuf -oL) — without the latter, glibc block-buffers ts's writes
+	# to the regular file (4 KB) and the final buffer is lost when the
+	# watchdog kills the pipeline (the old "drops post-fbcon content" bug).
+	(stdbuf -oL "${cmd[@]}" <"$stdin_fifo" 2>&1 | stdbuf -oL ts '[%Y-%m-%d %H:%M:%.S]' > "$log_path") &
 else
 	"${cmd[@]}" <"$stdin_fifo" &
 fi

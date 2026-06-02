@@ -564,6 +564,19 @@ re-validate every BAR you care about before issuing the first DMA.
   hardware-maintained endpoint context sticks at the Link TRB address;
   the workaround is to ensure your ring includes a Link TRB at the
   ring-expansion boundary.
+- **Reading RC registers before clearing `SERDES_IDDQ` is brutally slow
+  *and* harmful.** The host-bridge RC registers (`RC_BAR*`, `MEM_WIN*`,
+  `MISC_*`, `HARD_DEBUG`) live behind a PCIe block that is held in
+  reset/IDDQ until you clear `HARD_DEBUG.SERDES_IDDQ` during bridge bring-up.
+  An MMIO read issued *before* that clear does not fault cleanly — it stalls
+  on an AXI/external-abort timeout (~10.8 s on Phoenix's Pi 4) and returns
+  `0x0`. A "harmless" pre-init diagnostic that dumps ~10 such registers cost
+  ~90–110 s of boot time. Worse, with the AArch64 SError handler unmasked
+  these reads are exactly the live external-abort source in PCIe/VL805
+  bring-up, and removing a pre-bridge dump of them correlated with USB
+  enumeration going from flaky (3/10) to deterministic (10/10) — so the
+  aborts may also degrade the subsequent VL805 bring-up. **Touch RC
+  registers only after the bridge is out of IDDQ/reset.**
 
 ### Single-process bus owner is the workable pattern
 
@@ -792,6 +805,47 @@ takes is essential when diagnosing "boot looks stuck" issues — periodic
 HDMI screenshots from a capture card complement the UART log because
 they capture some Path-B-only state changes that arrive late or in a
 different order.
+
+### The klog ring is a *third* path — and the source of "non-deterministic"
+logs
+
+In Phoenix specifically there is a third, easy-to-miss path. Kernel
+`lib_printf` does **not** go straight to the wire; it appends to a fixed-size
+**klog ring** (`log/log.c`), which is drained to the console only by a
+*userspace* reader (libklog → the TTY driver) that attaches **late** in boot.
+On Pi 4 that reader historically never attached at all (it resolved
+`/dev/kmsg` through devfs, whose bind/lookup is slow/fragile here — the TD-14
+class). Net effect: a *variable* amount of early `lib_printf` output reached the
+console depending on ring-overflow-vs-drain timing — which presents as
+"boot logs are long on some boots, short on others" and looks like a
+base-OS determinism bug but is purely an **observability artifact**. Before
+trusting *any* boot-to-boot comparison, make the console faithful first.
+
+The fix that worked (2026-06-02), and the general shape to copy:
+
+- **Permanent kernel mirror for the UART.** In `log_write`, mirror every byte
+  straight to the console (`hal_consolePutch`) unconditionally — do *not* gate it
+  on "a reader has attached". The UART then carries the kernel's own complete,
+  ordered boot log with zero dependency on userspace coming up. This is the
+  source of truth.
+- **Split sinks for HDMI.** The framebuffer is owned by the userspace TTY
+  process, so the kernel can't write it directly. Have that process attach to the
+  klog ring **directly by message to the well-known kernel log port** (in Phoenix
+  the kernel log is served at port 0, id 0 — created before any userspace) rather
+  than resolving a devfs path, and have its klog callback write **only** to the
+  framebuffer (never re-emit to the UART). Then the UART (mirror) and HDMI (ring
+  drain) carry the same content with no double-printing.
+- **One lock for all console writers.** With multiple cores and every userspace
+  `debug()` syscall funnelling through the kernel console (`hal_consolePrint`),
+  unlocked writes interleave character-by-character. Serialize all console output
+  through a single console lock. Watch the granularity: a *per-byte* locked mirror
+  still lets a *per-string* `hal_consolePrint` splice into the middle of a
+  mirrored line — eliminate the contended writers (diagnostic spam emitted *during*
+  userspace activity) rather than decorating each flush (e.g. routing the mirror
+  through a colour-adding print injects escape codes mid-line).
+
+Result on Pi 4: exactly the same UART line count and a byte-identical HDMI final
+frame across 10 consecutive boots.
 
 ### Cost of byte-by-byte busy-wait
 

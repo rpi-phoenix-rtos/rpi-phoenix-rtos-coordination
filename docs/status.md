@@ -1,6 +1,63 @@
 # Phoenix-RTOS Raspberry Pi 4 Port Status
 
-## Current Status: 2026-05-29 — USB re-analysis: "silicon flakiness" retracted; USB is a software bug
+## Current Status: 2026-06-02 — Boot observability + speed fixes (P1/P2/P3); USB enum 3/10→10/10
+
+Three base-system fixes landed and were validated by a 10-boot consistency
+study (post-fix labels `fix01–10` vs pre-fix baseline `boot01–10`). Full detail:
+`docs/notes/2026-06-02-p1p2p3-postfix-10boot.md` (and the prior baseline study
+`docs/notes/2026-06-02-10-boot-consistency-study.md`).
+
+Context: a 10-boot baseline study (after adding UART timestamps + a
+`compare-boots.py` analyzer) established that the long-standing "boot logs long
+on some boots, short on others / fbcon non-deterministic" symptom was a
+**measurement artifact** of the broken klog→console drain, not a base-OS
+determinism defect — Phoenix's internal boot timeline is constant to <0.1 s; the
+only real variance was pre-kernel firmware/DHCP timing and USB enumeration. The
+three fixes then addressed the observability gaps and the dominant boot-time
+cost:
+
+- **P1 — removed the PCIe pre-init bridge-state diagnostic dump**
+  (`usb/xhci/bcm2711-pcie.c`, the old USB-FIX-18 block). It read 10 RC/MEM_WIN
+  registers *before* `bcm2711PrepareHostBridge` clears `SERDES_IDDQ`; each hit
+  the PCIe external-abort/SError path (~10.8 s, returning `0x0`), costing
+  ~90–110 s/boot. **Boot span 166 s → 66–74 s.**
+- **P2 — klog now reaches the HDMI fbcon (split sinks).** Kernel UART mirror in
+  `log/log.c` is now PERMANENT (raw per byte; UART = kernel's own complete log,
+  not gated on `readers`). `pl011-tty` replaced libklog's devfs `/dev/kmsg`
+  drain (never attached on Pi 4 — TD-14) with `pl011_klogthr`, which attaches
+  **directly to the kernel log port** (oid `{0,0}`) and writes the ring to the
+  **fbcon only** — so UART (mirror) and fbcon (drain) never double up. HDMI now
+  shows the full kernel boot log, byte-identical across all 10 boots.
+- **P3 — serialized kernel console writes.** `hal_consolePrint`
+  (`hal/aarch64/generic/console.c`) now takes `console_common.lock` like
+  `hal_consolePutch`; removed the `syscalls: psh root lookup` trace
+  (`syscalls.c`) — the one kernel `lib_printf` emitted during userspace, the
+  only line the atomic console writers could splice. **UART now un-garbled:
+  exactly 520 lines on all 10 boots.**
+
+**10-boot post-fix result:** span 66–74 s; line count exactly 520 ×10; HDMI
+final frame one md5 (full kernel log) MATCH ×10; `klog attach rc=0` every boot;
+`dummyfs initialized` = 2 (the long-suspected "duplicate" is the expected
+root+devfs pair). Phoenix internal timeline constant (`genet_linkup − plo_banner`
+≈ 8.6 s); the Δ≈8 s landmark spread is entirely pre-plo firmware/DHCP.
+
+**USB enumeration went 3/10 → 10/10 clean** (xhci_timeout=0, enum_fail=0,
+usbpool=48 on all 10) with the **same hardware** (VIA hub `2109:3431`, Logitech
+kbd `046d:c31c`, PIXART mouse `093a:2510` present in both studies' logs;
+baseline failures were `Enumeration failed despite 3 attempts` = device present).
+The only image delta is P1/P2/P3 and P2/P3 are console-only, so **P1 is the lead
+cause** — removing the ~10 pre-bridge abort-triggering reads (ties to memory
+`pi4-serror-pcie-source`). Not yet confirmed by a controlled A/B (toggle only
+P1); a 7/10→0/10 shift is not sample noise.
+
+Follow-ups flagged (not bundled): confirm the USB causality by restoring only
+the dump; the residual pl011-tty-vs-kernel two-owner UART interleave during psh
+interaction (TD-14 residue); the D-8 `smp:` diagnostic block in `main.c`
+(5 lines + a 15 s in-kernel sleep) is a removable diagnostic.
+
+---
+
+## Previous Status: 2026-05-29 — USB re-analysis: "silicon flakiness" retracted; USB is a software bug
 
 A three-agent re-analysis (code-correctness deep-read, cross-OS
 comparison, forensic re-derivation from raw logs) **retracts the
