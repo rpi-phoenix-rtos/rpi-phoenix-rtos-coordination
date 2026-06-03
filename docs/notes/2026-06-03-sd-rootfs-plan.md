@@ -188,6 +188,44 @@ Phase 1 ACMD41 fix (#119)  ── BLOCKER, do first; everything gates on it
 - genext2fs host dependency must be installed (PEP 668 / no system pollution rules
   don't apply — it's a host build tool, install via the OS package manager).
 
+## Progress 2026-06-03 (overnight, no SD card in the Pi)
+
+- **#119 DONE** — `/dev/mmcblk0` brings up under SD-boot (devices `c1aa946`).
+- **No-card-safe DONE** (devices `529a5f1`) — an absent card now logs one
+  `sdcard: no card present` line instead of error spam; netboot (slot empty)
+  validated clean.
+- **Rootfs ext2 image built** — `scripts/build-rpi4b-rootfs-ext2.sh` stages the
+  already-built rootfs tree (`_fs/<target>/root`: `/bin` psh + ~30 applets,
+  `/sbin` servers) + runtime mountpoints and runs `mke2fs -d` →
+  `_boot/<target>/part_rootfs.ext2` (256 MiB, fsck-clean), and assembles a
+  2-partition `rpi4b-sd-2part.img` (p1 FAT32 boot 64M + p2 ext2 root 256M).
+  Validated on the host (`fdisk -l` + ext2 superblock check). **Minimal rootfs
+  for now (no busybox yet — the locked decision); busybox is `--with-ports`.**
+
+### Morning steps (need the SD card; hardware-validated)
+
+1. **Convert the boot to the block-device-root model** (the ia32 pattern, see
+   `2026-05-31-rpi4b-rcpsh-rootfs-conversion-plan.md`): in `user.plo.yaml` keep
+   `kernel`, `dummyfs-root`, `dummyfs;-N;devfs`, `pl011-tty`, `mkdir/bind /dev`,
+   and launch **`bcm2711-emmc;-r;/dev/mmcblk0p2:ext2`** (so it `portRegister`s
+   `/`); then `psh -i /etc/rc.psh`. Move `posixsrv` + `usb`/`usbkbd`/`usbmouse`
+   + `lwip` into `rootfs-overlay/etc/rc.psh` (modelled on
+   `ia32-generic-pc/rootfs-overlay/etc/rc.psh`: `W bind devfs /dev`, `W dummyfs
+   -m /tmp`, `X posixsrv`, `X lwip genet:...`, `X psh`). Keep `dummyfs-root` as
+   the fallback root until the ext2 mount is proven.
+2. Rebuild (`--scope core`) so the FAT `loader.disk` carries the `-r` flip, then
+   `./scripts/build-rpi4b-rootfs-ext2.sh` to refresh `part_rootfs.ext2` +
+   `rpi4b-sd-2part.img` (the rootfs tree includes the staged `rc.psh`).
+3. Flash `rpi4b-sd-2part.img` to the card (host `/dev/sda`, `dd`), card to Pi,
+   `--sd-boot`. Validate: `/dev/mmcblk0p2` mounts as `/`, `psh` runs from it,
+   `ls /` shows the on-disk tree.
+4. Write-persistence: write a file, reboot, confirm it survives (write-through
+   cache `-c 1`).
+5. Then **busybox** (`rebuild --with-ports`) into the rootfs (#118).
+
+Caveat: step 1 is a real boot-architecture change — validate the ext2 mount
+serves `/` before removing the dummyfs-root fallback.
+
 ## Decisions (LOCKED 2026-06-03, user-confirmed)
 
 1. **Cache mode → write-through (`-c 1`, default).** Every completed write hits
