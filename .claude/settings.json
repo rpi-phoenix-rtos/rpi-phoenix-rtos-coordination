@@ -30,6 +30,8 @@
       "Bash(./scripts/test-cycle-netboot.sh:*)",
       "Bash(./scripts/test-cycle-bench.sh:*)",
       "Bash(./scripts/boot-consistency-study.sh:*)",
+      "Bash(./scripts/git-consolidate-repo.sh:*)",
+      "Bash(./scripts/git-pull-upstream-all.sh:*)",
       "Bash(python3 scripts/compare-boots.py:*)",
       "Bash(./scripts/diag-udp-probe.sh:*)",
       "Bash(./scripts/test-cycle-psh-interact.sh:*)",

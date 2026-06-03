@@ -1,8 +1,24 @@
 # Phoenix-RTOS Raspberry Pi 4 Port Status
 
-## Current Status: 2026-06-03 — USB keyboard #124 root-caused + candidate fix committed; dead lwip USB rig fully excised (A1/#140 completed)
+## Current Status: 2026-06-03 — USB keyboard WORKS end-to-end (#124 validated on HW); keymap fix + cleanup; SD/rootfs next
 
-**2026-06-03 update — USB HID input + cleanup:**
+**2026-06-03 (later) — USB keyboard validated + keymap fix:**
+
+- **#124 VALIDATED on real hardware** (user test): can type and navigate psh
+  over the USB keyboard; first *and* subsequent keys register. The interrupt-IN
+  ring-producer fix (devices `255ce87`) is confirmed. #124 closed.
+- **usbkbd symbol keymap fixed** (devices `cef9f72`). The symbol table omitted
+  HID usage 0x32 (Non-US `#`/`~`), so `;'`,`,./` were each shifted by one and
+  `/ ?` (0x38) read past the table end → dead key. Inserted the 0x32 slot
+  (12-char tables now align across 0x2d..0x38). Char output to confirm on next
+  keyboard test.
+- **Backspace redraw** (#147, filed, NOT fixed): pressing Backspace blanks the
+  whole visible psh line though the buffer is correct → a console/fbcon
+  rendering bug, not data/keymap. Cosmetic; deferred behind SD/rootfs.
+- **Next focus:** SD card (EMMC2, #119) + real persistent rootfs (#120) —
+  detailed plan in `docs/notes/2026-06-03-sd-rootfs-plan.md`.
+
+**2026-06-03 (earlier) — USB HID input + cleanup:**
 
 - **#124 USB keyboard "only first key registers" — root-caused + candidate fix
   committed** (devices `255ce87`). `xhci_submitInterruptIn` reused `ring[0]`
