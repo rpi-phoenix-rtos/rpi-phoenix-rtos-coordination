@@ -1,6 +1,31 @@
 # Phoenix-RTOS Raspberry Pi 4 Port Status
 
-## Current Status: 2026-06-03 — SD card (#119) WORKS: /dev/mmcblk0 brings up under SD-boot; USB keyboard validated; ext2 root next
+## Current Status: 2026-06-04 (overnight) — SD #119 done + no-card-safe; rootfs ext2 image built; USB mouse root-caused (#126); morning = ext2-root mount test
+
+**Overnight 2026-06-03→04 (Pi left card-out, netboot used for experiments):**
+
+- **SD no-card-safe** (devices `529a5f1`) — absent card now logs one
+  `sdcard: no card present` line, not error spam; netboot-validated.
+- **Rootfs ext2 image + 2-partition SD builder** (`scripts/build-rpi4b-rootfs-ext2.sh`,
+  coord `a36a280`) — builds a fsck-clean `part_rootfs.ext2` (256 MiB, minimal:
+  psh + applets + servers, no busybox yet) and a 2-partition `rpi4b-sd-2part.img`
+  (FAT boot + ext2 root). Host-validated. **Boot flip to serve `/` from ext2 is
+  the morning step** (user.plo.yaml `-r` + rc.psh conversion) — see
+  `docs/notes/2026-06-03-sd-rootfs-plan.md` "Morning steps".
+- **USB mouse root-caused (#126)** (diagnostic `b3e97dc`) — mouse won't bind, but
+  NOT a filter bug (iface 03/01/02 matches usbmouse). It's a multi-driver-host
+  issue: usbkbd & usbmouse each link the usb lib + run usb_main, so each tries to
+  host the single xHCI controller; usbkbd wins, usbmouse loses. Fix = host both
+  HID drivers in one process (architectural — deferred for design).
+
+**Morning priorities:** (1) ext2-root mount test with the card (flash
+`rpi4b-sd-2part.img` after the user.plo.yaml `-r` flip; validate `/` mounts +
+write-persistence). (2) Decide the USB multi-driver-host fix (#126). (3) busybox
+into the rootfs (#118). Pi has NO card in it now — netboot is available.
+
+---
+
+## Previous: 2026-06-03 — SD card (#119) WORKS: /dev/mmcblk0 brings up under SD-boot; USB keyboard validated; ext2 root next
 
 **2026-06-03 (SD card) — EMMC2 block device works (#119 RESOLVED):**
 
