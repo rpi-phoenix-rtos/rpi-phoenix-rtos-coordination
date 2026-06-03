@@ -12,11 +12,17 @@
   TRB and it stopped — so exactly one interrupt report was ever delivered.
   Replaced with a proper circular producer (`priv->enqueue` + cycle toggle at
   the Link TRB). Builds + boots with no enum/boot regression (interrupt-IN pipe
-  arms slot=3 ep=3, `/dev/kbd0` binds, 0 faults). **Candidate, not confirmed:**
-  multi-key + continuous-mouse delivery needs a live hardware keypress — #124
-  stays open until the user re-tests via `live-test-rpi4b.sh`. `usbmouse` shares
-  this path (continuous motion is an easier live check than typing). `N_URBS`
-  stays 1.
+  arms slot=3 ep=3, `/dev/kbd0` binds, 0 faults). **Candidate, not confirmed.**
+  The fix rewrote the *whole* `xhci_submitInterruptIn` including the
+  first-submission path, and the no-keypress boot delivered **zero** reports
+  (it only confirmed the pipe *arms*) — so even the *first* key is currently
+  unverified. **The live test must confirm BOTH (a) the first key still
+  registers AND (b) subsequent keys now register.** A totally dead keyboard
+  would mean the rewrite regressed the first-key path (low static risk — the
+  `ring[0]`/cycle=1 first-submit content is near-identical — but the hardware
+  decides). `usbmouse` shares this submit path, and continuous motion is an
+  easier live check than typing. `N_URBS` stays 1. Run via
+  `live-test-rpi4b.sh`; #124 stays open until confirmed.
 - **A1/#140 (USB out of lwip) completed.** The original A1 commit (`2462588`)
   deleted `phoenix-rtos-lwip/port/usb-embed/` but left dangling consumers that
   broke the `--scope core` build (uncaught — no core build ran in between).
@@ -24,6 +30,9 @@
   block + Makefile `-I usb-embed`), lwip `0581be3` (the ~946-line embedded 'X'
   bring-up rig in `diag-udp.c` + dispatch + include). Residual lwip-side
   `'x'/'R'/'d'` xHCI MMIO diag handlers (two-owner hazard) left for #146.
+  Observability confirmed intact after the cut: a live `diag-udp 'c'` probe
+  returned a complete, correctly-formatted reply
+  (`artifacts/diag-udp/2026-06-03-091732-diagcheck-clocks.txt`).
 
 ---
 
