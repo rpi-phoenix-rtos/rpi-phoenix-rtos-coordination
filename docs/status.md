@@ -1,6 +1,6 @@
 # Phoenix-RTOS Raspberry Pi 4 Port Status
 
-## Current Status: 2026-06-04 (overnight) — SD #119 done + no-card-safe; rootfs ext2 image built; USB mouse root-caused (#126); morning = ext2-root mount test
+## Current Status: 2026-06-04 (overnight) — SD #119 done + no-card-safe; rootfs ext2 image built; USB MOUSE FIXED (#126); morning = ext2-root mount test
 
 **Overnight 2026-06-03→04 (Pi left card-out, netboot used for experiments):**
 
@@ -12,16 +12,25 @@
   (FAT boot + ext2 root). Host-validated. **Boot flip to serve `/` from ext2 is
   the morning step** (user.plo.yaml `-r` + rc.psh conversion) — see
   `docs/notes/2026-06-03-sd-rootfs-plan.md` "Morning steps".
-- **USB mouse root-caused (#126)** (diagnostic `b3e97dc`) — mouse won't bind, but
-  NOT a filter bug (iface 03/01/02 matches usbmouse). It's a multi-driver-host
-  issue: usbkbd & usbmouse each link the usb lib + run usb_main, so each tries to
-  host the single xHCI controller; usbkbd wins, usbmouse loses. Fix = host both
-  HID drivers in one process (architectural — deferred for design).
+- **USB MOUSE FIXED (#126) + VALIDATED on HW** (build `30f6867`, devices `854103f`,
+  project `d6c1356`; manifest `2026-06-03-usbmouse-hosted-in-daemon.md`). The
+  earlier "multi-driver-host / each driver hosts the controller" story was a
+  garbled-log artifact and is WRONG. Real cause: the `usb` daemon is built
+  `-DUSB_INTERNAL_ONLY` (USB_HOSTDRV_LIBS non-empty) and `usbmouse` simply wasn't
+  in that list — only `usbkbd` was hosted internally. Fix: add `libusbdrv-usbmouse`
+  to `USB_HOSTDRV_LIBS` so the daemon hosts both HID drivers; drop the dead
+  standalone `-x usbkbd`/`-x usbmouse` launches + binaries (they only emitted
+  `unsupported usb_msg type: 0`). Netboot log now shows `host-side: usbmouse`,
+  `/dev/mouse0` created, `/dev/kbd0` still created, zero match-fail. (Live
+  move-mouse report-flow test + report-contract docs deferred — needs a consumer.)
+  Build hazard noted: changing only the make var didn't relink the daemon; had to
+  `rm` the prebuilt `usb` binary before `--scope core` and gate on the log.
 
 **Morning priorities:** (1) ext2-root mount test with the card (flash
 `rpi4b-sd-2part.img` after the user.plo.yaml `-r` flip; validate `/` mounts +
-write-persistence). (2) Decide the USB multi-driver-host fix (#126). (3) busybox
-into the rootfs (#118). Pi has NO card in it now — netboot is available.
+write-persistence). (2) busybox into the rootfs (#118). (3) Optional: live
+move-mouse report-flow validation on /dev/mouse0 (#126 follow-on). Pi has NO card
+in it now — netboot is available.
 
 ---
 
