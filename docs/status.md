@@ -1,6 +1,33 @@
 # Phoenix-RTOS Raspberry Pi 4 Port Status
 
-## Current Status: 2026-06-02 — Boot observability + speed fixes (P1/P2/P3); USB enum still intermittently flaky (A/B: P1 ≠ enum fix)
+## Current Status: 2026-06-03 — USB keyboard #124 root-caused + candidate fix committed; dead lwip USB rig fully excised (A1/#140 completed)
+
+**2026-06-03 update — USB HID input + cleanup:**
+
+- **#124 USB keyboard "only first key registers" — root-caused + candidate fix
+  committed** (devices `255ce87`). `xhci_submitInterruptIn` reused `ring[0]`
+  with a fixed producer cycle bit on every resubmit and never advanced an
+  enqueue index or toggled the cycle state; once the controller followed the
+  Link TRB and toggled its dequeue cycle, every resubmit handed it an un-owned
+  TRB and it stopped — so exactly one interrupt report was ever delivered.
+  Replaced with a proper circular producer (`priv->enqueue` + cycle toggle at
+  the Link TRB). Builds + boots with no enum/boot regression (interrupt-IN pipe
+  arms slot=3 ep=3, `/dev/kbd0` binds, 0 faults). **Candidate, not confirmed:**
+  multi-key + continuous-mouse delivery needs a live hardware keypress — #124
+  stays open until the user re-tests via `live-test-rpi4b.sh`. `usbmouse` shares
+  this path (continuous motion is an easier live check than typing). `N_URBS`
+  stays 1.
+- **A1/#140 (USB out of lwip) completed.** The original A1 commit (`2462588`)
+  deleted `phoenix-rtos-lwip/port/usb-embed/` but left dangling consumers that
+  broke the `--scope core` build (uncaught — no core build ran in between).
+  Excised: devices `9c588d6` (xhci.c rig include/extern + `XHCI_USE_RIG_BRINGUP`
+  block + Makefile `-I usb-embed`), lwip `0581be3` (the ~946-line embedded 'X'
+  bring-up rig in `diag-udp.c` + dispatch + include). Residual lwip-side
+  `'x'/'R'/'d'` xHCI MMIO diag handlers (two-owner hazard) left for #146.
+
+---
+
+## Previous Status: 2026-06-02 — Boot observability + speed fixes (P1/P2/P3); USB enum still intermittently flaky (A/B: P1 ≠ enum fix)
 
 Three base-system fixes landed and were validated by a 10-boot consistency
 study (post-fix labels `fix01–10` vs pre-fix baseline `boot01–10`). Full detail:
