@@ -188,13 +188,17 @@ Phase 1 ACMD41 fix (#119)  ── BLOCKER, do first; everything gates on it
 - genext2fs host dependency must be installed (PEP 668 / no system pollution rules
   don't apply — it's a host build tool, install via the OS package manager).
 
-## Open decisions for the user
+## Decisions (LOCKED 2026-06-03, user-confirmed)
 
-1. **Cache mode:** write-back (`-c 0`, faster, riskier on power-cut) vs
-   write-through (`-c 1`, default, safer). Recommend write-through for bring-up.
-2. **First rootfs contents:** minimal (psh + core applets + servers) first, add
-   **busybox** (`--with-ports`) once the mount is proven — or include busybox from
-   the start. Recommend minimal-first to isolate FS bugs.
-3. **Image-build style:** ad-hoc `assemble-rpi4b-sdimg.sh` vs declarative
-   `nvm.yaml` (ia32 model). Recommend nvm.yaml for reproducibility, ad-hoc script
-   acceptable for first light.
+1. **Cache mode → write-through (`-c 1`, default).** Every completed write hits
+   the card immediately, so durability survives the frequent unclean power-cycles
+   of bring-up (ext2 has no journal). Slower; revisit write-back (`-c 0`) for
+   speed once the mount is stable.
+2. **First rootfs → minimal, then busybox.** Bring up psh + core applets +
+   servers on the ext2 root first to isolate FS bugs; add busybox
+   (`--with-ports`) once the mount + write-persistence are proven (#118).
+3. **Image-build → ad-hoc `scripts/assemble-rpi4b-sdimg.sh` for first light.**
+   `sfdisk` adds the ext2 rootfs partition next to the existing (working) FAT boot
+   partition + `dd` the image in — fewest moving parts, doesn't disturb boot.
+   Migrate to declarative `nvm.yaml` (ia32 model) later if reproducible/CI image
+   builds are wanted.
