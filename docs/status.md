@@ -26,11 +26,20 @@
   Build hazard noted: changing only the make var didn't relink the daemon; had to
   `rm` the prebuilt `usb` binary before `--scope core` and gate on the log.
 
+- **busybox builds + is now IN the ext2 rootfs image (#118 checkpoint).** `--with-ports`
+  compiles busybox 1.27.2 for aarch64 (399 KB → `_fs/root/bin/busybox`). Found that
+  busybox is NOT in `loader.disk` (plo's RAM image bundles only syspage-listed
+  programs, not the rootfs tree), so **#118 converges with #120**: busybox needs a
+  mounted rootfs to live in. Regenerated `part_rootfs.ext2` / `rpi4b-sd-2part.img`
+  so they now contain `/bin/busybox` (confirmed via debugfs). The morning ext2-root
+  mount test validates busybox presence at the same time.
+
 **Morning priorities:** (1) ext2-root mount test with the card (flash
-`rpi4b-sd-2part.img` after the user.plo.yaml `-r` flip; validate `/` mounts +
-write-persistence). (2) busybox into the rootfs (#118). (3) Optional: live
-move-mouse report-flow validation on /dev/mouse0 (#126 follow-on). Pi has NO card
-in it now — netboot is available.
+`rpi4b-sd-2part.img` — which now includes busybox — after the user.plo.yaml `-r`
+flip; validate `/` mounts + write-persistence + `ls /bin/busybox`). (2) Wire an
+interactive busybox shell from the mounted root (`busybox sh` + applet symlinks)
+(#118). (3) Optional: live move-mouse report-flow validation on /dev/mouse0
+(#126 follow-on). Pi has NO card in it now — netboot is available.
 
 ---
 
