@@ -1,6 +1,27 @@
 # Phoenix-RTOS Raspberry Pi 4 Port Status
 
-## Current Status: 2026-06-03 — USB keyboard WORKS end-to-end (#124 validated on HW); keymap fix + cleanup; SD/rootfs next
+## Current Status: 2026-06-03 — SD card (#119) WORKS: /dev/mmcblk0 brings up under SD-boot; USB keyboard validated; ext2 root next
+
+**2026-06-03 (SD card) — EMMC2 block device works (#119 RESOLVED):**
+
+- The `bcm2711-emmc` driver now fully initialises the microSD under SD-boot
+  (firmware-pre-initialised card, the real rootfs scenario) — validated on real
+  hardware: `sdcard: /dev/mmcblk0 ready: 60905 MiB, 1 partition(s)`. Committed
+  devices `c1aa946`, project `f8f9533` (driver enabled in `user.plo.yaml`).
+- Two root causes fixed in `storage/bcm2711-emmc/sdcard.c`: (1) **CMD7 R1b** —
+  the Command-Complete IRQ isn't reliably raised for a check-busy command, so
+  poll `PRES_STATE` (Command-Inhibit-CMD then DAT0-busy clear) for
+  `CMD_NO_DATA_WAIT`; (2) a **lost-wakeup race** in `_sdio_cmdExecutionWait` —
+  the command is written before the wait arms and re-enabling `SIGNAL_ENABLE`
+  doesn't re-trigger on the already-latched bit (proven: `INTR_STATUS=0x3`), so
+  check `INTR_STATUS` before `condWait` (hardens all commands incl. block I/O).
+- **Testing note:** the SD driver can only be exercised by SD-boot (a card in
+  the slot breaks netboot via firmware contention). SD boot is much faster than
+  netboot. See `docs/notes/2026-06-03-sd-rootfs-plan.md`.
+- **Next:** #120 persistent ext2 root (`-r /dev/mmcblk0p2:ext2`; ext2 already
+  registered), then #118 busybox.
+
+**2026-06-03 (USB) — keyboard WORKS end-to-end (#124 validated on HW); keymap fix + cleanup:**
 
 **2026-06-03 (later) — USB keyboard validated + keymap fix:**
 
