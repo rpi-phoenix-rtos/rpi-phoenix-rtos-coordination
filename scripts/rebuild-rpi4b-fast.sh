@@ -71,6 +71,10 @@ do_prepare=1
 do_build_artifacts=1
 do_qemu_sanity=0
 with_ports=0
+# Build variant: 'netboot' (default; probe-only SD, card-out safe — for net-booted
+# device bring-up) or 'sd' (mount the ext2 partition as root, #120). Selects the
+# bcm2711-emmc launch line in user.plo.yaml via the RPI4B_VARIANT env var.
+variant="netboot"
 
 while [ "$#" -gt 0 ]; do
 	case "$1" in
@@ -85,6 +89,14 @@ while [ "$#" -gt 0 ]; do
 			# Off by default because the ports compile is slow and most
 			# iterations don't touch ports.
 			with_ports=1
+			;;
+		--variant)
+			shift
+			[ "$#" -gt 0 ] || die "missing value for --variant"
+			case "$1" in
+				netboot|sd) variant="$1" ;;
+				*) die "unknown variant: $1 (use netboot|sd)" ;;
+			esac
 			;;
 		--build-only)
 			do_build_artifacts=0
@@ -239,6 +251,7 @@ printf 'Toolchain: %s\n' "${toolchain_path}"
 printf 'Buildroot: %s\n' "${buildroot}"
 printf 'Target:    %s\n' "${target}"
 printf 'Scope:     %s\n' "${scope}"
+printf 'Variant:   %s\n' "${variant}"
 printf 'Build args: %s\n' "${build_args[*]}"
 printf 'Reason:    %s\n' "${scope_reason}"
 
@@ -274,7 +287,7 @@ build_args_str="${build_args[*]}"
 # PyYAML/rich from the venv rather than the PEP668-managed system Python. A
 # non-existent PATH entry is harmless, so this is safe even without the venv.
 run_build_shell \
-	"set -euo pipefail; export PATH='${repo_root}/.venv/bin':'${toolchain_path}':\$PATH; cd '${buildroot}'; env RPI4B_DTB_PATH='${dtb_path}' TARGET='${target}' ./phoenix-rtos-build/build.sh ${build_args_str}"
+	"set -euo pipefail; export PATH='${repo_root}/.venv/bin':'${toolchain_path}':\$PATH; cd '${buildroot}'; env RPI4B_DTB_PATH='${dtb_path}' RPI4B_VARIANT='${variant}' TARGET='${target}' ./phoenix-rtos-build/build.sh ${build_args_str}"
 
 if [ "${do_qemu_sanity}" -eq 1 ]; then
 	# QEMU path differs between hosts. On Darwin we use the in-VM
