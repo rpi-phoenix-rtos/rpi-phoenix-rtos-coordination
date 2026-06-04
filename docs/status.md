@@ -26,6 +26,14 @@
   Build hazard noted: changing only the make var didn't relink the daemon; had to
   `rm` the prebuilt `usb` binary before `--scope core` and gate on the log.
 
+- **USB enum reliability — FIX-14 likely resolved (#139 GATE passed).** 5 post-#124
+  netboots (card-out): **5/5 reached full enumeration + psh + /dev/kbd0**, 4/5
+  confirmed /dev/mouse0, **zero CPU faults, zero catastrophic enum failures** (the
+  historical FIX-14 mode = ~50% boots with insertions=0 / no devices). Strong
+  evidence that #124's interrupt-IN ring-producer fix (shared by the hub
+  status-change pipe) resolved the flakiness. #139 closed; #78/FIX-14 kept open
+  pending a formal large-N (≥10) run with the user + the TD-10/#144 SError A/B.
+  (Tally: `artifacts/enum-rate-accumulation.md` — gitignored, ephemeral.)
 - **busybox builds + is now IN the ext2 rootfs image (#118 checkpoint).** `--with-ports`
   compiles busybox 1.27.2 for aarch64 (399 KB → `_fs/root/bin/busybox`). Found that
   busybox is NOT in `loader.disk` (plo's RAM image bundles only syspage-listed
