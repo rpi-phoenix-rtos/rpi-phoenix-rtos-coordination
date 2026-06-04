@@ -34,6 +34,16 @@
   status-change pipe) resolved the flakiness. #139 closed; #78/FIX-14 kept open
   pending a formal large-N (≥10) run with the user + the TD-10/#144 SError A/B.
   (Tally: `artifacts/enum-rate-accumulation.md` — gitignored, ephemeral.)
+- **WiFi #91 fw-execution gate — new evidence + software lead.** Ran diag 'G'
+  (fwrelease) on a FRESH PSU-on boot: fw still doesn't execute (HT_AVAIL never,
+  SOCRAM unchanged post-release). Because a full PSU power state still fails, the
+  "WL_REG_ON can't reset / only PSU-drop recovers" HW hypothesis is **weakened** →
+  points to a **software** cause. Strongest lead: the NVRAM-trailer region readback
+  at the top of SOCRAM **fails (rc=-4)** with trailer-token = zeros — the fw
+  bootloader finds NVRAM via a length/magic token at RAM-end, so a misplaced token
+  or a wrong tail SBADDR window would stop fw from starting. Next (software): fix
+  the tail readback window / verify NVRAM trailer format vs brcmfmac. See #91 +
+  `artifacts/diag-udp/2026-06-04-032229-wifi-fwrel-G-probe.txt`.
 - **busybox builds + is now IN the ext2 rootfs image (#118 checkpoint).** `--with-ports`
   compiles busybox 1.27.2 for aarch64 (399 KB → `_fs/root/bin/busybox`). Found that
   busybox is NOT in `loader.disk` (plo's RAM image bundles only syspage-listed
