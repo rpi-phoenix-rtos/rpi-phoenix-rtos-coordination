@@ -44,10 +44,14 @@
   token (`af 01 50 fe` = `0xfe5001af` → len 431, `~len` 0xfe50) is a valid Broadcom
   length-magic placed at RAM-top `0x237FFC` — correct. The `SOCRAM-tail rc=-4` is a
   diag-readback artifact (16-byte read vs 64-byte writes; F1 block-size mismatch),
-  **not** an on-chip problem — a red herring. Next (software): diff the CR4
-  activation sequence (resetcore toggle, diag-udp.c:4652-4683) against Linux
-  brcmfmac `brcmf_chip_cr4_set_active()` — reset-vector register, halt/unhalt order,
-  AI-wrapper RMW masks. See #91 + `artifacts/diag-udp/2026-06-04-032229-wifi-fwrel-G-probe.txt`.
+  **not** an on-chip problem — a red herring. **CR4 release sequence also now
+  ELIMINATED** (source-verified vs upstream brcmfmac chip.c: `cr4_set_active` →
+  `resetcore(CPUHALT,0,0)` → IOCTL 0x23/RESET 1/IOCTL 0x03/RESET 0/IOCTL 0x01,
+  exactly our diag-udp.c:4670-4683). Prime remaining suspects (ordering/clock):
+  brcmfmac does `set_passive` (CR4→reset+CPUHALT) + `brcmf_sdio_clkctl(CLK_AVAIL)`
+  *before* download — our flow doesn't; and the SDIOD core base (0x18005000 hyp)
+  may be wrong so the fw-ready mailbox can't be observed. The diag fw-release code
+  is in the lwip-port process (low risk to change — doesn't touch USB). See #91.
 - **busybox builds + is now IN the ext2 rootfs image (#118 checkpoint).** `--with-ports`
   compiles busybox 1.27.2 for aarch64 (399 KB → `_fs/root/bin/busybox`). Found that
   busybox is NOT in `loader.disk` (plo's RAM image bundles only syspage-listed
