@@ -56,11 +56,17 @@
   comment diag-udp.c:4502-4519; spun = OpenWrt #23069) and source-confirmed
   (brcmfmac downloads with `alp_only=true`; HT comes up only after fw runs). So
   HT-stuck-`0x48` is a *symptom*, not the cause — don't re-chase it. Genuine
-  remaining unknowns: (1) is the full 643 KB fw written correctly across all 20
-  SBADDR windows (only [0..63] verified — a mid-image window-calc error would
-  corrupt fw)? (2) is `rstvec`=`0xb83ef198` the right CR4 boot vector / is addr 0
-  the right activate target? (3) is the SDIOD core base (0x18005000) right? This is
-  a hard, previously-stuck problem — sustained focused debugging recommended.
+  remaining unknowns: rstvec/activate semantics. **DECISIVE result (lwip `745b3a2`):**
+  added a wide post-release image change-scan (6 points across the full 643 KB) and
+  ran it — **0/6 changed → firmware GENUINELY NOT EXECUTING** (not an observability
+  artifact; SDIOD-base branch killed). Everything else matches brcmfmac (download
+  order, fw@0x198000, nvram@0x237940, rstvec=le32(fw[0..3])=0xb83ef198→addr0 via
+  buscore_activate, resetcore(CPUHALT,0,0), IoCtrl 0x21→0x01). **Focus = why the
+  CR4 won't run despite all-correct setup:** (1) rstvec semantics — `0xb83ef198`
+  is *outside* RAM (0x198000–0x238000); confirm whether the CR4 takes PC from the
+  value at addr 0 or executes the instruction there; (2) we may skip clearing the
+  SDIO-core intstatus (`0xFFFFFFFF`) that `brcmf_sdio_buscore_activate` does before
+  release; (3) a core clock/PMU resource. Needs datasheet/JTAG/focused debug.
 - **busybox builds + is now IN the ext2 rootfs image (#118 checkpoint).** `--with-ports`
   compiles busybox 1.27.2 for aarch64 (399 KB → `_fs/root/bin/busybox`). Found that
   busybox is NOT in `loader.disk` (plo's RAM image bundles only syspage-listed
