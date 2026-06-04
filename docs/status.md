@@ -14,6 +14,12 @@
   selects the boot config via `RPI4B_VARIANT`: `netboot` (default) = card-out-safe
   probe-only SD; `sd` = ext2-root mount (#120). (coord `9281541`, project `27f3913`)
 - Manifest: `manifests/2026-06-04-thermal-driver-rpi4.md`.
+- **fb0/GPU Tier-1 groundwork** — diag-udp `V` probe (lwip `fdbec01`) proves the
+  userspace framebuffer path on HW: `platformctl(pctl_graphmode)` →
+  `pa=0x3e87c000 1024x768x32 pitch=4096`, mmap, and non-destructive write/read
+  verify (`fb mmap rw verified`). De-risks a `/dev/fb0` driver to two attended
+  decisions (display ownership/fbcon coexistence + the no-fbdev device ABI),
+  written up in `docs/notes/2026-06-05-fb0-attended-decisions.md`.
 
 **Kernel changes deliberately deferred to an attended session** (not safe to do
 unattended over netboot): `_hal_systemReset` reboot/poweroff (#43 productionize)
