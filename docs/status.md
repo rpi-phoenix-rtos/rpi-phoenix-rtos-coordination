@@ -52,6 +52,15 @@
   *before* download — our flow doesn't; and the SDIOD core base (0x18005000 hyp)
   may be wrong so the fw-ready mailbox can't be observed. The diag fw-release code
   is in the lwip-port process (low risk to change — doesn't touch USB). See #91.
+  **Also eliminated: host-side HT-clock request** — already tried+reverted (code
+  comment diag-udp.c:4502-4519; spun = OpenWrt #23069) and source-confirmed
+  (brcmfmac downloads with `alp_only=true`; HT comes up only after fw runs). So
+  HT-stuck-`0x48` is a *symptom*, not the cause — don't re-chase it. Genuine
+  remaining unknowns: (1) is the full 643 KB fw written correctly across all 20
+  SBADDR windows (only [0..63] verified — a mid-image window-calc error would
+  corrupt fw)? (2) is `rstvec`=`0xb83ef198` the right CR4 boot vector / is addr 0
+  the right activate target? (3) is the SDIOD core base (0x18005000) right? This is
+  a hard, previously-stuck problem — sustained focused debugging recommended.
 - **busybox builds + is now IN the ext2 rootfs image (#118 checkpoint).** `--with-ports`
   compiles busybox 1.27.2 for aarch64 (399 KB → `_fs/root/bin/busybox`). Found that
   busybox is NOT in `loader.disk` (plo's RAM image bundles only syspage-listed
