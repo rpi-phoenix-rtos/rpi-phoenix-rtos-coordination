@@ -219,10 +219,24 @@ Both live in `sources/phoenix-rtos-kernel/hal/aarch64/generic/rpi-pm.c`.
 - Wire into existing kernel reboot path (replace whatever current shutdown does — likely `wfe` infinite loop).
 - **Test**: trigger reboot from a userspace test (`reboot` syscall, or `phoenix-rtos-tests` runner). Pi reboots without external power-cycle. Compare against current relay-cycle baseline in `tracking/current-step.md`.
 
-### Phase 3 — Thermal read
-- Add `phoenix-rtos-devices/sensors/rpi4-thermal/`.
-- Drop into `_targets/aarch64a72-generic-rpi4b/` build.
-- **Test**: `cat /dev/thermal` returns 35000 – 60000 (35 – 60 °C indoors at idle). Validate against a probe touched to the SoC heatsink — within ±3 °C of an external thermometer.
+### Phase 3 — Thermal read  ✅ DONE (2026-06-05, devices `97e38f0`)
+- Added `phoenix-rtos-devices/sensors/rpi4-thermal/`, registered in
+  `_targets/Makefile.aarch64a72-generic` DEFAULT_COMPONENTS, launched from
+  `user.plo.yaml`. Exposes `/dev/thermal` (milli-C) **and** `/dev/throttled`
+  (the optional GET_THROTTLED node from §4, same driver).
+- **Architecture deviation from §2's recommendation:** implemented **userspace,
+  not kernel-internal**. Rationale: the property call is needed by a userspace
+  pseudo-file anyway, the proven diag-udp scout already does the exact mailbox
+  round-trip from userspace (mmap 0xfe00b880 + uncached property buffer), and a
+  userspace driver cannot wedge `_hal_init`/boot — decisive for unattended
+  netboot bring-up. The kernel-internal primitive is still the right call for
+  the *boot-critical* consumers (WiFi/BT `WL_ON`/`BT_REG_ON`, future DVFS); add
+  it when one of those lands, and have this driver call through it then.
+- **Test (HW, netboot):** driver self-logs at init
+  `rpi4-thermal: T=35986 mC max=85000 mC throttle=0x00000000; registered ...`,
+  cross-checked against diag-udp 'c' (36473 mC). `cat`-from-shell read path is
+  the proven nct75 msg-loop template; exercise it once an interactive shell or
+  the SD rootfs lands. Heatsink-probe ±3 °C calibration deferred (needs a probe).
 
 ### Phase 4 — Poweroff
 - Add `_hal_systemHalt` and the `wdog_trigger_poweroff()` userspace wrapper.

@@ -1,6 +1,59 @@
 # Phoenix-RTOS Raspberry Pi 4 Port Status
 
-## Current Status: 2026-06-04 (overnight) — SD #119 done + no-card-safe; rootfs ext2 image built; USB MOUSE FIXED (#126); morning = ext2-root mount test
+## Current Status: 2026-06-05 (overnight, netboot-only) — thermal driver DONE + two-variant build infra
+
+**Committed + HW-validated tonight (card-out netboot):**
+- **`rpi4-thermal` driver (#44 productionized)** — new userspace driver
+  `sensors/rpi4-thermal/` exposing `/dev/thermal` (SoC temp, milli-C) and
+  `/dev/throttled` (under-voltage/throttle bitfield) via the VideoCore property
+  mailbox. Validated on HW: self-logs `T=35986 mC max=85000 mC throttle=0x0` at
+  init (matches diag-udp 'c' = 36473 mC); boot healthy. Mailbox protocol + cache
+  discipline carried over verbatim from the proven diag-udp scout. Telemetry
+  only — firmware owns the trip. (devices `97e38f0`, project `27f3913`)
+- **Two-variant build infra** — `rebuild-rpi4b-fast.sh --variant netboot|sd`
+  selects the boot config via `RPI4B_VARIANT`: `netboot` (default) = card-out-safe
+  probe-only SD; `sd` = ext2-root mount (#120). (coord `9281541`, project `27f3913`)
+- Manifest: `manifests/2026-06-04-thermal-driver-rpi4.md`.
+
+**Kernel changes deliberately deferred to an attended session** (not safe to do
+unattended over netboot): `_hal_systemReset` reboot/poweroff (#43 productionize)
+and the kernel-internal mailbox primitive — a hang at `_hal_init` or a wrong-
+partition park needs a physical power-cycle. diag-udp 'r'/'h' already covers the
+operational reboot need. The diag-udp 'c' thermal probe stays in place for now;
+remove per the diag-cleanup policy once redundant.
+
+**DEFERRED to the morning SD session (uncommitted, needs the card):** the rc.psh
+standard-init conversion below (#120/#118). Pi is netboot-only overnight.
+
+---
+
+## Previous: 2026-06-04 — IN FLIGHT: rc.psh standard-init conversion (#120/#118), first boot pending
+
+**rc.psh conversion (UNCOMMITTED, pending first-boot validation):** converting rpi4b
+to the standard `psh -i /etc/rc.psh` model with the SD ext2 partition as `/`.
+Changed (NOT yet committed — validate boot first):
+- `_projects/aarch64a72-generic-rpi4b/rootfs-overlay/etc/rc.psh` (NEW) — minimal
+  staged init: `W bind devfs /dev` → `W dummyfs -m /tmp` → `X posixsrv` →
+  `T /dev/console` → `X psh`. usb + lwip + busybox DEFERRED to iteration 2.
+- `phoenix-rtos-utils/psh/pshapp/pshapp.c` `psh_runscript()` — added bounded
+  fopen-retry (50×100ms) so `psh -i` waits for the SD root mount (mirrors bind/
+  ttyopen retries; upstreamable).
+- `_projects/.../user.plo.yaml` — removed dummyfs-root + the individually-launched
+  servers; plo now launches only dummyfs(devfs) + pl011-tty + `bcm2711-emmc;-r;
+  /dev/mmcblk0p2:ext2` + `psh;-i;/etc/rc.psh`. ext2 is the sole `/`.
+- Card WRITTEN to /dev/sda (sda1 FAT boot + sda2 ext2 root); 2-part image
+  `rpi4b-sd-2part.img`. Key fact verified: `storage_oidResolve` resolves via the
+  devfs port (`lookup("devfs/mmcblk0p2")`), so the root mount does NOT need /dev
+  bound first. Build gap noted: rebuild-rpi4b-fast.sh scopes omit the `fs` stage,
+  so the overlay was staged manually (`cp -a rootfs-overlay/. _fs/root`); fix the
+  wrapper to run `fs` when overlays change.
+- **NEXT:** insert card → SD-boot capture → confirm ext2 mounts as `/`, psh finds
+  /etc/rc.psh, exec-from-ext2 works, psh prompt. Then iteration 2: add busybox
+  (--with-ports) + usb + lwip back into rc.psh. Then commit + manifest.
+
+---
+
+## Previous: 2026-06-04 (overnight) — SD #119 done + no-card-safe; rootfs ext2 image built; USB MOUSE FIXED (#126); morning = ext2-root mount test
 
 **Overnight 2026-06-03→04 (Pi left card-out, netboot used for experiments):**
 
