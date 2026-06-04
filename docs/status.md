@@ -20,6 +20,11 @@
   verify (`fb mmap rw verified`). De-risks a `/dev/fb0` driver to two attended
   decisions (display ownership/fbcon coexistence + the no-fbdev device ABI),
   written up in `docs/notes/2026-06-05-fb0-attended-decisions.md`.
+- **`rpi4-hwrng` driver** (devices `daecd1a`, project `b16cacb`) — new userspace
+  driver for the BCM2711 RNG200 (`brcm,bcm2711-rng200` @ 0xfe104000) exposing
+  `/dev/hwrng` (hardware entropy stream). HW-validated: self-logs two non-zero,
+  differing samples (`0x836041fe 0xd8adda4b`) + `registered /dev/hwrng`; boot
+  healthy. FIFO poll is spin-bounded so a read can't hang the boot.
 
 **Kernel changes deliberately deferred to an attended session** (not safe to do
 unattended over netboot): `_hal_systemReset` reboot/poweroff (#43 productionize)
