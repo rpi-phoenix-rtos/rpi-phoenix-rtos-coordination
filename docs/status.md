@@ -38,12 +38,16 @@
   (fwrelease) on a FRESH PSU-on boot: fw still doesn't execute (HT_AVAIL never,
   SOCRAM unchanged post-release). Because a full PSU power state still fails, the
   "WL_REG_ON can't reset / only PSU-drop recovers" HW hypothesis is **weakened** →
-  points to a **software** cause. Strongest lead: the NVRAM-trailer region readback
-  at the top of SOCRAM **fails (rc=-4)** with trailer-token = zeros — the fw
-  bootloader finds NVRAM via a length/magic token at RAM-end, so a misplaced token
-  or a wrong tail SBADDR window would stop fw from starting. Next (software): fix
-  the tail readback window / verify NVRAM trailer format vs brcmfmac. See #91 +
-  `artifacts/diag-udp/2026-06-04-032229-wifi-fwrel-G-probe.txt`.
+  points to a **software** cause. fw never executes (SOCRAM unchanged post-release,
+  HT_AVAIL never set) though the reset vector landed at addr 0 and CR4 IoCtrl went
+  0x21→0x01. NVRAM was first suspected but **read-only analysis cleared it**: the
+  token (`af 01 50 fe` = `0xfe5001af` → len 431, `~len` 0xfe50) is a valid Broadcom
+  length-magic placed at RAM-top `0x237FFC` — correct. The `SOCRAM-tail rc=-4` is a
+  diag-readback artifact (16-byte read vs 64-byte writes; F1 block-size mismatch),
+  **not** an on-chip problem — a red herring. Next (software): diff the CR4
+  activation sequence (resetcore toggle, diag-udp.c:4652-4683) against Linux
+  brcmfmac `brcmf_chip_cr4_set_active()` — reset-vector register, halt/unhalt order,
+  AI-wrapper RMW masks. See #91 + `artifacts/diag-udp/2026-06-04-032229-wifi-fwrel-G-probe.txt`.
 - **busybox builds + is now IN the ext2 rootfs image (#118 checkpoint).** `--with-ports`
   compiles busybox 1.27.2 for aarch64 (399 KB → `_fs/root/bin/busybox`). Found that
   busybox is NOT in `loader.disk` (plo's RAM image bundles only syspage-listed
