@@ -48,9 +48,10 @@ One row per peripheral/subsystem. For narrative gap analysis see
 
 - Two build variants: `rebuild-rpi4b-fast.sh --variant netboot|sd` (2026-06-05).
 - Netboot loop: `test-cycle-netboot.sh` (UART + HDMI snapshots + diag-udp `--probe`).
-- Network observability: diag-udp responder on :9999 — commands include `c` (clocks+thermal),
-  `r`/`h` (reboot/halt), `g` (GPIO), `V` (framebuffer rw probe), `R` (device-read smoke test),
-  `D` (devnodes), plus the WiFi/SDIO bring-up probes.
+- Network observability: diag-udp responder on :9999 — full command + `/dev`-node
+  reference in **[docs/diag-udp-reference.md](diag-udp-reference.md)** (`c` clocks+thermal,
+  `r`/`h` reboot/halt, `g` GPIO, `V` framebuffer probe, `R` device-read smoke test,
+  `D` devnodes, plus the WiFi/SDIO bring-up set).
 - Deterministic rollback: `snapshot-/restore-integration-state.sh` + `manifests/`.
 
 ## What "fully supported" still needs (priority order)
