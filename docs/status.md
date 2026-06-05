@@ -2,6 +2,31 @@
 
 > Per-peripheral state at a glance: **[docs/pi4-hardware-support-matrix.md](pi4-hardware-support-matrix.md)**.
 
+## Current Status: 2026-06-05 (attended) — #120 SD ext2-root: resolve fixed, now multi-block CMD18 read bug
+
+Two layers peeled on SD-boot (`test-cycle-netboot.sh --sd-boot`, sd variant):
+1. **RESOLVED + COMMITTED** (devices `5c21e2c`): `-r /dev/mmcblk0p2:ext2` device
+   resolve returned `-2`. Root cause: `storage_oidResolve` synthesized
+   `"devfs/<name>"` (correct only on the zynq namespace where devfs is root); on
+   Pi4 root is dummyfs-root + devfs bound at /dev, so the literal `/dev/...` path
+   is what resolves. Fixed: resolve literal-first, devfs-prefix fallback, bounded
+   retry. HW-validated: `resolve ... literal=0`, 0 retries (structural, not a race).
+2. **OPEN — multi-block CMD18 read bug:** with resolve fixed, the ext2 *mount*
+   fails `-5 (EIO)`. The ext2 image is valid (magic 0xEF53, fsck-clean). Root
+   cause hypothesis (strong): the only validated SD read is the boot-time MBR read
+   = **lba 0, 1 block → CMD17**. The ext2 mount reads 1024 B = **2 blocks → CMD18
+   (READ_MULTIPLE_BLOCK)**; the multi-block path shows no CMD12/block-count setup
+   and is unproven → returns EIO. **Staged (UNCOMMITTED, built into the ready
+   image, NOT yet flashed):** a single-block sidestep in `sdcard_readCb` that
+   loops CMD17 per block (forces the validated path). The proper CMD18 multi-block
+   fix is deferred tech debt (real data-path bug; single-block is slow).
+
+**Hardware loop note:** card is physically IN the Pi (host reader `/dev/sda`
+empty) and won't be swapped out for hours, so I can re-boot the current flashed
+image but cannot deploy a new one until the next swap. The fixed+sidestep 2-part
+image (`.buildroot/_boot/aarch64a72-generic-rpi4b/rpi4b-sd-2part.img`) is built
+and ready to `dd` to `/dev/sda` the instant the card returns to the host.
+
 ## Current Status: 2026-06-05 (overnight, netboot-only) — thermal driver DONE + two-variant build infra
 
 **Committed + HW-validated tonight (card-out netboot):**
