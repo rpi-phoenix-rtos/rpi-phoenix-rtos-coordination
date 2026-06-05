@@ -39,6 +39,11 @@
   Happy path unchanged; re-validated via diag-udp `R`. (Adding more raw mailbox
   clients — e.g. a sysinfo node — was deliberately *not* done; the real fix is a
   single mailbox-owning server / the kernel-internal primitive.)
+- **3-boot stability sample** of tonight's drivers (netboot, existing image):
+  3/3 boots clean — `rpi4-thermal` + `rpi4-hwrng` registered every boot, read
+  paths sane each time (thermal tracked real SoC warming 35012→39396→42318 mC;
+  hwrng bytes differed every boot), 0 faults, full boot health (psh + USB enum +
+  genet). Closes the "validated once" caveat for the new mailbox/MMIO drivers.
 
 **Kernel changes deliberately deferred to an attended session** (not safe to do
 unattended over netboot): `_hal_systemReset` reboot/poweroff (#43 productionize)
