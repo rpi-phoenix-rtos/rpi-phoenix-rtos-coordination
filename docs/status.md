@@ -25,6 +25,11 @@
   `/dev/hwrng` (hardware entropy stream). HW-validated: self-logs two non-zero,
   differing samples (`0x836041fe 0xd8adda4b`) + `registered /dev/hwrng`; boot
   healthy. FIFO poll is spin-bounded so a read can't hang the boot.
+- **Device read-paths validated** (lwip `0fcfb74`) — diag-udp `R` smoke test
+  opens+reads the new nodes from a separate process: `/dev/thermal "34525"`,
+  `/dev/throttled "0x00000000"`, `/dev/hwrng 2cc1f9de789ed092`. Confirms the
+  thermal/hwrng `mtRead` msg-loops + devfs resolution work cross-process (no
+  #123-style "registers but unopenable" bug).
 
 **Kernel changes deliberately deferred to an attended session** (not safe to do
 unattended over netboot): `_hal_systemReset` reboot/poweroff (#43 productionize)
