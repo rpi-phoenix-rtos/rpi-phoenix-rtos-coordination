@@ -1,5 +1,7 @@
 # Phoenix-RTOS Raspberry Pi 4 Port Status
 
+> Per-peripheral state at a glance: **[docs/pi4-hardware-support-matrix.md](pi4-hardware-support-matrix.md)**.
+
 ## Current Status: 2026-06-05 (overnight, netboot-only) — thermal driver DONE + two-variant build infra
 
 **Committed + HW-validated tonight (card-out netboot):**
