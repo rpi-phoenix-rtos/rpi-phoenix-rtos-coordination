@@ -32,6 +32,13 @@
   `/dev/throttled "0x00000000"`, `/dev/hwrng 2cc1f9de789ed092`. Confirms the
   thermal/hwrng `mtRead` msg-loops + devfs resolution work cross-process (no
   #123-style "registers but unopenable" bug).
+- **`rpi4-thermal` mailbox hardening** (devices `b511550`) — bounded the mailbox
+  wait loops (the VideoCore mailbox is shared with diag-udp and has no
+  cross-process lock; a raced/lost response previously hung the read forever)
+  and made the read return `-EIO` on failure instead of formatting the sentinel.
+  Happy path unchanged; re-validated via diag-udp `R`. (Adding more raw mailbox
+  clients — e.g. a sysinfo node — was deliberately *not* done; the real fix is a
+  single mailbox-owning server / the kernel-internal primitive.)
 
 **Kernel changes deliberately deferred to an attended session** (not safe to do
 unattended over netboot): `_hal_systemReset` reboot/poweroff (#43 productionize)
