@@ -1,5 +1,52 @@
 # Current Implementation Step
 
+## Active step (2026-06-06): #120 SD ext2-root — id-direct mount fix BUILT + FLASHED, awaiting HW validation
+
+**Root cause found (follows the user's "don't reinvent the wheel — copy zynq/x86"
+directive).** The `bcm2711-emmc -r /dev/mmcblk0p2:ext2` root mount was failing
+`cannot resolve ... -2` in the no-dummyfs-root (true-ext2-root) config. The driver
+was recovering the root partition's storage id via a namespace `lookup()` of the
+`/dev/mmcblk0p2` path (`storage_oidResolve`), which cannot resolve here: the ext2
+root mounts BEFORE `/` exists and before devfs is bound at `/dev`. **zynq-flash and
+pc-ata never do this** — they mount root from the id `storage_add()`/`flash_partAdd()`
+already returned. bcm2711-emmc was the lone outlier doing the namespace round-trip.
+
+**Fix (uncommitted, in working tree; built; flashed):**
+- `sdstorage_dev.c/.h`: `sdcard_common` gains `rootDev/rootFound/rootStorageId`.
+  New `sdstorage_setRootDev()` (called from `main` before presence detection) and
+  `sdstorage_getRootStorageId()`. `sdstorage_createDeviceFile()` records the storage
+  id (`GET_STORAGE_ID(oid->id)`) when the created block-device path `strcmp`-matches
+  `rootDev`. Removed the old create-time `lookup` diagnostic block.
+- `sdstorage_srv.c`: deleted `storage_oidResolve`; `sdstorage_mountRootFs` now polls
+  `sdstorage_getRootStorageId()` (≤5 s for the async-presence edge), mounts by id,
+  `portRegister("/")`, and logs `sdstorage_srv: mounted ... as / ... portRegister=N`.
+- (pre-existing staged: `psh/pshapp/pshapp.c` rc.psh open-retry; single-block CMD24
+  writeCb sidestep; `user.plo.yaml` sd-variant reorder. dummyfs probe reverted = clean.)
+
+**Built + flashed (2026-06-06):** `rebuild-rpi4b-fast.sh --scope core --variant sd`
++ `build-rpi4b-rootfs-ext2.sh` → `rpi4b-sd-2part.img` (64M FAT boot w/ fresh loader +
+256M ext2 root). Verified new strings in loader.disk; old `cannot resolve` gone from
+the driver. **`dd`'d to `/dev/sda`** (card in host); readback confirms 2-part layout +
+ext2 magic `0xEF53` on p2. Card has `/bin` applets + `/etc/system.dtb`.
+
+**BLOCKED on HW validation — needs the user (autonomous loop can't move the card).**
+Next: move the SD card from host → Pi, then:
+`./scripts/test-cycle-netboot.sh --sd-boot --label sd-idmount --capture-secs 180` (Bash
+timeout ≥ 260000). **Success signals:** (1) UART shows
+`sdstorage_srv: mounted /dev/mmcblk0p2 (ext2, id=N) as / after M tr*, portRegister=0`;
+(2) `/`-dependent services come up (mkdir /dev, bind devfs /dev, posixsrv, psh prompt);
+(3) at psh, `ls /bin` lists the applets (proves the live ext2 root). If all hold →
+commit the devices change (+ snapshot a manifest), close the resolve layer of #120.
+
+**NOT on the critical path:** rc.psh auto-init is incomplete — `rootfs-overlay/etc/rc.psh`
+did NOT propagate into `_fs/root` (card `/etc` has only `system.dtb`), and `user.plo.yaml`
+still launches plain `-x psh`. Wire that up in an attended follow-up after the mount is proven.
+
+Memory: [[project_pi4_sdroot_120]]. See also [[feedback_sd_test_requires_sdboot]],
+[[project_pi4_sdcard_emmc2_119]].
+
+---
+
 ## Active step (2026-06-02): P1/P2/P3 boot observability + speed fixes — DONE, validated, ready to continue
 
 User directive: solve points 1–3 from the 10-boot consistency study, then repeat
