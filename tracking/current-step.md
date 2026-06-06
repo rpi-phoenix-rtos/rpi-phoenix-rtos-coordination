@@ -1,6 +1,40 @@
 # Current Implementation Step
 
-## Active step (2026-06-06): #120 SD ext2-root — id-direct mount fix BUILT + FLASHED, awaiting HW validation
+## Active step (2026-06-06 overnight): upstream-readiness code review + conservative cleanup
+
+User directive: a grand, deep review of ALL RPi4 bring-up changes vs upstream
+`origin/master`, to prepare for presentation to the Phoenix-RTOS maintainers (NOT
+pushing yet); fix/simplify wherever safe. SD card stays in the host so netboot runs
+unattended.
+
+**DONE + committed:**
+- **Review:** 17-area parallel audit (one findings file each) + `_SYNTHESIS.md` with
+  cross-cutting themes (T1 duplication, T2 un-marked diagnostics, T3 inverted comments,
+  T4 marker hygiene, T5 license/style) and a triaged APPLY-SAFE vs NEEDS-HW plan. Lives in
+  `docs/review/2026-06-06-rpi4-upstream-readiness/`. ~150 findings; bugs B1–B14 catalogued.
+- **Applied (3 waves, each build `--scope core` + netboot boot-to-psh smoke, 0 faults):**
+  W1 text-only comment/marker/header fixes (6 repos); W2a diag-udp.c removal (−5596,
+  lwip `f0973b5`, kept the mbox_tryfetch guard); W2b dead/diagnostic-code removal (5 repos,
+  ~−441). See `_SYNTHESIS.md` "APPLIED" for the commit SHAs. Net ~6.3k lines removed; boot
+  baseline unchanged.
+
+**Remaining (in `_SYNTHESIS.md` "STILL TODO"):** APPLY-SAFE remainder (reindent, extern→
+include, dead _targets yaml, careful print-only strips); and the NEEDS-HW set — bugs B1–B14
+(B1 pcie-server BAR2-size + B4 main.c SMP-gate-breaks-other-targets are the headline real
+bugs), the T1 de-duplication refactors, the a53 GIC-base fix. None of the NEEDS-HW items were
+applied (can't HW-validate overnight). Memory: [[project_rpi4_upstream_review]].
+
+---
+
+## Active step (2026-06-06): #120 SD ext2-root — id-direct mount fix VALIDATED + COMMITTED
+
+UPDATE: HW-validated + committed (devices `ebac8e4`, project `cb4b216`). SD-boot mounts the
+ext2 partition as `/` (portRegister=0, 0 retries); `ls` works over the live root; USB
+kbd+mouse enumerate. OPEN: executing a binary from /bin fails with an SD Data-CRC/End-Bit
+error under read volume (data-path reliability — clock/signal or PIO completion gating; needs
+a flash-shuttle iteration). Original entry below.
+
+### (original) #120 SD ext2-root — id-direct mount fix BUILT + FLASHED, awaiting HW validation
 
 **Root cause found (follows the user's "don't reinvent the wheel — copy zynq/x86"
 directive).** The `bcm2711-emmc -r /dev/mmcblk0p2:ext2` root mount was failing

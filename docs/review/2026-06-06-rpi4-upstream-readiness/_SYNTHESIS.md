@@ -141,6 +141,42 @@ own build+smoke — do it last among the safe set so a smoke failure is unambigu
   root-caused; removing needs a soak.
 - a53 QEMU/rpi4 targets: decide keep-vs-drop before presentation.
 
+## APPLIED so far (2026-06-06 overnight — each wave build `--scope core` + netboot boot-to-psh smoke, 0 faults)
+
+- **Wave 1 — text-only** (comments / TODO-TD markers / license+copyright headers), committed:
+  kernel `dec72c0e` (T3 inverted cache+syspage-NC comments, config.h NUM_CPUS, _memset TD-20,
+  proc/name+syspage markers), devices `c4433e0` (pcie lab-journal→invariants, stale copyright,
+  pcie-server TD-USB/TD-15 markers, pl011 cache rationale, sdcard #119/#120→TODO), lwip `0b9881b`
+  (bcm-genet SPDX→%LICENSE%, stale TD-Eth-DHCP), plo `3a2407a` (hal.c history comments, _init.S
+  EL1/EL2 fix, TD-16-1 note), utils `505c8bb` (psh TD-14-psh-retry marker), filesystems `5a88f89`
+  (copyright year), coord `+TD-20` doc.
+- **Wave 2a — diag-udp removal** (T2 headline, −5596 lines): lwip `f0973b5` — deleted
+  `port/diag-udp.c` + the `main.c` hook + diagnostic `mbox.c` bits; KEPT the `mbox_tryfetch`
+  guard (NEEDS-HW); `.gitignore` reverted.
+- **Wave 2b — dead/ungated-diagnostic code** (grep-verified callerless), committed:
+  kernel `08a09d28` (dead _init.S UART helpers + .asciz tags + "K" marker + the B6 raw-VA UART
+  probes in usrv.c/log.c — kept the klog mirror), filesystems `0fe0506` (dummyfs TD-14 trace),
+  usb `9a05bd9` (hub.c scanAll/hub_notifyScan dead experiment + hcd.c debug prints), plo `68172c1`
+  (hal_cpuJump/syspageSet markers + dead clkrate tags), devices `9781fbd` (xhci selftest,
+  USB_HCD_PCIE_DRIVE_ONLY dead block, usbkbd_diag).
+
+Net so far: ~6.3k lines of diagnostic/dead code + misleading comments removed; the validated
+boot baseline (kernel→fbcon→USB kbd+mouse→lwip/DHCP→psh) is unchanged across every wave.
+
+## STILL TODO (for the user / later iterations)
+
+- **APPLY-SAFE remainder** (mechanical, churny — safe to continue): 8-space→tab reindent of the
+  added `_init.S` blocks; `extern void debug` inline redeclarations → `#include <sys/debug.h>` in
+  the pcie files; dead `_targets/*.plo.yaml` removal + the Pi-incompatible a72 preinit map;
+  the print-only strips where a register read is shared (xhci/bcm2711-pcie/pcie-server — do as a
+  careful read-preserving pass); name.c dead trace stubs.
+- **NEEDS-HW — documented, NOT applied** (need the SD card / a real regression test before commit):
+  all bugs **B1–B14** above, the **T1 de-duplication** refactors (shared SDHCI lib / single PCIe
+  impl / shared mbox helper), the `mbox_tryfetch` guard removal, and the a53 GIC-base fix (B10,
+  pending a decision on whether a53-rpi4b is a kept target). B1 (pcie-server BAR2-size, fixed in
+  the sibling already) and B4 (main.c SMP gate breaking other targets' link) are the highest-value
+  real bugs to fix first when HW validation is available.
+
 ## Per-area findings index
 `devices-sdcard.md`, `devices-sdstorage.md`, `devices-xhci.md`, `devices-pcie-bcm2711.md`,
 `devices-pcie-server.md`, `devices-tty-pl011.md`, `devices-tty-usbhid.md`, `devices-misc.md`,
