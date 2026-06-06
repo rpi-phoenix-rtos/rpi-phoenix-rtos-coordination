@@ -42,7 +42,10 @@ intermittent corruption of a driver/struct pointer in the host stack.
 - **Do not blind-fix overnight:** USB-daemon internals + intermittent (≈1/5) → a fix
   cannot be validated in a few boots ([[feedback_unattended_scoping]]). Documented for
   attended root-cause.
-- **Characterize the rate** via the ongoing enum bench (B1-B4 clean, B5 = aborts).
+- **Rate (measured):** **1 in 10** boots on current HEAD (enum bench B1-B7 + the 3-boot
+  stability bench: only B5 showed the abort). USB enumeration itself was **10/10 reliable**
+  (every boot created `/dev/kbd0` + `/dev/mouse0`) — so the FIX-14/#78 enum large-N gate is
+  substantially satisfied; this abort is a separate, rare HID-attach-path corruption.
 - **Audit the HID-attach callback path** for the corruptible pointer: how the in-daemon
   usbkbd driver's `usb_driver_t`/ops are dispatched during attach, the device-name/symlink
   creation (`usb-VID-PID-ifNN -> /dev/kbdN`), and `usb_drvPipeOpen` (usb.c:558). Look for
