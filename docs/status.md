@@ -33,6 +33,11 @@ is `#ifdef`'d out on every built target — a rollback vestige). Plus the T1
 de-duplication refactors (shared SDHCI lib / single PCIe impl / shared mbox helper). See
 `_SYNTHESIS.md` "STILL TODO". Memory: `project_rpi4_upstream_review`.
 
+**Stability validation of the cleaned HEAD (3-boot netboot bench, `stability-T1..3`):**
+3/3 reach psh; 3/3 genet link up + DHCP/IP; 3/3 USB enumerate **both** kbd0 and the
+mouse; **0 faults** across all three. The ~9 cleanup commits introduced no regression and
+USB kbd+mouse enumeration is reliable on the final HEAD.
+
 ## Current Status: 2026-06-05 (attended) — #120 SD ext2-root: resolve fixed, now multi-block CMD18 read bug
 
 Two layers peeled on SD-boot (`test-cycle-netboot.sh --sd-boot`, sd variant):
