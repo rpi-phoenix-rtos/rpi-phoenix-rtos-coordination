@@ -7,7 +7,7 @@
 #
 # The generated files are gitignored:
 #   - the firmware itself is under Cypress EULA (not BSD), see
-#     docs/wifi-firmware-blobs.md
+#     docs/inprogress/wifi-firmware-blobs.md
 #   - regenerating is fast and deterministic from the staged blob
 #
 # Idempotent: skips work if the .c is newer than the .bin.

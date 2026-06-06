@@ -85,7 +85,7 @@ Memory: [[project_pi4_sdroot_120]]. See also [[feedback_sd_test_requires_sdboot]
 
 User directive: solve points 1–3 from the 10-boot consistency study, then repeat
 the study and re-analyze. All three landed and were validated by a fresh 10-boot
-run (`fix01–10`). See `docs/notes/2026-06-02-p1p2p3-postfix-10boot.md`.
+run (`fix01–10`). See `docs/done/2026-06-02-p1p2p3-postfix-10boot.md`.
 
 - **P1 (done):** deleted the USB-FIX-18 PCIe pre-init bridge-state dump in
   `usb/xhci/bcm2711-pcie.c`. Boot span 166 s → 66–74 s.
@@ -117,7 +117,7 @@ its local `master` (tracking canonical `origin` = phoenix-rtos) via
 upstream-merged image rebuilt + booted clean (`a830f9e1`, `consolidated-validate`:
 psh, klog on HDMI, networking, USB enum, 0 faults). Going forward, pull upstream
 frequently with `scripts/git-pull-upstream-all.sh` — see
-`docs/upstream-tracking.md`. Manifest:
+`docs/knowledge/upstream-tracking.md`. Manifest:
 `manifests/2026-06-02-consolidated-master-upstream-tracked.md`. NOT pushed.
 
 ---
@@ -138,13 +138,13 @@ Two tracks this session:
    and TD-10 stays PENDING with that abort as the tracked blocker. The
    abort is also a **major mechanistic lead for the USB wall** (external
    abort on a bridge/controller access → "events never post"). See memory
-   `pi4-serror-pcie-source` and `docs/notes/2026-05-29-usb-reanalysis.md`
+   `pi4-serror-pcie-source` and `docs/done/2026-05-29-usb-reanalysis.md`
    (NEW LEAD section). Verified: production boot (USB on, SError masked,
    handler present) reaches networking with 0 faults — no regression.
 
 2. **USB re-analysis (three agents) retracts the "silicon flakiness"
-   conclusion.** Full detail in `docs/notes/2026-05-29-usb-reanalysis.md`;
-   docs/status.md 2026-05-29 entry summarizes. The USB failure is most
+   conclusion.** Full detail in `docs/done/2026-05-29-usb-reanalysis.md`;
+   docs/inprogress/status.md 2026-05-29 entry summarizes. The USB failure is most
    likely a **software bug**, not silicon. Corrected facts that supersede
    the 2026-05-28 framing below:
    - **Two distinct problems**, previously merged: the PoC fails
@@ -197,7 +197,7 @@ Authoritative current state:
   devices `5b5c70b`/`30f91db`/`600081d`, usb `9aa96a2`/`29f8cea`.
 - Boot still reaches `(psh)%` reliably. SMP / GENET / DHCP / network
   remain fully working.
-- See docs/status.md 2026-05-28 entry; memory
+- See docs/inprogress/status.md 2026-05-28 entry; memory
   [[pi4-xhci-crcr-stale-after-hcrst]] for the resolved root cause and
   [[usb-dma-write-loss]] (rig-is-flaky correction) for the open class.
 
@@ -209,7 +209,7 @@ preference):
   netif gets DHCP'd outside our code today (static IP fallback works
   for testing); making the DHCP client actually complete a full lease
   would close TD-Eth-DHCP and is well-scoped lwip-port internals work.
-- **SMP soak test**: per docs/status.md, "Remaining SMP work is
+- **SMP soak test**: per docs/inprogress/status.md, "Remaining SMP work is
   hardening/soak, not a fix". A long-running CPU-bound workload across
   4 cores would catch any residual races. The `cpuload` test binary
   idea from the 2026-05-25 entry is still good.
@@ -225,7 +225,7 @@ preference):
 Code-quality wins delivered during the late-iteration session
 (no committed functional change but documented + clean code):
 
-- `docs/known-limits.md` — consolidates the silicon-bounded walls
+- `docs/knowledge/known-limits.md` — consolidates the silicon-bounded walls
   (VL805 + 43455) with Linux/forum citations
 - `scripts/test-cycle-bench.sh` — multi-trial pass-rate harness
 - `scripts/uart-summary.sh` — net-stage checks (lwip / link / IP)
@@ -247,12 +247,12 @@ Both major directive items — SMP and high-performance Ethernet — are
 now in a known-good state. Open candidates for the next initiative:
 
 - **WiFi (#36)**: BCM43455 SDIO bring-up. Large but now unblocked.
-  Plan in `docs/wifi-bringup-plan.md`: 6–8 iterations. Tier 0 + 1a/1b
+  Plan in `docs/inprogress/wifi-bringup-plan.md`: 6–8 iterations. Tier 0 + 1a/1b
   scout work done (controller is SDHCI @ 0xfe300000, accessible from
   userspace, fully clock/power-initialized at boot). Tier 1c is the
   next concrete step: GPFSEL3 → ALT3 + WL_REG_ON via mailbox + CMD5.
 - **Bluetooth (BCM43455 BT side)**: deferred until WiFi completes.
-  Plan in `docs/bluetooth-bringup-plan.md`. Shares two prerequisites
+  Plan in `docs/todo/bluetooth-bringup-plan.md`. Shares two prerequisites
   with WiFi (`expgpio` mailbox helper, firmware-blob staging path), so
   WiFi unblocks BT for free. Pi 4 BT is a standard UART HCI controller
   on PL011 UART0 — much simpler bring-up than WiFi SDIO. 4-6
@@ -403,7 +403,7 @@ would queue work on CPUs that are stuck in `wfi/b 1b`.
    on its outbound BAR0 reads is a CPU-side TLB/pmap state bug in
    `sources/phoenix-rtos-kernel/hal/aarch64/pmap.c` triggered by
    multiple MAP_DEVICE|MAP_PHYSMEM mappings of the same PA. See
-   `docs/notes/2026-05-21-pcie-bridge-ageing-codex.md`.
+   `docs/done/2026-05-21-pcie-bridge-ageing-codex.md`.
 
 2. **SMP Phase C → run primary scheduler on a second CPU.**
    Secondaries already do per-CPU VBAR + GIC + cpuInit in
@@ -420,7 +420,7 @@ would queue work on CPUs that are stuck in `wfi/b 1b`.
 3. **EEPROM operator step (manual)**: flash
    `artifacts/eeprom-netboot/eeprom-prep-sd.img` to recover the ~30 s
    firmware probe time per cycle. Already documented in §9.1 of
-   `docs/manual-operator-instructions.md`.
+   `docs/knowledge/manual-operator-instructions.md`.
 
 ## Other near-term work
 
@@ -459,7 +459,7 @@ The 2026-05-17 → 2026-05-19 baselines have shipped:
 
 The project moved from a macOS+Lima dev host to a dedicated
 Ubuntu 24.04+ x86-64 host. The build/test/analyze pipeline has been
-ported across commits `8d352d1` … `b845a39` (see `docs/status.md`
+ported across commits `8d352d1` … `b845a39` (see `docs/inprogress/status.md`
 2026-05-20 section for the file-by-file rundown).
 
 This session (2026-05-20) finished the last Linux-portability bits:
@@ -489,18 +489,18 @@ Validate the full netboot cycle on real Pi 4 from this Linux host:
 
 ### After Linux host is validated
 
-The open work items from `docs/linux-host-bootstrap.md` "Where the
+The open work items from `docs/knowledge/linux-host-bootstrap.md` "Where the
 current state stands" become the next steps in priority order:
 
 1. **USB keyboard interactive verification** (xhci HC + usbkbd
    already in `aarch64a72-generic-rpi4b` build target). Runbook:
-   `docs/interactive-verification-runbook.md`.
+   `docs/knowledge/interactive-verification-runbook.md`.
 2. **fbcon prompt-indent rendering glitch** — live
    `pl011_fbcon_putc` instrumentation.
 3. **SMP cores 1-3** (TD-01) — cores wake from spin-table and park
    in WFE; needs active dispatch.
 4. **TD-cleanup sweep** — flip the actually-resolved TD-NN items in
-   `docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md` (TD-04-hack-2/3,
+   `docs/inprogress/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md` (TD-04-hack-2/3,
    TD-12, TD-16-cache-enable, TD-15 phase 5) to RESOLVED with their
    commit SHAs. Done partially this session; full sweep pending.
 
@@ -936,7 +936,7 @@ cache) invalidate that ARM cache ops don't reach — the leading
 hypothesis for the persistent stale-read pattern.
 
 **Full c3a–c3t attempt matrix + planned next strategies** are in
-[docs/research/2026-05-15-cache-enable-c-approach-design.md](../docs/research/2026-05-15-cache-enable-c-approach-design.md)
+[docs/done/2026-05-15-cache-enable-c-approach-design.md](../docs/done/2026-05-15-cache-enable-c-approach-design.md)
 (see "2026-05-15 night — C-3 second pass" section).
 
 2026-05-15 late update: c3u/c3v/c3w/c3z were tested on real Pi 4:
@@ -1040,7 +1040,7 @@ session once cache is either landed or definitively parked.
 ## Subordinate items
 
 * TD-01 … TD-16, TD-plo-dcache, TD-plo-icache, TD-15-mboxprobe,
-  TD-04 — see `docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md`. The
+  TD-04 — see `docs/inprogress/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md`. The
   cache-related TDs (TD-16, TD-plo-dcache, TD-plo-icache) remain
   open.
 * TD-04-hack-2 (asm probe stores in `_hal_init`) — REMOVED in

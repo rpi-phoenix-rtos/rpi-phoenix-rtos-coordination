@@ -18,7 +18,7 @@
 # is permitted under the Cypress firmware redistribution terms shipped
 # alongside the blobs (LICENSE files in firmware-nonfree). Phoenix-RTOS
 # itself is BSD-3-Clause; the blobs are NOT BSD — they remain under
-# their original Cypress EULA. See docs/wifi-firmware-blobs.md.
+# their original Cypress EULA. See docs/inprogress/wifi-firmware-blobs.md.
 #
 # Copyright 2026 Phoenix Systems
 # SPDX-License-Identifier: BSD-3-Clause

@@ -10,7 +10,7 @@
   include/arch/aarch64/generic/{generic.h, syspage.h}, hal/{cpu.h, timer.h},
   hal/aarch64/zynqmp/{Makefile, timer.c}.
 - **Referents read:** hal/aarch64/zynqmp/console.c, hal/aarch64/zynqmp/timer.c,
-  hal/armv8r/mps3an536/timer.c, hal/aarch64/_init.S, docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md.
+  hal/armv8r/mps3an536/timer.c, hal/aarch64/_init.S, docs/inprogress/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md.
 
 ---
 

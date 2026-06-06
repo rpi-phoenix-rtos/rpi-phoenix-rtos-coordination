@@ -71,7 +71,7 @@ upstream readiness. Method:
    wrong register constants/masks, race/locking, lifetime of `oid`/handles.
 4. Reconcile `TODO(TD-xx)` markers vs the diff: don't recommend naively deleting code
    with a valid marker, but DO surface (a) temporary/diagnostic code with NO marker, and
-   (b) any TD item the diff shows is already resolved. (`docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md`.)
+   (b) any TD item the diff shows is already resolved. (`docs/inprogress/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md`.)
 
 Per-finding format (one entry each):
 `path:line` · **CATEGORY** · sev=high|med|low · WHAT · WHY · REC: <concrete; sketch the

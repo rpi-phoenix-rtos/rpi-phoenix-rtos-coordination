@@ -80,7 +80,7 @@ copy of the `printf` two lines above it).
 ### 3. `pcie/server/pcie.c` (759, 776, 956, 1000) TODO markers · **COMMENT** · sev=med · APPLY-SAFE
 **WHAT:** The new code is tagged with `TODO`/marker strings `TD-USB` and
 `TD-15 Stage 4 phase 2`. `TD-USB` is **not a tracked debt ID** —
-`docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md` has no `TD-USB` entry. `TD-15`'s documented
+`docs/inprogress/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md` has no `TD-USB` entry. `TD-15`'s documented
 scope is "Pi 4 VideoCore VI memory hygiene + 4 GiB DRAM enablement" (doc line 1140), not
 PCIe BAR programming, so "TD-15 Stage 4 phase 2" misattributes this PCIe diagnostic code
 to an unrelated debt item.
@@ -89,8 +89,8 @@ marker** must be surfaced; bogus markers also defeat the `grep -n "TD-xx"` recon
 the project relies on for cleanup. They will read as noise to maintainers.
 **REC:** When the diagnostic code in finding #2 is removed, these markers go with it. Any
 genuinely-transitional logic that survives (VL805 mailbox/BAR hack, finding #6) should get
-a *real* tracked debt entry in `docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md` and a matching
-`TODO(TD-nn)`. **Referent:** `docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md` (TD-15 §, line 1140).
+a *real* tracked debt entry in `docs/inprogress/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md` and a matching
+`TODO(TD-nn)`. **Referent:** `docs/inprogress/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md` (TD-15 §, line 1140).
 
 ---
 

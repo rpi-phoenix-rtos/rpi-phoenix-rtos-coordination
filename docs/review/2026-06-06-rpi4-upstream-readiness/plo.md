@@ -129,7 +129,7 @@ do not blind-apply).
 **WHAT:** `tag_getclkrate = 0x30002u, /* TD-16-1: get_clock_rate */` and `tag_clkid_arm = 0x3u`
 enum members are declared but never used — the mailbox sequence in `video_framebufferInit` never
 issues a get_clock_rate tag.
-**WHY:** TD-16-1 is RESOLVED and was stripped elsewhere (per `docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md`
+**WHY:** TD-16-1 is RESOLVED and was stripped elsewhere (per `docs/inprogress/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md`
 line 1821: "probe served its purpose, stripped in plo `c988e6a`"). These two members are leftover.
 **REC:** Delete both enum members. **APPLY-SAFE** (dead declarations).
 

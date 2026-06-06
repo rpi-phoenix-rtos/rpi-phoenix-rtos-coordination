@@ -16,7 +16,7 @@
 
 **WHAT:** `PLO_GICD_BASE_ADDRESS 0x40041000` and `PLO_GICC_BASE_ADDRESS 0x40042000` do not match the Pi 4 GIC-400 registers at `0xff841000` / `0xff842000` (the correct values used by `_projects/aarch64a72-generic-rpi4b/board_config.h:14-15`).
 
-**WHY:** The `aarch64a53-generic-rpi4b` project targets the same Raspberry Pi 4 hardware. These addresses are sourced by PLO's generic GIC driver (`plo/hal/aarch64/generic/interrupts.c:200-201`) via `plo/hal/aarch64/generic/config.h:32-33`. With the wrong addresses, PLO programs a non-existent register page and fails to initialize interrupts. The project is not in CI (`ci-project.yml` has no `aarch64a53-generic-rpi4b` entry) but it is documented as an alternative boot path in `docs/manual-operator-instructions.md:324` and `docs/source-artifacts.md:331-333`.
+**WHY:** The `aarch64a53-generic-rpi4b` project targets the same Raspberry Pi 4 hardware. These addresses are sourced by PLO's generic GIC driver (`plo/hal/aarch64/generic/interrupts.c:200-201`) via `plo/hal/aarch64/generic/config.h:32-33`. With the wrong addresses, PLO programs a non-existent register page and fails to initialize interrupts. The project is not in CI (`ci-project.yml` has no `aarch64a53-generic-rpi4b` entry) but it is documented as an alternative boot path in `docs/knowledge/manual-operator-instructions.md:324` and `docs/knowledge/source-artifacts.md:331-333`.
 
 **REC:** Replace both values:
 ```c
@@ -156,7 +156,7 @@ Then use these names in the BIC/ORR lines. Drop the three old `_DISTANCE` / `DIS
 
 **WHAT:** `TODO(#126)` comment for `PL011_TTY_MOUSE_PATH "/dev/mouse"` says this is a "throwaway USB-mouse bring-up reader" to be removed once a real pointer consumer exists. The marker references a GitHub issue number (`#126`) rather than the project's `TD-xx` debt tracking convention.
 
-**WHY:** `docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md` uses `TD-xx` identifiers for all source-code markers; `#126` is an issue-tracker reference not visible from the source alone. This creates an inconsistency in how temporary code is tracked.
+**WHY:** `docs/inprogress/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md` uses `TD-xx` identifiers for all source-code markers; `#126` is an issue-tracker reference not visible from the source alone. This creates an inconsistency in how temporary code is tracked.
 
 **REC:** If the mouse path is genuinely deferred, assign a `TD-xx` ID in `TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md` and update the comment to `TODO(TD-xx)`. If the validation is complete and the path is no longer temporary, remove both the `#define` and the corresponding code in `pl011-tty.c`.
 
@@ -229,7 +229,7 @@ The three dead files are captured in finding PC-R-07.
 
 ### `_projects/aarch64a53-generic-rpi4b` — functional gap; maintained but underdocumented
 
-This project targets Pi 4 hardware with the A53 ABI. It is not in CI, but is documented in `docs/manual-operator-instructions.md:324` and `docs/source-artifacts.md:331-333` as an alternative boot path, and the `small-repos` review area (`docs/review/2026-06-06-rpi4-upstream-readiness/small-repos.md:283`) confirms "aarch64a53-generic scaffolding is not dead." It has no `nvm.yaml` (falls back to `_targets/aarch64a53/generic/nvm.yaml`) and no `preinit.plo.yaml` (falls back to `_targets/aarch64a53/generic/preinit.plo.yaml` — that file is active and correct). Beyond PC-B-01 (wrong GIC addresses), the project's purpose is not documented in-tree. For upstream, add a brief comment in `board_config.h` or `build.project` explaining the use case (e.g., AArch64 baseline without A72-specific errata/features; compatibility testing).
+This project targets Pi 4 hardware with the A53 ABI. It is not in CI, but is documented in `docs/knowledge/manual-operator-instructions.md:324` and `docs/knowledge/source-artifacts.md:331-333` as an alternative boot path, and the `small-repos` review area (`docs/review/2026-06-06-rpi4-upstream-readiness/small-repos.md:283`) confirms "aarch64a53-generic scaffolding is not dead." It has no `nvm.yaml` (falls back to `_targets/aarch64a53/generic/nvm.yaml`) and no `preinit.plo.yaml` (falls back to `_targets/aarch64a53/generic/preinit.plo.yaml` — that file is active and correct). Beyond PC-B-01 (wrong GIC addresses), the project's purpose is not documented in-tree. For upstream, add a brief comment in `board_config.h` or `build.project` explaining the use case (e.g., AArch64 baseline without A72-specific errata/features; compatibility testing).
 
 ### `_projects/aarch64a53-generic-qemu` — clean, minimal, appropriate for upstream
 

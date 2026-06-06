@@ -6,7 +6,7 @@
 # This is the "no-card" half of the SD-rootfs work: it produces the image
 # artifacts on the host. Booting from the ext2 root (the user.plo.yaml `-r
 # /dev/mmcblk0p2:ext2` flip + rc.psh conversion) is a separate, hardware-
-# validated step — see docs/notes/2026-06-03-sd-rootfs-plan.md.
+# validated step — see docs/done/2026-06-03-sd-rootfs-plan.md.
 #
 # The rootfs tree is whatever the project build already staged under
 # _fs/<target>/root (psh + applets + servers), plus the runtime mountpoints

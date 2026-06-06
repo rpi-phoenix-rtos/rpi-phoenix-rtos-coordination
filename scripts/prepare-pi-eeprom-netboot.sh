@@ -18,7 +18,7 @@
 #                        With BOOT_UART=1 the EEPROM pre-initialises PL011 with
 #                        its own clock setup; start4.elf then inherits a baud
 #                        divisor that doesn't match plo's expected 115200, and
-#                        UART output gets garbled. See docs/netboot-test-cycle.md.)
+#                        UART output gets garbled. See docs/knowledge/netboot-test-cycle.md.)
 #
 # Host OS dispatch:
 #   Darwin  : shells into the phoenix-dev Lima VM, runs the staging there,

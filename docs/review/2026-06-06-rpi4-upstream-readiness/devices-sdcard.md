@@ -123,7 +123,7 @@ scope to re-litigate.
 ### COMMENT-2 · `storage/bcm2711-emmc/sdcard.c:28-30`, `200`, `277`, `406`, `429`, `1026` · COMMENT/ROLLBACK · sev=low
 - **WHAT:** Markers use GitHub-issue style (`#119`, `#120`) and a bespoke
   `TODO(rpi4b-emmc)` tag rather than the project-mandated `TODO(TD-xx)` convention, and
-  none of these has a matching entry in `docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md`
+  none of these has a matching entry in `docs/inprogress/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md`
   (grep for `emmc`/`sdcard`/`PIO`/`SDMA`/`#119`/`#120` returns nothing).
 - **WHY:** CLAUDE.md / rubric instruction 4 require transitional code to carry a
   `TODO(TD-xx):` marker with a matching debt-doc entry so it can be tracked and removed.

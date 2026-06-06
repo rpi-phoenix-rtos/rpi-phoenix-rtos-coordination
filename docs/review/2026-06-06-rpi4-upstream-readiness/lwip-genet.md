@@ -95,7 +95,7 @@ assigned on first link-up to bypass a DHCP-start interaction (TODO(TD-Eth-DHCP))
 **WHY:** The code does the opposite — `genet_dhcpStartCb` calls `dhcp_start(netif)` and no
 static IP is assigned anywhere (grep for `10.42.0.99` / `netif_set_addr` / `IP4_ADDR` finds
 only comments). `TD-Eth-DHCP` is recorded **RESOLVED 2026-05-28 (lwip `7f0b495`)** in
-`docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md:1826`. The header is stale and misleading.
+`docs/inprogress/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md:1826`. The header is stale and misleading.
 **REC:** Delete the static-IP caveat and the `TODO(TD-Eth-DHCP)` marker from the file header;
 keep only the live `TODO(TD-Eth-LinkIRQ)` (that TD is legitimately PENDING, ibid:1829).
 **APPLY-SAFE** (comment-only).

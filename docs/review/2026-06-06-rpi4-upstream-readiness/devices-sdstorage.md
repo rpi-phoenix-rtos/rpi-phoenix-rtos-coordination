@@ -9,7 +9,7 @@
   - `storage/bcm2711-emmc/Makefile`
 - **Method:** these four files are whole-file copies of `storage/zynq7000-sdcard/{sdstorage_dev.c,sdstorage_dev.h,sdstorage_srv.c,Makefile}`. Because the area diff is "new file" against `origin/master`, I diffed each file against its `zynq7000-sdcard` original to isolate the genuine RPi4 delta, and reviewed **only the hunks that differ from the zynq baseline**. Inherited-from-zynq code (the malloc chains in `sdstorage_handleInsertion`, `calculateSizeWithSaturation`, the `oid` DEVTYPE bit-masking, the `min(len, SDCARD_MAX_TRANSFER)` clamp, `storage_read/write/sync` dispatch) is upstream code, not RPi4 contribution, and is **not flagged**.
 
-Referents used: `storage/zynq7000-sdcard/` (same filenames — the copy source), `storage/zynq-flash/zynq-flash.c` (root-mount-by-id pattern), `docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md` (debt-marker convention).
+Referents used: `storage/zynq7000-sdcard/` (same filenames — the copy source), `storage/zynq-flash/zynq-flash.c` (root-mount-by-id pattern), `docs/inprogress/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md` (debt-marker convention).
 
 ---
 
@@ -39,9 +39,9 @@ Referents used: `storage/zynq7000-sdcard/` (same filenames — the copy source),
 
 **WHAT:** The `sdcard_readCb`/`sdcard_writeCb` loops force single-block transfers as a workaround for unproven multi-block CMD18/CMD25, marked `TODO(#120)`. This is **load-bearing temporary code** (multi-block is still broken per project memory) — correctly NOT dead code, must NOT be deleted. But the marker form is the issue.
 
-**WHY:** Step-4 reconciliation: the project's debt convention (`docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md`, line 39) is `TODO(TD-NN): <hint>` linked to a `TD-NN` entry. This sidestep has **no `TD-NN` entry** and uses a bare GitHub-issue number `#120`. Confirmed `git grep "TODO(#"` on `origin/master` returns **zero** hits — upstream uses plain `/* TODO: ... */` (e.g. `zynq-flash.c:467 "/* TODO: add umount() support ... */"`). So `#120` is meaningful only to this project, not to a Phoenix maintainer, and it dodges the project's own debt-tracking.
+**WHY:** Step-4 reconciliation: the project's debt convention (`docs/inprogress/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md`, line 39) is `TODO(TD-NN): <hint>` linked to a `TD-NN` entry. This sidestep has **no `TD-NN` entry** and uses a bare GitHub-issue number `#120`. Confirmed `git grep "TODO(#"` on `origin/master` returns **zero** hits — upstream uses plain `/* TODO: ... */` (e.g. `zynq-flash.c:467 "/* TODO: add umount() support ... */"`). So `#120` is meaningful only to this project, not to a Phoenix maintainer, and it dodges the project's own debt-tracking.
 
-**REC:** (a) Register this sidestep (and finding 1's duplication, and finding 4's mount-by-id workaround) as `TD-NN` entries in `docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md` and switch the inline markers to `TODO(TD-NN)`; or (b) for the public drop, rewrite as a plain self-contained `/* TODO: ... */` that does not lean on an issue number. Keep the technical explanation — it is good. **NEEDS-HW for code-path removal** (depends on the multi-block fix); the marker/doc reconciliation itself is **APPLY-SAFE** (comment + doc edit).
+**REC:** (a) Register this sidestep (and finding 1's duplication, and finding 4's mount-by-id workaround) as `TD-NN` entries in `docs/inprogress/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md` and switch the inline markers to `TODO(TD-NN)`; or (b) for the public drop, rewrite as a plain self-contained `/* TODO: ... */` that does not lean on an issue number. Keep the technical explanation — it is good. **NEEDS-HW for code-path removal** (depends on the multi-block fix); the marker/doc reconciliation itself is **APPLY-SAFE** (comment + doc edit).
 
 ---
 

@@ -9,7 +9,7 @@ The authoritative rules for this project live in [AGENTS.md](AGENTS.md) and the 
 Read these three, in order, before any code change:
 
 1. [AGENTS.md](AGENTS.md) — rules, conventions, mandatory reading list
-2. [docs/status.md](docs/status.md) — current boot progress and active focus
+2. [docs/inprogress/status.md](docs/inprogress/status.md) — current boot progress and active focus
 3. [tracking/current-step.md](tracking/current-step.md) — the single active implementation step
 
 Everything else in AGENTS.md's "Mandatory Reading Order" is **conditional** — read it when the task touches that area. Do not read all 14 docs on every session; that burns context with no gain.
@@ -20,7 +20,7 @@ Everything else in AGENTS.md's "Mandatory Reading Order" is **conditional** — 
 - **Sibling upstream repos**: `sources/<repo>/` under this repo root (e.g. `sources/phoenix-rtos-kernel`, `sources/plo`). These are separate git repos, not submodules. Edit and commit there, then record the tested integration state in a new `manifests/*.md` here. The repo lives at `/home/houp/phoenix-rpi/` on the current Linux dev host; older docs may reference the macOS path `/Users/witoldbolt/phoenix-rpi/`.
 - **Active kernel branch**: `agent/rpi4-program-reloc` in `sources/phoenix-rtos-kernel`. Known-good rollback tag: `known-good/2026-04-19-map-relocation-complete`.
 - **Build loop**: `./scripts/rebuild-rpi4b-fast.sh` → `./scripts/capture-rpi4b-uart.sh` → `python3 scripts/summarize-rpi4b-uart-log.py <log>`. Do not improvise alternate paths — fix the helper if broken.
-  - **Stale-core hazard:** `rebuild-rpi4b-fast.sh --scope auto` (default) runs only `project image` when the sibling repos are **clean**, reusing cached core objects. So after you **commit** (or merge upstream into) a kernel/devices/usb/plo/libphoenix change, an `auto` rebuild can ship a **stale image lacking your change**. After any committed *core* change, rebuild with **`--scope core`** and verify (e.g. `strings .buildroot/_boot/aarch64a72-generic-rpi4b/rpi4b-bootfs/loader.disk | grep <your-change>`). See `docs/notes/2026-06-02-p1-ab-verdict.md`.
+  - **Stale-core hazard:** `rebuild-rpi4b-fast.sh --scope auto` (default) runs only `project image` when the sibling repos are **clean**, reusing cached core objects. So after you **commit** (or merge upstream into) a kernel/devices/usb/plo/libphoenix change, an `auto` rebuild can ship a **stale image lacking your change**. After any committed *core* change, rebuild with **`--scope core`** and verify (e.g. `strings .buildroot/_boot/aarch64a72-generic-rpi4b/rpi4b-bootfs/loader.disk | grep <your-change>`). See `docs/done/2026-06-02-p1-ab-verdict.md`.
 
 ## Rollback discipline
 
@@ -33,9 +33,9 @@ This project depends on **deterministic rollback** when a step regresses boot pr
 
 ## Technical debt
 
-The Pi 4 bring-up is currently accepting known shortcuts to reach a first full boot. Each shortcut has an ID (e.g. `TD-01`) in [docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md](docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md) and a matching `TODO(TD-xx):` comment in source code. When touching transitional code, keep those markers; when resolving a debt item, remove both the marker and its entry.
+The Pi 4 bring-up is currently accepting known shortcuts to reach a first full boot. Each shortcut has an ID (e.g. `TD-01`) in [docs/inprogress/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md](docs/inprogress/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md) and a matching `TODO(TD-xx):` comment in source code. When touching transitional code, keep those markers; when resolving a debt item, remove both the marker and its entry.
 
-The code will be **published publicly**. Optimize for readability and upstreamability (see [docs/code-quality-and-upstreaming.md](docs/code-quality-and-upstreaming.md)). Remove diagnostic-only code whose hypothesis was disproved before closing a step.
+The code will be **published publicly**. Optimize for readability and upstreamability (see [docs/knowledge/code-quality-and-upstreaming.md](docs/knowledge/code-quality-and-upstreaming.md)). Remove diagnostic-only code whose hypothesis was disproved before closing a step.
 
 ## Working-style defaults
 

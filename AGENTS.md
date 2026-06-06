@@ -13,24 +13,24 @@ The repository currently contains documentation and agent playbooks, not the imp
 
 Before making code changes in future sessions, read these files in order:
 
-1. `docs/status.md`
-2. `docs/implementation-dossier.md`
-3. `docs/repository-work-breakdown.md`
-4. `docs/git-repository-strategy.md`
-5. `docs/linux-host-bootstrap.md` — primary dev host (Linux x86-64). Read
-   `docs/host-macos-apple-silicon.md` only if working on a macOS+Lima
+1. `docs/inprogress/status.md`
+2. `docs/knowledge/implementation-dossier.md`
+3. `docs/knowledge/repository-work-breakdown.md`
+4. `docs/knowledge/git-repository-strategy.md`
+5. `docs/knowledge/linux-host-bootstrap.md` — primary dev host (Linux x86-64). Read
+   `docs/knowledge/host-macos-apple-silicon.md` only if working on a macOS+Lima
    workstation; the rpi4 workflow has been on Linux since 2026-05-20.
-6. `docs/manual-operator-instructions.md`
-7. `docs/code-quality-and-upstreaming.md`
-8. `docs/execution-control.md`
-9. `docs/unattended-agent-mode.md`
+6. `docs/knowledge/manual-operator-instructions.md`
+7. `docs/knowledge/code-quality-and-upstreaming.md`
+8. `docs/knowledge/execution-control.md`
+9. `docs/knowledge/unattended-agent-mode.md`
 10. `tracking/current-step.md`
-11. `docs/platforms/raspberry-pi-4.md`
-12. `docs/testing-automation.md`
-13. `docs/session-playbook.md`
-14. `docs/source-artifacts.md`
+11. `docs/knowledge/raspberry-pi-4.md`
+12. `docs/knowledge/testing-automation.md`
+13. `docs/knowledge/session-playbook.md`
+14. `docs/knowledge/source-artifacts.md`
 
-Read `docs/platforms/raspberry-pi-5.md` when the task touches Pi 5 or RP1.
+Read `docs/knowledge/raspberry-pi-5.md` when the task touches Pi 5 or RP1.
 Read `skills/README.md` when choosing a local project skill.
 
 ## Local Skills
@@ -67,7 +67,7 @@ Use them as follows:
   ruled out permanently for this board. Mainline Linux/forum reports of Pi-4
   silicon quirks may be cited as *context*, but never as the cause of *our*
   failures. If you catch yourself reaching for a hardware-fault explanation,
-  stop: the bug is on our side. (See `docs/known-limits.md`; the USB
+  stop: the bug is on our side. (See `docs/knowledge/known-limits.md`; the USB
   "silicon flakiness" claim was already formally retracted on 2026-05-29.)
 - Do not start with Raspberry Pi 5 unless the task explicitly requires Pi 5-specific preparation or documentation.
 - Prefer native Phoenix bring-up over UEFI-assisted boot for the final design.
@@ -86,7 +86,7 @@ Use them as follows:
   over ad hoc `build.sh clean host core project image` loops. Reserve the full
   clean rebuild for build-infra changes, upstream-sync churn, toolchain/sysroot
   changes, or suspected stale-build state.
-- If the user explicitly authorizes unattended work, the agent may continue across normal step boundaries only under the rules in `docs/unattended-agent-mode.md`; those rules do not relax step sizing, validation, or commit discipline.
+- If the user explicitly authorizes unattended work, the agent may continue across normal step boundaries only under the rules in `docs/knowledge/unattended-agent-mode.md`; those rules do not relax step sizing, validation, or commit discipline.
 - On this workstation, treat Linux as the authoritative build and emulation environment. Use macOS natively for coordination, editing, and hardware control; use a Linux VM for Phoenix builds and most QEMU runs unless a task is explicitly documented as safe on the host.
 - For Pi 4 SD-card images exported from `phoenix-dev` to the host, use only
   `scripts/export-rpi4b-sdimg.sh`. Do not improvise with ad hoc `scp`, `sftp`,
@@ -106,7 +106,7 @@ Use them as follows:
   compared in `tracking/current-step.md`. Markers that match across QEMU and
   hardware describe properties of the code; markers that diverge describe
   properties of real silicon — and that diff is where the diagnostic signal
-  lives. See `docs/testing-automation.md` for the full workflow. This rule
+  lives. See `docs/knowledge/testing-automation.md` for the full workflow. This rule
   was learned the expensive way: the iter-7/8 syspage corruption looked like
   a code bug for several sessions, until the QEMU comparison proved the
   copy logic was correct and isolated the failure to a Cortex-A72 cache
@@ -125,15 +125,15 @@ Use them as follows:
 - When the user explicitly prioritizes the first Raspberry Pi 4 boot, use a boot-first fast lane:
   prefer the smallest steps that unlock common timer runtime validation, generic QEMU `virt`, PL011 console reuse, `plo` boot, and Pi 4 kernel handoff; defer generic cleanup that is not on that path.
 - Do not bury important findings in chat history. Update the docs when new constraints, addresses, boot flows, test commands, or risks are discovered.
-- If context becomes tight after a long session, re-read at least `docs/status.md`, `docs/repository-work-breakdown.md`, `docs/testing-automation.md`, and the relevant platform note before proceeding.
+- If context becomes tight after a long session, re-read at least `docs/inprogress/status.md`, `docs/knowledge/repository-work-breakdown.md`, `docs/knowledge/testing-automation.md`, and the relevant platform note before proceeding.
 
 ## Documentation Maintenance Rules
 
-- Update `docs/status.md` after every substantial implementation session.
-- Update `docs/manual-operator-instructions.md` whenever a new manual prerequisite, physical setup step, bootloader action, recovery procedure, or operator-only task is discovered.
-- Update `docs/code-quality-and-upstreaming.md` whenever a new subsystem-specific style rule, review preference, or reliable quality check becomes known.
+- Update `docs/inprogress/status.md` after every substantial implementation session.
+- Update `docs/knowledge/manual-operator-instructions.md` whenever a new manual prerequisite, physical setup step, bootloader action, recovery procedure, or operator-only task is discovered.
+- Update `docs/knowledge/code-quality-and-upstreaming.md` whenever a new subsystem-specific style rule, review preference, or reliable quality check becomes known.
 - Update `tracking/current-step.md` before starting implementation code, and update `tracking/step-history.md` when a step is closed.
-- Update `docs/source-artifacts.md` whenever a new upstream document, repository, driver, or code path becomes important.
+- Update `docs/knowledge/source-artifacts.md` whenever a new upstream document, repository, driver, or code path becomes important.
 - When a document contains a statement that may age quickly, add an explicit `Re-verify:` note.
 - Prefer citing exact upstream repo paths and official documentation URLs over vague prose.
 
@@ -181,12 +181,12 @@ The bring-up effort runs as a **single orchestrating session that fans work out 
 
 `docs/research/` is the durable home for forward-looking briefs. Each file is one subsystem:
 
-- `docs/research/gpu-vc6.md` — VideoCore VI 3D + display pipeline
-- `docs/research/ethernet-genet.md` — BCM2711 GENET MAC
-- `docs/research/wifi-bcm43455.md` — BCM43455 WiFi (SDIO)
-- `docs/research/bluetooth-bcm43455.md` — BCM43455 BT (UART-attached HCI)
-- `docs/research/gpio-pinctrl.md` — BCM2711 GPIO + pin muxing
-- `docs/research/rtc-thermal-power.md` — RTC, thermal, watchdog, power management
+- `docs/knowledge/gpu-vc6.md` — VideoCore VI 3D + display pipeline
+- `docs/knowledge/ethernet-genet.md` — BCM2711 GENET MAC
+- `docs/knowledge/wifi-bcm43455.md` — BCM43455 WiFi (SDIO)
+- `docs/knowledge/bluetooth-bcm43455.md` — BCM43455 BT (UART-attached HCI)
+- `docs/knowledge/gpio-pinctrl.md` — BCM2711 GPIO + pin muxing
+- `docs/knowledge/rtc-thermal-power.md` — RTC, thermal, watchdog, power management
 
 Each file should answer, with citations: (a) what hardware blocks are involved, (b) where Linux's driver lives, (c) the minimum subset Phoenix needs to claim "working", (d) known quirks/errata, (e) open questions for the orchestrator to resolve when the corresponding step becomes active.
 

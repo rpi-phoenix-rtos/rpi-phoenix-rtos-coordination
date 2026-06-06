@@ -281,13 +281,13 @@ print_next_steps() {
 
   8. Verification runbook (USB keyboard etc.):
 
-        $PROJECT_DIR/docs/interactive-verification-runbook.md
+        $PROJECT_DIR/docs/knowledge/interactive-verification-runbook.md
 
   9. Read these in order:
         - AGENTS.md          (project rules)
-        - docs/status.md     (current focus)
-        - docs/build-cache-and-cold-boot-races.md   (build-cache lesson)
-        - docs/console-architecture-and-fbcon.md    (Path A vs Path B)
+        - docs/inprogress/status.md     (current focus)
+        - docs/knowledge/build-cache-and-cold-boot-races.md   (build-cache lesson)
+        - docs/knowledge/console-architecture-and-fbcon.md    (Path A vs Path B)
         - tracking/current-step.md  (the active implementation step)
         - manifests/2026-05-19-td12-stable-plus-pm-sigint.md  (current baseline)
 

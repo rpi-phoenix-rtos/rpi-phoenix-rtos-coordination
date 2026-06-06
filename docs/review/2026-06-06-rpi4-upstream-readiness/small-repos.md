@@ -37,7 +37,7 @@ pre-dispatch, one post-dispatch, the latter behind a one-shot gate).
    The `traceNone` branch is never reachable. The `lookupTrace` gate fires
    only during the first-ever `"devfs"` lookup, at most once per run — its
    purpose was already achieved by observing it in boot logs during the TD-14
-   investigation, documented in `docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md`.
+   investigation, documented in `docs/inprogress/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md`.
 4. **Mixed concern.** Two separate debug levels (`traceKind` enum + separate
    `lookupTrace` one-shot) with no compile-time gate means the instrumentation
    runs in production on every `msgRecv` iteration.
@@ -47,7 +47,7 @@ the two state variables, all four `debug()` call sites, and the
 `#include <sys/debug.h>`. Restore the `switch` body to the upstream tab
 indentation (see F2). If any probe must be kept for the remainder of TD-14
 investigation, add `TODO(TD-14-dummyfs-trace)` and record it in
-`docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md`.
+`docs/inprogress/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md`.
 
 **NEEDS-HW** — removing this before a full boot smoke is a build-only
 verification. However, the probes are unconditional, so their absence cannot
@@ -148,7 +148,7 @@ decision, not a code-only call.
 ### F5 · `psh/pshapp/pshapp.c` · **COMMENT** · sev=low
 
 **What:** The `PSH_TTYOPEN_RETRIES` macro defaults to `50` (50 × 10 ms =
-500 ms). The `docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md` entry for
+500 ms). The `docs/inprogress/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md` entry for
 **TD-14-psh-retry** (§ near line 1019) documents the value as "bumped
 20 → 200" (20 retries × 100 ms = 2 s → 200 retries × 100 ms = 20 s). The
 code does not match: retries are 50, not 200; delay is 10 ms, not 100 ms; and
@@ -161,7 +161,7 @@ the documented intent of extending the budget for Pi 4's slow devfs path.
 
 **REC:**
 1. Add `TODO(TD-14-psh-retry)` immediately above the `#define PSH_TTYOPEN_RETRIES` block.
-2. Update `docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md` § TD-14-psh-retry to
+2. Update `docs/inprogress/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md` § TD-14-psh-retry to
    record the actual values (50 × 10 ms = 500 ms), or change the code to the
    documented values (200 × 100 ms = 20 s) if the longer budget is still
    needed.
@@ -194,7 +194,7 @@ validated). Both files should be clean.
 
 **REC:** Remove `#include <sys/debug.h>` from both files. Remove the
 `rootRetries` counter and the `(void)rootRetries` line from `psh/psh.c`. Mark
-TD-14-psh-debug-probes as RESOLVED in `docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md`.
+TD-14-psh-debug-probes as RESOLVED in `docs/inprogress/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md`.
 
 **APPLY-SAFE** — dead code removal; confirmed no debug() calls exist in either
 file.

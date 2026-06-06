@@ -32,7 +32,7 @@ mislead. A maintainer reading this today would bounce it on those three, not on 
   be made 5×.
 
 ### T2 — Un-marked diagnostic / dead scaffolding left in shipping files (pervasive ROLLBACK)
-The project's debt convention is `TODO(TD-xx)` linked to `docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md`,
+The project's debt convention is `TODO(TD-xx)` linked to `docs/inprogress/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md`,
 but most diagnostic code carries no marker (or ad-hoc `#119`/`#120`/`TD-USB`/`TD-15` that
 don't reconcile). Inventory:
 - **`lwip/port/diag-udp.c` (5534 lines)** — the headline: an unauthenticated UDP control
