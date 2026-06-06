@@ -2,6 +2,36 @@
 
 > Per-peripheral state at a glance: **[docs/inprogress/pi4-hardware-support-matrix.md](pi4-hardware-support-matrix.md)**.
 
+## Current Status: 2026-06-07 — two additive netboot device bricks landed (fb0, gpio)
+
+**Overnight autonomous session (card in host, netboot-only, additive + cannot-regress).**
+Two new userspace device drivers, each HW-validated on netboot (boot→psh, 0 faults,
+fbcon/USB unaffected) and committed + manifested:
+
+- **#148 `/dev/fb0`** (`phoenix-rtos-devices/video/rpi4-fb/`) — VideoCore HDMI framebuffer
+  as a char device: read()/write() byte access + `RPI4FB_GETMODE` devctl + getattr, over
+  the `pctl_graphmode` + `MAP_PHYSMEM` surface (`pa=0x3e87c000 1024x768x32 pitch=4096`).
+  Read-only startup self-test (no draw → no fbcon race). **Attended follow-ups (#149):**
+  Linux-fbdev `FBIOGET_*` veneer (Tiny-X), true `mmap(fd,0)` kernel backing, drawing/
+  display-ownership. Manifest `2026-06-06-fb0-framebuffer-device.md`.
+- **#150 `/dev/gpio`** (`phoenix-rtos-devices/gpio/rpi4-gpio/`) — BCM2711 GPIO observer:
+  read() register snapshot + `RPI4GPIO_GETPIN` per-pin {fsel,level,pull} devctl. **Read-only**
+  (`mtWrite=-EROFS`); outputs deferred to an attended bench session. Productionizes the #45
+  diag-'g' helpers. Manifest `2026-06-06-gpio-observer-device.md`.
+
+The reusable shape is now documented for maintainers + future drivers:
+`docs/knowledge/userspace-mmio-driver-pattern.md` (proven 4×: thermal/hwrng/fb0/gpio).
+
+**#120 note (state verified):** the devices tree is CLEAN — all SD work is committed
+(latest `688010e`); there is **no uncommitted single-block-write experiment** (the prior
+"STAGED uncommitted" memory note was stale; write CMD24 sidestep is only a `TODO`). The
+morning SD session works from committed source + the discriminator plan in
+`docs/notes/2026-06-07-sd-exec-data-path.md`. SD image NOT rebuilt this session.
+
+**Queued (attended / blocked, not autonomous-safe):** #149 (fb0 client + kernel mmap),
+#120 exec-from-card discriminators (SD swaps), USB hardening #142–#145 (daemon-internal,
+statistical), WiFi #91 (fw-exec gate, needs HW visibility).
+
 ## Current Status: 2026-06-06 — #120 SD ext2-root VALIDATED + upstream-readiness review & cleanup
 
 **#120 SD ext2-root — DONE (HW-validated + committed).** The `-r /dev/mmcblk0p2:ext2`
