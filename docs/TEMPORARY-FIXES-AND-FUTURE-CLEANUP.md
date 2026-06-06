@@ -210,6 +210,24 @@ authoritative current state.
   - Do not use this as evidence that zone or kernel-heap cacheability is solved;
     those remain separate boundaries.
 
+## TD-20: A72 DC ZVA disabled in hal_memset pending EL2 trap proof
+
+- **Status:** ACTIVE WORKAROUND.
+- **Where:** `sources/phoenix-rtos-kernel/hal/aarch64/_memset.S`
+  (the `__TARGET_AARCH64A72` block that force-defines `MEMSET_WITHOUT_ZVA`).
+- **What:** On Cortex-A72 (Pi 4) the `dc zva` fast path in `hal_memset` is
+  disabled; normal stores are used instead. The Pi 4 reaches EL1 via
+  firmware/armstub/PLO (not TF-A), and the first post-D-cache large zeroing
+  operation (`_log_init`'s `log_common` memset) hangs on real hardware with no
+  exception output. The hang does not reproduce in QEMU.
+- **Why interim:** The gate is sound and correctly scoped to A72 (zynqmp keeps
+  ZVA), but it is a functional perf change premised on the unproven EL2 DC-ZVA
+  trap state. Marked so it is revisited once that state is proven and is not
+  mistaken for an unconditional regression.
+- **Resolution requirements:** Prove the EL2 trap state for DC ZVA on Pi 4
+  (HW-only — does not repro in QEMU). If ZVA is safe, drop the
+  `MEMSET_WITHOUT_ZVA` gate and the `TODO(TD-20)` marker.
+
 ## TD-01: SMP enable disabled on Cortex-A72
 
 - **Status:** ✅ RESOLVED 2026-05-21
@@ -1823,6 +1841,7 @@ longer needed.
 | TD-17 | ✅ RESOLVED 2026-05-29 | amap/ELF cacheable (MAP_NONE) in code; boots to psh; armstub fix dde9bb5 removed the corruption |
 | TD-18 | ✅ RESOLVED 2026-05-29 | zone backing cacheable (MAP_NONE, zone.c:45) in code; boots to psh; 2026-05-14 fails predate armstub fix |
 | TD-19 | LIKELY STILL APPLIES (TLBI hardening is generally correct) | upstreamable as-is |
+| TD-20 | ACTIVE WORKAROUND | A72 `dc zva` disabled in `hal_memset` pending EL2 DC-ZVA trap proof (HW-only) |
 | TD-Eth-DHCP | ✅ RESOLVED 2026-05-28 (lwip `7f0b495`) | autonomous DHCP verified end-to-end via test-cycle-netboot.sh --probe q + scripts/get-pi-ip.sh; probe captured `netif: en1 ip=10.42.0.12 gw=10.42.0.1 flags=0x1f UP LINK DHCP` (artifact 2026-05-28-...-dhcp-clean-probe.txt) |
 | TD-Eth-MAC | RESOLVED 2026-05-25 (lwip `79bd607`) | mailbox `GET_BOARD_MAC` plumbed in `genet_mboxGetMac()` |
 | TD-Eth-Promisc | RESOLVED 2026-05-25 (lwip `79bd607`) | PROMISC only on `mac_is_fallback` path |
