@@ -141,6 +141,12 @@ own build+smoke — do it last among the safe set so a smoke failure is unambigu
   root-caused; removing needs a soak.
 - a53 QEMU/rpi4 targets: decide keep-vs-drop before presentation.
 
+## Important reclassification (verified 2026-06-06): `pcie/server/pcie.c` BCM2711 code is dead/vestigial
+
+The standalone `pcie` server is **intentionally not built on Pi4** — `devices/_targets/Makefile.aarch64a72-generic` says so explicitly (PCIe bring-up is folded into the `usb` daemon via `bcm2711_pcie_initVL805()` in `usb/xhci/bcm2711-pcie.c`). The +853 lines of BCM2711 code added to the *shared* `pcie/server/pcie.c` are all gated by `#ifdef PCI_EXPRESS_BCM2711_INDEXED_CFG`. That macro is set only in the rpi4b build context — but rpi4b doesn't build `pcie/server`; the targets that DO build it (zynqmp, ia32) don't define the macro. So the BCM2711 block is **compiled on no current target**. Consequences:
+- **B1 (the `bcm2711EncodeBar2Size` shift=20 bug in pcie-server) is INERT** — it lives in never-compiled code. The *live* copy in `usb/xhci/bcm2711-pcie.c` is the fixed one. Downgrade B1 from "highest-value real bug" to "latent, only matters if pcie-server is revived for a new BCM2711 board." (The real headline live bug is now **B4**, the main.c SMP-gate link break.)
+- The entire BCM2711 addition to `pcie/server/pcie.c` is a strong **rollback candidate** (revert that file toward upstream; BCM2711 PCIe lives only in the usb daemon). NEEDS-HW-ish: the file is shared, so an ia32 build must confirm the revert is clean — can't validate ia32 from the rpi4b harness. Documented for attended action, not blind-reverted overnight.
+
 ## APPLIED so far (2026-06-06 overnight — each wave build `--scope core` + netboot boot-to-psh smoke, 0 faults)
 
 - **Wave 1 — text-only** (comments / TODO-TD markers / license+copyright headers), committed:
