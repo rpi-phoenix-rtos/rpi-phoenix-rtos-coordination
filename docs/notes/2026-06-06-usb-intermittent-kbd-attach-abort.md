@@ -53,3 +53,23 @@ intermittent corruption of a driver/struct pointer in the host stack.
   #121 mitigated-but-did-not-root-cause.
 - Ties to tasks #142/#143 (USB daemon productionization) and #121 (free-list corruption,
   root cause UNCONFIRMED).
+
+## Candidate corrupted pointers (static audit, 2026-06-06)
+
+The wild jump (`lr`→non-code) is a branch/return through a clobbered pointer. In the
+kbd attach/open path the dispatched code pointers are:
+- `drv->handlers.insertion` / `drv->handlers.completion` — the registered
+  `usb_driver_t usbkbd_driver` (usbkbd.c:839) function pointers; invoked by the daemon
+  per insertion/completion. usbkbd_handleInsertion DID run ("handleInsertion fired"), so
+  the clobber happens during/after it (opening the interrupt-IN pipe).
+- `hcd->ops->transferEnqueue` (usb.c:138) and `t->ops->urbAsyncCompleted`/`urbSyncCompleted`
+  (usb.c:410/413) — HCD / transfer op tables.
+- `drv->hostPriv` (usb.c:548, deref in usblibdrv_open) — if the priv pointer is clobbered.
+- A stack return address smashed by a buffer overflow in device-name formatting
+  (`usb-VID-PID-ifNN` → `/dev/usb-...`); LOWER probability — a fixed-size overflow would
+  be deterministic (10/10), but the abort is 1/10, so heap/DMA-pool corruption hitting one
+  of the pointers above (the #121 free-list family) is the more likely culprit.
+
+Attended next step needs runtime: a guard/canary on `usbkbd_driver` + the hcd/transfer op
+tables (detect when a function pointer leaves its expected value), or poison-on-free in the
+usb mem pool to catch the #121 use-after-free at the moment of corruption.
