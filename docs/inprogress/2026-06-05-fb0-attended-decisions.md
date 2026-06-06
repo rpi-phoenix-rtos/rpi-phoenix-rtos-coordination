@@ -4,6 +4,20 @@
 **Status:** userspace framebuffer access PROVEN on HW; device bring-up blocked on
 two architecture decisions that want a human + a screen, deliberately deferred.
 
+> **UPDATE 2026-06-07 (#148):** the scope-safe `/dev/fb0` DEVICE now exists and is
+> HW-validated on netboot — see `phoenix-rtos-devices/video/rpi4-fb/` (manifest
+> `manifests/2026-06-06-fb0-framebuffer-device.md`). It ships read()/write() byte
+> access + an `RPI4FB_GETMODE` devctl + getattr(atSize/atMode), and does a
+> READ-ONLY startup self-test (`rpi4-fb: pa=0x3e87c000 1024x768 bpp=32 pitch=4096
+> size=3145728 first_px=0x003060a0; registered /dev/fb0`); `fbcon: ok` still prints
+> after, boot→psh, 0 faults. The THREE items below are exactly what was left out
+> and remain attended (task #149): (1) drawing/display-ownership vs the pl011-tty
+> fbcon — fb0 draws nothing yet; (2) a Linux-fbdev `FBIOGET_*` veneer for Tiny-X;
+> (3) a true `mmap(fd,0)` zero-copy backing (kernel VM work — the device-fd mmap
+> path demand-pages a private COPY today; clients must MAP_PHYSMEM at the pa from
+> `RPI4FB_GETMODE` instead). Quake (MAP_PHYSMEM, no veneer) is the lowest-friction
+> first real client.
+
 This note exists so the attended `/dev/fb0` session starts from facts, not a
 blank page. It is the GPU Tier-1 entry in `docs/todo/gpu-vc6-impl.md` (Phases
 1–2): adopt the plo-allocated framebuffer and expose it as a device.
