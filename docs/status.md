@@ -2,6 +2,37 @@
 
 > Per-peripheral state at a glance: **[docs/pi4-hardware-support-matrix.md](pi4-hardware-support-matrix.md)**.
 
+## Current Status: 2026-06-06 — #120 SD ext2-root VALIDATED + upstream-readiness review & cleanup
+
+**#120 SD ext2-root — DONE (HW-validated + committed).** The `-r /dev/mmcblk0p2:ext2`
+root mount now works: `sdstorage_srv: mounted /dev/mmcblk0p2 (ext2, id=2) as / after 0
+tries, portRegister=0`; `ls` over the live ext2 root, USB kbd+mouse enumerate. Root
+cause of the prior `-2` was the driver recovering the partition storage id via a
+namespace `lookup()` of the /dev path (impossible pre-root) — replaced with the
+zynq/pc-ata pattern: record the id at `create_dev` time and mount by id (devices
+`ebac8e4`, project `cb4b216`, manifest `2026-06-06-sd-ext2-root-mounts.md`). **OPEN:**
+executing a binary from /bin fails with an SD **Data-CRC/End-Bit** error under read
+volume (`ls` works, exec doesn't) — the data-path reliability layer (clock/signal or
+PIO completion gating); needs a flash-shuttle iteration.
+
+**Upstream-readiness code review + conservative cleanup (overnight).** Deep 17-area
+audit of all RPi4 changes vs upstream `origin/master`, to prepare for presentation to
+the Phoenix-RTOS maintainers (NOT pushing yet). Artifacts:
+`docs/review/2026-06-06-rpi4-upstream-readiness/` (per-area findings + `_SYNTHESIS.md`).
+Verdict: functionality is sound; the blockers are presentation — (T1) wholesale
+duplication of existing Phoenix drivers, (T2) un-marked diagnostic scaffolding, (T3)
+stale/inverted comments, (T4) marker hygiene, (T5) license/style. **Applied (3 waves,
+each `--scope core` build + netboot boot-to-psh smoke, 0 faults; ~6.3k lines removed,
+boot baseline unchanged):** W1 text-only comment/marker/header fixes (6 repos), W2a
+removed `lwip/port/diag-udp.c` (−5596, the unauthenticated UDP diagnostic surface; kept
+the mbox_tryfetch guard), W2b dead/diagnostic-code removal (5 repos). **Documented, NOT
+applied (NEEDS-HW / attended):** bugs B1–B14 — headline live bug is **B4** (kernel
+`main.c` `#if NUM_CPUS != 1` blocks reference aarch64-only `hal_smp*` → link break on
+gr740/zynq7000/gr712rc); B1 (pcie-server BAR2-size) is inert (that server's BCM2711 code
+is `#ifdef`'d out on every built target — a rollback vestige). Plus the T1
+de-duplication refactors (shared SDHCI lib / single PCIe impl / shared mbox helper). See
+`_SYNTHESIS.md` "STILL TODO". Memory: `project_rpi4_upstream_review`.
+
 ## Current Status: 2026-06-05 (attended) — #120 SD ext2-root: resolve fixed, now multi-block CMD18 read bug
 
 Two layers peeled on SD-boot (`test-cycle-netboot.sh --sd-boot`, sd variant):
