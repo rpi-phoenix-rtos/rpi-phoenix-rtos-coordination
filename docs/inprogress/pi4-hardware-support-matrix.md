@@ -22,7 +22,7 @@ One row per peripheral/subsystem. For narrative gap analysis see
 | PL011 UART console | ✅ done | primary console + klog mirror | TD-14 two-owner UART polish (#127) |
 | VideoCore property mailbox | ✅ done | userspace (thermal/clocks/power) | kernel-internal primitive ⏸ (for WiFi/BT/DVFS) |
 | HDMI framebuffer **console** (fbcon) | ✅ done | klog+psh on HDMI (Tier 0) | slow fills (caches off) |
-| HDMI framebuffer **device** `/dev/fb0` | 🔬 groundwork | userspace FB mmap rw proven on HW (diag-udp `V`) | 2 attended decisions: display ownership + no-fbdev ABI (`docs/inprogress/2026-06-05-fb0-attended-decisions.md`) |
+| HDMI framebuffer **device** `/dev/fb0` | 🟡 partial | device LANDED + HW-validated netboot (#148): read/write + `RPI4FB_GETMODE` devctl, `video/rpi4-fb/` | attended (#149): fbdev `FBIOGET_*` veneer (Tiny-X), true `mmap(fd,0)` kernel backing, drawing/display-ownership |
 | GENET Ethernet | ✅ done | Tier 5, IRQ-driven, ping ~0.9 ms | — |
 | lwIP / DHCP / ICMP / UDP | ✅ done | autonomous DHCP, diag-udp :9999 | — |
 | USB host (PCIe→VL805 xHCI) | ✅ done | enum 5/5 reliable (#139) | daemon hardening #142/#143, IRQ event path #145 — all ⏸ |
@@ -36,7 +36,7 @@ One row per peripheral/subsystem. For narrative gap analysis see
 | Watchdog / reboot / poweroff | ⏸ attended | works via diag-udp `r`/`h` (PM block #43) | productionize `_hal_systemReset` (kernel, boot-risk) |
 | WiFi (BCM43455 SDIO) | ⛔ blocked | full fw+NVRAM load path built; CR4 released | **firmware not executing** (#91); SOCRAM-tail/NVRAM-trailer lead; needs datasheet/JTAG |
 | Bluetooth (BCM43455 UART HCI) | ⬜ not started | plan only | needs mailbox+GPIO alt-fn + `.hcd` blob |
-| GPIO / pinctrl | 🟡 partial | read-only snapshot helpers (#45) | full driver needs a bench rig to validate (⏸) |
+| GPIO / pinctrl | 🟡 partial | `/dev/gpio` read-only observer device (#150): snapshot + per-pin `RPI4GPIO_GETPIN` devctl, `gpio/rpi4-gpio/` | **outputs** (GPSET/GPCLR/fsel set) need a bench rig to validate (⏸) |
 | I²C / SPI / PWM | ⬜ not started | plans exist | need GPIO alt-fn + clock-manager |
 | Audio (PWM / I²S / HDMI) | ⬜ not started | plan `docs/todo/pi4-audio-impl.md` | validation needs speaker/scope (⏸) |
 | RTC | ⏸ deferred | Pi 4 has no on-SoC RTC | NTP over GENET (zero-HW); or I²C HAT later |
