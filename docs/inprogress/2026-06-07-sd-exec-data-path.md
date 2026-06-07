@@ -106,6 +106,37 @@ card addresses even in the PIO path.
 This eliminates the "is the card/flash bad?" branch entirely and points the morning at one
 register field. (Card remains in host; analysis did not modify it beyond reading.)
 
+### Exact code location (for the morning fix)
+
+`sources/phoenix-rtos-devices/storage/bcm2711-emmc/sdcard.c:414-419` — the data-transfer
+setup programs the SDMA boundary **even though PIO is used** (`dmaEnable = 0` at line 427):
+```c
+*(host->base + SDHOST_REG_SDMA_ADDRESS) = host->dmaBufferPhys;   /* 414 */
+sdio_dataBarrier();
+*(host->base + SDHOST_REG_TRANSFER_BLOCK) =
+    ((uint32_t)blockCount << 16) |
+    TRANSFER_BLOCK_SDMA_BOUNDARY_4K |        /* 418 — 0b000<<12, the 4KB boundary */
+    blockLength;
+```
+And `SDHOST_INTR_SDMA_BOUNDARY` (bit 3) is in the enabled interrupt set
+(`sdhost_defs.h:188,213`) — so the controller *can* raise a 4 KB-boundary interrupt during
+the PIO transfer, which the wait/error path may then mis-handle.
+
+Two concrete things to try (order cheapest-first), each one reflash + SD-boot `/bin/date`:
+1. **Set the boundary past any transfer:** replace `TRANSFER_BLOCK_SDMA_BOUNDARY_4K` with
+   `TRANSFER_BLOCK_SDMA_BOUNDARY_512K` (defs already exist, `sdhost_defs.h:137`) so the
+   4 KB carry-out never fires within a read. Cheapest test of the hypothesis.
+2. **Stop arming SDMA entirely in PIO:** when `dmaEnable == 0`, skip the
+   `SDHOST_REG_SDMA_ADDRESS` write (414) and drop `SDHOST_INTR_SDMA_BOUNDARY` from the
+   active interrupt mask, so no boundary event is generated or awaited.
+
+Mechanism note (label = hypothesis): the boundary is a *buffer*-address carry-out, but it
+correlates with 4 KB-aligned *card* addresses because the PIO read advances buffer offset
+in lockstep with file/card offset — so buffer-4 KB boundaries land on the same blocks as
+card-4 KB boundaries. The empirical facts (data-at-rest perfect, only data-block reads
+fail, failures exactly on N≡0 mod 4 blocks, ~47≈49 of them) stand regardless of the exact
+intra-controller path.
+
 ## Strategic note
 
 The user said "not fixed" across 3 fixes — swap-iteration is not converging on the exec
