@@ -34,7 +34,7 @@ One row per peripheral/subsystem. For narrative gap analysis see
 | SoC thermal + throttle | ✅ done | `/dev/thermal`,`/dev/throttled` (2026-06-05) | firmware owns the trip (telemetry only) |
 | Hardware RNG (RNG200) | ✅ done | `/dev/hwrng` (2026-06-05) | not yet wired to a kernel `/dev/urandom` pool |
 | Watchdog / reboot / poweroff | ⏸ attended | works via diag-udp `r`/`h` (PM block #43) | productionize `_hal_systemReset` (kernel, boot-risk) |
-| WiFi (BCM43455 SDIO) | ⛔ blocked | full fw+NVRAM load path built; CR4 released | **firmware not executing** (#91); SOCRAM-tail/NVRAM-trailer lead; needs datasheet/JTAG |
+| WiFi (BCM43455 SDIO) | ⛔ blocked | fw+NVRAM load + CR4 release were built (in the now-**deleted** diag-udp.c) | **firmware not executing** (#91, image-scan proven). NVRAM-trailer lead DISPROVEN (2026-06-07); real suspects = download/clock ordering + SDIO-core intstatus-clear + rstvec semantics. Live downloader must be reintroduced first. Needs HW/JTAG |
 | Bluetooth (BCM43455 UART HCI) | ⬜ not started | plan only | needs mailbox+GPIO alt-fn + `.hcd` blob |
 | GPIO / pinctrl | 🟡 partial | `/dev/gpio` read-only observer device (#150): snapshot + per-pin `RPI4GPIO_GETPIN` devctl, `gpio/rpi4-gpio/` | **outputs** (GPSET/GPCLR/fsel set) need a bench rig to validate (⏸) |
 | I²C / SPI / PWM | ⬜ not started | plans exist | need GPIO alt-fn + clock-manager |
