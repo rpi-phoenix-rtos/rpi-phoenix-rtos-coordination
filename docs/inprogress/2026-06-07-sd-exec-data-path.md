@@ -137,6 +137,29 @@ card-4 KB boundaries. The empirical facts (data-at-rest perfect, only data-block
 fail, failures exactly on N≡0 mod 4 blocks, ~47≈49 of them) stand regardless of the exact
 intra-controller path.
 
+## A-vs-B VERDICT — 2026-06-07 (attended, HW, DECISIVE): it's B (exec), not A (reads)
+
+Built a diag SD loader logging `word0` of each recovered block; flashed; SD-booted;
+ran `/bin/date` at psh. Result:
+- Every recovered block read by the Pi **matches the source byte-for-byte** (word0),
+  incl. mid-binary AArch64 code (`0xa9bf7bfd` stp-prologue, `0xd65f03c0` ret):
+  lba 137770/137778/137786/137792/135694 all MATCH part_rootfs.ext2.
+- `/bin/date` still produced **NO output**.
+
+**Conclusion: Hypothesis A (corrupt recovered reads) is DISPROVEN.** The SD read path
+delivers correct data; the Data-CRC errors are real-but-transient (50 MHz signal
+margin) and the bounded retry recovers the **correct** bytes every time. The SD driver
+is functionally correct — only noisy. **The #120 blocker is Hypothesis B: executing /
+loading an ELF from the mounted ext2 root fails**, independent of the (recoverable) SD
+errors. This is the FIRST exec-from-mounted-fs on the port (netboot execs from the
+syspage/loader.disk), so the exec/spawn/ELF-load-from-fs path is the suspect.
+
+Next (exec path, not SD): determine the exec failure mode — does psh/spawn return an
+error, or does the process load and fault silently? Trace how Phoenix loads an ELF from
+a filesystem (posixsrv/kernel spawn → file-backed mmap → demand-page via mtRead to the
+ext2 server) vs from the syspage. The diag word0 logging can be removed from the SD
+driver — its job (the A/B verdict) is done.
+
 ## Strategic note
 
 The user said "not fixed" across 3 fixes — swap-iteration is not converging on the exec
