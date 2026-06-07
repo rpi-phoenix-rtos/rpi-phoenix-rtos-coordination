@@ -231,6 +231,28 @@ noisy-but-recovering 50 MHz Data-CRC reads (signal-margin polish), and single-bl
 CMD24 writes / CMD18 multi-block (perf TODOs). The shared ext2 object-cache thread-safety
 gap is a real upstream issue to report (not Pi4's to fix), now avoided by single-threading.
 
+## CORRECTED ROOT CAUSE + FINAL FIX — 2026-06-07: fs pool-thread STACK OVERFLOW
+
+The earlier "concurrency race in ext2" / `storage_run(1)` writeups above are SUPERSEDED.
+Auditing the locks showed both the SD dmaBuffer path (`host->cmdLock` covers the whole
+transfer+memcpy in `sdcard_transferBlocks`) and ext2's object cache (`fs->objs->lock`
+covers all lru/refs access) are correctly locked — so it is NOT an ext2 race and **ext2 is
+not buggy**. The real cause is a **pool-thread stack overflow**: `storage_run(N, stacksz)`
+allocates worker stacks as ADJACENT slices of one `malloc`, and the default `2*_PAGE_SIZE`
+(8 KB) is too small for Pi4's ext2-over-SD call chain (deeper than x86/virtio-blk, incl.
+the slow CRC-retry read path) → a worker overflows into its neighbour → memory corruption
+that surfaces as the ext2 `lib_listRemove` Data Abort.
+
+**FIX (committed devices `07bb181`):** `storage_run(2, 16*_PAGE_SIZE)` — keep full
+multithreading, give each pool thread a 64 KB stack. **HW-validated:** deterministic 100%
+crash at `storage_run(2)`+8 KB → **0/10** at 64 KB. Evidence trail nailing stack-size as
+the variable: `(2)+8KB`=4/4 crash; `(1)+8KB` (2 threads)=1/11 (fewer adjacent stacks only
+lowered the overflow probability); `(2)+64KB`=0/10. Manifest `2026-06-07-sd-root-stackfix.md`.
+(A serializing-mutex band-aid was tried and discarded — it masked the overflow by keeping
+the idle thread shallow, but defeated fs-layer multithreading; rejected as architecturally
+wrong.) Lesson for the port: the 8 KB default pool-thread stack is the prime suspect for any
+mysterious Pi4 fs/server corruption.
+
 ## Strategic note
 
 The user said "not fixed" across 3 fixes — swap-iteration is not converging on the exec
