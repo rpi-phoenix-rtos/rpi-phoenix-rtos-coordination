@@ -89,9 +89,14 @@ printf '[test-cycle-psh-interact] running psh-interact.py\n'
 printf '[test-cycle-psh-interact] log: %s\n' "$log_path"
 printf '[test-cycle-psh-interact] commands: %s\n' "${commands[*]}"
 
-exec python3 "$repo/scripts/psh-interact.py" \
+# NOTE: do NOT `exec` here. exec replaces this shell with python, which discards
+# the `trap cleanup EXIT` above, so the Pi would never get powered off when the
+# interactive session ends (it was left running every time). Run python as a
+# child and let the EXIT trap fire on return; preserve its exit status.
+python3 "$repo/scripts/psh-interact.py" \
 	--baud "$uart_baud" \
 	--log "$log_path" \
 	--wait-secs "$wait_secs" \
 	--idle-secs "$idle_secs" \
 	--commands "${commands[@]}"
+exit $?
