@@ -180,6 +180,35 @@ reached.** Fault: `pc=0x4290e4 esr=0x92000047 far=0x80` → **`lib_listRemove`
   pre-existing and (b) measure the rate. Use `test-cycle-netboot.sh --sd-boot` (HDMI on)
   for the bench so faults are visible.
 
+## ROOT CAUSE of the crash — ext2 object-cache LRU double-remove (2026-06-07, advisor: read the LR)
+
+Read the full exception register dump (not just pc/esr/far): `lr=0x4219c4` → `addr2line`
+= **`ext2_obj_get` (phoenix-rtos-filesystems/ext2/obj.c:166)**. Args: x1(t)=0x8e40 (the
+node), x2(noff)=0x80, x3(poff)=0x78. The fault is `LIST_REMOVE(&fs->objs->lru, obj)` on an
+object whose `prev`/`next` are **NULL** — `lib_listRemove` NULLs links after removal, so
+this is a **double-remove / remove-of-an-unlisted node**:
+
+```c
+obj->refs++;
+if ((obj->refs == 1) && !EXT2_IS_MOUNTPOINT(obj))   // refs WAS 0 → assumed on LRU
+    LIST_REMOVE(&fs->objs->lru, obj);               // but obj not on LRU → NULL+0x80 write
+```
+
+So it's a **Phoenix ext2 filesystem bug** (the refs↔LRU bookkeeping), NOT the SD driver,
+USB, or my diag. It's exercised hard by exec-from-ext2 (loading a binary reads many inodes
+→ object-cache get/put churn). **4/4 deterministic repro under `test-cycle-netboot.sh
+--sd-boot`** (the gift: reproducible). (NB: x16-x18/x24-x28 in the dump hold a
+register-index sentinel pattern = uncaptured regs, not memory poison — do not over-read.)
+
+Invariant: objects with refs==0 are meant to live on `lru` (added by ext2_obj_put when
+refs hits 0, unless links==0 → destroyed); get() pulls them off when refs goes 0→1. The
+crash means an object reached the `refs==1` branch while NOT on the lru (links NULL). Exact
+trigger (get/put imbalance vs destroy-without-unlink vs a refs underflow) still to pin in
+_ext2_obj_create/_ext2_obj_destroy. **Fix candidates:** (a) robust — track on-lru state
+(flag/`OFLAG_ONLRU` set on LIST_ADD, cleared on LIST_REMOVE) and only remove when set,
+making double-remove a safe no-op; (b) root-cause the refs/destroy imbalance. Validate via
+the deterministic netboot-sd repro (expect 0/N crashes). NEEDS rebuild + reflash (swap).
+
 ## Strategic note
 
 The user said "not fixed" across 3 fixes — swap-iteration is not converging on the exec
