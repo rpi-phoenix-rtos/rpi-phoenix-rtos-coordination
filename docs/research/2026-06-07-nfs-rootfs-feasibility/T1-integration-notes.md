@@ -47,11 +47,19 @@ the flat `-I$(PREFIX_H)`.)
 The T0 notes were validated with a standalone `make`, not through the in-tree
 port harness, so three real-harness gaps surfaced:
 
-1. **`port.def.sh` size pin** — the harness recomputes the tag-tree size with
-   `find -printf '%s'`; this host got `2112263`, the pin said `2112336`
-   (73-byte delta, likely sparse/FS accounting). The **sha256 matched exactly**
-   (content identical), so only the redundant size guard tripped. Updated
-   `size="2112263"`.
+1. **`port.def.sh` size pin** — the two pinned metrics measure **different file
+   sets**: `sha256` is `git archive HEAD | sha256sum` (honors `.gitattributes`
+   export-ignore and excludes submodule contents), while `size` is
+   `find -type f ! -path '*/.git/*' -printf '%s'` over the raw working tree
+   (includes export-ignored files and any `git submodule update --init`
+   checkouts). So the recomputed `size` (this host: `2112263` vs the pinned
+   `2112336`, 73-byte delta) can legitimately differ even when the cryptographic
+   `sha256` **matches exactly** — which it did, so the content is correctly
+   pinned and only the redundant size guard tripped. Repinned `size="2112263"`.
+   (This reproduces: the post-repin ports run passed the size gate and compiled.
+   The size-vs-sha256 file-set mismatch is a pre-existing property of the guard's
+   design, so the pinned `size` is inherently more host/clone-sensitive than the
+   `sha256`; that fragility is not introduced here.)
 2. **`port.def.sh` CROSS** — it passed `CROSS="${HOST}-"`, but `HOST` is the
    autotools triple `${TARGET_FAMILY}-phoenix` = `aarch64a72-phoenix`
    (`port_internal.subr`), which is NOT a real tool prefix. The installed
