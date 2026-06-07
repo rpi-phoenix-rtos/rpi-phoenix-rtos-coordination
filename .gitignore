@@ -25,3 +25,6 @@ gemini-findings.md
 *.mov
 Screenshot *.png
 /4
+
+# libnfs study clone (own git repo; not tracked here) — see docs/research/2026-06-07-nfs-rootfs-feasibility/
+research/libnfs/
