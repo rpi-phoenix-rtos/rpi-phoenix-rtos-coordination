@@ -30,7 +30,7 @@ One row per peripheral/subsystem. For narrative gap analysis see
 | USB mass storage | ⬜ not started | — | umass driver |
 | PCIe RC / VL805 inbound abort (TD-10) | ⏸ attended | SError handler in (#109); abort isolated to PCIe/USB bring-up | unmask SError = boot-risk; root-cause #144 |
 | SD card (EMMC2 SDHCI) | ✅ done | `/dev/mmcblk0[pN]`, PIO reads, MBR (#119) | high-throughput needs DMA |
-| ext2 persistent rootfs (#120) | 🟡 partial | block reads validated; 2-part SD image built | mount-as-`/` + rc.psh pivot (attended/morning) |
+| ext2 persistent rootfs (#120) | ✅ done | mounts as `/`, binaries exec from it (`ifconfig`), boots to psh stably (storage_run(1) fixes the ext2-obj-cache race); HW-validated SD-boot 0/3 faults | residuals: noisy-but-recovering 50 MHz Data-CRC (signal polish), single-block-only CMD24/CMD18 (perf); report shared-ext2 obj-cache thread-safety gap upstream |
 | SoC thermal + throttle | ✅ done | `/dev/thermal`,`/dev/throttled` (2026-06-05) | firmware owns the trip (telemetry only) |
 | Hardware RNG (RNG200) | ✅ done | `/dev/hwrng` (2026-06-05) | not yet wired to a kernel `/dev/urandom` pool |
 | Watchdog / reboot / poweroff | ⏸ attended | works via diag-udp `r`/`h` (PM block #43) | productionize `_hal_systemReset` (kernel, boot-risk) |

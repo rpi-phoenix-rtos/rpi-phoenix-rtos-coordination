@@ -209,6 +209,28 @@ _ext2_obj_create/_ext2_obj_destroy. **Fix candidates:** (a) robust — track on-
 making double-remove a safe no-op; (b) root-cause the refs/destroy imbalance. Validate via
 the deterministic netboot-sd repro (expect 0/N crashes). NEEDS rebuild + reflash (swap).
 
+## FIXED + VALIDATED — 2026-06-07: storage_run(1), a Pi4-local concurrency fix
+
+The crash was NOT an ext2 logic bug. It's a **concurrency race in the shared ext2 object
+cache**, exposed only by Pi4's combination of (a) `storage_run(2)` = 2 fs worker threads
+calling libext2 concurrently, and (b) uniquely slow CRC-retry SD reads that hold an object
+in flight long enough to lose the race → `ext2_obj_get` `LIST_REMOVE`s an LRU node another
+thread already unlinked → `prev==NULL` → Data Abort. Why no other platform sees it: the
+only other multi-threaded ext2 path is fast/jffs2-primary (zynq), and virtio-blk runs ext2
+**single-threaded** (`storage_run(1)`) — the proven-safe config.
+
+**Fix (Pi4-local, zero ext2 changes):** `bcm2711-emmc/sdstorage_srv.c` `storage_run(2)` →
+`storage_run(1)`. **Validated on HW:** the deterministic **4/4 crash is now 0/3** —
+mount + psh + USB kbd/mouse enum + 0 faults, HDMI-confirmed `(psh)%`. Committed (devices),
+manifest `2026-06-07-sd-root-exec-working.md`. (Optional: a larger N bench for extra
+statistical confidence; 0/3 after a 100% repro is already decisive.)
+
+**#120 STATUS: DONE.** Persistent SD ext2 root mounts as `/`, binaries exec from it
+(`ifconfig` ran), and the boot reaches psh stably. Residual cleanups (not blockers): the
+noisy-but-recovering 50 MHz Data-CRC reads (signal-margin polish), and single-block-only
+CMD24 writes / CMD18 multi-block (perf TODOs). The shared ext2 object-cache thread-safety
+gap is a real upstream issue to report (not Pi4's to fix), now avoided by single-threading.
+
 ## Strategic note
 
 The user said "not fixed" across 3 fixes — swap-iteration is not converging on the exec
