@@ -160,6 +160,26 @@ a filesystem (posixsrv/kernel spawn → file-backed mmap → demand-page via mtR
 ext2 server) vs from the syspage. The diag word0 logging can be removed from the SD
 driver — its job (the A/B verdict) is done.
 
+## INTERMITTENT CRASH found via HDMI capture — 2026-06-07 (bcm2711-emmc Data Abort)
+
+While re-running the SD boot with HDMI capture (`test-cycle-netboot.sh --sd-boot`), 1 of 3
+boots showed: ext2 root mounts OK, then **`bcm2711-emmc` (PID 7) Data Abort, psh never
+reached.** Fault: `pc=0x4290e4 esr=0x92000047 far=0x80` → **`lib_listRemove`
+(libphoenix sys/list.c:46)** dereferencing a node whose `prev` (poff) is NULL, writing to
+`NULL + noff(0x80)`. I.e. a **corrupted list-node linkage** (null link in a circular list).
+
+- **Intermittent:** the 2 psh-interact boots (same flashed image) reached psh + ran
+  `ifconfig`; this 3rd boot crashed. So mount ✓ and exec-from-ext2 ✓ both hold — but an
+  intermittent list/memory corruption can take down the SD driver before psh.
+- **Signature = #121-family corruption** (intermittent, root-cause-unconfirmed), now in
+  the bcm2711-emmc process. noff=0x80 → the corrupted struct's "next" link is at offset
+  0x80; identify which list (libphoenix internal: msg/thread/resource, or libcache).
+- **Confound to rule out:** the word0 diag was in the flashed image (now reverted from
+  source). It touches no list and survived 2 boots, so unlikely causal — but rebuild a
+  CLEAN image (committed source, no diag) and bench N boots to (a) confirm the crash is
+  pre-existing and (b) measure the rate. Use `test-cycle-netboot.sh --sd-boot` (HDMI on)
+  for the bench so faults are visible.
+
 ## Strategic note
 
 The user said "not fixed" across 3 fixes — swap-iteration is not converging on the exec
