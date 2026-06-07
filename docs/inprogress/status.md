@@ -2,6 +2,25 @@
 
 > Per-peripheral state at a glance: **[docs/inprogress/pi4-hardware-support-matrix.md](pi4-hardware-support-matrix.md)**.
 
+## ☀️ MORNING — start here (handoff from the overnight autonomous session)
+
+Highest-leverage first action — **#120 SD exec-from-card** (the path to a functional
+persistent rootfs). Overnight host-side forensics (card-in-host, read-only) **resolved the
+crux**: the data on the card is byte-perfect (media ruled out), the Pi's SD *write* +
+metadata reads work, and the failure is isolated to **data-block reads at 4 KB boundaries**.
+→ **Do this:** in `sdcard.c:414-419`, try `TRANSFER_BLOCK_SDMA_BOUNDARY_512K` instead of
+`_4K` (cheapest), reflash, SD-boot, run `/bin/date`; expect the Data-CRC flood to vanish.
+Then confirm reads via the psh-builtin `cat /bin/date`. Full writeup +
+fallback fix: `docs/inprogress/2026-06-07-sd-exec-data-path.md` (NIGHT section). The card is
+in the host, source tree is clean+committed — nothing to "recover", just apply the fix.
+
+Other landed/queued (details in the section below):
+- ✅ **Landed + HW-validated (netboot):** `/dev/fb0` (#148) + `/dev/gpio` (#150) device drivers.
+- 🔬 **#91 WiFi** — NVRAM-trailer lead **disproven** (was a diag artifact). Note the live
+  downloader (diag-udp.c) was deleted; reintroduce from `f0973b5^` before any #91 work.
+  Real suspects: download/clock ordering, SDIO-core intstatus-clear, rstvec semantics.
+- ⏸ **Attended queue:** #149 (fb0 fbdev veneer + mmap), USB hardening #142–#145, WiFi #91 (HW).
+
 ## Current Status: 2026-06-07 — two additive netboot device bricks landed (fb0, gpio)
 
 **Overnight autonomous session (card in host, netboot-only, additive + cannot-regress).**
