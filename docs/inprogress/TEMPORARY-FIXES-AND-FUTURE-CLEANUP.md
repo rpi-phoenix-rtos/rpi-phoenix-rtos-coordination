@@ -809,7 +809,22 @@ authoritative current state.
 
 ### TD-13-spawn-cap: hard cap on the spawn loop in `main()`
 
-- **Status:** ACTIVE HACK (added 2026-05-01)
+- **Status:** RESOLVED 2026-06-09 (#158). The cap was a pre-cache-hygiene
+  band-aid; the runaway it papered over no longer happens. Task #132
+  proved by a direct one-shot state dump on real Pi 4 (`TD13_DUMP:`
+  lines, kernel `382cde4d`) that the syspage program list is fully
+  circular: `main_initthr` walks all 17 programs and the tail (psh)
+  `->next` equals the head, so the `do {...} while ((prog = prog->next)
+  != syspage_progList())` terminator fires naturally. The cap was
+  therefore dead code AND a latent silent-truncation hazard (sized for
+  9 progs; 17 ship now; >32 would be dropped silently). In #158 the cap
+  (the `spawnIters` declaration + `if (++spawnIters >= 32) break;`
+  block + rationale comment) was removed (kernel `1594a550`), validated
+  across 2 clean netboots (both showed `tail->next == head after 17
+  entries`, reached `(psh)%`, 0 faults, no runaway), and the TD13_DUMP
+  diagnostic was reverted (kernel `2ea366be`) with a confirming netboot
+  (psh reached, 0 faults, no dump). The loop now terminates only on its
+  natural circular condition.
 - **Where:** `sources/phoenix-rtos-kernel/main.c` `main()`, the
   spawn `do {...} while ((prog = prog->next) != syspage_progList())`.
 - **What was observed:** With the EL0-sync vector restored to normal
@@ -1818,7 +1833,7 @@ longer needed.
 | TD-11 | ✅ RESOLVED 2026-05-21 alongside TD-01 (kernel `fb9669f4` activated LDAXR/STXR spinlocks via `NUM_CPUS=4`) | real exclusives are live with 4-core SMP |
 | TD-12 | RESOLVED 2026-05-17 (project `42b2db5` + plo `84ffbea`; manifest `2026-05-17-pi4-full-4gb-ram-unlocked`) | both 4 GB banks visible (`pmap: nBanks=2`, 948 MB + 3008 MB) |
 | TD-13 | RESOLVED at runtime layer | residual cleanup also done in kernel `334638ee` (Pass-4 debug strip) |
-| TD-13-spawn-cap | unknown status | re-verify against current `main.c` |
+| TD-13-spawn-cap | RESOLVED | #132 direct dump proved list circular on real HW; cap removed in #158 (kernel `1594a550`), diagnostic reverted (`2ea366be`) |
 | TD-14 | RESOLVED 2026-05-02; refined further by libphoenix `bd61195` + kernel `c8a81d5e` | devfs fast-path predicate restored after Pass-4 regression |
 | TD-14-stat-skip | RESOLVED 2026-05-02 | open() stat skip removed |
 | TD-14-deferred-fbcon | likely RESOLVED via TD-12 speed bundle | re-verify in devices `3899d38` neighborhood |
