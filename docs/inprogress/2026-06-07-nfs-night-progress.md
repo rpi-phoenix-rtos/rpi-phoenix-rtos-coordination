@@ -64,8 +64,20 @@ Then leftover time → non-SD open tasks.
   **Next (HW, orchestrator): the 3-step bisecting test in T3b-exec-fix-notes.md §5**
   (`ls /nfstest/bin` → `cat`/`stat /nfstest/bin/nfs-smoke` → exec it). All-pass = the
   wall was the empty-bin stale test → unblocks T3 + ports.
-- [ ] **T3** NFS as rootfs (decide-before-register + fallback) — GATED on exec-from-NFS.
-- [ ] **Ports** build phoenix-rtos-ports into the NFS root + run them — GATED on exec-from-NFS.
+- [x] **T3b EXEC — PASS (2026-06-08 ~02:31).** `/nfstest/bin/nfs-smoke 10.42.0.1 / /etc/nfs-smoke.txt`
+  from psh → `nfs-smoke: start ... mounted ... READ ok 21 bytes "T1-nfs-smoke-read-ok"`. The
+  binary was LOADED FROM NFS (mt* served the ELF page-reads via the loader's read-based
+  object_fetch) and RAN — it read a DISTINCT file (nfs-smoke.txt, 21B) vs the boot instance
+  (hostname, 17B), so unambiguous. NO code change (mmap was a red herring). The prior ENOENT was
+  the mount-timing race: `/nfstest` mounts ~seconds AFTER the psh prompt; commands must wait for
+  `nfs-fs: mounted at /nfstest`. **T3b COMPLETE: read+write+exec from /nfstest all HW-proven.**
+  Exec-of-a-228KB-ELF over NFS is slow (per-page open/read/close RPCs, single-threaded server) —
+  MT (§8) will help; fine for PoC.
+- [~] **T3** NFS as rootfs (decide-before-register + fallback) — UNBLOCKED (exec works). Invasive
+  boot reorder (NFS server owns "/" before /-dependent services; dummyfs-root fallback if mount
+  fails). Netboot-recoverable. In progress / next.
+- [ ] **Ports** build phoenix-rtos-ports + run from NFS — UNBLOCKED by exec; gated on T3 (or can
+  demo a single port exec'd from /nfstest without T3).
 
 ## Key facts / decisions
 - OQ answers recorded in the plan (§12 resolutions): cache-OFF first; v4 preferred, v3 fallback
