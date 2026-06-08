@@ -120,6 +120,25 @@ Then leftover time → non-SD open tasks.
 - [~] **T3** NFS as rootfs (decide-before-register + fallback) — UNBLOCKED (exec works). Invasive
   boot reorder (NFS server owns "/" before /-dependent services; dummyfs-root fallback if mount
   fails). Netboot-recoverable. In progress / next.
+  - **HW result of first nfsroot build (2026-06-08):** boot reorder + bounded-retry + FATAL line
+    all worked (no brick), BUT every `nfs_mount` failed "Failed to open socket" for the full 60 s
+    AND lwip never got its DHCP lease (`dhcp_start: 0; netif waits for OFFER`, then NO lwip-bound
+    /ip line; working boots bind to 10.42.0.12). socketsrv serves both name-res AND the TCP/IP
+    stack, so until lwip finishes DHCP `socket()` into it fails. **Hypothesis:** root mode skips
+    the /dev/ifstatus DHCP-wait and hammers nfs_init_context+nfs_mount at ~1 Hz; that socket() IPC
+    storm starves lwip's tcpip thread during its DHCP window (the /nfstest path waited on the lease
+    via /dev/ifstatus so never did this).
+  - **Fix shipped (filesystems 456e3df), `nfs_runRoot`:** (1) `sleep(10)` initial settle before
+    the first mount so lwip can bring up genet + finish DHCP quietly; (2) inter-attempt backoff
+    1 s → 3 s; (3) deadline 60 s → 90 s (settle + backoff still leaves ~25 attempts); (4) kept the
+    LOUD FATAL + "registered / (root mode)" lines; (5) one-shot post-settle probe
+    `lookup("devfs/netsocket")` → `nfs-fs: probe devfs/netsocket rc=%d` to split "socketsrv not
+    ready / lwip no lease" from "name unresolved". Built `--scope core --variant nfsroot`, clean;
+    loader.disk carries the new strings + the `app ram0 -x nfs;/;...;root` launch line.
+  - **NEXT (HW, orchestrator) — UART markers to watch:** during the 10 s settle, a lwip-bound/ip
+    line (e.g. bind to 10.42.0.12) SHOULD now appear; then `nfs-fs: probe devfs/netsocket rc=...`;
+    then either `nfs-fs: registered / (root mode)` + psh (= fixed) or still-failing mounts +
+    eventual FATAL (→ revisit; design-A RAM-root fallback is the pending decision, NOT yet built).
 - [ ] **Ports** build phoenix-rtos-ports + run from NFS — UNBLOCKED by exec; gated on T3 (or can
   demo a single port exec'd from /nfstest without T3).
 
