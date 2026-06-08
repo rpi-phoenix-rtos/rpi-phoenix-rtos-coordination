@@ -28,6 +28,12 @@ Options:
         run build.sh clean host core project image
   --build-only
       skip bootfs/sdimg export and verification
+  --ports-only
+      build ONLY the phoenix-rtos-ports `ports` stage (implies --with-ports
+      and --build-only). Ports stage writes straight into the rootfs tree
+      _fs/<target>/root (PREFIX_ROOTFS); it does NOT rebuild loader.disk or
+      any core/project artifact. Use when staging ports onto an external
+      rootfs (e.g. the NFS export) without touching the boot image.
   --skip-prepare
       do not refresh the copied VM-local buildroot first
   --qemu-sanity
@@ -71,6 +77,7 @@ do_prepare=1
 do_build_artifacts=1
 do_qemu_sanity=0
 with_ports=0
+ports_only=0
 # Build variant (selects the boot script in user.plo.yaml via the RPI4B_VARIANT
 # env var):
 #   netboot (default) - probe-only SD, card-out safe (net-booted device bring-up)
@@ -103,6 +110,11 @@ while [ "$#" -gt 0 ]; do
 			esac
 			;;
 		--build-only)
+			do_build_artifacts=0
+			;;
+		--ports-only)
+			ports_only=1
+			with_ports=1
 			do_build_artifacts=0
 			;;
 		--skip-prepare)
@@ -244,6 +256,14 @@ if [ "${with_ports}" = 1 ]; then
 	done
 	build_args=("${new_args[@]}")
 	scope_reason="${scope_reason}; +ports (busybox etc.)"
+fi
+
+# --ports-only: build the `ports` stage and nothing else. This stages port
+# binaries into _fs/<target>/root without rebuilding loader.disk or any
+# core/project artifact (used when populating an external NFS rootfs).
+if [ "${ports_only}" = 1 ]; then
+	build_args=(ports)
+	scope_reason="ports-only (stage ports into _fs root; no image rebuild)"
 fi
 
 if [ "$host_os" = "Darwin" ]; then
