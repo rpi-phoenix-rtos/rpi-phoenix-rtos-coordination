@@ -42,8 +42,30 @@ Then leftover time → non-SD open tasks.
   loop + splice on 64 KB stacks (#120). Built `--scope core --variant netboot`: `prog.stripped/nfs`
   283 KB, bundled in loader.disk, launch lines embedded. Notes: T2-fs-server-notes.md.
   Orchestrator: watch UART for `nfs-fs: mounted at /nfstest` + `ls /nfstest`/`cat`/exec, 0 faults.
-- [ ] **T3b HW test** — read/write/exec-from-/nfstest determinism (orchestrator runs it).
-- [ ] **T3** NFS as rootfs (decide-before-register + fallback). Then build ports + run them.
+- [x] **T3b HW test — READ + WRITE PASS (2026-06-08 ~01:5x).** Boot-config dup-mkdir fixed
+  (single `mkdir;/dev;/nfstest`; committed project 82d0ed3). Netboot: `nfs-fs: mounted at
+  /nfstest`, psh reached, NFS fs server 0 faults. From psh: `ls /nfstest/test` lists all host
+  files; `cat /nfstest/etc/hostname`="phoenix-rpi4-nfs"; `cp /nfstest/etc/hostname
+  /nfstest/pi-copy.txt` → host shows pi-copy.txt (content match, mode rw-rw-rw via chmod fix);
+  read-back matches. **NFS is a working read-write Phoenix filesystem at /nfstest.** (Two
+  `Data Abort (EL0)` in process "usb" = the KNOWN intermittent USB HID-attach corruption
+  [[project_usb_kbd_attach_abort]], far=wild ptr — UNRELATED to NFS, pre-existing, ~1/N boots.)
+- [~] **T3b EXEC — mmap hypothesis DISPROVEN; likely stale test. Needs HW re-test.**
+  Investigated host-only (`T3b-exec-fix-notes.md`). The loader does NOT mmap the fs:
+  `proc_fileSpawn` (process.c:1266) → `vm_objectGet`/`proc_size` (mtGetAttr atSize) →
+  `process_load` whose page faults are served by `object_fetch` (vm/object.c:174) =
+  `proc_open`+`proc_read(off,4096)`+`proc_close` per page. The NFS server already
+  implements every one of those ops correctly (proven by the working depth-2 `cat`
+  through the mount). So an mmap/mtDevCtl handler would be DEAD CODE — **no NFS code
+  change made.** Leading cause of the earlier ENOENT: the exec target
+  `/nfstest/bin/nfs-smoke` did not exist when exec was first tried (night doc lists
+  `bin/` as empty; binary mtime 01:52 is later/ambiguous). The staged binary is now
+  byte-identical (`cmp` clean) to the syspage-loaded `nfs-smoke` → a valid loadable ELF.
+  **Next (HW, orchestrator): the 3-step bisecting test in T3b-exec-fix-notes.md §5**
+  (`ls /nfstest/bin` → `cat`/`stat /nfstest/bin/nfs-smoke` → exec it). All-pass = the
+  wall was the empty-bin stale test → unblocks T3 + ports.
+- [ ] **T3** NFS as rootfs (decide-before-register + fallback) — GATED on exec-from-NFS.
+- [ ] **Ports** build phoenix-rtos-ports into the NFS root + run them — GATED on exec-from-NFS.
 
 ## Key facts / decisions
 - OQ answers recorded in the plan (§12 resolutions): cache-OFF first; v4 preferred, v3 fallback
