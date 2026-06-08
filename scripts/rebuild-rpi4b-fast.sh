@@ -71,9 +71,13 @@ do_prepare=1
 do_build_artifacts=1
 do_qemu_sanity=0
 with_ports=0
-# Build variant: 'netboot' (default; probe-only SD, card-out safe — for net-booted
-# device bring-up) or 'sd' (mount the ext2 partition as root, #120). Selects the
-# bcm2711-emmc launch line in user.plo.yaml via the RPI4B_VARIANT env var.
+# Build variant (selects the boot script in user.plo.yaml via the RPI4B_VARIANT
+# env var):
+#   netboot (default) - probe-only SD, card-out safe (net-booted device bring-up)
+#   sd                - mount the ext2 partition on the SD card as root (#120)
+#   nfsroot           - mount the NFS export as root over the network (#153 T3).
+#                       Netboot-delivered like netboot (no ext2 partition needed);
+#                       only the rendered user.plo.yaml differs.
 variant="netboot"
 
 while [ "$#" -gt 0 ]; do
@@ -94,8 +98,8 @@ while [ "$#" -gt 0 ]; do
 			shift
 			[ "$#" -gt 0 ] || die "missing value for --variant"
 			case "$1" in
-				netboot|sd) variant="$1" ;;
-				*) die "unknown variant: $1 (use netboot|sd)" ;;
+				netboot|sd|nfsroot) variant="$1" ;;
+				*) die "unknown variant: $1 (use netboot|sd|nfsroot)" ;;
 			esac
 			;;
 		--build-only)
