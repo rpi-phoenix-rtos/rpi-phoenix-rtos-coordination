@@ -1,5 +1,34 @@
 # NFS rootfs — overnight session progress (2026-06-07/08)
 
+## ☀️ MORNING SUMMARY (read first)
+
+**Headline: NFS works as a read-write, executable filesystem on the Pi4, HW-proven over netboot.**
+Built tonight from nothing: libnfs port → nfs-smoke client → a real `mt*` filesystem server
+mounted at `/nfstest`. On hardware I verified, from psh: `ls`/`cat` (content matches the host
+export), `cp` (host sees the Pi-written file), and **exec** — a 228 KB ELF was loaded *from NFS*
+and ran. So the SD-swap-free deploy loop is real: drop a binary in `/srv/phoenix-rpi4-nfs`, run
+it from `/nfstest` on the Pi.
+
+**What's NOT done (and why):**
+- **T3 NFS-as-ROOT** (rootfs on NFS): NOT attempted. It needs an invasive boot reorder AND has a
+  real open question I won't gamble on unattended — can a process obtain sockets (`/dev/netsocket`)
+  and `/dev/ifstatus` *before* the `/dev` bind, which itself needs `/`? (The SD ext2-root
+  precedent didn't need sockets, so it doesn't answer this.) This is the attended next step.
+- **Build all ports + run them**: gated on T3 (a full NFS root). The *capability* (exec from NFS)
+  is already proven; staging one binary + running it works today.
+
+**To continue (next session):** answer the socket-before-/dev-bind question (grep posix_socket /
+how lwip registers /dev/netsocket via the devfs named port), then implement an `nfsroot` boot
+variant (lwip + nfs server launched EARLY like the SD `bcm2711-emmc -r` precedent; NFS server
+`portRegister("/")`; dummyfs-root fallback if mount fails; netboot-recoverable). Then build ports.
+
+**Also tonight:** SD #154 root cause FOUND (see SD section below) — parked, needs card swaps.
+USB shows a known intermittent HID-attach Data Abort (process "usb", #121-family) — pre-existing,
+unrelated to NFS.
+
+---
+
+
 Autonomous night session. SD card in host → **netboot only** (no SD swaps). Goal: implement
 NFS support per `docs/research/2026-06-07-nfs-rootfs-feasibility/IMPLEMENTATION-PLAN.md`
 (T0→T1→T2→T3b→T3), then if NFS root boots, build all phoenix-rtos-ports into it + run them.
