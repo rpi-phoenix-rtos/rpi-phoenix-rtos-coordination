@@ -262,8 +262,13 @@ fi
 # binaries into _fs/<target>/root without rebuilding loader.disk or any
 # core/project artifact (used when populating an external NFS rootfs).
 if [ "${ports_only}" = 1 ]; then
-	build_args=(ports)
-	scope_reason="ports-only (stage ports into _fs root; no image rebuild)"
+	# Stage the filesystem skeleton (root-skel -> _fs/<target>/root) before the
+	# ports stage: some ports read config out of $PREFIX_ROOTFS/etc during their
+	# prepare step (e.g. lighttpd greps /etc/lighttpd.conf to generate its static
+	# plugin-init list). Without the fs stage that directory does not exist and
+	# the port prepare fails. `fs` is cheap (a cp -a of root-skel) and idempotent.
+	build_args=(fs ports)
+	scope_reason="ports-only (stage fs skeleton + ports into _fs root; no image rebuild)"
 fi
 
 if [ "$host_os" = "Darwin" ]; then
