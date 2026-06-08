@@ -10,10 +10,20 @@ and ran. So the SD-swap-free deploy loop is real: drop a binary in `/srv/phoenix
 it from `/nfstest` on the Pi.
 
 **What's NOT done (and why):**
-- **T3 NFS-as-ROOT** (rootfs on NFS): NOT attempted. It needs an invasive boot reorder AND has a
-  real open question I won't gamble on unattended — can a process obtain sockets (`/dev/netsocket`)
-  and `/dev/ifstatus` *before* the `/dev` bind, which itself needs `/`? (The SD ext2-root
-  precedent didn't need sockets, so it doesn't answer this.) This is the attended next step.
+- **T3 NFS-as-ROOT** (rootfs on NFS): NOT attempted, but now **fully de-risked + recipe ready**
+  (`docs/research/2026-06-07-nfs-rootfs-feasibility/T3-nfsroot-feasibility.md`). The open question
+  is ANSWERED **YES** — a process CAN get sockets + lease before "/" via the `devfs` named-port
+  resolution (`proc_portLookup`: literal `/dev/X` with no root → ENOENT, but `devfs/X` finds the
+  cached devfs port; lwip's netsocket+ifstatus are created via the devfs port so they exist
+  pre-"/"; same trick the SD ext2-root uses for `/dev/mmcblk0pN`). Changes needed: (1) libphoenix
+  `socket.c:56` add a `devfs/netsocket` fallback when the literal lookup fails (CORE/all-arch —
+  additive but cross-cutting, do attended); (2) nfs server root mode: accept "/", `portRegister
+  (port,"/")` instead of the splice, self-parent "..", and in root mode bounded-retry `nfs_mount`
+  instead of the `/dev/ifstatus` wait (fopen can't resolve pre-"/"); (3) boot variant `nfsroot`:
+  devfs→pl011-tty→lwip→**nfs(root)**→mkdir/bind/posixsrv→drivers→psh, dummyfs-root SKIPPED;
+  (4) fallback design A: nfs root server links the dummyfs object store + registers a RAM "/" if
+  the mount fails (never bricks). NOT done unattended: it's a core libphoenix change + boot reorder
+  — do attended/fresh-context. Netboot-recoverable.
 - **Build all ports + run them**: gated on T3 (a full NFS root). The *capability* (exec from NFS)
   is already proven; staging one binary + running it works today.
 
