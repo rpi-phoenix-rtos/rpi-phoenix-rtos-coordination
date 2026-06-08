@@ -137,10 +137,20 @@ prior NFS builds; if a fresh tree fails on `-lnfs`, run one `--with-ports` first
 ./scripts/rebuild-rpi4b-fast.sh --scope core --variant nfsroot --build-only
 ```
 
-Both built clean. The authoritative verification is the rendered
-`.buildroot/_build/aarch64a72-generic-rpi4b/plo-scripts/user.plo` and the plo
-program-image table (not `grep -a` on `loader.disk` — the embedded user.plo block
-has slack bytes from the larger netboot render that can show stale strings).
+Both built clean. **Verification gotcha:** `--build-only` SKIPS the assemble step,
+so `…/rpi4b-bootfs/loader.disk` is NOT refreshed by a `--build-only` build (it stays
+whatever the last full build produced). To grep loader.disk, run the build WITHOUT
+`--build-only` (or run `assemble-rpi4b-bootfs.sh`). Confirmed on freshly-assembled
+loader.disk files:
+
+- **nfsroot** loader.disk (size 4103624): `grep -aE 'nfs;/;|-x nfs'` →
+  `-x nfs;/;10.42.0.1;/;v4;root`; `grep -ac dummyfs-root` → 0; `grep -ac nfs-smoke` → 0.
+- **netboot** loader.disk (size 4398536): `dummyfs-root` present, `nfs-smoke` present,
+  `nfs;/nfstest` splice present, no `nfs;/;` root launch — byte-identical behaviour to
+  before this change.
+
+The rendered `.buildroot/_build/aarch64a72-generic-rpi4b/plo-scripts/user.plo` and the
+plo program-image table are the other authoritative views.
 
 ## Orchestrator HW test plan + markers
 
