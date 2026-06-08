@@ -32,9 +32,14 @@ how lwip registers /dev/netsocket via the devfs named port), then implement an `
 variant (lwip + nfs server launched EARLY like the SD `bcm2711-emmc -r` precedent; NFS server
 `portRegister("/")`; dummyfs-root fallback if mount fails; netboot-recoverable). Then build ports.
 
-**Also tonight:** SD #154 root cause FOUND (see SD section below) — parked, needs card swaps.
-USB shows a known intermittent HID-attach Data Abort (process "usb", #121-family) — pre-existing,
-unrelated to NFS.
+**Also tonight:**
+- SD #154 root cause FOUND (see SD section below) — parked, needs card swaps.
+- **#152 pool-thread stack audit** (docs/inprogress/2026-06-08-pool-thread-stack-audit.md): the
+  **usb daemon uses 2 KB thread stacks** (usb.c:51,53) on the deepest call chain (PCIe/VL805 + HID)
+  with no guard page → a strong new suspect for the intermittent USB kbd/mouse-attach Data Abort
+  (#121-family) seen for months. Fix is task **#155** (attended: bump to 16-32 KB + re-bench).
+  genet irq_stack 8 KB (borderline). SD-emmc + NFS servers correctly at 64 KB. The USB Data Abort
+  seen during the NFS boots is this pre-existing bug, unrelated to NFS.
 
 ---
 
