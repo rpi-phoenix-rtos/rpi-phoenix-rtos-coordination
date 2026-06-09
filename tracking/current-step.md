@@ -1,5 +1,37 @@
 # Current Implementation Step
 
+## Active step (2026-06-09): #152 pool-thread stacks + #156 NFS-root residuals (attended)
+
+User directive: work on #156 and #152. Netboot live (card in host).
+
+**#152 — DONE (committed + netboot-validated, image 2726cbfe, manifest
+`2026-06-09-td152-deepfs-stacks.md`):**
+- libstorage `STORAGE_DEEPFS_STACKSZ (16*_PAGE_SIZE)` + header comment (corelibs `2311290`);
+  bcm2711-emmc uses it (devices `1741541`); genet `irq_stack` 8→16 KB + `link_poll_stack`
+  4→8 KB margin (lwip `3d11426`). Smoke: psh/lwip/genet/IP, 0 faults.
+- **Headline lead (usb 2 KB stacks → intermittent HID-attach abort) REFUTED + REVERTED.**
+  Bench: T1 clean, T2 reproduced the abort with status stacks already at 16 KB. addr2line+nm:
+  it's a wild write into `hub_common.events` (list head → `.text` ptr), faulting in
+  `lib_listRemove` from `hub_thread:440` — NOT a stack-depth overflow (events sits above
+  hub_thread's stack top; no thread stack neighbours it; size bumps leave geometry invariant).
+  Live mechanism = #121 forward-overrun in usbkbd device-string formatting. Full writeup:
+  `docs/inprogress/2026-06-09-usb-hid-attach-abort-localized.md`. Reverted usb.c+hub.c.
+
+**#156 — residuals advanced:**
+- takeover-fail→RAM-root degrade: **verified ALREADY DONE in code** (`nfs_runTakeover` returns
+  non-zero + "keeping RAM root /" on every failure incl. the destructive-window restore).
+- ≥2-boot soak: **DONE 2/2** (nfsroot image b8582c1d; each boot `mounted via v4 → re-bound /dev
+  → registered / (takeover)`, psh, 0 faults).
+- first-read-after-psh transient ENOENT: **still open** — genuine NFSv4 attr/name-cache race
+  (lookup correctly maps server NOENT→ENOENT; libnfs caching untuned in `nfs_makeContext`).
+  A blind retry would mask real misses → needs an interactive read-after-psh repro before fixing.
+- MT server + more ports: deferred (not needed for serial exec / additive).
+
+Memory: [[project_pi4_pool_thread_stacks_152]], [[project_usb_kbd_attach_abort]],
+[[project_nfs_rootfs_feasibility]].
+
+---
+
 ## Active step (2026-06-06 overnight): upstream-readiness code review + conservative cleanup
 
 User directive: a grand, deep review of ALL RPi4 bring-up changes vs upstream
