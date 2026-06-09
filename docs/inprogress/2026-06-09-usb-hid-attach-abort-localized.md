@@ -26,6 +26,25 @@ not a list-API bug.
 occurred (watchpoint silent); clean builds boot to psh with `kbd0`+`mouse0` and
 0 faults.
 
+**Residuals / honest caveats:**
+- The "fixed" claim rests on the **mechanism** (caught the exact overflow store;
+  the WP-armed boot directly shows the code-pointer store to `events` no longer
+  happens), not the boot count — 6/6 clean is only ~85% on its own. A **longer
+  soak is an outstanding routine confirmation** (the WP-silent observation is n=1).
+- The fix is **headroom, not "overflow faults cleanly."** The class hazard
+  remains (#152): no guard pages, small stacks adjacent to critical `.bss`; an
+  8 KB stack just moves who is downstream of the *next* overflow. 8 KB is margin
+  over a *prologue-point* depth of ~1088 B — peak depth was not measured (judgment
+  call, comfortable given the headroom). True robustness = guard pages / stack
+  relocation, tracked under #152.
+- The **Route-A watchpoint facility** is now always-registered (dormant unless
+  armed; the 6/6 unarmed boots confirm no effect). Flag for the upstream-readiness
+  review — an always-present handler that decodes/emulates EL0 in resume-mode is
+  specialized debug infra (may want a build flag). **Before reusing it on a
+  different corruption class (e.g. WiFi #91): harden the `*(u32*)pc` instruction
+  read** — a wild *jump* (vs wild store) could leave `pc` unmapped and fault the
+  EL1 handler.
+
 **Reconciliation with the analysis below:** the earlier section correctly proved
 the corruptor was a wild store into `hub_common.events` (not a list-API bug) and
 correctly ruled out *hub_thread's own* stack. It was wrong only in inferring "not

@@ -51,3 +51,21 @@ phoenix-rtos-usb	e0911ce7b0c8b063db2f3a5d13afba9d63b08eb6	master
 phoenix-rtos-utils	aae3d350fa05f3663f8b9bdfb75c201a66fdf218	master
 plo	68172c11570d0d0f64fa416fadae47cb113dab2f	master
 ```
+
+## Note (restore caveat)
+
+Validated image `d1e0c9e3` was built from this sibling state PLUS the parked,
+**uncommitted** #154 SD deltas in the working tree (`devices`
+`storage/bcm2711-emmc/sdcard.c` + `sdstorage_dev.c`). Those are SD-only and do not
+affect the netboot-validated #121 fix (usbkbd/usbmouse msgstack). A restore from
+this manifest reproduces the committed tree but not those uncommitted SD deltas;
+rebuild the netboot variant after restore for a byte-identical image.
+
+## Outstanding (non-blocking)
+
+- Longer netboot soak as routine confirmation (the WP-silent direct check is n=1;
+  6/6 clean boots is mechanistic-corroboration, not statistical proof).
+- Class residual (#152): no guard pages on small `.bss`-adjacent stacks — the fix
+  is headroom, not "overflow faults cleanly."
+- Route-A watchpoint facility: flag for upstream-readiness review; harden the
+  handler's `*(u32*)pc` read before reusing on a wild-jump corruption class.
