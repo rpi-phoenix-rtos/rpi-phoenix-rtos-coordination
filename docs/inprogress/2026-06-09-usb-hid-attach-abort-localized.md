@@ -1,4 +1,43 @@
-# USB intermittent HID-attach Data Abort — root cause LOCALIZED (#152 bench result / #121-family)
+# USB intermittent HID-attach Data Abort — ROOT-CAUSED + FIXED (#121)
+
+## ✅ RESOLUTION (2026-06-09, via the Route-A self-hosted watchpoint)
+
+**Root cause:** the in-process HID msg threads (`usbkbd`/`usbmouse`,
+`tty/usbkbd/usbkbd.c:112`, `usbmouse.c:104`) ran on **1 KB** stacks
+(`msgstack[N][1024]`). Submitting a URB for the interrupt-IN pipe descends
+`usblibdrv_urbTransferAsync → xhci_cmdExec → xhci_enterRunState`, a chain already
+~1 KB+ deep at the `xhci_enterRunState` prologue. The 1 KB stack **overflowed
+~64 B past its base into the adjacent `.bss`** — for `usbkbd`, straight into
+`hub_common.events` (the `.bss` neighbour just below `usbkbd_common`) — writing a
+saved return address (a `.text` code pointer) there. Later `lib_listRemove` on
+the now-corrupted hub event list dereferenced that code pointer → the
+intermittent `Data Abort` in process `usb` (~3/11 boots).
+
+**How it was caught:** the Route-A watchpoint armed on `&hub_common.events` with a
+code-pointer value-trap (emulating legit NULL/heap list writes, halting only on a
+code-range store) froze *exactly* on `stp x30, x19, [sp, #-224]!` — the
+`xhci_enterRunState` prologue — running on the usbkbd msg-thread stack, with
+`far = &hub_common.events`. That is the smoking gun: a **stack-overflow store**,
+not a list-API bug.
+
+**Fix (committed):** `msgstack` 1 KB → **8 KB** for both `usbkbd` and `usbmouse`
+(devices `f07b938`); these stacks have no guard page so the margin is generous.
+**Validated on HW:** with the watchpoint still armed the overflow no longer
+occurred (watchpoint silent); clean builds boot to psh with `kbd0`+`mouse0` and
+0 faults.
+
+**Reconciliation with the analysis below:** the earlier section correctly proved
+the corruptor was a wild store into `hub_common.events` (not a list-API bug) and
+correctly ruled out *hub_thread's own* stack. It was wrong only in inferring "not
+a stack overflow at all" — the overflowing stack belonged to a **different
+thread** (the usbkbd msg thread, whose `.bss` stack abuts `hub_common`), which the
+fault-time analysis couldn't see. The #152 "2 KB-class USB stacks are too shallow
+for the deep xHCI chain" hypothesis was right in spirit; the specific culprit was
+the 1 KB usbkbd/usbmouse `msgstack`, not the usb.c msg/status threads.
+
+---
+
+# (original) USB intermittent HID-attach Data Abort — root cause LOCALIZED (#152 bench result / #121-family)
 
 **Date:** 2026-06-09
 **Session type:** attended; netboot live (card in host).

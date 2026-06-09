@@ -1,5 +1,36 @@
 # Current Implementation Step
 
+## Active step (2026-06-09 PM): roadmap Phase 0 (Route-A watchpoint) + #121 RESOLVED
+
+Executing the approved stability→breadth→GLQuake roadmap (`~/.claude/plans/
+calm-wobbling-quill.md`), unattended-first. Phase 0 + Phase 1.1 DONE.
+
+**Phase 0 — self-hosted A72 data-watchpoint facility (Route A) — DONE + committed.**
+On-device hardware watchpoint, no JTAG, reports via the existing UART exception
+dump. `platformctl(pctl_watchpoint, va[, trapLo, trapHi])` arms a store watchpoint;
+`exceptions_watchpointHandler` either halts+dumps (pc=writer, far=addr) or, in
+value-trap mode, emulates legit stores and halts only on a value in [trapLo,trapHi)
+(e.g. a code-pointer wild write). Kernel `a67f6dac` (halt-first) + `5160cd8d`
+(value-trap/emulate-resume). Validated by a deliberate self-test store.
+
+**Phase 1.1 — USB #121 HID-attach abort ROOT-CAUSED + FIXED + validated.** The
+watchpoint, armed on `&hub_common.events`, halted on `stp x30,x19,[sp,#-224]!` —
+the `xhci_enterRunState` prologue running on the **usbkbd msg-thread's 1 KB stack**,
+which overflowed ~64 B into the adjacent `hub_common.events` (storing a saved
+return address = the "code pointer in events" #121 signature). Fix: usbkbd +
+usbmouse `msgstack` 1 KB → 8 KB (devices `f07b938`). Validated: WP-armed boot
+silent (no overflow) + **6/6 clean netboot boots** (psh, kbd0+mouse0, 0 faults)
+vs pre-fix ~3/11. Manifest `2026-06-09-usb121-stackfix-watchpoint.md`, image
+`d1e0c9e3`. Docs: `docs/inprogress/2026-06-09-usb-hid-attach-abort-localized.md`
+(ROOT-CAUSED section). Memory: [[project_usb_kbd_attach_abort]],
+[[project_pi4_pool_thread_stacks_152]].
+
+**Next per roadmap:** Phase 1.2 (USB daemon hardening #142/#143/#145, [U]), then
+1.3 NFS #156 residuals, 1.4 SD #120/#154 (needs a batched SD swap). The Route-A
+watchpoint is now reusable for any future corruption hunt (e.g. WiFi #91).
+
+---
+
 ## Active step (2026-06-09): #152 pool-thread stacks + #156 NFS-root residuals (attended)
 
 User directive: work on #156 and #152. Netboot live (card in host).
