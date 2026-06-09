@@ -1085,19 +1085,21 @@ under TD-13-spawn-cap and the priority ladder.
   alongside reverting TD-14-tty0-nonfatal.
 - **Marker grep:** `grep -n "TD-14-pl011-retry" sources/phoenix-rtos-devices/tty/pl011-tty/pl011-tty.c`
 
-### TD-14-psh-retry: PSH_TTYOPEN_RETRIES bumped 20 → 200
+### TD-14-psh-retry: PSH_TTYOPEN_RETRIES retry budget
 
-- **Status:** ACTIVE TUNING (utils `0cafa08`, 2026-05-02)
-- **Where:** `sources/phoenix-rtos-utils/psh/pshapp/pshapp.c` macro
-  default. 20 retries × 100 ms = 2 s wall; 200 retries × 100 ms = 20 s.
-- **Why:** On real Pi 4 the `/dev/console` registration path
-  (pl011-tty + devfs) takes materially longer than QEMU. 2 s isn't
-  enough; 20 s lets psh ride out the slow registration and still
-  bail eventually.
-- **Risk accepted:** Slow shell startup on broken images (psh sleeps
-  20 s before reporting "ttyopen failed"). Trivial.
-- **Resolution requirements:** Restore to 20 once the underlying IPC
-  slowness is rooted out.
+- **Status:** ACTIVE TUNING, **mostly wound down** (value verified 2026-06-09).
+  The historical 20 s budget (200 × 100 ms) has since been **cut ~40× to ~0.5 s**:
+  current `pshapp.c` has `PSH_TTYOPEN_RETRIES 50` × `PSH_TTYOPEN_RETRY_US 10000`
+  (10 ms) = 0.5 s wall. That large reduction reflects that the underlying IPC
+  slowness was largely addressed (P2/P3 console fixes + the TD-14-devfs-direct
+  cache), so psh no longer needs a 20 s ride-out. The retry loop itself remains as
+  a small startup-ordering cushion.
+- **Where:** `sources/phoenix-rtos-utils/psh/pshapp/pshapp.c` macro defaults.
+- **Why (historical):** On real Pi 4 the `/dev/console` registration path
+  (pl011-tty + devfs) took materially longer than QEMU; the original 2 s wasn't
+  enough so it was bumped to 20 s.
+- **Resolution requirements:** Reduce toward the upstream default (or drop the
+  loop) once startup ordering is fully deterministic; 0.5 s is already close.
 - **Marker grep:** `grep -n "TD-14-psh-retry" sources/phoenix-rtos-utils/psh/pshapp/pshapp.c`
 
 ### TD-14-ttyopen-nonfatal: psh_run continues if /dev/console open fails

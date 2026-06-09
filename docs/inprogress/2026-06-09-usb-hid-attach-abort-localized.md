@@ -112,9 +112,11 @@ earlier boots:
 | #121 HID-attach abort | **2/5** (rel-T2, rel-T5); ~**3/11 ≈ 27%** across the day |
 
 Takeaways: (1) enumeration is fully reliable; the bug is purely the post-enum
-HID-attach corruption and does not block kbd/mouse coming up. (2) The abort is
-**more frequent than the previously-logged ~1/10** — small N, but it recurred
-readily, so it deserves priority as a real reliability defect, not a rare edge.
+HID-attach corruption and does not block kbd/mouse coming up. (2) The abort
+**recurred readily (3/11 today)** — clearly not a rare edge, and at least as
+frequent as the prior ~1/10 note. (n=11 is too small for a tighter claim: the
+3/11 point estimate carries a ~10–57% 95% interval, so this does NOT establish a
+*higher* rate than before — just that it reproduces easily enough to bench.)
 (3) The snprintf hardening neither fixed nor worsened the rate (expected — it's a
 different code path); enum/boot were unaffected, confirming no regression.
 
