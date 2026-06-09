@@ -100,5 +100,23 @@ A targeted, **temporary** guard mirroring `usb.c:192` could be added to
 `LIST_REMOVE`) to convert the crash into a logged recovery while the real
 overrun is hunted — but the fix is to bound the offending write.
 
+## Reliability baseline (2026-06-09, netboot bench, current daemon)
+
+A 5-boot bench (`rel-T1..T5`, snprintf hardening committed) plus the session's
+earlier boots:
+
+| metric | result |
+|---|---|
+| USB enum (`/dev/kbd0` + `/dev/mouse0`) | **5/5** (100%) — and 11/11 across the day |
+| boot → `(psh)%` | **5/5** |
+| #121 HID-attach abort | **2/5** (rel-T2, rel-T5); ~**3/11 ≈ 27%** across the day |
+
+Takeaways: (1) enumeration is fully reliable; the bug is purely the post-enum
+HID-attach corruption and does not block kbd/mouse coming up. (2) The abort is
+**more frequent than the previously-logged ~1/10** — small N, but it recurred
+readily, so it deserves priority as a real reliability defect, not a rare edge.
+(3) The snprintf hardening neither fixed nor worsened the rate (expected — it's a
+different code path); enum/boot were unaffected, confirming no regression.
+
 Relates to: [[project_usb_kbd_attach_abort]] (#155), [[project_usb_freelist_121_state]]
 (#121), `docs/notes/2026-06-06-usb-intermittent-kbd-attach-abort.md`.

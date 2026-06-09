@@ -21,6 +21,33 @@ Other landed/queued (details in the section below):
   Real suspects: download/clock ordering, SDIO-core intstatus-clear, rstvec semantics.
 - ⏸ **Attended queue:** #149 (fb0 fbdev veneer + mmap), USB hardening #142–#145, WiFi #91 (HW).
 
+## Current Status: 2026-06-09 — #152/#156 advanced, USB #121 abort localized, TD ledger reconciled
+
+Attended-but-autonomous netboot-only session (no SD swaps). Highlights:
+
+- **#152 (pool/worker stacks) — DONE + validated:** committed `STORAGE_DEEPFS_STACKSZ`
+  libstorage constant + bcm2711-emmc use, and genet `irq_stack`/`link_poll_stack` margins
+  (corelibs `2311290`, devices `1741541`, lwip `3d11426`; manifest
+  `2026-06-09-td152-deepfs-stacks`, image `2726cbfe`, netboot-clean). **The audit's headline
+  USB-stack lead was REFUTED + reverted** — a 16 KB bump still aborted (rel-T2/T5); addr2line+nm
+  proved the abort is a **wild write into `hub_common.events`** (list head → `.text` ptr,
+  faulting in `lib_listRemove` from `hub_thread:440`), NOT a stack overflow. Full writeup:
+  `docs/inprogress/2026-06-09-usb-hid-attach-abort-localized.md`. #121 is the live mechanism.
+- **USB hardening (committed, usb `e0911ce`):** `usb_devSymlinksCreate/Destroy` `sprintf→snprintf`
+  (latent overflow found during the hunt; NOT the abort cause).
+- **USB reliability baseline (netboot bench):** enum **11/11** (kbd0+mouse0 always up), boot→psh
+  11/11; **#121 abort ~3/11 ≈ 27%** — more frequent than the old ~1/10 note → real defect.
+- **#156 (NFS-root) residuals advanced:** takeover-fail→RAM-root degrade verified already-done;
+  **≥2-boot nfsroot soak 2/2 clean** (takeover-as-root stable, image `b8582c1d`); first-read ENOENT
+  still open (NFSv4 attr-cache race; needs interactive repro before a non-masking fix).
+- **TD ledger reconciled (coord `19434f0`), 6 items verified vs code:** TD-12 (948 MiB clamp)
+  RESOLVED (page allocator ~3.96 GiB), TD-07/TD-08 (QEMU-in-VM/gdbstub) RESOLVED (native QEMU 11.0.0
+  + qemu-debug.sh), TD-09 (en7/socket_vmnet) OBSOLETE (Linux dnsmasq), TD-05 (boot markers) MOSTLY
+  RESOLVED, TD-14-psh-debug-probes RESOLVED. Open kernel items (TD-02/03/06/20) left PENDING.
+
+**Blocked-unattended (switched away from):** USB #121 root cause (needs real-HW gdb watchpoint —
+QEMU lacks VL805), SD #120/#154 (card swaps), #156 ENOENT (interactive repro).
+
 ## Current Status: 2026-06-07 — two additive netboot device bricks landed (fb0, gpio)
 
 **Overnight autonomous session (card in host, netboot-only, additive + cannot-regress).**
