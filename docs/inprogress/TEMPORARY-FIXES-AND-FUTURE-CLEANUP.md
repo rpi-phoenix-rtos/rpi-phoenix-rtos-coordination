@@ -474,7 +474,16 @@ authoritative current state.
 
 ## TD-05: UART debug-marker scaffolding
 
-- **Status:** PENDING
+- **Status:** MOSTLY RESOLVED (verified 2026-06-09). The pervasive boot-progress
+  trace is gone: `grep -cE "\.asciz|main_uartMark" hal/aarch64/_init.S` = 0 (the
+  `.asciz` tags + scattered `main_uartMark` calls were removed in the upstream
+  cleanup, kernel `08a09d28`). What remains in `_init.S` is **not** boot-trace
+  cruft: the `uart_putc`/`early_putc_inline` *macros* are infrastructure, and the
+  `early_putc_inline 'E'/'X'/'='` sequence is the **exception-dump fault reporter**
+  (legitimate, keep). **Remaining for full closure (attended / low-value churn):**
+  the gated-`RPI4_BOOT_MARKER(c)` single-switch refactor the resolution asked for,
+  and the 8-space→tab reindent of the added `_init.S` blocks (upstream-readiness
+  remainder). The shipping risk (noisy diffs, leftover markers) is largely retired.
 - **First observed:** 2026-04 bring-up (pervasive)
 - **Where:** `hal/aarch64/_init.S`, `syspage.c`, `main.c`, and related
   boot-path files.
@@ -514,8 +523,14 @@ authoritative current state.
 
 ## TD-07: Update QEMU inside the phoenix-dev VM to a current stable
 
-- **Status:** PENDING
-- **Where:** apt-installed QEMU inside the Lima VM, used by
+- **Status:** ✅ RESOLVED via host migration (verified 2026-06-09). The macOS+Lima
+  VM is gone; the project runs on a native Linux x86-64 host with **QEMU 11.0.0**
+  installed at `/opt/qemu-11/bin/qemu-system-aarch64` — exactly the "QEMU 11.x"
+  the resolution asked for — driven by `scripts/qemu-debug.sh` (which superseded
+  the Lima-era `qemu-rpi4b-hdmi-smoke.sh`/`qemu-shell-smoke.sh`). The
+  install-method/version documentation requirement now belongs to the Linux host
+  bootstrap docs, not a VM provision script.
+- **Where (historical):** apt-installed QEMU inside the Lima VM, used by
   `scripts/qemu-rpi4b-hdmi-smoke.sh` and `scripts/qemu-shell-smoke.sh`.
 - **What was done:** an older QEMU release was good enough for early
   bring-up; never refreshed.
@@ -531,9 +546,16 @@ authoritative current state.
 
 ## TD-08: Re-test boot under QEMU + gdbstub for in-flight introspection
 
-- **Status:** PENDING (depends on TD-07)
-- **Where:** QEMU runner scripts and a gdb script we'll add under
-  `scripts/`.
+- **Status:** ✅ RESOLVED as a capability (verified 2026-06-09). The
+  `qemu-system-aarch64 ... -gdb` introspection capability now ships as
+  `scripts/qemu-debug.sh --gdb` on the Linux host (TD-07 unblocked it). The
+  *specific* original motivation — debugging the "iter-7/8 syspage corruption"
+  pre-handoff — is also moot: that bug was resolved long ago (see TD-04 / TD-13
+  RESOLVED). The general gdbstub walk remains available on demand for future
+  runtime questions (per CLAUDE.md "try QEMU gdbstub before source probes").
+  Caveat unchanged: QEMU's rpi4b model lacks the VL805/SD/DMA timing, so it can't
+  reproduce hardware-specific corruption (e.g. the USB #121 wild write).
+- **Where (historical):** QEMU runner scripts and a gdb script under `scripts/`.
 - **What was done:** real-hardware bring-up gives only UART markers as
   state. Memory contents at specific markers, register values right
   before the iter-7/8 corruption, MMU translation tables, and cache
@@ -552,8 +574,14 @@ authoritative current state.
 
 ## TD-09: Replace en7 crossover cable with an unmanaged ethernet switch
 
-- **Status:** PENDING
-- **Where:** physical cabling between the Mac's en7 USB-C ethernet
+- **Status:** ✅ OBSOLETE via host migration (verified 2026-06-09). The trigger was
+  macOS-specific: `socket_vmnet`'s BPF capture on the Mac's `en7` wedging when the
+  Pi power-cycle toggled the directly-cabled link. The Linux x86-64 host has no
+  Lima VM and no `socket_vmnet` — netboot runs `dnsmasq` bound directly to the
+  `enx00e04c68013a` NIC, so the BPF-wedge failure mode no longer exists. A switch
+  is no longer needed to eliminate it. (`test-cycle-netboot.sh`'s NIC-bounce
+  recovery still handles transient DHCP misses, as seen in this session's logs.)
+- **Where (historical):** physical cabling between the Mac's en7 USB-C ethernet
   and the Pi 4 RJ45.
 - **What was done:** direct crossover cable. Works electrically.
 - **Why:** en7's link state mirrors the Pi's PHY directly. Every Pi
@@ -652,15 +680,23 @@ authoritative current state.
 - **Stage:** 2 (phases 4-5). Resolved by DTB-driven memory layout
   and `total_mem=4096` config.txt change.
 
-- **Status:** PENDING
+- **Status:** ✅ RESOLVED for 4 GiB (verified 2026-06-09). The clamp described
+  below was lifted by the 4 GiB unlock (manifest
+  `2026-05-17-pi4-full-4gb-ram-unlocked.md`): the kernel adds a second `ddrh`
+  syspage bank for the high DRAM. **Evidence from current netboot boots
+  (td152-final, td156-soak-1):** `pmap: banks=2 min=0x max=0xfbffffff` and
+  `vm: Initializing page allocator (.../4050944KB)` — Phoenix's page allocator
+  manages ~3.96 GiB, NOT 948 MiB. The `MEM GPU: 76 ARM: 948 TOTAL: 1024` line is
+  only the **firmware→plo handoff view of the low 1 GiB**; the high bank is added
+  on top. **Remaining (folds into TD-06, not a clamp anymore):** drive the layout
+  fully from the DTB `/memory@0` + `/reserved-memory` rather than the 2-bank
+  construction, and validate the 1/2/8 GiB models (8 GiB still untested).
 - **First observed:** 2026-04-30 bring-up.
-- **Where:** plo memory probe / kernel boot path. Concretely the
-  start4.elf firmware hands plo a memory map that reports
-  `MEM GPU: 76 ARM: 948 TOTAL: 1024` on a physical 4 GiB board.
-  Plo currently honors that 948 MiB clamp.
-- **What was done:** No active workaround in source — this is a
-  *property* of the firmware/plo handoff that we noted but haven't
-  changed. Phoenix sees ~948 MiB instead of the physical 4 GiB.
+- **Where (historical):** plo memory probe / kernel boot path. The start4.elf
+  firmware hands plo a memory map reporting `MEM GPU: 76 ARM: 948 TOTAL: 1024` on
+  a physical 4 GiB board; plo originally honored that 948 MiB clamp.
+- **What was done:** the 4 GiB unlock added the `ddrh` high bank (see manifest
+  above); Phoenix now sees ~3.96 GiB on the 4 GiB board.
 - **Why:** Avoiding immediate high-memory / GPU-overlap risk while
   the rest of the boot path is being stabilized. At 948 MiB we
   stay well clear of any firmware-reserved region.
@@ -958,16 +994,16 @@ under TD-13-spawn-cap and the priority ladder.
 
 ### TD-14-psh-debug-probes: psh early probes use debug syscall
 
-- **Status:** ACTIVE DIAGNOSTIC (utils `da2f541`, 2026-05-02)
-- **Where:** `sources/phoenix-rtos-utils/psh/psh.c` and
-  `sources/phoenix-rtos-utils/psh/pshapp/pshapp.c`.
-- **Why:** Using `psh_write()` before `/dev/console` is open can block on
-  inherited stdio. The probes were moved to `debug()` and bracket psh entry,
+- **Status:** ✅ RESOLVED (verified 2026-06-09; removed by the upstream-readiness
+  cleanup). The doc's own marker grep
+  (`grep -rn "psh: tty isatty\|psh: tcsetpgrp done\|psh: readcmd" sources/phoenix-rtos-utils/psh`)
+  returns nothing at utils HEAD `aae3d35`, and there is no `debug(` call left in
+  `psh/*.c`. Interactive shell smoke has long passed on real Pi 4, so the probes
+  served their purpose and are gone.
+- **Where (historical):** `sources/phoenix-rtos-utils/psh/psh.c` and `pshapp/pshapp.c`.
+- **Why (historical):** Using `psh_write()` before `/dev/console` is open can block on
+  inherited stdio. The probes were moved to `debug()` and bracketed psh entry,
   root readiness, tty open, `isatty`, `tcsetpgrp`, and first `readcmd`.
-- **Risk accepted:** Extra UART/klog noise and slower prompt visibility.
-- **Resolution requirements:** Remove or gate after interactive shell smoke
-  passes on real Pi 4.
-- **Marker grep:** `grep -n "psh: tty isatty\\|psh: tcsetpgrp done\\|psh: readcmd" sources/phoenix-rtos-utils/psh`
 
 ### TD-14-stat-skip: skip `stat()` pre-check for `/dev/console`
 
