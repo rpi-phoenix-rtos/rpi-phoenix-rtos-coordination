@@ -99,6 +99,61 @@ attribute array (one BO with 3 vertices: x,y,z,w + a color), and a draw
 4. Shader-state record exact layout + VPM/attribute config — the densest part; lift verbatim
    from `v3dx_emit.c`/`v3dx_draw.c`.
 
+## 4b-2 DECODED RECIPE (single 64×64 tile clear-to-color → RT BO readback)
+
+4b-1 (bin pass) is DONE (devices `2117899`); reuse its tile_alloc/tile_state. All packet
+encodings below are from `python3 external/mesa/.../cle/gen_pack_header.py v3d_packet.xml 42`
+(regenerate to `/tmp/v3d42_pack.h` and read `*_pack` bodies for exact `cl[]` byte layouts).
+This is near-mechanical to implement; it is an intricate **two-level** control list, which is
+why it's a fresh-context task, not a context-bottom marathon.
+
+**Enums (verified):** MEMORY_FORMAT_RASTER=0; INTERNAL_TYPE_8=2 (RGBA8 unorm); INTERNAL_BPP_32=0;
+OUTPUT_IMAGE_FORMAT_RGBA8=27; buffer_to_store RENDER_TARGET_0=0, NONE=8. **sub_id** for the
+code-121 variants: COMMON=0, COLOR=1, ZS_CLEAR_VALUES=2, CLEAR_COLORS_PART1=3, PART2=4.
+
+**Opcodes / lengths:** TILE_RENDERING_MODE_CFG_* =121 (len 9 each); MULTICORE_..._SUPERTILE_CFG=122
+(9); MULTICORE_..._TILE_LIST_SET_BASE=123 (5); TILE_COORDINATES=124 (4); TILE_COORDINATES_IMPLICIT=125
+(1); CLEAR_TILE_BUFFERS=25 (2); END_OF_LOADS=26 (1); END_OF_TILE_MARKER=27 (1); STORE_TILE_BUFFER_GENERAL=29
+(13); FLUSH_VCD_CACHE=19 (1); BRANCH_TO_IMPLICIT_TILE_LIST=21 (2); SUPERTILE_COORDINATES=23 (3);
+END_OF_RENDERING=13 (1); PRIM_LIST_FORMAT and SET_INSTANCEID (look up codes/lens in the per-tile list).
+
+**Key byte layouts (cl[] little-endian, from the v42 pack header):**
+- COMMON(121,9): cl0=121; cl1=((numRT-1)<<4)|sub_id(0); cl2..3=width(64) u16; cl4..5=height(64) u16;
+  cl6=(internal_depth_type<<7)|(early_z_disable<<6)|(dbuf<<3)|(ms<<2)|max_bpp(0); cl7..8≈0 (depth/ez clear).
+- COLOR(121,9): cl0=121; cl1=(RT0_type(2)<<6)|(RT0_bpp(0)<<4)|sub_id(1); cl2..8 carry RT1-3 (0) + clamp(0).
+- CLEAR_COLORS_PART1(121,9): cl0=121; cl1=(rt_number(0)<<4)|sub_id(3); cl2..5=clear_color_low_32 (memcpy,
+  the 32bpp clear value e.g. 0xAABBGGRR); cl6..8=clear_color_next_24 (0 for 32bpp).
+- TILE_LIST_SET_BASE(123,5): cl0=123; cl1=(tile_alloc_VA & 0xff)|set_number(0); cl2..4=tile_alloc_VA>>8.. .
+- SUPERTILE_CFG(122,9): cl0=122; cl1=stw-1(0); cl2=sth-1(0); cl3=frameW_in_supertiles(1); cl4=frameH_in_supertiles(1);
+  cl5..6=frameW_in_tiles(1, 12b)+frameH_in_tiles(1, bits4-15 of cl6..7); cl7=frameH hi; cl8=(numBinTileLists-1=0<<5)|(rasterOrder<<4)|multicore_en(0).
+- STORE_TILE_BUFFER_GENERAL(29,13): cl0=29; cl1=(flipY<<7)|(mem_format RASTER(0)<<4)|buffer_to_store(RT0=0 or NONE=8);
+  cl2=(output_format RGBA8(27)<<4)|(decimate<<2)|dither; cl3=(rbswap<<4)|(chrev<<3)|(clear_being_stored<<2)|(outfmt>>8);
+  cl4..6=height_in_ub_or_stride (RASTER: row stride bytes=64*4=256, in bits 4-23 → store 256<<4? NO: field starts at bit4
+  so value occupies cl4..6; set field=stride 256); cl7..8=height(64); cl9..12=RT BO GPU VA (address).
+- TILE_COORDINATES(124,4): cl0=124; cl1=col(0); cl2=(row(0)<<4)|colhi; cl3=rowhi. CLEAR_TILE_BUFFERS(25,2):
+  cl0=25; cl1=(clear_z<<1)|clear_all_RT(1). BRANCH_TO_IMPLICIT_TILE_LIST(21,2): cl0=21; cl1=set_number(0).
+  SUPERTILE_COORDINATES(23,3): cl0=23; cl1=col(0); cl2=row(0).
+
+**Emit order (main RCL on CT1, from v3dx_rcl.c emit_rcl + emit_render_layer):**
+1. COMMON → COLOR → CLEAR_COLORS_PART1 (and PART2 if needed). 2. TILE_LIST_SET_BASE=tile_alloc.
+3. SUPERTILE_CFG (1×1 tile, 1 supertile). 4. GFXH-1742 initial-clear dance: TILE_COORDINATES(0,0),
+then 2× { [TILE_COORDINATES(0,0) if i>0] ; END_OF_LOADS ; STORE(buffer=NONE) ; [CLEAR_TILE_BUFFERS if i==0] ;
+END_OF_TILE_MARKER }. 5. FLUSH_VCD_CACHE. 6. **generic per-tile list (in a SEPARATE indirect BO)** =
+TILE_COORDINATES_IMPLICIT + (loads: none for clear) + PRIM_LIST_FORMAT(triangles) + SET_INSTANCEID(0) +
+BRANCH_TO_IMPLICIT_TILE_LIST + STORE_TILE_BUFFER_GENERAL(RT0→RT BO) + END_OF_TILE_MARKER. 7. supertile loop:
+SUPERTILE_COORDINATES(0,0). 8. END_OF_RENDERING.
+Submit: CT1QBA=main-RCL VA, CT1QEA=end. Invalidate caches (L2T flush + slices) before the kick.
+
+**ONE thing still to trace (the only gap):** how the main RCL is linked to the indirect per-tile list
+— `v3d_rcl_emit_generic_per_tile_list` (v3dx_rcl.c:345-378) writes the list into `job->indirect` and
+captures `tile_list_start = cl_get_address(cl)`; find where that address is handed to the main RCL /
+supertile walker (likely a "Start Address of Generic Tile List" packet, or it's implicit). Resolve from
+v3dx_rcl.c before coding. Everything else above is pinned.
+
+**Then 4b-3 (triangle):** add to the BIN CL a vertex attribute BO (3 verts) + GL_SHADER_STATE(64) +
+VERTEX_ARRAY_PRIMS(36, triangles, 3) + the shader-state record + hand-encoded coord/vertex/frag QPU
+shaders (external/mesa src/broadcom/qpu). Render to the RT BO (or the firmware FB) → HDMI.
+
 ## Reference map
 - Render CL: `external/mesa/src/gallium/drivers/v3d/v3dx_rcl.c` (clear `:74-340`, frame setup
   `:573-944`).
