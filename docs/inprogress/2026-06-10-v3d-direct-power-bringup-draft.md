@@ -1,9 +1,34 @@
-# V3D direct power-on (PM + rpivid_asb) — ATTENDED draft, NOT wired into boot
+# V3D direct power-on (PM + rpivid_asb) — VALIDATED (GPU alive)
 
-**Status:** DRAFT / not-yet-implemented. Do **not** run unattended. See "Why attended" below.
-**Goal:** wake the BCM2711 V3D 4.2 GPU so its HUB IDENT0 reads the live magic
-`0x02443356` ("V3D"+gen) instead of the `0xdeadbeef` bus-error sentinel — Tier-3 of the
-GLQuake roadmap (`~/.claude/plans/calm-wobbling-quill.md`, Phase 3).
+**Status: DONE / HW-PROVEN (2026-06-10), attended.** Implemented in `rpi4-v3d-scout`
+(devices `dedb44c`; recon-only checkpoint `40692fb`); manifest
+`manifests/2026-06-10-v3d-power-on-alive.md`. Reproduced over 2 netboots, no SoC hang.
+
+**Result:** the BCM2711 V3D 4.2 GPU now powers on from Phoenix userspace and its MMIO
+returns real values instead of `0xdeadbeef`:
+- `CORE0 V3D_CTL_IDENT0 = 0x04443356` ("V3D" + tech version 4)
+- `HUB V3D_HUB_IDENT0 = 0x42554856` ("VHUB"), `HUB_IDENT1 = 0x000e1124` => **V3D 4.2, 1 core, +TFU/TSY/MSO**
+
+**KEY CORRECTION to the original draft below:** on BCM2711 the PM power-island POWUP/
+POWOK/ISPOW/MEMREP/ISFUNC sequence is a **NO-OP** (`bcm2835_power_power_on`/`_off` both
+start with `if (power->rpivid_asb) return 0;` — "We don't run this on BCM2711"). The
+load-bearing path is ONLY: V3D clock on→settle→off (mailbox `SET_CLOCK_STATE` id 5) →
+deassert `PM_V3DRSTN` in `PM_GRAFX` (single PM write `0x1000→0x1040`) → clock on →
+`asb_enable` the V3D master+slave bridges on `rpivid_asb` (clear `ASB_REQ_STOP`, poll
+`ASB_ACK→0`; `0x07` stopped → `0x04` running). Recon confirmed both regions real and the
+"GRAFX island OFF / V3D in reset / bridges stopped" start state. The mailbox
+`SET_QPU_ENABLE`/domain/clock calls and the `vc4-fkms-v3d` overlay are NOT sufficient.
+
+The "attended" framing held for the *unattended-overnight* case; the actual run was done
+attended with scripted Meross recovery available. Next: GLQuake roadmap Tier 4 (V3D BO
+alloc + control-list submit → rainbow triangle on HDMI). Original draft retained below
+for the PM/ASB register reference.
+
+---
+
+**Goal (original):** wake the BCM2711 V3D 4.2 GPU so its core IDENT reads the live "V3D"
+magic instead of the `0xdeadbeef` bus-error sentinel — Tier-3 of the GLQuake roadmap
+(`~/.claude/plans/calm-wobbling-quill.md`, Phase 3).
 
 ## The decisive correction (vs the earlier mailbox approach)
 
