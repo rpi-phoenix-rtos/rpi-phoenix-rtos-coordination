@@ -113,6 +113,17 @@ and reusable; re-emit its packets via the ported packers. Apply the same princip
 shaders (4b-3): use Mesa's `src/broadcom/qpu` encoder rather than hand-assembling. See
 [[reference_external_source_clones]] and the `reuse-mesa-not-rewrite` memory.
 
+## 4b-2 STATUS (2026-06-10): Mesa packers ported; render parks at END_OF_LOADS
+
+Mesa's generated packers are now in the tree (`v3d_packet_v42_pack.h` + `v3d_gen.h` shim,
+devices `c45883d`) and the render CL is emitted through them (correct by construction). bin
+completes (FLDONE=1) and bin→render is synced on the HW done flags (FLDONE/FRDONE, INT_STS
+CORE+0x50). Remaining: the **render thread parks at `END_OF_LOADS`** in the per-tile list
+(`CT1CA=0x30801`, FRDONE never fires, RT unchanged) — a render-pipeline *semantics* issue, not
+encoding/sync. Next leads: explicit `TILE_COORDINATES` vs implicit; read V3D error/CT1CS status;
+match Mesa's clear RCL/TLB config more fully; verify supertile dims. The hand-encoded byte-layout
+recipe below is now superseded by the packer structs but kept as the field reference.
+
 ## 4b-2 DECODED RECIPE (single 64×64 tile clear-to-color → RT BO readback)
 
 4b-1 (bin pass) is DONE (devices `2117899`); reuse its tile_alloc/tile_state. All packet
