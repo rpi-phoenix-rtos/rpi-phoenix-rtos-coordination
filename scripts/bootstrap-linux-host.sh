@@ -68,6 +68,7 @@ PI_FW_FILES=(
 	boot/fixup4.dat
 	boot/bcm2711-rpi-4-b.dtb
 	boot/overlays/miniuart-bt.dtbo
+	boot/overlays/vc4-fkms-v3d.dtbo
 )
 
 log()   { printf '[bootstrap] %s\n' "$*"; }

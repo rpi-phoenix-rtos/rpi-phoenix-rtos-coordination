@@ -78,6 +78,15 @@ if grep -Eq '^dtoverlay=miniuart-bt$' \"\$staged_dir/config.txt\"; then
 	cp -f \"\$firmware_dir/overlays/miniuart-bt.dtbo\" \"\$out_dir/overlays/\"
 fi
 
+if grep -Eq '^dtoverlay=vc4-fkms-v3d' \"\$staged_dir/config.txt\"; then
+	if [ ! -f \"\$firmware_dir/overlays/vc4-fkms-v3d.dtbo\" ]; then
+		printf 'missing firmware overlay: %s\n' \"\$firmware_dir/overlays/vc4-fkms-v3d.dtbo\" >&2
+		exit 1
+	fi
+
+	cp -f \"\$firmware_dir/overlays/vc4-fkms-v3d.dtbo\" \"\$out_dir/overlays/\"
+fi
+
 if [ -d \"\$staged_dir/overlays\" ]; then
 	cp -f \"\$staged_dir/overlays\"/*.dtbo \"\$out_dir/overlays/\" 2>/dev/null || true
 fi
