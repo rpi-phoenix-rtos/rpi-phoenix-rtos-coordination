@@ -99,6 +99,20 @@ attribute array (one BO with 3 vertices: x,y,z,w + a color), and a draw
 4. Shader-state record exact layout + VPM/attribute config — the densest part; lift verbatim
    from `v3dx_emit.c`/`v3dx_draw.c`.
 
+## APPROACH (maintainer directive, 2026-06-10): PORT MESA, don't hand-encode
+
+Reuse as much Mesa as possible — use it directly or port it — rather than rewriting
+step-by-step. Concretely for the CLE: **port Mesa's generated packers** into the project
+(`external/mesa/src/broadcom/cle/gen_pack_header.py v3d_packet.xml 42` →
+`v3d_packet_v42_pack.h`, providing `V3D42_<PACKET>_pack()` + the `cl_emit()` macro) and emit
+packets through them, instead of writing `cl[]` bytes by hand. The hand-encoded
+`STORE_TILE_BUFFER_GENERAL` in the 4b-2 WIP **stalled the render thread** (CT1CA parked at the
+store packet, RT unchanged) — exactly the bitfield-error class that Mesa's packers remove. The
+CL *structure*/scaffold in `v3d_renderClearTest` (devices `8a90593`, gated/unused) is correct
+and reusable; re-emit its packets via the ported packers. Apply the same principle to the QPU
+shaders (4b-3): use Mesa's `src/broadcom/qpu` encoder rather than hand-assembling. See
+[[reference_external_source_clones]] and the `reuse-mesa-not-rewrite` memory.
+
 ## 4b-2 DECODED RECIPE (single 64×64 tile clear-to-color → RT BO readback)
 
 4b-1 (bin pass) is DONE (devices `2117899`); reuse its tile_alloc/tile_state. All packet
