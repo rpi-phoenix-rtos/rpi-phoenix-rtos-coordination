@@ -113,7 +113,16 @@ and reusable; re-emit its packets via the ported packers. Apply the same princip
 shaders (4b-3): use Mesa's `src/broadcom/qpu` encoder rather than hand-assembling. See
 [[reference_external_source_clones]] and the `reuse-mesa-not-rewrite` memory.
 
-## 4b-2 STATUS (2026-06-10): Mesa packers ported; render parks at END_OF_LOADS
+## 4b-2 DONE (2026-06-11): GPU clears a render target — full pipeline works
+
+The V3D renders: bin→render→TLB-store, 4096/4096 px of the 64×64 RGBA8 RT == clear color,
+FRDONE=1, 2/2 netboots (devices `22eb868`, manifest `2026-06-11-v3d-render-clear`). The three
+fixes over the stalling version: bin CL needs `FLUSH_VCD_CACHE`+`OCCLUSION_QUERY_COUNTER`;
+render CL needs `ZS_CLEAR_VALUES` as the last mode-cfg; and a **post-render V3D L2T flush**
+(clean→writeback) before the ARM readback (the store was landing in V3D cache, not RAM — the
+silent "no pixels" cause). All emitted via the ported Mesa packers. NEXT = 4b-3 triangle.
+
+## (historical) 4b-2 earlier status: Mesa packers ported; render parked at END_OF_LOADS
 
 Mesa's generated packers are now in the tree (`v3d_packet_v42_pack.h` + `v3d_gen.h` shim,
 devices `c45883d`) and the render CL is emitted through them (correct by construction). bin
