@@ -1,0 +1,22 @@
+diff --git a/src/gallium/drivers/v3d/v3d_bufmgr.c b/src/gallium/drivers/v3d/v3d_bufmgr.c
+index e82fd069b18..f3c32e2c83e 100644
+--- a/src/gallium/drivers/v3d/v3d_bufmgr.c
++++ b/src/gallium/drivers/v3d/v3d_bufmgr.c
+@@ -515,13 +515,10 @@ v3d_bo_map_unsynchronized(struct v3d_bo *bo)
+                 abort();
+         }
+ 
+-        bo->map = mmap(NULL, bo->size, PROT_READ | PROT_WRITE, MAP_SHARED,
+-                       bo->screen->fd, offset);
+-        if (bo->map == MAP_FAILED) {
+-                mesa_loge("mmap of bo %d (offset 0x%016llx, size %d) failed",
+-                          bo->handle, (long long)offset, bo->size);
+-                abort();
+-        }
++        /* Phoenix winsys: BOs are already CPU-mapped (uncached, MAP_CONTIGUOUS) at
++         * CREATE_BO time, and MMAP_BO returns that CPU virtual address as `offset`.
++         * Use it directly — re-mmap()ing our non-device fd would fault/hang. */
++        bo->map = (void *)(uintptr_t)offset;
+         VG(VALGRIND_MALLOCLIKE_BLOCK(bo->map, bo->size, 0, false));
+ 
+         return bo->map;
