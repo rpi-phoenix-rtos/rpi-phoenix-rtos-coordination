@@ -20,7 +20,7 @@
 #include <errno.h>
 #include <sys/mman.h>
 #include <sys/threads.h>
-#include "v3d_drm.h"
+#include "drm-uapi/v3d_drm.h"   /* Mesa's vendored UAPI — same structs the driver uses */
 
 /* V3D 4.2 MMIO (ARM low-peri), HUB + CORE0 — see rpi4-v3d-scout. */
 #define V3D_HUB_BASE        0xfec00000u
@@ -175,23 +175,41 @@ static int ioc_get_param(struct drm_v3d_get_param *gp)
 }
 
 /* The single entry the libdrm shim's drmIoctl() dispatches into. */
+int phoenix_v3d_ioctl(int fd, unsigned long request, void *arg);
+
 int phoenix_v3d_ioctl(int fd, unsigned long request, void *arg)
 {
 	(void)fd;
-	if (winsys_init() != 0) return -1;
+	if (winsys_init() != 0)
+		return -1;
 	switch (_IOC_NR(request)) {
-	case DRM_V3D_CREATE_BO:     return ioc_create_bo(arg);
+	case DRM_V3D_CREATE_BO:
+		return ioc_create_bo(arg);
 	case DRM_V3D_GET_BO_OFFSET: {
-		struct drm_v3d_get_bo_offset *g = arg; struct pbo *b = bo_find(g->handle);
-		if (!b) return -EINVAL; g->offset = b->gpuva; return 0; }
+		struct drm_v3d_get_bo_offset *g = arg;
+		struct pbo *b = bo_find(g->handle);
+		if (!b)
+			return -EINVAL;
+		g->offset = b->gpuva;
+		return 0;
+	}
 	case DRM_V3D_MMAP_BO: {
 		/* Our BOs are already CPU-mapped (uncached); return the va as the offset
 		 * and have the libdrm-shim mmap() return it directly. */
-		struct drm_v3d_mmap_bo *m = arg; struct pbo *b = bo_find(m->handle);
-		if (!b) return -EINVAL; m->offset = (uint64_t)(uintptr_t)b->cpu; return 0; }
-	case DRM_V3D_SUBMIT_CL:     return ioc_submit_cl(arg);
-	case DRM_V3D_WAIT_BO:       return 0;   /* submit is synchronous */
-	case DRM_V3D_GET_PARAM:     return ioc_get_param(arg);
-	default:                    return 0;   /* perfmon/tfu/csd: no-op for now */
+		struct drm_v3d_mmap_bo *m = arg;
+		struct pbo *b = bo_find(m->handle);
+		if (!b)
+			return -EINVAL;
+		m->offset = (uint64_t)(uintptr_t)b->cpu;
+		return 0;
+	}
+	case DRM_V3D_SUBMIT_CL:
+		return ioc_submit_cl(arg);
+	case DRM_V3D_WAIT_BO:
+		return 0;   /* submit is synchronous */
+	case DRM_V3D_GET_PARAM:
+		return ioc_get_param(arg);
+	default:
+		return 0;   /* perfmon/tfu/csd: no-op for now */
 	}
 }

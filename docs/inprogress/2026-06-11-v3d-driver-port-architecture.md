@@ -204,3 +204,59 @@ DRM/winsys seam is validated by construction. NEXT: the gallium AUXILIARY (the l
 shared body the driver links against — pipe screen/context infra, util, tgsi, draw,
 cso_cache) — build it + the driver to objects, link `libv3d-phoenix.a`, write the
 libdrm-shim/syncobj impls, then a gallium `pipe_context` triangle harness + the winsys.
+
+## Phase 2 MILESTONE (2026-06-11): the FULL v3d driver LINKS for Phoenix
+
+The complete Mesa v3d gallium driver now links into a real `aarch64-phoenix`
+executable — **`/tmp/v3dphx-harness`, 12.4 MB statically-linked ARM aarch64 ELF**,
+exporting `main` + `v3d_screen_create` + `phoenix_v3d_ioctl` + **`v3d_compile`** (the
+NIR→QPU compiler). The entire driver symbol closure resolves: 29 driver files + 43
+gallium-aux/util/tgsi/cso/broadcom files + the 334-obj core lib + winsys + libdrm shim
++ peripheral stubs.
+
+**How (link-drive, per the advisor):** rather than speculatively bulk-compiling ~180
+aux files, compile harness+driver+winsys, link against the core lib, and let `ld`
+print the undefined closure — then add exactly the aux objects that resolve it. The
+closure converged 164 → 63 → 36 → 30 → 10 → 2 → 0 undefined symbols over a handful of
+passes. Tooling (committed, reusable):
+- `tools/v3d-driver-port/build-v3d-phoenix.py` — reuses the host build's per-file flags
+  (swap toolchain, drop `-m*`/`-pthread`/`-Werror`/libdrm+valgrind `-I`, force-include
+  the compat shim, downgrade GCC-14 implicit-decl errors), compiles driver+aux+winsys+
+  stubs, link-drives the harness, dumps undefined refs.
+- `tools/v3d-driver-port/resolve-syms.py` — maps undefined symbols → Mesa source files
+  via `nm` over the host build (loose `.o` + archives) with a source-grep fallback for
+  unbuilt/data symbols; classifies STUB vs ADD; maintains the aux source list.
+- `tools/v3d-driver-port/v3d-aux-sources.txt` — the committed 43-file aux closure
+  (the build seeds `/tmp/v3dphx-aux.txt` from it on a fresh checkout).
+
+**The first-runtime-contact harness** (`harness_screen_create.c`) calls
+`v3d_screen_create(fd,NULL,NULL)` directly (bypassing the gallium pipe-loader, which
+`dlopen`s `pipe_*.so` — a dead-end on Phoenix). That one entry exercises link + winsys
+GET_PARAM dispatch + driver devinfo init together — the cheapest first proof, before
+any triangle/CL/shader (which the routing doc warns must not be stacked blind).
+
+**Phoenix gap profile (final, all shimmed/stubbed):**
+- compat shim (`phoenix_mesa_compat.h`): C99 math (rintf/lrintf/round*/fmax*/trunc/
+  copysign*/exp2f/log2f/expf/logf — Phoenix libm has only double exp/log/log2/pow),
+  `HAVE_PTHREAD` (so Mesa c11/threads.h takes the pthread path), SCNxPTR, qsort_r/
+  pthread_barrier/posix_memalign decls, static_assert.
+- libdrm shim (`v3d_libdrm_shim.c`): `drmIoctl`→`phoenix_v3d_ioctl` (inline in
+  xf86drm.h); `drmSyncobj*` return **success/signaled** (submit is synchronous, per the
+  advisor — a fence-wait must be satisfiable or screen/context create bails); `drmPrime*`
+  unsupported (no BO sharing); `drmGetCap`=0.
+- peripheral stubs (`v3d_phoenix_stubs.c`): disk_cache (disabled), clif_dump (debug),
+  build_id, mesa_log, _mesa_sha1_format, u_memstream, driconf (defaults), blake3 NEON
+  (TODO if hashing is exercised), os_* (page=4096, monotonic nano time), renderonly
+  (ro=NULL), `call_once`/`mtx_*` (direct pthread — Phoenix lacks pthread_mutex_timedlock
+  so threads_posix.c can't compile), `_mesa_strtod/f` (plain strtod/f), v3d42_perfcounters
+  (none), qsort_r (insertion sort).
+
+**=> Path C is no longer a feasibility question — the real Mesa driver is a linked
+Phoenix binary.** Three design-ins still pending before the first HW cycle (advisor):
+(1) the on-device variant must run the scout `v3d_powerOn` sequence BEFORE any winsys
+MMIO; (2) the winsys MMU PT is one page = 4 MiB GPU VA — render the first triangle to a
+SMALL RT (256×256) or grow the PT; (3) syncobj stubs already return signaled. NEXT:
+build this for the Pi (devices Makefile target linking the committed subset), run the
+screen-create harness on HW (does `v3d_screen_create` return a non-null pipe_screen with
+sane limits from our GET_PARAM?), THEN a `pipe_context` + `draw_vbo` triangle — each HW
+cycle testing exactly one new thing.

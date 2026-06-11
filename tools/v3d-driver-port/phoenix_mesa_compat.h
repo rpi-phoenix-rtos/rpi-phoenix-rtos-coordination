@@ -9,6 +9,13 @@
 #define PHOENIX_MESA_COMPAT_H
 #include <stdint.h>
 
+/* Phoenix has POSIX threads (pthread_mutex/cond/once/key); tell Mesa's
+ * c11/threads.h to take the pthread path instead of #error-ing out. (Barriers
+ * are the one gap — shimmed below.) */
+#ifndef HAVE_PTHREAD
+#define HAVE_PTHREAD 1
+#endif
+
 /* --- C99 math gaps (Phoenix math.h does not declare these) --- */
 static inline float  pmc_rintf(float f){ return (float)(f<0.0f?-(long long)(0.5f-f):(long long)(f+0.5f)); }
 static inline float  rintf(float f){ return (float)(f<0.0f?-(long long)(0.5f-f):(long long)(f+0.5f)); }
@@ -26,6 +33,14 @@ static inline float  fminf(float a,float b){ return a<b?a:b; }
 static inline double fmax(double a,double b){ return a>b?a:b; }
 static inline double fmin(double a,double b){ return a<b?a:b; }
 static inline float  truncf(float f){ return (float)(long long)f; }
+static inline float  copysignf(float x,float y){ return (y<0.0f)?-( x<0.0f?-x:x ):( x<0.0f?-x:x ); }
+static inline double copysign(double x,double y){ return (y<0.0)?-( x<0.0?-x:x ):( x<0.0?-x:x ); }
+/* Phoenix libm has only the double exp/log/log2/pow; wrap the float variants. */
+extern double exp(double); extern double log(double); extern double log2(double);
+static inline float  expf(float x){ return (float)exp((double)x); }
+static inline float  logf(float x){ return (float)log((double)x); }
+static inline float  exp2f(float x){ return (float)exp((double)x*0.6931471805599453); }
+static inline float  log2f(float x){ return (float)log2((double)x); }
 
 
 /* --- libc/POSIX gaps --- */
