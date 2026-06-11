@@ -24,7 +24,9 @@ GL_LIB = "/tmp/libGL-phoenix.a"
 
 # GL frontend source dirs (in compile_commands), and files to exclude.
 GL_DIRS = ["/src/mesa/main/", "/mesa/state_tracker/", "/mesa/program/",
-           "/src/mapi/", "/compiler/glsl/"]
+           "/src/mapi/", "/compiler/glsl/",
+           "/src/mesa/math/", "/src/mesa/vbo/", "/src/mesa/glapi/shared-glapi/",
+           "/gallium/auxiliary/cso_cache/"]
 GL_EXCLUDE = ["sse_minmax.c"]                  # x86 SSE intrinsics; portable path exists
 
 # generated GL headers to ninja-build in the host tree before compiling.

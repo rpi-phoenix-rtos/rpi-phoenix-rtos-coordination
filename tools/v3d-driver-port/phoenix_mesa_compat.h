@@ -37,6 +37,24 @@ static inline float  fminf(float a,float b){ return a<b?a:b; }
 static inline double fmax(double a,double b){ return a>b?a:b; }
 static inline double fmin(double a,double b){ return a<b?a:b; }
 static inline float  truncf(float f){ return (float)(long long)f; }
+/* float trig/transcendental + helpers Phoenix libm lacks — wrap its doubles. */
+extern double sin(double), cos(double), tan(double), asin(double), acos(double);
+extern double atan(double), atan2(double,double), pow(double,double), sqrt(double);
+extern double floor(double), ceil(double), fabs(double), fmod(double,double), hypot(double,double);
+static inline float sinf(float x){ return (float)sin((double)x); }
+static inline float cosf(float x){ return (float)cos((double)x); }
+static inline float tanf(float x){ return (float)tan((double)x); }
+static inline float asinf(float x){ return (float)asin((double)x); }
+static inline float acosf(float x){ return (float)acos((double)x); }
+static inline float atanf(float x){ return (float)atan((double)x); }
+static inline float atan2f(float y,float x){ return (float)atan2((double)y,(double)x); }
+static inline float powf(float a,float b){ return (float)pow((double)a,(double)b); }
+static inline float sqrtf(float x){ return (float)sqrt((double)x); }
+static inline float floorf(float x){ return (float)floor((double)x); }
+static inline float ceilf(float x){ return (float)ceil((double)x); }
+static inline float fabsf(float x){ return x<0.0f?-x:x; }
+static inline float fmodf(float a,float b){ return (float)fmod((double)a,(double)b); }
+static inline float hypotf(float a,float b){ return (float)hypot((double)a,(double)b); }
 static inline float  copysignf(float x,float y){ return (y<0.0f)?-( x<0.0f?-x:x ):( x<0.0f?-x:x ); }
 static inline double copysign(double x,double y){ return (y<0.0)?-( x<0.0?-x:x ):( x<0.0?-x:x ); }
 /* Phoenix libm has only the double exp/log/log2/pow; wrap the float variants. */
