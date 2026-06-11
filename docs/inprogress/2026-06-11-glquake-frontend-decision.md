@@ -48,10 +48,24 @@ Quakespasm's GL renderer.
    makecurrent + flush→blit to `/dev/fb0`. Smoke: `glClear` then a GL triangle
    (`glBegin`) → HDMI. (st/mesa's fixed-function path generating the shaders Mesa
    already compiles to QPU — the reuse-Mesa win.)
-3. **Quakespasm port**: replace its SDL GL-context backend (`gl_vidsdl.c`) with the
+3. **glgears intermediate (user-suggested, 2026-06-11) — the "OpenGL really works"
+   milestone before Quakespasm.** Port the classic `glxgears` gear demo (GL 1.x
+   fixed-function: `glRotatef`/`glTranslatef`/`glLight`/`glMaterial`/`glNormal` +
+   `glBegin` gear geometry + depth test + a per-frame rotation), stripped of its GLX
+   boilerplate and driven by the off-screen frontend, presenting each frame to
+   `/dev/fb0` in a loop → **fullscreen, GPU-accelerated, animated spinning gears on
+   HDMI** (auto-snapshot proof). Rationale: it exercises nearly all of Quakespasm's
+   GL feature set (transforms, lighting, depth, immediate-mode geometry, animation/
+   present loop) at ~300 lines vs a whole game — so transforms/lighting/depth get
+   debugged here, not inside the Quake port. Self-contained gears code (the gear()
+   algorithm is classic public-domain; mesa-demos `glxgears.c` is the reference) +
+   our frontend; no GLX. A boot-launched `rpi4-glgears` like `rpi4-v3d-mesa`, or
+   exec'd once filesystem-exec is solid.
+4. **Quakespasm port**: replace its SDL GL-context backend (`gl_vidsdl.c`) with the
    off-screen frontend; build the Quake/ sources for aarch64-phoenix; stage
    `pak0.pak` (shareware) on the rootfs; wire USB-HID (kbd/mouse) for input;
    present each frame to `/dev/fb0`. Fixed-function-first (`gl_glsl_able`=false).
+   Most GL risk already retired by the gears step.
 
 ## De-risked
 The GPU + driver + winsys + display path are all HW-proven. Phase 4 is GL-frontend
