@@ -18,6 +18,22 @@
 
 static void dbg_out(const char *msg, void *data) { (void)data; fprintf(stderr, "%s", msg); }
 
+static int v3d_type_size(const struct glsl_type *type, bool bindless)
+{ (void)bindless; return glsl_count_attribute_slots(type, false); }
+
+/* Replicate the driver's pre-compile NIR finalization so I/O is wired correctly
+ * (gather_info from the actual IR; nir_lower_io for FS; v3d does VS I/O itself). */
+static void finalize_nir(nir_shader *s)
+{
+	nir_shader_gather_info(s, nir_shader_get_entrypoint(s));
+	if (s->info.stage == MESA_SHADER_FRAGMENT) {
+		nir_lower_fragcolor(s, 1); /* gl_FragColor -> per-RT outputs (max_rb=1) */
+		nir_lower_io(s, nir_var_shader_in | nir_var_shader_out, v3d_type_size, 0);
+	}
+	v3d_optimize_nir(NULL, s);
+	nir_lower_var_copies(s);
+}
+
 /* v3d NIR compiler options — copied verbatim from gallium/drivers/v3d/v3d_screen.c
  * v3d_screen_get_compiler_options() (lower_fsat set for ver<71 = true at v4.2). */
 static nir_shader_compiler_options v3d_options =
@@ -128,19 +144,10 @@ int main(int argc, char **argv)
 	/* Output variable (drives c->outputs sizing in ntq_setup_outputs); the
 	 * value is written via the store_output intrinsic below (no deref). */
 	nir_variable *outc = nir_variable_create(b.shader, nir_var_shader_out,
-		glsl_vec4_type(), "gl_FragData0");
+		glsl_vec4_type(), "gl_FragColor");
 	outc->data.location = FRAG_RESULT_DATA0;
-	outc->data.driver_location = 0;
-	(void)outc;
-	nir_def *col = nir_imm_vec4(&b, 0.07, 0.13, 0.20, 1.0);
-	nir_io_semantics sem = { 0 };
-	sem.location = FRAG_RESULT_DATA0;
-	sem.num_slots = 1;
-	nir_store_output(&b, col, nir_imm_int(&b, 0),
-		.base = 0, .write_mask = 0xf, .src_type = nir_type_float32,
-		.io_semantics = sem);
-	b.shader->info.outputs_written = BITFIELD64_BIT(FRAG_RESULT_DATA0);
-	b.shader->num_outputs = 1;
+	nir_store_var(&b, outc, nir_imm_vec4(&b, 0.07, 0.13, 0.20, 1.0), 0xf);
+	finalize_nir(b.shader);
 
 	struct v3d_fs_key fs_key = { 0 };
 	fs_key.cbufs = 1;  /* RT0 present (bit mask) */
@@ -171,10 +178,7 @@ int main(int argc, char **argv)
 		pout->data.location = VARYING_SLOT_POS;
 		pout->data.driver_location = 0;
 		nir_store_var(&vb, pout, nir_load_var(&vb, pin), 0xf);
-		vb.shader->info.outputs_written = BITFIELD64_BIT(VARYING_SLOT_POS);
-		vb.shader->info.inputs_read = BITFIELD64_BIT(VERT_ATTRIB_GENERIC0);
-		vb.shader->num_outputs = 1;
-		vb.shader->num_inputs = 1;
+		finalize_nir(vb.shader);
 
 		struct v3d_vs_key vs_key = { 0 };
 		vs_key.is_coord = coord;
