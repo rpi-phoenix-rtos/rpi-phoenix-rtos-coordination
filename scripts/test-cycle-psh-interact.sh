@@ -30,6 +30,7 @@ power_settle_secs="${RPI4B_POWER_SETTLE_SECS:-3}"
 skip_server_up=0
 wait_secs="${PSH_WAIT_SECS:-150}"
 idle_secs="${PSH_IDLE_SECS:-20}"
+inter_cmd_secs="${PSH_INTER_CMD_SECS:-3}"
 commands_default=( "help" "ps" "mem" "df" )
 commands=()
 uart_baud="115200"
@@ -41,6 +42,8 @@ Usage: test-cycle-psh-interact.sh [options] [-- command1 command2 ...]
   --label TEXT       short label appended to the log filename
   --wait-secs N      seconds to wait for psh prompt (default $wait_secs)
   --idle-secs N      seconds of UART idle after each command (default $idle_secs)
+  --inter-cmd-secs N seconds to wait between commands (default $inter_cmd_secs;
+                     raise it so a post-takeover retry lands after NFS root mounts)
   --baud N           UART baud (default $uart_baud post-baud-switch)
   --skip-server-up   assume dnsmasq is already running in the VM
   -h, --help         show this help
@@ -55,6 +58,7 @@ while [ $# -gt 0 ]; do
 		--label)            label="$2"; shift 2 ;;
 		--wait-secs)        wait_secs="$2"; shift 2 ;;
 		--idle-secs)        idle_secs="$2"; shift 2 ;;
+		--inter-cmd-secs)   inter_cmd_secs="$2"; shift 2 ;;
 		--baud)             uart_baud="$2"; shift 2 ;;
 		--skip-server-up)   skip_server_up=1; shift ;;
 		--)                 shift; while [ $# -gt 0 ]; do commands+=("$1"); shift; done ;;
@@ -98,5 +102,6 @@ python3 "$repo/scripts/psh-interact.py" \
 	--log "$log_path" \
 	--wait-secs "$wait_secs" \
 	--idle-secs "$idle_secs" \
+	--inter-cmd-secs "$inter_cmd_secs" \
 	--commands "${commands[@]}"
 exit $?

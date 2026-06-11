@@ -106,6 +106,19 @@ def main():
         else:
             fails.append((rel, [l for l in r.stderr.splitlines() if "error:" in l][:1]))
 
+    # Phoenix shims, folded into libGL so a boot program links just the two libs:
+    # mathshim (real float-math libm lacks; compiled WITHOUT the compat shim) and
+    # gl_stubs (sw-path stubs + libc gaps). Neither conflicts with libGL's own
+    # symbols (they supply what libGL/libv3d reference but lack).
+    for shim, warn in (("v3d_phoenix_mathshim.c", []), ("gl_stubs.c", ["-w"])):
+        out = f"{GLOBJ}/{shim}.o"
+        r = subprocess.run([TC, "-O2", "-c"] + warn + [f"{PORT}/{shim}", "-o", out],
+                           capture_output=True, text=True)
+        if r.returncode == 0:
+            objs.append(out)
+        else:
+            fails.append((shim, [l for l in r.stderr.splitlines() if "error:" in l][:1]))
+
     print(f"[gl] OK={len(objs)} FAIL={len(fails)} (of {len(files)+len(GEN_C)})")
     for f, errs in fails:
         print(f"  FAIL {f} :: " + (errs[0].split('error:')[-1].strip()[:70] if errs else "?"))
