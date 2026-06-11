@@ -58,7 +58,13 @@ float driQueryOptionf(const void *opt, const char *name) { return 0.0f; }
 void blake3_hash_many_neon(const uint8_t *const *inputs, size_t num_inputs,
                            size_t blocks, const uint32_t key[8], uint64_t counter,
                            int increment_counter, uint8_t flags, uint8_t flags_start,
-                           uint8_t flags_end, uint8_t *out) { }
+                           uint8_t flags_end, uint8_t *out)
+{
+	/* zero the output so identical inputs hash identically (not garbage stack);
+	 * 64 bytes/output is blake3's block-hash stride. */
+	if (out)
+		__builtin_memset(out, 0, num_inputs * 64);
+}
 
 /* --- os abstraction: Phoenix isn't a Mesa-recognized OS, so os_misc.c/os_time.c
  * don't build. Provide minimal Phoenix-appropriate impls. --- */

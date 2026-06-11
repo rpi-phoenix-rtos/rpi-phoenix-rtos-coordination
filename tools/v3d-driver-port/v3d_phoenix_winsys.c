@@ -180,6 +180,16 @@ int phoenix_v3d_ioctl(int fd, unsigned long request, void *arg);
 int phoenix_v3d_ioctl(int fd, unsigned long request, void *arg)
 {
 	(void)fd;
+	/* GET_PARAM / WAIT_BO return constants and touch no MMIO — serve them WITHOUT
+	 * winsys_init() so screen-create (which is GET_PARAM-only, allocates no BO) needs
+	 * no V3D power-on / MMU bring-up. The MMIO paths below init lazily. */
+	switch (_IOC_NR(request)) {
+	case DRM_V3D_GET_PARAM:
+		return ioc_get_param(arg);
+	case DRM_V3D_WAIT_BO:
+		return 0;   /* submit is synchronous */
+	}
+	/* Everything below touches HUB/CORE MMIO + the MMU PT -> requires power-on. */
 	if (winsys_init() != 0)
 		return -1;
 	switch (_IOC_NR(request)) {
@@ -205,10 +215,6 @@ int phoenix_v3d_ioctl(int fd, unsigned long request, void *arg)
 	}
 	case DRM_V3D_SUBMIT_CL:
 		return ioc_submit_cl(arg);
-	case DRM_V3D_WAIT_BO:
-		return 0;   /* submit is synchronous */
-	case DRM_V3D_GET_PARAM:
-		return ioc_get_param(arg);
 	default:
 		return 0;   /* perfmon/tfu/csd: no-op for now */
 	}
