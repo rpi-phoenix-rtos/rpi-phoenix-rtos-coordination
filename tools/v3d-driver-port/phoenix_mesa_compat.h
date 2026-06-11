@@ -30,6 +30,13 @@ static inline float  truncf(float f){ return (float)(long long)f; }
 
 /* --- libc/POSIX gaps --- */
 #include <stddef.h>
+/* inttypes.h pointer scanf-format macros missing on Phoenix */
+#ifndef SCNxPTR
+#define SCNxPTR "lx"
+#endif
+#ifndef SCNuPTR
+#define SCNuPTR "lu"
+#endif
 #ifndef static_assert
 #define static_assert _Static_assert
 #endif

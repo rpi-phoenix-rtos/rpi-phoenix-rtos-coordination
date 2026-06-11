@@ -162,3 +162,24 @@ DRM-UAPI/libdrm-shim are the SAME Phase-2 work. No structural blockers.
 - NEXT: assemble the v3d-subset file list + build `libv3d-phoenix.a` (Phoenix toolchain +
   compat shim, exclude peripherals); write the minimal `xf86drm.h`/libdrm shim; then a
   gallium `pipe_context` triangle harness → CORRECT Mesa-generated triangle on HW.
+
+## Phase 2 milestone (2026-06-11): libv3d-phoenix-core.a BUILDS (real objects)
+
+Cross-compiled the v3d core to REAL aarch64-phoenix object code (not just syntax):
+**334 files compiled OK, archived `libv3d-phoenix-core.a` (6.1 MB, 333 objs)** — the
+v3d compiler + NIR + broadcom + util core. The one core failure (`nir_opt_varyings`:
+`SCNxPTR`/`SCNuPTR` inttypes macros) is fixed in the compat shim. The ~21 remaining
+failures are all **peripheral OS/libc util** (`u_thread`=pthread_barrier, `strtod`=locale,
+`u_process`, `u_dl`=dlopen, `memstream`=open_memstream, `os_misc`/`os_time`, `rand_xor`,
+`anon_file`, `build_id`, `log`, `mesa_cache_db`, `u_sync_provider`, `xmlconfig`) — exclude
+(not needed for CL/shader gen) or small shims.
+
+Recipe: drive `aarch64-phoenix-gcc -O2 -c -include phoenix_mesa_compat.h` over the host
+build's `compile_commands.json` per-file flags (drop x86 `-m*`/SSE), reuse the host's
+arch-neutral generated headers, `aarch64-phoenix-ar rcs`. Build artifact lives in /tmp
+(reproducible); the recipe + shim are committed.
+
+**=> The core cross-compiles to a real Phoenix static lib. NEXT: add gallium-aux + the
+gallium v3d driver files (with the `xf86drm.h`/libdrm shim + Mesa's vendored drm-uapi),
+resolve link-level undefined symbols, then a gallium `pipe_context` triangle harness
+linked against the lib + `v3d_phoenix_winsys.c` → boot → CORRECT Mesa-generated triangle.**
