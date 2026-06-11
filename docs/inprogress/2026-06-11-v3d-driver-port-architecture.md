@@ -260,3 +260,35 @@ build this for the Pi (devices Makefile target linking the committed subset), ru
 screen-create harness on HW (does `v3d_screen_create` return a non-null pipe_screen with
 sane limits from our GET_PARAM?), THEN a `pipe_context` + `draw_vbo` triangle — each HW
 cycle testing exactly one new thing.
+
+## MILESTONE (2026-06-11): the Mesa v3d driver INITIALIZES on Pi4 HW (SCREEN-CREATE PASS)
+
+Boot-launched `rpi4-v3d-mesa` printed over UART:
+```
+rpi4-v3d-mesa: pipe_screen OK name=V3D 4.2.14.0 vendor=Broadcom
+rpi4-v3d-mesa: SCREEN-CREATE PASS (Mesa v3d driver initialized on HW)
+```
+The entire ported Mesa driver-init path runs correctly on Phoenix — `v3d_screen_create`
+returns a valid `pipe_screen`: devinfo decode (V3D 4.2 rev 14 from our GET_PARAM IDENTs),
+`v3d_perfcntrs_init`, driconf, slab pools, `v3d_compiler_init`, format/shader/screen caps.
+Not just links — *executes*.
+
+Launch = netboot boot-launch (kernel-started via `user.plo.yaml` `app -x rpi4-v3d-mesa`,
+like the scout): UART-reliable, runs before any NFS takeover. The 11 MB program sits in
+`loader.disk` (15.6 MB, 46% of the 32 MB cap); plo bundles + TFTPs it fine.
+
+Three bugs the fast UART loop bisected (from crash markers / the fault dump):
+1. `v3d_perfcntrs_init` NULL — stubbed `v3d42_perfcounters_num=0` → `rzalloc_array(0)`.
+   Fix: compile the REAL `v3dx_counter.c @ V3D_VERSION=42`.
+2. `v3d_get_device_info` FAILED — winsys decoded `_IOC_NR(request)` vs the bare `DRM_V3D_*`,
+   but Mesa builds `DRM_IOWR(DRM_COMMAND_BASE + DRM_V3D_*, …)` → nothing matched → GET_PARAM
+   returned 0 → ver=0. Fix: `cmd = _IOC_NR(request) - DRM_COMMAND_BASE`. (Also would have
+   broken SUBMIT_CL — load-bearing for the triangle.)
+3. Data abort `esr=0x92000007 far=0x8` — `v3d_screen_create` derefs `config->options_info`
+   (offset 8) and the harness passed `config=NULL`. Fix: pass a zeroed `pipe_screen_config`.
+
+NEXT: extend the harness to a `pipe_context` + trivial VS/FS + `draw_vbo` of a triangle to
+a small RT, read back / show on /dev/fb0 — exercises SUBMIT_CL (now correctly decoded) →
+the real V3D = the first Mesa-generated GPU render on Phoenix. The winsys MMIO paths
+(CREATE_BO/GET_BO_OFFSET/SUBMIT_CL) need V3D powered on first (the scout does that every
+boot; or call the scout power-on in the harness).
