@@ -98,3 +98,24 @@ scout is the prototype winsys; this port wraps it behind `v3d_ioctl`.
 - HW render pipeline: `manifests/2026-06-11-v3d-render-clear.md` (devices 22eb868).
 - Power-on + MMU + CLE: `manifests/2026-06-11-v3d-mmu-cle-foundation.md`, scout `dedb44c`.
 - Host Mesa build + shader compile: `tools/v3d-shader-tool/` + this doc's host build recipe.
+
+## Phase 1 full gap scan (2026-06-11): core is portable, failures are peripheral
+
+Cross-compiled ALL 364 util + NIR + broadcom .c files (`aarch64-phoenix-gcc
+-fsyntax-only` + shim, host flags). **331 compile clean; 33 fail — none in the core
+v3d compiler / NIR / CLE / packing logic.** The failures categorize as:
+- **Exclude from the vendored subset (not needed for CL+shader generation):**
+  DRM (`xf86drm.h`, ~5), disk cache + `fossilize_db` (dlfcn, memfd, inotify, ftw,
+  build_id), compression (`zlib.h`, `compress.c`/`crc32.c` for the disk cache),
+  XML (`expat.h`), x86 SIMD (`cache_ops_x86*.c`, `streaming-load-memcpy.c`,
+  `smmintrin.h`, `__builtin_ia32_*` — aarch64 won't build these anyway), locale
+  (`*_l`, `newlocale`), process affinity (`cpu_set_t`, `pthread_*affinity_np`),
+  `secure_getenv`, `_SC_PHYS_PAGES`, `dladdr`, `open_memstream`.
+- **Trivial shim:** `rintf`/`rint` (3 files) — added to the compat shim.
+
+So the vendored Phoenix subset = the clean core files + a few stubbed peripherals
+(disk_cache→no-op, os_misc/os_time→Phoenix equivalents, the DRM winsys→our
+`v3d_ioctl` Phoenix backend). **Phase-1 cross-compile feasibility is fully
+characterized and positive.** NEXT: assemble the subset file list + build a real
+`libv3d-phoenix.a` (link surfaces undefined symbols `-fsyntax-only` misses), then
+the `v3d_ioctl` backend + gallium triangle harness.

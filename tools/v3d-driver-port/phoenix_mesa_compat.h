@@ -11,6 +11,8 @@
 
 /* --- C99 math gaps (Phoenix math.h does not declare these) --- */
 static inline float  pmc_rintf(float f){ return (float)(f<0.0f?-(long long)(0.5f-f):(long long)(f+0.5f)); }
+static inline float  rintf(float f){ return (float)(f<0.0f?-(long long)(0.5f-f):(long long)(f+0.5f)); }
+static inline double rint(double d){ return (double)(d<0.0?-(long long)(0.5-d):(long long)(d+0.5)); }
 static inline long   lrintf(float f){ return (long)(f<0.0f?-(long long)(0.5f-f):(long long)(f+0.5f)); }
 static inline long   lrint(double d){ return (long)(d<0.0?-(long long)(0.5-d):(long long)(d+0.5)); }
 static inline long long llroundf(float f){ return (long long)(f<0.0f?f-0.5f:f+0.5f); }
