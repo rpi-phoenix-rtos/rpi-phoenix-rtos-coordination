@@ -58,6 +58,10 @@ static inline double fmax(double a,double b){ return a>b?a:b; }
 static inline double fmin(double a,double b){ return a<b?a:b; }
 static inline float  copysignf(float x,float y){ return (y<0.0f)?-( x<0.0f?-x:x ):( x<0.0f?-x:x ); }
 static inline double copysign(double x,double y){ return (y<0.0)?-( x<0.0?-x:x ):( x<0.0?-x:x ); }
+/* exp2f/log2f: Phoenix C++ <cmath> declares expf/logf but NOT these two -> add only
+ * these (adding expf/logf would conflict with the existing declarations). */
+static inline float  exp2f(float x){ return (float)exp((double)x*0.6931471805599453); }
+static inline float  log2f(float x){ return (float)log2((double)x); }
 #endif /* !__cplusplus */
 
 

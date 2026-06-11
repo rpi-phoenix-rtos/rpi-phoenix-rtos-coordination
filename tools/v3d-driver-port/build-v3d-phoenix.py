@@ -85,6 +85,7 @@ def transform(entry, src, out):
     # final link --gc-sections drop everything unreachable from main (shrinks the ELF).
     return [TC, "-c", src, "-o", out, f"-I{SHIM}", f"-I{PORT}"] + ABI_FLAGS + [
             "-Wno-error=implicit-function-declaration", "-Wno-error=implicit-int",
+            "-Wno-error=int-conversion",
             "-include", COMPAT] + keep
 
 
