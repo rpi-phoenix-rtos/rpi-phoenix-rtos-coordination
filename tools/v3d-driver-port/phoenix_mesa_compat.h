@@ -56,6 +56,8 @@ static inline float  fmaxf(float a,float b){ return a>b?a:b; }
 static inline float  fminf(float a,float b){ return a<b?a:b; }
 static inline double fmax(double a,double b){ return a>b?a:b; }
 static inline double fmin(double a,double b){ return a<b?a:b; }
+static inline float  copysignf(float x,float y){ return (y<0.0f)?-( x<0.0f?-x:x ):( x<0.0f?-x:x ); }
+static inline double copysign(double x,double y){ return (y<0.0)?-( x<0.0?-x:x ):( x<0.0?-x:x ); }
 #endif /* !__cplusplus */
 
 
