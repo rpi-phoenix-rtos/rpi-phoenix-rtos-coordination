@@ -32,11 +32,11 @@ const void *build_id_data(const void *note) { return NULL; }
 void       *build_id_find_nhdr_for_addr(const void *addr) { return NULL; }
 
 /* --- logging: route to nowhere (the driver only logs debug/perf) --- */
-void  mesa_log(int level, const char *tag, const char *fmt, ...) { }
-void  _mesa_log_multiline(int level, const char *tag, const char *lines) { }
-void *_mesa_log_stream_create(int level, char *tag) { return NULL; }
-void  mesa_log_stream_destroy(void *stream) { }
-void  mesa_log_stream_printf(void *stream, const char *fmt, ...) { }
+__attribute__((weak)) void  mesa_log(int level, const char *tag, const char *fmt, ...) { }
+__attribute__((weak)) void  _mesa_log_multiline(int level, const char *tag, const char *lines) { }
+__attribute__((weak)) void *_mesa_log_stream_create(int level, char *tag) { return NULL; }
+__attribute__((weak)) void  mesa_log_stream_destroy(void *stream) { }
+__attribute__((weak)) void  mesa_log_stream_printf(void *stream, const char *fmt, ...) { }
 
 /* sha1 hex formatter (only feeds the disabled disk cache key) */
 void _mesa_sha1_format(char *buf, const unsigned char *sha1) { if (buf) buf[0] = '\0'; }
@@ -99,11 +99,11 @@ void renderonly_scanout_destroy(void *scanout, void *ro) { }
  * those directly with pthread (mtx_t == pthread_mutex_t, once_flag == pthread_once_t
  * by Mesa's c11 typedefs, so the void* casts are size-correct). --- */
 #include <pthread.h>
-void call_once(void *flag, void (*func)(void)) { pthread_once((pthread_once_t *)flag, func); }
-int  mtx_init(void *mtx, int type) { (void)type; return pthread_mutex_init((pthread_mutex_t *)mtx, NULL) ? 1 : 0; }
-void mtx_destroy(void *mtx) { pthread_mutex_destroy((pthread_mutex_t *)mtx); }
-int  mtx_lock(void *mtx) { return pthread_mutex_lock((pthread_mutex_t *)mtx) ? 1 : 0; }
-int  mtx_unlock(void *mtx) { return pthread_mutex_unlock((pthread_mutex_t *)mtx) ? 1 : 0; }
+__attribute__((weak)) void call_once(void *flag, void (*func)(void)) { pthread_once((pthread_once_t *)flag, func); }
+__attribute__((weak)) int  mtx_init(void *mtx, int type) { (void)type; return pthread_mutex_init((pthread_mutex_t *)mtx, NULL) ? 1 : 0; }
+__attribute__((weak)) void mtx_destroy(void *mtx) { pthread_mutex_destroy((pthread_mutex_t *)mtx); }
+__attribute__((weak)) int  mtx_lock(void *mtx) { return pthread_mutex_lock((pthread_mutex_t *)mtx) ? 1 : 0; }
+__attribute__((weak)) int  mtx_unlock(void *mtx) { return pthread_mutex_unlock((pthread_mutex_t *)mtx) ? 1 : 0; }
 
 /* --- locale-aware strtod/strtof (Mesa's _mesa_strtod uses newlocale): plain libc --- */
 double _mesa_strtod(const char *s, char **end) { return strtod(s, end); }

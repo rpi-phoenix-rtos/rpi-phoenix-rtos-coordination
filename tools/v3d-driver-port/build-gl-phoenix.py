@@ -29,16 +29,20 @@ GL_DIRS = ["/src/mesa/main/", "/mesa/state_tracker/", "/mesa/program/",
            "/gallium/auxiliary/cso_cache/",
            "/gallium/auxiliary/util/u_vbuf.", "/gallium/auxiliary/util/u_threaded_context.",
            "/gallium/auxiliary/util/u_index_modify.", "/gallium/auxiliary/util/u_sampler.",
-           "/c11/impl/threads_posix.", "/src/util/u_thread.", "/src/util/log."]
+           "/c11/impl/threads_posix.", "/src/util/u_thread.", "/src/util/log.",
+           "/gallium/auxiliary/indices/", "/gallium/auxiliary/util/u_gen_mipmap.",
+           "/gallium/auxiliary/util/u_draw.", "/gallium/auxiliary/util/u_draw_quad.", "/gallium/auxiliary/tgsi/tgsi_from_mesa.",
+           "/src/util/crc32.", "/src/util/u_cpu_detect.", "/src/util/process.",
+           "/compiler/nir/nir_opt_varyings.", "/mesa/glapi/glapi/libgl_public."]
 # NOTE: gallium/auxiliary/draw/ (sw vertex pipeline) + compiler/spirv/ are
 # deliberately NOT included — they drag in the whole sw-render subtree (tgsi_exec,
 # translate, nir_to_tgsi) that v3d (HW vertex) never uses at runtime. st references
 # a handful of draw_*/spirv_to_nir symbols which gl_stubs.c stubs instead.
-GL_EXCLUDE = ["sse_minmax.c", "spirv2nir.c"]                  # x86 SSE intrinsics; portable path exists
+GL_EXCLUDE = ["sse_minmax.c", "spirv2nir.c", "/util/crc32.c"]                  # x86 SSE intrinsics; portable path exists
 
 # generated GL entrypoint .c (not in compile_commands; compiled with a mesa/main
 # template's flags). Provide glClear/_mesa_marshal_*/_mesa_enum_to_string/dispatch.
-GEN_C = ["src/mesa/glapi/glapi/gen/api_exec_init.c",
+GEN_C = ["src/mesa/format_fallback.c", "src/mesa/glapi/glapi/gen/unmarshal_table.c", "src/gallium/auxiliary/u_indices_gen.c", "src/gallium/auxiliary/u_unfilled_gen.c", "src/mesa/glapi/glapi/gen/api_exec_init.c",
          "src/mesa/glapi/glapi/gen/enums.c"] + \
         [f"src/mesa/glapi/glapi/gen/marshal_generated{i}.c" for i in range(8)]
 
@@ -58,6 +62,7 @@ GEN_HEADERS = [
     "src/compiler/glsl/cross_platform_settings_piece_all.h",
     "src/mesa/format_info.h", "src/mesa/get_hash.h",
     "src/mesa/program/program_parse.tab.h", "src/mesa/program/lex.yy.c",
+    "src/mesa/format_fallback.c", "src/mesa/glapi/glapi/gen/unmarshal_table.c",
     "src/mesa/glapi/glapi/gen/api_exec_init.c", "src/mesa/glapi/glapi/gen/enums.c",
 ] + [f"src/mesa/glapi/glapi/gen/marshal_generated{i}.c" for i in range(8)]
 

@@ -85,6 +85,18 @@ static inline float  log2f(float x){ return (float)log2((double)x); }
 
 /* --- libc/POSIX gaps --- */
 #include <stddef.h>
+#include <string.h>
+/* CPU affinity set — Phoenix lacks <sched.h> cpu_set_t; util/u_thread.c needs the
+ * type + macros (the affinity calls sched_getcpu/pthread_setaffinity_np are stubbed
+ * in gl_stubs.c). */
+#ifndef CPU_SETSIZE
+#define CPU_SETSIZE 128
+typedef struct { unsigned long __bits[CPU_SETSIZE / (8 * sizeof(unsigned long))]; } cpu_set_t;
+#define CPU_ZERO(s)     memset((s), 0, sizeof(*(s)))
+#define CPU_SET(c, s)   ((s)->__bits[(c) / (8 * sizeof(unsigned long))] |= (1UL << ((c) % (8 * sizeof(unsigned long)))))
+#define CPU_ISSET(c, s) ((((s)->__bits[(c) / (8 * sizeof(unsigned long))]) >> ((c) % (8 * sizeof(unsigned long)))) & 1UL)
+#define CPU_COUNT(s)    (0)
+#endif
 /* inttypes.h pointer scanf-format macros missing on Phoenix */
 #ifndef SCNxPTR
 #define SCNxPTR "lx"
@@ -105,12 +117,15 @@ int posix_memalign(void **memptr, size_t alignment, size_t size);
 /* GNU qsort_r (Phoenix has only plain qsort). Real impl is a port task. */
 void qsort_r(void *base, size_t nmemb, size_t size,
              int (*compar)(const void *, const void *, void *), void *arg);
-/* Phoenix pthread lacks barriers; provide types + decls (impl is a port task). */
+/* Phoenix pthread lacks barriers; provide types + decls (impls stubbed in gl_stubs.c). */
 typedef struct { int __dummy; } pthread_barrier_t;
 typedef struct { int __dummy; } pthread_barrierattr_t;
 int pthread_barrier_init(pthread_barrier_t *, const pthread_barrierattr_t *, unsigned);
 int pthread_barrier_wait(pthread_barrier_t *);
 int pthread_barrier_destroy(pthread_barrier_t *);
+#ifndef PTHREAD_BARRIER_SERIAL_THREAD
+#define PTHREAD_BARRIER_SERIAL_THREAD (-1)
+#endif
 #ifdef __cplusplus
 }
 #endif
