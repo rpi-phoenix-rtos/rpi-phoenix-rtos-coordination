@@ -180,10 +180,16 @@ int phoenix_v3d_ioctl(int fd, unsigned long request, void *arg);
 int phoenix_v3d_ioctl(int fd, unsigned long request, void *arg)
 {
 	(void)fd;
+	/* Mesa builds requests as DRM_IOWR(DRM_COMMAND_BASE + DRM_V3D_*, ...), so the
+	 * ioctl NR field is DRM_COMMAND_BASE (0x40) + the bare command. Strip the base
+	 * to recover the DRM_V3D_* command our cases are keyed on. (Missing this made
+	 * every ioctl fall through to the default -> GET_PARAM returned 0 -> ver=0 ->
+	 * v3d_get_device_info failed -> v3d_screen_create NULL.) */
+	unsigned cmd = _IOC_NR(request) - DRM_COMMAND_BASE;
 	/* GET_PARAM / WAIT_BO return constants and touch no MMIO — serve them WITHOUT
 	 * winsys_init() so screen-create (which is GET_PARAM-only, allocates no BO) needs
 	 * no V3D power-on / MMU bring-up. The MMIO paths below init lazily. */
-	switch (_IOC_NR(request)) {
+	switch (cmd) {
 	case DRM_V3D_GET_PARAM:
 		return ioc_get_param(arg);
 	case DRM_V3D_WAIT_BO:
@@ -192,7 +198,7 @@ int phoenix_v3d_ioctl(int fd, unsigned long request, void *arg)
 	/* Everything below touches HUB/CORE MMIO + the MMU PT -> requires power-on. */
 	if (winsys_init() != 0)
 		return -1;
-	switch (_IOC_NR(request)) {
+	switch (cmd) {
 	case DRM_V3D_CREATE_BO:
 		return ioc_create_bo(arg);
 	case DRM_V3D_GET_BO_OFFSET: {
