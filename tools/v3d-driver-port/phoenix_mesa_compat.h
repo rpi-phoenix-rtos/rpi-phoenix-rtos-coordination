@@ -16,7 +16,11 @@
 #define HAVE_PTHREAD 1
 #endif
 
-/* --- C99 math gaps (Phoenix math.h does not declare these) --- */
+/* --- C99 math gaps (Phoenix math.h does not declare these) ---
+ * C++ TUs (the GLSL compiler is C++) get these from <cmath>, and our `extern
+ * double exp(double)` etc. conflict with libstdc++'s declarations — so the whole
+ * math-gap block is C-only. */
+#ifndef __cplusplus
 static inline float  pmc_rintf(float f){ return (float)(f<0.0f?-(long long)(0.5f-f):(long long)(f+0.5f)); }
 static inline float  rintf(float f){ return (float)(f<0.0f?-(long long)(0.5f-f):(long long)(f+0.5f)); }
 static inline double rint(double d){ return (double)(d<0.0?-(long long)(0.5-d):(long long)(d+0.5)); }
@@ -41,6 +45,18 @@ static inline float  expf(float x){ return (float)exp((double)x); }
 static inline float  logf(float x){ return (float)log((double)x); }
 static inline float  exp2f(float x){ return (float)exp((double)x*0.6931471805599453); }
 static inline float  log2f(float x){ return (float)log2((double)x); }
+#else /* __cplusplus: <cmath> provides exp/log/log2/round but Phoenix's lacks the
+       * rint/lrint/fmax/fmin family — define just those (no extern conflicts). */
+#include <cmath>
+static inline float  rintf(float f){ return (float)(f<0.0f?-(long long)(0.5f-f):(long long)(f+0.5f)); }
+static inline double rint(double d){ return (double)(d<0.0?-(long long)(0.5-d):(long long)(d+0.5)); }
+static inline long   lrintf(float f){ return (long)rintf(f); }
+static inline long   lrint(double d){ return (long)rint(d); }
+static inline float  fmaxf(float a,float b){ return a>b?a:b; }
+static inline float  fminf(float a,float b){ return a<b?a:b; }
+static inline double fmax(double a,double b){ return a>b?a:b; }
+static inline double fmin(double a,double b){ return a<b?a:b; }
+#endif /* !__cplusplus */
 
 
 /* --- libc/POSIX gaps --- */
@@ -52,8 +68,14 @@ static inline float  log2f(float x){ return (float)log2((double)x); }
 #ifndef SCNuPTR
 #define SCNuPTR "lu"
 #endif
+#ifndef __cplusplus
+/* C++ has static_assert as a keyword; defining it as a macro corrupts libstdc++. */
 #ifndef static_assert
 #define static_assert _Static_assert
+#endif
+#endif
+#ifdef __cplusplus
+extern "C" {
 #endif
 int posix_memalign(void **memptr, size_t alignment, size_t size);
 /* GNU qsort_r (Phoenix has only plain qsort). Real impl is a port task. */
@@ -65,5 +87,8 @@ typedef struct { int __dummy; } pthread_barrierattr_t;
 int pthread_barrier_init(pthread_barrier_t *, const pthread_barrierattr_t *, unsigned);
 int pthread_barrier_wait(pthread_barrier_t *);
 int pthread_barrier_destroy(pthread_barrier_t *);
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* PHOENIX_MESA_COMPAT_H */
