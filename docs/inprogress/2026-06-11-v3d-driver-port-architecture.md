@@ -183,3 +183,24 @@ arch-neutral generated headers, `aarch64-phoenix-ar rcs`. Build artifact lives i
 gallium v3d driver files (with the `xf86drm.h`/libdrm shim + Mesa's vendored drm-uapi),
 resolve link-level undefined symbols, then a gallium `pipe_context` triangle harness
 linked against the lib + `v3d_phoenix_winsys.c` → boot → CORRECT Mesa-generated triangle.**
+
+## Phase 2 milestone (2026-06-11): the gallium v3d DRIVER layer cross-compiles (29/29)
+
+With a small libdrm/header shim set (`tools/v3d-driver-port/shim-include/`), ALL 29
+gallium v3d driver files (`v3dx_draw/emit/rcl/state/tfu/job/format_table`,
+`v3d_screen/context/program/bufmgr/resource/job/cl/blit/fence/formats/uniforms/query*`)
+cross-compile clean for aarch64-phoenix:
+- `xf86drm.h` shim: `drmIoctl()` → `phoenix_v3d_ioctl()` (the winsys seam, no Mesa edit
+  since `v3d_ioctl`→`drmIoctl` on the non-simulator path); `drmSyncobj*`/`drmPrime*`/
+  `drmGetCap` declared (stub impls = synchronous, no sharing).
+- `xf86drmMode.h`: empty (driver only #includes it).
+- `sys/ioccom.h`: Linux-style `_IOC`/`_IO*` macros + `_IOC_NR` (self-consistent with the
+  winsys backend's decode).
+- `dlfcn.h`: `dlopen/dlsym/dlclose/dladdr`+`Dl_info` stubs. `libsync.h`: `sync_*` stubs.
+- Driver uses Mesa's own vendored `src/drm-uapi/v3d_drm.h` (via -Isrc), no separate vendor needed.
+
+So **core (334 objs) + driver (29 files) both cross-compile to Phoenix**, and the
+DRM/winsys seam is validated by construction. NEXT: the gallium AUXILIARY (the large
+shared body the driver links against — pipe screen/context infra, util, tgsi, draw,
+cso_cache) — build it + the driver to objects, link `libv3d-phoenix.a`, write the
+libdrm-shim/syncobj impls, then a gallium `pipe_context` triangle harness + the winsys.
