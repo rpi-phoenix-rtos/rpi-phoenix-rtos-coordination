@@ -17,6 +17,8 @@ static inline long   lrintf(float f){ return (long)(f<0.0f?-(long long)(0.5f-f):
 static inline long   lrint(double d){ return (long)(d<0.0?-(long long)(0.5-d):(long long)(d+0.5)); }
 static inline long long llroundf(float f){ return (long long)(f<0.0f?f-0.5f:f+0.5f); }
 static inline long long llround(double d){ return (long long)(d<0.0?d-0.5:d+0.5); }
+static inline long long llrint(double d){ return (long long)(d<0.0?-(long long)(0.5-d):(long long)(d+0.5)); }
+static inline long      lround(double d){ return (long)(d<0.0?d-0.5:d+0.5); }
 static inline float  roundf(float f){ return (float)(f<0.0f?(long long)(f-0.5f):(long long)(f+0.5f)); }
 static inline double round(double d){ return (double)(d<0.0?(long long)(d-0.5):(long long)(d+0.5)); }
 static inline float  fmaxf(float a,float b){ return a>b?a:b; }

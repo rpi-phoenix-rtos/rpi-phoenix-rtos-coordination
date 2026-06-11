@@ -119,3 +119,25 @@ So the vendored Phoenix subset = the clean core files + a few stubbed peripheral
 characterized and positive.** NEXT: assemble the subset file list + build a real
 `libv3d-phoenix.a` (link surfaces undefined symbols `-fsyntax-only` misses), then
 the `v3d_ioctl` backend + gallium triangle harness.
+
+## Phase 1 driver+aux scan (2026-06-11): DRM coupling is ONE header
+
+Cross-compiled gallium/drivers/v3d + gallium/auxiliary (182 files): 45 fail, and the
+v3d DRIVER files (v3dx_draw/emit/rcl/state/tfu, v3d_context/screen/program/job/
+bufmgr/resource/...) fail almost entirely on a SINGLE cause: `#include "xf86drm.h"`
+(libdrm, 30 hits) — they need the `DRM_IOCTL_V3D_*` numbers + `drm_v3d_*` ioctl
+structs. The DRM coupling is therefore CONCENTRATED in one header dep, not scattered.
+Remaining: more math (`llrint`/`lround` → added to shim), and excludable/stubbable
+headers (`tr_util.h`, `u_tracepoints.h` generated traces → stub; `libsync.h` sync-file
+→ stub; `dlfcn.h`/disk_cache → exclude).
+
+**=> The DRM seam = (a) vendor the kernel UAPI `v3d_drm.h` (defines the ioctl structs +
+numbers) + (b) a tiny `xf86drm.h`/libdrm shim whose `drmIoctl()` dispatches into our
+Phoenix `v3d_ioctl` backend = the proven scout primitives.** The winsys backend and the
+DRM-UAPI/libdrm-shim are the SAME Phase-2 work. No structural blockers.
+
+### Phase 1 COMPLETE — characterization summary
+- Core (util/nir/broadcom, 331/364): portable with `phoenix_mesa_compat.h` (math + posix_memalign + qsort_r + static_assert + pthread_barrier).
+- Driver (gallium v3d + aux): portable once the DRM-UAPI header + libdrm/xf86drm shim (= the v3d_ioctl Phoenix backend) are provided; + math (llrint/lround) + stub tr_util/u_tracepoints/libsync; exclude disk_cache.
+- No structural incompatibilities. Cross-compile is tractable end-to-end.
+- **NEXT = Phase 2:** vendor `v3d_drm.h` + write `xf86drm.h`/`libdrm` shim + the `v3d_ioctl` Phoenix backend (CREATE_BO/GET_BO_OFFSET/MMAP_BO/SUBMIT_CL/WAIT_BO/GET_PARAM = scout primitives); then assemble `libv3d-phoenix.a` from the subset file list and link a gallium triangle harness.
