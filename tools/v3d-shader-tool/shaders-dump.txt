@@ -1,0 +1,21 @@
+/* FS QPU: 10 instructions (80 bytes) */
+0x3c203186bb800000ull, /* nop                           ; nop                         ; thrsw */
+0x3c203186bb800000ull, /* nop                           ; nop                         ; thrsw */
+0x3c003186bb800000ull, /* nop                           ; nop */
+0x3e103186bb800000ull, /* nop                           ; nop                         ; ldtlb.r0 */
+0x3e107186bb800000ull, /* nop                           ; nop                         ; ldtlb.r1 */
+0x3de031c6bbfc0000ull, /* nop                           ; mov tlb, 0 */
+0x3de031c6bbfc0000ull, /* nop                           ; mov tlb, 0 */
+0x3c203186bb800000ull, /* nop                           ; nop                         ; thrsw */
+0x3c003186bb800000ull, /* nop                           ; nop */
+0x3c003186bb800000ull, /* nop                           ; nop */
+/* RENDER-VS QPU: 4 instructions */
+0x3c003186bb816000ull, /* vpmwt -                       ; nop */
+0x3c203186bb800000ull, /* nop                           ; nop                         ; thrsw */
+0x3c003186bb800000ull, /* nop                           ; nop */
+0x3c003186bb800000ull, /* nop                           ; nop */
+/* COORD-VS QPU: 4 instructions */
+0x3c003186bb816000ull, /* vpmwt -                       ; nop */
+0x3c203186bb800000ull, /* nop                           ; nop                         ; thrsw */
+0x3c003186bb800000ull, /* nop                           ; nop */
+0x3c003186bb800000ull, /* nop                           ; nop */

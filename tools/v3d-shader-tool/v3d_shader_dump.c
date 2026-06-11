@@ -157,5 +157,40 @@ int main(int argc, char **argv)
 		printf("0x%016llxull, /* %s */\n", (unsigned long long)insts[i],
 			v3d_qpu_disasm(&devinfo, insts[i]));
 
+	/* ---- Vertex shader (passthrough position) + its coordinate variant ----
+	 * Built deref-based like mesa's blit VS; v3d_compile lowers VS I/O itself. */
+	for (int coord = 0; coord <= 1; coord++) {
+		nir_builder vb = nir_builder_init_simple_shader(MESA_SHADER_VERTEX,
+			&v3d_options, coord ? "coordvs" : "rendervs");
+		nir_variable *pin = nir_variable_create(vb.shader, nir_var_shader_in,
+			glsl_vec4_type(), "pos");
+		pin->data.location = VERT_ATTRIB_GENERIC0;
+		pin->data.driver_location = 0;
+		nir_variable *pout = nir_variable_create(vb.shader, nir_var_shader_out,
+			glsl_vec4_type(), "gl_Position");
+		pout->data.location = VARYING_SLOT_POS;
+		pout->data.driver_location = 0;
+		nir_store_var(&vb, pout, nir_load_var(&vb, pin), 0xf);
+		vb.shader->info.outputs_written = BITFIELD64_BIT(VARYING_SLOT_POS);
+		vb.shader->info.inputs_read = BITFIELD64_BIT(VERT_ATTRIB_GENERIC0);
+		vb.shader->num_outputs = 1;
+		vb.shader->num_inputs = 1;
+
+		struct v3d_vs_key vs_key = { 0 };
+		vs_key.is_coord = coord;
+		vs_key.num_used_outputs = 0;
+
+		struct v3d_prog_data *vpd = NULL;
+		uint32_t vsz = 0;
+		uint64_t *vi = v3d_compile(compiler, &vs_key.base, &vpd, vb.shader,
+			dbg_out, NULL, 0, 0, &vsz);
+		if (!vi) { fprintf(stderr, "VS(coord=%d) compile FAILED\n", coord); continue; }
+		uint32_t vn = vsz / sizeof(uint64_t);
+		printf("/* %s QPU: %u instructions */\n", coord ? "COORD-VS" : "RENDER-VS", vn);
+		for (uint32_t i = 0; i < vn; i++)
+			printf("0x%016llxull, /* %s */\n", (unsigned long long)vi[i],
+				v3d_qpu_disasm(&devinfo, vi[i]));
+	}
+
 	return 0;
 }
