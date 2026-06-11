@@ -182,6 +182,19 @@ def main():
             so.append((e, src, out))
         aux_objs, _ = build_objs([x[0] for x in so], so, AUXOBJ, "aux")
 
+    # 3a2. version-specific broadcom file(s): v3dx_counter.c @ V3D_VERSION=42 provides
+    #      the REAL v3d42_perfcounters_num/get (v3d_perfcntrs_init NULLs without them,
+    #      which fails v3d_screen_create at line 806). Pick the v42 compile entry.
+    ver_objs = []
+    for e in db:
+        if e["file"].endswith("broadcom/perfcntrs/v3dx_counter.c"):
+            cmd = e.get("command") or " ".join(e["arguments"])
+            if "V3D_VERSION=42" in cmd:
+                out = f"{DRVOBJ}/v3dx_counter_v42.o"
+                ok, _ = build_objs([e], [(e, abssrc(e["file"]), out)], DRVOBJ, "perfcntr-v42")
+                ver_objs += ok
+                break
+
     # 3b. core set from the committed manifest (rebuilt here with the ABI/section flags
     #     so it gc-sections and matches the on-device ABI; replaces the old /tmp core.a)
     core_objs = []
@@ -203,7 +216,7 @@ def main():
 
     # 4. one combined archive: core + aux + driver + winsys + shim + stubs
     if os.path.exists(FULL_LIB): os.remove(FULL_LIB)
-    members = core_objs + aux_objs + drv_ok + [winsys_o, libdrm_o, stubs_o]
+    members = core_objs + aux_objs + drv_ok + ver_objs + [winsys_o, libdrm_o, stubs_o]
     subprocess.run([AR, "rcs", FULL_LIB] + members, check=True)
     sz = os.path.getsize(FULL_LIB)
     print(f"[archive] {FULL_LIB} ({len(members)} objs, {sz//1024} KiB)")

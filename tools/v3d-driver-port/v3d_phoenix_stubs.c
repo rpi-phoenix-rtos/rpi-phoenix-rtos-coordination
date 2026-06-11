@@ -109,11 +109,8 @@ int  mtx_unlock(void *mtx) { return pthread_mutex_unlock((pthread_mutex_t *)mtx)
 double _mesa_strtod(const char *s, char **end) { return strtod(s, end); }
 float  _mesa_strtof(const char *s, char **end) { return strtof(s, end); }
 
-/* --- v3d perfcounters: report none (not needed for screen/CL/draw). The driver
- * inits an empty counter set. TODO: compile v3dx_counter.c@V3D_VERSION=42 if perf
- * queries are ever wired. --- */
-const void *v3d42_perfcounters_get(unsigned index) { (void)index; return NULL; }
-unsigned    v3d42_perfcounters_num(void) { return 0; }
+/* v3d42_perfcounters_get/num are now provided by the REAL v3dx_counter.c@V3D_VERSION=42
+ * (v3d_perfcntrs_init returns NULL with an empty set, failing v3d_screen_create). */
 
 /* --- GNU qsort_r (Phoenix libc has only plain qsort). Simple insertion-sort
  * impl: correct, no global state, fine for Mesa's small sorts. --- */
