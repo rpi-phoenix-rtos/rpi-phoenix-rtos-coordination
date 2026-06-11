@@ -37,8 +37,17 @@ DRVOBJ    = "/tmp/v3dphx-drvobj"
 AUXOBJ    = "/tmp/v3dphx-auxobj"
 COREA     = "/tmp/libv3d-phoenix-core.a"
 AUXLIST   = "/tmp/v3dphx-aux.txt"      # mesa-relative .c paths, one per line
+CORELIST  = f"{PORT}/v3d-core-sources.txt"   # committed core manifest
+COREOBJ   = "/tmp/v3dphx-coreobj"
 UNDEF     = "/tmp/v3dphx-undef.txt"
 HARNESS_BIN = "/tmp/v3dphx-harness"
+FULL_LIB  = "/tmp/libv3d-phoenix.a"    # one archive: core+aux+driver+winsys+shim+stubs
+
+# Correct on-device ABI (matches sources/phoenix-rtos-build/target/aarch64.mk) +
+# section flags so the final --gc-sections strips code unreachable from main().
+ABI_FLAGS = ["-mcpu=cortex-a72", "-mtune=cortex-a72", "-mstrict-align",
+             "-mno-outline-atomics", "-fomit-frame-pointer",
+             "-ffunction-sections", "-fdata-sections"]
 
 db = json.load(open(f"{HOSTBUILD}/compile_commands.json"))
 by_file = {e["file"]: e for e in db}
@@ -72,7 +81,9 @@ def transform(entry, src, out):
         keep.append(t); i += 1
     # GCC-14 promotes implicit-function-declaration/implicit-int to hard errors by
     # default; downgrade to warnings for the port (Phoenix libc misses some decls).
-    return [TC, "-c", src, "-o", out, f"-I{SHIM}", f"-I{PORT}",
+    # ABI = the project's aarch64.mk flags (correct on-device); section flags let the
+    # final link --gc-sections drop everything unreachable from main (shrinks the ELF).
+    return [TC, "-c", src, "-o", out, f"-I{SHIM}", f"-I{PORT}"] + ABI_FLAGS + [
             "-Wno-error=implicit-function-declaration", "-Wno-error=implicit-int",
             "-include", COMPAT] + keep
 
@@ -171,20 +182,37 @@ def main():
             so.append((e, src, out))
         aux_objs, _ = build_objs([x[0] for x in so], so, AUXOBJ, "aux")
 
+    # 3b. core set from the committed manifest (rebuilt here with the ABI/section flags
+    #     so it gc-sections and matches the on-device ABI; replaces the old /tmp core.a)
+    core_objs = []
+    if os.path.exists(CORELIST):
+        rels = [l.strip() for l in open(CORELIST) if l.strip() and not l.startswith("#")]
+        so = []
+        for rel in rels:
+            src = os.path.normpath(os.path.join(MESA, rel))
+            e = by_abs.get(src)
+            if e is None:
+                print(f"  [core] NO compile_commands entry for {rel} -- skipping")
+                continue
+            so.append((e, src, f"{COREOBJ}/{os.path.basename(rel)}.o"))
+        core_objs, _ = build_objs([x[0] for x in so], so, COREOBJ, "core")
+
     if compile_only:
         print("compile-only: skipping archive + link")
         return
 
-    # 4. aux archive (+ keep core as-is)
-    auxa = "/tmp/libv3d-phoenix-aux.a"
-    if aux_objs:
-        if os.path.exists(auxa): os.remove(auxa)
-        subprocess.run([AR, "rcs", auxa] + aux_objs, check=True)
+    # 4. one combined archive: core + aux + driver + winsys + shim + stubs
+    if os.path.exists(FULL_LIB): os.remove(FULL_LIB)
+    members = core_objs + aux_objs + drv_ok + [winsys_o, libdrm_o, stubs_o]
+    subprocess.run([AR, "rcs", FULL_LIB] + members, check=True)
+    sz = os.path.getsize(FULL_LIB)
+    print(f"[archive] {FULL_LIB} ({len(members)} objs, {sz//1024} KiB)")
 
-    # 5. link-drive: harness + winsys + shim + stubs + driver objs, group(core, aux)
-    link = [TC, "-o", HARNESS_BIN, harness_o, winsys_o, libdrm_o, stubs_o] + drv_ok + \
-           ["-Wl,--start-group", COREA] + ([auxa] if aux_objs else []) + \
-           ["-Wl,--end-group", "-lm"]
+    # 5. link the harness against the combined lib with --gc-sections (drops everything
+    #    unreachable from main -> measures the boot-bundle-able size).
+    link = [TC, "-o", HARNESS_BIN, harness_o,
+            "-Wl,--gc-sections", "-Wl,--start-group", FULL_LIB,
+            "-Wl,--end-group", "-lm"]
     r = subprocess.run(link, capture_output=True, text=True)
     print(f"[link] rc={r.returncode}")
     # collect undefined references
@@ -195,7 +223,8 @@ def main():
             undef.add(sym)
     open(UNDEF, "w").write("\n".join(sorted(undef)) + "\n")
     if r.returncode == 0:
-        print(f"[link] PASS -> {HARNESS_BIN}")
+        print(f"[link] PASS -> {HARNESS_BIN} ({os.path.getsize(HARNESS_BIN)//1024} KiB,"
+              f" was ~12 MiB pre-gc-sections)")
     else:
         print(f"[link] {len(undef)} undefined symbols -> {UNDEF}")
         for s in sorted(undef)[:40]:

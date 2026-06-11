@@ -23,6 +23,12 @@
 
 int main(void)
 {
+	/* Unbuffered: a fault must not eat buffered output over the captured UART path. */
+	setvbuf(stdout, NULL, _IONBF, 0);
+	/* Markers make the one HW cycle crash-interpretable: no output => ELF didn't load;
+	 * marker-only => faulted INSIDE screen_create (fence/program/caps/util_queue init,
+	 * the first exercise of the mtx_/call_once/syncobj stubs); "NULL" => clean null. */
+	printf("harness: entering v3d_screen_create\n");
 	/* fd is a token routed to phoenix_v3d_ioctl by the libdrm shim; value unused. */
 	struct pipe_screen *pscreen = v3d_screen_create(0, NULL, NULL);
 	if (pscreen == NULL) {
