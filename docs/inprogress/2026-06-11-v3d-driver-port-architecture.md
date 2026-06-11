@@ -141,3 +141,24 @@ DRM-UAPI/libdrm-shim are the SAME Phase-2 work. No structural blockers.
 - Driver (gallium v3d + aux): portable once the DRM-UAPI header + libdrm/xf86drm shim (= the v3d_ioctl Phoenix backend) are provided; + math (llrint/lround) + stub tr_util/u_tracepoints/libsync; exclude disk_cache.
 - No structural incompatibilities. Cross-compile is tractable end-to-end.
 - **NEXT = Phase 2:** vendor `v3d_drm.h` + write `xf86drm.h`/`libdrm` shim + the `v3d_ioctl` Phoenix backend (CREATE_BO/GET_BO_OFFSET/MMAP_BO/SUBMIT_CL/WAIT_BO/GET_PARAM = scout primitives); then assemble `libv3d-phoenix.a` from the subset file list and link a gallium triangle harness.
+
+## Phase 2 started (2026-06-11): UAPI vendored + winsys backend written
+
+- Vendored kernel UAPI `tools/v3d-driver-port/v3d_drm.h` (from external/linux). Confirmed
+  `drm_v3d_submit_cl` maps EXACTLY onto the scout submit: `bcl_start/end`→CT0 QBA/QEA,
+  `rcl_start/end`→CT1 QBA/QEA, `qma/qms/qts`→CT0 tile-alloc/state. So SUBMIT_CL = the
+  scout's bin+render path, parameterized.
+- Wrote `tools/v3d-driver-port/v3d_phoenix_winsys.c` — the Phoenix backend the libdrm
+  shim's `drmIoctl()` dispatches into: BO table, GPU-VA bump-allocator + V3D MMU flat-PT
+  map (CREATE_BO/GET_BO_OFFSET/MMAP_BO), the real SUBMIT_CL (CT0/CT1 + FLDONE/FRDONE +
+  L2T flush — scout primitives), GET_PARAM (real V3D-4.2 IDENT values), WAIT_BO=noop
+  (synchronous). All param/ioctl/struct names verified against the vendored UAPI.
+- Libdrm surface to shim is small: `drmIoctl`→`phoenix_v3d_ioctl`; `drmSyncobj*` stubbed
+  (synchronous, no fences); `drmPrime*` not needed.
+- STATUS: winsys design crystallized + grounded, but **pending integration** — needs the
+  cross-built `libv3d-phoenix.a` + a gallium harness + the `xf86drm.h`/libdrm shim before
+  it compiles/runs. Also needs the V3D power-on done first (scout `v3d_powerOn`) and the
+  MMU PT may need to grow beyond one page for many BOs.
+- NEXT: assemble the v3d-subset file list + build `libv3d-phoenix.a` (Phoenix toolchain +
+  compat shim, exclude peripherals); write the minimal `xf86drm.h`/libdrm shim; then a
+  gallium `pipe_context` triangle harness → CORRECT Mesa-generated triangle on HW.
