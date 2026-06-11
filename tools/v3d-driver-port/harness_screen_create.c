@@ -19,7 +19,16 @@
 #include <stdio.h>
 #include "pipe/p_screen.h"
 #include "pipe/p_defines.h"
-#include "v3d_screen.h"
+
+/* Forward-declare v3d_screen_create rather than #include "v3d_screen.h": that header
+ * drags in renderonly.h -> c11/threads.h -> c11/time.h, which redefines struct timespec
+ * and clashes with glibc when this harness is also built on the host (x86) for the
+ * MMIO-free screen-create validation. The prototype is stable. */
+struct pipe_screen_config;
+struct renderonly;
+struct pipe_screen *v3d_screen_create(int fd,
+                                      const struct pipe_screen_config *config,
+                                      struct renderonly *ro);
 
 int main(void)
 {
