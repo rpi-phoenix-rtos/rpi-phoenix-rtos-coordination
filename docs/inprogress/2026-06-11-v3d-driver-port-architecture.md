@@ -61,6 +61,30 @@ scout is the prototype winsys; this port wraps it behind `v3d_ioctl`.
 - BO mmap: driver expects `MMAP_BO` to give a CPU pointer; our BOs are already CPU-mapped
   (uncached) — coherent, no flush needed (the scout pattern).
 
+## Phase 1 findings (2026-06-11, cross-compile spike)
+
+- **Toolchain:** `.toolchain/aarch64-phoenix/bin/aarch64-phoenix-gcc-14.2.0` (GCC 14) +
+  sysroot `.toolchain/aarch64-phoenix/aarch64-phoenix/`.
+- **Spike method:** reuse the host Mesa build's per-file flags
+  (`/tmp/mesa-v3d-build/compile_commands.json`) and recompile representative files with
+  `aarch64-phoenix-gcc -fsyntax-only` to surface libc/header gaps (the real cross risk;
+  the `-DHAVE_*` are host-detected so some are wrong for Phoenix, but missing-symbol
+  errors are the signal).
+- **First gap (confirmed):** `ralloc.c`→`u_math.h` fails on `lrintf`/`fmax`/`fmin` —
+  **Phoenix's libm lacks C99 math functions** Mesa relies on (also hit `llroundf` in the
+  host shader harness). Bounded + shimmable: provide a small `phoenix-mesa-libm` shim
+  (`lrintf`=`(long)rintf`, `fmax`/`fmin`/`llround*`, etc.). NOT a structural blocker —
+  Mesa core (`ralloc`, `u_math`) otherwise compiles.
+- **Verdict so far:** Mesa code is largely portable; Phoenix libc/libm has bounded gaps
+  needing a compat shim. The **vendor-subset + compat-shim** approach (build the v3d
+  driver + gallium-aux + NIR + compiler + util as a Phoenix static lib via the project
+  toolchain, not Mesa's meson) is the working plan. The v3d gallium driver's hard
+  `dep_libdrm` build-coupling also argues against a full meson cross-build.
+- **Next:** build the libm/compat shim; push the cross-compile across the v3d-subset file
+  set to enumerate the full gap profile (pthread, mmap flags, `getrandom`, `os_*`, etc.);
+  then assemble the Phoenix-built static lib + the `v3d_ioctl` Phoenix backend (scout
+  primitives) + the gallium triangle harness.
+
 ## Proven foundation (reused wholesale)
 - HW render pipeline: `manifests/2026-06-11-v3d-render-clear.md` (devices 22eb868).
 - Power-on + MMU + CLE: `manifests/2026-06-11-v3d-mmu-cle-foundation.md`, scout `dedb44c`.
