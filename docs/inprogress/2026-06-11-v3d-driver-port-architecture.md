@@ -75,6 +75,15 @@ scout is the prototype winsys; this port wraps it behind `v3d_ioctl`.
   host shader harness). Bounded + shimmable: provide a small `phoenix-mesa-libm` shim
   (`lrintf`=`(long)rintf`, `fmax`/`fmin`/`llround*`, etc.). NOT a structural blocker —
   Mesa core (`ralloc`, `u_math`) otherwise compiles.
+- **FEASIBILITY CONFIRMED (2026-06-11):** with the compat shim
+  (`tools/v3d-driver-port/phoenix_mesa_compat.h`), **all representative files cross-compile
+  clean (`-fsyntax-only`, rc=0) for aarch64-phoenix** — spanning Mesa util core (`ralloc`,
+  `hash_table`, `u_math`, `os_file`, `u_debug`), central NIR (`nir.c`), AND the v3d compiler
+  (`vir.c`). The full gap profile is bounded + shimmed: C99 math (lrintf/fmax/fmin/llround*),
+  `posix_memalign`, GNU `qsort_r`, C11 `static_assert`, `pthread_barrier_t`. **No structural
+  blockers** (mmap/pthread-core/etc. are fine). The dominant Path-C risk (cross-compiling Mesa
+  for a non-Linux target) is therefore tractable via vendor-subset + this shim. `qsort_r` /
+  pthread-barrier real implementations are port tasks (declared/stubbed now).
 - **Verdict so far:** Mesa code is largely portable; Phoenix libc/libm has bounded gaps
   needing a compat shim. The **vendor-subset + compat-shim** approach (build the v3d
   driver + gallium-aux + NIR + compiler + util as a Phoenix static lib via the project
