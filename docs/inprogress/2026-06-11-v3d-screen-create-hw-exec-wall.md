@@ -59,4 +59,30 @@ GPU-forward move.
 
 ## Status
 HW validation of screen-create DEFERRED to the boot-launch path. The link + IDENT-decode
-milestones stand. Next iteration: gc-sections shrink + binary.mk boot-launched harness.
+milestones stand.
+
+## Update 2 (2026-06-11): NFS-as-root is too fragile; gc-sections won't shrink; go netboot boot-launch
+- **gc-sections result:** 12.0 -> 11.3 MiB only. `v3d_screen_create` references nearly
+  all of Mesa, so the binary is **inherently ~11 MB** — can't shrink for bundling.
+- **NFS-as-root is intermittent**, two independent failure modes seen across cycles:
+  (a) takeover **succeeds** (`registered / (takeover)`) but external exec is **silent**
+  (process never runs — sentinel test proved it); (b) takeover **aborts**
+  (`nfs-fs: takeover aborted: mount …; keeping RAM root /`) → RAM root → everything
+  "not found". Layered NFS flakiness — unfit for reliable HW iteration of the GPU work.
+- **Decisive pivot: NETBOOT boot-launch.** The proven, deterministic path is a
+  kernel-launched program via `user.plo.yaml`:
+  `app {{ env.BOOT_DEVICE }} -x <name> ddr ddr` (see the `rpi4-v3d-scout` line ~141,
+  gated to the **netboot** variant). Netboot has NO NFS takeover and NO exec-from-fs —
+  the program is TFTP'd into the syspage and the kernel starts it directly, printing to
+  UART reliably (the scout proves this every boot). screen-create is MMIO-free, so it
+  needs no filesystem at all.
+- **Plan:** create a `sources/phoenix-rtos-devices/misc/rpi4-v3d-mesa/` program
+  (binary.mk, `LOCAL_SRCS = harness main`, `LOCAL_CFLAGS = -I` the Mesa src + the /tmp
+  generated headers + shim-include + compat, `LOCAL_LDFLAGS = /tmp/libv3d-phoenix.a -lm`
+  — the lib is now ABI-compatible: built with -mcpu=cortex-a72 -mstrict-align). Register
+  it with an `app … -x rpi4-v3d-mesa ddr ddr` line (netboot variant) next to the scout.
+  Rebuild the netboot image (~15 MB with the 11 MB program; verify plo/TFTP handle it),
+  netboot, read `v3d screen-create harness: PASS` (or the crash marker) over UART.
+- **Note for GLQuake later:** the GL/quakespasm binary + pak0.pak (~18 MB assets) WILL
+  need filesystem-exec/read (SD likely more stable than NFS) — but that's a later
+  problem; boot-launch gets the Mesa driver running on HW now (screen-create -> triangle).
