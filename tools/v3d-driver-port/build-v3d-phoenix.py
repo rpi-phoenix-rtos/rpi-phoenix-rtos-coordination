@@ -142,16 +142,18 @@ def main():
         so.append((e, e["file"], out))
     drv_ok, _ = build_objs(drv, so, DRVOBJ, "driver")
 
-    # 2. winsys + libdrm-shim + harness (synth flags from the template entry)
+    # 2. winsys + libdrm-shim + power + harness (synth flags from the template entry)
     winsys_c  = f"{PORT}/v3d_phoenix_winsys.c"
     libdrm_c  = f"{PORT}/v3d_libdrm_shim.c"
+    power_c   = f"{PORT}/v3d_phoenix_power.c"
     harness_c = f"{PORT}/harness_screen_create.c"
     winsys_o  = f"{DRVOBJ}/v3d_phoenix_winsys.o"
     libdrm_o  = f"{DRVOBJ}/v3d_libdrm_shim.o"
+    power_o   = f"{DRVOBJ}/v3d_phoenix_power.o"
     harness_o = f"{DRVOBJ}/harness_screen_create.o"
-    build_objs([tmpl] * 3,
+    build_objs([tmpl] * 4,
         [(tmpl, winsys_c, winsys_o), (tmpl, libdrm_c, libdrm_o),
-         (tmpl, harness_c, harness_o)], DRVOBJ, "winsys+shim+harness")
+         (tmpl, power_c, power_o), (tmpl, harness_c, harness_o)], DRVOBJ, "winsys+shim+power+harness")
 
     # 2b. peripheral stubs (generic signatures -> compile warnings-off)
     stubs_c = f"{PORT}/v3d_phoenix_stubs.c"
@@ -216,7 +218,7 @@ def main():
 
     # 4. one combined archive: core + aux + driver + winsys + shim + stubs
     if os.path.exists(FULL_LIB): os.remove(FULL_LIB)
-    members = core_objs + aux_objs + drv_ok + ver_objs + [winsys_o, libdrm_o, stubs_o]
+    members = core_objs + aux_objs + drv_ok + ver_objs + [winsys_o, libdrm_o, power_o, stubs_o]
     subprocess.run([AR, "rcs", FULL_LIB] + members, check=True)
     sz = os.path.getsize(FULL_LIB)
     print(f"[archive] {FULL_LIB} ({len(members)} objs, {sz//1024} KiB)")

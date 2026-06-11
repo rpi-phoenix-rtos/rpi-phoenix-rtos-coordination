@@ -16,6 +16,7 @@
  */
 #include <stdint.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 #include <errno.h>
 #include <sys/mman.h>
@@ -86,9 +87,15 @@ static volatile uint32_t *map_dev(uint32_t pa, uint32_t len)
 	return (p==MAP_FAILED) ? NULL : (volatile uint32_t *)p;
 }
 
+int v3d_phoenix_powerOn(void);   /* v3d_phoenix_power.c — BCM2711 V3D power-on */
+
 static int winsys_init(void)
 {
 	if (W.inited) return 0;
+	/* Power on the V3D ourselves (self-contained; no dependency on a separate
+	 * scout process whose concurrent clock-toggle/reset would race our submit and
+	 * leave core0 reading 0xdeadbeef). Idempotent. */
+	v3d_phoenix_powerOn();
 	W.hub = map_dev(V3D_HUB_BASE, V3D_MMIO_LEN);
 	if (!W.hub) return -ENOMEM;
 	W.core0 = W.hub + (V3D_CORE0_OFFS/4);
@@ -135,7 +142,9 @@ static int ioc_create_bo(struct drm_v3d_create_bo *c)
 static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
 {
 	volatile uint32_t *c0 = W.core0;
-	uint32_t spins;
+	uint32_t spins, binspins, rendspins;
+	printf("SUBMITDBG: bcl=0x%x..0x%x rcl=0x%x..0x%x qma=0x%x qms=0x%x qts=0x%x\n",
+	       s->bcl_start, s->bcl_end, s->rcl_start, s->rcl_end, s->qma, s->qms, s->qts);
 	c0[CTL_MISCCFG/4] = MISCCFG_OVRTMUOUT;
 	/* invalidate V3D caches (L2T flush; slices) — see scout v3d_invalidateCaches */
 	c0[CTL_L2TCACTL/4] = L2TCACTL_L2TFLS;
@@ -146,11 +155,17 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
 	if (s->qts) { c0[CLE_CT0QTS/4]=CT0QTS_ENABLE|s->qts; }
 	c0[CLE_CT0QBA/4]=s->bcl_start; c0[CLE_CT0QEA/4]=s->bcl_end;
 	for (spins=8000000u; spins && !(c0[CTL_INT_STS/4]&INT_FLDONE); spins--) {}
+	binspins = spins;
+	printf("SUBMITDBG: bin INT_STS=0x%x FLDONE=%d CT0CA=0x%x spins_left=%u\n",
+	       c0[CTL_INT_STS/4], !!(c0[CTL_INT_STS/4]&INT_FLDONE), c0[0x110/4], binspins);
 	c0[CTL_INT_CLR/4]=INT_FLDONE|INT_FRDONE;
 	c0[CTL_L2TCACTL/4]=L2TCACTL_L2TFLS;
 	/* --- render (CT1); wait FRDONE --- */
 	c0[CLE_CT1QBA/4]=s->rcl_start; c0[CLE_CT1QEA/4]=s->rcl_end;
 	for (spins=16000000u; spins && !(c0[CTL_INT_STS/4]&INT_FRDONE); spins--) {}
+	rendspins = spins;
+	printf("SUBMITDBG: render INT_STS=0x%x FRDONE=%d CT1CA=0x%x spins_left=%u\n",
+	       c0[CTL_INT_STS/4], !!(c0[CTL_INT_STS/4]&INT_FRDONE), c0[0x114/4], rendspins);
 	/* L2T flush so RT stores reach RAM before CPU readback (scout finding). */
 	c0[CTL_L2TCACTL/4]=L2TCACTL_L2TFLS|(2u<<1); /* FLM_CLEAN */
 	return 0;
