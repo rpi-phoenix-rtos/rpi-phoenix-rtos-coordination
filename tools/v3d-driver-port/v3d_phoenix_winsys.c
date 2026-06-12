@@ -54,6 +54,8 @@
 #define CLE_CT0QMS          0x0174u
 #define CTL_L2TCACTL        0x0030u
 #define L2TCACTL_L2TFLS     (1u<<0)
+#define CTL_SLCACTL         0x0024u    /* slices cache control (V3D 4.x) */
+#define SLCACTL_INVAL_ALL   0x0f0f0f0fu /* invalidate TVCCS/TDCCS/UCC(uniform)/ICC(instr) */
 #define PTB_BPOS            0x030cu
 #define CTL_MISCCFG         0x0018u
 #define MISCCFG_OVRTMUOUT   (1u<<0)
@@ -144,7 +146,12 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
 	volatile uint32_t *c0 = W.core0;
 	uint32_t spins;
 	c0[CTL_MISCCFG/4] = MISCCFG_OVRTMUOUT;
-	/* invalidate V3D caches (L2T flush; slices) — see scout v3d_invalidateCaches */
+	/* Invalidate the V3D caches before the job: SLCACTL slices (TVCCS/TDCCS/UCC=uniform
+	 * cache/ICC=instruction cache) + an L2T flush — matches the scout's v3d_invalidateCaches.
+	 * The SLCACTL slices invalidation is essential for multi-frame rendering: without it the
+	 * GPU serves stale uniforms from its uniform cache, so per-frame matrix/uniform changes
+	 * never render (every frame looks like frame 0). */
+	c0[CTL_SLCACTL/4] = SLCACTL_INVAL_ALL;
 	c0[CTL_L2TCACTL/4] = L2TCACTL_L2TFLS;
 	/* --- bin (CT0); wait FLDONE --- */
 	c0[CTL_INT_CLR/4] = INT_FLDONE|INT_FRDONE;
