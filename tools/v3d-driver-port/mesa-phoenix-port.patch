@@ -1,3 +1,25 @@
+diff --git a/src/broadcom/meson.build b/src/broadcom/meson.build
+index be6f6d2d5b8..87fb3dfeea9 100644
+--- a/src/broadcom/meson.build
++++ b/src/broadcom/meson.build
+@@ -73,6 +73,17 @@ libbroadcom_v3d = static_library(
+   dependencies: [dep_valgrind, dep_thread, idep_mesautil, dep_libdrm],
+ )
+ 
++# Local harness (not upstream): compile a trivial shader -> dump QPU bytecode.
++executable(
++  'v3d_shader_dump',
++  files('compiler/v3d_shader_dump.c'),
++  include_directories : [inc_include, inc_src, inc_broadcom, inc_compiler],
++  link_with : [libbroadcom_v3d],
++  dependencies : [idep_nir, idep_mesautil, dep_libdrm, dep_valgrind, dep_thread],
++  build_by_default : true,
++)
++
++
+ subdir('perfcntrs')
+ 
+ if with_perfetto and (with_datasources.contains('v3d') or with_datasources.contains('auto'))
 diff --git a/src/gallium/drivers/v3d/v3d_bufmgr.c b/src/gallium/drivers/v3d/v3d_bufmgr.c
 index e82fd069b18..f3c32e2c83e 100644
 --- a/src/gallium/drivers/v3d/v3d_bufmgr.c
@@ -20,3 +42,26 @@ index e82fd069b18..f3c32e2c83e 100644
          VG(VALGRIND_MALLOCLIKE_BLOCK(bo->map, bo->size, 0, false));
  
          return bo->map;
+diff --git a/src/gallium/drivers/v3d/v3dx_draw.c b/src/gallium/drivers/v3d/v3dx_draw.c
+index 1dc918d3e1f..c8654158546 100644
+--- a/src/gallium/drivers/v3d/v3dx_draw.c
++++ b/src/gallium/drivers/v3d/v3dx_draw.c
+@@ -1009,6 +1009,18 @@ v3d_update_job_ez(struct v3d_context *v3d, struct v3d_job *job)
+                 job->ez_state = V3D_EZ_DISABLED;
+         }
+ 
++        /* PHOENIX PORT FIX (v3d, UPDATE 25aw): force early-Z (EZ) OFF. On this V3D 4.2
++         * port, the early-Z path HANGS the render on depth-tested steeply-tilted polygons
++         * (e.g. a cube face rotated edge-toward-camera, or any polygon with a steep screen-
++         * space Z gradient) -- proven by bisection: depth-tested screen-parallel geometry
++         * is fine, but depth-tested tilted polys hang until EZ is disabled. EZ is a pure
++         * performance optimization (early depth reject before the FS), so disabling it is
++         * always correctness-safe; the only cost is some fragment-shading overhead. This
++         * unblocks all multi-axis rotation / general 3D (incl. Quake's world geometry).
++         * TODO(v3d-ez): root-cause the EZ hang (TLB/EZ HW config for tilted polys) to
++         * re-enable EZ for perf; until then, EZ stays off. */
++        job->ez_state = V3D_EZ_DISABLED;
++
+         if (job->first_ez_state == V3D_EZ_UNDECIDED &&
+             (job->ez_state != V3D_EZ_DISABLED || job->draw_calls_queued == 0))
+                 job->first_ez_state = job->ez_state;
