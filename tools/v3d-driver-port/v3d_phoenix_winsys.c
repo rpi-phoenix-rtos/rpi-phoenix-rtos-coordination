@@ -62,6 +62,15 @@
 
 /* GPU VA space: bump-allocate page-aligned, starting past the null guard. */
 #define GPUVA_BASE          0x100000u
+/* MMU flat page table size. Each PTE (4 bytes) maps one 4 KiB page, so one 4 KiB
+ * PT page = 1024 PTEs = 4 MiB of GPU VA window. A 256x256 RT fits in one page, but
+ * a 1024x768 color+depth target (3 MiB each) overflows it -> PTEs written past the
+ * table (OOB) at unmapped VAs -> the GPU store lands nowhere -> all-zero RT. Grow to
+ * 32 PT pages = 128 MiB of GPU VA, enough for fullscreen color+depth+tile state plus
+ * texture/CL working set (Quake). PT must be physically contiguous (the MMU walks it
+ * as a flat array from MMU_PT_PA_BASE). */
+#define GPUVA_PT_PAGES      32u
+#define GPUVA_PT_ENTRIES    (GPUVA_PT_PAGES * (_PAGE_SIZE / 4u))   /* total PTEs */
 
 struct pbo {            /* Phoenix BO */
 	uint32_t handle;
@@ -101,12 +110,12 @@ static int winsys_init(void)
 	W.hub = map_dev(V3D_HUB_BASE, V3D_MMIO_LEN);
 	if (!W.hub) return -ENOMEM;
 	W.core0 = W.hub + (V3D_CORE0_OFFS/4);
-	/* MMU page table: 1 page = 1024 PTEs = 4 MiB of GPU VA window (grow later). */
-	W.pt = mmap(NULL, _PAGE_SIZE, PROT_READ|PROT_WRITE,
+	/* MMU page table: GPUVA_PT_PAGES contiguous pages = GPUVA_PT_PAGES*4 MiB GPU VA. */
+	W.pt = mmap(NULL, GPUVA_PT_PAGES*_PAGE_SIZE, PROT_READ|PROT_WRITE,
 		MAP_UNCACHED|MAP_CONTIGUOUS|MAP_ANONYMOUS, -1, 0);
 	if (W.pt==MAP_FAILED) return -ENOMEM;
 	W.pt_pa = (uintptr_t)va2pa((void*)W.pt);
-	for (uint32_t i=0;i<_PAGE_SIZE/4;i++) W.pt[i]=0;
+	for (uint32_t i=0;i<GPUVA_PT_ENTRIES;i++) W.pt[i]=0;
 	/* NOTE: assumes V3D already powered on (rpi4-v3d-scout v3d_powerOn sequence). */
 	W.hub[MMU_PT_PA_BASE/4] = (uint32_t)(W.pt_pa>>PAGE_SHIFT);
 	W.hub[MMU_CTL/4] = MMU_CTL_ENABLE|MMU_CTL_PTI_ABORT;
@@ -130,6 +139,16 @@ static int ioc_create_bo(struct drm_v3d_create_bo *c)
 	if (cpu==MAP_FAILED) return -ENOMEM;
 	uintptr_t pa = (uintptr_t)va2pa(cpu);
 	uint32_t gpuva = W.next_gpuva;
+	/* Bounds-check against the mapped PT window: overflowing it used to write PTEs
+	 * past the table (memory corruption) and place the BO at an unmapped GPU VA
+	 * (silent all-zero RT). Fail loudly instead. */
+	if ((gpuva>>PAGE_SHIFT) + pages > GPUVA_PT_ENTRIES) {
+		munmap(cpu, pages*_PAGE_SIZE);
+		fprintf(stderr, "v3d-winsys: GPU VA exhausted (need %u pages at va 0x%x; "
+			"PT window = %u MiB). Grow GPUVA_PT_PAGES.\n",
+			pages, gpuva, (GPUVA_PT_PAGES*4u));
+		return -ENOMEM;
+	}
 	W.next_gpuva += pages*_PAGE_SIZE;
 	for (uint32_t i=0;i<pages;i++)
 		W.pt[(gpuva>>PAGE_SHIFT)+i] = (uint32_t)((pa>>PAGE_SHIFT)+i)|PTE_W|PTE_V;
