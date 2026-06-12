@@ -1,25 +1,3 @@
-diff --git a/src/broadcom/meson.build b/src/broadcom/meson.build
-index be6f6d2d5b8..87fb3dfeea9 100644
---- a/src/broadcom/meson.build
-+++ b/src/broadcom/meson.build
-@@ -73,6 +73,17 @@ libbroadcom_v3d = static_library(
-   dependencies: [dep_valgrind, dep_thread, idep_mesautil, dep_libdrm],
- )
- 
-+# Local harness (not upstream): compile a trivial shader -> dump QPU bytecode.
-+executable(
-+  'v3d_shader_dump',
-+  files('compiler/v3d_shader_dump.c'),
-+  include_directories : [inc_include, inc_src, inc_broadcom, inc_compiler],
-+  link_with : [libbroadcom_v3d],
-+  dependencies : [idep_nir, idep_mesautil, dep_libdrm, dep_valgrind, dep_thread],
-+  build_by_default : true,
-+)
-+
-+
- subdir('perfcntrs')
- 
- if with_perfetto and (with_datasources.contains('v3d') or with_datasources.contains('auto'))
 diff --git a/src/gallium/drivers/v3d/v3d_bufmgr.c b/src/gallium/drivers/v3d/v3d_bufmgr.c
 index e82fd069b18..f3c32e2c83e 100644
 --- a/src/gallium/drivers/v3d/v3d_bufmgr.c
