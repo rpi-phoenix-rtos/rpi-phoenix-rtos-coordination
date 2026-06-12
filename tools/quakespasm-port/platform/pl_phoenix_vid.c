@@ -137,7 +137,8 @@ void GL_EndRendering(void)
 	if (fbfd < 0 || !readbuf || !fbimg)
 		return;
 
-	glFlush();
+	{ extern void qsv3d_bind_fbo(void); qsv3d_bind_fbo(); }  /* read from our FBO, not FB0 */
+	glFinish();
 	glReadPixels(0, 0, vid.width, vid.height, GL_RGBA, GL_UNSIGNED_BYTE, readbuf);
 
 	/* y-flip (GL y-up -> screen y-down), 1:1 native blit to /dev/fb0. */

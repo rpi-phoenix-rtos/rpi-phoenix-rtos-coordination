@@ -18,13 +18,22 @@
 qboolean isDedicated;          /* declared extern in quakedef.h */
 
 #define MAX_HANDLES 64
-static FILE *sys_handles[MAX_HANDLES];
+/* Read handles slurp the whole file into RAM on open (one sequential read) and serve
+ * reads/seeks from the buffer — pak0.pak over NFS is otherwise read per-lump (hundreds
+ * of slow random reads), which dominates map-load time. Write handles use a FILE*. */
+typedef struct {
+	int used;
+	FILE *fp;            /* write handles */
+	unsigned char *buf;  /* read handles: whole-file cache */
+	long size, pos;
+} qfh_t;
+static qfh_t sys_handles[MAX_HANDLES];
 
 static int findhandle(void)
 {
 	int i;
 	for (i = 1; i < MAX_HANDLES; i++)
-		if (!sys_handles[i])
+		if (!sys_handles[i].used)
 			return i;
 	Sys_Error("out of file handles");
 	return -1;
@@ -38,15 +47,33 @@ int Sys_FileOpenRead(const char *path, int *hndl)
 {
 	int i = findhandle();
 	FILE *f = fopen(path, "rb");
+	long len;
+	unsigned char *buf = NULL;
+
 	if (!f) {
 		*hndl = -1;
 		return -1;
 	}
-	sys_handles[i] = f;
-	*hndl = i;
 	fseek(f, 0, SEEK_END);
-	long len = ftell(f);
+	len = ftell(f);
 	fseek(f, 0, SEEK_SET);
+	if (len > 0) {
+		buf = (unsigned char *)malloc((size_t)len);
+		if (buf != NULL && fread(buf, 1, (size_t)len, f) != (size_t)len) {
+			free(buf);
+			buf = NULL;
+			len = -1;
+		}
+	}
+	fclose(f);
+	if (len < 0) { *hndl = -1; return -1; }
+
+	sys_handles[i].used = 1;
+	sys_handles[i].fp = NULL;
+	sys_handles[i].buf = buf;
+	sys_handles[i].size = len;
+	sys_handles[i].pos = 0;
+	*hndl = i;
 	return (int)len;
 }
 
@@ -56,36 +83,64 @@ int Sys_FileOpenWrite(const char *path)
 	FILE *f = fopen(path, "wb");
 	if (!f)
 		Sys_Error("Error opening %s: %s", path, strerror(errno));
-	sys_handles[i] = f;
+	sys_handles[i].used = 1;
+	sys_handles[i].fp = f;
+	sys_handles[i].buf = NULL;
+	sys_handles[i].size = 0;
+	sys_handles[i].pos = 0;
 	return i;
 }
 
 void Sys_FileClose(int handle)
 {
-	if (handle <= 0 || handle >= MAX_HANDLES || !sys_handles[handle])
+	if (handle <= 0 || handle >= MAX_HANDLES || !sys_handles[handle].used)
 		return;
-	fclose(sys_handles[handle]);
-	sys_handles[handle] = NULL;
+	if (sys_handles[handle].fp != NULL)
+		fclose(sys_handles[handle].fp);
+	free(sys_handles[handle].buf);
+	memset(&sys_handles[handle], 0, sizeof(sys_handles[handle]));
 }
 
 void Sys_FileSeek(int handle, int position)
 {
-	if (handle > 0 && handle < MAX_HANDLES && sys_handles[handle])
-		fseek(sys_handles[handle], position, SEEK_SET);
+	if (handle <= 0 || handle >= MAX_HANDLES || !sys_handles[handle].used)
+		return;
+	if (sys_handles[handle].buf != NULL)
+		sys_handles[handle].pos = position;
+	else if (sys_handles[handle].fp != NULL)
+		fseek(sys_handles[handle].fp, position, SEEK_SET);
 }
 
 int Sys_FileRead(int handle, void *dest, int count)
 {
-	if (handle <= 0 || handle >= MAX_HANDLES || !sys_handles[handle])
+	qfh_t *h;
+	long avail;
+
+	if (handle <= 0 || handle >= MAX_HANDLES || !sys_handles[handle].used)
 		return 0;
-	return (int)fread(dest, 1, count, sys_handles[handle]);
+	h = &sys_handles[handle];
+	if (h->buf != NULL) {
+		avail = h->size - h->pos;
+		if ((long)count > avail)
+			count = (int)avail;
+		if (count <= 0)
+			return 0;
+		memcpy(dest, h->buf + h->pos, (size_t)count);
+		h->pos += count;
+		return count;
+	}
+	if (h->fp != NULL)
+		return (int)fread(dest, 1, count, h->fp);
+	return 0;
 }
 
 int Sys_FileWrite(int handle, const void *data, int count)
 {
-	if (handle <= 0 || handle >= MAX_HANDLES || !sys_handles[handle])
+	if (handle <= 0 || handle >= MAX_HANDLES || !sys_handles[handle].used)
 		return 0;
-	return (int)fwrite(data, 1, count, sys_handles[handle]);
+	if (sys_handles[handle].fp != NULL)
+		return (int)fwrite(data, 1, count, sys_handles[handle].fp);
+	return 0;
 }
 
 int Sys_FileType(const char *path)
