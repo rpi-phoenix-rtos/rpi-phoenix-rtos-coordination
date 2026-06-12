@@ -7,9 +7,14 @@
 
 #include <stdlib.h>
 #include <unistd.h>
+#include <string.h>
 #include <pthread.h>
 
-#define DEFAULT_MEMORY (256 * 1024 * 1024)
+/* Shareware Quake needs far less than the upstream 256 MB default; use a modest
+ * heap that Phoenix can reliably back, and memset it after malloc to force every
+ * page committed/mapped up front (the hunk faulted at a low offset during BSP load,
+ * i.e. untouched malloc pages weren't mapped). */
+#define DEFAULT_MEMORY (96 * 1024 * 1024)
 /* Quake has large stack frames (model/file buffers) and recursive renderers
  * (R_RecursiveWorldNode, R_SplitEntityOnNode); Phoenix's default main-thread
  * stack is tiny (the engine overflowed it ~132 KiB into Host_Init). Run the host
@@ -89,6 +94,11 @@ int main(int argc, char *argv[])
 	parms.membase = malloc(parms.memsize);
 	if (!parms.membase)
 		Sys_Error("Not enough memory free; check disk space\n");
+	/* Touch every page so the whole hunk is committed/mapped (Phoenix does not
+	 * demand-page large anonymous malloc: untouched pages translation-fault). */
+	memset(parms.membase, 0, parms.memsize);
+	Sys_Printf("quakespasm: heap %d MB committed at %p\n",
+	           (int)(parms.memsize >> 20), parms.membase);
 
 	/* Run Host_Init + the frame loop on a large-stack thread (see HOST_STACKSZ). */
 	if (pthread_attr_init(&attr) != 0)
