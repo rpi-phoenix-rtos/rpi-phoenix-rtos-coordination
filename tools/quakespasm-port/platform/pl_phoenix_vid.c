@@ -21,6 +21,9 @@
 #include <string.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <pthread.h>
+#include <sys/ioctl.h>
+#include <phoenix/fbcon.h>
 
 /* GL context/FBO helpers (pl_phoenix_glctx.c) — plain C API, no Quake/Mesa types. */
 int  qsv3d_init(int w, int h);
@@ -86,8 +89,53 @@ cvar_t vid_gamma = { "gamma", "1", CVAR_ARCHIVE };
 cvar_t vid_contrast = { "contrast", "1", CVAR_ARCHIVE };
 
 static int      fbfd = -1;
+static int      ttyfd = -1;         /* /dev/tty0 (or /dev/console) for the fbcon mode switch */
 static uint32_t *readbuf = NULL;    /* W*H RGBA from glReadPixels */
 static uint32_t *fbimg = NULL;      /* W*H, y-flipped, for /dev/fb0 */
+
+/* DOS-style mode switch: tell the HDMI text console (pl011-tty fbcon) to stop drawing to
+ * the framebuffer while this full-screen GPU app owns it. Console output is not lost — it
+ * accumulates in an off-screen shadow and reappears (with everything printed meanwhile)
+ * when we restore FBCON_ENABLED at shutdown. Without this the klog/psh mirror overdraws
+ * our rendered frame. */
+static void console_setmode(int mode)
+{
+	if (ttyfd < 0) {
+		ttyfd = open("/dev/tty0", O_RDWR);
+		if (ttyfd < 0)
+			ttyfd = open("/dev/console", O_RDWR);
+	}
+	if (ttyfd >= 0) {
+		if (ioctl(ttyfd, FBCONSETMODE, mode) == 0)
+			Sys_Printf("VID: HDMI console fbcon mode -> %d\n", mode);
+		else
+			Sys_Printf("VID: FBCONSETMODE(%d) failed (console may overdraw)\n", mode);
+	}
+	else {
+		Sys_Printf("VID: no /dev/tty0|console to switch fbcon mode\n");
+	}
+}
+
+/* Continuous re-blit: caches-off Quake renders only a few frames per minute, so a
+ * once-per-frame blit loses to the kernel klog mirror (fbcon), which overdraws /dev/fb0
+ * between frames. A helper thread re-writes the last rendered frame (fbimg) at ~3 Hz so
+ * the held frame stays on screen. The thread does NO GL/Mesa calls (only write()), so the
+ * GL-on-main-thread TLS invariant is preserved. GL_EndRendering only updates fbimg. */
+static pthread_t        reblit_thread;
+static volatile int     reblit_run = 0;
+
+static void *reblit_fn(void *arg)
+{
+	(void)arg;
+	while (reblit_run) {
+		if (fbfd >= 0 && fbimg) {
+			lseek(fbfd, 0, SEEK_SET);
+			(void)write(fbfd, fbimg, (size_t)VID_W * VID_H * 4);
+		}
+		usleep(300000);     /* ~3 Hz */
+	}
+	return NULL;
+}
 
 void VID_Init(void)
 {
@@ -103,9 +151,19 @@ void VID_Init(void)
 
 	readbuf = (uint32_t *)malloc((size_t)VID_W * VID_H * 4);
 	fbimg = (uint32_t *)malloc((size_t)VID_W * VID_H * 4);
+	if (fbimg)
+		memset(fbimg, 0, (size_t)VID_W * VID_H * 4);
 	fbfd = open("/dev/fb0", O_WRONLY);
 	if (fbfd < 0)
 		Sys_Printf("VID_Init: /dev/fb0 open failed (rendering continues offscreen)\n");
+
+	if (fbfd >= 0 && fbimg) {
+		reblit_run = 1;
+		pthread_create(&reblit_thread, NULL, reblit_fn, NULL);
+	}
+
+	/* Claim the framebuffer: switch the HDMI text console into "graphics mode". */
+	console_setmode(FBCON_DISABLED);
 
 	Sys_Printf("VID_Init: V3D GL %dx%d, /dev/fb0 %s\n",
 	           VID_W, VID_H, (fbfd >= 0) ? "open" : "unavailable");
@@ -113,6 +171,14 @@ void VID_Init(void)
 
 void VID_Shutdown(void)
 {
+	/* Hand the framebuffer back to the text console (it redraws with all the klog/psh
+	 * output that accumulated while we owned the screen). */
+	console_setmode(FBCON_ENABLED);
+	if (ttyfd >= 0) {
+		close(ttyfd);
+		ttyfd = -1;
+	}
+	reblit_run = 0;
 	if (fbfd >= 0) {
 		close(fbfd);
 		fbfd = -1;
@@ -142,14 +208,12 @@ void GL_EndRendering(void)
 	glFinish();
 	glReadPixels(0, 0, vid.width, vid.height, GL_RGBA, GL_UNSIGNED_BYTE, readbuf);
 
-	/* y-flip (GL y-up -> screen y-down), 1:1 native blit to /dev/fb0. */
+	/* y-flip (GL y-up -> screen y-down) into fbimg; the re-blit thread writes it to
+	 * /dev/fb0 at ~3 Hz (holds the frame on screen against the fbcon klog mirror). */
 	for (sy = 0; sy < vid.height; sy++)
 		memcpy(fbimg + (size_t)sy * vid.width,
 		       readbuf + (size_t)(vid.height - 1 - sy) * vid.width,
 		       (size_t)vid.width * 4);
-
-	lseek(fbfd, 0, SEEK_SET);
-	(void)write(fbfd, fbimg, (size_t)vid.width * vid.height * 4);
 }
 
 /* --- the remaining VID_* contract: trivial for a fixed single fullscreen mode --- */
