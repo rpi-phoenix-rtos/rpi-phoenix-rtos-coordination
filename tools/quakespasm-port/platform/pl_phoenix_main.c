@@ -8,18 +8,19 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
-#include <pthread.h>
 
 /* Shareware Quake needs far less than the upstream 256 MB default; use a modest
  * heap that Phoenix can reliably back, and memset it after malloc to force every
  * page committed/mapped up front (the hunk faulted at a low offset during BSP load,
  * i.e. untouched malloc pages weren't mapped). */
 #define DEFAULT_MEMORY (96 * 1024 * 1024)
-/* Quake has large stack frames (model/file buffers) and recursive renderers
- * (R_RecursiveWorldNode, R_SplitEntityOnNode); Phoenix's default main-thread
- * stack is tiny (the engine overflowed it ~132 KiB into Host_Init). Run the host
- * on a generously-sized thread instead. */
-#define HOST_STACKSZ (32 * 1024 * 1024)
+
+/* The host runs on the MAIN thread (not a pthread). Quake has large stack frames +
+ * recursive renderers, so the main-thread stack is enlarged via PT_GNU_STACK in the
+ * link (-z stack-size=... in misc/rpi4-quake/Makefile). Running on the main thread is
+ * deliberate: Mesa's glapi dispatch is TLS and the kernel sets up TLS for the main
+ * thread (process.c), whereas GL on a libphoenix pthread faulted in the dispatch
+ * (far=0x100030428) — the rpi4-glcube demo runs identical GL on the main thread fine. */
 
 static quakeparms_t parms;      /* host_parms (the pointer) is owned by host.c */
 
@@ -45,30 +46,9 @@ static void wait_for_gamedata(void)
 	Sys_Printf("quakespasm: %s not found after wait (continuing; Host_Init will report)\n", pak);
 }
 
-static void *host_thread(void *arg)
-{
-	double time, oldtime, newtime;
-	(void)arg;
-
-	wait_for_gamedata();
-	Sys_Printf("Host_Init\n");
-	Host_Init();
-
-	oldtime = Sys_DoubleTime();
-	while (1) {
-		newtime = Sys_DoubleTime();
-		time = newtime - oldtime;
-		Host_Frame(time);
-		oldtime = newtime;
-		usleep(1000);
-	}
-	return NULL;
-}
-
 int main(int argc, char *argv[])
 {
-	pthread_t th;
-	pthread_attr_t attr;
+	double time, oldtime, newtime;
 
 	/* Unbuffered stdout so prints reach the UART immediately (psh stdout may be
 	 * fully buffered -> buffered output is lost if the process exits/faults early). */
@@ -100,13 +80,18 @@ int main(int argc, char *argv[])
 	Sys_Printf("quakespasm: heap %d MB committed at %p\n",
 	           (int)(parms.memsize >> 20), parms.membase);
 
-	/* Run Host_Init + the frame loop on a large-stack thread (see HOST_STACKSZ). */
-	if (pthread_attr_init(&attr) != 0)
-		Sys_Error("pthread_attr_init failed");
-	if (pthread_attr_setstacksize(&attr, HOST_STACKSZ) != 0)
-		Sys_Error("pthread_attr_setstacksize failed");
-	if (pthread_create(&th, &attr, host_thread, NULL) != 0)
-		Sys_Error("host thread create failed");
-	pthread_join(th, NULL);
+	wait_for_gamedata();
+
+	Sys_Printf("Host_Init\n");
+	Host_Init();
+
+	oldtime = Sys_DoubleTime();
+	while (1) {
+		newtime = Sys_DoubleTime();
+		time = newtime - oldtime;
+		Host_Frame(time);
+		oldtime = newtime;
+		usleep(1000);
+	}
 	return 0;
 }
