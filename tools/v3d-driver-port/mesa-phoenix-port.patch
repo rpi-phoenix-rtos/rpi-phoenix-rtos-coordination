@@ -43,3 +43,23 @@ index 1dc918d3e1f..c8654158546 100644
          if (job->first_ez_state == V3D_EZ_UNDECIDED &&
              (job->ez_state != V3D_EZ_DISABLED || job->draw_calls_queued == 0))
                  job->first_ez_state = job->ez_state;
+diff --git a/src/util/os_memory_aligned.h b/src/util/os_memory_aligned.h
+index 98b3cd6f8d8..16de49d8b28 100644
+--- a/src/util/os_memory_aligned.h
++++ b/src/util/os_memory_aligned.h
+@@ -37,6 +37,15 @@
+ 
+ #include "util/u_overflow.h"
+ 
++/* PHOENIX PORT FIX: Phoenix has no real posix_memalign (the gl_stubs.c shim ignores
++ * the alignment and returns plain malloc, only 16-byte aligned). util_sparse_array
++ * (the texture-object hash) needs 64-byte-aligned nodes — it packs the tree level
++ * into the low 6 bits of the node pointer (NODE_ALLOC_ALIGN=64). Underaligned nodes
++ * corrupt that encoding -> util_sparse_array_get returns wild pointers -> memory
++ * corruption (clobbered glGenTextures/glBindTexture). Force the self-contained
++ * malloc+cubby-hole path below, which honors alignment and frees correctly. */
++#undef HAVE_POSIX_MEMALIGN
++
+ #if defined(HAVE_POSIX_MEMALIGN)
+ 
+ static inline void *
