@@ -77,6 +77,14 @@ qboolean gl_texture_env_add = false;
 qboolean gl_vbo_able = false;
 float gl_max_anisotropy = 1.0f;
 
+/* --- more gl_vidsdl.c-owned globals --- */
+QS_PFNGENERATEMIPMAP GL_GenerateMipmap = NULL;
+GLint gl_max_texture_units = 1;     /* mtex off => single TMU */
+int gl_stencilbits = 0;
+modestate_t modestate = MS_UNINIT;
+cvar_t vid_gamma = { "gamma", "1", CVAR_ARCHIVE };
+cvar_t vid_contrast = { "contrast", "1", CVAR_ARCHIVE };
+
 static int      fbfd = -1;
 static uint32_t *readbuf = NULL;    /* W*H RGBA from glReadPixels */
 static uint32_t *fbimg = NULL;      /* W*H, y-flipped, for /dev/fb0 */

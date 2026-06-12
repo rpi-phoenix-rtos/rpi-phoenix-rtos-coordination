@@ -10,8 +10,7 @@
 
 #define DEFAULT_MEMORY (256 * 1024 * 1024)
 
-static quakeparms_t parms;
-quakeparms_t *host_parms;       /* declared extern in quakedef.h */
+static quakeparms_t parms;      /* host_parms (the pointer) is owned by host.c */
 
 int main(int argc, char *argv[])
 {

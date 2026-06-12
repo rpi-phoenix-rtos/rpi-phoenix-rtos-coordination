@@ -84,3 +84,12 @@ void qsv3d_make_current(void)
 	if (g_st)
 		_mesa_make_current(g_st->ctx, NULL, NULL);
 }
+
+/* Mesa's trace gallium wrapper (referenced by the GL state tracker) is not built
+ * into libv3d-phoenix; we never enable GALLIUM_TRACE, so pass the context through. */
+struct pipe_context *trace_context_create_threaded(struct pipe_screen *screen,
+                                                    struct pipe_context *pipe)
+{
+	(void)screen;
+	return pipe;
+}

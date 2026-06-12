@@ -36,36 +36,85 @@ CORE = ["strlcat", "strlcpy", "net_dgrm", "net_loop", "net_main", "net_udp",
         "console", "keys", "menu", "sbar", "view", "wad", "cmd", "common",
         "miniz", "crc", "cvar", "cfgfile", "host", "host_cmd", "mathlib",
         "pr_cmds", "pr_edict", "pr_exec", "sv_main", "sv_move", "sv_phys",
-        "sv_user", "world", "zone", "snd_dma", "snd_mix", "snd_mem", "bgmusic"]
+        "sv_user", "world", "zone", "snd_dma", "snd_mix", "snd_mem", "bgmusic",
+        "cd_null", "snd_codec"]   # portable CD-null + codec dispatcher
 
-CFLAGS = ["-c", "-O2", "-ffreestanding", "-fno-strict-aliasing", "-Wno-error",
+PLAT = f"{ROOT}/tools/quakespasm-port/platform"
+MESA = f"{ROOT}/external/mesa"
+COMPAT = f"{ROOT}/tools/v3d-driver-port/phoenix_mesa_compat.h"
+GLLIB = "/tmp/libGL-phoenix.a"
+V3DLIB = "/tmp/libv3d-phoenix.a"
+ELF = "/tmp/quakespasm-phoenix"
+
+# Quake-side flags (Quake TUs + the Quake-facing platform shims).
+QFLAGS = ["-c", "-O2", "-ffreestanding", "-fno-strict-aliasing", "-Wno-error",
           f"-I{SHIM}", f"-I{Q}", f"-I{GLINC}"]
+# Mesa-side flags (glctx only) — the endianness/timespec -D's + include order the
+# Mesa driver build uses (else u_endian #errors and struct timespec redefines).
+MFLAGS = ["-c", "-O2", "-ffreestanding", "-fno-strict-aliasing", "-Wno-error",
+          "-Wno-undef", "-DUTIL_ARCH_LITTLE_ENDIAN=1", "-DUTIL_ARCH_BIG_ENDIAN=0",
+          "-DHAVE_STRUCT_TIMESPEC", "-include", COMPAT,
+          f"-I{MESA}/src", f"-I{MESA}/include", f"-I{MESA}/src/mesa",
+          f"-I{MESA}/src/mapi", f"-I{MESA}/src/compiler",
+          f"-I{MESA}/src/gallium/include", f"-I{MESA}/src/gallium/auxiliary",
+          f"-I{MESA}/src/util", "-I/tmp/mesa-v3d-build/src"]
+
+QUAKE_SHIMS = ["pl_phoenix_sys", "pl_phoenix_snd", "pl_phoenix_in",
+               "pl_phoenix_main", "pl_phoenix_vid", "pl_phoenix_stubs"]  # Quake-side flags
+MESA_SHIMS = ["pl_phoenix_glctx"]                     # Mesa-side flags
+
+def compile_one(src, flags, obj):
+    r = subprocess.run([TC] + flags + ["-o", obj, src], capture_output=True, text=True)
+    if r.returncode == 0:
+        return None
+    errs = [l for l in r.stderr.splitlines() if "error:" in l]
+    return errs[0] if errs else (r.stderr.splitlines()[0] if r.stderr else "?")
 
 def main():
     os.makedirs(OBJ, exist_ok=True)
     units = [u for u in (GLOBJS + CORE) if u not in EXCLUDE]
-    ok, fail = [], []
+    objs, fail = [], []
+
     for u in units:
         src = f"{Q}/{u}.c"
         if not os.path.exists(src):
-            fail.append((u, "MISSING SOURCE"))
-            continue
-        r = subprocess.run([TC] + CFLAGS + ["-o", f"{OBJ}/{u}.o", src],
-                           capture_output=True, text=True)
-        if r.returncode == 0:
-            ok.append(u)
-        else:
-            # first error line is the most informative
-            errs = [l for l in r.stderr.splitlines() if "error:" in l]
-            fail.append((u, errs[0] if errs else r.stderr.splitlines()[0] if r.stderr else "?"))
-    print(f"\n=== Quakespasm compile probe: {len(ok)}/{len(units)} TUs OK ===")
+            fail.append((u, "MISSING SOURCE")); continue
+        e = compile_one(src, QFLAGS, f"{OBJ}/{u}.o")
+        (fail.append((u, e)) if e else objs.append(f"{OBJ}/{u}.o"))
+    for u in QUAKE_SHIMS:
+        e = compile_one(f"{PLAT}/{u}.c", QFLAGS, f"{OBJ}/{u}.o")
+        (fail.append((u, e)) if e else objs.append(f"{OBJ}/{u}.o"))
+    for u in MESA_SHIMS:
+        e = compile_one(f"{PLAT}/{u}.c", MFLAGS, f"{OBJ}/{u}.o")
+        (fail.append((u, e)) if e else objs.append(f"{OBJ}/{u}.o"))
+
+    total = len(units) + len(QUAKE_SHIMS) + len(MESA_SHIMS)
+    print(f"\n=== compile: {len(objs)}/{total} TUs OK ===")
     if fail:
         print(f"--- {len(fail)} FAILED ---")
         for u, e in fail:
             print(f"  [{u}] {e}")
-    else:
-        print("ALL portable TUs compiled. Next: write Phoenix platform shims + link.")
-    return 1 if fail else 0
+        return 1
+
+    # Link the full ELF; capture undefined-symbol gaps (the closure-reduction recon).
+    link = [TC] + objs + ["-Wl,--start-group", GLLIB, V3DLIB, "-Wl,--end-group",
+                          "-lstdc++", "-lm", "-o", ELF]
+    r = subprocess.run(link, capture_output=True, text=True)
+    if r.returncode == 0:
+        print(f"=== LINK OK -> {ELF} ===")
+        return 0
+    undef = sorted(set(l.split("undefined reference to ")[1].strip().strip("`'")
+                       for l in r.stderr.splitlines() if "undefined reference to" in l))
+    print(f"=== LINK FAILED: {len(undef)} undefined symbols ===")
+    for s in undef:
+        print(f"  U {s}")
+    other = [l for l in r.stderr.splitlines()
+             if "undefined reference" not in l and ("error" in l.lower() or "cannot" in l.lower())][:10]
+    if other:
+        print("--- other link errors ---")
+        for l in other:
+            print(f"  {l}")
+    return 2
 
 if __name__ == "__main__":
     sys.exit(main())
