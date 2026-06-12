@@ -48,11 +48,11 @@ V3DLIB = "/tmp/libv3d-phoenix.a"
 ELF = "/tmp/quakespasm-phoenix"
 
 # Quake-side flags (Quake TUs + the Quake-facing platform shims).
-QFLAGS = ["-c", "-O2", "-ffreestanding", "-fno-strict-aliasing", "-Wno-error",
+QFLAGS = ["-c", "-O2", "-g", "-ffreestanding", "-fno-strict-aliasing", "-Wno-error",
           f"-I{SHIM}", f"-I{Q}", f"-I{GLINC}"]
 # Mesa-side flags (glctx only) — the endianness/timespec -D's + include order the
 # Mesa driver build uses (else u_endian #errors and struct timespec redefines).
-MFLAGS = ["-c", "-O2", "-ffreestanding", "-fno-strict-aliasing", "-Wno-error",
+MFLAGS = ["-c", "-O2", "-g", "-ffreestanding", "-fno-strict-aliasing", "-Wno-error",
           "-Wno-undef", "-DUTIL_ARCH_LITTLE_ENDIAN=1", "-DUTIL_ARCH_BIG_ENDIAN=0",
           "-DHAVE_STRUCT_TIMESPEC", "-include", COMPAT,
           f"-I{MESA}/src", f"-I{MESA}/include", f"-I{MESA}/src/mesa",

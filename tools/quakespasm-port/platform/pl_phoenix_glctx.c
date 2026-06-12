@@ -33,6 +33,16 @@ extern unsigned char _mesa_make_current(struct gl_context *ctx,
 
 static struct st_context *g_st = NULL;
 
+static GLuint g_fbo = 0;             /* our render-target FBO (Quake renders into it) */
+
+/* Bind our render-target FBO. Quake renders to the "default" framebuffer (0), which
+ * is incomplete on a surfaceless context; redirect each frame into our readable FBO. */
+void qsv3d_bind_fbo(void)
+{
+	if (g_fbo != 0)
+		glBindFramebuffer(GL_FRAMEBUFFER, g_fbo);
+}
+
 int qsv3d_init(int w, int h)
 {
 	struct pipe_screen_config cfg;
@@ -62,6 +72,7 @@ int qsv3d_init(int w, int h)
 	       (const char *)glGetString(GL_RENDERER));
 
 	glGenFramebuffers(1, &fbo);
+	g_fbo = fbo;
 	glBindFramebuffer(GL_FRAMEBUFFER, fbo);
 	glGenRenderbuffers(1, &rbColor);
 	glBindRenderbuffer(GL_RENDERBUFFER, rbColor);

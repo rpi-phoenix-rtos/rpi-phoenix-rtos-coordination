@@ -122,6 +122,8 @@ void VID_Shutdown(void)
 /* Quake calls these around each frame's GL work. */
 void GL_BeginRendering(int *x, int *y, int *width, int *height)
 {
+	extern void qsv3d_bind_fbo(void);
+	qsv3d_bind_fbo();   /* render this frame into our readable FBO, not default FB0 */
 	*x = 0;
 	*y = 0;
 	*width = vid.width;
