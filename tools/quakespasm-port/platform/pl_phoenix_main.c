@@ -16,6 +16,12 @@ int main(int argc, char *argv[])
 {
 	double time, oldtime, newtime;
 
+	/* Unbuffered stdout so prints reach the UART immediately (psh stdout may be
+	 * fully buffered -> buffered output is lost if the process exits/faults early). */
+	setvbuf(stdout, NULL, _IONBF, 0);
+	setvbuf(stderr, NULL, _IONBF, 0);
+	printf("quakespasm: main() entered (argc=%d)\n", argc);
+
 	host_parms = &parms;
 	parms.basedir = ".";
 	parms.argc = argc;
