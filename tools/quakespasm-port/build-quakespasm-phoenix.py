@@ -18,6 +18,7 @@ import os, subprocess, sys
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 TC   = f"{ROOT}/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-gcc"
+AR   = f"{ROOT}/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-gcc-ar"
 Q    = f"{ROOT}/external/quakespasm/Quake"
 SHIM = f"{ROOT}/tools/quakespasm-port/sdl-shim"
 GLINC = f"{ROOT}/external/mesa/include"
@@ -95,6 +96,17 @@ def main():
         for u, e in fail:
             print(f"  [{u}] {e}")
         return 1
+
+    # Archive all objects into libquakespasm.a so a binary.mk program (rpi4-quake)
+    # can link it (+ libGL + libv3d) and bundle into loader.disk. main() lives in
+    # pl_phoenix_main.o inside the archive; crt0 pulls it, which pulls the rest.
+    QSLIB = "/tmp/libquakespasm.a"
+    subprocess.run(["rm", "-f", QSLIB])
+    ar = subprocess.run([AR, "rcs", QSLIB] + objs, capture_output=True, text=True)
+    if ar.returncode != 0:
+        print(f"=== AR FAILED ===\n{ar.stderr}")
+        return 1
+    print(f"=== archived {len(objs)} objs -> {QSLIB} ===")
 
     # Link the full ELF; capture undefined-symbol gaps (the closure-reduction recon).
     link = [TC] + objs + ["-Wl,--start-group", GLLIB, V3DLIB, "-Wl,--end-group",
