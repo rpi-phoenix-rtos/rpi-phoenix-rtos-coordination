@@ -34,6 +34,10 @@
 #define MMU_CTL_PTI_ABORT   (1u<<19)
 #define MMUC_CONTROL        0x1000u
 #define MMUC_ENABLE         (1u<<0)
+#define MMUC_FLUSH          (1u<<1)    /* flush the MMU PTE cache */
+#define MMUC_FLUSHING       (1u<<2)    /* set while the PTE-cache flush is in progress */
+#define MMU_CTL_TLB_CLEAR   (1u<<2)    /* clear the MMU TLB */
+#define MMU_CTL_TLB_CLEARING (1u<<7)   /* set while the TLB clear is in progress */
 #define MMU_ILLEGAL_ADDR    0x1230u
 #define MMU_ILLEGAL_ENABLE  (1u<<31)
 #define PTE_W               (1u<<29)
@@ -163,7 +167,18 @@ static int ioc_create_bo(struct drm_v3d_create_bo *c)
 static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
 {
 	volatile uint32_t *c0 = W.core0;
+	volatile uint32_t *h = W.hub;
 	uint32_t spins;
+	/* Flush the MMU PTE cache + TLB before the job. ioc_create_bo writes fresh PTEs but
+	 * never invalidated the MMU's cached translations, so a job whose CL/RT BOs were just
+	 * mapped at new GPU VAs (every Quake frame allocates fresh BOs) is fetched through a
+	 * stale TLB -> the render thread reads an unmapped/wrong VA and hangs at RCL packet 0.
+	 * (The cube reuses one persistent job at stable VAs, so it never hit this.) Mirrors the
+	 * linux v3d_mmu_flush_all sequence: MMUC flush, then MMU_CTL TLB clear, each spin-waited. */
+	h[MMUC_CONTROL/4] = MMUC_FLUSH | MMUC_ENABLE;
+	for (spins = 1000000u; spins && (h[MMUC_CONTROL/4] & MMUC_FLUSHING); spins--) {}
+	h[MMU_CTL/4] |= MMU_CTL_TLB_CLEAR;
+	for (spins = 1000000u; spins && (h[MMU_CTL/4] & MMU_CTL_TLB_CLEARING); spins--) {}
 	c0[CTL_MISCCFG/4] = MISCCFG_OVRTMUOUT;
 	/* Invalidate the V3D caches before the job: SLCACTL slices (TVCCS/TDCCS/UCC=uniform
 	 * cache/ICC=instruction cache) + an L2T flush — matches the scout's v3d_invalidateCaches.
