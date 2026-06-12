@@ -87,6 +87,12 @@ int qsv3d_init(int w, int h)
 	       w, h, fbs, GL_FRAMEBUFFER_COMPLETE);
 
 	glViewport(0, 0, w, h);
+
+	/* Initialize the FBO to black so an un-rendered frame shows black, not garbage.
+	 * (A diagnostic blue clear here proved glReadPixels(g_fbo)+blit are correct.) */
+	glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+	glFinish();
 	return 0;
 }
 

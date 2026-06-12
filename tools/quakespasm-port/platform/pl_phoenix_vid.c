@@ -138,6 +138,7 @@ void GL_EndRendering(void)
 		return;
 
 	{ extern void qsv3d_bind_fbo(void); qsv3d_bind_fbo(); }  /* read from our FBO, not FB0 */
+	glReadBuffer(GL_COLOR_ATTACHMENT0);
 	glFinish();
 	glReadPixels(0, 0, vid.width, vid.height, GL_RGBA, GL_UNSIGNED_BYTE, readbuf);
 
