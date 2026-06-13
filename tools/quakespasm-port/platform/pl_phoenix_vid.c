@@ -14,6 +14,11 @@
  * multitexture / VBO / GLSL paths (those pointers are never dereferenced). Enabling
  * them (assigning the real libGL-phoenix entry points) is a later optimization step.
  */
+/* Pull in the GL extension function prototypes (glGenBuffers/glActiveTexture/...) so we can
+ * take their addresses to wire Quakespasm's GL_*Func pointers. Must precede the GL headers
+ * that quakedef.h -> glquake.h -> the SDL shim include. */
+#define GL_GLEXT_PROTOTYPES 1
+
 #include "quakedef.h"
 
 #include <stdio.h>
@@ -148,6 +153,38 @@ void VID_Init(void)
 	vid.aspect = (float)VID_W / (float)VID_H;
 	vid.numpages = 1;
 	vid.recalc_refdef = 1;
+
+	/* Enable the GL extensions Quakespasm uses. These are core in our GL 2.1 / V3D 4.2
+	 * context; wire the GL_*Func pointers + flip the gl_*_able flags Quakespasm gates on.
+	 *  - VBO: brush + alias vertex buffers. The world-surface texturing path needs this;
+	 *    in the all-basic config the brush texcoords came from an undriven path and sampled
+	 *    black. Also cuts per-frame CPU (higher fps).
+	 *  - Multitexture: texture + lightmap in ONE pass (vs the slow multipass), and with
+	 *    env_combine enables one-pass 2x-overbright -> a correctly-lit world + higher fps.
+	 *  - GenerateMipmap: real mip chains for world/model textures. */
+	GL_GenBuffersFunc    = (PFNGLGENBUFFERSARBPROC)glGenBuffers;
+	GL_BindBufferFunc    = (PFNGLBINDBUFFERARBPROC)glBindBuffer;
+	GL_BufferDataFunc    = (PFNGLBUFFERDATAARBPROC)glBufferData;
+	GL_BufferSubDataFunc = (PFNGLBUFFERSUBDATAARBPROC)glBufferSubData;
+	GL_DeleteBuffersFunc = (PFNGLDELETEBUFFERSARBPROC)glDeleteBuffers;
+	gl_vbo_able = true;
+
+	GL_MTexCoord2fFunc         = (PFNGLMULTITEXCOORD2FARBPROC)glMultiTexCoord2f;
+	GL_SelectTextureFunc       = (PFNGLACTIVETEXTUREARBPROC)glActiveTexture;
+	GL_ClientActiveTextureFunc = (PFNGLCLIENTACTIVETEXTUREARBPROC)glClientActiveTexture;
+	gl_max_texture_units = 1;
+	glGetIntegerv(GL_MAX_TEXTURE_UNITS, &gl_max_texture_units);
+	if (gl_max_texture_units >= 2) {
+		gl_mtexable = true;
+		gl_texture_env_combine = true;   /* one-pass overbright via GL_RGB_SCALE */
+		gl_texture_env_add = true;
+	}
+
+	GL_GenerateMipmap = (QS_PFNGENERATEMIPMAP)glGenerateMipmap;
+
+	Sys_Printf("VID: GL exts wired: vbo=%d mtex=%d env_combine=%d max_tmu=%d\n",
+	           (int)gl_vbo_able, (int)gl_mtexable, (int)gl_texture_env_combine,
+	           (int)gl_max_texture_units);
 
 	/* Wire the engine colormap (Host_Init loads host_colormap from gfx/colormap.lmp
 	 * BEFORE calling VID_Init). gl_vidsdl.c does this; without it vid.colormap stays NULL
