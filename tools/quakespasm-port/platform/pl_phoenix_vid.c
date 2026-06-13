@@ -149,6 +149,16 @@ void VID_Init(void)
 	vid.numpages = 1;
 	vid.recalc_refdef = 1;
 
+	/* Wire the engine colormap (Host_Init loads host_colormap from gfx/colormap.lmp
+	 * BEFORE calling VID_Init). gl_vidsdl.c does this; without it vid.colormap stays NULL
+	 * and CL_NewTranslation memcpy's from NULL -> Data Abort (far=0) when a player's skin
+	 * translation is built during demo/3D playback. */
+	{
+		extern byte *host_colormap;
+		vid.colormap = host_colormap;
+		vid.fullbright = 256 - LittleLong(*((int *)vid.colormap + 2048));
+	}
+
 	readbuf = (uint32_t *)malloc((size_t)VID_W * VID_H * 4);
 	fbimg = (uint32_t *)malloc((size_t)VID_W * VID_H * 4);
 	if (fbimg)

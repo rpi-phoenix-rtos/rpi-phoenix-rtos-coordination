@@ -98,16 +98,12 @@ int main(int argc, char *argv[])
 	Sys_Printf("Host_Init\n");
 	Host_Init();
 
-	/* Render the main menu (cl_startdemos 0 -> Host_Startdemos_f goes straight to menu_main,
-	 * no map load). This is the reliable demonstration: it proves the full GPU + GL stack
-	 * renders real Quake content (logos, menu pics) loaded from the boot medium, WITHOUT the
-	 * slow caches-off BSP/lightmap load of the attract demo or the QuakeC-VM crash that
-	 * "map start" currently hits. (For the 3D world, the client-only attract demo is the next
-	 * step once the rootfs link is faster / caches are on.) */
-	{
-		extern cvar_t cl_startdemos;
-		Cvar_SetValueQuick(&cl_startdemos, 0);
-	}
+	/* Let the attract demo play (cl_startdemos default = 1 -> demo1.dem, a recorded E1M3
+	 * walkthrough). This is the CLIENT-ONLY 3D path: it renders the real Quake world from the
+	 * recorded demo without spawning a server / running the QuakeC VM (which "map start"
+	 * currently crashes in). With the MMU TLB-flush fix the 3D frames render to the V3D, and
+	 * with the 1MB NFS readmax the pak0 load is faster. (The BSP/lightmap build is still
+	 * CPU-bound with caches off (TD-16) — that is the remaining wall for fast 3D load.) */
 
 	oldtime = Sys_DoubleTime();
 	while (1) {
