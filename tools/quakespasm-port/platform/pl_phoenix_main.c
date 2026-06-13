@@ -40,7 +40,7 @@ static void wait_for_gamedata(void)
 	static const char *cands[] = { "/nfstest", "/" };
 	char path[80];
 	int i, c;
-	for (i = 0; i < 120; i++) {     /* ~60 s */
+	for (i = 0; i < 360; i++) {     /* ~180 s — NFS mount + DHCP can be slow/variable (#156) */
 		for (c = 0; c < (int)(sizeof(cands) / sizeof(cands[0])); c++) {
 			FILE *f;
 			snprintf(path, sizeof(path), "%s/id1/pak0.pak", cands[c]);
@@ -98,13 +98,12 @@ int main(int argc, char *argv[])
 	Sys_Printf("Host_Init\n");
 	Host_Init();
 
-	/* Force the main menu instead of the attract demo (a slow E1M3 map load with caches
-	 * off). cl_startdemos is now registered; a direct cvar write here takes effect before
-	 * the first Host_Frame executes the queued "startdemos", so Host_Startdemos_f takes the
-	 * "!fitzmode && !cl_startdemos.value" branch -> cls.demonum=-1 + menu_main, with NO map
-	 * load. (+set cl_startdemos 0 was unreliable: stuffcmds runs too late vs startdemos.)
-	 * The menu renders real Quake content (conchars/menu pics) with no map and no lightmaps
-	 * -> a fast frame that isolates the 2D render path from the world/lightmap path. */
+	/* Render the main menu (cl_startdemos 0 -> Host_Startdemos_f goes straight to menu_main,
+	 * no map load). This is the reliable demonstration: it proves the full GPU + GL stack
+	 * renders real Quake content (logos, menu pics) loaded from the boot medium, WITHOUT the
+	 * slow caches-off BSP/lightmap load of the attract demo or the QuakeC-VM crash that
+	 * "map start" currently hits. (For the 3D world, the client-only attract demo is the next
+	 * step once the rootfs link is faster / caches are on.) */
 	{
 		extern cvar_t cl_startdemos;
 		Cvar_SetValueQuick(&cl_startdemos, 0);
