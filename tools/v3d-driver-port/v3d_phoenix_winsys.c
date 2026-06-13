@@ -73,7 +73,7 @@
  * 32 PT pages = 128 MiB of GPU VA, enough for fullscreen color+depth+tile state plus
  * texture/CL working set (Quake). PT must be physically contiguous (the MMU walks it
  * as a flat array from MMU_PT_PA_BASE). */
-#define GPUVA_PT_PAGES      32u
+#define GPUVA_PT_PAGES      64u    /* 64 * 4 MiB = 256 MiB GPU VA window */
 #define GPUVA_PT_ENTRIES    (GPUVA_PT_PAGES * (_PAGE_SIZE / 4u))   /* total PTEs */
 
 struct pbo {            /* Phoenix BO */
@@ -82,7 +82,21 @@ struct pbo {            /* Phoenix BO */
 	uintptr_t pa;       /* physical */
 	uint32_t gpuva;     /* assigned V3D virtual address (= drm offset) */
 	uint32_t size;
+	int      used;      /* slot in use (freed by GEM_CLOSE -> reusable) */
 };
+
+/* Freed GPU-VA range, available for reuse. Without this the GPU VA + the BO slot
+ * array were monotonic (never reclaimed), so sustained rendering (e.g. Quake demo
+ * playback: per-frame CL / tile-state BOs) exhausted both -> the >256th BO indexed
+ * past bos[] and the RCL emit wrote through a garbage pointer. Mesa's bufmgr frees
+ * BOs (GEM_CLOSE) as its cache evicts, so reclaiming here keeps both bounded. */
+struct vahole {
+	uint32_t gpuva;
+	uint32_t pages;
+};
+
+#define MAX_BOS    4096u
+#define MAX_HOLES  2048u
 
 static struct {
 	volatile uint32_t *hub;   /* V3D regs (HUB base) */
@@ -90,8 +104,10 @@ static struct {
 	volatile uint32_t *pt;    /* MMU flat page table */
 	uintptr_t pt_pa;
 	uint32_t next_gpuva;
-	struct pbo bos[256];
-	uint32_t nbos;
+	struct pbo bos[MAX_BOS];
+	uint32_t nbos;            /* high-water mark of slots ever used */
+	struct vahole holes[MAX_HOLES];
+	uint32_t nholes;
 	int inited;
 } W;
 
@@ -131,36 +147,95 @@ static int winsys_init(void)
 
 static struct pbo *bo_find(uint32_t handle)
 {
-	for (uint32_t i=0;i<W.nbos;i++) if (W.bos[i].handle==handle) return &W.bos[i];
-	return NULL;
+	if (handle == 0 || handle > W.nbos) return NULL;
+	struct pbo *b = &W.bos[handle - 1];   /* handle == slot index + 1 */
+	return (b->used && b->handle == handle) ? b : NULL;
+}
+
+/* Allocate a page-aligned GPU VA range: first-fit a freed hole (so reclaimed VA is
+ * reused and the window doesn't grow unboundedly), else bump-allocate past the
+ * high-water mark. Returns 0 on exhaustion. */
+static uint32_t va_alloc(uint32_t pages)
+{
+	for (uint32_t i = 0; i < W.nholes; i++) {
+		if (W.holes[i].pages >= pages) {
+			uint32_t va = W.holes[i].gpuva;
+			if (W.holes[i].pages == pages) {
+				W.holes[i] = W.holes[--W.nholes];   /* remove */
+			}
+			else {
+				W.holes[i].gpuva += pages * _PAGE_SIZE;   /* shrink */
+				W.holes[i].pages -= pages;
+			}
+			return va;
+		}
+	}
+	if ((W.next_gpuva >> PAGE_SHIFT) + pages > GPUVA_PT_ENTRIES)
+		return 0;   /* window exhausted */
+	uint32_t va = W.next_gpuva;
+	W.next_gpuva += pages * _PAGE_SIZE;
+	return va;
+}
+
+static void va_free(uint32_t gpuva, uint32_t pages)
+{
+	for (uint32_t i = 0; i < pages; i++)
+		W.pt[(gpuva >> PAGE_SHIFT) + i] = 0;   /* unmap (PT cleared; TLB flushed per submit) */
+	if (W.nholes < MAX_HOLES)
+		W.holes[W.nholes++] = (struct vahole){ gpuva, pages };
+	/* else: VA leaks (bounded); the next-bump path still serves new allocs. */
 }
 
 static int ioc_create_bo(struct drm_v3d_create_bo *c)
 {
 	uint32_t pages = (c->size + _PAGE_SIZE - 1)/_PAGE_SIZE;
-	void *cpu = mmap(NULL, pages*_PAGE_SIZE, PROT_READ|PROT_WRITE,
-		MAP_UNCACHED|MAP_CONTIGUOUS|MAP_ANONYMOUS, -1, 0);
-	if (cpu==MAP_FAILED) return -ENOMEM;
-	uintptr_t pa = (uintptr_t)va2pa(cpu);
-	uint32_t gpuva = W.next_gpuva;
-	/* Bounds-check against the mapped PT window: overflowing it used to write PTEs
-	 * past the table (memory corruption) and place the BO at an unmapped GPU VA
-	 * (silent all-zero RT). Fail loudly instead. */
-	if ((gpuva>>PAGE_SHIFT) + pages > GPUVA_PT_ENTRIES) {
-		munmap(cpu, pages*_PAGE_SIZE);
-		fprintf(stderr, "v3d-winsys: GPU VA exhausted (need %u pages at va 0x%x; "
-			"PT window = %u MiB). Grow GPUVA_PT_PAGES.\n",
-			pages, gpuva, (GPUVA_PT_PAGES*4u));
+	uint32_t slot, gpuva;
+	void *cpu;
+	uintptr_t pa;
+
+	/* Reclaim a freed slot if any, else extend the high-water mark. */
+	for (slot = 0; slot < W.nbos; slot++)
+		if (!W.bos[slot].used) break;
+	if (slot == W.nbos) {
+		if (W.nbos >= MAX_BOS) {
+			fprintf(stderr, "v3d-winsys: BO table full (%u)\n", (unsigned)MAX_BOS);
+			return -ENOMEM;
+		}
+		W.nbos++;
+	}
+
+	gpuva = va_alloc(pages);
+	if (gpuva == 0) {
+		fprintf(stderr, "v3d-winsys: GPU VA exhausted (need %u pages; PT window = %u MiB). "
+			"Grow GPUVA_PT_PAGES or check for a BO leak.\n", pages, (GPUVA_PT_PAGES*4u));
 		return -ENOMEM;
 	}
-	W.next_gpuva += pages*_PAGE_SIZE;
+	cpu = mmap(NULL, pages*_PAGE_SIZE, PROT_READ|PROT_WRITE,
+		MAP_UNCACHED|MAP_CONTIGUOUS|MAP_ANONYMOUS, -1, 0);
+	if (cpu==MAP_FAILED) { va_free(gpuva, pages); return -ENOMEM; }
+	pa = (uintptr_t)va2pa(cpu);
 	for (uint32_t i=0;i<pages;i++)
 		W.pt[(gpuva>>PAGE_SHIFT)+i] = (uint32_t)((pa>>PAGE_SHIFT)+i)|PTE_W|PTE_V;
-	struct pbo *b = &W.bos[W.nbos++];
-	b->handle = W.nbos;        /* nonzero handle */
+
+	struct pbo *b = &W.bos[slot];
+	b->used = 1;
+	b->handle = slot + 1;       /* nonzero, stable per slot */
 	b->cpu = cpu; b->pa = pa; b->gpuva = gpuva; b->size = pages*_PAGE_SIZE;
 	c->handle = b->handle;
 	c->offset = gpuva;          /* V3D address-space offset (nonzero) */
+	return 0;
+}
+
+/* DRM core GEM_CLOSE: free the BO so its slot + GPU VA are reclaimed. */
+static int ioc_close_bo(struct drm_gem_close *gc)
+{
+	struct pbo *b = bo_find(gc->handle);
+	if (b == NULL) return 0;   /* already gone / never ours */
+	va_free(b->gpuva, b->size / _PAGE_SIZE);
+	if (b->cpu != NULL) munmap(b->cpu, b->size);
+	b->used = 0;
+	b->cpu = NULL;
+	b->handle = 0;
 	return 0;
 }
 
@@ -246,6 +321,10 @@ int phoenix_v3d_ioctl(int fd, unsigned long request, void *arg)
 	/* Everything below touches HUB/CORE MMIO + the MMU PT -> requires power-on. */
 	if (winsys_init() != 0)
 		return -1;
+	/* DRM core GEM_CLOSE (NR 0x09, below DRM_COMMAND_BASE so not a DRM_V3D_* cmd):
+	 * Mesa's bufmgr issues it to free a BO; reclaim the slot + GPU VA. */
+	if (_IOC_NR(request) == _IOC_NR(DRM_IOCTL_GEM_CLOSE))
+		return ioc_close_bo(arg);
 	switch (cmd) {
 	case DRM_V3D_CREATE_BO:
 		return ioc_create_bo(arg);
