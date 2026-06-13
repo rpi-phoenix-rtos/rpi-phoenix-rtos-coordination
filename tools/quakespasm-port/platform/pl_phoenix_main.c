@@ -105,13 +105,6 @@ int main(int argc, char *argv[])
 	 * with the 1MB NFS readmax the pak0 load is faster. (The BSP/lightmap build is still
 	 * CPU-bound with caches off (TD-16) — that is the remaining wall for fast 3D load.) */
 
-	/* KNOWN GAP (next session): world brush-surface geometry renders, but textured world
-	 * surfaces sample black (r_drawflat shows flat-colored geometry fine; r_fullbright and
-	 * gl_texturemode GL_LINEAR both stay black -> not lightmap/mipmap/overbright). Entities,
-	 * weapon, items, HUD all texture correctly via the same 8-bit/d_8to24 palette path, so
-	 * this is specific to the BSP brush-surface texturing path (likely the VBO/texcoord
-	 * route that the all-gl_*_able=false basic config does not drive). Deferred. */
-
 	oldtime = Sys_DoubleTime();
 	while (1) {
 		newtime = Sys_DoubleTime();

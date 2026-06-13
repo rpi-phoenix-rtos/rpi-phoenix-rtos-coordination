@@ -182,9 +182,41 @@ void VID_Init(void)
 
 	GL_GenerateMipmap = (QS_PFNGENERATEMIPMAP)glGenerateMipmap;
 
-	Sys_Printf("VID: GL exts wired: vbo=%d mtex=%d env_combine=%d max_tmu=%d\n",
+	/* GLSL — the modern world renderer. The FF multitexture path renders the world flat
+	 * gray (the texenv texture*lightmap combiner doesn't produce correct output on V3D);
+	 * the GLSL world shader samples texture+lightmap+overbright correctly with VBO geometry.
+	 * This is the advanced/correct/fast path (full bring-up). Shaders compile via Mesa's
+	 * GLSL frontend -> NIR -> v3d_compile in libGL-phoenix. If a shader fails to compile,
+	 * Quakespasm leaves r_world_program=0 and falls back to the FF path (no crash). Alias
+	 * models stay on the (working) FF path for now (gl_glsl_alias_able left false). */
+	GL_CreateShaderFunc             = (QS_PFNGLCREATESHADERPROC)glCreateShader;
+	GL_DeleteShaderFunc             = (QS_PFNGLDELETESHADERPROC)glDeleteShader;
+	GL_DeleteProgramFunc            = (QS_PFNGLDELETEPROGRAMPROC)glDeleteProgram;
+	GL_ShaderSourceFunc             = (QS_PFNGLSHADERSOURCEPROC)glShaderSource;
+	GL_CompileShaderFunc            = (QS_PFNGLCOMPILESHADERPROC)glCompileShader;
+	GL_GetShaderivFunc              = (QS_PFNGLGETSHADERIVPROC)glGetShaderiv;
+	GL_GetShaderInfoLogFunc         = (QS_PFNGLGETSHADERINFOLOGPROC)glGetShaderInfoLog;
+	GL_GetProgramivFunc             = (QS_PFNGLGETPROGRAMIVPROC)glGetProgramiv;
+	GL_GetProgramInfoLogFunc        = (QS_PFNGLGETPROGRAMINFOLOGPROC)glGetProgramInfoLog;
+	GL_CreateProgramFunc            = (QS_PFNGLCREATEPROGRAMPROC)glCreateProgram;
+	GL_AttachShaderFunc             = (QS_PFNGLATTACHSHADERPROC)glAttachShader;
+	GL_LinkProgramFunc              = (QS_PFNGLLINKPROGRAMPROC)glLinkProgram;
+	GL_BindAttribLocationFunc       = (QS_PFNGLBINDATTRIBLOCATIONFUNC)glBindAttribLocation;
+	GL_UseProgramFunc               = (QS_PFNGLUSEPROGRAMPROC)glUseProgram;
+	GL_GetAttribLocationFunc        = (QS_PFNGLGETATTRIBLOCATIONPROC)glGetAttribLocation;
+	GL_VertexAttribPointerFunc      = (QS_PFNGLVERTEXATTRIBPOINTERPROC)glVertexAttribPointer;
+	GL_EnableVertexAttribArrayFunc  = (QS_PFNGLENABLEVERTEXATTRIBARRAYPROC)glEnableVertexAttribArray;
+	GL_DisableVertexAttribArrayFunc = (QS_PFNGLDISABLEVERTEXATTRIBARRAYPROC)glDisableVertexAttribArray;
+	GL_GetUniformLocationFunc       = (QS_PFNGLGETUNIFORMLOCATIONPROC)glGetUniformLocation;
+	GL_Uniform1iFunc                = (QS_PFNGLUNIFORM1IPROC)glUniform1i;
+	GL_Uniform1fFunc                = (QS_PFNGLUNIFORM1FPROC)glUniform1f;
+	GL_Uniform3fFunc                = (QS_PFNGLUNIFORM3FPROC)glUniform3f;
+	GL_Uniform4fFunc                = (QS_PFNGLUNIFORM4FPROC)glUniform4f;
+	gl_glsl_able = true;
+
+	Sys_Printf("VID: GL exts wired: vbo=%d mtex=%d env_combine=%d glsl=%d max_tmu=%d\n",
 	           (int)gl_vbo_able, (int)gl_mtexable, (int)gl_texture_env_combine,
-	           (int)gl_max_texture_units);
+	           (int)gl_glsl_able, (int)gl_max_texture_units);
 
 	/* Wire the engine colormap (Host_Init loads host_colormap from gfx/colormap.lmp
 	 * BEFORE calling VID_Init). gl_vidsdl.c does this; without it vid.colormap stays NULL
