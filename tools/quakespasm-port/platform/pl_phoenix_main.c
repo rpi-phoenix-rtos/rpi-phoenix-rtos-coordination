@@ -98,6 +98,13 @@ int main(int argc, char *argv[])
 	Sys_Printf("Host_Init\n");
 	Host_Init();
 
+	/* Force the classic per-vertex water warp. r_oldwater defaults to 1 in this port
+	 * (the modern warpimage path needs glCopyTexSubImage2D, unimplemented on V3D ->
+	 * water samples RGB noise), but config.cfg is CVAR_ARCHIVE and a saved one on the
+	 * rootfs sets r_oldwater "0" — which execs AFTER our default. Re-assert it here,
+	 * after Host_Init has queued the config exec, so it wins regardless of the config. */
+	Cbuf_AddText("r_oldwater 1\n");
+
 	/* Boot into the attract demo loop (cl_startdemos default = 1 -> demo1.dem, a recorded
 	 * E1M3 walkthrough) as the no-input attract mode. Full single-player "map" loading also
 	 * works now (server + QuakeC VM + loopback connect, see pl_phoenix_stubs.c net_drivers)
