@@ -23,6 +23,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>
 #include <string.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -213,10 +214,35 @@ void VID_Init(void)
 	GL_Uniform3fFunc                = (QS_PFNGLUNIFORM3FPROC)glUniform3f;
 	GL_Uniform4fFunc                = (QS_PFNGLUNIFORM4FPROC)glUniform4f;
 	gl_glsl_able = true;
+	/* CRITICAL: the world GLSL program (r_world_program) is only built when gl_glsl_alias_able
+	 * is set (r_world.c:898 `if (!gl_glsl_alias_able) return;` before GL_CreateProgram). With it
+	 * false, r_world_program stays 0 -> the world falls back to the FF multitexture path, which
+	 * renders flat gray on V3D (FF texenv combiner bug). The host reference has it enabled
+	 * ("Enabled: GLSL alias model rendering"). Enable it so the GLSL world (+ alias) renders. */
+	gl_glsl_alias_able = true;
 
 	Sys_Printf("VID: GL exts wired: vbo=%d mtex=%d env_combine=%d glsl=%d max_tmu=%d\n",
 	           (int)gl_vbo_able, (int)gl_mtexable, (int)gl_texture_env_combine,
 	           (int)gl_glsl_able, (int)gl_max_texture_units);
+
+	/* CRITICAL: gl_vidsdl.c's GL_SetupState (which this port replaces) sets the cull winding
+	 * to glCullFace(GL_BACK)+glFrontFace(GL_CW) — quakespasm winds its world brush faces for
+	 * CW-front. Without this the default glFrontFace(GL_CCW) treats every world poly as a back
+	 * face, so R_SetupGL's glEnable(GL_CULL_FACE) culls the ENTIRE world (alias models survive
+	 * on their own winding). Replicate it here so the world renders. */
+	glCullFace (GL_BACK);
+	glFrontFace (GL_CW);
+
+	/* CRITICAL: the engine builds the GLSL world + alias programs in gl_vidsdl.c's GL_Init —
+	 * which THIS port replaces, so they were never created (r_world_program stayed 0) and the
+	 * world fell back to the gray FF path. Build them here, now that gl_glsl_able/
+	 * gl_glsl_alias_able and the GLSL function pointers are wired. */
+	{
+		extern void GLAlias_CreateShaders (void);
+		extern void GLWorld_CreateShaders (void);
+		GLAlias_CreateShaders ();
+		GLWorld_CreateShaders ();
+	}
 
 	/* Wire the engine colormap (Host_Init loads host_colormap from gfx/colormap.lmp
 	 * BEFORE calling VID_Init). gl_vidsdl.c does this; without it vid.colormap stays NULL
@@ -287,12 +313,33 @@ void GL_EndRendering(void)
 	glFinish();
 	glReadPixels(0, 0, vid.width, vid.height, GL_RGBA, GL_UNSIGNED_BYTE, readbuf);
 
-	/* y-flip (GL y-up -> screen y-down) into fbimg; the re-blit thread writes it to
-	 * /dev/fb0 at ~3 Hz (holds the frame on screen against the fbcon klog mirror). */
-	for (sy = 0; sy < vid.height; sy++)
-		memcpy(fbimg + (size_t)sy * vid.width,
-		       readbuf + (size_t)(vid.height - 1 - sy) * vid.width,
-		       (size_t)vid.width * 4);
+	/* y-flip (GL y-up -> screen y-down) into fbimg + apply a brighten gamma (the V3D-rendered
+	 * world comes out visibly darker than the host reference at identical gamma/overbright;
+	 * root cause still TBD, see project_quakespasm_port). gamma<1 lifts the dark world heavily
+	 * while barely touching the already-bright HUD (asymptotic to 255), so the UI doesn't blow
+	 * out. The re-blit thread writes fbimg to /dev/fb0 at ~3 Hz. TODO: root-cause + retune/remove. */
+	{
+		static unsigned char glut[256];
+		static int glut_done = 0;
+		int px;
+		if (!glut_done) {
+			for (px = 0; px < 256; px++) {
+				double v = pow((double)px / 255.0, 0.5) * 255.0;   /* gamma 0.5 = brighten */
+				glut[px] = (v > 255.0) ? 255u : (unsigned char)(v + 0.5);
+			}
+			glut_done = 1;
+		}
+		for (sy = 0; sy < vid.height; sy++) {
+			const unsigned char *s = (const unsigned char *)(readbuf + (size_t)(vid.height - 1 - sy) * vid.width);
+			unsigned char *d = (unsigned char *)(fbimg + (size_t)sy * vid.width);
+			for (px = 0; px < vid.width; px++) {
+				d[px * 4 + 0] = glut[s[px * 4 + 0]];
+				d[px * 4 + 1] = glut[s[px * 4 + 1]];
+				d[px * 4 + 2] = glut[s[px * 4 + 2]];
+				d[px * 4 + 3] = s[px * 4 + 3];
+			}
+		}
+	}
 }
 
 /* --- the remaining VID_* contract: trivial for a fixed single fullscreen mode --- */

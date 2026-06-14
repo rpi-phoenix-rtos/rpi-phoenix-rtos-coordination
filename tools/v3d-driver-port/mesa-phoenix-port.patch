@@ -20,6 +20,22 @@ index e82fd069b18..f3c32e2c83e 100644
          VG(VALGRIND_MALLOCLIKE_BLOCK(bo->map, bo->size, 0, false));
  
          return bo->map;
+diff --git a/src/gallium/drivers/v3d/v3d_context.c b/src/gallium/drivers/v3d/v3d_context.c
+index bd4309c1e74..42f37eda323 100644
+--- a/src/gallium/drivers/v3d/v3d_context.c
++++ b/src/gallium/drivers/v3d/v3d_context.c
+@@ -69,7 +69,10 @@ v3d_pipe_flush(struct pipe_context *pctx, struct pipe_fence_handle **fence,
+                  */
+                 drmSyncobjExportSyncFile(v3d->fd, v3d->out_sync, &fd);
+                 if (fd == -1) {
+-                        mesa_loge("Export failed");
++                        /* Bare-metal Phoenix port: no DRM syncobj/sync-file FD export. The
++                         * synchronous winsys submit already guarantees GPU completion, so a
++                         * NULL fence is correct here. Do NOT log — this fires on every flush
++                         * and floods the UART with 100k+ lines, crippling the boot. */
+                         *fence = NULL;
+                         return;
+                 }
 diff --git a/src/gallium/drivers/v3d/v3dx_draw.c b/src/gallium/drivers/v3d/v3dx_draw.c
 index 1dc918d3e1f..c8654158546 100644
 --- a/src/gallium/drivers/v3d/v3dx_draw.c
