@@ -98,12 +98,13 @@ int main(int argc, char *argv[])
 	Sys_Printf("Host_Init\n");
 	Host_Init();
 
-	/* Let the attract demo play (cl_startdemos default = 1 -> demo1.dem, a recorded E1M3
-	 * walkthrough). This is the CLIENT-ONLY 3D path: it renders the real Quake world from the
-	 * recorded demo without spawning a server / running the QuakeC VM (which "map start"
-	 * currently crashes in). With the MMU TLB-flush fix the 3D frames render to the V3D, and
-	 * with the 1MB NFS readmax the pak0 load is faster. (The BSP/lightmap build is still
-	 * CPU-bound with caches off (TD-16) — that is the remaining wall for fast 3D load.) */
+	/* Boot into the attract demo loop (cl_startdemos default = 1 -> demo1.dem, a recorded
+	 * E1M3 walkthrough) as the no-input attract mode. Full single-player "map" loading also
+	 * works now (server + QuakeC VM + loopback connect, see pl_phoenix_stubs.c net_drivers)
+	 * — once /dev/kbd0 input lands, the menu's New Game path is functional. With the MMU
+	 * TLB-flush fix the 3D frames render to the V3D, and with the 1MB NFS readmax the pak0
+	 * load is faster. (The BSP/lightmap build is still CPU-bound with caches off (TD-16) —
+	 * that is the remaining wall for fast 3D load.) */
 
 	oldtime = Sys_DoubleTime();
 	while (1) {

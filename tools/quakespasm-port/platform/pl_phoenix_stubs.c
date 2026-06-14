@@ -8,13 +8,37 @@
 #include "quakedef.h"
 typedef int sys_socket_t;       /* normally from net_sys.h (platform-gated) */
 #include "net_defs.h"
+#include "net_loop.h"
 
 #include <time.h>
 #include <pthread.h>
 
-/* --- network driver tables (were in net_bsd.c). Empty for first-light. --- */
-net_driver_t   net_drivers[1];
-const int      net_numdrivers = 0;
+/* --- network driver tables (were in net_bsd.c, which this port excludes). ---
+ * Register ONLY the Loopback driver: it is what "map"/"newgame" single-player
+ * uses (CL_EstablishConnection("local") -> NET_Connect -> Loop_Connect). Without
+ * a registered driver, NET_Init initializes none and the local connect fails with
+ * "CL_Connect: connect failed". The Datagram/UDP LAN drivers are omitted (they need
+ * net_bsd's socket glue, also excluded) -> no multiplayer, which is fine for the
+ * single-player capstone. Loop_* live in net_loop.c (built into CORE). */
+net_driver_t net_drivers[] =
+{
+	{	"Loopback",
+		false,
+		Loop_Init,
+		Loop_Listen,
+		Loop_SearchForHosts,
+		Loop_Connect,
+		Loop_CheckNewConnections,
+		Loop_GetMessage,
+		Loop_SendMessage,
+		Loop_SendUnreliableMessage,
+		Loop_CanSendMessage,
+		Loop_CanSendUnreliableMessage,
+		Loop_Close,
+		Loop_Shutdown
+	}
+};
+const int      net_numdrivers = Q_COUNTOF(net_drivers);
 net_landriver_t net_landrivers[1];
 const int      net_numlandrivers = 0;
 
