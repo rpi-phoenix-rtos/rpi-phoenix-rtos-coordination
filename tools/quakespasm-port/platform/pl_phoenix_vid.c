@@ -129,16 +129,33 @@ static void console_setmode(int mode)
  * GL-on-main-thread TLS invariant is preserved. GL_EndRendering only updates fbimg. */
 static pthread_t        reblit_thread;
 static volatile int     reblit_run = 0;
+static volatile unsigned fb_seq = 0;   /* bumped per presented frame; reblit refreshes only when idle */
 
 static void *reblit_fn(void *arg)
 {
 	(void)arg;
+	unsigned last_seq = ~0u;
+	int idle_ticks = 0;
+
 	while (reblit_run) {
 		if (fbfd >= 0 && fbimg) {
-			lseek(fbfd, 0, SEEK_SET);
-			(void)write(fbfd, fbimg, (size_t)VID_W * VID_H * 4);
+			unsigned seq = fb_seq;
+
+			/* GL_EndRendering now writes every rendered frame to /dev/fb0 itself, so
+			 * the screen tracks the render rate. This thread only refreshes the HELD
+			 * frame when Quake is idle (no new frame for a while), to repaint over the
+			 * shared klog/fbcon mirror. */
+			if (seq != last_seq) {
+				last_seq = seq;
+				idle_ticks = 0;
+			}
+			else if (++idle_ticks >= 5) {   /* ~500 ms idle -> refresh */
+				lseek(fbfd, 0, SEEK_SET);
+				(void)write(fbfd, fbimg, (size_t)VID_W * VID_H * 4);
+				idle_ticks = 0;
+			}
 		}
-		usleep(300000);     /* ~3 Hz */
+		usleep(100000);     /* idle-watch poll ~10 Hz */
 	}
 	return NULL;
 }
@@ -304,14 +321,18 @@ void GL_BeginRendering(int *x, int *y, int *width, int *height)
 void GL_EndRendering(void)
 {
 	int sy;
+	double ts_a, ts_b, ts_c, ts_d;
 
 	if (fbfd < 0 || !readbuf || !fbimg)
 		return;
 
 	{ extern void qsv3d_bind_fbo(void); qsv3d_bind_fbo(); }  /* read from our FBO, not FB0 */
 	glReadBuffer(GL_COLOR_ATTACHMENT0);
+	ts_a = Sys_DoubleTime();
 	glFinish();
+	ts_b = Sys_DoubleTime();
 	glReadPixels(0, 0, vid.width, vid.height, GL_RGBA, GL_UNSIGNED_BYTE, readbuf);
+	ts_c = Sys_DoubleTime();
 
 	/* y-flip (GL y-up -> screen y-down) into fbimg + apply a brighten gamma (the V3D-rendered
 	 * world comes out visibly darker than the host reference at identical gamma/overbright;
@@ -338,6 +359,44 @@ void GL_EndRendering(void)
 				d[px * 4 + 2] = glut[s[px * 4 + 2]];
 				d[px * 4 + 3] = s[px * 4 + 3];
 			}
+		}
+	}
+
+	ts_d = Sys_DoubleTime();
+
+	/* Present this frame to /dev/fb0 directly (every rendered frame), so the screen
+	 * tracks the render rate instead of the old 3 Hz idle re-blit. */
+	lseek(fbfd, 0, SEEK_SET);
+	(void)write(fbfd, fbimg, (size_t)VID_W * VID_H * 4);
+	fb_seq++;
+	{
+		double ts_e = Sys_DoubleTime();
+
+		/* Frame-rate + present-path attribution self-log (UART): a deterministic perf
+		 * baseline/regression signal. Splits the present cost into glFinish (GPU wait),
+		 * glReadPixels (3 MB GPU->CPU readback), the y-flip+gamma blit, and the fb0
+		 * write, so we optimise the dominant phase. Prints every ~2 s of wall-clock. */
+		static double fps_t0 = 0.0;
+		static double acc_fin = 0.0, acc_read = 0.0, acc_flip = 0.0, acc_fb = 0.0;
+		static int fps_frames = 0;
+		double now = ts_e;
+
+		fps_frames++;
+		acc_fin += ts_b - ts_a;
+		acc_read += ts_c - ts_b;
+		acc_flip += ts_d - ts_c;
+		acc_fb += ts_e - ts_d;
+		if (fps_t0 == 0.0) {
+			fps_t0 = now;
+		}
+		else if ((now - fps_t0) >= 2.0) {
+			Sys_Printf("QSFPS: %.1f fps (%d fr/%.2fs) present/fr: finish=%.2fms readpx=%.2fms blit=%.2fms fb0=%.2fms\n",
+				(double)fps_frames / (now - fps_t0), fps_frames, now - fps_t0,
+				1000.0 * acc_fin / fps_frames, 1000.0 * acc_read / fps_frames,
+				1000.0 * acc_flip / fps_frames, 1000.0 * acc_fb / fps_frames);
+			fps_t0 = now;
+			fps_frames = 0;
+			acc_fin = acc_read = acc_flip = acc_fb = 0.0;
 		}
 	}
 }
