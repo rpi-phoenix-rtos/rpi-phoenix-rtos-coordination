@@ -36,16 +36,27 @@ Pi writes `cap_NNNN.tga` to `/nfstest/id1` = `/srv/phoenix-rpi4-nfs/id1` on the
 host (the host reads them directly — no separate copy). The host capture run
 writes to a separate local dir to avoid collision.
 
-**BLOCKER (open): NFS large-write bug.** A large file write to the NFS export
-stalls after the first 4 KB block and floods `getservbyport: not implemented`.
-Root: libnfs binds a privileged source port (socket.c:1515, ports 512–1023); a
-write-triggered **reconnect** re-binds and loops over the range (the prior port
-is busy). Reads are unaffected (only 2× getservbyport at mount). The connection
-breaks *during* the write — leading hypothesis is the WRITE RPC failing/timing
-out (caches-off slow write path) → libnfs autoreconnect → reserved-port flood.
-This is a real NFS-write-stability gap (also affects saves/screenshots), worth
-fixing for the broader NFS work. Alternatives if the write fix is deep: a TCP
-sink (Pi sends TGAs to a host `nc`/python listener, bypassing the NFS write).
+**BLOCKER (open, DISENTANGLED 2026-06-15): the bug is the nfs-fs VFS-write
+bridge, NOT libnfs or the network.** Isolation test (nfs-smoke BIGWRITE: 512 KB
+via direct libnfs `nfs_pwrite` ×16 on one fh) → **works, 5.68 MB/s**. The same
+data via the nfs-fs VFS path (Pi `fwrite` → kernel → `nfs_ops_write`) → **stalls
+after the first 4 KB write**. Instrumenting `nfs_ops_write`: the 1st write
+(off=0, 4 KB) returns rc=4096 OK; the 2nd `nfs_pwrite` (off=4096) **never
+returns** (hangs inside libnfs's reconnect loop → the `getservbyport`×25739
+flood from the reserved-port re-bind, socket.c:1515). nfs-fs is **single-
+threaded** here (`nfs_loopThread`; the 2nd thread is a one-shot mount/splice
+helper) so it is NOT a concurrency race. The fh IS cached (`nfs_ops_open`:222,
+owned=0). So: libnfs leaves the connection in a state after the 1st nfs-fs write
+where the next op reconnect-hangs — but the identical libnfs call sequence via
+nfs-smoke is fine. Root is a subtle libnfs/nfs-fs write-state interaction
+specific to the nfs-fs-opened fh (vs nfs-smoke's `nfs_creat` fh) — deep, 3
+sessions in, not yet cracked. Real NFS-write-stability gap (also affects saves).
+
+**Transport decision: TCP sink** (don't keep blocking on the nfs-fs-write bug).
+The Pi capture opens a TCP socket to a host listener and streams the TGA bytes
+(length-prefixed per frame); the host listener writes `cap_NNNN.tga`. Uses the
+proven-fast lwip TCP (reads do 8.5 MB/s), bypasses the buggy VFS-write path
+entirely. The nfs-fs-write bug stays documented as a separate NFS-stability item.
 
 ## Host reference run (planned)
 
@@ -66,8 +77,12 @@ pairs. Evaluation criterion = #black-texture pixels and text-region SSIM trend.
 
 ## Status / next
 
-- [x] Deterministic capture mode (committed, Pi-validated).
-- [ ] Unblock transport: fix the NFS large-write (preferred — NFS stability) OR
-      TCP sink.
-- [ ] Host headless capture run (Xvfb/EGL + llvmpipe).
-- [ ] Comparison script + first report.
+- [x] Deterministic capture mode (committed, Pi-validated: 120 shots, exact 0.25 s spacing).
+- [x] Transport root-cause disentangled: nfs-fs VFS-write bridge bug (libnfs + net are fine).
+- [ ] **Host reference run** (UNBLOCKED — host writes locally, no NFS): build the
+      capture-enabled quakespasm natively + run headless (Xvfb + `LIBGL_ALWAYS_SOFTWARE=1`,
+      or SDL offscreen/EGL) with the same demo + autoexec → host `cap_*.tga`.
+- [ ] **Comparison script** (host Python/uv venv): SSIM + black-where-textured signature
+      + HUD/text-region metric → per-frame CSV + worst-pair montage.
+- [ ] **TCP sink** for the Pi → host frame transport (bypasses the nfs-fs-write bug).
+- [ ] (separate NFS-stability track) root-cause + fix the nfs-fs VFS large-write hang.
