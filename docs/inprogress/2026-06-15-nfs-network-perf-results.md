@@ -87,6 +87,40 @@ small in absolute terms; the real payoff is at gigabit.
 - **Gigabit cable** — hardware; the driver is now gigabit-ready (zero-copy, no
   per-frame copy/malloc).
 
+## Known residual: nfs-fs VFS large-write hang (root cause REFINED 2026-06-15)
+
+Separate from the boot/read path (which is solid). A multi-write through the
+nfs-fs VFS bridge (Pi `fwrite` → kernel → `nfs_ops_write`) stalls after the 1st
+4 KB write; the 2nd `nfs_pwrite` never returns. Direct libnfs writes (nfs-smoke
+BIGWRITE, 512 KB ×16 on one fh) work fine (5.68 MB/s) — so libnfs + net are OK;
+the trigger is specific to the nfs-fs-opened fh.
+
+**CORRECTION to the earlier `getservbyport` analysis (it was a red herring).**
+Reading libnfs `lib/socket.c` `rpc_connect_async`/the reserved-port binder:
+`getservbyport(port,"tcp")` (socket.c:1515) is only used to *skip well-known
+ports*; libphoenix returns NULL ("not implemented") which correctly means "no
+well-known service here, bind is fine" — it does NOT cause the hang. The
+`getservbyport` UART flood is a **symptom**: the reserved-port bind loop
+(`do { bind(512..1023) } while rc!=0 && portOfs!=startOfs`, socket.c:1547)
+sweeps all 511 reserved ports once per connect, and ×25739 calls ÷ 511 ≈ **~50
+full sweeps = ~50 reconnect attempts**, each failing to `bind()` *every* reserved
+port (errno ≠ EACCES, or the loop would break at 1543), then libnfs retries the
+whole connect. So the real mechanism is: **after the 1st nfs-fs write the
+connection drops → libnfs reconnects (socket.c:1456 `dup2(fd,old_fd)` path) →
+lwip `bind()` to reserved ports fails for all 511 → ~50 connect retries → hang.**
+
+Two open sub-questions (need on-device instrumentation, deferred — deep, and the
+write path isn't boot/Quake-critical; the capture harness uses a TCP sink, saves
+are the only user): **(A)** why does the 1st nfs-fs write drop the connection
+(nfs-smoke's identical libnfs calls on an `nfs_creat` fh don't)? **(B)** why does
+lwip reserved-port `bind()` fail for all 511 ports on reconnect (capture the
+errno; likely a leaked/TIME_WAIT old socket or lwip PCB exhaustion across the ~50
+retries). Likely fixes once (B) is known: `SO_REUSEADDR` on the rebind, or use an
+**ephemeral source port** (NFSv4 doesn't require a privileged port — set the host
+export `insecure` + disable libnfs's reserved-port bind), or fix an old-socket
+leak. Decisive next experiment: patch libnfs to print the bind errno on reconnect,
+one Pi cycle.
+
 ## Status
 
 High-value software-side NFS/networking work is **complete + tested**. The
