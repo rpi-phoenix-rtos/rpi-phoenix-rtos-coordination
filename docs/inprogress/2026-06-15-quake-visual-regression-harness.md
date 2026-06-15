@@ -110,7 +110,18 @@ pairs. Evaluation criterion = #black-texture pixels and text-region SSIM trend.
       per-texture GL_NEAREST doesn't reach the V3D sampler descriptor (sampler encoding in
       `v3dx_state.c:601` is correct upstream; world linear works → suspect FF/st sampler-atom or
       a shared/default sampler in the GL-frontend port). Re-run harness to verify (target hud_ssim ~1).
-- [ ] **Capture a water/start-map scene** to localise the "objects black instead of textured" bug.
+- [x] **Wide capture (100 frames / all 3 demos, ~100 s, default filtering) to hunt black objects (2026-06-15).**
+      WORLD-region blacktex mean=0.017% max=0.92% — **the world renders correctly across every demo
+      scene** (montages: cap_0050 textured stone hall + shotgun + ammo matches host pixel-for-pixel;
+      the two >0.5% outliers are cap_0000 demo-start transition + cap_0014 a rocket-explosion sprite
+      that's a frame off in position — both render fine, neither is a black object). **The user's
+      "objects black instead of textured" bug DOES NOT reproduce in deterministic demo playback.**
+      → strongly implicates **particles** (we force `r_particles 0` for determinism; particle quads/
+      points may render black on V3D = the "small random visual bugs") OR interactive-only scenes/
+      angles. NEXT: capture with `r_particles 1` and eyeball the Pi frames for black specks (no host
+      pairing needed — particles are rand()-placed; just need "colored vs black").
+- [ ] **Test `r_particles 1` on Pi** for the black-particle hypothesis (the likely "small random" bug).
+- [ ] **FIX the V3D mag-NEAREST text softness** (cosmetic; deferred — world is correct, text is readable).
 - [ ] (separate NFS-stability track) root-cause + fix the nfs-fs VFS large-write hang.
 
 ## End-to-end run (once TCP sink lands)
