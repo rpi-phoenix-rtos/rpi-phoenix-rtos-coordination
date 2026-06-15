@@ -132,9 +132,25 @@ pairs. Evaluation criterion = #black-texture pixels and text-region SSIM trend.
       render correctly + match the host** — the "objects black instead of textured" (= the old
       culling/gray-world bug) and "water looks strange" (= the old warpimage RGB-noise) symptoms do
       not reproduce in the current build. The one genuine residual is the 2D-text mag-filter softness.
-- [ ] **FIX the V3D mag-NEAREST text softness** — a real GL-driver correctness bug (NEAREST mag
-      filter not honored for magnified 2D textures), worth fixing for upstreamability + any GL app,
-      not just Quake. Next focused unit of work.
+- [x] **TEXT "BUG" ROOT-CAUSED + FIXED — it was stale config, NOT a V3D driver bug (2026-06-15).**
+      Decisive zero-cost test on the existing captures: measured the text bounding box — Pi=445×47px
+      vs host=276×30px = the Pi rendered 2D **1.6× larger**. 1024/1.6=640: the NFS export's
+      `config.cfg` (written by a prior session, Jun 13) had **`scr_conscale "1.6"`**. gl_screen.c:391
+      (included in the Pi build) computes `vid.conwidth = vid.width/scr_conscale = 640`, so 2D text
+      draws at `glwidth/conwidth = 1.6×`. Non-integer 1.6× scaling of the 8×8 bitmap font is the
+      "blurry/broken text". The host has no config.cfg → default `scr_conscale 1` (crisp 8px). **The
+      published/fresh build uses the default too → already correct; this was purely stale local
+      config, no code defect.** FIX: set the export config.cfg back to `scr_conscale "1"`.
+      VALIDATED via re-capture: Pi text 445×47 → **278×31px, matching host 276×30**; full harness
+      comparison SSIM mean 0.848→**0.875**, blacktex% 0.266→**0.189**, steady-state frames now
+      **SSIM 0.98 / MAE 0.7** (near-perfect host match). My earlier "V3D mag-NEAREST driver bug"
+      hypothesis is RETRACTED. **User guidance: use an INTEGER `scr_conscale` (1 or 2) on V3D — a
+      non-integer value blurs the bitmap font (true on any GL, but visible here).** A faint residual
+      softness remains at 1:1 (minor, deferred) but the text now matches the host size + layout.
+- [x] **CONCLUSION: all reported Quake visual issues are now resolved or explained.** World/water/
+      entities/particles render correctly (matches host); "black objects"+"strange water" were the
+      pre-2026-06-14 cull/warpimage bugs (fixed); "broken text" was stale scr_conscale 1.6 (fixed).
+      The harness + evaluation criteria (SSIM/hud_ssim/blacktex%) are the durable deliverable.
 - [ ] (separate NFS-stability track) root-cause + fix the nfs-fs VFS large-write hang.
 
 ## End-to-end run (once TCP sink lands)
