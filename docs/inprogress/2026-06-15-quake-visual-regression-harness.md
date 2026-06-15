@@ -85,9 +85,32 @@ pairs. Evaluation criterion = #black-texture pixels and text-region SSIM trend.
 - [x] **Comparison script** — `scripts/quake-visual-compare.py` (`.venv-quakecmp`): per-frame
       SSIM, MAE, blacktex% (textured-on-host/black-on-Pi = the "black object" bug), HUD-strip
       SSIM; CSV + [Pi|host|diff] montages. Validated host-vs-host (SSIM 1.000, blacktex 0.000).
-- [ ] **TCP sink** (the last piece): Pi capture sends frames over lwip TCP to a host listener
-      (bypasses the nfs-fs-write bug). Then: full Pi capture -> transport -> `quake-host-capture.sh`
-      -> `quake-visual-compare.py` = the first Pi-vs-host bug report.
+- [x] **TCP sink (DONE, committed `gl_screen.c` + `scripts/quake-capture-sink.py`)**: Pi capture
+      streams `[u32 idx][u32 tgalen][TGA]` over lwip TCP to a host listener (bypasses the nfs-fs
+      write bug). Quake's socket()/connect()/send() link + work on Phoenix. HW-proven: 40 frames
+      streamed, cap_0000 @ t=1.48 matching host.
+- [x] **FIRST PI-vs-HOST BUG REPORT (2026-06-15)** — 40 frame pairs, full pipeline ran end-to-end:
+      ```
+      SSIM mean=0.848 min=0.123   blacktex% mean=0.266 max=0.568
+      ```
+      **Headline finding: the 3D WORLD matches the host** (diff panel ~black over all geometry;
+      steady-state SSIM ~0.958) — textures, lightmaps, geometry, depth all correct. **The dominant
+      difference is TEXT/HUD rendering** (diff panel bright-red exactly on the top centerprint + the
+      bottom sbar; hud_ssim ~0.91). Characterised quantitatively (cap_0011 top text strip):
+      host text = sharp NEAREST peaks (max lum 171, 347 px>120); Pi text = LINEAR-spread (max 155,
+      565 px>120, same foreground brightness ~106-112). **= V3D applies LINEAR filtering to the
+      charset where quakespasm requests `GL_NEAREST`** (gl_draw.c:362 TEXPREF_NEAREST →
+      gl_texmgr.c:95 GL_NEAREST). The half-texel linear peak-shift is what `blacktex%` flags. World
+      textures filter correctly (linear, as intended) so the sampler path works in general — the
+      NEAREST case specifically is not honored. **This IS the user's "text rendering broken".**
+      The "objects black instead of textured" report is NOT strongly present in this corridor demo
+      (blacktex here is mostly text halos) — needs a water/start-map capture to reproduce.
+      Evaluation criteria established: per-frame SSIM (world), hud_ssim (text), blacktex% (black bug).
+- [ ] **FIX: V3D NEAREST sampler not honored** (the text bug) — investigate why the charset's
+      per-texture GL_NEAREST doesn't reach the V3D sampler descriptor (sampler encoding in
+      `v3dx_state.c:601` is correct upstream; world linear works → suspect FF/st sampler-atom or
+      a shared/default sampler in the GL-frontend port). Re-run harness to verify (target hud_ssim ~1).
+- [ ] **Capture a water/start-map scene** to localise the "objects black instead of textured" bug.
 - [ ] (separate NFS-stability track) root-cause + fix the nfs-fs VFS large-write hang.
 
 ## End-to-end run (once TCP sink lands)
