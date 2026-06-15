@@ -28,6 +28,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <time.h>
 #include <sys/ioctl.h>
 #include <phoenix/fbcon.h>
 
@@ -96,8 +97,8 @@ cvar_t vid_contrast = { "contrast", "1", CVAR_ARCHIVE };
 
 static int      fbfd = -1;
 static int      ttyfd = -1;         /* /dev/tty0 (or /dev/console) for the fbcon mode switch */
-static uint32_t *readbuf = NULL;    /* W*H RGBA from glReadPixels */
-static uint32_t *fbimg = NULL;      /* W*H, y-flipped, for /dev/fb0 */
+static uint32_t *readbuf[2] = { NULL, NULL };  /* double-buffered glReadPixels targets (pipelined present) */
+static uint32_t *fbimg = NULL;      /* W*H, y-flipped+gamma, written to /dev/fb0 by the present thread */
 
 /* DOS-style mode switch: tell the HDMI text console (pl011-tty fbcon) to stop drawing to
  * the framebuffer while this full-screen GPU app owns it. Console output is not lost — it
@@ -131,32 +132,97 @@ static pthread_t        reblit_thread;
 static volatile int     reblit_run = 0;
 static volatile unsigned fb_seq = 0;   /* bumped per presented frame; reblit refreshes only when idle */
 
+/* Present pipeline: the render (GL) thread fills readbuf[idx] via glReadPixels (GL ops must stay
+ * on the GL thread) and hands the index to the present thread, which does the CPU-only y-flip +
+ * gamma blit and the /dev/fb0 write on another core (SMP) — overlapping ~17 ms of present work
+ * with the next frame's render. Pure threading; no GL/coherency change, visually verifiable. */
+static pthread_mutex_t  present_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t   present_cv = PTHREAD_COND_INITIALIZER;
+static int              g_ready = -1;     /* readbuf index handed to the present thread, or -1 */
+static int              g_inflight = -1;  /* readbuf index the present thread is blitting, or -1 */
+
+/* CPU y-flip (GL y-up -> screen y-down) + brighten-gamma readbuf[idx] -> fbimg. Runs on the
+ * present thread, off the render thread. (gamma<1 lifts the dark V3D world; barely touches the
+ * already-bright HUD. TODO: root-cause the darkness + retune/remove, see project_quakespasm_port.) */
+static void present_blit(int idx)
+{
+	static unsigned char glut[256];
+	static int glut_done = 0;
+	int sy, px;
+
+	if (!glut_done) {
+		for (px = 0; px < 256; px++) {
+			double v = pow((double)px / 255.0, 0.5) * 255.0;   /* gamma 0.5 = brighten */
+			glut[px] = (v > 255.0) ? 255u : (unsigned char)(v + 0.5);
+		}
+		glut_done = 1;
+	}
+	for (sy = 0; sy < VID_H; sy++) {
+		const unsigned char *s = (const unsigned char *)(readbuf[idx] + (size_t)(VID_H - 1 - sy) * VID_W);
+		unsigned char *d = (unsigned char *)(fbimg + (size_t)sy * VID_W);
+		for (px = 0; px < VID_W; px++) {
+			d[px * 4 + 0] = glut[s[px * 4 + 0]];
+			d[px * 4 + 1] = glut[s[px * 4 + 1]];
+			d[px * 4 + 2] = glut[s[px * 4 + 2]];
+			d[px * 4 + 3] = s[px * 4 + 3];
+		}
+	}
+}
+
+static void present_fb0(void)
+{
+	if (fbfd >= 0 && fbimg) {
+		lseek(fbfd, 0, SEEK_SET);
+		(void)write(fbfd, fbimg, (size_t)VID_W * VID_H * 4);
+	}
+}
+
+/* Present + idle-refresh consumer thread. Blocks on present_cv for a frame the render thread
+ * hands off (g_ready); on a ~100 ms timeout with no new frame, refreshes the held frame so the
+ * shared klog/fbcon mirror can't leave the screen stale. */
 static void *reblit_fn(void *arg)
 {
-	(void)arg;
-	unsigned last_seq = ~0u;
 	int idle_ticks = 0;
+	(void)arg;
 
+	pthread_mutex_lock(&present_lock);
 	while (reblit_run) {
-		if (fbfd >= 0 && fbimg) {
-			unsigned seq = fb_seq;
-
-			/* GL_EndRendering now writes every rendered frame to /dev/fb0 itself, so
-			 * the screen tracks the render rate. This thread only refreshes the HELD
-			 * frame when Quake is idle (no new frame for a while), to repaint over the
-			 * shared klog/fbcon mirror. */
-			if (seq != last_seq) {
-				last_seq = seq;
-				idle_ticks = 0;
-			}
-			else if (++idle_ticks >= 5) {   /* ~500 ms idle -> refresh */
-				lseek(fbfd, 0, SEEK_SET);
-				(void)write(fbfd, fbimg, (size_t)VID_W * VID_H * 4);
-				idle_ticks = 0;
+		while (reblit_run && g_ready < 0) {
+			struct timespec ts;
+			clock_gettime(CLOCK_REALTIME, &ts);
+			ts.tv_nsec += 100000000L;   /* 100 ms idle watch */
+			if (ts.tv_nsec >= 1000000000L) { ts.tv_sec++; ts.tv_nsec -= 1000000000L; }
+			if (pthread_cond_timedwait(&present_cv, &present_lock, &ts) != 0 && g_ready < 0) {
+				if (++idle_ticks >= 5) {   /* ~500 ms idle -> repaint held frame */
+					pthread_mutex_unlock(&present_lock);
+					present_fb0();
+					pthread_mutex_lock(&present_lock);
+					idle_ticks = 0;
+				}
 			}
 		}
-		usleep(100000);     /* idle-watch poll ~10 Hz */
+		if (!reblit_run)
+			break;
+
+		/* A frame is ready: claim it, free the handoff slot, blit + present outside the lock. */
+		{
+			int idx = g_ready;
+			g_inflight = idx;
+			g_ready = -1;
+			pthread_cond_signal(&present_cv);   /* render thread may reuse the handoff slot */
+			pthread_mutex_unlock(&present_lock);
+
+			present_blit(idx);
+			present_fb0();
+
+			pthread_mutex_lock(&present_lock);
+			g_inflight = -1;
+			fb_seq++;
+			idle_ticks = 0;
+			pthread_cond_signal(&present_cv);   /* buffer freed; wake render thread if waiting */
+		}
 	}
+	pthread_mutex_unlock(&present_lock);
 	return NULL;
 }
 
@@ -271,7 +337,8 @@ void VID_Init(void)
 		vid.fullbright = 256 - LittleLong(*((int *)vid.colormap + 2048));
 	}
 
-	readbuf = (uint32_t *)malloc((size_t)VID_W * VID_H * 4);
+	readbuf[0] = (uint32_t *)malloc((size_t)VID_W * VID_H * 4);
+	readbuf[1] = (uint32_t *)malloc((size_t)VID_W * VID_H * 4);
 	fbimg = (uint32_t *)malloc((size_t)VID_W * VID_H * 4);
 	if (fbimg)
 		memset(fbimg, 0, (size_t)VID_W * VID_H * 4);
@@ -301,6 +368,10 @@ void VID_Shutdown(void)
 		ttyfd = -1;
 	}
 	reblit_run = 0;
+	pthread_mutex_lock(&present_lock);
+	pthread_cond_signal(&present_cv);   /* wake the present thread out of its wait */
+	pthread_mutex_unlock(&present_lock);
+	pthread_join(reblit_thread, NULL);  /* ensure it stops touching fbfd before we close it */
 	if (fbfd >= 0) {
 		close(fbfd);
 		fbfd = -1;
@@ -320,10 +391,10 @@ void GL_BeginRendering(int *x, int *y, int *width, int *height)
 
 void GL_EndRendering(void)
 {
-	int sy;
+	static int cur = 0;
 	double ts_a, ts_b, ts_c, ts_d;
 
-	if (fbfd < 0 || !readbuf || !fbimg)
+	if (fbfd < 0 || !readbuf[0] || !readbuf[1] || !fbimg)
 		return;
 
 	{ extern void qsv3d_bind_fbo(void); qsv3d_bind_fbo(); }  /* read from our FBO, not FB0 */
@@ -331,72 +402,53 @@ void GL_EndRendering(void)
 	ts_a = Sys_DoubleTime();
 	glFinish();
 	ts_b = Sys_DoubleTime();
-	glReadPixels(0, 0, vid.width, vid.height, GL_RGBA, GL_UNSIGNED_BYTE, readbuf);
+
+	/* Don't refill a buffer the present thread is still reading. With the present thread
+	 * (~17 ms) faster than this thread's finish+readpx (~29 ms), this rarely blocks. */
+	pthread_mutex_lock(&present_lock);
+	while ((g_ready == cur) || (g_inflight == cur))
+		pthread_cond_wait(&present_cv, &present_lock);
+	pthread_mutex_unlock(&present_lock);
+
+	glReadPixels(0, 0, vid.width, vid.height, GL_RGBA, GL_UNSIGNED_BYTE, readbuf[cur]);
 	ts_c = Sys_DoubleTime();
 
-	/* y-flip (GL y-up -> screen y-down) into fbimg + apply a brighten gamma (the V3D-rendered
-	 * world comes out visibly darker than the host reference at identical gamma/overbright;
-	 * root cause still TBD, see project_quakespasm_port). gamma<1 lifts the dark world heavily
-	 * while barely touching the already-bright HUD (asymptotic to 255), so the UI doesn't blow
-	 * out. The re-blit thread writes fbimg to /dev/fb0 at ~3 Hz. TODO: root-cause + retune/remove. */
-	{
-		static unsigned char glut[256];
-		static int glut_done = 0;
-		int px;
-		if (!glut_done) {
-			for (px = 0; px < 256; px++) {
-				double v = pow((double)px / 255.0, 0.5) * 255.0;   /* gamma 0.5 = brighten */
-				glut[px] = (v > 255.0) ? 255u : (unsigned char)(v + 0.5);
-			}
-			glut_done = 1;
-		}
-		for (sy = 0; sy < vid.height; sy++) {
-			const unsigned char *s = (const unsigned char *)(readbuf + (size_t)(vid.height - 1 - sy) * vid.width);
-			unsigned char *d = (unsigned char *)(fbimg + (size_t)sy * vid.width);
-			for (px = 0; px < vid.width; px++) {
-				d[px * 4 + 0] = glut[s[px * 4 + 0]];
-				d[px * 4 + 1] = glut[s[px * 4 + 1]];
-				d[px * 4 + 2] = glut[s[px * 4 + 2]];
-				d[px * 4 + 3] = s[px * 4 + 3];
-			}
-		}
-	}
+	/* Hand the filled buffer to the present thread; it does the y-flip+gamma blit and the
+	 * /dev/fb0 write on another core, overlapping with this thread's NEXT frame. */
+	pthread_mutex_lock(&present_lock);
+	while (g_ready >= 0)
+		pthread_cond_wait(&present_cv, &present_lock);
+	g_ready = cur;
+	pthread_cond_signal(&present_cv);
+	pthread_mutex_unlock(&present_lock);
+	cur ^= 1;
 
 	ts_d = Sys_DoubleTime();
 
-	/* Present this frame to /dev/fb0 directly (every rendered frame), so the screen
-	 * tracks the render rate instead of the old 3 Hz idle re-blit. */
-	lseek(fbfd, 0, SEEK_SET);
-	(void)write(fbfd, fbimg, (size_t)VID_W * VID_H * 4);
-	fb_seq++;
+	/* Frame-rate + main-thread attribution self-log (UART). The blit + fb0 write now run on
+	 * the present thread (off this thread), so the render-thread frame is finish + readpx +
+	 * handoff-wait; FPS tracks that. Prints every ~2 s. */
 	{
-		double ts_e = Sys_DoubleTime();
-
-		/* Frame-rate + present-path attribution self-log (UART): a deterministic perf
-		 * baseline/regression signal. Splits the present cost into glFinish (GPU wait),
-		 * glReadPixels (3 MB GPU->CPU readback), the y-flip+gamma blit, and the fb0
-		 * write, so we optimise the dominant phase. Prints every ~2 s of wall-clock. */
 		static double fps_t0 = 0.0;
-		static double acc_fin = 0.0, acc_read = 0.0, acc_flip = 0.0, acc_fb = 0.0;
+		static double acc_fin = 0.0, acc_read = 0.0, acc_hand = 0.0;
 		static int fps_frames = 0;
-		double now = ts_e;
+		double now = ts_d;
 
 		fps_frames++;
 		acc_fin += ts_b - ts_a;
 		acc_read += ts_c - ts_b;
-		acc_flip += ts_d - ts_c;
-		acc_fb += ts_e - ts_d;
+		acc_hand += ts_d - ts_c;
 		if (fps_t0 == 0.0) {
 			fps_t0 = now;
 		}
 		else if ((now - fps_t0) >= 2.0) {
-			Sys_Printf("QSFPS: %.1f fps (%d fr/%.2fs) present/fr: finish=%.2fms readpx=%.2fms blit=%.2fms fb0=%.2fms\n",
+			Sys_Printf("QSFPS: %.1f fps (%d fr/%.2fs) main/fr: finish=%.2fms readpx=%.2fms handoff=%.2fms (blit+fb0 off-thread)\n",
 				(double)fps_frames / (now - fps_t0), fps_frames, now - fps_t0,
 				1000.0 * acc_fin / fps_frames, 1000.0 * acc_read / fps_frames,
-				1000.0 * acc_flip / fps_frames, 1000.0 * acc_fb / fps_frames);
+				1000.0 * acc_hand / fps_frames);
 			fps_t0 = now;
 			fps_frames = 0;
-			acc_fin = acc_read = acc_flip = acc_fb = 0.0;
+			acc_fin = acc_read = acc_hand = 0.0;
 		}
 	}
 }
