@@ -79,10 +79,19 @@ pairs. Evaluation criterion = #black-texture pixels and text-region SSIM trend.
 
 - [x] Deterministic capture mode (committed, Pi-validated: 120 shots, exact 0.25 s spacing).
 - [x] Transport root-cause disentangled: nfs-fs VFS-write bridge bug (libnfs + net are fine).
-- [ ] **Host reference run** (UNBLOCKED — host writes locally, no NFS): build the
-      capture-enabled quakespasm natively + run headless (Xvfb + `LIBGL_ALWAYS_SOFTWARE=1`,
-      or SDL offscreen/EGL) with the same demo + autoexec → host `cap_*.tga`.
-- [ ] **Comparison script** (host Python/uv venv): SSIM + black-where-textured signature
-      + HUD/text-region metric → per-frame CSV + worst-pair montage.
-- [ ] **TCP sink** for the Pi → host frame transport (bypasses the nfs-fs-write bug).
+- [x] **Host reference run** — `scripts/quake-host-capture.sh`: builds quakespasm natively
+      + runs HEADLESS via **SDL offscreen + llvmpipe** (no X/Xvfb needed!), deterministic.
+      Validated: 20 frames, timestamps matching the Pi (cap_0010 @ demo t=3.98), correct render.
+- [x] **Comparison script** — `scripts/quake-visual-compare.py` (`.venv-quakecmp`): per-frame
+      SSIM, MAE, blacktex% (textured-on-host/black-on-Pi = the "black object" bug), HUD-strip
+      SSIM; CSV + [Pi|host|diff] montages. Validated host-vs-host (SSIM 1.000, blacktex 0.000).
+- [ ] **TCP sink** (the last piece): Pi capture sends frames over lwip TCP to a host listener
+      (bypasses the nfs-fs-write bug). Then: full Pi capture -> transport -> `quake-host-capture.sh`
+      -> `quake-visual-compare.py` = the first Pi-vs-host bug report.
 - [ ] (separate NFS-stability track) root-cause + fix the nfs-fs VFS large-write hang.
+
+## End-to-end run (once TCP sink lands)
+1. `scripts/quake-host-capture.sh` -> host `cap_*.tga` in /tmp/quake-host/id1
+2. Pi netboot with capture autoexec (scr_capture_host=<host>) -> frames stream to the host listener dir
+3. `.venv-quakecmp/bin/python scripts/quake-visual-compare.py --pi <pidir> --host /tmp/quake-host/id1`
+   -> CSV + montages localising the black-object / text bugs (the evaluation criteria).
