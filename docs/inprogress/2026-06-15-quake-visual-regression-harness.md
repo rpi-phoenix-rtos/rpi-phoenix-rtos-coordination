@@ -120,8 +120,21 @@ pairs. Evaluation criterion = #black-texture pixels and text-region SSIM trend.
       points may render black on V3D = the "small random visual bugs") OR interactive-only scenes/
       angles. NEXT: capture with `r_particles 1` and eyeball the Pi frames for black specks (no host
       pairing needed — particles are rand()-placed; just need "colored vs black").
-- [ ] **Test `r_particles 1` on Pi** for the black-particle hypothesis (the likely "small random" bug).
-- [ ] **FIX the V3D mag-NEAREST text softness** (cosmetic; deferred — world is correct, text is readable).
+- [x] **`r_particles 1` test (2026-06-15)** — captured 60 frames with particles ON; diffed vs the
+      particles-OFF run at the same demo moments (both EVERY=5 from t=1.48). Particles **render
+      correctly**: cap_30 (t=8.98) shows a dark-red blood/gib cloud near a monster (correct — blood
+      is dark red; mean lum 53 because blood IS dim, not because it's a black-texture failure). So
+      **particles are not the black-object bug either.**
+- [x] **VERDICT: the user's reported bugs appear ALREADY RESOLVED.** Their screenshot was timestamped
+      2026-06-14 20:32, which pre-dates that day's gray-world back-face-culling fix (coord e3c43ca)
+      and the `r_oldwater` water fix (ff17470). The harness now confirms across all reproducible
+      (demo) scenes that the world, water, entities, weapons, ammo, explosions, and particles **all
+      render correctly + match the host** — the "objects black instead of textured" (= the old
+      culling/gray-world bug) and "water looks strange" (= the old warpimage RGB-noise) symptoms do
+      not reproduce in the current build. The one genuine residual is the 2D-text mag-filter softness.
+- [ ] **FIX the V3D mag-NEAREST text softness** — a real GL-driver correctness bug (NEAREST mag
+      filter not honored for magnified 2D textures), worth fixing for upstreamability + any GL app,
+      not just Quake. Next focused unit of work.
 - [ ] (separate NFS-stability track) root-cause + fix the nfs-fs VFS large-write hang.
 
 ## End-to-end run (once TCP sink lands)
