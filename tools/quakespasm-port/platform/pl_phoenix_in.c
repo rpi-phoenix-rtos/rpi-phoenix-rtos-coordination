@@ -1,39 +1,52 @@
 /*
  * pl_phoenix_in.c — Phoenix input shim for Quakespasm: replaces in_sdl.c.
  *
- * Reads the USB keyboard via /dev/kbd0 and feeds Quake's input. The usbkbd driver
- * (phoenix-rtos-devices/tty/usbkbd) delivers a COOKED byte stream (like a TTY):
- *   - printable keys      -> their ASCII byte
- *   - Enter               -> '\n'      Backspace -> '\b'      Tab -> '\t'
- *   - Escape              -> '\033' (standalone)
- *   - arrows / nav keys   -> ANSI CSI escape sequences ("\033[A" = Up, etc.)
- * and ONLY on key-DOWN (there are no key-up reports). So we synthesize a Quake
- * down+up pair per byte. This is enough for menu navigation, the console, and
- * single-shot actions; sustained held-key movement (+forward held) needs real
- * key-up events from a richer kbd event interface (a future, attended USB change).
+ * Drives Quake input from the USB keyboard (/dev/kbd0) and mouse (/dev/mouse0).
  *
- * Quake's two input entry points (mirroring in_sdl.c's SDL_KEYDOWN / SDL_TEXTINPUT):
- *   - Key_Event(quakekey, down)  -> bindings, menu nav, console control keys
+ * KEYBOARD. We put usbkbd into RAW mode (write a 1 byte to /dev/kbd0; see usbkbd.c)
+ * so it delivers raw 8-byte HID boot-keyboard reports instead of the cooked ASCII
+ * stream. Raw reports carry full key state every change, so by diffing successive
+ * reports we generate real key-DOWN and key-UP events — which Quake needs for
+ * held-key movement (+forward latches on down, releases on up). Cooked ASCII cannot
+ * express key-up, so it only suited menus/console; raw mode makes the keyboard
+ * playable. If raw mode can't be enabled (older usbkbd), we fall back to the cooked
+ * decoder below (menu/console only, no sustained movement).
+ *   HID report: [0]=modifier bitmask, [1]=reserved, [2..7]=up to 6 pressed usages.
+ *
+ * MOUSE. /dev/mouse0 delivers raw 4-byte HID boot-mouse packets on change:
+ *   [0]=buttons (bit0 L, bit1 R, bit2 M), [1]=X int8, [2]=Y int8, [3]=wheel int8.
+ * We accumulate relative motion into total_dx/total_dy (applied in IN_Move, the same
+ * math as in_sdl.c's IN_MouseMove) and turn button transitions into K_MOUSE1/2/3.
+ *
+ * Quake input entry points (mirroring in_sdl.c's SDL_KEYDOWN / SDL_TEXTINPUT):
+ *   - Key_Event(quakekey, down)  -> bindings, movement, menu nav, console control
  *   - Char_Event(ascii)          -> console / message text entry
- * We emit Key_Event for every key and additionally Char_Event for printables.
+ *   - IN_Move(cmd)               -> apply accumulated mouse motion to the usercmd
  *
- * KNOWN BLOCKER (needs an attended ownership decision): /dev/kbd0 is opened
- * EXCLUSIVELY by pl011-tty's pl011_kbdthr (sources/.../tty/pl011-tty/pl011-tty.c),
- * which bridges USB keystrokes into the serial console so you can type in psh.
- * usbkbd is single-opener, so our open() here returns EBUSY (errno 16) and input
- * stays disabled (logged; demos still render). To give Quake the keyboard, EITHER
- * make usbkbd multi-reader (per-client FIFOs), OR don't start the pl011-tty kbd
- * bridge on the Quake boot variant (PL011_TTY_KBD_PATH), OR arbitrate by foreground
- * app. The decoder below is hardware-independent and is self-tested at boot, so it
- * is ready the moment /dev/kbd0 becomes openable.
+ * DEVICE OWNERSHIP. /dev/kbd0 is normally held by pl011-tty's console bridge
+ * (single-opener usbkbd). pl011-tty now releases it when the HDMI console switches
+ * to graphics mode (FBCONSETMODE(FBCON_DISABLED), which VID_Init does before us), so
+ * our open() succeeds — we retry briefly to absorb the async release. /dev/mouse0 is
+ * not held by anyone. On shutdown we close both (pl011-tty reacquires the keyboard).
  */
 #include "quakedef.h"
 
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
+#include <string.h>
+#include <stdint.h>
 
 static int kbd_fd = -1;
+static int mouse_fd = -1;
+static int kbd_raw = 0;                 /* 1 = usbkbd raw 8-byte HID reports active */
+static uint8_t kbd_prev[8];             /* previous raw report, for down/up diffing */
+static int total_dx, total_dy;          /* accumulated mouse motion (applied in IN_Move) */
+static int mouse_btn_prev;              /* previous mouse button bitmask */
+
+/* Pitch-clamp cvars (defined in view.c); in_sdl.c declares these locally too. */
+extern cvar_t cl_maxpitch;
+extern cvar_t cl_minpitch;
 
 /* Emit one decoded key. quakekey = Quake key code (K_* or lowercase ascii for
  * letter/printable keys); ch = the printable ascii to feed Char_Event, or 0. */
@@ -151,22 +164,179 @@ static void pl_in_selftest(void)
 	Sys_Printf("PL_IN: kbd decoder selftest %d/%d passed\n", pass, total);
 }
 
+/* --- raw HID keyboard: map a HID usage (page 0x07) to a Quake key, 0 if none --- */
+static int pl_hid_key(uint8_t u)
+{
+	if (u >= 0x04u && u <= 0x1du)
+		return 'a' + (u - 0x04u);          /* a..z -> lowercase ascii */
+	if (u >= 0x1eu && u <= 0x26u)
+		return '1' + (u - 0x1eu);          /* 1..9 */
+	if (u >= 0x3au && u <= 0x45u)
+		return K_F1 + (u - 0x3au);         /* F1..F12 */
+	switch (u) {
+	case 0x27: return '0';
+	case 0x28: return K_ENTER;
+	case 0x29: return K_ESCAPE;
+	case 0x2a: return K_BACKSPACE;
+	case 0x2b: return K_TAB;
+	case 0x2c: return K_SPACE;
+	case 0x2d: return '-';  case 0x2e: return '=';  case 0x2f: return '[';
+	case 0x30: return ']';  case 0x31: return '\\'; case 0x33: return ';';
+	case 0x34: return '\''; case 0x35: return '`';  case 0x36: return ',';
+	case 0x37: return '.';  case 0x38: return '/';
+	case 0x49: return K_INS;  case 0x4a: return K_HOME; case 0x4b: return K_PGUP;
+	case 0x4c: return K_DEL;  case 0x4d: return K_END;  case 0x4e: return K_PGDN;
+	case 0x4f: return K_RIGHTARROW; case 0x50: return K_LEFTARROW;
+	case 0x51: return K_DOWNARROW;  case 0x52: return K_UPARROW;
+	default:   return 0;
+	}
+}
+
+/* Printable ascii for Char_Event (text entry), honoring shift. 0 if non-printable. */
+static int pl_hid_char(uint8_t u, int shift)
+{
+	if (u >= 0x04u && u <= 0x1du) {
+		int c = 'a' + (u - 0x04u);
+		return shift ? (c - 'a' + 'A') : c;
+	}
+	if (u >= 0x1eu && u <= 0x26u) {
+		static const char base[] = "123456789";
+		static const char sh[]   = "!@#$%^&*(";
+		return shift ? sh[u - 0x1eu] : base[u - 0x1eu];
+	}
+	switch (u) {
+	case 0x27: return shift ? ')' : '0';
+	case 0x2c: return ' ';
+	case 0x2d: return shift ? '_' : '-';   case 0x2e: return shift ? '+' : '=';
+	case 0x2f: return shift ? '{' : '[';   case 0x30: return shift ? '}' : ']';
+	case 0x31: return shift ? '|' : '\\';  case 0x33: return shift ? ':' : ';';
+	case 0x34: return shift ? '"' : '\'';  case 0x35: return shift ? '~' : '`';
+	case 0x36: return shift ? '<' : ',';   case 0x37: return shift ? '>' : '.';
+	case 0x38: return shift ? '?' : '/';
+	default:   return 0;
+	}
+}
+
+static int pl_usage_in(const uint8_t *rep, uint8_t u)
+{
+	int i;
+	for (i = 2; i < 8; ++i)
+		if (rep[i] == u)
+			return 1;
+	return 0;
+}
+
+static void pl_emit_mod(int key, int now, int was)
+{
+	if (now && !was)
+		Key_Event(key, true);
+	else if (!now && was)
+		Key_Event(key, false);
+}
+
+/* Diff one raw 8-byte HID report against the previous one -> key down/up events. */
+static void pl_kbd_raw_process(const uint8_t *rep)
+{
+	uint8_t mod = rep[0], pmod = kbd_prev[0];
+	int shift = (mod & (0x02u | 0x20u)) != 0;   /* L or R shift */
+	int i;
+
+	/* modifier transitions (L+R fold to one Quake key, so compare aggregates) */
+	pl_emit_mod(K_CTRL,  (mod & 0x11u), (pmod & 0x11u));
+	pl_emit_mod(K_SHIFT, (mod & 0x22u), (pmod & 0x22u));
+	pl_emit_mod(K_ALT,   (mod & 0x44u), (pmod & 0x44u));
+
+	/* key-ups: usages in the old report no longer present */
+	for (i = 2; i < 8; ++i) {
+		uint8_t u = kbd_prev[i];
+		if (u >= 0x04u && !pl_usage_in(rep, u)) {
+			int k = pl_hid_key(u);
+			if (k)
+				Key_Event(k, false);
+		}
+	}
+	/* key-downs: usages newly present */
+	for (i = 2; i < 8; ++i) {
+		uint8_t u = rep[i];
+		if (u >= 0x04u && !pl_usage_in(kbd_prev, u)) {
+			int k = pl_hid_key(u);
+			if (k) {
+				int ch = pl_hid_char(u, shift);
+				Key_Event(k, true);
+				if (ch)
+					Char_Event(ch);
+			}
+		}
+	}
+
+	memcpy(kbd_prev, rep, 8);
+}
+
+/* Parse one raw 4-byte HID mouse packet: accumulate motion + button transitions. */
+static void pl_mouse_process(const uint8_t *p)
+{
+	int btn = p[0];
+
+	total_dx += (int)(signed char)p[1];
+	total_dy += (int)(signed char)p[2];
+
+	pl_emit_mod(K_MOUSE1, (btn & 0x01), (mouse_btn_prev & 0x01));
+	pl_emit_mod(K_MOUSE2, (btn & 0x02), (mouse_btn_prev & 0x02));
+	pl_emit_mod(K_MOUSE3, (btn & 0x04), (mouse_btn_prev & 0x04));
+	mouse_btn_prev = btn;
+}
+
 void IN_Init(void)
 {
+	int tries;
+	unsigned char raw = 1u;
+
 	pl_in_selftest();
 
-	kbd_fd = open("/dev/kbd0", O_RDONLY | O_NONBLOCK);
-	if (kbd_fd < 0)
+	/* /dev/kbd0 may still be held by the pl011-tty console bridge for a moment after
+	 * VID_Init switched the HDMI console to graphics mode (the bridge releases it
+	 * asynchronously); retry briefly to absorb that race. */
+	for (tries = 0; tries < 40; ++tries) {
+		kbd_fd = open("/dev/kbd0", O_RDWR | O_NONBLOCK);
+		if (kbd_fd >= 0)
+			break;
+		usleep(25000);
+	}
+	if (kbd_fd < 0) {
 		Sys_Printf("PL_IN: /dev/kbd0 open failed (errno=%d) — keyboard input disabled\n", errno);
+	}
+	else {
+		/* Ask usbkbd for raw 8-byte HID reports (key-up + held state). */
+		if (write(kbd_fd, &raw, 1) == 1) {
+			kbd_raw = 1;
+			Sys_Printf("PL_IN: /dev/kbd0 opened (fd=%d), RAW HID mode — keyboard active\n", kbd_fd);
+		}
+		else {
+			kbd_raw = 0;
+			Sys_Printf("PL_IN: /dev/kbd0 opened (fd=%d), cooked mode (raw unavailable) — keyboard active\n", kbd_fd);
+		}
+		memset(kbd_prev, 0, sizeof(kbd_prev));
+	}
+
+	mouse_fd = open("/dev/mouse0", O_RDONLY | O_NONBLOCK);
+	if (mouse_fd < 0)
+		Sys_Printf("PL_IN: /dev/mouse0 open failed (errno=%d) — mouse input disabled\n", errno);
 	else
-		Sys_Printf("PL_IN: /dev/kbd0 opened (fd=%d) — keyboard input active\n", kbd_fd);
+		Sys_Printf("PL_IN: /dev/mouse0 opened (fd=%d) — mouse active\n", mouse_fd);
 }
 
 void IN_Shutdown(void)
 {
 	if (kbd_fd >= 0) {
+		unsigned char cooked = 0u;
+		if (kbd_raw)
+			(void)write(kbd_fd, &cooked, 1);   /* restore cooked for the console bridge */
 		close(kbd_fd);
 		kbd_fd = -1;
+	}
+	if (mouse_fd >= 0) {
+		close(mouse_fd);
+		mouse_fd = -1;
 	}
 }
 
@@ -174,22 +344,68 @@ void IN_Commands(void)
 {
 }
 
+/* Apply accumulated mouse motion to the player command — identical math to in_sdl.c. */
 void IN_Move(usercmd_t *cmd)
 {
-	(void)cmd;
+	float dmx = total_dx * sensitivity.value;
+	float dmy = total_dy * sensitivity.value;
+
+	total_dx = 0;
+	total_dy = 0;
+
+	if (cl.paused || key_dest != key_game)
+		return;
+
+	if ((in_strafe.state & 1) || (lookstrafe.value && (in_mlook.state & 1)))
+		cmd->sidemove += m_side.value * dmx;
+	else
+		cl.viewangles[YAW] -= m_yaw.value * dmx;
+
+	if (in_mlook.state & 1) {
+		if (dmx || dmy)
+			V_StopPitchDrift();
+	}
+
+	if ((in_mlook.state & 1) && !(in_strafe.state & 1)) {
+		cl.viewangles[PITCH] += m_pitch.value * dmy;
+		if (cl.viewangles[PITCH] > cl_maxpitch.value)
+			cl.viewangles[PITCH] = cl_maxpitch.value;
+		if (cl.viewangles[PITCH] < cl_minpitch.value)
+			cl.viewangles[PITCH] = cl_minpitch.value;
+	}
+	else {
+		if ((in_strafe.state & 1) && noclip_anglehack)
+			cmd->upmove -= m_forward.value * dmy;
+		else
+			cmd->forwardmove -= m_forward.value * dmy;
+	}
 }
 
 void IN_SendKeyEvents(void)
 {
 	unsigned char buf[64];
 	ssize_t r;
+	int off;
 
-	if (kbd_fd < 0)
-		return;
+	if (kbd_fd >= 0) {
+		if (kbd_raw) {
+			/* raw 8-byte HID reports (packet-aligned by usbkbd) */
+			while ((r = read(kbd_fd, buf, sizeof(buf))) > 0)
+				for (off = 0; off + 8 <= (int)r; off += 8)
+					pl_kbd_raw_process(buf + off);
+		}
+		else {
+			while ((r = read(kbd_fd, buf, sizeof(buf))) > 0)
+				pl_in_decode(buf, (int)r, pl_in_emit);
+		}
+	}
 
-	/* Drain whatever the cooked kbd FIFO has this frame (non-blocking). */
-	while ((r = read(kbd_fd, buf, sizeof(buf))) > 0)
-		pl_in_decode(buf, (int)r, pl_in_emit);
+	if (mouse_fd >= 0) {
+		/* raw 4-byte HID mouse packets (packet-aligned by usbmouse) */
+		while ((r = read(mouse_fd, buf, sizeof(buf))) > 0)
+			for (off = 0; off + 4 <= (int)r; off += 4)
+				pl_mouse_process(buf + off);
+	}
 }
 
 void IN_UpdateInputMode(void)
