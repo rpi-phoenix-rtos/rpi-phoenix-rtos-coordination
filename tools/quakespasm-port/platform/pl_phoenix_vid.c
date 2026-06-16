@@ -228,6 +228,17 @@ static void *reblit_fn(void *arg)
 
 void VID_Init(void)
 {
+	/* SCTLR_EL1.UCI selftest: prove EL0 can run cache-maintenance (dc civac), which the
+	 * cacheable-readback fast path needs. If UCI is not set this instruction traps -> a
+	 * visible EL0 exception in the UART dump rather than this OK line. */
+	{
+		volatile char uci_probe[64] __attribute__((aligned(64)));
+		uci_probe[0] = 0;
+		__asm__ volatile("dc civac, %0" :: "r"(&uci_probe[0]) : "memory");
+		__asm__ volatile("dsb ish" ::: "memory");
+		Sys_Printf("PL_VID: EL0 dc civac OK — SCTLR.UCI active (cacheable-DMA cache ops available)\n");
+	}
+
 	if (qsv3d_init(VID_W, VID_H) != 0)
 		Sys_Error("VID_Init: V3D GL context create failed");
 	qsv3d_make_current();
