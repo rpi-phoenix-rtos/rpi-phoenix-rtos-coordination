@@ -36,8 +36,8 @@
 int  qsv3d_init(int w, int h);
 void qsv3d_make_current(void);
 
-#define VID_W 1024
-#define VID_H 768
+#define VID_W 1920
+#define VID_H 1080
 
 viddef_t vid;                   /* global video state (declared in vid.h) */
 

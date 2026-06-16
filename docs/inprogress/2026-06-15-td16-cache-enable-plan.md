@@ -789,3 +789,24 @@ path). New bottleneck = the present thread (y-flip+gamma blit 11.5ms + fb0 write
 write + readback are eliminated by render-to-scanout (render the raster RT straight into
 the scanout BO), (3) 1080p framebuffer (firmware/plo). The raster RT is the half-step
 toward render-to-scanout (the scanout IS a raster surface).
+
+## 1080p measurement + blockers (2026-06-16)
+
+Bumped Quake to 1920x1080 (FBO) + tried framebuffer_width/height=1920/1080. Measured +
+learned (then reverted to the clean 52fps@1024x768 state):
+- **Quake renders 1920x1080 at ~24fps** — RENDER-THREAD-bound: finish ~20ms + readpx
+  (linear cached) ~16ms = ~36ms. So even a perfect present caps at ~24fps; **readpx must
+  move OFF the render thread** to hit 40fps (-> render thread = finish only ~20ms -> ~50fps).
+- **framebuffer_width/height did NOT take** — fb0 stayed 1024x768 (rpi4-fb reports
+  1024x768/pitch=4096). The firmware/fkms overlay ignores legacy framebuffer_width/height;
+  a true 1080p fb likely needs hdmi_group/hdmi_mode AND depends on the attached display's
+  EDID/mode — NOT verifiable autonomously (only HDMI snapshots; the 1024x768 fallback
+  suggests no EDID). The 1080p FBO -> 1024x768 fb0 present was size-mismatched (broken).
+
+**Path to 40fps@1080p (clear, substantial):** (1) FPS: move readpx off the render thread
++ MULTI-THREAD the present (split read+blit+fb0 across the 4 cores; the RT is LINEAR so
+workers read its BO directly, no glReadPixels) -> render thread = finish only -> ~50fps@1080p
+render. Validatable at 1024x768 first. (2) DISPLAY: a real 1080p framebuffer needs firmware
+hdmi_mode config + the actual monitor's support — ATTENDED (HDMI eyes), since legacy fb
+config didn't work and the display capabilities are unknown from here. Render-to-scanout
+remains the alternative to the multi-thread present but adds a GPU y-flip complication.

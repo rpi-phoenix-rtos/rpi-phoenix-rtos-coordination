@@ -48,6 +48,7 @@
 #define CTL_INT_CLR         0x0058u
 #define INT_FRDONE          (1u<<0)
 #define INT_FLDONE          (1u<<1)
+#define INT_OUTOMEM         (1u<<2)   /* binner exhausted its tile-allocation pool */
 #define CLE_CT0QTS          0x015cu
 #define CT0QTS_ENABLE       (1u<<1)
 #define CLE_CT0QBA          0x0160u
@@ -60,7 +61,15 @@
 #define L2TCACTL_L2TFLS     (1u<<0)
 #define CTL_SLCACTL         0x0024u    /* slices cache control (V3D 4.x) */
 #define SLCACTL_INVAL_ALL   0x0f0f0f0fu /* invalidate TVCCS/TDCCS/UCC(uniform)/ICC(instr) */
-#define PTB_BPOS            0x030cu
+#define PTB_BPOA            0x0308u   /* binner pool overflow address (GPU VA) */
+#define PTB_BPOS            0x030cu   /* binner pool overflow size (bytes) */
+/* Binner tile-allocation overflow pool. When the binner exhausts the per-job
+ * tile_alloc memory Mesa supplies via CT0QMA/QMS, it raises INT_OUTOMEM and stalls
+ * until handed a fresh pool via PTB_BPOA/BPOS (linux v3d_overflow_mem_work). The
+ * pool need grows with tile count: 1024x768 (~192 tiles) never overflowed, but
+ * 1920x1080 (~510 tiles) does. We pre-allocate one generous pool at init and arm it
+ * on the first OUTOMEM of each job (Quake's per-frame overflow stays well under this). */
+#define BINOVF_PAGES        1024u     /* 4 MiB persistent binner-overflow pool */
 #define CTL_MISCCFG         0x0018u
 #define MISCCFG_OVRTMUOUT   (1u<<0)
 
@@ -104,6 +113,8 @@ static struct {
 	volatile uint32_t *pt;    /* MMU flat page table */
 	uintptr_t pt_pa;
 	uint32_t next_gpuva;
+	uint32_t binovf_gpuva;    /* persistent binner-overflow pool GPU VA (0 = none) */
+	uint32_t binovf_bytes;    /* its size in bytes */
 	struct pbo bos[MAX_BOS];
 	uint32_t nbos;            /* high-water mark of slots ever used */
 	struct vahole holes[MAX_HOLES];
@@ -119,6 +130,7 @@ static volatile uint32_t *map_dev(uint32_t pa, uint32_t len)
 }
 
 int v3d_phoenix_powerOn(void);   /* v3d_phoenix_power.c — BCM2711 V3D power-on */
+static uint32_t va_alloc(uint32_t pages);   /* defined below; used by the init overflow pool */
 
 static int winsys_init(void)
 {
@@ -141,6 +153,28 @@ static int winsys_init(void)
 	W.hub[MMU_CTL/4] = MMU_CTL_ENABLE|MMU_CTL_PTI_ABORT;
 	W.hub[MMUC_CONTROL/4] = MMUC_ENABLE;
 	W.next_gpuva = GPUVA_BASE;
+
+	/* Pre-allocate the persistent binner-overflow pool (uncached DMA, like the CL/tile
+	 * BOs): contiguous pages mapped into the flat MMU at a stable GPU VA, reused every
+	 * frame. The binner writes tile lists here on OUTOMEM; the render reads them back. */
+	{
+		uint32_t gpuva = va_alloc(BINOVF_PAGES);
+		void *cpu = (gpuva == 0) ? MAP_FAILED :
+			mmap(NULL, BINOVF_PAGES*_PAGE_SIZE, PROT_READ|PROT_WRITE,
+				MAP_UNCACHED|MAP_CONTIGUOUS|MAP_ANONYMOUS, -1, 0);
+		if (cpu != MAP_FAILED) {
+			for (uint32_t i=0;i<BINOVF_PAGES;i++) {
+				uintptr_t ppa = (uintptr_t)va2pa((char*)cpu + (size_t)i*_PAGE_SIZE);
+				W.pt[(gpuva>>PAGE_SHIFT)+i] = (uint32_t)(ppa>>PAGE_SHIFT)|PTE_W|PTE_V;
+			}
+			W.binovf_gpuva = gpuva;
+			W.binovf_bytes = BINOVF_PAGES*_PAGE_SIZE;
+		}
+		else {
+			fprintf(stderr, "v3d-winsys: WARN no binner-overflow pool — large RTs may stall\n");
+		}
+	}
+
 	W.inited = 1;
 	return 0;
 }
@@ -280,12 +314,40 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
 	if (s->qma) { c0[CLE_CT0QMA/4]=s->qma; c0[CLE_CT0QMS/4]=s->qms; }
 	if (s->qts) { c0[CLE_CT0QTS/4]=CT0QTS_ENABLE|s->qts; }
 	c0[CLE_CT0QBA/4]=s->bcl_start; c0[CLE_CT0QEA/4]=s->bcl_end;
-	for (spins=8000000u; spins && !(c0[CTL_INT_STS/4]&INT_FLDONE); spins--) {}
+	/* Wait for bin done, servicing binner OUT-OF-MEMORY: when the tile_alloc pool
+	 * (CT0QMA/QMS) exhausts, the binner raises INT_OUTOMEM and stalls until handed a
+	 * fresh pool via PTB_BPOA/BPOS. Arm our persistent overflow pool once per job (OOM
+	 * is edge-signaled, so clear INT_OUTOMEM after servicing). Without this, large RTs
+	 * (1080p ~510 tiles) hang the binner -> FLDONE never fires -> ~2.5 s spin timeout. */
+	{
+		int ovf_armed = 0;
+		uint32_t sts;
+		for (spins=8000000u; spins; spins--) {
+			sts = c0[CTL_INT_STS/4];
+			if (sts & INT_FLDONE) break;
+			if ((sts & INT_OUTOMEM) && !ovf_armed && W.binovf_gpuva) {
+				c0[PTB_BPOA/4] = W.binovf_gpuva;
+				c0[PTB_BPOS/4] = W.binovf_bytes;
+				c0[CTL_INT_CLR/4] = INT_OUTOMEM;
+				ovf_armed = 1;
+			}
+		}
+		if (spins == 0) {
+			fprintf(stderr, "v3d-winsys: BIN TIMEOUT int_sts=0x%08x ct0ca=0x%08x "
+				"mmu_ill=0x%08x ovf_armed=%d (gpuva=0x%x sz=%u)\n",
+				c0[CTL_INT_STS/4], c0[0x0118/4], W.hub[MMU_ILLEGAL_ADDR/4],
+				ovf_armed, W.binovf_gpuva, W.binovf_bytes);
+		}
+	}
 	c0[CTL_INT_CLR/4]=INT_FLDONE|INT_FRDONE;
 	c0[CTL_L2TCACTL/4]=L2TCACTL_L2TFLS;
 	/* --- render (CT1); wait FRDONE --- */
 	c0[CLE_CT1QBA/4]=s->rcl_start; c0[CLE_CT1QEA/4]=s->rcl_end;
 	for (spins=16000000u; spins && !(c0[CTL_INT_STS/4]&INT_FRDONE); spins--) {}
+	if (spins == 0) {
+		fprintf(stderr, "v3d-winsys: RENDER TIMEOUT int_sts=0x%08x ct1ca=0x%08x mmu_ill=0x%08x\n",
+			c0[CTL_INT_STS/4], c0[0x011c/4], W.hub[MMU_ILLEGAL_ADDR/4]);
+	}
 	/* L2T flush so RT stores reach RAM before CPU readback (scout finding). */
 	c0[CTL_L2TCACTL/4]=L2TCACTL_L2TFLS|(2u<<1); /* FLM_CLEAN */
 	return 0;
