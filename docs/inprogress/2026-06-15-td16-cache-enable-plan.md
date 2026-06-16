@@ -774,3 +774,18 @@ GPU raster-store may cost some render time; (b) TFU-blit tiled→linear-cacheabl
 linear CPU read; (c) render-to-scanout (no CPU read). All need GPU-side work. **Real NFS
 lever:** cacheable GENET RX — LINEAR buffers, read multiple times (checksum+copy), so
 caching DOES help there (unlike the scattered tiled detile); gated behind an integrity bench.
+
+## WIN: linear (raster) color RT + cacheable readback — 27 -> ~52 fps @1024x768 (2026-06-16)
+
+The detile was the cost (scattered tiled read, not the uncached read). Fix: force the
+full-screen color RT to RASTER (linear) layout (v3d_resource.c should_tile, targeted by
+display size so small SAMPLED RTs like the water warpimage stay tiled for the TMU) + map
+that RT cacheable (now a LINEAR read, which caching DOES accelerate). glReadPixels then
+takes the non-tiled fast path = a linear cached copy. Measured: **readpx 23ms -> ~6.5ms;
+FPS 27 -> ~52** @1024x768, HDMI render correct (textured walls/floor/weapon, no tearing),
+0 faults. Validates the cacheable infra on linear buffers (and by extension the NFS GENET-RX
+path). New bottleneck = the present thread (y-flip+gamma blit 11.5ms + fb0 write 5.5ms =
+17ms). For 40fps@1080p: (1) cut the blit (drop/cheapen the per-pixel gamma), (2) the fb0
+write + readback are eliminated by render-to-scanout (render the raster RT straight into
+the scanout BO), (3) 1080p framebuffer (firmware/plo). The raster RT is the half-step
+toward render-to-scanout (the scanout IS a raster surface).

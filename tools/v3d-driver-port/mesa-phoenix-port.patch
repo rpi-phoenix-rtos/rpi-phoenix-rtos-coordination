@@ -121,10 +121,10 @@ index bd4309c1e74..42f37eda323 100644
                          return;
                  }
 diff --git a/src/gallium/drivers/v3d/v3d_resource.c b/src/gallium/drivers/v3d/v3d_resource.c
-index 33df0d07be5..87014fd68ca 100644
+index 33df0d07be5..7b317407bad 100644
 --- a/src/gallium/drivers/v3d/v3d_resource.c
 +++ b/src/gallium/drivers/v3d/v3d_resource.c
-@@ -110,8 +110,29 @@ v3d_resource_bo_alloc(struct v3d_resource *rsc)
+@@ -110,8 +110,35 @@ v3d_resource_bo_alloc(struct v3d_resource *rsc)
           */
          uint32_t padding =
                  rsc->base.target == PIPE_BUFFER ? 4 : V3D_TFU_READAHEAD_SIZE;
@@ -150,13 +150,19 @@ index 33df0d07be5..87014fd68ca 100644
 +         * (render-to-scanout / TFU-to-linear, after which a LINEAR CPU read would benefit
 +         * from caching). The cacheable infra (v3d_bo_alloc_flags + civac) is kept and proven
 +         * for that + the NFS GENET-RX path. See docs/inprogress/2026-06-15-td16-cache-enable-plan.md. */
-+        uint32_t create_flags = 0;
++        /* Phoenix: the full-screen color RT is forced RASTER (see should_tile) and is
++         * GPU-written / CPU-read-back only — map it cacheable so the now-LINEAR readback
++         * hits cache (a linear read benefits from caching, unlike the scattered tiled
++         * detile). Invalidated (DC CIVAC) before the read in v3d_resource_transfer_map. */
++        uint32_t create_flags =
++                ((rsc->base.bind & PIPE_BIND_RENDER_TARGET) &&
++                 rsc->base.width0 >= 1024 && rsc->base.height0 >= 768) ? V3D_CREATE_BO_CACHEABLE : 0;
 +        bo = v3d_bo_alloc_flags(v3d_screen(pscreen), rsc->size + padding,
 +                          "resource", create_flags);
          if (bo) {
                  v3d_bo_unreference(&rsc->bo);
                  rsc->bo = bo;
-@@ -256,6 +277,25 @@ v3d_map_usage_prep(struct pipe_context *pctx,
+@@ -256,6 +283,25 @@ v3d_map_usage_prep(struct pipe_context *pctx,
          }
  }
  
@@ -182,7 +188,7 @@ index 33df0d07be5..87014fd68ca 100644
  static void *
  v3d_resource_transfer_map(struct pipe_context *pctx,
                            struct pipe_resource *prsc,
-@@ -316,6 +356,11 @@ v3d_resource_transfer_map(struct pipe_context *pctx,
+@@ -316,6 +362,11 @@ v3d_resource_transfer_map(struct pipe_context *pctx,
                  goto fail;
          }
  
@@ -194,6 +200,21 @@ index 33df0d07be5..87014fd68ca 100644
          *pptrans = ptrans;
  
          /* Our load/store routines work on entire compressed blocks. */
+@@ -847,6 +898,14 @@ v3d_resource_create_with_modifiers(struct pipe_screen *pscreen,
+         if (tmpl->bind & PIPE_BIND_SCANOUT)
+                 should_tile = false;
+ 
++        /* Phoenix: force the full-screen color render target to RASTER (linear) so a CPU
++         * readback (glReadPixels) is a fast linear copy instead of the ~23ms scattered
++         * tiled detile. Targeted by display size so small SAMPLED render targets (e.g. the
++         * water warpimage) stay tiled (the TMU needs tiled to sample efficiently). */
++        if ((tmpl->bind & PIPE_BIND_RENDER_TARGET) &&
++            tmpl->width0 >= 1024 && tmpl->height0 >= 768)
++                should_tile = false;
++
+         /* No user-specified modifier; determine our own. */
+         if (count == 1 && modifiers[0] == DRM_FORMAT_MOD_INVALID) {
+                 rsc->tiled = should_tile;
 diff --git a/src/gallium/drivers/v3d/v3dx_draw.c b/src/gallium/drivers/v3d/v3dx_draw.c
 index 1dc918d3e1f..c8654158546 100644
 --- a/src/gallium/drivers/v3d/v3dx_draw.c
