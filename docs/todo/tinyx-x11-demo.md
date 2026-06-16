@@ -7,13 +7,41 @@ aarch64-rpi4b target and getting an X server running on HDMI with
 keyboard input from a USB device.
 
 This is a **stretch / "wow" milestone** — see
-[`00-master-plan.md` M12](../knowledge/00-master-plan.md). It depends on essentially
+[`00-master-plan.md` M12](../knowledge/00-master-plan.md).
+
+> ## ⚠️ STATUS RECONCILIATION — 2026-06-16
+>
+> **This plan predates the GPU and base-system work that has since landed.
+> Most of the prerequisites it lists as future/blocked are now DONE.** The
+> body below is kept for structure and historical context; read it through
+> this lens. The headline deltas:
+>
+> | Old assumption in this doc | Reality as of 2026-06-16 |
+> |---|---|
+> | `/dev/fb0` is future work, owned by an unwritten "gpu-vc6 M8" server | **DONE.** `sources/phoenix-rtos-devices/video/rpi4-fb/` registers `/dev/fb0` (firmware framebuffer, `RPI4FB_GETMODE` devctl, `read()`/`write()` byte access, geometry runtime-queried via `platformctl(pctl_graphmode)` — validated `1024x768x32` on HW; the GPU/Quake path drives it at scanout resolution). HW-validated netboot, boot→psh, 0 faults. **NOT yet provided:** Linux-`FBIOGET_*` veneer and `mmap(fd,0)` FB backing — both flagged as attended one-way doors. So an X server reaches the framebuffer via `write()`-to-scanout (shadow→blit), not fbdev mmap. See `docs/inprogress/2026-06-05-fb0-attended-decisions.md`. |
+> | Stage-1 caches off → "unaccelerated 1080p X is slideshow-slow" | **Caches are ON** (TD-16 resolved 2026-05-17; SCTLR.{M,C,I} set, Normal RAM WB-cacheable). The "caches off" premise is stale. |
+> | USB HID keyboard "post-M3" / mouse driver doesn't exist | **Both work.** `usbkbd` (`/dev/kbd0`) ships a **raw 8-byte HID boot-report mode** (toggle by writing 1 byte) *in addition to* cooked ASCII; `usbmouse` (`/dev/mouse0`) ships raw 4-byte boot-mouse packets. Enumeration is reliable (11/11 benches). The "build an evdev shim + a usbmouse driver from scratch" lift in §4.2/§4.3 is **largely already paid** — see the revised note there. |
+> | The whole X.org GPU-accel question is "deferred past v1.0" (Open Q2) | **The V3D 4.2 GPU now renders accelerated OpenGL on real hardware.** A ported Mesa gallium **v3d** driver + GL frontend (`st/mesa` + GLSL) + a **custom in-process userspace winsys** (`tools/v3d-driver-port/v3d_phoenix_winsys.c`) runs GL on the real V3D, with **render-to-scanout** straight into `/dev/fb0`. **GL Quake (quakespasm) runs and is playable** (`tools/quakespasm-port/`; render-to-scanout, reported ~42 fps at 1080p — the earlier port-plan note of ~10 fps was a fullscreen *cube* before caches/EZ work, not the world renderer). **BUT** this changes the X-accel calculus in a subtle, important way analysed in the companion doc — the winsys is **per-process, no-DRM, synchronous, single-client** (it reprograms the V3D's one MMU base register to its own page table on init), so it does **not** give X a multi-client accelerated GPU for free. |
+> | "Tinyx ships in PR #82 today" — treats the X11 stack as arriving | PR #82 has **not** landed in `sources/phoenix-rtos-ports/` (verified: no `x11/`, `libX11`, `libxcb`, `pixman`, `freetype`, `fontconfig`, `Xau`, `Xdmcp`). The entire X11 library stack is **net-new unported work**, not a cherry-pick away. `shm_open` is still missing in libphoenix (MIT-SHM must be `--disable`d); `dlfcn.h`/`dlopen` is absent (rules out full Xorg loadable-module DDX — kdrive's static link is the only viable model). |
+>
+> **What this means going forward:** the *software* TinyX demo described
+> below (phases 1–7: Xfbdev on `/dev/fb0`, twm, st/xterm, keyboard+mouse)
+> is now mostly *unblocked on the Phoenix side* — the remaining cost is
+> porting the X11 library stack + a kdrive fbdev/input backend, not waiting
+> on caches/fb/USB. **GPU-accelerated X** is a separate, much harder
+> question now studied in full in
+> **[`2026-06-16-x11-accelerated-desktop-plan.md`](../inprogress/2026-06-16-x11-accelerated-desktop-plan.md)**
+> (path from this software TinyX to a full accelerated X11 desktop). The
+> headline of that study: **software X is the realistic milestone and the
+> practical ceiling; accelerated X is a research stretch gated on an EGL
+> port and on solving single-client GPU arbitration.**
+
+It depends on essentially
 every other Pi 4 subsystem reaching a working state: framebuffer
 (`/dev/fb0`), USB HID (keyboard, then mouse), persistent rootfs (X
 binaries + fonts won't fit in syspage), GENET (only for remote demos
 and X11 forwarding — not required for the core demo), and Stage-1
-caches (an unaccelerated 1080p X server on a cache-disabled BCM2711
-would be slideshow-slow).
+caches. **(All of these are now DONE — see the reconciliation banner above.)**
 
 ---
 
@@ -104,64 +132,89 @@ X.org port mechanics, says nothing about Pi 4 fb/input glue.
 
 ### Framebuffer
 
-Today: plo allocates a 1024x768x32 framebuffer via the BCM2711
-property mailbox; `pl011-tty` adopts that address and runs a tiny
-VT100/ANSI fbcon (`pl011_fbcon_*`). No `/dev/fb0` yet.
+> **UPDATED 2026-06-16:** `/dev/fb0` exists and is HW-validated. The
+> remaining gap is the *ABI shape*, not the device.
 
-[`gpu-vc6-impl.md`](gpu-vc6-impl.md) M8 owns the `/dev/fb0` Tier 1
-server, which registers Linux-fbdev devctl numbers
-(`FBIOGET_VSCREENINFO` etc.) plus mmap. Tinyx Xfbdev binds directly.
-Phase 3 of this plan is gated on M8.
+plo allocates the firmware framebuffer via the BCM2711 property mailbox;
+`pl011-tty` adopts that address and runs a tiny VT100/ANSI fbcon
+(`pl011_fbcon_*`). On top of that, **`sources/phoenix-rtos-devices/video/rpi4-fb/`
+now registers `/dev/fb0`**: `read()`/`write()` byte access, an
+`RPI4FB_GETMODE` devctl returning `{width,height,bpp,pitch,smemlen,framebuffer}`,
+and `getattr`. Geometry is **runtime-queried** (`platformctl(pctl_graphmode)`),
+validated at `1024x768x32 pitch=4096` on hardware; the GPU render-to-scanout
+path drives the same surface at scanout resolution. The surface is mapped
+**uncached by physical address** (`MAP_PHYSMEM`).
 
-ABI gap to confirm: tinyx may call `FBIOPUT_VSCREENINFO` to set
-res/bpp; Pi 4 firmware can round/cap the response. Ship Phase 3
-with `Xfbdev -screen <w>x<h>x<bpp>` matching the plo-allocated
-mode; live mode change is a stretch sub-phase.
+**Two ABI gaps remain (the real Phase-3 work now):**
+
+1. **No Linux-fbdev `FBIOGET_VSCREENINFO`/`FBIOGET_FSCREENINFO` veneer.**
+   The device exposes `RPI4FB_GETMODE`, not the Linux ioctls kdrive's
+   `fbdevHW`/`KdFb` backends expect. The kdrive fbdev backend must be
+   pointed at `RPI4FB_GETMODE` (small driver edit) or a veneer added (an
+   attended ABI one-way door — see `2026-06-05-fb0-attended-decisions.md`).
+2. **No `mmap(fd, 0)` backing.** The in-tree device-fd mmap path
+   demand-pages a *private copy*, not the live framebuffer — so a memory-mapped
+   fbdev "direct draw to screen" model does **not** work yet. The pragmatic
+   path: the X server keeps a **shadow framebuffer in its own memory** and
+   **blits it to `/dev/fb0` via `write()`** (the device's `write()` does the
+   `memcpy` into scanout DRAM). kdrive's *shadow framebuffer* layer
+   (`fbInitializeBackingStore`/`KdShadowFbAlloc`) is designed for exactly this
+   and sidesteps the kernel-VM one-way door entirely.
+
+`FBIOPUT_VSCREENINFO` mode-setting: there is no DRM/KMS, so live mode change
+is firmware-mediated only; ship matching the plo-allocated mode.
 
 ### Input — keyboard
 
+> **UPDATED 2026-06-16:** the raw-HID gap this section worried about is
+> **already closed in the driver.** usbkbd has a raw mode, and a working
+> reference consumer exists.
+
 Phoenix's
 [`usbkbd`](../../sources/phoenix-rtos-devices/tty/usbkbd/usbkbd.c)
-(post-M3) **translates HID usage codes to ASCII inside the driver**
-(`usbkbd_translateUsage` at lines 217–250) and exposes a character
-stream on `/dev/kbd0`. `pl011-tty`'s `pl011_kbdthr` (lines 929–980 of
-[`pl011-tty.c`](../../sources/phoenix-rtos-devices/tty/pl011-tty/pl011-tty.c))
-consumes that ASCII into libtty.
+exposes a cooked ASCII character stream on `/dev/kbd0` (consumed by
+`pl011-tty`'s `pl011_kbdthr` into libtty for the psh console) **and a
+raw 8-byte HID boot-report mode**: a client writes a single `1` byte to
+`/dev/kbd0` and subsequent `read()`s deliver raw packet-aligned HID
+reports (`[0]=modifier bitmask, [2..7]=pressed usages`); writing `0`
+restores cooked mode (`usbkbd.c` `rawMode`, lines ~109–114, 413, 641–644).
+Raw reports carry full key state on every change, so a consumer can diff
+successive reports into real key-**down** and key-**up** events plus
+shift-vs-shifted distinction.
 
-Tinyx wants either Linux evdev (`/dev/input/event*` emitting `struct
-input_event` with `KEY_*` codes and press/release semantics — the
-recommended `-keybd evdev` backend, lets xkbcommon handle layouts) or
-a Phoenix-custom kdrive input driver.
+**This is exactly what X needs** (press AND release, autorepeat source,
+modifier latching). A *proven reference* already does it in-process:
+`tools/quakespasm-port/platform/pl_phoenix_in.c` turns raw `/dev/kbd0`
+into Quake `Key_Event(down/up)` + `Char_Event`.
 
-**Gap.** ASCII `/dev/kbd0` is insufficient: no key-release events,
-no shift-vs-shifted distinction (`A` vs `a` arrive as already-resolved
-codepoints), no layout flexibility. X autorepeat, modifier latching,
-and xkbcommon all need raw scan codes plus press AND release.
+**Resolution paths**, re-ranked for current reality:
 
-**Resolution paths**, ranked:
-
-1. **Best:** add a raw-HID endpoint to usbkbd; new evdev shim
-   translates raw HID → evdev `input_event` on `/dev/input/event0`.
-   xkbcommon binds directly. Keep ASCII `/dev/kbd0` for legacy.
-2. **Interim:** custom kdrive driver reading `/dev/kbd0` ASCII,
-   synthesizing press+release. No xkb. ~70% faster but a dead-end.
-3. **Reject:** ASCII→fake-evdev inside Xfbdev — same limits as (2)
-   plus glue.
-
-Plan picks (1) for Phase 4 with (2) as fallback.
+1. **Recommended:** a small **kdrive input driver** (a `KdKeyboardDriver`)
+   that opens `/dev/kbd0`, toggles raw mode, and translates HID usages →
+   X keycodes via `KdEnqueueKeyboardEvent`. Mirrors `pl_phoenix_in.c`'s
+   HID→key map; no separate evdev server, no `/dev/input/event*`. ~few days.
+2. **Optional extra:** if layout flexibility is wanted, port **xkbcommon**
+   (not in PR #82) and feed it scancodes. Defer — a US-QWERTY hardcoded
+   map is fine for the demo.
+3. **Avoid:** building a full Linux-evdev `/dev/input/event0` server just
+   to satisfy the stock `-keybd evdev` backend. It's more IPC and glue than
+   a direct kdrive driver, given we already have raw HID.
 
 ### Input — mouse
 
-No USB HID mouse driver in Phoenix today. PR #82 brings PS/2 mouse
-(`devices#512`) — right shape (`/dev/mouse*` character device emitting
-button/movement records) but wrong transport for Pi 4. We need a
-`usbmouse` sibling to `usbkbd`, reusing the host stack from
-[`usb-xhci-impl.md`](../done/usb-xhci-impl.md). HID boot-mouse (subclass 0x01,
-proto 0x02) is simpler than the keyboard. Output: a raw report
-endpoint that the same evdev shim translates to `EV_REL`/`EV_KEY`.
+> **UPDATED 2026-06-16:** `usbmouse` exists; the PS/2 path is irrelevant.
 
-Mouse is deferred to **Phase 5**; demo Phases 1-4 are keyboard-only,
-consistent with classical kdrive framebuffer demos.
+`sources/phoenix-rtos-devices/usb/usbmouse/` ships and registers
+`/dev/mouse0`, delivering raw 4-byte HID boot-mouse packets on change
+(`[0]=buttons, [1]=dx int8, [2]=dy int8, [3]=wheel`). Enumeration of
+kbd0+mouse0 is reliable on HW (11/11 benches). The same kdrive input
+driver (path 1 above) opens `/dev/mouse0` and feeds
+`KdEnqueuePointerEvent` (relative motion + buttons). `pl_phoenix_in.c`
+again is the working reference for the parse + accumulate math.
+
+The PR #82 PS/2 mouse path (`devices#512`) is the wrong transport for
+Pi 4 and is **not needed**. Mouse is no longer a separate hard phase —
+it shares the keyboard's kdrive input driver.
 
 ### IPC and storage
 
@@ -180,44 +233,47 @@ Interim: tmpfs / cpio-initrd with a stripped-down X tree.
 
 ## 4. Per-gap implementation plan
 
-### 4.1 `/dev/fb0` server (M8 dependency, owned by gpu-vc6 plan)
+### 4.1 `/dev/fb0` server — DONE
 
-Owned by [`gpu-vc6-impl.md` §6 Phase 2](gpu-vc6-impl.md). This plan
-consumes it; a small mmap-gradient test program acts as the ABI
-smoke test before layering tinyx.
+> **UPDATED 2026-06-16:** done. `sources/phoenix-rtos-devices/video/rpi4-fb/`.
+> Remaining work is the kdrive *backend* binding (point it at
+> `RPI4FB_GETMODE` + `write()`-blit a shadow FB), not the device. See the
+> Framebuffer subsection in §3.
 
-### 4.2 Evdev shim for keyboard (new work, Phase 4)
+### 4.2 Keyboard input — driver gap already closed
 
-Two designs:
-- **A — extend usbkbd:** add a second `/dev/event0` endpoint
-  emitting Linux-`KEY_*` press/release records. Pros: one less
-  server. Cons: complicates a driver used only for ASCII today.
-- **B — separate `phoenix-rtos-devices/input/evdev/` server:**
-  reads raw HID reports via a new `/dev/kbd0_raw` endpoint on
-  usbkbd, translates to `input_event` on `/dev/input/event0`.
-  Pros: clean separation, reusable for mouse. Cons: extra IPC hop.
+> **UPDATED 2026-06-16:** the "build an evdev shim" plan is **obsolete**.
+> usbkbd already ships raw 8-byte HID mode (write `1` to `/dev/kbd0`), and
+> `tools/quakespasm-port/platform/pl_phoenix_in.c` is a proven HID→events
+> reference. The remaining work is a thin **kdrive input driver** that
+> reuses that map and calls `KdEnqueueKeyboardEvent` — no `/dev/input/event0`
+> server, no extra IPC hop. ~few days. (Designs A/B below are superseded.)
 
-Recommend **Design B**; ~1.5 weeks.
+### 4.3 USB HID mouse driver — DONE
 
-### 4.3 USB HID mouse driver (new work, Phase 5)
-
-New `phoenix-rtos-devices/usb/usbmouse/` mirroring `usbkbd`
-(srv.c + usbmouse.c + Makefile). HID boot-mouse report is 3-4 bytes
-(`{ buttons, dx, dy[, wheel] }`); raw endpoint feeds the same evdev
-shim. ~1 week.
+> **UPDATED 2026-06-16:** `sources/phoenix-rtos-devices/usb/usbmouse/`
+> ships and registers `/dev/mouse0` (raw 4-byte boot-mouse packets). No
+> new driver needed; the kdrive input driver from §4.2 also handles the
+> mouse via `KdEnqueuePointerEvent`.
 
 ### 4.4 X dependencies audit (Phase 1)
 
-One-time audit pass before any tinyx code lands:
+One-time audit pass before any tinyx code lands. **(UPDATED 2026-06-16:
+the X11 library stack itself — libX11, libxcb, xtrans, xorgproto, pixman,
+freetype, fontconfig, Xau/Xdmcp, libXext, libXfont — is NOT in
+`sources/phoenix-rtos-ports/` yet; PR #82 has not landed. Treat the whole
+stack as net-new porting work, not a cherry-pick. `dlopen`/`dlfcn.h` is
+absent → full Xorg's loadable-module DDX is impossible; kdrive's static
+link is the only viable server. `shm_open` still missing → `--disable-mitshm`.)**
 
 | Need | Phoenix status | Risk | Action |
 |---|---|---|---|
-| `mmap()` of fb | Yes | Low | None |
+| `mmap()` of fb (private copy only) | Partial — `MAP_PHYSMEM` works for drivers; `mmap(fb_fd,0)` demand-pages a private copy, not the FB | Medium | Use shadow-FB + `write()`-blit to `/dev/fb0` (no mmap of the live FB) |
 | AF_UNIX sockets | Header present, runtime unverified on aarch64-rpi4b | Medium | 20-line ping/pong test in Phase 1 |
 | pthreads (mutex+cond+create) | Yes | Low | None |
 | `select`/`poll` over multiple fds | Yes | Low | Smoke test |
 | `shm_open` (MIT-SHM) | **Missing** | Low (extension is optional) | Build with `--disable-mitshm` |
-| `dlopen` / dynamic loaders | Limited | Medium | imlib2 patch already addresses this with `loaders-no-dl` |
+| `dlopen` / dynamic loaders | **Absent** (`dlfcn.h` not present) | High for full Xorg / Low for kdrive | Forces the static-link kdrive model (no loadable DDX/modules); static-loader patches (e.g. imlib2 `loaders-no-dl`) needed for any dlopen consumer |
 | FS support for `/tmp` and font dirs | Tied to M4 | Medium | tmpfs interim, ext2 final |
 | `gettimeofday` / `clock_gettime` | Yes | Low | None |
 | `signal` / SIGCHLD for client reaping | Partial | Low | Verify SIGCHLD; may need `waitpid` |
@@ -267,9 +323,14 @@ DejaVu Sans Mono.
   region) — known-good "X is up" signal without HDMI.
 - **Exit:** MVD met against stub fb. Demonstrable in QEMU also.
 
-### Phase 3 — real fb on HDMI (~3 days, blocked on M8)
+### Phase 3 — real fb on HDMI (~3 days) — **fb0 DONE; remaining work = kdrive fbdev backend (§3)**
 
-- Replace the stub with the real `rpi4-vc6-fb` server.
+> **UPDATED 2026-06-16:** `/dev/fb0` exists. The work is no longer "wait for
+> M8" but: point a kdrive fbdev backend at `RPI4FB_GETMODE` for geometry and
+> use a shadow framebuffer flushed to `/dev/fb0` via `write()` (no fbdev mmap;
+> see §3 Framebuffer).
+
+- Replace the stub with the real `/dev/fb0` (`rpi4-fb`) device.
 - Run Xfbdev pointing at `/dev/fb0`. The fbcon banner should
   disappear; X dot-pattern root window appears on HDMI.
 - Confirm pixel format / pitch agreement (Pi 4 firmware prefers
@@ -277,21 +338,24 @@ DejaVu Sans Mono.
 - **Exit:** xeyes window visible on HDMI; pixels are correct
   (no shift, no torn rows).
 
-### Phase 4 — keyboard input (~1 week, depends on M3)
+### Phase 4 — keyboard input (~few days) — **evdev shim superseded (§4.2)**
 
-- Implement the evdev shim per §4.2 (Design B preferred, Design A
-  fallback).
-- Configure tinyx with `-keybd evdev,,device=/dev/input/event0`.
-- Type `a` on the USB keyboard; xeyes' eyes ignore it (xeyes
-  doesn't read keys), but `xev -display :0` echoes the press/release
-  events to its own UART-bound stdout.
-- **Exit:** pressing keys on the real USB keyboard produces visible
-  X events in `xev`.
+> **UPDATED 2026-06-16:** the evdev-shim design is superseded. usbkbd has raw
+> HID mode and `pl_phoenix_in.c` is a proven HID→events reference. Implement a
+> small **kdrive input driver** that opens `/dev/kbd0` (write `1` for raw),
+> diffs reports, and calls `KdEnqueueKeyboardEvent` — no `/dev/input/event0`.
 
-### Phase 5 — USB mouse (~1 week, deferred / stretch)
+- Write the kdrive keyboard driver (HID-usage map reused from `pl_phoenix_in.c`).
+- Type `a` on the USB keyboard; `xev -display :0` echoes press/release events.
+- **Exit:** pressing keys on the real USB keyboard produces visible X events.
 
-- Implement `usbmouse` driver per §4.3.
-- Extend evdev shim to handle mouse events too (`/dev/input/event1`).
+### Phase 5 — USB mouse (~days) — **usbmouse DONE; shares the kdrive input driver**
+
+> **UPDATED 2026-06-16:** `usbmouse`/`/dev/mouse0` already exists. No new
+> driver. The kdrive input driver from Phase 4 also opens `/dev/mouse0` and
+> calls `KdEnqueuePointerEvent`.
+
+- Extend the kdrive input driver to read `/dev/mouse0` (4-byte HID packets).
 - Plug a USB mouse, see the X cursor track.
 - **Exit:** mouse cursor visible and tracking on HDMI.
 
@@ -337,12 +401,14 @@ DejaVu Sans Mono.
 
 ## 7. Inter-dependencies
 
-| Dependency | Source | Why this plan needs it |
-|---|---|---|
-| **Stage-1 caches (M2)** | [`cache-mmu-smp-impl.md`](../done/cache-mmu-smp-impl.md) | Without caches, every X frame is rendered into uncached DRAM at fbcon speed (>10 min for 1080p in measured spike). Demo unwatchable. |
-| **`/dev/fb0` (M8)** | [`gpu-vc6-impl.md`](gpu-vc6-impl.md) | Xfbdev's only display target. |
-| **USB HID keyboard (M3)** | [`usb-xhci-impl.md`](../done/usb-xhci-impl.md) | Phase 4 input. |
-| **USB HID mouse (NEW, this plan §4.3)** | New | Phase 5 input. |
+**(UPDATED 2026-06-16: the first four rows are all DONE — see banner.)**
+
+| Dependency | Source | Status | Why this plan needs it |
+|---|---|---|---|
+| **Stage-1 caches (M2)** | [`cache-mmu-smp-impl.md`](../done/cache-mmu-smp-impl.md) | **DONE** (TD-16) | Frames render into cacheable DRAM at speed. |
+| **`/dev/fb0`** | `phoenix-rtos-devices/video/rpi4-fb/` | **DONE** | The X server's display target (shadow-FB + `write()`-blit). |
+| **USB HID keyboard** | `phoenix-rtos-devices/tty/usbkbd/` (raw HID mode) | **DONE** | Keyboard input via kdrive input driver. |
+| **USB HID mouse** | `phoenix-rtos-devices/usb/usbmouse/` | **DONE** | Pointer input (same kdrive input driver). |
 | **SDHCI + FAT/ext2 (M4)** | [`scope-pi4-uncovered.md` §2.1, §2.2](../knowledge/scope-pi4-uncovered.md) | X assets (~10 MB) don't fit syspage. Phase 6/7 fully blocked without it. |
 | **Companion Phoenix PRs** | kernel#572 sockets, kernel#596 graphmode, devices#515 fbcon, ports#88 libpng | All listed in PR #82's description. |
 
@@ -357,23 +423,28 @@ This plan **does not** require:
 
 ## 8. Effort estimate
 
-Per-phase at 1 dev-FTE, assuming all upstream prereqs are met:
+Per-phase at 1 dev-FTE. **(UPDATED 2026-06-16: the OS prereqs (caches, fb0,
+USB HID kbd+mouse) are all DONE, so the critical path no longer runs through
+them — the remaining cost is the X11 library port + the kdrive backend.
+Phases 4/5 shrink because raw-HID input + usbmouse already exist; Phase 1
+grows because the whole X11 stack is net-new, not a PR #82 cherry-pick.)**
 
-| Phase | Best | Likely | Worst |
-|---|---|---|---|
-| 1 — port skeleton + audit | 3 d | 1 wk | 2 wk |
-| 2 — Xfbdev stub fb | 3 d | 1 wk | 1.5 wk |
-| 3 — real fb on HDMI | 1 d | 3 d | 1 wk |
-| 4 — keyboard (incl. evdev shim) | 1 wk | 1.5 wk | 3 wk |
-| 5 — USB mouse | 4 d | 1 wk | 2 wk |
-| 6 — xclock client | 1 d | 3 d | 1 wk |
-| 7 — twm + st + psh-in-window | 1 wk | 1.5 wk | 3 wk |
-| **Total** | **~3.5 wk** | **~5-6 wk** | **~12 wk** |
+| Phase | Best | Likely | Worst | Note |
+|---|---|---|---|---|
+| 1 — port the X11 lib stack + audit | 2 wk | 4 wk | 8 wk | net-new (no PR #82); biggest item |
+| 2 — Xfbdev stub fb | 3 d | 1 wk | 1.5 wk | |
+| 3 — real fb on HDMI (kdrive fbdev backend) | 2 d | 4 d | 1 wk | fb0 done; backend small |
+| 4 — keyboard (kdrive input driver) | 2 d | 4 d | 1 wk | raw HID + reference exist |
+| 5 — USB mouse (same driver) | 1 d | 2 d | 4 d | usbmouse done |
+| 6 — xclock client | 1 d | 3 d | 1 wk | |
+| 7 — twm + xterm/st + psh-in-window | 1 wk | 1.5 wk | 3 wk | |
+| **Total** | **~4 wk** | **~6–10 wk** | **~16 wk** | software X |
 
-Most cost is plumbing (evdev shim, mouse driver, asset packaging),
-not tinyx itself. Critical path from today: **M2 caches → M3 USB HID
-→ M4 SDHCI+FS → M8 /dev/fb0 → tinyx Phases 1-7** — even optimistic
-~4-6 months at 1 FTE.
+Most cost is now the X11 **library port** (Phase 1), not the input/fb
+plumbing the original plan worried about. Critical path from today:
+**X11 lib stack → kdrive fbdev backend → kdrive input driver → twm + xterm**.
+GPU-accelerated X is a separate, much larger effort — see
+[`2026-06-16-x11-accelerated-desktop-plan.md`](../inprogress/2026-06-16-x11-accelerated-desktop-plan.md).
 
 ---
 
@@ -383,9 +454,16 @@ not tinyx itself. Critical path from today: **M2 caches → M3 USB HID
    MIT-flavoured but per-component COPYING varies (libXaw, xbill,
    etc.). Audit each component before public release per
    [`docs/knowledge/code-quality-and-upstreaming.md`](../knowledge/code-quality-and-upstreaming.md).
-2. **Hardware-accel via Mesa shim.** GPU Tier 3 in
-   [`gpu-vc6-impl.md` §10](gpu-vc6-impl.md) (V3D/Mesa) would unlock
-   GLX/DRI for a future Xorg-modesetting server. Deferred past v1.0.
+2. **Hardware-accel via Mesa shim.** ~~Deferred past v1.0.~~
+   **UPDATED 2026-06-16:** the Mesa gallium v3d driver + GL frontend now
+   render accelerated GL on the real V3D (GL Quake runs). **However**, the
+   winsys is per-process, no-DRM, synchronous, and single-client (it
+   reprograms the V3D's one MMU base register to its own page table on
+   init), so it does **not** drop in as X-server GPU acceleration. The full
+   feasibility analysis — Glamor, EGL, single-client GPU arbitration, and
+   why **software X remains the practical ceiling** — is the dedicated
+   companion study
+   [`2026-06-16-x11-accelerated-desktop-plan.md`](../inprogress/2026-06-16-x11-accelerated-desktop-plan.md).
 3. **Window manager choice.** `twm` (MIT) vs `dwm` (GPL-2.0,
    single C file). Public-demo license argues for twm.
 4. **Tinyx vs Wayland.** Tinyx ships in PR #82 today; Wayland would
