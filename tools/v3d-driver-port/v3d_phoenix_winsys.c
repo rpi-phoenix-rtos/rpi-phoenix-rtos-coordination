@@ -115,6 +115,9 @@ static struct {
 	uint32_t next_gpuva;
 	uint32_t binovf_gpuva;    /* persistent binner-overflow pool GPU VA (0 = none) */
 	uint32_t binovf_bytes;    /* its size in bytes */
+	uint32_t scanout_pa;      /* HDMI framebuffer physical addr (0 = unavailable) */
+	uint32_t scanout_bytes;   /* its byte size (pitch*height) */
+	int      scanout_claimed; /* only one BO may alias the single scanout surface */
 	struct pbo bos[MAX_BOS];
 	uint32_t nbos;            /* high-water mark of slots ever used */
 	struct vahole holes[MAX_HOLES];
@@ -177,6 +180,19 @@ static int winsys_init(void)
 
 	W.inited = 1;
 	return 0;
+}
+
+/* Tell the winsys where the HDMI scanout framebuffer lives (PA + byte size). Called by
+ * the present layer (which owns /dev/fb0 and queries RPI4FB_GETMODE) before any rendering.
+ * A render target backed by this PA lets the GPU raster-store straight to the displayed
+ * framebuffer — no glReadPixels/blit/fb0 CPU copies (render-to-scanout). Kept out of the
+ * Mesa-context winsys build's platformctl path (a stale sysroot platform.h there lacks the
+ * graphmode.height field), so the caller passes the values it already has. */
+void v3d_phoenix_set_scanout(uint32_t pa, uint32_t bytes);
+void v3d_phoenix_set_scanout(uint32_t pa, uint32_t bytes)
+{
+	W.scanout_pa = pa;
+	W.scanout_bytes = bytes;
 }
 
 static struct pbo *bo_find(uint32_t handle)
@@ -244,23 +260,57 @@ static int ioc_create_bo(struct drm_v3d_create_bo *c)
 			"Grow GPUVA_PT_PAGES or check for a BO leak.\n", pages, (GPUVA_PT_PAGES*4u));
 		return -ENOMEM;
 	}
-	/* Default: uncached contiguous DMA memory. A cacheable BO (flags bit 0 =
-	 * V3D_CREATE_BO_CACHEABLE, set by Mesa for CPU-read-back-only render targets)
-	 * drops MAP_UNCACHED so the CPU readback hits cache; Mesa invalidates it
-	 * (dc ivac) before each read. Keeps MAP_CONTIGUOUS for the flat V3D MMU. */
-	int mapflags = MAP_CONTIGUOUS | MAP_ANONYMOUS;
-	if ((c->flags & 0x1u) == 0u)
-		mapflags |= MAP_UNCACHED;
-	cpu = mmap(NULL, pages*_PAGE_SIZE, PROT_READ|PROT_WRITE, mapflags, -1, 0);
-	if (cpu==MAP_FAILED) { va_free(gpuva, pages); return -ENOMEM; }
-	pa = (uintptr_t)va2pa(cpu);
-	/* Map each page by its ACTUAL physical address rather than assuming pa+i.
-	 * MAP_CONTIGUOUS gives contiguous pages for uncached DMA, but a cacheable mapping
-	 * may not be physically contiguous — assuming pa+i would map the GPU to the wrong
-	 * pages (MMU fault / hang). Per-page va2pa is correct either way. */
-	for (uint32_t i=0;i<pages;i++) {
-		uintptr_t ppa = (uintptr_t)va2pa((char*)cpu + (size_t)i*_PAGE_SIZE);
-		W.pt[(gpuva>>PAGE_SHIFT)+i] = (uint32_t)(ppa>>PAGE_SHIFT)|PTE_W|PTE_V;
+	/* A SCANOUT BO (flags bit 1 = V3D_CREATE_BO_SCANOUT, set by Mesa for the
+	 * full-screen render target) is backed by the HDMI framebuffer's physical pages
+	 * instead of fresh DRAM: the GPU raster-stores straight to the displayed surface
+	 * (render-to-scanout), eliminating the per-frame glReadPixels/blit/fb0 CPU copies.
+	 * The scanout PA is physically contiguous, so map it pa+i. */
+	if ((c->flags & 0x2u) && W.scanout_pa && !W.scanout_claimed) {
+		/* Back the visible rows with the scanout framebuffer's physical pages so the GPU
+		 * stores straight to screen. The RT BO is a little larger than the fb (V3D stores
+		 * tile-aligned rows — 1088 for a 1080 RT — plus driver padding); those extra rows
+		 * are never displayed, so map them to fresh scratch DRAM (allocated as the BO's CPU
+		 * view) instead of past the end of the fb. */
+		uint32_t scanout_pages = W.scanout_bytes / _PAGE_SIZE;
+		if (scanout_pages > pages) scanout_pages = pages;
+		cpu = mmap(NULL, pages*_PAGE_SIZE, PROT_READ|PROT_WRITE,
+			MAP_CONTIGUOUS|MAP_UNCACHED|MAP_ANONYMOUS, -1, 0);
+		if (cpu==MAP_FAILED) { va_free(gpuva, pages); return -ENOMEM; }
+		pa = W.scanout_pa;
+		for (uint32_t i=0;i<pages;i++) {
+			uint32_t pfn = (i < scanout_pages)
+				? (W.scanout_pa>>PAGE_SHIFT)+i
+				: (uint32_t)((uintptr_t)va2pa((char*)cpu + (size_t)i*_PAGE_SIZE) >> PAGE_SHIFT);
+			W.pt[(gpuva>>PAGE_SHIFT)+i] = pfn|PTE_W|PTE_V;
+		}
+		W.scanout_claimed = 1;
+		fprintf(stderr, "v3d-winsys: RT scanout PA 0x%08x gpuva 0x%x, %u/%u pages to scanout "
+			"(%u scratch) — render-to-scanout\n",
+			W.scanout_pa, gpuva, scanout_pages, pages, pages-scanout_pages);
+	}
+	else {
+		/* Default: uncached contiguous DMA memory. A cacheable BO (flags bit 0 =
+		 * V3D_CREATE_BO_CACHEABLE, set by Mesa for CPU-read-back-only render targets)
+		 * drops MAP_UNCACHED so the CPU readback hits cache; Mesa invalidates it
+		 * (dc ivac) before each read. Keeps MAP_CONTIGUOUS for the flat V3D MMU. */
+		int mapflags = MAP_CONTIGUOUS | MAP_ANONYMOUS;
+		if ((c->flags & 0x1u) == 0u)
+			mapflags |= MAP_UNCACHED;
+		cpu = mmap(NULL, pages*_PAGE_SIZE, PROT_READ|PROT_WRITE, mapflags, -1, 0);
+		if (cpu==MAP_FAILED) {
+			fprintf(stderr, "v3d-winsys: BO mmap FAILED (%u pages, %u KiB, flags 0x%x)\n",
+				pages, pages*_PAGE_SIZE/1024u, c->flags);
+			va_free(gpuva, pages); return -ENOMEM;
+		}
+		pa = (uintptr_t)va2pa(cpu);
+		/* Map each page by its ACTUAL physical address rather than assuming pa+i.
+		 * MAP_CONTIGUOUS gives contiguous pages for uncached DMA, but a cacheable mapping
+		 * may not be physically contiguous — assuming pa+i would map the GPU to the wrong
+		 * pages (MMU fault / hang). Per-page va2pa is correct either way. */
+		for (uint32_t i=0;i<pages;i++) {
+			uintptr_t ppa = (uintptr_t)va2pa((char*)cpu + (size_t)i*_PAGE_SIZE);
+			W.pt[(gpuva>>PAGE_SHIFT)+i] = (uint32_t)(ppa>>PAGE_SHIFT)|PTE_W|PTE_V;
+		}
 	}
 
 	struct pbo *b = &W.bos[slot];
@@ -370,6 +420,12 @@ static int ioc_get_param(struct drm_v3d_get_param *gp)
 	default: gp->value = 0; return 0;
 	}
 }
+
+/* True once the full-screen render target has been backed by the scanout framebuffer
+ * (render-to-scanout). The present layer queries this to skip the CPU readback/blit/fb0
+ * copies — the GPU already wrote the displayed surface. */
+int v3d_phoenix_scanout_active(void);
+int v3d_phoenix_scanout_active(void) { return W.scanout_claimed; }
 
 /* The single entry the libdrm shim's drmIoctl() dispatches into. */
 int phoenix_v3d_ioctl(int fd, unsigned long request, void *arg);

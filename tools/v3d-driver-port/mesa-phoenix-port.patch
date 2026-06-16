@@ -1,8 +1,8 @@
 diff --git a/src/gallium/drivers/v3d/v3d_bufmgr.c b/src/gallium/drivers/v3d/v3d_bufmgr.c
-index e82fd069b18..55a2df87dc9 100644
+index e82fd069b18..0eed759e4e0 100644
 --- a/src/gallium/drivers/v3d/v3d_bufmgr.c
 +++ b/src/gallium/drivers/v3d/v3d_bufmgr.c
-@@ -117,9 +117,17 @@ v3d_bo_from_cache(struct v3d_screen *screen, uint32_t size, const char *name)
+@@ -117,9 +117,18 @@ v3d_bo_from_cache(struct v3d_screen *screen, uint32_t size, const char *name)
  
  struct v3d_bo *
  v3d_bo_alloc(struct v3d_screen *screen, uint32_t size, const char *name)
@@ -17,21 +17,22 @@ index e82fd069b18..55a2df87dc9 100644
          struct v3d_bo *bo;
          int ret;
 +        bool cacheable = (create_flags & V3D_CREATE_BO_CACHEABLE) != 0;
++        bool scanout = (create_flags & V3D_CREATE_BO_SCANOUT) != 0;
  
          /* The CLIF dumping requires that there is no whitespace in the name.
           */
-@@ -127,7 +135,9 @@ v3d_bo_alloc(struct v3d_screen *screen, uint32_t size, const char *name)
+@@ -127,7 +136,9 @@ v3d_bo_alloc(struct v3d_screen *screen, uint32_t size, const char *name)
  
          size = align(size, 4096);
  
 -        bo = v3d_bo_from_cache(screen, size, name);
 +        /* Cacheable BOs bypass the BO cache so they can never be reused as an
 +         * uncached GPU-read buffer (which would silently read stale CPU lines). */
-+        bo = cacheable ? NULL : v3d_bo_from_cache(screen, size, name);
++        bo = (cacheable || scanout) ? NULL : v3d_bo_from_cache(screen, size, name);
          if (bo) {
                  if (dump_stats) {
                          mesa_logd("Allocated %s %dkb from cache:", name, size / 1024);
-@@ -147,7 +157,8 @@ v3d_bo_alloc(struct v3d_screen *screen, uint32_t size, const char *name)
+@@ -147,7 +158,8 @@ v3d_bo_alloc(struct v3d_screen *screen, uint32_t size, const char *name)
          bo->private = true;
  
          struct drm_v3d_create_bo create = {
@@ -41,25 +42,27 @@ index e82fd069b18..55a2df87dc9 100644
          };
  
   retry:
-@@ -167,6 +178,7 @@ v3d_bo_alloc(struct v3d_screen *screen, uint32_t size, const char *name)
+@@ -167,6 +179,8 @@ v3d_bo_alloc(struct v3d_screen *screen, uint32_t size, const char *name)
  
          bo->handle = create.handle;
          bo->offset = create.offset;
 +        bo->cacheable = cacheable;
++        bo->scanout = scanout;
  
          screen->bo_count++;
          screen->bo_size += bo->size;
-@@ -277,7 +289,8 @@ v3d_bo_last_unreference_locked_timed(struct v3d_bo *bo, time_t time)
+@@ -277,7 +291,9 @@ v3d_bo_last_unreference_locked_timed(struct v3d_bo *bo, time_t time)
          struct v3d_bo_cache *cache = &screen->bo_cache;
          uint32_t page_index = bo->size / 4096 - 1;
  
 -        if (!bo->private) {
-+        if (!bo->private || bo->cacheable) {
-+                /* cacheable BOs must not enter the (uncached) BO cache. */
++        if (!bo->private || bo->cacheable || bo->scanout) {
++                /* cacheable / scanout BOs must not enter the (uncached) BO cache
++                 * (scanout aliases a fixed framebuffer PA). */
                  v3d_bo_free(bo);
                  return;
          }
-@@ -515,13 +528,10 @@ v3d_bo_map_unsynchronized(struct v3d_bo *bo)
+@@ -515,13 +531,10 @@ v3d_bo_map_unsynchronized(struct v3d_bo *bo)
                  abort();
          }
  
@@ -78,10 +81,10 @@ index e82fd069b18..55a2df87dc9 100644
  
          return bo->map;
 diff --git a/src/gallium/drivers/v3d/v3d_bufmgr.h b/src/gallium/drivers/v3d/v3d_bufmgr.h
-index 5363bf92fcb..5652f8d640c 100644
+index 5363bf92fcb..08325688c74 100644
 --- a/src/gallium/drivers/v3d/v3d_bufmgr.h
 +++ b/src/gallium/drivers/v3d/v3d_bufmgr.h
-@@ -54,10 +54,22 @@ struct v3d_bo {
+@@ -54,10 +54,29 @@ struct v3d_bo {
           * it's safe to reuse it in the BO cache).
           */
          bool private;
@@ -92,10 +95,17 @@ index 5363bf92fcb..5652f8d640c 100644
 +         * bypass the BO cache (they must not be reused as uncached GPU-read buffers)
 +         * and are invalidated (dc ivac) before each CPU read. */
 +        bool cacheable;
++
++        /* Phoenix: BO is backed by the HDMI scanout framebuffer's physical pages
++         * (render-to-scanout) — the GPU stores straight to the displayed surface, so
++         * there is no CPU readback/blit. Like cacheable, such a BO bypasses the BO
++         * cache (it aliases a fixed PA and must never be reused as a generic buffer). */
++        bool scanout;
  };
  
-+/* Phoenix: drm_v3d_create_bo.flags bit requesting a cacheable CPU mapping. */
++/* Phoenix: drm_v3d_create_bo.flags bits. */
 +#define V3D_CREATE_BO_CACHEABLE (1u << 0)
++#define V3D_CREATE_BO_SCANOUT   (1u << 1)
 +
  struct v3d_bo *v3d_bo_alloc(struct v3d_screen *screen, uint32_t size,
                              const char *name);
@@ -121,10 +131,10 @@ index bd4309c1e74..42f37eda323 100644
                          return;
                  }
 diff --git a/src/gallium/drivers/v3d/v3d_resource.c b/src/gallium/drivers/v3d/v3d_resource.c
-index 33df0d07be5..7b317407bad 100644
+index 33df0d07be5..9e073a401b1 100644
 --- a/src/gallium/drivers/v3d/v3d_resource.c
 +++ b/src/gallium/drivers/v3d/v3d_resource.c
-@@ -110,8 +110,35 @@ v3d_resource_bo_alloc(struct v3d_resource *rsc)
+@@ -110,8 +110,39 @@ v3d_resource_bo_alloc(struct v3d_resource *rsc)
           */
          uint32_t padding =
                  rsc->base.target == PIPE_BUFFER ? 4 : V3D_TFU_READAHEAD_SIZE;
@@ -150,19 +160,23 @@ index 33df0d07be5..7b317407bad 100644
 +         * (render-to-scanout / TFU-to-linear, after which a LINEAR CPU read would benefit
 +         * from caching). The cacheable infra (v3d_bo_alloc_flags + civac) is kept and proven
 +         * for that + the NFS GENET-RX path. See docs/inprogress/2026-06-15-td16-cache-enable-plan.md. */
-+        /* Phoenix: the full-screen color RT is forced RASTER (see should_tile) and is
-+         * GPU-written / CPU-read-back only — map it cacheable so the now-LINEAR readback
-+         * hits cache (a linear read benefits from caching, unlike the scattered tiled
-+         * detile). Invalidated (DC CIVAC) before the read in v3d_resource_transfer_map. */
++        /* Phoenix: the full-screen color RT is forced RASTER (see should_tile). RENDER-TO-
++         * SCANOUT: back it with the HDMI framebuffer's physical pages so the GPU raster-stores
++         * straight to the displayed surface — no per-frame glReadPixels/blit/fb0 CPU copies
++         * (those were the ~25ms readpx bottleneck at 1080p; the 8.3 MB RT exceeds the A72 L2 so
++         * even a cacheable readback is DRAM-bandwidth-bound). The winsys maps GPU VA -> scanout
++         * PA; coherency to the display is the existing per-submit SLCACTL + L2T flush. The
++         * cacheable-readback infra (v3d_bo_alloc_flags + civac) stays proven for the NFS GENET-RX
++         * path. See docs/inprogress/2026-06-15-td16-cache-enable-plan.md. */
 +        uint32_t create_flags =
 +                ((rsc->base.bind & PIPE_BIND_RENDER_TARGET) &&
-+                 rsc->base.width0 >= 1024 && rsc->base.height0 >= 768) ? V3D_CREATE_BO_CACHEABLE : 0;
++                 rsc->base.width0 >= 1024 && rsc->base.height0 >= 768) ? V3D_CREATE_BO_SCANOUT : 0;
 +        bo = v3d_bo_alloc_flags(v3d_screen(pscreen), rsc->size + padding,
 +                          "resource", create_flags);
          if (bo) {
                  v3d_bo_unreference(&rsc->bo);
                  rsc->bo = bo;
-@@ -256,6 +283,25 @@ v3d_map_usage_prep(struct pipe_context *pctx,
+@@ -256,6 +287,25 @@ v3d_map_usage_prep(struct pipe_context *pctx,
          }
  }
  
@@ -188,7 +202,7 @@ index 33df0d07be5..7b317407bad 100644
  static void *
  v3d_resource_transfer_map(struct pipe_context *pctx,
                            struct pipe_resource *prsc,
-@@ -316,6 +362,11 @@ v3d_resource_transfer_map(struct pipe_context *pctx,
+@@ -316,6 +366,11 @@ v3d_resource_transfer_map(struct pipe_context *pctx,
                  goto fail;
          }
  
@@ -200,7 +214,7 @@ index 33df0d07be5..7b317407bad 100644
          *pptrans = ptrans;
  
          /* Our load/store routines work on entire compressed blocks. */
-@@ -847,6 +898,14 @@ v3d_resource_create_with_modifiers(struct pipe_screen *pscreen,
+@@ -847,6 +902,14 @@ v3d_resource_create_with_modifiers(struct pipe_screen *pscreen,
          if (tmpl->bind & PIPE_BIND_SCANOUT)
                  should_tile = false;
  

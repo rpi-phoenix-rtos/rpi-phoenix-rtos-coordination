@@ -30,6 +30,21 @@
 #include <pthread.h>
 #include <time.h>
 #include <sys/ioctl.h>
+
+/* rpi4-fb client ABI (replicated to avoid a devices-tree include path); MUST match
+ * sources/phoenix-rtos-devices/video/rpi4-fb/rpi4-fb.h so the _IOR command number agrees. */
+typedef struct {
+	uint16_t width, height, bpp, pitch;
+	uint64_t smemlen;     /* framebuffer size in bytes (pitch*height) */
+	uint64_t framebuffer; /* physical base address */
+} rpi4fb_mode_t;
+#define RPI4FB_GETMODE _IOR('g', 1, rpi4fb_mode_t)
+
+/* winsys (v3d_phoenix_winsys.c): point render-to-scanout at the HDMI framebuffer, and
+ * query whether the full-screen RT actually got backed by it. */
+extern void v3d_phoenix_set_scanout(uint32_t pa, uint32_t bytes);
+extern int v3d_phoenix_scanout_active(void);
+#include <sys/ioctl.h>
 #include <phoenix/fbcon.h>
 
 /* GL context/FBO helpers (pl_phoenix_glctx.c) — plain C API, no Quake/Mesa types. */
@@ -171,6 +186,10 @@ static void present_blit(int idx)
 
 static void present_fb0(void)
 {
+	/* In render-to-scanout mode the GPU owns /dev/fb0; writing the CPU fbimg here would
+	 * clobber the rendered frame. (Guards the idle-refresh path if scanout engaged lazily.) */
+	if (v3d_phoenix_scanout_active())
+		return;
 	if (fbfd >= 0 && fbimg) {
 		lseek(fbfd, 0, SEEK_SET);
 		(void)write(fbfd, fbimg, (size_t)VID_W * VID_H * 4);
@@ -237,6 +256,26 @@ void VID_Init(void)
 		__asm__ volatile("dc civac, %0" :: "r"(&uci_probe[0]) : "memory");
 		__asm__ volatile("dsb ish" ::: "memory");
 		Sys_Printf("PL_VID: EL0 dc civac OK — SCTLR.UCI active (cacheable-DMA cache ops available)\n");
+	}
+
+	/* Open /dev/fb0 and hand the GPU winsys the scanout framebuffer's PA + size BEFORE
+	 * qsv3d_init creates the FBO — the full-screen render target is allocated during context
+	 * create, so the winsys must already know the scanout PA to back the RT with it
+	 * (render-to-scanout: GPU stores straight to screen, no CPU readback/blit). */
+	fbfd = open("/dev/fb0", O_WRONLY);
+	if (fbfd < 0)
+		Sys_Printf("VID_Init: /dev/fb0 open failed (rendering continues offscreen)\n");
+	if (fbfd >= 0) {
+		rpi4fb_mode_t mode;
+		if (ioctl(fbfd, RPI4FB_GETMODE, &mode) == 0 && mode.framebuffer != 0) {
+			v3d_phoenix_set_scanout((uint32_t)mode.framebuffer, (uint32_t)mode.smemlen);
+			Sys_Printf("VID_Init: scanout fb PA=0x%08x %ux%u pitch=%u size=%u\n",
+			           (uint32_t)mode.framebuffer, mode.width, mode.height,
+			           mode.pitch, (uint32_t)mode.smemlen);
+		}
+		else {
+			Sys_Printf("VID_Init: RPI4FB_GETMODE failed — render-to-scanout disabled\n");
+		}
 	}
 
 	if (qsv3d_init(VID_W, VID_H) != 0)
@@ -348,16 +387,17 @@ void VID_Init(void)
 		vid.fullbright = 256 - LittleLong(*((int *)vid.colormap + 2048));
 	}
 
+	/* Fallback CPU-present buffers (only used when render-to-scanout is NOT active). */
 	readbuf[0] = (uint32_t *)malloc((size_t)VID_W * VID_H * 4);
 	readbuf[1] = (uint32_t *)malloc((size_t)VID_W * VID_H * 4);
 	fbimg = (uint32_t *)malloc((size_t)VID_W * VID_H * 4);
 	if (fbimg)
 		memset(fbimg, 0, (size_t)VID_W * VID_H * 4);
-	fbfd = open("/dev/fb0", O_WRONLY);
-	if (fbfd < 0)
-		Sys_Printf("VID_Init: /dev/fb0 open failed (rendering continues offscreen)\n");
 
-	if (fbfd >= 0 && fbimg) {
+	/* Start the present/idle-refresh thread only in the fallback (CPU readback) path. With
+	 * render-to-scanout the GPU owns the framebuffer, so the idle-refresh would clobber it
+	 * with the (empty) fbimg — skip the thread entirely. */
+	if (fbfd >= 0 && fbimg && !v3d_phoenix_scanout_active()) {
 		reblit_run = 1;
 		pthread_create(&reblit_thread, NULL, reblit_fn, NULL);
 	}
@@ -411,30 +451,42 @@ void GL_EndRendering(void)
 	{ extern void qsv3d_bind_fbo(void); qsv3d_bind_fbo(); }  /* read from our FBO, not FB0 */
 	glReadBuffer(GL_COLOR_ATTACHMENT0);
 	ts_a = Sys_DoubleTime();
-	glFinish();
+	glFinish();   /* submit + synchronously render the frame */
 	ts_b = Sys_DoubleTime();
 
-	/* Don't refill a buffer the present thread is still reading. With the present thread
-	 * (~17 ms) faster than this thread's finish+readpx (~29 ms), this rarely blocks. */
-	pthread_mutex_lock(&present_lock);
-	while ((g_ready == cur) || (g_inflight == cur))
-		pthread_cond_wait(&present_cv, &present_lock);
-	pthread_mutex_unlock(&present_lock);
+	if (v3d_phoenix_scanout_active()) {
+		/* RENDER-TO-SCANOUT: the GPU rendered straight to the displayed framebuffer (its
+		 * RT BO is backed by the scanout PA); the per-submit SLCACTL + L2T flush already
+		 * pushed the stores to DRAM. No CPU readback / blit / fb0 write — the frame is
+		 * on screen. Render-thread cost is glFinish alone. */
+		ts_c = ts_b;
+		ts_d = ts_b;
+	}
+	else {
+		/* Fallback (scanout unavailable): copy the FBO out and present via the CPU pipeline. */
 
-	glReadPixels(0, 0, vid.width, vid.height, GL_RGBA, GL_UNSIGNED_BYTE, readbuf[cur]);
-	ts_c = Sys_DoubleTime();
+		/* Don't refill a buffer the present thread is still reading. With the present thread
+		 * (~17 ms) faster than this thread's finish+readpx (~29 ms), this rarely blocks. */
+		pthread_mutex_lock(&present_lock);
+		while ((g_ready == cur) || (g_inflight == cur))
+			pthread_cond_wait(&present_cv, &present_lock);
+		pthread_mutex_unlock(&present_lock);
 
-	/* Hand the filled buffer to the present thread; it does the y-flip+gamma blit and the
-	 * /dev/fb0 write on another core, overlapping with this thread's NEXT frame. */
-	pthread_mutex_lock(&present_lock);
-	while (g_ready >= 0)
-		pthread_cond_wait(&present_cv, &present_lock);
-	g_ready = cur;
-	pthread_cond_signal(&present_cv);
-	pthread_mutex_unlock(&present_lock);
-	cur ^= 1;
+		glReadPixels(0, 0, vid.width, vid.height, GL_RGBA, GL_UNSIGNED_BYTE, readbuf[cur]);
+		ts_c = Sys_DoubleTime();
 
-	ts_d = Sys_DoubleTime();
+		/* Hand the filled buffer to the present thread; it does the y-flip+gamma blit and the
+		 * /dev/fb0 write on another core, overlapping with this thread's NEXT frame. */
+		pthread_mutex_lock(&present_lock);
+		while (g_ready >= 0)
+			pthread_cond_wait(&present_cv, &present_lock);
+		g_ready = cur;
+		pthread_cond_signal(&present_cv);
+		pthread_mutex_unlock(&present_lock);
+		cur ^= 1;
+
+		ts_d = Sys_DoubleTime();
+	}
 
 	/* Frame-rate + main-thread attribution self-log (UART). The blit + fb0 write now run on
 	 * the present thread (off this thread), so the render-thread frame is finish + readpx +
