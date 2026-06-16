@@ -210,12 +210,24 @@ static int ioc_create_bo(struct drm_v3d_create_bo *c)
 			"Grow GPUVA_PT_PAGES or check for a BO leak.\n", pages, (GPUVA_PT_PAGES*4u));
 		return -ENOMEM;
 	}
-	cpu = mmap(NULL, pages*_PAGE_SIZE, PROT_READ|PROT_WRITE,
-		MAP_UNCACHED|MAP_CONTIGUOUS|MAP_ANONYMOUS, -1, 0);
+	/* Default: uncached contiguous DMA memory. A cacheable BO (flags bit 0 =
+	 * V3D_CREATE_BO_CACHEABLE, set by Mesa for CPU-read-back-only render targets)
+	 * drops MAP_UNCACHED so the CPU readback hits cache; Mesa invalidates it
+	 * (dc ivac) before each read. Keeps MAP_CONTIGUOUS for the flat V3D MMU. */
+	int mapflags = MAP_CONTIGUOUS | MAP_ANONYMOUS;
+	if ((c->flags & 0x1u) == 0u)
+		mapflags |= MAP_UNCACHED;
+	cpu = mmap(NULL, pages*_PAGE_SIZE, PROT_READ|PROT_WRITE, mapflags, -1, 0);
 	if (cpu==MAP_FAILED) { va_free(gpuva, pages); return -ENOMEM; }
 	pa = (uintptr_t)va2pa(cpu);
-	for (uint32_t i=0;i<pages;i++)
-		W.pt[(gpuva>>PAGE_SHIFT)+i] = (uint32_t)((pa>>PAGE_SHIFT)+i)|PTE_W|PTE_V;
+	/* Map each page by its ACTUAL physical address rather than assuming pa+i.
+	 * MAP_CONTIGUOUS gives contiguous pages for uncached DMA, but a cacheable mapping
+	 * may not be physically contiguous — assuming pa+i would map the GPU to the wrong
+	 * pages (MMU fault / hang). Per-page va2pa is correct either way. */
+	for (uint32_t i=0;i<pages;i++) {
+		uintptr_t ppa = (uintptr_t)va2pa((char*)cpu + (size_t)i*_PAGE_SIZE);
+		W.pt[(gpuva>>PAGE_SHIFT)+i] = (uint32_t)(ppa>>PAGE_SHIFT)|PTE_W|PTE_V;
+	}
 
 	struct pbo *b = &W.bos[slot];
 	b->used = 1;

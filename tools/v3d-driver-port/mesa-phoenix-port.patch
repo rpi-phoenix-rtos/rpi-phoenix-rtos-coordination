@@ -1,8 +1,65 @@
 diff --git a/src/gallium/drivers/v3d/v3d_bufmgr.c b/src/gallium/drivers/v3d/v3d_bufmgr.c
-index e82fd069b18..f3c32e2c83e 100644
+index e82fd069b18..55a2df87dc9 100644
 --- a/src/gallium/drivers/v3d/v3d_bufmgr.c
 +++ b/src/gallium/drivers/v3d/v3d_bufmgr.c
-@@ -515,13 +515,10 @@ v3d_bo_map_unsynchronized(struct v3d_bo *bo)
+@@ -117,9 +117,17 @@ v3d_bo_from_cache(struct v3d_screen *screen, uint32_t size, const char *name)
+ 
+ struct v3d_bo *
+ v3d_bo_alloc(struct v3d_screen *screen, uint32_t size, const char *name)
++{
++        return v3d_bo_alloc_flags(screen, size, name, 0);
++}
++
++struct v3d_bo *
++v3d_bo_alloc_flags(struct v3d_screen *screen, uint32_t size, const char *name,
++                   uint32_t create_flags)
+ {
+         struct v3d_bo *bo;
+         int ret;
++        bool cacheable = (create_flags & V3D_CREATE_BO_CACHEABLE) != 0;
+ 
+         /* The CLIF dumping requires that there is no whitespace in the name.
+          */
+@@ -127,7 +135,9 @@ v3d_bo_alloc(struct v3d_screen *screen, uint32_t size, const char *name)
+ 
+         size = align(size, 4096);
+ 
+-        bo = v3d_bo_from_cache(screen, size, name);
++        /* Cacheable BOs bypass the BO cache so they can never be reused as an
++         * uncached GPU-read buffer (which would silently read stale CPU lines). */
++        bo = cacheable ? NULL : v3d_bo_from_cache(screen, size, name);
+         if (bo) {
+                 if (dump_stats) {
+                         mesa_logd("Allocated %s %dkb from cache:", name, size / 1024);
+@@ -147,7 +157,8 @@ v3d_bo_alloc(struct v3d_screen *screen, uint32_t size, const char *name)
+         bo->private = true;
+ 
+         struct drm_v3d_create_bo create = {
+-                .size = size
++                .size = size,
++                .flags = create_flags
+         };
+ 
+  retry:
+@@ -167,6 +178,7 @@ v3d_bo_alloc(struct v3d_screen *screen, uint32_t size, const char *name)
+ 
+         bo->handle = create.handle;
+         bo->offset = create.offset;
++        bo->cacheable = cacheable;
+ 
+         screen->bo_count++;
+         screen->bo_size += bo->size;
+@@ -277,7 +289,8 @@ v3d_bo_last_unreference_locked_timed(struct v3d_bo *bo, time_t time)
+         struct v3d_bo_cache *cache = &screen->bo_cache;
+         uint32_t page_index = bo->size / 4096 - 1;
+ 
+-        if (!bo->private) {
++        if (!bo->private || bo->cacheable) {
++                /* cacheable BOs must not enter the (uncached) BO cache. */
+                 v3d_bo_free(bo);
+                 return;
+         }
+@@ -515,13 +528,10 @@ v3d_bo_map_unsynchronized(struct v3d_bo *bo)
                  abort();
          }
  
@@ -20,6 +77,33 @@ index e82fd069b18..f3c32e2c83e 100644
          VG(VALGRIND_MALLOCLIKE_BLOCK(bo->map, bo->size, 0, false));
  
          return bo->map;
+diff --git a/src/gallium/drivers/v3d/v3d_bufmgr.h b/src/gallium/drivers/v3d/v3d_bufmgr.h
+index 5363bf92fcb..5652f8d640c 100644
+--- a/src/gallium/drivers/v3d/v3d_bufmgr.h
++++ b/src/gallium/drivers/v3d/v3d_bufmgr.h
+@@ -54,10 +54,22 @@ struct v3d_bo {
+          * it's safe to reuse it in the BO cache).
+          */
+         bool private;
++
++        /* Phoenix: CPU mapping is cacheable (vs the default uncached DMA mapping).
++         * Used only for GPU-written / CPU-read-back render targets so the CPU
++         * readback (detile) hits cache instead of crawling uncached DRAM. Such BOs
++         * bypass the BO cache (they must not be reused as uncached GPU-read buffers)
++         * and are invalidated (dc ivac) before each CPU read. */
++        bool cacheable;
+ };
+ 
++/* Phoenix: drm_v3d_create_bo.flags bit requesting a cacheable CPU mapping. */
++#define V3D_CREATE_BO_CACHEABLE (1u << 0)
++
+ struct v3d_bo *v3d_bo_alloc(struct v3d_screen *screen, uint32_t size,
+                             const char *name);
++struct v3d_bo *v3d_bo_alloc_flags(struct v3d_screen *screen, uint32_t size,
++                                  const char *name, uint32_t create_flags);
+ void v3d_bo_last_unreference(struct v3d_bo *bo);
+ void v3d_bo_last_unreference_locked_timed(struct v3d_bo *bo, time_t time);
+ struct v3d_bo *v3d_bo_open_name(struct v3d_screen *screen, uint32_t name);
 diff --git a/src/gallium/drivers/v3d/v3d_context.c b/src/gallium/drivers/v3d/v3d_context.c
 index bd4309c1e74..42f37eda323 100644
 --- a/src/gallium/drivers/v3d/v3d_context.c
@@ -36,6 +120,80 @@ index bd4309c1e74..42f37eda323 100644
                          *fence = NULL;
                          return;
                  }
+diff --git a/src/gallium/drivers/v3d/v3d_resource.c b/src/gallium/drivers/v3d/v3d_resource.c
+index 33df0d07be5..87014fd68ca 100644
+--- a/src/gallium/drivers/v3d/v3d_resource.c
++++ b/src/gallium/drivers/v3d/v3d_resource.c
+@@ -110,8 +110,29 @@ v3d_resource_bo_alloc(struct v3d_resource *rsc)
+          */
+         uint32_t padding =
+                 rsc->base.target == PIPE_BUFFER ? 4 : V3D_TFU_READAHEAD_SIZE;
+-        bo = v3d_bo_alloc(v3d_screen(pscreen), rsc->size + padding,
+-                          "resource");
++        /* Phoenix: a color render target that is NOT sampled is GPU-written and only
++         * ever CPU-read-back (glReadPixels) — never CPU-written and never GPU-read. Map
++         * it cacheable so the readback detile hits cache instead of crawling uncached
++         * DRAM (the dominant present-path cost). Excludes sampled textures + depth, which
++         * stay uncached so the GPU reads them coherently. Invalidated before CPU read in
++         * v3d_resource_transfer_map. */
++        /* Cacheable-readback for render targets (would cut the uncached glReadPixels
++         * detile, the dominant present-path cost) is DISABLED: making a GPU-rendered RT
++         * BO CPU-cacheable hangs the GPU/render after the first cacheable readback — a
++         * coherency wall (NOT contiguity: the BO is contiguous), pending a focused
++         * deep-dive. Re-enable by setting this to the RENDER_TARGET rule. See
++         * docs/inprogress/2026-06-15-td16-cache-enable-plan.md. */
++        /* Cacheable-readback for the tiled color RT is DISABLED: it works (with dc CIVAC;
++         * dc IVAC is EL1-only and traps at EL0) but gives NO speedup — measured readpx is
++         * identical cached vs uncached (~23ms). The cost is the detile's SCATTERED tiled
++         * read pattern (each output pixel from a non-contiguous tiled address -> no cache-
++         * line reuse), not the uncached read. The FPS lever must move the detile to the GPU
++         * (render-to-scanout / TFU-to-linear, after which a LINEAR CPU read would benefit
++         * from caching). The cacheable infra (v3d_bo_alloc_flags + civac) is kept and proven
++         * for that + the NFS GENET-RX path. See docs/inprogress/2026-06-15-td16-cache-enable-plan.md. */
++        uint32_t create_flags = 0;
++        bo = v3d_bo_alloc_flags(v3d_screen(pscreen), rsc->size + padding,
++                          "resource", create_flags);
+         if (bo) {
+                 v3d_bo_unreference(&rsc->bo);
+                 rsc->bo = bo;
+@@ -256,6 +277,25 @@ v3d_map_usage_prep(struct pipe_context *pctx,
+         }
+ }
+ 
++/* Phoenix: invalidate a cacheable BO's CPU cache lines so a following CPU read sees
++ * what the (non-coherent) GPU wrote to DRAM, not stale cache. The BO is page-aligned
++ * and page-sized, so the [base, base+size) range is cache-line aligned (no partial-line
++ * loss); and these BOs are CPU-read-only (never CPU-written), so invalidate is safe.
++ * Requires SCTLR_EL1.UCI=1 (EL0 cache maintenance), set by the kernel. */
++static void
++v3d_bo_invalidate_for_cpu_read(struct v3d_bo *bo)
++{
++        uintptr_t a = (uintptr_t)bo->map;
++        uintptr_t end = a + bo->size;
++        /* Use DC CIVAC (clean+invalidate), NOT DC IVAC: invalidate-only is EL1-privileged
++         * and traps at EL0 even with SCTLR.UCI=1 (UCI gates CVAU/CVAC/CVAP/CIVAC/IVAU, not
++         * IVAC). This BO is CPU-read-only so there are no dirty lines — the clean is a
++         * no-op and CIVAC's invalidate makes the next read fetch the GPU's DRAM data. */
++        for (; a < end; a += 64)
++                __asm__ volatile("dc civac, %0" :: "r"(a) : "memory");
++        __asm__ volatile("dsb ish" ::: "memory");
++}
++
+ static void *
+ v3d_resource_transfer_map(struct pipe_context *pctx,
+                           struct pipe_resource *prsc,
+@@ -316,6 +356,11 @@ v3d_resource_transfer_map(struct pipe_context *pctx,
+                 goto fail;
+         }
+ 
++        /* Phoenix: for a cacheable readback RT the GPU wrote DRAM non-coherently;
++         * invalidate stale CPU lines so the detile/copy below reads the new pixels. */
++        if ((usage & PIPE_MAP_READ) && rsc->bo->cacheable)
++                v3d_bo_invalidate_for_cpu_read(rsc->bo);
++
+         *pptrans = ptrans;
+ 
+         /* Our load/store routines work on entire compressed blocks. */
 diff --git a/src/gallium/drivers/v3d/v3dx_draw.c b/src/gallium/drivers/v3d/v3dx_draw.c
 index 1dc918d3e1f..c8654158546 100644
 --- a/src/gallium/drivers/v3d/v3dx_draw.c

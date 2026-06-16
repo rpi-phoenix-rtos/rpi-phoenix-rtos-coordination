@@ -707,3 +707,70 @@ from DRAM) sees them. **Incremental attended bring-up:** step 1 = import scanout
 GPU clear-to-color into it, confirm the color on HDMI (proves import + GPU-write-to-
 scanout + flush); step 2 = (A) point the FBO color store at it + render; step 3 = y-flip
 + gamma + (optional) double-buffer. Each step HDMI-verifiable + netboot-recoverable.
+
+## Policy B EXECUTION — step 1 DONE, step 2 ready (2026-06-16)
+
+**Step 1 (committed + HW-verified): SCTLR_EL1.UCI=1** (kernel hal/aarch64/_init.S) — one
+line, Linux-standard, enables EL0 cache maintenance. Proven: an EL0 `dc civac` selftest in
+rpi4-quake VID_Init runs without trapping ("PL_VID: EL0 dc civac OK"), boot clean, 0 faults.
+This + the discovery that **cacheable+contiguous = just drop MAP_UNCACHED** in the winsys
+mmap (the flag exists, kernel mman.h) collapse the earlier "attended-huge" verdict: the
+allocator + EL0-cache-op cruxes are both trivial.
+
+**Step 2 (designed, ready) — cacheable V3D readback (the readpx 23ms FPS lever):** the slow
+path is v3d_resource_transfer_map (v3d_resource.c:337) detiling from rsc->bo->map (UNCACHED)
+via v3d_load_tiled_image. Make ONLY the readback color RT cacheable + invalidate before the
+read. Exact edits:
+1. winsys ioc_create_bo (v3d_phoenix_winsys.c): honor a cacheable bit in drm_v3d_create_bo.flags
+   -> mmap WITHOUT MAP_UNCACHED (keep MAP_CONTIGUOUS). Record cacheable in struct pbo.
+2. Mesa v3d_bufmgr.c:119 v3d_bo_alloc + :154 the CREATE_BO ioctl: thread a `flags`/cacheable
+   param -> set create.flags; add `bool cacheable` to struct v3d_bo (v3d_bufmgr.h).
+3. Mesa v3d_resource.c:113 (BO alloc): cacheable = (prsc->bind & PIPE_BIND_RENDER_TARGET) &&
+   !(prsc->bind & PIPE_BIND_SAMPLER_VIEW) — selects the GPU-written/CPU-read-only readback RT;
+   EXCLUDES all sampled textures + depth (which stay uncached so GPU reads them fine). This is
+   the advisor's "strictly opt-in, don't leak onto GPU-read BOs".
+4. Mesa v3d_resource_transfer_map (v3d_resource.c, before the PIPE_MAP_READ detile at :337):
+   if rsc->bo->cacheable, `dc ivac` over [rsc->bo->map, +size) (64B-aligned loop) + dsb, so the
+   cached detile read fetches the GPU-written DRAM, not stale CPU lines.
+GATE (advisor): verify FRAME CORRECTNESS via the visual harness vs the known-good uncached
+frame (a coherency bug is fast AND wrong); confirm the per-submit SLCACTL flush actually pushes
+the color write to DRAM before glFinish (most likely stale-frame source). Expected: readpx
+23->~5ms -> frame ~12ms -> ~80fps, which would OBVIATE render-to-scanout (tell the user). Then
+step 3 = same pattern for GENET RX (NFS bandwidth), gated behind the nfs-smoke integrity check
+(NFS corruption is silent). Intricate multi-file Mesa change -> implement with fresh context.
+
+## Cacheable-DMA DEEP DIVE — hang cracked, readpx characterized (2026-06-16)
+
+Pushed the cacheable readback to completion. Findings:
+
+**1. The hang was a wrong cache instruction, NOT a coherency wall.** Making the V3D RT BO
+WB-cacheable + invalidating before the CPU readback hung after frame 0. Root cause: the
+invalidate used `DC IVAC` (invalidate-only) which is **EL1-privileged and traps at EL0
+even with SCTLR.UCI=1** — UCI gates DC CVAU/CVAC/CVAP/CIVAC + IC IVAU, NOT DC IVAC. The
+UCI selftest passed only because it used DC CIVAC. Fix: use **DC CIVAC** (clean+invalidate,
+EL0-allowed); for a CPU-read-only readback BO there's nothing dirty so the clean is a
+no-op. After the fix: no hang, frames progress, 0 faults.
+
+**2. Cacheable readback gives ZERO speedup for the tiled RT — readpx stays ~23ms.**
+Verified the mapping IS cacheable (kernel vm/map.c:541: only MAP_UNCACHED sets
+PGHD_NOT_CACHED; dropping it → MAIR_IDX_CACHED WB). Yet cached==uncached==23ms. So the
+cost is NOT the uncached read — it's `v3d_load_tiled_image`'s **scattered tiled access
+pattern** (each output pixel from a non-contiguous tiled source addr → no cache-line
+reuse → caching can't help). Also confirmed DC CIVAC over 3 MB/frame is negligible (readpx
+didn't rise). RT-cacheable therefore DISABLED (no benefit); infra kept.
+
+**3. Linux confirms the model:** v3d maps BOs **Write-Combine** (`map_wc`/pgprot_writecombine),
+never WB — and Phoenix's MAP_UNCACHED is already Normal-NC (= WC-equivalent). Linux never
+CPU-reads-back per frame; it scans out (KMS). So the readback architecture is the issue.
+
+**Proven + committed infra (foundation for the real levers):** SCTLR.UCI=1 (kernel);
+v3d_bo_alloc_flags + the V3D_CREATE_BO_CACHEABLE winsys flag (drop MAP_UNCACHED) +
+per-page va2pa mapping (robust, no contiguity assumption) + the DC CIVAC invalidate helper.
+All work with no hang.
+
+**Real FPS levers (next):** the detile must move to the GPU — (a) render to a RASTER/LINEAR
+RT (no detile; glReadPixels = linear copy; + cacheable → fast) — smallest change, but the
+GPU raster-store may cost some render time; (b) TFU-blit tiled→linear-cacheable then a fast
+linear CPU read; (c) render-to-scanout (no CPU read). All need GPU-side work. **Real NFS
+lever:** cacheable GENET RX — LINEAR buffers, read multiple times (checksum+copy), so
+caching DOES help there (unlike the scattered tiled detile); gated behind an integrity bench.
