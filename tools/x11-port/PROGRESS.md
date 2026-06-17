@@ -28,8 +28,11 @@ needs host internet; idempotent).
 | libXext 1.3.5 | ✅ builds | `libXext.a` |
 | libXrender 0.9.11 | ✅ builds | `libXrender.a` |
 | pixman 0.42.2 | ✅ builds (lib) | `libpixman-1.a` (3.1 MB) + `.pc`; only pixman's *test* `utils.c` fails (its `gettime` clashes with Phoenix's non-standard `sys/time.h` `gettime`), so build `make -C pixman install` |
-| libXfont2 / freetype / fontconfig | ⬜ next | font libs (or PCF bitmaps only for the MVD) |
-| kdrive Xfbdev server | ⬜ | the actual server; shadow-FB + `write()`-blit to `/dev/fb0` |
+| zlib 1.3.1 | ✅ builds | `libz.a` (libfontenc needs zlib.h) |
+| freetype 2.13.2 | ✅ builds | `libfreetype.a` (minimal: no zlib/png/harfbuzz/bzip2/brotli) |
+| libfontenc 1.1.8 | ✅ builds | `libfontenc.a` |
+| libXfont2 2.0.6 | ✅ compiles | `libXfont2.a` built + headers installed. Needed `-DO_NOFOLLOW=0`, `-DNOFILES_MAX=256`, `ac_cv_lib_m_hypot=yes` + libphoenix `hypot` (6e2b929). A font *tool* link needs the hypot symbol → resolves after the libphoenix rebuild. |
+| **kdrive Xfbdev server** | ⬜ next (big) | the actual server (xorg-server); shadow-FB + `write()`-blit to `/dev/fb0`. Needs the libphoenix rebuild first + heavy OS-integration. Multi-session. |
 
 ## Findings / cross-compile recipe (proven)
 
@@ -53,8 +56,16 @@ needs host internet; idempotent).
 - **getpwuid_r** added + **getpwnam_r** implemented (was a `return -1` stub) — proper
   POSIX-reentrant wrappers. libX11's `Xos_r.h` needs them on the MT-safe path.
 - **`sys/poll.h`** compat alias added (→ `<poll.h>`) — libX11's `Xpoll.h` includes it.
-- These ship in the on-device libc on the next image rebuild (additive; needed when the X
-  server eventually links/runs). The frozen flagship image is unaffected until then.
+- **hypot()/hypotf()** added to libm (`6e2b929`) — Phoenix's libm lacked them; libXfont2's
+  freetype font-matrix code calls hypot.
+- These ship in the on-device libc on the next libphoenix/image rebuild (additive; needed when
+  the X server eventually links/runs). The frozen flagship image is unaffected until then.
+
+> **STATUS 2026-06-18:** the ENTIRE X11 client + rendering + font library stack cross-compiles
+> for aarch64-phoenix — 36 archives in `/tmp/x11-phoenix/lib` (libX11, libxcb +24 exts, libXext,
+> libXrender, libXfont2, libfontenc, libfreetype, libpixman-1, libXau, libXdmcp, libz). Remaining:
+> (1) a libphoenix rebuild to put getpwnam_r/getpwuid_r/hypot/sys/poll.h into the on-device libc;
+> (2) the kdrive Xfbdev **server** (the big multi-session piece). Foundation is DONE + de-risked.
 
 ### libphoenix gaps noted (upstream-worthy, not yet fixed)
 

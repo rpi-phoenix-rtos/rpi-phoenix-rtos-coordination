@@ -120,10 +120,34 @@ if [ ! -f "$PREFIX/lib/libpixman-1.a" ]; then
 	  || echo "pixman-0.42.2: FAIL (see /tmp/pixman-*.log)"
 fi
 
-# --- next bricks (TODO) ---
-# font libs (libXfont2/freetype/fontconfig or PCF bitmaps for the MVD), then the kdrive Xfbdev
-# server (shadow-FB + write()-blit to /dev/fb0). NOTE: libphoenix getpwnam_r/getpwuid_r + sys/poll.h
-# must be in the on-device libc when the X server eventually links/runs (committed in libphoenix).
+# --- font tier (build for Phoenix as of 2026-06-18) ---
+# zlib (libfontenc needs zlib.h). zlib uses its own configure (not autotools --host).
+if [ ! -f "$PREFIX/lib/libz.a" ]; then
+	fetch_extract zlib-1.3.1 "https://zlib.net/fossils/zlib-1.3.1.tar.gz"
+	( cd "$SRC/zlib-1.3.1" && CC="${TC}gcc --sysroot=$SYSROOT" AR="${TC}ar" RANLIB="${TC}ranlib" \
+	  ./configure --prefix="$PREFIX" --static >/tmp/zlib-conf.log 2>&1 && make install >/tmp/zlib-build.log 2>&1 \
+	  && echo "zlib-1.3.1: OK" ) || echo "zlib-1.3.1: FAIL"
+fi
+# freetype (minimal — no external codec deps). libXfont2's scalable-font backend.
+xbuild freetype-2.13.2 "https://download.savannah.gnu.org/releases/freetype/freetype-2.13.2.tar.gz" \
+	"--without-zlib --without-png --without-harfbuzz --without-bzip2 --without-brotli"
+xbuild libfontenc-1.1.8 "$XBASE/lib/libfontenc-1.1.8.tar.gz"
+# libXfont2: server-side font lib. Needs the cross run-test cache + several Phoenix gaps:
+#   -DO_NOFOLLOW=0 (no symlinks), -DNOFILES_MAX=256 (missing limit), ac_cv_lib_m_hypot=yes.
+# The libXfont2.a archive BUILDS; only an in-tree font *tool* link needs the hypot symbol, which
+# lands in libm.a on the next libphoenix rebuild (hypot added in 6e2b929) — so the X server link
+# will resolve it. We install the .a + headers directly.
+XCFLAGS_EXTRA="-DO_NOFOLLOW=0 -DNOFILES_MAX=256" \
+xbuild libXfont2-2.0.6 "$XBASE/lib/libXfont2-2.0.6.tar.gz" \
+	"ac_cv_lib_m_hypot=yes xorg_cv_malloc0_returns_null=no" || true
+[ -f "$SRC/libXfont2-2.0.6/.libs/libXfont2.a" ] && cp "$SRC/libXfont2-2.0.6/.libs/libXfont2.a" "$PREFIX/lib/" \
+	&& ( cd "$SRC/libXfont2-2.0.6" && make install-data >/dev/null 2>&1 ) && echo "libXfont2-2.0.6: OK (lib + headers)"
+
+# --- next brick (the big one) ---
+# The kdrive Xfbdev server (xorg-server). Needs the on-device libc to carry the libphoenix
+# additions (getpwnam_r/getpwuid_r/hypot/sys/poll.h) — rebuild libphoenix first. Expect heavy
+# OS-integration work (kdrive backend, input via /dev/kbd0+/dev/mouse0, shadow-FB + write()-blit
+# to /dev/fb0) + a stream of further Phoenix libc gaps. This is the multi-session frontier.
 
 echo "=== installed X11 libs in $PREFIX/lib ==="
 ls "$PREFIX/lib/"*.a 2>/dev/null || echo "(none yet)"
