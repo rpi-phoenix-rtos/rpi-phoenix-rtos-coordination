@@ -350,30 +350,6 @@ index baa9196c674..9df86a2d90f 100644
          }
  
          v3d->dirty |= V3D_DIRTY_FRAMEBUFFER;
-diff --git a/src/util/detect_os.h b/src/util/detect_os.h
-index 74037240c74..09dfc69cd95 100644
---- a/src/util/detect_os.h
-+++ b/src/util/detect_os.h
-@@ -20,6 +20,19 @@
- #define DETECT_OS_POSIX 1
- #endif
- 
-+/*
-+ * Phoenix-RTOS (RPi4 V3DV port): the V3D driver is a Linux-DRM-ABI driver and the
-+ * Phoenix winsys emulates that ABI (see tools/v3d-driver-port/). Masquerade as Linux
-+ * so the LINUX||BSD-gated fields/paths (e.g. vk_image.drm_format_mod) compile. The
-+ * filesystem/syscall-flavored LINUX paths are boot-verified by the main agent; see
-+ * docs/inprogress/2026-06-17-vulkan-v3dv-tier0-progress.md. A dedicated
-+ * DETECT_OS_PHOENIX is a future upstream refactor.
-+ */
-+#if defined(__phoenix__)
-+#define DETECT_OS_LINUX 1
-+#define DETECT_OS_POSIX 1
-+#endif
-+
- /*
-  * Android defines __linux__, so DETECT_OS_LINUX and DETECT_OS_POSIX will
-  * also be defined.
 diff --git a/src/util/os_memory_aligned.h b/src/util/os_memory_aligned.h
 index 98b3cd6f8d8..16de49d8b28 100644
 --- a/src/util/os_memory_aligned.h
@@ -394,3 +370,47 @@ index 98b3cd6f8d8..16de49d8b28 100644
  #if defined(HAVE_POSIX_MEMALIGN)
  
  static inline void *
+diff --git a/src/vulkan/runtime/vk_image.c b/src/vulkan/runtime/vk_image.c
+index f5e67646c61..ef483d79d5d 100644
+--- a/src/vulkan/runtime/vk_image.c
++++ b/src/vulkan/runtime/vk_image.c
+@@ -23,7 +23,7 @@
+ 
+ #include "vk_image.h"
+ 
+-#if DETECT_OS_LINUX || DETECT_OS_BSD
++#if DETECT_OS_LINUX || DETECT_OS_BSD || defined(__phoenix__) /* Phoenix V3DV: emulates the Linux DRM ABI; keep drm_format_mod */
+ #include <drm-uapi/drm_fourcc.h>
+ #endif
+ 
+@@ -96,7 +96,7 @@ vk_image_init(struct vk_device *device,
+       vk_find_struct_const(pCreateInfo->pNext, WSI_IMAGE_CREATE_INFO_MESA);
+    image->wsi_legacy_scanout = wsi_info && wsi_info->scanout;
+ 
+-#if DETECT_OS_LINUX || DETECT_OS_BSD
++#if DETECT_OS_LINUX || DETECT_OS_BSD || defined(__phoenix__) /* Phoenix V3DV: emulates the Linux DRM ABI; keep drm_format_mod */
+    image->drm_format_mod = ((1ULL << 56) - 1) /* DRM_FORMAT_MOD_INVALID */;
+ #endif
+ 
+@@ -176,7 +176,7 @@ vk_image_destroy(struct vk_device *device,
+    vk_object_free(device, alloc, image);
+ }
+ 
+-#if DETECT_OS_LINUX || DETECT_OS_BSD
++#if DETECT_OS_LINUX || DETECT_OS_BSD || defined(__phoenix__) /* Phoenix V3DV: emulates the Linux DRM ABI; keep drm_format_mod */
+ VKAPI_ATTR VkResult VKAPI_CALL
+ vk_common_GetImageDrmFormatModifierPropertiesEXT(UNUSED VkDevice device,
+                                                  VkImage _image,
+diff --git a/src/vulkan/runtime/vk_image.h b/src/vulkan/runtime/vk_image.h
+index c8db60a1ba9..6a6a087ac4e 100644
+--- a/src/vulkan/runtime/vk_image.h
++++ b/src/vulkan/runtime/vk_image.h
+@@ -76,7 +76,7 @@ struct vk_image {
+    /* wsi_image_create_info::scanout */
+    bool wsi_legacy_scanout;
+ 
+-#if DETECT_OS_LINUX || DETECT_OS_BSD
++#if DETECT_OS_LINUX || DETECT_OS_BSD || defined(__phoenix__) /* Phoenix V3DV: emulates the Linux DRM ABI; keep drm_format_mod */
+    /* VK_EXT_drm_format_modifier
+     *
+     * Initialized by vk_image_create/init() to DRM_FORMAT_MOD_INVALID.  It's

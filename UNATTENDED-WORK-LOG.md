@@ -50,7 +50,7 @@ This file is my running log + the decisions/parked items for you to review.
   PWM_CTL=0xa1a1 (PWEN1/2 + M/S + FIFO), 0 faults. write()=s16 PCM→FIFO (PIO).
   REMAINING (autonomous): DMA streaming (P3), a Quakespasm snd backend → /dev/audio0.
   ATTENDED (you, Fri): plug headphones, confirm audible (P2 tone / WAV / Quake sound).
-- ✅ **Vulkan V3DV Tier 0 DONE** (external/mesa 7b12e80, coord 9da241f). V3DV +
+- ✅ **Vulkan V3DV Tier 0 DONE** (external/mesa dbd03bef831, coord 9da241f). V3DV +
   Vulkan runtime + spirv_to_nir compile+link for aarch64-phoenix, harness 0 undefined
   symbols. Reuses the GL backend libv3d. NEXT: Tier 1 = boot the harness, vkCreateDevice
   on real HW (doc 2026-06-17-vulkan-v3dv-tier0-progress.md has the steps).
