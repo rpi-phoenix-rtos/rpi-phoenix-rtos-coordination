@@ -69,6 +69,29 @@ writes the RT's native bytes straight to the fb → byte0=B shown as red → tea
 The render is correct, so this is display-only and does not affect the fps result
 or the harness's render-correctness verdict.
 
+## Bugs 2 + 3 — UNIFIED ROOT CAUSE: GL_QUADS particles wedge the V3D — **FIXED 2026-06-17**
+
+The explosion square (Bug 2) AND the render stall (Bug 3) are the SAME root cause:
+the **immediate-mode GL_QUADS particle path** (`r_quadparticles 1`). Decisive tests:
+`r_particles 0` → 0 timeouts + demos reach demo3 (never before); `r_particles 1` +
+`r_quadparticles 0` (GL_TRIANGLES) → also 0 timeouts, particles ON, demo3, particles
+render correctly (torch flame, no square). So GL_QUADS is the trigger; GL_TRIANGLES
+is clean. Mechanism: V3D has no native quads, so the quad→triangle index conversion
+of the immediate-mode batch hits the same "V3D needs bound indices" path that broke
+world rendering — the bin AND render control threads wedge (QPUs active, no MMU/GMP
+fault) on heavy particle batches.
+
+**FIX (committed):** default `r_quadparticles` to "0" in external/quakespasm
+`r_part.c` (GL_TRIANGLES particles). Also fixed the export config.cfg's archived
+`r_quadparticles "1"` → "0" (CVAR_ARCHIVE would otherwise override the default).
+VALIDATED: 2 clean boots, demos demo1→demo3, particles enabled, colors correct,
+square gone, 0 faults, ~40fps. (Diagnostic note: the winsys timeout dumps were
+reading the WRONG CLE registers — 0x118/0x11c instead of CT0CA=0x110/CT1CA=0x114,
+CT1CS=0x104; corrected + added GMP_STATUS(0x800). The corrected dump is what
+localized the wedge to a per-tile sublist with QPUs active = a draw that never
+completes, pointing at the particle geometry.)
+
+### Original Bug 3 notes (kept for reference)
 ## Bug 3 — intermittent RENDER TIMEOUT in complex scenes (NEW, 2026-06-17)
 
 Observed after the color fix but likely independent of it. Same swap_color_rb image

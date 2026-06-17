@@ -383,10 +383,10 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
 			}
 		}
 		if (spins == 0) {
-			fprintf(stderr, "v3d-winsys: BIN TIMEOUT int_sts=0x%08x ct0ca=0x%08x "
-				"mmu_ill=0x%08x ovf_armed=%d (gpuva=0x%x sz=%u)\n",
-				c0[CTL_INT_STS/4], c0[0x0118/4], W.hub[MMU_ILLEGAL_ADDR/4],
-				ovf_armed, W.binovf_gpuva, W.binovf_bytes);
+			fprintf(stderr, "v3d-winsys: BIN TIMEOUT int_sts=0x%08x ct0cs=0x%08x "
+				"ct0ca=0x%08x[%x..%x] gmp=0x%08x gmpvio=0x%08x mmu_ill=0x%08x ovf_armed=%d\n",
+				c0[CTL_INT_STS/4], c0[0x0100/4], c0[0x0110/4], s->bcl_start, s->bcl_end,
+				c0[0x0800/4], c0[0x0808/4], W.hub[MMU_ILLEGAL_ADDR/4], ovf_armed);
 		}
 	}
 	c0[CTL_INT_CLR/4]=INT_FLDONE|INT_FRDONE;
@@ -395,8 +395,14 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
 	c0[CLE_CT1QBA/4]=s->rcl_start; c0[CLE_CT1QEA/4]=s->rcl_end;
 	for (spins=16000000u; spins && !(c0[CTL_INT_STS/4]&INT_FRDONE); spins--) {}
 	if (spins == 0) {
-		fprintf(stderr, "v3d-winsys: RENDER TIMEOUT int_sts=0x%08x ct1ca=0x%08x mmu_ill=0x%08x\n",
-			c0[CTL_INT_STS/4], c0[0x011c/4], W.hub[MMU_ILLEGAL_ADDR/4]);
+		uint32_t ca1 = c0[0x0114/4];
+		fprintf(stderr, "v3d-winsys: RENDER TIMEOUT int_sts=0x%08x ct1cs=0x%08x "
+			"ct1ca=0x%08x[%x..%x] ct1ea=0x%08x gmp=0x%08x gmpvio=0x%08x mmu_ill=0x%08x\n",
+			c0[CTL_INT_STS/4], c0[0x0104/4], ca1, s->rcl_start, s->rcl_end,
+			c0[0x010c/4], c0[0x0800/4], c0[0x0808/4], W.hub[MMU_ILLEGAL_ADDR/4]);
+		/* re-read CT1CA to see if it is advancing (slow) or wedged (stall) */
+		(void)ca1;
+		fprintf(stderr, "v3d-winsys: RENDER ct1ca recheck=0x%08x\n", c0[0x0114/4]);
 	}
 	/* L2T flush so RT stores reach RAM before CPU readback (scout finding). */
 	c0[CTL_L2TCACTL/4]=L2TCACTL_L2TFLS|(2u<<1); /* FLM_CLEAN */
