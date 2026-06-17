@@ -277,11 +277,29 @@ build-system fighting with low odds of a working unattended result. I validated 
 ✅) so the port is de-risked, but I will NOT sink the unattended window into a likely-partial X lib port.
 If you want X, the foundation is green; it's a focused multi-session effort. Flagging for your call Friday.
 
-### NEXT ACTION (decisive): keep banking bounded distinct wins
-X11 foundation validated + documented. Next: pick the next bounded, self-verifiable, DISTINCT item that
-maximizes "how much delivered" — candidates: (a) continuous-DMA audio streaming (completes the audio
-driver efficiently, restores ~40fps, frees a core; mechanism already proven); (b) a small in-tree demo
-app or rc.psh banner (docs/todo/userspace-demo-apps.md Tier A/B — usability/"feels alive"); (c) RTC-via-
-NTP SNTP client (docs, usability — but no NTP server on the crossover net, likely parked); (d) more
-publication-readiness/TODO cleanup. Lean (a) or (b). Keep avoiding Vulkan instr-abort + GENET Policy B
-(attended) + BT (needs attended GPIO for BT_REG_ON).
+### 2026-06-17 — Continuous streaming DMA audio (production arch) — devices 85c1c94
+Promoted the proven single-shot audio DMA to a free-running streaming engine: persistent uncached
+duty-word ring (~0.19s) played by a self-chained CB (NEXTCONBK→itself) forever, DREQ-paced;
+audio_write() fills the ring ahead of the live read cursor (SOURCE_AD) with usleep backpressure (the
+driver SLEEPS instead of busy-spinning); PIO push kept as fallback. HW: active=1, path=DMA,
+0 underruns, Quake mixes over it, 0 faults. HONEST FINDING: this did NOT raise Quake FPS (~35-40, same
+as PIO) — the audio CPU cost is the MIXER + feeder thread, not the driver wait (usleep vs spin made no
+measurable diff). But it's the correct production architecture (no per-sample MMIO, driver sleeps) +
+the base for vkQuake audio. Audio subsystem is now complete: bring-up → DMA mechanism → SNDDMA backend
+→ streaming DMA. Only the audible jack sign-off (yours, Friday) + a vkQuake hookup remain.
+Also: noted the DMA framework as 🟡 partial in the matrix (legacy DMA now in production for audio).
+
+### Note on what's left that's unattended-doable
+Most remaining documented FEATURES are attended-gated: X11 full lib port (multi-week), Bluetooth
+(needs GPIO output for BT_REG_ON = bench), umass (needs a USB stick plugged), I²C/SPI/PWM (bench rig),
+SD #120/#154 (card swaps), WiFi #91 (JTAG), Vulkan instr-abort (fiddly/attended-friendlier), GENET
+Policy B (silent-corruption soak + cable-gated). The Pi4 device-driver code is already publication-clean
+(no stray TODO/FIXME; 3 prior cleanup waves). So the unattended frontier is thinning.
+
+### NEXT ACTION (decisive): assess remaining unattended candidates, else deepen review
+Audio fully done. Next iteration: (a) check if a small high-value bounded item remains (e.g. wire
+/dev/hwrng entropy into a urandom pool to unblock the openssl-zero-stdout anomaly + crypto ports — a
+distinct usability feature, self-verifiable); OR (b) begin the user's fallback: a systematic
+step-by-step publication-readiness review of the Pi4 changes vs origin/master (the tools/ v3d+quake
+port surface is large + unreviewed for publication — diagnostics, licenses, dead code). Lean (a) if it
+scopes small, else (b). Keep avoiding the attended-gated list above.
