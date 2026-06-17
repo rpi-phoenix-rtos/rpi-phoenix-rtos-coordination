@@ -184,3 +184,17 @@ The ioctl-trace debug was removed; rpi4-quake restored as the flagship.
 - NOTE: usable Quake/vkQuake audio needs DMA streaming (P3, driver) before the Quakespasm
   SNDDMA backend (pl_phoenix_snd.c, currently a silent stub) is worth wiring — PIO alone
   underruns at per-frame Submit. DMA is the next audio step.
+
+### 2026-06-17 — Vulkan device-create: 5 blockers cleared, now an instruction abort
+init_uuids fixed (the BLAKE3 data-abort was libv3d's real build_id_data() dereferencing my
+synthetic note → wild ptr → blake3 read fault). Fix: #if __phoenix__ in init_uuids
+(v3dv_device.c) uses fixed dummy UUIDs, skipping build_id+blake3 (UUIDs only gate
+pipeline-cache validity + cross-process sharing, unused at first light). Confirmed: the
+data-abort is GONE — device-create now reaches further and hits an **Instruction Abort (EL0)**
+(a NULL/garbage code-pointer call, likely in v3d_compiler_init or disk_cache setup, after
+init_uuids). 5 blockers cleared total: instance, enumerate-caps, feature-gate (CSD+CPU_QUEUE),
+build-id, init_uuids/blake3. **NEXT (Vulkan Tier 1 cont.): extract the instruction-abort PC
+(it interleaves with pcie boot noise — grep the raw log) + addr2line in the rpi4-v3dv-tier0
+prog binary to find the bad call; likely another stub/NULL-fn in create_physical_device's
+tail. Then vkCreateDevice should return → Tier 2 (clear+readback).** PIVOTING to breadth now
+(3 turns on Vulkan); this is a clean focused next step. Flagship (rpi4-quake) restored.
