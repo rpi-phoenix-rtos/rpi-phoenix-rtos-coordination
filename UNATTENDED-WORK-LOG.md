@@ -44,6 +44,17 @@ This file is my running log + the decisions/parked items for you to review.
   /tmp/libv3dv-phoenix.a + may rebuild libv3d — so Pi boots during its run risk a torn
   /tmp/libv3d read (recoverable: just retry the build/boot).
 
+### 2026-06-17 — progress
+- ✅ **Audio P0-P1 DONE** (devices d5933ec, project 32867df). rpi4-audio driver →
+  /dev/audio0. HW-verified self-log: CM_PWMCTL=0x91 (clock ENAB+BUSY+osc running),
+  PWM_CTL=0xa1a1 (PWEN1/2 + M/S + FIFO), 0 faults. write()=s16 PCM→FIFO (PIO).
+  REMAINING (autonomous): DMA streaming (P3), a Quakespasm snd backend → /dev/audio0.
+  ATTENDED (you, Fri): plug headphones, confirm audible (P2 tone / WAV / Quake sound).
+- ✅ **Vulkan V3DV Tier 0 DONE** (external/mesa 7b12e80, coord 9da241f). V3DV +
+  Vulkan runtime + spirv_to_nir compile+link for aarch64-phoenix, harness 0 undefined
+  symbols. Reuses the GL backend libv3d. NEXT: Tier 1 = boot the harness, vkCreateDevice
+  on real HW (doc 2026-06-17-vulkan-v3dv-tier0-progress.md has the steps).
+
 ## EXECUTION ROADMAP (ordered; each firing picks the top unfinished item)
 Each item: implement → build (`--scope core`) → netboot-verify (uart-summary + HDMI
 snapshot if visual) → commit in the touched repo → tick here. Boot budget is large.
