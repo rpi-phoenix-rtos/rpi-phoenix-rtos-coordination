@@ -317,11 +317,20 @@ vkQuake), each step gated on a host-meson libv3dv rebuild. I'll make incremental
 best available item, but it won't reach a demo unattended. Flagged for your Friday call: worth a focused
 attended session.
 
-### NEXT ACTION (decisive): the unattended frontier is thin — pick the best remaining increment
-Bounded features done (audio, X11 gate); cleanup low-yield (code already clean); big items attended or
-heavy (Vulkan hang = host-meson loop; X11 lib port = weeks; BT/umass/I2C/SD/WiFi = hardware). Options
-next: (a) invest in the Vulkan vkCreateDevice-hang via libv3dv instrumentation (heavy but the named
-goal); (b) the /dev/hwrng→urandom pooling experiment (distinct, may unblock crypto ports); (c) a
-deeper publication review across the kernel/devices Pi4 diff vs origin/master (licenses, headers,
-diagnostics) even if TODO-grep was empty; (d) a small in-tree demo (rc.psh banner / sysinfo). Reassess
-honestly next iteration; prefer whichever has the best delivered-value-per-effort.
+### 2026-06-17 — ★ /dev/urandom now HW-RNG-backed (security/publication fix) — posixsrv ef6e39b
+Publication review surfaced a real defect: posixsrv served /dev/urandom from rand()/srand(time(NULL))
+— a weak, predictable PRNG — despite the system having a hardware RNG (/dev/hwrng, BCM2711 RNG200). For
+a published OS that's a security bug (any crypto/uuid/session gets guessable bytes). Fixed: random_read_op
+now reads real entropy from /dev/hwrng (lazy open since posixsrv starts before the hwrng driver; rand()
+fallback so it stays portable to targets without /dev/hwrng). Also fixed a latent bug where the old loop
+never advanced the dest pointer (reads >64B left a tail uninitialised). HW-verified via scripted psh:
+"posixsrv: /dev/urandom entropy source = /dev/hwrng (hardware RNG)" + a 64B dd read succeeds. Ties the
+existing rpi4-hwrng driver into something the whole system uses.
+
+### NEXT ACTION (decisive): continue the publication review for more concrete fixes
+The publication-review approach is paying off (it found the urandom defect). Continue it: review the
+Pi4-touched source for more real "things needing fixing" — candidates: (a) audit license headers on ALL
+new Pi4 files (drivers + tools) for publication; (b) scan the lwip/genet + kernel Pi4 diff for leftover
+debug prints / dead code / magic numbers; (c) the getrandom()/libc-seed PRNG (deeper entropy wiring);
+(d) small usability (rc.psh banner). Prefer concrete fixes over audits. Still avoiding: Vulkan hang
+(host-meson loop), X11 lib port (weeks), BT/umass/I2C/SD/WiFi (hardware).

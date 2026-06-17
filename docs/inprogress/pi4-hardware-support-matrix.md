@@ -32,7 +32,7 @@ One row per peripheral/subsystem. For narrative gap analysis see
 | SD card (EMMC2 SDHCI) | ✅ done | `/dev/mmcblk0[pN]`, PIO reads, MBR (#119) | high-throughput needs DMA |
 | ext2 persistent rootfs (#120) | ✅ done | mounts as `/`, binaries exec from it (`ifconfig`), boots to psh stably; HW-validated SD-boot 0/10 faults. Crash root cause was a **fs pool-thread stack overflow** (8 KB default too small) — fixed by `storage_run(2, 16*_PAGE_SIZE)`, full multithreading kept, ext2 unchanged | residuals: noisy-but-recovering 50 MHz Data-CRC (signal polish), single-block-only CMD24/CMD18 (perf) |
 | SoC thermal + throttle | ✅ done | `/dev/thermal`,`/dev/throttled` (2026-06-05) | firmware owns the trip (telemetry only) |
-| Hardware RNG (RNG200) | ✅ done | `/dev/hwrng` (2026-06-05) | not yet wired to a kernel `/dev/urandom` pool |
+| Hardware RNG (RNG200) | ✅ done | `/dev/hwrng` (2026-06-05); **now also backs `/dev/urandom`** (posixsrv reads `/dev/hwrng` for entropy, rand() fallback) — HW-verified 2026-06-17 | kernel `getrandom()`/pool wiring (libc-level) still PRNG |
 | Watchdog / reboot / poweroff | ⏸ attended | works via diag-udp `r`/`h` (PM block #43) | productionize `_hal_systemReset` (kernel, boot-risk) |
 | WiFi (BCM43455 SDIO) | ⛔ blocked | fw+NVRAM load + CR4 release were built (in the now-**deleted** diag-udp.c) | **firmware not executing** (#91, image-scan proven). NVRAM-trailer lead DISPROVEN (2026-06-07); real suspects = download/clock ordering + SDIO-core intstatus-clear + rstvec semantics. Live downloader must be reintroduced first. Needs HW/JTAG |
 | Bluetooth (BCM43455 UART HCI) | ⬜ not started | plan only | needs mailbox+GPIO alt-fn + `.hcd` blob |
@@ -44,7 +44,7 @@ One row per peripheral/subsystem. For narrative gap analysis see
 | DMA framework | 🟡 partial | legacy-DMA channel bring-up proven + in production for audio (`rpi4-audio`: self-chained streaming CB, DREQ-paced, low-1GB C0 bus alias) | generalize into a reusable DMA helper; line-rate SD (CMD18) still PIO |
 | RTC | ⏸ deferred | Pi 4 has no on-SoC RTC | NTP over GENET (zero-HW); or I²C HAT later |
 | Camera (CSI-2) / DSI display | ⬜ not started | — | — |
-| posixsrv / psh userspace | ✅ done | pipes, ptys, `/dev/{null,zero,urandom,full}`, interactive psh; **AF_UNIX SOCK_STREAM validated on HW** (socketpair + named bind/listen/accept/connect/send/recv — X11 Phase-1 gate, `misc/rpi4-ipcprobe`, 2026-06-17) | psh has no `|` pipe parsing |
+| posixsrv / psh userspace | ✅ done | pipes, ptys, `/dev/{null,zero,urandom,full}` (urandom now HW-RNG-backed), interactive psh; **AF_UNIX SOCK_STREAM validated on HW** (socketpair + named bind/listen/accept/connect/send/recv — X11 Phase-1 gate, `misc/rpi4-ipcprobe`, 2026-06-17) | psh has no `|` pipe parsing |
 
 ## Build / test infrastructure (✅)
 
