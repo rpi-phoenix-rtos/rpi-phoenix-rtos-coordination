@@ -343,8 +343,26 @@ disabled from default boot again (one-shot). FULL entropy stack now real-RNG-bac
 8. libc getrandom()/getentropy(). Plus license-header audit (clean). All committed + HW-verified where
 applicable; flagship Quake+audio image is the persisted boot state.
 
-### NEXT ACTION (decisive): frontier is thin — keep mining concrete publication/usability fixes
-Candidates: (a) scan lwip/genet + kernel Pi4 diff for leftover debug prints/dead code; (b) a small
-usability win (rc.psh boot banner / sysinfo demo — Tier A "feels alive"); (c) revisit the Vulkan
-vkCreateDevice-hang (named, heavy host-meson loop). Prefer concrete + low-risk. Avoid: X11 lib port,
-BT/umass/I2C/SD/WiFi (hardware).
+### 2026-06-17 — Publication scan #2 (clean) + ★ rpi4-sysinfo boot banner (usability/demo)
+Scanned the Pi4 kernel hal + device drivers for leftover diagnostics / non-TD "temporary/hack"
+markers / commented-out code: all hits are legitimate (temporary identity map, A72 erratum workaround,
+scratch page, DEBUG register name, intentional boot self-logs). Code confirmed publication-clean again.
+Then delivered the documented Tier-A "feels alive" item: rpi4-sysinfo (devices 9... + project 7087e3e)
+— a boot banner printing build stamp, uptime, an 8-byte hardware-RNG sample (via the new getentropy),
+and a present/absent inventory of the /dev nodes. HW-verified: 10/12 nodes present (kbd0/mouse0 pending
+USB enum at snapshot), entropy non-constant, boot proceeds to Quake. Permanent (every boot). Showcases
+the whole Pi4 device suite (thermal/throttled/hwrng/gpio/fb0/audio0/urandom) in one screen.
+
+### Tally so far this unattended run (for your Friday review) — 9 items
+1. Audio DMA mechanism. 2. Quakespasm SNDDMA audio backend. 3. Stale "caches-off" doc corrections.
+4. X11 AF_UNIX foundation gate (READY). 5. Continuous streaming DMA audio. 6. Vulkan Tier-1: instr-abort
+cleared → vkCreateDevice (hangs, localized). 7. /dev/urandom HW-RNG-backed. 8. libc getrandom()/
+getentropy(). 9. rpi4-sysinfo boot banner. Plus 2 publication scans (code clean) + license audit.
+All committed + HW-verified where applicable; flagship Quake+audio+banner is the persisted boot state.
+
+### NEXT ACTION (decisive): frontier nearly exhausted of safe bounded items
+Remaining: (a) the Vulkan vkCreateDevice-hang (named goal — instrument external/mesa v3dv_device.c +
+host-meson libv3dv rebuild loop; heavy but the furthest-along named target); (b) more small usability
+(a 2nd demo app / a psh-runnable tool); (c) consider winding the loop down with a final state summary
+if no high-value bounded item remains. Lean (a) as the named ambitious goal if iterations remain.
+Avoid: X11 lib port (weeks), BT/umass/I2C/SD/WiFi (hardware).
