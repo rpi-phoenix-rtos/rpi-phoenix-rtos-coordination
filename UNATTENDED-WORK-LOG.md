@@ -21,6 +21,8 @@ This file is my running log + the decisions/parked items for you to review.
 - **/dev/urandom is now hardware-RNG-backed** (was weak rand()); **libc `getrandom()`/`getentropy()`
   added** (broad app support). Full entropy stack: /dev/hwrng → /dev/urandom → libc. HW-verified.
 - **`rpi4-sysinfo` boot banner** — build stamp, uptime, HW-entropy sample, /dev inventory (10/12 nodes).
+- **psh `mv` applet** — was missing (a documented MUST); added (rename + dir-target + EXDEV copy-fallback),
+  HW-verified. Upstreamable.
 
 ## 2. Named-goal status
 - **Audio (you named it): DONE** (driver + DMA + Quake backend); audible check is yours.
@@ -407,8 +409,9 @@ the whole Pi4 device suite (thermal/throttled/hwrng/gpio/fb0/audio0/urandom) in 
 1. Audio DMA mechanism. 2. Quakespasm SNDDMA audio backend. 3. Stale "caches-off" doc corrections.
 4. X11 AF_UNIX foundation gate (READY). 5. Continuous streaming DMA audio. 6. Vulkan Tier-1: instr-abort
 cleared → vkCreateDevice (hangs, localized). 7. /dev/urandom HW-RNG-backed. 8. libc getrandom()/
-getentropy(). 9. rpi4-sysinfo boot banner. Plus 2 publication scans (code clean) + license audit.
-All committed + HW-verified where applicable; flagship Quake+audio+banner is the persisted boot state.
+getentropy(). 9. rpi4-sysinfo boot banner. 10. psh `mv` applet (was a missing MUST). Plus 2 publication
+scans (code clean) + license audit + restored MEMORY.md recall. All committed + HW-verified where
+applicable; flagship Quake+audio+banner+mv is the persisted boot state.
 
 ### 2026-06-17 — ★ Vulkan vkCreateDevice hang ROOT-CAUSED + FIXED (is_shim); new blocker localized
 Engaged the named Vulkan goal. The vkCreateDevice HANG was threaded submit: v3dv enables a submit
