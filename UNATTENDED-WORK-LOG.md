@@ -235,9 +235,35 @@ DECISION: the hardware-hard part (clock, FIFO, M/S, **DMA pacing**) is all prove
 remaining work is the cross-process shared-ring plumbing, which I'll either do next or after a breadth
 pass. Pivoting now to breadth per "I want as many items as possible" + the no-tunnel lesson.
 
-### NEXT ACTION (decisive): breadth pass — TODO/publication sweep + next unattended doc item
-Audio DMA milestone banked. Now execute the user's explicit "check for TODO comments in code... fix
-all this" + "make code ready to be publically published" on the Pi4 changes, AND pick the next
-clearly-unattended doc item (candidates: TD-05/TD-14 cleanup [1.6], /dev/urandom←hwrng pooling to
-unblock the openssl/curl/dropbear ports [1.5], or the continuous-audio-streaming increment). Avoid
-re-tunneling Vulkan (instruction-abort is fiddly + interleaved with boot noise — attended-friendlier).
+### 2026-06-17 — stale-doc cache-claim fixes (bounded, publication-readiness)
+Advisor flagged that the open-ended TODO sweep is your *fallback* ("if out of documented tasks"),
+not the primary work. So I did only the FINITE td16 §8 stale-doc list: corrected the false "caches
+globally off" claims in the hardware matrix (lines 18, 24), the network-fs perf plan (:31, :88), and
+the glquake capstone status (§2 + recommended order), plus the `bcm-genet.c:74` comment. Caches have
+been globally ON since 2026-05-17 (TD-16 RESOLVED); the real lever is the narrow uncached-GENET-RX
+pool (Policy B, attended). Commits: coord c2315f0 + lwip 0bb0123. Bounded — did NOT metastasize.
+
+### 2026-06-17 — ★ QUAKESPASM AUDIO BACKEND DONE (your named deliverable) — coord 311412a + devices 7dc5540
+"Add audio support to Quakespasm" — DONE to the self-verifiable bar. Checked snd_dma.c's contract
+first (advisor's gate): the mixer paints the ring strictly FORWARD and reads only a monotonic play
+cursor (SNDDMA_GetDMAPos) — it does NOT need random back-offset writes, so the heavy mmap-over-msg
+shared ring is unnecessary. Implemented the light path: pl_phoenix_snd.c spawns a FEEDER THREAD that
+reads shm->buffer sequentially behind the paint cursor and write()s to /dev/audio0, which blocks at
+the PWM drain rate (backpressure). GetDMAPos = bytes the device accepted. Driver fix: audio_write now
+returns bytes actually consumed (honest short-write) so the cursor is accurate. Stereo s16 → shared
+FIFO alternates ch1/ch2.
+HW-validated netboot: "PL_SND: /dev/audio0 44100 Hz 2ch 16-bit, feeder thread up" + Quake accepted it
+("Audio: 16 bit, stereo, 44100 Hz"), demo1 renders ~35 fps for 40+s with audio mixing running
+concurrently, 0 faults, no sound-overflow. **YOUR ONE CHECK FRIDAY: plug headphones into the 3.5mm
+jack and confirm Quake audio is audible.** (FPS dipped 40-42→~35 from the feeder's PIO-spin write;
+the continuous-DMA-streaming driver mode — mechanism already proven — would remove that, efficiency
+not correctness.) Same backend will serve vkQuake.
+
+### NEXT ACTION (decisive): next documented feature — X11 software path OR Bluetooth tier 0-3
+Audio (your named item) is delivered. Remaining *documented* named features that are unattended:
+X11 (kdrive/TinyX → /dev/fb0 software framebuffer; docs/todo/tinyx-x11-demo.md +
+docs/inprogress/2026-06-16-x11-accelerated-desktop-plan.md), Bluetooth tiers 0-3 (HCI self-logs over
+UART = unattended per the roadmap; needs the kernel/userspace mailbox for BT_REG_ON +.hcd blob), or
+the continuous-audio-DMA-streaming efficiency increment. Pick X11-software OR BT-tier-0 next (both
+are named/documented + self-verifiable). Keep avoiding the Vulkan instruction-abort (attended-friendlier)
+and the GENET-cacheable Policy B (attended, cable-gated).
