@@ -34,6 +34,19 @@ needs host internet; idempotent).
 | libXfont2 2.0.6 | ✅ compiles | `libXfont2.a` built + headers installed. Needed `-DO_NOFOLLOW=0`, `-DNOFILES_MAX=256`, `ac_cv_lib_m_hypot=yes` + libphoenix `hypot` (6e2b929). A font *tool* link needs the hypot symbol → resolves after the libphoenix rebuild. |
 | **kdrive Xfbdev server** | ⬜ next (big, scouted) | see "Server frontier" below — needs an Xfbdev source + libphoenix rebuild + OS-integration. Multi-session. |
 
+## Toolkit/app layer — scout (2026-06-18)
+
+The traditional X clients (xclock, twm) need the toolkit: libICE → libSM → libXt → libXmu → libXaw.
+Started it; these are **speculative until the server exists** (they can't run without Xfbdev), and they
+hit further Phoenix gaps, so the build is deferred behind the server. Gaps found:
+- **libXt:** `alloca.h` used `size_t` without `<stddef.h>` — a real libphoenix header bug, **fixed**
+  (libphoenix alloca.h `#include <stddef.h>`).
+- **libICE:** `iceauth.c` has an old-K&R `extern long time();` that conflicts with Phoenix's
+  `time(time_t*)` — needs a 1-line port patch (drop the local decl / include `<time.h>`).
+- **libSM** cascades from libICE.
+Deferred: the toolkit/apps come AFTER the server (no point running them otherwise). The libICE patch +
+libXt (now alloca-unblocked) are quick when resumed.
+
 ## Server frontier — scout (2026-06-18)
 
 The hard remaining piece is the X **server** (the libraries above are the client/render/font side).
