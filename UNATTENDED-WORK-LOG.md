@@ -373,6 +373,19 @@ reaching the live pdevice->dispatch_table). Needs instrumentation (libv3dv rebui
 committed. So Vulkan is 2 blockers further along: instance ✓, enumerate ✓ (count=1), abort ✓ (was the
 cosmetic name print), hang ✓ (is_shim) → now the phys-dispatch NULL.
 
+### 2026-06-17 — Vulkan vkCreateDevice instrumented; blocker moved DEEP (noop-job CL-NULL)
+Instrumented v3dv_CreateDevice (temp prints, since reverted — external/mesa HEAD stays clean is_shim-only).
+The phys-dispatch P2 (GetPhysicalDeviceProperties2) slot is NULL (only that one; QFP2/Feat2 are fine —
+it only bit the skipped cosmetic name print). With is_shim fixing the hang, CreateDevice now PROGRESSES:
+vk_device_init ✓ → queue_init (1 queue) ✓ → init_device_meta ✓ → then DATA-ABORTS (far=0) in
+v3d42_job_emit_binning_prolog (strb to a NULL CL ptr at job+104), reached via v3dv_device_create_noop_job.
+So the noop job's binner control-list BO isn't allocated/mapped. NEXT (6th blocker): the winsys/V3DV
+BO+CL interop for the noop job (v3dv_cl_ensure_space → v3dv_bo_alloc → winsys create_bo/mmap returns
+NULL for the V3DV path; GL works, so it's a V3DV-vs-GL diff). Precisely documented in
+project_vulkan_v3dv_port memory for the next session to continue. Flagship Quake restored; net code this
+turn = the is_shim fix (committed last turn) + this localization (knowledge). Vulkan is now 5 blockers
+cleared, 6th localized — the furthest Vulkan-on-Phoenix has reached.
+
 ### NEXT ACTION (decisive): frontier nearly exhausted of safe bounded items
 Remaining: (a) the Vulkan vkCreateDevice-hang (named goal — instrument external/mesa v3dv_device.c +
 host-meson libv3dv rebuild loop; heavy but the furthest-along named target); (b) more small usability
