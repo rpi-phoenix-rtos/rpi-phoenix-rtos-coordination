@@ -33,9 +33,11 @@ This file is my running log + the decisions/parked items for you to review.
   xorgproto, libXau, xtrans, libXdmcp, xcb-proto, libpthread-stubs, **libxcb + ~24 ext libs**, and the
   keystone **libX11 (core Xlib)**. Needed small Phoenix-gap fixes: libxcb patches (`<arpa/inet.h>`,
   `MSG_TRUNC`/`MSG_CTRUNC` no-ops) + **real libphoenix libc additions** (`getpwuid_r`, functional
-  `getpwnam_r`, `sys/poll.h` alias — libphoenix `89d1543`, additive, ship on next image rebuild). Next
-  bricks: libXext/libXrender, pixman, font libs, then the kdrive Xfbdev server. Ladder + recipe in
-  `tools/x11-port/PROGRESS.md`. Multi-session but advancing fast (host-side, isolated).
+  `getpwnam_r`, `sys/poll.h` alias — libphoenix `89d1543`, additive, ship on next image rebuild). Also
+  building now: **libXext, libXrender, pixman** (the rasteriser). So the X11 client + rendering libs are
+  essentially complete. Remaining: font libs, then **the kdrive Xfbdev server itself** (the big piece —
+  xserver source + fbdev backend + shadow-FB→/dev/fb0 blit). Ladder + recipe in
+  `tools/x11-port/PROGRESS.md`. Multi-session but advancing fast (host-side, isolated, flagship frozen).
 - **Vulkan+vkQuake (you named it): furthest-ever progress, 5 blockers cleared.** vkCreateInstance +
   enumerate(count=1) work on HW; cleared a name-print abort + the threaded-submit hang (is_shim fix).
   vkCreateDevice now reaches the noop-job and NULL-derefs the binner CL (winsys/V3DV BO-interop, the 6th
