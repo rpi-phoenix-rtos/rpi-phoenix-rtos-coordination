@@ -327,11 +327,24 @@ never advanced the dest pointer (reads >64B left a tail uninitialised). HW-verif
 "posixsrv: /dev/urandom entropy source = /dev/hwrng (hardware RNG)" + a 64B dd read succeeds. Ties the
 existing rpi4-hwrng driver into something the whole system uses.
 
-### NEXT ACTION (decisive): continue the publication review for more concrete fixes
-The publication-review approach is paying off (it found the urandom defect). DONE this round: license-
-header audit of all new Pi4 files (drivers + tools) — ALL present, clean (no gaps to fix). Continue with
-more real "things needing fixing": (b) scan the lwip/genet + kernel Pi4 diff for leftover debug prints /
-dead code / magic numbers; (c) the getrandom()/libc-seed PRNG (deeper entropy wiring — does libc's
-own rand-seed / getrandom use the HW RNG?); (d) small usability (rc.psh banner / sysinfo). Prefer
-concrete fixes over audits. Could also reconsider investing in the Vulkan vkCreateDevice-hang (named
-goal, but heavy host-meson loop). Still avoiding: X11 lib port (weeks), BT/umass/I2C/SD/WiFi (hardware).
+### 2026-06-17 — ★ libc getrandom()/getentropy() added (broad app support) — libphoenix 40053fd
+Follow-on to the /dev/urandom fix: libphoenix had NO getrandom()/getentropy() — modern crypto libs
+(libsodium, recent OpenSSL) + many runtimes require them, so their absence limited app support. Added
+sys/random.h + stdlib/getrandom.c (both wrap /dev/urandom → now HW-RNG-backed; GRND_* accepted+ignored
+since urandom never blocks; getentropy caps 256B). Runtime-verified by extending rpi4-ipcprobe to probe
+entropy too: getentropy+getrandom fill 32B, two draws differ 32/32 bytes (real HW entropy). Probe
+disabled from default boot again (one-shot). FULL entropy stack now real-RNG-backed: /dev/hwrng →
+/dev/urandom (posixsrv) → libc getrandom/getentropy. devices b3cf23e + project bd091f8.
+
+### Tally so far this unattended run (for your Friday review)
+1. Audio DMA mechanism (PWM1=DREQ 1). 2. Quakespasm SNDDMA audio backend (feeder thread). 3. Stale
+"caches-off" doc corrections. 4. X11 AF_UNIX foundation gate (READY). 5. Continuous streaming DMA audio.
+6. Vulkan Tier-1: instr-abort cleared → vkCreateDevice (hangs, localized). 7. /dev/urandom HW-RNG-backed.
+8. libc getrandom()/getentropy(). Plus license-header audit (clean). All committed + HW-verified where
+applicable; flagship Quake+audio image is the persisted boot state.
+
+### NEXT ACTION (decisive): frontier is thin — keep mining concrete publication/usability fixes
+Candidates: (a) scan lwip/genet + kernel Pi4 diff for leftover debug prints/dead code; (b) a small
+usability win (rc.psh boot banner / sysinfo demo — Tier A "feels alive"); (c) revisit the Vulkan
+vkCreateDevice-hang (named, heavy host-meson loop). Prefer concrete + low-risk. Avoid: X11 lib port,
+BT/umass/I2C/SD/WiFi (hardware).

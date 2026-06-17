@@ -44,7 +44,7 @@ One row per peripheral/subsystem. For narrative gap analysis see
 | DMA framework | 🟡 partial | legacy-DMA channel bring-up proven + in production for audio (`rpi4-audio`: self-chained streaming CB, DREQ-paced, low-1GB C0 bus alias) | generalize into a reusable DMA helper; line-rate SD (CMD18) still PIO |
 | RTC | ⏸ deferred | Pi 4 has no on-SoC RTC | NTP over GENET (zero-HW); or I²C HAT later |
 | Camera (CSI-2) / DSI display | ⬜ not started | — | — |
-| posixsrv / psh userspace | ✅ done | pipes, ptys, `/dev/{null,zero,urandom,full}` (urandom now HW-RNG-backed), interactive psh; **AF_UNIX SOCK_STREAM validated on HW** (socketpair + named bind/listen/accept/connect/send/recv — X11 Phase-1 gate, `misc/rpi4-ipcprobe`, 2026-06-17) | psh has no `|` pipe parsing |
+| posixsrv / psh userspace | ✅ done | pipes, ptys, `/dev/{null,zero,urandom,full}` (urandom now HW-RNG-backed), interactive psh; **AF_UNIX SOCK_STREAM** + **libc `getrandom()`/`getentropy()`** validated on HW (`misc/rpi4-ipcprobe`, 2026-06-17) | psh has no `|` pipe parsing |
 
 ## Build / test infrastructure (✅)
 
