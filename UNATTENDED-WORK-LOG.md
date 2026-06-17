@@ -33,11 +33,13 @@ This file is my running log + the decisions/parked items for you to review.
   xorgproto, libXau, xtrans, libXdmcp, xcb-proto, libpthread-stubs, **libxcb + ~24 ext libs**, and the
   keystone **libX11 (core Xlib)**. Needed small Phoenix-gap fixes: libxcb patches (`<arpa/inet.h>`,
   `MSG_TRUNC`/`MSG_CTRUNC` no-ops) + **real libphoenix libc additions** (`getpwuid_r`, functional
-  `getpwnam_r`, `sys/poll.h` alias — libphoenix `89d1543`, additive, ship on next image rebuild). Also
-  building now: **libXext, libXrender, pixman** (the rasteriser). So the X11 client + rendering libs are
-  essentially complete. Remaining: font libs, then **the kdrive Xfbdev server itself** (the big piece —
-  xserver source + fbdev backend + shadow-FB→/dev/fb0 blit). Ladder + recipe in
-  `tools/x11-port/PROGRESS.md`. Multi-session but advancing fast (host-side, isolated, flagship frozen).
+  `getpwnam_r`, `sys/poll.h`, `hypot` — libphoenix `89d1543`+`6e2b929`, additive, ship on next rebuild).
+  **The ENTIRE X11 client + rendering + font library stack now cross-compiles for aarch64-phoenix —
+  36 archives** (libX11, libxcb +24 exts, libXext, libXrender, libXfont2, libfontenc, libfreetype,
+  libpixman-1, libXau, libXdmcp, libz). Remaining: (1) a libphoenix rebuild to carry the new libc
+  symbols on-device; (2) **the kdrive Xfbdev server** (the big multi-session piece — xorg-server +
+  fbdev backend + shadow-FB→/dev/fb0). Ladder + full libc-gap inventory + recipe in
+  `tools/x11-port/PROGRESS.md`. Foundation DONE + de-risked (host-side, isolated, flagship frozen).
 - **Vulkan+vkQuake (you named it): furthest-ever progress, 5 blockers cleared.** vkCreateInstance +
   enumerate(count=1) work on HW; cleared a name-print abort + the threaded-submit hang (is_shim fix).
   vkCreateDevice now reaches the noop-job and NULL-derefs the binner CL (winsys/V3DV BO-interop, the 6th
@@ -418,11 +420,13 @@ the whole Pi4 device suite (thermal/throttled/hwrng/gpio/fb0/audio0/urandom) in 
 1. Audio DMA mechanism. 2. Quakespasm SNDDMA audio backend. 3. Stale "caches-off" doc corrections.
 4. X11 AF_UNIX foundation gate (READY). 5. Continuous streaming DMA audio. 6. Vulkan Tier-1: instr-abort
 cleared → vkCreateDevice (hangs, localized). 7. /dev/urandom HW-RNG-backed. 8. libc getrandom()/
-getentropy(). 9. rpi4-sysinfo boot banner. 10. psh `mv` applet (was a missing MUST). 11. X11 library
-port STARTED — base-lib tier (xorgproto+libXau+xtrans+libXdmcp) cross-compiles for aarch64-phoenix
-(tools/x11-port/, isolated, flagship untouched). Plus 2 publication scans (code clean) + license audit
-+ restored MEMORY.md recall. All committed + HW-verified where applicable; flagship Quake+audio+banner+mv
-is the persisted boot state.
+getentropy(). 9. rpi4-sysinfo boot banner. 10. psh `mv` applet (was a missing MUST). 11. ★ X11 library
+port — the ENTIRE client+rendering+font stack cross-compiles for aarch64-phoenix (36 archives:
+libX11, libxcb+24 exts, libXext, libXrender, libXfont2, libfontenc, libfreetype, libpixman-1, libXau,
+libXdmcp, libz; tools/x11-port/, isolated, flagship untouched) + 4 libphoenix libc fixes (getpwuid_r,
+getpwnam_r, sys/poll.h, hypot). Remaining = kdrive Xfbdev server (multi-session). Plus 2 publication
+scans (code clean) + license audit + restored MEMORY.md recall. All committed + HW-verified where
+applicable; flagship Quake+audio+banner+mv is the persisted boot state.
 
 ### 2026-06-17 — ★ X11 library port STARTED (named capstone; host-side, isolated, flagship-safe)
 Advisor reconciled: the host-side/fast-iterate/additive nature (no Pi boots, isolated prefix) removes
