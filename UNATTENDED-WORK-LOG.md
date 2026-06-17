@@ -29,13 +29,13 @@ This file is my running log + the decisions/parked items for you to review.
 - **X11 (you named it): foundation validated + library port STARTED.** AF_UNIX (the gate for every X
   client) is HW-confirmed READY; fb0 + USB HID also done. The X11 library port (net-new, PR #82 never
   landed) is now under way in `tools/x11-port/` (isolated `/tmp/x11-phoenix`, host-side, flagship
-  untouched): **base-lib tier + XCB tier cross-compile for aarch64-phoenix** — xorgproto, libXau,
-  xtrans, libXdmcp, xcb-proto, libpthread-stubs, and **libxcb + ~24 XCB extension libs** (config.sub
-  knows `phoenix`; libxcb needed 2 small Phoenix-gap patches: `<arpa/inet.h>` for the `htonl` macro +
-  no-op `MSG_TRUNC`/`MSG_CTRUNC` guards, captured in `tools/x11-port/patches/`). Next bricks: libX11,
-  pixman, font libs, then the kdrive Xfbdev server. Ladder + blockers in `tools/x11-port/PROGRESS.md`.
-  Multi-session, but de-risked + advancing fast (host-side). Noted an upstream-worthy libphoenix gap
-  (`sys/socket.h` lacks `MSG_TRUNC`/`MSG_CTRUNC`).
+  untouched): the **X11 client-library foundation cross-compiles end-to-end for aarch64-phoenix** —
+  xorgproto, libXau, xtrans, libXdmcp, xcb-proto, libpthread-stubs, **libxcb + ~24 ext libs**, and the
+  keystone **libX11 (core Xlib)**. Needed small Phoenix-gap fixes: libxcb patches (`<arpa/inet.h>`,
+  `MSG_TRUNC`/`MSG_CTRUNC` no-ops) + **real libphoenix libc additions** (`getpwuid_r`, functional
+  `getpwnam_r`, `sys/poll.h` alias — libphoenix `89d1543`, additive, ship on next image rebuild). Next
+  bricks: libXext/libXrender, pixman, font libs, then the kdrive Xfbdev server. Ladder + recipe in
+  `tools/x11-port/PROGRESS.md`. Multi-session but advancing fast (host-side, isolated).
 - **Vulkan+vkQuake (you named it): furthest-ever progress, 5 blockers cleared.** vkCreateInstance +
   enumerate(count=1) work on HW; cleared a name-print abort + the threaded-submit hang (is_shim fix).
   vkCreateDevice now reaches the noop-job and NULL-derefs the binner CL (winsys/V3DV BO-interop, the 6th
