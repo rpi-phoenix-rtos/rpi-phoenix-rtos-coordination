@@ -15,13 +15,13 @@ One row per peripheral/subsystem. For narrative gap analysis see
 
 | Subsystem | Status | Evidence / entry point | Remaining |
 |---|---|---|---|
-| CPU bring-up, EL2→EL1, MMU | ✅ done | boots to userspace | caches still globally off (TD-16) |
+| CPU bring-up, EL2→EL1, MMU | ✅ done | boots to userspace; **caches ON** (SCTLR.{M,C,I}, all Normal RAM WB-cacheable) since 2026-05-17 (TD-16 RESOLVED) | residual perf lever is the *uncached GENET RX DMA pool* (Policy B, attended), not a global cache switch |
 | SMP (4 cores) | 🟡 partial | 4-core enum works | scheduler is **cpu0-only**; CNTV-on-secondary breaks primary (`project_smp_d7_d8_findings`) |
 | Generic Timer | ✅ done | scheduler tick / delays | — |
 | Interrupts (GIC-400) | ✅ done | GENET/USB/SD IRQs live | — |
 | PL011 UART console | ✅ done | primary console + klog mirror | TD-14 two-owner UART polish (#127) |
 | VideoCore property mailbox | ✅ done | userspace (thermal/clocks/power) | kernel-internal primitive ⏸ (for WiFi/BT/DVFS) |
-| HDMI framebuffer **console** (fbcon) | ✅ done | klog+psh on HDMI (Tier 0) | slow fills (caches off) |
+| HDMI framebuffer **console** (fbcon) | ✅ done | klog+psh on HDMI (Tier 0) | slow fills (CPU writes to the uncached fb pages; caches are globally ON) |
 | HDMI framebuffer **device** `/dev/fb0` | 🟡 partial | device LANDED + HW-validated netboot (#148): read/write + `RPI4FB_GETMODE` devctl, `video/rpi4-fb/` | attended (#149): fbdev `FBIOGET_*` veneer (Tiny-X), true `mmap(fd,0)` kernel backing, drawing/display-ownership |
 | GENET Ethernet | ✅ done | Tier 5, IRQ-driven, ping ~0.9 ms | — |
 | lwIP / DHCP / ICMP / UDP | ✅ done | autonomous DHCP, diag-udp :9999 | — |

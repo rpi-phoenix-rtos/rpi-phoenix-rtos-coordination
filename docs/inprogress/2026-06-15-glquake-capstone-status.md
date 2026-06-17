@@ -39,11 +39,15 @@ console, and `usbkbd` is single-opener. Options:
   `/dev/kbd0 open failed (EBUSY)` to `keyboard input active`. Actual menu/play
   navigation is **attended** (physical keypresses). → Do (a) next.
 
-### 2. Performance / FPS — TD-16 caches (biggest lever, attended)
-Quake runs ~12 fps and loads are CPU-bound because **caches are globally off
-(TD-16)**. Cache enable is the single biggest perf lever (also fixes the ~1 ms
-NFS RTT) but is boot-risk/attended (BCM2711 SLC stale-read non-determinism). The
-NFS fix already cut load time. → TD-16 spike is the path; attended.
+### 2. Performance / FPS — SOLVED (CORRECTED: caches were never the issue)
+> **CORRECTION (2026-06-17):** "caches are globally off (TD-16)" is **stale/false** —
+> TD-16 was RESOLVED 2026-05-17; caches are ON. The ~12 fps was the present path
+> (uncached tiled V3D readback + CPU blit), not a global cache switch.
+
+FPS is now ~40-42 @1080p: render-to-scanout + linear RT + cacheable readback +
+cross-core pipelined present (see `2026-06-15-td16-cache-enable-plan.md` "WIN" notes).
+The only residual cache lever is the *uncached GENET RX DMA pool* for NFS bandwidth
+(Policy B, attended, cable-gated) — narrow and separate from FPS.
 
 ### 3. Mouse look — after keyboard
 `usbmouse` → `/dev/mouse0`, same EBUSY-class ownership + attended keypress/move
@@ -66,9 +70,12 @@ formal multi-boot soak once input lands.
    (unattended) → hand off keypress validation. This is the gate to interactivity
    = the biggest "usable" step.
 2. **Mouse** (same unblock pattern) once keyboard is confirmed.
-3. **TD-16 cache spike** for FPS/load (attended, boot-risk, netboot-recoverable).
-4. Audio, gamma retune, soak — polish.
+3. ~~TD-16 cache spike for FPS/load~~ **DONE** — FPS solved via render-to-scanout
+   (see §2 correction); the only residual cache lever is the uncached GENET RX pool
+   (Policy B, attended, NFS-bandwidth only, cable-gated).
+4. Audio (DMA mechanism proven 2026-06-17, devices 7bdb1c4; Quakespasm SNDDMA wiring
+   next), gamma retune, soak — polish.
 
 The remaining "usable" blockers are dominated by **attended** steps (keypress
-validation, TD-16 SLC, audio bench). Unattended progress = unblock `/dev/kbd0`
-+ verify, then prep mouse + the TD-16 spike design.
+validation, audible audio sign-off). Unattended progress = unblock `/dev/kbd0`
++ verify, then prep mouse + audio SNDDMA wiring.

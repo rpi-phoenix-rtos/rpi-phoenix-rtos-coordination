@@ -26,9 +26,10 @@ still 0.54 MB/s (the 18 MB pak0 slurp ≈ 33 s). So the *transfer rate*, not the
 round-trip latency, is now the limiter. ~23× below the 100 Mbps line rate.
 
 **Hypotheses (ranked).**
-1. **Caches-off CPU/memcpy (TD-16).** The rx path copies data several times
-   (genet DMA buffer → pbuf → socket buffer → libnfs buffer → app) plus TCP
-   checksums, all on *uncached* memory (caches globally off). Uncached A72
+1. **Uncached RX DMA pool (the real TD-16-shaped lever).** The rx path copies data
+   several times (genet DMA buffer → pbuf → socket buffer → libnfs buffer → app) plus
+   TCP checksums, all on *uncached* memory — the GENET RX `dmammap` pool (NB: global
+   caches are ON; only this DMA pool is uncached, see the correction below). Uncached A72
    memcpy is ~10–50× slower than cached; multiple copies + lwip overhead can
    bottleneck to ~0.5 MB/s. **This is the leading suspect** and would largely
    dissolve with TD-16.
@@ -83,13 +84,22 @@ kernel poll mechanism, `libphoenix` poll/select.
 
 ---
 
-## TD-16 (global cache enable) — REAFFIRMED NEAR-FUTURE MUST-HAVE
+## TD-16 — CORRECTED (caches are ON; the lever is the uncached RX DMA pool)
 
-Caches are **globally OFF** today. This makes *everything* CPU/memcpy-bound:
-the NFS bulk throughput (a), the Quake BSP/lightmap build, `v3d_compile` (GLSL
-shader compiles), and the network rx path. It is the **single largest perf
-lever** in the port and gates a genuinely fast system. Item (a) is most likely a
-direct symptom of it.
+> **CORRECTION (2026-06-17):** the claim below ("caches globally OFF") is **stale
+> and false**. TD-16 was RESOLVED 2026-05-17 — `SCTLR_EL1.{M,C,I}` are set and all
+> Normal RAM is WB-cacheable (see `docs/inprogress/2026-06-15-td16-cache-enable-plan.md`
+> §1 for the file:line proof). The genuine remaining lever is **narrower**: the GENET
+> RX zero-copy pool is *uncached* `dmammap` memory, so the lwIP receive chain reads
+> packet payload uncached. The fix is selective cacheable-RX + streaming `dc ivac`
+> maintenance (Policy B), not a global cache switch. Hypothesis (1) above and the
+> paragraph below conflate "DMA buffer uncached" with "global caches off."
+
+~~Caches are **globally OFF** today.~~ The uncached **GENET RX DMA pool** makes the
+NFS receive path CPU/memcpy-bound (every received byte is checksummed + copied out of
+uncached memory). Making that one pool cacheable + maintained (Policy B, attended per
+the td16 plan) is the bandwidth lever; the Quake FPS levers (render-to-scanout, linear
+RT + cacheable readback) already shipped. Item (a) is the uncached-RX symptom.
 
 **These performance issues need to be solved soon.** TD-16 should be scheduled as
 a near-term priority, not left indefinitely parked.
