@@ -167,9 +167,20 @@ Debugged vkEnumeratePhysicalDevices (was -3, not a hang). Cleared, in order:
    returns NULL on Phoenix's static ELF → added a weak override in v3dv_gap_stubs.c
    returning a non-NULL fixed-note sentinel (+ -Wl,--build-id on the link). 
 Now device-create reaches **init_uuids' BLAKE3 pipeline-cache-UUID hash and FAULTS**
-(Data Abort EL0, far=0 NULL-deref; regs show BLAKE3/SHA constants). Almost certainly
-the u_cpu_detect/SIMD-dispatch fragility on Phoenix (the subagent flagged: detect_os
+(Data Abort EL0, far=0 NULL-deref; regs show BLAKE3/SHA constants). NOTE: NOT NEON (host build sets no NEON flag; blake3 uses portable). Deeper portable-path NULL-deref (the subagent flagged: detect_os
 must NOT force DETECT_OS_LINUX or u_cpu_detect breaks). NEXT: force Mesa's blake3 to the
 PORTABLE impl in build-v3dv-phoenix.py (no SIMD dispatch → no cpu-detect dependency),
 or fix u_cpu_detect for aarch64-phoenix. Then vkCreateDevice should complete → Tier 2.
 The ioctl-trace debug was removed; rpi4-quake restored as the flagship.
+
+### 2026-06-17 — audio data path verified + Vulkan blake3 reassessed
+- ✅ **Audio write->FIFO path VERIFIED** (devices). rpi4-audio boot self-test feeds a
+  ~0.2s 440Hz tone through s16->duty->PWM-FIFO (PIO); underruns=0, STA 0x102->0x731,
+  0 faults. The output path works end-to-end. Audible blip on the jack = your Fri check.
+- ℹ️ **Vulkan blake3 blocker re-assessed**: NOT NEON (host build sets no NEON flag; blake3
+  uses the portable path). The init_uuids BLAKE3 fault is a deeper portable-path NULL-deref
+  — needs addr2line of the fault PC in the rpi4-v3dv-tier0 binary (or prints in init_uuids).
+  Parked as the Vulkan Tier-1 next step (device-create is otherwise past 4 blockers).
+- NOTE: usable Quake/vkQuake audio needs DMA streaming (P3, driver) before the Quakespasm
+  SNDDMA backend (pl_phoenix_snd.c, currently a silent stub) is worth wiring — PIO alone
+  underruns at per-frame Submit. DMA is the next audio step.
