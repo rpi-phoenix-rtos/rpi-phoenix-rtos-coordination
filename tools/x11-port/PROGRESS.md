@@ -21,9 +21,10 @@ needs host internet; idempotent).
 | libXau 1.0.11 | ✅ builds | `libXau.a` aarch64-phoenix; config.sub knows `phoenix` |
 | xtrans 1.5.0 | ✅ builds | transport headers (AF_UNIX path is the Phoenix-relevant one) |
 | libXdmcp 1.1.5 | ✅ builds | `libXdmcp.a` |
-| xcb-proto | ⬜ next | python codegen (host python); produces the XCB protocol descriptions |
-| libxcb | ⬜ next | needs xcb-proto + libXau + libXdmcp; `--disable-mitshm` (no `shm_open`) |
-| libX11 | ⬜ | needs xcb + xtrans + xorgproto; expect `--disable-xcb-sloppy-lock` etc. |
+| xcb-proto 1.16.0 | ✅ builds | host python codegen; `.pc` in `share/pkgconfig`, `xcbgen` under `local/lib/python3.x` |
+| libpthread-stubs 0.5 | ✅ builds | provides `pthread-stubs.pc` (pthread is in Phoenix libc → stubs are no-ops) |
+| libxcb 1.16 | ✅ builds | `libxcb.a` + ~24 extension libs (randr/render/shm/shape/xfixes/xkb/xinput/…); needed 2 Phoenix-gap patches (below) + `--disable-mitshm` |
+| libX11 | ⬜ next | needs xcb + xtrans + xorgproto; expect `--disable-xcb-sloppy-lock` etc. + more libc-gap patches |
 | libXext/libXrender/libXfont2 | ⬜ | extension + font libs |
 | pixman | ⬜ | software rasteriser (NEON path on aarch64) |
 | freetype/fontconfig | ⬜ | font rendering (or PCF bitmaps only for the MVD) |
@@ -38,6 +39,19 @@ needs host internet; idempotent).
   model; `dlopen` is absent so a static kdrive is the only viable server anyway.
 - `CFLAGS="--sysroot=$SYSROOT -I$PREFIX/include"`, `LDFLAGS` likewise; `PKG_CONFIG_PATH`
   points at the isolated prefix so each lib finds its already-built deps.
+
+## Phoenix-gap patches applied (in `patches/`)
+
+- **libxcb-1.16-phoenix.patch** — (1) `xcb_conn.c`: add `#include <arpa/inet.h>` (Phoenix
+  defines `htonl` as a macro there and doesn't pull it transitively). (2) `xcb_in.c`: no-op
+  guards for `MSG_TRUNC`/`MSG_CTRUNC` (Phoenix `sys/socket.h` lacks them; recvmsg doesn't
+  report them; SCM_RIGHTS fd-passing is unused by a software X server).
+
+### libphoenix gaps noted (upstream-worthy, not blocking the port)
+
+- `sys/socket.h` lacks `MSG_TRUNC`/`MSG_CTRUNC` (standard POSIX recvmsg flags). Adding them
+  to libphoenix would be a clean libc-completeness fix (like `getrandom`/`getentropy` were)
+  and let xcb build unpatched. Deferred — patched locally for now to keep the X11 brick moving.
 
 ## Known Phoenix walls to expect (from tinyx-x11-demo.md)
 

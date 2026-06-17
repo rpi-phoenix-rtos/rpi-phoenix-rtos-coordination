@@ -20,11 +20,36 @@ set -u
 TC=/home/houp/phoenix-rpi/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-
 SYSROOT=/home/houp/phoenix-rpi/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot
 PREFIX=/tmp/x11-phoenix
-SRC="$(cd "$(dirname "$0")" && pwd)/src"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+SRC="$HERE/src"
+PATCHDIR="$HERE/patches"
 XBASE=https://www.x.org/releases/individual
+XARCHIVE=https://xorg.freedesktop.org/archive/individual
 
 mkdir -p "$PREFIX" "$SRC"
+# share/pkgconfig holds xcb-proto.pc; lib/pkgconfig holds the rest.
 export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig:$PREFIX/share/pkgconfig"
+
+# apply_patches <name-version> — apply patches/<nv>*.patch (idempotent, -N).
+apply_patches() {
+	local nv=$1 p
+	for p in "$PATCHDIR/$nv"*.patch; do
+		[ -f "$p" ] && (cd "$SRC/$nv" && patch -p1 -N <"$p" >/dev/null 2>&1)
+	done
+	return 0
+}
+
+# host_build <name-version> <url> — build a HOST tool/package (e.g. xcb-proto's
+# python codegen), no cross-compile.
+host_build() {
+	local nv=$1 url=$2
+	fetch_extract "$nv" "$url" || return 1
+	cd "$SRC/$nv" || return 1
+	[ -f config.status ] || ./configure --prefix="$PREFIX" >"/tmp/$nv-conf.log" 2>&1 \
+		|| { echo "$nv: CONFIGURE FAIL"; tail -3 "/tmp/$nv-conf.log"; return 1; }
+	make install >"/tmp/$nv-build.log" 2>&1 || { echo "$nv: BUILD FAIL"; tail -4 "/tmp/$nv-build.log"; return 1; }
+	echo "$nv: OK (host)"
+}
 
 # fetch_extract <name-version> <url>
 fetch_extract() {
@@ -39,6 +64,7 @@ fetch_extract() {
 xbuild() {
 	local nv=$1 url=$2 extra=${3:-}
 	fetch_extract "$nv" "$url" || return 1
+	apply_patches "$nv"
 	cd "$SRC/$nv" || return 1
 	if [ ! -f config.status ]; then
 		# shellcheck disable=2086
@@ -58,10 +84,17 @@ xbuild libXau-1.0.11     "$XBASE/lib/libXau-1.0.11.tar.gz"
 xbuild xtrans-1.5.0      "$XBASE/lib/xtrans-1.5.0.tar.gz"
 xbuild libXdmcp-1.1.5    "$XBASE/lib/libXdmcp-1.1.5.tar.gz"
 
+# --- XCB tier (builds for Phoenix; libxcb needs 2 Phoenix-gap patches + --disable-mitshm) ---
+host_build xcb-proto-1.16.0       "$XARCHIVE/proto/xcb-proto-1.16.0.tar.xz"   # python codegen
+xbuild     libpthread-stubs-0.5   "$XARCHIVE/lib/libpthread-stubs-0.5.tar.xz" # pthread-stubs.pc (pthread is in libc)
+# libxcb: patches/libxcb-1.16-phoenix.patch adds <arpa/inet.h> (htonl macro) + MSG_TRUNC/
+# MSG_CTRUNC no-op guards (Phoenix sys/socket.h lacks them; fd-passing unused).
+xbuild     libxcb-1.16            "$XARCHIVE/lib/libxcb-1.16.tar.xz" "--disable-mitshm"
+
 # --- next bricks (TODO) ---
-# libxcb needs xcb-proto (python codegen) + the xcb util headers; --disable-mitshm
-# (no shm_open in libphoenix). Then libX11 (--host + xcb + xtrans + xorgproto,
-# --disable-xcb-sloppy-lock, --without-xmlto). Then the kdrive Xfbdev server.
+# libX11 (--host + xcb + xtrans + xorgproto; expect --disable-xcb-sloppy-lock,
+# --without-xmlto, and likely more Phoenix libc-gap patches). Then libXext/libXrender,
+# pixman, font libs, then the kdrive Xfbdev server (shadow-FB + write()-blit to /dev/fb0).
 
 echo "=== installed X11 libs in $PREFIX/lib ==="
 ls "$PREFIX/lib/"*.a 2>/dev/null || echo "(none yet)"
