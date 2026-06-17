@@ -105,12 +105,17 @@ is Tier 1.
 
 Full detail + Tier-1 next steps: `docs/inprogress/2026-06-17-vulkan-v3dv-tier0-progress.md`.
 
-**Committed in external/mesa @ 7b12e80eee0** (3 `#if __phoenix__`-guarded edits, upstream
-build unchanged): `util/detect_os.h` (__phoenix__ ⇒ DETECT_OS_LINUX so vk_image.drm_format_mod
-exists), `include/renderdoc_app.h` (__phoenix__ ⇒ RENDERDOC_CC), `broadcom/vulkan/v3dv_device.c`
-(enumerate_devices bypasses drmGetDevices2 → create_physical_device with an inert render-fd;
-skip fstat of absent DRM nodes). I staged ONLY these 3 — the GL port's pre-existing uncommitted
-`gallium/drivers/v3d/*` + `os_memory_aligned.h` working-tree changes were left untouched.
+**Committed in external/mesa @ dbd03bef831** (4 files, all `#if __phoenix__`-guarded, upstream +
+the main agent's GLQuake gallium build unchanged): `vulkan/runtime/vk_image.{h,c}` (extend the
+LINUX||BSD guards on drm_format_mod with `|| __phoenix__` — Vulkan-runtime-only files, GL build
+never compiles them), `include/renderdoc_app.h` (__phoenix__ ⇒ RENDERDOC_CC),
+`broadcom/vulkan/v3dv_device.c` (enumerate_devices bypasses drmGetDevices2 → create_physical_device
+with an inert render-fd; skip fstat of absent DRM nodes). NOTE: a global __phoenix__⇒DETECT_OS_LINUX
+in detect_os.h was tried first and REVERTED — it flipped u_cpu_detect.c onto a <sys/auxv.h> path
+Phoenix lacks and broke the SHARED libv3d-phoenix.a (would have silently regressed GLQuake too).
+I staged ONLY my files — the GL port's pre-existing uncommitted `gallium/drivers/v3d/*` +
+`os_memory_aligned.h` working-tree changes were left untouched; libv3d-phoenix.a rebuilt clean
+(GL build `[link] PASS`).
 
 **New/edited files in tools/v3d-driver-port/ (MAIN AGENT: commit these in the coord repo):**
 - `build-v3dv-phoenix.py` (cross-build + link-drive; header documents the one-time host
@@ -136,3 +141,19 @@ skip fstat of absent DRM nodes). I staged ONLY these 3 — the GL port's pre-exi
 **Tier-1 watch item flagged for boot:** `init_uuids` calls libv3d's real ELF-walking
 `build_id_find_nhdr_for_addr` which may return NULL on Phoenix and hard-fail vkCreateDevice
 before the stubbed leaves are hit — if so, add a weak fixed-note stub (details in the doc).
+
+### 2026-06-17 — Vulkan Tier 1 (partial: instance OK on HW)
+- ✅ **vkCreateInstance WORKS on real V3D hardware.** Built a boot-launched
+  rpi4-v3dv-tier0 (sources/phoenix-rtos-devices/misc/rpi4-v3dv-tier0/, links
+  /tmp/libv3dv-phoenix.a + /tmp/libv3d-phoenix.a with -Wl,--allow-multiple-definition
+  for the v3d42_* helpers in both archives). Booted (swapped in for rpi4-quake — only
+  one large GL/VK binary fits in loader.disk). Harness printed "start" then reached the
+  vkEnumeratePhysicalDevices printf — i.e. vkCreateInstance returned VK_SUCCESS (past the
+  return-2 check). **Vulkan instance creation on the Pi4 V3D: confirmed.**
+- ⏳ **vkEnumeratePhysicalDevices HANGS** (no further harness output; boot continues; no
+  fault dumped → the harness process is stuck inside the enumerate call, not crashed).
+  Next debug (Tier 1 cont.): instrument phoenix_v3d_ioctl in the winsys to log each cmd
+  → find the ioctl it wedges on (likely a winsys_init/power-on path or an ioctl V3DV
+  issues that the shim mishandles), or add prints in create_physical_device/init_uuids.
+  Swapped rpi4-quake back IN (flagship restored); re-enable rpi4-v3dv-tier0 (Makefile +
+  user.plo.yaml, both have the commented line) to resume.

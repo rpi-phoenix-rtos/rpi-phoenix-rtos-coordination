@@ -73,11 +73,13 @@ C11-threads.h shim was **not needed** — `HAVE_PTHREAD` already routes Mesa's
   decls, guarded WAIT_FLAGS), `shim-include/xf86drmMode.h` (KMS structs),
   `shim-include/dlfcn.h` (RTLD_NOLOAD etc.), `phoenix_mesa_compat.h` (_SC_PHYS_PAGES).
 
-## Mesa source edits (COMMITTED in external/mesa @ 7b12e80eee0, all `#if __phoenix__`-guarded)
+## Mesa source edits (COMMITTED in external/mesa @ dbd03bef831, all `#if __phoenix__`-guarded)
 
-- `src/util/detect_os.h` — `__phoenix__` ⇒ DETECT_OS_LINUX/POSIX (so the
-  LINUX||BSD-gated `vk_image.drm_format_mod`, accessed unconditionally in
-  v3dv_image.c, exists).
+- `src/vulkan/runtime/vk_image.{h,c}` — extend the four
+  `#if DETECT_OS_LINUX || DETECT_OS_BSD` guards (the `drm_format_mod` field decl + its
+  3 uses) with `|| defined(__phoenix__)`, so the modifier field exists (v3dv_image.c
+  accesses it unconditionally). **Vulkan-runtime-only files** — the gallium GL build
+  never compiles them, so the main agent's GLQuake stack is untouched.
 - `include/renderdoc_app.h` — `__phoenix__`/`__unix__` ⇒ RENDERDOC_CC (was
   `#error "Unknown platform"`).
 - `src/broadcom/vulkan/v3dv_device.c` — `enumerate_devices` bypasses the
@@ -93,17 +95,40 @@ single-sync fields; there is no legacy path, and the winsys ignores the chained
 extensions pointer because submit is synchronous), `SUPPORTS_PERFMON=0`,
 `SUPPORTS_CPU_QUEUE=0`.
 
-## DETECT_OS_LINUX blast radius (boot-verify on HW)
+**GL-build impact of the MULTISYNC 0→1 flip (shared-lib runtime change — VERIFIED, not
+assumed).** `v3d_phoenix_winsys.c` is baked into the shared `libv3d-phoenix.a` the main
+agent's GLQuake links, and gallium's `v3d_screen.c:829-831` DOES read all three caps into
+`screen->{has_perfmon,has_cpu_queue,has_multisync}` — so the flip sets GL's
+`has_multisync` false→true too. Checked every gallium use:
+- **submit hot path** (`v3d_job.c`, `v3dx_draw.c`) uses the LEGACY in_sync_bcl/
+  in_sync_rcl/out_sync fields directly, does NOT branch on has_multisync → the GLQuake
+  per-frame submit path is UNCHANGED.
+- `query_time_elapsed = has_cpu_queue && has_multisync` (v3d_screen.c:273) stays 0
+  (CPU_QUEUE=0) → advertised caps unchanged.
+- only delta: `assert(screen->has_multisync)` (v3d_query.c:258) in a timestamp-query
+  path classic Quake doesn't exercise — and it makes the assert PASS, never fire.
+Net: GL-runtime-inert in practice. libv3d-phoenix.a was rebuilt to bake in this edit;
+the GL harness still links PASS.
 
-Masquerading as Linux flips compile-time paths. Within the **actual closure** (the
-runtime + util + broadcom TUs we build), the ONLY `DETECT_OS_LINUX || DETECT_OS_BSD`
-sites are in `vk_image.h` / `vk_image.c`, and they are pure struct-field /
-modifier-tiling logic (init `drm_format_mod` to `DRM_FORMAT_MOD_INVALID`), **no
-syscalls / no filesystem**. No `memfd_create` / `/proc/self` paths are in the
-closure. So the LINUX shim is low-risk here. (`os_misc.c` — which has the
-`/proc`-ish memory probes — is deliberately NOT pulled; it collides with the GL
-port's os_* stubs, and the one symbol needed is stubbed.) A dedicated
-`DETECT_OS_PHOENIX` is the cleaner long-term upstream refactor.
+## Why per-site `__phoenix__` guards, NOT a global detect_os.h masquerade
+
+The first attempt set `__phoenix__ ⇒ DETECT_OS_LINUX/POSIX` globally in `detect_os.h`.
+That **regressed the shared core build**: it flipped `src/util/u_cpu_detect.c` onto its
+`#if DETECT_OS_LINUX → #include <sys/auxv.h>` / `getauxval` path, which the Phoenix
+toolchain lacks → u_cpu_detect.c failed → `libv3d-phoenix.a` lost
+`u_init_pipe_screen_caps` → the V3DV link (and, critically, the main agent's GLQuake
+gallium build, which shares detect_os.h) broke. `detect_os.h` is global; flipping it
+would silently recompile the entire gallium driver under DETECT_OS_LINUX=1 (mmap/anon-
+file/thread paths) on the main agent's next rebuild — a silent regression that can't be
+boot-verified unattended.
+
+Resolution: revert the global change; add `|| defined(__phoenix__)` only to the four
+`#if DETECT_OS_LINUX || DETECT_OS_BSD` sites in `vk_image.{h,c}` (Vulkan-runtime-only,
+never compiled by the GL build). Verified: the GL build is fully restored (build-v3d-
+phoenix.py → `[link] PASS`, 0 FAIL, `u_init_pipe_screen_caps` defined), and a V3DV
+`--compile-only` surfaced **no further** per-site DETECT_OS needs (the closure has none
+beyond vk_image). `os_misc.c` (the `/proc`-ish memory probes) is deliberately NOT pulled
+— it collides with the GL port's os_* stubs, and the one symbol needed is stubbed.
 
 ## Remaining undefined symbols / unbuilt TUs
 
@@ -127,6 +152,13 @@ multiple-definition during Tier 1-5 must be investigated, not absorbed.
    `v3d_phoenix_power.c`, like rpi4-glclear). Expect the printf trail
    `vkCreateInstance -> 0` / `vkEnumeratePhysicalDevices -> 0 count=1` / `device
    name='...'` / `vkCreateDevice -> 0` / `PASS`.
+1b. **Harness NULL-instance procaddr quirk.** The harness fetches `vkCreateInstance`
+   via `vkGetInstanceProcAddr(NULL, ...)`. NULL-instance procaddr is spec-valid only for
+   a few global entrypoints (CreateInstance / EnumerateInstance*); if the runtime's
+   GetInstanceProcAddr doesn't special-case them it returns NULL at runtime (harness
+   prints `vkGetInstanceProcAddr(vkCreateInstance) NULL`). That is a harness/loader
+   quirk, NOT a V3DV bug — if it bites, fetch CreateInstance directly as
+   `v3dv_CreateInstance` or check vk_common's global-procaddr handling.
 2. **build_id (likely first failure).** `init_uuids` (v3dv_device.c:842) calls
    `build_id_find_nhdr_for_addr(init_uuids)` — defined in libv3d-phoenix.a, does a
    real ELF program-header walk, and may return **NULL** on the Phoenix ELF, which
