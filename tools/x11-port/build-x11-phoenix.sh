@@ -101,10 +101,28 @@ XCFLAGS_EXTRA="-DMAXHOSTNAMELEN=256 -DXOS_USE_MTSAFE_PWDAPI -D_POSIX_THREAD_SAFE
 xbuild libX11-1.8.7 "$XBASE/lib/libX11-1.8.7.tar.gz" \
 	"--without-xmlto --disable-specs --disable-devel-docs xorg_cv_malloc0_returns_null=no"
 
+# --- extension + rendering libs (build for Phoenix as of 2026-06-18) ---
+xbuild libXext-1.3.5     "$XBASE/lib/libXext-1.3.5.tar.gz"     "xorg_cv_malloc0_returns_null=no"
+xbuild libXrender-0.9.11 "$XBASE/lib/libXrender-0.9.11.tar.gz" "xorg_cv_malloc0_returns_null=no"
+
+# pixman (software rasteriser, independent). The LIBRARY builds; only pixman's test/ utils.c
+# fails (its static gettime() clashes with Phoenix's non-standard sys/time.h gettime), so build
+# + install just the pixman/ subdir and copy the .pc manually.
+if [ ! -f "$PREFIX/lib/libpixman-1.a" ]; then
+	fetch_extract pixman-0.42.2 "$XBASE/lib/pixman-0.42.2.tar.gz"
+	( cd "$SRC/pixman-0.42.2" \
+	  && ./configure --host=aarch64-phoenix --prefix="$PREFIX" --disable-shared --enable-static \
+	       --disable-gtk CC=${TC}gcc AR=${TC}ar RANLIB=${TC}ranlib \
+	       CFLAGS="--sysroot=$SYSROOT -I$PREFIX/include" LDFLAGS="--sysroot=$SYSROOT -L$PREFIX/lib" \
+	       >/tmp/pixman-conf.log 2>&1 \
+	  && make -C pixman install >/tmp/pixman-build.log 2>&1 \
+	  && cp pixman-1.pc "$PREFIX/lib/pkgconfig/" && echo "pixman-0.42.2: OK (lib only)" ) \
+	  || echo "pixman-0.42.2: FAIL (see /tmp/pixman-*.log)"
+fi
+
 # --- next bricks (TODO) ---
-# libXext/libXrender (extension libs, need libX11), pixman (software rasteriser, independent),
-# font libs (libXfont2/freetype/fontconfig or PCF), then the kdrive Xfbdev server
-# (shadow-FB + write()-blit to /dev/fb0). NOTE: libphoenix getpwnam_r/getpwuid_r + sys/poll.h
+# font libs (libXfont2/freetype/fontconfig or PCF bitmaps for the MVD), then the kdrive Xfbdev
+# server (shadow-FB + write()-blit to /dev/fb0). NOTE: libphoenix getpwnam_r/getpwuid_r + sys/poll.h
 # must be in the on-device libc when the X server eventually links/runs (committed in libphoenix).
 
 echo "=== installed X11 libs in $PREFIX/lib ==="

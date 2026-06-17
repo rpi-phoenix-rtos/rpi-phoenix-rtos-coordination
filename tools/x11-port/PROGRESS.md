@@ -25,9 +25,10 @@ needs host internet; idempotent).
 | libpthread-stubs 0.5 | ✅ builds | provides `pthread-stubs.pc` (pthread is in Phoenix libc → stubs are no-ops) |
 | libxcb 1.16 | ✅ builds | `libxcb.a` + ~24 extension libs (randr/render/shm/shape/xfixes/xkb/xinput/…); needed 2 Phoenix-gap patches (below) + `--disable-mitshm` |
 | **libX11 1.8.7** | ✅ builds | **the core Xlib** (`libX11.a`, 2.2 MB). Needed: `xorg_cv_malloc0_returns_null=no` cache, `-DMAXHOSTNAMELEN=256`, `-DXOS_USE_MTSAFE_PWDAPI -D_POSIX_THREAD_SAFE_FUNCTIONS` (POSIX getpw*_r path) + libphoenix getpw*_r/sys/poll.h (below) |
-| libXext/libXrender/libXfont2 | ⬜ next | extension + font libs (need libX11) |
-| pixman | ⬜ | software rasteriser (NEON path on aarch64; independent — buildable any time) |
-| freetype/fontconfig | ⬜ | font rendering (or PCF bitmaps only for the MVD) |
+| libXext 1.3.5 | ✅ builds | `libXext.a` |
+| libXrender 0.9.11 | ✅ builds | `libXrender.a` |
+| pixman 0.42.2 | ✅ builds (lib) | `libpixman-1.a` (3.1 MB) + `.pc`; only pixman's *test* `utils.c` fails (its `gettime` clashes with Phoenix's non-standard `sys/time.h` `gettime`), so build `make -C pixman install` |
+| libXfont2 / freetype / fontconfig | ⬜ next | font libs (or PCF bitmaps only for the MVD) |
 | kdrive Xfbdev server | ⬜ | the actual server; shadow-FB + `write()`-blit to `/dev/fb0` |
 
 ## Findings / cross-compile recipe (proven)
