@@ -24,6 +24,19 @@ This is a **stretch / "wow" milestone** — see
 > | The whole X.org GPU-accel question is "deferred past v1.0" (Open Q2) | **The V3D 4.2 GPU now renders accelerated OpenGL on real hardware.** A ported Mesa gallium **v3d** driver + GL frontend (`st/mesa` + GLSL) + a **custom in-process userspace winsys** (`tools/v3d-driver-port/v3d_phoenix_winsys.c`) runs GL on the real V3D, with **render-to-scanout** straight into `/dev/fb0`. **GL Quake (quakespasm) runs and is playable** (`tools/quakespasm-port/`; render-to-scanout, reported ~42 fps at 1080p — the earlier port-plan note of ~10 fps was a fullscreen *cube* before caches/EZ work, not the world renderer). **BUT** this changes the X-accel calculus in a subtle, important way analysed in the companion doc — the winsys is **per-process, no-DRM, synchronous, single-client** (it reprograms the V3D's one MMU base register to its own page table on init), so it does **not** give X a multi-client accelerated GPU for free. |
 > | "Tinyx ships in PR #82 today" — treats the X11 stack as arriving | PR #82 has **not** landed in `sources/phoenix-rtos-ports/` (verified: no `x11/`, `libX11`, `libxcb`, `pixman`, `freetype`, `fontconfig`, `Xau`, `Xdmcp`). The entire X11 library stack is **net-new unported work**, not a cherry-pick away. `shm_open` is still missing in libphoenix (MIT-SHM must be `--disable`d); `dlfcn.h`/`dlopen` is absent (rules out full Xorg loadable-module DDX — kdrive's static link is the only viable model). |
 >
+> **✅ AF_UNIX GATE PASSED — 2026-06-17.** Phase-1 dep #1 (the gate for *all*
+> X-client connectivity) is confirmed on real aarch64-rpi4b hardware. The kernel
+> implements AF_UNIX in `posix/unix.c` (socket/bind/listen/accept4/connect/
+> send/recv for SOCK_STREAM/DGRAM/SEQPACKET, 1283 lines). A boot probe
+> (`sources/phoenix-rtos-devices/misc/rpi4-ipcprobe/`, kept in-tree, not a default
+> component) exercised it: **`socketpair` PASS** (stream data path) **and the full
+> named `bind`→`listen`→`accept`/`connect`→`send`/`recv` dance PASS** → verdict
+> "AF_UNIX READY for X11". So `/tmp/.X11-unix/X0`-style local sockets work; the X
+> server↔client transport is not a blocker. Remaining Phase-1 risk is now the X11
+> *library port* itself (net-new), not the OS IPC foundation. (Known kernel TODOs
+> in `unix.c`: `listen` backlog ignored, MSG_PEEK, some race FIXMEs — none block the
+> single-listener X server.)
+>
 > **What this means going forward:** the *software* TinyX demo described
 > below (phases 1–7: Xfbdev on `/dev/fb0`, twm, st/xterm, keyboard+mouse)
 > is now mostly *unblocked on the Phoenix side* — the remaining cost is

@@ -44,7 +44,7 @@ One row per peripheral/subsystem. For narrative gap analysis see
 | RTC | ⏸ deferred | Pi 4 has no on-SoC RTC | NTP over GENET (zero-HW); or I²C HAT later |
 | DMA framework | ⬜ not started | PIO everywhere today | blocks line-rate SD + audio |
 | Camera (CSI-2) / DSI display | ⬜ not started | — | — |
-| posixsrv / psh userspace | ✅ done | pipes, ptys, `/dev/{null,zero,urandom,full}`, interactive psh | psh has no `|` pipe parsing |
+| posixsrv / psh userspace | ✅ done | pipes, ptys, `/dev/{null,zero,urandom,full}`, interactive psh; **AF_UNIX SOCK_STREAM validated on HW** (socketpair + named bind/listen/accept/connect/send/recv — X11 Phase-1 gate, `misc/rpi4-ipcprobe`, 2026-06-17) | psh has no `|` pipe parsing |
 
 ## Build / test infrastructure (✅)
 

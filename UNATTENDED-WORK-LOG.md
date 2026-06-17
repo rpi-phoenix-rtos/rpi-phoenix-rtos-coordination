@@ -259,11 +259,29 @@ jack and confirm Quake audio is audible.** (FPS dipped 40-42→~35 from the feed
 the continuous-DMA-streaming driver mode — mechanism already proven — would remove that, efficiency
 not correctness.) Same backend will serve vkQuake.
 
-### NEXT ACTION (decisive): next documented feature — X11 software path OR Bluetooth tier 0-3
-Audio (your named item) is delivered. Remaining *documented* named features that are unattended:
-X11 (kdrive/TinyX → /dev/fb0 software framebuffer; docs/todo/tinyx-x11-demo.md +
-docs/inprogress/2026-06-16-x11-accelerated-desktop-plan.md), Bluetooth tiers 0-3 (HCI self-logs over
-UART = unattended per the roadmap; needs the kernel/userspace mailbox for BT_REG_ON +.hcd blob), or
-the continuous-audio-DMA-streaming efficiency increment. Pick X11-software OR BT-tier-0 next (both
-are named/documented + self-verifiable). Keep avoiding the Vulkan instruction-abort (attended-friendlier)
-and the GENET-cacheable Policy B (attended, cable-gated).
+### 2026-06-17 — ★ X11 Phase-1 gate ANSWERED: AF_UNIX READY on HW — devices 343fcb8 + project 215ac86
+You named X11 as a target. The full tinyx/kdrive stack is a multi-week net-new library port (PR #82
+never landed — no libX11/libxcb/xtrans/pixman/freetype/fontconfig in-tree), NOT unattended-completable.
+So I did the SMART unattended thing: validated the foundation the whole port gates on. The tinyx plan's
+Phase-1 dep #1 is "does AF_UNIX work on aarch64-rpi4b?" (every X client connects over a local socket).
+Desk-check: the kernel fully implements AF_UNIX (posix/unix.c, 1283 lines, all the SOCK_STREAM ops X
+needs). Runtime confirm: wrote rpi4-ipcprobe (misc/), a boot probe doing socketpair + the full named
+bind/listen/accept/connect/send/recv dance. HW result: BOTH PASS → "AF_UNIX READY for X11". Reverted
+it from the default boot (kept the source as a re-runnable probe; clean image restored, audio still in).
+So: X11's IPC foundation is PROVEN. The remaining X11 cost is purely the library port (big, attended-
+or-multi-session). Documented in docs/todo/tinyx-x11-demo.md (✅ AF_UNIX GATE PASSED banner).
+
+### Decision recorded for you: X11 full port is NOT an unattended job
+The honest call: porting libX11+libxcb+xtrans+pixman+freetype+fontconfig+the kdrive server is weeks of
+build-system fighting with low odds of a working unattended result. I validated the foundation (AF_UNIX
+✅) so the port is de-risked, but I will NOT sink the unattended window into a likely-partial X lib port.
+If you want X, the foundation is green; it's a focused multi-session effort. Flagging for your call Friday.
+
+### NEXT ACTION (decisive): keep banking bounded distinct wins
+X11 foundation validated + documented. Next: pick the next bounded, self-verifiable, DISTINCT item that
+maximizes "how much delivered" — candidates: (a) continuous-DMA audio streaming (completes the audio
+driver efficiently, restores ~40fps, frees a core; mechanism already proven); (b) a small in-tree demo
+app or rc.psh banner (docs/todo/userspace-demo-apps.md Tier A/B — usability/"feels alive"); (c) RTC-via-
+NTP SNTP client (docs, usability — but no NTP server on the crossover net, likely parked); (d) more
+publication-readiness/TODO cleanup. Lean (a) or (b). Keep avoiding Vulkan instr-abort + GENET Policy B
+(attended) + BT (needs attended GPIO for BT_REG_ON).
