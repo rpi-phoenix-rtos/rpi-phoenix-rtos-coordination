@@ -7,6 +7,56 @@ publication-readiness pass + TODO cleanup. Take risks; skip only items that need
 you physically (SD-card testing, bench rig/scope/LED, BLE-in-range, audible audio).
 This file is my running log + the decisions/parked items for you to review.
 
+---
+
+# ★ READ THIS FIRST — delivery summary (2026-06-17)
+
+## 1. What works now (in the flagship netboot image, boot-verified clean, 0 faults)
+- **GLQuake (Quakespasm)** — textured 3D world, ~40 fps @1080p, render-to-scanout. Unchanged baseline.
+- **Audio — NEW, the headline.** Full PWM-audio subsystem on `/dev/audio0`: clock+FIFO bring-up →
+  legacy-DMA mechanism (PWM1=DREQ 1) → **continuous streaming DMA** (free-running ring, driver sleeps) →
+  **Quakespasm SNDDMA backend** (feeder thread). Quake boots with "Audio: 16 bit, stereo, 44100 Hz" and
+  mixes live. **➡️ YOUR ONE ACTION FRIDAY: plug headphones into the 3.5 mm jack and confirm Quake audio
+  is audible.** Everything up to "is sound coming out" is self-verified; only your ears can close it.
+- **/dev/urandom is now hardware-RNG-backed** (was weak rand()); **libc `getrandom()`/`getentropy()`
+  added** (broad app support). Full entropy stack: /dev/hwrng → /dev/urandom → libc. HW-verified.
+- **`rpi4-sysinfo` boot banner** — build stamp, uptime, HW-entropy sample, /dev inventory (10/12 nodes).
+
+## 2. Named-goal status
+- **Audio (you named it): DONE** (driver + DMA + Quake backend); audible check is yours.
+- **X11 (you named it): foundation validated, full port is a multi-session job.** AF_UNIX (the gate for
+  every X client) is HW-confirmed READY; fb0 + USB HID also done. The X11 *library* port
+  (libX11/libxcb/pixman/freetype/… all net-new, PR #82 never landed) is weeks of work — NOT unattended.
+- **Vulkan+vkQuake (you named it): furthest-ever progress, 5 blockers cleared.** vkCreateInstance +
+  enumerate(count=1) work on HW; cleared a name-print abort + the threaded-submit hang (is_shim fix).
+  vkCreateDevice now reaches the noop-job and NULL-derefs the binner CL (winsys/V3DV BO-interop, the 6th
+  blocker, precisely localized in `project_vulkan_v3dv_port` memory). vkQuake is far; this is a research
+  stretch best finished attended.
+
+## 3. Parked / attended items — each with the human action it needs
+- **Quake audio audible check** — plug in headphones, listen. (minutes)
+- **SD card #120/#154** (exec-from-card, write-completion) — needs card swaps host↔Pi. (batched, ~5 min)
+- **USB mass storage (umass)** — plug in a USB stick once.
+- **GPIO outputs / I²C / SPI / PWM** — need a bench rig (LED / logic-analyzer / sensor).
+- **Bluetooth (BCM43455 HCI)** — needs the kernel mailbox for BT_REG_ON (GPIO) + a `.hcd` blob + a BLE
+  device in range to scan.
+- **WiFi #91** — firmware-exec gate; worst-case needs JTAG (FT2232 ~$20).
+- **Vulkan vkCreateDevice** — continue the winsys BO/CL probe (deep); then Tier 2 → vkQuake (big).
+- **GENET cacheable-RX (Policy B / task #11)** — silent-corruption risk, needs a multi-boot integrity
+  soak + is gigabit-cable-gated; attended.
+- **TD-10 SError unmask / #43 reboot / SMP-beyond-cpu0** — kernel boot-risk, careful attended.
+
+## 4. Decisions I made unattended (revisit if you disagree)
+- Backed /dev/urandom with /dev/hwrng (rand() fallback) — a security fix; touched the shared posixsrv.
+- Added getrandom/getentropy to libphoenix (shared libc) — additive, low-risk.
+- Forced is_shim=true in v3dv on Phoenix (synchronous submit) — committed in external/mesa (libv3dv-only,
+  swapped out of the flagship, zero effect on the shipped GL/Quake image).
+- Kept rpi4-sysinfo as a permanent boot banner; kept rpi4-ipcprobe as a re-runnable (disabled) probe.
+
+(Full chronological detail + per-item commits follow below.)
+
+---
+
 ## Operating rules I'm following
 - Each delivered change: build (`--scope core` for core), netboot-validate, HDMI
   snapshot where visual, commit in the touched repo, record here.
