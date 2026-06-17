@@ -95,6 +95,18 @@ void copy_build_id_to_sha1(uint8_t sha1[20], const struct build_id_note *note)
 	memcpy(sha1, v3dv_fixed_build_id, sizeof(v3dv_fixed_build_id));
 }
 
+/* libv3d-phoenix.a's real build_id_find_nhdr_for_addr does a runtime ELF program-header
+ * walk for the .note.gnu.build-id, which does not resolve on Phoenix's statically-loaded
+ * ELF -> returns NULL -> init_uuids() hard-fails create_physical_device. Override it
+ * (linked first, --allow-multiple-definition) to return a non-NULL sentinel; the length/
+ * copy stubs above ignore the note pointer and use the fixed 20-byte id. */
+const struct build_id_note *build_id_find_nhdr_for_addr(const void *addr);
+const struct build_id_note *build_id_find_nhdr_for_addr(const void *addr)
+{
+	(void)addr;
+	return (const struct build_id_note *)v3dv_fixed_build_id;
+}
+
 /* ---- driconf (xmlconfig) ----
  * src/util/xmlconfig.c needs libexpat to parse drirc XML; Phoenix has none. driconf is
  * purely an OPTIONAL per-app option-OVERRIDE layer — with an empty option cache every

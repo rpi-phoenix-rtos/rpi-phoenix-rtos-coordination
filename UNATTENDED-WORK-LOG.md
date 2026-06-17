@@ -157,3 +157,19 @@ before the stubbed leaves are hit — if so, add a weak fixed-note stub (details
   issues that the shim mishandles), or add prints in create_physical_device/init_uuids.
   Swapped rpi4-quake back IN (flagship restored); re-enable rpi4-v3dv-tier0 (Makefile +
   user.plo.yaml, both have the commented line) to resume.
+
+### 2026-06-17 — Vulkan Tier 1: 4 blockers cleared, device-create reaches blake3
+Debugged vkEnumeratePhysicalDevices (was -3, not a hang). Cleared, in order:
+1. **device_has_expected_features** (-3 "requires kernel 6.8+"): V3DV gates on TFU && CSD
+   && CACHE_FLUSH && CPU_QUEUE && MULTISYNC. winsys ioc_get_param returned CSD=0,
+   CPU_QUEUE=0 → set both to 1 (HW has CSD; CPU_QUEUE is a fib; graphics never uses them).
+2. **build-id**: init_uuids' build_id_find_nhdr_for_addr (libv3d's real ELF-phdr walk)
+   returns NULL on Phoenix's static ELF → added a weak override in v3dv_gap_stubs.c
+   returning a non-NULL fixed-note sentinel (+ -Wl,--build-id on the link). 
+Now device-create reaches **init_uuids' BLAKE3 pipeline-cache-UUID hash and FAULTS**
+(Data Abort EL0, far=0 NULL-deref; regs show BLAKE3/SHA constants). Almost certainly
+the u_cpu_detect/SIMD-dispatch fragility on Phoenix (the subagent flagged: detect_os
+must NOT force DETECT_OS_LINUX or u_cpu_detect breaks). NEXT: force Mesa's blake3 to the
+PORTABLE impl in build-v3dv-phoenix.py (no SIMD dispatch → no cpu-detect dependency),
+or fix u_cpu_detect for aarch64-phoenix. Then vkCreateDevice should complete → Tier 2.
+The ioctl-trace debug was removed; rpi4-quake restored as the flagship.

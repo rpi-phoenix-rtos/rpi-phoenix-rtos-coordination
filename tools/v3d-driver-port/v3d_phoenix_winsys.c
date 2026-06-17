@@ -421,16 +421,21 @@ static int ioc_get_param(struct drm_v3d_get_param *gp)
 	case DRM_V3D_PARAM_V3D_CORE0_IDENT1:  gp->value = 0x81001422; return 0;
 	case DRM_V3D_PARAM_V3D_CORE0_IDENT2:  gp->value = 0x40078121; return 0;
 	case DRM_V3D_PARAM_SUPPORTS_TFU:      gp->value = 1; return 0;
-	case DRM_V3D_PARAM_SUPPORTS_CSD:      gp->value = 0; return 0;
+	/* V3DV's device_has_expected_features() (v3dv_device.c) gates physical-device
+	 * creation on TFU && CSD && CACHE_FLUSH && CPU_QUEUE && MULTISYNC — all must be 1
+	 * or vkEnumeratePhysicalDevices returns VK_ERROR_INITIALIZATION_FAILED ("requires
+	 * kernel 6.8+"). The V3D 4.2 HW *has* CSD (compute) + the TFU; CPU_QUEUE is a
+	 * kernel-side convenience we don't implement. We advertise all 1 so device-create
+	 * succeeds; classic graphics (vkQuake) never dispatches compute or CPU jobs, so the
+	 * unimplemented SUBMIT_CSD / CPU-queue paths are not exercised. Revisit if a Tier-2+
+	 * client issues vkCmdDispatch / a CPU job. MULTISYNC_EXT MUST be 1: this Mesa's
+	 * handle_cl_job unconditionally uses DRM_V3D_SUBMIT_EXTENSION (no legacy sync path);
+	 * the winsys ignores the chained extensions (submit is synchronous), so 1 is safe. */
+	case DRM_V3D_PARAM_SUPPORTS_CSD:      gp->value = 1; return 0;
 	case DRM_V3D_PARAM_SUPPORTS_CACHE_FLUSH: gp->value = 1; return 0;
-	/* V3DV (Vulkan) init queries these (v3dv_device.c). MULTISYNC_EXT MUST be 1: in this
-	 * Mesa version handle_cl_job unconditionally sets DRM_V3D_SUBMIT_EXTENSION and zeroes
-	 * the legacy single-sync fields — there is no legacy path to fall back to. The winsys
-	 * ignores the chained extensions pointer (submit is synchronous), so 1 is safe.
-	 * PERFMON/CPU_QUEUE = 0 (no perf queries / no CPU jobs in classic Quake). */
 	case DRM_V3D_PARAM_SUPPORTS_MULTISYNC_EXT: gp->value = 1; return 0;
 	case DRM_V3D_PARAM_SUPPORTS_PERFMON:       gp->value = 0; return 0;
-	case DRM_V3D_PARAM_SUPPORTS_CPU_QUEUE:     gp->value = 0; return 0;
+	case DRM_V3D_PARAM_SUPPORTS_CPU_QUEUE:     gp->value = 1; return 0;
 	default: gp->value = 0; return 0;
 	}
 }
