@@ -296,10 +296,32 @@ SD #120/#154 (card swaps), WiFi #91 (JTAG), Vulkan instr-abort (fiddly/attended-
 Policy B (silent-corruption soak + cable-gated). The Pi4 device-driver code is already publication-clean
 (no stray TODO/FIXME; 3 prior cleanup waves). So the unattended frontier is thinning.
 
-### NEXT ACTION (decisive): assess remaining unattended candidates, else deepen review
-Audio fully done. Next iteration: (a) check if a small high-value bounded item remains (e.g. wire
-/dev/hwrng entropy into a urandom pool to unblock the openssl-zero-stdout anomaly + crypto ports — a
-distinct usability feature, self-verifiable); OR (b) begin the user's fallback: a systematic
-step-by-step publication-readiness review of the Pi4 changes vs origin/master (the tools/ v3d+quake
-port surface is large + unreviewed for publication — diagnostics, licenses, dead code). Lean (a) if it
-scopes small, else (b). Keep avoiding the attended-gated list above.
+### 2026-06-17 — ★ Vulkan V3DV Tier-1: instruction abort CLEARED, advanced to vkCreateDevice (hangs)
+You explicitly named Vulkan+vkQuake, so I engaged it (libs were still in /tmp → feasible). Swapped the
+v3dv-tier0 harness in for quake, booted. Findings: **vkEnumeratePhysicalDevices now returns count=1**
+(device found). The device-create "instruction abort" from the prior session was root-caused: pc=0
+(NULL fn-ptr call), lr→addr2line = vk_common_GetPhysicalDeviceProperties dispatching to the physical-
+device table's GetPhysicalDeviceProperties2 slot = NULL. So it was the harness's COSMETIC device-name
+print, not device-create. Guarded it (devices 0bfa53e) → reached vkCreateDevice, which now **HANGS**
+(no return/abort; rest of boot proceeds, so only the harness thread blocks). Two open Vulkan issues:
+(1) phys-device dispatch Properties2 NULL (create_physical_device's Phoenix shortcut likely skips the
+vk_physical_device dispatch-table init); (2) the vkCreateDevice hang — needs instrumenting external/
+mesa v3dv_device.c, which means a HEAVY host-meson rebuild of libv3dv per probe.
+**RESTORED quake as the boot image** (devices 60d48e6 + project 453ac33) so you boot to the working
+Quake+audio demo, not a hung harness. To resume Vulkan: re-swap (Makefile + plo) + touch the stub;
+/tmp libs are present.
+
+### Decision recorded: Vulkan is incremental-only unattended; not reaching vkQuake this window
+The vkQuake road is long+heavy (device-create hang → Tier 2 clear+readback → full renderer → port
+vkQuake), each step gated on a host-meson libv3dv rebuild. I'll make incremental progress when it's the
+best available item, but it won't reach a demo unattended. Flagged for your Friday call: worth a focused
+attended session.
+
+### NEXT ACTION (decisive): the unattended frontier is thin — pick the best remaining increment
+Bounded features done (audio, X11 gate); cleanup low-yield (code already clean); big items attended or
+heavy (Vulkan hang = host-meson loop; X11 lib port = weeks; BT/umass/I2C/SD/WiFi = hardware). Options
+next: (a) invest in the Vulkan vkCreateDevice-hang via libv3dv instrumentation (heavy but the named
+goal); (b) the /dev/hwrng→urandom pooling experiment (distinct, may unblock crypto ports); (c) a
+deeper publication review across the kernel/devices Pi4 diff vs origin/master (licenses, headers,
+diagnostics) even if TODO-grep was empty; (d) a small in-tree demo (rc.psh banner / sysinfo). Reassess
+honestly next iteration; prefer whichever has the best delivered-value-per-effort.
