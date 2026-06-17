@@ -210,3 +210,34 @@ CS=ACTIVE; CB NEXTCONBK→self for continuous. (4) Verify self-log: CS active + 
 progresses, PWM STA drains, underruns=0. Then wire pl_phoenix_snd.c SNDDMA_* to /dev/audio0 (ring +
 GetDMAPos from elapsed-time estimate). The user said take risks + iterate — boot, read CS, fix
 address/channel empirically. THEN consider X11-start or the Vulkan instruction-abort.
+
+### 2026-06-17 — Audio DMA DONE (mechanism proven on HW) — devices 7bdb1c4
+Implemented the single-shot legacy-DMA feed of the PWM1 FIFO. First boot: channel armed correctly
+but **held forever** (CS=0x21 = ACTIVE + bit5 ISHELD "held by DREQ flow control", remain=full, 0
+bytes, no error). Root cause via rpi4os.com part9-sound: **PWM1 is DMA DREQ peripheral 1, not 5** —
+DREQ 5 is the *legacy* PWM0; the analog jack on the Pi4 (GPIO40/41 ALT0) is PWM1 = DREQ 1. Changed
+PERMAP 5→1; second boot **completed**: CS=0x0a (END=1, ACTIVE=0, no ERROR), remain=0 (all 35292
+bytes DMA-paced into the FIFO, no CPU spin), FIFO drained. Buffers land in low 1 GB so the
+0xC0000000 legacy uncached alias is valid (cb_pa/tone_pa both <0x40000000). DEST=PWM_FIF1 bus
+0x7e20c818. So the audio DMA *hardware mechanism* is proven end-to-end.
+
+**What's left for actual Quake audio (decided to bank + pivot, not tunnel):**
+1. Continuous streaming: self-chain the CB (NEXTCONBK→CB) over a ring; or double-buffer with two CBs.
+   Self-verifiable (DMA stays ACTIVE for seconds, underruns=0). Straightforward increment.
+2. **The real lift = cross-process audio ring.** rpi4-quake and rpi4-audio are *separate processes*.
+   Quake's snd_dma wants a *directly-writable* `shm->buffer` (it mixes ahead at arbitrary offsets keyed
+   on `SNDDMA_GetDMAPos`), so a simple `write()` doesn't fit. Clean model: the driver exports its DMA
+   ring via `mmap(/dev/audio0)` (device-file memObject returning the physical ring pages) + a
+   `RPI4AUDIO_GETPOS` devctl for the play cursor; Quake mmaps it as `shm->buffer`. Needs mmap-over-msg
+   support on the device — non-trivial in Phoenix. Until then `pl_phoenix_snd.c` stays the silent stub.
+3. Audible sign-off is YOURS (headphones on the jack), Friday.
+DECISION: the hardware-hard part (clock, FIFO, M/S, **DMA pacing**) is all proven + committed. The
+remaining work is the cross-process shared-ring plumbing, which I'll either do next or after a breadth
+pass. Pivoting now to breadth per "I want as many items as possible" + the no-tunnel lesson.
+
+### NEXT ACTION (decisive): breadth pass — TODO/publication sweep + next unattended doc item
+Audio DMA milestone banked. Now execute the user's explicit "check for TODO comments in code... fix
+all this" + "make code ready to be publically published" on the Pi4 changes, AND pick the next
+clearly-unattended doc item (candidates: TD-05/TD-14 cleanup [1.6], /dev/urandom←hwrng pooling to
+unblock the openssl/curl/dropbear ports [1.5], or the continuous-audio-streaming increment). Avoid
+re-tunneling Vulkan (instruction-abort is fiddly + interleaved with boot noise — attended-friendlier).
