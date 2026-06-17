@@ -198,3 +198,15 @@ build-id, init_uuids/blake3. **NEXT (Vulkan Tier 1 cont.): extract the instructi
 prog binary to find the bad call; likely another stub/NULL-fn in create_physical_device's
 tail. Then vkCreateDevice should return → Tier 2 (clear+readback).** PIVOTING to breadth now
 (3 turns on Vulkan); this is a clean focused next step. Flagship (rpi4-quake) restored.
+
+### NEXT ACTION (decisive — execute, don't re-deliberate): Audio DMA (P3)
+The audio write→FIFO path works (PIO); DMA is the bridge to usable Quake audio. Implement in
+rpi4-audio.c: (1) pick a free legacy-DMA channel (query firmware dma-channel-mask via mailbox
+tag 0x00060001, else default ch 5); (2) Pi4 legacy-DMA DRAM bus addr — try 0xC0000000|phys for
+low-1GB buffers, else physical (iterate via the CS error/progress self-log); (3) map DMA ch regs
+(0xfe007000 + ch*0x100), build a 32B CB (TI = SRC_INC|DEST_DREQ|PERMAP=5[PWM]|WAIT_RESP; SRC=bus(tone
+ring); DEST=0x7e20c818 [PWM_FIF1 bus]; TXFR_LEN); PWM_DMAC = ENAB|(DREQ<<8)|PANIC; CONBLK_AD=bus(CB);
+CS=ACTIVE; CB NEXTCONBK→self for continuous. (4) Verify self-log: CS active + no ERROR bit, TXFR_LEN
+progresses, PWM STA drains, underruns=0. Then wire pl_phoenix_snd.c SNDDMA_* to /dev/audio0 (ring +
+GetDMAPos from elapsed-time estimate). The user said take risks + iterate — boot, read CS, fix
+address/channel empirically. THEN consider X11-start or the Vulkan instruction-abort.
