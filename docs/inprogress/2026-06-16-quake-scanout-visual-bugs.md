@@ -69,6 +69,21 @@ writes the RT's native bytes straight to the fb → byte0=B shown as red → tea
 The render is correct, so this is display-only and does not affect the fps result
 or the harness's render-correctness verdict.
 
+## Bug 3 — intermittent RENDER TIMEOUT in complex scenes (NEW, 2026-06-17)
+
+Observed after the color fix but likely independent of it. Same swap_color_rb image
+(40d4563): one boot ran 42fps with **0** timeouts (color-swaprb), the next hit **37**
+RENDER TIMEOUTs (ct1ca advances, FRDONE never fires, finish=1672ms = the 16M-spin
+render wait expiring → ~0.6fps) once into demo2 (square-hunt). The original pre-swap
+scanout boot (perf-scanout3) also had 0, but that's one sample. So: an INTERMITTENT
+render-completion stall in heavier 1080p scenes. Render (CT1) starts but never
+signals FRDONE. Suspects: binner overflow pool exhausted on a heavy frame (the 4MB
+pool arms once/job — a >4MB tile-list scene re-stalls; but these are RENDER not BIN
+timeouts), a huge/overflowing tile list, or a GPU render fault with no MMU/INT bit.
+Needs: dump more render-side state on timeout (CT1CA range vs rcl_start/end, the
+GMP/error regs), and test whether raising the spin limit just defers it (= genuine
+slowness) or it never completes (= a stall). Separate from color correctness.
+
 ## Bug 2 — monocolor square around explosions (particle alpha)
 
 **Symptom:** a solid lavender square around explosion/particle effects
