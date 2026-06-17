@@ -328,9 +328,10 @@ never advanced the dest pointer (reads >64B left a tail uninitialised). HW-verif
 existing rpi4-hwrng driver into something the whole system uses.
 
 ### NEXT ACTION (decisive): continue the publication review for more concrete fixes
-The publication-review approach is paying off (it found the urandom defect). Continue it: review the
-Pi4-touched source for more real "things needing fixing" — candidates: (a) audit license headers on ALL
-new Pi4 files (drivers + tools) for publication; (b) scan the lwip/genet + kernel Pi4 diff for leftover
-debug prints / dead code / magic numbers; (c) the getrandom()/libc-seed PRNG (deeper entropy wiring);
-(d) small usability (rc.psh banner). Prefer concrete fixes over audits. Still avoiding: Vulkan hang
-(host-meson loop), X11 lib port (weeks), BT/umass/I2C/SD/WiFi (hardware).
+The publication-review approach is paying off (it found the urandom defect). DONE this round: license-
+header audit of all new Pi4 files (drivers + tools) — ALL present, clean (no gaps to fix). Continue with
+more real "things needing fixing": (b) scan the lwip/genet + kernel Pi4 diff for leftover debug prints /
+dead code / magic numbers; (c) the getrandom()/libc-seed PRNG (deeper entropy wiring — does libc's
+own rand-seed / getrandom use the HW RNG?); (d) small usability (rc.psh banner / sysinfo). Prefer
+concrete fixes over audits. Could also reconsider investing in the Vulkan vkCreateDevice-hang (named
+goal, but heavy host-meson loop). Still avoiding: X11 lib port (weeks), BT/umass/I2C/SD/WiFi (hardware).
