@@ -82,3 +82,46 @@ snapshot if visual) → commit in the touched repo → tick here. Boot budget is
 - **Gamma/darkness:** deprioritized as cosmetic (render matches host per the visual-regression
   harness; it's Quake's default-gamma dimness, a player preference). Did not spend boot cycles
   on it; can add a palette/GPU gamma pass on request.
+
+### Vulkan V3DV Tier 0 (subagent)
+
+**Outcome: Tier 0 COMPLETE.** Mesa's V3DV (Vulkan for Broadcom V3D) driver + the Vulkan
+runtime + `spirv_to_nir` compile and link for aarch64-phoenix. A
+vkCreateInstance→vkEnumeratePhysicalDevices→vkCreateDevice harness links to a static
+aarch64 ELF with **0 undefined symbols** (`nm -u` clean, not just a passing link).
+Mirrors the GL gallium port recipe. NOT boot-tested (HW serialized by main agent) — that
+is Tier 1.
+
+Full detail + Tier-1 next steps: `docs/inprogress/2026-06-17-vulkan-v3dv-tier0-progress.md`.
+
+**Committed in external/mesa @ 7b12e80eee0** (3 `#if __phoenix__`-guarded edits, upstream
+build unchanged): `util/detect_os.h` (__phoenix__ ⇒ DETECT_OS_LINUX so vk_image.drm_format_mod
+exists), `include/renderdoc_app.h` (__phoenix__ ⇒ RENDERDOC_CC), `broadcom/vulkan/v3dv_device.c`
+(enumerate_devices bypasses drmGetDevices2 → create_physical_device with an inert render-fd;
+skip fstat of absent DRM nodes). I staged ONLY these 3 — the GL port's pre-existing uncommitted
+`gallium/drivers/v3d/*` + `os_memory_aligned.h` working-tree changes were left untouched.
+
+**New/edited files in tools/v3d-driver-port/ (MAIN AGENT: commit these in the coord repo):**
+- `build-v3dv-phoenix.py` (cross-build + link-drive; header documents the one-time host
+  Vulkan meson build via a uv venv since system python3.14 lacks mako)
+- `v3dv_harness.c`, `vk_icd_link.c`, `v3dv_libdrm_shim.c`, `v3dv_v71_stubs.c`,
+  `v3dv_gap_stubs.c`, `v3dv-aux-sources.txt`
+- edited: `shim-include/{xf86drm.h,xf86drmMode.h,dlfcn.h}`, `phoenix_mesa_compat.h`,
+  and `v3d_phoenix_winsys.c` (ioc_get_param: added SUPPORTS_MULTISYNC_EXT=1 / PERFMON=0 /
+  CPU_QUEUE=0 — needed for Tier-1 device-create; read-only constants, GL path unaffected)
+- new doc: `docs/inprogress/2026-06-17-vulkan-v3dv-tier0-progress.md`
+
+**Key engineering decisions (all advisor-reviewed):**
+- Reused `/tmp/libv3d-phoenix.a` back-end as-is (front-end-agnostic; plan §4.2).
+- No C11 threads.h shim needed — HAVE_PTHREAD routes c11/threads.h to pthread; cnd_*/thrd_*
+  bodies come from src/c11/impl/threads_posix.c (aux).
+- V3D-7.1 dispatch branch (57 v3d71_* syms) is **weak trap-stubs**, not no-ops (it's dead at
+  ver==42 but `v3d_X` macro takes the address of both v42 & v71 fns). Build v3dvx_* at
+  V3D_VERSION=42 only — building v71 would drag a whole v71 backend closure for a dead path.
+- 3 v3d42_* helpers collide between V3DV and gallium back-end (never co-linked upstream) →
+  tolerated with `-Wl,--allow-multiple-definition` (link order binds V3DV's copy = correct).
+  Any NEW dup in later tiers must be investigated, not absorbed.
+
+**Tier-1 watch item flagged for boot:** `init_uuids` calls libv3d's real ELF-walking
+`build_id_find_nhdr_for_addr` which may return NULL on Phoenix and hard-fail vkCreateDevice
+before the stubbed leaves are hit — if so, add a weak fixed-note stub (details in the doc).

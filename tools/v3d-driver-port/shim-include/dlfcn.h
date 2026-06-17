@@ -1,7 +1,13 @@
 #ifndef PHX_DLFCN_H
 #define PHX_DLFCN_H
+#define RTLD_LAZY 1
 #define RTLD_NOW 2
 #define RTLD_LOCAL 0
+#define RTLD_GLOBAL 0x100
+#define RTLD_NOLOAD 0x4
+#define RTLD_NODELETE 0x1000
+#define RTLD_DEFAULT ((void*)0)
+#define RTLD_NEXT ((void*)-1)
 static inline void*dlopen(const char*p,int f){(void)p;(void)f;return 0;}
 static inline void*dlsym(void*h,const char*s){(void)h;(void)s;return 0;}
 static inline int dlclose(void*h){(void)h;return 0;}

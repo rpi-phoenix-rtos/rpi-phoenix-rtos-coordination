@@ -97,6 +97,12 @@ typedef struct { unsigned long __bits[CPU_SETSIZE / (8 * sizeof(unsigned long))]
 #define CPU_ISSET(c, s) ((((s)->__bits[(c) / (8 * sizeof(unsigned long))]) >> ((c) % (8 * sizeof(unsigned long)))) & 1UL)
 #define CPU_COUNT(s)    (0)
 #endif
+/* sysconf() name Phoenix lacks: os_misc.c queries _SC_PHYS_PAGES for total RAM.
+ * Define the name so it compiles; Phoenix sysconf returns -1 for unknown names and
+ * os_get_total_physical_memory falls back gracefully. */
+#ifndef _SC_PHYS_PAGES
+#define _SC_PHYS_PAGES 85
+#endif
 /* inttypes.h pointer scanf-format macros missing on Phoenix */
 #ifndef SCNxPTR
 #define SCNxPTR "lx"
