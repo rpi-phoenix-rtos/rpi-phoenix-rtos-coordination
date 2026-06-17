@@ -36,10 +36,14 @@ This file is my running log + the decisions/parked items for you to review.
   `getpwnam_r`, `sys/poll.h`, `hypot` — libphoenix `89d1543`+`6e2b929`, additive, ship on next rebuild).
   **The ENTIRE X11 client + rendering + font library stack now cross-compiles for aarch64-phoenix —
   36 archives** (libX11, libxcb +24 exts, libXext, libXrender, libXfont2, libfontenc, libfreetype,
-  libpixman-1, libXau, libXdmcp, libz). Remaining: (1) a libphoenix rebuild to carry the new libc
-  symbols on-device; (2) **the kdrive Xfbdev server** (the big multi-session piece — xorg-server +
-  fbdev backend + shadow-FB→/dev/fb0). Ladder + full libc-gap inventory + recipe in
-  `tools/x11-port/PROGRESS.md`. Foundation DONE + de-risked (host-side, isolated, flagship frozen).
+  libpixman-1, libXau, libXdmcp, libz) + **5 libphoenix libc fixes** (getpwuid_r, getpwnam_r, sys/poll.h,
+  hypot, alloca.h-size_t — all additive, ship on the next libphoenix/image rebuild). Both remaining
+  frontiers SCOUTED + documented: (1) **kdrive Xfbdev server** — modern xorg-server dropped fbdev, so it
+  needs a restored/written fbdev backend (or PR#82 tinyx / old xserver) + the libphoenix rebuild + a
+  kdrive input driver (deep, multi-session); (2) **toolkit/apps** (libICE→libSM→libXt→Xaw→twm) —
+  speculative-until-server, libXt now alloca-unblocked, libICE needs a 1-line `time`-decl patch. Ladder +
+  full libc-gap inventory + recipe in `tools/x11-port/PROGRESS.md` + memory `project_x11_lib_port`.
+  Foundation DONE + de-risked (host-side, isolated, flagship frozen).
 - **Vulkan+vkQuake (you named it): furthest-ever progress, 5 blockers cleared.** vkCreateInstance +
   enumerate(count=1) work on HW; cleared a name-print abort + the threaded-submit hang (is_shim fix).
   vkCreateDevice now reaches the noop-job and NULL-derefs the binner CL (winsys/V3DV BO-interop, the 6th
