@@ -1,6 +1,6 @@
 # Phoenix-RTOS Raspberry Pi 4 (BCM2711) — Hardware Support Matrix
 
-**Updated:** 2026-06-05. Canonical "where are we" reference for the Pi 4 port.
+**Updated:** 2026-06-17. Canonical "where are we" reference for the Pi 4 port.
 One row per peripheral/subsystem. For narrative gap analysis see
 `docs/knowledge/scope-pi4-uncovered.md`; for live progress see `docs/inprogress/status.md`.
 
@@ -38,7 +38,9 @@ One row per peripheral/subsystem. For narrative gap analysis see
 | Bluetooth (BCM43455 UART HCI) | ⬜ not started | plan only | needs mailbox+GPIO alt-fn + `.hcd` blob |
 | GPIO / pinctrl | 🟡 partial | `/dev/gpio` read-only observer device (#150): snapshot + per-pin `RPI4GPIO_GETPIN` devctl, `gpio/rpi4-gpio/` | **outputs** (GPSET/GPCLR/fsel set) need a bench rig to validate (⏸) |
 | I²C / SPI / PWM | ⬜ not started | plans exist | need GPIO alt-fn + clock-manager |
-| Audio (PWM / I²S / HDMI) | ⬜ not started | plan `docs/todo/pi4-audio-impl.md` | validation needs speaker/scope (⏸) |
+| GPU (V3D 4.2) — OpenGL | ✅ done | ported Mesa gallium v3d driver + GL frontend (`tools/v3d-driver-port/`); **GLQuake (quakespasm) runs ~40-42fps@1080p** via render-to-scanout; R/B color + particle render-stall fixed (2026-06-16/17) | re-enable early-Z, double-buffer (tearing), gamma (cosmetic) |
+| GPU (V3D 4.2) — Vulkan (V3DV) | 🔬 groundwork | V3DV compiles+links for aarch64-phoenix (Tier 0); on HW vkCreateInstance works + 5 device-create blockers cleared (2026-06-17); harness `misc/rpi4-v3dv-tier0/` | device-create instruction-abort (Tier 1 cont.); then Tier 2 clear+readback → vkQuake |
+| Audio (PWM / I²S / HDMI) | 🟡 partial | PWM driver `/dev/audio0` (`audio/rpi4-audio/`): CPRMAN clock + PWM1 ch1/2 M/S+FIFO bring-up HW-verified (CM_PWMCTL=0x91), s16→FIFO write path verified (boot self-test, 0 underruns) (2026-06-17) | DMA streaming (P3); Quakespasm/vkQuake SNDDMA backend (`pl_phoenix_snd.c` stub); audible sign-off ⏸ (needs headphones) |
 | RTC | ⏸ deferred | Pi 4 has no on-SoC RTC | NTP over GENET (zero-HW); or I²C HAT later |
 | DMA framework | ⬜ not started | PIO everywhere today | blocks line-rate SD + audio |
 | Camera (CSI-2) / DSI display | ⬜ not started | — | — |

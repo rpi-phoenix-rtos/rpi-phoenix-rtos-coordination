@@ -21,6 +21,24 @@ Other landed/queued (details in the section below):
   Real suspects: download/clock ordering, SDIO-core intstatus-clear, rstvec semantics.
 - ⏸ **Attended queue:** #149 (fb0 fbdev veneer + mmap), USB hardening #142–#145, WiFi #91 (HW).
 
+## Current Status: 2026-06-17 — unattended multi-day run (GPU/Quake, audio, Vulkan)
+
+Autonomous `/loop` run (Witold away until Fri; netboot-only; SD/WiFi/USB-HW items skipped).
+Full chronological detail + parked items: **`UNATTENDED-WORK-LOG.md`** (repo root).
+
+- **GLQuake polished to shippable:** render-to-scanout (~40-42fps@1080p), the R/B color swap
+  fixed (`swap_color_rb` on the scanout RT, coord b6a9250), and the explosion-square + intermittent
+  GPU render-stall BOTH fixed — one root cause: GL_QUADS particles wedge the V3D; default
+  `r_quadparticles 0` (external/quakespasm 55b479e). Colors + stability now correct on HDMI.
+- **Audio (NEW): `/dev/audio0` PWM driver** (`audio/rpi4-audio/`, devices d5933ec/f8ac349). CPRMAN
+  clock + PWM1 ch1/2 M/S+FIFO bring-up HW-verified; s16→FIFO write path verified (boot self-test,
+  0 underruns). Remaining: DMA streaming + Quakespasm SNDDMA backend; audible sign-off ⏸ (headphones).
+- **Vulkan (NEW): V3DV port** — compiles+links for aarch64-phoenix (Tier 0); on HW vkCreateInstance
+  works + 5 device-create blockers cleared (feature-caps, build-id, init_uuids). Device-create now
+  hits an instruction abort (Tier 1 next). Harness `misc/rpi4-v3dv-tier0/` (swap with rpi4-quake).
+- **3 research+design docs** written (Vulkan/vkQuake, X11 accelerated desktop, DRM multi-client GPU).
+- Matrix updated (this date). Flagship rpi4-quake image is the working build.
+
 ## Current Status: 2026-06-09 — #152/#156 advanced, USB #121 abort localized, TD ledger reconciled
 
 Attended-but-autonomous netboot-only session (no SD swaps). Highlights:
