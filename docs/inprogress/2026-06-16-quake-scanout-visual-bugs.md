@@ -4,7 +4,31 @@ After render-to-scanout landed (~42fps@1080p, coord 2d9e246), two visual bugs
 appeared on the HDMI output. Both are DIAGNOSED here; neither is fixed yet. The
 build is reverted to the stable 42fps state (RGBA8 renderbuffer color RT).
 
-## Bug 1 — "everything is very blue" (red/blue channel swap)
+## Bug 1 — "everything is very blue" (red/blue channel swap) — **FIXED 2026-06-17**
+
+**FIX (committed):** force Mesa's `swap_color_rb` for the scanout RT. In
+`v3dx_state.c` set_framebuffer_state, set `v3d->swap_color_rb |= 1<<i` when the
+cbuf's resource BO is scanout-backed (`rsc->bo->scanout`, the flag set by the
+SCANOUT create path). This makes the fragment shader swap R<->B at color output
+(`nir_to_vir.c`), so the V3D's BGRA-native store lands byte0=logical-R — matching
+the RGB-order firmware fb. HW-verified: brown stone + red health cross on HDMI
+(was teal + blue), brightest-region RGB now R>B, ~33-41fps maintained, stable
+(renderbuffer RT, no GPU stall). **CAVEAT:** glReadPixels of the scanout RT is now
+R/B-swapped (the FS-output swap moves values in the fixed R8G8B8A8 physical layout;
+glReadPixels reads physical positions per the declared format). This is internal:
+the CPU-present fallback is unaffected (it only runs when scanout is *unavailable*,
+where the RT isn't scanout-backed so the swap isn't set), but the visual-regression
+**capture harness (scr_capture glReadPixels) will see R/B-swapped Pi frames — swap
+R<->B on the Pi frames in scripts/quake-visual-compare.py before comparing.**
+
+The clean alternative (a B8G8R8A8 *renderbuffer*, swap at tile-store so glReadPixels
+stays consistent) was not usable: glRenderbufferStorage has no BGRA enum, and a
+B8G8R8A8 (or even R8G8B8A8) **texture-backed** FBO color STALLS the GPU bin
+(ct0ca=0; isolation-tested both formats) — the texture/SAMPLER_VIEW resource path
+is the stall cause, not the format. `swap_color_rb` on the stable renderbuffer is
+the reliable fix.
+
+### Original diagnosis (kept for reference)
 
 **Symptom:** brown Quake stone renders teal/cyan; orange particles render blue.
 Quantitatively (HDMI grab, brightest 64px region): a stone wall is RGB ≈

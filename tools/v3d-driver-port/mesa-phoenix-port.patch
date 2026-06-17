@@ -252,6 +252,27 @@ index 1dc918d3e1f..c8654158546 100644
          if (job->first_ez_state == V3D_EZ_UNDECIDED &&
              (job->ez_state != V3D_EZ_DISABLED || job->draw_calls_queued == 0))
                  job->first_ez_state = job->ez_state;
+diff --git a/src/gallium/drivers/v3d/v3dx_state.c b/src/gallium/drivers/v3d/v3dx_state.c
+index baa9196c674..9df86a2d90f 100644
+--- a/src/gallium/drivers/v3d/v3dx_state.c
++++ b/src/gallium/drivers/v3d/v3dx_state.c
+@@ -558,6 +558,16 @@ v3d_set_framebuffer_state(struct pipe_context *pctx,
+ 
+                 if (desc->swizzle[3] == PIPE_SWIZZLE_1)
+                         v3d->blend_dst_alpha_one |= 1 << i;
++
++                /* Phoenix render-to-scanout: a color RT backed by the HDMI framebuffer is
++                 * displayed by firmware that reads it RGB-order, but the V3D's native 32-bit
++                 * store is BGRA, so the GPU's bytes come out red/blue-swapped on screen. Swap
++                 * R<->B at the fragment-shader color output for this RT so the stored bytes
++                 * land in the display's order. (Targets only the scanout RT; glReadPixels of
++                 * it is then R/B-swapped, which the CPU-present fallback + capture harness undo.) */
++                struct v3d_resource *rsc = v3d_resource(cbuf->texture);
++                if (rsc->bo != NULL && rsc->bo->scanout)
++                        v3d->swap_color_rb |= 1 << i;
+         }
+ 
+         v3d->dirty |= V3D_DIRTY_FRAMEBUFFER;
 diff --git a/src/util/os_memory_aligned.h b/src/util/os_memory_aligned.h
 index 98b3cd6f8d8..16de49d8b28 100644
 --- a/src/util/os_memory_aligned.h
