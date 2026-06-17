@@ -12,7 +12,7 @@ index b2d10c5e2d2..c19305b198f 100644
  #error "Unknown platform"
  #endif
 diff --git a/src/broadcom/vulkan/v3dv_device.c b/src/broadcom/vulkan/v3dv_device.c
-index 32b0cd460e8..86295c917b4 100644
+index 32b0cd460e8..66d5b650525 100644
 --- a/src/broadcom/vulkan/v3dv_device.c
 +++ b/src/broadcom/vulkan/v3dv_device.c
 @@ -841,6 +841,19 @@ device_has_expected_features(struct v3dv_physical_device *device)
@@ -79,7 +79,24 @@ index 32b0cd460e8..86295c917b4 100644
  
  #if USE_V3D_SIMULATOR
     device->sim_file = v3d_simulator_init(render_fd);
-@@ -1637,6 +1666,15 @@ enumerate_devices(struct vk_instance *vk_instance)
+@@ -1404,6 +1433,16 @@ create_physical_device(struct v3dv_instance *instance,
+       drmFreeVersion(version);
+    }
+ 
++#if defined(__phoenix__)
++   /* The Phoenix-RTOS winsys submits synchronously (it blocks on FLDONE/FRDONE per
++    * job) and provides only no-op DRM syncobjs — there is no real syncobj/timeline
++    * backing for a threaded submit. is_shim selects exactly the no-threaded-submit
++    * path (queue_init + CreateDevice both gate vk_*_enable_*submit_thread on !is_shim),
++    * so force it true. Without this, threaded submit is enabled and the device-create
++    * noop-job submit waits forever on a syncobj that never signals (hang). */
++   device->is_shim = true;
++#endif
++
+    if (!v3d_get_device_info(device->render_fd, &device->devinfo, &v3d_ioctl)) {
+       result = vk_errorf(instance, VK_ERROR_INITIALIZATION_FAILED,
+                          "Failed to get info from device.");
+@@ -1637,6 +1676,15 @@ enumerate_devices(struct vk_instance *vk_instance)
     struct v3dv_instance *instance =
        container_of(vk_instance, struct v3dv_instance, vk);
  
@@ -95,7 +112,7 @@ index 32b0cd460e8..86295c917b4 100644
     /* FIXME: Check for more devices? */
     drmDevicePtr devices[8];
     int max_devices;
-@@ -1696,6 +1734,7 @@ enumerate_devices(struct vk_instance *vk_instance)
+@@ -1696,6 +1744,7 @@ enumerate_devices(struct vk_instance *vk_instance)
     drmFreeDevices(devices, max_devices);
  
     return result;
@@ -103,301 +120,6 @@ index 32b0cd460e8..86295c917b4 100644
  }
  
  uint32_t
-diff --git a/src/gallium/drivers/v3d/v3d_bufmgr.c b/src/gallium/drivers/v3d/v3d_bufmgr.c
-index e82fd069b18..0eed759e4e0 100644
---- a/src/gallium/drivers/v3d/v3d_bufmgr.c
-+++ b/src/gallium/drivers/v3d/v3d_bufmgr.c
-@@ -117,9 +117,18 @@ v3d_bo_from_cache(struct v3d_screen *screen, uint32_t size, const char *name)
- 
- struct v3d_bo *
- v3d_bo_alloc(struct v3d_screen *screen, uint32_t size, const char *name)
-+{
-+        return v3d_bo_alloc_flags(screen, size, name, 0);
-+}
-+
-+struct v3d_bo *
-+v3d_bo_alloc_flags(struct v3d_screen *screen, uint32_t size, const char *name,
-+                   uint32_t create_flags)
- {
-         struct v3d_bo *bo;
-         int ret;
-+        bool cacheable = (create_flags & V3D_CREATE_BO_CACHEABLE) != 0;
-+        bool scanout = (create_flags & V3D_CREATE_BO_SCANOUT) != 0;
- 
-         /* The CLIF dumping requires that there is no whitespace in the name.
-          */
-@@ -127,7 +136,9 @@ v3d_bo_alloc(struct v3d_screen *screen, uint32_t size, const char *name)
- 
-         size = align(size, 4096);
- 
--        bo = v3d_bo_from_cache(screen, size, name);
-+        /* Cacheable BOs bypass the BO cache so they can never be reused as an
-+         * uncached GPU-read buffer (which would silently read stale CPU lines). */
-+        bo = (cacheable || scanout) ? NULL : v3d_bo_from_cache(screen, size, name);
-         if (bo) {
-                 if (dump_stats) {
-                         mesa_logd("Allocated %s %dkb from cache:", name, size / 1024);
-@@ -147,7 +158,8 @@ v3d_bo_alloc(struct v3d_screen *screen, uint32_t size, const char *name)
-         bo->private = true;
- 
-         struct drm_v3d_create_bo create = {
--                .size = size
-+                .size = size,
-+                .flags = create_flags
-         };
- 
-  retry:
-@@ -167,6 +179,8 @@ v3d_bo_alloc(struct v3d_screen *screen, uint32_t size, const char *name)
- 
-         bo->handle = create.handle;
-         bo->offset = create.offset;
-+        bo->cacheable = cacheable;
-+        bo->scanout = scanout;
- 
-         screen->bo_count++;
-         screen->bo_size += bo->size;
-@@ -277,7 +291,9 @@ v3d_bo_last_unreference_locked_timed(struct v3d_bo *bo, time_t time)
-         struct v3d_bo_cache *cache = &screen->bo_cache;
-         uint32_t page_index = bo->size / 4096 - 1;
- 
--        if (!bo->private) {
-+        if (!bo->private || bo->cacheable || bo->scanout) {
-+                /* cacheable / scanout BOs must not enter the (uncached) BO cache
-+                 * (scanout aliases a fixed framebuffer PA). */
-                 v3d_bo_free(bo);
-                 return;
-         }
-@@ -515,13 +531,10 @@ v3d_bo_map_unsynchronized(struct v3d_bo *bo)
-                 abort();
-         }
- 
--        bo->map = mmap(NULL, bo->size, PROT_READ | PROT_WRITE, MAP_SHARED,
--                       bo->screen->fd, offset);
--        if (bo->map == MAP_FAILED) {
--                mesa_loge("mmap of bo %d (offset 0x%016llx, size %d) failed",
--                          bo->handle, (long long)offset, bo->size);
--                abort();
--        }
-+        /* Phoenix winsys: BOs are already CPU-mapped (uncached, MAP_CONTIGUOUS) at
-+         * CREATE_BO time, and MMAP_BO returns that CPU virtual address as `offset`.
-+         * Use it directly — re-mmap()ing our non-device fd would fault/hang. */
-+        bo->map = (void *)(uintptr_t)offset;
-         VG(VALGRIND_MALLOCLIKE_BLOCK(bo->map, bo->size, 0, false));
- 
-         return bo->map;
-diff --git a/src/gallium/drivers/v3d/v3d_bufmgr.h b/src/gallium/drivers/v3d/v3d_bufmgr.h
-index 5363bf92fcb..08325688c74 100644
---- a/src/gallium/drivers/v3d/v3d_bufmgr.h
-+++ b/src/gallium/drivers/v3d/v3d_bufmgr.h
-@@ -54,10 +54,29 @@ struct v3d_bo {
-          * it's safe to reuse it in the BO cache).
-          */
-         bool private;
-+
-+        /* Phoenix: CPU mapping is cacheable (vs the default uncached DMA mapping).
-+         * Used only for GPU-written / CPU-read-back render targets so the CPU
-+         * readback (detile) hits cache instead of crawling uncached DRAM. Such BOs
-+         * bypass the BO cache (they must not be reused as uncached GPU-read buffers)
-+         * and are invalidated (dc ivac) before each CPU read. */
-+        bool cacheable;
-+
-+        /* Phoenix: BO is backed by the HDMI scanout framebuffer's physical pages
-+         * (render-to-scanout) — the GPU stores straight to the displayed surface, so
-+         * there is no CPU readback/blit. Like cacheable, such a BO bypasses the BO
-+         * cache (it aliases a fixed PA and must never be reused as a generic buffer). */
-+        bool scanout;
- };
- 
-+/* Phoenix: drm_v3d_create_bo.flags bits. */
-+#define V3D_CREATE_BO_CACHEABLE (1u << 0)
-+#define V3D_CREATE_BO_SCANOUT   (1u << 1)
-+
- struct v3d_bo *v3d_bo_alloc(struct v3d_screen *screen, uint32_t size,
-                             const char *name);
-+struct v3d_bo *v3d_bo_alloc_flags(struct v3d_screen *screen, uint32_t size,
-+                                  const char *name, uint32_t create_flags);
- void v3d_bo_last_unreference(struct v3d_bo *bo);
- void v3d_bo_last_unreference_locked_timed(struct v3d_bo *bo, time_t time);
- struct v3d_bo *v3d_bo_open_name(struct v3d_screen *screen, uint32_t name);
-diff --git a/src/gallium/drivers/v3d/v3d_context.c b/src/gallium/drivers/v3d/v3d_context.c
-index bd4309c1e74..42f37eda323 100644
---- a/src/gallium/drivers/v3d/v3d_context.c
-+++ b/src/gallium/drivers/v3d/v3d_context.c
-@@ -69,7 +69,10 @@ v3d_pipe_flush(struct pipe_context *pctx, struct pipe_fence_handle **fence,
-                  */
-                 drmSyncobjExportSyncFile(v3d->fd, v3d->out_sync, &fd);
-                 if (fd == -1) {
--                        mesa_loge("Export failed");
-+                        /* Bare-metal Phoenix port: no DRM syncobj/sync-file FD export. The
-+                         * synchronous winsys submit already guarantees GPU completion, so a
-+                         * NULL fence is correct here. Do NOT log — this fires on every flush
-+                         * and floods the UART with 100k+ lines, crippling the boot. */
-                         *fence = NULL;
-                         return;
-                 }
-diff --git a/src/gallium/drivers/v3d/v3d_resource.c b/src/gallium/drivers/v3d/v3d_resource.c
-index 33df0d07be5..9e073a401b1 100644
---- a/src/gallium/drivers/v3d/v3d_resource.c
-+++ b/src/gallium/drivers/v3d/v3d_resource.c
-@@ -110,8 +110,39 @@ v3d_resource_bo_alloc(struct v3d_resource *rsc)
-          */
-         uint32_t padding =
-                 rsc->base.target == PIPE_BUFFER ? 4 : V3D_TFU_READAHEAD_SIZE;
--        bo = v3d_bo_alloc(v3d_screen(pscreen), rsc->size + padding,
--                          "resource");
-+        /* Phoenix: a color render target that is NOT sampled is GPU-written and only
-+         * ever CPU-read-back (glReadPixels) — never CPU-written and never GPU-read. Map
-+         * it cacheable so the readback detile hits cache instead of crawling uncached
-+         * DRAM (the dominant present-path cost). Excludes sampled textures + depth, which
-+         * stay uncached so the GPU reads them coherently. Invalidated before CPU read in
-+         * v3d_resource_transfer_map. */
-+        /* Cacheable-readback for render targets (would cut the uncached glReadPixels
-+         * detile, the dominant present-path cost) is DISABLED: making a GPU-rendered RT
-+         * BO CPU-cacheable hangs the GPU/render after the first cacheable readback — a
-+         * coherency wall (NOT contiguity: the BO is contiguous), pending a focused
-+         * deep-dive. Re-enable by setting this to the RENDER_TARGET rule. See
-+         * docs/inprogress/2026-06-15-td16-cache-enable-plan.md. */
-+        /* Cacheable-readback for the tiled color RT is DISABLED: it works (with dc CIVAC;
-+         * dc IVAC is EL1-only and traps at EL0) but gives NO speedup — measured readpx is
-+         * identical cached vs uncached (~23ms). The cost is the detile's SCATTERED tiled
-+         * read pattern (each output pixel from a non-contiguous tiled address -> no cache-
-+         * line reuse), not the uncached read. The FPS lever must move the detile to the GPU
-+         * (render-to-scanout / TFU-to-linear, after which a LINEAR CPU read would benefit
-+         * from caching). The cacheable infra (v3d_bo_alloc_flags + civac) is kept and proven
-+         * for that + the NFS GENET-RX path. See docs/inprogress/2026-06-15-td16-cache-enable-plan.md. */
-+        /* Phoenix: the full-screen color RT is forced RASTER (see should_tile). RENDER-TO-
-+         * SCANOUT: back it with the HDMI framebuffer's physical pages so the GPU raster-stores
-+         * straight to the displayed surface — no per-frame glReadPixels/blit/fb0 CPU copies
-+         * (those were the ~25ms readpx bottleneck at 1080p; the 8.3 MB RT exceeds the A72 L2 so
-+         * even a cacheable readback is DRAM-bandwidth-bound). The winsys maps GPU VA -> scanout
-+         * PA; coherency to the display is the existing per-submit SLCACTL + L2T flush. The
-+         * cacheable-readback infra (v3d_bo_alloc_flags + civac) stays proven for the NFS GENET-RX
-+         * path. See docs/inprogress/2026-06-15-td16-cache-enable-plan.md. */
-+        uint32_t create_flags =
-+                ((rsc->base.bind & PIPE_BIND_RENDER_TARGET) &&
-+                 rsc->base.width0 >= 1024 && rsc->base.height0 >= 768) ? V3D_CREATE_BO_SCANOUT : 0;
-+        bo = v3d_bo_alloc_flags(v3d_screen(pscreen), rsc->size + padding,
-+                          "resource", create_flags);
-         if (bo) {
-                 v3d_bo_unreference(&rsc->bo);
-                 rsc->bo = bo;
-@@ -256,6 +287,25 @@ v3d_map_usage_prep(struct pipe_context *pctx,
-         }
- }
- 
-+/* Phoenix: invalidate a cacheable BO's CPU cache lines so a following CPU read sees
-+ * what the (non-coherent) GPU wrote to DRAM, not stale cache. The BO is page-aligned
-+ * and page-sized, so the [base, base+size) range is cache-line aligned (no partial-line
-+ * loss); and these BOs are CPU-read-only (never CPU-written), so invalidate is safe.
-+ * Requires SCTLR_EL1.UCI=1 (EL0 cache maintenance), set by the kernel. */
-+static void
-+v3d_bo_invalidate_for_cpu_read(struct v3d_bo *bo)
-+{
-+        uintptr_t a = (uintptr_t)bo->map;
-+        uintptr_t end = a + bo->size;
-+        /* Use DC CIVAC (clean+invalidate), NOT DC IVAC: invalidate-only is EL1-privileged
-+         * and traps at EL0 even with SCTLR.UCI=1 (UCI gates CVAU/CVAC/CVAP/CIVAC/IVAU, not
-+         * IVAC). This BO is CPU-read-only so there are no dirty lines — the clean is a
-+         * no-op and CIVAC's invalidate makes the next read fetch the GPU's DRAM data. */
-+        for (; a < end; a += 64)
-+                __asm__ volatile("dc civac, %0" :: "r"(a) : "memory");
-+        __asm__ volatile("dsb ish" ::: "memory");
-+}
-+
- static void *
- v3d_resource_transfer_map(struct pipe_context *pctx,
-                           struct pipe_resource *prsc,
-@@ -316,6 +366,11 @@ v3d_resource_transfer_map(struct pipe_context *pctx,
-                 goto fail;
-         }
- 
-+        /* Phoenix: for a cacheable readback RT the GPU wrote DRAM non-coherently;
-+         * invalidate stale CPU lines so the detile/copy below reads the new pixels. */
-+        if ((usage & PIPE_MAP_READ) && rsc->bo->cacheable)
-+                v3d_bo_invalidate_for_cpu_read(rsc->bo);
-+
-         *pptrans = ptrans;
- 
-         /* Our load/store routines work on entire compressed blocks. */
-@@ -847,6 +902,14 @@ v3d_resource_create_with_modifiers(struct pipe_screen *pscreen,
-         if (tmpl->bind & PIPE_BIND_SCANOUT)
-                 should_tile = false;
- 
-+        /* Phoenix: force the full-screen color render target to RASTER (linear) so a CPU
-+         * readback (glReadPixels) is a fast linear copy instead of the ~23ms scattered
-+         * tiled detile. Targeted by display size so small SAMPLED render targets (e.g. the
-+         * water warpimage) stay tiled (the TMU needs tiled to sample efficiently). */
-+        if ((tmpl->bind & PIPE_BIND_RENDER_TARGET) &&
-+            tmpl->width0 >= 1024 && tmpl->height0 >= 768)
-+                should_tile = false;
-+
-         /* No user-specified modifier; determine our own. */
-         if (count == 1 && modifiers[0] == DRM_FORMAT_MOD_INVALID) {
-                 rsc->tiled = should_tile;
-diff --git a/src/gallium/drivers/v3d/v3dx_draw.c b/src/gallium/drivers/v3d/v3dx_draw.c
-index 1dc918d3e1f..c8654158546 100644
---- a/src/gallium/drivers/v3d/v3dx_draw.c
-+++ b/src/gallium/drivers/v3d/v3dx_draw.c
-@@ -1009,6 +1009,18 @@ v3d_update_job_ez(struct v3d_context *v3d, struct v3d_job *job)
-                 job->ez_state = V3D_EZ_DISABLED;
-         }
- 
-+        /* PHOENIX PORT FIX (v3d, UPDATE 25aw): force early-Z (EZ) OFF. On this V3D 4.2
-+         * port, the early-Z path HANGS the render on depth-tested steeply-tilted polygons
-+         * (e.g. a cube face rotated edge-toward-camera, or any polygon with a steep screen-
-+         * space Z gradient) -- proven by bisection: depth-tested screen-parallel geometry
-+         * is fine, but depth-tested tilted polys hang until EZ is disabled. EZ is a pure
-+         * performance optimization (early depth reject before the FS), so disabling it is
-+         * always correctness-safe; the only cost is some fragment-shading overhead. This
-+         * unblocks all multi-axis rotation / general 3D (incl. Quake's world geometry).
-+         * TODO(v3d-ez): root-cause the EZ hang (TLB/EZ HW config for tilted polys) to
-+         * re-enable EZ for perf; until then, EZ stays off. */
-+        job->ez_state = V3D_EZ_DISABLED;
-+
-         if (job->first_ez_state == V3D_EZ_UNDECIDED &&
-             (job->ez_state != V3D_EZ_DISABLED || job->draw_calls_queued == 0))
-                 job->first_ez_state = job->ez_state;
-diff --git a/src/gallium/drivers/v3d/v3dx_state.c b/src/gallium/drivers/v3d/v3dx_state.c
-index baa9196c674..9df86a2d90f 100644
---- a/src/gallium/drivers/v3d/v3dx_state.c
-+++ b/src/gallium/drivers/v3d/v3dx_state.c
-@@ -558,6 +558,16 @@ v3d_set_framebuffer_state(struct pipe_context *pctx,
- 
-                 if (desc->swizzle[3] == PIPE_SWIZZLE_1)
-                         v3d->blend_dst_alpha_one |= 1 << i;
-+
-+                /* Phoenix render-to-scanout: a color RT backed by the HDMI framebuffer is
-+                 * displayed by firmware that reads it RGB-order, but the V3D's native 32-bit
-+                 * store is BGRA, so the GPU's bytes come out red/blue-swapped on screen. Swap
-+                 * R<->B at the fragment-shader color output for this RT so the stored bytes
-+                 * land in the display's order. (Targets only the scanout RT; glReadPixels of
-+                 * it is then R/B-swapped, which the CPU-present fallback + capture harness undo.) */
-+                struct v3d_resource *rsc = v3d_resource(cbuf->texture);
-+                if (rsc->bo != NULL && rsc->bo->scanout)
-+                        v3d->swap_color_rb |= 1 << i;
-         }
- 
-         v3d->dirty |= V3D_DIRTY_FRAMEBUFFER;
-diff --git a/src/util/os_memory_aligned.h b/src/util/os_memory_aligned.h
-index 98b3cd6f8d8..16de49d8b28 100644
---- a/src/util/os_memory_aligned.h
-+++ b/src/util/os_memory_aligned.h
-@@ -37,6 +37,15 @@
- 
- #include "util/u_overflow.h"
- 
-+/* PHOENIX PORT FIX: Phoenix has no real posix_memalign (the gl_stubs.c shim ignores
-+ * the alignment and returns plain malloc, only 16-byte aligned). util_sparse_array
-+ * (the texture-object hash) needs 64-byte-aligned nodes — it packs the tree level
-+ * into the low 6 bits of the node pointer (NODE_ALLOC_ALIGN=64). Underaligned nodes
-+ * corrupt that encoding -> util_sparse_array_get returns wild pointers -> memory
-+ * corruption (clobbered glGenTextures/glBindTexture). Force the self-contained
-+ * malloc+cubby-hole path below, which honors alignment and frees correctly. */
-+#undef HAVE_POSIX_MEMALIGN
-+
- #if defined(HAVE_POSIX_MEMALIGN)
- 
- static inline void *
 diff --git a/src/vulkan/runtime/vk_image.c b/src/vulkan/runtime/vk_image.c
 index f5e67646c61..ef483d79d5d 100644
 --- a/src/vulkan/runtime/vk_image.c
