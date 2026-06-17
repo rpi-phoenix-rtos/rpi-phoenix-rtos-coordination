@@ -32,7 +32,28 @@ needs host internet; idempotent).
 | freetype 2.13.2 | ✅ builds | `libfreetype.a` (minimal: no zlib/png/harfbuzz/bzip2/brotli) |
 | libfontenc 1.1.8 | ✅ builds | `libfontenc.a` |
 | libXfont2 2.0.6 | ✅ compiles | `libXfont2.a` built + headers installed. Needed `-DO_NOFOLLOW=0`, `-DNOFILES_MAX=256`, `ac_cv_lib_m_hypot=yes` + libphoenix `hypot` (6e2b929). A font *tool* link needs the hypot symbol → resolves after the libphoenix rebuild. |
-| **kdrive Xfbdev server** | ⬜ next (big) | the actual server (xorg-server); shadow-FB + `write()`-blit to `/dev/fb0`. Needs the libphoenix rebuild first + heavy OS-integration. Multi-session. |
+| **kdrive Xfbdev server** | ⬜ next (big, scouted) | see "Server frontier" below — needs an Xfbdev source + libphoenix rebuild + OS-integration. Multi-session. |
+
+## Server frontier — scout (2026-06-18)
+
+The hard remaining piece is the X **server** (the libraries above are the client/render/font side).
+Scout finding: **modern xorg-server (master) no longer ships the kdrive `fbdev` backend** — `hw/kdrive/`
+has only `ephyr` (Xephyr, runs on another X) + `src` (the kdrive core) + `meson.build`; `hw/kdrive/fbdev`
+(Xfbdev) was removed years ago. So a stock recent xorg-server can't build Xfbdev.
+
+Paths to a software X on `/dev/fb0` (for the next, attended-or-multi-session effort), best-first:
+1. **Restore/write a minimal kdrive fbdev backend** on the modern kdrive core (`hw/kdrive/src` +
+   a small `fbdev` card/screen driver) using the shadow-FB + `write()`-to-`/dev/fb0` model
+   (no `mmap(fd,0)`; per `docs/inprogress/2026-06-05-fb0-attended-decisions.md`). Cleanest long-term.
+2. Use the **PR #82 tinyx tree** (`phoenix-rtos-ports#82`) if it carries a restored Xfbdev — cherry-pick.
+3. An **old xorg-server (~1.13)** that still has `hw/kdrive/fbdev` — but decade-old autotools/deps.
+
+Prerequisites before any server build: (a) **rebuild libphoenix** so the on-device libc carries the new
+symbols (getpwnam_r/getpwuid_r/hypot/sys/poll.h); (b) the server needs xkb data (xkeyboard-config +
+xkbcomp) or `-DXKB_DFLT_*` + a built-in keymap; (c) a kdrive input driver reading `/dev/kbd0` +
+`/dev/mouse0` (the `pl_phoenix_in.c` HID→event logic is a proven reference). Expect a further stream of
+Phoenix libc gaps (the server is the most OS-integrated component). **This is the multi-session frontier;
+the 36-archive client/render/font foundation above is the delivered, de-risked milestone.**
 
 ## Findings / cross-compile recipe (proven)
 
