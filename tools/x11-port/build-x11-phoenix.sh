@@ -70,7 +70,7 @@ xbuild() {
 		# shellcheck disable=2086
 		./configure --host=aarch64-phoenix --prefix="$PREFIX" --disable-shared --enable-static \
 			CC=${TC}gcc AR=${TC}ar RANLIB=${TC}ranlib \
-			CFLAGS="--sysroot=$SYSROOT -I$PREFIX/include" \
+			CFLAGS="--sysroot=$SYSROOT -I$PREFIX/include ${XCFLAGS_EXTRA:-}" \
 			LDFLAGS="--sysroot=$SYSROOT -L$PREFIX/lib" $extra >"/tmp/$nv-conf.log" 2>&1 \
 			|| { echo "$nv: CONFIGURE FAIL (see /tmp/$nv-conf.log)"; tail -4 "/tmp/$nv-conf.log"; return 1; }
 	fi
@@ -91,10 +91,21 @@ xbuild     libpthread-stubs-0.5   "$XARCHIVE/lib/libpthread-stubs-0.5.tar.xz" # 
 # MSG_CTRUNC no-op guards (Phoenix sys/socket.h lacks them; fd-passing unused).
 xbuild     libxcb-1.16            "$XARCHIVE/lib/libxcb-1.16.tar.xz" "--disable-mitshm"
 
+# --- libX11 (the core Xlib) — builds for Phoenix with these knobs (2026-06-18): ---
+#   xorg_cv_malloc0_returns_null=no : cross-compile run-test cache (Phoenix malloc(0)!=NULL)
+#   -DMAXHOSTNAMELEN=256            : Phoenix headers lack it
+#   -DXOS_USE_MTSAFE_PWDAPI -D_POSIX_THREAD_SAFE_FUNCTIONS=200809L
+#                                   : route Xos_r.h to the POSIX getpwnam_r/getpwuid_r path
+#                                     (needs libphoenix getpwuid_r/getpwnam_r + sys/poll.h, added 89d1543)
+XCFLAGS_EXTRA="-DMAXHOSTNAMELEN=256 -DXOS_USE_MTSAFE_PWDAPI -D_POSIX_THREAD_SAFE_FUNCTIONS=200809L" \
+xbuild libX11-1.8.7 "$XBASE/lib/libX11-1.8.7.tar.gz" \
+	"--without-xmlto --disable-specs --disable-devel-docs xorg_cv_malloc0_returns_null=no"
+
 # --- next bricks (TODO) ---
-# libX11 (--host + xcb + xtrans + xorgproto; expect --disable-xcb-sloppy-lock,
-# --without-xmlto, and likely more Phoenix libc-gap patches). Then libXext/libXrender,
-# pixman, font libs, then the kdrive Xfbdev server (shadow-FB + write()-blit to /dev/fb0).
+# libXext/libXrender (extension libs, need libX11), pixman (software rasteriser, independent),
+# font libs (libXfont2/freetype/fontconfig or PCF), then the kdrive Xfbdev server
+# (shadow-FB + write()-blit to /dev/fb0). NOTE: libphoenix getpwnam_r/getpwuid_r + sys/poll.h
+# must be in the on-device libc when the X server eventually links/runs (committed in libphoenix).
 
 echo "=== installed X11 libs in $PREFIX/lib ==="
 ls "$PREFIX/lib/"*.a 2>/dev/null || echo "(none yet)"

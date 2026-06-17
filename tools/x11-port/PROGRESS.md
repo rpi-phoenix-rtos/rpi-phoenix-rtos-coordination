@@ -24,9 +24,9 @@ needs host internet; idempotent).
 | xcb-proto 1.16.0 | ✅ builds | host python codegen; `.pc` in `share/pkgconfig`, `xcbgen` under `local/lib/python3.x` |
 | libpthread-stubs 0.5 | ✅ builds | provides `pthread-stubs.pc` (pthread is in Phoenix libc → stubs are no-ops) |
 | libxcb 1.16 | ✅ builds | `libxcb.a` + ~24 extension libs (randr/render/shm/shape/xfixes/xkb/xinput/…); needed 2 Phoenix-gap patches (below) + `--disable-mitshm` |
-| libX11 | ⬜ next | needs xcb + xtrans + xorgproto; expect `--disable-xcb-sloppy-lock` etc. + more libc-gap patches |
-| libXext/libXrender/libXfont2 | ⬜ | extension + font libs |
-| pixman | ⬜ | software rasteriser (NEON path on aarch64) |
+| **libX11 1.8.7** | ✅ builds | **the core Xlib** (`libX11.a`, 2.2 MB). Needed: `xorg_cv_malloc0_returns_null=no` cache, `-DMAXHOSTNAMELEN=256`, `-DXOS_USE_MTSAFE_PWDAPI -D_POSIX_THREAD_SAFE_FUNCTIONS` (POSIX getpw*_r path) + libphoenix getpw*_r/sys/poll.h (below) |
+| libXext/libXrender/libXfont2 | ⬜ next | extension + font libs (need libX11) |
+| pixman | ⬜ | software rasteriser (NEON path on aarch64; independent — buildable any time) |
 | freetype/fontconfig | ⬜ | font rendering (or PCF bitmaps only for the MVD) |
 | kdrive Xfbdev server | ⬜ | the actual server; shadow-FB + `write()`-blit to `/dev/fb0` |
 
@@ -47,11 +47,17 @@ needs host internet; idempotent).
   guards for `MSG_TRUNC`/`MSG_CTRUNC` (Phoenix `sys/socket.h` lacks them; recvmsg doesn't
   report them; SCM_RIGHTS fd-passing is unused by a software X server).
 
-### libphoenix gaps noted (upstream-worthy, not blocking the port)
+### libphoenix fixes made for the port (committed, libphoenix 89d1543)
 
-- `sys/socket.h` lacks `MSG_TRUNC`/`MSG_CTRUNC` (standard POSIX recvmsg flags). Adding them
-  to libphoenix would be a clean libc-completeness fix (like `getrandom`/`getentropy` were)
-  and let xcb build unpatched. Deferred — patched locally for now to keep the X11 brick moving.
+- **getpwuid_r** added + **getpwnam_r** implemented (was a `return -1` stub) — proper
+  POSIX-reentrant wrappers. libX11's `Xos_r.h` needs them on the MT-safe path.
+- **`sys/poll.h`** compat alias added (→ `<poll.h>`) — libX11's `Xpoll.h` includes it.
+- These ship in the on-device libc on the next image rebuild (additive; needed when the X
+  server eventually links/runs). The frozen flagship image is unaffected until then.
+
+### libphoenix gaps noted (upstream-worthy, not yet fixed)
+
+- `sys/socket.h` lacks `MSG_TRUNC`/`MSG_CTRUNC` (patched locally in libxcb instead — see above).
 
 ## Known Phoenix walls to expect (from tinyx-x11-demo.md)
 
