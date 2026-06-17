@@ -360,6 +360,19 @@ cleared → vkCreateDevice (hangs, localized). 7. /dev/urandom HW-RNG-backed. 8.
 getentropy(). 9. rpi4-sysinfo boot banner. Plus 2 publication scans (code clean) + license audit.
 All committed + HW-verified where applicable; flagship Quake+audio+banner is the persisted boot state.
 
+### 2026-06-17 — ★ Vulkan vkCreateDevice hang ROOT-CAUSED + FIXED (is_shim); new blocker localized
+Engaged the named Vulkan goal. The vkCreateDevice HANG was threaded submit: v3dv enables a submit
+thread when !is_shim, but our winsys is synchronous with no real syncobj → the device-create noop-job
+submit waited forever on a never-signaled syncobj. FIX (external/mesa 52b08a7987d): force is_shim=true
+on Phoenix (selects the synchronous no-threaded-submit path = our model). Verified: moved PAST the hang.
+NEW blocker (precisely localized): vkCreateDevice now ABORTS (pc=0) calling a NULL fn-ptr in the
+physical-device dispatch table (Properties2/QueueFamilyProperties2 slot) — the entrypoints exist + the
+table is built + passed to vk_physical_device_init, yet the runtime slot is NULL (the built table isn't
+reaching the live pdevice->dispatch_table). Needs instrumentation (libv3dv rebuild per probe — feasible,
+~min/cycle). Mesa patch refreshed (4 files). Quake restored as the boot image. devices/project swap-back
+committed. So Vulkan is 2 blockers further along: instance ✓, enumerate ✓ (count=1), abort ✓ (was the
+cosmetic name print), hang ✓ (is_shim) → now the phys-dispatch NULL.
+
 ### NEXT ACTION (decisive): frontier nearly exhausted of safe bounded items
 Remaining: (a) the Vulkan vkCreateDevice-hang (named goal — instrument external/mesa v3dv_device.c +
 host-meson libv3dv rebuild loop; heavy but the furthest-along named target); (b) more small usability
