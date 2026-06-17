@@ -26,9 +26,13 @@ This file is my running log + the decisions/parked items for you to review.
 
 ## 2. Named-goal status
 - **Audio (you named it): DONE** (driver + DMA + Quake backend); audible check is yours.
-- **X11 (you named it): foundation validated, full port is a multi-session job.** AF_UNIX (the gate for
-  every X client) is HW-confirmed READY; fb0 + USB HID also done. The X11 *library* port
-  (libX11/libxcb/pixman/freetype/… all net-new, PR #82 never landed) is weeks of work — NOT unattended.
+- **X11 (you named it): foundation validated + library port STARTED.** AF_UNIX (the gate for every X
+  client) is HW-confirmed READY; fb0 + USB HID also done. The X11 library port (net-new, PR #82 never
+  landed) is now under way in `tools/x11-port/` (isolated `/tmp/x11-phoenix`, host-side, flagship
+  untouched): **base-lib tier cross-compiles for aarch64-phoenix — xorgproto + libXau + xtrans +
+  libXdmcp** (config.sub knows `phoenix`; the cross-compile machinery is proven). Next bricks: libxcb
+  (xcb-proto + `--disable-mitshm`), libX11, pixman, then the kdrive Xfbdev server. Ladder + blockers in
+  `tools/x11-port/PROGRESS.md`. Still a multi-session effort, but de-risked + advancing.
 - **Vulkan+vkQuake (you named it): furthest-ever progress, 5 blockers cleared.** vkCreateInstance +
   enumerate(count=1) work on HW; cleared a name-print abort + the threaded-submit hang (is_shim fix).
   vkCreateDevice now reaches the noop-job and NULL-derefs the binner CL (winsys/V3DV BO-interop, the 6th
@@ -409,9 +413,26 @@ the whole Pi4 device suite (thermal/throttled/hwrng/gpio/fb0/audio0/urandom) in 
 1. Audio DMA mechanism. 2. Quakespasm SNDDMA audio backend. 3. Stale "caches-off" doc corrections.
 4. X11 AF_UNIX foundation gate (READY). 5. Continuous streaming DMA audio. 6. Vulkan Tier-1: instr-abort
 cleared → vkCreateDevice (hangs, localized). 7. /dev/urandom HW-RNG-backed. 8. libc getrandom()/
-getentropy(). 9. rpi4-sysinfo boot banner. 10. psh `mv` applet (was a missing MUST). Plus 2 publication
-scans (code clean) + license audit + restored MEMORY.md recall. All committed + HW-verified where
-applicable; flagship Quake+audio+banner+mv is the persisted boot state.
+getentropy(). 9. rpi4-sysinfo boot banner. 10. psh `mv` applet (was a missing MUST). 11. X11 library
+port STARTED — base-lib tier (xorgproto+libXau+xtrans+libXdmcp) cross-compiles for aarch64-phoenix
+(tools/x11-port/, isolated, flagship untouched). Plus 2 publication scans (code clean) + license audit
++ restored MEMORY.md recall. All committed + HW-verified where applicable; flagship Quake+audio+banner+mv
+is the persisted boot state.
+
+### 2026-06-17 — ★ X11 library port STARTED (named capstone; host-side, isolated, flagship-safe)
+Advisor reconciled: the host-side/fast-iterate/additive nature (no Pi boots, isolated prefix) removes
+the risks it had flagged, so starting X11 is right given your repeated explicit mandate. Built the base-
+lib tier into /tmp/x11-phoenix: xorgproto (129 headers), libXau.a, xtrans, libXdmcp.a — all cross-compile
+for aarch64-phoenix (config.sub accepts --host=aarch64-phoenix; static-lib recipe vs the toolchain+sysroot
+works). Reproducible: tools/x11-port/build-x11-phoenix.sh; ladder+blockers in tools/x11-port/PROGRESS.md.
+HARD RULE honored: X11 is NEVER in the rpi4b default components / flagship image — it lives beside the OS
+in /tmp until a server is runnable. coord 224e30e.
+
+### NEXT ACTION (decisive): continue the X11 ladder — libxcb, then libX11
+One brick per iteration (host-side, fast): next = xcb-proto (python codegen) + libxcb (--disable-mitshm,
+since libphoenix lacks shm_open) → then libX11 → pixman → the kdrive Xfbdev server. Document each brick +
+any Phoenix libc wall in PROGRESS.md; if a brick hits a hard wall, log it + move to the next independent
+brick. Keep X11 out of the flagship. (Deep items Vulkan-winsys/GENET-perf remain attended/lower-value.)
 
 ### 2026-06-17 — ★ Vulkan vkCreateDevice hang ROOT-CAUSED + FIXED (is_shim); new blocker localized
 Engaged the named Vulkan goal. The vkCreateDevice HANG was threaded submit: v3dv enables a submit
