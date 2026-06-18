@@ -1,6 +1,6 @@
 # Phoenix-RTOS Raspberry Pi 4 (BCM2711) — Hardware Support Matrix
 
-**Updated:** 2026-06-17. Canonical "where are we" reference for the Pi 4 port.
+**Updated:** 2026-06-18. Canonical "where are we" reference for the Pi 4 port.
 One row per peripheral/subsystem. For narrative gap analysis see
 `docs/knowledge/scope-pi4-uncovered.md`; for live progress see `docs/inprogress/status.md`.
 
@@ -45,6 +45,7 @@ One row per peripheral/subsystem. For narrative gap analysis see
 | RTC | 🟡 capability present | Pi 4 has no on-SoC RTC. The **`ntpclient` psh applet** queries SNTP + calls `settimeofday` (kernel `settime` syscall + libphoenix `settimeofday`/`clock_settime` all present) → NTP-over-GENET works once a server is reachable | defaults to `pool.ntp.org` (needs an internet route or a host-side ntpd on the netboot link); not yet auto-run at boot |
 | Camera (CSI-2) / DSI display | ⬜ not started | — | — |
 | posixsrv / psh userspace | ✅ done | pipes, ptys, `/dev/{null,zero,urandom,full}` (urandom now HW-RNG-backed), interactive psh; **AF_UNIX SOCK_STREAM** + **libc `getrandom()`/`getentropy()`** validated on HW (`misc/rpi4-ipcprobe`, 2026-06-17) | psh has no `|` pipe parsing |
+| X11 / windowing (kdrive) | 🔬 groundwork | host-side, `tools/x11-port/`: full client+render+font+toolkit **lib stack** (~45 archives incl. libX11/libxcb/libXext/libXrender/pixman/freetype/libXaw/Xt/Xmu) **+ the kdrive xorg-server CORE** (28 archives, 0 errors, incl. `libkdrive.a`+`libshadow.a`) cross-compile for aarch64-phoenix (2026-06-18); clients **twm/xphxdemo/xeyes** link as static ELFs, **xprobe RUN-verified on HW** (Xlib executes). `tools/x11-port/PROGRESS.md` | the **fbdev DDX** (`main()`+`KdCardFuncs`/`KdScreenFuncs` → shadow → `write()`/`/dev/fb0`) is the only remaining new-code step (runtime-only-verifiable → ⏸ until Pi on) + kdrive input from `/dev/kbd0`+`/dev/mouse0` + xkb data |
 
 ## Build / test infrastructure (✅)
 
@@ -60,10 +61,13 @@ One row per peripheral/subsystem. For narrative gap analysis see
 
 1. **USB** is functionally complete (enum + HID); the remaining items (#142/#143/#144/#145)
    are *hardening/perf/root-cause* and are **attended** (statistical regression or boot-risk).
-2. **ext2 rootfs** (#120) — finish mount-as-root (attended/morning).
+2. **ext2 rootfs** (#120) — DONE (mounts as `/`, exec-from-card, boots to psh); **NFS rootfs**
+   also DONE + HW-proven (`project_nfs_rootfs_feasibility`). Residuals are perf/signal polish.
 3. **fb0 driver** — decide ABI + display ownership, then implement (attended).
-4. **WiFi #91** — the one true *blocker*; firmware-execution gate needs deeper HW visibility.
-5. Greenfield: DMA framework → audio/I²C/SPI/PWM; Bluetooth; GPIO full driver.
+4. **X11** — lib stack + kdrive server core build; the **fbdev DDX** backend + its HW bring-up is
+   the remaining step (attended — runtime-only-verifiable).
+5. **WiFi #91** — the one true *blocker*; firmware-execution gate needs deeper HW visibility.
+6. Greenfield: DMA framework → audio/I²C/SPI/PWM; Bluetooth; GPIO full driver.
 
 ## Unattended-vs-attended note
 
