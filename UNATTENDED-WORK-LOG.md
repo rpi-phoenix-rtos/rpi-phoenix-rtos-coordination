@@ -524,6 +524,10 @@ the long-open openssl zero-stdout anomaly is RESOLVED by the /dev/urandom→hwrn
 entropy source = /dev/hwrng` confirming the source → **the crypto-port class (openssl/curl/dropbear) is
 unblocked**. Bonus fix: gated rpi4-quake out of the nfsroot variant (its render loop flooded the UART and
 drowned scripted-psh — the whole point of nfsroot; project d619616). All boots 0-fault.
+**Follow-on (same path): the whole crypto/network port class now RUNS on HW** — `curl 7.64.1` with
+`mbedTLS/2.28.0` (HTTPS/SSL/all protocols), `Dropbear SSH client v2018.76`, and `openssl dgst -sha256`
+(real digest of an NFS file) all exec from the NFS root, 0 faults. These were all previously blocked on
+the unseeded /dev/urandom. Broad-application-support milestone delivered + evidence-backed.
 
 ### Tally — 2026-06-18 (this unattended run, cumulative)
 Flagship-shipping: audio subsystem (driver+DMA+Quake backend), /dev/urandom HW-backed, getrandom/
