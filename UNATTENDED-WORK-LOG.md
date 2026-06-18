@@ -12,10 +12,11 @@ This file is my running log + the decisions/parked items for you to review.
 # ★ READ THIS FIRST — delivery summary
 
 ## ⭐ 2026-06-18 (day 2) — biggest new wins (details in the dated log below)
-- **Vulkan `vkCreateDevice` WORKS on real Pi 4 HW** — the furthest the V3DV→vkQuake port has ever
-  reached: full `vkCreateInstance`→`vkEnumeratePhysicalDevices`→`vkCreateDevice` → `PASS`, 0 faults.
-  Root-caused + fixed the long-standing device-create blocker (the V3DV build never linked a real BO
-  allocator). Tier-2 (queue submit) attempted, narrowed to one more device-proc gating NULL.
+- **Vulkan reaches a full QUEUE SUBMIT on real Pi 4 HW (Tier 2 done)** — the furthest the V3DV→vkQuake
+  port has ever reached: `vkCreateInstance`→`EnumeratePhysicalDevices`→`vkCreateDevice`→`CreateCommandPool`
+  →`AllocateCommandBuffers`→record→`vkQueueSubmit`→`vkQueueWaitIdle` **all PASS, 0 faults, 0 V3D timeouts**.
+  Root-caused + fixed the device-create blocker (V3DV never linked a real BO allocator) and then proved the
+  whole GPU submit path (winsys `ioc_submit_cl` + fence) via Vulkan. Next: real render cmds (clear) → vkQuake.
 - **The whole crypto/network port class RUNS on HW** — `openssl` (version/dgst/rand), `curl 7.64.1`
   +mbedTLS (HTTPS/SSL), `Dropbear` SSH client — all unblocked by wiring `/dev/urandom` to the HW RNG.
 - **First X11 executables for Phoenix LINK + RUN** — the full 45-archive X11 client+toolkit lib stack
@@ -586,6 +587,18 @@ code is provably intact). Lesson: space out GPU-heavy boot cycles / let the Pi c
 31-47 fps, **0 V3D timeouts** (was 28), 0 faults. Confirmed thermal/HW-state, NOT a code regression. The
 Friday Quake showcase is healthy. Takeaway for the rest of this run: insert a cool-down gap between
 GPU-heavy boot cycles (esp. flagship-swap Vulkan tests) so the V3D doesn't heat-soak into render-timeouts.
+
+### 2026-06-18 — ★★ Vulkan TIER 2: full queue submit works on HW (devices commit)
+Continued the named Vulkan goal past device-create. Per-proc diag (1 paced boot) pinned the submit
+blocker to 3 NULL device procs (CreateCommandPool/AllocateCommandBuffers/QueueSubmit — vk_common
+command-pool + synchronization framework entrypoints) resolving NULL via vkGetDeviceProcAddr, despite
+their symbols being linked + in the dispatch table + the framework being wired (v3dv_queue_driver_submit
++ v3dv_cmd_buffer_ops exist) → a separate dispatch-gate bug. DECOUPLED the submit test by calling the
+exported vk_common_* impls directly. HW (1 paced boot): CreateCommandPool/AllocateCommandBuffers/
+record-empty/QueueSubmit/QueueWaitIdle ALL → 0, **PASS (instance+phys+device+queue submit)**, 0 faults,
+0 V3D timeouts. So the COMPLETE Vulkan submit path runs on the real Pi4 V3D. Flagship restored after.
+Also: fixed the stale pool-thread-stack-audit doc (genet irq/link stacks already hardened 16K/8K, #152).
+Next Tier 3 = real render cmds (clear) in the cmd buffer → read back → geometry+shaders → vkQuake.
 
 ### Tally — 2026-06-18 (this unattended run, cumulative)
 Flagship-shipping: audio subsystem (driver+DMA+Quake backend), /dev/urandom HW-backed, getrandom/
