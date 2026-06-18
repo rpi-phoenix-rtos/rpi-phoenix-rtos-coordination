@@ -16,14 +16,20 @@
 >   the NFS root, launches), but capturing its multi-second score over scripted-psh is
 >   tooling-timing-limited (the test-cycle capture window truncates the run before the score
 >   prints) — deferred; the cache-before/after value story is moot anyway (caches are already on,
->   TD-16). An ANSI game is the remaining optional polish.
+>   TD-16). **The ANSI game is now DONE (2026-06-18):** a self-contained VT100 **2048**
+>   (`tools/demo-apps/2048/2048.c`, MIT) — WASD/arrow controls, ANSI-coloured board, PRNG seeded
+>   from the hwrng-backed `/dev/urandom`. Host-verified logic (zero `-Wall -Wextra` warnings,
+>   scripted-move merge/spawn/score correct), cross-compiled to a static aarch64-phoenix ELF and
+>   **staged to the NFS export `/bin/2048`** (coord `a2c3c04`). Interactive play-test (`runfile
+>   /bin/2048`) is the one HW step, pending the Pi powering back on.
 > - **RTC-via-NTP:** the `ntpclient` psh applet already queries SNTP and calls `settimeofday`
 >   (kernel `settime` syscall + libphoenix `settimeofday`/`clock_settime` all present), so the
 >   capability EXISTS. It defaults to `pool.ntp.org` → needs a reachable NTP server (internet
 >   route or a host-side ntpd on the netboot link) to actually sync; not yet wired into boot.
 >
-> Net: the "first-keyboard demo experience" this plan scoped is achieved. Remaining items are
-> optional polish (an ANSI game) or attended (sshd login). Original plan retained below for record.
+> Net: the "first-keyboard demo experience" this plan scoped is achieved, and Tier D now has a
+> playable game (2048). The only remaining item is attended (sshd end-to-end login). Original plan
+> retained below for record.
 
 
 The Pi 4 port reaches `(psh)%` today and USB phase 2
