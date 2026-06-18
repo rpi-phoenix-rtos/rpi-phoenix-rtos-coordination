@@ -43,7 +43,13 @@ This file is my running log + the decisions/parked items for you to review.
   kdrive input driver (deep, multi-session); (2) **toolkit/apps** (libICE→libSM→libXt→Xaw→twm) —
   speculative-until-server, libXt now alloca-unblocked, libICE needs a 1-line `time`-decl patch. Ladder +
   full libc-gap inventory + recipe in `tools/x11-port/PROGRESS.md` + memory `project_x11_lib_port`.
-  Foundation DONE + de-risked (host-side, isolated, flagship frozen).
+  **UPDATE: the TOOLKIT base also builds** (libICE/libSM/libXt/libXmu/libXpm; coord 427ec46) — so the
+  whole X11 *library* stack (client+render+font+toolkit, ~41 archives) cross-compiles for Phoenix.
+  Clean **executable boundary** found: apps (twm/xclock) + the server LINK libc, so they need the
+  libphoenix symbol additions in libc.a/libm.a (getpwnam_r/getpwuid_r/hypot committed; still to ADD
+  mbtowc/wcsncpy/wide-char) → a **libphoenix rebuild** before any X exe. Libs DONE; the rebuild + the
+  kdrive Xfbdev server are the deep/multi-session remainder (server is the true gate — nothing X runs
+  without it). Foundation DONE + de-risked (host-side, isolated, flagship frozen throughout).
 - **Vulkan+vkQuake (you named it): furthest-ever progress, 5 blockers cleared.** vkCreateInstance +
   enumerate(count=1) work on HW; cleared a name-print abort + the threaded-submit hang (is_shim fix).
   vkCreateDevice now reaches the noop-job and NULL-derefs the binner CL (winsys/V3DV BO-interop, the 6th
