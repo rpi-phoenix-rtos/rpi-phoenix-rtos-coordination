@@ -35,6 +35,10 @@ This file is my running log + the decisions/parked items for you to review.
   server *binary* exists because xorg-server 1.20 ships no fbdev DDX, so a small fbdev backend
   (`main()` + screen hooks → `/dev/fb0`) is the one remaining new-code step, and it's unvalidated on HW
   (Pi is off). But everything that backend links against now builds. Detail: `tools/x11-port/PROGRESS.md`.
+- **A playable game — `2048` — builds for Phoenix + is staged on the NFS root** (`/bin/2048`). Tier-D
+  "visual flourish" from the demo-apps plan: a self-contained VT100/ANSI 2048, WASD/arrow controls,
+  PRNG seeded from the hwrng-backed `/dev/urandom`. Host-verified logic, cross-built static
+  aarch64-phoenix ELF. **➡️ Friday: `runfile /bin/2048` on the Pi to play it** (one HW step).
 - **Flagship intact + re-verified** — Quake netboot runs ~40 fps, audio up, psh, 0 faults. (A transient
   thermal slowdown from GPU-heavy Vulkan swap cycles was diagnosed + fully recovered after a cold rest.)
 - The 2026-06-17 summary below remains valid for the day-1 deliverables (audio, /dev/urandom, sysinfo, mv).
