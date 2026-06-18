@@ -12,7 +12,9 @@ This file is my running log + the decisions/parked items for you to review.
 # ★ READ THIS FIRST — delivery summary
 
 ## ⭐ 2026-06-18 (day 2) — biggest new wins (details in the dated log below)
-- **Vulkan runs a real RENDER COMMAND on the Pi 4 V3D (Tier 3 done)** — the furthest the V3DV→vkQuake
+- **Vulkan PAINTS THE LIVE HDMI SCREEN (Tier 4a done)** — `vkCmdClearColorImage` to a scanout-backed image
+  turned the physical Pi 4 display magenta: the live framebuffer DRAM reads `ff 00 80 ff` (the exact clear)
+  AND the HDMI snapshot shows the screen magenta, 0 faults. The furthest the V3DV→vkQuake
   port has ever reached: full `vkCreateInstance`→`vkCreateDevice`→cmd pool/buffer→**`vkCmdClearColorImage`**
   (create image + bind memory + record the clear) →`vkQueueSubmit`→`vkQueueWaitIdle`, **all PASS, 0 faults,
   0 V3D timeouts**, and a CPU readback of the cleared image returned **px0=00 80 ff ff = the exact clear color** (pixel-verified, not just no-fault). So the V3D executes an actual Vulkan-issued render command and writes the correct pixels. Got
@@ -627,6 +629,16 @@ one paced boot: vkCreateImage/AllocateMemory/BindImageMemory/record-clear/QueueS
 0, **PASS Tier 3**, 0 faults, 0 V3D timeouts. So the Pi4 V3D executes an actual Vulkan-issued render
 command end-to-end. Flagship restored after. Next Tier 4 = render pass + geometry/shaders → vkQuake. Doc:
 docs/inprogress/2026-06-18-vulkan-v3dv-noop-job-rootcause.md.
+
+### 2026-06-18 — ★★★ Vulkan TIER 4a: a Vulkan clear PAINTS THE LIVE HDMI SCREEN
+Built on Tier 3 (offscreen clear, pixel-verified) to a VISIBLE result. Added a committable winsys one-shot
+`v3d_phoenix_set_next_scanout()` (backs the next BO with the HDMI scanout surface; GL/Quake unaffected).
+Harness: query /dev/fb0 (RPI4FB_GETMODE, 1920x1080, pa=0x3e384000) -> v3d_phoenix_set_scanout -> fullscreen
+R8G8B8A8 LINEAR image whose memory is scanout-backed -> vkCmdClearColorImage(magenta {1,0,0.5,1}) -> submit.
+HW (label v3dv-t4a-visible): live fb-DRAM readback (MAP_PHYSMEM) px0=**ff 00 80 ff** = exact magenta, AND the
+HDMI snapshot (artifacts/hdmi/20260618-094432-v3dv-t4a-visible-tick.png) shows the top of the physical screen
+magenta (fbcon klog overdrew only the lower rows). 0 faults, 0 V3D timeouts. So a Vulkan render command
+paints the real Pi4 display. Flagship restored after. Next Tier 4b = triangle (pipeline + SPIR-V shaders).
 
 ### Tally — 2026-06-18 (this unattended run, cumulative)
 Flagship-shipping: audio subsystem (driver+DMA+Quake backend), /dev/urandom HW-backed, getrandom/

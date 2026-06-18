@@ -210,7 +210,32 @@ then read back / display. That is the remaining road to vkQuake. (The dispatch-g
 `vkGetDeviceProcAddr` returns NULL for the 3 framework entrypoints — is still open but off the GPU
 critical path; the direct-impl decouple keeps the harness progressing.)
 
-## Tier 4a recipe — a VISIBLE-on-HDMI Vulkan clear (scouted 2026-06-18; the pieces are identified)
+## ★★★ TIER 4a ACHIEVED — a Vulkan clear PAINTS THE LIVE HDMI SCREEN (2026-06-18)
+
+Implemented + HW-validated (label v3dv-t4a-visible). Added a committable winsys one-shot
+`v3d_phoenix_set_next_scanout()` (backs the NEXT BO with the HDMI scanout surface — for clients like
+V3DV's `vkAllocateMemory` that can't pass `V3D_CREATE_BO_SCANOUT`; GL/Quake use the flag directly and are
+unaffected). The harness then: queries `/dev/fb0` (`RPI4FB_GETMODE` → 1920×1080, pitch 7680, PA 0x3e384000,
+8294400 B) → `v3d_phoenix_set_scanout(pa,size)` → creates a **fullscreen 1920×1080 R8G8B8A8 LINEAR** image →
+`set_next_scanout()` + `vkAllocateMemory` (scanout-backed) + bind → records `vkCmdClearColorImage` (magenta
+{1,0,0.5,1}) → submit → wait. HW result:
+```
+fb0 1920x1080 pitch=7680 pa=0x3e384000 size=8294400
+scanout image 1920x1080 bound (mem=8294400)
+vkQueueSubmit -> 0   vkQueueWaitIdle -> 0
+scanout fb px0 = ff 00 80 ff (magenta clear -> expect ff 00 80 ff)   <- LIVE fb DRAM readback
+PASS -- Tier 3/4a
+```
+**Two independent proofs:** (1) reading the LIVE scanout framebuffer's physical memory (`MAP_PHYSMEM`)
+returned `ff 00 80 ff` = the exact magenta clear; (2) the **HDMI auto-snapshot
+`artifacts/hdmi/20260618-094432-v3dv-t4a-visible-tick.png` shows the top of the physical screen filled
+magenta** (the fbcon klog overdrew only the lower rows). 0 faults, 0 V3D timeouts. So a Vulkan render
+command paints the real Pi 4 display. Flagship (rpi4-quake) restored after.
+
+**Next (Tier 4b): a triangle** — graphics pipeline + vertex buffer + SPIR-V vertex/fragment shaders
+through v3dv's NIR→QPU compiler + a render pass to the scanout image — the larger lift toward vkQuake.
+
+## Tier 4a recipe — (the scouting that led to the above; kept for reference)
 
 The simplest visible-on-HDMI Vulkan result is the Tier-3 clear, but with the image's memory backed by the
 HDMI scanout framebuffer so the GPU's clear lands on screen. All the pieces exist:
