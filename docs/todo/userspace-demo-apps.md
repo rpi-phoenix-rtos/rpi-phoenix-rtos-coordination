@@ -12,8 +12,11 @@
 >   with mbedTLS (HTTPS/SSL), `Dropbear SSH client v2018.76`, `openssl` (version + dgst + rand) —
 >   all were previously blocked on an unseeded `/dev/urandom`, now hwrng-backed. (sshd daemon
 >   end-to-end login still needs a host-side client session = attended.)
-> - **Tier D (Visual flourish):** `coremark` validated (perf number, see below); an ANSI game is
->   the remaining optional polish.
+> - **Tier D (Visual flourish):** `coremark` is staged + exec-confirmed (`/bin/coremark` present in
+>   the NFS root, launches), but capturing its multi-second score over scripted-psh is
+>   tooling-timing-limited (the test-cycle capture window truncates the run before the score
+>   prints) — deferred; the cache-before/after value story is moot anyway (caches are already on,
+>   TD-16). An ANSI game is the remaining optional polish.
 > - **RTC-via-NTP:** the `ntpclient` psh applet already queries SNTP and calls `settimeofday`
 >   (kernel `settime` syscall + libphoenix `settimeofday`/`clock_settime` all present), so the
 >   capability EXISTS. It defaults to `pool.ntp.org` → needs a reachable NTP server (internet
