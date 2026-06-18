@@ -1,5 +1,28 @@
 # Userspace demo-apps plan — make `(psh)%` actually do something
 
+> **STATUS 2026-06-18 — LARGELY DELIVERED (this plan is mostly superseded by progress).**
+> The hard prereq (USB HID keystrokes) is done; psh is interactive on HW.
+> - **Tier A (Alive):** ✅ psh applets work on HW; `mv` was the one missing MUST and is now
+>   added (psh `mv` applet, rename + dir-target + EXDEV copy-fallback, committed 112c56b);
+>   the `rpi4-sysinfo` boot banner (build stamp/uptime/HW-entropy/device inventory) covers the
+>   motd/hello item.
+> - **Tier B (Interactive):** ✅ `lua` REPL + `micropython` both HW-validated exec-from-NFS
+>   (lua 5.3 stdlib correct; micropython "micropython-exec-ok 42"). `busybox` ash also runs.
+> - **Tier C (Networked):** ✅ the crypto/network class now RUNS on HW (2026-06-18): `curl 7.64.1`
+>   with mbedTLS (HTTPS/SSL), `Dropbear SSH client v2018.76`, `openssl` (version + dgst + rand) —
+>   all were previously blocked on an unseeded `/dev/urandom`, now hwrng-backed. (sshd daemon
+>   end-to-end login still needs a host-side client session = attended.)
+> - **Tier D (Visual flourish):** `coremark` validated (perf number, see below); an ANSI game is
+>   the remaining optional polish.
+> - **RTC-via-NTP:** the `ntpclient` psh applet already queries SNTP and calls `settimeofday`
+>   (kernel `settime` syscall + libphoenix `settimeofday`/`clock_settime` all present), so the
+>   capability EXISTS. It defaults to `pool.ntp.org` → needs a reachable NTP server (internet
+>   route or a host-side ntpd on the netboot link) to actually sync; not yet wired into boot.
+>
+> Net: the "first-keyboard demo experience" this plan scoped is achieved. Remaining items are
+> optional polish (an ANSI game) or attended (sshd login). Original plan retained below for record.
+
+
 The Pi 4 port reaches `(psh)%` today and USB phase 2
 ([usb-xhci-impl.md §6 Phase 3](../done/usb-xhci-impl.md)) is wiring real HID
 keystrokes into libtty within the next few sessions. The moment a
