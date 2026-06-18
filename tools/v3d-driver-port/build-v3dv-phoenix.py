@@ -205,6 +205,26 @@ def main():
         else:
             print(f"[v3dv-shim] {shim} FAIL\n{r.stderr.strip()[-400:]}")
 
+    # The REAL Phoenix V3D winsys (phoenix_v3d_ioctl + ioc_create_bo + lazy winsys_init that
+    # powers V3D and builds the flat MMU) — the SAME backend the GL gallium port uses. Without
+    # it, V3DV's v3dv_bo_alloc (-> v3d_ioctl DRM_V3D_CREATE_BO -> drmIoctl -> phoenix_v3d_ioctl)
+    # has no allocator, so device-create's noop-job CL BO is never allocated and binning_prolog
+    # faults on a NULL bcl. These need Mesa flags (drm_v3d_* structs, broadcom headers) so they
+    # are compiled with the v3dv_device.c template, like the harness/aux — not the plain-C path.
+    # See docs/inprogress/2026-06-18-vulkan-v3dv-noop-job-rootcause.md.
+    if tmpl:
+        for wsrc in ("v3d_phoenix_winsys.c", "v3d_phoenix_power.c"):
+            out = f"{V3DV_OBJ}/{wsrc}.o"
+            rc, err, cmd = compile_one(tmpl, f"{PORT}/{wsrc}", out)
+            if rc == 0:
+                shim_objs.append(out); print(f"[v3dv-winsys] {wsrc} OK")
+            else:
+                print(f"[v3dv-winsys] {wsrc} FAIL")
+                for l in err.strip().splitlines()[-8:]:
+                    print(f"       {l}")
+    else:
+        print("[v3dv-winsys] no template -> winsys NOT built (BO alloc will fail)")
+
     # harness compiled with a v3dv_device.c template's flags (Vulkan headers on -I path)
     harness_o = f"{V3DV_OBJ}/v3dv_harness.o"
     if tmpl:

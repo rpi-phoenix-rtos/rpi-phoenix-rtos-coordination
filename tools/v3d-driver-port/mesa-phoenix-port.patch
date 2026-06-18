@@ -11,6 +11,45 @@ index b2d10c5e2d2..c19305b198f 100644
  #else
  #error "Unknown platform"
  #endif
+diff --git a/src/broadcom/vulkan/v3dv_bo.c b/src/broadcom/vulkan/v3dv_bo.c
+index 1417dda7212..0b090e4100b 100644
+--- a/src/broadcom/vulkan/v3dv_bo.c
++++ b/src/broadcom/vulkan/v3dv_bo.c
+@@ -295,6 +295,13 @@ v3dv_bo_map_unsynchronized(struct v3dv_device *device,
+       return false;
+    }
+ 
++#if defined(__phoenix__)
++   /* Phoenix has no V3D kernel DRM driver: the in-process winsys (phoenix_v3d_ioctl in
++    * v3d_phoenix_winsys.c) backs every BO with uncached, flat-MMU-mapped host memory and
++    * returns the BO's already-mapped CPU virtual address as map.offset. There is no
++    * separate kernel mmap to perform — use the returned address directly. */
++   bo->map = (void *)(uintptr_t)map.offset;
++#else
+    bo->map = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED,
+                   device->pdevice->render_fd, map.offset);
+    if (bo->map == MAP_FAILED) {
+@@ -302,6 +309,7 @@ v3dv_bo_map_unsynchronized(struct v3dv_device *device,
+                 bo->handle, (long long)map.offset, (uint32_t)bo->size);
+       return false;
+    }
++#endif
+    VG(VALGRIND_MALLOCLIKE_BLOCK(bo->map, bo->size, 0, false));
+ 
+    bo->map_size = size;
+@@ -346,7 +354,12 @@ v3dv_bo_unmap(struct v3dv_device *device, struct v3dv_bo *bo)
+ {
+    assert(bo && bo->map && bo->map_size > 0);
+ 
++#if defined(__phoenix__)
++   /* The winsys owns the BO's mapping (it is freed by GEM_CLOSE -> ioc_close_bo); the va
++    * here was not produced by libc mmap(), so there is nothing to munmap. */
++#else
+    munmap(bo->map, bo->map_size);
++#endif
+    VG(VALGRIND_FREELIKE_BLOCK(bo->map, 0));
+    bo->map = NULL;
+    bo->map_size = 0;
 diff --git a/src/broadcom/vulkan/v3dv_device.c b/src/broadcom/vulkan/v3dv_device.c
 index 32b0cd460e8..66d5b650525 100644
 --- a/src/broadcom/vulkan/v3dv_device.c
