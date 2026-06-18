@@ -118,6 +118,9 @@ static struct {
 	uint32_t scanout_pa;      /* HDMI framebuffer physical addr (0 = unavailable) */
 	uint32_t scanout_bytes;   /* its byte size (pitch*height) */
 	int      scanout_claimed; /* only one BO may alias the single scanout surface */
+	int      next_scanout;    /* one-shot: back the NEXT ioc_create_bo with the scanout surface
+	                           * (set by a client that can't pass V3D_CREATE_BO_SCANOUT through its
+	                           * own BO-alloc path, e.g. the V3DV present image). Cleared on use. */
 	struct pbo bos[MAX_BOS];
 	uint32_t nbos;            /* high-water mark of slots ever used */
 	struct vahole holes[MAX_HOLES];
@@ -195,6 +198,15 @@ void v3d_phoenix_set_scanout(uint32_t pa, uint32_t bytes)
 	W.scanout_bytes = bytes;
 }
 
+/* One-shot: request that the NEXT BO created be backed by the scanout surface. Lets a client
+ * whose BO-alloc path can't set V3D_CREATE_BO_SCANOUT (e.g. V3DV's vkAllocateMemory for a present
+ * image) still get a scanout-backed BO: call this immediately before the allocation. */
+void v3d_phoenix_set_next_scanout(void);
+void v3d_phoenix_set_next_scanout(void)
+{
+	W.next_scanout = 1;
+}
+
 static struct pbo *bo_find(uint32_t handle)
 {
 	if (handle == 0 || handle > W.nbos) return NULL;
@@ -265,7 +277,8 @@ static int ioc_create_bo(struct drm_v3d_create_bo *c)
 	 * instead of fresh DRAM: the GPU raster-stores straight to the displayed surface
 	 * (render-to-scanout), eliminating the per-frame glReadPixels/blit/fb0 CPU copies.
 	 * The scanout PA is physically contiguous, so map it pa+i. */
-	if ((c->flags & 0x2u) && W.scanout_pa && !W.scanout_claimed) {
+	if (((c->flags & 0x2u) || W.next_scanout) && W.scanout_pa && !W.scanout_claimed) {
+		W.next_scanout = 0;
 		/* Back the visible rows with the scanout framebuffer's physical pages so the GPU
 		 * stores straight to screen. The RT BO is a little larger than the fb (V3D stores
 		 * tile-aligned rows — 1088 for a 1080 RT — plus driver padding); those extra rows
@@ -289,6 +302,9 @@ static int ioc_create_bo(struct drm_v3d_create_bo *c)
 			W.scanout_pa, gpuva, scanout_pages, pages, pages-scanout_pages);
 	}
 	else {
+		/* Scanout was requested one-shot but couldn't be honored (already claimed / no PA);
+		 * don't leak the request to a later BO. */
+		W.next_scanout = 0;
 		/* Default: uncached contiguous DMA memory. A cacheable BO (flags bit 0 =
 		 * V3D_CREATE_BO_CACHEABLE, set by Mesa for CPU-read-back-only render targets)
 		 * drops MAP_UNCACHED so the CPU readback hits cache; Mesa invalidates it
