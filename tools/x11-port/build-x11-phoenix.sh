@@ -143,6 +143,38 @@ xbuild libXfont2-2.0.6 "$XBASE/lib/libXfont2-2.0.6.tar.gz" \
 [ -f "$SRC/libXfont2-2.0.6/.libs/libXfont2.a" ] && cp "$SRC/libXfont2-2.0.6/.libs/libXfont2.a" "$PREFIX/lib/" \
 	&& ( cd "$SRC/libXfont2-2.0.6" && make install-data >/dev/null 2>&1 ) && echo "libXfont2-2.0.6: OK (lib + headers)"
 
+# --- toolkit base (build for Phoenix as of 2026-06-18) — needed by traditional X clients ---
+# libICE needs patches/libICE-1.1.1-phoenix.patch (drop old-K&R "long time();" vs <time.h>).
+# libXt/libXmu need the same MT-safe-pwd + MAXHOSTNAMELEN defines as libX11.
+PWD_DEFS="-DMAXHOSTNAMELEN=256 -DO_NOFOLLOW=0 -DXOS_USE_MTSAFE_PWDAPI -D_POSIX_THREAD_SAFE_FUNCTIONS=200809L"
+XCFLAGS_EXTRA="-DMAXHOSTNAMELEN=256 -DO_NOFOLLOW=0" \
+	xbuild libICE-1.1.1 "$XBASE/lib/libICE-1.1.1.tar.gz" "xorg_cv_malloc0_returns_null=no"
+XCFLAGS_EXTRA="-DMAXHOSTNAMELEN=256 -DO_NOFOLLOW=0" \
+	xbuild libSM-1.2.4  "$XBASE/lib/libSM-1.2.4.tar.gz"  "xorg_cv_malloc0_returns_null=no --without-libuuid"
+XCFLAGS_EXTRA="$PWD_DEFS" \
+	xbuild libXt-1.3.0  "$XBASE/lib/libXt-1.3.0.tar.gz"  "xorg_cv_malloc0_returns_null=no ac_cv_lib_m_hypot=yes"
+XCFLAGS_EXTRA="$PWD_DEFS" \
+	xbuild libXmu-1.2.1 "$XBASE/lib/libXmu-1.2.1.tar.gz" "xorg_cv_malloc0_returns_null=no ac_cv_lib_m_hypot=yes"
+# libXpm: lib builds; its sxpm/cxpm tools link getpwuid_r (deferred, see below), so lib-only.
+if [ ! -f "$PREFIX/lib/libXpm.a" ]; then
+	fetch_extract libXpm-3.5.17 "$XBASE/lib/libXpm-3.5.17.tar.gz"
+	( cd "$SRC/libXpm-3.5.17" && ./configure --host=aarch64-phoenix --prefix="$PREFIX" --disable-shared \
+	    --enable-static xorg_cv_malloc0_returns_null=no CC=${TC}gcc AR=${TC}ar RANLIB=${TC}ranlib \
+	    CFLAGS="--sysroot=$SYSROOT -I$PREFIX/include $PWD_DEFS" LDFLAGS="--sysroot=$SYSROOT -L$PREFIX/lib" \
+	    >/tmp/libXpm-conf.log 2>&1; make -C src install >/tmp/libXpm-build.log 2>&1; make install-data >/dev/null 2>&1
+	  PC=$(find . -name xpm.pc|head -1); [ -n "$PC" ] && cp "$PC" "$PREFIX/lib/pkgconfig/"
+	  [ -f src/.libs/libXpm.a ] && cp src/.libs/libXpm.a "$PREFIX/lib/" && echo "libXpm-3.5.17: OK (lib only)" )
+fi
+# libXaw (Athena widgets) — TODO: needs wide-char/i18n libc (wcsncpy, mbtowc, ... missing in
+# libphoenix). Deferred with the apps. NOT required by twm (twm uses only libXt+libXmu).
+
+# --- THE EXE BOUNDARY ---
+# All X executables (apps like twm/xclock AND the server) LINK against libc, so they need the
+# libphoenix additions IN libc.a/libm.a — currently only the HEADERS are synced to the sysroot; the
+# SYMBOLS (getpwnam_r/getpwuid_r/hypot, + still-missing mbtowc/wcsncpy/...) land on a libphoenix
+# rebuild. So: rebuild libphoenix (with the committed fixes + add mbtowc/wcsncpy) BEFORE linking any
+# X exe. The static LIBRARIES above all build today without it.
+
 # --- next brick (the big one) ---
 # The kdrive Xfbdev server (xorg-server). Needs the on-device libc to carry the libphoenix
 # additions (getpwnam_r/getpwuid_r/hypot/sys/poll.h) — rebuild libphoenix first. Expect heavy

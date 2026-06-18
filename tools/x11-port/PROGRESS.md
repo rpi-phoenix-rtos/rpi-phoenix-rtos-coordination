@@ -34,18 +34,23 @@ needs host internet; idempotent).
 | libXfont2 2.0.6 | ✅ compiles | `libXfont2.a` built + headers installed. Needed `-DO_NOFOLLOW=0`, `-DNOFILES_MAX=256`, `ac_cv_lib_m_hypot=yes` + libphoenix `hypot` (6e2b929). A font *tool* link needs the hypot symbol → resolves after the libphoenix rebuild. |
 | **kdrive Xfbdev server** | ⬜ next (big, scouted) | see "Server frontier" below — needs an Xfbdev source + libphoenix rebuild + OS-integration. Multi-session. |
 
-## Toolkit/app layer — scout (2026-06-18)
+## Toolkit base — BUILDS (2026-06-18)
 
-The traditional X clients (xclock, twm) need the toolkit: libICE → libSM → libXt → libXmu → libXaw.
-Started it; these are **speculative until the server exists** (they can't run without Xfbdev), and they
-hit further Phoenix gaps, so the build is deferred behind the server. Gaps found:
-- **libXt:** `alloca.h` used `size_t` without `<stddef.h>` — a real libphoenix header bug, **fixed**
-  (libphoenix alloca.h `#include <stddef.h>`).
-- **libICE:** `iceauth.c` has an old-K&R `extern long time();` that conflicts with Phoenix's
-  `time(time_t*)` — needs a 1-line port patch (drop the local decl / include `<time.h>`).
-- **libSM** cascades from libICE.
-Deferred: the toolkit/apps come AFTER the server (no point running them otherwise). The libICE patch +
-libXt (now alloca-unblocked) are quick when resumed.
+The toolkit-base libraries now cross-compile: **libICE, libSM, libXt, libXmu, libXpm** (`.a` each).
+- **libICE** needed `patches/libICE-1.1.1-phoenix.patch` (drop old-K&R `long time();` vs `<time.h>`).
+- **libXt/libXmu** needed the same MT-safe-pwd + `-DMAXHOSTNAMELEN` defines as libX11; **libXt** also
+  needed the libphoenix `alloca.h` fix (`#include <stddef.h>`, committed).
+- **libXpm** lib builds (its sxpm/cxpm tools link the deferred symbols → lib-only install).
+- **libXaw** (Athena widgets) — deferred: needs wide-char/i18n libc (`wcsncpy`, `mbtowc`, … missing in
+  libphoenix). NOT needed by twm (twm uses only libXt+libXmu).
+
+### THE EXECUTABLE BOUNDARY (key)
+Every X **executable** (apps like twm/xclock AND the server) links libc, so it needs the libphoenix
+additions present as SYMBOLS in `libc.a`/`libm.a`. Right now only the HEADERS are synced into the build
+sysroot; the symbols (getpwnam_r/getpwuid_r/hypot — committed; plus still-missing `mbtowc`/`wcsncpy`/…)
+land on a **libphoenix rebuild**. So the static LIBRARY stack is complete today; the next concrete step
+before any X exe is: **rebuild libphoenix** (with the committed fixes + add mbtowc/wcsncpy/wide-char),
+then exes link. twm (libXt+libXmu only) is the smallest first app to try after that.
 
 ## Server frontier — scout (2026-06-18)
 
