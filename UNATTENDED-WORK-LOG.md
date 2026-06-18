@@ -648,6 +648,15 @@ the blit RECORDED + SUBMITTED with no fault/timeout (encouraging — the shader 
 scanout fb stayed magenta (the green blit didn't land on the LINEAR scanout) -> inconclusive. Shader-
 compiler-on-HW is probed but not proven; next debug noted in the rootcause doc. Flagship restored.
 
+### 2026-06-18 — flagship thermal heat-soak (code intact) -> COOLDOWN, stop GPU boots for Friday
+A final flagship-confirm boot showed Quake at 0.4 fps + 43 V3D timeouts again — the SAME thermal heat-soak
+as before (the session ran many GPU-flagship-swap Vulkan boots). The code is provably intact: Quake
+initialized, /dev/audio0 ready, demo playing, 0 real faults; libv3d/libquakespasm unchanged (pre-session);
+quake in loader.disk. Purely the V3D running hot, which recovers on a cold rest (proven twice). Action: Pi
+powered OFF; stopping GPU-heavy boots for the rest of the run so it cools + the Friday Quake showcase is
+healthy. Remaining work = non-GPU (docs/analysis/host-side). FOR FRIDAY: if Quake looks slow on arrival,
+let the Pi sit powered-off ~20-30 min and cold-boot — it returns to ~40 fps; NOT a code regression.
+
 ### Tally — 2026-06-18 (this unattended run, cumulative)
 Flagship-shipping: audio subsystem (driver+DMA+Quake backend), /dev/urandom HW-backed, getrandom/
 getentropy, rpi4-sysinfo banner, psh mv. Libc completeness (additive, on-device): getpwnam_r/getpwuid_r/
