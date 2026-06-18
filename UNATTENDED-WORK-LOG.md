@@ -529,6 +529,23 @@ drowned scripted-psh — the whole point of nfsroot; project d619616). All boots
 (real digest of an NFS file) all exec from the NFS root, 0 faults. These were all previously blocked on
 the unseeded /dev/urandom. Broad-application-support milestone delivered + evidence-backed.
 
+### 2026-06-18 — ★★★ VULKAN vkCreateDevice WORKS ON HW (6th blocker cleared) — mesa 3995663795a + coord 131c825
+The named Vulkan goal reached its furthest point ever. Root-caused (code analysis) why device-create
+data-aborted in the noop-job's binning prolog: V3DV's BO path uses upstream DRM ioctls
+(CREATE_BO/MMAP_BO) but Phoenix has no V3D kernel DRM driver — and `build-v3dv-phoenix.py` never compiled
+the real in-process winsys, so `phoenix_v3d_ioctl` was undefined and there was NO BO allocator → the noop
+job's CL BO never allocated → NULL `bcl.next` → fault. **Fix:** link the real `v3d_phoenix_winsys.c`
+(+power) into the V3DV build (the same winsys the GL port uses: lazy `winsys_init` powers V3D + builds the
+flat MMU, `ioc_create_bo` = mmap CONTIGUOUS|UNCACHED + va2pa), and `#if __phoenix__` patch `v3dv_bo.c` to
+use the winsys's uncached CPU va directly (no libc mmap on the inert render-fd, no munmap). Compile/link-
+verified (0 undefined, real `phoenix_v3d_ioctl` in the harness), then **HW-VALIDATED**: swapped the
+rpi4-v3dv-tier0 harness in (Quake out), netboot → harness printed `vkEnumeratePhysicalDevices -> 0
+count=1` → `vkCreateDevice -> 0` → **`PASS (instance+phys+device created)`**, no abort, 0 faults. So full
+Vulkan instance→enumerate→**device-create** now works on the real Pi4 V3D. Flagship RESTORED after (Quake
+swapped back, rebuilt, verified in loader.disk). The user explicitly OK'd the flagship-swap risk; it was
+reversible + paid off. **Next (Tier 2):** a queue submit (cmd-buffer + clear) → expect ioc_submit_cl +
+fence-signalling blockers. Doc: docs/inprogress/2026-06-18-vulkan-v3dv-noop-job-rootcause.md.
+
 ### Tally — 2026-06-18 (this unattended run, cumulative)
 Flagship-shipping: audio subsystem (driver+DMA+Quake backend), /dev/urandom HW-backed, getrandom/
 getentropy, rpi4-sysinfo banner, psh mv. Libc completeness (additive, on-device): getpwnam_r/getpwuid_r/

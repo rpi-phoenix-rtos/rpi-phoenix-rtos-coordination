@@ -98,7 +98,13 @@ Root-cause: **DONE (code-analysis, high confidence)**. Fix parts 1 & 2:
 
 Fix part 3 (noop-job alloc-fail robustness): still TODO (secondary).
 
-**Remaining = HW validation only:** swap `rpi4-v3dv-tier0` in (Quake out), netboot, confirm
-device-create passes the noop-job BO alloc (no binning_prolog abort) and reaches the next
-blocker. Deferred here to avoid disrupting the Friday flagship; `/tmp/libv3dv-phoenix.a` is
-already rebuilt with the fix. See `project_vulkan_v3dv_port` memory.
+**HW-VALIDATED (2026-06-18) — vkCreateDevice SUCCEEDS on real Pi4 HW.** Swapped `rpi4-v3dv-tier0`
+in (Quake out), netboot (label `v3dv-noopfix-hwtest`): the harness printed
+`vkEnumeratePhysicalDevices -> 0 count=1` → `vkCreateDevice -> 0` → **`PASS (instance+phys+device
+created)`**, with NO `binning_prolog` abort and 0 faults. The noop-job BO-alloc fix works; the 6th
+blocker is cleared — the furthest Vulkan has reached on Phoenix. Flagship restored afterward
+(rpi4-quake swapped back + rebuilt; quake in loader.disk, v3dv out).
+
+**Next (Tier 2):** extend the harness past `vkCreateDevice` to a real queue submit (cmd-buffer +
+clear); expect the next blockers in `ioc_submit_cl` (winsys submit) + fence/semaphore signalling for
+the synchronous winsys.
