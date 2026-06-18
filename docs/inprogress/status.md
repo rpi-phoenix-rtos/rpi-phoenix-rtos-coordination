@@ -1,6 +1,26 @@
 # Phoenix-RTOS Raspberry Pi 4 Port Status
 
 > Per-peripheral state at a glance: **[docs/inprogress/pi4-hardware-support-matrix.md](pi4-hardware-support-matrix.md)**.
+> Full chronological log of the multi-day unattended run: **[UNATTENDED-WORK-LOG.md](../../UNATTENDED-WORK-LOG.md)** (repo root).
+
+## 🟢 LATEST — 2026-06-18 (unattended /loop, day 2; netboot/host only)
+
+This session's headline deliverables (all committed; HW- or host-verified):
+- **X11: the full client+toolkit library stack (45 archives incl. libXaw/Xt/Xmu/ICE/SM/Xrandr)
+  cross-compiles AND the executable boundary is CROSSED** — `xprobe` (Xlib client) + **`twm`
+  window manager** link as static aarch64-phoenix ELFs, and **`xprobe` RUN-verified on HW** (the
+  X client stack + libc *execute* on the Pi). Completed all libphoenix libc gaps (full wide-char +
+  C-locale multibyte set). Only the kdrive Xfbdev **server** remains (deep/multi-session).
+- **Crypto/network port class UNBLOCKED + running on HW:** `openssl` (version/dgst/rand), `curl`
+  7.64.1 + mbedTLS, `Dropbear` SSH client — all were blocked on an unseeded `/dev/urandom`, now
+  hwrng-backed (posixsrv). openssl zero-stdout anomaly RESOLVED.
+- **Flagship re-validated** clean on the rebuilt libphoenix (0 faults, Quake gameplay, `/dev/audio0`).
+- **Docs refreshed** to reality: demo-apps (Tiers A–C delivered), support matrix (RTC=ntpclient
+  capability present, Vulkan 6th blocker localized). nfsroot variant de-Quaked for clean scripted-psh.
+- **Next deep targets** (fresh-context): Vulkan noop-job winsys BO/CL (named goal), kdrive X server.
+
+The 2026-06-17 section below is the prior day's state. The ☀️ MORNING block under it is older still
+(an SD #120 handoff) — superseded; SD work is HW-gated (card swaps) and skipped this run.
 
 ## ☀️ MORNING — start here (handoff from the overnight autonomous session)
 
