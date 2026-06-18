@@ -107,6 +107,16 @@ xbuild libXext-1.3.5     "$XBASE/lib/libXext-1.3.5.tar.gz"     "xorg_cv_malloc0_
 xbuild libXrender-0.9.11 "$XBASE/lib/libXrender-0.9.11.tar.gz" "xorg_cv_malloc0_returns_null=no"
 xbuild libXrandr-1.5.4   "$XBASE/lib/libXrandr-1.5.4.tar.gz"   "xorg_cv_malloc0_returns_null=no"
 
+# --- server-side X libs (for the kdrive xorg-server, 2026-06-18) ---
+# libxkbfile (xkb keymap parsing) + the xcb-util family (Xephyr's xcb helpers). All static.
+xbuild libxkbfile-1.1.3  "$XBASE/lib/libxkbfile-1.1.3.tar.gz"  "xorg_cv_malloc0_returns_null=no"
+XCBB=https://xcb.freedesktop.org/dist
+xbuild xcb-util-0.4.1             "$XCBB/xcb-util-0.4.1.tar.gz"             ""
+xbuild xcb-util-image-0.4.1       "$XCBB/xcb-util-image-0.4.1.tar.gz"       ""
+xbuild xcb-util-renderutil-0.3.10 "$XCBB/xcb-util-renderutil-0.3.10.tar.gz" ""
+xbuild xcb-util-keysyms-0.4.1     "$XCBB/xcb-util-keysyms-0.4.1.tar.gz"     ""
+xbuild xcb-util-wm-0.4.2          "$XCBB/xcb-util-wm-0.4.2.tar.gz"          ""
+
 # pixman (software rasteriser, independent). The LIBRARY builds; only pixman's test/ utils.c
 # fails (its static gettime() clashes with Phoenix's non-standard sys/time.h gettime), so build
 # + install just the pixman/ subdir and copy the .pc manually.

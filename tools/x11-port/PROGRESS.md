@@ -72,6 +72,38 @@ gotchas were resolved:**
   archived in `artifacts/x11/`. They cannot RUN until the X **server** exists, but the entire
   client+toolkit+app+libc link closure is now proven. Build with `build-x11-phoenix.sh --with-apps`.
 
+## ★ SERVER — kdrive xorg-server CONFIGURES + COMPILES 371 objects for aarch64-phoenix (2026-06-18)
+
+Real progress on the server (the last X11 gate), host-side (no Pi boots). Chose **xorg-server 1.20.14**
+(autotools; kdrive core + Xephyr — note Xfbdev was removed in 1.17, so a fbdev backend must be written on
+the kdrive core, see below). Built the remaining server-side X libs into `/tmp/x11-phoenix`: **libxkbfile
+1.1.3**, and the **xcb-util family** (xcb-util 0.4.1, xcb-util-image 0.4.1, xcb-util-renderutil 0.3.10,
+xcb-util-keysyms 0.4.1, xcb-util-wm 0.4.2) — Xephyr's deps. With those, **`./configure` SUCCEEDS** (kdrive
++ Xephyr enabled; Makefiles generated for `hw/kdrive/{src,ephyr}`). Configure flags that worked:
+`--enable-kdrive --enable-xephyr --disable-{xorg,xwayland,xnest,xvfb,dmx,glamor,dri,dri2,dri3,glx,
+int10-module,vgahw,vbe,systemd-logind,secure-rpc,config-udev,config-hal,unit-tests} --without-{dtrace,
+systemd-daemon}`, `CC=aarch64-phoenix-gcc`, `CFLAGS=--sysroot=$SYSROOT -I$PREFIX/include
+-DMAXHOSTNAMELEN=256 -DXOS_USE_MTSAFE_PWDAPI -D_POSIX_THREAD_SAFE_FUNCTIONS=200809L`,
+`PKG_CONFIG_PATH=$PREFIX/lib/pkgconfig`.
+
+**`make` compiles 371 objects** (the dix/os/Xi/render/... server core largely builds for aarch64-phoenix!)
+then hits a clean, finite set of **Phoenix os-layer gaps** — the exact remaining porting work:
+- `os/access.c`: `struct ifaddrs` lacks `ifa_broadaddr` → add the union member to libphoenix `ifaddrs`, or
+  `#if __phoenix__` skip the broadcast-addr code (server interface enumeration).
+- `os/osinit.c`: `SI_USER` undeclared (libphoenix `signal.h`/siginfo), `setlinebuf` implicit (stdio) →
+  add `SI_USER` + `setlinebuf` to libphoenix, or guard.
+- `os/utils.c`: `O_NOFOLLOW` undeclared → `-DO_NOFOLLOW=0` (same fix as libXfont2).
+- `os/xsha1.c`: `openssl/sha.h` missing → configure `--with-sha1=libsha1`/CesCH built-in, or provide sha1.
+- `os/xdmcp.c`: `htons`/`IN_MULTICAST` implicit → `<arpa/inet.h>`/`<netinet/in.h>` gaps; or `--disable-xdmcp`.
+- `hw/kdrive/ephyr/hostx.c`: `sys/ipc.h` missing (SysV IPC/shm) → `--disable-mitshm` / drop the shm path.
+
+**Remaining server road (multi-session):** (1) clear the os-layer gaps above (mostly small libphoenix
+additions + CFLAGS/configure flags) → finish the compile + link a kdrive binary; (2) **write a minimal
+fbdev DDX backend** on `hw/kdrive/src` (KdCardFuncs/KdScreenFuncs: shadow-FB + `write()`-blit to
+`/dev/fb0`, no `mmap(fd,0)`) since 1.20 has no Xfbdev; (3) a kdrive input driver reading `/dev/kbd0`+
+`/dev/mouse0` (the `pl_phoenix_in.c` HID→event logic is the reference) + xkb data; (4) run on HW. The
+foundation (50 X archives + a configuring/compiling server) is the delivered, de-risked milestone.
+
 ## Server frontier — scout (2026-06-18)
 
 The hard remaining piece is the X **server** (the libraries above are the client/render/font side).
