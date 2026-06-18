@@ -87,7 +87,18 @@ that the BO alloc/map fails in the first place.
 
 ## Status
 
-Root-cause: **DONE (code-analysis, high confidence)**. Fix: **specified, not yet
-implemented** (the implementation is mechanical; the HW validation is the gated, flagship-
-disrupting part — best done in a focused session that swaps Quake out, validates, and swaps
-it back). See `project_vulkan_v3dv_port` memory.
+Root-cause: **DONE (code-analysis, high confidence)**. Fix parts 1 & 2:
+**IMPLEMENTED + COMPILE/LINK-VERIFIED (2026-06-18).**
+- external/mesa `3995663795a`: `v3dv_bo.c` `#if __phoenix__` direct-va map + no-munmap.
+- coord `131c825`: `build-v3dv-phoenix.py` compiles `v3d_phoenix_winsys.c`+`v3d_phoenix_power.c`
+  into libv3dv; `mesa-phoenix-port.patch` regenerated (5 files).
+- Rebuild result: winsys compiles for V3DV, frontend 96/0, **link rc=0, 0 undefined symbols,
+  no new multiple-definition collisions**; `phoenix_v3d_ioctl` now resolves to the real winsys
+  (`T`) in `/tmp/v3dvphx-harness`.
+
+Fix part 3 (noop-job alloc-fail robustness): still TODO (secondary).
+
+**Remaining = HW validation only:** swap `rpi4-v3dv-tier0` in (Quake out), netboot, confirm
+device-create passes the noop-job BO alloc (no binning_prolog abort) and reaches the next
+blocker. Deferred here to avoid disrupting the Friday flagship; `/tmp/libv3dv-phoenix.a` is
+already rebuilt with the fix. See `project_vulkan_v3dv_port` memory.
