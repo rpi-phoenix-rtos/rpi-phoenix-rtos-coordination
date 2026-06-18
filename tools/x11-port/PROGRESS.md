@@ -47,13 +47,26 @@ The toolkit-base libraries now cross-compile: **libICE, libSM, libXt, libXmu, li
   `wmemcmp`, plus `mbtowc` (libphoenix `0cb9f72`). So the **entire** X11 client/render/font/toolkit
   library stack now cross-compiles — **44 archives** in `/tmp/x11-phoenix/lib`.
 
-### THE EXECUTABLE BOUNDARY (key)
-Every X **executable** (apps like twm/xclock AND the server) links libc, so it needs the libphoenix
-additions present as SYMBOLS in `libc.a`/`libm.a`. Right now only the HEADERS are synced into the build
-sysroot; the symbols (getpwnam_r/getpwuid_r/hypot — committed; plus still-missing `mbtowc`/`wcsncpy`/…)
-land on a **libphoenix rebuild**. So the static LIBRARY stack is complete today; the next concrete step
-before any X exe is: **rebuild libphoenix** (with the committed fixes + add mbtowc/wcsncpy/wide-char),
-then exes link. twm (libXt+libXmu only) is the smallest first app to try after that.
+### THE EXECUTABLE BOUNDARY — CROSSED (2026-06-18) ✅
+Every X **executable** links libc, so it needs the libphoenix additions present as SYMBOLS in
+`libc.a`/`libm.a`. **All the libc gaps are now committed** (getpwnam_r/getpwuid_r/sys-poll `89d1543`,
+hypot `6e2b929`, wide-char `0cb9f72`, full C-locale multibyte set mblen/mbtowc/wctomb/mbstowcs/wcstombs
+`e29c840`) and a `--scope core` libphoenix rebuild puts them in the on-device `libc.a`. **Two non-obvious
+gotchas were resolved:**
+1. **The toolchain bundles its OWN libphoenix/libc/libm** under
+   `.toolchain/aarch64-phoenix/aarch64-phoenix/lib/`, and the auto-linked libc comes from THERE, not the
+   build sysroot. After a libphoenix change you must sync that bundle (build script's
+   `sync_toolchain_libc()` does it: `cp <sysroot>/lib/lib{phoenix,c,m}.a <toolchain>/lib/`).
+2. **App configure needs `PKG_CONFIG="pkg-config --static"`** so the static private deps (xcb/Xau/Xdmcp/
+   Xrender) land on the link line, plus `LDFLAGS -L$SYSROOT/lib`.
+
+**FIRST X11 EXECUTABLES BUILT for aarch64-phoenix (2026-06-18):**
+- **`xprobe`** — a minimal Xlib client (XOpenDisplay), proves Xlib+xcb+libc link closure.
+- **`twm` 1.0.12** — a complete X11 **window manager**, the first real X11 *application* ported to
+  Phoenix. 3.1 MB static aarch64-phoenix ELF (`main`/`XOpenDisplay`/`XtToolkitInitialize` present),
+  exercises the full toolkit (libXmu/libXt/libXext/libX11/libxcb/libSM/libICE) + libXrandr. Binaries
+  archived in `artifacts/x11/`. They cannot RUN until the X **server** exists, but the entire
+  client+toolkit+app+libc link closure is now proven. Build with `build-x11-phoenix.sh --with-apps`.
 
 ## Server frontier — scout (2026-06-18)
 
@@ -103,11 +116,14 @@ the 36-archive client/render/font foundation above is the delivered, de-risked m
 - These ship in the on-device libc on the next libphoenix/image rebuild (additive; needed when
   the X server eventually links/runs). The frozen flagship image is unaffected until then.
 
-> **STATUS 2026-06-18:** the ENTIRE X11 client + rendering + font library stack cross-compiles
-> for aarch64-phoenix — 36 archives in `/tmp/x11-phoenix/lib` (libX11, libxcb +24 exts, libXext,
-> libXrender, libXfont2, libfontenc, libfreetype, libpixman-1, libXau, libXdmcp, libz). Remaining:
-> (1) a libphoenix rebuild to put getpwnam_r/getpwuid_r/hypot/sys/poll.h into the on-device libc;
-> (2) the kdrive Xfbdev **server** (the big multi-session piece). Foundation is DONE + de-risked.
+> **STATUS 2026-06-18:** the ENTIRE X11 client + render + font + toolkit library stack cross-compiles
+> for aarch64-phoenix — **45 archives** in `/tmp/x11-phoenix/lib` (libX11, libxcb +24 exts, libXext,
+> libXrender, libXrandr, libXfont2, libfontenc, libfreetype, libpixman-1, libICE, libSM, libXt, libXmu,
+> libXpm, libXaw, libXau, libXdmcp, libz). The **executable boundary is CROSSED**: the libphoenix libc
+> gaps are all committed + rebuilt, and the first X executables — `xprobe` (minimal Xlib client) and
+> **`twm`** (a full window manager) — LINK as aarch64-phoenix ELFs (`artifacts/x11/`). Remaining: the
+> kdrive Xfbdev **server** (the big multi-session piece) — then twm can actually run. Foundation +
+> client + toolkit + first app are DONE + de-risked.
 
 ### libphoenix gaps noted (upstream-worthy, not yet fixed)
 

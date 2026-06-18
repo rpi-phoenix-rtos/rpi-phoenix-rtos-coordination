@@ -21,6 +21,7 @@ TC=/home/houp/phoenix-rpi/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-
 SYSROOT=/home/houp/phoenix-rpi/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot
 PREFIX=/tmp/x11-phoenix
 HERE="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$HERE/../.." && pwd)"
 SRC="$HERE/src"
 PATCHDIR="$HERE/patches"
 XBASE=https://www.x.org/releases/individual
@@ -104,6 +105,7 @@ xbuild libX11-1.8.7 "$XBASE/lib/libX11-1.8.7.tar.gz" \
 # --- extension + rendering libs (build for Phoenix as of 2026-06-18) ---
 xbuild libXext-1.3.5     "$XBASE/lib/libXext-1.3.5.tar.gz"     "xorg_cv_malloc0_returns_null=no"
 xbuild libXrender-0.9.11 "$XBASE/lib/libXrender-0.9.11.tar.gz" "xorg_cv_malloc0_returns_null=no"
+xbuild libXrandr-1.5.4   "$XBASE/lib/libXrandr-1.5.4.tar.gz"   "xorg_cv_malloc0_returns_null=no"
 
 # pixman (software rasteriser, independent). The LIBRARY builds; only pixman's test/ utils.c
 # fails (its static gettime() clashes with Phoenix's non-standard sys/time.h gettime), so build
@@ -178,18 +180,49 @@ if [ ! -f "$PREFIX/lib/libXaw7.a" ]; then
 	  [ -f "$PREFIX/lib/libXaw7.a" ] && echo "libXaw-1.0.16: OK" || echo "libXaw-1.0.16: FAILED (see /tmp/libXaw-build.log)" )
 fi
 
-# --- THE EXE BOUNDARY ---
-# All X executables (apps like twm/xclock AND the server) LINK against libc, so they need the
-# libphoenix additions IN libc.a/libm.a — currently only the HEADERS are synced to the sysroot; the
-# SYMBOLS (getpwnam_r/getpwuid_r/hypot/mbtowc/wcsncpy/wcscpy/...) land on a libphoenix rebuild. All
-# the libc fixes are now COMMITTED in libphoenix (89d1543/6e2b929/0cb9f72); so the only remaining
-# step before linking any X exe is to rebuild libphoenix. The static LIBRARIES above all build today.
+# --- THE EXE BOUNDARY (CROSSED 2026-06-18) ---
+# All X executables LINK against libc, so they need the libphoenix additions present as SYMBOLS in
+# libc.a/libm.a. All the libc fixes are now COMMITTED in libphoenix (getpw*_r/sys-poll 89d1543;
+# hypot 6e2b929; wide-char+multibyte 0cb9f72/e29c840). After a libphoenix rebuild
+# (./scripts/rebuild-rpi4b-fast.sh --scope core --build-only) the on-device libc carries them.
+# IMPORTANT: the cross-toolchain bundles its OWN copy of libphoenix.a/libc.a/libm.a under
+# .toolchain/aarch64-phoenix/aarch64-phoenix/lib/ and the auto-linked libc comes from THERE, not the
+# build sysroot. After a libphoenix change, sync that bundle so X exes link the fresh libc:
+#   cp <sysroot>/lib/lib{phoenix,c,m}.a .toolchain/aarch64-phoenix/aarch64-phoenix/lib/
+# (sync_toolchain_libc below does this.) Then X executables link cleanly.
+
+sync_toolchain_libc() {
+	local tclib="$REPO_ROOT/.toolchain/aarch64-phoenix/aarch64-phoenix/lib"
+	[ -d "$tclib" ] || return 0
+	for l in libphoenix.a libc.a libm.a; do
+		[ -f "$SYSROOT/lib/$l" ] && cp "$SYSROOT/lib/$l" "$tclib/$l"
+	done
+	echo "synced fresh libphoenix/libc/libm into the toolchain bundle"
+}
+
+# --- apps: twm (the first real X11 application proven to build for aarch64-phoenix, 2026-06-18) ---
+# twm exercises the full toolkit (libXmu/libXt/libXext/libX11/libxcb/libSM/libICE) + libXrandr.
+# Two non-obvious knobs: PKG_CONFIG="pkg-config --static" (so the static private deps xcb/Xau/Xdmcp
+# are on the link line) and LDFLAGS -L$SYSROOT/lib. It LINKS into a static aarch64-phoenix ELF; it
+# cannot RUN until the X server exists, but it proves the entire client+toolkit+libc link closure.
+build_twm() {
+	sync_toolchain_libc
+	if [ -f "$PREFIX/bin/twm" ]; then echo "twm: already built"; return 0; fi
+	fetch_extract twm-1.0.12 "$XBASE/app/twm-1.0.12.tar.gz" || return 1
+	( cd "$SRC/twm-1.0.12" && PKG_CONFIG="pkg-config --static" ./configure --host=aarch64-phoenix \
+	    --prefix="$PREFIX" CC=${TC}gcc AR=${TC}ar RANLIB=${TC}ranlib \
+	    CFLAGS="--sysroot=$SYSROOT -I$PREFIX/include $PWD_DEFS" \
+	    LDFLAGS="--sysroot=$SYSROOT -L$PREFIX/lib -L$SYSROOT/lib" >/tmp/twm-conf.log 2>&1
+	  make install >/tmp/twm-build.log 2>&1
+	  [ -f "$PREFIX/bin/twm" ] && echo "twm-1.0.12: OK (aarch64-phoenix ELF)" || echo "twm: FAILED (see /tmp/twm-build.log)" )
+}
+# Build apps only when explicitly requested (needs the libphoenix rebuild done first).
+[ "${1:-}" = "--with-apps" ] && build_twm
 
 # --- next brick (the big one) ---
-# The kdrive Xfbdev server (xorg-server). Needs the on-device libc to carry the libphoenix
-# additions (getpwnam_r/getpwuid_r/hypot/sys/poll.h) — rebuild libphoenix first. Expect heavy
-# OS-integration work (kdrive backend, input via /dev/kbd0+/dev/mouse0, shadow-FB + write()-blit
-# to /dev/fb0) + a stream of further Phoenix libc gaps. This is the multi-session frontier.
+# The kdrive Xfbdev server (xorg-server). Expect heavy OS-integration work (kdrive backend, input via
+# /dev/kbd0+/dev/mouse0, shadow-FB + write()-blit to /dev/fb0) + a stream of further Phoenix libc
+# gaps. This is the multi-session frontier; the client+toolkit+app foundation below is delivered.
 
 echo "=== installed X11 libs in $PREFIX/lib ==="
 ls "$PREFIX/lib/"*.a 2>/dev/null || echo "(none yet)"
