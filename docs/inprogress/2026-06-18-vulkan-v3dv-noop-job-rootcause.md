@@ -130,9 +130,32 @@ device entrypoint table (`v3dv_entrypoints.c`). So the NULL is a **dispatch/enab
 (same class as the earlier Properties2-NULL: the entrypoint exists but the live dispatch slot / the
 `vk_device_get_proc_addr` enablement gate returns NULL), not a missing implementation.
 
-**Next-session diagnostic (precise):** add per-proc NULL logging to the harness (print each of the 7
-results) to identify WHICH proc(s) are NULL; then trace `vk_device_get_proc_addr` /
-`vk_device_dispatch_table_get_if_supported` gating (core-version / enabled-features) in
-`vk_device_init` for the Phoenix device-create path — likely the same "passed NULL where a real
-struct was expected" pattern that left Properties2 NULL. The harness Tier-2 code is committed (staged;
-component stays swapped out, Quake is the flagship).
+**Per-proc diagnosis DONE (2026-06-18, one paced v3dv boot, label v3dv-dproc-diag).** Of the 7 device
+procs resolved via `vkGetDeviceProcAddr`, exactly **3 are NULL**: `vkCreateCommandPool`,
+`vkAllocateCommandBuffers`, `vkQueueSubmit`. Resolved fine: `vkGetDeviceQueue`, `vkBeginCommandBuffer`,
+`vkEndCommandBuffer`, `vkQueueWaitIdle`. The discriminator is **which vk_common runtime file implements
+each**: the 3 NULL ones live in `vk_command_pool.c` (the common command-pool framework) +
+`vk_synchronization.c` (the common submit framework); the resolved ones live in `vk_device.c` / `vk_queue.c`
+/ v3dv itself.
+
+Ruled out: (a) **api_version gating** — the harness sets `apiVersion=VK_API_VERSION_1_1` (and mesa
+defaults 0→1.0), so core-1.0 procs pass the version gate; (b) **missing symbols** — all 5 `vk_common_*`
+are defined (`T`) in `libv3dv-phoenix.a`; (c) **missing table entries** — all 3 ARE assigned in the
+generated `vk_common_device_entrypoints` (`.CreateCommandPool = vk_common_CreateCommandPool`, etc.). So
+the symbols + entrypoint table are correct, yet `vk_device_dispatch_table_get_if_supported` returns NULL
+for these 3 → a subtle **runtime dispatch-table population / enablement gate** specific to the common
+command-pool + synchronization frameworks (likely the driver must *opt in* — e.g. `vk_queue_init` with a
+`driver_submit`, or a `vk_command_buffer_ops`/common-cmd-pool init — for those framework entrypoints to
+land in the live device dispatch table; the Phoenix `vkCreateDevice` path may skip that init).
+
+**Two next-step options (next session):**
+1. **Trace it:** add a print inside `vk_device_get_proc_addr` / `vk_device_dispatch_table_get_if_supported`
+   (or check `vk_device_init`'s `vk_queue_init` / common-command-pool setup) to see whether the dispatch
+   slot is NULL or the is_enabled gate fails for these 3, then enable the missing framework init.
+2. **Decouple the submit test:** the `vk_common_*`/`v3dv_*` entrypoints are exported (`T`), so the harness
+   can **call `vkCreateCommandPool`/`vkAllocateCommandBuffers`/`vkQueueSubmit` directly** (declare the
+   prototypes, link against libv3dv) instead of via `vkGetDeviceProcAddr` — this exercises the actual
+   winsys submit path (`ioc_submit_cl`) NOW, independent of the dispatch-resolution bug, proving Tier 2's
+   GPU submit works while the dispatch gate is fixed separately.
+
+The harness per-proc diag is committed (staged; component swapped OUT, rpi4-quake is the flagship).
