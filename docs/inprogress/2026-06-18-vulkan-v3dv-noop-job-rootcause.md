@@ -159,3 +159,31 @@ land in the live device dispatch table; the Phoenix `vkCreateDevice` path may sk
    GPU submit works while the dispatch gate is fixed separately.
 
 The harness per-proc diag is committed (staged; component swapped OUT, rpi4-quake is the flagship).
+
+## ★★ TIER 2 ACHIEVED — full Vulkan queue submit works on HW (2026-06-18)
+
+Took option (b) — DECOUPLE. The harness now calls the 3 dispatch-gated framework entrypoints via their
+exported `vk_common_*` impls directly (`extern VkResult vk_common_CreateCommandPool/AllocateCommandBuffers/
+QueueSubmit(...)`), keeping `vkGetDeviceProcAddr` for the 4 that resolve. HW (label v3dv-tier2-decouple,
+one paced boot):
+```
+device created OK
+vkCreateCommandPool -> 0
+vkAllocateCommandBuffers -> 0
+record empty cmd buffer -> 0
+vkQueueSubmit -> 0
+vkQueueWaitIdle -> 0
+PASS (instance+phys+device+queue submit)
+```
+Every call returns `VK_SUCCESS`, **no faults, no V3D BIN/RENDER timeouts**. So the COMPLETE Vulkan submit
+path executes on the real Pi 4 V3D: instance → physical device → device → command pool → command buffer
+(record) → **queue submit** → wait-idle. The winsys submit (`ioc_submit_cl`) + the synchronous syncobj
+fence path work end-to-end through Vulkan. This confirms the submit machinery is fully wired; the
+GetDeviceProcAddr gating on the 3 framework entrypoints is a separate, cosmetic-for-now dispatch bug
+(does not block the GPU path). Flagship restored (rpi4-quake) after.
+
+**Next (Tier 3): real rendering commands** — put actual work in the command buffer (a render pass with a
+`vkCmdClearColorImage` / a `loadOp=CLEAR` render pass to a VkImage), submit, and read back / scan out the
+cleared color. That exercises v3dv's CL generation for real draws (vs the empty/noop job). Then geometry
++ shaders → the road to vkQuake. (Also worth fixing the dispatch gate so apps using the normal
+`vkGetDeviceProcAddr` path work — but it is not on the GPU critical path.)
