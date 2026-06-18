@@ -108,3 +108,31 @@ blocker is cleared — the furthest Vulkan has reached on Phoenix. Flagship rest
 **Next (Tier 2):** extend the harness past `vkCreateDevice` to a real queue submit (cmd-buffer +
 clear); expect the next blockers in `ioc_submit_cl` (winsys submit) + fence/semaphore signalling for
 the synchronous winsys.
+
+## Tier 2 attempt (2026-06-18) — queue-submit path, narrowed to a device-proc gating issue
+
+Extended both harness copies (`tools/v3d-driver-port/v3dv_harness.c` + the bootable
+`sources/phoenix-rtos-devices/misc/rpi4-v3dv-tier0/rpi4-v3dv-tier0.c`) past `vkCreateDevice` with a
+minimal **empty-command-buffer submit**: `vkGetDeviceQueue` → `vkCreateCommandPool` →
+`vkAllocateCommandBuffers` → `vkBegin/EndCommandBuffer` (empty) → `vkQueueSubmit` → `vkQueueWaitIdle`.
+The winsys submit path itself is real + proven (`ioc_submit_cl` is the synchronous bin/render path Quake
+renders through; the syncobj stubs signal immediately), so an empty submit *should* complete.
+
+Two HW iterations (flagship swapped in/out each, Quake restored after):
+1. **Resolving device procs via `vkGetInstanceProcAddr` → instruction-abort `pc=0`** (NULL fn-ptr).
+   In a loader-less ICD link, `vkGetInstanceProcAddr` hands back trampolines for *device* entrypoints
+   that deref a NULL device-dispatch slot. **Fixed:** resolve device procs via `vkGetDeviceProcAddr`.
+2. **With `vkGetDeviceProcAddr` → no crash, but "Tier-2 submit procs missing"** — one of the 7 device
+   procs resolves NULL. `device created OK` still prints (device-create unaffected).
+
+Analysis (no HW): all 7 device entrypoints **and** `GetDeviceProcAddr` ARE present in v3dv's generated
+device entrypoint table (`v3dv_entrypoints.c`). So the NULL is a **dispatch/enablement-gating** issue
+(same class as the earlier Properties2-NULL: the entrypoint exists but the live dispatch slot / the
+`vk_device_get_proc_addr` enablement gate returns NULL), not a missing implementation.
+
+**Next-session diagnostic (precise):** add per-proc NULL logging to the harness (print each of the 7
+results) to identify WHICH proc(s) are NULL; then trace `vk_device_get_proc_addr` /
+`vk_device_dispatch_table_get_if_supported` gating (core-version / enabled-features) in
+`vk_device_init` for the Phoenix device-create path — likely the same "passed NULL where a real
+struct was expected" pattern that left Properties2 NULL. The harness Tier-2 code is committed (staged;
+component stays swapped out, Quake is the flagship).
