@@ -1,8 +1,11 @@
 # Quake render-to-scanout visual bugs — diagnosis (2026-06-16)
 
 After render-to-scanout landed (~42fps@1080p, coord 2d9e246), two visual bugs
-appeared on the HDMI output. Both are DIAGNOSED here; neither is fixed yet. The
-build is reverted to the stable 42fps state (RGBA8 renderbuffer color RT).
+appeared on the HDMI output. **STATUS 2026-06-18: BOTH ARE NOW FIXED + committed
+(2026-06-17)** — Bug 1 (R/B channel swap) via `swap_color_rb` on the scanout RT,
+and Bugs 2+3 (explosion square / render stall, one root cause) via defaulting
+`r_quadparticles 0`. Details + the original diagnoses are preserved per-section
+below. The build runs colors-correct, square-gone, ~40fps, 0 faults.
 
 ## Bug 1 — "everything is very blue" (red/blue channel swap) — **FIXED 2026-06-17**
 
