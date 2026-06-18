@@ -26,6 +26,11 @@ This file is my running log + the decisions/parked items for you to review.
   (incl. libXaw/Xt/Xmu/ICE/SM/Xrandr) cross-compiles, and `xprobe` (Xlib client) + **`twm` window
   manager** build as aarch64-phoenix ELFs; `xprobe` RUN-verified on HW (X client stack executes).
   Completed all libphoenix libc gaps (wide-char + multibyte).
+- **A native Xlib *drawing* client (`xphxdemo`) builds + stages to NFS** — beyond `xprobe`'s
+  connect-only test, this exercises the libX11 drawing surface (window/GC/colour/line/rect/arc/text +
+  event loop). Links clean as a static aarch64-phoenix ELF (proving the drawing-path symbols resolve),
+  degrades gracefully with no server (so it runs on HW today), and draws a real scene once the fbdev
+  DDX lands — the canonical "first visual X app". Staged to `/bin/xphxdemo`.
 - **The ENTIRE kdrive X *server* core now COMPILES for aarch64-phoenix** — 28 static archives, 0 errors,
   including the **kdrive DDX core** (`libkdrive.a`: `KdInitOutput`/`KdScreenInit`/`KdAddScreen`) and
   `miext/shadow` (the shadow-FB the future fbdev backend blits from). The X *server* was the last and
