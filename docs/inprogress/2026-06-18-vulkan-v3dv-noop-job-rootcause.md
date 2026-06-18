@@ -182,11 +182,27 @@ fence path work end-to-end through Vulkan. This confirms the submit machinery is
 GetDeviceProcAddr gating on the 3 framework entrypoints is a separate, cosmetic-for-now dispatch bug
 (does not block the GPU path). Flagship restored (rpi4-quake) after.
 
-**Next (Tier 3): real rendering commands** — put actual work in the command buffer (a render pass with a
-`vkCmdClearColorImage` / a `loadOp=CLEAR` render pass to a VkImage), submit, and read back / scan out the
-cleared color. That exercises v3dv's CL generation for real draws (vs the empty/noop job). Then geometry
-+ shaders → the road to vkQuake. (Also worth fixing the dispatch gate so apps using the normal
-`vkGetDeviceProcAddr` path work — but it is not on the GPU critical path.)
+## ★★ TIER 3 ACHIEVED — a real Vulkan render command executes on the V3D (2026-06-18)
+
+Extended the harness past the Tier-2 empty submit to record an actual render command:
+create a 64×64 R8G8B8A8 VkImage → `vkGetImageMemoryRequirements` (size=16384, typeBits=0x1) →
+`vkAllocateMemory` (type 0) → `vkBindImageMemory` → record `vkCmdClearColorImage` (clear to
+{0,0.5,1,1}, layout GENERAL, no barrier — v3dv has no validation enforcement) → reuse the Tier-2
+`vkQueueSubmit` + `vkQueueWaitIdle`. All via the exported `v3dv_*`/`vk_common_*` impls directly (same
+decouple as Tier 2). HW (label v3dv-tier3-clear, one paced boot):
+```
+vkCreateImage -> 0   image mem size=16384 typeBits=0x1   vkAllocateMemory -> 0   vkBindImageMemory -> 0
+record clear cmd buffer -> 0   vkQueueSubmit -> 0   vkQueueWaitIdle -> 0
+PASS (instance+phys+device+clear-image submit) -- Tier 3
+```
+Every call `VK_SUCCESS`, **no faults, no V3D BIN/RENDER timeouts**. So the V3D executed a real
+Vulkan-issued render command (a clear) end-to-end. Flagship restored (rpi4-quake) after.
+
+**Next (Tier 4): a render pass + geometry/shaders** — a `loadOp=CLEAR` render pass to a framebuffer
+(scanout-backed for HDMI), then a triangle (vertex/fragment shaders compiled by v3dv's NIR→QPU path),
+then read back / display. That is the remaining road to vkQuake. (The dispatch-gate cosmetic bug — normal
+`vkGetDeviceProcAddr` returns NULL for the 3 framework entrypoints — is still open but off the GPU
+critical path; the direct-impl decouple keeps the harness progressing.)
 
 ### Dispatch-gate — deeper no-heat analysis (2026-06-18), narrowed to the entrypoint-table merge
 

@@ -12,11 +12,12 @@ This file is my running log + the decisions/parked items for you to review.
 # ★ READ THIS FIRST — delivery summary
 
 ## ⭐ 2026-06-18 (day 2) — biggest new wins (details in the dated log below)
-- **Vulkan reaches a full QUEUE SUBMIT on real Pi 4 HW (Tier 2 done)** — the furthest the V3DV→vkQuake
-  port has ever reached: `vkCreateInstance`→`EnumeratePhysicalDevices`→`vkCreateDevice`→`CreateCommandPool`
-  →`AllocateCommandBuffers`→record→`vkQueueSubmit`→`vkQueueWaitIdle` **all PASS, 0 faults, 0 V3D timeouts**.
-  Root-caused + fixed the device-create blocker (V3DV never linked a real BO allocator) and then proved the
-  whole GPU submit path (winsys `ioc_submit_cl` + fence) via Vulkan. Next: real render cmds (clear) → vkQuake.
+- **Vulkan runs a real RENDER COMMAND on the Pi 4 V3D (Tier 3 done)** — the furthest the V3DV→vkQuake
+  port has ever reached: full `vkCreateInstance`→`vkCreateDevice`→cmd pool/buffer→**`vkCmdClearColorImage`**
+  (create image + bind memory + record the clear) →`vkQueueSubmit`→`vkQueueWaitIdle`, **all PASS, 0 faults,
+  0 V3D timeouts**. So the V3D executes an actual Vulkan-issued render command (a clear) end-to-end. Got
+  here by: root-causing + fixing the device-create blocker (V3DV never linked a real BO allocator), proving
+  the GPU submit path (Tier 2), then the clear (Tier 3). Next: render pass + geometry/shaders → vkQuake.
 - **The whole crypto/network port class RUNS on HW** — `openssl` (version/dgst/rand), `curl 7.64.1`
   +mbedTLS (HTTPS/SSL), `Dropbear` SSH client — all unblocked by wiring `/dev/urandom` to the HW RNG.
 - **First X11 executables for Phoenix LINK + RUN** — the full 45-archive X11 client+toolkit lib stack
@@ -90,10 +91,11 @@ This file is my running log + the decisions/parked items for you to review.
 - **Bluetooth (BCM43455 HCI)** — needs the kernel mailbox for BT_REG_ON (GPIO) + a `.hcd` blob + a BLE
   device in range to scan.
 - **WiFi #91** — firmware-exec gate; worst-case needs JTAG (FT2232 ~$20).
-- **Vulkan (V3DV) — Tier 1 + Tier 2 DONE on HW** (instance→device→**queue submit** all PASS, 0 faults).
-  Remaining toward vkQuake (all deep, GPU-boot-paced, unattended-doable but multi-session): **Tier 3** =
-  real render cmds (a clear) in the cmd buffer → readback; then geometry + shaders; then the vkQuake port
-  itself (large). Plus a **cosmetic dispatch-gate bug** (vkGetDeviceProcAddr returns NULL for 3 vk_common
+- **Vulkan (V3DV) — Tier 1 + 2 + 3 DONE on HW** (instance→device→queue submit→a real
+  **`vkCmdClearColorImage`** render command, all PASS, 0 faults, 0 V3D timeouts). Remaining toward vkQuake
+  (all deep, GPU-boot-paced, unattended-doable but multi-session): **Tier 4** = render pass (loadOp=CLEAR
+  to a scanout framebuffer for HDMI) + geometry + vertex/frag shaders (v3dv NIR→QPU) → triangle; then the
+  vkQuake port itself (large). Plus a **cosmetic dispatch-gate bug** (vkGetDeviceProcAddr returns NULL for 3 vk_common
   framework entrypoints — GPU path unaffected, proven via direct calls; needs a one-boot runtime trace to
   fix for the normal-API path). Full status: docs/inprogress/2026-06-18-vulkan-v3dv-noop-job-rootcause.md.
 - **X11 — full lib stack + `xprobe`/`twm` exes build + run on HW; only the SERVER remains** — the kdrive
@@ -615,6 +617,16 @@ record-empty/QueueSubmit/QueueWaitIdle ALL → 0, **PASS (instance+phys+device+q
 0 V3D timeouts. So the COMPLETE Vulkan submit path runs on the real Pi4 V3D. Flagship restored after.
 Also: fixed the stale pool-thread-stack-audit doc (genet irq/link stacks already hardened 16K/8K, #152).
 Next Tier 3 = real render cmds (clear) in the cmd buffer → read back → geometry+shaders → vkQuake.
+
+### 2026-06-18 — ★★ Vulkan TIER 3: a real render command (clear) executes on the V3D (devices commit)
+Extended the harness past the Tier-2 empty submit to record a REAL render command: create a 64x64
+R8G8B8A8 VkImage → GetImageMemoryRequirements (16384 B) → AllocateMemory → BindImageMemory → record
+vkCmdClearColorImage → reuse the Tier-2 submit+wait. All via the exported v3dv_/vk_common_ impls (same
+decouple as Tier 2, bypassing the cosmetic dispatch-gate). Compile-verified (no heat) then HW-validated in
+one paced boot: vkCreateImage/AllocateMemory/BindImageMemory/record-clear/QueueSubmit/QueueWaitIdle ALL →
+0, **PASS Tier 3**, 0 faults, 0 V3D timeouts. So the Pi4 V3D executes an actual Vulkan-issued render
+command end-to-end. Flagship restored after. Next Tier 4 = render pass + geometry/shaders → vkQuake. Doc:
+docs/inprogress/2026-06-18-vulkan-v3dv-noop-job-rootcause.md.
 
 ### Tally — 2026-06-18 (this unattended run, cumulative)
 Flagship-shipping: audio subsystem (driver+DMA+Quake backend), /dev/urandom HW-backed, getrandom/
