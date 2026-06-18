@@ -31,6 +31,11 @@ This file is my running log + the decisions/parked items for you to review.
   event loop). Links clean as a static aarch64-phoenix ELF (proving the drawing-path symbols resolve),
   degrades gracefully with no server (so it runs on HW today), and draws a real scene once the fbdev
   DDX lands — the canonical "first visual X app". Staged to `/bin/xphxdemo`.
+- **`pidiag` — a runnable Pi 4 self-test tool — builds + stages to NFS** (`/bin/pidiag`). Unlike the
+  X clients (which need the deferred server), this RUNS from psh on Friday with no X/network: it
+  opens+reads every device node the port created (`/dev/thermal`, `/dev/throttled`, `/dev/hwrng`,
+  `/dev/urandom`, `/dev/gpio`) and runs integer + memcpy micro-benchmarks. **➡️ Friday: `pidiag`
+  shows the whole device stack alive in one command.** Static aarch64-phoenix ELF, host-verified logic.
 - **`xeyes` — a real, iconic upstream X11 app — builds for Phoenix + stages to NFS** (`/bin/xeyes`).
   xeyes-1.1.2 (chosen to predate the XInput2/libXi dep) cross-compiles to a static aarch64-phoenix
   ELF against the already-built libXt/Xmu/Xext/Xrender. Proves a genuine recognizable X client — not
