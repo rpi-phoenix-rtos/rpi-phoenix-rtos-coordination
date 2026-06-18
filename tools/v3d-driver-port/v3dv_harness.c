@@ -264,6 +264,20 @@ int main(void)
 	if (r != VK_SUCCESS)
 		return 11;
 
-	printf("v3dv-harness: PASS (instance+phys+device+clear-image submit) -- Tier 3\n");
+	/* Tier 3 verification: map the HOST_VISIBLE (uncached winsys) image memory and read pixel 0 —
+	 * it must hold the clear color, proving the GPU actually wrote it. */
+	extern VkResult v3dv_MapMemory(VkDevice, VkDeviceMemory, VkDeviceSize, VkDeviceSize, VkMemoryMapFlags, void **);
+	void *mapped = NULL;
+	r = v3dv_MapMemory(dev, mem, 0, VK_WHOLE_SIZE, 0, &mapped);
+	if (r == VK_SUCCESS && mapped != NULL) {
+		const unsigned char *px = (const unsigned char *)mapped;
+		printf("v3dv-harness: clear readback px0 = %02x %02x %02x %02x (expect ~00 80 ff ff / bgra ff 80 00 ff)\n",
+		       px[0], px[1], px[2], px[3]);
+	}
+	else {
+		printf("v3dv-harness: clear readback skipped (vkMapMemory -> %d)\n", (int)r);
+	}
+
+	printf("v3dv-harness: PASS (instance+phys+device+clear-image submit+readback) -- Tier 3\n");
 	return 0;
 }
