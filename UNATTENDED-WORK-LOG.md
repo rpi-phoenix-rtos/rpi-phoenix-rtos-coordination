@@ -44,12 +44,20 @@ This file is my running log + the decisions/parked items for you to review.
   speculative-until-server, libXt now alloca-unblocked, libICE needs a 1-line `time`-decl patch. Ladder +
   full libc-gap inventory + recipe in `tools/x11-port/PROGRESS.md` + memory `project_x11_lib_port`.
   **UPDATE: the TOOLKIT base also builds** (libICE/libSM/libXt/libXmu/libXpm; coord 427ec46) — so the
-  whole X11 *library* stack (client+render+font+toolkit, ~41 archives) cross-compiles for Phoenix.
-  Clean **executable boundary** found: apps (twm/xclock) + the server LINK libc, so they need the
-  libphoenix symbol additions in libc.a/libm.a (getpwnam_r/getpwuid_r/hypot committed; still to ADD
-  mbtowc/wcsncpy/wide-char) → a **libphoenix rebuild** before any X exe. Libs DONE; the rebuild + the
-  kdrive Xfbdev server are the deep/multi-session remainder (server is the true gate — nothing X runs
-  without it). Foundation DONE + de-risked (host-side, isolated, flagship frozen throughout).
+  whole X11 *library* stack (client+render+font+toolkit) cross-compiles for Phoenix.
+  **★★ MAJOR UPDATE — the EXECUTABLE BOUNDARY IS CROSSED + the first X11 app is ported (coord fce360c):**
+  the full lib stack is now **45 archives** (added libXaw/Athena-widgets + libXrandr); I completed the
+  libphoenix libc gaps (full wide-char set + C-locale multibyte set mblen/mbtowc/wctomb/mbstowcs/wcstombs;
+  libphoenix `0cb9f72`+`e29c840`), rebuilt libphoenix so they're on-device, and **the first X11
+  executables now LINK as static aarch64-phoenix ELFs: `xprobe` (a minimal Xlib client) and — the
+  headline — `twm` 1.0.12, a complete X11 window manager** (3.1 MB ELF, full toolkit closure; binaries in
+  `artifacts/x11/`). Two gotchas solved + scripted: the cross-toolchain bundles its OWN stale
+  libphoenix/libc/libm (must sync after a libphoenix change), and app configure needs
+  `PKG_CONFIG="pkg-config --static"`. So the **entire X11 client + toolkit + a real application build
+  for Phoenix** — the ONLY remaining gate is the kdrive Xfbdev **server** (deep/multi-session; modern
+  xorg-server dropped fbdev). Nothing X *runs* until the server exists, but everything up to it is DONE
+  + de-risked (host-side, isolated, flagship frozen throughout). Build apps: `build-x11-phoenix.sh
+  --with-apps`.
 - **Vulkan+vkQuake (you named it): furthest-ever progress, 5 blockers cleared.** vkCreateInstance +
   enumerate(count=1) work on HW; cleared a name-print abort + the threaded-submit hang (is_shim fix).
   vkCreateDevice now reaches the noop-job and NULL-derefs the binner CL (winsys/V3DV BO-interop, the 6th
@@ -485,3 +493,28 @@ host-meson libv3dv rebuild loop; heavy but the furthest-along named target); (b)
 (a 2nd demo app / a psh-runnable tool); (c) consider winding the loop down with a final state summary
 if no high-value bounded item remains. Lean (a) as the named ambitious goal if iterations remain.
 Avoid: X11 lib port (weeks), BT/umass/I2C/SD/WiFi (hardware).
+
+### 2026-06-18 — ★★ X11 EXECUTABLE BOUNDARY CROSSED — first X11 app (twm) builds for Phoenix — coord 0cb9f72→fce360c
+Continued the X11 port to a real milestone. (1) **libXaw** (Athena widgets, the last toolkit lib) built
+once I completed libphoenix's wide-char set — added wcsncpy/wcscpy/wcscat/wcschr/wcsrchr/wcsncmp/wmem*
+(libphoenix `0cb9f72`). So the full lib stack = client+render+font+toolkit. (2) Crossed the **executable
+boundary**: rebuilt libphoenix (`--scope core --build-only`) so the committed libc additions land
+on-device, then linked the FIRST X11 executables for aarch64-phoenix: `xprobe` (a minimal Xlib client)
+and — the headline — **`twm` 1.0.12, a complete X11 window manager** (3.1 MB static ELF; binaries in
+`artifacts/x11/`). En route I had to (a) complete the **C-locale multibyte set** (mblen/mbtowc/wctomb/
+mbstowcs/wcstombs — wctomb was a broken stub returning 0; libphoenix `e29c840`), (b) discover + script
+the fact that **the cross-toolchain bundles its own stale libphoenix/libc/libm** (the auto-linked libc)
+distinct from the build sysroot — `sync_toolchain_libc()` now refreshes it, and (c) build libXrandr +
+use `PKG_CONFIG="pkg-config --static"` so static private deps reach the link line. The full X11
+client+toolkit+a real app now build for Phoenix; the ONLY remaining gate is the kdrive Xfbdev **server**
+(deep/multi-session — nothing X runs without it). All host-side/isolated; flagship untouched. Commits:
+libphoenix `0cb9f72` (wide-char) + `e29c840` (multibyte); coord `a4be46b` (libXaw) + `fce360c` (twm).
+**LESSON banked:** after any libphoenix change, the toolchain-bundled libc must be re-synced or ad-hoc/X
+exe links silently use the stale one (mbtowc/mblen "undefined" despite being in the fresh sysroot lib).
+
+### Tally — 2026-06-18 (this unattended run, cumulative)
+Flagship-shipping: audio subsystem (driver+DMA+Quake backend), /dev/urandom HW-backed, getrandom/
+getentropy, rpi4-sysinfo banner, psh mv. Libc completeness (additive, on-device): getpwnam_r/getpwuid_r/
+sys-poll, hypot, alloca size_t, full wide-char set, full C-locale multibyte set. **X11: 45-archive lib
+stack + xprobe + twm window manager build as aarch64-phoenix ELFs** (server is the remaining gate).
+Vulkan: 5 blockers cleared, 6th (noop-job CL) localized. All netboot/host-validated; flagship 0-fault.
