@@ -25,7 +25,16 @@ This file is my running log + the decisions/parked items for you to review.
 - **First X11 executables for Phoenix LINK + RUN** — the full 45-archive X11 client+toolkit lib stack
   (incl. libXaw/Xt/Xmu/ICE/SM/Xrandr) cross-compiles, and `xprobe` (Xlib client) + **`twm` window
   manager** build as aarch64-phoenix ELFs; `xprobe` RUN-verified on HW (X client stack executes).
-  Only the kdrive X *server* remains (deep). Completed all libphoenix libc gaps (wide-char + multibyte).
+  Completed all libphoenix libc gaps (wide-char + multibyte).
+- **The ENTIRE kdrive X *server* core now COMPILES for aarch64-phoenix** — 28 static archives, 0 errors,
+  including the **kdrive DDX core** (`libkdrive.a`: `KdInitOutput`/`KdScreenInit`/`KdAddScreen`) and
+  `miext/shadow` (the shadow-FB the future fbdev backend blits from). The X *server* was the last and
+  deepest X11 gate; its whole core (dix/os/render/mi/fb/Xext/Xi/xkb/...) now builds. Cleared the os-layer
+  gap list with two clean upstreamable fixes (libphoenix `setlinebuf` inline; a public-domain SHA1
+  `libmd.a`) + `--disable-xephyr`. **Honest ceiling: it compiles + archives, it does NOT run yet** — no
+  server *binary* exists because xorg-server 1.20 ships no fbdev DDX, so a small fbdev backend
+  (`main()` + screen hooks → `/dev/fb0`) is the one remaining new-code step, and it's unvalidated on HW
+  (Pi is off). But everything that backend links against now builds. Detail: `tools/x11-port/PROGRESS.md`.
 - **Flagship intact + re-verified** — Quake netboot runs ~40 fps, audio up, psh, 0 faults. (A transient
   thermal slowdown from GPU-heavy Vulkan swap cycles was diagnosed + fully recovered after a cold rest.)
 - The 2026-06-17 summary below remains valid for the day-1 deliverables (audio, /dev/urandom, sysinfo, mv).
