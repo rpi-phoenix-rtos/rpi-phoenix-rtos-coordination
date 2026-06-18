@@ -565,6 +565,10 @@ render-timeouts + HDMI EDID-read errors are the signature, and the test-cycle's 
 cool it). **Action taken:** Pi powered OFF to cold-rest; the next loop iteration will cold-boot and
 verify the flagship recovers to ~40 fps. If it does NOT recover after a long cold rest, escalate (but the
 code is provably intact). Lesson: space out GPU-heavy boot cycles / let the Pi cool between them.
+**✅ RESOLVED (2026-06-18): the flagship RECOVERED after the ~30 min cold rest** — cold-boot measured
+31-47 fps, **0 V3D timeouts** (was 28), 0 faults. Confirmed thermal/HW-state, NOT a code regression. The
+Friday Quake showcase is healthy. Takeaway for the rest of this run: insert a cool-down gap between
+GPU-heavy boot cycles (esp. flagship-swap Vulkan tests) so the V3D doesn't heat-soak into render-timeouts.
 
 ### Tally — 2026-06-18 (this unattended run, cumulative)
 Flagship-shipping: audio subsystem (driver+DMA+Quake backend), /dev/urandom HW-backed, getrandom/
