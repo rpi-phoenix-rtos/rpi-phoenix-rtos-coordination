@@ -31,6 +31,11 @@ This file is my running log + the decisions/parked items for you to review.
   event loop). Links clean as a static aarch64-phoenix ELF (proving the drawing-path symbols resolve),
   degrades gracefully with no server (so it runs on HW today), and draws a real scene once the fbdev
   DDX lands — the canonical "first visual X app". Staged to `/bin/xphxdemo`.
+- **`xeyes` — a real, iconic upstream X11 app — builds for Phoenix + stages to NFS** (`/bin/xeyes`).
+  xeyes-1.1.2 (chosen to predate the XInput2/libXi dep) cross-compiles to a static aarch64-phoenix
+  ELF against the already-built libXt/Xmu/Xext/Xrender. Proves a genuine recognizable X client — not
+  just a hand-written demo — builds for Phoenix. Runs once the fbdev DDX lands. `--with-apps` now
+  builds twm + xeyes + xphxdemo.
 - **The ENTIRE kdrive X *server* core now COMPILES for aarch64-phoenix** — 28 static archives, 0 errors,
   including the **kdrive DDX core** (`libkdrive.a`: `KdInitOutput`/`KdScreenInit`/`KdAddScreen`) and
   `miext/shadow` (the shadow-FB the future fbdev backend blits from). The X *server* was the last and

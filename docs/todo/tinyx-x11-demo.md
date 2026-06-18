@@ -48,6 +48,34 @@ This is a **stretch / "wow" milestone** — see
 > headline of that study: **software X is the realistic milestone and the
 > practical ceiling; accelerated X is a research stretch gated on an EGL
 > port and on solving single-client GPU arbitration.**
+>
+> ## ✅✅ STATUS UPDATE — 2026-06-18: the X11 library stack + server core are BUILT
+>
+> The "remaining cost is porting the X11 library stack + a kdrive fbdev/input
+> backend" from the 2026-06-16 note above is now **largely paid** (host-side; the
+> only un-done piece is the fbdev DDX, which is runtime-only-verifiable and so
+> deferred until the Pi is on). Concretely, all in `tools/x11-port/` (isolated
+> `/tmp/x11-phoenix`, flagship untouched; recipe in `tools/x11-port/PROGRESS.md`):
+> - **The entire X11 client+render+font+TOOLKIT library stack cross-compiles** for
+>   aarch64-phoenix — ~45 archives incl. libX11/libxcb(+exts)/libXext/libXrender/
+>   pixman/freetype/libXfont2 + libICE/SM/Xt/Xmu/Xaw/Xrandr. All libphoenix libc
+>   gaps it needed are committed (getpw*_r, sys/poll, hypot, full wide-char +
+>   C-locale multibyte set, `setlinebuf`).
+> - **The kdrive xorg-server 1.20.14 SERVER CORE compiles** — 28 static archives,
+>   0 errors, incl. `libkdrive.a` (the DDX core: `KdInitOutput`/`KdScreenInit`) and
+>   `libshadow.a` (the shadow-FB the fbdev backend will blit to `/dev/fb0`). Gaps
+>   cleared with clean fixes: libphoenix `setlinebuf`, a public-domain `libmd.a`
+>   SHA1 (`--with-sha1=libmd`), `--disable-xephyr` (Xephyr is a nested server,
+>   unrunnable on Phoenix). The **only remaining new-code step is the fbdev DDX**
+>   (`main()` + `KdCardFuncs`/`KdScreenFuncs` → shadow → `write()`/`/dev/fb0`).
+> - **Three X *clients* link as static aarch64-phoenix ELFs** (staged to the NFS
+>   `/bin`): `twm` (window manager), `xphxdemo` (a native Xlib *drawing* client),
+>   and **`xeyes` 1.1.2** (a real upstream X app). `xprobe` is RUN-verified on HW
+>   (Xlib executes; XOpenDisplay returns NULL gracefully with no server yet).
+>
+> Net: the software-TinyX path this doc scoped is **de-risked down to one remaining
+> code artifact (the fbdev DDX) + its HW bring-up**. Everything that DDX links
+> against is built and the client apps are ready to run against it.
 
 It depends on essentially
 every other Pi 4 subsystem reaching a working state: framebuffer
