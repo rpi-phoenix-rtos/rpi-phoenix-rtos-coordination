@@ -198,6 +198,12 @@ PASS (instance+phys+device+clear-image submit) -- Tier 3
 Every call `VK_SUCCESS`, **no faults, no V3D BIN/RENDER timeouts**. So the V3D executed a real
 Vulkan-issued render command (a clear) end-to-end. Flagship restored (rpi4-quake) after.
 
+**PIXEL-VERIFIED (2026-06-18, label v3dv-t3-readback):** added a readback — the image memory (type 0) is
+HOST_VISIBLE and the winsys BO is uncached, so `vkMapMemory` + reading pixel 0 returns the GPU's actual
+write. Result: **`clear readback px0 = 00 80 ff ff`** = exactly the clear color {R=0, G=0.5→0x80, B=1→0xff,
+A=1→0xff} in R8G8B8A8 order. So the V3D didn't just *run* the clear without fault — it wrote the *correct*
+pixels. Rigorous, pixel-verified Vulkan GPU rendering on the Pi 4.
+
 **Next (Tier 4): a render pass + geometry/shaders** — a `loadOp=CLEAR` render pass to a framebuffer
 (scanout-backed for HDMI), then a triangle (vertex/fragment shaders compiled by v3dv's NIR→QPU path),
 then read back / display. That is the remaining road to vkQuake. (The dispatch-gate cosmetic bug — normal

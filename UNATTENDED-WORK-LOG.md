@@ -15,7 +15,7 @@ This file is my running log + the decisions/parked items for you to review.
 - **Vulkan runs a real RENDER COMMAND on the Pi 4 V3D (Tier 3 done)** — the furthest the V3DV→vkQuake
   port has ever reached: full `vkCreateInstance`→`vkCreateDevice`→cmd pool/buffer→**`vkCmdClearColorImage`**
   (create image + bind memory + record the clear) →`vkQueueSubmit`→`vkQueueWaitIdle`, **all PASS, 0 faults,
-  0 V3D timeouts**. So the V3D executes an actual Vulkan-issued render command (a clear) end-to-end. Got
+  0 V3D timeouts**, and a CPU readback of the cleared image returned **px0=00 80 ff ff = the exact clear color** (pixel-verified, not just no-fault). So the V3D executes an actual Vulkan-issued render command and writes the correct pixels. Got
   here by: root-causing + fixing the device-create blocker (V3DV never linked a real BO allocator), proving
   the GPU submit path (Tier 2), then the clear (Tier 3). Next: render pass + geometry/shaders → vkQuake.
 - **The whole crypto/network port class RUNS on HW** — `openssl` (version/dgst/rand), `curl 7.64.1`
