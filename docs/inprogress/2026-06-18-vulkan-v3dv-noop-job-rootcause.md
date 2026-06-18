@@ -205,3 +205,14 @@ boot):** a temporary print in `vk_device_dispatch_table_from_entrypoints` (or `v
 enabled`) for these indices — is the source entry NULL, or does `is_enabled` return false during the
 merge? — then fix. NOT on the GPU critical path (the direct-call decouple already proves submit works);
 matters for real apps (vkQuake) that use the normal proc-addr path.
+
+**Static analysis exhausted (2026-06-18) — read the merge + lookup source directly:**
+`vk_device_dispatch_table_from_entrypoints` (generated, vk_dispatch_table.c): non-MSVC path copies any
+`entry[i] != NULL` (overwrite=true) / fills NULL slots (overwrite=false) — it does NOT skip stubs (only
+the `_MSC_VER` path checks `vk_function_is_stub`). `vk_device_dispatch_table_get_if_supported` returns the
+slot WITHOUT rejecting stubs — so a stub-filled slot would resolve NON-NULL. Since the 3 resolve NULL, the
+slot is either genuinely empty (vk_common fill didn't happen) OR `vk_device_entrypoint_is_enabled` returns
+false for them. Both are surprising for core-1.0 entrypoints and CANNOT be distinguished statically (every
+static path says "should resolve"). **CONCLUSION: needs the one-boot runtime trace** (print entry_index +
+is_enabled + the raw slot from inside `get_if_supported` for these names) to disambiguate — deferred as a
+cosmetic, off-critical-path item. The GPU submit path is already proven (Tier 2 direct-call PASS).
