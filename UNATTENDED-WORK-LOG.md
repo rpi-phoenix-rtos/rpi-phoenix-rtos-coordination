@@ -9,6 +9,23 @@ This file is my running log + the decisions/parked items for you to review.
 
 ---
 
+# ★ READ THIS FIRST — delivery summary
+
+## ⭐ 2026-06-18 (day 2) — biggest new wins (details in the dated log below)
+- **Vulkan `vkCreateDevice` WORKS on real Pi 4 HW** — the furthest the V3DV→vkQuake port has ever
+  reached: full `vkCreateInstance`→`vkEnumeratePhysicalDevices`→`vkCreateDevice` → `PASS`, 0 faults.
+  Root-caused + fixed the long-standing device-create blocker (the V3DV build never linked a real BO
+  allocator). Tier-2 (queue submit) attempted, narrowed to one more device-proc gating NULL.
+- **The whole crypto/network port class RUNS on HW** — `openssl` (version/dgst/rand), `curl 7.64.1`
+  +mbedTLS (HTTPS/SSL), `Dropbear` SSH client — all unblocked by wiring `/dev/urandom` to the HW RNG.
+- **First X11 executables for Phoenix LINK + RUN** — the full 45-archive X11 client+toolkit lib stack
+  (incl. libXaw/Xt/Xmu/ICE/SM/Xrandr) cross-compiles, and `xprobe` (Xlib client) + **`twm` window
+  manager** build as aarch64-phoenix ELFs; `xprobe` RUN-verified on HW (X client stack executes).
+  Only the kdrive X *server* remains (deep). Completed all libphoenix libc gaps (wide-char + multibyte).
+- **Flagship intact + re-verified** — Quake netboot runs ~40 fps, audio up, psh, 0 faults. (A transient
+  thermal slowdown from GPU-heavy Vulkan swap cycles was diagnosed + fully recovered after a cold rest.)
+- The 2026-06-17 summary below remains valid for the day-1 deliverables (audio, /dev/urandom, sysinfo, mv).
+
 # ★ READ THIS FIRST — delivery summary (2026-06-17)
 
 ## 1. What works now (in the flagship netboot image, boot-verified clean, 0 faults)
