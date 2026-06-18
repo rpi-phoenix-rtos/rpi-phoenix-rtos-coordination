@@ -210,6 +210,32 @@ then read back / display. That is the remaining road to vkQuake. (The dispatch-g
 `vkGetDeviceProcAddr` returns NULL for the 3 framework entrypoints — is still open but off the GPU
 critical path; the direct-impl decouple keeps the harness progressing.)
 
+## Tier 4a recipe — a VISIBLE-on-HDMI Vulkan clear (scouted 2026-06-18; the pieces are identified)
+
+The simplest visible-on-HDMI Vulkan result is the Tier-3 clear, but with the image's memory backed by the
+HDMI scanout framebuffer so the GPU's clear lands on screen. All the pieces exist:
+- **fb0 PA:** open `/dev/fb0`, `ioctl(fd, RPI4FB_GETMODE, &mode)` → `rpi4fb_mode_t { width,height,bpp,
+  pitch, smemlen, framebuffer }` (header `video/rpi4-fb/rpi4-fb.h`; `RPI4FB_GETMODE=_IOR('g',1,...)`).
+- **hand it to the winsys:** `extern void v3d_phoenix_set_scanout(uint32_t pa, uint32_t bytes);`
+  call `v3d_phoenix_set_scanout(mode.framebuffer, mode.smemlen)` before any image allocation (the proven
+  reference is `tools/quakespasm-port/platform/pl_phoenix_vid.c`).
+- **scanout-back the image BO:** the winsys `ioc_create_bo` backs a BO with the scanout pages when
+  `create.flags & 0x2` (V3D_CREATE_BO_SCANOUT) AND `W.scanout_pa` is set AND `!scanout_claimed`
+  (`v3d_phoenix_winsys.c:268`). So the image's `vkAllocateMemory` BO must set flag 0x2.
+- **fullscreen, stride-matched image:** create a `mode.width × mode.height` `R8G8B8A8_UNORM` **LINEAR**
+  image so the V3D linear stride (`width*4`) equals the fb `pitch` — then `vkCmdClearColorImage` fills the
+  whole screen. A 64×64 image (Tier 3) would paint only a corner / be garbled by the stride mismatch.
+- **verify:** HDMI auto-snapshot (`artifacts/hdmi/*.png`) shows the clear color (expect an R/B swap vs the
+  fb's RGB order — cosmetic; pre-swap the clear color or accept it for the demo).
+
+**The one non-trivial piece (do it cleanly):** how does the SCANOUT flag reach the image's BO? Setting it
+on *all* `vkAllocateMemory` is a hack (would scanout-back every allocation — wrong for a real app). The
+clean route is v3dv's WSI/present path or a dedicated-allocation + a `#if __phoenix__` that keys off a
+specific image usage/sentinel so ONLY the present image is scanout-backed. That plumbing (not a global
+flag) is the real Tier-4a work — a focused session, GPU-boot-paced. Everything else above is a known
+quantity. (Tier 4b = a triangle: graphics pipeline + vertex buffer + SPIR-V vertex/fragment shaders
+through v3dv's NIR→QPU compiler + a render pass — the larger lift toward vkQuake.)
+
 ### Dispatch-gate — deeper no-heat analysis (2026-06-18), narrowed to the entrypoint-table merge
 
 `v3dv_CreateDevice` (v3dv_device.c:2021) builds the device dispatch from `v3dv_device_entrypoints`
