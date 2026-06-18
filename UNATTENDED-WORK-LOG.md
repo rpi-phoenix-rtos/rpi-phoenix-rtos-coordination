@@ -9,6 +9,39 @@ This file is my running log + the decisions/parked items for you to review.
 
 ---
 
+# ✅ FRIDAY BOOT-UP TEST CHECKLIST (do these in order when you're back)
+
+Everything below was built/staged with the Pi **off** (cooling). Here's the
+efficient path to validate it. Items marked **[needs you]** are the only ones I
+couldn't self-verify.
+
+1. **FIRST — cold-boot the flagship, confirm thermal recovery.** `rpi4-quake`
+   netboot (`test-cycle-netboot.sh`). Expect Quake ~40 fps @1080p, psh, 0 faults.
+   (The Pi was throttling from back-to-back GPU boots; a cold rest fixes it — code
+   is intact. If fps is still low, let it cool longer and re-boot.)
+2. **[needs you] Audio sign-off** — plug headphones into the 3.5 mm jack; confirm
+   Quake audio is audible ("Audio: 16 bit, stereo, 44100 Hz" prints; everything up
+   to "is sound coming out" is self-verified).
+3. **Run the new RUNNABLE tools from psh** (on the NFS root, no server needed):
+   - `pidiag` — Pi 4 device-stack self-test: reads /dev/{thermal,throttled,hwrng,
+     urandom,gpio} + integer/memcpy micro-benchmarks. One-command "all alive?".
+   - `2048` — the playable terminal game (WASD/arrows, q to quit; PRNG from hwrng).
+   - (Earlier, already HW-validated: `lua`, `busybox` ash, `curl`, `openssl`,
+     `dropbear` client, `micropython`.)
+4. **X11 (build-only so far — needs the fbdev DDX, which is the remaining code
+   step, NOT yet written).** Staged ELFs: `twm`, `xphxdemo` (Xlib drawing demo),
+   `xeyes`, `xprobe` (xprobe is RUN-verified: Xlib executes, XOpenDisplay→NULL
+   gracefully). They draw once a kdrive fbdev DDX server lands on /dev/fb0 — that's
+   the next attended X step (the whole lib stack + server core they link against is
+   built; see `tools/x11-port/PROGRESS.md`).
+5. **Review the headline code/doc deliverables** in the summary below (X server
+   core compile, Vulkan Tier-4a, crypto/network class, the doc reconciliations).
+
+Parked decisions / things awaiting your call are in the "Parked / attended
+items" + "Decisions parked for you" sections below.
+
+---
+
 # ★ READ THIS FIRST — delivery summary
 
 ## ⭐ 2026-06-18 (day 2) — biggest new wins (details in the dated log below)
