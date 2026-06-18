@@ -546,6 +546,26 @@ swapped back, rebuilt, verified in loader.disk). The user explicitly OK'd the fl
 reversible + paid off. **Next (Tier 2):** a queue submit (cmd-buffer + clear) → expect ioc_submit_cl +
 fence-signalling blockers. Doc: docs/inprogress/2026-06-18-vulkan-v3dv-noop-job-rootcause.md.
 
+### 2026-06-18 — Vulkan Tier-2 (queue submit) attempted + ⚠ flagship perf anomaly (thermal, cold-resting)
+Pushed Vulkan past device-create toward Tier 2 (a queue submit). Extended the harness with a minimal
+empty-cmd-buffer submit; 2 HW cycles narrowed it: (1) device procs via vkGetInstanceProcAddr → pc=0
+instruction-abort (loader-less ICD returns trampolines that deref a NULL device-dispatch slot) → fixed
+with vkGetDeviceProcAddr; (2) now "Tier-2 submit procs missing" = one of 7 device procs resolves NULL
+(a dispatch/enablement-gating NULL — all 7 are in v3dv's entrypoint table). Committed (staged; harness
+swapped OUT, Quake is the flagship). Next: per-proc logging + trace vk_device_get_proc_addr gating.
+
+⚠ **FLAGSHIP PERF ANOMALY (under watch, NOT a code regression):** after the Tier-2 swap cycles, the
+restored Quake flagship booted at **0.4-2.9 fps** (V3D BIN/RENDER timeouts, finish≈1.7-2.5 s/frame) vs
+the 27-44 fps it ran at earlier THIS session. **The Quake render path is byte-identical to the validated
+fast flagship** — libv3d/libGL/libquakespasm (/tmp/*.a) are unchanged (pre-session timestamps), the
+launch config is correct (quake launches; v3d-scout/mesa stay commented), and I only touched V3DV-only
+code (v3dv_bo.c) + the swapped-out harness. So this is a **hardware/firmware state issue**, most likely
+**thermal** (the Pi is heat-soaked from many back-to-back GPU boots this long session; hard V3D
+render-timeouts + HDMI EDID-read errors are the signature, and the test-cycle's 3 s power-blip doesn't
+cool it). **Action taken:** Pi powered OFF to cold-rest; the next loop iteration will cold-boot and
+verify the flagship recovers to ~40 fps. If it does NOT recover after a long cold rest, escalate (but the
+code is provably intact). Lesson: space out GPU-heavy boot cycles / let the Pi cool between them.
+
 ### Tally — 2026-06-18 (this unattended run, cumulative)
 Flagship-shipping: audio subsystem (driver+DMA+Quake backend), /dev/urandom HW-backed, getrandom/
 getentropy, rpi4-sysinfo banner, psh mv. Libc completeness (additive, on-device): getpwnam_r/getpwuid_r/
