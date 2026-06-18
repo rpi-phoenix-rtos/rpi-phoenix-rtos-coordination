@@ -273,6 +273,25 @@ snapshot if visual) → commit in the touched repo → tick here. Boot budget is
 - **Gamma/darkness:** deprioritized as cosmetic (render matches host per the visual-regression
   harness; it's Quake's default-gamma dimness, a player preference). Did not spend boot cycles
   on it; can add a palette/GPU gamma pass on request.
+- **X11 desktop — the completion path + why I stopped where I did.** Host-side I took X11 from
+  "no libraries" to: the full client+toolkit lib stack builds, the kdrive xorg-server CORE builds
+  (28 archives incl. libkdrive.a + libshadow.a), and 4 clients link (twm/xphxdemo/xeyes/xprobe;
+  xprobe RUN-verified). I deliberately **did not** write the last pieces because they are
+  runtime-only-verifiable and the Pi is off (and one is a real porting chain). The remaining work,
+  all best done **attended** (so the whole desktop validates together when the Pi is on):
+  1. **fbdev DDX backend** (the one new-code step) — a `main()` + `KdCardFuncs`/`KdScreenFuncs` on
+     `hw/kdrive/src` that allocates a `miext/shadow` shadow-FB and `write()`s it to `/dev/fb0`
+     (no `mmap(fd,0)` needed). Everything it links against is already built. Est. small-to-medium.
+  2. **kdrive input** from `/dev/kbd0`+`/dev/mouse0` (the `tools/quakespasm-port/platform/
+     pl_phoenix_in.c` HID→event logic is the reference) + xkb keymap data.
+  3. **A terminal (`xterm`) for a *usable* desktop** — twm+xeyes alone can't type commands. xterm
+     needs the **libXft/fontconfig** font chain (fontconfig→expat; libXft→freetype[built]+Xrender
+     [built]) + termcap/ncurses. I judged this chain **not worth building unattended**: its payoff
+     is link-only until the DDX runs, and it's a multi-port chain with gap risk — better built
+     alongside the DDX bring-up so it's validated end-to-end. (twm/xeyes/xphxdemo give a first
+     visual desktop without it.)
+  Recipe + exact flags: `tools/x11-port/PROGRESS.md`. This is the single biggest "almost there"
+  item: the hard library/server-core porting is done; what's left is one backend + a bring-up.
 
 ### Vulkan V3DV Tier 0 (subagent)
 
