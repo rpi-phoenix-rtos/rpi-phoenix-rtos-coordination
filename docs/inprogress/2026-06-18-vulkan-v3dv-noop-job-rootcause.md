@@ -235,6 +235,27 @@ command paints the real Pi 4 display. Flagship (rpi4-quake) restored after.
 **Next (Tier 4b): a triangle** — graphics pipeline + vertex buffer + SPIR-V vertex/fragment shaders
 through v3dv's NIR→QPU compiler + a render pass to the scanout image — the larger lift toward vkQuake.
 
+### Tier 4b attempt — exercise the SHADER compiler via vkCmdBlitImage (2026-06-18, partial)
+
+A user-shader triangle is **blocked on host SPIR-V tooling** (no `glslc`/`glslangValidator` on the host, no
+internet to fetch; hand-authoring SPIR-V is impractical). Also found: `vkCmdClearColorImage` uses v3dv's
+**shaderless `clear_image_tlb` fast-path** (`v3dv_meta_clear.c:187`), so Tiers 3/4a did NOT exercise the
+NIR→QPU compiler. To prove the compiler without user SPIR-V, used **`vkCmdBlitImage`** — v3dv's `blit_shader`
+(`v3dv_meta_copy.c:516`) builds its fragment/vertex shaders with `nir_builder` + compiles them via
+`v3d_compile` at record time. Harness: clear a 256×256 source GREEN (TLB) → `vk_common_CmdBlitImage` it
+(scaled NEAREST) over the magenta scanout.
+HW (label v3dv-t4b-blit): the blit **recorded and submitted with NO fault and NO V3D timeout**
+(`recorded clear-src(green) + blit-to-scanout`, `vkQueueSubmit -> 0`, `vkQueueWaitIdle -> 0`) — encouraging:
+the meta-blit shader's NIR build + `v3d_compile` + the GPU job all ran clean. **BUT the live scanout fb
+stayed magenta** (`ff 00 80 ff`, the Tier-4a clear) — the blit's green output did NOT land on the LINEAR
+scanout image. So the result is **inconclusive on whether the shader executed**: either the meta-blit
+fell back / no-op'd, or it rendered but its tiled render-target store didn't reach the LINEAR scanout BO
+(the clear used a TLB clear straight to the BO; a render-pass store to a LINEAR image may take a different
+path). **Next debug:** add a print in `blit_shader` to confirm it handled the blit (vs returned false), and
+either blit to an OPTIMAL-tiled dest + `vkCmdCopyImageToBuffer` readback, or verify the RCL store address
+for a linear dest. The shader-compiler-on-HW question (the vkQuake gate) is thus **probed but not yet
+proven** — no crash on a shader-using op is a positive signal, but green-not-landing leaves it open.
+
 ## Tier 4a recipe — (the scouting that led to the above; kept for reference)
 
 The simplest visible-on-HDMI Vulkan result is the Tier-3 clear, but with the image's memory backed by the

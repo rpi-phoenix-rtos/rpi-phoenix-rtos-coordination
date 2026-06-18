@@ -640,6 +640,14 @@ HDMI snapshot (artifacts/hdmi/20260618-094432-v3dv-t4a-visible-tick.png) shows t
 magenta (fbcon klog overdrew only the lower rows). 0 faults, 0 V3D timeouts. So a Vulkan render command
 paints the real Pi4 display. Flagship restored after. Next Tier 4b = triangle (pipeline + SPIR-V shaders).
 
+### 2026-06-18 — Vulkan Tier 4b probe: shader-compiler via vkCmdBlitImage (partial)
+A user-shader triangle is blocked on host SPIR-V tooling (no glslc/glslangValidator, no internet). Found
+vkCmdClearColorImage uses the shaderless TLB clear, so Tiers 3/4a didn't exercise the NIR->QPU compiler.
+Tried vkCmdBlitImage (v3dv's meta-blit builds+compiles shaders via nir_builder/v3d_compile): HW result =
+the blit RECORDED + SUBMITTED with no fault/timeout (encouraging — the shader path didn't crash), but the
+scanout fb stayed magenta (the green blit didn't land on the LINEAR scanout) -> inconclusive. Shader-
+compiler-on-HW is probed but not proven; next debug noted in the rootcause doc. Flagship restored.
+
 ### Tally — 2026-06-18 (this unattended run, cumulative)
 Flagship-shipping: audio subsystem (driver+DMA+Quake backend), /dev/urandom HW-backed, getrandom/
 getentropy, rpi4-sysinfo banner, psh mv. Libc completeness (additive, on-device): getpwnam_r/getpwuid_r/
