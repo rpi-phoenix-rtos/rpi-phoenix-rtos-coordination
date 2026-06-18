@@ -72,6 +72,58 @@ gotchas were resolved:**
   archived in `artifacts/x11/`. They cannot RUN until the X **server** exists, but the entire
   client+toolkit+app+libc link closure is now proven. Build with `build-x11-phoenix.sh --with-apps`.
 
+## ★★ SERVER CORE — ENTIRE xorg-server core + kdrive DDX core COMPILE for aarch64-phoenix, 0 errors (2026-06-18)
+
+**The full server-side core now cross-compiles cleanly to static aarch64-phoenix archives.**
+Host-side, no Pi boots. After the "371 objects" milestone below, the remaining finite os-layer gap
+list was cleared and `make` now produces **28 `.a` archives with zero compile/link errors** — the
+complete X server core plus the **kdrive DDX core** (`libkdrive.a`, exports `KdInitOutput`/
+`KdScreenInit`/`KdAddScreen`):
+
+```
+dix(+libmain) os render mi fb(+wfb) Xext(+hashtable+Xvidmode) Xi(+Xistubs) xkb(+xkbstubs)
+xfixes composite damageext dbe exa present randr record config
+miext/{damage,rootless,shadow,sync}  hw/kdrive/src(libkdrive.a)
+```
+
+`miext/shadow` (`libshadow.a`) is built — that is exactly the shadow-framebuffer layer the future
+fbdev DDX blits from. **The only thing NOT produced is a server *binary*** — correct and expected:
+xorg-server 1.20 ships no Xfbdev DDX, so the `main()`/`KdCardFuncs`/`KdScreenFuncs` backend that
+`write()`s a shadow FB to `/dev/fb0` is the sole remaining **new-code** step. Everything it links
+against now compiles.
+
+**How the gap list (below) was cleared — two clean, upstreamable fixes + one configure decision:**
+- `setlinebuf` → added as a **static inline** in libphoenix `<stdio.h>` (commit libphoenix `91cdbfd`).
+  NOTE: a `-Dsetlinebuf(f)=...` *CFLAGS macro* does NOT work — the parens/commas break the libtool
+  shell command line (`syntax error near unexpected token '('`), silently failing every compile.
+  Function-like-macro gaps must be real header declarations, not `-D` hacks.
+- `openssl/sha.h` → built **`libmd.a`** (public-domain Steve-Reid SHA1 with the BSD libmd API:
+  `SHA1_CTX`/`SHA1Init`/`SHA1Update`/`SHA1Final`; `tools/x11-port/libmd-phoenix/`, verified against the
+  `SHA1("abc")` test vector) and configured `--with-sha1=libmd` (configure: `SHA1 implementation...
+  libmd`). No fake stub.
+- `O_NOFOLLOW`/`SI_USER` → `-DO_NOFOLLOW=0 -DSI_USER=0` (both are guard values, not behaviour).
+- `sys/ipc.h` (Xephyr `hostx.c` SysV-SHM) → **`--disable-xephyr`**. Xephyr is a *nested* server (needs
+  a host X to connect to) and can never run standalone on Phoenix; the fbdev DDX is the real target,
+  so dropping Xephyr is correct, not a workaround. This also removed the `htons`/xdmcp gaps (already
+  `--disable-xdmcp`). `ifa_broadaddr` did not recur (the access.c path it sat in compiles as-is).
+
+**Exact working configure** (host-side; `PKG_CONFIG="pkg-config --static"`,
+`PKG_CONFIG_PATH=$PREFIX/{lib,share}/pkgconfig`):
+`--enable-kdrive --disable-xephyr --with-sha1=libmd --disable-{xorg,xwayland,xnest,xvfb,dmx,glamor,
+dri,dri2,dri3,glx,int10-module,vgahw,vbe,xdmcp,xinerama,systemd-logind,secure-rpc,config-udev,
+config-hal,unit-tests} --without-{dtrace,systemd-daemon}`,
+`CFLAGS=--sysroot=$SYSROOT -I$PREFIX/include -DMAXHOSTNAMELEN=256 -DXOS_USE_MTSAFE_PWDAPI
+-D_POSIX_THREAD_SAFE_FUNCTIONS=200809L -DO_NOFOLLOW=0 -DSI_USER=0`,
+`LDFLAGS=--sysroot=$SYSROOT -L$PREFIX/lib -L$SYSROOT/lib`.
+
+**Honest ceiling:** this is *compiles + archives*, NOT *runs*. No server binary exists yet (needs the
+fbdev DDX = new code) and it is unvalidated on HW (the Pi is off). The next step is purely additive
+new code: a minimal kdrive fbdev DDX on `hw/kdrive/src` (a `main()` + `KdCardFuncs`/`KdScreenFuncs`
+using `miext/shadow` + `write()` to `/dev/fb0`) + a kdrive input driver (`/dev/kbd0`+`/dev/mouse0`,
+`tools/quakespasm-port/platform/pl_phoenix_in.c` is the HID→event reference) + xkb data.
+
+---
+
 ## ★ SERVER — kdrive xorg-server CONFIGURES + COMPILES 371 objects for aarch64-phoenix (2026-06-18)
 
 Real progress on the server (the last X11 gate), host-side (no Pi boots). Chose **xorg-server 1.20.14**
