@@ -90,7 +90,16 @@ This file is my running log + the decisions/parked items for you to review.
 - **Bluetooth (BCM43455 HCI)** — needs the kernel mailbox for BT_REG_ON (GPIO) + a `.hcd` blob + a BLE
   device in range to scan.
 - **WiFi #91** — firmware-exec gate; worst-case needs JTAG (FT2232 ~$20).
-- **Vulkan vkCreateDevice** — continue the winsys BO/CL probe (deep); then Tier 2 → vkQuake (big).
+- **Vulkan (V3DV) — Tier 1 + Tier 2 DONE on HW** (instance→device→**queue submit** all PASS, 0 faults).
+  Remaining toward vkQuake (all deep, GPU-boot-paced, unattended-doable but multi-session): **Tier 3** =
+  real render cmds (a clear) in the cmd buffer → readback; then geometry + shaders; then the vkQuake port
+  itself (large). Plus a **cosmetic dispatch-gate bug** (vkGetDeviceProcAddr returns NULL for 3 vk_common
+  framework entrypoints — GPU path unaffected, proven via direct calls; needs a one-boot runtime trace to
+  fix for the normal-API path). Full status: docs/inprogress/2026-06-18-vulkan-v3dv-noop-job-rootcause.md.
+- **X11 — full lib stack + `xprobe`/`twm` exes build + run on HW; only the SERVER remains** — the kdrive
+  Xfbdev server is a deep multi-session frontier (modern xorg-server dropped the fbdev kdrive backend; must
+  restore/write one + xkb + a /dev/kbd0+/dev/mouse0 input driver). Host-side, no flagship risk. Until then
+  twm/xprobe link+run but can't display. Status: tools/x11-port/PROGRESS.md.
 - **GENET cacheable-RX (Policy B / task #11)** — silent-corruption risk, needs a multi-boot integrity
   soak + is gigabit-cable-gated; attended.
 - **TD-10 SError unmask / #43 reboot / SMP-beyond-cpu0** — kernel boot-risk, careful attended.
@@ -101,6 +110,13 @@ This file is my running log + the decisions/parked items for you to review.
 - Forced is_shim=true in v3dv on Phoenix (synchronous submit) — committed in external/mesa (libv3dv-only,
   swapped out of the flagship, zero effect on the shipped GL/Quake image).
 - Kept rpi4-sysinfo as a permanent boot banner; kept rpi4-ipcprobe as a re-runnable (disabled) probe.
+- Linked the real Phoenix V3D winsys into the V3DV build (fixed device-create) + a `#if __phoenix__`
+  v3dv_bo.c map (committed external/mesa) — V3DV-only, swapped out of the flagship.
+- For the Tier-2 submit HW test, called the 3 dispatch-gated `vk_common_*` entrypoints **directly** in the
+  harness (their dispatch-resolution is a separate cosmetic bug) — harness-only, swapped out of flagship.
+- Did several GPU-flagship-swap Vulkan HW tests (rpi4-v3dv-tier0 ↔ rpi4-quake), restoring Quake each time.
+  One caused a transient thermal slowdown (recovered on cold rest); since then I pace GPU boots with gaps.
+- De-Quaked the **nfsroot** variant (Quake floods the UART, drowning scripted-psh which that variant is for).
 
 (Full chronological detail + per-item commits follow below.)
 
