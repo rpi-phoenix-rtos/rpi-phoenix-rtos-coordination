@@ -165,15 +165,25 @@ if [ ! -f "$PREFIX/lib/libXpm.a" ]; then
 	  PC=$(find . -name xpm.pc|head -1); [ -n "$PC" ] && cp "$PC" "$PREFIX/lib/pkgconfig/"
 	  [ -f src/.libs/libXpm.a ] && cp src/.libs/libXpm.a "$PREFIX/lib/" && echo "libXpm-3.5.17: OK (lib only)" )
 fi
-# libXaw (Athena widgets) — TODO: needs wide-char/i18n libc (wcsncpy, mbtowc, ... missing in
-# libphoenix). Deferred with the apps. NOT required by twm (twm uses only libXt+libXmu).
+# libXaw (Athena widgets) — builds once libphoenix carries the standard wide-char functions
+# (wcsncpy/wcscpy/wcscat/wcschr/wcsrchr/wcsncmp/wmem* + mbtowc; committed libphoenix 0cb9f72,
+# their HEADERS synced to the sysroot). Its tools also pull deferred libc symbols, so lib-only.
+if [ ! -f "$PREFIX/lib/libXaw7.a" ]; then
+	fetch_extract libXaw-1.0.16 "$XBASE/lib/libXaw-1.0.16.tar.gz"
+	( cd "$SRC/libXaw-1.0.16" && ./configure --host=aarch64-phoenix --prefix="$PREFIX" --disable-shared \
+	    --enable-static xorg_cv_malloc0_returns_null=no ac_cv_lib_m_hypot=yes CC=${TC}gcc AR=${TC}ar RANLIB=${TC}ranlib \
+	    CFLAGS="--sysroot=$SYSROOT -I$PREFIX/include $PWD_DEFS" LDFLAGS="--sysroot=$SYSROOT -L$PREFIX/lib" \
+	    >/tmp/libXaw-conf.log 2>&1
+	  make install >/tmp/libXaw-build.log 2>&1
+	  [ -f "$PREFIX/lib/libXaw7.a" ] && echo "libXaw-1.0.16: OK" || echo "libXaw-1.0.16: FAILED (see /tmp/libXaw-build.log)" )
+fi
 
 # --- THE EXE BOUNDARY ---
 # All X executables (apps like twm/xclock AND the server) LINK against libc, so they need the
 # libphoenix additions IN libc.a/libm.a — currently only the HEADERS are synced to the sysroot; the
-# SYMBOLS (getpwnam_r/getpwuid_r/hypot, + still-missing mbtowc/wcsncpy/...) land on a libphoenix
-# rebuild. So: rebuild libphoenix (with the committed fixes + add mbtowc/wcsncpy) BEFORE linking any
-# X exe. The static LIBRARIES above all build today without it.
+# SYMBOLS (getpwnam_r/getpwuid_r/hypot/mbtowc/wcsncpy/wcscpy/...) land on a libphoenix rebuild. All
+# the libc fixes are now COMMITTED in libphoenix (89d1543/6e2b929/0cb9f72); so the only remaining
+# step before linking any X exe is to rebuild libphoenix. The static LIBRARIES above all build today.
 
 # --- next brick (the big one) ---
 # The kdrive Xfbdev server (xorg-server). Needs the on-device libc to carry the libphoenix

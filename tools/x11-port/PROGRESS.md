@@ -41,8 +41,11 @@ The toolkit-base libraries now cross-compile: **libICE, libSM, libXt, libXmu, li
 - **libXt/libXmu** needed the same MT-safe-pwd + `-DMAXHOSTNAMELEN` defines as libX11; **libXt** also
   needed the libphoenix `alloca.h` fix (`#include <stddef.h>`, committed).
 - **libXpm** lib builds (its sxpm/cxpm tools link the deferred symbols → lib-only install).
-- **libXaw** (Athena widgets) — deferred: needs wide-char/i18n libc (`wcsncpy`, `mbtowc`, … missing in
-  libphoenix). NOT needed by twm (twm uses only libXt+libXmu).
+- **libXaw** (Athena widgets) — ✅ **BUILDS** (`libXaw7.a` + `libXaw6.a`, 2026-06-19). Unblocked by
+  adding the standard wide-char functions to libphoenix (`wchar.c` had only `wcscmp`, 2026-06-18): committed
+  `wcsncpy`, `wcscpy`, `wcscat`, `wcschr`, `wcsrchr`, `wcsncmp`, `wmemcpy`, `wmemmove`, `wmemset`,
+  `wmemcmp`, plus `mbtowc` (libphoenix `0cb9f72`). So the **entire** X11 client/render/font/toolkit
+  library stack now cross-compiles — **44 archives** in `/tmp/x11-phoenix/lib`.
 
 ### THE EXECUTABLE BOUNDARY (key)
 Every X **executable** (apps like twm/xclock AND the server) links libc, so it needs the libphoenix
