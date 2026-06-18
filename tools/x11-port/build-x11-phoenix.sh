@@ -226,8 +226,32 @@ build_twm() {
 	  make install >/tmp/twm-build.log 2>&1
 	  [ -f "$PREFIX/bin/twm" ] && echo "twm-1.0.12: OK (aarch64-phoenix ELF)" || echo "twm: FAILED (see /tmp/twm-build.log)" )
 }
+# --- apps: xeyes (a real, iconic upstream X11 app — 2026-06-18) ---
+# xeyes-1.1.2 chosen deliberately: it predates the XInput2/libXi dependency of 1.2.x, so it needs
+# only libXt/libXmu/libXext(SHAPE)/libXrender — all already built — and links a static
+# aarch64-phoenix ELF. (1.2.x would require building libXi first.) Proves a genuine, recognizable
+# X client builds for Phoenix, not just a hand-written demo. Runs once the fbdev DDX server lands.
+build_xeyes() {
+	sync_toolchain_libc
+	if [ -f "$PREFIX/bin/xeyes" ]; then echo "xeyes: already built"; return 0; fi
+	fetch_extract xeyes-1.1.2 "$XBASE/app/xeyes-1.1.2.tar.gz" || return 1
+	( cd "$SRC/xeyes-1.1.2" && PKG_CONFIG="pkg-config --static" ./configure --host=aarch64-phoenix \
+	    --prefix="$PREFIX" CC=${TC}gcc AR=${TC}ar RANLIB=${TC}ranlib \
+	    CFLAGS="--sysroot=$SYSROOT -I$PREFIX/include $PWD_DEFS" \
+	    LDFLAGS="--sysroot=$SYSROOT -L$PREFIX/lib -L$SYSROOT/lib" >/tmp/xeyes-conf.log 2>&1
+	  make install >/tmp/xeyes-build.log 2>&1
+	  [ -f "$PREFIX/bin/xeyes" ] && echo "xeyes-1.1.2: OK (aarch64-phoenix ELF)" || echo "xeyes: FAILED (see /tmp/xeyes-build.log)" )
+}
+
+# --- apps: the self-contained native Xlib drawing client (no fetch; source in apps/) ---
+build_xphxdemo() { ( cd "$HERE/apps" && ./build.sh ); }
+
 # Build apps only when explicitly requested (needs the libphoenix rebuild done first).
-[ "${1:-}" = "--with-apps" ] && build_twm
+if [ "${1:-}" = "--with-apps" ]; then
+	build_twm
+	build_xeyes
+	build_xphxdemo
+fi
 
 # --- next brick (the big one) ---
 # The kdrive Xfbdev server (xorg-server). Expect heavy OS-integration work (kdrive backend, input via
