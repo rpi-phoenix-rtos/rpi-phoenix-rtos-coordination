@@ -187,3 +187,21 @@ GetDeviceProcAddr gating on the 3 framework entrypoints is a separate, cosmetic-
 cleared color. That exercises v3dv's CL generation for real draws (vs the empty/noop job). Then geometry
 + shaders → the road to vkQuake. (Also worth fixing the dispatch gate so apps using the normal
 `vkGetDeviceProcAddr` path work — but it is not on the GPU critical path.)
+
+### Dispatch-gate — deeper no-heat analysis (2026-06-18), narrowed to the entrypoint-table merge
+
+`v3dv_CreateDevice` (v3dv_device.c:2021) builds the device dispatch from `v3dv_device_entrypoints`
+(overwrite=true) + `wsi_device_entrypoints`, then `vk_device_init` (vk_device.c:177-179) adds
+`vk_common_device_entrypoints` with **overwrite=false** (fill NULL slots only). The generated
+`v3dv_device_entrypoints` assigns `.QueueSubmit = v3dv_QueueSubmit` etc., but v3dv does NOT define those
+(weak → NULL), so the vk_common merge should fill them — and `vk_common_{QueueSubmit,CreateCommandPool,
+AllocateCommandBuffers}` ARE defined (`T` in libv3dv) AND assigned in `vk_common_device_entrypoints`. Yet
+the live slot is NULL. RULED OUT: api_version gate (harness sets 1.1), missing symbols (`T`), missing
+source table entries (present), the GetDeviceProcAddr resolver (works for the other 4). **So the bug is
+in the merge itself** — `vk_device_dispatch_table_from_entrypoints` / its per-entrypoint `is_enabled` gate
+drops exactly the common command-pool + synchronization framework entrypoints during the vk_common fill
+on the Phoenix build (a weak-symbol / codegen-gating interaction). **Definitive next step (one paced
+boot):** a temporary print in `vk_device_dispatch_table_from_entrypoints` (or `vk_device_entrypoint_is_
+enabled`) for these indices — is the source entry NULL, or does `is_enabled` return false during the
+merge? — then fix. NOT on the GPU critical path (the direct-call decouple already proves submit works);
+matters for real apps (vkQuake) that use the normal proc-addr path.
