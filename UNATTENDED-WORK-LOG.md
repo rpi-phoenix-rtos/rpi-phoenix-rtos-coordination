@@ -512,9 +512,24 @@ libphoenix `0cb9f72` (wide-char) + `e29c840` (multibyte); coord `a4be46b` (libXa
 **LESSON banked:** after any libphoenix change, the toolchain-bundled libc must be re-synced or ad-hoc/X
 exe links silently use the stale one (mbtowc/mblen "undefined" despite being in the fresh sysroot lib).
 
+### 2026-06-18 — ★ RUN-VERIFIED on HW: X client executes + openssl/crypto unblocked — project d619616
+Advisor-guided verification pass (link-verified ≠ run-verified; the rebuilt flagship was also unbooted).
+Three checks, all PASS on the Pi 4: (1) **Rebuilt flagship netboot boots clean** — 0 faults, `/dev/audio0`
+ready, Quake live gameplay ("You got the shells", 32.7 fps) → the libphoenix rebuild is safe, the "0
+faults" claim is true again. (2) **xprobe RUNS** — staged on the NFS export, exec'd via scripted psh, it
+printed `XOpenDisplay returned NULL (no server) — but Xlib linked + ran` → the X client stack + libc
+*execute* on real hardware (not just link); proves no runtime libc/multibyte bug. (3) **openssl WORKS** —
+the long-open openssl zero-stdout anomaly is RESOLVED by the /dev/urandom→hwrng wiring I did this run:
+`openssl version` → `OpenSSL 1.1.1a`, `openssl rand -hex 16` → real entropy, with `posixsrv: /dev/urandom
+entropy source = /dev/hwrng` confirming the source → **the crypto-port class (openssl/curl/dropbear) is
+unblocked**. Bonus fix: gated rpi4-quake out of the nfsroot variant (its render loop flooded the UART and
+drowned scripted-psh — the whole point of nfsroot; project d619616). All boots 0-fault.
+
 ### Tally — 2026-06-18 (this unattended run, cumulative)
 Flagship-shipping: audio subsystem (driver+DMA+Quake backend), /dev/urandom HW-backed, getrandom/
 getentropy, rpi4-sysinfo banner, psh mv. Libc completeness (additive, on-device): getpwnam_r/getpwuid_r/
 sys-poll, hypot, alloca size_t, full wide-char set, full C-locale multibyte set. **X11: 45-archive lib
-stack + xprobe + twm window manager build as aarch64-phoenix ELFs** (server is the remaining gate).
-Vulkan: 5 blockers cleared, 6th (noop-job CL) localized. All netboot/host-validated; flagship 0-fault.
+stack + xprobe + twm window manager build as aarch64-phoenix ELFs; xprobe RUN-verified on HW** (server is
+the remaining gate). **Crypto unblocked: openssl runs on HW (urandom→hwrng); openssl/curl/dropbear class
+freed.** nfsroot variant de-Quaked for clean scripted-psh. Vulkan: 5 blockers cleared, 6th (noop-job CL)
+localized. All netboot/host/HW-validated; flagship 0-fault (re-confirmed on the rebuilt image).

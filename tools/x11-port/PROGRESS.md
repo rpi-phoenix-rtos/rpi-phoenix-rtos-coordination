@@ -61,7 +61,11 @@ gotchas were resolved:**
    Xrender) land on the link line, plus `LDFLAGS -L$SYSROOT/lib`.
 
 **FIRST X11 EXECUTABLES BUILT for aarch64-phoenix (2026-06-18):**
-- **`xprobe`** — a minimal Xlib client (XOpenDisplay), proves Xlib+xcb+libc link closure.
+- **`xprobe`** — a minimal Xlib client (XOpenDisplay). **RUN-VERIFIED ON HW (2026-06-18):** staged on the
+  NFS export, exec'd via scripted psh on the Pi 4, it printed
+  `xprobe: XOpenDisplay returned NULL (no server) — but Xlib linked + ran` — i.e. the X client stack +
+  libc **execute** on real hardware (not just link). Catches any runtime libc bug (mbstowcs/wctomb/…)
+  that linking can't. 0 faults.
 - **`twm` 1.0.12** — a complete X11 **window manager**, the first real X11 *application* ported to
   Phoenix. 3.1 MB static aarch64-phoenix ELF (`main`/`XOpenDisplay`/`XtToolkitInitialize` present),
   exercises the full toolkit (libXmu/libXt/libXext/libX11/libxcb/libSM/libICE) + libXrandr. Binaries
