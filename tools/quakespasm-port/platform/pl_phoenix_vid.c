@@ -362,7 +362,14 @@ void VID_Init(void)
 	 * to glCullFace(GL_BACK)+glFrontFace(GL_CW) — quakespasm winds its world brush faces for
 	 * CW-front. Without this the default glFrontFace(GL_CCW) treats every world poly as a back
 	 * face, so R_SetupGL's glEnable(GL_CULL_FACE) culls the ENTIRE world (alias models survive
-	 * on their own winding). Replicate it here so the world renders. */
+	 * on their own winding). Replicate it here so the world renders.
+	 *
+	 * For render-to-scanout we force Mesa fb_orientation Y_0_TOP (st_atom_framebuffer.c) so the
+	 * viewport Y is negated and the frame lands upright on the y-down HDMI scanout. Mesa keeps
+	 * front-face sense consistent across that Y-flip (front-face is resolved before the viewport
+	 * Y-negate), so glFrontFace stays GL_CW to match quakespasm's CW-wound world brushes. Setting
+	 * GL_CCW here culls the entire world (gray-world bug) — verified on HW. So: Y_0_TOP for the
+	 * flip, GL_CW unchanged for winding. */
 	glCullFace (GL_BACK);
 	glFrontFace (GL_CW);
 
@@ -458,7 +465,9 @@ void GL_EndRendering(void)
 		/* RENDER-TO-SCANOUT: the GPU rendered straight to the displayed framebuffer (its
 		 * RT BO is backed by the scanout PA); the per-submit SLCACTL + L2T flush already
 		 * pushed the stores to DRAM. No CPU readback / blit / fb0 write — the frame is
-		 * on screen. Render-thread cost is glFinish alone. */
+		 * on screen. Render-thread cost is glFinish alone. The frame lands UPRIGHT because
+		 * Mesa rasterizes y-flipped (fb_orientation Y_0_TOP, st_atom_framebuffer.c) for the
+		 * y-down HDMI scanout, with winding compensated by glFrontFace(GL_CCW) below. */
 		ts_c = ts_b;
 		ts_d = ts_b;
 	}

@@ -36,7 +36,11 @@ static struct st_context *g_st = NULL;
 static GLuint g_fbo = 0;             /* our render-target FBO (Quake renders into it) */
 
 /* Bind our render-target FBO. Quake renders to the "default" framebuffer (0), which
- * is incomplete on a surfaceless context; redirect each frame into our readable FBO. */
+ * is incomplete on a surfaceless context; redirect each frame into our readable FBO.
+ * This FBO's color renderbuffer is the full-screen scanout-backed surface (winsys backs
+ * it with the HDMI framebuffer's physical pages), so the GPU stores straight to screen
+ * (render-to-scanout). Mesa renders y-flipped into it (fb_orientation forced Y_0_TOP for
+ * __phoenix__ in st_atom_framebuffer.c) so the frame lands upright on the y-down scanout. */
 void qsv3d_bind_fbo(void)
 {
 	if (g_fbo != 0)

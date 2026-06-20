@@ -16,8 +16,10 @@ extern double atan(double), atan2(double, double), exp(double), log(double), log
 extern double pow(double, double), sqrt(double), floor(double), ceil(double);
 extern double fmod(double, double), ldexp(double, int);
 extern double rint(double);
-/* Phoenix libm lacks hypot (double) too — provide it (exported for other TUs). */
-double hypot(double a, double b) { return sqrt(a * a + b * b); }
+/* NOTE: hypot (double) and hypotf (float) are NOT defined here — libphoenix's libm now
+ * provides them. Defining them here too produced a duplicate-symbol link clash (previously
+ * masked by -Wl,--allow-multiple-definition in rpi4-quake; that workaround is now removed).
+ * If a future libphoenix drops them, restore the wrappers here. */
 
 float sinf(float x) { return (float)sin((double)x); }
 float cosf(float x) { return (float)cos((double)x); }
@@ -32,7 +34,6 @@ float exp2f(float x) { return (float)exp((double)x * 0.6931471805599453); }
 float log2f(float x) { return (float)log2((double)x); }
 float powf(float a, float b) { return (float)pow((double)a, (double)b); }
 float fmodf(float a, float b) { return (float)fmod((double)a, (double)b); }
-float hypotf(float a, float b) { return (float)hypot((double)a, (double)b); }
 float ldexpf(float x, int e) { return (float)ldexp((double)x, e); }
 float rintf(float x) { return (float)rint((double)x); }
 long  lrintf(float x) { return (long)rintf(x); }
