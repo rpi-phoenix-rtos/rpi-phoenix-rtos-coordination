@@ -139,6 +139,7 @@ static volatile uint32_t *map_dev(uint32_t pa, uint32_t len)
 }
 
 int v3d_phoenix_powerOn(void);   /* v3d_phoenix_power.c — BCM2711 V3D power-on */
+int v3d_phoenix_reset(void);     /* v3d_phoenix_power.c — true reset cycle (hold + power on) */
 
 /* Render-timeout counter, exported for the stall-repro harness (rpi4-v3d-stalltest):
  * incremented every time a CT1 render submit hits the spin-timeout. Lets the harness
@@ -414,6 +415,18 @@ volatile unsigned v3d_phoenix_render_recoveries = 0;
 static void reset_reinit_core(void)
 {
 	(void)v3d_phoenix_powerOn();
+	apply_core_regs();
+}
+
+/* Harness-only: force a TRUE V3D reset (hold-in-reset + power back on) then re-establish
+ * core register state over the surviving page table. Lets rpi4-v3d-stalltest re-create the
+ * cold first-frame-after-power-on condition per iteration, so each loop iteration is an
+ * independent trial of the intermittent stall — converting one boot into hundreds of
+ * samples. Requires winsys already inited (the harness renders one warm-up frame first). */
+void v3d_phoenix_harness_reset(void);
+void v3d_phoenix_harness_reset(void)
+{
+	(void)v3d_phoenix_reset();
 	apply_core_regs();
 }
 

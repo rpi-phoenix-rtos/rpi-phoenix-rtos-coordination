@@ -121,6 +121,58 @@ static int asbEnable(volatile uint32_t *asb, uint32_t reg)
 	return -1;
 }
 
+/* Stop a V3D async-AXI bridge (set REQ_STOP, wait for ACK) — the power-off direction,
+ * mirror of asbEnable. Used by v3d_phoenix_reset to quiesce the bridges before reset. */
+static int asbStop(volatile uint32_t *asb, uint32_t reg)
+{
+	uint32_t val = asb[reg / 4] | ASB_REQ_STOP;
+	uint32_t spins;
+	asb[reg / 4] = PM_PASSWORD | val;
+	for (spins = ASB_ACK_SPINS; spins != 0u; spins--) {
+		if ((asb[reg / 4] & ASB_ACK) != 0u)
+			return 0;
+	}
+	return -1;
+}
+
+/* TRUE V3D reset cycle: quiesce the AXI bridges, assert PM_V3DRSTN (hold the V3D in
+ * reset), then power back on (clock toggle + RSTN deassert + bridge re-enable). This is
+ * the "reboot-like" reset a per-iteration repro harness needs to re-roll the power-on
+ * lottery each trial (v3d_phoenix_powerOn alone only re-deasserts; it does not hold the
+ * core in reset, so it cannot re-create the cold first-frame condition). Returns 0 on
+ * success. */
+int v3d_phoenix_reset(void)
+{
+	volatile uint32_t *pm, *asb;
+	void *pm_page, *asb_page;
+	uint32_t grafx;
+
+	pm_page = mmap(NULL, _PAGE_SIZE, PROT_READ | PROT_WRITE,
+		MAP_DEVICE | MAP_UNCACHED | MAP_PHYSMEM | MAP_ANONYMOUS, -1, (addr_t)PM_BASE);
+	if (pm_page == MAP_FAILED)
+		return -1;
+	pm = (volatile uint32_t *)pm_page;
+	asb_page = mmap(NULL, _PAGE_SIZE, PROT_READ | PROT_WRITE,
+		MAP_DEVICE | MAP_UNCACHED | MAP_PHYSMEM | MAP_ANONYMOUS, -1, (addr_t)RPIVID_ASB_BASE);
+	if (asb_page == MAP_FAILED) {
+		munmap(pm_page, _PAGE_SIZE);
+		return -1;
+	}
+	asb = (volatile uint32_t *)asb_page;
+
+	(void)asbStop(asb, ASB_V3D_M_CTRL);
+	(void)asbStop(asb, ASB_V3D_S_CTRL);
+	grafx = pm[PM_GRAFX / 4];
+	pm[PM_GRAFX / 4] = PM_PASSWORD | (grafx & ~PM_V3DRSTN);   /* assert reset (hold in reset) */
+	usleep(100);
+
+	munmap(asb_page, _PAGE_SIZE);
+	munmap(pm_page, _PAGE_SIZE);
+
+	/* power back on (clock toggle + RSTN deassert + ASB enable) */
+	return v3d_phoenix_powerOn();
+}
+
 /* Full HW-proven V3D power-on. Returns 0 on success (both ASB bridges ACK). */
 int v3d_phoenix_powerOn(void)
 {
