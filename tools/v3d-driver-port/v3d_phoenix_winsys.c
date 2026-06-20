@@ -351,6 +351,32 @@ static int ioc_close_bo(struct drm_gem_close *gc)
 	return 0;
 }
 
+/* Translate a GPU VA back to the CPU (uncached) pointer of the BO that covers it, or NULL
+ * if no live BO maps it. Used only by the render-timeout instrumentation below. */
+static void *gpuva_to_cpu(uint32_t gpuva)
+{
+	for (uint32_t i = 0; i < W.nbos; i++) {
+		struct pbo *b = &W.bos[i];
+		if (b->used && b->cpu != NULL && gpuva >= b->gpuva && gpuva < b->gpuva + b->size)
+			return (char *)b->cpu + (gpuva - b->gpuva);
+	}
+	return NULL;
+}
+
+/* GFXH-1897 (Broadcom erratum, see linux v3d_gem.c v3d_clean_caches): a new L2TCACTL
+ * flush must not be issued while a previous L2T flush is still in progress, or the new
+ * flush malfunctions — the consumer then reads a stale/transient view. Our submit issues
+ * L2T flushes back-to-back (bin pre-flush -> render pre-flush -> readback clean) with no
+ * wait, so when the render-side flush lands while the bin/binner flush is still busy the
+ * render fetches a stale tile-list and wedges (ct1ca parks past rcl_end, FRDONE never
+ * fires). Identical demo content stalls ~50% of boots = exactly this flush-completion race.
+ * Spin until the L2TFLS busy bit clears before each L2TCACTL write. */
+static inline void l2t_flush_wait(volatile uint32_t *c0)
+{
+	uint32_t spins;
+	for (spins = 1000000u; spins && (c0[CTL_L2TCACTL/4] & L2TCACTL_L2TFLS); spins--) {}
+}
+
 static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
 {
 	volatile uint32_t *c0 = W.core0;
@@ -373,6 +399,7 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
 	 * GPU serves stale uniforms from its uniform cache, so per-frame matrix/uniform changes
 	 * never render (every frame looks like frame 0). */
 	c0[CTL_SLCACTL/4] = SLCACTL_INVAL_ALL;
+	l2t_flush_wait(c0);                       /* GFXH-1897: prior flush must be idle first */
 	c0[CTL_L2TCACTL/4] = L2TCACTL_L2TFLS;
 	/* --- bin (CT0); wait FLDONE --- */
 	c0[CTL_INT_CLR/4] = INT_FLDONE|INT_FRDONE;
@@ -406,6 +433,7 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
 		}
 	}
 	c0[CTL_INT_CLR/4]=INT_FLDONE|INT_FRDONE;
+	l2t_flush_wait(c0);                       /* GFXH-1897: bin/binner flush must complete before this one */
 	c0[CTL_L2TCACTL/4]=L2TCACTL_L2TFLS;
 	/* --- render (CT1); wait FRDONE --- */
 	c0[CLE_CT1QBA/4]=s->rcl_start; c0[CLE_CT1QEA/4]=s->rcl_end;
@@ -419,8 +447,34 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
 		/* re-read CT1CA to see if it is advancing (slow) or wedged (stall) */
 		(void)ca1;
 		fprintf(stderr, "v3d-winsys: RENDER ct1ca recheck=0x%08x\n", c0[0x0114/4]);
+		/* TODO(quake-render-stall): diagnostic dump for the UNRESOLVED residual render stall
+		 * (GFXH-1897 wait below mitigated the early CL-fetch wedge but a later shader-stage
+		 * stall remains, int_sts=QPU bits). Remove once the residual is root-caused + fixed.
+		 * INSTRUMENTATION (first 3 stalls): ct1ca runs tens of KB PAST rcl_end, i.e. into the
+		 * binner's tile-list region (CT1 branched into a per-tile sub-list and wedged). Dump the
+		 * actual RAM at the wedge point + the main RCL tail (via the uncached BO mapping) to
+		 * discriminate: valid CL bytes = GPU-side stale fetch; zeros/garbage = binner output
+		 * incomplete at render time (bin->render handoff race); "no BO" = stale/freed tile-list
+		 * pointer (use-after-free). */
+		{
+			static int dbgn = 0;
+			if (dbgn++ < 3) {
+				uint32_t caw = ca1 & ~0xfu;
+				uint32_t *rp = (uint32_t *)gpuva_to_cpu((s->rcl_end - 16u) & ~0xfu);
+				uint32_t *cp = (uint32_t *)gpuva_to_cpu(caw);
+				fprintf(stderr, "v3d-winsys: RCLTAIL gpuva=0x%08x cpu=%p:", (s->rcl_end-16u)&~0xfu, (void*)rp);
+				if (rp) { for (int i = 0; i < 8; i++) fprintf(stderr, " %08x", rp[i]); }
+				else { fprintf(stderr, " (no BO)"); }
+				fprintf(stderr, "\n");
+				fprintf(stderr, "v3d-winsys: WEDGEAT gpuva=0x%08x cpu=%p:", caw, (void*)cp);
+				if (cp) { for (int i = 0; i < 8; i++) fprintf(stderr, " %08x", cp[i]); }
+				else { fprintf(stderr, " (no BO covers ct1ca -> unmapped/freed tile-list pointer)"); }
+				fprintf(stderr, "\n");
+			}
+		}
 	}
 	/* L2T flush so RT stores reach RAM before CPU readback (scout finding). */
+	l2t_flush_wait(c0);                       /* GFXH-1897: render flush must complete first */
 	c0[CTL_L2TCACTL/4]=L2TCACTL_L2TFLS|(2u<<1); /* FLM_CLEAN */
 	return 0;
 }
