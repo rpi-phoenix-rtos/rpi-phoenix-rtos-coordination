@@ -139,7 +139,13 @@ static volatile uint32_t *map_dev(uint32_t pa, uint32_t len)
 }
 
 int v3d_phoenix_powerOn(void);   /* v3d_phoenix_power.c — BCM2711 V3D power-on */
+
+/* Render-timeout counter, exported for the stall-repro harness (rpi4-v3d-stalltest):
+ * incremented every time a CT1 render submit hits the spin-timeout. Lets the harness
+ * count stalls across many in-boot submits instead of one-boot-per-sample roulette. */
+volatile unsigned v3d_phoenix_render_timeouts = 0;
 static uint32_t va_alloc(uint32_t pages);   /* defined below; used by the init overflow pool */
+static void apply_core_regs(void);          /* defined below; used by winsys_init + reset path */
 
 static int winsys_init(void)
 {
@@ -158,17 +164,12 @@ static int winsys_init(void)
 	W.pt_pa = (uintptr_t)va2pa((void*)W.pt);
 	for (uint32_t i=0;i<GPUVA_PT_ENTRIES;i++) W.pt[i]=0;
 	/* NOTE: assumes V3D already powered on (rpi4-v3d-scout v3d_powerOn sequence). */
-	W.hub[MMU_PT_PA_BASE/4] = (uint32_t)(W.pt_pa>>PAGE_SHIFT);
-	W.hub[MMU_CTL/4] = MMU_CTL_ENABLE|MMU_CTL_PTI_ABORT;
-	W.hub[MMUC_CONTROL/4] = MMUC_ENABLE;
-	/* Clear + enable the general L2 cache as invariant init state (mirrors linux
-	 * v3d_init_core: L2CACTL = L2CCLR|L2CENA). The QPUs fetch shader instructions/uniforms
-	 * through L2C and our init never enabled it, so its power-on state was undefined — an init
-	 * correctness gap regardless. NOTE: adding this did NOT measurably resolve the intermittent
-	 * first-frame render stall (3/6 boots still stalled, with varying int_sts), so the stall's
-	 * root cause lies elsewhere (suspected V3D clock/power settle at first submit). Kept as a
-	 * correctness fix; see TODO(quake-render-stall) + task for the ongoing hunt. */
-	W.core0[CTL_L2CACTL/4] = L2CACTL_L2CCLR | L2CACTL_L2CENA;
+	/* MMU base/enable, MMUC, + general-L2 clear+enable. The L2C enable mirrors linux
+	 * v3d_init_core (L2CACTL = L2CCLR|L2CENA): the QPUs fetch shader instructions/uniforms
+	 * through L2C and our init never enabled it (an init-correctness gap regardless; it did
+	 * not by itself resolve the intermittent first-frame render stall). Factored into
+	 * apply_core_regs() so the in-job reset path can re-establish identical state. */
+	apply_core_regs();
 	W.next_gpuva = GPUVA_BASE;
 
 	/* Pre-allocate the persistent binner-overflow pool (uncached DMA, like the CL/tile
@@ -388,11 +389,45 @@ static inline void l2t_flush_wait(volatile uint32_t *c0)
 	for (spins = 1000000u; spins && (c0[CTL_L2TCACTL/4] & L2TCACTL_L2TFLS); spins--) {}
 }
 
+/* Re-apply the per-power-on core registers over the (surviving) MMU page table: MMU base +
+ * enable, MMUC enable, and the general-L2 clear+enable. Used at init and after an in-job
+ * reset. The PT, BO pool and GPU VAs are unchanged — only the V3D's own register state is
+ * re-established. */
+static void apply_core_regs(void)
+{
+	W.hub[MMU_PT_PA_BASE/4] = (uint32_t)(W.pt_pa>>PAGE_SHIFT);
+	W.hub[MMU_CTL/4] = MMU_CTL_ENABLE|MMU_CTL_PTI_ABORT;
+	W.hub[MMUC_CONTROL/4] = MMUC_ENABLE;
+	W.core0[CTL_L2CACTL/4] = L2CACTL_L2CCLR | L2CACTL_L2CENA;
+}
+
+/* Render-stall MITIGATION + probe: how many times a submit recovered a wedged GPU by
+ * resetting + retrying. "A reboot clears it" implies an in-process reset clears it too;
+ * if so this turns the fatal first-frame render stall into a sub-second hitch. Exported
+ * for visibility. */
+volatile unsigned v3d_phoenix_render_recoveries = 0;
+
+/* Reset the V3D and re-establish core register state, then return so the caller can
+ * re-submit the same job. Re-runs the BCM2711 power-on (clock toggle + RSTN deassert +
+ * ASB bridge re-enable) — the same sequence a reboot performs — then re-applies the core
+ * regs over the surviving page table. */
+static void reset_reinit_core(void)
+{
+	(void)v3d_phoenix_powerOn();
+	apply_core_regs();
+}
+
+#define SUBMIT_MAX_RETRIES 3   /* reset+resubmit attempts on a wedged bin/render before giving up */
+
 static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
 {
 	volatile uint32_t *c0 = W.core0;
 	volatile uint32_t *h = W.hub;
 	uint32_t spins;
+	int attempt = 0;        /* reset+resubmit count (render-stall mitigation) */
+	int job_failed;         /* set if bin or render wedged this attempt */
+submit_attempt:
+	job_failed = 0;
 	/* Flush the MMU PTE cache + TLB before the job. ioc_create_bo writes fresh PTEs but
 	 * never invalidated the MMU's cached translations, so a job whose CL/RT BOs were just
 	 * mapped at new GPU VAs (every Quake frame allocates fresh BOs) is fetched through a
@@ -437,12 +472,16 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
 			}
 		}
 		if (spins == 0) {
+			job_failed = 1;
 			fprintf(stderr, "v3d-winsys: BIN TIMEOUT int_sts=0x%08x ct0cs=0x%08x "
-				"ct0ca=0x%08x[%x..%x] gmp=0x%08x gmpvio=0x%08x mmu_ill=0x%08x ovf_armed=%d\n",
+				"ct0ca=0x%08x[%x..%x] gmp=0x%08x gmpvio=0x%08x mmu_ill=0x%08x ovf_armed=%d (attempt %d)\n",
 				c0[CTL_INT_STS/4], c0[0x0100/4], c0[0x0110/4], s->bcl_start, s->bcl_end,
-				c0[0x0800/4], c0[0x0808/4], W.hub[MMU_ILLEGAL_ADDR/4], ovf_armed);
+				c0[0x0800/4], c0[0x0808/4], W.hub[MMU_ILLEGAL_ADDR/4], ovf_armed, attempt);
 		}
 	}
+	/* If the binner wedged, don't kick the render against a bad tile state — reset+retry. */
+	if (job_failed)
+		goto job_retry;
 	c0[CTL_INT_CLR/4]=INT_FLDONE|INT_FRDONE;
 	l2t_flush_wait(c0);                       /* GFXH-1897: bin/binner flush must complete before this one */
 	c0[CTL_L2TCACTL/4]=L2TCACTL_L2TFLS;
@@ -451,6 +490,8 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
 	for (spins=16000000u; spins && !(c0[CTL_INT_STS/4]&INT_FRDONE); spins--) {}
 	if (spins == 0) {
 		uint32_t ca1 = c0[0x0114/4];
+		v3d_phoenix_render_timeouts++;   /* stall counter for the repro harness */
+		job_failed = 1;
 		fprintf(stderr, "v3d-winsys: RENDER TIMEOUT int_sts=0x%08x ct1cs=0x%08x "
 			"ct1ca=0x%08x[%x..%x] ct1ea=0x%08x gmp=0x%08x gmpvio=0x%08x mmu_ill=0x%08x\n",
 			c0[CTL_INT_STS/4], c0[0x0104/4], ca1, s->rcl_start, s->rcl_end,
@@ -483,6 +524,27 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
 				fprintf(stderr, "\n");
 			}
 		}
+	}
+job_retry:
+	/* MITIGATION + probe: if the bin or render wedged, reset the V3D and re-submit the SAME
+	 * job. A reboot is known to clear this stall; an in-process reset that also clears it turns
+	 * the otherwise-fatal first-frame wedge into a sub-second hitch (playable flagship even with
+	 * the root cause unfound), and proves the failing state is software-reset-reachable. */
+	if (job_failed) {
+		if (attempt < SUBMIT_MAX_RETRIES) {
+			attempt++;
+			fprintf(stderr, "v3d-winsys: GPU wedged — reset + resubmit (attempt %d/%d)\n",
+				attempt, SUBMIT_MAX_RETRIES);
+			reset_reinit_core();
+			goto submit_attempt;
+		}
+		fprintf(stderr, "v3d-winsys: GPU still wedged after %d resets — giving up this frame\n",
+			attempt);
+	}
+	else if (attempt > 0) {
+		v3d_phoenix_render_recoveries++;
+		fprintf(stderr, "v3d-winsys: RECOVERED after %d reset(s) (recoveries=%u)\n",
+			attempt, v3d_phoenix_render_recoveries);
 	}
 	/* L2T flush so RT stores reach RAM before CPU readback (scout finding). */
 	l2t_flush_wait(c0);                       /* GFXH-1897: render flush must complete first */
