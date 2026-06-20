@@ -57,6 +57,9 @@
 #define CLE_CT1QEA          0x016cu
 #define CLE_CT0QMA          0x0170u
 #define CLE_CT0QMS          0x0174u
+#define CTL_L2CACTL         0x0020u    /* general L2 cache control (V3D 4.x) */
+#define L2CACTL_L2CENA      (1u<<0)    /* enable the L2 cache */
+#define L2CACTL_L2CCLR      (1u<<2)    /* clear the L2 cache */
 #define CTL_L2TCACTL        0x0030u
 #define L2TCACTL_L2TFLS     (1u<<0)
 #define CTL_SLCACTL         0x0024u    /* slices cache control (V3D 4.x) */
@@ -158,6 +161,14 @@ static int winsys_init(void)
 	W.hub[MMU_PT_PA_BASE/4] = (uint32_t)(W.pt_pa>>PAGE_SHIFT);
 	W.hub[MMU_CTL/4] = MMU_CTL_ENABLE|MMU_CTL_PTI_ABORT;
 	W.hub[MMUC_CONTROL/4] = MMUC_ENABLE;
+	/* Clear + enable the general L2 cache as invariant init state (mirrors linux
+	 * v3d_init_core: L2CACTL = L2CCLR|L2CENA). The QPUs fetch shader instructions/uniforms
+	 * through L2C and our init never enabled it, so its power-on state was undefined — an init
+	 * correctness gap regardless. NOTE: adding this did NOT measurably resolve the intermittent
+	 * first-frame render stall (3/6 boots still stalled, with varying int_sts), so the stall's
+	 * root cause lies elsewhere (suspected V3D clock/power settle at first submit). Kept as a
+	 * correctness fix; see TODO(quake-render-stall) + task for the ongoing hunt. */
+	W.core0[CTL_L2CACTL/4] = L2CACTL_L2CCLR | L2CACTL_L2CENA;
 	W.next_gpuva = GPUVA_BASE;
 
 	/* Pre-allocate the persistent binner-overflow pool (uncached DMA, like the CL/tile
