@@ -66,8 +66,21 @@
 #define L2TCACTL_L2TFLS     (1u<<0)
 #define CTL_SLCACTL         0x0024u    /* slices cache control (V3D 4.x) */
 #define SLCACTL_INVAL_ALL   0x0f0f0f0fu /* invalidate TVCCS/TDCCS/UCC(uniform)/ICC(instr) */
+#define PTB_BPCA            0x0300u   /* binner primitive-list current address (advances as the binner runs) */
+#define PTB_BPCS            0x0304u   /* binner primitive-list current status */
 #define PTB_BPOA            0x0308u   /* binner pool overflow address (GPU VA) */
 #define PTB_BPOS            0x030cu   /* binner pool overflow size (bytes) */
+#define GMP_STATUS          0x0800u   /* global memory protection status (RD/WR_ACTIVE, VIO) */
+#define GMP_CFG             0x0804u   /* GMP config (STOP_REQ for safe AXI drain) */
+#define GMP_CFG_STOP_REQ    (1u<<1)   /* request the GMP to quiesce outstanding AXI transactions */
+#define GMP_STATUS_RD_WR_CNT 0x7f7f0000u /* RD_COUNT(22:16)|WR_COUNT(30:24) — nonzero = txns in flight */
+#define GMP_STATUS_CFG_BUSY (1u<<3)
+/* HUB block (W.hub[0]): the AXI config. GFXH-1383 — the V3D AXI master must cap its max burst
+ * length (MAX_LEN field, bits 3:0). Linux v3d_reset_by_bridge restores it to MAX_LEN_MASK after
+ * a bridge SW_INIT; if our power-on path leaves it unset/wrong the AXI can deadlock under
+ * sustained load (GMP RD+WR stuck active, binner ct0ca frozen) — the workload-dependent wedge. */
+#define HUB_AXICFG          0x0000u
+#define HUB_AXICFG_MAX_LEN  0x0000000fu
 /* Binner tile-allocation overflow pool. When the binner exhausts the per-job
  * tile_alloc memory Mesa supplies via CT0QMA/QMS, it raises INT_OUTOMEM and stalls
  * until handed a fresh pool via PTB_BPOA/BPOS (linux v3d_overflow_mem_work). The
@@ -87,7 +100,22 @@
  * 32 PT pages = 128 MiB of GPU VA, enough for fullscreen color+depth+tile state plus
  * texture/CL working set (Quake). PT must be physically contiguous (the MMU walks it
  * as a flat array from MMU_PT_PA_BASE). */
+/* STEP-1 EXPERIMENT (render-stall hunt, task #13): V3D_VA_NO_RECYCLE makes va_alloc
+ * never reuse a freed GPU VA (monotonic bump only). Tests whether the intermittent
+ * render wedge is caused by a recycled VA whose GPU cache still holds the prior BO's
+ * (stale) content — a fresh never-used VA cannot have a stale cache entry. Needs a larger
+ * VA window since per-frame BOs are never reclaimed; sized for a short validation run.
+ * HELD OFF (advisor 2026-06-21): a 12-boot A/B cannot resolve a 15-30% base rate, and the
+ * "zeroing BOs changed wedge content garbage->zeros but NOT the rate" evidence shows CT1
+ * overruns ct1ea regardless of memory content -> the wedge is not a memory/VA/cache effect.
+ * Pivoted to STEP-3 first: instrument cold-power-on HW state (clock cfg-vs-measured, PLL,
+ * temp) and correlate clean-vs-stalled boots for a deterministic discriminator. */
+#define V3D_VA_NO_RECYCLE   0
+#if V3D_VA_NO_RECYCLE
+#define GPUVA_PT_PAGES      512u   /* 512 * 4 MiB = 2 GiB monotonic VA window (no reclaim) */
+#else
 #define GPUVA_PT_PAGES      64u    /* 64 * 4 MiB = 256 MiB GPU VA window */
+#endif
 #define GPUVA_PT_ENTRIES    (GPUVA_PT_PAGES * (_PAGE_SIZE / 4u))   /* total PTEs */
 
 struct pbo {            /* Phoenix BO */
@@ -142,6 +170,7 @@ static volatile uint32_t *map_dev(uint32_t pa, uint32_t len)
 
 int v3d_phoenix_powerOn(void);   /* v3d_phoenix_power.c — BCM2711 V3D power-on */
 int v3d_phoenix_reset(void);     /* v3d_phoenix_power.c — true reset cycle (hold + power on) */
+void v3d_phoenix_logColdState(void);  /* v3d_phoenix_power.c — STEP-3 cold-power-on state probe */
 
 /* Render-timeout counter, exported for the stall-repro harness (rpi4-v3d-stalltest):
  * incremented every time a CT1 render submit hits the spin-timeout. Lets the harness
@@ -160,6 +189,15 @@ static int winsys_init(void)
 	W.hub = map_dev(V3D_HUB_BASE, V3D_MMIO_LEN);
 	if (!W.hub) return -ENOMEM;
 	W.core0 = W.hub + (V3D_CORE0_OFFS/4);
+	/* STEP-3 render-stall discriminator: log the firmware-controlled cold-power-on state
+	 * (V3D clock cfg-vs-measured, PLL/clock state, temp, throttle, core voltage, PM_GRAFX)
+	 * plus the live V3D core identity. Captured ONCE per boot so a multi-boot run can diff a
+	 * stalled boot's line against a clean one for a deterministic separator. CORE0_IDENT0 of
+	 * a powered-but-mis-clocked core would read back wrong/0xdeadXXXX. */
+	v3d_phoenix_logColdState();
+	fprintf(stderr, "v3d-coldstate: CORE0_IDENT0=0x%08x HUB_IDENT1=0x%08x cold_HUB_AXICFG=0x%08x "
+		"cold_GMP_STATUS=0x%08x\n",
+		W.core0[0x0000/4], W.hub[0x000c/4], W.hub[HUB_AXICFG/4], W.core0[GMP_STATUS/4]);
 	/* MMU page table: GPUVA_PT_PAGES contiguous pages = GPUVA_PT_PAGES*4 MiB GPU VA. */
 	W.pt = mmap(NULL, GPUVA_PT_PAGES*_PAGE_SIZE, PROT_READ|PROT_WRITE,
 		MAP_UNCACHED|MAP_CONTIGUOUS|MAP_ANONYMOUS, -1, 0);
@@ -240,6 +278,7 @@ static struct pbo *bo_find(uint32_t handle)
  * high-water mark. Returns 0 on exhaustion. */
 static uint32_t va_alloc(uint32_t pages)
 {
+#if !V3D_VA_NO_RECYCLE
 	for (uint32_t i = 0; i < W.nholes; i++) {
 		if (W.holes[i].pages >= pages) {
 			uint32_t va = W.holes[i].gpuva;
@@ -253,6 +292,7 @@ static uint32_t va_alloc(uint32_t pages)
 			return va;
 		}
 	}
+#endif
 	if ((W.next_gpuva >> PAGE_SHIFT) + pages > GPUVA_PT_ENTRIES)
 		return 0;   /* window exhausted */
 	uint32_t va = W.next_gpuva;
@@ -424,6 +464,13 @@ static void apply_core_regs(void)
 	 * the reset path, so their cold-boot value persisted across software resets. */
 	W.core0[CTL_L2TFLSTA/4] = 0u;
 	W.core0[CTL_L2TFLEND/4] = ~0u;
+	/* GFXH-1383: cap the V3D AXI master's max burst length. Our power-on path (mailbox +
+	 * PM_V3DRSTN + rpivid_asb) never wrote HUB_AXICFG, so it kept whatever cold-boot/bridge
+	 * value it had; an unbounded burst length lets the AXI deadlock under sustained load
+	 * (GMP RD+WR stuck active, binner ct0ca frozen mid-CL = the workload-dependent wedge).
+	 * Linux restores exactly this after every bridge reset. Written here so init AND the
+	 * in-job reset path both establish it. */
+	W.hub[HUB_AXICFG/4] = HUB_AXICFG_MAX_LEN;
 }
 
 /* Render-stall MITIGATION + probe: how many times a submit recovered a wedged GPU by
@@ -436,9 +483,32 @@ volatile unsigned v3d_phoenix_render_recoveries = 0;
  * re-submit the same job. Re-runs the BCM2711 power-on (clock toggle + RSTN deassert +
  * ASB bridge re-enable) — the same sequence a reboot performs — then re-applies the core
  * regs over the surviving page table. */
+/* Best-effort safe AXI drain: ask the GMP to quiesce any outstanding transaction before reset
+ * so a stuck RD/WR (the wedge signature: GMP_STATUS RD+WR active) is drained rather than carried
+ * across the reset. Mirrors linux v3d_idle_axi (GMP_CFG_STOP_REQ + wait for RD/WR counts +
+ * CFG_BUSY to clear). Bounded spin — on a truly wedged AXI it may not drain, which is fine: the
+ * subsequent hold-in-reset clears it. */
+static void idle_axi(volatile uint32_t *c0)
+{
+	uint32_t spins;
+	c0[GMP_CFG/4] = GMP_CFG_STOP_REQ;
+	for (spins = 1000000u; spins; spins--) {
+		if ((c0[GMP_STATUS/4] & (GMP_STATUS_RD_WR_CNT | GMP_STATUS_CFG_BUSY)) == 0u)
+			break;
+	}
+}
+
 static void reset_reinit_core(void)
 {
-	(void)v3d_phoenix_powerOn();
+	/* The weak powerOn (re-deassert RSTN only) was empirically unable to clear the binner
+	 * hang: ct0ca stayed frozen at the same address across 3 resets, and the next frame's
+	 * DIFFERENT CL still showed ct0ca stuck there — the AXI/GMP transaction survived the soft
+	 * re-deassert. Do a TRUE reset instead: drain the GMP, hold the core in reset + power back
+	 * on (v3d_phoenix_reset = asbStop + assert PM_V3DRSTN + powerOn), then re-establish core
+	 * regs incl. the GFXH-1383 HUB_AXICFG burst cap. */
+	if (W.core0)
+		idle_axi(W.core0);
+	(void)v3d_phoenix_reset();
 	apply_core_regs();
 }
 
@@ -482,8 +552,9 @@ submit_attempt:
 	 * GPU serves stale uniforms from its uniform cache, so per-frame matrix/uniform changes
 	 * never render (every frame looks like frame 0). */
 	c0[CTL_SLCACTL/4] = SLCACTL_INVAL_ALL;
-	l2t_flush_wait(c0);                       /* GFXH-1897: prior flush must be idle first */
+	l2t_flush_wait(c0);                       /* wait-old: prior L2T flush must be idle first */
 	c0[CTL_L2TCACTL/4] = L2TCACTL_L2TFLS;
+	l2t_flush_wait(c0);                       /* wait-new: flush must complete before the bin reads its CL/vertex data */
 	/* --- bin (CT0); wait FLDONE --- */
 	c0[CTL_INT_CLR/4] = INT_FLDONE|INT_FRDONE;
 	c0[PTB_BPOS/4] = 0;
@@ -513,24 +584,37 @@ submit_attempt:
 			fprintf(stderr, "v3d-winsys: BIN TIMEOUT int_sts=0x%08x ct0cs=0x%08x "
 				"ct0ca=0x%08x[%x..%x] gmp=0x%08x gmpvio=0x%08x mmu_ill=0x%08x ovf_armed=%d (attempt %d)\n",
 				c0[CTL_INT_STS/4], c0[0x0100/4], c0[0x0110/4], s->bcl_start, s->bcl_end,
-				c0[0x0800/4], c0[0x0808/4], W.hub[MMU_ILLEGAL_ADDR/4], ovf_armed, attempt);
+				c0[GMP_STATUS/4], c0[0x0808/4], W.hub[MMU_ILLEGAL_ADDR/4], ovf_armed, attempt);
+			/* PTB binner pointers + AXICFG localise the hang: BPCA advancing = binner alive but
+			 * downstream stalled; BPCA frozen = binner itself wedged. gmp RD/WR-active with
+			 * BPCA frozen = stuck AXI transaction (GFXH-1383). */
+			fprintf(stderr, "v3d-winsys: BIN PTB bpca=0x%08x bpcs=0x%08x bpoa=0x%08x bpos=0x%08x "
+				"hub_axicfg=0x%08x int_qpu=0x%03x\n",
+				c0[PTB_BPCA/4], c0[PTB_BPCS/4], c0[PTB_BPOA/4], c0[PTB_BPOS/4],
+				W.hub[HUB_AXICFG/4], (c0[CTL_INT_STS/4] >> 16) & 0xfffu);
 		}
 	}
 	/* If the binner wedged, don't kick the render against a bad tile state — reset+retry. */
 	if (job_failed)
 		goto job_retry;
 	c0[CTL_INT_CLR/4]=INT_FLDONE|INT_FRDONE;
-	/* Invalidate the slice caches (TVCCS/TDCCS/uniform/INSTR) before the render kick too —
-	 * not just before bin. The render's CL executor + shaders fetch the RCL and the binner's
-	 * tile-lists; with GPU-VA recycling (va_alloc reuses freed VAs every frame) the slice
-	 * caches can hold a PRIOR BO's content for the reused VA, so the render fetches stale/empty
-	 * data instead of this frame's freshly-written RCL/tile-lists -> CT1 parks reading the wrong
-	 * bytes (observed: wedge_op=0x00, GPU sees the BO as zeroed not as Mesa wrote it). Linux
-	 * v3d_invalidate_caches runs before BOTH bin and render for exactly this reason; we only did
-	 * it before bin. Then the L2T flush (full range) as before. */
-	c0[CTL_SLCACTL/4] = SLCACTL_INVAL_ALL;
-	l2t_flush_wait(c0);                       /* GFXH-1897: bin/binner flush must complete before this one */
-	c0[CTL_L2TCACTL/4]=L2TCACTL_L2TFLS;
+	/* Bin->render coherency handoff. The binner (CT0, just done) writes the per-tile sub-lists
+	 * into tile_alloc/overflow through the GPU's L2T; CT1's CL executor then FETCHES those
+	 * tile-lists. Two things must hold before CT1 starts:
+	 *   1. the binner's tile-list output must be flushed to RAM, and that flush must COMPLETE
+	 *      (not merely be issued) — else CT1 reads an INCOMPLETE tile-list and parks near
+	 *      rcl_end with FRDONE never firing (the data-dependent render wedge: worse on complex
+	 *      frames whose larger tile-lists take longer to drain);
+	 *   2. the render-side slice caches must be invalidated so a reused GPU VA doesn't serve a
+	 *      prior BO's stale lines.
+	 * The previous code only ISSUED the L2T flush then kicked CT1 immediately (no wait-new), so
+	 * on a heavy frame the flush was still in flight when CT1 began fetching. Correct order:
+	 * clean + WAIT, then invalidate, then kick. Linux v3d runs an invalidate before both bin
+	 * and render for the same coherency reason. */
+	l2t_flush_wait(c0);                       /* wait-old: any prior L2T flush must be idle */
+	c0[CTL_L2TCACTL/4]=L2TCACTL_L2TFLS;       /* clean the binner's tile-list output to RAM */
+	l2t_flush_wait(c0);                       /* wait-new: it must COMPLETE before CT1 fetches */
+	c0[CTL_SLCACTL/4] = SLCACTL_INVAL_ALL;    /* then drop stale render-side slice-cache lines */
 	/* --- render (CT1); wait FRDONE --- */
 	c0[CLE_CT1QBA/4]=s->rcl_start; c0[CLE_CT1QEA/4]=s->rcl_end;
 	for (spins=16000000u; spins && !(c0[CTL_INT_STS/4]&INT_FRDONE); spins--) {}

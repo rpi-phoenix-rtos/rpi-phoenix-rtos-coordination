@@ -35,6 +35,13 @@
 #define RPI_POWER_DOMAIN_V3D     10u
 #define VC_PROP_SET_CLOCK_STATE  0x00038001u
 #define RPI_CLOCK_V3D            5u
+/* GET property tags for the cold-power-on state probe (render-stall STEP-3 discriminator). */
+#define VC_PROP_GET_CLOCK_RATE      0x00030002u   /* configured rate (Hz), w0=clock id */
+#define VC_PROP_GET_CLOCK_MEASURED  0x00030047u   /* actual measured rate (Hz) — reveals an unlocked/unsettled PLL */
+#define VC_PROP_GET_CLOCK_STATE     0x00030001u   /* bit0 on, bit1 not-exists */
+#define VC_PROP_GET_TEMPERATURE     0x00030006u   /* SoC temp (milli-degC), w0=temp id 0 */
+#define VC_PROP_GET_THROTTLED       0x00030046u   /* throttle/undervolt bitmask */
+#define VC_PROP_GET_VOLTAGE         0x00030003u   /* w0=voltage id; id 1 = core */
 /* PM + rpivid_asb (the BCM2711 V3D power/reset path) */
 #define PM_BASE                 0xfe100000u
 #define RPIVID_ASB_BASE         0xfec11000u
@@ -216,4 +223,38 @@ int v3d_phoenix_powerOn(void)
 	munmap(asb_page, _PAGE_SIZE);
 	munmap(pm_page, _PAGE_SIZE);
 	return (rcM == 0 && rcS == 0) ? 0 : -1;
+}
+
+/* STEP-3 cold-power-on state probe (render-stall hunt, task #13). The render wedge is
+ * cold-boot-determined and software-reset-immune (60/60 in-process resets never reproduced
+ * it; clean boots render thousands of frames, stalled boots wedge from frame 1), and is
+ * INDIFFERENT to BO memory content (zeroing changed the wedge bytes but not the rate). That
+ * profile points away from memory/cache and at firmware-controlled cold-power-on HW state —
+ * the one thing a reboot re-rolls but an in-process reset does not. This logs the candidate
+ * discriminators ONCE at winsys init so a multi-boot run can diff a stalled boot's line vs a
+ * clean one: a register that cleanly separates the two populations is the root cause, found in
+ * far fewer boots than an underpowered rate A/B. KEY signal: clk_v3d configured-vs-measured
+ * mismatch (an unlocked/unsettled V3D PLL would let the render control thread run wild). */
+void v3d_phoenix_logColdState(void);
+void v3d_phoenix_logColdState(void)
+{
+	uint32_t rate_cfg  = mboxProp(VC_PROP_GET_CLOCK_RATE,     2, RPI_CLOCK_V3D, 0u);
+	uint32_t rate_meas = mboxProp(VC_PROP_GET_CLOCK_MEASURED, 2, RPI_CLOCK_V3D, 0u);
+	uint32_t clk_state = mboxProp(VC_PROP_GET_CLOCK_STATE,    2, RPI_CLOCK_V3D, 0u);
+	uint32_t temp      = mboxProp(VC_PROP_GET_TEMPERATURE,    2, 0u, 0u);
+	uint32_t throttled = mboxProp(VC_PROP_GET_THROTTLED,      1, 0u, 0u);
+	uint32_t volt      = mboxProp(VC_PROP_GET_VOLTAGE,        2, 1u, 0u);   /* core voltage */
+	uint32_t grafx = 0xffffffffu;
+	void *pm_page = mmap(NULL, _PAGE_SIZE, PROT_READ | PROT_WRITE,
+		MAP_DEVICE | MAP_UNCACHED | MAP_PHYSMEM | MAP_ANONYMOUS, -1, (addr_t)PM_BASE);
+	if (pm_page != MAP_FAILED) {
+		grafx = ((volatile uint32_t *)pm_page)[PM_GRAFX / 4];
+		munmap(pm_page, _PAGE_SIZE);
+	}
+	/* delta_kHz: signed gap between firmware-configured and hardware-measured V3D clock. A
+	 * large gap => the V3D PLL had not locked/settled at first render = the prime stall lead. */
+	long delta_khz = ((long)rate_meas - (long)rate_cfg) / 1000;
+	printf("v3d-coldstate: clk_v3d cfg=%u Hz meas=%u Hz delta=%ld kHz clkstate=0x%x "
+	       "temp=%u mC throttled=0x%08x corevolt=%u uV pm_grafx=0x%08x\n",
+	       rate_cfg, rate_meas, delta_khz, clk_state, temp, throttled, volt, grafx);
 }
