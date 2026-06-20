@@ -60,6 +60,8 @@
 #define CTL_L2CACTL         0x0020u    /* general L2 cache control (V3D 4.x) */
 #define L2CACTL_L2CENA      (1u<<0)    /* enable the L2 cache */
 #define L2CACTL_L2CCLR      (1u<<2)    /* clear the L2 cache */
+#define CTL_L2TFLSTA        0x0034u    /* L2T flush start address */
+#define CTL_L2TFLEND        0x0038u    /* L2T flush end address */
 #define CTL_L2TCACTL        0x0030u
 #define L2TCACTL_L2TFLS     (1u<<0)
 #define CTL_SLCACTL         0x0024u    /* slices cache control (V3D 4.x) */
@@ -182,6 +184,12 @@ static int winsys_init(void)
 			mmap(NULL, BINOVF_PAGES*_PAGE_SIZE, PROT_READ|PROT_WRITE,
 				MAP_UNCACHED|MAP_CONTIGUOUS|MAP_ANONYMOUS, -1, 0);
 		if (cpu != MAP_FAILED) {
+			/* Zero the pool: Phoenix mmap(MAP_CONTIGUOUS) returns NON-zeroed DRAM (the kernel
+			 * zeroes only the vm_object struct, not page contents — unlike Linux's __GFP_ZERO
+			 * shmem). The binner writes tile-list next-block pointers into this pool; any slot
+			 * it doesn't populate must read 0 (a clean halt), not cold-boot garbage that CT1
+			 * would follow as a wild pointer. Root cause of the intermittent render wedge. */
+			memset(cpu, 0, BINOVF_PAGES*_PAGE_SIZE);
 			for (uint32_t i=0;i<BINOVF_PAGES;i++) {
 				uintptr_t ppa = (uintptr_t)va2pa((char*)cpu + (size_t)i*_PAGE_SIZE);
 				W.pt[(gpuva>>PAGE_SHIFT)+i] = (uint32_t)(ppa>>PAGE_SHIFT)|PTE_W|PTE_V;
@@ -331,6 +339,14 @@ static int ioc_create_bo(struct drm_v3d_create_bo *c)
 				pages, pages*_PAGE_SIZE/1024u, c->flags);
 			va_free(gpuva, pages); return -ENOMEM;
 		}
+		/* Zero freshly-allocated BO memory. Phoenix mmap(MAP_CONTIGUOUS) returns NON-zeroed
+		 * DRAM (kernel zeroes only the vm_object struct, not pages — unlike Linux __GFP_ZERO
+		 * shmem). Binner-output BOs (tile_alloc / tile_state / CLs) chain per-tile sub-lists via
+		 * pointers written into this memory; an unpopulated slot holding cold-boot garbage makes
+		 * CT1 branch to a wild address past rcl_end and wedge (the intermittent render stall).
+		 * The huge scanout-backed RT (above) is excluded — it is fully rendered each frame and
+		 * claimed once, and zeroing 8 MB of uncached fb memory per frame would tank fps. */
+		memset(cpu, 0, pages*_PAGE_SIZE);
 		pa = (uintptr_t)va2pa(cpu);
 		/* Map each page by its ACTUAL physical address rather than assuming pa+i.
 		 * MAP_CONTIGUOUS gives contiguous pages for uncached DMA, but a cacheable mapping
@@ -400,6 +416,14 @@ static void apply_core_regs(void)
 	W.hub[MMU_CTL/4] = MMU_CTL_ENABLE|MMU_CTL_PTI_ABORT;
 	W.hub[MMUC_CONTROL/4] = MMUC_ENABLE;
 	W.core0[CTL_L2CACTL/4] = L2CACTL_L2CCLR | L2CACTL_L2CENA;
+	/* Define the L2T flush range as the WHOLE cache (mirrors linux v3d_init_core:
+	 * L2TFLSTA=0, L2TFLEND=~0 — "whenever we flush L2T we want the whole thing"). Without
+	 * this, every L2TCACTL flush we issue covers an indeterminate cold-boot range, so a
+	 * bin->render flush can leave stale tile-list lines and the render fetches a stale
+	 * next-block pointer -> CT1 wedges. These core regs aren't otherwise written by init or
+	 * the reset path, so their cold-boot value persisted across software resets. */
+	W.core0[CTL_L2TFLSTA/4] = 0u;
+	W.core0[CTL_L2TFLEND/4] = ~0u;
 }
 
 /* Render-stall MITIGATION + probe: how many times a submit recovered a wedged GPU by
@@ -496,6 +520,15 @@ submit_attempt:
 	if (job_failed)
 		goto job_retry;
 	c0[CTL_INT_CLR/4]=INT_FLDONE|INT_FRDONE;
+	/* Invalidate the slice caches (TVCCS/TDCCS/uniform/INSTR) before the render kick too —
+	 * not just before bin. The render's CL executor + shaders fetch the RCL and the binner's
+	 * tile-lists; with GPU-VA recycling (va_alloc reuses freed VAs every frame) the slice
+	 * caches can hold a PRIOR BO's content for the reused VA, so the render fetches stale/empty
+	 * data instead of this frame's freshly-written RCL/tile-lists -> CT1 parks reading the wrong
+	 * bytes (observed: wedge_op=0x00, GPU sees the BO as zeroed not as Mesa wrote it). Linux
+	 * v3d_invalidate_caches runs before BOTH bin and render for exactly this reason; we only did
+	 * it before bin. Then the L2T flush (full range) as before. */
+	c0[CTL_SLCACTL/4] = SLCACTL_INVAL_ALL;
 	l2t_flush_wait(c0);                       /* GFXH-1897: bin/binner flush must complete before this one */
 	c0[CTL_L2TCACTL/4]=L2TCACTL_L2TFLS;
 	/* --- render (CT1); wait FRDONE --- */
@@ -509,6 +542,17 @@ submit_attempt:
 			"ct1ca=0x%08x[%x..%x] ct1ea=0x%08x gmp=0x%08x gmpvio=0x%08x mmu_ill=0x%08x\n",
 			c0[CTL_INT_STS/4], c0[0x0104/4], ca1, s->rcl_start, s->rcl_end,
 			c0[0x010c/4], c0[0x0800/4], c0[0x0808/4], W.hub[MMU_ILLEGAL_ADDR/4]);
+		/* V3D error-debug registers (FDBGO/FDBGS/ERRSTAT) localize the wedged render
+		 * pipeline stage; + decode the CL opcode byte CT1 is parked on. */
+		{
+			uint32_t *cp = (uint32_t *)gpuva_to_cpu(ca1 & ~0xfu);
+			unsigned op = cp ? (cp[0] & 0xffu) : 0xffffffffu;
+			const char *opn = (op==21)?"BRANCH_TO_IMPLICIT":(op==18)?"RETURN_FROM_SUBLIST":
+				(op==124)?"TILE_COORDINATES":(op==23)?"SUPERTILE_COORDS":(op==0)?"HALT/zero":"?";
+			fprintf(stderr, "v3d-winsys: RENDER DBG fdbgo=0x%08x fdbgs=0x%08x errstat=0x%08x "
+				"wedge_op=0x%02x(%s)\n",
+				c0[0x0f04/4], c0[0x0f10/4], c0[0x0f20/4], op, opn);
+		}
 		/* re-read CT1CA to see if it is advancing (slow) or wedged (stall) */
 		(void)ca1;
 		fprintf(stderr, "v3d-winsys: RENDER ct1ca recheck=0x%08x\n", c0[0x0114/4]);
