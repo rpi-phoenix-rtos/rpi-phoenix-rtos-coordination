@@ -606,6 +606,8 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
 	{
 		int ovf_armed = 0;
 		uint32_t sts;
+		uint32_t last_ca = c0[0x0110/4];   /* ct0ca — frozen = binner wedged (fast wedge detect) */
+		unsigned frozen = 0;
 		for (spins=8000000u; spins; spins--) {
 			sts = c0[CTL_INT_STS/4];
 			if (sts & INT_FLDONE) break;
@@ -614,6 +616,14 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
 				c0[PTB_BPOS/4] = W.binovf_bytes;
 				c0[CTL_INT_CLR/4] = INT_OUTOMEM;
 				ovf_armed = 1;
+				frozen = 0; last_ca = c0[0x0110/4];   /* binner just re-armed; restart frozen window */
+			}
+			if ((spins & 0xfffffu) == 0u) {            /* sample ct0ca ~every 1M spins (~160 ms) */
+				uint32_t ca = c0[0x0110/4];
+				if (ca == last_ca) {
+					if (++frozen >= 5u) { spins = 0; break; }   /* frozen ~0.8 s -> wedged */
+				}
+				else { frozen = 0; last_ca = ca; }
 			}
 		}
 		if (spins == 0) {
@@ -671,7 +681,27 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
 	c0[CTL_SLCACTL/4] = SLCACTL_INVAL_ALL;    /* then drop stale render-side slice-cache lines */
 	/* --- render (CT1); wait FRDONE --- */
 	c0[CLE_CT1QBA/4]=s->rcl_start; c0[CLE_CT1QEA/4]=s->rcl_end;
-	for (spins=16000000u; spins && !(c0[CTL_INT_STS/4]&INT_FRDONE); spins--) {}
+	/* Wait for FRDONE, detecting a wedge two ways: (a) FAST — ct1ca FROZEN (the confirmed wedge
+	 * signature: CT1 stuck at one address) for ~0.8 s while not done; a legitimately slow frame
+	 * keeps advancing ct1ca between samples, so this never false-trips and is safe for heavy
+	 * frames; (b) BACKSTOP — the absolute spin cap. Frozen-detection shrinks the mitigation hitch
+	 * from the full ~2.5 s cap to ~0.8 s. On done: spins != 0; on wedge: spins == 0 (unchanged
+	 * downstream handling). */
+	{
+		uint32_t last_ca = c0[0x0114/4];
+		unsigned frozen = 0;
+		for (spins = 16000000u; spins; spins--) {
+			if (c0[CTL_INT_STS/4] & INT_FRDONE)
+				break;                                  /* render done */
+			if ((spins & 0xfffffu) == 0u) {             /* sample ct1ca ~every 1M spins (~160 ms) */
+				uint32_t ca = c0[0x0114/4];
+				if (ca == last_ca) {
+					if (++frozen >= 5u) { spins = 0; break; }   /* frozen ~0.8 s -> wedged */
+				}
+				else { frozen = 0; last_ca = ca; }
+			}
+		}
+	}
 	/* Clean-frame RCL structure probe (render-stall A/B, task #13): periodically dump the SAME
 	 * locations the wedge dump reads (rcl head + tail) on a SUCCESSFUL render. If a clean RCL is
 	 * structurally identical to a wedged one, the RCL BO is NOT corrupted and the wedge is a
