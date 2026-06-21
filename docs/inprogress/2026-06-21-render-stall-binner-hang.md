@@ -132,10 +132,44 @@ correct display (HDMI: dungeon + Quake sigil + HUD, upright, no tearing), ~30 fp
 The progression: render-to-scanout (~40% boots wedge) -> blit-resolve (frequent->rare) -> double-
 buffer (~1 render wedge/boot, recovered) -> TRIPLE-buffer (0 render wedges).
 
-NOTE: a SEPARATE binner (CT0) wedge (task #18) is independent of display contention and can still
-storm on a rare boot (observed once: 146 bin timeouts -> 1.5 fps, all recovered by the drop-frame
-mitigation but the boot was effectively stuck). That is NOT the render-to-scanout stall this fix
-eliminates; it needs its own root-cause (vertex coherency / tile_alloc / binner-QPU errata).
+BINNER (CT0) wedge (task #18) — two sub-modes found + fixed:
+- OVERFLOW EXHAUSTION (int_sts=OUTOMEM|SPILLUSE, ovf_armed=exhausted): a complex 1080p frame
+  spilled >4 MiB of per-tile lists; the binner wedged every frame on that scene (~3 fps). FIXED by
+  growing the spill pool 4->32 MiB (coord e9aba4b). Linux does this unbounded (fresh 256 KiB BO
+  per OUTOMEM); 32 MiB covers Quake.
+- COORDINATE-SHADER STARVE (int_sts QPU bits, ovf_armed=0): caused by clobbering CTL_MISCCFG.QRMAXCNT
+  (the QPU-reserve-max-count) to 0 every submit. FIXED by not writing MISCCFG (coord 5ad309b,
+  matches Linux on V3D 4.2).
+
+QPU-BALANCE TRADE-OFF (residual): QRMAXCNT balances QPUs between the binner's coordinate shaders
+and the render's fragment shaders. Clobbering it to 0 suppressed RENDER wedges but starved the
+binner; the Linux-aligned default (no write) + 32 MiB pool eliminates BOTH binner sub-modes but
+lets a RENDER-stage wedge resurface ~1/boot (fdbgs=EZTEST/DEPTHO, recovered by drop-frame, ~31 fps).
+Neither extreme is 0-on-both; a specific QRMAXCNT value might balance both (untested HW tuning).
+
+STATUS: the DOMINANT render-to-scanout stall (frequent, mid-run, ~40% of boots, made it unplayable)
+is ELIMINATED. The residual is ~1 GPU wedge/boot, RECOVERED seamlessly by the drop-frame+true-reset
+mitigation at ~31 fps — i.e. exactly how Linux's GPU scheduler survives a hang (reset + reschedule).
+Truly-0-wedges-ever would need Linux-DRM-driver maturity (full scheduler/coherency) or the real
+vc4-kms-v3d + v3d kernel drivers — a large undertaking; we are at "Linux-grade handling".
+
+HOW LINUX/RASPBERRY PI OS AVOIDS ALL THIS (the architectural answer):
+1. DISPLAY CONTENTION (our dominant stall) does NOT EXIST on Linux — by architecture. Two drivers:
+   v3d (GPU: bin/render into off-screen GEM BOs in DRAM) + vc4 DRM/KMS (display: the HVS scanout +
+   vsync'd atomic page-flips). Mesa renders to off-screen BOs; the compositor/KMS flips them at
+   vsync. The GPU NEVER writes the buffer being scanned out = exactly the triple-buffer discipline
+   we rebuilt by hand. Our port uses vc4-fkms-v3d (fake-KMS: ungates V3D but keeps the FIRMWARE
+   fb for the console, no kernel display driver) and render-to-scanout as a shortcut — which
+   reintroduced the contention. Full vc4-kms-v3d would give proper buffering but needs a kernel
+   DRM display driver we don't have (would replace our fbcon console).
+2. GPU HANGS: Linux hits them too — it has a drm_sched GPU scheduler with per-job timeouts that
+   calls v3d_reset (the TOP_GR_BRIDGE + GFXH-1383 sequence we mirror) and reschedules. So reset-on-
+   hang IS the Linux answer (= our drop-frame+reset). Linux hangs RARELY because the whole stack
+   is mature: correct coherency, IRQ-driven unbounded overflow, no QRMAXCNT clobber.
+3. META: we have NO kernel DRM driver — our in-process userspace winsys pokes V3D MMIO/MMU/submit
+   directly, reimplementing the v3d kernel driver's job. The fixes here PORT Linux's disciplines
+   (page-flip=KMS buffering, 32 MiB spill~=unbounded overflow, leave-MISCCFG-alone, true-reset=
+   scheduler reset, per-job L2T-flush+slice-invalidate = v3d_invalidate_caches on 4.2).
 
 (Earlier rung — DOUBLE-buffer — left a deferred-flip race: SET_VIRTUAL_OFFSET latches at vsync, so
 2 buffers could briefly resolve into a still-scanned-out buffer. Triple-buffer closes it.)
