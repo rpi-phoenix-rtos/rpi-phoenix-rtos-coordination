@@ -50,6 +50,7 @@ extern int v3d_phoenix_scanout_active(void);
 /* GL context/FBO helpers (pl_phoenix_glctx.c) — plain C API, no Quake/Mesa types. */
 int  qsv3d_init(int w, int h);
 void qsv3d_make_current(void);
+int  qsv3d_resolve(void);   /* color-only GPU blit: DRAM render FBO -> scanout fb (returns 1 if active) */
 
 #define VID_W 1920
 #define VID_H 1080
@@ -462,14 +463,16 @@ void GL_EndRendering(void)
 	ts_b = Sys_DoubleTime();
 
 	if (v3d_phoenix_scanout_active()) {
-		/* RENDER-TO-SCANOUT: the GPU rendered straight to the displayed framebuffer (its
-		 * RT BO is backed by the scanout PA); the per-submit SLCACTL + L2T flush already
-		 * pushed the stores to DRAM. No CPU readback / blit / fb0 write — the frame is
-		 * on screen. Render-thread cost is glFinish alone. The frame lands UPRIGHT because
-		 * Mesa rasterizes y-flipped (fb_orientation Y_0_TOP, st_atom_framebuffer.c) for the
-		 * y-down HDMI scanout, with winding compensated by glFrontFace(GL_CCW) below. */
+		/* RESOLVE-TO-SCANOUT: Quake rendered the depth-tested frame into a DRAM color RT (off
+		 * the live fb, so the depth-output pipeline never contended with the HVS display reads
+		 * that caused the intermittent wedge). Now a color-only GPU blit resolves it to the
+		 * scanout fb — no depth FIFO, one light streaming pass, so it cannot hit that stall, and
+		 * still no CPU readback. The frame lands UPRIGHT: both FBOs are full-screen so Mesa
+		 * forced Y_0_TOP on both, and the (0..h)->(0..h) blit copies verbatim onto the y-down
+		 * scanout, with winding compensated by glFrontFace(GL_CCW) below. */
+		qsv3d_resolve();
 		ts_c = ts_b;
-		ts_d = ts_b;
+		ts_d = Sys_DoubleTime();
 	}
 	else {
 		/* Fallback (scanout unavailable): copy the FBO out and present via the CPU pipeline. */
