@@ -98,8 +98,15 @@
  * pool need grows with tile count: 1024x768 (~192 tiles) never overflowed, but
  * 1920x1080 (~510 tiles) does. We pre-allocate one generous pool at init and arm it
  * on the first OUTOMEM of each job (Quake's per-frame overflow stays well under this). */
-#define BINOVF_PAGES        1024u     /* 4 MiB persistent binner-overflow pool */
-#define BINOVF_CHUNK_BYTES  (256u*4096u)  /* 1 MiB hand-out per OUTOMEM event (re-armable servicer) */
+/* Binner overflow (spill) pool. The binner spills per-tile primitive lists here when Mesa's
+ * initial tile_alloc (CT0QMA/QMS) is exhausted; a complex 1080p frame can need many MiB. Linux
+ * allocates a FRESH 256 KiB BO per OUTOMEM event, UNBOUNDED (v3d_overflow_mem_work) — our prior
+ * 4 MiB fixed pool was too small, so a heavy scene exhausted it and the binner wedged EVERY frame
+ * (OUTOMEM|SPILLUSE, ovf_armed=exhausted, ~3 fps). 64 MiB covers far more; the servicer hands the
+ * whole remaining pool on the first OUTOMEM so the binner has it all at once. (A truly pathological
+ * frame exceeding 64 MiB would still need Linux-style unbounded fresh allocation — logged.) */
+#define BINOVF_PAGES        8192u     /* 32 MiB persistent binner-overflow/spill pool (8x the old 4 MiB) */
+#define BINOVF_CHUNK_BYTES  (BINOVF_PAGES * 4096u)  /* hand the whole pool on the first OUTOMEM */
 #define CTL_MISCCFG         0x0018u
 #define MISCCFG_OVRTMUOUT   (1u<<0)
 
