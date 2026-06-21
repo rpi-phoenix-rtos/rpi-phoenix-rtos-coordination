@@ -55,7 +55,43 @@ cold-power-on artifact:
 4. **Enriched BIN-TIMEOUT dump**: PTB bpca/bpcs/bpoa/bpos + GMP + int_qpu bits.
 5. Defensive (no-op here, matches Linux): set HUB_AXICFG=MAX_LEN in apply_core_regs.
 
-## Next rungs if the flush fix is insufficient
+## RESOLUTION (2026-06-21): root cause localized to a HW-marginal depth-pipeline drain stall; mitigation hardened
+
+Instrument-validated wedge dump (full RCL dump + per-address BO handle/base/offset + multi-match
+detector) settled it decisively:
+- **RCLSTART** rcl_start → single BO, off=0x0 (no offset bug, no wrong-BO; OVERLAP detector silent).
+- **RCLFULL** the RCL is COMPLETE + VALID (0x79 config head, 0x7c TILE_COORDINATES, 0x17
+  SUPERTILE iteration) and **byte-identical** to a CLEAN frame's RCL head (8/8) — config is the
+  SAME on rendering vs wedging frames, so NOT a config/EZ/offset bug.
+- **WEDGECA** ct1ca is in the VALID per-tile sublist BO (CT1 correctly branched out of the RCL).
+- **fdbgs=0x000350ef** decoded vs external/linux v3d_regs.h = QXYF_FIFO_OP_VALID (valid frag work
+  queued) + XYNRM_IP_STALL + **DEPTHO_FIFO_IP_STALL (depth OUTPUT)** + INTERPZ_IP_STALL + full
+  EZTEST backup. The depth-output/interp-Z stages won't drain → whole fragment pipeline backs up.
+
+Root cause = a **content-triggered HW depth/fragment-pipeline drain stall** on complex geometry
+under the **render-to-scanout** path (the full-screen color RT forced RASTER + backed by the
+UNCACHED HDMI framebuffer). Corroborated as part of the broader V3D RT **coherency wall** the port
+already documented (v3d_resource.c: "making a GPU-rendered RT BO CPU-cacheable HANGS THE GPU after
+the first cacheable readback — a coherency wall"). The existing Phoenix EZ-disable fix
+(v3dx_draw.c) addresses a DISTINCT early-Z *input* hang; this is the depth *output* stage, which
+EZ-disable does not cover. Ruled OUT by reading the upstream diff: no depth-config divergence
+(depth stays tiled/uncached; only the COLOR RT diverges, gated on PIPE_BIND_RENDER_TARGET).
+
+**Mitigation hardened (the deliverable):** on a wedge, do ONE true reset (asbStop + assert RSTN +
+power-on + re-apply core regs) to clean the wedged core for the NEXT (different) frame, and DROP
+the current frame — NO re-submit (re-submitting the same data re-hangs, HW-confirmed, so it would
+only stack another multi-second spin-timeout). Converts a wedge from a multi-second freeze into a
+single dropped frame. Remaining hitch is dominated by the ~2.5 s detection spin-timeout; tuning it
+down (toward the heaviest legit frame time, ~100 ms) is a follow-up that needs the worst-case
+legit frame measured to avoid false-positive drops.
+
+## Next rungs (root cause is HW-marginal; these are perf/robustness follow-ups, not blockers)
+- Tune the wedge-detection spin-timeout down (measure the heaviest legit Quake frame first).
+- The real fix would keep render-to-scanout but avoid the uncached-linear-store pressure that
+  triggers the depth-FIFO stall (e.g. tiled render + a GPU tile-store-to-linear resolve, or a
+  cacheable scanout with proper invalidate) — both interact with the documented RT coherency wall.
+
+## (historical) Next rungs if the flush fix is insufficient
 - Faster mitigation: drop SUBMIT_MAX_RETRIES (same-data re-hangs, so 3 retries just delay the
   skip) → 1 quick retry then skip the frame = shorter hitch.
 - TOP_GR_BRIDGE_SW_INIT reset rung (need the bridge physical base on BCM2711).

@@ -333,6 +333,19 @@ static int ioc_create_bo(struct drm_v3d_create_bo *c)
 			"Grow GPUVA_PT_PAGES or check for a BO leak.\n", pages, (GPUVA_PT_PAGES*4u));
 		return -ENOMEM;
 	}
+	/* VA-collision detector (render-stall probe, task #13): behavior-neutral check for two LIVE
+	 * BOs overlapping the same GPU VA — the only aliasing that could overwrite a live RCL/tile-
+	 * list with another BO's content. If any PTE in the new range is already VALID, a previous
+	 * BO is still mapped there. Logged, not fixed, so a wedge log can be correlated with a real
+	 * collision (vs the fdbgs=EZTEST drain-stall reading, which implies NO corruption). */
+	for (uint32_t i = 0; i < pages; i++) {
+		if (W.pt[(gpuva>>PAGE_SHIFT)+i] & PTE_V) {
+			fprintf(stderr, "v3d-winsys: VA COLLISION new handle gpuva=0x%x page %u already "
+				"mapped (PTE=0x%08x) — live-BO overlap\n",
+				gpuva, i, W.pt[(gpuva>>PAGE_SHIFT)+i]);
+			break;
+		}
+	}
 	/* A SCANOUT BO (flags bit 1 = V3D_CREATE_BO_SCANOUT, set by Mesa for the
 	 * full-screen render target) is backed by the HDMI framebuffer's physical pages
 	 * instead of fresh DRAM: the GPU raster-stores straight to the displayed surface
@@ -432,6 +445,29 @@ static void *gpuva_to_cpu(uint32_t gpuva)
 	return NULL;
 }
 
+/* Instrument-validation probe (render-stall, task #13): log EVERY live BO whose VA range
+ * contains gpuva — handle, base, size, and (gpuva-base). If >1 matches, gpuva_to_cpu's
+ * first-match is ambiguous and any "head is zero" reading is a WRONG-BO artifact (overlapping
+ * VA ranges in the BO table even with disjoint PTEs) rather than a real RCL-offset bug. */
+static void gpuva_describe(const char *label, uint32_t gpuva)
+{
+	unsigned matches = 0;
+	for (uint32_t i = 0; i < W.nbos; i++) {
+		struct pbo *b = &W.bos[i];
+		if (b->used && b->cpu != NULL && gpuva >= b->gpuva && gpuva < b->gpuva + b->size) {
+			fprintf(stderr, "v3d-winsys: %s gpuva=0x%08x -> BO handle=%u base=0x%08x size=%u "
+				"off=0x%x cpu=%p\n", label, gpuva, b->handle, b->gpuva, b->size,
+				(unsigned)(gpuva - b->gpuva), b->cpu);
+			matches++;
+		}
+	}
+	if (matches == 0)
+		fprintf(stderr, "v3d-winsys: %s gpuva=0x%08x -> NO live BO covers it\n", label, gpuva);
+	else if (matches > 1)
+		fprintf(stderr, "v3d-winsys: %s gpuva=0x%08x -> %u OVERLAPPING BOs (gpuva_to_cpu ambiguous!)\n",
+			label, gpuva, matches);
+}
+
 /* GFXH-1897 (Broadcom erratum, see linux v3d_gem.c v3d_clean_caches): a new L2TCACTL
  * flush must not be issued while a previous L2T flush is still in progress, or the new
  * flush malfunctions — the consumer then reads a stale/transient view. Our submit issues
@@ -524,17 +560,18 @@ void v3d_phoenix_harness_reset(void)
 	apply_core_regs();
 }
 
-#define SUBMIT_MAX_RETRIES 3   /* reset+resubmit attempts on a wedged bin/render before giving up */
+/* The wedge is data-dependent (re-submitting the same frame re-hangs across true resets,
+ * HW-confirmed), so the mitigation does NOT re-submit: on a wedge it does ONE true reset to
+ * clean the core for the next (different) frame and drops the current frame. See the job_failed
+ * handling in ioc_submit_cl. */
 
 static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
 {
 	volatile uint32_t *c0 = W.core0;
 	volatile uint32_t *h = W.hub;
 	uint32_t spins;
-	int attempt = 0;        /* reset+resubmit count (render-stall mitigation) */
-	int job_failed;         /* set if bin or render wedged this attempt */
-submit_attempt:
-	job_failed = 0;
+	int job_failed = 0;     /* set if bin or render wedged */
+	int attempt = 0;        /* kept for the timeout-dump "attempt" field (always 0 now: no resubmit) */
 	/* Flush the MMU PTE cache + TLB before the job. ioc_create_bo writes fresh PTEs but
 	 * never invalidated the MMU's cached translations, so a job whose CL/RT BOs were just
 	 * mapped at new GPU VAs (every Quake frame allocates fresh BOs) is fetched through a
@@ -592,6 +629,23 @@ submit_attempt:
 				"hub_axicfg=0x%08x int_qpu=0x%03x\n",
 				c0[PTB_BPCA/4], c0[PTB_BPCS/4], c0[PTB_BPOA/4], c0[PTB_BPOS/4],
 				W.hub[HUB_AXICFG/4], (c0[CTL_INT_STS/4] >> 16) & 0xfffu);
+			/* Instrument-validation probe (same as the render path): which BO backs bcl_start and
+			 * ct0ca, at what offset / ambiguous? + full BCL head dump — head-zero vs wrong-BO. */
+			{
+				static int bdbg = 0;
+				if (bdbg++ < 3) {
+					uint32_t ca0 = c0[0x0110/4];
+					gpuva_describe("BCLSTART", s->bcl_start);
+					gpuva_describe("BINCA", ca0 & ~0xfu);
+					uint32_t bw = (s->bcl_end - s->bcl_start + 3u) / 4u;
+					if (bw > 40u) bw = 40u;
+					uint32_t *bs = (uint32_t *)gpuva_to_cpu(s->bcl_start);
+					fprintf(stderr, "v3d-winsys: BCLFULL gpuva=0x%08x (%u words):", s->bcl_start, bw);
+					if (bs) { for (uint32_t i = 0; i < bw; i++) fprintf(stderr, " %08x", bs[i]); }
+					else { fprintf(stderr, " (no BO)"); }
+					fprintf(stderr, "\n");
+				}
+			}
 		}
 	}
 	/* If the binner wedged, don't kick the render against a bad tile state — reset+retry. */
@@ -618,6 +672,22 @@ submit_attempt:
 	/* --- render (CT1); wait FRDONE --- */
 	c0[CLE_CT1QBA/4]=s->rcl_start; c0[CLE_CT1QEA/4]=s->rcl_end;
 	for (spins=16000000u; spins && !(c0[CTL_INT_STS/4]&INT_FRDONE); spins--) {}
+	/* Clean-frame RCL structure probe (render-stall A/B, task #13): periodically dump the SAME
+	 * locations the wedge dump reads (rcl head + tail) on a SUCCESSFUL render. If a clean RCL is
+	 * structurally identical to a wedged one, the RCL BO is NOT corrupted and the wedge is a
+	 * pipeline-drain stall (fdbgs=EZTEST), not CL/VA corruption. Read-only + throttled. */
+	if (spins != 0) {
+		static unsigned ok_n = 0;
+		if ((ok_n++ % 256u) == 0u) {
+			uint32_t *hp = (uint32_t *)gpuva_to_cpu(s->rcl_start & ~0xfu);
+			uint32_t *tp = (uint32_t *)gpuva_to_cpu((s->rcl_end - 16u) & ~0xfu);
+			fprintf(stderr, "v3d-winsys: CLEAN RCL head gpuva=0x%08x:", s->rcl_start & ~0xfu);
+			if (hp) { for (int i=0;i<8;i++) fprintf(stderr, " %08x", hp[i]); } else fprintf(stderr, " (no BO)");
+			fprintf(stderr, "  tail gpuva=0x%08x:", (s->rcl_end-16u)&~0xfu);
+			if (tp) { for (int i=0;i<8;i++) fprintf(stderr, " %08x", tp[i]); } else fprintf(stderr, " (no BO)");
+			fprintf(stderr, "\n");
+		}
+	}
 	if (spins == 0) {
 		uint32_t ca1 = c0[0x0114/4];
 		v3d_phoenix_render_timeouts++;   /* stall counter for the repro harness */
@@ -652,40 +722,44 @@ submit_attempt:
 		{
 			static int dbgn = 0;
 			if (dbgn++ < 3) {
-				uint32_t caw = ca1 & ~0xfu;
-				uint32_t *rp = (uint32_t *)gpuva_to_cpu((s->rcl_end - 16u) & ~0xfu);
-				uint32_t *cp = (uint32_t *)gpuva_to_cpu(caw);
-				fprintf(stderr, "v3d-winsys: RCLTAIL gpuva=0x%08x cpu=%p:", (s->rcl_end-16u)&~0xfu, (void*)rp);
-				if (rp) { for (int i = 0; i < 8; i++) fprintf(stderr, " %08x", rp[i]); }
+				/* Instrument validation: which BO backs rcl_start and ct1ca, at what offset,
+				 * and are the ranges ambiguous? Resolves "head is zero" to either WRONG-BO
+				 * artifact (overlap/multi-match) or a real rcl_start-vs-content offset bug. */
+				gpuva_describe("RCLSTART", s->rcl_start);
+				gpuva_describe("WEDGECA", ca1 & ~0xfu);
+				/* Full RCL dump from rcl_start (bounded): shows exactly where valid packets begin
+				 * relative to rcl_start — head-missing vs offset-shifted vs all-valid. */
+				uint32_t rcl_words = (s->rcl_end - s->rcl_start + 3u) / 4u;
+				if (rcl_words > 40u) rcl_words = 40u;
+				uint32_t *rs = (uint32_t *)gpuva_to_cpu(s->rcl_start);
+				fprintf(stderr, "v3d-winsys: RCLFULL gpuva=0x%08x (%u words):", s->rcl_start, rcl_words);
+				if (rs) { for (uint32_t i = 0; i < rcl_words; i++) fprintf(stderr, " %08x", rs[i]); }
 				else { fprintf(stderr, " (no BO)"); }
-				fprintf(stderr, "\n");
-				fprintf(stderr, "v3d-winsys: WEDGEAT gpuva=0x%08x cpu=%p:", caw, (void*)cp);
-				if (cp) { for (int i = 0; i < 8; i++) fprintf(stderr, " %08x", cp[i]); }
-				else { fprintf(stderr, " (no BO covers ct1ca -> unmapped/freed tile-list pointer)"); }
 				fprintf(stderr, "\n");
 			}
 		}
 	}
 job_retry:
-	/* MITIGATION + probe: if the bin or render wedged, reset the V3D and re-submit the SAME
-	 * job. A reboot is known to clear this stall; an in-process reset that also clears it turns
-	 * the otherwise-fatal first-frame wedge into a sub-second hitch (playable flagship even with
-	 * the root cause unfound), and proves the failing state is software-reset-reachable. */
+	/* MITIGATION. The wedge is a HW-marginal fragment/depth-pipeline drain stall (fdbgs shows
+	 * DEPTHO_FIFO/INTERPZ stalled with valid work queued) triggered by specific complex
+	 * geometry under the render-to-scanout (RASTER+uncached) store — part of the V3D RT
+	 * coherency wall this port has hit several ways. It is NOT corruption/aliasing/cold-state
+	 * (all ruled out via the instrument-validated wedge dump: valid RCL, single-match BOs).
+	 *
+	 * Recovery strategy: the wedge is DATA-dependent — re-submitting the SAME frame re-hangs
+	 * at the same ct1ca/ct0ca across true resets (HW-confirmed). So do NOT burn another
+	 * multi-second spin-timeout re-running known-bad work. Instead do ONE true reset (asbStop +
+	 * assert RSTN + power-on + re-apply core regs), which clears the wedged core so the NEXT
+	 * (different) frame renders, and DROP this frame. That converts a wedge from a multi-second
+	 * re-submit freeze into a single dropped frame — the difference between unplayable and
+	 * playable. (Earlier code re-submitted up to SUBMIT_MAX_RETRIES times, stacking timeouts.) */
 	if (job_failed) {
-		if (attempt < SUBMIT_MAX_RETRIES) {
-			attempt++;
-			fprintf(stderr, "v3d-winsys: GPU wedged — reset + resubmit (attempt %d/%d)\n",
-				attempt, SUBMIT_MAX_RETRIES);
-			reset_reinit_core();
-			goto submit_attempt;
-		}
-		fprintf(stderr, "v3d-winsys: GPU still wedged after %d resets — giving up this frame\n",
-			attempt);
-	}
-	else if (attempt > 0) {
 		v3d_phoenix_render_recoveries++;
-		fprintf(stderr, "v3d-winsys: RECOVERED after %d reset(s) (recoveries=%u)\n",
-			attempt, v3d_phoenix_render_recoveries);
+		fprintf(stderr, "v3d-winsys: GPU wedged — true reset + drop this frame "
+			"(mitigation; drops=%u). Wedge is HW-marginal depth-pipeline drain stall.\n",
+			v3d_phoenix_render_recoveries);
+		reset_reinit_core();   /* clean the wedged core so the next (different) frame renders */
+		(void)attempt;
 	}
 	/* L2T flush so RT stores reach RAM before CPU readback (scout finding). */
 	l2t_flush_wait(c0);                       /* GFXH-1897: render flush must complete first */
