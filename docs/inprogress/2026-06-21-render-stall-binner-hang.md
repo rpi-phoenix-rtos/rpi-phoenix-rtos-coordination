@@ -115,11 +115,30 @@ Two residuals, both RECOVER via the drop-frame mitigation (rsv-f PROVED it: binn
 - separate BINNER (CT0) wedge (~1-2/7) — NOT fb-contention (binner is all-DRAM; valid BCL,
   coordinate-shader QPUs pending). Distinct mechanism (task #18).
 
-COMPLETE FIX (next rung, more invasive): DOUBLE-BUFFER + page-flip so NO GPU write (render OR
-resolve) ever touches the LIVE fb — render+resolve to an off-screen DRAM buffer, then page-flip the
-display base to it (HVS/mailbox SET_VIRTUAL_OFFSET on a 2x-height fb, or an HVS base-address
-update). Eliminates ALL display contention. Needs fb/display-setup changes (rpi4-fb page-flip
-devctl + plo 2x fb) — flagged for an attended decision.
+COMPLETE FIX — DONE + HW-VALIDATED (triple-buffer page-flip):
+- plo allocates a 3x-virtual-height fb (2nd call computes 3x from the GRANTED physical, since the
+  firmware overrides the requested resolution); guarded + degrades to 2x/1x.
+- config.txt: gpu_mem=128 + max_framebuffer_height=4096 (BOTH needed — 76 only fit 2x, and the
+  default ~2560 height cap limited the grant to 2 buffers even with more memory). Firmware then
+  grants virt_h=3240 -> 3 buffers.
+- winsys scanout_init detects the granted buffer count (virt_h/phys_h, cap 3); backs the 1st/2nd/3rd
+  scanout RT with buffer 0/1/2; v3d_phoenix_flip pans the display (SET_VIRTUAL_OFFSET).
+- qsv3d: N scanout FBOs + a DRAM render FBO; renders depth-tested geometry to DRAM, blit-resolves
+  (color only) to the back buffer, page-flips, round-robins. With 3 buffers the resolve target is
+  always >=2 vsync-latched flips from the scanned-out buffer, so the GPU NEVER writes the displayed
+  buffer -> zero display contention.
+RESULT: TRIPLE-BUFFER active (n=3 resolve=1), **0 render/bin wedges over 95 FPS-samples (~190s)**,
+correct display (HDMI: dungeon + Quake sigil + HUD, upright, no tearing), ~30 fps median (max 39).
+The progression: render-to-scanout (~40% boots wedge) -> blit-resolve (frequent->rare) -> double-
+buffer (~1 render wedge/boot, recovered) -> TRIPLE-buffer (0 render wedges).
+
+NOTE: a SEPARATE binner (CT0) wedge (task #18) is independent of display contention and can still
+storm on a rare boot (observed once: 146 bin timeouts -> 1.5 fps, all recovered by the drop-frame
+mitigation but the boot was effectively stuck). That is NOT the render-to-scanout stall this fix
+eliminates; it needs its own root-cause (vertex coherency / tile_alloc / binner-QPU errata).
+
+(Earlier rung — DOUBLE-buffer — left a deferred-flip race: SET_VIRTUAL_OFFSET latches at vsync, so
+2 buffers could briefly resolve into a still-scanned-out buffer. Triple-buffer closes it.)
 
 REWORK design — decouple the depth-using render from the live fb:
 - Quake renders depth-tested geometry to a DRAM color RT (RASTER, no scanout backing) — proven
