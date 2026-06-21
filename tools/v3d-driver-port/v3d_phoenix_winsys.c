@@ -31,7 +31,18 @@
 #define MMU_PT_PA_BASE      0x1204u
 #define MMU_CTL             0x1200u
 #define MMU_CTL_ENABLE      (1u<<0)
-#define MMU_CTL_PTI_ABORT   (1u<<19)
+#define MMU_CTL_PTI_ABORT   (1u<<19)   /* = PT_INVALID_ABORT */
+/* Full MMU fault config (mirror linux v3d_mmu_set_page_table). Our prior config set ABORT
+ * without PT_INVALID_ENABLE, so PT-invalid detection was effectively OFF — an illegal/unmapped
+ * access was neither aborted nor reported (it could hang). Enable detection + abort + INT for
+ * PT-invalid, write-violation and cap-exceeded, and arm a scratch page so an illegal access is
+ * redirected to harmless memory instead of hanging. */
+#define MMU_CTL_PTI_ENABLE      (1u<<16)
+#define MMU_CTL_PTI_INT         (1u<<18)
+#define MMU_CTL_WRITEVIO_ABORT  (1u<<11)
+#define MMU_CTL_WRITEVIO_INT    (1u<<10)
+#define MMU_CTL_CAPEXC_ABORT    (1u<<26)
+#define MMU_CTL_CAPEXC_INT      (1u<<25)
 #define MMUC_CONTROL        0x1000u
 #define MMUC_ENABLE         (1u<<0)
 #define MMUC_FLUSH          (1u<<1)    /* flush the MMU PTE cache */
@@ -88,6 +99,7 @@
  * 1920x1080 (~510 tiles) does. We pre-allocate one generous pool at init and arm it
  * on the first OUTOMEM of each job (Quake's per-frame overflow stays well under this). */
 #define BINOVF_PAGES        1024u     /* 4 MiB persistent binner-overflow pool */
+#define BINOVF_CHUNK_BYTES  (256u*4096u)  /* 1 MiB hand-out per OUTOMEM event (re-armable servicer) */
 #define CTL_MISCCFG         0x0018u
 #define MISCCFG_OVRTMUOUT   (1u<<0)
 
@@ -125,6 +137,7 @@ struct pbo {            /* Phoenix BO */
 	uint32_t gpuva;     /* assigned V3D virtual address (= drm offset) */
 	uint32_t size;
 	int      used;      /* slot in use (freed by GEM_CLOSE -> reusable) */
+	int      scanout;   /* this BO aliases the scanout surface (clear W.scanout_claimed on close) */
 };
 
 /* Freed GPU-VA range, available for reuse. Without this the GPU VA + the BO slot
@@ -148,6 +161,8 @@ static struct {
 	uint32_t next_gpuva;
 	uint32_t binovf_gpuva;    /* persistent binner-overflow pool GPU VA (0 = none) */
 	uint32_t binovf_bytes;    /* its size in bytes */
+	uint32_t binovf_used;     /* bytes of the pool handed out this job (re-armable overflow) */
+	uintptr_t scratch_pa;     /* MMU illegal-access scratch page PA (0 = none); redirects faults */
 	uint32_t scanout_pa;      /* HDMI framebuffer physical addr (0 = unavailable) */
 	uint32_t scanout_bytes;   /* its byte size (pitch*height) */
 	int      scanout_claimed; /* only one BO may alias the single scanout surface */
@@ -204,6 +219,17 @@ static int winsys_init(void)
 	if (W.pt==MAP_FAILED) return -ENOMEM;
 	W.pt_pa = (uintptr_t)va2pa((void*)W.pt);
 	for (uint32_t i=0;i<GPUVA_PT_ENTRIES;i++) W.pt[i]=0;
+	/* MMU illegal-access scratch page (linux v3d mmu_scratch): one harmless page the MMU
+	 * redirects faulting accesses to, armed via MMU_ILLEGAL_ADDR in apply_core_regs. Without it
+	 * an illegal access has nowhere to land and can stall the bus. */
+	{
+		void *sp = mmap(NULL, _PAGE_SIZE, PROT_READ|PROT_WRITE,
+			MAP_UNCACHED|MAP_CONTIGUOUS|MAP_ANONYMOUS, -1, 0);
+		if (sp != MAP_FAILED) {
+			memset(sp, 0, _PAGE_SIZE);
+			W.scratch_pa = (uintptr_t)va2pa(sp);
+		}
+	}
 	/* NOTE: assumes V3D already powered on (rpi4-v3d-scout v3d_powerOn sequence). */
 	/* MMU base/enable, MMUC, + general-L2 clear+enable. The L2C enable mirrors linux
 	 * v3d_init_core (L2CACTL = L2CCLR|L2CENA): the QPUs fetch shader instructions/uniforms
@@ -415,6 +441,7 @@ static int ioc_create_bo(struct drm_v3d_create_bo *c)
 	b->used = 1;
 	b->handle = slot + 1;       /* nonzero, stable per slot */
 	b->cpu = cpu; b->pa = pa; b->gpuva = gpuva; b->size = pages*_PAGE_SIZE;
+	b->scanout = (W.scanout_pa != 0 && pa == W.scanout_pa);   /* this BO aliases the scanout fb */
 	c->handle = b->handle;
 	c->offset = gpuva;          /* V3D address-space offset (nonzero) */
 	return 0;
@@ -425,6 +452,13 @@ static int ioc_close_bo(struct drm_gem_close *gc)
 {
 	struct pbo *b = bo_find(gc->handle);
 	if (b == NULL) return 0;   /* already gone / never ours */
+	/* If the scanout-backed RT is being freed, release the single-claim so the NEXT full-screen
+	 * RT can re-acquire scanout backing. Without this, a freed+realloc'd RT silently fell back to
+	 * plain DRAM while the present path still expected render-to-scanout -> a frozen screen. */
+	if (b->scanout) {
+		W.scanout_claimed = 0;
+		b->scanout = 0;
+	}
 	va_free(b->gpuva, b->size / _PAGE_SIZE);
 	if (b->cpu != NULL) munmap(b->cpu, b->size);
 	b->used = 0;
@@ -489,7 +523,17 @@ static inline void l2t_flush_wait(volatile uint32_t *c0)
 static void apply_core_regs(void)
 {
 	W.hub[MMU_PT_PA_BASE/4] = (uint32_t)(W.pt_pa>>PAGE_SHIFT);
-	W.hub[MMU_CTL/4] = MMU_CTL_ENABLE|MMU_CTL_PTI_ABORT;
+	/* Full MMU fault config (mirror linux v3d_mmu_set_page_table): enable PT-invalid detection
+	 * (not just abort), write-violation and cap-exceeded aborts+INTs. Our prior config set ABORT
+	 * without the matching ENABLE, leaving detection effectively off so an illegal access could
+	 * hang silently. */
+	W.hub[MMU_CTL/4] = MMU_CTL_ENABLE | MMU_CTL_PTI_ENABLE | MMU_CTL_PTI_ABORT | MMU_CTL_PTI_INT |
+		MMU_CTL_WRITEVIO_ABORT | MMU_CTL_WRITEVIO_INT |
+		MMU_CTL_CAPEXC_ABORT | MMU_CTL_CAPEXC_INT;
+	/* Arm the illegal-access scratch page: a faulting GPU access is redirected here (harmless
+	 * mapped DRAM) instead of stalling the bus — and MMU_ILLEGAL_ADDR then reports the fault. */
+	if (W.scratch_pa)
+		W.hub[MMU_ILLEGAL_ADDR/4] = (uint32_t)(W.scratch_pa>>PAGE_SHIFT) | MMU_ILLEGAL_ENABLE;
 	W.hub[MMUC_CONTROL/4] = MMUC_ENABLE;
 	W.core0[CTL_L2CACTL/4] = L2CACTL_L2CCLR | L2CACTL_L2CENA;
 	/* Define the L2T flush range as the WHOLE cache (mirrors linux v3d_init_core:
@@ -572,6 +616,7 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
 	uint32_t spins;
 	int job_failed = 0;     /* set if bin or render wedged */
 	int attempt = 0;        /* kept for the timeout-dump "attempt" field (always 0 now: no resubmit) */
+	W.binovf_used = 0;      /* re-armable binner overflow: reset the per-job hand-out cursor */
 	/* Flush the MMU PTE cache + TLB before the job. ioc_create_bo writes fresh PTEs but
 	 * never invalidated the MMU's cached translations, so a job whose CL/RT BOs were just
 	 * mapped at new GPU VAs (every Quake frame allocates fresh BOs) is fetched through a
@@ -611,12 +656,27 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
 		for (spins=8000000u; spins; spins--) {
 			sts = c0[CTL_INT_STS/4];
 			if (sts & INT_FLDONE) break;
-			if ((sts & INT_OUTOMEM) && !ovf_armed && W.binovf_gpuva) {
-				c0[PTB_BPOA/4] = W.binovf_gpuva;
-				c0[PTB_BPOS/4] = W.binovf_bytes;
-				c0[CTL_INT_CLR/4] = INT_OUTOMEM;
-				ovf_armed = 1;
-				frozen = 0; last_ca = c0[0x0110/4];   /* binner just re-armed; restart frozen window */
+			/* Re-armable overflow servicer (was single-shot !ovf_armed, which STARVED the binner
+			 * on a 2nd OUTOMEM in one job — linux hands a fresh block per event). Hand successive
+			 * chunks of the persistent pool on each OUTOMEM until it is exhausted; a frame needing
+			 * more than the whole pool logs that it ran dry (a real wedge cause worth growing the
+			 * pool for). OUTOMEM is edge-signalled, so clear it after each hand-out. */
+			if ((sts & INT_OUTOMEM) && W.binovf_gpuva) {
+				if (W.binovf_used < W.binovf_bytes) {
+					uint32_t chunk = W.binovf_bytes - W.binovf_used;
+					if (chunk > BINOVF_CHUNK_BYTES) chunk = BINOVF_CHUNK_BYTES;
+					c0[PTB_BPOA/4] = W.binovf_gpuva + W.binovf_used;
+					c0[PTB_BPOS/4] = chunk;
+					c0[CTL_INT_CLR/4] = INT_OUTOMEM;
+					W.binovf_used += chunk;
+					ovf_armed = 1;
+					frozen = 0; last_ca = c0[0x0110/4];   /* binner just re-armed; restart frozen window */
+				}
+				else if (ovf_armed != 2) {
+					ovf_armed = 2;   /* pool exhausted — record once; binner will wedge */
+					fprintf(stderr, "v3d-winsys: binner overflow pool EXHAUSTED (%u KiB) — grow BINOVF_PAGES\n",
+						W.binovf_bytes / 1024u);
+				}
 			}
 			if ((spins & 0xfffffu) == 0u) {            /* sample ct0ca ~every 1M spins (~160 ms) */
 				uint32_t ca = c0[0x0110/4];
