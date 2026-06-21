@@ -32,9 +32,12 @@ extern unsigned char _mesa_make_current(struct gl_context *ctx,
                                         struct gl_framebuffer *readFb);
 
 /* winsys (v3d_phoenix_winsys.c): one-shot request that the NEXT BO be backed by the scanout fb,
- * and a query of whether the single scanout surface has been claimed. */
+ * a query of whether the scanout surface was claimed, whether DOUBLE-BUFFER+page-flip is active,
+ * and the page-flip itself (display buffer 0 or 1). */
 extern void v3d_phoenix_set_next_scanout(void);
 extern int  v3d_phoenix_scanout_active(void);
+extern int  v3d_phoenix_scanout_double(void);
+extern void v3d_phoenix_flip(int buf);
 
 static struct st_context *g_st = NULL;
 
@@ -45,8 +48,10 @@ static struct st_context *g_st = NULL;
  * (+ depth), then a per-frame COLOR-ONLY GPU blit resolves that to the scanout fb. The blit has
  * no depth FIFO and is a single light streaming pass, so it cannot hit the stall. */
 static GLuint g_render_fbo  = 0;     /* DRAM color+depth FBO — Quake renders here (no fb contention) */
-static GLuint g_scanout_fbo = 0;     /* scanout-fb-backed color FBO — blit-resolve destination */
-static int    g_resolve     = 0;     /* 1 = 2-FBO blit-resolve path active (scanout fb claimed) */
+static GLuint g_scanout_fbo[2] = {0, 0}; /* scanout-fb-backed color FBO(s) — blit-resolve target(s) */
+static int    g_resolve     = 0;     /* 1 = blit-resolve path active (scanout fb claimed) */
+static int    g_double      = 0;     /* 1 = double-buffer + page-flip (two scanout FBOs) */
+static int    g_back        = 0;     /* double-buffer: which scanout buffer to resolve into next (0/1) */
 static int    g_w = 0, g_h = 0;
 
 /* Bind the DRAM render FBO. Quake renders to the "default" framebuffer (0), incomplete on a
@@ -65,11 +70,22 @@ int qsv3d_resolve(void)
 {
 	if (!g_resolve)
 		return 0;
+	/* DOUBLE-BUFFER: resolve into the OFF-screen (back) buffer, then page-flip the display to it.
+	 * The previously-displayed buffer becomes the next back buffer — so the GPU never writes the
+	 * buffer currently being scanned out (zero display contention -> the depth/fragment-pipeline
+	 * stall cannot occur, eliminating ALL render-to-scanout wedges, not just the depth one).
+	 * SINGLE-BUFFER fallback: in-place blit-resolve to the one scanout fb (still lighter than the
+	 * depth-tested render, but contends — see g_double==0 path). */
+	int dst = g_double ? g_back : 0;
 	glBindFramebuffer(GL_READ_FRAMEBUFFER, g_render_fbo);
-	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, g_scanout_fbo);
+	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, g_scanout_fbo[dst]);
 	glBlitFramebuffer(0, 0, g_w, g_h, 0, 0, g_w, g_h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
 	glBindFramebuffer(GL_FRAMEBUFFER, g_render_fbo);   /* restore for the next frame */
-	glFinish();
+	glFinish();                                        /* resolve must complete before the flip */
+	if (g_double) {
+		v3d_phoenix_flip(g_back);   /* display the buffer we just resolved into */
+		g_back ^= 1;                /* next frame resolves into the other (now off-screen) buffer */
+	}
 	return 1;
 }
 
@@ -103,21 +119,29 @@ int qsv3d_init(int w, int h)
 
 	g_w = w; g_h = h;
 
-	/* SCANOUT destination FBO FIRST: set_next_scanout() makes its color renderbuffer claim the
-	 * single scanout surface (the HDMI fb). Created before the render FBO so the render FBO's
-	 * color falls to plain DRAM. No depth attachment — it is only a blit target. */
+	/* SCANOUT destination FBO(s) FIRST: set_next_scanout() makes each color renderbuffer claim a
+	 * scanout buffer (the winsys hands buffer 0 then buffer 1). Created before the render FBO so
+	 * the render FBO's color falls to plain DRAM. In DOUBLE-BUFFER mode we make TWO (one per fb
+	 * buffer) and page-flip between them; in single-buffer mode one (in-place blit-resolve). No
+	 * depth attachment — they are only blit targets. */
+	g_double = v3d_phoenix_scanout_double();
 	{
-		GLuint rbScan = 0;
-		glGenFramebuffers(1, &g_scanout_fbo);
-		glBindFramebuffer(GL_FRAMEBUFFER, g_scanout_fbo);
-		glGenRenderbuffers(1, &rbScan);
-		glBindRenderbuffer(GL_RENDERBUFFER, rbScan);
-		v3d_phoenix_set_next_scanout();   /* the next RT alloc claims the scanout fb */
-		glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, w, h);
-		glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, rbScan);
+		int n = g_double ? 2 : 1;
+		for (int i = 0; i < n; i++) {
+			GLuint rbScan = 0;
+			glGenFramebuffers(1, &g_scanout_fbo[i]);
+			glBindFramebuffer(GL_FRAMEBUFFER, g_scanout_fbo[i]);
+			glGenRenderbuffers(1, &rbScan);
+			glBindRenderbuffer(GL_RENDERBUFFER, rbScan);
+			v3d_phoenix_set_next_scanout();   /* the next RT alloc claims scanout buffer i */
+			glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, w, h);
+			glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, rbScan);
+		}
 		g_resolve = v3d_phoenix_scanout_active();   /* did the fb get claimed? */
-		printf("qsv3d: scanout FBO %dx%d resolve=%d (scanout %s)\n",
-		       w, h, g_resolve, g_resolve ? "claimed" : "unavailable -> CPU-present fallback");
+		printf("qsv3d: scanout FBO(s) %dx%d n=%d resolve=%d double=%d (%s)\n",
+		       w, h, n, g_resolve, g_double,
+		       g_resolve ? (g_double ? "double-buffer+page-flip" : "single blit-resolve")
+		                 : "unavailable -> CPU-present fallback");
 	}
 
 	/* RENDER FBO: DRAM color + depth. Quake renders depth-tested geometry here, off the live fb
@@ -144,8 +168,10 @@ int qsv3d_init(int w, int h)
 	glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 	if (g_resolve) {
-		glBindFramebuffer(GL_FRAMEBUFFER, g_scanout_fbo);
-		glClear(GL_COLOR_BUFFER_BIT);
+		for (int i = 0; i < (g_double ? 2 : 1); i++) {
+			glBindFramebuffer(GL_FRAMEBUFFER, g_scanout_fbo[i]);
+			glClear(GL_COLOR_BUFFER_BIT);
+		}
 		glBindFramebuffer(GL_FRAMEBUFFER, g_render_fbo);
 	}
 	glFinish();

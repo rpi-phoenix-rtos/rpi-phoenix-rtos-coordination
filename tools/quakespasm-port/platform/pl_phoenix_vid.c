@@ -43,6 +43,7 @@ typedef struct {
 /* winsys (v3d_phoenix_winsys.c): point render-to-scanout at the HDMI framebuffer, and
  * query whether the full-screen RT actually got backed by it. */
 extern void v3d_phoenix_set_scanout(uint32_t pa, uint32_t bytes);
+extern int v3d_phoenix_scanout_init(uint32_t pa, uint32_t w, uint32_t h, uint32_t pitch); /* detects double-buffer */
 extern int v3d_phoenix_scanout_active(void);
 #include <sys/ioctl.h>
 #include <phoenix/fbcon.h>
@@ -269,10 +270,11 @@ void VID_Init(void)
 	if (fbfd >= 0) {
 		rpi4fb_mode_t mode;
 		if (ioctl(fbfd, RPI4FB_GETMODE, &mode) == 0 && mode.framebuffer != 0) {
-			v3d_phoenix_set_scanout((uint32_t)mode.framebuffer, (uint32_t)mode.smemlen);
-			Sys_Printf("VID_Init: scanout fb PA=0x%08x %ux%u pitch=%u size=%u\n",
+			int sc = v3d_phoenix_scanout_init((uint32_t)mode.framebuffer, mode.width, mode.height, mode.pitch);
+			Sys_Printf("VID_Init: scanout fb PA=0x%08x %ux%u pitch=%u size=%u -> %s\n",
 			           (uint32_t)mode.framebuffer, mode.width, mode.height,
-			           mode.pitch, (uint32_t)mode.smemlen);
+			           mode.pitch, (uint32_t)mode.smemlen,
+			           (sc == 2) ? "double-buffer+page-flip" : "single (blit-resolve)");
 		}
 		else {
 			Sys_Printf("VID_Init: RPI4FB_GETMODE failed — render-to-scanout disabled\n");

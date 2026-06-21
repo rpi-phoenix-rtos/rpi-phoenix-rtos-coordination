@@ -163,9 +163,13 @@ static struct {
 	uint32_t binovf_bytes;    /* its size in bytes */
 	uint32_t binovf_used;     /* bytes of the pool handed out this job (re-armable overflow) */
 	uintptr_t scratch_pa;     /* MMU illegal-access scratch page PA (0 = none); redirects faults */
-	uint32_t scanout_pa;      /* HDMI framebuffer physical addr (0 = unavailable) */
-	uint32_t scanout_bytes;   /* its byte size (pitch*height) */
-	int      scanout_claimed; /* only one BO may alias the single scanout surface */
+	uint32_t scanout_pa;      /* HDMI framebuffer physical addr / buffer 0 (0 = unavailable) */
+	uint32_t scanout_pa2;     /* double-buffer: buffer 1 PA (= scanout_pa + pitch*phys_h), else 0 */
+	uint32_t scanout_phys_h;  /* physical (displayed) height — page-flip pans by buffer*phys_h rows */
+	uint32_t scanout_bytes;   /* one buffer's byte size (pitch*phys_h) */
+	int      scanout_double;  /* 1 = double-buffer + page-flip available (plo granted 2x virtual) */
+	int      scanout_claim_idx; /* double-buffer: which buffer the next scanout BO is backed by (0/1) */
+	int      scanout_claimed; /* single-buffer: only one BO may alias the single scanout surface */
 	int      next_scanout;    /* one-shot: back the NEXT ioc_create_bo with the scanout surface
 	                           * (set by a client that can't pass V3D_CREATE_BO_SCANOUT through its
 	                           * own BO-alloc path, e.g. the V3DV present image). Cleared on use. */
@@ -283,6 +287,49 @@ void v3d_phoenix_set_scanout(uint32_t pa, uint32_t bytes)
 	W.scanout_bytes = bytes;
 }
 
+/* Scanout init with double-buffer detection (render-stall complete fix). Given the displayed
+ * framebuffer (pa, w, h, pitch), probe the firmware's granted VIRTUAL height: if plo allocated
+ * >= 2x physical, a second buffer sits at pa + pitch*h and we can page-flip — the GPU renders +
+ * resolves to the OFF-screen buffer and we pan the display to it, so the live (displayed) buffer
+ * is never GPU-written (no display contention -> no depth/fragment-pipeline stall). Returns 2 if
+ * double-buffer is active, 1 if single (caller falls back to the in-place blit-resolve). */
+extern unsigned v3d_phoenix_fb_virtual_height(void);
+int v3d_phoenix_scanout_init(uint32_t pa, uint32_t w, uint32_t h, uint32_t pitch);
+int v3d_phoenix_scanout_init(uint32_t pa, uint32_t w, uint32_t h, uint32_t pitch)
+{
+	(void)w;
+	W.scanout_pa = pa;
+	W.scanout_phys_h = h;
+	W.scanout_bytes = pitch * h;
+	W.scanout_claim_idx = 0;
+	W.scanout_claimed = 0;
+	unsigned vh = v3d_phoenix_fb_virtual_height();
+	if (h != 0u && vh >= 2u * h && pitch != 0u) {
+		W.scanout_pa2 = pa + pitch * h;   /* buffer 1 sits directly below buffer 0 */
+		W.scanout_double = 1;
+	}
+	else {
+		W.scanout_pa2 = 0;
+		W.scanout_double = 0;
+	}
+	fprintf(stderr, "v3d-winsys: scanout init pa=0x%08x %ux%u pitch=%u virt_h=%u -> %s (buf1=0x%08x)\n",
+		pa, w, h, pitch, vh, W.scanout_double ? "DOUBLE-BUFFER+page-flip" : "single (blit-resolve)",
+		W.scanout_pa2);
+	return W.scanout_double ? 2 : 1;
+}
+
+/* Page-flip the display to buffer `buf` (0 or 1). Called after resolving into that buffer. */
+extern void v3d_phoenix_fb_flip(unsigned yoff);
+void v3d_phoenix_flip(int buf);
+void v3d_phoenix_flip(int buf)
+{
+	if (W.scanout_double)
+		v3d_phoenix_fb_flip((buf != 0) ? W.scanout_phys_h : 0u);
+}
+
+int v3d_phoenix_scanout_double(void);
+int v3d_phoenix_scanout_double(void) { return W.scanout_double; }
+
 /* One-shot: request that the NEXT BO created be backed by the scanout surface. Lets a client
  * whose BO-alloc path can't set V3D_CREATE_BO_SCANOUT (e.g. V3DV's vkAllocateMemory for a present
  * image) still get a scanout-backed BO: call this immediately before the allocation. */
@@ -377,29 +424,42 @@ static int ioc_create_bo(struct drm_v3d_create_bo *c)
 	 * instead of fresh DRAM: the GPU raster-stores straight to the displayed surface
 	 * (render-to-scanout), eliminating the per-frame glReadPixels/blit/fb0 CPU copies.
 	 * The scanout PA is physically contiguous, so map it pa+i. */
-	if (((c->flags & 0x2u) || W.next_scanout) && W.scanout_pa && !W.scanout_claimed) {
+	/* Select the scanout buffer this BO should alias, or 0 (not a scanout BO). In DOUBLE-BUFFER
+	 * mode the first scanout RT is backed by buffer 0, the second by buffer 1 (the renderer
+	 * creates two scanout FBOs and page-flips between them); in single-buffer mode only one RT
+	 * may claim the (live) fb. */
+	uint32_t sel_pa = 0;
+	if (((c->flags & 0x2u) || W.next_scanout) && W.scanout_pa) {
+		if (W.scanout_double) {
+			if (W.scanout_claim_idx < 2)
+				sel_pa = (W.scanout_claim_idx == 0) ? W.scanout_pa : W.scanout_pa2;
+		}
+		else if (!W.scanout_claimed) {
+			sel_pa = W.scanout_pa;
+		}
+	}
+	if (sel_pa) {
 		W.next_scanout = 0;
-		/* Back the visible rows with the scanout framebuffer's physical pages so the GPU
-		 * stores straight to screen. The RT BO is a little larger than the fb (V3D stores
-		 * tile-aligned rows — 1088 for a 1080 RT — plus driver padding); those extra rows
-		 * are never displayed, so map them to fresh scratch DRAM (allocated as the BO's CPU
-		 * view) instead of past the end of the fb. */
+		/* Back the visible rows with the scanout buffer's physical pages. The RT BO is a little
+		 * larger than the fb (V3D stores tile-aligned rows — 1088 for a 1080 RT — plus driver
+		 * padding); those extra rows are never displayed, so map them to fresh scratch DRAM. */
 		uint32_t scanout_pages = W.scanout_bytes / _PAGE_SIZE;
 		if (scanout_pages > pages) scanout_pages = pages;
 		cpu = mmap(NULL, pages*_PAGE_SIZE, PROT_READ|PROT_WRITE,
 			MAP_CONTIGUOUS|MAP_UNCACHED|MAP_ANONYMOUS, -1, 0);
 		if (cpu==MAP_FAILED) { va_free(gpuva, pages); return -ENOMEM; }
-		pa = W.scanout_pa;
+		pa = sel_pa;
 		for (uint32_t i=0;i<pages;i++) {
 			uint32_t pfn = (i < scanout_pages)
-				? (W.scanout_pa>>PAGE_SHIFT)+i
+				? (sel_pa>>PAGE_SHIFT)+i
 				: (uint32_t)((uintptr_t)va2pa((char*)cpu + (size_t)i*_PAGE_SIZE) >> PAGE_SHIFT);
 			W.pt[(gpuva>>PAGE_SHIFT)+i] = pfn|PTE_W|PTE_V;
 		}
-		W.scanout_claimed = 1;
-		fprintf(stderr, "v3d-winsys: RT scanout PA 0x%08x gpuva 0x%x, %u/%u pages to scanout "
-			"(%u scratch) — render-to-scanout\n",
-			W.scanout_pa, gpuva, scanout_pages, pages, pages-scanout_pages);
+		fprintf(stderr, "v3d-winsys: RT scanout buf%d PA 0x%08x gpuva 0x%x, %u/%u pages "
+			"(%u scratch) — %s\n", W.scanout_double ? W.scanout_claim_idx : 0, sel_pa, gpuva,
+			scanout_pages, pages, pages-scanout_pages,
+			W.scanout_double ? "double-buffer" : "render-to-scanout");
+		if (W.scanout_double) W.scanout_claim_idx++; else W.scanout_claimed = 1;
 	}
 	else {
 		/* Scanout was requested one-shot but couldn't be honored (already claimed / no PA);
@@ -441,7 +501,8 @@ static int ioc_create_bo(struct drm_v3d_create_bo *c)
 	b->used = 1;
 	b->handle = slot + 1;       /* nonzero, stable per slot */
 	b->cpu = cpu; b->pa = pa; b->gpuva = gpuva; b->size = pages*_PAGE_SIZE;
-	b->scanout = (W.scanout_pa != 0 && pa == W.scanout_pa);   /* this BO aliases the scanout fb */
+	b->scanout = (W.scanout_pa != 0 && (pa == W.scanout_pa ||
+		(W.scanout_pa2 != 0 && pa == W.scanout_pa2)));   /* this BO aliases a scanout buffer */
 	c->handle = b->handle;
 	c->offset = gpuva;          /* V3D address-space offset (nonzero) */
 	return 0;
@@ -456,7 +517,12 @@ static int ioc_close_bo(struct drm_gem_close *gc)
 	 * RT can re-acquire scanout backing. Without this, a freed+realloc'd RT silently fell back to
 	 * plain DRAM while the present path still expected render-to-scanout -> a frozen screen. */
 	if (b->scanout) {
-		W.scanout_claimed = 0;
+		if (W.scanout_double) {
+			if (W.scanout_claim_idx > 0) W.scanout_claim_idx--;
+		}
+		else {
+			W.scanout_claimed = 0;
+		}
 		b->scanout = 0;
 	}
 	va_free(b->gpuva, b->size / _PAGE_SIZE);
@@ -892,7 +958,13 @@ static int ioc_get_param(struct drm_v3d_get_param *gp)
  * (render-to-scanout). The present layer queries this to skip the CPU readback/blit/fb0
  * copies — the GPU already wrote the displayed surface. */
 int v3d_phoenix_scanout_active(void);
-int v3d_phoenix_scanout_active(void) { return W.scanout_claimed; }
+int v3d_phoenix_scanout_active(void)
+{
+	/* "active" = a scanout buffer is backing an RT: single-buffer sets scanout_claimed; double-
+	 * buffer tracks scanout_claim_idx (>0 once a buffer is claimed). Without the double case this
+	 * read 0 in double mode and the present path wrongly fell back to CPU readback. */
+	return W.scanout_claimed || (W.scanout_double && W.scanout_claim_idx > 0);
+}
 
 /* The single entry the libdrm shim's drmIoctl() dispatches into. */
 int phoenix_v3d_ioctl(int fd, unsigned long request, void *arg);

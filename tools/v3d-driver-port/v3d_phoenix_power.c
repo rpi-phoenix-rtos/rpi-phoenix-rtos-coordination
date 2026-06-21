@@ -42,6 +42,8 @@
 #define VC_PROP_GET_TEMPERATURE     0x00030006u   /* SoC temp (milli-degC), w0=temp id 0 */
 #define VC_PROP_GET_THROTTLED       0x00030046u   /* throttle/undervolt bitmask */
 #define VC_PROP_GET_VOLTAGE         0x00030003u   /* w0=voltage id; id 1 = core */
+#define VC_PROP_GET_VIRTUAL_WH      0x00040004u   /* virtual (buffer) w,h — h>=2*phys => double-buffer */
+#define VC_PROP_SET_VIRTUAL_OFFSET  0x00048009u   /* pan: (x,y) — page-flip by setting y=buffer*phys_h */
 /* PM + rpivid_asb (the BCM2711 V3D power/reset path) */
 #define PM_BASE                 0xfe100000u
 #define RPIVID_ASB_BASE         0xfec11000u
@@ -257,4 +259,22 @@ void v3d_phoenix_logColdState(void)
 	printf("v3d-coldstate: clk_v3d cfg=%u Hz meas=%u Hz delta=%ld kHz clkstate=0x%x "
 	       "temp=%u mC throttled=0x%08x corevolt=%u uV pm_grafx=0x%08x\n",
 	       rate_cfg, rate_meas, delta_khz, clk_state, temp, throttled, volt, grafx);
+}
+
+/* Double-buffer / page-flip support (render-stall complete fix). plo allocates the fb with
+ * virtual height = 2x physical so a second buffer sits below the first; these query the granted
+ * virtual height (to confirm double-buffer is available) and page-flip by panning the display
+ * origin. The displayed buffer is never the one the GPU is writing -> no GPU-write/display-read
+ * contention -> the depth/fragment-pipeline stall cannot occur. */
+unsigned v3d_phoenix_fb_virtual_height(void);
+unsigned v3d_phoenix_fb_virtual_height(void)
+{
+	uint32_t h = mboxProp(VC_PROP_GET_VIRTUAL_WH, 2, 0u, 0u);   /* returns granted virtual height */
+	return (h == MBOX_FAIL) ? 0u : h;
+}
+
+void v3d_phoenix_fb_flip(unsigned yoff);
+void v3d_phoenix_fb_flip(unsigned yoff)
+{
+	(void)mboxProp(VC_PROP_SET_VIRTUAL_OFFSET, 2, 0u, yoff);   /* pan display origin to (0, yoff) */
 }
