@@ -37,6 +37,7 @@ extern unsigned char _mesa_make_current(struct gl_context *ctx,
 extern void v3d_phoenix_set_next_scanout(void);
 extern int  v3d_phoenix_scanout_active(void);
 extern int  v3d_phoenix_scanout_double(void);
+extern int  v3d_phoenix_scanout_nbuf(void);   /* page-flip buffer count: 1 (none), 2 (double), 3 (triple) */
 extern void v3d_phoenix_flip(int buf);
 
 static struct st_context *g_st = NULL;
@@ -48,10 +49,11 @@ static struct st_context *g_st = NULL;
  * (+ depth), then a per-frame COLOR-ONLY GPU blit resolves that to the scanout fb. The blit has
  * no depth FIFO and is a single light streaming pass, so it cannot hit the stall. */
 static GLuint g_render_fbo  = 0;     /* DRAM color+depth FBO — Quake renders here (no fb contention) */
-static GLuint g_scanout_fbo[2] = {0, 0}; /* scanout-fb-backed color FBO(s) — blit-resolve target(s) */
+static GLuint g_scanout_fbo[3] = {0, 0, 0}; /* scanout-fb-backed color FBO(s) — blit-resolve target(s) */
 static int    g_resolve     = 0;     /* 1 = blit-resolve path active (scanout fb claimed) */
-static int    g_double      = 0;     /* 1 = double-buffer + page-flip (two scanout FBOs) */
-static int    g_back        = 0;     /* double-buffer: which scanout buffer to resolve into next (0/1) */
+static int    g_double      = 0;     /* 1 = page-flip (>=2 scanout buffers) */
+static int    g_nbuf        = 1;     /* page-flip buffer count (1/2/3) — triple closes the flip race */
+static int    g_back        = 0;     /* which scanout buffer to resolve into next (round-robin mod g_nbuf) */
 static int    g_w = 0, g_h = 0;
 
 /* Bind the DRAM render FBO. Quake renders to the "default" framebuffer (0), incomplete on a
@@ -83,9 +85,9 @@ int qsv3d_resolve(void)
 	glBindFramebuffer(GL_FRAMEBUFFER, g_render_fbo);   /* restore for the next frame */
 	glFinish();                                        /* resolve must complete before the flip */
 	if (g_double) {
-		v3d_phoenix_flip(g_back);   /* display the buffer we just resolved into */
-		g_back ^= 1;                /* next frame resolves into the other (now off-screen) buffer */
-	}
+		v3d_phoenix_flip(g_back);            /* display the buffer we just resolved into */
+		g_back = (g_back + 1) % g_nbuf;      /* round-robin; with 3 buffers the next target is */
+	}                                        /* >=2 flips from display -> never the scanned-out one */
 	return 1;
 }
 
@@ -125,8 +127,9 @@ int qsv3d_init(int w, int h)
 	 * buffer) and page-flip between them; in single-buffer mode one (in-place blit-resolve). No
 	 * depth attachment — they are only blit targets. */
 	g_double = v3d_phoenix_scanout_double();
+	g_nbuf = v3d_phoenix_scanout_nbuf();
 	{
-		int n = g_double ? 2 : 1;
+		int n = g_double ? g_nbuf : 1;
 		for (int i = 0; i < n; i++) {
 			GLuint rbScan = 0;
 			glGenFramebuffers(1, &g_scanout_fbo[i]);
@@ -168,7 +171,7 @@ int qsv3d_init(int w, int h)
 	glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 	if (g_resolve) {
-		for (int i = 0; i < (g_double ? 2 : 1); i++) {
+		for (int i = 0; i < (g_double ? g_nbuf : 1); i++) {
 			glBindFramebuffer(GL_FRAMEBUFFER, g_scanout_fbo[i]);
 			glClear(GL_COLOR_BUFFER_BIT);
 		}

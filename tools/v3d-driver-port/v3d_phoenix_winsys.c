@@ -164,11 +164,13 @@ static struct {
 	uint32_t binovf_used;     /* bytes of the pool handed out this job (re-armable overflow) */
 	uintptr_t scratch_pa;     /* MMU illegal-access scratch page PA (0 = none); redirects faults */
 	uint32_t scanout_pa;      /* HDMI framebuffer physical addr / buffer 0 (0 = unavailable) */
-	uint32_t scanout_pa2;     /* double-buffer: buffer 1 PA (= scanout_pa + pitch*phys_h), else 0 */
+	uint32_t scanout_pa2;     /* multi-buffer: buffer 1 PA (= scanout_pa + pitch*phys_h), else 0 */
+	uint32_t scanout_pa3;     /* triple-buffer: buffer 2 PA (= scanout_pa + 2*pitch*phys_h), else 0 */
 	uint32_t scanout_phys_h;  /* physical (displayed) height — page-flip pans by buffer*phys_h rows */
 	uint32_t scanout_bytes;   /* one buffer's byte size (pitch*phys_h) */
-	int      scanout_double;  /* 1 = double-buffer + page-flip available (plo granted 2x virtual) */
-	int      scanout_claim_idx; /* double-buffer: which buffer the next scanout BO is backed by (0/1) */
+	int      scanout_nbuf;    /* number of page-flip buffers granted: 1 (none), 2 (double), 3 (triple) */
+	int      scanout_double;  /* convenience: scanout_nbuf >= 2 (page-flip available) */
+	int      scanout_claim_idx; /* multi-buffer: which buffer the next scanout BO is backed by */
 	int      scanout_claimed; /* single-buffer: only one BO may alias the single scanout surface */
 	int      next_scanout;    /* one-shot: back the NEXT ioc_create_bo with the scanout surface
 	                           * (set by a client that can't pass V3D_CREATE_BO_SCANOUT through its
@@ -303,19 +305,19 @@ int v3d_phoenix_scanout_init(uint32_t pa, uint32_t w, uint32_t h, uint32_t pitch
 	W.scanout_bytes = pitch * h;
 	W.scanout_claim_idx = 0;
 	W.scanout_claimed = 0;
-	unsigned vh = v3d_phoenix_fb_virtual_height();
-	if (h != 0u && vh >= 2u * h && pitch != 0u) {
-		W.scanout_pa2 = pa + pitch * h;   /* buffer 1 sits directly below buffer 0 */
-		W.scanout_double = 1;
-	}
-	else {
-		W.scanout_pa2 = 0;
-		W.scanout_double = 0;
-	}
-	fprintf(stderr, "v3d-winsys: scanout init pa=0x%08x %ux%u pitch=%u virt_h=%u -> %s (buf1=0x%08x)\n",
-		pa, w, h, pitch, vh, W.scanout_double ? "DOUBLE-BUFFER+page-flip" : "single (blit-resolve)",
-		W.scanout_pa2);
-	return W.scanout_double ? 2 : 1;
+	unsigned vh = (h != 0u && pitch != 0u) ? v3d_phoenix_fb_virtual_height() : 0u;
+	unsigned nbuf = (h != 0u) ? (vh / h) : 1u;   /* how many stacked buffers the firmware granted */
+	if (nbuf > 3u) nbuf = 3u;                     /* we use at most 3 (triple-buffer) */
+	if (nbuf < 1u) nbuf = 1u;
+	W.scanout_nbuf = (int)nbuf;
+	W.scanout_double = (nbuf >= 2u);
+	W.scanout_pa2 = (nbuf >= 2u) ? (pa + pitch * h) : 0u;        /* buffer 1 directly below buffer 0 */
+	W.scanout_pa3 = (nbuf >= 3u) ? (pa + 2u * pitch * h) : 0u;   /* buffer 2 below buffer 1 */
+	fprintf(stderr, "v3d-winsys: scanout init pa=0x%08x %ux%u pitch=%u virt_h=%u -> %d buffer(s) %s "
+		"(buf1=0x%08x buf2=0x%08x)\n", pa, w, h, pitch, vh, W.scanout_nbuf,
+		(nbuf >= 3u) ? "TRIPLE-BUFFER+page-flip" : (nbuf == 2u) ? "DOUBLE-BUFFER+page-flip" : "single (blit-resolve)",
+		W.scanout_pa2, W.scanout_pa3);
+	return W.scanout_nbuf;
 }
 
 /* Page-flip the display to buffer `buf` (0 or 1). Called after resolving into that buffer. */
@@ -329,6 +331,9 @@ void v3d_phoenix_flip(int buf)
 
 int v3d_phoenix_scanout_double(void);
 int v3d_phoenix_scanout_double(void) { return W.scanout_double; }
+
+int v3d_phoenix_scanout_nbuf(void);
+int v3d_phoenix_scanout_nbuf(void) { return W.scanout_nbuf ? W.scanout_nbuf : 1; }
 
 /* One-shot: request that the NEXT BO created be backed by the scanout surface. Lets a client
  * whose BO-alloc path can't set V3D_CREATE_BO_SCANOUT (e.g. V3DV's vkAllocateMemory for a present
@@ -431,8 +436,10 @@ static int ioc_create_bo(struct drm_v3d_create_bo *c)
 	uint32_t sel_pa = 0;
 	if (((c->flags & 0x2u) || W.next_scanout) && W.scanout_pa) {
 		if (W.scanout_double) {
-			if (W.scanout_claim_idx < 2)
-				sel_pa = (W.scanout_claim_idx == 0) ? W.scanout_pa : W.scanout_pa2;
+			if (W.scanout_claim_idx < W.scanout_nbuf)
+				sel_pa = (W.scanout_claim_idx == 0) ? W.scanout_pa
+				       : (W.scanout_claim_idx == 1) ? W.scanout_pa2
+				       : W.scanout_pa3;
 		}
 		else if (!W.scanout_claimed) {
 			sel_pa = W.scanout_pa;
@@ -502,7 +509,8 @@ static int ioc_create_bo(struct drm_v3d_create_bo *c)
 	b->handle = slot + 1;       /* nonzero, stable per slot */
 	b->cpu = cpu; b->pa = pa; b->gpuva = gpuva; b->size = pages*_PAGE_SIZE;
 	b->scanout = (W.scanout_pa != 0 && (pa == W.scanout_pa ||
-		(W.scanout_pa2 != 0 && pa == W.scanout_pa2)));   /* this BO aliases a scanout buffer */
+		(W.scanout_pa2 != 0 && pa == W.scanout_pa2) ||
+		(W.scanout_pa3 != 0 && pa == W.scanout_pa3)));   /* this BO aliases a scanout buffer */
 	c->handle = b->handle;
 	c->offset = gpuva;          /* V3D address-space offset (nonzero) */
 	return 0;
