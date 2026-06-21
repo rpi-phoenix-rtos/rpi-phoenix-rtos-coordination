@@ -85,6 +85,27 @@ single dropped frame. Remaining hitch is dominated by the ~2.5 s detection spin-
 down (toward the heaviest legit frame time, ~100 ms) is a follow-up that needs the worst-case
 legit frame measured to avoid false-positive drops.
 
+## CONFIRMED (2026-06-21): render-to-scanout (live-fb contention) is the trigger
+
+Decisive experiment: rebuilt rpi4-v3d-stalltest to render 3000 COMPLEX depth-tested perspective
+frames (1152 tilted tris/frame, heavy overdraw, per-frame rotation) CONTINUOUSLY to its own FBO —
+a RASTER render target in NORMAL DRAM, NOT the scanout fb. Result: **0 wedges over 3000 frames**
+(wedged_frames=0, render_timeouts=0). Identical-complexity geometry that wedges Quake does NOT
+wedge when the RT is not the live HDMI framebuffer.
+
+=> The trigger is NOT geometry/RASTER/uncached alone — it is the GPU writing the LIVE scanout fb
+while the HVS display controller continuously reads it for HDMI. That memory contention stalls
+the depth-OUTPUT FIFO on heavy frames. A DRAM RT (no concurrent display reader) never wedges.
+
+REWORK (in progress) — decouple the depth-using render from the live fb:
+- Quake renders depth-tested geometry to a DRAM color RT (RASTER, no scanout backing) — proven
+  no-wedge by the stalltest.
+- A per-frame GPU glBlitFramebuffer (COLOR only, NO depth) resolves that RT to the scanout fb.
+  The blit has no depth FIFO, so it cannot hit the depth-output stall, and it is a single light
+  streaming pass (brief fb-contention window) vs the whole depth-tested render.
+- Contained to the present layer (pl_phoenix_glctx.c two FBOs + a resolve; pl_phoenix_vid.c
+  GL_EndRendering calls the resolve in the scanout branch). No Mesa/winsys changes.
+
 ## Next rungs (root cause is HW-marginal; these are perf/robustness follow-ups, not blockers)
 - Tune the wedge-detection spin-timeout down (measure the heaviest legit Quake frame first).
 - The real fix would keep render-to-scanout but avoid the uncached-linear-store pressure that
