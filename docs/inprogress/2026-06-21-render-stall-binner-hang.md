@@ -97,7 +97,31 @@ wedge when the RT is not the live HDMI framebuffer.
 while the HVS display controller continuously reads it for HDMI. That memory contention stalls
 the depth-OUTPUT FIFO on heavy frames. A DRAM RT (no concurrent display reader) never wedges.
 
-REWORK (in progress) — decouple the depth-using render from the live fb:
+REWORK DONE + HW-VALIDATED (coord c8c49b9): render-to-DRAM + GPU blit-resolve. 7-boot campaign:
+the heavy depth-tested render now goes to a DRAM RT (off the live fb), so the dominant
+depth-output-FIFO wedge is **eliminated in steady state** — 5/7 boots rendered 59-69 FPS-samples
+(~120-138s) FULLY CLEAN; display correct (HUD upright, HDMI-confirmed); FPS ~28 (vs ~33-40
+render-to-scanout; the per-frame blit costs ~5-6ms; far above CPU readback ~25ms). Render wedges
+fell from FREQUENT/mid-run (~40% of boots, multiple/boot) to RARE/cold-start (1/7: rsv-e wedged on
+the FIRST frame, QSFPS=0).
+
+PARTIAL, not total: the glBlitFramebuffer resolve is itself a DRAW-based tiled render that writes
+the live fb (color only, no depth), so it STILL contends with the HVS display read — just far more
+lightly (fdbgs=0x250ef = INTERPZ+QXYF+EZTEST, no DEPTHO). Hence the rare residual blit wedge.
+
+Two residuals, both RECOVER via the drop-frame mitigation (rsv-f PROVED it: binner wedge -> drop
+-> +51 clean frames @33fps):
+- rare COLOR-BLIT wedge (cold-start, ~1/7) — lighter fb contention from the resolve blit.
+- separate BINNER (CT0) wedge (~1-2/7) — NOT fb-contention (binner is all-DRAM; valid BCL,
+  coordinate-shader QPUs pending). Distinct mechanism (task #18).
+
+COMPLETE FIX (next rung, more invasive): DOUBLE-BUFFER + page-flip so NO GPU write (render OR
+resolve) ever touches the LIVE fb — render+resolve to an off-screen DRAM buffer, then page-flip the
+display base to it (HVS/mailbox SET_VIRTUAL_OFFSET on a 2x-height fb, or an HVS base-address
+update). Eliminates ALL display contention. Needs fb/display-setup changes (rpi4-fb page-flip
+devctl + plo 2x fb) — flagged for an attended decision.
+
+REWORK design — decouple the depth-using render from the live fb:
 - Quake renders depth-tested geometry to a DRAM color RT (RASTER, no scanout backing) — proven
   no-wedge by the stalltest.
 - A per-frame GPU glBlitFramebuffer (COLOR only, NO depth) resolves that RT to the scanout fb.
