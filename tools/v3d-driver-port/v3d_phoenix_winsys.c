@@ -701,7 +701,13 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
 	for (spins = 1000000u; spins && (h[MMUC_CONTROL/4] & MMUC_FLUSHING); spins--) {}
 	h[MMU_CTL/4] |= MMU_CTL_TLB_CLEAR;
 	for (spins = 1000000u; spins && (h[MMU_CTL/4] & MMU_CTL_TLB_CLEARING); spins--) {}
-	c0[CTL_MISCCFG/4] = MISCCFG_OVRTMUOUT;
+	/* DO NOT write CTL_MISCCFG here. It is {QRMAXCNT[3:1], OVRTMUOUT[0]} — writing OVRTMUOUT
+	 * (0x1) every submit CLOBBERED QRMAXCNT (the QPU-reserve-max-count that balances QPUs between
+	 * the binner's coordinate shaders and the render's fragment shaders) to 0, which intermittently
+	 * starved the coordinate shaders -> the binner wedged with "coordinate-shader QPUs pending"
+	 * (the residual CT0 wedge). Linux v3d only writes MISCCFG for ver<41 (and only at init); on
+	 * V3D 4.2 it never touches it, leaving the firmware's QRMAXCNT default. OVRTMUOUT is moot on
+	 * 4.2 (Mesa sets the TMU output type in the shader/texture state). So leave MISCCFG alone. */
 	/* Invalidate the V3D caches before the job: SLCACTL slices (TVCCS/TDCCS/UCC=uniform
 	 * cache/ICC=instruction cache) + an L2T flush — matches the scout's v3d_invalidateCaches.
 	 * The SLCACTL slices invalidation is essential for multi-frame rendering: without it the
