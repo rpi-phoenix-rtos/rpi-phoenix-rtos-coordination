@@ -62,9 +62,13 @@ int main(int argc, char *argv[])
 {
 	double time, oldtime, newtime;
 
-	/* Unbuffered stdout so prints reach the UART immediately (psh stdout may be
-	 * fully buffered -> buffered output is lost if the process exits/faults early). */
-	setvbuf(stdout, NULL, _IONBF, 0);
+	/* LINE-buffered stdout: each printf line is written to the shared UART console in one
+	 * write() instead of per character, so our log lines no longer interleave character-by-
+	 * character with the concurrently-running lwip process's output (which made boot messages
+	 * like "Initializing QuakeSpasm" unreadable, one fragment per line). stderr stays unbuffered
+	 * so crash/wedge diagnostics reach the UART immediately even on an early fault. */
+	static char qs_stdout_buf[2048];
+	setvbuf(stdout, qs_stdout_buf, _IOLBF, sizeof(qs_stdout_buf));
 	setvbuf(stderr, NULL, _IONBF, 0);
 	printf("quakespasm: main() entered (argc=%d)\n", argc);
 

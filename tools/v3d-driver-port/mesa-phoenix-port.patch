@@ -230,30 +230,29 @@ index 33df0d07be5..9e073a401b1 100644
          if (count == 1 && modifiers[0] == DRM_FORMAT_MOD_INVALID) {
                  rsc->tiled = should_tile;
 diff --git a/src/gallium/drivers/v3d/v3dx_draw.c b/src/gallium/drivers/v3d/v3dx_draw.c
-index 1dc918d3e1f..c8654158546 100644
+index 1dc918d3e1f..58435eacff7 100644
 --- a/src/gallium/drivers/v3d/v3dx_draw.c
 +++ b/src/gallium/drivers/v3d/v3dx_draw.c
-@@ -1009,6 +1009,18 @@ v3d_update_job_ez(struct v3d_context *v3d, struct v3d_job *job)
+@@ -1009,6 +1009,17 @@ v3d_update_job_ez(struct v3d_context *v3d, struct v3d_job *job)
                  job->ez_state = V3D_EZ_DISABLED;
          }
  
-+        /* PHOENIX PORT FIX (v3d, UPDATE 25aw): force early-Z (EZ) OFF. On this V3D 4.2
-+         * port, the early-Z path HANGS the render on depth-tested steeply-tilted polygons
-+         * (e.g. a cube face rotated edge-toward-camera, or any polygon with a steep screen-
-+         * space Z gradient) -- proven by bisection: depth-tested screen-parallel geometry
-+         * is fine, but depth-tested tilted polys hang until EZ is disabled. EZ is a pure
-+         * performance optimization (early depth reject before the FS), so disabling it is
-+         * always correctness-safe; the only cost is some fragment-shading overhead. This
-+         * unblocks all multi-axis rotation / general 3D (incl. Quake's world geometry).
-+         * TODO(v3d-ez): root-cause the EZ hang (TLB/EZ HW config for tilted polys) to
-+         * re-enable EZ for perf; until then, EZ stays off. */
-+        job->ez_state = V3D_EZ_DISABLED;
++        /* Early-Z (EZ) is ENABLED on this V3D 4.2 port (the normal mesa state machine above
++         * decides per-shader/per-direction; it already disables EZ for FS discard/writes-Z).
++         * EZ was previously force-disabled here because depth-tested steeply-tilted polygons
++         * hung the render — but that hang was a symptom of the L2T flush-completion race
++         * (GFXH-1897): the render fetched the binner's tile-list before the bin-phase L2T flush
++         * had drained. That race is now fixed in the winsys (l2t_flush_wait around the pre-bin
++         * and bin->render flushes, v3d_phoenix_winsys.c). With it fixed, the stalltest renders
++         * 3000 tilted depth-tested EZ-ON frames with 0 wedges, so EZ is re-enabled here — it
++         * early-rejects overdraw (FPS win) and lets stock GL_LEQUAL run without the depth-drain
++         * stall. See docs/inprogress/2026-06-21-v3d-early-z-reenable-plan.md. */
 +
          if (job->first_ez_state == V3D_EZ_UNDECIDED &&
              (job->ez_state != V3D_EZ_DISABLED || job->draw_calls_queued == 0))
                  job->first_ez_state = job->ez_state;
 diff --git a/src/gallium/drivers/v3d/v3dx_state.c b/src/gallium/drivers/v3d/v3dx_state.c
-index baa9196c674..9df86a2d90f 100644
+index baa9196c674..fd90e922d19 100644
 --- a/src/gallium/drivers/v3d/v3dx_state.c
 +++ b/src/gallium/drivers/v3d/v3dx_state.c
 @@ -558,6 +558,16 @@ v3d_set_framebuffer_state(struct pipe_context *pctx,
@@ -261,15 +260,15 @@ index baa9196c674..9df86a2d90f 100644
                  if (desc->swizzle[3] == PIPE_SWIZZLE_1)
                          v3d->blend_dst_alpha_one |= 1 << i;
 +
-+                /* Phoenix render-to-scanout: a color RT backed by the HDMI framebuffer is
-+                 * displayed by firmware that reads it RGB-order, but the V3D's native 32-bit
-+                 * store is BGRA, so the GPU's bytes come out red/blue-swapped on screen. Swap
-+                 * R<->B at the fragment-shader color output for this RT so the stored bytes
-+                 * land in the display's order. (Targets only the scanout RT; glReadPixels of
-+                 * it is then R/B-swapped, which the CPU-present fallback + capture harness undo.) */
-+                struct v3d_resource *rsc = v3d_resource(cbuf->texture);
-+                if (rsc->bo != NULL && rsc->bo->scanout)
-+                        v3d->swap_color_rb |= 1 << i;
++                /* Phoenix Pi4: do NOT swap R<->B. The plo HDMI framebuffer is configured with RGB
++                 * pixel order (mailbox SET_PIXEL_ORDER=1), which matches the V3D's native 32-bit
++                 * store order — so a color RT, whether the GPU scans it out directly (render-to-
++                 * scanout / page-flip) or it is glReadPixels'd for the CPU-present fallback (which
++                 * copies channels straight through, present_blit() in pl_phoenix_vid.c), already
++                 * lands in display order. An earlier render-to-scanout workaround swapped R<->B
++                 * here; on this fb config that was spurious and rendered the brown Quake world
++                 * blue (HW-verified). Leave swap_color_rb at 0. (A format-agnostic fb would derive
++                 * this from plo's actual pixel order rather than hardcoding it.) */
          }
  
          v3d->dirty |= V3D_DIRTY_FRAMEBUFFER;

@@ -376,6 +376,30 @@ void VID_Init(void)
 	glCullFace (GL_BACK);
 	glFrontFace (GL_CW);
 
+	/* CRITICAL: replicate the REST of gl_vidsdl.c's GL_SetupState, which this port replaces. The
+	 * port previously set only the cull winding above and dropped the rest — most importantly the
+	 * ALPHA-TEST and BLEND state. Quakespasm sets these ONCE here and relies on them globally
+	 * thereafter (Draw_Character/sbar/particles only toggle glEnable(GL_ALPHA_TEST|GL_BLEND), never
+	 * re-set the func/ref). Without them:
+	 *  - glAlphaFunc defaults to (GL_ALWAYS, 0) so GL_ALPHA_TEST never discards transparent texels
+	 *    -> alpha-keyed textures (conchars/HUD digits/sprites/fence brushes) render their fully-
+	 *    transparent texels as OPAQUE -> solid-color boxes behind HUD numbers, unreadable fonts.
+	 *  - glBlendFunc defaults to (GL_ONE, GL_ZERO) so GL_BLEND ignores source alpha -> particles
+	 *    (sparks/blood/explosions) draw as solid filled triangles instead of soft alpha sprites.
+	 * Matching stock GL_SetupState fixes all of these (the V3D R/B-swap is orthogonal, handled in
+	 * the framebuffer path). */
+	glClearColor (0.15f, 0.15f, 0.15f, 0.0f);
+	glEnable (GL_TEXTURE_2D);
+	glEnable (GL_ALPHA_TEST);
+	glAlphaFunc (GL_GREATER, 0.666f);
+	glShadeModel (GL_FLAT);
+	glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	/* Stock GL_LEQUAL. This was temporarily GL_LESS to dodge a depth-drain wedge, but that wedge
+	 * was the disabled-Early-Z + L2T-flush-race interaction; with EZ re-enabled (the flush race is
+	 * fixed in the winsys), GL_LEQUAL runs without wedging and EZ early-rejects overdraw. The
+	 * viewmodel GL_LEQUAL special-case in R_DrawViewModel is correspondingly removed. */
+	glDepthFunc (GL_LEQUAL);
+
 	/* CRITICAL: the engine builds the GLSL world + alias programs in gl_vidsdl.c's GL_Init —
 	 * which THIS port replaces, so they were never created (r_world_program stayed 0) and the
 	 * world fell back to the gray FF path. Build them here, now that gl_glsl_able/

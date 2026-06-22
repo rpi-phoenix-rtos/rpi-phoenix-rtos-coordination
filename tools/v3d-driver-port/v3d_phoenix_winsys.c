@@ -109,6 +109,12 @@
 #define BINOVF_CHUNK_BYTES  (BINOVF_PAGES * 4096u)  /* hand the whole pool on the first OUTOMEM */
 #define CTL_MISCCFG         0x0018u
 #define MISCCFG_OVRTMUOUT   (1u<<0)
+#define MISCCFG_QRMAXCNT_SHIFT 1u    /* QRMAXCNT = MISCCFG bits 3:1 (QPU reserve bin-vs-render split) */
+/* Tune the binner-coord vs render-frag QPU split. -1 = leave the firmware default (Linux behaviour
+ * on V3D 4.2 — it never writes MISCCFG). 0..7 = write MISCCFG=(QRMAXCNT<<1)|0 ONCE at init: low
+ * favours the render (frag) shaders, high favours the binner (coord) shaders. The render-stall
+ * residual is a balance point — find a value with 0 bin AND 0 render wedges. */
+#define V3D_QRMAXCNT        (2)
 
 /* GPU VA space: bump-allocate page-aligned, starting past the null guard. */
 #define GPUVA_BASE          0x100000u
@@ -224,8 +230,9 @@ static int winsys_init(void)
 	 * a powered-but-mis-clocked core would read back wrong/0xdeadXXXX. */
 	v3d_phoenix_logColdState();
 	fprintf(stderr, "v3d-coldstate: CORE0_IDENT0=0x%08x HUB_IDENT1=0x%08x cold_HUB_AXICFG=0x%08x "
-		"cold_GMP_STATUS=0x%08x\n",
-		W.core0[0x0000/4], W.hub[0x000c/4], W.hub[HUB_AXICFG/4], W.core0[GMP_STATUS/4]);
+		"cold_GMP_STATUS=0x%08x cold_MISCCFG=0x%08x (QRMAXCNT=%u)\n",
+		W.core0[0x0000/4], W.hub[0x000c/4], W.hub[HUB_AXICFG/4], W.core0[GMP_STATUS/4],
+		W.core0[CTL_MISCCFG/4], (W.core0[CTL_MISCCFG/4] >> 1) & 0x7u);
 	/* MMU page table: GPUVA_PT_PAGES contiguous pages = GPUVA_PT_PAGES*4 MiB GPU VA. */
 	W.pt = mmap(NULL, GPUVA_PT_PAGES*_PAGE_SIZE, PROT_READ|PROT_WRITE,
 		MAP_UNCACHED|MAP_CONTIGUOUS|MAP_ANONYMOUS, -1, 0);
@@ -632,6 +639,13 @@ static void apply_core_regs(void)
 	 * Linux restores exactly this after every bridge reset. Written here so init AND the
 	 * in-job reset path both establish it. */
 	W.hub[HUB_AXICFG/4] = HUB_AXICFG_MAX_LEN;
+#if (V3D_QRMAXCNT) >= 0
+	/* MISCCFG = QRMAXCNT (QPU bin/render split — 2 zeroes both wedge classes here) | OVRTMUOUT.
+	 * OVRTMUOUT (TMU uses the shader's texture-output-type field) IS required by our Mesa build —
+	 * dropping it broke texture sampling (solid HUD/particles/fonts, wrong colours). Written once
+	 * (init + reset path), so QRMAXCNT is NOT clobbered per submit (that was the binner-wedge bug). */
+	W.core0[CTL_MISCCFG/4] = ((uint32_t)(V3D_QRMAXCNT) << MISCCFG_QRMAXCNT_SHIFT) | MISCCFG_OVRTMUOUT;
+#endif
 }
 
 /* Render-stall MITIGATION + probe: how many times a submit recovered a wedged GPU by
