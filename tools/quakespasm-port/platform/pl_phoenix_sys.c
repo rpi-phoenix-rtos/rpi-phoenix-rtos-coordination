@@ -168,6 +168,19 @@ void Sys_Printf(const char *fmt, ...)
 
 void Sys_Quit(void)
 {
+	/* Restore the system-wide device state our port grabbed, before exiting. Our Sys_Quit had
+	 * dropped this, so "quit" left the screen frozen on the last rendered frame and psh
+	 * non-interactive:
+	 *   - VID_Shutdown(): pans the display off the last page-flipped GPU buffer and hands the
+	 *     framebuffer back to the fbcon text console.
+	 *   - IN_Shutdown():  restores cooked mode + closes /dev/kbd0 so the pl011-tty bridge
+	 *     reacquires it and psh becomes interactive again.
+	 * We deliberately do NOT call the full Host_Shutdown() here: it runs Host_WriteConfiguration()
+	 * which writes config.cfg to the (NFS) rootfs, and the NFS large-write path can hang — which
+	 * would prevent the display/input restore below from ever running. Everything else
+	 * (sockets, heap, audio) is reclaimed by the kernel on exit(). */
+	VID_Shutdown();
+	IN_Shutdown();
 	exit(0);
 }
 

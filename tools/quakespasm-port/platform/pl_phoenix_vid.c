@@ -147,6 +147,13 @@ static void console_setmode(int mode)
  * GL-on-main-thread TLS invariant is preserved. GL_EndRendering only updates fbimg. */
 static pthread_t        reblit_thread;
 static volatile int     reblit_run = 0;
+static int              reblit_started = 0;  /* 1 only if pthread_create ran (fallback path); guards the join */
+
+/* winsys page-flip (v3d_phoenix_winsys.c): pan the display back to buffer 0 at shutdown so the
+ * fbcon redraw (which targets buffer 0) is what's actually scanned out — otherwise the display
+ * stays panned to the last page-flipped GPU buffer and the final game frame stays frozen on screen. */
+extern void v3d_phoenix_flip(int buf);
+extern int  v3d_phoenix_scanout_active(void);
 static volatile unsigned fb_seq = 0;   /* bumped per presented frame; reblit refreshes only when idle */
 
 /* Present pipeline: the render (GL) thread fills readbuf[idx] via glReadPixels (GL ops must stay
@@ -433,7 +440,8 @@ void VID_Init(void)
 	 * with the (empty) fbimg — skip the thread entirely. */
 	if (fbfd >= 0 && fbimg && !v3d_phoenix_scanout_active()) {
 		reblit_run = 1;
-		pthread_create(&reblit_thread, NULL, reblit_fn, NULL);
+		if (pthread_create(&reblit_thread, NULL, reblit_fn, NULL) == 0)
+			reblit_started = 1;
 	}
 
 	/* Claim the framebuffer: switch the HDMI text console into "graphics mode". */
@@ -445,6 +453,11 @@ void VID_Init(void)
 
 void VID_Shutdown(void)
 {
+	/* Pan the display back to buffer 0 (where fbcon draws). In the render-to-scanout path the
+	 * display is left panned to the last page-flipped GPU buffer (1 or 2); without this reset the
+	 * final game frame stays frozen on screen even after fbcon redraws buffer 0 below. */
+	if (v3d_phoenix_scanout_active())
+		v3d_phoenix_flip(0);
 	/* Hand the framebuffer back to the text console (it redraws with all the klog/psh
 	 * output that accumulated while we owned the screen). */
 	console_setmode(FBCON_ENABLED);
@@ -452,11 +465,17 @@ void VID_Shutdown(void)
 		close(ttyfd);
 		ttyfd = -1;
 	}
-	reblit_run = 0;
-	pthread_mutex_lock(&present_lock);
-	pthread_cond_signal(&present_cv);   /* wake the present thread out of its wait */
-	pthread_mutex_unlock(&present_lock);
-	pthread_join(reblit_thread, NULL);  /* ensure it stops touching fbfd before we close it */
+	/* Stop + join the CPU-present thread ONLY if it was actually started (fallback path). In the
+	 * render-to-scanout path it is never created, so joining the uninitialised pthread_t would be
+	 * undefined behaviour (hang/crash) — guard on reblit_started. */
+	if (reblit_started) {
+		reblit_run = 0;
+		pthread_mutex_lock(&present_lock);
+		pthread_cond_signal(&present_cv);   /* wake the present thread out of its wait */
+		pthread_mutex_unlock(&present_lock);
+		pthread_join(reblit_thread, NULL);  /* ensure it stops touching fbfd before we close it */
+		reblit_started = 0;
+	}
 	if (fbfd >= 0) {
 		close(fbfd);
 		fbfd = -1;
