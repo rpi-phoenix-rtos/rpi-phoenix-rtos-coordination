@@ -16,7 +16,10 @@
  *     (kdrive's KdShadowFbAlloc): X renders into ordinary RAM, and on each
  *     damage update we lseek()+write() the dirty scanlines out to /dev/fb0.
  *
- * Input is stubbed (no-op keyboard + pointer drivers) for this bring-up.
+ * Input is wired to the Phoenix USB HID devices /dev/kbd0 (8-byte boot-keyboard
+ * reports) and /dev/mouse0 (4-byte boot-mouse packets). See the input-driver
+ * section below for the HID-usage -> evdev-keycode mapping and the
+ * InputThreadRegisterDev() fd-polling model.
  *
  * Copyright 2026 Phoenix Systems
  * Author: Witold Bołt
@@ -33,6 +36,7 @@
 #include <errno.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <sys/ioctl.h>
 
 #include "kdrive.h"
@@ -349,11 +353,173 @@ fbdevPutColors(ScreenPtr pScreen, int n, xColorItem *pdefs)
 }
 
 /* -------------------------------------------------------------------------
- * Stub input drivers. kdrive requires at least a keyboard + pointer driver to
- * exist; for this framebuffer bring-up they are no-ops (no /dev/kbd0,/dev/
- * mouse0 wiring yet — see report's gap list). They satisfy KdInitInput so the
- * server reaches the dispatch loop and paints.
+ * Input drivers — Phoenix USB HID keyboard (/dev/kbd0) + mouse (/dev/mouse0).
+ *
+ * Event sourcing. We register each device fd in the driver's Enable() via
+ * InputThreadRegisterDev(fd, cb, arg) and unregister in Disable() via
+ * InputThreadUnregisterDev(fd). That call routes to one of two poll paths and
+ * both are safe for us:
+ *   - input thread active (inputThreadInfo != NULL): the dedicated input thread
+ *     (os/inputthread.c) polls the fd and calls our callback wrapped in
+ *     input_lock()/input_unlock() (InputReady()).
+ *   - otherwise it falls back to SetNotifyFd() (os.h), i.e. the fd is polled in
+ *     the server's main dispatch loop and the callback runs on the main thread —
+ *     the same path ephyr uses.
+ * Either way a single thread both enqueues (our callback) and dequeues (dix), so
+ * the callback needs no extra locking, and reading the device never blocks the
+ * dispatch loop (the fds are O_NONBLOCK and the drain is bounded).
+ *
+ * KEYBOARD. usbkbd is put into RAW mode (write a single 0x01 byte to /dev/kbd0;
+ * see usbkbd.c) so it delivers raw 8-byte HID boot-keyboard reports rather than
+ * a cooked ASCII stream. Raw reports carry the full key-state array on every
+ * change, so by diffing each report against the previous one we derive real
+ * key-DOWN and key-UP events (X needs both; cooked ASCII cannot express key-up).
+ *   HID report: [0]=modifier bitmask, [1]=reserved, [2..7]=up to 6 pressed usages.
+ *
+ * HID-usage -> X keycode. The compiled-in keymap is us/pc105 under the evdev
+ * rules, whose keycodes are POSITIONAL (not the alphabetical layout of HID
+ * usages). We map HID usage -> Linux evdev keycode via the canonical kernel
+ * table (drivers/hid/usbhid/usbkbd.c usb_kbd_keycode[256]) then add the X
+ * keycode offset of 8 (X keycode = evdev keycode + 8). With minScanCode = 8
+ * (= KD_MIN_KEYCODE), KdEnqueueKeyboardEvent's formula passes the value through
+ * unchanged. Anchors: Esc usage 0x29 -> evdev 1 -> X 9; 'a' 0x04 -> 30 -> 38;
+ * Space 0x2c -> 57 -> 65. We send keycodes ONLY: XKB derives keysyms/chars from
+ * keycode + modifier state, so there is no char/shift handling here. Modifier
+ * keys are just their own evdev keycodes, pressed/released by diffing byte[0].
+ *
+ * MOUSE. usbmouse delivers raw 4-byte HID boot-mouse packets on change:
+ *   [0]=buttons (bit0 L, bit1 R, bit2 M), [1]=dx int8, [2]=dy int8, [3]=wheel.
+ * We map HID buttons -> KD button mask: KD_BUTTON_1=L(0x01), KD_BUTTON_2=MIDDLE
+ * (0x02), KD_BUTTON_3=RIGHT(0x04) — note HID's right/middle bit order is the
+ * reverse of KD's, so we remap rather than pass through. One
+ * KdEnqueuePointerEvent(pi, buttons | KD_MOUSE_DELTA, dx, dy, 0) per packet
+ * delivers relative motion + the current button mask together.
+ *
+ * GRACEFUL DEGRADE. Enable() opens the device; if the open fails it logs, leaves
+ * fd = -1, skips registration, and STILL returns Success. The keyboard is the
+ * mandatory virtual-core keyboard — returning failure from its Enable would
+ * abort the server ("Failed to activate virtual core keyboard") — so a missing
+ * device must never be fatal; the server simply runs without that input source.
  * ------------------------------------------------------------------------- */
+
+#define KBD_DEVICE   "/dev/kbd0"
+#define MOUSE_DEVICE "/dev/mouse0"
+
+/*
+ * HID usage (page 0x07) -> Linux evdev keycode. Verbatim from the kernel's
+ * drivers/hid/usbhid/usbkbd.c usb_kbd_keycode[256]. X keycode = entry + 8.
+ */
+static const unsigned char hidToEvdev[256] = {
+      0,  0,  0,  0, 30, 48, 46, 32, 18, 33, 34, 35, 23, 36, 37, 38,
+     50, 49, 24, 25, 16, 19, 31, 20, 22, 47, 17, 45, 21, 44,  2,  3,
+      4,  5,  6,  7,  8,  9, 10, 11, 28,  1, 14, 15, 57, 12, 13, 26,
+     27, 43, 43, 39, 40, 41, 51, 52, 53, 58, 59, 60, 61, 62, 63, 64,
+     65, 66, 67, 68, 87, 88, 99, 70,119,110,102,104,111,107,109,106,
+    105,108,103, 69, 98, 55, 74, 78, 96, 79, 80, 81, 75, 76, 77, 71,
+     72, 73, 82, 83, 86,127,116,117,183,184,185,186,187,188,189,190,
+    191,192,193,194,134,138,130,132,128,129,131,137,133,135,136,113,
+    115,114,  0,  0,  0,121,  0, 89, 93,124, 92, 94, 95,  0,  0,  0,
+    122,123, 90, 91, 85,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+      0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+      0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+      0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+      0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+     29, 42, 56,125, 97, 54,100,126,164,166,165,163,161,115,114,113,
+    150,158,159,128,136,177,178,176,142,152,173,140
+};
+
+/* X keycode offset over the Linux evdev keycode for the evdev-rules keymap. */
+#define EVDEV_KEYCODE_OFFSET 8
+
+/* Per-keyboard driver state. */
+typedef struct _FbdevKbd {
+    int fd;
+    uint8_t prev[8];            /* previous raw HID report, for down/up diffing */
+} FbdevKbd;
+
+/* Per-pointer driver state. */
+typedef struct _FbdevPtr {
+    int fd;
+} FbdevPtr;
+
+/* The single keyboard/pointer instances (kdrive creates one core device each). */
+static FbdevKbd fbdevKbd = { -1, { 0 } };
+static FbdevPtr fbdevPtr = { -1 };
+
+/* The eight HID modifier bits (report byte[0]) -> their Linux evdev keycodes,
+ * in bit order: LCtrl, LShift, LAlt, LGUI, RCtrl, RShift, RAlt, RGUI. */
+static const unsigned char hidModEvdev[8] = {
+    29, 42, 56, 125, 97, 54, 100, 126
+};
+
+static int
+fbdevHidUsagePresent(const uint8_t *rep, uint8_t u)
+{
+    int i;
+    for (i = 2; i < 8; ++i)
+        if (rep[i] == u)
+            return 1;
+    return 0;
+}
+
+static void
+fbdevKbdEmit(KdKeyboardInfo *ki, unsigned char evdev, int is_up)
+{
+    if (evdev == 0)
+        return;
+    KdEnqueueKeyboardEvent(ki, evdev + EVDEV_KEYCODE_OFFSET, is_up);
+}
+
+/* Diff one raw 8-byte HID report against the previous -> key down/up events. */
+static void
+fbdevKbdProcess(KdKeyboardInfo *ki, FbdevKbd *kbd, const uint8_t *rep)
+{
+    uint8_t mod = rep[0], pmod = kbd->prev[0];
+    int i;
+
+    /* modifier transitions */
+    for (i = 0; i < 8; ++i) {
+        int now = (mod >> i) & 1;
+        int was = (pmod >> i) & 1;
+        if (now != was)
+            fbdevKbdEmit(ki, hidModEvdev[i], !now);
+    }
+
+    /* key-ups: usages in the old report no longer present */
+    for (i = 2; i < 8; ++i) {
+        uint8_t u = kbd->prev[i];
+        if (u >= 0x04u && !fbdevHidUsagePresent(rep, u))
+            fbdevKbdEmit(ki, hidToEvdev[u], 1);
+    }
+    /* key-downs: usages newly present */
+    for (i = 2; i < 8; ++i) {
+        uint8_t u = rep[i];
+        if (u >= 0x04u && !fbdevHidUsagePresent(kbd->prev, u))
+            fbdevKbdEmit(ki, hidToEvdev[u], 0);
+    }
+
+    memcpy(kbd->prev, rep, 8);
+}
+
+/*
+ * Input-thread callback for /dev/kbd0. Bounded drain: cap reads so a held
+ * auto-repeating key can never spin the loop and starve the input thread.
+ * O_NONBLOCK makes read() return -1/EWOULDBLOCK once the fifo empties.
+ */
+static void
+fbdevKbdRead(int fd, int ready, void *data)
+{
+    KdKeyboardInfo *ki = data;
+    FbdevKbd *kbd = &fbdevKbd;
+    uint8_t buf[64];
+    ssize_t r;
+    int off, guard;
+
+    (void) ready;
+    for (guard = 0; guard < 64 && (r = read(fd, buf, sizeof(buf))) > 0; ++guard)
+        for (off = 0; off + 8 <= (int) r; off += 8)
+            fbdevKbdProcess(ki, kbd, buf + off);
+}
 
 static Bool
 fbdevKeyboardInit(KdKeyboardInfo *ki)
@@ -366,12 +532,58 @@ fbdevKeyboardInit(KdKeyboardInfo *ki)
 static Bool
 fbdevKeyboardEnable(KdKeyboardInfo *ki)
 {
+    FbdevKbd *kbd = &fbdevKbd;
+    unsigned char raw = 1u;
+    int tries;
+
+    /* Must return TRUE even on failure: this is the virtual core keyboard, and a
+     * failed Enable aborts the server. A missing device just means no input.
+     *
+     * /dev/kbd0 is normally held single-opener by the pl011-tty console bridge
+     * (the same gate Quake hits — see pl_phoenix_in.c). It is only released when
+     * the HDMI console switches out of text mode; that release is asynchronous,
+     * so we retry briefly to absorb the race. If the bridge never releases it
+     * (e.g. the X server was launched from a psh sitting on the console), the
+     * open keeps failing and we degrade to no keyboard — see the deliverable
+     * note: freeing kbd0 for X is a separate display-ownership step. */
+    for (tries = 0; tries < 40; ++tries) {
+        kbd->fd = open(KBD_DEVICE, O_RDWR | O_NONBLOCK);
+        if (kbd->fd >= 0)
+            break;
+        usleep(25000);
+    }
+    if (kbd->fd < 0) {
+        ErrorF("[fbdev] %s open failed (%s) — keyboard input disabled\n",
+               KBD_DEVICE, strerror(errno));
+        return TRUE;
+    }
+
+    /* Ask usbkbd for raw 8-byte HID reports (carries key-up + held state). */
+    if (write(kbd->fd, &raw, 1) == 1)
+        ErrorF("[fbdev] %s opened (fd=%d), RAW HID mode — keyboard active\n",
+               KBD_DEVICE, kbd->fd);
+    else
+        ErrorF("[fbdev] %s opened (fd=%d), raw-mode request failed — keyboard active\n",
+               KBD_DEVICE, kbd->fd);
+
+    memset(kbd->prev, 0, sizeof(kbd->prev));
+
+    if (!InputThreadRegisterDev(kbd->fd, fbdevKbdRead, ki))
+        ErrorF("[fbdev] InputThreadRegisterDev(%s) failed — keyboard idle\n",
+               KBD_DEVICE);
     return TRUE;
 }
 
 static void
 fbdevKeyboardDisable(KdKeyboardInfo *ki)
 {
+    FbdevKbd *kbd = &fbdevKbd;
+
+    if (kbd->fd >= 0) {
+        InputThreadUnregisterDev(kbd->fd);
+        close(kbd->fd);
+        kbd->fd = -1;
+    }
 }
 
 static void
@@ -400,6 +612,41 @@ KdKeyboardDriver fbdevKeyboardDriver = {
     NULL,
 };
 
+/* Decode one raw 4-byte HID mouse packet -> one KdEnqueuePointerEvent. */
+static void
+fbdevMouseProcess(KdPointerInfo *pi, const uint8_t *p)
+{
+    int hidbtn = p[0];
+    int dx = (int) (signed char) p[1];
+    int dy = (int) (signed char) p[2];
+    unsigned long flags = KD_MOUSE_DELTA;
+
+    /* Remap HID button bits to KD's order (HID bit1=right, bit2=middle; KD
+     * KD_BUTTON_2=middle, KD_BUTTON_3=right). */
+    if (hidbtn & 0x01)
+        flags |= KD_BUTTON_1;       /* left */
+    if (hidbtn & 0x04)
+        flags |= KD_BUTTON_2;       /* middle */
+    if (hidbtn & 0x02)
+        flags |= KD_BUTTON_3;       /* right */
+
+    KdEnqueuePointerEvent(pi, flags, dx, dy, 0);
+}
+
+static void
+fbdevMouseRead(int fd, int ready, void *data)
+{
+    KdPointerInfo *pi = data;
+    uint8_t buf[64];
+    ssize_t r;
+    int off, guard;
+
+    (void) ready;
+    for (guard = 0; guard < 64 && (r = read(fd, buf, sizeof(buf))) > 0; ++guard)
+        for (off = 0; off + 4 <= (int) r; off += 4)
+            fbdevMouseProcess(pi, buf + off);
+}
+
 static Status
 fbdevMouseInit(KdPointerInfo *pi)
 {
@@ -409,12 +656,32 @@ fbdevMouseInit(KdPointerInfo *pi)
 static Status
 fbdevMouseEnable(KdPointerInfo *pi)
 {
+    FbdevPtr *ptr = &fbdevPtr;
+
+    ptr->fd = open(MOUSE_DEVICE, O_RDONLY | O_NONBLOCK);
+    if (ptr->fd < 0) {
+        ErrorF("[fbdev] %s open failed (%s) — mouse input disabled\n",
+               MOUSE_DEVICE, strerror(errno));
+        return Success;             /* degrade gracefully, server keeps running */
+    }
+    ErrorF("[fbdev] %s opened (fd=%d) — mouse active\n", MOUSE_DEVICE, ptr->fd);
+
+    if (!InputThreadRegisterDev(ptr->fd, fbdevMouseRead, pi))
+        ErrorF("[fbdev] InputThreadRegisterDev(%s) failed — mouse idle\n",
+               MOUSE_DEVICE);
     return Success;
 }
 
 static void
 fbdevMouseDisable(KdPointerInfo *pi)
 {
+    FbdevPtr *ptr = &fbdevPtr;
+
+    if (ptr->fd >= 0) {
+        InputThreadUnregisterDev(ptr->fd);
+        close(ptr->fd);
+        ptr->fd = -1;
+    }
 }
 
 static void
