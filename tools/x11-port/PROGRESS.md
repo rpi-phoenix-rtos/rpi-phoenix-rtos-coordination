@@ -32,7 +32,7 @@ needs host internet; idempotent).
 | freetype 2.13.2 | ✅ builds | `libfreetype.a` (minimal: no zlib/png/harfbuzz/bzip2/brotli) |
 | libfontenc 1.1.8 | ✅ builds | `libfontenc.a` |
 | libXfont2 2.0.6 | ✅ compiles | `libXfont2.a` built + headers installed. Needed `-DO_NOFOLLOW=0`, `-DNOFILES_MAX=256`, `ac_cv_lib_m_hypot=yes` + libphoenix `hypot` (6e2b929). A font *tool* link needs the hypot symbol → resolves after the libphoenix rebuild. |
-| **kdrive Xfbdev server** | ⬜ next (big, scouted) | see "Server frontier" below — needs an Xfbdev source + libphoenix rebuild + OS-integration. Multi-session. |
+| **kdrive fbdev server (Xphoenix)** | ✅ **COMPILES + LINKS** (2026-06-23) | fresh fbdev DDX (`hw/kdrive/fbdev/fbdev.c`) → static aarch64-phoenix `Xphoenix` ELF (7.1 MB, 0 undefined syms). Opens `/dev/fb0`, `RPI4FB_GETMODE`, shadow-FB, `write()`-blit on damage. NOT yet run on HW (needs fonts staged + libphoenix on-device). See "SERVER — Xphoenix LINKS" below. |
 
 ## Toolkit base — BUILDS (2026-06-18)
 
@@ -71,6 +71,54 @@ gotchas were resolved:**
   exercises the full toolkit (libXmu/libXt/libXext/libX11/libxcb/libSM/libICE) + libXrandr. Binaries
   archived in `artifacts/x11/`. They cannot RUN until the X **server** exists, but the entire
   client+toolkit+app+libc link closure is now proven. Build with `build-x11-phoenix.sh --with-apps`.
+
+## ★★★ SERVER — `Xphoenix` (kdrive fbdev DDX) COMPILES + LINKS for aarch64-phoenix (2026-06-23)
+
+**A complete, static `Xphoenix` X-server ELF now links** (7.1 MB aarch64-phoenix, **0 undefined
+symbols**). This is the sole remaining new-code piece — the kdrive **fbdev DDX backend** — written
+fresh because xorg-server 1.20 ships no Xfbdev (removed in 1.17). Host-side; no Pi boot.
+
+**New code:**
+- `tools/x11-port/src/xorg-server-1.20.14/hw/kdrive/fbdev/fbdev.c` — the DDX. Provides the full
+  `KdCardFuncs fbdevFuncs` lifecycle (cardinit/scrinit/initScreen/finishInitScreen/createRes/
+  scrfini/cardfini/closeScreen/get+putColors) + the DDX entry hooks dix/os require
+  (`InitCard`/`InitOutput`/`InitInput`/`OsVendorInit`/`ddxProcessArgument`/`ddxUseMsg`/
+  `ddxInputThreadInit`) + **no-op stub keyboard/pointer drivers**. Modelled structurally on
+  `hw/kdrive/ephyr/ephyr*.c` but the "host" is the bare framebuffer device.
+  - `fbdevCardInit`: `open("/dev/fb0")` + `RPI4FB_GETMODE` → geometry (1024x768x32 pitch 4096).
+  - `fbdevScreenInit`: depth 24 / bpp 32 / TrueColor masks (BGRX) from the mode; **always shadow**
+    (`KdShadowFbAlloc` — /dev/fb0 has no live `mmap(fd,0)`, issue #149). Shadow byteStride
+    (width*bpp/8 = 4096) == device pitch, so the blit is a straight copy.
+  - `fbdevShadowUpdate` (the custom `ShadowUpdateProc`): on each damage, `lseek()`+`write()` the
+    damaged scanline band of the shadow buffer out to `/dev/fb0` (one syscall when strides match;
+    falls back to row-by-row for rotation). Wired via `createRes`→`KdShadowSet`.
+- `tools/x11-port/build-xfbdev.sh` — compile+link helper (idempotent). Mirrors the kdrive
+  `KDRIVE_CFLAGS`/`KDRIVE_LIBS` from `hw/kdrive/ephyr/Makefile`; wraps the 25 core archives in
+  `-Wl,--start-group … --end-group` (circular dix/os/mi/fb refs); links the X11 lib stack from
+  `/tmp/x11-phoenix/lib` (+ `-lmd` for SHA1, `-lxkbfile`). `main()`/`dix_main` come from
+  `dix/libmain.a` (we do NOT define our own main). `build-x11-phoenix.sh --with-server` calls it.
+  A `--stub` mode (fbdev_stub.c, empty hooks) was used first to de-risk the archive link-closure.
+
+**Verified:** `nm Xphoenix` → `main`/`dix_main`/`InitOutput`/`KdInitOutput`/`InitCard`/`InitInput`/
+`fbScreenInit`/`shadowAdd`/`fbdevShadowUpdate` all `T`; `grep " U "` empty (fully resolved static
+exe); compiles `-Wall`-clean. Binary archived at `artifacts/x11/Xphoenix`.
+
+**Screen-add correctness (important, not just a link detail):** `OsVendorInit` must NOT pre-create a
+card. `KdInitOutput` (kdrive.c) only runs its default-screen fallback — `InitCard(0)` +
+`KdScreenInfoAdd` + `KdParseScreen(screen, 0)` — when `kdCardInfo` is still NULL. If `OsVendorInit`
+called `InitCard(0)` itself, that fallback is skipped → a card with **no screen** is registered →
+`cardinit`/`scrinit` (the /dev/fb0 open + GETMODE + shadow alloc) never run and dix bails. So
+`OsVendorInit` is intentionally empty; the no-arg run gets a native-mode screen from KdInitOutput,
+and an explicit `-screen WxH` gets card+screen via `KdProcessArgument`. `KdParseScreen(.,0)` leaves
+width/height 0, which `fbdevScreenInitialize` then fills from the /dev/fb0 native mode.
+`screen->softCursor = TRUE` is forced in scrinit (no HW-cursor backend).
+
+**Honest ceiling:** *links*, NOT yet *runs*. Before it can paint on HW the main agent must (see the
+report's launch recipe): (1) rebuild libphoenix `--scope core` so the on-device libc carries the X
+gaps (getpw*_r/hypot/wide-char/sys-poll) — already committed, just needs to ship; (2) stage X font
+files (`fixed`, `cursor`) + a `font-dirs`/`fonts.dir` or pass `-fp` — dix `InitFonts` FatalErrors
+without a default font; (3) stage `Xphoenix` + run it on the Pi. Input is stubbed (no real
+`/dev/kbd0`/`/dev/mouse0` yet). xkb: relies on built-in defaults (no xkbcomp on-device).
 
 ## ★★ SERVER CORE — ENTIRE xorg-server core + kdrive DDX core COMPILE for aarch64-phoenix, 0 errors (2026-06-18)
 
