@@ -400,23 +400,30 @@ void IN_SendKeyEvents(void)
 	unsigned char buf[64];
 	ssize_t r;
 	int off;
+	int guard;
 
+	/* BOUNDED drains: cap reads PER FRAME so a device delivering a continuous stream (a noisy/
+	 * fast mouse, or a held key auto-repeating) can never spin these while() loops indefinitely
+	 * and stall the host frame loop. 64 reads/frame = up to ~1024 mouse packets or ~512 kbd
+	 * reports — far more than any real input burst; the rest drains next frame. (O_NONBLOCK already
+	 * makes read() return -1/EWOULDBLOCK when empty, but only if the device fifo actually empties;
+	 * a refilled-faster-than-drained fifo otherwise loops forever — this guard bounds that.) */
 	if (kbd_fd >= 0) {
 		if (kbd_raw) {
 			/* raw 8-byte HID reports (packet-aligned by usbkbd) */
-			while ((r = read(kbd_fd, buf, sizeof(buf))) > 0)
+			for (guard = 0; guard < 64 && (r = read(kbd_fd, buf, sizeof(buf))) > 0; ++guard)
 				for (off = 0; off + 8 <= (int)r; off += 8)
 					pl_kbd_raw_process(buf + off);
 		}
 		else {
-			while ((r = read(kbd_fd, buf, sizeof(buf))) > 0)
+			for (guard = 0; guard < 64 && (r = read(kbd_fd, buf, sizeof(buf))) > 0; ++guard)
 				pl_in_decode(buf, (int)r, pl_in_emit);
 		}
 	}
 
 	if (mouse_fd >= 0) {
 		/* raw 4-byte HID mouse packets (packet-aligned by usbmouse) */
-		while ((r = read(mouse_fd, buf, sizeof(buf))) > 0)
+		for (guard = 0; guard < 64 && (r = read(mouse_fd, buf, sizeof(buf))) > 0; ++guard)
 			for (off = 0; off + 4 <= (int)r; off += 4)
 				pl_mouse_process(buf + off);
 	}
