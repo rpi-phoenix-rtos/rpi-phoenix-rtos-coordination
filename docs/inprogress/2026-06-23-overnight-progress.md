@@ -1,5 +1,33 @@
 # Overnight progress — 2026-06-23 (autonomous)
 
+## ★★★ DAY UPDATE (2026-06-23, evening++): X SERVER RUNS + PAINTS ON HDMI (HW-PROVEN)
+
+**Xphoenix (the kdrive fbdev X server) now runs on the Pi and paints the X root to the real HDMI
+display.** With the embedded-keymap XKB fix in place, the netboot run (Quake launch disabled,
+scripted psh from /nfstest):
+```
+/nfstest/bin/Xphoenix :0 -fp /nfstest/usr/share/fonts/X11/misc
+[fbdev] /dev/fb0: 1920x1080 bpp=32 pitch=7680 smemlen=8294400
+```
+— and then **NO** "XKB: Failed to compile keymap", **NO** "Fatal server error", **NO** "Failed to
+activate virtual core keyboard" (all present in the pre-fix run). The server reached its dispatch
+loop. Proof it PAINTED: the HDMI auto-snapshots transition from ~1 MB PNGs (full fbcon text) at
+launch to a stable ~30 KB PNG (uniform black = the X root) across the final ticks — the fbdev DDX
+shadow→fb0 blit cleared the framebuffer to the black root, overwriting fbcon. Evidence snapshot
+saved at `artifacts/x11/xphoenix-root-painted-hdmi.png`.
+
+So the full X11 path is proven on HW end-to-end: lib stack → kdrive server core → fbdev DDX opens
+/dev/fb0 → XKB compiled-in keymap → dispatch loop → shadow→fb0 paint. The server OWNS the display.
+
+**What's left for an interactive X desktop (next session, all refinement — server itself works):**
+- Run a CLIENT (twm/xeyes — staged on NFS). psh can't background, and the server runs foreground,
+  so this needs either a boot-launch of the server (bundle it / nfsroot post-takeover) or a 2nd
+  psh session. A client painting is the definitive server+client proof.
+- Wire input: the DDX keyboard/pointer drivers are no-op stubs; bridge /dev/kbd0 + /dev/mouse0
+  (reference tools/quakespasm-port/platform/pl_phoenix_in.c) into the kdrive input layer.
+- Font path / color order verification once a client draws text.
+Flagship netboot restored after the test (image f65f6143, rpi4-quake bundled+launched).
+
 ## DAY UPDATE (2026-06-23, evening+): XKB gate RESOLVED — Xphoenix no longer needs on-device xkbcomp
 
 The one remaining gate from the X11 evening update (below) is fixed host-side. Xphoenix's XKB init
