@@ -1,5 +1,35 @@
 # Overnight progress — 2026-06-23 (autonomous)
 
+## ★★★★ DAY UPDATE (2026-06-23, night): X CLIENT (xeyes) RENDERS ON HDMI — full X11 stack works
+
+**A real X11 client application (xeyes) is rendering on the Pi's HDMI display.** Evidence:
+`artifacts/x11/xeyes-on-hdmi.png` — the two classic xeyes (white ovals + black pupils) on the
+black X root. The full X11 path is proven end-to-end on hardware:
+```
+Xphoenix server (kdrive fbdev DDX) ── X11 protocol over AF_UNIX /tmp/.X11-unix/X0 ──
+  xeyes client (DISPLAY=:0) ── fbdev DDX shadow->fb0 blit ── /dev/fb0 ── HDMI
+```
+Done via `pl_phoenix_xlaunch` (the xinit-style launcher, coord 195570b) since psh has no job
+control. UART trace (netboot, Quake launch temp-disabled):
+```
+/nfstest/bin/pl_phoenix_xlaunch /nfstest/bin/Xphoenix /nfstest/usr/share/fonts/X11/misc /nfstest/bin/xeyes
+xlaunch: starting server: ... :0 -ac -nolisten tcp -fp ...
+xlaunch: waiting for /tmp/.X11-unix/X0 (server pid 23)
+[fbdev] /dev/fb0: 1920x1080 ...
+xlaunch: server socket present after ~10 ms        <- server reached dispatch, opened the socket
+xlaunch: starting client: /nfstest/bin/xeyes (DISPLAY=:0)
+```
+No Fatal/BadAccess/connection errors; the only output is two cosmetic Xlib locale warnings
+("locale not supported by Xlib, locale set to C" — set LANG or ignore). The X GRAPHICS path is
+complete: server + client + protocol + render-to-HDMI all work.
+
+**Only remaining for a fully interactive desktop:** INPUT. The DDX keyboard/pointer drivers are
+no-op stubs, so xeyes' pupils don't track the (absent) mouse yet. Wire /dev/kbd0 + /dev/mouse0
+into the kdrive KdKeyboard/KdPointer layer (ref tools/quakespasm-port/platform/pl_phoenix_in.c
+for the HID decode). Then twm (also staged) gives a movable-window WM. The cosmetic locale
+warning can be silenced with LANG=C in the client env (xlaunch could set it). Flagship netboot
+restored after the test (image fcb0972b, rpi4-quake bundled+launched).
+
 ## ★★★ DAY UPDATE (2026-06-23, evening++): X SERVER RUNS + PAINTS ON HDMI (HW-PROVEN)
 
 **Xphoenix (the kdrive fbdev X server) now runs on the Pi and paints the X root to the real HDMI
