@@ -1,5 +1,25 @@
 # Overnight progress — 2026-06-23 (autonomous)
 
+## DAY UPDATE (2026-06-23, night+): X11 input driver wired — mouse device opens, render unregressed
+
+Wired real /dev/kbd0 + /dev/mouse0 drivers into the fbdev DDX (coord 1d93d7b), replacing the
+no-op stubs. HW (netboot, input-enabled Xphoenix + xeyes via xlaunch):
+- `[fbdev] /dev/mouse0 opened (fd=6) — mouse active` — the driver opened the mouse (mouse0
+  enumerated after USB bring-up; it shows absent at the early rpi4-sysinfo probe, present by
+  xlaunch time).
+- xeyes still renders (final snapshot byte-identical 47377 B to the capstone) — NO regression
+  from adding input.
+- Keyboard: kbd0 EBUSY as predicted — the pl011-tty console bridge holds /dev/kbd0; freeing it
+  for X needs the display-ownership step Quake does (FBCONSETMODE(FBCON_DISABLED)), not yet in
+  the DDX. So keyboard degrades to disabled; mouse (unheld) opens fine.
+
+**ATTENDED to finish (autonomous can't move a mouse / press keys):** verify mouse motion → xeyes
+pupils track + cursor moves; then the kbd0-ownership step → keyboard + twm interactive. Also a
+poll()-readiness risk (Phoenix poll() may not wake on the HID fd — the known lwip-socket-poll gap;
+if mouse opens but pupils don't move, that's it → fallback = a periodic KdWakeupHandler drain).
+The driver logic is the idiomatic kdrive approach; the remaining items are environmental
+(device ownership / poll semantics) + the physical interaction test. Flagship restored (e303c09e).
+
 ## ★★★★ DAY UPDATE (2026-06-23, night): X CLIENT (xeyes) RENDERS ON HDMI — full X11 stack works
 
 **A real X11 client application (xeyes) is rendering on the Pi's HDMI display.** Evidence:
