@@ -1,0 +1,181 @@
+# vkQuake → Phoenix-RTOS Pi4 (aarch64-phoenix, V3DV) — build scaffold + gap inventory
+
+**Date:** 2026-06-23
+**Type:** IMPLEMENTATION (host-side build scaffolding) + gap scoping
+**Scope:** ADDITIVE. Does NOT touch the GLQuake flagship (`tools/quakespasm-port`, the GL
+path) or the main image build. Host-side only — no Pi boot (UART owned by the main agent).
+Builds on the HW-validated V3DV ICD (Tier-4b, 2026-06-23): `libv3dv-phoenix.a` +
+`libv3d-phoenix.a` back-end.
+
+> **TL;DR.** vkQuake source is now in `external/vkquake/` (cloned from
+> github.com/Novum/vkQuake, master `9be3a5a`). A new build scaffold under
+> `tools/vkquake-port/` compiles **all 72 portable engine TUs** (including the full
+> Vulkan renderer + `tasks.c` threading + `mem.c`/mimalloc-style alloc + `hash_map` +
+> `lodepng`) for aarch64-phoenix, and a generated public-`vk*` trampoline layer resolves
+> the engine's direct Vulkan calls onto the ICD dispatch. A whole-archive link-drive
+> leaves **174 undefined symbols** — the real gap inventory below. None are V3DV/back-end
+> symbols (the ICD link closure is clean); they are the **platform-shim surface** (which
+> is largely portable from `quakespasm-port`), the **SDL2 threading bodies**, the
+> **embedded SPIR-V shaders** (80 of the 174 — a build-infra task needing glslang), and a
+> tiny **libc gap** (`copysign`, `pthread_mutex_timedlock`).
+
+---
+
+## 1. Where the source is
+
+- **Fetched** (internet was available this session): `external/vkquake/` —
+  `git clone --depth 1 github.com/Novum/vkQuake`, master `9be3a5a`. Sibling of
+  `external/quakespasm`, `external/mesa`, `external/linux`.
+- Engine sources: `external/vkquake/Quake/*.c` (97 `.c`). Authoritative build set is the
+  meson `srcs` list in `external/vkquake/meson.build`.
+- Shaders: `external/vkquake/Shaders/*.{vert,frag,comp}` (41 GLSL), compiled to SPIR-V
+  then `bintoc`-embedded into generated `.c`. `Shaders/Compiled/{Debug,Release}/` are
+  **empty** in the checkout (only `.gitkeep`) — SPIR-V must be built (see §5, build-infra).
+
+**Note on the plan's "no compute" assumption (`docs/inprogress/2026-06-16-...plan.md`
+§1.4):** FALSE for modern master. vkQuake uses compute (`vkCmdDispatch`, the
+`*_comp` shaders: lightmap updates, `cs_tex_warp`, `indirect`/`indirect_clear`),
+indirect draws (`vkCmdDrawIndexedIndirect`), buffer-device-address, push descriptors,
+and even RT-accel-structure debug paths. These are loaded via `fp*` pointers and gated
+behind feature checks at runtime, so they are **not link symbols** and do **not** block
+the host-side build. Whether V3DV supports them is a *runtime* question (out of scope —
+no Pi boot). Flag for Tier-5 feature-scoping: the renderer must be steered onto a path
+V3DV supports (classic raster, no compute lightmaps / no RT), likely via vkQuake cvars
+(`r_rtshadows 0`, software/compute-lightmap fallbacks) or by stubbing the compute path.
+
+## 2. The build scaffold (all new, under `tools/vkquake-port/`)
+
+| File | Purpose |
+|---|---|
+| `build-vkquake-phoenix.py` | Mirrors `build-quakespasm-phoenix.py`. Probe-compiles the 72 portable engine TUs; `--link` does the whole-archive link-drive against the V3DV ICD + back-end and dumps the undefined closure. |
+| `gen-vk-trampolines.py` | Parses `vulkan_core.h` prototypes; emits public `vk*` trampolines for the 75 core commands vkQuake calls directly (it does NOT use `VK_NO_PROTOTYPES`). |
+| `vk_trampolines.c` | GENERATED (75 commands). Each forwards through the ICD dispatch (aliased to `v3dv_GetInstanceProcAddr` by the existing `tools/v3d-driver-port/vk_icd_link.c`). A Mesa ICD does NOT export public `vk*` symbols, so without this layer every direct core call is undefined at link. **Resolver split is load-bearing and HW-proven by `v3dv_harness.c`:** global cmds → `vkGetInstanceProcAddr(NULL,…)`; instance/phys-dev cmds → `vkGetInstanceProcAddr(g_vk_instance,…)`; **device cmds (VkDevice/VkQueue/VkCommandBuffer first arg, e.g. `vkQueueSubmit`/`vkCmd*`) → `vkGetDeviceProcAddr(g_vk_device,…)`** — instance-proc-addr returns NULL for device commands in a loader-less ICD (the harness proved calling that NULL = pc=0 abort). `g_vk_instance`/`g_vk_device` are published by the vid shim right after `vkCreateInstance`/`vkCreateDevice`. |
+| `sdl-shim/SDL.h` | Grown SDL2-compat shim (superset of the quakespasm one): SDL2 threading TYPES (`SDL_mutex/cond/sem/Thread` — quakedef.h aliases SDL3→SDL2 names onto these), `SDL_MUTEX_MAXWAIT`, `SDL_GetPrefPath`, `SDL_RWsize` + RWops, `SDL_PRIs64/u64/u32`, `SDL_GetMouseState` (SDL2 `int*` form). |
+| `vkq_phoenix_compat.h` | Force-included into every TU. Pulls `<arm_neon.h>` (mathlib.h auto-#defines USE_SIMD/USE_NEON on aarch64 but never includes the intrinsics header — relies on a PCH upstream); declares the libphoenix `<math.h>` gaps and the `struct ipv6_mreq` netinet gap. |
+| `undefined-symbols.txt` | Saved snapshot of the 174-symbol whole-archive undefined closure (the gap inventory). |
+
+## 3. How far compilation/link got
+
+- **Compile: 72/72 portable engine TUs OK** (+ the trampoline TU). Net-new TUs vs
+  quakespasm-port that now compile: `gl_heap hash_map lodepng mdfour mem palette pr_ext
+  quakedef r_part_fte snd_umx snd_wave tasks`. The entire Vulkan renderer
+  (`gl_rmain/gl_draw/gl_screen/gl_sky/gl_warp/gl_texmgr/gl_mesh/r_world/r_brush/r_alias/
+  r_part/r_part_fte/...`) compiles against the Vulkan headers + shim.
+- **Link (whole-archive): 174 undefined symbols** — NONE are V3DV or v3d-back-end symbols
+  (the ICD closure links clean). All 174 are the platform-shim + shader + libc surface in §4.
+
+> **Method note (important, was a trap):** a *bare* archive link (`gcc -o elf lib.a ...`)
+> only pulls members crt0's `main` reference reaches — i.e. almost nothing — and
+> falsely reports "1 undefined: `main`". The real closure requires
+> `-Wl,--whole-archive libvkquake.a -Wl,--no-whole-archive` so every engine TU enters the
+> link. `build-vkquake-phoenix.py --link` does this.
+
+## 4. Gap inventory (the 174 undefined symbols), bucketed
+
+### A. Platform shims — LARGELY PORTABLE from `tools/quakespasm-port/platform/` (reuse)
+- **`Sys_*` (23):** `Sys_DoubleTime Sys_Printf Sys_Error Sys_Quit Sys_Sleep
+  Sys_FileOpenRead/Write Sys_FileRead/Write/Seek/Close Sys_filelength Sys_fseek/ftell
+  Sys_FileType Sys_mkdir Sys_ConsoleInput Sys_SendKeyEvents Sys_MemFileOpenRead
+  Sys_PinCurrentThread Sys_StackTrace Sys_DebugBreak Sys_IsInDebugger`. Quakespasm-port's
+  `pl_phoenix_sys.c` covers most; the file-I/O + `Sys_PinCurrentThread` (thread affinity,
+  can be a no-op) + debugger hooks (no-op) are deltas.
+- **`IN_*` (8):** `IN_Init/Shutdown/Activate/Deactivate/Commands/Move/ClearStates/
+  UpdateInputMode`. Reuse `pl_phoenix_in.c` (`/dev/kbd0` decoder); `IN_UpdateInputMode`
+  is a vkQuake addition (small).
+- **`SNDDMA_*` (7):** `SNDDMA_Init/Shutdown/GetDMAPos/Submit/LockBuffer/Block/Unblock`.
+  Reuse/adapt `pl_phoenix_snd.c` (the audio driver `/dev/audio0` exists — see MEMORY
+  rpi4-audio). `BlockSound/UnblockSound` are small additions.
+
+### B. SDL2 threading + path bodies — NET-NEW (I declared them in SDL.h; must implement)
+- `SDL_CreateMutex SDL_LockMutex SDL_UnlockMutex SDL_CreateCond SDL_CondWait
+  SDL_CondWaitTimeout SDL_CondBroadcast SDL_CreateSemaphore SDL_SemPost SDL_SemWait
+  SDL_SemTryWait SDL_Delay SDL_GetCPUCount SDL_CreateThread SDL_DetachThread
+  SDL_GetMouseState SDL_GetPrefPath SDL_free` (18).
+- These map cleanly onto Phoenix `sys/threads.h` (`mutexCreate/Lock`, `condCreate/Wait`,
+  `semaphoreCreate/Up/Down`, `beginthread`). Write `pl_phoenix_sdlcompat.c`. `tasks.c`
+  (vkQuake's job system) is the main consumer — it is the one genuinely new threading
+  dependency vs. quakespasm. `SDL_GetCPUCount` → return 1 (or the real core count;
+  scheduler is cpu0-only per SMP findings). `SDL_GetMouseState`/`SDL_GetPrefPath` belong
+  in the input/sys shims.
+
+### C. Vulkan vid shim — NET-NEW, THE LONG POLE (replaces `gl_vidsdl.c`)
+- `VID_Init VID_Shutdown VID_Restart VID_Toggle VID_Lock`; `GL_BeginRendering
+  GL_EndRendering GL_WaitForDeviceIdle GL_UpdateDescriptorSets GL_SetObjectName
+  GL_SynchronizeEndRenderingTask`; globals — **two distinct classes (verified against
+  `undefined-symbols.txt`):** (a) GENUINELY UNDEFINED, the shim must **define** them:
+  `vid modestate isDedicated r_usesops prev_end_rendering_task`; (b) TENTATIVE/COMMON
+  (resolve at link, absent from the undefined list), the shim need only **initialize**:
+  `vulkan_globals` + the `num_vulkan_*_allocations` / `total_device_vulkan_allocation_size`
+  counters; `M_Menu_Video_f M_Video_Draw M_Video_Key`
+  (video menu — can stub); `PL_GetClipboardData SCR_ScreenShot_f` (small); `net_drivers
+  net_landrivers net_numdrivers net_numlandrivers` (net registry — comes from the net
+  platform glue `pl_linux`/`net_bsd`, replace with the loopback-only table from
+  quakespasm-port's `pl_phoenix_stubs.c`).
+- This `pl_phoenix_vk_vid.c` is the bulk of the new work: it owns `vkCreateInstance`
+  (then publishes `g_vk_instance`), device/queue/swapchain bring-up, the fb0 swapchain
+  (plan §3), `GL_BeginRendering/EndRendering` (per-frame command-buffer + present), and
+  the `vulkan_globals` table the whole renderer reads. Mirror upstream `gl_vidsdl.c`'s
+  structure, swap SDL_Vulkan_* for the fb0 surface. Plan-§3 swapchain coupling applies.
+- **SDL_Vulkan_* surface:** `SDL_Vulkan_CreateSurface/GetInstanceExtensions/
+  GetDrawableSize/GetVkGetInstanceProcAddr/LoadLibrary` are referenced only in the
+  excluded `gl_vidsdl.c`; the replacement vid shim calls our fb0-surface code directly
+  and never needs them. (They are NOT in the undefined list precisely because gl_vidsdl
+  is excluded.)
+
+### D. Embedded SPIR-V shaders + pak — BUILD-INFRA (80 + 3 of the 174)
+- 80 `*_spv` / `*_spv_size` extern arrays (`world_vert_spv`, `alias_frag_spv`,
+  `*_comp_spv` lightmap/compute, `postprocess_*`, `sky_*`, `showtris_*`, `wboit_*`, ...)
+  and 3 `vkquake_pak*` (the embedded base pak via `mkpak`).
+- Upstream builds these by: GLSL → SPIR-V via **glslang** (+ `spirv-opt
+  --canonicalize-ids` for the `sops` variants), then `bintoc` (host tool,
+  `Shaders/bintoc.c`) emits a `<name>.spv.c` with `const unsigned char name_spv[]` +
+  `int name_spv_size`. `embedded_pak.c` similarly from `mkpak` (`Misc/vq_pak/mkpak.c`).
+- **glslang / spirv-opt are NOT on this host's PATH** → this is a build-infra prerequisite:
+  install/build glslang + spirv-tools (host tools), compile the 41 shaders, run bintoc,
+  add the generated `.spv.c` to the build. `bintoc`/`mkpak` themselves compile with the
+  host cc (native). Until then the renderer links only with stubbed/zero shader arrays
+  (which would render nothing — so this gates any on-HW pixel, but NOT the link scaffold).
+
+### E. libc gaps — SMALL (upstreamable to libphoenix)
+- `copysign` — libphoenix `<math.h>` lacks it (has `round/roundf/log2/trunc`; lacks
+  `copysign`, also `rint/remainder/log2f/fmin/fmax` were missing as *declarations* but
+  DO resolve from libm at link; only `copysign` is truly unresolved at link). Add to
+  libphoenix math (the upstreamable fix), or provide in a shim `.c`.
+- `pthread_mutex_timedlock` — libphoenix lacks it; reached via `SDL_SemWaitTimeout`/
+  tasks.c timeouts. Either implement in `pl_phoenix_sdlcompat.c` over Phoenix cond-timed-
+  wait, or add to libphoenix pthread. (Matches the libc-gap-filling pattern the
+  quakespasm/X11 ports used.)
+- `main` — entry point lives in the excluded `main_sdl.c`; provided by the
+  `pl_phoenix_main.c` shim (reuse quakespasm-port's, adapt the init order for the Vulkan
+  vid path).
+
+## 5. Concrete next steps (in dependency order)
+
+1. **Write `pl_phoenix_sdlcompat.c`** — the 18 SDL2 threading/path bodies over
+   `sys/threads.h` + `pthread_mutex_timedlock`. Smallest, unblocks `tasks.c` at link.
+   (Bucket B + the pthread gap in E.)
+2. **Port the platform shims** from `tools/quakespasm-port/platform/` — `pl_phoenix_sys.c`
+   (+ file-I/O + no-op thread-pin/debugger), `pl_phoenix_in.c` (+ `IN_UpdateInputMode`,
+   `SDL_GetMouseState`), `pl_phoenix_snd.c` → `SNDDMA_*`, `pl_phoenix_main.c`,
+   `pl_phoenix_stubs.c` (loopback `net_drivers` table). (Buckets A + parts of C/E.)
+3. **Add `copysign` to libphoenix math** (or a shim) — one symbol. (Bucket E.)
+4. **Build-infra: SPIR-V shaders** — get glslang + spirv-opt on the host, compile the 41
+   shaders, run `bintoc`, generate `embedded_pak.c` via `mkpak`, add the `.spv.c` to the
+   build. (Bucket D — needed before any real frame, parallelizable with 1–3.)
+5. **Write the Vulkan vid shim `pl_phoenix_vk_vid.c`** — the long pole (Bucket C):
+   instance/device/queue/swapchain bring-up, the fb0 swapchain (plan §3),
+   `GL_BeginRendering/EndRendering`, the `vulkan_globals` table, publish `g_vk_instance`.
+   Steer the renderer onto a V3DV-supported feature path (no compute lightmaps / no RT —
+   see §1) via cvars/stubs. This is where the plan's Tier-4/5 risk concentrates.
+6. **Link to a complete ELF**, then hand to the main agent for on-HW Tier-1 bring-up
+   (`vkCreateInstance`/`vkCreateDevice` already HW-proven via `v3dv_harness`; vkQuake adds
+   the renderer + swapchain on top).
+
+## 6. Reuse vs. net-new summary (vs `quakespasm-port`)
+
+- **~Free reuse:** engine core, net (loopback), the `Sys_*`/`IN_*` shim skeletons,
+  `pl_phoenix_main/sys/in/snd/stubs.c`, the SDL RWops mapping.
+- **Net-new:** the SDL2 *threading* bodies (`tasks.c` is vkQuake-only), the Vulkan vid
+  shim + fb0 swapchain (replaces the GL `pl_phoenix_vid.c`/`glctx`), the trampoline layer
+  (done — generated), the SPIR-V shader build pipeline, the V3DV feature-scoping for
+  compute/RT paths.
