@@ -91,6 +91,15 @@ def main():
         help="seconds to wait between commands",
     )
     ap.add_argument(
+        "--max-cmd-secs",
+        type=int,
+        default=120,
+        help="hard cap on per-command capture (seconds), regardless of idle-detection. "
+        "Prevents an infinite hang when the console is never quiet (e.g. genet RXSTATS "
+        "spam keeps resetting the idle timer) or when a launched program runs forever "
+        "(e.g. an X server). 0 = unlimited (old behavior).",
+    )
+    ap.add_argument(
         "--commands",
         nargs="+",
         default=DEFAULT_COMMANDS,
@@ -155,9 +164,16 @@ def main():
             ser.write((cmd + "\n").encode("ascii"))
             ser.flush()
 
-            # capture response while bytes arrive
-            quiet_since = time.time()
+            # capture response: end after idle-secs of silence OR a hard max
+            # (max-cmd-secs) elapsed — the latter prevents an infinite hang when
+            # the console is never quiet (genet RXSTATS spam resets the idle timer
+            # every ~1 s) or the command launched a never-exiting program.
+            cmd_start = time.time()
+            quiet_since = cmd_start
             while time.time() - quiet_since < args.idle_secs:
+                if args.max_cmd_secs and (time.time() - cmd_start) >= args.max_cmd_secs:
+                    print(f"\n*** max-cmd-secs ({args.max_cmd_secs}s) reached, moving on")
+                    break
                 data = ser.read(256)
                 if data:
                     sys.stdout.buffer.write(data)

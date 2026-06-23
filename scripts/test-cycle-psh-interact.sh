@@ -31,9 +31,18 @@ skip_server_up=0
 wait_secs="${PSH_WAIT_SECS:-150}"
 idle_secs="${PSH_IDLE_SECS:-20}"
 inter_cmd_secs="${PSH_INTER_CMD_SECS:-3}"
+max_cmd_secs="${PSH_MAX_CMD_SECS:-120}"
 commands_default=( "help" "ps" "mem" "df" )
 commands=()
 uart_baud="115200"
+
+# HDMI grabber (Linux host, optional) — mirrors test-cycle-netboot.sh so a
+# scripted-psh cycle can also capture what's on-screen (e.g. an X server painting
+# the framebuffer). Skips cleanly if the grabber device is absent.
+hdmi_grabber="${RPI4B_HDMI_GRABBER:-/dev/video4}"
+hdmi_interval="${RPI4B_HDMI_INTERVAL:-15}"
+hdmi_dir="${RPI4B_HDMI_DIR:-$repo/artifacts/hdmi}"
+hdmi_pid=""
 
 usage() {
 	cat <<EOF
@@ -59,6 +68,7 @@ while [ $# -gt 0 ]; do
 		--wait-secs)        wait_secs="$2"; shift 2 ;;
 		--idle-secs)        idle_secs="$2"; shift 2 ;;
 		--inter-cmd-secs)   inter_cmd_secs="$2"; shift 2 ;;
+		--max-cmd-secs)     max_cmd_secs="$2"; shift 2 ;;
 		--baud)             uart_baud="$2"; shift 2 ;;
 		--skip-server-up)   skip_server_up=1; shift ;;
 		--)                 shift; while [ $# -gt 0 ]; do commands+=("$1"); shift; done ;;
@@ -74,7 +84,35 @@ fi
 ts="$(date +%Y%m%d-%H%M%S)"
 log_path="$repo/artifacts/rpi4b-uart/rpi4b-uart-${ts}-${label}.log"
 
+hdmi_label_base() {
+	local ts2
+	ts2="$(date -u +%Y%m%d-%H%M%S)"
+	if [ -n "$label" ]; then printf '%s/%s-%s' "$hdmi_dir" "$ts2" "$label"; else printf '%s/%s' "$hdmi_dir" "$ts2"; fi
+}
+hdmi_grab_one() {
+	local out="$1"
+	[ -e "$hdmi_grabber" ] || return 1
+	timeout --foreground 5 ffmpeg -y -loglevel error -f v4l2 -i "$hdmi_grabber" \
+		-frames:v 1 "$out" </dev/null >/dev/null 2>&1 || return 1
+}
+start_hdmi_periodic() {
+	[ "$hdmi_interval" -gt 0 ] || return 0
+	[ -e "$hdmi_grabber" ] || { printf 'HDMI: grabber %s absent, skipping snapshots\n' "$hdmi_grabber" >&2; return 0; }
+	mkdir -p "$hdmi_dir"
+	( while sleep "$hdmi_interval"; do hdmi_grab_one "$(hdmi_label_base)-tick.png" || true; done ) &
+	hdmi_pid=$!
+}
+stop_hdmi_periodic() {
+	if [ -n "$hdmi_pid" ] && kill -0 "$hdmi_pid" 2>/dev/null; then
+		kill "$hdmi_pid" 2>/dev/null || true
+		wait "$hdmi_pid" 2>/dev/null || true
+	fi
+	hdmi_pid=""
+}
+
 cleanup() {
+	stop_hdmi_periodic
+	if [ -e "$hdmi_grabber" ]; then mkdir -p "$hdmi_dir"; hdmi_grab_one "$(hdmi_label_base)-final.png" || true; fi
 	printf '\n[test-cycle-psh-interact] power off\n'
 	"$repo/scripts/pi_power_off.sh" >/dev/null 2>&1 || true
 }
@@ -88,6 +126,7 @@ printf '[test-cycle-psh-interact] power cycle\n'
 "$repo/scripts/pi_power_off.sh" >/dev/null 2>&1 || true
 sleep "$power_settle_secs"
 "$repo/scripts/pi_power_on.sh"
+start_hdmi_periodic
 
 printf '[test-cycle-psh-interact] running psh-interact.py\n'
 printf '[test-cycle-psh-interact] log: %s\n' "$log_path"
@@ -103,5 +142,6 @@ python3 "$repo/scripts/psh-interact.py" \
 	--wait-secs "$wait_secs" \
 	--idle-secs "$idle_secs" \
 	--inter-cmd-secs "$inter_cmd_secs" \
+	--max-cmd-secs "$max_cmd_secs" \
 	--commands "${commands[@]}"
 exit $?
