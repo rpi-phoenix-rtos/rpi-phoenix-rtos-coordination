@@ -1,5 +1,45 @@
 # Overnight progress — 2026-06-23 (autonomous)
 
+## DAY UPDATE (2026-06-23, later): X11 Xphoenix server LINKS + launches on HW (visible paint = tooling-gated)
+
+**The one remaining new-code X11 piece is done: the kdrive fbdev DDX.** `Xphoenix` — a static
+aarch64-phoenix X server (xorg-server 1.20.14 kdrive core + the 45-archive X lib stack + a new
+fbdev backend) — compiles and LINKS with 0 undefined symbols (7.1 MB ELF, artifacts/x11/Xphoenix).
+Committed coord `72319f5` (ddx/fbdev.c is the durable source-of-truth; build-xfbdev.sh syncs it
+into the regenerable src/ tree). The DDX: cardinit opens /dev/fb0 + RPI4FB_GETMODE; scrinit sets
+depth24/bpp32/TrueColor + a shadow framebuffer; a custom ShadowUpdateProc lseek()+write()s damaged
+scanlines to /dev/fb0 (no mmap(fd,0) dependency, works around #149). An InitCard-in-OsVendorInit
+bug (made the screen unreachable) was caught + fixed by the assisting pass via advisor.
+
+**HW: launched without a FatalError, but visible paint NOT yet confirmed (test-tooling gap).**
+Staged on the NFS export: /bin/Xphoenix + a minimal font dir (/usr/share/fonts/X11/misc with
+6x13.pcf.gz aliased to `fixed` + cursor.pcf.gz + fonts.dir/fonts.alias). Ran it via scripted psh
+on the **netboot** variant (Quake launch temporarily disabled for a quiet console; reverted +
+flagship rebuilt after, image ebd20569): `/nfstest/bin/Xphoenix :0 -fp /nfstest/usr/share/fonts/X11/misc`
+was accepted by psh and produced NO FatalError / no "could not open font" in the capture window
+(X servers are silent on success) — but also no positive confirmation.
+
+**Blockers hit (all test-infra, NOT the X server):**
+1. nfsroot scripted psh is unusable for this: the NFS `takeover` re-binds /dev mid-stream and the
+   psh console stops receiving scripted input after takeover (commands sent post-takeover don't
+   echo). netboot avoids this (no takeover) — psh is stable there.
+2. On netboot, genet RXSTATS spam means the console is never "quiet", so psh-interact's
+   per-command idle-detection waits the full --idle-secs each command → only the first 1-2 commands
+   fit the time budget. Mitigated by sending just 2 commands (mkdir /tmp; Xphoenix — the server
+   auto-creates /tmp/.X11-unix).
+3. **psh-interact.py does NOT capture HDMI snapshots**, and the test-cycle that DOES snapshot
+   (test-cycle-netboot.sh) can't run scripted psh commands → no autonomous way to see the painted
+   X root. This is the precise remaining gap.
+
+**To finish (visible paint on HDMI) — pick one, all small:**
+- (a) Add an HDMI-snapshot tick to psh-interact.sh (or grab one mid-cycle while Xphoenix runs), then
+  re-run the netboot recipe above and read the PNG.
+- (b) Attended: at an interactive psh (HDMI or UART), `mkdir /tmp` then run the Xphoenix line above
+  and look at the screen. Interactive psh isn't subject to the scripted-timing issues.
+- (c) Bundle Xphoenix into loader.disk + add to the nfsroot post-takeover plo block (boot-launched,
+  no scripted input) — but it's 7 MB against the one-big-binary loader.disk budget.
+Then wire input (/dev/kbd0,/dev/mouse0 — stubbed today) + run twm/xeyes for an interactive desktop.
+
 ## DAY UPDATE (2026-06-23, later): Vulkan Tier-4b TRIANGLE — first user-shader GPU render via Vulkan (HW-PROVEN)
 
 **The vkQuake prerequisite is met.** A real Vulkan graphics pipeline executed on the BCM2711
