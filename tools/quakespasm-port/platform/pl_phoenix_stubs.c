@@ -9,25 +9,21 @@
 typedef int sys_socket_t;       /* normally from net_sys.h (platform-gated) */
 #include "net_defs.h"
 #include "net_loop.h"
-#include "net_dgrm.h"
-#include "net_udp.h"
 
 #include <time.h>
 #include <pthread.h>
 
 /* --- network driver tables (were in net_bsd.c, which this port excludes). ---
- * These four arrays are the ENTIRE content of net_bsd.c (just registration tables, no
- * socket "glue"), so the port owns them here and keeps net_bsd.c excluded from the build
- * (avoids duplicate symbols). Register BOTH:
- *  - Loopback: single-player "map"/"newgame" (CL_EstablishConnection("local") -> Loop_Connect).
- *  - Datagram + UDP LAN: multiplayer. net_dgrm.c/net_udp.c already compile+link (only net_bsd
- *    is excluded), and every socket primitive UDP_* needs (socket/bind/sendto/recvfrom/
- *    setsockopt(SO_BROADCAST)/ioctl(FIONBIO/FIONREAD)/inet_addr/htonl…) is real in libphoenix/
- *    lwip. Registering the UDP landriver is what sets tcpipAvailable=true, so the multiplayer
- *    menu works and a listen server + connect-by-IP function. (gethostbyname is a libphoenix
- *    NULL stub -> self-IP falls back to loopback, so broadcast `slist` discovery needs the
- *    Phase-1 SIOCGIFADDR fix; connect-by-numeric-IP does NOT use it and works now.)
- * Loop_* live in net_loop.c, Datagram_* in net_dgrm.c, UDP_* in net_udp.c — all in CORE. */
+ * Register ONLY the Loopback driver (single-player "map"/"newgame" via Loop_Connect).
+ *
+ * The Datagram + UDP LAN driver was REVERTED (it broke the single-player flagship): registering
+ * the UDP landriver makes Quake's per-frame net poll service incoming UDP, and the BCM2711 LAN
+ * has stray UDP/broadcast traffic — when a packet arrives, UDP_CheckNewConnections calls
+ * ioctl(FIONREAD), which on Phoenix lwIP errors ENOSYS -> Quake Error (fatal hang at the demo).
+ * Enabling lwIP FIONREAD (LWIP_FIONREAD_LINUXMODE) made the server start but ALSO regressed
+ * NFS/rendering (the demo never rendered). So LAN multiplayer needs BOTH a working FIONREAD AND
+ * a fix that doesn't break the NFS path — a careful combined effort, deferred (task #26). Until
+ * then, Loopback-only keeps single-player solid. Loop_* live in net_loop.c (CORE). */
 net_driver_t net_drivers[] =
 {
 	{	"Loopback",
@@ -44,51 +40,11 @@ net_driver_t net_drivers[] =
 		Loop_CanSendUnreliableMessage,
 		Loop_Close,
 		Loop_Shutdown
-	},
-	{	"Datagram",
-		false,
-		Datagram_Init,
-		Datagram_Listen,
-		Datagram_SearchForHosts,
-		Datagram_Connect,
-		Datagram_CheckNewConnections,
-		Datagram_GetMessage,
-		Datagram_SendMessage,
-		Datagram_SendUnreliableMessage,
-		Datagram_CanSendMessage,
-		Datagram_CanSendUnreliableMessage,
-		Datagram_Close,
-		Datagram_Shutdown
 	}
 };
 const int      net_numdrivers = Q_COUNTOF(net_drivers);
-
-net_landriver_t net_landrivers[] =
-{
-	{	"UDP",
-		false,
-		0,
-		UDP_Init,
-		UDP_Shutdown,
-		UDP_Listen,
-		UDP_OpenSocket,
-		UDP_CloseSocket,
-		UDP_Connect,
-		UDP_CheckNewConnections,
-		UDP_Read,
-		UDP_Write,
-		UDP_Broadcast,
-		UDP_AddrToString,
-		UDP_StringToAddr,
-		UDP_GetSocketAddr,
-		UDP_GetNameFromAddr,
-		UDP_GetAddrFromName,
-		UDP_AddrCompare,
-		UDP_GetSocketPort,
-		UDP_SetSocketPort
-	}
-};
-const int      net_numlandrivers = Q_COUNTOF(net_landrivers);
+net_landriver_t net_landrivers[1];
+const int      net_numlandrivers = 0;
 
 /* --- throttle cvar (was in main_sdl.c; sys_ticrate is owned by host.c) --- */
 cvar_t sys_throttle = { "sys_throttle", "0.02", CVAR_ARCHIVE };
