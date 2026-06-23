@@ -38,6 +38,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <sys/ioctl.h>
+#include <phoenix/fbcon.h>   /* FBCONSETMODE / FBCON_DISABLED|ENABLED — silence the HDMI text console */
 
 #include "kdrive.h"
 #include "fb.h"
@@ -97,6 +98,37 @@ fbdevInitialize(KdCardInfo *card, FbdevPriv *priv)
     return TRUE;
 }
 
+/*
+ * The HDMI text console (pl011-tty fbcon + the kernel klog mirror) keeps drawing
+ * to /dev/fb0. While the X server owns the framebuffer that overdraws our output:
+ * any stderr/klog line (e.g. a client's locale warning) gets painted on top of the
+ * rendered screen, and the once-per-damage shadow blit loses to the console redraw
+ * — exactly the problem GLQuake hit (pl_phoenix_vid.c::console_setmode). So we tell
+ * the console to stop drawing (FBCON_DISABLED) while X owns the display, and restore
+ * it (FBCON_ENABLED) at server teardown. Disabling fbcon's text mode is also what
+ * frees /dev/kbd0 for the input driver (the console holds it in text mode).
+ */
+static int fbdev_ttyfd = -1;
+
+static void
+fbdevConsoleSetMode(int mode)
+{
+    if (fbdev_ttyfd < 0) {
+        fbdev_ttyfd = open("/dev/tty0", O_RDWR);
+        if (fbdev_ttyfd < 0)
+            fbdev_ttyfd = open("/dev/console", O_RDWR);
+    }
+    if (fbdev_ttyfd >= 0) {
+        if (ioctl(fbdev_ttyfd, FBCONSETMODE, mode) == 0)
+            ErrorF("[fbdev] HDMI console fbcon mode -> %d\n", mode);
+        else
+            ErrorF("[fbdev] FBCONSETMODE(%d) failed (console may overdraw)\n", mode);
+    }
+    else {
+        ErrorF("[fbdev] no /dev/tty0|console to switch fbcon mode\n");
+    }
+}
+
 static Bool
 fbdevCardInit(KdCardInfo *card)
 {
@@ -108,6 +140,8 @@ fbdevCardInit(KdCardInfo *card)
         free(priv);
         return FALSE;
     }
+    /* Claim the framebuffer: stop the text console from overdrawing X. */
+    fbdevConsoleSetMode(FBCON_DISABLED);
     card->driver = priv;
     return TRUE;
 }
@@ -328,6 +362,13 @@ static void
 fbdevCardFini(KdCardInfo *card)
 {
     FbdevPriv *priv = card->driver;
+    /* Hand the framebuffer back to the text console (reappears with everything
+     * the console accumulated off-screen while X owned the display). */
+    fbdevConsoleSetMode(FBCON_ENABLED);
+    if (fbdev_ttyfd >= 0) {
+        close(fbdev_ttyfd);
+        fbdev_ttyfd = -1;
+    }
     if (priv) {
         if (priv->fd >= 0)
             close(priv->fd);
