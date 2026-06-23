@@ -31,9 +31,21 @@ if [ "${1:-}" = "--stub" ]; then SRCFILE=fbdev_stub.c; OUT=Xphoenix-stub; fi
 # DURABLE source-of-truth for the DDX is the tracked copy in tools/x11-port/ddx/.
 # Sync it into the in-tree DDX dir before compiling so a fresh tree gets the backend.
 DDX_SRC=/home/houp/phoenix-rpi/tools/x11-port/ddx
+XKBDIR=/home/houp/phoenix-rpi/tools/x11-port/xkb
 mkdir -p "$DDX"
 cp "$DDX_SRC/fbdev.c" "$DDX/fbdev.c"
 [ -f "$DDX_SRC/fbdev_stub.c" ] && cp "$DDX_SRC/fbdev_stub.c" "$DDX/fbdev_stub.c"
+
+# Phoenix XKB fix: the kdrive server's XKB init forks `xkbcomp` (absent on the Pi),
+# so it aborts before the dispatch loop. The durable patched ddxLoad.c (tracked in
+# tools/x11-port/ddx/, mirroring how fbdev.c is the DDX source-of-truth) stages a
+# compiled-in keymap instead of forking. We compile it fresh and link it BEFORE
+# libxkb.a so the linker takes our XkbDDX* symbols and skips the stock archive member.
+# The embedded keymap (builtin_keymap.h) is produced by xkb/gen-builtin-keymap.sh.
+PATCHED_DDXLOAD="$DDX_SRC/ddxLoad.c"
+if [ ! -f "$XKBDIR/builtin_keymap.h" ]; then
+  echo "MISSING $XKBDIR/builtin_keymap.h — run xkb/gen-builtin-keymap.sh first"; exit 1
+fi
 
 # Compile flags mirror hw/kdrive/src/Makefile (DEFS + DEFAULT_INCLUDES + AM_CPPFLAGS + CFLAGS).
 # Mirrors hw/kdrive/ephyr/Makefile (KDRIVE_CFLAGS + KDRIVE_INCS) so the kdrive
@@ -52,6 +64,11 @@ INCS="-DHAVE_DIX_CONFIG_H -DHAVE_CONFIG_H \
 
 echo "=== compiling $SRCFILE ==="
 $CC $CFLAGS $INCS -c "$DDX/$SRCFILE" -o "$DDX/${SRCFILE%.c}.o" || { echo "COMPILE FAIL"; exit 1; }
+
+# Patched ddxLoad.c (XKB compiled-in-keymap fix). -I$XKBDIR resolves builtin_keymap.h.
+echo "=== compiling patched ddxLoad.c (XKB no-xkbcomp fix) ==="
+$CC $CFLAGS $INCS -I"$KD/xkb" -I"$XKBDIR" -c "$PATCHED_DDXLOAD" -o "$DDX/ddxLoad.o" \
+  || { echo "COMPILE FAIL (ddxLoad.c)"; exit 1; }
 
 # Server core archive list (from hw/kdrive/ephyr/Makefile KDRIVE_LIBS), .la -> .libs/*.a,
 # PLUS dix/libmain.a (Xephyr supplies its own main(); we use the stock stubmain).
@@ -87,7 +104,10 @@ for a in "${core_la[@]}"; do GROUP="$GROUP $KD/$a"; done
 
 echo "=== linking $OUT ==="
 # --start-group/--end-group: dix/os/mi/fb have circular refs (single-pass link fails).
-$CC --sysroot=$SYSROOT -o "$DDX/$OUT" "$DDX/${SRCFILE%.c}.o" \
+# ddxLoad.o BEFORE the group: its XkbDDX* symbols satisfy the references first, so
+# the linker never pulls the stock ddxLoad.o member out of libxkb.a (archive members
+# are only extracted to resolve still-undefined symbols).
+$CC --sysroot=$SYSROOT -o "$DDX/$OUT" "$DDX/${SRCFILE%.c}.o" "$DDX/ddxLoad.o" \
   -Wl,--start-group $GROUP -Wl,--end-group \
   -L$PREFIX/lib -lpixman-1 -lXfont2 -lfontenc -lfreetype -lz -lXau -lXdmcp -lxkbfile -lmd -lm \
   2> "$DDX/${OUT}-link.log"
@@ -101,3 +121,12 @@ fi
 echo "=== OK: $DDX/$OUT ==="
 file "$DDX/$OUT"
 ls -l "$DDX/$OUT"
+
+# Publish the full (non-stub) server to the tracked artifact location.
+if [ "$OUT" = "Xphoenix" ]; then
+  ART=/home/houp/phoenix-rpi/artifacts/x11
+  mkdir -p "$ART"
+  cp "$DDX/$OUT" "$ART/$OUT"
+  echo "=== published -> $ART/$OUT ==="
+  ls -l "$ART/$OUT"
+fi

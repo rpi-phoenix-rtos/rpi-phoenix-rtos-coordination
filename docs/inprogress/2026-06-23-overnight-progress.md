@@ -1,5 +1,43 @@
 # Overnight progress — 2026-06-23 (autonomous)
 
+## DAY UPDATE (2026-06-23, evening+): XKB gate RESOLVED — Xphoenix no longer needs on-device xkbcomp
+
+The one remaining gate from the X11 evening update (below) is fixed host-side. Xphoenix's XKB init
+forked `xkbcomp` (absent on the Pi, no xkeyboard-config) and aborted. **Fix = option c+a hybrid
+(smallest on-device footprint): a keymap precompiled on the host is embedded in the server and
+staged to the path the server's `LoadXKM()` reads — no fork, no shipped data file.**
+
+Key correction caught via advisor: the stock RMLVO path fails at `XkbDDXNamesFromRules`'s
+`fopen(.../rules/evdev)` (no xkeyboard-config) BEFORE it ever reaches the xkbcomp fork, and the
+`KeymapOrDefaults` fallback forks xkbcomp too — so a patch at `XkbDDXCompileKeymapByNames` would be
+dead code. The short-circuit therefore lives at the TOP of `XkbCompileKeymap` (ddxLoad.c), bypassing
+the rules lookup entirely; the precompiled `.xkm` already encodes resolved us/pc105.
+
+Files (all durable / tracked, mirroring the fbdev.c source-of-truth pattern):
+- `tools/x11-port/xkb/gen-builtin-keymap.sh` — host generator: setxkbmap+xkbcomp → `default.xkm` +
+  `builtin_keymap.h` (C byte array). Asserts the `.xkm` XkmFileVersion == the in-tree reader's (15)
+  and that symbols/types/compat/keycodes are present, else FAILS LOUDLY.
+- `tools/x11-port/xkb/builtin_keymap.h` + `default.xkm` — the embedded us/pc105 keymap (12316 B, v15).
+- `tools/x11-port/ddx/ddxLoad.c` — durable patched copy (was untracked before); `#ifdef __phoenix__`
+  short-circuit in `XkbCompileKeymap` calls `PhoenixWriteBuiltinKeymap()` (writes the embedded bytes
+  to `<OutputDirectory>server-<display>.xkm`, i.e. `/tmp/server-0.xkm`) then `LoadXKM()`; falls
+  through to the stock path on any failure. `XkbDDXCompileKeymapByNames` left STOCK (upstreamable).
+- `tools/x11-port/build-xfbdev.sh` — now compiles the patched ddxLoad.c fresh and links it BEFORE
+  libxkb.a (so the linker takes our `XkbDDX*`/`XkbCompileKeymap` and skips the archive member), and
+  publishes the built server to `artifacts/x11/Xphoenix`.
+
+Build: links 0-undefined into the static aarch64-phoenix ELF (7.12 MB, `artifacts/x11/Xphoenix`).
+objdump confirms `XkbCompileKeymap` → `PhoenixWriteBuiltinKeymap`+`LoadXKM` (not the rules path) and
+the embedded array byte-matches `default.xkm`. Version-15 match verified (host xkbcomp 1.4.7 emits
+v15; in-tree xkmread.c/libxkbfile expect 15).
+
+Next HW run (main agent): the `[fbdev] /dev/fb0: ...` line, then **NO** "XKB: Failed to compile
+keymap" / no "Failed to activate virtual core keyboard" — instead `XKB: using compiled-in keymap
+(no xkbcomp): /tmp/server-0.xkm`. Server should reach the dispatch loop → shadow→fb0 blit paints the
+root. Run as before: `mkdir /tmp` then `/nfstest/bin/Xphoenix :0 -fp /nfstest/usr/share/fonts/X11/misc`
+(needs `/tmp` writable for the staged .xkm + the X socket). Residual risks: input still stubbed
+(/dev/kbd0,/dev/mouse0), font path, color order — all unchanged by this fix.
+
 ## DAY UPDATE (2026-06-23, evening): X11 fbdev DDX PROVEN FUNCTIONAL on HW — blocked only on XKB
 
 Re-ran the X paint test after fixing the test tooling (below). **The fbdev DDX works**: Xphoenix
