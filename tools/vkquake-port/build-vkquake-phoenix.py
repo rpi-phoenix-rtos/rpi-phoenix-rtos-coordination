@@ -49,7 +49,10 @@ EXCLUDE = {
     "gl_vidsdl",                         # -> pl_phoenix_vk_vid.c (Vulkan vid shim, TODO)
     "in_sdl", "in_sdl2", "in_sdl3",      # -> pl_phoenix_in.c (/dev/kbd0)
     "snd_sdl", "snd_sdl3",               # -> pl_phoenix_snd.c
-    "sys_sdl", "sys_sdl_unix", "sys_sdl_win",  # -> pl_phoenix_sys.c
+    # NOTE: sys_sdl.c is PORTABLE (the integer file-handle layer; no SDL dependency) and
+    # is kept in ENGINE — only the platform-specific sys_sdl_{unix,win}.c are excluded
+    # (replaced by pl_phoenix_sys.c).
+    "sys_sdl_unix", "sys_sdl_win",       # -> pl_phoenix_sys.c
     "main_sdl",                          # -> pl_phoenix_main.c
     "pl_linux", "pl_win",                # platform glue
     "net_bsd", "net_win", "net_wins", "net_wipx",  # BSD/Win sockets -> loopback shim
@@ -73,6 +76,23 @@ ENGINE = [
     "r_world", "sbar", "snd_codec", "snd_dma", "snd_mem", "snd_mix", "snd_umx",
     "snd_wave", "strlcat", "strlcpy", "sv_main", "sv_move", "sv_phys", "sv_user",
     "tasks", "view", "wad", "world", "hash_map", "quakedef", "lodepng",
+    # Portable file-handle layer (sys_sdl.c): the integer Sys_FileOpenRead/Write/Read/
+    # Write/Seek/Close + Sys_MemFileOpenRead + Sys_filelength. No SDL dependency, so it
+    # builds verbatim and supplies those 8 Sys_* symbols; the Phoenix sys shim provides
+    # only the non-portable deltas (Sys_fseek/ftell/Init/Error/etc.).
+    "sys_sdl",
+]
+
+# Phoenix platform shims (replace the EXCLUDEd SDL/platform TUs). Compiled with the same
+# CFLAGS and archived alongside the engine TUs so their bodies resolve the platform-shim
+# undefined surface (Sys_*/IN_*/SNDDMA_*/SDL_* threading + net loopback table + libc gaps).
+PLATFORM = [
+    f"{PORT}/platform/pl_phoenix_sdlcompat.c",   # SDL2 threading/path bodies + copysign + pthread_mutex_timedlock
+    f"{PORT}/platform/pl_phoenix_sys.c",         # Sys_* (non-portable) + PL_ErrorDialog/PL_GetClipboardData
+    f"{PORT}/platform/pl_phoenix_in.c",          # IN_* (/dev/kbd0 + /dev/mouse0) + SDL_GetMouseState
+    f"{PORT}/platform/pl_phoenix_snd.c",         # SNDDMA_* (/dev/audio0 feeder)
+    f"{PORT}/platform/pl_phoenix_main.c",        # main() + host loop
+    f"{PORT}/platform/pl_phoenix_stubs.c",       # net_drivers loopback table + pthread_getcpuclockid
 ]
 
 # Engine include flags. quakedef.h pulls <vulkan/vulkan_core.h> + vid.h, so VKINC and the
@@ -111,8 +131,18 @@ def main():
         e = compile_one(tramp_src, f"{OBJ}/vk_trampolines.o")
         (fail.append(("vk_trampolines", e)) if e else objs.append(f"{OBJ}/vk_trampolines.o"))
 
-    total = len(units) + (1 if os.path.exists(tramp_src) else 0)
-    print(f"\n=== compile: {len(objs)}/{total} TUs OK ===")
+    # Phoenix platform shims (replace the EXCLUDEd SDL/platform TUs). Same CFLAGS.
+    plat_total = 0
+    for src in PLATFORM:
+        if not os.path.exists(src):
+            fail.append((os.path.basename(src), "MISSING SOURCE")); continue
+        plat_total += 1
+        name = os.path.splitext(os.path.basename(src))[0]
+        e = compile_one(src, f"{OBJ}/{name}.o")
+        (fail.append((name, e)) if e else objs.append(f"{OBJ}/{name}.o"))
+
+    total = len(units) + (1 if os.path.exists(tramp_src) else 0) + plat_total
+    print(f"\n=== compile: {len(objs)}/{total} TUs OK (incl. {plat_total} platform shims) ===")
     if fail:
         print(f"--- {len(fail)} FAILED ---")
         for u, e in fail:
