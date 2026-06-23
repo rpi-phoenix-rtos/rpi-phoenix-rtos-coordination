@@ -1,5 +1,41 @@
 # X11 (tinyx/kdrive) library port — progress
 
+## UPDATE 2026-06-23 (assist): xinit-style launcher `pl_phoenix_xlaunch` built
+
+psh has no job control (`&` is a redirect), so a server + client cannot be
+started from one psh session. New foreground launcher solves this:
+`tools/x11-port/launcher/pl_phoenix_xlaunch.c` + `tools/x11-port/build-xlaunch.sh`.
+It vfork+execve's the server (`:0 -ac -nolisten tcp -fp <fontdir>`), polls for the
+listening socket `/tmp/.X11-unix/X0` (~10 ms, ≤10 s, abort-on-server-death via
+`waitpid(WNOHANG)`), then vfork+execve's the client with `DISPLAY=:0` (env built in
+the parent — vfork-safe, no setenv in the child), then blocks in `waitpid` on both
+(server dies → kill client + exit). Spawn idiom mirrors psh/pshapp.c + psh/runfile.c
+(vfork + execv + waitpid). `/tmp` and `/tmp/.X11-unix` are mkdir'd up front.
+
+Built static aarch64-phoenix ELF, **0 undefined symbols** (libc only):
+`artifacts/x11/pl_phoenix_xlaunch` (also staged to NFS export `/bin/pl_phoenix_xlaunch`).
+(The vfork-live locals are marked `volatile` to suppress GCC's `-Wclobbered`, which
+fires because at -O2 the env/argv builders inline into main() alongside the vfork
+calls; it is a false positive — the children only execve/_exit, never writing parent
+memory — but volatile documents the constraint cleanly for upstreaming.)
+
+**HW recipe (main agent, netboot, NFS export at /nfstest):**
+```
+mkdir /tmp                         # if not already
+/bin/pl_phoenix_xlaunch /nfstest/bin/Xphoenix /nfstest/usr/share/fonts/X11/misc /nfstest/bin/xeyes
+```
+(`/bin/pl_phoenix_xlaunch` is on the NFS root; pass absolute NFS paths for the three
+args.) Expect on UART: `xlaunch: starting server...`, the `[fbdev] /dev/fb0: ...` line,
+`xlaunch: server socket present...`, `xlaunch: starting client: .../xeyes (DISPLAY=:0)`.
+Expect on **HDMI**: xeyes' two eyes painted on the black X root (eyes won't track —
+pointer input is still a stub, that's fine; the paint is the proof). For twm later:
+stage a `twm` ELF to `/nfstest/bin/` and swap the last arg.
+
+Risks: if Xphoenix names its socket differently than `/tmp/.X11-unix/X0`, the readiness
+poll times out but the launcher proceeds best-effort (server-reaches-dispatch is
+HW-proven) so the client still launches — confirm the socket name on the run.
+
+
 **Goal:** a software X server (kdrive `Xfbdev`) on the Pi 4 `/dev/fb0`, per
 `docs/todo/tinyx-x11-demo.md`. The OS prereqs are done (AF_UNIX HW-validated, fb0,
 USB HID kbd+mouse). The remaining cost is porting the X11 **library stack** (it is
