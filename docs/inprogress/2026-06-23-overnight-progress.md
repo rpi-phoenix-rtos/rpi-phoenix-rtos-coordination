@@ -1,23 +1,30 @@
 # Overnight progress — 2026-06-23 (autonomous)
 
-## Delivered + committed tonight
+## CORRECTION (later 2026-06-23): multiplayer ATTEMPT broke single-player → REVERTED
 
-### Quake LAN multiplayer — NOW FUNCTIONAL (was "no communications" / server hang)
-Two fixes, both HW-validated:
-1. **Driver registration** (coord `13702d1`): the port registered only Loopback; added the
-   Datagram + UDP LAN drivers in `pl_phoenix_stubs.c` (net_udp.c/net_dgrm.c already compiled).
-   → "UDP Initialized", multiplayer menu works.
-2. **FIONREAD fix** (lib-lwip `4d24465` + phoenix-rtos-lwip `67380fa`): the UDP server hung at
-   "Loading" with `ioctlsocket (FIONREAD) failed (ENOSYS)`. Root cause: lwIP FIONREAD was
-   `_IOR('f',127,unsigned long)` but libphoenix/clients send the `int` version — `_IOR` encodes
-   sizeof into the value, so they were different command numbers and lwip_ioctl's `case FIONREAD`
-   never matched. (FIONBIO matched, both ulong → non-blocking worked, FIONREAD didn't.) Plus
-   `LWIP_FIONREAD_LINUXMODE` wasn't reaching the lib-lwip core compile. Fixed value→int +
-   opt.h default→1. → server reaches protocol-666 init, no ENOSYS, 0 faults.
+The multiplayer work below was **reverted** — it regressed the single-player flagship (Quake
+hung at the demo / never rendered). **Committed end state = working single-player flagship**
+(Loopback-only, FIONREAD default, EZ on, colour/alpha/QUIT fixed). Reverts: coord `4c65180`,
+lib-lwip `8da7fc2`, phoenix-rtos-lwip `e247acb`. HW-validated demo renders (QSFPS ~60, no error).
 
-**Remaining for full multiplayer:** Phase 1 (real advertised IP via `SIOCGIFADDR` for `slist`
-discovery — autonomous, but moderate net-code risk, deferred to fresh context so as not to
-regress the now-working server) + the actual 2-machine connect handshake (attended; the dev host
+**What happened (task #26):** registering the UDP LAN driver (Phase 0) made Quake's per-frame
+net poll service incoming UDP; a stray BCM2711-LAN packet triggers `UDP_CheckNewConnections` →
+`ioctl(FIONREAD)` → fatal `ENOSYS` Quake Error (intermittent — an early boot got lucky). The
+FIONREAD enablement (`LWIP_FIONREAD_LINUXMODE` + value→int) made the *server* start but ALSO
+regressed the NFS-backed Quake load (demo never rendered, QSFPS=0). So multiplayer needs BOTH a
+working FIONREAD AND one that doesn't break NFS, plus a non-fatal UDP poll — a careful combined
+re-work, deferred. Details + plan in task #26.
+
+---
+### (HISTORICAL, reverted) Quake LAN multiplayer attempt
+1. **Driver registration** (coord `13702d1`, REVERTED 4c65180): added Datagram + UDP LAN drivers
+   in `pl_phoenix_stubs.c`. → "UDP Initialized", menu worked — but destabilized single-player.
+2. **FIONREAD fix** (lib-lwip `4d24465` + phoenix-rtos-lwip `67380fa`, REVERTED 8da7fc2/e247acb):
+   lwIP FIONREAD was `_IOR('f',127,unsigned long)` vs libphoenix's `int` (different command
+   numbers); fixed value→int + opt.h LINUXMODE default→1 → server started, but regressed NFS.
+
+**Remaining for full multiplayer:** re-do the above without breaking NFS + non-fatal FIONREAD,
+then the actual 2-machine connect handshake (attended; the dev host
 NIC is cabled to the Pi).
 
 ## Investigated + documented (queued for fresh context / you)
