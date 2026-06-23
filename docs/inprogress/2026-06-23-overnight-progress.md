@@ -1,5 +1,59 @@
 # Overnight progress — 2026-06-23 (autonomous)
 
+## DAY UPDATE (2026-06-23, later): Vulkan Tier-4b TRIANGLE — first user-shader GPU render via Vulkan (HW-PROVEN)
+
+**The vkQuake prerequisite is met.** A real Vulkan graphics pipeline executed on the BCM2711
+V3D 4.2: a render pass (loadOp=CLEAR magenta, storeOp=STORE to the scanout-backed image), a
+graphics pipeline built from hand-authored SPIR-V VS+FS (vertexless triangle; VS derives 3
+clip positions + R/G/B from gl_VertexIndex), compiled through v3dv's spirv_to_nir ->
+v3d_compile (NIR->QPU), and a vertexless vkCmdDraw(3). UART (netboot, harness swapped in for
+rpi4-quake):
+```
+v3dv-harness: shader modules created (vs=868B fs=448B)
+v3dv-harness: vkCreateGraphicsPipelines -> 0
+v3dv-harness: recorded render pass + vertexless triangle draw (user VS+FS)
+v3dv-harness: vkQueueSubmit -> 0
+v3dv-harness: vkQueueWaitIdle -> 0
+v3dv-harness: scanout fb px0(corner) = ff 00 80 ff  (render-pass STORE landed)
+v3dv-harness: PASS
+```
+All pipeline/submit/wait calls return 0 with NO fault, NO hang. The user-authored shaders
+compiled and the render pass executed on the GPU — the first user-shader GPU render through
+Vulkan on Phoenix. (HDMI snapshot didn't catch the one-shot triangle: the harness draws once
+early and the 25 s snapshot cadence / live display plane don't align with that BO. The UART
+scanout-readback is the deterministic proof.)
+
+Commits: coord `0145486` (host harness + gen-triangle-spirv.py + triangle_spirv.h, compiles),
+devices `5155c9e` (on-Pi rpi4-v3dv-tier0 synced + Makefile include path + Tier-4b STATUS).
+Flagship config RESTORED after the test (rpi4-quake re-bundled; image SHA 94082502...). To
+re-run the triangle: swap rpi4-quake -> rpi4-v3dv-tier0 in BOTH
+phoenix-rtos-devices/_targets/Makefile.aarch64a72-generic AND user.plo.yaml (one large V3D
+binary fits per boot). **NEXT: vkQuake** (the V3DV path is now proven end-to-end).
+
+The subagent that began this was cut off mid-edit by a transient 529 (left the command-buffer
+recording referencing a removed blit source); I finished the recording (render pass + draw),
+built, integrated into the on-Pi program, and HW-validated.
+
+## DAY UPDATE (2026-06-23, later): Quake-start fix + two big-item subagents
+
+- **Quake input-hang (#24):** committed coord `5fa0bea` — bounded the per-frame HID drain in
+  `IN_SendKeyEvents` (kbd/mouse `while(read()>0)` → capped at 64 reads/frame). Verify boot
+  (`quakefix-verify`, no input) confirms the **demo still renders** (QSFPS up to 41, CLEAN RCL,
+  "You got armor", 0 faults) → no regression. HONEST ATTRIBUTION: this build ALSO restored
+  `xhci.c` to committed (removed the debug `fprintf`s that ran under `eventLock` during input).
+  Two candidate fixes for the input-driven hang; can't attribute between them unattended, and the
+  user's symptom (events *trickle, don't flood*) argues the bounded-drain is defensive-good but
+  maybe NOT the actual cause — the xhci-fprintf removal is the other suspect. #24 stays open
+  pending the attended mouse-movement test.
+- **Two big-item subagents launched (additive, HDMI-verifiable, separate builds):**
+  - **Xserver kdrive Xfbdev DDX** (primary): X lib stack + clients already built; the DDX
+    (fbdev backend, dropped from modern xorg-server → needs resurrection) is the one remaining
+    new-code piece. Target: static `Xfbdev`/`Xphoenix` ELF driving /dev/fb0 (shadow-fb → fb0
+    flush) → twm/xeyes paint on HDMI.
+  - **Vulkan V3DV Tier-4b** (secondary): render-pass + minimal pipeline + SPIR-V shaders →
+    triangle; also resolving the `noop-job` submit blocker.
+  Main agent integrates + HW-validates each when they report (one Pi cycle at a time).
+
 ## CORRECTION (later 2026-06-23): multiplayer ATTEMPT broke single-player → REVERTED
 
 The multiplayer work below was **reverted** — it regressed the single-player flagship (Quake
