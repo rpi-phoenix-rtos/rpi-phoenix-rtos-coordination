@@ -132,19 +132,50 @@ int main(int argc, char *argv[])
 	volatile pid_t cli_pid;
 	pid_t w;
 	int status, tick;
+	char *const *client_extra;
+	int n_client_extra;
+	static char sp_buf[256], fd_buf[256], cp_buf[256];
 
-	if (argc < 4) {
-		fprintf(stderr,
-			"usage: %s <Xphoenix-path> <fontdir> <client-path> [client-args...]\n"
-			"  e.g. %s /nfstest/bin/Xphoenix "
-			"/nfstest/usr/share/fonts/X11/misc /nfstest/bin/xeyes\n",
-			argv[0], argv[0]);
-		return EXIT_FAILURE;
+	if (argc >= 4) {
+		/* Explicit form: <Xphoenix> <fontdir> <client> [client-args...] */
+		server_path = argv[1];
+		font_dir    = argv[2];
+		client_path = argv[3];
+		client_extra = &argv[4];
+		n_client_extra = argc - 4;
 	}
+	else {
+		/* "startx" convenience: 0 or 1 args. Auto-detect the install prefix
+		 * (NFS export mounted at /nfstest on netboot, else "/" on nfsroot/sd)
+		 * and default the client to xeyes. Optional argv[1] picks the client
+		 * (bare name under <prefix>/bin, or an absolute path). So:
+		 *   startx          -> <prefix>/bin/xeyes
+		 *   startx twm      -> <prefix>/bin/twm
+		 *   startx /bin/2048-> /bin/2048
+		 */
+		const char *prefix = "/nfstest";
+		const char *client = (argc >= 2) ? argv[1] : "xeyes";
+		struct stat stx;
 
-	server_path = argv[1];
-	font_dir    = argv[2];
-	client_path = argv[3];
+		snprintf(sp_buf, sizeof(sp_buf), "%s/bin/Xphoenix", prefix);
+		if (stat(sp_buf, &stx) != 0) {
+			prefix = ""; /* root install (nfsroot / sd) */
+			snprintf(sp_buf, sizeof(sp_buf), "%s/bin/Xphoenix", prefix);
+		}
+		snprintf(fd_buf, sizeof(fd_buf), "%s/usr/share/fonts/X11/misc", prefix);
+		if (client[0] == '/')
+			snprintf(cp_buf, sizeof(cp_buf), "%s", client);
+		else
+			snprintf(cp_buf, sizeof(cp_buf), "%s/bin/%s", prefix, client);
+
+		server_path = sp_buf;
+		font_dir    = fd_buf;
+		client_path = cp_buf;
+		client_extra = NULL;
+		n_client_extra = 0;
+		fprintf(stderr, "xlaunch: startx mode — prefix=%s client=%s\n",
+			prefix[0] ? prefix : "/", client);
+	}
 
 	/* The X server + clients need /tmp (for the .xkm + the listening socket).
 	 * Create /tmp and /tmp/.X11-unix up front; EEXIST is fine. */
@@ -171,7 +202,7 @@ int main(int argc, char *argv[])
 
 	/* Build the client argv (prog + any trailing args from our argv[4..]) and
 	 * the client environment (with DISPLAY=:0) BEFORE forking — vfork-safe. */
-	client_argv = build_argv((char *)client_path, &argv[4], argc - 4);
+	client_argv = build_argv((char *)client_path, client_extra, n_client_extra);
 	if (client_argv == NULL) {
 		fprintf(stderr, "xlaunch: out of memory building client argv\n");
 		return EXIT_FAILURE;
