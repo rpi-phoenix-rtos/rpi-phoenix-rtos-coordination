@@ -1,5 +1,39 @@
 # Overnight progress — 2026-06-23 (autonomous)
 
+## DAY UPDATE (2026-06-23, evening): X11 fbdev DDX PROVEN FUNCTIONAL on HW — blocked only on XKB
+
+Re-ran the X paint test after fixing the test tooling (below). **The fbdev DDX works**: Xphoenix
+opened /dev/fb0 and read the mode —
+```
+/nfstest/bin/Xphoenix :0 -fp /nfstest/usr/share/fonts/X11/misc
+[fbdev] /dev/fb0: 1920x1080 bpp=32 pitch=7680 smemlen=8294400      <- DDX cardinit/scrinit OK
+XKB: Failed to compile keymap
+Keyboard initialization failed. ... missing or incorrect setup of xkeyboard-config.
+Fatal server error: Failed to activate virtual core keyboard: 2
+```
+So the server gets through framebuffer + screen init and dies at INPUT init — the device has no
+`xkbcomp` binary + no xkeyboard-config data, so the mandatory virtual-core-keyboard's keymap
+compile fails (fatal). This is a well-known minimal-system X issue, NOT a DDX problem. The screen
+init (which precedes input init) succeeded but the server aborts before the first paint flush, so
+HDMI still shows fbcon. `-noxkb` is an Xorg-DDX flag, NOT a kdrive option (kdrive only has
+`-keybd`/`-xkb-rules/model/layout/...`, all of which still invoke xkbcomp) — confirmed via the
+server's own usage dump. There is no keyboard-disable flag.
+
+**XKB fix options (next session — the one remaining gate to a painted X root):**
+- (a) Precompile a keymap to a `.xkm` on the host (xkbcomp present here) + arrange the server to
+  load it without compiling (XKM cache dir / `-xkbdir` with the rules-hash-named cache file).
+- (b) Cross-compile + stage `xkbcomp` + a minimal xkeyboard-config dataset onto the NFS root.
+- (c) Patch XkbInitKeyboardDeviceStruct / the kdrive keyboard init to fall back to a compiled-in
+  default keymap (make the compile non-fatal) — smallest on-device footprint.
+Then the server reaches its dispatch loop and the shadow→fb0 blit paints the root → twm/xeyes.
+
+**Test-tooling fixes committed (87dc7ad)** — these unblocked getting this signal at all:
+- psh-interact.py hung forever when the console never went quiet (genet RXSTATS prints every ~1s
+  reset the idle timer); added `--max-cmd-secs` hard cap. The hang had been silently eating every
+  scripted-psh netboot run (only the 1st command ever landed) + leaking a port-holding process.
+- Ported the HDMI periodic grabber into test-cycle-psh-interact.sh (it took NO snapshots before),
+  so scripted-psh cycles can now see the screen — required to confirm any X/GPU paint.
+
 ## DAY UPDATE (2026-06-23, later): X11 Xphoenix server LINKS + launches on HW (visible paint = tooling-gated)
 
 **The one remaining new-code X11 piece is done: the kdrive fbdev DDX.** `Xphoenix` — a static
