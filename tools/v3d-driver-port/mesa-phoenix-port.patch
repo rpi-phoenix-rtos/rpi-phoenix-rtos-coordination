@@ -1,3 +1,164 @@
+diff --git a/include/renderdoc_app.h b/include/renderdoc_app.h
+index b2d10c5e2d2..c19305b198f 100644
+--- a/include/renderdoc_app.h
++++ b/include/renderdoc_app.h
+@@ -39,6 +39,8 @@
+ #define RENDERDOC_CC
+ #elif defined(__APPLE__)
+ #define RENDERDOC_CC
++#elif defined(__phoenix__) || defined(__unix__)
++#define RENDERDOC_CC
+ #else
+ #error "Unknown platform"
+ #endif
+diff --git a/src/broadcom/vulkan/v3dv_bo.c b/src/broadcom/vulkan/v3dv_bo.c
+index 1417dda7212..0b090e4100b 100644
+--- a/src/broadcom/vulkan/v3dv_bo.c
++++ b/src/broadcom/vulkan/v3dv_bo.c
+@@ -295,6 +295,13 @@ v3dv_bo_map_unsynchronized(struct v3dv_device *device,
+       return false;
+    }
+ 
++#if defined(__phoenix__)
++   /* Phoenix has no V3D kernel DRM driver: the in-process winsys (phoenix_v3d_ioctl in
++    * v3d_phoenix_winsys.c) backs every BO with uncached, flat-MMU-mapped host memory and
++    * returns the BO's already-mapped CPU virtual address as map.offset. There is no
++    * separate kernel mmap to perform — use the returned address directly. */
++   bo->map = (void *)(uintptr_t)map.offset;
++#else
+    bo->map = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED,
+                   device->pdevice->render_fd, map.offset);
+    if (bo->map == MAP_FAILED) {
+@@ -302,6 +309,7 @@ v3dv_bo_map_unsynchronized(struct v3dv_device *device,
+                 bo->handle, (long long)map.offset, (uint32_t)bo->size);
+       return false;
+    }
++#endif
+    VG(VALGRIND_MALLOCLIKE_BLOCK(bo->map, bo->size, 0, false));
+ 
+    bo->map_size = size;
+@@ -346,7 +354,12 @@ v3dv_bo_unmap(struct v3dv_device *device, struct v3dv_bo *bo)
+ {
+    assert(bo && bo->map && bo->map_size > 0);
+ 
++#if defined(__phoenix__)
++   /* The winsys owns the BO's mapping (it is freed by GEM_CLOSE -> ioc_close_bo); the va
++    * here was not produced by libc mmap(), so there is nothing to munmap. */
++#else
+    munmap(bo->map, bo->map_size);
++#endif
+    VG(VALGRIND_FREELIKE_BLOCK(bo->map, 0));
+    bo->map = NULL;
+    bo->map_size = 0;
+diff --git a/src/broadcom/vulkan/v3dv_device.c b/src/broadcom/vulkan/v3dv_device.c
+index 32b0cd460e8..66d5b650525 100644
+--- a/src/broadcom/vulkan/v3dv_device.c
++++ b/src/broadcom/vulkan/v3dv_device.c
+@@ -841,6 +841,19 @@ device_has_expected_features(struct v3dv_physical_device *device)
+ static VkResult
+ init_uuids(struct v3dv_physical_device *device)
+ {
++#if defined(__phoenix__)
++   /* Phoenix first-light: no .note.gnu.build-id is resolvable on the statically-
++    * loaded image, and the upstream build_id_data()+blake3 path dereferences a
++    * synthetic note header -> wild pointer -> fault. These UUIDs only gate pipeline-
++    * cache validity and cross-process memory sharing, neither of which is used at
++    * first light (no persistent cache, single process). Use fixed dummy UUIDs so
++    * device-create succeeds; revisit for a real build-id when caching matters. */
++   memset(device->driver_build_sha1, 0x5a, sizeof(device->driver_build_sha1));
++   memset(device->pipeline_cache_uuid, 0xb3, VK_UUID_SIZE);
++   memset(device->driver_uuid, 0xd5, VK_UUID_SIZE);
++   memset(device->device_uuid, 0xde, VK_UUID_SIZE);
++   return VK_SUCCESS;
++#else
+    const struct build_id_note *note =
+       build_id_find_nhdr_for_addr(init_uuids);
+    if (!note) {
+@@ -892,6 +905,7 @@ init_uuids(struct v3dv_physical_device *device)
+    memcpy(device->device_uuid, blake3, VK_UUID_SIZE);
+ 
+    return VK_SUCCESS;
++#endif /* __phoenix__ */
+ }
+ 
+ static void
+@@ -1346,6 +1360,12 @@ get_device_properties(const struct v3dv_physical_device *device,
+ 
+ }
+ 
++#if defined(__phoenix__)
++/* Inert render-fd token for the Phoenix winsys (no /dev/dri node). Any value works;
++ * phoenix_v3d_ioctl ignores the fd. Nonzero so it never looks like a closed fd. */
++#define V3DV_PHOENIX_FAKE_RENDER_FD 0x763364 /* 'v3d' */
++#endif
++
+ static VkResult
+ create_physical_device(struct v3dv_instance *instance,
+                        int32_t primary_fd, int32_t render_fd,
+@@ -1372,6 +1392,14 @@ create_physical_device(struct v3dv_instance *instance,
+    if (result != VK_SUCCESS)
+       goto fail;
+ 
++#if defined(__phoenix__)
++   /* No /dev/dri nodes to stat on Phoenix; the render fd is an inert token routed to
++    * phoenix_v3d_ioctl. Synthesize device ids so init can proceed. */
++   (void)primary_fd;
++   device->has_primary = false;
++   device->has_render = true;
++   device->render_devid = 0;
++#else
+    struct stat primary_stat = {0}, render_stat = {0};
+    if (fstat(primary_fd, &primary_stat) != 0) {
+       result = vk_errorf(instance, VK_ERROR_INITIALIZATION_FAILED,
+@@ -1389,6 +1417,7 @@ create_physical_device(struct v3dv_instance *instance,
+ 
+    device->has_render = true;
+    device->render_devid = render_stat.st_rdev;
++#endif
+ 
+ #if USE_V3D_SIMULATOR
+    device->sim_file = v3d_simulator_init(render_fd);
+@@ -1404,6 +1433,16 @@ create_physical_device(struct v3dv_instance *instance,
+       drmFreeVersion(version);
+    }
+ 
++#if defined(__phoenix__)
++   /* The Phoenix-RTOS winsys submits synchronously (it blocks on FLDONE/FRDONE per
++    * job) and provides only no-op DRM syncobjs — there is no real syncobj/timeline
++    * backing for a threaded submit. is_shim selects exactly the no-threaded-submit
++    * path (queue_init + CreateDevice both gate vk_*_enable_*submit_thread on !is_shim),
++    * so force it true. Without this, threaded submit is enabled and the device-create
++    * noop-job submit waits forever on a syncobj that never signals (hang). */
++   device->is_shim = true;
++#endif
++
+    if (!v3d_get_device_info(device->render_fd, &device->devinfo, &v3d_ioctl)) {
+       result = vk_errorf(instance, VK_ERROR_INITIALIZATION_FAILED,
+                          "Failed to get info from device.");
+@@ -1637,6 +1676,15 @@ enumerate_devices(struct vk_instance *vk_instance)
+    struct v3dv_instance *instance =
+       container_of(vk_instance, struct v3dv_instance, vk);
+ 
++#if defined(__phoenix__)
++   /* Phoenix-RTOS (RPi4 V3DV port): there is no /dev/dri node and no real libdrm
++    * device enumeration. The Phoenix winsys (tools/v3d-driver-port/) routes every
++    * v3d ioctl through phoenix_v3d_ioctl regardless of fd, so the render fd is an
++    * inert token. Bypass the drmGetDevices2 scan and create the physical device
++    * directly. primary/display fd = -1 (no KMS; the custom /dev/fb0 swapchain at
++    * Tier 4 handles present). See docs/inprogress/2026-06-17-vulkan-v3dv-tier0-progress.md. */
++   return create_physical_device(instance, -1, V3DV_PHOENIX_FAKE_RENDER_FD, -1);
++#else
+    /* FIXME: Check for more devices? */
+    drmDevicePtr devices[8];
+    int max_devices;
+@@ -1696,6 +1744,7 @@ enumerate_devices(struct vk_instance *vk_instance)
+    drmFreeDevices(devices, max_devices);
+ 
+    return result;
++#endif /* !__phoenix__ */
+ }
+ 
+ uint32_t
 diff --git a/src/gallium/drivers/v3d/v3d_bufmgr.c b/src/gallium/drivers/v3d/v3d_bufmgr.c
 index e82fd069b18..0eed759e4e0 100644
 --- a/src/gallium/drivers/v3d/v3d_bufmgr.c
@@ -318,3 +479,47 @@ index 98b3cd6f8d8..16de49d8b28 100644
  #if defined(HAVE_POSIX_MEMALIGN)
  
  static inline void *
+diff --git a/src/vulkan/runtime/vk_image.c b/src/vulkan/runtime/vk_image.c
+index f5e67646c61..ef483d79d5d 100644
+--- a/src/vulkan/runtime/vk_image.c
++++ b/src/vulkan/runtime/vk_image.c
+@@ -23,7 +23,7 @@
+ 
+ #include "vk_image.h"
+ 
+-#if DETECT_OS_LINUX || DETECT_OS_BSD
++#if DETECT_OS_LINUX || DETECT_OS_BSD || defined(__phoenix__) /* Phoenix V3DV: emulates the Linux DRM ABI; keep drm_format_mod */
+ #include <drm-uapi/drm_fourcc.h>
+ #endif
+ 
+@@ -96,7 +96,7 @@ vk_image_init(struct vk_device *device,
+       vk_find_struct_const(pCreateInfo->pNext, WSI_IMAGE_CREATE_INFO_MESA);
+    image->wsi_legacy_scanout = wsi_info && wsi_info->scanout;
+ 
+-#if DETECT_OS_LINUX || DETECT_OS_BSD
++#if DETECT_OS_LINUX || DETECT_OS_BSD || defined(__phoenix__) /* Phoenix V3DV: emulates the Linux DRM ABI; keep drm_format_mod */
+    image->drm_format_mod = ((1ULL << 56) - 1) /* DRM_FORMAT_MOD_INVALID */;
+ #endif
+ 
+@@ -176,7 +176,7 @@ vk_image_destroy(struct vk_device *device,
+    vk_object_free(device, alloc, image);
+ }
+ 
+-#if DETECT_OS_LINUX || DETECT_OS_BSD
++#if DETECT_OS_LINUX || DETECT_OS_BSD || defined(__phoenix__) /* Phoenix V3DV: emulates the Linux DRM ABI; keep drm_format_mod */
+ VKAPI_ATTR VkResult VKAPI_CALL
+ vk_common_GetImageDrmFormatModifierPropertiesEXT(UNUSED VkDevice device,
+                                                  VkImage _image,
+diff --git a/src/vulkan/runtime/vk_image.h b/src/vulkan/runtime/vk_image.h
+index c8db60a1ba9..6a6a087ac4e 100644
+--- a/src/vulkan/runtime/vk_image.h
++++ b/src/vulkan/runtime/vk_image.h
+@@ -76,7 +76,7 @@ struct vk_image {
+    /* wsi_image_create_info::scanout */
+    bool wsi_legacy_scanout;
+ 
+-#if DETECT_OS_LINUX || DETECT_OS_BSD
++#if DETECT_OS_LINUX || DETECT_OS_BSD || defined(__phoenix__) /* Phoenix V3DV: emulates the Linux DRM ABI; keep drm_format_mod */
+    /* VK_EXT_drm_format_modifier
+     *
+     * Initialized by vk_image_create/init() to DRM_FORMAT_MOD_INVALID.  It's

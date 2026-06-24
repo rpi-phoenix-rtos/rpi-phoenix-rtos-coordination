@@ -7,6 +7,55 @@ path) or the main image build. Host-side only — no Pi boot (UART owned by the 
 Builds on the HW-validated V3DV ICD (Tier-4b, 2026-06-23): `libv3dv-phoenix.a` +
 `libv3d-phoenix.a` back-end.
 
+> **UPDATE 2026-06-25 — REAL SPIR-V SHADERS + FULL CHAIN REBUILT 0-UNDEFINED FROM SCRATCH.**
+> The night-audit "no glslang" premise was stale: `glslangValidator` 11:16.2.0 + `spirv-opt`
+> (SPIRV-Tools v2026.1) ARE on this host. Re-ran `gen-vkquake-shaders.py` → **all 41 shaders
+> compiled to REAL SPIR-V** (mode `REAL (glslangValidator)`; sizes 1.6–4.9 KB each, magic
+> `0x07230203`, no 20-byte placeholders). The generator already matches the upstream
+> `Shaders/compile.sh` flags exactly: `.vert`/`.frag` = `glslangValidator -V`; `*sops*.comp`
+> = `-V --target-env vulkan1.1`. **compile.sh uses NO `spirv-opt`** (the prior §D note that
+> the sops variants need `spirv-opt --canonicalize-ids` is wrong vs the primary source — no
+> spirv-opt pass is applied or needed). `vkquake_shaders.c` (1.8 MB real bytes) is committed
+> for reproducibility.
+>
+> The three `/tmp` libs had been cleared, so the WHOLE chain was rebuilt host-side and
+> re-verified — the deliverable's "0 undefined" is now a fact about *today*, not 2026-06-24:
+> - Reconstructed the one-time host Mesa builds (`uv venv /tmp/mesa-pyenv` + mako/meson/ninja;
+>   `meson setup /tmp/mesa-v3d-build` [gallium v3d] + `/tmp/mesa-v3dv-build` [+vulkan broadcom]).
+>   The GL host build aborts on `v3d_resource.c`'s aarch64 `dc civac` cache-flush asm (can't
+>   assemble on x86) — **expected**; the Phoenix cross-build re-emits it with the aarch64 gcc.
+> - **New durability fix (`build-v3d-phoenix.py`):** that early abort left the meson
+>   *custom-target* generated sources unmaterialized — `builtin_types.c` (defines the
+>   `glsl_type_builtin_*` globals) + the `nir_*`/`v3d_nir_lower_algebraic.c` tables — so the
+>   aux build silently skipped them and `libv3d`/`libv3dv`/`vkquake` linked with 40+
+>   undefined `glsl_type_builtin_*`. Added `ensure_generated_sources()`: ninja-generates the
+>   7 needed custom-target outputs (no-op if present) before the aux compile. Verified by
+>   deleting the generated sources and re-running: `[gen] materialized 3 … aux] OK=43 FAIL=0`.
+> - **Final link status (all host-verified today):** `libv3d-phoenix.a` 408 objs / aux 43/0;
+>   `libv3dv-phoenix.a` frontend 97/0, **harness LINK PASS rc=0, 0 undefined**;
+>   `build-vkquake-phoenix.py --link` → **compile 82/82, LINK OK → `/tmp/vkquake-phoenix`**
+>   (22.6 MB aarch64 statically-linked ELF, `main` present, `world_vert_spv`/`alias_frag_spv`
+>   real-SPIR-V `.rodata`). **No libphoenix gap:** `copysign` + `pthread_mutex_timedlock` both
+>   resolve as `T` from `pl_phoenix_sdlcompat.c` (no libphoenix edit made).
+> - **Task A (noop-job blocker) was already DONE + HW-validated** (2026-06-18, mesa
+>   `3995663795a`): `vkCreateDevice` SUCCEEDS on real Pi4, no `binning_prolog` abort. The only
+>   gap was *durability*: the v3dv fix lived as a local mesa commit absent from
+>   `mesa-phoenix-port.patch` (it diffed working-tree-vs-HEAD, which skips committed changes).
+>   **Regenerated the patch as `git diff <upstream-base 489aa1808f2>`** so it now captures all
+>   13 Phoenix files incl. `v3dv_bo.c`/`v3dv_device.c`/`vk_image.{c,h}`. Verified it equals the
+>   live diff and reverse-applies clean against the working tree.
+>
+> **EXACT next HW step (orchestrator, serial GPU-binary boot):** the bootable
+> `sources/phoenix-rtos-devices/misc/rpi4-vkquake/` component is already wired (Makefile links
+> `/tmp/libvkquake.a` + `/tmp/libv3dv-phoenix.a` + `/tmp/libv3d-phoenix.a`, 32 MB main stack,
+> `--build-id`, `--allow-multiple-definition`, `-lstdc++ -lm`). To validate: swap `rpi4-vkquake`
+> IN / `rpi4-quake` OUT in `_targets/Makefile.aarch64a72-generic` `DEFAULT_COMPONENTS` +
+> `user.plo.yaml` (only one large GL/VK binary fits `loader.disk`), `rebuild --scope core`,
+> netboot, expect: vkQuake `VID_Init` brings Vulkan up (instance/device/queue — all already
+> HW-proven via `v3dv_harness`), then the renderer draws with the real shaders to `/dev/fb0`
+> via the winsys scanout. **Restore `rpi4-quake` after** (Friday flagship). First-frame /
+> swapchain-coupling risk per §C is the on-HW Tier-1 unknown.
+>
 > **UPDATE 2026-06-24 — FULL LINK: 0 undefined symbols.** The whole-archive link of
 > `libvkquake.a` against the V3DV ICD (`libv3dv-phoenix.a` + `libv3d-phoenix.a`) + the
 > trampolines + the Phoenix platform shims now closes completely to a statically-linked

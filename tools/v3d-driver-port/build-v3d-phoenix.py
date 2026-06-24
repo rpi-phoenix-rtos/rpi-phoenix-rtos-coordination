@@ -124,8 +124,46 @@ def build_objs(entries, srcs_outs, objdir, label):
     return ok, fails
 
 
+# Generated sources the aux/core lists consume but that a host `ninja` does NOT
+# materialize on its own: the Phoenix gallium patch adds an aarch64 `dc civac`
+# cache-flush asm to v3d_resource.c, which the HOST assembler can't encode, so the
+# default host build aborts on that TU *before* emitting these custom-target outputs
+# (builtin_types.c defines the glsl_type_builtin_* globals; the nir_* files define the
+# opcode/intrinsic tables). They are independent of the failing TU, so we ninja them
+# explicitly. Harmless if already present (ninja no-ops). See the noop-job rootcause doc.
+GENERATED_SRCS = [
+    "src/compiler/builtin_types.c",
+    "src/broadcom/compiler/v3d_nir_lower_algebraic.c",
+    "src/compiler/nir/nir_constant_expressions.c",
+    "src/compiler/nir/nir_intrinsics.c",
+    "src/compiler/nir/nir_opcodes.c",
+    "src/compiler/nir/nir_opt_algebraic.c",
+    "src/util/format/u_format_table.c",
+]
+
+
+def ensure_generated_sources():
+    """ninja the custom-target sources the aux list needs (see GENERATED_SRCS).
+    No-op when they already exist; warns (does not fail) if ninja isn't reachable."""
+    missing = [s for s in GENERATED_SRCS
+               if not os.path.exists(os.path.join(HOSTBUILD, s))]
+    if not missing:
+        return
+    ninja = "ninja" if not os.path.exists("/tmp/mesa-pyenv/bin/ninja") \
+        else "/tmp/mesa-pyenv/bin/ninja"
+    env = dict(os.environ, PATH="/tmp/mesa-pyenv/bin:" + os.environ.get("PATH", ""))
+    r = subprocess.run([ninja] + missing, cwd=HOSTBUILD, env=env,
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        print(f"[gen] WARNING: could not generate {len(missing)} sources via ninja "
+              f"(aux build may report them missing):\n{r.stderr.strip()[-400:]}")
+    else:
+        print(f"[gen] materialized {len(missing)} generated sources in {HOSTBUILD}")
+
+
 def main():
     compile_only = "--compile-only" in sys.argv
+    ensure_generated_sources()
     tmpl = template_entry()
 
     # 1. driver set (exact host-built variants)
