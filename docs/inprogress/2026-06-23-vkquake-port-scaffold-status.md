@@ -10,13 +10,20 @@ Builds on the HW-validated V3DV ICD (Tier-4b, 2026-06-23): `libv3dv-phoenix.a` +
 > **UPDATE 2026-06-25 — REAL SPIR-V SHADERS + FULL CHAIN REBUILT 0-UNDEFINED FROM SCRATCH.**
 > The night-audit "no glslang" premise was stale: `glslangValidator` 11:16.2.0 + `spirv-opt`
 > (SPIRV-Tools v2026.1) ARE on this host. Re-ran `gen-vkquake-shaders.py` → **all 41 shaders
-> compiled to REAL SPIR-V** (mode `REAL (glslangValidator)`; sizes 1.6–4.9 KB each, magic
-> `0x07230203`, no 20-byte placeholders). The generator already matches the upstream
-> `Shaders/compile.sh` flags exactly: `.vert`/`.frag` = `glslangValidator -V`; `*sops*.comp`
-> = `-V --target-env vulkan1.1`. **compile.sh uses NO `spirv-opt`** (the prior §D note that
-> the sops variants need `spirv-opt --canonicalize-ids` is wrong vs the primary source — no
-> spirv-opt pass is applied or needed). `vkquake_shaders.c` (1.8 MB real bytes) is committed
-> for reproducibility.
+> compiled to REAL SPIR-V** (magic `0x07230203`, no 20-byte placeholders), matching vkQuake's
+> **authoritative `external/vkquake/meson.build` recipe exactly** (NOT the legacy
+> `Shaders/compile.sh`, which hardcodes a 2017 `VULKAN_SDK=~/VulkanSDK/1.0.26.0` path and is
+> dead). The meson recipe per shader is: `glslangValidator -V --quiet [--target-env vulkan1.1
+> for *sops*] -o X.spv INPUT` **then `spirv-opt -Os --canonicalize-ids --strip-debug X.spv -o
+> X.spv` on EVERY shader** (the `--canonicalize-ids --strip-debug` variant is taken because
+> spirv-opt advertises `--canonicalize-ids`, i.e. glslang ≥ 16.0 — true here). The earlier §D
+> note that *only* the sops variants need spirv-opt was wrong on two counts: the pass runs on
+> all 41, and the load-bearing sops flag is `--target-env vulkan1.1`, not a spirv-opt option.
+> Updated `gen-vkquake-shaders.py` to emit that exact glslang+spirv-opt pipeline (mode now
+> prints `REAL (glslangValidator +spirv-opt -Os --canonicalize-ids --strip-debug)`); the
+> optimize/strip pass is non-functional (shaders render identically) but makes the embedded
+> bytes byte-faithful to the upstream build and ~40% smaller (e.g. `alias_frag` 3304→1832 B).
+> `vkquake_shaders.c` (real optimized bytes) is committed for reproducibility.
 >
 > The three `/tmp` libs had been cleared, so the WHOLE chain was rebuilt host-side and
 > re-verified — the deliverable's "0 undefined" is now a fact about *today*, not 2026-06-24:
@@ -48,7 +55,30 @@ Builds on the HW-validated V3DV ICD (Tier-4b, 2026-06-23): `libv3dv-phoenix.a` +
 > **EXACT next HW step (orchestrator, serial GPU-binary boot):** the bootable
 > `sources/phoenix-rtos-devices/misc/rpi4-vkquake/` component is already wired (Makefile links
 > `/tmp/libvkquake.a` + `/tmp/libv3dv-phoenix.a` + `/tmp/libv3d-phoenix.a`, 32 MB main stack,
-> `--build-id`, `--allow-multiple-definition`, `-lstdc++ -lm`). To validate: swap `rpi4-vkquake`
+> `--build-id`, `--allow-multiple-definition`, `-lstdc++ -lm`).
+>
+> **PRECONDITION — the three libs live in ephemeral `/tmp` and were observed to clear once
+> mid-session.** Before the swap, if `/tmp/lib{v3d,v3dv,vkquake}*.a` are absent (check first),
+> reconstruct the whole chain — this is the exact sequence run on 2026-06-25, ~10 min total:
+> 1. `uv venv /tmp/mesa-pyenv --python 3.14` then `uv pip install --python
+>    /tmp/mesa-pyenv/bin/python mako pyyaml packaging meson ninja`
+> 2. `cd external/mesa && PATH=/tmp/mesa-pyenv/bin:$PATH meson setup /tmp/mesa-v3d-build
+>    -Dgallium-drivers=v3d -Dvulkan-drivers= -Dplatforms= -Dglx=disabled -Degl=disabled
+>    -Dgbm=disabled -Dvideo-codecs= -Dbuildtype=release` and the same for `/tmp/mesa-v3dv-build`
+>    with `-Dvulkan-drivers=broadcom`.
+> 3. `cd /tmp/mesa-v3dv-build && ninja src/broadcom/vulkan/libvulkan_broadcom.so` (succeeds).
+>    For the GL dir run `cd /tmp/mesa-v3d-build && ninja -k 0` (it ABORTS on `v3d_resource.c`'s
+>    aarch64 `dc civac` asm — **expected, ignore**; `-k 0` still materializes the other
+>    generated sources, and `build-v3d-phoenix.py`'s `ensure_generated_sources()` ninja-makes
+>    the 7 custom-target outputs it needs anyway).
+> 4. `python3 tools/v3d-driver-port/build-v3d-phoenix.py` → `python3
+>    tools/v3d-driver-port/build-v3dv-phoenix.py` → `python3
+>    tools/vkquake-port/build-vkquake-phoenix.py --link`. Expect `libv3d` aux 43/0,
+>    `libv3dv` harness LINK PASS rc=0, vkquake `82/82 compile + LINK OK` (0 undefined).
+>    (`build-v3d-phoenix.py` `json.load`s `/tmp/mesa-v3d-build/compile_commands.json` at import,
+>    so step 2's meson dir MUST exist before step 4.)
+>
+> Then to validate on HW: swap `rpi4-vkquake`
 > IN / `rpi4-quake` OUT in `_targets/Makefile.aarch64a72-generic` `DEFAULT_COMPONENTS` +
 > `user.plo.yaml` (only one large GL/VK binary fits `loader.disk`), `rebuild --scope core`,
 > netboot, expect: vkQuake `VID_Init` brings Vulkan up (instance/device/queue — all already

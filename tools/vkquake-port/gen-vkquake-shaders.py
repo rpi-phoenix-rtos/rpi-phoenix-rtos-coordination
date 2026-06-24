@@ -53,14 +53,33 @@ def find_glslang():
     return None, None
 
 
-def compile_real(tool, path, shader_file, is_sops):
+def find_spirv_opt():
+    """spirv-opt for the post-glslang optimize pass. Returns (path, has_canon) where
+    has_canon = whether this spirv-opt supports --canonicalize-ids (glslang >= 16.0).
+    Matches external/vkquake/meson.build's run-time probe."""
+    p = shutil.which("spirv-opt")
+    if not p:
+        return None, False
+    r = subprocess.run([p, "-h"], capture_output=True, text=True)
+    return p, ("--canonicalize-ids" in (r.stdout or ""))
+
+
+def compile_real(tool, path, shader_file, is_sops, spirv_opt, has_canon):
+    """Compile GLSL -> SPIR-V exactly as external/vkquake/meson.build does:
+      glslangValidator -V [--target-env vulkan1.1 for *sops*] -o X.spv INPUT
+    then the optimize pass meson runs on EVERY shader (not just sops):
+      spirv-opt -Os [--canonicalize-ids --strip-debug] X.spv -o X.spv
+    The canonicalize/strip variant is used when spirv-opt advertises --canonicalize-ids
+    (glslang >= 16.0, true on this host). The pass is non-functional (it optimizes +
+    strips debug info, shrinking the module) — shaders render identically — but emitting
+    it makes the embedded SPIR-V byte-identical to vkQuake's authoritative meson build."""
     out = "/tmp/_vkq_shader.spv"
     if tool == "glslc":
         cmd = [path, shader_file, "-o", out]
         if is_sops:
             cmd += ["--target-env=vulkan1.1"]
     else:  # glslangValidator / glslang
-        cmd = [path, "-V", shader_file, "-o", out]
+        cmd = [path, "-V", "--quiet", shader_file, "-o", out]
         if is_sops:
             cmd += ["--target-env", "vulkan1.1"]
     r = subprocess.run(cmd, capture_output=True, text=True, cwd=SHADERS)
@@ -68,6 +87,16 @@ def compile_real(tool, path, shader_file, is_sops):
         sys.stderr.write(f"  ! {os.path.basename(shader_file)} compile failed: "
                          f"{r.stderr.strip().splitlines()[-1] if r.stderr else '?'}\n")
         return None
+    if spirv_opt:
+        opt = [spirv_opt, "-Os"]
+        if has_canon:
+            opt += ["--canonicalize-ids", "--strip-debug"]
+        opt += [out, "-o", out]
+        ro = subprocess.run(opt, capture_output=True, text=True)
+        if ro.returncode != 0:
+            sys.stderr.write(f"  ! {os.path.basename(shader_file)} spirv-opt failed "
+                             f"(using unoptimized SPIR-V): "
+                             f"{ro.stderr.strip().splitlines()[-1] if ro.stderr else '?'}\n")
     with open(out, "rb") as fh:
         return fh.read()
 
@@ -84,7 +113,11 @@ def c_bytes(name, blob):
 def main():
     tool, path = find_glslang()
     real = tool is not None
-    mode = f"REAL ({tool})" if real else "PLACEHOLDER (no glslang on PATH)"
+    spirv_opt, has_canon = find_spirv_opt() if real else (None, False)
+    optdesc = ("" if not spirv_opt else
+               " +spirv-opt -Os --canonicalize-ids --strip-debug" if has_canon
+               else " +spirv-opt -Os")
+    mode = f"REAL ({tool}{optdesc})" if real else "PLACEHOLDER (no glslang on PATH)"
     sys.stderr.write(f"gen-vkquake-shaders: mode = {mode}\n")
 
     shaders = []
@@ -110,7 +143,7 @@ def main():
         is_sops = "sops" in base
         blob = None
         if real:
-            blob = compile_real(tool, path, f, is_sops)
+            blob = compile_real(tool, path, f, is_sops, spirv_opt, has_canon)
             if blob is not None:
                 n_real += 1
         if blob is None:
