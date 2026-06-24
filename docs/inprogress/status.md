@@ -3,7 +3,29 @@
 > Per-peripheral state at a glance: **[docs/inprogress/pi4-hardware-support-matrix.md](pi4-hardware-support-matrix.md)**.
 > Full chronological log of the multi-day unattended run: **[UNATTENDED-WORK-LOG.md](../../UNATTENDED-WORK-LOG.md)** (repo root).
 
-## 🟢 LATEST — 2026-06-18 (unattended /loop, day 2; netboot/host only)
+## 🟢 LATEST — 2026-06-24/25 (unattended night run; subagent fan-out)
+
+Backlog map: **[2026-06-24-night-work-audit.md](2026-06-24-night-work-audit.md)**.
+
+- **Mailbox serialization (rpi4-vcmbox) — HW-VALIDATED.** Root-caused a systemic non-determinism
+  source: the single BCM2711 VideoCore mailbox FIFO (0xfe00b880, ch8) was driven by 5+ processes
+  with no cross-process lock (thermal/genet/usb-VL805/sdio/v3d), each popping+discarding others'
+  responses. Fix = a single serialized server (`misc/rpi4-vcmbox/`) owning the FIFO + one low
+  bounce buffer + internal retry + a failure-mode discriminator. Thermal converted + proven on
+  netboot (the reported `mailbox temperature read failed` is GONE; T=35012 mC; 0 faults).
+  Rollout to genet/usb/sdio/diag in progress (v3d alongside vkQuake). Design+validation:
+  [2026-06-24-vcmbox-mailbox-serialization.md](2026-06-24-vcmbox-mailbox-serialization.md).
+- **X11 desktop (#30):** `pl_phoenix_xlaunch` generalized to a client list; **`startx desktop`**
+  → twm + a managed/draggable xeyes. twm's earlier crash root-caused (libXt built with
+  `malloc0_returns_null=no` but Phoenix `malloc(0)`==NULL → XtMalloc(0) aborted; rebuilt =yes).
+  kbd0-free ordering verified (fbcon-disable precedes the kbd open). HW sign-off (mouse/keypress) pending.
+- **vkQuake (#29):** links **0-undefined → /tmp/vkquake-phoenix (22.5 MB aarch64, real SPIR-V** — all
+  41 shaders via glslangValidator+spirv-opt). V3DV device-create gate confirmed fixed + the mesa
+  patch regenerated against the upstream base so it's durable. Ready for an on-HW Tier-1 swap.
+- **Ports:** all binary ports built/staged on NFS (openssl/curl/dropbear/lua/lighttpd valid ELFs);
+  added fs_mark; exec-verify checklist in [2026-06-24-ports-build-night.md](2026-06-24-ports-build-night.md).
+
+## 🟢 2026-06-18 (unattended /loop, day 2; netboot/host only)
 
 This session's headline deliverables (all committed; HW- or host-verified):
 - **X11: the full client+toolkit library stack (45 archives incl. libXaw/Xt/Xmu/ICE/SM/Xrandr)
