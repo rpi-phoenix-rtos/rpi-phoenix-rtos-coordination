@@ -64,6 +64,22 @@ GEN_HEADERS = [
     "src/mesa/program/program_parse.tab.h", "src/mesa/program/lex.yy.c",
     "src/mesa/format_fallback.c", "src/mesa/glapi/glapi/gen/unmarshal_table.c",
     "src/mesa/glapi/glapi/gen/api_exec_init.c", "src/mesa/glapi/glapi/gen/enums.c",
+    # GLSL-compiler custom-target sources/headers. The host GL build aborts on
+    # v3d_resource.c's aarch64 `dc civac` asm (can't assemble on x86) BEFORE meson
+    # emits these, so without ninja-ing them explicitly the GL aux sweep fails on
+    # glsl_lexer.cpp (MISSING) + glsl_to_nir.cpp (float64_glsl.h) +
+    # ir_constant_expression.cpp (ir_expression_operation_constant.h) + ir.cpp
+    # (ir_expression_operation_strings.h). ir_expression_operation.h is their shared
+    # dep. glsl_lexer.cpp lives under GL_DIRS (/compiler/glsl/) so once generated it
+    # is picked up by the compile_commands sweep; the rest are headers. Mirrors the
+    # ensure_generated_sources() fix in build-v3d-phoenix.py.
+    "src/compiler/ir_expression_operation.h",
+    "src/compiler/glsl/ir_expression_operation_constant.h",
+    "src/compiler/glsl/ir_expression_operation_strings.h",
+    "src/compiler/glsl/float64_glsl.h",
+    "src/compiler/glsl/glsl_lexer.cpp",
+    # gallium index-buffer codegen the GEN_C list compiles (were "[gen-c] MISSING").
+    "src/gallium/auxiliary/u_indices_gen.c", "src/gallium/auxiliary/u_unfilled_gen.c",
 ] + [f"src/mesa/glapi/glapi/gen/marshal_generated{i}.c" for i in range(8)]
 
 
