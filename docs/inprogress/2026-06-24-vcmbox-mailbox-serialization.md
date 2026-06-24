@@ -1,7 +1,16 @@
 # VideoCore mailbox serialization: the rpi4-vcmbox server
 
 Date: 2026-06-24
-Status: server + libvcmbox + thermal conversion landed (build-verified, not yet HW-validated)
+Status: server + libvcmbox + thermal conversion landed — **HW-VALIDATED 2026-06-24** (netboot)
+
+## HW validation (2026-06-24, netboot, log rpi4b-uart-20260624-215213-netboot-vcmbox-thermal-validate)
+
+The originally-reported bug (`rpi4-thermal: mailbox temperature read failed`) is FIXED:
+- `rpi4-vcmbox: mailbox @ 0xfe00b880, bounce buf_pa=0x03699000; registered /dev/vcmbox (serialized)` — server up; the single bounce buffer landed LOW (~57 MB), inside VC-addressable range (defuses failure mode #2 deterministically).
+- `rpi4-thermal: T=35012 mC max=85000 mC throttle=0x00000000; registered /dev/thermal /dev/throttled` — temperature read SUCCEEDED through the serialized server; the failure line is gone; sysinfo shows thermal+/throttled+ present.
+- 0 faults, boot to psh, correct launch order (vcmbox first among mailbox users), no discriminator-failure line.
+
+Remaining rollout (genet MAC / usb VL805 PCIe / sdio / v3d power / diag-udp) tracked in the wave plan below; the mechanism is proven and the thermal proof is shipped.
 Component: `sources/phoenix-rtos-devices/misc/rpi4-vcmbox/`
 
 ## The problem
