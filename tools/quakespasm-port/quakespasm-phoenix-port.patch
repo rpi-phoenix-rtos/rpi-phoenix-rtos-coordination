@@ -1,0 +1,298 @@
+diff --git a/Quake/gl_screen.c b/Quake/gl_screen.c
+index cf7c7ce..3a7214d 100644
+--- a/Quake/gl_screen.c
++++ b/Quake/gl_screen.c
+@@ -25,6 +25,14 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+ 
+ #include "quakedef.h"
+ 
++/* Capture-harness TCP sink (Pi -> host): the nfs-fs VFS-write bridge stalls on
++ * large writes, so on the Pi the deterministic capture streams frames over a raw
++ * TCP socket to a host listener instead of writing files. */
++#include <sys/socket.h>
++#include <netinet/in.h>
++#include <arpa/inet.h>
++#include <unistd.h>
++
+ /*
+ 
+ background clear
+@@ -97,6 +105,17 @@ cvar_t		scr_centertime = {"scr_centertime","2",CVAR_NONE};
+ cvar_t		scr_showturtle = {"showturtle","0",CVAR_NONE};
+ cvar_t		scr_showpause = {"showpause","1",CVAR_NONE};
+ cvar_t		scr_printspeed = {"scr_printspeed","8",CVAR_NONE};
++
++/* Deterministic demo-capture harness (Pi-vs-host visual regression). When
++ * scr_capture > 0, every scr_capture-th rendered in-game demo frame is dumped to
++ * com_gamedir/cap_NNNN.png; after scr_capture_max shots the engine quits. Drive
++ * with `host_framerate <dt>` (fixed timestep) + `r_particles 0` so frame N shows
++ * the same demo moment on every machine -> the PNG sets are directly comparable. */
++cvar_t		scr_capture = {"scr_capture","0",CVAR_NONE};
++cvar_t		scr_capture_max = {"scr_capture_max","0",CVAR_NONE};
++cvar_t		scr_capture_dir = {"scr_capture_dir","",CVAR_NONE};
++cvar_t		scr_capture_host = {"scr_capture_host","",CVAR_NONE};   /* TCP sink host (Pi) */
++cvar_t		scr_capture_port = {"scr_capture_port","5599",CVAR_NONE};
+ cvar_t		gl_triplebuffer = {"gl_triplebuffer", "1", CVAR_ARCHIVE};
+ 
+ cvar_t		cl_gun_fovscale = {"cl_gun_fovscale","1",CVAR_ARCHIVE}; // Qrack
+@@ -407,6 +426,11 @@ void SCR_Init (void)
+ 	Cvar_RegisterVariable (&scr_crosshairscale);
+ 	Cvar_RegisterVariable (&scr_showfps);
+ 	Cvar_RegisterVariable (&scr_clock);
++	Cvar_RegisterVariable (&scr_capture);
++	Cvar_RegisterVariable (&scr_capture_max);
++	Cvar_RegisterVariable (&scr_capture_dir);
++	Cvar_RegisterVariable (&scr_capture_host);
++	Cvar_RegisterVariable (&scr_capture_port);
+ 	//johnfitz
+ 	Cvar_RegisterVariable (&scr_usekfont); // 2021 re-release
+ 	Cvar_SetCallback (&scr_fov, SCR_Callback_refdef);
+@@ -833,6 +857,142 @@ void SCR_ScreenShot_f (void)
+ }
+ 
+ 
++/*
++==================
++SCR_CaptureFrame -- dump the just-rendered frame to com_gamedir/cap_<idx>.png for
++the deterministic Pi-vs-host comparison harness. Frame-indexed (not auto-numbered)
++so the same index = the same demo moment on every machine.
++==================
++*/
++static int cap_sock = -1;
++
++static int scr_sendAll (int s, const void *buf, size_t len)
++{
++	const char *p = (const char *)buf;
++	size_t off = 0;
++	while (off < len) {
++		int r = send (s, p + off, len - off, 0);
++		if (r <= 0)
++			return -1;
++		off += (size_t)r;
++	}
++	return 0;
++}
++
++static int scr_captureConnect (void)
++{
++	struct sockaddr_in sa;
++	int s = socket (AF_INET, SOCK_STREAM, 0);
++	if (s < 0)
++		return -1;
++	memset (&sa, 0, sizeof(sa));
++	sa.sin_family = AF_INET;
++	sa.sin_port = htons ((unsigned short)scr_capture_port.value);
++	sa.sin_addr.s_addr = inet_addr (scr_capture_host.string);
++	if (connect (s, (struct sockaddr *)&sa, sizeof(sa)) != 0) {
++		close (s);
++		return -1;
++	}
++	return s;
++}
++
++static void SCR_CaptureFrame (int idx)
++{
++	byte	*pix, hdr[18];
++	char	path[MAX_OSPATH];
++	const char *dir;
++	FILE	*f;
++	int	w = glwidth, h = glheight, i, n = glwidth * glheight;
++
++	/* Write directory: scr_capture_dir if set, else com_gamedir. The Pi's
++	 * com_gamedir/com_basedir is broken for writes (resolves to "(null)/id1"),
++	 * so the harness sets scr_capture_dir explicitly (e.g. /nfstest/id1 on the
++	 * Pi, straight onto the fast NFS export). Self-contained 24-bit uncompressed
++	 * TGA writer (BGR, bottom-up) so the byte format is identical on every machine
++	 * — no libpng/com_gamedir dependency. */
++	dir = (scr_capture_dir.string && scr_capture_dir.string[0]) ? scr_capture_dir.string : com_gamedir;
++	q_snprintf (path, sizeof(path), "%s/cap_%04d.tga", dir, idx);
++
++	if (!(pix = (byte *) malloc ((size_t)n * 3)))
++		return;
++	glPixelStorei (GL_PACK_ALIGNMENT, 1);
++	glReadPixels (glx, gly, w, h, GL_RGB, GL_UNSIGNED_BYTE, pix);
++	for (i = 0; i < n; i++) {	/* RGB -> BGR in place */
++		byte t = pix[i*3]; pix[i*3] = pix[i*3+2]; pix[i*3+2] = t;
++	}
++
++	memset (hdr, 0, sizeof(hdr));
++	hdr[2] = 2;                 /* uncompressed true-color */
++	hdr[12] = w & 0xff; hdr[13] = (w >> 8) & 0xff;
++	hdr[14] = h & 0xff; hdr[15] = (h >> 8) & 0xff;
++	hdr[16] = 24;              /* bpp */
++
++	/* TCP sink (Pi): stream [u32 idx][u32 tgalen][TGA bytes] to a host listener,
++	 * which writes cap_<idx>.tga. Bypasses the broken nfs-fs VFS write path. */
++	if (scr_capture_host.string && scr_capture_host.string[0]) {
++		uint32_t rec[2];
++		uint32_t tgalen = (uint32_t)(sizeof(hdr) + (size_t)n * 3);
++		if (cap_sock < 0) {
++			cap_sock = scr_captureConnect ();
++			Con_Printf ("CAPTURE: tcp %s:%d %s\n", scr_capture_host.string,
++				(int)scr_capture_port.value, (cap_sock >= 0) ? "connected" : "FAILED");
++		}
++		if (cap_sock >= 0) {
++			rec[0] = htonl ((uint32_t)idx);
++			rec[1] = htonl (tgalen);
++			if (scr_sendAll (cap_sock, rec, sizeof(rec)) != 0 ||
++			    scr_sendAll (cap_sock, hdr, sizeof(hdr)) != 0 ||
++			    scr_sendAll (cap_sock, pix, (size_t)n * 3) != 0) {
++				Con_Printf ("CAPTURE: tcp send failed at idx=%d\n", idx);
++				close (cap_sock);
++				cap_sock = -1;
++			}
++		}
++		free (pix);
++		return;
++	}
++
++	f = fopen (path, "wb");
++	if (f != NULL) {
++		fwrite (hdr, 1, sizeof(hdr), f);
++		fwrite (pix, 1, (size_t)n * 3, f);
++		fclose (f);
++	}
++	if (idx == 0)
++		Con_Printf ("CAPTURE: dir=%s %s\n", dir, (f != NULL) ? "OK" : "fopen FAILED");
++	free (pix);
++}
++
++
++/*
++==================
++SCR_CaptureTick -- called once per rendered frame from SCR_UpdateScreen (just
++before the buffer swap). Captures every scr_capture-th in-game demo frame and
++quits after scr_capture_max shots.
++==================
++*/
++void SCR_CaptureTick (void)
++{
++	static int frames = 0;
++	static int shots = 0;
++
++	if (scr_capture.value <= 0 || !cls.demoplayback || cls.signon != SIGNONS)
++		return;
++
++	if ((frames++ % (int)scr_capture.value) != 0)
++		return;
++
++	SCR_CaptureFrame (shots);
++	Con_Printf ("CAPTURE: cap_%04d.png (demo t=%.2f)\n", shots, cl.time);
++	shots++;
++
++	if (scr_capture_max.value > 0 && shots >= (int)scr_capture_max.value) {
++		Con_Printf ("CAPTURE: done (%d shots), quitting\n", shots);
++		Cbuf_AddText ("quit\n");
++	}
++}
++
++
+ //=============================================================================
+ 
+ 
+@@ -1111,6 +1271,8 @@ void SCR_UpdateScreen (void)
+ 
+ 	GLSLGamma_GammaCorrect ();
+ 
++	SCR_CaptureTick (); /* deterministic demo-capture (reads the composed frame pre-swap) */
++
+ 	GL_EndRendering ();
+ }
+ 
+diff --git a/Quake/gl_warp.c b/Quake/gl_warp.c
+index 3c6ea5e..624e35e 100644
+--- a/Quake/gl_warp.c
++++ b/Quake/gl_warp.c
+@@ -24,7 +24,15 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+ 
+ extern cvar_t r_drawflat;
+ 
+-cvar_t r_oldwater = {"r_oldwater", "0", CVAR_ARCHIVE};
++/* Phoenix/V3D port: default to the classic per-vertex water warp (r_oldwater 1).
++ * The modern path (0) renders each warp texture to an offscreen region and copies
++ * it into tx->warpimage via glCopyTexSubImage2D (R_UpdateWarpTextures, gl_warp.c),
++ * a framebuffer->texture copy that the ported Mesa v3d GL frontend does not
++ * implement -> warpimage stays uninitialised GPU memory and water surfaces sample
++ * RGB noise. The classic path warps the (correctly-uploaded) base texture directly
++ * with no FBO copy. TODO: implement glCopyTexSubImage2D (or an FBO warp pass) to
++ * restore the higher-quality warpimage path. */
++cvar_t r_oldwater = {"r_oldwater", "1", CVAR_ARCHIVE};
+ cvar_t r_waterquality = {"r_waterquality", "8", CVAR_NONE};
+ cvar_t r_waterwarp = {"r_waterwarp", "1", CVAR_NONE};
+ 
+diff --git a/Quake/r_alias.c b/Quake/r_alias.c
+index f179976..5ffe25f 100644
+--- a/Quake/r_alias.c
++++ b/Quake/r_alias.c
+@@ -157,7 +157,19 @@ void GLAlias_CreateShaders (void)
+ 		"	FogFragCoord = gl_Position.w;\n"
+ 		"	float dot1 = r_avertexnormal_dot(Pose1Normal);\n"
+ 		"	float dot2 = r_avertexnormal_dot(Pose2Normal);\n"
+-		"	gl_FrontColor = LightColor * vec4(vec3(mix(dot1, dot2, Blend)), 1.0);\n"
++		// Pi4 V3D: r_avertexnormal_dot() is mathematically bounded to [0.7045, 2.0],
++		// so mix(dot1,dot2,Blend) is too -- but a V3D shader-codegen miscompile of the
++		// branch/mix can drive the lit term to <=0, blacking out triangles (most visible
++		// as intermittent black triangles on the continuously-lerped torch flames).
++		// Flooring at the function's true minimum is value-identical for every valid
++		// vertex (so it cannot dim player/monster/weapon models) yet converts any
++		// pathological <=0 into dim-but-visible. Reversible: drop the max() to restore
++		// upstream behaviour.
++		"	float lightterm = max(mix(dot1, dot2, Blend), 0.7);\n"
++		// Keep upstream's `LightColor * scalar` form (scales rgba alike) so the alpha
++		// semantics are unchanged -- only the scalar is floored. Truly value-identical
++		// for valid vertices (scalar >= 0.7045 > 0.7).
++		"	gl_FrontColor = LightColor * lightterm;\n"
+ 		"}\n";
+ 
+ 	const GLchar *fragSource = \
+diff --git a/Quake/r_part.c b/Quake/r_part.c
+index 32e067a..57b19fb 100644
+--- a/Quake/r_part.c
++++ b/Quake/r_part.c
+@@ -40,7 +40,13 @@ static gltexture_t *particletexture, *particletexture1, *particletexture2, *part
+ static float texturescalefactor; //johnfitz -- compensate for apparent size of different particle textures
+ 
+ cvar_t	r_particles = {"r_particles","1", CVAR_ARCHIVE}; //johnfitz
+-cvar_t	r_quadparticles = {"r_quadparticles","1", CVAR_ARCHIVE}; //johnfitz
++/* Phoenix/V3D: default 0 (GL_TRIANGLES particles) instead of 1 (GL_QUADS). The V3D
++ * gallium path wedges the GPU (bin + render control threads hang, QPUs active, no
++ * fault) on the immediate-mode GL_QUADS particle batches in heavy scenes — the
++ * quad->triangle index conversion hits the same "V3D needs bound indices" path that
++ * broke world rendering. GL_TRIANGLES particles render identically (and fix the
++ * opaque-square artifact) with no stall. See docs/inprogress/2026-06-16-quake-scanout-visual-bugs.md */
++cvar_t	r_quadparticles = {"r_quadparticles","0", CVAR_ARCHIVE}; //johnfitz
+ 
+ /*
+ ===============
+diff --git a/Quake/r_world.c b/Quake/r_world.c
+index 22dd574..a72d395 100644
+--- a/Quake/r_world.c
++++ b/Quake/r_world.c
+@@ -369,7 +369,17 @@ static void R_FlushBatch (void)
+ {
+ 	if (num_vbo_indices > 0)
+ 	{
+-		glDrawElements (GL_TRIANGLES, num_vbo_indices, GL_UNSIGNED_INT, vbo_indices);
++		/* V3D (GLES-style GPU) cannot draw from a CLIENT-MEMORY index array; it needs the
++		 * indices in a bound element buffer. The host's desktop GL allowed client indices,
++		 * so the brush-surface draw only broke on-device (it drew nothing -> flat-gray world).
++		 * Upload the batch indices to a streaming element VBO and draw from it (offset 0). */
++		static GLuint r_batch_ibo = 0;
++		if (r_batch_ibo == 0)
++			GL_GenBuffersFunc (1, &r_batch_ibo);
++		GL_BindBufferFunc (GL_ELEMENT_ARRAY_BUFFER, r_batch_ibo);
++		GL_BufferDataFunc (GL_ELEMENT_ARRAY_BUFFER, (GLsizeiptr)(num_vbo_indices * sizeof(vbo_indices[0])), vbo_indices, GL_STREAM_DRAW);
++		glDrawElements (GL_TRIANGLES, num_vbo_indices, GL_UNSIGNED_INT, (const GLvoid *)0);
++		GL_BindBufferFunc (GL_ELEMENT_ARRAY_BUFFER, 0);
+ 		num_vbo_indices = 0;
+ 	}
+ }
+@@ -886,7 +896,7 @@ void GLWorld_CreateShaders (void)
+ 		return;
+ 
+ 	r_world_program = GL_CreateProgram (vertSource, fragSource, Q_COUNTOF(bindings), bindings);
+-	
++
+ 	if (r_world_program != 0)
+ 	{
+ 		// get uniform locations
