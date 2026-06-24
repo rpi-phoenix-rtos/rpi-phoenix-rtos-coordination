@@ -17,12 +17,12 @@ Component: `sources/phoenix-rtos-devices/misc/rpi4-vcmbox/`
 
 | Client | Status | Validate by |
 |---|---|---|
-| rpi4-thermal | converted + HW-validated (2026-06-24) | done |
-| bcm-genet MAC | **converted** (build-verified) | single netboot |
+| rpi4-thermal | converted + **HW-validated** (2026-06-24, re-confirmed in rollout boots after the shared-resolve change) | done |
+| bcm-genet MAC | converted + **HW-VALIDATED 2026-06-25** — `MAC from VideoCore mailbox` = `dc:a6:32:3c:dd:f1` (correct, byte order preserved), link up 100 Mbps + DHCP/IP | done |
 | diag-udp | **N/A — file removed** in the 2026-06-06 upstream-readiness cleanup; no mailbox code remains anywhere in lwip. Dropped. | — |
-| usb VL805 PCIe | **converted** (build-verified) | **multi-boot enum-rate bench** |
-| bcm2711-sdio | **converted** (build-verified) | **attended SD-swap** (sd variant pre-bind path) |
-| v3d power-on | pending (orchestrator converts alongside vkQuake) | — |
+| usb VL805 PCIe | converted + **HW-VALIDATED 2026-06-25** — 2/2 clean netboots, full enumeration (root hub → VIA hub → PIXART mouse → /dev/mouse0 + Logitech kbd → /dev/kbd0), 0 faults | done (low-risk; longer enum-rate bench optional) |
+| bcm2711-sdio | **converted** (build-verified) | **attended SD-swap** (sd variant pre-bind path — devfs-resolve branch only executes there) |
+| v3d power-on | deferred — runs LATE (GPU-binary startup, after all other mailbox users finish) so its race risk is minimal; conversion is fiddly (host-built v3d lib cross-linkage). Optional follow-up | low priority |
 
 All four conversions build clean under `--scope core --variant netboot`; each converted binary
 (`lwip`, `usb`, `bcm2711-emmc`) links `vcmbox_call`, and every client's private mailbox-FIFO
