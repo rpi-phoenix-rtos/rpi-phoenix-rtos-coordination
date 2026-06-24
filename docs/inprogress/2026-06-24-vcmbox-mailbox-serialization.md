@@ -13,6 +13,64 @@ The originally-reported bug (`rpi4-thermal: mailbox temperature read failed`) is
 Remaining rollout (genet MAC / usb VL805 PCIe / sdio / v3d power / diag-udp) tracked in the wave plan below; the mechanism is proven and the thermal proof is shipped.
 Component: `sources/phoenix-rtos-devices/misc/rpi4-vcmbox/`
 
+## Rollout status (2026-06-25, build-verified)
+
+| Client | Status | Validate by |
+|---|---|---|
+| rpi4-thermal | converted + HW-validated (2026-06-24) | done |
+| bcm-genet MAC | **converted** (build-verified) | single netboot |
+| diag-udp | **N/A — file removed** in the 2026-06-06 upstream-readiness cleanup; no mailbox code remains anywhere in lwip. Dropped. | — |
+| usb VL805 PCIe | **converted** (build-verified) | **multi-boot enum-rate bench** |
+| bcm2711-sdio | **converted** (build-verified) | **attended SD-swap** (sd variant pre-bind path) |
+| v3d power-on | pending (orchestrator converts alongside vkQuake) | — |
+
+All four conversions build clean under `--scope core --variant netboot`; each converted binary
+(`lwip`, `usb`, `bcm2711-emmc`) links `vcmbox_call`, and every client's private mailbox-FIFO
+code + register `#define`s are removed (only the property-tag constants remain).
+
+**Cross-repo linkage (the resolved "libusbxhci precedent"):** the doc's original "mirror
+libusbxhci's `USB_HCD_LIBS` cross-repo pattern" was written against a tree that no longer
+embeds USB in lwip — there is no live libusbxhci link in the lwip build. The actual mechanism
+is the **shared per-target build prefix**: `Makefile.common` sets `PREFIX_A`/`PREFIX_H` to
+`_build/$(TARGET)/{lib,include}` (one dir for *all* siblings) and unconditionally adds
+`-L$(PREFIX_A)` + `-I$(PREFIX_H)`. `build-core-aarch64a72-generic.sh` builds devices (which
+builds + installs `libvcmbox.a` + `libvcmbox.h` into that shared prefix) **before** lwip and
+before the usb-daemon link. So:
+- **lwip (genet):** `LIBS += libvcmbox`, gated on `$(filter genet,$(NET_DRIVERS))` in
+  `port/Makefile` so non-Pi lwip targets (which don't build libvcmbox) still link. Header via
+  `#include <libvcmbox.h>` resolved through the shared `-I$(PREFIX_H)`.
+- **usb (bcm2711-pcie.c → libusbxhci.a static lib):** `DEP_LIBS` can't apply (a static lib
+  can't link another), so libvcmbox is added to the downstream daemon link in
+  `build-core-…sh`: `USB_HCD_LIBS="libusbxhci libvcmbox"` (libvcmbox *after* libusbxhci so the
+  static-link reference resolves). **Note: the doc's Wave-4 "usb = DEP_LIBS (same repo)" was
+  wrong** — bcm2711-pcie.c lives in a devices *static lib* consumed by the separate
+  phoenix-rtos-usb daemon repo.
+- **sdio (bcm2711-sdio.c → libsdcard-bcm2711.a static lib):** same pattern, same repo — the
+  `bcm2711-emmc` binary already lists `LIBS`, so `libvcmbox` is appended there (after
+  libsdcard-bcm2711), and the static lib gets `DEPS := libvcmbox` so the header installs first.
+
+**Shared-resolve robustness (libvcmbox.c):** the old `vcmbox_resolve()` was an *unbounded*
+`while(lookup("/dev/vcmbox")<0)` — fine for thermal/genet (run post-`bind devfs /dev`), but it
+would **hang boot** for the sd-variant sdio client (runs *before* the bind, so `/dev/vcmbox`
+never resolves) and is unsafe for boot-critical usb. Replaced with a **bounded (~5 s, the
+sdstorage budget) per-iteration "try `/dev/vcmbox` path, else resolve via the `devfs` named
+port" loop** returning `-ETIMEDOUT` on exhaustion. The devfs fallback mirrors `create_dev`'s
+own directory-walk: `lookup("devfs")` → `mtLookup "vcmbox"` → take `msg.o.lookup.dev` (devfs
+returns the char-dev's server oid, confirmed in dummyfs `dummyfs_lookup`). Post-bind callers
+hit the path on iteration 0 and pay nothing for the fallback (raw `lookup()` returns fast
+pre-bind). **Because this is shared code, the orchestrator must re-validate thermal too**, not
+just the new clients; the devfs-fallback branch runs only in the sd pre-bind window so it is
+**proven only by an attended SD-swap** (`--scope core` compiles but never executes it).
+
+**genet byte order preserved:** `vcmbox_call(0x10003, 8, NULL, 0, macWords, 2)` then
+`memcpy(out, macWords, 6)` reproduces the old `(uint8_t*)&msg[5]` layout exactly on this LE
+target (word 0 = MAC[0..3], word 1 = MAC[4..5]). The call-site zero-MAC check + PROMISC LAA
+fallback are unchanged.
+
+**Per-client rollback:** each conversion is one-file (+ its Makefile/build-core line) and
+git-tracked; reverting the single commit restores the private mailbox block. The shared
+`vcmbox_resolve()` change reverts with the libvcmbox commit.
+
 ## The problem
 
 The BCM2711 exposes exactly one VideoCore property mailbox: a single hardware
