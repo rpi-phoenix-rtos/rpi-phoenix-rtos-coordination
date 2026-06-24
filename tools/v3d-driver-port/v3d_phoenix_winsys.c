@@ -901,34 +901,6 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
 		/* re-read CT1CA to see if it is advancing (slow) or wedged (stall) */
 		(void)ca1;
 		fprintf(stderr, "v3d-winsys: RENDER ct1ca recheck=0x%08x\n", c0[0x0114/4]);
-		/* TODO(quake-render-stall): diagnostic dump for the UNRESOLVED residual render stall
-		 * (GFXH-1897 wait below mitigated the early CL-fetch wedge but a later shader-stage
-		 * stall remains, int_sts=QPU bits). Remove once the residual is root-caused + fixed.
-		 * INSTRUMENTATION (first 3 stalls): ct1ca runs tens of KB PAST rcl_end, i.e. into the
-		 * binner's tile-list region (CT1 branched into a per-tile sub-list and wedged). Dump the
-		 * actual RAM at the wedge point + the main RCL tail (via the uncached BO mapping) to
-		 * discriminate: valid CL bytes = GPU-side stale fetch; zeros/garbage = binner output
-		 * incomplete at render time (bin->render handoff race); "no BO" = stale/freed tile-list
-		 * pointer (use-after-free). */
-		{
-			static int dbgn = 0;
-			if (dbgn++ < 3) {
-				/* Instrument validation: which BO backs rcl_start and ct1ca, at what offset,
-				 * and are the ranges ambiguous? Resolves "head is zero" to either WRONG-BO
-				 * artifact (overlap/multi-match) or a real rcl_start-vs-content offset bug. */
-				gpuva_describe("RCLSTART", s->rcl_start);
-				gpuva_describe("WEDGECA", ca1 & ~0xfu);
-				/* Full RCL dump from rcl_start (bounded): shows exactly where valid packets begin
-				 * relative to rcl_start — head-missing vs offset-shifted vs all-valid. */
-				uint32_t rcl_words = (s->rcl_end - s->rcl_start + 3u) / 4u;
-				if (rcl_words > 40u) rcl_words = 40u;
-				uint32_t *rs = (uint32_t *)gpuva_to_cpu(s->rcl_start);
-				fprintf(stderr, "v3d-winsys: RCLFULL gpuva=0x%08x (%u words):", s->rcl_start, rcl_words);
-				if (rs) { for (uint32_t i = 0; i < rcl_words; i++) fprintf(stderr, " %08x", rs[i]); }
-				else { fprintf(stderr, " (no BO)"); }
-				fprintf(stderr, "\n");
-			}
-		}
 	}
 job_retry:
 	/* MITIGATION. The wedge is a HW-marginal fragment/depth-pipeline drain stall (fdbgs shows
