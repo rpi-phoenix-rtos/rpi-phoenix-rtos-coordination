@@ -7,7 +7,36 @@ path) or the main image build. Host-side only — no Pi boot (UART owned by the 
 Builds on the HW-validated V3DV ICD (Tier-4b, 2026-06-23): `libv3dv-phoenix.a` +
 `libv3d-phoenix.a` back-end.
 
-> **TL;DR.** vkQuake source is now in `external/vkquake/` (cloned from
+> **UPDATE 2026-06-24 — FULL LINK: 0 undefined symbols.** The whole-archive link of
+> `libvkquake.a` against the V3DV ICD (`libv3dv-phoenix.a` + `libv3d-phoenix.a`) + the
+> trampolines + the Phoenix platform shims now closes completely to a statically-linked
+> aarch64 ELF (`/tmp/vkquake-phoenix`, 22 MB). Progression 174 → 109 → **26 → 0**:
+> - **Build-infra bucket (83 syms) resolved.** `tools/vkquake-port/gen-vkquake-shaders.py`
+>   emits the 41 embedded-SPIR-V arrays (`*_spv`/`*_spv_size`). The host has **no
+>   glslang/glslc and no network**, so the arrays are **PLACEHOLDER minimal-valid-SPIR-V
+>   headers** (link-green, NOT runnable). The generator auto-switches to REAL compiled
+>   SPIR-V the moment glslang is on PATH — re-run, no other change. The 3 `vkquake_pak*`
+>   are **REAL**: `Misc/vq_pak` `mkpak` + `Shaders/bintoc -c` built `embedded_pak.c`
+>   (667 KB pak: gfx/maps/default.cfg). Both generated files wired into
+>   `build-vkquake-phoenix.py`.
+> - **Vulkan vid shim (26 syms) resolved.** `tools/vkquake-port/platform/pl_phoenix_vk_vid.c`
+>   replaces `gl_vidsdl.c`: `VID_Init` brings Vulkan up the HW-proven `v3dv_harness.c` way
+>   (vkCreateInstance → publish `g_vk_instance`; vkCreateDevice → publish `g_vk_device` +
+>   `vulkan_globals.device`; vkGetDeviceQueue), presents to **`/dev/fb0` via the v3d winsys
+>   scanout (NOT VK_KHR_swapchain — the ICD has no WSI)**, populates the `vulkan_globals`
+>   fields the renderer reads (formats, sample_count, memory/feature props,
+>   gfx_queue_family_index, the `vk_cmd_*` dispatch pointers), defines the genuine globals
+>   (`vid modestate r_usesops prev_end_rendering_task`) + the 7 `vid_*` cvars, and stubs the
+>   video menu + screenshot. Features V3D lacks (sops/RT/push-descriptor/BDA) are forced off.
+> - **No libphoenix/libc gaps** surfaced this session (the prior `copysign` /
+>   `pthread_mutex_timedlock` gaps were already filled by the platform shims).
+> - **Runtime is NOT proven** (host-side link only, no Pi boot). The placeholder shaders
+>   render nothing — REAL SPIR-V (glslang) is the gating build-infra item for any pixel.
+>   The vid shim's per-frame `GL_BeginRendering`/`GL_EndRendering` are minimal-but-real
+>   (submit + scanout hook); the swapchain-image / double-buffer / render-resource coupling
+>   the engine's `gl_rmisc.c` expects needs on-HW Tier-1 bring-up. See §C below.
+>
+> **TL;DR (original 2026-06-23).** vkQuake source is now in `external/vkquake/` (cloned from
 > github.com/Novum/vkQuake, master `9be3a5a`). A new build scaffold under
 > `tools/vkquake-port/` compiles **all 72 portable engine TUs** (including the full
 > Vulkan renderer + `tasks.c` threading + `mem.c`/mimalloc-style alloc + `hash_map` +

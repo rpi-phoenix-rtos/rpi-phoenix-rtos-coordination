@@ -93,6 +93,7 @@ PLATFORM = [
     f"{PORT}/platform/pl_phoenix_snd.c",         # SNDDMA_* (/dev/audio0 feeder)
     f"{PORT}/platform/pl_phoenix_main.c",        # main() + host loop
     f"{PORT}/platform/pl_phoenix_stubs.c",       # net_drivers loopback table + pthread_getcpuclockid
+    f"{PORT}/platform/pl_phoenix_vk_vid.c",      # Vulkan vid shim (VID_*/GL_*/vid+cvars) -> fb0 scanout
 ]
 
 # Engine include flags. quakedef.h pulls <vulkan/vulkan_core.h> + vid.h, so VKINC and the
@@ -131,6 +132,36 @@ def main():
         e = compile_one(tramp_src, f"{OBJ}/vk_trampolines.o")
         (fail.append(("vk_trampolines", e)) if e else objs.append(f"{OBJ}/vk_trampolines.o"))
 
+    # Generated build-infra TUs (see gen-vkquake-shaders.py + Misc/vq_pak/Makefile):
+    #   vkquake_shaders.c — the 41 embedded-SPIR-V arrays (real bytes if glslang on PATH,
+    #                       else minimal valid placeholders; *_spv / *_spv_size symbols).
+    #   embedded_pak.c    — the base pak (gfx/maps/default.cfg) compressed + bin2c'd by
+    #                       mkpak+bintoc (vkquake_pak / _size / _decompressed_size).
+    # Both are AUTO-GENERATED here when absent so --link is reproducible from a clean
+    # checkout (embedded_pak.c is gitignored in external/vkquake; vkquake_shaders.c is a
+    # generated artifact too). Re-run gen-vkquake-shaders.py by hand to refresh shaders
+    # after putting glslang on PATH (it then emits REAL SPIR-V instead of placeholders).
+    SHADERS_C = f"{PORT}/vkquake_shaders.c"
+    PAK_C     = f"{Q}/embedded_pak.c"
+    if not os.path.exists(SHADERS_C):
+        print(f"=== generating {SHADERS_C} (gen-vkquake-shaders.py) ===")
+        subprocess.run([sys.executable, f"{PORT}/gen-vkquake-shaders.py", SHADERS_C])
+    if not os.path.exists(PAK_C):
+        print(f"=== generating {PAK_C} (Misc/vq_pak make) ===")
+        subprocess.run(["make", "-C", f"{ROOT}/external/vkquake/Misc/vq_pak"])
+
+    GENERATED = [SHADERS_C, PAK_C]
+    gen_total = 0
+    for src in GENERATED:
+        if not os.path.exists(src):
+            fail.append((os.path.basename(src), "MISSING (auto-gen failed; run "
+                         "gen-vkquake-shaders.py / `make -C external/vkquake/Misc/vq_pak`)"))
+            continue
+        gen_total += 1
+        name = os.path.splitext(os.path.basename(src))[0]
+        e = compile_one(src, f"{OBJ}/{name}.o")
+        (fail.append((name, e)) if e else objs.append(f"{OBJ}/{name}.o"))
+
     # Phoenix platform shims (replace the EXCLUDEd SDL/platform TUs). Same CFLAGS.
     plat_total = 0
     for src in PLATFORM:
@@ -141,7 +172,7 @@ def main():
         e = compile_one(src, f"{OBJ}/{name}.o")
         (fail.append((name, e)) if e else objs.append(f"{OBJ}/{name}.o"))
 
-    total = len(units) + (1 if os.path.exists(tramp_src) else 0) + plat_total
+    total = len(units) + (1 if os.path.exists(tramp_src) else 0) + plat_total + gen_total
     print(f"\n=== compile: {len(objs)}/{total} TUs OK (incl. {plat_total} platform shims) ===")
     if fail:
         print(f"--- {len(fail)} FAILED ---")

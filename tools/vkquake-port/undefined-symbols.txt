@@ -1,109 +1,17 @@
-GL_BeginRendering
-GL_EndRendering
-GL_SetObjectName
-GL_SynchronizeEndRenderingTask
-GL_UpdateDescriptorSets
-GL_WaitForDeviceIdle
-M_Menu_Video_f
-M_Video_Draw
-M_Video_Key
-SCR_ScreenShot_f
-VID_Init
-VID_Lock
-VID_Restart
-VID_Shutdown
-VID_Toggle
-alias_alphatest_frag_spv
-alias_alphatest_frag_spv_size
-alias_alphatest_oit_frag_spv
-alias_alphatest_oit_frag_spv_size
-alias_frag_spv
-alias_frag_spv_size
-alias_oit_frag_spv
-alias_oit_frag_spv_size
-alias_vert_spv
-alias_vert_spv_size
-basic_alphatest_frag_spv
-basic_alphatest_frag_spv_size
-basic_frag_spv
-basic_frag_spv_size
-basic_notex_frag_spv
-basic_notex_frag_spv_size
-basic_oit_frag_spv
-basic_oit_frag_spv_size
-basic_vert_spv
-basic_vert_spv_size
-cs_tex_warp_comp_spv
-cs_tex_warp_comp_spv_size
-indirect_clear_comp_spv
-indirect_clear_comp_spv_size
-indirect_comp_spv
-indirect_comp_spv_size
-md5_vert_spv
-md5_vert_spv_size
-mesh_interpolate_comp_spv
-mesh_interpolate_comp_spv_size
-modestate
-postprocess_frag_spv
-postprocess_frag_spv_size
-postprocess_vert_spv
-postprocess_vert_spv_size
-prev_end_rendering_task
-r_usesops
-screen_effects_10bit_comp_spv
-screen_effects_10bit_comp_spv_size
-screen_effects_10bit_scale_comp_spv
-screen_effects_10bit_scale_comp_spv_size
-screen_effects_10bit_scale_sops_comp_spv
-screen_effects_10bit_scale_sops_comp_spv_size
-screen_effects_8bit_comp_spv
-screen_effects_8bit_comp_spv_size
-screen_effects_8bit_scale_comp_spv
-screen_effects_8bit_scale_comp_spv_size
-screen_effects_8bit_scale_sops_comp_spv
-screen_effects_8bit_scale_sops_comp_spv_size
-showtris_frag_spv
-showtris_frag_spv_size
-showtris_vert_spv
-showtris_vert_spv_size
-skinning_comp_spv
-skinning_comp_spv_size
-sky_box_frag_spv
-sky_box_frag_spv_size
-sky_cube_frag_spv
-sky_cube_frag_spv_size
-sky_cube_vert_spv
-sky_cube_vert_spv_size
-sky_layer_frag_spv
-sky_layer_frag_spv_size
-sky_layer_vert_spv
-sky_layer_vert_spv_size
-update_lightmap_10bit_comp_spv
-update_lightmap_10bit_comp_spv_size
-update_lightmap_10bit_rt_comp_spv
-update_lightmap_10bit_rt_comp_spv_size
-update_lightmap_8bit_comp_spv
-update_lightmap_8bit_comp_spv_size
-update_lightmap_8bit_rt_comp_spv
-update_lightmap_8bit_rt_comp_spv_size
-vid
-vid_anisotropic
-vid_contrast
-vid_filter
-vid_fsaa
-vid_fsaamode
-vid_gamma
-vid_palettize
-vkquake_pak
-vkquake_pak_decompressed_size
-vkquake_pak_size
-wboit_resolve_frag_spv
-wboit_resolve_frag_spv_size
-wboit_resolve_msaa_frag_spv
-wboit_resolve_msaa_frag_spv_size
-world_frag_spv
-world_frag_spv_size
-world_oit_frag_spv
-world_oit_frag_spv_size
-world_vert_spv
-world_vert_spv_size
+# vkQuake aarch64-phoenix whole-archive link — undefined-symbol closure snapshot.
+#
+# 2026-06-24: LINK OK — 0 undefined symbols.
+#   The whole-archive link of libvkquake.a against the V3DV ICD (libv3dv-phoenix.a +
+#   libv3d-phoenix.a) + the trampolines + the Phoenix platform shims now closes
+#   completely to a statically-linked aarch64 ELF (/tmp/vkquake-phoenix).
+#
+# Progression:
+#   174 (2026-06-23, initial whole-archive drive)
+#   109 (after the Sys_*/IN_*/SNDDMA_*/SDL-threading platform shims landed)
+#    26 (after the build-infra bucket: 80 *_spv shader arrays via
+#        gen-vkquake-shaders.py + 3 vkquake_pak* via mkpak+bintoc)
+#     0 (after the Vulkan vid shim pl_phoenix_vk_vid.c: VID_*/GL_*/vid+modestate+
+#        r_usesops+prev_end_rendering_task + the 7 vid_* cvars + menu/screenshot stubs)
+#
+# Re-generate this snapshot with: build-vkquake-phoenix.py --link
+# (prints "=== LINK OK -> /tmp/vkquake-phoenix ===" when the closure is empty.)
