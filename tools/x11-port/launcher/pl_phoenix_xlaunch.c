@@ -22,6 +22,16 @@
  * The server is always launched as ":0" with "-ac" (disable access control;
  * a local client has no xauth cookie) and "-nolisten tcp".
  *
+ * MULTI-CLIENT / DESKTOP MODE. The launcher can also bring up a window manager
+ * AND one or more client apps in a single session — useful so the screen shows
+ * a managed, decorated window the user can drag, rather than a bare black root.
+ * In "startx" convenience mode (argc < 4) the special client name `desktop`
+ * expands to the list [twm, xeyes]: twm comes up as the window manager first,
+ * then xeyes launches as a managed (titlebar-decorated, draggable) window. The
+ * server is brought up first in every mode; the clients are forked after the
+ * listening socket appears. The supervisor keeps the server (and the other
+ * clients) alive when any single client exits.
+ *
  * SPAWN IDIOM: this mirrors the proven Phoenix pattern (psh/pshapp.c,
  * psh/runfile.c): vfork() + exec*() + waitpid(). Under vfork() the child
  * shares the parent's address space until exec, so the child does NOTHING
@@ -59,6 +69,9 @@
 #define POLL_INTERVAL_MS  10
 #define POLL_TIMEOUT_MS   10000
 #define POLL_MAX_TICKS    (POLL_TIMEOUT_MS / POLL_INTERVAL_MS)
+
+/* Most clients we ever launch in one session (window manager + apps). */
+#define MAX_CLIENTS       4
 
 extern char **environ;
 
@@ -116,42 +129,70 @@ static char **build_client_env(void)
 	return env;
 }
 
+/* Resolve a client name to a path under cp_buf: absolute names pass through,
+ * bare names are taken relative to <prefix>/bin. */
+static void
+resolve_client(char *cp_buf, size_t cp_sz, const char *prefix, const char *client)
+{
+	if (client[0] == '/')
+		snprintf(cp_buf, cp_sz, "%s", client);
+	else
+		snprintf(cp_buf, cp_sz, "%s/bin/%s", prefix, client);
+}
+
 int main(int argc, char *argv[])
 {
-	const char *server_path, *font_dir, *client_path;
+	const char *server_path, *font_dir;
 	/* volatile: these are live across the vfork() calls below. The children
 	 * only execve/_exit (never write parent memory), so no real clobber can
 	 * occur, but at -O2 GCC inlines the env/argv builders into main() and its
 	 * vfork-clobber analysis can't prove that — volatile silences the
 	 * -Wclobbered warning and documents the constraint for upstreaming. */
 	char **server_argv;
-	char ** volatile client_argv;
 	char ** volatile client_env;
 	char *server_extra[6];
 	pid_t srv_pid;
-	volatile pid_t cli_pid;
 	pid_t w;
 	int status, tick;
-	char *const *client_extra;
-	int n_client_extra;
-	static char sp_buf[256], fd_buf[256], cp_buf[256];
+	/* volatile: live across the vfork() calls below (see server_argv note).
+	 * The children only execve/_exit, so no real clobber occurs, but -O2
+	 * vfork-clobber analysis can't prove it — volatile silences -Wclobbered. */
+	volatile int c;
+	volatile int n_clients = 0;
+	static char sp_buf[256], fd_buf[256];
+
+	/* The session's clients (window manager + apps). Each entry has its own
+	 * resolved path, its own pre-built argv (vfork-safe), and a live pid that
+	 * the supervisor watches. The DISPLAY=:0 environment is shared by all. */
+	static char cp_bufs[MAX_CLIENTS][256];
+	char ** volatile client_argv[MAX_CLIENTS] = { 0 };
+	volatile pid_t cli_pid[MAX_CLIENTS];
+	const char *client_path[MAX_CLIENTS];
+	char *const *client_extra[MAX_CLIENTS] = { 0 };
+	int n_client_extra[MAX_CLIENTS] = { 0 };
+
+	for (c = 0; c < MAX_CLIENTS; c++)
+		cli_pid[c] = -1;
 
 	if (argc >= 4) {
 		/* Explicit form: <Xphoenix> <fontdir> <client> [client-args...] */
 		server_path = argv[1];
 		font_dir    = argv[2];
-		client_path = argv[3];
-		client_extra = &argv[4];
-		n_client_extra = argc - 4;
+		client_path[0]    = argv[3];
+		client_extra[0]   = &argv[4];
+		n_client_extra[0] = argc - 4;
+		n_clients = 1;
 	}
 	else {
 		/* "startx" convenience: 0 or 1 args. Auto-detect the install prefix
 		 * (NFS export mounted at /nfstest on netboot, else "/" on nfsroot/sd)
 		 * and default the client to xeyes. Optional argv[1] picks the client
-		 * (bare name under <prefix>/bin, or an absolute path). So:
-		 *   startx          -> <prefix>/bin/xeyes
-		 *   startx twm      -> <prefix>/bin/twm
-		 *   startx /bin/2048-> /bin/2048
+		 * (bare name under <prefix>/bin, or an absolute path), with one
+		 * reserved name `desktop` that brings up a window manager + an app:
+		 *   startx           -> <prefix>/bin/xeyes
+		 *   startx twm       -> <prefix>/bin/twm        (WM only, bare root)
+		 *   startx /bin/2048 -> /bin/2048
+		 *   startx desktop   -> twm (WM) + xeyes (managed window)
 		 */
 		const char *prefix = "/nfstest";
 		const char *client = (argc >= 2) ? argv[1] : "xeyes";
@@ -163,18 +204,38 @@ int main(int argc, char *argv[])
 			snprintf(sp_buf, sizeof(sp_buf), "%s/bin/Xphoenix", prefix);
 		}
 		snprintf(fd_buf, sizeof(fd_buf), "%s/usr/share/fonts/X11/misc", prefix);
-		if (client[0] == '/')
-			snprintf(cp_buf, sizeof(cp_buf), "%s", client);
-		else
-			snprintf(cp_buf, sizeof(cp_buf), "%s/bin/%s", prefix, client);
+
+		if (strcmp(client, "desktop") == 0) {
+			/* WM first so it adopts the app's window when it maps; then the
+			 * app comes up as a managed, decorated, draggable window.
+			 *
+			 * xeyes is given an explicit -geometry so twm AUTO-PLACES it. The
+			 * compiled-in twm config has no RandomPlacement, so a window that
+			 * carries no position hint triggers twm's INTERACTIVE placement (a
+			 * rubber-band outline that follows the pointer until the user
+			 * clicks to drop it). A geometry supplies a USPosition hint, which
+			 * twm honours by placing the window immediately — so the user sees
+			 * a decorated xeyes at once rather than an outline they must click. */
+			static char *const xeyes_geom[2] = { "-geometry", "300x200+360+240" };
+			resolve_client(cp_bufs[0], sizeof(cp_bufs[0]), prefix, "twm");
+			resolve_client(cp_bufs[1], sizeof(cp_bufs[1]), prefix, "xeyes");
+			client_path[0] = cp_bufs[0];
+			client_path[1] = cp_bufs[1];
+			client_extra[1] = xeyes_geom;
+			n_client_extra[1] = 2;
+			n_clients = 2;
+		}
+		else {
+			resolve_client(cp_bufs[0], sizeof(cp_bufs[0]), prefix, client);
+			client_path[0] = cp_bufs[0];
+			n_clients = 1;
+		}
 
 		server_path = sp_buf;
 		font_dir    = fd_buf;
-		client_path = cp_buf;
-		client_extra = NULL;
-		n_client_extra = 0;
-		fprintf(stderr, "xlaunch: startx mode — prefix=%s client=%s\n",
-			prefix[0] ? prefix : "/", client);
+		fprintf(stderr, "xlaunch: startx mode — prefix=%s client=%s (%d client%s)\n",
+			prefix[0] ? prefix : "/", client, n_clients,
+			n_clients == 1 ? "" : "s");
 	}
 
 	/* The X server + clients need /tmp (for the .xkm + the listening socket).
@@ -200,12 +261,15 @@ int main(int argc, char *argv[])
 		return EXIT_FAILURE;
 	}
 
-	/* Build the client argv (prog + any trailing args from our argv[4..]) and
-	 * the client environment (with DISPLAY=:0) BEFORE forking — vfork-safe. */
-	client_argv = build_argv((char *)client_path, client_extra, n_client_extra);
-	if (client_argv == NULL) {
-		fprintf(stderr, "xlaunch: out of memory building client argv\n");
-		return EXIT_FAILURE;
+	/* Build each client's argv (prog + any trailing args) and the shared client
+	 * environment (with DISPLAY=:0) BEFORE forking — vfork-safe. */
+	for (c = 0; c < n_clients; c++) {
+		client_argv[c] = build_argv((char *)client_path[c],
+			client_extra[c], n_client_extra[c]);
+		if (client_argv[c] == NULL) {
+			fprintf(stderr, "xlaunch: out of memory building client argv\n");
+			return EXIT_FAILURE;
+		}
 	}
 	client_env = build_client_env();
 	if (client_env == NULL) {
@@ -255,21 +319,31 @@ int main(int argc, char *argv[])
 			"launching client anyway\n", X_SOCKET_PATH, POLL_TIMEOUT_MS);
 	}
 
-	/* --- fork the client with DISPLAY=:0 --- */
-	fprintf(stderr, "xlaunch: starting client: %s (DISPLAY=%s)\n", client_path, DISPLAY_VALUE);
-	cli_pid = vfork();
-	if (cli_pid < 0) {
-		fprintf(stderr, "xlaunch: vfork (client) failed: %s\n", strerror(errno));
-		kill(srv_pid, SIGTERM);
-		return EXIT_FAILURE;
-	}
-	if (cli_pid == 0) {
-		/* child: exec only */
-		execve(client_path, client_argv, client_env);
-		_exit(127);
+	/* --- fork the clients with DISPLAY=:0, in order --- */
+	for (c = 0; c < n_clients; c++) {
+		fprintf(stderr, "xlaunch: starting client[%d]: %s (DISPLAY=%s)\n",
+			c, client_path[c], DISPLAY_VALUE);
+		cli_pid[c] = vfork();
+		if (cli_pid[c] < 0) {
+			fprintf(stderr, "xlaunch: vfork (client[%d]) failed: %s\n",
+				c, strerror(errno));
+			cli_pid[c] = -1;
+			continue; /* a failed client must not abort the session */
+		}
+		if (cli_pid[c] == 0) {
+			/* child: exec only */
+			execve(client_path[c], client_argv[c], client_env);
+			_exit(127);
+		}
+		/* When launching a window manager + an app together, let the WM
+		 * settle into its dispatch loop before the app maps its window, so
+		 * the WM is ready to reparent/decorate it. Cheap, only between
+		 * multiple clients. */
+		if (n_clients > 1 && c + 1 < n_clients)
+			msleep(250);
 	}
 
-	/* --- supervise: block in waitpid for either child --- */
+	/* --- supervise: block in waitpid; server death kills all clients --- */
 	for (;;) {
 		w = waitpid(-1, &status, 0);
 		if (w < 0) {
@@ -280,25 +354,28 @@ int main(int argc, char *argv[])
 		}
 
 		if (w == srv_pid) {
-			fprintf(stderr, "xlaunch: server exited (status=0x%x) — killing client\n",
+			fprintf(stderr, "xlaunch: server exited (status=0x%x) — killing clients\n",
 				(unsigned)status);
-			/* Guard against cli_pid == -1 (client already reaped below):
-			 * kill(-1, ...) would broadcast. Only signal a live client. */
-			if (cli_pid > 0) {
-				kill(cli_pid, SIGTERM);
-				(void)waitpid(cli_pid, NULL, 0);
+			/* Only signal live clients; kill(-1,...) would broadcast. */
+			for (c = 0; c < n_clients; c++) {
+				if (cli_pid[c] > 0) {
+					kill(cli_pid[c], SIGTERM);
+					(void)waitpid(cli_pid[c], NULL, 0);
+					cli_pid[c] = -1;
+				}
 			}
 			break;
 		}
-		if (w == cli_pid) {
-			fprintf(stderr, "xlaunch: client exited (status=0x%x); server still running\n",
-				(unsigned)status);
-			/* Keep the server up so the painted root persists and a new
-			 * client could attach. Continue waiting on the server. */
-			cli_pid = -1;
-			continue;
+
+		/* A client exited: reap it, keep the server (and other clients) up so
+		 * the painted root persists and a new client could attach. */
+		for (c = 0; c < n_clients; c++) {
+			if (w == cli_pid[c]) {
+				fprintf(stderr, "xlaunch: client[%d] exited (status=0x%x); "
+					"server still running\n", c, (unsigned)status);
+				cli_pid[c] = -1;
+			}
 		}
-		/* some other child — ignore and keep waiting */
 	}
 
 	return EXIT_SUCCESS;

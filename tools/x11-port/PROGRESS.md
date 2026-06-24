@@ -1,5 +1,101 @@
 # X11 (tinyx/kdrive) library port — progress
 
+## UPDATE 2026-06-24 (assist): `startx desktop` (twm + managed xeyes) + kbd0-ordering verified
+
+Host-side + NFS-staging only (no Pi boot this session — UART reserved for the orchestrator).
+
+### Task 1 — twm + a managed client in one session (`startx desktop`)
+`pl_phoenix_xlaunch.c` now drives a **list of clients** instead of one. The
+single-foreground-binary model is unchanged (psh has no job control): bring the
+server up first, wait for the listening socket, then vfork+execve each client
+with `DISPLAY=:0`, then supervise. Design chosen = a reserved client name in the
+existing "startx" convenience branch (argc < 4), so every prior form is byte-for-byte
+unchanged and the new mode lands without touching the explicit `<X> <fontdir> <client>`
+path or adding a flag that would collide with the `argc >= 4` parse:
+
+```
+startx              -> <prefix>/bin/xeyes                (unchanged)
+startx twm          -> <prefix>/bin/twm   (WM only, bare root — unchanged)
+startx /bin/2048    -> /bin/2048                          (unchanged)
+startx desktop      -> twm (WM)  +  xeyes (managed, decorated, draggable)   <-- NEW
+```
+
+`desktop` expands to the list `[twm, xeyes]`: twm is launched first and given a
+250 ms settle so it is in its dispatch loop and ready to reparent/decorate xeyes'
+window when it maps. xeyes is launched with `-geometry 300x200+360+240` so twm
+**auto-places** it: the compiled-in twm config has no `RandomPlacement`, so a window
+carrying no position hint triggers twm's *interactive* placement (a rubber-band
+outline that follows the pointer until the user clicks to drop it) — the geometry
+supplies a `USPosition` hint that twm honours immediately, so the user sees a
+decorated xeyes at once rather than an outline. All argvs + the shared DISPLAY=:0 env
+are built in the parent before any vfork (vfork-safe). Supervisor semantics
+generalized: **server death kills all clients and exits; any single client exit
+(incl. twm) leaves the server + other clients running** so the painted root persists.
+New vfork-live locals marked `volatile` (same false-positive `-Wclobbered` rationale
+as before).
+
+**The command the user runs (netboot, NFS at /nfstest):**
+```
+mkdir /tmp                 # if not already
+/nfstest/bin/startx desktop
+```
+(`/nfstest/bin/startx` is the launcher under its convenience name; `argv[0]`==startx
++ argc<4 triggers convenience mode.) Equivalent fully-explicit invocation is NOT
+available for the multi-client case — use `startx desktop`. Single-client still works
+either way (`startx`, `startx twm`, or the explicit 3-arg form).
+
+Rebuilt static aarch64-phoenix ELF, **0 undefined symbols, 0 warnings**:
+`artifacts/x11/pl_phoenix_xlaunch` (664736 bytes), staged to BOTH
+`/srv/phoenix-rpi4-nfs/bin/pl_phoenix_xlaunch` AND `.../bin/startx` (startx is a
+plain copy, not a symlink — `build-xlaunch.sh` now refreshes both automatically).
+
+**Expect on UART:** `xlaunch: startx mode — prefix=/nfstest client=desktop (2 clients)`,
+the `[fbdev] /dev/fb0: ...` line, `xlaunch: server socket present...`,
+`xlaunch: starting client[0]: /nfstest/bin/twm`, `xlaunch: starting client[1]: /nfstest/bin/xeyes`.
+twm will also log a few `unable to open font "-adobe-helvetica-bold-..."` warnings —
+the `misc`-only font path has no helvetica, so twm falls back to `fixed` (which IS in
+that path, since the server itself started). Those warnings are EXPECTED and harmless,
+not a failure. **Expect on HDMI:** xeyes at ~360,240 inside a twm titlebar/border on
+the slategrey twm root (auto-placed via the `-geometry` hint — NOT an outline waiting
+for a click); the mouse drags the window by its titlebar (mouse is HW-proven) and the
+eyes track the pointer. Left-click on the bare root pops twm's "TWM" (defops) menu.
+
+### Task 2 — minimal twmrc: SKIPPED (per task guidance)
+twm's compiled-in default config (`src/twm-1.0.12/src/system.twmrc` → deftwmrc) already
+binds **Button1-on-root → the "defops" menu** and paints an icon manager, so a root menu
+exists with no config file. The only thing a custom `.twmrc` would add is `f.exec`
+launching apps — `f.exec` forks a shell from twm, whose viability on Phoenix (no job
+control, uncertain shell-fork) can't be verified host-side. So per the task's own
+guidance we rely on the launcher running the client directly (`startx desktop` maps
+xeyes for twm to manage) rather than shipping a twmrc. The default menu's `Xterm` entry
+is a harmless dead link (no xterm on the export).
+
+### Task 3 — keyboard-in-X readiness: ORDERING VERIFIED CORRECT, no code change
+Read the vendored kdrive/dix source to confirm (not guess) the lifecycle:
+- `dix/main.c`: `InitOutput()` (line 193) runs BEFORE `InitInput()` (line 250).
+- `hw/kdrive/src/kdrive.c` `KdInitOutput()` calls `(*card->cfuncs->cardinit)(card)`
+  (line 955–956) = our `fbdevCardInit`, which calls `fbdevConsoleSetMode(FBCON_DISABLED)`
+  (fbdev.c:144) — this is what frees `/dev/kbd0` from the pl011-tty console bridge.
+- The keyboard is opened later in `fbdevKeyboardEnable` (fbdev.c:591), reached via
+  `InitInput`. So **fbcon-disable strictly precedes the kbd0 open.** A 40-try / 1 s retry
+  loop in Enable additionally absorbs the asynchronous console release. No fix needed.
+
+**HW test the orchestrator should run:**
+1. Boot netboot; at psh: `mkdir /tmp` (if needed) then `/nfstest/bin/startx desktop`.
+2. On UART, confirm the keyboard line is the SUCCESS form, not EBUSY:
+   - GOOD: `[fbdev] /dev/kbd0 opened (fd=N), RAW HID mode — keyboard active`
+   - BAD:  `[fbdev] /dev/kbd0 open failed (Device or resource busy) — keyboard input disabled`
+   Also confirm `[fbdev] HDMI console fbcon mode -> 0` appears BEFORE the kbd0 line.
+3. On HDMI: xeyes inside a twm-decorated frame on the slategrey root; move the mouse →
+   eyes track; drag the titlebar → window moves.
+4. Keyboard: focus matters under twm (default is click/pointer-to-focus). With xeyes
+   focused, type — xeyes ignores keys, so for a visible keyboard proof prefer launching
+   a key-echoing client; alternatively `startx 2048` then use arrow keys. The kbd0
+   "keyboard active" UART line is the primary readiness proof; on-screen key effect needs
+   a client that consumes keys.
+
+---
+
 ## UPDATE 2026-06-23 (assist): xinit-style launcher `pl_phoenix_xlaunch` built
 
 psh has no job control (`&` is a redirect), so a server + client cannot be

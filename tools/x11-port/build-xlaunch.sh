@@ -59,3 +59,18 @@ mkdir -p "$ART"
 cp "$LAUNCHDIR/$OUT" "$ART/$OUT"
 echo "=== published -> $ART/$OUT ==="
 ls -l "$ART/$OUT"
+
+# Stage to the NFS export so a netboot picks the new binary up. The launcher is
+# installed under TWO names — pl_phoenix_xlaunch (explicit form) and startx
+# (convenience/desktop mode keyed on argv[0]). startx is a plain COPY, not a
+# symlink, so BOTH must be refreshed or `startx desktop` runs a stale binary.
+NFS_BIN=/srv/phoenix-rpi4-nfs/bin
+if [ -d "$NFS_BIN" ]; then
+  cp "$LAUNCHDIR/$OUT" "$NFS_BIN/$OUT"
+  cp "$LAUNCHDIR/$OUT" "$NFS_BIN/startx"
+  chmod 755 "$NFS_BIN/$OUT" "$NFS_BIN/startx"
+  echo "=== staged -> $NFS_BIN/{$OUT,startx} ==="
+  ls -l "$NFS_BIN/$OUT" "$NFS_BIN/startx"
+else
+  echo "=== NFS export $NFS_BIN not present — skipped staging (artifact only) ==="
+fi
