@@ -19,9 +19,17 @@ Backlog map: **[2026-06-24-night-work-audit.md](2026-06-24-night-work-audit.md)*
   → twm + a managed/draggable xeyes. twm's earlier crash root-caused (libXt built with
   `malloc0_returns_null=no` but Phoenix `malloc(0)`==NULL → XtMalloc(0) aborted; rebuilt =yes).
   kbd0-free ordering verified (fbcon-disable precedes the kbd open). HW sign-off (mouse/keypress) pending.
-- **vkQuake (#29):** links **0-undefined → /tmp/vkquake-phoenix (22.5 MB aarch64, real SPIR-V** — all
-  41 shaders via glslangValidator+spirv-opt). V3DV device-create gate confirmed fixed + the mesa
-  patch regenerated against the upstream base so it's durable. Ready for an on-HW Tier-1 swap.
+- **vkQuake (#29): on-HW Tier-1 milestone reached.** Links 0-undefined → /tmp/vkquake-phoenix
+  (22.5 MB, real SPIR-V — 41 shaders via glslangValidator+spirv-opt). Boot-launched on HW:
+  **Vulkan fully initializes on the V3D** (vkCreateInstance/Enumerate/CreateDevice rc=0, queue +
+  fb0 1920×1080 scanout up), pak0.pak found over NFS, then a NULL+0x70 deref at pc=0x4c5d20 right
+  after VID_Init (the no-WSI first-frame path). Specific next step in
+  [2026-06-25-vkquake-hw-tier1-result.md](2026-06-25-vkquake-hw-tier1-result.md). GPU-binary swap reverted.
+- **GPU build durability:** `build-gl-phoenix.py` had the same mesa generated-sources regression as
+  build-v3d (libGL 4-FAIL → flagship couldn't link); FIXED (devices/tools `3c603d3`) → libGL 0-FAIL
+  (325 objs), libquakespasm relinks clean. NOTE: `rpi4-quake` is intentionally NOT bundled right now
+  (its user.plo.yaml launch is commented — `TEMP-NO-QUAKE-AUTOSTART`, for the X11/debug phase);
+  bundling follows the plo launch, so re-enabling = uncomment the launch + rebuild (now builds clean).
 - **Ports:** all binary ports built/staged on NFS (openssl/curl/dropbear/lua/lighttpd valid ELFs);
   added fs_mark; exec-verify checklist in [2026-06-24-ports-build-night.md](2026-06-24-ports-build-night.md).
 
