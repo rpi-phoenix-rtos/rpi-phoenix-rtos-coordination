@@ -136,24 +136,25 @@ expected. Order from cheapest/most-likely-pass to heaviest.
     expected: "curl 7.64.1 ... mbedTLS/..." banner
 
 # 7. dropbearkey — generate a key (dropbear multi-binary, no network)
-/usr/bin/dropbearmulti dropbearkey -t ed25519 -f /tmp/id_test
-    expected: "Generating ... key" + "Public key portion is ssh-ed25519 AAAA..." + fingerprint
+#    NOTE: this port is dropbear 2018.76, which PREDATES ed25519 (added 2020.79).
+#    The binary's strings show only ssh-rsa + ecdsa-sha2-* — use -t rsa (universal).
+/usr/bin/dropbearmulti dropbearkey -t rsa -f /tmp/id_test
+    expected: "Generating key, this may take a while..." + "Public key portion is ssh-rsa AAAA..." + fingerprint
+    (this also proves the multibinary loads + dispatches an applet, so a separate
+     `dropbear -h` server check is redundant and is intentionally omitted — do NOT
+     run `/usr/sbin/dropbear` bare, it would try to daemonize on port 22 and hang.)
 
-# 8. dropbear server — help/usage banner (do NOT background a daemon in the cycle)
-/usr/sbin/dropbear -h
-    expected: "Dropbear server v2018.76 ..." usage text (exits after printing)
-
-# 9. lighttpd — version
+# 8. lighttpd — version
 /usr/sbin/lighttpd -v
     expected: "lighttpd/1.4.79 ..." banner
 
-# 10. micropython (HW-run prior; sanity)
+# 9. micropython (HW-run prior; sanity)
 /bin/micropython -c "print('mpy-ok')"
     expected: mpy-ok
 ```
 
 Notes for the orchestrator:
-- Capture stderr too — several tools (fs_mark usage, dropbear -h) print to stderr.
+- Capture stderr too — several tools (fs_mark usage, dropbearkey progress) print to stderr.
 - #4 is the load-bearing re-test. Empty stdout there = openssl still broken despite
   /dev/urandom; that's a real finding to record (likely libphoenix/conf gap, not RNG).
 - Exec-from-NFS is slow (per-page RPCs); allow generous per-command time, especially for the
