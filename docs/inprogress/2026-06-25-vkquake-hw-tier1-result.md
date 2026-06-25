@@ -369,3 +369,25 @@ Summary of the day: 8 vkQuake blockers root-caused + fixed (SV_LocalSound guard;
 whole-archive 13 entrypoints; render resources; >4KB shader = blake3 NEON-stub stack overflow;
 tile_state zero-dim job) → crash-free full run. Headline fix = the blake3 portable-vs-NEON stack
 overflow. GL flagship restored for the evening test.
+
+## 🎉🎉 FIRST VISIBLE vkQuake FRAME ON HDMI (2026-06-25) — Vulkan→V3D→HDMI proven end-to-end
+
+With display ownership (fbcon-disable, commit cbc7df7) + the scanout bound to the real fb0:
+- `vkvid: HDMI console fbcon mode -> 1` (fbcon disabled) → `render resources created` → **`vkvid: present 1`**.
+- HDMI snapshot (…100923-tick.png): **full-screen Quake-palette BROWN (151,93,49), 99.95% coverage**
+  — vkQuake's UI render-pass `loadOp=CLEAR` color, written to fb0 by the V3D and displayed. This is
+  the **first visible vkQuake GPU output on real hardware through Vulkan** — the complete chain works
+  end to end with a visible result (init → 41 shaders → pipelines → render pass → vkQueueSubmit →
+  scanout present → HDMI), 0 faults.
+
+**Remaining (a refinement, not a crash):** only ONE frame presented (`present` count = 1), then the
+screen went black — the per-frame loop doesn't sustain (vkQuake renders frame 1 = the clear, but
+doesn't continue presenting; no 2D console/menu content drawn over the clear yet). Next: keep the
+GL_BeginRendering/EndRendering frame loop running each Host_Frame + record the 2D draws (SCR_DrawGUI)
+into the cb so the console/menu appears over the clear; investigate why presents stop after frame 1
+(frame-loop gating, a wait/fence, or the engine pausing). Best iterated with a live look at the HDMI.
+
+**This is the vkQuake capstone milestone: a Vulkan application rendering on the BCM2711 V3D via the
+ported V3DV ICD, visible on HDMI.** Day's total: 9 root-caused blockers cleared (SV_LocalSound,
+VID_Init init-block, 13 whole-archive entrypoints, render resources, blake3 NEON-stub stack overflow,
+tile_state zero-dim job, display-present) — from instant-crash to a visible frame in one day.
