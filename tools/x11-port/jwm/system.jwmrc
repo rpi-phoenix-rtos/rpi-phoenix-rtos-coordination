@@ -39,23 +39,24 @@
         <Clock format="%H:%M"><Button mask="123">exec:/nfstest/bin/xeyes</Button></Clock>
     </Tray>
 
-    <!-- Window-decoration colors. -->
-    <WindowStyle>
+    <!-- Window decorations. JWM 2.4.6 schema (matches the shipped example.jwmrc):
+         decorations="motif" draws a real titlebar with the window title + the
+         close/maximize/minimize buttons (the Mouse "close"/"maximize"/"minimize"
+         contexts below bind to them). The top-level Font/Foreground/Background are
+         the INACTIVE titlebar; the <Active> block is the focused window. (The older
+         <Active><Text>/<Title>/<Corner> + top-level <Inactive> schema was wrong for
+         2.4.6 and produced "invalid tag" warnings + a plain undecorated bar.)
+         Font stays a CORE XLFD ("fixed") — this build has no Xft. -->
+    <WindowStyle decorations="motif">
         <Font>fixed</Font>
         <Width>4</Width>
-        <Height>20</Height>
+        <Corner>0</Corner>
+        <Foreground>#FFFFFF</Foreground>
+        <Background>#555555</Background>
         <Active>
-            <Text>#FFFFFF</Text>
-            <Title>#0A64A4</Title>
-            <Corner>#0A64A4</Corner>
-            <Outline>#000000</Outline>
+            <Foreground>#FFFFFF</Foreground>
+            <Background>#0A64A4</Background>
         </Active>
-        <Inactive>
-            <Text>#FFFFFF</Text>
-            <Title>#555555</Title>
-            <Corner>#555555</Corner>
-            <Outline>#000000</Outline>
-        </Inactive>
     </WindowStyle>
 
     <TrayStyle decorations="flat">
