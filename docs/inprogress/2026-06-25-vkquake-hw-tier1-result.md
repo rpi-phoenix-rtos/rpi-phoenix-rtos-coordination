@@ -137,3 +137,44 @@ per the render-resource notes above.
 
 **Status:** vkQuake iteration PAUSED here to advance the broader clean-repo goals; flagship restored.
 All fixes committed (vkquake-phoenix-port.patch + the rpi4-vkquake Makefile + pl_phoenix_vk_vid.c).
+
+## Progress log — 2026-06-25 (shader #10 skipped: md5_vert gated out)
+
+Acted on the focused next step above: **skipped the md5_vert shader module** so the engine can
+proceed past the shader-#10 crash toward a first on-screen 2D frame.
+
+- **Exactly what was skipped:** `md5_vert` is the **only** 2021-rerelease MD5-model shader *module*
+  in the DECLARE/CREATE list (md5 reuses `alias_frag` for its fragment stage, so there is no
+  `md5_frag` to skip). One entry, gated.
+- **How:** `external/vkquake/Quake/gl_rmisc.c`, `R_CreateShaderModules` — replaced
+  `CREATE_SHADER_MODULE (md5_vert)` with `CREATE_SHADER_MODULE_COND (md5_vert, false)` (so
+  `md5_vert_module = VK_NULL_HANDLE`; `DESTROY_SHADER_MODULE` already guards on that), preceded by a
+  `Sys_Printf ("vkvid: shmod md5_vert SKIPPED (rerelease/MD5-only, unused by shareware)\n")`. The
+  per-shader `vkvid: shmod` instrumentation is unchanged, so the next boot prints the true create
+  order around the skip.
+- **Safety check:** the no-WSI shim (`pl_phoenix_vk_vid.c`) only builds `R_CreateBasicPipelines`
+  (UI/basic variant) and then `R_DestroyShaderModules`. The only consumer of `md5_vert_module`
+  is `R_CreateMD5Pipelines` (gl_rmisc.c:3637/3720), which is NOT on the 2D path — so a NULL
+  md5 handle cannot bite. Confirmed `R_CreateBasicPipelines` (2493–3325) contains no md5 ref.
+- **Build:** `python3 tools/vkquake-port/build-vkquake-phoenix.py --link` → **82/82 TUs OK, LINK OK
+  (0 undefined)** → `/tmp/{libvkquake.a,vkquake-phoenix}`. Guard verified present in the fresh
+  `gl_rmisc.o` AND in the final ELF (`strings | grep "md5_vert SKIPPED"`); `nm` on the ELF = 0 `U`
+  (no undefined). (The build script unconditionally recompiles every TU into `/tmp/vkqobj`, which
+  was wiped first — no stale-`.o` hazard this time.)
+- **Committed:** external/vkquake clone `cf48ae6` (gitignored clone); coord repo `8175682`
+  (regenerated `tools/vkquake-port/vkquake-phoenix-port.patch`, now 3 files: gl_rmisc.c + glquake.h
+  + sv_main.c, baseline upstream `9be3a5a`).
+
+**WHAT THE ORCHESTRATOR SHOULD LOOK FOR ON THE NEXT BOOT** (bundle rpi4-vkquake + netboot + HDMI
+snapshot). After the `shmod alias_alphatest_oit_frag ok` line, the log now prints
+`shmod md5_vert SKIPPED ...`; the **next module created is `sky_layer_vert`**. Three outcomes:
+1. `shmod sky_layer_vert ... ok` and onward through `rr: pipelines ok` → 2D frame on HDMI →
+   **md5_vert was shader-specific** (defer rerelease/MD5 support; the NULL fptr is in the md5_vert
+   SPIR-V or its v3dv/Mesa path).
+2. Crash (Exception #32, pc=0/lr=0) **immediately after the `md5_vert SKIPPED` line, on
+   `sky_layer_vert`** → **heap corruption from an earlier alloc** (a fn-ptr-bearing struct trashed
+   by an earlier `vk_alloc` is dereferenced by the 10th module create regardless of which shader it
+   is) → root-cause the allocator, NOT md5.
+3. Reaches `rr: pipelines ok` / `rr: shadermodules destroyed` but crashes **later in the draw/
+   present path** → frame-path issue, separate from shaders (the world/3D pipelines are still
+   stubbed; 2D-first).
