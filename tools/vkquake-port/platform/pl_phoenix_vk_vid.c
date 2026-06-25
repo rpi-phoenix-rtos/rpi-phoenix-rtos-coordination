@@ -38,7 +38,9 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
+#include <sys/mman.h>
 #include <stdint.h>
+#include <stddef.h>
 #include <string.h>
 
 /* ---- the global instance/device the trampoline layer (vk_trampolines.c) resolves
@@ -231,6 +233,115 @@ static void populate_dispatch_table (void)
 		(PFN_vkCmdCopyBufferToImage) gdpa ("vkCmdCopyBufferToImage");
 	vulkan_globals.vk_cmd_dispatch = (PFN_vkCmdDispatch) gdpa ("vkCmdDispatch");
 	/* push-descriptor / buffer-device-address / accel-structure: V3DV-unsupported -> NULL. */
+}
+
+/* =========================== mmap-backed VkAllocationCallbacks =========================== */
+/* WHY: stock vkCreateShaderModule (vk_common_CreateShaderModule -> vk_alloc2 with
+ * pAllocator==NULL -> libphoenix malloc) crashes for any single shader-module allocation
+ * whose codeSize exceeds one page (4096 B): every module <= 3624 B succeeds; md5_vert
+ * (5228) + screen_effects_8bit_comp (8844) fault. The trigger is a >1-page, 8-byte-aligned
+ * allocation on this process's libphoenix heap (root cause established 2026-06-25,
+ * docs/inprogress/2026-06-25-vkquake-hw-tier1-result.md "DECISIVE root-cause").
+ *
+ * Interim unblock (no core change): supply these callbacks as the pAllocator argument to the
+ * shader-module create/destroy calls. They back every allocation with mmap(MAP_ANONYMOUS) — a
+ * SEPARATE kernel mapping that does NOT touch the failing malloc heap (the same primitive
+ * libphoenix's own malloc_dl.c uses to grow its heap, so it is a proven userspace path here).
+ *
+ * Layout: mmap returns a page-aligned base (>= 4096-aligned, so any Vulkan alignment <= page is
+ * trivially honored). A header { base, maplen, size } (three pointer-width fields) is written
+ * immediately before the user pointer so pfnFree/pfnReallocation can recover the mapping and the
+ * original size (Vulkan's free/realloc callbacks receive only the pointer). The driver does NOT
+ * remember which allocator
+ * created an object, so the SAME callbacks MUST be passed to vkDestroyShaderModule — see the
+ * DESTROY_SHADER_MODULE macro (gl_rmisc.c), which is patched to pass PL_VkHostAllocator(). */
+
+typedef struct {
+	void  *base;   /* mmap() base to hand back to munmap() */
+	size_t maplen; /* total mapped length (for munmap + realloc copy bound) */
+	size_t size;   /* user-requested size (for realloc copy) */
+} pl_vkalloc_hdr_t;
+
+#ifndef PAGE_SIZE
+#define PL_VKALLOC_PAGE 4096u
+#else
+#define PL_VKALLOC_PAGE PAGE_SIZE
+#endif
+
+static size_t pl_round_up (size_t v, size_t a)
+{
+	return (v + (a - 1)) & ~(a - 1);
+}
+
+static void *VKAPI_PTR pl_vk_alloc (void *pUserData, size_t size, size_t alignment,
+                                    VkSystemAllocationScope scope)
+{
+	(void)pUserData;
+	(void)scope;
+	if (size == 0)
+		return NULL;
+	if (alignment < 8)
+		alignment = 8;
+
+	/* Reserve room for the header AND for aligning the user pointer up from the page base. */
+	size_t hdr	 = pl_round_up (sizeof (pl_vkalloc_hdr_t), alignment);
+	size_t maplen = pl_round_up (hdr + size, PL_VKALLOC_PAGE);
+
+	void *base = mmap (NULL, maplen, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	if (base == MAP_FAILED)
+		return NULL;
+
+	/* base is page-aligned; hdr is a multiple of alignment, so the user pointer is aligned. */
+	void			 *user = (char *)base + hdr;
+	pl_vkalloc_hdr_t *h	   = (pl_vkalloc_hdr_t *)((char *)user - sizeof (pl_vkalloc_hdr_t));
+	h->base	  = base;
+	h->maplen = maplen;
+	h->size	  = size;
+	return user;
+}
+
+static void VKAPI_PTR pl_vk_free (void *pUserData, void *pMemory)
+{
+	(void)pUserData;
+	if (pMemory == NULL)
+		return;
+	pl_vkalloc_hdr_t *h = (pl_vkalloc_hdr_t *)((char *)pMemory - sizeof (pl_vkalloc_hdr_t));
+	munmap (h->base, h->maplen);
+}
+
+static void *VKAPI_PTR pl_vk_realloc (void *pUserData, void *pOriginal, size_t size,
+                                      size_t alignment, VkSystemAllocationScope scope)
+{
+	if (pOriginal == NULL)
+		return pl_vk_alloc (pUserData, size, alignment, scope);
+	if (size == 0) {
+		pl_vk_free (pUserData, pOriginal);
+		return NULL;
+	}
+	pl_vkalloc_hdr_t *oh	   = (pl_vkalloc_hdr_t *)((char *)pOriginal - sizeof (pl_vkalloc_hdr_t));
+	size_t			  old_size = oh->size;
+	void			 *nptr	   = pl_vk_alloc (pUserData, size, alignment, scope);
+	if (nptr == NULL)
+		return NULL;
+	memcpy (nptr, pOriginal, old_size < size ? old_size : size);
+	pl_vk_free (pUserData, pOriginal);
+	return nptr;
+}
+
+static const VkAllocationCallbacks pl_vk_host_allocator = {
+	.pUserData			   = NULL,
+	.pfnAllocation		   = pl_vk_alloc,
+	.pfnReallocation	   = pl_vk_realloc,
+	.pfnFree			   = pl_vk_free,
+	.pfnInternalAllocation = NULL,
+	.pfnInternalFree	   = NULL,
+};
+
+/* Exposed to the engine (gl_rmisc.c R_CreateShaderModule / DESTROY_SHADER_MODULE) so the >4KB
+ * shader-module allocations bypass the failing libphoenix malloc path. */
+const VkAllocationCallbacks *PL_VkHostAllocator (void)
+{
+	return &pl_vk_host_allocator;
 }
 
 /* ============================== fb0 scanout discovery ============================== */
