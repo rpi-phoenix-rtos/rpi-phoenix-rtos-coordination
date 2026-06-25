@@ -192,3 +192,26 @@ snapshot). After the `shmod alias_alphatest_oit_frag ok` line, the log now print
   `sky_layer_vert`. A crash *between* `rr: shadermodules ok` and `rr: pipelines ok` (i.e.
   `R_CreateBasicPipelines` failing) is a **distinct basic-pipeline/module wall** — NOT outcome #3
   above (which presumes pipelines built) and NOT the md5 discriminator.
+
+## md5-skip result (2026-06-25) — shader-specific confirmed; next = SPIR-V embedding root-cause
+
+Skipped md5_vert (rerelease-only) → vkQuake created **9 MORE modules** (sky_layer_vert/frag,
+sky_box_frag, sky_cube_vert/frag, postprocess_vert/frag, wboit_resolve_frag) then crashed on
+**screen_effects_8bit_comp** (compute shader, size=8844) with a DIFFERENT fault: Data Abort
+`pc=0x7943d0 far=0x80000002a9 esr=0x92000004` (translation fault L0 on a GARBAGE address, NOT a
+NULL fptr like md5_vert). So:
+- md5_vert was genuinely shader-specific (NOT heap corruption — 9 modules created fine after it).
+- The two failing shaders (md5_vert 5228 NULL-fptr; screen_effects_8bit_comp 8844 garbage-deref)
+  point at a **systemic embedded-SPIR-V issue** in vkquake_shaders.c / gen-vkquake-shaders.py for
+  certain (larger/compute) shaders — a size/length/alignment mismatch making vkCreateShaderModule
+  read past or mis-interpret the array. Skipping shaders one-by-one would mask this + disable real
+  features; the right fix is to ROOT-CAUSE the embedding.
+
+**Next focused session:** dump the embedded arrays for md5_vert + screen_effects_8bit_comp
+(declared codeSize vs actual array byte length vs SPIR-V magic 0x07230203 + word count) and compare
+to the glslang output; fix gen-vkquake-shaders.py's array generation (likely a size/codeSize or
+4-byte-alignment bug for some shaders). Then all modules create → pipelines → the 2D frame. (World/
+3D render pass + pipelines remain stubbed beyond that — 2D/console first.)
+
+**Status: vkQuake PAUSED here (huge progress: full init + ~18 shader modules).** Flagship restored
+for the evening manual test. All fixes committed (vkquake-phoenix-port.patch).
