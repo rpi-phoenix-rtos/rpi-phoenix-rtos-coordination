@@ -477,6 +477,16 @@ void VID_Init (void)
 	vulkan_globals.multi_draw_indirect = false;
 	Cvar_SetValueQuick (&r_usesops, 0.0f);
 
+	/* Force the SINGLE-THREADED render path. host.c calls SCR_UpdateScreen(true), and with the
+	 * task path SCR_DrawGUI runs as a worker task while this shim's inline GL_EndRendering would
+	 * end the render pass + submit frame_cb before the draws are recorded -> empty/garbage frame.
+	 * Our synchronous single-command-buffer present REQUIRES the non-task path. r_tasks=0 makes
+	 * SCR_UpdateScreen's use_tasks gate false unconditionally (independent of worker count). */
+	{
+		extern cvar_t r_tasks;
+		Cvar_SetValueQuick (&r_tasks, 0.0f);
+	}
+
 	/* Formats + sample count the renderer's render-pass/pipeline build reads. R8G8B8A8 is the
 	 * fb0 scanout format the harness rendered into; single-sample (no MSAA on first light). */
 	vulkan_globals.swap_chain_format = VK_FORMAT_R8G8B8A8_UNORM;
