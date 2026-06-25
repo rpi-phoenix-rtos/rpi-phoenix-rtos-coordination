@@ -608,9 +608,14 @@ static int create_render_resources (void)
 	R_DestroyShaderModules ();
 	Sys_Printf ("vkvid: rr: shadermodules destroyed\n");
 
-	vulkan_globals.color_clear_value.color.float32[0] = 0.0f;
+	/* BRING-UP DIAGNOSTIC clear color = magenta (not black). A black clear is
+	 * indistinguishable on HDMI from "rendered nothing / console still owns fb0"; a
+	 * full-screen magenta frame proves the render-pass result is actually reaching the
+	 * displayed fb0 surface. Once 2D content lands this reverts to black (the engine's 2D
+	 * draws paint the whole frame anyway). TODO(vkquake-port): restore 0,0,0 once 2D is proven. */
+	vulkan_globals.color_clear_value.color.float32[0] = 1.0f;
 	vulkan_globals.color_clear_value.color.float32[1] = 0.0f;
-	vulkan_globals.color_clear_value.color.float32[2] = 0.0f;
+	vulkan_globals.color_clear_value.color.float32[2] = 1.0f;
 	vulkan_globals.color_clear_value.color.float32[3] = 1.0f;
 
 	render_resources_created = 1;
@@ -921,7 +926,10 @@ task_handle_t GL_EndRendering (qboolean use_tasks, qboolean use_swapchain)
 	 * never reached the first SCR_UpdateScreen; climbing => rendering+presenting. */
 	if (err == VK_SUCCESS) {
 		present_count++;
-		if (present_count == 1 || (present_count % 30) == 0)
+		/* BRING-UP: log EVERY frame for the first 60 so the orchestrator can tell "stalled at
+		 * 1" from "climbing" in a single grab (the old %30 gating hid frames 2..29). After 60,
+		 * fall back to every 30th to avoid flooding the lwip-shared UART. */
+		if (present_count <= 60 || (present_count % 30) == 0)
 			Sys_Printf ("vkvid: present %lu\n", present_count);
 	}
 	return INVALID_TASK_HANDLE; /* inline: no async end task to chain */

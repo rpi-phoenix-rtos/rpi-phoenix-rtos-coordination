@@ -87,6 +87,23 @@ int main(int argc, char *argv[])
 	Sys_Printf("Host_Init\n");
 	Host_Init();
 
+	/* 2D-FIRST BRING-UP: stop the demo loop (quake.rc's `startdemos demo1 demo2 demo3`
+	 * runs during Host_Init and loads a BSP world, driving the 3D render path whose world
+	 * render pass/pipelines are still stubbed in this port). Force the engine to the main
+	 * MENU instead: con_forcedup is then true, V_RenderView early-returns, and only the 2D
+	 * path (SCR_DrawGUI -> M_Draw) records into the UI render pass — the simplest recognizable
+	 * content to prove the no-WSI present end to end. Done post-Host_Init so it overrides
+	 * whatever quake.rc/config.cfg set, and disconnects any demo already mid-load.
+	 * TODO(vkquake-port): remove once the world/3D render path is implemented. */
+	{
+		extern cvar_t cl_startdemos;
+		Cvar_SetValueQuick(&cl_startdemos, 0.0f);
+		Cbuf_AddText("disconnect\n");
+		Cbuf_AddText("menu_main\n");
+		Cbuf_Execute();
+		Sys_Printf("vkquake: 2D-first: startdemos disabled, forced to main menu\n");
+	}
+
 	oldtime = Sys_DoubleTime();
 	while (1) {
 		newtime = Sys_DoubleTime();
