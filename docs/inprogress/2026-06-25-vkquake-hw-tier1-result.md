@@ -83,3 +83,23 @@ authoritative next step is the SV_LocalSound NULL-client sound/init path describ
 This is the vkQuake capstone's inflection point: Vulkan init is DONE on real HW; the remaining
 blocker is a NULL-client crash in SV_LocalSound during startup (a sound/init-ordering issue, not
 the render/present path). The GL flagship (rpi4-quake) is unaffected and restored.
+
+## HW RE-TEST with the guard (2026-06-25) — GUARD DID NOT TAKE (build-cache issue)
+
+Bundled the guarded rpi4-vkquake (force-relinked against /tmp/libvkquake.a, 03:33) + netbooted.
+**Result: IDENTICAL crash — `pc=0x4c5d20`, `far=0x70`, same SV_LocalSound NULL deref.** An early
+`if (client==NULL) return;` would shift the function's code, so an identical fault PC proves the
+running binary is STILL PRE-GUARD. Vulkan init again fully succeeded (VID_Init done 1920×1080);
+the crash is byte-identical.
+
+**Diagnosis: `tools/vkquake-port/build-vkquake-phoenix.py` reused a CACHED `sv_main.o`** — the guard
+is in the source (clone + tracked patch `vkquake-phoenix-port.patch`) but was never recompiled into
+`/tmp/libvkquake.a` (the relink pulled the stale object). Confirmed mechanism: the build script does
+not invalidate object files when the patched source changes.
+
+**Next session (precise):** force a clean recompile of `sv_main.c` in the vkQuake build (delete the
+cached `sv_main.o` / clean the vkquake build dir, or add a source-mtime check to the build script),
+rebuild `libvkquake.a`, verify the guard is in the object (`objdump` the new `sv_main.o` shows the
+early-return + the function size grew), THEN swap rpi4-vkquake in + netboot. Only then is the guard
+actually under test. The flagship was restored after this test (loader.disk back to the psh/no-GPU
+config; swap files match committed state).
