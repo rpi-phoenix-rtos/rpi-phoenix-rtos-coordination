@@ -178,3 +178,17 @@ snapshot). After the `shmod alias_alphatest_oit_frag ok` line, the log now print
 3. Reaches `rr: pipelines ok` / `rr: shadermodules destroyed` but crashes **later in the draw/
    present path** → frame-path issue, separate from shaders (the world/3D pipelines are still
    stubbed; 2D-first).
+
+**Two handoff notes (read before boot):**
+- **Verify the BUNDLED binary carries the guard, not just `/tmp`.** The prior cycle's entire loss
+  was a stale bundled binary giving a byte-identical crash; the in-`/tmp` string check does NOT
+  cover the orchestrator's separate bundle copy/relink. Before boot run
+  `strings <bundled rpi4-vkquake> | grep "md5_vert SKIPPED"` — it MUST be non-empty. If empty, the
+  bundle pulled a stale object/binary (the documented prior failure) → do not boot, re-bundle.
+- **Expected create order + a 4th (pipeline) case.** Source order puts **13** modules before
+  md5_vert (5 `basic_*` + 3 `world_*` + 5 `alias_*`); the earlier "9 created" narration omitted the
+  `basic_*` group — the kept `vkvid: shmod` print resolves the true order on the next boot. The log
+  should show all `basic_* + world_* + alias_*` as `... ok`, THEN the `md5_vert SKIPPED` line, THEN
+  `sky_layer_vert`. A crash *between* `rr: shadermodules ok` and `rr: pipelines ok` (i.e.
+  `R_CreateBasicPipelines` failing) is a **distinct basic-pipeline/module wall** — NOT outcome #3
+  above (which presumes pipelines built) and NOT the md5 discriminator.
