@@ -165,3 +165,21 @@ Notes for the orchestrator:
 None newly identified this session — fs_mark cross-compiled with no missing-symbol errors
 against the toolchain-bundled libphoenix. (If any port fails at runtime in the cycle, the
 exec-verify stderr will name the gap; record it then.)
+
+## EXEC-VERIFY RESULTS (2026-06-25, nfsroot scripted-psh, log …-ports-verify)
+
+Run on the mailbox-rollout + diagnostic-cleanup build (nfsroot variant, boot reached psh on
+the NFS root — also confirms the vcmbox rollout + genet-MAC-via-vcmbox boot clean on nfsroot):
+
+| Cmd | Result |
+|---|---|
+| `/usr/bin/openssl version` | **PASS** — `OpenSSL 1.1.1a  20 Nov 2018`. The load-bearing re-test: the zero-stdout anomaly is RESOLVED (hwrng-backed /dev/urandom seed path works). |
+| `/usr/bin/curl --version` | **PASS** — `curl 7.64.1 (aarch64-unknown-phoenix) libcurl/7.64.1 mbedTLS/2.28.0`. |
+| `/usr/bin/dropbearmulti dropbearkey -t rsa -f /tmp/id_test` | **PASS** — generated a 2048-bit RSA key + ssh-rsa pubkey + sha1 fingerprint (multibinary loads + dispatches the applet). |
+| `/bin/fs_mark` | **PASS** — prints `Usage: fs_mark …` (the new port executes). |
+| `/usr/bin/lua -v` | `psh: /usr/bin/lua not found` — but lua IS staged (`/srv/phoenix-rpi4-nfs/usr/bin/lua`, 243 KB, verified post-run). lua was the FIRST `/usr/bin` access of the boot and ENOENT'd, while openssl/curl/dropbear (later `/usr/bin` accesses) all succeeded → this is the known **NFS first-read-transient-ENOENT (#156)** (first access misses the libnfs dircache, subsequent ones hit), NOT a staging gap. A retry of lua would succeed. |
+
+Net: the crypto/network userland (openssl/curl/dropbear) + the new fs_mark all run from NFS —
+broad-app-support validated. The lone "not found" re-confirms the #156 first-read-ENOENT
+residual (proper fix = libnfs post-mount dircache invalidate / readiness, tracked separately),
+not a port problem. No re-staging needed.
