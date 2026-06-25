@@ -192,9 +192,20 @@ def main():
     # whole-archive on libvkquake.a is REQUIRED for a meaningful closure: a bare archive
     # link only pulls members crt0's `main` reaches (~nothing), falsely reporting "1
     # undefined: main". Whole-archive forces every engine TU into the link so its real
-    # references enter the undefined set. The ICD + back-end stay in the normal group.
+    # references enter the undefined set.
+    #
+    # whole-archive on V3DV_LIB is ALSO required: the Mesa Vulkan *runtime* layer (vk_buffer.c,
+    # vk_fence.c, vk_command_pool.c, vk_synchronization.c, vk_cmd_copy.c, ...) is bundled into
+    # libv3dv-phoenix.a, and its vk_common_* fallback entrypoints are reachable ONLY through
+    # WEAK relocs in the generated dispatch tables (vk_common_device_entrypoints). Weak refs do
+    # NOT pull archive members, so a non-whole-archive link silently drops those objects: the
+    # dispatch slots resolve to 0 and any command V3DV implements via the common fallback (e.g.
+    # vkGetBufferMemoryRequirements, vkQueueSubmit, vkCreateFence, vkWaitForFences,
+    # vkCreateCommandPool, vkCmdPipelineBarrier) becomes a NULL function pointer -> pc=0 abort
+    # at runtime, with a 0-undefined link masking it. Upstream Mesa whole-archives the runtime
+    # into the ICD for exactly this reason. The V3D back-end (V3D_LIB) stays in the normal group.
     link = [TC, "-o", ELF, "-Wl,--allow-multiple-definition",
-            "-Wl,--whole-archive", LIB, "-Wl,--no-whole-archive",
+            "-Wl,--whole-archive", LIB, V3DV_LIB, "-Wl,--no-whole-archive",
             "-Wl,--start-group", V3DV_LIB, V3D_LIB, "-Wl,--end-group", "-lm"]
     r = subprocess.run(link, capture_output=True, text=True)
     if r.returncode == 0:

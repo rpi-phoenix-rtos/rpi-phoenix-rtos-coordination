@@ -16,6 +16,8 @@ typedef int sys_socket_t;       /* normally from net_sys.h (platform-gated) */
 
 #include <time.h>
 #include <pthread.h>
+#include <stdint.h>
+#include <stddef.h>
 
 /* --- network driver tables (were in net_bsd.c, which this port excludes). ---
  * Register ONLY the Loopback driver (single-player "map"/"newgame" via Loop_Connect).
@@ -58,4 +60,41 @@ int pthread_getcpuclockid(pthread_t thread, clockid_t *clock_id)
 	if (clock_id != NULL)
 		*clock_id = CLOCK_MONOTONIC;
 	return 0;
+}
+
+/* --- Dead Mesa-runtime entrypoints pulled by --whole-archive on libv3dv-phoenix.a ---
+ *
+ * Whole-archiving the ICD (required so the vk_common_* dispatch fallbacks — reachable only
+ * through WEAK relocs in the generated dispatch tables — are actually linked) also drags in
+ * two runtime objects this build never reaches at runtime:
+ *
+ *   vk_texcompress_astc.c  -> the software ASTC-decode meta path. V3D 4.2 decodes ASTC in
+ *                             hardware, so V3DV never registers/calls the emulated decoder;
+ *                             its LUT helpers (_mesa_{init_astc_decoder_luts,
+ *                             get_astc_decoder_partition_table}) live in src/util and are
+ *                             not in the linked archives.
+ *   vk_rmv_exporter.c      -> the Radeon Memory Visualizer trace dump (vk_dump_rmv_capture),
+ *                             a debug-tooling path; its util_get_process_name dep is unused.
+ *
+ * Nothing references these objects' exported symbols (verified via nm + the prior link
+ * reaching staging-buffer init without pulling them), so they are inert. We satisfy their
+ * three dangling deps with TRAP stubs that Sys_Error (already linked) rather than spin: an
+ * unexpected reach prints to UART instead of silently hanging (the orchestrator reads UART). */
+void _mesa_init_astc_decoder_luts(void *holder)
+{
+	(void)holder;
+	Sys_Error ("ASTC emulation path reached — unexpected on V3D 4.2 (HW ASTC)");
+}
+
+void *_mesa_get_astc_decoder_partition_table(uint32_t block_width, uint32_t block_height,
+                                             unsigned *lut_width, unsigned *lut_height)
+{
+	(void)block_width; (void)block_height; (void)lut_width; (void)lut_height;
+	Sys_Error ("ASTC emulation path reached — unexpected on V3D 4.2 (HW ASTC)");
+	return NULL;
+}
+
+const char *util_get_process_name(void)
+{
+	return "vkquake-phoenix";
 }
