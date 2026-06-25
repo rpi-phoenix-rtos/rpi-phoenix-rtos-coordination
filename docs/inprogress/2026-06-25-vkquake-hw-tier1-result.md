@@ -215,3 +215,29 @@ to the glslang output; fix gen-vkquake-shaders.py's array generation (likely a s
 
 **Status: vkQuake PAUSED here (huge progress: full init + ~18 shader modules).** Flagship restored
 for the evening manual test. All fixes committed (vkquake-phoenix-port.patch).
+
+## DECISIVE root-cause (2026-06-25) — >4KB single-allocation bug, NOT the embedding
+
+A bounded dump-and-compare proved the embedding is PERFECT: all 41 `*_spv[]` arrays have
+declared==actual byte count == 4×wordcount, magic 0x07230203, 4-byte aligned; `spirv-val
+--target-env vulkan1.1` passes on all (incl. both "crashers"); re-running gen-vkquake-shaders.py
+reproduces byte-identical output. NO generator bug.
+
+**The discriminator is per-allocation size at the 4 KB page boundary:** every shader module that
+creates successfully is ≤ 3624 B (largest success world_oit_frag=3624); md5_vert (5228) and
+screen_effects_8bit_comp (8844) — the first two whose individual codeSize exceeds 4096 — crash
+(distinct modes: md5 NULL-fptr pc=0; se8bit wild far). NOT cumulative (~46 KB across 18 small
+modules allocated fine first). The failing call is `vk_common_CreateShaderModule` →
+`vk_alloc2(sizeof(module)+codeSize, align=8)` with pAllocator==NULL → `vk_default_allocator()` =
+libphoenix malloc. So a single >1-page (>4096 B), 8-byte-aligned allocation in the vkquake process
+is the trigger. (Note: the system allocates >4KB elsewhere routinely, so it's NOT a blanket malloc
+bug — likely the align-8 large-alloc path or this process's heap interaction.)
+
+**Discriminating HW test (definitive):** in a Phoenix process do `p=malloc(8844); memcpy(p,src,8844)`
+(+ an align-8 vk_alloc2-style variant). Faults → libphoenix large/aligned-alloc bug (core, attended).
+Succeeds → the fault is in the vk_alloc2 align-8 path or blake3-over-pCode, not raw malloc.
+
+**Interim unblock (vkQuake-side, no core change) — IN PROGRESS:** pass a custom VkAllocationCallbacks
+(mmap/posix_memalign-backed, a path this port already uses for >page buffers) to the >4KB
+vkCreateShaderModule calls, bypassing the failing libphoenix path. If it works → all 41 modules
+create → pipelines → 2D frame, AND it confirms the alloc path is the culprit.
