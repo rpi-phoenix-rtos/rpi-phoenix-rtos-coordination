@@ -264,6 +264,31 @@ void VID_Init (void)
 	vid.restart_next_frame = false;
 	modestate = MS_FULLSCREEN;
 
+	/* Renderer-resource init — restored from upstream gl_vidsdl.c VID_Init (4108-4116).
+	 * This shim REPLACES gl_vidsdl.c, and the original drop of this block was the bug:
+	 * the heaps/buffers/layouts these create (most visibly mesh_buffer_heap from
+	 * R_InitMeshHeap) were never allocated, so the first alias-model mesh upload hit a
+	 * NULL heap in GL_HeapAllocate. These functions live in the COMPILED engine files
+	 * (gl_rmisc.c / gl_mesh.c / gl_texmgr.c), so calling them here is the faithful
+	 * upstream ordering fix, not a workaround.
+	 *
+	 * Deliberately NOT called (all static-linkage inside the excluded gl_vidsdl.c, and
+	 * only reached via the screen-effects / GL_CreateRenderResources path this shim does
+	 * not run — the upstream line 4118 `GL_CreateRenderResources()` is itself commented):
+	 *   R_CreatePaletteOctreeBuffers()  -> palette_octree_buffer (screen-effects only)
+	 *   VID_Gamma_Init() / VID_Menu_Init()  -> gamma ramp + video menu
+	 * If the screen-effects post-process or the video menu are later enabled, those will
+	 * need un-static-ing in external/vkquake (and tracking in the .patch). */
+	vulkan_globals.staging_buffer_size = INITIAL_STAGING_BUFFER_SIZE_KB * 1024;
+	R_InitStagingBuffers ();
+	R_CreateDescriptorSetLayouts ();
+	R_CreateDescriptorPool ();
+	R_InitGPUBuffers ();
+	R_InitMeshHeap ();
+	TexMgr_InitHeap ();
+	R_InitSamplers ();
+	R_CreatePipelineLayouts ();
+
 	Sys_Printf ("vkvid: VID_Init done (%dx%d, device=%p queue=%p)\n", vid.width, vid.height,
 	            (void *)g_vk_device, (void *)gfx_queue);
 }
