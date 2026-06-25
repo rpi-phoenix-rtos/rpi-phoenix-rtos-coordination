@@ -54,10 +54,12 @@ WM_URL="https://github.com/window-maker/wmaker/releases/download/wmaker-0.95.9/$
 fail() { echo "FAIL: $*"; exit 1; }
 
 # Cross idiom shared by every autotools dep here.
-export PKG_CONFIG_PATH="$DEPS/lib/pkgconfig"
+# share/pkgconfig holds the xorgproto .pc files (xproto, renderproto, ...) that
+# xft.pc/xrender.pc Require; lib/pkgconfig holds the rest.
+export PKG_CONFIG_PATH="$DEPS/lib/pkgconfig:$DEPS/share/pkgconfig"
 # LIBDIR (not just PATH) so pkg-config CANNOT see host /usr/lib *.pc — the same
 # lesson as build-jwm.sh: without it, configure auto-detects host fontconfig/Xft.
-export PKG_CONFIG_LIBDIR="$DEPS/lib/pkgconfig"
+export PKG_CONFIG_LIBDIR="$DEPS/lib/pkgconfig:$DEPS/share/pkgconfig"
 PKGC="pkg-config --static"
 
 mkdir -p "$SRC" "$DEPS/lib/pkgconfig" "$DEPS/include"
@@ -196,12 +198,182 @@ build_libxft() {
 	echo "libXft: OK"
 }
 
+# ============================================================================
+# 3b. libftw: tiny libphoenix gap-fill lib (nftw/ftw + nice + scandir/alphasort)
+# ============================================================================
+# libphoenix has no <ftw.h>/nftw(), no nice(), and no scandir()/alphasort().
+# Window Maker (WINGs + util/) references all of them. The committed sources
+# live in ftw-phoenix/; build.sh there compiles libftw.a + installs the headers
+# (ftw.h, wmaker-phoenix-compat.h) into $DEPS. See WMAKER-PORT-STATUS.md.
+build_libftw() {
+	[ -f "$DEPS/lib/libftw.a" ] && { echo "libftw: already built"; return 0; }
+	DEPS_PREFIX="$DEPS" SYSROOT="$SYSROOT" \
+		TOOLCHAIN_BIN="$(dirname "$TC")" "$HERE/ftw-phoenix/build.sh" \
+		|| fail "libftw build failed"
+	[ -f "$DEPS/lib/libftw.a" ] || fail "libftw.a not produced"
+}
+
+# ============================================================================
+# 4. Window Maker (wmaker)  — needs Xft + fontconfig + the X11 closure + libftw
+# ============================================================================
+# Compiled-in paths land under /nfstest (the NFS rootfs mount point on the
+# netboot Pi): --prefix=/nfstest, --sysconfdir=/nfstest/etc.
+#
+# Source patch (idempotent perl, re-applied on a fresh tree):
+#   src/main.c: ExecuteShellCommand() hardcodes shell="/bin/sh" (the getenv
+#   path is commented out upstream). The Pi's shell is at /nfstest/bin/sh, so
+#   menu/<exec> commands would fail. Guard with #ifndef WMAKER_SHELL and pass
+#   -DWMAKER_SHELL="/nfstest/bin/sh" — same trap as JWM's SHELL_NAME.
+#
+# Build defines (CFLAGS), each papering a libphoenix gap deterministically
+# against the CURRENT sysroot (no libphoenix rebuild required for this build):
+#   -D_SC_LINE_MAX=5  : WINGs sysconf(_SC_LINE_MAX); value 5 matches the
+#                       libphoenix commit. On an un-rebuilt sysroot sysconf()
+#                       returns -1 and WINGs uses its own 512 fallback; once
+#                       libphoenix is rebuilt it returns _POSIX2_LINE_MAX.
+#   -Drint=round      : libphoenix libm has no rint(); round() is an adequate
+#                       substitute for wmaker's UI coordinate/colour rounding.
+#   -include wmaker-phoenix-compat.h : declares nice/scandir/alphasort whose
+#                       definitions are in libftw.a.
+# Image codecs + extensions we have no cross libs for are disabled.
+WM_PWD_DEFS="-DMAXHOSTNAMELEN=256 -DO_NOFOLLOW=0 -DXOS_USE_MTSAFE_PWDAPI -D_POSIX_THREAD_SAFE_FUNCTIONS=200809L"
+WM_GAP_DEFS="-D_SC_LINE_MAX=5 -Drint=round -include wmaker-phoenix-compat.h"
+WM_SHELL_DEF='-DWMAKER_SHELL=\"/nfstest/bin/sh\"'
+# Full X11 + font + gap-fill static link closure, correctly ordered.
+WM_XCLOSURE="-lXft -lfontconfig -lexpat -lfreetype -lXrender -lXpm -lXext -lXmu -lXt -lSM -lICE -lX11 -lxcb -lXau -lXdmcp -lz -lftw -lm"
+
+wm_patch() {
+	local f="$SRC/$WM_NV/src/main.c"
+	if ! grep -q '#ifndef WMAKER_SHELL' "$f"; then
+		perl -0pi -e 's{(void ExecuteShellCommand\(WScreen \*scr, const char \*command\)\n\{)}{#ifndef WMAKER_SHELL\n#define WMAKER_SHELL "/bin/sh"\n#endif\n\n$1}' "$f"
+		perl -0pi -e 's{\n\tshell = "/bin/sh";\n}{\n\tshell = WMAKER_SHELL;\n}' "$f"
+	fi
+}
+
+build_wmaker() {
+	if [ -x "$SRC/$WM_NV/src/wmaker" ]; then echo "wmaker: already built"; return 0; fi
+	fetch_extract "$WM_NV" "$WM_URL"
+	wm_patch
+	local cf="--sysroot=$SYSROOT -I$DEPS/include $WM_PWD_DEFS $WM_GAP_DEFS $WM_SHELL_DEF"
+	( cd "$SRC/$WM_NV" \
+	  && { [ -f config.status ] || PKG_CONFIG="$PKGC" ./configure --host=aarch64-phoenix \
+	       --build=x86_64-pc-linux-gnu --prefix="$TGT_PREFIX" --sysconfdir="$TGT_PREFIX/etc" \
+	       --disable-shared \
+	       --disable-png --disable-jpeg --disable-tiff --disable-gif --disable-webp --disable-magick \
+	       --disable-shm --disable-xinerama --disable-nls --disable-xlocale \
+	       --x-includes="$DEPS/include" --x-libraries="$DEPS/lib" \
+	       CC=${TC}gcc AR=${TC}ar RANLIB=${TC}ranlib xorg_cv_malloc0_returns_null=no \
+	       CFLAGS="$cf" \
+	       LDFLAGS="--sysroot=$SYSROOT -static -L$DEPS/lib -L$SYSROOT/lib" \
+	       LIBS="$WM_XCLOSURE" >/tmp/wm-conf.log 2>&1; } \
+	  && make CFLAGS="$cf" >/tmp/wm-build.log 2>&1 ) \
+	  || { tail -20 /tmp/wm-conf.log /tmp/wm-build.log 2>/dev/null; fail "wmaker build failed"; }
+	[ -x "$SRC/$WM_NV/src/wmaker" ] || fail "src/wmaker not produced"
+	echo "wmaker: OK (aarch64-phoenix static ELF)"
+}
+
+# ============================================================================
+# 5. stage to the NFS export + pre-flight (no Pi cycle)
+# ============================================================================
+stage_wmaker() {
+	local wm="$SRC/$WM_NV/src/wmaker"
+	local stage=/tmp/wm-stage
+	mkdir -p "$ART"
+	cp "$wm" "$ART/wmaker"
+	echo "=== published -> $ART/wmaker ==="
+
+	# DESTDIR install gives us the full WindowMaker data tree + util binaries.
+	rm -rf "$stage"
+	( cd "$SRC/$WM_NV" && make DESTDIR="$stage" install >/tmp/wm-install.log 2>&1 ) \
+		|| { tail -10 /tmp/wm-install.log; fail "wmaker install (DESTDIR) failed"; }
+
+	if [ ! -d "$NFS/bin" ]; then
+		echo "=== NFS export $NFS not present — skipped staging (artifact only) ==="
+		return 0
+	fi
+
+	echo "=== staging Window Maker -> $NFS ==="
+	# 5a. binaries: wmaker + all util helpers, into /nfstest/bin
+	cp "$stage$TGT_PREFIX/bin/"* "$NFS/bin/" 2>/dev/null
+	chmod 755 "$NFS/bin/wmaker"
+
+	# 5b. data tree: share/WindowMaker, share/WINGs, share/WPrefs + etc/WindowMaker
+	mkdir -p "$NFS/share" "$NFS/etc"
+	cp -a "$stage$TGT_PREFIX/share/WindowMaker" "$NFS/share/" 2>/dev/null
+	cp -a "$stage$TGT_PREFIX/share/WINGs"       "$NFS/share/" 2>/dev/null
+	cp -a "$stage$TGT_PREFIX/share/WPrefs"      "$NFS/share/" 2>/dev/null
+	cp -a "$stage$TGT_PREFIX/etc/WindowMaker"   "$NFS/etc/"   2>/dev/null
+
+	# 5c. font: stage one real TTF family (DejaVu) — fontconfig+Xft return NULL
+	# (wmaker won't start) with no font file. Take it from the host if present.
+	mkdir -p "$NFS/usr/share/fonts/truetype/dejavu"
+	local hostttf=/usr/share/fonts/truetype/dejavu
+	if [ -d "$hostttf" ]; then
+		cp "$hostttf/DejaVuSans.ttf" "$hostttf/DejaVuSans-Bold.ttf" \
+		   "$hostttf/DejaVuSerif.ttf" "$hostttf/DejaVuSansMono.ttf" \
+		   "$NFS/usr/share/fonts/truetype/dejavu/" 2>/dev/null
+		echo "  staged DejaVu TTF -> $NFS/usr/share/fonts/truetype/dejavu/"
+	else
+		echo "  [WARN] host DejaVu TTF not found ($hostttf) — stage a TTF before booting"
+	fi
+
+	# 5d. fonts.conf (self-contained; maps generic family names -> DejaVu) + cache dir
+	mkdir -p "$NFS/etc/fonts" "$NFS/var/cache/fontconfig"
+	cp "$HERE/wmaker/fonts.conf" "$NFS/etc/fonts/fonts.conf"
+	echo "  staged fonts.conf -> $NFS/etc/fonts/fonts.conf + cache dir $NFS/var/cache/fontconfig"
+
+	echo "=== staged. binaries: ==="
+	ls -l "$NFS/bin/wmaker" "$NFS/bin/wmsetbg" 2>&1
+}
+
+preflight() {
+	local wm="$ART/wmaker"
+	echo "=== PRE-FLIGHT ==="
+	file "$wm"
+	case "$(file "$wm")" in
+		*"ARM aarch64"*"statically linked"*) echo "[OK] aarch64 static ELF" ;;
+		*) fail "binary is not an aarch64 static ELF" ;;
+	esac
+
+	local und
+	und=$(${TC}nm -u "$wm" 2>/dev/null)
+	if [ -n "$und" ]; then echo "$und"; fail "undefined symbols present (not fully static)"; fi
+	echo "[OK] 0 undefined symbols"
+
+	# compiled-in shell path (menu/<exec> commands)
+	if strings "$wm" 2>/dev/null | grep -q "^/nfstest/bin/sh$"; then
+		echo "[OK] WMAKER_SHELL == /nfstest/bin/sh"
+	else
+		fail "shell path /nfstest/bin/sh not compiled in — menu commands would fail"
+	fi
+
+	# compiled-in data dir (must match where we stage). The path appears inside
+	# colon-separated search-path strings, so match a substring, not a full line.
+	if strings "$wm" 2>/dev/null | grep -q "/nfstest/share/WindowMaker"; then
+		echo "[OK] data dir /nfstest/share/WindowMaker compiled in"
+	else
+		fail "/nfstest/share/WindowMaker not found in strings (data-dir path wrong)"
+	fi
+	if strings "$wm" 2>/dev/null | grep -q "/nfstest/etc/WindowMaker"; then
+		echo "[OK] global defaults dir /nfstest/etc/WindowMaker compiled in"
+	fi
+
+	echo "=== ALL PRE-FLIGHT CHECKS PASSED ==="
+	echo "HW test (orchestrator): boot netboot image, then:"
+	echo "    ls /nfstest/bin                 # expect wmaker + wmsetbg present"
+	echo "    HOME=/nfstest/root PATH=/nfstest/bin:\$PATH /nfstest/bin/startx wmaker"
+	echo "      (or via the xlaunch launcher with HOME + PATH set; see WMAKER-PORT-STATUS.md)"
+}
+
 # ----------------------------------------------------------------------------
 build_expat
 snapshot_x11_closure
 build_fontconfig
 build_libxft
+build_libftw
+build_wmaker
+stage_wmaker
+preflight
 
-echo "=== font stack built into $DEPS ==="
-ls "$DEPS"/lib/libexpat.a "$DEPS"/lib/libfontconfig.a "$DEPS"/lib/libXft.a 2>&1
-echo "=== (wmaker build appended below in a later step) ==="
+echo "=== font stack + Window Maker built into $DEPS / staged to $NFS ==="
+ls "$DEPS"/lib/libexpat.a "$DEPS"/lib/libfontconfig.a "$DEPS"/lib/libXft.a "$DEPS"/lib/libftw.a 2>&1
