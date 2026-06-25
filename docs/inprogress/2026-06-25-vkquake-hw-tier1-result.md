@@ -35,22 +35,29 @@ esr=0x92000007  far=0x0000000000000070   psr=0x20000100
 ```
 
 - `esr=0x92000007` → Data Abort from EL0, **translation fault level 3** (DFSC=0b000111).
-- `far=0x70` → a **NULL-pointer struct dereference** (NULL + 0x70 offset).
-- Fires **immediately after `VID_Init done`** — i.e. the renderer's first post-init step,
-  exactly the "first-frame / swapchain-surface coupling" risk flagged at build time. The
-  no-WSI shim likely returns NULL for a surface/swapchain object that the renderer then
-  dereferences at field +0x70 (or an early `S_Init`/resource struct).
-- `addr2line` on the (non-debug) ELF pointed near `SV_LocalSound` (sv_main.c:1403) — treat as
-  a weak hint only; confirm with a debug build or a careful objdump of `0x4c5d20` next session.
+- `far=0x70` → a **NULL-pointer struct dereference** (NULL + 0x70).
+- **DEFINITIVELY LOCALIZED (2026-06-25, symbol-table range lookup, not just addr2line):** the fault
+  PC `0x4c5d20` lies inside **`SV_LocalSound`** (symbol `0x4c5c20` + size `0x10c`). The faulting
+  line is `sv_main.c:1403` `MSG_WriteByte(&client->message, svc_localsound)` — **`client` is NULL**
+  and `client->message` (a `sizebuf_t` at offset **0x70** in `client_t`) is dereferenced → `far=0x70`.
+- **This OVERTURNS the build-time "first-frame / swapchain-surface" prediction.** It is NOT a render
+  or WSI bug — Vulkan init fully succeeded. It is a **sound / init-ordering bug**: vkQuake's startup
+  calls the SERVER-side local-sound (`SV_LocalSound`) with no connected client (`host_client` NULL)
+  right after VID_Init.
 
-## Next session (focused vkQuake bring-up)
-1. Build vkquake-phoenix with frame-pointer/debug line info (or objdump `0x4c5d20`) to name the
-   exact function + the NULL object dereferenced at +0x70.
-2. Inspect the no-WSI present/surface shim (`tools/vkquake-port/platform/pl_phoenix_vk_vid.c`)
-   and vkQuake's `R_Init`/`GL_*`/swapchain-equivalent path for an unset pointer the engine
-   assumes valid after VID_Init.
-3. Re-run the GPU-binary swap (rpi4-vkquake IN, see Makefile.aarch64a72-generic + user.plo.yaml
-   comments) and netboot; expect to get past 0x4c5d20 toward a first rendered frame on HDMI.
+## Next session (corrected — chase the sound/init path, NOT the swapchain)
+1. Find why `SV_LocalSound` runs with a NULL `client` during vkQuake init — likely a UI/intro sound
+   routed through the server path before `sv`/`host_client` exist, or an init-order difference vs
+   the working GL quake (which doesn't hit this). Compare the two engines' Host_Init → S_Init →
+   first-sound ordering.
+2. Fix = guard the NULL `client` in `SV_LocalSound` (early-return if `!client`/`!sv.active`), or
+   correct the call site / init order. A debug (`-g`) build will name the exact caller.
+3. Then re-run the GPU-binary swap (rpi4-vkquake) and netboot — expect to get past 0x4c5d20.
 
-This is the vkQuake capstone's inflection point: init is done, the remaining work is the
-engine→V3DV render/present path. The GL flagship (rpi4-quake) is unaffected and restored.
+(Superseded: an earlier draft of this doc pointed the next session at the no-WSI swapchain shim —
+that was the build-time prediction, now disproven by the symbol-table localization above. The
+authoritative next step is the SV_LocalSound NULL-client sound/init path described above.)
+
+This is the vkQuake capstone's inflection point: Vulkan init is DONE on real HW; the remaining
+blocker is a NULL-client crash in SV_LocalSound during startup (a sound/init-ordering issue, not
+the render/present path). The GL flagship (rpi4-quake) is unaffected and restored.
