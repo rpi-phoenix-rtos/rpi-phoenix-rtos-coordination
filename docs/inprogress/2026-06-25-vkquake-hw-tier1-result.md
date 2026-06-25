@@ -258,3 +258,22 @@ portable C blake3 (no SIMD dispatch), or ensure the CPU-feature/dispatch init ru
 skipped, leaving the fn ptr NULL). Likely a small Mesa-side change (src/util + the broadcom vulkan
 runtime). Then all 41 modules hash+create → pipelines → 2D frame. The mmap allocator (commit
 cabcd35/2a37cdf) is correct + kept (legit >page Vulkan alloc path), just not the fix.
+
+## 🎉 BLAKE3 FIX = MAJOR UNLOCK (2026-06-25) — all shaders + pipelines + render resources, now at GPU submit
+
+The blake3 NEON-stub stack-overflow fix (disable NEON under __phoenix__ → portable blake3, commit
+7c3c041) unblocked the ENTIRE shader path. HW result:
+- **All 41 shader modules create** — md5_vert, screen_effects_8bit/10bit_comp + _scale_comp (the
+  previously-crashing >4-chunk shaders) all `ok`.
+- **`rr: shadermodules ok` → `rr: pipelines ok`** — all basic pipelines build.
+- **`render resources created (UI render pass + fb0 framebuffer + basic pipelines)`**.
+- Engine records the first 2D frame, calls GL_EndRendering → **vkQueueSubmit** → crash in V3DV
+  **`queue_handle_job`** (external/mesa src/broadcom/vulkan/v3dv_queue.c): `ldr w1,[x4,#36]` with
+  x4=NULL → Data Abort far=0x24, pc=0x562b28.
+
+So vkQuake is now into the **GPU job-submission path** — the last layer before on-screen pixels.
+This is enormous progress (immediate-crash → records+submits a frame in one day, 7 root-caused
+blockers). The Tier-4b harness proved vkQueueSubmit works, so the NULL is something vkQuake's submit
+carries that Tier-4b didn't (a fence/semaphore/timeline-sync2 object, a job/submit-info field, or
+multiple-cb handling) that the no-WSI GL_EndRendering path leaves unset. **Next: localize x4 (the
+NULL job/submit struct) in queue_handle_job + set the missing field in the shim's submit.**
