@@ -1,0 +1,168 @@
+--- a/src/startup.c
++++ b/src/startup.c
+@@ -73,6 +73,7 @@
+ #endif
+ 
+ #include "xutil.h"
++#include "phx_diag.h"
+ 
+ /* for SunOS */
+ #ifndef SA_RESTART
+@@ -578,18 +579,23 @@
+ 		wPreferences.icon_size = 16;
+ 	}
+ 
++	PHX_MARK("StartUp: after wReadStaticDefaults (WindowMaker domain done)");
++
+ 	/* init other domains */
+ 	w_global.domain.root_menu = wDefaultsInitDomain("WMRootMenu", False);
+ 	if (!w_global.domain.root_menu->dictionary)
+ 		wwarning(_("could not read domain \"%s\" from defaults database"), "WMRootMenu");
+ 
+ 	wDefaultsMergeGlobalMenus(w_global.domain.root_menu);
++	PHX_MARK("StartUp: after WMRootMenu + global-menu merge");
+ 
+ 	w_global.domain.window_attr = wDefaultsInitDomain("WMWindowAttributes", True);
+ 	if (!w_global.domain.window_attr->dictionary)
+ 		wwarning(_("could not read domain \"%s\" from defaults database"), "WMWindowAttributes");
++	PHX_MARK("StartUp: after WMWindowAttributes domain");
+ 
+ 	XSetErrorHandler((XErrorHandler) catchXError);
++	PHX_MARK("StartUp: before X extension queries (Shape/RandR/XKB roundtrips)");
+ 
+ #ifdef USE_XSHAPE
+ 	/* ignore j */
+@@ -608,6 +614,8 @@
+ 	}
+ #endif
+ 
++	PHX_MARK("StartUp: after X extension queries");
++
+ 	if (defaultScreenOnly)
+ 		max = 1;
+ 	else
+@@ -628,10 +636,13 @@
+ 		}
+ 	}
+ 
++	PHX_MARK("StartUp: before wScreenInit (creates WINGs screen + fonts + dock)");
++
+ 	/* manage the screens */
+ 	for (j = 0; j < max; j++) {
+ 		if (defaultScreenOnly || max == 1) {
+ 			wScreen[w_global.screen_count] = wScreenInit(DefaultScreen(dpy));
++			PHX_MARK("StartUp: wScreenInit returned %p", (void *)wScreen[w_global.screen_count]);
+ 			if (!wScreen[w_global.screen_count]) {
+ 				wfatal(_("it seems that there is already a window manager running"));
+ 				Exit(1);
+@@ -646,7 +657,10 @@
+ 		w_global.screen_count++;
+ 	}
+ 
++	PHX_MARK("StartUp: all screens managed (count=%i)", w_global.screen_count);
++
+ 	InitializeSwitchMenu();
++	PHX_MARK("StartUp: after InitializeSwitchMenu");
+ 
+ 	/* initialize/restore state for the screens */
+ 	for (j = 0; j < w_global.screen_count; j++) {
+@@ -660,7 +674,9 @@
+ 		if (!wPreferences.flags.nodock && wScreen[j]->dock)
+ 			wScreen[j]->last_dock = wScreen[j]->dock;
+ 
++		PHX_MARK("StartUp: before manageAllWindows (screen %i)", j);
+ 		manageAllWindows(wScreen[j], wPreferences.flags.restarting == 2);
++		PHX_MARK("StartUp: after manageAllWindows (screen %i)", j);
+ 
+ 		/* restore saved menus */
+ 		wMenuRestoreState(wScreen[j]);
+@@ -713,6 +729,7 @@
+ 		WMAddTimerHandler(3000, wDefaultsCheckDomains, NULL);
+ #endif
+ 
++	PHX_MARK("StartUp: COMPLETE — returning to real_main (EventLoop next)");
+ }
+ 
+ static Bool windowInList(Window window, Window * list, int count)
+--- a/src/screen.c
++++ b/src/screen.c
+@@ -39,6 +39,7 @@
+ #include "WindowMaker.h"
+ #include "def_pixmaps.h"
+ #include "screen.h"
++#include "phx_diag.h"
+ #include "texture.h"
+ #include "pixmap.h"
+ #include "menu.h"
+@@ -682,7 +683,9 @@
+ 		rattr.visualid = getWVisualID(screen_number);
+ 	}
+ 
++	PHX_MARK("wScreenInit: before RCreateContext (wrlib)");
+ 	scr->rcontext = RCreateContext(dpy, screen_number, &rattr);
++	PHX_MARK("wScreenInit: RCreateContext returned %p", (void *)scr->rcontext);
+ 
+ 	if (!scr->rcontext && RErrorCode == RERR_STDCMAPFAIL) {
+ 		wwarning("%s", RMessageForError(RErrorCode));
+@@ -703,8 +706,11 @@
+ 	scr->w_depth = scr->rcontext->depth;
+ 	scr->w_colormap = scr->rcontext->cmap;
+ 
+-	/* create screen descriptor for WINGs */
++	/* create screen descriptor for WINGs (this loads the WINGs SYSTEM FONT
++	 * internally via Xft/fontconfig — prime suspect for a NULL-font bail) */
++	PHX_MARK("wScreenInit: before WMCreateScreenWithRContext (loads WINGs system font)");
+ 	scr->wmscreen = WMCreateScreenWithRContext(dpy, screen_number, scr->rcontext);
++	PHX_MARK("wScreenInit: WMCreateScreenWithRContext returned %p", (void *)scr->wmscreen);
+ 
+ 	if (!scr->wmscreen) {
+ 		wfatal(_("could not initialize WINGs widget set"));
+@@ -778,7 +784,9 @@
+ 	wBalloonInitialize(scr);
+ #endif
+ 
++	PHX_MARK("wScreenInit: before createInternalWindows..font setup done; opening info_text_font");
+ 	scr->info_text_font = WMBoldSystemFontOfSize(scr->wmscreen, 12);
++	PHX_MARK("wScreenInit: WMBoldSystemFontOfSize(12) returned %p", (void *)scr->info_text_font);
+ 
+ 	scr->tech_draw_font = XLoadQueryFont(dpy, "-adobe-helvetica-bold-r-*-*-12-*-*-*-*-*-*-*");
+ 	if (!scr->tech_draw_font)
+--- a/src/monitor.c
++++ b/src/monitor.c
+@@ -38,6 +38,7 @@
+ #include "window.h"
+ #include "dialog.h"
+ #include "main.h"
++#include "phx_diag.h"
+ 
+ 
+ static int showCrashDialog(int sig)
+@@ -92,6 +93,7 @@
+ 		last_start = time(NULL);
+ 
+ 		/* Start Window Maker */
++		PHX_MARK("MonitorLoop: forking child '%s --for-real'", child_argv[0]);
+ 		pid = fork();
+ 		if (pid == 0) {
+ 			execvp(child_argv[0], child_argv);
+@@ -111,6 +113,20 @@
+ 			}
+ 		} while (exited != pid);
+ 
++		/*
++		 * THE discriminating probe: from outside, "child hung in a blocking
++		 * call" and "child exit()'d silently" look identical (both = no further
++		 * output). This pins which one it is:
++		 *   - this marker fires with WIFEXITED  -> child called exit(code)
++		 *     (hunt the reachable exit()/wfatal after defaults; font NULL?)
++		 *   - fires with WIFSIGNALED            -> child crashed (signal N)
++		 *   - NEVER fires (monitor still in waitpid) -> child is HUNG in a
++		 *     blocking call (e.g. an X roundtrip Xphoenix's DDX never answers)
++		 */
++		PHX_MARK("MonitorLoop: child reaped: WIFEXITED=%d code=%d WIFSIGNALED=%d sig=%d",
++			 WIFEXITED(status), WIFEXITED(status) ? WEXITSTATUS(status) : -1,
++			 WIFSIGNALED(status), WIFSIGNALED(status) ? WTERMSIG(status) : -1);
++
+ 		if (error)
+ 			break;
+ 

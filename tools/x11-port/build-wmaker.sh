@@ -239,8 +239,25 @@ build_libftw() {
 WM_PWD_DEFS="-DMAXHOSTNAMELEN=256 -DO_NOFOLLOW=0 -DXOS_USE_MTSAFE_PWDAPI -D_POSIX_THREAD_SAFE_FUNCTIONS=200809L"
 WM_GAP_DEFS="-D_SC_LINE_MAX=5 -Drint=round -include wmaker-phoenix-compat.h"
 WM_SHELL_DEF='-DWMAKER_SHELL=\"/nfstest/bin/sh\"'
+# WMAKER_DIAG=1 compiles in the PHX_DIAG startup milestone markers (src/phx_diag.h)
+# that localize the post-defaults HDMI-black startup stall on HW. Off => upstream-
+# clean binary. The markers route through wmessage (the UART-proven path).
+WM_DIAG_DEF=""
+[ "${WMAKER_DIAG:-0}" = "1" ] && WM_DIAG_DEF="-DPHX_DIAG -I$SRC/$WM_NV/WINGs/WINGs"
 # Full X11 + font + gap-fill static link closure, correctly ordered.
 WM_XCLOSURE="-lXft -lfontconfig -lexpat -lfreetype -lXrender -lXpm -lXext -lXmu -lXt -lSM -lICE -lX11 -lxcb -lXau -lXdmcp -lz -lftw -lm"
+
+# Apply the PHX_DIAG startup-marker instrumentation (only when WMAKER_DIAG=1):
+# drop in src/phx_diag.h and apply the patch that adds the markers to
+# startup.c/screen.c/monitor.c. Idempotent (-N skips already-applied hunks);
+# the canonical sources are committed under wmaker/ and patches/.
+wm_diag_patch() {
+	[ "${WMAKER_DIAG:-0}" = "1" ] || return 0
+	cp "$HERE/wmaker/phx_diag.h" "$SRC/$WM_NV/src/phx_diag.h"
+	local p="$HERE/patches/$WM_NV-phx-diag.patch"
+	[ -f "$p" ] && ( cd "$SRC/$WM_NV" && patch -p1 -N <"$p" >/dev/null 2>&1 )
+	return 0
+}
 
 wm_patch() {
 	local f="$SRC/$WM_NV/src/main.c"
@@ -251,10 +268,18 @@ wm_patch() {
 }
 
 build_wmaker() {
-	if [ -x "$SRC/$WM_NV/src/wmaker" ]; then echo "wmaker: already built"; return 0; fi
 	fetch_extract "$WM_NV" "$WM_URL"
 	wm_patch
-	local cf="--sysroot=$SYSROOT -I$DEPS/include $WM_PWD_DEFS $WM_GAP_DEFS $WM_SHELL_DEF"
+	wm_diag_patch
+	local cf="--sysroot=$SYSROOT -I$DEPS/include $WM_PWD_DEFS $WM_GAP_DEFS $WM_SHELL_DEF $WM_DIAG_DEF"
+	# When diagnostics are toggled, force-recompile the instrumented objects so
+	# the PHX_DIAG markers are (re)baked even if wmaker was already built.
+	if [ "${WMAKER_DIAG:-0}" = "1" ]; then
+		rm -f "$SRC/$WM_NV/src/wmaker" "$SRC/$WM_NV/src/startup.o" \
+		      "$SRC/$WM_NV/src/screen.o" "$SRC/$WM_NV/src/monitor.o"
+	elif [ -x "$SRC/$WM_NV/src/wmaker" ]; then
+		echo "wmaker: already built"; return 0
+	fi
 	( cd "$SRC/$WM_NV" \
 	  && { [ -f config.status ] || PKG_CONFIG="$PKGC" ./configure --host=aarch64-phoenix \
 	       --build=x86_64-pc-linux-gnu --prefix="$TGT_PREFIX" --sysconfdir="$TGT_PREFIX/etc" \
@@ -269,7 +294,7 @@ build_wmaker() {
 	  && make CFLAGS="$cf" >/tmp/wm-build.log 2>&1 ) \
 	  || { tail -20 /tmp/wm-conf.log /tmp/wm-build.log 2>/dev/null; fail "wmaker build failed"; }
 	[ -x "$SRC/$WM_NV/src/wmaker" ] || fail "src/wmaker not produced"
-	echo "wmaker: OK (aarch64-phoenix static ELF)"
+	echo "wmaker: OK (aarch64-phoenix static ELF${WM_DIAG_DEF:+, PHX_DIAG markers})"
 }
 
 # ============================================================================
