@@ -220,31 +220,82 @@ index 3c6ea5e..624e35e 100644
  cvar_t r_waterquality = {"r_waterquality", "8", CVAR_NONE};
  cvar_t r_waterwarp = {"r_waterwarp", "1", CVAR_NONE};
  
+diff --git a/Quake/net_udp.c b/Quake/net_udp.c
+index 1f3644b..c1cd407 100644
+--- a/Quake/net_udp.c
++++ b/Quake/net_udp.c
+@@ -262,22 +262,37 @@ int UDP_Connect (sys_socket_t socketid, struct qsockaddr *addr)
+ 
+ sys_socket_t UDP_CheckNewConnections (void)
+ {
+-	int		available;
+ 	struct sockaddr_in	from;
+-	socklen_t	fromlen;
++	socklen_t	fromlen = sizeof(from);
+ 	char		buff[1];
++	int		ret;
+ 
+ 	if (net_acceptsocket == INVALID_SOCKET)
+ 		return INVALID_SOCKET;
+ 
+-	if (ioctl (net_acceptsocket, FIONREAD, &available) == -1)
++	/* Phoenix/lwIP port: upstream probes the accept socket with ioctl(FIONREAD),
++	 * but the Pi's lwIP build has LWIP_SO_RCVBUF==0 / LWIP_FIONREAD_LINUXMODE==0, so
++	 * FIONREAD is unimplemented and the syscall errors -- and upstream turns that into
++	 * a fatal Sys_Error, which (with stray LAN broadcast traffic) hung the flagship as
++	 * soon as a packet arrived (task #26). FIONBIO *is* implemented, so the accept
++	 * socket is non-blocking (see UDP_OpenSocket); peek it instead. A non-blocking
++	 * MSG_PEEK recvfrom returns >=0 when a datagram is pending and EWOULDBLOCK when
++	 * not -- the same "is there data?" answer FIONREAD gave, with no kernel change and
++	 * no Sys_Error path. NOTE: returns the socket on a pending datagram WITHOUT
++	 * consuming it (PEEK), matching the FIONREAD>0 case; the empty/zero-length packet
++	 * is consumed below exactly as upstream did. */
++	ret = recvfrom (net_acceptsocket, buff, sizeof(buff), MSG_PEEK,
++			(struct sockaddr *) &from, &fromlen);
++	if (ret > 0)
++		return net_acceptsocket;
++	if (ret == SOCKET_ERROR)
+ 	{
+ 		int err = SOCKETERRNO;
+-		Sys_Error ("UDP: ioctlsocket (FIONREAD) failed (%s)", socketerror(err));
++		if (err != NET_EWOULDBLOCK && err != NET_ECONNREFUSED)
++			Con_SafePrintf ("UDP_CheckNewConnections, recvfrom: %s\n", socketerror(err));
++		return INVALID_SOCKET;
+ 	}
+-	if (available)
+-		return net_acceptsocket;
+-	// quietly absorb empty packets
++	// quietly absorb empty (zero-length) packets
+ 	recvfrom (net_acceptsocket, buff, 0, 0, (struct sockaddr *) &from, &fromlen);
+ 	return INVALID_SOCKET;
+ }
 diff --git a/Quake/r_alias.c b/Quake/r_alias.c
-index f179976..5ffe25f 100644
+index f179976..ee461cf 100644
 --- a/Quake/r_alias.c
 +++ b/Quake/r_alias.c
-@@ -157,7 +157,19 @@ void GLAlias_CreateShaders (void)
- 		"	FogFragCoord = gl_Position.w;\n"
- 		"	float dot1 = r_avertexnormal_dot(Pose1Normal);\n"
- 		"	float dot2 = r_avertexnormal_dot(Pose2Normal);\n"
--		"	gl_FrontColor = LightColor * vec4(vec3(mix(dot1, dot2, Blend)), 1.0);\n"
-+		// Pi4 V3D: r_avertexnormal_dot() is mathematically bounded to [0.7045, 2.0],
-+		// so mix(dot1,dot2,Blend) is too -- but a V3D shader-codegen miscompile of the
-+		// branch/mix can drive the lit term to <=0, blacking out triangles (most visible
-+		// as intermittent black triangles on the continuously-lerped torch flames).
-+		// Flooring at the function's true minimum is value-identical for every valid
-+		// vertex (so it cannot dim player/monster/weapon models) yet converts any
-+		// pathological <=0 into dim-but-visible. Reversible: drop the max() to restore
-+		// upstream behaviour.
-+		"	float lightterm = max(mix(dot1, dot2, Blend), 0.7);\n"
-+		// Keep upstream's `LightColor * scalar` form (scales rgba alike) so the alpha
-+		// semantics are unchanged -- only the scalar is floored. Truly value-identical
-+		// for valid vertices (scalar >= 0.7045 > 0.7).
-+		"	gl_FrontColor = LightColor * lightterm;\n"
- 		"}\n";
+@@ -226,6 +226,22 @@ void GL_DrawAliasFrame_GLSL (aliashdr_t *paliashdr, lerpdata_t lerpdata, gltextu
+ {
+ 	float	blend;
  
- 	const GLchar *fragSource = \
++	/* Pi4 V3D: snap animated alias models to the current pose (no inter-frame lerp).
++	 * Symptom this fixes: animated MDLs (flame.mdl/flame2.mdl, monsters) render as
++	 * garbage/morphing shapes while STATIC alias models (viewmodel, ammo box) in the
++	 * same frame are perfect. The discriminator localizes the bug to the 2-pose
++	 * interpolated draw: when pose1 != pose2 the shader fetches Pose2Vert/Pose2Normal
++	 * from a SECOND VBO offset (GLARB_GetXYZOffset(.., pose2)) and mix()es it with
++	 * Pose1. The v3d gallium backend mis-handles this two-offset interpolated fetch
++	 * (the single-pose path that every static model uses is known-good). Equalizing
++	 * the poses makes BOTH the vertex and normal attribs read one identical offset --
++	 * i.e. the exact known-good static path -- so the live frame renders correctly
++	 * (a flickering flame is visually fine without inter-frame interpolation, far
++	 * better than garbage). Forced in code (not via an r_lerpmodels default) because
++	 * an archived config.cfg can override a cvar default (cf. r_quadparticles).
++	 * TODO: implement correct 2-pose vertex lerp on the v3d backend (attended HW). */
++	lerpdata.pose1 = lerpdata.pose2;
++
+ 	if (lerpdata.pose1 != lerpdata.pose2)
+ 	{
+ 		blend = lerpdata.blend;
 diff --git a/Quake/r_part.c b/Quake/r_part.c
 index 32e067a..57b19fb 100644
 --- a/Quake/r_part.c

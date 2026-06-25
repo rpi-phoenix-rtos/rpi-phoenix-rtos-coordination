@@ -9,21 +9,25 @@
 typedef int sys_socket_t;       /* normally from net_sys.h (platform-gated) */
 #include "net_defs.h"
 #include "net_loop.h"
+#include "net_dgrm.h"
+#include "net_udp.h"
 
 #include <time.h>
 #include <pthread.h>
 
 /* --- network driver tables (were in net_bsd.c, which this port excludes). ---
- * Register ONLY the Loopback driver (single-player "map"/"newgame" via Loop_Connect).
+ * Register the Loopback driver (single-player "map"/"newgame" via Loop_Connect) AND
+ * the Datagram net driver over the UDP LAN driver, so LAN multiplayer works (task #26).
  *
- * The Datagram + UDP LAN driver was REVERTED (it broke the single-player flagship): registering
- * the UDP landriver makes Quake's per-frame net poll service incoming UDP, and the BCM2711 LAN
- * has stray UDP/broadcast traffic — when a packet arrives, UDP_CheckNewConnections calls
- * ioctl(FIONREAD), which on Phoenix lwIP errors ENOSYS -> Quake Error (fatal hang at the demo).
- * Enabling lwIP FIONREAD (LWIP_FIONREAD_LINUXMODE) made the server start but ALSO regressed
- * NFS/rendering (the demo never rendered). So LAN multiplayer needs BOTH a working FIONREAD AND
- * a fix that doesn't break the NFS path — a careful combined effort, deferred (task #26). Until
- * then, Loopback-only keeps single-player solid. Loop_* live in net_loop.c (CORE). */
+ * Earlier this was Loopback-only: enabling the UDP landriver hung the single-player
+ * flagship because Quake's per-frame net poll services incoming UDP, and stray LAN
+ * broadcast traffic on the BCM2711 made UDP_CheckNewConnections call ioctl(FIONREAD),
+ * which the Pi's lwIP build leaves unimplemented (LWIP_SO_RCVBUF==0) -> the syscall
+ * errored and upstream turned that into a fatal Sys_Error. That FIONREAD dependency is
+ * now removed app-side (net_udp.c UDP_CheckNewConnections peeks the non-blocking socket
+ * with MSG_PEEK instead) -- no lwIP/kernel change, so the working NFS/render path is
+ * untouched. Loop_* live in net_loop.c, Datagram_* in net_dgrm.c, UDP_* in net_udp.c
+ * (all CORE). */
 net_driver_t net_drivers[] =
 {
 	{	"Loopback",
@@ -40,11 +44,52 @@ net_driver_t net_drivers[] =
 		Loop_CanSendUnreliableMessage,
 		Loop_Close,
 		Loop_Shutdown
+	},
+
+	{	"Datagram",
+		false,
+		Datagram_Init,
+		Datagram_Listen,
+		Datagram_SearchForHosts,
+		Datagram_Connect,
+		Datagram_CheckNewConnections,
+		Datagram_GetMessage,
+		Datagram_SendMessage,
+		Datagram_SendUnreliableMessage,
+		Datagram_CanSendMessage,
+		Datagram_CanSendUnreliableMessage,
+		Datagram_Close,
+		Datagram_Shutdown
 	}
 };
 const int      net_numdrivers = Q_COUNTOF(net_drivers);
-net_landriver_t net_landrivers[1];
-const int      net_numlandrivers = 0;
+
+net_landriver_t net_landrivers[] =
+{
+	{	"UDP",
+		false,
+		0,
+		UDP_Init,
+		UDP_Shutdown,
+		UDP_Listen,
+		UDP_OpenSocket,
+		UDP_CloseSocket,
+		UDP_Connect,
+		UDP_CheckNewConnections,
+		UDP_Read,
+		UDP_Write,
+		UDP_Broadcast,
+		UDP_AddrToString,
+		UDP_StringToAddr,
+		UDP_GetSocketAddr,
+		UDP_GetNameFromAddr,
+		UDP_GetAddrFromName,
+		UDP_AddrCompare,
+		UDP_GetSocketPort,
+		UDP_SetSocketPort
+	}
+};
+const int      net_numlandrivers = Q_COUNTOF(net_landrivers);
 
 /* --- throttle cvar (was in main_sdl.c; sys_ticrate is owned by host.c) --- */
 cvar_t sys_throttle = { "sys_throttle", "0.02", CVAR_ARCHIVE };
