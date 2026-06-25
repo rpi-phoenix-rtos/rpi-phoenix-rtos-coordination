@@ -401,3 +401,63 @@ no sustained frames; the HDMI shows the boot console, not vkQuake. The earlier "
 framing was wrong and is retracted. Honest status: crash-free init done; the sustained per-frame
 render+present (2D draw recording + the no-WSI present landing repeated frames on fb0) is NOT done.
 See 2026-06-25-hw-validation-results.md.
+
+## 2026-06-26 — 2D-first instrumentation build (host-side; NOT yet HW-tested)
+
+This session built ONE high-information image to disambiguate the three open questions (sustained
+frame loop / 2D content reaches scanout / present correctness) in a single HW grab. No HW boot was
+run (orchestrator owns grabs). Source reading first resolved two premises:
+
+- **The frame loop is NOT exiting.** `pl_phoenix_main.c` is `while(1){ Host_Frame; usleep(1000); }`
+  with no exit; the prior doc confirms the process is alive at +15s. Priority #1 ("sustained loop")
+  is almost certainly already fine in the loop driver — the question is whether `SCR_UpdateScreen`
+  *presents* each frame, which the old `present_count==1 || %30` log could not show (frames 2..29 were
+  invisible, so "stalled at 1" was indistinguishable from "climbing 1..29").
+- **The 2D bare-draw model in the shim is CORRECT.** `SCR_DrawGUI` (gl_screen.c:1106) binds a
+  pipeline + records `Draw_*`/`M_Draw` straight into the SCBX_GUI cb — it does NOT call
+  `vkCmdBeginRenderPass` itself (verified: no BeginRenderPass in gl_draw.c / the 2D path), so the
+  shim's single active UI render pass wrapping the draws is right (no nested-begin bug).
+- **At the menu/console, `V_RenderView` early-returns** (`view.c:895`, `if (con_forcedup) return;`),
+  so the stubbed world/3D pipelines are NOT exercised — the 2D path can be validated in isolation by
+  forcing the menu. The earlier "3D pipelines stubbed → crash" theory does not fit (no crash at +15s;
+  a NULL world pipeline would Data Abort).
+
+**Three coordinated changes (committed: coord `e216c65`, vkquake clone `4a06a19`):**
+1. `pl_phoenix_main.c` — after `Host_Init`, `Cvar_SetValueQuick(&cl_startdemos,0)` +
+   `Cbuf_AddText("disconnect\nmenu_main\n"); Cbuf_Execute()`. Stops quake.rc's `startdemos demo1..3`
+   (which loads a BSP and drives the stubbed 3D path) and forces the Quake **main menu** — recognizable
+   2D content, `con_forcedup` true, 2D-only render. `fitzmode` is off by default so Host_Startdemos_f's
+   QuakeSpasm branch goes straight to `menu_main`.
+2. `pl_phoenix_vk_vid.c` — `vkvid: present N` now logs **every frame for the first 60** (then %30), so
+   the orchestrator can read "climbing" vs "stalled at 1" in one grab. Clear color changed from black
+   to **magenta (1,0,1)** — a black clear on HDMI is indistinguishable from "nothing rendered / console
+   owns fb0"; magenta proves the render-pass result reaches the displayed fb0 surface. Both are flagged
+   `TODO(vkquake-port)` to revert once 2D lands.
+3. `gl_screen.c` (clone) — edge-triggered `vkvid: SCR_UpdateScreen gate -> N` (0=render 1=init 2=worker
+   3=loading) names which early-return (if any) suppresses frames; `vkvid: SCR_DrawGUI #N` logs the 2D
+   branch taken (con_forcedup / m_state / drawloading) for the first frames.
+
+**Build:** regenerated host Mesa generated headers (the fresh /tmp needed `builtin_types.h`,
+`nir_opcodes.h`, `u_format_gen.h` materialized via `ninja libvulkan_broadcom.so` in BOTH host build
+dirs) → `libv3d-phoenix.a` (408 objs) + `libv3dv-phoenix.a` (119 objs) → `build-vkquake-phoenix.py
+--link` 82/82 TUs, **LINK OK (0 undefined)** → `/tmp/{libvkquake.a,vkquake-phoenix}`. All four
+diagnostic strings + the menu-force string verified present in the final ELF; `nm` = 0 `U`. **Mesa
+NOT touched** (no `mesa-phoenix-port.patch` change).
+
+**WHAT THE ORCHESTRATOR SHOULD GRAB (bundle rpi4-vkquake + netboot + HDMI):** the new UART lines
+`vkvid: SCR_UpdateScreen gate -> 0`, `vkvid: SCR_DrawGUI #0 (...)`, and `vkvid: present 1,2,3,...`.
+Success criterion = `present N` **increments every frame** (not stalled at 1) AND the Quake **main
+menu** appears over magenta on HDMI. Four discriminating outcomes:
+- **present climbs + menu visible** → priorities #1 and #2 BOTH done (frame loop + 2D content). Win.
+- **present climbs + magenta only, no menu** → present works, 2D-recording gap (chase SCR_DrawGUI /
+  pipeline / dynamic-buffer path).
+- **present climbs + console text still on HDMI** → present-correctness/ownership regression
+  (FBCON_DISABLED not holding or scanout != displayed fb0); the brown-clear earlier proved the blit
+  *can* work, so this is a regression to chase.
+- **present does NOT climb** → the `gate -> N` line names the early-return (most likely `3=loading`,
+  `scr_disabled_for_loading` suppressing frames during a slow caches-off load — but menu-forcing should
+  avoid that).
+
+**Honest status:** still NOT HW-proven to render recognizable content. This session converted the
+ambiguous measurement into a single decisive grab and removed the most likely confound (the demo-load
+3D path) by forcing the menu. Whether 2D actually lands is the next grab's verdict, not a claim here.
