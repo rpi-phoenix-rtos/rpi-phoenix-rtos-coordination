@@ -271,6 +271,20 @@ if [ "${ports_only}" = 1 ]; then
 	scope_reason="ports-only (stage fs skeleton + ports into _fs root; no image rebuild)"
 fi
 
+# Task #31 logging build mode: the single source of truth is the
+# RPI4_LOG_TO_FILE macro in the target's board_config.h. The compile-time
+# console sinks (kernel log.c, pl011-tty) read the macro directly; the
+# rpi4-klogd plo launch gate needs it as an env var, so derive it here (same
+# pattern as --variant -> RPI4B_VARIANT). We export RPI4_LOG_TO_FILE=1 ONLY when
+# the macro is set to 1, so a DEBUG build (the default) leaves it unset and the
+# klogd launch in user.plo.yaml stays inert. Deriving the env from the macro
+# every build keeps the two in lock-step (they cannot desync).
+board_config="${sources_dir}/phoenix-rtos-project/_projects/${target}/board_config.h"
+log_to_file=0
+if [ -f "${board_config}" ] && grep -Eq '^[[:space:]]*#define[[:space:]]+RPI4_LOG_TO_FILE[[:space:]]+1\b' "${board_config}"; then
+	log_to_file=1
+fi
+
 if [ "$host_os" = "Darwin" ]; then
 	printf 'Host:     macOS (using Lima VM %s)\n' "${vm}"
 else
@@ -281,6 +295,11 @@ printf 'Buildroot: %s\n' "${buildroot}"
 printf 'Target:    %s\n' "${target}"
 printf 'Scope:     %s\n' "${scope}"
 printf 'Variant:   %s\n' "${variant}"
+if [ "${log_to_file}" = 1 ]; then
+	printf 'Logging:   USER (klog -> /var/log/messages, console quiet; RPI4_LOG_TO_FILE=1)\n'
+else
+	printf 'Logging:   DEBUG (klog -> console, default; RPI4_LOG_TO_FILE=0)\n'
+fi
 printf 'Build args: %s\n' "${build_args[*]}"
 printf 'Reason:    %s\n' "${scope_reason}"
 
@@ -311,12 +330,20 @@ if [ "${do_prepare}" -eq 1 ]; then
 fi
 
 build_args_str="${build_args[*]}"
+# Task #31: pass RPI4_LOG_TO_FILE into the build env ONLY when the board macro is
+# set, so the plo render (image_builder.py reads os.environ) gates the rpi4-klogd
+# launch. In a DEBUG build the var stays unset and user.plo.yaml's
+# `env.RPI4_LOG_TO_FILE | default('0')` resolves to '0' -> not launched.
+log_to_file_env=""
+if [ "${log_to_file}" = 1 ]; then
+	log_to_file_env="RPI4_LOG_TO_FILE='1' "
+fi
 # Prepend the repo's uv venv bin so the build's bare `python3` (used by
 # phoenix-rtos-build/build-ports.sh -> port_manager) finds resolvelib/jinja2/
 # PyYAML/rich from the venv rather than the PEP668-managed system Python. A
 # non-existent PATH entry is harmless, so this is safe even without the venv.
 run_build_shell \
-	"set -euo pipefail; export PATH='${repo_root}/.venv/bin':'${toolchain_path}':\$PATH; cd '${buildroot}'; env RPI4B_DTB_PATH='${dtb_path}' RPI4B_VARIANT='${variant}' TARGET='${target}' ./phoenix-rtos-build/build.sh ${build_args_str}"
+	"set -euo pipefail; export PATH='${repo_root}/.venv/bin':'${toolchain_path}':\$PATH; cd '${buildroot}'; env ${log_to_file_env}RPI4B_DTB_PATH='${dtb_path}' RPI4B_VARIANT='${variant}' TARGET='${target}' ./phoenix-rtos-build/build.sh ${build_args_str}"
 
 if [ "${do_qemu_sanity}" -eq 1 ]; then
 	# QEMU path differs between hosts. On Darwin we use the in-VM
