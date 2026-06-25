@@ -358,6 +358,16 @@ preflight() {
 		echo "[OK] global defaults dir /nfstest/etc/WindowMaker compiled in"
 	fi
 
+	# fontconfig's config dir (FONTCONFIG_PATH = sysconfdir/fonts) is baked into
+	# the statically-linked libfontconfig. It MUST match where fonts.conf is
+	# staged, or no aliases load and XftFontOpenName("sans serif") -> NULL ->
+	# wmaker won't start.
+	if strings "$wm" 2>/dev/null | grep -qx "/nfstest/etc/fonts"; then
+		echo "[OK] fontconfig reads /nfstest/etc/fonts (= staged fonts.conf dir)"
+	else
+		fail "fontconfig config dir /nfstest/etc/fonts not baked in — fonts.conf would never load"
+	fi
+
 	echo "=== ALL PRE-FLIGHT CHECKS PASSED ==="
 	echo "HW test (orchestrator): boot netboot image, then:"
 	echo "    ls /nfstest/bin                 # expect wmaker + wmsetbg present"

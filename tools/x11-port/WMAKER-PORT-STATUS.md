@@ -30,6 +30,12 @@ concurrent rebuilds of the shared prefix.
 - `nm -u` → 0 undefined symbols
 - `strings` → `/nfstest/bin/sh` (shell), `/nfstest/share/WindowMaker` +
   `/nfstest/etc/WindowMaker` (data dirs) compiled in
+- `strings` → `/nfstest/etc/fonts` is baked as fontconfig's `FONTCONFIG_PATH`
+  (= `sysconfdir/fonts`), so the statically-linked libfontconfig loads
+  `/nfstest/etc/fonts/fonts.conf` — exactly where the alias config is staged.
+  This is the linchpin of the font deliverable: if it pointed at a stock
+  `/etc/fonts`, no aliases would load and `XftFontOpenName("sans serif")` would
+  return NULL (wmaker won't start). Confirmed correct.
 
 ## Staged to /srv/phoenix-rpi4-nfs
 
@@ -82,3 +88,32 @@ Host build dependency installed this session: **gperf** (`apt-get install gperf`
    is a draft mirroring the working build. It is blocked on the X11 + font lib
    stacks not being phoenix-rtos ports yet (same blocker as `xterm`; feeds task
    #12).
+
+## Residuals / known untested paths
+
+- **The libphoenix `_SC_LINE_MAX` commit is UNBUILT.** The next `--scope core`
+  is its first actual compile (per the project's build-validate norm for core
+  changes). It is correct by inspection (`<limits.h>` is included in
+  `unistd/conf.c`, `_POSIX2_LINE_MAX` is reachable), but has not been compiled
+  this session. The wmaker build does not depend on it (it uses
+  `-D_SC_LINE_MAX=5` against the un-rebuilt sysroot).
+- **`build_wmaker()`'s fresh-build codepath was not exercised end-to-end this
+  session** — the staged binary came from manual configure+make steps with the
+  same flags; every script run hit the "already built" guard. The constituent
+  commands were validated by hand, but the one-shot script path is the single
+  untested codepath. (Re-running clean is intentionally avoided: it re-exposes
+  the concurrent shared-prefix race and is expensive.)
+- **libc `system()`/`popen()` use `/bin/sh`, not `WMAKER_SHELL`.** The
+  `WMAKER_SHELL` patch only covers `ExecuteShellCommand()` (menu/`<exec>`).
+  These call sites shell out via libc, which hardcodes `/bin/sh` (absent on the
+  netboot RAM root, present at `/nfstest/bin/sh`):
+    - `util/wmsetbg.c:1007` — `system(cmd_smooth)` for background image smoothing
+    - `src/rootmenu.c:1186` — `popen()` for a menu pipe (`<OPEN PIPE>` menu entry)
+    - `WINGs/proplist.c:1587` — `popen()` reading a proplist via a command
+    - `src/main.c:468/524/542` — `system("wmaker.inst …")` / first-run setup
+  None are on the path to "wmaker shows a managed desktop" (the WM core and
+  menu `<exec>` go through the fixed `ExecuteShellCommand`). They would fail
+  gracefully (with a werror) if hit. If a desktop boots and the background or a
+  pipe-menu entry silently does nothing, this is why — not a mystery. A future
+  fix would be a `/nfstest/bin/sh` -> `/bin/sh` symlink on the root, or a libc
+  build configured with the alternate shell path.
