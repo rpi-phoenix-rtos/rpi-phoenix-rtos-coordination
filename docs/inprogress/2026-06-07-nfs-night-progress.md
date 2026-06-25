@@ -1,5 +1,18 @@
 # NFS rootfs — overnight session progress (2026-06-07/08)
 
+> **UPDATE 2026-06-25 — #156 "first-read transient ENOENT" ROOT-CAUSED (NOT closed;
+> no in-scope code fix, mitigated by protocol).** It is NOT a dircache/libnfs bug (the dircache is already off at
+> HEAD and the lookup path never touches it). It is the **takeover window**: plo
+> launches psh as a sibling of the NFS takeover server and does not gate on it, so
+> early commands hit the sparse dummyfs RAM root before `portRegister("/")`. Proven
+> by the nfsroot UART logs (ENOENT always fires BEFORE `nfs-fs: registered /
+> (takeover)`; every access after that line succeeds first-try). The NFS server
+> cannot win the race (takeover is gated on the DHCP lease, psh prompts earlier), and
+> the only real fix is a plo boot-order gate (out of scope). Full diagnosis + the
+> orchestrator validation protocol (wait for `registered / (takeover)` before sending
+> commands): **docs/inprogress/2026-06-25-nfs-156-first-read.md**.
+
+
 ## ☀️ MORNING SUMMARY (read first)
 
 **Headline: NFS works as a read-write, executable filesystem on the Pi4, HW-proven over netboot.**

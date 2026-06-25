@@ -58,9 +58,16 @@ Everything below is committed. UART/netboot was free (you were away) so I valida
   visibility). Safe additive slice possible (a syslogd mirroring klog to /var/log + a `logread`
   command, console unchanged); the *suppress-console-in-user-mode* part is the delicate bit. Want
   me to do the additive slice next, or hold the whole thing for an attended session?
-- **NFS #156 first-read-ENOENT** — re-confirmed tonight (lua, the first /usr/bin exec, ENOENT'd;
-  later /usr/bin execs worked). The simple fix (`nfs_set_dircache(0)`) regressed reads to ERANGE
-  and was reverted; proper fix = a targeted post-mount dircache invalidate. Tractable but needs care.
+- **NFS #156 first-read-ENOENT — RE-ROOT-CAUSED tonight: it's a BOOT-ORDER RACE, not the dircache**
+  (the dircache is already off at HEAD, so the old "disable dircache → ERANGE" angle is moot). psh
+  launches as a *sibling* of the NFS takeover server without gating on it, so the first command(s)
+  run while "/" is still the dummyfs RAM root, before takeover does `portRegister("/")`. Proven
+  across 3 UART logs (the ENOENT always precedes `nfs-fs: registered / (takeover)`; every access
+  after that line succeeds first-try). **Practical impact is low** — interactive use is past the
+  race by the time you type; scripted use just waits for the takeover line (documented protocol).
+  Real fix = gate psh on takeover-complete (a plo/psh boot-order change — fiddly + brick-risk per
+  the dup-program-brick lesson), DEFERRED. Diagnosis: `2026-06-25-nfs-156-first-read.md`. Code
+  shipped = a comment correction only (filesystems `fafa024`, build-verified, no behavior change).
 - **vkQuake crash (NULL+0x70 @ 0x4c5d20)** — needs a debug-symbol build to name the function, then
   fix the no-WSI surface/swapchain shim. Next focused session.
 - **fb0 mmap (#5), NFS MT server (#7), TD-05 + kernel TD items** — kernel/complex; deferred.
