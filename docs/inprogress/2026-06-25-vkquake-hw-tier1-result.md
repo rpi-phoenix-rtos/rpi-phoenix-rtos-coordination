@@ -58,6 +58,28 @@ esr=0x92000007  far=0x0000000000000070   psr=0x20000100
 that was the build-time prediction, now disproven by the symbol-table localization above. The
 authoritative next step is the SV_LocalSound NULL-client sound/init path described above.)
 
+## FIX APPLIED (2026-06-25, host-side) — NULL-client guard in SV_LocalSound
+
+- **Caller analysis:** the ONLY path into `SV_LocalSound` is `PF_sv_localsound` (a QuakeC builtin,
+  `pr_cmds.c:1798`), which calls `SV_LocalSound (&svs.clients[entnum - 1], sample)`. Its guard
+  `entnum < 1 || entnum > svs.maxclients` was *passed* (so `svs.maxclients >= 1` and `entnum == 1`),
+  yet `client == NULL` → therefore `svs.clients == NULL`: the server local-sound builtin ran during
+  startup before the client array was allocated (`Host_InitLocal`, `host.c:317`). The menu/intro UI
+  correctly uses the CLIENT-side `S_LocalSound` (`snd_dma.c`), which is unaffected; only the
+  server-path builtin faults. The GL flagship (`external/quakespasm`) has byte-identical
+  `SV_LocalSound`/`PF_sv_localsound` and simply never triggers the builtin at this init point.
+- **Fix:** `external/vkquake/Quake/sv_main.c` — early `if (client == NULL) return;` at the top of
+  `SV_LocalSound` (writing a server datagram to a non-existent client is invalid regardless). This is
+  the guard directly proven by `far=0x70` (client is *exactly* NULL). Durable as the tracked patch
+  `tools/vkquake-port/vkquake-phoenix-port.patch` (external/vkquake is a gitignored clone).
+- **Build:** `python3 tools/vkquake-port/build-vkquake-phoenix.py --link` → 82/82 TUs OK, **LINK OK
+  (0 undefined)** → `/tmp/vkquake-phoenix`.
+- **Honest status:** this is a **get-past-it guard, not a root-caused fix.** It provably stops the
+  observed Data Abort, but it does NOT explain *why* the server-side localsound builtin runs at
+  startup with no spawned server / unallocated client array (a Phoenix init-ordering difference vs.
+  the GL engine that static reading can't reconcile — `svs.maxclients` set while `svs.clients` NULL).
+  The HW re-run past 0x4c5d20 is what reveals whether a deeper init-order issue remains.
+
 This is the vkQuake capstone's inflection point: Vulkan init is DONE on real HW; the remaining
 blocker is a NULL-client crash in SV_LocalSound during startup (a sound/init-ordering issue, not
 the render/present path). The GL flagship (rpi4-quake) is unaffected and restored.
