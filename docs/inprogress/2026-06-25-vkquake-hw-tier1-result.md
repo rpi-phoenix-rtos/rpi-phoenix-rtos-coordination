@@ -241,3 +241,20 @@ Succeeds → the fault is in the vk_alloc2 align-8 path or blake3-over-pCode, no
 (mmap/posix_memalign-backed, a path this port already uses for >page buffers) to the >4KB
 vkCreateShaderModule calls, bypassing the failing libphoenix path. If it works → all 41 modules
 create → pipelines → 2D frame, AND it confirms the alloc path is the culprit.
+
+## CORRECTED root-cause (2026-06-25) — Mesa blake3 multi-block dispatch, NOT the allocator
+
+The mmap-backed custom VkAllocationCallbacks works (small modules now allocate at mmap'd pages
+mod=0x0dc0X018, 13 create fine) — but **md5_vert STILL crashes (Exception #32 Instruction Abort,
+pc=0)**. pc=0 is a NULL FUNCTION-POINTER call (not a data read of pCode → not a Data Abort), so the
+allocation is exonerated. vk_common_CreateShaderModule → vk_shader_module_init hashes pCode with
+**blake3**: small inputs (<~1KB-ish, ≤ a few 64-byte blocks) use the single-block compress (no
+dispatch); larger inputs (md5_vert 5228, se8bit 8844) use **blake3_hash_many**, whose SIMD-vs-portable
+implementation is selected via a RUNTIME-DISPATCH function pointer — **NULL/uninitialized on Phoenix
+aarch64** → blr 0. The "4096 boundary" is really the blake3 multi-block threshold.
+
+**Fix (focused, in external/mesa):** make blake3 use a valid impl on Phoenix aarch64 — force the
+portable C blake3 (no SIMD dispatch), or ensure the CPU-feature/dispatch init runs (it's apparently
+skipped, leaving the fn ptr NULL). Likely a small Mesa-side change (src/util + the broadcom vulkan
+runtime). Then all 41 modules hash+create → pipelines → 2D frame. The mmap allocator (commit
+cabcd35/2a37cdf) is correct + kept (legit >page Vulkan alloc path), just not the fix.
