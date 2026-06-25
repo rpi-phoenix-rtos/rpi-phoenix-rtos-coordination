@@ -20,8 +20,11 @@ Everything below is committed. UART/netboot was free (you were away) so I valida
 2. **vkQuake on-HW Tier-1 milestone.** vkquake-phoenix (22.5 MB, real SPIR-V — 41 shaders) boot-
    launched: **Vulkan fully initializes on the V3D** (instance/enumerate/device/queue rc=0, fb0
    1920×1080 scanout), pak0.pak found over NFS, then a **NULL+0x70 deref at pc=0x4c5d20 right
-   after VID_Init** (the no-WSI first-frame path). Specific next step in
-   `2026-06-25-vkquake-hw-tier1-result.md`. GPU-binary swap reverted; GL flagship untouched.
+   after VID_Init**. Now PRECISELY localized (symbol table): the crash is in **`SV_LocalSound`**
+   (`sv_main.c:1403`, `client` is NULL, `client->message` at offset 0x70) — a **sound/init-ordering
+   bug, NOT the swapchain** (Vulkan init fully succeeds). Likely a one-line fix (guard NULL `client`
+   in SV_LocalSound) unblocks it → teed up for a focused session. `2026-06-25-vkquake-hw-tier1-result.md`.
+   GPU-binary swap reverted; GL flagship untouched.
 
 3. **GPU build durability.** `build-gl-phoenix.py` had a mesa generated-sources regression (libGL
    4-FAIL → flagship couldn't relink); FIXED → libGL 0-FAIL (325 objs), libquakespasm relinks.
