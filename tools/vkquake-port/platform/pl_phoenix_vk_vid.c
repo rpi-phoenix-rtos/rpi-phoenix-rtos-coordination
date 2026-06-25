@@ -85,6 +85,25 @@ typedef struct {
 static rpi4fb_mode_t fb_mode;
 static int			 fb_ready = 0;
 
+/* ---- no-WSI render resources (this shim's GL_CreateRenderResources equivalent) ----
+ * vkQuake's upstream render path is a WSI swapchain with double-buffered primary + a dozen
+ * secondary command-buffer contexts, OIT/WBOIT/post-process render passes, etc. The V3DV ICD
+ * has no WSI; we render into the SINGLE fb0-backed scanout VkImage (the Tier-4b harness proved
+ * loadOp=CLEAR -> storeOp=STORE into a LINEAR scanout image lands on HDMI). So this collapses the
+ * whole machinery to: one primary command buffer + one single-attachment UI render pass + one
+ * framebuffer wrapping the fb0 scanout image. SCR_DrawGUI records the 2D/console draws straight
+ * into that primary cb (no secondary cbs, no vkCmdExecuteCommands), and the "present" is the
+ * scanout image itself. World/3D rendering (V_RenderView) is the documented next blocker. */
+static VkCommandPool   gfx_command_pool	  = VK_NULL_HANDLE;
+static VkCommandBuffer frame_cb			  = VK_NULL_HANDLE;
+static VkImage		   scanout_image	  = VK_NULL_HANDLE;
+static VkDeviceMemory  scanout_memory	  = VK_NULL_HANDLE;
+static VkImageView	   scanout_view		  = VK_NULL_HANDLE;
+static VkRenderPass	   ui_render_pass	  = VK_NULL_HANDLE;
+static VkFramebuffer   ui_framebuffer	  = VK_NULL_HANDLE;
+static int			   render_resources_created = 0;
+static int			   frame_recording	  = 0; /* set between GL_BeginRendering and GL_EndRendering */
+
 #define GIPA(inst, name) ((PFN_##name) vkGetInstanceProcAddr ((inst), #name))
 
 static PFN_vkVoidFunction gdpa (const char *name)
@@ -219,6 +238,221 @@ static void discover_fb0 (void)
 	}
 	if (fd >= 0)
 		close (fd);
+}
+
+/* ============================ no-WSI render-resource bring-up ============================ */
+/* Pick the first memory type the image's requirements allow (the V3DV scanout BO is type 0,
+ * HOST_VISIBLE + uncached — the same one the Tier-4b harness selected). */
+static uint32_t pick_memory_type (uint32_t type_bits)
+{
+	for (uint32_t i = 0; i < 32; ++i)
+		if (type_bits & (1u << i))
+			return i;
+	return 0;
+}
+
+/* Create the single fb0-backed scanout VkImage + view, the UI render pass + framebuffer, and
+ * the basic UI pipelines (reusing the engine's R_CreateBasicPipelines, gated to the UI variant).
+ * Returns 1 on success. Mirrors the proven harness present path. Called once. */
+static int create_render_resources (void)
+{
+	if (render_resources_created)
+		return 1;
+	if (!fb_ready) {
+		Sys_Printf ("vkvid: create_render_resources: no fb0 scanout, cannot render\n");
+		return 0;
+	}
+
+	PFN_vkCreateImage				 pCreateImage	   = (PFN_vkCreateImage) gdpa ("vkCreateImage");
+	PFN_vkGetImageMemoryRequirements pGetImageMemReq   = (PFN_vkGetImageMemoryRequirements) gdpa ("vkGetImageMemoryRequirements");
+	PFN_vkAllocateMemory			 pAllocateMemory   = (PFN_vkAllocateMemory) gdpa ("vkAllocateMemory");
+	PFN_vkBindImageMemory			 pBindImageMemory  = (PFN_vkBindImageMemory) gdpa ("vkBindImageMemory");
+	PFN_vkCreateImageView			 pCreateImageView  = (PFN_vkCreateImageView) gdpa ("vkCreateImageView");
+	PFN_vkCreateRenderPass			 pCreateRenderPass = (PFN_vkCreateRenderPass) gdpa ("vkCreateRenderPass");
+	PFN_vkCreateFramebuffer			 pCreateFramebuffer = (PFN_vkCreateFramebuffer) gdpa ("vkCreateFramebuffer");
+	PFN_vkCreateCommandPool			 pCreateCommandPool = (PFN_vkCreateCommandPool) gdpa ("vkCreateCommandPool");
+	PFN_vkAllocateCommandBuffers	 pAllocCmdBuffers  = (PFN_vkAllocateCommandBuffers) gdpa ("vkAllocateCommandBuffers");
+	if (!pCreateImage || !pGetImageMemReq || !pAllocateMemory || !pBindImageMemory || !pCreateImageView || !pCreateRenderPass ||
+	    !pCreateFramebuffer || !pCreateCommandPool || !pAllocCmdBuffers) {
+		Sys_Printf ("vkvid: create_render_resources: missing device proc\n");
+		return 0;
+	}
+
+	VkResult err;
+
+	/* (1) Scanout image: LINEAR R8G8B8A8, color-attachment usage, backed by the fb0 BO. The
+	 * winsys binds the NEXT allocated BO to the live scanout, so set_next_scanout() must be
+	 * called right before this image's memory is allocated (the harness ordering). */
+	{
+		VkImageCreateInfo ici = {
+			.sType		   = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+			.imageType	   = VK_IMAGE_TYPE_2D,
+			.format		   = vulkan_globals.color_format,
+			.extent		   = {fb_mode.width, fb_mode.height, 1},
+			.mipLevels	   = 1,
+			.arrayLayers   = 1,
+			.samples	   = VK_SAMPLE_COUNT_1_BIT,
+			.tiling		   = VK_IMAGE_TILING_LINEAR,
+			.usage		   = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+			.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+		};
+		err = pCreateImage (g_vk_device, &ici, NULL, &scanout_image);
+		if (err != VK_SUCCESS) {
+			Sys_Printf ("vkvid: vkCreateImage(scanout) -> %d\n", (int)err);
+			return 0;
+		}
+
+		VkMemoryRequirements mreq;
+		memset (&mreq, 0, sizeof (mreq));
+		pGetImageMemReq (g_vk_device, scanout_image, &mreq);
+
+		VkMemoryAllocateInfo mai = {
+			.sType			 = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+			.allocationSize	 = mreq.size ? mreq.size : (VkDeviceSize)fb_mode.smemlen,
+			.memoryTypeIndex = pick_memory_type (mreq.memoryTypeBits),
+		};
+		v3d_phoenix_set_next_scanout (); /* the next BO (this image's memory) backs the live scanout */
+		err = pAllocateMemory (g_vk_device, &mai, NULL, &scanout_memory);
+		if (err == VK_SUCCESS)
+			err = pBindImageMemory (g_vk_device, scanout_image, scanout_memory, 0);
+		if (err != VK_SUCCESS) {
+			Sys_Printf ("vkvid: scanout image alloc/bind -> %d\n", (int)err);
+			return 0;
+		}
+		Sys_Printf ("vkvid: scanout image %ux%u bound (mem=%u)\n", fb_mode.width, fb_mode.height, (unsigned)mreq.size);
+	}
+
+	/* (2) Image view over the scanout image. */
+	{
+		VkImageViewCreateInfo vci = {
+			.sType			  = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+			.image			  = scanout_image,
+			.viewType		  = VK_IMAGE_VIEW_TYPE_2D,
+			.format			  = vulkan_globals.color_format,
+			.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+		};
+		err = pCreateImageView (g_vk_device, &vci, NULL, &scanout_view);
+		if (err != VK_SUCCESS) {
+			Sys_Printf ("vkvid: vkCreateImageView -> %d\n", (int)err);
+			return 0;
+		}
+	}
+
+	/* (3) UI render pass: ONE color attachment, ONE subpass, samples=1, color_format. This is
+	 * the exact shape R_CreateBasicPipelines expects for RENDER_PASS_INDEX_UI (attachment_count=1,
+	 * subpass=0, samples=1), so the pipelines it builds are render-pass-compatible with the
+	 * draw-time vkCmdBeginRenderPass below. loadOp=CLEAR -> storeOp=STORE is the harness's proven
+	 * scanout-paint path. finalLayout=GENERAL matches the host-mapped scanout BO. */
+	{
+		VkAttachmentDescription att = {
+			.format			= vulkan_globals.color_format,
+			.samples		= VK_SAMPLE_COUNT_1_BIT,
+			.loadOp			= VK_ATTACHMENT_LOAD_OP_CLEAR,
+			.storeOp		= VK_ATTACHMENT_STORE_OP_STORE,
+			.stencilLoadOp	= VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+			.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+			.initialLayout	= VK_IMAGE_LAYOUT_UNDEFINED,
+			.finalLayout	= VK_IMAGE_LAYOUT_GENERAL,
+		};
+		VkAttachmentReference attref = {
+			.attachment = 0,
+			.layout		= VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+		};
+		VkSubpassDescription sub = {
+			.pipelineBindPoint	  = VK_PIPELINE_BIND_POINT_GRAPHICS,
+			.colorAttachmentCount = 1,
+			.pColorAttachments	  = &attref,
+		};
+		VkRenderPassCreateInfo rpci = {
+			.sType			 = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+			.attachmentCount = 1,
+			.pAttachments	 = &att,
+			.subpassCount	 = 1,
+			.pSubpasses		 = &sub,
+		};
+		err = pCreateRenderPass (g_vk_device, &rpci, NULL, &ui_render_pass);
+		if (err != VK_SUCCESS) {
+			Sys_Printf ("vkvid: vkCreateRenderPass(ui) -> %d\n", (int)err);
+			return 0;
+		}
+	}
+
+	/* (4) Framebuffer wrapping the scanout view. */
+	{
+		VkFramebufferCreateInfo fbci = {
+			.sType			 = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+			.renderPass		 = ui_render_pass,
+			.attachmentCount = 1,
+			.pAttachments	 = &scanout_view,
+			.width			 = fb_mode.width,
+			.height			 = fb_mode.height,
+			.layers			 = 1,
+		};
+		err = pCreateFramebuffer (g_vk_device, &fbci, NULL, &ui_framebuffer);
+		if (err != VK_SUCCESS) {
+			Sys_Printf ("vkvid: vkCreateFramebuffer(ui) -> %d\n", (int)err);
+			return 0;
+		}
+	}
+
+	/* (5) Command pool + one PRIMARY command buffer for the per-frame record/submit. */
+	{
+		VkCommandPoolCreateInfo cpci = {
+			.sType			  = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+			.flags			  = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+			.queueFamilyIndex = vulkan_globals.gfx_queue_family_index,
+		};
+		err = pCreateCommandPool (g_vk_device, &cpci, NULL, &gfx_command_pool);
+		if (err != VK_SUCCESS) {
+			Sys_Printf ("vkvid: vkCreateCommandPool(gfx) -> %d\n", (int)err);
+			return 0;
+		}
+		VkCommandBufferAllocateInfo cbai = {
+			.sType				= VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+			.commandPool		= gfx_command_pool,
+			.level				= VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+			.commandBufferCount = 1,
+		};
+		err = pAllocCmdBuffers (g_vk_device, &cbai, &frame_cb);
+		if (err != VK_SUCCESS) {
+			Sys_Printf ("vkvid: vkAllocateCommandBuffers(gfx) -> %d\n", (int)err);
+			return 0;
+		}
+	}
+
+	/* (6) The single SCBX_GUI command-buffer context the 2D draw path (SCR_DrawGUI) records into.
+	 * Upstream allocates a *pointer* per SCBX index and uses a SECONDARY cb executed into the
+	 * primary; here it points at the PRIMARY frame_cb (inline subpass), and shares ui_render_pass /
+	 * RENDER_PASS_INDEX_UI with the pipeline build so everything is render-pass-compatible. */
+	{
+		cb_context_t *gui = (cb_context_t *)Mem_Alloc (sizeof (cb_context_t));
+		gui->cb				  = frame_cb;
+		gui->current_canvas	  = CANVAS_INVALID;
+		gui->render_pass	  = ui_render_pass;
+		gui->render_pass_index = RENDER_PASS_INDEX_UI;
+		gui->subpass		  = 0;
+		vulkan_globals.secondary_cb_contexts[SCBX_GUI] = gui;
+	}
+
+	/* (7) Build the basic UI pipelines by reusing the engine's own R_CreateBasicPipelines (now
+	 * un-static + guarded to skip the MAIN/OIT/WBOIT variants whose render pass is NULL). It reads
+	 * secondary_cb_contexts[SCBX_GUI]->render_pass (set above) for the UI variant. This reuses the
+	 * exact vertex-input / blend / push-constant state the draw path expects — hand-authoring it
+	 * would risk a silent GPU hang. Requires basic_pipeline_layout (R_CreatePipelineLayouts, done
+	 * in VID_Init) + shader modules (created here, destroyed after). */
+	R_CreateShaderModules ();
+	R_InitVertexAttributes ();
+	R_CreateBasicPipelines ();
+	R_DestroyShaderModules ();
+
+	vulkan_globals.color_clear_value.color.float32[0] = 0.0f;
+	vulkan_globals.color_clear_value.color.float32[1] = 0.0f;
+	vulkan_globals.color_clear_value.color.float32[2] = 0.0f;
+	vulkan_globals.color_clear_value.color.float32[3] = 1.0f;
+
+	render_resources_created = 1;
+	Sys_Printf ("vkvid: render resources created (UI render pass + fb0 framebuffer + basic pipelines)\n");
+	return 1;
 }
 
 /* ================================ VID_* public surface ================================ */
@@ -366,38 +600,125 @@ qboolean GL_BeginRendering (qboolean use_tasks, task_handle_t *begin_rendering_t
 		VID_Restart (false);
 		vid.restart_next_frame = false;
 	}
+
+	/* Create render resources lazily on the first frame (matches upstream GL_BeginRendering, which
+	 * defers GL_CreateRenderResources to the first frame so the device/heaps are fully up). */
+	if (!render_resources_created && !create_render_resources ())
+		return false;
+
 	*width	= vid.width;
 	*height = vid.height;
 	if (begin_rendering_task)
 		*begin_rendering_task = INVALID_TASK_HANDLE; /* inline path: no async begin task */
 
-	/* The engine records into vulkan_globals.primary_cb_contexts[].cb between Begin/End. The
-	 * command-buffer acquisition + render-target setup is owned by the engine's GL_Create-
-	 * RenderResources (gl_rmisc.c). This shim's begin is a no-op past geometry publish; the
-	 * actual command-buffer begin happens in the engine's per-frame path.
-	 *
-	 * Return true so the engine proceeds to record. (Main agent: if GL_CreateRenderResources
-	 * needs a swapchain-image index, supply the single fb0-backed image here.) */
+	/* Begin the per-frame primary command buffer, then begin the UI render pass INLINE on the fb0
+	 * framebuffer. SCR_DrawGUI then records its 2D draws straight into frame_cb (it reads the
+	 * SCBX_GUI cb_context we point at frame_cb). Reset the canvas + pipeline so GL_SetCanvas /
+	 * R_BindPipeline re-emit their state this frame. */
+	PFN_vkResetCommandBuffer pReset = (PFN_vkResetCommandBuffer) gdpa ("vkResetCommandBuffer");
+	PFN_vkBeginCommandBuffer pBegin = (PFN_vkBeginCommandBuffer) gdpa ("vkBeginCommandBuffer");
+	PFN_vkCmdBeginRenderPass pBeginRP = (PFN_vkCmdBeginRenderPass) gdpa ("vkCmdBeginRenderPass");
+	if (!pBegin || !pBeginRP) {
+		Sys_Printf ("vkvid: GL_BeginRendering: missing device proc\n");
+		return false;
+	}
+
+	if (pReset)
+		pReset (frame_cb, 0);
+
+	cb_context_t *gui = vulkan_globals.secondary_cb_contexts[SCBX_GUI];
+	gui->cb				= frame_cb;
+	gui->current_canvas = CANVAS_INVALID;
+	memset (&gui->current_pipeline, 0, sizeof (gui->current_pipeline));
+
+	VkCommandBufferBeginInfo bbi = {
+		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+	};
+	VkResult err = pBegin (frame_cb, &bbi);
+	if (err != VK_SUCCESS) {
+		Sys_Printf ("vkvid: vkBeginCommandBuffer -> %d\n", (int)err);
+		return false;
+	}
+
+	VkClearValue clear = vulkan_globals.color_clear_value;
+	VkRenderPassBeginInfo rpbi = {
+		.sType			 = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+		.renderPass		 = ui_render_pass,
+		.framebuffer	 = ui_framebuffer,
+		.renderArea		 = {{0, 0}, {(uint32_t)vid.width, (uint32_t)vid.height}},
+		.clearValueCount = 1,
+		.pClearValues	 = &clear,
+	};
+	pBeginRP (frame_cb, &rpbi, VK_SUBPASS_CONTENTS_INLINE);
+
+	/* The viewport/scissor are dynamic state set per-canvas by GL_SetCanvas -> GL_Viewport. Seed
+	 * a full-frame scissor/viewport so a draw before the first GL_SetCanvas has valid state. */
+	PFN_vkCmdSetViewport pSetVp = (PFN_vkCmdSetViewport) gdpa ("vkCmdSetViewport");
+	PFN_vkCmdSetScissor	 pSetSc = (PFN_vkCmdSetScissor) gdpa ("vkCmdSetScissor");
+	if (pSetVp) {
+		VkViewport vp = {0.0f, 0.0f, (float)vid.width, (float)vid.height, 0.0f, 1.0f};
+		pSetVp (frame_cb, 0, 1, &vp);
+	}
+	if (pSetSc) {
+		VkRect2D sc = {{0, 0}, {(uint32_t)vid.width, (uint32_t)vid.height}};
+		pSetSc (frame_cb, 0, 1, &sc);
+	}
+
+	/* New frame: cycle the dynamic vertex/index/uniform buffers (resets per-frame alloc offsets).
+	 * The 2D draw path (R_VertexAllocate / R_IndexAllocate in gl_draw.c) writes into these; without
+	 * the swap they'd accumulate across frames and overflow. Mirrors GL_BeginRenderingTask's tail. */
+	R_SwapDynamicBuffers ();
+
+	vulkan_globals.device_idle = false;
+	frame_recording = 1;
 	return true;
 }
 
 task_handle_t GL_EndRendering (qboolean use_tasks, qboolean use_swapchain)
 {
 	(void)use_tasks;
+	(void)use_swapchain;
 
-	/* Submit the recorded primary command buffer and present to fb0. The engine has recorded
-	 * into vulkan_globals.primary_cb_contexts[PCBX_CANVAS_NONE].cb; submit it on the graphics
-	 * queue and (if presenting) point the scanout at the rendered image's BO via the winsys.
-	 *
-	 * MINIMAL-but-real: the queue submit goes through the trampoline vkQueueSubmit (device
-	 * cmd). A full implementation tracks per-frame fences + double buffering; first-light uses
-	 * a synchronous submit + wait (the winsys submit is synchronous anyway, like the harness).
-	 *
-	 * The detailed command-buffer end + the present (set_next_scanout before the frame's
-	 * scanout-image alloc) are owned by the engine's render-resource code; this shim provides
-	 * the submit/scanout hook + device-idle. */
-	if (use_swapchain && fb_ready)
-		v3d_phoenix_set_next_scanout ();
+	if (!frame_recording)
+		return INVALID_TASK_HANDLE;
+	frame_recording = 0;
+
+	/* Flush staging (texture uploads) + dynamic-buffer mapped ranges so the GPU sees the 2D vertex/
+	 * index/uniform data recorded this frame. R_SubmitStagingBuffers runs its own staging cb+fence;
+	 * R_FlushDynamicBuffers flushes the non-coherent mapped dynamic buffers. Mirrors the head of
+	 * GL_EndRenderingTask. Must happen before the queue submit below. */
+	R_SubmitStagingBuffers ();
+	R_FlushDynamicBuffers ();
+
+	/* End the UI render pass + command buffer, submit on the graphics queue, and wait. The
+	 * render pass's storeOp=STORE writes the rendered tiles to the fb0 scanout BO -> the frame
+	 * is visible on HDMI. This single-image scanout IS the "present" (no WSI swapchain, no
+	 * vkQueuePresentKHR). Synchronous submit + wait mirrors the proven Tier-4b harness. */
+	PFN_vkCmdEndRenderPass pEndRP	= (PFN_vkCmdEndRenderPass) gdpa ("vkCmdEndRenderPass");
+	PFN_vkEndCommandBuffer pEnd		= (PFN_vkEndCommandBuffer) gdpa ("vkEndCommandBuffer");
+	PFN_vkQueueSubmit	   pSubmit	= (PFN_vkQueueSubmit) gdpa ("vkQueueSubmit");
+	if (!pEndRP || !pEnd || !pSubmit) {
+		Sys_Printf ("vkvid: GL_EndRendering: missing device proc\n");
+		return INVALID_TASK_HANDLE;
+	}
+
+	pEndRP (frame_cb);
+
+	VkResult err = pEnd (frame_cb);
+	if (err != VK_SUCCESS) {
+		Sys_Printf ("vkvid: vkEndCommandBuffer -> %d\n", (int)err);
+		return INVALID_TASK_HANDLE;
+	}
+
+	VkSubmitInfo si = {
+		.sType				= VK_STRUCTURE_TYPE_SUBMIT_INFO,
+		.commandBufferCount = 1,
+		.pCommandBuffers	= &frame_cb,
+	};
+	err = pSubmit (gfx_queue, 1, &si, VK_NULL_HANDLE);
+	if (err != VK_SUCCESS)
+		Sys_Printf ("vkvid: vkQueueSubmit -> %d\n", (int)err);
 
 	GL_WaitForDeviceIdle ();
 	return INVALID_TASK_HANDLE; /* inline: no async end task to chain */
