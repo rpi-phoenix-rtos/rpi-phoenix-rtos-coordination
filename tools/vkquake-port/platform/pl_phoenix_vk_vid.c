@@ -42,6 +42,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <string.h>
+#include <phoenix/fbcon.h> /* FBCONSETMODE / FBCON_DISABLED|ENABLED — silence the HDMI text console */
 
 /* ---- the global instance/device the trampoline layer (vk_trampolines.c) resolves
  *      every direct vk* call against. Published right after create, as the harness does. */
@@ -105,6 +106,7 @@ static VkRenderPass	   ui_render_pass	  = VK_NULL_HANDLE;
 static VkFramebuffer   ui_framebuffer	  = VK_NULL_HANDLE;
 static int			   render_resources_created = 0;
 static int			   frame_recording	  = 0; /* set between GL_BeginRendering and GL_EndRendering */
+static unsigned long   present_count	  = 0; /* frames submitted+presented to the fb0 scanout */
 
 #define GIPA(inst, name) ((PFN_##name) vkGetInstanceProcAddr ((inst), #name))
 
@@ -342,6 +344,34 @@ static const VkAllocationCallbacks pl_vk_host_allocator = {
 const VkAllocationCallbacks *PL_VkHostAllocator (void)
 {
 	return &pl_vk_host_allocator;
+}
+
+/* ============================== HDMI display ownership ============================== */
+/* The HDMI text console (pl011-tty fbcon + the kernel klog mirror) keeps drawing to /dev/fb0.
+ * Our render-pass storeOp=STORE writes the rendered frame straight into the fb0 scanout BO (the
+ * winsys backs the scanout VkImage's memory with the fb0 physical pages — see v3d_phoenix_winsys.c),
+ * so while the console still owns the framebuffer it overdraws every vkQuake frame between/over
+ * presents. So we tell the console to stop drawing (FBCON_DISABLED) while vkQuake owns the display,
+ * and restore it (FBCON_ENABLED) on clean shutdown. Mirrors the GL flagship's
+ * pl_phoenix_vid.c::console_setmode and the X DDX's fbdevConsoleSetMode. This only touches the HDMI
+ * fbcon, NOT the UART — vkvid: prints keep flowing on UART regardless. */
+static int console_ttyfd = -1;
+
+static void console_setmode (int mode)
+{
+	if (console_ttyfd < 0) {
+		console_ttyfd = open ("/dev/tty0", O_RDWR);
+		if (console_ttyfd < 0)
+			console_ttyfd = open ("/dev/console", O_RDWR);
+	}
+	if (console_ttyfd >= 0) {
+		if (ioctl (console_ttyfd, FBCONSETMODE, mode) == 0)
+			Sys_Printf ("vkvid: HDMI console fbcon mode -> %d\n", mode);
+		else
+			Sys_Printf ("vkvid: FBCONSETMODE(%d) failed (console may overdraw)\n", mode);
+	} else {
+		Sys_Printf ("vkvid: no /dev/tty0|console to switch fbcon mode\n");
+	}
 }
 
 /* ============================== fb0 scanout discovery ============================== */
@@ -601,6 +631,12 @@ void VID_Init (void)
 	populate_dispatch_table ();
 	discover_fb0 ();
 
+	/* Take HDMI display ownership: stop the text console overdrawing vkQuake's fb0 scanout. Only
+	 * meaningful when we actually drive fb0; if fb0 was unavailable we render offscreen and leave
+	 * the console alone. (Restored to FBCON_ENABLED in VID_Shutdown's clean-exit path.) */
+	if (fb_ready)
+		console_setmode (FBCON_DISABLED);
+
 	/* Steer onto a V3DV-supported feature path (no subgroup-size-control, no RT). These are
 	 * the runtime gates the renderer keys off; force them off so it picks the classic raster
 	 * + non-sops compute path. (Cvar values; the engine re-reads them.) */
@@ -673,6 +709,15 @@ void VID_Init (void)
 void VID_Shutdown (void)
 {
 	GL_WaitForDeviceIdle ();
+	/* Hand the framebuffer back to the text console (reappears with everything the console
+	 * accumulated off-screen while vkQuake owned the display). */
+	if (fb_ready) {
+		console_setmode (FBCON_ENABLED);
+		if (console_ttyfd >= 0) {
+			close (console_ttyfd);
+			console_ttyfd = -1;
+		}
+	}
 	/* Device/instance teardown deliberately omitted: the V3DV ICD destroy paths are not
 	 * exercised here and the process exits anyway. (Main agent: wire vkDestroyDevice /
 	 * vkDestroyInstance if a clean restart is needed.) */
@@ -867,6 +912,18 @@ task_handle_t GL_EndRendering (qboolean use_tasks, qboolean use_swapchain)
 		Sys_Printf ("vkvid: vkQueueSubmit -> %d\n", (int)err);
 
 	GL_WaitForDeviceIdle ();
+
+	/* Per-frame present heartbeat (UART). storeOp=STORE just wrote this frame's tiles to the fb0
+	 * scanout BO = the displayed surface, so a climbing count means frames ARE reaching HDMI.
+	 * First frame logged unconditionally (so "any frame at all?" shows immediately), then every
+	 * 30th to avoid flooding — caches-off vkQuake renders only a few frames/min, so a pure %30
+	 * could hide the signal for minutes. Absent on the next boot => still loading game data /
+	 * never reached the first SCR_UpdateScreen; climbing => rendering+presenting. */
+	if (err == VK_SUCCESS) {
+		present_count++;
+		if (present_count == 1 || (present_count % 30) == 0)
+			Sys_Printf ("vkvid: present %lu\n", present_count);
+	}
 	return INVALID_TASK_HANDLE; /* inline: no async end task to chain */
 }
 
