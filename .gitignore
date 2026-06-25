@@ -28,3 +28,11 @@ Screenshot *.png
 
 # libnfs study clone (own git repo; not tracked here) — see docs/research/2026-06-07-nfs-rootfs-feasibility/
 research/libnfs/
+
+# X11 port build outputs + logs (host-side build noise; sources/launchers are
+# fetched/compiled, the .c sources stay tracked). See tools/x11-port/build-x11-phoenix.sh
+tools/x11-port/src/
+/tools/x11-port/launcher/pl_phoenix_xlaunch
+/tools/x11-port/launcher/*-build.log
+/tools/x11-port/xkb/xkbcomp.warn
+/history.txt
