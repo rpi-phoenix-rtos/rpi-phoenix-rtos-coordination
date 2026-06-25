@@ -81,3 +81,37 @@ Everything below is committed. UART/netboot was free (you were away) so I valida
 1. Re-enable the Quake flagship autostart, or keep it off while you test X11?
 2. #31 logging: additive slice now, or hold for attended (console-internals risk)?
 3. vkQuake: want me to continue the crash debug (debug build → name 0x4c5d20)?
+
+---
+
+# DAY SESSION update (2026-06-25, while you were out) — for your evening review
+
+## Delivered + committed today
+- **Logging #31 — DONE + HW-validated.** `RPI4_LOG_TO_FILE` build mode: USER mode captures klog →
+  /var/log/messages (console quiet, `logread` views it), DEBUG = unchanged. Default-safe.
+- **vkQuake — six startup blockers cleared on HW (huge advance), then paused at a clean root-cause.**
+  Full Vulkan init now COMPLETES + no-WSI render resources created + **~18 shader modules build**.
+  Remaining: a systemic embedded-SPIR-V issue for 2 specific shaders (md5_vert, screen_effects_8bit_comp
+  — the larger/compute ones); next step = root-cause gen-vkquake-shaders.py array generation, then
+  pipelines → 2D frame. Detail: 2026-06-25-vkquake-hw-tier1-result.md. Flagship (GL Quake) restored.
+- **Clean-repo (your "upstreamable, showable" goal):**
+  - Cleanup/upstreamability **plan** written (2026-06-25-cleanup-upstreamability-plan.md, 5 phases).
+  - **Kernel cleanup review** (2026-06-25-kernel-cleanup-review.md) + **executed + boot-validated**:
+    dead code removed, misattributed marker retagged, diagnostic banners removed, TD-04 prose trimmed,
+    TD-doc reconciled to reality (honest known-limitations vs hacks). 0 faults.
+  - **Tree hygiene**: gitignored build noise; dropped the diagnostic-only libXt patch.
+  - **Quake→ports reorg plan** (2026-06-25-quake-to-ports-reorg-plan.md) — gated, ready to execute.
+
+## ⚠ DECISION I need from you (the one blocker)
+**Reorg destination.** You said "Quake in the ports project." Investigation proved `phoenix-rtos-ports`
+(the literal repo) CANNOT host Quake — ports are upstream-tarball recipes; Quake is a bespoke link
+against prebuilt libs. The architecturally-correct home is **`phoenix-rtos-project/_user/`** (Phoenix's
+in-tree applications dir, already hosts hello/voxeldemo). That fulfills your intent (Quake = app, out
+of devices) but isn't the literal "ports" word. **Confirm `_user/` (recommended) or tell me otherwise**,
+and I'll run the gated reorg (Quake + vkQuake → _user; drop the v3d/gl bring-up diagnostics; stable
+GPU-lib home). It's build-critical so I held it rather than risk your evening test.
+
+## Ready for your evening test
+The DEBUG flagship is bundled + clean (boots to psh; GL Quake autostart OFF per your call). To test
+GL Quake, re-enable the two `rpi4-quake` launch lines in user.plo.yaml + rebuild. vkQuake is swappable
+per the Makefile/plo comments (currently at the shader-embedding blocker).
