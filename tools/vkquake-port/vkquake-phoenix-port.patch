@@ -1,8 +1,25 @@
 diff --git a/Quake/gl_rmisc.c b/Quake/gl_rmisc.c
-index 9444f07..8fbe9b3 100644
+index 9444f07..70d1f84 100644
 --- a/Quake/gl_rmisc.c
 +++ b/Quake/gl_rmisc.c
-@@ -2281,7 +2281,7 @@ static void R_SetWBOITBlend (VkPipelineColorBlendAttachmentState *blend_attachme
+@@ -2144,10 +2144,16 @@ static VkShaderModule R_CreateShaderModule (const byte *code, const int size, co
+ 	module_create_info.codeSize = size;
+ 	module_create_info.pCode = (const uint32_t *)code;
+ 
++	/* TODO(vkquake-port): drop this diag once R_CreateShaderModules is proven on HW.
++	 * Print BEFORE the call so the faulting shader's line is already on the UART when
++	 * vkCreateShaderModule dies (Phoenix no-WSI bring-up, Instruction Abort pc=0). */
++	Sys_Printf ("vkvid: shmod %s size=%d code=%p dev=%p\n", name, (int)size, (const void *)code, (const void *)vulkan_globals.device);
++
+ 	VkShaderModule module;
+ 	VkResult	   err = vkCreateShaderModule (vulkan_globals.device, &module_create_info, NULL, &module);
+ 	if (err != VK_SUCCESS)
+ 		Sys_Error ("vkCreateShaderModule failed with code %i", (int)err);
++	Sys_Printf ("vkvid: shmod %s ok mod=%p\n", name, (const void *)module);
+ 
+ 	GL_SetObjectName ((uint64_t)module, VK_OBJECT_TYPE_SHADER_MODULE, name);
+ 
+@@ -2281,7 +2287,7 @@ static void R_SetWBOITBlend (VkPipelineColorBlendAttachmentState *blend_attachme
  R_InitVertexAttributes
  ===============
  */
@@ -11,7 +28,7 @@ index 9444f07..8fbe9b3 100644
  {
  	{
  		basic_vertex_input_attribute_descriptions[0].binding = 0;
-@@ -2484,7 +2484,7 @@ static void R_InitDefaultStates (pipeline_create_infos_t *infos)
+@@ -2484,7 +2490,7 @@ static void R_InitDefaultStates (pipeline_create_infos_t *infos)
  R_CreateBasicPipelines
  ===============
  */
@@ -20,7 +37,7 @@ index 9444f07..8fbe9b3 100644
  {
  	VkResult				err;
  	pipeline_create_infos_t infos;
-@@ -2511,6 +2511,8 @@ static void R_CreateBasicPipelines ()
+@@ -2511,6 +2517,8 @@ static void R_CreateBasicPipelines ()
  	for (int render_pass = 0; render_pass < countof (render_pass_variants); ++render_pass)
  	{
  		const int index = render_pass_variants[render_pass].index;
@@ -29,7 +46,7 @@ index 9444f07..8fbe9b3 100644
  		infos.graphics_pipeline.renderPass = render_pass_variants[render_pass].render_pass;
  		infos.graphics_pipeline.subpass = render_pass_variants[render_pass].subpass;
  		infos.multisample_state.rasterizationSamples = render_pass_variants[render_pass].rasterization_samples;
-@@ -2531,6 +2533,8 @@ static void R_CreateBasicPipelines ()
+@@ -2531,6 +2539,8 @@ static void R_CreateBasicPipelines ()
  	for (int render_pass = 0; render_pass < countof (render_pass_variants); ++render_pass)
  	{
  		const int index = render_pass_variants[render_pass].index;
@@ -38,7 +55,7 @@ index 9444f07..8fbe9b3 100644
  		infos.graphics_pipeline.renderPass = render_pass_variants[render_pass].render_pass;
  		infos.graphics_pipeline.subpass = render_pass_variants[render_pass].subpass;
  		infos.multisample_state.rasterizationSamples = render_pass_variants[render_pass].rasterization_samples;
-@@ -2555,6 +2559,8 @@ static void R_CreateBasicPipelines ()
+@@ -2555,6 +2565,8 @@ static void R_CreateBasicPipelines ()
  	{
  		const int	   index = render_pass_variants[render_pass].index;
  		const qboolean wboit_pass = (index == RENDER_PASS_INDEX_WBOIT);
@@ -47,7 +64,7 @@ index 9444f07..8fbe9b3 100644
  		infos.graphics_pipeline.renderPass = render_pass_variants[render_pass].render_pass;
  		infos.graphics_pipeline.subpass = render_pass_variants[render_pass].subpass;
  		infos.multisample_state.rasterizationSamples = render_pass_variants[render_pass].rasterization_samples;
-@@ -3953,7 +3959,7 @@ static void R_CreateIndirectComputePipelines ()
+@@ -3953,7 +3965,7 @@ static void R_CreateIndirectComputePipelines ()
  R_CreateShaderModules
  ===============
  */
@@ -56,7 +73,7 @@ index 9444f07..8fbe9b3 100644
  {
  	CREATE_SHADER_MODULE (basic_vert);
  	CREATE_SHADER_MODULE (basic_frag);
-@@ -4005,7 +4011,7 @@ static void R_CreateShaderModules ()
+@@ -4005,7 +4017,7 @@ static void R_CreateShaderModules ()
  R_DestroyShaderModules
  ===============
  */

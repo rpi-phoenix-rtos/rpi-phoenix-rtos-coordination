@@ -193,6 +193,17 @@ static qboolean create_device (void)
 	if (pGetQueue)
 		pGetQueue (dev, vulkan_globals.gfx_queue_family_index, 0, &gfx_queue);
 	vulkan_globals.queue = gfx_queue;
+
+	/* TODO(vkquake-port): drop once R_CreateShaderModules is proven on HW.
+	 * Discriminator for the Instruction-Abort pc=0 inside R_CreateShaderModules:
+	 * resolve vkCreateShaderModule via the device proc-addr ONCE here and print the
+	 * returned pointer. A NULL/garbage value means GetDeviceProcAddr handed back a bad
+	 * fp (dispatch-table slot unpopulated); a sane value means the NULL fptr is reached
+	 * INSIDE the resolved entrypoint (e.g. device->alloc.pfnAllocation). */
+	{
+		PFN_vkVoidFunction pCSM = gdpa ("vkCreateShaderModule");
+		Sys_Printf ("vkvid: gdpa(vkCreateShaderModule) -> %p\n", (const void *)pCSM);
+	}
 	return true;
 }
 
