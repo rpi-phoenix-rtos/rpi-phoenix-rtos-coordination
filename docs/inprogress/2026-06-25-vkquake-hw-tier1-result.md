@@ -103,3 +103,37 @@ rebuild `libvkquake.a`, verify the guard is in the object (`objdump` the new `sv
 early-return + the function size grew), THEN swap rpi4-vkquake in + netboot. Only then is the guard
 actually under test. The flagship was restored after this test (loader.disk back to the psh/no-GPU
 config; swap files match committed state).
+
+## Progress log — 2026-06-25 morning (six blockers cleared; now at shader #10)
+
+vkQuake advanced enormously today; each HW cycle cleared one blocker:
+1. SV_LocalSound NULL-client guard (sv_main.c).
+2. VID_Init's dropped renderer-init block restored (R_InitMeshHeap etc.) — mesh heap created.
+3. `--whole-archive` libvkquake+V3DV (standalone build-vkquake-phoenix.py + the rpi4-vkquake
+   component Makefile) — 13 NULL `vk_common_*` dispatch slots fixed → **VID_Init now COMPLETES**.
+4. No-WSI render resources implemented (pl_phoenix_vk_vid.c): fb0 scanout image + UI render pass +
+   framebuffer + command pool/buffer + SCBX_GUI cb context + R_CreateBasicPipelines; GL_BeginRendering/
+   GL_EndRendering (submit + scanout-as-present). `vkvid: scanout image 1920x1080 bound`.
+5. Render-resource steps all pass (`rr: imageview/renderpass/framebuffer/cmdpool/cmdbuf/gui-cbx ok`).
+
+**Current blocker (shader #10):** `R_CreateShaderModules` calls `vkCreateShaderModule` per embedded
+SPIR-V. The per-shader probe shows **9 modules create fine** (world_vert/frag/oit_frag, alias_vert/
+frag/alphatest_frag/oit_frag/alphatest_oit_frag) then **crashes on `md5_vert`** (size=5228, valid
+code ptr) — Exception #32 pc=0/lr=0 (blr to NULL fptr), NO `vktramp: UNRESOLVED`. Static trace
+(commit 06c4b26) proved the whole vkCreateShaderModule→vk_common_CreateShaderModule→vk_alloc2→
+vk_shader_module_init→blake3 chain resolves to real symbols + device->alloc is populated (9
+successes confirm). So it is a **runtime NULL fptr specific to the md5_vert path** — candidates:
+(a) `md5_vert`'s SPIR-V trips a v3dv/Mesa path with a NULL callback; (b) an earlier alloc corrupted
+heap metadata (a fn-ptr-bearing struct) that the 10th alloc dereferences; (c) the md5* shader array
+wiring (size/code) in vkquake_shaders.c.
+
+**Next step (focused session):** md5* shaders are 2021-rerelease MD5-model shaders, **UNUSED by
+shareware id1 content**. Quickest path to a first on-screen 2D/console frame = SKIP the md5*/
+rerelease shader-module creation in R_CreateShaderModules (guard them out) and retest — if it then
+reaches the 2D frame, the issue was md5-specific (defer rerelease support); if it crashes on the
+next shader, it's heap corruption from an earlier alloc (root-cause the allocator). Either way the
+2D frame is close. Beyond shaders: the world/3D render pass + pipelines are still stubbed (2D-first),
+per the render-resource notes above.
+
+**Status:** vkQuake iteration PAUSED here to advance the broader clean-repo goals; flagship restored.
+All fixes committed (vkquake-phoenix-port.patch + the rpi4-vkquake Makefile + pl_phoenix_vk_vid.c).
