@@ -100,20 +100,28 @@ static char **build_argv(char *prog, char *const extra[], int nextra)
 	return argv;
 }
 
-/* Copy environ and append DISPLAY=:0 (overriding any inherited DISPLAY).
- * Built in the parent so the vfork'd child never has to touch the
- * (shared) address space beyond exec. */
-static char **build_client_env(void)
+/* Copy environ, override DISPLAY=:0, and supply HOME/PATH defaults when the
+ * inherited environment lacks them. psh exports neither HOME nor PATH, but X
+ * clients need both: a window manager (e.g. Window Maker) writes its per-user
+ * state under $HOME (~/GNUstep) and PATH-searches for helper programs (wmsetbg,
+ * menu apps). Defaults are derived from the install prefix (the NFS export at
+ * /nfstest on netboot, "" => "/" otherwise): HOME=<prefix>/root,
+ * PATH=<prefix>/bin:/bin. An inherited HOME/PATH (if psh ever sets one) wins.
+ * Built in the parent so the vfork'd child never touches the shared address
+ * space beyond exec. */
+static char **build_client_env(const char *prefix)
 {
 	static char display_var[] = "DISPLAY=" DISPLAY_VALUE;
-	int n = 0, i, j;
+	static char home_var[256];
+	static char path_var[256];
+	int n = 0, i, j, have_home = 0, have_path = 0;
 	char **env;
 
 	for (i = 0; environ[i] != NULL; i++)
 		n++;
 
-	/* worst case: all inherited vars + our DISPLAY + NULL */
-	env = malloc((size_t)(n + 2) * sizeof(char *));
+	/* worst case: all inherited vars + DISPLAY + HOME + PATH + NULL */
+	env = malloc((size_t)(n + 4) * sizeof(char *));
 	if (env == NULL)
 		return NULL;
 
@@ -121,9 +129,21 @@ static char **build_client_env(void)
 	for (i = 0; i < n; i++) {
 		if (strncmp(environ[i], "DISPLAY=", 8) == 0)
 			continue; /* drop inherited DISPLAY, we set our own */
+		if (strncmp(environ[i], "HOME=", 5) == 0)
+			have_home = 1;
+		if (strncmp(environ[i], "PATH=", 5) == 0)
+			have_path = 1;
 		env[j++] = environ[i];
 	}
 	env[j++] = display_var;
+	if (have_home == 0) {
+		snprintf(home_var, sizeof(home_var), "HOME=%s/root", prefix);
+		env[j++] = home_var;
+	}
+	if (have_path == 0) {
+		snprintf(path_var, sizeof(path_var), "PATH=%s/bin:/bin", prefix);
+		env[j++] = path_var;
+	}
 	env[j] = NULL;
 
 	return env;
@@ -160,6 +180,10 @@ int main(int argc, char *argv[])
 	volatile int c;
 	volatile int n_clients = 0;
 	static char sp_buf[256], fd_buf[256];
+	/* Install prefix used to derive client HOME/PATH defaults (see
+	 * build_client_env). "" => root install; set to the auto-detected prefix
+	 * in startx convenience mode below. */
+	const char *client_prefix = "";
 
 	/* The session's clients (window manager + apps). Each entry has its own
 	 * resolved path, its own pre-built argv (vfork-safe), and a live pid that
@@ -264,6 +288,7 @@ int main(int argc, char *argv[])
 
 		server_path = sp_buf;
 		font_dir    = fd_buf;
+		client_prefix = prefix; /* HOME/PATH defaults track the install prefix */
 		fprintf(stderr, "xlaunch: startx mode — prefix=%s client=%s (%d client%s)\n",
 			prefix[0] ? prefix : "/", client, n_clients,
 			n_clients == 1 ? "" : "s");
@@ -302,7 +327,7 @@ int main(int argc, char *argv[])
 			return EXIT_FAILURE;
 		}
 	}
-	client_env = build_client_env();
+	client_env = build_client_env(client_prefix);
 	if (client_env == NULL) {
 		fprintf(stderr, "xlaunch: out of memory building client env\n");
 		return EXIT_FAILURE;
