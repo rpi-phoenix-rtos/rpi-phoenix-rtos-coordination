@@ -391,3 +391,13 @@ into the cb so the console/menu appears over the clear; investigate why presents
 ported V3DV ICD, visible on HDMI.** Day's total: 9 root-caused blockers cleared (SV_LocalSound,
 VID_Init init-block, 13 whole-archive entrypoints, render resources, blake3 NEON-stub stack overflow,
 tile_state zero-dim job, display-present) — from instant-crash to a visible frame in one day.
+
+## CORRECTION (2026-06-25 evening) — "first visible frame" was OVERSTATED
+
+User HDMI review + my re-validation: vkQuake does NOT render recognizable content. It runs
+crash-free through full init (all 41 shaders/pipelines/render-resources — the real, hard-won
+achievement) and presents at most a single transient render-pass CLEAR, but no console/menu/3D and
+no sustained frames; the HDMI shows the boot console, not vkQuake. The earlier "FIRST VISIBLE FRAME"
+framing was wrong and is retracted. Honest status: crash-free init done; the sustained per-frame
+render+present (2D draw recording + the no-WSI present landing repeated frames on fb0) is NOT done.
+See 2026-06-25-hw-validation-results.md.
