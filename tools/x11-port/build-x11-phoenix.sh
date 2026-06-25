@@ -163,10 +163,17 @@ XCFLAGS_EXTRA="-DMAXHOSTNAMELEN=256 -DO_NOFOLLOW=0" \
 	xbuild libICE-1.1.1 "$XBASE/lib/libICE-1.1.1.tar.gz" "xorg_cv_malloc0_returns_null=no"
 XCFLAGS_EXTRA="-DMAXHOSTNAMELEN=256 -DO_NOFOLLOW=0" \
 	xbuild libSM-1.2.4  "$XBASE/lib/libSM-1.2.4.tar.gz"  "xorg_cv_malloc0_returns_null=no --without-libuuid"
+# NOTE (2026-06-24, twm "Cannot perform malloc" triage): Phoenix malloc(0) RETURNS
+# NULL (libphoenix stdlib/malloc_dl.c). libXt's XtMalloc(0) is only guarded when
+# MALLOC_0_RETURNS_NULL+XTMALLOC_BC are defined, which requires
+# xorg_cv_malloc0_returns_null=yes (the run-test cache value; was wrongly forced =no).
+# With =no, any XtMalloc(0)/XtCalloc(0,..)/XtRealloc(NULL,0) aborts with
+# "Error: Cannot perform malloc". =yes adds -DMALLOC_0_RETURNS_NULL -DXTMALLOC_BC so
+# those size-0 requests are bumped to size 1 instead of failing.
 XCFLAGS_EXTRA="$PWD_DEFS" \
-	xbuild libXt-1.3.0  "$XBASE/lib/libXt-1.3.0.tar.gz"  "xorg_cv_malloc0_returns_null=no ac_cv_lib_m_hypot=yes"
+	xbuild libXt-1.3.0  "$XBASE/lib/libXt-1.3.0.tar.gz"  "xorg_cv_malloc0_returns_null=yes ac_cv_lib_m_hypot=yes"
 XCFLAGS_EXTRA="$PWD_DEFS" \
-	xbuild libXmu-1.2.1 "$XBASE/lib/libXmu-1.2.1.tar.gz" "xorg_cv_malloc0_returns_null=no ac_cv_lib_m_hypot=yes"
+	xbuild libXmu-1.2.1 "$XBASE/lib/libXmu-1.2.1.tar.gz" "xorg_cv_malloc0_returns_null=yes ac_cv_lib_m_hypot=yes"
 # libXpm: lib builds; its sxpm/cxpm tools link getpwuid_r (deferred, see below), so lib-only.
 if [ ! -f "$PREFIX/lib/libXpm.a" ]; then
 	fetch_extract libXpm-3.5.17 "$XBASE/lib/libXpm-3.5.17.tar.gz"
