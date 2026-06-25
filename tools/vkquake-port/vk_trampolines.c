@@ -12,8 +12,11 @@
  * 75 commands trampolined. Regenerate when the directly-called set changes.
  */
 #include <vulkan/vulkan_core.h>
+#include <string.h>
 
 PFN_vkVoidFunction vkGetInstanceProcAddr(VkInstance instance, const char *pName);
+/* Diagnostic for the NULL-fp guard below (UART/console-reaching print from the engine). */
+extern void Sys_Printf(const char *fmt, ...);
 
 /* Published by the Vulkan vid shim (pl_phoenix_vk_vid.c) right after vkCreateInstance /
  * vkCreateDevice so the trampolines can resolve their real entrypoints. */
@@ -33,6 +36,7 @@ VkResult vkAllocateCommandBuffers(VkDevice device, const VkCommandBufferAllocate
 {
 	static PFN_vkAllocateCommandBuffers fp = NULL;
 	if (!fp) fp = (PFN_vkAllocateCommandBuffers)g_vkGetDeviceProcAddr(g_vk_device, "vkAllocateCommandBuffers");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkAllocateCommandBuffers\n"); return VK_ERROR_INITIALIZATION_FAILED; }
 	return fp(device, pAllocateInfo, pCommandBuffers);
 }
 
@@ -40,6 +44,7 @@ VkResult vkAllocateDescriptorSets(VkDevice device, const VkDescriptorSetAllocate
 {
 	static PFN_vkAllocateDescriptorSets fp = NULL;
 	if (!fp) fp = (PFN_vkAllocateDescriptorSets)g_vkGetDeviceProcAddr(g_vk_device, "vkAllocateDescriptorSets");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkAllocateDescriptorSets\n"); return VK_ERROR_INITIALIZATION_FAILED; }
 	return fp(device, pAllocateInfo, pDescriptorSets);
 }
 
@@ -47,6 +52,7 @@ VkResult vkAllocateMemory(VkDevice device, const VkMemoryAllocateInfo* pAllocate
 {
 	static PFN_vkAllocateMemory fp = NULL;
 	if (!fp) fp = (PFN_vkAllocateMemory)g_vkGetDeviceProcAddr(g_vk_device, "vkAllocateMemory");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkAllocateMemory\n"); return VK_ERROR_INITIALIZATION_FAILED; }
 	return fp(device, pAllocateInfo, pAllocator, pMemory);
 }
 
@@ -54,6 +60,7 @@ VkResult vkBeginCommandBuffer(VkCommandBuffer commandBuffer, const VkCommandBuff
 {
 	static PFN_vkBeginCommandBuffer fp = NULL;
 	if (!fp) fp = (PFN_vkBeginCommandBuffer)g_vkGetDeviceProcAddr(g_vk_device, "vkBeginCommandBuffer");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkBeginCommandBuffer\n"); return VK_ERROR_INITIALIZATION_FAILED; }
 	return fp(commandBuffer, pBeginInfo);
 }
 
@@ -61,6 +68,7 @@ VkResult vkBindBufferMemory(VkDevice device, VkBuffer buffer, VkDeviceMemory mem
 {
 	static PFN_vkBindBufferMemory fp = NULL;
 	if (!fp) fp = (PFN_vkBindBufferMemory)g_vkGetDeviceProcAddr(g_vk_device, "vkBindBufferMemory");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkBindBufferMemory\n"); return VK_ERROR_INITIALIZATION_FAILED; }
 	return fp(device, buffer, memory, memoryOffset);
 }
 
@@ -68,6 +76,7 @@ VkResult vkBindImageMemory(VkDevice device, VkImage image, VkDeviceMemory memory
 {
 	static PFN_vkBindImageMemory fp = NULL;
 	if (!fp) fp = (PFN_vkBindImageMemory)g_vkGetDeviceProcAddr(g_vk_device, "vkBindImageMemory");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkBindImageMemory\n"); return VK_ERROR_INITIALIZATION_FAILED; }
 	return fp(device, image, memory, memoryOffset);
 }
 
@@ -75,6 +84,7 @@ void vkCmdBeginRenderPass(VkCommandBuffer commandBuffer, const VkRenderPassBegin
 {
 	static PFN_vkCmdBeginRenderPass fp = NULL;
 	if (!fp) fp = (PFN_vkCmdBeginRenderPass)g_vkGetDeviceProcAddr(g_vk_device, "vkCmdBeginRenderPass");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkCmdBeginRenderPass\n"); return; }
 	fp(commandBuffer, pRenderPassBegin, contents);
 }
 
@@ -82,6 +92,7 @@ void vkCmdBindDescriptorSets(VkCommandBuffer commandBuffer, VkPipelineBindPoint 
 {
 	static PFN_vkCmdBindDescriptorSets fp = NULL;
 	if (!fp) fp = (PFN_vkCmdBindDescriptorSets)g_vkGetDeviceProcAddr(g_vk_device, "vkCmdBindDescriptorSets");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkCmdBindDescriptorSets\n"); return; }
 	fp(commandBuffer, pipelineBindPoint, layout, firstSet, descriptorSetCount, pDescriptorSets, dynamicOffsetCount, pDynamicOffsets);
 }
 
@@ -89,6 +100,7 @@ void vkCmdBindIndexBuffer(VkCommandBuffer commandBuffer, VkBuffer buffer, VkDevi
 {
 	static PFN_vkCmdBindIndexBuffer fp = NULL;
 	if (!fp) fp = (PFN_vkCmdBindIndexBuffer)g_vkGetDeviceProcAddr(g_vk_device, "vkCmdBindIndexBuffer");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkCmdBindIndexBuffer\n"); return; }
 	fp(commandBuffer, buffer, offset, indexType);
 }
 
@@ -96,6 +108,7 @@ void vkCmdBindVertexBuffers(VkCommandBuffer commandBuffer, uint32_t firstBinding
 {
 	static PFN_vkCmdBindVertexBuffers fp = NULL;
 	if (!fp) fp = (PFN_vkCmdBindVertexBuffers)g_vkGetDeviceProcAddr(g_vk_device, "vkCmdBindVertexBuffers");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkCmdBindVertexBuffers\n"); return; }
 	fp(commandBuffer, firstBinding, bindingCount, pBuffers, pOffsets);
 }
 
@@ -103,6 +116,7 @@ void vkCmdBlitImage(VkCommandBuffer commandBuffer, VkImage srcImage, VkImageLayo
 {
 	static PFN_vkCmdBlitImage fp = NULL;
 	if (!fp) fp = (PFN_vkCmdBlitImage)g_vkGetDeviceProcAddr(g_vk_device, "vkCmdBlitImage");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkCmdBlitImage\n"); return; }
 	fp(commandBuffer, srcImage, srcImageLayout, dstImage, dstImageLayout, regionCount, pRegions, filter);
 }
 
@@ -110,6 +124,7 @@ void vkCmdCopyBuffer(VkCommandBuffer commandBuffer, VkBuffer srcBuffer, VkBuffer
 {
 	static PFN_vkCmdCopyBuffer fp = NULL;
 	if (!fp) fp = (PFN_vkCmdCopyBuffer)g_vkGetDeviceProcAddr(g_vk_device, "vkCmdCopyBuffer");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkCmdCopyBuffer\n"); return; }
 	fp(commandBuffer, srcBuffer, dstBuffer, regionCount, pRegions);
 }
 
@@ -117,6 +132,7 @@ void vkCmdCopyBufferToImage(VkCommandBuffer commandBuffer, VkBuffer srcBuffer, V
 {
 	static PFN_vkCmdCopyBufferToImage fp = NULL;
 	if (!fp) fp = (PFN_vkCmdCopyBufferToImage)g_vkGetDeviceProcAddr(g_vk_device, "vkCmdCopyBufferToImage");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkCmdCopyBufferToImage\n"); return; }
 	fp(commandBuffer, srcBuffer, dstImage, dstImageLayout, regionCount, pRegions);
 }
 
@@ -124,6 +140,7 @@ void vkCmdCopyImageToBuffer(VkCommandBuffer commandBuffer, VkImage srcImage, VkI
 {
 	static PFN_vkCmdCopyImageToBuffer fp = NULL;
 	if (!fp) fp = (PFN_vkCmdCopyImageToBuffer)g_vkGetDeviceProcAddr(g_vk_device, "vkCmdCopyImageToBuffer");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkCmdCopyImageToBuffer\n"); return; }
 	fp(commandBuffer, srcImage, srcImageLayout, dstBuffer, regionCount, pRegions);
 }
 
@@ -131,6 +148,7 @@ void vkCmdDispatch(VkCommandBuffer commandBuffer, uint32_t groupCountX, uint32_t
 {
 	static PFN_vkCmdDispatch fp = NULL;
 	if (!fp) fp = (PFN_vkCmdDispatch)g_vkGetDeviceProcAddr(g_vk_device, "vkCmdDispatch");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkCmdDispatch\n"); return; }
 	fp(commandBuffer, groupCountX, groupCountY, groupCountZ);
 }
 
@@ -138,6 +156,7 @@ void vkCmdDraw(VkCommandBuffer commandBuffer, uint32_t vertexCount, uint32_t ins
 {
 	static PFN_vkCmdDraw fp = NULL;
 	if (!fp) fp = (PFN_vkCmdDraw)g_vkGetDeviceProcAddr(g_vk_device, "vkCmdDraw");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkCmdDraw\n"); return; }
 	fp(commandBuffer, vertexCount, instanceCount, firstVertex, firstInstance);
 }
 
@@ -145,6 +164,7 @@ void vkCmdDrawIndexed(VkCommandBuffer commandBuffer, uint32_t indexCount, uint32
 {
 	static PFN_vkCmdDrawIndexed fp = NULL;
 	if (!fp) fp = (PFN_vkCmdDrawIndexed)g_vkGetDeviceProcAddr(g_vk_device, "vkCmdDrawIndexed");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkCmdDrawIndexed\n"); return; }
 	fp(commandBuffer, indexCount, instanceCount, firstIndex, vertexOffset, firstInstance);
 }
 
@@ -152,6 +172,7 @@ void vkCmdEndRenderPass(VkCommandBuffer commandBuffer)
 {
 	static PFN_vkCmdEndRenderPass fp = NULL;
 	if (!fp) fp = (PFN_vkCmdEndRenderPass)g_vkGetDeviceProcAddr(g_vk_device, "vkCmdEndRenderPass");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkCmdEndRenderPass\n"); return; }
 	fp(commandBuffer);
 }
 
@@ -159,6 +180,7 @@ void vkCmdExecuteCommands(VkCommandBuffer commandBuffer, uint32_t commandBufferC
 {
 	static PFN_vkCmdExecuteCommands fp = NULL;
 	if (!fp) fp = (PFN_vkCmdExecuteCommands)g_vkGetDeviceProcAddr(g_vk_device, "vkCmdExecuteCommands");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkCmdExecuteCommands\n"); return; }
 	fp(commandBuffer, commandBufferCount, pCommandBuffers);
 }
 
@@ -166,6 +188,7 @@ void vkCmdNextSubpass(VkCommandBuffer commandBuffer, VkSubpassContents contents)
 {
 	static PFN_vkCmdNextSubpass fp = NULL;
 	if (!fp) fp = (PFN_vkCmdNextSubpass)g_vkGetDeviceProcAddr(g_vk_device, "vkCmdNextSubpass");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkCmdNextSubpass\n"); return; }
 	fp(commandBuffer, contents);
 }
 
@@ -173,6 +196,7 @@ void vkCmdPipelineBarrier(VkCommandBuffer commandBuffer, VkPipelineStageFlags sr
 {
 	static PFN_vkCmdPipelineBarrier fp = NULL;
 	if (!fp) fp = (PFN_vkCmdPipelineBarrier)g_vkGetDeviceProcAddr(g_vk_device, "vkCmdPipelineBarrier");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkCmdPipelineBarrier\n"); return; }
 	fp(commandBuffer, srcStageMask, dstStageMask, dependencyFlags, memoryBarrierCount, pMemoryBarriers, bufferMemoryBarrierCount, pBufferMemoryBarriers, imageMemoryBarrierCount, pImageMemoryBarriers);
 }
 
@@ -180,6 +204,7 @@ void vkCmdSetDepthBias(VkCommandBuffer commandBuffer, float depthBiasConstantFac
 {
 	static PFN_vkCmdSetDepthBias fp = NULL;
 	if (!fp) fp = (PFN_vkCmdSetDepthBias)g_vkGetDeviceProcAddr(g_vk_device, "vkCmdSetDepthBias");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkCmdSetDepthBias\n"); return; }
 	fp(commandBuffer, depthBiasConstantFactor, depthBiasClamp, depthBiasSlopeFactor);
 }
 
@@ -187,6 +212,7 @@ void vkCmdSetScissor(VkCommandBuffer commandBuffer, uint32_t firstScissor, uint3
 {
 	static PFN_vkCmdSetScissor fp = NULL;
 	if (!fp) fp = (PFN_vkCmdSetScissor)g_vkGetDeviceProcAddr(g_vk_device, "vkCmdSetScissor");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkCmdSetScissor\n"); return; }
 	fp(commandBuffer, firstScissor, scissorCount, pScissors);
 }
 
@@ -194,6 +220,7 @@ void vkCmdSetViewport(VkCommandBuffer commandBuffer, uint32_t firstViewport, uin
 {
 	static PFN_vkCmdSetViewport fp = NULL;
 	if (!fp) fp = (PFN_vkCmdSetViewport)g_vkGetDeviceProcAddr(g_vk_device, "vkCmdSetViewport");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkCmdSetViewport\n"); return; }
 	fp(commandBuffer, firstViewport, viewportCount, pViewports);
 }
 
@@ -201,6 +228,7 @@ VkResult vkCreateBuffer(VkDevice device, const VkBufferCreateInfo* pCreateInfo, 
 {
 	static PFN_vkCreateBuffer fp = NULL;
 	if (!fp) fp = (PFN_vkCreateBuffer)g_vkGetDeviceProcAddr(g_vk_device, "vkCreateBuffer");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkCreateBuffer\n"); return VK_ERROR_INITIALIZATION_FAILED; }
 	return fp(device, pCreateInfo, pAllocator, pBuffer);
 }
 
@@ -208,6 +236,7 @@ VkResult vkCreateBufferView(VkDevice device, const VkBufferViewCreateInfo* pCrea
 {
 	static PFN_vkCreateBufferView fp = NULL;
 	if (!fp) fp = (PFN_vkCreateBufferView)g_vkGetDeviceProcAddr(g_vk_device, "vkCreateBufferView");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkCreateBufferView\n"); return VK_ERROR_INITIALIZATION_FAILED; }
 	return fp(device, pCreateInfo, pAllocator, pView);
 }
 
@@ -215,6 +244,7 @@ VkResult vkCreateCommandPool(VkDevice device, const VkCommandPoolCreateInfo* pCr
 {
 	static PFN_vkCreateCommandPool fp = NULL;
 	if (!fp) fp = (PFN_vkCreateCommandPool)g_vkGetDeviceProcAddr(g_vk_device, "vkCreateCommandPool");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkCreateCommandPool\n"); return VK_ERROR_INITIALIZATION_FAILED; }
 	return fp(device, pCreateInfo, pAllocator, pCommandPool);
 }
 
@@ -222,6 +252,7 @@ VkResult vkCreateComputePipelines(VkDevice device, VkPipelineCache pipelineCache
 {
 	static PFN_vkCreateComputePipelines fp = NULL;
 	if (!fp) fp = (PFN_vkCreateComputePipelines)g_vkGetDeviceProcAddr(g_vk_device, "vkCreateComputePipelines");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkCreateComputePipelines\n"); return VK_ERROR_INITIALIZATION_FAILED; }
 	return fp(device, pipelineCache, createInfoCount, pCreateInfos, pAllocator, pPipelines);
 }
 
@@ -229,6 +260,7 @@ VkResult vkCreateDescriptorPool(VkDevice device, const VkDescriptorPoolCreateInf
 {
 	static PFN_vkCreateDescriptorPool fp = NULL;
 	if (!fp) fp = (PFN_vkCreateDescriptorPool)g_vkGetDeviceProcAddr(g_vk_device, "vkCreateDescriptorPool");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkCreateDescriptorPool\n"); return VK_ERROR_INITIALIZATION_FAILED; }
 	return fp(device, pCreateInfo, pAllocator, pDescriptorPool);
 }
 
@@ -236,6 +268,7 @@ VkResult vkCreateDescriptorSetLayout(VkDevice device, const VkDescriptorSetLayou
 {
 	static PFN_vkCreateDescriptorSetLayout fp = NULL;
 	if (!fp) fp = (PFN_vkCreateDescriptorSetLayout)g_vkGetDeviceProcAddr(g_vk_device, "vkCreateDescriptorSetLayout");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkCreateDescriptorSetLayout\n"); return VK_ERROR_INITIALIZATION_FAILED; }
 	return fp(device, pCreateInfo, pAllocator, pSetLayout);
 }
 
@@ -243,6 +276,7 @@ VkResult vkCreateDevice(VkPhysicalDevice physicalDevice, const VkDeviceCreateInf
 {
 	static PFN_vkCreateDevice fp = NULL;
 	if (!fp) fp = (PFN_vkCreateDevice)vkGetInstanceProcAddr(g_vk_instance, "vkCreateDevice");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkCreateDevice\n"); return VK_ERROR_INITIALIZATION_FAILED; }
 	return fp(physicalDevice, pCreateInfo, pAllocator, pDevice);
 }
 
@@ -250,6 +284,7 @@ VkResult vkCreateFence(VkDevice device, const VkFenceCreateInfo* pCreateInfo, co
 {
 	static PFN_vkCreateFence fp = NULL;
 	if (!fp) fp = (PFN_vkCreateFence)g_vkGetDeviceProcAddr(g_vk_device, "vkCreateFence");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkCreateFence\n"); return VK_ERROR_INITIALIZATION_FAILED; }
 	return fp(device, pCreateInfo, pAllocator, pFence);
 }
 
@@ -257,6 +292,7 @@ VkResult vkCreateFramebuffer(VkDevice device, const VkFramebufferCreateInfo* pCr
 {
 	static PFN_vkCreateFramebuffer fp = NULL;
 	if (!fp) fp = (PFN_vkCreateFramebuffer)g_vkGetDeviceProcAddr(g_vk_device, "vkCreateFramebuffer");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkCreateFramebuffer\n"); return VK_ERROR_INITIALIZATION_FAILED; }
 	return fp(device, pCreateInfo, pAllocator, pFramebuffer);
 }
 
@@ -264,6 +300,7 @@ VkResult vkCreateGraphicsPipelines(VkDevice device, VkPipelineCache pipelineCach
 {
 	static PFN_vkCreateGraphicsPipelines fp = NULL;
 	if (!fp) fp = (PFN_vkCreateGraphicsPipelines)g_vkGetDeviceProcAddr(g_vk_device, "vkCreateGraphicsPipelines");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkCreateGraphicsPipelines\n"); return VK_ERROR_INITIALIZATION_FAILED; }
 	return fp(device, pipelineCache, createInfoCount, pCreateInfos, pAllocator, pPipelines);
 }
 
@@ -271,6 +308,7 @@ VkResult vkCreateImage(VkDevice device, const VkImageCreateInfo* pCreateInfo, co
 {
 	static PFN_vkCreateImage fp = NULL;
 	if (!fp) fp = (PFN_vkCreateImage)g_vkGetDeviceProcAddr(g_vk_device, "vkCreateImage");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkCreateImage\n"); return VK_ERROR_INITIALIZATION_FAILED; }
 	return fp(device, pCreateInfo, pAllocator, pImage);
 }
 
@@ -278,6 +316,7 @@ VkResult vkCreateImageView(VkDevice device, const VkImageViewCreateInfo* pCreate
 {
 	static PFN_vkCreateImageView fp = NULL;
 	if (!fp) fp = (PFN_vkCreateImageView)g_vkGetDeviceProcAddr(g_vk_device, "vkCreateImageView");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkCreateImageView\n"); return VK_ERROR_INITIALIZATION_FAILED; }
 	return fp(device, pCreateInfo, pAllocator, pView);
 }
 
@@ -285,6 +324,7 @@ VkResult vkCreateInstance(const VkInstanceCreateInfo* pCreateInfo, const VkAlloc
 {
 	static PFN_vkCreateInstance fp = NULL;
 	if (!fp) fp = (PFN_vkCreateInstance)vkGetInstanceProcAddr(NULL, "vkCreateInstance");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkCreateInstance\n"); return VK_ERROR_INITIALIZATION_FAILED; }
 	return fp(pCreateInfo, pAllocator, pInstance);
 }
 
@@ -292,6 +332,7 @@ VkResult vkCreatePipelineLayout(VkDevice device, const VkPipelineLayoutCreateInf
 {
 	static PFN_vkCreatePipelineLayout fp = NULL;
 	if (!fp) fp = (PFN_vkCreatePipelineLayout)g_vkGetDeviceProcAddr(g_vk_device, "vkCreatePipelineLayout");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkCreatePipelineLayout\n"); return VK_ERROR_INITIALIZATION_FAILED; }
 	return fp(device, pCreateInfo, pAllocator, pPipelineLayout);
 }
 
@@ -299,6 +340,7 @@ VkResult vkCreateRenderPass(VkDevice device, const VkRenderPassCreateInfo* pCrea
 {
 	static PFN_vkCreateRenderPass fp = NULL;
 	if (!fp) fp = (PFN_vkCreateRenderPass)g_vkGetDeviceProcAddr(g_vk_device, "vkCreateRenderPass");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkCreateRenderPass\n"); return VK_ERROR_INITIALIZATION_FAILED; }
 	return fp(device, pCreateInfo, pAllocator, pRenderPass);
 }
 
@@ -306,6 +348,7 @@ VkResult vkCreateSampler(VkDevice device, const VkSamplerCreateInfo* pCreateInfo
 {
 	static PFN_vkCreateSampler fp = NULL;
 	if (!fp) fp = (PFN_vkCreateSampler)g_vkGetDeviceProcAddr(g_vk_device, "vkCreateSampler");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkCreateSampler\n"); return VK_ERROR_INITIALIZATION_FAILED; }
 	return fp(device, pCreateInfo, pAllocator, pSampler);
 }
 
@@ -313,6 +356,7 @@ VkResult vkCreateSemaphore(VkDevice device, const VkSemaphoreCreateInfo* pCreate
 {
 	static PFN_vkCreateSemaphore fp = NULL;
 	if (!fp) fp = (PFN_vkCreateSemaphore)g_vkGetDeviceProcAddr(g_vk_device, "vkCreateSemaphore");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkCreateSemaphore\n"); return VK_ERROR_INITIALIZATION_FAILED; }
 	return fp(device, pCreateInfo, pAllocator, pSemaphore);
 }
 
@@ -320,6 +364,7 @@ VkResult vkCreateShaderModule(VkDevice device, const VkShaderModuleCreateInfo* p
 {
 	static PFN_vkCreateShaderModule fp = NULL;
 	if (!fp) fp = (PFN_vkCreateShaderModule)g_vkGetDeviceProcAddr(g_vk_device, "vkCreateShaderModule");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkCreateShaderModule\n"); return VK_ERROR_INITIALIZATION_FAILED; }
 	return fp(device, pCreateInfo, pAllocator, pShaderModule);
 }
 
@@ -327,6 +372,7 @@ void vkDestroyBuffer(VkDevice device, VkBuffer buffer, const VkAllocationCallbac
 {
 	static PFN_vkDestroyBuffer fp = NULL;
 	if (!fp) fp = (PFN_vkDestroyBuffer)g_vkGetDeviceProcAddr(g_vk_device, "vkDestroyBuffer");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkDestroyBuffer\n"); return; }
 	fp(device, buffer, pAllocator);
 }
 
@@ -334,6 +380,7 @@ void vkDestroyFramebuffer(VkDevice device, VkFramebuffer framebuffer, const VkAl
 {
 	static PFN_vkDestroyFramebuffer fp = NULL;
 	if (!fp) fp = (PFN_vkDestroyFramebuffer)g_vkGetDeviceProcAddr(g_vk_device, "vkDestroyFramebuffer");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkDestroyFramebuffer\n"); return; }
 	fp(device, framebuffer, pAllocator);
 }
 
@@ -341,6 +388,7 @@ void vkDestroyImage(VkDevice device, VkImage image, const VkAllocationCallbacks*
 {
 	static PFN_vkDestroyImage fp = NULL;
 	if (!fp) fp = (PFN_vkDestroyImage)g_vkGetDeviceProcAddr(g_vk_device, "vkDestroyImage");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkDestroyImage\n"); return; }
 	fp(device, image, pAllocator);
 }
 
@@ -348,6 +396,7 @@ void vkDestroyImageView(VkDevice device, VkImageView imageView, const VkAllocati
 {
 	static PFN_vkDestroyImageView fp = NULL;
 	if (!fp) fp = (PFN_vkDestroyImageView)g_vkGetDeviceProcAddr(g_vk_device, "vkDestroyImageView");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkDestroyImageView\n"); return; }
 	fp(device, imageView, pAllocator);
 }
 
@@ -355,6 +404,7 @@ void vkDestroyPipeline(VkDevice device, VkPipeline pipeline, const VkAllocationC
 {
 	static PFN_vkDestroyPipeline fp = NULL;
 	if (!fp) fp = (PFN_vkDestroyPipeline)g_vkGetDeviceProcAddr(g_vk_device, "vkDestroyPipeline");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkDestroyPipeline\n"); return; }
 	fp(device, pipeline, pAllocator);
 }
 
@@ -362,6 +412,7 @@ void vkDestroyRenderPass(VkDevice device, VkRenderPass renderPass, const VkAlloc
 {
 	static PFN_vkDestroyRenderPass fp = NULL;
 	if (!fp) fp = (PFN_vkDestroyRenderPass)g_vkGetDeviceProcAddr(g_vk_device, "vkDestroyRenderPass");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkDestroyRenderPass\n"); return; }
 	fp(device, renderPass, pAllocator);
 }
 
@@ -369,6 +420,7 @@ void vkDestroySampler(VkDevice device, VkSampler sampler, const VkAllocationCall
 {
 	static PFN_vkDestroySampler fp = NULL;
 	if (!fp) fp = (PFN_vkDestroySampler)g_vkGetDeviceProcAddr(g_vk_device, "vkDestroySampler");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkDestroySampler\n"); return; }
 	fp(device, sampler, pAllocator);
 }
 
@@ -376,6 +428,7 @@ void vkDestroySemaphore(VkDevice device, VkSemaphore semaphore, const VkAllocati
 {
 	static PFN_vkDestroySemaphore fp = NULL;
 	if (!fp) fp = (PFN_vkDestroySemaphore)g_vkGetDeviceProcAddr(g_vk_device, "vkDestroySemaphore");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkDestroySemaphore\n"); return; }
 	fp(device, semaphore, pAllocator);
 }
 
@@ -383,6 +436,7 @@ void vkDestroyShaderModule(VkDevice device, VkShaderModule shaderModule, const V
 {
 	static PFN_vkDestroyShaderModule fp = NULL;
 	if (!fp) fp = (PFN_vkDestroyShaderModule)g_vkGetDeviceProcAddr(g_vk_device, "vkDestroyShaderModule");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkDestroyShaderModule\n"); return; }
 	fp(device, shaderModule, pAllocator);
 }
 
@@ -390,6 +444,7 @@ VkResult vkDeviceWaitIdle(VkDevice device)
 {
 	static PFN_vkDeviceWaitIdle fp = NULL;
 	if (!fp) fp = (PFN_vkDeviceWaitIdle)g_vkGetDeviceProcAddr(g_vk_device, "vkDeviceWaitIdle");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkDeviceWaitIdle\n"); return VK_ERROR_INITIALIZATION_FAILED; }
 	return fp(device);
 }
 
@@ -397,6 +452,7 @@ VkResult vkEndCommandBuffer(VkCommandBuffer commandBuffer)
 {
 	static PFN_vkEndCommandBuffer fp = NULL;
 	if (!fp) fp = (PFN_vkEndCommandBuffer)g_vkGetDeviceProcAddr(g_vk_device, "vkEndCommandBuffer");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkEndCommandBuffer\n"); return VK_ERROR_INITIALIZATION_FAILED; }
 	return fp(commandBuffer);
 }
 
@@ -404,6 +460,7 @@ VkResult vkEnumerateDeviceExtensionProperties(VkPhysicalDevice physicalDevice, c
 {
 	static PFN_vkEnumerateDeviceExtensionProperties fp = NULL;
 	if (!fp) fp = (PFN_vkEnumerateDeviceExtensionProperties)vkGetInstanceProcAddr(g_vk_instance, "vkEnumerateDeviceExtensionProperties");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkEnumerateDeviceExtensionProperties\n"); return VK_ERROR_INITIALIZATION_FAILED; }
 	return fp(physicalDevice, pLayerName, pPropertyCount, pProperties);
 }
 
@@ -411,6 +468,7 @@ VkResult vkEnumerateInstanceExtensionProperties(const char* pLayerName, uint32_t
 {
 	static PFN_vkEnumerateInstanceExtensionProperties fp = NULL;
 	if (!fp) fp = (PFN_vkEnumerateInstanceExtensionProperties)vkGetInstanceProcAddr(NULL, "vkEnumerateInstanceExtensionProperties");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkEnumerateInstanceExtensionProperties\n"); return VK_ERROR_INITIALIZATION_FAILED; }
 	return fp(pLayerName, pPropertyCount, pProperties);
 }
 
@@ -418,6 +476,7 @@ VkResult vkEnumeratePhysicalDevices(VkInstance instance, uint32_t* pPhysicalDevi
 {
 	static PFN_vkEnumeratePhysicalDevices fp = NULL;
 	if (!fp) fp = (PFN_vkEnumeratePhysicalDevices)vkGetInstanceProcAddr(g_vk_instance, "vkEnumeratePhysicalDevices");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkEnumeratePhysicalDevices\n"); return VK_ERROR_INITIALIZATION_FAILED; }
 	return fp(instance, pPhysicalDeviceCount, pPhysicalDevices);
 }
 
@@ -425,6 +484,7 @@ VkResult vkFlushMappedMemoryRanges(VkDevice device, uint32_t memoryRangeCount, c
 {
 	static PFN_vkFlushMappedMemoryRanges fp = NULL;
 	if (!fp) fp = (PFN_vkFlushMappedMemoryRanges)g_vkGetDeviceProcAddr(g_vk_device, "vkFlushMappedMemoryRanges");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkFlushMappedMemoryRanges\n"); return VK_ERROR_INITIALIZATION_FAILED; }
 	return fp(device, memoryRangeCount, pMemoryRanges);
 }
 
@@ -432,6 +492,7 @@ VkResult vkFreeDescriptorSets(VkDevice device, VkDescriptorPool descriptorPool, 
 {
 	static PFN_vkFreeDescriptorSets fp = NULL;
 	if (!fp) fp = (PFN_vkFreeDescriptorSets)g_vkGetDeviceProcAddr(g_vk_device, "vkFreeDescriptorSets");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkFreeDescriptorSets\n"); return VK_ERROR_INITIALIZATION_FAILED; }
 	return fp(device, descriptorPool, descriptorSetCount, pDescriptorSets);
 }
 
@@ -439,6 +500,7 @@ void vkFreeMemory(VkDevice device, VkDeviceMemory memory, const VkAllocationCall
 {
 	static PFN_vkFreeMemory fp = NULL;
 	if (!fp) fp = (PFN_vkFreeMemory)g_vkGetDeviceProcAddr(g_vk_device, "vkFreeMemory");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkFreeMemory\n"); return; }
 	fp(device, memory, pAllocator);
 }
 
@@ -446,6 +508,7 @@ void vkGetBufferMemoryRequirements(VkDevice device, VkBuffer buffer, VkMemoryReq
 {
 	static PFN_vkGetBufferMemoryRequirements fp = NULL;
 	if (!fp) fp = (PFN_vkGetBufferMemoryRequirements)g_vkGetDeviceProcAddr(g_vk_device, "vkGetBufferMemoryRequirements");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkGetBufferMemoryRequirements\n"); return; }
 	fp(device, buffer, pMemoryRequirements);
 }
 
@@ -453,6 +516,7 @@ void vkGetDeviceQueue(VkDevice device, uint32_t queueFamilyIndex, uint32_t queue
 {
 	static PFN_vkGetDeviceQueue fp = NULL;
 	if (!fp) fp = (PFN_vkGetDeviceQueue)g_vkGetDeviceProcAddr(g_vk_device, "vkGetDeviceQueue");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkGetDeviceQueue\n"); return; }
 	fp(device, queueFamilyIndex, queueIndex, pQueue);
 }
 
@@ -460,6 +524,7 @@ void vkGetImageMemoryRequirements(VkDevice device, VkImage image, VkMemoryRequir
 {
 	static PFN_vkGetImageMemoryRequirements fp = NULL;
 	if (!fp) fp = (PFN_vkGetImageMemoryRequirements)g_vkGetDeviceProcAddr(g_vk_device, "vkGetImageMemoryRequirements");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkGetImageMemoryRequirements\n"); return; }
 	fp(device, image, pMemoryRequirements);
 }
 
@@ -467,6 +532,7 @@ void vkGetPhysicalDeviceFeatures(VkPhysicalDevice physicalDevice, VkPhysicalDevi
 {
 	static PFN_vkGetPhysicalDeviceFeatures fp = NULL;
 	if (!fp) fp = (PFN_vkGetPhysicalDeviceFeatures)vkGetInstanceProcAddr(g_vk_instance, "vkGetPhysicalDeviceFeatures");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkGetPhysicalDeviceFeatures\n"); return; }
 	fp(physicalDevice, pFeatures);
 }
 
@@ -474,6 +540,7 @@ void vkGetPhysicalDeviceFormatProperties(VkPhysicalDevice physicalDevice, VkForm
 {
 	static PFN_vkGetPhysicalDeviceFormatProperties fp = NULL;
 	if (!fp) fp = (PFN_vkGetPhysicalDeviceFormatProperties)vkGetInstanceProcAddr(g_vk_instance, "vkGetPhysicalDeviceFormatProperties");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkGetPhysicalDeviceFormatProperties\n"); return; }
 	fp(physicalDevice, format, pFormatProperties);
 }
 
@@ -481,6 +548,7 @@ VkResult vkGetPhysicalDeviceImageFormatProperties(VkPhysicalDevice physicalDevic
 {
 	static PFN_vkGetPhysicalDeviceImageFormatProperties fp = NULL;
 	if (!fp) fp = (PFN_vkGetPhysicalDeviceImageFormatProperties)vkGetInstanceProcAddr(g_vk_instance, "vkGetPhysicalDeviceImageFormatProperties");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkGetPhysicalDeviceImageFormatProperties\n"); return VK_ERROR_INITIALIZATION_FAILED; }
 	return fp(physicalDevice, format, type, tiling, usage, flags, pImageFormatProperties);
 }
 
@@ -488,6 +556,7 @@ void vkGetPhysicalDeviceMemoryProperties(VkPhysicalDevice physicalDevice, VkPhys
 {
 	static PFN_vkGetPhysicalDeviceMemoryProperties fp = NULL;
 	if (!fp) fp = (PFN_vkGetPhysicalDeviceMemoryProperties)vkGetInstanceProcAddr(g_vk_instance, "vkGetPhysicalDeviceMemoryProperties");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkGetPhysicalDeviceMemoryProperties\n"); return; }
 	fp(physicalDevice, pMemoryProperties);
 }
 
@@ -495,6 +564,7 @@ void vkGetPhysicalDeviceProperties(VkPhysicalDevice physicalDevice, VkPhysicalDe
 {
 	static PFN_vkGetPhysicalDeviceProperties fp = NULL;
 	if (!fp) fp = (PFN_vkGetPhysicalDeviceProperties)vkGetInstanceProcAddr(g_vk_instance, "vkGetPhysicalDeviceProperties");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkGetPhysicalDeviceProperties\n"); return; }
 	fp(physicalDevice, pProperties);
 }
 
@@ -502,6 +572,7 @@ void vkGetPhysicalDeviceQueueFamilyProperties(VkPhysicalDevice physicalDevice, u
 {
 	static PFN_vkGetPhysicalDeviceQueueFamilyProperties fp = NULL;
 	if (!fp) fp = (PFN_vkGetPhysicalDeviceQueueFamilyProperties)vkGetInstanceProcAddr(g_vk_instance, "vkGetPhysicalDeviceQueueFamilyProperties");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkGetPhysicalDeviceQueueFamilyProperties\n"); return; }
 	fp(physicalDevice, pQueueFamilyPropertyCount, pQueueFamilyProperties);
 }
 
@@ -509,6 +580,7 @@ VkResult vkInvalidateMappedMemoryRanges(VkDevice device, uint32_t memoryRangeCou
 {
 	static PFN_vkInvalidateMappedMemoryRanges fp = NULL;
 	if (!fp) fp = (PFN_vkInvalidateMappedMemoryRanges)g_vkGetDeviceProcAddr(g_vk_device, "vkInvalidateMappedMemoryRanges");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkInvalidateMappedMemoryRanges\n"); return VK_ERROR_INITIALIZATION_FAILED; }
 	return fp(device, memoryRangeCount, pMemoryRanges);
 }
 
@@ -516,6 +588,7 @@ VkResult vkMapMemory(VkDevice device, VkDeviceMemory memory, VkDeviceSize offset
 {
 	static PFN_vkMapMemory fp = NULL;
 	if (!fp) fp = (PFN_vkMapMemory)g_vkGetDeviceProcAddr(g_vk_device, "vkMapMemory");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkMapMemory\n"); return VK_ERROR_INITIALIZATION_FAILED; }
 	return fp(device, memory, offset, size, flags, ppData);
 }
 
@@ -523,6 +596,7 @@ VkResult vkQueueSubmit(VkQueue queue, uint32_t submitCount, const VkSubmitInfo* 
 {
 	static PFN_vkQueueSubmit fp = NULL;
 	if (!fp) fp = (PFN_vkQueueSubmit)g_vkGetDeviceProcAddr(g_vk_device, "vkQueueSubmit");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkQueueSubmit\n"); return VK_ERROR_INITIALIZATION_FAILED; }
 	return fp(queue, submitCount, pSubmits, fence);
 }
 
@@ -530,6 +604,7 @@ VkResult vkResetFences(VkDevice device, uint32_t fenceCount, const VkFence* pFen
 {
 	static PFN_vkResetFences fp = NULL;
 	if (!fp) fp = (PFN_vkResetFences)g_vkGetDeviceProcAddr(g_vk_device, "vkResetFences");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkResetFences\n"); return VK_ERROR_INITIALIZATION_FAILED; }
 	return fp(device, fenceCount, pFences);
 }
 
@@ -537,6 +612,7 @@ void vkUnmapMemory(VkDevice device, VkDeviceMemory memory)
 {
 	static PFN_vkUnmapMemory fp = NULL;
 	if (!fp) fp = (PFN_vkUnmapMemory)g_vkGetDeviceProcAddr(g_vk_device, "vkUnmapMemory");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkUnmapMemory\n"); return; }
 	fp(device, memory);
 }
 
@@ -544,6 +620,7 @@ void vkUpdateDescriptorSets(VkDevice device, uint32_t descriptorWriteCount, cons
 {
 	static PFN_vkUpdateDescriptorSets fp = NULL;
 	if (!fp) fp = (PFN_vkUpdateDescriptorSets)g_vkGetDeviceProcAddr(g_vk_device, "vkUpdateDescriptorSets");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkUpdateDescriptorSets\n"); return; }
 	fp(device, descriptorWriteCount, pDescriptorWrites, descriptorCopyCount, pDescriptorCopies);
 }
 
@@ -551,5 +628,6 @@ VkResult vkWaitForFences(VkDevice device, uint32_t fenceCount, const VkFence* pF
 {
 	static PFN_vkWaitForFences fp = NULL;
 	if (!fp) fp = (PFN_vkWaitForFences)g_vkGetDeviceProcAddr(g_vk_device, "vkWaitForFences");
+	if (!fp) { Sys_Printf("vktramp: UNRESOLVED vkWaitForFences\n"); return VK_ERROR_INITIALIZATION_FAILED; }
 	return fp(device, fenceCount, pFences, waitAll, timeout);
 }

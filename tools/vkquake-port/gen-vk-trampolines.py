@@ -124,10 +124,23 @@ def main():
         else:
             resolver = f'(PFN_{name})vkGetInstanceProcAddr(g_vk_instance, "{name}")'
 
+        # NULL-fp guard: if the ICD's vkGetDeviceProcAddr / vkGetInstanceProcAddr returns NULL
+        # for this command (i.e. V3DV doesn't expose it), calling fp() is a `blr` to 0 -> a
+        # pc=0 instruction-abort with NO usable LR (impossible to localize statically). Instead
+        # log the unresolved name and return a clean failure so the caller's error path fires.
+        # void cmds: bare return; VkResult cmds: VK_ERROR_INITIALIZATION_FAILED; other return
+        # types (none today): a zeroed value (VkBool32/PFN_*/handles all read as 0/NULL).
+        if is_void:
+            guard_ret = "return;"
+        elif ret == "VkResult":
+            guard_ret = "return VK_ERROR_INITIALIZATION_FAILED;"
+        else:
+            guard_ret = f"{{ {ret} z_; memset(&z_, 0, sizeof(z_)); return z_; }}"
         body.append(f"""{ret} {name}({decl_params})
 {{
 \tstatic {pfn} fp = NULL;
 \tif (!fp) fp = {resolver};
+\tif (!fp) {{ Sys_Printf("vktramp: UNRESOLVED {name}\\n"); {guard_ret} }}
 \t{'' if is_void else 'return '}fp({call_args});
 }}
 """)
@@ -149,8 +162,11 @@ def main():
 f" * {len(emitted)} commands trampolined. Regenerate when the directly-called set changes.\n"
 " */\n"
 "#include <vulkan/vulkan_core.h>\n"
+"#include <string.h>\n"
 "\n"
 "PFN_vkVoidFunction vkGetInstanceProcAddr(VkInstance instance, const char *pName);\n"
+"/* Diagnostic for the NULL-fp guard below (UART/console-reaching print from the engine). */\n"
+"extern void Sys_Printf(const char *fmt, ...);\n"
 "\n"
 "/* Published by the Vulkan vid shim (pl_phoenix_vk_vid.c) right after vkCreateInstance /\n"
 " * vkCreateDevice so the trampolines can resolve their real entrypoints. */\n"

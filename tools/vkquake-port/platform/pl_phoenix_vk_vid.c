@@ -336,6 +336,7 @@ static int create_render_resources (void)
 			Sys_Printf ("vkvid: vkCreateImageView -> %d\n", (int)err);
 			return 0;
 		}
+		Sys_Printf ("vkvid: rr: imageview ok\n");
 	}
 
 	/* (3) UI render pass: ONE color attachment, ONE subpass, samples=1, color_format. This is
@@ -375,6 +376,7 @@ static int create_render_resources (void)
 			Sys_Printf ("vkvid: vkCreateRenderPass(ui) -> %d\n", (int)err);
 			return 0;
 		}
+		Sys_Printf ("vkvid: rr: renderpass ok\n");
 	}
 
 	/* (4) Framebuffer wrapping the scanout view. */
@@ -393,6 +395,7 @@ static int create_render_resources (void)
 			Sys_Printf ("vkvid: vkCreateFramebuffer(ui) -> %d\n", (int)err);
 			return 0;
 		}
+		Sys_Printf ("vkvid: rr: framebuffer ok\n");
 	}
 
 	/* (5) Command pool + one PRIMARY command buffer for the per-frame record/submit. */
@@ -407,6 +410,7 @@ static int create_render_resources (void)
 			Sys_Printf ("vkvid: vkCreateCommandPool(gfx) -> %d\n", (int)err);
 			return 0;
 		}
+		Sys_Printf ("vkvid: rr: cmdpool ok\n");
 		VkCommandBufferAllocateInfo cbai = {
 			.sType				= VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
 			.commandPool		= gfx_command_pool,
@@ -418,6 +422,7 @@ static int create_render_resources (void)
 			Sys_Printf ("vkvid: vkAllocateCommandBuffers(gfx) -> %d\n", (int)err);
 			return 0;
 		}
+		Sys_Printf ("vkvid: rr: cmdbuf ok\n");
 	}
 
 	/* (6) The single SCBX_GUI command-buffer context the 2D draw path (SCR_DrawGUI) records into.
@@ -432,6 +437,7 @@ static int create_render_resources (void)
 		gui->render_pass_index = RENDER_PASS_INDEX_UI;
 		gui->subpass		  = 0;
 		vulkan_globals.secondary_cb_contexts[SCBX_GUI] = gui;
+		Sys_Printf ("vkvid: rr: gui-cbx ok\n");
 	}
 
 	/* (7) Build the basic UI pipelines by reusing the engine's own R_CreateBasicPipelines (now
@@ -440,10 +446,15 @@ static int create_render_resources (void)
 	 * exact vertex-input / blend / push-constant state the draw path expects — hand-authoring it
 	 * would risk a silent GPU hang. Requires basic_pipeline_layout (R_CreatePipelineLayouts, done
 	 * in VID_Init) + shader modules (created here, destroyed after). */
+	Sys_Printf ("vkvid: rr: calling R_CreateShaderModules\n");
 	R_CreateShaderModules ();
+	Sys_Printf ("vkvid: rr: shadermodules ok\n");
 	R_InitVertexAttributes ();
+	Sys_Printf ("vkvid: rr: vertexattrs ok\n");
 	R_CreateBasicPipelines ();
+	Sys_Printf ("vkvid: rr: pipelines ok\n");
 	R_DestroyShaderModules ();
+	Sys_Printf ("vkvid: rr: shadermodules destroyed\n");
 
 	vulkan_globals.color_clear_value.color.float32[0] = 0.0f;
 	vulkan_globals.color_clear_value.color.float32[1] = 0.0f;
@@ -610,6 +621,9 @@ qboolean GL_BeginRendering (qboolean use_tasks, task_handle_t *begin_rendering_t
 		VID_Restart (false);
 		vid.restart_next_frame = false;
 	}
+
+	if (!render_resources_created)
+		Sys_Printf ("vkvid: GL_BeginRendering: first frame, creating render resources\n");
 
 	/* Create render resources lazily on the first frame (matches upstream GL_BeginRendering, which
 	 * defers GL_CreateRenderResources to the first frame so the device/heaps are fully up). */
