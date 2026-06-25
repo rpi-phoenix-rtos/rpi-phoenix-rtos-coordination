@@ -18,16 +18,24 @@ ls /nfstest/bin            # REQUIRED first — warms the NFS dircache (see #156
 /nfstest/bin/startx        # xeyes on a black root
 ```
 
-## ❌ X11 `startx desktop` (twm + xeyes) — does NOT render (twm issue)
-The desktop mode launches cleanly (Xphoenix + fbcon-disable + mouse0 + twm + xeyes all start, per
-the UART log) but the HDMI keeps showing the **stale boot-console text** — the X root-clear never
-reaches fb0. Isolated by comparison: **xeyes-alone clears the root to black + blits (works); adding
-twm suppresses that full-screen blit.** The kdrive fbdev DDX blits only DAMAGED scanlines via
-lseek()+write() to /dev/fb0 (mmap(fb0) is unbacked, #149); xeyes animates → continuous damage →
-blits, but twm's static root produces no full-screen damage, so the console text underneath is never
-overdrawn. **Fix idea:** add a periodic full-screen shadow→fb0 blit in the DDX (like GL Quake's
-continuous full-frame blit), or force a full root repaint when the WM starts. This was the user's
-"startx desktop did nothing" report — the launcher is fine; this DDX/twm blit gap is the cause.
+## ✅ X11 `startx desktop` (twm + xeyes) — NOW RENDERS (FIXED + grab-proven)
+**Fixed 2026-06-25.** HDMI shows a black X root (console text fully overdrawn) with a **twm-decorated
+xeyes window** — a green titlebar reading "xeyes" + window-manager iconify/resize buttons, the two
+eyes inside the managed window. Grab: `artifacts/hdmi/20260625-163446-twm-verbose-final.png`
+(brightness trace: console 98% bright → 0.0% fully black at 163428 → black + 1.7% window). This was
+the user's "startx desktop did nothing" report. Two fixes, both committed:
+1. **DDX periodic full-screen flush** (`tools/x11-port/ddx/fbdev.c`, commit `2b224a2`): the kdrive
+   fbdev DDX blitted only DAMAGED scanlines to /dev/fb0, so twm's static root never overdrew the
+   console (xeyes-alone worked only because its animation kept producing damage). Added an OsTimer
+   (`TimerSet`, 300 ms) that re-blits the ENTIRE shadow to fb0 regardless of damage — static WM
+   content now reaches the display, the first tick overdraws the console immediately.
+2. **Launcher output visibility** (`tools/x11-port/launcher/pl_phoenix_xlaunch.c`, commit `99bc144`):
+   psh wires a program's stdout to the console but NOT its stderr, so the launcher's + X server's +
+   clients' diagnostics all vanished ("no debug output, no logs"). `dup2(STDOUT_FILENO,
+   STDERR_FILENO)` in the parent before forking makes the whole session self-report on the UART
+   (server pid, fb0 geometry, socket-up, mouse-active, the periodic-flush banner, per-client launch).
+**How to test** (boot-to-psh build — comment the rpi4-quake launch in user.plo.yaml + rebuild):
+`ls /nfstest/bin` (#156 warmup) then `/nfstest/bin/startx desktop`.
 
 ## ❌ vkQuake — runs crash-free but renders NO recognizable content (earlier claim CORRECTED)
 **Correction:** my earlier "first visible vkQuake frame" was over-stated. vkQuake now runs crash-free
@@ -45,8 +53,10 @@ race), even though the file is present. This is why `startx desktop` reported no
 running anything from it. Real fix tracked separately (the NFS boot-order/dircache, #156).
 
 ## Summary for testing
-- **Demo now, works:** GL Quake (boots into it) — recognizable, stable, ~40 fps.
-- **Works with the #156 warmup:** `ls /nfstest/bin; /nfstest/bin/startx` → xeyes on a black root.
-- **Not yet:** `startx desktop` (twm blit gap) and vkQuake (no sustained content) — both are the
-  fb0-present/full-blit theme; clear next steps above.
+- **Demo now, works (bundled default):** GL Quake (boots straight into it) — recognizable, stable, ~40 fps.
+- **Works (grab-proven), with #156 warmup, on a boot-to-psh build:**
+  - `ls /nfstest/bin; /nfstest/bin/startx`          → xeyes on a black root.
+  - `ls /nfstest/bin; /nfstest/bin/startx desktop`  → **twm-decorated xeyes window on a black root.**
+- **Not yet:** vkQuake (crash-free init, no sustained recognizable content) — the fb0-present/frame-loop
+  theme; clear next steps above.
 </content>
