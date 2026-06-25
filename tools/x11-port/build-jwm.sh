@@ -77,6 +77,20 @@ if [ ! -d "$JWMDIR" ]; then
 fi
 [ -f "$JWMDIR/configure" ] || fail "$JWMDIR/configure missing — not a release tarball?"
 
+# --- 1b. point JWM's hardcoded shell at the NFS export ---
+# JWM runs EVERY command (StartupCommand, RootMenu <Program>, exec: actions) via
+#   execl(SHELL_NAME, SHELL_NAME, "-c", command)
+# and SHELL_NAME is a hardcoded "#define ... \"/bin/sh\"" in src/jwm.h. On the
+# netboot Pi "/" is the RAM dummyfs root and the rootfs (incl. the shell) is at
+# /nfstest, so /bin/sh does NOT exist → nothing JWM launches would start (no
+# xeyes window, dead menu) even though the WM itself runs. JWM does NOT consult
+# $SHELL, so the env can't fix it; we redefine SHELL_NAME at compile time. Guard
+# the header define with #ifndef (idempotent) so the -D below wins.
+if ! grep -q '#ifndef SHELL_NAME' "$JWMDIR/src/jwm.h"; then
+	perl -0pi -e 's{#define SHELL_NAME "/bin/sh"}{#ifndef SHELL_NAME\n#define SHELL_NAME "/bin/sh"\n#endif}' "$JWMDIR/src/jwm.h"
+fi
+SHELL_DEF='-DSHELL_NAME=\"/nfstest/bin/sh\"'
+
 # --- 2. configure (only if not already configured) ---
 # --x-includes/--x-libraries point AC_PATH_X at the PREFIX so it does NOT probe
 # and add host /usr/include (whose glibc headers break the cross compile).
@@ -92,7 +106,7 @@ if [ ! -f "$JWMDIR/config.h" ]; then
 	    --x-includes="$PREFIX/include" --x-libraries="$PREFIX/lib" \
 	    --disable-png --disable-xinerama \
 	    CC=${TC}gcc AR=${TC}ar RANLIB=${TC}ranlib \
-	    CFLAGS="--sysroot=$SYSROOT -I$PREFIX/include $PWD_DEFS" \
+	    CFLAGS="--sysroot=$SYSROOT -I$PREFIX/include $PWD_DEFS $SHELL_DEF" \
 	    LDFLAGS="--sysroot=$SYSROOT -static -L$PREFIX/lib -L$SYSROOT/lib" \
 	    LIBS="$XCLOSURE" >/tmp/jwm-conf.log 2>&1 ) || { tail -25 /tmp/jwm-conf.log; fail "configure failed"; }
 fi
@@ -155,6 +169,13 @@ if strings "$NFS/bin/jwm" 2>/dev/null | grep -q "^$EXPECT_CFG$"; then
 	echo "[OK] compiled-in path == $EXPECT_CFG"
 else
 	fail "compiled-in jwmrc path does not match $EXPECT_CFG"
+fi
+
+echo "--- shell path JWM exec's its children with (must be on the export) ---"
+if strings "$NFS/bin/jwm" 2>/dev/null | grep -q "^/nfstest/bin/sh$"; then
+	echo "[OK] SHELL_NAME == /nfstest/bin/sh (StartupCommand + RootMenu programs will launch)"
+else
+	fail "SHELL_NAME is not /nfstest/bin/sh — JWM-launched commands (xeyes, menu) would fail"
 fi
 
 if [ -f "$NFS/etc/jwm/system.jwmrc" ]; then
