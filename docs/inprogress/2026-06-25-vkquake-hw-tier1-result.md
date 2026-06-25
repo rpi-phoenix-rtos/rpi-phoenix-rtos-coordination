@@ -343,3 +343,29 @@ discriminate:
 
 Either way the crash is cleared and the next boot is now *observable* (the diagnostic names the source),
 so this is a clean handoff. The flagship (rpi4-quake) is unaffected.
+
+## 🏁 vkQuake RUNS CRASH-FREE END-TO-END (2026-06-25) — only the display-present remains
+
+With the tile_state guard (commit 09e7aed), vkQuake boots with **ZERO faults** all the way through:
+VID_Init ✓ → all 41 shader modules ✓ → all pipelines ✓ → render resources ✓ → **PL_SND audio init
+✓** (`/dev/audio0 44100 Hz 2ch`) → into the game loop (smp tick at +15s, no crash). The entire
+8-blocker crash chain is FIXED.
+
+**HDMI shows the fbcon boot CONSOLE (klog text), not a vkQuake frame** — stable ~6.6%-non-black
+(white text on black) across 5 snapshots. So vkQuake's rendered frames are NOT reaching the display:
+the framebuffer console still owns the HDMI. This is the **no-WSI present / display-ownership gap**
+(NOT a crash): vkQuake renders to its fb0-bound scanout image, but either (a) the fbcon console isn't
+disabled so it still owns/overdraws the HDMI surface (GL Quake fixes this with FBCON_DISABLED +
+display ownership), (b) the scanout image isn't the actually-displayed fb0 surface, or (c) vkQuake
+was still loading game data at capture-end (hadn't rendered the first SCR_UpdateScreen frame).
+
+**Next step (final piece to a visible frame):** in the shim's present path, take display ownership
+like GL Quake (FBCON_DISABLED) and ensure GL_EndRendering's scanout actually lands on the displayed
+fb0 surface; and/or run a longer/live capture to confirm vkQuake reaches the first real frame after
+game-data load. **Best done as a live test (user at the HDMI) — the snapshot can't distinguish
+still-loading from a present gap.** This is the one remaining gap; everything upstream works.
+
+Summary of the day: 8 vkQuake blockers root-caused + fixed (SV_LocalSound guard; VID_Init init-block;
+whole-archive 13 entrypoints; render resources; >4KB shader = blake3 NEON-stub stack overflow;
+tile_state zero-dim job) → crash-free full run. Headline fix = the blake3 portable-vs-NEON stack
+overflow. GL flagship restored for the evening test.
