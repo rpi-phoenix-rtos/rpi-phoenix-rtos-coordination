@@ -227,42 +227,31 @@ fbdevScreenInit(KdScreenInfo *screen)
 }
 
 /*
- * Damage flush: write the shadow framebuffer out to /dev/fb0. The shadow
- * buffer stride equals the device pitch, so each damaged scanline maps to a
- * contiguous device offset row*pitch. We coalesce to the damaged Y span and
- * write whole rows (full-width); this is correct and simple. (A future
- * optimisation can write only the damaged X sub-extent per row.)
+ * Blit a band of scanlines [y0, y1) from the shadow buffer out to /dev/fb0.
+ * The shadow buffer stride equals the device pitch, so each scanline maps to a
+ * contiguous device offset row*pitch. We write whole rows (full-width); this is
+ * correct and simple. (A future optimisation can write only a damaged X
+ * sub-extent per row.) Used by both the damage-driven flush (damaged Y span)
+ * and the periodic full-screen flush (0..height).
  */
 static void
-fbdevShadowUpdate(ScreenPtr pScreen, shadowBufPtr pBuf)
+fbdevFlushRegion(ScreenPtr pScreen, int y0, int y1)
 {
     KdScreenPriv(pScreen);
     KdScreenInfo *screen = pScreenPriv->screen;
     FbdevPriv *priv = screen->card->driver;
-    RegionPtr damage = DamageRegion(pBuf->pDamage);
     int pitch = priv->mode.pitch;
     int fbHeight = priv->mode.height;
     CARD8 *shadow = (CARD8 *) screen->fb.frameBuffer;
     int shadowStride = screen->fb.byteStride;
-    int y0, y1, rows;
+    int rows;
     off_t off;
     size_t len;
     ssize_t w;
-    BoxPtr extents;
 
     if (!shadow || priv->fd < 0)
         return;
 
-    if (RegionNotEmpty(damage)) {
-        extents = RegionExtents(damage);
-        y0 = extents->y1;
-        y1 = extents->y2;
-    }
-    else {
-        /* No damage info → flush the whole frame. */
-        y0 = 0;
-        y1 = fbHeight;
-    }
     if (y0 < 0)
         y0 = 0;
     if (y1 > fbHeight)
@@ -272,8 +261,8 @@ fbdevShadowUpdate(ScreenPtr pScreen, shadowBufPtr pBuf)
     rows = y1 - y0;
 
     /*
-     * Shadow stride and device pitch are equal here, so the damaged band is a
-     * single contiguous region in both buffers: write it in one syscall.
+     * Shadow stride and device pitch are equal here, so the band is a single
+     * contiguous region in both buffers: write it in one syscall.
      */
     if (shadowStride == pitch) {
         off = (off_t) y0 * pitch;
@@ -299,6 +288,81 @@ fbdevShadowUpdate(ScreenPtr pScreen, shadowBufPtr pBuf)
                          (size_t) pitch);
         }
     }
+}
+
+/*
+ * Damage flush: write the damaged Y span of the shadow buffer out to /dev/fb0.
+ * We coalesce to the damaged Y extent and write whole rows (full-width). This is
+ * the low-latency path: animated content (xeyes, the cursor) flushes promptly as
+ * it draws. Static content is covered by the periodic full-screen flush below.
+ */
+static void
+fbdevShadowUpdate(ScreenPtr pScreen, shadowBufPtr pBuf)
+{
+    KdScreenPriv(pScreen);
+    KdScreenInfo *screen = pScreenPriv->screen;
+    FbdevPriv *priv = screen->card->driver;
+    RegionPtr damage = DamageRegion(pBuf->pDamage);
+    BoxPtr extents;
+
+    if (RegionNotEmpty(damage)) {
+        extents = RegionExtents(damage);
+        fbdevFlushRegion(pScreen, extents->y1, extents->y2);
+    }
+    else {
+        /* No damage info → flush the whole frame. */
+        fbdevFlushRegion(pScreen, 0, priv->mode.height);
+    }
+}
+
+/*
+ * Periodic full-screen flush.
+ *
+ * The damage-driven flush above only writes scanlines the X server *redrew*.
+ * That is enough for animated content, but a static desktop (e.g. the twm root
+ * + decorated windows under `startx desktop`) produces no further full-screen
+ * damage after its initial paint — so the stale boot-console text sitting under
+ * the X root on /dev/fb0 would never be overdrawn. (xeyes-alone happens to work
+ * only because its continuous animation keeps generating damage.)
+ *
+ * To guarantee static content reaches the display we re-blit the ENTIRE shadow
+ * buffer to /dev/fb0 on a timer, independent of damage. The frame is only ~8 MB
+ * and the interval is coarse (FBDEV_FLUSH_MS), so the bandwidth is bounded and
+ * modest; the damage path is kept for latency. The first tick after the X root
+ * is created overdraws the console immediately. This mirrors the GL Quake port's
+ * continuous full-frame blit to /dev/fb0.
+ *
+ * Runs on the main dispatch thread (TimerSet callbacks fire from
+ * WaitForSomething/TimerCheck on poll() *timeout*, not fd-readiness — robust on
+ * Phoenix, whose poll() does not reliably wake on fd-readiness), the same thread
+ * as fbdevShadowUpdate, so no locking is needed against the damage path.
+ */
+#define FBDEV_FLUSH_MS 300
+
+static OsTimerPtr fbdevFlushTimer = NULL;
+
+static CARD32
+fbdevFlushTimerCb(OsTimerPtr timer, CARD32 now, void *arg)
+{
+    ScreenPtr pScreen = arg;
+    KdScreenPriv(pScreen);
+    KdScreenInfo *screen = pScreenPriv->screen;
+    FbdevPriv *priv = screen->card->driver;
+    static int announced = 0;
+
+    (void) timer;
+    (void) now;
+    /* One-time marker so a UART log can confirm the timer is actually serviced
+     * (distinguishes "timer never fired" from "shadow content wrong" if the
+     * desktop still doesn't appear). */
+    if (!announced) {
+        announced = 1;
+        ErrorF("[fbdev] periodic full-screen flush active (every %d ms)\n",
+               FBDEV_FLUSH_MS);
+    }
+    fbdevFlushRegion(pScreen, 0, priv->mode.height);
+    /* Return the interval (non-zero) to re-arm; returning 0 fires only once. */
+    return FBDEV_FLUSH_MS;
 }
 
 /*
@@ -340,9 +404,16 @@ fbdevCreateResources(ScreenPtr pScreen)
     KdScreenInfo *screen = pScreenPriv->screen;
     FbdevScrPriv *scrpriv = screen->driver;
 
-    if (scrpriv->shadow)
-        return KdShadowSet(pScreen, scrpriv->randr,
-                           fbdevShadowUpdate, fbdevWindowLinear);
+    if (scrpriv->shadow) {
+        if (!KdShadowSet(pScreen, scrpriv->randr,
+                         fbdevShadowUpdate, fbdevWindowLinear))
+            return FALSE;
+        /* Arm the periodic full-screen shadow→fb0 flush (see
+         * fbdevFlushTimerCb): guarantees static content (the twm desktop)
+         * reaches the display even with no further damage. */
+        fbdevFlushTimer = TimerSet(fbdevFlushTimer, 0, FBDEV_FLUSH_MS,
+                                   fbdevFlushTimerCb, pScreen);
+    }
     return TRUE;
 }
 
@@ -362,6 +433,11 @@ static void
 fbdevCardFini(KdCardInfo *card)
 {
     FbdevPriv *priv = card->driver;
+    /* Stop the periodic flush before we hand the framebuffer back. */
+    if (fbdevFlushTimer) {
+        TimerFree(fbdevFlushTimer);
+        fbdevFlushTimer = NULL;
+    }
     /* Hand the framebuffer back to the text console (reappears with everything
      * the console accumulated off-screen while X owned the display). */
     fbdevConsoleSetMode(FBCON_ENABLED);
