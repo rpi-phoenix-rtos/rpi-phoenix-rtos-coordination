@@ -204,6 +204,7 @@ int main(int argc, char *argv[])
 		 *   startx twm       -> <prefix>/bin/twm        (WM only, bare root)
 		 *   startx /bin/2048 -> /bin/2048
 		 *   startx desktop   -> twm (WM) + xeyes (managed window)
+		 *   startx term      -> twm (WM) + xterm (managed terminal window)
 		 */
 		const char *prefix = "/nfstest";
 		const char *client = (argc >= 2) ? argv[1] : "xeyes";
@@ -233,6 +234,25 @@ int main(int argc, char *argv[])
 			client_path[0] = cp_bufs[0];
 			client_path[1] = cp_bufs[1];
 			client_extra[1] = xeyes_geom;
+			n_client_extra[1] = 2;
+			n_clients = 2;
+		}
+		else if (strcmp(client, "term") == 0) {
+			/* twm (WM) + xterm (managed terminal). The window manager is
+			 * essential here, not cosmetic: with no WM the server uses
+			 * PointerRoot focus, so keystrokes go to whatever window the
+			 * pointer happens to be over — making a keyboard test
+			 * non-deterministic. twm gives xterm a titlebar and (with the
+			 * compiled-in config) click-to-focus, so typed keys reliably
+			 * reach the shell running inside xterm. A -geometry supplies a
+			 * USPosition hint so twm places the window immediately (see the
+			 * desktop-mode note) instead of an interactive rubber-band. */
+			static char *const xterm_geom[2] = { "-geometry", "80x24+48+48" };
+			resolve_client(cp_bufs[0], sizeof(cp_bufs[0]), prefix, "twm");
+			resolve_client(cp_bufs[1], sizeof(cp_bufs[1]), prefix, "xterm");
+			client_path[0] = cp_bufs[0];
+			client_path[1] = cp_bufs[1];
+			client_extra[1] = xterm_geom;
 			n_client_extra[1] = 2;
 			n_clients = 2;
 		}
