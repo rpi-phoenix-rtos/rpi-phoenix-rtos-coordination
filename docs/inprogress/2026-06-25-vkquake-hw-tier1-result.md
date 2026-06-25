@@ -273,7 +273,73 @@ The blake3 NEON-stub stack-overflow fix (disable NEON under __phoenix__ → port
 
 So vkQuake is now into the **GPU job-submission path** — the last layer before on-screen pixels.
 This is enormous progress (immediate-crash → records+submits a frame in one day, 7 root-caused
-blockers). The Tier-4b harness proved vkQueueSubmit works, so the NULL is something vkQuake's submit
-carries that Tier-4b didn't (a fence/semaphore/timeline-sync2 object, a job/submit-info field, or
-multiple-cb handling) that the no-WSI GL_EndRendering path leaves unset. **Next: localize x4 (the
-NULL job/submit struct) in queue_handle_job + set the missing field in the shim's submit.**
+blockers).
+
+## ROOT-CAUSED (2026-06-25) — x4 = `job->tile_state` == NULL (zero-tile CL job), NOT a submit-struct field
+
+Disassembled the **exact bundled crashing binary** (`.buildroot/.../prog/rpi4-vkquake`): pc=0x562b28
+is `queue_handle_job+0xb8`, instruction `ldr w1,[x4,#36]`, with `x4` loaded by
+`ldp x2,x4,[x19,#280]` where x19=`struct v3dv_job *`. By struct offset, **job+280 = `tile_alloc`,
+job+288 = `tile_state`** (both `struct v3dv_bo *`), and `+36` = `v3dv_bo.offset`. So this is the
+inlined `handle_cl_job` building `drm_v3d_submit_cl` (qma/qms/qts): `tile_alloc` (x2) is valid (read
+at +32 via the `ldp w2,w3` immediately before, survives), **`tile_state` (x4) is NULL** → `far=0x24`.
+The task's "missing fence/semaphore/sync2" framing was **wrong** — those BO pointers are set during
+command-buffer recording, not submit; the submit only reads them.
+
+**Why tile_state is NULL — zero-tile job (DECISIVE, from the registers):** `tile_state` is allocated
+in `v3dv_job_allocate_tile_state` (`v3dv_cmd_buffer.c`) with
+`tile_state_size = layers*tiles_x*tiles_y*256` — **no floor**. `tile_alloc`, allocated in the same
+function, has a hard `+8192` floor (`v3d_util.c:295`). The crash register **x2 = 0x2000 = 8192** is
+`tile_alloc->size` (read at +32 just before the fault) — the *exact* floor produced only when
+`tiles_size == 0`. A real 1920×1080 job would give tile_alloc ≈ 0x12000; the 1×1 noop job gives
+0x3000. So the crashing job had **`layers*tiles_x*tiles_y == 0`** → `tile_state_size == 0` →
+`v3dv_bo_alloc(0)` → `ioc_create_bo` did `mmap(...,0,...)` → MAP_FAILED → NULL. (The
+`v3d-winsys: BO mmap FAILED (0 pages, 0 KiB)` line in the log is a *separate* 0-size buffer at init;
+the tile_state alloc's failing print sits in stderr's buffer and dies with the faulting process.)
+
+**Which job (corrected):** the crasher emitted an RCL (`rcl.bo` read and survived just before the
+tile_state read), and it carried `tile_alloc` from `allocate_tile_state`. **Every meta copy/clear/blit
+path and the noop path bail (`return true`/`return`) on a NULL tile_state BEFORE emitting the RCL**, so
+they can't produce (valid rcl.bo + NULL tile_state). The **only** caller that ignores
+`v3dv_job_allocate_tile_state`'s return and proceeds to emit the RCL is
+`cmd_buffer_end_render_pass_frame` (`v3dv_cmd_buffer.c:572`). So **the crasher is a render-pass-end CL
+job (cmd_buffer != NULL) whose render area was zero** — the job's width/height come from
+`render_area.offset + render_area.extent` (`v3dv_cmd_buffer.c:1779`). The shim's UI render pass uses
+`renderArea = {{0,0},{vid.width,vid.height}}` = 1920×1080 (verified: `vid.width/height` are set in
+`VID_Init` and the `VID_Init done (1920x1080)` print reads them), so the zero-area pass is **a
+DIFFERENT render pass** — a candidate is the engine's `warp_render_pass` to a `warpimage` framebuffer
+(`gl_warp.c`) created at an uninitialized (zero) size during init, recorded+submitted before the UI
+frame. (`gl_vidsdl.c`'s main/UI render passes are upstream-only; the shim replaces that module.)
+
+## FIX (committed) — guard the degenerate zero-tile CL job in V3DV + diagnostic
+
+- **external/mesa `4a293f80aa3`** (`v3dv_queue.c`, `v3dv_cmd_buffer.c`, `#if __phoenix__`):
+  `queue_handle_job` now **skips a `V3DV_JOB_TYPE_GPU_CL` job with `tile_state == NULL` and returns
+  `VK_SUCCESS`** (a zero-tile job has nothing for the binner/renderer; this is exactly the NULL the
+  fault proved). Plus a **one-shot diagnostic in `v3dv_job_start_frame`** logging `w/h/layers` and
+  `job->cmd_buffer` (NULL == device noop job) for any zero-dim frame — the next boot then NAMES the
+  offending op.
+- **coord `09e7aed`**: regenerated `tools/v3d-driver-port/mesa-phoenix-port.patch` (now 16 files,
+  applies cleanly against pinned base `489aa1808f2`, `git apply --check` rc=0). The shim
+  (`pl_phoenix_vk_vid.c`) was **not** changed — the fix is entirely V3DV-side.
+- **Build:** `build-v3dv-phoenix.py` → frontend 97/0, link rc=0; `build-vkquake-phoenix.py --link` →
+  82/82 TUs, **LINK OK (0 undefined)** → `/tmp/{libv3dv-phoenix.a,libvkquake.a,vkquake-phoenix}`.
+  Verified in the final ELF: `queue_handle_job` loads `[x19,#288]` (tile_state) then `cbz` to a
+  VK_SUCCESS return BEFORE the `ldr w1,[x4,#36]` deref; both guard log strings present; `nm` = 0 `U`.
+
+## NEXT HW EXPECTATION (read before bundling — two outcomes, not one)
+
+Bundle rpi4-vkquake + netboot + HDMI snapshot. The guard provably stops the `0x562b28` Data Abort.
+Because the skipped job is a **real render pass** (not a harmless aux job), there are TWO outcomes —
+the log's new `v3dv: ... zero dimension` / `skipping degenerate CL job` lines + the HDMI frame
+discriminate:
+1. **Skipped pass is a secondary/first-frame-only pass** (e.g. warp render-to-texture at a
+   zero/uninitialized size) → the main 1920×1080 UI frame still submits → **first 2D vkQuake frame on
+   HDMI**. Guard is the correct fix; the zero-dim pass is a separate, non-visible artifact to clean up
+   later (or guard out engine-side).
+2. **Skipped pass IS the visible frame** → **HDMI stays black** (no crash). Then the real fix is making
+   that pass non-zero (source its renderArea/framebuffer dims from `fb_mode.width/height`, or stop the
+   engine recording it during init). The diagnostic's `cmd_buffer`/`w/h/layers` print pinpoints it.
+
+Either way the crash is cleared and the next boot is now *observable* (the diagnostic names the source),
+so this is a clean handoff. The flagship (rpi4-quake) is unaffected.
