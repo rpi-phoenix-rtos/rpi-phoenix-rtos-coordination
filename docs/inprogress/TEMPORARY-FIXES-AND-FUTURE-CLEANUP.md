@@ -174,6 +174,17 @@ authoritative current state.
 ## TD-19: AArch64 runtime PTE/TLBI hardening
 
 - **Status:** VALIDATED, needs upstream review.
+- **⚠️ OPEN RECONCILIATION (flagged 2026-06-25, NOT yet acted on — touches a
+  correctness-sensitive TLB path, left for attended review):** the
+  "What was done" line below claims the TLBI helpers "now end with `dsb; isb`,
+  not just `dsb`." In current source the generic `hal_tlbInval*` helpers
+  (`aarch64.h:201-241`) end with `hal_cpuDataSyncBarrier()` = `dsb ish` only —
+  no trailing `isb`. Either the doc overstates what landed, or the `isb` lives
+  only on the `_pmap_writeTtl3` path (`pmap.c:435+`). Confirm whether the ISB
+  is genuinely required on the generic helper paths or only on
+  `_pmap_writeTtl3`, then correct whichever of doc/code is wrong before
+  claiming the ARMv8 break-before-make sequence is complete in the generic
+  helpers. Do NOT edit the TLB helpers without that confirmation.
 - **Stage:** 1 (cache enable).
 - **First observed:** 2026-05-14 cache-policy cleanup.
 - **Where:** `sources/phoenix-rtos-kernel/hal/aarch64/aarch64.h`
@@ -212,7 +223,10 @@ authoritative current state.
 
 ## TD-20: A72 DC ZVA disabled in hal_memset pending EL2 trap proof
 
-- **Status:** ACTIVE WORKAROUND.
+- **Status:** KNOWN LIMITATION (HW-gated). A sound, A72-scoped gate (zynqmp
+  keeps ZVA); a functional perf-only change, correctness-safe. Removal needs
+  HW proof of the EL2 DC-ZVA trap state and does not reproduce in QEMU, so it
+  is not unattended.
 - **Where:** `sources/phoenix-rtos-kernel/hal/aarch64/_memset.S`
   (the `__TARGET_AARCH64A72` block that force-defines `MEMSET_WITHOUT_ZVA`).
 - **What:** On Cortex-A72 (Pi 4) the `dc zva` fast path in `hal_memset` is
@@ -220,10 +234,6 @@ authoritative current state.
   firmware/armstub/PLO (not TF-A), and the first post-D-cache large zeroing
   operation (`_log_init`'s `log_common` memset) hangs on real hardware with no
   exception output. The hang does not reproduce in QEMU.
-- **Why interim:** The gate is sound and correctly scoped to A72 (zynqmp keeps
-  ZVA), but it is a functional perf change premised on the unproven EL2 DC-ZVA
-  trap state. Marked so it is revisited once that state is proven and is not
-  mistaken for an unconditional regression.
 - **Resolution requirements:** Prove the EL2 trap state for DC ZVA on Pi 4
   (HW-only — does not repro in QEMU). If ZVA is safe, drop the
   `MEMSET_WITHOUT_ZVA` gate and the `TODO(TD-20)` marker.
@@ -252,54 +262,52 @@ authoritative current state.
 
 ## TD-02: Pre-MMU cache invalidation disabled
 
-- **Status:** PENDING
+- **Status:** ✅ RESOLVED (verified in source 2026-06-25). The pre-MMU
+  data-cache invalidation was restored: `_init.S:554-556` runs a live
+  `_inval_dcache_range` over `PMAP_COMMON_KERNEL_TTL2 … PMAP_COMMON_STACK`
+  before the first `SCTLR_EL1.M` write (restored by `5e727dcc`). The earlier
+  "commented out / PENDING" narrative below predates that restore and is kept
+  for diff history. The A72-specific hang that originally forced the
+  workaround was cleared by the 2026-05-17 armstub fix (project `dde9bb5`).
 - **Stage:** 1. Subsumed by the Linux `__enable_mmu` restructure: in
   the new shape, the unified pre-MMU VA-range sweep over the kernel
-  image and PT region replaces this entry's intent. Resolution comes
-  for free with Stage 1.
+  image and PT region replaces this entry's intent. Resolution came
+  with Stage 1.
 - **First observed:** 2026-04 bring-up
 - **Where:** `sources/phoenix-rtos-kernel/hal/aarch64/_init.S`, the
   `PMAP_COMMON_KERNEL_TTL2 … PMAP_COMMON_STACK` `_inval_dcache_range` call
   before MMU enable.
-- **What was done:** The pre-MMU data-cache invalidation sweep is commented
-  out. The code now relies solely on the post-MMU-enable invalidation and
-  on `dsb ish; isb` to make table writes visible.
-- **Why:** Cache maintenance with the MMU disabled hung the board in
-  observed runs. Linux arm64 performs this sweep unconditionally.
-- **Risk accepted:** Speculatively loaded stale lines for the page-table
-  regions can survive into early MMU walks. So far no observed corruption,
-  but that is not a guarantee.
-- **Resolution requirements:**
-  - Identify the A72-specific precondition that makes the generic sequence
-    hang (likely ordering or an earlier missing setup step).
-  - Restore the invalidation, or document the exact reason a narrower form
-    is correct for this platform.
+- **Historical state (pre-resolution):** The pre-MMU data-cache
+  invalidation sweep was commented out; the code relied solely on the
+  post-MMU-enable invalidation and on `dsb ish; isb` to make table writes
+  visible.
+- **Why it was disabled:** Cache maintenance with the MMU disabled hung the
+  board in observed runs. Linux arm64 performs this sweep unconditionally.
+- **Risk while disabled (now retired):** Speculatively loaded stale lines for
+  the page-table regions could survive into early MMU walks. The restored
+  invalidation closes this hole.
 
 ## TD-03: Syspage copy / BSS mapping shortcut
 
-- **Status:** PENDING
-- **Stage:** 1. The Stage 1 restructure moves the syspage copy into
-  the caches-off pre-MMU window, copying directly to the destination
-  PA. The TD-04 NC-mapping workaround becomes redundant once the
-  copy happens with caches off. Resolves alongside Stage 1.
+- **Status:** ✅ RESOLVED (verified in source 2026-06-25). `_init.S:737+`
+  copies the syspage through the high-VA mapping (cacheable, bracketed by the
+  pre/post `_clean_inval_dcache_range`), and the early MMU map now covers the
+  destination, so the original "BSS not reliably mapped" concern is retired.
+  No `TODO(TD-03)` marker remains in source. The "PENDING" narrative below
+  predates the resolution and is kept for diff history.
+- **Stage:** 1. The Stage 1 restructure moved the syspage copy so the
+  destination is mapped before the copy and the copied bytes are made
+  authoritative in DDR by explicit clean+invalidate. Resolved alongside
+  Stage 1.
 - **First observed:** 2026-04 bring-up
 - **Where:** Interaction between `hal/aarch64/_init.S` (virtual syspage
-  copy) and `syspage.c` (syspage access after MMU enable). BSS region is
-  not reliably mapped in the early MMU page tables.
-- **What was done:** Per `docs/inprogress/status.md`, syspage access was stabilized by
-  side-stepping the copied-into-BSS location and working with the original
-  syspage. Intent and current source may diverge: **verify before acting.**
-- **Why:** The early MMU page tables did not cover the BSS region into
-  which the syspage was being copied.
-- **Risk accepted:** Any code path that assumes the copied virtual syspage
-  is authoritative may read stale data or wrong addresses.
-- **Resolution requirements:**
-  - Extend early MMU setup to map the BSS region (or move the syspage copy
-    target to an already-mapped region).
-  - Re-enable the canonical syspage copy path and validate that every
-    consumer reads from the virtual location.
-  - Add a syspage integrity check (size and a simple checksum) to the
-    post-copy path.
+  copy) and `syspage.c` (syspage access after MMU enable).
+- **Historical concern (pre-resolution):** the early MMU page tables did not
+  cover the BSS region into which the syspage was being copied, so consumers
+  of the copied virtual syspage could read stale data or wrong addresses.
+- **Resolution as landed:** the early MMU map covers the destination; the
+  copy runs through the high-VA mapping with `_clean_inval_dcache_range`
+  before and after, so every consumer reads authoritative bytes.
 
 ## TD-04: BCM2711-specific syspage corruption at the plo→kernel handoff
 
@@ -505,15 +513,20 @@ authoritative current state.
 
 ## TD-06: DTB handling assumptions
 
-- **Status:** PENDING
+- **Status:** KNOWN LIMITATION (board-portability; validated on 4 GiB Pi 4B).
+  The kernel side is DTB-driven — `dtb.c` parses `/memory@0`,
+  `/reserved-memory`, and `/soc/dma-ranges`, and `pmap.c` consumes them. The
+  residual is breadth of board coverage: the parser still assumes a single
+  known interrupt controller and has limited error paths, and 1/2/8 GiB
+  models are unvalidated. A defensible scope decision, not a hack.
 - **First observed:** 2026-04 bring-up
 - **Where:** `sources/phoenix-rtos-kernel/hal/aarch64/dtb.c`.
-- **What was done:** Early parsing assumes a fixed memory layout, a single
-  known interrupt controller, and limited error paths.
-- **Why:** Early bring-up needed a DTB path with no surprises; robust
-  parsing was not on the critical boot lane.
-- **Risk accepted:** Any future board variant or firmware change silently
-  reuses the fixed assumptions.
+- **What was done:** Early parsing assumes a single known interrupt
+  controller and has limited error paths; memory layout is read from the DTB.
+- **Why:** Early bring-up needed a DTB path with no surprises on the one
+  validated board; broad multi-board robustness was not on the critical lane.
+- **Limitation:** Future board variants or firmware changes are unvalidated
+  against the current assumptions.
 - **Resolution requirements:**
   - Drive memory layout from the actual DTB, not compile-time constants.
   - Validate required nodes at parse time and fail with a useful message.
@@ -599,8 +612,13 @@ authoritative current state.
 
 ## TD-10: SError masked across all early kernel paths on Pi 4
 
-- **Status:** PENDING — **handler implemented; unmask BLOCKED by a live
-  PCIe/USB external-abort SError source (found 2026-05-29).**
+- **Status:** KNOWN LIMITATION (HW-gated). A correct dump-and-halt SError
+  handler is implemented and armed (`exceptions_serrorHandler`); the mask
+  stays only because real Pi 4 has a live external-abort SError in the
+  PCIe/VL805 USB bring-up that has not yet been root-caused. This is a
+  documented design decision, not an unexplained hack: unmasking before that
+  abort is fixed regresses the boot. Root-causing the bridge NACK is HW-deep
+  and tied to the USB investigation (not unattended).
 - **2026-05-29 progress + finding:**
   - Implemented `exceptions_serrorHandler` (kernel `bcb64610`): a
     dedicated dump-and-halt SError handler registered for `EXC_SERROR`,
@@ -1863,11 +1881,11 @@ longer needed.
 | TD-04-hack-2 | RESOLVED 2026-05-17 (kernel `6c65616f`) | `_hal_init()` debug markers stripped |
 | TD-04-hack-3 | RESOLVED 2026-05-17 (kernel `6c65616f`) | `dtbEnd = dtb->end` restored |
 | TD-05 | LARGELY RESOLVED 2026-05-17→18 (kernel `5a2d3a77`, `334638ee`, `dccd0aee`; plo `c988e6a`, `568f4cf`, `6a5dfdd`) | ~250 lines of debug markers stripped; residual diagnostic prints can be removed case-by-case |
-| TD-06 | PENDING | DTB robustness/portability (partial: plo reads firmware DTB ptr from PA 0xf8) |
+| TD-06 | KNOWN LIMITATION (board-portability) | kernel side is DTB-driven (`dtb.c` parses `/memory@0`+`/reserved-memory`+`/soc/dma-ranges`); residual = single-IRQ-controller assumption + 1/2/8 GiB models unvalidated |
 | TD-07 | PENDING | QEMU 11.x installed on Linux host (`/opt/qemu-11`); Lima VM QEMU still old |
 | TD-08 | PENDING | QEMU+gdb debugging not exercised since cache resolved |
 | TD-09 | N/A on Linux host (no socket_vmnet bridge); macOS-only concern |
-| TD-10 | PENDING | SError still masked; needs proper handler |
+| TD-10 | KNOWN LIMITATION (HW-gated) | dump-and-halt SError handler implemented + armed; mask stays only because a live PCIe/VL805 USB external-abort SError is not yet root-caused (unmask regresses boot) |
 | TD-11 | ✅ RESOLVED 2026-05-21 alongside TD-01 (kernel `fb9669f4` activated LDAXR/STXR spinlocks via `NUM_CPUS=4`) | real exclusives are live with 4-core SMP |
 | TD-12 | RESOLVED 2026-05-17 (project `42b2db5` + plo `84ffbea`; manifest `2026-05-17-pi4-full-4gb-ram-unlocked`) | both 4 GB banks visible (`pmap: nBanks=2`, 948 MB + 3008 MB) |
 | TD-13 | RESOLVED at runtime layer | residual cleanup also done in kernel `334638ee` (Pass-4 debug strip) |
@@ -1893,8 +1911,8 @@ longer needed.
 | TD-16-cache-enable | RESOLVED 2026-05-17 (project `dde9bb5` armstub L2CTLR + 1319367 encoding fix; kernel `72242a05` single-shot M\|C\|I in `el1_entry`; helper scaffolding deleted in kernel `dccd0aee`) | `SCTLR_EL1.M\|C\|I` enabled inline in `el1_entry` |
 | TD-17 | ✅ RESOLVED 2026-05-29 | amap/ELF cacheable (MAP_NONE) in code; boots to psh; armstub fix dde9bb5 removed the corruption |
 | TD-18 | ✅ RESOLVED 2026-05-29 | zone backing cacheable (MAP_NONE, zone.c:45) in code; boots to psh; 2026-05-14 fails predate armstub fix |
-| TD-19 | LIKELY STILL APPLIES (TLBI hardening is generally correct) | upstreamable as-is |
-| TD-20 | ACTIVE WORKAROUND | A72 `dc zva` disabled in `hal_memset` pending EL2 DC-ZVA trap proof (HW-only) |
+| TD-19 | LIKELY STILL APPLIES (TLBI hardening is generally correct) | upstreamable as-is. ⚠️ OPEN: doc claims helpers end `dsb; isb` but source `hal_tlbInval*` end `dsb ish` only — reconcile before publishing (see TD-19 entry; do NOT edit TLB helpers unattended) |
+| TD-20 | KNOWN LIMITATION (HW-gated) | A72 `dc zva` disabled in `hal_memset` pending EL2 DC-ZVA trap proof (HW-only); perf-only, correctness-safe, A72-scoped |
 | TD-Eth-DHCP | ✅ RESOLVED 2026-05-28 (lwip `7f0b495`) | autonomous DHCP verified end-to-end via test-cycle-netboot.sh --probe q + scripts/get-pi-ip.sh; probe captured `netif: en1 ip=10.42.0.12 gw=10.42.0.1 flags=0x1f UP LINK DHCP` (artifact 2026-05-28-...-dhcp-clean-probe.txt) |
 | TD-Eth-MAC | RESOLVED 2026-05-25 (lwip `79bd607`) | mailbox `GET_BOARD_MAC` plumbed in `genet_mboxGetMac()` |
 | TD-Eth-Promisc | RESOLVED 2026-05-25 (lwip `79bd607`) | PROMISC only on `mac_is_fallback` path |
