@@ -174,6 +174,17 @@ int main(int argc, char *argv[])
 	for (c = 0; c < MAX_CLIENTS; c++)
 		cli_pid[c] = -1;
 
+	/* Make the whole X session visible on the console. psh wires a launched
+	 * program's stdout (fd 1) to the console but NOT its stderr (fd 2), so every
+	 * diagnostic below — and, crucially, the forked server's and clients' own
+	 * stderr (kdrive/X write their logs there) — would otherwise vanish, leaving
+	 * `startx` looking like it "did nothing". Point fd 2 at fd 1 here, in the
+	 * parent, before any fork: the children inherit the redirected fd table, so
+	 * the server banner, socket-wait status, and any client error all reach the
+	 * UART. Unbuffer stdout so nothing is lost if a child dies mid-init. */
+	dup2(STDOUT_FILENO, STDERR_FILENO);
+	setvbuf(stdout, NULL, _IONBF, 0);
+
 	if (argc >= 4) {
 		/* Explicit form: <Xphoenix> <fontdir> <client> [client-args...] */
 		server_path = argv[1];
