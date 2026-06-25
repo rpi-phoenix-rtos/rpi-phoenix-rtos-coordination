@@ -459,6 +459,35 @@ index cc5ad3d3cb7..487fa4e44df 100644
     /**
      * Quantize the derived default number of samples:
      *
+diff --git a/src/util/blake3/blake3_impl.h b/src/util/blake3/blake3_impl.h
+index 0dd387c7f77..31c44b49467 100644
+--- a/src/util/blake3/blake3_impl.h
++++ b/src/util/blake3/blake3_impl.h
+@@ -58,15 +58,22 @@ enum blake3_flags {
+ #endif
+ #endif
+ 
+-#if !defined(BLAKE3_USE_NEON) 
++#if !defined(BLAKE3_USE_NEON)
+   // If BLAKE3_USE_NEON not manually set, autodetect based on AArch64ness
+-  #if defined(IS_AARCH64)
++  #if defined(IS_AARCH64) && !defined(__phoenix__)
+     #if defined(__ARM_BIG_ENDIAN)
+       #define BLAKE3_USE_NEON 0
+     #else
+       #define BLAKE3_USE_NEON 1
+     #endif
+   #else
++    // Phoenix-RTOS aarch64: the NEON blake3 backend (blake3_neon.c) is NOT
++    // compiled into the V3D/V3DV port, so the upstream auto-detect would route
++    // blake3_hash_many() to an undefined/stubbed blake3_hash_many_neon and
++    // silently mis-hash any multi-chunk (>4 KiB) input. Force the portable C
++    // backend so the static if/else dispatch in blake3_dispatch.c falls through
++    // to blake3_hash_many_portable. Correct over fast — Mesa only hashes SPIR-V
++    // shader blobs once at load. See tools/v3d-driver-port + the vkQuake port.
+     #define BLAKE3_USE_NEON 0
+   #endif
+ #endif
 diff --git a/src/util/os_memory_aligned.h b/src/util/os_memory_aligned.h
 index 98b3cd6f8d8..16de49d8b28 100644
 --- a/src/util/os_memory_aligned.h

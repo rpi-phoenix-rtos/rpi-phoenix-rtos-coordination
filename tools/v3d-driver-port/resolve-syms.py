@@ -132,12 +132,14 @@ def build_symmap():
 
 
 # symbols that are genuine Phoenix stubs/ports even if a definition exists in-tree
-# (libdrm syncobj/prime, C lib gaps, NEON blake3 we route to portable)
+# (libdrm syncobj/prime, C lib gaps). NOTE: blake3_hash_many_neon was dropped —
+# the Phoenix build forces BLAKE3_USE_NEON=0 (blake3_impl.h) so the dispatch uses
+# the real portable backend and the NEON symbol is no longer referenced at all.
 FORCE_STUB = {
     "drmSyncobjCreate", "drmSyncobjDestroy", "drmSyncobjWait",
     "drmSyncobjImportSyncFile", "drmSyncobjExportSyncFile",
     "drmPrimeFDToHandle", "drmPrimeHandleToFD",
-    "qsort_r", "blake3_hash_many_neon",
+    "qsort_r",
     "driCheckOption", "driParseConfigFiles", "driQueryOptionb", "driQueryOptionf",
 }
 

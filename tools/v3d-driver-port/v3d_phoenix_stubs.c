@@ -52,19 +52,12 @@ unsigned char driCheckOption(const void *opt, const char *name, int type) { retu
 unsigned char driQueryOptionb(const void *opt, const char *name) { return 0; }
 float driQueryOptionf(const void *opt, const char *name) { return 0.0f; }
 
-/* --- NEON blake3 (aarch64 dispatch picks this): not used on the screen/CL path.
- * TODO: route to blake3_hash_many_portable or compile blake3_neon.c if hashing
- * is ever exercised (currently only the disabled disk cache hashes). --- */
-void blake3_hash_many_neon(const uint8_t *const *inputs, size_t num_inputs,
-                           size_t blocks, const uint32_t key[8], uint64_t counter,
-                           int increment_counter, uint8_t flags, uint8_t flags_start,
-                           uint8_t flags_end, uint8_t *out)
-{
-	/* zero the output so identical inputs hash identically (not garbage stack);
-	 * 64 bytes/output is blake3's block-hash stride. */
-	if (out)
-		__builtin_memset(out, 0, num_inputs * 64);
-}
+/* --- NEON blake3: REMOVED. The previous do-nothing stub silently mis-hashed any
+ * multi-chunk (>4 KiB) input — vkCreateShaderModule hashes the SPIR-V blob, so
+ * large shaders (md5_vert 5228 B, screen_effects 8844 B) routed through it and
+ * crashed/mis-hashed. The Phoenix aarch64 build now forces BLAKE3_USE_NEON=0
+ * (external/mesa src/util/blake3/blake3_impl.h), so blake3_dispatch.c calls the
+ * real portable blake3_hash_many_portable and never references this symbol. --- */
 
 /* --- os abstraction: Phoenix isn't a Mesa-recognized OS, so os_misc.c/os_time.c
  * don't build. Provide minimal Phoenix-appropriate impls. --- */
