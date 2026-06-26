@@ -68,9 +68,41 @@ walk but not `buf->next` → still crashed.
 
 Fix (additive, corruption-path only): `usb_bufSane()` validates `buf->next` before the recursion
 (smashed link → bounded leak + report, no crash, and USB can survive to enumerate); an alloc-log
-ring (addr,size,**caller PC**) dumped by the report flags the allocation abutting the smashed
-buffer = the overflow writer → `addr2line prog/usb` names it. Next recurrence self-localizes.
-Intermittent (~1 boot in 4); clean boots enumerate kbd0+mouse0.
+ring (addr,size,**caller PC**) dumped by the report. Next recurrence self-localizes.
+
+**LIVE FIRE + ROOT-CAUSE REFRAME (smp-diag-reboot boot).** #121 fired with the new instrumentation
+and it points away from "overflow" entirely:
+- The guard WORKED: `usb_mem: buf->next corrupt, leaking chain` — **no Exception**, boot continued
+  to psh. Shipped stability win: #121 is now non-fatal.
+- The corruption bytes decode to **another process's strings**: `buf->next="rpi4-hwr"` (=rpi4-hwrng),
+  `buf->head="led (bcm"` — fragments of the **rpi4-hwrng boot banner**. The usb daemon never writes
+  those → the data is FOREIGN = a recycled physical page.
+- The alloc-log named `[0x5020/544 caller=usb_devInit dev.c:872]` = `setupBuf=usb_alloc(32+512)`,
+  which sits AFTER the smashed header (offset 0/16) — the newest ring entry, **not** the writer.
+- **Conclusion: #121 is a CACHE-COHERENCY / PAGE-RECYCLING bug, not a usb overflow.** The DMA pool
+  is `mmap(MAP_UNCACHED)`; the kernel hands it a page a prior process wrote *cached* whose dirty
+  lines were never flushed on free/remap → they write back over the uncached buffer header. KERNEL/
+  HAL bug, not usb — which is why 3+ sessions hunting a usb string/descriptor overflow found nothing.
+- **Fix DEFERRED to attended** (intermittent ~1/4-8, statistical USB-daemon-internals per the
+  unattended-scoping discipline; must not jeopardize the morning keyboard test): kernel `dc civac`
+  pages on `MAP_UNCACHED`/free, or a userspace `dc civac` of the buffer in `usb_allocBuffer` after
+  mmap (EL0-legal). The committed guard already makes it non-fatal in the meantime.
+
+## Kernel upstream cleanup — SMP Phase-D diag removed (kernel `5a9f5ed3`)
+
+Removed the `#if NUM_CPUS != 1` D-8 observability block from `main_initthr` (per-CPU counter
+prints + a 15 s `proc_threadSleep` + re-print). The SMP investigation is resolved/documented; the
+block was pure diagnostics on the published boot path. Boot-validated: reaches psh, no `smp:`
+spam, USB/lwip unaffected. Closes punch-list blocker #1.
+
+## Upstream-readiness punch-list (read-only audit)
+
+A subagent audited the Pi4 diff (`origin/master..master`) across all siblings + coord `tools/` and
+produced **[2026-06-27-upstream-readiness-punchlist.md](2026-06-27-upstream-readiness-punchlist.md)**
+— 16 Blockers / 58 Should-fix / 27 Nice-to-have, each with file:line + suggested action, plus a
+safe-mechanical-vs-needs-judgement split and a do-NOT-touch keep-list (live TD markers, load-bearing
+SMP symbols, the #121/#29/#30 active probes, off-limits SD/WiFi WIP). This is the actionable artifact
+for a focused publish-prep pass. (Blocker #1 — the SMP 15 s diag — is already fixed above.)
 
 ## State for the morning
 - Bundled netboot image = **boot-to-psh** (no Quake autostart), ready for the #30 keyboard test.
