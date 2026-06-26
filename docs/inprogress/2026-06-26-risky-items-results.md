@@ -65,3 +65,22 @@ GPU is active (likely the dmammap_cached RX pool aliasing the GPU scanout high-m
 PAs 0x3d3b2000/0x3db9b000/0x3e384000 — or a civac-range/coherency interaction). #11 re-opened; keep
 DEFAULT-OFF + UNSAFE-with-GPU until root-caused. LESSON: validate risky features under realistic
 CONCURRENT load (GPU running), never just the isolated micro-bench.
+
+## FINAL outcomes (2026-06-26, end of campaign)
+- **xterm (#36) — DONE**: terminal + live BusyBox shell, HW-proven. Production binary staged.
+- **Window Maker (#35) — DONE**: renders its desktop (mauve root + Dock + Clip) + STABLE. Fixed a
+  chain incl. two general wins: the libphoenix NULL/SIG_DFL signal-handler bug (da69de7) and the
+  Phoenix main-stack-default=32KB lesson (1MB PT_GNU_STACK via -z stack-size). Plus the X RECORD
+  malloc(0) assert guard, the Xft font-load bypass, and the fonts.conf XML fix. The Pi4 X11 stack now
+  runs TWO WMs (JWM + WMaker) + a terminal.
+- **GENET cacheable RX (#11) — CONCLUDED UNVIABLE** (default-off, shipped-safe): corrupts the GPU
+  framebuffer under load (user-caught); root-caused to a coherency interaction (not overlap/range);
+  kept the valuable dc ivac→civac + endthread + kernel-UCI-doc fixes.
+- **vkQuake (#29) — PAUSED, 2D-raster-PROVEN**: renders GPU 2D geometry via Vulkan on the V3D (quad);
+  frame loop / present / projection / cull all fixed. Texture upload is a deep no-WSI-winsys gap
+  (DRM_V3D_SUBMIT_TFU no-op + CL meta-copy fallback also doesn't land textures) → needs a proper
+  buffer→image copy impl in v3d_phoenix_winsys.c (focused session). Console gated on that.
+- **USB #121 (#33) — ADVANCED**: deterministic repro + localized (usb/mem.c); deep fix deferred.
+- Final bundled default: flag-off GL Quake flagship. All repos clean.
+- DURABILITY: the mesa blake3 NEON-stub fix is uncommitted in the mesa clone but captured in the
+  tracked mesa-phoenix-port.patch (the clone is rebuilt from the patch).
