@@ -65,6 +65,19 @@ as an unexplained kludge.
 
 ## Phase C — Architecture: applications out of the devices project (#12)
 
+> **DONE 2026-06-26** (executed per `docs/inprogress/2026-06-25-quake-to-ports-reorg-plan.md`,
+> user-gated decisions): the apps moved to **`phoenix-rtos-project/_user/`** (NOT the literal
+> `phoenix-rtos-ports` recipe repo — only `_user/` can host a bespoke libphoenix-linked binary AND
+> bundle a 19 MB program into `loader.disk`; see the reorg plan §0). All six GPU bring-up
+> diagnostics + the three GL demo rungs were **dropped** (hypotheses resolved; recoverable from git
+> history) — NO GL demo kept. The prebuilt engine libs now live in **`tools/.gpu-libs/`** (gitignored
+> `.a`s, tracked dir), replacing `/tmp`. `make -C "_user" all install` was wired into the rpi4b
+> `b_build_project`. Verified `--scope core` clean, `rpi4-quake` still bundled in `loader.disk`, all
+> dropped names absent. Commits: project `82f84a2`/`08e4e41`, devices `f988a76`/`a81767e`/`41d745b`,
+> coord `9381401`. Items 1, 2, 4 below are realized; item 4's "`--scope core` auto-regenerates the
+> libs" was deliberately **not** done (shelling the slow `build-*.py` out of the in-buildroot make
+> breaks copy isolation) — instead each `_user` Makefile has a loud `$(error ...)` existence-check.
+
 The capstone applications + GPU demos currently live in **`phoenix-rtos-devices/misc/`** — wrong:
 they are not device drivers. Present in devices/misc: `rpi4-quake`, `rpi4-vkquake`, `rpi4-v3d-mesa`,
 `rpi4-v3d-scout`, `rpi4-v3d-stalltest`, `rpi4-v3dv-tier0` (+ the gl* demos). Reorg:
