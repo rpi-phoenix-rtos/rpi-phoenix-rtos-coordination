@@ -92,6 +92,35 @@
  * sustained load (GMP RD+WR stuck active, binner ct0ca frozen) — the workload-dependent wedge. */
 #define HUB_AXICFG          0x0000u
 #define HUB_AXICFG_MAX_LEN  0x0000000fu
+/* HUB interrupt status/clear (HUB block, see linux v3d_regs.h V3D_HUB_INT_*). The TFU
+ * raises HUB_INT bit1 (TFUC = "conversion complete") when a job finishes. */
+#define HUB_INT_STS         0x0050u
+#define HUB_INT_CLR         0x0058u
+#define HUB_INT_TFUC        (1u<<1)   /* TFU conversion complete */
+#define HUB_INT_TFUF        (1u<<0)   /* TFU conversion failed */
+/* Texture Formatting Unit (HUB block, V3D 4.2 / ver<71 register layout — see linux
+ * v3d_regs.h V3D_TFU_*(ver) and v3d_sched.c v3d_tfu_job_run). The TFU is a small
+ * fixed-function unit that copies a (raster or tiled) source buffer into a tiled/UIF
+ * destination image: program the input/output addresses+strides+the format/tiling
+ * config word, then write ICFG (with IOC) to kick. Like the CL submit, the addresses
+ * here are GPU virtual addresses translated by the V3D MMU (the TFU sits behind it),
+ * so Mesa has already folded each BO's GPU-VA base into iia/ioa — we program them as-is.
+ * All offsets are HUB-relative (V3D_WRITE in linux targets hub_regs == our W.hub). */
+#define TFU_CS              0x0400u   /* control/status: bit0 BUSY, bit31 TFURST */
+#define TFU_CS_BUSY         (1u<<0)
+#define TFU_ICFG            0x0408u   /* input config (format/tiling/ttype/opad); write kicks */
+#define TFU_ICFG_IOC        (1u<<0)   /* raise the done interrupt when the job completes */
+#define TFU_IIA             0x040cu   /* input image address (GPU VA) */
+#define TFU_ICA             0x0410u   /* input chroma address (GPU VA; 0 for non-planar) */
+#define TFU_IIS             0x0414u   /* input image stride */
+#define TFU_IUA             0x0418u   /* input u-plane address (GPU VA; 0 for non-planar) */
+#define TFU_IOA             0x041cu   /* output image address (GPU VA) + dest tiling format */
+#define TFU_IOS             0x0420u   /* output image size: (height<<16)|width */
+#define TFU_COEF0           0x0424u   /* YUV coefficient 0 (bit31 USECOEF gates COEF1..3) */
+#define TFU_COEF0_USECOEF   (1u<<31)
+#define TFU_COEF1           0x0428u
+#define TFU_COEF2           0x042cu
+#define TFU_COEF3           0x0430u
 /* Binner tile-allocation overflow pool. When the binner exhausts the per-job
  * tile_alloc memory Mesa supplies via CT0QMA/QMS, it raises INT_OUTOMEM and stalls
  * until handed a fresh pool via PTB_BPOA/BPOS (linux v3d_overflow_mem_work). The
@@ -604,6 +633,20 @@ static inline void l2t_flush_wait(volatile uint32_t *c0)
 	for (spins = 1000000u; spins && (c0[CTL_L2TCACTL/4] & L2TCACTL_L2TFLS); spins--) {}
 }
 
+/* Flush the MMU PTE cache + clear the TLB (mirror linux v3d_mmu_flush_all). ioc_create_bo
+ * writes fresh PTEs but never invalidates the MMU's cached translations, so a job whose
+ * BOs were just mapped at new GPU VAs is fetched through a stale TLB. Both the CL and the
+ * TFU submit paths must do this before kicking work that references freshly-created BOs
+ * (every texture upload allocates a staging BO + a destination image BO). */
+static void mmu_flush_tlb(volatile uint32_t *h)
+{
+	uint32_t spins;
+	h[MMUC_CONTROL/4] = MMUC_FLUSH | MMUC_ENABLE;
+	for (spins = 1000000u; spins && (h[MMUC_CONTROL/4] & MMUC_FLUSHING); spins--) {}
+	h[MMU_CTL/4] |= MMU_CTL_TLB_CLEAR;
+	for (spins = 1000000u; spins && (h[MMU_CTL/4] & MMU_CTL_TLB_CLEARING); spins--) {}
+}
+
 /* Re-apply the per-power-on core registers over the (surviving) MMU page table: MMU base +
  * enable, MMUC enable, and the general-L2 clear+enable. Used at init and after an in-job
  * reset. The PT, BO pool and GPU VAs are unchanged — only the V3D's own register state is
@@ -718,10 +761,7 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
 	 * stale TLB -> the render thread reads an unmapped/wrong VA and hangs at RCL packet 0.
 	 * (The cube reuses one persistent job at stable VAs, so it never hit this.) Mirrors the
 	 * linux v3d_mmu_flush_all sequence: MMUC flush, then MMU_CTL TLB clear, each spin-waited. */
-	h[MMUC_CONTROL/4] = MMUC_FLUSH | MMUC_ENABLE;
-	for (spins = 1000000u; spins && (h[MMUC_CONTROL/4] & MMUC_FLUSHING); spins--) {}
-	h[MMU_CTL/4] |= MMU_CTL_TLB_CLEAR;
-	for (spins = 1000000u; spins && (h[MMU_CTL/4] & MMU_CTL_TLB_CLEARING); spins--) {}
+	mmu_flush_tlb(h);
 	/* DO NOT write CTL_MISCCFG here. It is {QRMAXCNT[3:1], OVRTMUOUT[0]} — writing OVRTMUOUT
 	 * (0x1) every submit CLOBBERED QRMAXCNT (the QPU-reserve-max-count that balances QPUs between
 	 * the binner's coordinate shaders and the render's fragment shaders) to 0, which intermittently
@@ -930,6 +970,90 @@ job_retry:
 	return 0;
 }
 
+/* DRM_V3D_SUBMIT_TFU: run a Texture Formatting Unit job — the hardware buffer->image (and
+ * image->image) copy V3DV uses for every TILED/OPTIMAL texture upload, blit and mipmap
+ * generation. Previously the winsys's ioctl dispatch handled only SUBMIT_CL and fell through
+ * to `default: return 0`, so every TFU job was a silent no-op: the destination image stayed
+ * at its alloc-time zero and every sampled texture rendered BLACK (#29). This programs the
+ * TFU registers exactly as linux v3d_tfu_job_run does for V3D 4.2 (ver<71) and waits for the
+ * unit to finish, bracketed by the same MMU-TLB + cache coherency operations ioc_submit_cl
+ * uses (texture BOs were just created by ioc_create_bo, which writes PTEs but doesn't flush
+ * the TLB; the source staging buffer must be coherent in RAM before the TFU reads it, and the
+ * tiled destination must be flushed to RAM before a later sampling CL job reads it).
+ *
+ * The submit struct's iia/ica/iua/ioa are already full GPU virtual addresses — Mesa folds
+ * each BO's GPU-VA base (the winsys's create_bo c->offset) into them in meta_emit_tfu_job /
+ * copy_*_tfu — and the TFU is behind the V3D MMU, so we write them verbatim (no va2pa). */
+static int ioc_submit_tfu(struct drm_v3d_submit_tfu *t)
+{
+	volatile uint32_t *c0 = W.core0;
+	volatile uint32_t *h = W.hub;
+	uint32_t spins;
+
+	/* --- prologue: make the source coherent + translations fresh ---
+	 * Flush the MMU TLB so the just-created source/dest BOs are translated by their new PTEs,
+	 * then invalidate the slice caches + flush L2T so the TFU reads the source staging buffer
+	 * from RAM rather than a stale cached view (mirror the ioc_submit_cl pre-bin sequence). */
+	mmu_flush_tlb(h);
+	c0[CTL_SLCACTL/4] = SLCACTL_INVAL_ALL;
+	l2t_flush_wait(c0);                        /* prior L2T flush must be idle (GFXH-1897) */
+	c0[CTL_L2TCACTL/4] = L2TCACTL_L2TFLS;
+	l2t_flush_wait(c0);                        /* and complete before the TFU reads source */
+
+	/* Clear any stale TFU done/fail latch so our post-kick poll sees only this job. */
+	h[HUB_INT_CLR/4] = HUB_INT_TFUC | HUB_INT_TFUF;
+
+	/* --- kick: program the TFU regs (ICFG last, with IOC). Verbatim from v3d_tfu_job_run. --- */
+	h[TFU_IIA/4]  = t->iia;
+	h[TFU_IIS/4]  = t->iis;
+	h[TFU_ICA/4]  = t->ica;
+	h[TFU_IUA/4]  = t->iua;
+	h[TFU_IOA/4]  = t->ioa;
+	h[TFU_IOS/4]  = t->ios;
+	h[TFU_COEF0/4] = t->coef[0];
+	if (t->coef[0] & TFU_COEF0_USECOEF) {      /* YUV: COEF1..3 valid only when USECOEF set */
+		h[TFU_COEF1/4] = t->coef[1];
+		h[TFU_COEF2/4] = t->coef[2];
+		h[TFU_COEF3/4] = t->coef[3];
+	}
+	h[TFU_ICFG/4] = t->icfg | TFU_ICFG_IOC;    /* this write starts the job */
+
+	/* --- wait for done. Poll HUB_INT TFUC (set on completion) / TFUF (on failure). We rely on
+	 * the interrupt-status LATCH rather than the CS BUSY bit: BUSY can race the kick (we may read
+	 * it 0 in the window before the unit asserts busy), whereas TFUC is sticky once set (cleared
+	 * only by us, pre-kick) so it cannot be missed. Bounded spin like the CL paths — a wedged TFU
+	 * must not hang the process. --- */
+	for (spins = 8000000u; spins; spins--) {
+		if (h[HUB_INT_STS/4] & (HUB_INT_TFUC | HUB_INT_TFUF))
+			break;
+	}
+	{
+		uint32_t isr = h[HUB_INT_STS/4];
+		h[HUB_INT_CLR/4] = HUB_INT_TFUC | HUB_INT_TFUF;
+		if (spins == 0 || (isr & HUB_INT_TFUF)) {
+			fprintf(stderr, "v3d-winsys: TFU TIMEOUT/FAIL hub_int=0x%08x cs=0x%08x "
+				"iia=0x%08x ioa=0x%08x ios=0x%08x icfg=0x%08x\n",
+				isr, h[TFU_CS/4], t->iia, t->ioa, t->ios, t->icfg);
+			/* Don't abort the client — return success so rendering proceeds (a failed
+			 * upload leaves the image zero, same as before, just visible in the log). */
+		}
+		else {
+			static unsigned tfu_n = 0;
+			if (tfu_n++ < 8 || (tfu_n & 0x3ffu) == 0u)
+				fprintf(stderr, "v3d-winsys: TFU copy iia=0x%08x->ioa=0x%08x %ux%u done "
+					"(n=%u)\n", t->iia, t->ioa, t->ios & 0xffffu, t->ios >> 16, tfu_n);
+		}
+	}
+
+	/* --- epilogue: flush the tiled destination image to RAM so a subsequent sampling CL job
+	 * (which fetches texels through the TMU/L2T) reads the freshly-written pixels, not stale
+	 * cache. Same GFXH-1897-safe clean as the end of ioc_submit_cl. --- */
+	l2t_flush_wait(c0);
+	c0[CTL_L2TCACTL/4] = L2TCACTL_L2TFLS | (2u << 1);   /* FLM_CLEAN */
+	c0[CTL_SLCACTL/4] = SLCACTL_INVAL_ALL;              /* drop stale TMU-cache view of the dest */
+	return 0;
+}
+
 /* device info from the real Pi4 IDENTs (rpi4-v3d-scout): IDENT0=0x04443356, etc. */
 static int ioc_get_param(struct drm_v3d_get_param *gp)
 {
@@ -1024,7 +1148,9 @@ int phoenix_v3d_ioctl(int fd, unsigned long request, void *arg)
 	}
 	case DRM_V3D_SUBMIT_CL:
 		return ioc_submit_cl(arg);
+	case DRM_V3D_SUBMIT_TFU:
+		return ioc_submit_tfu(arg);
 	default:
-		return 0;   /* perfmon/tfu/csd: no-op for now */
+		return 0;   /* perfmon/csd: no-op for now */
 	}
 }

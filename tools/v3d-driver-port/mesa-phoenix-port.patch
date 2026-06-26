@@ -78,35 +78,24 @@ index 8de6f6de312..48507bea4ac 100644
      * double-buffer mode is disabled.
      */
 diff --git a/src/broadcom/vulkan/v3dv_device.c b/src/broadcom/vulkan/v3dv_device.c
-index 32b0cd460e8..746de4204b1 100644
+index 32b0cd460e8..e49be198630 100644
 --- a/src/broadcom/vulkan/v3dv_device.c
 +++ b/src/broadcom/vulkan/v3dv_device.c
-@@ -661,6 +661,24 @@ v3dv_CreateInstance(const VkInstanceCreateInfo *pCreateInfo,
+@@ -661,6 +661,13 @@ v3dv_CreateInstance(const VkInstanceCreateInfo *pCreateInfo,
  
     v3d_process_debug_variable();
  
-+#if defined(__phoenix__)
-+   /* Phoenix no-WSI fb0 winsys does not implement the DRM_V3D_SUBMIT_TFU ioctl (its
-+    * ioctl dispatch handles only DRM_V3D_SUBMIT_CL; everything else is a silent no-op
-+    * `default: return 0`). The TFU is V3DV's *preferred* (faster) path for buffer<->image
-+    * and image<->image copies, blits, and mipmap generation of tiled/OPTIMAL images, so on
-+    * this port every such copy was submitted as a TFU job that never executed -> the
-+    * destination image stayed at its alloc-time zero -> every sampled texture rendered
-+    * BLACK (root-caused: notex draws fine, all textured draws black, descriptors/samplers
-+    * valid). Forcing DISABLE_TFU routes ALL of those operations to the CL fallback
-+    * (copy_*_tlb / blit_shader), which submits through DRM_V3D_SUBMIT_CL — the path the
-+    * winsys does execute. DISABLE_TFU is an upstream-supported debug mode, so a non-TFU CL
-+    * fallback is guaranteed for every TFU path. This is correctness (not perf) on this
-+    * winsys; implementing the TFU submit is a future optimization.
-+    * TODO(vkquake-port): drop once ioc_submit_tfu is implemented in v3d_phoenix_winsys.c. */
-+   v3d_mesa_debug |= V3D_DEBUG_DISABLE_TFU;
-+   fprintf(stderr, "v3dv: Phoenix DISABLE_TFU forced (no-WSI winsys, CL copy fallback)\n");
-+#endif
++   /* Phoenix no-WSI fb0 winsys: the TFU (texture formatting unit) buffer->image / image->image
++    * copy path is now implemented in the winsys (v3d_phoenix_winsys.c ioc_submit_tfu, the
++    * DRM_V3D_SUBMIT_TFU ioctl), so V3DV uses its preferred hardware TFU copy for TILED/OPTIMAL
++    * texture uploads, blits and mipmap generation — no DISABLE_TFU override is needed. (It was
++    * previously forced on because the winsys's ioctl dispatch ended `default: return 0`, making
++    * every TFU job a silent no-op, so every sampled texture rendered black — #29.) */
 +
     instance->vk.physical_devices.enumerate = enumerate_devices;
     instance->vk.physical_devices.destroy = destroy_physical_device;
  
-@@ -841,6 +859,19 @@ device_has_expected_features(struct v3dv_physical_device *device)
+@@ -841,6 +848,19 @@ device_has_expected_features(struct v3dv_physical_device *device)
  static VkResult
  init_uuids(struct v3dv_physical_device *device)
  {
@@ -126,7 +115,7 @@ index 32b0cd460e8..746de4204b1 100644
     const struct build_id_note *note =
        build_id_find_nhdr_for_addr(init_uuids);
     if (!note) {
-@@ -892,6 +923,7 @@ init_uuids(struct v3dv_physical_device *device)
+@@ -892,6 +912,7 @@ init_uuids(struct v3dv_physical_device *device)
     memcpy(device->device_uuid, blake3, VK_UUID_SIZE);
  
     return VK_SUCCESS;
@@ -134,7 +123,7 @@ index 32b0cd460e8..746de4204b1 100644
  }
  
  static void
-@@ -1346,6 +1378,12 @@ get_device_properties(const struct v3dv_physical_device *device,
+@@ -1346,6 +1367,12 @@ get_device_properties(const struct v3dv_physical_device *device,
  
  }
  
@@ -147,7 +136,7 @@ index 32b0cd460e8..746de4204b1 100644
  static VkResult
  create_physical_device(struct v3dv_instance *instance,
                         int32_t primary_fd, int32_t render_fd,
-@@ -1372,6 +1410,14 @@ create_physical_device(struct v3dv_instance *instance,
+@@ -1372,6 +1399,14 @@ create_physical_device(struct v3dv_instance *instance,
     if (result != VK_SUCCESS)
        goto fail;
  
@@ -162,7 +151,7 @@ index 32b0cd460e8..746de4204b1 100644
     struct stat primary_stat = {0}, render_stat = {0};
     if (fstat(primary_fd, &primary_stat) != 0) {
        result = vk_errorf(instance, VK_ERROR_INITIALIZATION_FAILED,
-@@ -1389,6 +1435,7 @@ create_physical_device(struct v3dv_instance *instance,
+@@ -1389,6 +1424,7 @@ create_physical_device(struct v3dv_instance *instance,
  
     device->has_render = true;
     device->render_devid = render_stat.st_rdev;
@@ -170,7 +159,7 @@ index 32b0cd460e8..746de4204b1 100644
  
  #if USE_V3D_SIMULATOR
     device->sim_file = v3d_simulator_init(render_fd);
-@@ -1404,6 +1451,16 @@ create_physical_device(struct v3dv_instance *instance,
+@@ -1404,6 +1440,16 @@ create_physical_device(struct v3dv_instance *instance,
        drmFreeVersion(version);
     }
  
@@ -187,7 +176,7 @@ index 32b0cd460e8..746de4204b1 100644
     if (!v3d_get_device_info(device->render_fd, &device->devinfo, &v3d_ioctl)) {
        result = vk_errorf(instance, VK_ERROR_INITIALIZATION_FAILED,
                           "Failed to get info from device.");
-@@ -1637,6 +1694,15 @@ enumerate_devices(struct vk_instance *vk_instance)
+@@ -1637,6 +1683,15 @@ enumerate_devices(struct vk_instance *vk_instance)
     struct v3dv_instance *instance =
        container_of(vk_instance, struct v3dv_instance, vk);
  
@@ -203,7 +192,7 @@ index 32b0cd460e8..746de4204b1 100644
     /* FIXME: Check for more devices? */
     drmDevicePtr devices[8];
     int max_devices;
-@@ -1696,6 +1762,7 @@ enumerate_devices(struct vk_instance *vk_instance)
+@@ -1696,6 +1751,7 @@ enumerate_devices(struct vk_instance *vk_instance)
     drmFreeDevices(devices, max_devices);
  
     return result;
