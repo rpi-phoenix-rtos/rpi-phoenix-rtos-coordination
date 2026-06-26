@@ -337,6 +337,30 @@ fbdevShadowUpdate(ScreenPtr pScreen, shadowBufPtr pBuf)
  * Phoenix, whose poll() does not reliably wake on fd-readiness), the same thread
  * as fbdevShadowUpdate, so no locking is needed against the damage path.
  */
+/* Per-keyboard driver state. */
+typedef struct _FbdevKbd {
+    int fd;
+    uint8_t prev[8];            /* previous raw HID report, for down/up diffing */
+    KdKeyboardInfo *ki;         /* device handle, for the poll-timer drain (see
+                                 * fbdevInputTimerCb) — NULL until Enable */
+} FbdevKbd;
+
+/* Per-pointer driver state. */
+typedef struct _FbdevPtr {
+    int fd;
+    KdPointerInfo *pi;          /* device handle, for the poll-timer drain */
+} FbdevPtr;
+
+/* The single keyboard/pointer instances (kdrive creates one core device each).
+ * Declared above the input-drain timer (fbdevInputTimerCb) which reads them. */
+static FbdevKbd fbdevKbd = { -1, { 0 }, NULL };
+static FbdevPtr fbdevPtr = { -1, NULL };
+
+/* The HID read/drain callbacks live in the input section below; forward-declare
+ * them so the poll-timer (defined next) can call them. */
+static void fbdevKbdRead(int fd, int ready, void *data);
+static void fbdevMouseRead(int fd, int ready, void *data);
+
 #define FBDEV_FLUSH_MS 300
 
 static OsTimerPtr fbdevFlushTimer = NULL;
@@ -363,6 +387,36 @@ fbdevFlushTimerCb(OsTimerPtr timer, CARD32 now, void *arg)
     fbdevFlushRegion(pScreen, 0, priv->mode.height);
     /* Return the interval (non-zero) to re-arm; returning 0 fires only once. */
     return FBDEV_FLUSH_MS;
+}
+
+/*
+ * Input drain timer. /dev/kbd0 + /dev/mouse0 are drained here on a fast timer
+ * instead of via InputThreadRegisterDev's poll()-readiness model: Phoenix poll()
+ * does not reliably wake on HID fd-readiness (the very reason the screen flush is
+ * timer-driven too, see fbdevFlushTimerCb), so a registered read callback never
+ * fires and NO input reaches X — devices open fine but nothing reacts. This timer
+ * fires from WaitForSomething/TimerCheck on poll() *timeout* on the main dispatch
+ * thread and does the non-blocking, bounded drain itself. It is the SOLE reader
+ * (the Enable funcs deliberately do NOT call InputThreadRegisterDev), so there is
+ * no input-thread race and no input_lock is needed — same threading as the flush
+ * timer and the ephyr SetNotifyFd main-loop path. 16 ms ≈ 60 Hz: the bounded
+ * drain empties the FIFO each tick, so latency is ≤ one tick with no event loss.
+ */
+#define FBDEV_INPUT_POLL_MS 16
+
+static OsTimerPtr fbdevInputTimer = NULL;
+
+static CARD32
+fbdevInputTimerCb(OsTimerPtr timer, CARD32 now, void *arg)
+{
+    (void) timer;
+    (void) now;
+    (void) arg;
+    if (fbdevKbd.fd >= 0 && fbdevKbd.ki != NULL)
+        fbdevKbdRead(fbdevKbd.fd, 1, fbdevKbd.ki);
+    if (fbdevPtr.fd >= 0 && fbdevPtr.pi != NULL)
+        fbdevMouseRead(fbdevPtr.fd, 1, fbdevPtr.pi);
+    return FBDEV_INPUT_POLL_MS;
 }
 
 /*
@@ -413,6 +467,11 @@ fbdevCreateResources(ScreenPtr pScreen)
          * reaches the display even with no further damage. */
         fbdevFlushTimer = TimerSet(fbdevFlushTimer, 0, FBDEV_FLUSH_MS,
                                    fbdevFlushTimerCb, pScreen);
+        /* Arm the HID input-drain timer too (see fbdevInputTimerCb). Safe to arm
+         * before the input devices enable: the callback no-ops until kbd0/mouse0
+         * are open and their device handles are stored. */
+        fbdevInputTimer = TimerSet(fbdevInputTimer, 0, FBDEV_INPUT_POLL_MS,
+                                   fbdevInputTimerCb, pScreen);
     }
     return TRUE;
 }
@@ -433,10 +492,14 @@ static void
 fbdevCardFini(KdCardInfo *card)
 {
     FbdevPriv *priv = card->driver;
-    /* Stop the periodic flush before we hand the framebuffer back. */
+    /* Stop the periodic flush + input drain before we hand the framebuffer back. */
     if (fbdevFlushTimer) {
         TimerFree(fbdevFlushTimer);
         fbdevFlushTimer = NULL;
+    }
+    if (fbdevInputTimer) {
+        TimerFree(fbdevInputTimer);
+        fbdevInputTimer = NULL;
     }
     /* Hand the framebuffer back to the text console (reappears with everything
      * the console accumulated off-screen while X owned the display). */
@@ -548,21 +611,6 @@ static const unsigned char hidToEvdev[256] = {
 /* X keycode offset over the Linux evdev keycode for the evdev-rules keymap. */
 #define EVDEV_KEYCODE_OFFSET 8
 
-/* Per-keyboard driver state. */
-typedef struct _FbdevKbd {
-    int fd;
-    uint8_t prev[8];            /* previous raw HID report, for down/up diffing */
-} FbdevKbd;
-
-/* Per-pointer driver state. */
-typedef struct _FbdevPtr {
-    int fd;
-} FbdevPtr;
-
-/* The single keyboard/pointer instances (kdrive creates one core device each). */
-static FbdevKbd fbdevKbd = { -1, { 0 } };
-static FbdevPtr fbdevPtr = { -1 };
-
 /* The eight HID modifier bits (report byte[0]) -> their Linux evdev keycodes,
  * in bit order: LCtrl, LShift, LAlt, LGUI, RCtrl, RShift, RAlt, RGUI. */
 static const unsigned char hidModEvdev[8] = {
@@ -582,8 +630,14 @@ fbdevHidUsagePresent(const uint8_t *rep, uint8_t u)
 static void
 fbdevKbdEmit(KdKeyboardInfo *ki, unsigned char evdev, int is_up)
 {
+    static int first = 1;
     if (evdev == 0)
         return;
+    if (first) {                /* #30 diag: a real key event reached dix */
+        first = 0;
+        ErrorF("[fbdev] kbd FIRST event enqueued (keycode=%d up=%d)\n",
+               evdev + EVDEV_KEYCODE_OFFSET, is_up);
+    }
     KdEnqueueKeyboardEvent(ki, evdev + EVDEV_KEYCODE_OFFSET, is_up);
 }
 
@@ -631,11 +685,20 @@ fbdevKbdRead(int fd, int ready, void *data)
     uint8_t buf[64];
     ssize_t r;
     int off, guard;
+    static unsigned long drained = 0;
+    unsigned long before = drained;
 
     (void) ready;
-    for (guard = 0; guard < 64 && (r = read(fd, buf, sizeof(buf))) > 0; ++guard)
+    for (guard = 0; guard < 64 && (r = read(fd, buf, sizeof(buf))) > 0; ++guard) {
+        drained += (unsigned long) r;
         for (off = 0; off + 8 <= (int) r; off += 8)
             fbdevKbdProcess(ki, kbd, buf + off);
+    }
+    /* #30 diag: prove the timer-drain reaches kbd0. Log the FIRST bytes ever read,
+     * so a null result tells "0 bytes (drain not reaching the device)" apart from
+     * "bytes read but no client reaction (downstream keycode/focus issue)". */
+    if (before == 0 && drained > 0)
+        ErrorF("[fbdev] kbd FIRST drain: %lu bytes from kbd0\n", drained);
 }
 
 /*
@@ -696,9 +759,11 @@ fbdevKeyboardEnable(KdKeyboardInfo *ki)
 
     memset(kbd->prev, 0, sizeof(kbd->prev));
 
-    if (!InputThreadRegisterDev(kbd->fd, fbdevKbdRead, ki))
-        ErrorF("[fbdev] InputThreadRegisterDev(%s) failed — keyboard idle\n",
-               KBD_DEVICE);
+    /* Drive reads from fbdevInputTimerCb, NOT InputThreadRegisterDev: the latter
+     * polls for fd-readiness, which Phoenix poll() does not deliver on HID fds, so
+     * the callback would never fire (devices open but no input — the observed
+     * symptom). Storing the device handle here is what lets the timer enqueue. */
+    kbd->ki = ki;
     return Success;
 }
 
@@ -707,8 +772,8 @@ fbdevKeyboardDisable(KdKeyboardInfo *ki)
 {
     FbdevKbd *kbd = &fbdevKbd;
 
+    kbd->ki = NULL;             /* stop the timer drain before closing the fd */
     if (kbd->fd >= 0) {
-        InputThreadUnregisterDev(kbd->fd);
         close(kbd->fd);
         kbd->fd = -1;
     }
@@ -758,6 +823,14 @@ fbdevMouseProcess(KdPointerInfo *pi, const uint8_t *p)
     if (hidbtn & 0x02)
         flags |= KD_BUTTON_3;       /* right */
 
+    {
+        static int first = 1;
+        if (first) {            /* #30 diag: a real pointer event reached dix */
+            first = 0;
+            ErrorF("[fbdev] mouse FIRST event enqueued (dx=%d dy=%d btn=0x%x)\n",
+                   dx, dy, hidbtn);
+        }
+    }
     KdEnqueuePointerEvent(pi, flags, dx, dy, 0);
 }
 
@@ -769,10 +842,17 @@ fbdevMouseRead(int fd, int ready, void *data)
     ssize_t r;
     int off, guard;
 
+    static unsigned long drained = 0;
+    unsigned long before = drained;
+
     (void) ready;
-    for (guard = 0; guard < 64 && (r = read(fd, buf, sizeof(buf))) > 0; ++guard)
+    for (guard = 0; guard < 64 && (r = read(fd, buf, sizeof(buf))) > 0; ++guard) {
+        drained += (unsigned long) r;
         for (off = 0; off + 4 <= (int) r; off += 4)
             fbdevMouseProcess(pi, buf + off);
+    }
+    if (before == 0 && drained > 0)
+        ErrorF("[fbdev] mouse FIRST drain: %lu bytes from mouse0\n", drained);
 }
 
 static Status
@@ -794,9 +874,9 @@ fbdevMouseEnable(KdPointerInfo *pi)
     }
     ErrorF("[fbdev] %s opened (fd=%d) — mouse active\n", MOUSE_DEVICE, ptr->fd);
 
-    if (!InputThreadRegisterDev(ptr->fd, fbdevMouseRead, pi))
-        ErrorF("[fbdev] InputThreadRegisterDev(%s) failed — mouse idle\n",
-               MOUSE_DEVICE);
+    /* Timer-driven drain, not InputThreadRegisterDev — see fbdevMouseEnable's
+     * keyboard sibling and fbdevInputTimerCb (Phoenix poll() readiness gap). */
+    ptr->pi = pi;
     return Success;
 }
 
@@ -805,8 +885,8 @@ fbdevMouseDisable(KdPointerInfo *pi)
 {
     FbdevPtr *ptr = &fbdevPtr;
 
+    ptr->pi = NULL;            /* stop the timer drain before closing the fd */
     if (ptr->fd >= 0) {
-        InputThreadUnregisterDev(ptr->fd);
         close(ptr->fd);
         ptr->fd = -1;
     }
