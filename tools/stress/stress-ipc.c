@@ -74,9 +74,14 @@
 #define IPC_STACKSZ (32u * 1024u)
 #define MAX_THR     16
 
-/* Private message type for the in-process echo server. Past mtStat so it can
- * never collide with a standard filesystem/object message the kernel routes. */
-#define MT_ECHO 0x5300
+/* Private message types for the in-process echo server. Past mtStat so they can
+ * never collide with a standard filesystem/object message the kernel routes.
+ * MT_ECHO_STOP is the shutdown sentinel: main sends exactly one after every
+ * client has joined, the server responds and breaks — deterministic teardown
+ * with no message counting (a count-based shutdown races msgRespond vs. the
+ * counter increment and can leave a filler msgSend blocked on a dead port). */
+#define MT_ECHO      0x5300
+#define MT_ECHO_STOP 0x5301
 
 /* VideoCore property tags (BCM2711 firmware mailbox), from the thermal driver. */
 #define VC_PROP_GET_FIRMWARE_REV 0x00000001u
@@ -110,11 +115,11 @@ typedef struct {
 } echo_arg_t;
 
 /* The echo server thread: msgRecv on its port, copy i.raw->o.raw verbatim for
- * MT_ECHO, and msgRespond. It runs until it has served `expect` messages, so the
- * test tears down deterministically (no lingering port thread). */
+ * MT_ECHO, and msgRespond. It runs until it receives the MT_ECHO_STOP sentinel,
+ * which it responds to and then exits — so teardown is deterministic and the
+ * server is always blocked in msgRecv while any client could be sending. */
 typedef struct {
 	uint32_t port;
-	long expect;
 	volatile long served;
 	volatile int up;
 } echo_srv_t;
@@ -127,12 +132,20 @@ static void echo_server(void *arg)
 	int err;
 
 	s->up = 1;
-	while (s->served < s->expect) {
+	for (;;) {
 		err = msgRecv(s->port, &msg, &rid);
 		if (err < 0) {
 			if (err == -EINTR)
 				continue;
 			break; /* port closed / fatal */
+		}
+		if (msg.type == MT_ECHO_STOP) {
+			/* Acknowledge the shutdown, then exit the loop. Only main sends this,
+			 * and only after every client has joined, so nothing else is in
+			 * flight. */
+			msg.o.err = EOK;
+			msgRespond(s->port, &msg, rid);
+			break;
 		}
 		/* Echo the request payload back into the response region. For any other
 		 * type, respond with an error so a stray message is visible, not hung. */
@@ -214,17 +227,15 @@ static void run_echo(sr_tally_t *t, int nthr)
 	handle_t ctids[MAX_THR];
 	handle_t stid;
 	int i, started = 0, faults = 0, limits = 0;
-	long total_rounds, total_done = 0;
+	long total_done = 0;
 
 	if (nthr > MAX_THR) nthr = MAX_THR;
 	if (nthr < 1) nthr = 1;
-	total_rounds = (long)nthr * ECHO_ROUNDS;
 
 	if (portCreate(&srv.port) != EOK) {
 		SR_FAULT(t, SUITE, "echo", "portCreate failed errno=%d (%s)", errno, strerror(errno));
 		return;
 	}
-	srv.expect = total_rounds;
 	srv.served = 0;
 	srv.up = 0;
 
@@ -284,21 +295,14 @@ static void run_echo(sr_tally_t *t, int nthr)
 		free(cstacks[i]);
 	}
 
-	/* If some clients failed to start, the server is still waiting for the full
-	 * `expect`. Lower the bar to what was actually sent so the server can exit,
-	 * then poke it with the right number of drain messages if needed. Simpler:
-	 * if not all rounds were served, send no-op fillers so the server reaches
-	 * `expect` and joins cleanly. */
-	if (srv.served < srv.expect) {
-		long missing = srv.expect - srv.served;
-		long k;
-		for (k = 0; k < missing; k++) {
-			msg_t m;
-			memset(&m, 0, sizeof(m));
-			m.type = MT_ECHO;
-			if (msgSend(srv.port, &m) < 0)
-				break;
-		}
+	/* All clients have joined, so nothing else is sending. The server is blocked
+	 * in msgRecv; send the single STOP sentinel to make it respond + exit, then
+	 * join it. Deterministic — no message counting, no off-by-one race. */
+	{
+		msg_t m;
+		memset(&m, 0, sizeof(m));
+		m.type = MT_ECHO_STOP;
+		(void)msgSend(srv.port, &m);
 	}
 	(void)threadJoin(stid, 0);
 	free(sstack);

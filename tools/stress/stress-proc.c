@@ -59,9 +59,14 @@ extern char **environ;
 #define DEFAULT_CHURN    200
 
 /* Churn watchdog: once spawns start failing for a non-limit reason, or once the
- * per-spawn time blows past this multiple of the early baseline, we stop and
- * report — a monotonic onset is the leak signature. */
-#define CHURN_SLOWDOWN_FACTOR 8
+ * per-spawn time stays past this multiple of the early baseline for several
+ * CONSECUTIVE iterations, we stop and report. A real pid/handle leak shows as a
+ * monotonic onset (sustained slowdown); a single NFS blip on one execve must NOT
+ * trip it, so we require a run of slow iterations AND an absolute floor below
+ * which ratios are ignored (sub-ms jitter is meaningless). */
+#define CHURN_SLOWDOWN_FACTOR    8
+#define CHURN_SLOWDOWN_RUN       8     /* consecutive slow iters before we flag */
+#define CHURN_SLOWDOWN_FLOOR_MS  4     /* ignore deltas below this (jitter) */
 
 /* Worker compute/alloc bounds: enough to touch the allocator + run a real (tiny)
  * loop so the child is not a no-op exec, but bounded so it always terminates. */
@@ -235,17 +240,18 @@ static void run_parallel(sr_tally_t *t, char *self, int n)
 static void run_churn(sr_tally_t *t, char *self, int iters)
 {
 	int i, ok = 0;
-	long baseline_us = 0;
+	long baseline_ms = 0;
 	int slowdown_at = -1, fail_at = -1, limit_at = -1;
+	int slow_run = 0; /* consecutive slow iterations */
 
 	SR_HB(SUITE, "churn start iters=%d", iters);
 
 	for (i = 0; i < iters; i++) {
-		long a, b;
+		long a, b, delta;
 		pid_t p;
 		int status = 0;
 
-		a = ms_now() * 1000L; /* coarse; we compare deltas, not absolutes */
+		a = ms_now();
 		p = spawn_worker(self);
 		if (p < 0) {
 			if (errno == EAGAIN) {
@@ -271,13 +277,24 @@ static void run_churn(sr_tally_t *t, char *self, int iters)
 		}
 		ok++;
 
-		b = ms_now() * 1000L;
-		/* Establish a baseline once a handful of iterations have settled. */
-		if (i == 16)
-			baseline_us = (b - a > 0) ? (b - a) : 1;
-		else if (baseline_us > 0 && (b - a) > baseline_us * CHURN_SLOWDOWN_FACTOR) {
-			slowdown_at = i;
-			break;
+		b = ms_now();
+		delta = b - a;
+		/* Establish a baseline once a handful of iterations have settled, then
+		 * track a sustained run of slow spawns. A single slow iteration (e.g. an
+		 * NFS hiccup on the worker's execve) resets the run, so only a monotonic
+		 * leak-shaped slowdown is ever flagged. */
+		if (i == 16) {
+			baseline_ms = (delta > CHURN_SLOWDOWN_FLOOR_MS) ? delta : CHURN_SLOWDOWN_FLOOR_MS;
+		}
+		else if (baseline_ms > 0 && delta > CHURN_SLOWDOWN_FLOOR_MS
+				&& delta > baseline_ms * CHURN_SLOWDOWN_FACTOR) {
+			if (++slow_run >= CHURN_SLOWDOWN_RUN) {
+				slowdown_at = i;
+				break;
+			}
+		}
+		else {
+			slow_run = 0; /* fast iteration — not a sustained slowdown */
 		}
 
 		if ((i % 50) == 0)
@@ -291,9 +308,10 @@ static void run_churn(sr_tally_t *t, char *self, int iters)
 			limit_at, ok);
 	}
 	if (slowdown_at >= 0) {
-		/* A clean monotonic slowdown is the classic handle-leak signature. */
-		SR_FAULT(t, SUITE, "churn", "per-spawn slowdown >%dx baseline at iter=%d "
-			"(possible pid/handle leak)", CHURN_SLOWDOWN_FACTOR, slowdown_at);
+		/* A sustained monotonic slowdown is the classic handle-leak signature. */
+		SR_FAULT(t, SUITE, "churn", "sustained per-spawn slowdown >%dx baseline "
+			"(%dms) for %d consecutive iters ending iter=%d (possible pid/handle leak)",
+			CHURN_SLOWDOWN_FACTOR, (int)baseline_ms, CHURN_SLOWDOWN_RUN, slowdown_at);
 	}
 	if (fail_at < 0 && slowdown_at < 0) {
 		SR_OK(t, SUITE, "churn", "completed=%d cycles, no leak onset", ok);
