@@ -1,5 +1,8 @@
 # WiFi (BCM43455) Bring-Up Plan for Phoenix-RTOS on Pi 4
 
+> **STATUS (2026-06-26): forward plan, still ACTIVE but PARKED at the #91 firmware-execution
+> gate** (see `2026-06-04-wifi-fw-exec-gate.md`). Valid forward reference; no change.
+
 > **Related**: see `docs/todo/bluetooth-bringup-plan.md` for the BT side of the
 > same combo chip. WiFi lands first (higher user-visible value + the
 > shared `expgpio` / mailbox / firmware-blob plumbing carries over to BT

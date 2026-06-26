@@ -1,5 +1,11 @@
 # SD #154 — ROOT CAUSE FOUND: PIO write completion (Transfer-Complete IRQ never fires)
 
+> **STATUS (2026-06-26): still ACTIVE / PARKED — no change.** Root cause stands (writes
+> land but the Transfer-Complete IRQ never fires for writes → false ETIME); the CMD13-poll
+> completion fix is still designed-not-implemented. Validation needs an attended SD-card
+> swap, so it stays parked. The SD-write WIP in `storage/bcm2711-emmc/` is flagged by the
+> cleanup plan (Phase A) as "finalize behind a branch/flag."
+
 **Date:** 2026-06-07. **Task:** #154. **Status:** root cause HW-proven; **fix designed, not yet
 implemented**. Paused for an overnight NFS session (SD needs card-swaps; card is in the host).
 

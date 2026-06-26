@@ -1,5 +1,12 @@
 # WiFi #91 — BCM43455 firmware-execution gate: investigation & next steps
 
+> **STATUS (2026-06-26): still PARKED — no change.** WiFi #91 remains at the firmware-
+> execution gate (fw downloaded + CR4 released, fw does not run). Strongest lead is still
+> the SOCRAM-tail readback / NVRAM-trailer-token issue. No work since 2026-06-04; resuming
+> needs a focused datasheet/JTAG session. The loose WiFi WIP files in lwip
+> (`port/wifi-fw-43455.*`, `wifi-nvram-43455.*`) are flagged by the cleanup plan (Phase A)
+> to move to a `wip/wifi-91` branch.
+
 **Status (2026-06-04):** firmware is downloaded correctly and the CR4 is released,
 but the firmware **does not execute**. This note consolidates the elimination
 work so a focused datasheet/JTAG session can start from the frontier instead of

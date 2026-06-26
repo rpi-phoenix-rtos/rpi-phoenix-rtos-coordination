@@ -1,5 +1,16 @@
 # vkQuake → Phoenix-RTOS Pi4 (aarch64-phoenix, V3DV) — build scaffold + gap inventory
 
+> **STATUS (2026-06-26): 2D GPU RASTER PROVEN ON HW; PAUSED at the texture-upload gap.**
+> Since this scaffold doc, vkQuake advanced well past init: Vulkan fully initializes on
+> the V3D, the per-frame loop / present / projection / back-face-cull are all fixed, and
+> a GPU 2D quad renders via Vulkan on the V3D (HW-proven). The **sole remaining blocker is
+> the no-WSI winsys texture-copy gap**: `DRM_V3D_SUBMIT_TFU` is a no-op on the Phoenix
+> winsys and the CL meta-copy fallback also fails to land textures, so no texture data
+> reaches the GPU images → no recognizable Quake content yet. The fix is a proper
+> buffer→image copy in `v3d_phoenix_winsys.c` (a focused session). vkQuake is task #29,
+> PAUSED; the GL Quake flagship is unaffected. See `2026-06-26-risky-items-results.md`
+> and `2026-06-25-hw-validation-results.md`.
+
 **Date:** 2026-06-23
 **Type:** IMPLEMENTATION (host-side build scaffolding) + gap scoping
 **Scope:** ADDITIVE. Does NOT touch the GLQuake flagship (`tools/quakespasm-port`, the GL

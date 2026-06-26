@@ -1,5 +1,8 @@
 # BCM43455 firmware blobs — provenance, licensing, staging
 
+> **STATUS (2026-06-26): reference doc, still ACTIVE.** WiFi is parked at the #91 firmware-
+> execution gate; this provenance/licensing/staging reference is unchanged and still valid.
+
 The Phoenix-RTOS Pi 4 WiFi driver (impl plan
 [`plans/wifi-bcm43455-impl.md`](wifi-bcm43455-impl.md), phase
 P3+) needs three Cypress firmware files at runtime to bring the

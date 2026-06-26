@@ -1,5 +1,26 @@
 # TD-16 "cache enable" — investigation, ground-truth correction, and the real perf-lever plan
 
+> **STATUS (2026-06-26): BOTH premises now overtaken — see correction below.**
+> 1. The original TD-16 framing ("caches globally OFF = the biggest perf lever") was
+>    already WRONG when this doc was written: caches are ON (`SCTLR_EL1.{M,C,I}` set;
+>    all Normal RAM is WB-cacheable). That correction still holds.
+> 2. **This doc's recast lever — "make the GENET RX pool cacheable (streaming DMA)" —
+>    has since been TRIED and CONCLUDED UNVIABLE.** The opt-in cacheable-RX path was
+>    implemented (lwip 476825b/89cc6e7), the `dc ivac`→`dc civac` EL0-legality bug fixed
+>    (f0b75a2), and the bench-thread `endthread()` crash fixed (1eee839) — BUT under
+>    realistic concurrent load (GPU running Quake) the cacheable RX pool **corrupts the
+>    GPU framebuffer** (full-screen green noise; user-caught 2026-06-26). Root cause is a
+>    coherency interaction (likely the dmammap_cached RX pool aliasing the GPU scanout
+>    high-memory region), not buffer overlap/range. **#11 is RE-OPENED; the feature is
+>    DEFAULT-OFF and UNSAFE-with-GPU.** See `2026-06-26-risky-items-results.md`.
+> 3. Genuine measured network throughput today (uncached RX) is ~8.5 MB/s after the
+>    genet RX buffer-aliasing fix (lwip 6b01087) — see `2026-06-15-nfs-network-perf-results.md`.
+>    Remaining headroom is largely gigabit-cable-gated, not cache-gated.
+> The kernel `_init.S` UCI comment was also corrected (c3a118d2): `SCTLR_EL1.UCI`
+> enables `dc cvau/cvac/cvap/cvadp/civac`+`ic ivau` at EL0 but NOT `dc ivac`.
+> This doc is kept for the research record; do not treat the cacheable-RX plan as a
+> live recommendation.
+
 **Date:** 2026-06-15
 **Author:** research/planning spike (no source changes; doc-only)
 **Scope:** Phoenix-RTOS RPi4 (BCM2711, Cortex-A72) port. RESEARCH + PLANNING ONLY.

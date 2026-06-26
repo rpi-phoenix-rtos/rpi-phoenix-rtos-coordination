@@ -1,5 +1,14 @@
 # Porting Mesa V3DV (Vulkan for Broadcom V3D) to Phoenix-RTOS, toward vkQuake
 
+> **STATUS (2026-06-26): plan substantially executed; PAUSED at one well-localized gap.**
+> The V3DV ICD + Vulkan runtime + spirv_to_nir compile/link for aarch64-phoenix (Tier 0,
+> done), Vulkan fully initializes on real HW (instance/device/queue/41 real-SPIR-V shaders),
+> the frame loop / present / projection / cull are fixed, and a 2D GPU quad renders on the
+> V3D (HW-proven). The single remaining blocker is the **no-WSI winsys texture upload**
+> (`DRM_V3D_SUBMIT_TFU` no-op + CL meta-copy fallback don't land textures) → a focused
+> buffer→image-copy session in `v3d_phoenix_winsys.c`. Task #29, PAUSED; GL Quake flagship
+> unaffected. Current detail: `2026-06-23-vkquake-port-scaffold-status.md`.
+
 **Date:** 2026-06-16
 **Type:** RESEARCH + IMPLEMENTATION PLAN (no source changes; design only)
 **Scope:** Phoenix-RTOS RPi4 port (BCM2711, Cortex-A72, V3D 4.2). Targets a working

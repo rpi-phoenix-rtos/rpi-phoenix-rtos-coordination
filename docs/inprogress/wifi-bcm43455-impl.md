@@ -1,5 +1,9 @@
 # Implementation plan — Pi 4 WiFi (CYW43455 / BCM43455 over SDIO)
 
+> **STATUS (2026-06-26): forward plan, still ACTIVE but PARKED at the #91 firmware-execution
+> gate.** Implementation reached fw-download + CR4-release; the firmware does not execute (see
+> `2026-06-04-wifi-fw-exec-gate.md`). This plan remains the valid forward reference; no change.
+
 Status: forward plan. Sequenced after MMU/EL drop, GENET ethernet, and a
 working in-tree SDIO bus driver. References: forward research at
 [`docs/knowledge/wifi-bcm43455.md`](../knowledge/wifi-bcm43455.md), non-Linux
