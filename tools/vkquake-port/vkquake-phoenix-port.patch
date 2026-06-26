@@ -1,5 +1,5 @@
 diff --git a/Quake/gl_rmisc.c b/Quake/gl_rmisc.c
-index 9444f07..8e66b6b 100644
+index 9444f07..3f32319 100644
 --- a/Quake/gl_rmisc.c
 +++ b/Quake/gl_rmisc.c
 @@ -27,6 +27,15 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
@@ -69,7 +69,7 @@ index 9444f07..8e66b6b 100644
  {
  	{
  		basic_vertex_input_attribute_descriptions[0].binding = 0;
-@@ -2484,7 +2504,7 @@ static void R_InitDefaultStates (pipeline_create_infos_t *infos)
+@@ -2484,12 +2504,23 @@ static void R_InitDefaultStates (pipeline_create_infos_t *infos)
  R_CreateBasicPipelines
  ===============
  */
@@ -78,7 +78,23 @@ index 9444f07..8e66b6b 100644
  {
  	VkResult				err;
  	pipeline_create_infos_t infos;
-@@ -2511,6 +2531,8 @@ static void R_CreateBasicPipelines ()
+ 	R_InitDefaultStates (&infos);
+ 
++	/* Phoenix no-WSI fb0 path: disable back-face culling for the 2D/UI basic pipelines.
++	 * R_InitDefaultStates sets cullMode=BACK_BIT + frontFace=CLOCKWISE. The fb0 scanout present
++	 * uses a Y-flipped viewport (GL_Viewport: viewport.y = vid.height-(y+height)) on top of the
++	 * Y-negating 2D ortho (GL_OrthoMatrix), and on the V3D this net facing inversion makes the 2D
++	 * quads back-facing -> every 2D triangle is culled -> nothing rasterizes (HW: 2D draws recorded,
++	 * nullLayoutPC=0, but a textureless rect is invisible). 2D quads have no meaningful facing, so
++	 * CULL_MODE_NONE is the correct fix; it is scoped HERE to the basic 2D pipelines only (the
++	 * world/3D pipelines build their own infos and keep BACK-face culling). Same class as the
++	 * GLQuake-on-V3D back-face-cull fix. TODO(vkquake-port): if 3D later needs it, revisit frontFace. */
++	infos.rasterization_state.cullMode = VK_CULL_MODE_NONE;
++
+ 	const VkRenderPass main_render_pass = vulkan_globals.main_render_pass[MAIN_RENDER_PASS_STANDARD][MAIN_RENDER_PASS_STENCIL_CLEAR];
+ 	const VkRenderPass main_oit_render_pass = vulkan_globals.main_render_pass[MAIN_RENDER_PASS_OIT][MAIN_RENDER_PASS_STENCIL_CLEAR];
+ 	VkRenderPass	   ui_render_pass = vulkan_globals.secondary_cb_contexts[SCBX_GUI]->render_pass;
+@@ -2511,6 +2542,8 @@ static void R_CreateBasicPipelines ()
  	for (int render_pass = 0; render_pass < countof (render_pass_variants); ++render_pass)
  	{
  		const int index = render_pass_variants[render_pass].index;
@@ -87,7 +103,7 @@ index 9444f07..8e66b6b 100644
  		infos.graphics_pipeline.renderPass = render_pass_variants[render_pass].render_pass;
  		infos.graphics_pipeline.subpass = render_pass_variants[render_pass].subpass;
  		infos.multisample_state.rasterizationSamples = render_pass_variants[render_pass].rasterization_samples;
-@@ -2531,6 +2553,8 @@ static void R_CreateBasicPipelines ()
+@@ -2531,6 +2564,8 @@ static void R_CreateBasicPipelines ()
  	for (int render_pass = 0; render_pass < countof (render_pass_variants); ++render_pass)
  	{
  		const int index = render_pass_variants[render_pass].index;
@@ -96,7 +112,7 @@ index 9444f07..8e66b6b 100644
  		infos.graphics_pipeline.renderPass = render_pass_variants[render_pass].render_pass;
  		infos.graphics_pipeline.subpass = render_pass_variants[render_pass].subpass;
  		infos.multisample_state.rasterizationSamples = render_pass_variants[render_pass].rasterization_samples;
-@@ -2555,6 +2579,8 @@ static void R_CreateBasicPipelines ()
+@@ -2555,6 +2590,8 @@ static void R_CreateBasicPipelines ()
  	{
  		const int	   index = render_pass_variants[render_pass].index;
  		const qboolean wboit_pass = (index == RENDER_PASS_INDEX_WBOIT);
@@ -105,7 +121,7 @@ index 9444f07..8e66b6b 100644
  		infos.graphics_pipeline.renderPass = render_pass_variants[render_pass].render_pass;
  		infos.graphics_pipeline.subpass = render_pass_variants[render_pass].subpass;
  		infos.multisample_state.rasterizationSamples = render_pass_variants[render_pass].rasterization_samples;
-@@ -3953,7 +3979,7 @@ static void R_CreateIndirectComputePipelines ()
+@@ -3953,7 +3990,7 @@ static void R_CreateIndirectComputePipelines ()
  R_CreateShaderModules
  ===============
  */
@@ -114,7 +130,7 @@ index 9444f07..8e66b6b 100644
  {
  	CREATE_SHADER_MODULE (basic_vert);
  	CREATE_SHADER_MODULE (basic_frag);
-@@ -3968,6 +3994,10 @@ static void R_CreateShaderModules ()
+@@ -3968,6 +4005,10 @@ static void R_CreateShaderModules ()
  	CREATE_SHADER_MODULE (alias_alphatest_frag);
  	CREATE_SHADER_MODULE (alias_oit_frag);
  	CREATE_SHADER_MODULE (alias_alphatest_oit_frag);
@@ -125,7 +141,7 @@ index 9444f07..8e66b6b 100644
  	CREATE_SHADER_MODULE (md5_vert);
  	CREATE_SHADER_MODULE (sky_layer_vert);
  	CREATE_SHADER_MODULE (sky_layer_frag);
-@@ -4005,7 +4035,7 @@ static void R_CreateShaderModules ()
+@@ -4005,7 +4046,7 @@ static void R_CreateShaderModules ()
  R_DestroyShaderModules
  ===============
  */
