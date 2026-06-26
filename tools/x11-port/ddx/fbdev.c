@@ -638,23 +638,34 @@ fbdevKbdRead(int fd, int ready, void *data)
             fbdevKbdProcess(ki, kbd, buf + off);
 }
 
-static Bool
+/*
+ * Init/Enable return Status (Success == 0), NOT Bool — even though the
+ * KdKeyboardDriver struct declares the fields as Bool. KdKeyboardProc()
+ * (hw/kdrive/src/kinput.c) checks both with `!= Success`, so returning Bool
+ * TRUE (== 1) is read as failure: DEVICE_INIT is rejected and the keyboard is
+ * never enabled (no Enable call, no /dev/kbd0 open — the symptom that the mouse,
+ * whose KdPointerDriver path correctly uses Status, never exhibits). The stock
+ * ephyr keyboard driver resolves the same struct-vs-caller mismatch by declaring
+ * its impls `static Status` and returning Success; we mirror that exactly.
+ */
+static Status
 fbdevKeyboardInit(KdKeyboardInfo *ki)
 {
     ki->minScanCode = KD_MIN_KEYCODE;
     ki->maxScanCode = KD_MAX_KEYCODE;
-    return TRUE;
+    return Success;
 }
 
-static Bool
+static Status
 fbdevKeyboardEnable(KdKeyboardInfo *ki)
 {
     FbdevKbd *kbd = &fbdevKbd;
     unsigned char raw = 1u;
     int tries;
 
-    /* Must return TRUE even on failure: this is the virtual core keyboard, and a
-     * failed Enable aborts the server. A missing device just means no input.
+    /* Must return Success even on failure: this is the virtual core keyboard, and
+     * a failed Enable (anything != Success) aborts the server. A missing device
+     * just means no input.
      *
      * /dev/kbd0 is normally held single-opener by the pl011-tty console bridge
      * (the same gate Quake hits — see pl_phoenix_in.c). It is only released when
@@ -672,7 +683,7 @@ fbdevKeyboardEnable(KdKeyboardInfo *ki)
     if (kbd->fd < 0) {
         ErrorF("[fbdev] %s open failed (%s) — keyboard input disabled\n",
                KBD_DEVICE, strerror(errno));
-        return TRUE;
+        return Success;
     }
 
     /* Ask usbkbd for raw 8-byte HID reports (carries key-up + held state). */
@@ -688,7 +699,7 @@ fbdevKeyboardEnable(KdKeyboardInfo *ki)
     if (!InputThreadRegisterDev(kbd->fd, fbdevKbdRead, ki))
         ErrorF("[fbdev] InputThreadRegisterDev(%s) failed — keyboard idle\n",
                KBD_DEVICE);
-    return TRUE;
+    return Success;
 }
 
 static void
