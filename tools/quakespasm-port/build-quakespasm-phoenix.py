@@ -43,8 +43,9 @@ CORE = ["strlcat", "strlcpy", "net_dgrm", "net_loop", "net_main", "net_udp",
 PLAT = f"{ROOT}/tools/quakespasm-port/platform"
 MESA = f"{ROOT}/external/mesa"
 COMPAT = f"{ROOT}/tools/v3d-driver-port/phoenix_mesa_compat.h"
-GLLIB = "/tmp/libGL-phoenix.a"
-V3DLIB = "/tmp/libv3d-phoenix.a"
+GPU_LIBS = f"{ROOT}/tools/.gpu-libs"  # stable home for the prebuilt engine archives (was /tmp)
+GLLIB = f"{GPU_LIBS}/libGL-phoenix.a"
+V3DLIB = f"{GPU_LIBS}/libv3d-phoenix.a"
 ELF = "/tmp/quakespasm-phoenix"
 
 # Quake-side flags (Quake TUs + the Quake-facing platform shims).
@@ -100,7 +101,7 @@ def main():
     # Archive all objects into libquakespasm.a so a binary.mk program (rpi4-quake)
     # can link it (+ libGL + libv3d) and bundle into loader.disk. main() lives in
     # pl_phoenix_main.o inside the archive; crt0 pulls it, which pulls the rest.
-    QSLIB = "/tmp/libquakespasm.a"
+    QSLIB = f"{GPU_LIBS}/libquakespasm.a"  # stable home (was /tmp)
     subprocess.run(["rm", "-f", QSLIB])
     ar = subprocess.run([AR, "rcs", QSLIB] + objs, capture_output=True, text=True)
     if ar.returncode != 0:

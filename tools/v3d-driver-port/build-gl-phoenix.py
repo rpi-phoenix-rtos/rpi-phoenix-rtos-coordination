@@ -7,7 +7,7 @@ aarch64-phoenix). C files use aarch64-phoenix-gcc; C++ files (the GLSL compiler,
 54 .cpp) use aarch64-phoenix-g++. The host build configured these files but never
 ran their codegen, so we first `ninja` the generated GL headers in HOSTBUILD.
 
-Output: /tmp/libGL-phoenix.a (the GL frontend; links with libv3d-phoenix.a + a
+Output: tools/.gpu-libs/libGL-phoenix.a (the GL frontend; links with libv3d-phoenix.a + a
 frontend/harness). Excludes x86-only sse_minmax.c (portable fallback exists).
 
 Usage: python3 build-gl-phoenix.py
@@ -20,7 +20,7 @@ exec(_pre)
 
 TCXX = TC.rsplit("-", 1)[0] + "-g++"          # aarch64-phoenix-g++
 GLOBJ = "/tmp/globj"
-GL_LIB = "/tmp/libGL-phoenix.a"
+GL_LIB = f"{GPU_LIBS}/libGL-phoenix.a"  # stable home (was /tmp); GPU_LIBS from the v3d prelude
 
 # GL frontend source dirs (in compile_commands), and files to exclude.
 GL_DIRS = ["/src/mesa/main/", "/mesa/state_tracker/", "/mesa/program/",

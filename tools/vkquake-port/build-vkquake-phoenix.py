@@ -39,8 +39,9 @@ SDLSHIM = f"{QSPORT}/sdl-shim"
 VKINC   = f"{ROOT}/external/mesa/include"           # <vulkan/vulkan_core.h>
 OBJ  = "/tmp/vkqobj"
 
-V3DV_LIB = "/tmp/libv3dv-phoenix.a"
-V3D_LIB  = "/tmp/libv3d-phoenix.a"
+GPU_LIBS = f"{ROOT}/tools/.gpu-libs"  # stable home for the prebuilt engine archives (was /tmp)
+V3DV_LIB = f"{GPU_LIBS}/libv3dv-phoenix.a"
+V3D_LIB  = f"{GPU_LIBS}/libv3d-phoenix.a"
 ELF      = "/tmp/vkquake-phoenix"
 
 # SDL/platform TUs replaced wholesale by Phoenix shims — never compiled here.
@@ -184,7 +185,7 @@ def main():
 
     # STAGE 2: archive + link-drive against the V3DV ICD + back-end. Captures the
     # undefined-symbol closure (libc gaps + the platform-shim surface still to write).
-    LIB = "/tmp/libvkquake.a"
+    LIB = f"{GPU_LIBS}/libvkquake.a"  # stable home (was /tmp)
     subprocess.run(["rm", "-f", LIB])
     subprocess.run([AR, "rcs", LIB] + objs, check=True)
     print(f"=== archived {len(objs)} objs -> {LIB} ===")

@@ -41,7 +41,8 @@ CORELIST  = f"{PORT}/v3d-core-sources.txt"   # committed core manifest
 COREOBJ   = "/tmp/v3dphx-coreobj"
 UNDEF     = "/tmp/v3dphx-undef.txt"
 HARNESS_BIN = "/tmp/v3dphx-harness"
-FULL_LIB  = "/tmp/libv3d-phoenix.a"    # one archive: core+aux+driver+winsys+shim+stubs
+GPU_LIBS  = f"{ROOT}/tools/.gpu-libs"  # stable home for the prebuilt engine archives (was /tmp)
+FULL_LIB  = f"{GPU_LIBS}/libv3d-phoenix.a"  # one archive: core+aux+driver+winsys+shim+stubs
 
 # Correct on-device ABI (matches sources/phoenix-rtos-build/target/aarch64.mk) +
 # section flags so the final --gc-sections strips code unreachable from main().

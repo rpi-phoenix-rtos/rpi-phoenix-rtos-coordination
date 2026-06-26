@@ -1,0 +1,15 @@
+# Prebuilt GPU/engine archives — large generated artifacts, not source.
+#
+# These are produced by the coordination-repo build scripts:
+#   tools/v3d-driver-port/build-v3d-phoenix.py   -> libv3d-phoenix.a
+#   tools/v3d-driver-port/build-gl-phoenix.py    -> libGL-phoenix.a
+#   tools/v3d-driver-port/build-v3dv-phoenix.py  -> libv3dv-phoenix.a
+#   tools/quakespasm-port/build-quakespasm-phoenix.py -> libquakespasm.a
+#   tools/vkquake-port/build-vkquake-phoenix.py  -> libvkquake.a
+#
+# The rpi4-quake / rpi4-vkquake apps (phoenix-rtos-project/_user/) link them via
+# an absolute coord-repo path so they survive the prepare-buildroot.sh --copy.
+# This dir is the stable home that replaced /tmp (which the host reaped mid-session).
+# Track this .gitignore so the dir exists in a fresh checkout; ignore the .a's.
+*.a
+!.gitignore

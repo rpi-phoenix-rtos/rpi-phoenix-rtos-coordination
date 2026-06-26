@@ -12,7 +12,7 @@ CRUCIAL difference from the GL build: the host build dir is a SEPARATE Vulkan-en
 meson configuration (HOSTBUILD below = /tmp/mesa-v3dv-build, configured with
 -Dvulkan-drivers=broadcom). The gallium GL build dir (/tmp/mesa-v3d-build) is left
 untouched. The broadcom back-end (v3d_compile/CLE/QPU/perfcntrs/nir) is reused AS-IS
-from /tmp/libv3d-phoenix.a — it is front-end-agnostic and already cross-built; we only
+from tools/.gpu-libs/libv3d-phoenix.a — it is front-end-agnostic and already cross-built; we only
 add the Vulkan front-end + runtime objects on top (plan section 4.2).
 
 Bulk-compiled (genuinely new, no overlap with libv3d-phoenix.a):
@@ -27,7 +27,7 @@ Link-driven via the aux list (linker pulls only referenced members):
                                         this, V3DV needs it)
   - any nir/util delta not already in libv3d-phoenix.a
 
-Output: /tmp/libv3dv-phoenix.a, link-driven against libv3d-phoenix.a + the Phoenix
+Output: tools/.gpu-libs/libv3dv-phoenix.a, link-driven against libv3d-phoenix.a + the Phoenix
 shims to a vk_icd harness ELF with (ideally) 0 undefined symbols.
 
 PREREQUISITE — the Vulkan-enabled host Mesa build (one-time, do NOT disturb the GL
@@ -59,10 +59,10 @@ HOSTBUILD = "/tmp/mesa-v3dv-build"           # Vulkan-enabled host meson build
 db        = json.load(open(f"{HOSTBUILD}/compile_commands.json"))
 by_abs    = {abssrc(e["file"]): e for e in db}
 
-V3D_LIB   = "/tmp/libv3d-phoenix.a"          # reused broadcom back-end (built by build-v3d-phoenix.py)
+V3D_LIB   = f"{GPU_LIBS}/libv3d-phoenix.a"   # reused broadcom back-end (built by build-v3d-phoenix.py); GPU_LIBS from prelude
 V3DV_OBJ  = "/tmp/v3dvphx-obj"
 V3DV_AUXOBJ = "/tmp/v3dvphx-auxobj"
-V3DV_LIB  = "/tmp/libv3dv-phoenix.a"
+V3DV_LIB  = f"{GPU_LIBS}/libv3dv-phoenix.a"  # stable home (was /tmp)
 V3DV_AUXLIST = "/tmp/v3dvphx-aux.txt"
 V3DV_AUX_COMMITTED = f"{PORT}/v3dv-aux-sources.txt"
 V3DV_UNDEF = "/tmp/v3dvphx-undef.txt"
