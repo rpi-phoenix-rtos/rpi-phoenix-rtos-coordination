@@ -49,6 +49,19 @@
  * use because a hung thread would then wedge the whole run with no localization. */
 #define JOIN_TIMEOUT_US (30ull * 1000ull * 1000ull) /* 30 s — generous, finite */
 
+/* Progress-aware join for the high-contention counter test: a fixed timeout is
+ * the WRONG deadlock test there, because a large, fully-serialized workload on
+ * the cpu0-only scheduler can legitimately take minutes. Instead we poll the
+ * join in short slices and watch the shared counter: if it is still climbing,
+ * the work is just slow (NOT a fault); only a counter that is frozen across a
+ * full stall window is a genuine deadlock/wedge. */
+#define JOIN_POLL_US      (2ull * 1000ull * 1000ull) /* 2 s per poll slice + heartbeat cadence */
+#define STALL_WINDOW_US   (30ull * 1000ull * 1000ull) /* counter must be frozen this long = deadlock */
+
+/* Cap total counter work so a default-ish `all` run can't spin for many minutes
+ * on one core. perThread is clamped so nthreads*perThread <= this. */
+#define MAX_COUNTER_OPS   (8ul * 1000ul * 1000ul) /* 8M serialized lock/unlock ops */
+
 #define MAX_THREADS 64u
 
 
@@ -69,6 +82,16 @@ static unsigned int sr_free_ram(void)
 
 	meminfo(&info);
 	return info.page.free;
+}
+
+
+/* Monotonic wall-clock in microseconds — used for throughput timing and the
+ * progress-aware join's stall window. */
+static uint64_t now_us(void)
+{
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (uint64_t)ts.tv_sec * 1000000ull + (uint64_t)ts.tv_nsec / 1000ull;
 }
 
 
@@ -401,6 +424,15 @@ static int mode_thread(unsigned long intensity)
 			nthreads = MAX_THREADS;
 		}
 		unsigned long perThread = 20000ul * intensity;
+		/* Clamp total work so a high-intensity `all` run stays bounded: with N
+		 * threads all serialized on one mutex on the cpu0-only scheduler, total
+		 * ops = nthreads*perThread. Keep that under MAX_COUNTER_OPS. */
+		if ((unsigned long)nthreads * perThread > MAX_COUNTER_OPS) {
+			perThread = MAX_COUNTER_OPS / nthreads;
+			if (perThread == 0ul) {
+				perThread = 1ul;
+			}
+		}
 
 		/* Heap-allocate per-thread stacks; they must OUTLIVE the threads
 		 * (freed only after join). 16-byte aligned via dedicated alloc. */
@@ -450,22 +482,57 @@ static int mode_thread(unsigned long intensity)
 					spawned, nthreads);
 			}
 
-			/* join all spawned threads with a finite timeout — a timeout means
-			 * the thread is wedged (deadlock) and is a FAULT. */
+			/* Progress-aware join. A plain fixed-timeout join is a false-positive
+			 * generator here: a large fully-serialized workload on the cpu0-only
+			 * scheduler can legitimately take minutes. So we poll each thread in
+			 * short slices, emit a heartbeat with the LIVE counter each slice, and
+			 * only declare a deadlock if the counter is FROZEN across a full stall
+			 * window. A counter that is still climbing = slow, not a fault. */
 			int deadlock = 0;
-			SR_HB(suite, "counter.join spawned=%u", spawned);
-			for (i = 0; i < spawned; i++) {
-				int jr = threadJoin((int)tids[i], JOIN_TIMEOUT_US);
-				if (jr == -ETIME) {
-					deadlock = 1;
-					SR_FAULT(&t, suite, "counter.join",
-						"threadJoin TIMED OUT on thread %u (deadlock/wedge)", i);
+			unsigned long expectTotal = (unsigned long)spawned * perThread;
+			SR_HB(suite, "counter.join spawned=%u expectTotal=%lu", spawned, expectTotal);
+			for (i = 0; i < spawned && !deadlock; i++) {
+				unsigned long lastSeen = g_tctx.counter;
+				uint64_t lastProgressUs = now_us();
+				for (;;) {
+					int jr = threadJoin((int)tids[i], JOIN_POLL_US);
+					if (jr != -ETIME) {
+						break; /* thread reaped (or a non-timeout error) — done with it */
+					}
+					/* still running after this slice — check the counter trend */
+					unsigned long cur = g_tctx.counter;
+					uint64_t nowU = now_us();
+					if (cur != lastSeen) {
+						/* work is progressing — reset the stall clock, keep waiting */
+						lastSeen = cur;
+						lastProgressUs = nowU;
+						SR_HB(suite, "counter.progress thread=%u counter=%lu/%lu",
+							i, cur, expectTotal);
+					}
+					else if ((nowU - lastProgressUs) >= STALL_WINDOW_US) {
+						/* counter frozen for the whole stall window = genuine wedge */
+						deadlock = 1;
+						SR_FAULT(&t, suite, "counter.join",
+							"DEADLOCK: counter frozen at %lu/%lu for >%llus while joining thread %u",
+							cur, expectTotal,
+							(unsigned long long)(STALL_WINDOW_US / 1000000ull), i);
+						break;
+					}
+					else {
+						SR_HB(suite, "counter.stall thread=%u counter=%lu (no advance, %llus into window)",
+							i, cur, (unsigned long long)((nowU - lastProgressUs) / 1000000ull));
+					}
 				}
 			}
 
-			/* free stacks only AFTER join */
-			for (i = 0; i < nthreads; i++) {
-				free(stacks[i]);
+			/* Free stacks only AFTER join. On a genuine deadlock the wedged
+			 * threads are still alive, so freeing their stacks would be a
+			 * use-after-free — leave those unfreed (the run is reporting a FAULT
+			 * and exiting anyway); free only on the clean path. */
+			if (!deadlock) {
+				for (i = 0; i < nthreads; i++) {
+					free(stacks[i]);
+				}
 			}
 
 			unsigned long expect = (unsigned long)spawned * perThread;
@@ -590,13 +657,6 @@ static void spin_thread(void *arg)
 		g_sched.counts[idx]++;
 	}
 	endthread();
-}
-
-static uint64_t now_us(void)
-{
-	struct timespec ts;
-	clock_gettime(CLOCK_MONOTONIC, &ts);
-	return (uint64_t)ts.tv_sec * 1000000ull + (uint64_t)ts.tv_nsec / 1000ull;
 }
 
 static int mode_sched(unsigned long intensity)
