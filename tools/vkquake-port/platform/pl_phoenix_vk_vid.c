@@ -655,14 +655,15 @@ static int create_render_resources (void)
 	R_DestroyShaderModules ();
 	Sys_Printf ("vkvid: rr: shadermodules destroyed\n");
 
-	/* BRING-UP DIAGNOSTIC clear color = magenta (not black). A black clear is
-	 * indistinguishable on HDMI from "rendered nothing / console still owns fb0"; a
-	 * full-screen magenta frame proves the render-pass result is actually reaching the
-	 * displayed fb0 surface. Once 2D content lands this reverts to black (the engine's 2D
-	 * draws paint the whole frame anyway). TODO(vkquake-port): restore 0,0,0 once 2D is proven. */
-	vulkan_globals.color_clear_value.color.float32[0] = 1.0f;
+	/* Clear color = BLACK. (Was diagnostic-magenta to prove the no-WSI present reached fb0 —
+	 * confirmed on HW: 99.9% magenta every frame.) Now that the 2D-projection fix lets the
+	 * console/menu draws land, black is the correct backdrop so the actual 2D content shows
+	 * (the Quake console background + text overdraw the cleared frame). If the screen comes up
+	 * solid black, the per-frame `2D draws=N nullLayoutPC=K` marker disambiguates a present
+	 * regression from a remaining 2D-recording gap (it should read draws>0, nullLayoutPC=0). */
+	vulkan_globals.color_clear_value.color.float32[0] = 0.0f;
 	vulkan_globals.color_clear_value.color.float32[1] = 0.0f;
-	vulkan_globals.color_clear_value.color.float32[2] = 1.0f;
+	vulkan_globals.color_clear_value.color.float32[2] = 0.0f;
 	vulkan_globals.color_clear_value.color.float32[3] = 1.0f;
 
 	render_resources_created = 1;
@@ -873,6 +874,17 @@ qboolean GL_BeginRendering (qboolean use_tasks, task_handle_t *begin_rendering_t
 	gui->cb				= frame_cb;
 	gui->current_canvas = CANVAS_INVALID;
 	memset (&gui->current_pipeline, 0, sizeof (gui->current_pipeline));
+
+	/* FIX (2D-recording gap): seed current_pipeline.LAYOUT (not .handle) with the basic pipeline
+	 * layout so the FIRST GL_SetCanvas -> GL_OrthoMatrix -> R_PushConstants pushes the 2D ortho
+	 * matrix against a VALID layout. SCR_DrawGUI calls GL_SetCanvas before its first R_BindPipeline,
+	 * and R_PushConstants pushes via cbx->current_pipeline.layout.handle; with the handle reset to 0
+	 * that push had a NULL layout and was dropped (nullLayoutPC=1 on HW) -> the projection matrix was
+	 * lost -> all 2D geometry transformed off-screen (bare clear). The basic layout's push range is
+	 * {offset 0, size 21 floats, ALL_GRAPHICS}, which covers the 16-float ortho push, so it is
+	 * push-constant-compatible with every 2D draw. Leaving .handle == 0 means the first real
+	 * R_BindPipeline still fires (its handle != 0), so binding is unaffected. */
+	gui->current_pipeline.layout = vulkan_globals.basic_pipeline_layout;
 
 	VkCommandBufferBeginInfo bbi = {
 		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
