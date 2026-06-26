@@ -107,7 +107,16 @@ echo "=== linking $OUT ==="
 # ddxLoad.o BEFORE the group: its XkbDDX* symbols satisfy the references first, so
 # the linker never pulls the stock ddxLoad.o member out of libxkb.a (archive members
 # are only extracted to resolve still-undefined symbols).
+# -L$SYSROOT/lib comes FIRST so the implicit -lc/libphoenix resolves from the
+# freshly built sysroot archive, not the toolchain's bundled
+# aarch64-phoenix/lib/libphoenix.a. gcc's --sysroot does NOT redirect the
+# built-in target lib dir for -lc (see `gcc -print-file-name=libc.a`), so
+# without this -L a relink after a `--scope core` libphoenix rebuild silently
+# links a STALE libphoenix (stale-core hazard) — e.g. it would drop the
+# _signal_handler NULL-handler guard. An explicit -L precedes the built-in dir
+# in ld's search order, so the sysroot copy wins.
 $CC --sysroot=$SYSROOT -o "$DDX/$OUT" "$DDX/${SRCFILE%.c}.o" "$DDX/ddxLoad.o" \
+  -L$SYSROOT/lib \
   -Wl,--start-group $GROUP -Wl,--end-group \
   -L$PREFIX/lib -lpixman-1 -lXfont2 -lfontenc -lfreetype -lz -lXau -lXdmcp -lxkbfile -lmd -lm \
   2> "$DDX/${OUT}-link.log"
