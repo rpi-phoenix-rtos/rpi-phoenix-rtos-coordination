@@ -200,6 +200,99 @@ index 32b0cd460e8..e49be198630 100644
  }
  
  uint32_t
+diff --git a/src/broadcom/vulkan/v3dv_meta_copy.c b/src/broadcom/vulkan/v3dv_meta_copy.c
+index f43181cb394..3b990ec20d7 100644
+--- a/src/broadcom/vulkan/v3dv_meta_copy.c
++++ b/src/broadcom/vulkan/v3dv_meta_copy.c
+@@ -1943,6 +1943,10 @@ copy_buffer_image_tfu(struct v3dv_cmd_buffer *cmd_buffer,
+     */
+    if (cmd_buffer->device->devinfo.ver < 71 &&
+        (to_buffer || !image->tiled)) {
++#if defined(__phoenix__)
++      fprintf(stderr, "v3dv: TFU declined (ver<71 %s)\n",
++              to_buffer ? "image->buffer" : "non-tiled dst");
++#endif
+       return false;
+    }
+ 
+@@ -1961,8 +1965,12 @@ copy_buffer_image_tfu(struct v3dv_cmd_buffer *cmd_buffer,
+    /* Region must include full slice */
+    const uint32_t offset_x = region->imageOffset.x;
+    const uint32_t offset_y = region->imageOffset.y;
+-   if (offset_x != 0 || offset_y != 0)
++   if (offset_x != 0 || offset_y != 0) {
++#if defined(__phoenix__)
++      fprintf(stderr, "v3dv: TFU declined (imageOffset %u,%u != 0,0)\n", offset_x, offset_y);
++#endif
+       return false;
++   }
+ 
+    uint32_t width, height;
+    if (region->bufferRowLength == 0)
+@@ -1995,6 +2003,11 @@ copy_buffer_image_tfu(struct v3dv_cmd_buffer *cmd_buffer,
+     */
+    if (region->imageExtent.width != slice->width ||
+        region->imageExtent.height != slice->height) {
++#if defined(__phoenix__)
++      fprintf(stderr, "v3dv: TFU declined (region %ux%u != slice %ux%u — not full slice)\n",
++              region->imageExtent.width, region->imageExtent.height,
++              slice->width, slice->height);
++#endif
+       return false;
+    }
+ 
+@@ -3404,12 +3417,29 @@ v3dv_CmdCopyBufferToImage2(VkCommandBuffer commandBuffer,
+        * where we are copying full images, since they should be the fastest.
+        */
+       uint32_t batch_size = 1;
++#if defined(__phoenix__)
++      /* Phoenix copy-path tracer (#29): log which buffer->image copy path each upload
++       * takes so the black-texture triage can see whether conchars goes via the TFU
++       * (now implemented in the winsys) or a CL fallback. tiled=%d gates the ver<71 TFU
++       * precondition (copy_buffer_image_tfu returns false for a non-tiled dst). */
++      fprintf(stderr, "v3dv: CmdCopyBufferToImage region %u/%u %ux%u fmt=%u tiled=%d -> trying TFU\n",
++              r, info->regionCount, info->pRegions[r].imageExtent.width,
++              info->pRegions[r].imageExtent.height, image->vk.format, image->tiled);
++#endif
+       if (copy_buffer_image_tfu(cmd_buffer, image, buffer, &info->pRegions[r],
+-                                false /* to_buffer */))
++                                false /* to_buffer */)) {
++#if defined(__phoenix__)
++         fprintf(stderr, "v3dv: CmdCopyBufferToImage region %u -> path=TFU\n", r);
++#endif
+          goto handled;
++      }
+ 
+-      if (copy_buffer_to_image_tlb(cmd_buffer, image, buffer, &info->pRegions[r]))
++      if (copy_buffer_to_image_tlb(cmd_buffer, image, buffer, &info->pRegions[r])) {
++#if defined(__phoenix__)
++         fprintf(stderr, "v3dv: CmdCopyBufferToImage region %u -> path=TLB\n", r);
++#endif
+          goto handled;
++      }
+ 
+       /* Otherwise, we are copying subrects, so we fallback to copying
+        * via shader and texel buffers and we try to batch the regions
+@@ -3439,6 +3469,9 @@ v3dv_CmdCopyBufferToImage2(VkCommandBuffer commandBuffer,
+ 
+       if (copy_buffer_to_image_shader(cmd_buffer, image, buffer,
+                                       batch_size, &info->pRegions[r], true)) {
++#if defined(__phoenix__)
++         fprintf(stderr, "v3dv: CmdCopyBufferToImage region %u -> path=SHADER(texel)\n", r);
++#endif
+          goto handled;
+       }
+ 
+@@ -3450,6 +3483,9 @@ v3dv_CmdCopyBufferToImage2(VkCommandBuffer commandBuffer,
+        */
+       if (copy_buffer_to_image_shader(cmd_buffer, image, buffer,
+                                       batch_size, &info->pRegions[r], false)) {
++#if defined(__phoenix__)
++         fprintf(stderr, "v3dv: CmdCopyBufferToImage region %u -> path=SHADER(blit)\n", r);
++#endif
+          goto handled;
+       }
+ 
 diff --git a/src/broadcom/vulkan/v3dv_queue.c b/src/broadcom/vulkan/v3dv_queue.c
 index 2cd6e959137..7ba219409e2 100644
 --- a/src/broadcom/vulkan/v3dv_queue.c

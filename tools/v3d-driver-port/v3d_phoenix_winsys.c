@@ -435,7 +435,13 @@ static void va_free(uint32_t gpuva, uint32_t pages)
 
 static int ioc_create_bo(struct drm_v3d_create_bo *c)
 {
+	/* A zero-byte BO request (e.g. vkQuake's empty lightstyles buffer) would compute 0 pages
+	 * and mmap(len=0) fails with "BO mmap FAILED (0 pages)". Round up to one page so the
+	 * handle/GPU-VA are valid (mirrors Mesa always allocating full pages) — a legitimate
+	 * 0-size allocation just gets one unused page rather than a spurious -ENOMEM. */
 	uint32_t pages = (c->size + _PAGE_SIZE - 1)/_PAGE_SIZE;
+	if (pages == 0)
+		pages = 1;
 	uint32_t slot, gpuva;
 	void *cpu;
 	uintptr_t pa;
