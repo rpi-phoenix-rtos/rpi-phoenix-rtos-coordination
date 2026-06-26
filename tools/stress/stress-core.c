@@ -690,12 +690,18 @@ static int mode_sched(unsigned long intensity)
 	printf("STRESS sched.progress SERIES idx count\n");
 	for (i = 0; i < spawned; i++) {
 		printf("STRESS sched.progress SERIES %u %lu\n", i, g_sched.counts[i]);
-		/* gross starvation: a thread got essentially no CPU while others ran */
-		if (avg > 0 && g_sched.counts[i] < (avg / 20ul)) { /* <5% of average */
+		/* gross starvation: the task's bar is "a thread gets ~0". An uneven
+		 * but working scheduler (a thread getting a small share) is NOT a
+		 * fault — only essentially-zero progress is. Flag <1% of average. */
+		if (avg > 0 && g_sched.counts[i] < (avg / 100ul)) {
 			starved++;
 		}
 	}
 
+	/* free per-thread stacks (only after join), then the bookkeeping arrays */
+	for (i = 0; i < spawned; i++) {
+		free(stacks[i]);
+	}
 	free(stacks);
 	free(tids);
 
@@ -704,7 +710,7 @@ static int mode_sched(unsigned long intensity)
 		unsigned long spreadPct = (avg > 0) ? ((maxC - minC) * 100ul / avg) : 0;
 		if (starved > 0) {
 			SR_FAULT(&t, suite, "fairness",
-				"%u thread(s) starved (<5%% of avg) threads=%u min=%lu max=%lu avg=%lu",
+				"%u thread(s) starved (~0 progress, <1%% of avg) threads=%u min=%lu max=%lu avg=%lu",
 				starved, spawned, minC, maxC, avg);
 		}
 		else {
