@@ -105,12 +105,31 @@ int main(int argc, char *argv[])
 	}
 
 	oldtime = Sys_DoubleTime();
-	while (1) {
-		newtime = Sys_DoubleTime();
-		time = newtime - oldtime;
-		Host_Frame(time);
-		oldtime = newtime;
-		usleep(1000);
+	{
+		/* BRING-UP heartbeat: an UNCONDITIONAL, flushed marker bracketing each Host_Frame for
+		 * the first frames. The earlier "present 1 then nothing" grabs were a pre-instrumentation
+		 * %30-present-gate artifact (frames 2..29 simply weren't logged) AND the process was alive
+		 * at +15s, so it was NOT a hang. This heartbeat removes the ambiguity: "loop N enter/exit"
+		 * climbing => the loop iterates (a missing present is then a per-frame render gate, not a
+		 * blocked loop); enter-without-exit => Host_Frame itself blocks on frame N (the real hang).
+		 * TODO(vkquake-port): remove once the sustained frame loop is proven on HW. */
+		unsigned long loopn = 0;
+		while (1) {
+			newtime = Sys_DoubleTime();
+			time = newtime - oldtime;
+			if (loopn < 8) {
+				printf("vkquake: loop %lu enter\n", loopn);
+				fflush(stdout);
+			}
+			Host_Frame(time);
+			if (loopn < 8) {
+				printf("vkquake: loop %lu exit\n", loopn);
+				fflush(stdout);
+			}
+			loopn++;
+			oldtime = newtime;
+			usleep(1000);
+		}
 	}
 	return 0;
 }

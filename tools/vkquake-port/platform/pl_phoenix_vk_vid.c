@@ -912,11 +912,29 @@ task_handle_t GL_EndRendering (qboolean use_tasks, qboolean use_swapchain)
 		.commandBufferCount = 1,
 		.pCommandBuffers	= &frame_cb,
 	};
+	/* BRING-UP: unconditional flushed brackets around submit + device-wait for the first
+	 * frames, so a grab can tell a SLOW frame (submit ok, wait returns late) from a true block
+	 * (wait never returns -> "submitted N" with no "waited N"). Synchronous wait-per-frame is
+	 * by design here (no WSI), so a slow caches-off GPU frame looks like a stall but isn't a hang.
+	 * TODO(vkquake-port): remove with the other bring-up markers once frames sustain on HW. */
+	if (present_count < 8) {
+		Sys_Printf ("vkvid: submitting %lu\n", present_count + 1);
+		fflush (stdout);
+	}
 	err = pSubmit (gfx_queue, 1, &si, VK_NULL_HANDLE);
 	if (err != VK_SUCCESS)
 		Sys_Printf ("vkvid: vkQueueSubmit -> %d\n", (int)err);
+	if (present_count < 8) {
+		Sys_Printf ("vkvid: submitted %lu, waiting idle\n", present_count + 1);
+		fflush (stdout);
+	}
 
 	GL_WaitForDeviceIdle ();
+
+	if (present_count < 8) {
+		Sys_Printf ("vkvid: waited %lu\n", present_count + 1);
+		fflush (stdout);
+	}
 
 	/* Per-frame present heartbeat (UART). storeOp=STORE just wrote this frame's tiles to the fb0
 	 * scanout BO = the displayed surface, so a climbing count means frames ARE reaching HDMI.
