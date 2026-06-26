@@ -93,9 +93,12 @@
 #define HUB_AXICFG          0x0000u
 #define HUB_AXICFG_MAX_LEN  0x0000000fu
 /* HUB interrupt status/clear (HUB block, see linux v3d_regs.h V3D_HUB_INT_*). The TFU
- * raises HUB_INT bit1 (TFUC = "conversion complete") when a job finishes. */
+ * raises HUB_INT bit1 (TFUC = "conversion complete") when a job finishes. HUB_INT_STS
+ * (0x50) is the RAW status latch (the separate HUB_INT_MSK_STS at 0x5c gates the CPU IRQ
+ * line), so polling STS works without unmasking — we have no V3D IRQ handler. */
 #define HUB_INT_STS         0x0050u
 #define HUB_INT_CLR         0x0058u
+#define HUB_INT_MSK_STS     0x005cu   /* mask status (diagnostic only; STS is raw) */
 #define HUB_INT_TFUC        (1u<<1)   /* TFU conversion complete */
 #define HUB_INT_TFUF        (1u<<0)   /* TFU conversion failed */
 /* Texture Formatting Unit (HUB block, V3D 4.2 / ver<71 register layout — see linux
@@ -1018,30 +1021,55 @@ static int ioc_submit_tfu(struct drm_v3d_submit_tfu *t)
 	}
 	h[TFU_ICFG/4] = t->icfg | TFU_ICFG_IOC;    /* this write starts the job */
 
-	/* --- wait for done. Poll HUB_INT TFUC (set on completion) / TFUF (on failure). We rely on
-	 * the interrupt-status LATCH rather than the CS BUSY bit: BUSY can race the kick (we may read
-	 * it 0 in the window before the unit asserts busy), whereas TFUC is sticky once set (cleared
-	 * only by us, pre-kick) so it cannot be missed. Bounded spin like the CL paths — a wedged TFU
-	 * must not hang the process. --- */
-	for (spins = 8000000u; spins; spins--) {
-		if (h[HUB_INT_STS/4] & (HUB_INT_TFUC | HUB_INT_TFUF))
-			break;
+	/* --- wait for done. Primary signal: HUB_INT TFUC (set on completion) / TFUF (on failure) —
+	 * sticky once set (cleared only by us, pre-kick) so it can't be missed, and HUB_INT_STS is the
+	 * raw latch so this works without unmasking. Fallback signal: CS BUSY clearing AFTER we have
+	 * observed it set at least once — mask-independent, so if STS ever turns out post-mask on this
+	 * silicon the job still completes instead of false-timing-out. BUSY alone races the kick (it
+	 * reads 0 in the window before the unit asserts busy), hence the "saw_busy" gate. Bounded spin
+	 * like the CL paths — a wedged TFU must not hang the process. --- */
+	{
+		int saw_busy = 0;
+		for (spins = 8000000u; spins; spins--) {
+			if (h[HUB_INT_STS/4] & (HUB_INT_TFUC | HUB_INT_TFUF))
+				break;
+			uint32_t cs = h[TFU_CS/4];
+			if (cs & TFU_CS_BUSY) saw_busy = 1;
+			else if (saw_busy) break;   /* completed (mask-independent fallback) */
+		}
 	}
 	{
 		uint32_t isr = h[HUB_INT_STS/4];
+		int failed = (spins == 0) || (isr & HUB_INT_TFUF);
 		h[HUB_INT_CLR/4] = HUB_INT_TFUC | HUB_INT_TFUF;
-		if (spins == 0 || (isr & HUB_INT_TFUF)) {
-			fprintf(stderr, "v3d-winsys: TFU TIMEOUT/FAIL hub_int=0x%08x cs=0x%08x "
+		if (failed) {
+			fprintf(stderr, "v3d-winsys: TFU TIMEOUT/FAIL hub_int=0x%08x mskts=0x%08x cs=0x%08x "
 				"iia=0x%08x ioa=0x%08x ios=0x%08x icfg=0x%08x\n",
-				isr, h[TFU_CS/4], t->iia, t->ioa, t->ios, t->icfg);
+				isr, h[HUB_INT_MSK_STS/4], h[TFU_CS/4], t->iia, t->ioa, t->ios, t->icfg);
 			/* Don't abort the client — return success so rendering proceeds (a failed
 			 * upload leaves the image zero, same as before, just visible in the log). */
 		}
 		else {
 			static unsigned tfu_n = 0;
-			if (tfu_n++ < 8 || (tfu_n & 0x3ffu) == 0u)
+			tfu_n++;
+			/* Discriminator probe (gated; the dest BO is uncached + just L2T-clean-flushed, so a
+			 * CPU read sees RAM). On the instrumented boot this separates the three outcomes:
+			 *   src=0            -> the upload-to-staging is the bug, not the TFU;
+			 *   src!=0, dst=0    -> TFU register programming is wrong (tune on HW);
+			 *   src!=0, dst!=0, still black -> the copy works; the bug is the sampler/descriptor
+			 *                       path (resolves the "CL fallback also black" mystery — the TFU
+			 *                       was necessary but not sufficient).
+			 * The marker proves the TFU KICKED; this readback proves whether pixels LANDED. */
+			if (tfu_n <= 8u || (tfu_n & 0x3ffu) == 0u) {
+				const uint32_t *src = gpuva_to_cpu(t->iia);
+				const uint32_t *dst = gpuva_to_cpu(t->ioa);
+				int src_nz = src ? (src[0] | src[1] | src[2] | src[3]) != 0u : -1;
+				int dst_nz = dst ? (dst[0] | dst[1] | dst[2] | dst[3]) != 0u : -1;
 				fprintf(stderr, "v3d-winsys: TFU copy iia=0x%08x->ioa=0x%08x %ux%u done "
-					"(n=%u)\n", t->iia, t->ioa, t->ios & 0xffffu, t->ios >> 16, tfu_n);
+					"(n=%u) src_nz=%d dst_nz=%d src0=0x%08x dst0=0x%08x\n",
+					t->iia, t->ioa, t->ios & 0xffffu, t->ios >> 16, tfu_n,
+					src_nz, dst_nz, src ? src[0] : 0u, dst ? dst[0] : 0u);
+			}
 		}
 	}
 
