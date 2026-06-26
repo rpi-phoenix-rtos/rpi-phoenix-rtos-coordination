@@ -3,7 +3,34 @@
 > Per-peripheral state at a glance: **[docs/inprogress/pi4-hardware-support-matrix.md](pi4-hardware-support-matrix.md)**.
 > Full chronological log of the multi-day unattended run: **[UNATTENDED-WORK-LOG.md](../../UNATTENDED-WORK-LOG.md)** (repo root).
 
-## 🟢 LATEST — 2026-06-26 (risky-items + stress-test campaign; HW-validated)
+## 🟢 LATEST — 2026-06-27 (interactive-input + vkQuake-texture session; HW-validated)
+
+Session log: **[2026-06-27-input-and-vkquake-session.md](2026-06-27-input-and-vkquake-session.md)**.
+
+- **X11 keyboard input (#30) — FIXED + HW-confirmed (the DDX now owns kbd0+mouse0).** Two bugs:
+  (a) the DDX `fbdevKeyboard{Init,Enable}` returned `Bool TRUE` but kdrive checks `!= Success`
+  (`Success==0`), so DEVICE_INIT was rejected and kbd0 was never opened (coord `aef9f9f`); (b) input
+  still didn't react because the read callbacks were hung off `InputThreadRegisterDev`'s poll()-
+  readiness, which Phoenix poll() doesn't deliver on HID fds — so events never fired. Fix: drive the
+  kbd0/mouse0 drain from a 16 ms `OsTimer` on the main dispatch thread (coord `3dc26a9`), mirroring
+  the already-working flush-timer pattern. HW-confirmed: kbd0(fd=7)+mouse0(fd=8) open, X (twm+xterm
+  +BusyBox shell) renders unregressed, the timer does not wedge dispatch. **Remaining = one human
+  keypress** to confirm HID→keycode→client (self-diagnosing `FIRST drain`/`FIRST event` logs added).
+- **vkQuake textures (#29) — TFU works + textures now UPLOAD (big progress).** `DRM_V3D_SUBMIT_TFU`
+  implemented in the no-WSI winsys (present-hang gone, multi-frame present). Black-texture root cause
+  found via a 3-stage probe: vkQuake emitted `VkBufferImageCopy.imageExtent = 0x1x1` for every
+  texture (build computes `mipwidth=0` though `glt=2x2`). Fixed at point-of-use (vkquake `f4d923e`):
+  HW now shows correct extents (2×2…640×512), all 18 copies take `path=TFU`, and the conchars rects
+  show **sampled content** (were pure black). New open issue: the sampled textures are dark + show
+  horizontal **striping** (TFU-destination tiling vs TMU-sampler layout mismatch) — agent iterating.
+- **USB #121 (#33) — mechanism root-caused + self-localizing guard committed (usb `53b3db2`).** The
+  intermittent boot crash is an **adjacent-buffer forward overflow** that smashes a `usb_buf_t`
+  header (`buf->next`@0 + `buf->head`@32) with device-name **string** bytes; the allocator then
+  recursed into the wild `buf->next` (mem.c:238 via :273). Added a `buf->next` sanity guard (crash →
+  bounded leak) + an alloc-log (addr,size,caller PC) so the next recurrence **names the overflow
+  writer** by addr2line. Intermittent (~1 boot in 4); clean boots enumerate kbd0+mouse0 fine.
+
+## 🟢 2026-06-26 (risky-items + stress-test campaign; HW-validated)
 
 Authoritative current-state docs: **[2026-06-26-risky-items-results.md](2026-06-26-risky-items-results.md)**,
 **[2026-06-26-stress-test-results.md](2026-06-26-stress-test-results.md)**,
