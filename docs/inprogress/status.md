@@ -3,7 +3,33 @@
 > Per-peripheral state at a glance: **[docs/inprogress/pi4-hardware-support-matrix.md](pi4-hardware-support-matrix.md)**.
 > Full chronological log of the multi-day unattended run: **[UNATTENDED-WORK-LOG.md](../../UNATTENDED-WORK-LOG.md)** (repo root).
 
-## 🟢 LATEST — 2026-06-24/25 (unattended night run; subagent fan-out)
+## 🟢 LATEST — 2026-06-26 (risky-items + stress-test campaign; HW-validated)
+
+Authoritative current-state docs: **[2026-06-26-risky-items-results.md](2026-06-26-risky-items-results.md)**,
+**[2026-06-26-stress-test-results.md](2026-06-26-stress-test-results.md)**,
+**[2026-06-26-overnight-results.md](2026-06-26-overnight-results.md)**,
+**[2026-06-25-hw-validation-results.md](2026-06-25-hw-validation-results.md)**.
+
+- **X11 software desktop — COMPLETE on HW.** Xphoenix (kdrive fbdev DDX → /dev/fb0 + real kbd+mouse
+  input) runs xeyes (mouse-tracking), **JWM** and **Window Maker** window managers (#30/#35), and
+  **xterm** with a live BusyBox shell (#36). The Pi4 X11 stack now runs two WMs + a terminal.
+- **GLQuake — the working flagship.** Render correctness + torch flame (#28) + mouse (#24) +
+  QUIT/fbcon restore (#25) + LAN multiplayer net drivers (#26) + NFS-root & manual launch (#27)
+  all landed and HW-validated; ~40 fps @1080p.
+- **vkQuake (#29) — 2D GPU raster PROVEN on HW, then PAUSED.** A GPU quad renders via Vulkan on the
+  V3D (frame loop/present/projection/cull fixed). Sole blocker = the no-WSI winsys texture-upload
+  gap (`DRM_V3D_SUBMIT_TFU` no-op + CL meta-copy fallback don't land textures).
+- **GENET cacheable RX (#11) — CONCLUDED UNVIABLE, #11 RE-OPENED.** Tried opt-in cacheable
+  streaming-DMA RX; it corrupts the GPU framebuffer under concurrent load (user-caught). Kept the
+  valuable `dc ivac`→`dc civac` EL0-legality fix + the endthread crash fix + the kernel UCI-doc
+  correction; the cacheable-RX policy is DEFAULT-OFF + UNSAFE-with-GPU.
+- **Stress / micro-benchmark suite (#38-40) — system ROBUST.** mem/threads/sched/syscall/proc/fs/
+  ipc/net all clean (fault=0) at modest-to-high intensity; the only real fault is the pre-known
+  USB #121 heap free-list corruption (#33), now a deterministic boot repro localized to usb/mem.c
+  (deep fix pending). #156 NFS first-access ENOENT re-confirmed (boot-order race).
+- **Logging #31 — DONE** (rpi4-klogd + logread + RPI4_LOG_TO_FILE); **uname #37 — DONE.**
+
+## 🟢 2026-06-24/25 (unattended night run; subagent fan-out)
 
 Backlog map: **[2026-06-24-night-work-audit.md](2026-06-24-night-work-audit.md)**.
 

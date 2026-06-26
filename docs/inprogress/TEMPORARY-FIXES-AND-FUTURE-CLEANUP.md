@@ -1,5 +1,17 @@
 # Temporary Fixes and Future Cleanup
 
+> **STATUS (2026-06-26): LIVING registry — authoritative table is the bottom `Tracking
+> Checklist`.** Reconciled to reality by the 2026-06-25 kernel cleanup review (executed +
+> boot-validated): only ~4 `TODO(TD-…)` markers remain kernel-wide, no macOS paths, no
+> unexplained kludge. The narrative per-item prose above the checklist is mostly
+> pre-resolution history (kept for the diagnosis record) — read the checklist for current
+> state. Reminders so nobody re-introduces a stale premise: **caches are ON** (TD-16/-17/-18
+> RESOLVED 2026-05-17; SCTLR.{M,C,I} set, all Normal RAM WB-cacheable) — the recurring
+> "caches off = perf lever" claim is wrong; and the GENET cacheable-RX experiment (a separate
+> lever) was CONCLUDED UNVIABLE (corrupts the GPU framebuffer under load, #11 re-opened,
+> default-off). Genuinely-open workarounds are tracked in the checklist (e.g. TD-10 masked
+> SError, TD-20 DC-ZVA gate).
+
 This document is the registry of transitional shortcuts and workarounds
 accepted during the Raspberry Pi 4 bring-up. Each item has a stable ID
 (`TD-NN`) used to link from source code, commits, and future cleanup steps.

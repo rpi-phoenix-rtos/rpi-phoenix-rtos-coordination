@@ -1,8 +1,16 @@
 # Phoenix-RTOS Raspberry Pi 4 (BCM2711) — Hardware Support Matrix
 
-**Updated:** 2026-06-18. Canonical "where are we" reference for the Pi 4 port.
+**Updated:** 2026-06-26. Canonical "where are we" reference for the Pi 4 port.
 One row per peripheral/subsystem. For narrative gap analysis see
 `docs/knowledge/scope-pi4-uncovered.md`; for live progress see `docs/inprogress/status.md`.
+
+> **STATUS (2026-06-26):** since the 2026-06-18 pass — the X11 software desktop is fully
+> live on HW (Xphoenix kdrive fbdev DDX + kbd/mouse input + JWM + Window Maker WMs + xterm
+> running a BusyBox shell, #30/#35/#36); GLQuake is the working flagship (mouse #24, QUIT/
+> fbcon restore #25, LAN multiplayer #26, NFS-root #27, torch flame #28); vkQuake reached
+> 2D GPU raster on HW, paused at the no-WSI texture-upload gap (#29); VideoCore mailbox is
+> serialized via the rpi4-vcmbox server; logging→/var/log shipped (#31); a stress-test
+> suite ran clean across all layers (#38-40). Rows below updated accordingly.
 
 **Status legend:**
 - ✅ **done** — works on hardware, committed, validated.
@@ -39,13 +47,13 @@ One row per peripheral/subsystem. For narrative gap analysis see
 | GPIO / pinctrl | 🟡 partial | `/dev/gpio` read-only observer device (#150): snapshot + per-pin `RPI4GPIO_GETPIN` devctl, `gpio/rpi4-gpio/` | **outputs** (GPSET/GPCLR/fsel set) need a bench rig to validate (⏸) |
 | I²C / SPI / PWM | ⬜ not started | plans exist | need GPIO alt-fn + clock-manager |
 | GPU (V3D 4.2) — OpenGL | ✅ done | ported Mesa gallium v3d driver + GL frontend (`tools/v3d-driver-port/`); **GLQuake (quakespasm) runs ~40-42fps@1080p** via render-to-scanout; R/B color + particle render-stall fixed (2026-06-16/17) | re-enable early-Z, double-buffer (tearing), gamma (cosmetic) |
-| GPU (V3D 4.2) — Vulkan (V3DV) | 🔬 groundwork | V3DV compiles+links for aarch64-phoenix (Tier 0); on HW vkCreateInstance works + 5 device-create blockers cleared (2026-06-17); 6th localized = `v3dv_device_create_noop_job`→`v3d42_job_emit_binning_prolog` NULL CL (winsys BO/CL interop, `project_vulkan_v3dv_port`); harness `misc/rpi4-v3dv-tier0/` | finish the noop-job winsys BO/CL alloc (deep); then Tier 2 clear+readback → vkQuake |
+| GPU (V3D 4.2) — Vulkan (V3DV) | 🟡 partial | full Vulkan init on HW (instance/device/queue, 41 real-SPIR-V shaders); the noop-job NULL-CL blocker is fixed; **vkQuake renders GPU 2D geometry (a quad) via Vulkan on the V3D** — frame loop/present/projection/cull all fixed (#29, 2026-06-26) | **PAUSED** at the no-WSI winsys **texture upload** gap (`DRM_V3D_SUBMIT_TFU` no-op + CL meta-copy fallback don't land textures) → buffer→image copy in `v3d_phoenix_winsys.c` (focused session) |
 | Audio (PWM / I²S / HDMI) | 🟡 partial | PWM driver `/dev/audio0` (`audio/rpi4-audio/`): **continuous streaming DMA** (free-running self-chained ring, PWM1=DREQ 1) feeds the FIFO; `write()` fills the ring w/ usleep backpressure (driver sleeps, no spin); PIO fallback retained. **Quakespasm SNDDMA backend** (feeder thread) mixes over it — "Audio: 16 bit, stereo, 44100 Hz", demo renders, 0 faults/underruns (2026-06-17) | audible jack sign-off ⏸ (headphones); vkQuake reuses the backend; underrun→ring-loop artifact (steady state ok) |
 | DMA framework | 🟡 partial | legacy-DMA channel bring-up proven + in production for audio (`rpi4-audio`: self-chained streaming CB, DREQ-paced, low-1GB C0 bus alias) | generalize into a reusable DMA helper; line-rate SD (CMD18) still PIO |
 | RTC | 🟡 capability present | Pi 4 has no on-SoC RTC. The **`ntpclient` psh applet** queries SNTP + calls `settimeofday` (kernel `settime` syscall + libphoenix `settimeofday`/`clock_settime` all present) → NTP-over-GENET works once a server is reachable | defaults to `pool.ntp.org` (needs an internet route or a host-side ntpd on the netboot link); not yet auto-run at boot |
 | Camera (CSI-2) / DSI display | ⬜ not started | — | — |
 | posixsrv / psh userspace | ✅ done | pipes, ptys, `/dev/{null,zero,urandom,full}` (urandom now HW-RNG-backed), interactive psh; **AF_UNIX SOCK_STREAM** + **libc `getrandom()`/`getentropy()`** validated on HW (`misc/rpi4-ipcprobe`, 2026-06-17) | psh has no `|` pipe parsing |
-| X11 / windowing (kdrive) | 🔬 groundwork | host-side, `tools/x11-port/`: full client+render+font+toolkit **lib stack** (~45 archives incl. libX11/libxcb/libXext/libXrender/pixman/freetype/libXaw/Xt/Xmu) **+ the kdrive xorg-server CORE** (28 archives, 0 errors, incl. `libkdrive.a`+`libshadow.a`) cross-compile for aarch64-phoenix (2026-06-18); clients **twm/xphxdemo/xeyes** link as static ELFs, **xprobe RUN-verified on HW** (Xlib executes). `tools/x11-port/PROGRESS.md` | the **fbdev DDX** (`main()`+`KdCardFuncs`/`KdScreenFuncs` → shadow → `write()`/`/dev/fb0`) is the only remaining new-code step (runtime-only-verifiable → ⏸ until Pi on) + kdrive input from `/dev/kbd0`+`/dev/mouse0` + xkb data |
+| X11 / windowing (kdrive) | ✅ done | host-side `tools/x11-port/`: full client+render+font+toolkit lib stack + kdrive xorg-server core build for aarch64-phoenix. **LIVE ON HW:** Xphoenix (fbdev DDX → shadow → /dev/fb0, periodic full-screen flush) with real kbd+mouse input (`/dev/kbd0`+`/dev/mouse0` via the DDX after FBCON_DISABLED), running **xeyes (mouse-tracking)**, the **JWM** and **Window Maker** window managers (#30/#35), and **xterm** with a live BusyBox shell (#36). | accelerated/GPU-X (Glamor/EGL via a multi-client GPU arbiter) remains a research stretch (`2026-06-16-x11-accelerated-desktop-plan.md`) |
 
 ## Build / test infrastructure (✅)
 
@@ -64,8 +72,8 @@ One row per peripheral/subsystem. For narrative gap analysis see
 2. **ext2 rootfs** (#120) — DONE (mounts as `/`, exec-from-card, boots to psh); **NFS rootfs**
    also DONE + HW-proven (`project_nfs_rootfs_feasibility`). Residuals are perf/signal polish.
 3. **fb0 driver** — decide ABI + display ownership, then implement (attended).
-4. **X11** — lib stack + kdrive server core build; the **fbdev DDX** backend + its HW bring-up is
-   the remaining step (attended — runtime-only-verifiable).
+4. **X11** — DONE: the software kdrive desktop (Xphoenix + fbdev DDX + kbd/mouse input + JWM/
+   Window Maker WMs + xterm) is live on HW. Remaining is the *accelerated* GPU-X research stretch.
 5. **WiFi #91** — the one true *blocker*; firmware-execution gate needs deeper HW visibility.
 6. Greenfield: DMA framework → audio/I²C/SPI/PWM; Bluetooth; GPIO full driver.
 
