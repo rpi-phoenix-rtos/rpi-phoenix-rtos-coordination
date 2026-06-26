@@ -51,3 +51,17 @@ bundled, all repos clean.
 3. **EL0 exception → identify the process before addr2line:** ASLR-free statics share virtual
    addresses; addr2line on the wrong `prog/<x>` gives plausible-but-false symbols (cost a misattributed
    "rpi4-audio" finding that was actually USB #121).
+
+## ⚠ CORRECTION (2026-06-26, user-caught) — GENET cacheable RX is NOT safe; #11 RE-OPENED
+My "GENET cacheable RX — DONE/validated" above was an OVER-CLAIM. The integrity bench ran in
+ISOLATION (no GPU) → integrity=PASS proved only RX-data correctness. With the GPU active (the
+genet-final boot had Quake autostart + flag-ON), the cacheable-RX path CORRUPTS THE GPU FRAMEBUFFER:
+artifacts/hdmi/20260626-151622-genet-final-final.png is full-screen GREEN NOISE. Progression: Quake
+rendered cleanly through grab 151546, then corrupted into green noise by 151612 as the bench's 32MB
+RX stream flowed. The flag-OFF flagship (shipped default) renders Quake fine — so the SHIPPED build
+is safe — but the feature is HARMFUL, not "a perf wash." The dc ivac→civac (f0b75a2) + endthread
+(1eee839) fixes are still correct; the cacheable-RX POLICY itself corrupts the framebuffer when the
+GPU is active (likely the dmammap_cached RX pool aliasing the GPU scanout high-memory region — scanout
+PAs 0x3d3b2000/0x3db9b000/0x3e384000 — or a civac-range/coherency interaction). #11 re-opened; keep
+DEFAULT-OFF + UNSAFE-with-GPU until root-caused. LESSON: validate risky features under realistic
+CONCURRENT load (GPU running), never just the isolated micro-bench.
