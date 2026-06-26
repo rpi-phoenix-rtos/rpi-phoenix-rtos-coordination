@@ -166,3 +166,66 @@
  		if (error)
  			break;
  
+--- a/WINGs/widgets.c
++++ b/WINGs/widgets.c
+@@ -1,6 +1,7 @@
+ 
+ #include "WINGsP.h"
+ #include "wconfig.h"
++#include "../src/phx_diag.h"
+ 
+ #include <X11/Xft/Xft.h>
+ 
+@@ -632,7 +633,14 @@
+ 
+ 	scrPtr->fontCache = WMCreateHashTable(WMStringPointerHashCallbacks);
+ 
++	/* XftDrawCreate is the FIRST Xft call: on many Xft builds it triggers
++	 * XftDefaultInit -> FcInit -> fonts.conf parse + font-dir scan + cache
++	 * (build/write). If wmaker hangs HERE rather than at the later
++	 * WMSystemFontOfSize, the stall is in fontconfig init/scan/cache, not the
++	 * font match. (Phoenix port diagnostic — PHX_DIAG.) */
++	PHX_MARK("WMCreateScreenWithRContext: before XftDrawCreate (1st Xft call -> FcInit/scan)");
+ 	scrPtr->xftdraw = XftDrawCreate(scrPtr->display, W_DRAWABLE(scrPtr), scrPtr->visual, scrPtr->colormap);
++	PHX_MARK("WMCreateScreenWithRContext: XftDrawCreate returned %p", (void *)scrPtr->xftdraw);
+ 
+ 	/* Create missing CUT_BUFFERs */
+ 	{
+@@ -761,9 +769,12 @@
+ 
+ 	scrPtr->antialiasedText = WINGsConfiguration.antialiasedText;
+ 
++	PHX_MARK("WMCreateScreenWithRContext: before WMSystemFontOfSize (system-font open)");
+ 	scrPtr->normalFont = WMSystemFontOfSize(scrPtr, 0);
++	PHX_MARK("WMCreateScreenWithRContext: WMSystemFontOfSize returned %p", (void *)scrPtr->normalFont);
+ 
+ 	scrPtr->boldFont = WMBoldSystemFontOfSize(scrPtr, 0);
++	PHX_MARK("WMCreateScreenWithRContext: WMBoldSystemFontOfSize returned %p", (void *)scrPtr->boldFont);
+ 
+ 	if (!scrPtr->boldFont)
+ 		scrPtr->boldFont = scrPtr->normalFont;
+--- a/WINGs/wfont.c
++++ b/WINGs/wfont.c
+@@ -4,6 +4,7 @@
+ #include "wconfig.h"
+ 
+ #include "WINGsP.h"
++#include "../src/phx_diag.h"
+ 
+ #include <wraster.h>
+ #include <assert.h>
+@@ -156,7 +157,14 @@
+ 
+ 	font->screen = scrPtr;
+ 
++	/* The actual fontconfig match + freetype open. This is where a font-name
++	 * mismatch shows up (returns NULL -> chatty warnings up the stack) and where
++	 * a fontconfig-scan/cache-write HANG would freeze with no output. The two
++	 * markers + the result pointer distinguish the two on the next grab.
++	 * (Phoenix port diagnostic — PHX_DIAG.) */
++	PHX_MARK("WMCreateFont: before XftFontOpenName(\"%s\")", fname);
+ 	font->font = XftFontOpenName(display, scrPtr->screen, fname);
++	PHX_MARK("WMCreateFont: XftFontOpenName(\"%s\") = %p", fname, (void *)font->font);
+ 	if (!font->font) {
+ 		wfree(font);
+ 		wfree(fname);

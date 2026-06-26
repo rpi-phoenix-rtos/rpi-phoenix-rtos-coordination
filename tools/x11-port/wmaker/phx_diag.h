@@ -12,9 +12,14 @@
 #ifndef PHX_DIAG_H
 #define PHX_DIAG_H
 
+/*
+ * wmessage() is provided wherever this header is used: in src/*.c via
+ * WindowMaker.h and in WINGs/*.c via WINGsP.h -> WINGs/WINGs.h -> WUtil.h.
+ * We deliberately do NOT #include "WUtil.h" here so the header works unmodified
+ * from both the wmaker src/ and the WINGs/ trees (different include roots).
+ */
 #ifdef PHX_DIAG
 #include <stdio.h>
-#include "WUtil.h" /* wmessage */
 #define PHX_MARK(...) do { wmessage("PHX_DIAG: " __VA_ARGS__); fflush(stderr); fflush(stdout); } while (0)
 #else
 #define PHX_MARK(...) do { } while (0)

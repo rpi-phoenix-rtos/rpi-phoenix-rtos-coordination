@@ -275,8 +275,13 @@ build_wmaker() {
 	# When diagnostics are toggled, force-recompile the instrumented objects so
 	# the PHX_DIAG markers are (re)baked even if wmaker was already built.
 	if [ "${WMAKER_DIAG:-0}" = "1" ]; then
+		# wmaker src objects + the libtool WINGs objects/lib so the markers in
+		# widgets.c/wfont.c (which live in libWINGs.a) are relinked into wmaker.
 		rm -f "$SRC/$WM_NV/src/wmaker" "$SRC/$WM_NV/src/startup.o" \
-		      "$SRC/$WM_NV/src/screen.o" "$SRC/$WM_NV/src/monitor.o"
+		      "$SRC/$WM_NV/src/screen.o" "$SRC/$WM_NV/src/monitor.o" \
+		      "$SRC/$WM_NV/WINGs/widgets.o"  "$SRC/$WM_NV/WINGs/widgets.lo" \
+		      "$SRC/$WM_NV/WINGs/wfont.o"    "$SRC/$WM_NV/WINGs/wfont.lo" \
+		      "$SRC/$WM_NV"/WINGs/.libs/libWINGs.a "$SRC/$WM_NV"/WINGs/libWINGs.la
 	elif [ -x "$SRC/$WM_NV/src/wmaker" ]; then
 		echo "wmaker: already built"; return 0
 	fi
