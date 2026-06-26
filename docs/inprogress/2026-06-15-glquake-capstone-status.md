@@ -1,5 +1,15 @@
 # GLQuake capstone — status + path to a fully stable, usable build (2026-06-15)
 
+> **STATUS (2026-06-26): most "usable" blockers below are now RESOLVED — GLQuake is the
+> working flagship.** Since this doc: keyboard input (§1, kbd0 ownership), mouse-look (§3,
+> #24 — usbmouse 3-byte boot-report fix), QUIT/fbcon restore (#25), LAN multiplayer net
+> drivers (#26), NFS-root + manual launch (#27) and the torch-flame alias-model fix (#28)
+> all landed and are HW-validated (see `2026-06-25-hw-validation-results.md` and
+> `2026-06-26-overnight-results.md`). FPS (§2) was already solved (render-to-scanout, ~40 fps).
+> **Genuinely still open:** §4 audio (SNDDMA — DMA mechanism proven, audible sign-off is an
+> attended bench item) and §5/§6 minor visual-polish + a formal multi-boot soak. Kept as the
+> remaining-polish reference; the interactivity items are done.
+
 Evaluation of the open topics after the textured-world / live-map / water /
 input-decoder / NFS-perf work. Goal: a **stable, high-performance, usable**
 GLQuake build on Pi4 Phoenix + V3D.

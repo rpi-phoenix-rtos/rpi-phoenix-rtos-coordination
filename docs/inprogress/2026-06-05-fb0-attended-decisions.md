@@ -1,5 +1,14 @@
 # /dev/fb0 (GPU Tier-1) — proven groundwork + the two attended decisions
 
+> **STATUS (2026-06-26): partly overtaken, residual attended items still ACTIVE.** The
+> `/dev/fb0` device exists + is HW-validated (#148, see the 2026-06-07 UPDATE below). Display
+> ownership (Decision 1) is now solved IN PRACTICE for the graphics path — both GLQuake and the
+> X11 DDX take the framebuffer via `FBCONSETMODE(FBCON_DISABLED)` and render full-screen on HDMI.
+> Still open + attended (#149): the fb0 device's own Linux-fbdev `FBIOGET_*` veneer (Decision 2)
+> and a true zero-copy `mmap(fd,0)` kernel backing (clients still MAP_PHYSMEM the pa today). NOTE:
+> the §47 "caches are off globally" parenthetical is STALE — caches are ON (TD-16 resolved).
+> Kept as the reference for those remaining attended decisions.
+
 **Date:** 2026-06-05 (overnight, netboot-only)
 **Status:** userspace framebuffer access PROVEN on HW; device bring-up blocked on
 two architecture decisions that want a human + a screen, deliberately deferred.

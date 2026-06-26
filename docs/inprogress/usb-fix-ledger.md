@@ -1,5 +1,12 @@
 # Pi 4 USB FIX / parked-item ledger
 
+> **STATUS (2026-06-26): LIVING ledger, still ACTIVE.** USB enum + keyboard + mouse work
+> end-to-end on HW; the HID-attach EL0 abort was root-caused + fixed (msgstack 1KB→8KB). Open
+> items below stand: FIX-14 (downstream LS-device completion reliability / #129), TD-10 (masked
+> SError / PCIe external abort), IRQ-driven events (perf). Separately, #121/#33 USB heap
+> free-list corruption is now a DETERMINISTIC boot repro localized to usb/mem.c (deep fix
+> pending) — see `2026-06-26-risky-items-results.md` / `2026-06-26-stress-test-results.md`.
+
 Authoritative current status of the BCM2711/VL805 USB bring-up "FIX-NN" items
 and related parked investigations. These were historically scattered across the
 USB notes (`docs/notes/2026-05-2x-*`, `2026-06-01-usb-rearchitecture-plan.md`)

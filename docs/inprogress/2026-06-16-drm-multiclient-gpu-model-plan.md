@@ -1,5 +1,11 @@
 # A DRM-equivalent, multi-client GPU model for Phoenix-RTOS on the Pi 4 V3D
 
+> **STATUS (2026-06-26): forward ARCHITECTURE design, still ACTIVE / unbuilt.** No central GPU
+> arbiter server exists yet; the V3D is still driven per-process by the no-DRM single-client
+> synchronous winsys (which GLQuake and vkQuake each use exclusively). This design remains the
+> foundation for any future multi-client GPU sharing (accelerated X, concurrent GPU apps). No
+> change since 2026-06-16; kept as the forward reference.
+
 **Date:** 2026-06-16
 **Type:** RESEARCH + ARCHITECTURE DESIGN (no source changes; design only)
 **Scope:** Phoenix-RTOS RPi4 port (BCM2711, Cortex-A72, V3D 4.2). The arbitration

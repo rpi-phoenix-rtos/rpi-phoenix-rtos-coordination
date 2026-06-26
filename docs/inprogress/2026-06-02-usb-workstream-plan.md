@@ -1,5 +1,13 @@
 # Pi 4 USB workstream — step-by-step implementation plan (2026-06-02)
 
+> **STATUS (2026-06-26): largely overtaken; the residual phases live elsewhere now.** Phase D
+> (production mouse driver toward Tiny-X/Quake) is DONE — usbmouse works (#24) and drives both X
+> and Quake. The standalone-daemon architecture (Phase preamble) shipped. What this plan still
+> usefully points at is open: Phase B (the parked FIX ledger → now `usb-fix-ledger.md`), Phase C
+> (TD-10 masked-SError / PCIe external abort, still OPEN), and Phase A (USB cleanup →
+> `2026-06-25-cleanup-upstreamability-plan.md`). Kept for that residual sequencing; the
+> day-to-day USB status now lives in `usb-fix-ledger.md` + the 2026-06-26 results docs.
+
 Audience: the project owner. Goal: a concrete, phased, hardware-testable plan for
 the Pi 4 USB stack covering (A) code cleanup / upstreamability, (B) closing the
 parked USB-FIX ledger honestly, (C) understanding + fixing TD-10 (the masked

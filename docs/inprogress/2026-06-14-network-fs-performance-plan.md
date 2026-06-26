@@ -1,5 +1,13 @@
 # Network / Filesystem Performance — Plan & Backlog (2026-06-14)
 
+> **STATUS (2026-06-26): the headline per-RPC fix is DONE; the backlog items remain
+> DEFERRED.** NFS is now fast + reliable (~8.5 MB/s after the genet RX-aliasing fix; see
+> `2026-06-15-nfs-network-perf-results.md`). Item (a) bulk-read throughput and item (b) are
+> still deferred — remaining headroom is largely gigabit-cable-gated. NOTE: the doc's TD-16
+> "cacheable RX = near-future MUST-HAVE" framing is OVERTAKEN — cacheable RX was tried and
+> concluded UNVIABLE (corrupts the GPU framebuffer under load; #11 re-opened, default-off).
+> See `2026-06-15-td16-cache-enable-plan.md` STATUS + `2026-06-26-risky-items-results.md`.
+
 Status: **(a) and (b) below are DEFERRED** (documented here for a focused future
 session). **TD-16 (cache enable) is reaffirmed a near-future MUST-HAVE.** The
 per-RPC latency bug is already fixed (see "Done" below); these are the residual

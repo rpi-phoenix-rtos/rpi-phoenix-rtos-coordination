@@ -1,5 +1,13 @@
 # From TinyX to a full accelerated X11 desktop on Raspberry Pi 4
 
+> **STATUS (2026-06-26): the SOFTWARE-X milestone this doc named as the practical ceiling is
+> DONE; GPU-accelerated X remains the unbuilt research stretch.** The kdrive/fbdev software X
+> stack is real on HW: Xphoenix + working kbd+mouse input, JWM and Window Maker window managers
+> (#30/#35), and xterm running a live BusyBox shell (#36) all render on HDMI. The accelerated
+> path (X as the sole GPU client via Glamor/EGL, gated on the multi-client GPU arbiter) is still
+> a research stretch — see the companion `2026-06-16-drm-multiclient-gpu-model-plan.md`. Kept as
+> the forward feasibility reference for the accelerated step.
+
 **Status:** planning / feasibility study (no code). 2026-06-16.
 **Companion:** [`tinyx-x11-demo.md`](../todo/tinyx-x11-demo.md) (the software
 TinyX/kdrive bring-up plan, just reconciled to current reality). This doc

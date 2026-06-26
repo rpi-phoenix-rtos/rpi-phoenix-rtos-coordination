@@ -1,5 +1,12 @@
 # Quake Pi4-vs-host visual regression harness — design + status (2026-06-15)
 
+> **STATUS (2026-06-26): still ACTIVE.** The deterministic Pi-side capture is DONE +
+> validated (120 shots); the host llvmpipe reference run + the SSIM/black-texture/text
+> comparison script remain PLANNED (unrun). The NFS large-write stall documented below is
+> still open — the stress suite confirmed it does NOT trigger at a 4 MB write but the deeper
+> nfs-fs VFS-write bug stands (see `2026-06-26-stress-test-results.md`). No change since
+> 2026-06-15; the TCP-sink transport workaround is the path forward when this resumes.
+
 Goal: systematic, automated, **unattended** comparison of Quake's visual output
 on Pi4 (V3D) vs a host reference (llvmpipe software GL), to localise the small
 visual bugs (objects/parts rendering black instead of textured; broken text).
