@@ -201,7 +201,7 @@ index 32b0cd460e8..e49be198630 100644
  
  uint32_t
 diff --git a/src/broadcom/vulkan/v3dv_meta_copy.c b/src/broadcom/vulkan/v3dv_meta_copy.c
-index f43181cb394..3b990ec20d7 100644
+index f43181cb394..a31c2ba1b10 100644
 --- a/src/broadcom/vulkan/v3dv_meta_copy.c
 +++ b/src/broadcom/vulkan/v3dv_meta_copy.c
 @@ -1943,6 +1943,10 @@ copy_buffer_image_tfu(struct v3dv_cmd_buffer *cmd_buffer,
@@ -241,18 +241,35 @@ index f43181cb394..3b990ec20d7 100644
        return false;
     }
  
-@@ -3404,12 +3417,29 @@ v3dv_CmdCopyBufferToImage2(VkCommandBuffer commandBuffer,
+@@ -3404,12 +3417,46 @@ v3dv_CmdCopyBufferToImage2(VkCommandBuffer commandBuffer,
         * where we are copying full images, since they should be the fastest.
         */
        uint32_t batch_size = 1;
 +#if defined(__phoenix__)
-+      /* Phoenix copy-path tracer (#29): log which buffer->image copy path each upload
-+       * takes so the black-texture triage can see whether conchars goes via the TFU
-+       * (now implemented in the winsys) or a CL fallback. tiled=%d gates the ver<71 TFU
-+       * precondition (copy_buffer_image_tfu returns false for a non-tiled dst). */
-+      fprintf(stderr, "v3dv: CmdCopyBufferToImage region %u/%u %ux%u fmt=%u tiled=%d -> trying TFU\n",
-+              r, info->regionCount, info->pRegions[r].imageExtent.width,
-+              info->pRegions[r].imageExtent.height, image->vk.format, image->tiled);
++      /* Phoenix copy-path tracer (#29): the prior boot showed every region as 0x1 / 1x0
++       * (degenerate), so the copy uploads no pixels and textures sample black. Disambiguate
++       * a real zero-extent from a logging/struct artifact by printing ALL of: region extent
++       * (w,h,d), region imageOffset (x,y,z), and the DESTINATION IMAGE's own created extent
++       * (image->vk.extent) + mip0 slice dims. If the image is 128x128 but the region extent
++       * is 0 -> the VkBufferImageCopy region is built/marshalled wrong (vkQuake side or the
++       * legacy->2 trampoline); if the image itself is 0x1 -> an image-creation bug. */
++      {
++         const struct v3d_resource_slice *s0 = &image->planes[0].slices[
++            info->pRegions[r].imageSubresource.mipLevel];
++         fprintf(stderr, "v3dv: CmdCopyBufferToImage region %u/%u extent=%ux%ux%u off=%d,%d,%d "
++                 "buf(off=%llu rowlen=%u imgh=%u) | IMAGE create=%ux%ux%u type=%u fmt=%u tiled=%d "
++                 "slice0=%ux%u -> trying TFU\n",
++                 r, info->regionCount,
++                 info->pRegions[r].imageExtent.width, info->pRegions[r].imageExtent.height,
++                 info->pRegions[r].imageExtent.depth,
++                 info->pRegions[r].imageOffset.x, info->pRegions[r].imageOffset.y,
++                 info->pRegions[r].imageOffset.z,
++                 (unsigned long long)info->pRegions[r].bufferOffset,
++                 info->pRegions[r].bufferRowLength, info->pRegions[r].bufferImageHeight,
++                 image->vk.extent.width, image->vk.extent.height, image->vk.extent.depth,
++                 image->vk.image_type, image->vk.format, image->tiled,
++                 s0->width, s0->height);
++      }
 +#endif
        if (copy_buffer_image_tfu(cmd_buffer, image, buffer, &info->pRegions[r],
 -                                false /* to_buffer */))
@@ -273,7 +290,7 @@ index f43181cb394..3b990ec20d7 100644
  
        /* Otherwise, we are copying subrects, so we fallback to copying
         * via shader and texel buffers and we try to batch the regions
-@@ -3439,6 +3469,9 @@ v3dv_CmdCopyBufferToImage2(VkCommandBuffer commandBuffer,
+@@ -3439,6 +3486,9 @@ v3dv_CmdCopyBufferToImage2(VkCommandBuffer commandBuffer,
  
        if (copy_buffer_to_image_shader(cmd_buffer, image, buffer,
                                        batch_size, &info->pRegions[r], true)) {
@@ -283,7 +300,7 @@ index f43181cb394..3b990ec20d7 100644
           goto handled;
        }
  
-@@ -3450,6 +3483,9 @@ v3dv_CmdCopyBufferToImage2(VkCommandBuffer commandBuffer,
+@@ -3450,6 +3500,9 @@ v3dv_CmdCopyBufferToImage2(VkCommandBuffer commandBuffer,
         */
        if (copy_buffer_to_image_shader(cmd_buffer, image, buffer,
                                        batch_size, &info->pRegions[r], false)) {
@@ -677,6 +694,42 @@ index 98b3cd6f8d8..16de49d8b28 100644
  #if defined(HAVE_POSIX_MEMALIGN)
  
  static inline void *
+diff --git a/src/vulkan/runtime/vk_cmd_copy.c b/src/vulkan/runtime/vk_cmd_copy.c
+index 5b4ef8a28d2..7303a7c47f2 100644
+--- a/src/vulkan/runtime/vk_cmd_copy.c
++++ b/src/vulkan/runtime/vk_cmd_copy.c
+@@ -24,6 +24,9 @@
+ #include "vk_common_entrypoints.h"
+ #include "vk_device.h"
+ #include "vk_util.h"
++#if defined(__phoenix__)
++#include <stdio.h>   /* #29 triage trampoline trace */
++#endif
+ 
+ VKAPI_ATTR void VKAPI_CALL
+ vk_common_CmdCopyBuffer(VkCommandBuffer commandBuffer,
+@@ -128,6 +131,21 @@ vk_common_CmdCopyBufferToImage(VkCommandBuffer commandBuffer,
+          .imageOffset         = pRegions[r].imageOffset,
+          .imageExtent         = pRegions[r].imageExtent,
+       };
++#if defined(__phoenix__)
++      /* #29 black-texture triage: this legacy->Copy2 trampoline is the boundary between
++       * vkQuake's region array (proven >=1x1 by q_max) and what V3DV's CmdCopyBufferToImage2
++       * receives (observed 0x1). Print the extent BEFORE (incoming pRegions) and AFTER (the
++       * converted region2s) the field copy: equal+nonzero here but 0 at v3dv = corruption
++       * downstream of this trampoline; 0 already on `in` = upstream (vkQuake/proc-addr); 0
++       * only on `out` = a struct/field mismatch in this very copy. */
++      fprintf(stderr, "vk-trampoline: CmdCopyBufferToImage region %u in=%ux%ux%u out=%ux%ux%u "
++              "(sizeof in=%u out=%u)\n", r,
++              pRegions[r].imageExtent.width, pRegions[r].imageExtent.height,
++              pRegions[r].imageExtent.depth,
++              region2s[r].imageExtent.width, region2s[r].imageExtent.height,
++              region2s[r].imageExtent.depth,
++              (unsigned)sizeof(VkBufferImageCopy), (unsigned)sizeof(VkBufferImageCopy2));
++#endif
+    }
+ 
+    VkCopyBufferToImageInfo2 info = {
 diff --git a/src/vulkan/runtime/vk_image.c b/src/vulkan/runtime/vk_image.c
 index f5e67646c61..ef483d79d5d 100644
 --- a/src/vulkan/runtime/vk_image.c
