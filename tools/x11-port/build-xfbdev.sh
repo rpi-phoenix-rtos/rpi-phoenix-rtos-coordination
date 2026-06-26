@@ -36,6 +36,19 @@ mkdir -p "$DDX"
 cp "$DDX_SRC/fbdev.c" "$DDX/fbdev.c"
 [ -f "$DDX_SRC/fbdev_stub.c" ] && cp "$DDX_SRC/fbdev_stub.c" "$DDX/fbdev_stub.c"
 
+# Durable core-source patches: the src/ tree is a regenerable download, so any
+# fix to a core (non-DDX) file lives in tools/x11-port/patches/ and is (re)applied
+# here, then the affected archive is rebuilt. Otherwise a relink would pull the
+# STALE prebuilt archive (same stale-archive hazard as the toolchain libphoenix).
+# patch -N is idempotent; `make -C record` is a fast no-op when nothing changed.
+PATCHDIR=/home/houp/phoenix-rpi/tools/x11-port/patches
+RECORD_PATCH="$PATCHDIR/xorg-server-1.20.14-record-malloc0.patch"
+if [ -f "$RECORD_PATCH" ]; then
+  echo "=== applying + rebuilding RECORD (malloc(0)->NULL assert guard) ==="
+  patch -d "$KD" -p1 -N <"$RECORD_PATCH" >/dev/null 2>&1 || true
+  make -C "$KD/record" >/dev/null 2>&1 || { echo "RECORD rebuild FAIL"; exit 1; }
+fi
+
 # Phoenix XKB fix: the kdrive server's XKB init forks `xkbcomp` (absent on the Pi),
 # so it aborts before the dispatch loop. The durable patched ddxLoad.c (tracked in
 # tools/x11-port/ddx/, mirroring how fbdev.c is the DDX source-of-truth) stages a
