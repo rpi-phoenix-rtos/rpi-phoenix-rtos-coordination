@@ -26,7 +26,6 @@ Exit codes: 0 = OK/LIMIT only, 2 = FAULT detected, 1 = usage / setup error.
 import argparse
 import http.client
 import socket
-import statistics
 import sys
 import threading
 import time

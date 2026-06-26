@@ -27,7 +27,6 @@ Exit codes: 0 = OK/LIMIT only, 2 = FAULT, 1 = usage/setup error.
 import argparse
 import os
 import socket
-import statistics
 import sys
 import threading
 import time
