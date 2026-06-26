@@ -75,6 +75,8 @@
 #define CTL_L2TFLEND        0x0038u    /* L2T flush end address */
 #define CTL_L2TCACTL        0x0030u
 #define L2TCACTL_L2TFLS     (1u<<0)
+#define L2TCACTL_FLM_CLEAN  (2u<<1)    /* FLM field = CLEAN (write back dirty L2T lines to RAM) */
+#define L2TCACTL_TMUWCF     (1u<<8)    /* TMU write-combiner flush (drain partial tiled writes) */
 #define CTL_SLCACTL         0x0024u    /* slices cache control (V3D 4.x) */
 #define SLCACTL_INVAL_ALL   0x0f0f0f0fu /* invalidate TVCCS/TDCCS/UCC(uniform)/ICC(instr) */
 #define PTB_BPCA            0x0300u   /* binner primitive-list current address (advances as the binner runs) */
@@ -1066,25 +1068,55 @@ static int ioc_submit_tfu(struct drm_v3d_submit_tfu *t)
 			 *                       path (resolves the "CL fallback also black" mystery — the TFU
 			 *                       was necessary but not sufficient).
 			 * The marker proves the TFU KICKED; this readback proves whether pixels LANDED. */
-			if (tfu_n <= 8u || (tfu_n & 0x3ffu) == 0u) {
+			if (tfu_n <= 12u || (tfu_n & 0x3ffu) == 0u) {
+				/* Coherency discriminator (striping triage): the dest BO is uncached, and we have
+				 * L2T-clean-flushed the TFU output to RAM above (the flush is BEFORE this read).
+				 * Read the SOURCE (raster staging) first words, and the DEST (tiled image) at the
+				 * START of the buffer and a MIDDLE row, after re-deriving stride from ios width.
+				 * - src all-stale/0 -> CPU-staging->TFU input coherency gap (staging cached, not
+				 *   cleaned before the TFU read);
+				 * - dst start nonzero but mid-row 0/garbage -> TFU only partially wrote the tiled
+				 *   image (write/flush gap) -> the BO itself is striped;
+				 * - dst BO looks fully populated here but the SAMPLE is striped -> the gap is
+				 *   TMU-side (L2T not invalidated before the sampling CL reads it). */
 				const uint32_t *src = gpuva_to_cpu(t->iia);
 				const uint32_t *dst = gpuva_to_cpu(t->ioa);
+				uint32_t w = t->ios & 0xffffu;
+				uint32_t hgt = t->ios >> 16;
+				/* UIF/T tiling is not linear, but a per-cache-line "is anything here" probe still
+				 * tells partial-vs-full: sample dst at byte offsets 0, w*cpp (row1-ish raster
+				 * equivalent), and (hgt/2)*w*cpp (mid). cpp=4 (RGBA8). These are RAW byte offsets
+				 * into the tiled buffer, not pixel coords — we only test populated-vs-zero. */
+				uint32_t cpp = 4u;
+				uint32_t off_mid = (hgt / 2u) * w * cpp;     /* bytes */
+				const uint32_t *dmid = dst ? (const uint32_t *)((const char *)dst + off_mid) : NULL;
 				int src_nz = src ? (src[0] | src[1] | src[2] | src[3]) != 0u : -1;
 				int dst_nz = dst ? (dst[0] | dst[1] | dst[2] | dst[3]) != 0u : -1;
-				fprintf(stderr, "v3d-winsys: TFU copy iia=0x%08x->ioa=0x%08x %ux%u done "
-					"(n=%u) src_nz=%d dst_nz=%d src0=0x%08x dst0=0x%08x\n",
-					t->iia, t->ioa, t->ios & 0xffffu, t->ios >> 16, tfu_n,
-					src_nz, dst_nz, src ? src[0] : 0u, dst ? dst[0] : 0u);
+				int dmid_nz = dmid ? (dmid[0] | dmid[1] | dmid[2] | dmid[3]) != 0u : -1;
+				fprintf(stderr, "v3d-winsys: TFU copy iia=0x%08x->ioa=0x%08x %ux%u done (n=%u) "
+					"src_nz=%d dst_nz=%d dmid_nz=%d | src=%08x %08x dst0=%08x %08x dmid=%08x %08x\n",
+					t->iia, t->ioa, w, hgt, tfu_n, src_nz, dst_nz, dmid_nz,
+					src ? src[0] : 0u, src ? src[1] : 0u,
+					dst ? dst[0] : 0u, dst ? dst[1] : 0u,
+					dmid ? dmid[0] : 0u, dmid ? dmid[1] : 0u);
 			}
 		}
 	}
 
-	/* --- epilogue: flush the tiled destination image to RAM so a subsequent sampling CL job
-	 * (which fetches texels through the TMU/L2T) reads the freshly-written pixels, not stale
-	 * cache. Same GFXH-1897-safe clean as the end of ioc_submit_cl. --- */
-	l2t_flush_wait(c0);
-	c0[CTL_L2TCACTL/4] = L2TCACTL_L2TFLS | (2u << 1);   /* FLM_CLEAN */
-	c0[CTL_SLCACTL/4] = SLCACTL_INVAL_ALL;              /* drop stale TMU-cache view of the dest */
+	/* --- epilogue: make the TFU-written tiled image visible to the TMU (sampler). The TFU writes
+	 * the destination through the TMU's WRITE COMBINER + L2T; a plain L2T clean is NOT enough — the
+	 * write combiner holds partial cache-line writes that never reach RAM, so the sampler reads a
+	 * partially-stale image (the classic horizontal STRIPING on a freshly-TFU'd texture). Mirror
+	 * linux v3d_clean_caches EXACTLY (the CACHE_CLEAN job the kernel runs after a write-producing
+	 * job): wait for any in-flight L2T flush (GFXH-1897), then TMU write-combiner flush + WAIT, then
+	 * L2T clean + WAIT. The waits are essential — the prior code issued FLM_CLEAN without waiting,
+	 * so the sampling CL could start before the clean drained. */
+	l2t_flush_wait(c0);                                  /* GFXH-1897: any prior L2T flush idle */
+	c0[CTL_L2TCACTL/4] = L2TCACTL_TMUWCF;                /* drain the TMU write combiner... */
+	for (spins = 1000000u; spins && (c0[CTL_L2TCACTL/4] & L2TCACTL_TMUWCF); spins--) {}  /* ...and wait */
+	c0[CTL_L2TCACTL/4] = L2TCACTL_L2TFLS | L2TCACTL_FLM_CLEAN;   /* write back dirty L2T lines... */
+	l2t_flush_wait(c0);                                  /* ...and wait for the clean to complete */
+	c0[CTL_SLCACTL/4] = SLCACTL_INVAL_ALL;              /* drop stale read-only slice/TMU cache view */
 	return 0;
 }
 
