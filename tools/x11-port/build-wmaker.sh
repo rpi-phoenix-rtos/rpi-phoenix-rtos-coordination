@@ -247,15 +247,33 @@ WM_DIAG_DEF=""
 # Full X11 + font + gap-fill static link closure, correctly ordered.
 WM_XCLOSURE="-lXft -lfontconfig -lexpat -lfreetype -lXrender -lXpm -lXext -lXmu -lXt -lSM -lICE -lX11 -lxcb -lXau -lXdmcp -lz -lftw -lm"
 
-# Apply the PHX_DIAG startup-marker instrumentation (only when WMAKER_DIAG=1):
-# drop in src/phx_diag.h and apply the patch that adds the markers to
-# startup.c/screen.c/monitor.c. Idempotent (-N skips already-applied hunks);
-# the canonical sources are committed under wmaker/ and patches/.
-wm_diag_patch() {
-	[ "${WMAKER_DIAG:-0}" = "1" ] || return 0
+# Apply the Phoenix-RTOS wmaker patch. This carries TWO things:
+#   1. the direct-TTF-file font fix ("phxfile:" handling in WINGs/wfont.c +
+#      makeFontOfSize/configuration.c defaults) — the candidate FIX for the
+#      WMCreateFont/XftFontOpenName startup hang. This is PLAIN C and runs
+#      ALWAYS (not gated on PHX_DIAG), so it must be applied unconditionally,
+#      or a clean build would ship the broken generic-name path.
+#   2. the PHX_DIAG startup-milestone markers (startup.c/screen.c/monitor.c +
+#      the split match-vs-open markers in wfont.c). These route through
+#      PHX_MARK(), which compiles to nothing unless -DPHX_DIAG is passed, so
+#      applying them unconditionally is harmless for a clean build.
+# Idempotent: `patch -N` skips already-applied hunks. We hard-fail if the patch
+# does NOT apply cleanly (a silently-dropped hunk would ship the broken path).
+wm_phx_patch() {
 	cp "$HERE/wmaker/phx_diag.h" "$SRC/$WM_NV/src/phx_diag.h"
 	local p="$HERE/patches/$WM_NV-phx-diag.patch"
-	[ -f "$p" ] && ( cd "$SRC/$WM_NV" && patch -p1 -N <"$p" >/dev/null 2>&1 )
+	[ -f "$p" ] || fail "missing wmaker patch $p"
+	# --dry-run first: tolerate a fully-already-applied tree (-R detects it),
+	# but reject a partially-applying / rejecting patch.
+	if ( cd "$SRC/$WM_NV" && patch -p1 --dry-run -N <"$p" >/tmp/wm-patch.log 2>&1 ); then
+		( cd "$SRC/$WM_NV" && patch -p1 -N <"$p" >/tmp/wm-patch.log 2>&1 ) \
+			|| { tail -20 /tmp/wm-patch.log; fail "wmaker phx patch failed to apply"; }
+	elif grep -q "previously applied" /tmp/wm-patch.log; then
+		echo "wmaker phx patch: already applied"
+	else
+		tail -20 /tmp/wm-patch.log
+		fail "wmaker phx patch does not apply cleanly (rejects) — regenerate it"
+	fi
 	return 0
 }
 
@@ -270,21 +288,18 @@ wm_patch() {
 build_wmaker() {
 	fetch_extract "$WM_NV" "$WM_URL"
 	wm_patch
-	wm_diag_patch
+	wm_phx_patch
 	local cf="--sysroot=$SYSROOT -I$DEPS/include $WM_PWD_DEFS $WM_GAP_DEFS $WM_SHELL_DEF $WM_DIAG_DEF"
-	# When diagnostics are toggled, force-recompile the instrumented objects so
-	# the PHX_DIAG markers are (re)baked even if wmaker was already built.
-	if [ "${WMAKER_DIAG:-0}" = "1" ]; then
-		# wmaker src objects + the libtool WINGs objects/lib so the markers in
-		# widgets.c/wfont.c (which live in libWINGs.a) are relinked into wmaker.
-		rm -f "$SRC/$WM_NV/src/wmaker" "$SRC/$WM_NV/src/startup.o" \
-		      "$SRC/$WM_NV/src/screen.o" "$SRC/$WM_NV/src/monitor.o" \
-		      "$SRC/$WM_NV/WINGs/widgets.o"  "$SRC/$WM_NV/WINGs/widgets.lo" \
-		      "$SRC/$WM_NV/WINGs/wfont.o"    "$SRC/$WM_NV/WINGs/wfont.lo" \
-		      "$SRC/$WM_NV"/WINGs/.libs/libWINGs.a "$SRC/$WM_NV"/WINGs/libWINGs.la
-	elif [ -x "$SRC/$WM_NV/src/wmaker" ]; then
-		echo "wmaker: already built"; return 0
-	fi
+	# Force-recompile the objects the phx patch touches so the font fix (and,
+	# when WMAKER_DIAG=1, the markers) are (re)baked even if wmaker was already
+	# built. wfont.c/widgets.c/configuration.c live in libWINGs.a; startup.c/
+	# screen.c/monitor.c are wmaker src — drop the lib so it relinks.
+	rm -f "$SRC/$WM_NV/src/wmaker" "$SRC/$WM_NV/src/startup.o" \
+	      "$SRC/$WM_NV/src/screen.o" "$SRC/$WM_NV/src/monitor.o" \
+	      "$SRC/$WM_NV/WINGs/widgets.o"       "$SRC/$WM_NV/WINGs/widgets.lo" \
+	      "$SRC/$WM_NV/WINGs/wfont.o"         "$SRC/$WM_NV/WINGs/wfont.lo" \
+	      "$SRC/$WM_NV/WINGs/configuration.o" "$SRC/$WM_NV/WINGs/configuration.lo" \
+	      "$SRC/$WM_NV"/WINGs/.libs/libWINGs.a "$SRC/$WM_NV"/WINGs/libWINGs.la
 	( cd "$SRC/$WM_NV" \
 	  && { [ -f config.status ] || PKG_CONFIG="$PKGC" ./configure --host=aarch64-phoenix \
 	       --build=x86_64-pc-linux-gnu --prefix="$TGT_PREFIX" --sysconfdir="$TGT_PREFIX/etc" \
@@ -333,6 +348,37 @@ stage_wmaker() {
 	cp -a "$stage$TGT_PREFIX/share/WINGs"       "$NFS/share/" 2>/dev/null
 	cp -a "$stage$TGT_PREFIX/share/WPrefs"      "$NFS/share/" 2>/dev/null
 	cp -a "$stage$TGT_PREFIX/etc/WindowMaker"   "$NFS/etc/"   2>/dev/null
+
+	# 5b'. Rewrite the ACTIVE defaults databases to name the DejaVu TTF by direct
+	# file path ("phxfile:" — handled in WINGs/wfont.c) instead of the generic
+	# "Sans"/"sans serif" family. These DB values OVERRIDE the compiled-in
+	# DEF_*_FONT / SYSTEM_FONT defaults (getFont/WMGetUDStringForKey), so they
+	# are the load-bearing trigger for the font fix: a generic family name makes
+	# wmaker run a fontconfig FcFontMatch scan during startup, which HANGS on the
+	# Pi 4 netboot stack. We rewrite ONLY the two active startup DBs:
+	#   - etc/WindowMaker/WMGLOBAL : WINGs SystemFont / BoldSystemFont
+	#   - etc/WindowMaker/WindowMaker : wmaker's own Window/Menu/Icon/... fonts
+	# (the on-demand .style/.theme files are NOT on the dock-render path and are
+	# left untouched). The bold faces map to DejaVuSans-Bold.ttf, the rest to
+	# DejaVuSans.ttf; the pixelsize from the original spec is preserved.
+	# NOTE: the replacement KEEPS the surrounding double quotes. WindowMaker's
+	# proplist parser needs strings with '/' ':' '.' '=' quoted, or it rejects
+	# the value and the font silently reverts to the generic compiled default.
+	phx_fontfix_db() {
+		local db="$1"
+		[ -f "$db" ] || return 0
+		# "...Sans:bold..."  -> DejaVuSans-Bold.ttf   (bold before non-bold!)
+		perl -pi -e 's{"Sans:bold(:pixelsize=\d+)?"}{my $sz=$1//"";"\"phxfile:'"$FONTDIR"'/DejaVuSans-Bold.ttf$sz\""}ge' "$db"
+		perl -pi -e 's{"sans serif:bold(:pixelsize=\d+)?"}{my $sz=$1//"";"\"phxfile:'"$FONTDIR"'/DejaVuSans-Bold.ttf$sz\""}ge' "$db"
+		# remaining plain "Sans..." / "sans serif..." -> regular face
+		perl -pi -e 's{"Sans(:pixelsize=\d+)?"}{my $sz=$1//"";"\"phxfile:'"$FONTDIR"'/DejaVuSans.ttf$sz\""}ge' "$db"
+		perl -pi -e 's{"sans serif(:pixelsize=\d+)?"}{my $sz=$1//"";"\"phxfile:'"$FONTDIR"'/DejaVuSans.ttf$sz\""}ge' "$db"
+	}
+	local FONTDIR="$TGT_PREFIX/usr/share/fonts/truetype/dejavu"
+	phx_fontfix_db "$NFS/etc/WindowMaker/WMGLOBAL"
+	phx_fontfix_db "$NFS/etc/WindowMaker/WindowMaker"
+	echo "  rewrote active defaults DBs (WMGLOBAL + WindowMaker) -> phxfile: DejaVu"
+	grep -h "Font" "$NFS/etc/WindowMaker/WMGLOBAL" "$NFS/etc/WindowMaker/WindowMaker" 2>/dev/null | head -8
 
 	# 5c. font: stage one real TTF family (DejaVu) — fontconfig+Xft return NULL
 	# (wmaker won't start) with no font file. Take it from the host if present.

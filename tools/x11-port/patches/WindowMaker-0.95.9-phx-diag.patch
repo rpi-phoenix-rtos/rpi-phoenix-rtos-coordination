@@ -214,18 +214,219 @@
  
  #include <wraster.h>
  #include <assert.h>
-@@ -156,7 +157,14 @@
+@@ -22,6 +23,31 @@
+ 
+ #define DEFAULT_SIZE WINGsConfiguration.defaultFontSize
+ 
++/*
++ * Phoenix-RTOS X11 port — direct-TTF-file font bypass.
++ *
++ * On the Pi 4 netboot stack, WMCreateFont("sans serif:pixelsize=12") hangs
++ * inside XftFontOpenName(): the generic-family path runs a full fontconfig
++ * FcFontMatch scan over the font set and then a freetype open of whatever it
++ * picks. To sidestep the generic-name FcFontMatch scan entirely, a font name
++ * may instead be written as
++ *
++ *      phxfile:/abs/path/to/Face.ttf[:pixelsize=N][:antialias=false]
++ *
++ * which WMCreateFont turns into a minimal FcPattern carrying only FC_FILE +
++ * FC_PIXEL_SIZE (+ FC_INDEX 0, FC_ANTIALIAS) and hands STRAIGHT to
++ * XftFontOpenPattern — no FcFontMatch. XftFontInfoFill only requires FC_FILE
++ * and FC_PIXEL_SIZE; every other property has a documented NoMatch default
++ * (see libXft xftfreetype.c:XftFontInfoFill), so this minimal pattern is
++ * sufficient to open the face.
++ *
++ * The default WINGs system fonts (configuration.c) use this prefix so a stock
++ * Pi 4 boot never hits the generic FcFontMatch scan. The marker pair (under
++ * PHX_DIAG) still brackets the open, so if the hang is the freetype/NFS open
++ * itself rather than the match, the next HW grab still pins it.
++ */
++#define PHX_FILE_PREFIX "phxfile:"
++
+ static FcPattern *xlfdToFcPattern(const char *xlfd)
+ {
+ 	FcPattern *pattern;
+@@ -94,6 +120,24 @@
+ 	FcPattern *pattern;
+ 	char *result;
+ 
++	/*
++	 * Phoenix-RTOS port: a "phxfile:" direct-file spec must NOT be round-tripped
++	 * through FcNameParse/FcNameUnparse (that would mangle the prefix and the
++	 * path). Pass it through verbatim, just appending a "pixelsize=" option so
++	 * WMCreateFont's phxFileToFcPattern() picks up the requested size.
++	 */
++	if (strncmp(font, PHX_FILE_PREFIX, sizeof(PHX_FILE_PREFIX) - 1) == 0) {
++		int px = size > 0 ? size : DEFAULT_SIZE;
++		char szbuf[32];
++
++		if (px <= 0)
++			px = 12;
++		snprintf(szbuf, sizeof(szbuf), ":pixelsize=%d", px);
++		result = wstrdup(font);
++		result = wstrappend(result, szbuf);
++		return result;
++	}
++
+ 	if (font[0] == '-') {
+ 		pattern = xlfdToFcPattern(font);
+ 	} else {
+@@ -121,6 +165,59 @@
+ 	return result;
+ }
+ 
++/*
++ * Phoenix-RTOS port: build a minimal direct-file FcPattern from a
++ *   phxfile:/abs/path.ttf[:pixelsize=N][:antialias=false]
++ * spec. Only FC_FILE + FC_PIXEL_SIZE are load-bearing for XftFontInfoFill;
++ * FC_INDEX defaults to 0 and FC_ANTIALIAS is honoured if present in the spec.
++ * Returns a pattern (caller owns it) or NULL if the path is empty.
++ */
++static FcPattern *phxFileToFcPattern(const char *spec)
++{
++	FcPattern *pattern;
++	char *work, *path, *opt, *next;
++	double pixelsize = DEFAULT_SIZE > 0 ? (double)DEFAULT_SIZE : 12.0;
++	FcBool antialias = FcTrue;
++
++	work = wstrdup(spec + (sizeof(PHX_FILE_PREFIX) - 1));
++
++	/* The file path runs up to the first option-introducing ':'. */
++	path = work;
++	opt = strchr(work, ':');
++	if (opt)
++		*opt++ = 0;
++
++	if (path[0] == 0) {
++		wfree(work);
++		return NULL;
++	}
++
++	/* Parse the ':'-separated options (pixelsize=, antialias=). */
++	while (opt && opt[0]) {
++		next = strchr(opt, ':');
++		if (next)
++			*next++ = 0;
++		if (strncmp(opt, "pixelsize=", 10) == 0) {
++			pixelsize = atof(opt + 10);
++		} else if (strncmp(opt, "antialias=", 10) == 0) {
++			antialias = (strcasecmp(opt + 10, "false") == 0
++				     || strcmp(opt + 10, "0") == 0) ? FcFalse : FcTrue;
++		}
++		opt = next;
++	}
++
++	pattern = FcPatternCreate();
++	if (pattern) {
++		FcPatternAddString(pattern, FC_FILE, (const FcChar8 *)path);
++		FcPatternAddInteger(pattern, FC_INDEX, 0);
++		FcPatternAddDouble(pattern, FC_PIXEL_SIZE, pixelsize > 0 ? pixelsize : 12.0);
++		FcPatternAddBool(pattern, FC_ANTIALIAS, antialias);
++	}
++
++	wfree(work);
++	return pattern;
++}
++
+ WMFont *WMCreateFont(WMScreen * scrPtr, const char *fontName)
+ {
+ 	Display *display = scrPtr->display;
+@@ -156,7 +253,69 @@
  
  	font->screen = scrPtr;
  
-+	/* The actual fontconfig match + freetype open. This is where a font-name
-+	 * mismatch shows up (returns NULL -> chatty warnings up the stack) and where
-+	 * a fontconfig-scan/cache-write HANG would freeze with no output. The two
-+	 * markers + the result pointer distinguish the two on the next grab.
-+	 * (Phoenix port diagnostic — PHX_DIAG.) */
-+	PHX_MARK("WMCreateFont: before XftFontOpenName(\"%s\")", fname);
- 	font->font = XftFontOpenName(display, scrPtr->screen, fname);
-+	PHX_MARK("WMCreateFont: XftFontOpenName(\"%s\") = %p", fname, (void *)font->font);
+-	font->font = XftFontOpenName(display, scrPtr->screen, fname);
++	/*
++	 * Phoenix-RTOS port. Two things happen here:
++	 *
++	 *  (1) DIRECT-FILE BYPASS (the candidate fix). When the name is a
++	 *      "phxfile:/path.ttf..." spec we build a minimal FC_FILE +
++	 *      FC_PIXEL_SIZE pattern and hand it STRAIGHT to XftFontOpenPattern,
++	 *      skipping FcFontMatch entirely (no generic-family scan over the font
++	 *      set). The WINGs default system fonts use this form, so a stock boot
++	 *      opens a known TTF directly.
++	 *
++	 *  (2) SPLIT INSTRUMENTATION (PHX_DIAG only). For a generic name we inline
++	 *      what XftFontOpenName() does — FcNameParse, then the substitute +
++	 *      FcFontMatch step (== XftFontMatch), then XftFontOpenPattern — with a
++	 *      marker between each, and print the matched FC_FILE. So the next HW
++	 *      grab shows exactly which sub-step is the last to print: the match
++	 *      (fontconfig scan) or the open (freetype / FT_New_Face of the TTF,
++	 *      e.g. over NFS).
++	 *
++	 * Both paths bracket the freetype OPEN with markers, so even with the
++	 * bypass active a hang in the open itself is still pinned.
++	 */
++	{
++		FcPattern *match = NULL;
++		FcResult fcres = FcResultMatch;
++
++		if (strncmp(fname, PHX_FILE_PREFIX, sizeof(PHX_FILE_PREFIX) - 1) == 0) {
++			PHX_MARK("WMCreateFont: direct-file bypass for \"%s\"", fname);
++			match = phxFileToFcPattern(fname);
++			PHX_MARK("WMCreateFont: phxFileToFcPattern -> %p (no FcFontMatch scan)", (void *)match);
++		} else {
++			FcPattern *pat;
++
++			PHX_MARK("WMCreateFont: FcNameParse(\"%s\")", fname);
++			pat = FcNameParse((const FcChar8 *)fname);
++			PHX_MARK("WMCreateFont: FcNameParse -> %p; before FcConfigSubstitute", (void *)pat);
++			if (pat) {
++				FcConfigSubstitute(NULL, pat, FcMatchPattern);
++				PHX_MARK("WMCreateFont: after FcConfigSubstitute; before XftDefaultSubstitute");
++				XftDefaultSubstitute(display, scrPtr->screen, pat);
++				PHX_MARK("WMCreateFont: after XftDefaultSubstitute; before FcFontMatch (the SCAN)");
++				match = FcFontMatch(NULL, pat, &fcres);
++				PHX_MARK("WMCreateFont: FcFontMatch -> %p (res=%d)", (void *)match, (int)fcres);
++				FcPatternDestroy(pat);
++			}
++		}
++
++		if (match) {
++			FcChar8 *mfile = NULL;
++			if (FcPatternGetString(match, FC_FILE, 0, &mfile) == FcResultMatch && mfile)
++				PHX_MARK("WMCreateFont: matched FC_FILE = \"%s\"; before XftFontOpenPattern (FT_New_Face)", (char *)mfile);
++			else
++				PHX_MARK("WMCreateFont: matched pattern has no FC_FILE; before XftFontOpenPattern");
++
++			/* XftFontOpenPattern consumes (frees) the pattern on success. */
++			font->font = XftFontOpenPattern(display, match);
++			PHX_MARK("WMCreateFont: XftFontOpenPattern -> %p", (void *)font->font);
++			if (!font->font)
++				FcPatternDestroy(match);
++		} else {
++			PHX_MARK("WMCreateFont: no pattern to open for \"%s\"", fname);
++			font->font = NULL;
++		}
++	}
  	if (!font->font) {
  		wfree(font);
  		wfree(fname);
+--- a/WINGs/configuration.c
++++ b/WINGs/configuration.c
+@@ -6,8 +6,23 @@
+ 
+ _WINGsConfiguration WINGsConfiguration;
+ 
+-#define SYSTEM_FONT "sans serif"
+-#define BOLD_SYSTEM_FONT "sans serif:bold"
++/*
++ * Phoenix-RTOS X11 port: the default WINGs system fonts name a TTF by EXPLICIT
++ * FILE PATH ("phxfile:" prefix, handled in WINGs/wfont.c) instead of the
++ * generic "sans serif" family. On the Pi 4 netboot stack a generic family
++ * name makes XftFontOpenName run a full fontconfig FcFontMatch scan over the
++ * font set, which hangs during startup; naming the file directly skips that
++ * scan and freetype-opens a known face. The path is exactly where
++ * build-wmaker.sh stages DejaVu (/nfstest/usr/share/fonts/truetype/dejavu).
++ * Upstream/other platforms can still override these via the WINGs SystemFont /
++ * BoldSystemFont user defaults.
++ */
++#ifndef SYSTEM_FONT
++#define SYSTEM_FONT "phxfile:/nfstest/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
++#endif
++#ifndef BOLD_SYSTEM_FONT
++#define BOLD_SYSTEM_FONT "phxfile:/nfstest/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
++#endif
+ #define DEFAULT_FONT_SIZE 12
+ 
+ #define FLOPPY_PATH "/floppy"

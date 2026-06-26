@@ -3,6 +3,58 @@
 **Date:** 2026-06-26
 **Outcome:** BUILT + STAGED (host-side). Not yet HW-validated (no Pi boot in this session).
 
+## UPDATE 2026-06-26 — startup-font hang: candidate fix applied (direct-TTF bypass)
+
+Prior HW grabs localized the startup hang to `WMCreateFont()` →
+`XftFontOpenName("sans serif:pixelsize=12")` (WINGs `wfont.c`): the marker
+`before XftFontOpenName(...)` printed, `after` never did. `XftDrawCreate`
+(FcInit/scan) returned fine, and it was NOT a NULL return (no "could not load
+font" warnings) → the freeze is inside the generic-name path:
+`FcFontMatch` (the fontconfig scan) and/or the freetype `FT_New_Face` open of
+the matched TTF.
+
+**Two-pronged change this session (all in `patches/WindowMaker-0.95.9-phx-diag.patch`
++ `build-wmaker.sh`):**
+
+1. **Split-instrumentation (PHX_DIAG).** `WMCreateFont` no longer calls the
+   opaque `XftFontOpenName`. For a generic name it now INLINES that function's
+   steps — `FcNameParse` → `FcConfigSubstitute` → `XftDefaultSubstitute` →
+   `FcFontMatch` (the scan) → `XftFontOpenPattern` (the freetype open) — with a
+   `PHX_MARK` between each, and prints the matched `FC_FILE`. So the next grab's
+   LAST marker pins match-vs-open exactly.
+
+2. **Direct-TTF-file bypass (the FIX, runs ALWAYS — not gated on PHX_DIAG).** A
+   font name may now be written `phxfile:/abs/path.ttf[:pixelsize=N][:antialias=…]`.
+   `WMCreateFont` turns it into a minimal `FC_FILE`+`FC_PIXEL_SIZE` `FcPattern`
+   and hands it STRAIGHT to `XftFontOpenPattern` — **no `FcFontMatch` scan at
+   all**, just a freetype open of a known file. (`XftFontInfoFill` only requires
+   `FC_FILE`+`FC_PIXEL_SIZE`; everything else has a NoMatch default.)
+   - The WINGs system fonts (`configuration.c` `SYSTEM_FONT`/`BOLD_SYSTEM_FONT`)
+     and wmaker's UI fonts now use this form.
+   - **The load-bearing trigger is the staged defaults DBs**, not the compiled
+     defaults: `etc/WindowMaker/WMGLOBAL` (`SystemFont`/`BoldSystemFont`) and
+     `etc/WindowMaker/WindowMaker` (Window/Menu/Icon/Clip/LargeDisplay fonts)
+     set explicit `"Sans…"` values that override the macros. `stage_wmaker()`
+     now rewrites both DBs: `Sans:bold…`→`DejaVuSans-Bold.ttf`, `Sans…`→
+     `DejaVuSans.ttf`, pixelsize preserved, quoting preserved. (On-demand
+     `.style`/`.theme` files are NOT on the dock-render path — left untouched.)
+
+**What the orchestrator should see on the next `startx wmaker` grab:**
+- If the FIX works: `PHX_DIAG: WMCreateFont: direct-file bypass for "phxfile:…DejaVuSans.ttf:pixelsize=11"`
+  then `phxFileToFcPattern -> 0x… (no FcFontMatch scan)`, then `matched FC_FILE = "/nfstest/…/DejaVuSans.ttf"; before XftFontOpenPattern (FT_New_Face)`,
+  then `XftFontOpenPattern -> 0x…` (non-NULL) — and startup PROCEEDS past
+  `WMCreateScreenWithRContext` to `wScreenInit returned`, the screen/dock should
+  RENDER on HDMI.
+- If the hang has MOVED to the freetype open itself (e.g. `FT_New_Face` blocking
+  on the NFS file read): the LAST marker is `…before XftFontOpenPattern (FT_New_Face)`
+  with no `XftFontOpenPattern ->` after it. That would mean the bypass correctly
+  removed the `FcFontMatch` scan but the open-over-NFS is the real blocker — the
+  fix then is to stage the TTF where it opens without blocking (flagged for the
+  orchestrator; not solvable host-side).
+
+This is a CANDIDATE fix — it should let wmaker reach the dock render, and it
+makes the next grab fully discriminating either way. Not yet HW-confirmed.
+
 The heaviest window manager ported to the Pi 4 X11 stack so far. Window Maker
 0.95.9 — core WM + the WINGs widget toolkit + the wrlib raster lib + all 13
 `util/` helper programs — cross-compiles to **static aarch64-phoenix ELFs with
