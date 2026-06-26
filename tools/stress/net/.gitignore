@@ -1,0 +1,4 @@
+# Build outputs (cross-compiled by build-stress-net.sh; staged to the NFS export)
+stress-net
+*.o
+__pycache__/
