@@ -17,10 +17,10 @@
 
 /* The host runs on the MAIN thread (not a pthread). Quake has large stack frames +
  * recursive renderers, so the main-thread stack is enlarged via PT_GNU_STACK in the
- * link (-z stack-size=... in misc/rpi4-quake/Makefile). Running on the main thread is
- * deliberate: Mesa's glapi dispatch is TLS and the kernel sets up TLS for the main
- * thread (process.c), whereas GL on a libphoenix pthread faulted in the dispatch
- * (far=0x100030428) — the rpi4-glcube demo runs identical GL on the main thread fine. */
+ * link (-z stack-size=... in phoenix-rtos-project/_user/rpi4-quake/Makefile). Running
+ * on the main thread is deliberate: Mesa's glapi dispatch is TLS and the kernel sets up
+ * TLS for the main thread (process.c), whereas GL on a libphoenix pthread faulted in the
+ * dispatch (far=0x100030428) — identical GL ran on the main thread fine. */
 
 static quakeparms_t parms;      /* host_parms (the pointer) is owned by host.c */
 
