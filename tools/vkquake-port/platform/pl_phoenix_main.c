@@ -104,6 +104,23 @@ int main(int argc, char *argv[])
 		Sys_Printf("vkquake: 2D-first: startdemos disabled, forced to main menu\n");
 	}
 
+	/* TEXTURE-STAGING FLUSH (hygiene; HW: textured 2D samples 0 = upload gap). conchars + the
+	 * other init-time textures (whitetexture, ...) record their vkCmdCopyBufferToImage + the
+	 * SHADER_READ_ONLY transition into a STAGING command buffer during Host_Init (TexMgr_LoadImage
+	 * -> R_StagingAllocate). The shim only flushes staging per-frame inside GL_EndRendering, which
+	 * starts at frame 1 — so force the pending init-time uploads onto the GPU here, before the first
+	 * SCR_UpdateScreen, and wait the device idle so the copies+transitions COMPLETE before any
+	 * textured draw samples the image. (Note: per-frame submit+device-wait would also eventually
+	 * land these, so if textures stay black AFTER this the cause is the copy/sample path, not submit
+	 * timing — a marker disambiguates.) TODO(vkquake-port): keep if it proves load-bearing. */
+	{
+		extern void R_SubmitStagingBuffers(void);
+		extern void GL_WaitForDeviceIdle(void);
+		R_SubmitStagingBuffers();
+		GL_WaitForDeviceIdle();
+		Sys_Printf("vkquake: init-texture staging flushed + device idle (conchars/whitetexture uploads forced to GPU)\n");
+	}
+
 	oldtime = Sys_DoubleTime();
 	{
 		/* BRING-UP heartbeat: an UNCONDITIONAL, flushed marker bracketing each Host_Frame for
