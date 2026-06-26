@@ -211,6 +211,50 @@ static qboolean create_device (void)
 	return true;
 }
 
+/* ===================== BRING-UP draw/push-constant counting wrappers =====================
+ * The frame loop sustains and the magenta clear reaches fb0, but the 2D draws (console/menu)
+ * don't show. To split "draws never recorded into the submitted cb" from "draws recorded but
+ * rasterize nothing", install counting wrappers as the dispatch-table draw entrypoints (the
+ * renderer calls vulkan_globals.vk_cmd_draw* directly). Since V_RenderView early-returns at the
+ * menu (con_forcedup), every counted draw is a 2D/GUI draw into frame_cb.
+ *
+ * Also wrap vk_cmd_push_constants to catch a NULL pipeline layout: GL_SetCanvas -> GL_OrthoMatrix
+ * pushes the 2D projection matrix via cbx->current_pipeline.layout.handle, which is reset to 0 at
+ * frame start — if the canvas runs before any pipeline bind, the projection push targets a NULL
+ * layout and the matrix is lost -> all 2D geometry transforms off-screen (would look like bare
+ * clear). The counter pins which case it is. TODO(vkquake-port): remove once 2D lands. */
+static PFN_vkCmdDraw		 real_vk_cmd_draw		   = NULL;
+static PFN_vkCmdDrawIndexed	 real_vk_cmd_draw_indexed  = NULL;
+static PFN_vkCmdPushConstants real_vk_cmd_push_constants = NULL;
+static unsigned long g_draw_calls	   = 0; /* vkCmdDraw this frame */
+static unsigned long g_draw_idx_calls  = 0; /* vkCmdDrawIndexed this frame */
+static unsigned long g_pc_null_layout  = 0; /* push-constant calls with NULL layout this frame */
+
+static void VKAPI_PTR count_vk_cmd_draw (VkCommandBuffer cb, uint32_t vc, uint32_t ic, uint32_t fv, uint32_t fi)
+{
+	g_draw_calls++;
+	if (real_vk_cmd_draw)
+		real_vk_cmd_draw (cb, vc, ic, fv, fi);
+}
+
+static void VKAPI_PTR count_vk_cmd_draw_indexed (VkCommandBuffer cb, uint32_t ic, uint32_t inst, uint32_t fi, int32_t vo, uint32_t fia)
+{
+	g_draw_idx_calls++;
+	if (real_vk_cmd_draw_indexed)
+		real_vk_cmd_draw_indexed (cb, ic, inst, fi, vo, fia);
+}
+
+static void VKAPI_PTR count_vk_cmd_push_constants (VkCommandBuffer cb, VkPipelineLayout layout, VkShaderStageFlags sf,
+                                                   uint32_t off, uint32_t sz, const void *vals)
+{
+	if (layout == VK_NULL_HANDLE) {
+		g_pc_null_layout++;
+		return; /* a NULL-layout push is invalid; skip it (it would be dropped/UB anyway) */
+	}
+	if (real_vk_cmd_push_constants)
+		real_vk_cmd_push_constants (cb, layout, sf, off, sz, vals);
+}
+
 /* Populate the dispatch-table function pointers vulkan_globals exposes (the renderer calls
  * through vulkan_globals.vk_cmd_* directly in the hot path). Resolve via vkGetDeviceProcAddr.
  * Unsupported-on-V3D entries (push-descriptor / buffer-device-address / accel-structure) are
@@ -218,15 +262,18 @@ static qboolean create_device (void)
 static void populate_dispatch_table (void)
 {
 	vulkan_globals.vk_cmd_bind_pipeline = (PFN_vkCmdBindPipeline) gdpa ("vkCmdBindPipeline");
-	vulkan_globals.vk_cmd_push_constants = (PFN_vkCmdPushConstants) gdpa ("vkCmdPushConstants");
+	real_vk_cmd_push_constants = (PFN_vkCmdPushConstants) gdpa ("vkCmdPushConstants");
+	vulkan_globals.vk_cmd_push_constants = count_vk_cmd_push_constants;
 	vulkan_globals.vk_cmd_bind_descriptor_sets =
 		(PFN_vkCmdBindDescriptorSets) gdpa ("vkCmdBindDescriptorSets");
 	vulkan_globals.vk_cmd_bind_index_buffer =
 		(PFN_vkCmdBindIndexBuffer) gdpa ("vkCmdBindIndexBuffer");
 	vulkan_globals.vk_cmd_bind_vertex_buffers =
 		(PFN_vkCmdBindVertexBuffers) gdpa ("vkCmdBindVertexBuffers");
-	vulkan_globals.vk_cmd_draw = (PFN_vkCmdDraw) gdpa ("vkCmdDraw");
-	vulkan_globals.vk_cmd_draw_indexed = (PFN_vkCmdDrawIndexed) gdpa ("vkCmdDrawIndexed");
+	real_vk_cmd_draw = (PFN_vkCmdDraw) gdpa ("vkCmdDraw");
+	vulkan_globals.vk_cmd_draw = count_vk_cmd_draw;
+	real_vk_cmd_draw_indexed = (PFN_vkCmdDrawIndexed) gdpa ("vkCmdDrawIndexed");
+	vulkan_globals.vk_cmd_draw_indexed = count_vk_cmd_draw_indexed;
 	vulkan_globals.vk_cmd_draw_indexed_indirect =
 		(PFN_vkCmdDrawIndexedIndirect) gdpa ("vkCmdDrawIndexedIndirect");
 	vulkan_globals.vk_cmd_pipeline_barrier =
@@ -866,6 +913,9 @@ qboolean GL_BeginRendering (qboolean use_tasks, task_handle_t *begin_rendering_t
 	 * the swap they'd accumulate across frames and overflow. Mirrors GL_BeginRenderingTask's tail. */
 	R_SwapDynamicBuffers ();
 
+	/* Reset the per-frame bring-up counters (draws + NULL-layout push constants). */
+	g_draw_calls = g_draw_idx_calls = g_pc_null_layout = 0;
+
 	vulkan_globals.device_idle = false;
 	frame_recording = 1;
 	return true;
@@ -897,6 +947,17 @@ task_handle_t GL_EndRendering (qboolean use_tasks, qboolean use_swapchain)
 	if (!pEndRP || !pEnd || !pSubmit) {
 		Sys_Printf ("vkvid: GL_EndRendering: missing device proc\n");
 		return INVALID_TASK_HANDLE;
+	}
+
+	/* BRING-UP: report the 2D draw activity recorded into THIS submitted cb before ending the
+	 * render pass. draws>0 => 2D geometry IS in the presented cb (the gap is then rasterization:
+	 * geometry/scissor/projection), draws==0 => the Draw_* calls never reached frame_cb (skipped
+	 * early / null pics / wrong cb). null_layout_pc>0 flags the projection-matrix-lost ordering bug
+	 * (GL_SetCanvas pushing before any pipeline bind). Logged for the first frames only. */
+	if (present_count < 8) {
+		Sys_Printf ("vkvid: 2D draws=%lu drawIdx=%lu nullLayoutPC=%lu into submitted cb\n",
+		            g_draw_calls, g_draw_idx_calls, g_pc_null_layout);
+		fflush (stdout);
 	}
 
 	pEndRP (frame_cb);
