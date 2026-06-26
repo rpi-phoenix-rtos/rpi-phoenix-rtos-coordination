@@ -247,6 +247,15 @@ WM_DIAG_DEF=""
 # Full X11 + font + gap-fill static link closure, correctly ordered.
 WM_XCLOSURE="-lXft -lfontconfig -lexpat -lfreetype -lXrender -lXpm -lXext -lXmu -lXt -lSM -lICE -lX11 -lxcb -lXau -lXdmcp -lz -lftw -lm"
 
+# Main-thread stack size. The Phoenix kernel reads PT_GNU_STACK's p_memsz from
+# the ELF as the main (initial) thread's user stack size, else falls back to
+# SIZE_USTACK = 8 pages = 32 KiB on aarch64 (hal/aarch64/arch/cpu.h). 32 KiB is
+# far too small for wmaker's deep call chains (manageAllWindows + WINGs + event
+# machinery), which overflow it right after the desktop renders (Data Abort with
+# far at the stack limit). -Wl,-z,stack-size=N sets PT_GNU_STACK p_memsz, which
+# the kernel honors. 1 MiB is generous and page-aligned (round_page no-op).
+WM_STACK_LDFLAG="-Wl,-z,stack-size=0x100000"
+
 # Apply the Phoenix-RTOS wmaker patch. This carries TWO things:
 #   1. the direct-TTF-file font fix ("phxfile:" handling in WINGs/wfont.c +
 #      makeFontOfSize/configuration.c defaults) — the candidate FIX for the
@@ -309,9 +318,11 @@ build_wmaker() {
 	       --x-includes="$DEPS/include" --x-libraries="$DEPS/lib" \
 	       CC=${TC}gcc AR=${TC}ar RANLIB=${TC}ranlib xorg_cv_malloc0_returns_null=no \
 	       CFLAGS="$cf" \
-	       LDFLAGS="--sysroot=$SYSROOT -static -L$DEPS/lib -L$SYSROOT/lib" \
+	       LDFLAGS="--sysroot=$SYSROOT -static -L$DEPS/lib -L$SYSROOT/lib $WM_STACK_LDFLAG" \
 	       LIBS="$WM_XCLOSURE" >/tmp/wm-conf.log 2>&1; } \
-	  && make CFLAGS="$cf" >/tmp/wm-build.log 2>&1 ) \
+	  && make CFLAGS="$cf" \
+	       LDFLAGS="--sysroot=$SYSROOT -static -L$DEPS/lib -L$SYSROOT/lib $WM_STACK_LDFLAG" \
+	       >/tmp/wm-build.log 2>&1 ) \
 	  || { tail -20 /tmp/wm-conf.log /tmp/wm-build.log 2>/dev/null; fail "wmaker build failed"; }
 	[ -x "$SRC/$WM_NV/src/wmaker" ] || fail "src/wmaker not produced"
 	echo "wmaker: OK (aarch64-phoenix static ELF${WM_DIAG_DEF:+, PHX_DIAG markers})"
