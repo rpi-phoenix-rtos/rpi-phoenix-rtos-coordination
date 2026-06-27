@@ -1,16 +1,30 @@
 # Exec-from-NFS reliability — root cause + foundational fix (2026-06-27)
 
-> **STATUS (2026-06-27): the short-read fix LANDED + HW-validated; ONE residual OPEN.**
-> The `object_fetch` short-read loop + EOF zero-fill (section (b)) was committed as kernel
-> `f145658f` and HW-validated — micropython, busybox, and the 665 KB startx launcher all
-> exec reliably from NFS where they failed intermittently before. **Remaining OPEN item:**
-> very large binaries (e.g. the ~19 MB Quake/vkQuake images) still fail direct NFS exec with
-> `-ENOMEM` from the whole-file map at `process_load` (`proc/process.c:704`, `vm_mmap` of the
-> entire object for ELF-header/section validation) — which is why those flagship binaries are
-> still bundled into `loader.disk` rather than exec'd from NFS. The proper fix is to validate
-> ELF headers without mapping the whole file (windowed/section-bounded map). Tracked here as
-> the NFS-exec correctness home. (NOTE: the separate `busybox sh -c '<script>'` ENOMEM is a
-> psh argv-parsing artifact, NOT this loader path.)
+> **STATUS (2026-06-27): RESOLVED + HW-validated — both the short-read corruption AND the
+> large-binary -ENOMEM are fixed.**
+> 1. **Short-read corruption** — `object_fetch` short-read loop + EOF zero-fill (section (b)),
+>    kernel `f145658f`, HW-validated (micropython/busybox/startx exec reliably).
+> 2. **Large-binary -ENOMEM** — kernel `d30fd33a`. ROOT CAUSE was *not* "validation needs the
+>    whole file mapped" but **eager population**: on an MMU target `vm_mmap` force-populates
+>    every page of a mapping (`_map_force` → `vm_objectPage` → `object_fetch`/`proc_read`), so
+>    the whole-file header map at `process_load` (`proc/process.c:704`) pulled the ENTIRE ELF
+>    in one page-read per page and pinned it — 163 NFS reads for a 652 KB launcher, far worse
+>    for the 3 MB X clients — intermittently `-ENOMEM` under boot memory pressure, even though
+>    only the ELF/program/section headers + the section-name string table are ever
+>    *dereferenced* (the segment data between is pointer-range-checked only). Fix: map the
+>    image **demand-paged** (toggle the process `lazy` flag across just that mmap — exec is
+>    single-threaded) and explicitly fault in only the metadata pages the parser touches
+>    (phdr/shdr/shstrtab ranges via `process_forceElf64Headers`/`process_forceRange`; other
+>    ELF classes fall back to forcing the whole image). Validation + TLS detection unchanged
+>    (the contiguous `iehdr/size` contract is preserved — no validation refactor needed). The
+>    PT_TLS-based cleanup is a legitimate *separate* follow-up, deliberately not bundled here.
+>    HW-validated: ~20 large (2–3 MB) NFS execs + 3 startx launches across 3 boots, **0
+>    `-ENOMEM`** (was ~2/3 failing), and exec is faster (a handful of page reads, not the whole
+>    file). Manifest `2026-06-27-nfs-large-exec-demand-page`.
+>
+> (NOTE: the separate `busybox sh -c '<script>'` ENOMEM is a psh argv-parsing artifact, NOT
+> this loader path. The ~19 MB Quake/vkQuake images can now also be exec'd from NFS rather than
+> bundled, though `loader.disk` bundling remains for boot-without-NFS convenience.)
 
 Host-side investigation (no Pi boots; orchestrator owns HW). User mandate: NFS must
 ALWAYS work and support direct exec of large binaries with NO workarounds (no
