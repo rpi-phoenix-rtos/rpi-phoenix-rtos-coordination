@@ -1,5 +1,31 @@
 # vkQuake → Phoenix-RTOS Pi4 (aarch64-phoenix, V3DV) — build scaffold + gap inventory
 
+> **STATUS (2026-06-27): TEXTURE-UPLOAD GAP CLOSED on the write side; striping localized to a
+> single TFU→TMU CACHE-FENCE bug.** The TFU buffer→image copy is now implemented and executes
+> in `v3d_phoenix_winsys.c` (present-hang gone; textures upload via TFU; extent + TMUWCF
+> write-combiner fixes landed). Quake content reaches the GPU — but textures sample **striped**
+> (horizontal banding). Two diagnostic probe boots pinned the cause precisely:
+> - `TILING` probe → block-0 UIF correct (but block-0 is XOR/stride-invariant, too weak).
+> - `TFU vcheck` vertical/inter-block probe → **`UIF-VERIFIED match=6/6`** on 64²/128²/256²
+>   (incl. the `xor=1` variant): the TFU's FULL UIF output — vertical layout (y=8/16/32,
+>   (8,8)/(16,16)) and the XOR page-interleave — is **correct in memory** (CPU-mapped read via
+>   mesa `uif_pixel_off`). So **write-side is REFUTED**. And since GLQuake renders textured
+>   through the IDENTICAL TMU/descriptor/MMU/L2T path with CPU-tiled UIF textures, the
+>   **read-side descriptor is also proven correct**.
+> - ∴ The bug is a **TFU-write → TMU-read coherency fence gap**: data is correct in memory but
+>   samples striped ⇒ the L2T texture cache (and/or the TFU's TMUWCF write-combiner) is **not
+>   flushed/invalidated between the TFU copy (`ioc_submit_tfu`) and the render CL that samples
+>   the texture**. The TMU fetches stale/partial lines → banding.
+>
+> **NEXT (the fix, a focused GPU step):** between the TFU copy and the sampling render submit,
+> add an **L2T flush + TMU cache invalidate** (`SLCACTL` with the TMU/L2T bits) and/or fence on
+> **TFU completion** before the render issues TMU fetches. Reference `external/mesa`
+> `src/broadcom/vulkan` (v3dv TFU path: how it fences TFU→sample) and `external/linux` v3d
+> (`v3d_sched`/TFU IRQ + L2T flush sequencing). Validate by a vkQuake autostart boot — striping
+> should resolve to clean textures on HDMI. Probes committed: coord `7e3d1f6`/`c5c1baf`/`123f9bf`
+> (winsys `TFU vcheck`). This is the LAST known blocker to textured vkQuake.
+>
+> ---
 > **STATUS (2026-06-26): 2D GPU RASTER PROVEN ON HW; PAUSED at the texture-upload gap.**
 > Since this scaffold doc, vkQuake advanced well past init: Vulkan fully initializes on
 > the V3D, the per-frame loop / present / projection / back-face-cull are all fixed, and
