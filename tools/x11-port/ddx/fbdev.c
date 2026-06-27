@@ -170,9 +170,19 @@ fbdevScreenInitialize(KdScreenInfo *screen, FbdevScrPriv *scrpriv)
     bpp = priv->mode.bpp;
     if (bpp == 32) {
         depth = 24;
-        screen->fb.redMask = 0x00ff0000;
+        /*
+         * The Pi firmware framebuffer is RGB byte order, not the x86-typical
+         * BGRX: plo sets mailbox SET_PIXEL_ORDER=1 (RGB) when it allocates the
+         * surface (sources/plo/hal/aarch64/generic/video.c). So in memory R is
+         * at byte 0, G at byte 1, B at byte 2 — i.e. red occupies the LOW mask
+         * bits and blue the high. Using the BGRX masks here swaps R<->B on every
+         * write to /dev/fb0 (a chosen deep blue renders as red/orange; greys are
+         * unaffected since R==G==B) — the same channel-order mismatch the GLQuake
+         * scanout path had to correct (#19).
+         */
+        screen->fb.redMask = 0x000000ff;
         screen->fb.greenMask = 0x0000ff00;
-        screen->fb.blueMask = 0x000000ff;
+        screen->fb.blueMask = 0x00ff0000;
     }
     else if (bpp == 16) {
         depth = 16;
@@ -296,6 +306,17 @@ fbdevFlushRegion(ScreenPtr pScreen, int y0, int y1)
  * the low-latency path: animated content (xeyes, the cursor) flushes promptly as
  * it draws. Static content is covered by the periodic full-screen flush below.
  */
+/*
+ * Set by the damage path (fbdevShadowUpdate) each time it blits a damaged band,
+ * cleared by the periodic timer. It lets the periodic full-screen flush SKIP its
+ * 8 MB blit whenever the damage path already pushed pixels this interval — so
+ * during active use (continuous damage) the dispatch thread never eats the full
+ * flush, and the periodic blit only runs as an idle safety net to catch static
+ * content that produced no damage. (Single dispatch thread sets+clears it, so no
+ * locking — same thread as both the damage update and this timer.)
+ */
+static int fbdevDirtySinceTick = 0;
+
 static void
 fbdevShadowUpdate(ScreenPtr pScreen, shadowBufPtr pBuf)
 {
@@ -313,6 +334,9 @@ fbdevShadowUpdate(ScreenPtr pScreen, shadowBufPtr pBuf)
         /* No damage info → flush the whole frame. */
         fbdevFlushRegion(pScreen, 0, priv->mode.height);
     }
+    /* Tell the periodic timer the display is current so it can skip its full
+     * blit this interval (see fbdevDirtySinceTick / fbdevFlushTimerCb). */
+    fbdevDirtySinceTick = 1;
 }
 
 /*
@@ -381,9 +405,20 @@ fbdevFlushTimerCb(OsTimerPtr timer, CARD32 now, void *arg)
      * desktop still doesn't appear). */
     if (!announced) {
         announced = 1;
-        ErrorF("[fbdev] periodic full-screen flush active (every %d ms)\n",
+        ErrorF("[fbdev] periodic full-screen flush armed (idle safety, every %d ms)\n",
                FBDEV_FLUSH_MS);
     }
+
+    /* The damage path already updated the display this interval — skip the
+     * expensive full-screen blit (measured ~17 ms for the 8 MB frame) so
+     * interactive redraws are never stalled by it. The full blit then runs only
+     * when the screen went a whole interval with no damage (idle safety net for
+     * static content that produced none). */
+    if (fbdevDirtySinceTick) {
+        fbdevDirtySinceTick = 0;
+        return FBDEV_FLUSH_MS;
+    }
+
     fbdevFlushRegion(pScreen, 0, priv->mode.height);
     /* Return the interval (non-zero) to re-arm; returning 0 fires only once. */
     return FBDEV_FLUSH_MS;
