@@ -1,7 +1,24 @@
 # Exec-from-NFS reliability — root cause + foundational fix (2026-06-27)
 
-> **STATUS (2026-06-27): RESOLVED + HW-validated — both the short-read corruption AND the
-> large-binary -ENOMEM are fixed.**
+> **STATUS (2026-06-28): reported failures FIXED + HW-validated; one ELUSIVE residual OPEN
+> (so #43 stays in_progress, doc kept in inprogress/).** Read integrity is proven byte-exact
+> (md5 of NFS reads matches host across many boots). RESIDUAL: an INTERMITTENT, clustered,
+> concurrent-heavy-load exec `-ENOMEM` that is NOT reliably reproducible — it hit in 2 clusters
+> under heavy load (6 rapid 3 MB execs; 20 MB md5sum + execs) yet ~6 identical-load boots after
+> were clean. It is NOT read corruption (md5 always matches) and NOT the now-fixed header map.
+> Mechanism not yet pinned: `-12` still merges ≥4 alloc sites (header mmap / `process_forceRange`
+> / eager segment maps / user stack). Diagnostics ARMED (kernel `542e4f1c`, `TEMP-NOMEM-DIAG`
+> markers; revert once root-caused) to name the failing allocation on the next occurrence —
+> most likely the parallel X-app demo (`ico & oclock & xlogo & xclock & xcalc & xbill &`), true
+> concurrent 6×3 MB exec that sequential psh commands can't replicate. Leading (unconfirmed)
+> candidate: eager segment population under concurrent pressure → proper fix would be
+> demand-paged segments (lazy exec is off on MMU, `process->lazy=0`), a separate multi-day
+> project. NEXT: capture `mem` + the marker at one live failure → classify → scope.
+>
+> ---
+> **Earlier status (now partially superseded): the two fixes below are REAL and stand** — they
+> resolve the *reported* failures (short-read corruption + the "startx returns immediately at
+> boot" eager-header-map ENOMEM). The heavy-concurrent-load residual above was found afterward.
 > 1. **Short-read corruption** — `object_fetch` short-read loop + EOF zero-fill (section (b)),
 >    kernel `f145658f`, HW-validated (micropython/busybox/startx exec reliably).
 > 2. **Large-binary -ENOMEM** — kernel `d30fd33a`. ROOT CAUSE was *not* "validation needs the
