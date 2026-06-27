@@ -21,6 +21,42 @@ Note: `busybox sh -c '<long quoted script>'` still returns ENOMEM — a **psh ar
 of complex quoted commands (busybox/applets exec fine directly; no `object_fetch` failure even with
 USB disabled). Separate low-priority psh issue, NOT NFS.
 
+### ◑ Residual — large-binary exec -ENOMEM (the second, distinct NFS-exec failure)
+
+Separate from the (fixed) short-read bug. `process_load` (proc/process.c:704) maps the **whole ELF**
+into the GLOBAL kernel map — `ehdr = vm_mmap(process_common.kmap, NULL, NULL, size, PROT_READ, o,
+base, MAP_NONE)` — because `process_load64` reads the section-header table at `e_shoff` (file end,
+lines 610-630) for TLS detection. For large binaries (startx 652KB; the X sample apps 2–3MB) this
+intermittently returns `-ENOMEM` → `proc: exec '...' failed (err=-12)` → "startx returns immediately
+to psh". Confirmed by instrumentation: 2/3 startx boots hit `DIAG ehdr kmap-map FAILED size=667648`.
+
+Mechanism NARROWED (this session) but NOT fully pinned:
+- The mapping IS correctly released after parsing (`vm_munmap` at process.c:726) — so it is **not a
+  progressive VA leak**; the kmap footprint is per-exec-transient.
+- For a BACKED read-only `MAP_NONE` mapping, `vm_mmap` allocates **no amap** (map.c:367-368, the
+  `o != NULL` path) and does **no demand-fault at map time** — so it is neither anon-amap nor
+  physical-page pressure. The failure is in `map_alloc()` (pooled `map_entry_t`) **or** kernel-map
+  VA-window search.
+- It is transient + size-correlated + boot-concentrated → leading hypothesis is **concurrent
+  whole-file kmap mappings at boot** (many processes parsing large ELFs at once) contending for kmap
+  VA or the map-entry pool. boot-1 (less concurrency) succeeded; boots 2-3 failed.
+
+DEFERRED (needs a focused session — do NOT patch the core exec path blind, per advisor):
+1. PIN the mechanism: instrument `map_alloc` exhaustion vs kmap free-VA at the failure; check whether
+   serializing exec parse windows makes it disappear (confirms concurrency) or not (absolute window).
+2. Then the matching fix, lowest-risk-first:
+   - if concurrency/pool: a mutex around the map→parse→unmap window, or enlarge the map-entry pool.
+   - if VA window: bound the kmap mapping to the header region only — map `[0, phdr_end]` for phdrs +
+     a small `[e_shoff_page, file_end]` mapping for the section/string tables (the bulk loadable
+     middle is never read via this mapping; it is mmap'd into the process map separately at load
+     time). Moderate `process_load64` refactor; preserves TLS logic exactly.
+   - cleanest long-term: detect TLS from the **PT_TLS program header** (standard, at file start) and
+     drop the section-header read entirely → only the header region ever needs mapping.
+3. Validate by exec'ing every program (incl. the 3MB X apps) across many boots, 0 ENOMEM, 0 crash.
+
+This residual is the keystone for reliable X (startx) AND the X sample-apps demo (the apps are larger
+than startx → more ENOMEM-prone). Tracked as task #43 (reopened).
+
 ## ✅ USB enumeration — BOTH bugs FIXED + HW-validated (11/11 cold boots, kbd0+mouse0)
 
 Update (end of session): both USB bugs below are FIXED and committed. USB now fully enumerates

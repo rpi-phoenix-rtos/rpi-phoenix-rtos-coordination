@@ -1,6 +1,15 @@
 # Pi 4 USB FIX / parked-item ledger
 
-> **STATUS (2026-06-26): LIVING ledger, still ACTIVE.** USB enum + keyboard + mouse work
+> **RETIRED (2026-06-27): the headline open items are now CLOSED; the residuals live elsewhere.**
+> FIX-14 / #129 (the downstream AddressDevice completion wall) is FIXED — two-step BSR (devices
+> `53383d1`) + TRSTRCY (usb `47eede9`); #121/#33 DMA-pool corruption is FIXED — dc-civac eviction
+> of recycled uncached pages (usb `12c4fe8`, guard `53b3db2`). USB enumerates kbd0+mouse0 on
+> 11/11 cold boots. The two genuinely-still-open items survive in their living homes: **TD-10**
+> (masked SError / PCIe external abort) is in `TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md` (TD registry,
+> KNOWN-LIMITATION), and **IRQ-driven events** is a perf follow-up there. Kept for the honest
+> historical FIX-NN record. Resolution detail: `docs/done/2026-06-27-usb-nfs-reliability-deep-dive.md`.
+
+> Historical status header (2026-06-26): USB enum + keyboard + mouse work
 > end-to-end on HW; the HID-attach EL0 abort was root-caused + fixed (msgstack 1KB→8KB). Open
 > items below stand: FIX-14 (downstream LS-device completion reliability / #129), TD-10 (masked
 > SError / PCIe external abort), IRQ-driven events (perf). Separately, #121/#33 USB heap

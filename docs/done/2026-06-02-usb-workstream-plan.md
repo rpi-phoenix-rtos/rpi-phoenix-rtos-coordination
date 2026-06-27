@@ -1,6 +1,11 @@
 # Pi 4 USB workstream — step-by-step implementation plan (2026-06-02)
 
-> **STATUS (2026-06-26): largely overtaken; the residual phases live elsewhere now.** Phase D
+> **RETIRED (2026-06-27): fully overtaken — all phases done or moved to living homes.** Phase D
+> (mouse #24) done; Phase B (the FIX ledger) closed — #129/FIX-14 FIXED (BSR `53383d1`); Phase C
+> (TD-10) lives in the TD registry (`TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md`); Phase A (USB cleanup)
+> folded into `2026-06-27-upstream-readiness-punchlist.md`. Kept for the historical sequencing record.
+
+> Prior status header (2026-06-26): largely overtaken; the residual phases live elsewhere now. Phase D
 > (production mouse driver toward Tiny-X/Quake) is DONE — usbmouse works (#24) and drives both X
 > and Quake. The standalone-daemon architecture (Phase preamble) shipped. What this plan still
 > usefully points at is open: Phase B (the parked FIX ledger → now `usb-fix-ledger.md`), Phase C

@@ -1,6 +1,13 @@
 # TD-16 "cache enable" — investigation, ground-truth correction, and the real perf-lever plan
 
-> **STATUS (2026-06-26): BOTH premises now overtaken — see correction below.**
+> **RETIRED (2026-06-27): research record only — both premises are dead.** (1) "caches globally
+> OFF" was already false (caches on; TD-16 resolved 2026-05-17). (2) The recast lever "cacheable
+> GENET RX" was TRIED and CONCLUDED UNVIABLE (#11 re-opened, default-off — corrupts the GPU
+> framebuffer under load). Measured net throughput today is ~8.5 MB/s uncached, gigabit-cable-gated.
+> No live recommendation remains. Kept for the investigation history. See the original STATUS block
+> below + `docs/done/2026-06-26-risky-items-results.md`.
+
+> Prior status header (2026-06-26): BOTH premises now overtaken — see correction below.
 > 1. The original TD-16 framing ("caches globally OFF = the biggest perf lever") was
 >    already WRONG when this doc was written: caches are ON (`SCTLR_EL1.{M,C,I}` set;
 >    all Normal RAM is WB-cacheable). That correction still holds.

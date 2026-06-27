@@ -1,3 +1,10 @@
+> **RETIRED (2026-06-27): superseded — the AddressDevice wall is FIXED.** This source
+> comparison fed the fix that landed: the two-step BSR Address Device (devices `53383d1`)
+> + TRSTRCY reset-recovery (usb `47eede9`) + the #121 dc-civac uncached-page eviction
+> (usb `12c4fe8`). USB now enumerates kbd0+mouse0 on 11/11 cold boots. Kept for the
+> research record of how the BSR signature was derived. See
+> `2026-06-27-usb-nfs-reliability-deep-dive.md` (in docs/done/) for the resolution.
+
 # Phoenix vs Linux xHCI: why AddressDevice intermittently never completes on the Pi 4 VL805
 
 Date: 2026-06-27
