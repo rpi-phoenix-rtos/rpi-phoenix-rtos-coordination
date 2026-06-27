@@ -423,13 +423,41 @@ int main(int argc, char *argv[])
 			break;
 		}
 
-		/* A client exited: reap it, keep the server (and other clients) up so
-		 * the painted root persists and a new client could attach. */
-		for (c = 0; c < n_clients; c++) {
-			if (w == cli_pid[c]) {
-				fprintf(stderr, "xlaunch: client[%d] exited (status=0x%x); "
-					"server still running\n", c, (unsigned)status);
-				cli_pid[c] = -1;
+		/* A client exited. End the session when the session leader (client[0] —
+		 * the window manager, launched first) exits OR when all clients are gone,
+		 * exactly like startx ending with its .xinitrc foreground client. Tear the
+		 * server down so the fbdev DDX restores the text console (fbdevCardFini ->
+		 * FBCON_ENABLED) and psh resumes. Without this, exiting the WM left the
+		 * server running on a blank, WM-less root with psh still blocked here — a
+		 * dead end (no X, no shell). */
+		{
+			int leaderGone = 0, live = 0;
+			for (c = 0; c < n_clients; c++) {
+				if (w == cli_pid[c]) {
+					fprintf(stderr, "xlaunch: client[%d] exited (status=0x%x)\n", c, (unsigned)status);
+					cli_pid[c] = -1;
+					if (c == 0) {
+						leaderGone = 1;
+					}
+				}
+			}
+			for (c = 0; c < n_clients; c++) {
+				if (cli_pid[c] > 0) {
+					live++;
+				}
+			}
+			if ((leaderGone != 0) || (live == 0)) {
+				fprintf(stderr, "xlaunch: session ended (WM/last client exited) — shutting down X\n");
+				for (c = 0; c < n_clients; c++) {
+					if (cli_pid[c] > 0) {
+						kill(cli_pid[c], SIGTERM);
+						(void)waitpid(cli_pid[c], NULL, 0);
+						cli_pid[c] = -1;
+					}
+				}
+				kill(srv_pid, SIGTERM);
+				(void)waitpid(srv_pid, NULL, 0);
+				break;
 			}
 		}
 	}
