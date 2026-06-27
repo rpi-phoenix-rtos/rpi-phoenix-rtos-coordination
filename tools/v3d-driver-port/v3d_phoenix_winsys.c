@@ -1083,22 +1083,40 @@ static int ioc_submit_tfu(struct drm_v3d_submit_tfu *t)
 				const uint32_t *dst = gpuva_to_cpu(t->ioa);
 				uint32_t w = t->ios & 0xffffu;
 				uint32_t hgt = t->ios >> 16;
-				/* UIF/T tiling is not linear, but a per-cache-line "is anything here" probe still
-				 * tells partial-vs-full: sample dst at byte offsets 0, w*cpp (row1-ish raster
-				 * equivalent), and (hgt/2)*w*cpp (mid). cpp=4 (RGBA8). These are RAW byte offsets
-				 * into the tiled buffer, not pixel coords — we only test populated-vs-zero. */
-				uint32_t cpp = 4u;
-				uint32_t off_mid = (hgt / 2u) * w * cpp;     /* bytes */
-				const uint32_t *dmid = dst ? (const uint32_t *)((const char *)dst + off_mid) : NULL;
 				int src_nz = src ? (src[0] | src[1] | src[2] | src[3]) != 0u : -1;
 				int dst_nz = dst ? (dst[0] | dst[1] | dst[2] | dst[3]) != 0u : -1;
-				int dmid_nz = dmid ? (dmid[0] | dmid[1] | dmid[2] | dmid[3]) != 0u : -1;
-				fprintf(stderr, "v3d-winsys: TFU copy iia=0x%08x->ioa=0x%08x %ux%u done (n=%u) "
-					"src_nz=%d dst_nz=%d dmid_nz=%d | src=%08x %08x dst0=%08x %08x dmid=%08x %08x\n",
-					t->iia, t->ioa, w, hgt, tfu_n, src_nz, dst_nz, dmid_nz,
-					src ? src[0] : 0u, src ? src[1] : 0u,
-					dst ? dst[0] : 0u, dst ? dst[1] : 0u,
-					dmid ? dmid[0] : 0u, dmid ? dmid[1] : 0u);
+				/* TILED-vs-LINEAR discriminator (the decisive striping test). The source staging
+				 * buffer is RASTER: src word k = pixel (x=k%w, y=k/w). For a UIF_NO_XOR dest the
+				 * V3D byte layout (verified against mesa v3d_tiling.c) puts dest byte 64 (word 16)
+				 * = source pixel (4,0) = src[4]; a LINEAR/raster dest would instead have dest
+				 * word 16 = pixel (16,0) = src[16]. So for w>=17:
+				 *   dst[16] == src[4]  -> TFU produced correct UIF tiling (gap is elsewhere/read-side)
+				 *   dst[16] == src[16] -> TFU wrote LINEAR (a winsys/icfg tiling-config bug)
+				 * Bytes 0..63 are the top-left 4x4 microtile in raster order (identical to linear),
+				 * so only word>=16 discriminates. Print dst[4],dst[16] alongside src[4],src[16]. */
+				uint32_t s4  = (src && w >= 5u)  ? src[4]  : 0u;   /* src pixel (4,0)  */
+				uint32_t s16 = (src && w >= 17u) ? src[16] : 0u;   /* src pixel (16,0) */
+				uint32_t d4  = dst ? dst[4]  : 0u;                 /* dst word 4  (byte 16) */
+				uint32_t d16 = dst ? dst[16] : 0u;                 /* dst word 16 (byte 64) — the test */
+				const char *verdict = "n/a";
+				if (dst && src && w >= 17u) {
+					if (d16 == s4 && d16 != s16)      verdict = "UIF-OK";
+					else if (d16 == s16 && d16 != s4) verdict = "LINEAR!";
+					else                              verdict = "??";
+				}
+				/* Also print what Mesa REQUESTED (ioa low bits carry the dest tiling-format field,
+				 * icfg the input format/ttype/opad). Combined with the produced-tiling verdict this
+				 * is 3-way: Mesa-asked-UIF + produced-UIF + striped -> pure read-side (descriptor/
+				 * L2T); Mesa-asked-UIF + produced-LINEAR -> TFU ignored IOA (winsys/HW); Mesa-asked-
+				 * LINEAR (ioa format field == LINEARTILE/RASTER) -> Mesa dst_tiling bug upstream.
+				 * NOTE: the decisive verdict comes from a texture with distinct (4,0)/(16,0) source
+				 * pixels — read the BLUENOISE 64x64 line (random data), NOT conchars (blank top row
+				 * -> src[4]==src[16] -> verdict ??). */
+				fprintf(stderr, "v3d-winsys: TFU copy iia=0x%08x->ioa=0x%08x icfg=0x%08x %ux%u done (n=%u) "
+					"src_nz=%d dst_nz=%d | TILING=%s dst[16]=%08x src(4,0)=%08x src(16,0)=%08x "
+					"dst[4]=%08x\n",
+					t->iia, t->ioa, t->icfg, w, hgt, tfu_n, src_nz, dst_nz, verdict,
+					d16, s4, s16, d4);
 			}
 		}
 	}
