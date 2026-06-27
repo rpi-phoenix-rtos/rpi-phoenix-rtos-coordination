@@ -785,6 +785,7 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
 	 * The SLCACTL slices invalidation is essential for multi-frame rendering: without it the
 	 * GPU serves stale uniforms from its uniform cache, so per-frame matrix/uniform changes
 	 * never render (every frame looks like frame 0). */
+	c0[CTL_L2CACTL/4] = L2CACTL_L2CCLR | L2CACTL_L2CENA;   /* per-job L2C invalidate (linux v3d_invalidate_l2c) */
 	c0[CTL_SLCACTL/4] = SLCACTL_INVAL_ALL;
 	l2t_flush_wait(c0);                       /* wait-old: prior L2T flush must be idle first */
 	c0[CTL_L2TCACTL/4] = L2TCACTL_L2TFLS;
@@ -887,10 +888,22 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
 	 * on a heavy frame the flush was still in flight when CT1 began fetching. Correct order:
 	 * clean + WAIT, then invalidate, then kick. Linux v3d runs an invalidate before both bin
 	 * and render for the same coherency reason. */
+	/* Per-job L2C invalidate before the render samples textures (mirror linux v3d_invalidate_l2c,
+	 * run inside v3d_invalidate_caches at v3d_render_job_run). This is the DECISIVE one for the
+	 * TFU-write -> TMU-read coherency gap (#29 striping): the TMU fetches texels THROUGH the general
+	 * L2 cache, and a TFU-uploaded image at a recycled GPU VA can hit a stale L2C line even though
+	 * the dest is correct in RAM (the uncached CPU probe that read UIF-VERIFIED bypasses L2C). The
+	 * winsys previously invalidated only slices + L2T per job; L2C was only invalidated at init. */
+	c0[CTL_L2CACTL/4] = L2CACTL_L2CCLR | L2CACTL_L2CENA;
 	l2t_flush_wait(c0);                       /* wait-old: any prior L2T flush must be idle */
 	c0[CTL_L2TCACTL/4]=L2TCACTL_L2TFLS;       /* clean the binner's tile-list output to RAM */
 	l2t_flush_wait(c0);                       /* wait-new: it must COMPLETE before CT1 fetches */
 	c0[CTL_SLCACTL/4] = SLCACTL_INVAL_ALL;    /* then drop stale render-side slice-cache lines */
+	{
+		static int l2c_logged = 0;
+		if (!l2c_logged) { l2c_logged = 1;
+			fprintf(stderr, "v3d-winsys: TFU fence L2C+L2T+TMU invalidated per-job (#29 coherency)\n"); }
+	}
 	/* --- render (CT1); wait FRDONE --- */
 	c0[CLE_CT1QBA/4]=s->rcl_start; c0[CLE_CT1QEA/4]=s->rcl_end;
 	/* Wait for FRDONE, detecting a wedge two ways: (a) FAST — ct1ca FROZEN (the confirmed wedge
@@ -1025,6 +1038,12 @@ static int ioc_submit_tfu(struct drm_v3d_submit_tfu *t)
 	 * then invalidate the slice caches + flush L2T so the TFU reads the source staging buffer
 	 * from RAM rather than a stale cached view (mirror the ioc_submit_cl pre-bin sequence). */
 	mmu_flush_tlb(h);
+	/* Per-job L2C invalidate (mirror linux v3d_invalidate_l2c inside v3d_invalidate_caches):
+	 * L2CACTL = L2CCLR|L2CENA invalidates the general L2 cache the TMU reads texture data
+	 * THROUGH. apply_core_regs() does this once at init/reset, but the kernel re-invalidates L2C
+	 * before EVERY job — the winsys previously invalidated only the slices + L2T per job, leaving
+	 * a stale L2C line at a recycled GPU VA for the next sampler to fetch. Outside-in (L2C first). */
+	c0[CTL_L2CACTL/4] = L2CACTL_L2CCLR | L2CACTL_L2CENA;
 	c0[CTL_SLCACTL/4] = SLCACTL_INVAL_ALL;
 	l2t_flush_wait(c0);                        /* prior L2T flush must be idle (GFXH-1897) */
 	c0[CTL_L2TCACTL/4] = L2TCACTL_L2TFLS;
