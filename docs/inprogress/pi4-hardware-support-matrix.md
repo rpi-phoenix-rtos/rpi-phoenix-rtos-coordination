@@ -33,7 +33,7 @@ One row per peripheral/subsystem. For narrative gap analysis see
 | HDMI framebuffer **device** `/dev/fb0` | 🟡 partial | device LANDED + HW-validated netboot (#148): read/write + `RPI4FB_GETMODE` devctl, `video/rpi4-fb/` | attended (#149): fbdev `FBIOGET_*` veneer (Tiny-X), true `mmap(fd,0)` kernel backing, drawing/display-ownership |
 | GENET Ethernet | ✅ done | Tier 5, IRQ-driven, ping ~0.9 ms | — |
 | lwIP / DHCP / ICMP / UDP | ✅ done | autonomous DHCP, diag-udp :9999 | — |
-| USB host (PCIe→VL805 xHCI) | ✅ done | enum 5/5 reliable (#139) | daemon hardening #142/#143, IRQ event path #145 — all ⏸ |
+| USB host (PCIe→VL805 xHCI) | ✅ done | **enum 11/11 cold boots** after the #129 two-step-BSR AddressDevice fix (devices `53383d1`) + TRSTRCY (usb `47eede9`) + #121 dc-civac uncached-page eviction (usb `12c4fe8`) | IRQ event path #145 (perf) ⏸; daemon hardening #142/#143 ⏸ |
 | USB HID (kbd + mouse) | ✅ done | `/dev/kbd0`+`/dev/mouse0`, live keys→psh (#122/#124/#126) | — |
 | USB mass storage | ⬜ not started | — | umass driver |
 | PCIe RC / VL805 inbound abort (TD-10) | ⏸ attended | SError handler in (#109); abort isolated to PCIe/USB bring-up | unmask SError = boot-risk; root-cause #144 |
@@ -70,7 +70,10 @@ One row per peripheral/subsystem. For narrative gap analysis see
 1. **USB** is functionally complete (enum + HID); the remaining items (#142/#143/#144/#145)
    are *hardening/perf/root-cause* and are **attended** (statistical regression or boot-risk).
 2. **ext2 rootfs** (#120) — DONE (mounts as `/`, exec-from-card, boots to psh); **NFS rootfs**
-   also DONE + HW-proven (`project_nfs_rootfs_feasibility`). Residuals are perf/signal polish.
+   also DONE + HW-proven (`project_nfs_rootfs_feasibility`). **Direct exec from NFS FIXED** (the
+   `object_fetch` short-read corruption — kernel `f145658f`); residual: ~19 MB binaries still hit
+   `-ENOMEM` at `process_load:704` so flagships stay bundled (`2026-06-27-nfs-exec-reliability.md`).
+   Other residuals: #156 first-access ENOENT (boot-order race), perf/signal polish.
 3. **fb0 driver** — decide ABI + display ownership, then implement (attended).
 4. **X11** — DONE: the software kdrive desktop (Xphoenix + fbdev DDX + kbd/mouse input + JWM/
    Window Maker WMs + xterm) is live on HW. Remaining is the *accelerated* GPU-X research stretch.

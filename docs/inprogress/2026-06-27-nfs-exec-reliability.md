@@ -1,5 +1,17 @@
 # Exec-from-NFS reliability — root cause + foundational fix (2026-06-27)
 
+> **STATUS (2026-06-27): the short-read fix LANDED + HW-validated; ONE residual OPEN.**
+> The `object_fetch` short-read loop + EOF zero-fill (section (b)) was committed as kernel
+> `f145658f` and HW-validated — micropython, busybox, and the 665 KB startx launcher all
+> exec reliably from NFS where they failed intermittently before. **Remaining OPEN item:**
+> very large binaries (e.g. the ~19 MB Quake/vkQuake images) still fail direct NFS exec with
+> `-ENOMEM` from the whole-file map at `process_load` (`proc/process.c:704`, `vm_mmap` of the
+> entire object for ELF-header/section validation) — which is why those flagship binaries are
+> still bundled into `loader.disk` rather than exec'd from NFS. The proper fix is to validate
+> ELF headers without mapping the whole file (windowed/section-bounded map). Tracked here as
+> the NFS-exec correctness home. (NOTE: the separate `busybox sh -c '<script>'` ENOMEM is a
+> psh argv-parsing artifact, NOT this loader path.)
+
 Host-side investigation (no Pi boots; orchestrator owns HW). User mandate: NFS must
 ALWAYS work and support direct exec of large binaries with NO workarounds (no
 copy-to-RAM, no retry loops). Find and implement the real root-cause fix.

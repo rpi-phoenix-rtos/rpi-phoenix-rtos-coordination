@@ -3,9 +3,31 @@
 > Per-peripheral state at a glance: **[docs/inprogress/pi4-hardware-support-matrix.md](pi4-hardware-support-matrix.md)**.
 > Full chronological log of the multi-day unattended run: **[UNATTENDED-WORK-LOG.md](../../UNATTENDED-WORK-LOG.md)** (repo root).
 
-## 🟢 LATEST — 2026-06-27 (interactive-input + vkQuake-texture session; HW-validated)
+## 🟢 LATEST — 2026-06-27 (USB enum + NFS exec FIXED; interactive input; vkQuake textures)
 
-Session log: **[2026-06-27-input-and-vkquake-session.md](2026-06-27-input-and-vkquake-session.md)**.
+Session logs (archived): **[docs/done/2026-06-27-input-and-vkquake-session.md](../done/2026-06-27-input-and-vkquake-session.md)**,
+**[docs/done/2026-06-27-usb-nfs-reliability-deep-dive.md](../done/2026-06-27-usb-nfs-reliability-deep-dive.md)**.
+Open NFS-exec residual: **[2026-06-27-nfs-exec-reliability.md](2026-06-27-nfs-exec-reliability.md)**.
+
+- **USB enumeration (#129/#121/#33) — FIXED + HW-validated (11/11 cold boots, kbd0+mouse0).** The
+  ~3/4 cold-boot enum failure was TWO independent bugs, both now closed: (A) #129 — the controller
+  intermittently never completed `AddressDevice`; fixed with a **two-step BSR** (BSR=1 setup then
+  BSR=0 assign, matching Linux `xhci_setup_device`; devices `53383d1`) + the **TRSTRCY** 50 ms
+  reset-recovery delay (usb `47eede9`); (B) #121 — the uncached DMA pool was smashed by stale dirty
+  cache lines on recycled physical pages; fixed by **`dc civac`-evicting** those pages right after
+  mmap in `usb_allocUncached` (usb `12c4fe8`; the earlier `buf->next` guard `53b3db2` made it
+  non-fatal). USB now fully enumerates every device on every boot. The `external/linux` xHCI oracle
+  (§4.6.1: a dequeued command ALWAYS completes) was the decisive enabler.
+- **NFS direct-exec (short-read corruption) — FIXED + HW-validated (kernel `f145658f`).** The
+  demand-paged ELF loader's `object_fetch` issued one `proc_read` per page and treated only a
+  negative return as failure; NFS legitimately returns SHORT positive reads, leaving a correct head
+  + garbage tail → silent child death. Fixed: loop `proc_read` to EOF-within-page + zero-fill the
+  tail (the standard read contract). micropython/busybox/the 665 KB startx launcher now exec
+  reliably from NFS. **Residual OPEN:** ~19 MB binaries still hit `-ENOMEM` at `process_load:704`
+  (whole-file map for ELF validation) → flagships stay bundled in `loader.disk`. See the NFS-exec
+  doc above.
+
+Earlier in the session (also HW-validated):
 
 - **X11 keyboard input (#30) — FIXED + HW-confirmed (the DDX now owns kbd0+mouse0).** Two bugs:
   (a) the DDX `fbdevKeyboard{Init,Enable}` returned `Bool TRUE` but kdrive checks `!= Success`
@@ -23,12 +45,11 @@ Session log: **[2026-06-27-input-and-vkquake-session.md](2026-06-27-input-and-vk
   HW now shows correct extents (2×2…640×512), all 18 copies take `path=TFU`, and the conchars rects
   show **sampled content** (were pure black). New open issue: the sampled textures are dark + show
   horizontal **striping** (TFU-destination tiling vs TMU-sampler layout mismatch) — agent iterating.
-- **USB #121 (#33) — mechanism root-caused + self-localizing guard committed (usb `53b3db2`).** The
-  intermittent boot crash is an **adjacent-buffer forward overflow** that smashes a `usb_buf_t`
-  header (`buf->next`@0 + `buf->head`@32) with device-name **string** bytes; the allocator then
-  recursed into the wild `buf->next` (mem.c:238 via :273). Added a `buf->next` sanity guard (crash →
-  bounded leak) + an alloc-log (addr,size,caller PC) so the next recurrence **names the overflow
-  writer** by addr2line. Intermittent (~1 boot in 4); clean boots enumerate kbd0+mouse0 fine.
+- **USB #121 (#33) — FIXED (see the enumeration entry above).** The guard `53b3db2` first made it
+  non-fatal and the alloc-log reframed the mechanism from "overflow" to **cache-coherency / page
+  recycling** (the uncached DMA pool was handed a page a prior process wrote *cached*, whose dirty
+  lines were never flushed). Real fix landed as `dc civac` eviction of recycled pages after mmap
+  (usb `12c4fe8`); 0 corruption across the 11/11 enum runs.
 
 ## 🟢 2026-06-26 (risky-items + stress-test campaign; HW-validated)
 
@@ -102,27 +123,10 @@ This session's headline deliverables (all committed; HW- or host-verified):
   capability present, Vulkan 6th blocker localized). nfsroot variant de-Quaked for clean scripted-psh.
 - **Next deep targets** (fresh-context): Vulkan noop-job winsys BO/CL (named goal), kdrive X server.
 
-The 2026-06-17 section below is the prior day's state. The ☀️ MORNING block under it is older still
-(an SD #120 handoff) — superseded; SD work is HW-gated (card swaps) and skipped this run.
-
-## ☀️ MORNING — start here (handoff from the overnight autonomous session)
-
-Highest-leverage first action — **#120 SD exec-from-card** (the path to a functional
-persistent rootfs). Overnight host-side forensics (card-in-host, read-only) **resolved the
-crux**: the data on the card is byte-perfect (media ruled out), the Pi's SD *write* +
-metadata reads work, and the failure is isolated to **data-block reads at 4 KB boundaries**.
-→ **Do this:** in `sdcard.c:414-419`, try `TRANSFER_BLOCK_SDMA_BOUNDARY_512K` instead of
-`_4K` (cheapest), reflash, SD-boot, run `/bin/date`; expect the Data-CRC flood to vanish.
-Then confirm reads via the psh-builtin `cat /bin/date`. Full writeup +
-fallback fix: `docs/inprogress/2026-06-07-sd-exec-data-path.md` (NIGHT section). The card is
-in the host, source tree is clean+committed — nothing to "recover", just apply the fix.
-
-Other landed/queued (details in the section below):
-- ✅ **Landed + HW-validated (netboot):** `/dev/fb0` (#148) + `/dev/gpio` (#150) device drivers.
-- 🔬 **#91 WiFi** — NVRAM-trailer lead **disproven** (was a diag artifact). Note the live
-  downloader (diag-udp.c) was deleted; reintroduce from `f0973b5^` before any #91 work.
-  Real suspects: download/clock ordering, SDIO-core intstatus-clear, rstvec semantics.
-- ⏸ **Attended queue:** #149 (fb0 fbdev veneer + mmap), USB hardening #142–#145, WiFi #91 (HW).
+The 2026-06-17 section below is the prior day's state. (The old "☀️ MORNING — start here" SD #120
+handoff that used to sit here was removed 2026-06-27 — it was stale: it pointed at a deleted doc and
+SD work is parked/HW-gated. SD #154 status: `2026-06-07-sd-write-completion-rootcause.md`; the WiFi
+#91 lead it mentioned is in `2026-06-04-wifi-fw-exec-gate.md`.)
 
 ## Current Status: 2026-06-17 — unattended multi-day run (GPU/Quake, audio, Vulkan)
 
