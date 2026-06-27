@@ -981,6 +981,25 @@ job_retry:
 	return 0;
 }
 
+/* UIF byte offset of pixel (x,y) for a cpp=4 image of height image_h — transcribed from mesa
+ * v3d_tiling.c v3d_get_uif_pixel_offset (verified). Used only by the TFU readback probe to test
+ * that the TFU output matches the UIF layout the TMU reads BEYOND the first 8x8 block (the prior
+ * dst[16] test only covered block 0, which is XOR/stride-invariant; horizontal striping is a
+ * vertical-period artifact that only shows up across blocks/pages). do_xor for UIF_XOR images. */
+static uint32_t uif_pixel_off(uint32_t image_h, uint32_t x, uint32_t y, int do_xor)
+{
+	const uint32_t uw = 4u, uh = 4u, lmbw = 3u, lmbh = 3u;   /* microtile 4x4; macroblock 8x8 px */
+	uint32_t mb_x = x >> lmbw, mb_y = y >> lmbh;
+	uint32_t px = x - (mb_x << lmbw), py = y - (mb_y << lmbh);
+	if (do_xor && ((mb_x / 4u) & 1u)) mb_y ^= 0x10u;
+	uint32_t mb_h = (image_h + (1u << lmbh) - 1u) >> lmbh;
+	uint32_t mb_id = ((mb_x / 4u) * ((mb_h - 1u) * 4u)) + mb_x + mb_y * 4u;
+	uint32_t base = mb_id * 256u;
+	uint32_t tile_off = ((py < uh) ? 0u : 128u) + ((px < uw) ? 0u : 64u);
+	uint32_t ux = px & (uw - 1u), uy = py & (uh - 1u);
+	return base + tile_off + (ux * 4u + uy * uw * 4u);   /* cpp=4 */
+}
+
 /* DRM_V3D_SUBMIT_TFU: run a Texture Formatting Unit job — the hardware buffer->image (and
  * image->image) copy V3DV uses for every TILED/OPTIMAL texture upload, blit and mipmap
  * generation. Previously the winsys's ioctl dispatch handled only SUBMIT_CL and fell through
@@ -1124,6 +1143,35 @@ static int ioc_submit_tfu(struct drm_v3d_submit_tfu *t)
 					"dst[4]=%08x\n",
 					t->iia, t->ioa, t->icfg, w, hgt, tfu_n, src_nz, dst_nz, verdict,
 					d16, s4, s16, d4);
+				/* VERTICAL / inter-block probe (the actual striping test). dst[16]==src[4] only
+				 * proves block 0 is UIF; horizontal striping lives in the inter-block vertical
+				 * stride / page interleave / XOR, which block 0 cannot see. For each test pixel
+				 * (x,y) compare the UIF-computed dest word against the raster source word. The
+				 * dest tiling-format field is in t->ioa bits3..5 (6=UIF_NO_XOR, 7=UIF_XOR); pick
+				 * do_xor from it so we test the SAME variant the TFU was told to write. A mismatch
+				 * at any y>=8 point = the TFU's vertical layout diverges from the UIF formula the
+				 * TMU (and the working GLQuake CPU-tiler) use -> the striping root cause. */
+				if (dst && src && w >= 17u && hgt >= 17u) {
+					uint32_t iofmt = (t->ioa >> 3) & 0x7u;   /* IOA FORMAT field */
+					int xor = (iofmt == 7u);                 /* 6=UIF_NO_XOR, 7=UIF_XOR */
+					static const uint16_t tx[6] = { 4, 0, 0, 8, 0, 16 };
+					static const uint16_t ty[6] = { 0, 8, 16, 8, 32, 16 };
+					int okN = 0, total = 0;
+					char buf[160]; int bl = 0;
+					for (int i = 0; i < 6; i++) {
+						uint32_t px = tx[i], py = ty[i];
+						if (px >= w || py >= hgt) continue;
+						uint32_t doff = uif_pixel_off(hgt, px, py, xor) / 4u;   /* dst word */
+						uint32_t soff = py * w + px;                            /* src word */
+						uint32_t dv = dst[doff], sv = src[soff];
+						int ok = (dv == sv);
+						okN += ok; total++;
+						bl += snprintf(buf + bl, sizeof(buf) - bl, " (%u,%u)%c", px, py, ok ? '=' : 'X');
+					}
+					fprintf(stderr, "v3d-winsys: TFU vcheck %ux%u %s xor=%d match=%d/%d%s\n",
+						w, hgt, (okN == total) ? "UIF-VERIFIED" : "VERTICAL-MISMATCH",
+						xor, okN, total, buf);
+				}
 			}
 		}
 	}
