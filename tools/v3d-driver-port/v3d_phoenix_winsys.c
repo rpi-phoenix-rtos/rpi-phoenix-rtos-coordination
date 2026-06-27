@@ -1080,7 +1080,14 @@ static int ioc_submit_tfu(struct drm_v3d_submit_tfu *t)
 				 * - dst BO looks fully populated here but the SAMPLE is striped -> the gap is
 				 *   TMU-side (L2T not invalidated before the sampling CL reads it). */
 				const uint32_t *src = gpuva_to_cpu(t->iia);
-				const uint32_t *dst = gpuva_to_cpu(t->ioa);
+				/* IOA carries the dest tiling-format field in its low bits (DIMTW bit0 +
+				 * FORMAT bits3..5, e.g. |0x30 for UIF_NO_XOR), so the address part is t->ioa
+				 * with those low bits cleared. gpuva_to_cpu does NOT mask, so passing the raw
+				 * tagged t->ioa would offset the CPU pointer by up to 0x38 bytes and scramble
+				 * the discriminator. Mask the low 6 bits (the whole tag) to recover the BO base.
+				 * (iia carries NO format bits — input format lives in ICFG — and includes the
+				 * staging sub-alloc byte offset, so it must NOT be masked.) */
+				const uint32_t *dst = gpuva_to_cpu(t->ioa & ~0x3fu);
 				uint32_t w = t->ios & 0xffffu;
 				uint32_t hgt = t->ios >> 16;
 				int src_nz = src ? (src[0] | src[1] | src[2] | src[3]) != 0u : -1;
