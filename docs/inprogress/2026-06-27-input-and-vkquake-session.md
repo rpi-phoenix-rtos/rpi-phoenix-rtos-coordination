@@ -52,9 +52,21 @@ then type into the xterm and move the mouse.
   a clobber in the gl_texmgr barrier block ~1215 — is deferred; the override holds.)
 - **HW after the fix:** all textures get correct extents (2×2…640×512), all 18 copies take
   `path=TFU`, and the conchars rects show **sampled content** (were pure black).
-- **New open issue:** sampled textures are dark + horizontally **striped**, whitetexture not
-  white — classic TFU-destination **tiling/format mismatch** (TFU output tiling vs TMU sampler
-  layout). Agent investigating `ioc_submit_tfu` OTYPE/tiling vs the VkImage slice tiling.
+- **Striping investigation (5 layers closed tonight, 1 precise open question).** Progression:
+  black/hang → TFU implemented → degenerate-extent fixed (upload) → **TMUWCF write-combiner flush**
+  added (winsys `58e314c`, mirrors Linux `v3d_clean_caches`) → HW readback confirms the BO is now
+  **fully populated** (64×64: `dst_nz=1 dmid_nz=1`, mid-row no longer stale; write side correct).
+  Ruled out: tiling-emit math is self-consistent (OPAD=0); `UIFCFG=0x45` (Mesa hardcodes UIF, never
+  reads it); write-side coherency (fixed). A decisive tiled-vs-linear probe (winsys `c5c1baf`) on the
+  bluenoise 64×64 texture returned: `dst[16]` = source pixel **(4,4)** (= linear index 260), `dst[4]`
+  = source pixel (4,0). So the TFU output is **genuinely tiled** (linear would put pixel 16 at word
+  16), in a UIF microtile order. **REMAINING (single open question, fresh-context):** the striping
+  is **TMU-READ-side** — the sampler `TEXTURE_SHADER_STATE` descriptor must encode the SAME UIF
+  tiling/level-0 layout the TFU wrote. Next step: verify the TMU descriptor's tiling mode/base/stride
+  vs the TFU output order (ref mesa `src/broadcom/cle` TEXTURE_SHADER_STATE + gallium v3d `tex->tiling`),
+  and confirm L2T is invalidated for the image before the sampling CL. Agent `af9951fdf5006ccb8`
+  flagged this as a clean handoff point; its full analysis is in its transcript. Probes retained
+  (`TILING=`, `vkq-tex-fix`, TFU readback) so a resume continues from here.
 
 ## #33 — USB #121: mechanism root-caused, self-localizing guard committed (usb `53b3db2`)
 
