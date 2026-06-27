@@ -17,7 +17,47 @@
 >   flushed/invalidated between the TFU copy (`ioc_submit_tfu`) and the render CL that samples
 >   the texture**. The TMU fetches stale/partial lines → banding.
 >
-> **NEXT (the fix, a focused GPU step):** between the TFU copy and the sampling render submit,
+> **UPDATE 2026-06-27 (later) — L2C per-job-invalidate fence tried + REFUTED on HW.** The first
+> fence candidate (coord `ebc33fb`): the winsys did the general-L2 (L2C) invalidate only ONCE at
+> init, whereas Linux `v3d_invalidate_caches` runs `L2CACTL=L2CCLR|L2CENA` before EVERY job; since
+> the TMU fetches through L2C, a stale L2C line at a recycled GPU VA was a plausible cause. Added
+> the per-job L2C invalidate to the TFU/bin/render prologues. **HW result (vkq-l2c-fence boot): the
+> fence fires (marker confirmed) but textures STILL sample striped** (HDMI texture-upload test
+> pattern shows persistent horizontal banding). So L2C is NOT the cause. **The `ebc33fb` per-job
+> L2C invalidate is KEPT regardless** — it is a correctness/coherency hardening that matches the
+> Linux reference (init-only L2C was a latent bug), just not the fix for striping.
+>
+> **CONFIRMED remaining cause (the real one): the slice-height/stride PARAMETER fed to vkQuake's
+> TMU descriptor is wrong for this image — a v3dv image-creation/blit-layout bug.** Scope it
+> carefully: GLQuake proves the TMU read PATH and the whole cache hierarchy (L2C/L2T/MMU) are
+> sound, but it does NOT prove vkQuake's descriptor is correct — GLQuake builds its texture images
+> through a SEPARATE (gallium v3d) image-creation path, so its correctness does not transfer to the
+> v3dv descriptor params. With write-side proven correct (UIF-VERIFIED 6/6) and the cache-fence
+> refuted, the remaining difference is that the **TFU blit and the TMU sampler are handed different
+> tiled HEIGHT/STRIDE values for the same vkQuake image**. The `TFU vcheck` probe passes precisely
+> because it verifies the TFU output against the TFU's OWN `ios`/height — it is blind to a TMU
+> descriptor that reads with a different slice height. Both values are computed by the ported Mesa
+> v3dv code (image creation `v3dv_image` slice layout + the meta-copy/TFU blit `ios` setup),
+> OUTSIDE `tools/v3d-driver-port`'s winsys. NEXT INVESTIGATION (a focused Mesa-v3dv dive): locate
+> where the TFU job sets the destination image height/stride (`t->ios`, `mb_h`, OPAD) vs where the
+> TMU `TEXTURE_SHADER_STATE` descriptor takes the sampled slice height/`uif_height`, and reconcile
+> them (ref `external/mesa` `src/broadcom/vulkan/v3dv_image.c` + `v3dx_pack` TEXTURE_SHADER_STATE +
+> `v3d_tiling.c` / `v3d_resource` slice setup). This is the LAST blocker and it lives in the v3dv
+> ICD, not the winsys.
+>
+> **DO THIS FIRST — the CPU-tile discriminator (one unambiguous boot, not a code-reading hunt).**
+> Before diving into the v3dv image-creation code, settle which side is wrong with a single boot:
+> CPU-tile the vkQuake texture into the mapped image BO instead of TFU-tiling it — reuse the
+> `uif_pixel_off()` tiler already living in the `TFU vcheck` probe to write the texels directly into
+> the mapped image BO, and SKIP the `vkCmdCopyBufferToImage`/TFU upload for that image. Then boot:
+> - **Clean textures** → the TFU output ≠ what the descriptor reads (TFU/blit layout is the culprit);
+>   AND you now have a **shippable CPU-tile demo fallback** (textured vkQuake on HDMI, slower upload).
+> - **Still striped** → the descriptor params are wrong independent of the upload path; the TFU is a
+>   red herring and the Mesa dive should target IMAGE-CREATION (`v3dv_image` slice height/uif_height),
+>   not the blit.
+> That boot can't come back ambiguous; start the next session with it.
+>
+> **NEXT (the original cache-fence reasoning, now refuted — kept for the record):** between the TFU copy and the sampling render submit,
 > add an **L2T flush + TMU cache invalidate** (`SLCACTL` with the TMU/L2T bits) and/or fence on
 > **TFU completion** before the render issues TMU fetches. Reference `external/mesa`
 > `src/broadcom/vulkan` (v3dv TFU path: how it fences TFU→sample) and `external/linux` v3d
