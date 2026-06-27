@@ -4,8 +4,8 @@
 > working flagship.** Since this doc: keyboard input (§1, kbd0 ownership), mouse-look (§3,
 > #24 — usbmouse 3-byte boot-report fix), QUIT/fbcon restore (#25), LAN multiplayer net
 > drivers (#26), NFS-root + manual launch (#27) and the torch-flame alias-model fix (#28)
-> all landed and are HW-validated (see `2026-06-25-hw-validation-results.md` and
-> `2026-06-26-overnight-results.md`). FPS (§2) was already solved (render-to-scanout, ~40 fps).
+> all landed and are HW-validated (see `docs/done/2026-06-25-hw-validation-results.md` and
+> `docs/done/2026-06-26-overnight-results.md`). FPS (§2) was already solved (render-to-scanout, ~40 fps).
 > **Genuinely still open:** §4 audio (SNDDMA — DMA mechanism proven, audible sign-off is an
 > attended bench item) and §5/§6 minor visual-polish + a formal multi-boot soak. Kept as the
 > remaining-polish reference; the interactivity items are done.
@@ -29,7 +29,7 @@ GLQuake build on Pi4 Phoenix + V3D.
 - **Keyboard input decoder** — `pl_phoenix_in.c` parses `/dev/kbd0`'s cooked
   ASCII / ANSI-arrow stream into `Key_Event`+`Char_Event`; boot self-test 11/11.
   coord `b921fd1`. **Blocked at runtime** — see below.
-- **NFS fast + reliable** — see `2026-06-15-nfs-network-perf-results.md`
+- **NFS fast + reliable** — see `docs/done/2026-06-15-nfs-network-perf-results.md`
   (~8.5 MB/s, reliable rapid reboots) → faster pak0/map loads.
 
 ## Open topics → path to "usable"
@@ -55,7 +55,7 @@ console, and `usbkbd` is single-opener. Options:
 > (uncached tiled V3D readback + CPU blit), not a global cache switch.
 
 FPS is now ~40-42 @1080p: render-to-scanout + linear RT + cacheable readback +
-cross-core pipelined present (see `2026-06-15-td16-cache-enable-plan.md` "WIN" notes).
+cross-core pipelined present (see `docs/done/2026-06-15-td16-cache-enable-plan.md` "WIN" notes).
 The only residual cache lever is the *uncached GENET RX DMA pool* for NFS bandwidth
 (Policy B, attended, cable-gated) — narrow and separate from FPS.
 

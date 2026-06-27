@@ -2,11 +2,11 @@
 
 > **STATUS (2026-06-26): the headline per-RPC fix is DONE; the backlog items remain
 > DEFERRED.** NFS is now fast + reliable (~8.5 MB/s after the genet RX-aliasing fix; see
-> `2026-06-15-nfs-network-perf-results.md`). Item (a) bulk-read throughput and item (b) are
+> `docs/done/2026-06-15-nfs-network-perf-results.md`). Item (a) bulk-read throughput and item (b) are
 > still deferred — remaining headroom is largely gigabit-cable-gated. NOTE: the doc's TD-16
 > "cacheable RX = near-future MUST-HAVE" framing is OVERTAKEN — cacheable RX was tried and
 > concluded UNVIABLE (corrupts the GPU framebuffer under load; #11 re-opened, default-off).
-> See `2026-06-15-td16-cache-enable-plan.md` STATUS + `2026-06-26-risky-items-results.md`.
+> See `docs/done/2026-06-15-td16-cache-enable-plan.md` STATUS + `docs/done/2026-06-26-risky-items-results.md`.
 
 Status: **(a) and (b) below are DEFERRED** (documented here for a focused future
 session). **TD-16 (cache enable) is reaffirmed a near-future MUST-HAVE.** The
@@ -96,7 +96,7 @@ kernel poll mechanism, `libphoenix` poll/select.
 
 > **CORRECTION (2026-06-17):** the claim below ("caches globally OFF") is **stale
 > and false**. TD-16 was RESOLVED 2026-05-17 — `SCTLR_EL1.{M,C,I}` are set and all
-> Normal RAM is WB-cacheable (see `docs/inprogress/2026-06-15-td16-cache-enable-plan.md`
+> Normal RAM is WB-cacheable (see `docs/done/2026-06-15-td16-cache-enable-plan.md`
 > §1 for the file:line proof). The genuine remaining lever is **narrower**: the GENET
 > RX zero-copy pool is *uncached* `dmammap` memory, so the lwIP receive chain reads
 > packet payload uncached. The fix is selective cacheable-RX + streaming `dc ivac`

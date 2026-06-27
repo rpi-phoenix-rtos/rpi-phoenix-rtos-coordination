@@ -4,7 +4,7 @@
 > first-access-after-boot ENOENT against `/nfstest/...` still reproduces (it bit stress-fs/
 > stress-ipc on their first try; warm-up `ls` of the exact path fixes it). Root cause stands
 > = the takeover/boot-order window (NOT the dircache). Proper fix = gate psh on takeover-
-> complete (a plo boot-order change), still deferred. See `2026-06-26-stress-test-results.md`.
+> complete (a plo boot-order change), still deferred. See `docs/done/2026-06-26-stress-test-results.md`.
 
 **Status: root-caused; no in-scope non-regressing fix; mitigated by the
 wait-for-`registered /` orchestrator protocol below. NOT closed — the real fix is a

@@ -53,10 +53,10 @@ Earlier in the session (also HW-validated):
 
 ## 🟢 2026-06-26 (risky-items + stress-test campaign; HW-validated)
 
-Authoritative current-state docs: **[2026-06-26-risky-items-results.md](2026-06-26-risky-items-results.md)**,
-**[2026-06-26-stress-test-results.md](2026-06-26-stress-test-results.md)**,
-**[2026-06-26-overnight-results.md](2026-06-26-overnight-results.md)**,
-**[2026-06-25-hw-validation-results.md](2026-06-25-hw-validation-results.md)**.
+Authoritative current-state docs (archived): **[docs/done/2026-06-26-risky-items-results.md](../done/2026-06-26-risky-items-results.md)**,
+**[docs/done/2026-06-26-stress-test-results.md](../done/2026-06-26-stress-test-results.md)**,
+**[docs/done/2026-06-26-overnight-results.md](../done/2026-06-26-overnight-results.md)**,
+**[docs/done/2026-06-25-hw-validation-results.md](../done/2026-06-25-hw-validation-results.md)**.
 
 - **X11 software desktop — COMPLETE on HW.** Xphoenix (kdrive fbdev DDX → /dev/fb0 + real kbd+mouse
   input) runs xeyes (mouse-tracking), **JWM** and **Window Maker** window managers (#30/#35), and

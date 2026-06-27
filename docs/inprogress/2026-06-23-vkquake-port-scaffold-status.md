@@ -8,8 +8,8 @@
 > winsys and the CL meta-copy fallback also fails to land textures, so no texture data
 > reaches the GPU images → no recognizable Quake content yet. The fix is a proper
 > buffer→image copy in `v3d_phoenix_winsys.c` (a focused session). vkQuake is task #29,
-> PAUSED; the GL Quake flagship is unaffected. See `2026-06-26-risky-items-results.md`
-> and `2026-06-25-hw-validation-results.md`.
+> PAUSED; the GL Quake flagship is unaffected. See `docs/done/2026-06-26-risky-items-results.md`
+> and `docs/done/2026-06-25-hw-validation-results.md`.
 
 **Date:** 2026-06-23
 **Type:** IMPLEMENTATION (host-side build scaffolding) + gap scoping

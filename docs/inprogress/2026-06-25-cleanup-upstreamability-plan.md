@@ -65,7 +65,7 @@ as an unexplained kludge.
 
 ## Phase C — Architecture: applications out of the devices project (#12)
 
-> **DONE 2026-06-26** (executed per `docs/inprogress/2026-06-25-quake-to-ports-reorg-plan.md`,
+> **DONE 2026-06-26** (executed per `docs/done/2026-06-25-quake-to-ports-reorg-plan.md`,
 > user-gated decisions): the apps moved to **`phoenix-rtos-project/_user/`** (NOT the literal
 > `phoenix-rtos-ports` recipe repo — only `_user/` can host a bespoke libphoenix-linked binary AND
 > bundle a 19 MB program into `loader.disk`; see the reorg plan §0). All six GPU bring-up
