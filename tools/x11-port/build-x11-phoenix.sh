@@ -154,6 +154,17 @@ if [ ! -f "$PREFIX/lib/libpng16.a" ]; then
 	  && make -j4 >/tmp/libpng-build.log 2>&1 && make install >/tmp/libpng-install.log 2>&1 \
 	  && echo "libpng-1.6.40: OK" ) || { echo "libpng-1.6.40: FAIL"; tail -6 /tmp/libpng-*.log; }
 fi
+# libjpeg (IJG; WRaster's JPEG image backend — JPEG backgrounds/themes). Plain
+# autotools, no SIMD/NASM dep. Static.
+if [ ! -f "$PREFIX/lib/libjpeg.a" ]; then
+	fetch_extract jpeg-9e "https://www.ijg.org/files/jpegsrc.v9e.tar.gz"
+	( cd "$SRC/jpeg-9e" \
+	  && ./configure --host=aarch64-phoenix --prefix="$PREFIX" --disable-shared --enable-static \
+	       CC=${TC}gcc AR=${TC}ar RANLIB=${TC}ranlib CFLAGS="--sysroot=$SYSROOT" \
+	       >/tmp/jpeg-conf.log 2>&1 \
+	  && make -j4 >/tmp/jpeg-build.log 2>&1 && make install >/tmp/jpeg-install.log 2>&1 \
+	  && echo "jpeg-9e: OK" ) || { echo "jpeg-9e: FAIL"; tail -6 /tmp/jpeg-*.log; }
+fi
 # freetype (minimal — no external codec deps). libXfont2's scalable-font backend.
 xbuild freetype-2.13.2 "https://download.savannah.gnu.org/releases/freetype/freetype-2.13.2.tar.gz" \
 	"--without-zlib --without-png --without-harfbuzz --without-bzip2 --without-brotli"
