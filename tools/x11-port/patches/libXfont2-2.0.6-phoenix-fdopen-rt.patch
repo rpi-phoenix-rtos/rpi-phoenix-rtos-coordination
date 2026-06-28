@@ -1,0 +1,45 @@
+Phoenix-RTOS: libXfont2 fonts.dir/fonts.alias open uses fdopen(fd, "rt").
+
+libphoenix's stdio mode parser (sources/libphoenix/stdio/file.c string2mode())
+does NOT accept the glibc "t" (text) mode flag: for a mode of "rt" it takes the
+'r' branch, sees 't' (not 'b'/'\0'/'+'/'c') and returns -1, so fdopen() sets
+EINVAL and returns NULL. dirfile.c then treats the NULL FILE* as a failed open
+with errno != ENOENT and returns BadFontPath from FontFileReadDirectory().
+
+Consequence (task #56): FontFileInitFPE() fails for every disk font directory,
+so dix SetFontPathElements() silently drops the disk FPE (the "Could not init
+font path element" message is DebugF, a no-op without -DDEBUG) and the running
+server font path collapses to "built-ins" only. No named disk font
+(8x13/9x15/10x20/-misc-fixed-*) can load, regardless of gzip/PCF content — which
+is exactly why uncompressing the fonts never helped. Observed on HW via
+xfontprobe: XGetFontPath -> 1 element "built-ins"; disk=0/3.
+
+Fix: drop the non-portable "t" — POSIX fopen/fdopen ignore 't' and "r" is
+text-mode by default on POSIX, so "r" is equivalent everywhere AND accepted by
+libphoenix. (The "%[^\n]\n"/"%d\n" fscanf reads on these streams are handled
+conformantly by libphoenix's scanf, so this is a complete fix, not a half-fix.)
+
+A more general fix (make libphoenix string2mode() ignore a 't' flag) is tracked
+as a follow-up; it is a --scope core change with a wider blast radius, so the
+localized X-side patch is used to unblock #56.
+
+--- a/src/fontfile/dirfile.c
++++ b/src/fontfile/dirfile.c
+@@ -98,7 +98,7 @@ FontFileReadDirectory (const char *directory, FontDirectoryPtr *pdir)
+ #ifndef WIN32
+     file_fd = open(dir_file, O_RDONLY | O_NOFOLLOW);
+     if (file_fd >= 0) {
+-	file = fdopen(file_fd, "rt");
++	file = fdopen(file_fd, "r");
+     }
+ #else
+     file = fopen(dir_file, "rt");
+@@ -295,7 +295,7 @@ ReadFontAlias(char *directory, Bool isFile, FontDirectoryPtr *pdir)
+ #ifndef WIN32
+     file_fd = open(alias_file, O_RDONLY | O_NOFOLLOW);
+     if (file_fd >= 0) {
+-	file = fdopen(file_fd, "rt");
++	file = fdopen(file_fd, "r");
+     }
+ #else
+     file = fopen(alias_file, "rt");
