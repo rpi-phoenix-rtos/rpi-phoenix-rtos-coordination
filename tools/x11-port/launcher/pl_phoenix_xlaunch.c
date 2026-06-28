@@ -114,14 +114,16 @@ static char **build_client_env(const char *prefix)
 	static char display_var[] = "DISPLAY=" DISPLAY_VALUE;
 	static char home_var[256];
 	static char path_var[256];
-	int n = 0, i, j, have_home = 0, have_path = 0;
+	static char xfsp_var[256];
+	static char xloc_var[256];
+	int n = 0, i, j, have_home = 0, have_path = 0, have_xfsp = 0, have_xloc = 0;
 	char **env;
 
 	for (i = 0; environ[i] != NULL; i++)
 		n++;
 
-	/* worst case: all inherited vars + DISPLAY + HOME + PATH + NULL */
-	env = malloc((size_t)(n + 4) * sizeof(char *));
+	/* worst case: all inherited vars + DISPLAY + HOME + PATH + XFILESEARCHPATH + XLOCALEDIR + NULL */
+	env = malloc((size_t)(n + 6) * sizeof(char *));
 	if (env == NULL)
 		return NULL;
 
@@ -133,6 +135,10 @@ static char **build_client_env(const char *prefix)
 			have_home = 1;
 		if (strncmp(environ[i], "PATH=", 5) == 0)
 			have_path = 1;
+		if (strncmp(environ[i], "XFILESEARCHPATH=", 16) == 0)
+			have_xfsp = 1;
+		if (strncmp(environ[i], "XLOCALEDIR=", 11) == 0)
+			have_xloc = 1;
 		env[j++] = environ[i];
 	}
 	env[j++] = display_var;
@@ -143,6 +149,21 @@ static char **build_client_env(const char *prefix)
 	if (have_path == 0) {
 		snprintf(path_var, sizeof(path_var), "PATH=%s/bin:/bin", prefix);
 		env[j++] = path_var;
+	}
+	/* Xt app-defaults: libXt's compiled default path points at the host build
+	 * prefix (absent on the Pi), so Xaw apps (xedit, xcalc, ...) need this to
+	 * find their class resource files under <prefix>/usr/share/X11/app-defaults. */
+	if (have_xfsp == 0) {
+		snprintf(xfsp_var, sizeof(xfsp_var), "XFILESEARCHPATH=%s/usr/share/X11/app-defaults/%%N", prefix);
+		env[j++] = xfsp_var;
+	}
+	/* libX11's locale database (XLC_LOCALE etc.) — XCreateFontSet needs it to map
+	 * the C locale to its charset (iso8859-1). Its compiled-in path points at the
+	 * host build prefix, so override it; without this Xaw apps that use a fontset
+	 * (xcalc, xedit) get "unable to load any usable fontset" and crash. */
+	if (have_xloc == 0) {
+		snprintf(xloc_var, sizeof(xloc_var), "XLOCALEDIR=%s/usr/share/X11/locale", prefix);
+		env[j++] = xloc_var;
 	}
 	env[j] = NULL;
 
