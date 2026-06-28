@@ -140,6 +140,20 @@ if [ ! -f "$PREFIX/lib/libz.a" ]; then
 	  ./configure --prefix="$PREFIX" --static >/tmp/zlib-conf.log 2>&1 && make install >/tmp/zlib-build.log 2>&1 \
 	  && echo "zlib-1.3.1: OK" ) || echo "zlib-1.3.1: FAIL"
 fi
+# libpng (WRaster's PNG image backend — Window Maker theme pixmaps, switch-panel
+# images, and PNG backgrounds. Needs zlib, above). Without it WRaster loads only
+# XPM and silently fails every .png (the swback.png/theme cluster). Static.
+if [ ! -f "$PREFIX/lib/libpng16.a" ]; then
+	fetch_extract libpng-1.6.40 "https://download.sourceforge.net/libpng/libpng-1.6.40.tar.gz"
+	( cd "$SRC/libpng-1.6.40" \
+	  && ./configure --host=aarch64-phoenix --prefix="$PREFIX" --disable-shared --enable-static \
+	       CC=${TC}gcc AR=${TC}ar RANLIB=${TC}ranlib \
+	       CPPFLAGS="--sysroot=$SYSROOT -I$PREFIX/include" CFLAGS="--sysroot=$SYSROOT -I$PREFIX/include" \
+	       LDFLAGS="--sysroot=$SYSROOT -L$PREFIX/lib" --with-zlib-prefix="$PREFIX" \
+	       >/tmp/libpng-conf.log 2>&1 \
+	  && make -j4 >/tmp/libpng-build.log 2>&1 && make install >/tmp/libpng-install.log 2>&1 \
+	  && echo "libpng-1.6.40: OK" ) || { echo "libpng-1.6.40: FAIL"; tail -6 /tmp/libpng-*.log; }
+fi
 # freetype (minimal — no external codec deps). libXfont2's scalable-font backend.
 xbuild freetype-2.13.2 "https://download.savannah.gnu.org/releases/freetype/freetype-2.13.2.tar.gz" \
 	"--without-zlib --without-png --without-harfbuzz --without-bzip2 --without-brotli"

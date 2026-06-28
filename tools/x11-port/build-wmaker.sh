@@ -249,7 +249,7 @@ WM_SHELL_DEF='-DWMAKER_SHELL=\"/bin/sh\"'
 WM_DIAG_DEF=""
 [ "${WMAKER_DIAG:-0}" = "1" ] && WM_DIAG_DEF="-DPHX_DIAG -I$SRC/$WM_NV/WINGs/WINGs"
 # Full X11 + font + gap-fill static link closure, correctly ordered.
-WM_XCLOSURE="-lXft -lfontconfig -lexpat -lfreetype -lXrender -lXpm -lXext -lXmu -lXt -lSM -lICE -lX11 -lxcb -lXau -lXdmcp -lz -lftw -lm"
+WM_XCLOSURE="-lXft -lfontconfig -lexpat -lfreetype -lXrender -lXpm -lXext -lXmu -lXt -lSM -lICE -lX11 -lxcb -lXau -lXdmcp -lpng16 -lz -lftw -lm"
 
 # Main-thread stack size. The Phoenix kernel reads PT_GNU_STACK's p_memsz from
 # the ELF as the main (initial) thread's user stack size, else falls back to
@@ -318,7 +318,7 @@ build_wmaker() {
 	       --build=x86_64-pc-linux-gnu --prefix="$CONF_PREFIX" --sysconfdir="$TGT_PREFIX/etc" \
 	       --datadir="$TGT_PREFIX/share" --bindir="$TGT_PREFIX/bin" \
 	       --disable-shared \
-	       --disable-png --disable-jpeg --disable-tiff --disable-gif --disable-webp --disable-magick \
+	       --enable-png --disable-jpeg --disable-tiff --disable-gif --disable-webp --disable-magick \
 	       --disable-shm --disable-xinerama --disable-nls --disable-xlocale \
 	       --x-includes="$DEPS/include" --x-libraries="$DEPS/lib" \
 	       CC=${TC}gcc AR=${TC}ar RANLIB=${TC}ranlib xorg_cv_malloc0_returns_null=no \
