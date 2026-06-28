@@ -15,10 +15,35 @@ psh with a normal tree; paths are root-relative (`/bin/startx`, `/bin/Xphoenix`,
 - `nfs: stable NFSv4 client id` (`4b5acb4`) — fixes #156 rapid-reboot NFS4ERR_EXPIRED.
 - Rollback manifest: `manifests/2026-06-28-pre-nfsroot-default-44-45.md`.
 
-## ⛔ BLOCKER — X does not start on nfsroot: /tmp is not a writable RAM fs
-X needs `/tmp` to (a) hold its lock file `/tmp/.tX0-lock` and (b) bind its
-AF_UNIX listener `/tmp/.X11-unix/X0`. The NFS root cannot host AF_UNIX socket
-nodes, so `/tmp` MUST be a RAM fs. Two approaches were tried; both fail:
+## ✅ RESOLVED — X11/wmaker runs on the NFS-as-root default (HW-proven)
+`startx wmaker` launches the full X stack on the NFS-root Pi: Xphoenix binds
+`/tmp/.X11-unix/X0`, wmaker renders its deep-blue desktop + dock on HDMI
+(1920x1080), keyboard (`/dev/kbd0`) and mouse (`/dev/mouse0`) are active. Two
+fixes landed (both HW-validated):
+
+1. **Writable RAM `/tmp`** (project `dfe96f6` + filesystems `16e9759`):
+   `dummyfs-tmp` now MOUNTS itself at `/ramtmp` (`-m`, its own atDev splice onto
+   the dummyfs RAM-root — honored, unlike onto NFS) instead of registering a
+   bare `-N tmpfs` name. The NFS takeover resolves `/ramtmp` (a real mount,
+   resolves reliably like `/dev`) and re-binds its own `/tmp` node onto that
+   fresh writable dummyfs. Combined the `/dev`+`/ramtmp` mkdir into one
+   invocation (plo registers one alias per program name — a second `mkdir;`
+   line collides and bricks boot). Boot log: `re-bound /tmp (takeover, tmpfs
+   port=4)`; `echo>/tmp/probe.txt`+`cat` ok; `mkdir /tmp/.X11-unix` ok.
+
+2. **Bare command names resolve** (utils `52ddbda`): psh now defaults
+   `PATH=/bin:/usr/bin:/sbin:/usr/sbin` when unset, so `startx wmaker` works
+   directly (the plo-spawned NFS-root console psh inherits no env; previously
+   only `/bin/startx` worked). libphoenix's execve already searches PATH — it
+   just needs PATH set. Also unblocks Quake-by-name (#46).
+
+Evidence: `artifacts/hdmi/20260628-135911-startx-abs-final.png` (wmaker desktop).
+
+### Original root cause (kept for reference)
+A bare `-N tmpfs` named dummyfs port registered but never mounted was not
+resolvable by the late takeover `lookup("tmpfs")`, while the identical devfs
+resolved — because devfs is *referenced* by `bind;devfs;/dev`. Mounting (`-m`)
+gives the same persistent reference. The two earlier failed approaches:
 
 1. **Fresh `dummyfs-tmp` named "tmpfs" port** (committed base): boot launches
    `dummyfs-tmp;-N;tmpfs;-D`; it reaches `dummyfs: initialized` (so it forked,
