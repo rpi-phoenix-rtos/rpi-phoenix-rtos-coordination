@@ -165,3 +165,61 @@ tools/ports/build-libiconv.sh   # stub iconv
 tools/ports/build-libffi.sh     # aarch64 libffi
 tools/ports/build-glib2.sh      # pulls the above in if missing; builds all 4 glib libs
 ```
+
+## HW RUNTIME RESULT (2026-06-29) — mc builds, but CRASHES at startup
+
+mc was staged to `/srv/phoenix-rpi4-nfs/bin/mc` and run on the Pi (NFS root, teken
+fbcon). **It Data-Aborts (EL0) on startup, before any TUI**, on `mc`, `mc -V`, AND
+`mc --help` identically:
+
+```
+Exception #36: Data Abort (EL0)   in thread, process "/bin/mc"
+pc=0x5386e8  esr=0x92000004 (translation fault)  far=0x6120796172677448 (ASCII!)
+```
+
+`pc` resolves to `malloc_chunkSize`/`malloc_find` (libphoenix `malloc_dl.c:78` — the
+dlmalloc tree walk). `far` and x16/x17 hold ASCII bytes from mc's GOptionContext help
+.rodata ("...out of 'mc -V')", color-help text). => **heap-metadata corruption**: mc
+overflowed a heap chunk with string data; the next malloc walk dereferenced the
+clobbered RB-tree pointer. NOT a malloc bug — an earlier overflow.
+
+### What was EXONERATED on HW (proven safe — do NOT re-investigate)
+
+Two minimal link-test programs were built against the SAME staged glib + stubs and run
+on the Pi (sources `/tmp/glibtest.c`, `/tmp/glibtest2.c`; staged `/bin/glibtest`,
+`/bin/glibtest2`):
+
+| Probe | Result on HW |
+|-------|--------------|
+| `glibtest`: g_malloc + GString + GList (200× g_strdup_printf) + GHashTable + free-all | `GLIBTEST-OK ... GLIBTEST-FREED-CLEAN` — **glib alloc is SAFE** |
+| `glibtest2`: setlocale(LC_ALL,"") + setlocale(LC_MESSAGES,NULL) + GOptionContext (entries, parse, get_help) | `GT2-OK`, `setlocale(LC_MESSAGES,NULL)=NULL`, `help len=340` — **GOptionContext + setlocale path SAFE** |
+| env `G_SLICE=always-malloc` then `mc -V` | still crashes — **not the slice allocator** |
+| env `LC_ALL=C` then `mc -V` | still crashes — **not locale OOB** |
+| iconv stub code review (`iconv-stub/iconv.c`) | correctly bounds copy, returns E2BIG — **safe** |
+
+Confirmed: `setlocale(LC_MESSAGES=6, NULL)` returns NULL (libphoenix `posix/stubs.c`
+setlocale rejects category 6 — it is NOT array-indexed, so no OOB write), and glib
+tolerates that NULL (glibtest2 proves it).
+
+### CONCLUSION: the bug is in mc's OWN early init, not the ported libs
+
+Everything glibtest/glibtest2 exercise is clean. The crash is in something mc does that
+they do NOT. Leading suspect: **mc's string/charset init** — `str_init_strings()`
+(`lib/strutil/strutil.c`) selects the **UTF-8** strutil path (`strutilutf8.c`) because
+the nl_langinfo(CODESET) stub returns "UTF-8". The UTF-8 g_utf8_* path is the untested
+surface. (Next candidates: the full mc args GOptionContext with its translation-domain
+callback + ~40 grouped entries; vfs_init.)
+
+### NEXT (attended or next-boot, batched — 2 binaries staged by the mc-fix subagent)
+
+- `/bin/mc-ascii`: nl_langinfo(CODESET)→"ASCII" so str_init picks the 8-bit
+  `strutilascii.c` path (cheap-fix hypothesis: avoids the UTF-8 buffer bug).
+- `/bin/mc-dbg`: fprintf+fflush MCDBG markers through main()/str_init_strings — the
+  last marker before the Data Abort pinpoints the crashing init call.
+- Boot the Pi, run `mc-ascii` (does it reach the TUI?) and `mc-dbg` (read the last
+  MCDBG marker on UART). One boot discriminates fix-vs-localize.
+
+**Deliverable status:** the hard part (full glib2 + libffi + iconv chain ported, mc
+links to a 0-undefined-symbol static ELF, libs HW-validated) is DONE and committed. The
+residual is an mc-internal startup heap overflow, precisely localized, with repro
+programs + a fix attempt + an instrumented build staged for a single decisive boot.
