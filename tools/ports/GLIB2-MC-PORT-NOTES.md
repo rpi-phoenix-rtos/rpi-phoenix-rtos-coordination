@@ -306,3 +306,34 @@ MCDBG marker count, so a stale binary is caught at build time.
 links to a 0-undefined-symbol static ELF, libs HW-validated) is DONE and committed. The
 residual is an mc-internal startup heap overflow, precisely localized, with repro
 programs + a fix attempt + an instrumented build staged for a single decisive boot.
+
+## FINAL HW VERDICT (2026-06-29) — mc-dbg + mc-ascii run on the Pi
+
+Both ran on the NFS-root teken-fbcon boot (label `mc-dbg2`):
+
+- **mc-dbg** (`-V`): last marker before the Data Abort = **`MCDBG: mc_args_parse begin`**
+  (str_init_strings + mc_setup_run_mode all completed cleanly first, incl. the UTF-8
+  `str_choose_str_functions done`). So the corruption is TRIPPED at `mc_args_parse`'s
+  GOptionContext build+parse allocation burst.
+- **mc-ascii** (`-V`): **also Data-Aborts** (identical EL0 fault). Per this doc's own
+  precedence rule, **the empirical mc-ascii result outranks the marker**: since the
+  8-bit/ASCII strutil path crashes too, **the codeset / UTF-8 strutil path is
+  EXONERATED** — it is NOT the planter.
+
+**Net localization:** heap corruption is planted in mc's **codeset-INDEPENDENT** early
+init (everything common to mc-dbg and mc-ascii up to and including `mc_args_parse begin`
+— i.e. str_init_strings' common part / iconv_open / mc_setup_run_mode / the start of
+mc_args_parse) and surfaces at the first large malloc burst inside `mc_args_parse`.
+glib alloc, iconv stub, setlocale, basic GOptionContext, AND the codeset/strutil choice
+are ALL exonerated on HW.
+
+**Why this is the stop point (not a quick fix):** the remaining suspects (the iconv
+identity stub being driven by mc's str_convert during init, or a fixed buffer in mc's
+own init) require **heap-canary / malloc-guard instrumentation to find the PLANT site**
+— the trip site is already known and isn't where the bug is. That is multi-cycle
+attended debugging, outside the unattended envelope. **#55 handoff: mc + the entire
+glib2 stack are ported and committed (the deliverable); the runtime crash is localized
+to a codeset-independent heap overflow in mc's init, tripping in mc_args_parse, with
+`/bin/mc-dbg` (markers) + `/bin/mc-ascii` (codeset-exoneration proof) staged.** Next
+attended step: build an `MC_VARIANT=guard` with `MALLOC_CHECK_`-style heap canaries or
+bisect mc_args_parse with finer markers to catch the overflowing write.
