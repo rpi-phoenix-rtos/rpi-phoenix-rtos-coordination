@@ -210,14 +210,87 @@ the nl_langinfo(CODESET) stub returns "UTF-8". The UTF-8 g_utf8_* path is the un
 surface. (Next candidates: the full mc args GOptionContext with its translation-domain
 callback + ~40 grouped entries; vfs_init.)
 
-### NEXT (attended or next-boot, batched — 2 binaries staged by the mc-fix subagent)
+### TWO DIAGNOSTIC BINARIES BUILT + STAGED (2026-06-29)
 
-- `/bin/mc-ascii`: nl_langinfo(CODESET)→"ASCII" so str_init picks the 8-bit
-  `strutilascii.c` path (cheap-fix hypothesis: avoids the UTF-8 buffer bug).
-- `/bin/mc-dbg`: fprintf+fflush MCDBG markers through main()/str_init_strings — the
-  last marker before the Data Abort pinpoints the crashing init call.
-- Boot the Pi, run `mc-ascii` (does it reach the TUI?) and `mc-dbg` (read the last
-  MCDBG marker on UART). One boot discriminates fix-vs-localize.
+Both produced reproducibly by `build-mc.sh` via a new `MC_VARIANT` env
+(`stock|ascii|dbg`); both verified as valid static aarch64-phoenix ELFs with 0
+undefined symbols. `/bin/mc` (the original stock UTF-8 build) is left untouched.
+
+**1. `/bin/mc-ascii` — the cheap-fix attempt.** `MC_VARIANT=ascii` compiles the
+langinfo stub with `-DMC_CODESET_ASCII`, so `nl_langinfo(CODESET)` returns
+`"ASCII"` instead of `"UTF-8"`. (Verified by disasm: mc-ascii's CODESET jump-table
+slot points at the bytes `41 53 43 49 49` = "ASCII"; mc-dbg's points at
+`55 54 46 2d 38` = "UTF-8".)
+
+  Where mc decides UTF-8-vs-8bit — `lib/strutil/strutil.c`:
+  - `main()` (`src/main.c:267`) calls `str_init_strings(NULL)`.
+  - With `termenc==NULL` it takes `codeset = g_strdup(str_detect_termencoding())`,
+    and `str_detect_termencoding()` = `g_ascii_strup(nl_langinfo(CODESET), -1)`.
+  - `str_choose_str_functions()` then tests `codeset` against two tables IN ORDER:
+    `str_utf8_encodings[]` = {"utf-8","utf8"} → `str_utf8_init()` (strutilutf8.c);
+    else `str_8bit_encodings[]` = {cp-125x, iso-8859, koi8, cp-866/850/852, …} →
+    `str_8bit_init()` (strutil8bit.c); **else** → `str_ascii_init()`
+    (strutilascii.c).
+  - "ASCII" matches NEITHER table (it is not in str_8bit_encodings — checked the
+    full array), so it falls to the **else** branch → `str_ascii_init()`, the plain
+    8-bit path that the crashing UTF-8 path's g_utf8_* ops never run. "ASCII" is
+    also mc's own `DEFAULT_CHARSET` (lib/global.h:144), confirming it's the
+    intended safe fall-through.
+
+**2. `/bin/mc-dbg` — the instrumented fallback.** `MC_VARIANT=dbg` keeps the
+**UTF-8** codeset (so it still reproduces the crash) and applies
+`tools/ports/mc-dbg-instrument.patch` (23 `fprintf(stderr,…)+fflush` markers).
+The LAST `MCDBG:` line on the UART before the Data Abort pinpoints the crashing
+init call. Marker order on a clean boot:
+
+```
+MCDBG: enter main
+MCDBG: setlocale begin
+MCDBG: setlocale done
+MCDBG: str_init_strings begin
+MCDBG:   str_init_strings: enter (termenc=(null))
+MCDBG:   str_init_strings: codeset=<UTF-8 for mc-dbg>
+MCDBG:   str_init_strings: iconv_open done
+MCDBG:   str_init_strings: str_choose_str_functions done   <- past UTF-8 strutil init
+MCDBG: str_init_strings done
+MCDBG: mc_setup_run_mode begin
+MCDBG: mc_setup_run_mode done
+MCDBG: mc_args_parse begin                                  <- GOptionContext build+parse
+MCDBG: mc_args_parse done
+MCDBG: OS_Setup begin
+MCDBG: OS_Setup done
+MCDBG: events_init begin
+MCDBG: events_init done
+MCDBG: mc_config_init_config_paths begin
+MCDBG: mc_config_init_config_paths done
+MCDBG: vfs_init begin
+MCDBG: vfs_init done
+MCDBG: load_setup begin
+MCDBG: load_setup done
+```
+
+Reading it: if the last line is `str_init_strings: codeset=UTF-8` (no
+`str_choose_str_functions done`), the crash is inside the UTF-8 strutil init →
+mc-ascii should fix it. If it gets to `mc_args_parse begin` but not `done`, the
+GOptionContext entry set (not str_init) is the culprit (matches the GOptionContext
+help .rodata in the fault address) and mc-ascii will NOT help. The `mc-ascii`
+result is the orthogonal confirmation: reaches TUI ⇒ codeset path was it.
+
+### Reproducing the variants
+
+```
+MC_VARIANT=ascii tools/ports/build-mc.sh   # -> /bin/mc-ascii + artifacts/mc-ascii
+MC_VARIANT=dbg   tools/ports/build-mc.sh   # -> /bin/mc-dbg   + artifacts/mc-dbg
+MC_VARIANT=stock tools/ports/build-mc.sh   # -> /bin/mc (default; rebuilds canonical)
+```
+
+The script is idempotent across variant switches: it rebuilds `libmcsupport.a`
+with the variant's codeset `-D`, reverse-applies any stale dbg patch then
+forward-applies it only for dbg, removes the stale `.o`s of the two patched TUs,
+and `rm`s `src/mc` to force a relink (libmcsupport.a is not a make dependency of
+`src/mc`, so a plain `make` would otherwise ship a stale binary). Each build
+prints a PRE-FLIGHT that `strings`-greps the baked-in CODESET and (for dbg) the
+MCDBG marker count, so a stale binary is caught at build time.
 
 **Deliverable status:** the hard part (full glib2 + libffi + iconv chain ported, mc
 links to a 0-undefined-symbol static ELF, libs HW-validated) is DONE and committed. The

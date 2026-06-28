@@ -1,0 +1,166 @@
+Phoenix-RTOS — MCDBG init-trace instrumentation for the mc-dbg variant.
+
+Applied by build-mc.sh (MC_VARIANT=dbg) with `patch -p1` against the extracted
+mc-4.8.31 tree. Adds fprintf(stderr,...)+fflush markers at each major early-init
+step so the LAST marker printed before a Data Abort (EL0) pinpoints the crashing
+init call. Markers go to stderr (fflush'd) so they survive a crash. This patch is
+applied ONLY for MC_VARIANT=dbg; the stock and ascii variants keep an unmodified
+init path. The dbg build keeps the stock UTF-8 codeset so it reproduces the crash.
+
+Marker order on a clean boot:
+  MCDBG: enter main
+  MCDBG: setlocale begin
+  MCDBG: setlocale done
+  MCDBG: str_init_strings begin
+  MCDBG:   str_init_strings: enter (termenc=(null))
+  MCDBG:   str_init_strings: codeset=<UTF-8|ASCII|...>
+  MCDBG:   str_init_strings: iconv_open done
+  MCDBG:   str_init_strings: str_choose_str_functions done
+  MCDBG: str_init_strings done
+  MCDBG: mc_setup_run_mode begin
+  MCDBG: mc_setup_run_mode done
+  MCDBG: mc_args_parse begin
+  MCDBG: mc_args_parse done
+  MCDBG: OS_Setup begin
+  MCDBG: OS_Setup done
+  MCDBG: events_init begin
+  MCDBG: events_init done
+  MCDBG: mc_config_init_config_paths begin
+  MCDBG: mc_config_init_config_paths done
+  MCDBG: vfs_init begin
+  MCDBG: vfs_init done
+  MCDBG: load_setup begin
+  MCDBG: load_setup done
+
+--- a/src/main.c
++++ b/src/main.c
+@@ -254,20 +254,37 @@
+     GError *mcerror = NULL;
+     int exit_code = EXIT_FAILURE;
+ 
++    fprintf (stderr, "MCDBG: enter main\n");
++    fflush (stderr);
++
+     mc_global.run_from_parent_mc = !check_sid ();
+ 
+     /* We had LC_CTYPE before, LC_ALL includs LC_TYPE as well */
+ #ifdef HAVE_SETLOCALE
++    fprintf (stderr, "MCDBG: setlocale begin\n");
++    fflush (stderr);
+     (void) setlocale (LC_ALL, "");
++    fprintf (stderr, "MCDBG: setlocale done\n");
++    fflush (stderr);
+ #endif
+     (void) bindtextdomain (PACKAGE, LOCALEDIR);
+     (void) textdomain (PACKAGE);
+ 
+     /* do this before args parsing */
++    fprintf (stderr, "MCDBG: str_init_strings begin\n");
++    fflush (stderr);
+     str_init_strings (NULL);
++    fprintf (stderr, "MCDBG: str_init_strings done\n");
++    fflush (stderr);
+ 
++    fprintf (stderr, "MCDBG: mc_setup_run_mode begin\n");
++    fflush (stderr);
+     mc_setup_run_mode (argv);   /* are we mc? editor? viewer? etc... */
++    fprintf (stderr, "MCDBG: mc_setup_run_mode done\n");
++    fflush (stderr);
+ 
++    fprintf (stderr, "MCDBG: mc_args_parse begin\n");
++    fflush (stderr);
+     if (!mc_args_parse (&argc, &argv, "mc", &mcerror))
+     {
+       startup_exit_falure:
+@@ -278,6 +295,8 @@
+         str_uninit_strings ();
+         return exit_code;
+     }
++    fprintf (stderr, "MCDBG: mc_args_parse done\n");
++    fflush (stderr);
+ 
+     /* check terminal type
+      * $TERM must be set and not empty
+@@ -287,7 +306,11 @@
+     mc_global.tty.xterm_flag = tty_check_term (mc_args__force_xterm);
+ 
+     /* do this before mc_args_show_info () to view paths in the --datadir-info output */
++    fprintf (stderr, "MCDBG: OS_Setup begin\n");
++    fflush (stderr);
+     OS_Setup ();
++    fprintf (stderr, "MCDBG: OS_Setup done\n");
++    fflush (stderr);
+ 
+     if (!g_path_is_absolute (mc_config_get_home_dir ()))
+     {
+@@ -303,20 +326,36 @@
+         goto startup_exit_ok;
+     }
+ 
++    fprintf (stderr, "MCDBG: events_init begin\n");
++    fflush (stderr);
+     if (!events_init (&mcerror))
+         goto startup_exit_falure;
++    fprintf (stderr, "MCDBG: events_init done\n");
++    fflush (stderr);
+ 
++    fprintf (stderr, "MCDBG: mc_config_init_config_paths begin\n");
++    fflush (stderr);
+     mc_config_init_config_paths (&mcerror);
+     if (mcerror != NULL)
+     {
+         mc_event_deinit (NULL);
+         goto startup_exit_falure;
+     }
++    fprintf (stderr, "MCDBG: mc_config_init_config_paths done\n");
++    fflush (stderr);
+ 
++    fprintf (stderr, "MCDBG: vfs_init begin\n");
++    fflush (stderr);
+     vfs_init ();
+     vfs_plugins_init ();
++    fprintf (stderr, "MCDBG: vfs_init done\n");
++    fflush (stderr);
+ 
++    fprintf (stderr, "MCDBG: load_setup begin\n");
++    fflush (stderr);
+     load_setup ();
++    fprintf (stderr, "MCDBG: load_setup done\n");
++    fflush (stderr);
+ 
+     /* Must be done after load_setup because depends on mc_global.vfs.cd_symlinks */
+     vfs_setup_work_dir ();
+--- a/lib/strutil/strutil.c
++++ b/lib/strutil/strutil.c
+@@ -402,8 +402,14 @@
+ void
+ str_init_strings (const char *termenc)
+ {
++    fprintf (stderr, "MCDBG:   str_init_strings: enter (termenc=%s)\n", termenc != NULL ? termenc : "(null)");
++    fflush (stderr);
++
+     codeset = termenc != NULL ? g_ascii_strup (termenc, -1) : g_strdup (str_detect_termencoding ());
+ 
++    fprintf (stderr, "MCDBG:   str_init_strings: codeset=%s\n", codeset != NULL ? codeset : "(null)");
++    fflush (stderr);
++
+     str_cnv_not_convert = g_iconv_open (codeset, codeset);
+     if (str_cnv_not_convert == INVALID_CONV)
+     {
+@@ -422,10 +428,16 @@
+         }
+     }
+ 
++    fprintf (stderr, "MCDBG:   str_init_strings: iconv_open done\n");
++    fflush (stderr);
++
+     str_cnv_to_term = str_cnv_not_convert;
+     str_cnv_from_term = str_cnv_not_convert;
+ 
+     str_choose_str_functions ();
++
++    fprintf (stderr, "MCDBG:   str_init_strings: str_choose_str_functions done\n");
++    fflush (stderr);
+ }
+ 
+ /* --------------------------------------------------------------------------------------------- */
