@@ -81,6 +81,46 @@ unattended safety; the clean fixes belong in `sources/libphoenix` (attended):
   wrong for legacy single-byte codepages.
 - LC_MESSAGES=6 OOB risk (item 5 above).
 
+## Midnight Commander (mc 4.8.31) recon — 2026-06-29
+
+`tools/ports/build-mc.sh` drives mc's configure+build. mc needs glib-2.0 >= 2.32
+(have 2.56) + a screen lib (ncurses, ported). Status: **configure PASSES, mc
+itself COMPILES** through libmcskin and into lib/tty, then hits ONE blocker.
+
+Flags that work: `--with-screen=ncurses --with-ncurses-includes/libs`,
+`--without-subshell` (sidesteps grantpt/ptsname pty wall), `--without-x
+--without-gpm --disable-nls --disable-vfs-undelfs --disable-vfs-sftp
+--disable-doxygen-doc`. GLIB fed via `GLIB_CFLAGS/GLIB_LIBS` env +
+`fake-pkg-config.sh` (mc calls `pkg-config --variable=gmodule_supported`, so a
+plain `/bin/false` isn't enough — the fake script answers mc's specific queries).
+
+mc-specific gaps worked around:
+- **mntent API**: Phoenix `<mntent.h>` is empty, no getmntent. Supplied
+  `mc-support/mntent.h` (glibc-compatible struct) + stub libmcsupport.a
+  (no-mounts). Seeded `fu_cv_sys_mounted_getmntent1=yes` in mc.cache.
+- **glib-unix.h staging bug** (fixed in build-glib2.sh): glib-unix.h is a
+  top-level public header (`<glib-unix.h>`), installs to include/glib-2.0/ not
+  glib/. Staging now copies the 3 glibinclude_HEADERS (glib.h, glib-unix.h,
+  glib-object.h) to the top level.
+
+### THE mc BLOCKER (next session): ncurses needs WIDE-CHAR build
+
+mc's `lib/tty/tty-ncurses.h:35` unconditionally `#define ENABLE_SHADOWS 1`, and
+`tty-ncurses.c` (tty_colorize_area, under ENABLE_SHADOWS) calls the WIDE ncurses
+API: `getcchar`, `setcchar`, `mvin_wchnstr`, `mvadd_wchnstr`, `cchar_t`. Our
+ported ncurses (build-ncurses.sh) is NARROW (no `--enable-widec`), so these are
+undeclared.
+
+FIX (clean, reusable): rebuild ncurses with `--enable-widec` to produce
+`libncursesw.a` (which exports getcchar/setcchar/*_wchnstr), and point mc at it
+(`--with-ncurses-libs` + link `-lncursesw`). This is the single remaining step to
+a compiling mc. (A hackier alternative — `#undef ENABLE_SHADOWS` via the mc shim —
+loses dialog shadows and risks other widec call sites; prefer widec ncurses.)
+
+NOTE: widec ncurses pulls in wchar/multibyte libc (wcwidth, mbrtowc, wcrtomb).
+libphoenix has the wide-char set (added during the X11 lib port per MEMORY), so
+this should link; verify with `nm`.
+
 ## Build order
 
 ```

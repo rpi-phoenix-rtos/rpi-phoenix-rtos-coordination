@@ -141,7 +141,9 @@ done
 GINC="$PREFIX/include/glib-2.0"
 rm -rf "$GINC"
 mkdir -p "$GINC/glib/deprecated" "$GINC/gobject" "$GINC/gmodule" "$PREFIX/lib/glib-2.0/include"
-cp -a "$XDIR"/glib/glib.h "$XDIR"/glib/glib-object.h "$XDIR"/glib/gi18n.h "$XDIR"/glib/gi18n-lib.h "$GINC/" 2>/dev/null || true
+# Top-level public headers included as <glib.h>/<glib-unix.h>/<glib-object.h>
+# (glibinclude_HEADERS) — these live directly under include/glib-2.0/, NOT glib/.
+cp -a "$XDIR"/glib/glib.h "$XDIR"/glib/glib-unix.h "$XDIR"/glib/glib-object.h "$XDIR"/glib/gi18n.h "$XDIR"/glib/gi18n-lib.h "$GINC/" 2>/dev/null || true
 cp -a "$XDIR"/gmodule/gmodule.h "$GINC/" 2>/dev/null || true
 # all glib/*.h except the .in template; deprecated subdir too
 for h in "$XDIR"/glib/*.h; do cp -a "$h" "$GINC/glib/"; done
