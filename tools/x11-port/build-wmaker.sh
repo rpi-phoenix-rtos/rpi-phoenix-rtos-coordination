@@ -316,8 +316,8 @@ build_wmaker() {
 	# Force-regenerate the menu/data files from their .in templates so the
 	# compiled-in #bindir#/#wmdatadir# (now /bin, /share) are re-substituted.
 	# Without this, a generated menu cached from an earlier build (e.g. one that
-	# used --bindir=/nfstest/bin) is newer than its .in and `make` skips it,
-	# silently shipping a stale "/nfstest/bin/WPrefs" EXEC path (#45).
+	# used a different --bindir) is newer than its .in and `make` skips it,
+	# silently shipping a stale WPrefs EXEC path (#45).
 	for tin in "$SRC/$WM_NV"/WindowMaker/*.in; do
 		[ -f "$tin" ] || continue
 		rm -f "${tin%.in}"

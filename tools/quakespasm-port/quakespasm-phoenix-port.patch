@@ -100,7 +100,7 @@ index cf7c7ce..3a7214d 100644
 +
 +	/* Write directory: scr_capture_dir if set, else com_gamedir. The Pi's
 +	 * com_gamedir/com_basedir is broken for writes (resolves to "(null)/id1"),
-+	 * so the harness sets scr_capture_dir explicitly (e.g. /nfstest/id1 on the
++	 * so the harness sets scr_capture_dir explicitly (e.g. /usr/share/quake/id1 on the
 +	 * Pi, straight onto the fast NFS export). Self-contained 24-bit uncompressed
 +	 * TGA writer (BGR, bottom-up) so the byte format is identical on every machine
 +	 * — no libpng/com_gamedir dependency. */

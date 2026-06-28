@@ -8,7 +8,7 @@
 # (plus libphoenix for the msg API in stress-ipc — pulled in by the toolchain's
 # default specs). After each build we print `file` + `nm -u` (undefined symbols)
 # so a missing msg-API / libphoenix symbol is caught at build time, then stage to
-# /srv/phoenix-rpi4-nfs/bin (mounted at /nfstest on the netbooted Pi).
+# /srv/phoenix-rpi4-nfs/bin (mounted at /mnt on the netbooted Pi).
 #
 # Host-side only — this does NOT boot the Pi.
 #

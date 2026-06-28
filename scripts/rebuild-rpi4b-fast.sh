@@ -83,7 +83,7 @@ ports_only=0
 #   nfsroot (default) - mount the NFS export as root over the network (#153 T3 /
 #                       #44): the booted Pi gets a real "/" with /bin /usr /var
 #                       /etc + /dev via devfs. Netboot-delivered (no ext2 needed).
-#   netboot           - legacy probe-only SD, card-out safe, NFS at /nfstest (no
+#   netboot           - legacy probe-only SD, card-out safe, NFS at /mnt (no
 #                       real root tree). Kept as the rollback fallback.
 #   sd                - mount the ext2 partition on the SD card as root (#120)
 variant="nfsroot"

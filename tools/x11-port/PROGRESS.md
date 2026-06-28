@@ -34,7 +34,7 @@ generalized: **server death kills all clients and exits; any single client exit
 New vfork-live locals marked `volatile` (same false-positive `-Wclobbered` rationale
 as before).
 
-**The command the user runs (netboot, NFS at /nfstest):**
+**The command the user runs (netboot, NFS at /mnt):**
 ```
 mkdir /tmp                 # if not already
 /bin/startx desktop
@@ -49,7 +49,7 @@ Rebuilt static aarch64-phoenix ELF, **0 undefined symbols, 0 warnings**:
 `/srv/phoenix-rpi4-nfs/bin/pl_phoenix_xlaunch` AND `.../bin/startx` (startx is a
 plain copy, not a symlink — `build-xlaunch.sh` now refreshes both automatically).
 
-**Expect on UART:** `xlaunch: startx mode — prefix=/nfstest client=desktop (2 clients)`,
+**Expect on UART:** `xlaunch: startx mode — prefix=/mnt client=desktop (2 clients)`,
 the `[fbdev] /dev/fb0: ...` line, `xlaunch: server socket present...`,
 `xlaunch: starting client[0]: /bin/twm`, `xlaunch: starting client[1]: /bin/xeyes`.
 twm will also log a few `unable to open font "-adobe-helvetica-bold-..."` warnings —
@@ -115,7 +115,7 @@ fires because at -O2 the env/argv builders inline into main() alongside the vfor
 calls; it is a false positive — the children only execve/_exit, never writing parent
 memory — but volatile documents the constraint cleanly for upstreaming.)
 
-**HW recipe (main agent, netboot, NFS export at /nfstest):**
+**HW recipe (main agent, netboot, NFS export at /mnt):**
 ```
 mkdir /tmp                         # if not already
 /bin/pl_phoenix_xlaunch /bin/Xphoenix /usr/share/fonts/X11/misc /bin/xeyes

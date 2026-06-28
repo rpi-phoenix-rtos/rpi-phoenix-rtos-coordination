@@ -46,7 +46,7 @@ FDSET_SHIM=$PORTDIR/xterm-phoenix-fdset-shim.h
 WCTYPE_INC=$PORTDIR/include
 
 # The compile-time fallback shell. On the netboot Pi "/" is the RAM dummyfs root
-# and the rootfs (incl. the shell) lives at /nfstest, so "/bin/sh" does not
+# and the rootfs (incl. the shell) lives at /mnt, so "/bin/sh" does not
 # exist. xterm resolves its shell as -e program, then $SHELL, then passwd
 # pw_shell, then this compiled default; xlaunch sets neither $SHELL nor
 # pw_shell, so THIS is what xterm exec's. (Patched resetShell() guards it with

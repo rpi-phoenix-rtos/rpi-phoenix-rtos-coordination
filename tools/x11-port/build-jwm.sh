@@ -35,7 +35,7 @@ NFS=/srv/phoenix-rpi4-nfs
 # The compiled-in SYSTEM config path. JWM's configure defines
 # SYSTEM_CONFIG = "$sysconfdir/system.jwmrc" (NO extra jwm/ subdir), so to land
 # the path at /etc/jwm/system.jwmrc we must pass --sysconfdir=/etc/jwm.
-# netboot mounts the NFS export at /nfstest (NOT /). This MUST match where the
+# netboot mounts the NFS export at /mnt (NOT /). This MUST match where the
 # config is staged below — it is the #1 "WM starts but finds no config" failure.
 SYSCONFDIR=/etc/jwm
 EXPECT_CFG=$SYSCONFDIR/system.jwmrc
@@ -82,7 +82,7 @@ fi
 #   execl(SHELL_NAME, SHELL_NAME, "-c", command)
 # and SHELL_NAME is a hardcoded "#define ... \"/bin/sh\"" in src/jwm.h. On the
 # netboot Pi "/" is the RAM dummyfs root and the rootfs (incl. the shell) is at
-# /nfstest, so /bin/sh does NOT exist → nothing JWM launches would start (no
+# /mnt, so /bin/sh does NOT exist → nothing JWM launches would start (no
 # xeyes window, dead menu) even though the WM itself runs. JWM does NOT consult
 # $SHELL, so the env can't fix it; we redefine SHELL_NAME at compile time. Guard
 # the header define with #ifndef (idempotent) so the -D below wins.
