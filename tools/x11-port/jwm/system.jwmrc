@@ -9,8 +9,8 @@
      open a font and draw nothing — do NOT reintroduce them.
    - No icons (USE_PNG/JPEG/SVG are off in this build), so no <IconPath> and no
      icon="" attributes — they would just spam "unable to load icon" warnings.
-   - All launched programs use ABSOLUTE /bin/... paths: the NFS export is
-     mounted at /nfstest on netboot, NOT at /.
+   - All launched programs use ABSOLUTE /bin/... paths: the NFS export is the
+     root "/" (nfsroot default).
 
   Compiled-in system path: /etc/jwm/system.jwmrc  (configure
   --sysconfdir=/etc/jwm). Keep this file at that path on the export.
