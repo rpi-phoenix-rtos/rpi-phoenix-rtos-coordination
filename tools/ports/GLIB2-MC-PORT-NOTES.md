@@ -269,12 +269,22 @@ MCDBG: load_setup begin
 MCDBG: load_setup done
 ```
 
-Reading it: if the last line is `str_init_strings: codeset=UTF-8` (no
-`str_choose_str_functions done`), the crash is inside the UTF-8 strutil init →
-mc-ascii should fix it. If it gets to `mc_args_parse begin` but not `done`, the
-GOptionContext entry set (not str_init) is the culprit (matches the GOptionContext
-help .rodata in the fault address) and mc-ascii will NOT help. The `mc-ascii`
-result is the orthogonal confirmation: reaches TUI ⇒ codeset path was it.
+Reading it — IMPORTANT precedence (the crash is heap-metadata corruption that
+surfaces at a *later* malloc tree-walk, NOT a direct deref, so the last MCDBG
+marker localizes where the corruption is *tripped*, not where it was *planted*):
+
+- **`/bin/mc-ascii` reaching the TUI is the ground-truth signal** that the
+  codeset/strutil path was the cause. Trust this over the marker.
+- The dbg last-marker is a coarse localizer only. If the last line is
+  `str_init_strings: codeset=UTF-8` (no `str_choose_str_functions done`), the
+  corruption is tripped inside the UTF-8 strutil init. But because surfacing is
+  delayed, a UTF-8 overflow planted in str_init can instead trip later (e.g. at a
+  malloc inside `mc_args_parse`) — in which case the last marker reads
+  `mc_args_parse begin` AND mc-ascii still fixes it. So do NOT conclude "the args
+  parser is the culprit, mc-ascii won't help" from the marker alone; let the
+  empirical mc-ascii result outrank the marker when they disagree.
+- Also note: `fprintf` itself may call the allocator, so mc-dbg's exact crash
+  point can shift slightly vs stock `mc` — treat the marker as approximate.
 
 ### Reproducing the variants
 
