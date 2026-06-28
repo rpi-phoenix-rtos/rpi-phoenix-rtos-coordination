@@ -104,8 +104,8 @@ static char **build_argv(char *prog, char *const extra[], int nextra)
  * inherited environment lacks them. psh exports neither HOME nor PATH, but X
  * clients need both: a window manager (e.g. Window Maker) writes its per-user
  * state under $HOME (~/GNUstep) and PATH-searches for helper programs (wmsetbg,
- * menu apps). Defaults are derived from the install prefix (the NFS export at
- * /nfstest on netboot, "" => "/" otherwise): HOME=<prefix>/root,
+ * menu apps). Defaults are derived from the install prefix ("" => "/" on the
+ * nfsroot default and sd; the legacy /nfstest subtree mount otherwise): HOME=<prefix>/root,
  * PATH=<prefix>/bin:/bin. An inherited HOME/PATH (if psh ever sets one) wins.
  * Built in the parent so the vfork'd child never touches the shared address
  * space beyond exec. */
@@ -220,8 +220,8 @@ int main(int argc, char *argv[])
 	}
 	else {
 		/* "startx" convenience: 0 or 1 args. Auto-detect the install prefix
-		 * (NFS export mounted at /nfstest on netboot, else "/" on nfsroot/sd)
-		 * and default the client to xeyes. Optional argv[1] picks the client
+		 * ("/" on the nfsroot default and sd; else the legacy /nfstest subtree
+		 * mount) and default the client to xeyes. Optional argv[1] picks the client
 		 * (bare name under <prefix>/bin, or an absolute path), with one
 		 * reserved name `desktop` that brings up a window manager + an app:
 		 *   startx           -> <prefix>/bin/xeyes
@@ -230,13 +230,13 @@ int main(int argc, char *argv[])
 		 *   startx desktop   -> twm (WM) + xeyes (managed window)
 		 *   startx term      -> twm (WM) + xterm (managed terminal window)
 		 */
-		const char *prefix = "/nfstest";
+		const char *prefix = ""; /* root install (nfsroot default / sd) */
 		const char *client = (argc >= 2) ? argv[1] : "xeyes";
 		struct stat stx;
 
 		snprintf(sp_buf, sizeof(sp_buf), "%s/bin/Xphoenix", prefix);
 		if (stat(sp_buf, &stx) != 0) {
-			prefix = ""; /* root install (nfsroot / sd) */
+			prefix = "/nfstest"; /* legacy netboot subtree-mount fallback */
 			snprintf(sp_buf, sizeof(sp_buf), "%s/bin/Xphoenix", prefix);
 		}
 		snprintf(fd_buf, sizeof(fd_buf), "%s/usr/share/fonts/X11/misc", prefix);

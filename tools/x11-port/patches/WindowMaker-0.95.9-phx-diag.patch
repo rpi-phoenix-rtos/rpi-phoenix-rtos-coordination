@@ -417,15 +417,15 @@
 + * name makes XftFontOpenName run a full fontconfig FcFontMatch scan over the
 + * font set, which hangs during startup; naming the file directly skips that
 + * scan and freetype-opens a known face. The path is exactly where
-+ * build-wmaker.sh stages DejaVu (/nfstest/usr/share/fonts/truetype/dejavu).
++ * build-wmaker.sh stages DejaVu (/usr/share/fonts/truetype/dejavu).
 + * Upstream/other platforms can still override these via the WINGs SystemFont /
 + * BoldSystemFont user defaults.
 + */
 +#ifndef SYSTEM_FONT
-+#define SYSTEM_FONT "phxfile:/nfstest/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
++#define SYSTEM_FONT "phxfile:/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 +#endif
 +#ifndef BOLD_SYSTEM_FONT
-+#define BOLD_SYSTEM_FONT "phxfile:/nfstest/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
++#define BOLD_SYSTEM_FONT "phxfile:/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 +#endif
  #define DEFAULT_FONT_SIZE 12
  

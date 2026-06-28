@@ -35,10 +35,14 @@ SRC="$HERE/src"
 NFS=/srv/phoenix-rpi4-nfs
 ART=/home/houp/phoenix-rpi/artifacts/x11
 
-# wmaker is installed under --prefix=/nfstest so its compiled-in data paths
-# (share/WindowMaker, defaults, menus) resolve on the netboot Pi, where the NFS
-# rootfs export is mounted at /nfstest (NOT /).
-TGT_PREFIX=/nfstest
+# wmaker is installed under --prefix=/ so its compiled-in data paths
+# (share/WindowMaker, defaults, menus) resolve on the booted Pi, where the NFS
+# rootfs export is now mounted as "/" (the nfsroot default, #44/#45). The baked
+# path-prefix (TGT_PREFIX) is empty so paths are /bin/sh, /share/WindowMaker,
+# etc.; autotools --prefix is "/" (an empty --prefix is invalid). $stage$TGT_PREFIX
+# therefore equals $stage, where --prefix=/ installs bin/, share/, etc.
+TGT_PREFIX=
+CONF_PREFIX=/
 
 # Versions
 EXPAT_NV=expat-2.5.0
@@ -156,7 +160,7 @@ build_fontconfig() {
 	rm -rf "$stage"
 	( cd "$SRC/$FC_NV" \
 	  && { [ -f config.status ] || PKG_CONFIG="$PKGC" ./configure --host=aarch64-phoenix \
-	       --build=x86_64-pc-linux-gnu --prefix="$TGT_PREFIX" --disable-shared --enable-static --disable-docs \
+	       --build=x86_64-pc-linux-gnu --prefix="$CONF_PREFIX" --disable-shared --enable-static --disable-docs \
 	       --with-cache-dir="$TGT_PREFIX/var/cache/fontconfig" \
 	       --with-default-fonts="$TGT_PREFIX/usr/share/fonts" \
 	       --sysconfdir="$TGT_PREFIX/etc" --with-expat="$DEPS" \
@@ -173,7 +177,7 @@ build_fontconfig() {
 	cp "$stage$TGT_PREFIX/lib/libfontconfig.a" "$DEPS/lib/"
 	cp -r "$stage$TGT_PREFIX/include/fontconfig" "$DEPS/include/"
 	cp "$stage$TGT_PREFIX/lib/pkgconfig/fontconfig.pc" "$DEPS/lib/pkgconfig/"
-	perl -pi -e "s{^prefix=$TGT_PREFIX\$}{prefix=$DEPS}" "$DEPS/lib/pkgconfig/fontconfig.pc"
+	perl -pi -e "s{^prefix=/?\$}{prefix=$DEPS}" "$DEPS/lib/pkgconfig/fontconfig.pc"
 	[ -f "$DEPS/lib/libfontconfig.a" ] || fail "libfontconfig.a not produced"
 	echo "fontconfig: OK"
 }
@@ -216,14 +220,14 @@ build_libftw() {
 # ============================================================================
 # 4. Window Maker (wmaker)  — needs Xft + fontconfig + the X11 closure + libftw
 # ============================================================================
-# Compiled-in paths land under /nfstest (the NFS rootfs mount point on the
-# netboot Pi): --prefix=/nfstest, --sysconfdir=/nfstest/etc.
+# Compiled-in paths land under "/" (the NFS rootfs is now mounted as the root
+# filesystem on the booted Pi, #44/#45): --prefix=/, --sysconfdir=/etc.
 #
 # Source patch (idempotent perl, re-applied on a fresh tree):
 #   src/main.c: ExecuteShellCommand() hardcodes shell="/bin/sh" (the getenv
-#   path is commented out upstream). The Pi's shell is at /nfstest/bin/sh, so
+#   path is commented out upstream). The Pi's shell is at /bin/sh, so
 #   menu/<exec> commands would fail. Guard with #ifndef WMAKER_SHELL and pass
-#   -DWMAKER_SHELL="/nfstest/bin/sh" — same trap as JWM's SHELL_NAME.
+#   -DWMAKER_SHELL="/bin/sh" — same trap as JWM's SHELL_NAME.
 #
 # Build defines (CFLAGS), each papering a libphoenix gap deterministically
 # against the CURRENT sysroot (no libphoenix rebuild required for this build):
@@ -238,7 +242,7 @@ build_libftw() {
 # Image codecs + extensions we have no cross libs for are disabled.
 WM_PWD_DEFS="-DMAXHOSTNAMELEN=256 -DO_NOFOLLOW=0 -DXOS_USE_MTSAFE_PWDAPI -D_POSIX_THREAD_SAFE_FUNCTIONS=200809L"
 WM_GAP_DEFS="-D_SC_LINE_MAX=5 -Drint=round -include wmaker-phoenix-compat.h"
-WM_SHELL_DEF='-DWMAKER_SHELL=\"/nfstest/bin/sh\"'
+WM_SHELL_DEF='-DWMAKER_SHELL=\"/bin/sh\"'
 # WMAKER_DIAG=1 compiles in the PHX_DIAG startup milestone markers (src/phx_diag.h)
 # that localize the post-defaults HDMI-black startup stall on HW. Off => upstream-
 # clean binary. The markers route through wmessage (the UART-proven path).
@@ -311,7 +315,8 @@ build_wmaker() {
 	      "$SRC/$WM_NV"/WINGs/.libs/libWINGs.a "$SRC/$WM_NV"/WINGs/libWINGs.la
 	( cd "$SRC/$WM_NV" \
 	  && { [ -f config.status ] || PKG_CONFIG="$PKGC" ./configure --host=aarch64-phoenix \
-	       --build=x86_64-pc-linux-gnu --prefix="$TGT_PREFIX" --sysconfdir="$TGT_PREFIX/etc" \
+	       --build=x86_64-pc-linux-gnu --prefix="$CONF_PREFIX" --sysconfdir="$TGT_PREFIX/etc" \
+	       --datadir="$TGT_PREFIX/share" --bindir="$TGT_PREFIX/bin" \
 	       --disable-shared \
 	       --disable-png --disable-jpeg --disable-tiff --disable-gif --disable-webp --disable-magick \
 	       --disable-shm --disable-xinerama --disable-nls --disable-xlocale \
@@ -349,7 +354,7 @@ stage_wmaker() {
 	fi
 
 	echo "=== staging Window Maker -> $NFS ==="
-	# 5a. binaries: wmaker + all util helpers, into /nfstest/bin
+	# 5a. binaries: wmaker + all util helpers, into /bin (export root)
 	cp "$stage$TGT_PREFIX/bin/"* "$NFS/bin/" 2>/dev/null
 	chmod 755 "$NFS/bin/wmaker"
 
@@ -428,38 +433,37 @@ preflight() {
 	echo "[OK] 0 undefined symbols"
 
 	# compiled-in shell path (menu/<exec> commands)
-	if strings "$wm" 2>/dev/null | grep -q "^/nfstest/bin/sh$"; then
-		echo "[OK] WMAKER_SHELL == /nfstest/bin/sh"
+	if strings "$wm" 2>/dev/null | grep -q "^/bin/sh$"; then
+		echo "[OK] WMAKER_SHELL == /bin/sh"
 	else
-		fail "shell path /nfstest/bin/sh not compiled in — menu commands would fail"
+		fail "shell path /bin/sh not compiled in — menu commands would fail"
 	fi
 
 	# compiled-in data dir (must match where we stage). The path appears inside
 	# colon-separated search-path strings, so match a substring, not a full line.
-	if strings "$wm" 2>/dev/null | grep -q "/nfstest/share/WindowMaker"; then
-		echo "[OK] data dir /nfstest/share/WindowMaker compiled in"
+	if strings "$wm" 2>/dev/null | grep -q "/share/WindowMaker"; then
+		echo "[OK] data dir /share/WindowMaker compiled in"
 	else
-		fail "/nfstest/share/WindowMaker not found in strings (data-dir path wrong)"
+		fail "/share/WindowMaker not found in strings (data-dir path wrong)"
 	fi
-	if strings "$wm" 2>/dev/null | grep -q "/nfstest/etc/WindowMaker"; then
-		echo "[OK] global defaults dir /nfstest/etc/WindowMaker compiled in"
+	if strings "$wm" 2>/dev/null | grep -q "/etc/WindowMaker"; then
+		echo "[OK] global defaults dir /etc/WindowMaker compiled in"
 	fi
 
 	# fontconfig's config dir (FONTCONFIG_PATH = sysconfdir/fonts) is baked into
 	# the statically-linked libfontconfig. It MUST match where fonts.conf is
 	# staged, or no aliases load and XftFontOpenName("sans serif") -> NULL ->
 	# wmaker won't start.
-	if strings "$wm" 2>/dev/null | grep -qx "/nfstest/etc/fonts"; then
-		echo "[OK] fontconfig reads /nfstest/etc/fonts (= staged fonts.conf dir)"
+	if strings "$wm" 2>/dev/null | grep -qx "/etc/fonts"; then
+		echo "[OK] fontconfig reads /etc/fonts (= staged fonts.conf dir)"
 	else
-		fail "fontconfig config dir /nfstest/etc/fonts not baked in — fonts.conf would never load"
+		fail "fontconfig config dir /etc/fonts not baked in — fonts.conf would never load"
 	fi
 
 	echo "=== ALL PRE-FLIGHT CHECKS PASSED ==="
-	echo "HW test (orchestrator): boot netboot image, then:"
-	echo "    ls /nfstest/bin                 # expect wmaker + wmsetbg present"
-	echo "    HOME=/nfstest/root PATH=/nfstest/bin:\$PATH /nfstest/bin/startx wmaker"
-	echo "      (or via the xlaunch launcher with HOME + PATH set; see WMAKER-PORT-STATUS.md)"
+	echo "HW test (orchestrator): boot the (nfsroot-default) image, then:"
+	echo "    ls /bin                         # expect wmaker + wmsetbg present"
+	echo "    startx wmaker                   # HOME/PATH defaulted by the xlaunch launcher"
 }
 
 # ----------------------------------------------------------------------------
