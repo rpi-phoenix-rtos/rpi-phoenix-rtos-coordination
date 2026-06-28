@@ -313,6 +313,15 @@ build_wmaker() {
 	      "$SRC/$WM_NV/WINGs/wfont.o"         "$SRC/$WM_NV/WINGs/wfont.lo" \
 	      "$SRC/$WM_NV/WINGs/configuration.o" "$SRC/$WM_NV/WINGs/configuration.lo" \
 	      "$SRC/$WM_NV"/WINGs/.libs/libWINGs.a "$SRC/$WM_NV"/WINGs/libWINGs.la
+	# Force-regenerate the menu/data files from their .in templates so the
+	# compiled-in #bindir#/#wmdatadir# (now /bin, /share) are re-substituted.
+	# Without this, a generated menu cached from an earlier build (e.g. one that
+	# used --bindir=/nfstest/bin) is newer than its .in and `make` skips it,
+	# silently shipping a stale "/nfstest/bin/WPrefs" EXEC path (#45).
+	for tin in "$SRC/$WM_NV"/WindowMaker/*.in; do
+		[ -f "$tin" ] || continue
+		rm -f "${tin%.in}"
+	done
 	( cd "$SRC/$WM_NV" \
 	  && { [ -f config.status ] || PKG_CONFIG="$PKGC" ./configure --host=aarch64-phoenix \
 	       --build=x86_64-pc-linux-gnu --prefix="$CONF_PREFIX" --sysconfdir="$TGT_PREFIX/etc" \
