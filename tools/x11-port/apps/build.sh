@@ -13,7 +13,7 @@ ART=${ARTIFACTS:-/home/houp/phoenix-rpi/artifacts/x11}
 HERE=$(cd "$(dirname "$0")" && pwd)
 
 cd "$HERE"
-for app in xphxdemo; do
+for app in xphxdemo xfontprobe; do
 	"$TC/aarch64-phoenix-gcc" --sysroot="$SR" -Wall -Wextra -O2 -static \
 		-I"$P/include" "$app.c" -o "$app" \
 		-L"$P/lib" -lX11 -lxcb -lXau -lXdmcp
