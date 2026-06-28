@@ -10,9 +10,23 @@
 #       (iso8859-1) and Xaw apps (xcalc/xedit) abort with
 #       "unable to load any usable fontset".  (#51)
 #   * the X server bitmap font dir -> $NFS/usr/share/fonts/X11/misc
-#       fonts.dir registers 6x13 under BOTH iso10646-1 and iso8859-1 (the latter
-#       is what the C-locale fontset needs); fonts.alias maps the common
-#       fixed-font names apps request (fixed/6x13/7x13/8x13/9x15/10x20) to it.
+#       The FULL standard misc set (409 .pcf.gz + the upstream fonts.dir /
+#       fonts.alias) is copied from the host X11 font tree. This is required for
+#       NAMED bitmap fonts (#56): apps like xcalc/xedit/xterm request "8x13",
+#       "9x15", "10x20", "-misc-fixed-*" — none of which are in the libXfont2
+#       built-in set (only 6x13+cursor are built in), so they can ONLY be served
+#       from this disk dir. The upstream fonts.dir already registers 6x13 under
+#       iso8859-1/iso10646-1, so the #51 C-locale fontset chain
+#       (fixed/6x13 alias -> iso8859-1) still resolves.
+#       NOTE: do NOT regenerate a minimal hand-written fonts.dir here — the
+#       earlier 3-line version (6x13+cursor only) silently broke every named
+#       disk font (#56). Copy the full upstream dir verbatim instead.
+#   * the X11 encodings DB -> $NFS/usr/share/fonts/X11/encodings
+#       The server references .../encodings/encodings.dir (libfontenc) when
+#       opening PCF fonts that name an encoding. Absent on the export until now;
+#       staged here as a host-side correctness fix (and a prime suspect for #56
+#       per-font load failures — verify with the xfontprobe HW run before
+#       asserting it as the cause).
 #
 # Idempotent. Run after build-x11-phoenix.sh (which builds the locale DB into the
 # shared prefix).
@@ -23,7 +37,8 @@ set -u
 PREFIX=/tmp/x11-phoenix
 NFS=/srv/phoenix-rpi4-nfs
 FONTDIR=$NFS/usr/share/fonts/X11/misc
-FIXED="-misc-fixed-medium-r-semicondensed--13-120-75-75-c-60"
+# Host X11 font tree (source of the standard bitmap fonts + encodings DB).
+HOSTFONTS=/usr/share/fonts/X11
 
 fail() { echo "FAIL: $*"; exit 1; }
 
@@ -38,22 +53,24 @@ else
 	echo "WARN: $PREFIX/share/X11/locale missing — run build-x11-phoenix.sh first"
 fi
 
-# --- X server misc font dir (6x13 must exist; staged earlier) ---
-if [ -f "$FONTDIR/6x13.pcf.gz" ]; then
-	cat > "$FONTDIR/fonts.dir" <<EOF
-3
-6x13.pcf.gz ${FIXED}-iso10646-1
-6x13.pcf.gz ${FIXED}-iso8859-1
-cursor.pcf.gz cursor
-EOF
-	{
-		for a in fixed variable 6x13 6x10 7x13 7x14 8x13 8x16 9x15 10x20; do
-			echo "$a ${FIXED}-iso8859-1"
-		done
-	} > "$FONTDIR/fonts.alias"
-	echo "wrote fonts.dir + fonts.alias (iso8859-1 fontset + common aliases) -> $FONTDIR"
+# --- X server misc font dir: copy the FULL standard set + upstream indices ---
+# (#56) Named disk fonts (8x13/9x15/10x20/-misc-fixed-*) live only here.
+if [ -d "$HOSTFONTS/misc" ] && [ -f "$HOSTFONTS/misc/fonts.dir" ]; then
+	mkdir -p "$FONTDIR"
+	cp -a "$HOSTFONTS/misc/." "$FONTDIR/"
+	n=$(grep -c '\.pcf' "$FONTDIR/fonts.dir" 2>/dev/null || echo '?')
+	echo "staged full misc font dir ($n fonts.dir entries) + fonts.alias -> $FONTDIR"
 else
-	echo "WARN: $FONTDIR/6x13.pcf.gz missing — stage a misc bitmap font first"
+	echo "WARN: $HOSTFONTS/misc (with fonts.dir) not found on host — named fonts will fail (#56)"
+fi
+
+# --- X11 encodings DB (libfontenc) ---
+if [ -d "$HOSTFONTS/encodings" ] && [ -f "$HOSTFONTS/encodings/encodings.dir" ]; then
+	mkdir -p "$NFS/usr/share/fonts/X11/encodings"
+	cp -a "$HOSTFONTS/encodings/." "$NFS/usr/share/fonts/X11/encodings/"
+	echo "staged encodings DB -> $NFS/usr/share/fonts/X11/encodings"
+else
+	echo "WARN: $HOSTFONTS/encodings missing on host — PCF fonts naming an encoding may fail"
 fi
 
 echo "=== X11 runtime assets staged ==="
