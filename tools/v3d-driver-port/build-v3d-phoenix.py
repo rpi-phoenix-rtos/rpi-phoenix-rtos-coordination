@@ -50,6 +50,14 @@ ABI_FLAGS = ["-mcpu=cortex-a72", "-mtune=cortex-a72", "-mstrict-align",
              "-mno-outline-atomics", "-fomit-frame-pointer",
              "-ffunction-sections", "-fdata-sections"]
 
+# task #29 striping discriminator: set VKQ_CPU_TILE=1 in the environment to build the
+# winsys CPU-tile path (CPU-tiles UIF textures into the dest image BO + skips the HW TFU
+# kick) instead of the hardware TFU upload. Default OFF -> GLQuake/normal path unchanged.
+# The macro only appears in v3d_phoenix_winsys.c, so passing it to every TU is harmless.
+EXTRA_DEFINES = (["-DVKQ_CPU_TILE=1"]
+                 if os.environ.get("VKQ_CPU_TILE", "0") not in ("", "0")
+                 else [])
+
 db = json.load(open(f"{HOSTBUILD}/compile_commands.json"))
 by_file = {e["file"]: e for e in db}
 
@@ -84,7 +92,7 @@ def transform(entry, src, out):
     # default; downgrade to warnings for the port (Phoenix libc misses some decls).
     # ABI = the project's aarch64.mk flags (correct on-device); section flags let the
     # final link --gc-sections drop everything unreachable from main (shrinks the ELF).
-    return [TC, "-c", src, "-o", out, f"-I{SHIM}", f"-I{PORT}"] + ABI_FLAGS + [
+    return [TC, "-c", src, "-o", out, f"-I{SHIM}", f"-I{PORT}"] + ABI_FLAGS + EXTRA_DEFINES + [
             "-Wno-error=implicit-function-declaration", "-Wno-error=implicit-int",
             "-Wno-error=int-conversion",
             "-include", COMPAT] + keep

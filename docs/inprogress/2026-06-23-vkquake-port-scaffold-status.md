@@ -1,5 +1,60 @@
 # vkQuake → Phoenix-RTOS Pi4 (aarch64-phoenix, V3DV) — build scaffold + gap inventory
 
+> **STATUS (2026-06-28): CPU-TILE DISCRIMINATOR BUILT + LINKED (host-side, awaiting one boot).**
+> Implemented the doc's "DO THIS FIRST" discriminator: a build-time CPU-tile path in
+> `tools/v3d-driver-port/v3d_phoenix_winsys.c` `ioc_submit_tfu()`, gated by `#ifdef VKQ_CPU_TILE`
+> (set via `VKQ_CPU_TILE=1` env in `build-v3d-phoenix.py`/`build-v3dv-phoenix.py`; default OFF, so
+> GLQuake/normal path is byte-unchanged — verified: default-build archives contain 0 markers).
+> For UIF dest + RASTER source images it CPU-tiles the staging buffer straight into the (uncached)
+> dest image BO via the existing `uif_pixel_off()` tiler and **skips the HW TFU kick**; non-UIF
+> mips / tiled (image→image) sources fall through to the real TFU. Strict gating: dst FORMAT field
+> 6/7, src ICFG FORMAT 0 (RASTER), src row stride from `iis`, bounds-checked against the dst BO end,
+> `__sync_synchronize()` + the read-side L2T/SLC coherency epilogue kept. **HARDENED past the probe:
+> the tiler now derives the macroblock stride from the slice PADDED height** (transcribed
+> `v3d_get_ub_pad` + `padded_height = align(h,8)+ub_pad*8`), not the bare copy height — a no-op for
+> all power-of-two heights (ub_pad==0) but correct for NPOT, so the discriminator is unambiguous.
+>
+> **Rebuilt + verified (host-side only, NO Pi boot — coordinator owns the UART):**
+> `tools/.gpu-libs/libv3d-phoenix.a` (408 objs) + `libv3dv-phoenix.a` (119 objs) + `libvkquake.a`
+> (82 TUs) → `/tmp/vkquake-phoenix` (23 MB ELF), **LINK OK / 0 undefined**. Same libs also copied to
+> the stale `/tmp/lib*.a` paths the doc once referenced. **Log marker to grep on the next boot:**
+> `TFU CPU-TILE path` (prints `WxH xor=N phgt=N ub_pad=N ... HW TFU skipped`, rate-limited like the
+> probe). Also `TFU CPU-TILE skip`/`FALLTHROUGH` for images that took the HW path.
+> - **Boot shows CLEAN textures** → the HW TFU diverged from the `uif_pixel_off` padded-height
+>   formula at points vcheck didn't sample (a HW-faithfulness gap on the upload side) AND we have a
+>   shippable CPU-tile fallback. (The CPU tiler writes the SAME padded-height layout the TFU should,
+>   so "clean" specifically means the HW TFU was unfaithful to that layout, not a generic blit bug.)
+> - **Boot STILL striped** → the layout formula is faithful but the descriptor reads it wrong → the
+>   bug is read-side (descriptor/slice-offset); the Mesa dive targets the v3dv-vs-gallium descriptor
+>   diff (see below), NOT image-height.
+> - **COORDINATOR CHECK (load-bearing): grep the per-texture marker TYPE, don't just look at HDMI.**
+>   The discriminator's verdict is only valid for textures that printed `TFU CPU-TILE path`. Confirm
+>   the visibly-striped textures print `path`, NOT `FALLTHROUGH`/`skip`. The XOR bounds check is
+>   deliberately conservative (over-estimates by `0x10*mb_w*256`, e.g. +128 KB for a 256-wide XOR
+>   image); if the dest BO is sized tight to its slice, an XOR texture could spuriously FALLTHROUGH to
+>   the HW TFU (logged with `max_off`/`avail`) → that texture tested the HW path, not the CPU path =
+>   no discriminator signal for it. If XOR textures fall through, tighten the bound to
+>   `mb_w*((phgt+7)/8)*256` (drop the `+0x10` — UIF_XOR interleave stays within the padded slice) and
+>   rebuild. The over-bound is memory-SAFE; only tighten if the boot shows it neutering the test.
+>
+> **Pre-staged Mesa analysis (host-side, while the Pi was owned) — ub_pad theory RETIRED.** Traced
+> `v3dv_image.c v3d_setup_plane_slices` (slice `padded_height`, `ub_pad`) → the buffer→image TFU in
+> `v3dv_meta_copy.c` (`ios=(slice->height<<16)|width` = BARE height; `dst_padded_height_or_stride =
+> slice->padded_height` folded to ICFG OPAD) → the TMU descriptor in `v3dvx_image.c
+> pack_texture_shader_state` (`tex.image_height = bare height`, `tex.level_0_ub_pad = slices[0].ub_pad`,
+> `extended=true`). The original `uif_pixel_off` probe ignored ub_pad, which looked like a candidate —
+> BUT checking the actual uploaded sizes from the prior striping boots (`grep -a "TFU copy"` in
+> `artifacts/`/`docs/done/`: only 2x2/8x8/8x9 [non-UIF] + 64²/128²/256²), **every UIF texture there has
+> ub_pad==0** (all power-of-two heights → `v3d_get_ub_pad`→0). So ub_pad CANNOT explain the observed
+> striping, and `uif_pixel_off` is not even in the real render path (probe + CPU-tiler only). The
+> honest scoped truth: vcheck's write-side proof only ever covered ub_pad==0 sizes — a real coverage
+> limit, not the cause. NEXT Mesa dive (if still-striped): diff the **v3dv** descriptor/slice setup
+> (`v3dvx_image.c pack_texture_shader_state` + `v3dv_image.c` slice offset/stride) against the
+> **working gallium GLQuake** path (`v3d_resource.c` + gallium `v3dx` TEXTURE_SHADER_STATE) for POT
+> UIF — GLQuake samples POT UIF cleanly through the same TMU, so whatever the v3dv descriptor does
+> differently is the read-side bug.
+>
+> ---
 > **STATUS (2026-06-27): TEXTURE-UPLOAD GAP CLOSED on the write side; striping localized to a
 > single TFU→TMU CACHE-FENCE bug.** The TFU buffer→image copy is now implemented and executes
 > in `v3d_phoenix_winsys.c` (present-hang gone; textures upload via TFU; extent + TMUWCF

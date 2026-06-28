@@ -607,6 +607,19 @@ static void *gpuva_to_cpu(uint32_t gpuva)
 	return NULL;
 }
 
+/* Bytes remaining in the BO that covers gpuva, from gpuva to the BO's end (0 if none).
+ * Used to bounds-check the CPU UIF tiler so it can never write past the dest image BO into
+ * an adjacent texture in the contiguous dmammap pool. */
+static uint32_t gpuva_bo_remaining(uint32_t gpuva)
+{
+	for (uint32_t i = 0; i < W.nbos; i++) {
+		struct pbo *b = &W.bos[i];
+		if (b->used && b->cpu != NULL && gpuva >= b->gpuva && gpuva < b->gpuva + b->size)
+			return (b->gpuva + b->size) - gpuva;
+	}
+	return 0;
+}
+
 /* Instrument-validation probe (render-stall, task #13): log EVERY live BO whose VA range
  * contains gpuva — handle, base, size, and (gpuva-base). If >1 matches, gpuva_to_cpu's
  * first-match is ambiguous and any "head is zero" reading is a WRONG-BO artifact (overlapping
@@ -992,6 +1005,12 @@ static uint32_t uif_pixel_off(uint32_t image_h, uint32_t x, uint32_t y, int do_x
 	uint32_t mb_x = x >> lmbw, mb_y = y >> lmbh;
 	uint32_t px = x - (mb_x << lmbw), py = y - (mb_y << lmbh);
 	if (do_xor && ((mb_x / 4u) & 1u)) mb_y ^= 0x10u;
+	/* mb_h is the per-column macroblock stride; it MUST be derived from the slice's PADDED
+	 * height (mesa v3dv_image.c v3d_setup_plane_slices: padded_height = align(h,uif_block_h) +
+	 * ub_pad*uif_block_h), NOT the bare image height. image_h here is already the padded height
+	 * (callers pass the ub-padded value). For ub_pad==0 sizes (all power-of-two heights, e.g.
+	 * 64/128/256 — exactly what the original TFU vcheck probe covered) padded==align(h,8), so this
+	 * is unchanged; the padding only matters for the rare NPOT heights v3d_get_ub_pad pads. */
 	uint32_t mb_h = (image_h + (1u << lmbh) - 1u) >> lmbh;
 	uint32_t mb_id = ((mb_x / 4u) * ((mb_h - 1u) * 4u)) + mb_x + mb_y * 4u;
 	uint32_t base = mb_id * 256u;
@@ -1019,6 +1038,118 @@ static int ioc_submit_tfu(struct drm_v3d_submit_tfu *t)
 	volatile uint32_t *c0 = W.core0;
 	volatile uint32_t *h = W.hub;
 	uint32_t spins;
+
+#ifdef VKQ_CPU_TILE
+	/* --- CPU-tile discriminator (task #29 striping triage) -----------------------------------
+	 * Instead of kicking the TFU to tile a RASTER staging buffer into the UIF destination image,
+	 * CPU-tile the texels directly into the (uncached) destination BO using the SAME uif_pixel_off
+	 * tiler the `TFU vcheck` probe proved byte-correct (UIF-VERIFIED 6/6). The TFU hardware kick is
+	 * SKIPPED for this image. If the texture then samples CLEAN, the TFU's produced layout differed
+	 * from what the descriptor reads at points vcheck did not sample (upload/blit-side bug) — and we
+	 * have a shippable CPU-tile fallback. If it STILL samples striped, the bug is independent of the
+	 * upload path: uif_pixel_off(t->ios height) itself disagrees with the TMU descriptor's slice
+	 * height ⇒ a v3dv image-creation / TEXTURE_SHADER_STATE bug (look in v3dv_image.c, not the blit).
+	 *
+	 * Strict gating (anything not satisfied falls through to the real TFU below):
+	 *   - dest tiling is UIF (IOA FORMAT field 6=UIF_NO_XOR / 7=UIF_XOR); uif_pixel_off is UIF+cpp=4
+	 *     only, so LINEARTILE/UBLINEAR mips MUST take the HW path or they would be corrupted;
+	 *   - source is RASTER (ICFG FORMAT field == 0); only then is the staging buffer a plain raster
+	 *     image we can index as src[y*srcstride + x]. A tiled (image->image / mipmap) source is NOT
+	 *     raster and must use the TFU;
+	 *   - the dest BO has room for the whole tiled image (bounds check vs gpuva_bo_remaining). */
+	{
+		uint32_t iofmt = (t->ioa >> 3) & 0x7u;            /* IOA dst FORMAT field (V3D33) */
+		uint32_t ifmt  = (t->icfg >> 18) & 0xfu;          /* ICFG src FORMAT field (V3D33) */
+		uint32_t w   = t->ios & 0xffffu;
+		uint32_t hgt = t->ios >> 16;
+		int dst_is_uif = (iofmt == 6u || iofmt == 7u);
+		int src_is_raster = (ifmt == 0u);                 /* V3D33_TFU_ICFG_FORMAT_RASTER */
+		int xor = (iofmt == 7u);
+		/* The UIF tiler's per-column macroblock stride uses the slice PADDED height, not the bare
+		 * copy height (= ios>>16). Transcribe mesa v3dv_image.c v3d_get_ub_pad (cpp=4: utile_h=4,
+		 * uif_block_h=8) + padded_height = align(h,8) + ub_pad*8, so the CPU layout matches the TMU
+		 * descriptor (which encodes image_height + level_0_ub_pad) for NPOT heights too. For all
+		 * power-of-two heights ub_pad==0, so phgt == align(h,8) and this is a no-op. */
+		const uint32_t uif_block_h = 8u, page_cache_ub_rows = 32u,
+		               page_ub_rows_x1_5 = 6u, page_cache_minus_1_5 = 26u;
+		uint32_t aligned_h = (hgt + uif_block_h - 1u) & ~(uif_block_h - 1u);
+		uint32_t height_ub = aligned_h / uif_block_h;
+		uint32_t off_in_pc = height_ub % page_cache_ub_rows;
+		uint32_t ub_pad = 0u;
+		if (off_in_pc != 0u) {
+			if (off_in_pc < page_ub_rows_x1_5)
+				ub_pad = (height_ub < page_cache_ub_rows) ? 0u
+				         : (page_ub_rows_x1_5 - off_in_pc);
+			else if (off_in_pc > page_cache_minus_1_5)
+				ub_pad = page_cache_ub_rows - off_in_pc;
+		}
+		uint32_t phgt = aligned_h + ub_pad * uif_block_h;   /* slice->padded_height */
+		/* Source row stride in PIXELS. For a RASTER source Mesa sets iis = src_stride/cpp; a 0 iis
+		 * means "broadcast 1 row" (clear/fill) which we don't CPU-tile. Fall back to width if the
+		 * field is the implicit no-stride case but width is sane. */
+		uint32_t src_stride_px = (t->iis & 0xffffffu);
+		if (src_stride_px == 0u) src_stride_px = w;
+
+		if (dst_is_uif && src_is_raster && w >= 1u && hgt >= 1u) {
+			const uint32_t *src = gpuva_to_cpu(t->iia);
+			uint32_t dst_gpuva = t->ioa & ~0x3fu;         /* strip the tiling-format tag bits */
+			uint32_t *dst = gpuva_to_cpu(dst_gpuva);
+			uint32_t avail = gpuva_bo_remaining(dst_gpuva);
+			/* Conservative upper bound on bytes the tiler touches, using the PADDED height (phgt).
+			 * The XOR variant flips bit 4 of mb_y inside uif_pixel_off, so the farthest write is NOT
+			 * simply (w-1,h-1) — a lower row with bit-4 set can land higher. Bound by the full padded
+			 * slice: mb columns = ceil(w/8), mb rows = ceil(phgt/8), and XOR can raise the effective
+			 * mb_y by up to 0x10 blocks, so reserve (mb_h+0x10) rows. Each macroblock is 256 B. This
+			 * over-estimates slightly but can never under-bound, so it cannot mis-size into a neighbor. */
+			uint32_t mb_w = (w + 7u) / 8u;
+			uint32_t mb_h_b = (phgt + 7u) / 8u + (xor ? 0x10u : 0u);
+			uint64_t max_off = (uint64_t)mb_w * (uint64_t)mb_h_b * 256u;
+
+			if (src && dst && max_off <= (uint64_t)avail) {
+				for (uint32_t y = 0; y < hgt; y++) {
+					const uint32_t *srow = src + (uint64_t)y * src_stride_px;
+					for (uint32_t x = 0; x < w; x++)
+						dst[uif_pixel_off(phgt, x, y, xor) / 4u] = srow[x];
+				}
+				__sync_synchronize();   /* drain CPU stores (dst is uncached, but be explicit) */
+
+				/* Keep the read-side coherency epilogue so the TMU's L2T/slice caches drop any
+				 * stale view of this GPU VA before the sampling CL — identical to the HW-path
+				 * epilogue below, minus the TFU write-combiner drain (no TFU ran). */
+				l2t_flush_wait(c0);
+				c0[CTL_L2TCACTL/4] = L2TCACTL_L2TFLS | L2TCACTL_FLM_CLEAN;
+				l2t_flush_wait(c0);
+				c0[CTL_SLCACTL/4] = SLCACTL_INVAL_ALL;
+
+				{
+					static unsigned cpu_n = 0;
+					cpu_n++;
+					if (cpu_n <= 12u || (cpu_n & 0x3ffu) == 0u)
+						fprintf(stderr, "v3d-winsys: TFU CPU-TILE path %ux%u xor=%d phgt=%u ub_pad=%u "
+							"iia=0x%08x->ioa=0x%08x (n=%u, HW TFU skipped)\n",
+							w, hgt, xor, phgt, ub_pad, t->iia, t->ioa, cpu_n);
+				}
+				return 0;   /* image populated by the CPU; do NOT kick the TFU */
+			}
+			else {
+				static unsigned cpu_skip_n = 0;
+				cpu_skip_n++;
+				if (cpu_skip_n <= 8u)
+					fprintf(stderr, "v3d-winsys: TFU CPU-TILE FALLTHROUGH %ux%u "
+						"(src=%p dst=%p max_off=%llu avail=%u) — using HW TFU\n",
+						w, hgt, (void *)src, (void *)dst,
+						(unsigned long long)max_off, avail);
+			}
+		}
+		else {
+			static unsigned cpu_hw_n = 0;
+			cpu_hw_n++;
+			if (cpu_hw_n <= 8u)
+				fprintf(stderr, "v3d-winsys: TFU CPU-TILE skip (non-UIF/non-raster: "
+					"iofmt=%u ifmt=%u %ux%u) — using HW TFU\n", iofmt, ifmt, w, hgt);
+		}
+	}
+#endif /* VKQ_CPU_TILE */
 
 	/* --- prologue: make the source coherent + translations fresh ---
 	 * Flush the MMU TLB so the just-created source/dest BOs are translated by their new PTEs,
