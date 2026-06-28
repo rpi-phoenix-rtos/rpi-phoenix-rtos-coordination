@@ -38,13 +38,16 @@ fail() { echo "FAIL: $*"; exit 1; }
 [ -f "$SYSROOT/lib/libglib-2.0.a" ] || { "$HERE/build-glib2.sh" || fail "build-glib2.sh failed"; }
 [ -f "$NCPREFIX/lib/libncurses.a" ] || { "$HERE/build-ncurses.sh" || fail "build-ncurses.sh failed"; }
 
-# mc-support: Phoenix lacks the mntent API (empty <mntent.h>, no getmntent). Stage
-# a glibc-compatible <mntent.h> + build a stub libmcsupport.a (no-mounts) so mc's
-# mountlist.c builds + links. See GLIB2-MC-PORT-NOTES.md.
+# mc-support: Phoenix lacks the mntent API (empty <mntent.h>, no getmntent) and
+# langinfo (no <langinfo.h>, no nl_langinfo). Stage glibc-compatible headers +
+# build a stub libmcsupport.a so mc's mountlist.c (no-mounts) and strutil.c
+# (nl_langinfo(CODESET)->"UTF-8") build + link. See GLIB2-MC-PORT-NOTES.md.
 cp -a "$HERE/mc-support/mntent.h" "$SYSROOT/usr/include/mntent.h"
+cp -a "$HERE/mc-support/langinfo.h" "$SYSROOT/usr/include/langinfo.h"
 if [ ! -f "$SYSROOT/lib/libmcsupport.a" ]; then
-	${TC}gcc --sysroot="$SYSROOT" -O2 -c "$HERE/mc-support/mntent-stub.c" -I"$HERE/mc-support" -o /tmp/mc-mntent.o || fail "mc-support compile failed"
-	${TC}ar rcs "$SYSROOT/lib/libmcsupport.a" /tmp/mc-mntent.o || fail "mc-support ar failed"
+	${TC}gcc --sysroot="$SYSROOT" -O2 -c "$HERE/mc-support/mntent-stub.c" -I"$HERE/mc-support" -o /tmp/mc-mntent.o || fail "mc-support mntent compile failed"
+	${TC}gcc --sysroot="$SYSROOT" -O2 -c "$HERE/mc-support/langinfo-stub.c" -I"$HERE/mc-support" -o /tmp/mc-langinfo.o || fail "mc-support langinfo compile failed"
+	${TC}ar rcs "$SYSROOT/lib/libmcsupport.a" /tmp/mc-mntent.o /tmp/mc-langinfo.o || fail "mc-support ar failed"
 fi
 
 mkdir -p "$SRC"
@@ -62,7 +65,14 @@ done
 
 GINC="-I$SYSROOT/usr/include/glib-2.0 -I$SYSROOT/usr/lib/glib-2.0/include"
 GLIBLIBS="-L$SYSROOT/lib -lglib-2.0 -lgmodule-2.0 -lmcsupport -lpthread -liconv -lresolv -lm"
-CF="--sysroot=$SYSROOT -O2 $GINC -I$NCPREFIX/include -I$NCPREFIX/include/ncurses"
+# Our ported ncurses is NARROW. mc's tty-ncurses.h enables ENABLE_SHADOWS (which
+# uses the WIDE ncurses API getcchar/setcchar/*_wchnstr/cchar_t) whenever the
+# ncurses header reports NCURSES_WIDECHAR=1 — and the narrow header sets that to 1
+# under _XOPEN_SOURCE>=500. Force NCURSES_WIDECHAR=0 (the header honours a
+# pre-definition via #ifndef) so mc compiles against the narrow API; the only loss
+# is dialog drop-shadows. (Full widec/UTF-8 mc needs ncursesw + libphoenix
+# wcwidth/mbrtowc/wcrtomb/mbsinit — an attended libc add; see GLIB2-MC-PORT-NOTES.md.)
+CF="--sysroot=$SYSROOT -O2 -DNCURSES_WIDECHAR=0 $GINC -I$NCPREFIX/include -I$NCPREFIX/include/ncurses"
 [ -f "$SHIM" ] && CF="$CF -include $SHIM"
 
 if [ ! -f "$XDIR/config.status" ]; then
@@ -75,7 +85,8 @@ if [ ! -f "$XDIR/config.status" ]; then
 	    --with-ncurses-includes="$NCPREFIX/include" \
 	    --with-ncurses-libs="$NCPREFIX/lib" \
 	    --without-subshell --without-x --without-gpm --disable-nls \
-	    --disable-vfs-undelfs --disable-vfs-sftp --disable-doxygen-doc \
+	    --disable-vfs-undelfs --disable-vfs-sftp --disable-vfs-ftp \
+	    --disable-doxygen-doc \
 	    CC=${TC}gcc AR=${TC}ar RANLIB=${TC}ranlib \
 	    CFLAGS="$CF" CPPFLAGS="--sysroot=$SYSROOT $GINC" \
 	    LDFLAGS="--sysroot=$SYSROOT -static -L$SYSROOT/lib -L$NCPREFIX/lib -L$ZLIB/lib" \
