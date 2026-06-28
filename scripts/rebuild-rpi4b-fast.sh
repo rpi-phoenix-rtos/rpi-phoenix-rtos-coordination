@@ -80,12 +80,13 @@ with_ports=0
 ports_only=0
 # Build variant (selects the boot script in user.plo.yaml via the RPI4B_VARIANT
 # env var):
-#   netboot (default) - probe-only SD, card-out safe (net-booted device bring-up)
+#   nfsroot (default) - mount the NFS export as root over the network (#153 T3 /
+#                       #44): the booted Pi gets a real "/" with /bin /usr /var
+#                       /etc + /dev via devfs. Netboot-delivered (no ext2 needed).
+#   netboot           - legacy probe-only SD, card-out safe, NFS at /nfstest (no
+#                       real root tree). Kept as the rollback fallback.
 #   sd                - mount the ext2 partition on the SD card as root (#120)
-#   nfsroot           - mount the NFS export as root over the network (#153 T3).
-#                       Netboot-delivered like netboot (no ext2 partition needed);
-#                       only the rendered user.plo.yaml differs.
-variant="netboot"
+variant="nfsroot"
 
 while [ "$#" -gt 0 ]; do
 	case "$1" in

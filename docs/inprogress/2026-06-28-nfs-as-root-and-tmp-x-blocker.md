@@ -86,7 +86,12 @@ launcher no longer prepends `/nfstest`). nfsroot is the path forward.
 Partial: x11 build/launcher de-/nfstest'd (`9e2c6a0`); ~28 `/nfstest` refs remain
 (quakespasm/vkquake ports, stress, some scripts/docs). Finish after /tmp-X lands.
 
-## Deployed image note
-The currently-flashed netboot image was built with a (now-reverted) 2 s tmpfs
-retry; rebuild `--scope core` to match committed source. Behaviour identical
-(X still blocked) — the retry was a no-op (registration genuinely fails).
+## Open wmaker follow-up (separate from #44)
+The user's pre-FS-directive complaint — background change / theme change have no
+effect, preferences app faults — is NOT covered by "wmaker renders": the
+deep-blue desktop is the configured DEFAULT, not a runtime change. A live lead
+is in the launch log: `Could not load image "/share/WindowMaker/Pixmaps/
+swback.png"` — note `/share/...`, not `/usr/share/...`. If wmaker's data/prefix
+root is misconfigured it hunts for pixmaps/backgrounds/styles in the wrong
+place, which would make "select a background → nothing" and "theme → nothing"
+fail silently. Tracked under #30.
