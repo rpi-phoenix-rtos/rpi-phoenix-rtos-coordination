@@ -11,7 +11,7 @@
 # bare empty window. libXt's compiled default search path points at the host
 # build prefix (/tmp/x11-phoenix), which does not exist on the Pi, so we stage
 # XCalc to $NFS/usr/share/X11/app-defaults and the launch recipe MUST set
-# XFILESEARCHPATH=/nfstest/usr/share/X11/app-defaults/%N before running xcalc.
+# XFILESEARCHPATH=/usr/share/X11/app-defaults/%N before running xcalc.
 #
 # SOURCE: xorg app release tarball xcalc-1.1.2. Host-side build only. Idempotent.
 #
@@ -89,5 +89,5 @@ und=$(${TC}nm -u "$ART/$APP" 2>/dev/null)
 [ -z "$und" ] && echo "[OK] 0 undefined symbols" || { echo "$und"; fail "undefined symbols present"; }
 echo "=== ALL PRE-FLIGHT CHECKS PASSED ==="
 echo "HW: in an xterm under twm (app-defaults REQUIRED for the button layout):"
-echo "    export XFILESEARCHPATH=/nfstest/usr/share/X11/app-defaults/%N"
+echo "    export XFILESEARCHPATH=/usr/share/X11/app-defaults/%N"
 echo "    xcalc &"

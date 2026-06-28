@@ -34,10 +34,10 @@ NFS=/srv/phoenix-rpi4-nfs
 
 # The compiled-in SYSTEM config path. JWM's configure defines
 # SYSTEM_CONFIG = "$sysconfdir/system.jwmrc" (NO extra jwm/ subdir), so to land
-# the path at /nfstest/etc/jwm/system.jwmrc we must pass --sysconfdir=/nfstest/etc/jwm.
+# the path at /etc/jwm/system.jwmrc we must pass --sysconfdir=/etc/jwm.
 # netboot mounts the NFS export at /nfstest (NOT /). This MUST match where the
 # config is staged below — it is the #1 "WM starts but finds no config" failure.
-SYSCONFDIR=/nfstest/etc/jwm
+SYSCONFDIR=/etc/jwm
 EXPECT_CFG=$SYSCONFDIR/system.jwmrc
 
 # Same X11-app build knobs as build_twm in build-x11-phoenix.sh.
@@ -89,7 +89,7 @@ fi
 if ! grep -q '#ifndef SHELL_NAME' "$JWMDIR/src/jwm.h"; then
 	perl -0pi -e 's{#define SHELL_NAME "/bin/sh"}{#ifndef SHELL_NAME\n#define SHELL_NAME "/bin/sh"\n#endif}' "$JWMDIR/src/jwm.h"
 fi
-SHELL_DEF='-DSHELL_NAME=\"/nfstest/bin/sh\"'
+SHELL_DEF='-DSHELL_NAME=\"/bin/sh\"'
 
 # --- 2. configure (only if not already configured) ---
 # --x-includes/--x-libraries point AC_PATH_X at the PREFIX so it does NOT probe
@@ -172,10 +172,10 @@ else
 fi
 
 echo "--- shell path JWM exec's its children with (must be on the export) ---"
-if strings "$NFS/bin/jwm" 2>/dev/null | grep -q "^/nfstest/bin/sh$"; then
-	echo "[OK] SHELL_NAME == /nfstest/bin/sh (StartupCommand + RootMenu programs will launch)"
+if strings "$NFS/bin/jwm" 2>/dev/null | grep -q "^/bin/sh$"; then
+	echo "[OK] SHELL_NAME == /bin/sh (StartupCommand + RootMenu programs will launch)"
 else
-	fail "SHELL_NAME is not /nfstest/bin/sh — JWM-launched commands (xeyes, menu) would fail"
+	fail "SHELL_NAME is not /bin/sh — JWM-launched commands (xeyes, menu) would fail"
 fi
 
 if [ -f "$NFS/etc/jwm/system.jwmrc" ]; then
@@ -186,5 +186,5 @@ fi
 
 echo "=== ALL PRE-FLIGHT CHECKS PASSED ==="
 echo "HW test (orchestrator): boot netboot image, then:"
-echo "    ls /nfstest/bin            # #156 warmup"
-echo "    /nfstest/bin/startx jwm    # expect taskbar + menu + decorated xeyes"
+echo "    ls /bin            # #156 warmup"
+echo "    /bin/startx jwm    # expect taskbar + menu + decorated xeyes"

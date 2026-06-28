@@ -18,9 +18,9 @@
 #
 # ASSETS (runtime, IMPORTANT): xbill loads its sprites at runtime from
 # <IMAGES>/bitmaps/*.xbm and <IMAGES>/pixmaps/*.xpm (x11.c), falling back to "."
-# when <IMAGES> is absent. We compile IMAGES=/nfstest/usr/share/xbill and stage
+# when <IMAGES> is absent. We compile IMAGES=/usr/share/xbill and stage
 # the bitmaps/ + pixmaps/ trees there, so the sprites resolve regardless of cwd.
-# SCOREFILE points at /nfstest/usr/share/xbill/scores (xbill degrades gracefully
+# SCOREFILE points at /usr/share/xbill/scores (xbill degrades gracefully
 # if it is unwritable on the read-only-ish NFS export).
 #
 # SOURCE: the alistairmcmillan/Xbill GitHub mirror of xbill 2.1 (has x11-athena.c;
@@ -43,8 +43,8 @@ NFS=/srv/phoenix-rpi4-nfs
 REPO=https://github.com/alistairmcmillan/Xbill.git
 
 # Runtime asset + score locations on the netboot NFS export.
-IMAGES_DIR=/nfstest/usr/share/xbill
-SCOREFILE=/nfstest/usr/share/xbill/scores
+IMAGES_DIR=/usr/share/xbill
+SCOREFILE=/usr/share/xbill/scores
 
 # Force-include the port shim (re-declares strncasecmp/strcasecmp, which xbill's
 # own shadowing "strings.h" hides from the system header). Committed under

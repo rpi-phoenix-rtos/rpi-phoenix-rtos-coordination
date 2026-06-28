@@ -12,7 +12,7 @@
 # RESOURCES: xclock ships app-defaults (the XClock class file). libXt's compiled
 # default search path points at the host build prefix (/tmp/x11-phoenix), absent
 # on the Pi, so we stage XClock to $NFS/usr/share/X11/app-defaults and the launch
-# recipe sets XFILESEARCHPATH=/nfstest/usr/share/X11/app-defaults/%N. (xclock has
+# recipe sets XFILESEARCHPATH=/usr/share/X11/app-defaults/%N. (xclock has
 # sensible built-in fallbacks, so it still runs as an analog clock without it.)
 #
 # SOURCE: xorg app release tarball xclock-1.1.1. Host-side build only. Idempotent.
@@ -93,5 +93,5 @@ und=$(${TC}nm -u "$ART/$APP" 2>/dev/null)
 [ -z "$und" ] && echo "[OK] 0 undefined symbols" || { echo "$und"; fail "undefined symbols present"; }
 echo "=== ALL PRE-FLIGHT CHECKS PASSED ==="
 echo "HW: in an xterm under twm:"
-echo "    export XFILESEARCHPATH=/nfstest/usr/share/X11/app-defaults/%N"
+echo "    export XFILESEARCHPATH=/usr/share/X11/app-defaults/%N"
 echo "    xclock &            # analog (default).   xclock -digital &   for digital"

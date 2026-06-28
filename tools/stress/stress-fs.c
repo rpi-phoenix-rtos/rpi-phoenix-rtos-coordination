@@ -1,7 +1,7 @@
 /*
  * Phoenix-RTOS Raspberry Pi 4 — FILE-I/O stress / micro-benchmark util (task #39).
  *
- * Exercises the file path on NFS (the working rootfs path, /nfstest — NOT the SD
+ * Exercises the file path on NFS (the working rootfs path under "/" — NOT the SD
  * card, whose large-read EIO is a separate known issue). All test files live
  * under <base>/stress/, created at startup (mkdir, EEXIST ignored).
  *
@@ -14,7 +14,7 @@
  *                              + verify read-back) concurrently.
  *   stress-fs all               seq + rand + many + conc at default intensities.
  *
- *   Optional final argv: a base dir overriding /nfstest (e.g. stress-fs seq 8 /tmp).
+ *   Optional final argv: a base dir overriding /root (e.g. stress-fs seq 8 /tmp).
  *
  * Integrity is the headline: every read verifies the exact bytes written; a
  * mismatch is a FAULT (silent corruption / lost update). A short read or write
@@ -53,7 +53,7 @@
 
 #define SUITE "fs"
 
-#define DEFAULT_BASE "/nfstest"
+#define DEFAULT_BASE "/root"
 
 /* Defaults sized to stress meaningfully without wedging the HW run given the
  * known NFS large-write stall. seq writes 4 MB in 64 KB chunks. */

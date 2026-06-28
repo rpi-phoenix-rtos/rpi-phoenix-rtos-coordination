@@ -16,7 +16,7 @@
  * The worker is THIS SAME binary re-exec'd with argv[1] == "_worker": it does a
  * bounded compute + alloc, then _exit(WORKER_EXIT_CODE). The re-exec path is
  * argv[0], which MUST be absolute (psh launches us as e.g.
- * /nfstest/bin/stress-proc) — guarded below.
+ * /bin/stress-proc) — guarded below.
  *
  * Result lines follow tools/stress/stress.h. Three buckets, only FAULT is a
  * finding: fork()->EAGAIN at the per-system process cap is the OS correctly

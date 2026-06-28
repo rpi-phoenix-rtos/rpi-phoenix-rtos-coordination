@@ -11,8 +11,8 @@
  *     (issue #24, a USB/usbmouse problem, upstream of X) -> the DDX can't help.
  *
  * Run from psh on its own (NOT while Xphoenix holds the device):
- *   /nfstest/bin/mouseprobe            # probes /dev/mouse0
- *   /nfstest/bin/mouseprobe /dev/kbd0  # (kbd0 is usually EBUSY: console holds it)
+ *   /bin/mouseprobe            # probes /dev/mouse0
+ *   /bin/mouseprobe /dev/kbd0  # (kbd0 is usually EBUSY: console holds it)
  * Move the mouse during the 30 s window.
  */
 #include <stdio.h>

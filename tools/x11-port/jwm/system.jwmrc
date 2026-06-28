@@ -9,19 +9,19 @@
      open a font and draw nothing — do NOT reintroduce them.
    - No icons (USE_PNG/JPEG/SVG are off in this build), so no <IconPath> and no
      icon="" attributes — they would just spam "unable to load icon" warnings.
-   - All launched programs use ABSOLUTE /nfstest/bin/... paths: the NFS export is
+   - All launched programs use ABSOLUTE /bin/... paths: the NFS export is
      mounted at /nfstest on netboot, NOT at /.
 
-  Compiled-in system path: /nfstest/etc/jwm/system.jwmrc  (configure
-  --sysconfdir=/nfstest/etc/jwm). Keep this file at that path on the export.
+  Compiled-in system path: /etc/jwm/system.jwmrc  (configure
+  --sysconfdir=/etc/jwm). Keep this file at that path on the export.
 -->
 <JWM>
 
     <!-- Root menu: right-click the desktop. Proves a real WM (not just a static
          taskbar) — launches xeyes, a terminal-less app, and offers restart/exit. -->
     <RootMenu onroot="1" height="20">
-        <Program label="xeyes">/nfstest/bin/xeyes</Program>
-        <Program label="2048">/nfstest/bin/2048</Program>
+        <Program label="xeyes">/bin/xeyes</Program>
+        <Program label="2048">/bin/2048</Program>
         <Separator/>
         <Restart label="Restart JWM"/>
         <Exit label="Exit JWM" confirm="false"/>
@@ -36,7 +36,7 @@
         <Pager labeled="true"/>
         <TaskList maxwidth="256"/>
         <Spacer width="4"/>
-        <Clock format="%H:%M"><Button mask="123">exec:/nfstest/bin/xeyes</Button></Clock>
+        <Clock format="%H:%M"><Button mask="123">exec:/bin/xeyes</Button></Clock>
     </Tray>
 
     <!-- Window decorations. JWM 2.4.6 schema (matches the shipped example.jwmrc):
@@ -117,7 +117,7 @@
          no position hint, so it is given a geometry here (compiled-in config has
          no RandomPlacement) to land at a fixed spot rather than triggering
          interactive rubber-band placement. -->
-    <StartupCommand>/nfstest/bin/xeyes -geometry 200x150+360+240</StartupCommand>
+    <StartupCommand>/bin/xeyes -geometry 200x150+360+240</StartupCommand>
 
     <!-- Key bindings -->
     <Key key="Up">up</Key>

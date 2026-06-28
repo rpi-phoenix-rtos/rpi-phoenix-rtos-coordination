@@ -41,7 +41,7 @@ the matched TTF.
 
 **What the orchestrator should see on the next `startx wmaker` grab:**
 - If the FIX works: `PHX_DIAG: WMCreateFont: direct-file bypass for "phxfile:…DejaVuSans.ttf:pixelsize=11"`
-  then `phxFileToFcPattern -> 0x… (no FcFontMatch scan)`, then `matched FC_FILE = "/nfstest/…/DejaVuSans.ttf"; before XftFontOpenPattern (FT_New_Face)`,
+  then `phxFileToFcPattern -> 0x… (no FcFontMatch scan)`, then `matched FC_FILE = "/…/DejaVuSans.ttf"; before XftFontOpenPattern (FT_New_Face)`,
   then `XftFontOpenPattern -> 0x…` (non-NULL) — and startup PROCEEDS past
   `WMCreateScreenWithRContext` to `wScreenInit returned`, the screen/dock should
   RENDER on HDMI.
@@ -80,11 +80,11 @@ concurrent rebuilds of the shared prefix.
 
 - `file` → ELF 64-bit, ARM aarch64, statically linked
 - `nm -u` → 0 undefined symbols
-- `strings` → `/nfstest/bin/sh` (shell), `/nfstest/share/WindowMaker` +
-  `/nfstest/etc/WindowMaker` (data dirs) compiled in
-- `strings` → `/nfstest/etc/fonts` is baked as fontconfig's `FONTCONFIG_PATH`
+- `strings` → `/bin/sh` (shell), `/share/WindowMaker` +
+  `/etc/WindowMaker` (data dirs) compiled in
+- `strings` → `/etc/fonts` is baked as fontconfig's `FONTCONFIG_PATH`
   (= `sysconfdir/fonts`), so the statically-linked libfontconfig loads
-  `/nfstest/etc/fonts/fonts.conf` — exactly where the alias config is staged.
+  `/etc/fonts/fonts.conf` — exactly where the alias config is staged.
   This is the linchpin of the font deliverable: if it pointed at a stock
   `/etc/fonts`, no aliases would load and `XftFontOpenName("sans serif")` would
   return NULL (wmaker won't start). Confirmed correct.
@@ -117,17 +117,17 @@ Host build dependency installed this session: **gperf** (`apt-get install gperf`
 1. **HW validation** — no Pi was booted (host-side-only task). The real test:
    ```
    boot netboot image
-   ls /nfstest/bin                 # expect wmaker + wmsetbg
-   HOME=/nfstest/root PATH=/nfstest/bin:$PATH /nfstest/bin/startx wmaker
+   ls /bin                 # expect wmaker + wmsetbg
+   HOME=/root PATH=/bin:$PATH /bin/startx wmaker
    ```
    `startx` is the `pl_phoenix_xlaunch` ELF; `startx wmaker` brings up Xphoenix
-   then forks `/nfstest/bin/wmaker` as the WM. **HOME and PATH must be set in the
+   then forks `/bin/wmaker` as the WM. **HOME and PATH must be set in the
    psh env** (the launcher passes `environ` through; it does not set them).
    Risks to watch on first boot: (a) Xft/fontconfig actually resolving "sans
    serif" to the DejaVu TTF (the `fonts.conf` aliases are designed for this but
    are untested on-target); (b) `~/GNUstep` writes on the (write-flaky) NFS root
    — if they fail, wmaker runs off the global defaults in
-   `/nfstest/share/WindowMaker` with warnings, which is acceptable for a first
+   `/share/WindowMaker` with warnings, which is acceptable for a first
    boot; (c) the same input/`/dev/kbd0`-EBUSY caveats as the rest of the X stack.
 
 2. **Upstream libphoenix** — `nftw`/`ftw`, `scandir`/`alphasort`, `nice`, and
@@ -158,7 +158,7 @@ Host build dependency installed this session: **gperf** (`apt-get install gperf`
 - **libc `system()`/`popen()` use `/bin/sh`, not `WMAKER_SHELL`.** The
   `WMAKER_SHELL` patch only covers `ExecuteShellCommand()` (menu/`<exec>`).
   These call sites shell out via libc, which hardcodes `/bin/sh` (absent on the
-  netboot RAM root, present at `/nfstest/bin/sh`):
+  netboot RAM root, present at `/bin/sh`):
     - `util/wmsetbg.c:1007` — `system(cmd_smooth)` for background image smoothing
     - `src/rootmenu.c:1186` — `popen()` for a menu pipe (`<OPEN PIPE>` menu entry)
     - `WINGs/proplist.c:1587` — `popen()` reading a proplist via a command
@@ -167,5 +167,5 @@ Host build dependency installed this session: **gperf** (`apt-get install gperf`
   menu `<exec>` go through the fixed `ExecuteShellCommand`). They would fail
   gracefully (with a werror) if hit. If a desktop boots and the background or a
   pipe-menu entry silently does nothing, this is why — not a mystery. A future
-  fix would be a `/nfstest/bin/sh` -> `/bin/sh` symlink on the root, or a libc
+  fix would be a `/bin/sh` -> `/bin/sh` symlink on the root, or a libc
   build configured with the alternate shell path.

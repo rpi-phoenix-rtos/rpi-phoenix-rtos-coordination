@@ -51,7 +51,7 @@ WCTYPE_INC=$PORTDIR/include
 # pw_shell, then this compiled default; xlaunch sets neither $SHELL nor
 # pw_shell, so THIS is what xterm exec's. (Patched resetShell() guards it with
 # #ifndef so this -D wins.) Same lesson as JWM's SHELL_NAME.
-SHELL_PATH=/nfstest/bin/sh
+SHELL_PATH=/bin/sh
 
 # pkg-config: prefix .pc only (LIBDIR, not just PATH) so host /usr/lib *.pc are
 # invisible to the cross configure — same precaution as build-jwm.sh.
@@ -161,7 +161,7 @@ if [ -d "$NFS/bin" ]; then
 	chmod 755 "$NFS/bin/xterm"
 	# Minimal terminfo (xterm sets TERM=xterm for the child; busybox ash uses
 	# hardcoded ANSI and ignores terminfo, but stage xterm/vt100 entries for any
-	# terminfo-aware program run inside). Maps to /nfstest/usr/share/terminfo.
+	# terminfo-aware program run inside). Maps to /usr/share/terminfo.
 	mkdir -p "$NFS/usr/share/terminfo/x" "$NFS/usr/share/terminfo/v"
 	for ti in x/xterm x/xterm-256color v/vt100; do
 		[ -f "/usr/share/terminfo/$ti" ] && cp "/usr/share/terminfo/$ti" "$NFS/usr/share/terminfo/$ti"
@@ -195,6 +195,6 @@ strings "$ART/xterm" | grep -qx "$SHELL_PATH" && echo "[OK] DEFSHELL_NAME == $SH
 
 echo "=== ALL PRE-FLIGHT CHECKS PASSED ==="
 echo "HW test (orchestrator): boot netboot image, then:"
-echo "    ls /nfstest/bin                 # #156 warmup"
-echo "    /nfstest/bin/startx term        # twm (focus) + xterm (managed terminal)"
-echo "  In the xterm window: type 'ls /nfstest/bin' + Enter — output validates HID->X->pty->shell."
+echo "    ls /bin                 # #156 warmup"
+echo "    /bin/startx term        # twm (focus) + xterm (managed terminal)"
+echo "  In the xterm window: type 'ls /bin' + Enter — output validates HID->X->pty->shell."

@@ -15,9 +15,9 @@
  *   pl_phoenix_xlaunch <Xphoenix-path> <fontdir> <client-path> [client-args...]
  *
  * e.g. on netboot/NFS:
- *   pl_phoenix_xlaunch /nfstest/bin/Xphoenix \
- *                      /nfstest/usr/share/fonts/X11/misc \
- *                      /nfstest/bin/xeyes
+ *   pl_phoenix_xlaunch /bin/Xphoenix \
+ *                      /usr/share/fonts/X11/misc \
+ *                      /bin/xeyes
  *
  * The server is always launched as ":0" with "-ac" (disable access control;
  * a local client has no xauth cookie) and "-nolisten tcp".

@@ -37,9 +37,9 @@ as before).
 **The command the user runs (netboot, NFS at /nfstest):**
 ```
 mkdir /tmp                 # if not already
-/nfstest/bin/startx desktop
+/bin/startx desktop
 ```
-(`/nfstest/bin/startx` is the launcher under its convenience name; `argv[0]`==startx
+(`/bin/startx` is the launcher under its convenience name; `argv[0]`==startx
 + argc<4 triggers convenience mode.) Equivalent fully-explicit invocation is NOT
 available for the multi-client case — use `startx desktop`. Single-client still works
 either way (`startx`, `startx twm`, or the explicit 3-arg form).
@@ -51,7 +51,7 @@ plain copy, not a symlink — `build-xlaunch.sh` now refreshes both automaticall
 
 **Expect on UART:** `xlaunch: startx mode — prefix=/nfstest client=desktop (2 clients)`,
 the `[fbdev] /dev/fb0: ...` line, `xlaunch: server socket present...`,
-`xlaunch: starting client[0]: /nfstest/bin/twm`, `xlaunch: starting client[1]: /nfstest/bin/xeyes`.
+`xlaunch: starting client[0]: /bin/twm`, `xlaunch: starting client[1]: /bin/xeyes`.
 twm will also log a few `unable to open font "-adobe-helvetica-bold-..."` warnings —
 the `misc`-only font path has no helvetica, so twm falls back to `fixed` (which IS in
 that path, since the server itself started). Those warnings are EXPECTED and harmless,
@@ -81,7 +81,7 @@ Read the vendored kdrive/dix source to confirm (not guess) the lifecycle:
   loop in Enable additionally absorbs the asynchronous console release. No fix needed.
 
 **HW test the orchestrator should run:**
-1. Boot netboot; at psh: `mkdir /tmp` (if needed) then `/nfstest/bin/startx desktop`.
+1. Boot netboot; at psh: `mkdir /tmp` (if needed) then `/bin/startx desktop`.
 2. On UART, confirm the keyboard line is the SUCCESS form, not EBUSY:
    - GOOD: `[fbdev] /dev/kbd0 opened (fd=N), RAW HID mode — keyboard active`
    - BAD:  `[fbdev] /dev/kbd0 open failed (Device or resource busy) — keyboard input disabled`
@@ -118,14 +118,14 @@ memory — but volatile documents the constraint cleanly for upstreaming.)
 **HW recipe (main agent, netboot, NFS export at /nfstest):**
 ```
 mkdir /tmp                         # if not already
-/bin/pl_phoenix_xlaunch /nfstest/bin/Xphoenix /nfstest/usr/share/fonts/X11/misc /nfstest/bin/xeyes
+/bin/pl_phoenix_xlaunch /bin/Xphoenix /usr/share/fonts/X11/misc /bin/xeyes
 ```
 (`/bin/pl_phoenix_xlaunch` is on the NFS root; pass absolute NFS paths for the three
 args.) Expect on UART: `xlaunch: starting server...`, the `[fbdev] /dev/fb0: ...` line,
 `xlaunch: server socket present...`, `xlaunch: starting client: .../xeyes (DISPLAY=:0)`.
 Expect on **HDMI**: xeyes' two eyes painted on the black X root (eyes won't track —
 pointer input is still a stub, that's fine; the paint is the proof). For twm later:
-stage a `twm` ELF to `/nfstest/bin/` and swap the last arg.
+stage a `twm` ELF to `/bin/` and swap the last arg.
 
 Risks: if Xphoenix names its socket differently than `/tmp/.X11-unix/X0`, the readiness
 poll times out but the launcher proceeds best-effort (server-reaches-dispatch is
