@@ -25,19 +25,17 @@
 static quakeparms_t parms;      /* host_parms (the pointer) is owned by host.c */
 
 /* Discovered basedir (set by wait_for_gamedata): "<basedir>/id1/pak0.pak" is the data. */
-static const char *g_basedir = "/";
+static const char *g_basedir = "/usr/share/quake";
 
 /* Wait (bounded) for the game data to be reachable before Host_Init, and discover WHERE
- * it lives. The same NFS export appears at different paths depending on the boot variant:
- *  - netboot variant: mounted at /nfstest (deterministic, ~0.5 s) -> data at /nfstest/id1
- *  - nfsroot variant: nfs-fs takeover registers it as "/" -> data at /id1, BUT a syspage-
- *    launched process can race the takeover and keep a stale (dummyfs) root that never sees
- *    /id1 (observed: 30 s of polling /id1 failed even after "registered / (takeover)").
- * So probe BOTH candidate basedirs each poll and adopt whichever first exposes id1/pak0.pak.
- * Also covers the libnfs first-read dircache ENOENT (#156): a retry succeeds. */
+ * it lives. The data (id1/pak0.pak) is installed FHS-style under /usr/share/quake on the
+ * NFS root (#46). Probe a few standard locations each poll and adopt whichever first
+ * exposes id1/pak0.pak. The bounded retry also covers a syspage-launched process racing
+ * the nfs-fs takeover (the root briefly resolves to the pre-takeover dummyfs) and the
+ * libnfs first-read dircache ENOENT (#156): a later retry succeeds. */
 static void wait_for_gamedata(void)
 {
-	static const char *cands[] = { "/nfstest", "/" };
+	static const char *cands[] = { "/usr/share/quake", "/opt/quake", "/" };
 	char path[80];
 	int i, c;
 	for (i = 0; i < 360; i++) {     /* ~180 s — NFS mount + DHCP can be slow/variable (#156) */
@@ -73,7 +71,7 @@ int main(int argc, char *argv[])
 	printf("quakespasm: main() entered (argc=%d)\n", argc);
 
 	host_parms = &parms;
-	parms.basedir = "/";    /* absolute: on nfsroot, /id1/pak0.pak is the NFS export */
+	parms.basedir = "/usr/share/quake";    /* FHS data dir; wait_for_gamedata() refines it (#46) */
 	parms.argc = argc;
 	parms.argv = argv;
 	parms.errstate = 0;

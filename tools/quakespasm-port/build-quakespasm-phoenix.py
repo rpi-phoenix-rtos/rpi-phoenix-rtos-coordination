@@ -110,8 +110,12 @@ def main():
     print(f"=== archived {len(objs)} objs -> {QSLIB} ===")
 
     # Link the full ELF; capture undefined-symbol gaps (the closure-reduction recon).
+    # 32 MB stack matches the canonical _user/rpi4-quake binary.mk link
+    # (-Wl,-z,stack-size=33554432); Quake's deep render/host call chains overflow
+    # the default. With it, this standalone ELF is directly stageable (the _user
+    # stub TU is just a binary.mk placeholder marker, no functional code).
     link = [TC] + objs + ["-Wl,--start-group", GLLIB, V3DLIB, "-Wl,--end-group",
-                          "-lstdc++", "-lm", "-o", ELF]
+                          "-lstdc++", "-lm", "-Wl,-z,stack-size=33554432", "-o", ELF]
     r = subprocess.run(link, capture_output=True, text=True)
     if r.returncode == 0:
         print(f"=== LINK OK -> {ELF} ===")
