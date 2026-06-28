@@ -22,16 +22,16 @@
 static quakeparms_t parms;      /* host_parms (the pointer) is owned by host.c */
 
 /* Discovered basedir (set by wait_for_gamedata): "<basedir>/id1/pak0.pak" is the data. */
-static const char *g_basedir = "/";
+static const char *g_basedir = "/usr/share/quake";
 
 /* Wait (bounded) for the game data to be reachable before Host_Init, and discover WHERE
- * it lives — same NFS-path race as the quakespasm port (netboot mounts at /nfstest;
- * nfsroot takeover registers it as "/"). Probe both candidate basedirs each poll and
- * adopt whichever first exposes id1/pak0.pak. Also absorbs the libnfs first-read dircache
- * ENOENT (#156): a retry succeeds. */
+ * it lives. The data is installed FHS-style under /usr/share/quake (#46), same as the
+ * quakespasm port. Probe a few standard locations each poll and adopt whichever first
+ * exposes id1/pak0.pak (the bounded retry also absorbs a syspage process racing the
+ * nfs-fs takeover + the libnfs first-read dircache ENOENT, #156). */
 static void wait_for_gamedata(void)
 {
-	static const char *cands[] = { "/nfstest", "/" };
+	static const char *cands[] = { "/usr/share/quake", "/opt/quake", "/" };
 	char path[80];
 	int i, c;
 	for (i = 0; i < 360; i++) {     /* ~180 s — NFS mount + DHCP can be slow/variable (#156) */
@@ -65,8 +65,8 @@ int main(int argc, char *argv[])
 	printf("vkquake: main() entered (argc=%d)\n", argc);
 
 	host_parms = &parms;
-	parms.basedir = "/";    /* absolute: on nfsroot, /id1/pak0.pak is the NFS export */
-	parms.userdir = "/";    /* DO_USERDIRS disabled -> userdir == basedir */
+	parms.basedir = "/usr/share/quake";    /* FHS data dir; wait_for_gamedata() refines it (#46) */
+	parms.userdir = "/usr/share/quake";    /* DO_USERDIRS disabled -> userdir == basedir */
 	parms.argc = argc;
 	parms.argv = argv;
 	parms.errstate = 0;
