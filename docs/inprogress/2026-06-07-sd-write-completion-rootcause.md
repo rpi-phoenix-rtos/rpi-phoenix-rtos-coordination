@@ -1,10 +1,39 @@
 # SD #154 — ROOT CAUSE FOUND: PIO write completion (Transfer-Complete IRQ never fires)
 
-> **STATUS (2026-06-26): still ACTIVE / PARKED — no change.** Root cause stands (writes
-> land but the Transfer-Complete IRQ never fires for writes → false ETIME); the CMD13-poll
-> completion fix is still designed-not-implemented. Validation needs an attended SD-card
-> swap, so it stays parked. The SD-write WIP in `storage/bcm2711-emmc/` is flagged by the
-> cleanup plan (Phase A) as "finalize behind a branch/flag."
+> **STATUS (2026-06-29): FIX CODED — awaiting HW validation.** Root cause stands (writes
+> land but the Transfer-Complete IRQ never fires for writes → false ETIME). The CMD13-poll
+> write-completion fix is now **implemented + builds green** (`--scope core`) in
+> `storage/bcm2711-emmc/sdcard.c` — see "Implementation (coded 2026-06-29)" below. It is
+> NOT yet HW-validated: that needs an attended SD-card swap (card-in breaks netboot), done
+> by the main session + the user, not in this coding pass.
+>
+> ### Implementation (coded 2026-06-29)
+> - New raw register-level CMD13 helper `_sdio_rawSendStatus()` (does NOT recurse through
+>   `sdio_cmdSend`/`_sdio_cmdSend` — the caller already holds both `cmdLock` and `eventLock`,
+>   so a high-level re-send would self-deadlock; the task-body step-2c "call `sdio_cmdSend`"
+>   was wrong about which lock and would deadlock). It runs with `eventLock` HELD and uses
+>   `_sdio_cmdExecutionWait(CMD_DONE)` (which condWaits on `eventLock`).
+> - `_sdio_pollCardReady()` polls that raw CMD13 with the Linux exp-backoff until
+>   `READY_FOR_DATA & CURRENT_STATE==TRAN`, bounded by `SDCARD_WRITE_BUSY_TIMEOUT_MS` (1000);
+>   `-EIO` on any card R1 error bit, `-ETIME` on expiry.
+> - `_sdio_cmdSend` data-done now branches on `pioRead`: READS keep the `TRANSFER_DONE` IRQ
+>   wait unchanged; WRITES call `_sdio_pollCardReady` with `eventLock` STILL HELD and on
+>   success **fall through to the single tail unlock + R1 read** (exactly one unlock per
+>   path — the inverse of the task-body's "unlock-before-poll" guidance, which would have
+>   broken `condWait`). The fall-through reads the final CMD13 R1 (TRAN+READY, no error
+>   bits) into `res[]`, which the caller's `CARD_STATUS_ERRORS` check accepts.
+> - Step 1: the pre-command `PRES_STATE_BUSY_FLAGS` busy-wait in `_sdio_cmdSend` is now
+>   skipped for `SDIO_CMD13_SEND_STATUS` (legal during card-busy) so the gated diag harness's
+>   high-level CMD13 status poll can issue during PRG.
+> - Read-error diagnostic `sdcard_readDiag()` (default-on, NOT gated; capped at first 3):
+>   on a read data-phase failure (PIO error path + read TRANSFER_DONE timeout) it logs
+>   `SDREADDIAG: cmd=.. intr=0x.. cmd13rc=.. r1=0x.. state=..` — the host data-end-bit
+>   INTR vs. the card's own CMD13 R1 state, the §4.1 discriminator (card in TRAN+READY ⇒
+>   HS50 sampling-margin ⇒ drop clock; card off-TRAN ⇒ wedge ⇒ re-init). Read behavior
+>   otherwise unchanged.
+> - `sdstorage_dev.c` write-retry (`SDCARD_WRITE_RETRIES`) kept as belt-and-suspenders.
+>
+> The original parked text follows unchanged for the record.
 
 **Date:** 2026-06-07. **Task:** #154. **Status:** root cause HW-proven; **fix designed, not yet
 implemented**. Paused for an overnight NFS session (SD needs card-swaps; card is in the host).
