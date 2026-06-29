@@ -371,11 +371,28 @@ Every guarded allocation is laid out as:
 
 The header (fixed `PREFIX` before the user pointer) stores the requested size, a
 `GUARD_MAGIC`, an intrusive live-block list, and the allocating backtrace
-(`__builtin_return_address(0..3)` captured at malloc time). On EVERY wrapper entry
-it scans all live blocks' canaries BEFORE delegating to the real allocator (so the
-overflow is caught before libphoenix dlmalloc faults on its own corrupted
+(`__builtin_return_address(0..7)` captured at malloc time — 8 deep because mc
+allocates via `g_malloc`/`g_strdup`/`g_strdup_printf`, so RA(0..1) are usually
+inside libglib and the mc init frame only appears at RA(2..7)). On EVERY wrapper
+entry it scans all live blocks' canaries BEFORE delegating to the real allocator
+(so the overflow is caught before libphoenix dlmalloc faults on its own corrupted
 metadata). Foreign pointers (no magic) pass through untranslated. A reentrancy
 flag prevents the scan/`fprintf` from recursing into the allocator.
+
+**Backtrace-depth caveat (READ THIS when reading GUARD-ALLOC-BT):** libglib-2.0.a
+is built `-O2` WITHOUT `-fno-omit-frame-pointer` (build-glib2.sh). On aarch64,
+`__builtin_return_address(n>0)` needs frame-pointer chaining in the intervening
+frames, so the chain may break (read 0 / a garbage address that addr2line can't
+resolve) at the first glib boundary. RA(0) is always reliable. So:
+- If RA(0..7) resolve into mc's own `src/`/`lib/` `.c` files → that names the
+  call site directly. Take the SHALLOWEST address that lands in mc source.
+- If the chain bottoms out inside glib (addresses resolve to `gmem.c`/`gstrfuncs.c`
+  or fail to resolve), lean on **`GUARD-CLOBBER-ASCII` + `size`** as the primary
+  signal — the clobber bytes name the overrun string, and the size pins which
+  fixed-size mc buffer was too small. (The xcalc #58 precedent crossed similar
+  `-O2` libs and still yielded a usable backtrace, so it usually degrades
+  gracefully.) If glib frames are needed and ASCII+size aren't enough, the
+  attended fix is to rebuild glib with `-fno-omit-frame-pointer`.
 
 ### What mc-guard prints on detection (for the main session to CAPTURE)
 
@@ -384,7 +401,7 @@ and `_exit(55)`:
 
 ```
 GUARD-OVERFLOW: TRAIL redzone clobbered; block alloc'd size=<n> by ~<k> bytes
-GUARD-ALLOC-BT: <a0> <a1> <a2> <a3>
+GUARD-ALLOC-BT: <a0> <a1> <a2> <a3> <a4> <a5> <a6> <a7>
 GUARD-CLOBBER-HEX: <up to 64 hex bytes of the clobbered redzone>
 GUARD-CLOBBER-ASCII: "<same bytes as printable ascii>"
 ```
@@ -406,7 +423,7 @@ ASCII help text, so the clobber bytes likely NAME the source string being copied
 
 ```
 aarch64-phoenix-addr2line -e /home/houp/phoenix-rpi/artifacts/mc-guard -f -C \
-    <a0> <a1> <a2> <a3>
+    <a0> <a1> <a2> <a3> <a4> <a5> <a6> <a7>
 ```
 
 (`-f` = function name, `-C` = demangle.) Each address resolves to

@@ -58,7 +58,10 @@ typedef struct guard_hdr {
 	size_t req;                /* requested user size */
 	struct guard_hdr *next;    /* intrusive live-block list */
 	struct guard_hdr *prev;
-	void *bt[4];               /* allocating return-address chain */
+	void *bt[8];               /* allocating return-address chain. 8 deep because
+	                            * mc allocates via g_malloc/g_strdup/... — RA(0..1)
+	                            * are usually inside libglib, so the mc init frame
+	                            * we are hunting only appears at RA(2..7). */
 } guard_hdr_t;
 
 /* User region must stay 16-byte aligned. PREFIX = header + lead redzone, rounded
@@ -129,8 +132,9 @@ static void report_overflow(guard_hdr_t *h, const char *which)
 		"GUARD-OVERFLOW: %s redzone clobbered; block alloc'd size=%zu "
 		"by ~%zu bytes\n",
 		which, h->req, over);
-	fprintf(stderr, "GUARD-ALLOC-BT: %p %p %p %p\n",
-		h->bt[0], h->bt[1], h->bt[2], h->bt[3]);
+	fprintf(stderr, "GUARD-ALLOC-BT: %p %p %p %p %p %p %p %p\n",
+		h->bt[0], h->bt[1], h->bt[2], h->bt[3],
+		h->bt[4], h->bt[5], h->bt[6], h->bt[7]);
 
 	/* dump the clobbered redzone as hex AND ascii: the original fault address
 	 * was ASCII help text, so the clobber content likely names the source
@@ -199,18 +203,18 @@ static void list_remove(guard_hdr_t *h)
 		h->next->prev = h->prev;
 }
 
-/* Carve a guarded block out of a raw base allocation of total bytes. */
-static void *guard_make(void *base, size_t req, void *r0, void *r1, void *r2, void *r3)
+/* Carve a guarded block out of a raw base allocation of total bytes. bt[] is the
+ * 8-deep allocating return-address chain captured by the caller. */
+static void *guard_make(void *base, size_t req, void *const bt[8])
 {
 	guard_hdr_t *h = (guard_hdr_t *)base;
 	unsigned char *user;
+	int i;
 
 	h->magic = GUARD_MAGIC;
 	h->req = req;
-	h->bt[0] = r0;
-	h->bt[1] = r1;
-	h->bt[2] = r2;
-	h->bt[3] = r3;
+	for (i = 0; i < 8; i++)
+		h->bt[i] = bt[i];
 	list_add(h);
 
 	user = (unsigned char *)base + PREFIX;
@@ -224,27 +228,41 @@ static size_t guard_total(size_t req)
 	return PREFIX + req + TRAIL_REDZONE;
 }
 
+/* Capture the 8-deep allocating return-address chain into a local array `bt`.
+ * Must be invoked directly in the wrapper body (not a helper) so frame 0 is the
+ * wrapper's caller. __builtin_return_address(n>0) on aarch64 needs frame-pointer
+ * chaining (-fno-omit-frame-pointer) in the intervening frames; libglib is built
+ * -O2 without it, so frames beyond the first glib boundary may read NULL/garbage
+ * — use GUARD-CLOBBER-ASCII + size as the independent signal in that case. */
+#define CAPTURE_BT(bt) do { \
+	(bt)[0] = __builtin_return_address(0); \
+	(bt)[1] = __builtin_return_address(1); \
+	(bt)[2] = __builtin_return_address(2); \
+	(bt)[3] = __builtin_return_address(3); \
+	(bt)[4] = __builtin_return_address(4); \
+	(bt)[5] = __builtin_return_address(5); \
+	(bt)[6] = __builtin_return_address(6); \
+	(bt)[7] = __builtin_return_address(7); \
+} while (0)
+
 void *__wrap_malloc(size_t size)
 {
 	void *base;
-	void *r0, *r1, *r2, *r3;
+	void *bt[8];
 
 	if (in_guard)
 		return __real_malloc(size);
 
 	in_guard = 1;
 	scan_all();
-	r0 = __builtin_return_address(0);
-	r1 = __builtin_return_address(1);
-	r2 = __builtin_return_address(2);
-	r3 = __builtin_return_address(3);
+	CAPTURE_BT(bt);
 	base = __real_malloc(guard_total(size));
 	if (base == NULL) {
 		in_guard = 0;
 		return NULL;
 	}
 	{
-		void *u = guard_make(base, size, r0, r1, r2, r3);
+		void *u = guard_make(base, size, bt);
 		in_guard = 0;
 		return u;
 	}
@@ -254,7 +272,7 @@ void *__wrap_calloc(size_t nmemb, size_t size)
 {
 	size_t req = nmemb * size;
 	void *base;
-	void *r0, *r1, *r2, *r3;
+	void *bt[8];
 
 	if (in_guard) {
 		/* calloc must zero; use real calloc to keep semantics */
@@ -263,10 +281,7 @@ void *__wrap_calloc(size_t nmemb, size_t size)
 
 	in_guard = 1;
 	scan_all();
-	r0 = __builtin_return_address(0);
-	r1 = __builtin_return_address(1);
-	r2 = __builtin_return_address(2);
-	r3 = __builtin_return_address(3);
+	CAPTURE_BT(bt);
 	/* over-allocate via malloc, then zero only the user region (redzones get
 	 * the canary, header gets set by guard_make). */
 	base = __real_malloc(guard_total(req));
@@ -275,7 +290,7 @@ void *__wrap_calloc(size_t nmemb, size_t size)
 		return NULL;
 	}
 	{
-		void *u = guard_make(base, req, r0, r1, r2, r3);
+		void *u = guard_make(base, req, bt);
 		memset(u, 0, req);
 		in_guard = 0;
 		return u;
@@ -286,7 +301,7 @@ void *__wrap_realloc(void *ptr, size_t size)
 {
 	guard_hdr_t *h;
 	void *base, *newbase, *u;
-	void *r0, *r1, *r2, *r3;
+	void *bt[8];
 	size_t copy;
 
 	if (in_guard)
@@ -306,10 +321,7 @@ void *__wrap_realloc(void *ptr, size_t size)
 		return u;
 	}
 
-	r0 = __builtin_return_address(0);
-	r1 = __builtin_return_address(1);
-	r2 = __builtin_return_address(2);
-	r3 = __builtin_return_address(3);
+	CAPTURE_BT(bt);
 
 	if (size == 0) {
 		/* realloc(ptr,0): free + return NULL (libphoenix semantics) */
@@ -328,7 +340,7 @@ void *__wrap_realloc(void *ptr, size_t size)
 		in_guard = 0;
 		return NULL; /* old block left intact, per realloc contract */
 	}
-	u = guard_make(newbase, size, r0, r1, r2, r3);
+	u = guard_make(newbase, size, bt);
 	memcpy(u, ptr, copy);
 
 	/* free the old block */
