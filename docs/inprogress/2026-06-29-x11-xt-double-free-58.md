@@ -63,10 +63,19 @@ xlaunch: client[0] exited (status=0x46)
    true double-frees, free-of-non-heap, and overflows — **zero of any** on the
    identical code path. The upstream logic frees everything correctly.
 
-   (Caveat for airtightness: distro libXt/libXmu are 1.2.1/1.1.3 vs the port's
-   1.3.0/1.2.1; libXaw is the exact 1.0.16. The converter/resource code on this
-   path is materially identical across those minor versions, and the warning
-   reproduced byte-for-byte, so the clean valgrind result is trustworthy.)
+   Version-gap closure (the load-bearing check): the distro libXt used in the
+   valgrind run is 1.2.1, but the port ships 1.3.0. Diffed pristine libXt-1.2.1
+   vs 1.3.0 for every file on the death path (Convert.c, Resources.c, Create.c,
+   Destroy.c, Alloc.c, GetValues.c, Initialize.c). The only changes are cosmetic:
+   `memmove`->`memcpy`, `__XtMalloc(n*size)`->`XtMallocArray(n,size)` (same result,
+   overflow-checked), `XtRealloc`->`XtReallocArray`, and a NEW `XtReallocArray`
+   helper. NO change to the conversion cache (`CacheEnter`/`FreeCacheRec`),
+   `XtConvertAndStore`, or the resource-default free logic. So the
+   conversion-failure path is functionally identical in 1.2.1 and 1.3.0, and the
+   clean 1.2.1 valgrind result validly establishes 1.3.0 is clean on this path
+   too. libXaw is the exact version-matched 1.0.16. (Also built pristine
+   libXt-1.3.0 natively to confirm it compiles clean; full static relink was not
+   needed once the diff proved path-equivalence.)
 
 ## Conclusion: libphoenix-specific runtime divergence
 
@@ -105,6 +114,19 @@ one decisive line on the UART:
 
 Validated on the host glibc build: the tracer emits **0** FREE-TRACE lines on a
 clean run (no false positives) while the "calculator" warning still fires.
+
+Tracer caveats (the offending pointer still prints; only the A/B tag can be
+imperfect):
+- On the host the X libs are SHARED, so `--wrap` only caught xcalc's own
+  malloc/free; the Pi build is STATIC, so the wrappers also see all libXt/libXaw
+  internal traffic (far more). The set is 16384 slots (load < ~0.06 even at the
+  measured ~1000 live host blocks; library traffic raises this but headroom is
+  large). If the `table full` line ever prints, raise `SLOTS`.
+- `freed_ring` is 4096 deep: if a double-freed pointer's first free was >4096
+  frees earlier, it wraps out of the ring and the line is tagged A instead of B.
+  The pointer + ordinal stay correct; only the hypothesis label may flip. Treat a
+  NON-HEAP line whose pointer looks heap-shaped (not a small constant / .rodata
+  address) as possibly-B.
 
 ### HW run (main session)
 
