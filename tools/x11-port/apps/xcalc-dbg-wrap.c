@@ -207,6 +207,17 @@ void __wrap_free(void *ptr)
 				"-> static/aliased buffer freed (hypothesis A)\n",
 				free_ordinal, ptr);
 		}
+		/* Print the call stack of the offending free so the exact Xfree call
+		 * site can be addr2line'd against /bin/xcalc-dbg. __builtin_return_address
+		 * is used (libphoenix lacks backtrace()/libunwind). Built -O0
+		 * -fno-omit-frame-pointer so the return-address chain is walkable. */
+		fprintf(stderr, "FREE-BT: %p %p %p %p %p %p\n",
+			__builtin_return_address(0),
+			__builtin_return_address(1),
+			__builtin_return_address(2),
+			__builtin_return_address(3),
+			__builtin_return_address(4),
+			__builtin_return_address(5));
 		fflush(stderr);
 		/* pass through unchanged; libphoenix will abort here, but our marker is
 		 * already on the wire */

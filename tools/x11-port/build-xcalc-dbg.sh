@@ -44,7 +44,7 @@ fail() { echo "FAIL: $*"; exit 1; }
 [ -d "$XDIR" ] || fail "$XDIR missing (run build-xcalc.sh first)"
 
 echo "=== compiling wrap tracer (aarch64-phoenix) ==="
-${TC}gcc --sysroot="$SYSROOT" -g -O0 -I"$PREFIX/include" -c "$WRAP" \
+${TC}gcc --sysroot="$SYSROOT" -g -O0 -fno-omit-frame-pointer -I"$PREFIX/include" -c "$WRAP" \
     -o "$XDIR/xcalc-dbg-wrap.o" || fail "wrap compile failed"
 
 echo "=== compiling xcalc objects (aarch64-phoenix) ==="
