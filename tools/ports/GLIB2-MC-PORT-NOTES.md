@@ -337,3 +337,105 @@ to a codeset-independent heap overflow in mc's init, tripping in mc_args_parse, 
 `/bin/mc-dbg` (markers) + `/bin/mc-ascii` (codeset-exoneration proof) staged.** Next
 attended step: build an `MC_VARIANT=guard` with `MALLOC_CHECK_`-style heap canaries or
 bisect mc_args_parse with finer markers to catch the overflowing write.
+
+## MC_VARIANT=guard — redzone/canary allocator shim BUILT + STAGED (2026-06-29)
+
+To catch the OVERFLOWING WRITE (the planter, not the trip site), `build-mc.sh` now
+has an `MC_VARIANT=guard` that links a redzone/canary allocator shim
+(`tools/ports/mc-support/mc-guard-wrap.c`) into mc via
+`-Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=free`. Mirrors the proven
+`tools/x11-port/apps/xcalc-dbg-wrap.c` pattern (#58), adapted from double-free
+detection to overflow detection.
+
+Build + stage:
+
+```
+MC_VARIANT=guard tools/ports/build-mc.sh   # -> /bin/mc-guard + artifacts/mc-guard
+```
+
+Verified at build time (PRE-FLIGHT gates, all PASS): `__wrap_{malloc,calloc,
+realloc,free}` are `T` (defined) in the final link — the go/no-go that `--wrap`
+reached the link; 0 undefined symbols; ELF type EXEC (non-PIE, so runtime return
+addresses == link addresses == addr2line-resolvable); `.debug_info` present, not
+stripped. Built `-O0 -g -fno-omit-frame-pointer` for mc's OWN TUs (not just the
+shim) so `__builtin_return_address(1..3)` walks through mc's frames.
+
+### How the shim works
+
+Every guarded allocation is laid out as:
+
+```
+[ guard_hdr_t | LEAD redzone (32B 0xAB) | <user region> | TRAIL redzone (64B 0xAB) ]
+ ^base (to __real_*)                      ^user ptr (to mc)
+```
+
+The header (fixed `PREFIX` before the user pointer) stores the requested size, a
+`GUARD_MAGIC`, an intrusive live-block list, and the allocating backtrace
+(`__builtin_return_address(0..3)` captured at malloc time). On EVERY wrapper entry
+it scans all live blocks' canaries BEFORE delegating to the real allocator (so the
+overflow is caught before libphoenix dlmalloc faults on its own corrupted
+metadata). Foreign pointers (no magic) pass through untranslated. A reentrancy
+flag prevents the scan/`fprintf` from recursing into the allocator.
+
+### What mc-guard prints on detection (for the main session to CAPTURE)
+
+On the first clobbered redzone it emits exactly these lines to stderr, fflushes,
+and `_exit(55)`:
+
+```
+GUARD-OVERFLOW: TRAIL redzone clobbered; block alloc'd size=<n> by ~<k> bytes
+GUARD-ALLOC-BT: <a0> <a1> <a2> <a3>
+GUARD-CLOBBER-HEX: <up to 64 hex bytes of the clobbered redzone>
+GUARD-CLOBBER-ASCII: "<same bytes as printable ascii>"
+```
+
+(The `GUARD-ALLOC-BT` addresses are the ALLOCATING call site — the code that
+asked for the too-small buffer — NOT the detection site. That is the key output.)
+
+Two other variants of the first line are possible:
+- `... LEAD redzone clobbered ...` (underflow before the user region), or
+- `GUARD-OVERFLOW: live-list header magic clobbered (overflow reached an adjacent
+  block header)` with `GUARD-ALLOC-BT: <header destroyed>` — if the overflow was
+  big enough to wipe a neighbouring block's header before the scan ran.
+
+The `GUARD-CLOBBER-ASCII` line is high-value: the original Data-Abort `far=` was
+ASCII help text, so the clobber bytes likely NAME the source string being copied
+(may pin the source buffer directly, independent of the backtrace).
+
+### addr2line recipe (resolve the allocating backtrace)
+
+```
+aarch64-phoenix-addr2line -e /home/houp/phoenix-rpi/artifacts/mc-guard -f -C \
+    <a0> <a1> <a2> <a3>
+```
+
+(`-f` = function name, `-C` = demangle.) Each address resolves to
+`function` + `file:line`. The toolchain prefix is
+`/home/houp/phoenix-rpi/.toolchain/aarch64-phoenix/bin/`. `artifacts/mc-guard` ==
+the staged `/bin/mc-guard` (same bytes). Verified working: e.g.
+`addr2line ... 0x56d644` → `__wrap_malloc / mc-guard-wrap.c:228`. The `<a0..a3>`
+chain names the mc (or glib) function that allocated the overflowed buffer →
+pins the fix.
+
+### To run on HW
+
+`mc-guard -V` (or `mc-guard`). Expect the four `GUARD-*` lines on the UART, then
+exit 55, INSTEAD of the `Exception #36: Data Abort` — the shim catches the write
+before dlmalloc faults. If it Data-Aborts WITHOUT a `GUARD-*` line, the overflow
+is in a non-malloc'd buffer (static/stack), not a heap-chunk overflow. If it HANGS
+with no output, the per-alloc full-list canary scan is O(n²) over the startup
+alloc burst — the lever is to scan only the freed block + a recent-N ring (noted
+in the shim header); the crash trips early (mc_args_parse) so n is likely modest.
+
+### Build mechanics (why guard needs its own configure)
+
+guard differs from stock/dbg in BOTH CFLAGS (`-O0 -g -fno-omit-frame-pointer` vs
+`-O2`) and the final-link `--wrap` flags, so the cached `config.status` can't be
+reused. A `.mc-guard-configured` stamp records the tree's guard-ness; flipping
+into/out of guard forces `make distclean` + reconfigure. The guard object is an
+ARCHIVE MEMBER of `libmcsupport.a` (libtool rejects a raw `.o` in LDFLAGS when
+building intermediate `libmc*.la`); the `-Wl,--wrap=` flags are injected ONLY at
+the final `make LDFLAGS=...` link (a full-LDF override, since make var
+assignment replaces not appends) so they never reach configure's conftest probe
+(which would fail with undefined `__wrap_*` from libphoenix pthread) nor the
+ar-built `.la` libs.

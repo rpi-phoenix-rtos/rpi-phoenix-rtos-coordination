@@ -36,13 +36,21 @@ NV=mc-4.8.31
 URL=http://ftp.midnight-commander.org/$NV.tar.xz
 
 MC_VARIANT=${MC_VARIANT:-stock}
+MC_GUARD=0
 case "$MC_VARIANT" in
 	stock) MC_OUT=mc;       MC_CODESET_DEF="";                  MC_DBG=0 ;;
 	ascii) MC_OUT=mc-ascii; MC_CODESET_DEF="-DMC_CODESET_ASCII"; MC_DBG=0 ;;
 	dbg)   MC_OUT=mc-dbg;   MC_CODESET_DEF="";                  MC_DBG=1 ;;
-	*) echo "FAIL: unknown MC_VARIANT='$MC_VARIANT' (want stock|ascii|dbg)"; exit 1 ;;
+	# guard: UTF-8 codeset (reproduces the crash) + a redzone/canary allocator
+	# shim (mc-support/mc-guard-wrap.c) linked via -Wl,--wrap=malloc,... that
+	# catches the startup heap OVERFLOW at the WRITER and prints the allocating
+	# backtrace. Built -O0 -g -fno-omit-frame-pointer so __builtin_return_address
+	# 1..3 walk and addr2line resolves mc's call sites. Needs its OWN configure
+	# (different CFLAGS+LDFLAGS than the cached stock/dbg one) — see below.
+	guard) MC_OUT=mc-guard; MC_CODESET_DEF="";                  MC_DBG=0; MC_GUARD=1 ;;
+	*) echo "FAIL: unknown MC_VARIANT='$MC_VARIANT' (want stock|ascii|dbg|guard)"; exit 1 ;;
 esac
-echo "=== MC_VARIANT=$MC_VARIANT -> output '$MC_OUT' (codeset_def='$MC_CODESET_DEF' dbg=$MC_DBG) ==="
+echo "=== MC_VARIANT=$MC_VARIANT -> output '$MC_OUT' (codeset_def='$MC_CODESET_DEF' dbg=$MC_DBG guard=$MC_GUARD) ==="
 
 TC=/home/houp/phoenix-rpi/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-
 SYSROOT=/home/houp/phoenix-rpi/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot
@@ -73,7 +81,23 @@ cp -a "$HERE/mc-support/langinfo.h" "$SYSROOT/usr/include/langinfo.h"
 # plus the src/mc removal below are what force the codeset change into the binary.
 ${TC}gcc --sysroot="$SYSROOT" -O2 -c "$HERE/mc-support/mntent-stub.c" -I"$HERE/mc-support" -o /tmp/mc-mntent.o || fail "mc-support mntent compile failed"
 ${TC}gcc --sysroot="$SYSROOT" -O2 $MC_CODESET_DEF -c "$HERE/mc-support/langinfo-stub.c" -I"$HERE/mc-support" -o /tmp/mc-langinfo.o || fail "mc-support langinfo compile failed"
-${TC}ar rcs "$SYSROOT/lib/libmcsupport.a" /tmp/mc-mntent.o /tmp/mc-langinfo.o || fail "mc-support ar failed"
+MCSUPPORT_OBJS="/tmp/mc-mntent.o /tmp/mc-langinfo.o"
+# guard variant: compile the redzone/canary allocator shim -O0 -g
+# -fno-omit-frame-pointer and bundle it as a MEMBER of libmcsupport.a (which is
+# already on mc's final link line via GLIB_LIBS' -lmcsupport). It must be an
+# archive member, NOT a named .o in LDFLAGS: libtool intercepts LDFLAGS for every
+# intermediate libmc*.la build and rejects a raw .o ("cannot build libtool
+# library from non-libtool objects"). The -Wl,--wrap=malloc,... flags are
+# injected ONLY at the final `make` link (see below), so they never reach
+# configure's conftest probe (which would fail with undefined __wrap_* refs from
+# libphoenix pthread) nor the ar-built intermediate .la libs. At the final mc
+# link, --wrap makes mc's/glib's malloc/free/realloc/calloc reference __wrap_*,
+# which pulls this member from the archive (all four wrappers in one object).
+if [ "$MC_GUARD" = "1" ]; then
+	${TC}gcc --sysroot="$SYSROOT" -O0 -g -fno-omit-frame-pointer -c "$HERE/mc-support/mc-guard-wrap.c" -I"$HERE/mc-support" -o /tmp/mc-guard-wrap.o || fail "mc-support guard compile failed"
+	MCSUPPORT_OBJS="$MCSUPPORT_OBJS /tmp/mc-guard-wrap.o"
+fi
+${TC}ar rcs "$SYSROOT/lib/libmcsupport.a" $MCSUPPORT_OBJS || fail "mc-support ar failed"
 
 mkdir -p "$SRC"
 if [ ! -d "$XDIR" ]; then
@@ -117,11 +141,40 @@ GLIBLIBS="-L$SYSROOT/lib -lglib-2.0 -lgmodule-2.0 -lmcsupport -lpthread -liconv 
 # pre-definition via #ifndef) so mc compiles against the narrow API; the only loss
 # is dialog drop-shadows. (Full widec/UTF-8 mc needs ncursesw + libphoenix
 # wcwidth/mbrtowc/wcrtomb/mbsinit — an attended libc add; see GLIB2-MC-PORT-NOTES.md.)
-CF="--sysroot=$SYSROOT -O2 -DNCURSES_WIDECHAR=0 $GINC -I$NCPREFIX/include -I$NCPREFIX/include/ncurses"
+# Base optimization for mc's own TUs. The guard variant overrides this to
+# -O0 -g -fno-omit-frame-pointer so the allocator shim's __builtin_return_address
+# 1..3 chain walks through mc's frames and aarch64-phoenix-addr2line resolves the
+# allocating call sites against /bin/mc-guard.
+if [ "$MC_GUARD" = "1" ]; then
+	MC_OPT="-O0 -g -fno-omit-frame-pointer"
+else
+	MC_OPT="-O2"
+fi
+CF="--sysroot=$SYSROOT $MC_OPT -DNCURSES_WIDECHAR=0 $GINC -I$NCPREFIX/include -I$NCPREFIX/include/ncurses"
 [ -f "$SHIM" ] && CF="$CF -include $SHIM"
 
+# Base LDFLAGS used at configure time (plain — no --wrap, so configure's bare
+# conftest.c link probe doesn't hit undefined __wrap_* refs). The guard variant's
+# --wrap flags are injected only at the final `make` link, below.
+LDF="--sysroot=$SYSROOT -static -L$SYSROOT/lib -L$NCPREFIX/lib -L$ZLIB/lib"
+GUARD_WRAP="-Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=free"
+
+# The cached config.status bakes CFLAGS+LDFLAGS, which differ for guard (-O0 -g
+# vs -O2; --wrap vs none). When the configured state doesn't match the requested
+# guard-ness, force a reconfigure. A stamp file records what the tree is
+# configured for. Also wipe object files so the new CFLAGS take effect.
+STAMP="$XDIR/.mc-guard-configured"
+WANT_STAMP="guard=$MC_GUARD"
+if [ -f "$XDIR/config.status" ]; then
+	HAVE_STAMP="$(cat "$STAMP" 2>/dev/null || echo guard=0)"
+	if [ "$HAVE_STAMP" != "$WANT_STAMP" ]; then
+		echo "=== variant guard-ness changed ($HAVE_STAMP -> $WANT_STAMP); forcing reconfigure + clean ==="
+		( cd "$XDIR" && make distclean >/tmp/mc-distclean.log 2>&1 ) || rm -f "$XDIR/config.status"
+	fi
+fi
+
 if [ ! -f "$XDIR/config.status" ]; then
-	echo "=== configuring $NV ==="
+	echo "=== configuring $NV (guard=$MC_GUARD) ==="
 	[ -f "$CACHE" ] && cp "$CACHE" "$XDIR/mc.cache" && CACHE_OPT="--cache-file=mc.cache" || CACHE_OPT=""
 	( cd "$XDIR" && ./configure \
 	    --host=aarch64-phoenix --build=x86_64-pc-linux-gnu --prefix="$PREFIX" \
@@ -134,12 +187,13 @@ if [ ! -f "$XDIR/config.status" ]; then
 	    --disable-doxygen-doc \
 	    CC=${TC}gcc AR=${TC}ar RANLIB=${TC}ranlib \
 	    CFLAGS="$CF" CPPFLAGS="--sysroot=$SYSROOT $GINC" \
-	    LDFLAGS="--sysroot=$SYSROOT -static -L$SYSROOT/lib -L$NCPREFIX/lib -L$ZLIB/lib" \
+	    LDFLAGS="$LDF" \
 	    PKG_CONFIG="$HERE/fake-pkg-config.sh" \
 	    GLIB_LIBDIR="$SYSROOT/lib" \
 	    GLIB_CFLAGS="$GINC" GLIB_LIBS="$GLIBLIBS" \
 	    GMODULE_CFLAGS="$GINC" GMODULE_LIBS="$GLIBLIBS" \
 	    >/tmp/mc-conf.log 2>&1 ) || { echo "--- configure failed; tail ---"; tail -n 40 /tmp/mc-conf.log; fail "configure failed"; }
+	echo "$WANT_STAMP" >"$STAMP"
 fi
 
 # Force a relink: src/mc does not depend on libmcsupport.a, and (for dbg) the .o
@@ -148,7 +202,15 @@ fi
 rm -f "$XDIR/src/mc"
 
 echo "=== building $NV ($MC_VARIANT) ==="
-( cd "$XDIR" && make >/tmp/mc-build.log 2>&1 ) || { echo "--- build failed; tail ---"; tail -n 50 /tmp/mc-build.log; fail "build failed"; }
+if [ "$MC_GUARD" = "1" ]; then
+	# Override LDFLAGS only on the guard build so --wrap reaches the final mc link.
+	# A command-line `make VAR=val` REPLACES the variable (no append), so carry the
+	# FULL base LDF (-static + all -L) plus the wrap flags. libtool's intermediate
+	# .la libs are ar-built and ignore LDFLAGS, so --wrap is harmlessly unused there.
+	( cd "$XDIR" && make LDFLAGS="$LDF $GUARD_WRAP" >/tmp/mc-build.log 2>&1 ) || { echo "--- build failed; tail ---"; tail -n 50 /tmp/mc-build.log; fail "build failed"; }
+else
+	( cd "$XDIR" && make >/tmp/mc-build.log 2>&1 ) || { echo "--- build failed; tail ---"; tail -n 50 /tmp/mc-build.log; fail "build failed"; }
+fi
 
 BIN="$XDIR/src/mc"
 [ -x "$BIN" ] || fail "src/mc not produced"
@@ -173,5 +235,14 @@ ${TC}strings "$BIN" 2>/dev/null | grep -iE '^(UTF-8|ASCII)$' | sort -u | head
 if [ "$MC_DBG" = "1" ]; then
 	echo "--- MCDBG markers baked in (count) ---"
 	${TC}strings "$BIN" 2>/dev/null | grep -c '^MCDBG'
+fi
+if [ "$MC_GUARD" = "1" ]; then
+	echo "--- GUARD go/no-go: __wrap_* must be DEFINED (T) in the final link ---"
+	${TC}nm "$BIN" 2>/dev/null | grep -iE ' (T|t) __wrap_(malloc|calloc|realloc|free)' || fail "__wrap_* not in link — -Wl,--wrap did not reach the final link (build useless)"
+	echo "--- GUARD markers baked in (expect GUARD-OVERFLOW / GUARD-ALLOC-BT strings) ---"
+	${TC}strings "$BIN" 2>/dev/null | grep -E '^GUARD-' | sort -u
+	echo "--- GUARD: ELF type EXEC (non-PIE, addr2line-resolvable) + has debug info ---"
+	${TC}readelf -h "$BIN" 2>/dev/null | grep -E 'Type:'
+	${TC}readelf -S "$BIN" 2>/dev/null | grep -q debug_info && echo "  .debug_info present (backtraces resolve)" || echo "  WARN: no .debug_info"
 fi
 echo "=== $MC_OUT OK ==="
