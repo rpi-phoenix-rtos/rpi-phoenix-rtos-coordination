@@ -1,0 +1,103 @@
+--- a/src/osdep_stub.c
++++ b/src/osdep_stub.c
+@@ -1,11 +1,13 @@
+ 
+-#include <sys/utsname.h>
+-
+ #include <WINGs/WUtil.h>
+ 
+ #include "wconfig.h"
+ #include "osdep.h"
+ 
++#ifndef __phoenix__
++
++#include <sys/utsname.h>
++
+ Bool GetCommandForPid(int pid, char ***argv, int *argc)
+ {
+ 	static int notified = 0;
+@@ -34,3 +36,84 @@
+ 
+ 	return False;
+ }
++
++#else /* __phoenix__ */
++
++/*
++ * Phoenix-RTOS has no procfs, so the Linux /proc/<pid>/cmdline path is
++ * unavailable. Instead we use the threadsinfo() syscall, which reports every
++ * thread in the system together with its owning pid and the process name/path
++ * (the same field psh `ps` prints). Phoenix does not expose the original argv
++ * for a pid — only the process name — so the best we can do is reconstruct a
++ * single-element argv whose argv[0] is the process name. That is sufficient for
++ * Window Maker's session save/restore, which only needs a command to relaunch.
++ */
++
++#include <stdlib.h>
++#include <string.h>
++
++#include <sys/threads.h>
++
++Bool GetCommandForPid(int pid, char ***argv, int *argc)
++{
++	/* argv[0] points into this static buffer (subsequent calls reuse it,
++	 * matching the contract documented in osdep_linux.c/osdep_bsd.c). */
++	static char buf[sizeof(((threadinfo_t *)0)->name)];
++	threadinfo_t *info;
++	int n = 64, tcnt, i;
++
++	*argv = NULL;
++	*argc = 0;
++
++	info = malloc(n * sizeof(threadinfo_t));
++	if (info == NULL)
++		return False;
++
++	/* threadsinfo() returns the TOTAL thread count and fills up to n entries;
++	 * grow the buffer until it fits, as psh ps.c does. */
++	while ((tcnt = threadsinfo(n, info)) >= n) {
++		threadinfo_t *grown;
++
++		n *= 2;
++		grown = realloc(info, n * sizeof(threadinfo_t));
++		if (grown == NULL) {
++			free(info);
++			return False;
++		}
++		info = grown;
++	}
++
++	if (tcnt < 0) {
++		free(info);
++		return False;
++	}
++
++	/* Multiple threads share a pid; match the first entry for the target. */
++	for (i = 0; i < tcnt; i++) {
++		if (info[i].pid != pid)
++			continue;
++
++		/* name is a fixed-size, packed field — copy it out bounded and
++		 * NUL-terminate, since it is not guaranteed terminated when full. */
++		strncpy(buf, info[i].name, sizeof(buf) - 1);
++		buf[sizeof(buf) - 1] = '\0';
++
++		/* NULL-terminated argv array (never freed by the caller; matches the
++		 * Linux/BSD impls). buf is static, so this small array is the only
++		 * allocation and it intentionally outlives the call. */
++		*argv = (char **)wmalloc(sizeof(char *) * 2);
++		(*argv)[0] = buf;
++		(*argv)[1] = NULL;
++		*argc = 1;
++
++		free(info);
++		return True;
++	}
++
++	/* No such pid (the process is gone, or threadsinfo could not see it).
++	 * Fail quietly — False is a legitimate result here, no warning. */
++	free(info);
++	return False;
++}
++
++#endif /* __phoenix__ */

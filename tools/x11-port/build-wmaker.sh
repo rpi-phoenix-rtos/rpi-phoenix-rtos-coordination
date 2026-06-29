@@ -290,6 +290,28 @@ wm_phx_patch() {
 	return 0
 }
 
+# Apply the Phoenix GetCommandForPid patch. Phoenix has no procfs, so the build
+# falls to src/osdep_stub.c, whose GetCommandForPid only warns ("not implemented
+# on this platform") and returns False. This patch wraps the stub body in
+# `#ifndef __phoenix__` and adds a real Phoenix implementation built on the
+# threadsinfo() syscall (process name -> single-element argv) for session
+# save/restore. Other stub platforms keep the warning unchanged.
+# Idempotent: `patch -N` skips an already-applied tree; hard-fail on rejects.
+wm_getcmd_patch() {
+	local p="$HERE/patches/$WM_NV-phoenix-getcommandforpid.patch"
+	[ -f "$p" ] || fail "missing wmaker patch $p"
+	if ( cd "$SRC/$WM_NV" && patch -p1 --dry-run -N <"$p" >/tmp/wm-getcmd-patch.log 2>&1 ); then
+		( cd "$SRC/$WM_NV" && patch -p1 -N <"$p" >/tmp/wm-getcmd-patch.log 2>&1 ) \
+			|| { tail -20 /tmp/wm-getcmd-patch.log; fail "wmaker getcommandforpid patch failed to apply"; }
+	elif grep -q "previously applied" /tmp/wm-getcmd-patch.log; then
+		echo "wmaker getcommandforpid patch: already applied"
+	else
+		tail -20 /tmp/wm-getcmd-patch.log
+		fail "wmaker getcommandforpid patch does not apply cleanly (rejects) — regenerate it"
+	fi
+	return 0
+}
+
 wm_patch() {
 	local f="$SRC/$WM_NV/src/main.c"
 	if ! grep -q '#ifndef WMAKER_SHELL' "$f"; then
@@ -302,12 +324,14 @@ build_wmaker() {
 	fetch_extract "$WM_NV" "$WM_URL"
 	wm_patch
 	wm_phx_patch
+	wm_getcmd_patch
 	local cf="--sysroot=$SYSROOT -I$DEPS/include $WM_PWD_DEFS $WM_GAP_DEFS $WM_SHELL_DEF $WM_DIAG_DEF"
 	# Force-recompile the objects the phx patch touches so the font fix (and,
 	# when WMAKER_DIAG=1, the markers) are (re)baked even if wmaker was already
 	# built. wfont.c/widgets.c/configuration.c live in libWINGs.a; startup.c/
 	# screen.c/monitor.c are wmaker src — drop the lib so it relinks.
 	rm -f "$SRC/$WM_NV/src/wmaker" "$SRC/$WM_NV/src/startup.o" \
+	      "$SRC/$WM_NV/src/osdep_stub.o" \
 	      "$SRC/$WM_NV/src/screen.o" "$SRC/$WM_NV/src/monitor.o" \
 	      "$SRC/$WM_NV/WINGs/widgets.o"       "$SRC/$WM_NV/WINGs/widgets.lo" \
 	      "$SRC/$WM_NV/WINGs/wfont.o"         "$SRC/$WM_NV/WINGs/wfont.lo" \
@@ -320,6 +344,10 @@ build_wmaker() {
 	# silently shipping a stale WPrefs EXEC path (#45).
 	for tin in "$SRC/$WM_NV"/WindowMaker/*.in; do
 		[ -f "$tin" ] || continue
+		# Skip Makefile.in: deleting the generated WindowMaker/Makefile would
+		# break `make` on a RE-RUN (configure is gated behind `[ -f config.status ]`
+		# so it never regenerates). The intent here is only the menu/data files.
+		case "$tin" in */Makefile.in) continue ;; esac
 		rm -f "${tin%.in}"
 	done
 	( cd "$SRC/$WM_NV" \
