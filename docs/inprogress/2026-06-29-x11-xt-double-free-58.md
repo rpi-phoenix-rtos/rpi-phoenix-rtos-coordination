@@ -1,95 +1,110 @@
 # #58 — Xt/Xaw clients (xcalc, xedit) abort with "Double free detected"
 
 Date: 2026-06-29
-Status: ROOT-CAUSED + FIXED (host-side; awaiting HW re-validation). The tracer
-pinned the freed pointer to a `.rodata` string literal; root cause is a latent
-**upstream libX11 ownership bug** in the default Output-Method fontset path
-(`XDefaultOMIF.c`), triggered by Phoenix's missing-fonts + default-OM
-environment. Fix: make `base_name_list` an owned heap copy in `create_oc` before
-any failure path can `Xfree` it. Clients relinked + staged.
+Status: ROOT-CAUSED + FIXED (host-side; awaiting HW re-validation). The
+backtrace-augmented tracer + addr2line pinned the freed pointer's call site to
+`destroy_oc` in the **generic OM** (`modules/om/generic/omGeneric.c`) — the OM
+backend Phoenix actually uses. A latent **upstream libX11 ownership bug**: the
+fontset base-name resource aliases a caller `.rodata` literal and is `Xfree`'d on
+a `create_oc` failure path. Fix: own a heap copy of `base_name_list` in
+`create_oc` before `create_fontset` can fail. Clients relinked + staged.
 
 ## RESOLUTION (the answer)
 
-### Tracer result (HW)
+### How the call site was pinned (HW)
+
+The first tracer iteration printed `FREE-TRACE: free #319 NON-HEAP ptr=0x5af0e8`
+(later 0x5af108 after relink). Interpreting that raw `.rodata` address from a
+relinked binary was unreliable, so the tracer was extended to print the call
+stack via `__builtin_return_address` (FREE-BT). The next boot gave:
 
 ```
-FREE-TRACE: free #319 NON-HEAP / never-malloc'd ptr=0x5af0e8
-            -> static/aliased buffer freed (hypothesis A)
+FREE-BT: 0x540d80 ...
+addr2line 0x540d80 -> destroy_oc, omGeneric.c
 ```
 
-`objdump` on `/bin/xcalc-dbg`: `0x5af0e8` = the `.rodata` literal
-`"-*-*-*-R-*-*-*-120-*-*-*-*,*"` — libXt's hardcoded fallback default-FontSet
-XLFD base-name pattern. So a string literal is being `Xfree`'d. (The preceding
-"Cannot convert string \"calculator\" to type Pixmap" warning was unrelated and
-benign; the death is in FontSet handling, which runs for xcalc's default font
-resource.)
+So the free is `destroy_oc` in `modules/om/generic/omGeneric.c` (the GENERIC OM),
+NOT `src/xlibi18n/XDefaultOMIF.c`. Phoenix's locale machinery loads the generic
+OM. (An earlier patch to XDefaultOMIF.c's identical bug therefore did not change
+the crash — free #319 was unchanged — which is what redirected the hunt to the
+backtrace.) The preceding "Cannot convert string \"calculator\" to type Pixmap"
+warning was unrelated/benign; the death is in FontSet handling, which runs for
+xcalc's default font resource.
 
-### Exact mechanism (libX11 1.8.7, src/xlibi18n/XDefaultOMIF.c)
+### Exact mechanism (libX11 1.8.7, modules/om/generic/omGeneric.c)
 
 1. libXt `XtCvtStringToFontSet` (Converters.c:1040) calls
    `XCreateFontSet(display, "-*-*-*-R-*-*-*-120-*-*-*-*,*", ...)` with the
-   literal as the base-name argument (the earlier user/default fontsets having
-   failed to load on Phoenix).
-2. `XCreateFontSet` -> default OM -> `create_oc` -> `_XlcSetValues` stores the
-   `base_name_list` resource. That resource is `XlcString` == `sizeof(XPointer)`,
-   so `_XlcCopyFromArg` (lcWrap.c:486-487) does `*dst = (XPointer)src` — a **pure
-   pointer copy** (verified; identical on every platform). `oc->core.base_name_list`
-   now ALIASES the caller's literal.
-3. `create_oc` calls `create_fontset` -> `parse_fontname`. On Phoenix no font
-   matches the pattern, so the chain fails (`create_fontset` returns False —
-   either `init_fontset` fails before `parse_fontname` runs, or `parse_fontname`
-   returns <=0). Upstream only takes its OWN heap copy of `base_name_list` at the
-   `found:` label deep inside `parse_fontname` (line 442) — NOT reached on these
-   failure paths.
-4. `create_oc` `goto err` -> `destroy_oc` -> `Xfree(oc->core.base_name_list)`
-   (line 525) frees the **literal**. Freeing a `.rodata` pointer is undefined on
-   any libc; libphoenix's allocator catches it immediately
-   (`malloc_dl.c` CHUNK_CUSED check -> `_exit(EX_SOFTWARE)` = status 0x46).
+   literal as the base-name argument (earlier user/default fontsets having failed
+   to load on Phoenix).
+2. `XCreateFontSet` -> `XCreateOC` -> generic OM `create_oc` (omGeneric.c:1562)
+   -> `_XlcSetValues` stores the `base_name_list` resource. That resource is
+   `XlcString` == `sizeof(XPointer)`, so `_XlcCopyFromArg` (lcWrap.c:486-487)
+   does `*dst = (XPointer)src` — a **pure pointer copy** (verified; identical on
+   every platform). `oc->core.base_name_list` now ALIASES the caller's literal.
+3. `create_oc` calls `create_fontset` (1282) -> `parse_fontname` (1067). On
+   Phoenix the fallback pattern parse fails: `_XParseBaseFontNameList` returns
+   NULL, so `parse_fontname` takes the **early `return -1` at line 1080-1082**,
+   which BYPASSES both the late `strdup` ownership (1165) and the err-path
+   `base_name_list = NULL` (1178). So `base_name_list` is still the literal.
+4. `create_fontset` returns False -> `create_oc` `goto err` (1609) ->
+   `destroy_oc` (1406) -> `Xfree(oc->core.base_name_list)` (line 1427) frees the
+   **`.rodata` literal**. Freeing a non-heap pointer is undefined on any libc;
+   libphoenix's allocator catches it immediately (`malloc_dl.c` CHUNK_CUSED
+   check -> `_exit(EX_SOFTWARE)` = status 0x46).
 
 This is a **latent upstream bug**, NOT a libphoenix divergence: `_XlcCopyFromArg`
-pointer-copies on glibc too. Real-locale hosts never hit it because they use the
-generic/Uniconv OM (not `XDefaultOMIF`) and have fonts, so `XCreateFontSet`
-succeeds and the `parse_fontname:442` copy is taken. (This also explains why the
-earlier host valgrind run below was clean — it exercised a different OM path.)
-Worth reporting upstream to xorg/libX11.
+pointer-copies on glibc too. Real-locale hosts never hit it because they have
+fonts, so the parse succeeds, `parse_fontname` reaches its strdup, and
+`base_name_list` becomes heap-owned. (This is also why the earlier host valgrind
+run below was clean — it never took the parse-fail early-return.) Worth reporting
+upstream to xorg/libX11.
 
-### Fix (libX11 src/xlibi18n/XDefaultOMIF.c)
+### Fix (libX11 modules/om/generic/omGeneric.c — the one that fixes Phoenix)
 
-In `create_oc`, right after `_XlcSetValues` + the NULL check, take an owned heap
-copy of `base_name_list` so EVERY subsequent failure path frees a real
-allocation:
+In `create_oc`, right after `_XlcSetValues` + the NULL check (and BEFORE
+`create_fontset`), take an owned heap copy of `base_name_list` so EVERY failure
+path frees a real allocation:
 
 ```c
     if (oc->core.base_name_list == NULL)
         goto err;
     {
-        char *owned_base = strdup(oc->core.base_name_list);
+        char *owned = strdup(oc->core.base_name_list);
         /* assign before the NULL check so the err-path destroy_oc frees
-         * NULL (safe), never the borrowed literal again */
-        oc->core.base_name_list = owned_base;
-        if (owned_base == NULL)
+         * NULL (safe), never the borrowed literal */
+        oc->core.base_name_list = owned;
+        if (owned == NULL)
             goto err;
     }
 ```
 
-and remove the now-redundant `strdup` at the `found:` label in `parse_fontname`
-(re-copying there would leak the create_oc copy). Net ownership: `base_name_list`
-is heap-owned from creation, freed exactly once in `destroy_oc`/`close_om` — no
-double-free, no leak, on success and on every failure path.
+and in `parse_fontname` remove the now-redundant late `strdup` (1165-1169,
+re-copying would leak the create_oc copy) and the err-path
+`oc->core.base_name_list = NULL` (1177-1178; with single ownership in create_oc,
+destroy_oc must free the owned copy on every path), plus the now-unused
+`base_name` local (decl 1073). Net ownership: `base_name_list` is heap-owned from
+creation, freed exactly once in `destroy_oc` — no double-free, no leak, on
+success and on every failure path.
+
+The identical defensive fix is also kept in `src/xlibi18n/XDefaultOMIF.c` (the
+default OM) so the bug can't resurface there if the OM selection ever changes.
 
 Tracked as `tools/x11-port/patches/libX11-1.8.7-phoenix-fontset-basename-ownership-58.patch`
-(the `src/` tree is gitignored; `build-x11-phoenix.sh` auto-applies
-`patches/libX11-1.8.7*.patch` via `apply_patches`, so a clean rebuild reproduces
-the fix). Upstreamable to xorg/libX11 as-is.
+(both OM files; the `src/`+`modules/` tree is gitignored; `build-x11-phoenix.sh`
+auto-applies `patches/libX11-1.8.7*.patch` via `apply_patches`, so a clean
+rebuild reproduces the fix). Verified: applies `-p1 -N` to pristine, reproduces
+the in-tree files byte-for-byte, idempotent. Upstreamable to xorg/libX11 as-is.
 
 Build: `make` in `src/libX11-1.8.7`, install to `/tmp/x11-phoenix`, relink the
 clients (they link libX11 statically). 0 undefined symbols. Compiles with no new
-warnings. Xphoenix does NOT link libX11 (`nm` = 0 fontset symbols) — no server
-relink needed.
+warnings. Disassembly confirms `create_oc` now `bl strdup` BEFORE
+`bl create_fontset`. Xphoenix does NOT link libX11 (`nm` = 0 fontset symbols) —
+no server relink needed.
 
-Staged (all 02:45):
+Staged (all 03:18):
 - `/srv/phoenix-rpi4-nfs/bin/xcalc`
-- `/srv/phoenix-rpi4-nfs/bin/xcalc-dbg`  (tracer kept; should now print 0 FREE-TRACE lines)
+- `/srv/phoenix-rpi4-nfs/bin/xcalc-dbg`  (tracer + FREE-BT kept; should now print 0 FREE-TRACE lines)
 - `/srv/phoenix-rpi4-nfs/bin/xedit`      (same libX11 path — fixed by the same change)
 
 ### HW re-validation
