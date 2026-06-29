@@ -178,6 +178,7 @@ if [ ! -f "$XDIR/config.status" ]; then
 	[ -f "$CACHE" ] && cp "$CACHE" "$XDIR/mc.cache" && CACHE_OPT="--cache-file=mc.cache" || CACHE_OPT=""
 	( cd "$XDIR" && ./configure \
 	    --host=aarch64-phoenix --build=x86_64-pc-linux-gnu --prefix="$PREFIX" \
+	    --datadir=/usr/share --sysconfdir=/etc \
 	    $CACHE_OPT \
 	    --with-screen=ncurses \
 	    --with-ncurses-includes="$NCPREFIX/include" \
@@ -224,6 +225,20 @@ if [ -d "$NFSBIN" ]; then
 	cp "$BIN" "$NFSBIN/$MC_OUT" && echo "=== staged $NFSBIN/$MC_OUT ==="
 else
 	echo "WARN: $NFSBIN not present — skipped NFS staging (artifacts/$MC_OUT only)"
+fi
+
+# Stage mc's runtime share data (skins + editor syntax) to the compiled-in
+# datadir (--datadir=/usr/share -> MC_DATADIR=/usr/share/mc). Without the skins
+# mc falls back to a monochrome built-in skin ("Unable to load 'default' skin"):
+# no colours and no visible panel selection. The on-disk default skin restores
+# the blue panels + cyan selection highlight. Skin-only is enough for colour; the
+# syntax/ tree adds editor highlighting.
+NFSSHARE=/srv/phoenix-rpi4-nfs/usr/share/mc
+if [ -d /srv/phoenix-rpi4-nfs/usr/share ]; then
+	mkdir -p "$NFSSHARE/skins" "$NFSSHARE/syntax"
+	cp -a "$XDIR"/misc/skins/*.ini "$NFSSHARE/skins/" 2>/dev/null && echo "=== staged mc skins -> $NFSSHARE/skins ==="
+	cp -a "$XDIR"/misc/syntax/*.syntax "$XDIR"/misc/syntax/Syntax "$NFSSHARE/syntax/" 2>/dev/null || true
+	cp -a "$XDIR"/misc/mc.ext.ini "$NFSSHARE/" 2>/dev/null || true
 fi
 
 echo "=== mc PRE-FLIGHT ($MC_VARIANT -> $MC_OUT) ==="
