@@ -39,6 +39,24 @@ repos that carry parked WIP). Per-repo `git -C <repo> merge` only.
 | phoenix-rtos-devices | 14 | 294 | none | report-only | parked SD #154 WIP (uncommitted) |
 | phoenix-rtos-lwip | 1 | 142 | none | report-only | parked WiFi #91 WIP (uncommitted) |
 
+## Rollback table (deterministic revert per repo)
+
+Since this work could not be boot-tested (main session owns the Pi), if the next
+netboot regresses, revert any merged repo with
+`git -C sources/<repo> reset --hard <pre-merge-SHA>`:
+
+| repo | pre-merge SHA (rollback to) | post-merge HEAD |
+|------|-----------------------------|-----------------|
+| phoenix-rtos-doc | 5083598 | deb40ff |
+| phoenix-rtos-tests | 63951d7 | d5d4cb1 |
+| phoenix-rtos-hostutils | 2a894a3 | aa0c55a |
+| phoenix-rtos-build | aad9a50 | 4ddabee |
+| phoenix-rtos-ports | 6b07b95 | 205e4a9 |
+| phoenix-rtos-project | 77d8fcd | 53bc2cb |
+| phoenix-rtos-posixsrv | ef6e39b | ff04a1b |
+| phoenix-rtos-utils | ad9e39a | 92d23e0 |
+| **plo** (boot-critical) | **f8ed6aa** | **93881db** |
+
 ## Merged repos (build-green-validated)
 
 All merges leave the repo `behind-origin=0`, `dirty=0`. Three were
@@ -50,7 +68,7 @@ fast-forwards (doc, tests, hostutils); the rest are merge commits (`ort`).
 - **phoenix-rtos-build** → 4ddabee (merge). Upstream touched only `target/sparcv8leon.mk` (move SPARC kernel bss/data) — orthogonal to aarch64.
 - **phoenix-rtos-ports** → 205e4a9 (merge). Upstream touched only openiked (vroute impl, stack-overflow + pfkey_writev fixes). We don't build openiked for the Pi 4.
 - **phoenix-rtos-project** → 53bc2cbd (merge). riscv64-gr765/grfpga DTB-from-source, openocd stm32n6 config, submodule-pointer bumps. The `sources/*` siblings are **not** initialised as submodules here (gitlinks uninitialised; build uses the sibling checkouts directly), so the pointer bumps are inert. No `_targets/aarch64*` or `_projects/*rpi4*` touched.
-- **phoenix-rtos-posixsrv** → ff04a1b (merge). Upstream rewrote `tmpfile.c` (open error handling, tmp-dir init, file-op forwarding). Our local commit touched only `special.c`. Disjoint. Recompiled by `core` scope; build green.
+- **phoenix-rtos-posixsrv** → ff04a1b (merge). Upstream rewrote `tmpfile.c` (open error handling, tmp-dir init, msg.oid file-op forwarding bug). Our local commit touched only `special.c`. Disjoint. Recompiled by `core` scope (`tmpfile.o` + rebuilt `posixsrv` binary confirmed post-merge mtime); build green. **Cross-repo caveat:** the tmpfile work is a coordinated fix (issues #1575/#1417) split across posixsrv + libphoenix + tests; we merged the posixsrv + tests halves but held libphoenix (report-only, below), so the tree now runs new-posixsrv + old-libphoenix. Inspected all three posixsrv commits: they are **posixsrv-internal** (error handling, /var/tmp dir creation, oid-forwarding fix, and dropping `asprintf` for a stack `sprintf`) and do **not** depend on any new libphoenix symbol or changed tmpfile() contract — they fix bugs against the existing protocol. Safe to keep decoupled; the libphoenix tmpfile/mktemp half can land later without re-touching posixsrv. `tmpfile()` is on the user's live test path (mc/editors), so the main session should exercise it once.
 - **phoenix-rtos-utils** → 92d23e0 (merge). Upstream: `psh/echo` gains `-n`, `nandtool` realpath resolution. Our 36 commits never touched echo.c/nandtool.c. Recompiled; build green. (Note: psh `echo -n` may slightly change rc-script echo behaviour — cosmetic.)
 - **plo** → 93881db (merge). Upstream: `devices/ram-storage/ramdrv.c` — overflow-safe `ramdrv_isValidAddress` + implements `ramdrv_write` (was `-ENOSYS`). `ram-storage` IS in `PLO_ALLDEVICES` for aarch64-generic, so this code is compiled into our bootloader, but we never touched ramdrv.c (no conflict) and the change is a self-contained 13-line bugfix that does not touch any Pi 4 HAL. Boot-critical repo, so validated with `--scope core` → green. **Recommend the main session boot-test once before relying on it** (the rebuild only proves it compiles, not that the loader still boots).
 
