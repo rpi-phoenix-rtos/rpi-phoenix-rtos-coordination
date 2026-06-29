@@ -18,12 +18,32 @@ These validate, end-to-end: the X server (Xphoenix kdrive fbdev DDX), libX11/lib
 libXaw/libXmu/libICE/libSM, named bitmap font loading (#56), the FontSet path (#58),
 the launcher's multi-client session modes (`desktop`, `term`), and shell exec from X.
 
+## Also working — fixed during this session
+
+| App | Status |
+|-----|--------|
+| **Midnight Commander** (`mc`, ncurses TUI) | ✅ Full two-panel TUI renders on the teken fbcon + is **interactive** (executes typed commands via fork+exec). Was crashing (#55) on the libphoenix `vasprintf` heap overflow (its ~1088-byte `--colors` `g_strdup_printf` > the buggy fixed-1024 buffer); fixed in libphoenix `stdio/asprintf.c`. |
+| **Dillo** (FLTK browser) | ✅ Renders the `about:splash` HTML page (toolbar, address bar, hyperlink). The status=0x46 (#59) was the **same** `vasprintf` overflow — fixed by the **same one-line libphoenix change** + a dillo relink. |
+
+The `vasprintf` overflow (`malloc(1024)` + unbounded `vsprintf`) was a latent core bug
+hitting any `asprintf`/`g_strdup_printf` >1024 bytes — root-caused via the redzone
+allocator (`mc-guard`), one fix unblocked both mc and Dillo.
+
 ## Not yet working
 
 | App | Status |
 |-----|--------|
-| **Dillo** (FLTK) | ❌ Launches (DNS + cookies init OK) but exits **status=0x46** during FLTK UI creation, before mapping a window — the libphoenix strict-allocator bad-free abort, same class as #58. Tracked as #59; subagent instrumenting `dillo-dbg`. Suspect FLTK's X font path freeing a static/aliased string (analogous to the #58 FontSet literal). |
-| **xedit** with a file arg | `startx xedit /etc/passwd` produced no launch — the `startx` convenience mode only honours `argv[1]` (the extra path is ignored / mis-handled). xedit itself shares the #58-fixed Athena path (xcalc proves it); bare `startx xedit` is the path to retry. Minor launcher-ergonomics item. |
+| **xedit** | Past the #58 double-free, but Data-Aborts (EL0) on `"Unable to load any usable fontset"` — a **separate i18n issue**: `XCreateFontSet` finds no usable fontset for Phoenix's minimal (C/POSIX) locale, and xedit (unlike xcalc, which falls back to `XFontStruct`) dereferences the failed result. Needs the locale→charset→font matching traced. Not the #58 bug (that's fixed). |
+
+## #43 (exec-from-NFS ENOMEM) — refined
+
+Observed once: `proc: exec '/bin/mc-guard' failed (err=-12)` on a 5.0 MB binary, while
+4.9 MB dillo exec'd fine. But it did **not** recur across 12+ subsequent rapid large
+execs (incl. 8 back-to-back) — so it's a **rare transient**, not a deterministic
+size threshold. The kernel exec diag (`DIAG-NOMEM`, `TEMP-NOMEM-DIAG (#43)`) is now
+armed at every exec mmap site (header, per-segment file/bss, stack) so the next
+occurrence names the failing allocation. Retry succeeds, consistent with transient
+kernel-map fragmentation.
 
 ## Recurring theme: libphoenix's strict `free()`
 
