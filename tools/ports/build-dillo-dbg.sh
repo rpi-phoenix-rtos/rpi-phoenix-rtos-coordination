@@ -72,7 +72,7 @@ ${TC}g++ --sysroot="$SYSROOT" -g \
 	-Wl,--start-group \
 	  -lfltk_images -lfltk -lpng16 -ljpeg -lz \
 	  -lX11 -lxcb -lXau -lXdmcp \
-	  -lstdc++ -lm -lphoenix -lc \
+	  -lstdc++ -lm -lpthread -lphoenix -lc \
 	-Wl,--end-group \
 	-lz -liconv \
 	-o "$OUT" >/tmp/dillo-dbg-link.log 2>&1 || { tail -50 /tmp/dillo-dbg-link.log; fail "dillo-dbg link failed"; }

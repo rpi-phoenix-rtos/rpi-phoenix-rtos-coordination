@@ -39,6 +39,19 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <pthread.h>
+
+/*
+ * Dillo is THREADED (dillo_dns_init "Here we go! (threaded)" + dpid IPC), unlike
+ * xcalc where this shim was first proven. The live[]/freed_ring[] bookkeeping is
+ * shared, so guard it with a static mutex to avoid a torn slot reading a
+ * legitimate free as idx<0 (a FALSE "NON-HEAP" line pointing at resolver/IPC
+ * code). The lock is held ONLY around the table bookkeeping — never across the
+ * __real_* calls or the fprintf (fprintf can call malloc -> __wrap_malloc ->
+ * re-lock -> self-deadlock on this non-recursive mutex). A static initializer is
+ * used so the mutex itself needs no allocation.
+ */
+static pthread_mutex_t trace_lock = PTHREAD_MUTEX_INITIALIZER;
 
 extern void *__real_malloc(size_t size);
 extern void *__real_calloc(size_t nmemb, size_t size);
@@ -136,27 +149,36 @@ static void set_remove(long idx)
 void *__wrap_malloc(size_t size)
 {
 	void *p = __real_malloc(size);
+	pthread_mutex_lock(&trace_lock);
 	trace_ready = 1;
 	set_add(p, size);
+	pthread_mutex_unlock(&trace_lock);
 	return p;
 }
 
 void *__wrap_calloc(size_t nmemb, size_t size)
 {
 	void *p = __real_calloc(nmemb, size);
+	pthread_mutex_lock(&trace_lock);
 	trace_ready = 1;
 	set_add(p, nmemb * size);
+	pthread_mutex_unlock(&trace_lock);
 	return p;
 }
 
 void *__wrap_realloc(void *ptr, size_t size)
 {
 	void *p;
-	long oldidx = (ptr != NULL) ? set_find(ptr) : -1;
+	long oldidx;
 
+	/* __real_realloc outside the lock; bookkeeping (find of the OLD ptr + the
+	 * add/remove) inside. The old ptr can't be concurrently realloc'd by another
+	 * thread (it's caller-owned), so finding it after the realloc is fine. */
 	p = __real_realloc(ptr, size);
-	trace_ready = 1;
 
+	pthread_mutex_lock(&trace_lock);
+	trace_ready = 1;
+	oldidx = (ptr != NULL) ? set_find(ptr) : -1;
 	if (ptr != NULL && p != NULL) {
 		/* the old block was freed by realloc; the (possibly moved) new block
 		 * is now live */
@@ -170,36 +192,50 @@ void *__wrap_realloc(void *ptr, size_t size)
 	else if (size == 0 && ptr != NULL) {
 		set_remove(oldidx);
 	}
+	pthread_mutex_unlock(&trace_lock);
 	return p;
 }
 
 void __wrap_free(void *ptr)
 {
 	long idx;
+	int ready, was_recent;
+	unsigned long ord;
 
 	if (ptr == NULL) {
 		__real_free(ptr);
 		return;
 	}
 
-	free_ordinal++;
+	/* All shared-state reads/decisions under the lock; fprintf + __real_free
+	 * happen AFTER unlock (fprintf may malloc -> __wrap_malloc -> re-lock). */
+	pthread_mutex_lock(&trace_lock);
+	ord = ++free_ordinal;
+	ready = trace_ready;
 	idx = set_find(ptr);
+	was_recent = (idx < 0) ? freed_recently(ptr) : 0;
+	if (idx >= 0) {
+		/* normal single free: remove from live set and record it */
+		set_remove(idx);
+		freed_note(ptr);
+	}
+	pthread_mutex_unlock(&trace_lock);
 
-	if (!trace_ready) {
+	if (!ready) {
 		/* extremely early free before any tracked alloc — just pass through */
 		__real_free(ptr);
 		return;
 	}
 
 	if (idx < 0) {
-		if (freed_recently(ptr)) {
+		if (was_recent) {
 			/* hypothesis B: this pointer WAS malloc'd and already freed once;
 			 * something is freeing it a second time. Genuine double management
 			 * (aliasing) that only manifests under libphoenix. */
 			fprintf(stderr,
 				"FREE-TRACE: free #%lu DOUBLE-FREE ptr=%p "
 				"(was malloc'd, already freed once) -> hypothesis B aliasing\n",
-				free_ordinal, ptr);
+				ord, ptr);
 		}
 		else {
 			/* hypothesis A: this pointer was never returned by
@@ -210,7 +246,7 @@ void __wrap_free(void *ptr)
 			fprintf(stderr,
 				"FREE-TRACE: free #%lu NON-HEAP / never-malloc'd ptr=%p "
 				"-> static/aliased buffer freed (hypothesis A)\n",
-				free_ordinal, ptr);
+				ord, ptr);
 		}
 		/* Print the call stack of the offending free so the exact free() call
 		 * site can be addr2line'd against /bin/dillo-dbg. __builtin_return_address
@@ -231,10 +267,8 @@ void __wrap_free(void *ptr)
 		return;
 	}
 
-	/* normal single free: remove from live set, record it, then free. Stay
-	 * quiet on the common case so we do not flood the UART with thousands of
-	 * lines; only the two smoking-gun cases above print. */
-	set_remove(idx);
-	freed_note(ptr);
+	/* normal single free: bookkeeping (set_remove/freed_note) already done under
+	 * the lock above. Stay quiet on the common case so we do not flood the UART
+	 * with thousands of lines; only the two smoking-gun cases above print. */
 	__real_free(ptr);
 }

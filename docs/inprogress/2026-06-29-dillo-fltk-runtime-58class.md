@@ -88,10 +88,18 @@ ownership site is covered; any new hit is elsewhere).
 
 Built by `tools/ports/build-dillo-dbg.sh`, which relinks the existing dillo
 objects + static libs with the `--wrap` allocator tracer
-`tools/ports/dillo-dbg-wrap.c` (copied from the proven #58 `xcalc-dbg-wrap.c`),
+`tools/ports/dillo-dbg-wrap.c` (ported from the proven #58 `xcalc-dbg-wrap.c`),
 `-Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=free`. The shim is compiled
 `-O0 -g -fno-omit-frame-pointer` so `__builtin_return_address(0)` (the direct
 `free()` caller) is exact; deeper frames are best-effort (FLTK/libX11 are `-O2`).
+
+**Thread-safe** (unlike the xcalc original): Dillo is threaded (`dillo_dns_init
+... (threaded)` + dpid IPC), so the shim guards its `live[]`/`freed_ring[]`
+bookkeeping with a static `PTHREAD_MUTEX_INITIALIZER`, held ONLY around the table
+operations — never across `__real_*` or `fprintf` (which can re-enter
+`__wrap_malloc`). This prevents a torn slot from a concurrent DNS-thread alloc
+reading a legitimate free as `idx<0` → a FALSE `NON-HEAP` line pointing at
+resolver/IPC code.
 
 Staged:
 - `/srv/phoenix-rpi4-nfs/bin/dillo-dbg` — runnable on HW
@@ -132,6 +140,18 @@ Pre-flight (all PASS): static aarch64 ELF, `with debug_info, not stripped`,
    FLTK/libX11 libs likewise resolve to function names. The function name + the
    `free #N` ordinal + ptr is enough to pin the site; cross-reference with the
    source map above.
+
+### Reading the outcome
+
+- **NO `FREE-TRACE` line before the `0x46` exit** = the crash is NOT an allocator
+  bad-free. It's then an `abort()`/assert path (C++ exceptions are already ruled
+  out — dillo builds `-fno-exceptions`). Pivot off the free hypothesis: look for
+  an `assert`/`Fl::fatal`/`X` I/O-error handler in the same 494→549 window.
+- **MULTIPLE `FREE-TRACE` lines** (possible once threaded, despite the lock, if a
+  genuinely benign aliasing exists elsewhere): the REAL one is whichever FREE-BT
+  frame 0/1 lands in the **font / X / FLTK** path (per the source map above) and
+  whose `free #N` is the LAST before the process exits. Don't fixate on the first
+  line printed.
 
 ## Fix
 
