@@ -74,6 +74,12 @@ if [ ! -f "$XDIR/config.status" ]; then
 	    >/tmp/$APP-conf.log 2>&1 ) || { tail -25 /tmp/$APP-conf.log; fail "configure failed"; }
 fi
 
+# Always remove the linked binary so `make` re-links it. The app executable does
+# not depend on the external libphoenix.a / X11 .a archives, so a plain rebuild
+# after one of those changes (e.g. a libphoenix fix) would otherwise SKIP relinking
+# and ship a stale binary built against the old libs (the #58/mc "stale-binary
+# trap"). Removing it forces the link; unchanged .o files are not recompiled.
+rm -f "$XDIR/$APP"
 if [ ! -x "$XDIR/$APP" ]; then
 	echo "=== building $NV ==="
 	# Keep xedit's bundled static libs (-lre -llisp -lmp, its regex + Lisp
