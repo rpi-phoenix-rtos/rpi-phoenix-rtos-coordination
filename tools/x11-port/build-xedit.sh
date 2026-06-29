@@ -33,6 +33,16 @@ SRC=$TOOLS/src
 XDIR=$SRC/$NV
 ART=/home/houp/phoenix-rpi/artifacts/x11
 NFS=/srv/phoenix-rpi4-nfs
+PATCHDIR=$TOOLS/patches
+
+# xedit's bundled Lisp interpreter loads its module .lsp files from a compiled-in
+# LISPDIR via (require "lisp") during LispBegin(). LISPDIR must be a Pi-resident
+# path (NOT the host build prefix /tmp/x11-phoenix), and the .lsp tree must be
+# staged there, or (require "lisp") fails and the interpreter Data-Aborts at
+# startup (NULL *PACKAGE* -> NULL package deref in LispProclaimSpecial). See
+# patches/xedit-1.2.2-phoenix-lispbegin-savepackage-null.patch and
+# docs/inprogress/2026-06-29-xedit-lisp-port.md.
+LISPDIR_PI=/usr/lib/X11/xedit/lisp
 
 export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig:$PREFIX/share/pkgconfig"
 export PKG_CONFIG_LIBDIR="$PREFIX/lib/pkgconfig:$PREFIX/share/pkgconfig"
@@ -55,6 +65,12 @@ if [ ! -d "$XDIR" ]; then
 fi
 [ -f "$XDIR/configure" ] || fail "$XDIR/configure missing"
 
+# Apply Phoenix patches (idempotent, -N). Currently only the LispBegin
+# savepackage-NULL guard for the bundled Lisp interpreter.
+for p in "$PATCHDIR/$NV"*.patch; do
+	[ -f "$p" ] && ( cd "$XDIR" && patch -p1 -N <"$p" >/dev/null 2>&1 )
+done
+
 # xedit-1.2.2 ships a 2014 config.sub that predates the "phoenix" OS triplet.
 # Refresh it (+ config.guess) from a newer xorg app tree so --host=aarch64-phoenix
 # is accepted.
@@ -65,13 +81,24 @@ for cfg in config.sub config.guess; do
 	fi
 done
 
-if [ ! -f "$XDIR/config.status" ]; then
-	echo "=== configuring $NV ==="
+# Reconfigure if config.status is missing OR was generated with a different
+# (stale) LISPDIR. The LISPDIR is baked into the binary via -DLISPDIR, so a
+# stale config.status would silently ship a binary pointing at the wrong path.
+need_configure=1
+if [ -f "$XDIR/config.status" ] && grep -q "LISPDIR.*$LISPDIR_PI" "$XDIR/Makefile" 2>/dev/null; then
+	need_configure=0
+fi
+if [ "$need_configure" = 1 ]; then
+	echo "=== configuring $NV (LISPDIR=$LISPDIR_PI) ==="
 	( cd "$XDIR" && ./configure --host=aarch64-phoenix --prefix="$PREFIX" \
+	    --with-lispdir="$LISPDIR_PI" \
 	    CC=${TC}gcc AR=${TC}ar RANLIB=${TC}ranlib \
 	    CFLAGS="--sysroot=$SYSROOT -I$PREFIX/include $APP_CFLAGS" \
 	    LDFLAGS="--sysroot=$SYSROOT -static -L$PREFIX/lib -L$SYSROOT/lib" \
 	    >/tmp/$APP-conf.log 2>&1 ) || { tail -25 /tmp/$APP-conf.log; fail "configure failed"; }
+	# Force a recompile of the Lisp interpreter so the new -DLISPDIR takes
+	# effect (configure alone does not invalidate the cached .o files).
+	rm -f "$XDIR"/lisp/*.o "$XDIR/liblisp.a"
 fi
 
 # Always remove the linked binary so `make` re-links it. The app executable does
@@ -100,7 +127,16 @@ if [ -d "$NFS/bin" ]; then
 	for ad in Xedit Xedit-color; do
 		[ -f "$XDIR/app-defaults/$ad" ] && cp "$XDIR/app-defaults/$ad" "$NFS/usr/share/X11/app-defaults/$ad"
 	done
-	echo "=== staged -> $NFS/bin/$APP (+ app-defaults/Xedit) ==="
+	# Stage the Lisp interpreter's module files at the compiled-in LISPDIR so
+	# (require "lisp") succeeds at startup (see header). Mirror modules/ +
+	# modules/progmodes/ exactly; require.c builds LISPDIR + "/" + name + ".lsp".
+	LSPSRC="$XDIR/lisp/modules"
+	LSPDST="$NFS$LISPDIR_PI"
+	mkdir -p "$LSPDST/progmodes"
+	cp "$LSPSRC"/*.lsp "$LSPDST/" 2>/dev/null
+	cp "$LSPSRC"/progmodes/*.lsp "$LSPDST/progmodes/" 2>/dev/null
+	nlsp=$(ls "$LSPDST"/*.lsp "$LSPDST"/progmodes/*.lsp 2>/dev/null | wc -l)
+	echo "=== staged -> $NFS/bin/$APP (+ app-defaults/Xedit + $nlsp lisp module .lsp under $LISPDIR_PI) ==="
 fi
 
 echo "=== PRE-FLIGHT ==="
@@ -111,6 +147,14 @@ case "$(file "$ART/$APP")" in
 esac
 und=$(${TC}nm -u "$ART/$APP" 2>/dev/null)
 [ -z "$und" ] && echo "[OK] 0 undefined symbols" || { echo "$und"; fail "undefined symbols present"; }
+# The Lisp interpreter must carry the Pi-resident LISPDIR, not the host prefix.
+if strings "$ART/$APP" | grep -q "$LISPDIR_PI"; then
+	echo "[OK] LISPDIR baked: $LISPDIR_PI"
+else
+	fail "binary does not contain LISPDIR=$LISPDIR_PI (stale -DLISPDIR?)"
+fi
+strings "$ART/$APP" | grep -q "/tmp/x11-phoenix/lib/X11/xedit/lisp" \
+	&& echo "[WARN] stale /tmp/x11-phoenix LISPDIR also present in binary"
 echo "=== ALL PRE-FLIGHT CHECKS PASSED ==="
 echo "HW: in twm/wmaker (app-defaults REQUIRED):"
 echo "    export XFILESEARCHPATH=/usr/share/X11/app-defaults/%N"
