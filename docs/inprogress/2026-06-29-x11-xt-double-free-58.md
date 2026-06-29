@@ -1,9 +1,122 @@
 # #58 — Xt/Xaw clients (xcalc, xedit) abort with "Double free detected"
 
 Date: 2026-06-29
-Status: ROOT CAUSE NARROWED to a libphoenix-specific runtime divergence (NOT an
-upstream Xt/Xaw logic bug). Instrumented `xcalc-dbg` staged to pinpoint the exact
-offending pointer on the next HW boot.
+Status: ROOT-CAUSED + FIXED (host-side; awaiting HW re-validation). The tracer
+pinned the freed pointer to a `.rodata` string literal; root cause is a latent
+**upstream libX11 ownership bug** in the default Output-Method fontset path
+(`XDefaultOMIF.c`), triggered by Phoenix's missing-fonts + default-OM
+environment. Fix: make `base_name_list` an owned heap copy in `create_oc` before
+any failure path can `Xfree` it. Clients relinked + staged.
+
+## RESOLUTION (the answer)
+
+### Tracer result (HW)
+
+```
+FREE-TRACE: free #319 NON-HEAP / never-malloc'd ptr=0x5af0e8
+            -> static/aliased buffer freed (hypothesis A)
+```
+
+`objdump` on `/bin/xcalc-dbg`: `0x5af0e8` = the `.rodata` literal
+`"-*-*-*-R-*-*-*-120-*-*-*-*,*"` — libXt's hardcoded fallback default-FontSet
+XLFD base-name pattern. So a string literal is being `Xfree`'d. (The preceding
+"Cannot convert string \"calculator\" to type Pixmap" warning was unrelated and
+benign; the death is in FontSet handling, which runs for xcalc's default font
+resource.)
+
+### Exact mechanism (libX11 1.8.7, src/xlibi18n/XDefaultOMIF.c)
+
+1. libXt `XtCvtStringToFontSet` (Converters.c:1040) calls
+   `XCreateFontSet(display, "-*-*-*-R-*-*-*-120-*-*-*-*,*", ...)` with the
+   literal as the base-name argument (the earlier user/default fontsets having
+   failed to load on Phoenix).
+2. `XCreateFontSet` -> default OM -> `create_oc` -> `_XlcSetValues` stores the
+   `base_name_list` resource. That resource is `XlcString` == `sizeof(XPointer)`,
+   so `_XlcCopyFromArg` (lcWrap.c:486-487) does `*dst = (XPointer)src` — a **pure
+   pointer copy** (verified; identical on every platform). `oc->core.base_name_list`
+   now ALIASES the caller's literal.
+3. `create_oc` calls `create_fontset` -> `parse_fontname`. On Phoenix no font
+   matches the pattern, so the chain fails (`create_fontset` returns False —
+   either `init_fontset` fails before `parse_fontname` runs, or `parse_fontname`
+   returns <=0). Upstream only takes its OWN heap copy of `base_name_list` at the
+   `found:` label deep inside `parse_fontname` (line 442) — NOT reached on these
+   failure paths.
+4. `create_oc` `goto err` -> `destroy_oc` -> `Xfree(oc->core.base_name_list)`
+   (line 525) frees the **literal**. Freeing a `.rodata` pointer is undefined on
+   any libc; libphoenix's allocator catches it immediately
+   (`malloc_dl.c` CHUNK_CUSED check -> `_exit(EX_SOFTWARE)` = status 0x46).
+
+This is a **latent upstream bug**, NOT a libphoenix divergence: `_XlcCopyFromArg`
+pointer-copies on glibc too. Real-locale hosts never hit it because they use the
+generic/Uniconv OM (not `XDefaultOMIF`) and have fonts, so `XCreateFontSet`
+succeeds and the `parse_fontname:442` copy is taken. (This also explains why the
+earlier host valgrind run below was clean — it exercised a different OM path.)
+Worth reporting upstream to xorg/libX11.
+
+### Fix (libX11 src/xlibi18n/XDefaultOMIF.c)
+
+In `create_oc`, right after `_XlcSetValues` + the NULL check, take an owned heap
+copy of `base_name_list` so EVERY subsequent failure path frees a real
+allocation:
+
+```c
+    if (oc->core.base_name_list == NULL)
+        goto err;
+    {
+        char *owned_base = strdup(oc->core.base_name_list);
+        /* assign before the NULL check so the err-path destroy_oc frees
+         * NULL (safe), never the borrowed literal again */
+        oc->core.base_name_list = owned_base;
+        if (owned_base == NULL)
+            goto err;
+    }
+```
+
+and remove the now-redundant `strdup` at the `found:` label in `parse_fontname`
+(re-copying there would leak the create_oc copy). Net ownership: `base_name_list`
+is heap-owned from creation, freed exactly once in `destroy_oc`/`close_om` — no
+double-free, no leak, on success and on every failure path.
+
+Tracked as `tools/x11-port/patches/libX11-1.8.7-phoenix-fontset-basename-ownership-58.patch`
+(the `src/` tree is gitignored; `build-x11-phoenix.sh` auto-applies
+`patches/libX11-1.8.7*.patch` via `apply_patches`, so a clean rebuild reproduces
+the fix). Upstreamable to xorg/libX11 as-is.
+
+Build: `make` in `src/libX11-1.8.7`, install to `/tmp/x11-phoenix`, relink the
+clients (they link libX11 statically). 0 undefined symbols. Compiles with no new
+warnings. Xphoenix does NOT link libX11 (`nm` = 0 fontset symbols) — no server
+relink needed.
+
+Staged (all 02:45):
+- `/srv/phoenix-rpi4-nfs/bin/xcalc`
+- `/srv/phoenix-rpi4-nfs/bin/xcalc-dbg`  (tracer kept; should now print 0 FREE-TRACE lines)
+- `/srv/phoenix-rpi4-nfs/bin/xedit`      (same libX11 path — fixed by the same change)
+
+### HW re-validation
+
+Success criterion for THIS fix = **no "Double free detected" abort**; the client
+reaches `XtAppMainLoop`. (This fix stops the crash; it does NOT make the fontset
+load — that still fails on Phoenix, which is exactly why the literal-fallback
+path ran. After the fix `XtCvtStringToFontSet` cleanly returns False with the
+benign "Unable to load any usable fontset" warning instead of crashing.)
+
+Recommended order:
+1. `startx xcalc-dbg` — the clean discriminator. If it reaches the event loop
+   with **0 `FREE-TRACE:` lines**, the double-free is definitively fixed,
+   independent of rendering.
+2. `startx xcalc` — expected to render the calculator on HDMI. xcalc/Xaw use
+   `XtRFontStruct` for labels when `international=False` (disk fonts load per
+   xfontprobe), so the fontset failure should be non-fatal and the window draws.
+   If xcalc reaches the loop but does NOT draw, that is a SEPARATE fontset-
+   fallback/rendering issue, NOT a regression of this double-free fix — do not
+   conflate them.
+
+xedit (`xedit /etc/hostname`) links the same libX11 and is fixed by the same
+change.
+
+---
+
+## Investigation history (how we got here)
 
 ## Symptom (HW, from artifacts/rpi4-uart/rpi4b-uart-20260629-014730-xcalc-payoff.log)
 

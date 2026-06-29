@@ -1,0 +1,48 @@
+--- a/src/xlibi18n/XDefaultOMIF.c	2023-10-03 18:37:42.000000000 +0200
++++ b/src/xlibi18n/XDefaultOMIF.c	2026-06-29 02:50:12.432263084 +0200
+@@ -439,12 +439,11 @@
+ 	}
+     }
+   found:
+-    base_name = strdup(oc->core.base_name_list);
+-    if (base_name == NULL)
+-	goto err;
+-
+-    oc->core.base_name_list = base_name;
+-
++    /*
++     * base_name_list is already an owned heap copy (taken in create_oc, right
++     * after _XlcSetValues), so no strdup is needed here.  Re-copying would leak
++     * the create_oc copy.
++     */
+     XFreeStringList(name_list);
+ 
+     return found_num;
+@@ -892,6 +891,27 @@
+     if (oc->core.base_name_list == NULL)
+ 	goto err;
+ 
++    /*
++     * _XlcSetValues() above only pointer-copies the base_name_list resource
++     * (XlcString == sizeof(XPointer), so _XlcCopyFromArg does *dst = src), so
++     * oc->core.base_name_list currently aliases the caller's argument to
++     * XCreateFontSet -- which is frequently a string *literal* (e.g. libXt's
++     * default "-*-*-*-R-*-*-*-120-*-*-*-*,*").  destroy_oc() unconditionally
++     * Xfree()s base_name_list, so any failure before parse_fontname() took its
++     * own copy would free a non-heap pointer.  Take an owned heap copy now, up
++     * front, so every error path (incl. init_fontset/parse failures) frees a
++     * real allocation.  parse_fontname() no longer needs to copy it again.
++     */
++    {
++	char *owned_base = strdup(oc->core.base_name_list);
++	/* assign before the NULL check: even on strdup failure this replaces the
++	 * borrowed literal with NULL, so the destroy_oc() on the err path does
++	 * Xfree(NULL) (safe) instead of freeing the literal again. */
++	oc->core.base_name_list = owned_base;
++	if (owned_base == NULL)
++	    goto err;
++    }
++
+     oc->core.resources = oc_resources;
+     oc->core.num_resources = XlcNumber(oc_resources);
+ 
