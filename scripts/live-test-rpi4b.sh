@@ -43,8 +43,15 @@
 #   --no-preview      do not open an HDMI window; stream UART only and wait for
 #                     Ctrl-C (use this on a headless host with no GUI / no
 #                     ffplay/mpv)
+#   --sd-boot         boot Phoenix from the Pi's SD card instead of netboot: the
+#                     netboot server is brought DOWN (not up) so the firmware's
+#                     network-boot times out and falls through to the SD card.
+#                     Put a bootable Phoenix SD card in the Pi first. (Network-
+#                     first EEPROM means a running netboot server would win, so
+#                     it must be down for SD boot.)
 #   --stop-netboot    bring the netboot server down during cleanup (default:
-#                     leave it running — it is cheap and you may re-run)
+#                     leave it running — it is cheap and you may re-run). Implied
+#                     by --sd-boot (the server is already down).
 #   --help            show this help
 #
 # Env overrides:
@@ -79,6 +86,7 @@ grabber="${RPI4B_HDMI_GRABBER:-/dev/video4}"
 baud="${RPI4B_UART_BAUD:-115200}"
 no_preview=0
 stop_netboot=0
+sd_boot=0
 
 usage() {
 	# Print the top-of-file comment block (everything between the shebang and
@@ -93,6 +101,7 @@ while [ $# -gt 0 ]; do
 		--uart)         uart_dev="$2"; shift 2 ;;
 		--grabber)      grabber="$2"; shift 2 ;;
 		--no-preview)   no_preview=1; shift ;;
+		--sd-boot)      sd_boot=1; shift ;;
 		--stop-netboot) stop_netboot=1; shift ;;
 		-h|--help)      usage; exit 0 ;;
 		*) printf 'unknown option: %s\n' "$1" >&2; usage >&2; exit 1 ;;
@@ -245,12 +254,23 @@ if [ "$no_preview" -eq 0 ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 1. Netboot server up.
+# 1. Netboot server. For netboot: bring it UP (serves the Pi). For --sd-boot:
+#    bring it DOWN so the firmware's network-boot times out and the Pi falls
+#    through to the SD card (the EEPROM is network-first, so a running server
+#    would win over the card).
 # ---------------------------------------------------------------------------
-log "ensuring netboot server (dnsmasq DHCP+TFTP) is up..."
-if ! "$repo/scripts/netboot-server-up.sh"; then
-	log "ERROR: netboot-server-up.sh failed; cannot serve the Pi. Aborting."
-	exit 1
+if [ "$sd_boot" -eq 1 ]; then
+	log "SD-boot: bringing netboot server DOWN so the Pi falls through to the SD card..."
+	if [ -x "$repo/scripts/netboot-server-down.sh" ]; then
+		"$repo/scripts/netboot-server-down.sh" >/dev/null 2>&1 || true
+	fi
+	log "make sure a bootable Phoenix SD card is in the Pi (network-boot will time out first, ~15-30s)."
+else
+	log "ensuring netboot server (dnsmasq DHCP+TFTP) is up..."
+	if ! "$repo/scripts/netboot-server-up.sh"; then
+		log "ERROR: netboot-server-up.sh failed; cannot serve the Pi. Aborting."
+		exit 1
+	fi
 fi
 
 # ---------------------------------------------------------------------------
