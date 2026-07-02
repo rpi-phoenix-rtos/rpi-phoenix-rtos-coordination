@@ -124,6 +124,41 @@ Recommend (a) first, (b) as a hardening follow-up.
 - **Secrets/PII scrub:** no committed tokens, personal IPs, MACs, or account names in tracked files.
 - **Exit test:** `grep -rn '/home/houp\|/Users/witoldbolt' scripts/` returns nothing in the build path.
 
+### Scope discovered during prep (2026-07-02 — refines Phases 2 & 3)
+
+Executing the prep surfaced blockers the first inventory missed (this is what the VM test would have
+hit at build time; found statically instead):
+
+- **`tools/` also hardcodes `/home/houp/phoenix-rpi` — 36 files** (`tools/x11-port/build-*.sh`,
+  `tools/ports/build-*.sh`, `tools/v3d-driver-port/*.py`, `tools/stress/*`, `tools/demo-apps/*`).
+  Agent A's Phase-2 pass covered only `scripts/`. **Extend Phase 2 to `tools/`** (mechanical:
+  derive repo root from script location at the right depth). Committed prep so far = `scripts/` only.
+- **Automated build vs. manual tool-scripts (the big one).** The automated build
+  (`rebuild-rpi4b-fast.sh` → `build.sh project image`) builds core + `phoenix-rtos-ports` (busybox,
+  curl, windowmaker, xterm, …, which download tarballs at build time). But the **GPU/GL/Vulkan stack
+  and the quake engines are built by manual `tools/v3d-driver-port|quakespasm-port|vkquake-port/*.py`
+  runs** that are NOT in the bootstrap or the build; their `.gpu-libs/*.a` archives (~65 MB) are
+  neither committed nor regenerated, and `sources/.../rpi4-quake/Makefile` `$(error)`s without them
+  (with a hardcoded `GPU_LIBS := /home/houp/.../tools/.gpu-libs`). Likewise several X11 apps are built
+  by `tools/x11-port/*.sh` outside the automated build. **Consequence:** a clean-clone `build.sh` today
+  reproduces the *base* system and then errors at `rpi4-quake`. **Decision needed (Phase 3):** for the
+  showcase apps (X11 extras, dillo, quake, vkquake), either (a) wire their `tools/*` build steps into
+  the automated build (reproducible from source; needs external/mesa etc., already auto-cloned now), or
+  (b) make `rpi4-quake`/`rpi4-vkquake` optional (base image builds; GPU/quake is an opt-in Tier-1.5
+  step), or (c) commit the prebuilt archives. **Recommend (b) for the first release** (base image is
+  the core deliverable; quake is a documented opt-in), with (a) as the eventual goal.
+- **`tools/ports/src` vendoring:** the port build scripts `curl`-download a tarball if absent, then
+  `tar -x` + patch. 315 MB extracted but only **31 MB of tarballs**. **Action:** commit the tarballs
+  (offline/deterministic, survives URL-rot) + `.gitignore` the extracted trees; keep the download as a
+  fallback. Otherwise a clean-clone build needs internet for these too.
+- **`SIBLING_BRANCHES` array is stale** (points at old feature branches; all siblings are on `master`)
+  → floating (non-`--pinned`) bootstrap reproduces a different tree. Refresh to `master`, or require
+  `--pinned`.
+
+**Revised expectation for the first VM test:** validate the **base image** ground-up (bootstrap →
+toolchain → core → phoenix-rtos-ports → rootfs → SD image) — the hard, high-value part — with quake
+made optional; the showcase-app build integration is a follow-on chunk.
+
 ### Phase 3 — Portable "build & flash" path (Tier 1, the core deliverable)
 - Provide one obvious entry point — e.g. `make sd-image` or `./build-sd-image.sh` — that runs
   toolchain-check → buildroot → core+ports+project → rootfs ext2 → SD `.img`, on a stock Ubuntu box
