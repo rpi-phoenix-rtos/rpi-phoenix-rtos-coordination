@@ -91,6 +91,14 @@ def main():
         help="seconds to wait between commands",
     )
     ap.add_argument(
+        "--stamp",
+        action="store_true",
+        help="prefix each captured chunk in the LOG with an elapsed-time marker "
+        "[T+SS.ss] measured from when the current command was sent. Lets you measure "
+        "startup latency of a launched program (grep the log for the marker preceding a "
+        "known output line). Off by default so it never disturbs other log consumers.",
+    )
+    ap.add_argument(
         "--max-cmd-secs",
         type=int,
         default=120,
@@ -178,6 +186,8 @@ def main():
                 if data:
                     sys.stdout.buffer.write(data)
                     sys.stdout.flush()
+                    if args.stamp:
+                        log.write(f"\n[T+{time.time() - cmd_start:6.2f}] ".encode("ascii"))
                     log.write(data)
                     log.flush()
                     quiet_since = time.time()

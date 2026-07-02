@@ -28,6 +28,7 @@ repo="${PHOENIX_RPI_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 label="${LABEL:-psh-interact}"
 power_settle_secs="${RPI4B_POWER_SETTLE_SECS:-3}"
 skip_server_up=0
+stamp=0
 wait_secs="${PSH_WAIT_SECS:-150}"
 idle_secs="${PSH_IDLE_SECS:-20}"
 inter_cmd_secs="${PSH_INTER_CMD_SECS:-3}"
@@ -71,6 +72,7 @@ while [ $# -gt 0 ]; do
 		--max-cmd-secs)     max_cmd_secs="$2"; shift 2 ;;
 		--baud)             uart_baud="$2"; shift 2 ;;
 		--skip-server-up)   skip_server_up=1; shift ;;
+		--stamp)            stamp=1; shift ;;
 		--)                 shift; while [ $# -gt 0 ]; do commands+=("$1"); shift; done ;;
 		-h|--help)          usage; exit 0 ;;
 		*) printf 'unknown arg: %s\n' "$1" >&2; usage >&2; exit 1 ;;
@@ -143,5 +145,6 @@ python3 "$repo/scripts/psh-interact.py" \
 	--idle-secs "$idle_secs" \
 	--inter-cmd-secs "$inter_cmd_secs" \
 	--max-cmd-secs "$max_cmd_secs" \
+	$( [ "$stamp" = 1 ] && printf -- '--stamp' ) \
 	--commands "${commands[@]}"
 exit $?
