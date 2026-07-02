@@ -52,10 +52,13 @@ case "$MC_VARIANT" in
 esac
 echo "=== MC_VARIANT=$MC_VARIANT -> output '$MC_OUT' (codeset_def='$MC_CODESET_DEF' dbg=$MC_DBG guard=$MC_GUARD) ==="
 
-TC=/home/houp/phoenix-rpi/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-
-SYSROOT=/home/houp/phoenix-rpi/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot
+# Repo root derived from this script's own location (portable across checkouts).
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)"
+
+TC=${ROOT}/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-
+SYSROOT=${ROOT}/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot
 PREFIX=/tmp/phoenix-mc
-HERE=/home/houp/phoenix-rpi/tools/ports
+HERE=${ROOT}/tools/ports
 SRC=$HERE/src
 XDIR=$SRC/$NV
 NCPREFIX=/tmp/phoenix-ncurses
@@ -107,7 +110,7 @@ fi
 
 for cfg in config.sub config.guess; do
 	if ! grep -q phoenix "$XDIR/$cfg" 2>/dev/null; then
-		s=$(grep -lr phoenix /home/houp/phoenix-rpi/tools/x11-port/src/*/$cfg 2>/dev/null | head -1)
+		s=$(grep -lr phoenix ${ROOT}/tools/x11-port/src/*/$cfg 2>/dev/null | head -1)
 		[ -n "$s" ] && cp "$s" "$XDIR/$cfg" && echo "=== refreshed $cfg ==="
 	fi
 done
@@ -219,8 +222,8 @@ BIN="$XDIR/src/mc"
 # Stage: artifacts/ (local) + NFS rootfs /bin/<MC_OUT>. The stock variant keeps
 # the canonical /bin/mc; ascii/dbg stage alongside it without disturbing it.
 NFSBIN=/srv/phoenix-rpi4-nfs/bin
-mkdir -p /home/houp/phoenix-rpi/artifacts
-cp "$BIN" "/home/houp/phoenix-rpi/artifacts/$MC_OUT"
+mkdir -p ${ROOT}/artifacts
+cp "$BIN" "${ROOT}/artifacts/$MC_OUT"
 if [ -d "$NFSBIN" ]; then
 	cp "$BIN" "$NFSBIN/$MC_OUT" && echo "=== staged $NFSBIN/$MC_OUT ==="
 else

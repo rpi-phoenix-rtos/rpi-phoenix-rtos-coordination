@@ -20,16 +20,19 @@
 # Author: Witold Bołt
 set -u
 
-TC=/home/houp/phoenix-rpi/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-
-SYSROOT=/home/houp/phoenix-rpi/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot
+# Repo root derived from this script's own location (portable across checkouts).
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)"
+
+TC=${ROOT}/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-
+SYSROOT=${ROOT}/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot
 XPREFIX=/tmp/x11-phoenix
 FPREFIX=/tmp/fltk-phoenix
-SRC=/home/houp/phoenix-rpi/tools/ports/src
+SRC=${ROOT}/tools/ports/src
 XDIR=$SRC/dillo-3.2.0
-ART=/home/houp/phoenix-rpi/artifacts/x11
+ART=${ROOT}/artifacts/x11
 NFS=/srv/phoenix-rpi4-nfs
-WRAPSRC=/home/houp/phoenix-rpi/tools/ports/dillo-dbg-wrap.c
-SHIM=/home/houp/phoenix-rpi/tools/ports/dillo-phoenix-shim.h
+WRAPSRC=${ROOT}/tools/ports/dillo-dbg-wrap.c
+SHIM=${ROOT}/tools/ports/dillo-phoenix-shim.h
 
 fail() { echo "FAIL: $*"; exit 1; }
 

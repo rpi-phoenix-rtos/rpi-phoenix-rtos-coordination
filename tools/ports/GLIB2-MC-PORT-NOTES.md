@@ -422,13 +422,13 @@ ASCII help text, so the clobber bytes likely NAME the source string being copied
 ### addr2line recipe (resolve the allocating backtrace)
 
 ```
-aarch64-phoenix-addr2line -e /home/houp/phoenix-rpi/artifacts/mc-guard -f -C \
+aarch64-phoenix-addr2line -e "$REPO_ROOT"/artifacts/mc-guard -f -C \
     <a0> <a1> <a2> <a3> <a4> <a5> <a6> <a7>
 ```
 
 (`-f` = function name, `-C` = demangle.) Each address resolves to
 `function` + `file:line`. The toolchain prefix is
-`/home/houp/phoenix-rpi/.toolchain/aarch64-phoenix/bin/`. `artifacts/mc-guard` ==
+`"$REPO_ROOT"/.toolchain/aarch64-phoenix/bin/`. `artifacts/mc-guard` ==
 the staged `/bin/mc-guard` (same bytes). Verified working: e.g.
 `addr2line ... 0x56d644` → `__wrap_malloc / mc-guard-wrap.c:228`. The `<a0..a3>`
 chain names the mc (or glib) function that allocated the overflowed buffer →

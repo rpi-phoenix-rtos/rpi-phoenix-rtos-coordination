@@ -4,8 +4,11 @@
 # (Tier D). Final interactive play-test is on HW.
 set -euo pipefail
 
-SR=${SYSROOT:-/home/houp/phoenix-rpi/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot}
-TC=${TOOLCHAIN_BIN:-/home/houp/phoenix-rpi/.toolchain/aarch64-phoenix/bin}
+# Repo root derived from this script's own location (portable across checkouts).
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../../.." && pwd)"
+
+SR=${SYSROOT:-${ROOT}/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot}
+TC=${TOOLCHAIN_BIN:-${ROOT}/.toolchain/aarch64-phoenix/bin}
 NFS=${NFS_EXPORT:-/srv/phoenix-rpi4-nfs}
 HERE=$(cd "$(dirname "$0")" && pwd)
 

@@ -17,9 +17,12 @@
 
 set -euo pipefail
 
-TC="${TC:-/home/houp/phoenix-rpi/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-gcc}"
-SR="${SR:-/home/houp/phoenix-rpi/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot}"
-NM="${NM:-/home/houp/phoenix-rpi/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-nm}"
+# Repo root derived from this script's own location (portable across checkouts).
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)"
+
+TC="${TC:-${ROOT}/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-gcc}"
+SR="${SR:-${ROOT}/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot}"
+NM="${NM:-${ROOT}/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-nm}"
 STAGE="${STAGE:-/srv/phoenix-rpi4-nfs/bin}"
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

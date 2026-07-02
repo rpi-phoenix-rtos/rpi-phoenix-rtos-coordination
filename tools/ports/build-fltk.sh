@@ -30,13 +30,16 @@ set -u
 NV=fltk-1.3.10
 URL=https://www.fltk.org/pub/fltk/1.3.10/$NV-source.tar.gz
 
-TC=/home/houp/phoenix-rpi/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-
-SYSROOT=/home/houp/phoenix-rpi/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot
+# Repo root derived from this script's own location (portable across checkouts).
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)"
+
+TC=${ROOT}/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-
+SYSROOT=${ROOT}/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot
 XPREFIX=/tmp/x11-phoenix          # READ-ONLY: the shared X11 client lib stack
 PREFIX=/tmp/fltk-phoenix          # our own install prefix
-SRC=/home/houp/phoenix-rpi/tools/ports/src
+SRC=${ROOT}/tools/ports/src
 XDIR=$SRC/$NV
-ART=/home/houp/phoenix-rpi/artifacts/x11
+ART=${ROOT}/artifacts/x11
 
 fail() { echo "FAIL: $*"; exit 1; }
 
@@ -61,7 +64,7 @@ done
 # Common cross flags. Point the compiler + linker at BOTH the X11 prefix (X11 +
 # image libs + their headers) and the cross sysroot. The shim aliases the C99
 # rint()/rintf() (absent from Phoenix libm) onto round()/roundf().
-SHIM=/home/houp/phoenix-rpi/tools/ports/fltk-phoenix-shim.h
+SHIM=${ROOT}/tools/ports/fltk-phoenix-shim.h
 XCFLAGS="--sysroot=$SYSROOT -I$XPREFIX/include -include $SHIM"
 XLDFLAGS="--sysroot=$SYSROOT -L$XPREFIX/lib -L$SYSROOT/lib"
 

@@ -22,7 +22,10 @@
 # Author: Witold Bołt
 set -eu
 
-HERE=/home/houp/phoenix-rpi/tools/x11-port/xkb
+# Repo root derived from this script's own location (portable across checkouts).
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../../.." && pwd)"
+
+HERE=${ROOT}/tools/x11-port/xkb
 RULES=evdev
 MODEL=pc105
 LAYOUT=us
@@ -45,7 +48,7 @@ xkbcomp -w 0 -xkm "$KEYMAP" "$XKM" 2> "$HERE/xkbcomp.warn" || { echo "FAIL: xkbc
 # so byte 0 of the file == ver. Read it portably with od.
 VER=$(od -An -tu1 -N1 "$XKM" | tr -d ' ')
 EXPECT=$(grep -hoE 'define[[:space:]]+XkmFileVersion[[:space:]]+[0-9]+' \
-    /home/houp/phoenix-rpi/tools/x11-port/src/libxkbfile-1.1.3/include/X11/extensions/XKM.h \
+    ${ROOT}/tools/x11-port/src/libxkbfile-1.1.3/include/X11/extensions/XKM.h \
     | grep -oE '[0-9]+$' | head -1)
 echo "xkm version byte = $VER ; server expects XkmFileVersion = $EXPECT"
 if [ "$VER" != "$EXPECT" ]; then

@@ -5,11 +5,14 @@
 # See ../PROGRESS.md. Final visual run is on HW once the fbdev DDX server lands.
 set -euo pipefail
 
-SR=${SYSROOT:-/home/houp/phoenix-rpi/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot}
-TC=${TOOLCHAIN_BIN:-/home/houp/phoenix-rpi/.toolchain/aarch64-phoenix/bin}
+# Repo root derived from this script's own location (portable across checkouts).
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../../.." && pwd)"
+
+SR=${SYSROOT:-${ROOT}/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot}
+TC=${TOOLCHAIN_BIN:-${ROOT}/.toolchain/aarch64-phoenix/bin}
 P=${X11_PREFIX:-/tmp/x11-phoenix}
 NFS=${NFS_EXPORT:-/srv/phoenix-rpi4-nfs}
-ART=${ARTIFACTS:-/home/houp/phoenix-rpi/artifacts/x11}
+ART=${ARTIFACTS:-${ROOT}/artifacts/x11}
 HERE=$(cd "$(dirname "$0")" && pwd)
 
 cd "$HERE"

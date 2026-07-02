@@ -20,10 +20,13 @@ set -u
 NV=libffi-3.3
 URL=https://github.com/libffi/libffi/releases/download/v3.3/$NV.tar.gz
 
-TC=/home/houp/phoenix-rpi/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-
-SYSROOT=/home/houp/phoenix-rpi/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot
+# Repo root derived from this script's own location (portable across checkouts).
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)"
+
+TC=${ROOT}/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-
+SYSROOT=${ROOT}/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot
 PREFIX=/tmp/phoenix-ffi
-HERE=/home/houp/phoenix-rpi/tools/ports
+HERE=${ROOT}/tools/ports
 SRC=$HERE/src
 XDIR=$SRC/$NV
 
@@ -37,7 +40,7 @@ fi
 
 for cfg in config.sub config.guess; do
 	if ! grep -q phoenix "$XDIR/$cfg" 2>/dev/null; then
-		s=$(grep -lr phoenix /home/houp/phoenix-rpi/tools/x11-port/src/*/$cfg 2>/dev/null | head -1)
+		s=$(grep -lr phoenix ${ROOT}/tools/x11-port/src/*/$cfg 2>/dev/null | head -1)
 		[ -n "$s" ] && cp "$s" "$XDIR/$cfg" && echo "=== refreshed $cfg ==="
 	fi
 done

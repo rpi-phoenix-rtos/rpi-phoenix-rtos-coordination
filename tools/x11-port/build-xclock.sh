@@ -27,13 +27,16 @@ NV=$APP-$VER
 TARBALL=$NV.tar.gz
 URL=http://www.x.org/archive/individual/app/$TARBALL
 
-TC=/home/houp/phoenix-rpi/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-
-SYSROOT=/home/houp/phoenix-rpi/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot
+# Repo root derived from this script's own location (portable across checkouts).
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)"
+
+TC=${ROOT}/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-
+SYSROOT=${ROOT}/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot
 PREFIX=/tmp/x11-phoenix
-TOOLS=/home/houp/phoenix-rpi/tools/x11-port
+TOOLS=${ROOT}/tools/x11-port
 SRC=$TOOLS/src
 XDIR=$SRC/$NV
-ART=/home/houp/phoenix-rpi/artifacts/x11
+ART=${ROOT}/artifacts/x11
 NFS=/srv/phoenix-rpi4-nfs
 
 export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig:$PREFIX/share/pkgconfig"

@@ -10,11 +10,14 @@
 set -eu
 
 TOOLS=$(cd "$(dirname "$0")" && pwd)
-TC=/home/houp/phoenix-rpi/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-
-SYSROOT=/home/houp/phoenix-rpi/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot
+# Repo root derived from this script's own location (portable across checkouts).
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+
+TC=${ROOT}/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-
+SYSROOT=${ROOT}/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot
 PREFIX=/tmp/x11-phoenix
 NFS=/srv/phoenix-rpi4-nfs
-ART=/home/houp/phoenix-rpi/artifacts/x11
+ART=${ROOT}/artifacts/x11
 SRC="$TOOLS/xcolortest/xcolortest.c"
 OUT="$TOOLS/xcolortest/xcolortest"
 

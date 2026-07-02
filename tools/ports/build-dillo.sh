@@ -34,16 +34,19 @@ set -u
 NV=dillo-3.2.0
 URL=https://github.com/dillo-browser/dillo/archive/refs/tags/v3.2.0.tar.gz
 
-TC=/home/houp/phoenix-rpi/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-
-SYSROOT=/home/houp/phoenix-rpi/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot
+# Repo root derived from this script's own location (portable across checkouts).
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)"
+
+TC=${ROOT}/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-
+SYSROOT=${ROOT}/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot
 XPREFIX=/tmp/x11-phoenix            # READ-ONLY: shared X11 client lib stack
 FPREFIX=/tmp/fltk-phoenix          # READ-ONLY: FLTK 1.3.10 static libs + fltk-config
 PREFIX=/tmp/dillo-phoenix          # our own build/install prefix
-SRC=/home/houp/phoenix-rpi/tools/ports/src
+SRC=${ROOT}/tools/ports/src
 XDIR=$SRC/$NV
-ART=/home/houp/phoenix-rpi/artifacts/x11
+ART=${ROOT}/artifacts/x11
 NFS=/srv/phoenix-rpi4-nfs
-SHIM=/home/houp/phoenix-rpi/tools/ports/dillo-phoenix-shim.h
+SHIM=${ROOT}/tools/ports/dillo-phoenix-shim.h
 
 fail() { echo "FAIL: $*"; exit 1; }
 

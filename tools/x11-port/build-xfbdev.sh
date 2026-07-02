@@ -16,10 +16,13 @@
 # Author: Witold Bołt
 set -u
 
-TC=/home/houp/phoenix-rpi/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-
-SYSROOT=/home/houp/phoenix-rpi/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot
+# Repo root derived from this script's own location (portable across checkouts).
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)"
+
+TC=${ROOT}/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-
+SYSROOT=${ROOT}/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot
 PREFIX=/tmp/x11-phoenix
-KD=/home/houp/phoenix-rpi/tools/x11-port/src/xorg-server-1.20.14
+KD=${ROOT}/tools/x11-port/src/xorg-server-1.20.14
 DDX=$KD/hw/kdrive/fbdev
 CC=${TC}gcc
 
@@ -30,8 +33,8 @@ if [ "${1:-}" = "--stub" ]; then SRCFILE=fbdev_stub.c; OUT=Xphoenix-stub; fi
 # The xorg-server source tree under src/ is a regenerable 3rd-party download; the
 # DURABLE source-of-truth for the DDX is the tracked copy in tools/x11-port/ddx/.
 # Sync it into the in-tree DDX dir before compiling so a fresh tree gets the backend.
-DDX_SRC=/home/houp/phoenix-rpi/tools/x11-port/ddx
-XKBDIR=/home/houp/phoenix-rpi/tools/x11-port/xkb
+DDX_SRC=${ROOT}/tools/x11-port/ddx
+XKBDIR=${ROOT}/tools/x11-port/xkb
 mkdir -p "$DDX"
 cp "$DDX_SRC/fbdev.c" "$DDX/fbdev.c"
 [ -f "$DDX_SRC/fbdev_stub.c" ] && cp "$DDX_SRC/fbdev_stub.c" "$DDX/fbdev_stub.c"
@@ -41,7 +44,7 @@ cp "$DDX_SRC/fbdev.c" "$DDX/fbdev.c"
 # here, then the affected archive is rebuilt. Otherwise a relink would pull the
 # STALE prebuilt archive (same stale-archive hazard as the toolchain libphoenix).
 # patch -N is idempotent; `make -C record` is a fast no-op when nothing changed.
-PATCHDIR=/home/houp/phoenix-rpi/tools/x11-port/patches
+PATCHDIR=${ROOT}/tools/x11-port/patches
 RECORD_PATCH="$PATCHDIR/xorg-server-1.20.14-record-malloc0.patch"
 if [ -f "$RECORD_PATCH" ]; then
   echo "=== applying + rebuilding RECORD (malloc(0)->NULL assert guard) ==="
@@ -146,7 +149,7 @@ ls -l "$DDX/$OUT"
 
 # Publish the full (non-stub) server to the tracked artifact location.
 if [ "$OUT" = "Xphoenix" ]; then
-  ART=/home/houp/phoenix-rpi/artifacts/x11
+  ART=${ROOT}/artifacts/x11
   mkdir -p "$ART"
   cp "$DDX/$OUT" "$ART/$OUT"
   echo "=== published -> $ART/$OUT ==="

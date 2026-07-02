@@ -26,14 +26,17 @@
 # Author: Witold Bołt
 set -u
 
-TC=/home/houp/phoenix-rpi/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-
-SYSROOT=/home/houp/phoenix-rpi/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot
+# Repo root derived from this script's own location (portable across checkouts).
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)"
+
+TC=${ROOT}/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-
+SYSROOT=${ROOT}/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot
 PREFIX=/tmp/x11-phoenix          # shared X11 prefix — READ-ONLY here
 DEPS=/tmp/wmaker-deps            # our isolated build prefix (X11 closure + font stack)
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SRC="$HERE/src"
 NFS=/srv/phoenix-rpi4-nfs
-ART=/home/houp/phoenix-rpi/artifacts/x11
+ART=${ROOT}/artifacts/x11
 
 # wmaker is installed under --prefix=/ so its compiled-in data paths
 # (share/WindowMaker, defaults, menus) resolve on the booted Pi, where the NFS

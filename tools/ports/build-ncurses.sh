@@ -19,10 +19,13 @@ set -u
 NV=ncurses-6.4
 URL=https://ftp.gnu.org/gnu/ncurses/$NV.tar.gz
 
-TC=/home/houp/phoenix-rpi/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-
-SYSROOT=/home/houp/phoenix-rpi/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot
+# Repo root derived from this script's own location (portable across checkouts).
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)"
+
+TC=${ROOT}/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-
+SYSROOT=${ROOT}/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot
 PREFIX=/tmp/phoenix-ncurses
-SRC=/home/houp/phoenix-rpi/tools/ports/src
+SRC=${ROOT}/tools/ports/src
 XDIR=$SRC/$NV
 NFS=/srv/phoenix-rpi4-nfs
 

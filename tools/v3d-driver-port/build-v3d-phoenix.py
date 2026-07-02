@@ -23,8 +23,10 @@ few passes (the real closure, not a speculative bulk compile).
 Usage:  python3 build-v3d-phoenix.py [--compile-only]
 """
 import json, os, shlex, subprocess, sys
+from pathlib import Path
 
-ROOT      = "/home/houp/phoenix-rpi"
+# Repo root derived from this script's own location (portable across checkouts).
+ROOT      = str(Path(__file__).resolve().parents[2])
 MESA      = f"{ROOT}/external/mesa"
 HOSTBUILD = "/tmp/mesa-v3d-build"
 TC        = f"{ROOT}/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-gcc"

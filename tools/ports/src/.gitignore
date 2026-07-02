@@ -1,0 +1,15 @@
+# Vendored port sources.
+#
+# The build scripts under tools/ports/ download an upstream tarball here (if
+# absent) and extract it in place, then patch the tree. To make a fresh clone
+# build offline / deterministically, we commit the *tarballs* but not the large
+# extracted source trees (315 MB extracted vs ~31 MB of tarballs).
+#
+# Ignore everything (including the extracted directories like dillo-3.2.0/) ...
+*
+# ... but keep this .gitignore and the upstream tarballs.
+!.gitignore
+!*.tar.gz
+!*.tar.xz
+!*.tgz
+!*.tar.bz2

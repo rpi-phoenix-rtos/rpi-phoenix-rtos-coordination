@@ -52,15 +52,15 @@ PIN_MANIFEST="${PIN_MANIFEST:-$PROJECT_DIR/manifests/release-pin.md}"
 # Branches each Pi-4-modified sibling repo should track when newly
 # cloned. Keep in sync with the latest manifest in manifests/.
 declare -A SIBLING_BRANCHES=(
-	[phoenix-rtos-kernel]=agent/rpi4-program-reloc
-	[phoenix-rtos-devices]=codex/upstream-sync-20260516
+	[phoenix-rtos-kernel]=master
+	[phoenix-rtos-devices]=master
 	[phoenix-rtos-usb]=master
-	[phoenix-rtos-utils]=codex/upstream-sync-20260516
-	[libphoenix]=codex/upstream-sync-20260516
-	[plo]=codex/upstream-sync-20260516
-	[phoenix-rtos-filesystems]=codex/upstream-sync-20260516
-	[phoenix-rtos-project]=codex/upstream-sync-20260516
-	[phoenix-rtos-build]=codex/upstream-sync-20260516
+	[phoenix-rtos-utils]=master
+	[libphoenix]=master
+	[plo]=master
+	[phoenix-rtos-filesystems]=master
+	[phoenix-rtos-project]=master
+	[phoenix-rtos-build]=master
 )
 
 # Additional sibling repos that phoenix-rtos-project's .gitmodules

@@ -28,13 +28,16 @@ TARBALL=$NV.tar.gz
 URL=https://github.com/ThomasDickey/xterm-snapshots/archive/refs/tags/xterm-$VER.tar.gz
 UPSTREAM_DIR=xterm-snapshots-xterm-$VER
 
-TC=/home/houp/phoenix-rpi/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-
-SYSROOT=/home/houp/phoenix-rpi/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot
+# Repo root derived from this script's own location (portable across checkouts).
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)"
+
+TC=${ROOT}/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-
+SYSROOT=${ROOT}/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot
 PREFIX=/tmp/x11-phoenix
-TOOLS=/home/houp/phoenix-rpi/tools/x11-port
+TOOLS=${ROOT}/tools/x11-port
 SRC=$TOOLS/src
 XDIR=$SRC/$NV
-ART=/home/houp/phoenix-rpi/artifacts/x11
+ART=${ROOT}/artifacts/x11
 NFS=/srv/phoenix-rpi4-nfs
 
 # Persistent (committed) port files live under tools/x11-port/xterm/ because the

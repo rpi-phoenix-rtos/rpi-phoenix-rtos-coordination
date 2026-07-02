@@ -15,8 +15,10 @@ the "STUB (no defining object)" bucket are libdrm/libc/peripheral and also stubb
 Usage: python3 resolve-syms.py   (reads UNDEF, writes/updates AUXLIST, prints report)
 """
 import json, os, subprocess, glob
+from pathlib import Path
 
-ROOT      = "/home/houp/phoenix-rpi"
+# Repo root derived from this script's own location (portable across checkouts).
+ROOT      = str(Path(__file__).resolve().parents[2])
 MESA      = f"{ROOT}/external/mesa"
 HOSTBUILD = "/tmp/mesa-v3d-build"
 NM        = "nm"

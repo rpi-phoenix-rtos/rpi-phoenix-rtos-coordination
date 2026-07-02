@@ -24,12 +24,15 @@ NV=jwm-$VER
 TARBALL=$NV.tar.xz
 URL=https://github.com/joewing/jwm/releases/download/v$VER/$TARBALL
 
-TC=/home/houp/phoenix-rpi/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-
-SYSROOT=/home/houp/phoenix-rpi/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot
+# Repo root derived from this script's own location (portable across checkouts).
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)"
+
+TC=${ROOT}/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-
+SYSROOT=${ROOT}/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot
 PREFIX=/tmp/x11-phoenix
-SRC=/home/houp/phoenix-rpi/tools/x11-port/src
+SRC=${ROOT}/tools/x11-port/src
 JWMDIR=$SRC/$NV
-ART=/home/houp/phoenix-rpi/artifacts/x11
+ART=${ROOT}/artifacts/x11
 NFS=/srv/phoenix-rpi4-nfs
 
 # The compiled-in SYSTEM config path. JWM's configure defines
@@ -138,7 +141,7 @@ if [ -d "$NFS/bin" ]; then
 	# The config is tracked in the repo and hand-staged; only copy it onto the
 	# export if a repo copy exists next to this script's tree (keeps the script
 	# self-contained for a fresh export) — otherwise leave the existing one.
-	REPO_CFG=/home/houp/phoenix-rpi/tools/x11-port/jwm/system.jwmrc
+	REPO_CFG=${ROOT}/tools/x11-port/jwm/system.jwmrc
 	if [ -f "$REPO_CFG" ]; then
 		cp "$REPO_CFG" "$NFS/etc/jwm/system.jwmrc"
 	fi

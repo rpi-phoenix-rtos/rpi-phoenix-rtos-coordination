@@ -15,14 +15,17 @@
 # Author: Witold Bołt
 set -u
 
-TC=/home/houp/phoenix-rpi/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-
-SYSROOT=/home/houp/phoenix-rpi/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot
-SRC=/home/houp/phoenix-rpi/tools/x11-port/launcher/pl_phoenix_xlaunch.c
+# Repo root derived from this script's own location (portable across checkouts).
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)"
+
+TC=${ROOT}/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-
+SYSROOT=${ROOT}/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot
+SRC=${ROOT}/tools/x11-port/launcher/pl_phoenix_xlaunch.c
 OUT=pl_phoenix_xlaunch
 CC=${TC}gcc
 
-LAUNCHDIR=/home/houp/phoenix-rpi/tools/x11-port/launcher
-ART=/home/houp/phoenix-rpi/artifacts/x11
+LAUNCHDIR=${ROOT}/tools/x11-port/launcher
+ART=${ROOT}/artifacts/x11
 
 echo "=== compiling + linking $OUT (static aarch64-phoenix) ==="
 $CC --sysroot=$SYSROOT -static -Wall -Wextra -O2 \

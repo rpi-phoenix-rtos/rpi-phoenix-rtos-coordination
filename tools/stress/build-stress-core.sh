@@ -7,9 +7,12 @@
 # a static binary), and stages. Mirrors tools/x11-port/apps/build.sh.
 set -euo pipefail
 
-SR=${SYSROOT:-/home/houp/phoenix-rpi/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot}
-TC=${TOOLCHAIN:-/home/houp/phoenix-rpi/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-gcc}
-NM=${NM:-/home/houp/phoenix-rpi/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-nm}
+# Repo root derived from this script's own location (portable across checkouts).
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)"
+
+SR=${SYSROOT:-${ROOT}/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot}
+TC=${TOOLCHAIN:-${ROOT}/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-gcc}
+NM=${NM:-${ROOT}/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-nm}
 NFS=${NFS_EXPORT:-/srv/phoenix-rpi4-nfs}
 HERE=$(cd "$(dirname "$0")" && pwd)
 
