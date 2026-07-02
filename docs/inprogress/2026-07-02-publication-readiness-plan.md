@@ -66,6 +66,38 @@ known-good image bit-for-bit, plus a "latest/floating" mode for developers.
 
 ## Phases
 
+### Source-acquisition reality (refined 2026-07-02 — answers to user Qs)
+
+The external/port sources are **heterogeneous** — five distinct mechanisms, and the publication
+bootstrap must handle each:
+
+1. **`external/linux` (7.0 GB) — NOT needed for the build; the DTB is FETCHED, never compiled.**
+   Per user directive (2026-07-02): the Pi4 device tree comes from the **`raspberrypi/firmware`**
+   repo (https://github.com/raspberrypi/firmware) — which ships `boot/bcm2711-rpi-4-b.dtb` ready-made
+   — **not** compiled from kernel `.dts`. The bootstrap already sparse-checks-out that repo for the
+   boot blobs (`start4.elf`, `fixup4.dat`, …), so the **same fetch provides both the boot blobs and the
+   DTB**; no `dtc`, no kernel source. → **Action:** in `prepare-rpi4b-dtb.sh`, make the firmware DTB the
+   sole supported source and **remove the `dtc`-compile-from-`external/linux/.../bcm2711-rpi-4-b.dts`
+   fallback branch** (it needs the 7 GB clone and never fires). Drop `external/linux` from the
+   publication bootstrap entirely (mention it only as an optional, out-of-band *research* clone).
+2. **`external/mesa` (1.1 GB) — REQUIRED for the build.** The V3D GPU / GL / Vulkan stack
+   (`tools/v3d-driver-port`, `quakespasm-port`, `vkquake-port`) consumes `external/mesa/include` +
+   `src/broadcom`. → **Clone + pin** in the bootstrap.
+3. **`phoenix-rtos-ports` ports** (windowmaker, xterm, curl, busybox, openssl…): each `port.def.sh`
+   **downloads its upstream tarball at build time** (pinned version+name; needs internet).
+4. **`tools/x11-port/build-x11-phoenix.sh`**: **downloads X.org release tarballs at build time**
+   (curl from x.org / xorg.freedesktop.org into `tools/x11-port/src`) + applies patches. Needs internet.
+5. **`tools/ports/src/`** (dillo, fltk, glib, libffi, libiconv…): **vendored tarballs + extracted trees,
+   currently UNTRACKED** (not gitignored, just never committed). The *build scripts* (`tools/ports/
+   build-dillo.sh` …) are tracked, but the **sources are not** → a publication blocker: either commit
+   (vendor) these tarballs, or replace with pinned-URL+checksum fetch scripts.
+
+**Consequence:** the build is **not fully offline today** — it fetches port tarballs (phoenix-rtos-ports
++ X.org) at build time. For publication, decide: (a) accept build-time downloads (simplest; pin
+versions, document that a network is required during build), or (b) add a `fetch-sources.sh` that
+pre-downloads+checksums everything for offline/reproducible builds (more work, fully deterministic).
+Recommend (a) first, (b) as a hardening follow-up.
+
 ### Phase 1 — Reproducibility foundation (one `bootstrap.sh`, pinned)
 - Promote `bootstrap-linux-host.sh` to a single canonical `bootstrap.sh` that, from an empty dir:
   clones coord repo (if not already) → clones all siblings **and** the `external/` clones (linux, mesa,
