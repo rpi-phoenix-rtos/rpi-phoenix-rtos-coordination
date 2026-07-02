@@ -259,6 +259,24 @@ if [ "${with_ports}" = 1 ]; then
 	scope_reason="${scope_reason}; +ports (busybox etc.)"
 fi
 
+# --variant sd: produce the COMPLETE bootable 2-partition SD image (FAT boot +
+# ext2 root) in one command. The ext2 root is populated from the staged rootfs
+# tree (_fs/<target>/root), which needs the `fs` skeleton, the `core`/`project`
+# binaries (psh + servers) and the `ports` (busybox etc.) all present — the
+# `auto` scope alone gives just `project image`, so on a clean tree the rootfs
+# would be missing core binaries and every port. Force the full, deterministic
+# sd stage list so the single command works from a cold buildroot. (`--scope`
+# other than auto is an explicit developer override and is left untouched; the
+# ext2 rootfs step at the tail still runs for sd regardless.) The ext2 image is
+# assembled after `image` by build-rpi4b-rootfs-ext2.sh in the artifact tail.
+if [ "${variant}" = "sd" ] && [ "${ports_only}" = 0 ] && [ "${scope}" = "auto" ]; then
+	# `host` builds the hostutils (metaelf/syspagen/mkrofs/...) that the image
+	# stage needs; include it so the command is self-sufficient from a cold
+	# buildroot (build.sh's clean wipes the host prefix too).
+	build_args=(host fs core ports project image)
+	scope_reason="sd variant: full stage list (host fs core ports project image) for a complete 2-part SD image"
+fi
+
 # --ports-only: build the `ports` stage and nothing else. This stages port
 # binaries into _fs/<target>/root without rebuilding loader.disk or any
 # core/project artifact (used when populating an external NFS rootfs).
@@ -364,10 +382,33 @@ fi
 
 "${repo_root}/scripts/assemble-rpi4b-bootfs.sh"
 "${repo_root}/scripts/assemble-rpi4b-bootfs-img.sh"
-"${repo_root}/scripts/assemble-rpi4b-sdimg.sh"
-"${repo_root}/scripts/export-rpi4b-sdimg.sh"
 
-exported_sha="$(shasum -a 256 "${repo_root}/artifacts/rpi4b/rpi4b-sd.img" | awk '{print $1}')"
-"${repo_root}/scripts/verify-rpi4b-sdimg.sh"
+if [ "${variant}" = "sd" ]; then
+	# sd variant: build the 2-partition SD image (FAT boot + ext2 root). The FAT
+	# bootfs image assembled above is consumed by build-rpi4b-rootfs-ext2.sh,
+	# which populates the ext2 root from the staged rootfs tree (_fs/<target>/root)
+	# and emits _boot/<target>/rpi4b-sd-2part.img. This is the real bootable card
+	# image for the sd variant (the 1-part rpi4b-sd.img below is FAT-boot-only and
+	# has no root filesystem, so it is skipped here). Export + verify target the
+	# 2-part image.
+	two_part_img="${buildroot}/_boot/${target}/rpi4b-sd-2part.img"
+	exported_two_part="${repo_root}/artifacts/rpi4b/rpi4b-sd-2part.img"
+	RPI4B_BUILDROOT="${buildroot}" "${repo_root}/scripts/build-rpi4b-rootfs-ext2.sh"
+	RPI4B_REMOTE_SDIMG="${two_part_img}" \
+		RPI4B_EXPORT_SDIMG_PATH="${exported_two_part}" \
+		"${repo_root}/scripts/export-rpi4b-sdimg.sh"
+	exported_sha="$(shasum -a 256 "${exported_two_part}" | awk '{print $1}')"
+	RPI4B_SDIMG_PATH="${exported_two_part}" \
+		"${repo_root}/scripts/verify-rpi4b-sdimg.sh"
+	printf 'Exported 2-partition SD image: %s\n' "${exported_two_part}"
+	printf 'Exported SHA256: %s\n' "${exported_sha}"
+else
+	# netboot / nfsroot: 1-partition FAT-only image (root comes from the network).
+	"${repo_root}/scripts/assemble-rpi4b-sdimg.sh"
+	"${repo_root}/scripts/export-rpi4b-sdimg.sh"
 
-printf 'Exported SHA256: %s\n' "${exported_sha}"
+	exported_sha="$(shasum -a 256 "${repo_root}/artifacts/rpi4b/rpi4b-sd.img" | awk '{print $1}')"
+	"${repo_root}/scripts/verify-rpi4b-sdimg.sh"
+
+	printf 'Exported SHA256: %s\n' "${exported_sha}"
+fi
