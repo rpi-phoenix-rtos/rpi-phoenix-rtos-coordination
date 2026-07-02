@@ -2,8 +2,9 @@
 
 set -euo pipefail
 
-image_path="${RPI4B_SDIMG_PATH:-/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b/rpi4b-sd.img}"
-report_dir="${RPI4B_REPORT_DIR:-/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b-reports}"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
+image_path="${RPI4B_SDIMG_PATH:-$repo_root/artifacts/rpi4b/rpi4b-sd.img}"
+report_dir="${RPI4B_REPORT_DIR:-$repo_root/artifacts/rpi4b-reports}"
 timestamp="$(date +%Y%m%d-%H%M%S)"
 report_path="${RPI4B_REPORT_PATH:-$report_dir/pi4-first-trial-$timestamp.md}"
 

@@ -6,24 +6,23 @@ repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 host_os="$(uname -s)"
 
 vm="${PHOENIX_VM:-phoenix-dev}"
-# Default paths: macOS expects external trees under /Users/...; Linux
-# uses the in-tree .bootblobs/ that bootstrap-linux-host.sh stages, and
-# the existing project DTB at sources/phoenix-rtos-project/.
-if [ "$host_os" = "Darwin" ]; then
-	linux_tree="${RPI4B_LINUX_TREE:-/Users/witoldbolt/phoenix-rpi/external/raspberrypi-linux}"
-	firmware_tree="${RPI4B_FIRMWARE_TREE:-/Users/witoldbolt/phoenix-rpi/external/raspberrypi-firmware}"
-	firmware_dtb_default="$firmware_tree/boot/bcm2711-rpi-4-b.dtb"
-	project_dtb_default="/Users/witoldbolt/phoenix-rpi/sources/phoenix-rtos-project/_projects/aarch64a72-generic-rpi4b/bcm2711-rpi-4-b.dtb"
-else
-	linux_tree="${RPI4B_LINUX_TREE:-$repo_root/external/raspberrypi-linux}"
-	firmware_tree="${RPI4B_FIRMWARE_TREE:-$repo_root/.bootblobs/.firmware-checkout}"
-	firmware_dtb_default="$repo_root/.bootblobs/bcm2711-rpi-4-b.dtb"
-	project_dtb_default="$repo_root/sources/phoenix-rtos-project/_projects/aarch64a72-generic-rpi4b/bcm2711-rpi-4-b.dtb"
-fi
-firmware_dtb="${RPI4B_FIRMWARE_DTB:-$firmware_dtb_default}"
-project_dtb="${RPI4B_PROJECT_DTB:-$project_dtb_default}"
+# The Pi 4 DTB is FETCHED, never compiled. It comes from the
+# raspberrypi/firmware blobs that bootstrap-linux-host.sh stages under
+# .bootblobs/ (the same fetch that provides start4.elf/fixup4.dat). We do
+# NOT compile from kernel .dts — that would need the multi-GB linux clone
+# which the publication bootstrap intentionally drops.
+#
+# Source precedence: an explicit final-form DTB (RPI4B_SOURCE_DTB) →
+# the firmware DTB → the in-repo project DTB.
+firmware_tree="${RPI4B_FIRMWARE_TREE:-$repo_root/.bootblobs/.firmware-checkout}"
+firmware_dtb="${RPI4B_FIRMWARE_DTB:-$repo_root/.bootblobs/bcm2711-rpi-4-b.dtb}"
+project_dtb="${RPI4B_PROJECT_DTB:-$repo_root/sources/phoenix-rtos-project/_projects/aarch64a72-generic-rpi4b/bcm2711-rpi-4-b.dtb}"
 source_dtb="${RPI4B_SOURCE_DTB:-}"
-source_dts="${RPI4B_SOURCE_DTS:-$linux_tree/arch/arm/boot/dts/broadcom/bcm2711-rpi-4-b.dts}"
+# A firmware checkout keeps the DTB under boot/; honour it as a fallback
+# location for the firmware DTB if the staged copy is absent.
+if [ ! -f "$firmware_dtb" ] && [ -f "$firmware_tree/boot/bcm2711-rpi-4-b.dtb" ]; then
+	firmware_dtb="$firmware_tree/boot/bcm2711-rpi-4-b.dtb"
+fi
 out_dir="${RPI4B_DTB_DIR:-/tmp/rpi4b-dtb}"
 out_dtb="${RPI4B_DTB_PATH:-$out_dir/bcm2711-rpi-4-b.dtb}"
 allow_warnings="${RPI4B_DTB_ALLOW_WARNINGS:-0}"
@@ -41,11 +40,9 @@ run_shell() {
 run_shell "
 set -euo pipefail
 
-linux_tree='$linux_tree'
 firmware_dtb='$firmware_dtb'
 project_dtb='$project_dtb'
 source_dtb='$source_dtb'
-source_dts='$source_dts'
 out_dir='$out_dir'
 out_dtb='$out_dtb'
 allow_warnings='$allow_warnings'
@@ -72,25 +69,16 @@ elif [ -f \"\$project_dtb\" ]; then
         printf 'Using project-local DTB source: %s\n' \"\$project_dtb\"
         cp \"\$project_dtb\" \"\$out_dtb\"
         mode='copy'
-elif [ -f \"\$source_dts\" ]; then
-        printf 'Compiling Pi 4 DTS source: %s\n' \"\$source_dts\"
-        cd \"\$linux_tree\"
-        cpp -nostdinc \
-                -I arch/arm/boot/dts \
-                -I arch/arm/boot/dts/broadcom \
-                -I include \
-                -undef \
-                -x assembler-with-cpp \
-                \"\$source_dts\" | dtc -I dts -O dtb -o \"\$out_dtb\" 2>\"\$stderr_log\"
-        mode='compile'
 else
-        printf 'missing Pi 4 DT source: no final DTB, no firmware DTB and no DTS found\n' >&2
-        printf 'To fix this, you can clone the official firmware repo:\n' >&2
-        printf '  mkdir -p external && git clone --depth 1 https://github.com/raspberrypi/firmware external/raspberrypi-firmware\n' >&2
-        printf 'checked DTB: %s\n' \"\$source_dtb\" >&2
+        printf 'missing Pi 4 DTB: no final DTB, no firmware DTB and no project DTB found\n' >&2
+        printf 'The Pi 4 DTB is fetched from the raspberrypi/firmware blobs, not compiled.\n' >&2
+        printf 'Run the host bootstrap to stage them:\n' >&2
+        printf '  ./scripts/bootstrap-linux-host.sh\n' >&2
+        printf 'or fetch the firmware repo manually (its boot/ ships bcm2711-rpi-4-b.dtb):\n' >&2
+        printf '  https://github.com/raspberrypi/firmware\n' >&2
+        printf 'checked final DTB:    %s\n' \"\$source_dtb\" >&2
         printf 'checked firmware DTB: %s\n' \"\$firmware_dtb\" >&2
-        printf 'checked project DTB: %s\n' \"\$project_dtb\" >&2
-        printf 'checked DTS: %s\n' \"\$source_dts\" >&2
+        printf 'checked project DTB:  %s\n' \"\$project_dtb\" >&2
         exit 1
 fi
 

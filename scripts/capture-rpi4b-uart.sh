@@ -11,7 +11,10 @@ default_output_dir="${RPI4B_UART_DIR:-${repo_root}/artifacts/rpi4b-uart}"
 
 baud="115200"
 baud_set=0
-device=""
+# Empty by default so autodetect (and the /dev/serial/by-id preference)
+# still runs on this host. Set RPI4B_SERIAL_DEV (e.g. /dev/ttyUSB0) to
+# pin a device and skip autodetect; --device overrides both.
+device="${RPI4B_SERIAL_DEV:-}"
 exit_after=""
 label=""
 list_only=0

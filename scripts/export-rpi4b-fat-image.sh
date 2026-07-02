@@ -8,7 +8,7 @@ host_os="$(uname -s)"
 vm="${PHOENIX_VM:-phoenix-dev}"
 if [ "$host_os" = "Darwin" ]; then
 	remote_image="${RPI4B_REMOTE_BOOTFS_IMG:-/home/witoldbolt.guest/phoenix-buildroots/phoenix-rtos-project-copy/_boot/aarch64a72-generic-rpi4b/rpi4b-bootfs.img}"
-	out_dir="${RPI4B_EXPORT_DIR:-/Users/witoldbolt/phoenix-rpi/artifacts/rpi4b}"
+	out_dir="${RPI4B_EXPORT_DIR:-$repo_root/artifacts/rpi4b}"
 else
 	remote_image="${RPI4B_REMOTE_BOOTFS_IMG:-$repo_root/.buildroot/_boot/aarch64a72-generic-rpi4b/rpi4b-bootfs.img}"
 	out_dir="${RPI4B_EXPORT_DIR:-$repo_root/artifacts/rpi4b}"

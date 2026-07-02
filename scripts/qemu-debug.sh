@@ -25,7 +25,11 @@
 set -u
 set -o pipefail
 
-COORD="${PHOENIX_COORD:-/Users/witoldbolt/phoenix-rpi}"
+# Coordination-repo root: derive from this script's location so it
+# resolves correctly on any host. The VM_* paths below are Lima *guest*
+# paths and are intentionally left as-is (this harness targets macOS+Lima).
+_script_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+COORD="${PHOENIX_COORD:-$(cd "$_script_dir/.." && pwd)}"
 VM="${PHOENIX_VM:-phoenix-dev}"
 QEMU_VERSION="11.0.0"
 # QEMU's `raspi4b` machine model is hard-capped at 2 GiB ("Invalid RAM

@@ -48,7 +48,7 @@ if [ "$host_os" = "Darwin" ]; then
 	vm="${PHOENIX_VM:-phoenix-dev}"
 	eeprom_dir_vm="${PHOENIX_EEPROM_DIR:-/home/witoldbolt.guest/external/rpi-eeprom}"
 	work_dir_vm="${PHOENIX_EEPROM_WORK:-/home/witoldbolt.guest/phoenix-buildroots/eeprom-netboot}"
-	out_dir_host="${RPI4B_EEPROM_OUT_DIR:-/Users/witoldbolt/phoenix-rpi/artifacts/eeprom-netboot}"
+	out_dir_host="${RPI4B_EEPROM_OUT_DIR:-$repo/artifacts/eeprom-netboot}"
 	mkdir -p "$out_dir_host"
 else
 	eeprom_dir="${PHOENIX_EEPROM_DIR:-$repo/external/rpi-eeprom}"

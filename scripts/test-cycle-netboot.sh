@@ -255,16 +255,18 @@ watch_for_dhcp() {
 # handoff entirely, leaving an empty or garbage-only log.
 "$repo/scripts/pi_power_off.sh" >/dev/null 2>&1 || true
 
-# Kill any orphan picocom/tio still holding /dev/ttyUSB0 from a prior
-# aborted cycle. Without this, the new picocom in capture-rpi4b-uart.sh
-# fails with "FATAL: cannot lock /dev/ttyUSB0: Resource temporarily
-# unavailable" and the cycle aborts with an empty log file.
-if command -v fuser >/dev/null 2>&1 && [ -e /dev/ttyUSB0 ]; then
+# Kill any orphan picocom/tio still holding the UART from a prior aborted
+# cycle. Without this, the new picocom in capture-rpi4b-uart.sh fails with
+# "FATAL: cannot lock <dev>: Resource temporarily unavailable" and the
+# cycle aborts with an empty log file. Best-effort; no-ops if the device
+# is elsewhere (capture-rpi4b-uart.sh still autodetects).
+serial_dev="${RPI4B_SERIAL_DEV:-/dev/ttyUSB0}"
+if command -v fuser >/dev/null 2>&1 && [ -e "$serial_dev" ]; then
 	# `fuser -k` sends SIGKILL by default; -TERM gives the picocom EXIT
 	# handler a chance to release the kernel lock cleanly.
-	fuser -k -TERM /dev/ttyUSB0 >/dev/null 2>&1 || true
+	fuser -k -TERM "$serial_dev" >/dev/null 2>&1 || true
 	sleep 1
-	fuser -k -KILL /dev/ttyUSB0 >/dev/null 2>&1 || true
+	fuser -k -KILL "$serial_dev" >/dev/null 2>&1 || true
 fi
 
 sleep "$power_settle_secs"

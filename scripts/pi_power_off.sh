@@ -4,8 +4,10 @@
 # current host knows how to control. Counterpart of pi_power_on.sh.
 #
 #   Darwin  : Apple Shortcuts ("GniazdkoOff") talks to Apple Home.
-#   Linux   : Meross cloud API via /home/houp/meross-plug/plug.py
-#             (override path with $MEROSS_PLUG_SCRIPT).
+#   Linux   : the script named by $MEROSS_PLUG_SCRIPT (e.g. a Meross
+#             cloud-API helper). If that var is unset or the file is
+#             missing, the power toggle is skipped (non-fatal) so build
+#             and test flows on machines without a smart plug still run.
 #
 
 set -euo pipefail
@@ -18,14 +20,18 @@ case "$host_os" in
 		echo "Pi powered off (Apple Home shortcut)"
 		;;
 	Linux)
-		meross_plug="${MEROSS_PLUG_SCRIPT:-/home/houp/meross-plug/plug.py}"
-		if [ ! -x "$meross_plug" ]; then
-			printf 'pi_power_off: meross-plug helper not executable: %s\n' "$meross_plug" >&2
-			printf 'pi_power_off: set MEROSS_PLUG_SCRIPT or fix the path.\n' >&2
-			exit 1
+		# Default to the author's-lab helper if present; otherwise the
+		# var is unset and we skip the toggle (see below).
+		meross_plug="${MEROSS_PLUG_SCRIPT:-}"
+		if [ -z "$meross_plug" ] && [ -x /home/houp/meross-plug/plug.py ]; then
+			meross_plug=/home/houp/meross-plug/plug.py
+		fi
+		if [ -z "$meross_plug" ] || [ ! -f "$meross_plug" ]; then
+			echo "pi_power: MEROSS_PLUG_SCRIPT not configured or missing; skipping power toggle (set MEROSS_PLUG_SCRIPT to your smart-plug control script)"
+			exit 0
 		fi
 		"$meross_plug" off
-		echo "Pi powered off (Meross cloud)"
+		echo "Pi powered off (smart plug via $meross_plug)"
 		;;
 	*)
 		printf 'pi_power_off: unsupported host OS: %s\n' "$host_os" >&2
