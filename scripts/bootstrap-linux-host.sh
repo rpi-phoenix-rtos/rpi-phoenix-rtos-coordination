@@ -140,6 +140,10 @@ APT_PACKAGES=(
 	# --- host build tools ---
 	gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
 	cmake pkg-config make
+	# autotools: phoenix-rtos-ports lighttpd runs autoreconf/autogen at prepare time
+	autoconf automake libtool
+	# phoenix-rtos-hostutils links against hidapi (hid.c / usb_imx.c / usb_vybrid.c)
+	libhidapi-dev
 	# --- SD-image + rootfs assembly (Tier 1: build & flash) ---
 	device-tree-compiler
 	mtools dosfstools parted e2fsprogs

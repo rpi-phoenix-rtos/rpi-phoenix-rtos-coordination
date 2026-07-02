@@ -188,6 +188,33 @@ made optional; the showcase-app build integration is a follow-on chunk.
 - Produce an `.img`, flash it, boot a Pi. When a stranger's clean box builds a booting image from the
   docs alone, Phase 5 passes.
 
+### Phase 5 — FIRST RUN RESULT (2026-07-02, clean Ubuntu 24.04 VM)
+
+Ran the full ground-up build on a genuinely clean VM (`phoenix-buildtest`). **A complete, fsck-clean
+2-partition SD image was produced** (FAT32 boot + populated ext2 root, SHA256 `a9ec1b60…`), proving
+the toolchain + deps + core + all 17 ports + rootfs assembly work on a clean box. **Key win: the
+de-hardcoding fully held — no `/home/houp` or `/Users/witoldbolt` path fired anywhere.** Toolchain
+built in ~9 min; firmware DTB staged from raspberrypi/firmware (no dtc, no external/linux, as designed).
+
+**But the single documented command failed** — the image was only obtainable via a hand-crafted
+out-of-band sequence. 7 gaps found (this is the value of the test):
+
+- **F1/F2 (FIXED):** missing apt packages `libhidapi-dev` (hostutils) + `autoconf automake libtool`
+  (lighttpd autogen). Added to `bootstrap-linux-host.sh APT_PACKAGES`.
+- **F3 (task #72, headline):** build-order inversion — nfs fs server (`core`) depends on libnfs
+  (`ports`, built later). Masked on the dev host by a non-wiping `clean` (stale sysroot). Real bug.
+- **F4 (task #73):** parallel-make race — `usb/xhci/bcm2711-pcie.c` needs `libvcmbox.h` from the same
+  devices pass with no dependency edge. Masked by warm sysroot.
+- **F5/F6/F7 (task #74):** no single command yields a bootable 2-part SD card — `rebuild-rpi4b-fast.sh
+  --variant sd` builds neither `ports` nor the ext2 rootfs (produces a FAT-boot-only image). Needs a
+  producer that chains ports + `build-rpi4b-rootfs-ext2.sh`. **Recommendation: yes, `--variant sd`
+  should output the full 2-part image in one command** (the whole point of "build your own SD image").
+  Depends on F3 first.
+
+**Next re-run gate:** fix F3 + F4 + the F5/F7 producer → then `--variant sd` should go empty-VM → flashable
+2-part `.img` unattended. Per-stage logs preserved in the VM at `~/build-logs/`. The VM
+(`phoenix-buildtest`, 192.168.122.239) is kept for re-runs.
+
 ### Phase 6 — Release hygiene (optional, do before going public)
 - License audit (Phoenix-RTOS is BSD/MIT-ish; ports carry their own — GPL/quake shareware caveats),
   `LICENSE`, per-file SPDX where practical.
