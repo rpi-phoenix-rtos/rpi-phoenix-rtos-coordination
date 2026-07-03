@@ -257,6 +257,19 @@ phase_gpu() {
 	setup_mesa_host_build "${mesa_v3d_build}"
 	need_file "${mesa_v3d_build}/compile_commands.json" "meson setup did not emit compile_commands.json"
 
+	# Materialize ALL mesa generated sources up-front. On a COLD host mesa build the
+	# per-script enumerated gen-header lists (build-*.py) are always incomplete — a
+	# missing generated header silently drops objs (state_tracker st_*, v3d_screen, ...)
+	# so archives link with undefined symbols. Instead of chasing each header, ninja
+	# every custom-command OUTPUT (pure codegen — no object compiles, so it's fast and
+	# side-steps the x86-can't-assemble-aarch64-asm failure). Best-effort; the enumerated
+	# lists remain as a harmless fallback (already built here).
+	log "materializing all mesa generated sources in ${mesa_v3d_build} (codegen-only ninja)"
+	( cd "${mesa_v3d_build}" \
+	  && mapfile -t _gen < <(ninja -t targets rule CUSTOM_COMMAND 2>/dev/null | cut -d: -f1) \
+	  && [ "${#_gen[@]}" -gt 0 ] && ninja "${_gen[@]}" >/dev/null 2>&1 ) \
+	  || warn "gen-all ninja returned non-zero (some custom targets may need obj deps; continuing)"
+
 	# --- GPU driver + GL archives (order: v3d driver -> GL frontend) ---
 	local py="python3"
 	if [ ! -f "${gpu_libs}/libv3d-phoenix.a" ] || [ "$force" = 1 ] || ! archive_fresh "${gpu_libs}/libv3d-phoenix.a"; then
