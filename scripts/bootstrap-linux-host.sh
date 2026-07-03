@@ -55,6 +55,15 @@ VENV_DIR="$PROJECT_DIR/.venv"
 GH_USER="${GH_USER:-houp}"
 PHOENIX_FORK_BASE="${PHOENIX_FORK_BASE:-https://github.com/${GH_USER}}"
 PHOENIX_UPSTREAM_BASE="${PHOENIX_UPSTREAM_BASE:-https://github.com/phoenix-rtos}"
+# Base for the build-required external-dependency forks (mesa/quakespasm/vkquake).
+# These are pinned to exact commits that are NO LONGER FETCHABLE from their
+# upstreams (mesa main advanced past our SHA; the quakespasm/vkquake pins report
+# "not our ref") — so, exactly like the phoenix-rtos siblings, they must come from
+# our forks that preserve the validated commit. mesa additionally carries the v3d
+# port as a commit on its fork (branch phoenix-v3d-port), so no patch is applied.
+# Default assumes github.com/<user> forks (push them before publishing); override
+# for a local/clean-VM test, e.g. EXTERNAL_FORK_BASE=ssh://host/home/user/origins.
+EXTERNAL_FORK_BASE="${EXTERNAL_FORK_BASE:-https://github.com/${GH_USER}}"
 
 # --pinned mode: after cloning, check every sibling out to the SHA recorded
 # in a release-pin manifest (reproducible-build mode). Set by arg parsing.
@@ -105,12 +114,16 @@ UPSTREAM_ONLY_REPOS=(
 #   - external/rpi-eeprom Tier-2 lab/netboot only; prepare-pi-eeprom-netboot.sh
 #                         self-clones it on demand.
 #
-# Format: "<subdir>|<git-url>|<pinned-ref>". The pinned refs mirror the
-# release-pin manifest; bump both together.
+# Format: "<subdir>|<git-url>|<pinned-ref>[|<port-patch-relpath>]". Cloned from
+# $EXTERNAL_FORK_BASE (our forks) because the upstream pins are no longer
+# fetchable (see EXTERNAL_FORK_BASE note). mesa's ref is the v3d-port commit on
+# our fork (branch phoenix-v3d-port = upstream e8791b4 + the port), so it needs
+# no patch. quakespasm/vkquake are pristine at their pins (their Phoenix ports
+# live in tools/*-port/), just preserved on our forks. Bump refs deliberately.
 EXTERNAL_DEPS=(
-	"mesa|https://gitlab.freedesktop.org/mesa/mesa.git|e8791b4bc1c10af74ddd3af029fbf06cafc11d56|tools/v3d-driver-port/patches/mesa-v3d-phoenix.patch"
-	"quakespasm|https://github.com/sezero/quakespasm.git|4abb3249fe45c835d3d8540845a18a114e283996"
-	"vkquake|https://github.com/Novum/vkQuake.git|f4d923e36f6a2cbb6e796031eb81c88f23db8520"
+	"mesa|${EXTERNAL_FORK_BASE}/mesa.git|b234aa4ed9d8d8cd5b8db5aa011b76d3636b35f1"
+	"quakespasm|${EXTERNAL_FORK_BASE}/quakespasm.git|4abb3249fe45c835d3d8540845a18a114e283996"
+	"vkquake|${EXTERNAL_FORK_BASE}/vkquake.git|f4d923e36f6a2cbb6e796031eb81c88f23db8520"
 )
 
 # Raspberry Pi firmware blobs we need from raspberrypi/firmware boot
