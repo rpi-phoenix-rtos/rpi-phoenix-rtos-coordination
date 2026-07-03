@@ -30,7 +30,7 @@ FPREFIX=/tmp/fltk-phoenix
 SRC=${ROOT}/tools/ports/src
 XDIR=$SRC/dillo-3.2.0
 ART=${ROOT}/artifacts/x11
-NFS=/srv/phoenix-rpi4-nfs
+NFS="${SHOWCASE_STAGE_DIR:-/srv/phoenix-rpi4-nfs}"
 WRAPSRC=${ROOT}/tools/ports/dillo-dbg-wrap.c
 SHIM=${ROOT}/tools/ports/dillo-phoenix-shim.h
 

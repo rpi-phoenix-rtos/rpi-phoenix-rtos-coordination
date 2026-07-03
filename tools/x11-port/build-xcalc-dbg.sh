@@ -34,7 +34,7 @@ SRC=$TOOLS/src
 XDIR=$SRC/$NV
 WRAP=$TOOLS/apps/xcalc-dbg-wrap.c
 ART=${ROOT}/artifacts/x11
-NFS=/srv/phoenix-rpi4-nfs
+NFS="${SHOWCASE_STAGE_DIR:-/srv/phoenix-rpi4-nfs}"
 
 APP_CFLAGS="-DMAXHOSTNAMELEN=256 -DO_NOFOLLOW=0 -DXOS_USE_MTSAFE_PWDAPI -D_POSIX_THREAD_SAFE_FUNCTIONS=200809L"
 XCLOSURE="-Wl,--start-group -lXaw7 -lXmu -lXt -lSM -lICE -lXpm -lXext -lX11 -lxcb -lXau -lXdmcp -lphoenix -lc -lm -Wl,--end-group"

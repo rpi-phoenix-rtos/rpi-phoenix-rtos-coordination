@@ -25,7 +25,7 @@ HERE=${ROOT}/tools/ports
 SRC=$HERE/src
 XDIR=$SRC/$NV
 SHIM=$HERE/nano-phoenix-shim.h
-NFS=/srv/phoenix-rpi4-nfs
+NFS="${SHOWCASE_STAGE_DIR:-/srv/phoenix-rpi4-nfs}"
 
 fail() { echo "FAIL: $*"; exit 1; }
 

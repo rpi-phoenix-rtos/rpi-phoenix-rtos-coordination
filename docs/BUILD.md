@@ -171,15 +171,70 @@ the microSD card, and write.
 The base SD image boots to a shell and drives the hardware, but it does **not**
 include the graphical showcase applications (the X11 desktop with Window Maker
 and xterm, the Dillo web browser, Midnight Commander, and GLQuake on the V3D
-GPU). Those are built by a separate, opt-in build step that compiles the
-out-of-tree ports under `tools/` (X11 stack, the ported Mesa GPU driver, and
-the quake engines) against `external/mesa`.
+GPU). Those are built by a separate, opt-in orchestrator,
+`scripts/build-showcase-apps.sh`, which compiles the out-of-tree ports under
+`tools/` (the ported Mesa GPU/GL/Vulkan driver, the quake engines, the X11 lib
+stack + apps, and the extra userland ports) against `external/mesa` and the
+vendored tarballs in `tools/ports/src/`.
 
-> **TODO (fill in once the showcase build lands):** the exact invocation of the
-> showcase-apps build step — e.g. `./scripts/build-showcase-apps.sh` — is being
-> finalized. Once it is in place, document here: (a) the command to run after
-> Step 2, (b) which apps it produces, and (c) how they are staged into the SD
-> image or NFS root.
+### Extra host dependencies
+
+The showcase build needs a few packages beyond the base set. They are already
+in `bootstrap-linux-host.sh`'s apt list (the "Showcase build deps" block):
+`ninja-build python3-mako libdrm-dev glslang-tools gperf`. It also needs
+`meson >= 1.4`, which is newer than Ubuntu 24.04's apt `meson` (1.3.x) — so the
+orchestrator provisions a local `meson`/`ninja`/`mako` in a `uv` venv at
+`/tmp/mesa-pyenv` automatically; nothing to install by hand.
+
+`external/mesa` (and, for the quake engines, `external/quakespasm` /
+`external/vkquake`) must be cloned — the bootstrap does this.
+
+### One-command showcase SD image
+
+Pass `--with-showcase` to the same SD build from Step 3:
+
+```bash
+./scripts/rebuild-rpi4b-fast.sh --variant sd --with-showcase
+```
+
+This runs the orchestrator in two phases around the normal build:
+
+1. **Before `build.sh`** it builds the GPU/GL/Vulkan + Quake static archives
+   into `tools/.gpu-libs/` (`libv3d-phoenix.a`, `libGL-phoenix.a`,
+   `libquakespasm.a`, and — unless `--skip-vulkan` — `libv3dv-phoenix.a`,
+   `libvkquake.a`). The in-tree `rpi4-quake` / `rpi4-vkquake` `_user`
+   components link these and are bundled into `loader.disk` by the project
+   stage. (The rebuild script passes `GPU_LIBS=<repo>/tools/.gpu-libs`
+   explicitly so the archives are always found.)
+2. **After the image is built, before the ext2 root is packed** it builds the
+   port libraries (libiconv, libffi, ncurses, glib2, fltk), the X11 lib stack,
+   and every app (xterm, xedit, xcalc, xclock, xlogo, xbill, Window Maker, the
+   Xphoenix server, `dillo`, `mc`, `nano`) and stages their binaries + data
+   files into the ext2 rootfs tree (`_fs/<target>/root`).
+
+### Running the orchestrator standalone
+
+You can also run it directly (e.g. to iterate on just the GPU libs):
+
+```bash
+./scripts/build-showcase-apps.sh --phase gpu     # GPU/Quake archives only
+./scripts/build-showcase-apps.sh --phase stage   # X11/ports into the rootfs
+./scripts/build-showcase-apps.sh                  # both (phase "all")
+```
+
+Useful flags: `--force` (rebuild archives even if fresh), `--skip-vulkan` (GL
+only, no vkQuake — also skips the glslang requirement), `--skip-x11` (skip the
+X11 lib stack + X apps + dillo), `--stage-dir DIR` (stage into an arbitrary
+rootfs tree, e.g. an NFS export). It is idempotent (skips up-to-date archives)
+and fail-loud (each step is gated on its expected output existing). The X11
+apps and userland ports are treated as best-effort: a single app failing is
+recorded and reported at the end rather than aborting the whole run, so you get
+as many of the showcase apps as build cleanly.
+
+> **GLQuake vs. vkQuake shaders.** GLQuake (`libquakespasm` → `rpi4-quake`) is
+> pure GL and needs no shader compiler. vkQuake needs real SPIR-V shaders from
+> `glslang`; if `glslangValidator` is missing the vkQuake archive still links
+> but with non-rendering placeholder shaders (the orchestrator warns loudly).
 
 ## Troubleshooting
 

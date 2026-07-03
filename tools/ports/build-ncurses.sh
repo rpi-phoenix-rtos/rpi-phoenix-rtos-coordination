@@ -27,7 +27,7 @@ SYSROOT=${ROOT}/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot
 PREFIX=/tmp/phoenix-ncurses
 SRC=${ROOT}/tools/ports/src
 XDIR=$SRC/$NV
-NFS=/srv/phoenix-rpi4-nfs
+NFS="${SHOWCASE_STAGE_DIR:-/srv/phoenix-rpi4-nfs}"
 
 # Terminals to bake in: the Pi console (vt100/linux/ansi, now with SGR colour),
 # plus xterm variants for a remote/host terminal.

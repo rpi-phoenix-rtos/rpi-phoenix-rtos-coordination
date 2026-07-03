@@ -221,7 +221,7 @@ BIN="$XDIR/src/mc"
 
 # Stage: artifacts/ (local) + NFS rootfs /bin/<MC_OUT>. The stock variant keeps
 # the canonical /bin/mc; ascii/dbg stage alongside it without disturbing it.
-NFSBIN=/srv/phoenix-rpi4-nfs/bin
+NFSBIN="${SHOWCASE_STAGE_DIR:-/srv/phoenix-rpi4-nfs}/bin"
 mkdir -p ${ROOT}/artifacts
 cp "$BIN" "${ROOT}/artifacts/$MC_OUT"
 if [ -d "$NFSBIN" ]; then
@@ -236,8 +236,8 @@ fi
 # no colours and no visible panel selection. The on-disk default skin restores
 # the blue panels + cyan selection highlight. Skin-only is enough for colour; the
 # syntax/ tree adds editor highlighting.
-NFSSHARE=/srv/phoenix-rpi4-nfs/usr/share/mc
-if [ -d /srv/phoenix-rpi4-nfs/usr/share ]; then
+NFSSHARE="${SHOWCASE_STAGE_DIR:-/srv/phoenix-rpi4-nfs}/usr/share/mc"
+if [ -d "${SHOWCASE_STAGE_DIR:-/srv/phoenix-rpi4-nfs}/usr/share" ]; then
 	mkdir -p "$NFSSHARE/skins" "$NFSSHARE/syntax"
 	cp -a "$XDIR"/misc/skins/*.ini "$NFSSHARE/skins/" 2>/dev/null && echo "=== staged mc skins -> $NFSSHARE/skins ==="
 	cp -a "$XDIR"/misc/syntax/*.syntax "$XDIR"/misc/syntax/Syntax "$NFSSHARE/syntax/" 2>/dev/null || true

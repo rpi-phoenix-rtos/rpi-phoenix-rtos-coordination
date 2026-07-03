@@ -35,7 +35,7 @@ PREFIX=/tmp/x11-phoenix          # shared X11 prefix — READ-ONLY here
 DEPS=/tmp/wmaker-deps            # our isolated build prefix (X11 closure + font stack)
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SRC="$HERE/src"
-NFS=/srv/phoenix-rpi4-nfs
+NFS="${SHOWCASE_STAGE_DIR:-/srv/phoenix-rpi4-nfs}"
 ART=${ROOT}/artifacts/x11
 
 # wmaker is installed under --prefix=/ so its compiled-in data paths

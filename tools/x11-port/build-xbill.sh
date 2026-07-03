@@ -42,7 +42,7 @@ TOOLS=${ROOT}/tools/x11-port
 SRC=$TOOLS/src
 XDIR=$SRC/Xbill
 ART=${ROOT}/artifacts/x11
-NFS=/srv/phoenix-rpi4-nfs
+NFS="${SHOWCASE_STAGE_DIR:-/srv/phoenix-rpi4-nfs}"
 REPO=https://github.com/alistairmcmillan/Xbill.git
 
 # Runtime asset + score locations on the netboot NFS export.

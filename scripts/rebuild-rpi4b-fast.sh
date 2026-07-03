@@ -26,6 +26,13 @@ Options:
         run build.sh core project image
       full-clean:
         run build.sh clean host core project image
+  --with-showcase
+      build + bundle the showcase-app layer (GPU/GL/Vulkan stack, Quake, X11
+      server + apps, dillo/mc/nano) via scripts/build-showcase-apps.sh. Only
+      meaningful with --variant sd (the apps live on the ext2 root). Runs the
+      GPU archive builds before build.sh and stages X11/ports into the rootfs
+      after. Adds host deps (meson/ninja/mako/libdrm-dev/glslang) — install via
+      scripts/bootstrap-linux-host.sh.
   --build-only
       skip bootfs/sdimg export and verification
   --ports-only
@@ -78,6 +85,13 @@ do_build_artifacts=1
 do_qemu_sanity=0
 with_ports=0
 ports_only=0
+# --with-showcase: build the showcase-app layer (GPU/GL/Vulkan + Quake, X11
+# server + apps, dillo/mc/nano) and bundle it into the image. Only meaningful
+# for --variant sd (the ext2 root is where the apps live). Two-phase: the GPU
+# archives are built BEFORE build.sh (the rpi4-quake/-vkquake _user components
+# link them); the X11/ports binaries are staged into _fs/<target>/root AFTER
+# build.sh, before the ext2 image is packed.
+with_showcase=0
 # Build variant (selects the boot script in user.plo.yaml via the RPI4B_VARIANT
 # env var):
 #   nfsroot (default) - mount the NFS export as root over the network (#153 T3 /
@@ -109,6 +123,9 @@ while [ "$#" -gt 0 ]; do
 				netboot|sd|nfsroot) variant="$1" ;;
 				*) die "unknown variant: $1 (use netboot|sd|nfsroot)" ;;
 			esac
+			;;
+		--with-showcase)
+			with_showcase=1
 			;;
 		--build-only)
 			do_build_artifacts=0
@@ -348,6 +365,39 @@ if [ "${do_prepare}" -eq 1 ]; then
 	run_build_shell "cd '${repo_root}' && ./scripts/prepare-buildroot.sh --copy-components '${buildroot}'"
 fi
 
+# --with-showcase, phase 1 (GPU): build the GPU/GL/Vulkan + Quake archives into
+# tools/.gpu-libs BEFORE build.sh, so the _user rpi4-quake/-vkquake components
+# link them and are staged into the image by the project stage. Skipped unless
+# --with-showcase; only meaningful for --variant sd but harmless otherwise.
+if [ "${with_showcase}" = 1 ]; then
+	printf 'Showcase:  building GPU/Quake archives (phase gpu) before build.sh\n'
+	"${repo_root}/scripts/build-showcase-apps.sh" --phase gpu
+fi
+
+# GPU_LIBS: the rpi4-quake/-vkquake Makefiles compute this by climbing 4 levels
+# from their own dir, which is correct for the sources/... tree but off-by-one
+# for a repo-root-level .buildroot (the VM/publication layout). Pass it
+# explicitly so the archives are always found when present. Harmless when the
+# archives are absent (the Makefiles still skip the component gracefully).
+gpu_libs_env="GPU_LIBS='${repo_root}/tools/.gpu-libs' "
+
+# --with-showcase: tell the plo render (image_builder.py reads os.environ) to
+# bundle the rpi4-quake blob into loader.disk (launch-free `app` line gated on
+# RPI4B_WITH_SHOWCASE in user.plo.yaml). Only set it if the GLQuake archive was
+# actually produced by the gpu phase — otherwise the _user Makefile skips
+# rpi4-quake, the binary would be absent, and the plo `app rpi4-quake` line
+# would fail at boot (brick). Unset otherwise, so the base image and the
+# netboot/nfsroot variants are unchanged.
+showcase_env=""
+if [ "${with_showcase}" = 1 ] && [ -f "${repo_root}/tools/.gpu-libs/libquakespasm.a" ] \
+		&& [ -f "${repo_root}/tools/.gpu-libs/libGL-phoenix.a" ] \
+		&& [ -f "${repo_root}/tools/.gpu-libs/libv3d-phoenix.a" ]; then
+	showcase_env="RPI4B_WITH_SHOWCASE='1' "
+	printf 'Showcase:  bundling rpi4-quake into loader.disk (run it from psh; not auto-launched)\n'
+elif [ "${with_showcase}" = 1 ]; then
+	printf 'Showcase:  GLQuake archives absent after gpu phase; NOT bundling rpi4-quake\n' >&2
+fi
+
 build_args_str="${build_args[*]}"
 # Task #31: pass RPI4_LOG_TO_FILE into the build env ONLY when the board macro is
 # set, so the plo render (image_builder.py reads os.environ) gates the rpi4-klogd
@@ -362,7 +412,7 @@ fi
 # PyYAML/rich from the venv rather than the PEP668-managed system Python. A
 # non-existent PATH entry is harmless, so this is safe even without the venv.
 run_build_shell \
-	"set -euo pipefail; export PATH='${repo_root}/.venv/bin':'${toolchain_path}':\$PATH; cd '${buildroot}'; env ${log_to_file_env}RPI4B_DTB_PATH='${dtb_path}' RPI4B_VARIANT='${variant}' TARGET='${target}' ./phoenix-rtos-build/build.sh ${build_args_str}"
+	"set -euo pipefail; export PATH='${repo_root}/.venv/bin':'${toolchain_path}':\$PATH; cd '${buildroot}'; env ${log_to_file_env}${gpu_libs_env}${showcase_env}RPI4B_DTB_PATH='${dtb_path}' RPI4B_VARIANT='${variant}' TARGET='${target}' ./phoenix-rtos-build/build.sh ${build_args_str}"
 
 if [ "${do_qemu_sanity}" -eq 1 ]; then
 	# QEMU path differs between hosts. On Darwin we use the in-VM
@@ -393,7 +443,27 @@ if [ "${variant}" = "sd" ]; then
 	# 2-part image.
 	two_part_img="${buildroot}/_boot/${target}/rpi4b-sd-2part.img"
 	exported_two_part="${repo_root}/artifacts/rpi4b/rpi4b-sd-2part.img"
-	RPI4B_BUILDROOT="${buildroot}" "${repo_root}/scripts/build-rpi4b-rootfs-ext2.sh"
+	# --with-showcase, phase 2 (stage): stage the port + X11 app binaries into the
+	# rootfs tree (_fs/<target>/root) NOW — after build.sh finished populating it
+	# (fs/core/ports/project) and BEFORE build-rpi4b-rootfs-ext2.sh packs it into
+	# the ext2 image. Running earlier would be clobbered by build.sh's fs stage.
+	# The showcase apps (large static X11 binaries + fonts + WindowMaker share +
+	# mc skins) do not fit the default 256 MiB ext2 root; grow it to 768 MiB when
+	# --with-showcase. The downstream partition geometry is computed from the
+	# actual image size, so this only enlarges partition 2. Override with
+	# RPI4B_ROOTFS_BLOCKS. (env is used because a shell VAR=val prefix cannot be
+	# built conditionally from an array in command position.)
+	rootfs_blocks="${RPI4B_ROOTFS_BLOCKS:-262144}"
+	if [ "${with_showcase}" = 1 ]; then
+		printf 'Showcase:  staging X11/ports app binaries into rootfs (phase stage)\n'
+		SHOWCASE_STAGE_DIR="${buildroot}/_fs/${target}/root" \
+			RPI4B_BUILDROOT="${buildroot}" \
+			"${repo_root}/scripts/build-showcase-apps.sh" --phase stage \
+			--stage-dir "${buildroot}/_fs/${target}/root"
+		rootfs_blocks="${RPI4B_ROOTFS_BLOCKS:-786432}"
+	fi
+	env RPI4B_BUILDROOT="${buildroot}" RPI4B_ROOTFS_BLOCKS="${rootfs_blocks}" \
+		"${repo_root}/scripts/build-rpi4b-rootfs-ext2.sh"
 	RPI4B_REMOTE_SDIMG="${two_part_img}" \
 		RPI4B_EXPORT_SDIMG_PATH="${exported_two_part}" \
 		"${repo_root}/scripts/export-rpi4b-sdimg.sh"

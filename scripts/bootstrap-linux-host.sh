@@ -156,6 +156,21 @@ APT_PACKAGES=(
 	tio picocom
 	ffmpeg v4l-utils
 	gh
+	# --- Showcase build deps (Tier 1.5: only needed for --with-showcase, i.e.
+	# --- the GPU/GL/Vulkan + Quake + X11 + dillo/mc layer via
+	# --- scripts/build-showcase-apps.sh). Harmless for a base-image-only build. ---
+	# Mesa host build (GPU/GL/Vulkan cross-compile reuses its compile_commands.json):
+	ninja-build python3-mako
+	# libdrm dev headers: Mesa's broadcom vulkan TUs #include <xf86drm.h>/<drm.h>.
+	libdrm-dev
+	# glslangValidator: vkQuake real SPIR-V shaders (GLQuake/GL path does NOT need it).
+	glslang-tools
+	# gperf: WindowMaker's bundled fontconfig runs gperf codegen at build time.
+	gperf
+	# NOTE: Ubuntu 24.04's apt `meson` (1.3.x) is too old for external/mesa
+	# (needs >= 1.4). build-showcase-apps.sh provisions a local meson>=1.4 in a uv
+	# venv (/tmp/mesa-pyenv) automatically, so meson is intentionally NOT in this
+	# apt list.
 )
 
 install_packages() {

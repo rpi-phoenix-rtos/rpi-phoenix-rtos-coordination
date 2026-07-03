@@ -67,7 +67,7 @@ ls -l "$ART/$OUT"
 # installed under TWO names — pl_phoenix_xlaunch (explicit form) and startx
 # (convenience/desktop mode keyed on argv[0]). startx is a plain COPY, not a
 # symlink, so BOTH must be refreshed or `startx desktop` runs a stale binary.
-NFS_BIN=/srv/phoenix-rpi4-nfs/bin
+NFS_BIN="${SHOWCASE_STAGE_DIR:-/srv/phoenix-rpi4-nfs}/bin"
 if [ -d "$NFS_BIN" ]; then
   cp "$LAUNCHDIR/$OUT" "$NFS_BIN/$OUT"
   cp "$LAUNCHDIR/$OUT" "$NFS_BIN/startx"

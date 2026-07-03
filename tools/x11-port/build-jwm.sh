@@ -33,7 +33,7 @@ PREFIX=/tmp/x11-phoenix
 SRC=${ROOT}/tools/x11-port/src
 JWMDIR=$SRC/$NV
 ART=${ROOT}/artifacts/x11
-NFS=/srv/phoenix-rpi4-nfs
+NFS="${SHOWCASE_STAGE_DIR:-/srv/phoenix-rpi4-nfs}"
 
 # The compiled-in SYSTEM config path. JWM's configure defines
 # SYSTEM_CONFIG = "$sysconfdir/system.jwmrc" (NO extra jwm/ subdir), so to land

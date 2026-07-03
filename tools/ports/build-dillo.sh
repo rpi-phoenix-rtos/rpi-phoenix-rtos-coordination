@@ -45,7 +45,7 @@ PREFIX=/tmp/dillo-phoenix          # our own build/install prefix
 SRC=${ROOT}/tools/ports/src
 XDIR=$SRC/$NV
 ART=${ROOT}/artifacts/x11
-NFS=/srv/phoenix-rpi4-nfs
+NFS="${SHOWCASE_STAGE_DIR:-/srv/phoenix-rpi4-nfs}"
 SHIM=${ROOT}/tools/ports/dillo-phoenix-shim.h
 
 fail() { echo "FAIL: $*"; exit 1; }

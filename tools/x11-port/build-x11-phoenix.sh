@@ -61,7 +61,11 @@ fetch_extract() {
 	cd "$SRC" || return 1
 	[ -d "$nv" ] && return 0
 	timeout 90 curl -sSL -o "$nv.tar.gz" "$url" || { echo "$nv: FETCH FAIL"; return 1; }
-	tar xzf "$nv.tar.gz" || { echo "$nv: EXTRACT FAIL"; return 1; }
+	# Auto-detect compression: several upstream URLs are .tar.xz (xcb-proto,
+	# libxcb, libpthread-stubs, ...) but are saved here as "$nv.tar.gz". `tar xf`
+	# detects xz/gz/bz2 from the magic, so it handles all of them (a hardcoded
+	# `xzf` fails on the .xz downloads with "EXTRACT FAIL").
+	tar xf "$nv.tar.gz" || { echo "$nv: EXTRACT FAIL"; return 1; }
 }
 
 # autotools cross-build into $PREFIX (static libs). $3 = extra configure args.

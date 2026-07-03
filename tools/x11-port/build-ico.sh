@@ -36,7 +36,7 @@ TOOLS=${ROOT}/tools/x11-port
 SRC=$TOOLS/src
 XDIR=$SRC/$NV
 ART=${ROOT}/artifacts/x11
-NFS=/srv/phoenix-rpi4-nfs
+NFS="${SHOWCASE_STAGE_DIR:-/srv/phoenix-rpi4-nfs}"
 
 # pkg-config: prefix .pc only (LIBDIR, not just PATH) so host /usr/lib *.pc are
 # invisible to the cross configure.
