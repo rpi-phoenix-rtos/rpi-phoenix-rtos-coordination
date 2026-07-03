@@ -61,6 +61,10 @@ GEN_HEADERS = [
     # sweep dropped cso_cache/format_fallback/... objs and build-quakespasm's pl_phoenix_glctx
     # hard-failed on util/format/u_format_gen.h; they share this HOSTBUILD, gl runs first).
     "src/util/format/u_format_gen.h", "src/util/format_srgb.c",
+    # generated GLSL builtin-type sources (clean-build: MISSING -> the whole mesa
+    # state_tracker st_*.c sweep dropped out of libGL, so the final GLQuake link
+    # failed on st_create_context / _mesa_make_current / _mesa_noop_entrypoint).
+    "src/compiler/builtin_types.h", "src/compiler/builtin_types.c",
     "src/compiler/glsl/astc_glsl.h", "src/compiler/glsl/bc1_glsl.h",
     "src/compiler/glsl/bc4_glsl.h", "src/compiler/glsl/etc2_rgba_stitch_glsl.h",
     "src/compiler/glsl/cross_platform_settings_piece_all.h",
