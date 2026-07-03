@@ -265,10 +265,13 @@ phase_gpu() {
 	# side-steps the x86-can't-assemble-aarch64-asm failure). Best-effort; the enumerated
 	# lists remain as a harmless fallback (already built here).
 	log "materializing all mesa generated sources in ${mesa_v3d_build} (codegen-only ninja)"
+	# -k 0 (keep going) is ESSENTIAL: a few custom targets need a compiled generator
+	# and fail on the cold host, and without -k 0 ninja stops at the first one — leaving
+	# later codegen (e.g. nir_opcodes.h) ungenerated. -k 0 builds every reachable output.
 	( cd "${mesa_v3d_build}" \
 	  && mapfile -t _gen < <(ninja -t targets rule CUSTOM_COMMAND 2>/dev/null | cut -d: -f1) \
-	  && [ "${#_gen[@]}" -gt 0 ] && ninja "${_gen[@]}" >/dev/null 2>&1 ) \
-	  || warn "gen-all ninja returned non-zero (some custom targets may need obj deps; continuing)"
+	  && [ "${#_gen[@]}" -gt 0 ] && ninja -k 0 "${_gen[@]}" >/dev/null 2>&1 ) \
+	  || warn "gen-all ninja returned non-zero (expected: a few custom targets need obj deps; the rest are materialized)"
 
 	# --- GPU driver + GL archives (order: v3d driver -> GL frontend) ---
 	local py="python3"
