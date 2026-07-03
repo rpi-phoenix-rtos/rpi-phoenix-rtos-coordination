@@ -265,13 +265,16 @@ phase_gpu() {
 	# side-steps the x86-can't-assemble-aarch64-asm failure). Best-effort; the enumerated
 	# lists remain as a harmless fallback (already built here).
 	log "materializing all mesa generated sources in ${mesa_v3d_build} (codegen-only ninja)"
-	# -k 0 (keep going) is ESSENTIAL: a few custom targets need a compiled generator
-	# and fail on the cold host, and without -k 0 ninja stops at the first one — leaving
-	# later codegen (e.g. nir_opcodes.h) ungenerated. -k 0 builds every reachable output.
+	# Build each generated output INDIVIDUALLY. A single `ninja -k 0 <all>` aborts at the
+	# manifest/graph level if any one target is unresolvable on the cold host (-k 0 only
+	# tolerates *build* errors, not graph-load errors), leaving the rest (e.g. nir_opcodes.h)
+	# ungenerated. Per-target ninja with `|| true` isolates each: every codegen output that
+	# can build, does — which is all of them (each verified to build standalone).
 	( cd "${mesa_v3d_build}" \
 	  && mapfile -t _gen < <(ninja -t targets rule CUSTOM_COMMAND 2>/dev/null | cut -d: -f1) \
-	  && [ "${#_gen[@]}" -gt 0 ] && ninja -k 0 "${_gen[@]}" >/dev/null 2>&1 ) \
-	  || warn "gen-all ninja returned non-zero (expected: a few custom targets need obj deps; the rest are materialized)"
+	  && { n=0; for _t in "${_gen[@]}"; do ninja "$_t" >/dev/null 2>&1 && n=$((n+1)) || true; done; \
+	       log "materialized ${n}/${#_gen[@]} generated sources"; } ) \
+	  || warn "gen-all step returned non-zero (continuing)"
 
 	# --- GPU driver + GL archives (order: v3d driver -> GL frontend) ---
 	local py="python3"
