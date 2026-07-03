@@ -108,7 +108,7 @@ UPSTREAM_ONLY_REPOS=(
 # Format: "<subdir>|<git-url>|<pinned-ref>". The pinned refs mirror the
 # release-pin manifest; bump both together.
 EXTERNAL_DEPS=(
-	"mesa|https://gitlab.freedesktop.org/mesa/mesa.git|e8791b4bc1c10af74ddd3af029fbf06cafc11d56"
+	"mesa|https://gitlab.freedesktop.org/mesa/mesa.git|e8791b4bc1c10af74ddd3af029fbf06cafc11d56|tools/v3d-driver-port/patches/mesa-v3d-phoenix.patch"
 	"quakespasm|https://github.com/sezero/quakespasm.git|4abb3249fe45c835d3d8540845a18a114e283996"
 	"vkquake|https://github.com/Novum/vkQuake.git|f4d923e36f6a2cbb6e796031eb81c88f23db8520"
 )
@@ -283,12 +283,40 @@ clone_layout() {
 # 2d. Build-required external dependencies (V3D GPU / GL / Vulkan stack)
 ##############################################################################
 
+# Apply a tracked port patch onto a freshly-checked-out external dep. The Phoenix
+# port edits for these upstream deps are NOT committed into the upstream clone —
+# they live as tracked patches in the coord repo, so the reproducible source is
+# "pinned upstream ref + this patch". Idempotent: applies when it cleanly applies,
+# is a no-op when already applied, warns (does not fail) on drift. This is what
+# replaces the temporary host->VM rsync of an already-edited external/mesa.
+apply_dep_patch() {
+	local dest="$1" rel="$2" pf
+	[ -n "$rel" ] || return 0
+	pf="$PROJECT_DIR/$rel"
+	if [ ! -f "$pf" ]; then
+		warn "port patch not found: $rel (external/$(basename "$dest") left pristine)"
+		return 0
+	fi
+	if git -C "$dest" apply --check "$pf" 2>/dev/null; then
+		if git -C "$dest" apply "$pf"; then
+			log "  applied port patch: $rel"
+		else
+			warn "port patch failed to apply: $rel"
+		fi
+	elif git -C "$dest" apply --reverse --check "$pf" 2>/dev/null; then
+		log "  port patch already applied: $rel"
+	else
+		warn "port patch neither applies nor is already applied (drift?): $rel"
+	fi
+}
+
 clone_external_deps() {
 	log "Cloning build-required external deps → $EXTERNAL_DIR/"
 	mkdir -p "$EXTERNAL_DIR"
-	local spec subdir url ref dest
+	local spec subdir url ref patch dest
 	for spec in "${EXTERNAL_DEPS[@]}"; do
-		IFS='|' read -r subdir url ref <<< "$spec"
+		# Spec: "<subdir>|<git-url>|<pinned-ref>[|<port-patch-relpath>]".
+		IFS='|' read -r subdir url ref patch <<< "$spec"
 		dest="$EXTERNAL_DIR/$subdir"
 		if [ -d "$dest/.git" ]; then
 			# Already present: leave dev clones alone in floating mode. In
@@ -299,6 +327,7 @@ clone_external_deps() {
 				git -C "$dest" fetch --tags origin "$ref" 2>/dev/null || true
 				git -C "$dest" checkout --quiet "$ref" || \
 					warn "couldn't check out pinned ref $ref for external/$subdir"
+				apply_dep_patch "$dest" "$patch"
 			else
 				log "  already present: external/$subdir (leaving as-is)"
 			fi
@@ -311,6 +340,8 @@ clone_external_deps() {
 		git -C "$dest" fetch --tags origin "$ref" 2>/dev/null || true
 		git -C "$dest" checkout --quiet "$ref" || \
 			warn "couldn't check out pinned ref $ref for external/$subdir"
+		# A fresh clone is pristine upstream — apply the Phoenix port patch.
+		apply_dep_patch "$dest" "$patch"
 	done
 }
 
