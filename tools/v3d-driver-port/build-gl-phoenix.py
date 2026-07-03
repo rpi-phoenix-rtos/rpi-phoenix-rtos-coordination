@@ -57,6 +57,10 @@ GEN_HEADERS = [
     "src/compiler/glsl/glsl_parser.h", "src/compiler/glsl/glcpp/glcpp-lex.c",
     "src/compiler/glsl/glcpp/glcpp-parse.h",
     "src/compiler/spirv/spirv_info.h", "src/compiler/spirv/vtn_generator_ids.h", "src/util/format/u_format_pack.h",
+    # generated util/format sources (clean-build exposed these as MISSING -> the GL aux
+    # sweep dropped cso_cache/format_fallback/... objs and build-quakespasm's pl_phoenix_glctx
+    # hard-failed on util/format/u_format_gen.h; they share this HOSTBUILD, gl runs first).
+    "src/util/format/u_format_gen.h", "src/util/format_srgb.c",
     "src/compiler/glsl/astc_glsl.h", "src/compiler/glsl/bc1_glsl.h",
     "src/compiler/glsl/bc4_glsl.h", "src/compiler/glsl/etc2_rgba_stitch_glsl.h",
     "src/compiler/glsl/cross_platform_settings_piece_all.h",
