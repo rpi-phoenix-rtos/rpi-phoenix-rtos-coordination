@@ -24,7 +24,19 @@
 
 set -euo pipefail
 
-PROJECT_DIR="${PROJECT_DIR:-$HOME/phoenix-rpi}"
+# Where the project tree lives. If this script is being run from INSIDE an
+# already-cloned coordination repo (…/scripts/bootstrap-linux-host.sh), default
+# to that repo root so the bootstrap and rebuild-rpi4b-fast.sh (which derives its
+# root from cwd) operate on the SAME tree (#75). Otherwise — the standalone
+# "download the script and run it" flow — default to $HOME/phoenix-rpi. Always
+# overridable via the PROJECT_DIR env var.
+_self_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+_maybe_repo="$(dirname "$_self_dir")"
+if [ -f "$_maybe_repo/AGENTS.md" ] && [ -d "$_maybe_repo/scripts" ] && [ -d "$_maybe_repo/manifests" ]; then
+	PROJECT_DIR="${PROJECT_DIR:-$_maybe_repo}"
+else
+	PROJECT_DIR="${PROJECT_DIR:-$HOME/phoenix-rpi}"
+fi
 SOURCES_DIR="$PROJECT_DIR/sources"
 EXTERNAL_DIR="$PROJECT_DIR/external"
 BOOTBLOBS_DIR="$PROJECT_DIR/.bootblobs"

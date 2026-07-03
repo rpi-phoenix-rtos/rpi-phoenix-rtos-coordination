@@ -205,9 +205,16 @@ setup_mesa_host_build() {
 	# ['auto'] enables nouveau_vk, which pulls in a Rust build dependency (rustc)
 	# we don't have or want. The v3dv call passes -Dvulkan-drivers=broadcom via
 	# "$@", which (as the last occurrence) overrides this empty default.
+	# -Dspirv-tools=disabled (SB-2): mesa's spirv-tools feature option defaults to
+	# auto-detect. On a clean host with SPIRV-Tools present it enables
+	# -DHAVE_SPIRV_TOOLS, making spirv_to_nir.c reference spirv_print_asm (defined
+	# in vtn_debug.c, which is NOT in the v3dv aux-source closure) -> libv3dv link
+	# fails "undefined reference to spirv_print_asm" -> rpi4-vkquake can't link.
+	# We don't use SPIR-V validation/disasm, so force it off (harmless for GL too).
 	( cd "${mesa_dir}" && PATH="${mpath}" C_INCLUDE_PATH="${cinc}${C_INCLUDE_PATH:+:$C_INCLUDE_PATH}" \
 		meson setup "${bdir}" \
 		-Dgallium-drivers=v3d -Dvulkan-drivers= -Dplatforms= -Dglx=disabled \
+		-Dspirv-tools=disabled \
 		-Degl=disabled -Dgbm=disabled -Dvideo-codecs= -Dbuildtype=release "$@" ) \
 		|| die "meson setup ${bdir} failed (missing host dep? see meson-logs/meson-log.txt)"
 }
