@@ -358,6 +358,26 @@ clone_external_deps() {
 	done
 }
 
+# phoenix-rtos-lwip vendors lwIP as the `lib-lwip` git submodule, pinned to a SHA
+# that is NO LONGER fetchable from upstream github.com/phoenix-rtos/lwip ("not our
+# ref") — the same vanished-pin story as the sibling/external forks. So init it
+# from our fork ($EXTERNAL_FORK_BASE/lwip.git) at the superproject-recorded SHA.
+# (The tree's other .gitmodules is phoenix-rtos-project's, whose submodules are
+# the peer repos the build already uses from $SOURCES_DIR — those are NOT init'd.)
+init_vendored_submodules() {
+	local lwip="$SOURCES_DIR/phoenix-rtos-lwip"
+	[ -d "$lwip/.git" ] || return 0
+	if [ -f "$lwip/lib-lwip/src/Filelists.mk" ]; then
+		log "  lib-lwip submodule already populated"
+		return 0
+	fi
+	log "  initializing lib-lwip submodule from ${EXTERNAL_FORK_BASE}/lwip.git"
+	git -C "$lwip" submodule init lib-lwip || { warn "lib-lwip submodule init failed"; return 0; }
+	git -C "$lwip" config submodule.lib-lwip.url "${EXTERNAL_FORK_BASE}/lwip.git"
+	git -C "$lwip" submodule update lib-lwip \
+		|| warn "lib-lwip submodule update failed (build will miss lib-lwip/src/Filelists.mk)"
+}
+
 ##############################################################################
 # 3. Pi firmware blobs
 ##############################################################################
@@ -581,6 +601,7 @@ USAGE
 	install_packages
 	clone_layout
 	clone_external_deps
+	init_vendored_submodules
 	stage_pi_firmware
 	setup_python_venv
 	if [ "$PINNED_MODE" -eq 1 ]; then
