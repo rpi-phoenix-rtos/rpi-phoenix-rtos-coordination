@@ -36,3 +36,7 @@ tools/x11-port/src/
 /tools/x11-port/launcher/*-build.log
 /tools/x11-port/xkb/xkbcomp.warn
 /history.txt
+
+# Python bytecode caches
+__pycache__/
+*.pyc
