@@ -69,7 +69,9 @@ mesa_pyenv="${MESA_PYENV:-/tmp/mesa-pyenv}"
 
 phase="all"
 force=0
-skip_vulkan=0
+# vkQuake/V3DV is a work-in-progress capstone (not yet functional), so it is NOT
+# part of the default showcase. Skipped unless --with-vkquake is passed.
+skip_vulkan=1
 skip_x11=0
 
 usage() {
@@ -90,7 +92,9 @@ Phases:
 Options:
   --force         rebuild archives even if present + fresh (default: skip
                   up-to-date archives for iteration speed)
-  --skip-vulkan   skip the V3DV/vkquake path (GL/GLQuake still built)
+  --with-vkquake  ALSO build the WIP V3DV/vkQuake path (OFF by default; vkQuake is
+                  not yet functional and is not part of the default showcase)
+  --skip-vulkan   (default) skip the V3DV/vkquake path (GL/GLQuake still built)
   --skip-x11      skip the X11 lib stack + X11 apps (ports dillo/mc/nano still
                   attempted; note dillo needs fltk which needs the X11 libs, so
                   --skip-x11 also skips dillo)
@@ -109,6 +113,7 @@ while [ "$#" -gt 0 ]; do
 		--phase) shift; phase="${1:-}";;
 		--force) force=1;;
 		--skip-vulkan) skip_vulkan=1;;
+		--with-vkquake) skip_vulkan=0;;
 		--skip-x11) skip_x11=1;;
 		--stage-dir) shift; stage_dir="${1:-}";;
 		-h|--help) usage; exit 0;;
@@ -299,8 +304,8 @@ phase_gpu() {
 	need_file "${gpu_libs}/libquakespasm.a" "build-quakespasm-phoenix.py did not produce its archive"
 
 	if [ "$skip_vulkan" = 1 ]; then
-		warn "--skip-vulkan: not building V3DV / vkquake archives"
-		ok "PHASE gpu complete (GL only)"; return 0
+		log "vkQuake/V3DV is work-in-progress and NOT in the default showcase — skipping (pass --with-vkquake to build it)"
+		ok "PHASE gpu complete (GL/GLQuake)"; return 0
 	fi
 
 	# --- Vulkan V3DV + vkquake (BEST-EFFORT) --------------------------------

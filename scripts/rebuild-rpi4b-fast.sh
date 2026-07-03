@@ -92,6 +92,7 @@ ports_only=0
 # link them); the X11/ports binaries are staged into _fs/<target>/root AFTER
 # build.sh, before the ext2 image is packed.
 with_showcase=0
+with_vkquake=0
 # Build variant (selects the boot script in user.plo.yaml via the RPI4B_VARIANT
 # env var):
 #   nfsroot (default) - mount the NFS export as root over the network (#153 T3 /
@@ -126,6 +127,12 @@ while [ "$#" -gt 0 ]; do
 			;;
 		--with-showcase)
 			with_showcase=1
+			;;
+		--with-vkquake)
+			# opt-in the WIP Vulkan/vkQuake path (implies --with-showcase); NOT in the
+			# default showcase since vkQuake isn't functional yet.
+			with_showcase=1
+			with_vkquake=1
 			;;
 		--build-only)
 			do_build_artifacts=0
@@ -370,8 +377,10 @@ fi
 # link them and are staged into the image by the project stage. Skipped unless
 # --with-showcase; only meaningful for --variant sd but harmless otherwise.
 if [ "${with_showcase}" = 1 ]; then
-	printf 'Showcase:  building GPU/Quake archives (phase gpu) before build.sh\n'
-	"${repo_root}/scripts/build-showcase-apps.sh" --phase gpu
+	printf 'Showcase:  building GPU/Quake archives (phase gpu) before build.sh%s\n' \
+		"$( [ "${with_vkquake}" = 1 ] && printf ' (+vkQuake WIP)' )"
+	"${repo_root}/scripts/build-showcase-apps.sh" --phase gpu \
+		$( [ "${with_vkquake}" = 1 ] && printf -- '--with-vkquake' )
 fi
 
 # GPU_LIBS: the rpi4-quake/-vkquake Makefiles compute this by climbing 4 levels
