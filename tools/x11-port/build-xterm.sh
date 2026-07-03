@@ -127,6 +127,20 @@ cp "$PORTDIR/phoenix_termcap.h" "$XDIR/phoenix_termcap.h" || fail "phoenix_termc
 #   tcap-fkeys/--disable-tcap-query drop the termcap function-key features
 #   (curses-dependent); the stub covers what remains.
 # --x-includes/--x-libraries point AC_PATH_X at the PREFIX (no host /usr probe).
+#
+# cf_cv_lib_tgetent=no / cf_cv_lib_part_tgetent=no — PIN xterm's termcap/terminfo
+#   decision (CF_FUNC_TGETENT). These autoconf cache vars are normally set by a
+#   link-test for tgetent against candidate libs (ncurses/tinfo/...). Once the
+#   ncurses port (#52, for nano/mc) lands libncurses.a in the Phoenix sysroot,
+#   that test SUCCEEDS and configure defines USE_TERMINFO — but our xtermcap.h
+#   patch deliberately bypasses <term.h>, so the terminfo entry points end up
+#   undeclared and the build breaks. Whether it breaks then depends on build
+#   ORDER (ncurses-before-xterm on a clean tree vs xterm-first historically),
+#   i.e. it is non-deterministic across machines. Forcing both cache vars to
+#   "no" makes configure define NEITHER USE_TERMCAP nor USE_TERMINFO — xtermcap.c
+#   takes its plain-tgetent #else path, which phoenix_termcap.[ch] satisfies.
+#   This reproduces the proven host config on any machine, independent of whether
+#   libncurses.a happens to be present in the sysroot at configure time.
 if [ ! -f "$XDIR/config.status" ]; then
 	echo "=== configuring $NV ==="
 	( cd "$XDIR" && PKG_CONFIG="pkg-config --static" ./configure --host=aarch64-phoenix \
@@ -135,6 +149,7 @@ if [ ! -f "$XDIR/config.status" ]; then
 	    --disable-freetype --disable-luit --disable-imake --without-utempter \
 	    --disable-toolbar --disable-double-buffer --disable-session-mgt \
 	    --without-xpm --disable-tcap-fkeys --disable-tcap-query \
+	    cf_cv_lib_tgetent=no cf_cv_lib_part_tgetent=no \
 	    CC=${TC}gcc AR=${TC}ar RANLIB=${TC}ranlib \
 	    CFLAGS="--sysroot=$SYSROOT -I$PREFIX/include" \
 	    LDFLAGS="--sysroot=$SYSROOT -static -L$PREFIX/lib -L$SYSROOT/lib" \

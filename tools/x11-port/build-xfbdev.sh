@@ -30,6 +30,14 @@ SRCFILE=fbdev.c
 OUT=Xphoenix
 if [ "${1:-}" = "--stub" ]; then SRCFILE=fbdev_stub.c; OUT=Xphoenix-stub; fi
 
+# Ensure the xorg-server core archives this script links against actually exist.
+# Fetching/configuring/building the core was historically a MANUAL step (see
+# PROGRESS.md), so a fresh clone reached the record-patch step below with no tree
+# and failed ("RECORD rebuild FAIL"). build-xserver-core.sh automates it and is
+# idempotent (a no-op once the archives are present), so it is safe to call every
+# run and keeps this script self-contained for the showcase orchestrator.
+"$(dirname "${BASH_SOURCE[0]:-$0}")/build-xserver-core.sh" || { echo "xorg-server core build failed"; exit 1; }
+
 # The xorg-server source tree under src/ is a regenerable 3rd-party download; the
 # DURABLE source-of-truth for the DDX is the tracked copy in tools/x11-port/ddx/.
 # Sync it into the in-tree DDX dir before compiling so a fresh tree gets the backend.
