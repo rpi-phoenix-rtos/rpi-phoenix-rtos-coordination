@@ -55,10 +55,16 @@ on a clean VM because scripts let the result depend on host/accumulated state.
 
 ## Status
 
-- Phase A (fresh-clone build on the current VM, into ~/phoenix-clean): first run CONFIRMED
-  clone-from-mirror of coord + 16 siblings, then surfaced the vanished-external-SHA problem (killed;
-  it was building against the wrong mesa). Fixes committed (2384b02 + mesa fork). Re-running with
-  `EXTERNAL_FORK_BASE` = host mirrors.
+- Phase A (fresh-clone build on the current VM, into ~/phoenix-clean): **COMPLETE SUCCESS
+  (BUILD_RC=0, 2026-07-03 23:40).** Fresh `git clone` of coord + 16 siblings + 3 externals +
+  lib-lwip submodule, all from host mirrors at exact SHAs (no rsync) → bootstrap (toolchain built)
+  → `rebuild-rpi4b-fast.sh --variant sd --with-showcase` → **835 MiB `rpi4b-sd-2part.img`**
+  (artifacts/rpi4b/). Verified in the fresh-clone tree: Xphoenix (7.1 MB) + xterm (4.4 MB) [the
+  fixed apps], rpi4-quake (GLQuake) staged, GPU archives libGL/libv3d/libquakespasm from the fork
+  mesa. Two gaps found + fixed along the way: (a) stale /tmp/mesa-v3d-build reuse (cleared; a true
+  wipe makes it moot) → GPU archives then linked clean (GPU_RC=0); (b) lwip lib-lwip submodule not
+  initialized (b7bf9be). Everything validated EXCEPT the blank-OS apt layer (this VM had apt
+  pre-installed) — that is Phase B's job.
 - Phase B (final gate): wipe VM (disk.qcow2 recreate backed by noble base) → blank Ubuntu →
   `git clone` coord from mirror → `PHOENIX_FORK_BASE=… EXTERNAL_FORK_BASE=… bootstrap` →
   `rebuild-rpi4b-fast.sh --variant sd --with-showcase`.
