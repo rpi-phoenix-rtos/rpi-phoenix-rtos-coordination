@@ -381,6 +381,22 @@ setup_python_venv() {
 # 5. Print next steps
 ##############################################################################
 
+# 6. aarch64-phoenix cross-toolchain (gcc-14.2.0 + binutils-2.43). This is the
+# long pole (~20-60 min) but makes bootstrap a true one-command setup:
+# rebuild-rpi4b-fast.sh REQUIRES $PROJECT_DIR/.toolchain to exist, and BUILD.md
+# documents bootstrap as building it. Idempotent — build-phoenix-toolchain-linux.sh
+# skips when the compiler is already present.
+build_toolchain() {
+	if [ -x "$PROJECT_DIR/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-gcc" ]; then
+		log "aarch64-phoenix toolchain already present — skipping build"
+		return 0
+	fi
+	log "Building the aarch64-phoenix cross-toolchain (long pole, ~20-60 min)..."
+	( cd "$PROJECT_DIR" && ./scripts/build-phoenix-toolchain-linux.sh ) \
+		|| fatal "toolchain build failed (see output above); re-run bootstrap to retry"
+}
+
+
 print_next_steps() {
 	cat <<EOF
 
@@ -526,6 +542,7 @@ USAGE
 	if [ "$PINNED_MODE" -eq 1 ]; then
 		apply_pinned_manifest
 	fi
+	build_toolchain
 	print_next_steps
 }
 
