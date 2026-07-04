@@ -67,6 +67,13 @@ mesa_v3d_build="${MESA_V3D_BUILD:-/tmp/mesa-v3d-build}"
 mesa_v3dv_build="${MESA_V3DV_BUILD:-/tmp/mesa-v3dv-build}"
 mesa_pyenv="${MESA_PYENV:-/tmp/mesa-pyenv}"
 
+# uv (used to provision the mesa meson pyenv) is installed by bootstrap into
+# ~/.local/bin. A login shell picks that up via ~/.profile, but when bootstrap
+# and this build run in the SAME shell session (e.g. `bootstrap && rebuild`), the
+# PATH was fixed before uv existed, so `command -v uv` misses it. Prepend the
+# standard user-local bin dir (bootstrap does the same) so uv is found regardless.
+export PATH="$HOME/.local/bin:$PATH"
+
 phase="all"
 force=0
 # vkQuake/V3DV is a work-in-progress capstone (not yet functional), so it is NOT
