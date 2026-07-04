@@ -126,9 +126,19 @@ EXTERNAL_DEPS=(
 	"vkquake|${EXTERNAL_FORK_BASE}/vkquake.git|f4d923e36f6a2cbb6e796031eb81c88f23db8520"
 )
 
-# Raspberry Pi firmware blobs we need from raspberrypi/firmware boot
-# tree. We pin to a known-good firmware date; bump deliberately.
-PI_FW_REF="${PI_FW_REF:-master}"
+# Raspberry Pi firmware blobs we need from raspberrypi/firmware boot tree.
+#
+# PIN TO A COMMIT SHA, never a moving branch. The firmware (start4.elf) decides
+# whether it grants plo's request for a 3x-tall virtual framebuffer — the backing
+# for the GLQuake triple-buffer page-flip present path. Firmware newer than the
+# pin below (e.g. raspberrypi/firmware master as of 2026-07) DENIES the over-tall
+# virtual-height request: v3d-winsys reports virt_h=0 -> 1 buffer, the renderer
+# falls back to single-buffer render-in-place, and Quake tears/flickers on heavy
+# frames. It also makes every clean build non-deterministic. This SHA is the last
+# firmware verified to grant virt_h=3240 (TRIPLE-BUFFER). Bump deliberately, and
+# re-verify the scanout-init line still reports TRIPLE-BUFFER after any bump.
+#   41f4808 "kernel: Bump to 6.18.32" (2026-05-18) -> start4.elf VC_BUILD_ID ae9a8e
+PI_FW_REF="${PI_FW_REF:-41f4808270a922f08fdd927edfeb60212800fe64}"
 PI_FW_REPO="https://github.com/raspberrypi/firmware.git"
 PI_FW_FILES=(
 	boot/start4.elf
@@ -386,17 +396,25 @@ stage_pi_firmware() {
 	log "Staging Raspberry Pi firmware blobs ($PI_FW_REF) → $BOOTBLOBS_DIR/"
 	mkdir -p "$BOOTBLOBS_DIR/overlays"
 	local fw_tmp="$BOOTBLOBS_DIR/.firmware-checkout"
+	# Fetch the pinned commit by SHA (GitHub allows fetch of a ref-reachable SHA).
+	# We do NOT use `clone --branch $PI_FW_REF` because --branch rejects a commit
+	# SHA, and we do NOT `pull --ff-only` an existing checkout because that would
+	# silently advance the firmware past the pin — the exact non-determinism the
+	# pin exists to prevent. Instead: init once, then always checkout the pinned SHA.
 	if [ ! -d "$fw_tmp/.git" ]; then
-		log "  doing sparse-checkout of $PI_FW_REPO ..."
-		git clone --depth 1 --filter=blob:none --no-checkout \
-			--branch "$PI_FW_REF" \
-			"$PI_FW_REPO" "$fw_tmp"
+		log "  initialising firmware checkout of $PI_FW_REPO ..."
+		git init -q "$fw_tmp"
+		git -C "$fw_tmp" remote add origin "$PI_FW_REPO"
+		git -C "$fw_tmp" config core.sparseCheckout true
 		git -C "$fw_tmp" sparse-checkout init --cone
 		git -C "$fw_tmp" sparse-checkout set boot
-		git -C "$fw_tmp" checkout
+	fi
+	if [ "$(git -C "$fw_tmp" rev-parse -q --verify HEAD 2>/dev/null)" != "$PI_FW_REF" ]; then
+		log "  fetching pinned firmware $PI_FW_REF ..."
+		git -C "$fw_tmp" fetch --depth 1 --filter=blob:none origin "$PI_FW_REF"
+		git -C "$fw_tmp" checkout -q --detach FETCH_HEAD
 	else
-		log "  firmware checkout already present; pulling latest"
-		git -C "$fw_tmp" pull --ff-only || true
+		log "  firmware already at pinned $PI_FW_REF"
 	fi
 	for f in "${PI_FW_FILES[@]}"; do
 		local rel="${f#boot/}"
