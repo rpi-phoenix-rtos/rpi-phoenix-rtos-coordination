@@ -65,9 +65,18 @@ on a clean VM because scripts let the result depend on host/accumulated state.
   wipe makes it moot) → GPU archives then linked clean (GPU_RC=0); (b) lwip lib-lwip submodule not
   initialized (b7bf9be). Everything validated EXCEPT the blank-OS apt layer (this VM had apt
   pre-installed) — that is Phase B's job.
-- Phase B (final gate): wipe VM (disk.qcow2 recreate backed by noble base) → blank Ubuntu →
-  `git clone` coord from mirror → `PHOENIX_FORK_BASE=… EXTERNAL_FORK_BASE=… bootstrap` →
-  `rebuild-rpi4b-fast.sh --variant sd --with-showcase`.
+- Phase B (final gate): **PASSED (BUILD_RC=0, 2026-07-04 00:34).** Wiped the VM to a fresh disk
+  off the noble cloud image (blank Ubuntu 24.04), then from zero: apt install → uv → `git clone`
+  coord + 16 siblings + 3 externals + lib-lwip from host mirrors (exact SHAs) → toolchain →
+  GPU/GLQuake (fork mesa) → Xphoenix (7.1 MB) + xterm + xcalc + WindowMaker + nano/mc/dillo →
+  **835 MiB `rpi4b-sd-2part.img`**. One blank-OS gap found + fixed mid-run: uv (installed by
+  bootstrap into ~/.local/bin) wasn't on PATH for a same-shell `bootstrap && rebuild` → GPU phase
+  "uv not found"; fixed in build-showcase-apps.sh (commit 8d09183). Reproducibility goal MET: a
+  stranger with a blank Ubuntu + git can build the full SD image from our repo (once the forks are
+  pushed to github).
+- **Deliverable for manual RPi4 test:** the blank-OS-built image copied to the host at
+  `/home/houp/phoenix-sd-images/rpi4b-sd-2part-cleanbuild-2026-07-04.img`
+  (sha256 d53dbe07653d6f814f8e5d91d7d73fcbd2eb82c61aaa8635727ff2136be885c2, 875560960 bytes).
 
 ## Cleanup owed (revert after validation / before handoff)
 
