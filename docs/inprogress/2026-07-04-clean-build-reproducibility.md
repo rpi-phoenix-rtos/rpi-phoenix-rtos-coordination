@@ -93,3 +93,48 @@ local commits, so publishability requires those forks to exist+pushed on github 
 currently in UPSTREAM_ONLY_REPOS that carry local commits: corelibs, lwip, ports, posixsrv). The
 mirror test faithfully simulates "all forks pushed". No bootstrap list change needed — only the
 push.
+
+---
+
+## 2026-07-04 (pm): GLQuake flicker regression = unpinned RPi firmware
+
+**Symptom:** clean-build (VM) SD boots fine but Quake flickers (HUD/enemies tear,
+worse on heavy frames — monsters, explosions). X11 unaffected. Reported as a
+regression from the prior smooth state; user's instinct was double/triple-buffering.
+
+**Root cause (build-process bug, not the ported code):**
+`scripts/bootstrap-linux-host.sh` set `PI_FW_REF="${PI_FW_REF:-master}"` — a moving
+branch, despite a comment claiming it was pinned. The RPi firmware (`start4.elf`)
+decides whether it grants plo's request for a **3x-tall virtual framebuffer** (the
+backing for the GLQuake triple-buffer page-flip present path in
+`tools/quakespasm-port/platform/pl_phoenix_glctx.c` + `tools/v3d-driver-port/
+v3d_phoenix_winsys.c`).
+
+- Host `.bootblobs` staged 2026-05-20 → firmware `VC_BUILD_ID ae9a8e` (from
+  raspberrypi/firmware @ `41f4808`, 2026-05-18) → grants 3x → `virt_h=3240`.
+- Clean VM build 2026-07-04 → `master` had advanced → firmware `VC_BUILD_ID f68405`
+  → DENIES 3x → `virt_h=0`.
+
+Evidence (winsys scanout-init UART line):
+```
+smooth  (60 logs, 06-21..07-02):  scanout init ... virt_h=3240 -> 3 buffer(s) TRIPLE-BUFFER+page-flip
+flicker (07-04 VM build):         scanout init ... virt_h=0    -> 1 buffer(s) single (blit-resolve)
+```
+`virt_h=0` → `nbuf=1` → single-buffer render-in-place → tearing. Every other boot
+artifact (plo source+provenance, config.txt, dtb, armstub, rpi4-fb allocation) was
+byte-identical; `start4.elf`/`fixup4.dat` were the only difference.
+
+**Fix (commit 2a11a9f):**
+- Pin `PI_FW_REF=41f4808270a922f08fdd927edfeb60212800fe64`.
+- Rewrite `stage_pi_firmware`: `--branch` rejects a SHA, so init + `fetch --depth 1
+  origin <SHA>` + `checkout --detach FETCH_HEAD` (GitHub allows ref-reachable SHA
+  fetch; validated end-to-end). Dropped `pull --ff-only` (it advanced past the pin).
+- Also a reproducibility fix: clean builds are now firmware-deterministic.
+
+**Confirmation SD (awaiting user boot):**
+`phoenix-sd-images/rpi4b-sd-fwfix-2026-07-04.img` (flashed to /dev/sda) = the VM
+flicker image with ONLY `start4.elf`+`fixup4.dat` swapped to `ae9a8e` + `rpi4-quake`
+= the proven scanout-ON build (17766088). Firmware-isolated A/B: smooth →
+firmware confirmed (also exonerates the unchanged plo binary + kernel8.img).
+Verify objectively via the boot log: `scanout init ... virt_h=3240 -> TRIPLE-BUFFER`.
+The mesa `create_flags=0` experiment was a wrong lever and has been reverted.
