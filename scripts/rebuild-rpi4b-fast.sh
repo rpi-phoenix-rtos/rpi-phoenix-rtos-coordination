@@ -245,7 +245,15 @@ case "${scope}" in
 		scope_reason="forced core scope"
 		;;
 	full-clean)
-		build_args=(clean host core project image)
+		# `ports` MUST be between core and project: the nfsroot variant's nfs-fs
+		# (filesystems/nfs) links the libnfs port and is built in the project stage
+		# (see build.project b_build_project), so libnfs.a + <nfsc/libnfs.h> must
+		# already exist. Omitting `ports` makes a clean build fail with
+		# "fatal error: nfsc/libnfs.h: No such file" and — worse on a warm sysroot —
+		# silently reuse a STALE nfs-fs that is ABI-mismatched against the freshly
+		# rebuilt libphoenix/kernel (observed: every NFS read returns ERANGE, exec
+		# from NFS fails -12). A full clean must rebuild the ports too.
+		build_args=(clean host core ports project image)
 		scope_reason="forced full-clean scope"
 		;;
 	auto)
