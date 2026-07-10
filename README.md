@@ -108,6 +108,9 @@ agents, not required reading to build or use the port.
 
 Phoenix-RTOS and its components carry their own licenses (predominantly
 BSD/MIT-style). The out-of-tree ports under `tools/` and `external/` carry the
-licenses of their upstream projects (Mesa, Quakespasm, vkQuake, X.org, etc.);
-note that the Quake game data is not included and is subject to id Software's
-terms.
+licenses of their upstream projects (Mesa, Quakespasm, vkQuake, X.org, etc.).
+In particular the Quake/vkQuake platform glue under `tools/quakespasm-port/` and
+`tools/vkquake-port/` is **GPL-2.0-or-later** (derivative of those GPL engines) —
+optional, opt-in showcases kept separate from the BSD core. See
+[LICENSING.md](LICENSING.md) for the full breakdown. The Quake game data is not
+included and is subject to id Software's terms.

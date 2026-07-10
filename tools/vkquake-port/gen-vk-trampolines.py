@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 Phoenix Systems. Author: Witold Bołt.
+# Build recipe for the vkQuake Phoenix port (GPL-2.0-or-later); see COPYING.
 """Generate public vk* trampolines that vkQuake calls DIRECTLY as link symbols.
 
 vkQuake includes <vulkan/vulkan_core.h> WITHOUT VK_NO_PROTOTYPES, so it calls core

@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 Phoenix Systems. Author: Witold Bołt.
+# Build recipe for the QuakeSpasm Phoenix port (GPL-2.0-or-later); see COPYING.
 """Build Quakespasm for Phoenix (aarch64a72) on the ported Mesa GL stack (V3D).
 
 Stage 1 (this script, "probe" mode): compile every PORTABLE Quakespasm TU — the GL

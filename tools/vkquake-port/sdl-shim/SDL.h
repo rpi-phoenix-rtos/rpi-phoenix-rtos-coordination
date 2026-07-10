@@ -1,3 +1,13 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later
+ *
+ * Copyright (C) 2026 Phoenix Systems
+ * Author: Witold Bołt
+ *
+ * Phoenix-RTOS platform backend for vkQuake (vkQuake is Copyright (C) id
+ * Software, Inc. and the vkQuake developers, GPL-2.0-or-later). It implements
+ * the vkQuake platform interface and is distributed under the same license as
+ * the program it is built into; see COPYING in this directory.
+ */
 /*
  * SDL2-compat shim for the vkQuake -> Phoenix (V3DV) port.
  *

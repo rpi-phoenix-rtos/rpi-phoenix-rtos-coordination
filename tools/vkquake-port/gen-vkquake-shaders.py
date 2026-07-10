@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 Phoenix Systems. Author: Witold Bołt.
+# Build recipe for the vkQuake Phoenix port (GPL-2.0-or-later); see COPYING.
 """Generate the embedded-SPIR-V C arrays vkQuake's renderer references at link
 (world_vert_spv, alias_frag_spv, *_comp_spv, ...) for the aarch64-phoenix build.
 

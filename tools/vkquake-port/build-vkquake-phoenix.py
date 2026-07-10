@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 Phoenix Systems. Author: Witold Bołt.
+# Build recipe for the vkQuake Phoenix port (GPL-2.0-or-later); see COPYING.
 """Build vkQuake (Vulkan Quake) for Phoenix-RTOS Pi4 (aarch64-phoenix), on the ported
 V3DV Vulkan ICD (libv3dv-phoenix.a + libv3d-phoenix.a back-end).
 
