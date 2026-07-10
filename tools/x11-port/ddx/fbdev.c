@@ -19,7 +19,7 @@
  * Input is wired to the Phoenix USB HID devices /dev/kbd0 (8-byte boot-keyboard
  * reports) and /dev/mouse0 (4-byte boot-mouse packets). See the input-driver
  * section below for the HID-usage -> evdev-keycode mapping and the
- * InputThreadRegisterDev() fd-polling model.
+ * timer-drained HID input model.
  *
  * Copyright 2026 Phoenix Systems
  * Author: Witold Bołt
@@ -570,19 +570,13 @@ fbdevPutColors(ScreenPtr pScreen, int n, xColorItem *pdefs)
 /* -------------------------------------------------------------------------
  * Input drivers — Phoenix USB HID keyboard (/dev/kbd0) + mouse (/dev/mouse0).
  *
- * Event sourcing. We register each device fd in the driver's Enable() via
- * InputThreadRegisterDev(fd, cb, arg) and unregister in Disable() via
- * InputThreadUnregisterDev(fd). That call routes to one of two poll paths and
- * both are safe for us:
- *   - input thread active (inputThreadInfo != NULL): the dedicated input thread
- *     (os/inputthread.c) polls the fd and calls our callback wrapped in
- *     input_lock()/input_unlock() (InputReady()).
- *   - otherwise it falls back to SetNotifyFd() (os.h), i.e. the fd is polled in
- *     the server's main dispatch loop and the callback runs on the main thread —
- *     the same path ephyr uses.
- * Either way a single thread both enqueues (our callback) and dequeues (dix), so
- * the callback needs no extra locking, and reading the device never blocks the
- * dispatch loop (the fds are O_NONBLOCK and the drain is bounded).
+ * Event sourcing. Phoenix poll() does not signal readiness reliably, so we do
+ * NOT use InputThreadRegisterDev's poll()-based model. Instead Enable() opens
+ * the device and both fds are drained on a fast main-loop timer (see
+ * fbdevInputTimerCb); the read callbacks below enqueue events from there. A
+ * single thread both enqueues (the timer callback) and dequeues (dix), so the
+ * callback needs no extra locking, and reading never blocks the dispatch loop
+ * (the fds are O_NONBLOCK and the drain is bounded).
  *
  * KEYBOARD. usbkbd is put into RAW mode (write a single 0x01 byte to /dev/kbd0;
  * see usbkbd.c) so it delivers raw 8-byte HID boot-keyboard reports rather than

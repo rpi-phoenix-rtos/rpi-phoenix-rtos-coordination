@@ -55,7 +55,6 @@ typedef struct {
 extern void v3d_phoenix_set_scanout(uint32_t pa, uint32_t bytes);
 extern int v3d_phoenix_scanout_init(uint32_t pa, uint32_t w, uint32_t h, uint32_t pitch); /* detects double-buffer */
 extern int v3d_phoenix_scanout_active(void);
-#include <sys/ioctl.h>
 #include <phoenix/fbcon.h>
 
 /* GL context/FBO helpers (pl_phoenix_glctx.c) — plain C API, no Quake/Mesa types. */
@@ -163,7 +162,6 @@ static int              reblit_started = 0;  /* 1 only if pthread_create ran (fa
  * fbcon redraw (which targets buffer 0) is what's actually scanned out — otherwise the display
  * stays panned to the last page-flipped GPU buffer and the final game frame stays frozen on screen. */
 extern void v3d_phoenix_flip(int buf);
-extern int  v3d_phoenix_scanout_active(void);
 static volatile unsigned fb_seq = 0;   /* bumped per presented frame; reblit refreshes only when idle */
 
 /* Present pipeline: the render (GL) thread fills readbuf[idx] via glReadPixels (GL ops must stay
@@ -524,7 +522,7 @@ void GL_EndRendering(void)
 		 * scanout fb — no depth FIFO, one light streaming pass, so it cannot hit that stall, and
 		 * still no CPU readback. The frame lands UPRIGHT: both FBOs are full-screen so Mesa
 		 * forced Y_0_TOP on both, and the (0..h)->(0..h) blit copies verbatim onto the y-down
-		 * scanout, with winding compensated by glFrontFace(GL_CCW) below. */
+		 * scanout. */
 		qsv3d_resolve();
 		ts_c = ts_b;
 		ts_d = Sys_DoubleTime();
@@ -584,7 +582,6 @@ void GL_EndRendering(void)
 }
 
 /* --- the remaining VID_* contract: trivial for a fixed single fullscreen mode --- */
-void VID_Shutdown(void);
 qboolean VID_HasMouseOrInputFocus(void) { return true; }
 qboolean VID_IsMinimized(void) { return false; }
 void VID_Lock(void) {}

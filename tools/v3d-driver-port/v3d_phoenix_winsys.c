@@ -136,9 +136,9 @@
  * initial tile_alloc (CT0QMA/QMS) is exhausted; a complex 1080p frame can need many MiB. Linux
  * allocates a FRESH 256 KiB BO per OUTOMEM event, UNBOUNDED (v3d_overflow_mem_work) — our prior
  * 4 MiB fixed pool was too small, so a heavy scene exhausted it and the binner wedged EVERY frame
- * (OUTOMEM|SPILLUSE, ovf_armed=exhausted, ~3 fps). 64 MiB covers far more; the servicer hands the
+ * (OUTOMEM|SPILLUSE, ovf_armed=exhausted, ~3 fps). 32 MiB covers far more; the servicer hands the
  * whole remaining pool on the first OUTOMEM so the binner has it all at once. (A truly pathological
- * frame exceeding 64 MiB would still need Linux-style unbounded fresh allocation — logged.) */
+ * frame exceeding 32 MiB would still need Linux-style unbounded fresh allocation — logged.) */
 #define BINOVF_PAGES        8192u     /* 32 MiB persistent binner-overflow/spill pool (8x the old 4 MiB) */
 #define BINOVF_CHUNK_BYTES  (BINOVF_PAGES * 4096u)  /* hand the whole pool on the first OUTOMEM */
 #define CTL_MISCCFG         0x0018u
@@ -691,9 +691,9 @@ static void apply_core_regs(void)
 		W.hub[MMU_ILLEGAL_ADDR/4] = (uint32_t)(W.scratch_pa>>PAGE_SHIFT) | MMU_ILLEGAL_ENABLE;
 	W.hub[MMUC_CONTROL/4] = MMUC_ENABLE;
 	W.core0[CTL_L2CACTL/4] = L2CACTL_L2CCLR | L2CACTL_L2CENA;
-	/* Define the L2T flush range as the WHOLE cache (mirrors linux v3d_init_core:
-	 * L2TFLSTA=0, L2TFLEND=~0 — "whenever we flush L2T we want the whole thing"). Without
-	 * this, every L2TCACTL flush we issue covers an indeterminate cold-boot range, so a
+	/* Define the L2T flush range as the WHOLE cache (L2TFLSTA=0, L2TFLEND=~0), matching what
+	 * the Linux v3d driver programs at core init. Without this, every L2TCACTL flush we issue
+	 * covers an indeterminate cold-boot range, so a
 	 * bin->render flush can leave stale tile-list lines and the render fetches a stale
 	 * next-block pointer -> CT1 wedges. These core regs aren't otherwise written by init or
 	 * the reset path, so their cold-boot value persisted across software resets. */

@@ -287,20 +287,6 @@ static void pl_mouse_process(const uint8_t *p)
 {
 	int btn = p[0];
 
-	/* One-time delivery confirmation (task #24): the usbmouse driver + /dev/mouse0 open + this
-	 * read path are all wired, but mouse motion was reported not working. Log the first few
-	 * packets so an attended "move the mouse" test shows on the UART whether reports actually
-	 * arrive (isolates a USB interrupt-IN delivery gap from an input-application bug). Throttled
-	 * to avoid flooding the console during play. */
-	{
-		static int dbg_n = 0;
-		if (dbg_n < 12) {
-			dbg_n++;
-			Sys_Printf("PL_IN: mouse pkt btn=0x%02x dx=%d dy=%d wheel=%d\n",
-			           btn, (int)(signed char)p[1], (int)(signed char)p[2], (int)(signed char)p[3]);
-		}
-	}
-
 	total_dx += (int)(signed char)p[1];
 	total_dy += (int)(signed char)p[2];
 
