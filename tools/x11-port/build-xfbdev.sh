@@ -45,6 +45,7 @@ DDX_SRC=${ROOT}/tools/x11-port/ddx
 XKBDIR=${ROOT}/tools/x11-port/xkb
 mkdir -p "$DDX"
 cp "$DDX_SRC/fbdev.c" "$DDX/fbdev.c"
+cp "$DDX_SRC/hid_evdev_map.h" "$DDX/hid_evdev_map.h"
 [ -f "$DDX_SRC/fbdev_stub.c" ] && cp "$DDX_SRC/fbdev_stub.c" "$DDX/fbdev_stub.c"
 
 # Durable core-source patches: the src/ tree is a regenerable download, so any

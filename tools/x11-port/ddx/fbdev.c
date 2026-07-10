@@ -593,14 +593,14 @@ fbdevPutColors(ScreenPtr pScreen, int n, xColorItem *pdefs)
  *
  * HID-usage -> X keycode. The compiled-in keymap is us/pc105 under the evdev
  * rules, whose keycodes are POSITIONAL (not the alphabetical layout of HID
- * usages). We map HID usage -> Linux evdev keycode via the canonical kernel
- * table (drivers/hid/usbhid/usbkbd.c usb_kbd_keycode[256]) then add the X
- * keycode offset of 8 (X keycode = evdev keycode + 8). With minScanCode = 8
- * (= KD_MIN_KEYCODE), KdEnqueueKeyboardEvent's formula passes the value through
- * unchanged. Anchors: Esc usage 0x29 -> evdev 1 -> X 9; 'a' 0x04 -> 30 -> 38;
- * Space 0x2c -> 57 -> 65. We send keycodes ONLY: XKB derives keysyms/chars from
- * keycode + modifier state, so there is no char/shift handling here. Modifier
- * keys are just their own evdev keycodes, pressed/released by diffing byte[0].
+ * usages). We map HID usage -> evdev keycode via hidToEvdev[] (see
+ * hid_evdev_map.h) then add the X keycode offset of 8 (X keycode = evdev
+ * keycode + 8). With minScanCode = 8 (= KD_MIN_KEYCODE), KdEnqueueKeyboardEvent's
+ * formula passes the value through unchanged. Anchors: Esc usage 0x29 -> evdev 1
+ * -> X 9; 'a' 0x04 -> 30 -> 38; Space 0x2c -> 57 -> 65. We send keycodes ONLY:
+ * XKB derives keysyms/chars from keycode + modifier state, so there is no
+ * char/shift handling here. Modifier keys are just their own evdev keycodes,
+ * pressed/released by diffing byte[0].
  *
  * MOUSE. usbmouse delivers raw 4-byte HID boot-mouse packets on change:
  *   [0]=buttons (bit0 L, bit1 R, bit2 M), [1]=dx int8, [2]=dy int8, [3]=wheel.
@@ -620,37 +620,11 @@ fbdevPutColors(ScreenPtr pScreen, int n, xColorItem *pdefs)
 #define KBD_DEVICE   "/dev/kbd0"
 #define MOUSE_DEVICE "/dev/mouse0"
 
-/*
- * HID usage (page 0x07) -> Linux evdev keycode. Verbatim from the kernel's
- * drivers/hid/usbhid/usbkbd.c usb_kbd_keycode[256]. X keycode = entry + 8.
- */
-static const unsigned char hidToEvdev[256] = {
-      0,  0,  0,  0, 30, 48, 46, 32, 18, 33, 34, 35, 23, 36, 37, 38,
-     50, 49, 24, 25, 16, 19, 31, 20, 22, 47, 17, 45, 21, 44,  2,  3,
-      4,  5,  6,  7,  8,  9, 10, 11, 28,  1, 14, 15, 57, 12, 13, 26,
-     27, 43, 43, 39, 40, 41, 51, 52, 53, 58, 59, 60, 61, 62, 63, 64,
-     65, 66, 67, 68, 87, 88, 99, 70,119,110,102,104,111,107,109,106,
-    105,108,103, 69, 98, 55, 74, 78, 96, 79, 80, 81, 75, 76, 77, 71,
-     72, 73, 82, 83, 86,127,116,117,183,184,185,186,187,188,189,190,
-    191,192,193,194,134,138,130,132,128,129,131,137,133,135,136,113,
-    115,114,  0,  0,  0,121,  0, 89, 93,124, 92, 94, 95,  0,  0,  0,
-    122,123, 90, 91, 85,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
-      0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
-      0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
-      0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
-      0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
-     29, 42, 56,125, 97, 54,100,126,164,166,165,163,161,115,114,113,
-    150,158,159,128,136,177,178,176,142,152,173,140
-};
+/* hidToEvdev[256] and hidModEvdev[8]: HID usage -> evdev keycode. */
+#include "hid_evdev_map.h"
 
-/* X keycode offset over the Linux evdev keycode for the evdev-rules keymap. */
+/* X keycode offset over the evdev keycode for the evdev-rules keymap. */
 #define EVDEV_KEYCODE_OFFSET 8
-
-/* The eight HID modifier bits (report byte[0]) -> their Linux evdev keycodes,
- * in bit order: LCtrl, LShift, LAlt, LGUI, RCtrl, RShift, RAlt, RGUI. */
-static const unsigned char hidModEvdev[8] = {
-    29, 42, 56, 125, 97, 54, 100, 126
-};
 
 static int
 fbdevHidUsagePresent(const uint8_t *rep, uint8_t u)
