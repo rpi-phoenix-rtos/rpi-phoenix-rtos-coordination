@@ -33,6 +33,10 @@ Options:
       GPU archive builds before build.sh and stages X11/ports into the rootfs
       after. Adds host deps (meson/ninja/mako/libdrm-dev/glslang) — install via
       scripts/bootstrap-linux-host.sh.
+  --with-tests
+      build phoenix-rtos-tests for aarch64 (incl. the libc Unity suite) via the
+      build.sh `test` stage and stage the binaries into the rootfs so they can be
+      run on the Pi (e.g. `test-libc-string`, `test-libc-stdlib`).
   --build-only
       skip bootfs/sdimg export and verification
   --ports-only
@@ -84,6 +88,7 @@ do_prepare=1
 do_build_artifacts=1
 do_qemu_sanity=0
 with_ports=0
+with_tests=0
 ports_only=0
 # --with-showcase: build the showcase-app layer (GPU/GL/Vulkan + Quake, X11
 # server + apps, dillo/mc/nano) and bundle it into the image. Only meaningful
@@ -116,6 +121,13 @@ while [ "$#" -gt 0 ]; do
 			# Off by default because the ports compile is slow and most
 			# iterations don't touch ports.
 			with_ports=1
+			;;
+		--with-tests)
+			# Insert the build.sh `test` stage (builds phoenix-rtos-tests, incl.
+			# the libc Unity suite, for aarch64 and stages the binaries into the
+			# rootfs so they can be run on the Pi). Off by default: the whole
+			# suite is ~60 binaries and most iterations don't need them.
+			with_tests=1
 			;;
 		--variant)
 			shift
@@ -289,6 +301,22 @@ if [ "${with_ports}" = 1 ]; then
 	done
 	build_args=("${new_args[@]}")
 	scope_reason="${scope_reason}; +ports (busybox etc.)"
+fi
+
+# --with-tests: insert the build.sh `test` stage before `project` (tests need the
+# `core` sysroot; build.sh runs the test stage in its fixed core->test->project
+# order regardless of position here). Builds phoenix-rtos-tests for aarch64 and
+# stages the binaries so they can be run on the Pi.
+if [ "${with_tests}" = 1 ]; then
+	new_args=()
+	for arg in "${build_args[@]}"; do
+		if [ "${arg}" = "project" ]; then
+			new_args+=(test)
+		fi
+		new_args+=("${arg}")
+	done
+	build_args=("${new_args[@]}")
+	scope_reason="${scope_reason}; +tests (phoenix-rtos-tests)"
 fi
 
 # --variant sd: produce the COMPLETE bootable 2-partition SD image (FAT boot +
