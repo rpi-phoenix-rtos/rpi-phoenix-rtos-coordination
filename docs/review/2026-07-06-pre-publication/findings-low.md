@@ -91,3 +91,24 @@
 - plo cache.c SCTLR accessor dedup; _startc heap-zero diag — boot-critical
 - build port_internal.subr HOST_TARGET suffix — build-system, needs ports build
 - ext-mesa (os_memory_aligned #undef, v3d_resource dead infra); ext-quakespasm (gl_screen .tga/.png, harness TCP sink, r_part doc ref) — external clones, need GPU build
+
+## Additional autonomous work — 2026-07-11 session (libc + fbdev)
+
+**libphoenix libc robustness (commit cbe4946; verified: core rebuild + host logic tests):**
+- string2mode() rewritten — fopen(...,"rt") no longer fails (was the X11 libXfont2 root
+  cause, previously worked around downstream). Handles b/t/c/m (ignored), x→O_EXCL, e→O_CLOEXEC,
+  modifiers in any order; all previously valid modes byte-identical (21-case table).
+- memmem() added (string.c + string.h); getsubopt() added (new stdlib/getsubopt.c + decl + Makefile).
+
+**tools-x11 fbdev.c:297 [correctness] — FIXED (commit, verified cross-compile):**
+- Shadow-blit fallback copied a full device pitch from a narrower shadow row (over-read on
+  rotation/reflection). Now copies min(shadowStride, pitch). RPi4 fast path unchanged.
+
+**New deferred candidates (need user decision / attended verify):**
+- nl_langinfo() + <langinfo.h>: genuinely useful (many locale-aware ports call nl_langinfo(CODESET)),
+  but the CODESET return for the C locale is a policy call ("ANSI_X3.4-1968" vs "UTF-8") with real
+  behavioural impact on ncurses/editors — needs your decision, so not implemented blind.
+- libc unit tests for memmem/getsubopt/fopen-modes in phoenix-rtos-tests/libc/: the RPi4 project
+  doesn't build that suite (only ia32/host do), so can't build/run-verify here — attended follow-up.
+- X11 libXfont2 fdopen("rt") workaround (downstream) is now redundant given the string2mode fix;
+  can be dropped when the X stack is next rebuilt (harmless if left).
