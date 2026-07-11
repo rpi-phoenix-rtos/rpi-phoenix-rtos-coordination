@@ -112,3 +112,30 @@
   doesn't build that suite (only ia32/host do), so can't build/run-verify here — attended follow-up.
 - X11 libXfont2 fdopen("rt") workaround (downstream) is now redundant given the string2mode fix;
   can be dropped when the X stack is next rebuilt (harmless if left).
+
+## Deferred items completed — 2026-07-11/12 session
+
+**phoenix-rtos-tests now builds for RPi4** (was the blocker for on-target libc tests):
+- `rebuild-rpi4b-fast.sh --with-tests` inserts the build.sh `test` stage; the whole suite
+  (61 binaries) builds clean for aarch64a72-generic-rpi4b (keep-going: 0 errors) against the
+  freshly built libphoenix, and installs into the rootfs `/bin` (e.g. `/bin/test-libc-string`).
+  The `test` stage + `b_test_target` already existed for aarch64; only the RPi4 rebuild never
+  ran it. Gotcha resolved: tests must compile with `PREFIX_SYSROOT`=build sysroot
+  (LIBPHOENIX_DEVEL_MODE=y, the build.sh default) so they see the fresh headers, not the stale
+  toolchain-bundled ones.
+
+**libc unit tests added** (phoenix-rtos-tests, build-verified for aarch64):
+- string/string_memmem.c, stdlib/stdlib_getsubopt.c, stdio/stdio_file.c (fopen mode modifiers),
+  misc/langinfo.c (nl_langinfo). Registered in the respective runners.
+
+**nl_langinfo() + <langinfo.h> implemented** (libphoenix; CODESET="UTF-8" chosen for the
+mc/nano/ncurses/X target). Host-tested (values + bounds, ASan-clean); builds + links for aarch64.
+
+**X11 libXfont2 fdopen-rt patch** annotated as superseded by the string2mode fix (removal left
+for the next HW-verified X rebuild).
+
+**Verification note:** the new functions are proven correct on the host under AddressSanitizer,
+and the Unity tests build for aarch64 + install to the rootfs. On-target EXECUTION (running the
+Unity binaries) is pending: it needs either real HW (`--with-tests` image, `/bin/test-libc-string`
+from psh) or QEMU-raspi4b boot config that bundles a test in loader.disk / mounts a tests rootfs —
+not a clean unattended step. The functions themselves are host-ASan-verified.
