@@ -288,14 +288,17 @@ fbdevFlushRegion(ScreenPtr pScreen, int y0, int y1)
         }
     }
     else {
-        /* Strides differ (rotation/reflection): write row by row. */
+        /* Strides differ (rotation/reflection): write row by row. Copy only the
+         * lesser of the two strides so a narrower shadow row is never over-read
+         * (the surplus of a wider device pitch is off-screen padding). */
+        int rowbytes = (shadowStride < pitch) ? shadowStride : pitch;
         int y;
         for (y = y0; y < y1; y++) {
             off = (off_t) y * pitch;
             if (lseek(priv->fd, off, SEEK_SET) == (off_t) -1)
                 break;
             (void) write(priv->fd, shadow + (off_t) y * shadowStride,
-                         (size_t) pitch);
+                         (size_t) rowbytes);
         }
     }
 }
