@@ -19,9 +19,12 @@ text-mode by default on POSIX, so "r" is equivalent everywhere AND accepted by
 libphoenix. (The "%[^\n]\n"/"%d\n" fscanf reads on these streams are handled
 conformantly by libphoenix's scanf, so this is a complete fix, not a half-fix.)
 
-A more general fix (make libphoenix string2mode() ignore a 't' flag) is tracked
-as a follow-up; it is a --scope core change with a wider blast radius, so the
-localized X-side patch is used to unblock #56.
+UPDATE 2026-07: the general fix HAS landed — libphoenix string2mode() now accepts
+'b'/'t' (and other modifiers) in any position, so pristine libXfont2 fdopen("rt")
+works without this patch. This patch is therefore redundant (harmless: "r" is
+equivalent). It can be dropped once the X font stack is rebuilt and font loading
+is re-verified on hardware (xfontprobe disk=3/3); kept for now to avoid changing
+the X build without that HW check.
 
 --- a/src/fontfile/dirfile.c
 +++ b/src/fontfile/dirfile.c
