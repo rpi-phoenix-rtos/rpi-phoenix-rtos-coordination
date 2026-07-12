@@ -303,22 +303,6 @@ if [ "${with_ports}" = 1 ]; then
 	scope_reason="${scope_reason}; +ports (busybox etc.)"
 fi
 
-# --with-tests: insert the build.sh `test` stage before `project` (tests need the
-# `core` sysroot; build.sh runs the test stage in its fixed core->test->project
-# order regardless of position here). Builds phoenix-rtos-tests for aarch64 and
-# stages the binaries so they can be run on the Pi.
-if [ "${with_tests}" = 1 ]; then
-	new_args=()
-	for arg in "${build_args[@]}"; do
-		if [ "${arg}" = "project" ]; then
-			new_args+=(test)
-		fi
-		new_args+=("${arg}")
-	done
-	build_args=("${new_args[@]}")
-	scope_reason="${scope_reason}; +tests (phoenix-rtos-tests)"
-fi
-
 # --variant sd: produce the COMPLETE bootable 2-partition SD image (FAT boot +
 # ext2 root) in one command. The ext2 root is populated from the staged rootfs
 # tree (_fs/<target>/root), which needs the `fs` skeleton, the `core`/`project`
@@ -348,6 +332,23 @@ if [ "${ports_only}" = 1 ]; then
 	# the port prepare fails. `fs` is cheap (a cp -a of root-skel) and idempotent.
 	build_args=(fs ports)
 	scope_reason="ports-only (stage fs skeleton + ports into _fs root; no image rebuild)"
+fi
+
+# --with-tests: insert the build.sh `test` stage before `project`. This runs AFTER
+# the --variant/--ports-only blocks above so it survives their build_args rewrites
+# (e.g. `--variant sd` rebuilds the stage list). Tests need the `core` sysroot;
+# build.sh runs the test stage in its fixed core->test->project order regardless of
+# position. No `project` in build_args (e.g. --ports-only) => nothing to insert.
+if [ "${with_tests}" = 1 ]; then
+	new_args=()
+	for arg in "${build_args[@]}"; do
+		if [ "${arg}" = "project" ]; then
+			new_args+=(test)
+		fi
+		new_args+=("${arg}")
+	done
+	build_args=("${new_args[@]}")
+	scope_reason="${scope_reason}; +tests (phoenix-rtos-tests)"
 fi
 
 # Task #31 logging build mode: the single source of truth is the
