@@ -313,12 +313,15 @@ fi
 # other than auto is an explicit developer override and is left untouched; the
 # ext2 rootfs step at the tail still runs for sd regardless.) The ext2 image is
 # assembled after `image` by build-rpi4b-rootfs-ext2.sh in the artifact tail.
-if [ "${variant}" = "sd" ] && [ "${ports_only}" = 0 ] && [ "${scope}" = "auto" ]; then
+if [ "${ports_only}" = 0 ] && [ "${scope}" = "auto" ] && { [ "${variant}" = "sd" ] || [ "${with_showcase}" = 1 ]; }; then
 	# `host` builds the hostutils (metaelf/syspagen/mkrofs/...) that the image
 	# stage needs; include it so the command is self-sufficient from a cold
-	# buildroot (build.sh's clean wipes the host prefix too).
+	# buildroot (build.sh's clean wipes the host prefix too). `fs` applies the
+	# rootfs-overlay (e.g. the Quake pak0.pak). Forced for the sd variant (which
+	# packs the ext2 root) AND for any --with-showcase build (nfsroot needs the
+	# apps + overlay staged into _fs/root before it is served over NFS).
 	build_args=(host fs core ports project image)
-	scope_reason="sd variant: full stage list (host fs core ports project image) for a complete 2-part SD image"
+	scope_reason="full stage list (host fs core ports project image): sd variant and/or --with-showcase"
 fi
 
 # --ports-only: build the `ports` stage and nothing else. This stages port
@@ -479,6 +482,20 @@ fi
 "${repo_root}/scripts/assemble-rpi4b-bootfs.sh"
 "${repo_root}/scripts/assemble-rpi4b-bootfs-img.sh"
 
+# --with-showcase (both variants): stage the port + X11 app binaries into the
+# rootfs tree (_fs/<target>/root) NOW — after build.sh finished populating it
+# (fs/core/ports/project) and BEFORE the image assembly. Running earlier would be
+# clobbered by build.sh's fs stage. The sd variant then packs this tree into the
+# ext2 root; the nfsroot/netboot variant serves it over NFS (recreated from
+# _fs/<target>/root). Staging for both is why this now lives outside the sd block.
+if [ "${with_showcase}" = 1 ]; then
+	printf 'Showcase:  staging X11/ports app binaries into rootfs (phase stage)\n'
+	SHOWCASE_STAGE_DIR="${buildroot}/_fs/${target}/root" \
+		RPI4B_BUILDROOT="${buildroot}" \
+		"${repo_root}/scripts/build-showcase-apps.sh" --phase stage \
+		--stage-dir "${buildroot}/_fs/${target}/root"
+fi
+
 if [ "${variant}" = "sd" ]; then
 	# sd variant: build the 2-partition SD image (FAT boot + ext2 root). The FAT
 	# bootfs image assembled above is consumed by build-rpi4b-rootfs-ext2.sh,
@@ -489,25 +506,12 @@ if [ "${variant}" = "sd" ]; then
 	# 2-part image.
 	two_part_img="${buildroot}/_boot/${target}/rpi4b-sd-2part.img"
 	exported_two_part="${repo_root}/artifacts/rpi4b/rpi4b-sd-2part.img"
-	# --with-showcase, phase 2 (stage): stage the port + X11 app binaries into the
-	# rootfs tree (_fs/<target>/root) NOW — after build.sh finished populating it
-	# (fs/core/ports/project) and BEFORE build-rpi4b-rootfs-ext2.sh packs it into
-	# the ext2 image. Running earlier would be clobbered by build.sh's fs stage.
 	# The showcase apps (large static X11 binaries + fonts + WindowMaker share +
 	# mc skins) do not fit the default 256 MiB ext2 root; grow it to 768 MiB when
-	# --with-showcase. The downstream partition geometry is computed from the
-	# actual image size, so this only enlarges partition 2. Override with
-	# RPI4B_ROOTFS_BLOCKS. (env is used because a shell VAR=val prefix cannot be
-	# built conditionally from an array in command position.)
+	# --with-showcase. The downstream partition geometry is computed from the actual
+	# image size, so this only enlarges partition 2. Override with RPI4B_ROOTFS_BLOCKS.
 	rootfs_blocks="${RPI4B_ROOTFS_BLOCKS:-262144}"
-	if [ "${with_showcase}" = 1 ]; then
-		printf 'Showcase:  staging X11/ports app binaries into rootfs (phase stage)\n'
-		SHOWCASE_STAGE_DIR="${buildroot}/_fs/${target}/root" \
-			RPI4B_BUILDROOT="${buildroot}" \
-			"${repo_root}/scripts/build-showcase-apps.sh" --phase stage \
-			--stage-dir "${buildroot}/_fs/${target}/root"
-		rootfs_blocks="${RPI4B_ROOTFS_BLOCKS:-786432}"
-	fi
+	[ "${with_showcase}" = 1 ] && rootfs_blocks="${RPI4B_ROOTFS_BLOCKS:-786432}"
 	env RPI4B_BUILDROOT="${buildroot}" RPI4B_ROOTFS_BLOCKS="${rootfs_blocks}" \
 		"${repo_root}/scripts/build-rpi4b-rootfs-ext2.sh"
 	RPI4B_REMOTE_SDIMG="${two_part_img}" \
