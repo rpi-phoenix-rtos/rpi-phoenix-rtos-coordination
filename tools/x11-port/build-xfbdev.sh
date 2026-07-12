@@ -163,4 +163,17 @@ if [ "$OUT" = "Xphoenix" ]; then
   cp "$DDX/$OUT" "$ART/$OUT"
   echo "=== published -> $ART/$OUT ==="
   ls -l "$ART/$OUT"
+
+  # Stage into the showcase rootfs bin, like the other X app build scripts
+  # (e.g. build-xterm.sh). The showcase `--phase stage` driver sets
+  # SHOWCASE_STAGE_DIR to _fs/<target>/root; without this the X server built +
+  # published fine but never landed on the image, so /bin/Xphoenix (what
+  # pl_phoenix_xlaunch/startx exec) was absent and X11 could not start.
+  NFS="${SHOWCASE_STAGE_DIR:-}"
+  if [ -n "$NFS" ]; then
+    mkdir -p "$NFS/bin"
+    cp "$DDX/$OUT" "$NFS/bin/$OUT"
+    chmod 755 "$NFS/bin/$OUT"
+    echo "=== staged -> $NFS/bin/$OUT ==="
+  fi
 fi
