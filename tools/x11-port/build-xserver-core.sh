@@ -58,6 +58,19 @@ all_present() {
   return 0
 }
 
+# libmd (SHA1) must exist in $PREFIX independently of the core-archive cache: it
+# lives under $PREFIX (/tmp/x11-phoenix), which can be cleared on its own (e.g. a
+# /tmp cleanup), while the core archives survive. build-xfbdev.sh links -lmd from
+# $PREFIX, so ensure libmd BEFORE the all_present early-return below — otherwise a
+# cached-archive run leaves no libmd and the Xphoenix relink fails ("cannot find
+# -lmd").
+if [ ! -f "$PREFIX/lib/libmd.a" ]; then
+  echo "=== building libmd (SHA1) into $PREFIX ==="
+  X11_PREFIX="$PREFIX" SYSROOT="$SYSROOT" TOOLCHAIN_BIN="${TC%/aarch64-phoenix-}" \
+    "$ROOT/tools/x11-port/libmd-phoenix/build.sh" >/tmp/libmd-build.log 2>&1 \
+    || { cat /tmp/libmd-build.log; fail "libmd build failed"; }
+fi
+
 if all_present; then
   echo "=== xorg-server $VER core archives already built — skipping ==="
   exit 0
@@ -76,18 +89,8 @@ if [ ! -f "$KD/configure" ]; then
   [ -f "$KD/configure" ] || fail "$KD/configure missing after extract"
 fi
 
-# --- 1b. build libmd (SHA1) into $PREFIX ---
-# xorg-server os/xsha1.c has no openssl/libgcrypt/libnettle on Phoenix, so it is
-# configured --with-sha1=libmd and links -lmd. That libmd is the small local port
-# in libmd-phoenix/; building it was historically a manual step, so a clean $PREFIX
-# lacked libmd.a and configure aborted ("libmd requested but not found"). Build it
-# here (tiny, idempotent) so the SHA1Init-in-libmd configure probe passes.
-if [ ! -f "$PREFIX/lib/libmd.a" ]; then
-  echo "=== building libmd (SHA1) into $PREFIX ==="
-  X11_PREFIX="$PREFIX" SYSROOT="$SYSROOT" TOOLCHAIN_BIN="${TC%/aarch64-phoenix-}" \
-    "$ROOT/tools/x11-port/libmd-phoenix/build.sh" >/tmp/libmd-build.log 2>&1 \
-    || { cat /tmp/libmd-build.log; fail "libmd build failed"; }
-fi
+# --- 1b. libmd (SHA1) is built above, before the all_present early-return, so a
+# cached-archive run still leaves a linkable libmd in $PREFIX for build-xfbdev.sh.
 
 # --- 2. configure (exact invocation the dev host recorded; kdrive core only) ---
 # The disable-* flags keep this to the kdrive core; --with-sha1=libmd avoids
