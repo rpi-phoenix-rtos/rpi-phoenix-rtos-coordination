@@ -67,7 +67,7 @@ work; `⛔` blocked on external dependencies; `⬜` not started.
 | Subsystem | Status | Notes |
 |---|---|---|
 | CPU / EL2→EL1 / MMU + caches | ✅ | Boots to userspace; caches ON, all Normal RAM WB-cacheable |
-| SMP (4 cores) | 🟡 | 4 cores enumerated; scheduler is cpu0-only |
+| SMP (4 cores) | ✅ | 4-core scheduling; global run-queue + per-core timer preemption. Load distributes across all cores (HW-verified: a 6-thread `cpuburn` saturates cpu1–3 at 100% while cpu0 runs `top`) |
 | Generic timer, GIC-400 interrupts | ✅ | Scheduler ticks; GENET/USB/SD IRQs live |
 | PL011 UART console | ✅ | Primary serial console + klog mirror |
 | HDMI framebuffer console (fbcon) | ✅ | klog + psh on HDMI, FreeBSD `teken` VT engine |
