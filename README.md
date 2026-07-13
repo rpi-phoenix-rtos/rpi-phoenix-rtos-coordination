@@ -28,6 +28,36 @@ Flash the resulting image to a microSD card and boot it on a Pi 4. The full
 walkthrough — prerequisites, timings, flashing, and first-boot expectations —
 is in **[docs/BUILD.md](docs/BUILD.md)**.
 
+## Build with Docker (reproducible, any host OS)
+
+The whole build is also packaged as a **single, self-contained Dockerfile**. It
+works on any machine with a Docker CLI (Linux/macOS/Windows) regardless of host
+OS or installed packages — the entire toolchain runs inside a container we fully
+control. Nothing is copied from the host: every source tree, Ubuntu package, font,
+and the Quake **shareware** game data is fetched over the network.
+
+```bash
+mkdir -p out
+# 1. build the image (clones all sources, builds the cross toolchain, builds the SD image)
+docker build -t phoenix-rpi \
+  https://raw.githubusercontent.com/houp/phoenix-rpi/main/Dockerfile
+# 2. export the finished SD-card image to ./out/
+docker run --rm -v "$PWD/out":/out phoenix-rpi
+# -> ./out/rpi4b-sd-2part.img   (flash it exactly like the native build)
+```
+
+Useful `--build-arg`s (see the header of [`Dockerfile`](Dockerfile)): `UBUNTU_TAG`
+(base LTS, default `24.04` — the validated one), `PAK0_URL` (a Quake shareware
+`pak0.pak` mirror for playable GLQuake demos; omitted = engine built without game
+data), `BUILD_VARIANT` (`sd`/`nfsroot`/`netboot`), `BUILD_FLAGS` (default
+`--with-showcase --with-ports`; use `""` for a base image).
+
+> **Building from a local checkout (before this port is on public GitHub):** the
+> Dockerfile clones from `REPO_BASE` (default GitHub). To build the current tree
+> without pushing, run `./scripts/build-sd-in-docker.sh` — it serves this repo (and
+> the sibling/external repos, committed state) over a local git+http server and
+> points the container at it, then exports to `./docker-out/`.
+
 ## Capabilities
 
 Status of the Pi 4 hardware/software stack. `✅` works on hardware and is
