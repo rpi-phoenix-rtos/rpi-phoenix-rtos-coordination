@@ -46,6 +46,14 @@ done
 for e in mesa quakespasm vkquake; do
 	[ -d "$ROOT/external/$e/.git" ] && link_repo "$ROOT/external/$e" "$e"
 done
+# lib-lwip vendored submodule: bootstrap points submodule.lib-lwip.url at
+# ${EXTERNAL_FORK_BASE}/lwip.git, so expose it too. Its objects live in the parent
+# repo's modules dir (lib-lwip/.git is a gitdir: file, not a repo).
+lwip_mod="$ROOT/sources/phoenix-rtos-lwip/.git/modules/lib-lwip"
+if [ -d "$lwip_mod" ]; then
+	ln -sfn "$lwip_mod" "$SERVE/lwip.git"
+	touch "$lwip_mod/git-daemon-export-ok" 2>/dev/null || true
+fi
 
 # Also serve non-git assets over HTTP: the Quake SHAREWARE pak0.pak (18 MB, freely
 # redistributable) is NOT committed to any repo (licensing hygiene — full Quake data

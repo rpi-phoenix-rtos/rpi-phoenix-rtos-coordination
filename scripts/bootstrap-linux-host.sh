@@ -181,7 +181,7 @@ APT_PACKAGES=(
 	libhidapi-dev
 	# --- SD-image + rootfs assembly (Tier 1: build & flash) ---
 	device-tree-compiler
-	mtools dosfstools parted e2fsprogs
+	mtools dosfstools parted e2fsprogs rsync
 	# --- source acquisition + Python tooling ---
 	git git-lfs curl jq
 	python3 python3-pip python3-venv
