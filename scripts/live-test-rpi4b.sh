@@ -362,8 +362,16 @@ else
 		# Low-latency flags so keypresses echo near-instantly. ffplay's stderr
 		# is very chatty (decoder/SDL spam); send it to /dev/null so it doesn't
 		# interleave with the live UART on stdout.
+		# Pin the capture format to full-HD MJPEG explicitly, rather than inheriting
+		# whatever the device's lingering default is. A prior `ffmpeg -video_size`
+		# or `v4l2-ctl --set-fmt` (e.g. the flicker-capture harness) persistently
+		# changes the v4l2 device default, which would otherwise open this preview
+		# tiny/upscaled. MJPEG (not raw YUYV) is what the USB grabber can sustain at
+		# 1080p30. Override with RPI4B_HDMI_RES / RPI4B_HDMI_INFMT if needed.
 		ffplay \
 			-f v4l2 \
+			-input_format "${RPI4B_HDMI_INFMT:-mjpeg}" \
+			-video_size "${RPI4B_HDMI_RES:-1920x1080}" \
 			-framerate 30 \
 			-fflags nobuffer \
 			-flags low_delay \
@@ -377,6 +385,7 @@ else
 		mpv \
 			--profile=low-latency \
 			--untimed \
+			--demuxer-lavf-o=video_size="${RPI4B_HDMI_RES:-1920x1080}",input_format="${RPI4B_HDMI_INFMT:-mjpeg}" \
 			--title="Pi4 live (close window to power off)" \
 			"av://v4l2:$grabber" \
 			>/dev/null 2>&1 &
