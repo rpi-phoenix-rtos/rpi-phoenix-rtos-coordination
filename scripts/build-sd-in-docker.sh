@@ -44,7 +44,10 @@ PAK0_URL="http://127.0.0.1:$HTTPPORT/$PAK0_REL"
 echo "== docker build (host network → reaches the local servers; empty context, Dockerfile from stdin) =="
 # --network=host so RUN's git clone/wget reach 127.0.0.1:$PORT/$HTTPPORT.
 # Dockerfile piped on stdin => empty build context (nothing copied from host).
-$DOCKER build --network=host \
+# --no-cache by default: a reproducible build must re-clone + rebuild from scratch
+# (a cached layer would pin a stale clone/apt state). Set DOCKER_NO_CACHE="" for
+# faster dev iteration (reuses cached toolchain etc.).
+$DOCKER build ${DOCKER_NO_CACHE:---no-cache} --network=host \
 	--build-arg REPO_BASE="git://127.0.0.1:$PORT" \
 	--build-arg UPSTREAM_BASE="git://127.0.0.1:$PORT" \
 	--build-arg PAK0_URL="$PAK0_URL" \
