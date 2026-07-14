@@ -96,3 +96,49 @@ demo** — a regression shows as *more* blink pixels on entity/world regions. So
 2. Build the **full-lightmap-upload discriminator** (ignore `rectchange`; upload the whole lightmap) →
    capture the SAME window → compare. Lower blink rate ⇒ region-tracking bug in the mesa v3d
    texsubimage path; unchanged ⇒ look at the driver coherency / migration delta instead.
+
+## UPDATE 2026-07-14 (evening) — DECISIVELY localized to alias-model per-frame uniform update
+
+Discriminators run on HW (user eyeball, cvar-level, no rebuild except the full-upload one):
+
+- **full-lightmap-upload** (rebuild; verified in binary md5 e593f041): flicker **unchanged** ⇒ NOT the
+  world-surface lightmap upload / rect-tracking path.
+- **`r_drawentities 0`** (SD rootfs autoexec.cfg): monsters/weapons/buttons vanished **and flicker
+  vanished**, world stayed lit + stable ⇒ flicker is on the **alias models (dynamic entities)**, NOT
+  the world. (Monsters vanishing also proved the autoexec is read — proof-of-application.)
+- Prior A/B: `r_dynamic 0` ⇒ no flicker.
+
+Git (widened to since-06-10) shows the model-lighting code is **unchanged** in the regression window:
+only `5e3ec37` (06-24 add lit-floor) + `90da546` (06-26 remove floor + pose-snap), both **excluded**
+(pose-snap not r_dynamic-gated; the lit term `mix(dot1,dot2,Blend)` is **LightColor-independent** so a
+miscompile there cannot be gated by LightColor/r_dynamic — causally disconnected). `R_SetupAliasLighting`
+unchanged (blame: ancient upstream commit).
+
+**Fingerprint (sharp):** a model whose **`LightColor` uniform changes every frame** flickers;
+constant-lit models and the world do not. Consistent with ALL observations:
+- `r_dynamic 0` ⇒ model LightColor constant ⇒ uniform stable ⇒ no flicker ✓
+- `r_drawentities 0` ⇒ no models ⇒ no uniform ⇒ no flicker ✓
+- world surfaces don't use the alias LightColor uniform ⇒ no flicker ✓
+- dynamically-lit models ⇒ LightColor changes per frame ⇒ flicker ✓
+
+**Conclusion:** the regression is in the **mesa v3d driver** (the 07-03/07-04 materialization), in the
+**per-frame uniform (LightColor) update path** for alias-model draws — NOT a quakespasm bug (no
+quakespasm rebuild will fix it). The winsys (`v3d_phoenix_winsys.c` submit path, lines ~784–811)
+already documents this exact failure mode ("GPU serves stale uniforms from its uniform cache →
+per-frame flicker of dynamically-lit surfaces") and applies SLCACTL UCC (uniform-cache) invalidation +
+a CPU→device store barrier. Since flicker persists on per-frame-changing model uniforms, the residual
+mechanism is most likely a **uniform-stream BO write-ordering / inter-frame reuse race** that
+invalidation does not cover (frame N's GPU job still reading the uniform BO when frame N+1's CPU write
+overwrites it), OR a delta the mesa migration introduced in uniform-stream BO management.
+
+**Next:** driver-level — inspect mesa v3d uniform-stream BO allocation/reuse + the winsys submit
+ordering; candidate fix = ensure per-draw uniform data is not overwritten while a prior job reads it
+(fresh/orphaned uniform BO or a proper fence), then HW-eyeball. Deep + uncertain (squashed mesa
+history); may be attended-scale.
+
+## SEPARATE bug (orthogonal): mid-render fault-in-fault freeze
+During the `r_drawentities 0` run, quake rendered ~42–47 fps then the screen froze on one frame and the
+UART flooded with 25+ identical `Exception #37: Data Abort (EL1)`. Registers hold the exception
+dumper's own format strings (x8=`"far="`, x17=`" for OFF"`; `far` all-`0x66`) ⇒ a fault WHILE printing
+a fault dump = a console/teken fault-in-fault loop, not the quake renderer. Root cause upstream of the
+dump loop; not caused by `r_drawentities 0` specifically (demo ran a while first). File separately.
