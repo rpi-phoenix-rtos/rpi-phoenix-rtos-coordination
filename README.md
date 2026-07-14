@@ -75,7 +75,7 @@ work; `⛔` blocked on external dependencies; `⬜` not started.
 | GENET gigabit Ethernet + lwIP | ✅ | IRQ-driven, ~0.9 ms ping RTT, autonomous DHCP |
 | USB host (PCIe → VL805 xHCI) | ✅ | Enumerates reliably from cold boot |
 | USB HID (keyboard + mouse) | ✅ | `/dev/kbd0`, `/dev/mouse0`; live keys reach psh and apps |
-| SD card (EMMC2 SDHCI) | ✅ | `/dev/mmcblk0`; PIO reads/writes, MBR partitions |
+| SD card (EMMC2 SDHCI) | ✅ | `/dev/mmcblk0`, MBR partitions; UHS-I DDR50 + SDMA multi-block reads (~38 MB/s), PIO multi-block writes (~17 MB/s), 0 corruption |
 | ext2 persistent root | ✅ | Mounts as `/`, binaries exec from the card |
 | NFS root | ✅ | `/` served over NFS (`takeover` design), ~8.5 MB/s |
 | SoC thermal + throttle | ✅ | `/dev/thermal`, `/dev/throttled` via VideoCore mailbox |
