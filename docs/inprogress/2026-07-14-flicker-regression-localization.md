@@ -68,3 +68,31 @@ The problem has resisted multiple sessions of blind fixes; the missing capabilit
 Do NOT ship a coherency fix until the harness confirms the subsystem — see the failed barrier attempt
 (`__sync_synchronize` in `ioc_submit_cl`, uncommitted) which ordered the CPU write but did not address
 the still-in-use overwrite, and did not help.
+
+## UPDATE 2026-07-14 — measurement harness was broken; now fixed
+
+Verifying the harness surfaced the real reason every prior flicker measurement failed: it was a
+**software bug**, not a grabber limitation. `flicker-analyze.py`'s white-pixel counter was
+`sum(histogram()[256:])` — a PIL histogram has 256 bins (0..255) and white-after-threshold sits at
+index 255, so `[256:]` is an **empty slice → the count was ALWAYS 0**. So the detector reported "no
+flicker" for *any* input. The prior-session conclusion "the in-engine scr_capture harness is broken and
+the HDMI grab can't self-detect flicker" was actually this bug (the HDMI grab itself works fine —
+`scr_capture` (render-to-scanout readback) is separately broken and is NOT needed).
+
+Fixed (`scripts/flicker-analyze.py`, coord `8d87e82`): count via `histogram()[255]`; de-duplicate the
+~60fps grab of a ~30fps source (every quake frame is doubled, which broke triplet logic); and replace
+the static-camera blink test with a motion/cut-robust one (pixel differs from BOTH neighbours).
+Validated on `artifacts/flicker/20260714-173644-harness-verify` (netboot, current build): explosion
+onsets correctly score 20–33%.
+
+**Key limitation (now understood):** absolute detection cannot separate genuine flicker from legit
+one-frame VFX (explosion onset, muzzle flash) — both differ from both neighbours. In this 28s capture
+the top-scoring frames are all legit VFX; the sampled monster/world regions render consistently, so the
+specific "monster flicker" was not isolated (the capture also began during console scroll, not demo1).
+
+**Revised path forward:** the harness's real power is **A/B of two builds on the same deterministic
+demo** — a regression shows as *more* blink pixels on entity/world regions. So:
+1. Capture a clean demo1 window on the CURRENT (flickering) build → baseline blink rate.
+2. Build the **full-lightmap-upload discriminator** (ignore `rectchange`; upload the whole lightmap) →
+   capture the SAME window → compare. Lower blink rate ⇒ region-tracking bug in the mesa v3d
+   texsubimage path; unchanged ⇒ look at the driver coherency / migration delta instead.
