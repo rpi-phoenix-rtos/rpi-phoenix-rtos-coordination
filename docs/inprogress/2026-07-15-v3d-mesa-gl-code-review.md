@@ -103,6 +103,27 @@ completion race plausibly produces all three at low rate, worst under load. F4 (
 it. Unproven until HW eyeball, but it's the one fix that unifies the symptom set and is grounded in an
 actual code/comment contradiction, not a mechanism guess.
 
+### Reviewed CLEAN (positive findings — no defect)
+- `ioc_create_bo` (winsys:438): VA-collision detect, BO zeroing (avoids garbage tile-lists), per-page
+  `va2pa`, scanout double/triple-buffer aliasing — sound.
+- `apply_core_regs`/`winsys_init`/`reset_reinit_core` (winsys:678/250/743): faithfully implement the
+  linux `v3d_init_core`+`v3d_mmu_set_page_table`+reset contract — MMU fault config (ENABLE+ABORT+INT),
+  illegal-access scratch page, MMUC enable, L2T whole-cache flush range, GFXH-1383 HUB_AXICFG burst cap,
+  MISCCFG (QRMAXCNT+OVRTMUOUT), GMP idle-on-reset (v3d_idle_axi mirror). No missing init register.
+- Scanout double-buffer (winsys:340): synchronous render to off-screen buffer → page-flip after
+  completion → live buffer never GPU-written; no tearing path.
+- mesa GL diff (v3d_bufmgr/resource/context/draw/state/framebuffer): small, correct, well-gated
+  (scanout/cacheable flags + render-to-scanout + Y_0_TOP all gated on full-screen RTs).
+- Multi-job color+depth preservation: our synchronous winsys + post-render L2T CLEAN + next-submit L2T
+  FLUSH (with the correct whole-cache range) satisfies the upstream store-before-load contract.
+
+### VALIDATION (F1+F4, netboot 20260715-003609)
+Boots to psh; GLQuake renders **~38–42 fps**; wedge rate = **1** (within the 0–2 baseline); no fault/
+crash. **No regression.** The aggregate flicker metric is VFX-confounded so it cannot confirm the flicker
+is fixed — that needs a HW eyeball. SD image built + flashed for the user to test. The wedge persisting
+(1×) means the dsb does not by itself cure the depth-drain-stall wedge (a distinct HW-marginal issue);
+whether it reduces flicker/misshapen is the open eyeball question.
+
 ## REBASE RECOMMENDATION — do NOT rebase to fix these symptoms
 
 **Recommendation: stay on the current base; do not rebase (forward or to stable) as a fix.**
