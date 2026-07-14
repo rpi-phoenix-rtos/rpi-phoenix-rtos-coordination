@@ -779,6 +779,29 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
 	int job_failed = 0;     /* set if bin or render wedged */
 	int attempt = 0;        /* kept for the timeout-dump "attempt" field (always 0 now: no resubmit) */
 	W.binovf_used = 0;      /* re-armable binner overflow: reset the per-job hand-out cursor */
+	/* Drain CPU stores into uncached GPU BOs to DRAM BEFORE the first GPU MMIO poke below.
+	 * On aarch64, writes to Normal-Non-Cacheable (our MAP_UNCACHED BOs) are NOT ordered
+	 * before writes to Device (MMIO) memory without an explicit barrier. The per-frame
+	 * dynamic-lightmap upload (quakespasm R_UploadLightmap -> glTexSubImage2D ->
+	 * v3d_store_tiled_image) CPU-writes fresh texels into the uncached lightmap BO and is
+	 * then sampled by THIS submit's render job. Without a drain here the GPU can be kicked
+	 * and its TMU fetch the lightmap before the CPU write buffer has reached DRAM -> the
+	 * surface samples a half-updated lightmap -> per-frame flicker of dynamically-lit
+	 * surfaces (r_dynamic 1; load-dependent, worst during combat). The TFU CPU-tile path
+	 * already drains for the same reason (see the barrier in the TFU submit); the
+	 * CL/subdata path was missing the symmetric barrier. One dsb per submit — negligible.
+	 *
+	 * MUST be a `dsb` (completion), NOT `__sync_synchronize()` (aarch64 `dmb ish` = ordering
+	 * only). The V3D is a NON-COHERENT external DMA master: it reads these BOs straight from
+	 * DRAM, outside the CPU's inner-shareable domain. `dmb` orders the Normal-NC store before
+	 * the MMIO kick w.r.t. inner-shareable observers, but does NOT guarantee the store has
+	 * DRAINED to the point of coherency the GPU sees before CT0QEA is written. `dsb sy` waits
+	 * for completion. The old `dmb` usually worked because the many MMIO writes + spin-waits
+	 * between here and the kick gave the write buffer time to drain — but that is timing, not a
+	 * guarantee, so a slow-to-drain per-draw uniform/lightmap store could still race the kick =
+	 * intermittent flicker of per-frame-updated content (dynamic lightmaps; per-draw model
+	 * LightColor). Matches the comment's own stated intent ("one dsb per submit"). */
+	__asm__ volatile("dsb sy" ::: "memory");
 	/* Flush the MMU PTE cache + TLB before the job. ioc_create_bo writes fresh PTEs but
 	 * never invalidated the MMU's cached translations, so a job whose CL/RT BOs were just
 	 * mapped at new GPU VAs (every Quake frame allocates fresh BOs) is fetched through a
@@ -798,10 +821,15 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
 	 * The SLCACTL slices invalidation is essential for multi-frame rendering: without it the
 	 * GPU serves stale uniforms from its uniform cache, so per-frame matrix/uniform changes
 	 * never render (every frame looks like frame 0). */
-	c0[CTL_SLCACTL/4] = SLCACTL_INVAL_ALL;
+	/* Order matches the linux v3d_invalidate_caches "outside-in" sequence (and our own
+	 * bin->render handoff at l.916-918): L2T flush (clean+invalidate) FIRST, THEN the SLCACTL
+	 * slice-cache invalidate. Doing SLCACTL first (as this used to) risked the read-only slice
+	 * caches being dropped while stale lines still sat in the not-yet-flushed L2T; harmless while
+	 * the core is idle here, but the contract order is safer and consistent. */
 	l2t_flush_wait(c0);                       /* wait-old: prior L2T flush must be idle first */
 	c0[CTL_L2TCACTL/4] = L2TCACTL_L2TFLS;
 	l2t_flush_wait(c0);                       /* wait-new: flush must complete before the bin reads its CL/vertex data */
+	c0[CTL_SLCACTL/4] = SLCACTL_INVAL_ALL;    /* then drop stale slice-cache (uniforms/instr/TMU) lines */
 	/* --- bin (CT0); wait FLDONE --- */
 	c0[CTL_INT_CLR/4] = INT_FLDONE|INT_FRDONE;
 	c0[PTB_BPOS/4] = 0;
@@ -1111,7 +1139,7 @@ static int ioc_submit_tfu(struct drm_v3d_submit_tfu *t)
 					for (uint32_t x = 0; x < w; x++)
 						dst[uif_pixel_off(phgt, x, y, xor) / 4u] = srow[x];
 				}
-				__sync_synchronize();   /* drain CPU stores (dst is uncached, but be explicit) */
+				__asm__ volatile("dsb sy" ::: "memory");   /* drain (completion, not dmb) the CPU-tiled stores before the GPU (TMU) samples dst — matches the CL-submit barrier */
 
 				/* Keep the read-side coherency epilogue so the TMU's L2T/slice caches drop any
 				 * stale view of this GPU VA before the sampling CL — identical to the HW-path
