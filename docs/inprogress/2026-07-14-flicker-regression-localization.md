@@ -136,6 +136,43 @@ ordering; candidate fix = ensure per-draw uniform data is not overwritten while 
 (fresh/orphaned uniform BO or a proper fence), then HW-eyeball. Deep + uncertain (squashed mesa
 history); may be attended-scale.
 
+## UPDATE 2026-07-14 (late) — deep driver investigation (option 1): mechanism refined, no fix landed
+
+Pursued the driver fix. Key correction to the earlier "per-frame uniform update" framing:
+
+- **The model dlight loop (`R_SetupAliasLighting`, r_alias.c:576–586) is NOT `r_dynamic`-gated** — it
+  runs unconditionally. The ONLY `r_dynamic` check in the engine is `r_brush.c:308`, in the **world**
+  dynamic-lightmap path (`R_RenderDynamicLightmaps`). So `r_dynamic` does not change model lighting
+  directly.
+- Yet the flicker needs BOTH: models drawn (`r_drawentities 1`) AND `r_dynamic 1`. Since `r_dynamic`
+  only toggles the **world** lightmap dynamic-upload machinery, the flicker is an **interaction**:
+  *models flicker only when the per-frame world-lightmap upload machinery is active.*
+- **"Per-frame uniform update is broken" is DISPROVED**: the camera/MVP matrix is a per-frame-changing
+  uniform and the world renders correctly under camera motion (the winsys SLCACTL comment confirms
+  uniforms update per frame). So the uniform path works.
+- Driver coherency infra is **correct** (ruled out): winsys submit path has a CPU→device store barrier
+  + double SLCACTL UCC (uniform-cache) invalidation + L2T clean/wait/invalidate + TLB flush + fresh
+  per-frame BOs (monotonic bump, no reuse). Mesa emits each draw's uniforms at a **distinct** offset in
+  the growing `job->indirect` CL (`v3d_uniforms.c` `cl_start`), so no per-draw uniform overwrite.
+
+**Leading (UNCONFIRMED) mechanism:** `r_dynamic` drives per-frame world-lightmap `glTexSubImage2D`
+uploads; in mesa, a `glTexSubImage2D` to a texture referenced by the current batch **flushes the
+batch**, so each frame is split into **multiple GPU jobs**. The v3d multi-job-per-frame handling
+(depth/tile load-store across job boundaries in `v3d_phoenix_winsys.c`) is complex and the likely site
+of intermittent corruption of the **later-drawn model draws** (Z/tile state not preserved across the
+mid-frame flush). Consistent with: full-upload no effect (still flushes); `r_dynamic 0` → no mid-frame
+upload → single job → no flicker; `r_drawentities 0` → no models to corrupt.
+
+**Not confirmed because** the winsys submit debug is throttled (can't count submits/frame from logs).
+Confirming needs a submit-per-frame counter (rebuild + 1 cycle); the fix (if confirmed) is in the v3d
+multi-job depth/tile load-store, which is deep and uncertain.
+
+**Status: precisely localized, NOT fixed.** The clean `r_dynamic 0` workaround also removes *world*
+dynamic lighting (bigger visual trade-off than a model-only toggle — and a model-only toggle won't
+help since the model dlight loop isn't the cause). Recommend booking this as a KNOWN-ISSUE with this
+characterization; a future focused session should (1) add a submit/frame counter to confirm the
+multi-job split, then (2) audit the v3d cross-job depth/tile-state handling.
+
 ## SEPARATE bug (orthogonal): mid-render fault-in-fault freeze
 During the `r_drawentities 0` run, quake rendered ~42–47 fps then the screen froze on one frame and the
 UART flooded with 25+ identical `Exception #37: Data Abort (EL1)`. Registers hold the exception
