@@ -124,6 +124,53 @@ is fixed — that needs a HW eyeball. SD image built + flashed for the user to t
 (1×) means the dsb does not by itself cure the depth-drain-stall wedge (a distinct HW-marginal issue);
 whether it reduces flicker/misshapen is the open eyeball question.
 
+## FLICKER ROOT CAUSE FOUND (2026-07-15) — non-deterministic single-buffer → render-to-scanout tearing
+
+**The dynamic-model flicker is single-buffer render-to-scanout TILE TEARING, gated by a
+non-deterministic per-boot framebuffer-buffering mode.** Strong evidence, unifies every prior
+observation, and explains why every earlier fix (EZ, barrier, full-upload, dsb) failed.
+
+### Evidence
+- The scanout buffering mode is read from a VideoCore mailbox grant (`GET_VIRTUAL_WH`,
+  `v3d_phoenix_power.c:272`); plo requests a ≥2× virtual fb, the firmware grants what it can. Across
+  archived UART `scanout init` lines the grant is **non-deterministic per boot of the same build**:
+  `virt_h=3240` (TRIPLE-buffer), `2560`/`2160` (double), or **`0` (SINGLE-buffer)**.
+- **Same dsbfix build, two boots, opposite result:** netboot `20260715-003609` came up `virt_h=3240`
+  TRIPLE-buffer → my validation saw clean 38–42 fps, no tearing. The user's SD boot `20260715-074348`
+  came up `virt_h=0` SINGLE-buffer → flicker. That is the whole mystery: the flicker tracks the boot's
+  buffering mode, not the code.
+- In SINGLE-buffer mode the winsys STILL scanout-backs the RT to buf0 (the live displayed fb)
+  (`ioc_create_bo` else-branch, winsys:498-500) → the GPU paints tiles into the buffer the display is
+  concurrently scanning → **tile tearing**. `gl_flashblend 1` (slow alpha spheres) made it blatant
+  ("blocks rendered independently at different speed") — plus a 382-event RENDER-TIMEOUT wedge storm
+  (separate flashblend bug).
+
+### Why this unifies everything
+- **r_dynamic-gated:** r_dynamic ON = slower frames (per-frame lightmap uploads + more draws) → the GPU
+  paint lags the scanout more → tearing visible. r_dynamic 0 = fast frames complete before the scanout
+  catches up → no visible tear = "no flicker". (r_dynamic gates tear *visibility* via frame time.)
+- **"monsters you aim at in intense action":** entities are drawn LAST (after the world), so they are
+  the content most likely caught mid-paint by the concurrent scanout; combat = slowest frames.
+- **`r_drawentities 0` killed it:** removed the last-drawn, most-tear-prone content.
+- **dsb / full-upload / EZ did nothing:** the data the GPU reads is correct — it's a display/render
+  concurrency (present-path) problem, not a data/coherency/shader problem.
+- **Intermittent across all my tests:** the buffering mode varied per boot.
+
+### FIX (attended — plo/present-path, needs HW validation, and validation is non-deterministic)
+Two options, not landed tonight (per scope + the validation can't be trusted on a non-deterministic
+netboot that may come up multi-buffer):
+1. **Winsys robustness (preferred, self-contained):** when the grant is < 2× physical (single-buffer),
+   do NOT scanout-back the RT — leave it a normal DRAM BO so the present path does the atomic
+   blit-resolve (render off-screen → GPU-blit a COMPLETE frame to the fb). Eliminates tearing regardless
+   of the firmware grant. Change is small (winsys `ioc_create_bo` single-buffer branch) BUT requires the
+   blit-resolve present path to be verified working, on a boot that actually comes up single-buffer.
+2. **plo/firmware:** make the virtual-fb grant deterministic (always ≥2×) so double/triple-buffer always
+   engages. Touches boot/display allocation.
+
+### User confirmation test (cheap, decisive)
+Boot the card, check the UART `scanout init` line: **`virt_h=0` (single) should flicker; `virt_h=3240`
+(triple) should be clean** — same card. Reboot until you see both modes and confirm the correlation.
+
 ## REBASE RECOMMENDATION — do NOT rebase to fix these symptoms
 
 **Recommendation: stay on the current base; do not rebase (forward or to stable) as a fix.**
