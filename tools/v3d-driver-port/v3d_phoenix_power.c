@@ -269,8 +269,31 @@ void v3d_phoenix_logColdState(void)
 unsigned v3d_phoenix_fb_virtual_height(void);
 unsigned v3d_phoenix_fb_virtual_height(void)
 {
-	uint32_t h = mboxProp(VC_PROP_GET_VIRTUAL_WH, 2, 0u, 0u);   /* returns granted virtual height */
-	return (h == MBOX_FAIL) ? 0u : h;
+	/* Retry the GET. The VideoCore PROPERTY mailbox is SHARED and mboxProp matches the
+	 * response by (addr|channel); a concurrent mailbox user (thermal poll, another driver)
+	 * can race/consume the response so this GET returns MBOX_FAIL even though plo DID
+	 * allocate the 3x-tall virtual fb at boot (video.c SET_VIRTUAL_WH=3240 in its single
+	 * alloc call). A single failed GET wrongly demotes the renderer to single-buffer, so
+	 * render-to-scanout then paints the LIVE displayed fb -> tile tearing = the dynamic-model
+	 * "flicker" (worst on slow r_dynamic frames). Observed: netboot usually wins the race
+	 * (virt_h=3240) but occasionally 0; SD boot loses it consistently (virt_h=0) -> always
+	 * single-buffer -> always flickers. Retrying past the transient contention recovers the
+	 * real grant. SAFE: we still only ever act on the value the firmware actually reports —
+	 * never assume buffers that were not granted, so we can never render into unbacked pages. */
+	for (int i = 0; i < 8; i++) {
+		uint32_t h = mboxProp(VC_PROP_GET_VIRTUAL_WH, 2, 0u, 0u);   /* returns granted virtual height */
+		if (h != MBOX_FAIL && h != 0u) {
+			if (i > 0) {
+				printf("v3d-winsys: GET_VIRTUAL_WH recovered on retry %d -> virt_h=%u\n", i, h);
+			}
+			return h;
+		}
+		usleep(3000);
+	}
+	printf("v3d-winsys: GET_VIRTUAL_WH still failing after 8 retries -> single-buffer fallback "
+	       "(render-to-scanout into live fb; expect tearing). plo DID request 3x virtual — "
+	       "the shared property mailbox is losing the response race.\n");
+	return 0u;
 }
 
 void v3d_phoenix_fb_flip(unsigned yoff);
