@@ -60,3 +60,34 @@ at identical frame indices (same engine, r_particles 0, fixed timestep → any
 pixel diff = pure non-determinism, localizes the unstable model). Then
 root-cause (candidate: v3d_bo_from_cache reuse not re-zeroed → stale vertex
 data). [[project_pi4_quake_flicker_vcmbox]] [[project_quakespasm_port]]
+
+### Does the glitch reproduce in the deterministic demo? — NO (this boot)
+
+Cheap check before investing in the capture fix: eyeballed a spread of the 2702
+CORRECT boot-A HDMI frames (the display output is fine; only the TGA capture is
+noise). f_0650 (demon-face relief), f_1000 (weapon+corridor), f_1700 (gibs),
+f_2100 (**a live zombie — correct geometry + blood texture — plus a wall torch,
+both clean**): dynamic models render CORRECTLY across the sampled demo. The
+per-boot-varying glitch did NOT manifest in this boot's deterministic demo
+(consistent with the 2026-06-15 harness finding that demo playback matches host).
+
+**Conclusion for the hunt:** the glitch is intermittent / non-deterministic /
+possibly interactive-or-angle-specific — a single deterministic-demo boot does
+not reliably surface it. Localizing it needs the FIXED TGA harness run across
+several boots, diffed Pi-vs-Pi to catch the rare non-deterministic divergence.
+That chain (fix capture → multi-boot capture → diff → localize → root-cause →
+fix → validate) is a multi-cycle next-session task, not tonight. NOT a
+regression from the flicker fix — the flicker fix + known-good state are intact.
+
+### Capture-fix design (next session, ready to implement)
+
+The winsys has all scanout state (scanout_pa / pa2 / pa3 / phys_h / bytes). Add
+`v3d_phoenix_scanout_readback(dst, buf, bytes)` that mmaps the fb PA
+(MAP_PHYSMEM|MAP_UNCACHED) for buffer `buf` and memcpy's it; a glctx wrapper
+passes g_back; gl_screen.c capture uses it (under QSS_PHOENIX) instead of
+glReadPixels, converting scanout 32bpp → TGA BGR with a Y-flip. Match the
+scanout pixel order from plo video.c / rpi4-fb (don't guess). Advisor's cheaper
+alternative: a capture-only toggle to the DRAM-fallback FBO path
+(g_resolve==0 / g_render_fbo) where glReadPixels worked pre-2026-06-21 — since
+the leading cause (stale vertex-BO reuse) is geometry (upstream of present),
+it'd still show in blit-resolve capture, sidestepping the format work.
