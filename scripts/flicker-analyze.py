@@ -73,6 +73,10 @@ def main():
     tot = w * h
     print(f"grab frames: {len(files)}  unique (dedup dup={DUP}): {len(keep)}  "
           f"analysis-res: {w}x{h}  TH={TH}")
+    if len(keep) < 3:
+        print("STATIC/EMPTY CAPTURE: <3 unique frames — the screen never changed "
+              "(quake likely did not render this cycle). Nothing to analyze.")
+        sys.exit(3)
 
     def thr(d): return d.point(lambda x: 255 if x > TH else 0)   # mode "L", 0/255
     def wc(im): return im.histogram()[255]                        # white-pixel count (FIXED)
