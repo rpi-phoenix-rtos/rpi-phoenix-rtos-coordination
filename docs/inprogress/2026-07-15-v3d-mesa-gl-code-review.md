@@ -201,7 +201,30 @@ rebased branch is preserved for that.
 trivial but the winsys is coupled to the mesa RCL format, so a base move requires winsys updates. Pin a
 stable tag only together with that winsys work.
 
-## FLICKER FIX SHIPPED (pre-rebase): force-multi-buffer retry
+## 26.2 REBASE — COMPLETED + WORKING (2026-07-16): the wedge was Early-Z
+
+Follow-up to the wedge above: the 26.2 constant render-wedge is **Early-Z triggered**, not compiler/CL
+drift. Discriminator (force `V3D_EZ_DISABLED` in `v3d_update_job_ez`, rebuild 26.2, netboot):
+- EZ-on 26.2: 337 render timeouts, ~5.5 fps.
+- **EZ-off 26.2: 0 wedges, ~38 fps, triple-buffer — HW-verified (netboot 20260716-165718).**
+- **Frames visually correct** (read the HDMI grabs): green mossy world + wall torch + demon-face relief,
+  weapon viewmodel, a blood-spattered ogre with correct geometry, and a grenade explosion — all render
+  right, no garbage/misshapen/wedge artifacts.
+
+Root: this port's V3D 4.2 render pipeline hits the HW-marginal depth/fragment drain stall (fdbgs=EZTEST)
+with EZ enabled; 26.2's codegen makes it fire EVERY frame (pre-26.2 it was occasional, ~0–2/session).
+Fix = keep EZ off on 26.2 (mesa commit `671c4f08`, `v3dx_draw.c`). EZ early-rejects overdraw, but at
+1080p GLQuake isn't overdraw-bound so there's no measurable fps cost. TODO(v3d-26.2-ez): root-cause why
+26.2 makes the stall constant, to re-enable EZ (perf lever) later.
+
+The 26.2 rebase is on `external/mesa` branch **`phoenix-v3d-port-26.2`** (`671c4f08`: rebased port + the
+2 source-file additions + EZ-off). Coord `v3d-core-sources.txt` carries the 2 new files. **Reproducibility
+follow-up (deliberate adoption, user's call — "local commits only"):** to make 26.2 the default, push
+`phoenix-v3d-port-26.2` to the mesa fork base, update the `bootstrap-linux-host.sh:124` mesa pin
+(`b234aa4` → `671c4f08`), and regen `patches/mesa-v3d-phoenix.patch`. The LOCAL tree builds + the SD card
+below use `671c4f08` directly, so the user's test needs none of that.
+
+## FLICKER FIX SHIPPED (pre-rebase → now 26.2): force-multi-buffer retry
 The `v3d_phoenix_fb_virtual_height` GET retry (commit; winsys/power) recovers multi-buffering from the
 shared-mailbox response race that was demoting SD boots to single-buffer → render-to-scanout tearing.
 Netboot-validated no-regression (still triple-buffer, 38–42 fps). SD efficacy is the user's return test.
