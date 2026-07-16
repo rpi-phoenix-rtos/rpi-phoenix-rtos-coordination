@@ -251,3 +251,29 @@ it as: create a branch off the stable tag, cherry-pick/replay our 9 port commits
 + GPU, and re-run the GLQuake + X11 HW validation before adopting. This is a maintenance migration to
 schedule when the port is otherwise stable — NOT something to do speculatively overnight, and NOT
 expected to change the flicker/artifact/wedge behavior (those are port-side).
+
+## FLICKER (entity-blink) — reset + current wall (2026-07-16 late)
+
+User's precise description on the 26.2+EZ-off SD card: rendering FAST, but **all dynamic/animated models
+(monsters, buttons, moving gates, rotating item pickups) blink on/off SYNCHRONOUSLY at a regular
+frequency; the world (walls/sky/water) is perfectly stable; worse with >4 visible dynamic models.** "As
+if the phase that draws these objects is choking." This REFUTES the tearing hypothesis (tearing is
+spatial seams; this is temporal, whole-object, all-entities-together).
+
+Established:
+- The entity-drawing phase intermittently produces nothing — all entities drop together for a frame.
+- The frame splits into ~2 GPU render jobs/frame (CLEAN-RCL count vs QSFPS): world job + entity job.
+- SD comes up SINGLE-buffer: `virt_h=0`, "GET_VIRTUAL_WH still failing after 8 retries" — the mailbox
+  retry did NOT beat SD's shared-mailbox response race. So SD is stuck single-buffer.
+
+Wall: could NOT reproduce the all-entity-blink on netboot (multi-buffer, virt_h=3240). Two 90s captures
+(ez262, mm4) reaching demo2/demo3: every flagged blink is VFX (explosions, projectiles, lighting
+flashes), NOT an entity-drop — BUT the netboot demos in these captures don't clearly show a >4-static-
+models scene, so it's inconclusive whether multi-buffer eliminates the blink. And SD (the reproducing
+case) can't be self-tested (needs the card in the Pi).
+
+Leading (unconfirmed) hypothesis: single-buffer-specific — SD's single-buffer render-to-scanout + the
+multi-job split makes the late entity job's output intermittently not-shown. Fix would be reliable
+multi-buffering on SD (the retry fails; robust fix = plo passes the boot-time granted virtual height
+forward so the winsys doesn't depend on the flaky runtime GET). Needs user confirmation of the
+single-buffer↔flicker correlation before building the (plo/graphmode/winsys) fix.
