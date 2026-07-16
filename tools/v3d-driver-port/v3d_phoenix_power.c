@@ -18,6 +18,7 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <sys/mman.h>
+#include "libvcmbox.h"   /* serialized /dev/vcmbox client (single-FIFO arbitration) */
 
 /* firmware mailbox (property channel) */
 #define RPI_MAILBOX_BASE        0xfe00b880u
@@ -269,30 +270,39 @@ void v3d_phoenix_logColdState(void)
 unsigned v3d_phoenix_fb_virtual_height(void);
 unsigned v3d_phoenix_fb_virtual_height(void)
 {
-	/* Retry the GET. The VideoCore PROPERTY mailbox is SHARED and mboxProp matches the
-	 * response by (addr|channel); a concurrent mailbox user (thermal poll, another driver)
-	 * can race/consume the response so this GET returns MBOX_FAIL even though plo DID
-	 * allocate the 3x-tall virtual fb at boot (video.c SET_VIRTUAL_WH=3240 in its single
-	 * alloc call). A single failed GET wrongly demotes the renderer to single-buffer, so
-	 * render-to-scanout then paints the LIVE displayed fb -> tile tearing = the dynamic-model
-	 * "flicker" (worst on slow r_dynamic frames). Observed: netboot usually wins the race
-	 * (virt_h=3240) but occasionally 0; SD boot loses it consistently (virt_h=0) -> always
-	 * single-buffer -> always flickers. Retrying past the transient contention recovers the
-	 * real grant. SAFE: we still only ever act on the value the firmware actually reports —
-	 * never assume buffers that were not granted, so we can never render into unbacked pages. */
+	/* PRIMARY: query the granted virtual height through the SERIALIZED /dev/vcmbox server
+	 * (libvcmbox). The BCM2711 has a single VideoCore property-mailbox FIFO with NO hardware
+	 * arbitration: if two processes drive it concurrently, one read loop pops and discards the
+	 * other's response. The winsys was driving the FIFO DIRECTLY (mboxProp below), so it raced
+	 * the vcmbox server and the other mailbox clients (thermal, usb, genet); a concurrent reader
+	 * drained our GET_VIRTUAL_WH response -> spurious failure -> single-buffer -> dynamic-model
+	 * flicker (netboot won the race often, SD lost it consistently -> always flickered). Routing
+	 * the transaction through the server (which owns the FIFO and handles one msg at a time)
+	 * eliminates the race. GET_VIRTUAL_WH returns {width, height}; out[1] = granted virt height.
+	 * SAFE: reports only what the firmware actually granted — never assumes ungranted buffers. */
+	{
+		uint32_t in2[2] = { 0u, 0u };
+		uint32_t out2[2] = { 0u, 0u };
+		if ((vcmbox_call(VC_PROP_GET_VIRTUAL_WH, 8u, in2, 2u, out2, 2u) == 0) && (out2[1] != 0u)) {
+			return out2[1];
+		}
+	}
+
+	/* FALLBACK: /dev/vcmbox unavailable (server never registered). Retry the direct-FIFO GET —
+	 * still racy, but better than nothing. A single failed GET demotes the renderer to
+	 * single-buffer (render-to-scanout into the live fb -> tearing/flicker). */
 	for (int i = 0; i < 8; i++) {
 		uint32_t h = mboxProp(VC_PROP_GET_VIRTUAL_WH, 2, 0u, 0u);   /* returns granted virtual height */
 		if (h != MBOX_FAIL && h != 0u) {
 			if (i > 0) {
-				printf("v3d-winsys: GET_VIRTUAL_WH recovered on retry %d -> virt_h=%u\n", i, h);
+				printf("v3d-winsys: GET_VIRTUAL_WH (direct fallback) recovered on retry %d -> virt_h=%u\n", i, h);
 			}
 			return h;
 		}
 		usleep(3000);
 	}
-	printf("v3d-winsys: GET_VIRTUAL_WH still failing after 8 retries -> single-buffer fallback "
-	       "(render-to-scanout into live fb; expect tearing). plo DID request 3x virtual — "
-	       "the shared property mailbox is losing the response race.\n");
+	printf("v3d-winsys: GET_VIRTUAL_WH failed via /dev/vcmbox AND 8 direct retries -> single-buffer "
+	       "fallback (render-to-scanout into live fb; expect tearing).\n");
 	return 0u;
 }
 

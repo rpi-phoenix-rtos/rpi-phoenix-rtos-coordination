@@ -955,22 +955,6 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
 			}
 		}
 	}
-	/* Clean-frame RCL structure probe (render-stall A/B, task #13): periodically dump the SAME
-	 * locations the wedge dump reads (rcl head + tail) on a SUCCESSFUL render. If a clean RCL is
-	 * structurally identical to a wedged one, the RCL BO is NOT corrupted and the wedge is a
-	 * pipeline-drain stall (fdbgs=EZTEST), not CL/VA corruption. Read-only + throttled. */
-	if (spins != 0) {
-		static unsigned ok_n = 0;
-		if ((ok_n++ % 256u) == 0u) {
-			uint32_t *hp = (uint32_t *)gpuva_to_cpu(s->rcl_start & ~0xfu);
-			uint32_t *tp = (uint32_t *)gpuva_to_cpu((s->rcl_end - 16u) & ~0xfu);
-			fprintf(stderr, "v3d-winsys: CLEAN RCL head gpuva=0x%08x:", s->rcl_start & ~0xfu);
-			if (hp) { for (int i=0;i<8;i++) fprintf(stderr, " %08x", hp[i]); } else fprintf(stderr, " (no BO)");
-			fprintf(stderr, "  tail gpuva=0x%08x:", (s->rcl_end-16u)&~0xfu);
-			if (tp) { for (int i=0;i<8;i++) fprintf(stderr, " %08x", tp[i]); } else fprintf(stderr, " (no BO)");
-			fprintf(stderr, "\n");
-		}
-	}
 	if (spins == 0) {
 		uint32_t ca1 = c0[0x0114/4];
 		v3d_phoenix_render_timeouts++;   /* stall counter for the repro harness */

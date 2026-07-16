@@ -212,6 +212,16 @@ def main():
                          "-include", COMPAT], capture_output=True, text=True)
     print(f"[stubs] rc={rc.returncode}" + ("" if rc.returncode == 0 else "\n" + rc.stderr))
 
+    # 2c. libvcmbox client: serialized /dev/vcmbox access so v3d_phoenix_power's
+    #     GET_VIRTUAL_WH goes through the single-FIFO arbitration server (race-free)
+    #     instead of driving the property mailbox directly. Plain Phoenix IPC — compile
+    #     without the mesa template flags (like the stubs), only -I{PORT} for its header.
+    vcmbox_c = f"{PORT}/libvcmbox.c"
+    vcmbox_o = f"{DRVOBJ}/libvcmbox.o"
+    rc = subprocess.run([TC, "-c", vcmbox_c, "-o", vcmbox_o, "-std=gnu11", "-w", f"-I{PORT}"],
+                        capture_output=True, text=True)
+    print(f"[vcmbox] rc={rc.returncode}" + ("" if rc.returncode == 0 else "\n" + rc.stderr))
+
     # 3. aux objs from the link-drive list (seed from the committed manifest if the
     #    /tmp working copy is absent, so a fresh checkout builds without re-resolving)
     committed = f"{PORT}/v3d-aux-sources.txt"
@@ -268,7 +278,7 @@ def main():
 
     # 4. one combined archive: core + aux + driver + winsys + shim + stubs
     if os.path.exists(FULL_LIB): os.remove(FULL_LIB)
-    members = core_objs + aux_objs + drv_ok + ver_objs + [winsys_o, libdrm_o, power_o, stubs_o]
+    members = core_objs + aux_objs + drv_ok + ver_objs + [winsys_o, libdrm_o, power_o, stubs_o, vcmbox_o]
     subprocess.run([AR, "rcs", FULL_LIB] + members, check=True)
     sz = os.path.getsize(FULL_LIB)
     print(f"[archive] {FULL_LIB} ({len(members)} objs, {sz//1024} KiB)")
