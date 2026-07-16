@@ -58,7 +58,7 @@ QFLAGS = ["-c", "-O2", "-g", "-ffreestanding", "-fno-strict-aliasing", "-Wno-err
 # Mesa driver build uses (else u_endian #errors and struct timespec redefines).
 MFLAGS = ["-c", "-O2", "-g", "-ffreestanding", "-fno-strict-aliasing", "-Wno-error",
           "-Wno-undef", "-DUTIL_ARCH_LITTLE_ENDIAN=1", "-DUTIL_ARCH_BIG_ENDIAN=0",
-          "-DHAVE_STRUCT_TIMESPEC", "-include", COMPAT,
+          "-DHAVE_STRUCT_TIMESPEC", "-DQSS_PHOENIX=1", "-include", COMPAT,
           f"-I{MESA}/src", f"-I{MESA}/include", f"-I{MESA}/src/mesa",
           f"-I{MESA}/src/mapi", f"-I{MESA}/src/compiler",
           f"-I{MESA}/src/gallium/include", f"-I{MESA}/src/gallium/auxiliary",
