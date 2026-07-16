@@ -171,7 +171,42 @@ netboot that may come up multi-buffer):
 Boot the card, check the UART `scanout init` line: **`virt_h=0` (single) should flicker; `virt_h=3240`
 (triple) should be clean** — same card. Reboot until you see both modes and confirm the correlation.
 
-## REBASE RECOMMENDATION — do NOT rebase to fix these symptoms
+## 26.2 REBASE ATTEMPT (2026-07-16) — builds+links cleanly but WEDGES at runtime; reverted
+
+Per user request, rebased our 9 v3d port commits from `26.1-branchpoint+2793` onto the **mesa 26.2**
+stable branch (`mesa-26.2.0-rc1`, 2298 commits ahead; clean forward rebase, our base is an ancestor).
+
+- **Rebase: clean, 0 conflicts.** Port GL diff byte-identical after replay. Preserved on branch
+  `external/mesa: phoenix-v3d-port-26.2` (1584b1a); backup of pre-rebase on `phoenix-v3d-port-pre-26.2`
+  (b234aa4).
+- **Build: needed only 2 source-list additions** for 26.2 refactors — `src/broadcom/common/v3d_submit_util.c`
+  (multisync submit helpers: `v3d_multisync_init/free`, `v3d_submit_ext_set`) and
+  `src/compiler/nir/nir_convert_address_format.c` (split out of `nir_lower_explicit_io.c`). Then libGL
+  (325 objs), libv3d (410 objs), libquakespasm all link with **0 undefined symbols**. (Also had to
+  recreate `/tmp/mesa-pyenv` — the meson venv was `/tmp`-cleaned; not a 26.2 issue.)
+- **Runtime: REGRESSION — constant render wedge.** GLQuake on 26.2 runs at **~5.5 fps with 337
+  RENDER-TIMEOUT wedge events** (vs 38–42 fps pre-rebase). Signature: all CT1 (render) timeouts, 0 bin;
+  `ct1ca` lands OUTSIDE the RCL range (`wedge_op=0x70`), i.e. CT1 **branches out of its RCL into a wrong
+  address**. This is a 26.2 **RCL / tile-list / submit-format change** that our hand-written winsys
+  (`v3d_phoenix_winsys.c`, which reimplements the drm/v3d kernel job submission) no longer matches —
+  the "upstream drift breaks the winsys" risk this review flagged, now concrete.
+
+**Decision: NOT shipped.** Reverted mesa to the pre-rebase base; the SD card for the user carries the
+working pre-rebase build + the force-buffer flicker fix. The 26.2 rebase needs winsys work to match
+26.2's RCL/tile-list layout (audit `V3DX(emit_rcl)` tile-list base + branch + the multisync submit args
+vs our `ioc_submit_cl` CT1 setup) — a deliberate, HW-validated effort, not an overnight change. The
+rebased branch is preserved for that.
+
+**This supersedes the earlier "don't rebase" recommendation with data:** the rebase is mechanically
+trivial but the winsys is coupled to the mesa RCL format, so a base move requires winsys updates. Pin a
+stable tag only together with that winsys work.
+
+## FLICKER FIX SHIPPED (pre-rebase): force-multi-buffer retry
+The `v3d_phoenix_fb_virtual_height` GET retry (commit; winsys/power) recovers multi-buffering from the
+shared-mailbox response race that was demoting SD boots to single-buffer → render-to-scanout tearing.
+Netboot-validated no-regression (still triple-buffer, 38–42 fps). SD efficacy is the user's return test.
+
+## REBASE RECOMMENDATION — superseded above (rebase is winsys-coupled)
 
 **Recommendation: stay on the current base; do not rebase (forward or to stable) as a fix.**
 
