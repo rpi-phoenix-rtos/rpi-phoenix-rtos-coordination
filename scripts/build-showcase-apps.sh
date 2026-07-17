@@ -276,17 +276,28 @@ phase_gpu() {
 	# every custom-command OUTPUT (pure codegen — no object compiles, so it's fast and
 	# side-steps the x86-can't-assemble-aarch64-asm failure). Best-effort; the enumerated
 	# lists remain as a harmless fallback (already built here).
-	log "materializing all mesa generated sources in ${mesa_v3d_build} (codegen-only ninja)"
-	# Build each generated output INDIVIDUALLY. A single `ninja -k 0 <all>` aborts at the
-	# manifest/graph level if any one target is unresolvable on the cold host (-k 0 only
-	# tolerates *build* errors, not graph-load errors), leaving the rest (e.g. nir_opcodes.h)
-	# ungenerated. Per-target ninja with `|| true` isolates each: every codegen output that
-	# can build, does — which is all of them (each verified to build standalone).
-	( cd "${mesa_v3d_build}" \
-	  && mapfile -t _gen < <(ninja -t targets rule CUSTOM_COMMAND 2>/dev/null | cut -d: -f1) \
-	  && { n=0; for _t in "${_gen[@]}"; do ninja "$_t" >/dev/null 2>&1 && n=$((n+1)) || true; done; \
-	       log "materialized ${n}/${#_gen[@]} generated sources"; } ) \
-	  || warn "gen-all step returned non-zero (continuing)"
+	# Skip the codegen loop when the key generated sources already exist (from a prior build):
+	# the 88-target serial ninja loop is slow AND has been an intermittent point where the whole
+	# build gets externally killed; skipping it when unneeded shrinks that window. The enumerated
+	# aux/core lists still materialize any straggler on demand.
+	if [ -s "${mesa_v3d_build}/src/compiler/nir/nir_opcodes.c" ] \
+	   && [ -s "${mesa_v3d_build}/src/compiler/builtin_types.c" ] \
+	   && [ -s "${mesa_v3d_build}/src/util/format/u_format_table.c" ] \
+	   && [ -s "${mesa_v3d_build}/src/compiler/nir/nir_intrinsics.c" ]; then
+		log "generated mesa sources already present in ${mesa_v3d_build} — skipping codegen loop"
+	else
+		log "materializing all mesa generated sources in ${mesa_v3d_build} (codegen-only ninja)"
+		# Build each generated output INDIVIDUALLY. A single `ninja -k 0 <all>` aborts at the
+		# manifest/graph level if any one target is unresolvable on the cold host (-k 0 only
+		# tolerates *build* errors, not graph-load errors), leaving the rest (e.g. nir_opcodes.h)
+		# ungenerated. Per-target ninja with `|| true` isolates each: every codegen output that
+		# can build, does — which is all of them (each verified to build standalone).
+		( cd "${mesa_v3d_build}" \
+		  && mapfile -t _gen < <(ninja -t targets rule CUSTOM_COMMAND 2>/dev/null | cut -d: -f1) \
+		  && { n=0; for _t in "${_gen[@]}"; do ninja "$_t" >/dev/null 2>&1 && n=$((n+1)) || true; done; \
+		       log "materialized ${n}/${#_gen[@]} generated sources"; } ) \
+		  || warn "gen-all step returned non-zero (continuing)"
+	fi
 
 	# --- GPU driver + GL archives (order: v3d driver -> GL frontend) ---
 	local py="python3"
