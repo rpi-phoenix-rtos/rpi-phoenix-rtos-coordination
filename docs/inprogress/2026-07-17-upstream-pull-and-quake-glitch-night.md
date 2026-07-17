@@ -32,6 +32,27 @@ refactor; upstream's other 5 usb commits merged clean).
   hypot() (or confirm libmcs provides it), take upstream's real getpw/getgr
   impls over our stubs, then full rebuild + Quake math re-validation.
 
+**libphoenix conflict RESOLUTION (worked out 2026-07-17, ready to apply in phase 2):**
+All 3 conflicts resolve by taking UPSTREAM — upstream added real implementations that
+supersede our fork's stubs/additions:
+- `include/math.h` → **accept upstream's delete** (`git rm include/math.h`). The RTOS-1132
+  libm move relocated everything to `libm/phoenix/` + `libm/libmcs/`; libmcs PROVIDES
+  hypot/hypotf/hypotl (`libm/libmcs/libm/mathd/hypotd.c`, `mathf/hypotf.c`) and the new
+  `libm/libmcs/libm/include/math.h` DECLARES them — so our fork's hypot() addition (6e2b929)
+  is now redundant.
+- `posix/stubs.c` → **`git checkout --theirs`**. Upstream moved getgr* to a new real
+  `unistd/grp.c` and ADDED getgid/getegid/getgroups/setgroups/wctomb/flock/ulimit to stubs.c;
+  keeping ours would duplicate grp.c's getgr* (link error). We only lose a deprecated `gets`
+  stub (verify nothing links it; re-add if the build complains).
+- `unistd/pwd.c` → **`git checkout --theirs`**. Upstream's pwd.c is a superset (getpwnam/uid,
+  getpwnam_r/uid_r, getpwent/setpwent/endpwent). RUNTIME RISK to check: upstream's getpwnam
+  behavior vs our fork's (X11/Quake call it for the home dir) — confirm it doesn't return NULL
+  where consumers expect a synthetic entry.
+Recipe: `git -C sources/libphoenix merge origin/master; git rm include/math.h;
+git checkout --theirs posix/stubs.c unistd/pwd.c; git add -A; git commit --no-edit`.
+This ALSO fixes the socklen_t build failure (the merged posix-socket.h + merged libphoenix
+agree once both are on upstream).
+
 **ABI-coupling check (new kernel + deferred old libphoenix):** the 42 merged
 kernel upstream commits are additive/hardening (futimens/poll validation,
 lseek fix, `schedInfo` syscall ADDED, SMP priority inheritance) — no
@@ -91,3 +112,32 @@ alternative: a capture-only toggle to the DRAM-fallback FBO path
 (g_resolve==0 / g_render_fbo) where glReadPixels worked pre-2026-06-21 — since
 the leading cause (stale vertex-BO reuse) is geometry (upstream of present),
 it'd still show in blit-resolve capture, sidestepping the format work.
+
+---
+
+## UPDATE (2026-07-17, session 2) — both tasks advanced
+
+### (b) UPSTREAM PULL — COMPLETE + HW-VALIDATED
+Applied the libphoenix recipe (math.h delete, stubs.c/pwd.c take-theirs) + resolved the
+follow-on link clash: upstream's libmcs now defines the C99 float-math fns our GL math shim
+provided (tanf/acosf/powf/expf/...), causing multiple-definition. Fixed by making the shim
+defs WEAK (coord addafb4). ALL 16 siblings now merged (usb 8e8316f keeps our #121 mem.c
+guards; libphoenix 58c87dd; +14 clean). The full merged tree **builds, boots to (psh), and
+Quake renders correctly on HW** (netboot: TRIPLE-BUFFER scanout, brick world+torch+weapon+
+ammo+HUD all correct). Recorded: manifests/2026-07-17-upstream-merged-validated.md.
+Notes: (1) intermittent NFS exec -5 flake still bites rpi4-quake launch (retry). (2) SD card
+NOT reflashed — still the pre-upstream flicker-fixed build the user validated; build+flash the
+`sd` variant to move the upstream integration onto the card. (3) RUNTIME item to verify:
+upstream's getpwnam/getpwent behavior vs consumers (X11/Quake home-dir lookups).
+
+### (a) CAPTURE-READBACK FIX — WIP, buffer-index unresolved
+Root cause confirmed (glReadPixels reads the FBO resource's fresh CPU mapping = noise).
+Implemented v3d_phoenix_scanout_readback (mmap fb PA, MAP_SHARED required) + glctx wrapper +
+gl_screen.c hook (coord 3667ff4, quakespasm c533d16). The mmap reads real fb content, BUT
+neither g_back (render buffer) nor g_displayed (presented buffer) yields the clean frame —
+both come back noise (g_back once showed the 2D console overlay). So glctx's buffer index
+does NOT map to the winsys physical buffer (scanout_pa + k*bytes) as assumed. NEXT (needs 1
+build+boot): dump all 3 buffers to separate files in one capture to identify which holds the
+frame; fix the index (or track the firmware SET_VIRTUAL_OFFSET pan directly). The glitch does
+not reliably reproduce in the deterministic demo anyway, so this tooling is the prerequisite,
+not the fix. No functional regression (HDMI display correct; capture was already noise).
