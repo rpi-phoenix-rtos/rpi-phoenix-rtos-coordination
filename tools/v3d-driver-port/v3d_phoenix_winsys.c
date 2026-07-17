@@ -383,6 +383,41 @@ int v3d_phoenix_scanout_double(void) { return W.scanout_double; }
 int v3d_phoenix_scanout_nbuf(void);
 int v3d_phoenix_scanout_nbuf(void) { return W.scanout_nbuf ? W.scanout_nbuf : 1; }
 
+/* Capture readback. A render-to-scanout BO aliases its GPU VA to the framebuffer PA, but
+ * its GL-resource CPU mapping is a SEPARATE fresh anonymous mmap — so glReadPixels on the
+ * scanout FBO reads uninitialized CPU pages (noise) while the display reads the fb PA
+ * (correct). For screenshot capture, read the actual framebuffer PA instead. `buf` selects
+ * the page-flip buffer (0/1/2 — the just-rendered one at capture time); copies up to
+ * min(bytes, one-buffer-size) bytes of native 32bpp scanout pixels (top-to-bottom) into
+ * dst. Returns bytes copied, 0 if scanout unavailable. Lazily maps the whole fb region
+ * uncached on first use. */
+static volatile uint8_t *scanout_cpu;   /* uncached CPU view of the full fb region (nbuf buffers) */
+uint32_t v3d_phoenix_scanout_readback(void *dst, int buf, uint32_t bytes);
+uint32_t v3d_phoenix_scanout_readback(void *dst, int buf, uint32_t bytes)
+{
+	uint32_t n, off, total;
+	if (W.scanout_pa == 0u || W.scanout_bytes == 0u || dst == NULL)
+		return 0u;
+	if (scanout_cpu == NULL) {
+		void *m;
+		total = (uint32_t)(W.scanout_nbuf ? W.scanout_nbuf : 1) * W.scanout_bytes;
+		/* Map the physical framebuffer for CPU read. MAP_SHARED is required: without it the
+		 * MAP_PHYSMEM|MAP_ANONYMOUS mapping returns fresh private anon pages (noise) instead of
+		 * the fb RAM. Matches the rpi4-fb driver's proven fb mapping. */
+		m = mmap(NULL, total, PROT_READ | PROT_WRITE,
+			MAP_SHARED | MAP_UNCACHED | MAP_ANONYMOUS | MAP_PHYSMEM, -1, (addr_t)W.scanout_pa);
+		if (m == MAP_FAILED)
+			return 0u;
+		scanout_cpu = (volatile uint8_t *)m;
+	}
+	if (buf < 0 || buf >= (W.scanout_nbuf ? W.scanout_nbuf : 1))
+		buf = 0;
+	off = (uint32_t)buf * W.scanout_bytes;
+	n = (bytes < W.scanout_bytes) ? bytes : W.scanout_bytes;
+	memcpy(dst, (const void *)(scanout_cpu + off), n);
+	return n;
+}
+
 /* One-shot: request that the NEXT BO created be backed by the scanout surface. Lets a client
  * whose BO-alloc path can't set V3D_CREATE_BO_SCANOUT (e.g. V3DV's vkAllocateMemory for a present
  * image) still get a scanout-backed BO: call this immediately before the allocation. */

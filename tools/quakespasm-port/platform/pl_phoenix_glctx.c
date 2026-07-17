@@ -72,6 +72,7 @@ static int    g_resolve     = 0;     /* 1 = scanout fb claimed (direct-render+pa
 static int    g_double      = 0;     /* 1 = page-flip available (>=2 scanout buffers) */
 static int    g_nbuf        = 1;     /* page-flip buffer count (1/2/3) — triple closes the flip race */
 static int    g_back        = 0;     /* which scanout buffer we render into this frame (round-robin) */
+static int    g_displayed    = 0;     /* buffer currently scanned out (presented+flushed to fb RAM) — for capture */
 static int    g_w = 0, g_h = 0;
 
 /* Bind the framebuffer Quake renders this frame into. Quake targets the "default" framebuffer (0),
@@ -98,9 +99,29 @@ int qsv3d_resolve(void)
 		return 0;
 	if (g_double) {
 		v3d_phoenix_flip(g_back);            /* display the buffer we just rendered into */
+		g_displayed = g_back;                /* now presented + flushed to fb RAM (what HDMI shows) */
 		g_back = (g_back + 1) % g_nbuf;      /* next frame renders into a non-displayed buffer */
 	}
 	return 1;
+}
+
+/* Screenshot-capture readback for the deterministic demo-capture harness. In the
+ * render-to-scanout path glReadPixels reads a fresh (unwritten) CPU mapping = noise; read
+ * the framebuffer PA of the buffer Quake just rendered into instead. Called from
+ * SCR_CaptureTick (pre-flip, so g_back is still that buffer). Single-buffer renders buffer 0
+ * in place. `dst` receives native 32bpp scanout pixels (top-to-bottom); returns bytes copied
+ * (0 if not on the scanout path — caller falls back to glReadPixels). */
+uint32_t qsv3d_capture_readback(void *dst, uint32_t maxbytes);
+uint32_t qsv3d_capture_readback(void *dst, uint32_t maxbytes)
+{
+	extern uint32_t v3d_phoenix_scanout_readback(void *dst, int buf, uint32_t bytes);
+	if (!g_resolve)
+		return 0;
+	/* Read the DISPLAYED buffer (last flip), not g_back: at capture time (pre-flip) g_back's
+	 * 3D tile-store hasn't been flushed to fb RAM yet (that lands at present), so it reads noise;
+	 * the displayed buffer is already presented + flushed = exactly what HDMI shows. This lags
+	 * the demo by one captured frame — fine for the deterministic Pi-vs-Pi non-determinism diff. */
+	return v3d_phoenix_scanout_readback(dst, g_double ? g_displayed : 0, maxbytes);
 }
 
 int qsv3d_init(int w, int h)
