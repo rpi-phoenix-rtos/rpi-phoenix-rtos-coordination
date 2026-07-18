@@ -117,13 +117,12 @@ int qsv3d_resolve(void)
 int qsv3d_capture_gl(void *pix, int w, int h);
 int qsv3d_capture_gl(void *pix, int w, int h)
 {
-	static int diag = 0;
 	GLint prev = 0;
 	GLuint src;
 	glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prev);
 	/* Use the EXPLICIT render FBO Quake drew this frame into — NOT the currently-bound one.
 	 * By capture time the render target is often unbound back to FB0 (GL_EndRendering re-binds
-	 * it for the same reason); reading FB0 was the noise. */
+	 * it for the same reason); reading FB0 was noise. */
 	if (g_resolve)
 		src = g_scanout_fbo[g_double ? g_back : 0];
 	else if (g_render_fbo)
@@ -132,54 +131,37 @@ int qsv3d_capture_gl(void *pix, int w, int h)
 		return 0;
 
 	if (g_capture_fbo != 0) {
-		/* GPU-blit the scanout FBO (read via GPU-VA = correct) to a normal FBO, then read that. */
-		GLenum e0, e1;
+		/* STRAIGHT GPU blit of the scanout FBO -> a normal FBO (reads scanout color via GPU-VA
+		 * correctly; then glReadPixels a real CPU-backed BO). Do NOT flip Y in the blit — the v3d
+		 * gallium blit does not honor an inverted destination (it writes constant garbage); flip
+		 * in software below. */
 		glBindFramebuffer(GL_READ_FRAMEBUFFER, src);
 		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, g_capture_fbo);
-		(void)glGetError();
-		/* Flip Y in the blit (dst Y0/Y1 swapped): the scanout FBO is Y_0_TOP (top-left origin,
-		 * matching the y-down display), but glReadPixels returns rows bottom-up, so a straight
-		 * copy comes out upside-down. Flipping here yields an upright TGA (origin bottom-left). */
-		glBlitFramebuffer(0, 0, w, h, 0, h, w, 0, GL_COLOR_BUFFER_BIT, GL_NEAREST);
-		e0 = glGetError();
+		glBlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
 		glBindFramebuffer(GL_READ_FRAMEBUFFER, g_capture_fbo);
-		glReadBuffer(GL_COLOR_ATTACHMENT0);
-		glFinish();
-		glPixelStorei(GL_PACK_ALIGNMENT, 1);
-		glReadPixels(0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, pix);
-		e1 = glGetError();
-		if (diag++ < 5) {
-			unsigned char sp[6] = {0}, rp[6] = {0};
-			glBindFramebuffer(GL_READ_FRAMEBUFFER, src);   /* read the scanout src directly too */
-			glReadBuffer(GL_COLOR_ATTACHMENT0);
-			glReadPixels(w/2, h/2, 1, 1, GL_RGB, GL_UNSIGNED_BYTE, sp);
-			/* SANITY: clear the capture FBO to pure red, read 1px back. ff0000 => glReadPixels +
-			 * a normal FBO work (so the blit SOURCE is the problem); noise => readback itself is
-			 * broken in this process. */
-			glBindFramebuffer(GL_FRAMEBUFFER, g_capture_fbo);
-			glClearColor(1.0f, 0.0f, 0.0f, 1.0f);
-			glClear(GL_COLOR_BUFFER_BIT);
-			glBindFramebuffer(GL_READ_FRAMEBUFFER, g_capture_fbo);
-			glReadBuffer(GL_COLOR_ATTACHMENT0);
-			glFinish();
-			glReadPixels(0, 0, 1, 1, GL_RGB, GL_UNSIGNED_BYTE, rp);
-			unsigned char *p = (unsigned char *)pix;
-			size_t mid = ((size_t)(h/2) * (size_t)w + (size_t)(w/2)) * 3;
-			printf("qsv3d_cap: src_fbo=%u cap=%u prevbound=%d back=%d resolve=%d blit_err=%x rp_err=%x "
-			       "cap_mid=%02x%02x%02x srcdirect_mid=%02x%02x%02x redtest=%02x%02x%02x\n",
-			       src, g_capture_fbo, prev, g_back, g_resolve, e0, e1,
-			       p[mid], p[mid+1], p[mid+2], sp[0], sp[1], sp[2], rp[0], rp[1], rp[2]);
-			fflush(stdout);
-		}
 	}
 	else {
 		glBindFramebuffer(GL_READ_FRAMEBUFFER, src);
-		glReadBuffer(GL_COLOR_ATTACHMENT0);
-		glFinish();
-		glPixelStorei(GL_PACK_ALIGNMENT, 1);
-		glReadPixels(0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, pix);
 	}
-	glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)prev);   /* restore */
+	glReadBuffer(GL_COLOR_ATTACHMENT0);
+	glFinish();
+	glPixelStorei(GL_PACK_ALIGNMENT, 1);
+	glReadPixels(0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, pix);
+	glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)prev);   /* restore render target */
+
+	/* Software vertical flip: the FBO is Y_0_TOP but glReadPixels + the TGA writer are
+	 * bottom-origin, so the readback is upside-down. Reverse rows -> upright. */
+	{
+		size_t stride = (size_t)w * 3;
+		unsigned char *base = (unsigned char *)pix;
+		for (int r = 0; r < h / 2; r++) {
+			unsigned char *a = base + (size_t)r * stride;
+			unsigned char *b = base + (size_t)(h - 1 - r) * stride;
+			for (size_t i = 0; i < stride; i++) {
+				unsigned char t = a[i]; a[i] = b[i]; b[i] = t;
+			}
+		}
+	}
 	return 1;
 }
 
