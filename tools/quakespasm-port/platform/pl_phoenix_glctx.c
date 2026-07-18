@@ -137,7 +137,10 @@ int qsv3d_capture_gl(void *pix, int w, int h)
 		glBindFramebuffer(GL_READ_FRAMEBUFFER, src);
 		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, g_capture_fbo);
 		(void)glGetError();
-		glBlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+		/* Flip Y in the blit (dst Y0/Y1 swapped): the scanout FBO is Y_0_TOP (top-left origin,
+		 * matching the y-down display), but glReadPixels returns rows bottom-up, so a straight
+		 * copy comes out upside-down. Flipping here yields an upright TGA (origin bottom-left). */
+		glBlitFramebuffer(0, 0, w, h, 0, h, w, 0, GL_COLOR_BUFFER_BIT, GL_NEAREST);
 		e0 = glGetError();
 		glBindFramebuffer(GL_READ_FRAMEBUFFER, g_capture_fbo);
 		glReadBuffer(GL_COLOR_ATTACHMENT0);
