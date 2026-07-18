@@ -215,6 +215,7 @@ static struct {
 	uint32_t scanout_pa3;     /* triple-buffer: buffer 2 PA (= scanout_pa + 2*pitch*phys_h), else 0 */
 	uint32_t scanout_phys_h;  /* physical (displayed) height — page-flip pans by buffer*phys_h rows */
 	uint32_t scanout_bytes;   /* one buffer's byte size (pitch*phys_h) */
+	uint32_t scanout_disp_off; /* byte offset (from scanout_pa) of the CURRENTLY-DISPLAYED buffer (last flip) */
 	int      scanout_nbuf;    /* number of page-flip buffers granted: 1 (none), 2 (double), 3 (triple) */
 	int      scanout_double;  /* convenience: scanout_nbuf >= 2 (page-flip available) */
 	int      scanout_claim_idx; /* multi-buffer: which buffer the next scanout BO is backed by */
@@ -368,13 +369,21 @@ int v3d_phoenix_scanout_init(uint32_t pa, uint32_t w, uint32_t h, uint32_t pitch
 	return W.scanout_nbuf;
 }
 
-/* Page-flip the display to buffer `buf` (0 or 1). Called after resolving into that buffer. */
+/* Page-flip the display to buffer `buf` (0..nbuf-1). Called after resolving into that buffer.
+ * Pans the display origin to row buf*phys_h. (Previously hard-coded a 2-position 0/phys_h map
+ * from the double-buffer era, so a THIRD buffer was mis-displayed as buffer 1 — buffer 2's
+ * renders were never scanned out. Now scales to nbuf.) Records the displayed byte offset so
+ * screenshot capture can read exactly the region HDMI shows. */
 extern void v3d_phoenix_fb_flip(unsigned yoff);
 void v3d_phoenix_flip(int buf);
 void v3d_phoenix_flip(int buf)
 {
-	if (W.scanout_double)
-		v3d_phoenix_fb_flip((buf != 0) ? W.scanout_phys_h : 0u);
+	if (W.scanout_double) {
+		if (buf < 0) buf = 0;
+		if (buf >= W.scanout_nbuf) buf = W.scanout_nbuf - 1;
+		W.scanout_disp_off = (uint32_t)buf * W.scanout_bytes;
+		v3d_phoenix_fb_flip((unsigned)buf * W.scanout_phys_h);
+	}
 }
 
 int v3d_phoenix_scanout_double(void);
@@ -410,9 +419,16 @@ uint32_t v3d_phoenix_scanout_readback(void *dst, int buf, uint32_t bytes)
 			return 0u;
 		scanout_cpu = (volatile uint8_t *)m;
 	}
-	if (buf < 0 || buf >= (W.scanout_nbuf ? W.scanout_nbuf : 1))
-		buf = 0;
-	off = (uint32_t)buf * W.scanout_bytes;
+	/* buf == -1: read the CURRENTLY-DISPLAYED buffer (the region the firmware is scanning out,
+	 * as set by the last flip) — exactly what HDMI shows, robust to any buffer-index assumption.
+	 * buf >= 0: read that specific buffer. */
+	if (buf < 0)
+		off = W.scanout_disp_off;
+	else {
+		if (buf >= (W.scanout_nbuf ? W.scanout_nbuf : 1))
+			buf = 0;
+		off = (uint32_t)buf * W.scanout_bytes;
+	}
 	n = (bytes < W.scanout_bytes) ? bytes : W.scanout_bytes;
 	memcpy(dst, (const void *)(scanout_cpu + off), n);
 	return n;

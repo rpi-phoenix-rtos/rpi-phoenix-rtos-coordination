@@ -68,11 +68,13 @@ static struct st_context *g_st = NULL;
  * (cleared per frame, never scanned out). */
 static GLuint g_scanout_fbo[3] = {0, 0, 0}; /* scanout-fb-backed color+depth FBO(s) — Quake renders here */
 static GLuint g_render_fbo  = 0;     /* DRAM color+depth FBO — ONLY for the no-scanout CPU-present fallback */
+static GLuint g_capture_fbo = 0;     /* normal (non-aliased) RGBA8 FBO: scanout is blitted here so glReadPixels
+                                      * reads a real CPU-backed BO (screenshot capture; the scanout FBO's own
+                                      * resource CPU-map is a separate unwritten alloc -> glReadPixels=noise) */
 static int    g_resolve     = 0;     /* 1 = scanout fb claimed (direct-render+page-flip path active) */
 static int    g_double      = 0;     /* 1 = page-flip available (>=2 scanout buffers) */
 static int    g_nbuf        = 1;     /* page-flip buffer count (1/2/3) — triple closes the flip race */
 static int    g_back        = 0;     /* which scanout buffer we render into this frame (round-robin) */
-static int    g_displayed    = 0;     /* buffer currently scanned out (presented+flushed to fb RAM) — for capture */
 static int    g_w = 0, g_h = 0;
 
 /* Bind the framebuffer Quake renders this frame into. Quake targets the "default" framebuffer (0),
@@ -98,30 +100,84 @@ int qsv3d_resolve(void)
 	if (!g_resolve)
 		return 0;
 	if (g_double) {
-		v3d_phoenix_flip(g_back);            /* display the buffer we just rendered into */
-		g_displayed = g_back;                /* now presented + flushed to fb RAM (what HDMI shows) */
+		v3d_phoenix_flip(g_back);            /* display the buffer we just rendered into (winsys tracks the pan) */
 		g_back = (g_back + 1) % g_nbuf;      /* next frame renders into a non-displayed buffer */
 	}
 	return 1;
 }
 
-/* Screenshot-capture readback for the deterministic demo-capture harness. In the
- * render-to-scanout path glReadPixels reads a fresh (unwritten) CPU mapping = noise; read
- * the framebuffer PA of the buffer Quake just rendered into instead. Called from
- * SCR_CaptureTick (pre-flip, so g_back is still that buffer). Single-buffer renders buffer 0
- * in place. `dst` receives native 32bpp scanout pixels (top-to-bottom); returns bytes copied
- * (0 if not on the scanout path — caller falls back to glReadPixels). */
-uint32_t qsv3d_capture_readback(void *dst, uint32_t maxbytes);
-uint32_t qsv3d_capture_readback(void *dst, uint32_t maxbytes)
+/* Screenshot capture for the deterministic demo-capture harness. glReadPixels on the
+ * render-to-scanout FBO returns noise (its resource's CPU mapping is a fresh unwritten alloc;
+ * the GPU stored to the aliased fb PA). So BLIT the currently-bound (just-rendered) scanout FBO
+ * to a normal DRAM FBO on the GPU — which reads the scanout color via its GPU-VA correctly —
+ * then glReadPixels the normal FBO, whose CPU mapping IS the GPU-written BO. Fills `pix` with
+ * w*h*3 RGB bytes, bottom-to-top (GL convention, matches the TGA writer -> no Y-flip). Returns
+ * 1 on success, 0 if unavailable (caller falls back to a plain glReadPixels). Called from
+ * SCR_CaptureTick, pre-flip, with the render-target FBO still bound. */
+int qsv3d_capture_gl(void *pix, int w, int h);
+int qsv3d_capture_gl(void *pix, int w, int h)
 {
-	extern uint32_t v3d_phoenix_scanout_readback(void *dst, int buf, uint32_t bytes);
-	if (!g_resolve)
+	static int diag = 0;
+	GLint prev = 0;
+	GLuint src;
+	glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prev);
+	/* Use the EXPLICIT render FBO Quake drew this frame into — NOT the currently-bound one.
+	 * By capture time the render target is often unbound back to FB0 (GL_EndRendering re-binds
+	 * it for the same reason); reading FB0 was the noise. */
+	if (g_resolve)
+		src = g_scanout_fbo[g_double ? g_back : 0];
+	else if (g_render_fbo)
+		src = g_render_fbo;
+	else
 		return 0;
-	/* Read the DISPLAYED buffer (last flip), not g_back: at capture time (pre-flip) g_back's
-	 * 3D tile-store hasn't been flushed to fb RAM yet (that lands at present), so it reads noise;
-	 * the displayed buffer is already presented + flushed = exactly what HDMI shows. This lags
-	 * the demo by one captured frame — fine for the deterministic Pi-vs-Pi non-determinism diff. */
-	return v3d_phoenix_scanout_readback(dst, g_double ? g_displayed : 0, maxbytes);
+
+	if (g_capture_fbo != 0) {
+		/* GPU-blit the scanout FBO (read via GPU-VA = correct) to a normal FBO, then read that. */
+		GLenum e0, e1;
+		glBindFramebuffer(GL_READ_FRAMEBUFFER, src);
+		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, g_capture_fbo);
+		(void)glGetError();
+		glBlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+		e0 = glGetError();
+		glBindFramebuffer(GL_READ_FRAMEBUFFER, g_capture_fbo);
+		glReadBuffer(GL_COLOR_ATTACHMENT0);
+		glFinish();
+		glPixelStorei(GL_PACK_ALIGNMENT, 1);
+		glReadPixels(0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, pix);
+		e1 = glGetError();
+		if (diag++ < 5) {
+			unsigned char sp[6] = {0}, rp[6] = {0};
+			glBindFramebuffer(GL_READ_FRAMEBUFFER, src);   /* read the scanout src directly too */
+			glReadBuffer(GL_COLOR_ATTACHMENT0);
+			glReadPixels(w/2, h/2, 1, 1, GL_RGB, GL_UNSIGNED_BYTE, sp);
+			/* SANITY: clear the capture FBO to pure red, read 1px back. ff0000 => glReadPixels +
+			 * a normal FBO work (so the blit SOURCE is the problem); noise => readback itself is
+			 * broken in this process. */
+			glBindFramebuffer(GL_FRAMEBUFFER, g_capture_fbo);
+			glClearColor(1.0f, 0.0f, 0.0f, 1.0f);
+			glClear(GL_COLOR_BUFFER_BIT);
+			glBindFramebuffer(GL_READ_FRAMEBUFFER, g_capture_fbo);
+			glReadBuffer(GL_COLOR_ATTACHMENT0);
+			glFinish();
+			glReadPixels(0, 0, 1, 1, GL_RGB, GL_UNSIGNED_BYTE, rp);
+			unsigned char *p = (unsigned char *)pix;
+			size_t mid = ((size_t)(h/2) * (size_t)w + (size_t)(w/2)) * 3;
+			printf("qsv3d_cap: src_fbo=%u cap=%u prevbound=%d back=%d resolve=%d blit_err=%x rp_err=%x "
+			       "cap_mid=%02x%02x%02x srcdirect_mid=%02x%02x%02x redtest=%02x%02x%02x\n",
+			       src, g_capture_fbo, prev, g_back, g_resolve, e0, e1,
+			       p[mid], p[mid+1], p[mid+2], sp[0], sp[1], sp[2], rp[0], rp[1], rp[2]);
+			fflush(stdout);
+		}
+	}
+	else {
+		glBindFramebuffer(GL_READ_FRAMEBUFFER, src);
+		glReadBuffer(GL_COLOR_ATTACHMENT0);
+		glFinish();
+		glPixelStorei(GL_PACK_ALIGNMENT, 1);
+		glReadPixels(0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, pix);
+	}
+	glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)prev);   /* restore */
+	return 1;
 }
 
 int qsv3d_init(int w, int h)
@@ -204,6 +260,21 @@ int qsv3d_init(int w, int h)
 		fbs = glCheckFramebufferStatus(GL_FRAMEBUFFER);
 		printf("qsv3d: DRAM fallback render FBO %dx%d status=0x%x (complete=0x%x)\n",
 		       w, h, fbs, GL_FRAMEBUFFER_COMPLETE);
+	}
+
+	/* CAPTURE FBO: a normal (DRAM-backed, non-scanout) RGBA8 target. glReadPixels on a scanout
+	 * FBO reads its resource's fresh CPU mapping (= noise, the GPU stored to the aliased fb PA);
+	 * a normal FBO's CPU map IS the GPU-written BO, so we blit scanout->here then read here.
+	 * Only needed in the scanout path (the DRAM-fallback g_render_fbo is already readable). */
+	if (g_resolve) {
+		GLuint rbCap = 0;
+		glGenFramebuffers(1, &g_capture_fbo);
+		glBindFramebuffer(GL_FRAMEBUFFER, g_capture_fbo);
+		glGenRenderbuffers(1, &rbCap);
+		glBindRenderbuffer(GL_RENDERBUFFER, rbCap);
+		glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, w, h);
+		glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, rbCap);
+		printf("qsv3d: capture FBO %dx%d status=0x%x\n", w, h, glCheckFramebufferStatus(GL_FRAMEBUFFER));
 	}
 
 	glViewport(0, 0, w, h);

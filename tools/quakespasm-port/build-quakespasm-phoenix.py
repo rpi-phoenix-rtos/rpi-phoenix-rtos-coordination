@@ -52,7 +52,9 @@ V3DLIB = f"{GPU_LIBS}/libv3d-phoenix.a"
 ELF = "/tmp/quakespasm-phoenix"
 
 # Quake-side flags (Quake TUs + the Quake-facing platform shims).
+# QSS_PHOENIX enables gl_screen.c's Phoenix capture path (qsv3d_capture_gl).
 QFLAGS = ["-c", "-O2", "-g", "-ffreestanding", "-fno-strict-aliasing", "-Wno-error",
+          "-DQSS_PHOENIX=1",
           f"-I{SHIM}", f"-I{Q}", f"-I{GLINC}"]
 # Mesa-side flags (glctx only) — the endianness/timespec -D's + include order the
 # Mesa driver build uses (else u_endian #errors and struct timespec redefines).
