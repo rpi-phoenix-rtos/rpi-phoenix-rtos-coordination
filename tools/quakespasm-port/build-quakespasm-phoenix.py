@@ -51,16 +51,25 @@ GLLIB = f"{GPU_LIBS}/libGL-phoenix.a"
 V3DLIB = f"{GPU_LIBS}/libv3d-phoenix.a"
 ELF = "/tmp/quakespasm-phoenix"
 
+# QSS_PHOENIX enables gl_screen.c's Phoenix screen-capture path (qsv3d_capture_gl):
+# the visual-regression harness that blits the scanout FBO + glReadPixels a full
+# 1920x1080 frame per captured demo frame. That per-frame uncached readback is
+# EXPENSIVE (drags rendering to ~7 fps when scr_capture>0), so the capture harness
+# is OPT-IN: default builds ship WITHOUT it (stock SCR path, full render speed).
+# Re-enable for visual debugging with `QS_CAPTURE=1 python3 build-quakespasm-phoenix.py`
+# (then set scr_capture/scr_capture_host in autoexec to drive it).
+CAPTURE = os.environ.get("QS_CAPTURE", "0") not in ("", "0")
+_cap_def = ["-DQSS_PHOENIX=1"] if CAPTURE else []
+
 # Quake-side flags (Quake TUs + the Quake-facing platform shims).
-# QSS_PHOENIX enables gl_screen.c's Phoenix capture path (qsv3d_capture_gl).
 QFLAGS = ["-c", "-O2", "-g", "-ffreestanding", "-fno-strict-aliasing", "-Wno-error",
-          "-DQSS_PHOENIX=1",
+          *_cap_def,
           f"-I{SHIM}", f"-I{Q}", f"-I{GLINC}"]
 # Mesa-side flags (glctx only) — the endianness/timespec -D's + include order the
 # Mesa driver build uses (else u_endian #errors and struct timespec redefines).
 MFLAGS = ["-c", "-O2", "-g", "-ffreestanding", "-fno-strict-aliasing", "-Wno-error",
           "-Wno-undef", "-DUTIL_ARCH_LITTLE_ENDIAN=1", "-DUTIL_ARCH_BIG_ENDIAN=0",
-          "-DHAVE_STRUCT_TIMESPEC", "-DQSS_PHOENIX=1", "-include", COMPAT,
+          "-DHAVE_STRUCT_TIMESPEC", *_cap_def, "-include", COMPAT,
           f"-I{MESA}/src", f"-I{MESA}/include", f"-I{MESA}/src/mesa",
           f"-I{MESA}/src/mapi", f"-I{MESA}/src/compiler",
           f"-I{MESA}/src/gallium/include", f"-I{MESA}/src/gallium/auxiliary",
