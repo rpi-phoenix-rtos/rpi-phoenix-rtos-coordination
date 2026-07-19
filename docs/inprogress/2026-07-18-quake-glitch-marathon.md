@@ -219,6 +219,32 @@ improvement candidate: register + apply gamma in pl_phoenix_vid (GLSL post or 2D
 NOTE: classic Quake is dark by default and the user did NOT complain of darkness — so validate
 against host brightness, don't over-brighten.
 
+## Session 2026-07-19: user feedback — capture harness slowed rendering; no-capture build
+
+User tested the netboot build (= the capture-harness config): ~7 fps + particles off,
+flicker not visibly present but possibly masked by the slowness. Correct diagnosis: the
+shipped autoexec set `scr_capture 5`, so during the attract DEMO the harness did a full
+1920x1080 uncached glReadPixels every 5th frame (+ TGA + TCP) -> ~7 fps. (Interactive play
+is unaffected: SCR_CaptureTick requires cls.demoplayback + scr_capture>=1.)
+
+**DELIVERED for manual testing:**
+- Capture harness made OPT-IN (coord 8308365): default build compiles WITHOUT QSS_PHOENIX
+  (no GL-blit capture path); `QS_CAPTURE=1` re-enables it for debugging. QSS_PHOENIX gates
+  ONLY the capture (verified: single use, gl_screen.c:928).
+- Rebuilt libquakespasm + relinked rpi4-quake WITHOUT capture; staged to NFS.
+- Clean normal-play autoexec (scr_conscale 1 only): particles ON (default), real framerate
+  (no host_framerate), lerp ON (r_alias_lerpmode default 1). User can toggle r_particles /
+  r_lerpmodels / r_alias_lerpmode to test.
+
+**UART pre-boot "trash" DEMYSTIFIED (not GPU/Quake persisted state):** the 26 MB in the
+20260719-193601 log is the Raspberry Pi BOOTLOADER's TFTP retry-storm for MISSING optional
+firmware files (vl805.sig, vl805.bin, pieeprom.sig/.upd, recover4.elf, recovery.elf — all
+"not found" on our TFTP server). The bootcode retries in a tight loop, printing its net-stack
+counters (IP/IPV4/MAC/UDP/RX...) thousands of times on one line until it falls through to
+start4.elf (t=36s) and boots normally. Worse on a cold boot (EEPROM/VL805 update-check runs
+first). Benign; unrelated to Quake's exit. SUPPRESS by serving dummy vl805.sig/pieeprom.sig/
+recovery.elf on TFTP, or by a bootloader/config.txt tweak to skip the net EEPROM recovery.
+
 **exec-5 MITIGATION FOUND:** prepend an NFS-warmup psh command before the exec, e.g.
 `test-cycle-psh-interact ... -- 'ls -l /usr/bin/rpi4-quake' '/usr/bin/rpi4-quake'` with
 --inter-cmd-secs 10. The stat establishes libnfs + the delay lets it settle -> exec then
