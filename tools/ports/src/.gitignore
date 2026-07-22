@@ -1,15 +1,13 @@
-# Vendored port sources.
+# Port source cache — NOT committed.
 #
-# The build scripts under tools/ports/ download an upstream tarball here (if
-# absent) and extract it in place, then patch the tree. To make a fresh clone
-# build offline / deterministically, we commit the *tarballs* but not the large
-# extracted source trees (315 MB extracted vs ~31 MB of tarballs).
+# The build scripts under tools/ports/ download each upstream tarball here on
+# demand (curl-if-absent) from its OFFICIAL distribution URL, extract it, and
+# patch the tree. We deliberately do NOT vendor the tarballs: it wastes git
+# space and it is better to rely on the official upstream source. A fresh build
+# fetches them; the tarballs and the extracted trees are all build artifacts.
 #
-# Ignore everything (including the extracted directories like dillo-3.2.0/) ...
+# (build-libiconv.sh needs no tarball — it builds a self-written iconv stub.)
+#
+# Ignore everything here except this file.
 *
-# ... but keep this .gitignore and the upstream tarballs.
 !.gitignore
-!*.tar.gz
-!*.tar.xz
-!*.tgz
-!*.tar.bz2
