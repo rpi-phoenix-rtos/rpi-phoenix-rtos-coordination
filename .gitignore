@@ -55,3 +55,6 @@ session-id-cl
 # removed from the lwip fork tip; kept here + on the lwip `wifi-wip` branch so WiFi
 # work can resume). NOT for public release. See docs/inprogress/2026-07-22-consolidation-and-release-prep.md
 .wifi-wip/
+
+# git-filter-repo tool venv (release tooling)
+.venv-filter/
