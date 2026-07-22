@@ -1,0 +1,52 @@
+From cd111959bdf5557a549c0d17a29b695b0232169d Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Pavel=20Ondra=C4=8Dka?= <pavel.ondracka@gmail.com>
+Date: Tue, 14 Jul 2026 16:40:08 +0200
+Subject: [PATCH 06/17] nv50_ir_ra: align B96 spill slots to vec4
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+This fixes nouveau NVE4 shader-db godot crash exposed by vectorizing
+commutative ALU sources.
+
+Fixes: d12e16fc3b5 ("nouveau: Handle unaligned tlsBase during spills")
+Suggested-by: Karol Herbst <kherbst@redhat.com>
+Reviewed-by: Karol Herbst <kherbst@redhat.com>
+Reviewed-by: Mel Henning <mhenning@darkrefraction.com>
+Signed-off-by: Pavel Ondračka <pavel.ondracka@gmail.com>
+Part-of: <https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/42856>
+(cherry picked from commit 05f9f41fc294f6adb6d9b8ffed9a801bb232f40e)
+---
+ .pick_status.json                                  | 2 +-
+ src/gallium/drivers/nouveau/codegen/nv50_ir_ra.cpp | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/.pick_status.json b/.pick_status.json
+index af6989bcb3b..4f9f7016e0d 100644
+--- a/.pick_status.json
++++ b/.pick_status.json
+@@ -24,7 +24,7 @@
+         "description": "nv50_ir_ra: align B96 spill slots to vec4",
+         "nominated": true,
+         "nomination_type": 2,
+-        "resolution": 0,
++        "resolution": 1,
+         "main_sha": null,
+         "because_sha": "d12e16fc3b5217613aa077f5f3418f16cf5cb824",
+         "notes": null
+diff --git a/src/gallium/drivers/nouveau/codegen/nv50_ir_ra.cpp b/src/gallium/drivers/nouveau/codegen/nv50_ir_ra.cpp
+index f0fad0ded4e..ea80acdf440 100644
+--- a/src/gallium/drivers/nouveau/codegen/nv50_ir_ra.cpp
++++ b/src/gallium/drivers/nouveau/codegen/nv50_ir_ra.cpp
+@@ -1548,7 +1548,7 @@ GCRA::cleanup(const bool success)
+ Symbol *
+ SpillCodeInserter::assignSlot(const Interval &livei, const unsigned int size)
+ {
+-   int32_t address = align(stackSize + func->tlsBase, size);
++   int32_t address = align(stackSize + func->tlsBase, util_next_power_of_two(size));
+ 
+    Symbol *sym = new_Symbol(func->getProgram(), FILE_MEMORY_LOCAL);
+    sym->setAddress(NULL, address);
+-- 
+2.53.0
+

@@ -1,0 +1,91 @@
+From d1ddcb60f70797e734481cda180595c20c1d2ca0 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Witold=20Bo=C5=82t?= <witold.bolt@jit.team>
+Date: Thu, 25 Jun 2026 11:13:56 +0200
+Subject: [PATCH 11/17] v3dv: guard degenerate zero-tile CL job at submit
+ (vkQuake first-frame NULL deref)
+
+A V3DV CL job whose frame tiling has a zero dimension (width, height or
+layers) computes a zero-size tile-state BO; v3dv_bo_alloc(0) returns NULL,
+and handle_cl_job() then dereferences job->tile_state->offset and Data-Aborts
+(far=0x24 == offsetof(struct v3dv_bo, offset)). vkQuake's no-WSI 2D frame path
+hit exactly this at the first vkQueueSubmit (tile_alloc valid at the 0x2000
+zero-tile floor, tile_state NULL).
+
+Guard queue_handle_job (under __phoenix__) to skip a GPU_CL job with a NULL
+tile_state and return VK_SUCCESS: a zero-tile job has nothing for the binner
+or renderer to do, and skipping it lets the real render job in the same submit
+proceed. Add a one-shot v3dv_job_start_frame diagnostic naming the zero-dim
+source (and whether it is the device noop job, cmd_buffer==NULL) so the
+offending op (render area vs meta copy/clear/blit) is identifiable from a boot log.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+---
+ src/broadcom/vulkan/v3dv_cmd_buffer.c | 16 ++++++++++++++++
+ src/broadcom/vulkan/v3dv_queue.c      | 24 ++++++++++++++++++++++++
+ 2 files changed, 40 insertions(+)
+
+diff --git a/src/broadcom/vulkan/v3dv_cmd_buffer.c b/src/broadcom/vulkan/v3dv_cmd_buffer.c
+index 4db0298232d..cd1dabe1531 100644
+--- a/src/broadcom/vulkan/v3dv_cmd_buffer.c
++++ b/src/broadcom/vulkan/v3dv_cmd_buffer.c
+@@ -521,6 +521,22 @@ v3dv_job_start_frame(struct v3dv_job *job,
+ {
+    assert(job);
+ 
++#if defined(__phoenix__)
++   /* Diagnostic: a frame started with a zero dimension yields zero tiles, a
++    * zero-size tile-state BO (NULL), and a NULL deref at submit time. Name the
++    * source once so the offending op (render area vs meta copy/clear/blit) is
++    * identifiable from a boot log. cmd_buffer == NULL marks the device noop job. */
++   if (width == 0 || height == 0 || layers == 0) {
++      static bool warned_zero = false;
++      if (!warned_zero) {
++         mesa_logw("v3dv: v3dv_job_start_frame with zero dimension "
++                   "(w=%u h=%u layers=%u, cmd_buffer=%p) -> no tile state\n",
++                   width, height, layers, (void *)job->cmd_buffer);
++         warned_zero = true;
++      }
++   }
++#endif
++
+    /* Start by computing frame tiling spec for this job assuming that
+     * double-buffer mode is disabled.
+     */
+diff --git a/src/broadcom/vulkan/v3dv_queue.c b/src/broadcom/vulkan/v3dv_queue.c
+index d1b2e4d0c97..fbce1015a3d 100644
+--- a/src/broadcom/vulkan/v3dv_queue.c
++++ b/src/broadcom/vulkan/v3dv_queue.c
+@@ -998,6 +998,30 @@ queue_handle_job(struct v3dv_queue *queue,
+       job->needs_bcl_sync = job->type == V3DV_JOB_TYPE_GPU_CL;
+    }
+ 
++#if defined(__phoenix__)
++   /* Skip a degenerate CL job that has no tile state. A CL job's tile state is
++    * allocated from the frame tiling (layers * tiles_x * tiles_y); when one of
++    * those dimensions is zero the tile-state size is zero and v3dv_bo_alloc()
++    * returns NULL (see v3dv_job_allocate_tile_state / v3d_tile_alloc_sizes).
++    * handle_cl_job() then dereferences job->tile_state->offset and faults. Such a
++    * job (a zero-extent meta copy/clear/blit, or an empty render area) has nothing
++    * for the binner or renderer to do, so dropping it is correct and lets the real
++    * render job in the same submit proceed. Without this guard the no-WSI vkQuake
++    * 2D frame path hit a NULL-tile_state CL job at the first vkQueueSubmit and
++    * Data-Aborted in handle_cl_job (far=0x24 == offsetof v3dv_bo, offset). */
++   if (job->type == V3DV_JOB_TYPE_GPU_CL && job->tile_state == NULL) {
++      static bool warned = false;
++      if (!warned) {
++         mesa_logw("v3dv: skipping degenerate CL job with no tile state "
++                   "(zero-extent frame: w=%u h=%u layers=%u draws=%u)\n",
++                   job->frame_tiling.width, job->frame_tiling.height,
++                   job->frame_tiling.layers, job->draw_count);
++         warned = true;
++      }
++      return VK_SUCCESS;
++   }
++#endif
++
+    switch (job->type) {
+    case V3DV_JOB_TYPE_GPU_CL:
+       return handle_cl_job(queue, job, counter_pass_idx, sync_info);
+-- 
+2.53.0
+

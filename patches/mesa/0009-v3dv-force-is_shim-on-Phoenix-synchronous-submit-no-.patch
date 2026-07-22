@@ -1,0 +1,65 @@
+From 4e30dd89281ae4ee65cc547bf9b046a7a3598578 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Witold=20Bo=C5=82t?= <witold.bolt@jit.team>
+Date: Wed, 17 Jun 2026 17:05:26 +0200
+Subject: [PATCH 09/17] v3dv: force is_shim on Phoenix (synchronous submit, no
+ threaded-submit)
+
+The Phoenix winsys submits synchronously (blocks on FLDONE/FRDONE) and provides only no-op DRM syncobjs. is_shim selects the no-threaded-submit path (queue_init + CreateDevice both gate vk_*_enable_*submit_thread on !is_shim). Without this, threaded submit is enabled and the device-create noop-job submit waits forever on a syncobj that never signals. #if __phoenix__ forces is_shim=true. Moves past the hang (next blocker: physical-device dispatch Properties2/QueueFamilyProperties2 slot NULL at runtime).
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+---
+ src/broadcom/vulkan/v3dv_device.c | 24 ++++++++++++++++++++++++
+ 1 file changed, 24 insertions(+)
+
+diff --git a/src/broadcom/vulkan/v3dv_device.c b/src/broadcom/vulkan/v3dv_device.c
+index 36d89901501..97baf74e608 100644
+--- a/src/broadcom/vulkan/v3dv_device.c
++++ b/src/broadcom/vulkan/v3dv_device.c
+@@ -864,6 +864,19 @@ device_has_expected_features(struct v3dv_physical_device *device)
+ static VkResult
+ init_uuids(struct v3dv_physical_device *device)
+ {
++#if defined(__phoenix__)
++   /* Phoenix first-light: no .note.gnu.build-id is resolvable on the statically-
++    * loaded image, and the upstream build_id_data()+blake3 path dereferences a
++    * synthetic note header -> wild pointer -> fault. These UUIDs only gate pipeline-
++    * cache validity and cross-process memory sharing, neither of which is used at
++    * first light (no persistent cache, single process). Use fixed dummy UUIDs so
++    * device-create succeeds; revisit for a real build-id when caching matters. */
++   memset(device->driver_build_sha1, 0x5a, sizeof(device->driver_build_sha1));
++   memset(device->pipeline_cache_uuid, 0xb3, VK_UUID_SIZE);
++   memset(device->driver_uuid, 0xd5, VK_UUID_SIZE);
++   memset(device->device_uuid, 0xde, VK_UUID_SIZE);
++   return VK_SUCCESS;
++#else
+    const struct build_id_note *note =
+       build_id_find_nhdr_for_addr(init_uuids);
+    if (!note) {
+@@ -915,6 +928,7 @@ init_uuids(struct v3dv_physical_device *device)
+    memcpy(device->device_uuid, blake3, VK_UUID_SIZE);
+ 
+    return VK_SUCCESS;
++#endif /* __phoenix__ */
+ }
+ 
+ static void
+@@ -1473,6 +1487,16 @@ create_physical_device(struct v3dv_instance *instance,
+       drmFreeVersion(version);
+    }
+ 
++#if defined(__phoenix__)
++   /* The Phoenix-RTOS winsys submits synchronously (it blocks on FLDONE/FRDONE per
++    * job) and provides only no-op DRM syncobjs — there is no real syncobj/timeline
++    * backing for a threaded submit. is_shim selects exactly the no-threaded-submit
++    * path (queue_init + CreateDevice both gate vk_*_enable_*submit_thread on !is_shim),
++    * so force it true. Without this, threaded submit is enabled and the device-create
++    * noop-job submit waits forever on a syncobj that never signals (hang). */
++   device->is_shim = true;
++#endif
++
+    if (!v3d_get_device_info(device->render_fd, &device->devinfo, &v3d_ioctl)) {
+       result = vk_errorf(instance, VK_ERROR_INITIALIZATION_FAILED,
+                          "Failed to get info from device.");
+-- 
+2.53.0
+

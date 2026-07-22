@@ -1,0 +1,47 @@
+From 45b094e86201873a62a3f00ef6ac62eeb5ab5288 Mon Sep 17 00:00:00 2001
+From: JaeHoon Lee <dlwognsdc610@gmail.com>
+Date: Wed, 15 Jul 2026 11:43:52 +0900
+Subject: [PATCH 05/17] v3dv: record the no-op fragment shader with its Vulkan
+ stage bit
+
+Same as the previous commit: MESA_SHADER_FRAGMENT sets
+TESSELLATION_EVALUATION instead of FRAGMENT.
+
+Fixes: 02de1d9ab16f ("v3dv: add a no-op fragment shader if we don't have one")
+Reviewed-by: Iago Toral Quiroga <itoral@igalia.com>
+Part-of: <https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/42966>
+(cherry picked from commit fb7300c6da2b740b0605b1562fe569391f33be94)
+---
+ .pick_status.json                   | 2 +-
+ src/broadcom/vulkan/v3dv_pipeline.c | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/.pick_status.json b/.pick_status.json
+index 5b4ca422ca6..af6989bcb3b 100644
+--- a/.pick_status.json
++++ b/.pick_status.json
+@@ -154,7 +154,7 @@
+         "description": "v3dv: record the no-op fragment shader with its Vulkan stage bit",
+         "nominated": true,
+         "nomination_type": 2,
+-        "resolution": 0,
++        "resolution": 1,
+         "main_sha": null,
+         "because_sha": "02de1d9ab16f4818a9da29f96d222f19b11a106b",
+         "notes": null
+diff --git a/src/broadcom/vulkan/v3dv_pipeline.c b/src/broadcom/vulkan/v3dv_pipeline.c
+index d794f7da0e0..2fa8bd3e07c 100644
+--- a/src/broadcom/vulkan/v3dv_pipeline.c
++++ b/src/broadcom/vulkan/v3dv_pipeline.c
+@@ -2531,7 +2531,7 @@ pipeline_compile_graphics(struct v3dv_pipeline *pipeline,
+          p_atomic_inc_return(&physical_device->next_program_id);
+ 
+       pipeline->stages[BROADCOM_SHADER_FRAGMENT] = p_stage;
+-      pipeline->active_stages |= MESA_SHADER_FRAGMENT;
++      pipeline->active_stages |= VK_SHADER_STAGE_FRAGMENT_BIT;
+    }
+ 
+    /* If multiview is enabled, we inject a custom passthrough geometry shader
+-- 
+2.53.0
+
