@@ -219,6 +219,82 @@ improvement candidate: register + apply gamma in pl_phoenix_vid (GLSL post or 2D
 NOTE: classic Quake is dark by default and the user did NOT complain of darkness — so validate
 against host brightness, don't over-brighten.
 
+## Session 2026-07-22 (cont): r_alias_debug REVERTED — it tipped a latent GPU wedge
+
+Shipped an r_alias_debug diagnostic cvar (f12d397). On HW it dropped Quake to ~1.7fps with
+194 GPU wedges on demo1 — even at r_alias_debug 0 (the added code is INERT at 0). The
+known-good nocap build (nocap2 log) ran the SAME demo1 for 60+s at 21-45fps with ZERO wedges;
+same GPU libs. So the cvar caused a REGRESSION purely via memory-layout shift tipping a
+PRE-EXISTING, layout-sensitive GPU wedge. REVERTED (quakespasm 394342e); restored + verifying.
+
+**RESTORE CONFIRMED (2026-07-22):** reverted build re-verified on HW — demo1 ran at 18-45fps
+(healthy, matches nocap2) with only 1 wedge total (vs 194 with r_alias_debug) = the normal
+marginal background rate. Staged to NFS (r_alias_debug=0, capture=0). User's playable
+known-good state restored.
+
+**Wedge signature (real, latent bug):** RENDER TIMEOUT, ct1cs=0x220, ct1ca parks PAST rcl_end
+(e.g. 0x69f6680 vs rcl_end 0x69da1fc) inside the tile_alloc region, mmu_ill set (illegal VA),
+errstat=0x1000. => CT1 (render CL executor) follows a branch into a per-tile sublist that is
+STALE/GARBAGE/incomplete and wedges there; winsys mitigates with a ~594ms true-reset + drop
+frame (=> 1.7fps). mmu_ill differs per boot (0x8002b81b vs 0x8002b834) = the wild address
+lands in different runtime BO layout each boot; the TRIGGER is deterministic demo1 content.
+Root = binner(CT0)->render(CT1) tile-list coherency / overflow marginality. The winsys already
+mitigates + carefully flushes (l2t clean+wait, SLCACTL inval, MMU flush at submit-start), yet
+it's still marginal. Deep HW-coherency territory — risky to change blind.
+
+**LESSON (important):** do NOT ship Quake-side experimental cvars that add code to the alias /
+render HOT PATH — even inert-at-default code shifts libquakespasm layout and can tip this
+marginal wedge. Diagnose the geometry glitch via the capture-harness build (a SEPARATE test
+binary I run myself, keeping the user's known-good build staged) or on the winsys side, NOT by
+shipping the user live experimental render-path builds.
+
+**Likely glitch<->wedge relation:** the geometry glitch (wrong/missing triangles on small
+items/flames) and this wedge are plausibly the SAME marginal tile-list coherency in two
+severities: mild = a few tiles' sublists slightly wrong => wrong triangles; severe = a sublist
+branch is wild => full wedge. Fixing the binner->render coherency could address both — but the
+user's normal (non-layout-shifted) build does NOT wedge, so for THEM the glitch is the mild
+form only.
+
+## Session 2026-07-22: glitch is GEOMETRY corruption (not shading) — CORRECTED characterization
+
+User clarified: the primary problem is GEOMETRY, not shading. On specific models, some
+triangles that SHOULD be drawn are MISSING and some that should NOT appear DO — the shape is
+malformed. Looks like one of: wrong vertex PROCESSING ORDER, missing vertices, broken
+face-VISIBILITY (which side of a polygon is front/back), or skewed triangle assembly from
+vertices. Shading/texture-misposition is secondary/sometimes. Model-specific + LERP-INDEPENDENT.
+
+=> This is NOT lighting/fullbright/alpha. It is the MESH / vertex-fetch / index / winding /
+   VPM-VCM path in the V3D port. Candidate mechanisms (V3D-port divergence; generic Mesa v3d
+   is correct on Linux):
+   - VPM (Vertex Pipe Memory) / VCM batch sizing: the alias GLSL shader has FIVE vertex
+     attributes (TexCoords vec4 + Pose1/2 Vert vec4 + Pose1/2 Normal vec3). Heavy VPM input;
+     a sizing/num_vpm_rows bug corrupts geometry for models above some vertex count = "specific
+     models". (pre-stall Explore agent said "generic, fine" but also gave a refuted theory.)
+   - Large per-pose VBO OFFSET: GLARB_GetXYZOffset = pose * numverts_vbo * 8; many-frame or
+     high-vert models reach large offsets -> a truncation/stride bug scrambles those.
+   - Index (GL_UNSIGNED_SHORT) / winding / provoking-vertex / primitive-restart handling.
+   - Backface / EZ interaction per-model.
+   FIRST: re-examine EXISTING full-res captures for the exact breakage (cheap, no HW); then
+   identify which model/pose; then target. r_lerpmodels/r_alias_lerpmode confirmed no effect.
+
+## Session 2026-07-21: DECISIVE — glitch is LERP-INDEPENDENT + model-specific
+
+User on the no-capture build: performance OK, **FLICKER GONE**, fully playable + looks good.
+Remaining: small glitches on SOME SPECIFIC models. **r_lerpmodels AND r_alias_lerpmode have
+NO EFFECT on them.** => The entire 2-pose-interpolation hypothesis is DEAD (both cvars gate
+that path; neither changes the glitch). The bug is per-MODEL and lerp-independent.
+
+Candidate model-specific properties in the alias path (r_alias.c / gl_mesh.c) to investigate:
+- MF_HOLEY -> useAlphaTest uniform (alpha-tested skins, e.g. some pickups/grenades)
+- gl_fullbrights / fullbright-texel skins (useFullbrightTex + the fb texture)
+- gl_overbright_models scalar
+- per-model skin texture dims / non-power-of-2 / skingroups (animated skins)
+- specific normal sets hitting the V3D lit-term codegen (the 5e3ec37 lit-floor clamp is KEPT
+  and only rescues <=0 -> partial; a specific-model residual could still show here)
+Next: identify WHICH models glitch (ask user for a repro), + inspect these branches.
+The lit-floor (5e3ec37) is still the strongest standing lead for a lerp-INDEPENDENT
+lighting/normal codegen glitch on specific models.
+
 ## Session 2026-07-19: user feedback — capture harness slowed rendering; no-capture build
 
 User tested the netboot build (= the capture-harness config): ~7 fps + particles off,
