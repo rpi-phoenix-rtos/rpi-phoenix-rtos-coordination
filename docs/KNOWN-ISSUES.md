@@ -1,6 +1,6 @@
 # Known issues and limitations
 
-Open items in the Phoenix-RTOS Raspberry Pi 4 port, as of 2026-07-02. This is
+Open items in the Phoenix-RTOS Raspberry Pi 4 port, as of 2026-07-22. This is
 the user-facing summary; the exhaustive engineering registries are:
 
 - [docs/inprogress/pi4-hardware-support-matrix.md](inprogress/pi4-hardware-support-matrix.md)
@@ -17,7 +17,7 @@ These affect the showcase apps, not the base system.
 |---|---|---|
 | #64 | SD-side filesystem stack pressure under load (deep fs call chains). | Open. |
 | #66 | Stale `/tmp/.X0-lock` prevents the X server restarting after an unclean exit. | Open; remove `/tmp/.X0-lock` before relaunching the X server. |
-| #67 | Quake torch/flame rendering artifacts. | Open; cosmetic — gameplay unaffected. |
+| #67 | Quake model **geometry** glitch: on some small models — pickup **items** and **torch flames** most, monsters rarely — a few triangles render wrong/missing, malforming the shape (shading is secondary). Lerp-**independent** (`r_lerpmodels` / `r_alias_lerpmode` have no effect). Dynamic-model **flicker** (a separate, earlier symptom) is FIXED (`/dev/vcmbox` serialized mailbox, 2026-07-16). | Open; **cosmetic, gameplay unaffected**. Ruled out: backface-cull/winding (port winding matches upstream gl_vidsdl.c) and pose-interpolation. Leading hypothesis: marginal V3D **binner→render per-tile-list** generation on the alias path (same family as the latent GPU render wedge). Deferred to post-release. **Diagnose via the capture-harness build only** — adding code to the alias/render hot path shifts binary layout and can tip the marginal wedge (verified 2026-07-22). |
 | #68 | Quake multiplayer hangs at the `LOADING` screen. | Open; single-player and demos work. |
 | #69 | `xbill` exits silently instead of running. | Open; other Athena/X apps (xterm, xcalc, xedit) render fine. |
 | #70 | Dillo has no TLS/HTTPS support. | Open; plain-HTTP pages load; HTTPS is unavailable. |
