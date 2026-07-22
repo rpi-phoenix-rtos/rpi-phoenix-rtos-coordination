@@ -102,9 +102,24 @@ from `mesa-26.2.0-rc1` + coord patches. (Was 20; dropped vkquake + demoted mesa 
 - Commit these to coord and push coord LAST (so the published coord already points at the
   org).
 
+## 6b. GitHub FORK relationship (decided 2026-07-22)
+
+The 18 repos with upstreams are created as **GitHub forks** (provenance + server-side base
+copy + "N ahead" view), NOT plain repos:
+- `gh repo fork phoenix-rtos/<repo> --org rpi-phoenix-rtos --fork-name <repo>` for the 16
+  siblings + `libphoenix` + `plo`; `gh repo fork phoenix-rtos/lwip …`; `gh repo fork
+  sezero/quakespasm …`. Then add the fork as a remote and push our branch.
+- **Coordination repo** = `gh repo create rpi-phoenix-rtos/rpi-phoenix-rtos-coordination
+  --public` (NOT a fork — original work).
+- Caveat: `phoenix-rtos-lwip` history is rewritten by the wi-fi scrub, so its fork
+  ahead/behind graph diverges from the scrub point (force-push; cosmetic only). The `lwip`
+  LIBRARY fork is clean.
+- All upstreams verified PUBLIC + forkable; our HEADs are upstream-ancestor-clean.
+
 ## 6. Execution order (after approval)
 
-1. `gh repo create rpi-phoenix-rtos/<name> --public` for each of the 20 (or push-to-create).
+1. Create repos: `gh repo fork <upstream> --org rpi-phoenix-rtos` for the 18 (see §6b);
+   `gh repo create` for the coordination repo only.
 2. LICENSE/LICENSING.md verification pass (§4) — commit any fixes to each repo.
 3. Hygiene scan (§3.3) + build lwip filtered copy (§3.1) [+ coord if chosen §3.2].
 4. Add `org` remote to each repo; push `master`/`main` + tags. NOT `wifi-wip`.
