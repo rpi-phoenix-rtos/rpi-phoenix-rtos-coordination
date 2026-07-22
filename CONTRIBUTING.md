@@ -24,7 +24,7 @@ Each sibling repo is cloned with **two remotes**:
 | Remote | Points at | Use it for |
 |---|---|---|
 | `origin` | the Phoenix-RTOS upstream (`github.com/phoenix-rtos/<repo>`) | pulling upstream changes |
-| `fork` | the work fork (`github.com/houp/<repo>`) | pushing your work |
+| `fork` | the work fork (`github.com/rpi-phoenix-rtos/<repo>`) | pushing your work |
 
 > Note the convention is inverted from the common mental model: **`origin` is
 > upstream, `fork` is where you push.** This lets the same tree pull from
@@ -32,7 +32,7 @@ Each sibling repo is cloned with **two remotes**:
 > `git -C sources/<repo> pull origin`; push your branch with
 > `git -C sources/<repo> push fork <branch>`.
 
-The Pi 4 work forks live under [`github.com/houp/*`](https://github.com/houp).
+The Pi 4 work forks live under [`github.com/rpi-phoenix-rtos/*`](https://github.com/rpi-phoenix-rtos).
 All siblings currently track their `master` branch. Publishing (pushing) the
 forks public is a repo-owner action performed with the owner's GitHub access.
 

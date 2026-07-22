@@ -49,7 +49,7 @@ they are not required to build and flash.)
 ## Step 1 — Clone the coordination repo
 
 ```bash
-git clone https://github.com/houp/phoenix-rpi.git ~/phoenix-rpi
+git clone https://github.com/rpi-phoenix-rtos/rpi-phoenix-rtos-coordination.git ~/phoenix-rpi
 cd ~/phoenix-rpi
 ```
 
@@ -71,7 +71,7 @@ This is idempotent — safe to re-run if anything fails partway. It:
 
 1. Installs the host packages listed above (via `sudo apt-get`) plus `uv`.
 2. Clones the 16 Phoenix-RTOS sibling repos into `sources/<repo>/`, each wired
-   with `fork` = `github.com/houp/<repo>` and `origin` = the phoenix-rtos
+   with `fork` = `github.com/rpi-phoenix-rtos/<repo>` and `origin` = the phoenix-rtos
    upstream.
 3. Clones the build-required external deps (Mesa, Quakespasm, vkQuake) into
    `external/`, pinned to known-good commits.

@@ -28,7 +28,7 @@ Why this model is preferred:
 - local repo:
   - `/Users/witoldbolt/phoenix-rpi`
 - GitHub repo:
-  - <https://github.com/houp/phoenix-rpi>
+  - <https://github.com/rpi-phoenix-rtos/rpi-phoenix-rtos-coordination>
 - tracked branch:
   - local `main`
   - remote `origin/main`
@@ -45,15 +45,15 @@ published to personal forks.
 
 | Repo | Local path | Upstream `origin` | Personal fork | Local branch | Published fork branch |
 | --- | --- | --- | --- | --- | --- |
-| `libphoenix` | `/Users/witoldbolt/phoenix-rpi/sources/libphoenix` | <https://github.com/phoenix-rtos/libphoenix> | <https://github.com/houp/libphoenix> | `master` | `codex/rpi4-port` |
-| `phoenix-rtos-build` | `/Users/witoldbolt/phoenix-rpi/sources/phoenix-rtos-build` | <https://github.com/phoenix-rtos/phoenix-rtos-build> | <https://github.com/houp/phoenix-rtos-build> | `master` | `codex/rpi4-port` |
-| `phoenix-rtos-devices` | `/Users/witoldbolt/phoenix-rpi/sources/phoenix-rtos-devices` | <https://github.com/phoenix-rtos/phoenix-rtos-devices> | <https://github.com/houp/phoenix-rtos-devices> | `master` | `codex/rpi4-port` |
-| `phoenix-rtos-filesystems` | `/Users/witoldbolt/phoenix-rpi/sources/phoenix-rtos-filesystems` | <https://github.com/phoenix-rtos/phoenix-rtos-filesystems> | <https://github.com/houp/phoenix-rtos-filesystems> | `master` | `codex/rpi4-port` |
-| `phoenix-rtos-kernel` | `/Users/witoldbolt/phoenix-rpi/sources/phoenix-rtos-kernel` | <https://github.com/phoenix-rtos/phoenix-rtos-kernel> | <https://github.com/houp/phoenix-rtos-kernel> | `codex/common-aarch64-platform-makefiles` | `codex/rpi4-port` |
-| `phoenix-rtos-project` | `/Users/witoldbolt/phoenix-rpi/sources/phoenix-rtos-project` | <https://github.com/phoenix-rtos/phoenix-rtos-project> | <https://github.com/houp/phoenix-rtos-project> | `master` | `codex/rpi4-port` |
-| `phoenix-rtos-usb` | `/Users/witoldbolt/phoenix-rpi/sources/phoenix-rtos-usb` | <https://github.com/phoenix-rtos/phoenix-rtos-usb> | <https://github.com/houp/phoenix-rtos-usb> | `master` | `codex/rpi4-port` |
-| `phoenix-rtos-utils` | `/Users/witoldbolt/phoenix-rpi/sources/phoenix-rtos-utils` | <https://github.com/phoenix-rtos/phoenix-rtos-utils> | <https://github.com/houp/phoenix-rtos-utils> | `master` | `codex/rpi4-port` |
-| `plo` | `/Users/witoldbolt/phoenix-rpi/sources/plo` | <https://github.com/phoenix-rtos/plo> | <https://github.com/houp/plo> | `codex/common-aarch64-platform-makefiles` | `codex/rpi4-port` |
+| `libphoenix` | `/Users/witoldbolt/phoenix-rpi/sources/libphoenix` | <https://github.com/phoenix-rtos/libphoenix> | <https://github.com/rpi-phoenix-rtos/libphoenix> | `master` | `codex/rpi4-port` |
+| `phoenix-rtos-build` | `/Users/witoldbolt/phoenix-rpi/sources/phoenix-rtos-build` | <https://github.com/phoenix-rtos/phoenix-rtos-build> | <https://github.com/rpi-phoenix-rtos/phoenix-rtos-build> | `master` | `codex/rpi4-port` |
+| `phoenix-rtos-devices` | `/Users/witoldbolt/phoenix-rpi/sources/phoenix-rtos-devices` | <https://github.com/phoenix-rtos/phoenix-rtos-devices> | <https://github.com/rpi-phoenix-rtos/phoenix-rtos-devices> | `master` | `codex/rpi4-port` |
+| `phoenix-rtos-filesystems` | `/Users/witoldbolt/phoenix-rpi/sources/phoenix-rtos-filesystems` | <https://github.com/phoenix-rtos/phoenix-rtos-filesystems> | <https://github.com/rpi-phoenix-rtos/phoenix-rtos-filesystems> | `master` | `codex/rpi4-port` |
+| `phoenix-rtos-kernel` | `/Users/witoldbolt/phoenix-rpi/sources/phoenix-rtos-kernel` | <https://github.com/phoenix-rtos/phoenix-rtos-kernel> | <https://github.com/rpi-phoenix-rtos/phoenix-rtos-kernel> | `codex/common-aarch64-platform-makefiles` | `codex/rpi4-port` |
+| `phoenix-rtos-project` | `/Users/witoldbolt/phoenix-rpi/sources/phoenix-rtos-project` | <https://github.com/phoenix-rtos/phoenix-rtos-project> | <https://github.com/rpi-phoenix-rtos/phoenix-rtos-project> | `master` | `codex/rpi4-port` |
+| `phoenix-rtos-usb` | `/Users/witoldbolt/phoenix-rpi/sources/phoenix-rtos-usb` | <https://github.com/phoenix-rtos/phoenix-rtos-usb> | <https://github.com/rpi-phoenix-rtos/phoenix-rtos-usb> | `master` | `codex/rpi4-port` |
+| `phoenix-rtos-utils` | `/Users/witoldbolt/phoenix-rpi/sources/phoenix-rtos-utils` | <https://github.com/phoenix-rtos/phoenix-rtos-utils> | <https://github.com/rpi-phoenix-rtos/phoenix-rtos-utils> | `master` | `codex/rpi4-port` |
+| `plo` | `/Users/witoldbolt/phoenix-rpi/sources/plo` | <https://github.com/phoenix-rtos/plo> | <https://github.com/rpi-phoenix-rtos/plo> | `codex/common-aarch64-platform-makefiles` | `codex/rpi4-port` |
 
 ## Current Remote Convention
 
@@ -62,7 +62,7 @@ For the Phoenix sibling repositories that have published fork branches:
 - `origin`:
   official upstream Phoenix repo
 - `fork`:
-  personal `houp` fork
+  the `rpi-phoenix-rtos` org fork
 
 This convention should be preserved. Do not rename `origin` to the fork.
 
@@ -102,7 +102,7 @@ Examples:
 
 Before future publish work:
 
-- confirm GitHub account `houp` is still the intended fork owner
+- forks now live in the `rpi-phoenix-rtos` org (published 2026-07-22)
 - confirm each `fork` remote still points to the expected GitHub URL
 - confirm the long-running branch name is still meant to be
   `codex/rpi4-port`

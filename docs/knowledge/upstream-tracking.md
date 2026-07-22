@@ -17,11 +17,11 @@ frequently as it lands. **We do not push anything upstream** (no PRs, no
 Each sibling has two remotes:
 
 - `origin` → `github.com/phoenix-rtos/<repo>` — the canonical upstream we track.
-- `fork`   → `github.com/houp/<repo>` — the personal fork (eventual push target;
+- `fork`   → `github.com/rpi-phoenix-rtos/<repo>` — the personal fork (eventual push target;
   unused while we don't push). A few repos (e.g. lwip) only have `origin`.
 
 The coordination repo itself (this directory) is a separate repo on `main`
-tracking `github.com/houp/phoenix-rpi`; it is not part of the sibling sync.
+tracking `github.com/rpi-phoenix-rtos/rpi-phoenix-rtos-coordination`; it is not part of the sibling sync.
 
 ## Routine: pull upstream across all repos
 

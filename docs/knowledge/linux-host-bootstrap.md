@@ -51,7 +51,7 @@ Pi gets a lease at `10.42.0.12` and TFTPs the boot files from this same NIC.
    - Misc: `git`, `git-lfs`, `curl`, `jq`, `make`, `gh` (GitHub CLI, for issue/PR management)
 2. Clones the project layout to `~/phoenix-rpi/`:
    - The coord repo at `~/phoenix-rpi/`
-   - Each sibling at `~/phoenix-rpi/sources/<name>/`, with `fork` (houp/*) as default and `origin` pointing at upstream phoenix-rtos/*
+   - Each sibling at `~/phoenix-rpi/sources/<name>/`, with `fork` (rpi-phoenix-rtos/*) as default and `origin` pointing at upstream phoenix-rtos/*
 3. Downloads the Raspberry Pi firmware blobs (`start4.elf`, `fixup4.dat`,
    `bcm2711-rpi-4-b.dtb`, `overlays/miniuart-bt.dtbo`) into a staging
    directory; the build script later copies these into the netboot tree
@@ -140,7 +140,7 @@ mkdir -p ~/phoenix-rpi
 cd ~/phoenix-rpi
 
 # Grab just the bootstrap script — the rest follows
-curl -fsSL https://raw.githubusercontent.com/houp/phoenix-rpi/main/scripts/bootstrap-linux-host.sh -o bootstrap-linux-host.sh
+curl -fsSL https://raw.githubusercontent.com/rpi-phoenix-rtos/rpi-phoenix-rtos-coordination/main/scripts/bootstrap-linux-host.sh -o bootstrap-linux-host.sh
 chmod +x bootstrap-linux-host.sh
 ./bootstrap-linux-host.sh
 ```

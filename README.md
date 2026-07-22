@@ -18,7 +18,7 @@ Window Maker, a web browser, and **GLQuake on the V3D GPU**.
 On a fresh Ubuntu x86_64 machine, from an empty directory:
 
 ```bash
-git clone https://github.com/houp/phoenix-rpi.git ~/phoenix-rpi
+git clone https://github.com/rpi-phoenix-rtos/rpi-phoenix-rtos-coordination.git ~/phoenix-rpi
 cd ~/phoenix-rpi
 ./scripts/bootstrap-linux-host.sh            # installs deps, clones sources, builds the toolchain
 ./scripts/rebuild-rpi4b-fast.sh --variant sd # builds artifacts/rpi4b/rpi4b-sd-2part.img
@@ -40,7 +40,7 @@ and the Quake **shareware** game data is fetched over the network.
 mkdir -p out
 # 1. build the image (clones all sources, builds the cross toolchain, builds the SD image)
 docker build -t phoenix-rpi \
-  https://raw.githubusercontent.com/houp/phoenix-rpi/main/Dockerfile
+  https://raw.githubusercontent.com/rpi-phoenix-rtos/rpi-phoenix-rtos-coordination/main/Dockerfile
 # 2. export the finished SD-card image to ./out/
 docker run --rm -v "$PWD/out":/out phoenix-rpi
 # -> ./out/rpi4b-sd-2part.img   (flash it exactly like the native build)
@@ -113,7 +113,7 @@ phoenix-rpi/                     this coordination repo — docs, scripts, manif
 
 The sibling repos under `sources/` are separate git repositories, not
 submodules. Each has `origin` pointing at the phoenix-rtos upstream and `fork`
-pointing at the `houp/*` work fork — see [CONTRIBUTING.md](CONTRIBUTING.md).
+pointing at the `rpi-phoenix-rtos/*` work fork — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Documentation
 
