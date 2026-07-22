@@ -66,6 +66,14 @@ static inline float  log2f(float x){ return (float)log2((double)x); }
 #else /* __cplusplus: <cmath> provides exp/log/log2/round but Phoenix's lacks the
        * rint/lrint/fmax/fmin family — define just those (no extern conflicts). */
 #include <cmath>
+/* These fallbacks were needed when Phoenix's C++ <cmath>/math.h lacked the
+ * rint/lrint/fmax/fmin/copysign/exp2f/log2f family. After the libmcs libm merge,
+ * libphoenix's math.h (guard macro LIBMCS_MATH_H, pulled in by <cmath> above)
+ * PROVIDES all of them as `extern`, so re-declaring them here `static inline`
+ * is a hard C++ error ("'float rintf(float)' was declared 'extern' and later
+ * 'static'") that drops the whole state_tracker/glsl .cpp sweep out of libGL.
+ * Skip the fallbacks when libmcs is present; keep them for a pre-libmcs toolchain. */
+#ifndef LIBMCS_MATH_H
 static inline float  rintf(float f){ return (float)(f<0.0f?-(long long)(0.5f-f):(long long)(f+0.5f)); }
 static inline double rint(double d){ return (double)(d<0.0?-(long long)(0.5-d):(long long)(d+0.5)); }
 static inline long   lrintf(float f){ return (long)rintf(f); }
@@ -80,6 +88,7 @@ static inline double copysign(double x,double y){ return (y<0.0)?-( x<0.0?-x:x )
  * these (adding expf/logf would conflict with the existing declarations). */
 static inline float  exp2f(float x){ return (float)exp((double)x*0.6931471805599453); }
 static inline float  log2f(float x){ return (float)log2((double)x); }
+#endif /* !LIBMCS_MATH_H */
 #endif /* !__cplusplus */
 
 
