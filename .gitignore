@@ -58,3 +58,6 @@ session-id-cl
 
 # git-filter-repo tool venv (release tooling)
 .venv-filter/
+
+# fresh toolchain rebuild (release-blocker #27 verification; separate from working .toolchain/)
+.toolchain-fresh/
