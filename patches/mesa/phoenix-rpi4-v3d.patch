@@ -1,0 +1,1112 @@
+diff --git a/.pick_status.json b/.pick_status.json
+new file mode 100644
+index 00000000000..3cf87023a69
+--- /dev/null
++++ b/.pick_status.json
+@@ -0,0 +1,212 @@
++[
++    {
++        "sha": "d021138b4100bf1dc876e930645f3a382d1ed78d",
++        "description": "anv: hide Intel vendor ID for Cyberpunk",
++        "nominated": false,
++        "nomination_type": 0,
++        "resolution": 1,
++        "main_sha": null,
++        "because_sha": null,
++        "notes": null
++    },
++    {
++        "sha": "1be67a7d22c33095381206dcecda9a0c26980b26",
++        "description": "nir/opt_vectorize: handle commutative ALU sources",
++        "nominated": false,
++        "nomination_type": 0,
++        "resolution": 4,
++        "main_sha": null,
++        "because_sha": null,
++        "notes": null
++    },
++    {
++        "sha": "05f9f41fc294f6adb6d9b8ffed9a801bb232f40e",
++        "description": "nv50_ir_ra: align B96 spill slots to vec4",
++        "nominated": true,
++        "nomination_type": 2,
++        "resolution": 1,
++        "main_sha": null,
++        "because_sha": "d12e16fc3b5217613aa077f5f3418f16cf5cb824",
++        "notes": null
++    },
++    {
++        "sha": "f449a3ae575910ab6ee06d9607d2ffcdf442aae2",
++        "description": "freedreno/a6xx: Split VS driver params",
++        "nominated": false,
++        "nomination_type": 0,
++        "resolution": 4,
++        "main_sha": null,
++        "because_sha": null,
++        "notes": null
++    },
++    {
++        "sha": "df806d864a8a0f5e2961e3c8fcaea830634c674d",
++        "description": "freedreno/a6xx: Split driver UBO upload and emit",
++        "nominated": false,
++        "nomination_type": 0,
++        "resolution": 4,
++        "main_sha": null,
++        "because_sha": null,
++        "notes": null
++    },
++    {
++        "sha": "cbf6697c550584d5cc31386a19d2552ecb0d3302",
++        "description": "freedreno: Remove VS driver param patching",
++        "nominated": false,
++        "nomination_type": 0,
++        "resolution": 4,
++        "main_sha": null,
++        "because_sha": null,
++        "notes": null
++    },
++    {
++        "sha": "03bd1ff924b5474d2788e1e0406a659078fa3e80",
++        "description": "kraid/nir: Implement 64-bit integer comparisons",
++        "nominated": false,
++        "nomination_type": 0,
++        "resolution": 4,
++        "main_sha": null,
++        "because_sha": null,
++        "notes": null
++    },
++    {
++        "sha": "9a18efb87eeffe052389c25b38c214bdf975856e",
++        "description": "kraid: Add OpICmpMulti and plumb it through",
++        "nominated": false,
++        "nomination_type": 0,
++        "resolution": 4,
++        "main_sha": null,
++        "because_sha": null,
++        "notes": null
++    },
++    {
++        "sha": "48c8b0b1e5d18e56b24376944acba3931f230e7a",
++        "description": "kraid: Rework comparison folding",
++        "nominated": false,
++        "nomination_type": 0,
++        "resolution": 4,
++        "main_sha": null,
++        "because_sha": null,
++        "notes": null
++    },
++    {
++        "sha": "e906eb87cd19b9c426913170100c11fcc43070b6",
++        "description": "kraid/nir: Implement 64-bit integer down-conversions",
++        "nominated": false,
++        "nomination_type": 0,
++        "resolution": 4,
++        "main_sha": null,
++        "because_sha": null,
++        "notes": null
++    },
++    {
++        "sha": "54b8ab7e28b1bc0bad5b169df4ef94e95992d133",
++        "description": "pan/nir: Cast 64-bit comparison results to 32 bits",
++        "nominated": false,
++        "nomination_type": 0,
++        "resolution": 4,
++        "main_sha": null,
++        "because_sha": null,
++        "notes": null
++    },
++    {
++        "sha": "259470dbad8b43e55046f0dfbbd1d3fe6944ea34",
++        "description": "pan/nir: Use a single ALU op switch in lower_bool_to_bitsize",
++        "nominated": false,
++        "nomination_type": 0,
++        "resolution": 4,
++        "main_sha": null,
++        "because_sha": null,
++        "notes": null
++    },
++    {
++        "sha": "ed41cf233f1ae4aaba14d521de30345b52f23983",
++        "description": "mediafoundation: fix shadow variable in stats_buffer_manager.cpp, also remove using namespace std to avoid collision",
++        "nominated": false,
++        "nomination_type": 0,
++        "resolution": 4,
++        "main_sha": null,
++        "because_sha": null,
++        "notes": null
++    },
++    {
++        "sha": "6e786bed04314899f92e8f928fcd9874b0fbb66c",
++        "description": "mediafoundation: fix drain/flush when running ProcessDX12Context outside of m_lock, and allocator/buffer pool release.",
++        "nominated": false,
++        "nomination_type": 0,
++        "resolution": 4,
++        "main_sha": null,
++        "because_sha": null,
++        "notes": null
++    },
++    {
++        "sha": "0b3f2666029d6296cc4f9fcccbe71bbfabe4fcb7",
++        "description": "mesa: fix variable shadowing",
++        "nominated": false,
++        "nomination_type": 0,
++        "resolution": 4,
++        "main_sha": null,
++        "because_sha": null,
++        "notes": null
++    },
++    {
++        "sha": "fb7300c6da2b740b0605b1562fe569391f33be94",
++        "description": "v3dv: record the no-op fragment shader with its Vulkan stage bit",
++        "nominated": true,
++        "nomination_type": 2,
++        "resolution": 1,
++        "main_sha": null,
++        "because_sha": "02de1d9ab16f4818a9da29f96d222f19b11a106b",
++        "notes": null
++    },
++    {
++        "sha": "1d9201e377eb6f595c83d68757b054818bd4176a",
++        "description": "v3dv: record the multiview geometry shader with its Vulkan stage bit",
++        "nominated": true,
++        "nomination_type": 2,
++        "resolution": 1,
++        "main_sha": null,
++        "because_sha": "5872c7ca7ba79f5e5bf8824ee474b30fa9c12948",
++        "notes": null
++    },
++    {
++        "sha": "771dfe55fcb62b62212b418d7f702ab8d42ea07e",
++        "description": "v3dv: use the binning VS variant for the binning VPM config",
++        "nominated": true,
++        "nomination_type": 2,
++        "resolution": 1,
++        "main_sha": null,
++        "because_sha": "9e7d9a6efb6714848ea05209950e910fd7efe446",
++        "notes": null
++    },
++    {
++        "sha": "9d534e38a2e20d1076e2dbd4b82d8c9e6b65e932",
++        "description": "v3dv: make room in the descriptor map for the no-sampler entries",
++        "nominated": true,
++        "nomination_type": 2,
++        "resolution": 1,
++        "main_sha": null,
++        "because_sha": "fc17231b2b4eb2e24506db289cf89978779d9204",
++        "notes": null
++    },
++    {
++        "sha": "6895c0736ac7201889f85e1ff720f6c2fe7943ff",
++        "description": "docs: reset new_features.txt",
++        "nominated": false,
++        "nomination_type": 0,
++        "resolution": 4,
++        "main_sha": null,
++        "because_sha": null,
++        "notes": null
++    },
++    {
++        "sha": "06272731414da4e0206d9ed52ec32b0ba560c96c",
++        "description": "VERSION: bump to 26.3",
++        "nominated": false,
++        "nomination_type": 0,
++        "resolution": 4,
++        "main_sha": null,
++        "because_sha": null,
++        "notes": null
++    }
++]
+\ No newline at end of file
+diff --git a/include/renderdoc_app.h b/include/renderdoc_app.h
+index b2d10c5e2d2..c19305b198f 100644
+--- a/include/renderdoc_app.h
++++ b/include/renderdoc_app.h
+@@ -39,6 +39,8 @@
+ #define RENDERDOC_CC
+ #elif defined(__APPLE__)
+ #define RENDERDOC_CC
++#elif defined(__phoenix__) || defined(__unix__)
++#define RENDERDOC_CC
+ #else
+ #error "Unknown platform"
+ #endif
+diff --git a/src/broadcom/vulkan/v3dv_bo.c b/src/broadcom/vulkan/v3dv_bo.c
+index 1417dda7212..0b090e4100b 100644
+--- a/src/broadcom/vulkan/v3dv_bo.c
++++ b/src/broadcom/vulkan/v3dv_bo.c
+@@ -295,6 +295,13 @@ v3dv_bo_map_unsynchronized(struct v3dv_device *device,
+       return false;
+    }
+ 
++#if defined(__phoenix__)
++   /* Phoenix has no V3D kernel DRM driver: the in-process winsys (phoenix_v3d_ioctl in
++    * v3d_phoenix_winsys.c) backs every BO with uncached, flat-MMU-mapped host memory and
++    * returns the BO's already-mapped CPU virtual address as map.offset. There is no
++    * separate kernel mmap to perform — use the returned address directly. */
++   bo->map = (void *)(uintptr_t)map.offset;
++#else
+    bo->map = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED,
+                   device->pdevice->render_fd, map.offset);
+    if (bo->map == MAP_FAILED) {
+@@ -302,6 +309,7 @@ v3dv_bo_map_unsynchronized(struct v3dv_device *device,
+                 bo->handle, (long long)map.offset, (uint32_t)bo->size);
+       return false;
+    }
++#endif
+    VG(VALGRIND_MALLOCLIKE_BLOCK(bo->map, bo->size, 0, false));
+ 
+    bo->map_size = size;
+@@ -346,7 +354,12 @@ v3dv_bo_unmap(struct v3dv_device *device, struct v3dv_bo *bo)
+ {
+    assert(bo && bo->map && bo->map_size > 0);
+ 
++#if defined(__phoenix__)
++   /* The winsys owns the BO's mapping (it is freed by GEM_CLOSE -> ioc_close_bo); the va
++    * here was not produced by libc mmap(), so there is nothing to munmap. */
++#else
+    munmap(bo->map, bo->map_size);
++#endif
+    VG(VALGRIND_FREELIKE_BLOCK(bo->map, 0));
+    bo->map = NULL;
+    bo->map_size = 0;
+diff --git a/src/broadcom/vulkan/v3dv_cmd_buffer.c b/src/broadcom/vulkan/v3dv_cmd_buffer.c
+index 4db0298232d..cd1dabe1531 100644
+--- a/src/broadcom/vulkan/v3dv_cmd_buffer.c
++++ b/src/broadcom/vulkan/v3dv_cmd_buffer.c
+@@ -521,6 +521,22 @@ v3dv_job_start_frame(struct v3dv_job *job,
+ {
+    assert(job);
+ 
++#if defined(__phoenix__)
++   /* Diagnostic: a frame started with a zero dimension yields zero tiles, a
++    * zero-size tile-state BO (NULL), and a NULL deref at submit time. Name the
++    * source once so the offending op (render area vs meta copy/clear/blit) is
++    * identifiable from a boot log. cmd_buffer == NULL marks the device noop job. */
++   if (width == 0 || height == 0 || layers == 0) {
++      static bool warned_zero = false;
++      if (!warned_zero) {
++         mesa_logw("v3dv: v3dv_job_start_frame with zero dimension "
++                   "(w=%u h=%u layers=%u, cmd_buffer=%p) -> no tile state\n",
++                   width, height, layers, (void *)job->cmd_buffer);
++         warned_zero = true;
++      }
++   }
++#endif
++
+    /* Start by computing frame tiling spec for this job assuming that
+     * double-buffer mode is disabled.
+     */
+diff --git a/src/broadcom/vulkan/v3dv_descriptor_set.h b/src/broadcom/vulkan/v3dv_descriptor_set.h
+index aa70cfea1b3..388451e1ed7 100644
+--- a/src/broadcom/vulkan/v3dv_descriptor_set.h
++++ b/src/broadcom/vulkan/v3dv_descriptor_set.h
+@@ -202,6 +202,12 @@ v3dv_descriptor_set_layout_unref(struct v3dv_device *device,
+       v3dv_descriptor_set_layout_destroy(device, set_layout);
+ }
+ 
++/* Number of entries the sampler map reserves for the "no sampler" cases, see
++ * V3DV_NO_SAMPLER_16BIT_IDX below. They are added before any real sampler, so
++ * the sampler map needs room for them on top of V3D_MAX_TEXTURE_SAMPLERS.
++ */
++#define V3DV_NUM_NO_SAMPLER_IDX 2
++
+ /*
+  * We are using descriptor maps for ubo/ssbo and texture/samplers, so we need
+  * it to be big enough to include the max value for all of them.
+@@ -209,7 +215,8 @@ v3dv_descriptor_set_layout_unref(struct v3dv_device *device,
+  * FIXME: one alternative would be to allocate the map as big as you need for
+  * each descriptor type. That would means more individual allocations.
+  */
+-#define DESCRIPTOR_MAP_SIZE MAX3(V3D_MAX_TEXTURE_SAMPLERS,                         \
++#define DESCRIPTOR_MAP_SIZE MAX3(V3D_MAX_TEXTURE_SAMPLERS +                        \
++                                 V3DV_NUM_NO_SAMPLER_IDX,                          \
+                                  MAX_UNIFORM_BUFFERS + MAX_INLINE_UNIFORM_BUFFERS, \
+                                  MAX_STORAGE_BUFFERS)
+ 
+diff --git a/src/broadcom/vulkan/v3dv_device.c b/src/broadcom/vulkan/v3dv_device.c
+index 2ee6acafc7f..26a0ce26109 100644
+--- a/src/broadcom/vulkan/v3dv_device.c
++++ b/src/broadcom/vulkan/v3dv_device.c
+@@ -693,6 +693,13 @@ v3dv_CreateInstance(const VkInstanceCreateInfo *pCreateInfo,
+ 
+    v3d_process_debug_variable();
+ 
++   /* Phoenix no-WSI fb0 winsys: the TFU (texture formatting unit) buffer->image / image->image
++    * copy path is now implemented in the winsys (v3d_phoenix_winsys.c ioc_submit_tfu, the
++    * DRM_V3D_SUBMIT_TFU ioctl), so V3DV uses its preferred hardware TFU copy for TILED/OPTIMAL
++    * texture uploads, blits and mipmap generation — no DISABLE_TFU override is needed. (It was
++    * previously forced on because the winsys's ioctl dispatch ended `default: return 0`, making
++    * every TFU job a silent no-op, so every sampled texture rendered black — #29.) */
++
+    instance->vk.physical_devices.enumerate = enumerate_devices;
+    instance->vk.physical_devices.destroy = destroy_physical_device;
+ 
+@@ -864,6 +871,19 @@ device_has_expected_features(struct v3dv_physical_device *device)
+ static VkResult
+ init_uuids(struct v3dv_physical_device *device)
+ {
++#if defined(__phoenix__)
++   /* Phoenix first-light: no .note.gnu.build-id is resolvable on the statically-
++    * loaded image, and the upstream build_id_data()+blake3 path dereferences a
++    * synthetic note header -> wild pointer -> fault. These UUIDs only gate pipeline-
++    * cache validity and cross-process memory sharing, neither of which is used at
++    * first light (no persistent cache, single process). Use fixed dummy UUIDs so
++    * device-create succeeds; revisit for a real build-id when caching matters. */
++   memset(device->driver_build_sha1, 0x5a, sizeof(device->driver_build_sha1));
++   memset(device->pipeline_cache_uuid, 0xb3, VK_UUID_SIZE);
++   memset(device->driver_uuid, 0xd5, VK_UUID_SIZE);
++   memset(device->device_uuid, 0xde, VK_UUID_SIZE);
++   return VK_SUCCESS;
++#else
+    const struct build_id_note *note =
+       build_id_find_nhdr_for_addr(init_uuids);
+    if (!note) {
+@@ -915,6 +935,7 @@ init_uuids(struct v3dv_physical_device *device)
+    memcpy(device->device_uuid, blake3, VK_UUID_SIZE);
+ 
+    return VK_SUCCESS;
++#endif /* __phoenix__ */
+ }
+ 
+ static void
+@@ -1400,6 +1421,12 @@ get_device_properties(const struct v3dv_physical_device *device,
+ 
+ }
+ 
++#if defined(__phoenix__)
++/* Inert render-fd token for the Phoenix winsys (no /dev/dri node). Any value works;
++ * phoenix_v3d_ioctl ignores the fd. Nonzero so it never looks like a closed fd. */
++#define V3DV_PHOENIX_FAKE_RENDER_FD 0x763364 /* 'v3d' */
++#endif
++
+ static VkResult
+ create_physical_device(struct v3dv_instance *instance,
+                        int32_t primary_fd, int32_t render_fd,
+@@ -1426,6 +1453,14 @@ create_physical_device(struct v3dv_instance *instance,
+    if (result != VK_SUCCESS)
+       goto fail;
+ 
++#if defined(__phoenix__)
++   /* No /dev/dri nodes to stat on Phoenix; the render fd is an inert token routed to
++    * phoenix_v3d_ioctl. Synthesize device ids so init can proceed. */
++   (void)primary_fd;
++   device->has_primary = false;
++   device->has_render = true;
++   device->render_devid = 0;
++#else
+    struct stat primary_stat = {0}, render_stat = {0};
+    if (fstat(primary_fd, &primary_stat) != 0) {
+       result = vk_errorf(instance, VK_ERROR_INITIALIZATION_FAILED,
+@@ -1443,6 +1478,7 @@ create_physical_device(struct v3dv_instance *instance,
+ 
+    device->has_render = true;
+    device->render_devid = render_stat.st_rdev;
++#endif
+ 
+ #if USE_V3D_SIMULATOR
+    device->sim_file = v3d_simulator_init(render_fd);
+@@ -1458,6 +1494,16 @@ create_physical_device(struct v3dv_instance *instance,
+       drmFreeVersion(version);
+    }
+ 
++#if defined(__phoenix__)
++   /* The Phoenix-RTOS winsys submits synchronously (it blocks on FLDONE/FRDONE per
++    * job) and provides only no-op DRM syncobjs — there is no real syncobj/timeline
++    * backing for a threaded submit. is_shim selects exactly the no-threaded-submit
++    * path (queue_init + CreateDevice both gate vk_*_enable_*submit_thread on !is_shim),
++    * so force it true. Without this, threaded submit is enabled and the device-create
++    * noop-job submit waits forever on a syncobj that never signals (hang). */
++   device->is_shim = true;
++#endif
++
+    if (!v3d_get_device_info(device->render_fd, &device->devinfo, &v3d_ioctl)) {
+       result = vk_errorf(instance, VK_ERROR_INITIALIZATION_FAILED,
+                          "Failed to get info from device.");
+@@ -1685,6 +1731,15 @@ enumerate_devices(struct vk_instance *vk_instance)
+    struct v3dv_instance *instance =
+       container_of(vk_instance, struct v3dv_instance, vk);
+ 
++#if defined(__phoenix__)
++   /* Phoenix-RTOS (RPi4 V3DV port): there is no /dev/dri node and no real libdrm
++    * device enumeration. The Phoenix winsys (tools/v3d-driver-port/) routes every
++    * v3d ioctl through phoenix_v3d_ioctl regardless of fd, so the render fd is an
++    * inert token. Bypass the drmGetDevices2 scan and create the physical device
++    * directly. primary/display fd = -1 (no KMS; the custom /dev/fb0 swapchain at
++    * Tier 4 handles present). See docs/inprogress/2026-06-17-vulkan-v3dv-tier0-progress.md. */
++   return create_physical_device(instance, -1, V3DV_PHOENIX_FAKE_RENDER_FD, -1);
++#else
+    /* FIXME: Check for more devices? */
+    drmDevicePtr devices[8];
+    int max_devices;
+@@ -1746,6 +1801,7 @@ enumerate_devices(struct vk_instance *vk_instance)
+    drmFreeDevices(devices, max_devices);
+ 
+    return result;
++#endif /* !__phoenix__ */
+ }
+ 
+ uint32_t
+diff --git a/src/broadcom/vulkan/v3dv_meta_copy.c b/src/broadcom/vulkan/v3dv_meta_copy.c
+index f43181cb394..a31c2ba1b10 100644
+--- a/src/broadcom/vulkan/v3dv_meta_copy.c
++++ b/src/broadcom/vulkan/v3dv_meta_copy.c
+@@ -1943,6 +1943,10 @@ copy_buffer_image_tfu(struct v3dv_cmd_buffer *cmd_buffer,
+     */
+    if (cmd_buffer->device->devinfo.ver < 71 &&
+        (to_buffer || !image->tiled)) {
++#if defined(__phoenix__)
++      fprintf(stderr, "v3dv: TFU declined (ver<71 %s)\n",
++              to_buffer ? "image->buffer" : "non-tiled dst");
++#endif
+       return false;
+    }
+ 
+@@ -1961,8 +1965,12 @@ copy_buffer_image_tfu(struct v3dv_cmd_buffer *cmd_buffer,
+    /* Region must include full slice */
+    const uint32_t offset_x = region->imageOffset.x;
+    const uint32_t offset_y = region->imageOffset.y;
+-   if (offset_x != 0 || offset_y != 0)
++   if (offset_x != 0 || offset_y != 0) {
++#if defined(__phoenix__)
++      fprintf(stderr, "v3dv: TFU declined (imageOffset %u,%u != 0,0)\n", offset_x, offset_y);
++#endif
+       return false;
++   }
+ 
+    uint32_t width, height;
+    if (region->bufferRowLength == 0)
+@@ -1995,6 +2003,11 @@ copy_buffer_image_tfu(struct v3dv_cmd_buffer *cmd_buffer,
+     */
+    if (region->imageExtent.width != slice->width ||
+        region->imageExtent.height != slice->height) {
++#if defined(__phoenix__)
++      fprintf(stderr, "v3dv: TFU declined (region %ux%u != slice %ux%u — not full slice)\n",
++              region->imageExtent.width, region->imageExtent.height,
++              slice->width, slice->height);
++#endif
+       return false;
+    }
+ 
+@@ -3404,12 +3417,46 @@ v3dv_CmdCopyBufferToImage2(VkCommandBuffer commandBuffer,
+        * where we are copying full images, since they should be the fastest.
+        */
+       uint32_t batch_size = 1;
++#if defined(__phoenix__)
++      /* Phoenix copy-path tracer (#29): the prior boot showed every region as 0x1 / 1x0
++       * (degenerate), so the copy uploads no pixels and textures sample black. Disambiguate
++       * a real zero-extent from a logging/struct artifact by printing ALL of: region extent
++       * (w,h,d), region imageOffset (x,y,z), and the DESTINATION IMAGE's own created extent
++       * (image->vk.extent) + mip0 slice dims. If the image is 128x128 but the region extent
++       * is 0 -> the VkBufferImageCopy region is built/marshalled wrong (vkQuake side or the
++       * legacy->2 trampoline); if the image itself is 0x1 -> an image-creation bug. */
++      {
++         const struct v3d_resource_slice *s0 = &image->planes[0].slices[
++            info->pRegions[r].imageSubresource.mipLevel];
++         fprintf(stderr, "v3dv: CmdCopyBufferToImage region %u/%u extent=%ux%ux%u off=%d,%d,%d "
++                 "buf(off=%llu rowlen=%u imgh=%u) | IMAGE create=%ux%ux%u type=%u fmt=%u tiled=%d "
++                 "slice0=%ux%u -> trying TFU\n",
++                 r, info->regionCount,
++                 info->pRegions[r].imageExtent.width, info->pRegions[r].imageExtent.height,
++                 info->pRegions[r].imageExtent.depth,
++                 info->pRegions[r].imageOffset.x, info->pRegions[r].imageOffset.y,
++                 info->pRegions[r].imageOffset.z,
++                 (unsigned long long)info->pRegions[r].bufferOffset,
++                 info->pRegions[r].bufferRowLength, info->pRegions[r].bufferImageHeight,
++                 image->vk.extent.width, image->vk.extent.height, image->vk.extent.depth,
++                 image->vk.image_type, image->vk.format, image->tiled,
++                 s0->width, s0->height);
++      }
++#endif
+       if (copy_buffer_image_tfu(cmd_buffer, image, buffer, &info->pRegions[r],
+-                                false /* to_buffer */))
++                                false /* to_buffer */)) {
++#if defined(__phoenix__)
++         fprintf(stderr, "v3dv: CmdCopyBufferToImage region %u -> path=TFU\n", r);
++#endif
+          goto handled;
++      }
+ 
+-      if (copy_buffer_to_image_tlb(cmd_buffer, image, buffer, &info->pRegions[r]))
++      if (copy_buffer_to_image_tlb(cmd_buffer, image, buffer, &info->pRegions[r])) {
++#if defined(__phoenix__)
++         fprintf(stderr, "v3dv: CmdCopyBufferToImage region %u -> path=TLB\n", r);
++#endif
+          goto handled;
++      }
+ 
+       /* Otherwise, we are copying subrects, so we fallback to copying
+        * via shader and texel buffers and we try to batch the regions
+@@ -3439,6 +3486,9 @@ v3dv_CmdCopyBufferToImage2(VkCommandBuffer commandBuffer,
+ 
+       if (copy_buffer_to_image_shader(cmd_buffer, image, buffer,
+                                       batch_size, &info->pRegions[r], true)) {
++#if defined(__phoenix__)
++         fprintf(stderr, "v3dv: CmdCopyBufferToImage region %u -> path=SHADER(texel)\n", r);
++#endif
+          goto handled;
+       }
+ 
+@@ -3450,6 +3500,9 @@ v3dv_CmdCopyBufferToImage2(VkCommandBuffer commandBuffer,
+        */
+       if (copy_buffer_to_image_shader(cmd_buffer, image, buffer,
+                                       batch_size, &info->pRegions[r], false)) {
++#if defined(__phoenix__)
++         fprintf(stderr, "v3dv: CmdCopyBufferToImage region %u -> path=SHADER(blit)\n", r);
++#endif
+          goto handled;
+       }
+ 
+diff --git a/src/broadcom/vulkan/v3dv_pipeline.c b/src/broadcom/vulkan/v3dv_pipeline.c
+index e62ce49b94a..2fa8bd3e07c 100644
+--- a/src/broadcom/vulkan/v3dv_pipeline.c
++++ b/src/broadcom/vulkan/v3dv_pipeline.c
+@@ -1813,7 +1813,8 @@ pipeline_lower_nir(struct v3dv_pipeline *pipeline,
+     * shader doesn't need any other samplers, get rid of them so we can
+     * recognize that this program doesn't use any samplers at all.
+     */
+-   if (!needs_default_sampler_state && maps->sampler_map.num_desc == 2)
++   if (!needs_default_sampler_state &&
++       maps->sampler_map.num_desc == V3DV_NUM_NO_SAMPLER_IDX)
+       maps->sampler_map.num_desc = 0;
+ 
+    p_stage->feedback.duration += os_time_get_nano() - stage_start;
+@@ -2393,7 +2394,7 @@ pipeline_add_multiview_gs(struct v3dv_pipeline *pipeline,
+ 
+    pipeline->has_gs = true;
+    pipeline->stages[BROADCOM_SHADER_GEOMETRY] = p_stage;
+-   pipeline->active_stages |= MESA_SHADER_GEOMETRY;
++   pipeline->active_stages |= VK_SHADER_STAGE_GEOMETRY_BIT;
+ 
+    pipeline->stages[BROADCOM_SHADER_GEOMETRY_BIN] =
+       pipeline_stage_create_binning(p_stage, pAllocator);
+@@ -2530,7 +2531,7 @@ pipeline_compile_graphics(struct v3dv_pipeline *pipeline,
+          p_atomic_inc_return(&physical_device->next_program_id);
+ 
+       pipeline->stages[BROADCOM_SHADER_FRAGMENT] = p_stage;
+-      pipeline->active_stages |= MESA_SHADER_FRAGMENT;
++      pipeline->active_stages |= VK_SHADER_STAGE_FRAGMENT_BIT;
+    }
+ 
+    /* If multiview is enabled, we inject a custom passthrough geometry shader
+@@ -2689,7 +2690,7 @@ compute_vpm_config(struct v3dv_pipeline *pipeline)
+    struct v3dv_shader_variant *vs_variant =
+       pipeline->shared_data->variants[BROADCOM_SHADER_VERTEX];
+    struct v3dv_shader_variant *vs_bin_variant =
+-      pipeline->shared_data->variants[BROADCOM_SHADER_VERTEX];
++      pipeline->shared_data->variants[BROADCOM_SHADER_VERTEX_BIN];
+    struct v3d_vs_prog_data *vs = vs_variant->prog_data.vs;
+    struct v3d_vs_prog_data *vs_bin =vs_bin_variant->prog_data.vs;
+ 
+diff --git a/src/broadcom/vulkan/v3dv_queue.c b/src/broadcom/vulkan/v3dv_queue.c
+index d1b2e4d0c97..fbce1015a3d 100644
+--- a/src/broadcom/vulkan/v3dv_queue.c
++++ b/src/broadcom/vulkan/v3dv_queue.c
+@@ -998,6 +998,30 @@ queue_handle_job(struct v3dv_queue *queue,
+       job->needs_bcl_sync = job->type == V3DV_JOB_TYPE_GPU_CL;
+    }
+ 
++#if defined(__phoenix__)
++   /* Skip a degenerate CL job that has no tile state. A CL job's tile state is
++    * allocated from the frame tiling (layers * tiles_x * tiles_y); when one of
++    * those dimensions is zero the tile-state size is zero and v3dv_bo_alloc()
++    * returns NULL (see v3dv_job_allocate_tile_state / v3d_tile_alloc_sizes).
++    * handle_cl_job() then dereferences job->tile_state->offset and faults. Such a
++    * job (a zero-extent meta copy/clear/blit, or an empty render area) has nothing
++    * for the binner or renderer to do, so dropping it is correct and lets the real
++    * render job in the same submit proceed. Without this guard the no-WSI vkQuake
++    * 2D frame path hit a NULL-tile_state CL job at the first vkQueueSubmit and
++    * Data-Aborted in handle_cl_job (far=0x24 == offsetof v3dv_bo, offset). */
++   if (job->type == V3DV_JOB_TYPE_GPU_CL && job->tile_state == NULL) {
++      static bool warned = false;
++      if (!warned) {
++         mesa_logw("v3dv: skipping degenerate CL job with no tile state "
++                   "(zero-extent frame: w=%u h=%u layers=%u draws=%u)\n",
++                   job->frame_tiling.width, job->frame_tiling.height,
++                   job->frame_tiling.layers, job->draw_count);
++         warned = true;
++      }
++      return VK_SUCCESS;
++   }
++#endif
++
+    switch (job->type) {
+    case V3DV_JOB_TYPE_GPU_CL:
+       return handle_cl_job(queue, job, counter_pass_idx, sync_info);
+diff --git a/src/gallium/drivers/nouveau/codegen/nv50_ir_ra.cpp b/src/gallium/drivers/nouveau/codegen/nv50_ir_ra.cpp
+index f0fad0ded4e..ea80acdf440 100644
+--- a/src/gallium/drivers/nouveau/codegen/nv50_ir_ra.cpp
++++ b/src/gallium/drivers/nouveau/codegen/nv50_ir_ra.cpp
+@@ -1548,7 +1548,7 @@ GCRA::cleanup(const bool success)
+ Symbol *
+ SpillCodeInserter::assignSlot(const Interval &livei, const unsigned int size)
+ {
+-   int32_t address = align(stackSize + func->tlsBase, size);
++   int32_t address = align(stackSize + func->tlsBase, util_next_power_of_two(size));
+ 
+    Symbol *sym = new_Symbol(func->getProgram(), FILE_MEMORY_LOCAL);
+    sym->setAddress(NULL, address);
+diff --git a/src/gallium/drivers/v3d/v3d_bufmgr.c b/src/gallium/drivers/v3d/v3d_bufmgr.c
+index e82fd069b18..0eed759e4e0 100644
+--- a/src/gallium/drivers/v3d/v3d_bufmgr.c
++++ b/src/gallium/drivers/v3d/v3d_bufmgr.c
+@@ -117,9 +117,18 @@ v3d_bo_from_cache(struct v3d_screen *screen, uint32_t size, const char *name)
+ 
+ struct v3d_bo *
+ v3d_bo_alloc(struct v3d_screen *screen, uint32_t size, const char *name)
++{
++        return v3d_bo_alloc_flags(screen, size, name, 0);
++}
++
++struct v3d_bo *
++v3d_bo_alloc_flags(struct v3d_screen *screen, uint32_t size, const char *name,
++                   uint32_t create_flags)
+ {
+         struct v3d_bo *bo;
+         int ret;
++        bool cacheable = (create_flags & V3D_CREATE_BO_CACHEABLE) != 0;
++        bool scanout = (create_flags & V3D_CREATE_BO_SCANOUT) != 0;
+ 
+         /* The CLIF dumping requires that there is no whitespace in the name.
+          */
+@@ -127,7 +136,9 @@ v3d_bo_alloc(struct v3d_screen *screen, uint32_t size, const char *name)
+ 
+         size = align(size, 4096);
+ 
+-        bo = v3d_bo_from_cache(screen, size, name);
++        /* Cacheable BOs bypass the BO cache so they can never be reused as an
++         * uncached GPU-read buffer (which would silently read stale CPU lines). */
++        bo = (cacheable || scanout) ? NULL : v3d_bo_from_cache(screen, size, name);
+         if (bo) {
+                 if (dump_stats) {
+                         mesa_logd("Allocated %s %dkb from cache:", name, size / 1024);
+@@ -147,7 +158,8 @@ v3d_bo_alloc(struct v3d_screen *screen, uint32_t size, const char *name)
+         bo->private = true;
+ 
+         struct drm_v3d_create_bo create = {
+-                .size = size
++                .size = size,
++                .flags = create_flags
+         };
+ 
+  retry:
+@@ -167,6 +179,8 @@ v3d_bo_alloc(struct v3d_screen *screen, uint32_t size, const char *name)
+ 
+         bo->handle = create.handle;
+         bo->offset = create.offset;
++        bo->cacheable = cacheable;
++        bo->scanout = scanout;
+ 
+         screen->bo_count++;
+         screen->bo_size += bo->size;
+@@ -277,7 +291,9 @@ v3d_bo_last_unreference_locked_timed(struct v3d_bo *bo, time_t time)
+         struct v3d_bo_cache *cache = &screen->bo_cache;
+         uint32_t page_index = bo->size / 4096 - 1;
+ 
+-        if (!bo->private) {
++        if (!bo->private || bo->cacheable || bo->scanout) {
++                /* cacheable / scanout BOs must not enter the (uncached) BO cache
++                 * (scanout aliases a fixed framebuffer PA). */
+                 v3d_bo_free(bo);
+                 return;
+         }
+@@ -515,13 +531,10 @@ v3d_bo_map_unsynchronized(struct v3d_bo *bo)
+                 abort();
+         }
+ 
+-        bo->map = mmap(NULL, bo->size, PROT_READ | PROT_WRITE, MAP_SHARED,
+-                       bo->screen->fd, offset);
+-        if (bo->map == MAP_FAILED) {
+-                mesa_loge("mmap of bo %d (offset 0x%016llx, size %d) failed",
+-                          bo->handle, (long long)offset, bo->size);
+-                abort();
+-        }
++        /* Phoenix winsys: BOs are already CPU-mapped (uncached, MAP_CONTIGUOUS) at
++         * CREATE_BO time, and MMAP_BO returns that CPU virtual address as `offset`.
++         * Use it directly — re-mmap()ing our non-device fd would fault/hang. */
++        bo->map = (void *)(uintptr_t)offset;
+         VG(VALGRIND_MALLOCLIKE_BLOCK(bo->map, bo->size, 0, false));
+ 
+         return bo->map;
+diff --git a/src/gallium/drivers/v3d/v3d_bufmgr.h b/src/gallium/drivers/v3d/v3d_bufmgr.h
+index 5363bf92fcb..08325688c74 100644
+--- a/src/gallium/drivers/v3d/v3d_bufmgr.h
++++ b/src/gallium/drivers/v3d/v3d_bufmgr.h
+@@ -54,10 +54,29 @@ struct v3d_bo {
+          * it's safe to reuse it in the BO cache).
+          */
+         bool private;
++
++        /* Phoenix: CPU mapping is cacheable (vs the default uncached DMA mapping).
++         * Used only for GPU-written / CPU-read-back render targets so the CPU
++         * readback (detile) hits cache instead of crawling uncached DRAM. Such BOs
++         * bypass the BO cache (they must not be reused as uncached GPU-read buffers)
++         * and are invalidated (dc ivac) before each CPU read. */
++        bool cacheable;
++
++        /* Phoenix: BO is backed by the HDMI scanout framebuffer's physical pages
++         * (render-to-scanout) — the GPU stores straight to the displayed surface, so
++         * there is no CPU readback/blit. Like cacheable, such a BO bypasses the BO
++         * cache (it aliases a fixed PA and must never be reused as a generic buffer). */
++        bool scanout;
+ };
+ 
++/* Phoenix: drm_v3d_create_bo.flags bits. */
++#define V3D_CREATE_BO_CACHEABLE (1u << 0)
++#define V3D_CREATE_BO_SCANOUT   (1u << 1)
++
+ struct v3d_bo *v3d_bo_alloc(struct v3d_screen *screen, uint32_t size,
+                             const char *name);
++struct v3d_bo *v3d_bo_alloc_flags(struct v3d_screen *screen, uint32_t size,
++                                  const char *name, uint32_t create_flags);
+ void v3d_bo_last_unreference(struct v3d_bo *bo);
+ void v3d_bo_last_unreference_locked_timed(struct v3d_bo *bo, time_t time);
+ struct v3d_bo *v3d_bo_open_name(struct v3d_screen *screen, uint32_t name);
+diff --git a/src/gallium/drivers/v3d/v3d_context.c b/src/gallium/drivers/v3d/v3d_context.c
+index d639c688637..fefb9046cb9 100644
+--- a/src/gallium/drivers/v3d/v3d_context.c
++++ b/src/gallium/drivers/v3d/v3d_context.c
+@@ -69,7 +69,10 @@ v3d_pipe_flush(struct pipe_context *pctx, struct pipe_fence_handle **fence,
+                  */
+                 drmSyncobjExportSyncFile(v3d->fd, v3d->out_sync, &fd);
+                 if (fd == -1) {
+-                        mesa_loge("Export failed");
++                        /* Bare-metal Phoenix port: no DRM syncobj/sync-file FD export. The
++                         * synchronous winsys submit already guarantees GPU completion, so a
++                         * NULL fence is correct here. Do NOT log — this fires on every flush
++                         * and floods the UART with 100k+ lines, crippling the boot. */
+                         *fence = NULL;
+                         return;
+                 }
+diff --git a/src/gallium/drivers/v3d/v3d_resource.c b/src/gallium/drivers/v3d/v3d_resource.c
+index 33df0d07be5..9e073a401b1 100644
+--- a/src/gallium/drivers/v3d/v3d_resource.c
++++ b/src/gallium/drivers/v3d/v3d_resource.c
+@@ -110,8 +110,39 @@ v3d_resource_bo_alloc(struct v3d_resource *rsc)
+          */
+         uint32_t padding =
+                 rsc->base.target == PIPE_BUFFER ? 4 : V3D_TFU_READAHEAD_SIZE;
+-        bo = v3d_bo_alloc(v3d_screen(pscreen), rsc->size + padding,
+-                          "resource");
++        /* Phoenix: a color render target that is NOT sampled is GPU-written and only
++         * ever CPU-read-back (glReadPixels) — never CPU-written and never GPU-read. Map
++         * it cacheable so the readback detile hits cache instead of crawling uncached
++         * DRAM (the dominant present-path cost). Excludes sampled textures + depth, which
++         * stay uncached so the GPU reads them coherently. Invalidated before CPU read in
++         * v3d_resource_transfer_map. */
++        /* Cacheable-readback for render targets (would cut the uncached glReadPixels
++         * detile, the dominant present-path cost) is DISABLED: making a GPU-rendered RT
++         * BO CPU-cacheable hangs the GPU/render after the first cacheable readback — a
++         * coherency wall (NOT contiguity: the BO is contiguous), pending a focused
++         * deep-dive. Re-enable by setting this to the RENDER_TARGET rule. See
++         * docs/inprogress/2026-06-15-td16-cache-enable-plan.md. */
++        /* Cacheable-readback for the tiled color RT is DISABLED: it works (with dc CIVAC;
++         * dc IVAC is EL1-only and traps at EL0) but gives NO speedup — measured readpx is
++         * identical cached vs uncached (~23ms). The cost is the detile's SCATTERED tiled
++         * read pattern (each output pixel from a non-contiguous tiled address -> no cache-
++         * line reuse), not the uncached read. The FPS lever must move the detile to the GPU
++         * (render-to-scanout / TFU-to-linear, after which a LINEAR CPU read would benefit
++         * from caching). The cacheable infra (v3d_bo_alloc_flags + civac) is kept and proven
++         * for that + the NFS GENET-RX path. See docs/inprogress/2026-06-15-td16-cache-enable-plan.md. */
++        /* Phoenix: the full-screen color RT is forced RASTER (see should_tile). RENDER-TO-
++         * SCANOUT: back it with the HDMI framebuffer's physical pages so the GPU raster-stores
++         * straight to the displayed surface — no per-frame glReadPixels/blit/fb0 CPU copies
++         * (those were the ~25ms readpx bottleneck at 1080p; the 8.3 MB RT exceeds the A72 L2 so
++         * even a cacheable readback is DRAM-bandwidth-bound). The winsys maps GPU VA -> scanout
++         * PA; coherency to the display is the existing per-submit SLCACTL + L2T flush. The
++         * cacheable-readback infra (v3d_bo_alloc_flags + civac) stays proven for the NFS GENET-RX
++         * path. See docs/inprogress/2026-06-15-td16-cache-enable-plan.md. */
++        uint32_t create_flags =
++                ((rsc->base.bind & PIPE_BIND_RENDER_TARGET) &&
++                 rsc->base.width0 >= 1024 && rsc->base.height0 >= 768) ? V3D_CREATE_BO_SCANOUT : 0;
++        bo = v3d_bo_alloc_flags(v3d_screen(pscreen), rsc->size + padding,
++                          "resource", create_flags);
+         if (bo) {
+                 v3d_bo_unreference(&rsc->bo);
+                 rsc->bo = bo;
+@@ -256,6 +287,25 @@ v3d_map_usage_prep(struct pipe_context *pctx,
+         }
+ }
+ 
++/* Phoenix: invalidate a cacheable BO's CPU cache lines so a following CPU read sees
++ * what the (non-coherent) GPU wrote to DRAM, not stale cache. The BO is page-aligned
++ * and page-sized, so the [base, base+size) range is cache-line aligned (no partial-line
++ * loss); and these BOs are CPU-read-only (never CPU-written), so invalidate is safe.
++ * Requires SCTLR_EL1.UCI=1 (EL0 cache maintenance), set by the kernel. */
++static void
++v3d_bo_invalidate_for_cpu_read(struct v3d_bo *bo)
++{
++        uintptr_t a = (uintptr_t)bo->map;
++        uintptr_t end = a + bo->size;
++        /* Use DC CIVAC (clean+invalidate), NOT DC IVAC: invalidate-only is EL1-privileged
++         * and traps at EL0 even with SCTLR.UCI=1 (UCI gates CVAU/CVAC/CVAP/CIVAC/IVAU, not
++         * IVAC). This BO is CPU-read-only so there are no dirty lines — the clean is a
++         * no-op and CIVAC's invalidate makes the next read fetch the GPU's DRAM data. */
++        for (; a < end; a += 64)
++                __asm__ volatile("dc civac, %0" :: "r"(a) : "memory");
++        __asm__ volatile("dsb ish" ::: "memory");
++}
++
+ static void *
+ v3d_resource_transfer_map(struct pipe_context *pctx,
+                           struct pipe_resource *prsc,
+@@ -316,6 +366,11 @@ v3d_resource_transfer_map(struct pipe_context *pctx,
+                 goto fail;
+         }
+ 
++        /* Phoenix: for a cacheable readback RT the GPU wrote DRAM non-coherently;
++         * invalidate stale CPU lines so the detile/copy below reads the new pixels. */
++        if ((usage & PIPE_MAP_READ) && rsc->bo->cacheable)
++                v3d_bo_invalidate_for_cpu_read(rsc->bo);
++
+         *pptrans = ptrans;
+ 
+         /* Our load/store routines work on entire compressed blocks. */
+@@ -847,6 +902,14 @@ v3d_resource_create_with_modifiers(struct pipe_screen *pscreen,
+         if (tmpl->bind & PIPE_BIND_SCANOUT)
+                 should_tile = false;
+ 
++        /* Phoenix: force the full-screen color render target to RASTER (linear) so a CPU
++         * readback (glReadPixels) is a fast linear copy instead of the ~23ms scattered
++         * tiled detile. Targeted by display size so small SAMPLED render targets (e.g. the
++         * water warpimage) stay tiled (the TMU needs tiled to sample efficiently). */
++        if ((tmpl->bind & PIPE_BIND_RENDER_TARGET) &&
++            tmpl->width0 >= 1024 && tmpl->height0 >= 768)
++                should_tile = false;
++
+         /* No user-specified modifier; determine our own. */
+         if (count == 1 && modifiers[0] == DRM_FORMAT_MOD_INVALID) {
+                 rsc->tiled = should_tile;
+diff --git a/src/gallium/drivers/v3d/v3dx_draw.c b/src/gallium/drivers/v3d/v3dx_draw.c
+index 14fb2306026..b33e88f50b2 100644
+--- a/src/gallium/drivers/v3d/v3dx_draw.c
++++ b/src/gallium/drivers/v3d/v3dx_draw.c
+@@ -917,6 +917,21 @@ v3d_update_primitives_generated_counter(struct v3d_context *v3d,
+ static void
+ v3d_update_job_ez(struct v3d_context *v3d, struct v3d_job *job)
+ {
++        /* Phoenix Pi4 (mesa 26.2): force Early-Z OFF for the whole job. On the 26.2 base
++         * this port's V3D 4.2 render pipeline hits the HW-marginal depth/fragment drain
++         * stall (fdbgs=EZTEST) on EVERY frame with EZ enabled — the winsys reset+drop
++         * mitigation then fires constantly, collapsing GLQuake to ~5 fps (337 render
++         * timeouts). The stall is EZ-triggered: forcing EZ off yields 0 wedges and full
++         * ~38 fps (HW-verified via netboot, 20260716-165718, triple-buffer, frames render
++         * correctly). EZ early-rejects overdraw (a perf lever) but at 1080p GLQuake is not
++         * overdraw-bound, so disabling it costs no measurable fps here while eliminating
++         * the wedge. (On the pre-26.2 base EZ was re-enabled after a winsys L2T-flush fix;
++         * 26.2's codegen re-triggers the stall, so keep EZ off on 26.2. Falls through to
++         * the existing first_ez_state==DISABLED early-return below.) TODO(v3d-26.2-ez):
++         * root-cause why 26.2 makes the EZTEST drain stall constant to safely re-enable EZ. */
++        job->first_ez_state = V3D_EZ_DISABLED;
++        job->ez_state = V3D_EZ_DISABLED;
++
+         /* If first_ez_state is V3D_EZ_DISABLED it means that we have already
+          * determined that we should disable EZ completely for all draw calls
+          * in this job. This will cause us to disable EZ for the entire job in
+@@ -1009,6 +1024,17 @@ v3d_update_job_ez(struct v3d_context *v3d, struct v3d_job *job)
+                 job->ez_state = V3D_EZ_DISABLED;
+         }
+ 
++        /* Early-Z (EZ) is ENABLED on this V3D 4.2 port (the normal mesa state machine above
++         * decides per-shader/per-direction; it already disables EZ for FS discard/writes-Z).
++         * EZ was previously force-disabled here because depth-tested steeply-tilted polygons
++         * hung the render — but that hang was a symptom of the L2T flush-completion race
++         * (GFXH-1897): the render fetched the binner's tile-list before the bin-phase L2T flush
++         * had drained. That race is now fixed in the winsys (l2t_flush_wait around the pre-bin
++         * and bin->render flushes, v3d_phoenix_winsys.c). With it fixed, the stalltest renders
++         * 3000 tilted depth-tested EZ-ON frames with 0 wedges, so EZ is re-enabled here — it
++         * early-rejects overdraw (FPS win) and lets stock GL_LEQUAL run without the depth-drain
++         * stall. See docs/inprogress/2026-06-21-v3d-early-z-reenable-plan.md. */
++
+         if (job->first_ez_state == V3D_EZ_UNDECIDED &&
+             (job->ez_state != V3D_EZ_DISABLED || job->draw_calls_queued == 0))
+                 job->first_ez_state = job->ez_state;
+diff --git a/src/gallium/drivers/v3d/v3dx_state.c b/src/gallium/drivers/v3d/v3dx_state.c
+index 0ce11c17a7e..8ba2a4f64ac 100644
+--- a/src/gallium/drivers/v3d/v3dx_state.c
++++ b/src/gallium/drivers/v3d/v3dx_state.c
+@@ -558,6 +558,16 @@ v3d_set_framebuffer_state(struct pipe_context *pctx,
+ 
+                 if (desc->swizzle[3] == PIPE_SWIZZLE_1)
+                         v3d->blend_dst_alpha_one |= 1 << i;
++
++                /* Phoenix Pi4: do NOT swap R<->B. The plo HDMI framebuffer is configured with RGB
++                 * pixel order (mailbox SET_PIXEL_ORDER=1), which matches the V3D's native 32-bit
++                 * store order — so a color RT, whether the GPU scans it out directly (render-to-
++                 * scanout / page-flip) or it is glReadPixels'd for the CPU-present fallback (which
++                 * copies channels straight through, present_blit() in pl_phoenix_vid.c), already
++                 * lands in display order. An earlier render-to-scanout workaround swapped R<->B
++                 * here; on this fb config that was spurious and rendered the brown Quake world
++                 * blue (HW-verified). Leave swap_color_rb at 0. (A format-agnostic fb would derive
++                 * this from plo's actual pixel order rather than hardcoding it.) */
+         }
+ 
+         v3d->dirty |= V3D_DIRTY_FRAMEBUFFER;
+diff --git a/src/intel/vulkan/00-anv-defaults.conf b/src/intel/vulkan/00-anv-defaults.conf
+index 7f8753dc8d4..2876590d8a4 100644
+--- a/src/intel/vulkan/00-anv-defaults.conf
++++ b/src/intel/vulkan/00-anv-defaults.conf
+@@ -70,6 +70,9 @@
+             See: https://gitlab.freedesktop.org/mesa/mesa/-/issues/9241
+             -->
+             <option name="shader_spilling_rate" value="15" />
++            <!-- work around XeSS misrendering with Intel vendor ID shown.
++                 see https://gitlab.freedesktop.org/mesa/mesa/-/work_items/15739 -->
++            <option name="force_vk_vendor" value="-1" />
+         </application>
+         <application name="Elden Ring" executable="eldenring.exe">
+             <option name="fake_sparse" value="true" />
+diff --git a/src/mesa/state_tracker/st_atom_framebuffer.c b/src/mesa/state_tracker/st_atom_framebuffer.c
+index cc5ad3d3cb7..487fa4e44df 100644
+--- a/src/mesa/state_tracker/st_atom_framebuffer.c
++++ b/src/mesa/state_tracker/st_atom_framebuffer.c
+@@ -124,6 +124,21 @@ st_update_framebuffer_state( struct st_context *st )
+ 
+    st->state.fb_orientation = _mesa_fb_orientation(fb);
+ 
++#if defined(__phoenix__)
++   /* Phoenix-RTOS Pi4 render-to-scanout: the full-screen user FBO is backed by the HDMI
++    * framebuffer's physical pages (winsys V3D_CREATE_BO_SCANOUT, gated on >=1024x768), so the
++    * GPU stores straight to the displayed surface. That surface is scanned top-down (y-down),
++    * but a user FBO is Y_0_BOTTOM (y-up), which lands the whole frame upside down. Force Y_0_TOP
++    * for the full-screen FBO so Mesa negates the viewport Y (st_atom_viewport.c: scale[1]*=-1)
++    * and the frame renders upright directly into scanout — no extra blit/CPU copy. Gated on
++    * full-screen size (matching the scanout trigger) so small internal FBOs (mipmap generation,
++    * blit fallbacks) keep Y_0_BOTTOM and are not wrongly flipped. Winding is compensated by the
++    * platform layer's glFrontFace(GL_CCW) (Mesa does not auto-invert front-face for Y_0_TOP). */
++   if (st->state.fb_orientation == Y_0_BOTTOM &&
++       fb->Width >= 1024 && fb->Height >= 768)
++      st->state.fb_orientation = Y_0_TOP;
++#endif
++
+    /**
+     * Quantize the derived default number of samples:
+     *
+diff --git a/src/util/blake3/blake3_impl.h b/src/util/blake3/blake3_impl.h
+index 0dd387c7f77..31c44b49467 100644
+--- a/src/util/blake3/blake3_impl.h
++++ b/src/util/blake3/blake3_impl.h
+@@ -58,15 +58,22 @@ enum blake3_flags {
+ #endif
+ #endif
+ 
+-#if !defined(BLAKE3_USE_NEON) 
++#if !defined(BLAKE3_USE_NEON)
+   // If BLAKE3_USE_NEON not manually set, autodetect based on AArch64ness
+-  #if defined(IS_AARCH64)
++  #if defined(IS_AARCH64) && !defined(__phoenix__)
+     #if defined(__ARM_BIG_ENDIAN)
+       #define BLAKE3_USE_NEON 0
+     #else
+       #define BLAKE3_USE_NEON 1
+     #endif
+   #else
++    // Phoenix-RTOS aarch64: the NEON blake3 backend (blake3_neon.c) is NOT
++    // compiled into the V3D/V3DV port, so the upstream auto-detect would route
++    // blake3_hash_many() to an undefined/stubbed blake3_hash_many_neon and
++    // silently mis-hash any multi-chunk (>4 KiB) input. Force the portable C
++    // backend so the static if/else dispatch in blake3_dispatch.c falls through
++    // to blake3_hash_many_portable. Correct over fast — Mesa only hashes SPIR-V
++    // shader blobs once at load. See tools/v3d-driver-port + the vkQuake port.
+     #define BLAKE3_USE_NEON 0
+   #endif
+ #endif
+diff --git a/src/util/os_memory_aligned.h b/src/util/os_memory_aligned.h
+index 98b3cd6f8d8..16de49d8b28 100644
+--- a/src/util/os_memory_aligned.h
++++ b/src/util/os_memory_aligned.h
+@@ -37,6 +37,15 @@
+ 
+ #include "util/u_overflow.h"
+ 
++/* PHOENIX PORT FIX: Phoenix has no real posix_memalign (the gl_stubs.c shim ignores
++ * the alignment and returns plain malloc, only 16-byte aligned). util_sparse_array
++ * (the texture-object hash) needs 64-byte-aligned nodes — it packs the tree level
++ * into the low 6 bits of the node pointer (NODE_ALLOC_ALIGN=64). Underaligned nodes
++ * corrupt that encoding -> util_sparse_array_get returns wild pointers -> memory
++ * corruption (clobbered glGenTextures/glBindTexture). Force the self-contained
++ * malloc+cubby-hole path below, which honors alignment and frees correctly. */
++#undef HAVE_POSIX_MEMALIGN
++
+ #if defined(HAVE_POSIX_MEMALIGN)
+ 
+ static inline void *
+diff --git a/src/vulkan/runtime/vk_cmd_copy.c b/src/vulkan/runtime/vk_cmd_copy.c
+index 5b4ef8a28d2..7303a7c47f2 100644
+--- a/src/vulkan/runtime/vk_cmd_copy.c
++++ b/src/vulkan/runtime/vk_cmd_copy.c
+@@ -24,6 +24,9 @@
+ #include "vk_common_entrypoints.h"
+ #include "vk_device.h"
+ #include "vk_util.h"
++#if defined(__phoenix__)
++#include <stdio.h>   /* #29 triage trampoline trace */
++#endif
+ 
+ VKAPI_ATTR void VKAPI_CALL
+ vk_common_CmdCopyBuffer(VkCommandBuffer commandBuffer,
+@@ -128,6 +131,21 @@ vk_common_CmdCopyBufferToImage(VkCommandBuffer commandBuffer,
+          .imageOffset         = pRegions[r].imageOffset,
+          .imageExtent         = pRegions[r].imageExtent,
+       };
++#if defined(__phoenix__)
++      /* #29 black-texture triage: this legacy->Copy2 trampoline is the boundary between
++       * vkQuake's region array (proven >=1x1 by q_max) and what V3DV's CmdCopyBufferToImage2
++       * receives (observed 0x1). Print the extent BEFORE (incoming pRegions) and AFTER (the
++       * converted region2s) the field copy: equal+nonzero here but 0 at v3dv = corruption
++       * downstream of this trampoline; 0 already on `in` = upstream (vkQuake/proc-addr); 0
++       * only on `out` = a struct/field mismatch in this very copy. */
++      fprintf(stderr, "vk-trampoline: CmdCopyBufferToImage region %u in=%ux%ux%u out=%ux%ux%u "
++              "(sizeof in=%u out=%u)\n", r,
++              pRegions[r].imageExtent.width, pRegions[r].imageExtent.height,
++              pRegions[r].imageExtent.depth,
++              region2s[r].imageExtent.width, region2s[r].imageExtent.height,
++              region2s[r].imageExtent.depth,
++              (unsigned)sizeof(VkBufferImageCopy), (unsigned)sizeof(VkBufferImageCopy2));
++#endif
+    }
+ 
+    VkCopyBufferToImageInfo2 info = {
+diff --git a/src/vulkan/runtime/vk_image.c b/src/vulkan/runtime/vk_image.c
+index bda7fc77d1b..15db3eec0e0 100644
+--- a/src/vulkan/runtime/vk_image.c
++++ b/src/vulkan/runtime/vk_image.c
+@@ -23,7 +23,7 @@
+ 
+ #include "vk_image.h"
+ 
+-#if DETECT_OS_LINUX || DETECT_OS_BSD
++#if DETECT_OS_LINUX || DETECT_OS_BSD || defined(__phoenix__) /* Phoenix V3DV: emulates the Linux DRM ABI; keep drm_format_mod */
+ #include <drm-uapi/drm_fourcc.h>
+ #endif
+ 
+@@ -105,7 +105,7 @@ vk_image_init(struct vk_device *device,
+       vk_find_struct_const(pCreateInfo->pNext, WSI_IMAGE_CREATE_INFO_MESA);
+    image->wsi_legacy_scanout = wsi_info && wsi_info->scanout;
+ 
+-#if DETECT_OS_LINUX || DETECT_OS_BSD
++#if DETECT_OS_LINUX || DETECT_OS_BSD || defined(__phoenix__) /* Phoenix V3DV: emulates the Linux DRM ABI; keep drm_format_mod */
+    image->drm_format_mod = ((1ULL << 56) - 1) /* DRM_FORMAT_MOD_INVALID */;
+ #endif
+ 
+@@ -185,7 +185,7 @@ vk_image_destroy(struct vk_device *device,
+    vk_object_free(device, alloc, image);
+ }
+ 
+-#if DETECT_OS_LINUX || DETECT_OS_BSD
++#if DETECT_OS_LINUX || DETECT_OS_BSD || defined(__phoenix__) /* Phoenix V3DV: emulates the Linux DRM ABI; keep drm_format_mod */
+ VKAPI_ATTR VkResult VKAPI_CALL
+ vk_common_GetImageDrmFormatModifierPropertiesEXT(UNUSED VkDevice device,
+                                                  VkImage _image,
+diff --git a/src/vulkan/runtime/vk_image.h b/src/vulkan/runtime/vk_image.h
+index f560519c16f..5f03ccd49ef 100644
+--- a/src/vulkan/runtime/vk_image.h
++++ b/src/vulkan/runtime/vk_image.h
+@@ -77,7 +77,7 @@ struct vk_image {
+    /* wsi_image_create_info::scanout */
+    bool wsi_legacy_scanout;
+ 
+-#if DETECT_OS_LINUX || DETECT_OS_BSD
++#if DETECT_OS_LINUX || DETECT_OS_BSD || defined(__phoenix__) /* Phoenix V3DV: emulates the Linux DRM ABI; keep drm_format_mod */
+    /* VK_EXT_drm_format_modifier
+     *
+     * Initialized by vk_image_create/init() to DRM_FORMAT_MOD_INVALID.  It's

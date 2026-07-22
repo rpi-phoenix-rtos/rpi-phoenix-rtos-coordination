@@ -6,7 +6,7 @@
 # Quake shareware game data is fetched over the network (git clone + downloads).
 #
 # Quick use (see README.md "Build with Docker"):
-#   docker build -t phoenix-rpi https://raw.githubusercontent.com/houp/phoenix-rpi/main/Dockerfile
+#   docker build -t phoenix-rpi https://raw.githubusercontent.com/rpi-phoenix-rtos/rpi-phoenix-rtos-coordination/main/Dockerfile
 #   docker run --rm -v "$PWD/out":/out phoenix-rpi
 #   # -> ./out/rpi4b-sd-2part.img
 #
@@ -17,9 +17,10 @@
 #   UBUNTU_TAG    base image. Default 24.04 — the LTS the toolchain + bootstrap are
 #                 VALIDATED against. Bump deliberately; a newer LTS may shift apt
 #                 package names / meson / gcc and break the toolchain build.
-#   REPO_BASE     git base for the phoenix-rpi repos (coord + siblings + mesa/
-#                 quakespasm/vkquake forks). Default: public GitHub.
-#   UPSTREAM_BASE phoenix-rtos upstream base (fallback remote).
+#   REPO_BASE     git base for the org repos (coord + 16 siblings + quakespasm +
+#                 lwip forks). Default: public GitHub org rpi-phoenix-rtos. (mesa is
+#                 NOT a fork — upstream Mesa @ a tag + patches/mesa/, see bootstrap.)
+#   UPSTREAM_BASE fallback remote; also the org (self-contained set).
 #   PAK0_URL      URL of the Quake SHAREWARE pak0.pak (freely redistributable). Empty
 #                 = build without game data (engine still built; demos need a pak0).
 #   BUILD_VARIANT sd (default) | nfsroot | netboot.
@@ -28,8 +29,8 @@
 ARG UBUNTU_TAG=24.04
 FROM ubuntu:${UBUNTU_TAG}
 
-ARG REPO_BASE=https://github.com/houp
-ARG UPSTREAM_BASE=https://github.com/phoenix-rtos
+ARG REPO_BASE=https://github.com/rpi-phoenix-rtos
+ARG UPSTREAM_BASE=https://github.com/rpi-phoenix-rtos
 ARG PAK0_URL=
 ARG BUILD_VARIANT=sd
 ARG BUILD_FLAGS=--with-showcase --with-ports
@@ -43,11 +44,12 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 # 1. Clone the coordination repo (carries every build script, incl. bootstrap).
-RUN git clone "${REPO_BASE}/phoenix-rpi.git" /build/phoenix-rpi
+RUN git clone "${REPO_BASE}/rpi-phoenix-rtos-coordination.git" /build/phoenix-rpi
 WORKDIR /build/phoenix-rpi
 
-# 2. Bootstrap: install all Ubuntu packages, clone the 16 sibling repos + the
-#    mesa/quakespasm/vkquake forks + the Pi firmware, and build the cross toolchain.
+# 2. Bootstrap: install all Ubuntu packages, clone the 16 sibling repos + quakespasm
+#    + the lwip library + the Pi firmware, fetch upstream Mesa @ the pinned tag and
+#    apply patches/mesa/, and build the cross toolchain.
 #    FORK_BASE/UPSTREAM_BASE point the clones at REPO_BASE (GitHub, or a host server).
 RUN PROJECT_DIR=/build/phoenix-rpi \
     PHOENIX_FORK_BASE="${REPO_BASE}" \

@@ -12,14 +12,14 @@
 #   2. Clones the project layout into ~/phoenix-rpi/:
 #        ~/phoenix-rpi/                          (coord repo)
 #        ~/phoenix-rpi/sources/<repo>/           (each sibling)
-#      Each sibling gets fork=houp/* + origin=phoenix-rtos/* remotes.
+#      Each sibling gets fork=rpi-phoenix-rtos/* + origin=rpi-phoenix-rtos/* remotes.
 #   3. Stages the Raspberry Pi 4 boot blobs (start4.elf, fixup4.dat,
 #      bcm2711-rpi-4-b.dtb, overlays/miniuart-bt.dtbo) under
 #      ~/phoenix-rpi/.bootblobs/.
 #   4. Creates a Python venv at ~/phoenix-rpi/.venv/ with pyserial.
 #   5. Prints the next steps (NIC config, dnsmasq launch, first build).
 #
-# Author/contact: see https://github.com/houp/phoenix-rpi
+# Author/contact: see https://github.com/rpi-phoenix-rtos/rpi-phoenix-rtos-coordination
 # Generated 2026-05-19 during Phoenix-RTOS Pi 4 bring-up session.
 
 set -euo pipefail
@@ -52,17 +52,16 @@ VENV_DIR="$PROJECT_DIR/.venv"
 #
 # Each sibling is cloned from $PHOENIX_FORK_BASE/<repo>.git with the
 # phoenix-rtos upstream wired as a second remote (see clone_repo).
-GH_USER="${GH_USER:-houp}"
+GH_USER="${GH_USER:-rpi-phoenix-rtos}"
 PHOENIX_FORK_BASE="${PHOENIX_FORK_BASE:-https://github.com/${GH_USER}}"
-PHOENIX_UPSTREAM_BASE="${PHOENIX_UPSTREAM_BASE:-https://github.com/phoenix-rtos}"
-# Base for the build-required external-dependency forks (mesa/quakespasm/vkquake).
-# These are pinned to exact commits that are NO LONGER FETCHABLE from their
-# upstreams (mesa main advanced past our SHA; the quakespasm/vkquake pins report
-# "not our ref") — so, exactly like the phoenix-rtos siblings, they must come from
-# our forks that preserve the validated commit. mesa additionally carries the v3d
-# port as a commit on its fork (branch phoenix-v3d-port), so no patch is applied.
-# Default assumes github.com/<user> forks (push them before publishing); override
-# for a local/clean-VM test, e.g. EXTERNAL_FORK_BASE=ssh://host/home/user/origins.
+# UPSTREAM_BASE also points at our org: the published set is self-contained, so a
+# clone never depends on phoenix-rtos upstream still serving a given pin.
+PHOENIX_UPSTREAM_BASE="${PHOENIX_UPSTREAM_BASE:-https://github.com/rpi-phoenix-rtos}"
+# Base for the build-required external-dependency forks (quakespasm; and the lwIP
+# library submodule via init_vendored_submodules). quakespasm is pinned to an exact
+# commit preserved on our org fork. mesa is NOT a fork here — it is upstream Mesa at
+# an immutable tag + our patch (see EXTERNAL_DEPS / patches/mesa/). Override for a
+# local/clean-VM test, e.g. EXTERNAL_FORK_BASE=ssh://host/home/user/origins.
 EXTERNAL_FORK_BASE="${EXTERNAL_FORK_BASE:-https://github.com/${GH_USER}}"
 
 # --pinned mode: after cloning, check every sibling out to the SHA recorded
@@ -99,31 +98,31 @@ UPSTREAM_ONLY_REPOS=(
 	phoenix-rtos-doc
 )
 
-# BUILD-REQUIRED external dependencies cloned into external/ and pinned to
-# a specific SHA/tag. These feed the V3D GPU / GL / Vulkan stack:
-#   - external/mesa       -> tools/v3d-driver-port builds libGL/libv3d/libv3dv
-#   - external/quakespasm -> tools/quakespasm-port builds libquakespasm.a
-#   - external/vkquake    -> tools/vkquake-port builds libvkquake.a
-# The rpi4b project's `make -C _user all install` builds rpi4-quake and
-# rpi4-vkquake (both link the archives above), so all three are build inputs.
+# BUILD-REQUIRED external dependencies cloned into external/ and pinned. These
+# feed the V3D GPU / GL stack + the GLQuake showcase:
+#   - external/mesa       -> UPSTREAM Mesa at the immutable tag mesa-26.2.0-rc1 +
+#                            our patch (patches/mesa/phoenix-rpi4-v3d.patch);
+#                            tools/v3d-driver-port builds libGL/libv3d/libv3dv.
+#                            NOT a fork — reproducible from the frozen tag, so it
+#                            cannot be broken by upstream drift.
+#   - external/quakespasm -> our org fork at a pinned commit; tools/quakespasm-port
+#                            builds libquakespasm.a (the rpi4-quake showcase).
 #
 # NOT cloned here:
-#   - external/linux      research-only; the Pi 4 DTB is fetched ready-made
-#                         from raspberrypi/firmware (see stage_pi_firmware),
-#                         never compiled. (7 GB; clone out-of-band if needed.)
+#   - external/vkquake    WIP/non-functional Vulkan Quake; NOT published (local-only).
+#                         `--with-vkquake` is unsupported in the public release.
+#   - external/linux      research-only; the Pi 4 DTB is fetched ready-made from
+#                         raspberrypi/firmware (stage_pi_firmware), never compiled.
 #   - external/rpi-eeprom Tier-2 lab/netboot only; prepare-pi-eeprom-netboot.sh
 #                         self-clones it on demand.
 #
-# Format: "<subdir>|<git-url>|<pinned-ref>[|<port-patch-relpath>]". Cloned from
-# $EXTERNAL_FORK_BASE (our forks) because the upstream pins are no longer
-# fetchable (see EXTERNAL_FORK_BASE note). mesa's ref is the v3d-port commit on
-# our fork (branch phoenix-v3d-port = upstream e8791b4 + the port), so it needs
-# no patch. quakespasm/vkquake are pristine at their pins (their Phoenix ports
-# live in tools/*-port/), just preserved on our forks. Bump refs deliberately.
+# Format: "<subdir>|<git-url>|<pinned-ref>[|<port-patch-relpath>]". mesa clones
+# PRISTINE UPSTREAM at the tag and apply_dep_patch applies our diff; quakespasm
+# comes from our org fork (its upstream pin is no longer fetchable). Bump refs
+# deliberately (and, for mesa, re-base the patch when 26.2.0 final ships).
 EXTERNAL_DEPS=(
-	"mesa|${EXTERNAL_FORK_BASE}/mesa.git|b234aa4ed9d8d8cd5b8db5aa011b76d3636b35f1"
+	"mesa|https://gitlab.freedesktop.org/mesa/mesa.git|mesa-26.2.0-rc1|patches/mesa/phoenix-rpi4-v3d.patch"
 	"quakespasm|${EXTERNAL_FORK_BASE}/quakespasm.git|4abb3249fe45c835d3d8540845a18a114e283996"
-	"vkquake|${EXTERNAL_FORK_BASE}/vkquake.git|f4d923e36f6a2cbb6e796031eb81c88f23db8520"
 )
 
 # Raspberry Pi firmware blobs we need from raspberrypi/firmware boot tree.
@@ -247,7 +246,7 @@ clone_repo() {
 		warn "fork branch '$branch' not on fork; cloned default branch then setting up"
 		(cd "$dest" && git checkout -b "$branch" || true)
 	else
-		# No fork at all (e.g. an upstream-only sibling with no houp/ fork).
+		# No fork at all (e.g. an upstream-only sibling with no org fork).
 		# Fall back to cloning the upstream directly; still wire a 'fork'
 		# remote pointing at the intended fork URL for future pushes.
 		warn "fork $fork_url unavailable; cloning upstream $upstream_url instead"
@@ -274,7 +273,7 @@ clone_layout() {
 		# directory. Normally they curl the script and run it inside the
 		# coord clone.
 		log "Cloning coord repo into $PROJECT_DIR/"
-		git clone "$PHOENIX_FORK_BASE/phoenix-rpi.git" "$PROJECT_DIR"
+		git clone "$PHOENIX_FORK_BASE/rpi-phoenix-rtos-coordination.git" "$PROJECT_DIR"
 	else
 		log "Coord repo already at $PROJECT_DIR/"
 	fi
@@ -602,8 +601,8 @@ usage: $0 [--pinned] [--pin-manifest <path>]
 Environment overrides:
   PROJECT_DIR           install root (default: \$HOME/phoenix-rpi)
   PHOENIX_FORK_BASE     work-fork base URL (default: https://github.com/\$GH_USER)
-  PHOENIX_UPSTREAM_BASE upstream base URL (default: https://github.com/phoenix-rtos)
-  GH_USER               feeds PHOENIX_FORK_BASE's default (default: houp)
+  PHOENIX_UPSTREAM_BASE upstream/fallback base URL (default: https://github.com/rpi-phoenix-rtos)
+  GH_USER               feeds the fork-base defaults (default: rpi-phoenix-rtos)
 USAGE
 				exit 0 ;;
 			*) fatal "unknown option: $1 (try --help)" ;;

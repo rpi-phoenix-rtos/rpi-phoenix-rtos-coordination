@@ -1,38 +1,36 @@
-# Mesa V3D/GL/Vulkan port — patch series
+# Mesa V3D/GL/Vulkan port — patch
 
 The Phoenix-RTOS Raspberry Pi 4 GPU stack (libGL / libv3d / libv3dv) is built from
-**upstream Mesa plus this small patch series** — we do NOT vendor a full Mesa fork.
+**upstream Mesa plus this single patch** — we do NOT vendor a full Mesa fork.
 
 ## Base
 
 - Upstream: `https://gitlab.freedesktop.org/mesa/mesa.git`
 - Pinned tag: **`mesa-26.2.0-rc1`** — an *immutable* git tag. Because it never moves,
-  these patches can never be broken by upstream drift and the build is exactly
-  reproducible. (rc1 is a release candidate; when Mesa 26.2.0 **final** ships we will
-  re-base the port onto that tag. rc1 is our validated base for now.)
+  this patch can never be broken by upstream drift and the build is exactly reproducible.
+  (rc1 is a release candidate; when Mesa 26.2.0 **final** ships we will re-base the port
+  onto that tag. rc1 is our validated base for now.)
 
-## Applying
+## Applying (what `scripts/bootstrap-linux-host.sh` does automatically)
 
 ```sh
 git clone https://gitlab.freedesktop.org/mesa/mesa.git external/mesa
 cd external/mesa
 git checkout mesa-26.2.0-rc1
-git am /path/to/patches/mesa/*.patch      # applies all 17 in order -> our exact tree
+git apply /path/to/patches/mesa/phoenix-rpi4-v3d.patch   # -> our exact validated tree
 ```
 
-`scripts/bootstrap-linux-host.sh` does this automatically.
+## Contents
 
-## Contents (17 patches)
-
-- **Phoenix-RTOS RPi4 port (ours):** the `v3d:` and `v3dv:` / `broadcom/vulkan:` commits
-  — the BCM2711 V3D 4.2 GL + Vulkan port and its Phoenix winsys integration.
-- **Incidental upstream commits** included only to reproduce our exact validated base
-  from the `mesa-26.2.0-rc1` tag (they touch nouveau / Intel anv / pick_status and do
-  **not** affect the aarch64 V3D build): `0001` (.pick_status.json), `0006` (nv50_ir_ra),
-  `0007` (anv Intel vendor id). Harmless; kept for byte-exact reproducibility.
+`phoenix-rpi4-v3d.patch` is `git diff mesa-26.2.0-rc1..HEAD` of our port branch — the net
+change from the tag to our validated tree (23 files, ~600 lines): the BCM2711 V3D 4.2 GL +
+Vulkan (v3dv) port and its Phoenix winsys integration. It also folds in a few incidental
+upstream commits that were between rc1 and our fork point (nouveau / Intel anv /
+pick_status housekeeping) — harmless to the aarch64 V3D build, included only so the applied
+tree byte-matches our validated HEAD. Verified to `git apply --check` cleanly onto the tag.
 
 ## License
 
-Mesa is **MIT** (see `docs/license.rst` in the Mesa tree). Our patches modify Mesa and are
-therefore under Mesa's MIT license. This directory redistributes only the patch text; the
-Mesa source itself is fetched from upstream.
+Mesa is **MIT** (see `docs/license.rst` in the Mesa tree). This patch modifies Mesa and is
+therefore under Mesa's MIT license. Only the patch text is redistributed here; the Mesa
+source itself is fetched from upstream at the pinned tag.
