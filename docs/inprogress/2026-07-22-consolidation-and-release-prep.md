@@ -18,12 +18,19 @@ known issue, then aim for a first public GitHub release**, and continue fixes af
    DELETED (orphans: not referenced by any build, not tracked). WiFi documented as UNSUPPORTED
    in KNOWN-ISSUES ("Not started / unsupported"; use wired Ethernet). Firmware binaries were
    already non-vendored (staged to gitignored `.firmware/`).
-   - ⚠️ **DECISION NEEDED (user):** a large **committed** Cypress WHD WiFi driver subtree exists
-     in the lwip fork — `wi-fi/whd/*`, `wi-fi/lwip/*`, `include/wifi-api.h`, and notably
-     `wi-fi/whd/wifi_nvram_image.h` (an NVRAM blob-as-C-header). It is third-party (Cypress/
-     Infineon license) + non-functional. For a clean public release, recommend REMOVING the
-     whole `wi-fi/` subtree (WiFi is unsupported anyway) — but deleting committed third-party
-     code is consequential, so left for your call. If kept, needs a licensing/attribution pass.
+   - ✅ **RESOLVED (user: keep local, don't publish, will resume WiFi soon).** The committed
+     Cypress WHD WiFi subtree (`wi-fi/`, 116 files incl. `wifi_nvram_image.h`) was REMOVED from
+     the lwip published tip (commit `bf8d405`) and PRESERVED two ways (belt+suspenders):
+       - lwip branch **`wifi-wip`** at the pre-removal HEAD (116 wi-fi/ files) — **do NOT push it**;
+       - tarball **`.wifi-wip/lwip-wifi-subtree-2026-07-22.tar.gz`** (coord, gitignored).
+     Build-safe: Pi4 sets `LWIP_WIFI_BUILD=no` so `wi-fi/` is never compiled; the trivial upstream
+     `include/wifi-api.h` (BSD-3-Clause, one decl) is KEPT so `port/main.c` still compiles
+     (`init_wifi()` is `#if LWIP_WIFI`=0). **Restore to resume WiFi:**
+     `git -C sources/phoenix-rtos-lwip checkout wifi-wip -- wi-fi` (or untar the archive).
+     **Publish rule:** push lwip `master` only, NOT `wifi-wip`. For a fully wifi-free public
+     HISTORY (master history still contains wi-fi/), scrub at publish time:
+     `git filter-repo --path wi-fi/ --invert-paths` — this rewrites lwip SHAs, so re-snapshot
+     the manifests afterward. (Not done now — publish-time decision.)
 3. **Quake `pak0.pak`** — ✅ gitignored in the project fork (`**/share/quake/**/*.pak`, targeted
    so tracked ia32 overlay assets are unaffected). ✅ auto-download wired: new
    `scripts/fetch-quake-shareware-pak.sh` (md5-verified freely-redistributable shareware) +
@@ -38,8 +45,12 @@ known issue, then aim for a first public GitHub release**, and continue fixes af
    `session-id-cl` (none were tracked; now can't be).
 
 ### Still-open decisions for you (from the triage)
-- (2) remove the committed `wi-fi/` WHD subtree entirely, or keep + license it?
-- **project `_user/ext2conc/`** — untracked test/util; keep (commit) or drop? (leaning drop.)
+- **project `_user/ext2conc/`** — untracked (so it will NOT publish either way). It's a
+  diagnostic stress-test that reproduced a Pi4 ext2 concurrent-allocator crash (Data Abort in
+  `ext2_block_destroyone` during bitmap write-back) — **that bug was already FIXED** (ext2
+  fs-global lock, commit `463aec13`), so the repro is a closed/disproved-hypothesis tool.
+  Recommend DROP (rm) as tidiness; kept in place for now (untracked = release-safe) pending
+  your OK — deleting an untracked file is unrecoverable, so not done unilaterally.
 
 ## Release readiness references (already in repo)
 

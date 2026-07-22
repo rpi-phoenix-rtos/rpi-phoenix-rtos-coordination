@@ -50,3 +50,8 @@ docs/review/2026-07-06-pre-publication/
 
 # Claude Code session-id scratch file
 session-id-cl
+
+# Local-only preservation of the unpublished WiFi WIP (Cypress WHD/HAL subtree
+# removed from the lwip fork tip; kept here + on the lwip `wifi-wip` branch so WiFi
+# work can resume). NOT for public release. See docs/inprogress/2026-07-22-consolidation-and-release-prep.md
+.wifi-wip/
