@@ -64,6 +64,42 @@ fixed — it's a real release blocker, not a publish problem.
 4. **Re-run the clean Docker build** to verify libGL is complete + the image builds.
 5. Re-verify the local HW build still works (the toolchain change could shift libc behavior).
 
+## Refined diagnosis (2026-07-22, deeper) — it's a libstdc++↔libmcs C99-math coordination bug
+
+Ruled OUT by local probes (with the current pre-merge toolchain's g++):
+- **Not** a generic `<cmath>` + libmcs `math.h` clash: a `#include <cmath>` + `rintf(x)` C++
+  probe compiled CLEAN (rc=0) when libmcs's math.h was swapped into the sysroot.
+- **Not** a Mesa re-declaration: Mesa never declares `rintf` (only calls it via
+  `src/util/rounding.h`); no second decl comes from Mesa.
+- **Not** a bare double-math.h macro clash (only warnings, no rintf error).
+
+Therefore the conflict is created by **libstdc++ itself when it is CONFIGURED/BUILT against
+libmcs's `math.h`** (the fresh toolchain). libstdc++'s `<cmath>` does `#include_next <math.h>`
+then, per its build-time C99-math detection (`_GLIBCXX_USE_C99_MATH*` in `c++config.h`, set by
+libstdc++'s configure conftests against the math.h present at gcc-build time) and the
+`__CORRECT_ISO_CPP_MATH_H_PROTO` path, imports/redeclares the C math funcs. libmcs's math.h
+does NOT define `__CORRECT_ISO_CPP_MATH_H_PROTO` and provides only a plain-C `extern "C"
+{ extern float rintf(float); ... }`. When libstdc++ was built against it, the resulting
+`<cmath>`/config combination redeclares `rintf` in a way that conflicts → *"'float
+rintf(float)' was declared ..."* on the Mesa C++ TUs. The LOCAL toolchain's libstdc++ was
+built against the OLD (pre-libmcs) math.h, so it doesn't hit this — which is exactly why it
+CANNOT be reproduced locally without rebuilding the toolchain against libmcs.
+
+### Verify/fix loop (multi-HOUR — needs a dedicated run)
+- `build-phoenix-toolchain-linux.sh` is a full gcc-14.2 + binutils build (MULTI-HOUR),
+  idempotent (skips if `.toolchain/aarch64-phoenix/…-gcc` exists), hardcoded prefix.
+- To iterate safely: build the fresh toolchain to a SEPARATE prefix (edit `toolchain_dir` or
+  call the phoenix-rtos-build `build-toolchain.sh` helper with a custom install dir) so the
+  working toolchain is preserved. Then compile a Mesa C++ probe (e.g. st_atom_array.cpp) with
+  it to capture the EXACT g++ error, fix libphoenix `math.h`, recompile the probe (fast — no
+  libstdc++ rebuild if the fix is at the math.h header level), and finally re-run the clean
+  Docker build to confirm the whole image builds.
+- **Likely fix directions** (confirm against the exact error first): (a) make libmcs's math.h
+  define `__CORRECT_ISO_CPP_MATH_H_PROTO` and provide the C++ float/double/long-double
+  overloads libstdc++ expects; or (b) provide a thin Phoenix `math.h` wrapper that supplies
+  the ISO C++ prototypes and includes libmcs's; or (c) fix libstdc++'s C99-math config for the
+  Phoenix target. Same header family as the `__infd` link-order break (libXfont2/glib2).
+
 ## Evidence
 
 Full clean-build log was at `$CLAUDE_JOB_DIR/tmp/cleanbuild.log` (ephemeral). Key lines quoted
