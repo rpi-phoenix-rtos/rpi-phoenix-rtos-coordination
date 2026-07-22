@@ -39,7 +39,25 @@ trap cleanup EXIT INT TERM
 sleep 3
 grep -q 'git-daemon' /tmp/phoenix-docker-serve.log 2>/dev/null && echo "server up" || { echo "server failed:"; cat /tmp/phoenix-docker-serve.log; exit 1; }
 
-PAK0_URL="http://127.0.0.1:$HTTPPORT/$PAK0_REL"
+# pak0.pak source for the Docker build (game DATA is never committed):
+#  - unset PAK0_URL (default): if the maintainer has a local pak0 in the rootfs
+#    overlay, serve THAT (reproduces the maintainer's exact image); otherwise fall
+#    back to the freely-redistributable Quake SHAREWARE pak0 on a public mirror so a
+#    fresh public clone still yields a playable GLQuake image.
+#  - PAK0_URL="" : build the engine WITHOUT game data (demos then need a pak0).
+#  - PAK0_URL=<url> : use your own (e.g. full-game) pak0.
+PAK0_PUBLIC_URL="${PAK0_PUBLIC_URL:-https://archive.org/download/quake-shareware-pak/PAK0.PAK}"
+if [ -z "${PAK0_URL+x}" ]; then
+	if [ -f "$ROOT/$PAK0_REL" ]; then
+		PAK0_URL="http://127.0.0.1:$HTTPPORT/$PAK0_REL"
+		echo "== pak0: serving local $PAK0_REL to the build =="
+	else
+		PAK0_URL="$PAK0_PUBLIC_URL"
+		echo "== pak0: no local pak0 — build fetches the freely-redistributable Quake SHAREWARE pak0 from $PAK0_URL =="
+	fi
+else
+	echo "== pak0: using caller-provided PAK0_URL='${PAK0_URL}' =="
+fi
 
 echo "== docker build (host network → reaches the local servers; empty context, Dockerfile from stdin) =="
 # --network=host so RUN's git clone/wget reach 127.0.0.1:$PORT/$HTTPPORT.

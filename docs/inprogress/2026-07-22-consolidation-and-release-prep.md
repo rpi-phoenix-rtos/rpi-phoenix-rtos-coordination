@@ -10,26 +10,36 @@ known issue, then aim for a first public GitHub release**, and continue fixes af
   staged to NFS. Validated playable by the user.
 - Remaining glitch → **KNOWN-ISSUE #67** (docs/KNOWN-ISSUES.md), deferred post-release.
 
-## Release-prep loose ends found during consolidation (NOT yet resolved)
+## Release-prep loose-ends triage (2026-07-22, per user direction) — DONE except where noted
 
-Pre-existing uncommitted / stray state in the tree that should be cleaned or decided before a
-public release (surfaced 2026-07-22 via `git-siblings.sh status`):
+1. **kernel `hal/riscv64/generic/config.h` stray edit** — ✅ REVERTED (uncommitted debug edit,
+   "QEMU ext2-repro tweak", origin unknown — likely a broken upstream merge). Tree clean.
+2. **lwip untracked WiFi blobs** (`port/wifi-fw-43455.{c,h}`, `wifi-nvram-43455.{c,h}`) — ✅
+   DELETED (orphans: not referenced by any build, not tracked). WiFi documented as UNSUPPORTED
+   in KNOWN-ISSUES ("Not started / unsupported"; use wired Ethernet). Firmware binaries were
+   already non-vendored (staged to gitignored `.firmware/`).
+   - ⚠️ **DECISION NEEDED (user):** a large **committed** Cypress WHD WiFi driver subtree exists
+     in the lwip fork — `wi-fi/whd/*`, `wi-fi/lwip/*`, `include/wifi-api.h`, and notably
+     `wi-fi/whd/wifi_nvram_image.h` (an NVRAM blob-as-C-header). It is third-party (Cypress/
+     Infineon license) + non-functional. For a clean public release, recommend REMOVING the
+     whole `wi-fi/` subtree (WiFi is unsupported anyway) — but deleting committed third-party
+     code is consequential, so left for your call. If kept, needs a licensing/attribution pass.
+3. **Quake `pak0.pak`** — ✅ gitignored in the project fork (`**/share/quake/**/*.pak`, targeted
+   so tracked ia32 overlay assets are unaffected). ✅ auto-download wired: new
+   `scripts/fetch-quake-shareware-pak.sh` (md5-verified freely-redistributable shareware) +
+   `build-sd-in-docker.sh` now falls back to the public shareware mirror when no local pak0 is
+   present (unset PAK0_URL = auto; ="" = no game data; =url = own copy). Docker `PAK0_URL` path
+   already existed. No permission prompt needed — shareware is free to redistribute; scripts
+   print a clear license notice.
+4. **external/quakespasm host binary + artifacts** — ✅ host `Quake/quakespasm` binary removed;
+   added `external/quakespasm/.gitignore` (`*.o`, `*.d`, binaries) so the fork won't publish
+   build artifacts. (coord already ignores `external/`.)
+5. **coord scratch** — ✅ gitignored `docker-out/`, `docs/review/2026-07-06-pre-publication/`,
+   `session-id-cl` (none were tracked; now can't be).
 
-1. **kernel `hal/riscv64/generic/config.h`** — uncommitted stray debug edit (`#define NUM_CPUS 1`,
-   comment "QEMU ext2-repro tweak"). RISC-V, not built for Pi4; harmless but cruft. Decide:
-   revert (likely) or commit with rationale.
-2. **lwip `port/wifi-fw-43455.{c,h}` + `wifi-nvram-43455.{c,h}`** — untracked WiFi firmware/NVRAM
-   blobs for BCM43455. **Licensing-sensitive for a public release** (redistributable? Broadcom
-   fw license). Decide: gitignore/exclude, or include with proper license/attribution. WiFi is
-   unresolved (#91) so these aren't load-bearing for the release.
-3. **project `_projects/.../rootfs-overlay/usr/`** — untracked; holds Quake shareware `pak0.pak`
-   + data. **Copyrighted — must NOT be committed.** Ensure `.gitignore` covers it; document how
-   users supply their own pak0.
-4. **project `_user/ext2conc/`** — untracked test/util. Decide: keep (commit) or drop.
-5. **external/quakespasm `Quake/quakespasm`** — host-built binary artifact (should be
-   gitignored, not committed); `Quake/history.txt` is upstream doc.
-6. **coord repo**: ~22 changes = mostly untracked `docs/review/2026-07-06-pre-publication/*`
-   file-inventory lists + `docker-out/` + `session-id-cl`. Triage before release.
+### Still-open decisions for you (from the triage)
+- (2) remove the committed `wi-fi/` WHD subtree entirely, or keep + license it?
+- **project `_user/ext2conc/`** — untracked test/util; keep (commit) or drop? (leaning drop.)
 
 ## Release readiness references (already in repo)
 

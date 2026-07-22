@@ -40,3 +40,13 @@ tools/x11-port/src/
 # Python bytecode caches
 __pycache__/
 *.pyc
+
+# Docker build outputs (SD image etc. — large, machine-local)
+docker-out/
+
+# Pre-publication review scratch: file inventories + internal notes, not for
+# the public release.
+docs/review/2026-07-06-pre-publication/
+
+# Claude Code session-id scratch file
+session-id-cl

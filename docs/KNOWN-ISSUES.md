@@ -56,8 +56,15 @@ records them and continues):
 | GPU Vulkan (V3DV) | Full Vulkan init and shader execution work on hardware; vkQuake is paused at the no-WSI texture-upload gap (buffer→image copy). | Partial. |
 | Audio | PWM audio over the 3.5 mm jack works with a streaming DMA ring and a Quakespasm mixer backend; an audible end-to-end sign-off on real headphones is still pending. | Partial. |
 
-## Not started
+## Not started / unsupported
 
-WiFi (BCM43455 — **blocked** on a firmware-execution gate that needs deeper
-hardware visibility), Bluetooth, USB mass storage, I²C / SPI / PWM general
-drivers, and camera (CSI-2) / DSI display are not implemented.
+- **WiFi (BCM43455) — NOT supported in this release.** Bring-up is blocked on a
+  firmware-execution gate (the chip loads but the firmware never goes live; needs
+  deeper hardware visibility — see `docs/inprogress/wifi-bcm43455-impl.md`). Do not
+  expect wireless networking to work. The proprietary Cypress firmware blobs are
+  **not vendored** in this repository (copyright/EULA hygiene); if WiFi is ever
+  completed, `scripts/stage-bcm43455-firmware.sh` stages them locally into a
+  gitignored `.firmware/`. Use **wired Ethernet** (fully working).
+- **Bluetooth** (shares the BCM43455) — not implemented.
+- USB mass storage, I²C / SPI / PWM general-purpose drivers, and camera (CSI-2) /
+  DSI display are not implemented.
