@@ -115,7 +115,7 @@ if [ ! -f "$KD/config.status" ]; then
       --disable-xinerama --without-dtrace --disable-systemd-logind --disable-secure-rpc \
       --disable-config-udev --disable-config-hal --without-systemd-daemon --disable-unit-tests \
       CC=${TC}gcc AR=${TC}ar RANLIB=${TC}ranlib \
-      CFLAGS="--sysroot=$SYSROOT -I$PREFIX/include -DMAXHOSTNAMELEN=256 -DXOS_USE_MTSAFE_PWDAPI -D_POSIX_THREAD_SAFE_FUNCTIONS=200809L -DO_NOFOLLOW=0 -DSI_USER=0" \
+      CFLAGS="--sysroot=$SYSROOT -I$PREFIX/include -DMAXHOSTNAMELEN=256 -DXOS_USE_MTSAFE_PWDAPI -D_POSIX_THREAD_SAFE_FUNCTIONS=200809L -DO_NOFOLLOW=0 -DSI_USER=0 -DHAVE_CBRT=1" \
       LDFLAGS="--sysroot=$SYSROOT -L$PREFIX/lib -L$SYSROOT/lib" \
       >/tmp/$NV-conf.log 2>&1 ) || { tail -30 /tmp/$NV-conf.log; fail "configure failed (see /tmp/$NV-conf.log)"; }
 fi

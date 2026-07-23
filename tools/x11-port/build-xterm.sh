@@ -67,7 +67,7 @@ export PKG_CONFIG_LIBDIR="$PREFIX/lib/pkgconfig:$PREFIX/share/pkgconfig"
 # them). phoenix_termcap.o (the no-curses termcap stub) is included; -lphoenix
 # -lc close out wcslen and friends. Putting the closure in LDFLAGS instead
 # would place it BEFORE the objects → unresolved X symbols.
-XCLOSURE="-lXaw7 -lXmu -lXt -lSM -lICE -lXpm -lXrender -lXext -lX11 -lxcb -lXau -lXdmcp -lphoenix -lc"
+XCLOSURE="-lXaw7 -lXmu -lXt -lSM -lICE -lXpm -lXrender -lXext -lX11 -liconv -lxcb -lXau -lXdmcp -lphoenix -lc"
 
 # Force-include the fd_set shim (fd_mask + __fds_bits alias for Xpoll.h) and add
 # the wctype.h shim dir ahead of the prefix includes. P_tmpdir + the shell

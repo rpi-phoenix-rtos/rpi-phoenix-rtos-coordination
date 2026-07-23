@@ -41,7 +41,7 @@ APP_CFLAGS="-DMAXHOSTNAMELEN=256 -DO_NOFOLLOW=0 -DXOS_USE_MTSAFE_PWDAPI -D_POSIX
 # appended after the objects by overriding the program's *_LDADD make variable.
 # -lxkbfile supplies XkbStdBell() (the alarm-bell helper xlogo's quit() calls
 # when configure detects xkbfile.pc); it lives in libxkbfile, not libX11.
-XCLOSURE="-Wl,--start-group -lXaw7 -lXmu -lXt -lSM -lICE -lXpm -lXext -lxkbfile -lX11 -lxcb -lXau -lXdmcp -lphoenix -lc -lm -Wl,--end-group"
+XCLOSURE="-Wl,--start-group -lXaw7 -lXmu -lXt -lSM -lICE -lXpm -lXext -lxkbfile -lX11 -liconv -lxcb -lXau -lXdmcp -lphoenix -lc -lm -Wl,--end-group"
 
 fail() { echo "FAIL: $*"; exit 1; }
 

@@ -44,7 +44,7 @@ export PKG_CONFIG_LIBDIR="$PREFIX/lib/pkgconfig:$PREFIX/share/pkgconfig"
 
 APP_CFLAGS="-DMAXHOSTNAMELEN=256 -DO_NOFOLLOW=0 -DXOS_USE_MTSAFE_PWDAPI -D_POSIX_THREAD_SAFE_FUNCTIONS=200809L"
 # Full Xaw toolkit closure + libxkbfile (XkbStdBell). Circular -> start/end-group.
-XCLOSURE="-Wl,--start-group -lXaw7 -lXmu -lXt -lSM -lICE -lXpm -lXext -lxkbfile -lX11 -lxcb -lXau -lXdmcp -lphoenix -lc -lm -Wl,--end-group"
+XCLOSURE="-Wl,--start-group -lXaw7 -lXmu -lXt -lSM -lICE -lXpm -lXext -lxkbfile -lX11 -liconv -lxcb -lXau -lXdmcp -lphoenix -lc -lm -Wl,--end-group"
 
 fail() { echo "FAIL: $*"; exit 1; }
 

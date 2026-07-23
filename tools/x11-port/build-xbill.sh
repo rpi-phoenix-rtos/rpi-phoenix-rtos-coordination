@@ -55,7 +55,7 @@ SCOREFILE=/usr/share/xbill/scores
 SHIM="$TOOLS/xbill/xbill-phoenix-shim.h"
 APP_CFLAGS="-DMAXHOSTNAMELEN=256 -DO_NOFOLLOW=0 -DXOS_USE_MTSAFE_PWDAPI -D_POSIX_THREAD_SAFE_FUNCTIONS=200809L -include $SHIM"
 # Athena toolkit closure (Xaw<->Xmu<->Xt<->X11 circular -> start/end-group).
-XCLOSURE="-Wl,--start-group -lXaw7 -lXmu -lXt -lSM -lICE -lXpm -lXext -lX11 -lxcb -lXau -lXdmcp -lphoenix -lc -lm -Wl,--end-group"
+XCLOSURE="-Wl,--start-group -lXaw7 -lXmu -lXt -lSM -lICE -lXpm -lXext -lX11 -liconv -lxcb -lXau -lXdmcp -lphoenix -lc -lm -Wl,--end-group"
 
 # Athena UI object set: core game logic + the shared core-X driver (x11.c) +
 # the Athena widget driver (x11-athena.c). gtk.c / x11-motif.c are excluded.
