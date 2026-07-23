@@ -60,7 +60,19 @@ fetch_extract() {
 	local nv=$1 url=$2
 	cd "$SRC" || return 1
 	[ -d "$nv" ] && return 0
-	timeout 90 curl -sSL -o "$nv.tar.gz" "$url" || { echo "$nv: FETCH FAIL"; return 1; }
+	# Retry transient network blips: some upstreams (notably
+	# download.savannah.gnu.org, which hosts freetype) are intermittently flaky,
+	# and a single failed curl otherwise aborts the whole clean build. -f makes
+	# curl fail on an HTTP error instead of saving an error page as the tarball.
+	local attempt
+	for attempt in 1 2 3; do
+		if timeout 120 curl -fsSL -o "$nv.tar.gz" "$url"; then
+			break
+		fi
+		echo "$nv: fetch attempt $attempt/3 failed; retrying in 5s..."
+		sleep 5
+	done
+	[ -s "$nv.tar.gz" ] || { echo "$nv: FETCH FAIL"; return 1; }
 	# Auto-detect compression: several upstream URLs are .tar.xz (xcb-proto,
 	# libxcb, libpthread-stubs, ...) but are saved here as "$nv.tar.gz". `tar xf`
 	# detects xz/gz/bz2 from the magic, so it handles all of them (a hardcoded
