@@ -61,3 +61,5 @@ session-id-cl
 
 # fresh toolchain rebuild (release-blocker #27 verification; separate from working .toolchain/)
 .toolchain-fresh/
+
+.toolchain-old-prelibmcs/
