@@ -10,15 +10,10 @@
 
 #include <pwd.h>
 
-/* libphoenix has getpwnam/getpwuid but not the passwd-enumeration API; mc uses
- * it only to tab-complete ~username. Stub it (no users enumerated) so mc builds;
- * ~name still resolves via getpwnam elsewhere. Same approach as the nano port. */
-#ifndef MC_HAVE_PWENT_STUBS
-#define MC_HAVE_PWENT_STUBS 1
-static inline struct passwd *getpwent(void) { return (struct passwd *)0; }
-static inline void setpwent(void) { }
-static inline void endpwent(void) { }
-#endif
+/* libphoenix now provides the passwd-enumeration API (getpwent/setpwent/endpwent
+ * in unistd/pwd.c); the local stubs it once needed were removed after the libc
+ * gap was filled — redeclaring them here now clashes with <pwd.h>. Same change as
+ * the nano port. */
 
 /* P_tmpdir for temp-file fallbacks. */
 #ifndef P_tmpdir

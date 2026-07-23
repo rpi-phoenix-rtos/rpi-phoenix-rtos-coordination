@@ -13,11 +13,8 @@
 #define P_tmpdir "/tmp"
 #endif
 
-/* libphoenix has getpwnam/getpwuid but not the passwd-enumeration API; nano uses
- * it only to tab-complete ~username. Stub it (no users enumerated) so nano
- * builds; ~name still resolves via getpwnam elsewhere. */
-static inline struct passwd *getpwent(void) { return (struct passwd *)0; }
-static inline void setpwent(void) { }
-static inline void endpwent(void) { }
+/* libphoenix now provides the passwd-enumeration API (getpwent/setpwent/endpwent
+ * in unistd/pwd.c); the local stubs it once needed were removed after the libc
+ * gap was filled — redeclaring them here now clashes with <pwd.h>. */
 
 #endif /* NANO_PHOENIX_SHIM_H */
