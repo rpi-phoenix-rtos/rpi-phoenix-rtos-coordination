@@ -72,12 +72,15 @@ fetch_extract() {
 		echo "$nv: fetch attempt $attempt/3 failed; retrying in 5s..."
 		sleep 5
 	done
-	[ -s "$nv.tar.gz" ] || { echo "$nv: FETCH FAIL"; return 1; }
+	# A persistent download failure must ABORT the build, not silently continue and
+	# ship a half-baked image (e.g. a missing freetype cascades to no Xphoenix). exit
+	# (not return) so it aborts even though this script is not run under `set -e`.
+	[ -s "$nv.tar.gz" ] || { echo "ERROR: $nv download failed from $url after 3 attempts — failing the build (fix connectivity or update the URL)" >&2; exit 1; }
 	# Auto-detect compression: several upstream URLs are .tar.xz (xcb-proto,
 	# libxcb, libpthread-stubs, ...) but are saved here as "$nv.tar.gz". `tar xf`
 	# detects xz/gz/bz2 from the magic, so it handles all of them (a hardcoded
 	# `xzf` fails on the .xz downloads with "EXTRACT FAIL").
-	tar xf "$nv.tar.gz" || { echo "$nv: EXTRACT FAIL"; return 1; }
+	tar xf "$nv.tar.gz" || { echo "ERROR: $nv extract failed (corrupt/truncated download?) — failing the build" >&2; exit 1; }
 }
 
 # autotools cross-build into $PREFIX (static libs). $3 = extra configure args.
