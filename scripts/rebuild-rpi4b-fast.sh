@@ -253,7 +253,14 @@ case "${scope}" in
 		scope_reason="forced project scope"
 		;;
 	core)
-		build_args=(core project image)
+		# `fs` (root-skel -> _fs/<target>/root) must precede ports/project on a
+		# COLD buildroot: some ports read config out of $PREFIX_ROOTFS/etc during
+		# their prepare step (e.g. lighttpd greps /etc/lighttpd.conf to generate
+		# its static plugin-init list). Without it that dir is absent and the port
+		# prepare aborts. `fs` is a cheap, idempotent cp -a. build.sh runs stages in
+		# a fixed order (fs -> core -> ports -> project), so the listing order here
+		# does not matter, only presence.
+		build_args=(fs core project image)
 		scope_reason="forced core scope"
 		;;
 	full-clean)
@@ -265,7 +272,10 @@ case "${scope}" in
 		# silently reuse a STALE nfs-fs that is ABI-mismatched against the freshly
 		# rebuilt libphoenix/kernel (observed: every NFS read returns ERANGE, exec
 		# from NFS fails -12). A full clean must rebuild the ports too.
-		build_args=(clean host core ports project image)
+		# `fs` re-applies the root-skel AFTER `clean` wipes _fs (build.sh runs
+		# clean -> fs -> core -> ports -> project): ports such as lighttpd read
+		# $PREFIX_ROOTFS/etc during prepare, so the skeleton must exist first.
+		build_args=(clean host fs core ports project image)
 		scope_reason="forced full-clean scope"
 		;;
 	auto)
