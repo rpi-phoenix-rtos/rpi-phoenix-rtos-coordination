@@ -13,6 +13,12 @@ Window Maker, a web browser, and **GLQuake on the V3D GPU**.
 > integration manifests. The Phoenix-RTOS source lives in sibling repositories
 > cloned under `sources/` (see [Repository layout](#repository-layout)).
 
+> 🚀 **First time here?** [**TUTORIAL.md**](TUTORIAL.md) is a single,
+> self-contained walkthrough: build the image, flash an SD card, boot the Pi,
+> and launch everything in the distribution — GLQuake, the X11 desktop with
+> Window Maker, `mc`, `dillo`, the editors, MicroPython, Lua, and more.
+> *(Tested on a Raspberry Pi 4 Model B with 4 GB RAM.)*
+
 ## Quick start
 
 On a fresh Ubuntu x86_64 machine, from an empty directory:
