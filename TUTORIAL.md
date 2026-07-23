@@ -74,6 +74,8 @@ Notes:
 - Prefer building natively on Linux instead of Docker? See
   [docs/BUILD.md](docs/BUILD.md) (`scripts/bootstrap-linux-host.sh` then
   `scripts/rebuild-rpi4b-fast.sh --variant sd --with-showcase --with-ports`).
+- Want to boot over the network (DHCP + TFTP + NFS, no SD card) for a fast
+  edit-rebuild-run loop? See [TUTORIAL-NETBOOT.md](TUTORIAL-NETBOOT.md).
 
 ---
 

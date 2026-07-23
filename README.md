@@ -18,6 +18,10 @@ Window Maker, a web browser, and **GLQuake on the V3D GPU**.
 > and launch everything in the distribution — GLQuake, the X11 desktop with
 > Window Maker, `mc`, `dillo`, the editors, MicroPython, Lua, and more.
 > *(Tested on a Raspberry Pi 4 Model B with 4 GB RAM.)*
+>
+> 🌐 **Want a network dev setup?** [**TUTORIAL-NETBOOT.md**](TUTORIAL-NETBOOT.md)
+> shows how to build from source and boot the Pi entirely over the network
+> (DHCP + TFTP + NFS root, no SD card) — the fast edit-rebuild-run loop.
 
 ## Quick start
 
