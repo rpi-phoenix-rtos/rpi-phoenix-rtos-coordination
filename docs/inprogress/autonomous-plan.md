@@ -503,6 +503,23 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-14 (session 30 — ★★★ Redis 7.2.4 FULLY FUNCTIONAL on Phoenix/RPi4 — a real network data-store SERVICE).
+Raised ambition per the owner's "BIG/network" push: ported **Redis 7.2.4** (BSD-3-Clause; before the 7.4 relicense).
+tools/redis-port/ (build.sh + phoenix-compat.h + redis-min.conf + README). **HW-verified END-TO-END over netboot
+(0 faults):** redis-server starts clean (`Ready to accept connections tcp`), and a HOST client (10.42.0.1) drove the
+Pi's redis (10.42.0.12:6379) over lwip TCP — strings/int/list/hash/set/expiry/keyspace ALL correct (PING=>PONG,
+SET/GET, INCR, LPUSH/LRANGE, HGETALL, SADD-dedup, EXPIRE/TTL, DEL, DBSIZE, COMMAND COUNT=241). Exercises lwip TCP +
+the ae_select event loop + the session-28 malloc(0) fix (jemalloc off) + NEW libphoenix long-double libm.
+**Build recipe:** MALLOC=libc; phoenix-compat.h (-include: errno consts + crash-report/watchdog stubs — all non-core);
+Makefile link-flag patch (Redis keyed off host-Linux uname → drop -rdynamic/-ldl/-pthread/-lrt). **Fixed en route:
+libphoenix floorl/ceill/llroundl** (128-bit long double — libmcs ships no mathl; llroundl in hyperloglog.c, ceill in
+timeout.c). Host-tested vs glibc (caught + fixed a sign bug in the round-to-nearest trick before the Pi cycle).
+Commits: libphoenix fea134f (pushed publish/master), coord bd6794b+6dd1891, manifest 2026-08-14-redis-and-longdouble.
+Cosmetic-only issue: garbage redis log timestamps (Phoenix time()/gmtime quirk). Persistence (RDB/AOF=fork) disabled
+by config, untested. **NEXT — rotate again.** Streak of clean+verified wins holds (SQLite, jq, Lua, Redis + 2 real
+libphoenix bug fixes: malloc(0), long-double libm). Fresh: another network service or language, git-core, or a
+design-doc pass at an owner-hard item (DRI/DRM, XFce/LXQt — best with owner present ~08-21).
+
 2026-08-14 (session 29 — Lua 5.4.7 ported; FULL win, first-try compile). Rotated to the cleanest self-contained win.
 **Lua 5.4.7 (interpreter + luac, MIT)** cross-compiles FIRST-try with ZERO libphoenix gaps (pure C89, no autoconf, no
 deps; `-DLUA_USE_POSIX` links → popen/gmtime_r present in libphoenix). tools/lua-port/ (build.sh + selfcheck.lua +
