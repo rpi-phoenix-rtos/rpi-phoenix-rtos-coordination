@@ -39,7 +39,21 @@ BGSAVE/AOF paths are never hit — plus `protected-mode no` + `bind 0.0.0.0` so 
 host client can verify over the netboot network (`redis-cli -h <pi-ip>` or raw RESP:
 `PING` -> `+PONG`, `SET k v` -> `+OK`, `GET k` -> `v`).
 
-## Status
+## Status — FULLY FUNCTIONAL (HW-verified 2026-08-14, netboot, 0 faults)
 
-Build: **complete** — `redis-server` links into a static aarch64 Phoenix ELF.
-Runtime bring-up in progress (see the coordination board).
+`redis-server` starts clean on the Pi (`Redis version=7.2.4, bits=64 … Ready to
+accept connections tcp`, 0 faults), and a host client (`10.42.0.1`) drives it over
+the netboot network (`10.42.0.12:6379`). Verified end-to-end across data types:
+
+    PING => +PONG              SET/GET/APPEND/STRLEN => bar / barbaz / 6
+    INCR ctr => 1,2            LPUSH/LLEN/LRANGE => [c,b,a]
+    HSET/HGET/HGETALL => v2    SADD s x y z x / SCARD => 3 (dedup)
+    EXPIRE foo 100 / TTL => 100   TYPE => list   EXISTS/DEL/DBSIZE   COMMAND COUNT => 241
+
+So strings, integers, lists, hashes, sets, key-expiry, and key management all work
+over real lwip TCP with the `ae_select` event loop. Uses the libphoenix `malloc(0)`
+fix (jemalloc off) and the new `floorl`/`ceill`/`llroundl`.
+
+Known cosmetic issue: log timestamps print garbage (`4294967295…`) — Phoenix
+`time()`/`gmtime` quirk in the log formatter, not a functional problem. Persistence
+(RDB/AOF, which fork()) is disabled by config and untested.
