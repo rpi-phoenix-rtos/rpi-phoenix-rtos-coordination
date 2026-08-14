@@ -503,6 +503,24 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-14 (session 34 — ★★★★ CPython 3.14.4 RUNS on Phoenix/RPi4 — flagship BIG feature, HW-verified!).
+Culminated the multi-cycle CPython port. **HW netboot: `/bin/python3 -S -c print(6*7)`=>42, `python3 -S /selftest.py`
+=> PYVER 3.14.4 + ALL-OK** (sum/range, list-comps, sorted, unicode .upper() héllo→HÉLLO, map/lambda, generators,
+exceptions, os.getpid()/posix builtin, classes, dict-merge). A full static python3 interpreter on Phoenix.
+**How it came together this turn:** the big unlock was a BATCH of ~149 `ac_cv_func_*=yes` overrides in config.site —
+configure's cross func-checks falsely marked many present funcs absent (fork/execv/sysconf/timegm/clock/gettimeofday/…),
+causing static-fallback conflicts everywhere; overriding cleared the whole compile-conflict class. Then: LDSHARED→cross
+gcc + `make python` (static interpreter, skip .so ext modules); final startup blocker = **sysconf(_SC_CLK_TCK) returned
+-1** → CPython "_Py_GetTicksPerSecond: cannot read ticks_per_second" → **fixed libphoenix conf.c to return 100**
+(92e8eab, pushed publish/master). Also disabled external-lib modules (config.site py_cv_module_*=n/a) + module gaps
+(_zstd/resource/…) + shims (SOMAXCONN/msync/_SC_*/O_NOFOLLOW in phoenix-py-compat.h). Rebuilt core (image 6bbc323/
+6bbc323→6bbc...), relinked python, re-tested. tools/python-port/ (build.sh + config.site + phoenix-py-compat.h +
+selftest.py + README). Commits: libphoenix 92e8eab, coord 5963c24, manifest 2026-08-14-cpython-runs. **5th libphoenix
+platform fix** (malloc0, long-double, C99 libm, wide-char, _SC_CLK_TCK). **Deferred:** .so ext modules (array/_socket/
+mmap built static-into-binary later) + external-lib modules (zlib/_ssl/_sqlite3 — cross-build the libs). **NEXT —
+rotate; CPython is a landed landmark.** Could: broaden python (build key .so modules static, e.g. _socket for
+networking, _sqlite3 via the sqlite port), or a fresh BIG item, or an owner-hard design pass.
+
 2026-08-14 (session 33 — ★ libphoenix WIDE-CHAR completion LANDED (the turn's win) + CPython make advanced further).
 Continued CPython; per plan, converted the long compile-tail grind into a landable platform win. **libphoenix wide-char
 LANDED (54df17b, pushed publish/master, manifest 2026-08-14-libphoenix-widechar):** added wcspbrk/wcsspn/wcscspn/
