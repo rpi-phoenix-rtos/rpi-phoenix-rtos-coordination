@@ -503,6 +503,23 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-14 (session 35 — ★★★ CPython static C-extension modules work — Python now USABLE on Phoenix/RPi4).
+Broadened last turn's CPython landmark from a bare interpreter to a genuinely useful Python. Built 20 pure-C stdlib
+extension modules **STATIC into the interpreter** (Modules/Setup.local under `*static*` — makesetup prioritizes it over
+Setup.stdlib's *shared*; avoids Phoenix runtime .so loading): array/_struct/_json/math/cmath/select/**_socket**/mmap/
+_pickle/_csv/heapq/bisect/_random/_statistics/_queue/_zoneinfo/unicodedata/fcntl/grp/_posixsubprocess. **HW-verified
+(selftest2.py => MODULES-OK + ALL-OK, PYVER 3.14.4):** json dumps/loads, struct pack/unpack, math (gcd/factorial/sqrt/
+**math.nextafter**/hypot), heapq, bisect, pickle round-trip, csv writer, random(seeded), statistics.mean, and
+**socket.socket(AF_INET,SOCK_DGRAM)** fd via lwip. Needed a new libphoenix libm fn: **nextafter/nexttoward** (c2900ab,
+pushed publish/master, host-tested vs glibc) — math.nextafter link dep. Rebuilt core (image 78bd900), relinked python
+(38.5MB w/ modules). tools/python-port/ now ships Setup.local + selftest2.py; build.sh installs Setup.local. Commits:
+libphoenix c2900ab, coord 581c826, manifest 2026-08-14-cpython-modules. **6th libphoenix libm/libc fix.**
+**Deferred:** external-lib modules (zlib: cross-build libz; _sqlite3: link the sqlite port lib; _ssl: mbedtls/openssl);
+pyexpat/_decimal (bundled, need their -I flags in Setup.local); broader runtime + fork/subprocess untested.
+**NEXT — rotate; Python is a landed+usable landmark.** Options: wire _sqlite3 (link libsqlite3 from the sqlite port —
+Python+SQLite is compelling), cross-build libz→zlib module, a Python demo (e.g. Python HTTP server over lwip talking to
+the Redis port), a fresh BIG item, or an owner-hard design pass (DE/DRI-DRM).
+
 2026-08-14 (session 34 — ★★★★ CPython 3.14.4 RUNS on Phoenix/RPi4 — flagship BIG feature, HW-verified!).
 Culminated the multi-cycle CPython port. **HW netboot: `/bin/python3 -S -c print(6*7)`=>42, `python3 -S /selftest.py`
 => PYVER 3.14.4 + ALL-OK** (sum/range, list-comps, sorted, unicode .upper() héllo→HÉLLO, map/lambda, generators,
