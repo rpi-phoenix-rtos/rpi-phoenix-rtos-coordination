@@ -503,6 +503,21 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-14 (session 28 — ★★ jq ENOMEM ROOT-CAUSED to a libphoenix malloc(0) bug — FIXED; jq now fully functional).
+Chased the session-27 jq "intermittent ENOMEM" instead of rotating (high-leverage: a fix helps ALL ports + owner
+directive = "fix Phoenix bugs, kernel-OK"). Instrumented jq's allocator (jv_mem_alloc/calloc print size on NULL),
+1 Pi cycle → **failing call = `calloc(0, 24)`** (jq building an empty jv collection). **libphoenix `malloc(0)` returned
+NULL** (malloc_dl.c:440 `if (size==0) return NULL`), and jq — like most portable software (glibc/BSD convention) —
+does `p=calloc(0,n); if(!p) out_of_memory()`. So the "intermittency" was DETERMINISTIC by code path: filters that never
+build a zero-length alloc (`[1,2,3]|add`) ran; those that do (`-n 42`, selfcheck) failed. **FIX (libphoenix
+6465a4a, pushed publish/master): malloc(0) → size=1** → distinct freeable non-NULL ptr (glibc/dlmalloc behavior);
+calloc(0,x)/realloc(NULL,0) inherit it. Rebuilt --scope core (image SHA fa0f16bf), synced libphoenix.a → toolchain,
+relinked jq. **HW-verified (netboot): `-n 42`=>42, `selfcheck.jq`=>ALL-OK (30 assertions), `--run-tests /jqcore.test`
+=> 12/12 passed (0 malformed)** — the exact 3 invocations that ENOMEM'd before. jq is a **FULL win** now. Manifest
+2026-08-14-libphoenix-malloc0-fix.md. Commits: libphoenix 6465a4a, coord b37d4f4+7a44b5f. **This libphoenix malloc(0)
+fix likely un-breaks other ports too** (any relying on malloc(0)!=NULL). **NEXT — rotate to the next win.** Clean-win
+candidates: Lua (cleanest port possible), git-core; or a design-doc pass at an owner-hard item (DRI/DRM, XFce/LXQt).
+
 2026-08-14 (session 27 — jq JSON processor ported; core FUNCTIONAL on HW, intermittent-ENOMEM caveat).
 Rotated to a clean breadth win after re-confirming the WiFi data-plane is banked at a firmware-opaque wall
 (TX reaches fw, not the air; SDPCM seq/credit; advisor previously steered "PIVOT to breadth, don't blind-code" —
