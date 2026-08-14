@@ -503,6 +503,18 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-14 (session 36 — ★★★ Python + SQLite: _sqlite3 module works on Phoenix/RPi4). Wired CPython's _sqlite3 against
+a cross-built libsqlite3.a (SQLite amalgamation 3.53.4, THREADSAFE=1, OMIT_LOAD_EXT). **HW-verified (selftest_sqlite.py
+=> `sqlite_version 3.53.4` + ALL-OK):** connect(:memory:), CREATE TABLE, parameterized executemany, commit, SELECT
+ORDER BY, COUNT/SUM aggregates, LIKE, BEGIN/rollback, fetchall/fetchone. Python is now a scripting+SQL-database platform
+on Phoenix. **Mechanism:** Setup.local `_sqlite3 _sqlite/*.c -I<amalg> -L<amalg> -lsqlite3` (MODULE_NAME is in
+Modules/_sqlite/module.h → no -D needed, which was the makesetup "missing separator" gotcha). build.sh now cross-builds
+libsqlite3.a + appends the _sqlite3 line. python 40.5MB. No libphoenix change (libsqlite3.a is a separate lib → no core
+rebuild/manifest). Commit coord 9a810e6. tools/python-port/ (Setup.local base 20 modules + build.sh sqlite section +
+selftest_sqlite.py). **NEXT — rotate.** Python is now RUN+USABLE+SQL. Options: cross-build libz→zlib module (unlocks
+gzip/zipfile/many stdlib), a Python-over-lwip demo (Python HTTP server / Python client → the Redis port), a fresh BIG
+item, or an owner-hard design pass (DE/DRI-DRM). Streak: SQLite/jq/Lua/Redis/CPython(+usable+sqlite) + 6 libphoenix fixes.
+
 2026-08-14 (session 35 — ★★★ CPython static C-extension modules work — Python now USABLE on Phoenix/RPi4).
 Broadened last turn's CPython landmark from a bare interpreter to a genuinely useful Python. Built 20 pure-C stdlib
 extension modules **STATIC into the interpreter** (Modules/Setup.local under `*static*` — makesetup prioritizes it over
