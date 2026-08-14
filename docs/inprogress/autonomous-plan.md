@@ -503,6 +503,21 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-14 (session 32 — CPython 3.14 make advances 32→~120 objects; cleared mimalloc + 5 libc gaps; WIP).
+Continued the CPython cross-build (owner-sanctioned BIG multi-cycle). Cleared this turn: (1) **mimalloc** →
+`--without-mimalloc` (uses pymalloc; mimalloc needs madvise/MADV_DONTNEED + rusage fields Phoenix lacks). (2) **struct
+timeval/rusage incomplete** in CPython internal headers → phoenix-py-compat.h (`-include` first) pulls sys/time.h +
+sys/resource.h early. KEY: the REAL Phoenix headers are in `.toolchain/aarch64-phoenix/aarch64-phoenix/usr/include`
+(not `.../include`). (3) **wide-char decls** (wcstol/wcstok/wcstoul/wcstod/wcsstr/wcsspn/wcscspn/wcspbrk — libphoenix
+has a partial wcs* set, lacks these; declared for now, real defs needed at LINK). (4) **clock_getres** shim (Phoenix
+has clock_gettime only; nominal 1ns). (5) **O_NOFOLLOW=0** (absent in Phoenix fcntl.h). make now ~120 objects.
+**Current wall:** `_SC_TTY_NAME_MAX` undeclared (missing sysconf name) — a one-gap-per-iteration COMPILE tail; keep
+editing tools/python-port/phoenix-py-compat.h + re-running make (resumes from failed object) to LINK. **NEXT:** reach
+LINK → the undefined-symbol list = the wide-char funcs (+ maybe more) to implement PROPERLY in libphoenix (host-test vs
+glibc, one --scope core), then static python (curated Modules/Setup) → runtime bring-up. Several more turns (each libc
+gap fixed benefits all ports). Resume: tools/python-port/STATUS.md. Commit 4df475e. No libphoenix change this turn
+(no core rebuild). Streak intact: SQLite/jq/Lua/Redis + 3 libphoenix fixes (malloc0, long-double, C99 libm).
+
 2026-08-14 (session 31 — ★★ libphoenix C99 libm COMPLETED + CPython 3.14 cross-configures for Phoenix; make WIP).
 Took on the BIG owner-sanctioned multi-cycle target: full **CPython 3.14.4** on Phoenix. Two milestones this turn:
 (1) **libphoenix C99 libm completion (the durable WIN)** — the phoenix libm (default LIBM_USE_LIBMCS=n, uses
