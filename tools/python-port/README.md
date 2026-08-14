@@ -8,11 +8,20 @@ Pi 4** — a full Python 3 interpreter on Phoenix-RTOS. PSF-licensed (permissive
     /bin/python3 -S -c print(6*7)     ->  42
     /bin/python3 -S /selftest.py      ->  PYVER 3.14.4 / ALL-OK
 
-`selftest.py` asserts: `sum(range(100))`, list comprehensions, `sorted`, Unicode
-`.upper()` (`héllo`→`HÉLLO`), `map`/`lambda`, generators, exception handling,
-`os.getpid()` (builtin `posix`), classes, and dict-merge — all pass. The interpreter
-starts (core init, reads `/dev/urandom` via `/dev/hwrng`), runs frozen `importlib`,
-and imports pure-Python stdlib modules from disk.
+`selftest.py` asserts core language: `sum(range(100))`, list comprehensions,
+`sorted`, Unicode `.upper()` (`héllo`→`HÉLLO`), `map`/`lambda`, generators,
+exceptions, `os.getpid()` (builtin `posix`), classes, dict-merge — all pass.
+
+**Static C extension modules also work** (`selftest2.py` → `MODULES-OK … ALL-OK`):
+`array`, `struct` (binary pack/unpack), `json` (dumps/loads), `math` (incl.
+`math.nextafter` via the new libm fix), `heapq`, `bisect`, `pickle` (round-trip),
+`csv`, `random`, `statistics`, and **`socket`** (`AF_INET`/`SOCK_DGRAM` fd via lwip).
+These are compiled **static into the interpreter** (Phoenix avoids runtime `.so`
+loading) — see `Setup.local`. Also baked in: `select`, `mmap`, `fcntl`, `grp`,
+`_posixsubprocess`, `_queue`, `_zoneinfo`, `unicodedata`.
+
+The interpreter starts (core init, reads `/dev/urandom` via `/dev/hwrng`), runs
+frozen `importlib`, and imports pure-Python stdlib modules from disk.
 
 (Startup prints a harmless `Could not find platform dependent libraries <exec_prefix>`
 — there is no `lib-dynload` dir because the `.so` extension modules aren't built yet.)

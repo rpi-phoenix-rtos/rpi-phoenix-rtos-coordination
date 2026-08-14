@@ -46,10 +46,15 @@ export CC=aarch64-phoenix-gcc CXX=aarch64-phoenix-g++ AR=aarch64-phoenix-ar RANL
 #    interpreter below doesn't need them).
 sed -i 's/^LDSHARED=\tld /LDSHARED=\taarch64-phoenix-gcc -shared /; s/^BLDSHARED=\tld /BLDSHARED=\taarch64-phoenix-gcc -shared /' Makefile
 
-# 4. Build JUST the static interpreter (libpython + builtin modules baked in).
-#    `make` (all) would also try to build the ~40 shared .so stdlib extensions;
-#    we skip those for now (a static python with builtin modules + the pure-python
-#    stdlib is enough to run). Re-enable individual .so modules later as needed.
+# 4. Build the STATIC extension modules into the interpreter (Setup.local lists
+#    the pure-C, no-external-lib stdlib modules: _socket/array/struct/json/select/
+#    math/mmap/pickle/csv/...). makesetup gives Setup.local priority over the
+#    Setup.stdlib *shared* defs, so these link into `python` instead of as .so.
+cp "$HERE/Setup.local" Modules/Setup.local
+
+# 5. Build JUST the interpreter (skip the remaining .so extensions we didn't
+#    make static). `make` (all) would try to link those as .so with the wrong
+#    linker; `make python` links the static interpreter + the Setup.local modules.
 make -j4 python
 "$TC/aarch64-phoenix-readelf" -h python | grep Machine
 echo "OK -> $PWD/python  (static aarch64 CPython 3.14.4)"
