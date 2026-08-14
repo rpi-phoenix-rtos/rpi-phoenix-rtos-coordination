@@ -503,6 +503,23 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-14 (session 31 — ★★ libphoenix C99 libm COMPLETED + CPython 3.14 cross-configures for Phoenix; make WIP).
+Took on the BIG owner-sanctioned multi-cycle target: full **CPython 3.14.4** on Phoenix. Two milestones this turn:
+(1) **libphoenix C99 libm completion (the durable WIN)** — the phoenix libm (default LIBM_USE_LIBMCS=n, uses
+libm/phoenix/*) shipped a C99 SUBSET missing acosh/asinh/atanh/expm1/log1p. Implemented all 5 (libm/phoenix/c99extra.c,
+built on an accurate Kahan log1p), **host-tested bit-close to glibc across the domain incl. Inf/NaN/±1 edges** (caught
+nothing this time — the design was right). Rebuilt --scope core (image a66ae7d), synced libphoenix.a→toolchain, nm
+confirms all 5 defined. Benefits ALL math-heavy ports (jq had dropped these too). libphoenix 2d0de2f pushed
+publish/master; manifest 2026-08-14-libphoenix-c99-libm. (2) **CPython cross-configures** — taught configure about
+Phoenix (2 MACHDEP cross-blocks hard-errored "cross build not supported for aarch64-unknown-phoenix" → added
+`*-*-phoenix*` cases → ac_sys_system=Phoenix, MACHDEP=phoenix); the C99 libm gate then passed → **configure SUCCEEDS
+(Makefile+pyconfig.h generated)**. tools/python-port/ (build.sh + config.site + STATUS.md), coord scaffold committed.
+**NEXT (CPython make, multi-cycle):** `make` reaches ~32 objects then walls on **mimalloc** (CPython 3.14 bundled
+allocator needs madvise/MADV_DONTNEED + struct rusage ru_majflt/ru_maxrss — Phoenix lacks) → re-configure
+`--without-mimalloc` (or shim), then continue make (expect more POSIX/module gaps; target a static python w/ curated
+Modules/Setup). Resume from tools/python-port/STATUS.md. Streak: SQLite/jq/Lua/Redis + 3 libphoenix fixes (malloc(0),
+long-double libm, C99 libm).
+
 2026-08-14 (session 30 — ★★★ Redis 7.2.4 FULLY FUNCTIONAL on Phoenix/RPi4 — a real network data-store SERVICE).
 Raised ambition per the owner's "BIG/network" push: ported **Redis 7.2.4** (BSD-3-Clause; before the 7.4 relicense).
 tools/redis-port/ (build.sh + phoenix-compat.h + redis-min.conf + README). **HW-verified END-TO-END over netboot
