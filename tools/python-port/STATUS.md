@@ -1,31 +1,47 @@
 # CPython 3.14.4 on Phoenix-RTOS — WORK IN PROGRESS
 
-Big multi-cycle port. Progress so far (2026-08-14):
+Big multi-cycle port (owner-sanctioned). CPython is PSF-licensed (permissive).
+Resume with `build.sh` (idempotent) then `make` in the build tree.
 
-1. **configure taught about Phoenix** — CPython's configure has two cross-build
-   `MACHDEP` case blocks that hard-error `cross build not supported for
-   aarch64-unknown-phoenix`. Added a `*-*-phoenix*` case to each (ac_sys_system=
-   Phoenix, _host_ident=$host_cpu → MACHDEP=phoenix). build.sh applies both via perl.
-2. **C99 libm gate passed** — configure hard-errors "requires C99 compatible libm"
-   unless acosh/asinh/atanh/erf/erfc/expm1/log1p/log2 all link. The phoenix libm
-   was missing acosh/asinh/atanh/expm1/log1p → **added to libphoenix**
-   (libm/phoenix/c99extra.c, host-tested vs glibc). erf/erfc/log2 already present.
-3. **configure now SUCCEEDS** — Makefile + pyconfig.h generated (with `--disable-shared
-   --without-ensurepip --disable-ipv6 --disable-test-modules --with-build-python=
-   host python3.14`, and config.site with cross cache answers).
+## Done so far (2026-08-14)
 
-## Next wall (where `make` stops)
+- **configure taught about Phoenix** — added `*-*-phoenix*` cases to CPython's two
+  cross-build `MACHDEP` blocks (else `cross build not supported for
+  aarch64-unknown-phoenix`). → `ac_sys_system=Phoenix`, `MACHDEP=phoenix`. build.sh
+  applies both via perl.
+- **C99 libm gate passed** — needed acosh/asinh/atanh/erf/erfc/expm1/log1p/log2;
+  the 5 missing were added to libphoenix (`libm/phoenix/c99extra.c`).
+- **configure SUCCEEDS**; `--without-mimalloc` (CPython 3.14's bundled mimalloc
+  needs madvise/MADV_DONTNEED + rusage fields Phoenix lacks → use pymalloc instead).
+- **make advances to ~120 objects.** Compile gaps cleared via `phoenix-py-compat.h`
+  (`-include`'d first in every TU):
+  1. `struct timeval`/`struct rusage` incomplete in CPython internal headers →
+     include `<sys/time.h>`/`<sys/resource.h>` early. (Real Phoenix headers live in
+     `.toolchain/aarch64-phoenix/aarch64-phoenix/usr/include`, not `.../include`.)
+  2. wide-char funcs libphoenix lacks — declared: wcstol/wcstoul/wcstoll/wcstoull/
+     wcstod/wcstof/wcstold/wcstok/wcsstr/wcsspn/wcscspn/wcspbrk (declarations only;
+     real defs needed at LINK — candidates to add to libphoenix).
+  3. `clock_getres` — Phoenix has clock_gettime only; shimmed (nominal 1 ns).
+  4. `O_NOFOLLOW` — absent in Phoenix fcntl.h; defined 0 (no nofollow enforcement).
 
-`make` builds ~32 objects then fails in **mimalloc** (CPython 3.14's bundled
-allocator): `Objects/mimalloc/prim/unix/prim.c` needs `madvise`/`MADV_DONTNEED`
-and `struct rusage` fields `ru_majflt`/`ru_maxrss` — none in Phoenix.
+## Current wall
 
-**Fix to try next:** re-configure with mimalloc off (a `--without-mimalloc` /
-`--with-pymalloc` route, or `-DMI_...` off), or shim madvise as a no-op +
-add the rusage fields. Then continue `make`, expecting further POSIX/module gaps
-(build a static python with a curated Modules/Setup — no dynamic .so extensions).
+`make` stops (~120 objects in) on **`_SC_TTY_NAME_MAX` undeclared** (a sysconf name
+Phoenix's `<unistd.h>` lacks). More missing `_SC_*` / constants likely follow —
+define each in phoenix-py-compat.h (runtime `sysconf` returns -1 for unknown, which
+CPython tolerates). This is a one-gap-per-iteration compile tail; keep editing the
+compat header + re-running `make` (it resumes from the failed object) until LINK.
 
-## Verify (once built)
+## Then (next milestones)
 
-    /bin/python3 -c 'print(sum(range(100)))'   # => 4950
-    /bin/python3 /selftest.py                  # a self-asserting feature script
+1. **Reach LINK** — the undefined-symbol list = the real libphoenix functions to
+   implement (expect the wide-char family wcstol/wcstok/… — add to libphoenix
+   properly, host-tested vs glibc, one `--scope core` rebuild; promote clock_getres
+   too). Build a STATIC python (`--disable-shared`) with a curated `Modules/Setup`
+   (no dynamic .so extension imports on Phoenix).
+2. **Runtime bring-up** — netboot the interpreter; expect further POSIX/syscall
+   gaps at startup. Verify: `python3 -c 'print(sum(range(100)))'` => 4950, then a
+   self-asserting `selftest.py`.
+
+Realistic: several more turns. Each turn clears a batch of gaps (and each libphoenix
+gap fixed benefits all ports).

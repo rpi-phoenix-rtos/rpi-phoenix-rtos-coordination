@@ -28,6 +28,14 @@ export PATH="$TC:$PATH"
 export CC=aarch64-phoenix-gcc CXX=aarch64-phoenix-g++ AR=aarch64-phoenix-ar RANLIB=aarch64-phoenix-ranlib READELF=aarch64-phoenix-readelf
 ./configure --host=aarch64-phoenix --build=x86_64-pc-linux-gnu \
   --with-build-python=/usr/bin/python3 \
-  --disable-ipv6 --without-ensurepip --disable-shared --disable-test-modules
-  # TODO(next): --without-mimalloc (or shim madvise/MADV_DONTNEED/rusage), then make
-echo "configure OK. 'make' is the next step (see STATUS.md)."
+  --disable-ipv6 --without-ensurepip --disable-shared --disable-test-modules \
+  --without-mimalloc \
+  CFLAGS="-include $HERE/phoenix-py-compat.h"
+
+# phoenix-py-compat.h (-include'd first in every TU) shims the libc gaps found so
+# far: early sys/time.h+sys/resource.h (complete struct timeval/rusage for CPython
+# internal headers), wide-char decls (wcstol/wcstok/wcstoul/wcstod/wcsstr/wcsspn/
+# wcscspn/wcspbrk/... — declare so compile proceeds, link then reveals which need
+# real defs), a clock_getres nominal-1ns shim, and O_NOFOLLOW=0.
+make -j4   # advances to ~120 objects; next compile gap: _SC_TTY_NAME_MAX (see STATUS.md)
+echo "see STATUS.md for the current wall + next steps."
