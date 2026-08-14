@@ -24,24 +24,33 @@ Resume with `build.sh` (idempotent) then `make` in the build tree.
   3. `clock_getres` — Phoenix has clock_gettime only; shimmed (nominal 1 ns).
   4. `O_NOFOLLOW` — absent in Phoenix fcntl.h; defined 0 (no nofollow enforcement).
 
-## Current wall
+## Cleared since (session 33)
 
-`make` stops (~120 objects in) on **`_SC_TTY_NAME_MAX` undeclared** (a sysconf name
-Phoenix's `<unistd.h>` lacks). More missing `_SC_*` / constants likely follow —
-define each in phoenix-py-compat.h (runtime `sysconf` returns -1 for unknown, which
-CPython tolerates). This is a one-gap-per-iteration compile tail; keep editing the
-compat header + re-running `make` (it resumes from the failed object) until LINK.
+- **`_SC_*` sysconf batch** — 6 direct-use names Phoenix lacks defined in
+  phoenix-py-compat.h (`_SC_PAGE_SIZE`=alias `_SC_PAGESIZE`; NPROCESSORS_ONLN/
+  TTY_NAME_MAX/SEM_VALUE_MAX/GETGR_R_SIZE_MAX/GETPW_R_SIZE_MAX = unknown ints →
+  sysconf returns -1, CPython tolerates).
+- **External-lib modules disabled** via `config.site` `py_cv_module_*=n/a`
+  (zlib/binascii/_ssl/_hashlib/_ctypes/readline/_curses*/_dbm/_gdbm/_sqlite3/
+  _tkinter/_bz2/_lzma/nis/_uuid/spwd) — build a core static python first; re-enable
+  zlib/_sqlite3 later by cross-building libz + linking the sqlite port's lib.
+- **`HAVE_CLOCK_GETTIME`** — configure's cross func-check falsely said no (Phoenix
+  HAS clock_gettime) → the timespec `_PyTime_*` decls were `#if`'d out → implicit-decl
+  error. Fixed with `ac_cv_func_clock_gettime=yes` in config.site.
+- **libphoenix wide-char LANDED** (54df17b) — wcspbrk/wcsspn/wcscspn/wcsstr/wcstok +
+  wcsto{l,ul,ll,ull,d,f,ld} implemented + host-tested vs glibc + synced to toolchain.
+  So the wide-char link deps are now real (not shims). Removed their decls from the
+  compat header.
 
-## Then (next milestones)
+## Current state / next
 
-1. **Reach LINK** — the undefined-symbol list = the real libphoenix functions to
-   implement (expect the wide-char family wcstol/wcstok/… — add to libphoenix
-   properly, host-tested vs glibc, one `--scope core` rebuild; promote clock_getres
-   too). Build a STATIC python (`--disable-shared`) with a curated `Modules/Setup`
-   (no dynamic .so extension imports on Phoenix).
-2. **Runtime bring-up** — netboot the interpreter; expect further POSIX/syscall
-   gaps at startup. Verify: `python3 -c 'print(sum(range(100)))'` => 4950, then a
-   self-asserting `selftest.py`.
+Re-run `build.sh` (applies the Phoenix configure patch + config.site) then `make`.
+Expect the compile tail to continue a bit (more one-off constant/func gaps), then
+**LINK** — remaining undefined symbols there = the final libc gaps to implement.
+Then a STATIC python (`--disable-shared`, curated modules) → **runtime bring-up**
+over netboot: `python3 -c 'print(sum(range(100)))'` => 4950, then a self-asserting
+`selftest.py`. (compat header now carries: sys/time.h+resource.h+fcntl.h early,
+clock_getres 1ns shim, O_NOFOLLOW=0, _SC_ batch.)
 
 Realistic: several more turns. Each turn clears a batch of gaps (and each libphoenix
 gap fixed benefits all ports).

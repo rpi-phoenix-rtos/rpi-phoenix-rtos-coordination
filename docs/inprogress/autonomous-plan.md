@@ -503,6 +503,20 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-14 (session 33 — ★ libphoenix WIDE-CHAR completion LANDED (the turn's win) + CPython make advanced further).
+Continued CPython; per plan, converted the long compile-tail grind into a landable platform win. **libphoenix wide-char
+LANDED (54df17b, pushed publish/master, manifest 2026-08-14-libphoenix-widechar):** added wcspbrk/wcsspn/wcscspn/
+wcsstr/wcstok + wcsto{l,ul,ll,ull,d,f,ld} (search/tokenize on wcschr/wcsncmp; wcsto* copy the ASCII numeric prefix to a
+narrow buf + defer to strto*, endptr mapped 1:1). **Host-tested vs glibc (values + endptr) ALL-OK.** Rebuilt --scope
+core (image f9a2643), synced .a + wchar.h to toolchain, nm-confirmed. Benefits all wchar-heavy ports + unblocks CPython
+link. **CPython progress:** cleared the _SC_ sysconf batch (6 names → compat header), disabled external-lib modules
+(config.site py_cv_module_*=n/a: zlib/binascii/_ssl/_ctypes/readline/sqlite3/...), and fixed HAVE_CLOCK_GETTIME
+(ac_cv_func_clock_gettime=yes — configure's cross-check falsely said no, which #if'd out the timespec _PyTime_* decls).
+**NEXT:** re-run build.sh + make → finish the compile tail → LINK (remaining undefined syms = final libc gaps) → static
+python (curated modules) → runtime bring-up (`python3 -c 'print(sum(range(100)))'`=>4950). Resume tools/python-port/
+STATUS.md. Commits: libphoenix 54df17b, coord 8d24ef2. This is the 4th libphoenix platform fix (malloc0, long-double,
+C99 libm, wide-char) — each unblocks many ports. Streak: SQLite/jq/Lua/Redis + these 4 libc completions.
+
 2026-08-14 (session 32 — CPython 3.14 make advances 32→~120 objects; cleared mimalloc + 5 libc gaps; WIP).
 Continued the CPython cross-build (owner-sanctioned BIG multi-cycle). Cleared this turn: (1) **mimalloc** →
 `--without-mimalloc` (uses pymalloc; mimalloc needs madvise/MADV_DONTNEED + rusage fields Phoenix lacks). (2) **struct
