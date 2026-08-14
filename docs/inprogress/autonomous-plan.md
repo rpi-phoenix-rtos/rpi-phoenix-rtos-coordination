@@ -13,6 +13,30 @@ host/Linux comparison, UART logs, QEMU, debugger).
 
 ---
 
+## Comments from human operator / owner (more more from 2026-08-14)
+
+- Do not start new topics for a while - there are still many pending / in progress / not fully finished topics on the list that you started, got some nice progress, but still there are things which may be improved. So before new topics - finalize the ones which are in progress.
+- Try to move as many ports to the proper ports project - away from the "tools" folder in coordination repo.
+- Notice that there actually is already an official Lua port, so your effort was not needed here. To your credit - you did use a newer Lua version, so you can go back to the official port and upgrade it to the newest version based on you experiment.
+- Try to finalize coreutils - at least the biggest subset you can get working.
+- Try to finalize dynamic library loading and use in Python for loading extensions / modules.
+- Try to push forward the machine learning track with models different than LLM. Especially CNN image processing models would be interesting as they may potentially benefity GPU acceleration (unlike LLMs which turned out to be slower on GPU).
+- Continue working on Wifi - full support of joining and using a WPA2/WPA3 secured network would be a welcomed addition.
+- Still try to improve X11 experience with more complete desktop environment and GPU acceleration. Try to reach similar level of completeness as Raspberry Pi OS - in a reasonable way (full GNOME or KDE is definitively out of scope, but some of the lightweight desktop environments could work).
+- Do more testing on ffmpeg - testing with bigger media files (transfer them to RAM disk before playback) and work on hardware accelerated h264 decode which Pi4 has.
+- In general go over all the ports done and see if the limitations / not finished parts of the porting can be finished. Do it even if it is a lot of work.
+- Whenever you add new libphoenix functionalities - always remember about the tests!!!
+- Continue working on polishing the code and improving the performance.
+- Big idea for future consideration - try to rebase Phoenix RTOS against newest gcc version (16.2.0). Could potentially bring some performance improvements and uncover some bugs / incompatibilities.
+
+You continue to set the priorities yourself!
+Remember to use subagents whenever possible to speed things up.
+
+Keep up good progress!
+
+---
+
+
 ## Comments from human operator / owner (more more from 2026-08-12)
 
 - qemu 11.1 was released - please update the host-side toolchain to up-to-date qemu
