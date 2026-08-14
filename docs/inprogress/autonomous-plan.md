@@ -503,6 +503,18 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-14 (session 29 — Lua 5.4.7 ported; FULL win, first-try compile). Rotated to the cleanest self-contained win.
+**Lua 5.4.7 (interpreter + luac, MIT)** cross-compiles FIRST-try with ZERO libphoenix gaps (pure C89, no autoconf, no
+deps; `-DLUA_USE_POSIX` links → popen/gmtime_r present in libphoenix). tools/lua-port/ (build.sh + selfcheck.lua +
+README). **HW-verified (netboot): `/bin/lua /selfcheck.lua` => ALL-OK** (~30 asserts: int/float + math.type + wraparound,
+bitwise `& | ~ << >>`, `//` floordiv, string patterns/format/gsub/match, metatables __index/__add, coroutines, pcall,
+utf8.len, string.pack/unpack, tonumber base/hex, goto) + `lua -e print(2^10)` => 1024.0. selfcheck also passes on native
+Lua (script validated). Commit 308a365, pushed publish. **NEXT — rotate again.** The clean-oracle self-contained ports
+keep landing reliably (SQLite, jq, Lua, ML, bash). Remaining owner-hard items (DRI/DRM, XFce/LXQt = HDMI/regression-risky;
+radio data-plane = fw-opaque wall) are best with the owner present (~08-21). Fresh candidates: git-core (bigger port,
+version control), a language w/ stdlib, a net service tying SQLite+lwip, OR a design-doc pass at an owner-hard item.
+Note: the session-28 libphoenix malloc(0) fix may have silently un-blocked other ports (worth spot-checking on reuse).
+
 2026-08-14 (session 28 — ★★ jq ENOMEM ROOT-CAUSED to a libphoenix malloc(0) bug — FIXED; jq now fully functional).
 Chased the session-27 jq "intermittent ENOMEM" instead of rotating (high-leverage: a fix helps ALL ports + owner
 directive = "fix Phoenix bugs, kernel-OK"). Instrumented jq's allocator (jv_mem_alloc/calloc print size on NULL),
