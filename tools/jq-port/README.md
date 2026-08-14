@@ -4,49 +4,36 @@
 Phoenix-RTOS on the Pi 4. jq is **MIT-licensed** (permissive; no GPL concern for
 the Phoenix repos, unlike the bash/coreutils ports).
 
-## Result (HW-verified 2026-08-14, netboot)
+## Result (HW-verified 2026-08-14, netboot) — fully functional
 
-**Core jq works** — the parser, bytecode compiler, execution engine, the
-~250 jq-defined builtins, object/array construction, arithmetic, and the number
-formatter all produce **correct** output on hardware:
+**jq works** — parser, bytecode compiler, execution engine, the ~250 jq-defined
+builtins, object/array construction, arithmetic, and the number formatter all
+produce **correct** output on hardware:
 
     /bin/jq -n '{a:(1+2),b:[1,2,3]|add}'   ->  {"a":3,"b":6}
-    /bin/jq -n -f /tiny.jq   ([1,2,3]|add)  ->  6
-    /bin/jq -n -f /med.jq    (reduce .[] as $x (0;.+$x)) ->  15
+    /bin/jq -n -f /selfcheck.jq            ->  "ALL-OK"   (30 feature assertions)
+    /bin/jq --run-tests /jqcore.test       ->  12 of 12 tests passed (0 malformed)
 
-The reference oracle (`selfcheck.jq`, 30 feature assertions — map/select/group_by/
-reduce/foreach/recurse/to_entries/sort_by/unique/split/join/paths/getpath/utf8-length/
-pow/sqrt/…) returns `"ALL-OK"` on the native x86 build (same source, same config).
+`selfcheck.jq` exercises map/select/group_by/reduce/foreach/recurse/to_entries/
+sort_by/unique/split/join/paths/getpath/utf8-length/pow/sqrt/… — each result checked
+against a hardcoded expected value, emitting `"ALL-OK"` or the mismatches. It matches
+the native x86 build exactly.
 
-## Known limitation — intermittent `cannot allocate memory` (unresolved)
+## Root-caused + fixed: a libphoenix `malloc(0)` bug
 
-Under **netboot**, some invocations abort with `jq: error: cannot allocate memory`
-even though jq's own `malloc` wrapper is the thing returning NULL:
+Early testing hit `jq: error: cannot allocate memory` on some programs. Instrumenting
+jq's allocator showed the failing call was **`calloc(0, 24)`** — jq allocating an
+empty collection. libphoenix's `malloc(0)` returned **NULL**, and jq (like most
+portable software, following the glibc/BSD convention) does `p = calloc(0,n);
+if (!p) out_of_memory()` — so it mis-reported OOM. The apparent "intermittency" was
+deterministic by code path: filters that never build a zero-length allocation
+(`[1,2,3]|add`) always ran; those that do (`-n 42`, `selfcheck`) always failed.
 
-- Small filters read from a file (`-f /tiny.jq`, `-f /med.jq`) run reliably.
-- Larger programs (the 30-assertion `selfcheck.jq`, jq's `--run-tests` harness)
-  fail **consistently**.
-- A bare inline program (`-n 42`) failed **intermittently** (works in one boot,
-  ENOMEM in another).
-
-Characterization (honest scope):
-
-- It is **not** a simple process-heap cap: SQLite (file DBs), bash, and the Quake
-  ports all allocate far more than jq without ENOMEM.
-- It is **not** decNumber (`USE_DECNUM`): rebuilding without it (numbers → plain
-  doubles) reproduces the failure identically.
-- Every jq run compiles the entire `builtin.jq` (~250 functions) at startup — a
-  transient burst of many tiny `jv` allocations. The failure scales with total
-  allocation volume and is state-dependent, which is most consistent with **heap
-  fragmentation / a robustness issue in the jq × libphoenix-malloc interaction
-  under a many-small-object workload**, possibly aggravated by memory pressure from
-  the netboot lwip + nfs-fs + RAM-root stack.
-
-**Recommended follow-up** (not autonomously testable — needs physical SD-card
-handling): re-run under **SD boot**, where the netboot network stack is absent and
-more RAM is free. If jq runs reliably there, the ENOMEM is netboot memory pressure,
-not a jq/allocator bug. Otherwise the next step is instrumenting libphoenix `malloc`
-for fragmentation under jq's alloc/free trace.
+Fixed in **libphoenix** (`stdlib/malloc_dl.c`: `malloc(0)` now returns a distinct,
+freeable, non-NULL pointer — glibc/dlmalloc behavior). This benefits **any** port
+that relies on the standard `malloc(0) != NULL` convention, not just jq. After the
+fix + a `--scope core` rebuild + syncing `libphoenix.a` into the toolchain, all three
+invocations above pass.
 
 ## Build
 
