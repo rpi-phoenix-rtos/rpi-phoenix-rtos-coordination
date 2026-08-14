@@ -9,20 +9,7 @@
 #include <time.h>
 #include <wchar.h>
 #include <stddef.h>
-/* (2) wide-char funcs libphoenix's <wchar.h> lacks (declare so compile proceeds;
- *     the link pass reveals which need real definitions in libphoenix). */
-long               wcstol(const wchar_t *__restrict, wchar_t **__restrict, int);
-unsigned long      wcstoul(const wchar_t *__restrict, wchar_t **__restrict, int);
-long long          wcstoll(const wchar_t *__restrict, wchar_t **__restrict, int);
-unsigned long long wcstoull(const wchar_t *__restrict, wchar_t **__restrict, int);
-double             wcstod(const wchar_t *__restrict, wchar_t **__restrict);
-float              wcstof(const wchar_t *__restrict, wchar_t **__restrict);
-long double        wcstold(const wchar_t *__restrict, wchar_t **__restrict);
-wchar_t           *wcstok(wchar_t *__restrict, const wchar_t *__restrict, wchar_t **__restrict);
-wchar_t           *wcsstr(const wchar_t *, const wchar_t *);
-size_t             wcsspn(const wchar_t *, const wchar_t *);
-size_t             wcscspn(const wchar_t *, const wchar_t *);
-wchar_t           *wcspbrk(const wchar_t *, const wchar_t *);
+/* (2) wide-char funcs (wcstol/wcstok/wcsstr/...) are now IN libphoenix <wchar.h>. */
 /* (3) clock_getres: Phoenix has clock_gettime but not clock_getres; CPython uses
  *     it only to report clock resolution (time.get_clock_info). Nominal 1ns. */
 static inline int clock_getres(clockid_t __id, struct timespec *__res) {
@@ -31,5 +18,27 @@ static inline int clock_getres(clockid_t __id, struct timespec *__res) {
 /* (4) O_NOFOLLOW: Phoenix fcntl.h lacks it; define 0 (no nofollow enforcement). */
 #ifndef O_NOFOLLOW
 #define O_NOFOLLOW 0
+#endif
+#include <unistd.h>
+/* (5) sysconf names CPython calls directly that Phoenix's <unistd.h> lacks.
+ *     Unknown names -> Phoenix sysconf returns -1, which CPython tolerates;
+ *     _SC_PAGE_SIZE aliases the real _SC_PAGESIZE so mmap page size is correct. */
+#ifndef _SC_PAGE_SIZE
+#define _SC_PAGE_SIZE _SC_PAGESIZE
+#endif
+#ifndef _SC_NPROCESSORS_ONLN
+#define _SC_NPROCESSORS_ONLN 1001
+#endif
+#ifndef _SC_TTY_NAME_MAX
+#define _SC_TTY_NAME_MAX 1002
+#endif
+#ifndef _SC_SEM_VALUE_MAX
+#define _SC_SEM_VALUE_MAX 1003
+#endif
+#ifndef _SC_GETGR_R_SIZE_MAX
+#define _SC_GETGR_R_SIZE_MAX 1004
+#endif
+#ifndef _SC_GETPW_R_SIZE_MAX
+#define _SC_GETPW_R_SIZE_MAX 1005
 #endif
 #endif
