@@ -52,7 +52,27 @@ sed -i 's/^LDSHARED=\tld /LDSHARED=\taarch64-phoenix-gcc -shared /; s/^BLDSHARED
 #    Setup.stdlib *shared* defs, so these link into `python` instead of as .so.
 cp "$HERE/Setup.local" Modules/Setup.local
 
-# 5. Build JUST the interpreter (skip the remaining .so extensions we didn't
+# 5. Optional: the `_sqlite3` module (Python + SQLite). Build libsqlite3.a from the
+#    SQLite amalgamation and append the module to Setup.local. Set SKIP_SQLITE=1 to
+#    skip. Needs the sqlite-port amalgamation (same URL/SHA as tools/sqlite-port).
+if [ "${SKIP_SQLITE:-0}" != 1 ]; then
+	SQLVER=3530400
+	SQLZIP="sqlite-amalgamation-$SQLVER.zip"
+	SQLSHA=1e71ddf93849c6a6ecf58b827c0692073d2dd7ee40196158068f7b29f422e87d
+	SQLDIR="$WORK/sqlite-amalgamation-$SQLVER"
+	if [ ! -d "$SQLDIR" ]; then
+		( cd "$WORK"; [ -f "$SQLZIP" ] || curl -fsSL -o "$SQLZIP" "https://www.sqlite.org/2026/$SQLZIP"
+		  echo "$SQLSHA  $SQLZIP" | sha256sum -c -; unzip -oq "$SQLZIP" )
+	fi
+	"$CC" -O2 -c "$SQLDIR/sqlite3.c" -o "$SQLDIR/sqlite3.o" \
+		-DSQLITE_THREADSAFE=1 -DSQLITE_OMIT_LOAD_EXTENSION -DSQLITE_ENABLE_JSON1 -DSQLITE_ENABLE_FTS5
+	"$AR" rcs "$SQLDIR/libsqlite3.a" "$SQLDIR/sqlite3.o"; "$RANLIB" "$SQLDIR/libsqlite3.a"
+	# MODULE_NAME is defined in Modules/_sqlite/module.h, so no -D needed.
+	grep -q '^_sqlite3 ' Modules/Setup.local || \
+	echo "_sqlite3 _sqlite/blob.c _sqlite/connection.c _sqlite/cursor.c _sqlite/microprotocols.c _sqlite/module.c _sqlite/prepare_protocol.c _sqlite/row.c _sqlite/statement.c _sqlite/util.c -I$SQLDIR -L$SQLDIR -lsqlite3" >> Modules/Setup.local
+fi
+
+# 6. Build JUST the interpreter (skip the remaining .so extensions we didn't
 #    make static). `make` (all) would try to link those as .so with the wrong
 #    linker; `make python` links the static interpreter + the Setup.local modules.
 make -j4 python

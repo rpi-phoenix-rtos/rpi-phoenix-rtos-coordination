@@ -20,6 +20,12 @@ These are compiled **static into the interpreter** (Phoenix avoids runtime `.so`
 loading) — see `Setup.local`. Also baked in: `select`, `mmap`, `fcntl`, `grp`,
 `_posixsubprocess`, `_queue`, `_zoneinfo`, `unicodedata`.
 
+**`sqlite3` works too** (`selftest_sqlite.py` → `sqlite_version 3.53.4` / `ALL-OK`):
+`connect(:memory:)`, CREATE TABLE, parameterized `executemany`, commit, `ORDER BY`,
+aggregates, `LIKE`, transaction rollback, fetchall/fetchone. `build.sh` cross-builds
+`libsqlite3.a` from the SQLite amalgamation and links the static `_sqlite3` module
+against it (Python + a real SQL database on Phoenix).
+
 The interpreter starts (core init, reads `/dev/urandom` via `/dev/hwrng`), runs
 frozen `importlib`, and imports pure-Python stdlib modules from disk.
 
@@ -64,8 +70,8 @@ A genuinely multi-cycle port. The pieces:
   interpreter has its builtin modules + the pure-Python stdlib. Re-enable by
   building them static into the binary (Modules/Setup) or shared once Phoenix's
   runtime `.so` import is validated.
-- **External-lib modules** (zlib/_ssl/_hashlib/_ctypes/_sqlite3/readline/…) —
-  disabled; re-enable by cross-building the libs (e.g. libz, and the sqlite port's
-  lib for `_sqlite3`).
+- **External-lib modules** (zlib/_ssl/_hashlib/_ctypes/readline/…) — disabled;
+  re-enable by cross-building the libs (e.g. libz for `zlib`, mbedtls/openssl for
+  `_ssl`). `_sqlite3` is already wired (see above).
 - **Runtime breadth** — only the self-test exercised so far; broader stdlib +
   `fork`/subprocess behavior on Phoenix is untested.
