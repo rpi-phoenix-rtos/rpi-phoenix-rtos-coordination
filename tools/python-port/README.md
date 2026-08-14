@@ -1,0 +1,62 @@
+# CPython on Phoenix-RTOS / Raspberry Pi 4
+
+**CPython 3.14.4** cross-compiled to a **static `python3`** and **running on the
+Pi 4** — a full Python 3 interpreter on Phoenix-RTOS. PSF-licensed (permissive).
+
+## Result (HW-verified 2026-08-14, netboot)
+
+    /bin/python3 -S -c print(6*7)     ->  42
+    /bin/python3 -S /selftest.py      ->  PYVER 3.14.4 / ALL-OK
+
+`selftest.py` asserts: `sum(range(100))`, list comprehensions, `sorted`, Unicode
+`.upper()` (`héllo`→`HÉLLO`), `map`/`lambda`, generators, exception handling,
+`os.getpid()` (builtin `posix`), classes, and dict-merge — all pass. The interpreter
+starts (core init, reads `/dev/urandom` via `/dev/hwrng`), runs frozen `importlib`,
+and imports pure-Python stdlib modules from disk.
+
+(Startup prints a harmless `Could not find platform dependent libraries <exec_prefix>`
+— there is no `lib-dynload` dir because the `.so` extension modules aren't built yet.)
+
+## Build + deploy
+
+    ./build.sh        # downloads CPython 3.14.4, patches, cross-compiles `python`
+
+Then stage the binary + the pure-Python stdlib at the compiled prefix (so startup
+finds `encodings`), as `build.sh` prints:
+
+    cp python     <nfsroot>/bin/python3
+    cp -r Lib/*   <nfsroot>/usr/local/lib/python3.14/
+
+## How it was ported (the interesting parts)
+
+A genuinely multi-cycle port. The pieces:
+
+1. **Teach configure about Phoenix** — two cross-build `MACHDEP` blocks hard-error
+   on an unknown host; added `*-*-phoenix*` cases (`build.sh` patches them).
+2. **libphoenix gaps fixed properly** (these benefit *all* ports, not just Python):
+   - **C99 libm** `log1p/expm1/asinh/acosh/atanh` (configure's "requires C99 libm"
+     gate) + `floorl/ceill/llroundl`.
+   - **wide-char** `wcstol/wcstok/wcstoul/wcstod/wcsstr/wcsspn/wcscspn/wcspbrk/…`.
+   - **`sysconf(_SC_CLK_TCK)`** now returns 100 (was `-1` → CPython's
+     `_Py_GetTicksPerSecond` aborted startup with "cannot read ticks_per_second").
+   - **`malloc(0)`** returns non-NULL (earlier fix, needed by the allocator paths).
+3. **config.site** — ~149 `ac_cv_func_*=yes` overrides for functions Phoenix has but
+   the cross func-check missed (fork/execv/sysconf/timegm/clock/gettimeofday/…),
+   plus `py_cv_module_*=n/a` to drop external-lib modules.
+4. **phoenix-py-compat.h** (`-include`) — small shims: early `sys/time.h`/
+   `sys/resource.h`/`sys/mman.h` (complete `struct timeval`/`rusage`), missing
+   `_SC_*` names, `clock_getres`/`msync` no-ops, `O_NOFOLLOW=0`, `SOMAXCONN=128`.
+5. **`--without-mimalloc`** (needs `madvise`/rusage fields Phoenix lacks → pymalloc),
+   **`--disable-shared`**, cross `LDSHARED`, and `make python` (static interpreter).
+
+## Deferred
+
+- **C extension modules as `.so`** (array, _socket, mmap, …) — not built; the
+  interpreter has its builtin modules + the pure-Python stdlib. Re-enable by
+  building them static into the binary (Modules/Setup) or shared once Phoenix's
+  runtime `.so` import is validated.
+- **External-lib modules** (zlib/_ssl/_hashlib/_ctypes/_sqlite3/readline/…) —
+  disabled; re-enable by cross-building the libs (e.g. libz, and the sqlite port's
+  lib for `_sqlite3`).
+- **Runtime breadth** — only the self-test exercised so far; broader stdlib +
+  `fork`/subprocess behavior on Phoenix is untested.

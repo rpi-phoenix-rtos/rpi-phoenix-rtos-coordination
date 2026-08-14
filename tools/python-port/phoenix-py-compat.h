@@ -6,6 +6,7 @@
 #include <fcntl.h>
 #include <sys/time.h>
 #include <sys/resource.h>
+#include <sys/mman.h>
 #include <time.h>
 #include <wchar.h>
 #include <stddef.h>
@@ -40,5 +41,16 @@ static inline int clock_getres(clockid_t __id, struct timespec *__res) {
 #endif
 #ifndef _SC_GETPW_R_SIZE_MAX
 #define _SC_GETPW_R_SIZE_MAX 1005
+#endif
+/* (6) msync/MS_*: Phoenix lacks msync; mmap.flush() -> no-op (mmap is coherent). */
+#ifndef MS_SYNC
+#define MS_ASYNC 1
+#define MS_INVALIDATE 2
+#define MS_SYNC 4
+static inline int msync(void *__a, size_t __l, int __f){ (void)__a;(void)__l;(void)__f; return 0; }
+#endif
+/* (7) SOMAXCONN: Phoenix socket headers lack it; 128 is the customary backlog. */
+#ifndef SOMAXCONN
+#define SOMAXCONN 128
 #endif
 #endif
