@@ -503,6 +503,28 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-14 (session 27 — jq JSON processor ported; core FUNCTIONAL on HW, intermittent-ENOMEM caveat).
+Rotated to a clean breadth win after re-confirming the WiFi data-plane is banked at a firmware-opaque wall
+(TX reaches fw, not the air; SDPCM seq/credit; advisor previously steered "PIVOT to breadth, don't blind-code" —
+re-engaging = a multi-cycle firmware-debugging slog needing the owner present; the board already records it accurately).
+**jq 1.7.1 (MIT, no GPL)** cross-compiles clean (SQLite-style direct compile of the RELEASE tarball — pre-gen
+parser/lexer, decNumber bundled, baked HAVE_ macros so NO autoconf on-target; regex/oniguruma + ~25 obscure math
+builtins dropped; `-Wno-incompatible-pointer-types` for jq's runtime-arity cfunction table vs GCC-14). tools/jq-port/
+(build.sh + selfcheck.jq + README). **HW netboot: core engine CORRECT** — `{a:(1+2),b:[1,2,3]|add}`=>`{"a":3,"b":6}`,
+`[1,2,3]|add`=>6, `reduce`=>15 (parser+bytecode+execute+~250 builtins+number-format all work). **KNOWN LIMITATION:**
+some invocations abort `jq: error: cannot allocate memory` — larger programs (30-assert selfcheck, `--run-tests`)
+CONSISTENTLY, a bare `-n 42` INTERMITTENTLY. NOT a heap cap (SQLite/bash/Quake alloc far more), NOT decNumber (rebuilt
+without it, same). Best hypothesis: heap fragmentation in the jq×libphoenix-malloc many-small-`jv`-object pattern
+(every run compiles all ~250 builtins = a transient alloc burst), possibly + netboot lwip/nfs/RAM-root memory pressure.
+**Follow-up (NOT autonomously testable — needs physical SD-card handling):** retest under SD boot (network stack absent,
+more free RAM); if reliable there, ENOMEM = netboot pressure not a jq bug. Else instrument libphoenix malloc under jq's
+alloc/free trace. Committed 568c4ab, pushed publish (no owner signal). **NEXT — jq is landed honest-partial; pick the
+next rotation.** The clean-oracle self-contained wins (SQLite, jq-core, ML, AXI-PMU) keep landing; owner-hard items
+(radio data-plane firmware wall, DRI/DRM + XFce/LXQt = HDMI-heavy/regression-risky/oracle-poor) remain best done with
+the owner present (returns ~08-21). Fresh clean-win candidates: Lua (cleanest possible — pure C89, `make generic`, no
+autoconf, no deps — perfect oracle), git-core (bigger, useful), a network service tying SQLite+lwip. OR chip a
+design-doc at an owner-hard item. Note: the jq ENOMEM is itself a worthwhile libphoenix-malloc investigation lead.
+
 2026-08-14 (session 26 — ★★★ SQLite RUNS on Phoenix/RPi4 — full SQL database, in-memory + file VFS, HW-verified).
 Rotated to a fresh BIG feature (SQLite; public domain, no GPL). **Cross-compiled on the FIRST TRY with ZERO libphoenix
 gaps** (one gcc command, no patches — vs bash/coreutils' many libc fixes; the amalgamation is that portable). HW
