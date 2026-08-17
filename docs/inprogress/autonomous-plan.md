@@ -527,6 +527,25 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-17 (session 37 — ★ OWNER FEEDBACK received + acted on; started FINALIZATION: libphoenix libm tests + 3 bug fixes).
+**Owner pushed new operator comments (2026-08-14, merged 838ff40)** — key directive: **STOP starting new topics; FINALIZE
+in-progress ones**; specifics: ALWAYS add libphoenix tests(!!!), finalize dynamic-linking + Python .so extension loading,
+finalize coreutils, upgrade the OFFICIAL Lua port (mine duplicated an existing one — upgrade theirs to newest instead),
+MOVE ports out of tools/ into the ports project, push ML toward CNN/GPU (not LLM), continue WiFi WPA2/WPA3, improve
+X11/DE + GPU accel (RPi-OS-like, lightweight), ffmpeg bigger-media + HW h264 decode, revisit ALL ports' unfinished
+parts, polish/perf, (future) rebase to gcc 16.2.0. "You set priorities; use subagents."
+**This turn (finalization #1 — the ALWAYS-TEST debt):** added **phoenix-rtos-tests/libc/math/c99extra.c** (math_c99extra
+group) for the 10 libphoenix math fns I'd added WITHOUT tests (log1p/expm1/asinh/acosh/atanh/floorl/ceill/llroundl/
+nextafter/nexttoward). **The tests immediately CAUGHT 3 REAL BUGS** in those HW-"verified" fns: asinh(-0.0)/atanh(-0.0)
+returned +0.0 (→copysign), log1p(-1) returned NaN (phoenix log(0)=NaN →return -inf), log1p(+inf) returned NaN
+(inf*NaN; also broke atanh(±1) poles →return +inf). Fixed all in libphoenix (7b22fa3), **HW-verified 12 Tests 0
+Failures**. Also re-hit the stale-relink hazard (test binary not relinked vs fresh libphoenix → delete target to force
+relink). Pushes: libphoenix 7b22fa3, phoenix-rtos-tests 7801e84 (both publish/master), manifest 2026-08-17-libc-math-tests.
+Cron: date now 08-17, expires ~08-20 → recreate within ~1 day (by 08-19).
+**NEXT finalization targets (owner-driven):** (a) tests for the OTHER libphoenix additions I shipped untested —
+malloc(0), wide-char (wcstol/wcstok/...), sysconf(_SC_CLK_TCK); (b) dynamic-linking + Python .so extension loading
+(owner explicit, ties [[T-DYNLINK]] + CPython); (c) move tools/ ports → ports project; (d) upgrade official Lua port.
+
 2026-08-14 (session 36 — ★★★ Python + SQLite: _sqlite3 module works on Phoenix/RPi4). Wired CPython's _sqlite3 against
 a cross-built libsqlite3.a (SQLite amalgamation 3.53.4, THREADSAFE=1, OMIT_LOAD_EXT). **HW-verified (selftest_sqlite.py
 => `sqlite_version 3.53.4` + ALL-OK):** connect(:memory:), CREATE TABLE, parameterized executemany, commit, SELECT
