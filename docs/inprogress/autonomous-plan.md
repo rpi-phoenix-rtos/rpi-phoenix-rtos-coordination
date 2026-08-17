@@ -527,6 +527,26 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-17 (session 42 — finalization #6: OWNER #2 continued — redis is now an OFFICIAL port, HW-verified).
+Promoted the third tools/ port: `sources/phoenix-rtos-ports/redis/` (Redis 7.2.4, BSD-3-Clause pre-SSPL, in-memory data
+store — server + CLI). First PATCH-based promotion (vs the direct-compile sqlite3/jq): ships `patches/7.2.4/` (drops the
+Linux link flags -rdynamic/-ldl/-pthread/-lrt — Redis picks its Linux branch because `uname -s` runs on the Linux BUILD
+host) + a bundled `phoenix-compat.h` (`-include`'d, shims setcanceltype/setitimer/dladdr + 2 errno constants — crash-report
+diagnostics only, not the data path). MALLOC=libc, ae_select fallback. Installs redis-server+redis-cli → /usr/bin. Wired
+into rpi4b ports.yaml. **Build gotcha (root-caused + fixed):** first framework build FAILED with Lua 5.1 API errors
+(lua_open/LUA_GLOBALSINDEX) in eval.c — the framework EXPORTS CFLAGS with `-I<sysroot>/include`, which holds the official
+**lua-5.3.6** port's headers and shadowed Redis's bundled deps/lua (5.1). Fix = pass `CFLAGS=` on the make line to drop the
+inherited framework CFLAGS (the cross gcc's built-in sysroot still resolves libphoenix); cleared the stale build dir to
+force a clean recompile. **Built via REAL framework** (`--ports-only`, `[redis] Installed 17.4s`, EXIT 0) → two static
+aarch64 ELFs. **HW-verified (netboot):** `redis-server --version` → `v=7.2.4 ... malloc=libc bits=64`, `redis-cli --version`
+→ `7.2.4` — both load+run+libc-init on HW, 0 faults, malloc=libc confirmed. (A persistent TCP server isn't testable through
+one-shot psh-interact; the full data-plane — str/int/list/hash/set/expiry/241 cmds over lwip — was already HW-verified for
+this IDENTICAL source+flags in tools/redis-port, so the new target was "framework binary runs on HW," which it does.)
+Deployed to BOTH /bin+/usr/bin (drift guard). Commits: phoenix-rtos-ports `facf295`, phoenix-rtos-project `ded7c57`
+(pushed publish/master). **tools/→ports progress: sqlite3 ✓, jq ✓, redis ✓.** Next: the heavier CPython/llama2 promotions,
+or pivot to another finalization area (X11/DE polish, ffmpeg HW-h264, CNN/GPU ML). Lua official upgrade still parked on owner
+decision (session 40). SQLite→CPython _sqlite3 re-point + tools/sqlite-port retirement still open.
+
 2026-08-17 (session 41 — finalization #5: OWNER #2 continued — jq is now an OFFICIAL port, HW-verified).
 Promoted the second tools/ port to phoenix-rtos-ports: `sources/phoenix-rtos-ports/jq/port.def.sh` (jq 1.7.1, MIT,
 command-line JSON processor). Same direct-compile approach as sqlite3 — the release tarball ships pre-generated
