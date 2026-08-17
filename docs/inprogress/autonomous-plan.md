@@ -527,6 +527,25 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-17 (session 43 — OWNER #1 "ALWAYS add libphoenix tests" + [[feedback_implement_missing_libc]]: 8 new libm functions, HW-tested. Coreutils probe running in a subagent).
+Implemented the C99/POSIX libm functions that were DECLARED in math.h (or needed by ports) but never DEFINED — the set jq
+had to drop: **tgamma/tgammaf, lgamma/lgammaf, lgamma_r/lgammaf_r, exp10/exp10f, remainder/remainderf, drem/dremf,
+logb/logbf, ilogb/ilogbf, scalb, significand** (libphoenix libm/phoenix/gammaextra.c; Lanczos g=7 for the gamma family,
+IEEE round-half-to-even for remainder). Also ADDED the missing prototypes to libphoenix's math.h (libmcs header) for
+exp10/drem/scalb/significand/lgamma_r (the float variants were already declared). **Host-verified vs glibc first** (caught
+a real bug: remainder used copysign(r,x) which forces |r| with x's sign — wrong, it's an odd function → negate for x<0).
+Added Unity tests **math_gammaextra** (8 cases, phoenix-rtos-tests libc/math/gammaextra.c) with glibc reference values +
+poles/reflection/tie-to-even/special cases. Tolerances are magnitude-scaled (~1e-4..1e-6 for tgamma/exp10) because phoenix
+transcendentals (pow/exp) are ~1e-7, so composed functions inherit that — the first HW run's 3 "failures" were all
+"Expected 24 Was 24" (value correct, tol too tight); relaxed + **HW re-verified 8 Tests 0 Failures**. Gotcha: the test
+needed `#include "common.h"` (TEST_ASSERT_DOUBLE_IS_ZERO lives there, not in Unity). Built --scope core --with-tests,
+synced libphoenix.a + math.h → toolchain, force-relinked test-libc-math. Commits: libphoenix `235103e`,
+phoenix-rtos-tests `e2fe847` (pushed publish/master). Manifest `2026-08-17-libm-gammaextra.md` (core changed).
+**IN FLIGHT:** a background subagent is probing GNU coreutils cross-build feasibility (host-only, scratch dir) — will report
+the working tool subset + the exact list of libphoenix symbols still missing at link. Next turn: batch-implement those
+missing libphoenix funcs (with tests, same as this turn) and, if a meaningful subset builds, land coreutils as an official
+port. tools/→ports so far: sqlite3 ✓, jq ✓, redis ✓. Lua upgrade still parked on owner decision.
+
 2026-08-17 (session 42 — finalization #6: OWNER #2 continued — redis is now an OFFICIAL port, HW-verified).
 Promoted the third tools/ port: `sources/phoenix-rtos-ports/redis/` (Redis 7.2.4, BSD-3-Clause pre-SSPL, in-memory data
 store — server + CLI). First PATCH-based promotion (vs the direct-compile sqlite3/jq): ships `patches/7.2.4/` (drops the
