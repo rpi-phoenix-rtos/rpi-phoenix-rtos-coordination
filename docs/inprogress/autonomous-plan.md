@@ -527,6 +527,19 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-17 (session 52 — tested (+ ruled out cheaply) the _ssl-crash stack hypothesis; delegated the long-deferred Lua 5.4.7 upgrade to a subagent).
+Tried to cheaply confirm/deny that the session-51 TLS-handshake heap corruption is a **stack overflow** (openssl handshakes are stack-heavy;
+cf. the ffmpeg "h264 needs 8MB-stack pthread" pattern) by running the handshake in a Python thread with `threading.stack_size(8MB)`. **Blocked:
+Phoenix Python raises `RuntimeError: setting stack size not supported`** — a SEPARATE Phoenix CPython limitation (_thread.stack_size not wired;
+worth fixing later, would help the h264/openssl big-stack cases). So the stack hypothesis is untested; the heap-corruption bug (malloc_dl
+_malloc_chunkRemove/lib_listRemove during the handshake) stays **banked** — proper root-cause needs QEMU-gdb break-on-corruption or malloc
+guard-byte instrumentation, and it's Pi-bound (a subagent can't help while I hold the Pi-lock). Not sinking a 3rd turn into it.
+**Pivoted to clear the most-deferred owner-explicit item:** launched a HOST-ONLY subagent to **upgrade the OFFICIAL Lua port 5.3.6→5.4.7**
+(port the 8 Phoenix patches — incl. the risky 207-line default-on healthcheck; instructed to rename-only + flag if the VM-hook is too risky —
+update port.def.sh, build-verify with the cross toolchain). It writes into sources/phoenix-rtos-ports/lua/; I'll review + HW-test (lua/luac
+selfcheck) + commit when it reports. (Server/harness from session 51 cleaned up.) NEXT: land Lua (verify subagent output on HW), then either
+the _ssl heap-corruption root-cause (QEMU-gdb) or a pivot to X11/DE / ffmpeg-HW / CNN-GPU-ML for breadth.
+
 2026-08-17 (session 51 — live TLS handshake attempt → found a libphoenix HEAP-CORRUPTION crash; `_ssl` module OK, HTTPS end-to-end BANKED).
 Tried to prove `_ssl` end-to-end with a real handshake (self-contained: HTTPS server on the host 10.42.0.1:8443 w/ self-signed
 cert, TLS1.2; Python client on the Pi does socket+wrap_socket + GET). **Result: the handshake CRASHES** — Exception #36 Data
