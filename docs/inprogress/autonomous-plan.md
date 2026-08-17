@@ -527,6 +527,19 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-17 (session 46 — coreutils straggler `sort` recovered via libphoenix RLIMIT_* + getrlimit fix, HW-tested. 101 tools).
+Pushed coreutils from 100→**101 tools** by fixing the real libphoenix gap `sort` needed (owner #1 "always add tests" +
+[[feedback_implement_missing_libc]]): **(1)** added the common `RLIMIT_*` ids (DATA/AS/FSIZE/CPU/RSS/NPROC/MEMLOCK) to
+`sys/resource.h` — sort keys its rlimit fallback on `#ifdef RLIMIT_DATA`; absent before, so it redefined `struct rlimit`
+→ clash. **(2)** fixed the `getrlimit`/`setrlimit` **stub bug**: getrlimit returned 0 while leaving `*rlp` UNINITIALIZED
+(callers read a garbage soft limit) → now fills `RLIM_INFINITY` (Phoenix enforces no per-process limits). Added
+**resource_limits** Unity test (poisons *rlp to catch the write-nothing stub; all RLIMIT_* ids) — **HW 3/0 OK**. Rebuilt
+--scope core --with-tests --with-ports: `sort` now compiles → coreutils **101 tools**; **HW-verified `sort -u`** →
+apple/banana/cherry. Commits: libphoenix `3b45a15`, phoenix-rtos-tests `f7df0f6`, phoenix-rtos-ports `3499a0d` (pushed).
+Manifest `2026-08-17-resource-rlimit.md` (core changed). **Remaining coreutils stragglers (3):** stat (needs struct statfs
++ f_type fs-magic — Phoenix has only statvfs, harder), stty (needs many termios flag macros — its whole help-string is
+`#ifdef`-built and collapses), factor/expr (GMP). tools/→ports: sqlite3 ✓, jq ✓, redis ✓, coreutils ✓ (101). Lua parked.
+
 2026-08-17 (session 45 — ★★★ OWNER "finalize coreutils (biggest subset)": GNU coreutils 9.5 LANDED — 100 tools, HW-verified).
 Resolved last turn's mbszero blocker and shipped coreutils as a working official port. **Root cause of the undefined
 mbszero:** the framework configured coreutils at **-O0**, where GCC defines `__NO_INLINE__` → gnulib's
