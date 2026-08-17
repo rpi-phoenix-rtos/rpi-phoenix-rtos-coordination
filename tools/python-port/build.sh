@@ -98,6 +98,22 @@ if [ "${SKIP_ZLIB:-0}" != 1 ]; then
 	echo "zlib zlibmodule.c -I$ZDIR -L$ZDIR -lz" >> Modules/Setup.local
 fi
 
+# 5c. Optional: `_ssl` + `_hashlib` (TLS/HTTPS + OpenSSL-backed hashlib). Links the
+#     official phoenix-rtos-ports/openssl111 (now built thread-safe). Needs a prior
+#     `rebuild-rpi4b-fast.sh --with-ports` so libssl.a/libcrypto.a exist. SKIP_SSL=1 to skip.
+if [ "${SKIP_SSL:-0}" != 1 ]; then
+	OSSL="$REPO/.buildroot/_build/aarch64a72-generic-rpi4b/versioned-ports/openssl-1.1.1a"
+	if [ -f "$OSSL/lib/libssl.a" ]; then
+		grep -q '^_ssl ' Modules/Setup.local || \
+		echo "_ssl _ssl.c -I$OSSL/include -L$OSSL/lib -lssl -lcrypto" >> Modules/Setup.local
+		grep -q '^_hashlib ' Modules/Setup.local || \
+		echo "_hashlib _hashopenssl.c -I$OSSL/include -L$OSSL/lib -lcrypto" >> Modules/Setup.local
+	else
+		echo "SKIP _ssl: official openssl111 not built (run rebuild-rpi4b-fast.sh --with-ports first)"
+	fi
+fi
+
+
 # 6. Build JUST the interpreter (skip the remaining .so extensions we didn't
 #    make static). `make` (all) would try to link those as .so with the wrong
 #    linker; `make python` links the static interpreter + the Setup.local modules.

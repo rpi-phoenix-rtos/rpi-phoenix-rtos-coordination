@@ -21,3 +21,4 @@ select selectmodule.c
 _socket socketmodule.c
 mmap mmapmodule.c
 _posixsubprocess _posixsubprocess.c
+binascii binascii.c
