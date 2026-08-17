@@ -527,6 +527,20 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-17 (session 48 — pivot off coreutils: CPython `zlib` module LANDED on HW — unlocks gzip/zipfile/zipimport).
+Revisited the Python port's biggest deferred piece (owner "revisit ALL ports' unfinished parts"). Added a zlib block to
+tools/python-port/build.sh: cross-builds libz.a from zlib 1.2.11 (same version as the official phoenix-rtos-ports/zlib —
+self-contained, matching the existing _sqlite3 pattern) and appends `zlib zlibmodule.c -I<z> -L<z> -lz` to Modules/Setup.local
+(the static-module override beats config.site's `py_cv_module_zlib=n/a`, same as _sqlite3). **De-risk caught a gap first**
+(host test): zlib's gz*.c need `-DZ_HAVE_UNISTD_H=1` (else implicit read/write/lseek) — configure normally sets it. Rebuilt
+the static python (EXIT 0); verified PyInit_zlib + deflateInit_/inflateInit_ linked in. **HW-verified (netboot,
+`python3 -S /selftest_zlib.py`):** `ZVER 1.2.11` + `ZLIB-OK` — compress shrinks + decompress roundtrip, crc32=0xCBF43926,
+adler32=0x091E01DE, streaming compressobj roundtrip all correct. Recipe committed (tools/python-port/build.sh +
+selftest_zlib.py, coord repo — no sibling/core change, no manifest). **CPython arc: runs → usable → +SQLite → +.so dlopen →
++zlib.** Note: self-contained libz.a mirrors the _sqlite3 approach; the clean owner-#2 end-state is CPython as an official
+phoenix-rtos-ports port with `depends:[zlib]` (a larger future move). Deferred still: _ssl (mbedtls). coreutils remains at
+102/104 (done). tools/→ports official: sqlite3 ✓, jq ✓, redis ✓, coreutils ✓. Lua parked on owner decision.
+
 2026-08-17 (session 47 — coreutils straggler `stat` recovered: libphoenix statfs()/<sys/statfs.h> filled, HW-tested. 102 tools).
 `<sys/statfs.h>` was an **empty placeholder** in libphoenix — a genuine libc gap. Filled it: added the Linux/BSD
 `struct statfs` + `fsid_t` + `statfs()`/`fstatfs()` (sys/statfs.c), implemented as a thin mapping over the working

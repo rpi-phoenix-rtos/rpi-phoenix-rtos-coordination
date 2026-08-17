@@ -72,6 +72,31 @@ if [ "${SKIP_SQLITE:-0}" != 1 ]; then
 	echo "_sqlite3 _sqlite/blob.c _sqlite/connection.c _sqlite/cursor.c _sqlite/microprotocols.c _sqlite/module.c _sqlite/prepare_protocol.c _sqlite/row.c _sqlite/statement.c _sqlite/util.c -I$SQLDIR -L$SQLDIR -lsqlite3" >> Modules/Setup.local
 fi
 
+# 5b. Optional: the `zlib` module (unlocks gzip / zipfile / zipimport). Cross-build
+#     libz.a from zlib 1.2.11 (same version as phoenix-rtos-ports/zlib) and append
+#     the module to Setup.local. Set SKIP_ZLIB=1 to skip.
+if [ "${SKIP_ZLIB:-0}" != 1 ]; then
+	ZVER=1.2.11
+	ZTGZ="zlib-$ZVER.tar.gz"
+	ZSHA=c3e5e9fdd5004dcb542feda5ee4f0ff0744628baf8ed2dd5d66f8ca1197cb1a1
+	ZDIR="$WORK/zlib-$ZVER"
+	if [ ! -d "$ZDIR" ]; then
+		( cd "$WORK"; [ -f "$ZTGZ" ] || curl -fsSL -o "$ZTGZ" "https://zlib.net/fossils/$ZTGZ"
+		  echo "$ZSHA  $ZTGZ" | sha256sum -c -; tar xzf "$ZTGZ" )
+	fi
+	[ -f "$ZDIR/zconf.h" ] || cp "$ZDIR/zconf.h.in" "$ZDIR/zconf.h"
+	ZOBJS=""
+	# -DZ_HAVE_UNISTD_H: configure normally sets this; it makes the gz* sources pull
+	# <unistd.h> for read/write/lseek (else implicit-decl errors on Phoenix).
+	for zc in adler32 compress crc32 deflate gzclose gzlib gzread gzwrite infback inffast inflate inftrees trees uncompr zutil; do
+		"$CC" -O2 -DZ_HAVE_UNISTD_H=1 -c "$ZDIR/$zc.c" -o "$ZDIR/$zc.o"
+		ZOBJS="$ZOBJS $ZDIR/$zc.o"
+	done
+	"$AR" rcs "$ZDIR/libz.a" $ZOBJS; "$RANLIB" "$ZDIR/libz.a"
+	grep -q '^zlib ' Modules/Setup.local || \
+	echo "zlib zlibmodule.c -I$ZDIR -L$ZDIR -lz" >> Modules/Setup.local
+fi
+
 # 6. Build JUST the interpreter (skip the remaining .so extensions we didn't
 #    make static). `make` (all) would try to link those as .so with the wrong
 #    linker; `make python` links the static interpreter + the Setup.local modules.
