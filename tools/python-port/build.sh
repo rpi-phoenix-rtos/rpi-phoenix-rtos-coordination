@@ -54,7 +54,8 @@ cp "$HERE/Setup.local" Modules/Setup.local
 
 # 5. Optional: the `_sqlite3` module (Python + SQLite). Build libsqlite3.a from the
 #    SQLite amalgamation and append the module to Setup.local. Set SKIP_SQLITE=1 to
-#    skip. Needs the sqlite-port amalgamation (same URL/SHA as tools/sqlite-port).
+#    skip. Downloads the SQLite amalgamation (same version as the official
+#    phoenix-rtos-ports/sqlite3 port).
 if [ "${SKIP_SQLITE:-0}" != 1 ]; then
 	SQLVER=3530400
 	SQLZIP="sqlite-amalgamation-$SQLVER.zip"
