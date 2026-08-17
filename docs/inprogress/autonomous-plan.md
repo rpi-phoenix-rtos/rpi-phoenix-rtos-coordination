@@ -527,6 +527,22 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-17 (session 39 — ★★★ finalization #3: OWNER #5 "dynamic-linking used in Python" — CPython .so extensions dlopen on HW!).
+Delivered the owner's explicit "finalize dynamic-linking + use it for Python .so extension loading." **HW-verified
+(netboot):** `import spam` → CPython dynload_shlib dlopen's `spam.cpython-314.so` → resolves PyInit_spam + the Py C-API
+(PyArg_ParseTuple/PyLong_FromLong/PyModule_Create2) against the NON-STRIPPED python binary's `.symtab` via libphoenix
+Phase-A dlopen [[project_dynamic_linking]] → `spam.add(3,4)==7` / DLOPEN-EXT-OK. **First real consumer of Phase-A
+dynamic linking.** Recipe (tools/python-port/build-extension.sh + ext-example.c): compile `-shared -fPIC -nostartfiles`
+(nostartfiles drops crt EH-frame __(de)register_frame_info absent from the host .symtab — that was the one wall hit +
+fixed), leave Py+libc UNDEFINED (resolve to host; linking them = 2nd-copy corruption), non-stripped host python, no
+__thread (Phase-A has no dynamic TLS = Phase B). No libphoenix change (used existing dlopen) → no core rebuild/manifest.
+Commit coord 1e1c3b4. **CPython arc: runs → usable(modules) → +SQLite → +dlopen extensions.**
+**⚠ Lua official-port upgrade (5.3.6→5.4.7) — subagent FAILED mid-stream (API stall) before making changes; port
+UNTOUCHED. RETRY next turn** (port the 6+2 patches to 5.4.7; sha256 9fbf5e28...; my tools/lua-port built 5.4.7 clean).
+**NEXT finalizations:** Lua official upgrade (retry); move tools/ ports → phoenix-rtos-ports; finalize coreutils (official
+port exists in phoenix-rtos-ports/coreutils); wire real modules to the .so-extension mechanism (e.g. build the disabled
+CPython ext modules as .so instead of static, now that dlopen works).
+
 2026-08-17 (session 38 — finalization #2: tests for the rest of the untested libphoenix additions; ALL now HW-verified).
 Per owner "ALWAYS add tests": added the remaining regression tests, all HW-verified (netboot):
 - **string_wchar** (phoenix-rtos-tests libc/string/string_wchar.c) — wcspbrk/wcsspn/wcscspn/wcsstr/wcstok +
