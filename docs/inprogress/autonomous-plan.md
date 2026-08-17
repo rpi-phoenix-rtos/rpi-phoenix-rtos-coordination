@@ -527,6 +527,28 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-17 (session 40 — ★★★ finalization #4: OWNER #2 "move ports out of tools/ into the ports project" — SQLite is now an OFFICIAL port, HW-verified).
+Added `sources/phoenix-rtos-ports/sqlite3/port.def.sh` — the first of my `tools/` ports promoted to a real
+phoenix-rtos-ports definition (owner: "move ports out of tools/ into the ports project"). Built from the SQLite 3.53.4
+autoconf tarball's pre-amalgamated sources (compile the amalgamation directly, skip its ./configure). Produces BOTH the
+`sqlite3` CLI (→ /usr/bin) and `libsqlite3.a` + headers (→ lib/include) so other ports (CPython's `_sqlite3`) can link it.
+Wired into the rpi4b ports.yaml (ungated — tiny, self-contained). **Built through the REAL framework** (port_manager
+`--ports-only`, EXIT 0) → valid static aarch64 Phoenix ELF. **HW-verified (netboot smoke, `sqlite3 -init /smoke.sql :memory:`):**
+`VERSION=3.53.4` / `FTS5=1` / `JSON=42` / `RTREE=1` / `SMOKE-OK` — every advertised feature flag (THREADSAFE=1, FTS5, JSON1,
+RTREE) actually exercised. **Gotcha caught by running it (advisor's insistence paid off):** first smoke run showed
+FTS5/RTREE "no such module" — root cause was **netboot drift**, a STALE `/bin/sqlite3` (old tools/sqlite-port build, no
+FTS5/RTREE) shadowing my `/usr/bin/sqlite3` because the Pi PATH is `/bin:...:/usr/bin` (/bin first). Overwrote the stale
+`/bin/sqlite3` → all features pass. Commits: phoenix-rtos-ports `6b36f1c`, phoenix-rtos-project `8b04f21` (both pushed
+publish/master). This is "added an official port," NOT a full "move" yet — **follow-up:** re-point CPython's `_sqlite3` at
+`PREFIX_A/libsqlite3.a` and retire `tools/sqlite-port`; then promote the other tools/ ports (jq, redis, cpython, llama2).
+**DECISION on Lua official-port upgrade (5.3.6→5.4.7) — NOT a punt:** I re-assessed it concretely. Test-applying the 5.3.6
+patches to a fresh 5.4.7 tree: **7 of 8 need manual re-authoring** (5.3→5.4 is structural), and `05-add-healthcheck` is a
+**207-line, default-on** Phoenix-custom patch (MT heartbeat hooks in lparser/lstate/lvm/lua.h + a priority[]→lpriority[]
+rename to dodge Phoenix's `priority()`) that must be re-ported against 5.4's *rewritten* VM — a multi-hour, error-prone
+job for a version bump, while 5.3.6 already works. My `tools/lua-port` already builds 5.4.7 cleanly (core engine).
+**Recommend: owner confirms the healthcheck feature is still wanted before I invest the VM-hook re-port** (if not, a
+minimal 5.4.7 upgrade — build/luaconf/priority/searchers/safe patches only — is ~1 turn). Parked pending that call.
+
 2026-08-17 (session 39 — ★★★ finalization #3: OWNER #5 "dynamic-linking used in Python" — CPython .so extensions dlopen on HW!).
 Delivered the owner's explicit "finalize dynamic-linking + use it for Python .so extension loading." **HW-verified
 (netboot):** `import spam` → CPython dynload_shlib dlopen's `spam.cpython-314.so` → resolves PyInit_spam + the Py C-API
