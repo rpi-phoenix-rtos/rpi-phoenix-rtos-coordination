@@ -527,6 +527,23 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-17 (session 45 — ★★★ OWNER "finalize coreutils (biggest subset)": GNU coreutils 9.5 LANDED — 100 tools, HW-verified).
+Resolved last turn's mbszero blocker and shipped coreutils as a working official port. **Root cause of the undefined
+mbszero:** the framework configured coreutils at **-O0**, where GCC defines `__NO_INLINE__` → gnulib's
+`gl_cv_c_inline_effective` test fails → `HAVE_INLINE` stays undefined → gnulib's extern-inline helpers (mbszero &c.) are
+neither inlined at call sites nor emitted out-of-line → undefined at link. (My earlier `_GL_EXTERN_INLINE_STDHEADER_BUG`
+hypothesis was WRONG — that path needs __APPLE__/__FreeBSD__.) **Fix:** build at `-O2` (config.h then defines HAVE_INLINE=1;
+clean link, 0 undefined). **2nd bug (mine):** `make install` can't be used (its `all` prereq fails on the 5 unbuildable
+tools → -k skips install-am) and PREFIX_PORT_INSTALL/bin is the SHARED prefix (my loop tried to strip another port's
+event_rpcgen.py → set -e abort). **Fix:** install straight from `src/`, filtered to aarch64 ELF (also skips host
+build-helpers like make-prime-list). **Result: 100 tools built+installed via the real framework** (99 utilities + `[`),
+ungated in ports.yaml. **HW-verified (netboot):** `seq 1 5`→1-5, `wc -l`→3, `sha256sum`→hash **bit-exact vs host**,
+`nproc`, `seq --version`→"seq (GNU coreutils) 9.5" (genuine GNU, not busybox). The earlier "no output" was NFS-cold exec
+slowness (idle too short), not a bug. Commits: phoenix-rtos-ports `6b3e2d3`, phoenix-rtos-project `47935e1` (pushed).
+**5 tools still skipped** (owner "biggest subset" satisfied at 99/104): stat (needs struct statfs), sort (RLIMIT_* macros),
+stty (termios macros) — each a small **testable libphoenix header addition** (owner #1) for a future turn; factor/expr need
+GMP (external). **tools/→ports: sqlite3 ✓, jq ✓, redis ✓, coreutils ✓ (100 tools).** Lua upgrade still parked on owner decision.
+
 2026-08-17 (session 43 — OWNER #1 "ALWAYS add libphoenix tests" + [[feedback_implement_missing_libc]]: 8 new libm functions, HW-tested. Coreutils probe running in a subagent).
 Implemented the C99/POSIX libm functions that were DECLARED in math.h (or needed by ports) but never DEFINED — the set jq
 had to drop: **tgamma/tgammaf, lgamma/lgammaf, lgamma_r/lgammaf_r, exp10/exp10f, remainder/remainderf, drem/dremf,
