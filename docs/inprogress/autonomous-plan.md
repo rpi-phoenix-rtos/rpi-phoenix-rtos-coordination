@@ -527,6 +527,24 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-17 (session 50 — ★★★ CPython `_ssl` LANDED (HTTPS/TLS in Python) via thread-safe openssl + libphoenix mlock. HW-verified).
+Unblocked + finalized the `_ssl` module (session 49's blocker). Three layered fixes, each HW-verified:
+- **libphoenix mlock family** (mman.c: mlock/munlock/mlockall/munlockall — no-op returning 0, correct since Phoenix has no
+  swap-to-disk; + <sys/mman.h> decls + MCL_* flags). OpenSSL's secure heap calls mlock unconditionally once threads are on.
+  Test **mlock_noswap** (libc/misc) — HW **2/0 OK**. libphoenix `ec9afd0`, tests `951b3e7`.
+- **openssl111 built thread-safe** (30-phoenix.conf): the phoenix target had `thread_scheme => "(unknown)"` → Configure
+  marked `"threads" => "unavailable"` → no `OPENSSL_THREADS`. Fix = declare `thread_scheme => "pthreads"` + drop "threads"
+  from disable (Phoenix has all the pthread primitives openssl needs). opensslconf.h now `#define OPENSSL_THREADS`;
+  libcrypto/libssl are thread-safe (reusable for redis/curl too). phoenix-rtos-ports `758d740`.
+- **CPython _ssl + _hashlib + binascii** (python-port/build.sh): link the official openssl111 (libssl/libcrypto) + add
+  binascii (ssl/hashlib dep) to Setup.local. Canonical rebuild = sqlite+zlib+ssl. **HW-verified** (`python3 -S
+  /selftest_ssl.py`): `SSL OpenSSL 1.1.1a`, SSLContext creation, HAS_TLSv1_2, hashlib.sha256 via OpenSSL bit-exact vs host,
+  `SSL-OK`. Unlocks HTTPS/urllib in Python. coord `06e5e44`.
+Manifest `2026-08-17-mlock-openssl-threads.md` (core changed). **CPython arc: runs → usable → +SQLite → +.so dlopen →
++zlib → +ssl(HTTPS).** Notes: blake2b/blake2s hashlib probes print harmless tracebacks (optional _blake2 not built — cosmetic).
+A live TLS handshake needs the host-NAT setup (E2/E3); module+crypto proven. TLS 1.3 still disabled in the openssl port
+(1.2 works). tools/python-port still self-contained (owner-#2 end-state = CPython official port depends:[openssl,zlib] = future).
+
 2026-08-17 (session 49 — OWNER #2 completion: retired tools/{sqlite,jq,redis}-port; assessed CPython `_ssl` (blocked on openssl-threads)).
 **(1) `_ssl` feasibility (blocked, documented for a future turn):** CPython 3.14 requires OpenSSL ≥ 1.1.1 and the official
 openssl111 port (1.1.1a) satisfies it, with libssl.a/libcrypto.a+headers in the buildroot — but a de-risk test-compile of
