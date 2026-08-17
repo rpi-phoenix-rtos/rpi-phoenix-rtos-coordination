@@ -527,6 +527,22 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-17 (session 51 — live TLS handshake attempt → found a libphoenix HEAP-CORRUPTION crash; `_ssl` module OK, HTTPS end-to-end BANKED).
+Tried to prove `_ssl` end-to-end with a real handshake (self-contained: HTTPS server on the host 10.42.0.1:8443 w/ self-signed
+cert, TLS1.2; Python client on the Pi does socket+wrap_socket + GET). **Result: the handshake CRASHES** — Exception #36 Data
+Abort (EL0), and addr2line pins it to **libphoenix malloc**: pc=`lib_listRemove` (sys/list.c:46) ← lr=`_malloc_chunkRemove`
+(stdlib/malloc_dl.c:232), with far = a random-looking value (a heap free-chunk's list pointer overwritten by garbage). So
+**openssl's allocation-heavy handshake corrupts the heap free-list** (classic buffer-overrun over malloc metadata; `/dev/urandom`
+seeding via /dev/hwrng works fine — not an RNG issue). **IMPORTANT correction to session 50:** `_ssl` MODULE is verified (loads,
+SSLContext, HAS_TLSv1_2, hashlib.sha256 bit-exact — those do NO handshake) but a **live TLS handshake does NOT work yet** — HTTPS
+end-to-end is BANKED on this heap-corruption bug, NOT achieved. hashlib.sha256 (also libcrypto+malloc) does NOT crash, so the
+corruption is specific to the handshake path (BIGNUM/RSA/ECDH key-exchange + cert parsing + larger allocs). **Not blind-coding it**
+(precise root-cause needs QEMU-gdb break-on-corruption or malloc instrumentation — multi-turn). Test harness preserved
+(tools/python-port/selftest_https.py + tls-test-server.py) for when fixed. No core change this turn (investigation only).
+**NEXT:** either root-cause the handshake heap corruption (QEMU-gdb / malloc guard bytes; could be an openssl-Phoenix buffer-size
+bug OR a latent malloc bug the handshake's alloc pattern triggers), or pivot to a different owner area (X11/DE, ffmpeg HW-h264,
+CNN/GPU ML) and return to HTTPS later.
+
 2026-08-17 (session 50 — ★★★ CPython `_ssl` LANDED (HTTPS/TLS in Python) via thread-safe openssl + libphoenix mlock. HW-verified).
 Unblocked + finalized the `_ssl` module (session 49's blocker). Three layered fixes, each HW-verified:
 - **libphoenix mlock family** (mman.c: mlock/munlock/mlockall/munlockall — no-op returning 0, correct since Phoenix has no
