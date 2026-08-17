@@ -32,6 +32,21 @@ frozen `importlib`, and imports pure-Python stdlib modules from disk.
 (Startup prints a harmless `Could not find platform dependent libraries <exec_prefix>`
 — there is no `lib-dynload` dir because the `.so` extension modules aren't built yet.)
 
+## Dynamic C extensions (`.so`) work — HW-verified
+
+Python can **`dlopen` a C extension module** on Phoenix (owner's "dynamic-linking used in
+Python" goal). Using libphoenix's Phase-A dlopen (undefined symbols resolve against the
+host binary's `.symtab`), an extension built with `build-extension.sh` loads and runs:
+
+    import spam            # spam.cpython-314.so on sys.path
+    spam.add(3, 4)  == 7   # HW-verified (DLOPEN-EXT-OK)
+
+Recipe (`build-extension.sh` + `ext-example.c`): compile `-shared -fPIC -nostartfiles`,
+leaving the Py C-API + libc **undefined** so they resolve against the (non-stripped)
+`python3` binary at import time; name it `<mod>.cpython-314.so`. Constraints: the
+python binary must stay **non-stripped** (keep `.symtab`); the extension must not link
+libpython/libc (a 2nd copy corrupts state); no `__thread` (Phase-A has no dynamic TLS).
+
 ## Build + deploy
 
     ./build.sh        # downloads CPython 3.14.4, patches, cross-compiles `python`
