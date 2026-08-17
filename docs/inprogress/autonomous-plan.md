@@ -541,10 +541,23 @@ transcendentals (pow/exp) are ~1e-7, so composed functions inherit that — the 
 needed `#include "common.h"` (TEST_ASSERT_DOUBLE_IS_ZERO lives there, not in Unity). Built --scope core --with-tests,
 synced libphoenix.a + math.h → toolchain, force-relinked test-libc-math. Commits: libphoenix `235103e`,
 phoenix-rtos-tests `e2fe847` (pushed publish/master). Manifest `2026-08-17-libm-gammaextra.md` (core changed).
-**IN FLIGHT:** a background subagent is probing GNU coreutils cross-build feasibility (host-only, scratch dir) — will report
-the working tool subset + the exact list of libphoenix symbols still missing at link. Next turn: batch-implement those
-missing libphoenix funcs (with tests, same as this turn) and, if a meaningful subset builds, land coreutils as an official
-port. tools/→ports so far: sqlite3 ✓, jq ✓, redis ✓. Lua upgrade still parked on owner decision.
+**COREUTILS (subagent returned + acted on, same session):** the background subagent found GNU coreutils **9.5** STRONGLY
+feasible — a direct cross-build compiles+links **99 of 104 tools cleanly against libphoenix with ZERO missing symbols**
+(the 5 fails are header/macro gaps — stat needs struct statfs, sort needs RLIMIT_*, stty needs termios macros — and GMP
+for factor/expr, NOT missing libc funcs). It produced a config.site (cross ac_cv_*; load-bearing ac_cv_func_chown_works=yes
+stops gnulib building rpl_chown) + a 2nd patch (0002, teaches gnulib stdio internals about Phoenix's FILE struct). I wrote
+the port (sources/phoenix-rtos-ports/coreutils/: port.def.sh + config.site + patches 0001/0002) and wired it into ports.yaml,
+but the FRAMEWORK build hits ONE issue the subagent's direct build didn't: under the framework sysroot, gnulib's
+`_GL_EXTERN_INLINE` resolves to `static` (not `extern inline`), so `mbszero` (an extern-inline) links undefined across all
+tools. mbszero.o DOES compile; it's the inline-emission mode. **Prime suspect for next turn:** the
+`_GL_EXTERN_INLINE_STDHEADER_BUG` path (config.h ~line 3190) — likely `_FORTIFY_SOURCE`/`__GLIBC__`-style macro differing
+between the buildroot sysroot headers and the bare toolchain the subagent used; regenerate the framework config.h + diff
+the `_GL_EXTERN_INLINE` definition vs the subagent's clean/coreutils-9.5/lib/config.h (which got `extern inline`). Committed
+the port as a **gated `if: false` WIP** (phoenix-rtos-ports 92b83d3, phoenix-rtos-project 98a47f8, pushed) so it can't break
+image builds; flip to `if: true` once mbszero links. Subagent artifacts (config.site, 0002 patch, working build trees) in
+/home/houp/.claude/jobs/c8f1289c/tmp/coreutils-probe/. **NEXT TURN:** fix mbszero inline-mode → 99-tool coreutils lands; then
+optionally the 5 stragglers via libphoenix header work (statfs/RLIMIT_*/termios — each a testable libphoenix addition, owner #1).
+tools/→ports so far: sqlite3 ✓, jq ✓, redis ✓; coreutils WIP-gated. Lua upgrade still parked on owner decision.
 
 2026-08-17 (session 42 — finalization #6: OWNER #2 continued — redis is now an OFFICIAL port, HW-verified).
 Promoted the third tools/ port: `sources/phoenix-rtos-ports/redis/` (Redis 7.2.4, BSD-3-Clause pre-SSPL, in-memory data
