@@ -527,6 +527,21 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-17 (session 41 — finalization #5: OWNER #2 continued — jq is now an OFFICIAL port, HW-verified).
+Promoted the second tools/ port to phoenix-rtos-ports: `sources/phoenix-rtos-ports/jq/port.def.sh` (jq 1.7.1, MIT,
+command-line JSON processor). Same direct-compile approach as sqlite3 — the release tarball ships pre-generated
+parser.c/lexer.c + bundled decNumber, no autoconf on-target: `p_prepare` generates the BUILT_SOURCES
+(builtin.inc/config_opts.inc/version.h via the sed/printf transforms), `p_build` compiles with the curated Phoenix-valid
+HAVE_* macro set (DEFS as a bash array to avoid `eval`; omitted libm funcs gate only obscure jq math builtins; oniguruma
+regex builtins compiled out; core jq complete) + `-Wno-incompatible-pointer-types`. Installs `jq` → /usr/bin. Wired into
+rpi4b ports.yaml. **Built through the REAL framework** (`--ports-only`, `[jq] Installed`, EXIT 0) → valid static aarch64
+Phoenix ELF. **HW-verified (netboot, `jq -n -f /jq-smoke.jq`):** `add`=6, obj-access=3, `map(.*2)|add`=12,
+`reduce range(1;5)`=10, `"SMOKE-OK"` — all correct, 0 faults. Pre-deployed to BOTH /bin and /usr/bin to avoid the
+shadowing drift that bit sqlite3 last turn. Commits: phoenix-rtos-ports `1514d78`, phoenix-rtos-project `63ae669` (both
+pushed publish/master). **tools/→ports progress: sqlite3 ✓, jq ✓.** Next candidates: redis (bigger, TCP service — needs
+Makefile patch + MALLOC=libc), then the CPython/llama2 heavier ones. Lua official upgrade still parked on owner decision
+(see session 40). SQLite follow-up (re-point CPython _sqlite3 at PREFIX_A/libsqlite3.a + retire tools/sqlite-port) still open.
+
 2026-08-17 (session 40 — ★★★ finalization #4: OWNER #2 "move ports out of tools/ into the ports project" — SQLite is now an OFFICIAL port, HW-verified).
 Added `sources/phoenix-rtos-ports/sqlite3/port.def.sh` — the first of my `tools/` ports promoted to a real
 phoenix-rtos-ports definition (owner: "move ports out of tools/ into the ports project"). Built from the SQLite 3.53.4
