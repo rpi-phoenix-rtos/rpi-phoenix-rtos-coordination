@@ -527,6 +527,22 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-17 (session 47 — coreutils straggler `stat` recovered: libphoenix statfs()/<sys/statfs.h> filled, HW-tested. 102 tools).
+`<sys/statfs.h>` was an **empty placeholder** in libphoenix — a genuine libc gap. Filled it: added the Linux/BSD
+`struct statfs` + `fsid_t` + `statfs()`/`fstatfs()` (sys/statfs.c), implemented as a thin mapping over the working
+statvfs syscall (f_type=0 "unknown" since Phoenix has no fs-type magic; all size/inode/namelen fields from statvfs). Added
+`<sys/vfs.h>` as a compat alias. Registered statfs.o in sys/Makefile. Added **statfs_basic** Unity test (statfs("/") +
+fstatfs(open("/")) → 0, f_bsize>0, f_type==0) — **HW 2/0 OK** (statvfs backing works on the NFS root). coreutils config.site
+asserts statfs/fstatfs + the headers; configure then detected struct statfs.f_type/f_namelen/f_frsize and **stat.o
+compiled → coreutils 102 tools**. **HW-verified `stat /cu-smoke.txt`** → full GNU output (Size 17, Blocks, IO Block 4096,
+regular file, Inode, mode 0644, uid/gid, timestamps). Commits: libphoenix `676234a`, phoenix-rtos-tests `51de9e5`,
+phoenix-rtos-ports `0333f94` (pushed). Manifest `2026-08-17-statfs.md` (core changed). **Remaining coreutils stragglers (2 +
+external):** stty (whole help-string is `#ifdef`-built from termios flag macros Phoenix lacks — many, + needs tty-driver
+support to be useful; low ROI), factor/expr (need GMP external lib). **coreutils effectively complete at 102/104.**
+tools/→ports: sqlite3 ✓, jq ✓, redis ✓, coreutils ✓ (102). Lua parked on owner decision. NEXT: likely pivot off coreutils
+(diminishing) to another owner area — SQLite→CPython _sqlite3 re-point + retire redundant tools/{sqlite,jq,redis}-port, or
+X11/DE, or ffmpeg HW-h264, or CNN/GPU ML.
+
 2026-08-17 (session 46 — coreutils straggler `sort` recovered via libphoenix RLIMIT_* + getrlimit fix, HW-tested. 101 tools).
 Pushed coreutils from 100→**101 tools** by fixing the real libphoenix gap `sort` needed (owner #1 "always add tests" +
 [[feedback_implement_missing_libc]]): **(1)** added the common `RLIMIT_*` ids (DATA/AS/FSIZE/CPU/RSS/NPROC/MEMLOCK) to
