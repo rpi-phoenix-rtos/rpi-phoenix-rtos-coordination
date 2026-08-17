@@ -527,6 +527,22 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-17 (session 49 — OWNER #2 completion: retired tools/{sqlite,jq,redis}-port; assessed CPython `_ssl` (blocked on openssl-threads)).
+**(1) `_ssl` feasibility (blocked, documented for a future turn):** CPython 3.14 requires OpenSSL ≥ 1.1.1 and the official
+openssl111 port (1.1.1a) satisfies it, with libssl.a/libcrypto.a+headers in the buildroot — but a de-risk test-compile of
+Modules/_ssl.c hit `#error "OPENSSL_THREADS is not defined"`. The openssl111 port's `phoenix-*` Configure target builds
+WITHOUT OPENSSL_THREADS, and CPython requires thread-safe OpenSSL. Enabling threads is an openssl-PORT change (edit the
+phoenix Configure target + rebuild openssl + revalidate curl/dropbear) — a broad, multi-build follow-up, NOT a clean Python
+finalization. So `_ssl` (HTTPS/urllib in Python) is parked behind "openssl111 built with threads". **(2) Retired the
+redundant tools/ ports (owner #2 "move ports out of tools/"):** removed tools/{sqlite,jq,redis}-port — all three are now
+HW-verified official phoenix-rtos-ports (sessions 40-42), so the tools/ prototypes were stale duplicates. Preserved their
+regression/config artifacts into the official port dirs (jq/{jqcore.test,selfcheck.jq}, redis/redis-min.conf,
+sqlite3/smoke.sql). Fixed a stale tools/sqlite-port comment in python-port/build.sh. Commits: phoenix-rtos-ports `52be7c6`,
+coord `7272075`. No core/manifest. **tools/ remaining (no official equivalent yet, bigger moves):** python-port, llama2-port,
+ffmpeg-port, quake*-port, sdl2-port (sdl2 IS official — tools/sdl2-port may be retireable too, check game-port refs first),
+lua-port (5.4.7 experiment; official Lua upgrade still parked on owner). NEXT candidates: openssl-threads→_ssl (multi-build),
+CPython→official-port move, or a different owner area (X11/DE, ffmpeg HW-h264, CNN/GPU ML).
+
 2026-08-17 (session 48 — pivot off coreutils: CPython `zlib` module LANDED on HW — unlocks gzip/zipfile/zipimport).
 Revisited the Python port's biggest deferred piece (owner "revisit ALL ports' unfinished parts"). Added a zlib block to
 tools/python-port/build.sh: cross-builds libz.a from zlib 1.2.11 (same version as the official phoenix-rtos-ports/zlib —
