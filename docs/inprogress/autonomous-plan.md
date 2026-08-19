@@ -527,6 +527,21 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-20 (session 53 — ★★ OWNER BACK + the long-deferred Lua 5.4.7 official-port upgrade LANDED, HW-verified).
+**Owner returned from vacation** (mid-turn message): frustrated the loop looked "stuck on a stupid permission question for a
+couple of days"; wants efficient autonomous forward motion; will inspect during the day. Acknowledged — keep driving work to
+completion each turn, use the allowlisted wrappers, don't stall on prompts.
+**Lua 5.3.6 → 5.4.7 (official phoenix-rtos-ports/lua) DONE:** the session-52 subagent actually COMPLETED successfully (I
+misread its mid-run .tmp scratch as a stall and briefly re-authored 03/06 myself — a race; reconciled by using the subagent's
+complete, superior set). All 8 Phoenix patches re-authored against 5.4.7, incl. the hard 05-healthcheck FULLY ported to 5.4's
+rewritten luaV_execute (disables the computed-goto jumptable under LUA_HEALTHCHECK_EVAL to keep per-instruction hook
+semantics; feature opt-in/off by default so the default image is unaffected). Dropped the unused 5.3.6 patch tree; refreshed
+checksums; tests_version→5.4.7. Built via the FRAMEWORK (`[lua] Installed`, EXIT 0) and **HW-verified over netboot**: `lua -v`
+=> Lua 5.4.7, `selfcheck.lua` => ALL-OK (int/float, bitwise, string patterns, metatables, coroutines, string.pack, goto).
+Commit phoenix-rtos-ports `3007ff8`. **This clears the most-deferred owner-explicit item.** (Transient smart-plug "No matching
+plug found" on the first Pi cycle — retried, fine.) tools/→ports official now: sqlite3, jq, redis, coreutils, + Lua upgraded.
+NEXT: pick from owner list (X11/DE, ffmpeg HW-h264, CNN/GPU ML) or the banked _ssl-handshake heap-corruption (QEMU-gdb).
+
 2026-08-17 (session 52 — tested (+ ruled out cheaply) the _ssl-crash stack hypothesis; delegated the long-deferred Lua 5.4.7 upgrade to a subagent).
 Tried to cheaply confirm/deny that the session-51 TLS-handshake heap corruption is a **stack overflow** (openssl handshakes are stack-heavy;
 cf. the ffmpeg "h264 needs 8MB-stack pthread" pattern) by running the handshake in a Python thread with `threading.stack_size(8MB)`. **Blocked:
