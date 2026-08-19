@@ -527,6 +527,20 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-20 (session 54b — ★★★ _ssl handshake heap-corruption ROOT-CAUSED + FIXED; Python HTTPS works end-to-end on HW).
+**FIXED the session-51 crash — it was a platform-wide openssl bug, not Python.** Root cause: the phoenix openssl targets set
+no `bn_ops`, so bignums defaulted to **THIRTY_TWO_BIT even on 64-bit aarch64** — clashing with the aarch64 bignum **asm**
+(64-bit limbs). The C code sized BIGNUM buffers for 32-bit limbs while the asm wrote 64-bit limbs → **heap buffer overflow**
+during the handshake's ECDHE/RSA math, overwriting libphoenix free-chunk metadata (rb-tree/list) with bignum data → Data
+Abort. Fix: `bn_ops => "SIXTY_FOUR_BIT_LONG RC4_CHAR"` on the aarch64a72 + riscv64 targets (matches stock linux-aarch64).
+Found it fast via config inspection (opensslconf.h said THIRTY_TWO_BIT) after building a standalone C reproducer
+(tools/python-port/tls-repro-client.c) that isolated the bug to openssl+libphoenix. **HW-verified after the fix:** the C
+reproducer completes a full TLSv1.2 ECDHE-RSA-AES256-GCM handshake (`TLS-C-OK`); rebuilt CPython against the fixed openssl →
+`python3 selftest_https.py` => `TLS TLSv1.2 ... HTTPS-OK` (real handshake + encrypted GET). **Fixes crypto for ALL 64-bit
+openssl consumers (curl HTTPS, dropbear, Python _ssl).** Commit openssl `3639dff` (pushed). ★ CPython arc complete:
+runs→usable→+SQLite→+.so dlopen→+zlib→+ssl(HTTPS end-to-end). (Owner tip noted: keep the Pi up + swap nfsroot binaries for
+userspace iteration; QEMU-gdb / libdbg / instrumentation — use to save rebuild/reboot time.)
+
 2026-08-20 (session 54 — _ssl handshake heap-corruption: built a fast standalone reproducer + narrowed scope; fix teed up).
 Progressed the highest-value unfinished item (finalize _ssl/HTTPS). Built a **minimal C openssl TLS client**
 (tools/python-port/tls-repro-client.c) — cross-compiled against the port's libssl/libcrypto + libphoenix — as a FAST
