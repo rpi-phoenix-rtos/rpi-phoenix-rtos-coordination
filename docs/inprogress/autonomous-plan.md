@@ -527,6 +527,19 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-20 (session 55 — OWNER "push ML toward CNN/GPU": a real MNIST CNN runs on Phoenix/Pi4, HW-verified. + openssl-reach correction).
+Advanced the owner's ML→CNN redirect (LLM llama2 already done; owner wants CNN/GPU). Built a **self-contained C CNN digit
+classifier** (tools/cnn-mnist/): 1×28×28 → fixed 3×3 conv (8ch) → ReLU → 2×2 maxpool → flatten(1352) → trained linear head →
+argmax. Fixed-random conv features + a trained linear softmax head = **95.1% MNIST test accuracy** (keeps training small/robust
+via a numpy trainer/exporter; conv is deterministic). numpy env via `uv venv`; MNIST from the ossci S3 mirror. **HW-verified
+(Pi4, netboot):** all 10 embedded test digits' predictions **match the numpy reference bit-exact** (incl. one the model itself
+misclassifies 5→6, reproduced exactly = proof of correct conv/relu/pool/dense compute), 9/10 correct, 0 faults, `CNN-OK`.
+Proves CNN inference compute works on Phoenix CPU. Commit coord `7be8d0f`. **Next (owner's real target): V3D GPU accel of the
+conv/matmul** (cf. the llama2 phase-2 V3D-matmul design doc) — the compute-heavy path a larger CNN needs.
+**CORRECTION to session 54b:** the openssl bignum fix's reach is openssl-itself + **Python _ssl** (both verified) — NOT curl:
+curl on rpi4b links **mbedtls** (`--without-ssl --with-mbedtls`), and dropbear/lighttpd don't ref openssl either. So the fix is
+"openssl consumers" = Python _ssl today; still a correct+important openssl-port fix, just narrower than "all TLS" I wrote.
+
 2026-08-20 (session 54b — ★★★ _ssl handshake heap-corruption ROOT-CAUSED + FIXED; Python HTTPS works end-to-end on HW).
 **FIXED the session-51 crash — it was a platform-wide openssl bug, not Python.** Root cause: the phoenix openssl targets set
 no `bn_ops`, so bignums defaulted to **THIRTY_TWO_BIT even on 64-bit aarch64** — clashing with the aarch64 bignum **asm**
