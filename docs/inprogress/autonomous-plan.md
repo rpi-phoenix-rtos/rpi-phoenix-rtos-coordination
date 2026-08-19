@@ -527,6 +527,21 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-20 (session 54 — _ssl handshake heap-corruption: built a fast standalone reproducer + narrowed scope; fix teed up).
+Progressed the highest-value unfinished item (finalize _ssl/HTTPS). Built a **minimal C openssl TLS client**
+(tools/python-port/tls-repro-client.c) — cross-compiled against the port's libssl/libcrypto + libphoenix — as a FAST
+reproducer (rebuilds in seconds vs ~10min for CPython). HW result: `TCP-CONNECTED` → `SSL_connect...` → **Data Abort** —
+so the crash is **openssl+libphoenix, NOT Python-specific** (rules out CPython's memory mgmt / _ssl wrapper). Crash sites
+(addr2line): this run pc=`malloc_chunkSize` ← lr=`lib_rbFindEx` (sys/rb.c:383, the free-chunk **red-black tree**); session
+51's run = `lib_listRemove` ← `_malloc_chunkRemove` (the free **list**). Both far/x2/x3 = **random-looking values** → openssl's
+handshake overruns a heap buffer and writes crypto/random bytes over an adjacent free chunk's allocator metadata
+(size header / next-prev / rb-node) → next malloc op derefs the garbage pointer → Data Abort. malloc_dl.c is a custom
+boundary-tag allocator (no built-in check mode). **FIX PLAN (next session, fast loop via the reproducer):** add redzone/canary
+bytes + a header-vs-foot integrity check to libphoenix malloc_dl (guarded debug build) → --scope core → recompile
+tls-repro-client (seconds) → reproduce → the check fires at/near the overflowing allocation → identify the openssl alloc size/
+site → fix. Reproducer + host TLS server harness (tls-test-server.py) committed. This is genuine forward motion (banked-unknown
+→ fast reproducer + scope confirmed + dual-site localization). tools/→ports: Lua 5.4.7 done last session.
+
 2026-08-20 (session 53 — ★★ OWNER BACK + the long-deferred Lua 5.4.7 official-port upgrade LANDED, HW-verified).
 **Owner returned from vacation** (mid-turn message): frustrated the loop looked "stuck on a stupid permission question for a
 couple of days"; wants efficient autonomous forward motion; will inspect during the day. Acknowledged — keep driving work to
