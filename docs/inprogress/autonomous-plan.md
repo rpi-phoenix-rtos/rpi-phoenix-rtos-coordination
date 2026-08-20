@@ -528,6 +528,22 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~71 — P6 lwip gateway: candidate (b) cleared + /dev/ipstats diagnostic prepped; X11 subagent still building).
+Heartbeat woke; no owner feedback on publish. X11-ports subagent (a06b982…) is ALIVE + actively building `xorg_libs` under the
+real framework (discovered framework needs underscore name, mirrored into buildroot, running --ports-only) → .buildroot + Pi
+stay OFF-LIMITS (no concurrent builds). So picked P6 (lwip TCP gateway) as source-only work in the lwip sibling (not .buildroot,
+not the ports tree). Advisor-scoped the turn to "candidate (b) cleared-or-fixed + minimal probes." **Candidate (b) CLEARED by
+reading:** `port/filter.c` (LWIP_HOOK_ETH_INPUT) defaults to pfpass w/ empty rule list (no default rules) → passes everything;
+the outbound SYN reaching 1.1.1.1 exercises LWIP_HOOK_IP4_ROUTE=route_find + LWIP_HOOK_ETHARP_GET_GW=route_get_gw, proving
+off-subnet route/gw-ARP work (route.c correct). **Diagnostic prepped (better than hand-rolled probes):** lwip already has a full
+stats facility (LINK/IP/TCP recv/drop/rterr) with a `/dev/ipstats` dump, gated off by LWIP_STATS=0. Enabled it for aarch64a72
+(rpi4b) ONLY via -DLWIP_STATS=1 placed BEFORE the lwip-core static-lib include (MCU targets keep stats-off default). Verified
+compile-safe: every stats_open() append is #if-guarded, lwipopts enables exactly those sub-stats. lwip `2323efd` (local; lwip
+uses the filtered-cherry-pick publish flow — not pushed). **The BATCHED Pi cycle now carries THREE items on ONE core rebuild +
+netboot:** (1) strerror test-libc-string, (2) X11 ports.yaml integration (post-subagent), (3) lwip /dev/ipstats gateway
+diagnostic (snapshot→connect→snapshot diff localizes link/ip/tcp drop + answers the E3-vs-C3 "does it still repro?" conflict).
+Coord docs pushed. NEXT: on X11-subagent completion → run the batched core-rebuild + one netboot cycle for all three.
+
 2026-08-21 (session ~70 — strerror POSIX-text FIXED+committed; X11-ports framework-build subagent dispatched; unified-TFU hypothesis RETIRED).
 Three durable items. (1) **P5 strerror DONE (wired+committed, HW-validation batched):** libphoenix `strerror()` now returns
 "No such file or directory" not "ENOENT". Analysis verdict = conformance fix (every libc does it; only non-conformant
