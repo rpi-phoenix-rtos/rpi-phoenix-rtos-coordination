@@ -527,6 +527,19 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-20 (session 57 — OWNER "improve X11/desktop-environment (RPi-OS-like, lightweight)": twm-managed DESKTOP on HDMI, HW-verified).
+Fresh owner-list area, clean efficient turn (front-loaded the demo per last turn's lesson — no over-survey). The X11 stack +
+a lightweight WM were already built/staged (Xphoenix kdrive-fbdev, twm 1.0.12, xeyes/xterm/xclock, fonts on the NFS root),
+and pl_phoenix_xlaunch has a `desktop` mode. Ran `/bin/pl_phoenix_xlaunch desktop` on the Pi over netboot → Xphoenix (:0) +
+twm (WM) + xeyes all came up cleanly (0 faults). **HDMI-verified:** the xeyes window is now drawn with a **twm title bar
+(decorated, managed)** — i.e. a running window manager on the Pi's framebuffer = the owner's lightweight DE. Evidence
+`artifacts/x11/twm-desktop-on-hdmi.png` (was previously only bare xeyes-on-hdmi; this shows the WM decoration = new). psh
+invocation modes: `pl_phoenix_xlaunch desktop` (twm+xeyes), `... term` (twm+xterm). **Remaining X11/DE gap = INTERACTIVE
+INPUT**: the Xphoenix fbdev DDX kbd/pointer are still no-op stubs → wiring them to /dev/kbd0 + /dev/mouse0 would make windows
+draggable + xterm typeable. That's the real next X11 step, BUT it's owner-verification-territory (autonomous mode can't move a
+physical mouse to confirm) — flagging for owner HW test. Commit coord (evidence + board). GPU-in-window (glamor/DRI) still
+blocked (no DRM/PRIME). No core change → no manifest.
+
 2026-08-20 (session 56 — CNN upgraded to a fully-TRAINED convnet, HW-verified; + ML/GPU-matmul arc status (decision-relevant)).
 **Two outcomes.** (1) **CNN now fully trained:** replaced session-55's fixed-random-conv+trained-head shortcut with a
 genuinely trained convnet — conv filters AND linear head learned via numpy im2col backprop (95.5% MNIST test acc). C
