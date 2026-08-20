@@ -538,9 +538,14 @@ landed)** + re-validated patch-free xorg_server build. ports repo commits 60705b
 cold, so don't burden every image build; showcase→ports migration + flip if:true is the follow-up). project repo 4f4c9c9. **Batched
 --scope core --with-tests nfsroot rebuild: EXIT 0.** VERIFIED both committed core changes compile AND take effect: strerror errno.str.inc
 regenerated WITH descriptions ("No such file or directory" etc.) + present in built libphoenix.a; lwip built with /dev/ipstats string
-(LWIP_STATS=1 active); test-libc-string built into _fs/root/bin. **Pi netboot cycle IN-FLIGHT** (bbiqn25vl): /bin/test-libc-string -g
-string_errsign (strerror HW validation) + cat /dev/ipstats (lwip stats facility). Result pending — will update. NEXT: read Pi result; if
-strerror passes → P5 fully DONE-HW + push libphoenix/tests; then the lwip gateway repro (NAT + connect + /dev/ipstats diff) for P6.
+(LWIP_STATS=1 active); test-libc-string built into _fs/root/bin. **Pi netboot cycle DONE (bbiqn25vl, exit 0):** ✅ **strerror HW test PASSED** — `test-libc-string -g string_errsign` 9/9 incl. the new
+`strerror_posix_text` (0 Failures, OK) ⇒ **P5 DONE-HW-VERIFIED.** ✅ **`/dev/ipstats` facility works on HW** (dumps live counters:
+etharp.xmit=9, ip.xmit=109, cachehit=105). ⚠️ FINDING for the P6 repro: `link.recv=0` despite traffic — genet's custom-pbuf RX path
+doesn't bump lwip LINK_STATS, so the gateway diagnostic keys off ip.recv/tcp.recv/tcp.xmit/ip.rterr, NOT link.recv.
+**PUSHED (all HW-/build-verified):** libphoenix e71331d + tests 56b1f7d (strerror, HW-verified) → publish/master; phoenix-rtos-ports
+3500a2a+60705be (X11 migration, build-verified) + project 4f4c9c9 (ports.yaml) → publish/master. lwip 2323efd stays LOCAL (filtered
+publish flow). NEXT: P6 gateway repro (bring up E2/E3 host NAT + one gatewayed connect + snapshot→connect→snapshot /dev/ipstats diff);
+then P4 coreutils make check / P7 vkQuake / P-DOCS.
 
 2026-08-21 (session ~72 — owner patch-cleanup request: decided drop 2 redundant malloc(0) patches, keep 3; delegated xorg-server drop to the X11 subagent).
 Heartbeat woke; no owner feedback commits. X11 subagent (a06b982…) STILL iterating on the framework build (restarted --ports-only on xorg_libs;
