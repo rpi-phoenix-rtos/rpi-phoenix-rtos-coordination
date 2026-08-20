@@ -528,6 +528,20 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~74 — P-DOCS user-facing docs synced (subagent + my accuracy review); P4 feasibility decided).
+Two items. **P-DOCS DONE:** dispatched a subagent to sync the 7 user-facing docs with an accuracy-calibrated brief (correct current
+state + explicit no-overclaim framing). It edited 6 (HARDWARE.md correctly left — already current), committed nothing. I acted as the
+ACCURACY GATE — reviewed ALL 6 diffs (README/KNOWN-ISSUES/matrix/TUTORIAL/TUTORIAL-NETBOOT/BUILD): WiFi ⛔→🟡 (control-plane only, data-
+plane doesn't carry traffic, use wired), Bluetooth ⬜→🟡 (driver-level, no host stack), vkQuake ✅→🟡 (hangs post-menu, no input), Dillo
+#70→RESOLVED (live HTTPS via host NAT, honest about the lab setup), strerror bug removed (fixed), added CLI/languages ecosystem +
+quake2/3 launchers + new known-issues + refreshed dates. All accurate/honest — NO overclaiming. Committed `d576fa7` pushed. **Caught +
+fixed an inaccuracy:** verified coreutils count = **103 of 104 (only stty skipped)**, not "104 built" (contradictory; the 104th src ELF
+is the make-prime-list build helper) — corrected README/TUTORIAL/BUILD/matrix/plan + memory (`7b10fcd`). Subagent's other flags handled
+(non-numeric issue IDs to avoid clashing task #71-74; redis-cli/shell-example accuracy — it correctly didn't claim redis-cli ships).
+**P4 feasibility DECIDED + committed (`ec42076`):** literal make-check infeasible on-target (no make/perl; 554 sh + 64 pl tests need
+them on-device) → reframe to a DIFFERENTIAL harness (each of the 103 tools on Pi vs host GNU coreutils, diff outputs). Cron 97aa057e
+healthy (expires ~08-28). NEXT: build the P4 differential harness (dedicated turn), or P7 vkQuake characterization, or the G-tier goals.
+
 2026-08-21 (session ~73b — P6 lwip gateway bug RESOLVED: does NOT reproduce; Pi completes live gatewayed TCP handshake).
 Ran the P6 repro: host NAT up (pi-internet-nat.sh, 10.42.0.0/24→enp1s0f0) + Pi netboot cycle. RESULT: **`curl http://1.1.1.1/`→HTTP 301**
 (full gatewayed TCP handshake completes) + **`ping 1.1.1.1` 3/3** (~20ms, ttl=54). `/dev/ipstats` after: ip.recv=951 tcp.xmit=609
