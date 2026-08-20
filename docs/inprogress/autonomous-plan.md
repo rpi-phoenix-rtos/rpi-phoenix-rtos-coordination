@@ -14,6 +14,7 @@ host/Linux comparison, UART logs, QEMU, debugger).
 ---
 
 ## Comments from human operator / owner (more more from 2026-08-14)
+- (2026-08-21) SCHEDULED TASK: build + run coreutils' own `make check` test suite on Phoenix to validate the port (extensive/rigorous suite; see memory project_coreutils_testsuite_task). Assess which tests run given psh limits (maybe via bash port / host-side runner); fix libphoenix gaps found.
 
 - Do not start new topics for a while - there are still many pending / in progress / not fully finished topics on the list that you started, got some nice progress, but still there are things which may be improved. So before new topics - finalize the ones which are in progress.
 - Try to move as many ports to the proper ports project - away from the "tools" folder in coordination repo.
