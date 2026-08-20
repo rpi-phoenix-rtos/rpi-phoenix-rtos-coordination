@@ -527,6 +527,18 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-20 (session 59 — curl+mbedtls HTTPS verified on Phoenix (both TLS stacks now proven via their CLI tools); Pi→internet-forwarding banked).
+Networking turn — partial land + an honest bank. **LANDED:** `curl -sk https://10.42.0.1:8443/` on the Pi → `PHOENIX-TLS-HELLO`
+= curl + **mbedtls** TLS works on HW (complements last week's Python + **openssl** HTTPS — both TLS stacks now proven via
+their main client tools). **BANKED (real-internet CLI fetch):** brought up host NAT (pi-internet-nat.sh: 10.42.0.0/24 →
+enp1s0f0, ip_forward=1, FORWARD ACCEPT) + Pi default route (verified in the Pi route table: `default 10.42.0.1 UG en1`) +
+DNS (resolv.conf 8.8.8.8), but `curl https://1.1.1.1/` from the Pi silently times out. Host itself reaches the internet
+(HTTP 301) and the iptables NAT/FORWARD look correct, yet the forward doesn't complete → deeper host-side issue (prime
+suspect: **firewalld/nftables shadowing the iptables FORWARD rules on the Pi-facing `enx00e04c68013a` zone**; next step =
+tcpdump on host enx + enp1s0f0 during a Pi cycle to see where the packet dies, and/or `nft list ruleset`). NOT a Phoenix
+regression — the Pi→real-internet HTTPS **capability is already proven** (E2/E3 Dillo live HTTPS, CA-verified, via this NAT).
+PROCESS: under-set a Bash timeout on one cycle (2-min default vs a 3-cmd cycle) — corrected; use (wait+n*idle+120)s. No core change.
+
 2026-08-20 (session 58 — OWNER "ffmpeg bigger-media (RAM disk)": 720p H.264 video plays from a RAM disk on HDMI, HW-verified).
 Tractable half of the ffmpeg item (full HW-decode = a multi-week VideoCore-codec driver; RAM-disk bigger-media is
 autonomously verifiable). The ffmpeg SW decode core + fb present path were built; the current clip was tiny (320×240, 3KB).
