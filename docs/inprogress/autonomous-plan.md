@@ -544,9 +544,11 @@ script) — so the library stack underneath is NOT in the framework. **Owner cho
 aggregate ports by layer — `xorg-libs` (protos + core X libs), `xorg-fonts` (freetype/fontconfig/cairo/pango/harfbuzz/
 fribidi/pixman/png/jpeg), `xorg-server` (Xorg + fbdev DDX) — then individual thin APP ports (xterm/windowmaker already
 exist; add jwm/twm/xcalc/xclock/xeyes/xlogo/oclock/ico/xbill) that depend on the layer ports. Each aggregate port stages
-into $PREFIX_SYSROOT (not /tmp); app ports drop the /tmp references. NEXT: scaffold xorg-libs port.def.sh from the
-build-x11-phoenix.sh build order (leaf->top DAG), staging to sysroot; then xorg-fonts, xorg-server, then rewire the app
-ports. Multi-session effort — do in dependency order, validate the stack builds before rewiring apps. Also pending: retire
+into $PREFIX_SYSROOT (not /tmp); app ports drop the /tmp references. The full extracted build spec (versions, URLs, configure flags, DAG, every Phoenix patch, tricky bits) is in
+**docs/inprogress/x11-ports-migration-spec.md** (produced by a subagent). NEXT: scaffold the xorg-libs (Layer 1) port that
+fetches its ~24 tarballs in p_prepare and builds leaf->top into $PREFIX_SYSROOT (the framework's single-tarball meta doesn't
+fit an aggregate; use a multi-fetch p_prepare). Then xorg-fonts, xorg-server, then rewire windowmaker/xterm off /tmp + add
+app ports. Multi-session; validate each layer builds in-framework (one Pi smoke) before moving up. Also pending: retire
 the now-redundant tools/lua-port dir (official lua 5.4.7 subsumes it).
 
 2026-08-21 (session 64 — libphoenix test for vsnprintf exact-sizing + PERMANENT fix for the --with-tests bootfs-wipe trap).
