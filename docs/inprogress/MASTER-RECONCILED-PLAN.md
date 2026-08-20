@@ -31,7 +31,7 @@ directive, then other tractable finalization; decision-gated (§E) and can't-com
 6. **P6 — lwip TCP gateway bug** (C3): fix Pi→internet handshake (root-caused).
 7. **P7 — vkQuake hang + input** (A2.3): characterize backtrace; input half owner-attended.
 8. **P8 — move remaining `tools/` ports** (§G): v3d-driver-port→**devices** (E1), ffmpeg, python, games, `tools/ports/` bundle (dillo/fltk/mc/nano/ncurses/libffi/libiconv; **glib2 deferred** with E4).
-9. **P9 — small to-do** (§D): **Mesa patch-series rebase onto released 26.2.0** (from rc1; keep patches in-repo, pin the release tag — E2), CNN-on-GPU, wpa_supplicant upgrade, qemu 11.1. (zsh DROPPED — bash is enough.)
+9. **P9 — small to-do** (§D): **Mesa patch-series rebase onto released 26.2.0** (from rc1; keep patches in-repo, pin the release tag — E2), wpa_supplicant upgrade, qemu 11.1. (zsh DROPPED — bash is enough. CNN-on-GPU RULED OUT — see §F.)
 
 **TIER 2 — big greenlit goals (E-decisions; multi-cycle; the major thrusts, begin interleaving as Tier-1 wins bank):**
 10. **G-GPU — Linux/RPi-OS GPU parity** (E5): GL-windowed apps under X + video-in-a-window + HW-accelerated X11 on V3D 4.2 — study how RPi-OS does it (DRI/DRM/kmsro/glamor/modesetting or Wayland) and replicate the capability level.
@@ -100,7 +100,7 @@ Owner ran the ports on real HW. "Finalizing a port = being able to actually run 
 
 - 📋 **wpa_supplicant port upgrade** (A10) — port is old; upgrade + use (WiFi join currently via custom tools/wifi-probe, not wpa_supplicant).
 - ~~zsh~~ — **DROPPED** (owner: bash is enough, we don't do zsh).
-- 📋 **CNN on GPU** (A8, the owner's real ML target) — CNN is CPU; wire conv/matmul onto the working (bit-exact) V3D CSD compute path.
+- ⛔ **CNN on GPU (A8) → RULED OUT with the current approach — see §F.** (was mis-listed as a to-do; it's investigated + shelved, not fresh work.)
 - 📋 **Mesa patch-series rebase onto released 26.2.0** (A25/E2) — move our local patches from 26.2.0-rc1 to the released 26.2.0 tag; keep patches in-repo; pin the single release tag/tarball as reference; NO full fork.
 - 📋 **qemu 11.1 host toolchain** (A23 / TD-07/08) — update host qemu; re-test boot under qemu+gdbstub.
 - 📋 **TD-Eth-LinkIRQ** — route PHY INT_B to GIC SPI (or accept MDIO-poll as the portable answer).
@@ -127,6 +127,7 @@ Owner ran the ports on real HW. "Finalizing a port = being able to actually run 
 
 ## F. STRUCTURALLY BLOCKED / HW-gated (still can't-complete)
 
+- ⛔ **ML on GPU (CNN / matmul) — INVESTIGATED, NO SPEEDUP (not a HW block, a perf reality).** The V3D CSD GPU-compute matmul was brought up and is numerically **bit-exact**, but it is **dispatch/bandwidth-bound → ~6.6× SLOWER than the A72 CPU** (measured on the llama2 arc, session ~S22). CNN's conv/matmul would inherit the same slowdown, so CNN-on-GPU shows no win. The only remaining lever (tiled-GEMM) was **ruled out by the advisor** and owner-gated ("do NOT optimization-grind"). ⇒ RULED OUT unless a fundamentally different GPU-compute formulation emerges (possibly via the E5 GPU-parity work). CNN itself runs CPU-side, HW-verified 95.5%. Memory: `project_ml_inference_llama2`, `project_cnn_mnist`.
 - ⛔ **SuperTuxKart** — modern needs GL3.3/GLES3 (our port is GL2.1); legacy = multi-week Irrlicht spike. Deferred.
 - ⛔ **TD-10 / SError root cause** — live PCIe/VL805 external-abort behind JTAG/masked-SError wall.
 - ⏳ **SD SDMA-write validation — POSTPONED (not blocked).** Owner will provide an SD card later, then trigger: rebuild a full SD-card image → boot the system from SD → focus on SD performance (incl. flipping the SDMA-write gate at sdcard.c:1625 + HW-validating it). Owner-triggered; resume when the card is in.
