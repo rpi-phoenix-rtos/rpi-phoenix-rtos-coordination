@@ -31,7 +31,7 @@ directive, then other tractable finalization; decision-gated (§E) and can't-com
 6. **P6 — lwip TCP gateway bug** (C3): fix Pi→internet handshake (root-caused).
 7. **P7 — vkQuake hang + input** (A2.3): characterize backtrace; input half owner-attended.
 8. **P8 — move remaining `tools/` ports** (§G): v3d-driver-port→**devices** (E1), ffmpeg, python, games, `tools/ports/` bundle (dillo/fltk/mc/nano/ncurses/libffi/libiconv; **glib2 deferred** with E4).
-9. **P9 — small to-do** (§D): CNN-on-GPU, wpa_supplicant upgrade, zsh, qemu 11.1. *(Mesa 26.2.0 rebase DROPPED per E2.)*
+9. **P9 — small to-do** (§D): **Mesa patch-series rebase onto released 26.2.0** (from rc1; keep patches in-repo, pin the release tag — E2), CNN-on-GPU, wpa_supplicant upgrade, zsh, qemu 11.1.
 
 **TIER 2 — big greenlit goals (E-decisions; multi-cycle; the major thrusts, begin interleaving as Tier-1 wins bank):**
 10. **G-GPU — Linux/RPi-OS GPU parity** (E5): GL-windowed apps under X + video-in-a-window + HW-accelerated X11 on V3D 4.2 — study how RPi-OS does it (DRI/DRM/kmsro/glamor/modesetting or Wayland) and replicate the capability level.
@@ -78,7 +78,7 @@ Owner ran the ports on real HW. "Finalizing a port = being able to actually run 
 | 🧪 **xorg-libs (X11 Layer 1)** | validated standalone (24 libs build); confirm **in-framework** (`ports.yaml` + `--with-ports`) + a Pi smoke (twm/xeyes) | tractable now |
 | 🧪 **AXI-PMU per-master attribution** (genet/V3D) | mechanism proven; per-master isolation UNVALIDATED | tractable |
 | 🧪 **~20 libc/system test binaries on card** | staged, never run | needs Pi |
-| 🧪 **SD SDMA-write path** (sdcard.c:1625, gated off) | flip + HW-validate; corruption risk — do NOT default-ON unvalidated | ⛔ HW-blocked (no card in rig) |
+| ⏳ **SD SDMA-write path** (sdcard.c:1625, gated off) | flip + HW-validate; corruption risk — do NOT default-ON unvalidated | **POSTPONED** — owner will supply a card + trigger the SD image/boot/perf pass |
 | 🧪 **Audio audible sign-off** | driver HW-verified; needs owner + headphones | owner-attended |
 | 🧪 **X11 interactive keypress** (DDX kbd/pointer → /dev/kbd0,mouse0) | needs owner physically at the board | owner-attended |
 | 🧪 **/dev/gpio outputs** | read path done; outputs need attended bench rig | owner-attended |
@@ -101,7 +101,7 @@ Owner ran the ports on real HW. "Finalizing a port = being able to actually run 
 - 📋 **wpa_supplicant port upgrade** (A10) — port is old; upgrade + use (WiFi join currently via custom tools/wifi-probe, not wpa_supplicant).
 - 📋 **zsh** (part of A18 "full bash/zsh CLI") — never attempted (bash done).
 - 📋 **CNN on GPU** (A8, the owner's real ML target) — CNN is CPU; wire conv/matmul onto the working (bit-exact) V3D CSD compute path.
-- ~~Mesa 26.2.0 rebase (A25)~~ — **DROPPED per E2** (owner: patch-series, no full rebase now).
+- 📋 **Mesa patch-series rebase onto released 26.2.0** (A25/E2) — move our local patches from 26.2.0-rc1 to the released 26.2.0 tag; keep patches in-repo; pin the single release tag/tarball as reference; NO full fork.
 - 📋 **qemu 11.1 host toolchain** (A23 / TD-07/08) — update host qemu; re-test boot under qemu+gdbstub.
 - 📋 **TD-Eth-LinkIRQ** — route PHY INT_B to GIC SPI (or accept MDIO-poll as the portable answer).
 - 📋 **Propose-own impressive feature** (A32) — arguably satisfied by RAM-staging + the ports ecosystem; can propose a fresh one if wanted.
@@ -112,7 +112,7 @@ Owner ran the ports on real HW. "Finalizing a port = being able to actually run 
 ## E. OWNER DECISIONS — RESOLVED (2026-08-21)
 
 1. ✅ **v3d-driver-port placement → `phoenix-rtos-devices`** (if feasible). Migration target set (§G, P8).
-2. ✅ **Mesa → patch-series for now, NOT a full rebase.** Keep the current patch-series publish; **do NOT** do the Mesa 26.2.0 full rebase now (drop from §D/P9).
+2. ✅ **Mesa → USE the released 26.2.0, maintained as a LOCAL PATCH-SERIES (never a full fork).** Rebase our local patches (currently against 26.2.0-**rc1** git-671c4f08c9) onto the **released 26.2.0 tag**; keep the patches in our repo; reference the upstream release tarball / specific release tag (a single stable tag — we do NOT support multiple versions). Mesa's tree is VERY BIG, so no vendored fork. ⇒ this is an ACTIVE task (P9), NOT dropped.
 3. ✅ **jq/libphoenix `malloc(0)`→non-NULL → ACCEPT permanently, don't revert.** Settled; glibc-compat stays.
 4. ✅ **Desktop environments → PAUSE XFce/LXQt, stay on WindowMaker** (revisit later). ⇒ glib2/GIO + pango/harfbuzz/fribidi (GTK text stack) DEFERRED with it. **Simplifies P3:** xorg-fonts only needs the glib-free tier (freetype/fontconfig/expat/libpng/jpeg/libXft/cairo) to carry the *current* WindowMaker+Xft stack.
 5. 🎯 **GPU capability → AIM FOR RPi-OS/Linux PARITY on Pi4** (NEW ACTIVE GOAL, not "accept the ceiling"). Owner: Linux on the same V3D 4.2 does GL-windowed apps under X + video-in-a-window + HW-accelerated X11/Wayland — we should reach a similar capability level. Investigate HOW RPi-OS achieves this (DRI/DRM, kmsro, X modesetting/glamor, or Wayland) on single-context V3D and replicate. (Reframes A15/F.)
@@ -129,7 +129,7 @@ Owner ran the ports on real HW. "Finalizing a port = being able to actually run 
 
 - ⛔ **SuperTuxKart** — modern needs GL3.3/GLES3 (our port is GL2.1); legacy = multi-week Irrlicht spike. Deferred.
 - ⛔ **TD-10 / SError root cause** — live PCIe/VL805 external-abort behind JTAG/masked-SError wall.
-- ⛔ **SD SDMA-write validation** — no card in the Pi/host rig (owner-attended).
+- ⏳ **SD SDMA-write validation — POSTPONED (not blocked).** Owner will provide an SD card later, then trigger: rebuild a full SD-card image → boot the system from SD → focus on SD performance (incl. flipping the SDMA-write gate at sdcard.c:1625 + HW-validating it). Owner-triggered; resume when the card is in.
 - ~~WiFi data-plane~~ → **owner says INVEST (E7)** — moved to active goals.
 - ~~True multi-client GPU / DRI~~ → **owner wants Linux-parity (E5)** — moved to active goals (investigate RPi-OS approach; may not need *true* concurrency to match Linux's user-visible capability).
 - ~~ffmpeg HW-decode~~ → **owner says BUILD it (E6)** — moved to active goals.
