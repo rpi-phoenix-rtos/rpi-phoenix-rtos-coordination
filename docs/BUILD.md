@@ -178,7 +178,7 @@ stack + apps, and the extra userland ports) against `external/mesa` and the
 vendored tarballs in `tools/ports/src/`.
 
 A companion `--with-ports` flag adds the **CLI tools and languages ecosystem** to
-the image — all HW-verified: GNU **coreutils 9.5** (104 tools), GNU **bash 5.2**,
+the image — all HW-verified: GNU **coreutils 9.5** (103 of 104 tools; `stty` skipped), GNU **bash 5.2**,
 **CPython 3.14** (with `sqlite3`, `zlib`, `_ssl`/HTTPS, `_decimal`, `ctypes`, and
 `.so` C-extension `dlopen`), **Redis 7.2**, **SQLite 3**, **jq**, **Lua 5.4.7**,
 BusyBox, and **curl** (mbedTLS). For the fullest image, combine both:

@@ -114,7 +114,7 @@ Beyond the base system, a substantial ports ecosystem runs on the hardware
 
 | Component | Notes |
 |---|---|
-| GNU **coreutils 9.5** | 104 tools (`ls`, `cat`, `wc`, `sha256sum`, `seq`, …) |
+| GNU **coreutils 9.5** | 103 of 104 tools (only `stty` skipped) — `ls`, `cat`, `wc`, `sha256sum`, `seq`, … |
 | GNU **bash 5.2** | runs; see caveat below |
 | **CPython 3.14** | static `python3` with `sqlite3`, `zlib`, `_ssl`/HTTPS, `_decimal`, `ctypes`, and `.so` C-extension `dlopen` |
 | **Redis 7.2** | in-memory data store, served over lwIP TCP |

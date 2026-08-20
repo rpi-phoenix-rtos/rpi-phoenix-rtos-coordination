@@ -265,7 +265,7 @@ The image (built `--with-ports`) ships a real command-line ecosystem, all
 HW-verified:
 
 ```bash
-# GNU coreutils 9.5 — 104 tools
+# GNU coreutils 9.5 — 103 of 104 tools (stty skipped)
 ls -l /etc
 wc -l /etc/passwd
 sha256sum /etc/profile
