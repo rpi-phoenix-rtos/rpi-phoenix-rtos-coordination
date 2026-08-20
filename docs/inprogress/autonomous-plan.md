@@ -527,6 +527,21 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session 62 — CPython **`ctypes`** (FFI) WORKS on HW + libphoenix **`dlopen(NULL)`** finalized). Owner "continue"
++ "finalize dynamic-linking + use it for Python". Chain of real fixes: (a) `_ctypes` builds against the existing cross-built
+libffi 3.3 (tools/ports/build-libffi.sh, idempotent) — build.sh block links _ctypes.c + 5 helpers; (b) callproc.c's
+`set_errno`/`get_errno` clash with Phoenix <errno.h>'s inline → targeted perl rename of only _ctypes' C functions (Python-
+visible names kept); (c) `-DUSING_MALLOC_CLOSURE_DOT_C` so malloc_closure.c owns `Py_ffi_closure_*` instead of redefining
+libffi's; (d) **libphoenix `dlopen(NULL)`** — POSIX main-program handle whose dlsym routes through the existing host-symtab
+lookup (dl.c, committed 9f1a545) — without it `import ctypes` fails (ctypes does PyDLL(None) at import). HW (netboot,
+`/bin/python3 -S /ctypestest.py`): **CTYPES-OK** — sizeof/Structure/array/pointer + **FFI forward calls** strlen/strcmp/
+getpid all correct via libffi ffi_call on aarch64. CAVEAT: must invoke python by a resolvable path (`/bin/python3`), because
+dl_hostInit open()s argv[0] to read the symtab and bare "python3" (psh's argv[0]) isn't openable → FFI can't resolve host
+symbols (type system still works). NEXT (same theme): make dl_hostInit PATH-search when argv[0] has no '/', so ctypes works
+regardless of invocation. Core change (libphoenix) → manifest snapshotted. Closures/callbacks (C→Python) untested (need exec
+mmap). PROCESS: many builds but each fixed a distinct, understood issue; used fast standalone compile-checks to avoid wasted
+full rebuilds; core rebuild only once at the end.
+
 2026-08-21 (session 61 — CPython **`_decimal`** (arbitrary-precision `Decimal`) FINALIZED + HW-verified). Clean finalization
 win (owner: "revisit ports' unfinished parts"). CPython 3.14 still bundles libmpdec, so `_decimal` is self-contained — added
 a `build.sh` block that statically links `_decimal.c` + the 15 libmpdec library sources (bench*.c excluded). Two real gotchas

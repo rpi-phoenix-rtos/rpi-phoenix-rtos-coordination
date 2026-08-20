@@ -135,6 +135,41 @@ if [ "${SKIP_DECIMAL:-0}" != 1 ]; then
 fi
 
 
+# 5e. `_ctypes` (Python FFI: the `ctypes` module / CDLL). Needs libffi — build it via
+#     the committed tools/ports/build-libffi.sh (idempotent: downloads + cross-builds
+#     libffi 3.3 into /tmp/phoenix-ffi + the cross sysroot). Forward calls (load a lib,
+#     call a C function) work; ffi closures/callbacks need executable mmap, which is
+#     limited on Phoenix (callbacks may not work). The HAVE_FFI_* macros are normally
+#     set by configure's libffi probe; we supply them directly (libffi 3.3 has all of
+#     them). Same no-'=' rule for the -D flags as _decimal. SKIP_CTYPES=1 to skip.
+if [ "${SKIP_CTYPES:-0}" != 1 ]; then
+	FFIPREFIX=/tmp/phoenix-ffi
+	[ -f "$FFIPREFIX/lib/libffi.a" ] || "$REPO/tools/ports/build-libffi.sh" || true
+	if [ -f "$FFIPREFIX/lib/libffi.a" ]; then
+		# _ctypes' callproc.c defines its own set_errno/get_errno, which clash with
+		# Phoenix <errno.h>'s `static inline int set_errno(int)`. Rename ONLY _ctypes'
+		# C functions (definitions + method-table references) to ctypes_{set,get}_errno.
+		# The quoted "set_errno"/"get_errno" method names Python sees are left intact.
+		# (A global -Dset_errno=... would rename errno.h's inline too -> same clash, and
+		# a Setup.local -D can't contain '=' anyway: makesetup reads it as a Make var.)
+		perl -0pi -e 's/\nset_errno\(PyObject \*self/\nctypes_set_errno(PyObject *self/;
+		              s/\nget_errno\(PyObject \*self/\nctypes_get_errno(PyObject *self/;
+		              s/\{"set_errno", set_errno,/{"set_errno", ctypes_set_errno,/;
+		              s/\{"get_errno", get_errno,/{"get_errno", ctypes_get_errno,/' \
+		              Modules/_ctypes/callproc.c
+		CTSRCS="_ctypes/_ctypes.c _ctypes/callbacks.c _ctypes/callproc.c _ctypes/cfield.c _ctypes/malloc_closure.c _ctypes/stgdict.c"
+		grep -q '^_ctypes ' Modules/Setup.local || \
+		# -DUSING_MALLOC_CLOSURE_DOT_C: without it ctypes.h #defines Py_ffi_closure_free
+		# -> ffi_closure_free, so malloc_closure.c's Py_ffi_closure_free definition
+		# redefines libffi's symbol (multiple-definition link error + self-recursion).
+		# With it, malloc_closure.c owns Py_ffi_closure_* and calls libffi's underneath.
+		echo "_ctypes $CTSRCS -I$FFIPREFIX/include -L$FFIPREFIX/lib -lffi -DHAVE_FFI_PREP_CIF_VAR -DHAVE_FFI_PREP_CLOSURE_LOC -DHAVE_FFI_CLOSURE_ALLOC -DHAVE_ALLOCA_H -DUSING_MALLOC_CLOSURE_DOT_C" >> Modules/Setup.local
+	else
+		echo "SKIP _ctypes: libffi.a not available (build-libffi.sh failed)"
+	fi
+fi
+
+
 # 6. Build JUST the interpreter (skip the remaining .so extensions we didn't
 #    make static). `make` (all) would try to link those as .so with the wrong
 #    linker; `make python` links the static interpreter + the Setup.local modules.
