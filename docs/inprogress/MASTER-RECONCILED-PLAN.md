@@ -22,18 +22,24 @@ Legend: ✅ DONE-HW · 🧪 needs test/validation · 🔧 in-progress · ⏸ wai
 directive, then other tractable finalization; decision-gated (§E) and can't-complete
 (§F) items are parked pending owner input. Owner retests are BATCHED (I signal).
 
-1. **P1 — quake2 + quake3 runnable** (A2.1/A2.2): `quake2`/`quake3` launchers set the
-   data paths (data staged at /usr/share/quake{2,3}). Near-done; highest user-visible win. → owner retest.
-2. **P2 — bash interactive shell** (A2.5): getty→/dev/pts bridge so `bash` doesn't EOF-exit. Usability blocker. → owner retest (batched with P1).
-3. **P3 — X11 ports migration** (C1): validate `xorg-libs` in-framework → `xorg-fonts`
-   (needs a **glib2** port too) → `xorg-server` → rewire `xterm`/`windowmaker` off `/tmp` → app ports.
-4. **P4 — coreutils `make check`** on Phoenix (B / owner-scheduled): prove correctness, not just that binaries run.
-5. **P5 — strerror POSIX descriptions** (A2.4): DO THE ANALYSIS first (system-wide behavior change), then wire the drafted fix + test.
-6. **P6 — lwip TCP gateway bug** (C3): fix Pi→internet handshake (root-caused; go straight to the fix).
-7. **P7 — vkQuake hang + input** (A2.3): characterize the watchdog backtrace now; the input half is owner-attended.
-8. **P8 — move remaining `tools/` ports** (C2/§G): ffmpeg, python, the games, the `tools/ports/` bundle (glib2/dillo/fltk/mc/nano/ncurses/libffi/libiconv).
-9. **P9 — other to-do** (§D): CNN-on-GPU, wpa_supplicant upgrade, zsh, Mesa 26.2.0 rebase, qemu 11.1.
-- **Parked:** §E (11 owner decisions) + §F (structurally blocked) — do not spend cycles until decided.
+**TIER 1 — finalization (near-term, tractable; finish first):**
+1. **P1 — quake2 + quake3 runnable** (A2.1/A2.2): DONE for quake3 (menu renders); finish quake2 render check. → owner retest.
+2. **P2 — bash interactive shell** (A2.5): getty→/dev/pts bridge so `bash` doesn't EOF-exit. → owner retest (batched with P1).
+3. **P3 — X11 ports migration** (C1) — **SIMPLIFIED by E4** (desktops paused → no glib2/pango yet): validate `xorg-libs` in-framework → `xorg-fonts` **glib-free tier** (freetype/fontconfig/expat/libpng/jpeg/libXft/cairo) → `xorg-server`/Xphoenix → rewire `xterm`/`windowmaker` off `/tmp` → app ports.
+4. **P4 — coreutils `make check`** on Phoenix (owner-scheduled): prove correctness.
+5. **P5 — strerror POSIX descriptions** (A2.4): analysis first, then wire the drafted fix + test.
+6. **P6 — lwip TCP gateway bug** (C3): fix Pi→internet handshake (root-caused).
+7. **P7 — vkQuake hang + input** (A2.3): characterize backtrace; input half owner-attended.
+8. **P8 — move remaining `tools/` ports** (§G): v3d-driver-port→**devices** (E1), ffmpeg, python, games, `tools/ports/` bundle (dillo/fltk/mc/nano/ncurses/libffi/libiconv; **glib2 deferred** with E4).
+9. **P9 — small to-do** (§D): CNN-on-GPU, wpa_supplicant upgrade, zsh, qemu 11.1. *(Mesa 26.2.0 rebase DROPPED per E2.)*
+
+**TIER 2 — big greenlit goals (E-decisions; multi-cycle; the major thrusts, begin interleaving as Tier-1 wins bank):**
+10. **G-GPU — Linux/RPi-OS GPU parity** (E5): GL-windowed apps under X + video-in-a-window + HW-accelerated X11 on V3D 4.2 — study how RPi-OS does it (DRI/DRM/kmsro/glamor/modesetting or Wayland) and replicate the capability level.
+11. **G-WIFI — WiFi data-plane** (E7): keep debugging with host WiFi tools + Linux-Pi4 netboot reference (compare SDPCM/data path); then WPA3.
+12. **G-FFMPEG-HW — VideoCore h264 HW decode driver** (E6).
+13. **G-GCC — gcc 16.2.0 rebase** (E10).
+14. **G-UPSTREAM — attended B1–B14 pass** (E8): re-verify relevance first (SMP likely already resolved), then apply what's live.
+- **Parked:** §F (structurally blocked) + §E11 (tool-boundary, owner deciding later).
 
 ---
 
@@ -95,7 +101,7 @@ Owner ran the ports on real HW. "Finalizing a port = being able to actually run 
 - 📋 **wpa_supplicant port upgrade** (A10) — port is old; upgrade + use (WiFi join currently via custom tools/wifi-probe, not wpa_supplicant).
 - 📋 **zsh** (part of A18 "full bash/zsh CLI") — never attempted (bash done).
 - 📋 **CNN on GPU** (A8, the owner's real ML target) — CNN is CPU; wire conv/matmul onto the working (bit-exact) V3D CSD compute path.
-- 📋 **Mesa 26.2.0 rebase** (A25) — rebase our patches onto the released version (was rc/beta). *Couples with the mesa-publish decision, §E.*
+- ~~Mesa 26.2.0 rebase (A25)~~ — **DROPPED per E2** (owner: patch-series, no full rebase now).
 - 📋 **qemu 11.1 host toolchain** (A23 / TD-07/08) — update host qemu; re-test boot under qemu+gdbstub.
 - 📋 **TD-Eth-LinkIRQ** — route PHY INT_B to GIC SPI (or accept MDIO-poll as the portable answer).
 - 📋 **Propose-own impressive feature** (A32) — arguably satisfied by RAM-staging + the ports ecosystem; can propose a fresh one if wanted.
@@ -103,30 +109,30 @@ Owner ran the ports on real HW. "Finalizing a port = being able to actually run 
 
 ---
 
-## E. WAITING FOR OWNER DECISION (blocks or shapes work)
+## E. OWNER DECISIONS — RESOLVED (2026-08-21)
 
-1. ⏸ **`v3d-driver-port` placement** — it's a GPU driver/lib (ported Mesa). Move to `phoenix-rtos-ports` (like SDL2) **or** `phoenix-rtos-devices`? Determines the migration target.
-2. ⏸ **Mesa publish model** — patch-series vs full fork; couples with the Mesa 26.2.0 rebase (D).
-3. ⏸ **jq/libphoenix `malloc(0)`→non-NULL** contract change — glibc-compat, already shipped and relied on by ports. Accept permanently, or revert to strict-NULL + per-port shims?
-4. ⏸ **XFce vs LXQt vs stay-WindowMaker** (A14) — full XFce is blocked on porting **glib's GIO** (multi-week); LXQt is Qt (different large blocker); WindowMaker/twm already work. Which target?
-5. ⏸ **DRI/DRM true GPU concurrency** (A15) — V3D 4.2 is a **single-context device** → true multi-client GPU is HW-structurally-blocked; the FBO+readback path is today's ceiling. Build the GPU-arbiter daemon (M0–M5, multi-week, still can't give true concurrency) or accept the ceiling?
-6. ⏸ **ffmpeg VideoCore HW h264 decode** (A16) — a multi-week VideoCore-codec driver. Attempt, or keep SW decode (works) + shelve?
-7. ⏸ **WiFi data-plane / radio-as-transport** (A9/A17) — BANKED at the fw-opaque SDPCM wall ("TX reaches fw not air; don't blind-code"). Abandon as can't-complete-unattended, or invest (needs deeper fw RE / possibly JTAG)? WPA3 unreached.
-8. ⏸ **Upstream-readiness bugs B1–B14** (`project_rpi4_upstream_review`) + **kernel upstream sync Batch 3** — documented, NOT applied; need attended review (B4 SMP-gate breaks other arches). Schedule an attended pass?
-9. ⏸ **Publication/licensing** — fork relocation, GPLv2 choice, WiFi-subtree history scrub, first GitHub release sequencing. Owner-owned.
-10. ⏸ **gcc 16.2.0 rebase** (A19) — owner labeled "future/big idea". Confirm defer.
-11. ⏸ **Genuine-tool boundary** — confirm `cnn-mnist`, `llama2-port`, `sdl2-port` (demos), and the probe/bench tools STAY in `tools/` (not ports). (My classification in §G.)
+1. ✅ **v3d-driver-port placement → `phoenix-rtos-devices`** (if feasible). Migration target set (§G, P8).
+2. ✅ **Mesa → patch-series for now, NOT a full rebase.** Keep the current patch-series publish; **do NOT** do the Mesa 26.2.0 full rebase now (drop from §D/P9).
+3. ✅ **jq/libphoenix `malloc(0)`→non-NULL → ACCEPT permanently, don't revert.** Settled; glibc-compat stays.
+4. ✅ **Desktop environments → PAUSE XFce/LXQt, stay on WindowMaker** (revisit later). ⇒ glib2/GIO + pango/harfbuzz/fribidi (GTK text stack) DEFERRED with it. **Simplifies P3:** xorg-fonts only needs the glib-free tier (freetype/fontconfig/expat/libpng/jpeg/libXft/cairo) to carry the *current* WindowMaker+Xft stack.
+5. 🎯 **GPU capability → AIM FOR RPi-OS/Linux PARITY on Pi4** (NEW ACTIVE GOAL, not "accept the ceiling"). Owner: Linux on the same V3D 4.2 does GL-windowed apps under X + video-in-a-window + HW-accelerated X11/Wayland — we should reach a similar capability level. Investigate HOW RPi-OS achieves this (DRI/DRM, kmsro, X modesetting/glamor, or Wayland) on single-context V3D and replicate. (Reframes A15/F.)
+6. 🎯 **ffmpeg → BUILD the VideoCore HW h264 decode driver** (greenlit, multi-week). (A16.)
+7. 🎯 **WiFi data-plane → KEEP DEBUGGING** (owner confident it's solvable with the current setup). Use host-side WiFi tools + the **Linux-Pi4 netboot reference** far more extensively for comparison/analysis of the SDPCM/data path. WPA3 after. (Un-parks A9/A17.)
+8. 🔶 **Upstream B1–B14 + kernel sync → schedule an ATTENDED pass, but FIRST re-verify relevance** — owner believes the SMP items (e.g. B4) were already solved before the org publish. Action: audit B1–B14 against current code; likely several are stale/done.
+9. ✅ **Publication/licensing → largely DONE** (we're on the GitHub org with forks; continue that model). Only open item: **WiFi code must stay unpublished / scrubbed** (existing lwip filtered-publish discipline). No fork-relocation/release-sequencing work needed.
+10. 🎯 **gcc 16.2.0 rebase → INVEST** (owner: "a big achievement to be proud of"). Greenlit as a real multi-cycle goal. (A19.)
+11. ⏸ **Genuine-tool boundary → owner will answer later; follow my classification (§G) for now.**
 
 ---
 
-## F. CAN'T-COMPLETE unattended / structurally blocked (owner: abandon or invest)
+## F. STRUCTURALLY BLOCKED / HW-gated (still can't-complete)
 
-- ⛔ **WiFi data-plane** — fw-opaque wall (see E7).
-- ⛔ **True multi-client GPU / real GLX-DRI** — V3D 4.2 single-context HW limit (see E5).
 - ⛔ **SuperTuxKart** — modern needs GL3.3/GLES3 (our port is GL2.1); legacy = multi-week Irrlicht spike. Deferred.
 - ⛔ **TD-10 / SError root cause** — live PCIe/VL805 external-abort behind JTAG/masked-SError wall.
-- ⛔ **SD SDMA-write validation** — no card in the Pi/host rig.
-- ⛔ **ffmpeg HW-decode** unless E6 says invest.
+- ⛔ **SD SDMA-write validation** — no card in the Pi/host rig (owner-attended).
+- ~~WiFi data-plane~~ → **owner says INVEST (E7)** — moved to active goals.
+- ~~True multi-client GPU / DRI~~ → **owner wants Linux-parity (E5)** — moved to active goals (investigate RPi-OS approach; may not need *true* concurrency to match Linux's user-visible capability).
+- ~~ffmpeg HW-decode~~ → **owner says BUILD it (E6)** — moved to active goals.
 
 ---
 
