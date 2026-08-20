@@ -536,8 +536,12 @@ host (else uutils-vs-GNU noise masquerades as Phoenix bugs). Dispatched a subage
 GNU-9.5 host reference + deterministic corpus (pure-arg: echo/printf/seq/expr/factor/basename/numfmt…; file-arg: wc/sort/head/tail/cut/nl/
 tac/uniq/sha256sum/md5sum/cksum/base64/od on staged fixed inputs), /usr/bin/<tool> explicit, filename-normalized (not relying on psh cd),
 env/time/random tools excluded, run on Pi via ONE netboot cycle + diff → PASS/FAIL table. It has EXCLUSIVE Pi access (I run no cycle
-concurrently); commits the harness+RESULTS.md, doesn't push (I review). Updated plan (P4 in-progress, P-DOCS done). NEXT: review the P4
-harness results on completion → push if clean + mark P4 done; then P7 vkQuake or begin a Tier-2 goal (G-STK Vulkan / G-GCC / G-GPU glamor).
+concurrently); commits the harness+RESULTS.md, doesn't push (I review). Updated plan (P4 in-progress, P-DOCS done). **RESILIENCE EVENT:**
+the subagent hit a transient API stall mid-build (~70% done). Assessed its on-disk state — INTACT + solid: 29-case cases.tsv, corpus/
+inputs, and a working native GNU coreutils 9.5 host reference (`wc (GNU coreutils) 9.5`); missing only expected/ outputs, the orchestrator,
+and the Pi run. Pi confirmed clean (no runaway cycle). **RESUMED the subagent** (SendMessage — context + disk state intact) to finish:
+generate expected → write orchestrator → stage export → ONE Pi cycle → parse/diff → RESULTS.md + commit. NEXT: review the resumed
+subagent's results on completion → push if clean + mark P4 done; then P7 vkQuake or begin a Tier-2 goal (G-STK Vulkan / G-GCC / G-GPU glamor).
 
 2026-08-21 (session ~74 — P-DOCS user-facing docs synced (subagent + my accuracy review); P4 feasibility decided).
 Two items. **P-DOCS DONE:** dispatched a subagent to sync the 7 user-facing docs with an accuracy-calibrated brief (correct current
