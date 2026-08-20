@@ -528,6 +528,19 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~69 — X11 ALL 3 LAYERS migrated + quake2 RENDERS via ramdisk; owner set night/tomorrow autonomous run).
+Two big wins: (1) **X11 migration L1+L2+L3 all landed as framework ports** — xorg-libs (24 libs), xorg-fonts (fonts+server
+font libs), xorg-server (produces Xphoenix); recipe validated end-to-end (XSRV-CORE-OK+XPHOENIX-LINK-OK+XORG-SERVER-PORT-OK),
+pushed. (2) **quake2 RESOLVED** — owner's ramdisk hint: launcher now RAM-stages (ram-stage-play, execvp) → bare `quake2`
+stages 50M→/tmp in ~16s then RENDERS demo2 in full textured 3D on V3D (HDMI-verified). quake3 launcher RAM-stages too.
+Also captured G-XORG-MODERN future goal (glamor on our GL2.1 = modern modesetting path; blocker=EGL/GBM/DRM ctx plumbing).
+OWNER NIGHT/TOMORROW DIRECTIVE (2026-08-21): work MASTER-RECONCILED-PLAN autonomously, don't stop/ask; use subagents/
+qemu-gdb/libdbg/host+netboot-Linux-Pi4 compare; aggressive prefetch-to-ramdisk for slow I/O; assume ALL bugs software/
+Phoenix-specific (not broken HW); can control+configure host+Pi. Heartbeat cron def64bfc (hourly) alive.
+NEXT (top-down, Pi free): quake3 lightmap black-sectors (V3D renderer) + SDL2 game input (mouse+console-text) + bash-tty
+EOF + wire X ports into rpi4b ports.yaml + rewire xterm/windowmaker off /tmp. Then P4 coreutils make-check, P6 lwip. All
+host+Pi-cycle work; trees clean+pushed.
+
 2026-08-21 (session ~69 cont — X11 L3 FULLY VALIDATED: Xphoenix server binary LINKS on my ports).
 P3 milestone: the complete **Xphoenix fbdev-DDX X server (AArch64 EXEC, 7.2MB) links end-to-end** from the xorg-server
 kdrive core archives + xorg-libs (L1) + xorg-fonts (L2) — XPHOENIX-LINK-OK. So ALL THREE X11 layers now build against my
