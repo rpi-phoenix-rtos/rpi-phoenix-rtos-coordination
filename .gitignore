@@ -63,3 +63,6 @@ session-id-cl
 .toolchain-fresh/
 
 .toolchain-old-prelibmcs/
+tools/wifi-probe/clm-43455.h
+tools/bt-probe/bt-hcd.h
+tools/python-port/*.cpython-*.so

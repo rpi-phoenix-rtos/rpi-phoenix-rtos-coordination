@@ -527,6 +527,18 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session 64 — libphoenix test for vsnprintf exact-sizing + PERMANENT fix for the --with-tests bootfs-wipe trap).
+Directive #1 (ALWAYS add libphoenix tests): surveyed recent fixes — malloc(0)!=NULL and long-double rounding were already
+covered, but **vsnprintf(NULL,0) exact-sizing** (the glib2 vasprintf fix, incl. the >1024-byte regression) had NONE. Added
+phoenix-rtos-tests **printf/snprintf_sizing.c** (5 cases: snprintf/vsnprintf NULL,0 return-len; measure-then-fill vasprintf
+idiom; truncation returns full len; sizing past 1024). HW: `test-libc-printf -v -g stdio_printf_sizing` => **5 Tests 0
+Failures OK**. Pushed (phoenix-rtos-tests 5278157).
+PERMANENT INFRA FIX: the recurring `--with-tests` bootfs-wipe (last 2 turns) was caused by lighttpd ABORTING the ports
+build — its p_prepare hard-read /etc/lighttpd.conf from the STAGED rootfs, which isn't populated when ports run before the
+fs stage. Fixed lighttpd/port.def.sh to fall back to the root-skel SOURCE ($PREFIX_PROJECT/_fs/root-skel/etc) (phoenix-
+rtos-ports 569a9d0, pushed). `--with-ports` now completes cleanly end-to-end (lighttpd built, image exported, bootfs OK) —
+the trap is gone. No core change this turn (ports recipe + test only).
+
 2026-08-21 (session 63 — Python **.so extension loading** RE-VERIFIED on current build; dynamic-linking item closed).
 Owner item "finalize dynamic-linking + use it for Python .so extension loading": confirmed end-to-end on the CURRENT
 python (post dlopen(NULL)/$PATH/_decimal/ctypes changes) — regression check after modifying libphoenix dl.c. Built
