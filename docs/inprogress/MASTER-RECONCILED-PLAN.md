@@ -61,6 +61,13 @@ directive, then other tractable finalization; decision-gated (§E) and can't-com
 
 ## A2. OWNER HARDWARE-USABILITY FINDINGS (2026-08-21 — live test, UART log 20260820-212714-live-test.log)
 
+### Round 2 (2026-08-21 pm, UART log 20260820-222927-live-test.log) — after the quake launchers
+- **quake3**: ✅ runs, renderer SMOOTH. But: (a) **mouse not working**; (b) **console (`~`) text input dead** — only Enter registers; **in-game key navigation DOES work**; (c) **lightmap bug** — some sectors render BLACK that should be lit; (d) **slow load** (NFS I/O). ⇒ new sub-tasks: **SDL2/X input** (mouse + console-text), **quake3 lightmap black-sectors** (V3D renderer), **RAM-stage game data** (slow load).
+- **quake2**: black screen + no input — confirms the slow-TFU-load render gap AND the input gap.
+- **bash**: **exits immediately on the REAL UART** (both `bash` and `pty-run bash`) — line 509 shows `bash-5.2#`→`exit` with no user input. So it's a GENUINE bash↔Phoenix-tty EOF bug (NOT just the harness), and `pty-run` does NOT fix it. P2 needs real bash/readline/tty diagnosis.
+- **NEW cross-cutting priority — GAME INPUT (SDL2)**: mouse + text-input broken across quake3 (in-game keys work). Likely the SDL2 phoenix input backend (kbd0/mouse0) — relative-mouse + text-event path. Highest-impact usability finding; unattended-investigable (SDL2 input source + Pi test). Add to Tier 1.
+
+
 Owner ran the ports on real HW. "Finalizing a port = being able to actually run it." Findings folded in:
 
 1. ✅/🔧 **quake2 (yQuake2)** — LAUNCHER LANDED (`quake2` = yquake2 -datadir /usr/share/quake2): now finds baseq2/pak0.pak (1106 files), loads ref_gl1 on V3D, fully initializes (no more crash-to-shell) — the crash-to-shell the owner hit is FIXED. VISUAL RENDER of the auto-demo still black even at 95s: the log shows it doing only ~12 TFU texture copies in the window (~2.5s EACH) — so the bottleneck is the **slow TFU/texture-load path** (NFS asset reads + the per-copy L2T/TMU cache-flush epilogue in v3d_phoenix_winsys.c), NOT the TFU-vcheck diagnostic (which is gated `tfu_n<=12`, low-impact — checked). NEXT (separate GPU/perf sub-task, not a quick fix): either RAM-stage the quake2 data (ram-stage-play pattern, like the fast-load path) OR profile/speed-up the TFU-copy epilogue. quake1/vkQuake avoid this because their data is baked at /usr/share/quake and they load differently. WAS: does not run — — starts, but game DATA not found: it searches CWD (`/usr/bin/baseq2`) and dies at `GetPCXPalette: Couldn't load pics/colormap.pcx` → back to shell (no render). Data IS staged at `/usr/share/quake2/baseq2/pak0.pak`. ROOT CAUSE: basedir not set. FIX: launcher/basedir → `/usr/share/quake2` (yQuake2 `-datadir`). [in progress]
