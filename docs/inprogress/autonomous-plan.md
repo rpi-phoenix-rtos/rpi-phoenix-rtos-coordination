@@ -528,6 +528,20 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session 66 — X11 migration STARTED: xorg-libs Layer-1 port written + VALIDATED, all 24 libs build).
+Executing the owner's hybrid X11 migration. Wrote **phoenix-rtos-ports/xorg-libs** (commit 03891f2, pushed) — an aggregate
+Layer-1 port building the ~24 X client/toolkit libraries (xorgproto, libXau, xtrans, libXdmcp, xcb-proto[host], libxcb,
+libX11, libXext/Xrender/Xrandr/xkbfile, xcb-util*, pixman, libICE/SM/Xt/Xmu/Xpm/Xaw) in dependency order, transplanting the
+proven flags from tools/x11-port/build-x11-phoenix.sh but staging into $PREFIX_BUILD/{lib,include} (=$PREFIX_A/$PREFIX_H)
+instead of /tmp/x11-phoenix. Carries the 3 Layer-1 Phoenix patches (libxcb/libX11/libICE); malloc0=yes for libXt/libXmu.
+Anchor source = xorgproto (framework-fetched), the other 23 self-fetched in p_build. **VALIDATED** via a standalone
+framework-env harness: all 24 => OK, 'LAYER 1 complete', p_build ret 0, every .a staged (libX11/libxcb/libXt/libXaw7/
+libpixman-1/... present in the buildroot lib dir). NEXT: wire xorg-libs into the rpi4b ports.yaml + one framework
+--with-ports build to confirm in-framework invocation (patch-apply, env) matches the standalone run; then xorg-fonts
+(Layer 2: freetype/fontconfig/pixman/cairo/pango/harfbuzz/fribidi/libpng/jpeg/libXft), then xorg-server, then rewire the
+app ports off /tmp. Spec: docs/inprogress/x11-ports-migration-spec.md. ALSO scheduled (owner): coreutils `make check` suite
+on Phoenix (memory project_coreutils_testsuite_task).
+
 2026-08-21 (session 65 — coreutils factor+expr FINALIZED via mini-gmp (HW-verified); X11 migration plan set by owner).
 **coreutils biggest-subset DONE:** root-caused factor/expr skip — coreutils bundles mini-gmp, but its mini-gmp.h only
 declares mpz_out_str() when it recognizes the libc's <stdio.h> include-guard, and Phoenix's _LIBPHOENIX_STDIO_H_ wasn't
