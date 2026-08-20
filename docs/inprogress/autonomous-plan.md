@@ -528,6 +528,19 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session 67 — RECONCILIATION: synthesized the MASTER plan across all notes/memory/backlog).
+Owner asked for a sync/reconciliation so nothing is lost after 66 cycles + a freeze on new topics until the list is done
+or decided undoable. Ran THREE parallel read-only subagent sweeps (board+owner-directives / all ~70 memory files / ports-
+migration+docs+tech-debt), then synthesized **docs/inprogress/MASTER-RECONCILED-PLAN.md** — the new single source of truth.
+Buckets: A done-HW, B to-be-tested, C in-progress, D to-do, E waiting-owner-decision (11 items), F can't-complete-unattended,
+G ports-migration tracker, H loose-ends/hygiene, + reconciliation-conflicts-resolved. Resolved 4 stale/conflicting claims
+against newest evidence (Pi internet BROKEN not working = lwip bug; Quake3 RENDERS + fix e498158 un-pushed; SD#154/B2/WiFi-
+assoc = memory authoritative; USB#121 de-facto fixed). NOTE: status.md + tracking/current-step.md are STALE — superseded by
+the master plan. 11 owner decisions surfaced (v3d placement, mesa publish, jq malloc0, XFce-vs-LXQt, DRI/DRM, ffmpeg HW-dec,
+WiFi data-plane, upstream B1-B14, publication, gcc16, tool-boundary). Owner is manually booting the Pi this turn (board LOCKED
+— no Pi cycles run). NEXT once board free + decisions in: work the master plan top-down (validate xorg-libs in-framework, then
+xorg-fonts; coreutils make-check; lwip gateway fix; push e498158).
+
 2026-08-21 (session 66 — X11 migration STARTED: xorg-libs Layer-1 port written + VALIDATED, all 24 libs build).
 Executing the owner's hybrid X11 migration. Wrote **phoenix-rtos-ports/xorg-libs** (commit 03891f2, pushed) — an aggregate
 Layer-1 port building the ~24 X client/toolkit libraries (xorgproto, libXau, xtrans, libXdmcp, xcb-proto[host], libxcb,
