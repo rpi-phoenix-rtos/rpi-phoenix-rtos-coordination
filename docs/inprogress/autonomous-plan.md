@@ -528,6 +528,18 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~69 — X11 migration L2 LANDED + L3 core validating; owner round-2 findings folded).
+P3 progress: **xorg-fonts (Layer 2, glib-free tier) VALIDATED + pushed** (ports 67166ff) — libpng/jpeg/freetype/expat/
+fontconfig/libXft/cairo all build+stage on xorg-libs(L1)+zlib. Fontconfig fix: the statfs I added to libphoenix this
+session gave struct statfs an f_flags member -> flipped fontconfig configure into fcstat.c #error; fixed via
+ac_cv_member_struct_statfs_f_flags=no (+ related). Now validating **xorg-server L3 core** (25 kdrive archives) against
+staged L1+L2 — a real completeness test of my ports + L3 feasibility (background, host-only). OWNER ROUND-2 HW TEST folded
+into MASTER-RECONCILED-PLAN A2: quake3 renders but mouse+console-text input DEAD (in-game keys work) + lightmap black-
+sectors + slow NFS load; quake2 black+no-input; **bash EOF-exits on the REAL UART** (both modes — pty-run insufficient, so
+it's a genuine bash/tty bug not a harness artifact). NEW Tier-1 cross-cutting priority: SDL2 game input (mouse relative +
+text events). Owner hands-off 'will test later' — batching a retest. NEXT: xorg-server core result -> DDX hand-ld link
+(carry ddx/libmd/xkb sources into the port); then SDL2 input dig; bash tty. All trees clean+pushed.
+
 2026-08-21 (session 68 — RECONCILIATION FINALIZED + P1 executed: quake3 renders, quake2 data-path fixed).
 Owner did a live HW test + steered hard. Actions: (1) MASTER-RECONCILED-PLAN.md made COMPLETE (folded the 5 HW-usability
 findings: quake2/quake3 data-path fails, vkQuake post-menu hang+no-input, bash EOF-exit, strerror-returns-NAMES) + added an
