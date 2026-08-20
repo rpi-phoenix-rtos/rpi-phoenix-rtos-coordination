@@ -15,6 +15,28 @@ Legend: ✅ DONE-HW · 🧪 needs test/validation · 🔧 in-progress · ⏸ wai
 
 ---
 
+## 0. EXECUTION PRIORITY QUEUE (my decision — work top-down; owner may reorder)
+
+**Rationale:** finalize what the owner's live HW test just proved un-usable FIRST
+(a "done" port you can't actually run isn't done), then the standing X11 migration
+directive, then other tractable finalization; decision-gated (§E) and can't-complete
+(§F) items are parked pending owner input. Owner retests are BATCHED (I signal).
+
+1. **P1 — quake2 + quake3 runnable** (A2.1/A2.2): `quake2`/`quake3` launchers set the
+   data paths (data staged at /usr/share/quake{2,3}). Near-done; highest user-visible win. → owner retest.
+2. **P2 — bash interactive shell** (A2.5): getty→/dev/pts bridge so `bash` doesn't EOF-exit. Usability blocker. → owner retest (batched with P1).
+3. **P3 — X11 ports migration** (C1): validate `xorg-libs` in-framework → `xorg-fonts`
+   (needs a **glib2** port too) → `xorg-server` → rewire `xterm`/`windowmaker` off `/tmp` → app ports.
+4. **P4 — coreutils `make check`** on Phoenix (B / owner-scheduled): prove correctness, not just that binaries run.
+5. **P5 — strerror POSIX descriptions** (A2.4): DO THE ANALYSIS first (system-wide behavior change), then wire the drafted fix + test.
+6. **P6 — lwip TCP gateway bug** (C3): fix Pi→internet handshake (root-caused; go straight to the fix).
+7. **P7 — vkQuake hang + input** (A2.3): characterize the watchdog backtrace now; the input half is owner-attended.
+8. **P8 — move remaining `tools/` ports** (C2/§G): ffmpeg, python, the games, the `tools/ports/` bundle (glib2/dillo/fltk/mc/nano/ncurses/libffi/libiconv).
+9. **P9 — other to-do** (§D): CNN-on-GPU, wpa_supplicant upgrade, zsh, Mesa 26.2.0 rebase, qemu 11.1.
+- **Parked:** §E (11 owner decisions) + §F (structurally blocked) — do not spend cycles until decided.
+
+---
+
 ## A. DONE — HW-verified (banked; here for confidence, not action)
 
 - ✅ **Boot/kernel:** 4-core SMP; caches on; EL0 cntvct/CNTKCTL; SError-masked boot; pool-thread stacks (#152); console P1/P2/P3; fbcon (teken); read-ahead exec speedup.
@@ -28,6 +50,19 @@ Legend: ✅ DONE-HW · 🧪 needs test/validation · 🔧 in-progress · ⏸ wai
 - ✅ **Infra/process:** upstream sync (16 siblings, 2026-08-12 — *verify SHAs, see H*); kernel branch main→master cleanup; SDL de-Quake/relicense; 2nd code-review pass; clean-build reproducibility + release gate; Linux-Pi4 reference box; AXI-PMU reader (mechanism); netboot EEE + bootfs-wipe (lighttpd) fixes.
 
 ---
+
+## A2. OWNER HARDWARE-USABILITY FINDINGS (2026-08-21 — live test, UART log 20260820-212714-live-test.log)
+
+Owner ran the ports on real HW. "Finalizing a port = being able to actually run it." Findings folded in:
+
+1. 🔧 **quake2 (yQuake2) does not run** — starts, but game DATA not found: it searches CWD (`/usr/bin/baseq2`) and dies at `GetPCXPalette: Couldn't load pics/colormap.pcx` → back to shell (no render). Data IS staged at `/usr/share/quake2/baseq2/pak0.pak`. ROOT CAUSE: basedir not set. FIX: launcher/basedir → `/usr/share/quake2` (yQuake2 `-datadir`). [in progress]
+2. 🔧 **quake3 (quake3e) does not run** — `pak0.pk3 is missing`; search path is CWD (`/usr/bin` or `/`). Data IS staged at `/usr/share/quake3/demoq3/{pak0,pak1}.pk3`. ROOT CAUSE: fs_basepath not set. FIX: launcher → `+set fs_basepath /usr/share/quake3 +set fs_game demoq3`. [in progress]
+   - Both mirror why q1/vkQuake "just work": those bake `basedir=/usr/share/quake` (log: `vkquake: found /usr/share/quake/id1/pak0.pak`). q2/q3 need the same via `rpi4-quake2`/`rpi4-quake3` launchers (convention = `rpi4-quake`/`rpi4-vkquake`).
+3. ⛔/🔧 **vkQuake hangs after the main menu** — found data + rendered the menu, then WATCHDOG tick #1 (15s) with a backtrace; NO keyboard/mouse response. Two coupled problems: (a) input not wired (SDL/console input on Phoenix — owner-attended territory), (b) a genuine post-menu hang (the known HW-marginal binner wedge did NOT self-recover, or an input-wait deadlock). HARDEST; characterize backtrace, fix later.
+4. 📋 **`cat: file: ENOENT` should read `No such file or directory` — SCHEDULED (not reactive-fixed).** cat's ENOENT for non-existent files is correct behavior, BUT libphoenix `strerror()` deliberately returns errno *names* ("ENOENT") not POSIX descriptions (string/strerror.c header: "errno names") — so EVERY error message from EVERY program is unhelpful. This is a general, high-leverage libphoenix quality bug. Owner directive: do NOT blindly fix — ANALYZE first (it's a system-wide behavior change: check nothing in Phoenix/tests depends on strerror returning the NAME; confirm POSIX-text is the desired contract; consider strsignal too). A draft `sources/libphoenix/string/errno.desc` (NAME->POSIX text, 78 entries) is already written as a head-start + the generator change is scoped (Makefile errno.list join; tab.inc `read num name` already handles multi-word). Add the mandatory libphoenix test when done. See memory project_strerror_posix_descriptions.
+5. 🔧 **bash self-exits immediately** — launches (`bash-5.2#`) then hits EOF on the console (no interactive tty) → exit/logout. This is the known "interactive bash needs a getty→/dev/pts bridge" gap. Real usability blocker for an interactive shell. Medium effort.
+
+**Priority (my call):** q2/q3 launchers FIRST (clear, high-value, matches owner expectation) → verify cat + game render on HW → bash-tty bridge → vkQuake hang+input (hardest, owner-attended input). Owner retests when I signal.
 
 ## B. TO-BE-TESTED / validation pending (built or fixed, not yet proven)
 
