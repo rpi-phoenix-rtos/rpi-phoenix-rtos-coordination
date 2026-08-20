@@ -114,6 +114,27 @@ if [ "${SKIP_SSL:-0}" != 1 ]; then
 fi
 
 
+# 5d. `_decimal` (arbitrary-precision Decimal / the `decimal` stdlib module).
+#     CPython 3.14 still bundles libmpdec under Modules/_decimal/libmpdec, so this is
+#     self-contained (no external download). Compile the module + all libmpdec sources
+#     (minus the bench*.c timing helpers, which aren't part of the library) with the
+#     64-bit config mpdecimal.h requires. Flags mirror the stock MODULE__DECIMAL_CFLAGS.
+#     NB: config.site sets py_cv_module__decimal=n/a so configure does NOT emit its own
+#     _decimal rules — otherwise they collide with this static line and corrupt the
+#     Makefile (same disable-then-append pattern as _sqlite3/zlib). SKIP_DECIMAL=1 to skip.
+if [ "${SKIP_DECIMAL:-0}" != 1 ]; then
+	MPDEC="basearith constants context convolute crt difradix2 fnt fourstep io mpalloc mpdecimal mpsignal numbertheory sixstep transpose"
+	DECSRCS="_decimal/_decimal.c"
+	for m in $MPDEC; do DECSRCS="$DECSRCS _decimal/libmpdec/$m.c"; done
+	# NB: no '=' in the -D flags. makesetup treats ANY Setup line containing '=' as a
+	# Makefile variable definition and echoes it raw (breaking the Makefile), so use
+	# bare -DCONFIG_64 (gcc defines it to 1) instead of -DCONFIG_64=1. The mpdecimal
+	# headers test these with #if defined(...), so the value is irrelevant.
+	grep -q '^_decimal ' Modules/Setup.local || \
+	echo "_decimal $DECSRCS -IModules/_decimal/libmpdec -DCONFIG_64 -DANSI -DHAVE_UINT128_T" >> Modules/Setup.local
+fi
+
+
 # 6. Build JUST the interpreter (skip the remaining .so extensions we didn't
 #    make static). `make` (all) would try to link those as .so with the wrong
 #    linker; `make python` links the static interpreter + the Setup.local modules.

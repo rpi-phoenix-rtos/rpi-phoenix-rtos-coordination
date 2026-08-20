@@ -527,6 +527,17 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session 61 — CPython **`_decimal`** (arbitrary-precision `Decimal`) FINALIZED + HW-verified). Clean finalization
+win (owner: "revisit ports' unfinished parts"). CPython 3.14 still bundles libmpdec, so `_decimal` is self-contained — added
+a `build.sh` block that statically links `_decimal.c` + the 15 libmpdec library sources (bench*.c excluded). Two real gotchas
+fixed en route: (1) configure auto-generates its own `_decimal` rules from bundled libmpdec, which collide with a static
+Setup.local line → added `py_cv_module__decimal=n/a` to config.site (the disable-then-append pattern sqlite/zlib use); (2)
+**makesetup treats ANY Setup line containing `=` as a Makefile variable and echoes it raw** (corrupted the Makefile) → use
+bare `-DCONFIG_64 -DANSI -DHAVE_UINT128_T` (no `=1`; gcc defines to 1, headers test `#if defined`). HW (netboot,
+`python3 -S /dectest.py`): DECIMAL-OK — `0.1+0.2==0.3` exact, `1/7` to 50 digits, `2**100` exact, ROUND_HALF_UP, C
+accelerator present. python3 53MB (was 51). Deployed to nfsroot /bin/python3. tools/python-port/ (coord repo). No core change.
+PROCESS: 3 build attempts, each advancing the diagnosis (conflict → config.site → makesetup `=`), zero wasted Pi cycles.
+
 2026-08-20 (session 60 — ROOT-CAUSED the Pi→internet-via-gateway failure to a **Phoenix lwip TCP bug**, wire-level proof).
 Definitively localized last turn's banked internet-forwarding issue with tcpdump on both host NICs. **The host is 100%
 correct** (forwarding=1 on all ifaces, gateway=10.42.0.1 via dnsmasq opt3, NAT masquerade counted). Wire capture on the

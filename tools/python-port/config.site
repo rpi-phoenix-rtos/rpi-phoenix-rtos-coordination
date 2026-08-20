@@ -10,6 +10,7 @@ py_cv_module__ctypes_test=n/a
 py_cv_module__curses=n/a
 py_cv_module__curses_panel=n/a
 py_cv_module__dbm=n/a
+py_cv_module__decimal=n/a
 py_cv_module__gdbm=n/a
 py_cv_module__hashlib=n/a
 py_cv_module__lzma=n/a
