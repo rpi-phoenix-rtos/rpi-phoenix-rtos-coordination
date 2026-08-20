@@ -528,6 +528,15 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~69 cont — X11 migration L3 core VALIDATED: xorg-server builds on my L1+L2).
+P3 milestone: the **xorg-server 1.20.14 kdrive CORE (25 archives) builds cleanly against my staged xorg-libs (L1) +
+xorg-fonts (L2)** — 7/7 key archives (dix/os/fb/mi/kdrive/xkb/render) present, XSRV-CORE-OK. This proves L1+L2 are
+COMPLETE + correct for the X server. En route: the L3 configure surfaced xorg-fonts was missing the server font libs
+(xfont2) -> added libfontenc + libXfont2 to xorg-fonts (ports 6e4aaa2, validated). So P3 status: L1 done, L2 done
+(+server font libs), L3 CORE validated. Remaining L3 = the DDX hand-ld link (Xphoenix binary) + XKB keymap — carry the
+local ddx/libmd/xkb sources into the xorg-server port; that's the next well-scoped step. Then rewire xterm/windowmaker
+off /tmp + app ports. All host-only, trees clean+pushed.
+
 2026-08-21 (session ~69 — X11 migration L2 LANDED + L3 core validating; owner round-2 findings folded).
 P3 progress: **xorg-fonts (Layer 2, glib-free tier) VALIDATED + pushed** (ports 67166ff) — libpng/jpeg/freetype/expat/
 fontconfig/libXft/cairo all build+stage on xorg-libs(L1)+zlib. Fontconfig fix: the statfs I added to libphoenix this
