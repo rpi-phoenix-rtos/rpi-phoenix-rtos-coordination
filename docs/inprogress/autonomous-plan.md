@@ -528,6 +528,20 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~73 — X11 subagent DONE (5 ports build clean); P3 ports.yaml wired; batched --scope core rebuild VALIDATED strerror+lwip compile; Pi cycle in-flight).
+X11 finalization subagent COMPLETED: all five ports (xorg_libs/xorg_fonts/xorg_server + xterm/windowmaker) BUILD CLEAN under the real
+port_manager framework, resolve together with correct cross-root depend dedup; artifacts Xphoenix 5.98MB + /bin/xterm + /bin/wmaker.
+Key framework fixes: hyphen→underscore names (parse_namever requires it), depends repointed to aggregates (no provides/meta in resolver),
+env/quoting/freetype-mirror fixes, ftw-phoenix gap-fill migrated into windowmaker/files/. **Dropped the record-malloc0 patch (my delegation
+landed)** + re-validated patch-free xorg_server build. ports repo commits 60705be + 3500a2a (master, not pushed). ports.yaml left pristine.
+**P3 ports.yaml integration DONE:** added the 5 X11 ports gated if:false (sdl2 precedent — build-proven+discoverable but ~30 tarballs/~5min
+cold, so don't burden every image build; showcase→ports migration + flip if:true is the follow-up). project repo 4f4c9c9. **Batched
+--scope core --with-tests nfsroot rebuild: EXIT 0.** VERIFIED both committed core changes compile AND take effect: strerror errno.str.inc
+regenerated WITH descriptions ("No such file or directory" etc.) + present in built libphoenix.a; lwip built with /dev/ipstats string
+(LWIP_STATS=1 active); test-libc-string built into _fs/root/bin. **Pi netboot cycle IN-FLIGHT** (bbiqn25vl): /bin/test-libc-string -g
+string_errsign (strerror HW validation) + cat /dev/ipstats (lwip stats facility). Result pending — will update. NEXT: read Pi result; if
+strerror passes → P5 fully DONE-HW + push libphoenix/tests; then the lwip gateway repro (NAT + connect + /dev/ipstats diff) for P6.
+
 2026-08-21 (session ~72 — owner patch-cleanup request: decided drop 2 redundant malloc(0) patches, keep 3; delegated xorg-server drop to the X11 subagent).
 Heartbeat woke; no owner feedback commits. X11 subagent (a06b982…) STILL iterating on the framework build (restarted --ports-only on xorg_libs;
 no clean-build commit yet) → .buildroot + Pi + ports-repo-writes stay off-limits. Was about to start P-DOCS when the OWNER sent a mid-turn
