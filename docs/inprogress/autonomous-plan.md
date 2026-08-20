@@ -527,6 +527,24 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-20 (session 60 — ROOT-CAUSED the Pi→internet-via-gateway failure to a **Phoenix lwip TCP bug**, wire-level proof).
+Definitively localized last turn's banked internet-forwarding issue with tcpdump on both host NICs. **The host is 100%
+correct** (forwarding=1 on all ifaces, gateway=10.42.0.1 via dnsmasq opt3, NAT masquerade counted). Wire capture on the
+Pi-facing NIC shows the FULL exchange except the last step:
+  1. `10.42.0.12.60924 > 1.1.1.1.80 [S] cksum (correct)`  — lwip **does** route the outbound SYN via the default gateway ✓
+  2. `1.1.1.1.80 > 10.42.0.12 [S.] cksum 0xbf0e (correct), ack=SYN+1` — a **valid** SYN-ACK is delivered back to the Pi ✓
+  3. **the Pi never sends the ACK** → 1.1.1.1 retransmits the SYN-ACK 1s later → handshake never completes → curl times out.
+So it is NOT checksum/NAT/host (verified `-vv`: SYN-ACK checksum CORRECT; disabling all NIC offloads changed nothing).
+It is a genuine **lwip bug: a valid SYN-ACK for a SYN_SENT PCB whose peer is reached via the default gateway does not
+complete the 3-way handshake** (on-link connections to 10.42.0.1 — NFS, local `curl https://10.42.0.1:8443` — work fine,
+which is why everything else on the Pi networks correctly). RECONCILE NEXT: memory says E2/E3 Dillo browsed live internet
+via this same NAT — so either an lwip regression since, or Dillo reached the net a different way; verify before assuming.
+NEXT STEP (no more captures needed): read `sources/phoenix-rtos-lwip` (or the lwip vendor tree) `tcp_in.c` tcp_process /
+`ip4_input` source-address path — hypothesis = an on-link / reverse-path assumption that drops or mis-routes the ACK for a
+gatewayed remote. Use the diag-udp probe or lwip stats (chkerr/proterr/drop counters) to confirm the drop site. Host state
+restored (offloads re-enabled). PROCESS: spent the turn characterizing (5 Pi cycles) — a real net-stack root-cause, but I
+must switch to the lwip *fix* next turn rather than re-confirm the symptom. psh mangles quoted `curl -w '...'` (avoid).
+
 2026-08-20 (session 59 — curl+mbedtls HTTPS verified on Phoenix (both TLS stacks now proven via their CLI tools); Pi→internet-forwarding banked).
 Networking turn — partial land + an honest bank. **LANDED:** `curl -sk https://10.42.0.1:8443/` on the Pi → `PHOENIX-TLS-HELLO`
 = curl + **mbedtls** TLS works on HW (complements last week's Python + **openssl** HTTPS — both TLS stacks now proven via
