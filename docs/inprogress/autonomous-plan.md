@@ -542,8 +542,13 @@ via this same NAT — so either an lwip regression since, or Dillo reached the n
 NEXT STEP (no more captures needed): read `sources/phoenix-rtos-lwip` (or the lwip vendor tree) `tcp_in.c` tcp_process /
 `ip4_input` source-address path — hypothesis = an on-link / reverse-path assumption that drops or mis-routes the ACK for a
 gatewayed remote. Use the diag-udp probe or lwip stats (chkerr/proterr/drop counters) to confirm the drop site. Host state
-restored (offloads re-enabled). PROCESS: spent the turn characterizing (5 Pi cycles) — a real net-stack root-cause, but I
-must switch to the lwip *fix* next turn rather than re-confirm the symptom. psh mangles quoted `curl -w '...'` (avoid).
+restored (offloads re-enabled). Tried an on-link forward-proxy workaround (host fwdproxy.py :8899; the Pi reaches 10.42.0.1
+on-link so `curl -x` via it should sidestep the gateway bug) — INCONCLUSIVE: the Pi's `curl -x` never reached the proxy
+(proxy log shows no connection from 10.42.0.12) though it served the host fine (HTTP/HTTPS 200). Possibly Phoenix curl
+proxy-support or a port quirk — NOT chased. PROCESS (important): I over-iterated (~7 Pi cycles on one thread) — the
+"getting stuck" trap the owner flagged. The committed deliverable is the wire-level lwip root-cause; NEXT turn go straight
+to the lwip *fix* (source read, no more captures) OR pivot to a fresh finalization item — do NOT re-confirm this symptom.
+psh mangles quoted `curl -w '...'` args (avoid).
 
 2026-08-20 (session 59 — curl+mbedtls HTTPS verified on Phoenix (both TLS stacks now proven via their CLI tools); Pi→internet-forwarding banked).
 Networking turn — partial land + an honest bank. **LANDED:** `curl -sk https://10.42.0.1:8443/` on the Pi → `PHOENIX-TLS-HELLO`
