@@ -33,6 +33,8 @@ directive, then other tractable finalization; decision-gated (§E) and can't-com
 8. **P8 — move remaining `tools/` ports** (§G): v3d-driver-port→**devices** (E1), ffmpeg, python, games, `tools/ports/` bundle (dillo/fltk/mc/nano/ncurses/libffi/libiconv; **glib2 deferred** with E4).
 9. **P9 — small to-do** (§D): **Mesa patch-series rebase onto released 26.2.0** (from rc1; keep patches in-repo, pin the release tag — E2), wpa_supplicant upgrade, qemu 11.1. (zsh DROPPED — bash is enough. CNN-on-GPU RULED OUT — see §F.)
 
+10. **P-DOCS — sync the user-facing GitHub docs with recent developments** (§I) — README.md, docs/KNOWN-ISSUES.md, TUTORIAL.md, TUTORIAL-NETBOOT.md, docs/BUILD.md, docs/inprogress/pi4-hardware-support-matrix.md, docs/HARDWARE.md. Also a **pre-publish gate**. Best run as a pass AFTER P1–P3 settle (to avoid re-churn), + refreshed whenever a big feature lands. Known-stale inventory captured in §I.
+
 **TIER 2 — big greenlit goals (E-decisions; multi-cycle; the major thrusts, begin interleaving as Tier-1 wins bank):**
 10. **G-GPU — Linux/RPi-OS GPU parity** (E5): GL-windowed apps under X + video-in-a-window + HW-accelerated X11 on V3D 4.2 — study how RPi-OS does it (DRI/DRM/kmsro/glamor/modesetting or Wayland) and replicate the capability level.
 11. **G-WIFI — WiFi data-plane** (E7): keep debugging with host WiFi tools + Linux-Pi4 netboot reference (compare SDPCM/data path); then WPA3.
@@ -156,6 +158,28 @@ Owner ran the ports on real HW. "Finalizing a port = being able to actually run 
 | `tools/{quakespasm,quake3,vkquake,yquake2}-port` | ports/ each (GPL glue) | medium; depends on v3d/SDL2 moving first + game-data staging |
 
 **Not-yet-self-contained official ports:** `xterm`, `windowmaker` still read `/tmp/x11-phoenix`+`/tmp/wmaker-deps` — fixed only once Layers 2/3 land.
+
+---
+
+## I. USER-FACING DOCS SYNC (P-DOCS) — keep the GitHub-browsable docs current
+
+Owner task: the main docs a visitor sees on the coord repo's GitHub page must stay
+in-line with the system's real state. **Doc set:** `README.md`, `docs/KNOWN-ISSUES.md`,
+`TUTORIAL.md`, `TUTORIAL-NETBOOT.md`, `docs/BUILD.md`,
+`docs/inprogress/pi4-hardware-support-matrix.md`, `docs/HARDWARE.md` (+ `LICENSING.md`,
+`CONTRIBUTING.md` as needed). Run as a deliberate pass once P1–P3 settle, then refresh
+per big feature; also the pre-publish gate. **Known-stale inventory (found 2026-08-21):**
+
+- **Bluetooth mislabeled ⬜"Not started"** in README Capabilities + hardware-matrix — WRONG. BT is **functional at the driver level**: `/dev/hci0`, patchram 323/323 → real BD_ADDR → HCI Inquiry completes (`project_bluetooth_bringup`). Correct to "🟡 driver up (HCI inquiry); no host stack yet."
+- **Dillo "HTTP only / no HTTPS"** in TUTORIAL §6.3 + §7 and KNOWN-ISSUES #70 — WRONG. Dillo **browses the live HTTPS internet** (CA-verified TLSv1.2, E2/E3 done). Update to HTTPS-works (via host NAT + ntpclient cert-clock).
+- **Missing the whole ports/language ecosystem** in README/TUTORIAL/matrix: coreutils 9.5 (**104 tools**), CPython **3.14** (sqlite3/_ssl-HTTPS/_decimal/ctypes/.so-dlopen), **redis** 7.2, **sqlite3**, **jq**, **bash** 5.2, **Lua** 5.4.7. TUTORIAL only shows micropython/lua. Add a "CLI tools & languages" section.
+- **quake2 / quake3 now launchable** via the new `quake2`/`quake3` commands (data-path launchers) — quake3 renders the menu; add to TUTORIAL + matrix (matrix has Q3 "VM-exec banked" which is superseded — it renders). quake2 render still slow (note honestly).
+- **WiFi framing**: README/KNOWN-ISSUES/matrix say ⛔"blocked/not-supported"; per E7 it's "control-plane up (WPA2 associated+keyed), data-plane under active debugging" — soften from "abandoned" to "in progress," but keep "don't rely on it yet."
+- **vkQuake**: matrix/README say "renders clean"; add the post-menu **hang + no-input** finding (owner HW test) as a known issue.
+- **New known-issues to add**: bash EOF-exits without an interactive tty (getty→pts pending); `strerror()` prints errno NAMES not POSIX text (scheduled); quake2 slow TFU/NFS texture load.
+- **Dates**: KNOWN-ISSUES (2026-08-05) + matrix (2026-08-06) headers are stale; refresh.
+- **HARDWARE.md / BUILD.md**: largely current (lab-rig + build path); minor — add the ports/languages to BUILD's showcase description. TUTORIAL-NETBOOT §8 only stages quake1 data; add quake2/quake3 data staging.
+- **Do NOT** over-claim: keep WiFi/vkQuake-hang/quake2-render honest; the docs' value is accuracy.
 
 ---
 
