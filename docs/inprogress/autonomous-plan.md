@@ -528,6 +528,17 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~69 — quake3 lightmap bug REPRODUCED + UNIFIED to one V3D-TFU root cause; STK-Vulkan scheduled).
+Dug the owner's quake3 'black sectors' finding: `quake3 +devmap q3dm1` renders FULLY LIT (perfect); `+devmap q3dm7`
+REPRODUCES extensive black surfaces. Code-read quake3e vanilla renderer (tr_bsp.c): it DOES build+index multiple lightmap
+atlas textures (SetLightmapParams/R_GetLightmapCoords) — NOT a 'page 0 only' bug. Lightmaps upload via R_UploadSubImage =
+glTexSubImage2D = the V3D winsys TFU path. ⇒ **UNIFIED: quake3 lightmap-black + quake2 floor-speckle + vkQuake striping =
+ONE root cause = the V3D winsys TFU LINEAR-tiling bug** (v3d_phoenix_winsys.c; memory already flagged 'shared w/ Quake2').
+Fixing the TFU tiling should resolve all 3 → HIGH-LEVERAGE next dig (deep GPU: read v3d winsys TFU vs Mesa v3d_tiling.c
+reference; the TFU vcheck VERTICAL-MISMATCH diagnostics were probing this). Also: owner note → SuperTuxKart reconsidered
+via its Vulkan renderer (ge_vulkan on our V3DV, skip GL3.3) = scheduled future G-STK. NEXT big digs: V3D TFU-tiling (fixes
+3 render bugs) OR X11 ports.yaml integration OR SDL2 input OR coreutils make-check. All pushed, trees clean.
+
 2026-08-21 (session ~69 — X11 ALL 3 LAYERS migrated + quake2 RENDERS via ramdisk; owner set night/tomorrow autonomous run).
 Two big wins: (1) **X11 migration L1+L2+L3 all landed as framework ports** — xorg-libs (24 libs), xorg-fonts (fonts+server
 font libs), xorg-server (produces Xphoenix); recipe validated end-to-end (XSRV-CORE-OK+XPHOENIX-LINK-OK+XORG-SERVER-PORT-OK),
