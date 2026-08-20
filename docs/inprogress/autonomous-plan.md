@@ -527,6 +527,17 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session 63 — Python **.so extension loading** RE-VERIFIED on current build; dynamic-linking item closed).
+Owner item "finalize dynamic-linking + use it for Python .so extension loading": confirmed end-to-end on the CURRENT
+python (post dlopen(NULL)/$PATH/_decimal/ctypes changes) — regression check after modifying libphoenix dl.c. Built
+ext-example.c -> spam.cpython-314.so (-shared -fPIC -nostartfiles, Py/libc left undefined), deployed to the Pi sys.path,
+HW (`python3 -S /sotest.py`): **SO-EXT-OK** — `import spam; spam.add(3,4)==7`, loaded from
+/usr/local/lib/python3.14/spam.cpython-314.so (CPython importdl+dlopen resolves the ext's undefined Py-C-API/libc against
+the unstripped host python). Committed sotest.py as a reproducible demo. Together with session 62 (ctypes FFI) this fully
+exercises the libphoenix dynamic loader for Python both ways: runtime .so import AND FFI. NOTE on lighttpd (last turn's
+TODO): its `--with-ports` abort is a build-ORDER fragility (port.def.sh reads /etc/lighttpd.conf from the staged rootfs,
+which the fs stage populates from _fs/root-skel BEFORE ports in a full build) — not a clean-build break; left as-is.
+
 2026-08-21 (session 62 — CPython **`ctypes`** (FFI) WORKS on HW + libphoenix **`dlopen(NULL)`** finalized). Owner "continue"
 + "finalize dynamic-linking + use it for Python". Chain of real fixes: (a) `_ctypes` builds against the existing cross-built
 libffi 3.3 (tools/ports/build-libffi.sh, idempotent) — build.sh block links _ctypes.c + 5 helpers; (b) callproc.c's
