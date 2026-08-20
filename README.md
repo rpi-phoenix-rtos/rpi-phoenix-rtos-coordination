@@ -7,8 +7,9 @@ Model B / BCM2711** (Cortex-A72, AArch64).
 The port was taken from "does not boot" to a system that boots to an
 interactive shell, drives the real hardware, serves its root filesystem from
 an SD card or over NFS, and runs a graphical userland: an X11 desktop with
-Window Maker, a web browser, and **both GLQuake (OpenGL) and vkQuake (Vulkan)
-running on the V3D GPU**.
+Window Maker, a web browser, and **GLQuake rendering on the V3D GPU via
+OpenGL** (a Vulkan/V3DV path drives the GPU too, though the vkQuake demo still
+hangs after its menu — see the capabilities table).
 
 > This repository is the **coordination repo** — docs, build scripts, and
 > integration manifests. The Phoenix-RTOS source lives in sibling repositories
@@ -93,17 +94,38 @@ work; `⛔` blocked on external dependencies; `⬜` not started.
 | Hardware RNG (RNG200) | ✅ | `/dev/hwrng`; also backs `/dev/urandom` |
 | GPIO observer | 🟡 | `/dev/gpio` read-only snapshot; outputs attended |
 | GPU (V3D 4.2) — OpenGL | ✅ | Ported Mesa `v3d` Gallium + GL → **GLQuake ~40 fps @ 1080p** |
-| GPU (V3D 4.2) — Vulkan (V3DV) | ✅ | Ported Mesa `v3dv` Vulkan driver → **vkQuake renders clean + lightmapped** on the V3D GPU (fork: [rpi-phoenix-rtos/vkQuake](https://github.com/rpi-phoenix-rtos/vkQuake), branch `phoenix-rpi4-port`) |
+| GPU (V3D 4.2) — Vulkan (V3DV) | 🟡 | Ported Mesa `v3dv` Vulkan driver runs SPIR-V vertex/fragment/compute shaders on the GPU; **vkQuake renders the menu + textured 3D but hangs after the main menu and does not respond to keyboard/mouse** on HW (known open issue). Fork: [rpi-phoenix-rtos/vkQuake](https://github.com/rpi-phoenix-rtos/vkQuake), branch `phoenix-rpi4-port` |
 | Audio (PWM, 3.5 mm jack) | 🟡 | `/dev/audio0` streaming DMA; Quakespasm audio backend |
-| X11 / windowing (kdrive) | ✅ | Xphoenix fbdev DDX + kbd/mouse; Window Maker, JWM, xterm |
+| X11 / windowing (kdrive) | ✅ | Xphoenix **fbdev DDX** (CPU shadow-blit — works, but not the modern accelerated modesetting/glamor path; that is a future goal) + kbd/mouse; WindowMaker/JWM/twm, xterm/xcalc/xedit/xeyes/xclock, plus mc/nano. Migrated to real `phoenix-rtos-ports` |
 | posixsrv / psh userland | ✅ | pipes, ptys, `/dev/{null,zero,urandom,full}`, AF_UNIX |
-| WiFi (BCM43455 SDIO) | ⛔ | Firmware-execution gate not cleared; needs deeper HW visibility |
-| Bluetooth, USB mass-storage, I²C/SPI/PWM, camera | ⬜ | Not started |
+| WiFi (BCM43455 SDIO) | 🟡 | **Control-plane works** — associates to a real WPA2-PSK AP and completes the 4-way key handshake. The **data-plane does not carry traffic yet** (under active debugging). Not usable for wireless networking — **use wired Ethernet** |
+| Bluetooth (BCM43455) | 🟡 | **Driver-level bring-up works** — `/dev/hci0` up, firmware patchram loads (323/323), a real BD_ADDR is read, and an HCI Inquiry completes. **No host Bluetooth stack** — no pairing, profiles, or audio yet |
+| USB mass-storage, I²C/SPI/PWM, camera (CSI-2) | ⬜ | Not started |
 
 The authoritative, per-peripheral matrix (with evidence and remaining work) is
 [docs/inprogress/pi4-hardware-support-matrix.md](docs/inprogress/pi4-hardware-support-matrix.md).
 Open bugs and known limitations are in
 [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md).
+
+## Userland: CLI tools and languages
+
+Beyond the base system, a substantial ports ecosystem runs on the hardware
+(built into the image with `--with-ports`; all HW-verified):
+
+| Component | Notes |
+|---|---|
+| GNU **coreutils 9.5** | 104 tools (`ls`, `cat`, `wc`, `sha256sum`, `seq`, …) |
+| GNU **bash 5.2** | runs; see caveat below |
+| **CPython 3.14** | static `python3` with `sqlite3`, `zlib`, `_ssl`/HTTPS, `_decimal`, `ctypes`, and `.so` C-extension `dlopen` |
+| **Redis 7.2** | in-memory data store, served over lwIP TCP |
+| **SQLite 3** | full SQL, in-memory + on-disk file VFS |
+| **jq** | JSON processor |
+| **Lua 5.4.7** | interpreter + `luac` compiler |
+| **BusyBox**, **curl** (mbedTLS) | shell utilities + HTTP/HTTPS client |
+
+> **bash caveat:** bash self-exits on EOF when there is no interactive tty
+> (getty/pts wiring is still pending), so it is not yet usable as a persistent
+> interactive login shell at the console.
 
 ## Repository layout
 

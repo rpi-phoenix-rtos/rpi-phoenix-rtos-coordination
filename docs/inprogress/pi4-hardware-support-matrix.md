@@ -1,8 +1,20 @@
 # Phoenix-RTOS Raspberry Pi 4 (BCM2711) — Hardware Support Matrix
 
-**Updated:** 2026-08-06. Canonical "where are we" reference for the Pi 4 port.
+**Updated:** 2026-08-21. Canonical "where are we" reference for the Pi 4 port.
 One row per peripheral/subsystem. For narrative gap analysis see
 `docs/knowledge/scope-pi4-uncovered.md`; for live progress see `docs/inprogress/status.md`.
+
+> **STATUS (2026-08-21):** the port is a working graphical + media machine with a real CLI/language
+> ecosystem (coreutils 9.5, bash 5.2, CPython 3.14, Redis 7.2, SQLite3, jq, Lua 5.4.7 — all
+> HW-verified; see the ports table). **Games render on the GPU:** GLQuake (quakespasm) flagship;
+> **Quake III renders gameplay** via the `quake3` RAM-staging launcher (`q3dm1` fully lit; some
+> larger maps show black lightmap sectors — under investigation); **Quake II renders its demo in
+> textured 3D** via the `quake2` RAM-staging launcher; **vkQuake** renders the menu + textured 3D
+> through Vulkan/V3DV but **hangs after the main menu with no input** (open). **WiFi** control-plane
+> is up (WPA2 associated + 4-way keyed; data-plane under active debugging — not usable for
+> networking); **Bluetooth** driver-level bring-up works (`/dev/hci0`, HCI Inquiry; no host stack).
+> **Dillo browses the live HTTPS internet** via a host NAT gateway. The 2026-08-06 blurb below is
+> retained for history.
 
 > **STATUS (2026-08-06):** the port is a working graphical + media machine. **Games render on the
 > GPU:** GLQuake (quakespasm) flagship, **vkQuake full textured 3D via Vulkan** (the old #29 no-WSI
@@ -52,12 +64,12 @@ One row per peripheral/subsystem. For narrative gap analysis see
 | SoC thermal + throttle | ✅ done | `/dev/thermal`,`/dev/throttled` (2026-06-05) | firmware owns the trip (telemetry only) |
 | Hardware RNG (RNG200) | ✅ done | `/dev/hwrng` (2026-06-05); **now also backs `/dev/urandom`** (posixsrv reads `/dev/hwrng` for entropy, rand() fallback) — HW-verified 2026-06-17 | kernel `getrandom()`/pool wiring (libc-level) still PRNG |
 | Watchdog / reboot / poweroff | ⏸ attended | works via diag-udp `r`/`h` (PM block #43) | productionize `_hal_systemReset` (kernel, boot-risk) |
-| WiFi (BCM43455 SDIO) | ⛔ blocked | fw+NVRAM load + CR4 release were built (in the now-**deleted** diag-udp.c) | **firmware not executing** (#91, image-scan proven). NVRAM-trailer lead DISPROVEN (2026-06-07); real suspects = download/clock ordering + SDIO-core intstatus-clear + rstvec semantics. Live downloader must be reintroduced first. Needs HW/JTAG |
-| Bluetooth (BCM43455 UART HCI) | ⬜ not started | plan only | needs mailbox+GPIO alt-fn + `.hcd` blob |
+| WiFi (BCM43455 SDIO) | 🟡 partial | **control-plane up** — the firmware executes, the driver associates to a real WPA2-PSK AP and completes the 4-way key handshake (`tools/wifi-probe` `join`; `project_wifi_fw_exec_gate_91`) | **data-plane does not carry traffic yet** — TX reaches the firmware but not the air (SDPCM seq/credit); under active debugging (owner E7). Not usable for networking — use wired Ethernet. Then WPA3 |
+| Bluetooth (BCM43455 UART HCI) | 🟡 partial | **driver-level bring-up** — `/dev/hci0` up over self-routed mini-UART, firmware patchram 323/323, real BD_ADDR read, HCI Inquiry completes (`tools/bt-probe`, `project_bluetooth_bringup`) | **no host Bluetooth stack** — no pairing, profiles, or audio yet |
 | GPIO / pinctrl | 🟡 partial | `/dev/gpio` read-only observer device (#150): snapshot + per-pin `RPI4GPIO_GETPIN` devctl, `gpio/rpi4-gpio/` | **outputs** (GPSET/GPCLR/fsel set) need a bench rig to validate (⏸) |
 | I²C / SPI / PWM | ⬜ not started | plans exist | need GPIO alt-fn + clock-manager |
 | GPU (V3D 4.2) — OpenGL | ✅ done | ported Mesa gallium v3d driver + GL frontend (`tools/v3d-driver-port/`); **GLQuake (quakespasm) runs ~40-50fps@1080p** via render-to-scanout; R/B color + particle render-stall fixed (2026-06-16/17); **early-Z re-enabled** (06-22) + **triple-buffer page-flip** (0 render/bin wedges) landed; mouse #24, QUIT/fbcon-restore #25, LAN multiplayer #26, NFS-root #27, torch flame #28 all done | gamma retune (cosmetic), audible audio sign-off (attended), formal multi-boot soak |
-| GPU (V3D 4.2) — Vulkan (V3DV) | ✅ working | full ported Mesa V3DV (`libv3dv`); **vkQuake renders textured 3D on the V3D** (real SPIR-V VS+FS → NIR→QPU, render passes, TFU texture uploads land); no-WSI fb0 scanout; the torch/fullbright **alpha-scanout** bug is FIXED (opaque present alpha=1, `project_vkquake_torches_dark_fullbright`, vkQuake d3e329c pushed) | TFU **LINEAR-tiling striping** on some texture sizes (winsys, shared w/ Quake2); RT gated off (V3D lacks ray_query) |
+| GPU (V3D 4.2) — Vulkan (V3DV) | ✅ working (driver) | full ported Mesa V3DV (`libv3dv`); **vkQuake renders textured 3D on the V3D** (real SPIR-V VS+FS → NIR→QPU, render passes, TFU texture uploads land); no-WSI fb0 scanout; the torch/fullbright **alpha-scanout** bug is FIXED (opaque present alpha=1, `project_vkquake_torches_dark_fullbright`, vkQuake d3e329c pushed) | **vkQuake hangs after the main menu with no keyboard/mouse response** on HW (owner test — post-menu hang + un-wired SDL input; open); TFU **LINEAR-tiling striping** on some texture sizes (winsys, shared w/ Quake2); RT gated off (V3D lacks ray_query) |
 | Audio (PWM / I²S / HDMI) | 🟡 partial | PWM driver `/dev/audio0` (`audio/rpi4-audio/`): **continuous streaming DMA** (free-running self-chained ring, PWM1=DREQ 1) feeds the FIFO; `write()` fills the ring w/ usleep backpressure (driver sleeps, no spin); PIO fallback retained. **Quakespasm SNDDMA backend** (feeder thread) mixes over it — "Audio: 16 bit, stereo, 44100 Hz", demo renders, 0 faults/underruns (2026-06-17). **SDL2 audio driver** over `/dev/audio0` HW-validated (driver=phoenix, 44100/S16/2ch, tone played, 0 faults, 2026-08-05) | audible jack sign-off ⏸ (headphones); vkQuake reuses the backend; underrun→ring-loop artifact (steady state ok) |
 | DMA framework | 🟡 partial | legacy-DMA channel bring-up proven + in production for audio (`rpi4-audio`: self-chained streaming CB, DREQ-paced, low-1GB C0 bus alias) | generalize into a reusable DMA helper; line-rate SD (CMD18) still PIO |
 | RTC | 🟡 capability present | Pi 4 has no on-SoC RTC. The **`ntpclient` psh applet** queries SNTP + calls `settimeofday` (kernel `settime` syscall + libphoenix `settimeofday`/`clock_settime` all present) → NTP-over-GENET works | **★ 2026-08-08 VALIDATED end-to-end**: with E2 internet up, `ntpclient -s pool.ntp.org` synced the clock 1970→2026 and enabled CA-verified HTTPS (the E3 cert clock). Still manual per boot — baking it into a boot step is deferred (risky nfsroot rc-model change) |
@@ -74,12 +86,20 @@ One row per peripheral/subsystem. For narrative gap analysis see
 | **SDL2 2.30.12** (`ports/sdl2`) | ✅ HW-validated | fullscreen GL + input (kbd0/mouse0) + audio (/dev/audio0) all proven on Pi; phoenix video/GL/input/audio drivers; org `ports c191d20`. Vulkan backend = phase 2 (needs V3DV WSI). `dlopen`→static, GPL-glue kept out of zlib `libSDL2.a` (`project_sdl2_port`) |
 | X11 desktop (kdrive/Xphoenix) | ✅ HW-validated | fbdev DDX → /dev/fb0, kbd+mouse input, xeyes/xterm/xcalc/xedit + JWM/Window Maker WMs (`project_x11_lib_port`) |
 | QuakeSpasm (GLQuake) | ✅ HW-validated | textured GLQuake ~40fps@1080p, demos + SP map, LAN MP, 0 faults (`project_quakespasm_port`) |
-| vkQuake (Vulkan Quake) | ✅ HW-validated | textured 3D via Vulkan on V3D; torch/alpha-scanout fixed (d3e329c). Remaining: TFU tiling striping, phantom-kbd (`project_vkquake_torches_dark_fullbright`) |
-| yQuake2 (Quake II, `ref_gl1`) | ✅ HW-validated | single-ELF (dlopen→static); **renders the full 3D game fullscreen 1920×1080** on V3D via SDL2+ref_gl1 (textured walls, enemies, viewmodel, HUD, correct lighting, 0 faults); launch `+set vid_renderer gl1 +set r_mode -1` (`project_quake2_port`) |
-| Quake III (quake3e) | 🟡 engine+renderer proven | exec → V3D GL @1080p → all GL procs → R_Init → QVMs load; VM-execution (interpreter + aarch64 JIT) deep-blocked, **banked** (`project_quake3_port`) |
+| vkQuake (Vulkan Quake) | 🟡 renders, hangs post-menu | textured 3D via Vulkan on V3D; torch/alpha-scanout fixed (d3e329c). **Hangs after the main menu with no keyboard/mouse input** on HW (owner test; open). Remaining: post-menu hang + SDL input, TFU tiling striping (`project_vkquake_torches_dark_fullbright`) |
+| yQuake2 (Quake II, `ref_gl1`) | ✅ HW-validated | single-ELF (dlopen→static); **renders its demo in full textured 3D** on V3D via SDL2+ref_gl1, launched by the **`quake2`** RAM-staging launcher (copies assets to a `/tmp` ramdisk then runs — fixes the black screen seen on slow NFS texture loads); 0 faults (`project_quake2_port`) |
+| Quake III (quake3e) | 🟡 renders gameplay | launched by the **`quake3`** RAM-staging launcher; **renders gameplay on V3D GL @1080p** — `q3dm1` fully lit + correct. Open: some larger maps (e.g. `q3dm7`) show **black lightmap sectors** (V3D GL-path lightmap-atlas issue, under investigation); mouse + console-text input not wired (`project_quake3_port`) |
 | **ffmpeg decode core (E4)** | ✅ HW-validated | **MJPEG + H.264** decode correct on HW (bit-exact vs host ffmpeg) and **moving video plays on the HDMI screen** (decode → YUV→RGB → `/dev/fb0`, paced loop); reproducible LGPL-clean scaffold `tools/ffmpeg-port/`; h264 needs an 8 MB-stack thread. **★ 2026-08-09 ALSO PLAYS IN AN X WINDOW** (`e4-x11-play`: decode → XPutImage into an X window under Xphoenix; 2730 frames, 0 faults) — and concurrently with a live GPU app in the media desktop. Remaining = audio/demux/A-V-sync for a full player (`project_ffmpeg_e4_feasibility`) |
 | Dillo / mc / glib2 | ✅ HW-validated | render on fbcon; Dillo HTTPS-capable via mbedTLS (E1). **★ 2026-08-08 E2+E3 DONE: Dillo BROWSES THE LIVE HTTPS INTERNET under Xphoenix** — rendered example.com over CA-verified TLSv1.2 on HDMI, via host NAT (`pi-internet-nat.sh`) + Phoenix `route add default gw 10.42.0.1 dev en1` + dnsmasq opt3/6 + `ntpclient` cert-clock (`project_pi4_internet_e2_feasibility`, `project_dillo_https_tls`). Dillo is FLTK/core-X (not fontconfig); file:// needs dpid (unstaged), http/https in-process |
 | libphoenix libm + libdbg (corelibs) | ✅ | libm gaps filled (rint/rounding/min-max + exp2/log2f/erf/erfc/scalbn, regression-tested in `phoenix-rtos-tests/libc/math`); **libdbg** reusable in-process crash/hang backtrace corelib (`project_libphoenix_libm`, `project_libdbg_facility`) |
+| GNU coreutils 9.5 | ✅ HW-validated | 104 tools (only `stty` skipped); `seq`/`wc`/`sha256sum` bit-exact (`project_coreutils_port`) |
+| GNU bash 5.2 | 🟡 runs, no interactive tty | bash 5.2.21 runs (0 faults) for non-interactive use; **self-exits on EOF at the console** (getty→pts wiring pending) so not yet a persistent interactive shell (`project_bash_port`) |
+| CPython 3.14 | ✅ HW-validated | static `python3` 3.14.4 with `sqlite3`, `zlib`, `_ssl`/HTTPS, `_decimal`, `ctypes` + `.so` C-extension `dlopen` (`project_python_port`) |
+| Redis 7.2 | ✅ HW-validated | Redis 7.2.4 data-store service over lwip TCP; 241 commands, 0 faults (`project_redis_port`) |
+| SQLite 3 | ✅ HW-validated | full SQL, in-memory + on-disk file VFS; `integrity_check=ok` (`project_sqlite_port`) |
+| jq | ✅ HW-validated | jq 1.7.1, selfcheck + run-tests all pass (`project_jq_port`) |
+| Lua 5.4.7 | ✅ HW-validated | interpreter + `luac`; selfcheck ALL-OK (`project_lua_port`) |
+| curl / BusyBox | ✅ HW-validated | curl over mbedTLS (HTTP/HTTPS); BusyBox shell utilities |
 
 ## Build / test infrastructure (✅)
 
@@ -107,8 +127,10 @@ One row per peripheral/subsystem. For narrative gap analysis see
 3. **fb0 driver** — decide ABI + display ownership, then implement (attended).
 4. **X11** — DONE: the software kdrive desktop (Xphoenix + fbdev DDX + kbd/mouse input + JWM/
    Window Maker WMs + xterm) is live on HW. Remaining is the *accelerated* GPU-X research stretch.
-5. **WiFi #91** — the one true *blocker*; firmware-execution gate needs deeper HW visibility.
-6. Greenfield: DMA framework → audio/I²C/SPI/PWM; Bluetooth; GPIO full driver.
+5. **WiFi #91** — control-plane up (firmware executes, WPA2 associated + 4-way keyed); the
+   **data-plane** (carrying traffic) is the remaining work, under active debugging.
+6. **Bluetooth** — driver-level bring-up done (`/dev/hci0`, HCI Inquiry); needs a host BT stack.
+7. Greenfield: DMA framework → audio/I²C/SPI/PWM; GPIO full driver.
 
 ## Unattended-vs-attended note
 

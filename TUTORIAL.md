@@ -21,7 +21,8 @@ scripting languages, benchmarks and more.
 - A display on **micro-HDMI** (use the HDMI port **nearest the USB-C** jack) + a
   micro-HDMI→HDMI cable.
 - A **USB keyboard** (for the console and Quake), and a **USB mouse** (for X11).
-- A **wired Ethernet** cable (Wi-Fi is *not* supported in this release).
+- A **wired Ethernet** cable (wireless networking is not usable yet — WiFi is
+  control-plane-only; see §7).
 - *Optional but handy:* a USB-to-serial (UART) adapter on GPIO pins
   8 (GND) / 10 (RXD→Pi TXD, GPIO14) / (Pi RXD, GPIO15) at **115200 8N1** to watch
   the boot log.
@@ -152,6 +153,34 @@ rpi4-quake
   a few small pickup **items**/**torch flames** show a minor cosmetic geometry
   glitch — gameplay is unaffected.
 
+### 🎮 Quake II and Quake III
+
+Two more id engines run on the V3D GPU via SDL2. Their launchers **stage the game
+data into a `/tmp` RAM disk first**, then run — so the first launch copies assets
+(a few seconds) and then plays from RAM:
+
+```bash
+quake2                # yQuake2 (OpenGL ref_gl1) — plays its demo in textured 3D
+quake3                # quake3e — renders gameplay on the GPU
+```
+
+- *Quake III:* `q3dm1` renders fully lit and correct. Some larger maps (e.g.
+  `q3dm7`) show **black lightmap sectors** — a known V3D GL-path issue under
+  investigation; gameplay otherwise renders.
+- *Quake II:* renders its demo in textured 3D. (It used to show a black screen on
+  slow NFS asset loads; the RAM-staging launcher fixed that.)
+
+### 🎮 vkQuake (Vulkan / V3DV)
+
+```bash
+rpi4-vkquake          # Quake rendered through the Vulkan (V3DV) driver
+```
+
+*Caveat:* vkQuake renders the menu and textured 3D through the GPU, but currently
+**hangs after the main menu and does not respond to the keyboard/mouse** — it is
+a known open issue, not yet a playable path. Use `rpi4-quake` (GLQuake) to
+actually play.
+
 ### 🖥️ X11 desktop and applications
 
 X11 runs on a kdrive/fbdev server (`Xphoenix`) drawing to the framebuffer. Launch
@@ -189,10 +218,13 @@ A small GTK-free graphical browser (X11 app):
 ```bash
 startx dillo
 # or, from within an X session / xterm:
-dillo http://example.com
+dillo https://example.com
 ```
-*Caveat:* **HTTP only** — there is no TLS/HTTPS support, so `https://` pages won't
-load.
+Dillo **browses the live HTTPS internet** (CA-verified TLSv1.2) as well as plain
+HTTP. *Note:* live internet access in this port goes through a **host-side NAT
+gateway** (`scripts/pi-internet-nat.sh`) — the Pi reaches the internet through
+the dev host, a lab/netboot setup rather than the Pi routing on its own. On a
+plain LAN without that gateway you can still browse hosts reachable directly.
 
 ### 📂 Midnight Commander — text-mode file manager
 
@@ -213,13 +245,53 @@ vi   /etc/profile     # busybox vi
 ### 🐍 Scripting languages
 
 ```bash
+python3               # CPython 3.14 REPL    (Ctrl-D to exit)
+python3 -c 'import sqlite3, json, math; print(math.pi)'
+
 micropython           # MicroPython 3 REPL   (Ctrl-D to exit)
 micropython -c 'print(sum(range(100)))'
 
-lua                   # Lua 5 REPL
+lua                   # Lua 5.4.7 REPL
 lua -e 'print("hello from Lua on Phoenix-RTOS")'
 luac                  # the Lua compiler
 ```
+
+`python3` is a static **CPython 3.14** with `sqlite3`, `zlib`, `_ssl`/HTTPS,
+`_decimal`, `ctypes`, and `.so` C-extension loading via `dlopen`.
+
+### 🧰 CLI tools & data stores
+
+The image (built `--with-ports`) ships a real command-line ecosystem, all
+HW-verified:
+
+```bash
+# GNU coreutils 9.5 — 104 tools
+ls -l /etc
+wc -l /etc/passwd
+sha256sum /etc/profile
+seq 1 5
+
+# jq — JSON processor (the '|' here is jq's own filter syntax, not a shell pipe)
+jq -n '[1,2,3] | add'
+
+# SQLite 3 — full SQL, in-memory or on-disk
+sqlite3 :memory: 'select 2+2;'
+
+# Redis 7.2 — in-memory data store; start the server on the Pi, then connect
+# to it over TCP with redis-cli from another machine (find the Pi's IP with ifconfig)
+redis-server --port 6379
+
+# curl — HTTP/HTTPS client (mbedTLS); reaches the internet via the host NAT gateway
+curl https://example.com
+
+# GNU bash 5.2 — runs non-interactively; see the caveat below
+bash -c 'echo "hello from bash"'
+```
+
+> **bash caveat:** interactive `bash` self-exits on EOF when there is no
+> interactive tty at the console (`getty`/pts wiring is still pending), so it is
+> not yet a usable interactive login shell — run scripts with `bash -c '…'` or use
+> `psh` interactively. Non-interactive use is unaffected.
 
 ### 🎯 Small games & graphics toys
 
@@ -278,9 +350,17 @@ Other bundled drivers include the framebuffer (`/dev/fb0`), audio
 This is a bring-up port; the base system (boot → shell, 4-core SMP, Ethernet, SD,
 USB HID, HDMI, GPU) is solid, but some showcase edges are rough. Highlights:
 
-- **Wi-Fi and Bluetooth: not supported.** Use wired Ethernet.
-- **Quake:** multiplayer hangs; minor cosmetic model glitch on some items.
-- **Dillo:** HTTP only (no HTTPS).
+- **Wi-Fi: not usable for networking yet.** The control-plane works (associates
+  to WPA2-PSK + completes the 4-way key handshake) but the data-plane doesn't
+  carry traffic yet — **use wired Ethernet**.
+- **Bluetooth: driver-level only.** `/dev/hci0` comes up and an HCI Inquiry
+  completes, but there is no host stack — no pairing, profiles, or audio.
+- **GLQuake:** multiplayer hangs; minor cosmetic model glitch on some items.
+- **Quake III:** some larger maps (e.g. `q3dm7`) show black lightmap sectors;
+  `q3dm1` is fully lit.
+- **vkQuake:** renders the menu but hangs after it and takes no keyboard/mouse
+  input — use `rpi4-quake` (GLQuake) to actually play.
+- **bash:** self-exits on EOF without an interactive tty; use `psh` interactively.
 - **xbill:** may exit silently on some runs.
 - **Only the 4 GB Pi 4B is validated.** Other RAM sizes/boards are untested.
 - USB mass storage, I²C/SPI/PWM general-purpose, camera and DSI are not

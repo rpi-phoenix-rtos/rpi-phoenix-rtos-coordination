@@ -280,18 +280,38 @@ the client-side dir cache and `ENOENT` once; retry and it's there.)
 
 ---
 
-## 8. (Optional) Quake data over NFS
+## 8. (Optional) Quake game data over NFS
 
-A native build doesn't fetch the Quake game data (the Docker image does). To play
-GLQuake over netboot, drop the freely-redistributable **shareware** `pak0.pak`
-into the export:
+A native build doesn't fetch the Quake game data (the Docker image does). Drop the
+data files into the NFS export at the paths each engine expects, then run the
+matching command on the Pi. The engines run without data too (menu/engine only).
+
+**Quake 1 — GLQuake / vkQuake** (freely-redistributable **shareware** `pak0.pak`):
 
 ```bash
 sudo mkdir -p /srv/phoenix-rpi4-nfs/usr/share/quake/id1
 # fetch + extract the shareware pak0 (see TUTORIAL.md for the source), then:
 sudo cp pak0.pak /srv/phoenix-rpi4-nfs/usr/share/quake/id1/
 ```
-Then run `rpi4-quake` on the Pi. (Engine-only without it.)
+Then run `rpi4-quake` (or `rpi4-vkquake`) on the Pi.
+
+**Quake II — `quake2`** (`baseq2/pak0.pak`):
+
+```bash
+sudo mkdir -p /srv/phoenix-rpi4-nfs/usr/share/quake2/baseq2
+sudo cp pak0.pak /srv/phoenix-rpi4-nfs/usr/share/quake2/baseq2/
+```
+Then run `quake2` on the Pi. Its launcher RAM-stages the assets to `/tmp` first,
+so the demo loads fast even over NFS.
+
+**Quake III — `quake3`** (`demoq3/pak0.pk3` + `pak1.pk3`):
+
+```bash
+sudo mkdir -p /srv/phoenix-rpi4-nfs/usr/share/quake3/demoq3
+sudo cp pak0.pk3 pak1.pk3 /srv/phoenix-rpi4-nfs/usr/share/quake3/demoq3/
+```
+Then run `quake3` on the Pi (also RAM-stages the assets). `q3dm1` renders fully
+lit; some larger maps show black lightmap sectors (a known V3D issue).
 
 ---
 
@@ -314,8 +334,8 @@ Then run `rpi4-quake` on the Pi. (Engine-only without it.)
 - A **direct crossover cable** may negotiate **100 Mbit** (only two pairs wired),
   throttling NFS; a Cat5e/6 straight cable or a gigabit switch gives full speed.
   A switch also avoids the host-link-follows-Pi-power wedge.
-- Everything else (app caveats, Wi-Fi unsupported, 4 GB-only) is as in
-  [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md).
+- Everything else (app caveats, Wi-Fi not usable for networking yet, 4 GB-only)
+  is as in [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md).
 
 ---
 
