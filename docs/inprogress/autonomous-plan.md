@@ -540,6 +540,15 @@ CAVEAT REMOVED (same session): added a `$PATH` fallback to dl_hostInit (libphoen
 (launched via PATH) still resolves the running binary's symtab — HW re-verified with **bare `python3 -S /ctypestest.py` =>
 CTYPES-OK**. ctypes FFI now works regardless of how the interpreter is invoked. PROCESS: many builds but each fixed a
 distinct, understood issue; used fast standalone compile-checks to avoid wasted full rebuilds; 2 core rebuilds total.
+Directive #1 (libphoenix test): added **phoenix-rtos-tests `dlopen_self`** (libc/misc, commit 30c3ba9, pushed) — dlopen(NULL)
+API contract (non-NULL handle, stable, dlclose no-op, dlsym-miss→dlerror, bad-args). HW: `test-libc-misc -v -g dlopen_self`
+=> **4 Tests 0 Failures OK**. (Positive host-symbol resolution needs an unstripped host; installed test binaries are stripped,
+so that path is covered by the ctypes test on unstripped python.) BUILD LESSON (cost me a detour): `--with-tests` builds the
+test binary AND reassembles the nfsroot image; the nfsroot variant's nfs-fs needs the **libnfs** port, and the full ports
+build currently ABORTS on broken ports (lighttpd "Failed to prepare"; coreutils expr/factor/stty need GMP/termios) — so
+`--with-tests` failed at image assembly and **wiped the netboot bootfs**. Recovery: `--with-ports` builds libnfs first (it's
+early in the list, builds before the broken ones), then a plain default build reassembles the bootfs (nfs-fs compiles once
+libnfs.h is staged). Netboot restored + healthy. TODO(separate): fix/deselect lighttpd so `--with-ports` completes cleanly.
 
 2026-08-21 (session 61 — CPython **`_decimal`** (arbitrary-precision `Decimal`) FINALIZED + HW-verified). Clean finalization
 win (owner: "revisit ports' unfinished parts"). CPython 3.14 still bundles libmpdec, so `_decimal` is self-contained — added
