@@ -527,6 +527,23 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-20 (session 56 — CNN upgraded to a fully-TRAINED convnet, HW-verified; + ML/GPU-matmul arc status (decision-relevant)).
+**Two outcomes.** (1) **CNN now fully trained:** replaced session-55's fixed-random-conv+trained-head shortcut with a
+genuinely trained convnet — conv filters AND linear head learned via numpy im2col backprop (95.5% MNIST test acc). C
+inference unchanged; fixed a channel-first vs channel-last feature-layout mismatch so conv_w+features stay consistent.
+HW-verified (Pi4): all 10 test preds match the numpy reference bit-exact, `CNN-OK`, 0 faults. Commit coord `e20fbaa`.
+(2) **ML/GPU-matmul arc — surveyed the existing V3D compute work + reached a conclusion (stops redundant future chasing).**
+The V3D GPU compute path is ALREADY DONE + HW-verified: CSD dispatch steps 1-3 PASS (10b3522..2ed54d3), and a
+numerically-PERFECT GPU matmul microbench (tools/v3d-driver-port/csd_matmul.c, `3c631da`) — but **dispatch/bandwidth-bound**
+(~4µs compute ≪ per-call SLCACTL + 2× L2T-flush-with-wait + spin-CSDDONE), so it's SLOWER than the A72 CPU for llama2's
+matmul-vector, and NOT integrated. Beating the CPU would need a compute-dense TILED GEMM — and the design's own advisor
+explicitly ruled out a tiling/shared-mem optimization grind. So there is **no clean GPU-accel win here without discouraged
+effort**; phase-2 (GPU compute + verified matmul) is effectively COMPLETE, honest verdict = "V3D compute works but isn't
+faster for these ML ops at these sizes." (A larger compute-bound model or a genuinely different kernel could revisit, owner-gated.)
+**PROCESS NOTE:** this turn I over-surveyed before landing code (the inefficiency the owner flagged) + hit a marginal
+failed CNN-layout attempt before fixing it — tightened up mid-turn. tools/→ports + CPython + Lua + coreutils + _ssl/HTTPS + CNN
+all landed over the run.
+
 2026-08-20 (session 55 — OWNER "push ML toward CNN/GPU": a real MNIST CNN runs on Phoenix/Pi4, HW-verified. + openssl-reach correction).
 Advanced the owner's ML→CNN redirect (LLM llama2 already done; owner wants CNN/GPU). Built a **self-contained C CNN digit
 classifier** (tools/cnn-mnist/): 1×28×28 → fixed 3×3 conv (8ch) → ReLU → 2×2 maxpool → flatten(1352) → trained linear head →
