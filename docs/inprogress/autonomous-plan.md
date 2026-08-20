@@ -528,6 +528,15 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~69 cont — X11 L3 FULLY VALIDATED: Xphoenix server binary LINKS on my ports).
+P3 milestone: the complete **Xphoenix fbdev-DDX X server (AArch64 EXEC, 7.2MB) links end-to-end** from the xorg-server
+kdrive core archives + xorg-libs (L1) + xorg-fonts (L2) — XPHOENIX-LINK-OK. So ALL THREE X11 layers now build against my
+framework-migrated ports (validated the full compile+link recipe: libmd + ~30-flag kdrive configure + record-malloc0
+patch + fbdev.c/ddxLoad.c compile + hand-ld --start-group link with the XKB compiled-in keymap). Also captured owner's
+G-XORG-MODERN future goal (glamor on our GL 2.1 — the modern modesetting path; the blocker is glamor's EGL/GBM/DRM context
+plumbing, not the GL). REMAINING P3: package xorg-server as a port.def.sh (carry ddx/libmd/xkb sources + the validated
+recipe) → rewire xterm/windowmaker off /tmp → app ports. All host-only, trees clean+pushed.
+
 2026-08-21 (session ~69 cont — X11 migration L3 core VALIDATED: xorg-server builds on my L1+L2).
 P3 milestone: the **xorg-server 1.20.14 kdrive CORE (25 archives) builds cleanly against my staged xorg-libs (L1) +
 xorg-fonts (L2)** — 7/7 key archives (dix/os/fb/mi/kdrive/xkb/render) present, XSRV-CORE-OK. This proves L1+L2 are
