@@ -25,7 +25,7 @@ directive, then other tractable finalization; decision-gated (§E) and can't-com
 **TIER 1 — finalization (near-term, tractable; finish first):**
 1. **P1 — quake2 + quake3 runnable** (A2.1/A2.2): DONE for quake3 (menu renders); finish quake2 render check. → owner retest.
 2. **P2 — bash interactive shell** (A2.5) — **OWNER-ATTENDED** (moved from unattended): the psh-interact harness injects input line-at-a-time (psh model) and can't sustain a persistent interactive stream, so a child shell sees EOF under automation — NOT autonomously verifiable. Candidate `pty-run` helper built+deployed (`pty-run bash`); psh hands the tty to children correctly (runfile.c), so the residual is a readline/job-control/tty interaction needing a live terminal to diagnose. → owner tries plain `bash` AND `pty-run bash` at the real UART and reports.
-3. **P3 — X11 ports migration** (C1) — **SIMPLIFIED by E4** (desktops paused → no glib2/pango yet): validate `xorg-libs` in-framework → **`xorg-fonts` glib-free tier DONE (7/7 built+staged, validated standalone)** → **`xorg-server` core archives VALIDATED** (7/7 kdrive archives build against L1+L2 — proves L1+L2 complete; libmd + the ~30-flag kdrive configure work) → remaining L3 = the DDX hand-ld link (Xphoenix) + XKB keymap (carry ddx/libmd/xkb local sources into the port) → rewire `xterm`/`windowmaker` off `/tmp` → app ports.
+3. **P3 — X11 ports migration** (C1) — **SIMPLIFIED by E4** (desktops paused → no glib2/pango yet): validate `xorg-libs` in-framework → **`xorg-fonts` glib-free tier DONE (7/7 built+staged, validated standalone)** → **`xorg-server` core archives VALIDATED** (7/7 kdrive archives build against L1+L2 — proves L1+L2 complete; libmd + the ~30-flag kdrive configure work) → remaining L3 = the DDX hand-ld link (Xphoenix) + XKB keymap (carry ddx/libmd/xkb local sources into the port) → rewire `xterm`/`windowmaker` off `/tmp` → app ports. NOTE: this migrates the **current fbdev-DDX** Xphoenix (the WORKING interim); modernizing to a Linux-like modesetting+DRM path is the separate future goal **G-XORG-MODERN** (§J) — so this L3 port work is not wasted.
 4. **P4 — coreutils `make check`** on Phoenix (owner-scheduled): prove correctness.
 5. **P5 — strerror POSIX descriptions** (A2.4): analysis first, then wire the drafted fix + test.
 6. **P6 — lwip TCP gateway bug** (C3): fix Pi→internet handshake (root-caused).
@@ -41,6 +41,7 @@ directive, then other tractable finalization; decision-gated (§E) and can't-com
 12. **G-FFMPEG-HW — VideoCore h264 HW decode driver** (E6).
 13. **G-GCC — gcc 16.2.0 rebase** (E10).
 14. **G-UPSTREAM — attended B1–B14 pass** (E8): re-verify relevance first (SMP likely already resolved), then apply what's live.
+15. **G-XORG-MODERN — modernize the X-server graphics path** (owner 2026-08-21; the X-server dimension of E5/G-GPU; **BIG, FUTURE — not immediate**): today's `Xphoenix` uses an **outdated kdrive `fbdev` DDX** — it WORKS (great) but is old + slow (CPU shadow-blit to /dev/fb0). Linux/RPi-OS on the same Pi4 uses the **`modesetting` DDX + the `vc4` KMS/DRM driver** for an accelerated, current stack. We have **no KMS/DRM layer**. The question to explore (later): can we extract the **2D-acceleration-relevant parts of Mesa** and model a **simplified Linux-like path** (a minimal DRM/KMS-ish shim under a `modesetting`-style DDX, or a thin accel hook) to get good perf + an up-to-date Xorg code structure? Keep the fbdev DDX as the working fallback while this is prototyped. See §J.
 - **Parked:** §F (structurally blocked) + §E11 (tool-boundary, owner deciding later).
 
 ---
@@ -187,6 +188,20 @@ per big feature; also the pre-publish gate. **Known-stale inventory (found 2026-
 - **Dates**: KNOWN-ISSUES (2026-08-05) + matrix (2026-08-06) headers are stale; refresh.
 - **HARDWARE.md / BUILD.md**: largely current (lab-rig + build path); minor — add the ports/languages to BUILD's showcase description. TUTORIAL-NETBOOT §8 only stages quake1 data; add quake2/quake3 data staging.
 - **Do NOT** over-claim: keep WiFi/vkQuake-hang/quake2-render honest; the docs' value is accuracy.
+
+---
+
+## J. BIG FUTURE ARCHITECTURAL QUESTIONS (for-later; not immediate work)
+
+### J1. X-server graphics path: fbdev DDX (today) → Linux-style modesetting + KMS/DRM (future) — G-XORG-MODERN
+**Owner question (2026-08-21):** our `Xphoenix` server uses a **strange, outdated kdrive `fbdev` DDX**. It works — great — but it is old and slow: the DDX renders into a shadow buffer and the server does a **CPU full-screen blit to `/dev/fb0`** every flush (no 2D acceleration, no page-flip via a display controller). Linux running Xorg on the Pi4 does this the modern way: the **`modesetting` DDX** driving the **`vc4` KMS/DRM** kernel driver — GPU-accelerated 2D (glamor/Present), proper mode-setting, and a current Xorg code structure.
+
+**We do NOT have a KMS/DRM layer.** The question to explore (LATER — big, multi-cycle, tied to E5/G-GPU): can we get closer to the Linux capability + code-structure without building a full DRM stack? Candidate angles:
+- Extract the **2D-acceleration-relevant parts of Mesa** (the vc4/v3d Gallium 2D blit/copy paths we already ported for GL) and expose them to the X server as an accel hook.
+- Model a **simplified DRM/KMS-ish shim** — a minimal "dumb-buffer + page-flip + one accel-blit" interface — under a `modesetting`-style DDX, rather than the ad-hoc fbdev shadow-blit. Even a thin, non-generic version could give page-flipped, GPU-blitted 2D and a much more upstream-shaped server.
+- Reuse the existing in-process V3D winsys (the one GLQuake/vkQuake use) as the "GPU submit" side, wrapping it in the DDX-facing accel API.
+
+**Constraints/reality:** V3D 4.2 is single-context (see E5) — this is about *2D X acceleration + code modernity*, not multi-client concurrency. Keep the **fbdev DDX as the working fallback** while any modern path is prototyped; do not regress the working desktop. This is explicitly **for the future**, after the Tier-1 finalization + the L3 fbdev-DDX migration land. Tracked as queue item **G-XORG-MODERN**.
 
 ---
 
