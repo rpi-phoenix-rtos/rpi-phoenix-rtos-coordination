@@ -3,9 +3,9 @@
 A self-contained convolutional-net digit classifier running on Phoenix-RTOS —
 the first step of the owner's "push ML toward CNN/GPU (not LLM)" direction.
 
-**Net:** 1×28×28 → fixed 3×3 conv (8 ch) → ReLU → 2×2 maxpool → flatten(1352)
-→ trained linear head (→10) → argmax. Fixed random conv features + a trained
-linear softmax head reach **95.1%** MNIST test accuracy (training the linear
+**Net:** 1×28×28 → 3×3 conv (8 ch, trained) → ReLU → 2×2 maxpool → flatten(1352)
+→ trained linear head (→10) → argmax. The conv AND the linear head are trained
+(numpy im2col backprop) reaching **95.5%** MNIST test accuracy (training the linear
 head is small/robust; conv is deterministic).
 
 **Files:**
