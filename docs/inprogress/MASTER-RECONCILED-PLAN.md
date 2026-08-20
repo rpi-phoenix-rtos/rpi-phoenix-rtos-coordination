@@ -119,7 +119,7 @@ Legend: ✅ DONE-HW · 🧪 needs test/validation · 🔧 in-progress · ⏸ wai
 
 ## H. Loose ends / hygiene (do-not-lose)
 
-- **Un-pushed commit:** Quake3 ports fix `e498158` committed locally but **NOT pushed to org** — push (after verifying it's the QVM-exec fix that made q3dm1 render).
+- **~~Un-pushed commit e498158~~ (CORRECTED 2026-08-21):** e498158 is an sdl2 window-events commit and is ALREADY on publish/master — agent misidentified it; no action. Real hygiene check ran: coord + all siblings are pushed EXCEPT phoenix-rtos-lwip, which carries 5 local commits (FIONBIO/#68, getnameinfo OOB, genet header, poll-readiness wakeup, comment) ahead of publish/master — this is the EXPECTED lwip state (lwip publishes via a filtered cherry-pick onto a scrubbed tip to keep the WiFi subtree out; NEVER raw-push). Not lost work.
 - **Verify upstream-sync SHAs:** the 2026-08-12 "16 siblings synced" claim supersedes an earlier "Batch 3 banked as unsafe" note — confirm against actual sibling SHAs.
 - **Stale docs to update/retire:** `tracking/current-step.md` (2026-06-09), `status.md` (2026-08-12); several WiFi/SD/B2 `docs/inprogress/*` say "parked/not-validated" but memory reports resolved.
 - **Tech-debt open subset:** TD-06 (DTB single-IRQ-ctrl, 1/2/8 GiB unvalidated), TD-07/08 (qemu), TD-10 (SError, HW), TD-15-remaining (**plo syspage map hardcoded — mis-maps 2/8 GiB boards**), **TD-19 (doc says `dsb;isb` but source `hal_tlbInval*` ends `dsb ish` only — pre-publish reconcile, do not edit unattended)**, TD-20 (dc zva off, perf-only), TD-Eth-LinkIRQ, TD-Git-Branches(#128).
