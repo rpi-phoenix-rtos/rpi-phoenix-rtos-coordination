@@ -528,6 +528,19 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~72 — owner patch-cleanup request: decided drop 2 redundant malloc(0) patches, keep 3; delegated xorg-server drop to the X11 subagent).
+Heartbeat woke; no owner feedback commits. X11 subagent (a06b982…) STILL iterating on the framework build (restarted --ports-only on xorg_libs;
+no clean-build commit yet) → .buildroot + Pi + ports-repo-writes stay off-limits. Was about to start P-DOCS when the OWNER sent a mid-turn
+request: is the xorg-server record-malloc0 patch still needed now that malloc(0) was fixed? ANALYZED (race-immune via git show on committed
+blobs): (1) confirmed libphoenix malloc(0)→non-NULL since `6465a4a`; (2) the record-malloc0 patch (guards RECORD xallocarray(0) assert →
+WindowMaker-disconnect SIGABRT) is now REDUNDANT; (3) git-grepped ALL committed */patches/*.patch for the malloc(0)/NULL signature → only TWO
+true workarounds: xorg-server record-malloc0 + openiked 24-malloc (single hunk, whole file). The other size==0/bufsize==0/nz(x) hits are
+UNRELATED (memstream empty-check, readlink buffer, divide-by-zero guard) → KEEP. DECISIONS+ACTION: xorg-server drop DELEGATED to the subagent
+(it owns/rewrites that port right now — avoids a two-writer collision; sent it the reasoning to fold into its xorg-server commit); openiked drop
+DEFERRED to post-subagent (isolated, not in rpi4b build, low priority). Validation = the batched X11 Pi cycle (rebuild sans patch + WindowMaker
+disconnect must NOT SIGABRT). Memory project_redundant_malloc0_patches records it. NEXT: on subagent completion, confirm it dropped the patch +
+run the batched core-rebuild+netboot cycle (strerror + X11 integration + lwip /dev/ipstats + verify no RECORD regression).
+
 2026-08-21 (session ~71 — P6 lwip gateway: candidate (b) cleared + /dev/ipstats diagnostic prepped; X11 subagent still building).
 Heartbeat woke; no owner feedback on publish. X11-ports subagent (a06b982…) is ALIVE + actively building `xorg_libs` under the
 real framework (discovered framework needs underscore name, mirrored into buildroot, running --ports-only) → .buildroot + Pi
