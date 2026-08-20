@@ -528,6 +528,25 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~70 — strerror POSIX-text FIXED+committed; X11-ports framework-build subagent dispatched; unified-TFU hypothesis RETIRED).
+Three durable items. (1) **P5 strerror DONE (wired+committed, HW-validation batched):** libphoenix `strerror()` now returns
+"No such file or directory" not "ENOENT". Analysis verdict = conformance fix (every libc does it; only non-conformant
+strerror-parsers would notice) → proceeded. Added string/errno.desc (78 entries, verified 1:1 with phoenix/errno.h, all
+unique), awk-joined into string/Makefile errno.list gen with name-fallback (gaierr untouched). libphoenix `e71331d` + test
+`56b1f7d` (string_errsign.strerror_posix_text pins 8 mappings + asserts != macro name). Generation logic EXHAUSTIVELY verified
+on-host: offsets match independent Python recompute, blob 1833 B (<<64 KB assert), Makefile TAB/`$$`-escaping confirmed.
+(2) **Unified-TFU-bug hypothesis RETIRED (advisor-reviewed):** primary-source (2026-06-23 vkquake doc) shows gallium GL POT
+UIF samples CLEAN → quake2/quake3 GL-path defects are NOT vkQuake's V3DV striping bug. VKQ_CPU_TILE defaults OFF + never
+booted to verdict = vkQuake-only experiment, not a GL fix. Cheap log-grep for q3dm7 TFU sizes = empty (no diag in shipping GL
+binary). PARKED as non-blocking lead (all 3 games render); needs light GL-TFU instrumentation, not a rebuild. (3) **X11 ports
+framework-build finalization dispatched to a background subagent** (agentId a06b982…): make xorg-libs/fonts/server + xterm/
+windowmaker build under the REAL framework (they were only standalone-harness-validated), fix stale depends (xterm/wmaker
+declare libXaw/libXmu… = individual libs now bundled in aggregate xorg-libs), report ports.yaml entries. Runs host-side, no Pi.
+**PENDING (both need exclusive .buildroot+Pi, BLOCKED until X11 subagent finishes — no concurrent .buildroot builds):**
+strerror `--scope core` rebuild + Pi test-libc-string; X11 ports.yaml image integration. Heartbeat now every 15 min (cron
+97aa057e). All committed; coord+siblings trees clean. NEXT: on X11-subagent completion → batch strerror core-build + X11
+integration + one Pi validation cycle.
+
 2026-08-21 (session ~69 — quake3 lightmap bug REPRODUCED + UNIFIED to one V3D-TFU root cause; STK-Vulkan scheduled).
 Dug the owner's quake3 'black sectors' finding: `quake3 +devmap q3dm1` renders FULLY LIT (perfect); `+devmap q3dm7`
 REPRODUCES extensive black surfaces. Code-read quake3e vanilla renderer (tr_bsp.c): it DOES build+index multiple lightmap
