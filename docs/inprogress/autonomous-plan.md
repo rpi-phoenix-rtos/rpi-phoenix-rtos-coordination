@@ -528,6 +528,17 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~75 — P4 coreutils differential-harness build dispatched to a subagent).
+Tier-1 has converged (P1/P3/P5/P6 done, P2/P7 owner-attended, P-DOCS done) → picked P4 (coreutils correctness) as the clearest
+autonomously-actionable item, Pi free. Verified two design facts before dispatch: coreutils tools are at /usr/bin on the Pi; **the host's
+default coreutils is uutils 0.8.0 (Rust reimpl), NOT GNU** — so the differential reference MUST be a native GNU coreutils 9.5 build on the
+host (else uutils-vs-GNU noise masquerades as Phoenix bugs). Dispatched a subagent (ad6d1075) to build tools/coreutils-difftest/: native
+GNU-9.5 host reference + deterministic corpus (pure-arg: echo/printf/seq/expr/factor/basename/numfmt…; file-arg: wc/sort/head/tail/cut/nl/
+tac/uniq/sha256sum/md5sum/cksum/base64/od on staged fixed inputs), /usr/bin/<tool> explicit, filename-normalized (not relying on psh cd),
+env/time/random tools excluded, run on Pi via ONE netboot cycle + diff → PASS/FAIL table. It has EXCLUSIVE Pi access (I run no cycle
+concurrently); commits the harness+RESULTS.md, doesn't push (I review). Updated plan (P4 in-progress, P-DOCS done). NEXT: review the P4
+harness results on completion → push if clean + mark P4 done; then P7 vkQuake or begin a Tier-2 goal (G-STK Vulkan / G-GCC / G-GPU glamor).
+
 2026-08-21 (session ~74 — P-DOCS user-facing docs synced (subagent + my accuracy review); P4 feasibility decided).
 Two items. **P-DOCS DONE:** dispatched a subagent to sync the 7 user-facing docs with an accuracy-calibrated brief (correct current
 state + explicit no-overclaim framing). It edited 6 (HARDWARE.md correctly left — already current), committed nothing. I acted as the
