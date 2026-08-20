@@ -527,6 +527,18 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-20 (session 58 — OWNER "ffmpeg bigger-media (RAM disk)": 720p H.264 video plays from a RAM disk on HDMI, HW-verified).
+Tractable half of the ffmpeg item (full HW-decode = a multi-week VideoCore-codec driver; RAM-disk bigger-media is
+autonomously verifiable). The ffmpeg SW decode core + fb present path were built; the current clip was tiny (320×240, 3KB).
+Generated a genuinely bigger clip on the host (ffmpeg testsrc2 → **1280×720**, 120 frames, Constrained Baseline Annex-B,
+**2.9 MB** — motion + detail, big enough that NFS demand-paging would stall). Built the **fb-direct e4-play** (e4_play.c →
+/dev/fb0, no X libs; new reproducible tools/ffmpeg-port/build-e4-play.sh). Ran via the existing `ram-stage-play`
+(NFS→tmpfs then exec, one psh command): `ram-stage-play /usr/share/e4 /ramtmp/e4 /bin/e4-play /ramtmp/e4/big720.h264`.
+**HDMI-verified:** the 720p testsrc2 pattern (color bars + moving gradient/dots + live timestamp overlay counting up)
+renders on HDMI; UART = `E4PLAY: DONE ok (2 passes, 240 frames displayed)`, **0 faults**. So SW h264 decode scales to 720p
+and plays a multi-MB clip smoothly from a 256 MiB RAM disk. Evidence artifacts/ffmpeg-720p-ramdisk-on-hdmi.png. Commit coord.
+(Full HW-decode via VideoCore remains the big, separate, owner-gated driver effort.) No core change → no manifest.
+
 2026-08-20 (session 57 — OWNER "improve X11/desktop-environment (RPi-OS-like, lightweight)": twm-managed DESKTOP on HDMI, HW-verified).
 Fresh owner-list area, clean efficient turn (front-loaded the demo per last turn's lesson — no over-survey). The X11 stack +
 a lightweight WM were already built/staged (Xphoenix kdrive-fbdev, twm 1.0.12, xeyes/xterm/xclock, fonts on the NFS root),
