@@ -528,6 +528,17 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session 68 — RECONCILIATION FINALIZED + P1 executed: quake3 renders, quake2 data-path fixed).
+Owner did a live HW test + steered hard. Actions: (1) MASTER-RECONCILED-PLAN.md made COMPLETE (folded the 5 HW-usability
+findings: quake2/quake3 data-path fails, vkQuake post-menu hang+no-input, bash EOF-exit, strerror-returns-NAMES) + added an
+explicit **execution priority queue** (P1..P9); it's the driver now. (2) strerror SCHEDULED for analysis (not reactive-fixed)
+per owner — draft errno.desc kept, memory project_strerror_posix_descriptions. (3) **P1 executed:** wrote quake2/quake3
+launchers (set data paths) — HW: **`quake3` renders the Q3 main menu on HDMI**; `quake2` now finds baseq2/pak0.pak (1106
+files) + loads ref_gl1 on V3D + fully inits (no more crash-to-shell), visual render of its auto-demo TBD (black at 45s, likely
+mid NFS map-load). Commits: launchers fd32cb1, plan d6e98ce/16c4dad, corrections f2ed2ef. Also confirmed no lost work (lwip
+5-commits-ahead = expected filtered-publish state). NEXT (top-down): finish quake2 render check, then P2 bash-tty bridge;
+batch an owner retest after P1+P2. Pi FREE (owner released board).
+
 2026-08-21 (session 67 — RECONCILIATION: synthesized the MASTER plan across all notes/memory/backlog).
 Owner asked for a sync/reconciliation so nothing is lost after 66 cycles + a freeze on new topics until the list is done
 or decided undoable. Ran THREE parallel read-only subagent sweeps (board+owner-directives / all ~70 memory files / ports-
