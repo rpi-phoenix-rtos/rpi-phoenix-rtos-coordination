@@ -528,6 +528,16 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~73b — P6 lwip gateway bug RESOLVED: does NOT reproduce; Pi completes live gatewayed TCP handshake).
+Ran the P6 repro: host NAT up (pi-internet-nat.sh, 10.42.0.0/24→enp1s0f0) + Pi netboot cycle. RESULT: **`curl http://1.1.1.1/`→HTTP 301**
+(full gatewayed TCP handshake completes) + **`ping 1.1.1.1` 3/3** (~20ms, ttl=54). `/dev/ipstats` after: ip.recv=951 tcp.xmit=609
+tcp.recv=946 with **ip.drop=0 ip.rterr=0 tcp.drop=0 tcp.err=0** — 900+ pkts, zero drops/route-errors. ⇒ the S60/C3 "SYN-ACK never
+ACKed" was a STALE/TRANSIENT config-ARP artifact (as my source-read suspected), NOT a standing lwip bug. E3 (Pi browses live internet
+via NAT) is authoritative. **P6 CLOSED.** The /dev/ipstats facility (lwip 2323efd, local — filtered publish flow) stays as a permanent
+net-health diagnostic. Tier-1 scorecard now: P1 done, P2 owner-attended, P3 DONE, P4 pending-Pi, P5 DONE-HW, P6 RESOLVED, P7
+owner-attended/needs-Pi. NEXT: P4 coreutils make check (needs Pi) OR P-DOCS (now that P1-P3/P5/P6 settled, the re-churn risk is gone —
+document the banked wins) OR P7 vkQuake characterization.
+
 2026-08-21 (session ~73 — X11 subagent DONE (5 ports build clean); P3 ports.yaml wired; batched --scope core rebuild VALIDATED strerror+lwip compile; Pi cycle in-flight).
 X11 finalization subagent COMPLETED: all five ports (xorg_libs/xorg_fonts/xorg_server + xterm/windowmaker) BUILD CLEAN under the real
 port_manager framework, resolve together with correct cross-root depend dedup; artifacts Xphoenix 5.98MB + /bin/xterm + /bin/wmaker.
