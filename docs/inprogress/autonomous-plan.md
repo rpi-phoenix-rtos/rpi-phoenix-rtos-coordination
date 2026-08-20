@@ -527,6 +527,28 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session 65 — coreutils factor+expr FINALIZED via mini-gmp (HW-verified); X11 migration plan set by owner).
+**coreutils biggest-subset DONE:** root-caused factor/expr skip — coreutils bundles mini-gmp, but its mini-gmp.h only
+declares mpz_out_str() when it recognizes the libc's <stdio.h> include-guard, and Phoenix's _LIBPHOENIX_STDIO_H_ wasn't
+listed. Added phoenix-rtos-ports coreutils **patches/0003** (mini-gmp.c defines the symbol unconditionally, so only the
+header needed teaching). Now 104 built, **only stty skipped** (termios macros). HW: `factor 91`=>7 13, `factor 600851475143`
+=>71 839 1471 6857 (mini-gmp bignum), `expr 6 + 7`=>13. Pushed (phoenix-rtos-ports 84bf3fe).
+
+**OWNER DIRECTIVE — X11 ports migration (tools/x11-port -> phoenix-rtos-ports): plan set.** tools/x11-port/ holds a FULL
+X11 ecosystem built ad-hoc into /tmp by the monolithic build-x11-phoenix.sh: ~40 libraries (xorgproto, xtrans, libXau/
+Xdmcp, xcb-proto+libxcb+xcb-util*, libX11, libXext/Xt/Xaw/Xmu/Xpm/Xrender/Xft/Xrandr, libfontenc/Xfont2, freetype,
+fontconfig, expat, libpng, jpeg, zlib, pixman, cairo, pango, harfbuzz, fribidi, gdk-pixbuf), the Xorg server (xorg-server-
+1.20.14 + fbdev DDX), and ~12 apps (WindowMaker, jwm, twm, xterm, xcalc/xclock/xedit/xeyes/xlogo/oclock/ico/xbill). The
+official windowmaker+xterm ports ALREADY exist but reach into /tmp/x11-phoenix + /tmp/wmaker-deps (built by the coord
+script) — so the library stack underneath is NOT in the framework. **Owner chose the HYBRID layered model:** a few
+aggregate ports by layer — `xorg-libs` (protos + core X libs), `xorg-fonts` (freetype/fontconfig/cairo/pango/harfbuzz/
+fribidi/pixman/png/jpeg), `xorg-server` (Xorg + fbdev DDX) — then individual thin APP ports (xterm/windowmaker already
+exist; add jwm/twm/xcalc/xclock/xeyes/xlogo/oclock/ico/xbill) that depend on the layer ports. Each aggregate port stages
+into $PREFIX_SYSROOT (not /tmp); app ports drop the /tmp references. NEXT: scaffold xorg-libs port.def.sh from the
+build-x11-phoenix.sh build order (leaf->top DAG), staging to sysroot; then xorg-fonts, xorg-server, then rewire the app
+ports. Multi-session effort — do in dependency order, validate the stack builds before rewiring apps. Also pending: retire
+the now-redundant tools/lua-port dir (official lua 5.4.7 subsumes it).
+
 2026-08-21 (session 64 — libphoenix test for vsnprintf exact-sizing + PERMANENT fix for the --with-tests bootfs-wipe trap).
 Directive #1 (ALWAYS add libphoenix tests): surveyed recent fixes — malloc(0)!=NULL and long-double rounding were already
 covered, but **vsnprintf(NULL,0) exact-sizing** (the glib2 vasprintf fix, incl. the >1024-byte regression) had NONE. Added
