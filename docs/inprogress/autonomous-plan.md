@@ -528,6 +528,18 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~142 — ✅ E5: WM-managed desktop (twm+xeyes) renders GPU-accelerated under glamor, 0 faults; ⚠️ CONFIRMED single-GPU-process constraint (2nd GPU proc → EL1 abort)).
+Added a reusable `--server <path>` option to pl_phoenix_xlaunch (run convenience modes under a custom server; backward-compat; committed) → ran WM desktops under Xphoenix-glamor.
+**RESULT desktop mode (twm + xeyes, all X rendered via the server's glamor = ONE GPU proc):** server up → glamor GPU root + readback FBO complete → twm + xeyes up, **0 faults**;
+HDMI shows **twm-decorated xeyes window (yellow titlebar "xeyes" + correct eyes)** ⇒ the WM + window-decoration + managed-window path works GPU-accelerated under glamor.
+**RESULT showcase mode → EL1 Data Abort:** showcase bundles `gl-x11-window` (a SECOND, separate GPU process bringing up its OWN V3D context) alongside the glamor X server →
+two owners of the single-context V3D → **kernel EL1 Data Abort.** ⇒ empirically CONFIRMS the documented single-GPU-process constraint (V3D single-context; winsys per-proc singleton;
+X must be sole GPU owner). ★ NEW HARDENING TODO (tied to the v3d-server time-slicer future work): a 2nd V3D opener EL1-*crashes the kernel* rather than being rejected/serialized —
+the V3D device/winsys should refuse or serialize a 2nd opener gracefully, not corrupt kernel state. (Not blocking E5's single-owner desktop.) So: glamor desktop = robust for the
+X-as-sole-GPU-owner model (the intended one); concurrent GPU procs remain owner-gated future work. **E5 GPU-accel 2D X: DONE + robust (xeyes/xcalc/twm-desktop) + reproducible.**
+NEXT: PIVOT to a fresh Tier-2 — E5's headline + robustness are fully banked; remaining E5 (zero-copy present, video-in-window, the 2nd-GPU-opener kernel-hardening) is polish/owner-gated.
+Candidates: E10 gcc 16.2.0 rebase (verify it exists + scope; unattended-safe host build) or E7 WiFi (risky/attended). Leaning E10 assessment next.
+
 2026-08-21 (session ~141 — ✅ E5 reproducibility: first-class `--glamor` flag in build-xserver-core.sh retires the ad-hoc --enable-glamor tree tech-debt).
 Hardened the E5 build chain for reproducibility/upstreamability (the code will be published). `build-xserver-core.sh --glamor` now reconfigures with --enable-glamor +
 the epoxy-shim GLAMOR_CFLAGS env override (no epoxy.pc; autoconf skips the pkg-config epoxy query when *_CFLAGS/*_LIBS preset) + builds libglamor.a, gated by a
