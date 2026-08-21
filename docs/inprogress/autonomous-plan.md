@@ -528,6 +528,20 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~84 — V3D large-UIF_XOR ROOT: source analysis EXHAUSTED (all correct for 1024) → needs empirical GPU isolation; deferred, pivot next).
+With q3dm7's symptom fixed (workaround), dug the ROOT large-UIF_XOR bug (owner's #1 "one fix" for q3-lightmap+q2-speckle+vkQuake-striping).
+Checked quake2 first: its lightmaps are 128×128 (small) ⇒ its speckle is NOT the large-UIF_XOR bug (separate minor issue). Then exhaustively
+verified the ported Mesa read-side for the 1024 texture: CPU tiler uif_pixel_off≡Mesa; slice math → UIF_XOR/ub_pad=0/padded=1024; TMU
+descriptor v3d_setup_texture_shader_state (v3dx_state.c:914) → image_height=1024/xor_enable=1/ub_pad=0/extended — ALL consistent + correct.
+**Store + descriptor + tiler ALL source-correct for 1024, yet it renders wrong ⇒ the root is NOT source-diagnosable** — a V3D HW quirk at
+≥1024 UIF_XOR or a subtle interaction; pinpointing REQUIRES an empirical controlled upload→sample/readback isolation test (GPU-test build,
+heavy), same class as the unresolved vkQuake striping. DEFERRED (symptom fixed; source gives no more; bounded to "build a 1024-UIF_XOR
+readback test" for a focused future pass). memory project_quake3_lightmap_uif_xor updated. **PIVOT next turn** — been in the quake/V3D area
+~7 turns; the autonomous-validatable easy wins are drained (Tier-1 + owner #1 done). Remaining = big Tier-2 thrusts (G-STK Vulkan [owner-
+requested, huge+assets], G-FFMPEG-HW [VideoCore decode driver], G-GCC [toolchain rebase], G-GPU glamor [deep]) or owner-attended (SDL2 input,
+bash-tty) or deep (V3D root, signal-push). Next: pick a Tier-2 thrust + make incremental multi-turn progress, OR expand the coreutils
+differential corpus (bounded finalize). Self-prioritize G-FFMPEG-HW or G-GCC (no GB-asset/firmware wall) as the most tractable Tier-2 start.
+
 2026-08-21 (session ~83 — ✅✅ q3dm7 lightmap-BLACK FIXED + HW-verified (owner #1 dig): default r_mergeLightmaps 0 in the quake3 launcher).
 Landed the fix. After ruling out upload-tiling last turn, ran the cheap decisive test: `quake3 +set r_mergeLightmaps 0 +devmap q3dm7`
 (no rebuild) → **q3dm7 renders FULLY LIT + correct** (HDMI-confirmed) vs. the merged-atlas black. This confirms the large (≥1024) merged
