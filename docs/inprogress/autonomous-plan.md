@@ -741,7 +741,12 @@ V3DV-vs-gallium RCL compare + torn-HDMI band-period) on a LOWER-priority rendere
 attended, lower-prio). The clean-autonomous backlog is genuinely thin. **NEXT candidates (all safe but grind/modest):** (a) migrate the 5 X11
 demo-app ports (xedit/xcalc/xclock/xlogo/xbill) to framework ports gated if:false — real progress toward the clean X11 flip, safe (doesn't
 touch the working build); (b) the vkQuake RCL-divergence dig (deep); (c) finalization/doc-sync (P-DOCS §I) toward publication. Leaning (a) as
-the clearest completion path for the #2 top-dig.
+the clearest completion path for the #2 top-dig. **★ REVISED preference:** (d) **ADD LIBPHOENIX TESTS** — the owner's standing FINALIZE-FIRST
+directive says "ALWAYS add libphoenix tests(!!!)", and this session's arc added/fixed many libphoenix fns (libm rint/exp2/erf/scalbn/
+log1p/nextafter/floorl/ceill/llroundl, strerror POSIX text, malloc(0)→size1, FIONREAD via libtty, crt0 envp 3rd-arg). Adding regression tests
+for the ones lacking coverage in libc/ (test-libc-*) is SAFE, fully autonomous (write tests → --scope core rebuild → psh-interact run, UART-
+verified, no HDMI), owner-directed, and guards the fixes. This beats toy-demo-app grind (a) — do (d) next. Check libc/math/c99extra.c +
+string/ coverage vs the added fns; add missing cases.
 
 2026-08-21 (session ~107 — finalized the sysconf(_SC_NPROCESSORS) fix-path spec (precise, ready-to-implement); confirmed deferral correct; will diversify next turn).
 Followed the ~106 gap to a precise fix-path (no code change — the diagnosis is the deliverable). Traced the exact implementation: kernel adds a `pctl_cpucount`
