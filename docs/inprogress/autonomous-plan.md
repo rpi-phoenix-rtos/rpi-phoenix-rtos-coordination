@@ -528,6 +528,17 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~157 — ✅ Redis RDB persistence HW-VERIFIED end-to-end (§C4 owner-A20 deferred feature CLOSED); bonus: bash `&` job control works on Phoenix).
+E10 closed to the unattended boundary ⇒ picked a bounded, safe, verifiable capability win from §C4 "revisit ports' unfinished parts". Redis 7.2.4 was HW-verified in-memory
+already; PROVED RDB persistence across a REAL server restart on the netboot Pi (test entirely Pi-side via bash — no host redis-cli). Wrote a persistence conf (save 3600 1,
+dir /, dump.rdb — the shipped redis-min.conf has save "") + a bash test (redis-server bg → SET/RPUSH/HSET → SAVE → SHUTDOWN → RESTART redis-server → verify). **RESULT
+(label redis-persist2, 0 faults):** SAVE wrote /dump.rdb (178B, "Redis RDB file version 0011", persisted to the NFS-backed disk /srv); the restarted server logged "Loading RDB
+produced by 7.2.4" + "DB loaded from disk 0.019s"; post-restart (memory cleared) GET pkey=phoenix-persist-value, LRANGE plist=a b c d, HGETALL phash=f1 v1 f2 v2, DBSIZE=3 —
+ALL reloaded from RDB. ⇒ str/list/hash survive restart via RDB. Artifacts: tools/redis-persist-test/ (conf+script+README). Bonus datapoint: non-interactive bash job control
+(`&` background daemon + SHUTDOWN + relaunch) WORKS on Phoenix (the earlier "bash exits immediately" was interactive-tty-only). Committing + pushing. NEXT: another bounded §C4
+port-feature (SQLite WAL is uncertain re shm-mmap; ffmpeg audio needs the attended audio sign-off) or accept the easy-backlog is thin (remaining = attended M1/keypress/audio,
+deep WiFi/ffmpeg-HW, or the big X11 if:true migration).
+
 2026-08-21 (session ~145 — PIVOT to E10 gcc-16.2.0 rebase (owner "big achievement"): assessment DONE + M0 toolchain build delegated to a subagent (safe separate prefix)).
 Python port comprehensively done ⇒ pivoted to a fresh Tier-2. **E10 assessment (docs/inprogress/2026-08-21-e10-gcc-16.2.0-rebase-plan.md):** gcc 16.2.0 EXISTS on GNU ftp;
 current toolchain = gcc-14.2.0 + binutils-2.43 (build-toolchain.sh GCC= line 66). Patch-port scope: most of the 11 gcc patches are SMALL + touch stable target-def files
