@@ -528,6 +528,20 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~106 — syscall-hunt COMPLETED: corrected the python finding (python3 WORKS), exercised the rich surface clean, + FOUND a real ready-to-fix gap: sysconf(_SC_NPROCESSORS)).
+Followed through the ~105 hunt properly. **CORRECTION:** netboot python3 is NOT stdlib-degraded — sysinfo.py (builtin sys only) ran fine (prefix
+/usr/local, SYSINFO-DONE); the prior "degraded" was a PROBE BUG (probe.py imported `resource`, which isn't in the static module set → crashed before
+output). The "Could not find platform dependent libraries <exec_prefix>" warning is BENIGN (static python has no lib-dynload; it continues). Staged
+/lib + /usr/local/lib/python3.14 (428K, harmless, helps pure-python modules). **Hunt COMPLETED clean:** a fixed probe (built-ins + os.*) exercised
+getgroups=[], uname=Phoenix-RTOS/aarch64a72, **statvfs**=(4096,122512118,17561682) [statfs NOT a gap], getcwd=/, socket, umask, getpid/uid/gid — ALL
+work, NO `#Syscall(unimplemented)`/not-implemented warnings. (time=20 = expected 1970+boot clock on netboot-without-NTP, not a bug.) **★ FOUND a real
+gap (precisely diagnosed, ready-to-fix):** `os.cpu_count()=None` on the 4-core Pi4 because **sysconf(_SC_NPROCESSORS_ONLN/_SC_NPROCESSORS_CONF) is
+unimplemented** (libphoenix unistd/conf.c default→-1/EINVAL). Affects os.cpu_count() + `nproc` + any CPU-count-aware pool sizing. No userspace CPU-count
+source exists (not in syspage/sysinfo.h/threadinfo_t/any syscall), so the fix = a small KERNEL export of hal_cpuGetCount() (new syscall or a
+platformctl/info action) + libphoenix sysconf cases. DEFERRED from unattended: a kernel-ABI addition for a MINOR gap on the netboot-critical system
+isn't worth the unattended risk (journey-takeaway discipline) — logged as a ready-to-fix §D to-do for an attended/dedicated turn. (A libphoenix-only
+return of 1 would be worse — asserts wrong count vs honest -1.) NET: corrected a wrong finding + clean hunt + one precisely-diagnosed genuine gap.
+
 2026-08-21 (session ~105 — genuine syscall-gap hunt (standing "implement missing libc" rule) → NO gaps in the exercised surface; noted a netboot-python-stdlib deployment nuance).
 Ran a genuine, directive-aligned investigation (not a manufactured feature): exercised the ecosystem on HW hunting for kernel/libphoenix `#Syscall
 (unimplemented)` / "not implemented" warnings (the standing forcing-function rule). Ran `id` (uid/gid/**getgroups** all correct), and a python

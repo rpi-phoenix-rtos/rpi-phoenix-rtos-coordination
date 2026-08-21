@@ -115,6 +115,7 @@ Owner ran the ports on real HW. "Finalizing a port = being able to actually run 
 - 📋 **Mesa patch-series rebase onto released 26.2.0** (A25/E2) — move our local patches from 26.2.0-rc1 to the released 26.2.0 tag; keep patches in-repo; pin the single release tag/tarball as reference; NO full fork.
 - 📋 **qemu 11.1 host toolchain** (A23 / TD-07/08) — update host qemu; re-test boot under qemu+gdbstub.
 - ✅ **TD-Eth-LinkIRQ — RESOLVED (accept MDIO-poll)** (2026-08-21): PHY INT_B not GIC-routed on Pi4 + GENET internal LINK_UP left masked; Linux/U-Boot both poll; keep the 1 Hz genet_linkPollThread (portable, matches reference, no regression risk to the netboot-critical eth path). See TD ledger.
+- 📋 **sysconf(_SC_NPROCESSORS_ONLN/CONF)** (found session ~106) — unimplemented in libphoenix unistd/conf.c (default→-1/EINVAL) ⇒ os.cpu_count()=None + nproc wrong on the 4-core Pi4. Fix = small kernel export of hal_cpuGetCount() (new syscall or platformctl/info action) + libphoenix sysconf cases. Ready-to-fix; deferred from unattended (kernel-ABI change for a minor gap). 
 - 📋 **Propose-own impressive feature** (A32) — arguably satisfied by RAM-staging + the ports ecosystem; can propose a fresh one if wanted.
 - 📋 **Journey article** (`docs/AI-DRIVEN-PORT-JOURNEY.md`) — draft exists; owner review/finalize.
 
