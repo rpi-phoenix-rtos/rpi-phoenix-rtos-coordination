@@ -536,9 +536,15 @@ sha 27f703d1, glib2.cache, glib-phoenix-shim.h, and the 3 stubs libintl/arpa-nam
 with the full recipe. Unlike the dillo delegation, glib2's real deps (libiconv 1.18, libffi 3.4.6, zlib — all framework now; pcre bundled) are ALL
 resolved, so no out-of-scope wall this time; remaining complexity is framework-adapting the stub placement (→PREFIX_H/PREFIX_A not sysroot), the
 --cache-file cross probes, config.sub-phoenix, and glib's explicit header staging. Deliverable = libglib-2.0.a (+gobject/gmodule/gthread best-effort).
-Awaiting subagent completion → verify + finalize. DO NOT start a concurrent port build (shared buildroot). If glib2 lands, the whole ad-hoc X11
-support stack is framework ports and the X11 if:true flip becomes actionable (rewire build-showcase-apps.sh + remove ad-hoc X11). NEXT after glib2:
-the flip itself, or mc (needs glib2)/nano/ncurses, or P7/P9.
+**★ glib2 subagent COMPLETED + independently VERIFIED (ports `19b88da`, pushed):** all 4 libs built + staged — libglib-2.0.a (2.9M, g_malloc/
+g_hash_table_new/g_string_new/g_list_append present), **libgobject-2.0.a (923K, FULL — real libffi enabled gclosure marshalling)**, libgmodule-2.0.a,
+libgthread-2.0.a (3K legacy no-op shim, correct), + glibconfig.h/headers. 7 files committed (port.def.sh+cache+shim+3 stubs), NO tarball. This time
+the subagent had no out-of-scope wall (all deps framework) and nailed it end-to-end. ⇒ **★★ MILESTONE: the ENTIRE ad-hoc X11 support stack is now
+framework ports** (zlib, libpng, libjpeg, xorg_libs/fonts/server, xterm, windowmaker, fltk, libiconv, libffi, glib2, dillo, sdl2, mbedtls). The X11
+`if:true` flip is now DEPENDENCY-UNBLOCKED. Registered dillo in ports.yaml (if:false, project — matching xorg/sdl2 precedent; libs are transitive).
+NEXT — **the X11 flip is now actionable** (mechanical: flip xorg_*+dillo to if:true + drop the X11/glib2/fltk/dillo steps from build-showcase-apps.sh
++ full showcase build + boot to prove X apps launch) — this is a big integration+boot task (needs a full showcase build + Pi cycle). Alternatives:
+mc (needs glib2)/nano/ncurses migrations, or P7 vkQuake / P9 Mesa. DO NOT start a concurrent port build while any subagent build runs.
 
 2026-08-21 (session ~92 — P8: ★ REAL GNU libiconv 1.18 (retires the stub!) + dillo 3.2.0 migrated + verified; the WHOLE ad-hoc X11 image/browser stack is now framework ports).
 Resumed the dillo delegation (session ~91). The subagent got dillo configuring cleanly through FLTK/jpeg/zlib/png/**mbedTLS-selected** but hit
