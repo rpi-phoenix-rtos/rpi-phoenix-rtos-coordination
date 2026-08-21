@@ -36,6 +36,24 @@ KD=$SRC/$NV
 # (curl -L follows), same pattern as the other X tarballs in build-x11-phoenix.sh.
 URL=https://www.x.org/releases/individual/xserver/$NV.tar.gz
 
+# --glamor (E5 / G-XORG-MODERN): additionally build glamor (libglamor.a) for the
+# GPU-accelerated Xphoenix-glamor server (build-xfbdev.sh --glamor links it).
+# Reconfigures with --enable-glamor + the epoxy-shim GLAMOR_CFLAGS override —
+# autoconf skips the PKG_CHECK_MODULES([GLAMOR],[epoxy]) query when *_CFLAGS and
+# *_LIBS are pre-set, so no epoxy.pc is needed (see tools/x11-port/glamor-shim/).
+# Default (no flag) builds the software-only core EXACTLY as before. This makes the
+# whole glamor build chain reproducible from a clean tree (retires the ad-hoc
+# --enable-glamor reconfigure the M0/M1 bring-up left behind).
+GLAMOR=0
+[ "${1:-}" = "--glamor" ] && GLAMOR=1
+GLAMOR_SHIM="$ROOT/tools/x11-port/glamor-shim"
+GLAMOR_MESA_GL="$ROOT/external/mesa/include"
+GLAMOR_A="$KD/glamor/.libs/libglamor.a"
+# Records the glamor state the tree was last configured in; a mismatch vs the
+# requested state forces a reconfigure (the config.status skip would keep it stale).
+GLAMOR_MARK="$KD/.phoenix-glamor-enabled"
+glamor_marker_matches() { if [ "$GLAMOR" = 1 ]; then [ -f "$GLAMOR_MARK" ]; else [ ! -f "$GLAMOR_MARK" ]; fi; }
+
 fail() { echo "build-xserver-core: FATAL: $*" >&2; exit 1; }
 
 # The 25 core archives build-xfbdev.sh links (mirrors its core_la[] list). If all
@@ -71,9 +89,23 @@ if [ ! -f "$PREFIX/lib/libmd.a" ]; then
     || { cat /tmp/libmd-build.log; fail "libmd build failed"; }
 fi
 
-if all_present; then
-  echo "=== xorg-server $VER core archives already built — skipping ==="
+# Already-built = software archives present AND the configured glamor state matches
+# the request AND (for --glamor) libglamor.a is present.
+core_built() {
+  all_present || return 1
+  glamor_marker_matches || return 1
+  [ "$GLAMOR" = 0 ] || [ -f "$GLAMOR_A" ]
+}
+if core_built; then
+  echo "=== xorg-server $VER core archives already built (glamor=$GLAMOR) — skipping ==="
   exit 0
+fi
+
+# Requested glamor state differs from how the tree is configured → force a
+# reconfigure (else the config.status check below keeps the stale glamor setting).
+if [ -f "$KD/config.status" ] && ! glamor_marker_matches; then
+  echo "=== glamor state change (want glamor=$GLAMOR) — forcing reconfigure ==="
+  rm -f "$KD/config.status"
 fi
 
 [ -x "${TC}gcc" ] || fail "toolchain missing: ${TC}gcc (build the toolchain first)"
@@ -103,14 +135,22 @@ fi
 # damageproto/...) install under share/pkgconfig — omitting share/ makes configure
 # fail "Package requirements ... were not met".
 if [ ! -f "$KD/config.status" ]; then
-  echo "=== configuring $NV (kdrive core, aarch64-phoenix) ==="
+  glamor_arg="--disable-glamor"
+  if [ "$GLAMOR" = 1 ]; then
+    glamor_arg="--enable-glamor"
+    # Feed the epoxy shim + Mesa GL headers to PKG_CHECK_MODULES([GLAMOR],[epoxy])
+    # via the env (autoconf skips the pkg-config query when both are pre-set).
+    export GLAMOR_CFLAGS="-I$GLAMOR_SHIM -I$GLAMOR_MESA_GL"
+    export GLAMOR_LIBS=" "
+  fi
+  echo "=== configuring $NV (kdrive core, aarch64-phoenix, glamor=$GLAMOR) ==="
   ( cd "$KD" && \
     PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig:$PREFIX/share/pkgconfig" \
     PKG_CONFIG_LIBDIR="$PREFIX/lib/pkgconfig:$PREFIX/share/pkgconfig" \
     ./configure --host=aarch64-phoenix --prefix="$PREFIX" \
       --enable-kdrive --disable-xephyr --with-sha1=libmd \
       --disable-xorg --disable-xwayland --disable-xnest --disable-xvfb --disable-dmx \
-      --disable-glamor --disable-dri --disable-dri2 --disable-dri3 --disable-glx \
+      $glamor_arg --disable-dri --disable-dri2 --disable-dri3 --disable-glx \
       --disable-int10-module --disable-vgahw --disable-vbe --disable-xdmcp \
       --disable-xinerama --without-dtrace --disable-systemd-logind --disable-secure-rpc \
       --disable-config-udev --disable-config-hal --without-systemd-daemon --disable-unit-tests \
@@ -118,6 +158,8 @@ if [ ! -f "$KD/config.status" ]; then
       CFLAGS="--sysroot=$SYSROOT -I$PREFIX/include -DMAXHOSTNAMELEN=256 -DXOS_USE_MTSAFE_PWDAPI -D_POSIX_THREAD_SAFE_FUNCTIONS=200809L -DO_NOFOLLOW=0 -DSI_USER=0 -DHAVE_CBRT=1" \
       LDFLAGS="--sysroot=$SYSROOT -L$PREFIX/lib -L$SYSROOT/lib" \
       >/tmp/$NV-conf.log 2>&1 ) || { tail -30 /tmp/$NV-conf.log; fail "configure failed (see /tmp/$NV-conf.log)"; }
+  # Record the glamor state so a later run detects a state change (above).
+  if [ "$GLAMOR" = 1 ]; then touch "$GLAMOR_MARK"; else rm -f "$GLAMOR_MARK"; fi
 fi
 
 # --- 3. build the core archives ---
