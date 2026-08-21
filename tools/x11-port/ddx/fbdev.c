@@ -53,6 +53,35 @@
  */
 #ifdef GLAMOR_PHOENIX
 #include "glamor.h"
+
+/*
+ * E5 / G-XORG-MODERN (M1b): make glamor's GPU acceleration VISIBLE on /dev/fb0 by
+ * backing the X screen/root pixmap with a glamor GL texture (so Render/Copy/
+ * Composite into the root run on the V3D GPU) and presenting it by reading that
+ * texture back into the shadow RAM the DDX already write()s to the framebuffer.
+ *
+ * Two runtime gates guard this, so a glamor build with a failed GL bring-up (or a
+ * screen-pixmap that glamor could not texture-back) degrades to EXACTLY the
+ * software fbdev path:
+ *   - fbdev_glamor_inited : glamor_init() succeeded (screen ops are hooked).
+ *   - fbdev_glamor_active : the screen pixmap is a live glamor GL texture, so the
+ *                           present path must read it back (see fbdevFlushRegion).
+ */
+static Bool fbdev_glamor_inited = FALSE;
+static Bool fbdev_glamor_active = FALSE;
+
+/*
+ * Screen-pixmap texture readback, implemented in
+ * tools/x11-port/glamor-shim/glamor_phoenix_ctx.c. That translation unit is
+ * compiled against the Mesa GL headers, which cannot coexist with the X server
+ * headers in this file (the exact reason glamor_phoenix_ctx.c keeps the server
+ * headers out) — so the GL FBO+glReadPixels lives there and we call it by name.
+ * Reads `rows` scanlines starting at X y==y0 out of the glamor screen-pixmap GL
+ * texture `tex` (from glamor_get_pixmap_texture) into `dst`, tightly packed
+ * width*4 bytes/row, byte0=R (matches the Pi fb RGB byte order, DDX redMask 0xff).
+ */
+extern void glamor_phx_screen_readback(unsigned int tex, int width,
+                                        int y0, int rows, void *dst);
 #endif
 
 /*
@@ -281,6 +310,26 @@ fbdevFlushRegion(ScreenPtr pScreen, int y0, int y1)
         return;
     rows = y1 - y0;
 
+#ifdef GLAMOR_PHOENIX
+    /*
+     * Present the GPU-rendered root: pull the [y0,y1) band out of the glamor
+     * screen-pixmap GL texture into the shadow RAM, so the lseek()+write() below
+     * ships GPU pixels instead of the (now unused) software render target. Only
+     * when the screen pixmap is really GL-texture-backed (fbdev_glamor_active) and
+     * the shadow is contiguous (stride==pitch, i.e. unrotated — glamor+RandR-rotate
+     * is not a v1 target); otherwise this is a no-op and the buffer is presented
+     * as-is, i.e. exactly today's software behaviour.
+     */
+    if (fbdev_glamor_active && shadowStride == pitch) {
+        PixmapPtr screen_pixmap = pScreen->GetScreenPixmap(pScreen);
+        unsigned int tex = glamor_get_pixmap_texture(screen_pixmap);
+
+        if (tex != 0)
+            glamor_phx_screen_readback(tex, priv->mode.width, y0, rows,
+                                       shadow + (off_t) y0 * shadowStride);
+    }
+#endif
+
     /*
      * Shadow stride and device pitch are equal here, so the band is a single
      * contiguous region in both buffers: write it in one syscall.
@@ -507,14 +556,92 @@ fbdevFinishInitScreen(ScreenPtr pScreen)
      * server down (M1a is the link/bring-up milestone; runtime pixmap-accel
      * wiring is M1b). This call is also what pulls libglamor.a into the link.
      */
-    if (!glamor_init(pScreen, GLAMOR_USE_EGL_SCREEN | GLAMOR_NO_DRI3))
+    if (!glamor_init(pScreen, GLAMOR_USE_EGL_SCREEN | GLAMOR_NO_DRI3)) {
         ErrorF("[fbdev] glamor_init failed — continuing without GL acceleration\n");
-    else
+    }
+    else {
+        /*
+         * Provisional: glamor's screen ops (CreatePixmap/Composite/CopyArea/...)
+         * are now hooked, so a GL-texture screen pixmap can be created in
+         * fbdevCreateResources. fbdev_glamor_active only flips TRUE once that swap
+         * succeeds; until then the present path stays software.
+         */
+        fbdev_glamor_inited = TRUE;
         ErrorF("[fbdev] glamor initialised (V3D GL 2D acceleration)\n");
+    }
 #endif
 
     return TRUE;
 }
+
+#ifdef GLAMOR_PHOENIX
+/*
+ * Visitor: retarget a window whose backing pixmap is the OLD screen pixmap to the
+ * NEW one. Mirrors Xephyr's ephyrSetPixmapVisitWindow (hostx.c). At createRes time
+ * pScreen->root is still NULL so this never actually runs, but it keeps the swap
+ * correct if the routine is ever reused after the root exists (e.g. RandR resize).
+ */
+static int
+fbdevSetPixmapVisitWindow(WindowPtr window, void *data)
+{
+    ScreenPtr pScreen = window->drawable.pScreen;
+
+    if (pScreen->GetWindowPixmap(window) == data) {
+        pScreen->SetWindowPixmap(window, pScreen->GetScreenPixmap(pScreen));
+        return WT_WALKCHILDREN;
+    }
+    return WT_DONTWALKCHILDREN;
+}
+
+/*
+ * Re-back the screen/root pixmap with a glamor GL-texture pixmap so Render/Copy/
+ * Composite into the root run on the V3D GPU. Mirrors Xephyr's
+ * ephyr_glamor_create_screen_resources (hostx.c):
+ *
+ *   miCreateScreenResources() (run just before createRes) already made a SOFTWARE
+ *   scratch screen pixmap — it called CreatePixmap(0,0), which glamor_create_pixmap
+ *   forwards to fbCreatePixmap for w==h==0, then ModifyPixmapHeader pointed it at
+ *   the shadow RAM. We replace it with a real texture pixmap created THROUGH
+ *   glamor's now-hooked CreatePixmap (non-zero size + GLAMOR_CREATE_NO_LARGE =>
+ *   GLAMOR_TEXTURE_ONLY with a live fbo/texture), which is what glamor renders into.
+ *
+ * On any failure we roll back to the software scratch pixmap and leave
+ * fbdev_glamor_active FALSE, so the server presents exactly as the non-glamor build.
+ */
+static void
+fbdevGlamorBackScreenPixmap(ScreenPtr pScreen)
+{
+    PixmapPtr old_pix, new_pix;
+    unsigned int tex;
+
+    old_pix = pScreen->GetScreenPixmap(pScreen);
+
+    new_pix = pScreen->CreatePixmap(pScreen, pScreen->width, pScreen->height,
+                                    pScreen->rootDepth, GLAMOR_CREATE_NO_LARGE);
+    if (!new_pix) {
+        ErrorF("[fbdev] glamor: screen-pixmap alloc failed — software present\n");
+        return;
+    }
+
+    /* Confirm glamor really texture-backed it (a depth/size fallback would return
+     * a plain fb pixmap with no texture, which the readback path cannot present). */
+    tex = glamor_get_pixmap_texture(new_pix);
+    if (tex == 0) {
+        ErrorF("[fbdev] glamor: screen pixmap not GL-textured — software present\n");
+        pScreen->DestroyPixmap(new_pix);
+        return;
+    }
+
+    pScreen->SetScreenPixmap(new_pix);
+    if (pScreen->root && pScreen->SetWindowPixmap)
+        TraverseTree(pScreen->root, fbdevSetPixmapVisitWindow, old_pix);
+    pScreen->DestroyPixmap(old_pix);
+
+    fbdev_glamor_active = TRUE;
+    ErrorF("[fbdev] glamor: screen pixmap GL-texture-backed (tex=%u) — GPU root, "
+           "readback present\n", tex);
+}
+#endif
 
 static Bool
 fbdevCreateResources(ScreenPtr pScreen)
@@ -522,6 +649,18 @@ fbdevCreateResources(ScreenPtr pScreen)
     KdScreenPriv(pScreen);
     KdScreenInfo *screen = pScreenPriv->screen;
     FbdevScrPriv *scrpriv = screen->driver;
+
+#ifdef GLAMOR_PHOENIX
+    /*
+     * Swap the software scratch screen pixmap for a glamor GL-texture one BEFORE
+     * KdShadowSet: KdShadowSet reads GetScreenPixmap() at call time to register
+     * damage, so the swap must precede it for damage to track the GL pixmap. If the
+     * swap fails, fbdev_glamor_active stays FALSE and the shadow present path below
+     * is unchanged (software).
+     */
+    if (fbdev_glamor_inited)
+        fbdevGlamorBackScreenPixmap(pScreen);
+#endif
 
     if (scrpriv->shadow) {
         if (!KdShadowSet(pScreen, scrpriv->randr,

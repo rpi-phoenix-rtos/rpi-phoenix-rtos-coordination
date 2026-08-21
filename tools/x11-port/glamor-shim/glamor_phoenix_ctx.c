@@ -190,6 +190,100 @@ static void phx_make_current(struct glamor_context *glamor_ctx)
 		_mesa_make_current(st->ctx, NULL, NULL);
 }
 
+/* --- glamor screen-pixmap readback (E5/M1b present path) ----------------------
+ * The kdrive fbdev DDX makes the X screen/root pixmap a glamor GL texture so the
+ * root renders on the GPU (fbdevGlamorBackScreenPixmap). To present, it must copy
+ * those pixels back into the shadow RAM it write()s to /dev/fb0. This reads `rows`
+ * scanlines starting at X y==y0 out of the screen-pixmap texture `tex` (obtained by
+ * the DDX from the public glamor_get_pixmap_texture) into `dst`, tightly packed
+ * width*4 bytes/row. Uses only public GL: a private color-attachment FBO wrapping
+ * the texture + glReadPixels. Touches no glamor internals.
+ *
+ * Orientation (no vertical flip): glamor stores pixmap texel row 0 at X y==0 — its
+ * presentation maps window-top to texcoord t==0 -> texel row 0 (see the texcoord
+ * table in hw/kdrive/ephyr/ephyr_glamor_glx.c). So a color-attachment FBO read with
+ * glReadPixels(0, y0, width, rows) returns scanlines top-to-bottom already. (This is
+ * the opposite of gl_x11_window.c, which flips because it renders directly into a
+ * renderbuffer with GL's native bottom-left origin — a different source.) If the
+ * first HW frame comes out vertically mirrored, set PHX_READBACK_FLIP_Y to 1.
+ *
+ * Channel order: glReadPixels(GL_RGBA, GL_UNSIGNED_BYTE) writes byte0=R, byte1=G,
+ * byte2=B, matching the Pi fb's RGB byte order (DDX redMask 0x0000ff, the #19 fix).
+ */
+#define PHX_READBACK_FLIP_Y 0
+
+static GLuint phx_readback_fbo = 0;
+
+void glamor_phx_screen_readback(unsigned int tex, int width, int y0, int rows,
+                                void *dst)
+{
+	GLint prev_fbo = 0;
+	static int checked = 0;
+
+	if (phx_st == NULL || tex == 0 || rows <= 0 || dst == NULL)
+		return;
+
+	_mesa_make_current(phx_st->ctx, NULL, NULL);
+
+	/* Preserve whatever FBO glamor had bound (cheap insurance; glamor rebinds per
+	 * op, but do not assume). */
+	glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prev_fbo);
+
+	if (phx_readback_fbo == 0)
+		glGenFramebuffers(1, &phx_readback_fbo);
+	glBindFramebuffer(GL_FRAMEBUFFER, phx_readback_fbo);
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+	                       (GLuint)tex, 0);
+
+	if (!checked) {
+		GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+		checked = 1;
+		fprintf(stderr, "glamor-phx: screen-readback FBO status 0x%x (%s)\n",
+		        status,
+		        status == GL_FRAMEBUFFER_COMPLETE ? "complete" : "INCOMPLETE");
+	}
+
+	glPixelStorei(GL_PACK_ALIGNMENT, 4);
+
+#if PHX_READBACK_FLIP_Y
+	/* Flipped source: the X band [y0, y0+rows) maps to window rows
+	 * [H-(y0+rows), H-y0). Read into a scratch band then copy rows reversed so
+	 * dst still receives X scanlines top-to-bottom. Only compiled if HW shows a
+	 * mirrored frame; the default path above avoids the extra copy. */
+	{
+		static unsigned char *scratch = NULL;
+		static int scratch_bytes = 0;
+		int need = width * rows * 4;
+		int r;
+
+		if (need > scratch_bytes) {
+			free(scratch);
+			scratch = (unsigned char *)malloc(need);
+			scratch_bytes = scratch ? need : 0;
+		}
+		if (scratch) {
+			int H = 0;
+			/* The X band [y0, y0+rows) maps to the mirrored window origin
+			 * H-(y0+rows). Bind the screen-pixmap texture first so the height
+			 * query reads THIS texture (it is only attached to the FBO above,
+			 * not bound to the active unit). */
+			glBindTexture(GL_TEXTURE_2D, (GLuint)tex);
+			glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &H);
+			glReadPixels(0, H - (y0 + rows), width, rows, GL_RGBA,
+			             GL_UNSIGNED_BYTE, scratch);
+			for (r = 0; r < rows; r++)
+				memcpy((unsigned char *)dst + (size_t)r * width * 4,
+				       scratch + (size_t)(rows - 1 - r) * width * 4,
+				       (size_t)width * 4);
+		}
+	}
+#else
+	glReadPixels(0, y0, width, rows, GL_RGBA, GL_UNSIGNED_BYTE, dst);
+#endif
+
+	glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)prev_fbo);
+}
+
 /* --- glamor EGL-screen interface (replaces glamor/glamor_egl_stubs.c) ---------
  * Signatures are link-compatible with glamor.h by symbol name; `void *` stands
  * in for ScreenPtr / PixmapPtr and uint16_t * / uint32_t * for CARD16 * / CARD32 * so no
