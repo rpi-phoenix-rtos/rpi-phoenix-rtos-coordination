@@ -20,9 +20,13 @@ Over ~4.5 months the port went from "does not boot" to:
 - **Peripherals**: PCIe→VL805 xHCI with USB HID keyboard+mouse, SD/eMMC storage with an
   ext2 root, thermal, hardware RNG, GPIO, PWM audio.
 - **Graphics**: the full Mesa **V3D** stack — **OpenGL and Vulkan** — running on the real
-  GPU with no DRM kernel driver and no window-system compositor.
-- **Userspace**: an X11 desktop (kdrive), **SDL2**, and a stack of ported apps: **GLQuake
-  (QuakeSpasm), vkQuake (Vulkan), Quake II**, Dillo, Midnight Commander.
+  GPU with no DRM kernel driver, and later **GPU-accelerated 2D X** (glamor on that GL, the
+  X root rendered by the V3D and presented to the framebuffer).
+- **Userspace**: an X11 desktop (kdrive) with **twm/Window Maker**, **SDL2**, and a stack of
+  ported apps: **GLQuake (QuakeSpasm), vkQuake (Vulkan), Quake II**, Dillo (live HTTPS), MC.
+- **Languages & toolchain**: **CPython 3.14** (HTTPS/TLS, sqlite3, C-extension `dlopen`), Lua,
+  a **Redis** server (with RDB persistence), **SQLite** (incl. single-process WAL), coreutils,
+  bash, busybox — and a from-source cross-toolchain rebase to **gcc 16.2.0** (full C+C++).
 
 ## What turned out *easy* for the AI
 
@@ -262,6 +266,34 @@ the kind of deep single-bug diagnosis that yields a precise answer rather than a
   agent fixed in the shared tty library and HW-verified. `bash` still exits interactively, so that fix, though a
   genuine correctness bug, was *not the cause*; but a `bash` script now runs correctly and the whole terminal layer is
   *proven* not at fault, leaving the residual as a readline-internal question for a live terminal.
+
+- It then reached the port's headline graphics goal — **GPU-accelerated 2D X**. The textbook path
+  (GLX/DRI) had been ruled structurally impossible early on; the agent instead studied how the modern
+  X server accelerates 2D — **glamor**, which needs only OpenGL 2.1, which the port already had — and
+  found by reading the source that glamor's *core* is decoupled from the EGL/GBM/DRM plumbing everyone
+  had assumed was the blocker. It wrote a small shim standing in for the absent `libepoxy` (mapping GL
+  dispatch straight to the statically-linked Mesa driver) and a ~dozen-line context provider handing
+  glamor the in-process V3D GL context, then re-backed the X root pixmap with a GL texture and presented
+  it to `/dev/fb0`. On hardware: **xeyes, xcalc, and a twm desktop rendered by the V3D GPU** — the
+  accelerated-X capability the "sidestep" takeaway below had called blocked, now actually achieved, with
+  the single-GPU-process limit (the V3D is single-context) as the one real remaining constraint.
+- It rebased the cross-**toolchain to gcc 16.2.0** — from source, to a *separate* prefix so the working
+  gcc-14 was never at risk. The Phoenix target patches ported almost cleanly; the two real breaks were
+  both instructive. gcc-16's aarch64 unwind refactor now references a `frame_state_reg_info` member the
+  port's libgcc config never opted into (a one-line `md_unwind_def_header` fix). And gcc-16's libstdc++
+  refused to compile because the port modelled the C11 `_Atomic int` inside `pthread_mutex_t` as C++
+  `std::atomic<int>` — whose *deleted copy constructor* broke libstdc++'s mutex initialisation; making
+  that a plain, layout-compatible `int` in the C++ view (the atomic accesses live only in the C library)
+  yielded a full C **and** C++ gcc-16.2.0 toolchain that links runnable AArch64 binaries. The compile
+  half of the rebase is done; the system-wide swap is left for an attended pass.
+- With the headline goals banked, it dropped to a **test-and-close** cadence. Running two dozen
+  never-executed libc/kernel test suites on the hardware surfaced — and it fixed — two real bugs of its
+  own stack: a `pthread_detach` use-after-free on a freed handle, and `tmpfile()` failing on netboot
+  because its backing directory was created on a root that the NFS takeover then replaced. And it closed
+  deferred port features with tight one-cycle proofs: **Python HTTPS** over a real TLS 1.2 handshake,
+  **Redis RDB persistence** across a full server restart, and **SQLite WAL** — working single-process,
+  and precisely bounding *why* multi-process WAL cannot (the VFS has no shared-memory index). Small,
+  sure, verifiable — the right gear once the big wins are in.
 
 The limits it hit were *physical or judgment* boundaries, not cognitive ones: a 100 Mbps link it
 couldn't rewire, an SD card it couldn't insert, and a host network it judged too risky to

@@ -528,7 +528,15 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
-2026-08-21 (session ~158 — ✅ SQLite WAL HW-verified with a precise capability boundary (§C4 item CLOSED): works single-process EXCLUSIVE, multi-proc unsupported (no shm)).
+2026-08-21 (session ~159 — consolidation: updated the owner-requested journey article (§D) to accurately capture the recent arc — glamor-accelerated X, gcc-16 toolchain, HTTPS/Redis/SQLite).
+Honestly reassessed: the tractable-unattended backlog (big AND bounded) is at its floor — remaining is attended (M1 gcc-swap, X11 keypress, audio, bash -i), deep (WiFi fw-wall, ffmpeg-HW
+VCHIQ), delicate-hygiene-partly-attended (X11 if:true flip), or hard-rabbit-hole (AXI-PMU per-master needs display-background isolation). By expected-value (value × P(clean unattended
+success)) the best move was the owner-requested §D journey article, which UNDERSOLD the achievement — it still framed accelerated X as "structurally blocked / sidestepped via offscreen
+readback." Updated docs/AI-DRIVEN-PORT-JOURNEY.md: (1) "The arc" now lists glamor GPU-accelerated 2D X, twm/WindowMaker, CPython-HTTPS/Redis/SQLite, and the gcc-16.2.0 rebase; (2) three
+new autonomous-phase entries — the glamor-on-V3D breakthrough (epoxy shim + decoupling-from-EGL/GBM/DRM insight + GPU-backed root → xeyes/xcalc/twm on HDMI), the gcc-16.2.0 rebase (arch_fs
+md_unwind fix + the libphoenix pthread `_Atomic`→plain-int-in-C++ fix for libstdc++), and the test-and-close cadence (2 real UAF bugs found+fixed; Python-HTTPS/Redis-persistence/SQLite-WAL
+closed). Accurate, publishable, matches the article's honest field-report voice. Committing+pushing. NEXT: the remaining backlog is genuinely attended/deep — next heartbeats either advance
+a big item if a bounded-safe angle appears (else document it attended-ready), or keep the loop honest (targeted hardening / accurate hand-off) rather than manufacturing low-value work.
 Continued closing §C4 deferred port-features. SQLite was HW-verified (file VFS/B-tree/journal); PROVED WAL on the netboot Pi via a write→close→reopen round-trip (sqlite3 -init
 scripts). RESULT (0 faults): with `PRAGMA locking_mode=EXCLUSIVE` set first, WAL engages (journal_mode=wal), 3 rows written, integrity_check=ok, -wal file persists to disk; a
 fresh REOPEN (also exclusive) reloads all 3 rows correctly (READROW=phoenix-wal-2, integrity ok). ⇒ single-process WAL works. **BOUNDARY FOUND:** a DEFAULT (non-exclusive) reopen
