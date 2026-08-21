@@ -528,6 +528,22 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~94 — ★ BOOT-VALIDATED the framework X11 ports on real HW (advisor course-correction: 7 ports build-verified, 0 ever run) — Xphoenix+fltk+dillo RUN, 0 faults).
+Advisor flagged the real gap: this session migrated 7 ports (libpng/libjpeg-turbo/fltk/libiconv/libffi/glib2/dillo) all BUILD-verified + if:false = NEVER RUN; and
+framework dillo links DIFFERENT libs (libjpeg-turbo not IJG jpeg-9e, real libiconv not stub) than the E2/E3-proven ad-hoc dillo, so "works" doesn't transfer.
+7 Pi-less turns on a Pi project = the procrastination my own memory warns against. So I BOOT-TESTED. Staged the framework Xphoenix(5.98M)+xterm+wmaker+dillo
+into the netboot export (ad-hoc backed up), booted, ran `pl_phoenix_xlaunch /bin/Xphoenix /usr/share/fonts/X11/misc /bin/dillo file:///root/xtest.html`.
+**RESULT (HDMI 20260821-051111-fw-x11-validate-final.png + UART, 0 faults, drift-checked = Pi ran the 5983328-byte framework Xphoenix): the framework dillo
+browser GUI renders PERFECTLY on HDMI** — menu bar, URL field, full toolbar w/ icons, status bar (heavy fltk exercise) — and dillo started with `TLS library:
+mbed TLS 2.28.0` + `Trusting 121 TLS certificates` + `dillo_dns_init` + `Nav_open_url`. ⇒ framework Xphoenix (xorg_server) + fltk + dillo (with the NEW
+libjpeg-turbo/libiconv/mbedtls) all RUN on HW. The migration binaries are SOUND. **Boot-testing caught what 7 build-verified greens hid:** (1) framework
+dillo BUILDS dpid + all .dpi plugins but the port installs only /bin/dillo → file:// content blank (`can't start dpid daemon`); the EXPORT ALSO has no dpid,
+so this is NOT a regression (http/https browse in-process for both) — but an easy port IMPROVEMENT (install the already-built dpid+.dpi → file://+downloads+
+bookmarks work, beating ad-hoc). (2) Xphoenix framework installs to /usr/bin (launcher/showcase use /bin) — reconcile a path/symlink for the flip. Restored
+the ad-hoc export to known-good. NEXT (calibrated — binaries RUN proven; codec/charset-at-RENDER not yet): one content-render cycle (host-http or file:// after
+staging dpid) with a JPEG + UTF-8 page to exercise libjpeg-turbo decode + libiconv transcode at runtime; then the X11 flip. Heed advisor: after that, resist the
+migration treadmill — weight owner headline wants (X11 DE+GPU/DRI-DRM, V3D TFU-tiling one-fix-three-bugs) over mc/nano/ncurses.
+
 2026-08-21 (session ~93 — P8: libffi 3.4.6 migrated + verified; glib2 2.56.4 (the LAST X11-flip gate) delegated to a background subagent, inputs pre-staged).
 Continued toward the X11 flip. Found glib-2.56 configure HARD-requires libffi (not optional) → migrated **libffi 3.4.6** first (ports `032a946`,
 bumped 3.3→3.4.6 for GCC-14 compat + clean $includedir install; build-verified libffi.a+ffi.h, `Done 6.3 s`). Then set up **glib2 2.56.4** (last
