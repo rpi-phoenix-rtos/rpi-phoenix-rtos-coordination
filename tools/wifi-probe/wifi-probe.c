@@ -1185,6 +1185,15 @@ static void diag_sdhciResetDatCmd(volatile uint8_t *sdhci)
 static int g_ioctl_mode = 0;
 static int g_ioctl_ran = 0;
 static uint32_t g_ioctl_is_pre = 0u;   /* intstatus before the sequence */
+/* E7 read-only SDPCM credit-window instrumentation (no gating; observe only):
+ * the fw advertises its flow-control mask (SW-hdr byte 4 = buf[8]) and credit
+ * window / max-seq (SW-hdr byte 5 = buf[9]) on every RX frame. Capture those
+ * plus the seq we actually TX so we can test whether tx_seq is inside the
+ * fw-granted window BEFORE deciding the harvest+gate fix is warranted. */
+static uint8_t g_tx_seq_used = 0xffu;
+static int g_rx_win_seen = 0;
+static uint8_t g_rx_win_last = 0xffu, g_rx_win_min = 0xffu, g_rx_win_max = 0u;
+static uint8_t g_rx_fc_last = 0xffu, g_rx_seq_last = 0xffu;
 /* GET_VERSION-via-demux validation results */
 static int g_ioctl_rc = -100;          /* BCDC status (0=ok) or negative transport error */
 static uint32_t g_ioctl_version = 0u;
@@ -1246,6 +1255,18 @@ static int diag_f2RecvFrame(volatile uint8_t *sdhci, uint8_t *buf,
 	}
 	*outlen = len;
 	*outchan = (uint8_t)(buf[5] & 0x0fu);
+	/* E7 read-only: harvest the fw-advertised SDPCM flow/credit fields (len>=12
+	 * is guaranteed above, so buf[8]/buf[9] are in-frame). Observe only. */
+	g_rx_seq_last = buf[4];
+	g_rx_fc_last = buf[8];
+	g_rx_win_last = buf[9];
+	if (g_rx_win_seen == 0 || buf[9] < g_rx_win_min) {
+		g_rx_win_min = buf[9];
+	}
+	if (buf[9] > g_rx_win_max) {
+		g_rx_win_max = buf[9];
+	}
+	g_rx_win_seen++;
 	return 0;
 }
 
@@ -1803,6 +1824,7 @@ static void diag_wifiDataTx(volatile uint8_t *sdhci, uint32_t sdio_core, uint8_t
 	g_txf[2] = (uint8_t)((~total) & 0xffu);
 	g_txf[3] = (uint8_t)(((~total) >> 8) & 0xffu);
 	g_txf[4] = seq;
+	g_tx_seq_used = seq; /* E7 read-only: record the seq we TX for the window test */
 	g_txf[5] = 0x02u; /* SDPCM channel = DATA */
 	g_txf[7] = 12u;   /* data_offset */
 	/* BDC header (4B) @12: flags = BCDC proto ver 2 << 4 */
@@ -1992,6 +2014,13 @@ static void diag_wifiJoin(volatile uint8_t *sdhci, uint32_t sdio_core)
 	if (g_join_dtx) {
 		diag_wifiDataTx(sdhci, sdio_core, seq);
 		printf("wifi: DATATX-DONE rc=%d len=%d\n", g_tx_rc, g_tx_len);
+		/* E7 read-only credit test: tx_seq vs the fw-advertised window (buf[9]).
+		 * tx_seq inside the window => credit is NOT the blocker (chase RX-of-OFFER
+		 * / BDC); tx_seq >= window => the fw rejects at SDPCM demux (harvest+gate
+		 * fix is justified). No behaviour changed -- observation only. */
+		printf("wifi: SDPCM-CREDIT tx_seq=%u rx_win_last=%u rx_win_min=%u rx_win_max=%u fc=0x%02x rx_seq_last=%u rx_frames=%d\n",
+			(unsigned)g_tx_seq_used, (unsigned)g_rx_win_last, (unsigned)g_rx_win_min,
+			(unsigned)g_rx_win_max, (unsigned)g_rx_fc_last, (unsigned)g_rx_seq_last, g_rx_win_seen);
 		fflush(stdout);
 	}
 }

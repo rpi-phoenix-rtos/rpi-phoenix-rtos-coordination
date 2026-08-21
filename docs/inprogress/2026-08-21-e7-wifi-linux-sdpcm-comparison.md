@@ -75,3 +75,35 @@ Linux reference rootfs has a reusable `wifi-sdpcm.service` capture oneshot
 all is not resolvable by reading source; the `sig 0` trace is strong evidence it does not
 for data frames, but pinning fw fwsignal state (send the `tlv` iovar either way) remains a
 possible tie-breaker if the window-gate fix alone doesn't free TX-to-air.
+
+## Experiment EXECUTED (2026-08-21 cycle e7-wifi-credit) — credit/seq REFUTED
+
+Per the advisor's "instrument read-only + tcpdump, don't blind-code" plan, I added read-only
+instrumentation to `wifi-probe.c` (no gating): `diag_f2RecvFrame` now records the
+fw-advertised SDPCM flow-mask (`buf[8]`) and credit window / max-seq (`buf[9]`) on every RX
+frame, and `diag_wifiDataTx` records the `tx_seq` it writes. Ran `wifi-probe jointx
+PhoenixNet phoenixpi2026` on HW (join → CONNECTED, WPA2 4-way keyed) with `tcpdump` on the
+host AP `wlp3s0` in parallel. Result:
+
+```
+wifi: SDPCM-CREDIT tx_seq=21 rx_win_last=62 rx_win_min=21 rx_win_max=62 fc=0x00 rx_seq_last=26 rx_frames=27
+tcpdump wlp3s0 (udp 67/68 + arp), whole cycle: 0 packets
+```
+
+**Interpretation (advisor's third branch):**
+- `tx_seq=21` is far **inside** the fw-granted window (max-seq advertised up to **62**), and
+  `fc=0x00` ⇒ the fw is **not** asserting flow-control. ⇒ **The SDPCM seq/credit window is
+  NOT the blocker — hypothesis REFUTED.** The harvest+gate fix would have been wasted; the
+  read-only cycle correctly pre-empted it.
+- tcpdump saw **0 frames on air** ⇒ this is genuinely a **TX-to-air** failure (the frame dies
+  inside the fw), **not** an RX-of-OFFER problem. The frame is handed to the fw over SDIO
+  (F2-write rc=0, seq in-window, flow clear) yet never reaches the PHY.
+
+**⇒ New prime suspect: fwsignal (proptxstatus) TX header.** With credit refuted and the BDC
+data header (flags=0x20 ver2, priority 0, flags2 0, doff 0) matching brcmfmac's *fwsignal-off*
+form, the remaining divergence is that this 43455 fw likely runs fwsignal (proptxstatus) and
+silently discards a data frame lacking a valid fwsignal descriptor. **Next experiment (pin
+first, per don't-blind-code):** re-capture the Linux baseline WITHOUT the early `dmesg -c` so
+the brcmfmac init logs the `tlv`/proptxstatus mode it negotiates for this fw; if fwsignal is
+on, add the `tlv` iovar + a minimal fwsignal TX header to the probe and re-test tcpdump. If
+fwsignal is off there too, pivot to BDC priority/AC mapping or an interface-not-tx-ready iovar.

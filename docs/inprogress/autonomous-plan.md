@@ -575,6 +575,20 @@ air ⇒ not a TX-to-air bug, chase RX-of-OFFER; no frame on air + seq within win
 `tlv`-iovar fwsignal tie-breaker, held in reserve); no frame on air + seq OUTSIDE window ⇒ hypothesis confirmed, THEN code the harvest+gate.
 This pre-validates (or saves coding) the fix in one read-only cycle. sig-0 fwsignal-inactive read stands; keep the `tlv` iovar in reserve.
 
+2026-08-21 (session ~109 — ★★ EXECUTED the advisor's read-only experiment: CREDIT/SEQ REFUTED on HW; saved coding the wrong fix).
+Instrumented wifi-probe.c READ-ONLY (diag_f2RecvFrame records fw-advertised SDPCM fc-mask buf[8] + window/max-seq buf[9] every RX
+frame; diag_wifiDataTx records its tx_seq; prints `wifi: SDPCM-CREDIT`). Built, deployed to netboot /bin, ran `wifi-probe jointx
+PhoenixNet phoenixpi2026` on HW (CONNECTED, WPA2 4-way keyed) with tcpdump on host AP wlp3s0 in parallel. RESULT: **tx_seq=21,
+rx_win_last=62 (min21/max62), fc=0x00, rx_frames=27** + tcpdump **0 packets on air**. ⇒ tx_seq(21) is FAR inside the fw window (up to
+62), fc=0x00 (no flow-control stop) ⇒ **credit/seq REFUTED — the harvest+gate fix would have been wasted** (the read-only cycle
+correctly pre-empted it, exactly the advisor's third branch); AND 0 frames on air ⇒ genuine **TX-to-air fw-internal drop, NOT an
+RX-of-OFFER bug**. **NEW PRIME SUSPECT = fwsignal (proptxstatus) TX header** (BDC 0x20/prio0/0/0 matches brcmfmac's fwsignal-OFF form;
+if this fw runs fwsignal ON it silently drops a descriptor-less data frame). Instrumented probe + doc committed+pushed (probe already
+published in coord tools/; CLM/fw blobs gitignored). **NEXT (pin-first, don't-blind-code):** re-capture the Linux baseline WITHOUT the
+early `dmesg -c` (edit the ref rootfs oneshot) so brcmfmac init logs the `tlv`/proptxstatus mode it negotiates; if fwsignal is ON, add
+the `tlv` iovar + a minimal fwsignal TX header to the probe and re-tcpdump; if OFF there too, pivot to BDC priority/AC or an
+interface-not-tx-ready iovar. (Host AP left up; Linux ref oneshot in place. WiFi firmware/CLM stays unpublished; probe source is public.)
+
 2026-08-21 (session ~107 — finalized the sysconf(_SC_NPROCESSORS) fix-path spec (precise, ready-to-implement); confirmed deferral correct; will diversify next turn).
 Followed the ~106 gap to a precise fix-path (no code change — the diagnosis is the deliverable). Traced the exact implementation: kernel adds a `pctl_cpucount`
 platformctl action in aarch64-generic (generic.h enum+union, generic.c handler returning hal_cpuGetCount() — clean/additive/ABI-stable, mirrors the
