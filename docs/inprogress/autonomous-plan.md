@@ -712,6 +712,22 @@ APPROACH: keep edits UNCOMMITTED until the build+boot verify (a broken flip must
 scripts/build-xorg-ports.sh already validated the 5 X11 ports build standalone, so the flip is de-risked; the unproven part is the
 integration (framework ports feeding the image + apps launching). Big/long build → allocate a full turn.
 
+2026-08-21 (session ~118 — investigated the 2 remaining "big" items; BOTH are unsafe/tangled for an unattended rush → pivoted to a safe GPU dig).
+★ **X11 flip is NOT a clean flip (correction to the ~117 note):** build-showcase-apps.sh also builds 5 ad-hoc X11 *demo apps* NOT migrated to
+framework ports — xedit/xcalc/xclock/xlogo/xbill (also xbill) — which bootstrap from the ad-hoc /tmp/x11-phoenix prefix. Dropping the ad-hoc
+X11-lib step to flip if:true would BREAK those apps' builds (no prefix). So the clean flip is atomic with EITHER migrating those 5 apps to
+framework ports too, OR an owner-decided drop of the toy demos (xcalc/xclock/xlogo/xbill are showcase toys; xterm/wmaker/dillo — the
+substantive stack — are already framework ports). Hasty flip = broken working showcase build ⇒ NOT unattended-safe. Real remaining work =
+migrate the 5 demo-app ports (grind, safe, gated if:false) or an owner drop-decision. ★ **Signal-push double-fault FIX #1 = ATTENDED-WORTHY
+(reconfirmed from memory project_coreutils_cksum_od_dataabort):** hit a lock-ordering blocker (map-validate needs map->lock mutex, but
+_threads_checkSignal holds a hard spinlock) → needs a hot-path threads_setupUserReturn restructure where "a mistake hangs boot"; deferred as
+not-for-unattended-rush (the real cksum/od symptom is already fixed by the 1 MiB ustack). ⇒ both big items are careful-multi-cycle/attended.
+**PIVOT (safe, real bug, proven method):** investigate vkQuake's V3DV STRIPING — the one clearly-open GPU bug, now correctly scoped as
+SEPARATE from the GL should_tile fix (V3DV path, stock upstream tiling). Dispatched a subagent to analyze whether it's a present/WSI-shim
+blit-stride issue (vkQuake runs on a V3DV WSI shim, no real WSI) or a V3DV render-target/texture descriptor stride/tiling issue — mirroring
+the V3D-GL descriptor-dump method. Safe (read-only analysis; no build-break risk). NEXT after: act on the subagent's finding (runtime V3DV
+descriptor dump if it points there), OR if inconclusive, migrate the X11 demo-app ports toward the flip.
+
 2026-08-21 (session ~107 — finalized the sysconf(_SC_NPROCESSORS) fix-path spec (precise, ready-to-implement); confirmed deferral correct; will diversify next turn).
 Followed the ~106 gap to a precise fix-path (no code change — the diagnosis is the deliverable). Traced the exact implementation: kernel adds a `pctl_cpucount`
 platformctl action in aarch64-generic (generic.h enum+union, generic.c handler returning hal_cpuGetCount() — clean/additive/ABI-stable, mirrors the
