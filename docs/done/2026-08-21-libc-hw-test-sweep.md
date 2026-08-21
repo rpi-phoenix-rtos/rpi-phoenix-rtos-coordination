@@ -56,6 +56,32 @@ netboot-critical nfs-fs path unattended; documented as environment-dependent.
   libalgo, libcache, libuuid, waitpid
 - sweep3: waitpid, statvfs, sys-perf, libtinyaes, libtrace, mprotect
 
+### Batch 4 (2026-08-21, added) — socket/poll/pthread/posixsrv
+
+| Suite | Result |
+|---|---|
+| test-libc-pthread | ✅ 13 |
+| test-libc-poll | ✅ 1 |
+| test-libc-inet-socket | ✅ 1 |
+| test-libc-unix-socket | ✅ 25 |
+| test-libc-posixsrv | ✅ 16 (after fix — see below) |
+
+These self-test via fork + loopback / AF_UNIX and run standalone (no external peer).
+
+**Bug found AND fixed — `tmpfile()` returned NULL on netboot** (posixsrv `tmpfile`
+group, 3 fails → 0). Root cause: posixsrv is a **syspage program started before
+the nfs takeover**, so its `tmpfile_init()` `mkdir("/var/tmp")` lands on the
+ephemeral dummyfs RAM root; once the NFS export becomes `/` (no `/var/tmp`),
+posixsrv's runtime backing-file `open("/var/tmp/tmpfile_N")` hits `ENOENT` and
+`tmpfile()` fails for every caller. Unlike the two fs-server gaps above, this is a
+real functional bug (SD boot's persistent root wouldn't hit it, but netboot does).
+Fix (posixsrv `8a44ce8`): `tmpfile_open` now recreates `/var/tmp` on `ENOENT` and
+retries once — self-healing against the root mounting/swapping after init.
+HW-verified: `test-libc-posixsrv` 16/16, 0 failures. Manifest
+`2026-08-21-posixsrv-tmpfile-rootswap.md`.
+
+### Not run
+
 Not run (need special setup / are intentional-fault harness tests): the
 `test-fail-*` intentional-failure fixtures, `test-mprotect-fault`, socket/poll/
 posixsrv suites (need a peer/server), `test_*` (busybox/graph/disk/fs — device-

@@ -528,6 +528,17 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~132 — ✅ sweep batch 4 + FOUND+FIXED a real bug: tmpfile() broken on netboot → posixsrv lazy /var/tmp recreate; HW-verified 16/16).
+Extended the HW test sweep to the socket/poll/pthread/posixsrv suites (the loopback/peer ones): **pthread 13, poll 1, inet-socket 1, unix-socket 25 all PASS** —
+only posixsrv's tmpfile group failed (3/16). ROOT-CAUSED (real functional bug, not a test/NFS quirk): `tmpfile()` returns NULL on netboot because posixsrv is a
+**syspage program started BEFORE the nfs takeover** (boot log line 141: posixsrv precedes `nfs;...;takeover`), so its tmpfile_init() mkdir /var/tmp lands on the
+ephemeral dummyfs RAM root; once the NFS export becomes "/" (no /var/tmp), posixsrv's runtime backing open `/var/tmp/tmpfile_N` → ENOENT → tmpfile() NULL for EVERY
+caller (Python tempfile, sort, …). The /dev/posix/tmpfile lookup itself is fine (devfs re-bound). **FIX (posixsrv 8a44ce8, pushed):** made tmpfile_open self-healing
+— on ENOENT recreate /var/tmp + retry the open once (robust to the root mounting/swapping after init; general + upstreamable; no effect on single-root SD boots).
+**HW-verified over netboot: test-libc-posixsrv now 16 Tests 0 Failures / OK** (tmpfile basic/binary/multiple all PASS). Manifest 2026-08-21-posixsrv-tmpfile-rootswap.
+This CLOSES the socket/poll/pthread/posixsrv sweep — every libc/sys/corelib suite now HW-proven, the only remaining fails being the documented NFS-fs-server gaps
+(mkfifo/readdir ./..). NEXT: pick a fresh verifiable item (qemu 11.1 host-tool; or a Tier-2 thrust — E5/E7 unattended-cautioned).
+
 2026-08-21 (session ~131 — ✅ discharged E8/G-UPSTREAM "re-verify relevance" half: turnkey attended-pass work order for the 5 still-real B-items).
 Picked E8 (owner-greenlit Tier-2). The B1–B14 audit was already done 2026-08-10 (9 FIXED incl. the B4 SMP-gate the owner suspected, 3 not-actionable-by-design);
 5 still-real (B2/B5/B7b/B8/B14). **Considered applying B14 (xHCI PORTSC RW1C over-clear) unattended** — the diff is correct-by-construction (matches the ENABLE/POWER
