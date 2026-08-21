@@ -1,5 +1,26 @@
 # CPython 3.14.4 on Phoenix-RTOS — WORK IN PROGRESS
 
+## ★ 2026-08-21 UPDATE — zlib + _ssl + _hashlib HW-VERIFIED (the sections below are stale)
+
+The port is far past the early bring-up documented below: python3 RUNS on the Pi
+(HW-verified) and the external-lib modules the old text calls "disabled" are now
+built + wired in `build.sh` (5b zlib, 5c _ssl/_hashlib) and shipped in the staged
+`/bin/python3` (PyInit_zlib / PyInit__ssl / PyInit__hashlib all present).
+
+HW-verified on netboot (2026-08-21): `/bin/python3 /selftest_zlib.py` → `ZLIB-OK`
+(zlib 1.2.11: compress/decompress/crc32/adler32/streaming all correct);
+`/bin/python3 /selftest_ssl.py` → `SSL-OK` (`OpenSSL 1.1.1a`, `ssl.create_default_context`
+OK, `HAS_TLSv1_2`, openssl-backed `hashlib.sha256` correct). ⇒ Python has working
+**gzip/zlib compression + TLS/SSL + OpenSSL hashlib** on Phoenix.
+
+Known minor gap: `hashlib.blake2b`/`blake2s` raise `ValueError: unsupported hash
+type` (non-fatal — hashlib probes + catches). The builtin `_blake2` C module (no
+external lib) isn't in the build; sha2/sha1/md5 (openssl) work. Enable `_blake2`
+in Setup.local + rebuild if blake2 is wanted (low priority). HTTPS end-to-end
+(selftest_https.py) is pending a Pi cycle with the host NAT gateway up (the ssl
+module itself is confirmed; E2/E3 proves the NAT path).
+
+
 Big multi-cycle port (owner-sanctioned). CPython is PSF-licensed (permissive).
 Resume with `build.sh` (idempotent) then `make` in the build tree.
 

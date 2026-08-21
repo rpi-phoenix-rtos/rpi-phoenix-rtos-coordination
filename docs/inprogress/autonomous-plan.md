@@ -528,6 +528,17 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~143 — ✅ FINALIZE-FIRST win: CPython zlib + _ssl + _hashlib HW-VERIFIED on Pi4 → Python gzip + TLS/SSL + OpenSSL hashlib work).
+Pivoted off E5 (core done+robust+reproducible) to finalize a deferred port feature (owner A20 "revisit ports' unfinished parts" + FINALIZE-FIRST). Found the staged
+/bin/python3 already has PyInit_zlib/PyInit__ssl/PyInit__hashlib built in (build.sh 5b/5c wiring shipped Aug 20) but with NO recorded HW verification (memory said "deferred").
+HW-VERIFIED on netboot (self-contained selftests, no network): `/bin/python3 /selftest_zlib.py` → **ZLIB-OK** (zlib 1.2.11 compress/decompress/crc32/adler32/streaming all
+correct); `/bin/python3 /selftest_ssl.py` → **SSL-OK** (OpenSSL 1.1.1a, ssl.create_default_context OK, HAS_TLSv1_2, openssl-backed hashlib.sha256 correct). ⇒ Python now has
+working **gzip/zlib + TLS/SSL + OpenSSL hashlib** on Phoenix — a real capability, banked. No build/code change (modules were already built; this was the missing HW verify).
+Minor gap: hashlib.blake2b/blake2s raise "unsupported hash type" (non-fatal; builtin _blake2 module not in the build — sha2/sha1/md5 via openssl work). Updated STATUS.md
+(was stale/pre-runtime) + memory. NEXT candidates: (a) Python HTTPS end-to-end (selftest_https.py) with the host NAT gateway up = the killer demo (Python fetches a live HTTPS
+URL on Phoenix); (b) enable _blake2 (small, needs a CPython rebuild); (c) a fresh Tier-2 (E10 gcc 16.2.0 rebase assessment — current toolchain is gcc-14.2.0 + 11 phoenix patches;
+big/risky; or E7 WiFi = attended/unpublished). Leaning (a) HTTPS-e2e next (tangible + builds on E2/E3 NAT).
+
 2026-08-21 (session ~142 — ✅ E5: WM-managed desktop (twm+xeyes) renders GPU-accelerated under glamor, 0 faults; ⚠️ CONFIRMED single-GPU-process constraint (2nd GPU proc → EL1 abort)).
 Added a reusable `--server <path>` option to pl_phoenix_xlaunch (run convenience modes under a custom server; backward-compat; committed) → ran WM desktops under Xphoenix-glamor.
 **RESULT desktop mode (twm + xeyes, all X rendered via the server's glamor = ONE GPU proc):** server up → glamor GPU root + readback FBO complete → twm + xeyes up, **0 faults**;
