@@ -528,6 +528,19 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~105 — genuine syscall-gap hunt (standing "implement missing libc" rule) → NO gaps in the exercised surface; noted a netboot-python-stdlib deployment nuance).
+Ran a genuine, directive-aligned investigation (not a manufactured feature): exercised the ecosystem on HW hunting for kernel/libphoenix `#Syscall
+(unimplemented)` / "not implemented" warnings (the standing forcing-function rule). Ran `id` (uid/gid/**getgroups** all correct), and a python
+syscall-surface probe; **NO unimplemented-syscall warnings surfaced** ⇒ the common syscall surface (getpid/getuid/getgid/getgroups/…) is gap-free —
+a clean negative result (verification, no fix needed). FINDING (tangential, not a libphoenix gap): the netboot export's **python3 is stdlib-degraded**
+— `Could not find platform dependent libraries <exec_prefix>` + imports fail, because the pure-python stdlib wasn't staged into the hand-maintained
+export. Staged `/lib/python3.14` + `/usr/local/lib/python3.14` (428K; most stdlib is frozen into the static binary) but python's getpath still can't
+locate exec_prefix (needs the exact compiled prefix or PYTHONHOME, which psh can't set) — a netboot-deployment nuance, NOT a code bug (python3 is
+HW-validated on the SD image). Did NOT chase python's getpath further (tangential rabbit hole). Also hit the intermittent netboot firmware-TFTP flake
+again (`b75b156a/start4.elf not found` → "Firmware not found"; firmware IS in the bootfs; a retry booted — same transient as ~99; NOT deep-diving the
+risky netboot infra unattended). NET: verified the common syscall surface is gap-free; netboot-python-getpath noted as a low-value deployment TODO.
+State unchanged: autonomous high-value backlog complete; remainder owner-gated. NEXT: hold for owner decisions + genuine small closures only (no make-work).
+
 2026-08-21 (session ~104 — §D TD-Eth-LinkIRQ RESOLVED (accept MDIO-poll, correct call); confirmed no manufactured features per the just-written journey-takeaway).
 Closed the genuine remaining §D technical tech-debt item TD-Eth-LinkIRQ. Assessed the genet link-status mechanism: driver uses a 1 Hz MDIO-poll thread
 (genet_linkPollThread); GENET's own MAC-internal INTRL2_0 LINK_UP/DOWN interrupts exist (bcm-genet-regs.h) but are deliberately left masked
