@@ -528,6 +528,20 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~95 — ★★ CONTENT-RENDER VALIDATED: framework dillo renders a full http page + libjpeg-turbo JPEG decode CONFIRMED on HDMI, 0 faults).
+Closed the calibrated residual from ~94 (codec-at-render). Served a UTF-8+JPEG page over http from the netboot host (10.42.0.1:8099, python http.server;
+in-process dillo fetch = the E2/E3 path, no dpid), re-staged framework Xphoenix+dillo, booted, ran `pl_phoenix_xlaunch … /bin/dillo http://10.42.0.1:8099/
+test.html`. **HDMI (20260821-052059-fw-render-final.png): the framework dillo renders the FULL page** — green CSS heading, text/layout, `Images 1 of 1`,
+and DECISIVELY **the IJG canonical rose JPEG decoded + displayed correctly by framework libjpeg-turbo 3.0.4** (UART: Nav_open_url + Dns_server 10.42.0.1 +
+Connecting; 0 faults). ⇒ **the advisor's sharpest concern is CLOSED: libjpeg-turbo (vs IJG jpeg-9e) genuinely decodes on HW.** Framework dillo now
+comprehensively HW-proven: Xphoenix + fltk GUI + mbedTLS/121-certs + http + HTML engine + libjpeg-turbo. Caveats (honest): my UTF-8 test line was a
+page-gen bug (`printf %s` doesn't expand \x → literal text, not real UTF-8) so libiconv-at-render is inconclusive from this test — but libiconv is linked
+(0-undefined), the binary runs, and real libiconv is a strict SUPERSET of the ASCII/UTF-8 stub that already worked; plus core XLFD fonts lack α/✓/€ glyphs
+so a glyph-render test can't cleanly isolate libiconv anyway → low residual risk, not worth a cycle. Stopped the http server, restored the ad-hoc export to
+known-good. **★ The 7-port migration campaign (libpng/libjpeg-turbo/fltk/libiconv/libffi/glib2/dillo) is now BOTH build-verified AND HW-runtime-validated.**
+NEXT (heed advisor — resist the migration treadmill): pivot to owner HEADLINE wants — V3D TFU-tiling bug (one fix → quake3 lightmap + quake2 speckle +
+vkQuake striping), or X11 DE+GPU/DRI-DRM (G-GPU glamor), over more mc/nano/ncurses. The X11 if:true flip (mechanical rewire + build+boot) remains available.
+
 2026-08-21 (session ~94 — ★ BOOT-VALIDATED the framework X11 ports on real HW (advisor course-correction: 7 ports build-verified, 0 ever run) — Xphoenix+fltk+dillo RUN, 0 faults).
 Advisor flagged the real gap: this session migrated 7 ports (libpng/libjpeg-turbo/fltk/libiconv/libffi/glib2/dillo) all BUILD-verified + if:false = NEVER RUN; and
 framework dillo links DIFFERENT libs (libjpeg-turbo not IJG jpeg-9e, real libiconv not stub) than the E2/E3-proven ad-hoc dillo, so "works" doesn't transfer.
