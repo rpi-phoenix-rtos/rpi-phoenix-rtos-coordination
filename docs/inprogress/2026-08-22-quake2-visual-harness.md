@@ -103,12 +103,16 @@ Two ways to drive it:
 1. **Command line** (mirrors the host script):
    ```
    quake2 +set vid_renderer gl1 +set s_initsound 0 \
+     +set r_mode -1 +set r_customwidth 1024 +set r_customheight 768 \
      +set cl_particles 0 +set con_notifytime 0 +set fixedtime 50000 +set timedemo 1 \
      +set scr_capture 5 +set scr_capture_max 120 +set scr_capture_dir /nfstest/q2cap \
      +demomap q2demo1.dm2
    ```
 2. **`baseq2/autoexec.cfg`** (if launching via psh without args):
    ```
+   set r_mode -1
+   set r_customwidth 1024
+   set r_customheight 768
    set cl_particles 0
    set con_notifytime 0
    set fixedtime 50000
@@ -118,6 +122,13 @@ Two ways to drive it:
    set scr_capture_dir "/nfstest/q2cap"
    demomap q2demo1.dm2
    ```
+**MANDATORY: matched resolution.** `quake-visual-compare.py` pairs by index and needs
+identical WxH; the host reference is 1024×768 (`r_mode -1` + custom w/h). The Pi launch
+**must** set the same three cvars. If the Phoenix SDL2/fbdev backend cannot honor
+1024×768 on the Pi (unverified here — no Pi run), instead set the Pi's actual capture
+resolution and re-run the host script with `WIDTH`/`HEIGHT` overridden to match it. Q1
+used 1024×768 on both host and Pi, so that is the intended target.
+
 `scr_capture_dir` should point at a host-visible export (as with Q1) or, if the NFS-write
 bug bites, add a TCP-sink like Q1 (`scr_capture_host`) — not needed for host-only work.
 
@@ -129,9 +140,20 @@ bug bites, add a TCP-sink like Q1 (`scr_capture_host`) — not needed for host-o
 → per-frame SSIM (world), hud_ssim (HUD), blacktex% (black-object bug), + montages.
 
 ## Risks / open for the Pi run
-- The `phxgl_capture_gl` scanout readback is a direct Q1 port but **unverified on Pi**. If
-  Pi frames come back noise/black, that's the first thing to check (it worked for Q1's
-  identical glue, so expected OK).
+- The `-DYQ2CAP_PHOENIX` `phxgl_capture_gl` branch in `gl1_sdl.c` is **both compile- and
+  runtime-unverified**: the native host build only compiles the `#else` `glReadPixels`
+  path, and a Phoenix cross-compile of `gl1_sdl.c` needs `libSDL2.a`/the SDL2 port headers
+  (not built here). `gl1_main.c` (the gate one-liner) DID cross-compile clean. The branch
+  is trivial C mirroring `gl1_misc.c`, and `phxgl_capture_gl` is confirmed present in the
+  linked glue — low risk — but the next Pi cycle should watch for a build error there
+  first, then for noise/black frames (would mean the scanout readback needs adjusting;
+  Q1's identical glue worked, so expected OK).
+- **The hook lives only as a local commit (`ea5d7ae`) on top of pinned `YQ2_SHA` in the
+  gitignored `external/yquake2` clone.** A fresh `git clone yquake2 && checkout YQ2_SHA`
+  (per the port README) gets the Phoenix port patch but NOT this capture commit, so a
+  clean-build machine would silently build without capture. Consistent with how Q1's
+  `external/quakespasm` carries local commits; fine for the next Pi cycle on THIS host. If
+  a clean-build release is ever in scope, this commit must reach the fork-mirror.
 - If the demo desyncs (frame N differs structurally, not just filtering), re-check that the
   Pi honors `fixedtime`/`timedemo` (both are stock yQuake2 `common/frame.c`, no Phoenix
   patch, so they should) and that `cl_particles 0` took.
