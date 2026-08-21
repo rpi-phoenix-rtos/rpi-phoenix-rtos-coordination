@@ -528,6 +528,22 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~104 — §D TD-Eth-LinkIRQ RESOLVED (accept MDIO-poll, correct call); confirmed no manufactured features per the just-written journey-takeaway).
+Closed the genuine remaining §D technical tech-debt item TD-Eth-LinkIRQ. Assessed the genet link-status mechanism: driver uses a 1 Hz MDIO-poll thread
+(genet_linkPollThread); GENET's own MAC-internal INTRL2_0 LINK_UP/DOWN interrupts exist (bcm-genet-regs.h) but are deliberately left masked
+(bcm-genet.c genet_irqThread), and the external PHY INT_B isn't GIC-routed on the Pi4. **RESOLVED-BY-DECISION: accept MDIO-poll as the portable
+answer** — the correct call (NOT a cop-out): Linux AND U-Boot both MDIO-poll on this board (if GENET's LINK_UP IRQ were the reliable path they'd use
+it), link changes are rare so 1 s latency is fine, wiring the IRQ adds regression risk to the netboot-CRITICAL eth link for no benefit the poll doesn't
+already give, and validating an interrupt-driven link *change* needs cable plug/unplug = a live test anyway. Documented in the TD ledger (RESOLVED) +
+plan §D + removed from the open-TD subset. Per my own journey-article takeaway ("late in a long run, the honest move is a clean evidence-backed hand-off,
+not a manufactured feature"), I explicitly did NOT invent a demo-feature this turn. **State: the autonomous high-value + tractable-unattended backlog is
+now COMPLETE** (Tier-1 done/handed-off; P8 X11-stack migrated+boot-validated; P9 Mesa source-done + wpa_supplicant done + qemu deferred; §D journey
+article finalized + TD-Eth-LinkIRQ resolved; FIONREAD tty gap fixed; V3D + bash-interactive + SDL2-mouse cleanly localized/handed-off). Everything of
+value now remaining is OWNER-GATED: the §-owner-decisions (DRI/DRM GO, XFce/LXQt-vs-WindowMaker, v3d→devices feasibility [entangled w/ DRI/DRM],
+ffmpeg-HW, WiFi data-plane, upstream B1–B14, licensing, gcc, tool-boundary) + owner live tests (bash interactive, SDL2 mouse, batched game retests) +
+the V3D read-side winsys fix (deep/attended). NEXT: hold for owner decisions; do genuine small hardening/closures if any surface; keep surfacing the
+owner-decision asks (highest leverage — unblocking the owner unblocks the big Tier-2 work).
+
 2026-08-21 (session ~103 — §D Journey article FINALIZED (added the latest wave); P9 qemu 11.1 deferred as low-ROI; autonomous high-value backlog confirmed complete/owner-gated).
 Technical Tier-1 backlog complete/handed-off; picked the sanctioned §D non-code deliverable with genuine value for the to-be-published project: finalized
 docs/AI-DRIVEN-PORT-JOURNEY.md (owner: "draft exists; review/finalize"). Added a new "autonomous phase" wave the 273-line draft was missing — the

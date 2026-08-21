@@ -1827,11 +1827,22 @@ lwip-port concern). Each marker has a `TODO(TD-Eth-…)` comment in source.
   true; the mailbox path leaves the unicast filter active. 5/5 pings
   still succeed (RTT 0.66–1.42 ms), confirming the filter accepts
   unicast destined for the real board MAC.
-- **TD-Eth-LinkIRQ** — link-state interrupts. The BCM54213PE PHY has
-  an `INT_B` output but it isn't routed to a GIC SPI on the Pi 4
-  board (Linux and U-Boot both MDIO-poll). Tier 5 keeps the 1 Hz
-  `genet_linkPollThread`. Revisit if a future board variant exposes
-  the line.
+- **TD-Eth-LinkIRQ** — link-state interrupts. **RESOLVED-BY-DECISION
+  (2026-08-21): accept MDIO-poll as the portable answer.** Two IRQ
+  routes were considered and both rejected: (1) the BCM54213PE PHY's
+  `INT_B` output is not routed to a GIC SPI on the Pi 4 board — and
+  **Linux and U-Boot both MDIO-poll here** for exactly this reason;
+  (2) GENET's own MAC-internal `INTRL2_0_LINK_UP`/`LINK_DOWN` sources
+  exist (bcm-genet-regs.h) but are deliberately left masked
+  (bcm-genet.c genet_irqThread) — the fact the reference drivers poll
+  rather than use them indicates they aren't the reliable path on this
+  config, so wiring them would add complexity + regression risk to the
+  **netboot-critical** eth link with no benefit the poll doesn't
+  already give. The 1 Hz `genet_linkPollThread` stays as the correct,
+  portable mechanism (matches Linux/U-Boot; link changes are rare so
+  1 s latency is fine; validating an interrupt-driven link *change*
+  needs cable plug/unplug events = a live-attended test anyway).
+  Revisit only if a future board variant routes `INT_B` to the GIC.
 - **TD-Eth-Stats** — RESOLVED 2026-05-25 in lwip `b261265`. Counters
   are surfaced via the new lwip-port UDP diag responder on port
   9999. A generic `netif_driver_t.stats` callback (NULL-safe) lets
@@ -1928,7 +1939,7 @@ longer needed.
 | TD-Eth-DHCP | ✅ RESOLVED 2026-05-28 (lwip `7f0b495`) | autonomous DHCP verified end-to-end via test-cycle-netboot.sh --probe q + scripts/get-pi-ip.sh; probe captured `netif: en1 ip=10.42.0.12 gw=10.42.0.1 flags=0x1f UP LINK DHCP` (artifact 2026-05-28-...-dhcp-clean-probe.txt) |
 | TD-Eth-MAC | RESOLVED 2026-05-25 (lwip `79bd607`) | mailbox `GET_BOARD_MAC` plumbed in `genet_mboxGetMac()` |
 | TD-Eth-Promisc | RESOLVED 2026-05-25 (lwip `79bd607`) | PROMISC only on `mac_is_fallback` path |
-| TD-Eth-LinkIRQ | PENDING | PHY `INT_B` not routed to GIC SPI on Pi 4 board; MDIO poll is the portable answer |
+| TD-Eth-LinkIRQ | RESOLVED (accept poll) | PHY INT_B not GIC-routed + GENET internal LINK_UP left masked; Linux/U-Boot both poll; 1 Hz genet_linkPollThread is the portable answer (2026-08-21) |
 | TD-Eth-Stats | RESOLVED 2026-05-25 (lwip `b261265`) | surfaced via lwip-port diag UDP responder (port 9999) + per-driver `stats` callback |
 | TD-Pi4-FalseSharingPenalty | RESOLVED 2026-05-25 (lwip `ea936d3`) | classic false sharing on a 64B cache line; per-slot `_Alignas(64)` padding restored plain `volatile ++` to ALU-speed. No kernel work needed. |
 | TD-Git-Branches | PENDING (deferred per user 2026-06-01) | Sibling repos sit on inconsistent branches: `codex/upstream-sync-20260516` (libphoenix, build, devices, filesystems, project, utils, plo), `master` (corelibs, doc, hostutils, ports, posixsrv, tests, usb), `agent/rpi4-program-reloc` (kernel), `agent/rpi4-genet` (lwip). All commits are on each repo's checked-out branch (nothing lost). Single-contributor local-only project → consolidate to one consistent scheme (per-repo `master`, or a shared `rpi4`), merge everything, update rollback tooling (`manifests/*.md` + `scripts/{snapshot,restore}-integration-state.sh` record per-repo branch). Tracked as task #128. Not urgent. |

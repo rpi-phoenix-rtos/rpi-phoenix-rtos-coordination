@@ -114,7 +114,7 @@ Owner ran the ports on real HW. "Finalizing a port = being able to actually run 
 - ⛔ **CNN on GPU (A8) → RULED OUT with the current approach — see §F.** (was mis-listed as a to-do; it's investigated + shelved, not fresh work.)
 - 📋 **Mesa patch-series rebase onto released 26.2.0** (A25/E2) — move our local patches from 26.2.0-rc1 to the released 26.2.0 tag; keep patches in-repo; pin the single release tag/tarball as reference; NO full fork.
 - 📋 **qemu 11.1 host toolchain** (A23 / TD-07/08) — update host qemu; re-test boot under qemu+gdbstub.
-- 📋 **TD-Eth-LinkIRQ** — route PHY INT_B to GIC SPI (or accept MDIO-poll as the portable answer).
+- ✅ **TD-Eth-LinkIRQ — RESOLVED (accept MDIO-poll)** (2026-08-21): PHY INT_B not GIC-routed on Pi4 + GENET internal LINK_UP left masked; Linux/U-Boot both poll; keep the 1 Hz genet_linkPollThread (portable, matches reference, no regression risk to the netboot-critical eth path). See TD ledger.
 - 📋 **Propose-own impressive feature** (A32) — arguably satisfied by RAM-staging + the ports ecosystem; can propose a fresh one if wanted.
 - 📋 **Journey article** (`docs/AI-DRIVEN-PORT-JOURNEY.md`) — draft exists; owner review/finalize.
 
@@ -213,7 +213,7 @@ per big feature; also the pre-publish gate. **Known-stale inventory (found 2026-
 - **~~Un-pushed commit e498158~~ (CORRECTED 2026-08-21):** e498158 is an sdl2 window-events commit and is ALREADY on publish/master — agent misidentified it; no action. Real hygiene check ran: coord + all siblings are pushed EXCEPT phoenix-rtos-lwip, which carries 5 local commits (FIONBIO/#68, getnameinfo OOB, genet header, poll-readiness wakeup, comment) ahead of publish/master — this is the EXPECTED lwip state (lwip publishes via a filtered cherry-pick onto a scrubbed tip to keep the WiFi subtree out; NEVER raw-push). Not lost work.
 - **Verify upstream-sync SHAs:** the 2026-08-12 "16 siblings synced" claim supersedes an earlier "Batch 3 banked as unsafe" note — confirm against actual sibling SHAs.
 - **Stale docs to update/retire:** `tracking/current-step.md` (2026-06-09), `status.md` (2026-08-12); several WiFi/SD/B2 `docs/inprogress/*` say "parked/not-validated" but memory reports resolved.
-- **Tech-debt open subset:** TD-06 (DTB single-IRQ-ctrl, 1/2/8 GiB unvalidated), TD-07/08 (qemu), TD-10 (SError, HW), TD-15-remaining (**plo syspage map hardcoded — mis-maps 2/8 GiB boards**), **TD-19 (doc says `dsb;isb` but source `hal_tlbInval*` ends `dsb ish` only — pre-publish reconcile, do not edit unattended)**, TD-20 (dc zva off, perf-only), TD-Eth-LinkIRQ, TD-Git-Branches(#128).
+- **Tech-debt open subset:** TD-06 (DTB single-IRQ-ctrl, 1/2/8 GiB unvalidated), TD-07/08 (qemu), TD-10 (SError, HW), TD-15-remaining (**plo syspage map hardcoded — mis-maps 2/8 GiB boards**), **TD-19 (doc says `dsb;isb` but source `hal_tlbInval*` ends `dsb ish` only — pre-publish reconcile, do not edit unattended)**, TD-20 (dc zva off, perf-only), TD-Git-Branches(#128).
 - **Untracked `_user/ext2conc/` repro** — closed-hypothesis tool, recommend drop (owner OK).
 - **NFS first-lookup-after-psh transient ENOENT (#156)** — kernel root-resolver race, parked (low impact, retry works).
 
