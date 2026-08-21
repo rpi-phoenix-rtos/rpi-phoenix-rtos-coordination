@@ -528,6 +528,17 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~140 — ✅ E5 robustness HARDENED: xcalc (complex Xaw widget app + text) renders correctly via glamor on HW, 0 faults — not a one-app fluke).
+Stress-tested the glamor-accelerated path with a much harder workload than xeyes: xcalc (full button grid + labels + display = glamor Composite/Copy/CopyArea + GLYPH
+rendering). Ran `pl_phoenix_xlaunch /bin/Xphoenix-glamor /usr/share/fonts/X11/misc /bin/xcalc` on the netboot Pi. **UART (log ...-glamor-xcalc, 0 fault lines whole log):**
+server up → GL up → glamor initialised → `screen pixmap GL-texture-backed (tex=1) — GPU root` → readback FBO complete. **HDMI snapshot: xcalc renders as a complete, correct
+calculator** — button grid with readable labels (INV/sin/cos/tan/log/EE/STO/RCL/SUM/DEG/digits/operators) + DEC display, text upright + readable. ⇒ glamor's Composite/glyph/
+copy paths work for a real widget app on V3D GL, 0 faults ⇒ E5 GPU-accel-X is ROBUST beyond the xeyes proof. (Cosmetic: window at bottom-left = no-WM default placement, not
+a bug.) No code changed (test only). **E5 status: CORE OBJECTIVE done + robustness-confirmed on 2 apps (xeyes fills, xcalc widgets+text).** NEXT E5 polish (all owner-reviewable,
+pick per priority): full desktop (twm + multi-app via a small launcher tweak to run convenience modes under a custom server) to stress WM decorations + compositing; zero-copy
+present (st_context_teximage/scanout) vs the glReadPixels blit (perf); make glamor a first-class build-xserver-core.sh flag (retire the ad-hoc --enable-glamor tree); owner
+perf/visual sign-off; then the video-in-window half of E5. Could also pivot to another Tier-2 (E7 WiFi data-plane / E10 gcc) now that E5's headline is banked.
+
 2026-08-21 (session ~139 — ✅✅✅ E5 CORE OBJECTIVE ACHIEVED + VISUALLY CONFIRMED ON HW: glamor GPU-accelerated 2D X on V3D 4.2 renders xeyes correctly to HDMI, 0 faults).
 Reviewed + committed the M1b-step-1 impl (subagent-built, guarded, Xephyr-pattern), built Xphoenix-glamor myself (links 0 undef), staged + ran the HW cycle.
 **UART (log 20260821-200345-glamor-m1b1, 0 fault lines in the WHOLE log):** server socket up → `glamor-phx: GL up; 2.1 Mesa / V3D 4.2.14.0` → `[fbdev] glamor initialised`
