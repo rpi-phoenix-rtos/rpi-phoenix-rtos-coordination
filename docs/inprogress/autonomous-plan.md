@@ -561,6 +561,13 @@ untouched); helps any modern C++ compiler. E10 status: the gcc-16 REBASE is prov
 C+C++ toolchain builds to a separate prefix). REMAINING = attended M1 only: (a) rebuild+revalidate ALL Phoenix (kernel/libphoenix/ports) under gcc-16 + swap .toolchain (new-major
 breakage surface → owner-attended); (b) C++23 import-std header-completeness (libphoenix <cmath>/<cstdlib> std:: exports — optional; classic #include C++ works). Do NOT swap
 .toolchain unattended. NEXT: E10 is at a clean, well-banked milestone (full gcc-16 toolchain proven) — pivot to another item; the remaining E10 is owner-attended M1.
+UPDATE (session ~156): ✅ E10-M0 FULLY CLOSED OUT — the validated gcc-16.2.0 rebase patch set is now COMMITTED to phoenix-rtos-build (20bc28f, INERT: build-toolchain.sh GCC=
+stays gcc-14.2.0, so gcc-16.2.0-*.patch are copied-but-not-applied → current build unaffected). So the whole E10 port work is durable in-repo (patches + libphoenix 94df683 +
+plan doc) → the M1 swap is turnkey. Assessed M1-unattended + REJECTED: rebuild-rpi4b-fast.sh uses a FIXED .buildroot, so a gcc-16 Phoenix build would CONTAMINATE the working
+gcc-14 build state (mixing objects) — plus the attended runtime-breakage judgment. ⇒ M1 (rebuild+revalidate all Phoenix under gcc-16 + swap .toolchain) is correctly owner-attended;
+the toolchain + patches are ready for it. E10 DONE to the unattended-safe boundary. Remaining backlog is now largely attended (M1 gcc-swap, X11 keypress, audio, bash -i),
+tangled (X11 if:true flip needs glib2/fltk/dillo migration), or deep/hard (E7 WiFi fw-wall, E6 ffmpeg-HW VCHIQ). NEXT heartbeat: pick the best bounded item (e.g. a §C4 port-
+feature like Redis persistence, or the X11-migration integration) — the easy high-value backlog is thinning; lean toward concrete port-feature completions or owner-prep.
 UPDATE (session ~146): M0 build PROGRESSING well + SAFE (building to .toolchain-gcc16, .toolchain untouched). ★ all 4 aarch64 gcc patches applied CLEAN (04/05/09 clean —
 incl the 05-libstdcpp configure patch I'd flagged as the reject-risk; 11-aarch64 needed one no-op hunk dropped). **binutils-2.43 built + installed** (aarch64-phoenix-ar/as/ld/nm
 present); gcc-16.2.0 now compiling (25 parallel procs, still in stage1 support-libs). Detached build (log ~/.claude/jobs/aa2bf3f6/tmp/build-gcc16.log); Bash caps at 10min so
