@@ -1833,17 +1833,18 @@ static void diag_wifiDataTx(volatile uint8_t *sdhci, uint32_t sdio_core, uint8_t
 	 * 8-byte HWEXT glom descriptor on data frames -- confirmed by capturing
 	 * Linux's real TX data-frame bytes, see
 	 * docs/inprogress/2026-08-21-e7-wifi-linux-sdpcm-comparison.md).
-	 * Layout: HW(4) + HWEXT(8) + SW(8) + BDC(4) + eth; doff = tx_hdrlen = 20,
-	 * head_pad = 0 (g_txf is buffer-aligned). The bare non-glom frame we used
-	 * before (SW@4, BDC@12, doff=12) was silently dropped by the fw before the
-	 * 802.11 TX queue -- the whole "reaches fw not air" wall. */
+	 * Layout matches Linux's captured frame EXACTLY: HW(4) + HWEXT(8) + SW(8) +
+	 * head_pad(2) + BDC(4) + eth; doff = tx_hdrlen(20) + head_pad(2) = 22, BDC@22,
+	 * eth@26. (Linux's head_pad=2 comes from its skb alignment; we replicate it
+	 * byte-for-byte to rule the frame layout in or out.) The bare non-glom frame
+	 * we used before (SW@4, BDC@12, doff=12) was silently dropped by the fw. */
 	{
-		uint32_t glom_total = 24u + (uint32_t)elen; /* whole frame incl 4B HW tag */
+		uint32_t glom_total = 26u + (uint32_t)elen; /* whole frame incl 4B HW tag */
 		uint32_t hwext;
 		int j;
-		/* shift the already-built 802.3 frame from offset 16 -> 24 (backwards; regions overlap) */
+		/* shift the already-built 802.3 frame from offset 16 -> 26 (backwards; regions overlap) */
 		for (j = elen - 1; j >= 0; --j) {
-			g_txf[24 + j] = g_txf[16 + j];
+			g_txf[26 + j] = g_txf[16 + j];
 		}
 		/* HW header [0-3]: len + ~len */
 		g_txf[0] = (uint8_t)(glom_total & 0xffu);
@@ -1857,21 +1858,30 @@ static void diag_wifiDataTx(volatile uint8_t *sdhci, uint32_t sdio_core, uint8_t
 		g_txf[6] = (uint8_t)((hwext >> 16) & 0xffu);
 		g_txf[7] = (uint8_t)((hwext >> 24) & 0xffu);
 		g_txf[8] = 0u; g_txf[9] = 0u; g_txf[10] = 0u; g_txf[11] = 0u; /* tail_pad = 0 */
-		/* SDPCM SW header [12-19]: seq, channel=DATA(2), nextlen=0, doff=20 */
+		/* SDPCM SW header [12-19]: seq, channel=DATA(2), nextlen=0, doff=22 */
 		g_txf[12] = seq;
 		g_tx_seq_used = seq; /* E7 read-only: record the seq we TX for the window test */
 		g_txf[13] = 0x02u; /* channel = DATA */
 		g_txf[14] = 0u;    /* nextlen */
-		g_txf[15] = 20u;   /* data_offset = tx_hdrlen (HW 4 + HWEXT 8 + SW 8) */
+		g_txf[15] = 22u;   /* data_offset = tx_hdrlen(20) + head_pad(2), matches Linux */
 		g_txf[16] = 0u; g_txf[17] = 0u; g_txf[18] = 0u; g_txf[19] = 0u;
-		/* BDC header [20-23] @ doff: flags = BCDC proto ver 2 << 4; prio/flags2/doff = 0 */
-		g_txf[20] = 0x20u;
-		g_txf[21] = 0u; g_txf[22] = 0u; g_txf[23] = 0u;
+		g_txf[20] = 0u; g_txf[21] = 0u; /* head_pad (2 bytes) -> BDC lands at 22 like Linux */
+		/* BDC header [22-25] @ doff: flags = BCDC proto ver 2 << 4; prio/flags2/doff = 0 */
+		g_txf[22] = 0x20u;
+		g_txf[23] = 0u; g_txf[24] = 0u; g_txf[25] = 0u;
 		total = glom_total;
 	}
 
 	diag_setWindow18(sdhci);
 	wlen = (total + 3u) & ~3u;
+	/* E7: dump the on-wire TX frame header so we can diff it byte-for-byte
+	 * against Linux's captured glom data frame (measure, don't infer). */
+	printf("wifi: TXFRAME wlen=%u total=%u hdr=", (unsigned)wlen, (unsigned)total);
+	for (i = 0; i < 28; ++i) {
+		printf("%02x ", (unsigned)g_txf[i]);
+	}
+	printf("\n");
+	fflush(stdout);
 	rc = diag_sdioCmd53WriteByteMode(sdhci, 2, /*incr=*/1, IOCTL_F2_ADDR, wlen, g_txf);
 	if (rc != 0) {
 		diag_sdhciResetDatCmd(sdhci);

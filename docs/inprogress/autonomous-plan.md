@@ -630,6 +630,19 @@ USB-enum-spam (maybe remove the re-enumerating USB mouse), then `wifi-probe join
 launched cleanly (do NOT pkill the launcher) → confirm AP rx_bytes jumps +DISCOVER. Fallback if post-join glom-enable fails: enable glom
 during bring-up (preinit timing like brcmfmac). This is the payoff cycle — the root cause + fix are done; only a clean HW confirm remains.
 
+2026-08-21 (session ~113 — E7 DEFINITIVE: glom FRAME format ruled out too; data-plane = resident-driver territory. Rotating to V3D next.)
+Clean cycles this turn (no boot flakiness). Added a TXFRAME hex-dump → Phoenix's data frame is now BYTE-IDENTICAL to Linux's captured
+glom frame (HWEXT@4, SW@12, doff=22, BDC@22, head_pad=2). HW result: join CONNECTED+keyed, STA authorized@AP, bus:txglomalign/rxglom
+both rc=0 (fw accepts glom), valid src MAC, byte-perfect glom frame, F2-write rc=0 — **but rx_bytes STILL FLAT at 774 (NO egress),
+tcpdump 0.** Five frame variants tried, none egress. Advisor's decision-tree: "bytes match + still flat ⇒ frame is NOT the
+differentiator; it's the fw glom-mode running STATE (preinit-timing gap)." **VERDICT: standalone probe CANNOT fix this** — brcmfmac
+enables txglom at preinit (before assoc) coupled with a glom-aware RX reader; post-join enable doesn't re-plumb the running data path,
+and preinit-enable needs a de-glom RX the single-frame probe lacks (why rxglom broke cur_etheraddr). ⇒ **RESIDENT-DRIVER territory**
+(rpi4-wifi: preinit txglom + glom RX de-glom + bus state machine). **E7 standalone-probe scope = DONE/characterized** (control+assoc+key
+work; data frame byte-perfect + SDIO-accepted; missing piece precisely identified). The data-plane is a separate larger owner-scoped
+driver effort. All committed+pushed. **NEXT TURN: rotate to the V3D TFU-tiling top-dig** (one fix → quake3 lightmap-black + quake2
+speckle + vkQuake striping) — the highest-leverage untouched Tier-1 item; E7 has had many cycles and reached its standalone ceiling.
+
 2026-08-21 (session ~107 — finalized the sysconf(_SC_NPROCESSORS) fix-path spec (precise, ready-to-implement); confirmed deferral correct; will diversify next turn).
 Followed the ~106 gap to a precise fix-path (no code change — the diagnosis is the deliverable). Traced the exact implementation: kernel adds a `pctl_cpucount`
 platformctl action in aarch64-generic (generic.h enum+union, generic.c handler returning hal_cpuGetCount() — clean/additive/ABI-stable, mirrors the

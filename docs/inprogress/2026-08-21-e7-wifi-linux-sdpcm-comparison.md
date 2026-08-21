@@ -226,3 +226,38 @@ state (consider removing the USB mouse that re-enumerates), then `wifi-probe joi
 `--idle-secs 240` + station-dump + L2 tcpdump detectors launched cleanly (do NOT pkill the
 launcher). If `rx_bytes` jumps ⇒ data-plane UNBLOCKED. If glom-enable-post-join still fails, try
 enabling glom during bring-up (preinit timing, like brcmfmac) instead of post-join.
+
+## DEFINITIVE RESULT (cycles e7-txdump + e7-glom6) — frame format ruled OUT; it's the fw glom-mode STATE
+
+Per the advisor's "measure Phoenix's actual TX bytes, don't infer" step, added a `TXFRAME` hex
+dump right before the CMD53 write and diffed against Linux's captured frame:
+
+```
+Linux : 7c 00 83 ff | 78 00 00 01 | 00 00 00 00 | 1c 02 00 16 | 00 00 00 00 | 00 00 | 20 00 00 00 | (eth)
+Phoenix: 3b 01 c4 fe | 37 01 00 01 | 00 00 00 00 | 18 02 00 16 | 00 00 00 00 | 00 00 | 20 00 00 00 | ff ff (eth)
+```
+
+After fixing doff 20->22 + a 2-byte head_pad, **Phoenix's frame is byte-identical to Linux's glom
+layout** (only length + seq differ, as expected). Result on HW (e7-glom6): join CONNECTED+keyed,
+`bus:txglomalign`/`bus:rxglom` both `rc=0` (fw accepts glom), STA `authorized` at the AP, valid
+src MAC — yet **`rx_bytes` STILL flat at 774 across 110 samples; tcpdump 0 frames. NO EGRESS.**
+
+**Conclusion (advisor's decision-tree, "bytes match + still flat"):** the glom *frame format* is
+**NOT** the differentiator — it's now byte-perfect and the fw accepts the glom iovars, but the
+host-injected data frame still never reaches air. The remaining gap is the fw's glom-mode *running
+STATE*: brcmfmac establishes txglom in `brcmf_sdio_bus_preinit` **before association**, and it is
+coupled with a **glom-aware RX reader** (`brcmf_sdio_rxglom`). A standalone single-frame probe
+cannot achieve this: enabling glom *post-join* (what we did) doesn't re-plumb the fw's already-
+running per-STA data path, and enabling it at *preinit* would break the probe's own single-frame
+RX during the join handshake (which is exactly why `rxglom` broke `cur_etheraddr` here).
+
+### E7 verdict + hand-off
+**This is resident-driver territory, not a standalone-probe fix.** The full data-plane requires the
+resident `rpi4-wifi` driver to: (1) enable txglom at preinit (before association), (2) implement a
+glom-aware SDPCM RX reader (superframe de-glom, `brcmf_sdio_rxglom`), and (3) run the data path
+through the bus state machine. The probe has now characterized the wall to a precise point:
+control-plane + association + keying all work; the data frame is byte-perfect-correct and accepted
+over SDIO; the missing piece is the preinit glom-mode + glom RX that only a resident driver can
+carry. tools/wifi-probe/wifi-probe.c retains the glom-format builder + `TXFRAME` dump as the
+reference implementation for that driver work. **E7 (standalone-probe scope) is DONE/characterized;
+the resident-driver data-plane is a separate, larger effort — owner-scoped.**
