@@ -550,6 +550,19 @@ UART; (4) that gives Linux's WORKING SDPCM seq/credit/flow-control host↔fw exc
 TX (tools/wifi-probe; TX reaches fw not air). Focus the diff on the SDPCM credit/seq/flow-control the memory fingered. This is a MULTI-CYCLE thrust —
 start the Linux capture next turn with a full Pi-cycle budget; restore RPI4B_NETBOOT_TFTPROOT to Phoenix after every Linux cycle.
 
+2026-08-21 (session ~108 cont — ★★ E7 DELIVERABLE DONE: Linux baseline captured + data-plane divergence LOCALIZED with evidence).
+Executed the E7 capture: booted the Linux-Pi4 ref over netboot NFS (autologin-root oneshot) on the SAME Pi + SAME AP (PhoenixNet)
+Phoenix TX-stalls on → `ping 10.43.0.1` = 6/6 0% loss, 2 runs ⇒ **Phoenix's TX-reaches-fw-not-air is PROVEN a software bug** (identical
+HW+AP works on Linux). Baselines saved to artifacts/wifi-linux-ref/. Subagent read tools/wifi-probe/wifi-probe.c vs the Linux brcmfmac
+model → **THE DIVERGENCE:** Phoenix never harvests the SDPCM window byte (buf[9]=tx_max) in diag_f2RecvFrame (wifi-probe.c:1248) so has
+no credit-window feedback, and never gates the data-TX write (:1814) on tx_seq-within-window (Linux's brcmf_sdio_txpkt does). Trace
+refinement: Linux RX shows `brcmf_fws_hdrpull sig 0` ⇒ fwsignal INACTIVE on this fw ⇒ the missing-fwsignal gap is likely NOT the blocker;
+primary suspect = the SDPCM bus-level tx_seq/tx_max credit window. Writeup: docs/inprogress/2026-08-21-e7-wifi-linux-sdpcm-comparison.md;
+memory project_wifi_fw_exec_gate_91 updated. Restored Phoenix netboot TFTP default (verified tftproot=...rpi4b-bootfs). Host AP left up +
+Linux capture oneshot left in the ref rootfs for the next step. **NEXT:** implement the buf[8]/buf[9] harvest + persistent tx_seq +
+seq!=tx_max write-gate in wifi-probe.c, boot the Phoenix wifi-probe `join`+`jointx`, and watch the HOST AP (tcpdump wlp3s0) for the
+probe's DHCP-DISCOVER to appear ON AIR — the decisive TX-to-air test. (WiFi code stays unpublished/scrubbed — coord docs/memory only.)
+
 2026-08-21 (session ~107 — finalized the sysconf(_SC_NPROCESSORS) fix-path spec (precise, ready-to-implement); confirmed deferral correct; will diversify next turn).
 Followed the ~106 gap to a precise fix-path (no code change — the diagnosis is the deliverable). Traced the exact implementation: kernel adds a `pctl_cpucount`
 platformctl action in aarch64-generic (generic.h enum+union, generic.c handler returning hal_cpuGetCount() — clean/additive/ABI-stable, mirrors the
