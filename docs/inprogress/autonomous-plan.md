@@ -528,6 +528,18 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~83 — ✅✅ q3dm7 lightmap-BLACK FIXED + HW-verified (owner #1 dig): default r_mergeLightmaps 0 in the quake3 launcher).
+Landed the fix. After ruling out upload-tiling last turn, ran the cheap decisive test: `quake3 +set r_mergeLightmaps 0 +devmap q3dm7`
+(no rebuild) → **q3dm7 renders FULLY LIT + correct** (HDMI-confirmed) vs. the merged-atlas black. This confirms the large (≥1024) merged
+UIF_XOR lightmap atlas is the bug + r_mergeLightmaps 0 (individual 128² lightmaps, small non-UIF_XOR path) is the fix. **Shipped it:** baked
+`+set r_mergeLightmaps 0` into quake3-launcher.c (quake3-port `b433121`), cross-compiled + deployed → re-verified END-TO-END: `quake3 +devmap
+q3dm7` (baked-in default) renders FULLY LIT (HDMI 20260821-020617-q3dm7-fix — lit walls/arches/floor/torches, no black sectors). **Owner's
+#1 top-dig RESOLVED.** Multi-turn narrowing paid off (BSP atlas math → Mesa slice math → uif_pixel_off≡Mesa → VKQ_CPU_TILE experiment → the
+r_mergeLightmaps discriminator). Small perf cost (more texture binds) vs correctness. STILL OPEN (deeper future fix): the underlying V3D
+large-UIF_XOR read-side sampling/descriptor bug (r_mergeLightmaps 0 sidesteps it). committed+pushed (launcher b433121, plan/board). NEXT:
+check quake2 floor-speckle (same fix may apply if it uses large lightmap textures); else a fresh top-dig / Tier-2 goal. (vkQuake striping =
+separate V3DV path.)
+
 2026-08-21 (session ~82 — q3dm7 lightmap: VKQ_CPU_TILE experiment RAN → UPLOAD-TILING DEFINITIVELY RULED OUT; bug is sampling/descriptor-side).
 Ran the full VKQ_CPU_TILE experiment: rebuilt libv3d (VKQ_CPU_TILE=1) → built libSDL2.a (needed 2 incremental passes, >10min) → relinked
 quake3e (CPU-tile marker in the ELF) → deployed → ran `quake3 +devmap q3dm7`. Map fully loaded + entered the game; HDMI captured. **STILL
