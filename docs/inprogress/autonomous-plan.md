@@ -528,6 +528,23 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~99 — boot regression-check CLEAN; SDL2 input fix DEPLOYED+verified (quakespasm-sdl renders on netboot); honest owner-gated backlog assessment).
+Pivoted off the (banked) V3D dig. (1) **Boot regression-check PASSED** — the current netboot image (session's ~many accumulated changes) boots clean:
+microkernel + USB + lwip genet link-up + NFS root takeover + psh + `uname`=Phoenix-RTOS 3.3.1 aarch64a72 + /bin populated, no real faults. No regression.
+(2) **SDL2 INPUT FIX DEPLOYED + VERIFIED** — the console-text/keyboard fix (c019e12) was committed-but-never-shipped-to-a-game. Clean-rebuilt the
+input-fixed libSDL2.a (recompiles SDL_phoenixevents.c w/ phoenix_hid_to_char+SDL_SendKeyboardText), relinked quakespasm-sdl
+(build-quakespasm-sdl-phoenix.py, 67/67 TUs, 25MB ELF), deployed to /srv/.../bin/quakespasm-sdl, boot-verified: renders the Quake title+demo1.dem
+on HDMI via V3D 4.2 GL (Mesa 26.2.0-rc1), 1920x1080, SDL audio up, Host_Init 3.8s, 0 faults. ⇒ the owner's reported input fix now ships in a deployed
+game for their live-input retest (input itself = owner-attended). (Mouse: SDL_SetRelativeMouseMode warning persists — the owner-attended mouse path.)
+**★ HONEST BACKLOG STATE (decision-ready for owner):** the tractable AUTONOMOUS Tier-1 backlog is complete/handed-off; the remaining HIGH-VALUE work
+is OWNER-GATED: (a) **V3D read-side TMU bug** — localized (reproducer gl_uif_probe committed), fix needs deep V3D/HW = owner-attended; symptom
+worked-around. (b) **DRI/DRM / G-GPU multi-app** — design doc (2026-08-13-dri-drm-design.md) COMPLETE + explicitly owner-GATED ("do NOT implement
+yet"): V3D 4.2 is single-context HW ⇒ "multi-app GPU" = serialized time-slicing via a v3d-server daemon (Linux model, Mesa untouched, Phase-1a =
+route phoenix_v3d_ioctl→IPC + gl_det_harness CRC-match), NOT true concurrency — needs owner GO on the approach/scope. (c) **bash-tty EOF** — needs a
+live terminal (owner-attended). (d) **SDL2 input** — fix now DEPLOYED; needs owner live-input test. X11 flip = advisor-low-priority (X11-DE already
+validated running); ncurses/nano/mc migration = advisor-deprioritized treadmill (+ the flip's only remaining blocker). NEXT: absent owner input, the
+non-gated concrete options are the DRI/DRM Phase-1a scaffold (biggest owner want, but gated), Mesa rc1→release rebase (hygiene), or P9 small bumps.
+
 2026-08-21 (session ~98 — V3D dig: EXHAUSTIVE host-side + winsys-source localization → ruled out store/Mesa-GL-layer/UIFCFG/bounded-flush; residual = deep read-side HW/winsys, owner-attended HAND-OFF).
 Continued the #1 dig with CHEAP host-side/source analysis (no rebuild) per "compare vs Mesa/Linux". Systematically RULED OUT every tractable software
 layer: (1) STORE (uif_pixel_off) — HW-clean at 512+1024 (session ~97). (2) The Mesa GL READ-side code is VERBATIM upstream — the port patch
