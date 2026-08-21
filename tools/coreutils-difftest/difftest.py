@@ -170,10 +170,26 @@ def parse_log(log_path, cases):
     return results
 
 
+def merge_logs(log_paths, cases):
+    """Parse several UART logs and, per case, take the FIRST log that captured it.
+
+    Split runs (one per netboot cycle) must NOT be concatenated into one file: the
+    last case of an earlier log would have its region bleed into the next log's boot
+    output. Instead parse each log independently and merge per-case.
+    """
+    merged = {cid: None for cid, _ in cases}
+    for lp in log_paths:
+        got = parse_log(lp, cases)
+        for cid in merged:
+            if merged[cid] is None and got.get(cid) is not None:
+                merged[cid] = got[cid]
+    return merged
+
+
 def cmd_check(args):
     os.makedirs(PIOUT, exist_ok=True)
     cases = load_cases(pilot_only=args.pilot)
-    piout = parse_log(args.log, cases)
+    piout = merge_logs(args.log, cases)
 
     rows = []
     n_pass = n_fail = n_nocap = 0
@@ -263,7 +279,8 @@ def main():
     p.set_defaults(func=cmd_gencmds)
 
     p = sub.add_parser("check")
-    p.add_argument("--log", required=True)
+    p.add_argument("--log", required=True, nargs="+",
+                   help="one or more UART logs (split-run cycles); merged per-case, NOT concatenated")
     p.add_argument("--pilot", action="store_true")
     p.add_argument("--refdir", default="(native GNU 9.5)")
     p.set_defaults(func=cmd_check)

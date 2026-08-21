@@ -528,7 +528,18 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
-2026-08-21 (session ~75 — P4 coreutils differential-harness build dispatched to a subagent).
+2026-08-21 (session ~76 — P4 coreutils differential test COMPLETE: 25/28 bit-exact vs host GNU 9.5; found a real cksum/od Data Abort bug).
+Took over the P4 harness after the subagent API-stalled twice (its on-disk work was intact + good). Fixed 2 parser bugs (ANSI-CSI strip;
+apply filename-normalize to Pi output) — pilot 6/6 PASS. Added a reusable `--cmd-file` to test-cycle-psh-interact.sh + a multi-log
+`check --log A B C` merge (naive concat bleeds a log's last case into the next log's boot). Ran the 28 cases as 3 netboot cycles (28+boot
+> one 10-min cap). **RESULT: 25/28 bit-identical to native host GNU 9.5** (the native GNU build is the reference; host default is uutils
+0.8.0 = wrong ref). **FOUND A REAL BUG:** `cksum` + `od` → **Data Abort (EL0)** (od prints correct output THEN crashes; cksum crashes
+first), and the **kernel fault-dump DOUBLE-FAULTS at EL1** reading the user stack → the printed register dump is unreliable (byte-identical
+across both binaries = impossible for a real per-proc state). addr2line: 0x403e88 = getopt `exchange` in od but `cksum_slice8` in cksum
+(different funcs, not one shared) — NOT fadvise (wc uses it + passes). `nl` "fail" = tty tab-expansion artifact (bytes correct).
+Committed harness+RESULTS.md (c2c8cd2 + this), memory project_coreutils_cksum_od_dataabort. NEXT: root-cause the cksum/od Data Abort via
+QEMU+gdb/libdbg (printed dump unreliable → need a true backtrace) + fix the kernel fault-dump double-fault (observability). Then P7 vkQuake
+or a Tier-2 goal.
 Tier-1 has converged (P1/P3/P5/P6 done, P2/P7 owner-attended, P-DOCS done) → picked P4 (coreutils correctness) as the clearest
 autonomously-actionable item, Pi free. Verified two design facts before dispatch: coreutils tools are at /usr/bin on the Pi; **the host's
 default coreutils is uutils 0.8.0 (Rust reimpl), NOT GNU** — so the differential reference MUST be a native GNU coreutils 9.5 build on the
