@@ -107,3 +107,25 @@ first, per don't-blind-code):** re-capture the Linux baseline WITHOUT the early 
 the brcmfmac init logs the `tlv`/proptxstatus mode it negotiates for this fw; if fwsignal is
 on, add the `tlv` iovar + a minimal fwsignal TX header to the probe and re-test tcpdump. If
 fwsignal is off there too, pivot to BDC priority/AC mapping or an interface-not-tx-ready iovar.
+
+## Cycle linux-fwsignal (2026-08-21) — fwsignal signaling is NOT the differentiator
+
+Re-captured the Linux baseline with the fwsignal-negotiation dump (no early `dmesg -c`).
+brcmfmac loaded `brcmfmac43455-sdio` fw **BCM4345/6 wl0 version 7.45.265 (28bca26 CY)**, ping
+0% loss again. Evidence on fwsignal: **no `fws_stats` debugfs** captured (before or after
+traffic; on its own inconclusive — debugfs may be unmounted), **but** combined with the prior
+capture's `brcmf_fws_hdrpull … sig 0` on *every* RX frame (siglen=0 ⇒ no fwsignal TLVs in the
+BDC), the fw is **not signaling fwsignal on this link**. So Linux is effectively sending bare
+BDC+eth data frames — structurally the same as Phoenix. ⇒ **fwsignal TLVs are unlikely to be
+the missing ingredient.**
+
+**Sharper problem statement:** Phoenix's control plane fully works (ioctls, scan, join,
+WPA2 4-way keyed) — and the FULLMAC firmware-supplicant generates + transmits the EAPOL M2/M4
+frames itself, which the AP must receive to complete the 4-way. **So the fw's *internal* TX
+path to air demonstrably works.** What fails is specifically the **host-injected SDPCM
+channel-2 DATA frame → 802.11 TX** handoff: the frame is accepted over SDIO (F2 write rc=0,
+seq in-window, flow clear, no fwsignal needed) yet never reaches air. Remaining candidates
+(post-credit, post-fwsignal): (a) BDC interface-index / bsscfg mapping (flags2 ifidx) or
+priority/AC; (b) a post-association iovar / data-path-enable the fw needs before it will
+egress host data (802.1X controlled-port authorize, or an interface "up for data" step
+brcmfmac does that the probe omits); (c) frame framing the fw's data classifier rejects.
