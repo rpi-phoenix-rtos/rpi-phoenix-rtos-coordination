@@ -858,7 +858,10 @@ commit" worry is REFUTED (that was the confounded test_stat.txt-absence). ⇒ th
 (If ever chased: nfs-fs in-process attr-cache invalidation after write — low-priority, attended.) Probe cleaned up. **The stat_* FAILs should be
 marked known-flaky in the suite (a follow-up).** NEXT: batch the audit's remaining safe stubs (getrusage defensive + times) in one core rebuild.
 
-2026-08-21 (session ~129 — closed the stub audit: implemented times() real elapsed clock + getrusage() defensive out-param, with tests; core build + HW-verify in flight).
+2026-08-21 (session ~129 — ✅ DONE+PUSHED: closed the stub audit — times() real elapsed clock + getrusage() defensive out-param, tests HW-verified 3/3).
+Shipped: libphoenix b6f5986, tests cb5f413 (both pushed to publish/master), coord manifest fa06211 (2026-08-21-libphoenix-times-getrusage.md). HW result:
+`/bin/test-libc-misc -g misc_rusage_times` over netboot → 3 Tests 0 Failures / OK. Advisor caught that the first test draft passed even against the old
+`return 0` stub (0!=-1, 0>=0) → added TEST_ASSERT_GREATER_THAN_INT(0, t1) which pins the real fix. Push clean (no reject ⇒ no pending owner feedback).
 Finished the audit's remaining actionable stubs (both were `return 0` no-ops):
  • **times()** (libphoenix sys/times.c) — was a stub returning 0, so every POSIX elapsed-time / shell `time` measurement read zero. Now returns the
    MONOTONIC elapsed time in clock ticks (CLK_TCK==100) via clock_gettime(CLOCK_MONOTONIC), and zeroes the `struct tms` CPU breakdown (was left
