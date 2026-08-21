@@ -528,6 +528,16 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~158 — ✅ SQLite WAL HW-verified with a precise capability boundary (§C4 item CLOSED): works single-process EXCLUSIVE, multi-proc unsupported (no shm)).
+Continued closing §C4 deferred port-features. SQLite was HW-verified (file VFS/B-tree/journal); PROVED WAL on the netboot Pi via a write→close→reopen round-trip (sqlite3 -init
+scripts). RESULT (0 faults): with `PRAGMA locking_mode=EXCLUSIVE` set first, WAL engages (journal_mode=wal), 3 rows written, integrity_check=ok, -wal file persists to disk; a
+fresh REOPEN (also exclusive) reloads all 3 rows correctly (READROW=phoenix-wal-2, integrity ok). ⇒ single-process WAL works. **BOUNDARY FOUND:** a DEFAULT (non-exclusive) reopen
+FAILS `SQLITE_PROTOCOL "locking protocol (15)"` — the default WAL path needs the shared-memory wal-index (VFS xShmMap/mmap), which the Phoenix SQLite VFS lacks (matches the
+no-file-mmap limitation). So WAL = single-process only (use EXCLUSIVE); multi-proc needs the rollback journal until the VFS gains shm. Artifacts+finding: tools/sqlite-wal-test/.
+Committing+pushing. §C4 status: Redis-persistence ✅ + Python zlib/_ssl/HTTPS ✅ + SQLite-WAL ✅ (this) all closed; remaining §C4 = attended (bash -i, ffmpeg audio) or dep-blocked
+(CPython TLS1.3 needs openssl3, curses needs ncurses). NEXT: the §C4 remainder is attended/dep-blocked ⇒ the bounded-win vein is nearly exhausted too; next heartbeat weigh a big
+item (X11 if:true migration — delicate/hygiene; or accept the backlog is at its attended/deep floor + consolidate for owner return).
+
 2026-08-21 (session ~157 — ✅ Redis RDB persistence HW-VERIFIED end-to-end (§C4 owner-A20 deferred feature CLOSED); bonus: bash `&` job control works on Phoenix).
 E10 closed to the unattended boundary ⇒ picked a bounded, safe, verifiable capability win from §C4 "revisit ports' unfinished parts". Redis 7.2.4 was HW-verified in-memory
 already; PROVED RDB persistence across a REAL server restart on the netboot Pi (test entirely Pi-side via bash — no host redis-cli). Wrote a persistence conf (save 3600 1,
