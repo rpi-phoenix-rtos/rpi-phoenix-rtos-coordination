@@ -528,6 +528,18 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~85 — pivoted to SDL2 game input: console-text (SDL_TEXTINPUT) FIXED + compile-verified; mouse determined source-correct/owner-attended).
+Pivoted off the V3D arc (breadth) to the owner-reported "games don't respond to mouse/console-text" bug — root-causeable + fixable in source
+even though final live-input validation is owner-attended. Read SDL_phoenixevents.c (the SDL2 Phoenix input backend). **(b) Console text FIXED:**
+root cause = the backend only emitted SDL_SendKeyboardKey (scancodes), NEVER SDL_SendKeyboardText → no SDL_TEXTINPUT → text fields/Quake console
+got no chars. Added phoenix_hid_to_char (US-QWERTY HID→char, SHIFT-aware, skips CTRL/ALT/GUI) + SDL_SendKeyboardText on printable key-downs.
+Additive (scancode+mouse paths unchanged). COMPILE-VERIFIED (copied into the SDL2 build tree, incremental make → built clean into libSDL2.a).
+ports `c019e12` pushed. **(a) Mouse: SOURCE IS CORRECT** — usbmouse.c creates /dev/mouse0 with the exact 4-byte [buttons,X,Y,wheel] format the
+backend parses (+ handles 3-byte boot mice); so "not working" is a RUNTIME issue (enumeration/read), needs a physical mouse + Pi obs =
+owner-attended. memory project_sdl2_game_input + plan + MEMORY.md updated. Runtime validation (both) = owner-attended (no synthetic input
+under automation); batch a game relink vs the new libSDL2.a. NEXT: relink quake3e vs new libSDL2.a + redeploy (batch owner-attended input
+test), OR a fresh item (Tier-2 thrust / coreutils corpus expansion / bash-tty source look).
+
 2026-08-21 (session ~84 — V3D large-UIF_XOR ROOT: source analysis EXHAUSTED (all correct for 1024) → needs empirical GPU isolation; deferred, pivot next).
 With q3dm7's symptom fixed (workaround), dug the ROOT large-UIF_XOR bug (owner's #1 "one fix" for q3-lightmap+q2-speckle+vkQuake-striping).
 Checked quake2 first: its lightmaps are 128×128 (small) ⇒ its speckle is NOT the large-UIF_XOR bug (separate minor issue). Then exhaustively
