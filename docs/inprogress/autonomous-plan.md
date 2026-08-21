@@ -528,6 +528,19 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~90 — P8: fltk 1.3.10 migrated tools/→ports, build-verified + smoke-linked; full transitive dep resolution through the framework).
+Continued the P8/E4 chain — the key step for Dillo. Migrated the Fast Light Toolkit (C++ X11 GUI lib), previously built only by the ad-hoc
+tools/ports/build-fltk.sh against /tmp/x11-phoenix, to phoenix-rtos-ports/fltk with **depends="xorg_libs libpng libjpeg"** — so ALL of fltk's X
+client + image-codec deps are now resolved by the framework (this is exactly what the previous 3 migrations set up). Autotools cross, configure+make
+in p_build (sdl2 pattern for CROSS); builds src/ only (top-level "all" runs cross-built fluid on host → breaks); disables gl/xft/xinerama/xcursor/
+xfixes/xdbe + bundled png/jpeg/zlib; ac_cv_lib_png_* cache vars defeat FLTK's -lpng-without-lz static false negative; rint/rintf shim self-contained
+in the port (copied from tools/, -include; TODO drop once libphoenix rint lands in sysroot libm.a). **Build-VERIFIED** `build-port.sh fltk`:
+port_manager pulls xorg_libs+libpng+libjpeg+zlib then builds libfltk.a/_images.a/_forms.a (`Done 38 s`, full dep summary). **Deliverable test**
+(from the ad-hoc build) reproduced: test/hello.cxx links statically against the framework closure → aarch64 ELF, **0 undefined symbols**. Committed
+(ports `62f402f`), pushed. This proves the whole libpng→libjpeg→xorg_libs→fltk framework chain composes. NEXT: **dillo** (needs fltk + png/jpeg —
+all framework now) → then glib2 (deferred/E4) is the only remaining ad-hoc /tmp/x11-phoenix consumer gating the X11 if:true flip. Also open:
+ncurses/nano/mc sub-chain, P7 vkQuake, P9 Mesa rebase.
+
 2026-08-21 (session ~89 — P8: libjpeg (libjpeg-turbo 3.0.4) migrated tools/→ports, cmake-cross build-verified; image-codec prereqs now complete).
 Continued the P8/E4 chain. Migrated the JPEG codec — previously built by the ad-hoc X11 path as IJG jpeg-9e — to phoenix-rtos-ports/libjpeg as
 **libjpeg-turbo 3.0.4** (the de-facto standard, classic libjpeg API). Chose turbo over IJG BECAUSE the framework version parser is PEP440-strict
