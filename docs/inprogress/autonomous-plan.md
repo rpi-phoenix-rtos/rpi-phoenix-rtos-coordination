@@ -528,6 +528,16 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~102 — P9 progress: wpa_supplicant 2.9→2.11 (security) DONE+verified; confirmed P9 Mesa rebase already source-done (external/mesa on final tag)).
+Worked the sanctioned §D tractable-unattended P9 items. (1) **P9 Mesa rc1→release rebase = ALREADY SOURCE-DONE** — external/mesa is at the FINAL
+`mesa-26.2.0` tag + 11 port commits (bootstrap pins mesa-26.2.0, rebased 2026-08-13; owner-decision #2 ✅ satisfied). The running GPU binaries still
+report "26.2.0-rc1" only because the gpu-libs are stale build artifacts (HOSTBUILD from an older checkout) — they auto-refresh on the next full
+showcase/clean build; not worth a 30-min forced rebuild for a cosmetic string bump. ⇒ P9-Mesa effectively done. (2) **wpa_supplicant 2.9→2.11 DONE**
+(ports `350d89f`) — 2.9 (2019) had multiple CVEs; bumped to 2.11 (2024, latest). All 5 Phoenix patches (makefile/daemon/ecanceled/bswap/l2) apply
+cleanly to 2.11 (dry-run verified, no rebase). Build-verified via build-port.sh: pulls openssl, builds+installs wpa_supplicant+wpa_cli to /usr/bin
+(Done 4.5s, aarch64 ELF). Security hygiene for a published port. **P9 remaining: qemu 11.1 host-tool update** (dev-workflow; host-config effort). NEXT:
+qemu 11.1, or a Tier-2 thrust if owner GOs a decision. Autonomous high-value backlog remains complete/owner-gated (DRI/DRM decision, V3D fix, live tests).
+
 2026-08-21 (session ~101 — bash-tty P2 autonomously RESOLVED: bash SCRIPTING works on HW; interactive stdin = owner live-terminal test (with FIONREAD now fixed)).
 Closed the bash-tty dig cleanly. HW test: `/bin/bash /root/bt.sh` ran a real script CORRECTLY — SCRIPT-START, answer=42 (arithmetic 6*7), w=alpha/w=beta
 (for-loop), bash-present-ok (if/[ -f ]), SCRIPT-END. So **bash EXECUTION works** (arithmetic/loops/conditionals/tests) — bash's core is fine; the
