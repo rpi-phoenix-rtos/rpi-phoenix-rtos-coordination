@@ -36,6 +36,12 @@ import sys
 # strip them so prompt-line filtering + command matching work on clean text.
 ANSI_CSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 
+# Async kernel/driver log lines can interleave into a command's captured region
+# on the shared serial console (e.g. "nfs-fs: fh-cache evict, 16 idle", "lwip: ...").
+# Drop them before diffing — no coreutils output starts with a "subsys:" tag like
+# these. Conservative allowlist of the Phoenix subsystems that log to the console.
+KLOG_LINE = re.compile(r"^(nfs-fs|lwip|genet|usb|xhci|pcie|mmc|sdcard|emmc|hal|kernel|plo|vm|proc|posixsrv|dummyfs|tmpfs|devfs|meterfs|imxrt|phoenix|klog):")
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 CORPUS = os.path.join(HERE, "corpus")
 EXPECTED = os.path.join(HERE, "expected")
@@ -162,7 +168,9 @@ def parse_log(log_path, cases):
                 end = idx[later]
                 break
         region = lines[start + 1:end]
-        body = [ln for ln in region if not ln.lstrip().startswith(PSH_PROMPT)]
+        body = [ln for ln in region
+                if not ln.lstrip().startswith(PSH_PROMPT)
+                and KLOG_LINE.match(ln.lstrip()) is None]
         # drop a single trailing empty line artifact from capture framing, keep internal ones
         while body and body[-1] == "":
             body.pop()
