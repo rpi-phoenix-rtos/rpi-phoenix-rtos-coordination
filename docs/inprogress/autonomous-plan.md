@@ -528,6 +528,17 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~91 — P8: dillo 3.2.0 migration DELEGATED to a background subagent; tarball+shim pre-seeded; awaiting completion).
+Continued the chain — dillo (FLTK/X11 web browser, TLS via mbedTLS) is the next tools/→ports migration. It is bigger/fiddlier than fltk
+(autoreconf, 2 source patches [strndup multiple-def rename + connect_ret_size uint_t→socklen_t stack-overwrite fix], an fltk-config
+link-closure WRAPPER since Dillo's `fltk-config --ldflags` omits the full static group, and mbedTLS TLS) — an ideal bounded subagent task per the
+directive. Pre-seeded sources/phoenix-rtos-ports/dillo/{v3.2.0.tar.gz (sha 4282e4bc, GPLv3), dillo-phoenix-shim.h, patches/} + launched a
+general-purpose subagent with the COMPLETE spec (metadata, depends="fltk mbedtls", the exact wrapper closure, configure flags, build-verify:
+aarch64 static ELF + XOpenDisplay+mbedtls_ssl_init+a_Tls_mbedtls_connect symbols + 0 undefined; commit+push only on pass). NOTE: dillo already
+WORKS end-to-end via the ad-hoc build (E2/E3 live-HTTPS) — this migration is upstreamability + chain progress, NOT flip-unblocking (the showcase
+still builds glib2 which consumes /tmp/x11-phoenix, so glib2/E4 remains the X11 if:true flip gate regardless). Awaiting subagent completion →
+will verify + finalize the board next. Do not start a concurrent port build (shared buildroot).
+
 2026-08-21 (session ~90 — P8: fltk 1.3.10 migrated tools/→ports, build-verified + smoke-linked; full transitive dep resolution through the framework).
 Continued the P8/E4 chain — the key step for Dillo. Migrated the Fast Light Toolkit (C++ X11 GUI lib), previously built only by the ad-hoc
 tools/ports/build-fltk.sh against /tmp/x11-phoenix, to phoenix-rtos-ports/fltk with **depends="xorg_libs libpng libjpeg"** — so ALL of fltk's X
