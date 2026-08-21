@@ -528,6 +528,19 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~100 — bash-tty EOF dig: FOUND+FIXED a real tty gap (FIONREAD -EINVAL→works); PROVED the tty read layer correct ⇒ bash EOF is bash/readline-internal).
+Dug the un-investigated top-dig (bash exits immediately at its first prompt = reads EOF). Root-caused via a HW tty-probe (built + deployed + run on
+netboot): **isatty=1, inherited termios sane (ICANON/VMIN=1/VTIME=0), read() works — but FIONREAD returned rc=-1/EINVAL** (garbage count). bash is
+configured bash_cv_fionread_in_ioctl=yes (readline uses FIONREAD for input-availability). **FIXED:** libtty_ioctl had no FIONREAD case (default→
+-EINVAL); added `case FIONREAD: tty->temp=fifo_count(rx_fifo); *out_arg=&tty->temp` (devices `b247643`, --scope core rebuild, HW-verified FIONREAD
+rc=0). Real tty-ioctl correctness gap (any FIONREAD user), committed+pushed. **BUT bash STILL EOF-exits** (bash-5.2#→exit; my `echo $BASH_VERSION`
+ran in psh not bash) — so FIONREAD wasn't the (sole) cause. Probe v2 (drain buffer → blocking read on EMPTY buffer) **PROVED the Phoenix tty read
+layer is CORRECT**: VMIN index consistent (6, tcsetattr(VMIN=1) readback=1 — no c_cc ABI mismatch), O_NONBLOCK=0, and a blocking read on an empty
+buffer BLOCKS + returns data (NOT immediate-EOF). ⇒ **bash's immediate-EOF is BASH/readline-INTERNAL, not a Phoenix tty-read/termios/VMIN/FIONREAD
+bug (all now verified correct).** Remaining cause = bash/readline input path (select/poll usage, or bash input.c) — needs bash-source debugging +
+a live terminal to validate = OWNER-ATTENDED. NET: one real tty fix (FIONREAD) + decisive ruling-out of the entire tty-read layer as the bash cause.
+NEXT: bash residual is owner-attended (live terminal); other non-gated concrete = Mesa rc1→release rebase (hygiene) or P9 small bumps.
+
 2026-08-21 (session ~99 — boot regression-check CLEAN; SDL2 input fix DEPLOYED+verified (quakespasm-sdl renders on netboot); honest owner-gated backlog assessment).
 Pivoted off the (banked) V3D dig. (1) **Boot regression-check PASSED** — the current netboot image (session's ~many accumulated changes) boots clean:
 microkernel + USB + lwip genet link-up + NFS root takeover + psh + `uname`=Phoenix-RTOS 3.3.1 aarch64a72 + /bin populated, no real faults. No regression.
