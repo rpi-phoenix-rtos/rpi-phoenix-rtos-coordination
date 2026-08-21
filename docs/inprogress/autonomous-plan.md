@@ -536,8 +536,12 @@ EL0 cause: proc/process.c + hal/aarch64/arch/cpu.h — main-thread user stack is
 demand-paged MAP_NONE so ~free). kernel `8ae20864` PUSHED + manifest 2026-08-21-ustack-1mib. Rebuilt --scope core, HW-tested: **Data Abort
 GONE, cksum correct CRC `3638076971 104`, od correct hex; boot+psh+tools fine (regression-clean).** SEPARATE follow-up: the signal-push
 double-fault robustness (hal_cpuPushSignal should validate the frame target + terminate cleanly) — defense-in-depth, memory
-project_coreutils_cksum_od_dataabort. Re-running cycle B2 (cases 15-28, new kernel) for a clean harness RESULTS table (in flight). NEXT:
-finalize RESULTS.md on B2; then P7 vkQuake or a Tier-2 goal, or the signal-push robustness fix.
+project_coreutils_cksum_od_dataabort. Clean post-fix harness run (cutest-A + cutest-B3): **27/28 bit-identical to host GNU 9.5 — cksum + od now PASS**
+(Data Abort gone). The 1 "FAIL" is nl = tty tab-expansion artifact (bytes correct) ⇒ effectively 28/28 correct output. Also robustified
+the harness (filter interleaved kernel async log lines — fixed a spurious od FAIL). RESULTS.md + harness committed 8edb77d, pushed. P4
+DONE. (B2 flaked — transient NFS/timing stall on a 14-file-command batch; B3 with --inter-cmd-secs 10 was clean.) **PIVOT NEXT:** been deep
+in coreutils for many turns; next turn move to a different top-dig — SDL2 game input, the signal-push double-fault robustness (defense-in-
+depth), or a Tier-2 goal (G-STK Vulkan / G-GPU glamor / G-GCC).
 
 2026-08-21 (session ~76 — P4 coreutils differential test COMPLETE: 25/28 bit-exact vs host GNU 9.5; found a real cksum/od Data Abort bug).
 Took over the P4 harness after the subagent API-stalled twice (its on-disk work was intact + good). Fixed 2 parser bugs (ANSI-CSI strip;
