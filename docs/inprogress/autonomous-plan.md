@@ -554,6 +554,13 @@ SAFE: all atomic ops on `.initialized` are in pthread.c (C only); NO header-inli
 build can't regress; layout int==_Atomic int==std::atomic<int> (4B) so C↔C++ ABI preserved. Also matches glibc/musl (plain types for pthread structs in C++). Handed to the build
 subagent to rebuild libstdc++ in .toolchain-gcc16 with the fixed header. ON CONFIRM (libstdc++ builds): commit the libphoenix fix + push → gcc-16.2.0 becomes a FULL C++ toolchain
 (M0-full). This is a genuine libphoenix improvement that helps ANY C++ compiler (not just gcc-16). NOTE: the attended M1 (rebuild+revalidate all Phoenix under gcc-16, swap .toolchain) still stands.
+UPDATE (session ~154): ✅✅✅ M0-FULL DONE + libphoenix fix COMMITTED+PUSHED (94df683). Subagent VALIDATED: gcc-16.2.0 libstdc++ builds to completion (libstdc++.a/libsupc++.a
++ headers installed) + a C++ hello-world (std::string+std::atomic) statically links to a runnable aarch64 ELF. ⇒ **gcc-16.2.0 is a full C+C++ aarch64-phoenix toolchain.** The
+fix was 2-part (both required): _ATOMIC→plain-int (copyable) + drop <atomic> (libstdc++'s own -std=gnu++98 TUs reach it → c++98 hard-error). C branch unchanged (C build/ABI
+untouched); helps any modern C++ compiler. E10 status: the gcc-16 REBASE is proven end-to-end (patches port cleanly modulo the 2 documented deltas + this libphoenix fix; full
+C+C++ toolchain builds to a separate prefix). REMAINING = attended M1 only: (a) rebuild+revalidate ALL Phoenix (kernel/libphoenix/ports) under gcc-16 + swap .toolchain (new-major
+breakage surface → owner-attended); (b) C++23 import-std header-completeness (libphoenix <cmath>/<cstdlib> std:: exports — optional; classic #include C++ works). Do NOT swap
+.toolchain unattended. NEXT: E10 is at a clean, well-banked milestone (full gcc-16 toolchain proven) — pivot to another item; the remaining E10 is owner-attended M1.
 UPDATE (session ~146): M0 build PROGRESSING well + SAFE (building to .toolchain-gcc16, .toolchain untouched). ★ all 4 aarch64 gcc patches applied CLEAN (04/05/09 clean —
 incl the 05-libstdcpp configure patch I'd flagged as the reject-risk; 11-aarch64 needed one no-op hunk dropped). **binutils-2.43 built + installed** (aarch64-phoenix-ar/as/ld/nm
 present); gcc-16.2.0 now compiling (25 parallel procs, still in stage1 support-libs). Detached build (log ~/.claude/jobs/aa2bf3f6/tmp/build-gcc16.log); Bash caps at 10min so
