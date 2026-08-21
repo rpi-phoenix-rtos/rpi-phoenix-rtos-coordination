@@ -38,3 +38,30 @@ md5sum	md5sum @F:lorem.txt
 cksum	cksum @F:lorem.txt
 base64	base64 @F:data.bin
 od	od -An -tx1 @F:data.bin
+# --- expansion batch 2 (2026-08-21): more tools, GNU-9.5-vs-9.5, no tab-output ---
+sha1sum	sha1sum @F:data.bin
+sha512sum	sha512sum @F:data.bin
+sha224sum	sha224sum @F:data.bin
+b2sum	b2sum @F:data.bin
+sumbsd	sum @F:data.bin
+base32	base32 @F:data.bin
+basenc16	basenc --base16 @F:data.bin
+fold	fold -w 10 @F:lorem.txt
+expand	expand @F:tabs.txt
+nlcolon	nl -ba -s: @F:lorem.txt
+catA	cat -A @F:tabs.txt
+uniqc	uniq -c @F:dups.txt
+uniqd	uniq -d @F:dups.txt
+sortn	sort -n @F:nums.txt
+join	join @F:kv1.txt @F:kv2.txt
+pastecomma	paste -d, @F:kv1.txt @F:kv2.txt
+tsort	tsort @F:pairs.txt
+headc	head -c 20 @F:lorem.txt
+wcc	wc -c @F:lorem.txt
+wcw	wc -w @F:lorem.txt
+exprlen	expr length abcdef
+exprsubstr	expr substr abcdefgh 3 4
+exprmod	expr 17 % 5
+factormulti	factor 12 15 100
+seqfmt	seq -f %03g 1 3
+odtx4	od -An -tx4 @F:data.bin

@@ -109,6 +109,9 @@ def cmd_host(args):
     cases = load_cases()
     for cid, tokens in cases:
         argv = host_argv(tokens, args.refdir)
+        if not os.path.exists(argv[0]):
+            print(f"[host] {cid}: SKIP (no ref binary {argv[0]} — not a GNU coreutils tool?)")
+            continue
         proc = subprocess.run(
             argv, cwd=CORPUS, env=env,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
