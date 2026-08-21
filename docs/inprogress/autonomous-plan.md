@@ -795,6 +795,21 @@ timeval macros (2eee50f) — 3 libphoenix improvements, all HW-verified, from th
 more libphoenix coverage (candidates: other sys/ or string/ areas; each group may surface more gaps/stubs). Backlog's big items still
 attended/tangled (X11 flip, vkQuake V3DV, signal-push).
 
+2026-08-21 (session ~124 — subagent STUB AUDIT of libphoenix → fixed 4 more stubs (wctomb + makedev/major/minor), HW-verified).
+Dispatched a subagent to hunt timerisset-class stubs across libphoenix (507 trivial-return candidates). It ranked 8; I fixed the 4
+highest-confidence, cheap, self-inconsistent ones: **wctomb()** (returned 0/encoded nothing → now C-locale 1:1 encode + EILSEQ, mirrors
+wcrtomb) and **makedev()/major()/minor()** (all returned 0 → makedev(8,1)==makedev(0,0); now consistent glibc-style pack/extract + fixed the
+major/minor `int dev`→`dev_t dev` signature bug). libphoenix a1a5540 + tests phoenix-rtos-tests 0e42f7b (misc_stubs_fixed: wctomb + dev
+roundtrip incl. large-minor split). **HW-verified: both new tests PASS.** Manifest 2026-08-21-wctomb-dev-stubs.md. Pushed both to org.
+**DEFERRED audit stubs (documented for later):** strptime (time/time.c:521 return NULL — needs a full format-parser port, sizeable),
+getrusage/times (return 0 w/ undefined out-param — a memset-to-0 defensive fix is low-value), fchdir (needs an fd→path lookup). Excluded:
+many single-user-policy no-ops (chown/setuid/getuid/etc.) are deliberate, not bugs. **SEPARATE issues NOTED (not mine, not this turn):**
+(a) test-libc-misc stat_* group: 10 FAILs = NFS-stat returns st_size/st_blocks/st_time = 0/wrong over netboot (pre-existing filesystem
+limitation, unrelated to the stub fixes; nearby #764/#682 IGNOREs confirm known-flaky); (b) coreutils PORT build errors on `--with-ports`
+rebuilds: src/stty.c:994 "expected expression before ')'" + an earlier OpenSSL Makefile:8865 Error 2 — soft port failures (the core image
++ bootfs completed anyway), NOT caused by my libphoenix changes (stty doesn't use my macros/fns). Worth an owner/port-maintenance look.
+RUNNING TALLY (test-driven arc): wctype tests + timerisset fix + timeval macros + wctomb/dev stubs = 4 libphoenix improvements, all HW-verified.
+
 2026-08-21 (session ~107 — finalized the sysconf(_SC_NPROCESSORS) fix-path spec (precise, ready-to-implement); confirmed deferral correct; will diversify next turn).
 Followed the ~106 gap to a precise fix-path (no code change — the diagnosis is the deliverable). Traced the exact implementation: kernel adds a `pctl_cpucount`
 platformctl action in aarch64-generic (generic.h enum+union, generic.c handler returning hal_cpuGetCount() — clean/additive/ABI-stable, mirrors the
