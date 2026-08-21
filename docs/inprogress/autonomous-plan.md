@@ -773,6 +773,17 @@ The netboot breakage I introduced (+ recovered) is fully resolved. **Owner FINAL
 options (backlog still thin/deep): more libphoenix test coverage (other uncovered fns) · X11 demo-app port migration (toward the flip) · the
 deep GPU digs (vkQuake V3DV RCL / signal-push) which remain attended/semi-attended.
 
+2026-08-21 (session ~122 — ★ TEST-DRIVEN BUG FIND+FIX: timerisset() was a stub; added tests found it, fixed + HW-verified).
+Continued the "add libphoenix tests" directive with libc/time/timeval.c (timercmp + timerisset). **The timerisset test FOUND A REAL BUG:**
+`timerisset()` in libphoenix sys/time.c was an unimplemented STUB (`return 0` always) → every caller saw a set timer as unset. **FIXED**
+(libphoenix f7e979a: `return tvp->tv_sec != 0 || tvp->tv_usec != 0`). timercmp PASSed first try (the earlier `->` fix is good). **HW-VERIFIED
+after fix: 28 Tests 0 Failures OK** (both timercmp_lt_gt + timerisset_basic PASS). Pushed: libphoenix f7e979a + phoenix-rtos-tests 7c284bc
+(timeval tests) + 5a6ea2b (wctype tests, last session) to org. Manifest manifests/2026-08-21-timerisset-fix.md. GOTCHA hit + worked around:
+the test binary.mk does NOT track libphoenix.a as a prerequisite → a libphoenix fix does NOT auto-relink the test binaries; had to `touch`
+the test source to force the relink (else the stale-linked test kept failing). (Minor build-hygiene lead: add libphoenix.a as a test dep.)
+This is the value of the tests directive — test-writing directly surfaced + fixed a real libc bug. Netboot healthy throughout (paired
+--with-tests with --with-ports as per the last lesson). NEXT: more libphoenix test coverage (each new group may find more stubs/bugs).
+
 2026-08-21 (session ~107 — finalized the sysconf(_SC_NPROCESSORS) fix-path spec (precise, ready-to-implement); confirmed deferral correct; will diversify next turn).
 Followed the ~106 gap to a precise fix-path (no code change — the diagnosis is the deliverable). Traced the exact implementation: kernel adds a `pctl_cpucount`
 platformctl action in aarch64-generic (generic.h enum+union, generic.c handler returning hal_cpuGetCount() — clean/additive/ABI-stable, mirrors the
