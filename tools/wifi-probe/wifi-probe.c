@@ -1759,6 +1759,10 @@ static int g_tx_ran = 0;
 static int g_tx_mac_rc = -100;
 static int g_tx_rc = -100;
 static int g_tx_len = 0;
+/* STA MAC read in non-glom mode before enabling txglom (rxglom breaks our
+ * single-frame RX reader, so the MAC must be fetched first). */
+static uint8_t g_txmac[6] = {0};
+static int g_txmac_valid = 0;
 
 /* radio-as-transport #4 Phase 2b step 1: TX one DHCP-DISCOVER 802.3 frame as an
  * SDPCM channel-2 DATA frame (4-byte BDC header), to prove the data-plane TX path
@@ -1778,8 +1782,16 @@ static void diag_wifiDataTx(volatile uint8_t *sdhci, uint32_t sdio_core, uint8_t
 	for (i = 0; i < 8; ++i) {
 		mac[i] = 0u;
 	}
-	g_tx_mac_rc = diag_iovar(sdhci, sdio_core, 0, "cur_etheraddr", NULL, 6u,
-		mac, sizeof(mac), &ml, 200u, seq);
+	if (g_txmac_valid) {
+		/* use the MAC read earlier in non-glom mode (see jointx block) */
+		for (i = 0; i < 6; ++i) {
+			mac[i] = g_txmac[i];
+		}
+		g_tx_mac_rc = 0;
+	} else {
+		g_tx_mac_rc = diag_iovar(sdhci, sdio_core, 0, "cur_etheraddr", NULL, 6u,
+			mac, sizeof(mac), &ml, 200u, seq);
+	}
 
 	for (i = 0; i < F2_FRAME_MAX; ++i) {
 		g_txf[i] = 0u;
@@ -1817,19 +1829,46 @@ static void diag_wifiDataTx(volatile uint8_t *sdhci, uint32_t sdio_core, uint8_t
 	elen = 289;
 	g_tx_len = elen;
 
-	/* SDPCM header (12B): channel=2 DATA, seq, data_offset=12 */
-	total = 12u + 4u + (uint32_t)elen;
-	g_txf[0] = (uint8_t)(total & 0xffu);
-	g_txf[1] = (uint8_t)((total >> 8) & 0xffu);
-	g_txf[2] = (uint8_t)((~total) & 0xffu);
-	g_txf[3] = (uint8_t)(((~total) >> 8) & 0xffu);
-	g_txf[4] = seq;
-	g_tx_seq_used = seq; /* E7 read-only: record the seq we TX for the window test */
-	g_txf[5] = 0x02u; /* SDPCM channel = DATA */
-	g_txf[7] = 12u;   /* data_offset */
-	/* BDC header (4B) @12: flags = BCDC proto ver 2 << 4 */
-	g_txf[12] = 0x20u;
-	/* g_txf[13..15] already 0 (priority, flags2, bdc data_offset) */
+	/* --- SDIO TXGLOM on-wire format (matches brcmfmac; this fw expects the
+	 * 8-byte HWEXT glom descriptor on data frames -- confirmed by capturing
+	 * Linux's real TX data-frame bytes, see
+	 * docs/inprogress/2026-08-21-e7-wifi-linux-sdpcm-comparison.md).
+	 * Layout: HW(4) + HWEXT(8) + SW(8) + BDC(4) + eth; doff = tx_hdrlen = 20,
+	 * head_pad = 0 (g_txf is buffer-aligned). The bare non-glom frame we used
+	 * before (SW@4, BDC@12, doff=12) was silently dropped by the fw before the
+	 * 802.11 TX queue -- the whole "reaches fw not air" wall. */
+	{
+		uint32_t glom_total = 24u + (uint32_t)elen; /* whole frame incl 4B HW tag */
+		uint32_t hwext;
+		int j;
+		/* shift the already-built 802.3 frame from offset 16 -> 24 (backwards; regions overlap) */
+		for (j = elen - 1; j >= 0; --j) {
+			g_txf[24 + j] = g_txf[16 + j];
+		}
+		/* HW header [0-3]: len + ~len */
+		g_txf[0] = (uint8_t)(glom_total & 0xffu);
+		g_txf[1] = (uint8_t)((glom_total >> 8) & 0xffu);
+		g_txf[2] = (uint8_t)((~glom_total) & 0xffu);
+		g_txf[3] = (uint8_t)(((~glom_total) >> 8) & 0xffu);
+		/* HWEXT glom descriptor [4-11]: (len-4)|(lastfrm<<24), then tail_pad<<16 */
+		hwext = (glom_total - 4u) | (1u << 24); /* lastfrm = 1 */
+		g_txf[4] = (uint8_t)(hwext & 0xffu);
+		g_txf[5] = (uint8_t)((hwext >> 8) & 0xffu);
+		g_txf[6] = (uint8_t)((hwext >> 16) & 0xffu);
+		g_txf[7] = (uint8_t)((hwext >> 24) & 0xffu);
+		g_txf[8] = 0u; g_txf[9] = 0u; g_txf[10] = 0u; g_txf[11] = 0u; /* tail_pad = 0 */
+		/* SDPCM SW header [12-19]: seq, channel=DATA(2), nextlen=0, doff=20 */
+		g_txf[12] = seq;
+		g_tx_seq_used = seq; /* E7 read-only: record the seq we TX for the window test */
+		g_txf[13] = 0x02u; /* channel = DATA */
+		g_txf[14] = 0u;    /* nextlen */
+		g_txf[15] = 20u;   /* data_offset = tx_hdrlen (HW 4 + HWEXT 8 + SW 8) */
+		g_txf[16] = 0u; g_txf[17] = 0u; g_txf[18] = 0u; g_txf[19] = 0u;
+		/* BDC header [20-23] @ doff: flags = BCDC proto ver 2 << 4; prio/flags2/doff = 0 */
+		g_txf[20] = 0x20u;
+		g_txf[21] = 0u; g_txf[22] = 0u; g_txf[23] = 0u;
+		total = glom_total;
+	}
 
 	diag_setWindow18(sdhci);
 	wlen = (total + 3u) & ~3u;
@@ -2012,6 +2051,33 @@ static void diag_wifiJoin(volatile uint8_t *sdhci, uint32_t sdio_core)
 	/* jointx (step 1): after the join sequence, TX a DHCP-discover data frame so
 	 * the host AP's tcpdump proves the SDPCM channel-2 data-plane TX path. */
 	if (g_join_dtx) {
+		/* Match brcmfmac's txglom setup so the fw parses glom data frames:
+		 * bus:txglomalign sets the TX-glom alignment (sdio.c:3760); bus:rxglom
+		 * flips the fw into glom mode (sdio.c:3775, which also makes the driver
+		 * use the HWEXT glom TX header). Done post-join so the join's control RX
+		 * is unaffected; the data frame below is built in glom format. */
+		uint8_t v_align[4] = { 4u, 0u, 0u, 0u };  /* txglomalign = 4 */
+		uint8_t v_on[4] = { 1u, 0u, 0u, 0u };     /* rxglom = 1 */
+		uint8_t macbuf[8] = {0};
+		uint32_t maclen = 0u;
+		int rc_ga, rc_rg, k;
+		/* 1) read the STA MAC in NON-glom mode first (rxglom breaks our single-
+		 * frame RX reader, so the src MAC must be fetched before enabling glom) */
+		g_tx_mac_rc = diag_iovar(sdhci, sdio_core, 0, "cur_etheraddr", NULL, 6u,
+			macbuf, sizeof(macbuf), &maclen, reqid++, seq++);
+		for (k = 0; k < 6; ++k) {
+			g_txmac[k] = macbuf[k];
+		}
+		g_txmac_valid = 1;
+		/* 2) enter txglom mode (fw then parses the HWEXT glom data frame) */
+		rc_ga = diag_iovar(sdhci, sdio_core, 1, "bus:txglomalign", v_align,
+			4u, NULL, 0u, NULL, reqid++, seq++);
+		rc_rg = diag_iovar(sdhci, sdio_core, 1, "bus:rxglom", v_on,
+			4u, NULL, 0u, NULL, reqid++, seq++);
+		printf("wifi: TXGLOM-ENABLE mac_rc=%d align_rc=%d rxglom_rc=%d mac=%02x:%02x:%02x:%02x:%02x:%02x\n",
+			g_tx_mac_rc, rc_ga, rc_rg,
+			g_txmac[0], g_txmac[1], g_txmac[2], g_txmac[3], g_txmac[4], g_txmac[5]);
+		fflush(stdout);
 		diag_wifiDataTx(sdhci, sdio_core, seq);
 		printf("wifi: DATATX-DONE rc=%d len=%d\n", g_tx_rc, g_tx_len);
 		/* E7 read-only credit test: tx_seq vs the fw-advertised window (buf[9]).
