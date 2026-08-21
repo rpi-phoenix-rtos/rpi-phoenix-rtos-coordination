@@ -589,6 +589,19 @@ early `dmesg -c` (edit the ref rootfs oneshot) so brcmfmac init logs the `tlv`/p
 the `tlv` iovar + a minimal fwsignal TX header to the probe and re-tcpdump; if OFF there too, pivot to BDC priority/AC or an
 interface-not-tx-ready iovar. (Host AP left up; Linux ref oneshot in place. WiFi firmware/CLM stays unpublished; probe source is public.)
 
+2026-08-21 (session ~110 — ★★ NON-EGRESS CONFIRMED robustly + fwsignal ruled out; narrowed to the host-data-path-enable gap).
+Advisor caught that the prior "0 on air" used a BPF DHCP filter (parses L3) while the DISCOVER has a HARDCODED IP checksum/lengths →
+a bad-L3 frame reads 0 even if it egressed. Re-ran jointx with the L3-INDEPENDENT detectors: `iw dev wlp3s0 station dump` (2s loop) +
+broad L2 tcpdump (RPi OUI). RESULT (108 samples): station dc:a6:32:3c:dd:f3 **authorized:yes** (assoc LIVE at AP — verified directly),
+**rx bytes=774 CONSTANT** (assoc+EAPOL only, never +289 for the DISCOVER), tx=583 constant, L2 tcpdump 0 Pi frames. rx_bytes is a
+MAC-level counter ⇒ **CONFIRMED non-egress, not a filter artifact.** Separately re-captured Linux (fw 7.45.265): no fws_stats + sig 0
+every RX ⇒ **fwsignal NOT signaling ⇒ unlikely the gap** (Linux sends bare BDC+eth like Phoenix). SHARP DIAGNOSIS: the fw's own
+internal TX works (EAPOL M2/M4 reached the AP) — only the HOST-INJECTED SDPCM-ch2 DATA→802.11-TX handoff is dead. Committed+pushed
+(8238efc + this). Dispatched a subagent to compare brcmfmac (external/linux) data-frame byte-construction + the post-assoc
+data-path-ENABLE ioctl/iovar sequence vs the probe's diag_wifiJoin. **NEXT:** act on the subagent's finding — add the missing
+post-assoc enable iovar (or fix the frame bytes) to wifi-probe.c, re-run jointx, and confirm rx_bytes jumps +289 at the AP (the
+robust egress test). Credit + fwsignal both REFUTED; the answer is in the data-path-enable / frame-construction divergence.
+
 2026-08-21 (session ~107 — finalized the sysconf(_SC_NPROCESSORS) fix-path spec (precise, ready-to-implement); confirmed deferral correct; will diversify next turn).
 Followed the ~106 gap to a precise fix-path (no code change — the diagnosis is the deliverable). Traced the exact implementation: kernel adds a `pctl_cpucount`
 platformctl action in aarch64-generic (generic.h enum+union, generic.c handler returning hal_cpuGetCount() — clean/additive/ABI-stable, mirrors the

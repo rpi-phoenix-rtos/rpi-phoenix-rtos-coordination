@@ -129,3 +129,33 @@ seq in-window, flow clear, no fwsignal needed) yet never reaches air. Remaining 
 priority/AC; (b) a post-association iovar / data-path-enable the fw needs before it will
 egress host data (802.1X controlled-port authorize, or an interface "up for data" step
 brcmfmac does that the probe omits); (c) frame framing the fw's data classifier rejects.
+
+## Cycle e7-air-detect (2026-08-21) — CONFIRMED non-egress with an L3-independent detector
+
+The advisor flagged that the prior "0 on air" rested on a BPF DHCP filter that must parse L3,
+while the DISCOVER has a *hand-built, hardcoded* IP checksum + length fields — a slightly-off
+L3 frame would show 0 packets even if it egressed. Re-ran `jointx` with two host-side detectors
+that do NOT depend on L3 validity: `iw dev wlp3s0 station dump` in a 2 s loop, and a broad L2
+`tcpdump` filtered on the RPi OUI (`ether[6:4] & 0xffffff00 = 0xdca63200`). Result (108 samples,
+~216 s associated window):
+
+```
+station dc:a6:32:3c:dd:f3  authorized: yes  connected-time 10..133s climbing
+rx bytes: 774   (CONSTANT across all 108 samples — never +289 for the DISCOVER)
+tx bytes: 583   (constant — AP sent no data back either)
+L2 tcpdump (Pi-OUI source): 0 frames
+```
+
+**Conclusions (robust, not filter-dependent):**
+- **Association is live + `authorized` at the AP** — verified directly for the first time (had
+  only been derived from "4-way keyed"). Premise holds.
+- `rx_bytes` is a **802.11-MAC-level** counter (L3-independent); it plateaus at 774 (assoc +
+  EAPOL) and **never rises by the ~289-byte DISCOVER** ⇒ **the data frame genuinely never
+  reaches the AP MAC — confirmed non-egress, not a capture artifact.**
+- The fw's OWN internal TX works (EAPOL M2/M4 reached the AP) ⇒ **only the host-injected
+  SDPCM-ch2 DATA → 802.11-TX handoff is dead.**
+
+⇒ advisor's "world #2" (data doesn't egress, association live). Earned next step (dispatched to
+a subagent): brcmfmac source comparison of (1) the exact data-frame byte construction and (2)
+the post-association **data-path-enable** ioctl/iovar sequence brcmfmac issues between "keyed"
+and "first data TX" that the probe's `diag_wifiJoin` omits.
