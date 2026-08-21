@@ -810,6 +810,17 @@ rebuilds: src/stty.c:994 "expected expression before ')'" + an earlier OpenSSL M
 + bootfs completed anyway), NOT caused by my libphoenix changes (stty doesn't use my macros/fns). Worth an owner/port-maintenance look.
 RUNNING TALLY (test-driven arc): wctype tests + timerisset fix + timeval macros + wctomb/dev stubs = 4 libphoenix improvements, all HW-verified.
 
+2026-08-21 (session ~125 — implemented strptime() (was a NULL stub); C-locale parser, HW-verified).
+Tackled the biggest deferred audit stub: **strptime()** returned NULL unconditionally → every date/time parse silently failed. Wrote a fresh
+C/POSIX-locale parser in libphoenix time/time.c (855dfc6): directives %Y %y %m %d %e %H %M %S %j %a %A %b %B %h + whitespace (%n %t) + %%,
+reusing the existing wdayasc/monasc tables (full or 3-char abbrev, case-insensitive), with range checks + the standard end-pointer return /
+NULL-on-mismatch. Two static helpers (strptime_num, strptime_name). Tests (phoenix-rtos-tests 7896fa2, time_strptime group): ISO date,
+datetime, names full+abbrev, 2-digit-year POSIX pivot + endptr, mismatch/out-of-range→NULL. **HW-verified: all 5 PASS (36 Tests 0 Failures
+OK).** Manifest 2026-08-21-strptime-impl.md. Pushed both to org. **TALLY now 5 libphoenix improvements this arc, all HW-verified**
+(wctype tests, timerisset fix, timeval macros, wctomb+dev stubs, strptime). Remaining audit stubs: getrusage/times (defensive memset,
+low-value), fchdir (needs fd→path) — deferred. Known %Y greedy-digit limitation on undelimited formats (4-digit cap) — fine for delimited
+callers. NEXT: getrusage/times defensive fix OR more coverage OR the noted NFS-stat / coreutils-port issues (deeper, separate).
+
 2026-08-21 (session ~107 — finalized the sysconf(_SC_NPROCESSORS) fix-path spec (precise, ready-to-implement); confirmed deferral correct; will diversify next turn).
 Followed the ~106 gap to a precise fix-path (no code change — the diagnosis is the deliverable). Traced the exact implementation: kernel adds a `pctl_cpucount`
 platformctl action in aarch64-generic (generic.h enum+union, generic.c handler returning hal_cpuGetCount() — clean/additive/ABI-stable, mirrors the
