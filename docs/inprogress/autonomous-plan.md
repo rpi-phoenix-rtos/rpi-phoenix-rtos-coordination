@@ -528,6 +528,19 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~87 — P3-followup: framework X11 build re-validated via a new durable helper; `if:true` flip correctly scoped/gated, NOT flipped).
+Re-read the queue — corrected last turn's "autonomous wins drained" (too hasty): P3-followup, P7, P8 are still autonomous. Confirmed directive-#14
+"upgrade OFFICIAL Lua" is ALREADY DONE (ports `3007ff8` 5.3.6→5.4.7). Advisor picked P3-followup (converts inert done-work to shipping value +
+on the G-GPU critical path) with a fail-safe (discriminator first; keep wiring as prep; never leave a broken shipping path). Built + committed
+**scripts/build-xorg-ports.sh** (generalises build-sdl2-port.sh to the 5 migrated X11 ports; the discriminator + future-flip mechanism). Ran it:
+**DISCRIMINATOR PASSED** — port_manager resolves + builds all 5 clean (`Done 45 s` warm, Xphoenix relinked, correct dep order + framework zlib),
+re-confirming the P3 subagent result via a repeatable script. **Decision: did NOT flip `if:true`.** Framework xorg is self-contained (framework
+zlib) so it CAN flip, BUT the ad-hoc build-showcase-apps.sh X11 step also seeds /tmp/x11-phoenix zlib/png/jpeg that the still-ad-hoc glib2/fltk/
+dillo (E4-deferred) consume — so the ad-hoc X11 can't be removed until those migrate; flipping alone would build X11 twice + stage two Xphoenix.
+⇒ the clean flip is ATOMIC with the glib2/fltk/dillo migration (E4). Documented in ports.yaml (project `7bf3259`) + helper (coord `08776b4`),
+both pushed. NEXT: the flip is now correctly gated on E4 (glib2/fltk/dillo → framework ports); other autonomous leads = P7 vkQuake backtrace,
+P9 Mesa 26.2.0 rebase, or deploy the SDL2 input fix to netboot. Owner-attended (input/bash/mouse/vkQuake-live) + deep V3D-root still parked.
+
 2026-08-21 (session ~86 — coreutils differential corpus EXPANDED 28→54 cases; 53/54 bit-exact on HW, no new bugs; harness robustified).
 Bounded fully-autonomous win: expanded tools/coreutils-difftest (the differential harness that earlier found the cksum/od Data Abort).
 Added 26 deterministic cases (sha1/224/512sum, b2sum, sum, base32, basenc-16, fold, expand, nl -s:, cat -A, uniq -c/-d, sort -n, join,
