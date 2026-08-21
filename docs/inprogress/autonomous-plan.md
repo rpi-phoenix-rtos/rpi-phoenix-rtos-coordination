@@ -528,6 +528,23 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~98 — V3D dig: EXHAUSTIVE host-side + winsys-source localization → ruled out store/Mesa-GL-layer/UIFCFG/bounded-flush; residual = deep read-side HW/winsys, owner-attended HAND-OFF).
+Continued the #1 dig with CHEAP host-side/source analysis (no rebuild) per "compare vs Mesa/Linux". Systematically RULED OUT every tractable software
+layer: (1) STORE (uif_pixel_off) — HW-clean at 512+1024 (session ~97). (2) The Mesa GL READ-side code is VERBATIM upstream — the port patch
+(mesa-phoenix-port.patch) touches v3dx_state.c ONLY for the framebuffer R↔B swap + v3d_resource.c ONLY for RT-scanout/cacheable-readback; the
+sampled-texture descriptor (v3d_setup_texture_shader_state) + slice layout (v3d_setup_slices) + tiling (v3d_tiling.c) are UNMODIFIED ⇒ identical to
+stock Mesa, which renders 1024 lightmaps fine on RPi-OS Linux. (3) UIFCFG=0x45 — Mesa's v3d_device_info + gallium do NOT consume UIFCFG at all (fields:
+ver/vpm/qpu/page_size=os_page_size/…), so the hardcoded value can't affect GL texture layout — DEFINITIVELY ruled out. (4) Bounded cache flush — the
+winsys L2T flush range is the WHOLE cache (L2TFLSTA=0,L2TFLEND=~0) + per-submit whole-L2T clean+invalidate + SLCACTL_INVAL_ALL (TVCCS/TDCCS/UCC/ICC),
+with GFXH-1897/1383 errata handled ⇒ not an obviously-bounded/broken flush. KEY corroborating fact: glGetTexImage (CPU read of the BO) is CLEAN at
+1024 ⇒ the DRAM layout is correct; ONLY the HW TMU reads wrong. ⇒ **DIAGNOSIS: the bug is a subtle READ-side HW/winsys TMU interaction for LARGE
+sampled textures — NOT in any ported-Mesa GL code, the store, UIFCFG, or the cache-flush range. Same class as the vkQuake V3DV striping (both read-side
+winsys/HW).** This is the advisor's reframed hand-off point: the reproducer (gl_uif_probe + build-gl-uif.py) is committed for future empirical work,
+the symptom is already worked-around (r_mergeLightmaps 0 → q3dm7 renders lit), and the actual read-side fix needs deep V3D/HW expertise = OWNER-ATTENDED.
+If pursued further unattended, the only remaining lever is instrumenting the real quake TMU submit (descriptor bytes + per-submit cache-flush timing vs a
+Linux-Pi4 v3d capture) — heavy, uncertain. NEXT TURN: pivot off this dig (banked+localized) to another Tier-1 item — the X11 if:true flip finalization,
+SDL2 input deploy, or bash-tty — per the advisor's "resist grinding one deep bug; the symptom is worked-around."
+
 2026-08-21 (session ~97 — V3D dig: BUILT+RAN the store-vs-sample probe on HW (2 boots) → STORE side RULED OUT, corruption is READ-side/TMU-descriptor. Harness over-reports; pivot to descriptor instrumentation per tripwire).
 Reconstructed the removed gl-det-build.sh recipe generically (tools/v3d-driver-port/build-gl-uif.py: reuses build-v3d-phoenix.py's transform() to
 compile against Mesa's HOSTBUILD include set + LINK with g++ (C++ runtime for libGL's GLSL compiler) vs the two folded gpu-libs; harness carries its
