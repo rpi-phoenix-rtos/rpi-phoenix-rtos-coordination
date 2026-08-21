@@ -528,6 +528,17 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~81 — q3dm7 lightmap: tiler formula CONFIRMED correct (uif_pixel_off ≡ Mesa exactly) → VKQ_CPU_TILE experiment in flight).
+Continued the q3dm7 lightmap dig. Compared the winsys `uif_pixel_off` (v3d_phoenix_winsys.c ~1170) against Mesa
+`v3d_tiling.c v3d_get_uif_pixel_offset` line-by-line (cpp=4): XOR `(mb_x/4)&1`, mb_id `(mb_x/4)*((mb_h-1)*4)+mb_x+mb_y*4`,
+mb_h=align(h,8)>>3, tile offsets, utile offset `x*4+y*16` — ALL EXACT MATCH, incl. 1024-wide. ⇒ **the tiler FORMULA is correct, not the
+bug.** But uif_pixel_off is only used by the CPU-tiler (`#ifdef VKQ_CPU_TILE`, default OFF) + the probe; the REAL upload uses the TFU HW
+(ioc_submit_tfu). So the 1024 bug is in the TFU-HW upload path or the TMU descriptor, NOT the tiler math. **Set up a clean discriminator/
+fix: flip VKQ_CPU_TILE=1** — route the lightmap upload (UIF dst+RASTER src+cpp=4, matches the CPU-tiler gating) through the verified-correct
+uif_pixel_off instead of the TFU HW. If q3dm7 lights up → TFU-HW mis-tiles 1024-wide UIF_XOR (upload bug) + CPU-tiler is the fix; if still
+black → upload was fine, bug is sampling/descriptor. Rebuild IN FLIGHT: `VKQ_CPU_TILE=1 build-v3d-phoenix.py` (libv3d-phoenix.a). NEXT:
+relink quake3e → deploy → `quake3 +devmap q3dm7` → HDMI-verify. memory project_quake3_lightmap_uif_xor updated.
+
 2026-08-21 (session ~80 — pivoted to V3D quake3-lightmap (owner #1 dig): root-caused q3dm7 BLACK to a 512/1024 SIZE THRESHOLD, cheaply, no rebuild).
 Pivoted to the owner's #1 top-dig (V3D quake-lightmap). Got the advisor's discriminating fact WITHOUT any GPU rebuild — computed the merged-
 lightmap atlas size from each map's BSP (numLightmaps = LUMP_LIGHTMAPS.len/(128²·3)) + the renderer's SetLightmapParams POT-atlas formula:
