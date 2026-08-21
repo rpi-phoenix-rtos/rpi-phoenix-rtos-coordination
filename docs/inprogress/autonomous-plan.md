@@ -528,6 +528,20 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~103 — §D Journey article FINALIZED (added the latest wave); P9 qemu 11.1 deferred as low-ROI; autonomous high-value backlog confirmed complete/owner-gated).
+Technical Tier-1 backlog complete/handed-off; picked the sanctioned §D non-code deliverable with genuine value for the to-be-published project: finalized
+docs/AI-DRIVEN-PORT-JOURNEY.md (owner: "draft exists; review/finalize"). Added a new "autonomous phase" wave the 273-line draft was missing — the
+ports-migration campaign (ad-hoc scripts → framework recipes: libpng/libjpeg-turbo/fltk/libiconv-real-1.18/libffi/glib2/dillo, chain composes),
+the advisor-driven BOOT-validation ("build-verified ≠ works" → framework X+Dillo render an HTTPS+JPEG page on HDMI; caught 2 gaps 7 green builds hid),
+the V3D store-vs-sample bisection (ruled out store/Mesa/UIFCFG/flush → localized to the winsys read-side, banked w/ reproducer), and the bash-tty dig
+(tty layer PROVED correct + FIONREAD gap fixed → residual is readline-internal/owner). Added a takeaway: "a precise 'not here' is a deliverable"
+(localization + reproducer + hand-off is real engineering; fix genuine gaps found en route; late in a long run, clean evidence-backed hand-off beats a
+manufactured feature). Committed (coord). P9 qemu 11.1 DEFERRED: host is already qemu 11.0.0 (recent); 11.0→11.1 is a trivial point bump needing a
+~30-min from-source host build that won't resolve the TD-07/08 arch tech-debt — low ROI, not worth it. ⇒ P9 effectively done (Mesa source-done,
+wpa_supplicant done, qemu adequate). Autonomous high-value backlog is complete; remaining = owner-gated (DRI/DRM GO decision, V3D read-side fix,
+bash/SDL2/mouse live tests, XFce/LXQt-vs-WindowMaker + the other §-owner-decisions). NEXT: absent owner input, options are TD-Eth-LinkIRQ (driver dig,
+or accept MDIO-poll), a propose-own feature, or hold for owner decisions — surfacing the owner-decision asks remains the highest-leverage pending item.
+
 2026-08-21 (session ~102 — P9 progress: wpa_supplicant 2.9→2.11 (security) DONE+verified; confirmed P9 Mesa rebase already source-done (external/mesa on final tag)).
 Worked the sanctioned §D tractable-unattended P9 items. (1) **P9 Mesa rc1→release rebase = ALREADY SOURCE-DONE** — external/mesa is at the FINAL
 `mesa-26.2.0` tag + 11 port commits (bootstrap pins mesa-26.2.0, rebased 2026-08-13; owner-decision #2 ✅ satisfied). The running GPU binaries still

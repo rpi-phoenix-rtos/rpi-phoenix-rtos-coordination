@@ -229,6 +229,40 @@ address (adjacent to the Wi-Fi one, the same silicon) and ran a clean device-dis
 combo chip were now fully up from a from-scratch RTOS that, weeks earlier, could not get the chip's firmware to
 execute a single instruction.
 
+A later wave turned inward — from adding capabilities to *consolidating* what the port had accumulated, and to
+the kind of deep single-bug diagnosis that yields a precise answer rather than a demo:
+
+- **Migrated the ad-hoc port scripts into first-class framework recipes.** Much of the ecosystem — the PNG/JPEG
+  codecs, the FLTK toolkit, iconv/ffi, GLib, the Dillo browser, the X11 stack — had been built by hand-rolled
+  shell scripts staging into `/tmp`: fine for bring-up, wrong for a project meant to be published and upstreamed.
+  The agent moved each into a proper port-manager recipe so they resolve one another by declared dependency and
+  build reproducibly — `libpng`, `libjpeg` (as **libjpeg-turbo**, since the build system's version parser rejected
+  the legacy IJG version string), `fltk`, **`libiconv` as the *real* GNU libiconv 1.18, retiring a documented
+  ASCII-only stub** (the modern gnulib that a two-years-older release had "refused to cross-compile" simply worked),
+  `libffi`, `glib2`, and `dillo` — each build-verified through the real port manager, the whole
+  `libpng→libjpeg→fltk→dillo` dependency chain composing end-to-end.
+- Then — on a stronger reviewer's pointed reminder that **"build-verified" is not "works"** — it *booted* them.
+  Seven freshly-migrated ports had never actually run, and the framework Dillo now linked *different* libraries
+  (libjpeg-turbo not IJG, real libiconv not the stub) than the binary proven months earlier. Staged onto the netboot
+  root and launched, the migrated **X server and Dillo rendered a full browser window on HDMI, then a live HTTPS page
+  with a JPEG decoded by the new libjpeg-turbo** — proving the recipes produced working artifacts, and catching two
+  gaps (an uninstalled plugin daemon; a `/usr/bin`-vs-`/bin` path) that seven green builds had hidden.
+- It reopened the port's most-wanted graphics bug — a lightmap that renders black on large maps, plus the same class
+  of read-side corruption in two other engines — and, instead of re-reading source, built a **store-versus-sample
+  bisection**: upload a known pixel pattern to the exact texture layout the game uses, then read it back *two ways* —
+  through the CPU transfer path and through the GPU's texture unit — and diff. The CPU path was byte-clean; the GPU
+  sample was not. That split, plus a host-side audit proving the ported GPU tiling/descriptor code *identical* to
+  upstream (which renders the same textures correctly on Linux) and the tiling math independent of the one hardware
+  register the port hard-codes, **ruled out every layer months of notes had suspected** and localized the fault to a
+  Phoenix-specific read-side interaction in the GPU winsys — a precise negative result, banked with a reproducer, for
+  an attended dive rather than an unbounded unattended one.
+- And it chased **why interactive `bash` exits at its first prompt.** A small tty probe on the hardware proved the
+  terminal read path *correct* (line discipline, `VMIN` blocking, no ABI mismatch) but caught a real gap on the way —
+  the `FIONREAD` ioctl that readline queries for pending input returned an error instead of a byte count — which the
+  agent fixed in the shared tty library and HW-verified. `bash` still exits interactively, so that fix, though a
+  genuine correctness bug, was *not the cause*; but a `bash` script now runs correctly and the whole terminal layer is
+  *proven* not at fault, leaving the residual as a readline-internal question for a live terminal.
+
 The limits it hit were *physical or judgment* boundaries, not cognitive ones: a 100 Mbps link it
 couldn't rewire, an SD card it couldn't insert, and a host network it judged too risky to
 reconfigure unattended (reconfiguring the netboot infrastructure everything depended on was not
@@ -271,3 +305,10 @@ worth a silent regression while no human could recover it).
   only autonomous ground truth is an HDMI frame and a serial log, the agent rationally favored work it could
   *see itself finish* — a sensible bias, but one worth naming, since it also means audio, interactivity, and
   anything needing a human's eyes or ears quietly slid down the queue regardless of stated priority.
+- **A precise "not here" is a deliverable.** The hardest late items didn't end in a fix — they ended in a
+  *localization*: the GPU corruption is not in the store path, not in the ported Mesa, not in a hard-coded
+  register; the `bash` EOF is not in the tty read layer. Each came with a reproducer and a hand-off. Exhaustively
+  ruling out the tractable layers is real engineering — it converts an open-ended "GPU tiling bug" into a named,
+  bounded question an attended session can finish — and a genuine gap you fix on the way (the `FIONREAD` ioctl) is
+  worth landing even when it turns out not to be the culprit. Late in a long run, when the shippable backlog is
+  drained to owner-gated decisions, the honest move is a clean, evidence-backed hand-off, not a manufactured feature.
