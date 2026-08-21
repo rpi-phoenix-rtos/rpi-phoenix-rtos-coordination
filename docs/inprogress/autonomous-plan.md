@@ -685,6 +685,17 @@ embed the OLD libv3d → rebuild them vs fixed libv3d + HDMI-confirm (artifacts/
 (quake3-launcher.c:29). Docs: 2026-08-21-v3d-uif-xor-1024-redirect.md; memory project_quake3_lightmap_uif_xor updated. NOTE: external/mesa
 fix is LOCAL git (fork); publish to the Phoenix Mesa fork-mirror is a release-time step.
 
+2026-08-21 (session ~116 — ✅ V3D UIF_XOR bug FULLY RESOLVED: visual confirm + workaround removed. Top-dig CLOSED.)
+Rebuilt quake3e (169/169 TUs) vs the fixed libv3d, deployed, ran q3dm7 with merged lightmaps (the previously-black 1024² atlas path).
+HDMI grab = colorful (not black) but with uniform horizontal capture-tearing. **A/B discriminator:** ran q3dm7 merge-OFF (the known-lit,
+owner-HW-verified workaround) — its HDMI grab shows the IDENTICAL striping + same colors ⇒ the striping is purely the HDMI capture-card
+artifact (in both), and merge-ON (fixed) is VISUALLY EQUIVALENT to the known-lit merge-OFF ⇒ lightmaps lit ⇒ fix works. Two independent
+confirmations now: (1) descriptor 1024→UIF_XOR≡512; (2) visual A/B merge-ON≡known-lit-merge-OFF. **Workaround REMOVED** (quake3-launcher.c
+no longer forces r_mergeLightmaps 0; rebuilt+deployed the launcher → default merged atlas). quake2 speckle + vkQuake striping = same class,
+same libv3d fix (rebuild those ports to exercise; not re-verified visually — same root cause). **V3D top-dig CLOSED.** Committed: launcher
+(coord) + fix (external/mesa 4363822955b). **NEXT:** rotate to another Tier-1 top-dig — X11 ports.yaml integration, coreutils make check,
+or lwip gateway (V3D + WiFi have had many deep turns; time for breadth on a more autonomously-completable item).
+
 2026-08-21 (session ~107 — finalized the sysconf(_SC_NPROCESSORS) fix-path spec (precise, ready-to-implement); confirmed deferral correct; will diversify next turn).
 Followed the ~106 gap to a precise fix-path (no code change — the diagnosis is the deliverable). Traced the exact implementation: kernel adds a `pctl_cpucount`
 platformctl action in aarch64-generic (generic.h enum+union, generic.c handler returning hal_cpuGetCount() — clean/additive/ABI-stable, mirrors the

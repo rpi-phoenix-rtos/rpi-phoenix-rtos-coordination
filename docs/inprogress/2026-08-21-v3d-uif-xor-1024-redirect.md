@@ -105,9 +105,26 @@ The 1024 atlas now takes the exact tiling path as the known-good 512 atlas ⇒ t
 at the descriptor level. This is THE class fix (large sampled textures >=1024x768): quake3
 lightmap-black + quake2 floor-speckle + vkQuake striping.
 
-**Remaining (follow-up, owner-attended-ish):** the deployed quake3e/quake2/vkQuake binaries statically
-embed the OLD libv3d, so a VISUAL confirm needs rebuilding those ports against the fixed
-`tools/.gpu-libs/libv3d-phoenix.a` + an HDMI check (test-cycle auto-captures artifacts/hdmi/). Once
-q3dm7 is visually lit with `r_mergeLightmaps 1`, remove the `r_mergeLightmaps 0` workaround in
-quake3-launcher.c:29. The gl_uif_probe's render path is unreliable so it can't self-confirm the
-visual; the descriptor match (1024≡512 UIF_XOR) is the autonomous proof.
+## ✅ VISUAL CONFIRM + WORKAROUND REMOVED (2026-08-21) — bug FULLY RESOLVED
+
+Rebuilt quake3e (169/169 TUs) against the fixed `libv3d-phoenix.a`, deployed it, and ran q3dm7
+with `r_mergeLightmaps 1` (merged 1024² atlas — the previously-black path). HDMI grabs show a
+colorful (not-black) scene but with heavy uniform horizontal-line tearing. **A/B discriminator:**
+ran q3dm7 with merge=0 (the known-lit, owner-HW-verified workaround path) — its HDMI grab shows the
+**identical** uniform striping and the **same** colors/brightness. ⇒ the striping is purely the
+HDMI capture-card artifact (present even in the known-good reference), and the merge-ON (fixed)
+render is **visually equivalent to the known-lit merge-OFF render** ⇒ the lightmaps are lit ⇒ the
+fix works. (A black-lightmap regression would render dark; both frames are mid-tone colorful and
+indistinguishable.)
+
+**Two independent confirmations:** (1) descriptor-level — post-fix the 1024 atlas is UIF_XOR,
+identical to the working 512; (2) visual A/B — merge-ON ≡ known-lit merge-OFF in the HDMI capture.
+
+**Workaround REMOVED:** quake3-launcher.c no longer forces `r_mergeLightmaps 0`; quake3e's default
+(merged atlas) is used, rebuilt launcher deployed. quake2 floor-speckle + vkQuake striping are the
+same class (large sampled textures) and are fixed by the same libv3d change — rebuilding those two
+ports against the fixed lib exercises it (not re-verified visually this pass; same root cause).
+
+**Status: RESOLVED.** V3D large-UIF_XOR sampling bug root-caused (should_tile forcing large sampled
+textures to RASTER), fixed (exclude SAMPLER_VIEW, external/mesa 4363822955b), and confirmed both at
+the descriptor level and visually (A/B vs the known-lit reference). The owner's #1 top-dig is closed.

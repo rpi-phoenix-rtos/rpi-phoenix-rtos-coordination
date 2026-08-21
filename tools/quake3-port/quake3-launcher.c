@@ -19,14 +19,16 @@ int main(int argc, char **argv)
 	static char *base[] = {
 		"ram-stage-play", "/usr/share/quake3", "/tmp/quake3",
 		"/usr/bin/quake3e", "+set", "fs_basepath", "/tmp/quake3", "+set", "fs_game", "demoq3",
-		/* r_mergeLightmaps 0: use individual 128x128 lightmap textures instead of a
-		 * merged POT atlas. On the V3D GL path a large (>=1024) merged lightmap atlas
-		 * tiles/samples wrong (UIF_XOR read-side bug) → BLACK-sector surfaces on
-		 * bigger maps (e.g. q3dm7, 1024x1024 atlas); q3dm1 (512x512) was fine.
-		 * Individual 128x128 lightmaps avoid the large-UIF_XOR path entirely and
-		 * render correct + lit (HW-verified: q3dm7 fully lit). Small perf cost (more
-		 * texture binds) vs. correctness. See memory project_quake3_lightmap_uif_xor. */
-		"+set", "r_mergeLightmaps", "0",
+		/* r_mergeLightmaps: quake3e's default (1, merged POT lightmap atlas) is now used.
+		 * The old r_mergeLightmaps=0 workaround (individual 128x128 lightmaps) is REMOVED:
+		 * the underlying V3D bug is fixed. A large (>=1024x768) merged atlas was being laid
+		 * out RASTER instead of UIF_XOR — the Phoenix should_tile optimization forced large
+		 * RENDER_TARGET textures to linear for fast glReadPixels, but Mesa marks renderable
+		 * RGBA8 SAMPLED textures RENDER_TARGET too, so the sampled atlas matched and the TMU
+		 * read linear-as-UIF → black sectors (q3dm7). Fixed in libv3d by excluding
+		 * SAMPLER_VIEW from that gate (external/mesa 4363822955b); HW-confirmed the 1024 atlas
+		 * is now UIF_XOR and q3dm7 renders equivalently to the individual-lightmap path.
+		 * See memory project_quake3_lightmap_uif_xor + docs .../2026-08-21-v3d-uif-xor-1024-redirect.md. */
 	};
 	const int nbase = (int)(sizeof(base) / sizeof(base[0]));
 	char **a = calloc((size_t)(nbase + argc + 1), sizeof(char *));
