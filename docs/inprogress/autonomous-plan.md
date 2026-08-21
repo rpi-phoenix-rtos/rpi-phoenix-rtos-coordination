@@ -528,6 +528,18 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-22 (session ~160 — ★ OWNER RETURNED + authorized #6/#7/#9/#10/#11/#12/#13 (pick order, keep autonomous). STARTED #6 = upstream B-items apply pass: 4/5 applied+HW-verified, B5 deferred).
+Owner greenlit the big/deep items. My execution order: #6 B-items → #11 v3d→devices → #7 X11 if:true flip → #12 V3D UIF_XOR bug → #13 v3d-server arbiter → #9 WiFi + #10 ffmpeg-HW.
+**#6 DONE (this turn):** applied the upstream-review still-real fixes, lowest-risk first, each HW non-regression-verified (0 faults):
+ • **B14** (xHCI PORTSC RW1C over-clear) + **B2** (xHCI shared inputCtx leak) — devices `4576e72`, pushed; boot+USB-root-hub-enum+netboot OK.
+ • **B8** (pl011-tty kbd-bridge batch-wake collapse) — devices `25e5c9a`, pushed. ★ CAUGHT: my earlier work-order fix (remove the shared libtty entry-reset) was WRONG — it's
+   load-bearing for grlib/stm32l4/grlib-uart (they declare `int wh;` uninitialised + rely on it). Correct fix is LOCAL to pl011-tty (accumulate per-char). HW: psh console input
+   delivers+runs commands (string_memmem 5/5 OK).
+ • **B7b** (genet dsb before the TX producer doorbell) — lwip `87ff8db` LOCAL (lwip publish = filtered cherry-pick flow, deferred). HW: netboot NFS unaffected (0 faults). Defensive fence.
+ • **B5** (console early-print alias) DEFERRED — lowest rpi4 value (alias==DTB-discovered base ⇒ no rpi4 effect + unverifiable here) + boot-output-risky; for a cross-board/attended pass.
+Manifest 2026-08-21-b-items-apply-pass. Work-order updated (B8 correction + B5 defer). ⇒ #6 complete to the unattended-safe boundary (4 real upstream bug-fixes shipped; B5 = attended).
+NEXT: #11 v3d-driver-port → phoenix-rtos-devices migration.
+
 2026-08-21 (session ~159 — consolidation: updated the owner-requested journey article (§D) to accurately capture the recent arc — glamor-accelerated X, gcc-16 toolchain, HTTPS/Redis/SQLite).
 Honestly reassessed: the tractable-unattended backlog (big AND bounded) is at its floor — remaining is attended (M1 gcc-swap, X11 keypress, audio, bash -i), deep (WiFi fw-wall, ffmpeg-HW
 VCHIQ), delicate-hygiene-partly-attended (X11 if:true flip), or hard-rabbit-hole (AXI-PMU per-master needs display-background isolation). By expected-value (value × P(clean unattended

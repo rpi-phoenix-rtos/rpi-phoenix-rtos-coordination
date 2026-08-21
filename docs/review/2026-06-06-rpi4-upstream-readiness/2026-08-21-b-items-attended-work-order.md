@@ -118,23 +118,19 @@ in a loop then one wake check, so the entry-reset makes only the LAST char's wak
 decision survive → a completed line mid-burst can lose its reader wakeup. (The
 locked path is saved by per-char `condSignal`.)
 
-Fix: remove the entry-reset; make the helper *only ever raise* `*wake_reader`, and
-have each caller initialize `*wake_reader = 0` once before its batch loop.
+✅ **APPLIED + FIXED (2026-08-21, pl011-tty `25e5c9a`) — the original fix below was WRONG.**
+The caller audit revealed the entry-reset is **load-bearing** for the *majority*
+pattern: grlib-multi, stm32l4-multi, grlib-uart all declare `int wh;`
+*uninitialised* and do `putchar(&wh); wake |= wh;` per char — they RELY on the
+helper's entry-reset to zero `wh`. Removing the shared entry-reset would make those
+3 drivers read garbage. The bug is **specific to pl011-tty's batch loop** (it inits
+`wake_reader=0` once, then passes `&wake_reader` per char = accumulate-in-place,
+which the entry-reset then collapses). So the correct fix is LOCAL to pl011-tty:
+accumulate per char with a scratch var (`int wh=0; putchar(&wh); wake_reader|=wh;`),
+matching the other drivers — no shared-libtty change, no other-arch risk. Applied +
+build-clean; non-regression = psh interactive input still works (it uses this path).
 
-```c
-static int libtty_putchar_helper(...) {
--  if (wake_reader != NULL) {
--      *wake_reader = 0;
--  }
-   ...
-}
-```
-
-**Caller audit REQUIRED before applying** (shared libtty, all arches): confirm
-every caller of `libtty_putchar`/`libtty_putchar_unlocked` initializes
-`*wake_reader = 0` before the (possibly single-iteration) batch — `libtty_putchar`
-(340) and the pl011-tty batch loop (pl011-tty.c ~1187-1194) at minimum. Higher
-blast radius than the others (every tty on every target).
+~~Original (WRONG) fix: remove the shared entry-reset + require all callers to init.~~
 
 **Confirms:** feed a multi-char burst that completes a line partway through the
 burst (line + trailing chars in one write) and assert the reader wakes on the
