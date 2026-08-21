@@ -60,16 +60,34 @@ for p in pak0.pk3 pak1.pk3; do
 done
 cp "$DEMO_SRC" "$HOSTDIR/demoq3/demos/$DEMO.dm_68"
 
+# CRITICAL — shared render baseline. The Pi auto-execs the export's q3config.cfg
+# at startup (r_customwidth 1920, com_blood 1, r_picmip/r_vertexLight/r_textureMode,
+# ...); the host on a fresh /tmp would otherwise run on quake3e defaults, so EVERY
+# Pi frame would diverge systematically (this is the exact Q1 stale-scr_conscale
+# trap). Stage the SAME q3config.cfg on the host so both sides share one baseline
+# by construction; autocap.cfg (exec'd after both configs, from the command line)
+# overrides the capture + determinism + resolution cvars on top. Copy each run so
+# the engine's quit-time config writeback can't drift the baseline.
+[ -f "$PAK_SRC/q3config.cfg" ] && cp "$PAK_SRC/q3config.cfg" "$HOSTDIR/demoq3/q3config.cfg"
+
 # Determinism cvars (the q3 analogue of Q1's `r_particles 0`): disable the
 # rand()-driven client-side effects that would desync across arch (libphoenix vs
 # glibc rand()). cl_aviMotionJpeg 0 => lossless raw BGR AVI (MJPEG would wreck
 # blacktex%). cl_forceavidemo 0 (default) => capture only while CA_ACTIVE, so
 # both machines start at demo snapshot 0 and skip the variable-length load frames.
+# Resolution is pinned HERE (not just on the command line) so the identical
+# autocap.cfg drives host and Pi to the same frame size regardless of q3config.
 cat > "$HOSTDIR/demoq3/autocap.cfg" <<EOF
+set r_mode -1
+set r_customwidth $WIDTH
+set r_customheight $HEIGHT
+set r_fullscreen 0
 set r_fbo 0
 set cg_marks 0
 set cg_gibs 0
 set cg_brassTime 0
+set com_blood 0
+set cg_blood 0
 set cg_drawFPS 0
 set cl_aviMotionJpeg 0
 set cl_aviFrameRate $FPS

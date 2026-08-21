@@ -41,14 +41,40 @@ stream itself (entity positions/events replayed from the `.dm_68`) is fixed; onl
 the cgame-spawned effects use `rand()`. Disabled in `autocap.cfg`:
 
 ```
+set r_mode -1                 # pin resolution HERE (autocap, not just cmdline)
+set r_customwidth 1024        # so host+Pi get the SAME frame size regardless
+set r_customheight 768        # of q3config (which requests 1920x1080)
+set r_fullscreen 0
+set r_fbo 0
 set cg_marks 0        # impact/explosion decals (random spread+orientation)
 set cg_gibs 0         # gibs (random velocities)
 set cg_brassTime 0    # ejected shell casings (random)
+set com_blood 0       # blood spray/decals (rand-driven) — engine + cgame
+set cg_blood 0
 set cg_drawFPS 0      # wall-clock-dependent HUD text
 set cl_aviMotionJpeg 0
 set cl_aviFrameRate 25
 set cl_forceavidemo 0
 ```
+
+### CRITICAL — shared render baseline (the Q1 stale-config trap, avoided)
+
+The Pi **auto-execs the export's `demoq3/q3config.cfg`** (4681 bytes) at startup,
+which sets render cvars that differ from quake3e defaults — notably
+`r_customwidth 1920 / r_customheight 1080`, `com_blood 1`, plus `r_picmip`,
+`r_vertexLight`, `r_textureMode`, `cg_fov`. A host on a fresh `/tmp` would run on
+**defaults**, so *every* Pi frame would diverge systematically — exactly the Q1
+failure mode where a stale `scr_conscale 1.6` in the export config produced a
+phantom "text bug." The host-vs-host SSIM=1.000 proof does **not** catch this
+(same config both runs); it is a cross-machine asymmetry.
+
+**Fix (in the script):** stage the **same** `q3config.cfg` onto the host
+(`cp "$PAK_SRC/q3config.cfg" "$HOSTDIR/demoq3/q3config.cfg"`, unconditionally each
+run so the engine's quit-time writeback can't drift it). Both sides then share one
+baseline by construction; `autocap.cfg` — exec'd from the command line *after* the
+startup configs — overrides the capture/determinism/**resolution** cvars on top.
+Resolution is pinned inside `autocap.cfg` (not only on the host command line) so
+the identical file drives host and Pi to the same frame size.
 
 ## The demo: a committed recorded demo, NOT the shipped `.dm3`
 
@@ -113,8 +139,11 @@ The Pi engine binary already links the capture path — nothing to rebuild. Step
    `cp tools/quake3-port/demos/cap.dm_68
       /srv/phoenix-rpi4-nfs/usr/share/quake3/demoq3/demos/cap.dm_68`
    (see the netboot export-drift memory: the NFS root is hand-maintained).
-2. **autocap.cfg** identical to the host one above (same six determinism cvars +
-   same `cl_aviFrameRate`), placed in the staged `demoq3/`.
+2. **autocap.cfg** identical to the host one above (same determinism + resolution
+   cvars + same `cl_aviFrameRate`), placed in the staged `demoq3/`. The Pi already
+   has the export's `q3config.cfg` as its baseline — that is the SAME file the host
+   script now stages, so the render baseline matches by construction; autocap
+   overrides on top. Keep the resolution the same on both sides (see caveat below).
 3. **Launch** with the same demo + video sequence and a **writable tmpfs
    homepath** (the AVI is written to `fs_homepath/demoq3/videos/`):
    ```
