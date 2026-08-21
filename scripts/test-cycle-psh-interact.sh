@@ -56,6 +56,7 @@ Usage: test-cycle-psh-interact.sh [options] [-- command1 command2 ...]
                      raise it so a post-takeover retry lands after NFS root mounts)
   --baud N           UART baud (default $uart_baud post-baud-switch)
   --skip-server-up   assume dnsmasq is already running in the VM
+  --cmd-file FILE    read commands from FILE (one per line; appended to any -- commands)
   -h, --help         show this help
 
 If no commands are given on the command line, the default set is sent:
@@ -72,6 +73,7 @@ while [ $# -gt 0 ]; do
 		--max-cmd-secs)     max_cmd_secs="$2"; shift 2 ;;
 		--baud)             uart_baud="$2"; shift 2 ;;
 		--skip-server-up)   skip_server_up=1; shift ;;
+		--cmd-file)         mapfile -t _cf < "$2"; commands+=("${_cf[@]}"); shift 2 ;;
 		--stamp)            stamp=1; shift ;;
 		--)                 shift; while [ $# -gt 0 ]; do commands+=("$1"); shift; done ;;
 		-h|--help)          usage; exit 0 ;;

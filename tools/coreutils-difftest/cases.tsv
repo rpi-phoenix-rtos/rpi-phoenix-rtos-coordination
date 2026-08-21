@@ -1,0 +1,40 @@
+# Differential-correctness corpus for GNU coreutils 9.5 (Phoenix Pi4 vs host-GNU).
+# Format: <id> <TAB> <token-string>
+#   - token-string is split on single spaces to form argv (matches psh strtok(" \t")).
+#   - first token is the coreutils tool name (no path); harness prefixes /usr/bin/ for Pi,
+#     and <refdir>/ for the host reference.
+#   - @F:<name> expands to /root/cutest/<name> on the Pi and to <name> (cwd=corpus) on host.
+#   - NO quotes / NO shell metachars: psh does not process them, so neither may we.
+#   - printf backslash-escapes (\n) are literal 2-char tokens; printf itself interprets them.
+# pilot column: cases marked "pilot" run in the small first cycle.
+#
+# --- pure-arg cases (no input file) ---
+echo	echo hello world
+printf-mixed	printf %05d|%s|%x\n 42 hi 255
+printf-float	printf %.3f\n 3.14159
+seq-basic	seq 1 10
+seq-sep	seq -s, 1 5
+seq-width	seq -w 8 12
+expr-add	expr 6 + 7
+expr-div	expr 100 / 7
+factor-small	factor 97
+factor-big	factor 600851475143
+basename	basename /a/b/c.txt .txt
+dirname	dirname /a/b/c.txt
+numfmt	numfmt --to=iec 1048576
+# --- file-arg cases ---
+wc	wc @F:lorem.txt
+wc-l	wc -l @F:lorem.txt
+head-3	head -3 @F:lorem.txt
+tail-2	tail -2 @F:lorem.txt
+sort	sort @F:words.txt
+sort-r	sort -r @F:words.txt
+uniq	uniq @F:dups.txt
+cut-c	cut -c1-4 @F:lorem.txt
+nl	nl @F:lorem.txt
+tac	tac @F:lorem.txt
+sha256sum	sha256sum @F:lorem.txt
+md5sum	md5sum @F:lorem.txt
+cksum	cksum @F:lorem.txt
+base64	base64 @F:data.bin
+od	od -An -tx1 @F:data.bin
