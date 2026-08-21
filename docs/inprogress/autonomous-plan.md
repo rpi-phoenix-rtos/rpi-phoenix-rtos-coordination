@@ -528,6 +528,18 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~135 — E5 M0 progress: found the REAL first blocker (libepoxy absent) + built & cross-compile-VERIFIED the epoxy shim that removes it).
+Executing E5 M0 (glamor static-link into Xphoenix). Orientation surfaced the prerequisite my feasibility doc under-weighted: glamor hard-depends on **libepoxy** for GL
+dispatch (`#include <epoxy/gl.h>` in glamor_priv.h, every core file) and **Phoenix has NO libepoxy** (none in ports/tools/build). Since Phoenix links Mesa GL
+(libGL-phoenix.a) statically with no dlopen, the fix is a lightweight **epoxy shim** (mirrors the v3d libdrm-shim pattern): `<epoxy/gl.h>`→Mesa GL/gl.h+glext.h w/
+GL_GLEXT_PROTOTYPES (binds glFoo() straight to Mesa) + a tiny impl of the ONLY 3 epoxy_* helpers glamor-core calls (epoxy_gl_version/has_gl_extension/is_desktop_gl;
+epoxy_has_egl_extension is confined to the unbuilt glamor_egl.c). Built it at `tools/x11-port/glamor-shim/` (epoxy/gl.h, epoxy/egl.h, epoxy_shim.c, README with the
+exact M0 configure integration). **VERIFIED: both epoxy_shim.c AND a glamor-style probe (`#include <epoxy/gl.h>` + the 3 helpers + glGenFramebuffers/glBindFramebuffer
+FBO protos) cross-compile CLEAN with aarch64-phoenix-gcc against external/mesa/include** (exit 0, no warnings) ⇒ the epoxy prerequisite is SOLVED. M0 integration
+documented (no epoxy.pc needed — override GLAMOR_CFLAGS/LIBS env + `--enable-glamor`; then non-empty glamor_egl_screen_init installing phxgl make_current; link
+libGL-phoenix.a). All coord-repo (tools/x11-port). NEXT: run configure `--enable-glamor` with the GLAMOR_CFLAGS override + build libglamor.la → iterate compile errors →
+link into Xphoenix (M0 success = 0 EGL/GBM/DRM undefined symbols). That's the next focused (multi-cycle) sub-step.
+
 2026-08-21 (session ~134 — ✅ STARTED the #1 Tier-2 goal (E5 GPU-parity): source-grounded glamor-on-V3D feasibility PROVEN via 3 parallel subagents; M0 teed up).
 Small-finalization backlog fully drained ⇒ opened the top owner Tier-2 goal (E5 GPU parity), whose sanctioned unattended step is investigation (advisor HARD-STOP on
 unattended v3d-server impl). Fanned out 3 read-only subagents over the LOCAL source (xserver-1.20.14 glamor + x11-port + v3d-driver-port winsys). **VERDICT: glamor-
