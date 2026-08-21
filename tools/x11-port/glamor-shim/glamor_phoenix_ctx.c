@@ -199,18 +199,23 @@ static void phx_make_current(struct glamor_context *glamor_ctx)
  * width*4 bytes/row. Uses only public GL: a private color-attachment FBO wrapping
  * the texture + glReadPixels. Touches no glamor internals.
  *
- * Orientation (no vertical flip): glamor stores pixmap texel row 0 at X y==0 — its
- * presentation maps window-top to texcoord t==0 -> texel row 0 (see the texcoord
- * table in hw/kdrive/ephyr/ephyr_glamor_glx.c). So a color-attachment FBO read with
- * glReadPixels(0, y0, width, rows) returns scanlines top-to-bottom already. (This is
- * the opposite of gl_x11_window.c, which flips because it renders directly into a
- * renderbuffer with GL's native bottom-left origin — a different source.) If the
- * first HW frame comes out vertically mirrored, set PHX_READBACK_FLIP_Y to 1.
+ * Orientation (VERTICAL FLIP REQUIRED — HW-confirmed 2026-08-22): the earlier
+ * "no flip needed" reasoning (glamor maps window-top to texel row 0) was WRONG on
+ * HW. glReadPixels uses GL's bottom-left origin: reading glReadPixels(0, y0) and
+ * writing that to fb/shadow row y0 (top-left origin) places GL row y0 (near the
+ * FBO bottom) at the top of the screen -> the whole frame renders UPSIDE DOWN.
+ * The owner reported the glamor desktop was flipped, and a programmatic np.flipud
+ * of the HDMI grab (artifacts/hdmi/20260821-184717-glamor-desktop-final.png) made
+ * every window (xcalc title bar on top, "Phoenix V3D GL" label, all text) read
+ * correctly — proving a pure VERTICAL flip. So PHX_READBACK_FLIP_Y is now 1: for
+ * an fb band [y0, y0+rows) we read the corresponding GL band [H-(y0+rows), H-y0)
+ * and reverse the rows into dst, which is band-correct for both the partial
+ * damage-region flush and the full-frame flush (verified: dst row 0 <-> fb row y0).
  *
  * Channel order: glReadPixels(GL_RGBA, GL_UNSIGNED_BYTE) writes byte0=R, byte1=G,
  * byte2=B, matching the Pi fb's RGB byte order (DDX redMask 0x0000ff, the #19 fix).
  */
-#define PHX_READBACK_FLIP_Y 0
+#define PHX_READBACK_FLIP_Y 1
 
 static GLuint phx_readback_fbo = 0;
 
