@@ -528,6 +528,19 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~86 — coreutils differential corpus EXPANDED 28→54 cases; 53/54 bit-exact on HW, no new bugs; harness robustified).
+Bounded fully-autonomous win: expanded tools/coreutils-difftest (the differential harness that earlier found the cksum/od Data Abort).
+Added 26 deterministic cases (sha1/224/512sum, b2sum, sum, base32, basenc-16, fold, expand, nl -s:, cat -A, uniq -c/-d, sort -n, join,
+paste -d,, tsort, head -c, wc -c/-w, expr length/substr/mod, factor-multi, seq -f, od -tx4) + new inputs (kv1/kv2/pairs/tabs/nums). Dropped
+`rev` (util-linux, not coreutils); hardened difftest.py cmd_host to skip missing-ref tools. Ran on HW as 2 netboot cycles → **all 26 new
+cases PASS**; full merged 54-case check = **53/54 bit-identical to native host GNU 9.5**, the 1 FAIL being the known `nl` default-TAB tty
+artifact (bytes correct; `nl -s:` passes) ⇒ **all 54 tools produce correct output, NO new defects**. Confirms the ported coreutils are
+solid; the only real bug the harness ever found (cksum/od) was fixed earlier (SIZE_USTACK 1 MiB) and now passes. Committed harness+RESULTS
+(coord `e36f048`+`b726b61`) pushed. NEXT: autonomous easy-wins genuinely drained (Tier-1 + owner #1 done; remaining = owner-attended input/
+bash, deep V3D-root/signal-push needing empirical isolation, or big Tier-2 thrusts). Consider: deploy SDL2 input fix to netboot (relink
+quake3e) for owner readiness; or commit to a Tier-2 thrust (G-GCC most self-contained) accepting multi-turn; or a full --with-showcase
+clean-build integration/boot test of the session's accumulated changes.
+
 2026-08-21 (session ~85 — pivoted to SDL2 game input: console-text (SDL_TEXTINPUT) FIXED + compile-verified; mouse determined source-correct/owner-attended).
 Pivoted off the V3D arc (breadth) to the owner-reported "games don't respond to mouse/console-text" bug — root-causeable + fixable in source
 even though final live-input validation is owner-attended. Read SDL_phoenixevents.c (the SDL2 Phoenix input backend). **(b) Console text FIXED:**
