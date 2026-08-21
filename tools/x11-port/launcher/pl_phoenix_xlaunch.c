@@ -230,6 +230,21 @@ int main(int argc, char *argv[])
 	dup2(STDOUT_FILENO, STDERR_FILENO);
 	setvbuf(stdout, NULL, _IONBF, 0);
 
+	/* Optional leading `--server <path>`: run ANY mode — including the desktop/
+	 * full convenience modes that otherwise hardcode /bin/Xphoenix — under a
+	 * specific server binary (e.g. /bin/Xphoenix-glamor, the GPU-accelerated
+	 * glamor server). Consume the two slots so the mode parsing below is
+	 * unchanged; argv[0] (program name) is preserved. Applies to the convenience
+	 * modes; the explicit form already takes the server as argv[1]. */
+	const char *server_override = NULL;
+	if (argc >= 3 && strcmp(argv[1], "--server") == 0) {
+		int i;
+		server_override = argv[2];
+		for (i = 1; i + 2 < argc; i++)
+			argv[i] = argv[i + 2];
+		argc -= 2;
+	}
+
 	if (argc >= 4) {
 		/* Explicit form: <Xphoenix> <fontdir> <client> [client-args...] */
 		server_path = argv[1];
@@ -254,7 +269,10 @@ int main(int argc, char *argv[])
 		const char *prefix = ""; /* root install ("/" — nfsroot default / sd) */
 		const char *client = (argc >= 2) ? argv[1] : "xeyes";
 
-		snprintf(sp_buf, sizeof(sp_buf), "%s/bin/Xphoenix", prefix);
+		if (server_override != NULL)
+			snprintf(sp_buf, sizeof(sp_buf), "%s", server_override);
+		else
+			snprintf(sp_buf, sizeof(sp_buf), "%s/bin/Xphoenix", prefix);
 		snprintf(fd_buf, sizeof(fd_buf), "%s/usr/share/fonts/X11/misc", prefix);
 
 		if (strcmp(client, "desktop") == 0) {
