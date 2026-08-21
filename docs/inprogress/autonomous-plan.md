@@ -528,6 +528,19 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~134 — ✅ STARTED the #1 Tier-2 goal (E5 GPU-parity): source-grounded glamor-on-V3D feasibility PROVEN via 3 parallel subagents; M0 teed up).
+Small-finalization backlog fully drained ⇒ opened the top owner Tier-2 goal (E5 GPU parity), whose sanctioned unattended step is investigation (advisor HARD-STOP on
+unattended v3d-server impl). Fanned out 3 read-only subagents over the LOCAL source (xserver-1.20.14 glamor + x11-port + v3d-driver-port winsys). **VERDICT: glamor-
+accelerated 2D X on our V3D 4.2 is feasible IN-PROCESS with NO EGL/GBM/kernel-DRM.** Both halves confirmed with file:line evidence: (1) glamor's core `libglamor.la` is
+architecturally decoupled from EGL/GBM/DRM (all in the Xorg-only `glamor_egl.c`; `GLAMOR_HAS_GBM` undefined ⇒ zero EGL/GBM/DRM symbols; Render/Copy/Fill need only a
+current GL ctx); the ONE hard requirement is a `glamor_context.make_current` — and the shipped `glamor_egl_stubs.c` screen-init is EMPTY (→NULL-deref), so the make-or-
+break task is a ~10-line non-empty `glamor_egl_screen_init` (model: `glamor_glx_screen_init`). (2) We ALREADY get a current GL 2.1 context + offscreen-FBO-readback
+in-process via the Gallium frontend (`v3d_screen_create`→`st_create_context`→`_mesa_make_current`; reusable `phxgl_init`/`phxgl_make_current` in sdl2 glue), PROVEN by
+`tools/x11-port/gl_x11_window.c` "GPU in an X window" — no EGL/GBM (in-process libdrm→MMIO shim, no kernel DRM). Wrote the feasibility+staged-plan doc
+(docs/inprogress/2026-08-21-e5-glamor-on-v3d-feasibility.md). Constraint: single GPU process (X as sole owner; no concurrent GLQuake until a v3d-server time-slicer);
+static-link (glamor compiled in). **NEXT = M0 (unattended-buildable, next thrust): re-enable glamor + static-link libGL-phoenix.a into Xphoenix with the make_current
+shim → success = links with 0 EGL/GBM/DRM undefined symbols (empirically proves the decoupling).** Then M1 (HW glamor-accel render). No sibling code changed ⇒ no manifest.
+
 2026-08-21 (session ~133 — ✅ DONE+PUSHED: kernel test_* sweep → FOUND+FIXED a real libphoenix UAF in pthread_detach; HW-verified via maintained regression 2/2).
 HW RESULT: test-libc-pthread `test_pthread_detach` (freshly relinked vs the fixed libphoenix.a) = 2 Tests 0 Failures / OK on netboot — detach_stale_handle_no_uaf +
 detach_null_handle both PASS ⇒ the UAF fix WORKS. (Legacy proc/test_pthreads still Data-Aborts, but it's a STALE 16:05 binary NOT relinked against the fix — the
