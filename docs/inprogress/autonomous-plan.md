@@ -528,7 +528,23 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
-2026-08-21 (session ~91 — P8: dillo 3.2.0 migration DELEGATED to a background subagent; tarball+shim pre-seeded; awaiting completion).
+2026-08-21 (session ~92 — P8: ★ REAL GNU libiconv 1.18 (retires the stub!) + dillo 3.2.0 migrated + verified; the WHOLE ad-hoc X11 image/browser stack is now framework ports).
+Resumed the dillo delegation (session ~91). The subagent got dillo configuring cleanly through FLTK/jpeg/zlib/png/**mbedTLS-selected** but hit
+`configure: error: libiconv must be installed!` — dillo needs iconv, itself an un-migrated tools/ port, and the ad-hoc note documented that REAL
+GNU libiconv 1.15 refused to cross-compile on Phoenix (gnulib #include_next rabbit hole) so a hand-written STUB was used. Stopped the subagent
+(blocked out-of-scope — it was about to embed the stub) and dug the real fix per directive. **★ WIN: real GNU libiconv 1.18 cross-compiles CLEAN
+on Phoenix** — plain --host=aarch64-phoenix --enable-static --disable-shared --disable-nls, NO patches, `Done 15.9 s`; the 1.15 rabbit hole is gone
+in 1.18's modern gnulib. So libiconv.a (1.26M, real transcoding, libiconv_open present — NOT the stub) is now a framework port (ports `b846131`),
+retiring the stub TODO for glib2/mc/dillo. Then finished **dillo** on top of the subagent's solid port.def.sh + 2 patches (fixed 3 things: dropped
+the stub inline-build, depends="fltk mbedtls libiconv", prepend framework bin/ to PATH so libpng16-config resolves framework not host). **VERIFIED**
+`build-port.sh dillo`: full dep tree (fltk→xorg_libs+libpng→zlib+libjpeg, mbedtls, libiconv) resolves+builds, installs /bin/dillo (`Done 42 s`);
+deliverable = aarch64 static ELF, 0 undefined, XOpenDisplay+libiconv_open+a_Tls_mbedtls_connect+mbedtls_ssl_handshake/ctr_drbg linked (HTTPS-capable;
+runtime HTTPS already E2/E3-proven). Committed dillo (ports `b42edd2`). ⇒ **the ENTIRE ad-hoc X11 image/browser stack (libpng+libjpeg+fltk+libiconv+
+dillo) is now framework ports.** Remaining ad-hoc /tmp/x11-phoenix consumers gating the X11 if:true flip: glib2 (+mc via glib2) — glib2 can now use
+the real framework libiconv too. NEXT: glib2 migration (E4 — the last flip gate; big/meson) OR mc/nano/ncurses OR P7/P9. Subagent stalls note: it
+did good port.def.sh+patches work but couldn't cross the libiconv (out-of-scope dep) wall — taking over to provide the dep was the right call.
+
+2026-08-21 (session ~91 — P8: dillo 3.2.0 migration DELEGATED to a background subagent; tarball+shim pre-seeded; awaiting completion — RESOLVED in ~92 above).
 Continued the chain — dillo (FLTK/X11 web browser, TLS via mbedTLS) is the next tools/→ports migration. It is bigger/fiddlier than fltk
 (autoreconf, 2 source patches [strndup multiple-def rename + connect_ret_size uint_t→socklen_t stack-overwrite fix], an fltk-config
 link-closure WRAPPER since Dillo's `fltk-config --ldflags` omits the full static group, and mbedTLS TLS) — an ideal bounded subagent task per the
