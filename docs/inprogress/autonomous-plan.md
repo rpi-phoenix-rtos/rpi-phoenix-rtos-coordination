@@ -643,6 +643,21 @@ work; data frame byte-perfect + SDIO-accepted; missing piece precisely identifie
 driver effort. All committed+pushed. **NEXT TURN: rotate to the V3D TFU-tiling top-dig** (one fix → quake3 lightmap-black + quake2
 speckle + vkQuake striping) — the highest-leverage untouched Tier-1 item; E7 has had many cycles and reached its standalone ceiling.
 
+2026-08-21 (session ~114 — ROTATED to V3D UIF_XOR TFU-tiling top-dig; oriented + dispatched root-cause subagent).
+E7 closed (resident-driver hand-off). Started the V3D dig (owner+advisor top priority: one fix → quake3 lightmap-black + quake2
+speckle + vkQuake striping). Prior localization (tools/v3d-driver-port/gl_uif_probe.c header): a UIF_XOR-tiled lightmap atlas samples
+correct at 512² but BLACK at 1024²; STORE side PROVEN correct (uif_pixel_off ≡ Mesa v3d_get_uif_pixel_offset; glGetTexImage returns
+correct), so the bug is SAMPLE/read side — hypothesised as the TMU texture-shader-state descriptor (v3dx_state.c
+v3d_setup_texture_shader_state) mis-encoding a height/level-pitch field at the >512 threshold (bitfield overflow / UIF-XOR threshold).
+NOTE: the gl_uif_probe was FLAKY (rendered all-black even at 512 = harness-render bug, not the texture) so the localization is from
+source-elimination, not a clean probe result. Build-readiness CONFIRMED: tools/.gpu-libs/{libGL,libv3d,libv3dv}-phoenix.a built +
+HOSTBUILD /tmp/mesa-v3d-build present (compile_commands.json) ⇒ can rebuild libv3d after a source fix via build-v3d-phoenix.py. quake3
+currently ships r_mergeLightmaps 0 workaround (quake3-launcher.c:29). **Dispatched a subagent** to find the specific height/UIF-dependent
+descriptor field (GL v3dx_state.c + Vulkan v3dvx_image.c — the COMMON field, since the fix resolves GL quake3/quake2 + Vulkan vkQuake) +
+the UIF-vs-UIF_XOR threshold in v3d_setup_slices, and whether it's a bitfield overflow / a port-fed devinfo param (hardcoded UIFCFG=0x45).
+**NEXT:** act on the subagent's field → apply the fix to external/mesa v3d → rebuild libv3d → HW-verify. Test vehicle = quake3 q3dm7 with
+r_mergeLightmaps 1 re-enabled on HDMI (ground truth; the gl_uif_probe render path is unreliable). GPU HW test is semi-attended (HDMI).
+
 2026-08-21 (session ~107 — finalized the sysconf(_SC_NPROCESSORS) fix-path spec (precise, ready-to-implement); confirmed deferral correct; will diversify next turn).
 Followed the ~106 gap to a precise fix-path (no code change — the diagnosis is the deliverable). Traced the exact implementation: kernel adds a `pctl_cpucount`
 platformctl action in aarch64-generic (generic.h enum+union, generic.c handler returning hal_cpuGetCount() — clean/additive/ABI-stable, mirrors the
