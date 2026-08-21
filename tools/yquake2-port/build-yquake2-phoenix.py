@@ -67,7 +67,14 @@ CFLAGS = ["-c", "-O2", "-g", "-ffreestanding", "-fno-strict-aliasing", "-fwrapv"
 # Neither is tentative, so -fcommon can't merge them; rename the renderer's
 # consistently across all gl1 TUs at the preprocessor level (self-contained:
 # no non-gl1 TU references the renderer's `modes`).
-GL1_CFLAGS = CFLAGS + ["-Dmodes=yq2_gl1_modes"]
+# -DYQ2CAP_PHOENIX: on Phoenix the client renders into a scanout-backed FBO
+# (sdl_phoenix_glctx.c), not FB0, so the visual-regression capture hook in
+# gl1_sdl.c must read pixels back via phxgl_capture_gl (a GPU blit) instead of a
+# plain glReadPixels (which returns noise on the scanout FBO). The native host
+# reference build (yquake2 Makefile, renders into FB0) does NOT define this and
+# takes the plain glReadPixels path. See scripts/quake2-host-capture.sh and
+# docs/inprogress/2026-08-22-quake23-visual-harness.md.
+GL1_CFLAGS = CFLAGS + ["-Dmodes=yq2_gl1_modes", "-DYQ2CAP_PHOENIX"]
 
 # The SDL2 GL-context glue (winsys bridge: phxgl_*) is compiled with Mesa's
 # include/define set, verbatim from build-sdl2-gltest.py MFLAGS.
