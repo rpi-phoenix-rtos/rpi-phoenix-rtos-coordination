@@ -198,3 +198,31 @@ Edit `tools/wifi-probe/wifi-probe.c`:
    head_pad can be 0 => doff=20, BDC@20, eth@24. `total_len` (HW-hdr len) counts byte 0 .. end of eth.
 3. Re-run `wifi-probe jointx`; confirm the AP `rx_bytes` jumps by the DISCOVER size (robust egress
    test) + tcpdump sees the DHCP DISCOVER on air. Baseline: artifacts/rpi4b-uart/*linux-txbytes.log.
+
+## Fix IMPLEMENTED (commit d19746c) — egress confirmation still pending (boot flakiness)
+
+Implemented the fix in `tools/wifi-probe/wifi-probe.c`:
+- `diag_wifiDataTx` reframed to the txglom layout (HW + 8B HWEXT glom desc + SW@12 + BDC@20,
+  doff=20), matching Linux's captured bytes.
+- jointx block: read `cur_etheraddr` in NON-glom mode first (rxglom breaks the single-frame RX
+  reader), stash the STA MAC in `g_txmac`, then send `bus:txglomalign`=4 + `bus:rxglom`=1, then TX
+  the glom frame with the valid src MAC.
+
+**Cycle results:**
+1. `e7-glom-fix` (reframe only, no enable iovar): no egress (`rx_bytes` flat) ⇒ the frame format
+   alone is insufficient; the fw needs the glom-enable iovar.
+2. `e7-glom2` (reframe + glom-enable): both iovars accepted (`txglomalign rc=0, rxglom rc=0`) — fw
+   supports glom — but `rxglom` broke the in-DataTx `cur_etheraddr` read (`rc=-1042`), so the
+   DISCOVER went out with a **zero src-MAC** (confound). No egress. Fixed by the MAC-first ordering.
+3. `e7-glom3`/`e7-glom4` (MAC-first corrected version): **both boots were flaky** — glom3 produced
+   no probe output (slow NFS exec / capture too short), glom4 flooded the UART with a USB
+   re-enumeration loop (`USB2[1] connected enabled` ×613) and the detector relaunch failed. So the
+   **corrected fix was never cleanly egress-tested.**
+
+**STATUS: root cause CONFIRMED + fix IMPLEMENTED + committed; egress NOT yet confirmed** (blocked
+by boot flakiness, not a code issue — all changes are post-bring-up and the flaky boots never
+reached bring-up output). **NEXT (clean cycle):** power-cycle the Pi to clear the USB-enum-spam
+state (consider removing the USB mouse that re-enumerates), then `wifi-probe jointx` with
+`--idle-secs 240` + station-dump + L2 tcpdump detectors launched cleanly (do NOT pkill the
+launcher). If `rx_bytes` jumps ⇒ data-plane UNBLOCKED. If glom-enable-post-join still fails, try
+enabling glom during bring-up (preinit timing, like brcmfmac) instead of post-join.

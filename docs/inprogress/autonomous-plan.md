@@ -616,6 +616,20 @@ diag_wifiDataTx to the txglom layout (HWEXT@4-11, SW@12, doff=20, BDC@20, eth@24
 jointx` + confirm the AP rx_bytes jumps by the DISCOVER size (robust egress test) + tcpdump sees the DHCP DISCOVER on air. If egress
 works → the WiFi data-plane is UNBLOCKED (owner E7 headline). Host AP + Linux oneshot left in place. WiFi fw/CLM stays unpublished.
 
+2026-08-21 (session ~112 — E7 FIX IMPLEMENTED + committed (d19746c); egress confirmation blocked by boot flakiness, banked cleanly).
+Implemented the txglom fix in wifi-probe.c: (a) reframed diag_wifiDataTx to the glom layout (HW+HWEXT(8)+SW@12+BDC@20, doff=20)
+matching Linux's captured bytes; (b) jointx now reads cur_etheraddr in NON-glom mode first (rxglom breaks the single-frame RX reader),
+stashes the STA MAC, then sends bus:txglomalign=4 + bus:rxglom=1, then TXes the glom frame with a valid src MAC. **Cycle results:**
+(1) reframe-only → no egress (frame format alone insufficient; needs the enable iovar); (2) reframe+glom-enable → both iovars ACCEPTED
+by fw (rc=0) but rxglom broke the in-DataTx cur_etheraddr read → zero-src-MAC confound → no egress (confound then fixed via MAC-first);
+(3)+(4) the MAC-first corrected version → TWO FLAKY BOOTS (glom3: no probe output = slow NFS exec/short capture; glom4: UART flooded by
+a USB re-enum loop ×613 + detector relaunch failed) → **corrected fix NEVER cleanly egress-tested.** **STATUS: root cause CONFIRMED +
+fix IMPLEMENTED + committed; egress UNCONFIRMED (boot flakiness, NOT a code bug — all changes are post-bring-up, flaky boots never
+reached bring-up).** Detectors cleaned up, Pi powered off, netboot=Phoenix. **NEXT (fresh state):** power-cycle the Pi to clear the
+USB-enum-spam (maybe remove the re-enumerating USB mouse), then `wifi-probe jointx --idle-secs 240` with station-dump + L2 tcpdump
+launched cleanly (do NOT pkill the launcher) → confirm AP rx_bytes jumps +DISCOVER. Fallback if post-join glom-enable fails: enable glom
+during bring-up (preinit timing like brcmfmac). This is the payoff cycle — the root cause + fix are done; only a clean HW confirm remains.
+
 2026-08-21 (session ~107 — finalized the sysconf(_SC_NPROCESSORS) fix-path spec (precise, ready-to-implement); confirmed deferral correct; will diversify next turn).
 Followed the ~106 gap to a precise fix-path (no code change — the diagnosis is the deliverable). Traced the exact implementation: kernel adds a `pctl_cpucount`
 platformctl action in aarch64-generic (generic.h enum+union, generic.c handler returning hal_cpuGetCount() — clean/additive/ABI-stable, mirrors the
