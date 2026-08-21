@@ -528,6 +528,19 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~139 — ✅✅✅ E5 CORE OBJECTIVE ACHIEVED + VISUALLY CONFIRMED ON HW: glamor GPU-accelerated 2D X on V3D 4.2 renders xeyes correctly to HDMI, 0 faults).
+Reviewed + committed the M1b-step-1 impl (subagent-built, guarded, Xephyr-pattern), built Xphoenix-glamor myself (links 0 undef), staged + ran the HW cycle.
+**UART (log 20260821-200345-glamor-m1b1, 0 fault lines in the WHOLE log):** server socket up → `glamor-phx: GL up; 2.1 Mesa / V3D 4.2.14.0` → `[fbdev] glamor initialised`
+→ **`[fbdev] glamor: screen pixmap GL-texture-backed (tex=1) — GPU root, readback present`** (the root IS a glamor GL texture ⇒ Render/Copy/Composite into the root run on the
+V3D GPU) → **`glamor-phx: screen-readback FBO status 0x8cd5 (complete)`** (GL_FRAMEBUFFER_COMPLETE — the texture→glReadPixels→shadow→/dev/fb0 present path works). **HDMI
+snapshot (artifacts/hdmi/...-glamor-m1b1-final.png): xeyes RENDERS correctly** — two white eyeballs w/ pupils, top-left (correct orientation, NOT mirrored ⇒ FLIP_Y 0 right),
+clean white (channel order right), on black root. ⇒ the visible pixels came THROUGH the glamor GL-texture root ⇒ **GPU-accelerated 2D X presenting to HDMI, HW-confirmed.**
+Committed fbdev.c + glamor_phoenix_ctx.c (Phoenix-only, GLAMOR_PHOENIX-guarded; default Xphoenix untouched). Memory + index updated (glamor now VISIBLY accelerating, not just
+init). **E5 progression (6 turns, a verified milestone each): feasibility→epoxy→M0 compile→M1a link (no GL gap)→M1b-0 glamor init on HW→M1b-1 GPU root renders to HDMI.**
+NEXT (E5 polish/hardening, owner-reviewable): (1) owner visual sign-off on quality/perf; (2) zero-copy present (st_context_teximage/scanout) vs the glReadPixels blit;
+(3) run a WM + apps (startx desktop) under Xphoenix-glamor to exercise real accel; (4) reproducibility — make glamor a first-class flag in build-xserver-core.sh (tree is
+ad-hoc --enable-glamor); (5) later: video-in-window (the other half of E5). Single-GPU-process (X sole owner) holds.
+
 2026-08-21 (session ~138 — ✅✅ E5 M1b-step-0 ACHIEVED ON HARDWARE: glamor INITIALISES on real V3D 4.2 inside Xphoenix, 0 faults — glamor is LIVE on our GL).
 Ran the runtime moment-of-truth on the netboot Pi. Staged Xphoenix-glamor (27MB static, 0 undef) → /srv/.../bin/Xphoenix-glamor (separate name; working /bin/Xphoenix
 untouched) and launched via `pl_phoenix_xlaunch /bin/Xphoenix-glamor /usr/share/fonts/X11/misc /bin/xeyes`. **UART RESULT (log 20260821-193132-glamor-m1b0):**
