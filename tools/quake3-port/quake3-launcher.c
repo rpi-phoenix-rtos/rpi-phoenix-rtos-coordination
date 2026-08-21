@@ -19,6 +19,14 @@ int main(int argc, char **argv)
 	static char *base[] = {
 		"ram-stage-play", "/usr/share/quake3", "/tmp/quake3",
 		"/usr/bin/quake3e", "+set", "fs_basepath", "/tmp/quake3", "+set", "fs_game", "demoq3",
+		/* r_mergeLightmaps 0: use individual 128x128 lightmap textures instead of a
+		 * merged POT atlas. On the V3D GL path a large (>=1024) merged lightmap atlas
+		 * tiles/samples wrong (UIF_XOR read-side bug) → BLACK-sector surfaces on
+		 * bigger maps (e.g. q3dm7, 1024x1024 atlas); q3dm1 (512x512) was fine.
+		 * Individual 128x128 lightmaps avoid the large-UIF_XOR path entirely and
+		 * render correct + lit (HW-verified: q3dm7 fully lit). Small perf cost (more
+		 * texture binds) vs. correctness. See memory project_quake3_lightmap_uif_xor. */
+		"+set", "r_mergeLightmaps", "0",
 	};
 	const int nbase = (int)(sizeof(base) / sizeof(base[0]));
 	char **a = calloc((size_t)(nbase + argc + 1), sizeof(char *));
