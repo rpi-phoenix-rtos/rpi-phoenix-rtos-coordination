@@ -784,6 +784,17 @@ the test source to force the relink (else the stale-linked test kept failing). (
 This is the value of the tests directive — test-writing directly surfaced + fixed a real libc bug. Netboot healthy throughout (paired
 --with-tests with --with-ports as per the last lesson). NEXT: more libphoenix test coverage (each new group may find more stubs/bugs).
 
+2026-08-21 (session ~123 — filled a real libc gap: added missing sys/time.h timerclear/timeradd/timersub macros + tests, HW-verified).
+Continuing the test-driven finalization: libphoenix <sys/time.h> had timercmp+timerisset but was MISSING the other 3 standard POSIX/BSD
+timeval helpers → ports using them (libevent/tmux/etc.) fail to compile. Added the canonical **timerclear/timeradd/timersub** macros with
+tv_usec carry/borrow normalization (libphoenix 2eee50f) + tests incl. the overflow-carry + underflow-borrow edges (phoenix-rtos-tests
+1ddf2f0). **HW-verified: all 5 time_timeval tests PASS — 31 Tests 0 Failures OK.** Manifest manifests/2026-08-21-timeval-macros.md. Pushed
+both to org. Netboot healthy (paired --with-tests + --with-ports throughout). This + the prior timerisset fix = the sys/time.h timeval
+family is now complete + tested. RUNNING TALLY (this test-driven arc): wctype/wide-char tests (5a6ea2b) + timerisset stub FIX (f7e979a) +
+timeval macros (2eee50f) — 3 libphoenix improvements, all HW-verified, from the "always add libphoenix tests" directive. NEXT: keep going —
+more libphoenix coverage (candidates: other sys/ or string/ areas; each group may surface more gaps/stubs). Backlog's big items still
+attended/tangled (X11 flip, vkQuake V3DV, signal-push).
+
 2026-08-21 (session ~107 — finalized the sysconf(_SC_NPROCESSORS) fix-path spec (precise, ready-to-implement); confirmed deferral correct; will diversify next turn).
 Followed the ~106 gap to a precise fix-path (no code change — the diagnosis is the deliverable). Traced the exact implementation: kernel adds a `pctl_cpucount`
 platformctl action in aarch64-generic (generic.h enum+union, generic.c handler returning hal_cpuGetCount() — clean/additive/ABI-stable, mirrors the
