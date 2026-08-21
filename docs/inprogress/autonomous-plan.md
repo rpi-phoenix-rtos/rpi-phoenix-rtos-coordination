@@ -528,6 +528,16 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~145 — PIVOT to E10 gcc-16.2.0 rebase (owner "big achievement"): assessment DONE + M0 toolchain build delegated to a subagent (safe separate prefix)).
+Python port comprehensively done ⇒ pivoted to a fresh Tier-2. **E10 assessment (docs/inprogress/2026-08-21-e10-gcc-16.2.0-rebase-plan.md):** gcc 16.2.0 EXISTS on GNU ftp;
+current toolchain = gcc-14.2.0 + binutils-2.43 (build-toolchain.sh GCC= line 66). Patch-port scope: most of the 11 gcc patches are SMALL + touch stable target-def files
+(11-aarch64-phoenix 57L config.gcc+config.host; 09-libc-spec 15L phoenix.h; 04-arm-crtstuff 30L) → tractable; arm/i386/riscv/sparc patches are for OTHER Phoenix targets
+(skip for RPi4); ★ RISK = 05-libstdcpp (265L to the auto-generated libstdc++-v3/configure — will likely reject on a major bump, needs re-derivation). build-toolchain.sh
+takes the install prefix as $2 ⇒ build to a SEPARATE prefix, NEVER touching the working .toolchain (safe). The real cost/risk = rebuilding+revalidating ALL of Phoenix with
+gcc-16 (new-major warnings/UB/codegen breakage) = M1, ATTENDED (don't swap .toolchain unattended). **E10-M0 (delegated this turn):** subagent ports the aarch64-relevant
+patches → builds a gcc-16.2.0 aarch64-phoenix cross-toolchain to a separate prefix → compile-tests hello-world; reports patch apply/reject + build outcome. On result: bank
+the built toolchain (or the precise reject list) for the attended M1 swap. NEXT: review the M0 subagent report; then either continue E10 (fix rejects) or another item.
+
 2026-08-21 (session ~144 — ✅✅ Python HTTPS END-TO-END HW-VERIFIED on Pi4: full TLS1.2 client handshake + HTTP GET over the encrypted socket → HTTPS-OK, 0 faults).
 Completed the Python TLS story (from ~143's module-level _ssl verify). Ran a host TLS server (tools/python-port/tls-test-server.py, self-signed cert, 0.0.0.0:8443 TLS1.2,
 reachable at 10.42.0.1 over the netboot link) + `/bin/python3 /selftest_https.py` on the netboot Pi: the Pi's Python did a **full TLS1.2 client handshake (CIPHER
