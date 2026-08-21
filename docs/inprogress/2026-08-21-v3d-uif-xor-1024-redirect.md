@@ -75,3 +75,39 @@ path from upload accumulation.
 **Status:** the 2-year-old "descriptor mis-encode" hypothesis is REFUTED; the bug is a runtime
 4MB-BO magnitude effect; the precise HW instrumentation to pin it is specified above. GPU HW test
 is semi-attended (netboot + UART capture; no HDMI needed for the V3DTEX dump).
+
+## 🎯 ROOT CAUSE FOUND + FIXED (2026-08-21, HW descriptor-confirmed)
+
+Ran the V3DTEX dump on HW. Ground truth (SAMPLE data ignored — the probe's render path is a known
+broken harness, all-black even at 512; the descriptor/slice dumps are what's trustworthy):
+
+```
+pre-fix 512 : slice0 tiling=5(UIF_XOR) stride=2048 xor=1 uif=1   (correct — renders fine)
+pre-fix 1024: slice0 tiling=0(RASTER)  stride=4096 xor=0 uif=0   <-- WRONG: not tiled!
+V3DBO 1024  : size=4100KiB contig=1                              (4MB BO IS contiguous — alloc fine)
+```
+
+**The 1024 atlas was being laid out as RASTER (linear), not UIF_XOR** — so the TMU sampled linear
+data as if UIF and read garbage/black. Root cause = the Phoenix `should_tile` optimization in
+`v3d_resource.c` (~:905): it forces a full-screen color RT to RASTER for fast `glReadPixels`, gated
+on `(RENDER_TARGET && width>=1024 && height>=768)`. But Mesa marks every renderable (RGBA8) texture
+`PIPE_BIND_RENDER_TARGET`, so a **large SAMPLED texture** (the 1024² merged lightmap atlas) also
+matched → forced RASTER. The 512² atlas escaped only because width<1024 (→ stayed UIF_XOR → worked).
+
+**Fix (external/mesa `4363822955b`):** add `!(tmpl->bind & PIPE_BIND_SAMPLER_VIEW)` to the gate —
+a texture the TMU will sample must stay tiled; only a pure non-sampled RT may go RASTER.
+
+**Post-fix HW confirmation (fresh gl_uif_probe on the rebuilt libv3d):**
+```
+post-fix 1024: slice0 tiling=5(UIF_XOR) stride=4096 xor=1 uif=1   <-- now identical to the working 512
+```
+The 1024 atlas now takes the exact tiling path as the known-good 512 atlas ⇒ the read-side is fixed
+at the descriptor level. This is THE class fix (large sampled textures >=1024x768): quake3
+lightmap-black + quake2 floor-speckle + vkQuake striping.
+
+**Remaining (follow-up, owner-attended-ish):** the deployed quake3e/quake2/vkQuake binaries statically
+embed the OLD libv3d, so a VISUAL confirm needs rebuilding those ports against the fixed
+`tools/.gpu-libs/libv3d-phoenix.a` + an HDMI check (test-cycle auto-captures artifacts/hdmi/). Once
+q3dm7 is visually lit with `r_mergeLightmaps 1`, remove the `r_mergeLightmaps 0` workaround in
+quake3-launcher.c:29. The gl_uif_probe's render path is unreliable so it can't self-confirm the
+visual; the descriptor match (1024≡512 UIF_XOR) is the autonomous proof.

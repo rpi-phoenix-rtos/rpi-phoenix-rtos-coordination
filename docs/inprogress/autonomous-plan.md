@@ -671,6 +671,20 @@ path) + a winsys BO-alloc dump → rebuild libv3d → build gl_uif_probe → net
 value that diverges at 1024 IS the bug. Semi-attended = netboot+UART only (no HDMI needed for the dump). This turn = strong analytical
 redirection (2 source layers proven clean) + precise HW-instrumentation plan; next turn executes the dump+rebuild+cycle.
 
+2026-08-21 (session ~115 — 🎯🎯🎯 V3D UIF_XOR ROOT CAUSE FOUND + FIXED + HW descriptor-confirmed. The top-dig, cracked.)
+Executed the plan: added V3DTEX+V3DBO runtime dumps, rebuilt libv3d, ran gl_uif_probe on HW. **SMOKING GUN: pre-fix the 512 atlas =
+slice tiling=5 (UIF_XOR) but the 1024 atlas = tiling=0 (RASTER)** — the 1024 texture was laid out LINEAR, not tiled, so the TMU sampled
+linear-as-UIF → black. (BO dump: 4MB BO contig=1 — allocation fine, contiguity suspect ruled out. The probe's SAMPLE=corrupt at BOTH
+sizes = the known broken harness render path, ignored; the descriptor dump is ground truth.) **ROOT CAUSE = Phoenix should_tile opt
+(external/mesa v3d_resource.c ~:905): forces RT to RASTER for fast glReadPixels, gated `RENDER_TARGET && w>=1024 && h>=768` — but Mesa
+marks renderable RGBA8 SAMPLED textures RENDER_TARGET too, so the large 1024² lightmap atlas matched → RASTER. 512² escaped (w<1024).**
+**FIX (external/mesa 4363822955b): add `!(bind & PIPE_BIND_SAMPLER_VIEW)` to the gate.** **HW-CONFIRMED: post-fix 1024 atlas = tiling=5
+(UIF_XOR), identical to the working 512.** THE class fix: quake3 lightmap-black + quake2 speckle + vkQuake striping (all large sampled
+textures). Diagnostics removed, libv3d rebuilt clean, fix committed to the Phoenix Mesa git. **FOLLOW-UP:** deployed quake3e/quake2/vkQuake
+embed the OLD libv3d → rebuild them vs fixed libv3d + HDMI-confirm (artifacts/hdmi/) → remove the r_mergeLightmaps 0 workaround
+(quake3-launcher.c:29). Docs: 2026-08-21-v3d-uif-xor-1024-redirect.md; memory project_quake3_lightmap_uif_xor updated. NOTE: external/mesa
+fix is LOCAL git (fork); publish to the Phoenix Mesa fork-mirror is a release-time step.
+
 2026-08-21 (session ~107 — finalized the sysconf(_SC_NPROCESSORS) fix-path spec (precise, ready-to-implement); confirmed deferral correct; will diversify next turn).
 Followed the ~106 gap to a precise fix-path (no code change — the diagnosis is the deliverable). Traced the exact implementation: kernel adds a `pctl_cpucount`
 platformctl action in aarch64-generic (generic.h enum+union, generic.c handler returning hal_cpuGetCount() — clean/additive/ABI-stable, mirrors the
