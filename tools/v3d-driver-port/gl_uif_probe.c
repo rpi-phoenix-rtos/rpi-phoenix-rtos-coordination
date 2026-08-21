@@ -39,6 +39,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <pthread.h>
+#include <time.h>
 
 #include "pipe/p_screen.h"
 #include "pipe/p_context.h"
@@ -58,6 +60,24 @@ struct renderonly;
 struct pipe_screen *v3d_screen_create(int fd, const struct pipe_screen_config *config,
                                       struct renderonly *ro);
 void v3d_phoenix_powerOn(void);
+
+/* Mesa trace wrapper referenced by the state tracker but not built into libv3d; pass-through
+ * (same shim as gl_det_harness.c / pl_phoenix_glctx.c — GALLIUM_TRACE never enabled). */
+struct pipe_context *trace_context_create_threaded(struct pipe_screen *screen,
+                                                    struct pipe_context *pipe)
+{
+	(void)screen;
+	return pipe;
+}
+
+/* Phoenix libc lacks pthread_getcpuclockid (Mesa u_thread timing); monotonic stand-in. */
+int pthread_getcpuclockid(pthread_t thread, clockid_t *clock_id)
+{
+	(void)thread;
+	if (clock_id)
+		*clock_id = CLOCK_MONOTONIC;
+	return 0;
+}
 
 #define BLK 128            /* quake lightmap block size (the sub-image unit) */
 #define MAXSZ 1024
@@ -133,13 +153,11 @@ static void probe_size(unsigned size)
 	}
 	glFinish();
 
-	/* (A) STORE side: CPU transfer readback via uif_pixel_off untile. */
-	memset(back, 0, (size_t)size * size * 4);
-	glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, back);
-	unsigned store_mism = scan("STORE (glGetTexImage / uif_pixel_off)", size, back);
-
-	/* (B) SAMPLE side: render a 1:1 NEAREST/REPLACE quad, then glReadPixels. Output pixel
-	 * (px,py) samples texcoord ((px+0.5)/size,(py+0.5)/size) => texel (px,py) under NEAREST. */
+	/* (B) SAMPLE side FIRST (before any CPU transfer touches the texture — glGetTexImage
+	 * maps/transfers the BO and can leave it in a state the TMU then reads stale): render a
+	 * 1:1 NEAREST/REPLACE quad, then glReadPixels. Output pixel (px,py) samples texcoord
+	 * ((px+0.5)/size,(py+0.5)/size) => texel (px,py) under NEAREST. */
+	glBindTexture(GL_TEXTURE_2D, tex);
 	glViewport(0, 0, size, size);
 	glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 	glClear(GL_COLOR_BUFFER_BIT);
@@ -159,6 +177,26 @@ static void probe_size(unsigned size)
 	glPixelStorei(GL_PACK_ALIGNMENT, 1);
 	glReadPixels(0, 0, size, size, GL_RGBA, GL_UNSIGNED_BYTE, back);
 	unsigned sample_mism = scan("SAMPLE (TMU render+glReadPixels)", size, back);
+	/* diagnostic: raw sampled RGBA at a few coords vs expected enc(x,y) — shows WHAT the TMU
+	 * read (all-zero => not rendering; nonzero-but-wrong => sampled wrong texel = the bug). */
+	{
+		const unsigned dx[] = {0,1,2,64,127,128,200,511};
+		for (unsigned k = 0; k < 8; k++) {
+			unsigned x = dx[k], y = 0;
+			if (x >= size) continue;
+			const unsigned char *p = back + ((size_t)y * size + x) * 4;
+			unsigned char e[4]; enc(e, x, y);
+			printf("gl-uif:     samp(%u,%u) got %02x%02x%02x%02x want %02x%02x%02x%02x %s\n",
+			       x, y, p[0],p[1],p[2],p[3], e[0],e[1],e[2],e[3],
+			       (p[0]==e[0]&&p[1]==e[1]&&p[2]==e[2]) ? "ok" : "MISMATCH");
+		}
+	}
+
+	/* (A) STORE side: CPU transfer readback via uif_pixel_off untile (after the sample). */
+	memset(back, 0, (size_t)size * size * 4);
+	glBindTexture(GL_TEXTURE_2D, tex);
+	glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, back);
+	unsigned store_mism = scan("STORE (glGetTexImage / uif_pixel_off)", size, back);
 
 	printf("gl-uif: VERDICT %ux%u: store=%s sample=%s => %s\n", size, size,
 	       store_mism ? "CORRUPT" : "clean",

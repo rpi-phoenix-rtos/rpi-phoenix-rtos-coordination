@@ -528,6 +528,23 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~97 — V3D dig: BUILT+RAN the store-vs-sample probe on HW (2 boots) → STORE side RULED OUT, corruption is READ-side/TMU-descriptor. Harness over-reports; pivot to descriptor instrumentation per tripwire).
+Reconstructed the removed gl-det-build.sh recipe generically (tools/v3d-driver-port/build-gl-uif.py: reuses build-v3d-phoenix.py's transform() to
+compile against Mesa's HOSTBUILD include set + LINK with g++ (C++ runtime for libGL's GLSL compiler) vs the two folded gpu-libs; harness carries its
+own trace_context_create_threaded + pthread_getcpuclockid stubs). Built gl_uif_probe.c → /bin/gl-uif (20MB), ran on netboot (2 boots). **RESULTS:**
+GL up (Mesa 26.2.0-rc1 / V3D 4.2.14.0), FBO 1024² complete, 0 faults. **STORE side (glGetTexImage / uif_pixel_off untile) = CLEAN at BOTH 512 and
+1024 (0/262144, 0/1048576)** ⇒ the store/sub-image tiling path is DEFINITIVELY RULED OUT (advisor suspect #1 eliminated). **SAMPLE side (TMU render+
+glReadPixels, NEAREST/REPLACE 1:1) = CORRUPT**: at 1024 the TMU reads a COHERENT WRONG-STRIDE pattern (R = x+0x2c offset; G steps +0x40 every 64px in
+x — reading along a mis-strided/mis-laid-out layout), at 512 all-black (same bug reading into zero-padding). ⇒ **the corruption is READ-side — the TMU
+texture-shader-state descriptor (stride/layout), NOT the store.** This is the store-vs-sample split prior source-staring couldn't make; it confirms +
+localizes the hypothesis to the TMU descriptor. CAVEAT (honest): the harness OVER-REPORTS — my 512 case is also corrupt, but q3dm1@512 renders CORRECTLY
+in quake, so my FBO-sampled RGBA8/NEAREST/REPLACE single-texture setup produces a wrong descriptor that quake's 512 lightmap usage avoids; so the harness
+localizes to "read/TMU-descriptor side" but does NOT cleanly pin the exact field or the 512-vs-1024 quake threshold. Committed gl_uif_probe.c +
+build-gl-uif.py. **NEXT (advisor tripwire — do NOT iterate harness shapes further):** instrument the REAL path — hook v3d_setup_texture_shader_state
+(v3dx_state.c) to log the packed TMU descriptor bytes + the texture's w/h/stride/tiling for the merged lightmap atlas, run quake3 q3dm1(512,good) vs
+q3dm7(1024,bad) with r_mergeLightmaps 1, and DIFF the descriptor bytes host-side against what Mesa emits for those exact params → the diverging field is
+the bug. Likely owner-attended for the actual read-side fix; this turn's deliverable = reproducer + store-vs-sample localization (read-side/TMU).
+
 2026-08-21 (session ~96 — PIVOT to owner #1 dig: V3D UIF_XOR tiling bug. Ruled out UIFCFG; confirmed sample/descriptor-side; WROTE the store-vs-sample isolation harness).
 Per advisor, pivoted off the migration treadmill to the owner's #1 headline dig — the V3D UIF_XOR tiling bug (one fix → quake3 q3dm7 lightmap-black +
 quake2 speckle + vkQuake striping). Orientation (cheap, high-signal): (1) **RULED OUT the hardcoded UIFCFG=0x45 hypothesis** — Mesa's UIF_XOR pixel
