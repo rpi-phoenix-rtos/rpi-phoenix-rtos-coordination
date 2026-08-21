@@ -528,6 +528,15 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~144 — ✅✅ Python HTTPS END-TO-END HW-VERIFIED on Pi4: full TLS1.2 client handshake + HTTP GET over the encrypted socket → HTTPS-OK, 0 faults).
+Completed the Python TLS story (from ~143's module-level _ssl verify). Ran a host TLS server (tools/python-port/tls-test-server.py, self-signed cert, 0.0.0.0:8443 TLS1.2,
+reachable at 10.42.0.1 over the netboot link) + `/bin/python3 /selftest_https.py` on the netboot Pi: the Pi's Python did a **full TLS1.2 client handshake (CIPHER
+ECDHE-RSA-AES256-GCM-SHA384)** + `GET / HTTP/1.0` over the encrypted socket + verified the PHOENIX-TLS-HELLO body → **HTTPS-OK**, CYCLE_EXIT=0, no faults. No NAT needed
+(local client/server over the netboot subnet). ⇒ **Python is a fully HTTPS-capable scripting env on Phoenix**: zlib (gzip) + _ssl (module + end-to-end TLS client) + _hashlib
+(sha256) all HW-verified. Host server cleaned up (8443 closed). No build/code change (existing staged python3 + selftests). STATUS.md + memory updated. **Python port is
+comprehensively DONE for the common stdlib** (socket/json/struct/math/pickle/csv/sqlite3/.so-dlopen/zlib/_ssl/_hashlib). NEXT: pivot to a fresh Tier-2 — E10 gcc-16.2.0 rebase
+(big/risky host build; current gcc-14.2.0) or E7 WiFi (attended/unpublished); or a smaller finalize (enable _blake2 — needs a CPython rebuild). Leaning E10 assessment next (owner's explicit "big achievement" goal).
+
 2026-08-21 (session ~143 — ✅ FINALIZE-FIRST win: CPython zlib + _ssl + _hashlib HW-VERIFIED on Pi4 → Python gzip + TLS/SSL + OpenSSL hashlib work).
 Pivoted off E5 (core done+robust+reproducible) to finalize a deferred port feature (owner A20 "revisit ports' unfinished parts" + FINALIZE-FIRST). Found the staged
 /bin/python3 already has PyInit_zlib/PyInit__ssl/PyInit__hashlib built in (build.sh 5b/5c wiring shipped Aug 20) but with NO recorded HW verification (memory said "deferred").

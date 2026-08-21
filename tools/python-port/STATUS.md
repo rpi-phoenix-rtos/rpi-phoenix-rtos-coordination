@@ -16,9 +16,14 @@ OK, `HAS_TLSv1_2`, openssl-backed `hashlib.sha256` correct). ⇒ Python has work
 Known minor gap: `hashlib.blake2b`/`blake2s` raise `ValueError: unsupported hash
 type` (non-fatal — hashlib probes + catches). The builtin `_blake2` C module (no
 external lib) isn't in the build; sha2/sha1/md5 (openssl) work. Enable `_blake2`
-in Setup.local + rebuild if blake2 is wanted (low priority). HTTPS end-to-end
-(selftest_https.py) is pending a Pi cycle with the host NAT gateway up (the ssl
-module itself is confirmed; E2/E3 proves the NAT path).
+in Setup.local + rebuild if blake2 is wanted (low priority). ★ HTTPS END-TO-END HW-VERIFIED (2026-08-21): with a host TLS server
+(tls-test-server.py, self-signed cert, 0.0.0.0:8443 TLS1.2) reachable at
+10.42.0.1 over the netboot link, `/bin/python3 /selftest_https.py` on the Pi
+completed a full TLS1.2 client handshake (**CIPHER ECDHE-RSA-AES256-GCM-SHA384**)
++ HTTP GET over the encrypted socket + verified the body → **HTTPS-OK**, 0 faults.
+No NAT needed (local client/server over the netboot subnet). So Python does real
+end-to-end HTTPS/TLS client networking on Phoenix. (Internet HTTPS via the E2/E3
+NAT path would additionally need the gateway up + cert-verify enabled.)
 
 
 Big multi-cycle port (owner-sanctioned). CPython is PSF-licensed (permissive).
