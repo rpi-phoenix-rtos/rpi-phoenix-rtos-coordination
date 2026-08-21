@@ -528,6 +528,17 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~80 — pivoted to V3D quake3-lightmap (owner #1 dig): root-caused q3dm7 BLACK to a 512/1024 SIZE THRESHOLD, cheaply, no rebuild).
+Pivoted to the owner's #1 top-dig (V3D quake-lightmap). Got the advisor's discriminating fact WITHOUT any GPU rebuild — computed the merged-
+lightmap atlas size from each map's BSP (numLightmaps = LUMP_LIGHTMAPS.len/(128²·3)) + the renderer's SetLightmapParams POT-atlas formula:
+**q3dm1 = 512×512 atlas → renders PERFECT; q3dm7 = 1024×1024 → BLACK.** So NOT "large POT in general" — 512² works, 1024² fails, a size
+threshold. Then replicated Mesa's exact v3d_setup_slices/v3d_get_ub_pad math host-side: BOTH 512² and 1024² are UIF_XOR ((h/8)%32==0, ub_pad
+0) ⇒ **XOR-vs-not REFUTED**; the bug is a WIDTH-dependent UIF_XOR tiling detail (512-wide OK, 1024-wide wrong) in the winsys uif_pixel_off /
+TFU-TMU stride. Precise, actionable lead + autonomously HDMI-validatable. Banked: memory project_quake3_lightmap_uif_xor + plan §C quake3
+entry + MEMORY.md. NEXT: pinpoint uif_pixel_off (v3d_phoenix_winsys.c ~1170) vs Mesa v3d_tiling.c v3d_get_uif_pixel_offset for width>512
+UIF_XOR → fix → GPU-lib rebuild + relink quake3e → render q3dm7 → HDMI-verify lit. (Likely also fixes quake2 floor-speckle if >512-wide;
+vkQuake striping is the separate V3DV path.) Signal-push fix remains DEFERRED (attended, lock-ordering).
+
 2026-08-21 (session ~79 — signal-push fix: hit a lock-ordering BLOCKER while implementing → DEFERRED as attended-worthy; pivot next).
 Started implementing the signal-push double-fault fix. Reading the VM layer to build the validation primitive, found the BLOCKER: `map->lock`
 is a sleeping MUTEX (proc_lockSet→_proc_lockSet), but `_threads_checkSignal` runs with `threads_common.spinlock` (hard spinlock) held at BOTH
