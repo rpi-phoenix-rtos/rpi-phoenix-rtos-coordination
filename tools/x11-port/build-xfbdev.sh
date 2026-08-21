@@ -9,8 +9,14 @@
 #
 # Host-side only. Does NOT touch the flagship image. Idempotent.
 #
-# Usage: build-xfbdev.sh [--stub]
-#   --stub   link the empty-hook fbdev_stub.c (link-closure de-risk) instead.
+# Usage: build-xfbdev.sh [--stub | --glamor]
+#   --stub     link the empty-hook fbdev_stub.c (link-closure de-risk) instead.
+#   --glamor   E5/M1a: link glamor (2D GL accel) + our static Mesa GL into the
+#              server. Compiles the DDX with -DGLAMOR_PHOENIX (enables the guarded
+#              glamor_init call), adds glamor_phoenix_ctx.o + epoxy_shim.o +
+#              libglamor.a + libGL-phoenix.a + libv3d-phoenix.a to the link, and
+#              writes the full link stderr to /tmp/Xphoenix-glamor-link.log. Output
+#              is Xphoenix-glamor (NOT published/staged over the shipping Xphoenix).
 #
 # Copyright 2026 Phoenix Systems
 # Author: Witold Bołt
@@ -26,9 +32,20 @@ KD=${ROOT}/tools/x11-port/src/xorg-server-1.20.14
 DDX=$KD/hw/kdrive/fbdev
 CC=${TC}gcc
 
+# glamor (E5/M1a) inputs — see the --glamor branch below.
+SHIM=${ROOT}/tools/x11-port/glamor-shim
+GPU_LIBS=${ROOT}/tools/.gpu-libs
+MESA=${ROOT}/external/mesa
+MESABUILD=/tmp/mesa-v3d-build
+MESA_COMPAT=${ROOT}/tools/v3d-driver-port/phoenix_mesa_compat.h
+
 SRCFILE=fbdev.c
 OUT=Xphoenix
-if [ "${1:-}" = "--stub" ]; then SRCFILE=fbdev_stub.c; OUT=Xphoenix-stub; fi
+GLAMOR=0
+case "${1:-}" in
+  --stub)   SRCFILE=fbdev_stub.c; OUT=Xphoenix-stub ;;
+  --glamor) GLAMOR=1;             OUT=Xphoenix-glamor ;;
+esac
 
 # Ensure the xorg-server core archives this script links against actually exist.
 # Fetching/configuring/building the core was historically a MANUAL step (see
@@ -87,8 +104,41 @@ INCS="-DHAVE_DIX_CONFIG_H -DHAVE_CONFIG_H \
 -I$KD/render -I$KD/randr -I$KD/fb -I$KD/dbe -I$KD/present \
 -I$KD/hw/kdrive/src -I$KD/hw/kdrive/linux -I$DDX"
 
+# In --glamor mode the DDX gets -DGLAMOR_PHOENIX (enables the guarded glamor_init
+# call in fbdevFinishInitScreen) and the glamor public-header path so <glamor.h>
+# resolves. No epoxy/Mesa path is needed for the DDX itself (glamor.h pulls only
+# X server headers).
+GLAMOR_DDX_FLAGS=""
+if [ "$GLAMOR" = 1 ]; then
+  GLAMOR_DDX_FLAGS="-DGLAMOR_PHOENIX -I$KD/glamor"
+fi
+
 echo "=== compiling $SRCFILE ==="
-$CC $CFLAGS $INCS -c "$DDX/$SRCFILE" -o "$DDX/${SRCFILE%.c}.o" || { echo "COMPILE FAIL"; exit 1; }
+$CC $CFLAGS $INCS $GLAMOR_DDX_FLAGS -c "$DDX/$SRCFILE" -o "$DDX/${SRCFILE%.c}.o" || { echo "COMPILE FAIL"; exit 1; }
+
+# --- glamor context shim + epoxy shim (compiled against Mesa internal headers,
+# the exact MFLAGS set the proven gl_x11_window.c harness uses) --------------
+if [ "$GLAMOR" = 1 ]; then
+  [ -f "$GPU_LIBS/libGL-phoenix.a" ]  || { echo "missing $GPU_LIBS/libGL-phoenix.a"; exit 1; }
+  [ -f "$GPU_LIBS/libv3d-phoenix.a" ] || { echo "missing $GPU_LIBS/libv3d-phoenix.a"; exit 1; }
+  [ -f "$KD/glamor/.libs/libglamor.a" ] || { echo "missing libglamor.a — configure core with --enable-glamor first"; exit 1; }
+
+  MFLAGS="-O2 -g -ffreestanding -fno-strict-aliasing -Wno-error -Wno-undef \
+-DUTIL_ARCH_LITTLE_ENDIAN=1 -DUTIL_ARCH_BIG_ENDIAN=0 -DHAVE_STRUCT_TIMESPEC \
+-include $MESA_COMPAT \
+-I$MESA/src -I$MESA/include -I$MESA/src/mesa -I$MESA/src/mapi -I$MESA/src/compiler \
+-I$MESA/src/gallium/include -I$MESA/src/gallium/auxiliary -I$MESA/src/util -I$MESABUILD/src"
+
+  echo "=== compiling glamor_phoenix_ctx.c (Mesa GL bring-up shim) ==="
+  $CC --sysroot=$SYSROOT $MFLAGS -I"$KD/glamor" \
+    -c "$SHIM/glamor_phoenix_ctx.c" -o /tmp/glamor_phoenix_ctx.o \
+    || { echo "COMPILE FAIL (glamor_phoenix_ctx.c)"; exit 1; }
+
+  echo "=== compiling epoxy_shim.c (GL version/extension query helpers) ==="
+  $CC --sysroot=$SYSROOT $MFLAGS \
+    -c "$SHIM/epoxy_shim.c" -o /tmp/epoxy_shim.o \
+    || { echo "COMPILE FAIL (epoxy_shim.c)"; exit 1; }
+fi
 
 # Patched ddxLoad.c (XKB compiled-in-keymap fix). -I$XKBDIR resolves builtin_keymap.h.
 echo "=== compiling patched ddxLoad.c (XKB no-xkbcomp fix) ==="
@@ -140,16 +190,40 @@ echo "=== linking $OUT ==="
 # links a STALE libphoenix (stale-core hazard) — e.g. it would drop the
 # _signal_handler NULL-handler guard. An explicit -L precedes the built-in dir
 # in ld's search order, so the sysroot copy wins.
-$CC --sysroot=$SYSROOT -o "$DDX/$OUT" "$DDX/${SRCFILE%.c}.o" "$DDX/ddxLoad.o" \
-  -L$SYSROOT/lib \
-  -Wl,--start-group $GROUP -Wl,--end-group \
-  -L$PREFIX/lib -lpixman-1 -lXfont2 -lfontenc -lfreetype -lz -lXau -lXdmcp -lxkbfile -lmd -lm \
-  2> "$DDX/${OUT}-link.log"
-rc=$?
+if [ "$GLAMOR" = 1 ]; then
+  # E5/M1a link. Everything that can cross-reference — the xserver core, glamor,
+  # our GL context shims, and the Mesa GL + V3D archives — goes inside ONE
+  # --start-group so any "undefined reference" ld reports is a genuine gap and
+  # not a single-pass ordering artifact (the GL-entrypoint gap list is the whole
+  # point of M1a). -lstdc++ + a 32 MB stack mirror the proven GL harness link.
+  LINKLOG=/tmp/${OUT}-link.log
+  $CC --sysroot=$SYSROOT -o "$DDX/$OUT" \
+    "$DDX/${SRCFILE%.c}.o" "$DDX/ddxLoad.o" \
+    /tmp/glamor_phoenix_ctx.o /tmp/epoxy_shim.o \
+    -L$SYSROOT/lib -L$PREFIX/lib \
+    -Wl,--start-group \
+      $GROUP \
+      "$KD/glamor/.libs/libglamor.a" \
+      "$GPU_LIBS/libGL-phoenix.a" "$GPU_LIBS/libv3d-phoenix.a" \
+      -lpixman-1 -lXfont2 -lfontenc -lfreetype -lz -lXau -lXdmcp -lxkbfile -lmd -lm -lstdc++ \
+    -Wl,--end-group \
+    -Wl,-z,stack-size=33554432 \
+    2> "$LINKLOG"
+  rc=$?
+  echo "=== glamor link stderr -> $LINKLOG ($(wc -l < "$LINKLOG") lines) ==="
+else
+  LINKLOG=$DDX/${OUT}-link.log
+  $CC --sysroot=$SYSROOT -o "$DDX/$OUT" "$DDX/${SRCFILE%.c}.o" "$DDX/ddxLoad.o" \
+    -L$SYSROOT/lib \
+    -Wl,--start-group $GROUP -Wl,--end-group \
+    -L$PREFIX/lib -lpixman-1 -lXfont2 -lfontenc -lfreetype -lz -lXau -lXdmcp -lxkbfile -lmd -lm \
+    2> "$LINKLOG"
+  rc=$?
+fi
 if [ $rc -ne 0 ]; then
   echo "LINK FAIL (rc=$rc). First undefined/errors:"
-  grep -iE "undefined reference|error" "$DDX/${OUT}-link.log" | head -40
-  echo "(full log: $DDX/${OUT}-link.log)"
+  grep -iE "undefined reference|error" "$LINKLOG" | head -40
+  echo "(full log: $LINKLOG)"
   exit 1
 fi
 echo "=== OK: $DDX/$OUT ==="

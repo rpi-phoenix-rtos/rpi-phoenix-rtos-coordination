@@ -45,6 +45,17 @@
 #include "shadow.h"
 
 /*
+ * E5 / G-XORG-MODERN (M1a): optionally initialise glamor (2D GL acceleration on
+ * the in-process V3D Mesa GL context). Compiled in ONLY when the server is built
+ * with -DGLAMOR_PHOENIX (build-xfbdev.sh --glamor); the default build links no
+ * glamor/GL libs, so the reference must stay behind this guard or the normal
+ * Xphoenix link breaks. See tools/x11-port/glamor-shim/glamor_phoenix_ctx.c.
+ */
+#ifdef GLAMOR_PHOENIX
+#include "glamor.h"
+#endif
+
+/*
  * /dev/fb0 client ABI (mirror of sources/phoenix-rtos-devices/video/rpi4-fb/
  * rpi4-fb.h). Kept self-contained so the X cross-build needs no path into the
  * device tree; keep in sync if that ABI changes.
@@ -486,6 +497,22 @@ fbdevFinishInitScreen(ScreenPtr pScreen)
 {
     if (!shadowSetup(pScreen))
         return FALSE;
+
+#ifdef GLAMOR_PHOENIX
+    /*
+     * Bring glamor up on the framebuffer once fb + shadow are ready. EGL-screen
+     * mode installs our in-process V3D GL context (glamor_egl_screen_init in
+     * glamor_phoenix_ctx.c); NO_DRI3 because Phoenix has no DRM/PRIME buffer
+     * sharing. Non-fatal: a glamor failure must not take the software fbdev
+     * server down (M1a is the link/bring-up milestone; runtime pixmap-accel
+     * wiring is M1b). This call is also what pulls libglamor.a into the link.
+     */
+    if (!glamor_init(pScreen, GLAMOR_USE_EGL_SCREEN | GLAMOR_NO_DRI3))
+        ErrorF("[fbdev] glamor_init failed — continuing without GL acceleration\n");
+    else
+        ErrorF("[fbdev] glamor initialised (V3D GL 2D acceleration)\n");
+#endif
+
     return TRUE;
 }
 

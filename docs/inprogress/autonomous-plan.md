@@ -528,6 +528,20 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~137 — ✅ E5 M1a ACHIEVED: Xphoenix LINKS with glamor + our static Mesa GL, ZERO undefined symbols — NO GL-entrypoint gap. The key E5 unknown is resolved).
+Delegated M1a to a subagent (per "use subagents"). RESULT (exhaustively verified): **Xphoenix-glamor links rc=0 with 0 undefined symbols**, even under a whole-archive relink
+(`-Wl,--whole-archive libglamor.a` forcing ALL 34 glamor TUs / every accel path in). Since it's a STATIC executable, the empty gap list is airtight, not an ordering
+artifact. **HEADLINE: there is NO GL-entrypoint gap** — every gl*/GLSL symbol across all of glamor 1.20.14 resolves from libGL-phoenix.a (+libv3d-phoenix.a); all X-server
+symbols (incl. miImageGlyphBlt from libmi.a) resolve from the core archives; NO EGL/GBM/DRM symbols surfaced. ⇒ our static Mesa GL 2.1 has FULL entrypoint coverage for
+glamor — the central E5 risk is retired, so M1b can go straight to runtime. Files (Phoenix-only, NO upstream glamor/Mesa patch; all coord tools/x11-port): CREATED
+`glamor-shim/glamor_phoenix_ctx.c` (our glamor_egl_screen_init: guarded-singleton V3D/Mesa GL bring-up verbatim from gl_x11_window.c + phx_make_current cb + the 3
+fd-exporter stubs + 4 glX* link stubs + the 2 Mesa link shims; header discipline mirrors glamor_glx.c — opaque void* for ScreenPtr, scoped #define Bool, no server
+headers); MODIFIED `ddx/fbdev.c` (`#ifdef GLAMOR_PHOENIX`-guarded glamor_init(GLAMOR_USE_EGL_SCREEN|GLAMOR_NO_DRI3) in fbdevFinishInitScreen, non-fatal); MODIFIED
+`build-xfbdev.sh` (new `--glamor` mode → separate `Xphoenix-glamor`, never overwrites shipping Xphoenix). Regression-safe: default `build-xfbdev.sh` still links the 7.2MB
+Xphoenix cleanly (guarded). Reviewed all 3 files — clean/defensive/upstreamable. Committed + pushed. **M1b (next, multi-cycle, HW):** wire the kdrive fbdev DDX to actually
+USE glamor at runtime — back the screen/root pixmap with a glamor GL texture, run glamor accel for Render/Copy/Fill, and present the screen pixmap to /dev/fb0 (glReadPixels
+blit, later zero-copy via st_context_teximage) — then netboot Xphoenix-glamor on the Pi + run an X app + HDMI-verify GPU-accelerated 2D (single-GPU-process: X as sole owner).
+
 2026-08-21 (session ~136 — ✅ E5 M0 ACHIEVED: glamor core `libglamor.la` cross-compiles for aarch64-phoenix; ZERO EGL/GBM/DRM symbols — decoupling empirically PROVEN).
 Delegated the M0 build to a general-purpose subagent (per "use subagents"). RESULT: **`libglamor.la` BUILDS** — `glamor/.libs/libglamor.a` ~400KB/34 objects, **0 compile
 errors** (only benign -Wredundant-decls, same as the proven gl_x11_window harness). Reconfigured `--enable-glamor` with the epoxy-shim GLAMOR_CFLAGS env override (no
