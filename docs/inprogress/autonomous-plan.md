@@ -536,7 +536,12 @@ current toolchain = gcc-14.2.0 + binutils-2.43 (build-toolchain.sh GCC= line 66)
 takes the install prefix as $2 ⇒ build to a SEPARATE prefix, NEVER touching the working .toolchain (safe). The real cost/risk = rebuilding+revalidating ALL of Phoenix with
 gcc-16 (new-major warnings/UB/codegen breakage) = M1, ATTENDED (don't swap .toolchain unattended). **E10-M0 (delegated this turn):** subagent ports the aarch64-relevant
 patches → builds a gcc-16.2.0 aarch64-phoenix cross-toolchain to a separate prefix → compile-tests hello-world; reports patch apply/reject + build outcome. On result: bank
-the built toolchain (or the precise reject list) for the attended M1 swap. NEXT: review the M0 subagent report; then either continue E10 (fix rejects) or another item.
+the built toolchain (or the precise reject list) for the attended M1 swap.
+UPDATE (session ~146): M0 build PROGRESSING well + SAFE (building to .toolchain-gcc16, .toolchain untouched). ★ all 4 aarch64 gcc patches applied CLEAN (04/05/09 clean —
+incl the 05-libstdcpp configure patch I'd flagged as the reject-risk; 11-aarch64 needed one no-op hunk dropped). **binutils-2.43 built + installed** (aarch64-phoenix-ar/as/ld/nm
+present); gcc-16.2.0 now compiling (25 parallel procs, still in stage1 support-libs). Detached build (log ~/.claude/jobs/aa2bf3f6/tmp/build-gcc16.log); Bash caps at 10min so
+POLLING across heartbeats (build ~30-60min → 2-4 heartbeats). Completion marker: "Toolchain for target family 'aarch64-phoenix' has been installed in". NEXT: re-check the
+build each heartbeat; on completion, smoke-test hello-world with .toolchain-gcc16 gcc → M0 done (gcc-16.2.0 C compiler works); then bank for the attended M1 (Phoenix rebuild+revalidate under gcc-16 — do NOT swap .toolchain unattended).
 
 2026-08-21 (session ~144 — ✅✅ Python HTTPS END-TO-END HW-VERIFIED on Pi4: full TLS1.2 client handshake + HTTP GET over the encrypted socket → HTTPS-OK, 0 faults).
 Completed the Python TLS story (from ~143's module-level _ssl verify). Ran a host TLS server (tools/python-port/tls-test-server.py, self-signed cert, 0.0.0.0:8443 TLS1.2,
