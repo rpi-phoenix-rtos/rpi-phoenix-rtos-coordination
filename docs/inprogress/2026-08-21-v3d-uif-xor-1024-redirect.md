@@ -121,10 +121,18 @@ indistinguishable.)
 identical to the working 512; (2) visual A/B — merge-ON ≡ known-lit merge-OFF in the HDMI capture.
 
 **Workaround REMOVED:** quake3-launcher.c no longer forces `r_mergeLightmaps 0`; quake3e's default
-(merged atlas) is used, rebuilt launcher deployed. quake2 floor-speckle + vkQuake striping are the
-same class (large sampled textures) and are fixed by the same libv3d change — rebuilding those two
-ports against the fixed lib exercises it (not re-verified visually this pass; same root cause).
+(merged atlas) is used, rebuilt launcher deployed.
 
-**Status: RESOLVED.** V3D large-UIF_XOR sampling bug root-caused (should_tile forcing large sampled
-textures to RASTER), fixed (exclude SAMPLER_VIEW, external/mesa 4363822955b), and confirmed both at
-the descriptor level and visually (A/B vs the known-lit reference). The owner's #1 top-dig is closed.
+**SCOPE CORRECTION (which renderers this fixes):** the fix is in the **gallium GL** path
+(`v3d_resource.c` `should_tile`), so it covers the GL-path apps: **quake3 (confirmed)** and **quake2
+(likely — yQuake2 ref_gl1 is GL; its "floor-speckle" residual should be re-tested against the fixed
+lib, though it may be a separate slow-TFU-load artifact)**. It does **NOT** touch **vkQuake**, which
+uses the separate **V3DV (Vulkan)** path — `v3dv_image.c` has stock upstream tiling with NO Phoenix
+RASTER-forcing mod, so vkQuake's striping is a **separate, still-open V3DV read-side issue** (the
+MASTER plan already retired the "one unified bug" hypothesis on this basis). Earlier commit/doc
+wording that this fix "resolves vkQuake striping" was inaccurate and is corrected here.
+
+**Status: GL-path RESOLVED.** V3D large-UIF_XOR *GL* sampling bug root-caused (should_tile forcing
+large sampled textures to RASTER), fixed (exclude SAMPLER_VIEW, external/mesa 4363822955b), confirmed
+at the descriptor level and visually (A/B vs the known-lit reference). quake3 lightmap-black closed;
+quake2-GL likely closed (re-test); vkQuake-V3DV striping remains a separate open dig.
