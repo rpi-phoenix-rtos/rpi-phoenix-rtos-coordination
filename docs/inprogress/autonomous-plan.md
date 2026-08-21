@@ -528,6 +528,17 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~77 — cksum/od Data Abort ROOT-CAUSED + FIXED: 32 KiB user stack too small → raised SIZE_USTACK to 1 MiB).
+Root-caused the P4-found cksum/od Data Abort. addr2line on the EL1 double-fault → hal_cpuPushSignal→hal_memcpy (signal delivery pushes
+the frame to userSP-ctxsize UNCONDITIONALLY; faults on a bad user stack → kernel double-fault → printed dump unreliable). Then found the
+EL0 cause: proc/process.c + hal/aarch64/arch/cpu.h — main-thread user stack is FIXED `SIZE_USTACK` (no auto-growth), and aarch64's was only
+**8 pages = 32 KiB** — too small for full userland; cksum/od overflow it, wc/base64 don't. **FIX: SIZE_USTACK 32 KiB → 1 MiB** (256 pages;
+demand-paged MAP_NONE so ~free). kernel `8ae20864` PUSHED + manifest 2026-08-21-ustack-1mib. Rebuilt --scope core, HW-tested: **Data Abort
+GONE, cksum correct CRC `3638076971 104`, od correct hex; boot+psh+tools fine (regression-clean).** SEPARATE follow-up: the signal-push
+double-fault robustness (hal_cpuPushSignal should validate the frame target + terminate cleanly) — defense-in-depth, memory
+project_coreutils_cksum_od_dataabort. Re-running cycle B2 (cases 15-28, new kernel) for a clean harness RESULTS table (in flight). NEXT:
+finalize RESULTS.md on B2; then P7 vkQuake or a Tier-2 goal, or the signal-push robustness fix.
+
 2026-08-21 (session ~76 — P4 coreutils differential test COMPLETE: 25/28 bit-exact vs host GNU 9.5; found a real cksum/od Data Abort bug).
 Took over the P4 harness after the subagent API-stalled twice (its on-disk work was intact + good). Fixed 2 parser bugs (ANSI-CSI strip;
 apply filename-normalize to Pi output) — pilot 6/6 PASS. Added a reusable `--cmd-file` to test-cycle-psh-interact.sh + a multi-log
