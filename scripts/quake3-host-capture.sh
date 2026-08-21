@@ -10,9 +10,17 @@
 # writer, cl_avi.c). During AVI recording the engine FORCES a fixed timestep
 # (msec = 1000/cl_aviFrameRate, cl_main.c CL_Frame) so a demo advances
 # deterministically regardless of wall-clock — this is the q3 equivalent of Q1's
-# `host_framerate`. We record an UNCOMPRESSED (cl_aviMotionJpeg 0) AVI and split
-# it into cap_%04d.tga with ffmpeg. RNG-driven client effects (marks/gibs/brass)
-# are disabled for cross-arch determinism, mirroring Q1's `r_particles 0`.
+# `host_framerate`. RNG-driven client effects (marks/gibs/brass) are disabled for
+# cross-arch determinism, mirroring Q1's `r_particles 0`.
+#
+# TRANSPORT: we keep `+video` (to engage that fixed timestep + the CA_ACTIVE gate)
+# but the port's capture hook (external/quake3e tr_init.c Q3Cap_Stream, active when
+# scr_capture>0) intercepts each video frame and writes it as a per-frame BGR TGA
+# — the SAME code path (byte-for-byte TGA writer + readback) the Pi runs, so host
+# and Pi frames pair by construction. This replaces the old AVI+ffmpeg split, which
+# risked host/Pi format skew (bottom-up-ness, R/B order, gamma) between two
+# different pipelines. On the Pi the hook streams over TCP instead; here (empty
+# scr_capture_host) it writes files straight into $OUT. No ffmpeg needed.
 #
 # The 1999 demo-release `.dm3` demos shipped in demoq3 use an old protocol
 # quake3e refuses (DEMOEXT is `dm_<proto>`), so the reference camera path is a
@@ -37,7 +45,6 @@ OUT="$HOSTDIR/cap"                  # cap_*.tga land here (compare.py --host)
 
 fail() { echo "ERROR: $*" >&2; exit 1; }
 
-command -v ffmpeg   >/dev/null || fail "ffmpeg not found (needed to split the AVI into cap_*.tga)"
 command -v sdl2-config >/dev/null || fail "sdl2-config not found (SDL2 dev headers required to build quake3e)"
 [ -d "$Q3_SRC/code" ] || fail "missing quake3e clone at $Q3_SRC (git clone https://github.com/ec-/quake3e)"
 [ -f "$PAK_SRC/pak0.pk3" ] || fail "missing game paks at $PAK_SRC/pak0.pk3"
@@ -92,12 +99,21 @@ set cg_drawFPS 0
 set cl_aviMotionJpeg 0
 set cl_aviFrameRate $FPS
 set cl_forceavidemo 0
+set scr_capture 1
+set scr_capture_max 0
+set scr_capture_dir "$OUT"
 EOF
 
 rm -rf "$HOSTDIR/demoq3/videos"
 mkdir -p /tmp/q3home
+# Clear any prior frames so a short run can't leave stale higher-index TGAs behind.
+rm -f "$OUT"/cap_*.tga
 
-echo "== run headless (SDL offscreen + llvmpipe), recording demo '$DEMO' to AVI =="
+echo "== run headless (SDL offscreen + llvmpipe), replaying demo '$DEMO', capturing per-frame TGA =="
+# +video engages the fixed timestep + CA_ACTIVE gate; scr_capture (set in
+# autocap.cfg) makes the port's Q3Cap_Stream hook write each video frame directly
+# as $OUT/cap_NNNN.tga (identical writer to the Pi TCP path). The AVI file itself
+# stays empty — the hook returns before the built-in AVI writer runs.
 timeout 300 env HOME=/tmp/q3home SDL_VIDEODRIVER=offscreen LIBGL_ALWAYS_SOFTWARE=1 \
     "$Q3BIN" +set fs_basepath "$HOSTDIR" +set fs_homepath "$HOSTDIR" +set fs_game demoq3 \
     +set r_mode -1 +set r_customwidth "$WIDTH" +set r_customheight "$HEIGHT" +set r_fullscreen 0 \
@@ -105,16 +121,6 @@ timeout 300 env HOME=/tmp/q3home SDL_VIDEODRIVER=offscreen LIBGL_ALWAYS_SOFTWARE
     +demo "$DEMO" +video +wait "$WAITFRAMES" +stopvideo +quit >/tmp/q3-host-play.log 2>&1 \
     || fail "engine run failed (see /tmp/q3-host-play.log)"
 
-AVI="$(ls "$HOSTDIR"/demoq3/videos/video*.avi 2>/dev/null | head -1)"
-[ -f "$AVI" ] || fail "no AVI produced — the demo may not have played (see /tmp/q3-host-play.log)"
-
-echo "== split $AVI -> $OUT/cap_%04d.tga =="
-# quake3e writes an uncompressed bottom-up BGR AVI; ffmpeg reads the declared
-# bgr24 and emits correct RGB TGAs. 0-indexed to match the Q1 cap_0000 naming.
-rm -f "$OUT"/cap_*.tga
-ffmpeg -y -i "$AVI" -start_number 0 "$OUT/cap_%04d.tga" >/tmp/q3-host-ffmpeg.log 2>&1 \
-    || fail "ffmpeg split failed (see /tmp/q3-host-ffmpeg.log)"
-
 N=$(ls "$OUT"/cap_*.tga 2>/dev/null | wc -l)
-[ "$N" -gt 0 ] || fail "no cap_*.tga frames produced"
+[ "$N" -gt 0 ] || fail "no cap_*.tga frames produced (see /tmp/q3-host-play.log)"
 echo "== done: $N host reference frames in $OUT/cap_*.tga =="

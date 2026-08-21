@@ -80,6 +80,14 @@ CFLAGS = ["-c", "-O2", "-g", "-ffreestanding", "-fno-strict-aliasing", "-fwrapv"
 # prerequisites and source_t/punctuation_t/fielddef_t are undefined.
 BOTLIB_CFLAGS = CFLAGS + ["-DBOTLIB"]
 
+# The opengl1 renderer TUs get -DQ3CAP_PHOENIX so tr_init.c's visual-regression
+# capture hook reads the just-rendered frame back via phxgl_capture_gl (the V3D
+# scanout-FBO blit+readback in the SDL2 glue) instead of a plain glReadPixels,
+# which returns noise on the render-to-scanout path. The native host reference
+# build (renders into FB0) does NOT define it and uses the plain glReadPixels
+# #else branch. Same design as Q1 (QSS_PHOENIX) / Q2 (YQ2CAP_PHOENIX).
+REND1_CFLAGS = CFLAGS + ["-DQ3CAP_PHOENIX"]
+
 # The SDL2 GL-context glue (winsys bridge: phxgl_*) is compiled with Mesa's
 # include/define set, verbatim from the yQuake2 / sdl2-gltest MFLAGS.
 MESA   = f"{ROOT}/external/mesa"
@@ -216,7 +224,7 @@ def main():
         (BOTLIB,     f"{CODE}/botlib",        BOTLIB_CFLAGS),
         (JPEG,       f"{CODE}/libjpeg",       CFLAGS),
         (RENDCOMMON, f"{CODE}/renderercommon", CFLAGS),
-        (REND1,      f"{CODE}/renderer",      CFLAGS),
+        (REND1,      f"{CODE}/renderer",      REND1_CFLAGS),
         (SDLBK,      f"{CODE}/sdl",           CFLAGS),
         (UNIX_KEEP,  f"{CODE}/unix",          CFLAGS),
         (PHOENIX,    PLAT,                    CFLAGS),
