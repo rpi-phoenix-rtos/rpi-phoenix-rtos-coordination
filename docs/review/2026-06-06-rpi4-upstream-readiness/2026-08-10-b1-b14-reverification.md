@@ -1,3 +1,9 @@
+> **2026-08-21 update:** the 5 still-real items (B2/B5/B7b/B8/B14) have been
+> re-verified against the current tree (line numbers moved) and turned into a
+> turnkey attended-pass work order with exact diffs + per-item HW tests:
+> [`2026-08-21-b-items-attended-work-order.md`](2026-08-21-b-items-attended-work-order.md).
+> Use that for the apply pass; the table below remains the relevance snapshot.
+
 # B1–B14 re-verification vs current code — 2026-08-10
 
 The 2026-06-06 upstream-readiness review (`_SYNTHESIS.md`) listed 14 "NEEDS-HW" bugs

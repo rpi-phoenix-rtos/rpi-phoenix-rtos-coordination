@@ -528,6 +528,18 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~131 — ✅ discharged E8/G-UPSTREAM "re-verify relevance" half: turnkey attended-pass work order for the 5 still-real B-items).
+Picked E8 (owner-greenlit Tier-2). The B1–B14 audit was already done 2026-08-10 (9 FIXED incl. the B4 SMP-gate the owner suspected, 3 not-actionable-by-design);
+5 still-real (B2/B5/B7b/B8/B14). **Considered applying B14 (xHCI PORTSC RW1C over-clear) unattended** — the diff is correct-by-construction (matches the ENABLE/POWER
+cases at 3207/3211). **Advisor HARD-STOP (correct):** E8 is a *specifically-attended* item (specific owner instruction > general "be-aggressive"); my non-regression
+check was HOLLOW (single-device enumeration emits the identical write — the behavioral delta only appears in the multi-change-bit race no smoke reproduces); and it
+adds hub-driver event processing in the #121-sensitive subsystem. ⇒ did NOT merge unprovable code. **Instead produced the turnkey work order** (docs/review/.../2026-08-21-b-items-attended-work-order.md):
+re-verified all 5 against CURRENT line numbers (tree moved 11 days), pre-wrote the exact diff for each (B2 inputCtx alloc-once guard @1902; B14 four ~(PED|RW1C) masks
+@3191-3203; B7b dsb-before-TX-doorbell @1160; B8 remove entry wake-reset @204 + caller audit; B5 early-console alias conditionalize @32), and stated the single HW test
+that actually CONFIRMS each (all are invisible to a netboot smoke — a green boot proves nothing). Recommended attended order B2+B14→B8→B7b→B5. Plan G-UPSTREAM +
+2026-08-10 doc pointer updated. No sibling code changed (analysis/doc only) ⇒ no manifest/sibling push. The apply pass stays owner-attended. NEXT: a verifiable
+unattended item (Tier-2 code thrusts carry unattended-caution; or extend the test sweep to socket/poll suites once loopback/peer scoped).
+
 2026-08-21 (session ~130 — ✅ closed §B "test binaries staged, never run": swept 21 libc/sys/corelib suites on Pi4 HW → ~640 cases, essentially ALL PASS).
 Ran the never-validated staged test binaries on real hardware (3 netboot Pi cycles, Pi-lock honored). **21 suites PASS clean** (math 90, stdlib 91, printf 118,
 scanf-basic 48, scanf-adv 33, signal 9, exit 30, statvfs 22, thread-local 3, setjmp 8, sys-mutex 12, sys-cond 17, sys-perf 4, waitpid 3, mprotect 3, libalgo 7,
