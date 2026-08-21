@@ -658,6 +658,19 @@ the UIF-vs-UIF_XOR threshold in v3d_setup_slices, and whether it's a bitfield ov
 **NEXT:** act on the subagent's field → apply the fix to external/mesa v3d → rebuild libv3d → HW-verify. Test vehicle = quake3 q3dm7 with
 r_mergeLightmaps 1 re-enabled on HDMI (ground truth; the gl_uif_probe render path is unreliable). GPU HW test is semi-attended (HDMI).
 
+2026-08-21 (session ~114 cont — V3D dig: subagent + winsys read both come up CLEAN → REDIRECTED to a runtime 4MB-BO magnitude effect).
+Subagent (Mesa) + my read of v3d_phoenix_winsys.c both find the 1024²/4MB path source-correct. **DECISIVE: 512² is itself UIF_XOR and
+works** ⇒ the XOR mechanism / UIFCFG=0x45 / descriptor XOR fields are EXONERATED (else 512² would corrupt too). Mesa: no field
+overflow, no UIF/XOR threshold crossed 512→1024 (both UIF_XOR ub_pad=0 padded_h==h); GL≡Vulkan derivation. Winsys: texture BOs
+uncached, per-page PT-fill full-coverage, mmap-fail checked, whole-cache L2T flush, 32-bit-safe VA — all size-correct. ⇒ **the
+2-year-old "descriptor mis-encode at 1024" hypothesis is REFUTED; the bug is a RUNTIME magnitude effect on the 4MB BO** (truncated
+base pointer at the real VA / MAP_CONTIGUOUS+va2pa for 4MB / stale-cache over the larger working set → TMU reads unmapped/stale =
+black). **NEXT (executable, banked in docs/inprogress/2026-08-21-v3d-uif-xor-1024-redirect.md with exact dump code):** add a V3DTEX
+descriptor+slice dump to external/mesa v3dx_state.c (fires at texture SETUP, which works — bypasses the flaky gl_uif_probe RENDER
+path) + a winsys BO-alloc dump → rebuild libv3d → build gl_uif_probe → netboot → capture V3DTEX for the 512 vs 1024 atlases → the
+value that diverges at 1024 IS the bug. Semi-attended = netboot+UART only (no HDMI needed for the dump). This turn = strong analytical
+redirection (2 source layers proven clean) + precise HW-instrumentation plan; next turn executes the dump+rebuild+cycle.
+
 2026-08-21 (session ~107 — finalized the sysconf(_SC_NPROCESSORS) fix-path spec (precise, ready-to-implement); confirmed deferral correct; will diversify next turn).
 Followed the ~106 gap to a precise fix-path (no code change — the diagnosis is the deliverable). Traced the exact implementation: kernel adds a `pctl_cpucount`
 platformctl action in aarch64-generic (generic.h enum+union, generic.c handler returning hal_cpuGetCount() — clean/additive/ABI-stable, mirrors the
