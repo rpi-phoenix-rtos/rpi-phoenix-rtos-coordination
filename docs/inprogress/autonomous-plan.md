@@ -528,6 +528,20 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~108 — ★ REALIGNMENT: Tier-1 done ⇒ Tier-2 UNLOCKED; the E5/E6/E7/E10 goals are owner-GREENLIT (not gated!). Advisor-picked E7 (WiFi data-plane) to START; gating check passed).
+CORRECTED a multi-turn mis-framing: §E owner-decisions are RESOLVED, and E5 (GPU/DRI-DRM parity), E6 (ffmpeg-HW), E7 (WiFi data-plane), E10 (gcc) are
+🎯 GREENLIT ACTIVE GOALS — I'd been wrongly treating them as "owner-gated" + spending turns on diminishing micro-work. Tier-1 IS finalized ⇒ the plan's
+own "Tier-2 after Tier-1" gate is OPEN ⇒ executing a greenlit Tier-2 thrust is exactly the work now (NOT make-work). Advisor consulted on which:
+**START E7 (WiFi data-plane)** — owner explicitly said KEEP DEBUGGING + specified the METHOD (Linux-Pi4 reference comparison of the SDPCM/data path);
+autonomous; can't regress the netboot-critical path (separate subsystem); comparison-first is the antidote to the "don't blind-code" memory warning.
+**Advisor HARD-STOP: do NOT start E5 (v3d-server/DRI-DRM) unattended** — its own design doc defers to the owner ("do NOT implement yet"); §E.5 greenlit
+INVESTIGATE, not that refactor; only unattended-safe E5 work = extending the investigation. (E6=VCHIQ quagmire, no bounded step; E10=gcc fallback, verify
+16.2.0 exists first.) **E7 gating check PASSED:** the Linux-Pi4 ref (artifacts/linux-netboot/) is fully WiFi-capable — cyfmac43455-sdio.bin+.clm_blob,
+BCM4345C0.hcd, wpa_supplicant+iw, full 2.9G RPi-OS rootfs. **E7 bounded deliverable (advisor):** capture Linux's WORKING brcmfmac SDPCM/data-path host↔fw
+exchange, diff vs Phoenix's stuck TX-reaches-fw-not-air (memory project_wifi_fw_exec_gate_91: associated+keyed control-plane OK; data-plane banked at
+SDPCM seq/credit wall), focus on the credit/sequencing/flow-control handshake → a LOCALIZED DIVERGENCE with evidence (not "WiFi works"). NEXT: boot the
+Linux ref + join the host AP (radio-ap-up.sh) + enable brcmfmac SDPCM tracing + capture the working data-path; then compare to the Phoenix wifi-probe.
+
 2026-08-21 (session ~107 — finalized the sysconf(_SC_NPROCESSORS) fix-path spec (precise, ready-to-implement); confirmed deferral correct; will diversify next turn).
 Followed the ~106 gap to a precise fix-path (no code change — the diagnosis is the deliverable). Traced the exact implementation: kernel adds a `pctl_cpucount`
 platformctl action in aarch64-generic (generic.h enum+union, generic.c handler returning hal_cpuGetCount() — clean/additive/ABI-stable, mirrors the
