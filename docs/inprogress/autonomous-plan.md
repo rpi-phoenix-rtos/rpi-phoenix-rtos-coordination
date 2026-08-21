@@ -528,6 +528,20 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~79 — signal-push fix: hit a lock-ordering BLOCKER while implementing → DEFERRED as attended-worthy; pivot next).
+Started implementing the signal-push double-fault fix. Reading the VM layer to build the validation primitive, found the BLOCKER: `map->lock`
+is a sleeping MUTEX (proc_lockSet→_proc_lockSet), but `_threads_checkSignal` runs with `threads_common.spinlock` (hard spinlock) held at BOTH
+call sites (threads_setupUserReturn + the scheduler). Taking a mutex under a spinlock = sleep-in-atomic → deadlock/panic. So the map-validate
+CANNOT live in _threads_checkSignal (my banked "low-risk additive" design is unsafe). A pmap/page-table check is WRONG too (a valid-but-not-
+yet-demand-paged stack page would false-negative + kill a healthy process). The correct fix requires validating OUTSIDE the spinlock —
+restructuring `threads_setupUserReturn` (a HOT every-user-return path) with a pre-spinlock sigpend peek (race-free for the synchronous fault-
+signal, which IS the double-fault case) + map-validate + proc_kill. Intricate, hot-path, hard to fully validate → ATTENDED-WORTHY, NOT an
+unattended rush (a mistake hangs boot). And the bug is now rare-trigger (the SIZE_USTACK 1 MiB fix already resolved the real cksum/od symptom;
+only pathological overflow hits it). DEFERRED FIX #1 to a careful/attended pass; lock-ordering finding banked in memory. Honest outcome:
+attempted the fix, found a real architectural constraint, documented it. **PIVOT next turn** to a fresh autonomous item — the only autonomous
+top-dig left is V3D TFU/quake-lightmap (owner #1, GPU-heavy: instrument the GL winsys TFU path → measure q3dm7 lightmap upload sizes); else a
+Tier-2 goal (G-STK Vulkan, G-GCC) now that Tier-1 is banked, or a §D small-to-do (wpa_supplicant bump, Mesa 26.2.0 patch-series).
+
 2026-08-21 (session ~78 — pivoted to the signal-push double-fault: reproduced + root-caused + LOW-RISK fix designed; implement next).
 Pivoted off coreutils to the kernel robustness bug found in P4 (signal delivery double-faults on an exhausted user stack, corrupting crash
 dumps — affects ALL user faults). Built a DETERMINISTIC reproducer (tools/kernel-stackov/stackov.c, committed 8f0da17): infinite 4 KiB-frame
