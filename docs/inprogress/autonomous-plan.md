@@ -528,6 +528,16 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~107 — finalized the sysconf(_SC_NPROCESSORS) fix-path spec (precise, ready-to-implement); confirmed deferral correct; will diversify next turn).
+Followed the ~106 gap to a precise fix-path (no code change — the diagnosis is the deliverable). Traced the exact implementation: kernel adds a `pctl_cpucount`
+platformctl action in aarch64-generic (generic.h enum+union, generic.c handler returning hal_cpuGetCount() — clean/additive/ABI-stable, mirrors the
+existing pctl_graphmode-reads-syspage pattern), and libphoenix sysconf `_SC_NPROCESSORS_*` needs an ARCH-SCOPED hook (weak `_libc_ncpu()` default -1,
+strong aarch64 override via platformctl) because conf.c is SHARED across all arches (pctl_cpucount is aarch64-generic-only). ⇒ this CONFIRMS the deferral
+was right: it's a multi-file kernel-ABI + arch-hook change for a MINOR gap (os.cpu_count/nproc), not worth an unattended change on the netboot-critical
+system (journey-takeaway discipline). Logged the full ready-to-implement spec in §D for an attended/dedicated turn. HONEST NOTE: I've now spent parts of
+~3 turns on this one minor gap — over-investment; the diagnosis is complete + banked, so I will STOP on it and diversify. State unchanged: autonomous
+high-value backlog complete; remainder owner-gated. NEXT: a genuinely-different genuine item (or hold) — not more of this minor gap; no make-work.
+
 2026-08-21 (session ~106 — syscall-hunt COMPLETED: corrected the python finding (python3 WORKS), exercised the rich surface clean, + FOUND a real ready-to-fix gap: sysconf(_SC_NPROCESSORS)).
 Followed through the ~105 hunt properly. **CORRECTION:** netboot python3 is NOT stdlib-degraded — sysinfo.py (builtin sys only) ran fine (prefix
 /usr/local, SYSINFO-DONE); the prior "degraded" was a PROBE BUG (probe.py imported `resource`, which isn't in the static module set → crashed before
