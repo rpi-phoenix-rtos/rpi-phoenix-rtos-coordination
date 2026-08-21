@@ -528,6 +528,17 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~130 — ✅ closed §B "test binaries staged, never run": swept 21 libc/sys/corelib suites on Pi4 HW → ~640 cases, essentially ALL PASS).
+Ran the never-validated staged test binaries on real hardware (3 netboot Pi cycles, Pi-lock honored). **21 suites PASS clean** (math 90, stdlib 91, printf 118,
+scanf-basic 48, scanf-adv 33, signal 9, exit 30, statvfs 22, thread-local 3, setjmp 8, sys-mutex 12, sys-cond 17, sys-perf 4, waitpid 3, mprotect 3, libalgo 7,
+libcache 40, libuuid 7, libtinyaes 18, libtrace 3, stdio 79/80) ⇒ libphoenix's computational/threading/sync/memory/corelib layers are HW-solid. **Only 2 fails,
+BOTH NFS-root fs-server gaps (NOT libphoenix bugs):** (1) stdio `wrong_stream_type_fifo` — nfs-fs has no mkfifo so it returns a non-ENOSYS errno, defeating the
+test's issue-#1338 auto-ignore; (2) dirent `basic_listing_count` — nfs-fs READDIR omits `.`/`..` (count 5 not 7). Both dispatch through the fs server (mkfifo→
+sys_mkfifo; readdir→server READDIR), same class as the earlier stat_* NFS quirk; expected to pass on a local ext2/tmpfs root (no card in the Pi this session), so
+NOT worth a risky nfs-fs change unattended. Writeup: docs/done/2026-08-21-libc-hw-test-sweep.md; MASTER-RECONCILED-PLAN §B marked DONE + fixed a stale §D entry
+(sysconf(_SC_NPROCESSORS) was already done ~126). No sibling code changed (pure validation) ⇒ no manifest. NEXT: either sweep the remaining setup-dependent suites
+(socket/poll/posixsrv need a peer; test_* need devices) on a LOCAL root when a card is available, or pick a Tier-2 thrust (all multi-cycle; E5/E7 carry unattended-caution flags).
+
 2026-08-21 (session ~108 — ★ REALIGNMENT: Tier-1 done ⇒ Tier-2 UNLOCKED; the E5/E6/E7/E10 goals are owner-GREENLIT (not gated!). Advisor-picked E7 (WiFi data-plane) to START; gating check passed).
 CORRECTED a multi-turn mis-framing: §E owner-decisions are RESOLVED, and E5 (GPU/DRI-DRM parity), E6 (ffmpeg-HW), E7 (WiFi data-plane), E10 (gcc) are
 🎯 GREENLIT ACTIVE GOALS — I'd been wrongly treating them as "owner-gated" + spending turns on diminishing micro-work. Tier-1 IS finalized ⇒ the plan's
