@@ -748,6 +748,21 @@ for the ones lacking coverage in libc/ (test-libc-*) is SAFE, fully autonomous (
 verified, no HDMI), owner-directed, and guards the fixes. This beats toy-demo-app grind (a) — do (d) next. Check libc/math/c99extra.c +
 string/ coverage vs the added fns; add missing cases.
 
+2026-08-21 (session ~120 — added libphoenix wide-char/wctype TESTS (compiles clean); BUT a failed --with-tests build BROKE the netboot — restoring).
+Added wide-char/wctype coverage to phoenix-rtos-tests libc/string/string_wchar.c (isw*/tow*/wctype/wctrans/iswctype/towctrans + wcwidth/
+wcswidth/mbrlen/wctob/wmemchr/wcsdup/wcscoll — the bash-era additions that had NO tests). **COMPILES + LINKS CLEAN** against libphoenix (all
+fns present); committed phoenix-rtos-tests 5a6ea2b; fresh test-libc-string (160160 B) deployed to /srv. **★ BREAKAGE (fixing now):** the
+`rebuild-rpi4b-fast.sh --with-tests` run FAILED at phoenix-rtos-filesystems/nfs with `nfsc/libnfs.h: No such file` — the `auto` scope's stage
+list does NOT include `ports` (which builds libnfs; see the script's own comment ~line 270), and the build did a `clean`+died BEFORE the
+`image` stage → **the TFTP bootfs (_boot/.../rpi4b-bootfs) is GONE + libnfs unstaged → netboot is BROKEN** (server-up: "tftp-root does not
+exist"). /srv NFS root + kernel/nfs-fs binary are INTACT (unclobbered, Aug 20). **RECOVERY:** rebuild with **--with-ports** (inserts the
+`ports` stage → builds libnfs) + a scope that reaches `image` (regenerates bootfs). Running `--with-ports --scope core --with-tests` (=
+fs core ports project image + test). NO `clean` (resumable across the 10-min Bash-timeout: make-incremental, re-run converges; do NOT use
+--scope full-clean, its `clean` wipes progress each call). Once `ports` stages libnfs, `project` (nfs-fs) + `image` (bootfs) complete.
+**NEXT:** if the restore build completes → netboot back + run test-libc-string to confirm the new wctype tests PASS; if timeout-killed → re-run
+the same (resumes) until it completes. LESSON: `--with-tests`/auto scope on a cold-ports sysroot needs `--with-ports` or the nfs-fs build dies
++ can strand the bootfs — pair them.
+
 2026-08-21 (session ~107 — finalized the sysconf(_SC_NPROCESSORS) fix-path spec (precise, ready-to-implement); confirmed deferral correct; will diversify next turn).
 Followed the ~106 gap to a precise fix-path (no code change — the diagnosis is the deliverable). Traced the exact implementation: kernel adds a `pctl_cpucount`
 platformctl action in aarch64-generic (generic.h enum+union, generic.c handler returning hal_cpuGetCount() — clean/additive/ABI-stable, mirrors the
