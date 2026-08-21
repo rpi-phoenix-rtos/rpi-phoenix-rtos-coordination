@@ -763,6 +763,16 @@ fs core ports project image + test). NO `clean` (resumable across the 10-min Bas
 the same (resumes) until it completes. LESSON: `--with-tests`/auto scope on a cold-ports sysroot needs `--with-ports` or the nfs-fs build dies
 + can strand the bootfs — pair them.
 
+2026-08-21 (session ~121 — ✅ netboot RESTORED + libphoenix wctype tests PASS on HW; both goals done).
+The resumable restore build (`--with-ports --scope core --with-tests`) COMPLETED exit 0 → libnfs staged, nfs-fs built, **bootfs regenerated**
+(start4.elf 2.3M + loader.disk 4.4M) → netboot infrastructure BACK. Ran test-libc-string on the Pi (netboot): **all 5 new wide-char/wctype
+tests PASS** (wctype_classify/wctype_convert/wchar_width/wchar_misc/wchar_coll) — full suite **207 Tests, 0 Failures, 28 Ignored → OK** (no
+regressions). ⇒ the bash-era libphoenix wide-char/wctype functions (isw*/tow*/wctype/wctrans/iswctype/towctrans, wcwidth/wcswidth, mbrlen,
+wctob, wmemchr, wcsdup, wcscoll) are HW-verified correct + now have regression coverage. Pushed to org (phoenix-rtos-tests master 5a6ea2b).
+The netboot breakage I introduced (+ recovered) is fully resolved. **Owner FINALIZE-FIRST "always add libphoenix tests" — advanced.** NEXT
+options (backlog still thin/deep): more libphoenix test coverage (other uncovered fns) · X11 demo-app port migration (toward the flip) · the
+deep GPU digs (vkQuake V3DV RCL / signal-push) which remain attended/semi-attended.
+
 2026-08-21 (session ~107 — finalized the sysconf(_SC_NPROCESSORS) fix-path spec (precise, ready-to-implement); confirmed deferral correct; will diversify next turn).
 Followed the ~106 gap to a precise fix-path (no code change — the diagnosis is the deliverable). Traced the exact implementation: kernel adds a `pctl_cpucount`
 platformctl action in aarch64-generic (generic.h enum+union, generic.c handler returning hal_cpuGetCount() — clean/additive/ABI-stable, mirrors the
