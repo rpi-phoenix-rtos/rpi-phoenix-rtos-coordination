@@ -528,6 +528,16 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~141 — ✅ E5 reproducibility: first-class `--glamor` flag in build-xserver-core.sh retires the ad-hoc --enable-glamor tree tech-debt).
+Hardened the E5 build chain for reproducibility/upstreamability (the code will be published). `build-xserver-core.sh --glamor` now reconfigures with --enable-glamor +
+the epoxy-shim GLAMOR_CFLAGS env override (no epoxy.pc; autoconf skips the pkg-config epoxy query when *_CFLAGS/*_LIBS preset) + builds libglamor.a, gated by a
+`.phoenix-glamor-enabled` marker (state-change forces reconfigure; "already built" check requires libglamor.a when --glamor). Default (no flag) = software-only core,
+unchanged. ⇒ the WHOLE glamor chain now reproduces from clean: `build-xserver-core.sh --glamor` → `build-xfbdev.sh --glamor` → Xphoenix-glamor. Verified: bash -n OK +
+`--glamor` cached early-exit ("already built (glamor=1) — skipping"); reconfigure args are identical to the proven M0 ad-hoc invocation. Committed (coord tools/x11-port).
+This retires the tech-debt flagged in the M0/M1 notes. **E5 polish remaining:** full-desktop-under-glamor demo (needs a small launcher --server tweak); zero-copy present
+(st_context_teximage/scanout) vs glReadPixels; owner perf/visual sign-off; video-in-window half. **E5 headline (GPU-accel 2D X on V3D) is DONE + robust + now reproducible.**
+Next heartbeat: likely PIVOT to a fresh Tier-2 (E7 WiFi data-plane or E10 gcc) — E5's core value is fully banked; remaining E5 items are polish/owner-attended.
+
 2026-08-21 (session ~140 — ✅ E5 robustness HARDENED: xcalc (complex Xaw widget app + text) renders correctly via glamor on HW, 0 faults — not a one-app fluke).
 Stress-tested the glamor-accelerated path with a much harder workload than xeyes: xcalc (full button grid + labels + display = glamor Composite/Copy/CopyArea + GLYPH
 rendering). Ran `pl_phoenix_xlaunch /bin/Xphoenix-glamor /usr/share/fonts/X11/misc /bin/xcalc` on the netboot Pi. **UART (log ...-glamor-xcalc, 0 fault lines whole log):**
