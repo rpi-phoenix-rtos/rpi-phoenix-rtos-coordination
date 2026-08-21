@@ -21,14 +21,16 @@ int main(int argc, char **argv)
 		"/usr/bin/quake3e", "+set", "fs_basepath", "/tmp/quake3", "+set", "fs_game", "demoq3",
 		/* r_mergeLightmaps: quake3e's default (1, merged POT lightmap atlas) is now used.
 		 * The old r_mergeLightmaps=0 workaround (individual 128x128 lightmaps) is REMOVED:
-		 * the underlying V3D bug is fixed. A large (>=1024x768) merged atlas was being laid
-		 * out RASTER instead of UIF_XOR — the Phoenix should_tile optimization forced large
-		 * RENDER_TARGET textures to linear for fast glReadPixels, but Mesa marks renderable
-		 * RGBA8 SAMPLED textures RENDER_TARGET too, so the sampled atlas matched and the TMU
-		 * read linear-as-UIF → black sectors (q3dm7). Fixed in libv3d by excluding
-		 * SAMPLER_VIEW from that gate (external/mesa 4363822955b); HW-confirmed the 1024 atlas
-		 * is now UIF_XOR and q3dm7 renders equivalently to the individual-lightmap path.
-		 * See memory project_quake3_lightmap_uif_xor + docs .../2026-08-21-v3d-uif-xor-1024-redirect.md. */
+		 * the underlying V3D lightmap-tiling bug is fixed (external/mesa 4363822955b excludes
+		 * SAMPLER_VIEW from the should_tile gate so the 1024² atlas is UIF_XOR not RASTER).
+		 * NOTE (2026-08-22): q3dm7 also exhibits an INTERMITTENT (~50% of boots) V3D GPU wedge
+		 * (`v3d-winsys: BIN/RENDER TIMEOUT ... mmu_ill=0x8000886x ... GPU wedged`) — this is the
+		 * KNOWN winsys flush-completion race (v3d_phoenix_winsys.c l2t_flush_wait: back-to-back
+		 * L2T flushes with no wait), NOT the merged atlas: r_mergeLightmaps 0 does NOT reliably
+		 * avoid it (wedged 1 of 2 boots too). The real fix belongs in the winsys submit path;
+		 * tracked in memory project_quake3_lightmap_uif_xor. Do NOT re-add r_mergeLightmaps 0 as
+		 * a "fix" — a single clean boot is a false metric for an intermittent race.
+		 * See docs .../2026-08-21-v3d-uif-xor-1024-redirect.md. */
 	};
 	const int nbase = (int)(sizeof(base) / sizeof(base[0]));
 	char **a = calloc((size_t)(nbase + argc + 1), sizeof(char *));
