@@ -563,6 +563,18 @@ Linux capture oneshot left in the ref rootfs for the next step. **NEXT:** implem
 seq!=tx_max write-gate in wifi-probe.c, boot the Phoenix wifi-probe `join`+`jointx`, and watch the HOST AP (tcpdump wlp3s0) for the
 probe's DHCP-DISCOVER to appear ON AIR — the decisive TX-to-air test. (WiFi code stays unpublished/scrubbed — coord docs/memory only.)
 
+★ ADVISOR REFINEMENT of the next experiment (do NOT blind-code the harvest+gate fix — causal gap): tx_seq/tx_max is host→fw SDIO
+*admission* control; credit EXHAUSTION makes brcmfmac hold the frame in the host queue and NOT send it over SDIO at all — the OPPOSITE
+of "reaches fw." The credit window only explains "reaches fw but not air" if Phoenix sends a tx_seq the fw REJECTS at SDPCM demux (CMD53
+transport succeeds = looks "reached fw", fw silently drops before 802.11). But the subagent said the single frame's seq is in-order ⇒
+the mechanism may already be satisfied for the one-frame case ⇒ the fix could be wasted. Also "not air" might really be an RX-of-OFFER
+problem (Phoenix TXes fine but never receives/parses the DHCP-OFFER) — a DIFFERENT bug. **DECISIVE EXPERIMENT (1 Pi cycle, NO fix code):**
+(a) instrument the probe READ-ONLY — in diag_f2RecvFrame LOG buf[8]/buf[9] (fw-advertised window) every RX frame + LOG the tx_seq the
+data-TX writes; NO gating logic. (b) run `join`+`jointx` with tcpdump on wlp3s0 (host AP) simultaneously. Discriminates: DISCOVER seen on
+air ⇒ not a TX-to-air bug, chase RX-of-OFFER; no frame on air + seq within window ⇒ credit REFUTED, pivot to BDC priority/flags (or the
+`tlv`-iovar fwsignal tie-breaker, held in reserve); no frame on air + seq OUTSIDE window ⇒ hypothesis confirmed, THEN code the harvest+gate.
+This pre-validates (or saves coding) the fix in one read-only cycle. sig-0 fwsignal-inactive read stands; keep the `tlv` iovar in reserve.
+
 2026-08-21 (session ~107 — finalized the sysconf(_SC_NPROCESSORS) fix-path spec (precise, ready-to-implement); confirmed deferral correct; will diversify next turn).
 Followed the ~106 gap to a precise fix-path (no code change — the diagnosis is the deliverable). Traced the exact implementation: kernel adds a `pctl_cpucount`
 platformctl action in aarch64-generic (generic.h enum+union, generic.c handler returning hal_cpuGetCount() — clean/additive/ABI-stable, mirrors the
