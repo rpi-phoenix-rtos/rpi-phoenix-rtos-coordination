@@ -528,6 +528,18 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~93 — P8: libffi 3.4.6 migrated + verified; glib2 2.56.4 (the LAST X11-flip gate) delegated to a background subagent, inputs pre-staged).
+Continued toward the X11 flip. Found glib-2.56 configure HARD-requires libffi (not optional) → migrated **libffi 3.4.6** first (ports `032a946`,
+bumped 3.3→3.4.6 for GCC-14 compat + clean $includedir install; build-verified libffi.a+ffi.h, `Done 6.3 s`). Then set up **glib2 2.56.4** (last
+autotools glib; the last ad-hoc /tmp/x11-phoenix consumer gating the X11 if:true flip; mc prereq): pre-staged all inputs into the port dir (tarball
+sha 27f703d1, glib2.cache, glib-phoenix-shim.h, and the 3 stubs libintl/arpa-nameser/resolv) and **delegated the migration to a background subagent**
+with the full recipe. Unlike the dillo delegation, glib2's real deps (libiconv 1.18, libffi 3.4.6, zlib — all framework now; pcre bundled) are ALL
+resolved, so no out-of-scope wall this time; remaining complexity is framework-adapting the stub placement (→PREFIX_H/PREFIX_A not sysroot), the
+--cache-file cross probes, config.sub-phoenix, and glib's explicit header staging. Deliverable = libglib-2.0.a (+gobject/gmodule/gthread best-effort).
+Awaiting subagent completion → verify + finalize. DO NOT start a concurrent port build (shared buildroot). If glib2 lands, the whole ad-hoc X11
+support stack is framework ports and the X11 if:true flip becomes actionable (rewire build-showcase-apps.sh + remove ad-hoc X11). NEXT after glib2:
+the flip itself, or mc (needs glib2)/nano/ncurses, or P7/P9.
+
 2026-08-21 (session ~92 — P8: ★ REAL GNU libiconv 1.18 (retires the stub!) + dillo 3.2.0 migrated + verified; the WHOLE ad-hoc X11 image/browser stack is now framework ports).
 Resumed the dillo delegation (session ~91). The subagent got dillo configuring cleanly through FLTK/jpeg/zlib/png/**mbedTLS-selected** but hit
 `configure: error: libiconv must be installed!` — dillo needs iconv, itself an un-migrated tools/ port, and the ad-hoc note documented that REAL
