@@ -528,6 +528,28 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~133 — ✅ DONE+PUSHED: kernel test_* sweep → FOUND+FIXED a real libphoenix UAF in pthread_detach; HW-verified via maintained regression 2/2).
+HW RESULT: test-libc-pthread `test_pthread_detach` (freshly relinked vs the fixed libphoenix.a) = 2 Tests 0 Failures / OK on netboot — detach_stale_handle_no_uaf +
+detach_null_handle both PASS ⇒ the UAF fix WORKS. (Legacy proc/test_pthreads still Data-Aborts, but it's a STALE 16:05 binary NOT relinked against the fix — the
+known "test binaries don't track libphoenix.a" gotcha — so its crash is expected/irrelevant; the maintained suite is the authoritative + permanent regression.)
+Pushed: libphoenix f6489b8, tests eadbf4c → publish/master; manifest 2026-08-21-pthread-detach-uaf-fix. The 2 legacy test-side bugs (test_malloc 1KB worker stack,
+test_condwait missing mutex-lock) remain documented-not-fixed (low value; legacy proc/mem suite). This CLOSES the entire staged-test-binary validation effort:
+26 libc/sys/corelib suites HW-proven + 2 real bugs found-and-fixed (tmpfile root-swap, pthread_detach UAF). NEXT: the small-finalization backlog is drained; the
+remaining work is Tier-2 thrusts (E5 GPU-parity investigation is unattended-safe per advisor; E7/E6/E10 multi-cycle) or qemu-11.1 host-tool.
+Swept the last untested batch — the legacy proc/mem `test_*` suites. Triaged 3 fault/fail results, root-causing each (assume-software-bug):
+ • **test_pthreads create/detach → Data Abort = REAL libphoenix bug (FIXED).** After the first pthread_detach the detached worker terminates and self-frees its
+   pthread_ctx (pthread_do_exit→_pthread_release under pthread_list_lock); the test then re-detaches the now-stale handle, and pthread_detach cast pthread_t→ctx*
+   and dereferenced ->is_detached = **use-after-free** → EL0 Data Abort. FIX (libphoenix f6489b8): walk the live pthread_list under the same lock that guards the
+   free and return ESRCH for a stale handle. Added maintained-suite regression test-libc-pthread `test_pthread_detach` (stale-handle + NULL) (tests eadbf4c). The
+   old proc/test_pthreads explicitly expects graceful handling, so this matches Phoenix's own intent; upstreamable robustness fix.
+ • **test_malloc → Data Abort = TEST bug (not Phoenix):** spawns its worker with a 1024-byte stack (mem/test_malloc.c stack[1024]) → overflows on the first printf.
+   `malloc(0x7fffffff) succeeded` is benign lazy/over-commit mmap (never written). Documented; not fixing the legacy test this turn.
+ • **test_condwait → FAILED = TEST bug (not Phoenix):** calls condWait(c,m,1) WITHOUT locking m first, so condWait correctly returns -EPERM (can't release an
+   unowned mutex); test expects -ETIME. Missing lock in the test. Documented.
+⇒ The KERNEL is solid (the maintained libc Unity suites all pass); the legacy test_* failures are test-side except the one genuine pthread_detach UAF, now fixed.
+Building `--scope core --with-tests --with-ports`; will HW-verify test-libc-pthread (new group) + rerun proc/test_pthreads (detach subtest no longer faults), then
+push libphoenix+tests + manifest. NEXT after verify: pick a fresh item (the legacy-test bug fixes are low-value; a Tier-2 thrust is the remaining big work).
+
 2026-08-21 (session ~132 — ✅ sweep batch 4 + FOUND+FIXED a real bug: tmpfile() broken on netboot → posixsrv lazy /var/tmp recreate; HW-verified 16/16).
 Extended the HW test sweep to the socket/poll/pthread/posixsrv suites (the loopback/peer ones): **pthread 13, poll 1, inet-socket 1, unix-socket 25 all PASS** —
 only posixsrv's tmpfile group failed (3/16). ROOT-CAUSED (real functional bug, not a test/NFS quirk): `tmpfile()` returns NULL on netboot because posixsrv is a
