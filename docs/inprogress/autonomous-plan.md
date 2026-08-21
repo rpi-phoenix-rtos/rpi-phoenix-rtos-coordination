@@ -547,6 +547,13 @@ pthread-header/gthr tweak so the static mutex/cond initializers don't copy-const
 (M0 RESULT). ⇒ E10 is DE-RISKED + well-advanced: a working gcc-16 C toolchain exists; the remaining rebase work = the libstdc++/atomic fix + the attended M1 Phoenix rebuild+
 revalidate (do NOT swap .toolchain unattended). NEXT: either tackle the libstdc++/std::atomic libphoenix fix (concrete, in-libphoenix, testable by rebuilding libstdc++ with
 .toolchain-gcc16) or pivot to another item; the gcc-16 C-toolchain milestone is banked.
+UPDATE (session ~152): ✅ libstdc++/std::atomic fix APPLIED + under validation. Root-caused fully: libphoenix `sys/types.h` maps `_ATOMIC(int)`→`std::atomic<int>` in the
+`#ifdef __cplusplus` branch, so pthread_mutex_t/cond_t/rwlock_t get a std::atomic member whose DELETED copy ctor breaks gcc-16 libstdc++ `<ext/concurrence.h>` (copy-inits from
+PTHREAD_MUTEX_INITIALIZER). FIX (working-tree, UNCOMMITTED pending validation): C++ branch now `#define _ATOMIC(type) type` (plain, layout-identical int — copyable). VERIFIED
+SAFE: all atomic ops on `.initialized` are in pthread.c (C only); NO header-inline + NO .cc/.cpp in libphoenix touch it as std::atomic; C branch (`_Atomic`) unchanged so the C
+build can't regress; layout int==_Atomic int==std::atomic<int> (4B) so C↔C++ ABI preserved. Also matches glibc/musl (plain types for pthread structs in C++). Handed to the build
+subagent to rebuild libstdc++ in .toolchain-gcc16 with the fixed header. ON CONFIRM (libstdc++ builds): commit the libphoenix fix + push → gcc-16.2.0 becomes a FULL C++ toolchain
+(M0-full). This is a genuine libphoenix improvement that helps ANY C++ compiler (not just gcc-16). NOTE: the attended M1 (rebuild+revalidate all Phoenix under gcc-16, swap .toolchain) still stands.
 UPDATE (session ~146): M0 build PROGRESSING well + SAFE (building to .toolchain-gcc16, .toolchain untouched). ★ all 4 aarch64 gcc patches applied CLEAN (04/05/09 clean —
 incl the 05-libstdcpp configure patch I'd flagged as the reject-risk; 11-aarch64 needed one no-op hunk dropped). **binutils-2.43 built + installed** (aarch64-phoenix-ar/as/ld/nm
 present); gcc-16.2.0 now compiling (25 parallel procs, still in stage1 support-libs). Detached build (log ~/.claude/jobs/aa2bf3f6/tmp/build-gcc16.log); Bash caps at 10min so
