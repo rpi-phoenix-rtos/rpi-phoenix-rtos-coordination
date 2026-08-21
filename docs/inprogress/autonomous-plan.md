@@ -539,8 +539,16 @@ INVESTIGATE, not that refactor; only unattended-safe E5 work = extending the inv
 16.2.0 exists first.) **E7 gating check PASSED:** the Linux-Pi4 ref (artifacts/linux-netboot/) is fully WiFi-capable — cyfmac43455-sdio.bin+.clm_blob,
 BCM4345C0.hcd, wpa_supplicant+iw, full 2.9G RPi-OS rootfs. **E7 bounded deliverable (advisor):** capture Linux's WORKING brcmfmac SDPCM/data-path host↔fw
 exchange, diff vs Phoenix's stuck TX-reaches-fw-not-air (memory project_wifi_fw_exec_gate_91: associated+keyed control-plane OK; data-plane banked at
-SDPCM seq/credit wall), focus on the credit/sequencing/flow-control handshake → a LOCALIZED DIVERGENCE with evidence (not "WiFi works"). NEXT: boot the
-Linux ref + join the host AP (radio-ap-up.sh) + enable brcmfmac SDPCM tracing + capture the working data-path; then compare to the Phoenix wifi-probe.
+SDPCM seq/credit wall), focus on the credit/sequencing/flow-control handshake → a LOCALIZED DIVERGENCE with evidence (not "WiFi works"). **E7 mechanism confirmed (ready to execute):**
+Linux ref netboots NFS-root over WIRED eth (cmdline `root=/dev/nfs nfsroot=10.42.0.1:.../linux-netboot/rootfs,vers=3,tcp ip=dhcp`, console=serial0
+115200) + **autologin-root on ttyS0** (drivable over UART) — switch via RPI4B_NETBOOT_TFTPROOT=artifacts/linux-netboot/tftp (ALWAYS restore Phoenix
+default after). Host AP = radio-ap-up.sh → SSID `PhoenixNet` / WPA2 PSK `phoenixpi2026` on SEPARATE 10.43.0.0/24 (netboot 10.42 untouched). **Next-turn
+capture plan:** (1) bring up host AP (radio-ap-up.sh); (2) drop a boot oneshot into the Linux rootfs (/etc/rc.local or a systemd unit) that: enables
+brcmfmac SDPCM debug tracing (`echo 0x... > /sys/module/brcmfmac/parameters/debug` or dyndbg on the msgbuf/sdpcm), `wpa_supplicant` join PhoenixNet,
+`dhclient`, `ping` the host (10.43.0.1) N times, then `dmesg` dump — all to the serial console; (3) boot the Linux ref (TFTP switch, card out) + capture
+UART; (4) that gives Linux's WORKING SDPCM seq/credit/flow-control host↔fw exchange for a successful data TX. (5) Compare vs Phoenix wifi-probe's stuck
+TX (tools/wifi-probe; TX reaches fw not air). Focus the diff on the SDPCM credit/seq/flow-control the memory fingered. This is a MULTI-CYCLE thrust —
+start the Linux capture next turn with a full Pi-cycle budget; restore RPI4B_NETBOOT_TFTPROOT to Phoenix after every Linux cycle.
 
 2026-08-21 (session ~107 — finalized the sysconf(_SC_NPROCESSORS) fix-path spec (precise, ready-to-implement); confirmed deferral correct; will diversify next turn).
 Followed the ~106 gap to a precise fix-path (no code change — the diagnosis is the deliverable). Traced the exact implementation: kernel adds a `pctl_cpucount`
