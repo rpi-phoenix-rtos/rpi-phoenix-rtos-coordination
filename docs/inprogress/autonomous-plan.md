@@ -528,6 +528,18 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~136 — ✅ E5 M0 ACHIEVED: glamor core `libglamor.la` cross-compiles for aarch64-phoenix; ZERO EGL/GBM/DRM symbols — decoupling empirically PROVEN).
+Delegated the M0 build to a general-purpose subagent (per "use subagents"). RESULT: **`libglamor.la` BUILDS** — `glamor/.libs/libglamor.a` ~400KB/34 objects, **0 compile
+errors** (only benign -Wredundant-decls, same as the proven gl_x11_window harness). Reconfigured `--enable-glamor` with the epoxy-shim GLAMOR_CFLAGS env override (no
+epoxy.pc needed); dix-config.h = `GLAMOR 1`, `GLAMOR_HAS_GBM` UNDEFINED ✓. **The archive has ZERO real EGL/GBM/DRM (libEGL/libgbm/libdrm) undefined symbols** — only
+glamor's OWN interface stubs (`glamor_egl_screen_init` = the make-or-break M1 hook, + the fd exporters) + core `miImageGlyphBlt`. ⇒ **empirically confirms the
+feasibility-doc decoupling claim**: glamor's 2D-accel core needs NO EGL/GBM/DRM, just a GL context + make_current. One shim gap found+filled: glamor_glx.c needs
+`<epoxy/glx.h>` → added `tools/x11-port/glamor-shim/epoxy/glx.h` (decls-only; static archive needs no bodies). Committed glx.h + README M0-result. CAVEATS (documented in
+README): (1) the xserver tree is left `--enable-glamor` (build-xserver-core.sh skips reconfigure when config.status exists → default build now glamor-enabled; M1 should
+make it a first-class flag for reproducibility); (2) $PREFIX=/tmp/x11-phoenix had been partially wiped + a concurrent (now-exited) build-x11-phoenix.sh raced it — env
+restoration done by the subagent, NOT committed; the true prereq is a complete build-x11-phoenix.sh. **M1 (next, multi-cycle):** write the non-empty glamor_egl_screen_init
+(install phxgl ctx + make_current), link libglamor.a + libGL-phoenix.a + libv3d-phoenix.a into Xphoenix, wire the kdrive fbdev DDX to glamor + present to /dev/fb0, HW-test.
+
 2026-08-21 (session ~135 — E5 M0 progress: found the REAL first blocker (libepoxy absent) + built & cross-compile-VERIFIED the epoxy shim that removes it).
 Executing E5 M0 (glamor static-link into Xphoenix). Orientation surfaced the prerequisite my feasibility doc under-weighted: glamor hard-depends on **libepoxy** for GL
 dispatch (`#include <epoxy/gl.h>` in glamor_priv.h, every core file) and **Phoenix has NO libepoxy** (none in ports/tools/build). Since Phoenix links Mesa GL

@@ -57,4 +57,37 @@ Key points:
   EGL/GBM/DRM undefined symbols.** Remaining GL-entrypoint gaps (if Mesa doesn't
   export a symbol glamor calls) surface here as named undefined symbols.
 
+## M0 RESULT (2026-08-21) — libglamor.la builds, decoupling empirically confirmed
+
+`libglamor.la` cross-compiles for aarch64-phoenix: `glamor/.libs/libglamor.a`
+(~400 KB, 34 objects), **0 compile errors** (only benign `-Wredundant-decls` GL
+double-prototype warnings, same as `gl_x11_window.c`). `dix-config.h` = `GLAMOR 1`
+with `GLAMOR_HAS_GBM` undefined. **The archive has ZERO real EGL/GBM/DRM
+(libEGL/libgbm/libdrm) undefined symbols** — only glamor's own interface stubs
+(`glamor_egl_screen_init`, `glamor_egl_fd*_from_pixmap`) and core-server
+`miImageGlyphBlt`. This empirically confirms the feasibility doc's core-decoupling
+claim.
+
+Shim gap found + filled: `glamor_glx.c` (in `libglamor_la_SOURCES`) needs
+`<epoxy/glx.h>` + 4 `glX*` decls → added `epoxy/glx.h` (declarations only; a static
+archive needs no bodies at M0 — whether GLX resolves at the M1 link is moot because
+`make_current` comes from the non-empty `glamor_egl_screen_init` shim, not GLX).
+
+### Caveats for M1
+
+- **The xserver tree is left configured `--enable-glamor`.** `build-xserver-core.sh`
+  skips reconfigure when `config.status` exists, so the *default* core build now
+  preserves glamor-enabled. For reproducibility, M1 should make glamor a first-class
+  opt in `build-xserver-core.sh` (a flag that adds `--enable-glamor` +
+  `GLAMOR_CFLAGS="-I<shim> -I<mesa-gl>"`) rather than relying on the ad-hoc
+  reconfigured tree. The tree is a gitignored reproducible artifact.
+- The true M0/M1 prereq is a fully-populated `$PREFIX=/tmp/x11-phoenix` from a
+  complete `build-x11-phoenix.sh` run (the X proto/font headers).
+
+## Next (M1)
+
+Write the non-empty `glamor_egl_screen_init` (install the phxgl context +
+`make_current`), link `libglamor.a` + `libGL-phoenix.a` + `libv3d-phoenix.a` into
+Xphoenix, wire the kdrive fbdev DDX to use glamor + present to `/dev/fb0`, HW-test.
+
 See `docs/inprogress/2026-08-21-e5-glamor-on-v3d-feasibility.md` for the full plan.
