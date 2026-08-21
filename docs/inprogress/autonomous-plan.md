@@ -696,6 +696,22 @@ same libv3d fix (rebuild those ports to exercise; not re-verified visually — s
 (coord) + fix (external/mesa 4363822955b). **NEXT:** rotate to another Tier-1 top-dig — X11 ports.yaml integration, coreutils make check,
 or lwip gateway (V3D + WiFi have had many deep turns; time for breadth on a more autonomously-completable item).
 
+2026-08-21 (session ~117 — loop-survival + V3D-scope accuracy correction + SSOT reconcile; X11 flip scoped for next turn).
+Reviewed the MASTER plan queue: most Tier-1 is DONE (coreutils P4 ✅ incl. a real kernel-stack bug fix 8ae20864; lwip gateway C3 ✅
+resolved-not-reproduce; X11 ports MIGRATION ✅ all 5 build clean + rewired off /tmp; quake2 RAM-stage render ✅). **★ CRON RESET:**
+recreated the heartbeat cron (old 97aa057e → new bc450b68, same 15-min schedule + verbatim prompt) to reset the 7-day expiry — loop
+secured for another 7 days (couldn't verify age via CronList; recreated to be safe). **★ ACCURACY CORRECTION:** my V3D should_tile fix is
+GALLIUM-GL only (v3d_resource.c) → resolves quake3 (confirmed) + quake2-GL (likely) but NOT vkQuake — checked v3dv_image.c = stock upstream
+tiling, NO Phoenix RASTER mod, so vkQuake striping is a SEPARATE open V3DV read-side dig (matches the plan's already-retired unified-bug
+hypothesis). Corrected the over-claim in the redirect doc + memory + MASTER plan (reconciliation #5). **X11 if:true FLIP — precisely scoped
+for next turn (the remaining big Tier-1):** (1) source ports.yaml = sources/phoenix-rtos-project/_projects/aarch64a72-generic-rpi4b/ports.yaml
+— flip xorg_libs/xorg_fonts/xorg_server/xterm/windowmaker/dillo/glib2/fltk/libpng/libjpeg/libiconv/libffi if:false→if:true; (2)
+scripts/build-showcase-apps.sh — drop the ad-hoc "stage" X11 steps (build-x11-phoenix.sh + build-glib2.sh + fltk + dillo, ~line 458+) now
+that framework ports cover them; (3) full showcase build; (4) boot + verify X apps launch (twm/xeyes/xterm — UART "started" + HDMI root).
+APPROACH: keep edits UNCOMMITTED until the build+boot verify (a broken flip must not clobber the working ad-hoc showcase path — reversible).
+scripts/build-xorg-ports.sh already validated the 5 X11 ports build standalone, so the flip is de-risked; the unproven part is the
+integration (framework ports feeding the image + apps launching). Big/long build → allocate a full turn.
+
 2026-08-21 (session ~107 — finalized the sysconf(_SC_NPROCESSORS) fix-path spec (precise, ready-to-implement); confirmed deferral correct; will diversify next turn).
 Followed the ~106 gap to a precise fix-path (no code change — the diagnosis is the deliverable). Traced the exact implementation: kernel adds a `pctl_cpucount`
 platformctl action in aarch64-generic (generic.h enum+union, generic.c handler returning hal_cpuGetCount() — clean/additive/ABI-stable, mirrors the
