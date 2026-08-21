@@ -528,6 +528,19 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~82 — q3dm7 lightmap: VKQ_CPU_TILE experiment RAN → UPLOAD-TILING DEFINITIVELY RULED OUT; bug is sampling/descriptor-side).
+Ran the full VKQ_CPU_TILE experiment: rebuilt libv3d (VKQ_CPU_TILE=1) → built libSDL2.a (needed 2 incremental passes, >10min) → relinked
+quake3e (CPU-tile marker in the ELF) → deployed → ran `quake3 +devmap q3dm7`. Map fully loaded + entered the game; HDMI captured. **STILL
+black-sectored, and ZERO winsys-TFU markers** in the UART ⇒ the gallium GL texture upload does NOT use the winsys TFU ioctl — it CPU-tiles
+IN-DRIVER (Mesa v3d_resource store_tiled_image, the verified-correct v3d_get_uif_pixel_offset). So VKQ_CPU_TILE is moot for GL + the render
+is unchanged. **⇒ UPLOAD-TILING (winsys TFU) DEFINITIVELY RULED OUT** (with uif_pixel_off≡Mesa proven last turn). HDMI shows the corruption
+is SELECTIVE — some surfaces lit, others black from the SAME 1024 atlas ⇒ REGION-specific → the bug is SAMPLING/DESCRIPTOR-side: either the
+in-driver SUB-IMAGE (box-offset) UIF_XOR store, or the TMU texture-shader-state descriptor packing at 1024 (same read-side class as vkQuake
+striping). Progressively narrowed: 512-OK/1024-black (BSP math) → both UIF_XOR (Mesa math) → tiler formula correct → upload not via TFU →
+now firmly sampling/descriptor-side, region-specific. NEXT: Mesa v3d_resource sub-image store path + v3dx texture-shader-state packing at
+1024 UIF_XOR (instrument per-lightmap dest offsets or the TMU descriptor dims/tiling). memory project_quake3_lightmap_uif_xor updated.
+(Note: export quake3e is now the VKQ_CPU_TILE build — functionally identical render; rebuild default-flags for a clean shipping binary.)
+
 2026-08-21 (session ~81 — q3dm7 lightmap: tiler formula CONFIRMED correct (uif_pixel_off ≡ Mesa exactly) → VKQ_CPU_TILE experiment in flight).
 Continued the q3dm7 lightmap dig. Compared the winsys `uif_pixel_off` (v3d_phoenix_winsys.c ~1170) against Mesa
 `v3d_tiling.c v3d_get_uif_pixel_offset` line-by-line (cpp=4): XOR `(mb_x/4)&1`, mb_id `(mb_x/4)*((mb_h-1)*4)+mb_x+mb_y*4`,
