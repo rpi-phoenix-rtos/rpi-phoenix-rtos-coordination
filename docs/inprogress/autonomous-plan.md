@@ -528,6 +528,19 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~88 — P8: libpng migrated tools/→ports as a first-class framework port, build-verified; generic build-port.sh helper added).
+Continued P8 (owner directive #14 "move ports tools/→ports project") + the E4 chain that gates the X11 if:true flip. libpng (PNG reference lib)
+was previously built ONLY by the ad-hoc build-showcase-apps.sh + tools/x11-port path; migrated it to a proper phoenix-rtos-ports/libpng
+port.def.sh (1.6.40, static, depends="zlib"). Wrote a **generic scripts/build-port.sh** (supersedes the per-port build-sdl2/xorg helpers'
+special-casing) that builds any named framework port(s) standalone via port_manager. **Build-VERIFIED**: `build-port.sh libpng` → port_manager
+pulls framework zlib, builds+installs libpng16.a + headers + .pc into the target prefix, all libpng tools link against framework libz.a
+(`Done 4.8 s`). Two framework gotchas found+handled: (1) libpng's pnglibconf preprocessing uses $(CPPFLAGS) not $(CFLAGS) → must pass
+CPPFLAGS="-I$PREFIX_H" so it finds framework zlib.h; (2) the framework version parser is PEP440-strict (packaging.Version) → it REJECTS IJG
+jpeg's "9e" version string, so libjpeg cannot migrate as-is. Committed libpng (ports `6c94c7b`) + build-port.sh (coord `6264e9e`), pushed.
+libpng is a dep-library (pulled transitively via depends=, no ports.yaml entry needed). NEXT P8/E4 chain: migrate **libjpeg as libjpeg-turbo**
+(proper semver + de-facto standard; cmake build) → then fltk (needs libpng+libjpeg+X libs) → dillo → glib2(deferred) → which unblocks the
+X11 if:true flip. Also open: ncurses/nano/mc migrations, P7 vkQuake backtrace, P9 Mesa 26.2.0 rebase.
+
 2026-08-21 (session ~87 — P3-followup: framework X11 build re-validated via a new durable helper; `if:true` flip correctly scoped/gated, NOT flipped).
 Re-read the queue — corrected last turn's "autonomous wins drained" (too hasty): P3-followup, P7, P8 are still autonomous. Confirmed directive-#14
 "upgrade OFFICIAL Lua" is ALREADY DONE (ports `3007ff8` 5.3.6→5.4.7). Advisor picked P3-followup (converts inert done-work to shipping value +
