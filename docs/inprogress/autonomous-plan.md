@@ -528,6 +528,17 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~101 — bash-tty P2 autonomously RESOLVED: bash SCRIPTING works on HW; interactive stdin = owner live-terminal test (with FIONREAD now fixed)).
+Closed the bash-tty dig cleanly. HW test: `/bin/bash /root/bt.sh` ran a real script CORRECTLY — SCRIPT-START, answer=42 (arithmetic 6*7), w=alpha/w=beta
+(for-loop), bash-present-ok (if/[ -f ]), SCRIPT-END. So **bash EXECUTION works** (arithmetic/loops/conditionals/tests) — bash's core is fine; the
+primary scripting use is fully functional. Combined with session ~100 (tty read layer PROVED correct + FIONREAD gap FIXED), the ONLY residual is
+INTERACTIVE stdin (bash exits at its first interactive prompt). Given the tty layer is verified correct, that residual is either bash/readline-internal
+OR the psh-interact harness's line-at-a-time limitation (can't sustain a persistent interactive stream) — indistinguishable under automation ⇒
+OWNER-ATTENDED (live terminal). ⇒ **P2 autonomous portion DONE: bash scripting works + tty correct + FIONREAD fixed; owner retests interactive at a
+real UART (worth retrying now FIONREAD is fixed).** (bash -c under the harness hit a nested-quote mangling = a bash PARSE error, not the tty bug —
+harness quoting artifact.) NEXT: remaining non-gated concrete work is thin (Mesa rc1→release rebase = heavy+cosmetic; P9 wpa_supplicant/qemu bumps =
+low-value); the high-value backlog is owner-gated (DRI/DRM GO decision, V3D read-side fix, bash+SDL2 live tests). Reassess for a Tier-2 thrust if owner GObs.
+
 2026-08-21 (session ~100 — bash-tty EOF dig: FOUND+FIXED a real tty gap (FIONREAD -EINVAL→works); PROVED the tty read layer correct ⇒ bash EOF is bash/readline-internal).
 Dug the un-investigated top-dig (bash exits immediately at its first prompt = reads EOF). Root-caused via a HW tty-probe (built + deployed + run on
 netboot): **isatty=1, inherited termios sane (ICANON/VMIN=1/VTIME=0), read() works — but FIONREAD returned rc=-1/EINVAL** (garbage count). bash is
