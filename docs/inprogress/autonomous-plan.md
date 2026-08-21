@@ -602,6 +602,20 @@ data-path-ENABLE ioctl/iovar sequence vs the probe's diag_wifiJoin. **NEXT:** ac
 post-assoc enable iovar (or fix the frame bytes) to wifi-probe.c, re-run jointx, and confirm rx_bytes jumps +289 at the AP (the
 robust egress test). Credit + fwsignal both REFUTED; the answer is in the data-path-enable / frame-construction divergence.
 
+2026-08-21 (session ~111 — 🎯🎯🎯 E7 ROOT CAUSE CONFIRMED with byte-level proof: TXGLOM header format. The whole data-plane wall.)
+Followed the advisor's "capture the real bytes, don't infer" step: enabled brcmfmac BYTES+DATA debug (0x20088) → txpkt_prep hex-dumps
+each TX DATA frame. **Linux's actual TX data frame carries an 8-byte HWEXT GLOM descriptor at bytes [4-11] (78 00 00 01 00 00 00 00 =
+(len-4)|(lastfrm<<24)), with the SW header pushed to byte 12 (seq/chan2/doff=0x16=22) and BDC at byte 22** — i.e. the TXGLOM on-wire
+format (HW+HWEXT+SW+pad+BDC+eth, tx_hdrlen=20). brcmfmac enables txglom when sg_support + bus:rxglom succeed (sdio.c:3772-3782);
+the capture PROVES txglom is negotiated on the Pi4 SDIO. **Phoenix's diag_wifiDataTx builds a BARE NON-GLOM frame (SW@byte4, BDC@byte12,
+doff=12, no HWEXT) → the txglom fw misparses + drops it before 802.11 → the exact "reaches fw (CMD53 ok) not air" symptom.** Control
+frames survive via the separate non-glom tx_ctrlframe path. This is THE root cause; credit/fwsignal/frame-bytes/enable-iovar were all
+correctly excluded. Subagent's parallel read agreed "byte-correct" but ASSUMED txglom=false — the byte capture overrides that. Committed
++ pushed. **NEXT (the fix, precise + banked in the doc/memory):** (1) send `bus:rxglom`=(le32)1 in probe bring-up; (2) reframe
+diag_wifiDataTx to the txglom layout (HWEXT@4-11, SW@12, doff=20, BDC@20, eth@24, total_len over the whole frame); (3) build + `wifi-probe
+jointx` + confirm the AP rx_bytes jumps by the DISCOVER size (robust egress test) + tcpdump sees the DHCP DISCOVER on air. If egress
+works → the WiFi data-plane is UNBLOCKED (owner E7 headline). Host AP + Linux oneshot left in place. WiFi fw/CLM stays unpublished.
+
 2026-08-21 (session ~107 — finalized the sysconf(_SC_NPROCESSORS) fix-path spec (precise, ready-to-implement); confirmed deferral correct; will diversify next turn).
 Followed the ~106 gap to a precise fix-path (no code change — the diagnosis is the deliverable). Traced the exact implementation: kernel adds a `pctl_cpucount`
 platformctl action in aarch64-generic (generic.h enum+union, generic.c handler returning hal_cpuGetCount() — clean/additive/ABI-stable, mirrors the

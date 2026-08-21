@@ -159,3 +159,42 @@ L2 tcpdump (Pi-OUI source): 0 frames
 a subagent): brcmfmac source comparison of (1) the exact data-frame byte construction and (2)
 the post-association **data-path-enable** ioctl/iovar sequence brcmfmac issues between "keyed"
 and "first data TX" that the probe's `diag_wifiJoin` omits.
+
+## 🎯 ROOT CAUSE CONFIRMED (cycle linux-txbytes, 2026-08-21) — TXGLOM header format
+
+Per the advisor's step-2 (capture the real on-SDIO data-frame bytes, don't infer), enabled
+brcmfmac BYTES+DATA+SDIO debug (0x20088) so `brcmf_sdio_txpkt_prep` hex-dumps each TX **data**
+frame. Linux's actual TX data frame (a ping, 0x7c=124 bytes):
+
+```
+[0-3]   7c 00 83 ff          HW hdr: len=124, ~len=0xff83
+[4-11]  78 00 00 01 00 00 00 00   <- 8-byte HWEXT GLOM descriptor: (len-4=0x78)|(lastfrm=1<<24); tail_pad=0
+[12-15] 1c 02 00 16          SW hdr: seq=0x1c, channel=0x02 (DATA), nextlen=0, doff=0x16=22
+[16-19] 00 00 00 00          SW hdr word2 = 0
+[20-21] 00 00                head_pad (2 bytes, addr-alignment)
+[22+]   20 00 00 00          BDC (flags 0x20 ver2, prio 0, flags2 0, doff 0), then eth dst/src/0x0800
+```
+
+**This is the txglom on-wire format** (brcmf_sdio_hdpack sdio.c:1512-1518 + txpkt_prep :2246):
+`HW(4) + HWEXT-glom-desc(8) + SW-hdr(8) + head_pad + BDC(4) + eth`, with `doff = tx_hdrlen +
+head_pad = 20 + 2`. brcmfmac enables it when `sg_support` + `bus:rxglom` succeed (sdio.c:3772-3782
+-> `bus->txglom = true; bus->tx_hdrlen += SDPCM_HWEXT_LEN`). **On the Pi4's SDIO host txglom IS
+negotiated** (the capture proves it -- the HWEXT descriptor is present on every data frame).
+
+**Phoenix's `diag_wifiDataTx` builds a bare NON-glom frame:** `HW(4) + SW-hdr@byte4(8) +
+BDC@byte12(4) + eth`, doff=12, **no HWEXT descriptor**. Once the fw is in txglom mode it expects
+the HWEXT + SW-hdr@12 layout, so it **misparses Phoenix's frame and drops it before 802.11** --
+CMD53 F2 write succeeds ("reaches fw") but nothing egresses. Control frames survive because they
+go through a separate path (`brcmf_sdio_tx_ctrlframe`, sdio.c:2412) that isn't glom-framed.
+This is the confirmed root cause of the whole "TX reaches fw not air" wall.
+
+### The fix (precise, for the next cycle)
+Edit `tools/wifi-probe/wifi-probe.c`:
+1. **Enable glom during bring-up** -- send `bus:rxglom` = (le32)1 as an iovar (mirror brcmfmac
+   sdio.c:3775) so the fw is in the same mode Linux uses (verify rc=0).
+2. **Reframe `diag_wifiDataTx`** to the txglom layout: HW hdr `[0-3]`; HWEXT `[4-7]=le32((total-4)|(1<<24))`,
+   `[8-11]=le32(tail_pad<<16)` (tail_pad=0); SW hdr at `[12]`=seq, `[13]`=0x02, `[14]`=0 (nextlen),
+   `[15]`=doff; `[16-19]`=0; then BDC at `doff` and eth after. Phoenix controls its own buffer so
+   head_pad can be 0 => doff=20, BDC@20, eth@24. `total_len` (HW-hdr len) counts byte 0 .. end of eth.
+3. Re-run `wifi-probe jointx`; confirm the AP `rx_bytes` jumps by the DISCOVER size (robust egress
+   test) + tcpdump sees the DHCP DISCOVER on air. Baseline: artifacts/rpi4b-uart/*linux-txbytes.log.
