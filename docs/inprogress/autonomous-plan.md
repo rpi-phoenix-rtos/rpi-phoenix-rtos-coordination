@@ -528,6 +528,23 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~96 — PIVOT to owner #1 dig: V3D UIF_XOR tiling bug. Ruled out UIFCFG; confirmed sample/descriptor-side; WROTE the store-vs-sample isolation harness).
+Per advisor, pivoted off the migration treadmill to the owner's #1 headline dig — the V3D UIF_XOR tiling bug (one fix → quake3 q3dm7 lightmap-black +
+quake2 speckle + vkQuake striping). Orientation (cheap, high-signal): (1) **RULED OUT the hardcoded UIFCFG=0x45 hypothesis** — Mesa's UIF_XOR pixel
+offset (v3d_tiling.c v3d_get_uif_xor_pixel_offset → v3d_get_uif_pixel_offset) is a PURE fn of (cpp,image_h,x,y), NO UIFCFG/devinfo input, so a wrong
+UIFCFG can't cause the tiling divergence. (2) Re-confirmed our uif_pixel_off ≡ Mesa exactly ⇒ store-tiling matches HW expectation ⇒ **bug is
+SAMPLING/DESCRIPTOR-side** (the TMU texture-shader-state at width>512). Advisor sharpened the isolation-test design; **WROTE tools/v3d-driver-port/
+gl_uif_probe.c** (adapts the proven gl_det_harness.c GL context+FBO+readback boilerplate) with the design baked in: build each atlas via many 128×128
+glTexSubImage2D SUB-IMAGES at offsets (hits the box-offset store path like quake, not just aligned whole-upload); each texel encodes its (x,y);
+GL_NEAREST+GL_REPLACE 1:1 texel-center quad; **the store-vs-sample discriminator** — read back via glGetTexImage (STORE/uif_pixel_off) AND via
+render+glReadPixels (SAMPLE/TMU); A/B 512 (good) vs 1024 (bad) in one binary; localizes corrupt 128-block-rows. Expected verdict: 512 clean both,
+1024 store-clean + sample-CORRUPT ⇒ TMU-descriptor bug (a height/level-pitch bitfield overflowing at the >512 threshold). NEXT (build+run — the
+build recipe gl-det-build.sh is missing; reconstruct the cross-compile from build-gl-phoenix.py's Mesa include set + link the two folded libs
+tools/.gpu-libs/{libGL-phoenix.a,libv3d-phoenix.a}+libphoenix static aarch64 → /bin/gl-uif; deploy to netboot; run at psh; read the verdict).
+**Bound/tripwire (advisor):** if the harness doesn't reproduce within ~1–2 boots, DON'T iterate harness shapes blindly — pivot to instrumenting the
+REAL q3dm7 path (log atlas W×H + each sub-image offset + the packed TMU descriptor bytes for the merged atlas, one boot) + diff host-side vs Mesa.
+Reframe: deliverable = minimal reproducer + localized diagnosis (store vs sample, which field); the read-side fix itself may be owner-attended.
+
 2026-08-21 (session ~95 — ★★ CONTENT-RENDER VALIDATED: framework dillo renders a full http page + libjpeg-turbo JPEG decode CONFIRMED on HDMI, 0 faults).
 Closed the calibrated residual from ~94 (codec-at-render). Served a UTF-8+JPEG page over http from the netboot host (10.42.0.1:8099, python http.server;
 in-process dillo fetch = the E2/E3 path, no dpid), re-staged framework Xphoenix+dillo, booted, ran `pl_phoenix_xlaunch … /bin/dillo http://10.42.0.1:8099/
