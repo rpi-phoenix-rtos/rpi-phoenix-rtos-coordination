@@ -728,6 +728,21 @@ blit-stride issue (vkQuake runs on a V3DV WSI shim, no real WSI) or a V3DV rende
 the V3D-GL descriptor-dump method. Safe (read-only analysis; no build-break risk). NEXT after: act on the subagent's finding (runtime V3DV
 descriptor dump if it points there), OR if inconclusive, migrate the X11 demo-app ports toward the flip.
 
+2026-08-21 (session ~119 — vkQuake striping CHARACTERIZED: easy causes ruled out, localized to the direct-to-RASTER V3DV RCL divergence).
+Subagent (source) result: NOT a present/blit stride mismatch (render-to-scanout directly into a LINEAR VkImage on fb0; width*bpp=V3DV
+stride=fb0 pitch=7680, all match) and NOT the gallium should_tile bug (V3DV tiling is stock upstream; textures OPTIMAL-tiled + uploaded
+correctly). Localized: upstream V3DV uses a PRIME-BLIT (render OPTIMAL→copy to linear); the Phoenix shim renders the full scene DIRECTLY into
+the LINEAR RASTER scanout → the striping is a V3D tile-store/supertile addressing problem in the V3DV RCL setup for that direct-to-RASTER
+pass (a V3DV-vs-gallium RCL divergence). Candidate fix = the upstream prime-blit path OR find the RCL divergence. Banked: doc
+2026-08-21-vkquake-v3dv-striping-analysis.md + memory project_vulkan_v3dv_port. Closing it = deep semi-attended GPU dig (runtime RCL dump +
+V3DV-vs-gallium RCL compare + torn-HDMI band-period) on a LOWER-priority renderer (quake2/quake3 render fine) → parked as a characterized lead.
+**BACKLOG ASSESSMENT (honest):** the master plan's Tier-1 is ~done; the remaining items are all deep/attended/tangled — X11 if:true flip
+(tangled by 5 non-migrated demo apps + attended boot-verify), signal-push FIX#1 (attended, boot-hang risk), vkQuake striping (deep, semi-
+attended, lower-prio). The clean-autonomous backlog is genuinely thin. **NEXT candidates (all safe but grind/modest):** (a) migrate the 5 X11
+demo-app ports (xedit/xcalc/xclock/xlogo/xbill) to framework ports gated if:false — real progress toward the clean X11 flip, safe (doesn't
+touch the working build); (b) the vkQuake RCL-divergence dig (deep); (c) finalization/doc-sync (P-DOCS §I) toward publication. Leaning (a) as
+the clearest completion path for the #2 top-dig.
+
 2026-08-21 (session ~107 — finalized the sysconf(_SC_NPROCESSORS) fix-path spec (precise, ready-to-implement); confirmed deferral correct; will diversify next turn).
 Followed the ~106 gap to a precise fix-path (no code change — the diagnosis is the deliverable). Traced the exact implementation: kernel adds a `pctl_cpucount`
 platformctl action in aarch64-generic (generic.h enum+union, generic.c handler returning hal_cpuGetCount() — clean/additive/ABI-stable, mirrors the
