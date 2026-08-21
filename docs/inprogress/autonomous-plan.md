@@ -528,6 +528,19 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~78 — pivoted to the signal-push double-fault: reproduced + root-caused + LOW-RISK fix designed; implement next).
+Pivoted off coreutils to the kernel robustness bug found in P4 (signal delivery double-faults on an exhausted user stack, corrupting crash
+dumps — affects ALL user faults). Built a DETERMINISTIC reproducer (tools/kernel-stackov/stackov.c, committed 8f0da17): infinite 4 KiB-frame
+recursion → HW-confirmed EL0 #36 → EL1 #37 double-fault. Root-caused the delivery path (exceptions_dispatch → threads_setupUserReturn →
+_threads_checkSignal → hal_cpuPushSignal pushes the frame to signalCtx=userSP-ctxsize UNCONDITIONALLY). Designed a LOW-RISK fix: add
+vm_mapWritable() (wrap static _map_find + map_checkProt), validate signalCtx in _threads_checkSignal, and — key insight — the double-fault
+path is the SYNCHRONOUS threads_setupUserReturn (which already drops the spinlock before hal_jmp), so proc_kill is confined THERE; the
+scheduler path (also calls _threads_checkSignal, lock-held) just SKIPS the push on invalid (no scheduler-context kill = bounded risk).
+Normal (valid-stack) delivery unchanged. Design + reproducer banked in memory project_coreutils_cksum_od_dataabort (FIX #1). Did NOT rush
+the implementation at the tail of a very long turn (a scheduler/signal deadlock would hang boot); implement fresh next turn: vm_mapWritable +
+threads.c (-2 return + kill in threads_setupUserReturn + scheduler skip) → --scope core → stackov test (expect clean death, no EL1 #37) +
+normal-signal regression (psh Ctrl-C). NEXT: implement + test FIX #1.
+
 2026-08-21 (session ~77 — cksum/od Data Abort ROOT-CAUSED + FIXED: 32 KiB user stack too small → raised SIZE_USTACK to 1 MiB).
 Root-caused the P4-found cksum/od Data Abort. addr2line on the EL1 double-fault → hal_cpuPushSignal→hal_memcpy (signal delivery pushes
 the frame to userSP-ctxsize UNCONDITIONALLY; faults on a bad user stack → kernel double-fault → printed dump unreliable). Then found the
