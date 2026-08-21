@@ -528,6 +528,16 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~89 — P8: libjpeg (libjpeg-turbo 3.0.4) migrated tools/→ports, cmake-cross build-verified; image-codec prereqs now complete).
+Continued the P8/E4 chain. Migrated the JPEG codec — previously built by the ad-hoc X11 path as IJG jpeg-9e — to phoenix-rtos-ports/libjpeg as
+**libjpeg-turbo 3.0.4** (the de-facto standard, classic libjpeg API). Chose turbo over IJG BECAUSE the framework version parser is PEP440-strict
+and rejects IJG's "9e". CMake cross build mirroring the sdl2 port (CMAKE_SYSTEM_NAME=Generic; CFLAGS→LDFLAGS for the compiler probes; SIMD +
+TurboJPEG API off — SIMD=perf-only TODO, turbojpeg=no consumer). Framework gotcha: **p_prepare is mandatory even when empty** ("p_prepare
+undefined" hard error) — added a no-op. **Build-VERIFIED** via `build-port.sh libjpeg`: installs libjpeg.a (824K) + jpeglib.h/jconfig.h into the
+prefix (`Done 9.8 s`); the -Wstringop-overflow warnings in jchuff.c/rdtarga.c are known-harmless upstream. Committed (ports `85714c5`), pushed.
+With libpng (last turn) the **image-codec prerequisites for fltk/dillo are now complete.** NEXT P8/E4 chain: **fltk** (needs libpng + libjpeg +
+the X libs — all now framework) → dillo → glib2(deferred). Also open: ncurses/nano/mc sub-chain, P7 vkQuake backtrace, P9 Mesa 26.2.0 rebase.
+
 2026-08-21 (session ~88 — P8: libpng migrated tools/→ports as a first-class framework port, build-verified; generic build-port.sh helper added).
 Continued P8 (owner directive #14 "move ports tools/→ports project") + the E4 chain that gates the X11 if:true flip. libpng (PNG reference lib)
 was previously built ONLY by the ad-hoc build-showcase-apps.sh + tools/x11-port path; migrated it to a proper phoenix-rtos-ports/libpng
