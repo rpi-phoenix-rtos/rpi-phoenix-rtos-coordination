@@ -528,6 +528,18 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-21 (session ~138 — ✅✅ E5 M1b-step-0 ACHIEVED ON HARDWARE: glamor INITIALISES on real V3D 4.2 inside Xphoenix, 0 faults — glamor is LIVE on our GL).
+Ran the runtime moment-of-truth on the netboot Pi. Staged Xphoenix-glamor (27MB static, 0 undef) → /srv/.../bin/Xphoenix-glamor (separate name; working /bin/Xphoenix
+untouched) and launched via `pl_phoenix_xlaunch /bin/Xphoenix-glamor /usr/share/fonts/X11/misc /bin/xeyes`. **UART RESULT (log 20260821-193132-glamor-m1b0):**
+`xlaunch: server socket present after ~30 ms` (X server up+listening) → xeyes client forked → **`glamor-phx: GL up; 2.1 Mesa 26.2.0-rc1 / V3D 4.2.14.0`** (our provider
+brought up the in-process V3D GL 2.1 context INSIDE the X server on real HW) → **`[fbdev] glamor initialised (V3D GL 2D acceleration)`** (glamor_init SUCCEEDED — our
+real V3D Mesa GL passes ALL of glamor's init gates: GL≥2.1, texture_border_clamp, fragment_program, VAO, GLSL) → input (/dev/kbd0,/dev/mouse0) active + present armed.
+**ZERO Data Abort/Exception/fault in the whole log.** ⇒ E5's runtime viability is PROVEN end-to-end at the init level: glamor 2D-GL acceleration comes up on V3D 4.2 in
+Xphoenix. Nothing to commit (Xphoenix-glamor is a gitignored build artifact; staging is to /srv). **NEXT = M1b-step-1 (make it VISIBLE):** the fbdev DDX still presents via
+the software shadow→/dev/fb0 blit, so glamor accelerates offscreen pixmaps but the visible screen isn't glamor-driven yet. Wire the root/screen pixmap to be glamor-backed
+(glamor_create_pixmap / GLAMOR_USE_SCREEN) + present glamor's output to /dev/fb0 (glReadPixels blit → later zero-copy st_context_teximage/scanout), then HDMI-verify
+GPU-accelerated 2D. Single-GPU-process (X sole owner) holds. Also (reproducibility): make glamor a first-class flag in build-xserver-core.sh (tree is ad-hoc --enable-glamor).
+
 2026-08-21 (session ~137 — ✅ E5 M1a ACHIEVED: Xphoenix LINKS with glamor + our static Mesa GL, ZERO undefined symbols — NO GL-entrypoint gap. The key E5 unknown is resolved).
 Delegated M1a to a subagent (per "use subagents"). RESULT (exhaustively verified): **Xphoenix-glamor links rc=0 with 0 undefined symbols**, even under a whole-archive relink
 (`-Wl,--whole-archive libglamor.a` forcing ALL 34 glamor TUs / every accel path in). Since it's a STATIC executable, the empty gap list is airtight, not an ordering
