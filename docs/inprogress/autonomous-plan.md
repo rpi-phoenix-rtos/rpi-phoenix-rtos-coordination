@@ -835,6 +835,19 @@ signal-push). TALLY (this arc): now 6 HW-verified improvements (wctype tests, ti
 nprocessors). Note: the 10 test-libc-misc stat_* FAILs (NFS-stat 0 size/blocks/times) persist — pre-existing, unrelated, a real future dig.
 NEXT: the NFS-stat 0-size bug (real filesystem behavior; higher user-impact) OR getrusage/times OR more coverage.
 
+2026-08-21 (session ~127 — investigated the test-libc-misc stat_* FAILs → it's a WRITE-then-stat issue on the NFS root, NOT a stat bug; deep/risky → deferred).
+Characterized the 10 stat_* FAILs (st_size=0 after fopen+18944B-write+fclose). The test path (`test_stat.txt`) is RELATIVE ⇒ created in the CWD =
+the netboot NFS root (`/`) — CONFIRMED because the sibling `tempPath`="test_stat" (mkdir/fifo) IS present in /srv/phoenix-rpi4-nfs, proving Pi
+metadata writes commit to the server. BUT `test_stat.txt` is ABSENT from /srv ⇒ the file DATA write doesn't reflect. So the "NFS-stat" framing
+is WRONG — it's a **write-then-stat coherence issue on the NFS root**: either the data write doesn't commit, OR a stat/attr-cache staleness
+(the absence is CONFOUNDED by Unity teardown possibly remove()-ing the file after the failed test, so write-vs-stat isn't cleanly split yet).
+Ties to the KNOWN-HARD nfs-fs write path (memory project_pi4_genet_rx_perf: "nfs-fs 2nd nfs_pwrite hangs in libnfs reconnect"). **NOT my recent
+changes; NOT a libphoenix stat bug.** **DEFERRED (attended/deep):** this is on the netboot-CRITICAL NFS path + entangled with known-hard write
+issues → a risky unattended nfs-fs modification (esp. with owner away + having already broken+recovered the netboot once this session) is the
+wrong call. A clean disambiguation needs a controlled repro (write a file on NFS, DON'T remove it, check /srv size + the stat size) — an
+attended NFS-write session. Corrected the "NFS-stat" label everywhere to "NFS write-then-stat / write-commit". NEXT (safe): more libphoenix
+coverage OR the getrusage defensive fix (memset out-param, NULL-check) — low-risk libc, not the critical path. Deep/attended: the NFS-write dig.
+
 2026-08-21 (session ~107 — finalized the sysconf(_SC_NPROCESSORS) fix-path spec (precise, ready-to-implement); confirmed deferral correct; will diversify next turn).
 Followed the ~106 gap to a precise fix-path (no code change — the diagnosis is the deliverable). Traced the exact implementation: kernel adds a `pctl_cpucount`
 platformctl action in aarch64-generic (generic.h enum+union, generic.c handler returning hal_cpuGetCount() — clean/additive/ABI-stable, mirrors the
