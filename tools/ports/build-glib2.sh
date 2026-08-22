@@ -91,7 +91,11 @@ if [ ! -f "$SYSROOT/lib/libresolv.a" ]; then
 	${TC}ar rcs "$SYSROOT/lib/libresolv.a" /tmp/resolv-stub.o || fail "resolv stub ar failed"
 fi
 
-CF="--sysroot=$SYSROOT -O2 -I$ZLIB/include -include $SHIM"
+# -std=gnu17: glib 2.56.4 uses `bool` as a struct-field/variable identifier
+# (e.g. goption.c `gboolean bool;`), which gcc-16's C23 default makes a reserved
+# keyword -> "expected identifier before 'bool'". Pin C17 (matches the framework
+# X ports' gnu17 pin for the same gcc-16 C23 breakage).
+CF="--sysroot=$SYSROOT -O2 -std=gnu17 -I$ZLIB/include -include $SHIM"
 LD="--sysroot=$SYSROOT -static -L$SYSROOT/lib -L$ZLIB/lib"
 
 if [ ! -f "$XDIR/config.status" ]; then
