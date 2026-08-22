@@ -57,7 +57,23 @@ Was clean in the past (older GL grabs correct). vkQuake (own present path) is cl
   textures never set next_scanout → stay tiled → q3dm7 fix preserved. Files: tools/v3d-driver-port/
   v3d_phoenix_winsys.c + external/mesa/.../v3d_resource.c. Rebuild libv3d + relink a GL game + grab.
 
-## Issue 2 — vkQuake: the 2 start-map torches are MISSING (resurfaced #67/torch bug)
+## Issue 2 — vkQuake torches MISSING — ✅ RESOLVED (stale binary) + HW-VERIFIED 2026-08-22
+ROOT CAUSE = STALE BINARY. external/vkquake HEAD already carries `d3e329c alias: present opaque
+models with alpha=1 (fixes invisible torches on Phoenix)` — the flame is an opaque alias model that,
+pre-fix, was presented with alpha=0 → fully invisible. The owner's tested binary was a RELINK (P7,
+semaphore fix) of pre-d3e329c objects → torches still invisible. FIX = clean rebuild from HEAD (rm
+/tmp/vkqobj + recompile all 83 TUs → d3e329c's r_alias.c compiled in) → libvkquake.a + /tmp/vkquake-phoenix
+relinked vs current libv3dv/libv3d → staged /srv/phoenix-rpi4-nfs/bin/vkquake (22:00). HW-VERIFIED
+(netboot, +map start, 4920+ present frames, no hang): grab 20260822-200435-vkq-torchfix-tick.png shows
+a flame rendering + ANIMATING (brighter in the tick, dimmer in the -final) on the right wall where the
+owner's 14:37 grab (20260822-143739-vkq-semafix-final.png) shows NONE. Same camera angle → render-content
+difference, not camera. NOTE: a few intermittent binner wedges (mmu_ill=0x800066a5, BIN/RENDER TIMEOUT)
+occurred but the reset+drop mitigation recovered each → the separate tracked thread-B wedge (occasional
+dropped frame), NOT the torch bug and NOT a hang. FOLLOW-UP: /usr/bin/rpi4-vkquake (the flagship _user
+build, 12.8MB) still predates the rebuild — either run /bin/vkquake (the verified-fixed one) or rebuild
+rpi4-vkquake via --with-showcase to pick up libvkquake.a (22:00). Owner: visually confirm both archway
+torches on retest.
+
 **2026-08-22 SCOPED (strong lead, NOT the #51 wedge):** vkq-semafix grab 20260822-143739 confirms
 vkQuake RENDERS the start map fully (textures, QUAKE archway, HUD, viewmodel — an alias model — all
 fine), so this is a rendering-correctness bug in a WORKING vkQuake, NOT the binner-wedge hang. The
