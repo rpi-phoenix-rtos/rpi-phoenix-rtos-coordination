@@ -78,27 +78,35 @@ two version pins are `scripts/build-phoenix-toolchain-linux.sh` (builds gcc-14.2
   tag, attach the built image artifact / release notes, update the org README to state the release is
   gcc-16.2.0-based.
 
-## Follow-up: extend the distfiles cache to the other X ports
-The persistent distfiles cache + artfiles mirror was added to `xorg_libs` (the acute 24-lib
-re-downloader). `xorg_fonts` and `xorg_server` have their OWN `_fetch_extract` (no cache) pulling from
-mixed sources (sourceforge freetype/libpng, x.org libfontenc/libXfont2/libXft, freedesktop fontconfig,
-cairographics, github expat, ijg jpeg) — so a clean build re-downloads those. Owner's general cache
-ask applies: add the same cache-check-then-mirror pattern (or a shared helper) to `xorg_fonts` +
-`xorg_server`. Non-urgent (fewer libs each; several tarballs are committed in-dir; x.org is currently
-up), but do it for a fully offline-reproducible clean build. Ideal end state: one shared distfiles
-cache used by all ports (framework-level fetch hook).
+## Follow-up: extend the distfiles cache to the other X ports — ✅ DONE (2026-08-23, ports c3f8a6f)
+Became load-bearing: a full gcc-16 build FAILED in `xorg_fonts` when x.org's CDN
+(xorg.freedesktop.org) went down. Added the artfiles.org mirror + the shared persistent distfiles
+cache (`$PHOENIX_DISTFILES`, default `~/.phoenix-distfiles/xorg`, keyed by real tarball name so it is
+SHARED with `xorg_libs`) to `xorg_fonts`' `_fetch_extract`, and pointed `xorg_server`'s framework
+`source=` at the same mirror. Override with `XORG_XBASE`. Validated in-build (the x.org fonts libs
+fetched via artfiles, cache populated). Remaining non-x.org fetches in xorg_fonts (sourceforge
+freetype/libpng, freedesktop fontconfig, cairographics, github expat, ijg jpeg) now also cache-populate
+generically. Ideal end state (framework-level fetch hook shared by ALL ports) is still a future nicety,
+but every X port now has cache+mirror.
 
-## Follow-up: Docker game-data fetch for all Quakes (owner request)
-The Dockerfile fetches only **Quake 1** data (`PAK0_URL` = quake106.zip → id1/pak0.pak). A
-from-scratch reproducible build therefore ships the quake2/quake3/vkquake engines WITHOUT their game
-data (baseq2/pak0.pak, demoq3/pak0.pk3) — those are currently hand-staged, not fetched. For the
-release the Docker build should fetch all games' **freely-redistributable demo/shareware** data:
-add `PAK0Q2_URL`/`PAK0Q3_URL` (+ sha256) args and download/extract/stage steps mirroring the Q1
-`PAK0_URL` logic (optional; "" skips; a non-empty URL that fails to verify fails the build).
-Sources to pin (verify redistribution terms first, like Q1's shareware): Quake II shareware demo
-(baseq2 pak), Quake III Arena demo (demoq3/pak0.pk3 from the linux Q3 demo). Also worth a general
-`fetch-quake-data.sh` covering all three so SD + Docker + netboot builds share one path. Licensing:
-demo/shareware data only — no full retail paks in the public build.
+## Follow-up: Docker game-data fetch for all Quakes (owner request) — ✅ DONE (2026-08-23, coord 0e66aef/2829201)
+Owner resolved the licensing question (2026-08-23): the repo distributes only build scripts, never a
+pre-built image, so the build downloads the demos at build time and bakes them into the user's own
+image — fine to ship default URLs like Q1. Implemented the general `scripts/fetch-quake-data.sh`
+(q1|q2|q3 → overlay subdir + pak + extraction; shared by SD/Docker/netboot) and refactored the
+Dockerfile to call it for all three with verified defaults: Q1 quake106.zip (shareware); Q2 Yamagi
+`q2-314-demo-x86.exe` (7z → baseq2/pak0.pak, sha256 cae2571…); Q3 GWDG `linuxq3ademo-1.11-6.x86.gz.sh`
+(makeself skip+gzip+tar → demoq3/pak0.pk3, sha256 e77abad…). Added `p7zip-full` to the Docker apt set.
+Set a `PAK0*_URL` to "" to skip a game; a non-empty URL that fails download/extract/verify fails the
+build. All paths tested against the real installers. REMAINING (small): wire fetch-quake-data.sh into
+the SD/netboot build flow too (SD/netboot overlay Q2/Q3 paks are still hand-staged; the Docker release
+path is complete).
+
+## G3 blocker note (2026-08-23): host Docker buildx broken
+`docker build` fails with "BuildKit is enabled but the buildx component is missing or broken." G3.2
+(the authoritative `--no-cache` Docker release build) needs buildx installed on the host first
+(`apt-get install docker-buildx-plugin`, or `DOCKER_BUILDKIT=0` for the legacy builder). Resolve
+before running the release-gate Docker build.
 
 ## Follow-up: C++23 `import std` module (libstdc++ std.gcm) — owner request
 The gcc-16.2.0 toolchain build installs fine and classic C++ works (libstdc++.a; verified with a
