@@ -42,10 +42,19 @@ MESA_COMPAT=${ROOT}/tools/v3d-driver-port/phoenix_mesa_compat.h
 SRCFILE=fbdev.c
 OUT=Xphoenix
 GLAMOR=0
+DAEMON=0
 case "${1:-}" in
-  --stub)   SRCFILE=fbdev_stub.c; OUT=Xphoenix-stub ;;
-  --glamor) GLAMOR=1;             OUT=Xphoenix-glamor ;;
+  --stub)          SRCFILE=fbdev_stub.c; OUT=Xphoenix-stub ;;
+  --glamor)        GLAMOR=1;             OUT=Xphoenix-glamor ;;
+  # M3a: glamor X as a CLIENT of the v3d-server daemon. Same link as --glamor but the
+  # in-process winsys backend (v3d_phoenix_winsys.o + v3d_phoenix_power.o, folded into
+  # libv3d-phoenix.a) is swapped for libv3d-client.a, which RPCs phoenix_v3d_ioctl to
+  # /dev/v3d-srv. X's GPU work then routes through the daemon (2c-test recipe scaled up).
+  --glamor-daemon) GLAMOR=1; DAEMON=1;   OUT=Xphoenix-glamor-daemon ;;
 esac
+
+# Devices-repo home of the daemon client library (built into the swap below).
+DEVV3D=${ROOT}/sources/phoenix-rtos-devices/gpu/rpi4-v3d
 
 # Ensure the xorg-server core archives this script links against actually exist.
 # Fetching/configuring/building the core was historically a MANUAL step (see
@@ -196,6 +205,25 @@ if [ "$GLAMOR" = 1 ]; then
   # --start-group so any "undefined reference" ld reports is a genuine gap and
   # not a single-pass ordering artifact (the GL-entrypoint gap list is the whole
   # point of M1a). -lstdc++ + a 32 MB stack mirror the proven GL harness link.
+  #
+  # In --glamor-daemon (M3a) mode, swap the in-process winsys backend for the daemon
+  # client: use libv3d-phoenix.a MINUS {v3d_phoenix_winsys.o, v3d_phoenix_power.o} plus
+  # libv3d-client.a (phoenix_v3d_ioctl -> RPC to /dev/v3d-srv). Same recipe as
+  # tools/v3d-driver-port/build-gl-smoke-daemon.py's 2c-test daemon variant.
+  V3D_ARCHIVE="$GPU_LIBS/libv3d-phoenix.a"
+  CLIENT_A=""
+  if [ "$DAEMON" = 1 ]; then
+    echo "=== M3a daemon swap: building libv3d-phoenix-daemon.a (minus winsys+power) + libv3d-client.a ==="
+    V3D_ARCHIVE=/tmp/libv3d-phoenix-daemon.a
+    cp "$GPU_LIBS/libv3d-phoenix.a" "$V3D_ARCHIVE"
+    "${TC}gcc-ar" d "$V3D_ARCHIVE" v3d_phoenix_winsys.o v3d_phoenix_power.o \
+      || { echo "ar d (winsys/power) FAIL"; exit 1; }
+    $CC --sysroot=$SYSROOT -c "$DEVV3D/libv3d-client.c" -o /tmp/libv3d-client.o \
+      -I"$DEVV3D" -I"$DEVV3D/uapi" -O2 -std=gnu11 \
+      || { echo "COMPILE FAIL (libv3d-client.c)"; exit 1; }
+    CLIENT_A=/tmp/libv3d-client.a
+    rm -f "$CLIENT_A"; "${TC}gcc-ar" rcs "$CLIENT_A" /tmp/libv3d-client.o
+  fi
   LINKLOG=/tmp/${OUT}-link.log
   $CC --sysroot=$SYSROOT -o "$DDX/$OUT" \
     "$DDX/${SRCFILE%.c}.o" "$DDX/ddxLoad.o" \
@@ -204,7 +232,7 @@ if [ "$GLAMOR" = 1 ]; then
     -Wl,--start-group \
       $GROUP \
       "$KD/glamor/.libs/libglamor.a" \
-      "$GPU_LIBS/libGL-phoenix.a" "$GPU_LIBS/libv3d-phoenix.a" \
+      "$GPU_LIBS/libGL-phoenix.a" "$V3D_ARCHIVE" $CLIENT_A \
       -lpixman-1 -lXfont2 -lfontenc -lfreetype -lz -lXau -lXdmcp -lxkbfile -lmd -lm -lstdc++ \
     -Wl,--end-group \
     -Wl,-z,stack-size=33554432 \
