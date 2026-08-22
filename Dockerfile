@@ -40,6 +40,16 @@ ARG REPO_BASE=https://github.com/rpi-phoenix-rtos
 ARG UPSTREAM_BASE=https://github.com/rpi-phoenix-rtos
 ARG PAK0_URL=https://www.classicdosgames.com/files/games/id/quake106.zip
 ARG PAK0_SHA256=35a9c55e5e5a284a159ad2a62e0e8def23d829561fe2f54eb402dbc0a9a946af
+# Quake II / Quake III demo data. NO default URL: unlike the Q1 shareware
+# (quake106.zip, freely redistributable), the Q2/Q3 demo paks have their own
+# redistribution terms — supply a URL only after verifying rights for your
+# distribution. Empty = the engine still builds, just without bundled data.
+#   Q2: a *.zip containing baseq2/pak0.pak, or a direct *.pak
+#   Q3: a *.zip/*.pk3 containing demoq3/pak0.pk3, or a direct *.pk3
+ARG PAK0Q2_URL=
+ARG PAK0Q2_SHA256=
+ARG PAK0Q3_URL=
+ARG PAK0Q3_SHA256=
 ARG BUILD_VARIANT=sd
 ARG BUILD_FLAGS=--with-showcase --with-ports
 ENV DEBIAN_FRONTEND=noninteractive
@@ -65,46 +75,18 @@ RUN PROJECT_DIR=/build/phoenix-rpi \
     EXTERNAL_FORK_BASE="${REPO_BASE}" \
     ./scripts/bootstrap-linux-host.sh
 
-# 3. Quake shareware game data (licensing-clean): stage id1/pak0.pak into the rootfs
-#    overlay so the GLQuake showcase has playable demos. Default PAK0_URL is the
-#    official quake106.zip (pak0.pak is inside an LHA-compressed resource.1). A
-#    direct *.pak URL is also accepted. Empty PAK0_URL = intentional opt-out (engine
-#    only). A non-empty URL that fails to download/extract/verify FAILS the build —
-#    we never ship a half-baked image on a broken download (fix connectivity or
-#    override PAK0_URL). PAK0_SHA256 guards integrity.
+# 3. Quake game data (licensing-clean): stage the freely-redistributable demo/
+#    shareware paks into the rootfs overlay so the showcase Quake engines have
+#    playable data. Delegated to the shared scripts/fetch-quake-data.sh (same
+#    path used by SD + netboot builds). Q1 shareware (quake106.zip) is the
+#    default; Q2/Q3 have no default URL (their demo paks carry their own
+#    redistribution terms — pass PAK0Q2_URL / PAK0Q3_URL to opt in). An empty
+#    URL skips that game (engine still built); a non-empty URL that fails to
+#    download/extract/verify FAILS the build (never ship a half-baked image).
 RUN set -eu; \
-    if [ -z "${PAK0_URL}" ]; then \
-      echo "PAK0_URL empty — building WITHOUT Quake game data (engine only)"; \
-    else \
-      dst=sources/phoenix-rtos-project/_projects/aarch64a72-generic-rpi4b/rootfs-overlay/usr/share/quake/id1; \
-      mkdir -p "$dst"; \
-      tmp="$(mktemp -d)"; \
-      echo "Quake shareware: fetching ${PAK0_URL}"; \
-      case "${PAK0_URL}" in \
-        *.pak) \
-          curl -fSL --retry 5 --retry-delay 5 -o "$dst/pak0.pak" "${PAK0_URL}" \
-            || { echo "ERROR: Quake pak0.pak download failed from ${PAK0_URL} — fix connectivity or override PAK0_URL"; exit 1; } ;; \
-        *) \
-          curl -fSL --retry 5 --retry-delay 5 -o "$tmp/q.zip" "${PAK0_URL}" \
-            || { echo "ERROR: Quake shareware download failed from ${PAK0_URL} — fix connectivity or override PAK0_URL"; exit 1; }; \
-          unzip -oq "$tmp/q.zip" -d "$tmp" \
-            || { echo "ERROR: could not unzip the Quake shareware archive from ${PAK0_URL}"; exit 1; }; \
-          ( cd "$tmp" && lha xf resource.1 ) \
-            || { echo "ERROR: could not LHA-extract resource.1 from the Quake shareware archive"; exit 1; }; \
-          pak="$(find "$tmp" -iname pak0.pak | head -1)"; \
-          [ -n "$pak" ] \
-            || { echo "ERROR: pak0.pak not found inside the Quake shareware archive"; exit 1; }; \
-          cp "$pak" "$dst/pak0.pak" ;; \
-      esac; \
-      got="$(sha256sum "$dst/pak0.pak" | cut -d' ' -f1)"; \
-      sz="$(stat -c%s "$dst/pak0.pak")"; \
-      echo "Quake pak0.pak staged: size=$sz sha256=$got"; \
-      if [ -n "${PAK0_SHA256}" ] && [ "$got" != "${PAK0_SHA256}" ]; then \
-        echo "ERROR: pak0.pak sha256 mismatch (got $got, expected ${PAK0_SHA256}) — refusing to ship a bad image"; exit 1; \
-      fi; \
-      rm -rf "$tmp"; \
-      echo "Quake shareware pak0.pak OK -> $dst"; \
-    fi
+    ./scripts/fetch-quake-data.sh q1 "${PAK0_URL}"   "${PAK0_SHA256}"; \
+    ./scripts/fetch-quake-data.sh q2 "${PAK0Q2_URL}" "${PAK0Q2_SHA256}"; \
+    ./scripts/fetch-quake-data.sh q3 "${PAK0Q3_URL}" "${PAK0Q3_SHA256}"
 
 # 4. Full SD-card image build.
 RUN ./scripts/rebuild-rpi4b-fast.sh --variant "${BUILD_VARIANT}" ${BUILD_FLAGS}
