@@ -184,3 +184,31 @@ single-quote parsing, so a script file `bash /gpu-2proc.sh` was used):
 **serialize every submit** (and own power+PT+VA) — a design that only catches a clean
 abort/reset would silently corrupt results. This HW result validates Option A's core
 requirement (one owner, serialized submits). M0 is complete; M1 is the multi-week build.
+
+## M1 step 2b — HW result (2026-08-22): CSD compute routes through the daemon, BIT-EXACT
+
+First real proof that GPU work executes correctly through the serializing v3d-server
+daemon (not the in-process winsys). Netboot, `bash /gpu-csd-daemon.sh`:
+
+- Server: `powerOn PM_GRAFX asb M=ok S=ok` → `V3D up CORE0_IDENT0=0x04443356` →
+  `registered /dev/v3d-srv`. It is the sole GPU owner; the client (csd-matmul-daemon,
+  linked against libv3d-client, NOT the winsys) connects over the message port.
+- 100 CSD dispatches all complete via IPC (`rpi4-v3d: CSD done ... num_completed=1..100`).
+- **Numeric: `max_rel_err=0.000e+00`, `o[0]=-7.03244`, `o[255]=-4.46325`, `PASS` —
+  BIT-IDENTICAL to the in-process reference.** GPU=12.62 ms/matmul vs in-process 11.96
+  (ratio 6.83x vs CPU; the ~modest delta is the per-dispatch IPC round-trip, as expected).
+
+Architecture validated: create_dev-before-power-on single-owner guard; BO handoff by
+physical address + client `mmap(MAP_PHYSMEM,pa)`; SUBMIT_CSD forwarding cfg[0..6];
+one-message-at-a-time server serialization.
+
+### Known benign diagnostic (deferred to 2c): 4 startup VA COLLISION warnings
+The daemon logs 4 `VA COLLISION ... live-BO overlap` at startup (the stale Aug-14
+in-process reference showed 0). Root-caused as benign + NOT a correctness bug (result is
+bit-exact): csd_matmul allocates its 5 BOs once (monotonic va_alloc, no hole recycling),
+so the collisions are the first client BOs landing at the boundary of the 32 MiB
+binner-overflow pool that `v3d_gpu_init` eagerly maps. That eager pool is the
+"dormant overhead" flagged at 2a — it is consumed ONLY by the CL binner path (stubbed
+until 2c). The clean fix (make the pool alloc part of the CL path, or give it a reserved
+VA region that doesn't perturb BO allocation) lands with 2c; for CSD it is behavior-neutral
+(the detector is "Logged, not fixed" by design and the map proceeds correctly).
