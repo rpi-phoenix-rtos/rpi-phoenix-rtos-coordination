@@ -39,7 +39,7 @@ venv_python="${repo_root}/.venv/bin/python3"
 # The migrated X11 stack, dependency-ordered for readability (port_manager
 # resolves the real order itself). Override with XORG_PORTS="a b c" to build a
 # subset (e.g. just xorg_libs while iterating on Layer 1).
-: "${XORG_PORTS:=xorg_libs xorg_fonts xorg_server xterm windowmaker}"
+: "${XORG_PORTS:=xorg_libs xorg_fonts xorg_server xterm windowmaker xorg_apps xbill}"
 
 clean=1
 [ "${1:-}" = "--incremental" ] && clean=0

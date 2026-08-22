@@ -489,17 +489,15 @@ phase_stage() {
 	# #7 2026-08-22: the Xphoenix server, xterm and WindowMaker are now framework ports
 	# (ports.yaml if:true); the ports stage builds + stages them into the rootfs
 	# (Xphoenix -> /usr/bin, xterm/wmaker -> /bin), so their ad-hoc steps are removed
-	# here. The small X apps below (xedit/xcalc/xclock/xlogo/xbill) + the xlaunch
-	# supervisor are NOT framework ports yet, so they stay ad-hoc — they self-build the
-	# /tmp/x11-phoenix lib prefix (build-x11-phoenix.sh above). NOTE: framework Xphoenix
+	# here. The small Xaw demo apps xedit/xcalc/xclock/xlogo (framework port xorg_apps)
+	# and xbill (framework port xbill) are ALSO framework ports now (ports.yaml
+	# if:true) — the ports stage builds + stages them into the rootfs /bin + their
+	# app-defaults/assets — so their ad-hoc build-{xedit,xcalc,xclock,xlogo,xbill}.sh
+	# steps are removed here too. Only the xlaunch/startx supervisor (a tiny in-repo
+	# C launcher, not an upstream tarball) stays ad-hoc. NOTE: framework Xphoenix
 	# lands at /usr/bin/Xphoenix (b_install) not /bin — launch with that path.
 	if [ "$skip_x11" = 0 ]; then
 		run_step_soft "X11: xlaunch/startx"  "${X11}/build-xlaunch.sh"
-		run_step_soft "X11: xedit"           "${X11}/build-xedit.sh"
-		run_step_soft "X11: xcalc"           "${X11}/build-xcalc.sh"
-		run_step_soft "X11: xclock"          "${X11}/build-xclock.sh"
-		run_step_soft "X11: xlogo"           "${X11}/build-xlogo.sh"
-		run_step_soft "X11: xbill"           "${X11}/build-xbill.sh"
 	fi
 
 	if [ "${#soft_failures[@]}" -gt 0 ]; then
