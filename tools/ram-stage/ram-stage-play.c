@@ -35,6 +35,7 @@
 
 static unsigned long long g_bytes = 0;
 static unsigned long g_files = 0;
+static unsigned long long g_next_report = 16ull * 1024 * 1024; /* progress every 16 MiB */
 
 static int copy_file(const char *src, const char *dst, mode_t mode)
 {
@@ -82,6 +83,12 @@ static int copy_file(const char *src, const char *dst, mode_t mode)
 			break;
 		}
 		g_bytes += (unsigned long long)n;
+		/* Periodic progress so the user sees the preload is advancing (the copy
+		 * runs before any game frame is drawn, so the screen is otherwise blank). */
+		if (g_bytes >= g_next_report) {
+			printf("ram-stage: preloading... %llu MiB copied\n", g_bytes / (1024ull * 1024ull));
+			g_next_report += 16ull * 1024 * 1024;
+		}
 	}
 	free(buf);
 	close(sfd);
@@ -183,6 +190,8 @@ int main(int argc, char **argv)
 	exe = argv[ai + 2];
 	exeargv = &argv[ai + 2];   /* {exe, args..., NULL} */
 
+	printf("ram-stage: ===== starting to preload game data to RAM disk =====\n");
+	printf("ram-stage: copying %s -> %s (please wait — the screen stays blank until this finishes)\n", src, dst);
 	clock_gettime(CLOCK_MONOTONIC, &t0);
 	if (mkdir_p(dst) != 0) {
 		printf("ram-stage: could not create dst path '%s'\n", dst);
@@ -196,8 +205,8 @@ int main(int argc, char **argv)
 	clock_gettime(CLOCK_MONOTONIC, &t1);
 	secs = (double)(t1.tv_sec - t0.tv_sec) + (double)(t1.tv_nsec - t0.tv_nsec) / 1e9;
 	mib = (double)g_bytes / (1024.0 * 1024.0);
-	printf("ram-stage: staged %s -> %s (%lu files, %.2f MiB) in %.3f s (%.2f MiB/s)\n",
-	       src, dst, g_files, mib, secs, (secs > 0.0) ? (mib / secs) : 0.0);
+	printf("ram-stage: ===== DONE creating RAM disk: %lu files, %.2f MiB in %.3f s (%.2f MiB/s) — launching game =====\n",
+	       g_files, mib, secs, (secs > 0.0) ? (mib / secs) : 0.0);
 
 	if (exec_ram) {
 		const char *base = strrchr(exe, '/');
