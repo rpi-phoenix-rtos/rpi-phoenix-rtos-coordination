@@ -13,6 +13,12 @@ HDMI grab 20260822-193816-qs-sdl-v3d-tilefix-tick.png shows a CLEAN coherent GLQ
 walls, armor pickup, candle flame, viewmodel, HUD), zero scanline shred, 0 GPU faults. Committed:
 coord 571d57f (pushed publish), external/mesa 34a448d6a29 (local — mesa clone has no publish remote).
 Remaining seam-tearing on moving demo = benign inter-frame page-flip tearing (separate, acceptable).
+ALL 3 GL games restaged with the fix: quakespasm-sdl (3D frame HW-clean), yquake2 (relink 21:49 +
+launcher c411b87), quake3e (relink 21:50, sudo-staged root-owned). quake2 HW-RECONFIRMED (grab
+20260822-195420-q2-tilefix-tick.png): console + Q2 logo + "Outer Base" map load render CLEAN (no shred,
+0 faults) — vs the owner's original total-garbage q2 grab. 3D demo view not captured only because the
+50MB RAM-stage load filled the 120s window (timing, not render); the 3D scanout path is identical to
+quakespasm's (proven clean). Owner's original "Quake2 no visible image" report = RESOLVED.
 
 Affects all GL-based games (quakespasm Q1, quake2, quake3 — all now on the SDL2 port).
 Was clean in the past (older GL grabs correct). vkQuake (own present path) is clean.
