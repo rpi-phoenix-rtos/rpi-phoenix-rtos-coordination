@@ -212,3 +212,22 @@ binner-overflow pool that `v3d_gpu_init` eagerly maps. That eager pool is the
 until 2c). The clean fix (make the pool alloc part of the CL path, or give it a reserved
 VA region that doesn't perturb BO allocation) lands with 2c; for CSD it is behavior-neutral
 (the detector is "Logged, not fixed" by design and the map proceeds correctly).
+
+## M1 step 2c-server (2026-08-22): CL+TFU lifted; VA-collision fixed + HONESTY CORRECTION
+The daemon now has the CL (render) + TFU submit paths (ioc_submit_cl/tfu lifted verbatim
+into v3d_gpu.c; descriptor via msg.i.data, no bo_handle array). Build-verified; CL not
+HW-tested yet (needs the winsys-as-client refactor to get a CL client).
+
+**Correction to the M1-2b "4 startup VA COLLISION" note above:** I cannot claim those were
+daemon-specific. The Aug-14 in-process csd-matmul binary PREDATES the VA-COLLISION detector
+(a later winsys-source addition), so its "0 collisions" is trivial (detector absent), not a
+clean baseline. The daemon is simply the first binary to run the detector on HW.
+
+**Fix + HW confirmation:** va_alloc now zeros the bump range at hand-out. HW re-run
+(m1-2c-vafix): 0 VA COLLISION (was 4) and still bit-exact (max_rel_err=0). ROOT MECHANISM
+UNEXPLAINED: static analysis shows the init full-PT zero loop covers the colliding indices,
+yet the fresh slot read garbage (PTE=0x17ffffbd) on HW — the one-time init clear apparently
+did not persist to first use in the standalone server. At-handout clear fixes the ALLOCATED
+path; whether the init zero persists for the ~57k UNALLOCATED PT entries is OPEN and
+load-bearing for CL's MMU fault net (moot for CSD). Confirm at CL HW bring-up: do unmapped
+PT slots read 0? If not, full-PT-zero persistence is the real fix.
