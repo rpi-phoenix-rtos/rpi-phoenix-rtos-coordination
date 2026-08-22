@@ -78,6 +78,16 @@ two version pins are `scripts/build-phoenix-toolchain-linux.sh` (builds gcc-14.2
   tag, attach the built image artifact / release notes, update the org README to state the release is
   gcc-16.2.0-based.
 
+## Follow-up: extend the distfiles cache to the other X ports
+The persistent distfiles cache + artfiles mirror was added to `xorg_libs` (the acute 24-lib
+re-downloader). `xorg_fonts` and `xorg_server` have their OWN `_fetch_extract` (no cache) pulling from
+mixed sources (sourceforge freetype/libpng, x.org libfontenc/libXfont2/libXft, freedesktop fontconfig,
+cairographics, github expat, ijg jpeg) — so a clean build re-downloads those. Owner's general cache
+ask applies: add the same cache-check-then-mirror pattern (or a shared helper) to `xorg_fonts` +
+`xorg_server`. Non-urgent (fewer libs each; several tarballs are committed in-dir; x.org is currently
+up), but do it for a fully offline-reproducible clean build. Ideal end state: one shared distfiles
+cache used by all ports (framework-level fetch hook).
+
 ## Rollback
 Keep gcc-14 `.toolchain/` (rename, don't delete) + a gcc-14 tag/manifest until the gcc-16 release is
 HW-signed-off. Any regression → restore gcc-14 `.toolchain` + rebuild.
