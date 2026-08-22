@@ -59,7 +59,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # linux-host.sh calls `sudo apt-get`, so it must exist; bootstrap installs the full
 # apt set itself.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends git ca-certificates sudo wget curl xz-utils unzip lhasa p7zip-full \
+ && apt-get install -y --no-install-recommends git ca-certificates sudo wget curl xz-utils unzip lhasa 7zip \
  && rm -rf /var/lib/apt/lists/*
 
 # 1. Clone the coordination repo (carries every build script, incl. bootstrap).
