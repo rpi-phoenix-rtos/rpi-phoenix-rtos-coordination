@@ -52,6 +52,12 @@
 #define MMU_CTL_TLB_CLEARING (1u<<7)   /* set while the TLB clear is in progress */
 #define MMU_ILLEGAL_ADDR    0x1230u
 #define MMU_ILLEGAL_ENABLE  (1u<<31)
+/* The REAL MMU fault-report regs (distinct from MMU_ILLEGAL_ADDR, which is the scratch-page
+ * REDIRECT config we program in apply_core_regs — reading it back just echoes scratch_pa>>12).
+ * On a page fault the HW latches the faulting VA (as VA>>8, so bytes = value<<8) in VIO_ADDR
+ * and the faulting AXI client id in VIO_ID's low byte (cf. Linux v3d_irq.c). */
+#define MMU_VIO_ADDR        0x1234u
+#define MMU_VIO_ID          0x122cu
 #define PTE_W               (1u<<29)
 #define PTE_V               (1u<<28)
 #define PAGE_SHIFT          12u
@@ -1054,6 +1060,14 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
 				static int bdbg = 0;
 				if (bdbg++ < 3) {
 					uint32_t ca0 = c0[0x0110/4];
+					/* The REAL fault: VIO_ADDR is VA>>8 → bytes = <<8. Map it to the owning BO
+					 * (texture? CL? tile-alloc? or NO BO = unmapped VA / stale PTE). */
+					uint32_t vio = W.hub[MMU_VIO_ADDR/4];
+					uint32_t fva = vio << 8;
+					fprintf(stderr, "v3d-winsys: BIN MMU-VIO vio_addr=0x%08x fault_va=0x%08x "
+						"vio_id=0x%08x (mmu_ill printed above = scratch-cfg, NOT the fault)\n",
+						vio, fva, W.hub[MMU_VIO_ID/4]);
+					gpuva_describe("BINFAULT", fva);
 					gpuva_describe("BCLSTART", s->bcl_start);
 					gpuva_describe("BINCA", ca0 & ~0xfu);
 					uint32_t bw = (s->bcl_end - s->bcl_start + 3u) / 4u;
@@ -1143,6 +1157,21 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
 			fprintf(stderr, "v3d-winsys: RENDER DBG fdbgo=0x%08x fdbgs=0x%08x errstat=0x%08x "
 				"wedge_op=0x%02x(%s)\n",
 				c0[0x0f04/4], c0[0x0f10/4], c0[0x0f20/4], op, opn);
+		}
+		/* The REAL fault (VIO_ADDR = VA>>8) + which BO owns it — the definitive signal for
+		 * the intermittent q3dm7 wedge (texture VA-recycle vs render-CL/tile-alloc vs unmapped). */
+		{
+			static int rdbg = 0;
+			if (rdbg++ < 3) {
+				uint32_t vio = W.hub[MMU_VIO_ADDR/4];
+				uint32_t fva = vio << 8;
+				fprintf(stderr, "v3d-winsys: RENDER MMU-VIO vio_addr=0x%08x fault_va=0x%08x "
+					"vio_id=0x%08x (mmu_ill above = scratch-cfg, NOT the fault)\n",
+					vio, fva, W.hub[MMU_VIO_ID/4]);
+				gpuva_describe("RENDERFAULT", fva);
+				gpuva_describe("RCLSTART", s->rcl_start);
+				gpuva_describe("RENDERCA", ca1 & ~0xfu);
+			}
 		}
 		/* re-read CT1CA to see if it is advancing (slow) or wedged (stall) */
 		(void)ca1;
