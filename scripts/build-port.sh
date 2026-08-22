@@ -87,7 +87,7 @@ CC=${CROSS}gcc
 AS=${CROSS}as
 LD=${CROSS}ld
 AR=${CROSS}ar
-MAKEFLAGS="--no-print-directory -j 9"
+MAKEFLAGS="--no-print-directory -j $(nproc)"
 
 EXPORT_CFLAGS="$(make -f phoenix-rtos-build/Makefile.common export-cflags)"
 EXPORT_CXXFLAGS="$(make -f phoenix-rtos-build/Makefile.common export-cxxflags)"

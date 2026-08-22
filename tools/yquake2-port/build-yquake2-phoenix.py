@@ -25,6 +25,7 @@ tools/yquake2-port ARE committed.
 Usage: python3 tools/yquake2-port/build-yquake2-phoenix.py
 """
 import os, subprocess, sys
+import concurrent.futures
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 TC   = f"{ROOT}/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-gcc"
@@ -216,12 +217,18 @@ def main():
     groups = [(CLIENT, SRC, CFLAGS), (CLIENT_SDL, SRC, CFLAGS), (GENERIC, SRC, CFLAGS),
               (UNIX_KEEP, SRC, CFLAGS), (GAME, SRC, CFLAGS), (GL1, SRC, GL1_CFLAGS),
               (PHOENIX, PLAT, CFLAGS)]
-    for units, base, flags in groups:
-        for u in units:
-            src = f"{base}/{u}.c"
-            if not os.path.exists(src):
-                fail.append((u, "MISSING SOURCE")); continue
-            obj, err = compile_one(u, src, flags)
+    # Flatten the groups into one work list, then compile across all cores: each
+    # unit is an independent gcc subprocess (these bypass MAKEFLAGS, so parallelism
+    # must be explicit). ex.map preserves order -> deterministic archive.
+    work = [(u, f"{base}/{u}.c", flags) for units, base, flags in groups for u in units]
+    def _one(w):
+        u, src, flags = w
+        if not os.path.exists(src):
+            return (u, None, "MISSING SOURCE")
+        obj, err = compile_one(u, src, flags)
+        return (u, obj, err)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, os.cpu_count() or 1)) as _ex:
+        for u, obj, err in _ex.map(_one, work):
             (objs.append(obj) if obj else fail.append((u, err)))
 
     # SDL2 GL-context glue (winsys bridge) — Mesa flags, from sources/.
