@@ -100,6 +100,24 @@ Sources to pin (verify redistribution terms first, like Q1's shareware): Quake I
 `fetch-quake-data.sh` covering all three so SD + Docker + netboot builds share one path. Licensing:
 demo/shareware data only — no full retail paks in the public build.
 
+## Follow-up: C++23 `import std` module (libstdc++ std.gcm) — owner request
+The gcc-16.2.0 toolchain build installs fine and classic C++ works (libstdc++.a; verified with a
+std::vector test → static aarch64 ELF), but the **C++23 std module** fails to build:
+`Cannot compile std module … failed to read compiled module 'gcm.cache/std.gcm' … imports must be
+built before being imported` (then std.compat). Harmless today (Phoenix ports use classic
+`#include`, not `import std;`), but the owner wants it working for future modern-C++ ports. LEAD: the
+error is a build-ORDERING one (std.compat imported std before std.gcm existed) — quite possibly a
+parallel-build race exposed by the `-j$(nproc)` bump (the old -j9 may have serialized it). Check
+whether the libstdc++ modules build declares the std→std.compat dependency, whether building the std
+module needs `-j1`/an explicit order, or a libstdc++ patch; verify with `import std;` compiling to a
+static aarch64 ELF. Not on the release critical path (classic C++ is what the release needs).
+
+## Disk hygiene note
+Toolchains are large (.toolchain gcc-14 5.8G, .toolchain-gcc16 binutils-2.43 8.6G,
+.toolchain-gcc16-247 ~0.3G after removing its 6.7G _build scratch). Once .toolchain-gcc16-247 is
+promoted/validated, **.toolchain-gcc16 (binutils-2.43) is superseded and removable** (frees ~8.6G).
+Keep .toolchain (gcc-14) as the promotion rollback until the gcc-16 release is HW-signed-off.
+
 ## Rollback
 Keep gcc-14 `.toolchain/` (rename, don't delete) + a gcc-14 tag/manifest until the gcc-16 release is
 HW-signed-off. Any regression → restore gcc-14 `.toolchain` + rebuild.
