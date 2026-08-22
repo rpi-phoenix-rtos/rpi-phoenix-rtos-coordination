@@ -23,6 +23,7 @@ few passes (the real closure, not a speculative bulk compile).
 Usage:  python3 build-v3d-phoenix.py [--compile-only]
 """
 import json, os, shlex, subprocess, sys
+import concurrent.futures
 from pathlib import Path
 
 # Repo root derived from this script's own location (portable across checkouts).
@@ -128,6 +129,7 @@ def build_objs(entries, srcs_outs, objdir, label):
     os.makedirs(objdir, exist_ok=True)
     incr = os.environ.get("INCR") == "1"
     ok, fails, skipped = [], [], 0
+    cached, todo = set(), []
     for entry, src, out in srcs_outs:
         # INCR skip: reuse a cached .o at least as new as its .c. `src` may be a relative path
         # (gallium compile_commands entries) that doesn't resolve from this cwd; resolve it against
@@ -137,12 +139,29 @@ def build_objs(entries, srcs_outs, objdir, label):
             try:
                 s = src if os.path.exists(src) else os.path.join(HOSTBUILD, src)
                 if os.path.getmtime(out) >= os.path.getmtime(s):
-                    ok.append(out)
+                    cached.add(out)
                     skipped += 1
                     continue
             except OSError:
                 pass
-        rc, err, cmd = compile_one(entry, src, out)
+        todo.append((entry, src, out))
+    # Parallel compile: each compile_one() is an independent gcc subprocess writing a distinct .o,
+    # so a thread pool of cpu_count() workers uses ALL cores (the GIL doesn't block subprocess I/O).
+    # Previously this loop ran one gcc at a time — the slow part of a ~400-object libv3d build.
+    results = {}
+    if todo:
+        workers = max(1, os.cpu_count() or 1)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
+            futs = {ex.submit(compile_one, e, s, o): o for (e, s, o) in todo}
+            for fut in concurrent.futures.as_completed(futs):
+                results[futs[fut]] = fut.result()   # (rc, err, cmd)
+    # Assemble ok/fails in the ORIGINAL srcs_outs order — deterministic archive member order
+    # (bit-reproducible builds) regardless of parallel completion order.
+    for entry, src, out in srcs_outs:
+        if out in cached:
+            ok.append(out)
+            continue
+        rc, err, cmd = results[out]
         if rc == 0:
             ok.append(out)
         else:
