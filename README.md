@@ -56,7 +56,12 @@ The whole build is also packaged as a **single, self-contained Dockerfile**. It
 works on any machine with a Docker CLI (Linux/macOS/Windows) regardless of host
 OS or installed packages — the entire toolchain runs inside a container we fully
 control. Nothing is copied from the host: every source tree, Ubuntu package, font,
-and the Quake **shareware** game data is fetched over the network.
+and the freely-downloadable id Software game data (Quake I shareware + the Quake II
+and Quake III demos) is fetched over the network at build time and baked into the
+image *you* build — this repo distributes only the build scripts, never a built image.
+
+Requires a Docker CLI with **BuildKit/buildx** (Docker Desktop bundles it; on a
+minimal Linux docker.io install run `sudo apt-get install docker-buildx`).
 
 ```bash
 mkdir -p out
@@ -69,9 +74,10 @@ docker run --rm -v "$PWD/out":/out phoenix-rpi
 ```
 
 Useful `--build-arg`s (see the header of [`Dockerfile`](Dockerfile)): `UBUNTU_TAG`
-(base LTS, default `26.04` — the validated build host), `PAK0_URL` (a Quake shareware
-`pak0.pak` mirror for playable GLQuake demos; omitted = engine built without game
-data), `BUILD_VARIANT` (`sd`/`nfsroot`/`netboot`), `BUILD_FLAGS` (default
+(base LTS, default `26.04` — the validated build host), `PAK0_URL` / `PAK0Q2_URL` /
+`PAK0Q3_URL` (Quake I/II/III game-data URLs, each defaulting to a verified upstream
+demo/shareware mirror; set one to `""` to build that engine without bundled data),
+`BUILD_VARIANT` (`sd`/`nfsroot`/`netboot`), `BUILD_FLAGS` (default
 `--with-showcase --with-ports`; use `""` for a base image).
 
 > **Building from a local checkout (before this port is on public GitHub):** the

@@ -102,11 +102,15 @@ build. All paths tested against the real installers. REMAINING (small): wire fet
 the SD/netboot build flow too (SD/netboot overlay Q2/Q3 paks are still hand-staged; the Docker release
 path is complete).
 
-## G3 blocker note (2026-08-23): host Docker buildx broken
-`docker build` fails with "BuildKit is enabled but the buildx component is missing or broken." G3.2
-(the authoritative `--no-cache` Docker release build) needs buildx installed on the host first
-(`apt-get install docker-buildx-plugin`, or `DOCKER_BUILDKIT=0` for the legacy builder). Resolve
-before running the release-gate Docker build.
+## G3 buildx blocker — ✅ RESOLVED (2026-08-23)
+Installed `docker-buildx` 0.30.1 (`sudo apt-get install docker-buildx`; the Ubuntu 26.04 package —
+note it's `docker-buildx`, NOT `docker-buildx-plugin`). `sudo docker buildx version` works; the release
+script build-sd-in-docker.sh already defaults `DOCKER="sudo docker"` so the socket-permission side is
+handled (host user is not in the docker group, but sudo is passwordless). Validated the release
+Dockerfile under BuildKit: `sudo docker buildx build --check -f Dockerfile .` → "Check complete, no
+warnings found" (my Q2/Q3 ARGs + 7zip + fetch-quake-data calls all parse; ubuntu:26.04 pulls). ⇒ G3.2
+is launch-ready — run it AFTER the gcc-16 build + boot-verify (don't compete for CPU/RAM now). README
+now documents the buildx prerequisite.
 
 ## Follow-up: C++23 `import std` module (libstdc++ std.gcm) — owner request
 The gcc-16.2.0 toolchain build installs fine and classic C++ works (libstdc++.a; verified with a
