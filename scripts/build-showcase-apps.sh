@@ -459,7 +459,10 @@ phase_stage() {
 		# X11 lib stack first (provides zlib/png/jpeg + the X client libs).
 		run_step "X11 lib stack" "${X11}/build-x11-phoenix.sh"
 		run_step "port lib: glib2" "${PORTS}/build-glib2.sh"
-		run_step "port lib: fltk"  "${PORTS}/build-fltk.sh"
+		# fltk removed (#7 2026-08-22): dillo — its only consumer — is now a framework
+		# port (ports.yaml if:true) and pulls fltk transitively via depends=. The ad-hoc
+		# X11 lib stack + glib2 stay: the small ad-hoc X apps (xedit/xcalc/...) and mc
+		# still need the /tmp/x11-phoenix prefix + ad-hoc glib2.
 	else
 		warn "--skip-x11: skipping X11 libs + fltk (dillo/X apps will be skipped)"
 		# glib2 needs zlib from the X11 prefix; without X11 it may fail — attempt
@@ -470,21 +473,24 @@ phase_stage() {
 	# --- userland ports (soft) ---
 	run_step_soft "port app: nano" "${PORTS}/build-nano.sh"
 	run_step_soft "port app: mc"   "${PORTS}/build-mc.sh"
-	if [ "$skip_x11" = 0 ]; then
-		run_step_soft "port app: dillo" "${PORTS}/build-dillo.sh"
-	fi
+	# dillo removed (#7 2026-08-22): now a framework port (ports.yaml if:true) — the
+	# ports stage builds + stages /bin/dillo into the rootfs.
 
 	# --- X11 server + apps (soft) ---
+	# #7 2026-08-22: the Xphoenix server, xterm and WindowMaker are now framework ports
+	# (ports.yaml if:true); the ports stage builds + stages them into the rootfs
+	# (Xphoenix -> /usr/bin, xterm/wmaker -> /bin), so their ad-hoc steps are removed
+	# here. The small X apps below (xedit/xcalc/xclock/xlogo/xbill) + the xlaunch
+	# supervisor are NOT framework ports yet, so they stay ad-hoc — they self-build the
+	# /tmp/x11-phoenix lib prefix (build-x11-phoenix.sh above). NOTE: framework Xphoenix
+	# lands at /usr/bin/Xphoenix (b_install) not /bin — launch with that path.
 	if [ "$skip_x11" = 0 ]; then
-		run_step_soft "X11: Xphoenix server" "${X11}/build-xfbdev.sh"
 		run_step_soft "X11: xlaunch/startx"  "${X11}/build-xlaunch.sh"
-		run_step_soft "X11: xterm"           "${X11}/build-xterm.sh"
 		run_step_soft "X11: xedit"           "${X11}/build-xedit.sh"
 		run_step_soft "X11: xcalc"           "${X11}/build-xcalc.sh"
 		run_step_soft "X11: xclock"          "${X11}/build-xclock.sh"
 		run_step_soft "X11: xlogo"           "${X11}/build-xlogo.sh"
 		run_step_soft "X11: xbill"           "${X11}/build-xbill.sh"
-		run_step_soft "X11: WindowMaker"     "${X11}/build-wmaker.sh"
 	fi
 
 	if [ "${#soft_failures[@]}" -gt 0 ]; then
