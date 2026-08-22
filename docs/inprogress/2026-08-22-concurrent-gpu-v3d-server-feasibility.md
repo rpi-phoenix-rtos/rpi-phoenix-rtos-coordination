@@ -291,3 +291,29 @@ handles the wedge that goes global under multi-client; the wedge root-cause rema
 open q3dm7 item. ⇒ **First real windowed app through the daemon. NEXT M3b:** glamor-X + a GPU game
 (GLQuake/gl-smoke) CONCURRENT through the daemon = the E5 single-GPU-process limit LIFTED (+ a
 display-ownership story: X owns /dev/fb0; the game renders offscreen/windowed or they alternate).
+
+## M3b — HW result (2026-08-22): ★★★ TWO REAL GPU APPS CONCURRENT THROUGH THE DAEMON — E5 LIMIT LIFTED
+The payoff. glamor GPU-accelerated X (Xphoenix-glamor-daemon, presents to /dev/fb0) + a GPU
+compute client (csd-matmul-daemon) launched SIMULTANEOUSLY through the one v3d-server, so X's
+startup render-CL burst interleaves with csd's 100 CSD dispatches at the daemon (the M0 scenario).
+HW (netboot, `bash /gpu-m3b-concurrent.sh`):
+- csd: **max_rel_err=0.000e+00, PASS**, 13.1 ms/matmul; **CSD TIMEOUT=0, FAIL=0**.
+- X: `glamor GL up 2.1 / V3D 4.2`, initialised, **8× CL submit rc=0**, **xeyes rendered to HDMI
+  right-side-up and still visible during the concurrent compute**.
+- 0 corruption, 0 fault (clean run — no binner wedge this time; the wedge is intermittent and the
+  daemon recovers it when it hits, as M3a showed).
+
+⇒ **The E5 single-GPU-process constraint ("X as sole GPU owner; no concurrent GLQuake until a
+v3d-server time-slicer") is LIFTED for the general case: two real, independent GPU clients coexist
+through the daemon's message-port serialization, both correct, no corruption.** The v3d-server
+Option-A design is fully realized and HW-proven end to end:
+  design → M0 (conflict confirmed) → M1 (1 client: BO+CSD+CL+TFU bit-exact) → M2 (2 clients
+  serialized bit-exact) → M3a (glamor-X as daemon client, xeyes to HDMI) → M3b (glamor-X + GPU
+  compute concurrent, both correct).
+
+### Remaining stretch (M3c, separate/bigger — a DISPLAY problem, not a GPU-arbitration one)
+The GPU-arbitration problem is SOLVED. A full "X desktop + a windowed GLQuake both on screen"
+needs DISPLAY COMPOSITING (the game rendering into an X window via GL-in-a-window / the windowed-
+GL-under-X path), which is orthogonal to the daemon (both would be daemon clients; the new work is
+X window-manager + the game targeting a window surface instead of /dev/fb0). That is a follow-on X
+feature, not a concurrent-GPU gap. The daemon makes it POSSIBLE where E5 said it wasn't.
