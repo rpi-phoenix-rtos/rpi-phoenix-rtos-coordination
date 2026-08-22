@@ -231,3 +231,27 @@ did not persist to first use in the standalone server. At-handout clear fixes th
 path; whether the init zero persists for the ~57k UNALLOCATED PT entries is OPEN and
 load-bearing for CL's MMU fault net (moot for CSD). Confirm at CL HW bring-up: do unmapped
 PT slots read 0? If not, full-PT-zero persistence is the real fix.
+
+## M1 step 2c-test — HW result (2026-08-22): GL RENDER (CL) THROUGH THE DAEMON, BIT-EXACT — M1 COMPLETE
+A Mesa OpenGL glClear-to-green (gl_frontend_smoke: surfaceless FBO + glReadPixels = a real
+render-CL) ran as a daemon CLIENT — the Mesa GL stack linked against libv3d-client instead of
+the in-process winsys. HW (netboot, `bash /gpu-gl-smoke-daemon.sh`):
+- `rpi4-v3d: CL submit #1 done bcl=0x02143000.. rcl=0x02148000.. rc=0` (SUBMIT_CL carried a real
+  bin+render CL to the daemon and executed it).
+- `gl: GLCLEAR readback center=0xff00ff00 (expect 0xff00ff00)` + `GLCLEAR-DONE` — BIT-EXACT, 0 faults.
+Cross-process render-target readback via MMAP_BO→MAP_PHYSMEM proven (render output, not just CSD).
+
+**The seam is a literal one-symbol swap:** the Mesa/gallium archives reference EXACTLY
+`phoenix_v3d_ioctl` from the winsys; all 32 scanout/present/power exports are referenced only by
+external present-layer .c, never the libraries. Daemon-client link = libv3d-phoenix.a −
+{winsys.o,power.o} + libv3d-client.a; libv3d-client.c unchanged (empty undefined set, surfaceless).
+For M3, glamor-X present + windowed GLQuake WILL reference the scanout/present family → wire those
+into libv3d-client (loud-abort for surfaceless-invalid; powerOn→no-op since the daemon owns power).
+
+**PT-persistence question (opened at 2c-server) RESOLVED:** the startup PT-PROBE logged 4
+unallocated slots all = 0 → the init full-PT zero persists on HW; the fault net is intact. (The 2b
+"garbage" anomaly is robustly masked by the at-handout va_alloc clear regardless.)
+
+⇒ **M1 COMPLETE + HW-PROVEN (daemon + 1 client, all submit types): BO + CSD (bit-exact) + CL
+(bit-exact) + TFU.** Next = M2 (2 clients serialized, vs the M0 concurrent-corruption baseline),
+then M3 (glamor-X + GLQuake concurrent = the payoff).
