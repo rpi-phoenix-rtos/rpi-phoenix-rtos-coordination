@@ -33,9 +33,19 @@ two version pins are `scripts/build-phoenix-toolchain-linux.sh` (builds gcc-14.2
   Boot + HW-verify a game. [after G2.2]
 
 ### G2 — align toolchain + scripts to gcc-16 (the promotion)
-- **G2.1** Bump `scripts/build-phoenix-toolchain-linux.sh` to build **gcc-16.2.0** (+ the binutils it
-  needs; match exactly how `.toolchain-gcc16/` was built). This makes a fresh clone/bootstrap produce
-  gcc-16. Verify a from-scratch toolchain build succeeds.
+- **G2.1** Bump the toolchain version pins to **gcc-16.2.0 + binutils-2.47** (latest, owner request —
+  was gcc-14.2.0 + binutils-2.43). The pins live in the upstream helper
+  `sources/phoenix-rtos-build/toolchain/build-toolchain.sh:65-66` (`BINUTILS=` / `GCC=`);
+  `scripts/build-phoenix-toolchain-linux.sh` is just the wrapper that invokes it. READY: the
+  gcc-16.2.0 Phoenix patches exist (toolchain/gcc-16.2.0-*.patch, 4 aarch64 ones) and the
+  binutils-2.47 aarch64-phoenix patch is staged + verified-clean (toolchain/binutils-2.47-04-aarch64-phoenix.patch,
+  sibling 96f5697); both tarballs are on the mirrorservice.org GNU mirror as .tar.bz2/.tar.xz (the
+  formats the script fetches) — so no download-URL change needed. The script globs
+  `binutils-${VER}-*.patch` / `gcc-${VER}-*.patch`, so only the aarch64 subset applies (same as the
+  gcc-16 pattern; i386/sparc/arm binutils patches unported — not needed for aarch64-phoenix). STEP:
+  edit lines 65-66, do a from-scratch toolchain build, verify `aarch64-phoenix-gcc --version`=16.2.0 +
+  `aarch64-phoenix-ld --version`=2.47 + a test compile + a full Phoenix build boot. Multi-hour — run
+  AFTER the current full gcc-16 build finishes (CPU) and commit the version bump only once verified.
 - **G2.2** PROMOTE: replace the default `.toolchain/` with gcc-16 (rebuild via G2.1, or atomically
   swap in `.toolchain-gcc16`). HIGH-BLAST-RADIUS — before: tag + manifest the gcc-14 state; after:
   full rebuild + boot-verify before treating as default. Owner-authorized (this directive).
