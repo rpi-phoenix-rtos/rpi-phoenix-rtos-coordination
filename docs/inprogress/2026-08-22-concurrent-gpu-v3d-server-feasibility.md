@@ -158,3 +158,29 @@ Two parts, one Pi cycle each, both autonomously runnable:
 **(b) 2-process abort discriminator.** Add temporary prints to `v3d_phoenix_winsys.c`: in `apply_core_regs()` log `"v3d dbg: apply_core_regs pid=%d writing MMU_PT_PA_BASE=0x%x (was 0x%x)"` (read-back the old value first), and at the top of `ioc_submit_cl()` log `pid` + the live `MMU_PT_PA_BASE`. Launch the glamor X server (GPU owner), then at the psh prompt launch a second minimal GL client (a `gl_frontend_smoke`-style clear). **Capture:** full UART (`--capture-secs 240`, Bash `timeout 420000`) + HDMI ticks; run under `test-cycle-bench.sh` for ~3 trials (the wedge/abort may be intermittent). **Read out with `uart-summary.sh`.** **Determines:** whether the fault coincides with (a) the 2nd process's `powerOn`, (b) `MMU_PT_PA_BASE` changing under the first process, or (c) the first process's next submit through the stolen base — plus the abort PC / SError ESR. That fixes which of the §1.2 conflicts fires first and sizes the minimal daemon arbitration.
 
 *(Analysis-only task: neither experiment was run.)*
+
+---
+
+## M0 — HW result (2026-08-22): concurrent conflict CONFIRMED + characterized
+
+Reproduced with two existing compute probes (no relink needed) via a script on the
+netboot export (`csd-matmul & csd-probe`; an inline `bash -c '...'` failed on psh
+single-quote parsing, so a script file `bash /gpu-2proc.sh` was used):
+
+- **Sequential (gap between them): WORKS.** csd-matmul then csd-probe each init →
+  run → tear down cleanly; powerOn is idempotent; csd-probe returns rc=0 with correct
+  output. So the limit is **single *concurrent* GPU process**, not "one ever" — the
+  in-process winsys is fine as long as only one process touches the GPU at a time.
+- **Concurrent (true overlap): BROKEN — silent corruption, not a clean abort.** With
+  both processes GPU-live simultaneously (UART output interleaves): csd-probe STEP2/
+  STEP3 FAIL (out `0xeeeeeeee`/garbage vs expected `0xC0DE1234`/0..7) + a **CSD
+  TIMEOUT**; csd-matmul runs **42× slower** (504 vs 11.8 ms/matmul) and numeric-FAILs
+  (wrong results). Both processes clobber each other's single global `MMU_PT_PA_BASE`
+  + interfere on the shared CT/submit registers → each reads/writes the wrong GPU
+  memory. Evidence: `artifacts/rpi4b-uart/*-gpu-2proc-m0d.log`.
+
+**Implication for M1 (the v3d-server):** the failure is *insidious* (data corruption
++ timeout, NOT a clean EL1 abort in this compute-only case), so the daemon must
+**serialize every submit** (and own power+PT+VA) — a design that only catches a clean
+abort/reset would silently corrupt results. This HW result validates Option A's core
+requirement (one owner, serialized submits). M0 is complete; M1 is the multi-week build.
