@@ -29,9 +29,18 @@ The archway torches render now, but the start-map fire pits' flames are absent. 
 flame is a DIFFERENT effect than the torch flame model — likely a particle effect / different
 sprite/model or a `flame2`/lava-pit entity. d3e329c fixed opaque alias models (alpha=1); the
 fire-pit flame probably uses a separate path (particle system, additive sprite, or a
-different-flagged model) that still renders invisible/absent. NEXT: identify the start-map
-fire-pit entity + its render path in external/vkquake (r_part / r_sprite / r_alias) and what
-differs from the now-fixed torch alias path.
+different-flagged model) that still renders invisible/absent.
+- 2026-08-22 no-Pi narrowing: the fire-pit/brazier flame is almost certainly `progs/flame2.mdl`
+  (the large flame), an ALIAS model like the torch's `progs/flame.mdl`. Both get the IDENTICAL
+  model-load handling — `MOD_FBRIGHTHACK` (fullbright) at gl_model.c:3789, both in the special
+  model list at gl_rmain.c:95. So the difference is NOT at model load (d3e329c fixed the
+  opaque-alias-alpha=0 case for both). Remaining candidates (need Pi repro): (i) flame2 entities
+  not spawning at that spot; (ii) flame2-specific alias model-data/frame issue on V3DV (flame2 has
+  more/larger frames than flame); (iii) a different blend path — large fires are often drawn
+  ADDITIVE/translucent, a separate V3DV path than the opaque torch. Alt: the pit fire is PARTICLE
+  fire (pt_fire, r_part.c) — a wholly different render path. PI-REPRO: at the start-map pit, check
+  `r_drawentities`/`impulse`/console for flame2 entities + frame-dump to tell alias-vs-particle;
+  compare the flame vs flame2 draw call (blend/alpha) in gl_rmain/r_alias on V3DV.
 
 ### 2b. Lighting wrong at some spots (dark / unnatural / flicker)
 Some walls/floors constantly dark or unnaturally lit; some places light flickers strangely.
@@ -89,10 +98,59 @@ Log: artifacts/rpi4b-uart/20260822-222349-live-test.log.
   make the USB/xHCI driver do a FULL controller reset (or the boot daemon BRIDGE-only init per the
   memory) so a warm reboot re-enumerates cleanly. Decode xhci completion code 36/19 exactly.
 
-## Priority (my read; owner may reorder)
-Owner explicitly asked for Q1 analysis+fix first. Ordering:
-1. **Q1 box textures** (owner's headline ask; likely a small-NPOT UIF tiling fix, tractable).
-2. **vkQuake 2c crash** (a crash is worse than a cosmetic gap; possible libphoenix stdio
-   thread-safety fix with broad benefit).
-3. **USB-after-reboot** (intermittent; workaround = power-cycle; real fix = warm-reboot controller reset).
-4. **vkQuake 2a fire pits + 2b lighting** (cosmetic; V3DV render-path digs).
+## Round 3 (2026-08-22, owner tested Q2 + Q3 — both playable)
+### 4. Q2 VIDEO-setting change freezes the screen (renderer restart doesn't re-acquire fb) — ✅ FIX IMPLEMENTED
+Changing any VIDEO menu setting → yquake2 vid_restart → screen freezes on the last frame
+(game still live over UART; could console-quit; a fresh process — starting Q3 — recovered the fb).
+ROOT: SDL DeleteContext keeps the Mesa context alive for the process (destroying it wedges), then
+CreateContext re-runs phxgl_init → builds a SECOND context + new scanout FBOs, but the winsys
+scanout is still claimed by the first context's BOs → the new FBOs can't alias /dev/fb0 → render
+off-screen → frozen. FIX: phxgl_init now idempotent — reuses the existing context + scanout FBOs on
+re-init (Phoenix fb is fixed-size). Committed phoenix-rtos-ports 6f0481f. PENDING Pi validation
+(rebuild yquake2 + restage + change a video setting + confirm fb recovers).
+
+### 5. Q2 loads models/resources MUCH slower than Q1/Q3
+Q2 asset load is very slow vs Q1/Q3. Q2 RAM-stages ~50 MB → /tmp first (the launcher), which Q1
+doesn't need and Q3's data is smaller. HYPOTHESES: (a) the RAM-stage copy itself (50 MB over NFS
+→ tmpfs) dominates; (b) Q2's GL1 renderer uploads many small textures one-by-one (per-texture
+glTexImage2D + mipmap gen on V3D is slow); (c) NFS read pattern. NO-Pi NEXT: time the RAM-stage vs
+the in-engine load separately (the launcher logs; add timing). PI: compare load phases. Likely (b)
+texture-upload-bound — a batching/mipmap optimization, or expected for GL1. Low priority (cosmetic).
+
+### 6. Q3 CRASH after playing a while — Mesa u_vbuf NULL-deref (GL driver bug)
+Log: artifacts/rpi4b-uart/20260822-222549-live-test.log. Crashed mid-combat ("melted by plasmagun").
+Data Abort EL0, far=0x3a0, thread 57, SIGSEGV. addr2line + disasm (/tmp/quake3e-phoenix, not
+stripped): fault in **Mesa gallium `u_vbuf_translate_begin` (util/u_vbuf.c)** at
+`ldr x5,[x22,#928]; blr x5` with **x22=NULL** — an indirect call through a NULL object at offset
+0x3a0 (`obj->hook_0x3a0(obj, ...)`, obj passed as arg0). So u_vbuf's vertex-format-translation path
+dereferences a NULL context/manager/translate object, hit when combat geometry (plasma/gibs/effects)
+uses a vertex format the V3D HW can't consume directly so u_vbuf kicks in. This is a libv3d/Mesa GL
+driver bug (could affect any GL game on that format), NOT a quake3 bug. Also present: quake3e VM JIT
+warnings (bad opStack, mprotect-RX-failed→RWX mmap) — known Phoenix JIT quirks, likely unrelated.
+NO-Pi NEXT: identify the struct + which hook is at +0x3a0 (count u_vbuf's translate calls: is x22 the
+u_vbuf_mgr, its pipe_context, or a translate_context?) and why it's NULL on this path — likely a V3D
+driver capability the translate manager assumes but that's unset/NULL. PI-REPRO: quake3e frame-dump/
+gdb at a plasma-effect scene; or force the vertex format via a test. Deep Mesa dig.
+
+## EXECUTION QUEUE (Pi is FREE as of 2026-08-22 ~22:40; owner: fix step-by-step, THEN gcc-16 overnight)
+Owner directive: "fix them step-by-step. When done, continue gcc-16 migration overnight; when ready
+do a full clean rebuild of everything using gcc-16 and prepare a gcc-16 rootfs over NFS for testing."
+
+Fixes already IMPLEMENTED (committed; need rebuild+restage+Pi-validate):
+- [x] nfs noise print removed (phoenix-rtos-filesystems b017513) — needs --scope core.
+- [x] vkQuake 2c crash: worker stack 512K→8M (coord 1606e5c) — rebuild vkquake, restage, replay.
+- [x] Q2 fb-recovery: phxgl_init idempotent (phoenix-rtos-ports 6f0481f) — rebuild yquake2, restage,
+      change a VIDEO setting, confirm fb recovers.
+
+Ordering to EXECUTE now (crashes/blockers first, cosmetic last, then gcc-16):
+1. **Validate the 3 ready fixes** — one combined build pass: relink yquake2 (fb-recovery) + rebuild
+   vkquake (8M stack); `--scope core` image rebuild to pick up the nfs print removal; restage; Pi
+   cycles to confirm (Q2 vid-restart recovers; vkQuake plays without the stdio-overrun crash).
+2. **Q3 u_vbuf NULL-deref crash** (GL-driver, affects combat) — pin the NULL hook + fix in libv3d.
+3. **Q1 box textures** (frame-dump SSIM vs host → identify the broken texture + its V3D tiling).
+4. **USB-after-reboot** (cold vs warm boot; make xHCI/VL805 fully reset on warm reboot).
+5. **Q2 slow load** (time RAM-stage vs texture-upload; optimize if the latter).
+6. **vkQuake 2a fire pits + 2b lighting** (V3DV render-path digs; cosmetic).
+THEN: **gcc-16 migration** ([[project_gcc16_rebase]]) → full clean rebuild under gcc-16 → gcc-16 NFS
+rootfs staged for owner testing. The above fixes are committed to siblings so the gcc-16 clean
+rebuild will incorporate them.
