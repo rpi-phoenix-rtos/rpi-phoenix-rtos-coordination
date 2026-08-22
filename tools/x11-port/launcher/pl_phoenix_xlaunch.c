@@ -362,6 +362,28 @@ int main(int argc, char *argv[])
 			client_path[4] = cp_bufs[4]; client_extra[4] = eyes_geom; n_client_extra[4] = 2;
 			n_clients = 5;
 		}
+		else if (strcmp(client, "gpudesk") == 0) {
+			/* CONCURRENT-GPU DESKTOP (#13 M3c): twm (WM) + a live GPU-rendered window
+			 * (gl-x11-window-daemon — a V3D client that renders to an FBO, glReadPixels,
+			 * XPutImages into its X window) + xclock + xcalc. Requires the X server itself
+			 * to be the daemon-client Xphoenix-glamor-daemon AND gl-x11-window-daemon to be
+			 * a daemon client too: BOTH route their V3D work through the v3d-server, which
+			 * serializes them (M3b proved 2 concurrent daemon clients coexist bit-exact).
+			 * This is the E5 "X desktop + a GPU app at once" goal — a windowed GPU render
+			 * coexisting with the 2D desktop, all on the single V3D via the daemon.
+			 * gl-x11-window-daemon self-hints its position; the 2D apps -geometry-place. */
+			static char *const clk_geom[2]  = { "-geometry", "164x164+1120+110" };
+			static char *const calc_geom[2] = { "-geometry", "+1120+330" };
+			resolve_client(cp_bufs[0], sizeof(cp_bufs[0]), prefix, "twm");
+			resolve_client(cp_bufs[1], sizeof(cp_bufs[1]), prefix, "gl-x11-window-daemon");
+			resolve_client(cp_bufs[2], sizeof(cp_bufs[2]), prefix, "xclock");
+			resolve_client(cp_bufs[3], sizeof(cp_bufs[3]), prefix, "xcalc");
+			client_path[0] = cp_bufs[0];
+			client_path[1] = cp_bufs[1];
+			client_path[2] = cp_bufs[2]; client_extra[2] = clk_geom;  n_client_extra[2] = 2;
+			client_path[3] = cp_bufs[3]; client_extra[3] = calc_geom; n_client_extra[3] = 2;
+			n_clients = 4;
+		}
 		else if (strcmp(client, "wmaker") == 0) {
 			/* Window Maker as the DESKTOP SHELL — the real WM the owner wants (dock +
 			 * clip + NeXT-style window decorations), already ported+HW-proven. Full XFce

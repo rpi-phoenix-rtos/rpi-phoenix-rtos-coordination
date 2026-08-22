@@ -44,6 +44,18 @@ SRC="${ROOT}/tools/x11-port/gl_x11_window.c"
 OBJ="/tmp/gl_x11_window.o"
 ELF="${GPU_LIBS}/gl-x11-window"
 
+# M3c: --daemon links this GPU X client as a CLIENT of the v3d-server daemon. Same link
+# as the default, but the in-process winsys backend (v3d_phoenix_winsys.o +
+# v3d_phoenix_power.o, folded into libv3d-phoenix.a) is swapped for libv3d-client.a, which
+# RPCs phoenix_v3d_ioctl to /dev/v3d-srv (same recipe as Xphoenix-glamor-daemon, M3a).
+# The client's v3d_phoenix_powerOn is a no-op (the daemon owns power).
+DAEMON=0
+DEVV3D="${ROOT}/sources/phoenix-rtos-devices/gpu/rpi4-v3d"
+case "${1:-}" in
+  --daemon) DAEMON=1; ELF="${GPU_LIBS}/gl-x11-window-daemon" ;;
+esac
+AR="${ROOT}/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-gcc-ar"
+
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
 [ -x "$TC" ]        || fail "toolchain gcc not found: $TC"
@@ -72,11 +84,25 @@ echo "=== compiling gl_x11_window.c ==="
 # Model = build-quakespasm-phoenix.py: objs, --start-group GL+V3D --end-group,
 # -lstdc++ -lm, 32 MB stack. The X client libs go INSIDE the group with GL/V3D so
 # any cross-references resolve (libX11 <-> xcb/Xau/Xdmcp are mutually referential).
+# In --daemon mode, swap libv3d-phoenix.a -> (it minus winsys+power) + libv3d-client.a.
+V3D_ARCHIVE="$V3DLIB"
+CLIENT_A=""
+if [ "$DAEMON" = 1 ]; then
+	echo "=== M3c daemon swap: libv3d-phoenix-daemon.a (minus winsys+power) + libv3d-client.a ==="
+	V3D_ARCHIVE=/tmp/libv3d-phoenix-daemon.a
+	cp "$V3DLIB" "$V3D_ARCHIVE"
+	"$AR" d "$V3D_ARCHIVE" v3d_phoenix_winsys.o v3d_phoenix_power.o || fail "ar d (winsys/power) failed"
+	"$TC" -c "$DEVV3D/libv3d-client.c" -o /tmp/libv3d-client.o \
+		-I"$DEVV3D" -I"$DEVV3D/uapi" -O2 -std=gnu11 || fail "libv3d-client.c compile failed"
+	CLIENT_A=/tmp/libv3d-client.a
+	rm -f "$CLIENT_A"; "$AR" rcs "$CLIENT_A" /tmp/libv3d-client.o
+fi
+
 echo "=== linking $ELF ==="
 "$TC" "$OBJ" \
 	-L"${XPREFIX}/lib" -L"${SYSROOT}/lib" \
 	-Wl,--start-group \
-		"$GLLIB" "$V3DLIB" \
+		"$GLLIB" "$V3D_ARCHIVE" $CLIENT_A \
 		-lX11 -lxcb -lXau -lXdmcp -liconv \
 	-Wl,--end-group \
 	-lstdc++ -lm \
