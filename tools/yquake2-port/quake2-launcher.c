@@ -17,10 +17,23 @@
 
 int main(int argc, char **argv)
 {
-	/* ram-stage-play <src> <dst> <exec> [exec-args...] */
+	/* ram-stage-play <src> <dst> <exec> [exec-args...]
+	 *
+	 * Video args are REQUIRED: the Phoenix /dev/fb0 is 1920x1080-only, but yquake2
+	 * defaults to r_mode 4 (640x480) which SDL SetVideoMode rejects on this fb
+	 * ("Unknown pixel format") -> no visible image. Force the fb-native custom mode
+	 * (r_mode -1 + r_customwidth/height) with fullscreen + the working ref_gl1
+	 * renderer, and boot straight into the demo so 3D renders immediately. Any user
+	 * args are appended after and win (e.g. `quake2 +map base1`). */
 	static char *base[] = {
 		"ram-stage-play", "/usr/share/quake2", "/tmp/quake2",
 		"/usr/bin/yquake2", "-datadir", "/tmp/quake2",
+		"+set", "vid_renderer", "gl1",
+		"+set", "r_mode", "-1",
+		"+set", "r_customwidth", "1920",
+		"+set", "r_customheight", "1080",
+		"+set", "vid_fullscreen", "2",
+		"+map", "demo1",
 	};
 	const int nbase = (int)(sizeof(base) / sizeof(base[0]));
 	char **a = calloc((size_t)(nbase + argc + 1), sizeof(char *));
