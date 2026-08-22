@@ -282,7 +282,14 @@ Uint32 SDL_SemValue(SDL_sem *s)
  * stack that is never reclaimed is fine. We trampoline the SDL int(*)(void*) entry
  * through a void(*)(void*) Phoenix entry and discard the int return (SDL detaches them).
  */
-#define PL_THREAD_STACKSZ (512 * 1024)
+/* vkQuake's Task_Worker runs the full render/BSP/lightmap/alias call chains on these
+ * shim threads. 512 KiB was too tight for the deepest workloads: a worker overflowed its
+ * stack into adjacent heap, corrupting the stdout FILE's bufpos, which then crashed the
+ * main thread in a memmove overrun during Con_Printf of a centerprint (owner HW crash
+ * 2026-08-22, artifacts/rpi4b-uart/20260822-221322-live-test.log). The main thread itself
+ * links a 32 MiB stack; give the workers generous headroom too. HYPOTHESIS-driven — pending
+ * Pi re-validation that the crash is gone. */
+#define PL_THREAD_STACKSZ (8 * 1024 * 1024)
 #define PL_THREAD_PRIO    4
 
 struct SDL_Thread {

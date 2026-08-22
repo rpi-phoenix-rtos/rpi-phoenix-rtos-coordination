@@ -55,16 +55,24 @@ Log: artifacts/rpi4b-uart/20260822-221322-live-test.log. addr2line'd against /tm
 - MULTIPLE threads faulted: thread 58 (Data Abort in memcpy, main game loop) AND thread 61
   (Instruction Abort with x4..x28 = an incrementing byte pattern 0x0404..04,0x0505..05,…0x1c1c..1c
   and pc=lr=0x1514141414141414 = garbage → its stack/context was overwritten with a byte-pattern).
-- write_buffer/buffer_data are bounded PER CALL (min(bufsz-bufpos, writesz)); the memmove at :554
-  overruns only if `stream->bufpos` is corrupted. ⇒ HYPOTHESIS: **concurrent Con_Printf from
-  vkQuake task-pool WORKER threads racing the same stdout FILE** → torn stream->bufpos → memmove
-  overrun; OR a worker stack overflow overwriting an adjacent thread's context (the byte-pattern
-  thread 61). Triggered by a CENTERPRINT server message while playing (item/trigger text).
-- NO-Pi NEXT: audit libphoenix FILE locking (does every stdio write hold stream->lock? is the lock
-  per-FILE and re-entrant-safe?) vs vkQuake calling Con_Printf/Sys_Printf from worker threads;
-  check vkQuake's threaded logging. PI-REPRO: reproduce under libdbg/QEMU-gdb with the centerprint;
-  confirm bufpos corruption + which thread. If libphoenix stdio isn't thread-safe for concurrent
-  writers, that's a libc-level fix helping many multi-threaded ports.
+- write_buffer/buffer_data are bounded PER CALL (min(bufsz-bufpos, writesz)) AND libphoenix stdio
+  writes DO hold stream->lock (fwrite/fputc wrap the _unlocked forms under mutexLock) → concurrent
+  writers can't race bufpos. So the memmove at :554 overran because `stream->bufpos` was ALREADY
+  corrupted by a WILD WRITE (it ran ~144 bytes past a small heap buffer). Combined with thread 61's
+  pattern-corrupted stack/registers ⇒ **memory corruption from a WORKER-THREAD STACK OVERFLOW**.
+- ✅ ROOT + FIX (2026-08-22, no-Pi): vkQuake's Task_Worker threads are spawned via the port's SDL
+  shim `SDL_CreateThread` (tools/vkquake-port/platform/pl_phoenix_sdlcompat.c), which allocates a
+  fixed **`PL_THREAD_STACKSZ = 512 KiB`** stack per worker (the shim OVERRIDES the libphoenix pthread
+  default, so the 4 KiB default is NOT the cause here). vkQuake's render/BSP/lightmap/alias worker
+  call chains overflow 512 KiB on the deepest workloads → scribble into adjacent heap → corrupt the
+  stdout FILE → the crash. FIX: raised PL_THREAD_STACKSZ 512 KiB → **8 MiB** (the main thread already
+  links a 32 MiB stack; workers now get generous headroom). Committed (coord). HYPOTHESIS-DRIVEN —
+  512 KiB isn't obviously tiny, so PENDING Pi re-validation: rebuild vkquake + restage + replay to
+  the crash spot (or under libdbg/gdb, confirm a worker SP approached the old 512 KiB limit).
+- SEPARATE latent footgun (NOT this crash): libphoenix's DEFAULT pthread stack is only
+  ALIGN(PTHREAD_STACK_MIN=256, PAGE)=**4 KiB** (pthread.c:114) — fine for vkQuake (shim overrides)
+  but a real hazard for any future port using default-stack pthreads. Worth a broader libphoenix
+  default-stack review (owner-decision; core change, blast radius).
 
 ## 3. USB enumeration FAILED after reboot (intermittent)
 Log: artifacts/rpi4b-uart/20260822-222349-live-test.log.
