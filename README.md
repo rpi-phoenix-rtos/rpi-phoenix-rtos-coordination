@@ -68,7 +68,7 @@ docker run --rm -v "$PWD/out":/out phoenix-rpi
 ```
 
 Useful `--build-arg`s (see the header of [`Dockerfile`](Dockerfile)): `UBUNTU_TAG`
-(base LTS, default `24.04` — the validated one), `PAK0_URL` (a Quake shareware
+(base LTS, default `26.04` — the validated build host), `PAK0_URL` (a Quake shareware
 `pak0.pak` mirror for playable GLQuake demos; omitted = engine built without game
 data), `BUILD_VARIANT` (`sd`/`nfsroot`/`netboot`), `BUILD_FLAGS` (default
 `--with-showcase --with-ports`; use `""` for a base image).

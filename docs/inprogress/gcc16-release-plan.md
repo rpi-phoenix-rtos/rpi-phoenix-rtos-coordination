@@ -88,6 +88,18 @@ ask applies: add the same cache-check-then-mirror pattern (or a shared helper) t
 up), but do it for a fully offline-reproducible clean build. Ideal end state: one shared distfiles
 cache used by all ports (framework-level fetch hook).
 
+## Follow-up: Docker game-data fetch for all Quakes (owner request)
+The Dockerfile fetches only **Quake 1** data (`PAK0_URL` = quake106.zip → id1/pak0.pak). A
+from-scratch reproducible build therefore ships the quake2/quake3/vkquake engines WITHOUT their game
+data (baseq2/pak0.pak, demoq3/pak0.pk3) — those are currently hand-staged, not fetched. For the
+release the Docker build should fetch all games' **freely-redistributable demo/shareware** data:
+add `PAK0Q2_URL`/`PAK0Q3_URL` (+ sha256) args and download/extract/stage steps mirroring the Q1
+`PAK0_URL` logic (optional; "" skips; a non-empty URL that fails to verify fails the build).
+Sources to pin (verify redistribution terms first, like Q1's shareware): Quake II shareware demo
+(baseq2 pak), Quake III Arena demo (demoq3/pak0.pk3 from the linux Q3 demo). Also worth a general
+`fetch-quake-data.sh` covering all three so SD + Docker + netboot builds share one path. Licensing:
+demo/shareware data only — no full retail paks in the public build.
+
 ## Rollback
 Keep gcc-14 `.toolchain/` (rename, don't delete) + a gcc-14 tag/manifest until the gcc-16 release is
 HW-signed-off. Any regression → restore gcc-14 `.toolchain` + rebuild.
