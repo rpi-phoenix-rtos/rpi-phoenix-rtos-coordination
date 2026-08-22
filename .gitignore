@@ -69,3 +69,4 @@ tools/python-port/*.cpython-*.so
 
 # WiFi probe binary embeds Broadcom fw + CLM blob — build artifact, never publish
 tools/wifi-probe/wifi-probe
+tools/v3d-driver-port/.build-csd-daemon/
