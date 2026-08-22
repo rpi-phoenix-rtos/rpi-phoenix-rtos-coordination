@@ -29,6 +29,7 @@ which are blocked on the (not-yet-written) Vulkan vid shim / SDL_Vulkan surface.
 Usage: python3 build-vkquake-phoenix.py [--link]
 """
 import os, subprocess, sys
+import concurrent.futures
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 TC   = f"{ROOT}/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-gcc"
@@ -131,12 +132,18 @@ def main():
     units = [u for u in ENGINE if u not in EXCLUDE]
     objs, fail = [], []
 
-    for u in units:
+    # Parallel compile across all cores: compile_one() is an independent gcc subprocess writing a
+    # distinct .o (INCR-safe). ex.map preserves input order, so `objs` stays in `units` order for a
+    # deterministic (reproducible) archive. Was a serial one-gcc-at-a-time loop.
+    def _compile_unit(u):
         src = f"{Q}/{u}.c"
+        obj = f"{OBJ}/{u}.o"
         if not os.path.exists(src):
-            fail.append((u, "MISSING SOURCE")); continue
-        e = compile_one(src, f"{OBJ}/{u}.o")
-        (fail.append((u, e)) if e else objs.append(f"{OBJ}/{u}.o"))
+            return (u, obj, "MISSING SOURCE")
+        return (u, obj, compile_one(src, obj))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, os.cpu_count() or 1)) as _ex:
+        for u, obj, e in _ex.map(_compile_unit, units):
+            (fail.append((u, e)) if e else objs.append(obj))
 
     # trampolines (generated) — public vk* symbols vkQuake calls directly.
     tramp_src = f"{PORT}/vk_trampolines.c"
