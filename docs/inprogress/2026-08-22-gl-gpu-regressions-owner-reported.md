@@ -23,12 +23,27 @@ Was clean in the past (older GL grabs correct). vkQuake (own present path) is cl
   /dev/vcmbox — [[project_pi4_quake_flicker_vcmbox]]). So forcing single-buffer is a diagnostic
   + maybe-flickery stopgap, NOT the real fix. The real fix is in the page-flip/pan (or the
   render→scanout buffer coherency) — find what recent change broke it.
-- NEXT: (a) diagnostic — force nbuf=1 (winsys scanout_init) + re-grab: clean(-ish) confirms the
-  page-flip present is the culprit. (b) bisect: newest-clean vs oldest-broken GL grab → git
-  brackets across sdl2 port (glue/, overlay/src/video/phoenix/ — SwapWindow/present), winsys
-  (v3d_phoenix_flip/fb_flip/scanout), and v3d_phoenix_power fb pan. SDL2 migration ~Aug 11
-  (bc5e7ae de-Quake, c1494fc glBindFramebuffer→scanout FBO, 94ee607 video fixes) is a prime
-  suspect but CONFIRM via the bracket. Priority #1 (owner blocked on all GL games).
+- **ROOT CAUSE CONFIRMED (2026-08-22, by code inspection — not the pan/flip):** the scanout RT is
+  UIF-TILED, and the HVS display can only scan a LINEAR surface → it reads tiled memory as linear →
+  horizontal shred. Proof chain:
+  1. `external/mesa/src/mesa/main/renderbuffer.c:276` adds `PIPE_BIND_SAMPLER_VIEW` to EVERY
+     renderbuffer unconditionally. The SDL2 scanout FBO color attachment is a user renderbuffer
+     (`sdl_phoenix_glctx.c` glRenderbufferStorage), so its bind = RENDER_TARGET | SAMPLER_VIEW.
+  2. `v3d_resource.c` force-RASTER gate (added by commit `4363822955b`, the q3dm7 lightmap fix)
+     excluded `SAMPLER_VIEW` to keep the sampled lightmap atlas tiled — but that exclusion ALSO
+     catches the scanout renderbuffer → `should_tile` stays true → scanout RT tiled → shred.
+  - The q3 grab (20260822-184037-q3verify-tick.png) shows a coherent dark-red Quake3 frame sheared
+    into scanlines (content present, horizontally shredded) = tiled-read-as-linear signature.
+  - Explains ALL controls: frame-dump SSIM 0.993 (GPU-blit readback is tiling-aware → correct),
+    vkQuake clean (V3DV uses src/broadcom/vulkan, not gallium v3d_resource.c), X11 GL app clean
+    (DRAM FBO + glReadPixels, never scanned out by HVS). Regression window = when `4363822955b`
+    landed. NOT the page-flip/pan (all pa/pitch/nbuf/virt_h values verified consistent; no wedge).
+- **FIX (implemented, pending HW grab):** distinguish the scanout RT (must be RASTER) from a sampled
+  atlas (must stay tiled) via the winsys `next_scanout` one-shot, which is set immediately before the
+  scanout renderbuffer's `glRenderbufferStorage`. Added `v3d_phoenix_peek_next_scanout()` to the
+  winsys; the gate now forces RASTER when `peek_next_scanout() || !(bind & SAMPLER_VIEW)`. Sampled
+  textures never set next_scanout → stay tiled → q3dm7 fix preserved. Files: tools/v3d-driver-port/
+  v3d_phoenix_winsys.c + external/mesa/.../v3d_resource.c. Rebuild libv3d + relink a GL game + grab.
 
 ## Issue 2 — vkQuake: the 2 start-map torches are MISSING (resurfaced #67/torch bug)
 vkQuake render otherwise clean (Vulkan), but the flaming torches flanking the "QUAKE" archway

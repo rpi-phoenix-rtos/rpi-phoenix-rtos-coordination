@@ -463,6 +463,19 @@ void v3d_phoenix_set_next_scanout(void)
 	W.next_scanout = 1;
 }
 
+/* Non-destructive peek: is the NEXT BO going to be scanout-backed? The Mesa v3d resource layout
+ * decides tiling BEFORE the BO alloc, and the HVS display can only scan a LINEAR (raster) surface —
+ * a UIF-tiled scanout RT is read back as horizontal-shred garbage. Mesa's tiling gate can't tell a
+ * pure scanout render target from a sampled texture (Mesa tags BOTH with PIPE_BIND_SAMPLER_VIEW —
+ * see main/renderbuffer.c), so v3d_resource_create consults this to force the scanout RT to RASTER
+ * while leaving sampled textures (e.g. the quake3 lightmap atlas) tiled. Read-only: the flag is
+ * cleared later by ioc_create_bo when the alloc actually happens. */
+int v3d_phoenix_peek_next_scanout(void);
+int v3d_phoenix_peek_next_scanout(void)
+{
+	return W.next_scanout;
+}
+
 static struct pbo *bo_find(uint32_t handle)
 {
 	if (handle == 0 || handle > W.nbos) return NULL;
