@@ -317,3 +317,25 @@ needs DISPLAY COMPOSITING (the game rendering into an X window via GL-in-a-windo
 GL-under-X path), which is orthogonal to the daemon (both would be daemon clients; the new work is
 X window-manager + the game targeting a window surface instead of /dev/fb0). That is a follow-on X
 feature, not a concurrent-GPU gap. The daemon makes it POSSIBLE where E5 said it wasn't.
+
+## M3c — HW result (2026-08-22): ★★★★ FULL X11-DE PAYOFF — a live GPU window CONCURRENT in the desktop
+The E5 "X desktop + a GPU app at once" goal, realized end-to-end. `gpu-x-gpudesk-daemon.sh`:
+v3d-server + Xphoenix-glamor-daemon + the `gpudesk` session (twm + gl-x11-window-daemon +
+xclock + xcalc). gl-x11-window-daemon is the winsys-as-client swap applied to the GPU X window
+(ZERO new client symbols — it presents via XPutImage, so no scanout export is referenced).
+- HDMI: a **live GPU-rendered 3D scene** (rotating colored triangles, crisp, no striping — gallium
+  GL path) in a twm-decorated "Phoenix V3D GL" window, ALONGSIDE the analog xclock + the xcalc
+  keypad. TWO concurrent GPU clients — glamor-X's 2D + gl-x11-window's 3D — both routing V3D work
+  through the ONE daemon (8 interleaved `CL submit rc=0`).
+- The one first-CL binner wedge (mmu_ill=0x8002fcf8, intermittent q3dm7-class) was daemon-recovered.
+⇒ **An accelerated X desktop hosting a live GPU application, on the single V3D, via the v3d-server.**
+
+## ⇒⇒⇒ CONCURRENT-GPU #13 — COMPLETE + HW-PROVEN END TO END
+design → M0 (2 procs conflict: corruption+TIMEOUT+42x) → M1 (1 client: BO+CSD+CL+TFU bit-exact)
+→ M2 (2 compute clients serialized bit-exact) → M3a (glamor-X as daemon client, xeyes HDMI)
+→ M3b (glamor-X + compute concurrent) → M3c (glamor-X + a live GPU window concurrent IN a desktop)
+→ X11-DE (accelerated multi-app desktop via the daemon). The E5 single-GPU-process limit is fully
+retired: the v3d-server daemon serializes any number of concurrent GPU clients, HW-proven, and now
+backs a real accelerated desktop with a live GPU app. Remaining = productization (fold rpi4-v3d +
+daemon-client X into DEFAULT_COMPONENTS + auto-start) + the deep intermittent binner-wedge dig
+(recovered, not root-fixed) + V3DV striping (separate, for the Vulkan-game path).
