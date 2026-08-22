@@ -528,6 +528,13 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-22 (session ~206 — OWNER BACK + 3 requests: clean rootfs rebuild (primary), vkQuake regression, quakespasm test):
+ Owner (Witold) returned mid-day with a manual test session planned for later today. Requests: (1) prepare a nice CLEAN fresh NFS rootfs from a FULL clean rebuild (no temp files/leftovers/old builds/experiment traces) — authorized investing time; (2) schedule work on vkQuake ("we had it running almost perfectly", now fails — bring it back); (3) test whether Quakespasm/GLQuake still works (test first since I have time).
+ - **LAUNCHED the full clean rebuild** (detached in its own setsid session so it survives the harness per-call timeout; log artifacts/clean-rebuild-full.log; Monitor bauhj3ot6 armed): `rebuild-rpi4b-fast.sh --scope full-clean --variant nfsroot --with-showcase --with-ports --with-tests`. Nukes .buildroot, rebuilds core+ports+showcase(GPU/X/Quake)+tests. ~30-60min. In the GPU/Mesa phase at launch.
+ - Tasks: #50 clean rootfs (in_progress), #51 vkQuake regression, #52 quakespasm test.
+ - KEY export finding: sync-netboot-tree.sh rsyncs _fs/root→/srv/phoenix-rpi4-nfs WITHOUT --delete (why cruft accumulated). Clean-export plan: after the build, WIPE the export + fresh-sync the clean _fs/root, DROPPING experiment leftovers (stackbomb, csd-matmul-daemon, gl-smoke*, gpu-*.sh, daemon-client test binaries) but PRESERVING legit manual-test assets (Quake game data id1/baseq2/pak0.pak, X app-defaults). Verify clean+complete.
+ **NEXT (when the build completes):** (a) build the pristine export; (b) HW-test quakespasm (#52) + vkQuake (#51) on the FRESH rootfs (Pi-lock, one cycle at a time) → report state for the owner's session; (c) snapshot a manifest. vkQuake regression = characterize post-menu hang vs last-known-good (KNOWN-ISSUES SB-2 = water/torches were fixed; deep V3DV dig, input half owner-attended).
+
 2026-08-22 (session ~205 — P-DOCS refresh: public docs now reflect concurrent-GPU + the signal DoS):
  No owner feedback. With the unattended-code backlog genuinely thin (advisor-confirmed) and the two nearest code candidates carrying invisible-regression risk I shouldn't take blind (sysconf(_SC_NPROCESSORS) = shared cross-arch libphoenix conf.c, the B8-class trap; signal-DoS fix = attended hot-path), did the high-value zero-risk P-DOCS "refresh per big feature" for a public-publishing project:
  - **README Capabilities:** added a "GPU concurrency (v3d-server)" row (the daemon serializes multiple GPU clients → accelerated X desktop + a 2nd GPU program at once, HW-proven end-to-end) + corrected the stale "single GPU-owning process" glamor claim (the daemon lifts it). Points at the feasibility doc.
