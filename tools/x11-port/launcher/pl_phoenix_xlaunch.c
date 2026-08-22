@@ -336,6 +336,32 @@ int main(int argc, char *argv[])
 			client_path[4] = cp_bufs[4]; client_extra[4] = eyes_geom; n_client_extra[4] = 2;
 			n_clients = 5;
 		}
+		else if (strcmp(client, "deskapps") == 0) {
+			/* A 2D multi-window DESKTOP with NO second GPU client: twm (WM) + xterm +
+			 * xclock + xcalc + xeyes, each -geometry-placed (USPosition) so twm decorates
+			 * + auto-places them. Unlike `showcase`/`mediadesk` this omits gl-x11-window /
+			 * e4-x11-play, so it runs correctly when the X server itself is the sole GPU
+			 * client (e.g. Xphoenix-glamor OR the daemon-client Xphoenix-glamor-daemon):
+			 * a SECOND in-process GPU client would fight the server for the single V3D.
+			 * This is the accelerated-desktop substrate for the concurrent-GPU v3d-server
+			 * path (the daemon serializes GPU work, so glamor-X's own rendering is safe;
+			 * adding a concurrent GPU app window is the M3c/display-compositing follow-on). */
+			static char *const term_geom[2] = { "-geometry", "80x24+60+90" };
+			static char *const clk_geom[2]  = { "-geometry", "164x164+1120+110" };
+			static char *const calc_geom[2] = { "-geometry", "+1120+330" };
+			static char *const eyes_geom[2] = { "-geometry", "220x160+1120+720" };
+			resolve_client(cp_bufs[0], sizeof(cp_bufs[0]), prefix, "twm");
+			resolve_client(cp_bufs[1], sizeof(cp_bufs[1]), prefix, "xterm");
+			resolve_client(cp_bufs[2], sizeof(cp_bufs[2]), prefix, "xclock");
+			resolve_client(cp_bufs[3], sizeof(cp_bufs[3]), prefix, "xcalc");
+			resolve_client(cp_bufs[4], sizeof(cp_bufs[4]), prefix, "xeyes");
+			client_path[0] = cp_bufs[0];
+			client_path[1] = cp_bufs[1]; client_extra[1] = term_geom; n_client_extra[1] = 2;
+			client_path[2] = cp_bufs[2]; client_extra[2] = clk_geom;  n_client_extra[2] = 2;
+			client_path[3] = cp_bufs[3]; client_extra[3] = calc_geom; n_client_extra[3] = 2;
+			client_path[4] = cp_bufs[4]; client_extra[4] = eyes_geom; n_client_extra[4] = 2;
+			n_clients = 5;
+		}
 		else if (strcmp(client, "wmaker") == 0) {
 			/* Window Maker as the DESKTOP SHELL — the real WM the owner wants (dock +
 			 * clip + NeXT-style window decorations), already ported+HW-proven. Full XFce
