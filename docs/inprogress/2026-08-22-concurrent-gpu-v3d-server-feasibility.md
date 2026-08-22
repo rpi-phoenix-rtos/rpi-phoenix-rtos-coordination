@@ -269,3 +269,25 @@ one-message-at-a-time port — correct behavior, not corruption. ⇒ **Option A 
 message-port daemon de-races concurrent GPU clients on HW.** M1 (1 client, all submit types) +
 M2 (2 clients serialized) both done. NEXT = M3 (glamor-X + GLQuake concurrent = the real payoff;
 needs the scanout/present family wired into libv3d-client).
+
+## M3a — HW result (2026-08-22): glamor GPU-accelerated X server AS A DAEMON CLIENT, xeyes to HDMI
+The E5 headline (Xphoenix-glamor, GL-accelerated 2D X on V3D 4.2) now runs as a v3d-server CLIENT
+— its GPU work routes through the daemon, not the in-process winsys. HW (netboot, `bash /gpu-x-glamor-daemon.sh`):
+- Server `registered /dev/v3d-srv` (sole GPU owner); X launched via the E5 xlaunch flow.
+- `glamor-phx: GL up; 2.1 Mesa 26.2.0 / V3D 4.2.14.0`, `[fbdev] glamor initialised`, GL-texture-backed
+  root, screen-readback FBO complete.
+- **8× `rpi4-v3d: CL submit #N done rc=0`** = X's render CLs executed through the daemon (log bounded to 8).
+- **HDMI: xeyes rendered correctly, right-side-up** (inherits the committed FLIP_Y=1 O1 fix) — visual PASS.
+
+**Seam: exactly one runtime no-op.** The daemon-client link surfaced ONE undefined winsys symbol
+beyond phoenix_v3d_ioctl — `v3d_phoenix_powerOn` — resolved as a no-op (daemon owns power). The
+whole scanout/present/fb family is LINK-PROVEN unreferenced (glamor-X presents via glReadPixels→
+/dev/fb0). libv3d-client.c grew by one no-op; no scanout RPC needed.
+
+**Wedge recovery VALIDATED on HW (bonus):** the FIRST X render CL hit a binner wedge
+(`BIN TIMEOUT ... mmu_ill=0x8002fb9f`) — the known q3dm7-class intermittent wedge — and the daemon's
+lifted `reset_reinit_core` RECOVERED it (submit #1 rc=0, #2-8 clean, xeyes rendered). So the daemon
+handles the wedge that goes global under multi-client; the wedge root-cause remains the separate
+open q3dm7 item. ⇒ **First real windowed app through the daemon. NEXT M3b:** glamor-X + a GPU game
+(GLQuake/gl-smoke) CONCURRENT through the daemon = the E5 single-GPU-process limit LIFTED (+ a
+display-ownership story: X owns /dev/fb0; the game renders offscreen/windowed or they alternate).
