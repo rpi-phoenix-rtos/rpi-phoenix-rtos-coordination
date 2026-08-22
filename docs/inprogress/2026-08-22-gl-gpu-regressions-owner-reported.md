@@ -7,7 +7,13 @@ rebase, SDL2 migration of all Quake ports, v3d-server multiprocess GPU, tools→
 Confirmed visually from today/yesterday grabs. vkQuake (Vulkan/V3DV) is the control: its
 render path is clean, so this is NOT a general GPU break.
 
-## Issue 1 — GL-Quake HDMI/scanout output is SCANLINE-GARBAGE (BLOCKER)
+## Issue 1 — GL-Quake HDMI/scanout output is SCANLINE-GARBAGE (BLOCKER) — ✅ FIXED + HW-VERIFIED 2026-08-22
+VERIFIED: quakespasm-sdl relinked against the fixed libv3d, netbooted 1920x1080 fullscreen, +map start —
+HDMI grab 20260822-193816-qs-sdl-v3d-tilefix-tick.png shows a CLEAN coherent GLQuake frame (textured
+walls, armor pickup, candle flame, viewmodel, HUD), zero scanline shred, 0 GPU faults. Committed:
+coord 571d57f (pushed publish), external/mesa 34a448d6a29 (local — mesa clone has no publish remote).
+Remaining seam-tearing on moving demo = benign inter-frame page-flip tearing (separate, acceptable).
+
 Affects all GL-based games (quakespasm Q1, quake2, quake3 — all now on the SDL2 port).
 Was clean in the past (older GL grabs correct). vkQuake (own present path) is clean.
 - Evidence: artifacts/hdmi/20260822-183358-q2fix-tick.png (dense horizontal scanline garbage).
