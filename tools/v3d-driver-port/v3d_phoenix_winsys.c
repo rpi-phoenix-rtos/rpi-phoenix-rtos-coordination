@@ -17,6 +17,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <unistd.h>   /* getpid (M0 concurrent-GPU instrumentation) */
 #include <string.h>
 #include <errno.h>
 #include <sys/mman.h>
@@ -257,6 +258,13 @@ static void apply_core_regs(void);          /* defined below; used by winsys_ini
 static int winsys_init(void)
 {
 	if (W.inited) return 0;
+	/* M0 instrumentation (concurrent-GPU #13, docs/inprogress/2026-08-22-concurrent-gpu-
+	 * v3d-server-feasibility.md): log which PROCESS brings up the GPU winsys. A 2nd GPU
+	 * process re-runs this (re-power-on + steals the single MMU_PT_PA_BASE + overlapping VA)
+	 * -> the abort. This line + the apply_core_regs one turn the root-cause hypothesis into an
+	 * HW observation. Harmless single-process (one line per boot). */
+	fprintf(stderr, "v3d-winsys: winsys_init pid=%d (power-on + map regs + install PT)\n",
+		(int)getpid());
 	/* Power on the V3D ourselves (self-contained; no dependency on a separate
 	 * scout process whose concurrent clock-toggle/reset would race our submit and
 	 * leave core0 reading 0xdeadbeef). Idempotent. */
@@ -791,6 +799,12 @@ static void mmu_flush_tlb(volatile uint32_t *h)
  * re-established. */
 static void apply_core_regs(void)
 {
+	/* M0 instrumentation (concurrent-GPU #13): the single global MMU_PT_PA_BASE register is
+	 * written here to THIS process's page table. A 2nd GPU process overwrites it -> the 1st
+	 * process's BOs are no longer mapped -> MMU illegal-address fault. Logging pid + the PA
+	 * base makes the "PT theft" conflict visible on HW. */
+	fprintf(stderr, "v3d-winsys: apply_core_regs pid=%d MMU_PT_PA_BASE<=0x%08x\n",
+		(int)getpid(), (uint32_t)(W.pt_pa>>PAGE_SHIFT));
 	W.hub[MMU_PT_PA_BASE/4] = (uint32_t)(W.pt_pa>>PAGE_SHIFT);
 	/* Full MMU fault config (mirror linux v3d_mmu_set_page_table): enable PT-invalid detection
 	 * (not just abort), write-violation and cap-exceeded aborts+INTs. Our prior config set ABORT
