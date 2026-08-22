@@ -34,6 +34,13 @@ done
 for b in bin/quakespasm bin/quakespasm-sdl bin/vkquake bin/ram-stage-play bin/quake-det bin/e4-play bin/e4-x11-play; do
 	[ -e "$EXP/$b" ] && { sudo cp -a "$EXP/$b" "$NEW/$b"; echo "  + $b"; }
 done
+# Legit hand-staged TOOLS not in the standard build (default ports lack them): bash + CPython
+# (python3 + its /lib/python3.14 stdlib) + WiFi supplicant tools + the pty bash-tty helper.
+# (These are real capabilities the owner tests — dropping them made the export incomplete.)
+for b in bin/bash bin/python3 usr/bin/python3 usr/bin/wpa_supplicant usr/bin/wpa_cli usr/bin/pty-run; do
+	[ -e "$EXP/$b" ] && { sudo mkdir -p "$NEW/$(dirname "$b")"; sudo cp -a "$EXP/$b" "$NEW/$b"; echo "  + $b"; }
+done
+[ -d "$EXP/lib/python3.14" ] && { sudo cp -a "$EXP/lib/python3.14" "$NEW/lib/"; echo "  + lib/python3.14 (CPython stdlib)"; }
 
 echo "== 3. verify $NEW is clean (no junk) + complete =="
 echo "  -- junk check (should list NOTHING) --"
