@@ -1070,6 +1070,26 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
 					gpuva_describe("BINFAULT", fva);
 					gpuva_describe("BCLSTART", s->bcl_start);
 					gpuva_describe("BINCA", ca0 & ~0xfu);
+					/* Localise the SILENT stall (no MMU/GMP/OOM error): the CLE control regs
+					 * (ct0pc frozen = no primitive progress) + the front-end debug/STALL regs
+					 * (FDBGS per-stage STALL bits name the wedged sub-unit) + the CL window AT
+					 * ct0ca — the BCLFULL dump below starts at bcl_start, but the binner is parked
+					 * ~167 words in, so it never shows the actual stall opcode. Offsets confirmed
+					 * vs Linux v3d_regs.h (CLE_CT0* 0x100-0x134, FDBG 0xf04-0xf10). */
+					fprintf(stderr, "v3d-winsys: BIN CT0 ct0cs=0x%08x ct0lc=0x%08x ct0pc=0x%08x "
+						"pcs=0x%08x bfc=0x%08x\n",
+						c0[0x0100/4], c0[0x0120/4], c0[0x0128/4], c0[0x0130/4], c0[0x0134/4]);
+					fprintf(stderr, "v3d-winsys: BIN FDBG o=0x%08x b=0x%08x r=0x%08x s=0x%08x\n",
+						c0[0x0f04/4], c0[0x0f08/4], c0[0x0f0c/4], c0[0x0f10/4]);
+					{
+						uint32_t *cp = (uint32_t *)gpuva_to_cpu(ca0 & ~3u);
+						if (cp) {
+							fprintf(stderr, "v3d-winsys: BIN CL@ct0ca(0x%08x) op=0x%02x:",
+								ca0, (*cp) & 0xffu);
+							for (int i = -4; i < 8; i++) fprintf(stderr, " %08x", cp[i]);
+							fprintf(stderr, "\n");
+						}
+					}
 					uint32_t bw = (s->bcl_end - s->bcl_start + 3u) / 4u;
 					if (bw > 40u) bw = 40u;
 					uint32_t *bs = (uint32_t *)gpuva_to_cpu(s->bcl_start);
