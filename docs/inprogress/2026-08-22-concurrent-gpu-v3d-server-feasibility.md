@@ -255,3 +255,17 @@ unallocated slots all = 0 → the init full-PT zero persists on HW; the fault ne
 ⇒ **M1 COMPLETE + HW-PROVEN (daemon + 1 client, all submit types): BO + CSD (bit-exact) + CL
 (bit-exact) + TFU.** Next = M2 (2 clients serialized, vs the M0 concurrent-corruption baseline),
 then M3 (glamor-X + GLQuake concurrent = the payoff).
+
+## M2 — HW result (2026-08-22): TWO CONCURRENT CLIENTS SERIALIZED, both bit-exact
+Two independent csd-matmul-daemon processes launched concurrently against the one v3d-server
+(the exact scenario that corrupted in M0). HW (netboot, `bash /gpu-m2-2client.sh`):
+- CLIENT A: max_rel_err=0.000e+00, PASS, 29.5 ms/matmul
+- CLIENT B: max_rel_err=0.000e+00, PASS, 32.8 ms/matmul
+- CSD TIMEOUT = 0, FAIL = 0.
+Both bit-exact (o[0]=-7.03244, o[255]=-4.46325). vs M0 (2 concurrent GPU procs = silent
+corruption + CSD TIMEOUT + 42x slowdown + numeric FAIL). The elevated ms/matmul (29-33 vs 11.6
+single-client) is the SERIALIZATION cost of two clients sharing one GPU through the daemon's
+one-message-at-a-time port — correct behavior, not corruption. ⇒ **Option A CONFIRMED: the
+message-port daemon de-races concurrent GPU clients on HW.** M1 (1 client, all submit types) +
+M2 (2 clients serialized) both done. NEXT = M3 (glamor-X + GLQuake concurrent = the real payoff;
+needs the scanout/present family wired into libv3d-client).
