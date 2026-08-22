@@ -54,7 +54,9 @@ fi
 dst="${overlay_root}/${subdir}"
 mkdir -p "$dst"
 tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT
+# makeself demo trees (Q3) unpack read-only files — chmod before rm, and never let
+# cleanup failure poison the exit code (a real fetch/verify failure must still fail).
+trap 'chmod -R u+w "$tmp" 2>/dev/null || true; rm -rf "$tmp" 2>/dev/null || true' EXIT
 
 echo "[$game] fetching ${url}"
 case "$url" in
@@ -64,17 +66,37 @@ case "$url" in
   *)
     curl -fSL --retry 5 --retry-delay 5 -o "$tmp/dl" "$url" \
       || { echo "ERROR: [$game] download failed from $url"; exit 1; }
-    unzip -oq "$tmp/dl" -d "$tmp" \
-      || { echo "ERROR: [$game] could not unzip the archive from $url"; exit 1; }
-    # Q1 shareware: pak0.pak is packed inside an LHA-compressed resource.1.
-    if [ "$game" = q1 ] && [ -f "$tmp/resource.1" ]; then
-      ( cd "$tmp" && lha xf resource.1 ) \
-        || { echo "ERROR: [$game] could not LHA-extract resource.1"; exit 1; }
-    fi
-    found="$(find "$tmp" -iname "$pak" | head -1)"
+    mkdir -p "$tmp/ex"
+    case "$url" in
+      *.exe)
+        # Quake II demo: InstallShield/zip self-extractor (baseq2/pak0.pak inside).
+        sz="$(command -v 7z || command -v 7za || true)"
+        [ -n "$sz" ] \
+          || { echo "ERROR: [$game] '$url' needs 7z to extract — install p7zip-full"; exit 1; }
+        "$sz" x -y -o"$tmp/ex" "$tmp/dl" >/dev/null \
+          || { echo "ERROR: [$game] 7z extraction failed for $url"; exit 1; } ;;
+      *.gz.sh|*.sh|*.run)
+        # Quake III demo: makeself gzip+shell self-extractor. The installer's own
+        # --target/--noexec are unreliable; skip the shell header and gunzip+untar
+        # the payload directly (skip= line self-declares the header length).
+        skip="$(grep -am1 '^skip=' "$tmp/dl" | cut -d= -f2)"
+        [ -n "$skip" ] \
+          || { echo "ERROR: [$game] could not find makeself 'skip=' header in $url"; exit 1; }
+        tail -n +"$skip" "$tmp/dl" | gzip -cd | tar xof - -C "$tmp/ex" \
+          || { echo "ERROR: [$game] makeself payload extraction failed for $url"; exit 1; } ;;
+      *)
+        unzip -oq "$tmp/dl" -d "$tmp/ex" \
+          || { echo "ERROR: [$game] could not unzip the archive from $url"; exit 1; }
+        # Q1 shareware: pak0.pak is packed inside an LHA-compressed resource.1.
+        if [ "$game" = q1 ] && [ -f "$tmp/ex/resource.1" ]; then
+          ( cd "$tmp/ex" && lha xf resource.1 ) \
+            || { echo "ERROR: [$game] could not LHA-extract resource.1"; exit 1; }
+        fi ;;
+    esac
+    found="$(find "$tmp/ex" -iname "$pak" | head -1)"
     [ -n "$found" ] \
       || { echo "ERROR: [$game] $pak not found inside the archive from $url"; exit 1; }
-    cp "$found" "$dst/$pak" ;;
+    cp "$found" "$dst/$pak"; chmod u+w "$dst/$pak" ;;   # demo paks are often read-only
 esac
 
 got="$(sha256sum "$dst/$pak" | cut -d' ' -f1)"

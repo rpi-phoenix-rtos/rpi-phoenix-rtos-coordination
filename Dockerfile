@@ -40,16 +40,17 @@ ARG REPO_BASE=https://github.com/rpi-phoenix-rtos
 ARG UPSTREAM_BASE=https://github.com/rpi-phoenix-rtos
 ARG PAK0_URL=https://www.classicdosgames.com/files/games/id/quake106.zip
 ARG PAK0_SHA256=35a9c55e5e5a284a159ad2a62e0e8def23d829561fe2f54eb402dbc0a9a946af
-# Quake II / Quake III demo data. NO default URL: unlike the Q1 shareware
-# (quake106.zip, freely redistributable), the Q2/Q3 demo paks have their own
-# redistribution terms — supply a URL only after verifying rights for your
-# distribution. Empty = the engine still builds, just without bundled data.
-#   Q2: a *.zip containing baseq2/pak0.pak, or a direct *.pak
-#   Q3: a *.zip/*.pk3 containing demoq3/pak0.pk3, or a direct *.pk3
-ARG PAK0Q2_URL=
-ARG PAK0Q2_SHA256=
-ARG PAK0Q3_URL=
-ARG PAK0Q3_SHA256=
+# Quake II / Quake III demo data. These are the freely-downloadable id Software
+# demos (the same class as the Q1 shareware): the build downloads them at build
+# time and bakes them into the image you build — this repo distributes only the
+# build scripts, never a pre-built image containing the data. Set a URL to "" to
+# build that engine without bundled data. Overridable, e.g. to a local mirror.
+#   Q2: q2-314-demo-x86.exe (InstallShield self-extractor; needs p7zip) -> baseq2/pak0.pak
+#   Q3: linuxq3ademo-1.11-6.x86.gz.sh (makeself installer)             -> demoq3/pak0.pk3
+ARG PAK0Q2_URL=https://deponie.yamagi.org/quake2/idstuff/q2-314-demo-x86.exe
+ARG PAK0Q2_SHA256=cae257182f34d3913f3d663e1d7cf865d668feda6af393d4ecf3e9e408b48d09
+ARG PAK0Q3_URL=https://ftp.gwdg.de/pub/misc/ftp.idsoftware.com/idstuff/quake3/linux/linuxq3ademo-1.11-6.x86.gz.sh
+ARG PAK0Q3_SHA256=e77abad2466f45a0a7ea018445528f9b95a0fe7789fa1abc1a7718bbf0754b08
 ARG BUILD_VARIANT=sd
 ARG BUILD_FLAGS=--with-showcase --with-ports
 ENV DEBIAN_FRONTEND=noninteractive
@@ -58,7 +59,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # linux-host.sh calls `sudo apt-get`, so it must exist; bootstrap installs the full
 # apt set itself.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends git ca-certificates sudo wget curl xz-utils unzip lhasa \
+ && apt-get install -y --no-install-recommends git ca-certificates sudo wget curl xz-utils unzip lhasa p7zip-full \
  && rm -rf /var/lib/apt/lists/*
 
 # 1. Clone the coordination repo (carries every build script, incl. bootstrap).
@@ -75,13 +76,12 @@ RUN PROJECT_DIR=/build/phoenix-rpi \
     EXTERNAL_FORK_BASE="${REPO_BASE}" \
     ./scripts/bootstrap-linux-host.sh
 
-# 3. Quake game data (licensing-clean): stage the freely-redistributable demo/
-#    shareware paks into the rootfs overlay so the showcase Quake engines have
-#    playable data. Delegated to the shared scripts/fetch-quake-data.sh (same
-#    path used by SD + netboot builds). Q1 shareware (quake106.zip) is the
-#    default; Q2/Q3 have no default URL (their demo paks carry their own
-#    redistribution terms — pass PAK0Q2_URL / PAK0Q3_URL to opt in). An empty
-#    URL skips that game (engine still built); a non-empty URL that fails to
+# 3. Quake game data: download the id Software demos and bake them into the
+#    rootfs overlay so the showcase Quake engines have playable data. Delegated
+#    to the shared scripts/fetch-quake-data.sh (same path used by SD + netboot
+#    builds): Q1 shareware (quake106.zip), Q2 demo (baseq2/pak0.pak), Q3 demo
+#    (demoq3/pak0.pk3). Each defaults to a verified upstream URL; set a PAK0*_URL
+#    to "" to skip that game (engine still built). A non-empty URL that fails to
 #    download/extract/verify FAILS the build (never ship a half-baked image).
 RUN set -eu; \
     ./scripts/fetch-quake-data.sh q1 "${PAK0_URL}"   "${PAK0_SHA256}"; \
