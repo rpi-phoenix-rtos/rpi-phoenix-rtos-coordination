@@ -15,14 +15,15 @@ hangs after its menu — see the capabilities table).
 > integration manifests. The Phoenix-RTOS source lives in sibling repositories
 > cloned under `sources/` (see [Repository layout](#repository-layout)).
 
-> ⚙️ **Toolchain modernization — GCC 16.2.0 + binutils 2.47.** The entire port is
-> being rebuilt with an up-to-date **GCC 16.2.0** aarch64-phoenix cross-toolchain
-> and the latest **binutils 2.47** — a big jump from the previous GCC 14.2.0 /
-> binutils 2.43. The gcc-16 core system (kernel, drivers, libc, lwip, NFS) already
-> **boots to a shell and serves its NFS root on real Pi 4 hardware**; a full gcc-16
-> rebuild of the ports + X11 stack and a **Docker-reproducible gcc-16-based release**
-> are in progress. During the transition the default build still uses GCC 14.2.0;
-> follow the roadmap in the [gcc-16 release plan](docs/inprogress/gcc16-release-plan.md).
+> ⚙️ **Toolchain modernization — GCC 16.2.0 + binutils 2.47.** The port has moved
+> to an up-to-date **GCC 16.2.0** aarch64-phoenix cross-toolchain and the latest
+> **binutils 2.47** — a big jump from the previous GCC 14.2.0 / binutils 2.43. This
+> is now the **default toolchain** (a fresh `bootstrap-linux-host.sh` builds it),
+> and the gcc-16 system (kernel, drivers, libc, lwip, NFS) **boots to a shell and
+> serves its NFS root on real Pi 4 hardware**. A full gcc-16 rebuild of the ports +
+> X11 stack and a **Docker-reproducible gcc-16-based release** are in final
+> validation. Follow the roadmap in the
+> [gcc-16 release plan](docs/inprogress/gcc16-release-plan.md).
 
 > 🚀 **First time here?** [**TUTORIAL.md**](TUTORIAL.md) is a single,
 > self-contained walkthrough: build the image, flash an SD card, boot the Pi,

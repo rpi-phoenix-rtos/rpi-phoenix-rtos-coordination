@@ -91,7 +91,7 @@ container if either reason above applies to you.
 - *Recommended:* a USB-serial adapter on GPIO 8/10 (GND/Pi-TXD) at **115200 8N1**
   to watch `plo`/kernel output — invaluable when a netboot doesn't come up.
 
-**Host** — a Linux machine (Ubuntu 24.04 validated). You'll install:
+**Host** — a Linux machine (Ubuntu 24.04 / 26.04 validated). You'll install:
 - The Phoenix build dependencies (handled by the bootstrap script below).
 - **`dnsmasq`** (DHCP + TFTP), **`nfs-kernel-server`** (NFS), and
   **`sfdisk` + `mtools`** (for the one-time EEPROM SD image).

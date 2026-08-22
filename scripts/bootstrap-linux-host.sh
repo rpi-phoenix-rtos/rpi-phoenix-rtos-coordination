@@ -172,7 +172,7 @@ require_root_for() {
 # a one-shot bootstrap installs everything; that script re-checks its own
 # subset for the standalone-toolchain case.
 APT_PACKAGES=(
-	# --- cross-toolchain build prerequisites (gcc-14.2 + binutils-2.43) ---
+	# --- cross-toolchain build prerequisites (gcc-16.2 + binutils-2.47) ---
 	build-essential bison flex texinfo
 	libgmp-dev libmpfr-dev libmpc-dev
 	wget xz-utils
@@ -467,7 +467,7 @@ setup_python_venv() {
 # 5. Print next steps
 ##############################################################################
 
-# 6. aarch64-phoenix cross-toolchain (gcc-14.2.0 + binutils-2.43). This is the
+# 6. aarch64-phoenix cross-toolchain (gcc-16.2.0 + binutils-2.47). This is the
 # long pole (~20-60 min) but makes bootstrap a true one-command setup:
 # rebuild-rpi4b-fast.sh REQUIRES $PROJECT_DIR/.toolchain to exist, and BUILD.md
 # documents bootstrap as building it. Idempotent — build-phoenix-toolchain-linux.sh

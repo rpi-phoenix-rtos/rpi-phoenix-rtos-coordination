@@ -12,8 +12,8 @@ filesystem.
 
 ## Prerequisites
 
-- **Supported host:** Ubuntu x86_64 (24.04 or newer). The build runs directly
-  on the host — no VM.
+- **Supported host:** Ubuntu x86_64 (24.04 or newer; 26.04 LTS validated). The
+  build runs directly on the host — no VM.
 - **A Raspberry Pi 4 Model B** (any RAM tier; the port is validated on the
   4 GB model) and a **microSD card** (4 GB or larger).
 - **A network connection during the build.** The build is not fully offline:
@@ -78,7 +78,7 @@ This is idempotent — safe to re-run if anything fails partway. It:
 4. Stages the Raspberry Pi firmware blobs (`start4.elf`, `fixup4.dat`, the
    `bcm2711-rpi-4-b.dtb` device tree, and overlays) from `raspberrypi/firmware`
    into `.bootblobs/`. The DTB is fetched ready-made — it is never compiled.
-5. Builds the `aarch64-phoenix` cross-toolchain (gcc-14.2.0 + binutils-2.43)
+5. Builds the `aarch64-phoenix` cross-toolchain (gcc-16.2.0 + binutils-2.47)
    into `.toolchain/`.
 6. Creates a Python venv at `.venv/` with `pyserial` and the build's Python
    dependencies.
