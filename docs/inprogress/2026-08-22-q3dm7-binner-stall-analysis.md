@@ -243,8 +243,7 @@ runs exactly once every boot (clean AND wedged), always `status=0x8cd5`
 reuse, not the cause. This reconciles with the winsys:180 note ("zeroing BOs changed content not
 rate ⇒ not a memory/cache effect") for MODE B.
 
-**Two follow-ups identified:** (1) a SEPARATE deterministic bug — the capture FBO is always
-incomplete (0x8cd5, missing attachment) — worth fixing for harness reliability; (2) MODE A's
+**Two follow-ups identified:** (1) a SEPARATE deterministic bug — the capture FBO status is 0x8cd5 = GL_FRAMEBUFFER_COMPLETE (fine, not a bug) — worth fixing for harness reliability; (2) MODE A's
 question: why is a 19-byte CL BO with unwritten/stale content handed to the binner? The wedge has a
 working mitigation (reset+drop; #13 daemon reset_reinit_core recovers it), so deep root-fix stays
 banked behind the finalization queue.
