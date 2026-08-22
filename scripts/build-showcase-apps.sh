@@ -283,10 +283,19 @@ phase_gpu() {
 	# the 88-target serial ninja loop is slow AND has been an intermittent point where the whole
 	# build gets externally killed; skipping it when unneeded shrinks that window. The enumerated
 	# aux/core lists still materialize any straggler on demand.
+	#
+	# ROBUSTNESS (2026-08-22): the sentinel set below MUST include headers the Mesa *.c compiles
+	# actually #include, not just the nir/format tables. A partial /tmp/mesa-v3d-build (the 4 table
+	# sentinels present but the glapi dispatch headers missing — e.g. after a partial /tmp cleanup)
+	# would otherwise falsely skip the codegen, then every src/mesa/main/*.c fails "dispatch.h: No
+	# such file or directory" -> libGL incomplete -> libquakespasm link fails with ~222 undefined
+	# _mesa_* symbols (observed). So also require the generated glapi headers (path-agnostic find).
 	if [ -s "${mesa_v3d_build}/src/compiler/nir/nir_opcodes.c" ] \
 	   && [ -s "${mesa_v3d_build}/src/compiler/builtin_types.c" ] \
 	   && [ -s "${mesa_v3d_build}/src/util/format/u_format_table.c" ] \
-	   && [ -s "${mesa_v3d_build}/src/compiler/nir/nir_intrinsics.c" ]; then
+	   && [ -s "${mesa_v3d_build}/src/compiler/nir/nir_intrinsics.c" ] \
+	   && [ -n "$(find "${mesa_v3d_build}" -name dispatch.h -print -quit 2>/dev/null)" ] \
+	   && [ -n "$(find "${mesa_v3d_build}" -name api_exec_decl.h -print -quit 2>/dev/null)" ]; then
 		log "generated mesa sources already present in ${mesa_v3d_build} — skipping codegen loop"
 	else
 		log "materializing all mesa generated sources in ${mesa_v3d_build} (codegen-only ninja)"
