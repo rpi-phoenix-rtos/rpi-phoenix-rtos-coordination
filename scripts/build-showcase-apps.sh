@@ -498,6 +498,20 @@ phase_stage() {
 	# lands at /usr/bin/Xphoenix (b_install) not /bin — launch with that path.
 	if [ "$skip_x11" = 0 ]; then
 		run_step_soft "X11: xlaunch/startx"  "${X11}/build-xlaunch.sh"
+
+		# Concurrent-GPU (#13) daemon-client desktop apps: the glamor X server and the
+		# GPU window relinked as v3d-server CLIENTS (route V3D work through the rpi4-v3d
+		# daemon instead of the in-process winsys), so a shipped image can run the
+		# accelerated CONCURRENT-GPU desktop — rpi4-v3d (daemon, already a device
+		# component) + Xphoenix-glamor-daemon + gl-x11-window-daemon via pl_phoenix_xlaunch
+		# `gpudesk`/`deskapps`. HW-proven end-to-end: docs/inprogress/2026-08-22-concurrent-
+		# gpu-v3d-server-feasibility.md. Soft steps (GPU-lib dependent); staged into /bin.
+		# Requires the GPU phase (Mesa/libGL + libv3d-phoenix.a) to have run first.
+		run_step_soft "X11: Xphoenix-glamor-daemon (concurrent-GPU X)" "${X11}/build-xfbdev.sh" --glamor-daemon
+		xgd="$(find "${X11}/src" -name Xphoenix-glamor-daemon -type f 2>/dev/null | head -1)"
+		if [ -n "$xgd" ]; then cp -v "$xgd" "${stage_dir}/bin/Xphoenix-glamor-daemon"; else warn "Xphoenix-glamor-daemon not built — skipped staging"; fi
+		run_step_soft "X11: gl-x11-window-daemon (GPU window client)" "${X11}/build-gl-x11-window.sh" --daemon
+		if [ -f "${gpu_libs}/gl-x11-window-daemon" ]; then cp -v "${gpu_libs}/gl-x11-window-daemon" "${stage_dir}/bin/gl-x11-window-daemon"; else warn "gl-x11-window-daemon not built — skipped staging"; fi
 	fi
 
 	if [ "${#soft_failures[@]}" -gt 0 ]; then
