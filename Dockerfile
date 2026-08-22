@@ -14,9 +14,11 @@
 #   scripts/build-sd-in-docker.sh   (starts a git/http server + sets the ARGs below)
 #
 # Args (override with --build-arg):
-#   UBUNTU_TAG    base image. Default 24.04 — the LTS the toolchain + bootstrap are
-#                 VALIDATED against. Bump deliberately; a newer LTS may shift apt
-#                 package names / meson / gcc and break the toolchain build.
+#   UBUNTU_TAG    base image. Default 26.04 — the current LTS and the host the
+#                 GCC 16.2.0 + binutils 2.47 toolchain is built + validated on, so the
+#                 Docker build matches the known-good host environment. Change
+#                 deliberately; a different LTS may shift apt package names / meson /
+#                 gcc and break the toolchain build.
 #   REPO_BASE     git base for the org repos (coord + 16 siblings + quakespasm +
 #                 lwip forks). Default: public GitHub org rpi-phoenix-rtos. (mesa is
 #                 NOT a fork — upstream Mesa @ a tag + patches/mesa/, see bootstrap.)
@@ -31,7 +33,7 @@
 #   BUILD_VARIANT sd (default) | nfsroot | netboot.
 #   BUILD_FLAGS   extra rebuild flags. Default: --with-showcase --with-ports
 #                 (GLQuake + X11/WindowMaker + busybox). Use "" for a base image.
-ARG UBUNTU_TAG=24.04
+ARG UBUNTU_TAG=26.04
 FROM ubuntu:${UBUNTU_TAG}
 
 ARG REPO_BASE=https://github.com/rpi-phoenix-rtos
