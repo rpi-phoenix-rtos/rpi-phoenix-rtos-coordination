@@ -52,6 +52,21 @@ Was clean in the past (older GL grabs correct). vkQuake (own present path) is cl
   v3d_phoenix_winsys.c + external/mesa/.../v3d_resource.c. Rebuild libv3d + relink a GL game + grab.
 
 ## Issue 2 — vkQuake: the 2 start-map torches are MISSING (resurfaced #67/torch bug)
+**2026-08-22 SCOPED (strong lead, NOT the #51 wedge):** vkq-semafix grab 20260822-143739 confirms
+vkQuake RENDERS the start map fully (textures, QUAKE archway, HUD, viewmodel — an alias model — all
+fine), so this is a rendering-correctness bug in a WORKING vkQuake, NOT the binner-wedge hang. The
+viewmodel alias model renders → not a total alias failure → flame-specific (flame is progs/flame2.mdl,
+an animated alias model, fullbright/glowing + casts dlight; "scene darker" = missing torch dlight).
+KEY: external/vkquake HEAD already has `d3e329c alias: present opaque models with alpha=1 (fixes
+invisible torches on Phoenix)` (Aug 4). Staged rpi4-vkquake is Aug 22 (after d3e329c) yet the owner's
+14:37 grab shows no torches. So EITHER the tested binary was stale/older than d3e329c's effect, OR a
+later V3DV Mesa-rebase change (0f598ef drop-DISABLE_TFU, or the alias fullbright/additive path) undid
+it. **NEXT (fresh turn, 1 build + 1 cycle):** clean-rebuild rpi4-vkquake from HEAD (force non-INCR so
+d3e329c's r_alias.c is compiled) against current libv3dv/libv3d, restage /srv/phoenix-rpi4-nfs, netboot
++ grab the start map. Torches present → was a stale binary (DONE, like Issue 1). Still missing → git-bisect
+d3e329c..HEAD on external/vkquake + the src/broadcom/vulkan Mesa-rebase commits for the alias/fullbright
+regression. (vkQuake renders post-semafix so it's testable; watch for the #51 first-frame wedge.)
+
 vkQuake render otherwise clean (Vulkan), but the flaming torches flanking the "QUAKE" archway
 are gone; scene darker. This is the long-fought #67 torch/alpha bug resurfaced.
 - Evidence: artifacts/hdmi/20260822-143739-vkq-semafix-final.png (no torches at the archway).
@@ -70,6 +85,14 @@ content position wrong.
 - Likely the same present-path coordinate/origin family as the glamor O1 vertical-flip already
   fixed (PHX_READBACK_FLIP_Y). Suspect the m3c gl-x11-window present (glReadPixels→XPutImage dst-y,
   GL bottom-left vs X top-left origin). Lowest urgency (niche windowed-GL demo, doesn't block viewing).
+- **2026-08-22 code inspection — the dst-y guess is REFUTED.** tools/x11-port/gl_x11_window.c is
+  correct end-to-end: FBO 640x480, glViewport(0,0,W,H), glReadPixels(0,0,W,H), a correct bottom-left→
+  top-left vertical flip (srow = rgba+(H-1-y)*W*4), XPutImage dst (0,0) full W×H. draw_scene() uses an
+  identity projection with the fan centered at the origin (±0.85, no Y-translate) → content renders
+  CENTERED, no offset. So the reported "content shifted down / black top band" is NOT in this client's
+  present path. Remaining suspects (need live repro): server-side Xphoenix window geometry (client
+  area vs twm title-bar offset), or the grab was a different/older GL client. DEFERRED (lowest
+  priority, non-blocking) — revisit with a fresh HDMI repro when the higher-value items are done.
 
 ## Status
 Confirmed + triaged 2026-08-22. All uncommitted-investigation. Fixes are multi-turn GPU work;
