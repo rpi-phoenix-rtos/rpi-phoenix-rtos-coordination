@@ -13,6 +13,7 @@ frontend/harness). Excludes x86-only sse_minmax.c (portable fallback exists).
 Usage: python3 build-gl-phoenix.py
 """
 import os, json, subprocess, glob
+import concurrent.futures
 
 # pull in transform/abssrc/by_abs/TC/MESA/HOSTBUILD/COMPAT/SHIM/PORT/AR
 _pre = open(os.path.join(os.path.dirname(__file__), "build-v3d-phoenix.py")).read().split("def main")[0]
@@ -104,18 +105,24 @@ def main():
              and not any(x in e["file"] for x in GL_EXCLUDE)]
     os.makedirs(GLOBJ, exist_ok=True)
     objs, fails = [], []
+    # Parallel compile across all cores: each cmd is an independent gcc subprocess writing a distinct
+    # .o. Build the work list first, then run it in a cpu_count() ThreadPool (the GIL doesn't block
+    # subprocess I/O). ex.map preserves order -> deterministic archive. Was a serial one-at-a-time
+    # loop (the single-core bottleneck in the showcase/GPU build phase).
+    def _run(cmd, out, label):
+        r = subprocess.run(cmd, cwd=HOSTBUILD, capture_output=True, text=True)
+        if r.returncode == 0:
+            return (out, None)
+        return (out, (label, [l for l in r.stderr.splitlines() if "error:" in l][:1]))
+
+    work = []
     for e in files:
         src = abssrc(e["file"])
         out = f"{GLOBJ}/{os.path.basename(src)}.o"
         cmd = transform(e, src, out)
         if src.endswith(".cpp"):
             cmd[0] = TCXX
-        r = subprocess.run(cmd, cwd=HOSTBUILD, capture_output=True, text=True)
-        if r.returncode == 0:
-            objs.append(out)
-        else:
-            fails.append((os.path.relpath(src, MESA),
-                          [l for l in r.stderr.splitlines() if "error:" in l][:1]))
+        work.append((cmd, out, os.path.relpath(src, MESA)))
     # generated GL entrypoint .c — compile with a mesa/main template's flags.
     tmpl = next(e for e in db if e["file"].endswith("src/mesa/main/context.c"))
     for rel in GEN_C:
@@ -123,12 +130,10 @@ def main():
         if not os.path.exists(src):
             print(f"  [gen-c] MISSING {rel}"); continue
         out = f"{GLOBJ}/{os.path.basename(rel)}.o"
-        cmd = transform(tmpl, src, out)
-        r = subprocess.run(cmd, cwd=HOSTBUILD, capture_output=True, text=True)
-        if r.returncode == 0:
-            objs.append(out)
-        else:
-            fails.append((rel, [l for l in r.stderr.splitlines() if "error:" in l][:1]))
+        work.append((transform(tmpl, src, out), out, rel))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, os.cpu_count() or 1)) as _ex:
+        for out, fail in _ex.map(lambda w: _run(*w), work):
+            (fails.append(fail) if fail else objs.append(out))
 
     # Phoenix shims, folded into libGL so a boot program links just the two libs:
     # mathshim (real float-math libm lacks; compiled WITHOUT the compat shim) and
