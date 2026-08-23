@@ -31,24 +31,41 @@ Comparing how the two shells are built/configured on Phoenix:
   group, and installs SIGTTIN/SIGTTOU/SIGTSTP handlers. ash (job control off) never touches any of
   this — it just reads fd 0 in the process group psh gave it.
 
-## Mechanism (hypothesis, being confirmed against Phoenix source)
-1. psh forks+execs bash; bash inherits psh's process group (the tty's current foreground group).
-2. bash (JC on) calls `setpgid(0, getpid())` → moves itself into a NEW process group that is **not**
-   the tty's foreground group.
-3. bash calls `tcsetpgrp(shell_tty, its_pgrp)` to make its new group the foreground. **On Phoenix
-   this is (suspected) a no-op/stub — there is no per-terminal foreground-pgrp concept — so bash is
-   now effectively a BACKGROUND process on the tty.**
-4. readline does `read(0, &c, 1)`. POSIX: a read from a **background** process group must raise
-   **SIGTTIN** (default: stop). Phoenix (suspected) has no foreground-pgrp/SIGTTIN logic, so the
-   read just **returns 0 (EOF)**.
-5. readline treats `read()==0` as EOF → returns EOF to bash → bash exits (the Ctrl-D path), at the
-   very first prompt, before any user input. This looks like "bash exits in interactive mode."
+## Mechanism — REFINED by a full Phoenix-source audit (2026-08-23; my first sketch was partly wrong)
+A read-only audit of libphoenix + kernel + libtty + posixsrv (see below) **refuted the
+"background-read returns EOF" sketch** but confirmed the deeper picture:
 
-This exactly fits: ash (no setpgid/tcsetpgrp) stays in psh's foreground group → its reads return
-bytes; bash (JC on) demotes itself to background → its reads return 0 → exit.
+- `tcsetpgrp`/`tcgetpgrp` are **real** (libphoenix termios.c → `ioctl(TIOCSPGRP/TIOCGPGRP)` →
+  libtty stores `tty->pgrp`), NOT stubs. `setpgid`/`getpgid`/`setsid` are real kernel syscalls.
+- **psh already makes bash the tty's foreground group BEFORE exec** — `runfile.c` does
+  `setpgid(pid,pid)` then `tcsetpgrp(STDIN,pid)` before `execv`. So when bash starts,
+  `tcgetpgrp(shell_tty) == getpgrp()` → bash's foreground self-check **PASSES** → bash **enters
+  full job-control mode** (it does NOT fail to foreground, and does NOT become a background reader).
+- A blocking console read (pl011-tty → `libtty_read`, canonical) **never returns a spurious 0** — only
+  a real Ctrl-D/VEOF. So the exit is **not** a background-read EOF.
+- **Phoenix has NO real job control**: `tty->pgrp` is a signal-delivery target only (never gates
+  reads); there is **no** foreground-pgrp read enforcement, **no** SIGTTIN/SIGTTOU generation, **no**
+  kernel stop-state, and libphoenix defaults SIGTSTP/SIGTTIN/SIGTTOU/SIGSTOP/SIGCONT to
+  `_signal_ignore` (signal.c:104-112, TODO); `setsid` is a `FIXME` stub (pgid=pid). Sessions are
+  merely simulated via pgrp.
+- FIONREAD (readline input-availability, `bash_cv_fionread_in_ioctl=yes`) was a real gap, already
+  **FIXED** (commit b247643) — its message states it is "not the sole cause" of the EOF-exit.
+
+**So the real fault is a configuration mismatch:** bash was built **with** job control
+(`bash_cv_job_control_missing=present`) and *enters* JC mode, then interacts with Phoenix's
+**partial/absent** JC semantics (stop signals ignored, no real sessions/stop-state) in a way that
+ends the interactive session. The exact line is inside bash's own `jobs.c`/`shell.c` (fetched at
+build, not in this tree) — but it does not need to be pinned to fix the bug, because **the entire
+JC path is inappropriate on an OS with no job control.** ash proves this: it has JC compiled out and
+never runs any of it → works. bash-with-JC on a no-JC OS is the misconfiguration.
 
 ## Fixes
-**Fix A — pragmatic, high-probability, "in reach" (matches ash): build bash WITHOUT job control.**
+**The audit reframes the choice:** Phoenix has *no* job control (no SIGTTIN, stop signals ignored,
+no sessions/stop-state). So building bash WITH job control is a capability mismatch, and busybox
+ash already ships the correct answer for this OS (JC compiled out). Fix A is therefore the
+*correct* configuration, not merely a workaround.
+
+**Fix A — build bash WITHOUT job control (correct for a no-JC OS; matches ash).**
 Set `bash_cv_job_control_missing=missing` in the port config.cache (defines `JOB_CONTROL_MISSING`
 → bash never setpgid/tcsetpgrp's, stays in psh's foreground group, reads return bytes). Cost:
 no `Ctrl-Z`/`fg`/`bg`/`&`-with-signals — but INTERACTIVE bash (the owner's ask) works. This is the
