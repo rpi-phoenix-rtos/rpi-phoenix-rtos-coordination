@@ -528,6 +528,13 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-25 (session ~246 — pivot to gcc-16 release finalization: G3.2 Docker reproducible build LAUNCHED):
+ No new git owner feedback; Pi free. Bash arc fully closed last session (select(NULL) fix pushed+HW-verified+tested+documented). Pivoted to the #1 active thrust — the gcc-16 release (G-GCC/E10: build+boot already DONE) — and launched its next gate, **G3.2: the authoritative `--no-cache` Docker reproducible build** (scripts/build-sd-in-docker.sh, pid 4071003, log docker-release-g32.log). It serves my LOCAL committed sibling state (so the image bakes in the bash select fix libphoenix 033ee1f + all gcc-16 fixes) and builds a full gcc-16 SD image from scratch in a container → docker-out/.
+ - **Risky phases CONFIRMED working:** buildx/BuildKit installed (session ~234) works; `docker build --no-cache --network=host` reaches the host git-serve — `#6 git clone git://127.0.0.1:9418/...coordination.git` succeeded ("Cloning into..."), `#8 bootstrap-linux-host.sh` running (apt + sibling clones from the local server). So the earlier BuildKit-vs-network worry is moot.
+ - **BUDGET NOTE:** the Docker build is HOST CPU, not API tokens — launching + polling it costs few API calls, so it's safe under the recurring spend-limit constraint. Runs ~1-2hr across heartbeats.
+ **NEXT (check each heartbeat):** poll docker-release-g32.log for completion + BUILD_RC=0 + docker-out/rpi4b-sd-2part.img. If clean → G3.3 boot-verify the Docker image (netboot/SD) → G5: snapshot manifest + tag known-good/gcc16-release-2026-08-25 across siblings+coord + publish the release to the org + update the org README to state gcc-16.2.0-based. If the Docker build fails (e.g. a CDN hiccup mid-build — the mirror fallbacks from ~233 should cover x.org/fontconfig/cairo), diagnose from the log + relaunch. Other backlog available if the release stalls: WiFi data-plane (banked at fw wall), ffmpeg-HW (E4 largely done), G-STK/G-XORG-MODERN (future).
+
+
 2026-08-25 (session ~245 — bash arc CLOSED OUT: fix pushed, regression test added, docs corrected):
  No new git owner feedback. Completed all close-out for the interactive-bash fix (the owner's long-standing #1 bug, resolved this arc via the libphoenix select(NULL) fix, HW-verified session ~244):
  - libphoenix select(NULL)-blocks fix PUSHED (033ee1f). Interactive bash HW-verified working.
