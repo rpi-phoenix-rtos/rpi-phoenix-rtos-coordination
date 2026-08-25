@@ -22,18 +22,30 @@ verdict says the TFU **produced LINEAR** (dst[16]==src(16,0), != src(4,0)). Per 
 code's own 3-way comment that is the "Mesa-asked-UIF + produced-LINEAR ⇒ TFU ignored
 IOA (winsys/HW)" case — i.e. a real tiling bug that would scramble the wall texture.
 
-## BUT — why the prior session called the vcheck a false positive (must verify, not re-assert)
+## CONFIRMED (2026-08-25, source decode): the VERTICAL-MISMATCH is a false positive on MIP jobs
 
-The mismatching jobs have **`icfg` src FORMAT `(icfg>>18)&0xf = 0xE` (NON-raster)**,
-whereas the CPU-tiler/vcheck raster-source assumption (`src[y*w+x] = pixel(x,y)`) only
-holds when src FORMAT == 0 (RASTER). A tiled→tiled (in-place **mip**) TFU job with a
-tiled source makes BOTH the "LINEAR!" verdict and the vcheck compare against the wrong
-bytes ⇒ a **plausible false positive** for those specific jobs. The 32×32 UIF-VERIFIED
-job is the base-level raster→UIF upload (assumption holds) and passes.
+Mesa builds TFU ICFG in `external/mesa/src/gallium/drivers/v3d/v3dx_tfu.c` (V3D42):
+src FORMAT = `RASTER(0)` if the source slice is raster, else `LINEARTILE + (tiling -
+LINEARTILE)`. The FORMAT field is **6 bits (23:18)** — but the winsys decodes only
+`(icfg>>18)&0xf` (4 bits, `v3d_phoenix_winsys.c:1306`). Decoding the owner's 64×128 job
+`icfg=0x003808e0` with the full 6-bit mask: `(0x003808e0>>18)&0x3f = 14 = UIF_NO_XOR`.
+⇒ the **source is UIF-tiled**, i.e. these 64×128/64×64 jobs are **mipmap-generation**
+TFU jobs (base UIF level → mip levels), NOT raster→UIF base uploads. The vcheck's
+`src[y*w+x] = raster pixel(x,y)` assumption is therefore invalid for them ⇒ the
+`VERTICAL-MISMATCH` + `TILING=LINEAR!` verdicts are **confirmed false positives on mip
+jobs** (32×32 "UIF-VERIFIED" is a coincidental pass — small single-UIF-block image).
+This rigorously validates the prior session's claim. The real corruption is NOT what
+this probe flags.
 
-⇒ Source analysis is INCONCLUSIVE on its own: the mismatch is either (a) a real
-mip-level tiling bug, or (b) a diagnostic artifact on tiled-source mip jobs. The
-owner's REAL visible corruption means *something* is wrong regardless.
+⇒ The bug is in the **mip-level content** (wrong data sampled at distance) OR the
+base-level upload — exactly the `gl_texturemode GL_LINEAR` (mipmapping OFF) fork.
+
+## HDMI is NOT a usable capture path here (2026-08-25 cycle q2tex-default)
+
+Ran `quake2` (demo1) with dense HDMI ticks: the grabs show the Q2 **console overlay**
+(`]` prompt + logo) with a pure-black lower half — the page-flipped 3D scanout
+(log: "3 buffer(s) TRIPLE-BUFFER+page-flip") does not reach the HDMI grab reliably
+(same class as the O2/O3 HDMI-vs-page-flip issue). Use the coherent frame-dump instead.
 
 ## Also: the 08-22 Pi timedemo was CLEAN
 
@@ -49,22 +61,22 @@ scanout-RASTER fix coord 571d57f / mesa 34a448d6a29 — check if that touched ti
 disables mipmapping ⇒ removes all the mip-level (tiled-source) TFU jobs, leaving only
 base-level raster→UIF uploads.
 
-1. Host: `python3 scripts/quake-capture-sink.py --out /tmp/quake-pi-q2-default --port 5599`
-2. Pi (netboot, card out): launch yquake2 on **q2demo1** with the TCP-sink capture
-   cvars + `timedemo 1` + `fixedtime` (mirror `scripts/quake2-host-capture.sh` lines
-   72-76), DENSER sampling than the 08-22 run so the buggy view is captured. **TODO:**
-   confirm the Pi-side sink cvar spelling (`scr_capture_host`/`scr_capture_port`?) —
-   grep the yquake2 capture patch (not found under a plain name; likely a build define
-   or in the SDL/refresh glue). `quake2-launcher.c` is the ram-stage `quake2` wrapper —
-   check whether it forwards argv to yquake2 (so `quake2 +set gl_texturemode GL_LINEAR`
-   works) or run `/usr/bin/yquake2` directly.
-3. Repeat with `+set gl_texturemode GL_LINEAR` → /tmp/quake-pi-q2-linear.
-4. Convert + eyeball both sets (PIL, as in this session). **Malformation gone with
-   GL_LINEAR ⇒ mip-level path** (fix the tiled-source mip TFU tiling; the vcheck
-   false-positive is then masking a real mip bug). **Persists ⇒ base-level** raster→UIF
-   upload (the 32×32-verified path fails at 64-wide; look at TFU icfg/ioa for w=64).
-5. Also compare the CURRENT default-run Pi frames vs the 08-22 clean set → confirms/denies
-   an 08-22→08-25 regression.
+**Capture path RESOLVED** — the coherent hook is `external/yquake2/src/client/refresh/gl1/gl1_sdl.c`;
+it dumps every Nth **in-game 3D frame** and (on the Pi) streams `[u32 idx][u32 len][TGA]`
+over TCP to `scripts/quake-capture-sink.py`. Cvars: `scr_capture` (every Nth),
+`scr_capture_max` (N shots then EXIT), `scr_capture_host` (host IP; empty=file mode),
+`scr_capture_port` (5599). The `quake2` ram-stage wrapper (`tools/yquake2-port/quake2-launcher.c`)
+FORWARDS argv, so `quake2 +set ...` works.
+
+1. Host: `python3 scripts/quake-capture-sink.py --out /tmp/quake-pi-q2-default --port 5599 &`
+2. Pi (netboot, card out), via test-cycle-psh-interact, one command (mirror
+   `quake2-host-capture.sh` 72-76 so frames pair 1:1 with the host ref + the 08-22 Pi set):
+   `quake2 +set r_mode -1 +set r_customwidth 1920 +set r_customheight 1080 +set r_vsync 0 +set cl_particles 0 +set fixedtime 50000 +set timedemo 1 +set scr_capture 5 +set scr_capture_max 40 +set scr_capture_host 10.42.0.1 +set scr_capture_port 5599 +demomap q2demo1.dm2`
+3. Repeat with `+set gl_texturemode GL_LINEAR` added → sink `--out /tmp/quake-pi-q2-linear`.
+4. Convert + eyeball both sets (PIL, as this session). **Malformation gone with
+   GL_LINEAR ⇒ mip-level path**; **persists ⇒ base-level** raster→UIF upload.
+5. Also diff the current default Pi frames vs the 08-22 clean set → confirms/denies an
+   08-22→08-25 regression.
 
 ## Fix locus (once discriminated)
 
