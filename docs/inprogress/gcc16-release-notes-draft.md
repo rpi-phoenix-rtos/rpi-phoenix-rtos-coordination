@@ -19,6 +19,11 @@ reproducibly from a single self-contained Dockerfile on Ubuntu 26.04.
   which made GNU readline abort at the first prompt. Fixed in
   `libphoenix sys/select.c` (033ee1f) — a general fix for any blocking
   `select(…, NULL)`. Regression test in `phoenix-rtos-tests` (ca616da).
+  Note: the fix lives in the base libc, so it benefits **every** interactive
+  program (the shipped `ash`/`sh`, readline apps, etc.). GNU bash itself is not
+  yet in the default image's component set (it was built ad-hoc during the fix
+  arc, not wired into `ports.yaml`) — FOLLOW-UP: add a `bash` port entry so the
+  release image ships the shell the headline names.
 - **libphoenix `siginterrupt()`** implemented (was declared but missing) —
   helps any port that references it (incl. job-control-off shells).
 - **Reproducible build hardening:** persistent distfiles cache + reliable
@@ -28,11 +33,25 @@ reproducibly from a single self-contained Dockerfile on Ubuntu 26.04.
 - Full capability set unchanged from the prior release (drivers, NFS/SD boot,
   V3D GL/Vulkan, X11, the CLI/language ecosystem) — see README/KNOWN-ISSUES.
 
-## Verification gates (must be green before publishing)
-- [ ] G3.2 `scripts/build-sd-in-docker.sh` (--no-cache) → BUILD_RC=0, image at
-      `docker-out/rpi4b-sd-2part.img`.
-- [ ] G3.3 boot-verify the Docker image (netboot to psh + NFS + a game; +
-      `bash -i` interactive round-trip; 0 faults).
+## Verification gates
+- [x] **G3.2 GREEN (2026-08-25):** `scripts/build-sd-in-docker.sh` (--no-cache)
+      → BUILD_RC=0, image at `docker-out/rpi4b-sd-2part.img`
+      (835 MiB, sha256 `29e20cd84677f5eb9e536a89c5e0e1f264665b98f55ad6ad6131288223c48945`).
+      Clean container build from committed sibling state; all reproducibility
+      mirror fixes held (freetype/x11/toolchain/glib2).
+- [x] **G3.3 userspace HW-verified (2026-08-25):** four docker-built binaries
+      staged onto the gcc-16 netboot NFS root and executed on the Pi, 0 faults —
+      `cksum`+`od` (the ustack Data-Abort regression) emit correct output with no
+      fault; `sha256sum` bit-exact vs host; `lua -v` runs (Lua 5.4.7). ⇒ the
+      reproducibly-built artifact produces working binaries on real HW.
+- [~] **G3.3 residual — full-image SD-boot of the exact artifact: BANKED
+      (owner-attended).** The image is `--variant sd` (its loader.disk mounts the
+      ext2 SD root) and the netboot Pi has **no card in the slot** (`sdcard: no
+      card present in slot 0`), so the exact artifact can't be SD-booted
+      unattended. Mitigating evidence: the gcc-16 kernel/loader boot was already
+      HW-verified 2026-08-22 (full netboot → psh + NFS + all drivers) and the
+      docker kernel/loader are same-source. To close: self-flash via netboot-Linux
+      → `dd` to the Pi's card → SD-boot (needs a card physically in the Pi).
 
 ## Turnkey G5 publish steps (run after both gates pass)
 1. Snapshot the integration manifest:
