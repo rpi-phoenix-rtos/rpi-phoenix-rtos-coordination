@@ -79,3 +79,13 @@ echo "== exporting SD image to $OUT =="
 $DOCKER run --rm -v "$OUT":/out phoenix-rpi
 
 echo "== done: $(ls -l "$OUT"/*.img 2>/dev/null) =="
+
+# Reclaim the image layers + build cache this --no-cache build produced. The SD
+# image is now safely in $OUT, so the container image is disposable; without this,
+# repeated release builds accumulate hundreds of GB of dangling layers + build
+# cache and fill the disk (observed: 400GB across g32..g35 -> 100% full). Keep the
+# host lean so the next build has room. Non-fatal if docker/cleanup hiccups.
+echo "== reclaiming docker build artifacts (image + cache) =="
+$DOCKER image rm -f phoenix-rpi 2>/dev/null || true
+$DOCKER builder prune -af 2>/dev/null || true
+$DOCKER image prune -f 2>/dev/null || true
