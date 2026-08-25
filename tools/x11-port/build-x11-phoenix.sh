@@ -34,6 +34,12 @@ mkdir -p "$PREFIX" "$SRC"
 # share/pkgconfig holds xcb-proto.pc; lib/pkgconfig holds the rest.
 export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig:$PREFIX/share/pkgconfig"
 
+# Persistent distfiles cache: a tarball fetched once (here or by the xorg_*
+# ports, which share the same convention) survives across clean builds and
+# upstream CDN outages. Best-effort — a read-only $HOME just skips it.
+CACHE="${PHOENIX_DISTFILES:-$HOME/.phoenix-distfiles/x11}"
+mkdir -p "$CACHE" 2>/dev/null || true
+
 # apply_patches <name-version> — apply patches/<nv>*.patch (idempotent, -N).
 apply_patches() {
 	local nv=$1 p
@@ -55,27 +61,39 @@ host_build() {
 	echo "$nv: OK (host)"
 }
 
-# fetch_extract <name-version> <url>
+# fetch_extract <name-version> <url...>
+# $2 may list several whitespace-separated mirror URLs; they are tried in order
+# until one yields a non-empty tarball. Some upstreams (notably
+# download.savannah.gnu.org, which hosts freetype) go down for hours at a time,
+# so a single-URL fetch is a reproducible-build hazard — always give a fallback.
 fetch_extract() {
-	local nv=$1 url=$2
+	local nv=$1 urls=$2
 	cd "$SRC" || return 1
 	[ -d "$nv" ] && return 0
-	# Retry transient network blips: some upstreams (notably
-	# download.savannah.gnu.org, which hosts freetype) are intermittently flaky,
-	# and a single failed curl otherwise aborts the whole clean build. -f makes
-	# curl fail on an HTTP error instead of saving an error page as the tarball.
-	local attempt
-	for attempt in 1 2 3; do
-		if timeout 120 curl -fsSL -o "$nv.tar.gz" "$url"; then
-			break
-		fi
-		echo "$nv: fetch attempt $attempt/3 failed; retrying in 5s..."
-		sleep 5
-	done
+	# 1) Serve from the persistent distfiles cache if we've fetched this before.
+	if [ -s "$CACHE/$nv.tar.gz" ]; then
+		cp -a "$CACHE/$nv.tar.gz" "$nv.tar.gz"
+		echo "$nv: from distfiles cache"
+	else
+		# 2) Try each mirror in turn, twice; -f makes curl fail on an HTTP error
+		#    instead of saving an error page as the tarball.
+		local url attempt
+		for url in $urls; do
+			for attempt in 1 2; do
+				if timeout 120 curl -fsSL -o "$nv.tar.gz" "$url"; then
+					break 2
+				fi
+				echo "$nv: fetch attempt $attempt/2 failed for $url; retrying in 5s..."
+				sleep 5
+			done
+		done
+		# Populate the cache for next time (best-effort).
+		[ -s "$nv.tar.gz" ] && cp -a "$nv.tar.gz" "$CACHE/$nv.tar.gz" 2>/dev/null || true
+	fi
 	# A persistent download failure must ABORT the build, not silently continue and
 	# ship a half-baked image (e.g. a missing freetype cascades to no Xphoenix). exit
 	# (not return) so it aborts even though this script is not run under `set -e`.
-	[ -s "$nv.tar.gz" ] || { echo "ERROR: $nv download failed from $url after 3 attempts — failing the build (fix connectivity or update the URL)" >&2; exit 1; }
+	[ -s "$nv.tar.gz" ] || { echo "ERROR: $nv download failed from all mirrors ($urls) — failing the build (fix connectivity or update the URL)" >&2; exit 1; }
 	# Auto-detect compression: several upstream URLs are .tar.xz (xcb-proto,
 	# libxcb, libpthread-stubs, ...) but are saved here as "$nv.tar.gz". `tar xf`
 	# detects xz/gz/bz2 from the magic, so it handles all of them (a hardcoded
@@ -191,7 +209,10 @@ if [ ! -f "$PREFIX/lib/libjpeg.a" ] || [ ! -f "$PREFIX/include/jpeglib.h" ]; the
 	  && echo "jpeg-9e: OK" ) || { echo "jpeg-9e: FAIL"; tail -6 /tmp/jpeg-*.log; }
 fi
 # freetype (minimal — no external codec deps). libXfont2's scalable-font backend.
-xbuild freetype-2.13.2 "https://download.savannah.gnu.org/releases/freetype/freetype-2.13.2.tar.gz" \
+# Savannah (the canonical host) is regularly down for hours, so lead with two
+# reliable mirrors and keep savannah as the last-resort canonical fallback.
+xbuild freetype-2.13.2 \
+	"https://downloads.sourceforge.net/project/freetype/freetype2/2.13.2/freetype-2.13.2.tar.gz https://mirror.kumi.systems/nongnu/freetype/freetype-2.13.2.tar.gz https://download.savannah.gnu.org/releases/freetype/freetype-2.13.2.tar.gz" \
 	"--without-zlib --without-png --without-harfbuzz --without-bzip2 --without-brotli"
 xbuild libfontenc-1.1.8 "$XBASE/lib/libfontenc-1.1.8.tar.gz"
 # libXfont2: server-side font lib. Needs the cross run-test cache + several Phoenix gaps:
