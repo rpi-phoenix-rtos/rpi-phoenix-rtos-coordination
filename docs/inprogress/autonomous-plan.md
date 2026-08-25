@@ -528,6 +528,14 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-25 (session ~242 — ★ DECISIVE: Phoenix tty read path PROVEN SOUND; bash EOF is readline-internal, NOT the tty):
+ No new git owner feedback. Built `tools/ttyprobe` (minimal readline-input-path repro, gcc-16 static, staged /bin/ttyprobe) + ran 3 HW netboot cycles. **Result — the fd0 console tty read path is CORRECT on HW:**
+   PROBE: isatty=1; tcsetattr applies raw VMIN=1/VTIME=0/ICANON=0 (verified before/after); blocking read BLOCKS on empty fifo (select times out — NO spurious readable); non-blocking empty read returns -1/EAGAIN (NOT 0).
+ So every candidate tty-read bug is REFUTED (VMIN honored, no poll-spurious-readable, nonblock=EAGAIN not 0). **Yet `bash -i` still EOFs the instant it prints its prompt** (`bash-alive` cycle: `/bin/bash -i` → `bash-5.2#` → immediate `exit` → `(psh)%`, BEFORE any follow-up; the echo/pwd I sent then ran in psh). ⇒ **bash's immediate EOF is INSIDE bash/readline, NOT Phoenix's tty layer.** This eliminates the entire tty-read hypothesis class (incl. the ~240 pts-returns-0 theory, now fully refuted) and saves re-investigation. Committed ttyprobe + finding (coord 2786608).
+ **NEXT (reframed, bounded — needs a debug bash/readline build, budget-gated):** instrument readline's `rl_getc`/`rl_gather_tyi` (lib/readline/input.c) with a debug print of every read()'s fd+return+errno, rebuild bash, run `bash -i` over the ash-harness → capture the EXACT read that returns 0/EOF and on WHICH fd (readline may read a fd or use a pattern ttyprobe didn't replicate — e.g. a dup, an isearch/keyseq nonblock batch, or rl_instream not being fd0). That pinpoints the one-line fix (likely in bash/readline config or a libphoenix stdio/read edge, since the raw tty syscalls are proven correct). This is a self-contained readline dig, NOT a Pi tty dig.
+ - Standing wins solid: gcc-16 build+boot DONE; libphoenix siginterrupt PUSHED. bash tty layer CLEARED (this session). Recommend interleaving other backlog (the tty-read dead-end is closed); the readline-internal trace is a discrete next task.
+
+
 2026-08-25 (session ~241 — HONEST CORRECTION to ~240: bash EOF NARROWED (not yet root-caused); need HW instrumentation):
  No new git owner feedback. **Correcting session ~240's over-claim** (I had a confident-but-wrong JC hypothesis earlier this session too — not repeating the mistake): the deeper read shows the libtty/posixsrv read paths look like they SHOULD block on readline's VMIN=1/VTIME=0, so I have NOT proven the pts-returns-0 theory. Established facts (source, solid):
  - readline sets raw VMIN=1/VTIME=0 (rltty.c:531) + rl_getc does select()+read(), read()==0 ⇒ EOF ⇒ bash quits (input.c:846). HW A/B: ash STAYS, bash EOFs on the same psh fd0 ⇒ real bash-specific, tied to readline's select()+raw-read.
