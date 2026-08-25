@@ -167,10 +167,10 @@ GLQuake links the V3D driver in-process, so no separate GPU daemon is needed.
 The `startx` launcher starts the Xphoenix server plus a session in one command:
 
 ```
-startx term         # twm + an xterm you can type in   (recommended)
+startx              # Window Maker desktop (the default session)
+startx term         # twm + an xterm you can type in
 startx desktop      # twm + xeyes
 startx deskapps     # twm + xterm + xclock + xcalc + xeyes
-startx              # Window Maker desktop  — see the note below
 ```
 
 For **GPU-accelerated** X (experimental glamor server on the V3D GPU, via the
@@ -178,17 +178,13 @@ For **GPU-accelerated** X (experimental glamor server on the V3D GPU, via the
 auto-starts the GPU daemon and renders the desktop on the GPU:
 
 ```
-startx_gpu term     # same session, GPU-accelerated (glamor on V3D 4.2)
+startx_gpu          # Window Maker, GPU-accelerated (glamor on V3D 4.2)
+startx_gpu term     # twm + xterm, GPU-accelerated
 ```
 
 Drive the desktop with the USB mouse + keyboard. Exit the window manager to tear
 down X and return to `(psh)%`. If a crash ever leaves a stale lock, `rm -f
 /tmp/.X0-lock` and relaunch.
-
-> **Window Maker note:** the twm sessions above (`term`/`desktop`/`deskapps`)
-> render and work today; bare `startx`/`startx_gpu` selects Window Maker, which
-> currently **hangs during its own startup** (a WINGs font-load issue, being
-> debugged) — use a `twm` session in the meantime.
 
 ### Midnight Commander and nano
 
