@@ -528,6 +528,15 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-25 (session ~243 — ★★★ bash interactive-exit ROOT-CAUSED + FIXED: libphoenix select(NULL) returned 0 instead of blocking):
+ No new git owner feedback. **SOLVED the owner's long-standing "bash exits in interactive mode" bug — it's a libphoenix `select()` bug, HW-confirmed via tools/ttyprobe.**
+ - **Root cause:** `libphoenix sys/select.c` mapped a NULL (infinite) timeout via `poll_timeout()` -> -1, then clamped `rv < 0 ? 0` and passed **0** to poll() — so `select(..., NULL)` became a 0 ms non-blocking poll returning 0 immediately instead of blocking. GNU readline's `rl_getc` does a blocking `select(fd+1,&rf,NULL,NULL,NULL)` then `if (result==0) _rl_timeout_handle()` -> `_rl_abort_internal()` (longjmp) -> readline aborts -> bash prints "exit" at its FIRST prompt. busybox ash uses a plain blocking read() (no select) -> unaffected (matches the owner's ash-works discriminator exactly).
+ - **How pinned (ttyprobe, minimal readline-path repro, 5 HW cycles):** fd0 tcsetattr applies raw VMIN=1 correctly; blocking read blocks on empty; nonblock read = -EAGAIN; select(&tv 2s) works — ALL sound. The ONE failing case: **`select(1,&rf,NULL,NULL,NULL)` (NULL timeout) returned ret=0 immediately** (didn't block). Then traced readline: HAVE_SELECT=1, rl_getc select-block, `if(result==0)_rl_timeout_handle()` = the abort. Instrumented bash-dbg confirmed rl_getc ENTERs then aborts before the read.
+ - **FIX (libphoenix 033ee1f, LOCAL — push after boot-verify):** pass poll_timeout()'s -1 through to poll() (blocks on -1); also fixed the n==0 path (poll(NULL,0,ms) instead of the ms-as-us usleep that also lost infinite). **General fix — helps ANY program doing a blocking select(NULL), not just bash.** ttyprobe committed (coord).
+ - **--scope core RUNNING** (pid 4066023, log scope-core-selectfix.log) to propagate the fixed libc into the sysroot; waiter bysj4sw2z armed.
+ **NEXT:** after --scope core → `build-port.sh bash` (relink bash against the fixed libc.a) → stage /bin/bash → boot-verify `bash -i` executes a follow-up command + stays (vs old immediate exit). If confirmed: PUSH libphoenix 033ee1f + add a select(NULL) regression test (fork+pipe+alarm) to phoenix-rtos-tests (owner directive) + update KNOWN-ISSUES/pty-run (bash interactive now works; remove the stale "fd0 EOF" text) + manifest. Standing wins: gcc-16 build+boot DONE; libphoenix siginterrupt PUSHED.
+
+
 2026-08-25 (session ~242 — ★ DECISIVE: Phoenix tty read path PROVEN SOUND; bash EOF is readline-internal, NOT the tty):
  No new git owner feedback. Built `tools/ttyprobe` (minimal readline-input-path repro, gcc-16 static, staged /bin/ttyprobe) + ran 3 HW netboot cycles. **Result — the fd0 console tty read path is CORRECT on HW:**
    PROBE: isatty=1; tcsetattr applies raw VMIN=1/VTIME=0/ICANON=0 (verified before/after); blocking read BLOCKS on empty fifo (select times out — NO spurious readable); non-blocking empty read returns -1/EAGAIN (NOT 0).
