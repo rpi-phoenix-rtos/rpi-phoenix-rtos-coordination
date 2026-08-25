@@ -380,6 +380,63 @@ index d1b2e4d0c97..fbce1015a3d 100644
     switch (job->type) {
     case V3DV_JOB_TYPE_GPU_CL:
        return handle_cl_job(queue, job, counter_pass_idx, sync_info);
+diff --git a/src/gallium/auxiliary/util/u_vbuf.c b/src/gallium/auxiliary/util/u_vbuf.c
+index 882f683e2a3..f6c64334d4c 100644
+--- a/src/gallium/auxiliary/util/u_vbuf.c
++++ b/src/gallium/auxiliary/util/u_vbuf.c
+@@ -468,6 +468,18 @@ u_vbuf_translate_buffers(struct u_vbuf *mgr, struct translate_key *key,
+    /* Get a translate object. */
+    tr = translate_cache_find(mgr->translate_cache, key);
+ 
++   /* translate_cache_find() -> translate_create() -> translate_generic_create()
++    * can return NULL — e.g. for a pure-integer input format with an illegal
++    * int->output combo (is_legal_int_format_combo). Upstream never checks because
++    * on x86 translate_sse covers everything; on aarch64 (Phoenix-RTOS RPi4/V3D)
++    * only translate_generic exists, so an unsupported combo yields NULL and the
++    * unchecked tr->set_buffer()/tr->run() below dereferenced it -> crash (owner HW:
++    * quake3 SIGSEGV mid-combat, u_vbuf_translate_begin, far=0x3a0). Fail the
++    * translate cleanly instead; the caller (u_vbuf_translate_begin) treats a
++    * failure as "skip this draw's translate" rather than crashing. */
++   if (!tr)
++      return PIPE_ERROR;
++
+    /* Map buffers we want to translate. */
+    mask = vb_mask;
+    while (mask) {
+diff --git a/src/gallium/drivers/v3d/v3d_blit.c b/src/gallium/drivers/v3d/v3d_blit.c
+index c5c07d1deb0..68c38ad1092 100644
+--- a/src/gallium/drivers/v3d/v3d_blit.c
++++ b/src/gallium/drivers/v3d/v3d_blit.c
+@@ -26,6 +26,7 @@
+ #include "util/perf/cpu_trace.h"
+ #include "util/u_surface.h"
+ #include "util/u_blitter.h"
++#include "util/bitscan.h"
+ #include "compiler/nir/nir_builder.h"
+ #include "v3d_context.h"
+ #include "broadcom/common/v3d_tiling.h"
+@@ -252,6 +253,21 @@ v3d_generate_mipmap(struct pipe_context *pctx,
+         if (prsc->target == PIPE_TEXTURE_3D)
+                 return false;
+ 
++        /* Phoenix/RPi4 workaround (Quake II NPOT model skins rendered scrambled
++         * at distance): the TFU multi-level mipmap generator supplies OPAD only
++         * for level 0 and INFERS the tiling of levels >=1 internally. That
++         * inference only matches what v3d_setup_slices/the TMU sampler
++         * reconstruct when the base dimensions are powers of two; for NPOT bases
++         * (which carry ub_pad and pot_width/pot_height padding on the small
++         * UBLINEAR/LINEARTILE levels) the generated layout diverges from the
++         * sampled layout, so those mip levels read as garbage. Decline NPOT here
++         * so st_generate_mipmap falls back to the render-based util_gen_mipmap
++         * path, which lays out each level via its own correctly-tiled surface.
++         * POT textures keep the fast TFU path (this guard is a no-op for them). */
++        if (!util_is_power_of_two_or_zero(prsc->width0) ||
++            !util_is_power_of_two_or_zero(prsc->height0))
++                return false;
++
+         struct v3d_context *v3d = v3d_context(pctx);
+         struct v3d_screen *screen = v3d->screen;
+         struct v3d_device_info *devinfo = &screen->devinfo;
 diff --git a/src/gallium/drivers/v3d/v3d_bufmgr.c b/src/gallium/drivers/v3d/v3d_bufmgr.c
 index e82fd069b18..0eed759e4e0 100644
 --- a/src/gallium/drivers/v3d/v3d_bufmgr.c
@@ -513,7 +570,7 @@ index d639c688637..fefb9046cb9 100644
                          return;
                  }
 diff --git a/src/gallium/drivers/v3d/v3d_resource.c b/src/gallium/drivers/v3d/v3d_resource.c
-index 33df0d07be5..9e073a401b1 100644
+index 33df0d07be5..33758e8ceb7 100644
 --- a/src/gallium/drivers/v3d/v3d_resource.c
 +++ b/src/gallium/drivers/v3d/v3d_resource.c
 @@ -110,8 +110,39 @@ v3d_resource_bo_alloc(struct v3d_resource *rsc)
@@ -596,16 +653,48 @@ index 33df0d07be5..9e073a401b1 100644
          *pptrans = ptrans;
  
          /* Our load/store routines work on entire compressed blocks. */
-@@ -847,6 +902,14 @@ v3d_resource_create_with_modifiers(struct pipe_screen *pscreen,
+@@ -802,6 +857,11 @@ v3d_resource_setup(struct pipe_screen *pscreen,
+         return rsc;
+ }
+ 
++/* Phoenix winsys (v3d_phoenix_winsys.c, linked into libv3d-phoenix.a): is the NEXT BO the
++ * HDMI scanout surface? Used below to keep the scanout render target RASTER (the HVS display
++ * cannot scan a UIF-tiled surface). */
++int v3d_phoenix_peek_next_scanout(void);
++
+ static struct pipe_resource *
+ v3d_resource_create_with_modifiers(struct pipe_screen *pscreen,
+                                    const struct pipe_resource *tmpl,
+@@ -847,6 +907,34 @@ v3d_resource_create_with_modifiers(struct pipe_screen *pscreen,
          if (tmpl->bind & PIPE_BIND_SCANOUT)
                  should_tile = false;
  
 +        /* Phoenix: force the full-screen color render target to RASTER (linear) so a CPU
 +         * readback (glReadPixels) is a fast linear copy instead of the ~23ms scattered
 +         * tiled detile. Targeted by display size so small SAMPLED render targets (e.g. the
-+         * water warpimage) stay tiled (the TMU needs tiled to sample efficiently). */
++         * water warpimage) stay tiled (the TMU needs tiled to sample efficiently).
++         *
++         * MUST exclude SAMPLER_VIEW: Mesa marks every renderable (RGBA8) texture
++         * PIPE_BIND_RENDER_TARGET, so a *large sampled* texture (e.g. quake3's 1024x1024
++         * merged lightmap atlas) also matched the size gate and was forced RASTER — then the
++         * TMU sampled the linear data as if UIF and read garbage/black (quake3 lightmap-black,
++         * quake2 floor-speckle, vkQuake striping — all large sampled textures >=1024x768). A
++         * texture the TMU will sample must stay tiled; only a pure (non-sampled) RT may go
++         * RASTER for the readback fast-path.
++         *
++         * EXCEPTION -- the scanout render target: Mesa unconditionally adds
++         * PIPE_BIND_SAMPLER_VIEW to EVERY renderbuffer (main/renderbuffer.c), so the
++         * full-screen scanout RT (a GL renderbuffer the SDL2/GLX present layer
++         * render-to-scanouts and page-flips) also carries SAMPLER_VIEW and was newly caught by
++         * the exclusion above -- left UIF-tiled, so the HVS display scanned tiled memory as
++         * linear and produced horizontal-shred garbage on HDMI for all GL games
++         * (quakespasm/quake2/quake3). The scanout RT is never sampled by the TMU; it must be
++         * RASTER so the display reads it correctly. The winsys flagged it via set_next_scanout()
++         * immediately before this alloc, so peek that one-shot to force RASTER regardless of the
++         * spurious SAMPLER_VIEW bit -- sampled textures never set next_scanout, so they stay tiled. */
 +        if ((tmpl->bind & PIPE_BIND_RENDER_TARGET) &&
-+            tmpl->width0 >= 1024 && tmpl->height0 >= 768)
++            tmpl->width0 >= 1024 && tmpl->height0 >= 768 &&
++            (v3d_phoenix_peek_next_scanout() || !(tmpl->bind & PIPE_BIND_SAMPLER_VIEW)))
 +                should_tile = false;
 +
          /* No user-specified modifier; determine our own. */
