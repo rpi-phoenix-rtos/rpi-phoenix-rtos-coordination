@@ -54,7 +54,10 @@
  * (refexport_t GetRefAPI(refimport_t) / game_export_t *GetGameAPI(
  * game_import_t *)) are irrelevant to the linker. */
 extern void *GetRefAPI();
-extern void *GetGameAPI();
+/* Explicit param: under C23 (gcc-16 default) an empty () parameter list means
+ * (void), which rejects the Sys_GetGameAPI(parms) forwarding call below. The
+ * real signature returns/takes pointers, ABI-compatible with void*(void*). */
+extern void *GetGameAPI(void *);
 
 // Evil hack to determine if stdin is available
 qboolean stdin_active = true;
