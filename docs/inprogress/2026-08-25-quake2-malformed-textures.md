@@ -110,7 +110,17 @@ capture attempts:
   **`+map demo1`** = a LIVE in-game map (console closed, key_dest=key_game, 3D renders
   the spawn view immediately = same Outer Base wall textures) so the hook fires.
 
-NEXT: if cycle-5 streams frames → eyeball malformation + GL_LINEAR fork. If STILL 0
-(3D not rendering even in live map) ⇒ autonomous capture is blocked; hand the trivial
-`gl_texturemode GL_LINEAR` discriminator to the owner (interactive, 10 s) AND separately
-investigate the `+demomap+timedemo` ca_active render-hang as a possible regression.
+- cycle 5 (`+map demo1`, q2cap-map): ★ **BREAKTHROUGH — the render path WORKS.** `+map`
+  (live in-game, console closed) renders 3D and the capture hook FIRED 12× (`CAPTURE:`
+  logged, "done (12 shots), quitting"). So the `+demomap+timedemo` hang is specifically a
+  demo-playback issue, NOT a general render/console block. BUT the TCP sink connect
+  FAILED (`CAPTURE: tcp 10.42.0.1:559[9] FAILED` ×12) ⇒ 0 frames landed. ROOT CAUSE:
+  **host firewall** — NetworkManager's shared-connection chain (`nm-sh-in-wlp3s0`) only
+  whitelists the netboot subnet's UDP (dhcp/tftp/quake-26000); the capture-sink TCP:5599
+  SYN was dropped. FIX: `sudo iptables -I INPUT 1 -s 10.42.0.0/24 -p tcp --dport 5599 -j
+  ACCEPT` (session-scoped; re-add after host reboot). ⇒ cycle 6 (q2cap-map2) re-runs
+  `+map demo1` capture with the firewall open.
+
+NEXT: cycle-6 frames → convert + eyeball for the malformed wall textures + diff vs the
+clean 08-22 baseline (regression check), then the GL_LINEAR fork (mip vs base-level).
+Standing win: the `+map`+firewall recipe is the reusable autonomous Q2/Q3 capture path.
