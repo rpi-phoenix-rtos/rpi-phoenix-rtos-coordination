@@ -11,6 +11,7 @@
 #include <string.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <signal.h>
 int main(void)
 {
 	struct stat st;
@@ -81,6 +82,18 @@ int main(void)
 		fcntl(0, F_SETFL, fl);
 		fflush(stdout);
 	}
+	/* THE decisive test: readline's rl_getc does select() with a NULL (blocking)
+	 * timeout; if Phoenix returns 0 there (instead of blocking), rl_getc treats it
+	 * as a timeout -> _rl_timeout_handle -> _rl_abort_internal -> bash exits. */
+	signal(SIGALRM, SIG_DFL);
+	alarm(4);  /* if the NULL-timeout select correctly BLOCKS, SIGALRM kills us at 4s */
+	{
+		fd_set nrf; FD_ZERO(&nrf); FD_SET(0, &nrf);
+		int ns = select(1, &nrf, NULL, NULL, NULL);  /* NULL timeout = block */
+		int ne = errno;
+		printf("PROBE null-select: ret=%d errno=%d  (ret==0 => Phoenix select(NULL) doesn't block => THE bash EOF bug; if this line never prints, it blocked correctly and alarm fired)\n", ns, ne);
+	}
+	alarm(0);
 	printf("PROBE done\n");
 	fflush(stdout);
 	return 0;
