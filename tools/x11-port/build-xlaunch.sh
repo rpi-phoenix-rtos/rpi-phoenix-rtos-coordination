@@ -67,13 +67,18 @@ ls -l "$ART/$OUT"
 # installed under TWO names — pl_phoenix_xlaunch (explicit form) and startx
 # (convenience/desktop mode keyed on argv[0]). startx is a plain COPY, not a
 # symlink, so BOTH must be refreshed or `startx desktop` runs a stale binary.
+# Installed under THREE names — pl_phoenix_xlaunch (explicit), startx (software
+# fbdev X convenience mode), and startx_gpu (same modes but the experimental
+# glamor GPU X server + rpi4-v3d daemon). All are plain COPIES (the binary keys
+# its GPU behaviour on argv[0] == "startx_gpu"), so all must be refreshed together.
 NFS_BIN="${SHOWCASE_STAGE_DIR:-/srv/phoenix-rpi4-nfs}/bin"
 if [ -d "$NFS_BIN" ]; then
   cp "$LAUNCHDIR/$OUT" "$NFS_BIN/$OUT"
   cp "$LAUNCHDIR/$OUT" "$NFS_BIN/startx"
-  chmod 755 "$NFS_BIN/$OUT" "$NFS_BIN/startx"
-  echo "=== staged -> $NFS_BIN/{$OUT,startx} ==="
-  ls -l "$NFS_BIN/$OUT" "$NFS_BIN/startx"
+  cp "$LAUNCHDIR/$OUT" "$NFS_BIN/startx_gpu"
+  chmod 755 "$NFS_BIN/$OUT" "$NFS_BIN/startx" "$NFS_BIN/startx_gpu"
+  echo "=== staged -> $NFS_BIN/{$OUT,startx,startx_gpu} ==="
+  ls -l "$NFS_BIN/$OUT" "$NFS_BIN/startx" "$NFS_BIN/startx_gpu"
 else
   echo "=== NFS export $NFS_BIN not present — skipped staging (artifact only) ==="
 fi

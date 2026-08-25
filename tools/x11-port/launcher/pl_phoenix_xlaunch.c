@@ -230,6 +230,19 @@ int main(int argc, char *argv[])
 	dup2(STDOUT_FILENO, STDERR_FILENO);
 	setvbuf(stdout, NULL, _IONBF, 0);
 
+	/* startx_gpu mode: when invoked under the name "startx_gpu" (a copy of this
+	 * binary, like `startx`), drive the experimental GPU-accelerated glamor X
+	 * server (Xphoenix-glamor-daemon, a v3d-server client) instead of the software
+	 * fbdev Xphoenix — and bring up the rpi4-v3d GPU daemon first if it is not
+	 * already running. All session modes (bare -> wmaker, desktop, term, ...) are
+	 * identical to startx; only the server backend + the daemon prereq differ. */
+	int gpu;
+	{
+		const char *b = strrchr(argv[0], '/');
+		b = (b != NULL) ? b + 1 : argv[0];
+		gpu = (strcmp(b, "startx_gpu") == 0);
+	}
+
 	/* Optional leading `--server <path>`: run ANY mode — including the desktop/
 	 * full convenience modes that otherwise hardcode /bin/Xphoenix — under a
 	 * specific server binary (e.g. /bin/Xphoenix-glamor, the GPU-accelerated
@@ -275,13 +288,15 @@ int main(int argc, char *argv[])
 			snprintf(sp_buf, sizeof(sp_buf), "%s", server_override);
 		}
 		else {
-			/* The framework port stages Xphoenix at <prefix>/usr/bin/Xphoenix;
-			 * older ad-hoc roots put it at <prefix>/bin/Xphoenix. Prefer /usr/bin
-			 * and fall back to /bin so a mode finds the server on either layout. */
+			/* startx -> the software fbdev "Xphoenix"; startx_gpu -> the GPU
+			 * glamor "Xphoenix-glamor-daemon". The framework port stages Xphoenix
+			 * at <prefix>/usr/bin; the glamor-daemon server stages to <prefix>/bin.
+			 * Prefer /usr/bin, fall back to /bin, so either layout resolves. */
 			struct stat xst;
-			snprintf(sp_buf, sizeof(sp_buf), "%s/usr/bin/Xphoenix", prefix);
+			const char *srv = gpu ? "Xphoenix-glamor-daemon" : "Xphoenix";
+			snprintf(sp_buf, sizeof(sp_buf), "%s/usr/bin/%s", prefix, srv);
 			if (stat(sp_buf, &xst) != 0)
-				snprintf(sp_buf, sizeof(sp_buf), "%s/bin/Xphoenix", prefix);
+				snprintf(sp_buf, sizeof(sp_buf), "%s/bin/%s", prefix, srv);
 		}
 		snprintf(fd_buf, sizeof(fd_buf), "%s/usr/share/fonts/X11/misc", prefix);
 
@@ -474,6 +489,56 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "xlaunch: warning: mkdir /tmp: %s\n", strerror(errno));
 	if (mkdir(X_SOCKET_DIR, 0777) != 0 && errno != EEXIST)
 		fprintf(stderr, "xlaunch: warning: mkdir %s: %s\n", X_SOCKET_DIR, strerror(errno));
+
+	/* startx_gpu: the glamor server is a v3d-server CLIENT, so the rpi4-v3d GPU
+	 * daemon must own the V3D first. Start it once if /dev/v3d-srv is absent (its
+	 * readiness signal), then wait for that node to appear. Leave the daemon
+	 * running on exit so a subsequent startx_gpu reuses it (a 2nd rpi4-v3d would
+	 * hit the single-owner guard). No-op for plain startx (software fbdev). */
+	if (gpu) {
+		struct stat dst;
+		if (stat("/dev/v3d-srv", &dst) != 0) {
+			static const char *const daemons[] = { "/sbin/rpi4-v3d", "/usr/sbin/rpi4-v3d", NULL };
+			const char *dpath = NULL;
+			struct stat est;
+			pid_t dpid;
+			int i;
+			for (i = 0; daemons[i] != NULL; i++) {
+				if (stat(daemons[i], &est) == 0) { dpath = daemons[i]; break; }
+			}
+			if (dpath == NULL) {
+				fprintf(stderr, "xlaunch: startx_gpu: rpi4-v3d daemon not found in /sbin or /usr/sbin — cannot start GPU X\n");
+				return EXIT_FAILURE;
+			}
+			fprintf(stderr, "xlaunch: startx_gpu: starting GPU daemon %s\n", dpath);
+			dpid = vfork();
+			if (dpid < 0) {
+				fprintf(stderr, "xlaunch: vfork (v3d daemon) failed: %s\n", strerror(errno));
+				return EXIT_FAILURE;
+			}
+			if (dpid == 0) {
+				char *dargv[2];
+				dargv[0] = (char *)dpath;
+				dargv[1] = NULL;
+				execve(dpath, dargv, environ);
+				_exit(127);
+			}
+			for (tick = 0; tick < POLL_MAX_TICKS; tick++) {
+				if (stat("/dev/v3d-srv", &dst) == 0)
+					break;
+				msleep(POLL_INTERVAL_MS);
+			}
+			if (stat("/dev/v3d-srv", &dst) != 0) {
+				fprintf(stderr, "xlaunch: startx_gpu: /dev/v3d-srv never appeared after %d ms — GPU daemon failed to start\n",
+					POLL_TIMEOUT_MS);
+				return EXIT_FAILURE;
+			}
+			fprintf(stderr, "xlaunch: startx_gpu: GPU daemon ready (/dev/v3d-srv up)\n");
+		}
+		else {
+			fprintf(stderr, "xlaunch: startx_gpu: reusing already-running GPU daemon (/dev/v3d-srv present)\n");
+		}
+	}
 
 	/* Build the server argv:
 	 *   Xphoenix :0 -ac -nolisten tcp -fp <fontdir>
