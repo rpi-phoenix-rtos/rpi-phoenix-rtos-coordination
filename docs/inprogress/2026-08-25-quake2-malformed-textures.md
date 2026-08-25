@@ -120,6 +120,20 @@ tiling in `v3d_resource_setup`/`v3d_tiling.c` if Mesa chooses the wrong tiling f
 the raster→UIF case — but it explicitly does NOT handle tiled-source mip jobs, so it is
 NOT a fix if the bug is mip-path.
 
+## ✅✅✅ FIXED + HW-VERIFIED (2026-08-25)
+
+Rebuilt libv3d-phoenix.a (v3d_blit.o lives there, NOT libGL — first rebuild missed it) +
+relinked/redeployed yquake2, re-ran the `+map demo1` coherent capture. **The banner
+renders CLEAN**: the green/red speckle noise + blocky NPOT-mip garbage are GONE, replaced
+by a coherent banner texture (skull/emblem motif visible). BSP walls/floor unchanged (no
+regression). Before/after evidence: `artifacts/q2-texbug/banner-BEFORE-AFTER.png`,
+`fixed-frame5.png`. ⇒ Owner's #1 Quake2 malformed-texture bug RESOLVED.
+
+Fix commits: external/mesa `e4be1163240` (v3d_generate_mipmap declines NPOT →
+render-fallback), coord `f2fee16` (C23 GetGameAPI build fix). Build chain: rebuild
+libv3d-phoenix.a via build-v3d-phoenix.py (NOT build-gl-phoenix.py — that's libGL only) →
+build-yquake2-phoenix.py → deploy /srv/.../usr/bin/yquake2.
+
 ## GOTCHA (2026-08-25): capture cycle needs a LONG --max-cmd-secs
 
 Q2 precache is slow on Pi (~66 models, each with TFU texture uploads doing heavy
