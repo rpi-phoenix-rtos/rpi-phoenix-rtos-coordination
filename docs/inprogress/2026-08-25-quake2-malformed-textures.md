@@ -86,5 +86,15 @@ tiling in `v3d_resource_setup`/`v3d_tiling.c` if Mesa chooses the wrong tiling f
 the raster→UIF case — but it explicitly does NOT handle tiled-source mip jobs, so it is
 NOT a fix if the bug is mip-path.
 
+## GOTCHA (2026-08-25): capture cycle needs a LONG --max-cmd-secs
+
+Q2 precache is slow on Pi (~66 models, each with TFU texture uploads doing heavy
+per-submit cache flushes → ~2s/model → full precache >200s). The psh-interact harness
+`--max-cmd-secs` (default 120) powers off the Pi mid-precache (dies ~model 55/66, 0
+frames streamed). Use `--max-cmd-secs 360 --idle-secs 360` (Bash timeout 600000) so
+precache + the timedemo + all 40 captures complete before power-off.
+
 ## Status
-Source analysis done + banked. NEXT: execute the discriminator Pi cycle above.
+Source analysis done (TFU mismatch = confirmed false-positive on mip jobs). Coherent
+capture in progress: 1st/2nd cycles cut off mid-precache by max-cmd-secs=120 (0 frames);
+3rd cycle (q2cap-d3) launched with 360s cap. NEXT: inspect streamed frames → GL_LINEAR fork.
