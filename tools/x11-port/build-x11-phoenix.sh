@@ -61,11 +61,34 @@ host_build() {
 	echo "$nv: OK (host)"
 }
 
+# _mirror_urls <url> — echo the URL plus any equivalent mirror URLs (same
+# tarball on a different host) for outage-prone upstreams. The X.Org, Freedesktop
+# and XCB release hosts all go down for hours at a time, but the "individual"
+# release trees mirror each other 1:1: artfiles.org carries the whole x.org
+# individual/{lib,proto,app} tree, and the x.org / freedesktop individual/xcb/
+# dirs each carry the xcb-util family that also lives under xcb.freedesktop.org/dist.
+# So a single hardcoded X.Org URL is transparently upgraded to a multi-mirror
+# fetch here — no need to spell the mirrors out at every call site.
+_mirror_urls() {
+	local u=$1
+	echo "$u"
+	case "$u" in
+		https://www.x.org/releases/individual/*)
+			echo "https://artfiles.org/x.org/pub/xorg/individual/${u#https://www.x.org/releases/individual/}" ;;
+		https://xorg.freedesktop.org/archive/individual/*)
+			echo "https://artfiles.org/x.org/pub/xorg/individual/${u#https://xorg.freedesktop.org/archive/individual/}" ;;
+		https://xcb.freedesktop.org/dist/*)
+			echo "https://www.x.org/releases/individual/xcb/${u#https://xcb.freedesktop.org/dist/}"
+			echo "https://xorg.freedesktop.org/archive/individual/xcb/${u#https://xcb.freedesktop.org/dist/}" ;;
+	esac
+}
+
 # fetch_extract <name-version> <url...>
-# $2 may list several whitespace-separated mirror URLs; they are tried in order
-# until one yields a non-empty tarball. Some upstreams (notably
-# download.savannah.gnu.org, which hosts freetype) go down for hours at a time,
-# so a single-URL fetch is a reproducible-build hazard — always give a fallback.
+# $2 may list several whitespace-separated mirror URLs; each is further expanded
+# through _mirror_urls, and the full candidate set is tried in order until one
+# yields a non-empty tarball. Some upstreams (notably download.savannah.gnu.org,
+# which hosts freetype) go down for hours at a time, so a single-URL fetch is a
+# reproducible-build hazard — always give a fallback.
 fetch_extract() {
 	local nv=$1 urls=$2
 	cd "$SRC" || return 1
@@ -75,10 +98,14 @@ fetch_extract() {
 		cp -a "$CACHE/$nv.tar.gz" "$nv.tar.gz"
 		echo "$nv: from distfiles cache"
 	else
-		# 2) Try each mirror in turn, twice; -f makes curl fail on an HTTP error
+		# 2) Expand each given URL into its known mirrors, then try every
+		#    candidate in turn, twice; -f makes curl fail on an HTTP error
 		#    instead of saving an error page as the tarball.
-		local url attempt
+		local url attempt cands=""
 		for url in $urls; do
+			cands="$cands $(_mirror_urls "$url")"
+		done
+		for url in $cands; do
 			for attempt in 1 2; do
 				if timeout 120 curl -fsSL -o "$nv.tar.gz" "$url"; then
 					break 2
