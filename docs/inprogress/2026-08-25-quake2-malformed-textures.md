@@ -96,5 +96,21 @@ precache + the timedemo + all 40 captures complete before power-off.
 
 ## Status
 Source analysis done (TFU mismatch = confirmed false-positive on mip jobs). Coherent
-capture in progress: 1st/2nd cycles cut off mid-precache by max-cmd-secs=120 (0 frames);
-3rd cycle (q2cap-d3) launched with 360s cap. NEXT: inspect streamed frames → GL_LINEAR fork.
+capture attempts:
+- cycles 1-2: cut off mid-precache by max-cmd-secs=120 (0 frames).
+- cycle 3-4 (360s/480s cap): precache COMPLETES ("models done", ca_active) but the
+  `+demomap q2demo1.dm2 +set timedemo 1` demo then **HANGS at ca_active** — 0 game
+  events after, no `CAPTURE:` log ⇒ RI_RenderFrame never called ⇒ 3D never renders ⇒
+  hook never fires. Same invocation produced 30 HOST frames + (per plan) 23 Pi frames
+  on 08-22, so this is either a Pi demo-playback/timedemo regression since 08-22 OR the
+  console holds key focus with no autonomous game-input path to release it.
+- Discriminator: bare `quake2` (attract demo) DOES render+advance (HDMI timer moved
+  00:52→02:13 in cycle q2tex-default), but that path can't be frame-captured cleanly
+  (page-flip vs HDMI). `+demomap+timedemo` hangs. ⇒ cycle 5 (q2cap-map) uses
+  **`+map demo1`** = a LIVE in-game map (console closed, key_dest=key_game, 3D renders
+  the spawn view immediately = same Outer Base wall textures) so the hook fires.
+
+NEXT: if cycle-5 streams frames → eyeball malformation + GL_LINEAR fork. If STILL 0
+(3D not rendering even in live map) ⇒ autonomous capture is blocked; hand the trivial
+`gl_texturemode GL_LINEAR` discriminator to the owner (interactive, 10 s) AND separately
+investigate the `+demomap+timedemo` ca_active render-hang as a possible regression.
