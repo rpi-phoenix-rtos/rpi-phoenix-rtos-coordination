@@ -282,7 +282,13 @@ case "${scope}" in
 		;;
 	auto)
 		if [ "${#dirty_full[@]}" -gt 0 ]; then
-			build_args=(clean host core project image)
+			# A dirty build-infra repo forces a `clean`; that clean wipes _fs and
+			# every staged port, so — exactly like `full-clean` above — `fs` and
+			# `ports` MUST be rebuilt too. Omitting `ports` strands libnfs and makes
+			# the nfsroot nfs-fs fail to compile ("fatal error: nfsc/libnfs.h: No
+			# such file"); omitting `fs` breaks port prepare steps that read
+			# $PREFIX_ROOTFS/etc. build.sh runs stages in fixed order regardless.
+			build_args=(clean host fs core ports project image)
 			scope_reason="build-infra repos dirty: ${dirty_full[*]}"
 		elif [ "${#dirty_core[@]}" -gt 0 ]; then
 			build_args=(core project image)
