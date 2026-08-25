@@ -123,6 +123,18 @@ capture attempts:
 
 NEXT: cycle-6 frames → convert + eyeball for the malformed wall textures + diff vs the
 clean 08-22 baseline (regression check), then the GL_LINEAR fork (mip vs base-level).
+## ★★ BUG REPRODUCED + LOCALIZED (2026-08-25, cycle q2cap-cfg3, 12 coherent frames)
+
+`quake2 +exec capmap.cfg +map demo1` streamed 12 live 3D frames off the Pi. The scene
+renders correctly EXCEPT the hanging **Strogg banner** (a rectangular model quad,
+`models/objects/banner`) whose skin is **SCRAMBLED** — brown/orange noise + green/red
+speckle instead of the banner image (evidence: `artifacts/q2-texbug/banner-malformed-default.png`).
+This IS the owner's "rectangles with very strange malformed texture." The scramble
+pattern = a **tiling mismatch** (data present, arranged wrong = UIF-vs-linear), on a
+distant object ⇒ a MIP LEVEL is sampled. Discriminator cycle (q2cap-linear,
+`gl_texturemode GL_LINEAR` = mipmapping OFF, base level only) launched to confirm
+mip-path vs base-level.
+
 Standing win: `+map` (live game) + firewall-open + config-file cvars (short launch cmd) is the reusable autonomous Q2/Q3 capture path. Long UART command lines drop chars — always put many cvars in a cfg.
 - cycle 6 (q2cap-map2): still FAILED — the port echoed as `scr_capture_port 559` (not
   5599): a char DROPPED on the long (~200-char) UART command send (host→psh). So the Pi
