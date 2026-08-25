@@ -256,23 +256,33 @@ int main(int argc, char *argv[])
 	}
 	else {
 		/* "startx" convenience: 0 or 1 args. The install prefix is the root "/"
-		 * (the rootfs is the NFS export or the SD ext2), and the client defaults
-		 * to xeyes. Optional argv[1] picks the client (bare name under /bin, or an
-		 * absolute path), with one reserved name `desktop` that brings up a window
-		 * manager + an app:
-		 *   startx           -> /bin/xeyes
-		 *   startx twm       -> /bin/twm        (WM only, bare root)
-		 *   startx /bin/2048 -> /bin/2048
+		 * (the rootfs is the NFS export or the SD ext2). Bare `startx` brings up
+		 * the Window Maker desktop; an optional argv[1] picks a different client
+		 * (a bare name resolved under /bin, an absolute path, or a reserved mode):
+		 *   startx           -> Window Maker desktop (the DEFAULT session)
+		 *   startx wmaker    -> Window Maker            (same as bare startx)
+		 *   startx twm       -> /bin/twm                (WM only, bare root)
 		 *   startx desktop   -> twm (WM) + xeyes (managed window)
 		 *   startx term      -> twm (WM) + xterm (managed terminal window)
+		 *   startx deskapps  -> twm + xterm + xclock + xcalc + xeyes
+		 *   startx wmmedia   -> Window Maker + GPU window + H.264 video + clock
+		 *   startx /bin/foo  -> run /bin/foo as the sole client
 		 */
 		const char *prefix = ""; /* root install ("/" — nfsroot default / sd) */
-		const char *client = (argc >= 2) ? argv[1] : "xeyes";
+		const char *client = (argc >= 2) ? argv[1] : "wmaker";
 
-		if (server_override != NULL)
+		if (server_override != NULL) {
 			snprintf(sp_buf, sizeof(sp_buf), "%s", server_override);
-		else
-			snprintf(sp_buf, sizeof(sp_buf), "%s/bin/Xphoenix", prefix);
+		}
+		else {
+			/* The framework port stages Xphoenix at <prefix>/usr/bin/Xphoenix;
+			 * older ad-hoc roots put it at <prefix>/bin/Xphoenix. Prefer /usr/bin
+			 * and fall back to /bin so a mode finds the server on either layout. */
+			struct stat xst;
+			snprintf(sp_buf, sizeof(sp_buf), "%s/usr/bin/Xphoenix", prefix);
+			if (stat(sp_buf, &xst) != 0)
+				snprintf(sp_buf, sizeof(sp_buf), "%s/bin/Xphoenix", prefix);
+		}
 		snprintf(fd_buf, sizeof(fd_buf), "%s/usr/share/fonts/X11/misc", prefix);
 
 		if (strcmp(client, "desktop") == 0) {
@@ -385,13 +395,24 @@ int main(int argc, char *argv[])
 			n_clients = 4;
 		}
 		else if (strcmp(client, "wmaker") == 0) {
-			/* Window Maker as the DESKTOP SHELL — the real WM the owner wants (dock +
-			 * clip + NeXT-style window decorations), already ported+HW-proven. Full XFce
-			 * is impractical on this static/no-dlopen port (needs ~10 unported libs +
-			 * D-Bus/xfconf); Window Maker delivers a real desktop today at ~zero cost
-			 * (project_x11_gpu_windowed_feasibility). Brings up wmaker + the V3D GPU
-			 * window + the ffmpeg video + a clock as a rich media desktop. wmaker adopts
-			 * + decorates the app windows when it starts managing the root. */
+			/* Window Maker as the DESKTOP SHELL — the default `startx` session and
+			 * the real WM (dock + clip + NeXT-style decorations + a root right-click
+			 * app menu), already ported + HW-proven. A clean SINGLE-client bring-up:
+			 * wmaker alone is a usable desktop and manages whatever you launch next,
+			 * with no GPU/video dependencies — so it works on any --with-showcase
+			 * image that has Xphoenix + wmaker + the misc fonts. (Full XFce is
+			 * impractical on this static/no-dlopen port; Window Maker is the real
+			 * desktop at ~zero cost — project_x11_gpu_windowed_feasibility.) For the
+			 * richer GPU+video variant use `startx wmmedia`. */
+			resolve_client(cp_bufs[0], sizeof(cp_bufs[0]), prefix, "wmaker");
+			client_path[0] = cp_bufs[0];
+			n_clients = 1;
+		}
+		else if (strcmp(client, "wmmedia") == 0) {
+			/* Window Maker + a rich MEDIA desktop: the V3D GPU window (gl-x11-window)
+			 * + a playing H.264 video (e4-x11-play, ffmpeg decode) + an analog clock,
+			 * all managed + decorated by wmaker. (This was the old `wmaker` mode.)
+			 * Needs the GPU stack + those apps present in the image. */
 			static char *const clk_geom[2] = { "-geometry", "150x150+1120+120" };
 			resolve_client(cp_bufs[0], sizeof(cp_bufs[0]), prefix, "wmaker");
 			resolve_client(cp_bufs[1], sizeof(cp_bufs[1]), prefix, "gl-x11-window");
