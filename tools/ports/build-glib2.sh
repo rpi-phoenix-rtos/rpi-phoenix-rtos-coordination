@@ -28,7 +28,9 @@
 set -u
 
 NV=glib-2.56.4
-URL=https://download.gnome.org/sources/glib/2.56/$NV.tar.xz
+# download.gnome.org goes down periodically; ftp.gnome.org mirrors the same tree,
+# so give both — a single-URL fetch is a reproducible-build hazard.
+URLS="https://download.gnome.org/sources/glib/2.56/$NV.tar.xz https://ftp.gnome.org/pub/gnome/sources/glib/2.56/$NV.tar.xz"
 
 # Repo root derived from this script's own location (portable across checkouts).
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)"
@@ -55,7 +57,14 @@ fail() { echo "FAIL: $*"; exit 1; }
 
 mkdir -p "$SRC"
 if [ ! -d "$XDIR" ]; then
-	[ -f "$SRC/$NV.tar.xz" ] || { echo "=== fetching $URL ==="; curl -sSL --max-time 300 -o "$SRC/$NV.tar.xz" "$URL" || fail "download failed"; }
+	if [ ! -f "$SRC/$NV.tar.xz" ]; then
+		for u in $URLS; do
+			echo "=== fetching $u ==="
+			curl -fsSL --retry 2 --max-time 300 -o "$SRC/$NV.tar.xz" "$u" && break
+			echo "  failed: $u — trying next mirror"
+		done
+		[ -s "$SRC/$NV.tar.xz" ] || fail "download failed from all mirrors ($URLS)"
+	fi
 	tar -C "$SRC" -xf "$SRC/$NV.tar.xz" || fail "extract failed"
 fi
 
