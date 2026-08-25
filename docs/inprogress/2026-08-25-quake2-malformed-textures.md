@@ -78,6 +78,40 @@ FORWARDS argv, so `quake2 +set ...` works.
 5. Also diff the current default Pi frames vs the 08-22 clean set → confirms/denies an
    08-22→08-25 regression.
 
+## ★★★ ROOT CAUSE (2026-08-25): NPOT-texture MIP-LEVEL mistiling on V3D
+
+Decisive evidence chain (no GL_LINEAR run needed — the flaky NFS/serial harness kept
+blocking it; inferred from the render + texture dims instead):
+- Reproduced: model-skin textures scramble (banner, gibs); BSP wall/floor textures fine.
+- ALL Q2 model skins are **non-power-of-two** (pak0: banner 260×195, gibs 120×92 /
+  264×124 / …, soldier 288×195, v_blast 296×164). BSP `.wal` textures are always POT.
+- **Distance correlation**: the CLOSE blaster viewmodel (v_blast 296×164, NPOT, samples
+  the BASE level) renders CORRECTLY, while DISTANT banner/gibs (small MIP levels) scramble.
+⇒ The bug is in the **tiling of NPOT texture MIP LEVELS** (UIF layout / slice padding),
+NOT the base level and NOT POT textures. Base level correct + small mips wrong = a
+mip-slice tiling/padding miscalculation. This is the "mip-path" branch of the GL_LINEAR
+discriminator, established from physics instead of a 6th flaky Pi cycle.
+
+Connects to the TFU decode: Mesa's `v3dx_tfu.c` sets ICFG OPAD (dest UIF padding) only
+for level 0 (`!IOA_DIMTW`); "when filling mipmaps the miplevel 1+ tiling state is
+inferred" — so mip levels 1+ rely on the HW/slice-derived tiling. For NPOT heights the
+UIF `ub_pad`/`padded_height` per mip level (v3d_get_ub_pad, mirrored in the winsys
+CPU-tiler lines ~1312-1330) is what the TMU descriptor encodes; if Mesa's
+`v3d_setup_slices` / the TFU mip generation computes an NPOT mip level's padded_height or
+tiling mode differently from what the TMU reads, that mip samples scrambled.
+
+FIX LOCUS (to investigate/implement):
+- `external/mesa/src/gallium/drivers/v3d/v3d_resource.c` `v3d_setup_slices` — per-mip
+  tiling-mode + padded_height for NPOT (does a small NPOT mip drop below the UIF
+  threshold to UBLINEAR/LINEARTILE, and is the transition computed right?).
+- The TFU mip-gen dest slice tiling in `v3dx_tfu.c` (NUMMM path) vs what the TMU
+  descriptor (`v3dx_state` texture shader state) encodes for the same levels.
+- Compare against upstream/Linux Mesa v3d (Q2 renders NPOT model skins fine on Linux-Pi4)
+  — a diff of `v3d_setup_slices` / tiling.c vs the ported copy may reveal a port delta.
+
+VERIFY: rebuild libv3d + one `+map demo1` capture (NFS-server restarted this session to
+clear the stale-lease stalls) → banner renders clean.
+
 ## Fix locus (once discriminated)
 
 `tools/v3d-driver-port/v3d_phoenix_winsys.c` TFU path (or `external/mesa` v3d resource
