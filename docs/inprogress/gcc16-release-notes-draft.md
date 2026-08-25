@@ -19,11 +19,13 @@ reproducibly from a single self-contained Dockerfile on Ubuntu 26.04.
   which made GNU readline abort at the first prompt. Fixed in
   `libphoenix sys/select.c` (033ee1f) — a general fix for any blocking
   `select(…, NULL)`. Regression test in `phoenix-rtos-tests` (ca616da).
-  Note: the fix lives in the base libc, so it benefits **every** interactive
-  program (the shipped `ash`/`sh`, readline apps, etc.). GNU bash itself is not
-  yet in the default image's component set (it was built ad-hoc during the fix
-  arc, not wired into `ports.yaml`) — FOLLOW-UP: add a `bash` port entry so the
-  release image ships the shell the headline names.
+  The fix lives in the base libc, so it benefits **every** interactive program
+  (the shipped `ash`/`sh`, readline apps, etc.). GNU bash 5.2.21 is now wired
+  into the image (`ports.yaml`, project `1ed20f0`) and builds under gcc-16 via a
+  ports-side `-std=gnu17` pin (gcc-16's C23 default breaks bash's K&R
+  declarations; ports `751dda7`) — HW-verified on the Pi (bash runs scripts,
+  arithmetic, loops; `bash --version` OK, 0 faults). So the release image ships
+  the shell the headline names.
 - **libphoenix `siginterrupt()`** implemented (was declared but missing) —
   helps any port that references it (incl. job-control-off shells).
 - **Reproducible build hardening:** persistent distfiles cache + reliable
