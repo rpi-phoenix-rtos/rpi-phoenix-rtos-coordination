@@ -528,6 +528,15 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-25 (session ~244 — ★★★ bash interactive FIX HW-VERIFIED + PUSHED: the owner's long-standing bug is RESOLVED):
+ No new git owner feedback. **The select(NULL) fix WORKS — interactive bash is fully functional on Phoenix-RTOS (HW-proven).** Boot-verify (bashfix cycle) UART:
+   /bin/bash -i → bash-5.2# → `echo BASH_WORKS_NOW` → BASH_WORKS_NOW → bash-5.2# → `pwd` → / → bash-5.2# → `exit` → (psh)%
+ bash printed its prompt, EXECUTED follow-up commands at its own prompt, STAYED interactive, and exited only on explicit `exit` (previously it exited immediately at the first prompt). ⇒ the owner's "bash exits in interactive mode" bug (open across many sessions) is FIXED.
+ - **Fix PUSHED to org:** libphoenix `033ee1f` (sys/select.c: NULL timeout now blocks via poll(-1) instead of clamping to a 0 ms poll; n==0 path fixed too). General fix — helps ANY blocking select(..., NULL).
+ - Rebuilt bash against the fixed libc (--scope core Verification OK; build-port.sh bash relink) + staged /bin/bash in the gcc16 NFS export. KNOWN-ISSUES bash entry updated to Fixed. ttyprobe diagnostic committed (the tool that pinned it).
+ **NEXT (remaining close-out):** (1) add a `select(NULL)` regression test to phoenix-rtos-tests (fork+pipe+alarm: child writes after a delay, parent select(read, NULL) must return 1 after blocking, not 0 immediately) — owner's always-test rule. (2) correct tools/pty-run README + any stale "fd0 EOF" text (pty-run is no longer needed for bash). (3) snapshot a known-good manifest. Then interleave other backlog (gcc-16 build+boot DONE, siginterrupt PUSHED, bash DONE — the big three of this arc are complete).
+
+
 2026-08-25 (session ~243 — ★★★ bash interactive-exit ROOT-CAUSED + FIXED: libphoenix select(NULL) returned 0 instead of blocking):
  No new git owner feedback. **SOLVED the owner's long-standing "bash exits in interactive mode" bug — it's a libphoenix `select()` bug, HW-confirmed via tools/ttyprobe.**
  - **Root cause:** `libphoenix sys/select.c` mapped a NULL (infinite) timeout via `poll_timeout()` -> -1, then clamped `rv < 0 ? 0` and passed **0** to poll() — so `select(..., NULL)` became a 0 ms non-blocking poll returning 0 immediately instead of blocking. GNU readline's `rl_getc` does a blocking `select(fd+1,&rf,NULL,NULL,NULL)` then `if (result==0) _rl_timeout_handle()` -> `_rl_abort_internal()` (longjmp) -> readline aborts -> bash prints "exit" at its FIRST prompt. busybox ash uses a plain blocking read() (no select) -> unaffected (matches the owner's ash-works discriminator exactly).
