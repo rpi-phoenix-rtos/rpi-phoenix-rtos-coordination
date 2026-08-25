@@ -528,6 +528,15 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 
 ## Last progress
 
+2026-08-25 (session ~245 — bash arc CLOSED OUT: fix pushed, regression test added, docs corrected):
+ No new git owner feedback. Completed all close-out for the interactive-bash fix (the owner's long-standing #1 bug, resolved this arc via the libphoenix select(NULL) fix, HW-verified session ~244):
+ - libphoenix select(NULL)-blocks fix PUSHED (033ee1f). Interactive bash HW-verified working.
+ - Regression test PUSHED: phoenix-rtos-tests `ca616da` test/libc/poll `select_null_timeout_blocks` (fork+pipe: child writes after 200ms, parent select(read,NULL) must block+return 1, not 0; alarm(5) guard). Owner's always-test rule satisfied.
+ - Docs corrected: KNOWN-ISSUES bash -> Fixed; tools/pty-run/pty-run.c header note (the "fd0 EOF" motivation was really the select bug; bash now works directly under psh, pty-run not needed); ttyprobe committed. Manifest 2026-08-25-bash-interactive-select-fix.
+ **This session's arc COMPLETE — the big three all done + HW-verified + pushed:** (1) gcc-16 full build + boot-verify; (2) libphoenix siginterrupt (declared-unimplemented gap); (3) interactive bash (libphoenix select NULL-timeout). 
+ **NEXT (pivot — bash/tty dead-ends closed):** resume the master-plan Tier-2/finalization backlog. Candidates: G3.2 Docker --no-cache gcc-16 release build (launch-ready; buildx installed) -> G5 publish the gcc-16 release + tag known-good; OR wire fetch-quake-data.sh into SD/netboot; OR a Tier-2 thrust (WiFi data-plane / ffmpeg-HW). Budget-permitting; honor Pi-lock.
+
+
 2026-08-25 (session ~244 — ★★★ bash interactive FIX HW-VERIFIED + PUSHED: the owner's long-standing bug is RESOLVED):
  No new git owner feedback. **The select(NULL) fix WORKS — interactive bash is fully functional on Phoenix-RTOS (HW-proven).** Boot-verify (bashfix cycle) UART:
    /bin/bash -i → bash-5.2# → `echo BASH_WORKS_NOW` → BASH_WORKS_NOW → bash-5.2# → `pwd` → / → bash-5.2# → `exit` → (psh)%

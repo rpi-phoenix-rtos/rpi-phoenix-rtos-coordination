@@ -1,10 +1,15 @@
 /*
  * pty-run — run a program on a fresh pseudo-terminal so interactive shells work.
  *
- * On Phoenix, psh gets its interactive input from posixsrv's pty layer, but a
- * program it exec's (e.g. bash) inherits an fd 0 that is not a working
- * interactive terminal, so bash's readline hits immediate EOF and exits. This
- * helper is a minimal getty-style pty forwarder:
+ * NOTE (2026-08-25): the original motivation — "bash's readline hits immediate
+ * EOF and exits" — was NOT an fd-0/pty problem. It was a libphoenix select()
+ * bug (a NULL/infinite timeout returned 0 immediately instead of blocking, so
+ * readline's blocking select() in rl_getc() aborted). That is fixed in
+ * libphoenix sys/select.c, and interactive bash now works directly under psh
+ * (HW-verified) with no pty-run needed. This helper is kept as a general
+ * getty-style pty forwarder for programs that genuinely want their own pty:
+ *
+ * This helper is a minimal getty-style pty forwarder:
  *
  *   1. open the SVR4 /dev/ptmx multiplexor (posixsrv) -> pty master; unlockpt;
  *      ptsname() -> /dev/pts/N slave.
