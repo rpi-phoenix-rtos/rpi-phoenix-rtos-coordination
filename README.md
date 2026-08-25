@@ -140,9 +140,60 @@ Beyond the base system, a substantial ports ecosystem runs on the hardware
 | **Lua 5.4.7** | interpreter + `luac` compiler |
 | **BusyBox**, **curl** (mbedTLS) | shell utilities + HTTP/HTTPS client |
 
-> **bash caveat:** bash self-exits on EOF when there is no interactive tty
-> (getty/pts wiring is still pending), so it is not yet usable as a persistent
-> interactive login shell at the console.
+> **bash:** GNU bash 5.2 now runs as a **full interactive shell** at the console.
+> The earlier "self-exits on EOF at the prompt" bug was a libphoenix `select()`
+> bug — a NULL (infinite) timeout returned `0` immediately instead of blocking, so
+> readline's input wait saw EOF — and is fixed. Pipes, loops, variables,
+> conditionals, and command substitution all work interactively (HW-verified).
+
+## Running the showcase apps
+
+Boot the image and log in to the `(psh)%` prompt, with an **HDMI display** and a
+**USB keyboard** attached (plus a **USB mouse** for the X11 desktop). Then:
+
+### GLQuake (Quake 1)
+
+```
+rpi4-quake
+```
+
+Renders the shareware episode in textured 3D on the V3D GPU (~40 fps @ 1080p).
+The shareware `pak0` is baked into the image at `/usr/share/quake/id1/`. Open the
+in-game console with `` ` `` and type `quit` to exit (or Esc → menu → Quit).
+GLQuake links the V3D driver in-process, so no separate GPU daemon is needed.
+
+### X11 desktop (Window Maker / twm)
+
+The `startx` launcher starts the Xphoenix server plus a session in one command:
+
+```
+startx              # Window Maker desktop (the default session)
+startx desktop      # twm + xeyes
+startx term         # twm + an xterm you can type in
+startx deskapps     # twm + xterm + xclock + xcalc + xeyes
+```
+
+Drive the desktop with the USB mouse + keyboard. Exit the window manager to tear
+down X and return to `(psh)%`. If a crash ever leaves a stale lock, `rm -f
+/tmp/.X0-lock` and relaunch.
+
+### Midnight Commander and nano
+
+Both are terminal UIs, so set `TERM` for correct rendering over the console:
+
+```
+TERM=vt100 mc                   # file manager; quit with F10
+TERM=vt100 nano /etc/profile    # editor; quit with Ctrl-X
+```
+
+### Quake II, Quake III, vkQuake
+
+These build but are **not yet part of the default `--with-showcase` image**
+(GLQuake is the bundled game). vkQuake additionally needs `--build-arg
+BUILD_FLAGS="--with-showcase --with-vkquake"` and renders the menu + textured 3D
+but is a **known work-in-progress** (hangs after the main menu — see
+[docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md)). Wiring Quake II/III into the
+default image build is tracked as a follow-up.
 
 ## Repository layout
 
