@@ -123,4 +123,11 @@ capture attempts:
 
 NEXT: cycle-6 frames → convert + eyeball for the malformed wall textures + diff vs the
 clean 08-22 baseline (regression check), then the GL_LINEAR fork (mip vs base-level).
-Standing win: the `+map`+firewall recipe is the reusable autonomous Q2/Q3 capture path.
+Standing win: `+map` (live game) + firewall-open + config-file cvars (short launch cmd) is the reusable autonomous Q2/Q3 capture path. Long UART command lines drop chars — always put many cvars in a cfg.
+- cycle 6 (q2cap-map2): still FAILED — the port echoed as `scr_capture_port 559` (not
+  5599): a char DROPPED on the long (~200-char) UART command send (host→psh). So the Pi
+  connected to :559 (nothing there). FIX: moved all cvars into `baseq2/capmap.cfg`
+  (staged in the NFS export; NO timedemo, ends with `map demo1`) and launch with the
+  SHORT command `quake2 +exec capmap.cfg` → no long-line UART drop, reliable port 5599.
+- cycle 7 (q2cap-cfg): launched with the config-file approach + firewall open.
+
