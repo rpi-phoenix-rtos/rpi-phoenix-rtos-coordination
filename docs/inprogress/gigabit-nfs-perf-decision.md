@@ -158,6 +158,7 @@ Implemented (lib-lwip submodule `58e89121`, parent `e8cc8c5`, project enable `07
 
 - **Double-credit gate PASSED:** host `nstat` during the 400 MB send = TcpRetransSegs 12 (0.004%, 11 SYN-retrans from the connect loop → ~1 data retrans) — the window is NOT over-advertised; the consumer-side suppression is correct.
 - 128 MB NFS sha256 **bit-exact**; 0 faults. socket-recv is now 33.17 vs the 37.5 raw ceiling — most of the credit-ping-pong loss recovered.
+- **Slow-consumer robustness CONFIRMED (net-test -S, 2026-08-27):** a socket held 60 s without reading while the host streamed in → host send **blocked after ~1.25 MB** (recvmbox-bounded, NOT unbounded), lwip stayed **responsive** (5 s heartbeats throughout), buffered data **survived** + connection intact (post-stall read returned 65536 B), 0 faults/ENOMEM. So ingress-credit's ingress-buffering self-limits correctly for non-draining/interactive consumers — the last validation gap is closed.
 
 ### REMAINING — raw ceiling (§3 re-estimated on the shipped ingress-credit build, 2026-08-26)
 
