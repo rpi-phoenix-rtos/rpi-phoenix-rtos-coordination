@@ -131,6 +131,29 @@ content position wrong.
   (dedicated turn): read the glamor/fbdev-DDX window-drawable geometry + the XPutImage/composite
   Y-origin in Xphoenix-glamor; the fix is likely a sibling of the O1 flip. Repro is now a
   no-build, ~6-min cycle (all binaries staged in `/srv/phoenix-rpi4-nfs-gcc16`).
+- **★★ 2026-08-26 ROOT-CAUSED (owner correction + glamor source map).** OWNER (direct HW view): the
+  window height IS correct 480px (the BORDER confirms it) — the CONTENT is **Y-FLIPPED (upside-down)**,
+  NOT shifted down. My earlier "640×698 oversized" pixel-measurement was an artifact (symmetric
+  pinwheel + classifier mis-bounding the window); the owner's border read supersedes it. ROOT CAUSE
+  (subagent static map of the stock xorg-server-1.20.14 glamor tree — UNMODIFIED + self-consistent
+  per GL spec: X-row r → texel row r for PutImage-upload AND Render AND download): the **Phoenix
+  V3D/Mesa RASTER path draws FBOs Y-inverted** vs the GL spec (drawn X-row r lands at texel H-1-r).
+  Our O1 whole-screen readback flip (`PHX_READBACK_FLIP_Y=1`, glamor-shim/glamor_phoenix_ctx.c) is
+  tuned to that raster convention → correctly un-inverts *rendered* content (xclock/xcalc/twm/Render/
+  CopyArea) but **wrongly re-inverts BLIT-uploaded content** (`XPutImage`→`glTexSubImage2D`, never
+  rasterized). So ONLY XPutImage'd content is vertically flipped — matches the owner exactly.
+  **Fix is OURS + contained** (leave the raster convention + O1 flip alone so Quake/vkQuake/glamor
+  desktop are unaffected): flip Y on glamor's CPU-transfer path only — `glamor_upload_boxes` +
+  `glamor_download_boxes` in glamor/glamor_transfer.c (keep them symmetric so XGetImage round-trips
+  stay correct), as a Phoenix patch under tools/x11-port/patches/ (same mechanism as record-malloc0).
+  Alternative (fix the raster inversion + set PHX_READBACK_FLIP_Y=0) is cleaner but huge blast radius
+  (re-validate ALL GPU) — deferred. **Diagnostic READY:** gl_x11_window.c now draws an oriented scene
+  (RED-top/GREEN-mid/BLUE-bottom bands + WHITE top-left marker + up-arrow) so one grab names flip vs
+  rotate vs offset; gl-x11-window-daemon rebuilt+staged (needed a devices fix: libv3d-client
+  peek/set_next_scanout stub, pushed 966b4fb). **VALIDATION HW-BLOCKED:** the host USB-serial UART
+  adapter dropped off the bus mid-cycle 2026-08-26 (gone from lsusb; not SW-recoverable without a
+  physical re-plug) → no Pi console. NEXT Pi cycle (adapter back): run oriented diagnostic → confirm
+  pure vertical flip → apply the glamor_transfer.c upload/download flip patch → re-validate.
 
 ## Status
 Confirmed + triaged 2026-08-22. All uncommitted-investigation. Fixes are multi-turn GPU work;

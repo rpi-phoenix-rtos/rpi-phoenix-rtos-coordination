@@ -118,7 +118,7 @@ static unsigned long scale8_to_width(unsigned v, int wd)
  * of coloured triangles placed at varied depths, so LEQUAL depth-test accepts/rejects
  * across the fan (exercises the same EZ/tile path the GL frontend drives). `angle` is
  * advanced per frame so the motion is visible in the presented window. */
-static void draw_scene(float angle)
+__attribute__((unused)) static void draw_scene(float angle)
 {
 	const int spokes = 12;
 
@@ -147,6 +147,55 @@ static void draw_scene(float angle)
 		glColor3f(b, r, g);
 		glVertex3f(0.85f * cosf(a1), 0.85f * sinf(a1), z);
 	}
+	glEnd();
+}
+
+/* DIAGNOSTIC (2026-08-26, owner-requested): an UNAMBIGUOUSLY ORIENTED flat scene to
+ * tell apart flip vs. offset vs. rotation of the presented content. The rotating
+ * pinwheel above is too symmetric to read orientation from an HDMI grab. Drawn in
+ * NDC with identity matrices, depth test off:
+ *   - three horizontal colour bands: RED top (y>+0.33), GREEN middle, BLUE bottom
+ *     (y<-0.33)  -> distinguishes top/bottom inversion;
+ *   - a WHITE square in the TOP-LEFT NDC corner -> flip vs. rotation;
+ *   - a YELLOW up-pointing triangle (apex at top centre) -> confirms "up".
+ * The client's glReadPixels+vertical-flip makes GL-top land at X-image row 0, so a
+ * correct present shows: red band at window top, blue at bottom, white marker
+ * top-left, arrow apex up. Any deviation names the exact transform. */
+static void draw_orient_scene(void)
+{
+	glDisable(GL_DEPTH_TEST);
+	glMatrixMode(GL_MODELVIEW);
+	glLoadIdentity();
+	glMatrixMode(GL_PROJECTION);
+	glLoadIdentity();
+	glClearColor(0.10f, 0.10f, 0.10f, 1.0f);
+	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+	glBegin(GL_QUADS);
+	/* RED top band */
+	glColor3f(0.9f, 0.1f, 0.1f);
+	glVertex2f(-1.0f, 1.0f);   glVertex2f(1.0f, 1.0f);
+	glVertex2f(1.0f, 0.333f);  glVertex2f(-1.0f, 0.333f);
+	/* GREEN middle band */
+	glColor3f(0.1f, 0.8f, 0.1f);
+	glVertex2f(-1.0f, 0.333f);  glVertex2f(1.0f, 0.333f);
+	glVertex2f(1.0f, -0.333f);  glVertex2f(-1.0f, -0.333f);
+	/* BLUE bottom band */
+	glColor3f(0.1f, 0.2f, 0.9f);
+	glVertex2f(-1.0f, -0.333f); glVertex2f(1.0f, -0.333f);
+	glVertex2f(1.0f, -1.0f);    glVertex2f(-1.0f, -1.0f);
+	/* WHITE marker square, TOP-LEFT NDC corner */
+	glColor3f(1.0f, 1.0f, 1.0f);
+	glVertex2f(-0.95f, 0.95f);  glVertex2f(-0.60f, 0.95f);
+	glVertex2f(-0.60f, 0.60f);  glVertex2f(-0.95f, 0.60f);
+	glEnd();
+
+	/* YELLOW up-pointing triangle (apex at top centre) */
+	glBegin(GL_TRIANGLES);
+	glColor3f(1.0f, 1.0f, 0.0f);
+	glVertex2f(0.0f, 0.85f);    /* apex, top */
+	glVertex2f(-0.35f, -0.55f); /* base left */
+	glVertex2f(0.35f, -0.55f);  /* base right */
 	glEnd();
 }
 
@@ -261,7 +310,8 @@ int main(void)
 		float angle = (float)frame * 2.0f;
 
 		glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-		draw_scene(angle);
+		(void)angle;             /* DIAGNOSTIC: oriented static scene (owner 2026-08-26) */
+		draw_orient_scene();     /* was: draw_scene(angle) — restore after Y-flip diagnosis */
 		glFinish();
 		glReadPixels(0, 0, W, H, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
 
