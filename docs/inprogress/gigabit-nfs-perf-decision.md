@@ -21,14 +21,15 @@ Session delivered **2.4× NFS / 2.6× raw** via three root-caused, validated fix
 Linux hits **112 MB/s at standard 1500 MTU** on the same hardware ⇒ the NIC/switch/host/Pi fully support line-rate; the 6× gap is 100% Phoenix stack software. Decomposition:
 - **Not the wire / not the window / not loss** (bit-exact, drop=0, window full, RTT 0.4 ms).
 - **Not frame size** — jumbo ruled out (the switch drops 9000-MTU frames), and Linux doesn't need it anyway.
-- **It is per-frame CPU cost on single threads:** Phoenix's tcpip thread processes RX at ~32 µs/frame (~26k fps → 37.5 MB/s raw). Linux does ~80k fps via NAPI-style batching + multi-core + an optimized hot path. NFS then loses another ~1.8× (37.5→21 MB/s stream) to the socket-recv path (tcpip→app cross-thread pbuf handoff + recv-copy + libnfs RPC parse), which is drain/processing-bound (steady, not backpressure — bigger window/recvmbox won't help).
+- **It is per-frame CPU cost on single threads:** Phoenix's tcpip thread processes RX at ~32 µs/frame (~26k fps → 37.5 MB/s raw). Linux does ~80k fps via NAPI-style batching + multi-core + an optimized hot path.
+- **NFS then loses another ~1.8× (37.5→18.9) — now precisely located (net-test -R socket-recv sink, 2026-08-26):** raw socket recv() = **22.6 MB/s** vs lwiperf raw-API 37.5 and NFS 18.9. ⇒ the **lwip socket-recv path** (tcpip→app recvmbox cross-thread handoff + recv-copy) is the DOMINANT gap (37.5→22.6, ~1.6×); **libnfs is minor** (22.6→18.9, ~1.1×). It's drain/processing-bound (steady, not backpressure — bigger window/recvmbox won't help; the copy is already cached via cacheable-RX, so the cost is the per-segment cross-thread handoff — the RX→app analog of the CORE_LOCKING_INPUT fix).
 
 ## Options
 
 | # | Scope | Expected result | Effort | Risk |
 |---|---|---|---|---|
 | **A** | **Accept 2.4× (18.9 MB/s), stop here** | netboot fully works, 2.4× faster, bit-exact | 0 | none |
-| **B** | **Socket-recv path optimization** (cut the 37.5→21 NFS loss: reduce the per-segment tcpip→app handoff + copy; possibly move NFS read onto the raw/callback API or batch recv) | NFS → toward the 37.5 raw ceiling (~2× more, ~37 MB/s) | ~days (bounded-ish; needs socket-recv profiling first, then targeted lwip/nfs-fs work) | medium (touches the socket + nfs-fs read path) |
+| **B** | **Socket-recv path optimization** — PROFILED: target is the lwip tcpip→app recvmbox cross-thread handoff (37.5→22.6 MB/s), NOT libnfs. Reduce the per-segment handoff (batch pbufs per app wake; or an RX→app core-locking-style direct path) | NFS → toward the 22.6→37.5 socket ceiling (~1.6×, ~30 MB/s) | ~days (profiling DONE; now targeted lwip netconn/socket work) | medium (touches lwip netconn/socket RX delivery) |
 | **C** | **Raise the raw-TCP ceiling toward Linux** (NAPI-style RX batching to amortize per-frame cost, and/or multi-core RX — lwip's `LWIP_TCPIP_CORE_LOCKING` serializes ALL processing on one thread, so multi-core needs a multi-queue/lockless redesign) | raw → toward 112; NFS follows (with B) | **multi-week** | high (core lwip threading rearchitecture; the just-validated stack is single-threaded by design) |
 
 Note: **B is capped by the raw ceiling (37.5)** — to actually approach Linux's 112 you need **C**. B alone gets NFS to ~37 (still 33% of line); B+C gets toward parity.
