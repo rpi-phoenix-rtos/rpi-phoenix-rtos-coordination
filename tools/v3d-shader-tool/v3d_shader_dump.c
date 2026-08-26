@@ -247,27 +247,33 @@ int main(int argc, char **argv)
 		}
 	}
 
-	/* ---- CSMATMUL: o[i] = sum_j w[i*N+j]*x[j], N=D=256 (microbench, hand-NIR loop) ---- */
+	/* ---- CSMATMUL: o[i] = sum_j w[i*N+j]*x[j], N RUNTIME via ssbo3[0] (microbench) ----
+	 * N is read from a 4th SSBO (binding 3, element 0) so it drives BOTH the loop
+	 * bound AND the row stride consistently — a compile-time MMN let the compiler
+	 * bake the stride as an immediate while only the bound tracked a uniform, which
+	 * corrupted results for N!=256 (HW-confirmed). One kernel now serves any N. */
 	{
-		const unsigned MMN = 256u;
 		nir_builder mb = nir_builder_init_simple_shader(MESA_SHADER_COMPUTE,
 			&v3d_options, "csmatmul");
 		mb.shader->info.workgroup_size[0] = 64;
 		mb.shader->info.workgroup_size[1] = 1;
 		mb.shader->info.workgroup_size[2] = 1;
-		mb.shader->info.num_ssbos = 3;
+		mb.shader->info.num_ssbos = 4;
 
 		nir_variable *sumv = nir_local_variable_create(mb.impl, glsl_float_type(), "sum");
 		nir_variable *jvar = nir_local_variable_create(mb.impl, glsl_uint_type(), "j");
 		nir_def *ii = nir_channel(&mb, nir_load_global_invocation_id(&mb, 32), 0);
+		/* N = params[0] from ssbo binding 3 (hoisted out of the loop). */
+		nir_def *nrt = nir_load_ssbo(&mb, 1, 32, nir_imm_int(&mb, 3),
+			nir_imm_int(&mb, 0), .align_mul = 4, .align_offset = 0);
 		nir_store_var(&mb, sumv, nir_imm_float(&mb, 0.0f), 0x1);
 		nir_store_var(&mb, jvar, nir_imm_int(&mb, 0), 0x1);
 
 		nir_push_loop(&mb);
 		{
 			nir_def *jj = nir_load_var(&mb, jvar);
-			nir_break_if(&mb, nir_uge_imm(&mb, jj, MMN));
-			nir_def *widx = nir_iadd(&mb, nir_imul_imm(&mb, ii, MMN), jj);
+			nir_break_if(&mb, nir_uge(&mb, jj, nrt));
+			nir_def *widx = nir_iadd(&mb, nir_imul(&mb, ii, nrt), jj);
 			nir_def *wval = nir_load_ssbo(&mb, 1, 32, nir_imm_int(&mb, 0),
 				nir_imul_imm(&mb, widx, 4), .align_mul = 4, .align_offset = 0);
 			nir_def *xval = nir_load_ssbo(&mb, 1, 32, nir_imm_int(&mb, 1),
