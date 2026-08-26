@@ -32,6 +32,10 @@
 ## RECOMMENDATION (2026-08-27)
 **Accept 29.9 MB/s (3.8×) as the shipped state** unless line-rate NFS is a hard requirement. It is functionally complete (netboot + NFS-root work, bit-exact, 0 faults) and at ~75–80% of the single-thread ceiling. The only autonomous lever left (multi-conn NFS) buys ~1.3× for substantial nfs-fs work; the big jump to line rate needs owner-gated kernel work (futex + multi-core RX). **I need your call:** (A) accept 3.8× and I redirect to other master-plan items; (B) authorize multi-conn NFS (~1.3×, ~1-2 wk); (C) authorize the multi-core/futex kernel track (line-rate target, multi-week). Details + per-lever evidence below.
 
+## NFS WRITE PATH — a NEW bounded lever (2026-08-27)
+
+Separate from reads (which hit the single-thread wall): NFS **writes** were unexplored. Findings (HW): writes **WORK, no hang** (the old "2nd nfs_pwrite hangs" bug is refuted); **16.5 MB/s** (~55% of read speed); **NOT** server-sync-bound (async export test = identical 16.6); mtWrite = 1 MB (large RPCs). **Raw TX ceiling (Pi→host, no NFS) = 18.5 MB/s = literally HALF the RX ceiling (37.5)**, and NFS write is 92% of it ⇒ the limiter is the **raw Phoenix TX path**. **Root cause:** genet TX is a **single-slot synchronous polled descriptor** (bcm-genet.c:14-16) — one frame in flight, `linkoutput` poll-waits for HW completion per frame; the 256-BD TX ring is unused. **Fix = pipelined multi-slot genet TX** (driver-only, Phoenix-owned, TX-side/less-boot-critical, RX ring is the template): est. **~1.8× → NFS writes ~30 MB/s**. This is a real autonomous bounded lever (unlike the read-side wall) — **being implemented next**, no owner gate needed.
+
 Session delivered **2.4× NFS / 2.6× raw** via three root-caused, validated fixes:
 1. `LWIP_TCPIP_CORE_LOCKING_INPUT=1` — removed the per-packet tcpip-mailbox handoff (~94 µs/frame).
 2. `LWIP_CHKSUM_ALGORITHM=3` — wider reads over the (uncached) pbuf; recovered the checksum cost.
