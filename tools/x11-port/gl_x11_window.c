@@ -118,7 +118,7 @@ static unsigned long scale8_to_width(unsigned v, int wd)
  * of coloured triangles placed at varied depths, so LEQUAL depth-test accepts/rejects
  * across the fan (exercises the same EZ/tile path the GL frontend drives). `angle` is
  * advanced per frame so the motion is visible in the presented window. */
-__attribute__((unused)) static void draw_scene(float angle)
+static void draw_scene(float angle)
 {
 	const int spokes = 12;
 
@@ -161,7 +161,7 @@ __attribute__((unused)) static void draw_scene(float angle)
  * The client's glReadPixels+vertical-flip makes GL-top land at X-image row 0, so a
  * correct present shows: red band at window top, blue at bottom, white marker
  * top-left, arrow apex up. Any deviation names the exact transform. */
-static void draw_orient_scene(void)
+__attribute__((unused)) static void draw_orient_scene(void)
 {
 	glDisable(GL_DEPTH_TEST);
 	glMatrixMode(GL_MODELVIEW);
@@ -310,8 +310,7 @@ int main(void)
 		float angle = (float)frame * 2.0f;
 
 		glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-		(void)angle;             /* DIAGNOSTIC: oriented static scene (owner 2026-08-26) */
-		draw_orient_scene();     /* was: draw_scene(angle) — restore after Y-flip diagnosis */
+		draw_scene(angle);
 		glFinish();
 		glReadPixels(0, 0, W, H, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
 
