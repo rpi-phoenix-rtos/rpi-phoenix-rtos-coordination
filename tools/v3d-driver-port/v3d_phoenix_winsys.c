@@ -1665,9 +1665,13 @@ static int ioc_submit_csd(struct drm_v3d_submit_csd *s)
 	l2t_flush_wait(c0);
 	__asm__ volatile("dsb sy" ::: "memory");
 
-	/* TODO(csd-bringup): unconditional log while validating compute dispatch; gate on error once done. */
-	fprintf (stderr, "v3d-winsys: CSD %s cfg0=0x%08x int_sts=0x%08x status=0x%08x num_completed=%u\n",
-	         timed_out ? "TIMEOUT" : "done", s->cfg[0], sts, csd_status, (csd_status >> 4) & 0xffu);
+	/* Report only on TIMEOUT/error. The former unconditional per-dispatch "CSD done"
+	 * line went to UART on every compute dispatch; at serial baud that dominated any
+	 * compute-perf measurement (an empty kernel timed slower than a real matmul).
+	 * Gated now that CSD dispatch is validated (matches rpi4-v3d.c v3d_gpu.c). */
+	if (timed_out)
+		fprintf (stderr, "v3d-winsys: CSD TIMEOUT cfg0=0x%08x int_sts=0x%08x status=0x%08x num_completed=%u\n",
+		         s->cfg[0], sts, csd_status, (csd_status >> 4) & 0xffu);
 	return 0;
 }
 

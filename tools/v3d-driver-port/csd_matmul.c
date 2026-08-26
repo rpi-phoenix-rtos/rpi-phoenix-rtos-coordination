@@ -25,6 +25,19 @@ extern int phoenix_v3d_ioctl(int fd, unsigned long request, void *arg);
 #define WG_SIZE_SHIFT        0
 #define CFG5_PROPAGATE_NANS  (1u << 2)
 #define CFG5_THREADING       (1u << 0)
+#define CFG5_SINGLE_SEG      (1u << 1)
+
+/* CSNOP: empty compute kernel (thread-end only), local_size=16, single_seg=1,
+ * uniforms=0. From v3d-shader-tool (shaders-dump.txt / csd_probe.c). Used here to
+ * measure the FIXED per-dispatch floor (submit ioctl + GPU launch + INT_CSDDONE
+ * wait, no memory/compute) — so the GEMM-crossover question (does batching Nb
+ * matrix-vector products into one dispatch amortize this floor?) can be answered
+ * analytically from floor vs the matmul time. */
+static const uint64_t CSNOP[] = {
+	0x3c203186bb800000ull, /* nop ; nop ; thrsw */
+	0x3c003186bb800000ull, /* nop ; nop */
+	0x3c003186bb800000ull, /* nop ; nop */
+};
 
 /* CSMATMUL QPU (30 words), N=D=256, local_size=64. From shaders-dump.txt. */
 static const uint64_t MATMUL[] = {
@@ -128,6 +141,47 @@ int main(void)
 	tg1 = now_ms();
 	printf("csd-matmul: GPU %d dispatches rc=%d total=%.3f ms (%.4f ms/matmul)\n",
 		ITERS, r, tg1 - tg0, (tg1 - tg0) / ITERS);
+
+	/* Fixed-floor: time ITERS empty CSNOP dispatches (1 wg, local_size 16,
+	 * single_seg — the known-good csd_probe STEP1 config). This is the per-submit
+	 * overhead with ~zero compute/memory, so (matmul_ms - floor_ms) is the actual
+	 * per-matmul GPU work. GEMM crossover prediction: batching Nb matrix-vectors
+	 * into ONE dispatch costs ~ floor + Nb*(matmul_ms - floor); it beats the CPU
+	 * (Nb * cpu_ms/matmul) once Nb is large enough that the amortized floor no
+	 * longer dominates. If floor ~= matmul_ms, the crossover is real and near Nb ~
+	 * floor/cpu_ms; if floor << matmul_ms, GPU is compute/bandwidth-bound and no
+	 * batching helps -> RULED OUT with data. */
+	{
+		uint32_t nshva, nfloor_r = 0;
+		void *nshcpu;
+		uint32_t nshbo = make_bo(fd, (uint32_t)sizeof(CSNOP), &nshva, &nshcpu);
+		if (nshbo) {
+			struct drm_v3d_submit_csd ns;
+			uint32_t nh[2];
+			double tf0, tf1;
+			memcpy(nshcpu, CSNOP, sizeof(CSNOP));
+			memset(&ns, 0, sizeof(ns));
+			ns.cfg[0] = 1u << WG_COUNT_SHIFT;
+			ns.cfg[1] = 1u << WG_COUNT_SHIFT;
+			ns.cfg[2] = 1u << WG_COUNT_SHIFT;
+			ns.cfg[3] = (1u << WGS_PER_SG_SHIFT) | (0u << BATCHES_M1_SHIFT) | (16u << WG_SIZE_SHIFT);
+			ns.cfg[4] = 0u;
+			ns.cfg[5] = nshva | CFG5_PROPAGATE_NANS | CFG5_SINGLE_SEG | CFG5_THREADING;
+			ns.cfg[6] = unva;   /* unused by CSNOP but must be a valid BO VA */
+			nh[0] = nshbo; nh[1] = unbo;
+			ns.bo_handles = (uint64_t)(uintptr_t)nh;
+			ns.bo_handle_count = 2;
+			tf0 = now_ms();
+			for (it = 0; it < ITERS; it++)
+				nfloor_r = phoenix_v3d_ioctl(fd, DRM_IOCTL_V3D_SUBMIT_CSD, &ns);
+			tf1 = now_ms();
+			printf("csd-matmul: FLOOR (empty CSNOP) %d dispatches rc=%d total=%.3f ms (%.4f ms/dispatch)\n",
+				ITERS, nfloor_r, tf1 - tf0, (tf1 - tf0) / ITERS);
+		}
+		else {
+			printf("csd-matmul: FLOOR CSNOP BO alloc FAILED (skipping floor)\n");
+		}
+	}
 
 	tc0 = now_ms();
 	for (it = 0; it < ITERS; it++) {
