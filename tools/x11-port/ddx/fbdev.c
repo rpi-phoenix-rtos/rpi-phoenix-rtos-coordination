@@ -53,6 +53,8 @@
  */
 #ifdef GLAMOR_PHOENIX
 #include "glamor.h"
+#include "mipointer.h"    /* miPointerInitialize + miPointerSpriteFuncRec — the shadow-RAM card cursor */
+#include "cursorstr.h"    /* CursorPtr / CursorBitsPtr (source/mask/argb) */
 
 /*
  * E5 / G-XORG-MODERN (M1b): make glamor's GPU acceleration VISIBLE on /dev/fb0 by
@@ -82,6 +84,31 @@ static Bool fbdev_glamor_active = FALSE;
  */
 extern void glamor_phx_screen_readback(unsigned int tex, int width,
                                         int y0, int rows, void *dst);
+
+/*
+ * Shadow-RAM card cursor (defined in the cursor section below). fbdevFlushRegion
+ * calls this after it blits a shadow band to /dev/fb0: any part of the band that
+ * overlaps the on-screen cursor box has just been overwritten with cursor-free
+ * pixels, so the cursor is re-composited on top. Keeps the sprite above every
+ * screen redraw without ever touching the (pure) shadow buffer or the GL texture.
+ */
+static void fbdevCursorAfterFlush(ScreenPtr pScreen, int y0, int y1);
+
+/* Shadow-RAM cursor state (see the cursor section below for the full rationale).
+ * Declared here because fbdevScreenFini (above the cursor section) frees it.
+ * Single dispatch thread → no locking. */
+static struct {
+    ScreenPtr screen;
+    Bool have;              /* sprite buffer holds a valid cursor image */
+    Bool visible;           /* cursor shown (last SetCursor was non-NULL) */
+    Bool drawn;             /* a sprite is currently composited on /dev/fb0 */
+    int w, h;               /* sprite dimensions */
+    int xhot, yhot;         /* hotspot within the sprite */
+    int bx, by;             /* current box origin (= pointer pos - hotspot) */
+    int dbx, dby, dw, dh;   /* box currently drawn on fb0 (for a clean erase) */
+    CARD32 *argb;           /* w*h sprite, byte order [0]=R [1]=G [2]=B [3]=A */
+    int argbcap;            /* allocated capacity (pixels) */
+} fbdevCur;
 #endif
 
 /*
@@ -243,9 +270,20 @@ fbdevScreenInitialize(KdScreenInfo *screen, FbdevScrPriv *scrpriv)
 
     scrpriv->randr = screen->randr;
 
-    /* No hardware cursor backend (initCursor is NULL) → use the software
-     * cursor (mi) so the dix cursor path never dereferences a HW cursor. */
+    /*
+     * Cursor backend. The plain (non-glamor) build has no card cursor, so it uses
+     * the software mi cursor (miDC/miSprite), which draws into the screen pixmap.
+     * The glamor build's screen pixmap is a GL texture; miDC's GPU save-under into
+     * that texture mis-writes static content (smears). So the glamor build uses the
+     * shadow-RAM card cursor (fbdevCursorInit) instead: softCursor=FALSE lets
+     * KdScreenInit take the initCursor branch (kdrive.c:806). If fbdevCursorInit
+     * ever returns FALSE, kdrive forces softCursor=TRUE and falls back to miDC.
+     */
+#ifdef GLAMOR_PHOENIX
+    screen->softCursor = FALSE;
+#else
     screen->softCursor = TRUE;
+#endif
 
     /*
      * Always shadow: /dev/fb0 has no live mmap backing (issue #149), so X must
@@ -361,6 +399,12 @@ fbdevFlushRegion(ScreenPtr pScreen, int y0, int y1)
                          (size_t) rowbytes);
         }
     }
+
+#ifdef GLAMOR_PHOENIX
+    /* This band on /dev/fb0 is now cursor-free (it was blitted straight from the
+     * pure shadow). If the cursor overlaps it, paint the sprite back on top. */
+    fbdevCursorAfterFlush(pScreen, y0, y1);
+#endif
 }
 
 /*
@@ -683,6 +727,11 @@ fbdevCreateResources(ScreenPtr pScreen)
 static void
 fbdevScreenFini(KdScreenInfo *screen)
 {
+#ifdef GLAMOR_PHOENIX
+    /* Release the shadow-RAM cursor sprite + reset its state. */
+    free(fbdevCur.argb);
+    memset(&fbdevCur, 0, sizeof(fbdevCur));
+#endif
     if (screen->fb.shadow)
         KdShadowFbFree(screen);
 }
@@ -1163,6 +1212,290 @@ OsVendorInit(void)
      */
 }
 
+#ifdef GLAMOR_PHOENIX
+/* ======================================================================== *
+ *  Shadow-RAM software cursor (glamor build only)
+ *
+ *  The glamor screen pixmap is a GL texture; the mi software cursor (miDC)
+ *  composites the pointer + its save-under INTO that texture with GPU ops,
+ *  which mis-writes static content (smears) and only self-heals where the
+ *  content is continuously redrawn. This backend bypasses miDC/miSprite: the
+ *  cursor is an overlay on /dev/fb0 only. The shadow buffer
+ *  (screen->fb.frameBuffer) stays pure GPU-readback content (cursor-free); the
+ *  sprite is alpha-composited straight onto the device rows.
+ *
+ *  Erase/redraw on motion re-blit the cursor-free shadow rows for the old box
+ *  and composite the sprite over the new box — no GPU readback, no texture
+ *  write. All sprite funcs, the damage flush and the periodic flush run on the
+ *  single dispatch thread (this DDX also drains input there, fbdevInputTimerCb
+ *  → KdEnqueuePointerEvent), so no locking is needed and miPointerInitialize's
+ *  waitForUpdate is FALSE. If input ever moves to InputThreadRegisterDev, this
+ *  no-lock assumption must be revisited.
+ * ======================================================================== */
+
+/* Pack one premultiplied sprite pixel in /dev/fb0 byte order (byte0=R). */
+static inline void
+fbdevCurPutPix(CARD32 *p, int r, int g, int b, int a)
+{
+    unsigned char *c = (unsigned char *) p;
+    c[0] = (unsigned char) r;
+    c[1] = (unsigned char) g;
+    c[2] = (unsigned char) b;
+    c[3] = (unsigned char) a;
+}
+
+/* Convert dix cursor bits (argb, or core source/mask) into fbdevCur.argb. */
+static Bool
+fbdevCursorConvert(CursorPtr cursor)
+{
+    CursorBitsPtr bits = cursor->bits;
+    int w = bits->width, h = bits->height;
+    int npix = w * h;
+    int x, y;
+
+    if (w <= 0 || h <= 0)
+        return FALSE;
+
+    if (!fbdevCur.argb || fbdevCur.argbcap < npix) {
+        CARD32 *n = realloc(fbdevCur.argb, (size_t) npix * 4);
+        if (!n)
+            return FALSE;
+        fbdevCur.argb = n;
+        fbdevCur.argbcap = npix;
+    }
+
+    if (bits->argb) {
+        /* dix stores premultiplied a8r8g8b8 (machine CARD32 0xAARRGGBB). */
+        for (y = 0; y < h; y++)
+            for (x = 0; x < w; x++) {
+                CARD32 v = bits->argb[y * w + x];
+                fbdevCurPutPix(&fbdevCur.argb[y * w + x],
+                               (v >> 16) & 0xff, (v >> 8) & 0xff, v & 0xff,
+                               (v >> 24) & 0xff);
+            }
+    }
+    else {
+        /* Core cursor: 1bpp source (shape) + mask (drawn pixels), LSBFirst, each
+         * scanline padded to BitmapBytePad(w). fore/back are 16-bit → >>8. */
+        int stride = BitmapBytePad(w);
+        int fr = cursor->foreRed >> 8, fg = cursor->foreGreen >> 8,
+            fb = cursor->foreBlue >> 8;
+        int br = cursor->backRed >> 8, bg = cursor->backGreen >> 8,
+            bb = cursor->backBlue >> 8;
+        for (y = 0; y < h; y++) {
+            const unsigned char *srow = bits->source + y * stride;
+            const unsigned char *mrow = bits->mask + y * stride;
+            for (x = 0; x < w; x++) {
+                int m = (mrow[x >> 3] >> (x & 7)) & 1;
+                if (!m)
+                    fbdevCurPutPix(&fbdevCur.argb[y * w + x], 0, 0, 0, 0);
+                else if ((srow[x >> 3] >> (x & 7)) & 1)
+                    fbdevCurPutPix(&fbdevCur.argb[y * w + x], fr, fg, fb, 255);
+                else
+                    fbdevCurPutPix(&fbdevCur.argb[y * w + x], br, bg, bb, 255);
+            }
+        }
+    }
+
+    fbdevCur.w = w;
+    fbdevCur.h = h;
+    fbdevCur.xhot = bits->xhot;
+    fbdevCur.yhot = bits->yhot;
+    fbdevCur.have = TRUE;
+    return TRUE;
+}
+
+/* Re-blit the cursor-free shadow rows for box (bx,by,bw,bh) (clipped) to fb0. */
+static void
+fbdevCursorRestoreBox(ScreenPtr pScreen, int bx, int by, int bw, int bh)
+{
+    KdScreenPriv(pScreen);
+    KdScreenInfo *screen = pScreenPriv->screen;
+    FbdevPriv *priv = screen->card->driver;
+    CARD8 *shadow = (CARD8 *) screen->fb.frameBuffer;
+    int stride = screen->fb.byteStride;
+    int pitch = priv->mode.pitch;
+    int W = priv->mode.width, H = priv->mode.height;
+    int x0 = bx, y0 = by, x1 = bx + bw, y1 = by + bh, y;
+
+    if (!shadow || priv->fd < 0 || stride != pitch)
+        return;
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > W) x1 = W;
+    if (y1 > H) y1 = H;
+    if (x1 <= x0 || y1 <= y0)
+        return;
+    for (y = y0; y < y1; y++) {
+        off_t off = (off_t) y * pitch + (off_t) x0 * 4;
+        if (lseek(priv->fd, off, SEEK_SET) == (off_t) -1)
+            break;
+        (void) write(priv->fd, shadow + (off_t) y * stride + (off_t) x0 * 4,
+                     (size_t) (x1 - x0) * 4);
+    }
+}
+
+/* Composite the sprite over the shadow content at (bx,by) and write to fb0. */
+static void
+fbdevCursorDrawBox(ScreenPtr pScreen)
+{
+    KdScreenPriv(pScreen);
+    KdScreenInfo *screen = pScreenPriv->screen;
+    FbdevPriv *priv = screen->card->driver;
+    CARD8 *shadow = (CARD8 *) screen->fb.frameBuffer;
+    int stride = screen->fb.byteStride;
+    int pitch = priv->mode.pitch;
+    int W = priv->mode.width, H = priv->mode.height;
+    int bx = fbdevCur.bx, by = fbdevCur.by, w = fbdevCur.w, h = fbdevCur.h;
+    int sx0 = 0, sy0 = 0, x, y;
+    int cx0 = bx, cy0 = by, cx1 = bx + w, cy1 = by + h;
+    CARD32 rowbuf[256];
+
+    if (!fbdevCur.have || !shadow || priv->fd < 0 || stride != pitch)
+        return;
+    if (w > 256)               /* X cursors are tiny; guards rowbuf */
+        return;
+
+    /* Clip box to screen; sx0/sy0 = first on-screen sprite column/row. */
+    if (cx0 < 0) { sx0 = -cx0; cx0 = 0; }
+    if (cy0 < 0) { sy0 = -cy0; cy0 = 0; }
+    if (cx1 > W) cx1 = W;
+    if (cy1 > H) cy1 = H;
+    if (cx1 <= cx0 || cy1 <= cy0)
+        return;
+
+    for (y = cy0; y < cy1; y++) {
+        int rw = cx1 - cx0;
+        CARD8 *dstrow = shadow + (off_t) y * stride + (off_t) cx0 * 4;
+        CARD32 *sprow = &fbdevCur.argb[(sy0 + (y - cy0)) * w + sx0];
+        off_t off;
+
+        for (x = 0; x < rw; x++) {
+            unsigned char *d = (unsigned char *) (dstrow + x * 4);
+            unsigned char *s = (unsigned char *) (sprow + x);
+            unsigned char *o = (unsigned char *) (rowbuf + x);
+            int inv = 255 - s[3];
+            o[0] = (unsigned char) (s[0] + d[0] * inv / 255);
+            o[1] = (unsigned char) (s[1] + d[1] * inv / 255);
+            o[2] = (unsigned char) (s[2] + d[2] * inv / 255);
+            o[3] = 0;
+        }
+        off = (off_t) y * pitch + (off_t) cx0 * 4;
+        if (lseek(priv->fd, off, SEEK_SET) == (off_t) -1)
+            break;
+        (void) write(priv->fd, rowbuf, (size_t) rw * 4);
+    }
+
+    fbdevCur.dbx = bx;
+    fbdevCur.dby = by;
+    fbdevCur.dw = w;
+    fbdevCur.dh = h;
+    fbdevCur.drawn = TRUE;
+}
+
+/* Erase the currently-drawn sprite by restoring its box from the pure shadow. */
+static void
+fbdevCursorErase(ScreenPtr pScreen)
+{
+    if (!fbdevCur.drawn)
+        return;
+    fbdevCursorRestoreBox(pScreen, fbdevCur.dbx, fbdevCur.dby,
+                          fbdevCur.dw, fbdevCur.dh);
+    fbdevCur.drawn = FALSE;
+}
+
+/* fbdevFlushRegion hook: re-paint the sprite if the blitted band overlapped it. */
+static void
+fbdevCursorAfterFlush(ScreenPtr pScreen, int y0, int y1)
+{
+    if (!fbdevCur.drawn || !fbdevCur.visible)
+        return;
+    if (fbdevCur.dby + fbdevCur.dh <= y0 || fbdevCur.dby >= y1)
+        return;                /* no Y overlap with the just-blitted band */
+    fbdevCursorDrawBox(pScreen);
+}
+
+/* --- miPointerSpriteFuncRec: dix drives the cursor through these --- */
+
+static Bool
+fbdevRealizeCursor(DeviceIntPtr dev, ScreenPtr screen, CursorPtr cursor)
+{
+    (void) dev; (void) screen; (void) cursor;
+    return TRUE;               /* converted lazily in SetCursor */
+}
+
+static Bool
+fbdevUnrealizeCursor(DeviceIntPtr dev, ScreenPtr screen, CursorPtr cursor)
+{
+    (void) dev; (void) screen; (void) cursor;
+    return TRUE;
+}
+
+static void
+fbdevSetCursor(DeviceIntPtr dev, ScreenPtr screen, CursorPtr cursor, int x, int y)
+{
+    (void) dev;
+    fbdevCur.screen = screen;
+    fbdevCursorErase(screen);              /* clear old image (old dims) first */
+    if (!cursor || !fbdevCursorConvert(cursor)) {
+        fbdevCur.visible = FALSE;          /* NULL cursor = hide */
+        return;
+    }
+    fbdevCur.visible = TRUE;
+    fbdevCur.bx = x - fbdevCur.xhot;
+    fbdevCur.by = y - fbdevCur.yhot;
+    fbdevCursorDrawBox(screen);
+}
+
+static void
+fbdevMoveCursor(DeviceIntPtr dev, ScreenPtr screen, int x, int y)
+{
+    (void) dev;
+    fbdevCur.screen = screen;
+    if (!fbdevCur.visible || !fbdevCur.have)
+        return;
+    fbdevCursorErase(screen);
+    fbdevCur.bx = x - fbdevCur.xhot;
+    fbdevCur.by = y - fbdevCur.yhot;
+    fbdevCursorDrawBox(screen);
+}
+
+static Bool
+fbdevDeviceCursorInitialize(DeviceIntPtr dev, ScreenPtr screen)
+{
+    (void) dev; (void) screen;
+    return TRUE;
+}
+
+static void
+fbdevDeviceCursorCleanup(DeviceIntPtr dev, ScreenPtr screen)
+{
+    (void) dev; (void) screen;
+}
+
+static miPointerSpriteFuncRec fbdevPointerSpriteFuncs = {
+    fbdevRealizeCursor,
+    fbdevUnrealizeCursor,
+    fbdevSetCursor,
+    fbdevMoveCursor,
+    fbdevDeviceCursorInitialize,
+    fbdevDeviceCursorCleanup
+};
+
+/* KdCardFuncs.initCursor: register the sprite funcs so dix never calls miDC. */
+static Bool
+fbdevCursorInit(ScreenPtr pScreen)
+{
+    /* kdPointerScreenFuncs is kdrive's standard pointer/screen glue (the same one
+     * miDCInitialize would use). waitForUpdate FALSE is safe only because input
+     * is drained on the dispatch thread (fbdevInputTimerCb); see the section
+     * banner if that ever changes. */
+    miPointerInitialize(pScreen, &fbdevPointerSpriteFuncs,
+                        &kdPointerScreenFuncs, FALSE);
+    return TRUE;
+}
+#endif /* GLAMOR_PHOENIX */
+
 KdCardFuncs fbdevFuncs = {
     fbdevCardInit,              /* cardinit */
     fbdevScreenInit,            /* scrinit */
@@ -1172,7 +1505,11 @@ KdCardFuncs fbdevFuncs = {
     fbdevScreenFini,            /* scrfini */
     fbdevCardFini,              /* cardfini */
 
-    0,                          /* initCursor */
+#ifdef GLAMOR_PHOENIX
+    fbdevCursorInit,            /* initCursor (shadow-RAM card cursor, glamor build) */
+#else
+    0,                          /* initCursor (plain build uses the mi software cursor) */
+#endif
 
     0,                          /* initAccel */
     0,                          /* enableAccel */
