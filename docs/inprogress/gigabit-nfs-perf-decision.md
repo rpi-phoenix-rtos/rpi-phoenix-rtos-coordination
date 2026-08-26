@@ -29,15 +29,18 @@ Linux hits **112 MB/s at standard 1500 MTU** on the same hardware ⇒ the NIC/sw
 | # | Scope | Expected result | Effort | Risk |
 |---|---|---|---|---|
 | **A** | **Accept 2.4× (18.9 MB/s), stop here** | netboot fully works, 2.4× faster, bit-exact | 0 | none |
-| **B** | **Socket-recv path optimization** — PROFILED: target is the lwip tcpip→app recvmbox cross-thread handoff (37.5→22.6 MB/s), NOT libnfs. Reduce the per-segment handoff (batch pbufs per app wake; or an RX→app core-locking-style direct path) | NFS → toward the 22.6→37.5 socket ceiling (~1.6×, ~30 MB/s) | ~days (profiling DONE; now targeted lwip netconn/socket work) | medium (touches lwip netconn/socket RX delivery) |
+| **B** | **Socket-recv path optimization** — PROFILED + scoped: target is the lwip tcpip→app **recvmbox cross-thread handoff + per-recv cross-process IPC** (37.5→22.6 MB/s), NOT libnfs. NOTE: `lwip_recv_tcp` ALREADY drains all queued pbufs per call, so there is **no quick recv-batching win** — the cost is the per-SEGMENT recvmbox post/fetch + the socket-server IPC round-trip. Fixing it means coalescing pbufs before the recvmbox (fewer posts/wakes) or a lockless/zero-copy RX→app delivery — genuine architecture, no one-line flag (unlike the 3 shipped fixes). | NFS → toward the 22.6→37.5 socket ceiling (~1.6×, ~30 MB/s) | ~1-2 weeks (architectural, not a tweak) | medium-high (reworks lwip netconn RX delivery + the Phoenix socket server on the validated stack) |
 | **C** | **Raise the raw-TCP ceiling toward Linux** (NAPI-style RX batching to amortize per-frame cost, and/or multi-core RX — lwip's `LWIP_TCPIP_CORE_LOCKING` serializes ALL processing on one thread, so multi-core needs a multi-queue/lockless redesign) | raw → toward 112; NFS follows (with B) | **multi-week** | high (core lwip threading rearchitecture; the just-validated stack is single-threaded by design) |
 
 Note: **B is capped by the raw ceiling (37.5)** — to actually approach Linux's 112 you need **C**. B alone gets NFS to ~37 (still 33% of line); B+C gets toward parity.
 
 ## Recommendation
 
-- If NFS-over-netboot at **18.9 MB/s** is adequate for the workflow (it's 2.4× faster and fully correct/stable), **Option A** — declare gigabit done and free the focus for other master-plan items.
-- If you want a meaningful further step without a multi-week commitment, **Option B** (~2× more, ~37 MB/s) is the bounded next lever; I'd start by profiling where the socket-recv 21 MB/s goes (copy vs handoff vs libnfs) via a raw socket-recv sink, then target the biggest chunk.
-- **Option C** (Linux parity) is a genuine multi-week TCP-stack project (NAPI batching + multi-core lwip). Worth it only if line-rate NFS is a hard requirement; I'd want your go-ahead and preferred approach before starting, given the risk to the working stack.
+Update after full profiling: **there is no "bounded-days" middle option** — the 3 quick wins are already shipped (2.4×), and both remaining levers are architectural multi-week projects on the validated networking stack:
+- **Option A** — if NFS-over-netboot at **18.9 MB/s** (2.4×, correct/stable, bit-exact) is adequate, declare gigabit done and free the focus for other master-plan items. **This is my recommendation unless line-rate NFS is a hard requirement**, since B/C are both multi-week core-networking rearchitectures with regression risk to a just-validated stack.
+- **Option B** (~1.6×, NFS→~30 MB/s) — rework the lwip recvmbox/socket-server RX delivery (coalesce pbufs / reduce per-segment handoff+IPC). ~1-2 weeks, medium-high risk. Gets NFS to ~30 (still 27% of line) — capped by the raw ceiling.
+- **Option C** (Linux parity, 112 MB/s) — B **plus** raising the raw-TCP ceiling (NAPI batching + multi-core lwip; the core-locking model serializes on one thread). Multi-week, high risk.
+
+Given B alone can't reach parity and both are multi-week, the real choice is **A (accept 2.4×) vs. a committed multi-week networking project (B→C)**. I'd want your explicit go-ahead + priority call before starting B or C, given the effort and the risk to the working stack — hence this brief rather than autonomously launching it.
 
 Awaiting your call. Everything above is committed; the deployed image is the validated 2.4× cacheable build (Option-A state). Harnesses for re-measurement: `$CLAUDE_JOB_DIR/tmp/{ss-measure,iperf-measure,linux-bench}.sh`; lwiperf/RXSTATS/RXPROF diag build flags in the lwip Makefile.
