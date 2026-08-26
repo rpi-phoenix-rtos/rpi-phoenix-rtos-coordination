@@ -1,15 +1,35 @@
-# Gigabit NFS/eth performance — decision brief (2026-08-26)
+# Gigabit NFS/eth performance — decision brief (updated 2026-08-27)
 
-**For:** owner (Witold). **Status:** gigabit fully working + bit-exact + 2.4× faster and **shipped**; all *bounded* optimizations exhausted. The remaining gap to Linux parity needs a **multi-week TCP-stack rearchitecture** — your call on whether/how to invest. This brief has the data and options.
+**For:** owner (Witold). **BOTTOM LINE (2026-08-27):** gigabit NFS-root fully works, bit-exact, 0 faults, and is now **3.8× faster (7.86 → 29.9 MB/s), all shipped + public.** We have hit the **single-thread wall**: lwIP processes RX on ONE thread (core lock), so the raw single-flow ceiling is **~37.5–42 MB/s** and NFS is already at **~75–80% of it**. **Every remaining lever is either (a) owner-gated kernel/architectural work, or (b) a substantial nfs-fs rearchitecture for only ~1.3×.** The bounded, safe, autonomous lwIP optimizations are EXHAUSTED. Your decision below.
 
 ## Where we are (all HW-verified on the real gigabit link, same host/switch/NIC)
 
-| Path | Throughput | % of gigabit line |
-|---|---|---|
-| **Linux on this Pi4 (NFS read, 1500 MTU)** | **112 MB/s** | 95% |
-| Phoenix raw TCP into RAM (lwiperf, no NFS/socket-copy) | 37.5 MB/s | 32% |
-| **Phoenix NFS read (dd 128 MB)** — shipped | **18.9 MB/s** | 16% |
-| Phoenix NFS baseline (session start) | 7.86 MB/s | 7% |
+| Path | Throughput | % of line | note |
+|---|---|---|---|
+| **Linux on this Pi4 (NFS read)** | **112 MB/s** | 95% | multi-core + NAPI/GRO |
+| Phoenix raw TCP (lwiperf, single-thread input CEILING) | 37.5 (batch-off) / ~42 (batch-on) MB/s | 32–36% | **the wall for any single-thread-input approach** |
+| Phoenix socket-recv (net-test -R) | **33.2 MB/s** | 28% | IPC + lock residual below the raw ceiling |
+| **Phoenix NFS read (dd 128 MB)** — SHIPPED | **29.9 MB/s** | 25% | = 75–80% of the single-thread ceiling |
+| Phoenix NFS baseline (session start) | 7.86 MB/s | 7% | — |
+
+## The ceiling, precisely (why 29.9 is near the practical autonomous max)
+
+- **Raw input ceiling ~37.5–42 MB/s = single-thread `netif->input`** (33.5–39.5 µs/frame, HW-measured). lwIP's core lock serializes ALL RX on one thread — no single-flow multicore path exists in lwIP. This is the hard wall short of multi-core RX.
+- NFS (29.9) and socket-recv (33.2) sit BELOW that wall; the gap is Phoenix microkernel **IPC round-trip (~253 µs/op) + per-frame lock syscalls (~9 µs)**, not the wire, not the window, not RX drain (drop=0), not checksum, not jumbo (GENET can't).
+- Shipped this session: mount fix, cacheable-RX, checksum algo-3, recvmbox coalescing, TCP_WND 44·MSS, ingress window crediting → 3.8×.
+
+## Remaining levers, with honest cost/benefit
+
+| Lever | Gain | Effort | Gate |
+|---|---|---|---|
+| **Multi-connection NFS (`nconnect` striping)** | ~1.3× (→ ~40, capped by single-thread input) | substantial nfs-fs rearchitecture (single sync context today) | autonomous-possible but marginal; scoping in progress |
+| **`GENET_RX_INPUT_BATCH` flip default-on** | raises raw ceiling to ~42 (doesn't help NFS today — socket-bound) | 0 (built, bit-exact, parked off) | flip when socket path exceeds ~37 |
+| **Lightweight `SYS_ARCH_PROTECT` / recvmbox-mutex fast-path** | ~1.1–1.3× (lock cost) | needs a **Phoenix futex** (lost-wakeup race otherwise) | **owner-gated kernel work** |
+| **Multi-core RX input (toward Linux 112)** | up to ~3–4× | multi-queue/lockless lwip redesign | **owner-gated, multi-week** |
+| Kernel IPC-latency reduction / zero-copy shared-mem sockets | attacks the ~253 µs IPC | kernel + socket-server rework | **owner-gated** |
+
+## RECOMMENDATION (2026-08-27)
+**Accept 29.9 MB/s (3.8×) as the shipped state** unless line-rate NFS is a hard requirement. It is functionally complete (netboot + NFS-root work, bit-exact, 0 faults) and at ~75–80% of the single-thread ceiling. The only autonomous lever left (multi-conn NFS) buys ~1.3× for substantial nfs-fs work; the big jump to line rate needs owner-gated kernel work (futex + multi-core RX). **I need your call:** (A) accept 3.8× and I redirect to other master-plan items; (B) authorize multi-conn NFS (~1.3×, ~1-2 wk); (C) authorize the multi-core/futex kernel track (line-rate target, multi-week). Details + per-lever evidence below.
 
 Session delivered **2.4× NFS / 2.6× raw** via three root-caused, validated fixes:
 1. `LWIP_TCPIP_CORE_LOCKING_INPUT=1` — removed the per-packet tcpip-mailbox handoff (~94 µs/frame).
