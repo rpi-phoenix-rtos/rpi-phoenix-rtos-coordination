@@ -1,0 +1,18 @@
+--- a/glamor/glamor_transfer.c
++++ b/glamor/glamor_transfer.c
+@@ -30,8 +30,13 @@
+     switch (pixmap->drawable.depth) {
+     case 24:
+     case 32:
+-        *format = GL_BGRA;
+-        *type = GL_UNSIGNED_INT_8_8_8_8_REV;
++        /* Phoenix RPi4: the fbdev DDX + fb use RGBA byte order (byte0=R, the #19
++         * SET_PIXEL_ORDER=1 fix) and glamor's internal textures are GL_RGBA, so the
++         * CPU<->pixmap transfers (PutImage/GetImage/spans) must describe RGBA bytes,
++         * not the stock little-endian BGRA/8888_REV (which read R as B -> a red<->blue
++         * swap on XPutImage'd content). See tools/x11-port/patches/...-glamor-rgba-upload.patch */
++        *format = GL_RGBA;
++        *type = GL_UNSIGNED_BYTE;
+         break;
+     case 30:
+         *format = GL_BGRA;

@@ -167,6 +167,17 @@ fi
 # build-xfbdev.sh from these archives), so `make` only compiles the libs. It can
 # still exit non-zero on a trailing no-op target; the archive presence check below
 # is the authoritative success gate.
+# Phoenix RPi4 glamor R/B-swap fix (durable core-source patch): glamor's depth-24/32
+# CPU<->pixmap transfer describes stock little-endian BGRA/8888_REV, but this port's
+# fbdev DDX + fb use RGBA byte order (byte0=R, the #19 SET_PIXEL_ORDER fix) and glamor's
+# internal textures are GL_RGBA — so XPutImage'd content came out red<->blue swapped.
+# Apply before the glamor build so libglamor.a picks it up. patch -N is idempotent (a
+# fresh-extracted tree gets it; an already-patched tree is a no-op).
+if [ "$GLAMOR" = 1 ]; then
+  GLAMOR_RGBA_PATCH="$ROOT/tools/x11-port/patches/xorg-server-1.20.14-glamor-rgba-upload.patch"
+  [ -f "$GLAMOR_RGBA_PATCH" ] && patch -d "$KD" -p1 -N <"$GLAMOR_RGBA_PATCH" >/dev/null 2>&1 || true
+fi
+
 echo "=== building $NV core (make -j$(nproc)) ==="
 ( cd "$KD" && make -j"$(nproc)" >/tmp/$NV-build.log 2>&1 ) \
   || echo "=== make returned non-zero — verifying archives directly ==="
