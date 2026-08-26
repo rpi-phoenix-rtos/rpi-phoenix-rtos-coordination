@@ -43,4 +43,9 @@ Update after full profiling: **there is no "bounded-days" middle option** — th
 
 Given B alone can't reach parity and both are multi-week, the real choice is **A (accept 2.4×) vs. a committed multi-week networking project (B→C)**. I'd want your explicit go-ahead + priority call before starting B or C, given the effort and the risk to the working stack — hence this brief rather than autonomously launching it.
 
+### Option B — implementation-ready notes (running start if you approve)
+Root cause confirmed by measurement (net-test -R): recv-IPC batching is fine (bytes/call ≈ 18 KB); the cost is the **per-TCP-segment recvmbox handoff inside lwip**. `recv_tcp` (lib-lwip/src/api/api_msg.c:297) does one `sys_mbox_trypost(&conn->recvmbox, …)` per segment (~287k times per 400 MB), and the Phoenix socket_thread (port/sockets.c) dequeues + `pbuf_copy_partial`s each — ~35 µs/segment of mbox-op + cross-thread scheduling over lwiperf's raw path.
+Lever: **coalesce recvmbox posts** — in `recv_tcp`, if the previously-posted pbuf hasn't been consumed, `pbuf_cat` the new segment onto it instead of posting a new mbox entry (fewer post/dequeue pairs per KB). Risk: producer/consumer race on the recvmbox (the socket_thread may be mid-dequeue) — needs a small lock or a "pending head" the consumer coordinates on. Validate with net-test -R (target 22.6→toward 37.5) + a bit-exact sha256 NFS check. Secondary: pin socket_thread vs tcpip thread to different cores (SMP) to pipeline the handoff.
+**I did NOT start this** — it's a risky lwip-core change on the just-validated stack, and my recommendation is A unless you need line-rate NFS. Your call.
+
 Awaiting your call. Everything above is committed; the deployed image is the validated 2.4× cacheable build (Option-A state). Harnesses for re-measurement: `$CLAUDE_JOB_DIR/tmp/{ss-measure,iperf-measure,linux-bench}.sh`; lwiperf/RXSTATS/RXPROF diag build flags in the lwip Makefile.
