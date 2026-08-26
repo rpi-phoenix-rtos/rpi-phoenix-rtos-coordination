@@ -115,6 +115,22 @@ content position wrong.
   present path. Remaining suspects (need live repro): server-side Xphoenix window geometry (client
   area vs twm title-bar offset), or the grab was a different/older GL client. DEFERRED (lowest
   priority, non-blocking) — revisit with a fresh HDMI repro when the higher-value items are done.
+- **★ 2026-08-26 REPRODUCED + root cause LOCALIZED to the server (advisor-directed repro cycle).**
+  Fresh concurrent-GPU-daemon repro (`/gpu-x-gpudesk-repro.sh` on the gcc16 NFS root → v3d-server +
+  Xphoenix-glamor-daemon + gpudesk session). HDMI evidence (kept, un-rotated):
+  `docs/inprogress/evidence/2026-08-26-x11-windowed-gl-yoffset-REPRO.png` — the twm-decorated
+  "Phoenix V3D GL" window has a **black band across the top ~1/3** of its client area with the
+  640×480 pinwheel content **bottom-aligned in the lower ~2/3**; xclock + xcalc render correctly.
+  Exactly the owner's report. **Client re-confirmed INNOCENT from source:** gl_x11_window.c creates
+  a *fixed* 640×480 window (`min=max=640×480`, hints lines 221–223), FBO 640×480, glViewport(0,0,
+  640,480), and XPutImage the full 640×480 at dst (0,0). **But the on-screen client area measures
+  ~640 wide × ~695 TALL** (window taller than the fixed request) with content bottom-aligned →
+  the bug is entirely **server-side Xphoenix-glamor**: (i) the window is sized/composited TALLER
+  than the client's fixed 640×480, and (ii) the client's top-left (0,0) blit lands bottom-aligned
+  = a **Y-origin flip**, the SAME family as the O1 glamor fix (`PHX_READBACK_FLIP_Y`). NEXT
+  (dedicated turn): read the glamor/fbdev-DDX window-drawable geometry + the XPutImage/composite
+  Y-origin in Xphoenix-glamor; the fix is likely a sibling of the O1 flip. Repro is now a
+  no-build, ~6-min cycle (all binaries staged in `/srv/phoenix-rpi4-nfs-gcc16`).
 
 ## Status
 Confirmed + triaged 2026-08-22. All uncommitted-investigation. Fixes are multi-turn GPU work;
