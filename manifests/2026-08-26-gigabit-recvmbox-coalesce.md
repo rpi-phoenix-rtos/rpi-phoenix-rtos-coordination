@@ -5,6 +5,7 @@
 - Date: 2026-08-26
 - Note: lwip recvmbox coalescing (Option B): socket-recv 22.6->27.86, NFS dd read 18.9->24.4 MB/s, 128MB NFS sha256 bit-exact, 0 faults. lwip local-only (publish blocked).
 - Generator: scripts/snapshot-integration-state.sh
+- **SUBMODULE PIN (not captured by the generator — record by hand for rollback):** `phoenix-rtos-lwip/lib-lwip` @ `8f8335c8beb1e161f60e0a16babacb88fda5f395` (the recv_tcp coalesce commit). The parent `d570a58` gitlinks this SHA. It is on a **detached HEAD**, so it is protected from gc by local branch **`phoenix-pin-2`** in the submodule. If restoring this manifest, after checking out parent `d570a58` run `git -C sources/phoenix-rtos-lwip submodule update --init lib-lwip` (or `git -C .../lib-lwip checkout 8f8335c8`) to bring the submodule to the pinned SHA. Local-only (lwip publish blocked; needs an attended scrubbed cherry-pick to org).
 
 ## Repositories
 

@@ -331,11 +331,15 @@ socket-recv 22.6→27.86 MB/s (+23%), NFS dd read 18.9→24.4 MB/s (+29%; 3.1× 
 bit-exact, 0 faults.** Default-on (rollback `LWIP_RECVMBOX_COALESCE=0`). Committed local-only (lwip publish blocked):
 submodule lib-lwip 8f8335c8, parent phoenix-rtos-lwip d570a58; manifest 2026-08-26-gigabit-recvmbox-coalesce.
 Brief `docs/inprogress/gigabit-nfs-perf-decision.md` updated with the RESULT + narrowed owner decision.
-**Remaining gigabit levers are all multi-week + owner-gated (Option C: multi-core/NAPI toward Linux's 112 MB/s).**
-Next heartbeat: hold gigabit focus — either (a) squeeze more from the socket path (drained-mbox still posts+wakes per
-segment; the wakeup/IPC side is the next bounded-ish lever to profile) or (b) if judged "fast enough" per the owner's
-bar, note it and await the owner's Option-C call. Do NOT resume P8/other tasks until the owner signals gigabit is
-adequate. lwip gigabit stack (this + CORE_LOCKING_INPUT/algo-3/cacheable-RX) still needs the attended scrubbed
+**NEXT HEARTBEAT = keep working the ethernet problem (directive: switch away ONLY when "fully fixed"; 24.4 vs Linux
+112 does not obviously clear "it needs to be fast", and "await" is the one state the owner ruled out).** Concrete next
+action: **PROFILE the remaining socket-recv gap** (27.86 → the 37.5 raw ceiling). The drained-mbox case still pays a
+post + consumer-wakeup per segment; the wakeup/IPC side is the next lever. Do NOT pre-file it as "multi-week / owner-
+gated" — Option B was priced at 1-2 weeks right up until concrete examination collapsed it to a 70-line same-day change
+(Phoenix owns the primitive); the wakeup/IPC side deserves the same concrete look first (RXPROF-style posts/wakes-per-KB
+counters, or a socket_thread profile) before any effort estimate. **Only Option C (multi-core / NAPI RX batching, toward
+Linux's 112) is genuinely architectural → stays owner-gated** — but the profile, not a wait, is the next step. Do NOT
+resume P8/other tasks until the owner signals gigabit is adequate. lwip gigabit stack (this + CORE_LOCKING_INPUT/algo-3/cacheable-RX) still needs the attended scrubbed
 cherry-pick to org lwip. --- historical big-feature mandate below ---
 
 **★★★★ 2026-08-12 OWNER UPDATE (Witold, coord commit 71bb3db — see "## Comments from human operator / owner
