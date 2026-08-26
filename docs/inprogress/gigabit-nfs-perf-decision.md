@@ -109,3 +109,13 @@ The RX hot path takes ~6 lock pairs **per frame**: LOCK_TCPIP_CORE (per-packet u
 3. **Phoenix mutex fast-path** — 4.5 µs uncontended is itself the root inefficiency and would speed up *everything*, not just lwip; but that's a libphoenix/kernel change (larger scope, separate evaluation).
 
 Next: implement #1 (bounded/safe) and measure, then evaluate #2. #3 noted for the owner as a high-leverage cross-cutting item.
+
+### RESULTS (2026-08-26) — lock-batching validated but wrong stage; window bump = the real (modest) NFS win
+
+**Lever #1 (batch LOCK_TCPIP_CORE per drain burst) — IMPLEMENTED, validated, shipped default-OFF.** HW-measured (GENET_RX_INPUT_BATCH=32): input cost **39.5 → 31.0 µs/frame (−21%)** — proves the lock-cost model. BUT socket-recv (27.86→27.17) and NFS (24.4→23.7) stayed **flat**: input CPU was never the pacer for those paths. NFS/socket sit *below* the raw input ceiling, so raising the raw ceiling doesn't lift them. Kept **default-off** (lwip `9db0d23`, local): it becomes binding only once the socket path passes ~36 MB/s (then input is the pacer again — flip on + re-validate). Committed as scoped headroom, not a current win.
+
+**The real pacer = socket-recv is window-credit-LATENCY-bound.** Model: throughput = TCP_WND / effective-credit-RTT. At 32×MSS: 46720 B / 1.60 ms = 27.9 (matched 27.86). Every prior win (CORE_LOCKING_INPUT, coalescing) removed *wakeup hops* from the credit chain; batching added CPU headroom instead — which is why it was the first lever that didn't move the metric.
+
+**Lever = TCP_WND 32→44×MSS (64240 B, max w/o window scaling) — SHIPPED (project `0993e81`, pushed).** HW-validated: socket-recv **27.86 → 29.63**, NFS dd **24.4 → 26.3 MB/s (+8%; 3.35× cumulative from 7.86)**, 128 MB sha256 bit-exact, 0 faults, throughput *rose* (not the old backfire) + 64 KB in-flight ≪ 256-buf RX pool ⇒ no drop regression. **But below the model's ~38 prediction: effective credit-RTT GREW with the window (1.60→2.07 ms), so the credit loop is not fixed-latency — a deeper socket-path pacer remains.**
+
+**NEXT (bounded, not yet done):** profile the credit chain directly — timestamp data-arrival → recvmbox-post → socket_thread-wake → `netconn_tcp_recvd`/ACK-emit on the Pi — to find why per-credit latency scales with window (candidates: socket_thread copy+IPC CPU saturating ~30 MB/s; or wake-hop count per credit). That locates the next hop to remove. Multi-core / mutex-fast-path (#3) remain owner-gated.
