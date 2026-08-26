@@ -1,5 +1,14 @@
 # Quake III (quake3e) — Phoenix-RTOS port (GPL-2.0)
 
+> **Engine build migrated to the ports framework.** The engine now builds from
+> `sources/phoenix-rtos-ports/quake3/` (run `scripts/build-port.sh quake3`); the
+> old `build-quake3e-phoenix.py` + `platform/` glue + `.patch` were removed and
+> live there now as `glue/` + `patches/`. This directory retains only the
+> non-migrated runtime launcher (`quake3-launcher.c`), the visual-regression
+> capture reference demo (`demos/cap.dm_68`, used by
+> `scripts/quake3-host-capture.sh`), and the GPL license (`COPYING`). The notes
+> below are kept as bring-up history.
+
 Phoenix-RTOS RPi4 port of [quake3e](https://github.com/ec-/quake3e) (Quake III
 Arena engine), rendering through the ported Mesa/V3D GL stack over the SDL2
 port. Like the QuakeSpasm, yQuake2 and vkQuake ports, this is an **optional

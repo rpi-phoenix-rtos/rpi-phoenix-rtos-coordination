@@ -1,5 +1,12 @@
 # yQuake2 — Phoenix-RTOS port (GPL-2.0-or-later)
 
+> **Engine build migrated to the ports framework.** The engine now builds from
+> `sources/phoenix-rtos-ports/yquake2/` (run `scripts/build-port.sh yquake2`);
+> the old `build-yquake2-phoenix.py` + `platform/` glue + `.patch` were removed
+> and live there now as `glue/` + `patches/`. This directory retains only the
+> non-migrated runtime launcher (`quake2-launcher.c`) and the GPL license
+> (`COPYING`). The notes below are kept as bring-up history.
+
 Phoenix-RTOS RPi4 port of [yQuake2](https://github.com/yquake2/yquake2)
 (Quake II), rendering through the ported Mesa/V3D GL stack over the SDL2 port.
 Like the QuakeSpasm and vkQuake ports, this is an **optional showcase**: it is
