@@ -176,6 +176,11 @@ fi
 if [ "$GLAMOR" = 1 ]; then
   GLAMOR_RGBA_PATCH="$ROOT/tools/x11-port/patches/xorg-server-1.20.14-glamor-rgba-upload.patch"
   [ -f "$GLAMOR_RGBA_PATCH" ] && patch -d "$KD" -p1 -N <"$GLAMOR_RGBA_PATCH" >/dev/null 2>&1 || true
+  # Y-flip fix: screen-pixmap uploads are written Y-mirrored to match the raster-flipped
+  # rendered content that the readback shim un-flips whole-screen (else XPutImage'd
+  # content shows upside-down). Gated on the screen pixmap; offscreen pixmaps untouched.
+  GLAMOR_YFLIP_PATCH="$ROOT/tools/x11-port/patches/xorg-server-1.20.14-glamor-screen-upload-yflip.patch"
+  [ -f "$GLAMOR_YFLIP_PATCH" ] && patch -d "$KD" -p1 -N <"$GLAMOR_YFLIP_PATCH" >/dev/null 2>&1 || true
 fi
 
 echo "=== building $NV core (make -j$(nproc)) ==="

@@ -1,0 +1,39 @@
+--- a/glamor/glamor_transfer.c
++++ b/glamor/glamor_transfer.c
+@@ -79,6 +79,17 @@
+ 
+     glamor_format_for_pixmap(pixmap, &format, &type);
+ 
++    /* Phoenix RPi4: the v3d rasterizer lands rendered content Y-flipped in texture
++     * memory, which the readback shim un-flips for the WHOLE screen pixmap
++     * (glamor_phoenix_ctx.c PHX_READBACK_FLIP_Y=1). A CPU upload (XPutImage etc.) writes
++     * memory rows directly (top-origin), so that same whole-screen readback flip would
++     * invert uploaded content -> it appears upside-down on the fb. To match, uploads to
++     * the SCREEN pixmap are written Y-mirrored here. Offscreen pixmaps are sampled
++     * directly (no readback flip) so they must NOT be mirrored -> gate on the screen
++     * pixmap only. See tools/x11-port/patches/...-glamor-screen-upload-yflip.patch */
++    Bool phx_screen_flip = (pixmap == (*screen->GetScreenPixmap)(screen));
++    int phx_pix_h = pixmap->drawable.height;
++
+     glamor_make_current(glamor_priv);
+ 
+     glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+@@ -110,7 +121,17 @@
+             if (x2 <= x1 || y2 <= y1)
+                 continue;
+ 
+-            if (glamor_priv->has_unpack_subimage ||
++            if (phx_screen_flip) {
++                /* Phoenix: screen-pixmap upload written Y-mirrored, row by row, so it
++                 * matches the raster-flipped rendered content (see banner above). */
++                int yy;
++                for (yy = y1; yy < y2; yy++, ofs += byte_stride)
++                    glTexSubImage2D(GL_TEXTURE_2D, 0,
++                                    x1 - box->x1, (phx_pix_h - 1 - yy) - box->y1,
++                                    x2 - x1, 1,
++                                    format, type,
++                                    bits + ofs);
++            } else if (glamor_priv->has_unpack_subimage ||
+                 x2 - x1 == byte_stride / bytes_per_pixel) {
+                 glTexSubImage2D(GL_TEXTURE_2D, 0,
+                                 x1 - box->x1, y1 - box->y1,
