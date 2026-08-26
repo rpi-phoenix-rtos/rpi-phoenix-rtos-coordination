@@ -22,7 +22,8 @@
 
 | Lever | Gain | Effort | Gate |
 |---|---|---|---|
-| **Multi-connection NFS (`nconnect` striping)** | ~1.3× (→ ~40, capped by single-thread input) | substantial nfs-fs rearchitecture (single sync context today) | autonomous-possible but marginal; scoping in progress |
+| **Multi-connection NFS (`nconnect` striping)** | ~1.3× (→ ~40, capped by single-thread input) | **~1.5–3 wk**, boot-critical: needs a speculative **prefetch engine** (the real cost — the single-threaded fs server has only 1 mtRead outstanding, so N conns do nothing without it) + N-clientid state + fh-cache/reclaim refactor. libnfs 6.0.2 = NFSv4.0-only, no nconnect/sessions ⇒ N independent contexts/clientids. Feasibility: `2026-08-27-multiconn-nfs-feasibility.md` | **owner-gate** (bracket with multi-core) |
+| Single-conn async READ pipelining (cheaper subset) | ~10% (30→~33, the socket-recv ceiling) | still needs the prefetch engine; captures only the NFS-vs-socket-recv gap | marginal; prerequisite for multi-conn |
 | **`GENET_RX_INPUT_BATCH` flip default-on** | raises raw ceiling to ~42 (doesn't help NFS today — socket-bound) | 0 (built, bit-exact, parked off) | flip when socket path exceeds ~37 |
 | **Lightweight `SYS_ARCH_PROTECT` / recvmbox-mutex fast-path** | ~1.1–1.3× (lock cost) | needs a **Phoenix futex** (lost-wakeup race otherwise) | **owner-gated kernel work** |
 | **Multi-core RX input (toward Linux 112)** | up to ~3–4× | multi-queue/lockless lwip redesign | **owner-gated, multi-week** |
