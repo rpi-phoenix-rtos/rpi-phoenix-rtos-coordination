@@ -81,3 +81,31 @@ The checkpoint **passed** and correctness is proven, so B is implemented, defaul
 - **Ceiling note holds:** socket-recv is now 27.86 vs the 37.5 raw ceiling — some per-segment handoff cost remains (a fully-drained mbox still posts+wakes per segment; coalescing only fires under backlog). Closing the rest toward 37.5 needs the wakeup/IPC-side work; reaching Linux's 112 still needs Option C (multi-core / NAPI). Both remain multi-week and owner-gated — **not started.**
 
 **Owner decision now narrows to:** accept **3.1× / 24.4 MB/s NFS** (recommended — netboot is fully functional and fast enough for the workflow) vs. commit to the multi-week Option C for Linux parity.
+
+### Option C SCOPING PROFILE (2026-08-26) — the raw ceiling is single-core input-bound at 39.5 µs/frame
+
+RXPROF (GENET_RXSTATS_LOG diag build) under a sustained 400 MB socket-recv sink measured the per-frame RX processing cost directly:
+- **`input_us / input_calls` = 11,373,307 µs / 287,572 frames = 39.5 µs/frame.** At 39.5 µs/frame single-threaded, ceiling = 1/39.5µs × 1448 B = **36.6 MB/s — matches the independently-measured 37.5 raw ceiling** (from an uninstrumented build, so the number isn't instrumentation-distorted).
+- 74% of the transfer's wall-clock was spent inside `netif->input` on one core (11.4 s of 15.3 s). drop=0, rbuf_ovfl=0. The driver already batches **7.65 frames per drain-wake**, but the lwip stack still runs `ip_input→tcp_input→recv_tcp` **once per 1448 B frame**.
+
+⇒ The raw ceiling (hence everything above it, incl. NFS) is bounded by single-core per-frame stack cost. **39.5 µs (~59k cycles) is anomalously high for TCP on a 1.5 GHz A72 with cached pbufs** (lwip does single-digit µs/segment on far smaller parts) — the lead is **per-frame syscall-backed lock pairs** on the microkernel (LOCK_TCPIP_CORE per packet under CORE_LOCKING_INPUT + the recvmbox mutex + SYS_ARCH_PROTECT in recv_avail/event_callback), each a kernel round-trip. Six-ish lock pairs/frame at a few µs each ≈ the whole 39.5 µs.
+
+**Discriminating experiment (next):** a boot-time microbench (Phoenix-owned port/main.c, behind the diag flag) times a `mutexLock/mutexUnlock` pair and a `condSignal`-no-waiter in ns/op.
+- If a pair is ~µs-scale ⇒ locks dominate ⇒ **bounded fix = batch `LOCK_TCPIP_CORE` once per drain burst** (the genet drain already wakes with ~7.6 frames; take the core lock once, feed each frame to input under it, release after — ÷7.6 the dominant cost, no TCP-semantics change, Phoenix-owned, Option-B-shaped).
+- If a pair is ~0.3 µs ⇒ locks innocent ⇒ the time is genuine stack compute ⇒ **GRO-lite** (coalesce contiguous same-flow segments before ip_input so tcp_input runs once per super-segment) moves up — but it carries 10× the correctness surface (seq contiguity / same-flow keying / option handling), so it only earns its risk if the microbench rules out locks.
+- **Multi-core / multi-queue RX stays owner-gated and is NOT demanded by this data:** even 5 µs/frame single-core ≈ 290 MB/s, well above what the wire needs after the socket layer. The lever is per-frame cost, not core count.
+
+### MICROBENCH RESULT (2026-08-26) — the 39.5 µs/frame is LOCK-SYSCALL-bound, not compute
+
+Boot-time microbench (port/main.c, diag flag) on the real Pi4:
+- **`mutexLock`+`mutexUnlock` pair = 4542 ns (~4.5 µs/op)** — a Phoenix mutex syscalls even uncontended (a futex-style fast-path would be tens of ns).
+- `condSignal` (no waiter) = 1678 ns (~1.7 µs/op).
+
+The RX hot path takes ~6 lock pairs **per frame**: LOCK_TCPIP_CORE (per-packet under CORE_LOCKING_INPUT) + the recvmbox mutex (in `sys_mbox_trypost_coalesce`) + `SYS_ARCH_PROTECT` in `SYS_ARCH_INC(recv_avail)` + pbuf `memp_malloc`/`memp_free` (RX pool alloc at drain, free at consume) + (on real posts) `event_callback`'s `SYS_ARCH_PROTECT` + `condSignal`. **~6 × 4.5 µs ≈ 27 µs of the 39.5 µs is lock syscalls**; the residual ~12 µs is genuine stack compute. This is decisive: the raw ceiling is bounded by **per-frame kernel lock round-trips**, so **GRO-lite is the wrong lever** (it would amortize the ~12 µs compute, not the ~27 µs of locks) and **multi-core is unnecessary** (single-core at even 15 µs/frame ≈ 96 MB/s).
+
+**The lever is reducing per-frame lock syscalls.** Candidate fixes, smallest-diff first:
+1. **Batch LOCK_TCPIP_CORE across the drain burst** (advisor's Option-B-shaped pick): the genet drain already wakes with ~7.6 frames; take the core lock once, feed all frames to the input path under it, release after. Saves ~6.6/7.6 of the core-lock pair ≈ 3.9 µs/frame (~11%). Bounded, Phoenix-owned, no TCP-semantics change.
+2. **Lighter `SYS_ARCH_PROTECT`** — it guards very short critical sections (a counter INC, an event bump) but is implemented as the full global mutex (`sys_arch_global_lock`, 4.5 µs). A userspace atomic/spinlock fast-path would cut the recv_avail + event + memp pairs (~3-4 pairs/frame) — the biggest win (~15-18 µs/frame → ceiling toward ~70 MB/s) but touches the port's sync layer (preemption/deadlock risk on a preemptive microkernel — delicate).
+3. **Phoenix mutex fast-path** — 4.5 µs uncontended is itself the root inefficiency and would speed up *everything*, not just lwip; but that's a libphoenix/kernel change (larger scope, separate evaluation).
+
+Next: implement #1 (bounded/safe) and measure, then evaluate #2. #3 noted for the owner as a high-leverage cross-cutting item.
