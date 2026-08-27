@@ -136,9 +136,14 @@ xbuild() {
 	cd "$SRC/$nv" || return 1
 	if [ ! -f config.status ]; then
 		# shellcheck disable=2086
+		# -std=gnu17: GCC 16 defaults to C23, where `true`/`false` are reserved
+		# keywords; several X.org libs (e.g. libXt Shell.c: `static Boolean true;`
+		# ... `(XPointer)(&true)`) declare their own true/false and take their
+		# address, which C23 rejects ("lvalue required as unary '&' operand").
+		# Pin the pre-C23 dialect these sources were written for (the gcc-14 default).
 		./configure --host=aarch64-phoenix --prefix="$PREFIX" --disable-shared --enable-static \
 			CC=${TC}gcc AR=${TC}ar RANLIB=${TC}ranlib \
-			CFLAGS="--sysroot=$SYSROOT -I$PREFIX/include ${XCFLAGS_EXTRA:-}" \
+			CFLAGS="--sysroot=$SYSROOT -I$PREFIX/include -std=gnu17 ${XCFLAGS_EXTRA:-}" \
 			LDFLAGS="--sysroot=$SYSROOT -L$PREFIX/lib" $extra >"/tmp/$nv-conf.log" 2>&1 \
 			|| { echo "$nv: CONFIGURE FAIL (see /tmp/$nv-conf.log)"; tail -4 "/tmp/$nv-conf.log"; return 1; }
 	fi
