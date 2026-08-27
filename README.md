@@ -10,7 +10,9 @@ an SD card or over NFS, and runs a graphical userland: an X11 desktop with
 Window Maker, a web browser, and **GLQuake rendering on the V3D GPU via
 OpenGL** (a Vulkan/V3DV path drives the GPU too — vkQuake renders its full
 textured 3D map on the GPU, though its input is not yet wired — see the
-capabilities table).
+capabilities table). A **modern 3D game — SuperTuxKart 1.4 — also races on the
+V3D GPU via OpenGL ES**, rendering close to frame-for-frame with the same game
+on a desktop AMD GPU.
 
 > This repository is the **coordination repo** — docs, build scripts, and
 > integration manifests. The Phoenix-RTOS source lives in sibling repositories
@@ -134,10 +136,10 @@ Beyond the base system, a substantial ports ecosystem runs on the hardware
 |---|---|
 | GNU **coreutils 9.5** | the full tool set (~105 programs) builds + installs; core tools HW-verified bit-exact (`ls`, `cat`, `wc`, `sha256sum`, `seq`, `stat`, `stty`, …) |
 | GNU **bash 5.2** | runs; see caveat below |
-| **CPython 3.14** | static `python3` with `sqlite3`, `zlib`, `_ssl`/HTTPS, `_decimal`, `ctypes`, and `.so` C-extension `dlopen` |
+| **CPython 3.14** | static `python3` with `sqlite3`, `zlib`/`bz2`/`lzma` compression (full `tarfile`), `_ssl`/HTTPS, `hashlib` incl. `blake2`, `_decimal`, `ctypes`, and `.so` C-extension `dlopen` |
 | **Redis 7.2** | in-memory data store, served over lwIP TCP |
 | **SQLite 3** | full SQL, in-memory + on-disk file VFS |
-| **jq** | JSON processor |
+| **jq** | JSON processor, incl. the `test`/`match`/`sub`/`gsub`/`splits`/`scan` **regex builtins** (Oniguruma) |
 | **Lua 5.4.7** | interpreter + `luac` compiler |
 | **BusyBox**, **curl** (mbedTLS) | shell utilities + HTTP/HTTPS client |
 
@@ -205,6 +207,27 @@ textured 3D start map on the GPU; the remaining work-in-progress is **input
 wiring** (keyboard/mouse not yet delivered to the game) — see
 [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md). Wiring Quake II/III into the
 default image build is tracked as a follow-up.
+
+### SuperTuxKart 1.4
+
+A **modern 3D kart racer** — not a 1990s engine — running on the V3D GPU via
+its SP renderer on **OpenGL ES 3.x**:
+
+```
+stk                                  # boot to the main menu
+stk -N --track=olivermath            # jump straight into an AI race
+```
+
+`stk` boots straight to a clean main menu (logo, mode buttons, the seeded
+player profile) and plays a **fully-lit in-game 3D race** — the kart, opponents,
+the textured track, lighting and HUD all render on the GPU, 0 crashes. Its
+rendering was checked frame-for-frame against the same SuperTuxKart 1.4 on a
+desktop AMD GPU and matches closely (main-menu SSIM 0.991, in-race 0.873) — see
+[docs/inprogress/2026-08-27-stk-visual-parity.md](docs/inprogress/2026-08-27-stk-visual-parity.md).
+Like the extra Quake engines it is built on demand (large mobile-reduced asset
+set, ~150 MB) rather than baked into the default image. The `-N` auto-race flags
+drive a race without any input, which is the simplest way to see it in motion;
+interactive keyboard/mouse control is the same input path as the other GPU apps.
 
 ## Repository layout
 

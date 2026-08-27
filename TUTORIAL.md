@@ -184,6 +184,25 @@ map through the GPU (3150+ frames — the earlier post-menu hang is fixed). What
 still missing for actual play: **keyboard/mouse input is not yet wired**, and the
 GPU binner can intermittently wedge. Use `rpi4-quake` (GLQuake) to actually play.
 
+### 🎮 SuperTuxKart 1.4 (a modern 3-D game on the V3D GPU)
+
+Not a 1990s engine — the current **SuperTuxKart 1.4** kart racer, rendered on the
+V3D GPU through its SP renderer on **OpenGL ES 3.x**:
+
+```bash
+stk                             # boots to the main menu
+stk -N --track=olivermath       # jump straight into an AI race (no input needed)
+```
+
+- Boots to a clean main menu and drives a **fully-lit in-game 3-D race** — kart,
+  opponents, textured track, lighting and HUD all on the GPU, 0 crashes.
+- Its rendering was compared frame-for-frame against the same SuperTuxKart 1.4 on
+  a desktop AMD GPU and matches closely (menu SSIM 0.991, in-race 0.873).
+- *Caveats:* it is **built on demand**, not baked into the default image (its
+  mobile-reduced asset set is ~150 MB). The `-N` auto-race flags are the easiest
+  way to watch it in motion; interactive control uses the same USB input path as
+  the other GPU apps.
+
 ### 🖥️ X11 desktop and applications
 
 X11 runs on a kdrive/fbdev server (`Xphoenix`) drawing to the framebuffer. Launch
@@ -262,8 +281,9 @@ lua -e 'print("hello from Lua on Phoenix-RTOS")'
 luac                  # the Lua compiler
 ```
 
-`python3` is a static **CPython 3.14** with `sqlite3`, `zlib`, `_ssl`/HTTPS,
-`_decimal`, `ctypes`, and `.so` C-extension loading via `dlopen`.
+`python3` is a static **CPython 3.14** with `sqlite3`, `zlib`/`bz2`/`lzma`
+compression (so `tarfile` handles `.gz`/`.bz2`/`.xz`), `_ssl`/HTTPS, `hashlib`
+including `blake2`, `_decimal`, `ctypes`, and `.so` C-extension loading via `dlopen`.
 
 ### 🧰 CLI tools & data stores
 
@@ -279,6 +299,7 @@ seq 1 5
 
 # jq — JSON processor (the '|' here is jq's own filter syntax, not a shell pipe)
 jq -n '[1,2,3] | add'
+jq -n '"abc123" | match("[0-9]+").string'   # regex builtins (Oniguruma) work
 
 # SQLite 3 — full SQL, in-memory or on-disk
 sqlite3 :memory: 'select 2+2;'
