@@ -62,9 +62,8 @@ Resume with `build.sh` (idempotent) then `make` in the build tree.
   dep + static-link the module (config.site keeps `py_cv_module_*=n/a` so configure
   emits no colliding rules, then Setup.local overrides): zlib, binascii, _ssl,
   _hashlib, _ctypes, _sqlite3, _decimal, _blake2 (bundled, no dep), **_bz2** (libbz2
-  from bzip2 1.0.8). Still disabled (no port yet / low value): _lzma (needs xz/liblzma
-  — the clear next add, same pattern as _bz2), readline, _curses*, _dbm/_gdbm,
-  _tkinter, nis, _uuid, spwd.
+  from bzip2 1.0.8), **_lzma** (liblzma from xz 5.4.7). Still disabled (no port yet /
+  low value): readline, _curses*, _dbm/_gdbm, _tkinter, nis, _uuid, spwd.
 - **`HAVE_CLOCK_GETTIME`** — configure's cross func-check falsely said no (Phoenix
   HAS clock_gettime) → the timespec `_PyTime_*` decls were `#if`'d out → implicit-decl
   error. Fixed with `ac_cv_func_clock_gettime=yes` in config.site.
