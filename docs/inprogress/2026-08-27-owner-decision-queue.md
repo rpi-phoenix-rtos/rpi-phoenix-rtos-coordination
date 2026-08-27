@@ -48,10 +48,15 @@ is at a clean stopping point — nothing is half-broken waiting on you.
    avoided blind-coding SDPCM). **Your call:** prioritize a deeper WiFi dig, or stay on wired Ethernet.
 
 4. **q3dm7 intermittent GPU binner wedge (CT0) — worth an attended dig?**
-   Separate from the (now-fixed) CT1 render wedge; different signature, intermittent ~50%, owner-attended-
-   adjacent. quake3 renders correctly (SSIM 0.989); this is a dropped-frame robustness issue, recovered by
-   the winsys reset. **My call:** banked; the STK render fix may or may not touch it (untested — needs a
-   quake3 relink + multi-trial bench).
+   Separate from the (now-fixed) CT1 render wedge; different signature, intermittent, owner-attended-adjacent.
+   quake3 renders correctly (SSIM 0.989); this is a dropped-frame robustness issue, recovered by the winsys
+   reset. **NOW MEASURED (2026-08-27): the QPU-int fix does NOT fix it.** Relinked quake3e against the
+   QPU-int-fixed libv3d + ran a 7-trial q3dm7 bench: **wedge rate 3/7 (~43%)** — statistically the same as the
+   historical ~50%, so the STK CT1-render fix leaves the q3dm7 CT0 binner wedge untouched (confirmed distinct
+   bug). **Good news: all 7 trials RENDERED, 0 faults** — the winsys reset fully recovers it every time (a
+   dropped-frame robustness issue, not a crash or corruption). **My call:** stays banked — it needs a genuine
+   attended CT0-binner dig (the front-end pipeline-stall root-cause, see `project_quake3_lightmap_uif_xor`),
+   not a side-effect of another fix. Worth it only if you want smooth (no-drop) q3dm7; correctness is fine.
 
 5. **Ship CPython in the default image? (framework python is built + HW-validated, `if:false`)**
    The framework python port is feature-complete (zlib/bz2/lzma/ssl/hashlib+blake2/sqlite3/ctypes/decimal)
@@ -90,8 +95,7 @@ is at a clean stopping point — nothing is half-broken waiting on you.
     both log + return `-ENOMEM`, `v3d_phoenix_winsys.c:551/560`); the residual NULL-deref is one layer up in
     ported Mesa's BO-alloc caller (a Mesa-patch surface that touches every GPU app → needs a full showcase
     build + GPU boot to de-risk), and it's now rare given the 1 GiB VA window. Lower priority than its risk.
-  - **q3dm7 CT0 wedge vs the QPU-int fix (decision #4) is the one genuinely-valuable open DIAGNOSTIC** I can
-    run without you: relink quake3 against the QPU-int-fixed libv3d + a multi-trial bench to measure whether
-    the wedge rate changed. It's a heavy multi-cycle GPU bench; I'll take it on a fresh (non-fatigued) turn to
-    avoid the late-session error class, then report the data here.
+  - **q3dm7 CT0 wedge vs the QPU-int fix — DONE (2026-08-27):** measured, the fix doesn't help (rate 3/7 ≈
+    historical 50%; all trials still render, 0 faults). Result folded into decision #4. It now needs a genuine
+    attended CT0-binner dig, which is owner-gated — not a further unattended bench.
   - Otherwise I'm honestly at the "needs owner input" boundary and will not manufacture low-value churn.
