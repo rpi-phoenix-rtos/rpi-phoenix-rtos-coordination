@@ -17,7 +17,15 @@ is at a clean stopping point — nothing is half-broken waiting on you.
 - **Mesa on-disk shader cache implemented** (was stubbed) — GL apps no longer recompile shaders on
   the V3D every boot (HW-verified). Footgun documented: bump `V3D_PHX_CACHE_VERSION` on Mesa
   QPU-codegen changes (no build-id auto-invalidation).
-- **ffmpeg → framework port** (P8) done; **python → framework port** in progress.
+- **ffmpeg → framework port** (P8) done; **python → framework port DONE** (HW-validated).
+- **Port-finalization batch (all HW-verified + pushed, then integration-verified in a clean
+  `--with-ports` image, 0 faults):** coreutils → **full tool set** (`stty` was the last skip);
+  **jq regex builtins** (new `oniguruma` port); **Python `_blake2`/`_bz2`/`_lzma`** in both the dev
+  and the shippable framework port (full `tarfile` gz/bz2/xz + blake2 hashlib); **busybox `awk`(+libm)
+  / `xzcat`·`unxz` / seamless `tar`**; **curl gzip/deflate** decoding; **3 new reusable lib ports**
+  (oniguruma, bzip2, xz). Also: **qemu 11.1** host toolchain + native `qemu-debug.sh`; a latent
+  **stale-`.toolchain`-libphoenix ABI bug** found+fixed (would break any fresh port rebuild); README +
+  TUTORIAL refreshed with STK + the new ports (per your docs request).
 
 ## DECISIONS AWAITING YOU (ranked)
 
@@ -45,10 +53,20 @@ is at a clean stopping point — nothing is half-broken waiting on you.
    the winsys reset. **My call:** banked; the STK render fix may or may not touch it (untested — needs a
    quake3 relink + multi-trial bench).
 
-5. **Upstream B5** (the one deferred B-item) — lowest rpi4 value, cross-board/attended. Your call whether
+5. **Ship CPython in the default image? (framework python is built + HW-validated, `if:false`)**
+   The framework python port is feature-complete (zlib/bz2/lzma/ssl/hashlib+blake2/sqlite3/ctypes/decimal)
+   and passes all selftests on HW. It is NOT in the default image (`if:false`) purely because of **size** —
+   your call. Concrete footprint (measured): binary **9.5 MiB stripped** (or 57 MiB non-stripped, kept only
+   for the `.so` C-extension `dlopen` recipe) + stdlib Lib tree **14 MiB trimmed** (drop test/idlelib/tkinter)
+   or 52 MiB full. So on today's **66 MiB** image, shipping python adds **~+23 MiB (stripped+trimmed) up to
+   +109 MiB (full+non-stripped)**. **My recommendation:** if you want python in-image, ship stripped binary +
+   trimmed/pyc Lib (~+23 MiB); keep non-stripped only if you need on-device `.so` extension loading. Flip is a
+   one-line `ports.yaml` `if:false`→`if:true`. **Your call:** ship it (which variant?) or keep it build-on-demand.
+
+6. **Upstream B5** (the one deferred B-item) — lowest rpi4 value, cross-board/attended. Your call whether
    it's worth an attended pass.
 
-6. **v3d-driver-port placement — the last P8 item.** Everything else in the "move tools/ → framework ports"
+7. **v3d-driver-port placement — the last P8 item.** Everything else in the "move tools/ → framework ports"
    directive is DONE (libpng…glib2, ffmpeg, python, all 4 game ports — every tools/ port is now a registered
    framework port). The ONLY holdout is the V3D driver itself: does it become a `phoenix-rtos-devices` GPU
    *component*, or stay a `tools/` build producing `tools/.gpu-libs/*.a`? The game ports currently anchor to
@@ -56,11 +74,15 @@ is at a clean stopping point — nothing is half-broken waiting on you.
    placement to you. **My call:** low urgency (it works as-is); decide when you next touch the GPU stack.
 
 
-## What I'll keep doing autonomously (no input needed)
-- Finish P8 tools/→framework port migrations (python in flight; then the 4 game ports — which also
-  auto-relink the Quakes against the QPU-int + shader-cache libv3d).
-- Bounded residue: propagate the QPU-fix to the rest of the GL stack; the Mesa NULL-BO-alloc→crash
-  robustness gap.
-- The big *capability* thrusts are now largely done / firmware-walled / owner-gated (above), so the
-  autonomous work is trending toward hygiene + the decisions above. If it fully drains I'll say so rather
-  than force low-value work.
+## Status of autonomous work (updated late 2026-08-27)
+- **The unattended-tractable port backlog is now DRAINED and integration-verified.** Both survey rounds'
+  tractable items are done (see the batch above), and a clean `--with-ports` build composed them all into a
+  verified bootable image (manifest `2026-08-27-ports-batch-integration.md`), boot-tested on HW (jq regex,
+  awk, xzcat, stty all work, 0 faults).
+- **What's left is exactly the 7 decisions above — all need your input.** They're firmware-walled
+  (WiFi/HW-H.264), high-blast-radius (gcc-16 promotion), policy (ship-python size, v3d placement), or
+  attended-dig (q3dm7 wedge, B5). I've deliberately NOT forced low-value make-work or blind-coded past the
+  firmware walls.
+- Bounded residue I can still pick at without you: propagate the QPU-int fix to the rest of the GL stack;
+  the Mesa NULL-BO-alloc robustness gap; minor doc/hygiene. If a genuinely-tractable new item surfaces I'll
+  take it; otherwise I'm honestly at the "needs owner input" boundary rather than manufacturing work.
