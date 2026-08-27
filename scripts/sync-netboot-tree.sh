@@ -22,7 +22,15 @@ repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 buildroot="${PHOENIX_BUILDROOT:-$repo/.buildroot}"
 target="${RPI4B_TARGET:-aarch64a72-generic-rpi4b}"
 src="$buildroot/_fs/$target/root"
-export_dir="${RPI4B_NFS_EXPORT:-/srv/phoenix-rpi4-nfs}"
+
+# Default the sync target to the NFSv4 pseudo-root actually served — the export
+# marked fsid=0 in /etc/exports is what the Pi mounts as "/". Detecting it (rather
+# than hardcoding a name) stops the drift where the export dir gets renamed
+# (e.g. a leftover -gcc16 root) but the sync keeps writing the old default, so the
+# Pi silently boots a stale userspace. An explicit RPI4B_NFS_EXPORT still wins;
+# fall back to the historical default if no fsid=0 export is found.
+fsid0_export="$(awk '$0 ~ /fsid=0/ && $1 ~ /^\// { print $1; exit }' /etc/exports 2>/dev/null || true)"
+export_dir="${RPI4B_NFS_EXPORT:-${fsid0_export:-/srv/phoenix-rpi4-nfs}}"
 
 if [ ! -d "$export_dir" ]; then
 	printf 'sync-netboot-tree.sh: no NFS export at %s — nothing to sync (skipping)\n' "$export_dir"
