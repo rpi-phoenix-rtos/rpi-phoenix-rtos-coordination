@@ -8,8 +8,9 @@ The port was taken from "does not boot" to a system that boots to an
 interactive shell, drives the real hardware, serves its root filesystem from
 an SD card or over NFS, and runs a graphical userland: an X11 desktop with
 Window Maker, a web browser, and **GLQuake rendering on the V3D GPU via
-OpenGL** (a Vulkan/V3DV path drives the GPU too, though the vkQuake demo still
-hangs after its menu — see the capabilities table).
+OpenGL** (a Vulkan/V3DV path drives the GPU too — vkQuake renders its full
+textured 3D map on the GPU, though its input is not yet wired — see the
+capabilities table).
 
 > This repository is the **coordination repo** — docs, build scripts, and
 > integration manifests. The Phoenix-RTOS source lives in sibling repositories
@@ -105,12 +106,12 @@ work; `⛔` blocked on external dependencies; `⬜` not started.
 | USB HID (keyboard + mouse) | ✅ | `/dev/kbd0`, `/dev/mouse0`; live keys reach psh and apps |
 | SD card (EMMC2 SDHCI) | ✅ | `/dev/mmcblk0`, MBR partitions; UHS-I DDR50 + SDMA multi-block reads (~38 MB/s), PIO multi-block writes (~17 MB/s), 0 corruption |
 | ext2 persistent root | ✅ | Mounts as `/`, binaries exec from the card |
-| NFS root | ✅ | `/` served over NFS (`takeover` design), ~8.5 MB/s |
+| NFS root | ✅ | `/` served over NFS (`takeover` design); over gigabit ~30 MB/s read / ~20 MB/s write (bit-exact, 0 faults) |
 | SoC thermal + throttle | ✅ | `/dev/thermal`, `/dev/throttled` via VideoCore mailbox |
 | Hardware RNG (RNG200) | ✅ | `/dev/hwrng`; also backs `/dev/urandom` |
 | GPIO observer | 🟡 | `/dev/gpio` read-only snapshot; outputs attended |
 | GPU (V3D 4.2) — OpenGL | ✅ | Ported Mesa `v3d` Gallium + GL → **GLQuake ~40 fps @ 1080p** |
-| GPU (V3D 4.2) — Vulkan (V3DV) | 🟡 | Ported Mesa `v3dv` Vulkan driver runs SPIR-V vertex/fragment/compute shaders on the GPU; **vkQuake renders the menu + textured 3D but hangs after the main menu and does not respond to keyboard/mouse** on HW (known open issue). Fork: [rpi-phoenix-rtos/vkQuake](https://github.com/rpi-phoenix-rtos/vkQuake), branch `phoenix-rpi4-port` |
+| GPU (V3D 4.2) — Vulkan (V3DV) | 🟡 | Ported Mesa `v3dv` Vulkan driver runs SPIR-V vertex/fragment/compute shaders on the GPU; **vkQuake renders the menu and the full textured 3D start map** on HW (the earlier map-load hang was a libphoenix counting-semaphore lost-wakeup — fixed). Remaining: **keyboard/mouse input is not yet wired** (owner-attended) and an intermittent GPU binner wedge is under investigation. Fork: [rpi-phoenix-rtos/vkQuake](https://github.com/rpi-phoenix-rtos/vkQuake), branch `phoenix-rpi4-port` |
 | GPU concurrency (`v3d-server`) | ✅ | A userspace **`v3d-server` daemon** (`/dev/v3d-srv`, `/sbin/rpi4-v3d`) owns the single V3D and serializes GPU submits from multiple clients over a message port, so **an accelerated X desktop and a second GPU program can run at the same time**. HW-proven end-to-end: BO/compute/render/TFU submit bit-exact through the daemon, two concurrent compute clients serialized, and a glamor GPU-accelerated X desktop with a **live GPU-rendered window running concurrently** on one screen. Lifts the earlier single-GPU-process limit. Clients link `libv3d-client`; opt-in today (not the default boot). Details: [docs/inprogress/2026-08-22-concurrent-gpu-v3d-server-feasibility.md](docs/inprogress/2026-08-22-concurrent-gpu-v3d-server-feasibility.md) |
 | Audio (PWM, 3.5 mm jack) | 🟡 | `/dev/audio0` streaming DMA; Quakespasm audio backend |
 | X11 / windowing (kdrive) | ✅ | Xphoenix **fbdev DDX** (CPU shadow-blit — the default, always-on path) + kbd/mouse; WindowMaker/JWM/twm, xterm/xcalc/xedit/xeyes/xclock, plus mc/nano. Migrated to real `phoenix-rtos-ports` (the X server, xterm, WindowMaker and dillo build as framework ports). An **experimental glamor build** additionally runs GPU-accelerated 2D X on the V3D GPU — and, via the `v3d-server` daemon (row above), can now do so **concurrently with another GPU client** (accelerated desktop + a live GPU window at once), lifting the former single-GPU-process restriction. Modern modesetting/DRM remains a future goal |
@@ -199,9 +200,10 @@ TERM=vt100 nano /etc/profile    # editor; quit with Ctrl-X
 
 These build but are **not yet part of the default `--with-showcase` image**
 (GLQuake is the bundled game). vkQuake additionally needs `--build-arg
-BUILD_FLAGS="--with-showcase --with-vkquake"` and renders the menu + textured 3D
-but is a **known work-in-progress** (hangs after the main menu — see
-[docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md)). Wiring Quake II/III into the
+BUILD_FLAGS="--with-showcase --with-vkquake"` and renders the menu and the full
+textured 3D start map on the GPU; the remaining work-in-progress is **input
+wiring** (keyboard/mouse not yet delivered to the game) — see
+[docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md). Wiring Quake II/III into the
 default image build is tracked as a follow-up.
 
 ## Repository layout
