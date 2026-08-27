@@ -221,7 +221,7 @@ libsamplerate.**
 > was avoiding). This is a real trap for whoever executes M2; it does not affect the
 > already-landed enet/libogg ports, which build under `Generic` correctly.
 | M3 | STK links | **COMPLETE** ✅ — static `supertuxkart` aarch64-phoenix ELF (45.7 MB, EXEC, no PT_INTERP), **0 undefined symbols**, via `scripts/build-port.sh supertuxkart`. All STK src + bundled Irrlicht/GE/bullet/angelscript/mojoal/shaderc compile on the GLES2/SP path; GLES entrypoints resolve against `tools/.gpu-libs/libGL-phoenix.a`+`libv3d-phoenix.a` in the group-link. Detail + categorized gap fixes in §11. |
-| M4 | STK inits headless-ish | binary starts, loads config/assets over NFS, creates the SDL window + **ES 3.0 GL context** (UART/log evidence), no early fault |
+| M4 | STK inits headless-ish | **CONTEXT ACHIEVED; device-init blocker FIXED (§12)** — binary starts, loads config, creates the SDL window + a real **OpenGL ES 3.1 GL context** on V3D (UART evidence). Irrlicht device creation then aborted on a missing SDL `GetWindowWMInfo` hook; fixed. Awaiting owner HW re-test past device init. |
 | M5 | Renders a frame | main menu / a track renders to `/dev/fb0` on HDMI (HDMI snapshot evidence) — the "first frame" prize |
 | M6 | Playable | a race runs at usable fps with input (USB kbd/gamepad via SDL) + audio |
 
@@ -501,3 +501,73 @@ ELF). Requires the GL stack artifacts present: `tools/.gpu-libs/libGL-phoenix.a`
 (built by `tools/v3d-driver-port/build-gl-phoenix.py` + `build-v3d-phoenix.py`);
 `p_build` fails loud if any is missing. Not attempted: M4 runtime bring-up on
 HW (owner-gated Pi resource) and the ~1 GB `stk-assets` staging (§6).
+
+---
+
+## 12. M4 in progress — ES 3.1 context achieved; device-init blocker root-caused + fixed
+
+STK runs on the Pi and gets **further than M3's link**: it reaches Irrlicht
+device creation and **creates a real OpenGL ES 3.1 context on the V3D 4.2** via
+the SDL2 phoenix GL glue (`phxgl: GL up; OpenGL ES 3.1 Mesa 26.2.0 / V3D
+4.2.14.0`, scanout FBOs + capture FBO all `GL_FRAMEBUFFER_COMPLETE`). This
+proves the whole GLES3-via-SDL2 renderer strategy (§4) end-to-end at the
+context level. It then aborted with `[fatal] irr_driver: Couldn't initialise
+irrlicht device. Quitting.` (UART log `artifacts/rpi4b-uart/rpi4b-uart-
+20260827-103446-stk-m4b.log`).
+
+### Root cause — NOT a vid_restart (the phxgl message misled)
+The log shows 4 `GL_CreateContext` (1 full init + 3 `phxgl: re-init
+(vid_restart) — reusing…`), which looked like STK cycling the device to apply
+video settings. It is **not**. Trace:
+- `IrrDriver::initDevice()` (irr_driver.cpp:530) tries `createDeviceEx` in a
+  `for (bits = 32; bits > 15; bits -= 8)` loop, then once more at the default
+  1024×768 (line 600), then `Log::fatal` (line 621) if all returned NULL.
+  That is exactly **4 attempts → fatal**, all inside ONE `initDevice()` call.
+  No `changeResolution`/`sameRestart` fires at startup (the only startup caller
+  is MOBILE-only `extract_mobile_assets`), and the "Re-creating device to
+  workaround" path (line 669) never logs → the recreate/vid_restart machinery
+  is never entered. The `GR_FORCE_LEGACY_DEVICE` restriction does not match our
+  Broadcom/V3D/Mesa-26 renderer (`data/graphical_restrictions.xml`).
+- Each `createDeviceEx` returns NULL via **Irrlicht.cpp:172** (`dev &&
+  !dev->getVideoDriver()` → drop → return 0). `getVideoDriver()` is NULL because
+  the **`CIrrDeviceSDL` constructor early-returns at CIrrDeviceSDL.cpp:132**:
+  `if (!SDL_GetWindowWMInfo(Window, &Info)) return;` — before `createDriver()`
+  is ever called (hence no `COGLES2Driver` vendor/renderer prints, and no
+  Irrlicht `SDL Version 2.30.12` line at :149).
+- `SDL_GetWindowWMInfo` (SDL_video.c:4348) returns `SDL_FALSE` whenever the
+  video driver leaves the `GetWindowWMInfo` device hook NULL — which our
+  `SDL_phoenixvideo.c` did. There is no window manager on the fb0 scanout, so
+  the hook had simply never been implemented. yQuake2 gl3 / the glamor path
+  don't hit this because they use SDL directly and never call
+  `SDL_GetWindowWMInfo`; Irrlicht's `CIrrDeviceSDL` does, unconditionally.
+
+The phxgl reuse across the 3 retries is a benign consequence: same 1920×1080,
+so `phxgl_init` short-circuits to the live context each retry (it never tears
+the V3D context down).
+
+### Fix (least-invasive, general, upstreamable) — SDL driver hook
+Implemented `PHOENIX_GetWindowWMInfo` in the SDL2 phoenix video driver
+(`sources/phoenix-rtos-ports/sdl2/overlay/src/video/phoenix/SDL_phoenixvideo.c`)
+and wired it into the device table (`device->GetWindowWMInfo`). It reports
+success with the honest `SDL_SYSWM_UNKNOWN` subsystem and touches nothing else;
+the WM-specific `SDL_SysWMinfo` union is never read on this driver's GL path
+(only the ifdef'd-out iOS/DirectX9 branches read it, confirmed in
+`CIrrDeviceSDL.cpp`). Chosen over an 11th STK patch because it fixes the actual
+gap and benefits any Irrlicht/SDL consumer. Rebuilt `sdl2` then `supertuxkart`
+(0 undefined); the phoenix driver + hook are linked into the new
+`/usr/bin/supertuxkart` (image rootfs `_fs/.../root/usr/bin/supertuxkart`,
+`/bin/stk` launcher + 46 MB `data/` also staged).
+
+### Re-test + expectations
+Re-test command is **unchanged**: `stk` at the psh prompt (the `/bin/stk`
+launcher already sets `SUPERTUXKART_DATADIR`/`SAVEDIR` + `--screensize=1920x1080
+--fullscreen`; the launcher/args were never the problem). Rebuild the bootable
+image so the new binary is folded in before flashing/booting.
+
+This unblocks the constructor; the **next** code to execute is `createDriver()`
+→ `COGLES2Driver` init + STK's SP/`CentralVideoSettings` path — genuinely
+untested territory. A failure further along (shader compile, extension probes)
+is M4→M5 progress, not this fix regressing. Assets: `data/shaders`, `data/gui`,
+`data/ttf` ship with stk-code and are already staged, so device init + a menu
+attempt need no new staging; the ~650 MB `stk-assets` (tracks/karts) remain an
+M5 concern.
