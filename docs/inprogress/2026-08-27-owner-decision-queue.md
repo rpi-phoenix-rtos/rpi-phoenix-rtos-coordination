@@ -79,8 +79,12 @@ is at a clean stopping point — nothing is half-broken waiting on you.
    trimmed/pyc Lib (~+23 MiB); keep non-stripped only if you need on-device `.so` extension loading. Flip is a
    one-line `ports.yaml` `if:false`→`if:true`. **Your call:** ship it (which variant?) or keep it build-on-demand.
 
-6. **Upstream B5** (the one deferred B-item) — lowest rpi4 value, cross-board/attended. Your call whether
-   it's worth an attended pass.
+6. **Upstream B5** (the one deferred B-item) → ✅ **DECIDED (2026-08-28): document + leave the code as-is.**
+   Owner: "It will only matter when someone ports our code to another aarch64 board (Pi 5 / Pi Zero / similar).
+   We might do it in the future — make sure we have a clear note so it's not forgotten." DONE: it's the early-
+   console alias hardcode (harmless on the Pi 4 where alias==the DTB-discovered pl011 base). Added a clear
+   cross-board-portability comment at the exact source spot (`hal/aarch64/generic/console.c`, kernel `52b3a2c9`)
+   + a `docs/KNOWN-ISSUES.md` row so a future porter finds it. No code-behavior change.
 
 7. **v3d-driver-port placement — the last P8 item.** Everything else in the "move tools/ → framework ports"
    directive is DONE (libpng…glib2, ffmpeg, python, all 4 game ports — every tools/ port is now a registered
