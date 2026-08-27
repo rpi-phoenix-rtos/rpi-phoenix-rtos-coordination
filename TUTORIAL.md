@@ -149,10 +149,11 @@ rpi4-quake
   `Ctrl` to fire, `` ` `` for the console, `Esc` for the menu).
 - The **shareware** episode and its demo loops play out of the box (the data is
   in `/usr/share/quake/id1/pak0.pak`).
-- *Caveats:* single-player and demos are the tested path; **multiplayer is not a
-  supported/tested path** (the engine ships as a single-player capstone). The
-  viewmodel/monster/torch geometry renders correctly (an earlier cosmetic glitch,
-  bug #67, is fixed).
+- *Caveats:* single-player and demos are the tested path; **direct-IP multiplayer
+  works** — the client joins a dedicated server and runs in-game (HW-validated,
+  bug #68 fixed 2026-08-10); LAN broadcast server-discovery is skipped and
+  internet matchmaking is untested. The viewmodel/monster/torch geometry renders
+  correctly (an earlier cosmetic glitch, bug #67, is fixed).
 
 ### 🎮 Quake II and Quake III
 
@@ -360,8 +361,8 @@ USB HID, HDMI, GPU) is solid, but some showcase edges are rough. Highlights:
   carry traffic yet — **use wired Ethernet**.
 - **Bluetooth: driver-level only.** `/dev/hci0` comes up and an HCI Inquiry
   completes, but there is no host stack — no pairing, profiles, or audio.
-- **GLQuake:** single-player + demos are the tested path; multiplayer is not a
-  supported/tested path. Geometry (viewmodel/monsters/torches) renders correctly.
+- **GLQuake:** single-player + demos are the tested path; direct-IP multiplayer
+  works (bug #68 fixed). Geometry (viewmodel/monsters/torches) renders correctly.
 - **Quake III:** `q3dm1`/`q3dm7` render fully lit; `q3dm7` intermittently wedges
   the GPU binner (~half of boots, reset-recovered) and in-game mouse-look is not
   yet wired.

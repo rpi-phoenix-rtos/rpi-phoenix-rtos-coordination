@@ -20,7 +20,6 @@ These affect the showcase apps, not the base system.
 |---|---|---|
 | #64 | SD-side filesystem stack pressure under load (deep fs call chains). | Open. |
 | #66 | Stale `/tmp/.X0-lock` prevents the X server restarting after an unclean exit. | Open; remove `/tmp/.X0-lock` before relaunching the X server. |
-| #68 | Quake (Q1) multiplayer is not a tested/supported path — single-player and demos work. | Open; the engine ships as a single-player capstone (the BSD-socket net glue was not ported), so multiplayer is untested. |
 | vkQuake-input | **vkQuake keyboard/mouse input is not wired** — events don't reach the game, so it renders but is not interactive. An intermittent V3D GPU binner wedge is also under investigation. | Open (input is owner-attended). |
 
 ## System-level limitations
