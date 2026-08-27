@@ -132,7 +132,7 @@ Beyond the base system, a substantial ports ecosystem runs on the hardware
 
 | Component | Notes |
 |---|---|
-| GNU **coreutils 9.5** | ~102 tools built + HW-verified (`ls`, `cat`, `wc`, `sha256sum`, `seq`, …); a handful skipped that need OS facilities Phoenix lacks (`stat`, `stty`, `df`, …) |
+| GNU **coreutils 9.5** | the full tool set (~105 programs) builds + installs; core tools HW-verified bit-exact (`ls`, `cat`, `wc`, `sha256sum`, `seq`, `stat`, `stty`, …) |
 | GNU **bash 5.2** | runs; see caveat below |
 | **CPython 3.14** | static `python3` with `sqlite3`, `zlib`, `_ssl`/HTTPS, `_decimal`, `ctypes`, and `.so` C-extension `dlopen` |
 | **Redis 7.2** | in-memory data store, served over lwIP TCP |

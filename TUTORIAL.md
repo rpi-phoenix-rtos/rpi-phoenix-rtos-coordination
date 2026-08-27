@@ -271,7 +271,7 @@ The image (built `--with-ports`) ships a real command-line ecosystem, all
 HW-verified:
 
 ```bash
-# GNU coreutils 9.5 — ~102 tools (a few skipped that need OS facilities Phoenix lacks)
+# GNU coreutils 9.5 — the full tool set (~105 programs) builds + installs
 ls -l /etc
 wc -l /etc/passwd
 sha256sum /etc/profile
