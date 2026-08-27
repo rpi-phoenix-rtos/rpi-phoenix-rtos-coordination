@@ -6,14 +6,15 @@ harness. Host = reference.
 
 ## Verdict
 
-**The Pi4/V3D render matches the host AMD-GPU reference closely.** For the two genuinely
-render-comparable scenes the structural similarity is strong:
+**The Pi4/V3D render matches the host AMD-GPU reference closely.** Across all three
+compared scenes the structural similarity is strong — the menu is now near-identical
+after the first-run tutorial modal was suppressed (see the launcher `use-frequency=1` fix):
 
 | scene | SSIM | MAE (0-255) | assessment |
 |---|---|---|---|
+| **main menu** | **0.991** | **3.4** | near-identical — clean boot, no modal |
 | **in-game race** (olivermath, behind-Tux) | **0.873** | **8.9** | strong match — the crux 3D scene |
 | **loading screen** | **0.913** | 10.1 | strong match |
-| main menu | 0.46* | — | layout-identical; *SSIM depressed by the Pi's first-run tutorial modal overlay, NOT a render difference |
 
 Side-by-sides (Pi left \| host right), `docs/inprogress/evidence/2026-08-27-stk-parity-*.png`
 (full-res composites in `artifacts/stk-compare/sidebyside/`):
@@ -47,8 +48,8 @@ produces the same textured, lit 3D scene as the reference AMD GPU.
   - Kart santa-hat cosmetic on the Pi (STK seasonal/xmas mode) vs plain on the host.
   - The Pi frame shows the ceiling start-light + bird; the host camera's slightly lower pitch cut them off.
   - Loading screen: the Pi shows the kart-icon row; the host loads too fast for icons to populate.
-  - Main menu: the Pi shows STK's first-run "play tutorial?" modal (a UI state overlay); the menu
-    itself — logo, the 5 buttons, toolbar, background — renders identically (visible around the modal).
+  - Main menu: the animated checkered background is at a slightly different scroll phase between the
+    two frames (STK scrolls it continuously) — a timing artifact, not a render difference.
 - **Graphics preset not pinned:** the host auto-selected a moderate preset (dynamic lights on,
   shadows/bloom/glow off); the Pi's `config.xml` was not on the export (STK defaults). Output
   varies with these — a small residual source of difference beyond the GPU/driver.
@@ -56,5 +57,5 @@ produces the same textured, lit 3D scene as the reference AMD GPU.
 ## Bottom line
 
 STK renders on the Pi4/V3D essentially the same as on a modern AMD GPU for the scenes tested —
-strong quantitative parity on the in-game race + loading, and a layout-identical menu. The
+strong quantitative parity on the main menu (0.991), the in-game race, and loading. The
 differences are cosmetic/state, not rendering defects.
