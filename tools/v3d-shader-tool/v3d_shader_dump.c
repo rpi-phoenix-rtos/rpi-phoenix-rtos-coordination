@@ -317,6 +317,90 @@ int main(int argc, char **argv)
 		}
 	}
 
+	/* ---- CSGEMM8: C[i*8+k] = sum_j W[i*N+j]*X[j*8+k], K=8 batch, N runtime (ssbo3[0]).
+	 * Each invocation computes 8 batch outputs holding 8 accumulators and loading each
+	 * weight-row element W[i*N+j] ONCE (reused across the 8 batch columns) — the
+	 * weight-reuse that a plain per-vector GEMV lacks. Same D=256 grid as CSMATMUL, so
+	 * this is a kernel-only change (no dispatch-grid reconfig). Tests whether batching
+	 * amortizes the per-vector cost enough for the GPU to BEAT the CPU (single-vector
+	 * was measured at parity). X is (N x 8) row-major (batch-minor); C is (256 x 8). */
+	{
+		const int GK = 8;
+		int k;
+		nir_builder gb = nir_builder_init_simple_shader(MESA_SHADER_COMPUTE,
+			&v3d_options, "csgemm8");
+		gb.shader->info.workgroup_size[0] = 64;
+		gb.shader->info.workgroup_size[1] = 1;
+		gb.shader->info.workgroup_size[2] = 1;
+		gb.shader->info.num_ssbos = 4;
+
+		nir_variable *acc[8];
+		nir_variable *gjv = nir_local_variable_create(gb.impl, glsl_uint_type(), "j");
+		for (k = 0; k < GK; k++) {
+			acc[k] = nir_local_variable_create(gb.impl, glsl_float_type(), "acc");
+			nir_store_var(&gb, acc[k], nir_imm_float(&gb, 0.0f), 0x1);
+		}
+		nir_def *gi = nir_channel(&gb, nir_load_global_invocation_id(&gb, 32), 0);
+		nir_def *gn = nir_load_ssbo(&gb, 1, 32, nir_imm_int(&gb, 3),
+			nir_imm_int(&gb, 0), .align_mul = 4, .align_offset = 0);
+		nir_store_var(&gb, gjv, nir_imm_int(&gb, 0), 0x1);
+
+		nir_push_loop(&gb);
+		{
+			nir_def *gj = nir_load_var(&gb, gjv);
+			nir_break_if(&gb, nir_uge(&gb, gj, gn));
+			nir_def *gwidx = nir_iadd(&gb, nir_imul(&gb, gi, gn), gj);
+			nir_def *gw = nir_load_ssbo(&gb, 1, 32, nir_imm_int(&gb, 0),
+				nir_imul_imm(&gb, gwidx, 4), .align_mul = 4, .align_offset = 0);
+			nir_def *gjb = nir_imul_imm(&gb, gj, GK);          /* j*8 */
+			for (k = 0; k < GK; k++) {
+				nir_def *gxi = nir_iadd_imm(&gb, gjb, k);       /* j*8+k */
+				nir_def *gx = nir_load_ssbo(&gb, 1, 32, nir_imm_int(&gb, 1),
+					nir_imul_imm(&gb, gxi, 4), .align_mul = 4, .align_offset = 0);
+				nir_def *ga = nir_fadd(&gb, nir_load_var(&gb, acc[k]),
+					nir_fmul(&gb, gw, gx));
+				nir_store_var(&gb, acc[k], ga, 0x1);
+			}
+			nir_store_var(&gb, gjv, nir_iadd_imm(&gb, gj, 1), 0x1);
+		}
+		nir_pop_loop(&gb, NULL);
+
+		nir_def *gcb = nir_imul_imm(&gb, gi, GK);              /* i*8 */
+		for (k = 0; k < GK; k++) {
+			nir_def *gci = nir_iadd_imm(&gb, gcb, k);
+			nir_store_ssbo(&gb, nir_load_var(&gb, acc[k]), nir_imm_int(&gb, 2),
+				nir_imul_imm(&gb, gci, 4), .write_mask = 0x1, .access = 0,
+				.align_mul = 4, .align_offset = 0);
+		}
+
+		nir_shader_gather_info(gb.shader, nir_shader_get_entrypoint(gb.shader));
+		struct nir_lower_compute_system_values_options go = { 0 };
+		nir_lower_compute_system_values(gb.shader, &go);
+		nir_lower_vars_to_ssa(gb.shader);
+		v3d_optimize_nir(NULL, gb.shader);
+		nir_lower_var_copies(gb.shader);
+
+		struct v3d_key gk2 = { 0 };
+		struct v3d_prog_data *gpd = NULL;
+		uint32_t gsz = 0;
+		uint64_t *gins = v3d_compile(compiler, &gk2, &gpd, gb.shader,
+			dbg_out, NULL, 0, 0, &gsz);
+		if (!gins) {
+			fprintf(stderr, "CSGEMM8 compile FAILED\n");
+		}
+		else {
+			uint32_t gnn = gsz / sizeof(uint64_t);
+			printf("/* CSGEMM8 QPU: %u instructions; threads=%u single_seg=%d uniforms=%u */\n",
+				gnn, gpd->threads, (int)gpd->single_seg, gpd->uniforms.count);
+			for (uint32_t z = 0; z < gnn; z++)
+				printf("0x%016llxull, /* %s */\n", (unsigned long long)gins[z],
+					v3d_qpu_disasm(&devinfo, gins[z]));
+			for (uint32_t u = 0; u < gpd->uniforms.count; u++)
+				printf("/*   uniform[%u]: contents=%d data=0x%08x */\n",
+					u, (int)gpd->uniforms.contents[u], gpd->uniforms.data[u]);
+		}
+	}
+
 	/* ---- CSCONST: store a constant to out[0] (TMU write, no gid math) — step 2 ---- */
 	{
 		nir_builder cb = nir_builder_init_simple_shader(MESA_SHADER_COMPUTE,
