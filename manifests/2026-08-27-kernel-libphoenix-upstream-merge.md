@@ -1,0 +1,53 @@
+# Integration State: 2026-08-27-kernel-libphoenix-upstream-merge
+
+## Summary
+
+- Date: 2026-08-27
+- Note: Coordinated kernel+libphoenix upstream merge (schedGet/schedSet + robust/prio-ceiling mutexes + pthread mutexattrs). Syscall append-only deviation preserves NFS-root binary compat. Build + netboot boot-verify passed (psh+lwip+NFS, 0 faults).
+- Generator: scripts/snapshot-integration-state.sh
+
+## Repositories
+
+| Repository | Branch | Commit SHA | Remote |
+| --- | --- | --- | --- |
+| _build | main | 07a911d (dirty(10)) | https://github.com/houp/phoenix-rpi.git |
+| libphoenix | master | 9b7fe3a (clean) | https://github.com/phoenix-rtos/libphoenix.git |
+| phoenix-rtos-build | master | 857a5e8 (clean) | https://github.com/phoenix-rtos/phoenix-rtos-build.git |
+| phoenix-rtos-corelibs | master | c863625 (clean) | https://github.com/phoenix-rtos/phoenix-rtos-corelibs.git |
+| phoenix-rtos-devices | master | b05af4b (dirty(2)) | https://github.com/phoenix-rtos/phoenix-rtos-devices.git |
+| phoenix-rtos-doc | master | d4419df (clean) | https://github.com/phoenix-rtos/phoenix-rtos-doc.git |
+| phoenix-rtos-filesystems | master | b017513 (clean) | https://github.com/phoenix-rtos/phoenix-rtos-filesystems.git |
+| phoenix-rtos-hostutils | master | 49a1fd9 (clean) | https://github.com/phoenix-rtos/phoenix-rtos-hostutils.git |
+| phoenix-rtos-kernel | master | d9d09cc0 (clean) | https://github.com/phoenix-rtos/phoenix-rtos-kernel.git |
+| phoenix-rtos-lwip | master | bf34d89 (dirty(4)) | https://github.com/phoenix-rtos/phoenix-rtos-lwip.git |
+| phoenix-rtos-ports | master | dffaa9e (clean) | https://github.com/phoenix-rtos/phoenix-rtos-ports.git |
+| phoenix-rtos-posixsrv | master | 8a44ce8 (clean) | https://github.com/phoenix-rtos/phoenix-rtos-posixsrv.git |
+| phoenix-rtos-project | master | 07ba705 (dirty(1)) | https://github.com/phoenix-rtos/phoenix-rtos-project.git |
+| phoenix-rtos-tests | master | 4a7c5aa (clean) | https://github.com/phoenix-rtos/phoenix-rtos-tests.git |
+| phoenix-rtos-usb | master | d592025 (clean) | https://github.com/phoenix-rtos/phoenix-rtos-usb.git |
+| phoenix-rtos-utils | master | a585fae (clean) | https://github.com/phoenix-rtos/phoenix-rtos-utils.git |
+| plo | master | e815446 (clean) | https://github.com/phoenix-rtos/plo.git |
+
+## Machine-Parseable State
+
+Consumed by `scripts/restore-integration-state.sh`. Fields: `<repo>\t<sha>\t<branch>`.
+
+```integration-state-v1
+_build	07a911d5e111304cca39a3cb0bd364fec654b45e	main
+libphoenix	9b7fe3a9b30d26a689e441a358694fb7a925b2fa	master
+phoenix-rtos-build	857a5e86f668b7e1e9b0e11bc3e3f86f2654744c	master
+phoenix-rtos-corelibs	c863625b89c9b38ac6a6dde29e06d236de451c7f	master
+phoenix-rtos-devices	b05af4b36ef47d2f75bf414e9a6dc0576fad06cd	master
+phoenix-rtos-doc	d4419dfae5428cb3b8081404c34b12c78c86770d	master
+phoenix-rtos-filesystems	b017513f62009c577b2092a6cb5276bada304104	master
+phoenix-rtos-hostutils	49a1fd996e5745a19cc7ec0b22179bd1e90906cf	master
+phoenix-rtos-kernel	d9d09cc07b1f1e56c0e03710a8f002f4306873f6	master
+phoenix-rtos-lwip	bf34d89f961705315e45a5e884b11d4380309623	master
+phoenix-rtos-ports	dffaa9e764b1e39972ed06de93be240cdbd916ba	master
+phoenix-rtos-posixsrv	8a44ce8eb9851e3bac36e36165e26ca8e879530f	master
+phoenix-rtos-project	07ba705a73b56ce39da305629fb4b929102a9572	master
+phoenix-rtos-tests	4a7c5aa38dea9943bdfdd2a251bb175473d4119d	master
+phoenix-rtos-usb	d592025f0706f3302bea93ec2c629435aa1f125d	master
+phoenix-rtos-utils	a585faec974c981df7c07e83f365fcaf8c594d99	master
+plo	e815446b11e78fd2c55186a673e933374621d355	master
+```
