@@ -13,10 +13,12 @@ HW-verified on netboot (2026-08-21): `/bin/python3 /selftest_zlib.py` → `ZLIB-
 OK, `HAS_TLSv1_2`, openssl-backed `hashlib.sha256` correct). ⇒ Python has working
 **gzip/zlib compression + TLS/SSL + OpenSSL hashlib** on Phoenix.
 
-Known minor gap: `hashlib.blake2b`/`blake2s` raise `ValueError: unsupported hash
-type` (non-fatal — hashlib probes + catches). The builtin `_blake2` C module (no
-external lib) isn't in the build; sha2/sha1/md5 (openssl) work. Enable `_blake2`
-in Setup.local + rebuild if blake2 is wanted (low priority). ★ HTTPS END-TO-END HW-VERIFIED (2026-08-21): with a host TLS server
+`_blake2` (hashlib.blake2b/blake2s) DONE + HW-verified (2026-08-27): the builtin
+`_blake2` C module is now statically linked (CPython 3.14 bundles the portable
+HACL* Blake2 impl, no external lib — build.sh 5f + config.site). `/bin/python3
+/selftest_blake2.py` → `BLAKE2-OK` (empty+abc+keyed+incremental+hashlib.new
+vectors, 0 faults). ⇒ blake2b/blake2s alongside the openssl sha2/sha1/md5.
+★ HTTPS END-TO-END HW-VERIFIED (2026-08-21): with a host TLS server
 (tls-test-server.py, self-signed cert, 0.0.0.0:8443 TLS1.2) reachable at
 10.42.0.1 over the netboot link, `/bin/python3 /selftest_https.py` on the Pi
 completed a full TLS1.2 client handshake (**CIPHER ECDHE-RSA-AES256-GCM-SHA384**)
