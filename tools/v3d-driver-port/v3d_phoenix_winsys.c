@@ -186,7 +186,16 @@
 #if V3D_VA_NO_RECYCLE
 #define GPUVA_PT_PAGES      512u   /* 512 * 4 MiB = 2 GiB monotonic VA window (no reclaim) */
 #else
-#define GPUVA_PT_PAGES      64u    /* 64 * 4 MiB = 256 MiB GPU VA window */
+/* 256 * 4 MiB = 1 GiB GPU VA window. Was 64 (256 MiB) — enough for Quake's working
+ * set but a full SuperTuxKart race exhausts it: STK's deferred-render pipeline (many
+ * render targets) + track + all-kart working set, with uncompressed textures (the
+ * launcher's --disable-texture-compression, ~4x the DXT size), needs >256 MiB of live
+ * GPU VA and faulted (a NULL BO -> EL0 Data Abort). 1 GiB is ~4x the measured need and
+ * stays under the 32-bit VA sign bit (GPUVA_BASE 0x100000 + 1 GiB ~= 0x40100000, so no
+ * signed-int VA overflow). VAs are still recycled on free (V3D_VA_NO_RECYCLE=0), so this
+ * raises the live-set ceiling, not a leak budget. Costs 1 MiB of contiguous PT RAM (vs
+ * 256 KiB); the PT mmap fails loudly at init if that contiguous block is unavailable. */
+#define GPUVA_PT_PAGES      256u   /* 256 * 4 MiB = 1 GiB GPU VA window */
 #endif
 #define GPUVA_PT_ENTRIES    (GPUVA_PT_PAGES * (_PAGE_SIZE / 4u))   /* total PTEs */
 
