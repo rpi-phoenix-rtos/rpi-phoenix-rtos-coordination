@@ -71,8 +71,10 @@ This is idempotent — safe to re-run if anything fails partway. It:
 
 1. Installs the host packages listed above (via `sudo apt-get`) plus `uv`.
 2. Clones the 16 Phoenix-RTOS sibling repos into `sources/<repo>/`, each wired
-   with `fork` = `github.com/rpi-phoenix-rtos/<repo>` and `origin` = the phoenix-rtos
-   upstream.
+   with `fork` = `github.com/rpi-phoenix-rtos/<repo>`. By default `origin` also
+   points at the org (`github.com/rpi-phoenix-rtos/<repo>`) so the published set
+   is self-contained; override `PHOENIX_UPSTREAM_BASE=https://github.com/phoenix-rtos`
+   to wire `origin` at the phoenix-rtos upstream instead.
 3. Clones the build-required external deps (Mesa, Quakespasm, vkQuake) into
    `external/`, pinned to known-good commits.
 4. Stages the Raspberry Pi firmware blobs (`start4.elf`, `fixup4.dat`, the
@@ -178,7 +180,7 @@ stack + apps, and the extra userland ports) against `external/mesa` and the
 vendored tarballs in `tools/ports/src/`.
 
 A companion `--with-ports` flag adds the **CLI tools and languages ecosystem** to
-the image — all HW-verified: GNU **coreutils 9.5** (103 of 104 tools; `stty` skipped), GNU **bash 5.2**,
+the image — all HW-verified: GNU **coreutils 9.5** (~102 tools; a few skipped that need OS facilities Phoenix lacks), GNU **bash 5.2**,
 **CPython 3.14** (with `sqlite3`, `zlib`, `_ssl`/HTTPS, `_decimal`, `ctypes`, and
 `.so` C-extension `dlopen`), **Redis 7.2**, **SQLite 3**, **jq**, **Lua 5.4.7**,
 BusyBox, and **curl** (mbedTLS). For the fullest image, combine both:

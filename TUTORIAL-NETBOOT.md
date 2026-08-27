@@ -163,7 +163,8 @@ config, and launches it serving:
   firmware compatibility).
 
 You should see `=== netboot server up ===` with the iface/dhcp/tftproot summary.
-Manage it with `./scripts/netboot-server-{status,down,restart}.sh`.
+Check it with `./scripts/netboot-server.sh status`; stop/restart it with
+`./scripts/netboot-server-{down,restart}.sh`.
 
 > dnsmasq needs privileged ports, so these scripts use `sudo`. If NetworkManager
 > keeps reclaiming the NIC or the address, mark the device unmanaged first.
@@ -231,7 +232,7 @@ Network boot**.)
 
 ## 6. Boot the Pi over the network
 
-1. Make sure the server is up (`./scripts/netboot-server-status.sh`) and NFS is
+1. Make sure the server is up (`./scripts/netboot-server.sh status`) and NFS is
    exported (`sudo exportfs -v`).
 2. Connect the Pi's **Ethernet** to your NIC (no SD card needed), attach the
    optional serial adapter, and power on.
@@ -310,8 +311,9 @@ so the demo loads fast even over NFS.
 sudo mkdir -p /srv/phoenix-rpi4-nfs/usr/share/quake3/demoq3
 sudo cp pak0.pk3 pak1.pk3 /srv/phoenix-rpi4-nfs/usr/share/quake3/demoq3/
 ```
-Then run `quake3` on the Pi (also RAM-stages the assets). `q3dm1` renders fully
-lit; some larger maps show black lightmap sectors (a known V3D issue).
+Then run `quake3` on the Pi (also RAM-stages the assets). `q3dm1` and `q3dm7`
+render fully lit (the earlier black-lightmap bug is fixed); `q3dm7` does
+intermittently wedge the GPU binner on some boots (reset-recovered).
 
 ---
 
@@ -319,7 +321,7 @@ lit; some larger maps show black lightmap sectors (a known V3D issue).
 
 | Check | Command / expectation |
 |---|---|
-| Server running | `./scripts/netboot-server-status.sh` → `dnsmasq running` + iface has `10.42.0.1/24` |
+| Server running | `./scripts/netboot-server.sh status` → `dnsmasq running` + iface has `10.42.0.1/24` |
 | Pi got a lease | `cat artifacts/netboot/dnsmasq.leases` shows the Pi's MAC/IP |
 | TFTP serving | `sudo tail artifacts/netboot/dnsmasq.log` → `sent … start4.elf` / `loader.disk` |
 | NFS exported | `sudo exportfs -v` lists `/srv/phoenix-rpi4-nfs`; `showmount -e 10.42.0.1` shows it |

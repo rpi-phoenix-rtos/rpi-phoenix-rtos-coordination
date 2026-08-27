@@ -23,14 +23,19 @@ Each sibling repo is cloned with **two remotes**:
 
 | Remote | Points at | Use it for |
 |---|---|---|
-| `origin` | the Phoenix-RTOS upstream (`github.com/phoenix-rtos/<repo>`) | pulling upstream changes |
+| `origin` | **by default the org** (`github.com/rpi-phoenix-rtos/<repo>`); point it at the Phoenix-RTOS upstream (`github.com/phoenix-rtos/<repo>`) by overriding `PHOENIX_UPSTREAM_BASE` | pulling changes |
 | `fork` | the work fork (`github.com/rpi-phoenix-rtos/<repo>`) | pushing your work |
 
-> Note the convention is inverted from the common mental model: **`origin` is
-> upstream, `fork` is where you push.** This lets the same tree pull from
-> Phoenix-RTOS and push to the work fork without ambiguity. Pull upstream with
-> `git -C sources/<repo> pull origin`; push your branch with
-> `git -C sources/<repo> push fork <branch>`.
+> The bootstrap defaults `PHOENIX_UPSTREAM_BASE` to the **org**
+> (`github.com/rpi-phoenix-rtos`), so out of the box **both `origin` and `fork`
+> point at the org** — this keeps the published set self-contained and cloneable
+> without depending on the phoenix-rtos upstream still serving a given pin. To
+> track true upstream, run the bootstrap with
+> `PHOENIX_UPSTREAM_BASE=https://github.com/phoenix-rtos`, which wires `origin`
+> at the Phoenix-RTOS upstream while `fork` stays on the org. Note the convention
+> is inverted from the common mental model: **`origin` is what you pull, `fork`
+> is where you push.** Pull with `git -C sources/<repo> pull origin`; push your
+> branch with `git -C sources/<repo> push fork <branch>`.
 
 The Pi 4 work forks live under [`github.com/rpi-phoenix-rtos/*`](https://github.com/rpi-phoenix-rtos).
 All siblings currently track their `master` branch. Publishing (pushing) the

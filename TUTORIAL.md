@@ -149,9 +149,10 @@ rpi4-quake
   `Ctrl` to fire, `` ` `` for the console, `Esc` for the menu).
 - The **shareware** episode and its demo loops play out of the box (the data is
   in `/usr/share/quake/id1/pak0.pak`).
-- *Caveats:* single-player and demos work; **multiplayer hangs at LOADING**, and
-  a few small pickup **items**/**torch flames** show a minor cosmetic geometry
-  glitch — gameplay is unaffected.
+- *Caveats:* single-player and demos are the tested path; **multiplayer is not a
+  supported/tested path** (the engine ships as a single-player capstone). The
+  viewmodel/monster/torch geometry renders correctly (an earlier cosmetic glitch,
+  bug #67, is fixed).
 
 ### 🎮 Quake II and Quake III
 
@@ -164,9 +165,10 @@ quake2                # yQuake2 (OpenGL ref_gl1) — plays its demo in textured 
 quake3                # quake3e — renders gameplay on the GPU
 ```
 
-- *Quake III:* `q3dm1` renders fully lit and correct. Some larger maps (e.g.
-  `q3dm7`) show **black lightmap sectors** — a known V3D GL-path issue under
-  investigation; gameplay otherwise renders.
+- *Quake III:* `q3dm1` and `q3dm7` render fully lit and correct (the earlier
+  black-lightmap bug is fixed). Residual rough edges: `q3dm7` intermittently
+  wedges the GPU binner on ~half of boots (reset-recovered), and in-game
+  mouse-look is not yet wired.
 - *Quake II:* renders its demo in textured 3D. (It used to show a black screen on
   slow NFS asset loads; the RAM-staging launcher fixed that.)
 
@@ -176,16 +178,19 @@ quake3                # quake3e — renders gameplay on the GPU
 rpi4-vkquake          # Quake rendered through the Vulkan (V3DV) driver
 ```
 
-*Caveat:* vkQuake renders the menu and textured 3D through the GPU, but currently
-**hangs after the main menu and does not respond to the keyboard/mouse** — it is
-a known open issue, not yet a playable path. Use `rpi4-quake` (GLQuake) to
-actually play.
+*Caveat:* vkQuake renders the menu and goes on to draw the full textured 3D start
+map through the GPU (3150+ frames — the earlier post-menu hang is fixed). What is
+still missing for actual play: **keyboard/mouse input is not yet wired**, and the
+GPU binner can intermittently wedge. Use `rpi4-quake` (GLQuake) to actually play.
 
 ### 🖥️ X11 desktop and applications
 
 X11 runs on a kdrive/fbdev server (`Xphoenix`) drawing to the framebuffer. Launch
 it with `startx <client>`, which starts the server and the given client together.
-A **USB mouse** is required to interact.
+A **USB mouse** is required to interact. There is also an **experimental
+GPU-accelerated build** (`Xphoenix-glamor`, launched via `startx_gpu`) that runs
+2D X through glamor on the V3D GPU; the software fbdev server above is the default
+and the more broadly tested path.
 
 **Full window-manager desktop — WindowMaker:**
 ```bash
@@ -265,7 +270,7 @@ The image (built `--with-ports`) ships a real command-line ecosystem, all
 HW-verified:
 
 ```bash
-# GNU coreutils 9.5 — 103 of 104 tools (stty skipped)
+# GNU coreutils 9.5 — ~102 tools (a few skipped that need OS facilities Phoenix lacks)
 ls -l /etc
 wc -l /etc/passwd
 sha256sum /etc/profile
@@ -284,14 +289,14 @@ redis-server --port 6379
 # curl — HTTP/HTTPS client (mbedTLS); reaches the internet via the host NAT gateway
 curl https://example.com
 
-# GNU bash 5.2 — runs non-interactively; see the caveat below
-bash -c 'echo "hello from bash"'
+# GNU bash 5.2 — runs interactively or as a script interpreter
+bash                              # interactive bash shell
+bash -c 'echo "hello from bash"'  # or run a one-off command
 ```
 
-> **bash caveat:** interactive `bash` self-exits on EOF when there is no
-> interactive tty at the console (`getty`/pts wiring is still pending), so it is
-> not yet a usable interactive login shell — run scripts with `bash -c '…'` or use
-> `psh` interactively. Non-interactive use is unaffected.
+> **bash:** interactive `bash` works (HW-verified) — an earlier self-exit-on-EOF
+> bug (a libphoenix `select()` NULL-timeout issue) has been fixed. You can use it
+> as an interactive shell, run scripts, or invoke `bash -c '…'`.
 
 ### 🎯 Small games & graphics toys
 
@@ -355,12 +360,14 @@ USB HID, HDMI, GPU) is solid, but some showcase edges are rough. Highlights:
   carry traffic yet — **use wired Ethernet**.
 - **Bluetooth: driver-level only.** `/dev/hci0` comes up and an HCI Inquiry
   completes, but there is no host stack — no pairing, profiles, or audio.
-- **GLQuake:** multiplayer hangs; minor cosmetic model glitch on some items.
-- **Quake III:** some larger maps (e.g. `q3dm7`) show black lightmap sectors;
-  `q3dm1` is fully lit.
-- **vkQuake:** renders the menu but hangs after it and takes no keyboard/mouse
-  input — use `rpi4-quake` (GLQuake) to actually play.
-- **bash:** self-exits on EOF without an interactive tty; use `psh` interactively.
+- **GLQuake:** single-player + demos are the tested path; multiplayer is not a
+  supported/tested path. Geometry (viewmodel/monsters/torches) renders correctly.
+- **Quake III:** `q3dm1`/`q3dm7` render fully lit; `q3dm7` intermittently wedges
+  the GPU binner (~half of boots, reset-recovered) and in-game mouse-look is not
+  yet wired.
+- **vkQuake:** renders the full textured 3D start map, but keyboard/mouse input
+  is not yet wired (and the binner can intermittently wedge) — use `rpi4-quake`
+  (GLQuake) to actually play.
 - **xbill:** may exit silently on some runs.
 - **Only the 4 GB Pi 4B is validated.** Other RAM sizes/boards are untested.
 - USB mass storage, I²C/SPI/PWM general-purpose, camera and DSI are not
