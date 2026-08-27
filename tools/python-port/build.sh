@@ -211,6 +211,32 @@ if [ "${SKIP_BZ2:-0}" != 1 ]; then
 fi
 
 
+# 5h. `_lzma` (xz/LZMA compression: the `lzma` stdlib module + tarfile/shutil xz
+#     support). Cross-build a STATIC liblzma.a from xz 5.4.7 (autoconf: configure
+#     the library only -- --disable the xz/xzdec/lzmadec/lzmainfo CLIs + nls/threads/
+#     doc -- then `make -C src/liblzma`) and static-link the bundled _lzmamodule.c
+#     against it. config.site already sets py_cv_module__lzma=n/a. SKIP_LZMA=1 to skip.
+if [ "${SKIP_LZMA:-0}" != 1 ]; then
+	XZVER=5.4.7
+	XZTGZ="xz-$XZVER.tar.gz"
+	XZSHA=8db6664c48ca07908b92baedcfe7f3ba23f49ef2476864518ab5db6723836e71
+	XZDIR="$WORK/xz-$XZVER"
+	if [ ! -d "$XZDIR" ]; then
+		( cd "$WORK"; [ -f "$XZTGZ" ] || curl -fsSL -o "$XZTGZ" "https://github.com/tukaani-project/xz/releases/download/v$XZVER/$XZTGZ"
+		  echo "$XZSHA  $XZTGZ" | sha256sum -c -; tar xzf "$XZTGZ" )
+	fi
+	if [ ! -f "$XZDIR/config.status" ]; then
+		( cd "$XZDIR" && ./configure --host="${HOST:-aarch64-phoenix}" --enable-static --disable-shared \
+			--disable-xz --disable-xzdec --disable-lzmadec --disable-lzmainfo --disable-lzma-links \
+			--disable-scripts --disable-doc --disable-nls --disable-threads \
+			CC="$CC" AR="$AR" RANLIB="$RANLIB" CFLAGS="-O2" )
+	fi
+	make -C "$XZDIR/src/liblzma"
+	grep -q '^_lzma ' Modules/Setup.local || \
+	echo "_lzma _lzmamodule.c -I$XZDIR/src/liblzma/api -L$XZDIR/src/liblzma/.libs -llzma" >> Modules/Setup.local
+fi
+
+
 # 6. Build JUST the interpreter (skip the remaining .so extensions we didn't
 #    make static). `make` (all) would try to link those as .so with the wrong
 #    linker; `make python` links the static interpreter + the Setup.local modules.
