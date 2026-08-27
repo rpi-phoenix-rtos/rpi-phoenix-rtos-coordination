@@ -4,10 +4,17 @@
  * psh cannot set environment variables, and SuperTuxKart locates its game data
  * and writes its user config through env vars, so a small launcher binary wires
  * those up before exec'ing the engine:
- *   - SUPERTUXKART_DATADIR -> /usr/share/supertuxkart  (STK reads $DATADIR/data/)
- *   - SUPERTUXKART_SAVEDIR -> /tmp/stk                 (writable config dir; RAM)
- * The big ~650 MB stk-assets (art) are NOT required to reach the ES-3.0 GL
- * context (M4); SUPERTUXKART_ASSETS_DIR is left unset for now.
+ *   - SUPERTUXKART_DATADIR    -> /usr/share/supertuxkart  (STK reads $DATADIR/data/)
+ *   - SUPERTUXKART_SAVEDIR    -> /tmp/stk                 (writable config dir; RAM)
+ *   - SUPERTUXKART_ASSETS_DIR -> /usr/share/supertuxkart/stk-assets  (art root)
+ * The art assets (karts/tracks/textures/models/music/sfx/library) live in a
+ * separate stk-assets root, not in data/. STK's file_manager adds both DATADIR/
+ * data/ and ASSETS_DIR as root dirs and resolves each subdir from the first root
+ * that has it (see discoverPaths()); data/ supplies gui/shaders/ttf/configs,
+ * stk-assets/ supplies the art. We stage the 1.4 mobile-reduced asset set
+ * (~149 MB, version-locked to stk-code 1.4) there. The default would be
+ * DATADIR/../../stk-assets; we set it explicitly to avoid relying on `../..`
+ * path resolution over NFS.
  *
  * Video args mirror the Quake launchers: the Phoenix /dev/fb0 is 1920x1080-only,
  * so force --screensize=1920x1080 --fullscreen. Any extra user args are appended
@@ -33,7 +40,8 @@ int main(int argc, char **argv)
 	}
 
 	if (setenv("SUPERTUXKART_DATADIR", "/usr/share/supertuxkart", 1) != 0 ||
-			setenv("SUPERTUXKART_SAVEDIR", "/tmp/stk", 1) != 0) {
+			setenv("SUPERTUXKART_SAVEDIR", "/tmp/stk", 1) != 0 ||
+			setenv("SUPERTUXKART_ASSETS_DIR", "/usr/share/supertuxkart/stk-assets", 1) != 0) {
 		fprintf(stderr, "stk: setenv failed: %s\n", strerror(errno));
 		return 1;
 	}
