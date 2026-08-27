@@ -170,6 +170,22 @@ if [ "${SKIP_CTYPES:-0}" != 1 ]; then
 fi
 
 
+# 5f. `_blake2` (hashlib.blake2b / blake2s). CPython 3.14 bundles the portable
+#     HACL* Blake2 implementation, so this is self-contained (no external lib).
+#     Statically link blake2module.c + the two portable HACL sources; the x86
+#     SIMD variants (Blake2b_Simd256 / Blake2s_Simd128) compile out on aarch64
+#     because blake2module.c gates them on _Py_HACL_CAN_COMPILE_VEC*, which is 0
+#     here — so we build neither the Simd .c files nor define HACL_CAN_COMPILE_*.
+#     LIBHACL flags mirror the stock MODULE__BLAKE2_CFLAGS (LIBHACL_CFLAGS):
+#     -I Modules/_hacl[/include] -D_BSD_SOURCE -D_DEFAULT_SOURCE. config.site sets
+#     py_cv_module__blake2=n/a so configure emits no colliding rules (same
+#     disable-then-append pattern as _decimal/_sqlite3). SKIP_BLAKE2=1 to skip.
+if [ "${SKIP_BLAKE2:-0}" != 1 ]; then
+	grep -q '^_blake2 ' Modules/Setup.local || \
+	echo "_blake2 blake2module.c _hacl/Hacl_Hash_Blake2s.c _hacl/Hacl_Hash_Blake2b.c _hacl/Lib_Memzero0.c -IModules/_hacl -IModules/_hacl/include -D_BSD_SOURCE -D_DEFAULT_SOURCE" >> Modules/Setup.local
+fi
+
+
 # 6. Build JUST the interpreter (skip the remaining .so extensions we didn't
 #    make static). `make` (all) would try to link those as .so with the wrong
 #    linker; `make python` links the static interpreter + the Setup.local modules.
