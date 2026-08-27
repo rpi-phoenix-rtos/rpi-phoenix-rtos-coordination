@@ -18,14 +18,15 @@ on a desktop AMD GPU.
 > integration manifests. The Phoenix-RTOS source lives in sibling repositories
 > cloned under `sources/` (see [Repository layout](#repository-layout)).
 
-> ⚙️ **Toolchain modernization — GCC 16.2.0 + binutils 2.47.** The port has moved
-> to an up-to-date **GCC 16.2.0** aarch64-phoenix cross-toolchain and the latest
-> **binutils 2.47** — a big jump from the previous GCC 14.2.0 / binutils 2.43. This
-> is now the **default toolchain** (a fresh `bootstrap-linux-host.sh` builds it),
-> and the gcc-16 system (kernel, drivers, libc, lwip, NFS) **boots to a shell and
-> serves its NFS root on real Pi 4 hardware**. A full gcc-16 rebuild of the ports +
-> X11 stack and a **Docker-reproducible gcc-16-based release** are in final
-> validation. Follow the roadmap in the
+> ⚙️ **Toolchain — GCC 16.2.0 + binutils 2.47 (the default working setup).** The port
+> builds with an up-to-date **GCC 16.2.0** aarch64-phoenix cross-toolchain and the latest
+> **binutils 2.47** — a big jump from the previous GCC 14.2.0 / binutils 2.43. This is the
+> **default toolchain** (a fresh `bootstrap-linux-host.sh` builds it; the previous gcc-14
+> is kept as a rollback). The **entire system is gcc-16-built and HW-verified**: the kernel,
+> drivers, libc, lwip and NFS boot to a shell and serve the NFS root on real Pi 4 hardware,
+> and a full `--with-ports` image (coreutils, bash, jq, Python, busybox, curl, …) builds on
+> gcc-16 and boots + runs on the Pi with 0 faults. (A Docker-reproducible gcc-16 release build
+> is the remaining nice-to-have.) Details in the
 > [gcc-16 release plan](docs/inprogress/gcc16-release-plan.md).
 
 > 🚀 **First time here?** [**TUTORIAL.md**](TUTORIAL.md) is a single,

@@ -137,3 +137,6 @@ HW-signed-off. Any regression → restore gcc-14 `.toolchain` + rebuild.
 ## Dependencies
 G1.1 (running) → G2.1 → G2.2 → {G2.3, G2.4, G1.2} → G3 → G4 → G5. G4 (docs) can run in parallel once
 G2 lands. Each phase commits to the relevant repo + pushes when verified.
+
+## 2026-08-28 — PROMOTION COMPLETE
+gcc-16.2.0 is the default `.toolchain` (gcc-14 kept as `.toolchain-gcc14`). Whole system gcc-16-built + HW-verified: kernel/loader = GCC 16.2.0, all ports gcc-16, `--with-ports` image boots + runs 0 faults. Manifest 2026-08-28-gcc16-promoted-default.md. Owner-approved 2026-08-28. Remaining: optional Docker-reproducible gcc-16 release build.

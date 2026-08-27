@@ -46,10 +46,12 @@ is at a clean stopping point — nothing is half-broken waiting on you.
    target moves to H.265. **My call:** banked pending your content-strategy decision. Detail:
    `project_ffmpeg_hw_decode_scope` / the matrix "Video decode" row.
 
-2. **gcc-16 promotion to the default toolchain?**
-   The gcc-16.2.0 cross-toolchain builds core+ports clean AND boot-verified on HW (E10). Remaining = the
-   *promotion* (swap gcc-16 → default `.toolchain/`, full-flow rebuild, manifest) — HIGH blast-radius, so
-   I left it owner-attended (gcc-14 rollback kept). **Your call:** promote now, or keep gcc-14 default.
+2. **gcc-16 promotion to the default toolchain?** → ✅ **DONE / CERTIFIED (2026-08-28, per your "use it for
+   everything").** gcc-16.2.0 is already the default `.toolchain` (gcc-14 preserved as `.toolchain-gcc14`
+   rollback). Verified the WHOLE system is gcc-16: kernel ELF + loader.disk report `GCC 16.2.0`, every port
+   this session built on gcc-16, and the `--with-ports` image booted + ran (jq/awk/xz/stty/python) with 0
+   faults. Manifest `2026-08-28-gcc16-promoted-default.md`; README updated to state gcc-16.2 is the default
+   working setup. Remaining nice-to-have: a Docker-reproducible gcc-16 release build (not blocking).
 
 3. **WiFi data-plane — keep digging, or accept wired-only for now?**
    Control-plane is up (associates + 4-way-keyed to a real WPA2 AP). Data-plane doesn't carry traffic yet
