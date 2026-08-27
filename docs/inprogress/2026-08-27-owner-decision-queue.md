@@ -48,6 +48,14 @@ is at a clean stopping point — nothing is half-broken waiting on you.
 5. **Upstream B5** (the one deferred B-item) — lowest rpi4 value, cross-board/attended. Your call whether
    it's worth an attended pass.
 
+6. **v3d-driver-port placement — the last P8 item.** Everything else in the "move tools/ → framework ports"
+   directive is DONE (libpng…glib2, ffmpeg, python, all 4 game ports — every tools/ port is now a registered
+   framework port). The ONLY holdout is the V3D driver itself: does it become a `phoenix-rtos-devices` GPU
+   *component*, or stay a `tools/` build producing `tools/.gpu-libs/*.a`? The game ports currently anchor to
+   `tools/.gpu-libs/` (the STK precedent); that anchor changes if V3D moves to devices, so I left the
+   placement to you. **My call:** low urgency (it works as-is); decide when you next touch the GPU stack.
+
+
 ## What I'll keep doing autonomously (no input needed)
 - Finish P8 tools/→framework port migrations (python in flight; then the 4 game ports — which also
   auto-relink the Quakes against the QPU-int + shader-cache libv3d).
