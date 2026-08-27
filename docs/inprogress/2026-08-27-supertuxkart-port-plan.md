@@ -1,7 +1,7 @@
 # SuperTuxKart (G-STK) — staged port plan for Phoenix-RTOS / Raspberry Pi 4
 
 Date: 2026-08-27
-Status: scoping done + **M0 COMPLETE** (enet, libogg, libvorbis, libsamplerate, harfbuzz) + **M2 COMPLETE — STK 1.4 cross-CONFIGURES clean for aarch64-phoenix** (see §10). Multi-week effort remaining (M1 SDL2 audio backend + M3 link onward).
+Status: scoping done + **M0 COMPLETE** (enet, libogg, libvorbis, libsamplerate, harfbuzz) + **M1 DONE** (SDL2 already carries the phoenix /dev/audio0 backend — SDL_phoenixaudio) + **M2 COMPLETE — STK 1.4 cross-CONFIGURES clean** (§10) + **M3 COMPLETE — supertuxkart aarch64-phoenix static ELF LINKS with 0 undefined symbols** (§11). Next: M4 (runtime init on HW).
 Target host: aarch64-phoenix cross, static linking, framework ports only.
 
 ---
@@ -220,7 +220,7 @@ libsamplerate.**
 > so `UNIX` is true (evaluate side-effects: host-probe leakage the `Generic` setting
 > was avoiding). This is a real trap for whoever executes M2; it does not affect the
 > already-landed enet/libogg ports, which build under `Generic` correctly.
-| M3 | STK links | static `supertuxkart` ELF for aarch64-phoenix (bundled libs + our ports); resolve C++/libstdc++ + Irrlicht/SP link gaps |
+| M3 | STK links | **COMPLETE** ✅ — static `supertuxkart` aarch64-phoenix ELF (45.7 MB, EXEC, no PT_INTERP), **0 undefined symbols**, via `scripts/build-port.sh supertuxkart`. All STK src + bundled Irrlicht/GE/bullet/angelscript/mojoal/shaderc compile on the GLES2/SP path; GLES entrypoints resolve against `tools/.gpu-libs/libGL-phoenix.a`+`libv3d-phoenix.a` in the group-link. Detail + categorized gap fixes in §11. |
 | M4 | STK inits headless-ish | binary starts, loads config/assets over NFS, creates the SDL window + **ES 3.0 GL context** (UART/log evidence), no early fault |
 | M5 | Renders a frame | main menu / a track renders to `/dev/fb0` on HDMI (HDMI snapshot evidence) — the "first frame" prize |
 | M6 | Playable | a race runs at usable fps with input (USB kbd/gamepad via SDL) + audio |
@@ -401,7 +401,103 @@ flag/glue recipe to copy.
   `/dev/audio0` backend before a graphical build is actually runnable (there is
   no graphics-without-sound build; §2/§5).
 
-### Reproduce
-`scripts/build-port.sh supertuxkart` (deps already installed in the shared
-prefix are skipped). The `p_build` runs configure + the `mcpp` smoke and stops;
-it does **not** build/link the game (M3).
+### Reproduce (M2)
+`scripts/build-port.sh supertuxkart` — configure only was the M2 gate. The
+`p_build` has since been extended to build+link (M3, §11).
+
+---
+
+## 11. M3 landed — supertuxkart aarch64-phoenix ELF links (0 undefined)
+
+Committed to `phoenix-rtos-ports` (`master`, not pushed): extended
+`supertuxkart/port.def.sh` `p_build` (configure → `make` → glue compile →
+group-link → install), the toolchain file, `stk_phoenix_compat.h`, and patches
+`0004`–`0010`.
+
+**Verdict:** the full game — all 431 STK `src/*.cpp` objects + every bundled lib
+(Irrlicht/GE/bullet/angelscript/mojoal/sheenbidi/tinygettext/shaderc/glslang/
+SPIRV-Tools/libsquish/mcpp/dnsc/enet) — compiles on the GLES2/SP path, and the
+`supertuxkart` executable **links to a static aarch64 ELF with 0 undefined
+symbols** (`readelf`: ELF64 EXEC AArch64, statically linked, no PT_INTERP,
+8 MB PT_GNU_STACK; 45.7 MB unstripped). Installs `/usr/bin/supertuxkart`.
+
+### How GLES was wired (the prize mechanism)
+STK's Irrlicht/GE select the renderer purely by preprocessor define
+(`USE_GLES2=ON` → `-D_IRR_COMPILE_WITH_OGLES2_ -DNO_IRR_COMPILE_WITH_OPENGL_`)
+and never `find_package` a GL lib, so the GLES entrypoints stay unresolved in
+the static libs until the executable link — exactly the yQuake2 gl3 situation.
+Two additions carry it:
+- **Headers:** `-I${repo}/external/mesa/include` folded into the build CFLAGS so
+  Irrlicht's `<GLES2/gl2.h>` / `<GLES3/gl3.h>` resolve everywhere (mesa/include
+  ships GLES2/GLES3/KHR headers; nothing shadows libc).
+- **Link:** CMake's own link of the target necessarily fails (GLES undefined), so
+  `p_build` relinks from CMake's computed object/lib list
+  (`CMakeFiles/supertuxkart.dir/link.txt`) with the two SDL2 phoenix GL-glue
+  objects (`sdl_phoenix_glctx.c` = ES-3.0-context→Mesa/V3D winsys bridge +
+  `/dev/fb0` present; `sdl_phoenix_glstubs.c`) compiled against the Mesa internal
+  headers, plus a trailing `-Wl,--start-group libSDL2.a libGL-phoenix.a
+  libv3d-phoenix.a libz.a libogg.a libvorbis.a libvorbisfile.a libvorbisenc.a
+  -Wl,--end-group`. Identical seam to yQuake2 gl3 (libSDL2.a exports undefined
+  `PHOENIX_GL_*`/`phxgl_*` that the glue provides). **M1 is already satisfied** —
+  SDL2 carries the `/dev/audio0` backend (`SDL_phoenixaudio`), so MojoAL links
+  against real audio, not dummy.
+
+### Categorized gap fixes (all Phoenix libc/libstdc++ gaps; none change renderer)
+Compile-surface (bundled 3rd-party):
+- **GLES headers absent** → `-I mesa/include` (above).
+- **BSD socket consts** `AF_MAX`/`SOMAXCONN`/`MSG_TRUNC` (dnsc, bundled enet) →
+  force-included `stk_phoenix_compat.h` (macro-only).
+- **simde `<fenv.h>`** — Phoenix's header is a poison-pill `#error` stub; simde
+  auto-includes it in two blocks → patch `0004` skips both on `__phoenix__`
+  (uses simde's non-fenv rounding fallback).
+- **VMA `aligned_alloc`/`posix_memalign` absent** → patch `0005` adds a
+  `__phoenix__` base-stashing malloc for `vma_aligned_alloc/free` (VMA is on the
+  GLES path but its Vulkan allocator is never called at runtime).
+- **glslang OSDependent** — under `CMAKE_SYSTEM_NAME=Generic` the `OSDependent/
+  Unix` subdir wasn't built → bare unprovided `-lOSDependent`; patch `0007` adds
+  Generic to the gate. Its `ossource.cpp` then needed `<semaphore.h>` (absent,
+  and unused) dropped + thread-cleanup routed through the Android/Fuchsia path
+  (no `pthread_setcanceltype`/`PTHREAD_CANCEL_*` on Phoenix) → patch `0008`.
+- **spirv-tools timers** — `struct rusage` lacks `ru_maxrss/ru_minflt/ru_majflt`
+  and there's no `CLOCK_PROCESS_CPUTIME_ID` → patch `0003` leaves
+  `SPIRV_TIMER_ENABLED` off in the Generic branch.
+- **`-std=gnu17` in C++ flags** — the framework CFLAGS carries a C-only `-std`
+  that becomes fatal under bundled sub-projects' `-Werror`; the toolchain file
+  now strips it from `CMAKE_CXX_FLAGS` only.
+
+Compile-surface (STK's own src):
+- **`swprintf` absent from libphoenix** (wchar.h has zero printf family;
+  `libc.a` exports none) — Irrlicht + STK call it → patch `0006` adds a
+  self-contained shim in `irrTypes.h` (numeric + wide-`%s`; the CZipReader sites
+  pass `wchar_t*` to `%s`, handled as wide). **Real libphoenix gap — noted for a
+  future proper `swprintf`/`vswprintf`.**
+- **`std::wstringstream` absent** — Phoenix libstdc++ has no wide iostreams;
+  only `spinner_widget.cpp` used it → patch `0009` formats via a narrow stream
+  widened through `stringw`. **Real libstdc++ gap.** (`std::wstring` itself
+  works; only the wide *streams* are missing.)
+- **`LC_MESSAGES` absent** from Phoenix `locale.h` (has `LC_ALL`..`LC_TIME`
+  only) → patch `0010` routes `translation.cpp` through its existing Windows
+  `LC_CTYPE` branch.
+
+Link-surface:
+- **GLES/EGL entrypoints** → the group-link above (resolved, 0 left).
+- **ogg/vorbis/zlib ordering** — CMake lists these as raw file paths in
+  producer-first order, so single-pass `ld` can't back-resolve
+  vorbisfile→vorbis→ogg / zlib (214 undefined) → added to the trailing group
+  (resolved, 0 left).
+- **No libstdc++ hole** surfaced — exceptions/threads/`<filesystem>`/locale all
+  resolved from the Phoenix libstdc++ + libphoenix already in the link.
+
+### Residual libc/libstdc++ gaps to fix upstream (tracked, not blocking M3)
+- libphoenix: `swprintf`/`vswprintf` (wide-char printf family) — shimmed locally.
+- libphoenix libstdc++: wide iostreams (`std::wstringstream` etc.) — avoided.
+- libphoenix: no `aligned_alloc`/`posix_memalign` — VMA-local workaround.
+These are the honest "fix in libphoenix later" items; the ELF links without them.
+
+### Reproduce (M3)
+`scripts/build-port.sh supertuxkart` → `/usr/bin/supertuxkart` (static aarch64
+ELF). Requires the GL stack artifacts present: `tools/.gpu-libs/libGL-phoenix.a`
++ `libv3d-phoenix.a`, `external/mesa/{src,include}`, `/tmp/mesa-v3d-build/src`
+(built by `tools/v3d-driver-port/build-gl-phoenix.py` + `build-v3d-phoenix.py`);
+`p_build` fails loud if any is missing. Not attempted: M4 runtime bring-up on
+HW (owner-gated Pi resource) and the ~1 GB `stk-assets` staging (§6).
