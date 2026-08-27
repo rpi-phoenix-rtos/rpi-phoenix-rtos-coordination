@@ -186,6 +186,31 @@ if [ "${SKIP_BLAKE2:-0}" != 1 ]; then
 fi
 
 
+# 5g. `_bz2` (bzip2 compression: the `bz2` stdlib module + tarfile/shutil bz2 support).
+#     Cross-build libbz2.a from bzip2 1.0.8 (self-contained, no autoconf — just cc the
+#     7 library sources; the bzip2.c/bzip2recover.c CLI + dlltest.c are excluded) and
+#     append the module. config.site already sets py_cv_module__bz2=n/a so configure
+#     doesn't emit its own (colliding) rules. SKIP_BZ2=1 to skip.
+if [ "${SKIP_BZ2:-0}" != 1 ]; then
+	BZVER=1.0.8
+	BZTGZ="bzip2-$BZVER.tar.gz"
+	BZSHA=ab5a03176ee106d3f0fa90e381da478ddae405918153cca248e682cd0c4a2269
+	BZDIR="$WORK/bzip2-$BZVER"
+	if [ ! -d "$BZDIR" ]; then
+		( cd "$WORK"; [ -f "$BZTGZ" ] || curl -fsSL -o "$BZTGZ" "https://sourceware.org/pub/bzip2/$BZTGZ"
+		  echo "$BZSHA  $BZTGZ" | sha256sum -c -; tar xzf "$BZTGZ" )
+	fi
+	BZOBJS=""
+	for bc in blocksort huffman crctable randtable compress decompress bzlib; do
+		"$CC" -O2 -D_FILE_OFFSET_BITS=64 -c "$BZDIR/$bc.c" -o "$BZDIR/$bc.o"
+		BZOBJS="$BZOBJS $BZDIR/$bc.o"
+	done
+	"$AR" rcs "$BZDIR/libbz2.a" $BZOBJS; "$RANLIB" "$BZDIR/libbz2.a"
+	grep -q '^_bz2 ' Modules/Setup.local || \
+	echo "_bz2 _bz2module.c -I$BZDIR -L$BZDIR -lbz2" >> Modules/Setup.local
+fi
+
+
 # 6. Build JUST the interpreter (skip the remaining .so extensions we didn't
 #    make static). `make` (all) would try to link those as .so with the wrong
 #    linker; `make python` links the static interpreter + the Setup.local modules.
