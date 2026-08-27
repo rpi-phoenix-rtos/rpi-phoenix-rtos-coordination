@@ -1,4 +1,63 @@
-# EL1 kernel crash in test-libc-unix-socket `transfer` (found 2026-08-27)
+# EL1 kernel-mode faults in test-libc-unix-socket `transfer` (found 2026-08-27)
+
+**Status: ROOT-CAUSED + RESOLVED-AS-BENIGN. NOT a crash, NOT a merge regression — pre-existing upstream diagnostic noise. No fix applied (see below).**
+
+## ROOT CAUSE (2026-08-27, source analysis)
+`vm/map.c:map_pageFault` (809-811) unconditionally prints the full exception dump for
+**any fault whose PC is a kernel address** — *before* attempting to resolve it:
+```c
+if (hal_exceptionsPC(ctx) >= VADDR_KERNEL) {
+    /* output exception ASAP to avoid being deadlocked on spinlock */
+    process_dumpException(n, ctx);
+}
+...
+if (vm_mapForce(map, paddr, prot) != 0) { process_dumpException(...); sigsegv; }
+```
+So a kernel-mode page fault that IS legitimately resolvable — a syscall's user-copy touching
+a **COW** page (read-only after fork until written) or a demand-paged user page — still prints
+an "Exception #37: Data Abort (EL1)" dump, then `vm_mapForce` resolves it and execution
+continues. The `transfer` test forks and immediately does heavy bidirectional AF_UNIX
+user-copy on COW `data[]`/`buf[]` buffers → ~119 COW faults → 119 dumps → **test PASSES**
+(25/25, data intact). Normal workloads don't trigger it (pages already resident/non-COW;
+boots are clean 0-fault).
+
+- **Pre-existing upstream**: the dump-if-kernel-PC diagnostic is commit `05ed8327`
+  (2021-07-12, "proc: try to print exception without taking any locks"). The 2026-08 merge
+  did NOT touch it (`78a42efb..HEAD -- vm/map.c` = only the unrelated LIB_ASSERT→LIB_ASSERT_VM).
+  ⇒ NOT a merge regression.
+- **Correct + non-fatal**: faults resolve, no corruption, no hang. The only cost is log noise
+  + slow UART prints with interrupts disabled during fork-heavy kernel-user-copy patterns.
+
+## Proposed improvement (LOW priority, ATTENDED — do NOT rush unattended)
+Suppress the early dump for a **resolvable user-address** kernel-PC fault: only early-dump
+when the faulting ADDRESS is itself a kernel address (kernel-touches-kernel = a real wild
+pointer), and rely on the existing `vm_mapForce`-failure dump (line 826) + the default
+handler for genuine bugs. RISK: the early dump is a deliberate spinlock-deadlock safety net,
+and a kernel wild-pointer that happens to target a user address + then deadlocks would lose
+its dump — so this trades crash-diagnostic robustness for cleaner logs. Given the noise is
+low-severity + rare, and this is the netboot-critical fault path + upstream code, it should be
+done carefully/attended (ideally upstreamed), not as a rushed unattended change. NOT applied.
+
+---
+[Historical framings below are SUPERSEDED by the root cause above.]
+
+**Status: OPEN but SEVERITY DOWNGRADED — NOT a crash. The test PASSES.**
+
+**★ CORRECTION (2026-08-27, second run `unix-repro`): the test is NOT fatal.** A clean
+single run (proper Bash timeout) completed: `TEST(test_unix_socket, transfer) PASS` +
+**`25 Tests 0 Failures 0 Ignored` / OK** — WHILE the same log shows **119** `Exception #37:
+Data Abort (EL1)` dumps. So the EL1 aborts are RECOVERABLE (the kernel fault handler
+resolves each and the test completes with correct data). Last turn's "crash" verdict was a
+misread — the merge-sweep2 cycle was SIGTERM'd (missing Bash timeout) BEFORE the PASS/summary
+printed, so only the abort dumps were visible. **Real issue: the kernel takes EL1 Data Aborts
+on user-buffer access during the fork+AF_UNIX transfer and routes them through the noisy
+generic exception-dump handler instead of a silent COW/demand-page path — 119 exception
+dumps per run, but functionally correct.** Most likely COW-write faults on the child's `buf`
+recv buffer (COW read-only after fork → kernel write faults → resolved by copy). Low severity
+(no data corruption, no hang); the fix is about clean COW/demand-page handling of kernel
+user-access faults (or not exception-dumping handled faults), NOT a crash.
+
+[Original higher-severity framing below is superseded by the correction above.]
 
 **Status: OPEN — real EL1 (kernel-mode) crash, attribution UNCONFIRMED (merge regression vs pre-existing race). Needs a dedicated dig.**
 
