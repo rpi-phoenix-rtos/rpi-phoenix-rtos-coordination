@@ -83,6 +83,15 @@ is at a clean stopping point — nothing is half-broken waiting on you.
   (WiFi/HW-H.264), high-blast-radius (gcc-16 promotion), policy (ship-python size, v3d placement), or
   attended-dig (q3dm7 wedge, B5). I've deliberately NOT forced low-value make-work or blind-coded past the
   firmware walls.
-- Bounded residue I can still pick at without you: propagate the QPU-int fix to the rest of the GL stack;
-  the Mesa NULL-BO-alloc robustness gap; minor doc/hygiene. If a genuinely-tractable new item surfaces I'll
-  take it; otherwise I'm honestly at the "needs owner input" boundary rather than manufacturing work.
+- Bounded residue I can still pick at without you (each investigated this session):
+  - **QPU-int fix propagation to the GL stack** = just relinking the showcase apps against the shared
+    (already-fixed) libv3d — mechanical, done implicitly by the next `--with-showcase` build.
+  - **"Mesa NULL-BO-alloc crash" — re-scoped:** the winsys is ALREADY defensive (VA-exhaust and BO-table-full
+    both log + return `-ENOMEM`, `v3d_phoenix_winsys.c:551/560`); the residual NULL-deref is one layer up in
+    ported Mesa's BO-alloc caller (a Mesa-patch surface that touches every GPU app → needs a full showcase
+    build + GPU boot to de-risk), and it's now rare given the 1 GiB VA window. Lower priority than its risk.
+  - **q3dm7 CT0 wedge vs the QPU-int fix (decision #4) is the one genuinely-valuable open DIAGNOSTIC** I can
+    run without you: relink quake3 against the QPU-int-fixed libv3d + a multi-trial bench to measure whether
+    the wedge rate changed. It's a heavy multi-cycle GPU bench; I'll take it on a fresh (non-fatigued) turn to
+    avoid the late-session error class, then report the data here.
+  - Otherwise I'm honestly at the "needs owner input" boundary and will not manufacture low-value churn.
