@@ -100,7 +100,7 @@ work; `⛔` blocked on external dependencies; `⬜` not started.
 | Generic timer, GIC-400 interrupts | ✅ | Scheduler ticks; GENET/USB/SD IRQs live |
 | PL011 UART console | ✅ | Primary serial console + klog mirror |
 | HDMI framebuffer console (fbcon) | ✅ | klog + psh on HDMI, FreeBSD `teken` VT engine |
-| HDMI framebuffer device `/dev/fb0` | 🟡 | Read/write + `GETMODE` devctl; mmap/display-ownership attended |
+| HDMI framebuffer device `/dev/fb0` | 🟡 | Byte read/write + a custom `RPI4FB_GETMODE` devctl work; the standard Linux `FBIOGET_VSCREENINFO`/`FSCREENINFO` ioctls and a true `mmap()` of the framebuffer are **not implemented**, and display ownership vs the fbcon console is not arbitrated — so a stock Linux fbdev app can't mmap the surface (the X server + GL/Quake use the byte-write + GETMODE path instead) |
 | GENET gigabit Ethernet + lwIP | ✅ | IRQ-driven, ~0.9 ms ping RTT, autonomous DHCP |
 | USB host (PCIe → VL805 xHCI) | ✅ | Enumerates reliably from cold boot |
 | USB HID (keyboard + mouse) | ✅ | `/dev/kbd0`, `/dev/mouse0`; live keys reach psh and apps |
@@ -111,7 +111,7 @@ work; `⛔` blocked on external dependencies; `⬜` not started.
 | Hardware RNG (RNG200) | ✅ | `/dev/hwrng`; also backs `/dev/urandom` |
 | GPIO observer | 🟡 | `/dev/gpio` read-only snapshot; outputs attended |
 | GPU (V3D 4.2) — OpenGL | ✅ | Ported Mesa `v3d` Gallium + GL → **GLQuake ~40 fps @ 1080p** |
-| GPU (V3D 4.2) — Vulkan (V3DV) | 🟡 | Ported Mesa `v3dv` Vulkan driver runs SPIR-V vertex/fragment/compute shaders on the GPU; **vkQuake renders the menu and the full textured 3D start map** on HW (the earlier map-load hang was a libphoenix counting-semaphore lost-wakeup — fixed). Remaining: **keyboard/mouse input is not yet wired** (owner-attended) and an intermittent GPU binner wedge is under investigation. Fork: [rpi-phoenix-rtos/vkQuake](https://github.com/rpi-phoenix-rtos/vkQuake), branch `phoenix-rpi4-port` |
+| GPU (V3D 4.2) — Vulkan (V3DV) | ✅ | Ported Mesa `v3dv` Vulkan driver on real V3D 4.2 — init, texture upload (no-WSI buffer→image copy), SPIR-V vertex/fragment/compute shaders and render passes all execute on the GPU (HW-validated); **vkQuake renders the full textured 3D start map**. The only remaining WIP is app-level: vkQuake's **keyboard/mouse input is not yet wired** (an intermittent V3D binner wedge on long GPU runs — not Vulkan-specific — is tracked separately). Fork: [rpi-phoenix-rtos/vkQuake](https://github.com/rpi-phoenix-rtos/vkQuake), branch `phoenix-rpi4-port` |
 | GPU concurrency (`v3d-server`) | ✅ | A userspace **`v3d-server` daemon** (`/dev/v3d-srv`, `/sbin/rpi4-v3d`) owns the single V3D and serializes GPU submits from multiple clients over a message port, so **an accelerated X desktop and a second GPU program can run at the same time**. HW-proven end-to-end: BO/compute/render/TFU submit bit-exact through the daemon, two concurrent compute clients serialized, and a glamor GPU-accelerated X desktop with a **live GPU-rendered window running concurrently** on one screen. Lifts the earlier single-GPU-process limit. Clients link `libv3d-client`; opt-in today (not the default boot). Details: [docs/inprogress/2026-08-22-concurrent-gpu-v3d-server-feasibility.md](docs/inprogress/2026-08-22-concurrent-gpu-v3d-server-feasibility.md) |
 | Audio (PWM, 3.5 mm jack) | 🟡 | `/dev/audio0` streaming DMA; Quakespasm audio backend |
 | X11 / windowing (kdrive) | ✅ | Xphoenix **fbdev DDX** (CPU shadow-blit — the default, always-on path) + kbd/mouse; WindowMaker/JWM/twm, xterm/xcalc/xedit/xeyes/xclock, plus mc/nano. Migrated to real `phoenix-rtos-ports` (the X server, xterm, WindowMaker and dillo build as framework ports). An **experimental glamor build** additionally runs GPU-accelerated 2D X on the V3D GPU — and, via the `v3d-server` daemon (row above), can now do so **concurrently with another GPU client** (accelerated desktop + a live GPU window at once), lifting the former single-GPU-process restriction. Modern modesetting/DRM remains a future goal |
@@ -132,7 +132,7 @@ Beyond the base system, a substantial ports ecosystem runs on the hardware
 
 | Component | Notes |
 |---|---|
-| GNU **coreutils 9.5** | 103 of 104 tools (only `stty` skipped) — `ls`, `cat`, `wc`, `sha256sum`, `seq`, … |
+| GNU **coreutils 9.5** | ~102 tools built + HW-verified (`ls`, `cat`, `wc`, `sha256sum`, `seq`, …); a handful skipped that need OS facilities Phoenix lacks (`stat`, `stty`, `df`, …) |
 | GNU **bash 5.2** | runs; see caveat below |
 | **CPython 3.14** | static `python3` with `sqlite3`, `zlib`, `_ssl`/HTTPS, `_decimal`, `ctypes`, and `.so` C-extension `dlopen` |
 | **Redis 7.2** | in-memory data store, served over lwIP TCP |
