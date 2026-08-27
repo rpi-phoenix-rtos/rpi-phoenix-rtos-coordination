@@ -38,12 +38,14 @@ libvorbis → libsamplerate) plus exposing harfbuzz as a system-findable lib. **
 of these are now done** (enet, libogg, libvorbis, libsamplerate, harfbuzz — see
 §9): **M0 is COMPLETE.**
 
-Honest scale: still a **multi-week** effort. The long poles are not the deps but
-(1) an **SDL2 Phoenix audio backend** (MojoAL needs `SDL_OpenAudioDevice`; our
-SDL2 is currently built with the dummy audio driver), (2) **asset staging** (~650 MB
-compressed / ~900 MB–1 GB uncompressed — RAM-staging is impossible), (3) getting a
-large C++/Irrlicht/SP app to configure+link statically, and (4) **runtime
-iteration** on the V3D GLES3 path (single-GPU-process, TFU tiling quirks, perf).
+Honest scale: still a **multi-week** effort, but SMALLER than first thought — M0 (deps)
+✓, M2 (configure) ✓, and **M1 (SDL2 audio backend) is ALREADY DONE** (the SDL2 port
+already ships the SDL_phoenixaudio /dev/audio0 driver — see §5; the earlier "dummy audio"
+claim was wrong). Remaining long poles: (1) getting the large C++/Irrlicht/SP app to
+compile+link statically (M3, IN PROGRESS), (2) **asset staging** (~650 MB compressed /
+~900 MB–1 GB uncompressed — RAM-staging impossible; NFS-root for dev), and (3) **runtime
+iteration** on the V3D GLES3 path (single-GPU-process, TFU tiling quirks, perf) to first
+frame + playability, plus the owner-attended audio-output sign-off.
 
 ---
 
