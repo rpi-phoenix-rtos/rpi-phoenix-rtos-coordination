@@ -141,7 +141,7 @@ Beyond the base system, a substantial ports ecosystem runs on the hardware
 | **SQLite 3** | full SQL, in-memory + on-disk file VFS |
 | **jq** | JSON processor, incl. the `test`/`match`/`sub`/`gsub`/`splits`/`scan` **regex builtins** (Oniguruma) |
 | **Lua 5.4.7** | interpreter + `luac` compiler |
-| **BusyBox**, **curl** (mbedTLS) | shell utilities + HTTP/HTTPS client |
+| **BusyBox**, **curl** (mbedTLS) | shell utilities (incl. `awk`, `vi`, `tar` with seamless gz/bz2/xz, `xzcat`/`unxz`) + HTTP/HTTPS client |
 
 > **bash:** GNU bash 5.2 now runs as a **full interactive shell** at the console.
 > The earlier "self-exits on EOF at the prompt" bug was a libphoenix `select()`
