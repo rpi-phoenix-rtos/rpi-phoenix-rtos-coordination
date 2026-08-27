@@ -33,3 +33,14 @@ All GPU/HDMI, screenshot-worthy:
 
 ## Status log
 - (Thu) Plan created. Next: launch the `--with-showcase` baseline build + boot-verify the demo set.
+
+## Update (Thu, owner clarifications)
+- **Demo target = NETBOOT NFS ROOT, not SD** (SD tests are post-Sunday). So the Sat-night clean rebuild
+  produces the netboot **kernel (TFTP)** + populates the **NFS root** (`/srv/phoenix-rpi4-nfs-gcc16`) with all
+  demo apps/games; no SD flashing needed for Sunday.
+- **Keep making progress on WiFi and/or HW video decode** — owner: important milestones, good if running by
+  Sunday. So they continue IN PARALLEL as additive `tools/` work; still must not destabilize the netboot demo path.
+- **Baseline build finding:** the `--with-showcase` image built + exported (Verification OK), core X desktop
+  present (Xphoenix/wmaker/xterm/dillo/mc/xcalc/startx). One gcc-16 regression fixed: the ad-hoc x11-port's
+  **libXt** failed on C23 `&true` → pinned `-std=gnu17` (confirmed). TODO: verify GLQuake/STK/Q2/Q3 are staged to
+  the netboot NFS root (only vkQuake was in the showcase `_fs`; the others are netboot-staged separately).
