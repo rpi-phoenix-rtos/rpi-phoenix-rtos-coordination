@@ -20,6 +20,23 @@
  * so force --screensize=1920x1080 --fullscreen. Any extra user args are appended
  * after and win (e.g. `stk --disable-addons`). Install as /bin/stk.
  *
+ * SAVEDIR is /tmp (RAM), so it is wiped every boot and STK sees a "first run"
+ * each time: with no saved player profile PlayerManager::getCurrentPlayer()
+ * returns NULL, so main() pushes the UserScreen/RegisterScreen and the
+ * internet-permission dialog instead of the main menu (see stk-code
+ * src/main.cpp, the getCurrentPlayer()/m_always_show_login_screen branch, and
+ * askForInternetPermission()). To boot straight to the menu we seed two files
+ * into SAVEDIR before launching, unless they already exist (so a future
+ * persistent SAVEDIR keeps its real profile):
+ *   - players.xml : one local non-guest player "Player" marked <current>, which
+ *                   is exactly what makes getCurrentPlayer() non-NULL.
+ *   - config.xml  : version 8 (the version stk-code 1.4 expects; an older
+ *                   number is deleted and regenerated) with enable_internet=2
+ *                   (IPERM_NOT_ALLOWED), which suppresses the internet dialog.
+ * The files are embedded below rather than installed to a data path, so the
+ * launcher stays self-contained. If a seed write fails we still launch: the
+ * worst case is STK showing its first-run screens, which beats not starting.
+ *
  * Copyright 2026 Phoenix Systems
  * SPDX-License-Identifier: BSD-3-Clause
  */
@@ -30,14 +47,84 @@
 #include <errno.h>
 #include <sys/stat.h>
 
+/*
+ * Minimal players.xml: PlayerManager::load() reads the <current player="..."/>
+ * node and matches it by name against the <player> list to set the current
+ * player. The four <player> attributes are all required — the XMLNode ctor
+ * leaves name/guest/use-frequency/unique-id uninitialised if the attribute is
+ * absent. Story-mode/achievements child nodes are omitted on purpose; STK
+ * creates them fresh (createStoryModeStatus(NULL)) on load.
+ */
+static const char SEED_PLAYERS_XML[] =
+	"<?xml version=\"1.0\"?>\n"
+	"<players version=\"1\" >\n"
+	"    <current player=\"Player\"/>\n"
+	"    <player name=\"Player\" guest=\"false\" use-frequency=\"0\" unique-id=\"1\"/>\n"
+	"</players>\n";
+
+/*
+ * Minimal config.xml: the version must be exactly 8 (stk-code 1.4's
+ * m_current_config_version); a smaller number is treated as too old and the
+ * file is discarded. enable_internet=2 is IPERM_NOT_ALLOWED — the "asked and
+ * declined" state — which makes askForInternetPermission() early-return instead
+ * of popping the privacy dialog. All other params fall back to their defaults.
+ */
+static const char SEED_CONFIG_XML[] =
+	"<?xml version=\"1.0\"?>\n"
+	"<stkconfig version=\"8\" >\n"
+	"\n"
+	"    <!-- Status of internet: 0 user wasn't asked, 1: allowed, 2: not allowed -->\n"
+	"    <enable_internet value=\"2\" />\n"
+	"\n"
+	"</stkconfig>\n";
+
+/*
+ * Write a seed file into SAVEDIR only if it is not already present, so a real
+ * (persisted) profile is never clobbered. A failure is non-fatal: report it and
+ * let the caller launch STK anyway. NB: Phoenix libc rejects the "wt"/"rt" mode
+ * strings, so use plain "w".
+ */
+static void seed_file(const char *path, const char *contents)
+{
+	FILE *f;
+	size_t len;
+
+	if (access(path, F_OK) == 0) {
+		return; /* keep an existing (possibly persisted) file */
+	}
+
+	f = fopen(path, "w");
+	if (f == NULL) {
+		fprintf(stderr, "stk: seed %s: %s\n", path, strerror(errno));
+		return;
+	}
+	len = strlen(contents);
+	if (fwrite(contents, 1, len, f) != len) {
+		fprintf(stderr, "stk: seed %s: short write\n", path);
+	}
+	fclose(f);
+}
+
 int main(int argc, char **argv)
 {
 	/* STK writes its config/players/hardware-detection files into SAVEDIR; make
-	 * it exist and be writable first (tmpfs → RAM). EEXIST is fine. */
-	if (mkdir("/tmp/stk", 0777) != 0 && errno != EEXIST) {
-		fprintf(stderr, "stk: mkdir /tmp/stk: %s\n", strerror(errno));
+	 * it exist and be writable first (tmpfs → RAM). EEXIST is fine. But STK does
+	 * NOT read config.xml/players.xml directly from SAVEDIR: FileManager::
+	 * checkAndCreateConfigDir() takes SUPERTUXKART_SAVEDIR and appends the
+	 * version subdir "config-0.10/" (stk-code 1.4, file_manager.cpp:1068), so the
+	 * real config dir is /tmp/stk/config-0.10/. Create both levels. */
+	if ((mkdir("/tmp/stk", 0777) != 0 && errno != EEXIST) ||
+			(mkdir("/tmp/stk/config-0.10", 0777) != 0 && errno != EEXIST)) {
+		fprintf(stderr, "stk: mkdir /tmp/stk/config-0.10: %s\n", strerror(errno));
 		return 1;
 	}
+
+	/* Seed a current player + declined-internet config so STK boots straight to
+	 * the main menu instead of the first-run login/register/privacy screens.
+	 * These must land in the version subdir (see above), not SAVEDIR itself.
+	 * Skipped for any file that already exists (see seed_file). */
+	seed_file("/tmp/stk/config-0.10/players.xml", SEED_PLAYERS_XML);
+	seed_file("/tmp/stk/config-0.10/config.xml", SEED_CONFIG_XML);
 
 	if (setenv("SUPERTUXKART_DATADIR", "/usr/share/supertuxkart", 1) != 0 ||
 			setenv("SUPERTUXKART_SAVEDIR", "/tmp/stk", 1) != 0 ||

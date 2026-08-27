@@ -1,0 +1,5 @@
+<?xml version="1.0"?>
+<players version="1" >
+    <current player="Player"/>
+    <player name="Player" guest="false" use-frequency="0" unique-id="1"/>
+</players>
