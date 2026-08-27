@@ -56,6 +56,8 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 
 /* The kdrive server, invoked as ":0", creates this AF_UNIX listening socket
  * once it is past framebuffer + XKB init and entering its dispatch loop. We
@@ -67,6 +69,9 @@
 
 /* Bounded readiness poll: ~10 ms per tick, ~10 s total. */
 #define POLL_INTERVAL_MS  10
+/* Settle window after the server starts accepting, before the first client
+ * connects, so a single-attempt XOpenDisplay (e.g. twm) wins the handshake race. */
+#define SERVER_HANDSHAKE_SETTLE_MS 800
 #define POLL_TIMEOUT_MS   10000
 #define POLL_MAX_TICKS    (POLL_TIMEOUT_MS / POLL_INTERVAL_MS)
 
@@ -81,6 +86,31 @@ static void msleep(long ms)
 	ts.tv_sec = ms / 1000;
 	ts.tv_nsec = (ms % 1000) * 1000000L;
 	(void)nanosleep(&ts, NULL);
+}
+
+
+/* The X socket NODE appearing does not mean the server is ACCEPTING yet:
+ * Xphoenix creates /tmp/.X11-unix/X0 and then finishes screen/fbdev init
+ * before its accept() loop. A client that connects in that window gets
+ * "unable to open display" and exits — and when that client is the window
+ * manager (client[0]), xlaunch tears the whole session down. Probe by
+ * actually connecting until it succeeds, so the first client never loses
+ * this race. Returns 1 when a connect() to the server socket succeeds. */
+static int server_accepting(void)
+{
+	struct sockaddr_un a;
+	int fd, ok;
+
+	fd = socket(AF_UNIX, SOCK_STREAM, 0);
+	if (fd < 0) {
+		return 0;
+	}
+	memset(&a, 0, sizeof(a));
+	a.sun_family = AF_UNIX;
+	strncpy(a.sun_path, X_SOCKET_PATH, sizeof(a.sun_path) - 1);
+	ok = (connect(fd, (struct sockaddr *)&a, sizeof(a)) == 0);
+	close(fd);
+	return ok;
 }
 
 /* Build a NULL-terminated argv: prog + the trailing args verbatim. */
@@ -613,6 +643,36 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "xlaunch: warning: server socket %s not seen within %d ms; "
 			"launching client anyway\n", X_SOCKET_PATH, POLL_TIMEOUT_MS);
 	}
+
+	/* --- wait until the server actually ACCEPTS, not just until its socket
+	 * node exists (see server_accepting): otherwise the first client races the
+	 * server's post-socket init and fails to open the display. --- */
+	for (tick = 0; tick < POLL_MAX_TICKS; tick++) {
+		w = waitpid(srv_pid, &status, WNOHANG);
+		if (w == srv_pid) {
+			fprintf(stderr, "xlaunch: server exited during init (status=0x%x) — aborting\n",
+				(unsigned)status);
+			return EXIT_FAILURE;
+		}
+		if (server_accepting() != 0) {
+			fprintf(stderr, "xlaunch: server accepting connections after ~%d ms\n",
+				tick * POLL_INTERVAL_MS);
+			break;
+		}
+		msleep(POLL_INTERVAL_MS);
+	}
+	if (tick >= POLL_MAX_TICKS) {
+		fprintf(stderr, "xlaunch: warning: server not accepting within %d ms; "
+			"launching clients anyway\n", POLL_TIMEOUT_MS);
+	}
+
+	/* accept() succeeding at the TCP level still slightly precedes the server
+	 * being ready for the X PROTOCOL handshake, so the very first client to
+	 * connect (client[0], usually the window manager) can still lose the race
+	 * with a single-attempt XOpenDisplay (twm does; Window Maker's WINGs lib
+	 * retries and survives). Give the server a fixed settle window after it
+	 * starts accepting so the first client's XOpenDisplay succeeds too. */
+	msleep(SERVER_HANDSHAKE_SETTLE_MS);
 
 	/* --- fork the clients with DISPLAY=:0, in order --- */
 	for (c = 0; c < n_clients; c++) {
