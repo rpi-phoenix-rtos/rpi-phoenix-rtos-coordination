@@ -577,7 +577,7 @@ before the vacation handoff — NOT ours; leave untouched (always `git add <path
 ## Last progress
 
 ### ★ OWNER SCHEDULED 2026-08-27 (mid-turn; do AFTER current task — now next in queue):
-1. **Review README.md + ALL user-facing docs linked from it** — some info is OUTDATED; update to reflect the TRUE current project state. (User-facing accuracy.)
+1. **Review README.md + ALL user-facing docs linked from it** — some info is OUTDATED; update to reflect the TRUE current project state. (User-facing accuracy.) User-facing doc set (from README, 256 lines): README.md, TUTORIAL.md, TUTORIAL-NETBOOT.md, docs/BUILD.md, docs/HARDWARE.md, docs/KNOWN-ISSUES.md, docs/inprogress/pi4-hardware-support-matrix.md, LICENSING.md, CONTRIBUTING.md (skip AGENTS.md/CLAUDE.md = agent-facing). Cross-check against true state: X11 GPU desktop + shadow-RAM cursor, gigabit eth (read 29.9/write 19.7 MB/s), GPU-ML (parity), CPython/redis/sqlite/bash/coreutils/lua ports, SD ext2 root, WiFi/BT, V3D games, etc. Approach: read each, list stale claims, fix conservatively (don't overclaim).
 2. **Another round of upstream pulls/merges on ALL repos** — stay up-to-date with upstream (siblings track their upstreams; pull incoming, merge, verify builds/boot, no force-push). Recurring hygiene.
 These are the top-2 priorities for the next heartbeats.
 
