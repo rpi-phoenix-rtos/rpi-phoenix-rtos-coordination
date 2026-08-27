@@ -50,6 +50,22 @@ int main(int argc, char **argv)
 		"supertuxkart",
 		"--screensize=1920x1080",
 		"--fullscreen",
+		/*
+		 * --disable-texture-compression is essential on this port: with it ON,
+		 * KartPropertiesManager::loadAllKarts() compresses every kart texture
+		 * with libsquish and writes a .sptz cache file at startup (SPTexture,
+		 * sp_texture.cpp), which on the Pi4 costs ~200 s per kart (~18 s per
+		 * texture) and blocks the main menu for the better part of an hour.
+		 * Disabling compression early-returns that whole path (sp_texture.cpp
+		 * gates on CVS->isTextureCompressionEnabled()); textures load
+		 * uncompressed (~4x GPU/RAM, fine at 1080p) and the menu comes up
+		 * promptly. NB: --disable-hd-textures alone is NOT enough — it only
+		 * moves the cache from hd/ to resized_N/ and still compresses.
+		 */
+		"--disable-texture-compression",
+		/* Skip scanning the (empty) addon dirs on every boot. */
+		"--disable-addon-karts",
+		"--disable-addon-tracks",
 	};
 	const int nbase = (int)(sizeof(base) / sizeof(base[0]));
 	char **a = calloc((size_t)(nbase + argc + 1), sizeof(char *));
