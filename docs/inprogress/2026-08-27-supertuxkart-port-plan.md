@@ -1,7 +1,7 @@
 # SuperTuxKart (G-STK) — staged port plan for Phoenix-RTOS / Raspberry Pi 4
 
 Date: 2026-08-27
-Status: scoping done + **M0 COMPLETE — all dependency ports landed** (enet, libogg, libvorbis, libsamplerate, harfbuzz). Multi-week effort remaining (M1+).
+Status: scoping done + **M0 COMPLETE** (enet, libogg, libvorbis, libsamplerate, harfbuzz) + **M2 COMPLETE — STK 1.4 cross-CONFIGURES clean for aarch64-phoenix** (see §10). Multi-week effort remaining (M1 SDL2 audio backend + M3 link onward).
 Target host: aarch64-phoenix cross, static linking, framework ports only.
 
 ---
@@ -193,7 +193,7 @@ Higher risk; documented, not primary.
 |---|---|---|
 | M0 | Deps ported | **COMPLETE** ✅ — enet ✅, libogg ✅, libvorbis ✅, libsamplerate ✅, harfbuzz-exposed ✅ all build clean in the framework prefix via `scripts/build-port.sh` (see §9). Every STK dependency is now ported or bundled. (M0 = deps only; the SDL2 `/dev/audio0` backend is M1, not part of this gate.) |
 | M1 | SDL2 audio backend | SDL2 rebuilt with a phoenix `/dev/audio0` audio driver; `SDL_OpenAudioDevice` succeeds (host/Pi smoke) |
-| M2 | STK configures | `cmake` (cross toolchain file, `-DUSE_GLES2=ON -DUSE_MOJOAL=ON -DUSE_WIIUSE=0 -DCHECK_ASSETS=OFF -DBUILD_RECORDER=OFF`) completes with all find_package satisfied. **See the Generic-vs-UNIX trap below.** |
+| M2 | STK configures | **COMPLETE** ✅ — `cmake` (cross toolchain file, `-DUSE_GLES2=ON -DUSE_MOJOAL=ON -DUSE_WIIUSE=0 -DCHECK_ASSETS=OFF -DBUILD_RECORDER=OFF -DUSE_DNS_C=ON -DUSE_CRYPTO_OPENSSL=OFF`) reaches `Configuring done` + `Generating done`, all find_package satisfied from the shared ports prefix, no host leakage; bundled `mcpp` compiles with the cross toolchain. Trap resolution + full detail in §10. |
 
 > **M2 TRAP — `CMAKE_SYSTEM_NAME` and STK's `UNIX`-gated defaults.** Our standard
 > cross pattern (sdl2/libjpeg/enet/libogg ports) sets `CMAKE_SYSTEM_NAME=Generic`,
@@ -285,3 +285,110 @@ Committed to the `phoenix-rtos-ports` sibling (`master`, not pushed):
 All five build clean via `scripts/build-port.sh <name>`. **M0 (all STK deps
 ported/available) is COMPLETE.** Remaining STK gates (M1 SDL2 audio backend
 onward) are unaffected by this work.
+
+---
+
+## 10. M2 landed — STK 1.4 cross-configures clean
+
+Committed to the `phoenix-rtos-ports` sibling (`master`, not pushed):
+`sources/phoenix-rtos-ports/supertuxkart/` — `port.def.sh`,
+`aarch64-phoenix.cmake` (toolchain file), `patches/0001..0003`.
+
+**Verdict: `cmake` configure + generate COMPLETE** (`Configuring done` /
+`Generating done`, exit 0) for `aarch64a72-generic-rpi4b` via
+`scripts/build-port.sh supertuxkart`. The bundled `mcpp` lib also compiles with
+the cross toolchain (configure sanity smoke). The full executable link is **M3**
+and was deliberately not attempted.
+
+### Source pin
+GitHub tag-1.4 archive `stk-code-1.4.tar.gz` (the auto-generated tarball, which
+bundles `lib/*` and `data/` in-tree — tag 1.4 has no `.gitmodules`):
+size `32646035`, sha256 `40ff14ce0e1fde05fa9f427bfe1f75917a6f4efbf2c1a86421a7f794d05189b9`.
+`b_port_download`'s `(filename, orig_filename)` array form saves the remote
+`1.4.tar.gz` under the descriptive local name.
+
+### Generic-vs-UNIX trap — resolution
+Kept **`CMAKE_SYSTEM_NAME=Generic`** (every sibling port's choice; avoids
+host-`/usr` leakage and lets `FindOggVorbis`'s manual else-branch be pinned)
+and dealt with the UNIX-gated fallout explicitly:
+- **`-DUSE_GLES2=ON`** passed explicitly (the arm/aarch64 auto-default is
+  UNIX-gated → would not fire under Generic → desktop GL).
+- **Bundled enet** (`-DUSE_SYSTEM_ENET=OFF`): the system-enet branch is both
+  UNIX-gated *and* skipped when `USE_IPV6=ON` (the default), so the ported enet
+  is not consumed by this config — as anticipated in §2.
+- **Three configure-only portability patches** (none touch runtime code):
+  - `0001` — STK's `cmake/FindFreetype.cmake` else-branch calls
+    `pkg_check_modules(freetype2)`, but under Generic the UNIX-gated
+    `include(FindPkgConfig)` never ran, so that command is undefined → configure
+    abort. Route Generic through the existing manual find branch.
+  - `0002` — STK forces policy `CMP0043 OLD`; host **cmake 4.2.3** removed OLD
+    support for it (hard error). Gate the `cmake_policy` on cmake < 4.0.
+  - `0003` — bundled `lib/shaderc/third_party/spirv-tools` `FATAL_ERROR`s on any
+    unknown `CMAKE_SYSTEM_NAME` ("platform 'Generic' is not supported"). Add a
+    Generic branch treating it as Linux (mirrors STK's own NintendoSwitch
+    addition; `SPIRV_LINUX` only selects ANSI colours). shaderc/glslang/
+    spirv-tools/spirv-headers then configure.
+- `-DCMAKE_POLICY_VERSION_MINIMUM=3.5` (mandatory under cmake 4.x for STK's
+  `cmake_minimum_required(2.8.4)`).
+
+### find_package / find_library — all resolved, none blocked
+Toolchain file confines finds to the shared ports prefix + phoenix sysroot
+(`CMAKE_FIND_ROOT_PATH_MODE_{LIBRARY,INCLUDE,PACKAGE}=ONLY`, `PROGRAM=NEVER` so
+host python3 is found for SPIRV-Tools). Every dep cache var was pinned to the
+shared prefix; verified in the configure log:
+- Found **JPEG** (v62), **ZLIB** (1.2.11), **PNG** (1.6.40) — Irrlicht's
+  `find_package(... REQUIRED)`.
+- Found **OggVorbis** (manual branch, all 6 `OGGVORBIS_*` vars incl. vorbisenc).
+- **Freetype** (patched module) + **HARFBUZZ** (`include/` so `<harfbuzz/hb.h>`
+  resolves, matching STK's `src/font`), **SDL2**, **libsamplerate** (MojoAL),
+  **sqlite3**, **CURL** — all "Use system …" from the shared prefix.
+- **MbedTLS** selected for crypto (`-DUSE_CRYPTO_OPENSSL=OFF` + pinned
+  `MBEDTLS_INCLUDE_DIRS`/`MBEDCRYPTO_LIBRARY`), avoiding `find_package(OpenSSL)`
+  (openssl is a `conflicts`/versioned port, not in the shared prefix).
+- **Generate-step NOTFOUND landmines** pre-empted (these fail at *generate*, not
+  configure, when a `*-NOTFOUND` reaches `target_link_libraries`):
+  `PTHREAD_LIBRARY` pinned to `sysroot/lib/libpthread.a`; `LIBRESOLV_LIBRARY`
+  removed by `-DUSE_DNS_C=ON` (bundled resolver — STK's designed fallback);
+  vorbisenc pinned.
+- Bundled fallbacks (no system lib, as intended): **mcpp**, **libsquish**,
+  **shaderc**, **angelscript**, **MojoAL**, **bullet**, **Irrlicht**, **GE**,
+  **sheenbidi**, **tinygettext**, **wiiuse** (off). `graphics_engine` emits one
+  non-fatal warning (no system `astcenc` → ASTC support off).
+
+### GL / GLES wiring — configure needs nothing; M3 link plan
+STK's bundled Irrlicht and GE do **not** `find_package(OpenGL/OpenGLES/EGL/X11)`
+at configure. The renderer is selected purely by preprocessor defines: with
+`USE_GLES2=ON` STK adds `-DUSE_GLES2 -D_IRR_COMPILE_WITH_OGLES2_
+-DNO_IRR_COMPILE_WITH_OPENGL_`, so `COGLES2Driver.cpp` / GE `gl.c` reference GLES
+entrypoints (`glActiveTexture`, `glCreateProgram`, …) that remain **unresolved
+in the static libs until the final executable link**. So configure resolves no
+GL lib, and none is needed at M2.
+
+**M3 GL-link plan (reuse the yQuake2 gl3 mechanism):** link the `supertuxkart`
+ELF against our in-process ported Mesa —
+`tools/.gpu-libs/libGL-phoenix.a` (17 MB) + `libv3d-phoenix.a` (18 MB), both
+present — using the proven group-link so the GLES symbols resolve:
+`-Wl,--start-group libSDL2.a libGL-phoenix.a libv3d-phoenix.a -Wl,--end-group`,
+plus the SDL2 phoenix GL-context glue (`sdl_phoenix_glctx.c` /
+`sdl_phoenix_glstubs.c` under the sdl2 port's glue dir) that services the ES 3.0
+context request (`SDL_GL_CONTEXT_PROFILE_ES`, MAJOR=3/MINOR=0) STK's
+`CIrrDeviceSDL` makes — identical to the yQuake2 gl3 path that negotiated ES 3.1
+on our V3D. Injection point: extend the `supertuxkart` target's link (a small
+STK `target_link_libraries` patch or `-DCMAKE_EXE_LINKER_FLAGS`) in the port's
+M3 `p_build`. See `sources/phoenix-rtos-ports/yquake2/port.def.sh` for the exact
+flag/glue recipe to copy.
+
+### Known remaining M3 (link) risks — NOT blockers for M2
+- The GLES entrypoint resolution above (needs the group-link + glue).
+- Large C++ static link under libphoenix/libstdc++ (locale, threads,
+  exceptions, `<filesystem>`) — de-risked in kind by Dillo but STK is larger.
+- GE compiles Vulkan sources (`ge_vulkan_*`) + bundled `vulkan.c` even on the
+  GLES path; they must at least compile/link (runtime unused on SP/GLES3).
+- `-DUSE_MOJOAL=ON` links MojoAL against SDL2 audio → needs the **M1** SDL2
+  `/dev/audio0` backend before a graphical build is actually runnable (there is
+  no graphics-without-sound build; §2/§5).
+
+### Reproduce
+`scripts/build-port.sh supertuxkart` (deps already installed in the shared
+prefix are skipped). The `p_build` runs configure + the `mcpp` smoke and stops;
+it does **not** build/link the game (M3).
