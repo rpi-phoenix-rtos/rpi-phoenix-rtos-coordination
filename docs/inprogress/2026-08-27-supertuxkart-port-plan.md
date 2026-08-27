@@ -152,15 +152,26 @@ Higher risk; documented, not primary.
 
 ## 5. Audio strategy
 
-- **Use MojoAL** (`-DUSE_MOJOAL=ON`) rather than porting OpenAL-soft. MojoAL is
-  bundled and is a single-file OpenAL over SDL2's audio device.
-- MojoAL requires **`libsamplerate`** (pitch) and an **SDL2 audio backend** that
-  actually opens a device. **Our SDL2 is currently built with dummy audio**
-  (`SDL_ALSA/OSS/PULSE=OFF`). Phoenix has `/dev/audio0` (BCM2711 PWM audio,
-  `project_pi4_audio_driver`); a small **SDL2 phoenix audio driver** (SDL
-  `SDL_AudioDriver` writing to `/dev/audio0`) is needed. This is the single
-  biggest audio task and is Phoenix-side, not a port.
-- Decode: **libvorbis/vorbisfile** (must-port, needs libogg — done).
+**★ CORRECTION 2026-08-27: M1 (SDL2 audio backend) is ALREADY DONE — the earlier
+"our SDL2 is dummy audio" claim below was WRONG.** The SDL2 port already ships a full
+phoenix `/dev/audio0` audio driver: `sources/phoenix-rtos-ports/sdl2/overlay/src/audio/
+phoenix/SDL_phoenixaudio.{c,h}` + patch `0006-cmake-phoenix-audio-driver` (SDL_AUDIO_DRIVER_
+PHOENIX gates it + registers `&PHOENIXAUDIO_bootstrap` in SDL's driver list). VERIFIED in the
+current `libSDL2.a`: `PHOENIXAUDIO_bootstrap` (defined) + `PHOENIXAUDIO_{Init,OpenDevice,
+GetDeviceBuf,PlayDevice,WaitDevice,CloseDevice}` all present (full SDL AudioBootStrap). A smoke
+test exists (`tools/sdl2-port/sdl2-audiotest.c` — opens the default device = the phoenix driver,
+440Hz sine via the callback→conversion→GetDeviceBuf path). So MojoAL's `SDL_OpenAudioDevice`
+will get the PHOENIX driver → /dev/audio0 with NO new work. Remaining: only the runtime
+audio-OUTPUT sign-off (owner-attended, needs headphones — the /dev/audio0 driver itself is
+HW-verified per project_pi4_audio_driver). **⇒ the "single biggest audio task" is a non-issue;
+STK audio is satisfied by the existing SDL2 backend + bundled MojoAL + ported libvorbis/
+libsamplerate.**
+
+- **Use MojoAL** (`-DUSE_MOJOAL=ON`), bundled, single-file OpenAL over SDL2's audio device
+  → the existing PHOENIXAUDIO driver → /dev/audio0.
+- MojoAL requires **`libsamplerate`** (pitch — ported) + the SDL2 audio backend (DONE, above).
+- Decode: **libvorbis/vorbisfile** (ported). [Superseded stale note kept for history:]
+  ~~Our SDL2 is dummy audio; a phoenix SDL2 audio driver is the single biggest audio task.~~
 - **Sequencing option:** because there is no graphics-without-sound build, the
   audio chain must link before first render. If the SDL2 phoenix audio driver
   slips, a **temporary local patch** to STK's `SFXManager`/`MusicManager` init to
@@ -192,7 +203,7 @@ Higher risk; documented, not primary.
 | # | Milestone | Gate / evidence |
 |---|---|---|
 | M0 | Deps ported | **COMPLETE** ✅ — enet ✅, libogg ✅, libvorbis ✅, libsamplerate ✅, harfbuzz-exposed ✅ all build clean in the framework prefix via `scripts/build-port.sh` (see §9). Every STK dependency is now ported or bundled. (M0 = deps only; the SDL2 `/dev/audio0` backend is M1, not part of this gate.) |
-| M1 | SDL2 audio backend | SDL2 rebuilt with a phoenix `/dev/audio0` audio driver; `SDL_OpenAudioDevice` succeeds (host/Pi smoke) |
+| M1 | SDL2 audio backend | ✅ **DONE (found 2026-08-27)** — SDL_phoenixaudio driver already in libSDL2.a (PHOENIXAUDIO_bootstrap + full OpenDevice/PlayDevice/…); MojoAL will use it. Runtime audio-out sign-off owner-attended. |
 | M2 | STK configures | **COMPLETE** ✅ — `cmake` (cross toolchain file, `-DUSE_GLES2=ON -DUSE_MOJOAL=ON -DUSE_WIIUSE=0 -DCHECK_ASSETS=OFF -DBUILD_RECORDER=OFF -DUSE_DNS_C=ON -DUSE_CRYPTO_OPENSSL=OFF`) reaches `Configuring done` + `Generating done`, all find_package satisfied from the shared ports prefix, no host leakage; bundled `mcpp` compiles with the cross toolchain. Trap resolution + full detail in §10. |
 
 > **M2 TRAP — `CMAKE_SYSTEM_NAME` and STK's `UNIX`-gated defaults.** Our standard
