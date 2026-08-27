@@ -165,23 +165,21 @@ Owner ran the ports on real HW. "Finalizing a port = being able to actually run 
 
 ## G. Ports migration tracker (tools/ → phoenix-rtos-ports)
 
+**Updated 2026-08-27.**
+
 **Fully migrated + tools/ copy retired:** sqlite3, jq, redis, coreutils, lua, bash. ✅
 
-**Genuine tools — STAY in tools/ (not ports):** axi-pmu, bt-probe, wifi-probe, dbg-probe, dlopen-poc, nfs-bench, ram-stage, stress, v3d-shader-tool, demo-apps, cnn-mnist, llama2-port, sdl2-port(demos only). *(confirm — §E11)*
+**Migrated as framework ports (P8, 2026-08):** the **entire ad-hoc X11 + browser + TUI + image support stack** — `xorg_libs` / `xorg_fonts` / `xorg_server` + `xterm` + `windowmaker` + `dillo` (X11 stack `if:true`-flipped in ports.yaml + HW-validated, the overlapping ad-hoc build-showcase steps stripped), plus `fltk`, `libpng`, `libjpeg`, `libiconv`, `libffi`, `glib2`, `ncurses`, `nano`, `mc`, `sdl2`, `mbedtls`. ✅ (`xterm`/`windowmaker` self-contained now — no more `/tmp/x11-phoenix` reads.)
 
-**Still a port, to move:**
+**Genuine tools — STAY in tools/ (not ports):** axi-pmu, bt-probe, wifi-probe, dbg-probe, dlopen-poc, nfs-bench, ram-stage, stress, v3d-shader-tool, demo-apps, cnn-mnist, llama2-port, sdl2-port(demos only).
+
+**Still to move (P8 remaining):**
 | Source | Target | Difficulty |
 |---|---|---|
-| `tools/x11-port` (fonts+server+apps) | xorg-fonts/xorg-server + app ports | 🔧 in progress (Layer 1 done) |
-| `tools/ports/glib2` | phoenix-rtos-ports/glib2 | hard (blocks XFce via GIO) |
-| `tools/ports/dillo` | ports/dillo | medium |
-| `tools/ports/{fltk,mc,nano,ncurses,libffi,libiconv}` | ports/ each | medium (ncurses/libffi are deps of others) |
 | `tools/ffmpeg-port` (libav*.a recipe) | ports/ffmpeg (players stay as demos) | medium-hard |
 | `tools/python-port` (CPython 3.14) | ports/cpython (or python3) | large (bespoke build.sh) |
 | `tools/v3d-driver-port` | ⏸ ports vs devices (E1) | very hard |
 | `tools/{quakespasm,quake3,vkquake,yquake2}-port` | ports/ each (GPL glue) | medium; depends on v3d/SDL2 moving first + game-data staging |
-
-**Not-yet-self-contained official ports:** `xterm`, `windowmaker` still read `/tmp/x11-phoenix`+`/tmp/wmaker-deps` — fixed only once Layers 2/3 land.
 
 ---
 
@@ -192,7 +190,11 @@ in-line with the system's real state. **Doc set:** `README.md`, `docs/KNOWN-ISSU
 `TUTORIAL.md`, `TUTORIAL-NETBOOT.md`, `docs/BUILD.md`,
 `docs/inprogress/pi4-hardware-support-matrix.md`, `docs/HARDWARE.md` (+ `LICENSING.md`,
 `CONTRIBUTING.md` as needed). Run as a deliberate pass once P1–P3 settle, then refresh
-per big feature; also the pre-publish gate. **Known-stale inventory (found 2026-08-21):**
+per big feature; also the pre-publish gate. **✅ DONE 2026-08-27 — full user-facing doc-accuracy pass completed** (owner live review + subagent audit). README.md, docs/KNOWN-ISSUES.md, TUTORIAL.md, TUTORIAL-NETBOOT.md, docs/BUILD.md, docs/inprogress/pi4-hardware-support-matrix.md, LICENSING.md, CONTRIBUTING.md all reviewed + corrected and pushed. Fixed: vkQuake hang→fixed (input WIP), q3dm7 lightmaps→fixed, bash→interactive, GLQuake #67→fixed, Dillo HTTPS, Bluetooth/WiFi framing, DMA→green, Vulkan→green, NFS→~30 MB/s, coreutils count, /dev/fb0 gap, X11 glamor GPU X, Quake multiplayer reconciled (not a tested path), broken netboot-server-status.sh ref, LICENSING Mesa-patch/vkQuake-publish facts, origin-remote wiring, all dates. KNOWN-ISSUES pruned of resolved entries per owner (78→~45 lines; resolved items now deleted, git history keeps the record). The 2026-08-21 stale inventory below is retained as history.
+
+<details><summary>2026-08-21 stale inventory (now all addressed)</summary>
+
+**Known-stale inventory (found 2026-08-21):**
 
 - **Bluetooth mislabeled ⬜"Not started"** in README Capabilities + hardware-matrix — WRONG. BT is **functional at the driver level**: `/dev/hci0`, patchram 323/323 → real BD_ADDR → HCI Inquiry completes (`project_bluetooth_bringup`). Correct to "🟡 driver up (HCI inquiry); no host stack yet."
 - **Dillo "HTTP only / no HTTPS"** in TUTORIAL §6.3 + §7 and KNOWN-ISSUES #70 — WRONG. Dillo **browses the live HTTPS internet** (CA-verified TLSv1.2, E2/E3 done). Update to HTTPS-works (via host NAT + ntpclient cert-clock).
@@ -203,6 +205,7 @@ per big feature; also the pre-publish gate. **Known-stale inventory (found 2026-
 - **New known-issues to add**: bash EOF-exits without an interactive tty (getty→pts pending); `strerror()` prints errno NAMES not POSIX text (scheduled); quake2 slow TFU/NFS texture load.
 - **Dates**: KNOWN-ISSUES (2026-08-05) + matrix (2026-08-06) headers are stale; refresh.
 - **HARDWARE.md / BUILD.md**: largely current (lab-rig + build path); minor — add the ports/languages to BUILD's showcase description. TUTORIAL-NETBOOT §8 only stages quake1 data; add quake2/quake3 data staging.
+</details>
 - **Do NOT** over-claim: keep WiFi/vkQuake-hang/quake2-render honest; the docs' value is accuracy.
 
 ---
