@@ -62,3 +62,15 @@ built-on-demand). So the Sat-night sequence is:
 4. Boot-verify the whole demo set over netboot (HDMI snapshots) before Sunday.
 **Fri task:** script/checklist steps 2-3 so the Sat-night rebuild is one repeatable run (no ad-hoc per-game deploys).
 **Fri task:** end-to-end boot-verify each demo item renders on the FRESH gcc-16 kernel (startx, stk, rpi4-quake, …).
+
+## Thu (late) — X demo debugging
+- **X server + WindowMaker come up on the fresh gcc-16 kernel** (`startx`), cursor drawn, 0 faults — but bare
+  wmaker shows a black root (no apps/background); need a windows-visible launch for a good screenshot.
+- **`startx deskapps` failed → root-caused:** the apps (xterm/xclock/xcalc/xeyes) connect fine, but **twm** (the
+  WM, client[0]) fails `XOpenDisplay` and xlaunch tears the session down. Cause: the deployed **twm is a stale
+  08-08 binary** whose old libX11 transport can't talk to the current Xphoenix (`SocketOpenCOTSClient: unable to
+  open socket`); it wasn't rebuilt because the x11-port build died at the libXt/gcc-16 C23 `&true` error.
+- **Fixes:** (1) libXt `-std=gnu17` (committed) — lets the x11-port build finish + rebuild twm/apps fresh;
+  (2) xlaunch connect-probe + 800ms handshake settle (committed) for first-client robustness.
+- **In progress:** full x11-port rebuild (fresh libXt + twm + apps against current libX11) → then re-test the
+  desktop demo (`deskapps` / GPU `showcase`).
