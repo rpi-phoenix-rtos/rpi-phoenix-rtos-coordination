@@ -58,10 +58,13 @@ Resume with `build.sh` (idempotent) then `make` in the build tree.
   phoenix-py-compat.h (`_SC_PAGE_SIZE`=alias `_SC_PAGESIZE`; NPROCESSORS_ONLN/
   TTY_NAME_MAX/SEM_VALUE_MAX/GETGR_R_SIZE_MAX/GETPW_R_SIZE_MAX = unknown ints →
   sysconf returns -1, CPython tolerates).
-- **External-lib modules disabled** via `config.site` `py_cv_module_*=n/a`
-  (zlib/binascii/_ssl/_hashlib/_ctypes/readline/_curses*/_dbm/_gdbm/_sqlite3/
-  _tkinter/_bz2/_lzma/nis/_uuid/spwd) — build a core static python first; re-enable
-  zlib/_sqlite3 later by cross-building libz + linking the sqlite port's lib.
+- **External-lib modules:** many now ENABLED by build.sh blocks that cross-build the
+  dep + static-link the module (config.site keeps `py_cv_module_*=n/a` so configure
+  emits no colliding rules, then Setup.local overrides): zlib, binascii, _ssl,
+  _hashlib, _ctypes, _sqlite3, _decimal, _blake2 (bundled, no dep), **_bz2** (libbz2
+  from bzip2 1.0.8). Still disabled (no port yet / low value): _lzma (needs xz/liblzma
+  — the clear next add, same pattern as _bz2), readline, _curses*, _dbm/_gdbm,
+  _tkinter, nis, _uuid, spwd.
 - **`HAVE_CLOCK_GETTIME`** — configure's cross func-check falsely said no (Phoenix
   HAS clock_gettime) → the timespec `_PyTime_*` decls were `#if`'d out → implicit-decl
   error. Fixed with `ac_cv_func_clock_gettime=yes` in config.site.
