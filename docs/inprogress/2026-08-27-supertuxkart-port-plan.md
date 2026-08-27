@@ -1,7 +1,7 @@
 # SuperTuxKart (G-STK) — staged port plan for Phoenix-RTOS / Raspberry Pi 4
 
 Date: 2026-08-27
-Status: scoping + first two dependency ports landed (enet, libogg). Multi-week effort.
+Status: scoping done + **M0 COMPLETE — all dependency ports landed** (enet, libogg, libvorbis, libsamplerate, harfbuzz). Multi-week effort remaining (M1+).
 Target host: aarch64-phoenix cross, static linking, framework ports only.
 
 ---
@@ -34,8 +34,9 @@ a WSI/swapchain-on-fb0 shim we don't have. **`ge_vulkan` remains a documented
 fallback** if the SP/GLES3 path hits a wall.
 
 The genuine **must-port** list collapses to the **audio decode chain** (libogg →
-libvorbis → libsamplerate) plus exposing harfbuzz as a system-findable lib. Two of
-those (enet already, libogg now) are done.
+libvorbis → libsamplerate) plus exposing harfbuzz as a system-findable lib. **All
+of these are now done** (enet, libogg, libvorbis, libsamplerate, harfbuzz — see
+§9): **M0 is COMPLETE.**
 
 Honest scale: still a **multi-week** effort. The long poles are not the deps but
 (1) an **SDL2 Phoenix audio backend** (MojoAL needs `SDL_OpenAudioDevice`; our
@@ -87,9 +88,9 @@ Legend: **[P]** already ported (in the framework prefix) · **[B]** bundled in
 | wiiuse | **[B]** | `lib/wiiuse`; disable with `-DUSE_WIIUSE=0` (no wiimotes on Pi) |
 | shaderc | **[B]** | `lib/shaderc`; only needed for the Vulkan renderer → skip on GLES3 path |
 | **libogg** | **[M] → [P] (this work)** | Ported here (1.3.5). Base for libvorbis. **Not bundled.** |
-| **libvorbis / vorbisfile** | **[M]** | `find_package(OggVorbis REQUIRED)`. **Not bundled.** Needs libogg (done). |
-| **libsamplerate** | **[M]** | Required **only when `USE_MOJOAL=ON`** (pitch handling). Small. |
-| **harfbuzz** | **[M]/(expose)** | `find_library(HARFBUZZ REQUIRED)`. Exists in `tools/x11-port`; needs promotion/exposing as a framework port in the prefix. |
+| **libvorbis / vorbisfile** | **[M] → [P] (this work)** | Ported here (1.3.7). `find_package(OggVorbis REQUIRED)`. **Not bundled.** Needed libogg (done); FindOgg cache-var pin. |
+| **libsamplerate** | **[M] → [P] (this work)** | Ported here (0.2.2). Required **only when `USE_MOJOAL=ON`** (pitch handling). No hard deps. |
+| **harfbuzz** | **[M]/(expose) → [P] (this work)** | Exposed here (2.6.7 framework port, freetype backend). `find_library(HARFBUZZ REQUIRED)` + `<hb.h>`/`hb-ft.h` now resolve in the prefix. |
 | GLEW | **n/a** | Not needed — in-process Mesa V3D GL/GLES provides entrypoints. |
 | EGL / GLX / DRM / KMS | **n/a / avoid** | SDL device path avoids all of these. |
 
@@ -110,11 +111,11 @@ render a single frame** — they cannot be deferred with a stub.
 
 1. **libogg 1.3.5** — DONE (this work). ~2 files, CMake, no deps, clean. Effort: trivial.
 2. **enet 1.3.18** — DONE (this work). 8 files, CMake, one portability patch. Effort: trivial. *(Bonus: enet is a reusable general port; consumed by STK via `USE_SYSTEM_ENET`.)*
-3. **libvorbis 1.3.7** — NEXT. Depends on libogg (`depends="libogg"`). CMake, static. Provides `libvorbis.a` + `libvorbisfile.a` + `libvorbisenc.a`. STK's `FindOggVorbis.cmake` looks for `vorbis`, `vorbisfile`. Effort: small (well-trodden; watch the `alloca`/`clock` libc surface). ~1 day incl. verify.
-4. **libsamplerate 0.2.2** — for `USE_MOJOAL=ON`. CMake, static, no hard deps (FFT optional/off). Effort: small. ~0.5 day.
-5. **harfbuzz (expose)** — promote the existing `tools/x11-port` harfbuzz into a framework port (or add a thin `harfbuzz` port.def.sh) so `find_library(HARFBUZZ)` resolves in the prefix. Effort: small–medium (it already cross-builds; the work is packaging + `hb.h` include path). ~0.5–1 day.
+3. **libvorbis 1.3.7** — DONE (this work). Depends on libogg (`depends="libogg"`). CMake, static. Provides `libvorbis.a` + `libvorbisfile.a` + `libvorbisenc.a`. `alloca` resolved via gcc builtin (no autotools `config.h`); no `clock` gap surfaced.
+4. **libsamplerate 0.2.2** — DONE (this work). For `USE_MOJOAL=ON`. CMake, static, no hard deps (examples/tests + SndFile/FFT off).
+5. **harfbuzz (expose) 2.6.7** — DONE (this work). Added a `harfbuzz` framework port driving upstream's CMake build (freetype backend ON; glib/icu/cairo/subset off); `find_library(HARFBUZZ)` + `<hb.h>` + `hb-ft.h` now resolve in the prefix.
 
-After these five, **every STK dependency is satisfied** (ported or bundled).
+After these five, **every STK dependency is satisfied** (ported or bundled). **M0 is COMPLETE.**
 
 ### Not to be ported (bundled — confirmed by reading `stk-code/CMakeLists.txt`)
 bullet, angelscript, mcpp, libsquish, MojoAL, Irrlicht, GE, sheenbidi,
@@ -190,7 +191,7 @@ Higher risk; documented, not primary.
 
 | # | Milestone | Gate / evidence |
 |---|---|---|
-| M0 | Deps ported | enet ✅, libogg ✅, libvorbis, libsamplerate, harfbuzz-exposed all build clean in prefix |
+| M0 | Deps ported | **COMPLETE** ✅ — enet ✅, libogg ✅, libvorbis ✅, libsamplerate ✅, harfbuzz-exposed ✅ all build clean in the framework prefix via `scripts/build-port.sh` (see §9). Every STK dependency is now ported or bundled. (M0 = deps only; the SDL2 `/dev/audio0` backend is M1, not part of this gate.) |
 | M1 | SDL2 audio backend | SDL2 rebuilt with a phoenix `/dev/audio0` audio driver; `SDL_OpenAudioDevice` succeeds (host/Pi smoke) |
 | M2 | STK configures | `cmake` (cross toolchain file, `-DUSE_GLES2=ON -DUSE_MOJOAL=ON -DUSE_WIIUSE=0 -DCHECK_ASSETS=OFF -DBUILD_RECORDER=OFF`) completes with all find_package satisfied. **See the Generic-vs-UNIX trap below.** |
 
@@ -251,5 +252,36 @@ Committed to the `phoenix-rtos-ports` sibling (`master`, not pushed):
   (`port.def.sh`, no patches). `libogg.a` + `include/ogg/` + `ogg.pc`; correct
   aarch64 int typedefs in generated `config_types.h`. Base for the next dep
   (libvorbis).
+- **`libvorbis` 1.3.7** — `9b655a5`. `sources/phoenix-rtos-ports/libvorbis/`
+  (`port.def.sh`, no patches). `depends="libogg"`. `libvorbis.a` +
+  `libvorbisfile.a` + `libvorbisenc.a` + `include/vorbis/` + three `.pc`.
+  **libogg find mechanism:** `find_package(Ogg REQUIRED)` satisfied by
+  pre-seeding the bundled `FindOgg.cmake` cache vars `OGG_INCLUDE_DIR` +
+  `OGG_LIBRARY` from `${PORT_DEP_libogg}` (the shared build prefix); FindOgg
+  honours pre-set cache vars and short-circuits pkg-config, and the version-less
+  find can't fail on the empty `OGG_VERSION_STRING`. `alloca()` → gcc builtin
+  (CMake path never defines `HAVE_CONFIG_H`). Cross link-smoke
+  (`vorbis_info_init` + `ov_open_callbacks`) → static aarch64 ELF, 0 undefined.
+- **`libsamplerate` 0.2.2** — `5b65151`. `sources/phoenix-rtos-ports/libsamplerate/`
+  (`port.def.sh`, no patches). No hard deps (`LIBSAMPLERATE_EXAMPLES=OFF`,
+  `BUILD_TESTING=OFF` → no SndFile/FFTW/ALSA). `libsamplerate.a` +
+  `include/samplerate.h` + `samplerate.pc`. Cross link-smoke (`src_new` +
+  `src_simple`) → static aarch64 ELF, 0 undefined. Needed for `USE_MOJOAL=ON`.
+- **`harfbuzz` 2.6.7** — `fca5715`. `sources/phoenix-rtos-ports/harfbuzz/`
+  (`port.def.sh`, no patches). Drives upstream's **CMake** build (not the
+  autotools path `tools/x11-port` uses). `depends="xorg_fonts"` (sole freetype
+  provider; it builds freetype harfbuzz-less → no cycle). `HB_HAVE_FREETYPE=ON`,
+  glib/icu/graphite2/cairo/subset/utils OFF. `find_package(Freetype)` pinned via
+  its FindFreetype cache vars (`FREETYPE_LIBRARY` +
+  `FREETYPE_INCLUDE_DIR_ft2build/_freetype2`) at `${PORT_DEP_xorg_fonts}` to
+  defeat the `Generic`-mode fallthrough to host `/usr` freetype. C++ toolchain
+  driven explicitly (`CROSS g++`, CFLAGS reused as CXXFLAGS — the fltk pattern,
+  since `reset_env` exports no CXXFLAGS). Installs `libharfbuzz.a` +
+  `include/harfbuzz/*.h` (incl. `hb-ft.h`) + hand-emitted `harfbuzz.pc`. C++
+  cross link-smoke (`hb_buffer_create` + `hb_ft_font_create_referenced`, the
+  hb-ft bridge STK's font manager is expected to use) → static aarch64 ELF,
+  0 undefined.
 
-Both build clean via `scripts/build-port.sh <name>`.
+All five build clean via `scripts/build-port.sh <name>`. **M0 (all STK deps
+ported/available) is COMPLETE.** Remaining STK gates (M1 SDL2 audio backend
+onward) are unaffected by this work.
