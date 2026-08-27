@@ -52,14 +52,18 @@
  * node and matches it by name against the <player> list to set the current
  * player. The four <player> attributes are all required — the XMLNode ctor
  * leaves name/guest/use-frequency/unique-id uninitialised if the attribute is
- * absent. Story-mode/achievements child nodes are omitted on purpose; STK
- * creates them fresh (createStoryModeStatus(NULL)) on load.
+ * absent. **use-frequency="1" (not 0) suppresses the first-run "Would you like to
+ * play the tutorial?" modal**: MainMenuScreen::onUpdate (main_menu_screen.cpp:250)
+ * shows it only "when profile is newly created", i.e. `getUseFrequency()==0`, then
+ * increments it — so a seeded non-zero use-frequency skips the modal and STK boots
+ * straight to a clean, immediately-usable main menu. Story-mode/achievements child
+ * nodes are omitted; STK creates them fresh on load.
  */
 static const char SEED_PLAYERS_XML[] =
 	"<?xml version=\"1.0\"?>\n"
 	"<players version=\"1\" >\n"
 	"    <current player=\"Player\"/>\n"
-	"    <player name=\"Player\" guest=\"false\" use-frequency=\"0\" unique-id=\"1\"/>\n"
+	"    <player name=\"Player\" guest=\"false\" use-frequency=\"1\" unique-id=\"1\"/>\n"
 	"</players>\n";
 
 /*
