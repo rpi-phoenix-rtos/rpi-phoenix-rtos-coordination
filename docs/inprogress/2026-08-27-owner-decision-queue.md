@@ -1,5 +1,14 @@
 # Owner decision queue — for Witold's return (as of 2026-08-27, autonomous session)
 
+> **★ WITOLD ANSWERED (2026-08-28).** Decisions: **#1 HW decode → PURSUE** (H.265/rpivid and/or H.264, reasonable
+> effort); **#2 gcc-16 → PROMOTE to default, use for everything** (already the default `.toolchain`; certifying the
+> core build + manifest); **#3 WiFi → CONTINUE** (must work, it does on Linux); **#4 Q3/GPU wedges → POSTPONE, owner
+> will test the GPU programs and direct**; **#5 CPython → build-on-demand, gated with a separate opt-in option**;
+> **#6 B5 → explained** (kernel generic-aarch64 early-console alias hardcode; harmless on rpi4 where alias==the
+> DTB-discovered base, matters only for other aarch64 boards — a cross-board-upstreamability fix, not an rpi4 bug);
+> **#7 V3D placement → stays put**. Active thrusts now: gcc-16 core certification → HEVC decode → WiFi data-plane.
+
+
 You've been away a while; the autonomous loop has kept working the master plan. This is the
 **short list of decisions that need your call** (the board `autonomous-plan.md` has the full
 chronological log; `pi4-hardware-support-matrix.md` has the capability state). Everything below

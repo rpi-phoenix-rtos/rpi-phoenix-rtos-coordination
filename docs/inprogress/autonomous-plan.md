@@ -7737,3 +7737,13 @@ ONE focus per turn (use subagents to parallelize analyze/implement/test):
 
 2026-08-27 (q3dm7 wedge signature confirmation — light log analysis, no fix):
  Characterized the post-QPU-fix q3dm7 wedge from the bench T5 log: `BIN TIMEOUT` (CT0 binner), ct0ca frozen mid-CL, bpca=tile-alloc-out — the SAME MODE-A front-end-stall class as the 08-22 analysis (nature unchanged, not just rate). mmu_ill=0x800087dd = the known scratch-redirect echo (not a fault). vio_addr/int_qpu non-zero in the dump but LIKELY STALE — flagged not-to-over-interpret (the attended dig must read MMU_VIO_ADDR/ID fresh at the timeout). Recorded in [[project_quake3_lightmap_uif_xor]]. No code change; correctness unaffected (reset-recovered, 0 faults). This is genuinely the owner-gated attended-CT0-dig boundary — I've characterized it as far as is safe/useful unattended and will not blind-code a binner fix.
+
+2026-08-27/28 (★ OWNER DECISIONS RECEIVED — Witold answered the decision brief):
+ 1. HW video decode: "reasonable effort to bring true HW H.265 and/or H.264 decode" → UN-BANK; pursue rpivid/HEVC (+H.264 if feasible). Big thrust.
+ 2. gcc-16: "Promote to default toolchain — use for everything." → NOTE: .toolchain is ALREADY gcc-16.2.0 (gcc-14 preserved as .toolchain-gcc14); all this-session ports + the --with-ports integration image were gcc-16-built + boot-verified. Remaining = formally certify the CORE is freshly gcc-16-built in the DEFAULT buildroot (--with-ports --scope auto may have reused cached core objects) + manifest.
+ 3. WiFi: "Continue — it works on Linux, needs to work here." → resume the data-plane dig (was firmware-walled).
+ 4. Q3/GPU wedges: "Postpone further GPU digging; I'll test the GPU programs and tell you next." → STOP GPU digs; await owner test results.
+ 5. CPython: "Build on demand, gated with a separate option." → confirms the framework python if:false is correct; ensure a clean opt-in build flag/doc.
+ 6. Upstream B5: owner asked what it is → answering (kernel generic aarch64 early-console alias; harmless on rpi4, cross-board-only).
+ 7. V3D placement: "Stay where it is; maybe move later." → no action.
+ ACTIONS THIS SESSION: certify gcc-16 core (#2) → then HEVC (#1) + WiFi (#3) as the multi-turn thrusts. Python option (#5) small. Decision brief updated.
