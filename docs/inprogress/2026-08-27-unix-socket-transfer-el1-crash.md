@@ -1,4 +1,51 @@
-# EL1 kernel-mode faults in test-libc-unix-socket `transfer` (found 2026-08-27)
+# EL1 page-fault storm in test-libc-unix-socket `transfer` — real COW protection bug (found 2026-08-27)
+
+**Status: ROOT-CAUSED (real defect, not benign) + FIXED (kernel vm/map.c) + regression test added. Pre-existing (NOT a merge regression). Validation in progress.**
+
+## FINAL root cause (subagent deep-read + advisor review) — supersedes the "benign noise" framing below
+NOT benign, and NOT just one-time COW faults. It is a **page-protection OSCILLATION** that
+never converges, and it can make `transfer` **FAIL** (the original merge-sweep2 log shows
+`TEST(transfer) FAIL at :786` — the forked child exits non-zero; my later run happened to
+pass — **intermittent**). Mechanism:
+- AF_UNIX recv (`posix/unix.c`→`lib/cbuffer.c`) does an in-kernel `hal_memcpy` **directly onto
+  the caller's user pointer** (unlike INET, which marshals through message ports — that's why
+  only AF_UNIX + X11-doesn't-hit-it). After fork the child's `buf[]` recv page is COW/demand.
+- The child's first touch is the kernel recv **write** → **EL1** data abort. `map_pageFault`
+  resolves it, but `hal_exceptionsFaultType` sets `PROT_USER` **only for EL0** aborts, and
+  `_map_force` maps with the fault's `prot` → page installed **EL1-RW / EL0-none**.
+- The child's following EL0 **read** (unix_data_cmp) faults → remaps the page **RO / EL0**.
+- The next recv's EL1 **write** → RO again → faults again. **Oscillates forever** — one
+  `Exception #37: Data Abort (EL1)` dump per recv (the "storm"), same `far=0x4130c0`
+  (`buf[0]`, WnR=1 write), `x1` kernel-src advancing, until the transfer loop ends.
+
+## Fix APPLIED (kernel vm/map.c `map_pageFault`)
+Key `PROT_USER` off **where** the fault is (the user map), not which EL took it:
+```c
+if ((thread->process != NULL) && (map == thread->process->mapp)) { prot |= PROT_USER; }
+```
+So a kernel-mode (EL1) fault on a user page resolves with `PROT_USER`; the write-fault installs
+RW|USER on the (already COW-broken) private page → the EL0 read no longer faults → converges in
+ONE fault. **COW is untouched**: a read still maps RO (write still breaks COW as before).
+
+**Fix A REJECTED** (advisor caught it): mapping with `e->prot` at map.c:768 instead would, on a
+**read** fault of a still-shared NEEDSCOPY page (line 744 only clears NEEDSCOPY on write, so
+`amap_page` returns the SHARED anon), install it writable → the later write lands on the SHARED
+page → **silent cross-process corruption a boot-verify can't catch**. The fault path maps
+minimal rights *deliberately* for COW; only the USER bit was wrong.
+
+**Regression test added**: phoenix-rtos-tests `test-libc-exit` `fork_cow_isolation` — fork; child
+READS a page then WRITES it; parent asserts its own copy is unchanged. Probes exactly the hole
+either fix must not open (would have caught Fix A).
+
+**Attribution: pre-existing, upstream-relevant** — all implicated files (`posix/unix.c`,
+`lib/cbuffer.c`, `hal/aarch64/exceptions.c`+`pmap.c`, `map_pageFault`) are unchanged by the
+2026-08 merge; the defect is architectural (EL1 user-copy fault prot derivation), long-standing.
+Candidate for an upstream PR. No rollback needed.
+
+## Validation gate (advisor): build --scope core + boot + test-libc-unix-socket ×several (assert ZERO Exception #37 during transfer + PASS every trial) + test-libc-exit fork_cow_isolation PASS.
+
+---
+[Earlier framings below are SUPERSEDED.]
 
 **Status: ROOT-CAUSED + RESOLVED-AS-BENIGN. NOT a crash, NOT a merge regression — pre-existing upstream diagnostic noise. No fix applied (see below).**
 
