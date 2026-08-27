@@ -68,6 +68,7 @@
 #define INT_FLDONE          (1u<<1)
 #define INT_OUTOMEM         (1u<<2)   /* binner exhausted its tile-allocation pool */
 #define INT_CSDDONE         (1u<<7)   /* compute-shader dispatch done (V3D 4.2; V3D_INT_CSDDONE ver<71 = BIT(7)) */
+#define INT_QPU_MASK        (0xfffu<<16) /* CTL_INT QPU-interrupt bits 27:16 (Linux V3D_INT_QPU_MASK, v3d_regs.h) */
 /* CSD (Compute Shader Dispatch) config/status regs, CORE0-relative (V3D 4.2, ver<71).
  * cfg[0..6] map to CSD_QUEUED_CFG0..6; writing CFG0 KICKS the dispatch. See linux
  * v3d_regs.h (V3D_CSD_*) and v3d_sched.c v3d_csd_job_run. */
@@ -1015,7 +1016,11 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
 	c0[CTL_L2TCACTL/4] = L2TCACTL_L2TFLS;
 	l2t_flush_wait(c0);
 	/* --- bin (CT0); wait FLDONE --- */
-	c0[CTL_INT_CLR/4] = INT_FLDONE|INT_FRDONE;
+	/* Also clear any latched QPU-interrupt bits (27:16). Linux's IRQ handler clears the
+	 * FULL INT status every interrupt (v3d_irq.c: INT_CLR = INT_STS); this poll-based winsys
+	 * historically cleared only FLDONE|FRDONE, so QPU bits could stay latched across jobs.
+	 * Suspected in the STK in-game render stall (int_sts=0x00ff0000, FRDONE never fires). */
+	c0[CTL_INT_CLR/4] = INT_FLDONE|INT_FRDONE|INT_QPU_MASK;
 	c0[PTB_BPOS/4] = 0;
 	if (s->qma) { c0[CLE_CT0QMA/4]=s->qma; c0[CLE_CT0QMS/4]=s->qms; }
 	if (s->qts) { c0[CLE_CT0QTS/4]=CT0QTS_ENABLE|s->qts; }
@@ -1126,7 +1131,7 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
 	/* If the binner wedged, don't kick the render against a bad tile state — reset+retry. */
 	if (job_failed)
 		goto job_retry;
-	c0[CTL_INT_CLR/4]=INT_FLDONE|INT_FRDONE;
+	c0[CTL_INT_CLR/4]=INT_FLDONE|INT_FRDONE|INT_QPU_MASK;   /* +QPU bits: Linux-parity full-status clear */
 	/* Bin->render coherency handoff. The binner (CT0, just done) writes the per-tile sub-lists
 	 * into tile_alloc/overflow through the GPU's L2T; CT1's CL executor then FETCHES those
 	 * tile-lists. Two things must hold before CT1 starts:
@@ -1166,6 +1171,7 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
 	 * frames; (b) BACKSTOP — the absolute spin cap. Frozen-detection shrinks the mitigation hitch
 	 * from the full ~2.5 s cap to ~0.8 s. On done: spins != 0; on wedge: spins == 0 (unchanged
 	 * downstream handling). */
+	unsigned qpu_acks = 0;   /* # of poll-samples that found QPU int bits latched + cleared them */
 	{
 		uint32_t last_ca = c0[0x0114/4];
 		unsigned frozen = 0;
@@ -1173,6 +1179,12 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
 			if (c0[CTL_INT_STS/4] & INT_FRDONE)
 				break;                                  /* render done */
 			if ((spins & 0xfffffu) == 0u) {             /* sample ct1ca ~every 1M spins (~160 ms) */
+				/* Service latched QPU-interrupt bits mid-render (Linux clears them every IRQ;
+				 * we poll). Write-1-to-clear ONLY the QPU bits — never bit0 — so FRDONE cannot
+				 * be lost. If an unacknowledged QPU int stalls fragment dispatch, acking it here
+				 * lets the render complete. qpu_acks tells us whether the bits re-assert. */
+				uint32_t sts = c0[CTL_INT_STS/4];
+				if (sts & INT_QPU_MASK) { c0[CTL_INT_CLR/4] = sts & INT_QPU_MASK; qpu_acks++; }
 				uint32_t ca = c0[0x0114/4];
 				if (ca == last_ca) {
 					if (++frozen >= 5u) { spins = 0; break; }   /* frozen ~0.8 s -> wedged */
@@ -1189,6 +1201,8 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
 			"ct1ca=0x%08x[%x..%x] ct1ea=0x%08x gmp=0x%08x gmpvio=0x%08x mmu_ill=0x%08x\n",
 			c0[CTL_INT_STS/4], c0[0x0104/4], ca1, s->rcl_start, s->rcl_end,
 			c0[0x010c/4], c0[0x0800/4], c0[0x0808/4], W.hub[MMU_ILLEGAL_ADDR/4]);
+		fprintf(stderr, "v3d-winsys: RENDER qpu_int_acks=%u (QPU bits serviced mid-render; "
+			"nonzero+persisting = bits re-assert continuously)\n", qpu_acks);
 		/* V3D error-debug registers (FDBGO/FDBGS/ERRSTAT) localize the wedged render
 		 * pipeline stage; + decode the CL opcode byte CT1 is parked on. */
 		{
