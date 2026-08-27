@@ -44,3 +44,21 @@ All GPU/HDMI, screenshot-worthy:
   present (Xphoenix/wmaker/xterm/dillo/mc/xcalc/startx). One gcc-16 regression fixed: the ad-hoc x11-port's
   **libXt** failed on C23 `&true` → pinned `-std=gnu17` (confirmed). TODO: verify GLQuake/STK/Q2/Q3 are staged to
   the netboot NFS root (only vkQuake was in the showcase `_fs`; the others are netboot-staged separately).
+
+## Baseline VERIFIED (Thu) — netboot NFS root is demo-ready NOW
+The current `/srv/phoenix-rpi4-nfs-gcc16` already has the full demo set (built across this session):
+- **Games:** `bin/stk` + `usr/bin/supertuxkart` (38MB) + assets; `usr/bin/rpi4-quake` (GLQuake); `usr/bin/quake2`;
+  `usr/bin/quake3`+`quake3e`; `usr/bin/rpi4-vkquake`; `bin/quakespasm`. Data: quake/quake2/quake3/supertuxkart.
+- **X desktop:** Xphoenix, wmaker, startx, startx_gpu, xterm, dillo, mc.
+- **CLI:** the full --with-ports set (python/jq/sqlite/redis/coreutils/busybox/curl/…).
+
+### ★ Sat-night clean-rebuild + restage sequence (the key demo gate — must be repeatable)
+`--with-showcase` rebuilds the kernel + GLQuake + vkQuake + X + CLI, but NOT the extra games (STK/Q2/Q3 are
+built-on-demand). So the Sat-night sequence is:
+1. Nuke `.buildroot` → full clean `rebuild-rpi4b-fast.sh --with-showcase --with-ports` (gcc-16 default) → fresh
+   netboot kernel + base NFS root (GLQuake, vkQuake, X, CLI).
+2. Build the extra games: STK (`build-supertuxkart*`), quake2 (yquake2), quake3 (quake3e) — their build scripts.
+3. Stage ALL demo games + launchers + assets into the netboot NFS root (the per-game deploy done this session).
+4. Boot-verify the whole demo set over netboot (HDMI snapshots) before Sunday.
+**Fri task:** script/checklist steps 2-3 so the Sat-night rebuild is one repeatable run (no ad-hoc per-game deploys).
+**Fri task:** end-to-end boot-verify each demo item renders on the FRESH gcc-16 kernel (startx, stk, rpi4-quake, …).
