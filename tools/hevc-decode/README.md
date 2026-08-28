@@ -22,7 +22,9 @@ blob**. Ported register-by-register from the Linux `hevc_d_h265.c` driver.
 | **`hevc-play` bit-exact conformance verify** | ✅ `hevc-play <f.265> <golden.nv12>` → VERIFY BIT-EXACT (ibp, mandelbrot, bframes=2/3, b-pyramid all 0 bad px) |
 | Decode → SAND/COL128 unpack → NV12→RGB → /dev/fb0 → HDMI | ✅ |
 | Intermittent inter corruption during on-HDMI playback (~10%) | ⚠️ known, decoder bit-exact HEADLESS in isolation (see gotcha 8) |
-| multi-ref (ref>1), SAO, tmvp, WPP/tiles | ⏳ out of subset — each a separate feature toward full real-content |
+| **Multi-ref (ref>1)** | ✅ bit-exact (free via the general DPB + resolve_reflist) |
+| **Temporal-MVP (tmvp)** — collocated-MV path | ✅ bit-exact (per-DPB-slot colMV, x265 default-on; 64/128/320 verified) |
+| SAO, WPP/tiles, nonzero deblock beta/tc offsets | ⏳ out of subset — each a separate feature toward full real-content |
 | HW H.264 | ⛔ VCHIQ/firmware-walled (banked) |
 
 ## Layout
