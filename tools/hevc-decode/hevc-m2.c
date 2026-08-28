@@ -172,8 +172,11 @@ static uint32_t build_command_buffer(addr_t bs_pa)
 	/* no scaling factors (scaling-list disabled) */
 	p1(RPI_SLICESTART, 0);                        /* slice_segment_addr 0 -> ctb (0,0) */
 
-	/* 6) new_entry_point (h265.c:911). single tile at (0,0), do_bte, reset_qp_y, PAUSE_MODE_TILE. */
-	uint32_t endx = 0, endy = 0;                  /* col_bd[1]-1 = 0, row_bd[1]-1 = 0 */
+	/* 6) new_entry_point (h265.c:911). single tile spanning the whole frame, at (0,0),
+	 * do_bte, reset_qp_y, PAUSE_MODE_TILE. The tile end is the last CTB: for one tile
+	 * col_bd={0,ctb_w} row_bd={0,ctb_h}, so endx=col_bd[1]-1=ctb_w-1, endy=ctb_h-1
+	 * (multi-CTB frames need this — hardcoding 0 only decodes the first CTB). */
+	uint32_t endx = ctb_w - 1, endy = ctb_h - 1;
 	p1(RPI_TILESTART, 0);                         /* col_bd[0] | row_bd[0]<<16 */
 	p1(RPI_TILEEND, endx | (endy << 16));
 	p1(RPI_BEGINTILEEND, endx | (endy << 16));    /* do_bte */
