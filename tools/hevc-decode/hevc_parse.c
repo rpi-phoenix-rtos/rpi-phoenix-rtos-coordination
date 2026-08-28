@@ -338,6 +338,9 @@ int hevc_parse_pps(const uint8_t *pps_nal, uint32_t len, hevc_pps_t *out)
 	out->entropy_coding_sync = (int)br_u(&b, 1);
 	if (out->tiles_enabled)
 		return fail("tiles_enabled (out of subset)");
+	if (out->entropy_coding_sync)   /* WPP: slice carries entry_point_offsets we don't parse
+					 * -> would give a wrong data_byte_offset. Reject, don't mis-handle. */
+		return fail("entropy_coding_sync/WPP (out of subset)");
 	out->pps_loop_filter_across_slices = (int)br_u(&b, 1);
 	out->deblocking_filter_control_present = (int)br_u(&b, 1);
 	if (out->deblocking_filter_control_present) {
