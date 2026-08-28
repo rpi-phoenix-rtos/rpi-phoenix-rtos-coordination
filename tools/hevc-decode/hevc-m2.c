@@ -318,12 +318,37 @@ int main(void)
 	if (poll_active(intc, ACTIVE2_INT_SET, 500) != 0) { printf("hevc-m2: PHASE 2 TIMEOUT (no ACTIVE2)\n"); return 6; }
 	printf("hevc-m2: phase 2 done (ACTIVE2) — frame decoded\n");
 
-	/* Verify output non-zero (SAND/COL128; linear unpack + pixel compare = M4). */
-	uint32_t nz = 0; const uint8_t *y = luma.cpu;
-	for (uint32_t i = 0; i < luma_stride * cols; i++) if (y[i]) nz++;
-	printf("hevc-m2: output luma non-zero bytes = %u / %u %s\n", nz, luma_stride * cols,
-		nz ? "[DECODED]" : "[all-zero — check params]");
+	/* M4 verification: unpack SAND/COL128 -> linear and compare to the golden
+	 * ffmpeg SW decode. COL128 single-column layout for W<=128: a pixel (x,y)
+	 * lives at column-block (x/128)*<col-stride> + y*128 + (x%128); here the frame
+	 * is one 128-wide block so luma(x,y) = luma_buf[y*128 + x]. */
+	const uint8_t *yb = luma.cpu, *cb = chroma.cpu;
+	uint32_t y_ok = 0, y_min = 255, y_max = 0, y_bad = 0;
+	for (uint32_t y = 0; y < FRAME_HEIGHT; y++) {
+		for (uint32_t x = 0; x < FRAME_WIDTH; x++) {
+			uint8_t v = yb[(x / 128u) * luma_stride + y * 128u + (x % 128u)];
+			if (v < y_min) y_min = v;
+			if (v > y_max) y_max = v;
+			if (v == FRAME_EXPECT_Y) y_ok++; else y_bad++;
+		}
+	}
+	/* NV12 chroma: interleaved CbCr, 4:2:0 -> W/2 x H/2 pairs = W bytes/row, H/2 rows. */
+	uint32_t c_ok = 0, c_bad = 0, c_min = 255, c_max = 0;
+	for (uint32_t y = 0; y < FRAME_HEIGHT / 2u; y++) {
+		for (uint32_t x = 0; x < FRAME_WIDTH; x++) {
+			uint8_t v = cb[(x / 128u) * chroma_stride + y * 128u + (x % 128u)];
+			if (v < c_min) c_min = v;
+			if (v > c_max) c_max = v;
+			if (v == FRAME_EXPECT_C) c_ok++; else c_bad++;
+		}
+	}
+	uint32_t y_tot = FRAME_WIDTH * FRAME_HEIGHT, c_tot = FRAME_WIDTH * (FRAME_HEIGHT / 2u);
+	printf("hevc-m2: luma   %u/%u == %u  (min %u max %u)\n", y_ok, y_tot, FRAME_EXPECT_Y, y_min, y_max);
+	printf("hevc-m2: chroma %u/%u == %u  (min %u max %u)\n", c_ok, c_tot, FRAME_EXPECT_C, c_min, c_max);
 
-	printf("hevc-m2: M2 %s\n", nz ? "SUCCESS — HW decoded one IDR frame" : "completed but output empty");
-	return nz ? 0 : 7;
+	int exact = (y_bad == 0 && c_bad == 0);
+	printf("hevc-m2: M4 %s\n", exact ?
+		"EXACT MATCH — HW decode == ffmpeg SW decode (bit-exact)" :
+		"decoded but pixels differ from golden (see counts above)");
+	return exact ? 0 : 7;
 }

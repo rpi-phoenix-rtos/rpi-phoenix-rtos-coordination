@@ -48,6 +48,12 @@
 #define FRAME_SLICE_TYPE   2u    /* I */
 #define FRAME_SLICE_QP     25    /* 26 + init_qp_minus26(0) + slice_qp_delta(-1) */
 
+/* Golden output (ffmpeg SW decode of this vector): the solid gray frame decodes
+ * to a UNIFORM luma 126 and neutral chroma 128 everywhere. The HW decode, once
+ * unpacked from SAND/COL128, must match exactly. */
+#define FRAME_EXPECT_Y   126u
+#define FRAME_EXPECT_C   128u
+
 /* Phase-2 CONFIG2 (mk_config2, h265.c:1524) — precomputed for this frame:
  * BitDepthY 8 | BitDepthC 8<<4 | log2_ctb 6<<10 | strong_smooth<<14
  * | (log2_parallel_merge_level_minus2(0)+2)<<16 = 0x25888. */
