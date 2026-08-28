@@ -54,7 +54,8 @@ int main(int argc, char **argv)
 					printf("ERR %s PPS: %s\n", base, hevc_err());
 					rc = 1;
 				} else have_pps = 1;
-			} else if (nal.type == HEVC_NAL_TRAIL_R ||
+			} else if (nal.type == HEVC_NAL_TRAIL_N ||
+			           nal.type == HEVC_NAL_TRAIL_R ||
 			           nal.type == HEVC_NAL_IDR_W_RADL ||
 			           nal.type == HEVC_NAL_IDR_N_LP) {
 				hevc_slice_t s;
@@ -69,12 +70,14 @@ int main(int argc, char **argv)
 				epb_hdr += hevc_count_epb(nal.data, s.data_byte_offset);
 				epb_data += hevc_count_epb(nal.data + s.data_byte_offset,
 				                           nal.len - s.data_byte_offset);
-				printf("ROW %s %d %d %u %u %s %u %d %u %u\n",
+				printf("ROW %s %d %d %u %u %s %u %d %u %u  l0=%u l1=%u mmc=%u mvdl1z=%d cabac=%d\n",
 				       base, frame, nal.type,
 				       have_sps ? sps.width : 0,
 				       have_sps ? sps.height : 0,
 				       typename(s.slice_type), s.poc, s.slice_qp,
-				       s.data_byte_offset, s.bfnum);
+				       s.data_byte_offset, s.bfnum,
+				       s.nb_refs_l0, s.nb_refs_l1, s.max_num_merge_cand,
+				       s.mvd_l1_zero_flag, s.cabac_init_flag);
 				frame++;
 			}
 			/* other NAL types (VPS 32, SEI 39/40, AUD 35) ignored */

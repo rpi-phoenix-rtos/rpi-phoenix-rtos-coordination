@@ -21,7 +21,8 @@
 
 /* NAL unit types we care about (H.265 Table 7-1). */
 enum {
-	HEVC_NAL_TRAIL_R = 1,   /* non-IRAP coded slice (our P-slices) */
+	HEVC_NAL_TRAIL_N = 0,   /* non-IRAP, non-reference coded slice (non-ref B-slices) */
+	HEVC_NAL_TRAIL_R = 1,   /* non-IRAP coded slice (our P-slices, ref B-slices) */
 	HEVC_NAL_BLA_W_LP = 16,
 	HEVC_NAL_IDR_W_RADL = 19,
 	HEVC_NAL_IDR_N_LP = 20,
@@ -85,6 +86,14 @@ typedef struct {
 	int slice_qp;               /* 26 + init_qp_minus26 + slice_qp_delta */
 	uint32_t data_byte_offset;  /* NAL-start byte offset of slice_segment_data */
 	uint32_t bfnum;             /* len - data_byte_offset (bytes the HW consumes) */
+	/* Inter-prediction fields the HW command buffer needs (P/B). These are
+	 * STREAM-SEMANTIC (they steer the block's CABAC engine) so they must be
+	 * extracted, never assumed. Zero/1 defaults for I. */
+	uint32_t nb_refs_l0;        /* num_ref_idx_l0_active (1 for our subset) */
+	uint32_t nb_refs_l1;        /* num_ref_idx_l1_active (B only; 0 for P) */
+	int mvd_l1_zero_flag;       /* B: sets slice_reg_const BIT(16) */
+	int cabac_init_flag;        /* must be 0 for init_type = 2 - slice_type */
+	uint32_t max_num_merge_cand;/* 5 - five_minus_max_num_merge_cand (3 for our subset) */
 } hevc_slice_t;
 
 /* Human-readable reason for the most recent negative return, for diagnostics. */

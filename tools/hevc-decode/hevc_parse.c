@@ -362,9 +362,9 @@ int hevc_parse_slice(const uint8_t *nal, uint32_t len, int nal_type,
 	uint32_t nrl0_def = pps ? pps->num_ref_idx_l0_default_active_minus1 : 0;
 	uint32_t nrl1_def = pps ? pps->num_ref_idx_l1_default_active_minus1 : 0;
 
-	if (nal_type != HEVC_NAL_TRAIL_R && nal_type != HEVC_NAL_IDR_W_RADL &&
-	    nal_type != HEVC_NAL_IDR_N_LP)
-		return fail("slice NAL type outside {1,19,20} (out of subset)");
+	if (nal_type != HEVC_NAL_TRAIL_N && nal_type != HEVC_NAL_TRAIL_R &&
+	    nal_type != HEVC_NAL_IDR_W_RADL && nal_type != HEVC_NAL_IDR_N_LP)
+		return fail("slice NAL type outside {0,1,19,20} (out of subset)");
 
 	/* Guard: this subset's slice headers contain no emulation-prevention bytes,
 	 * so raw reading is valid and the bit position feeds data_byte_offset. */
@@ -414,6 +414,8 @@ int hevc_parse_slice(const uint8_t *nal, uint32_t len, int nal_type,
 		br_u(&b, 1);                       /* slice_sao_chroma_flag */
 	}
 
+	uint32_t nb_l0 = 1, nb_l1 = 0, mmc = 3;
+	int mvd_l1_zero = 0, cabac_init_flag = 0;
 	if (slice_type == 1 || slice_type == 0) {  /* P or B */
 		int is_b = (slice_type == 0);
 		uint32_t nrl0 = nrl0_def, nrl1 = nrl1_def;
@@ -422,17 +424,19 @@ int hevc_parse_slice(const uint8_t *nal, uint32_t len, int nal_type,
 			if (is_b)
 				nrl1 = br_ue(&b);
 		}
+		nb_l0 = nrl0 + 1;
+		nb_l1 = is_b ? nrl1 + 1 : 0;
 		if (lists_mod)
 			return fail("lists_modification_present (out of subset)");
 		if (is_b)
-			br_u(&b, 1);               /* mvd_l1_zero_flag */
+			mvd_l1_zero = (int)br_u(&b, 1);   /* mvd_l1_zero_flag */
 		if (cabac_init)
-			br_u(&b, 1);               /* cabac_init_flag */
+			cabac_init_flag = (int)br_u(&b, 1);
 		if (slice_tmvp)
 			return fail("slice temporal_mvp collocated syntax (out of subset)");
 		if ((wp && slice_type == 1) || (wbp && is_b))
 			parse_pred_weight_table(&b, nrl0 + 1, is_b, nrl1 + 1);
-		br_ue(&b);                         /* five_minus_max_num_merge_cand */
+		mmc = 5u - br_ue(&b);              /* 5 - five_minus_max_num_merge_cand */
 	}
 
 	int32_t qp_delta = br_se(&b);              /* slice_qp_delta */
@@ -460,5 +464,10 @@ int hevc_parse_slice(const uint8_t *nal, uint32_t len, int nal_type,
 	out->slice_qp = 26 + init_qp + qp_delta;
 	out->data_byte_offset = E / 8u + 1u;
 	out->bfnum = len - out->data_byte_offset;
+	out->nb_refs_l0 = nb_l0;
+	out->nb_refs_l1 = nb_l1;
+	out->mvd_l1_zero_flag = mvd_l1_zero;
+	out->cabac_init_flag = cabac_init_flag;
+	out->max_num_merge_cand = mmc;
 	return 0;
 }
