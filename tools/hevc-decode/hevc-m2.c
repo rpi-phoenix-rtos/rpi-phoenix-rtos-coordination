@@ -862,10 +862,32 @@ static int is_slice_nal(int t)
 	       t == HEVC_NAL_IDR_W_RADL || t == HEVC_NAL_IDR_N_LP;
 }
 
+/* Present one decoded frame: if a golden (ffmpeg NV12, display order) is given,
+ * verify this frame's luma against golden[poc] and return the bad-pixel count;
+ * then blit to fb (if present). poc = the frame's display index. */
+static uint32_t present_frame(uint8_t *fb, const fbmode_t *fbm, dma_buf_t *el, dma_buf_t *ec,
+			      uint32_t luma_stride, uint32_t chroma_stride,
+			      const uint8_t *golden, uint32_t golden_nframes, uint32_t poc)
+{
+	uint32_t bad = 0;
+	if (golden && poc < golden_nframes) {
+		/* NV12 golden: each frame is w*h luma + w*h/2 interleaved chroma; the Y
+		 * plane we compare is the first w*h bytes of the poc-th w*h*3/2 frame. */
+		size_t fstride = (size_t)g_frame_w * g_frame_h * 3u / 2u;
+		const uint8_t *yb = el->cpu, *g = golden + (size_t)poc * fstride;
+		for (uint32_t y = 0; y < g_frame_h; y++)
+			for (uint32_t x = 0; x < g_frame_w; x++)
+				if (yb[(x / 128u) * luma_stride + y * 128u + (x % 128u)] != g[y * g_frame_w + x]) bad++;
+	}
+	if (fb) fb_blit(fb, fbm->pitch, fbm->width, fbm->height, el->cpu, ec->cpu,
+			g_frame_w, g_frame_h, luma_stride, chroma_stride);
+	return bad;
+}
+
 int main(int argc, char **argv)
 {
 	setvbuf(stdout, NULL, _IONBF, 0);
-	if (argc < 2) { printf("usage: hevc-play <file.265>\n"); return 2; }
+	if (argc < 2) { printf("usage: hevc-play <file.265> [golden.nv12]\n"); return 2; }
 
 	uint32_t fsz = 0;
 	uint8_t *file = slurp_265(argv[1], &fsz);
@@ -909,6 +931,19 @@ int main(int argc, char **argv)
 	printf("hevc-play: %ux%u  %u CTBs (%ux%u)  %u frames%s\n", g_frame_w, g_frame_h,
 		g_ctb_w * g_ctb_h, g_ctb_w, g_ctb_h, nslices, sps.temporal_mvp_enabled ? " [tmvp]" : "");
 
+	/* Optional golden (ffmpeg NV12, display order) for bit-exact conformance verify. */
+	const uint8_t *golden = NULL; uint32_t golden_nframes = 0;
+	if (argc >= 3) {
+		uint32_t glen = 0;
+		uint8_t *gbuf = slurp_265(argv[2], &glen);   /* raw slurp (name is generic) */
+		if (!gbuf) { free(file); return 2; }
+		size_t fsz_nv12 = (size_t)g_frame_w * g_frame_h * 3u / 2u;
+		golden = gbuf; golden_nframes = (uint32_t)(glen / fsz_nv12);
+		printf("hevc-play: golden %s — %u frames @ %zu bytes/frame\n", argv[2], golden_nframes, fsz_nv12);
+		if (golden_nframes < nslices)
+			printf("hevc-play: WARNING golden has %u < %u frames; late frames unverified\n", golden_nframes, nslices);
+	}
+
 	volatile uint8_t *hevc, *intc;
 	int hrc = hevc_hw_up(&hevc, &intc);
 	if (hrc) { free(file); return hrc; }
@@ -939,7 +974,10 @@ int main(int argc, char **argv)
 	printf("hevc-play: buffers bs=%zu pu=%u coeff=%u luma_stride=%u cols=%u\n",
 		bs_size, pu_size, coeff_size, luma_stride, cols);
 
-	fbmode_t fbm; int fbfd = -1; uint8_t *fb = fb_open(&fbm, &fbfd);
+	/* Verify mode (golden given) runs HEADLESS — no fb_blit — so the known
+	 * display-path store-burst residual (README gotcha 8) can't confound the
+	 * pure decode bit-exact check. Normal playback (no golden) displays. */
+	fbmode_t fbm; int fbfd = -1; uint8_t *fb = golden ? NULL : fb_open(&fbm, &fbfd);
 
 	/* Play the sequence, looping so a periodic HDMI snapshot lands mid-clip. Each
 	 * loop restarts at the IDR (anchor DPB reset), so the rolling refs stay valid.
@@ -948,7 +986,7 @@ int main(int argc, char **argv)
 	 * (POC) order via a depth-2 reorder (emit the lower-POC of two held frames) —
 	 * correct for the max-1-consecutive-B subset. */
 	const int passes = (nslices >= 8) ? 2 : 8;
-	uint32_t shown = 0;
+	uint32_t shown = 0, total_bad = 0, verified = 0;
 	struct timespec ts25 = { 0, 40000000 };
 	int broke = 0;
 	for (int loop = 0; loop < passes && !broke; loop++) {
@@ -990,27 +1028,29 @@ int main(int argc, char **argv)
 				anew_l = ol; anew_c = oc; anew_poc = s.poc; parity ^= 1;
 			}
 
-			/* depth-2 display reorder: emit the lower-POC of {held, new}. */
+			/* depth-2 display reorder: emit (present) the lower-POC of {held, new}. */
 			if (held_valid) {
-				dma_buf_t *el, *ec;
-				if (s.poc < held_poc) { el = ol; ec = oc; }                  /* new is earlier */
-				else { el = held_l; ec = held_c; held_l = ol; held_c = oc; held_poc = s.poc; }
-				if (fb) fb_blit(fb, fbm.pitch, fbm.width, fbm.height, el->cpu, ec->cpu,
-						g_frame_w, g_frame_h, luma_stride, chroma_stride);
-				nanosleep(&ts25, NULL); shown++;
+				dma_buf_t *el, *ec; uint32_t el_poc;
+				if (s.poc < held_poc) { el = ol; ec = oc; el_poc = s.poc; }   /* new is earlier */
+				else { el = held_l; ec = held_c; el_poc = held_poc; held_l = ol; held_c = oc; held_poc = s.poc; }
+				total_bad += present_frame(fb, &fbm, el, ec, luma_stride, chroma_stride, golden, golden_nframes, el_poc);
+				nanosleep(&ts25, NULL); shown++; verified++;
 			} else { held_l = ol; held_c = oc; held_poc = s.poc; held_valid = 1; }
 			frame++;
 		}
 		if (!broke && held_valid) {   /* flush the last held frame */
-			if (fb) fb_blit(fb, fbm.pitch, fbm.width, fbm.height, held_l->cpu, held_c->cpu,
-					g_frame_w, g_frame_h, luma_stride, chroma_stride);
-			nanosleep(&ts25, NULL); shown++;
+			total_bad += present_frame(fb, &fbm, held_l, held_c, luma_stride, chroma_stride, golden, golden_nframes, held_poc);
+			nanosleep(&ts25, NULL); shown++; verified++;
 		}
 	}
 	if (fb) { munmap(fb, fbm.smemlen); close(fbfd); }
 	free(file);
+	if (golden) free((void *)golden);
 	printf("hevc-play: decoded+displayed %u frame-instances (%u unique frames)%s\n",
 		shown, nslices, fb ? " on HDMI" : " headless");
-	return shown ? 0 : 7;
+	if (golden)
+		printf("hevc-play: VERIFY %s — %u frame-instances checked, %u bad px total\n",
+			total_bad ? "MISMATCH" : "BIT-EXACT", verified, total_bad);
+	return shown ? (golden && total_bad ? 7 : 0) : 7;
 }
 #endif /* PLAY_TOOL */
