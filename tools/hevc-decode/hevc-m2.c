@@ -120,7 +120,7 @@ static void emit_prob(int slice_qp)
 
 /* Build the full phase-1 command buffer for the single IDR I-slice
  * (decode_slice last_slice path, h265.c:1149). Returns cmd_len. */
-static uint32_t build_command_buffer(addr_t bs_pa, uint32_t bfnum)
+static uint32_t build_command_buffer(addr_t bs_pa, uint32_t bfnum, int slice_qp)
 {
 	const uint32_t ctb = FRAME_LOG2_CTB;             /* log2 CTB size (6 => 64) */
 	const uint32_t ctb_w = FRAME_CTB_WIDTH;          /* pic width in CTBs (1) */
@@ -140,7 +140,7 @@ static uint32_t build_command_buffer(addr_t bs_pa, uint32_t bfnum)
 	p1(RPI_BFCONTROL, off + RPI_BFCONTROL_EMU);      /* V4L2 stream keeps emu-prevention bytes */
 
 	/* 3) write_prob (CABAC). */
-	emit_prob(FRAME_SLICE_QP);
+	emit_prob(slice_qp);
 
 	/* 4) program_slicecmds: SLICECMDS = num_msgs(0) + (sliceid(0)<<8) = 0. */
 	p1(RPI_SLICECMDS, 0);
@@ -190,7 +190,7 @@ static uint32_t build_command_buffer(addr_t bs_pa, uint32_t bfnum)
 	   slice_const |
 	   ((endx + 1 < ctb_w || !w_last ? cs : w_last) << 17) |
 	   ((endy + 1 < ctb_h || !h_last ? cs : h_last) << 24));
-	p1(RPI_QP, 6u * FRAME_BIT_DEPTH_LUMA_MINUS8 + FRAME_SLICE_QP); /* reset_qp_y */
+	p1(RPI_QP, 6u * FRAME_BIT_DEPTH_LUMA_MINUS8 + slice_qp); /* reset_qp_y */
 	p1(RPI_MODE, RPI_MODE_TILE |
 	   ((endx == ctb_w - 1) ? RPI_MODE_LASTCOL : 0) |
 	   ((endy == ctb_h - 1) ? RPI_MODE_LASTROW : 0));
@@ -311,12 +311,12 @@ static void __attribute__((unused)) hevc_show(const uint8_t *yb, const uint8_t *
 static int decode_one(volatile uint8_t *hevc, volatile uint8_t *intc,
 		      dma_buf_t *cmd, dma_buf_t *bs, dma_buf_t *pu, dma_buf_t *coeff,
 		      dma_buf_t *luma, dma_buf_t *chroma, const uint8_t *slice, uint32_t bfnum,
-		      uint32_t pu_stride, uint32_t coeff_stride, uint32_t luma_stride,
+		      int slice_qp, uint32_t pu_stride, uint32_t coeff_stride, uint32_t luma_stride,
 		      uint32_t chroma_stride, int verbose)
 {
 	memcpy(bs->cpu, slice, FRAME_DATA_BYTE_OFFSET + bfnum);
 	g_cmd = (uint64_t *)cmd->cpu;
-	uint32_t clen = build_command_buffer(bs->pa, bfnum);
+	uint32_t clen = build_command_buffer(bs->pa, bfnum, slice_qp);
 
 	/* Barrier: the bitstream + command buffer are written through the uncached
 	 * CPU mapping; ensure those writes have drained to DRAM before the block's DMA
@@ -429,10 +429,11 @@ int main(void)
 	printf("hevc-m2: playing %d-frame all-intra %ux%u clip%s\n", CLIP_NFRAMES,
 		FRAME_WIDTH, FRAME_HEIGHT, fb ? " on HDMI" : " (headless — no fb0)");
 	uint32_t shown = 0;
-	for (int loop = 0; loop < 6; loop++) {   /* replay so a periodic HDMI snapshot lands mid-clip */
+	const int passes = 6;                    /* replay so a periodic HDMI snapshot lands mid-clip */
+	for (int loop = 0; loop < passes; loop++) {
 		for (int f = 0; f < CLIP_NFRAMES; f++) {
 			int rc = decode_one(hevc, intc, &cmd, &bs, &pu, &coeff, &luma, &chroma,
-				clip_data + clip_frames[f].off, clip_frames[f].bfnum,
+				clip_data + clip_frames[f].off, clip_frames[f].bfnum, clip_frames[f].qp,
 				pu_stride, coeff_stride, luma_stride, chroma_stride, 0);
 			if (rc != 0) { printf("hevc-m2: frame %d decode failed rc=%d\n", f, rc); continue; }
 			if (fb) fb_blit(fb, fbm.pitch, fbm.width, fbm.height, luma.cpu, chroma.cpu,
@@ -442,14 +443,14 @@ int main(void)
 		}
 	}
 	if (fb) { munmap(fb, fbm.smemlen); close(fbfd); }
-	printf("hevc-m2: clip done — decoded+displayed %u/%u frames\n", shown, (unsigned)(2 * CLIP_NFRAMES));
+	printf("hevc-m2: clip done — decoded+displayed %u/%u frames\n", shown, (unsigned)(passes * CLIP_NFRAMES));
 	return shown ? 0 : 7;
 #else
 	/* Single frame: decode (verbose), verify bit-exact vs golden, display. */
 	printf("hevc-m2: buffers cmd_pa=0x%08llx bs_pa=0x%08llx\n",
 		(unsigned long long)cmd.pa, (unsigned long long)bs.pa);
 	int drc = decode_one(hevc, intc, &cmd, &bs, &pu, &coeff, &luma, &chroma,
-		slice_data, FRAME_DATA_LEN, pu_stride, coeff_stride, luma_stride, chroma_stride, 1);
+		slice_data, FRAME_DATA_LEN, FRAME_SLICE_QP, pu_stride, coeff_stride, luma_stride, chroma_stride, 1);
 	if (drc != 0) { printf("hevc-m2: decode FAILED rc=%d\n", drc); return 6; }
 	printf("hevc-m2: phase 2 done (ACTIVE2) — frame decoded\n");
 

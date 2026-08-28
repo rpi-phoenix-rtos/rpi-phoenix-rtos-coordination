@@ -7,9 +7,20 @@
 #
 # Usage: gen-clip-header.py <in.265> <W> <H> <GUARD> > out_clip.h
 # SPDX-License-Identifier: BSD-3-Clause
-import sys
+import sys, subprocess, re
 f265, W, H, guard = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), sys.argv[4]
 d = open(f265, 'rb').read()
+
+# Per-frame slice_qp: x265 rate-control varies QP per frame, and a wrong QP feeds
+# the wrong CABAC init -> entropy desync -> decode stall. Extract slice_qp_delta
+# per frame (in order) via ffmpeg trace_headers; slice_qp = 26 + slice_qp_delta
+# (init_qp_minus26 = 0 for these vectors).
+tr = subprocess.run(['ffmpeg', '-hide_banner', '-v', 'trace', '-i', f265,
+                     '-c', 'copy', '-bsf:v', 'trace_headers', '-f', 'null', '-'],
+                    capture_output=True, text=True).stderr
+qp_deltas = [int(m) for m in re.findall(r'slice_qp_delta\s+[01]+ = (-?\d+)', tr)]
+# trace_headers parses the stream once (the hevc decoder pass); take those in order.
+slice_qps = [26 + q for q in qp_deltas]
 
 # Split into NAL start-code boundaries; keep only IDR (type 19/20) NAL payloads.
 starts = []
@@ -63,9 +74,15 @@ print("static const unsigned char clip_data[%d] = {" % len(blob))
 for j in range(0, len(blob), 20):
     print("\t" + ",".join("0x%02x" % b for b in blob[j:j+20]) + ",")
 print("};")
-print("static const struct { unsigned int off, nal_len, bfnum; } clip_frames[%d] = {" % len(idx))
-for (o, nl, bf) in idx:
-    print("\t{%du,%du,%du}," % (o, nl, bf))
+# Align the QP list to the frame list (trace may emit one pass; if it emitted two,
+# take the trailing set). Fall back to 26 if counts still mismatch.
+if len(slice_qps) >= 2 * len(idx):
+    slice_qps = slice_qps[-len(idx):]
+if len(slice_qps) != len(idx):
+    slice_qps = (slice_qps + [26] * len(idx))[:len(idx)]
+print("static const struct { unsigned int off, nal_len, bfnum; int qp; } clip_frames[%d] = {" % len(idx))
+for i, (o, nl, bf) in enumerate(idx):
+    print("\t{%du,%du,%du,%d}," % (o, nl, bf, slice_qps[i]))
 print("};")
 print("#define slice_data (clip_data + clip_frames[0].off)")
 print("#define EXPECTED_Y(x, y) 0  /* unused in clip mode */")
