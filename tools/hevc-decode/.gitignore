@@ -10,3 +10,4 @@
 /hevc-ip
 /hevc-ipnw
 /hevc-ippp
+testdata/*.nv12
