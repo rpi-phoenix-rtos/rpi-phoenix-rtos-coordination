@@ -115,6 +115,12 @@ typedef struct {
 	 * lists (used=0 entries are future candidates; §8.3.2 marking). */
 	uint32_t rps_poc[16];
 	uint32_t rps_n;
+	/* Temporal-MVP (collocated-MV). The collocated picture is
+	 * RefPicList[collocated_from_l0?0:1][collocated_ref_idx] (resolved to POC). */
+	int slice_temporal_mvp_enabled;
+	int collocated_from_l0;
+	uint32_t collocated_ref_idx;
+	uint32_t collocated_poc;
 } hevc_slice_t;
 
 /* Human-readable reason for the most recent negative return, for diagnostics. */

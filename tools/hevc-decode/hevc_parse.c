@@ -440,6 +440,8 @@ int hevc_parse_slice(const uint8_t *nal, uint32_t len, int nal_type,
 
 	uint32_t nb_l0 = 1, nb_l1 = 0, mmc = 3;
 	int mvd_l1_zero = 0, cabac_init_flag = 0;
+	int coll_from_l0 = 1;          /* inferred 1 when not B (H.265 7.4.7.1) */
+	uint32_t coll_ref_idx = 0;     /* inferred 0 when absent */
 	if (slice_type == 1 || slice_type == 0) {  /* P or B */
 		int is_b = (slice_type == 0);
 		uint32_t nrl0 = nrl0_def, nrl1 = nrl1_def;
@@ -456,8 +458,16 @@ int hevc_parse_slice(const uint8_t *nal, uint32_t len, int nal_type,
 			mvd_l1_zero = (int)br_u(&b, 1);   /* mvd_l1_zero_flag */
 		if (cabac_init)
 			cabac_init_flag = (int)br_u(&b, 1);
-		if (slice_tmvp)
-			return fail("slice temporal_mvp collocated syntax (out of subset)");
+		if (slice_tmvp) {          /* collocated_from_l0_flag + collocated_ref_idx (7.3.6.1) */
+			if (is_b)
+				coll_from_l0 = (int)br_u(&b, 1);
+			if ((coll_from_l0 && nrl0 > 0) || (!coll_from_l0 && nrl1 > 0)) {
+				coll_ref_idx = br_ue(&b);
+				uint32_t nb_sel = coll_from_l0 ? (nrl0 + 1) : (nrl1 + 1);
+				if (coll_ref_idx >= nb_sel)
+					return fail("collocated_ref_idx >= active refs");
+			}
+		}
 		if ((wp && slice_type == 1) || (wbp && is_b))
 			parse_pred_weight_table(&b, nrl0 + 1, is_b, nrl1 + 1);
 		mmc = 5u - br_ue(&b);              /* 5 - five_minus_max_num_merge_cand */
@@ -522,6 +532,17 @@ int hevc_parse_slice(const uint8_t *nal, uint32_t len, int nal_type,
 		if (slice_type == 0)   /* B has L1 */
 			for (uint32_t i = 0; i < out->nb_refs_l1 && i < 16; i++)
 				out->ref_poc_l1[i] = nt1 ? t1[i % nt1] : poc;
+	}
+
+	/* Temporal-MVP: the collocated picture = RefPicList[from_l0?0:1][ref_idx]. */
+	out->slice_temporal_mvp_enabled = slice_tmvp;
+	out->collocated_from_l0 = coll_from_l0;
+	out->collocated_ref_idx = coll_ref_idx;
+	out->collocated_poc = 0;
+	if (slice_tmvp && slice_type != 2) {
+		const uint32_t *rl = coll_from_l0 ? out->ref_poc_l0 : out->ref_poc_l1;
+		uint32_t nsel = coll_from_l0 ? out->nb_refs_l0 : out->nb_refs_l1;
+		if (coll_ref_idx < nsel) out->collocated_poc = rl[coll_ref_idx];
 	}
 	return 0;
 }

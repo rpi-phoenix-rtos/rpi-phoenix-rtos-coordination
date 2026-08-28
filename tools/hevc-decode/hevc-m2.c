@@ -178,6 +178,14 @@ static void emit_prob(int slice_qp, int init_type)
  * code); PLAY_TOOL sets them from the parsed SPS. */
 static uint32_t g_frame_w, g_frame_h, g_ctb_w, g_ctb_h;
 
+/* Per-frame CONFIG2 + collocated-MV (temporal-MVP) state, set before each
+ * decode_one. Non-tmvp path keeps g_config2 = FRAME_CONFIG2 and the colMV
+ * fields 0 -> the CONFIG2/MV/COL/stride register writes are byte-identical to
+ * the pre-tmvp code (VC_ADDR(0)=VC_LEN(0)=0). g_mv_pa = THIS frame's colMV OUT
+ * (write, when a reference); g_col_pa = the collocated ref's colMV IN (read). */
+static uint32_t g_config2, g_colmv_stride;
+static addr_t g_mv_pa, g_col_pa;
+
 /* Build the full phase-1 command buffer for the single IDR I-slice
  * (decode_slice last_slice path, h265.c:1149). Returns cmd_len. */
 /* slice_const_arg: 0 => compute the I-slice const from FRAME_SLICE_TYPE; nonzero =>
@@ -435,17 +443,18 @@ static int decode_one(volatile uint8_t *hevc, volatile uint8_t *intc,
 		wr(hevc + RPI_REFBASE + roff + RPI_REF_CBASE, RPI_VC_ADDR(cp));
 		wr(hevc + RPI_REFBASE + roff + RPI_REF_CSTRIDE, RPI_VC_LEN(chroma_stride));
 	}
-	wr(hevc + RPI_CONFIG2, FRAME_CONFIG2);
+	wr(hevc + RPI_CONFIG2, g_config2);
 	wr(hevc + RPI_FRAMESIZE, (g_frame_h << 16) | g_frame_w);
 	wr(hevc + RPI_CURRPOC, currpoc);
-	/* Collocated-MV strides MUST be 0 when temporal-MVP is off (driver: colmv_stride
-	 * stays 0 unless setup_colmv runs, phase2_claimed writes 0). A non-zero stride with
-	 * base 0 engages the colMV path on an inter frame -> first MV txn targets addr 0 ->
-	 * AXI hang (I-frames are inert since they have no MVs). This was the P phase-2 hang. */
-	wr(hevc + RPI_COLSTRIDE, 0);
-	wr(hevc + RPI_MVSTRIDE, 0);
-	wr(hevc + RPI_MVBASE, 0);
-	wr(hevc + RPI_COLBASE, 0);
+	/* Collocated-MV (temporal-MVP): MVBASE = this frame's colMV OUT (write, set only
+	 * when a reference + CONFIG2 BIT15), COLBASE = the collocated ref's colMV IN (read,
+	 * set only on a tmvp slice + CONFIG2 BIT19). All zero when tmvp is off — a base of 0
+	 * with its CONFIG2 bit CLEAR is inert (no txn); a base of 0 with the bit SET would
+	 * target addr 0 -> AXI hang, so g_config2/g_mv_pa/g_col_pa are always set together. */
+	wr(hevc + RPI_COLSTRIDE, RPI_VC_LEN(g_colmv_stride));
+	wr(hevc + RPI_MVSTRIDE, RPI_VC_LEN(g_colmv_stride));
+	wr(hevc + RPI_MVBASE, RPI_VC_ADDR(g_mv_pa));
+	wr(hevc + RPI_COLBASE, RPI_VC_ADDR(g_col_pa));
 	hevc_dma_fence();                                 /* same ordering before the phase-2 doorbell */
 	wr(hevc + RPI_NUMROWS, g_ctb_h);                  /* STARTS PHASE 2 */
 	if (poll_active(intc, ACTIVE2_INT_SET, 1500) != 0) {
@@ -494,6 +503,7 @@ int main(void)
 	printf("hevc-m2: single-IDR %ux%u hardware decode\n", FRAME_WIDTH, FRAME_HEIGHT);
 	g_frame_w = FRAME_WIDTH; g_frame_h = FRAME_HEIGHT;
 	g_ctb_w = FRAME_CTB_WIDTH; g_ctb_h = FRAME_CTB_HEIGHT;
+	g_config2 = FRAME_CONFIG2;   /* build-time modes: no tmvp (colMV globals stay 0) */
 
 	int hrc = hevc_hw_up(&hevc, &intc);
 	if (hrc) return hrc;
@@ -848,10 +858,12 @@ static int play_frame(volatile uint8_t *hevc, volatile uint8_t *intc,
 
 	uint32_t slice_const = mmc | (nb0 << 4) | (nb1 << 8) | ((is_b ? 0u : 1u) << 12)
 			     | ((is_b && s->mvd_l1_zero_flag) ? (1u << 16) : 0u);
+	/* collocated_from_l0_flag (h265.c:747-751): 1 unless a tmvp B-slice sets it 0. */
+	int coll_l0 = !s->slice_temporal_mvp_enabled || !is_b || s->collocated_from_l0;
 	uint16_t msgs[2 + 2 * 16 + 2];
 	uint32_t m = 0;
 	msgs[m++] = (uint16_t)((is_b ? 3u : 2u) | (nb0 << 2) | (nb1 << 6)
-			     | ((uint32_t)no_backward << 10) | (mmc << 11) | (1u << 14)); /* coll_from_l0=1 (tmvp off) */
+			     | ((uint32_t)no_backward << 10) | (mmc << 11) | ((uint32_t)coll_l0 << 14));
 	for (uint32_t i = 0; i < nb0; i++) { msgs[m++] = (uint16_t)slot_l0[i]; msgs[m++] = (uint16_t)(s->ref_poc_l0[i] & 0xffffu); }
 	for (uint32_t i = 0; i < nb1; i++) { msgs[m++] = (uint16_t)slot_l1[i]; msgs[m++] = (uint16_t)(s->ref_poc_l1[i] & 0xffffu); }
 	msgs[m++] = 0x0200;   /* deblock (loop-filter-across-slices) */
@@ -1002,17 +1014,24 @@ int main(int argc, char **argv)
 	uint32_t pool_n = (sps.max_dec_pic_buffering ? sps.max_dec_pic_buffering : 4u) + 2u;
 	if (pool_n < 4u) pool_n = 4u;
 	if (pool_n > 16u) pool_n = 16u;
-	dma_buf_t pool_l[16] = {0}, pool_c[16] = {0};
+	dma_buf_t pool_l[16] = {0}, pool_c[16] = {0}, pool_mv[16] = {0};
+	/* Temporal-MVP: each DPB slot needs its own colMV buffer (setup_colmv,
+	 * h265.c:1424-1430). stride = ALIGN(w,64); picsize = stride*(ALIGN(h,64)>>4). */
+	int tmvp = sps.temporal_mvp_enabled;
+	uint32_t colmv_stride = (g_frame_w + 63u) & ~63u;
+	uint32_t colmv_picsize = colmv_stride * (((g_frame_h + 63u) & ~63u) >> 4);
 	int afail = dma_alloc(&cmd, 64u * 1024u) || dma_alloc(&bs, bs_size) ||
 		    dma_alloc(&pu, pu_size) || dma_alloc(&coeff, coeff_size);
-	for (uint32_t i = 0; i < pool_n && !afail; i++)
+	for (uint32_t i = 0; i < pool_n && !afail; i++) {
 		afail = dma_alloc(&pool_l[i], luma_stride * cols + 4096u) ||
 			dma_alloc(&pool_c[i], chroma_stride * cols + 4096u);
+		if (!afail && tmvp) afail = dma_alloc(&pool_mv[i], colmv_picsize);
+	}
 	if (afail) { printf("hevc-play: DMA alloc FAILED\n"); free(file); return 4; }
 	uint32_t pu_stride = (pu_size / g_ctb_h) & ~63u;
 	uint32_t coeff_stride = (coeff_size / g_ctb_h) & ~63u;
-	printf("hevc-play: buffers bs=%zu pu=%u coeff=%u luma_stride=%u cols=%u pool=%u reorder=%u\n",
-		bs_size, pu_size, coeff_size, luma_stride, cols, pool_n, sps.max_num_reorder);
+	printf("hevc-play: buffers bs=%zu pu=%u coeff=%u luma_stride=%u cols=%u pool=%u reorder=%u tmvp=%d colmv=%u\n",
+		bs_size, pu_size, coeff_size, luma_stride, cols, pool_n, sps.max_num_reorder, tmvp, tmvp ? colmv_picsize : 0);
 
 	/* Verify mode (golden given) runs HEADLESS — no fb_blit — so the known
 	 * display-path store-burst residual (README gotcha 8) can't confound the
@@ -1071,6 +1090,22 @@ int main(int argc, char **argv)
 						    refpa, slot_poc, &nslot, slot_l1) < 0) ref_ok = 0;
 			}
 			if (!ref_ok) { printf("hevc-play: frame %u POC %u — a reference POC not in DPB\n", frame, s.poc); broke = 1; break; }
+
+			/* Temporal-MVP colMV register state for this frame (globals consumed by
+			 * decode_one). tmvp off => FRAME_CONFIG2 + zeros (byte-identical). */
+			if (tmvp) {
+				g_colmv_stride = colmv_stride;
+				g_config2 = FRAME_CONFIG2;
+				g_mv_pa = 0; g_col_pa = 0;
+				if (is_ref_nal(n2.type)) { g_config2 |= (1u << 15); g_mv_pa = pool_mv[ob].pa; }  /* write own colMV */
+				if (s.slice_temporal_mvp_enabled) {
+					g_config2 |= (1u << 19);   /* read collocated colMV */
+					int ci = -1;
+					for (uint32_t d = 0; d < pool_n; d++) if (dpb[d].used && dpb[d].poc == s.collocated_poc) { ci = (int)d; break; }
+					if (ci < 0) { printf("hevc-play: frame %u POC %u — collocated POC %u not in DPB\n", frame, s.poc, s.collocated_poc); broke = 1; break; }
+					g_col_pa = pool_mv[ci].pa;
+				}
+			} else { g_config2 = FRAME_CONFIG2; g_colmv_stride = 0; g_mv_pa = 0; g_col_pa = 0; }
 
 			int rc = play_frame(hevc, intc, &cmd, &bs, &pu, &coeff, &n2, &s, ol, oc,
 				refpa, slot_l0, slot_l1, pu_stride, coeff_stride, luma_stride, chroma_stride);
