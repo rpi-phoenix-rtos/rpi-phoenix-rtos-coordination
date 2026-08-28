@@ -250,6 +250,41 @@ authoritative current state.
   (HW-only — does not repro in QEMU). If ZVA is safe, drop the
   `MEMSET_WITHOUT_ZVA` gate and the `TODO(TD-20)` marker.
 
+## TD-21: syscall table diverges from upstream (mutex syscalls kept append-only)
+
+- **Status:** PENDING (owner-directed; deferred to the next scheduled full rebuild)
+- **Owner directive (2026-08-28):** "I don't like the commit d9d09cc to the
+  kernel. It is done to save us time and effort short term. But it will only
+  bring confusion and unneeded difference between our port and upstream. Revert
+  this change and rebuild everything against the upstream syscall table. This
+  does not need to happen now — it should happen when a full rebuild is
+  scheduled due to some other reasons."
+- **Shortcut:** kernel `d9d09cc` moved `mutexConsistent` + `mutexPrioCeiling`
+  to the END of the `SYSCALLS(ID)` list in `include/syscalls.h` instead of
+  upstream's position (mid-list, right after `mutexUnlock`). Upstream's mid-list
+  insertion shifts the syscall numbers of every call below it; the append-only
+  layout keeps all existing numbers stable so the many PREBUILT static binaries
+  in the hand-maintained netboot NFS root (games/X11/python, not rebuilt each
+  cycle) don't invoke the wrong syscall.
+- **Why it's debt:** it is a permanent, silent divergence from the upstream
+  syscall numbering purely to avoid a rebuild — exactly the kind of unnecessary
+  fork-vs-upstream difference the owner wants eliminated.
+- **Marker:** `TODO(TD-21):` in `sources/phoenix-rtos-kernel/include/syscalls.h`
+  (the deviation comment above the `SYSCALLS(ID)` macro).
+- **Resolution requirements (do at the NEXT full rebuild, not standalone):**
+  1. Restore upstream order: put `ID(mutexConsistent)` + `ID(mutexPrioCeiling)`
+     back right after `ID(mutexUnlock)` and remove them from the end of the list
+     (i.e. revert d9d09cc's syscalls.h change); remove the deviation comment +
+     the `TODO(TD-21)` marker and this entry's `PENDING`→`RESOLVED`.
+  2. Rebuild EVERYTHING against the new syscall table — the image AND every
+     prebuilt binary in the netboot NFS root (games/X11/python/coreutils/etc.),
+     since their baked syscall numbers shift. A partial rebuild would leave
+     stale binaries calling the wrong syscall (silent misbehavior).
+  3. Boot-verify (netboot + the prebuilt-binary suite: a game, an X app, python)
+     to confirm no stale-syscall breakage.
+- **Trigger:** the next scheduled full clean rebuild for any other reason
+  (do not schedule a full rebuild solely for this).
+
 ## TD-01: SMP enable disabled on Cortex-A72
 
 - **Status:** ✅ RESOLVED 2026-05-21
