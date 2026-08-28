@@ -596,7 +596,9 @@ int main(void)
 #ifndef IPPP_STRESS
 		if (fb) fb_blit(fb, fbm.pitch, fbm.width, fbm.height, cl->cpu, cc->cpu,
 				FRAME_WIDTH, FRAME_HEIGHT, luma_stride, chroma_stride);
+#ifndef NO_FRAME_SLEEP
 		{ struct timespec ts = { 0, 40000000 }; nanosleep(&ts, NULL); }   /* ~25 fps */
+#endif
 #elif defined(STRESS_SLEEP)
 		/* Isolate the inter-frame idle: replicate the display loop's gap WITHOUT
 		 * fb0, to test whether idle duration alone (e.g. HEVC clock gating between
