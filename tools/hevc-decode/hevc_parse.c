@@ -246,7 +246,8 @@ static int sps_parse_internal(const uint8_t *nal, uint32_t len, hevc_sps_t *out)
 	br_ue(&b);  /* max_transform_hierarchy_depth_intra */
 	if (br_u(&b, 1))                           /* scaling_list_enabled_flag */
 		return fail("scaling_list_enabled (out of subset)");
-	br_u(&b, 1);                               /* amp_enabled_flag */
+	if (br_u(&b, 1))                           /* amp_enabled_flag */
+		return fail("amp_enabled (out of subset)");   /* SPS1 bakes AMP=0 */
 	out->sao_enabled = (int)br_u(&b, 1);       /* sample_adaptive_offset_enabled */
 	if (br_u(&b, 1))                           /* pcm_enabled_flag */
 		return fail("pcm_enabled (out of subset)");
@@ -257,6 +258,11 @@ static int sps_parse_internal(const uint8_t *nal, uint32_t len, hevc_sps_t *out)
 	if (br_u(&b, 1))                           /* long_term_ref_pics_present */
 		return fail("long_term_ref_pics_present (out of subset)");
 	out->temporal_mvp_enabled = (int)br_u(&b, 1);
+	/* strong_intra_smoothing is baked =1 into SPS1 bit21 + CONFIG2; a stream with
+	 * it disabled would decode with the wrong intra filter. Reject rather than
+	 * silently mis-handle (the struct doesn't expose it for a play-tool check). */
+	if (!br_u(&b, 1))                          /* strong_intra_smoothing_enabled_flag */
+		return fail("strong_intra_smoothing disabled (out of subset)");
 
 	if (b.overflow)
 		return fail("SPS parse ran past end of NAL");
