@@ -59,7 +59,15 @@ built-on-demand). So the Sat-night sequence is:
    netboot kernel + base NFS root (GLQuake, vkQuake, X, CLI).
 2. Build the extra games: STK (`build-supertuxkart*`), quake2 (yquake2), quake3 (quake3e) — their build scripts.
 3. Stage ALL demo games + launchers + assets into the netboot NFS root (the per-game deploy done this session).
-4. Boot-verify the whole demo set over netboot (HDMI snapshots) before Sunday.
+4. **★ CLEAR THE MESA SHADER CACHE:** `sudo rm -rf /srv/phoenix-rpi4-nfs-gcc16/.mesa-shader-cache` — MANDATORY
+   after any toolchain/Mesa change. The cache has NO build-id invalidation ([[project_v3d_shader_disk_cache]]); a
+   stale gcc-14-compiled blob loaded by the gcc-16 Mesa makes the GPU run wrong QPU binaries → **green-speckle
+   corruption** (HW-confirmed on STK's loading screen 2026-08-28; `rm -rf` → clean). The first boot after clearing
+   pays a one-time cold recompile (STK ~52 blobs); subsequent boots are warm+clean.
+5. **Do NOT restart nfs-server right before a boot** — the server's ~90 s post-restart GRACE period makes the Pi's
+   `exec` fail with `err=-34` (ERANGE) mid-boot. The export is fine as-is once games have run on it; only restart
+   nfsd if you hit genuine `NF4ERR_EXPIRED` staleness, then wait ≥120 s before booting.
+6. Boot-verify the whole demo set over netboot (HDMI snapshots) before Sunday.
 **Fri task:** script/checklist steps 2-3 so the Sat-night rebuild is one repeatable run (no ad-hoc per-game deploys).
 **Fri task:** end-to-end boot-verify each demo item renders on the FRESH gcc-16 kernel (startx, stk, rpi4-quake, …).
 

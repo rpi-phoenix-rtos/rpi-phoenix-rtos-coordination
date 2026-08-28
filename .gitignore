@@ -11,7 +11,9 @@ external/
 .firmware/
 .bootblobs/
 .buildroot/
+.buildroot-*/
 .toolchain/
+.toolchain-*/
 .env.local
 
 # Claude Code session state (worktrees, per-session settings)
