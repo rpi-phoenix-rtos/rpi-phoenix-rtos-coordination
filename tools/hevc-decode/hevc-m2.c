@@ -504,7 +504,7 @@ int main(void)
 	uint32_t luma_stride = ((FRAME_HEIGHT + 15u) & ~15u) * 128u;   /* NV12MT_COL128 */
 	uint32_t chroma_stride = luma_stride / 2u;
 	uint32_t cols = ((FRAME_WIDTH + 127u) & ~127u) / 128u;
-#if defined(CLIP_NFRAMES) || defined(IPPP_TEST)
+#if defined(CLIP_NFRAMES) || defined(IPPP_TEST) || defined(IPB_TEST)
 	size_t bs_size = 256u * 1024u;                    /* covers the largest clip frame NAL */
 #else
 	size_t bs_size = sizeof(slice_data) + 128u;
@@ -554,6 +554,67 @@ int main(void)
 	printf("hevc-m2: IP-TEST %s\n", y_bad == 0 ?
 		"P FRAME BIT-EXACT — inter-prediction works" : "P frame differs from golden");
 	return y_bad ? 7 : 0;
+	}
+#elif defined(IPB_TEST)
+	/* Minimal bidirectional B: decode I,P (anchors) then a B referencing BOTH the
+	 * past anchor (L0) and the future anchor (L1). With temporal-MVP off the phase-2
+	 * setup is identical to P; only phase-1 differs (B slice_const 0x0113 + a 7-msg
+	 * stream carrying L0 then L1 ref descriptors). Verify every frame bit-exact. */
+	{
+	dma_buf_t cl = {0}, cc = {0}, bl = {0}, bc = {0};   /* P anchor + B scratch */
+	if (dma_alloc(&cl, luma_stride * cols + 4096u) || dma_alloc(&cc, chroma_stride * cols + 4096u) ||
+	    dma_alloc(&bl, luma_stride * cols + 4096u) || dma_alloc(&bc, chroma_stride * cols + 4096u)) {
+		printf("hevc-m2: DMA alloc (IPB) FAILED\n"); return 4;
+	}
+	/* POC-keyed anchor slots: [0]=I (luma/chroma), [1]=P (cl/cc). */
+	struct { uint32_t poc; dma_buf_t *l, *c; } dpb[2] = {
+		{ ipb_frames[0].poc, &luma, &chroma },
+		{ ipb_frames[1].poc, &cl,   &cc },
+	};
+	uint32_t nbad = 0;
+	for (int f = 0; f < 3; f++) {
+		const struct ipb_frame *fr = &ipb_frames[f];
+		dma_buf_t *ol = &bl, *oc = &bc;                 /* B decodes to scratch */
+		if (fr->stype == 2) { ol = &luma; oc = &chroma; }
+		else if (fr->stype == 1) { ol = &cl; oc = &cc; }
+		uint32_t refpa[16][2];
+		for (int i = 0; i < 16; i++) { refpa[i][0] = (uint32_t)ol->pa; refpa[i][1] = (uint32_t)oc->pa; }
+		uint32_t slice_const = 0, nmsg = 0;
+		uint16_t msgs[7];
+		if (fr->stype == 1) {                            /* P: ref[0] = L0 anchor */
+			for (int k = 0; k < 2; k++) if (dpb[k].poc == fr->l0_poc) {
+				refpa[0][0] = (uint32_t)dpb[k].l->pa; refpa[0][1] = (uint32_t)dpb[k].c->pa; }
+			slice_const = 0x1013u; nmsg = 5;
+			msgs[0] = 0x5C06; msgs[1] = 0x0000; msgs[2] = (uint16_t)fr->l0_poc;
+			msgs[3] = 0x0200; msgs[4] = 0x0000;
+		} else if (fr->stype == 0) {                     /* B: slot0=L0(past), slot1=L1(future) */
+			for (int k = 0; k < 2; k++) {
+				if (dpb[k].poc == fr->l0_poc) { refpa[0][0] = (uint32_t)dpb[k].l->pa; refpa[0][1] = (uint32_t)dpb[k].c->pa; }
+				if (dpb[k].poc == fr->l1_poc) { refpa[1][0] = (uint32_t)dpb[k].l->pa; refpa[1][1] = (uint32_t)dpb[k].c->pa; }
+			}
+			slice_const = 0x0113u; nmsg = 7;
+			msgs[0] = 0x5847; msgs[1] = 0x0000; msgs[2] = (uint16_t)fr->l0_poc;
+			msgs[3] = 0x0001; msgs[4] = (uint16_t)fr->l1_poc; msgs[5] = 0x0200; msgs[6] = 0x0000;
+		}
+		int rc = decode_one(hevc, intc, &cmd, &bs, &pu, &coeff, ol, oc,
+			clip_blob + fr->off, fr->dbo, fr->bfnum, fr->qp,
+			slice_const, nmsg, (fr->stype == 2) ? NULL : msgs,
+			(fr->stype == 2) ? NULL : refpa, fr->poc,
+			pu_stride, coeff_stride, luma_stride, chroma_stride, 1);
+		const char *tn = fr->stype == 2 ? "I" : fr->stype == 1 ? "P" : "B";
+		if (rc != 0) { printf("hevc-m2: IPB frame %d %s POC %u decode FAILED rc=%d\n", f, tn, fr->poc, rc); return 7; }
+		const uint8_t *yb = ol->cpu, *g = ipb_golden_y + (size_t)f * FRAME_WIDTH * FRAME_HEIGHT;
+		uint32_t bad = 0;
+		for (uint32_t y = 0; y < FRAME_HEIGHT; y++)
+			for (uint32_t x = 0; x < FRAME_WIDTH; x++)
+				if (yb[(x / 128u) * luma_stride + y * 128u + (x % 128u)] != g[y * FRAME_WIDTH + x]) bad++;
+		printf("hevc-m2: IPB frame %d %s POC %u -> %s (%u bad px)\n", f, tn, fr->poc,
+			bad ? "MISMATCH" : "bit-exact", bad);
+		nbad += bad;
+	}
+	printf("hevc-m2: IPB-TEST %s\n", nbad == 0 ?
+		"B-FRAME BIT-EXACT — bidirectional inter works" : "B/anchors differ from golden");
+	return nbad ? 7 : 0;
 	}
 #elif defined(IPPP_TEST)
 	/* Rolling-DPB inter sequence: I + P... each P references the previous decoded
