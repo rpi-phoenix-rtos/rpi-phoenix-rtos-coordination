@@ -436,9 +436,10 @@ int hevc_parse_slice(const uint8_t *nal, uint32_t len, int nal_type,
 		if (tmvp_en)
 			slice_tmvp = (int)br_u(&b, 1); /* slice_temporal_mvp_enabled_flag */
 	}
+	int sao_luma = 0, sao_chroma = 0;
 	if (sao) {
-		br_u(&b, 1);                       /* slice_sao_luma_flag */
-		br_u(&b, 1);                       /* slice_sao_chroma_flag */
+		sao_luma = (int)br_u(&b, 1);       /* slice_sao_luma_flag */
+		sao_chroma = (int)br_u(&b, 1);     /* slice_sao_chroma_flag */
 	}
 
 	uint32_t nb_l0 = 1, nb_l1 = 0, mmc = 3;
@@ -538,6 +539,8 @@ int hevc_parse_slice(const uint8_t *nal, uint32_t len, int nal_type,
 	}
 
 	/* Temporal-MVP: the collocated picture = RefPicList[from_l0?0:1][ref_idx]. */
+	out->slice_sao_luma = sao_luma;
+	out->slice_sao_chroma = sao_chroma;
 	out->slice_temporal_mvp_enabled = slice_tmvp;
 	out->collocated_from_l0 = coll_from_l0;
 	out->collocated_ref_idx = coll_ref_idx;

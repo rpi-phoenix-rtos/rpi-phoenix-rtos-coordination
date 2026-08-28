@@ -121,6 +121,9 @@ typedef struct {
 	int collocated_from_l0;
 	uint32_t collocated_ref_idx;
 	uint32_t collocated_poc;
+	/* SAO: RPI_SLICE BIT14/BIT15 (the HW CABAC-decodes the per-CTB sao() params). */
+	int slice_sao_luma;
+	int slice_sao_chroma;
 } hevc_slice_t;
 
 /* Human-readable reason for the most recent negative return, for diagnostics. */

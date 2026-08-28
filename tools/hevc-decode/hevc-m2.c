@@ -213,7 +213,9 @@ static uint32_t build_command_buffer(addr_t bs_pa, uint32_t dbo, uint32_t bfnum,
 
 	/* 3) write_prob (CABAC). init_type from slice type: I=0; P/B (no cabac_init) = 2-slice_type.
 	 * slice_type lives in bits 12+ of slice_const_arg (P/B); I uses the computed I const => 0. */
-	int slice_type = slice_const_arg ? (int)((slice_const_arg >> 12) & 0xf) : (int)FRAME_SLICE_TYPE;
+	/* slice_type is the 2-bit field at bits 12-13 of slice_reg_const; mask 0x3, NOT
+	 * 0xf — bits 14/15 are SAO_LUMA/SAO_CHROMA and must not bleed into slice_type. */
+	int slice_type = slice_const_arg ? (int)((slice_const_arg >> 12) & 0x3) : (int)FRAME_SLICE_TYPE;
 	int init_type = (slice_type == 2 /*I*/) ? 0 : (2 - slice_type);
 	emit_prob(slice_qp, init_type);
 
@@ -844,10 +846,18 @@ static int play_frame(volatile uint8_t *hevc, volatile uint8_t *intc,
 		      uint32_t pu_stride, uint32_t coeff_stride,
 		      uint32_t luma_stride, uint32_t chroma_stride)
 {
-	if (s->slice_type == 2)   /* I: no refs */
+	/* SAO enable bits for RPI_SLICE (BIT14 luma, BIT15 chroma); the HW CABAC-decodes
+	 * the per-CTB sao() params. -DHEVC_NO_SAO forces them off (negative-control A/B). */
+#ifdef HEVC_NO_SAO
+	uint32_t sao_bits = 0;
+#else
+	uint32_t sao_bits = (s->slice_sao_luma ? (1u << 14) : 0u) | (s->slice_sao_chroma ? (1u << 15) : 0u);
+#endif
+	if (s->slice_type == 2)   /* I: no refs; pass an explicit I slice_const so SAO bits land */
 		return decode_one(hevc, intc, cmd, bs, pu, coeff, ol, oc,
 			nal->data, s->data_byte_offset, s->bfnum, s->slice_qp,
-			0, 0, NULL, NULL, s->poc, pu_stride, coeff_stride, luma_stride, chroma_stride, 0);
+			((uint32_t)FRAME_SLICE_TYPE << 12) | sao_bits, 0, NULL, NULL, s->poc,
+			pu_stride, coeff_stride, luma_stride, chroma_stride, 0);
 
 	int is_b = (s->slice_type == 0);
 	uint32_t nb0 = s->nb_refs_l0, nb1 = is_b ? s->nb_refs_l1 : 0, mmc = s->max_num_merge_cand;
@@ -857,7 +867,7 @@ static int play_frame(volatile uint8_t *hevc, volatile uint8_t *intc,
 	for (uint32_t i = 0; i < nb1; i++) if (s->ref_poc_l1[i] > s->poc) no_backward = 0;
 
 	uint32_t slice_const = mmc | (nb0 << 4) | (nb1 << 8) | ((is_b ? 0u : 1u) << 12)
-			     | ((is_b && s->mvd_l1_zero_flag) ? (1u << 16) : 0u);
+			     | ((is_b && s->mvd_l1_zero_flag) ? (1u << 16) : 0u) | sao_bits;
 	/* collocated_from_l0_flag (h265.c:747-751): 1 unless a tmvp B-slice sets it 0. */
 	int coll_l0 = !s->slice_temporal_mvp_enabled || !is_b || s->collocated_from_l0;
 	uint16_t msgs[2 + 2 * 16 + 2];
