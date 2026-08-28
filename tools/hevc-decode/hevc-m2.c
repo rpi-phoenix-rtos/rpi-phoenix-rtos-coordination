@@ -120,7 +120,7 @@ static void emit_prob(int slice_qp)
 
 /* Build the full phase-1 command buffer for the single IDR I-slice
  * (decode_slice last_slice path, h265.c:1149). Returns cmd_len. */
-static uint32_t build_command_buffer(addr_t bs_pa)
+static uint32_t build_command_buffer(addr_t bs_pa, uint32_t bfnum)
 {
 	const uint32_t ctb = FRAME_LOG2_CTB;             /* log2 CTB size (6 => 64) */
 	const uint32_t ctb_w = FRAME_CTB_WIDTH;          /* pic width in CTBs (1) */
@@ -135,7 +135,7 @@ static uint32_t build_command_buffer(addr_t bs_pa)
 	addr_t addr = bs_pa + FRAME_DATA_BYTE_OFFSET;
 	uint32_t off = (uint32_t)(addr & 63);
 	p1(RPI_BFBASE, RPI_VC_ADDR(addr));
-	p1(RPI_BFNUM, FRAME_DATA_LEN);
+	p1(RPI_BFNUM, bfnum);
 	p1(RPI_BFCONTROL, off + RPI_BFCONTROL_STOP);
 	p1(RPI_BFCONTROL, off + RPI_BFCONTROL_EMU);      /* V4L2 stream keeps emu-prevention bytes */
 
@@ -246,39 +246,114 @@ static inline uint8_t clip8(int v) { return v < 0 ? 0 : (v > 255 ? 255 : (uint8_
 /* Best-effort: unpack the SAND/COL128 decode, convert NV12->RGBA (BT.601 limited
  * range), and blit the frame centered onto /dev/fb0 (R8G8B8A8, the proven scanout
  * format). No-op if fb0 is unavailable — the headless pixel check already ran. */
-static void hevc_show(const uint8_t *yb, const uint8_t *cbb,
-		      uint32_t W, uint32_t H, uint32_t luma_stride, uint32_t chroma_stride)
+/* Blit one decoded frame (SAND/COL128 -> NV12 -> RGBA, BT.601) centered into a
+ * mapped R8G8B8A8 framebuffer. */
+static void fb_blit(uint8_t *fb, uint32_t pitch, uint32_t fbw, uint32_t fbh,
+		    const uint8_t *yb, const uint8_t *cbb, uint32_t W, uint32_t H,
+		    uint32_t luma_stride, uint32_t chroma_stride)
 {
-	int fd = open("/dev/fb0", O_RDWR);
-	if (fd < 0) { printf("hevc-m2: /dev/fb0 unavailable — skipping HDMI display\n"); return; }
-	fbmode_t m; memset(&m, 0, sizeof(m));
-	if (ioctl(fd, FB_GETMODE, &m) != 0 || m.framebuffer == 0 || m.bpp != 32) {
-		printf("hevc-m2: fb0 GETMODE failed — skipping display\n"); close(fd); return;
-	}
-	uint8_t *fb = mmap(NULL, m.smemlen, PROT_READ | PROT_WRITE,
-		MAP_PHYSMEM | MAP_UNCACHED | MAP_ANONYMOUS, -1, (off_t)m.framebuffer);
-	if (fb == MAP_FAILED) { printf("hevc-m2: fb mmap failed\n"); close(fd); return; }
-
-	uint32_t x0 = (m.width  > W) ? (m.width  - W) / 2u : 0;
-	uint32_t y0 = (m.height > H) ? (m.height - H) / 2u : 0;
-	for (uint32_t y = 0; y < H && (y0 + y) < m.height; y++) {
-		for (uint32_t x = 0; x < W && (x0 + x) < m.width; x++) {
+	uint32_t x0 = (fbw > W) ? (fbw - W) / 2u : 0;
+	uint32_t y0 = (fbh > H) ? (fbh - H) / 2u : 0;
+	for (uint32_t y = 0; y < H && (y0 + y) < fbh; y++) {
+		for (uint32_t x = 0; x < W && (x0 + x) < fbw; x++) {
 			int Y = yb[(x / 128u) * luma_stride + y * 128u + (x % 128u)];
 			uint32_t cxb = (x & ~1u), cy = y / 2u;   /* NV12: Cb at even col, Cr next */
 			int U = cbb[(cxb / 128u) * chroma_stride + cy * 128u + (cxb % 128u)];
 			int V = cbb[(((cxb + 1) / 128u)) * chroma_stride + cy * 128u + ((cxb + 1) % 128u)];
 			int C = Y - 16, D = U - 128, E = V - 128;
-			uint8_t *px = fb + (uint64_t)(y0 + y) * m.pitch + (uint64_t)(x0 + x) * 4u;
+			uint8_t *px = fb + (uint64_t)(y0 + y) * pitch + (uint64_t)(x0 + x) * 4u;
 			px[0] = clip8((298 * C + 409 * E + 128) >> 8);          /* R */
 			px[1] = clip8((298 * C - 100 * D - 208 * E + 128) >> 8);/* G */
 			px[2] = clip8((298 * C + 516 * D + 128) >> 8);          /* B */
 			px[3] = 0xff;                                           /* A */
 		}
 	}
-	printf("hevc-m2: displayed %ux%u decoded frame on fb0 (%ux%u) at (%u,%u)\n",
-		W, H, m.width, m.height, x0, y0);
+}
+
+/* Map /dev/fb0 (R8G8B8A8). Returns the mapping (and fills *m) or NULL. */
+static uint8_t *fb_open(fbmode_t *m, int *fd_out)
+{
+	int fd = open("/dev/fb0", O_RDWR);
+	if (fd < 0) { printf("hevc-m2: /dev/fb0 unavailable — skipping HDMI display\n"); return NULL; }
+	memset(m, 0, sizeof(*m));
+	if (ioctl(fd, FB_GETMODE, m) != 0 || m->framebuffer == 0 || m->bpp != 32) {
+		printf("hevc-m2: fb0 GETMODE failed — skipping display\n"); close(fd); return NULL;
+	}
+	uint8_t *fb = mmap(NULL, m->smemlen, PROT_READ | PROT_WRITE,
+		MAP_PHYSMEM | MAP_UNCACHED | MAP_ANONYMOUS, -1, (off_t)m->framebuffer);
+	if (fb == MAP_FAILED) { printf("hevc-m2: fb mmap failed\n"); close(fd); return NULL; }
+	*fd_out = fd;
+	return fb;
+}
+
+/* One-shot display of a single decoded frame (single-frame path; unused in clip mode). */
+static void __attribute__((unused)) hevc_show(const uint8_t *yb, const uint8_t *cbb,
+		      uint32_t W, uint32_t H, uint32_t luma_stride, uint32_t chroma_stride)
+{
+	fbmode_t m; int fd;
+	uint8_t *fb = fb_open(&m, &fd);
+	if (!fb) return;
+	fb_blit(fb, m.pitch, m.width, m.height, yb, cbb, W, H, luma_stride, chroma_stride);
+	printf("hevc-m2: displayed %ux%u decoded frame on fb0 (%ux%u)\n", W, H, m.width, m.height);
 	munmap(fb, m.smemlen);
 	close(fd);
+}
+
+/* Decode one all-intra frame (independent IDR I-slice) into luma/chroma using the
+ * pre-mapped block + pre-allocated buffers. Copies the slice NAL (data_byte_offset +
+ * bfnum bytes) into bs, builds + runs both HW phases. Returns 0 on success. */
+static int decode_one(volatile uint8_t *hevc, volatile uint8_t *intc,
+		      dma_buf_t *cmd, dma_buf_t *bs, dma_buf_t *pu, dma_buf_t *coeff,
+		      dma_buf_t *luma, dma_buf_t *chroma, const uint8_t *slice, uint32_t bfnum,
+		      uint32_t pu_stride, uint32_t coeff_stride, uint32_t luma_stride,
+		      uint32_t chroma_stride, int verbose)
+{
+	memcpy(bs->cpu, slice, FRAME_DATA_BYTE_OFFSET + bfnum);
+	g_cmd = (uint64_t *)cmd->cpu;
+	uint32_t clen = build_command_buffer(bs->pa, bfnum);
+
+	wr(hevc + RPI_PUWBASE, RPI_VC_ADDR(pu->pa));
+	wr(hevc + RPI_PUWSTRIDE, RPI_VC_LEN(pu_stride));
+	wr(hevc + RPI_COEFFWBASE, RPI_VC_ADDR(coeff->pa));
+	wr(hevc + RPI_COEFFWSTRIDE, RPI_VC_LEN(coeff_stride));
+	wr(hevc + RPI_CFNUM, clen);
+	wr(hevc + RPI_CFBASE, RPI_VC_ADDR(cmd->pa));       /* STARTS PHASE 1 */
+	if (poll_active(intc, ACTIVE1_INT_SET, 500) != 0) { if (verbose) printf("hevc-m2: PHASE 1 TIMEOUT\n"); return -5; }
+	uint32_t cfstatus = rd(hevc + RPI_CFSTATUS), cfnum = rd(hevc + RPI_CFNUM);
+	if (verbose) printf("hevc-m2: phase 1 done: CFSTATUS=%u CFNUM=%u %s\n", cfstatus, cfnum,
+		cfstatus == cfnum ? "[OK]" : "[MISMATCH]");
+	if (cfstatus != cfnum) {
+		if (verbose) { uint32_t st = rd(hevc + RPI_STATUS);
+			printf("hevc-m2: RPI_STATUS=0x%x (PU_EXH=%d COEFF_EXH=%d)\n", st,
+				!!(st & RPI_STATUS_PU_EXHAUSTED), !!(st & RPI_STATUS_COEFF_EXHAUSTED)); }
+		return -1;
+	}
+
+	wr(hevc + RPI_PURBASE, RPI_VC_ADDR(pu->pa));
+	wr(hevc + RPI_PURSTRIDE, RPI_VC_LEN(pu_stride));
+	wr(hevc + RPI_COEFFRBASE, RPI_VC_ADDR(coeff->pa));
+	wr(hevc + RPI_COEFFRSTRIDE, RPI_VC_LEN(coeff_stride));
+	wr(hevc + RPI_OUTYBASE, RPI_VC_ADDR(luma->pa));
+	wr(hevc + RPI_OUTCBASE, RPI_VC_ADDR(chroma->pa));
+	wr(hevc + RPI_OUTYSTRIDE, RPI_VC_LEN(luma_stride));
+	wr(hevc + RPI_OUTCSTRIDE, RPI_VC_LEN(chroma_stride));
+	for (uint32_t i = 0; i < 16; i++) {              /* IDR: all refs = current frame */
+		uint32_t roff = i * RPI_REFREGS_SIZE;
+		wr(hevc + RPI_REFBASE + roff + RPI_REF_YBASE, RPI_VC_ADDR(luma->pa));
+		wr(hevc + RPI_REFBASE + roff + RPI_REF_YSTRIDE, RPI_VC_LEN(luma_stride));
+		wr(hevc + RPI_REFBASE + roff + RPI_REF_CBASE, RPI_VC_ADDR(chroma->pa));
+		wr(hevc + RPI_REFBASE + roff + RPI_REF_CSTRIDE, RPI_VC_LEN(chroma_stride));
+	}
+	wr(hevc + RPI_CONFIG2, FRAME_CONFIG2);
+	wr(hevc + RPI_FRAMESIZE, (FRAME_HEIGHT << 16) | FRAME_WIDTH);
+	wr(hevc + RPI_CURRPOC, 0);
+	wr(hevc + RPI_COLSTRIDE, RPI_VC_LEN(luma_stride));
+	wr(hevc + RPI_MVSTRIDE, RPI_VC_LEN(luma_stride));
+	wr(hevc + RPI_MVBASE, 0);
+	wr(hevc + RPI_COLBASE, 0);
+	wr(hevc + RPI_NUMROWS, FRAME_CTB_HEIGHT);         /* STARTS PHASE 2 */
+	if (poll_active(intc, ACTIVE2_INT_SET, 500) != 0) { if (verbose) printf("hevc-m2: PHASE 2 TIMEOUT\n"); return -6; }
+	return 0;
 }
 
 int main(void)
@@ -304,73 +379,55 @@ int main(void)
 	wr(intc + ARG_IC_ICTRL, ACTIVE1_EN_SET | ACTIVE2_EN_SET);
 	wr(intc + ARG_IC_ICTRL, rd(intc + ARG_IC_ICTRL));
 
-	/* Buffers. pu = round_up_size(w*h/4), coeff = round_up_size(w*h). */
+	/* Buffers (allocated once; reused across frames in clip mode). */
 	uint32_t wh = FRAME_WIDTH * FRAME_HEIGHT;
 	uint32_t pu_size = round_up_size(wh / 4u), coeff_size = round_up_size(wh);
 	uint32_t luma_stride = ((FRAME_HEIGHT + 15u) & ~15u) * 128u;   /* NV12MT_COL128 */
 	uint32_t chroma_stride = luma_stride / 2u;
 	uint32_t cols = ((FRAME_WIDTH + 127u) & ~127u) / 128u;
-	if (dma_alloc(&cmd, 64u * 1024u) || dma_alloc(&bs, sizeof(slice_data) + 128u) ||
+#ifdef CLIP_NFRAMES
+	size_t bs_size = 256u * 1024u;                    /* covers the largest clip frame NAL */
+#else
+	size_t bs_size = sizeof(slice_data) + 128u;
+#endif
+	if (dma_alloc(&cmd, 64u * 1024u) || dma_alloc(&bs, bs_size) ||
 	    dma_alloc(&pu, pu_size) || dma_alloc(&coeff, coeff_size) ||
 	    dma_alloc(&luma, luma_stride * cols + 4096u) || dma_alloc(&chroma, chroma_stride * cols + 4096u)) {
 		printf("hevc-m2: DMA alloc FAILED\n"); return 4;
 	}
-	memcpy(bs.cpu, slice_data, sizeof(slice_data));  /* whole slice NAL payload; BF offset points at data */
-	g_cmd = (uint64_t *)cmd.cpu;
-	printf("hevc-m2: buffers cmd_pa=0x%08llx bs_pa=0x%08llx pu=%u coeff=%u luma=0x%08llx\n",
-		(unsigned long long)cmd.pa, (unsigned long long)bs.pa, pu_size, coeff_size,
-		(unsigned long long)luma.pa);
-
-	/* Build phase-1 command buffer. */
-	uint32_t clen = build_command_buffer(bs.pa);
-	printf("hevc-m2: command buffer built: %u entries\n", clen);
-
-	/* Phase-1 kick. */
 	uint32_t pu_stride = (pu_size / FRAME_CTB_HEIGHT) & ~63u;
 	uint32_t coeff_stride = (coeff_size / FRAME_CTB_HEIGHT) & ~63u;
-	wr(hevc + RPI_PUWBASE, RPI_VC_ADDR(pu.pa));
-	wr(hevc + RPI_PUWSTRIDE, RPI_VC_LEN(pu_stride));
-	wr(hevc + RPI_COEFFWBASE, RPI_VC_ADDR(coeff.pa));
-	wr(hevc + RPI_COEFFWSTRIDE, RPI_VC_LEN(coeff_stride));
-	wr(hevc + RPI_CFNUM, clen);
-	wr(hevc + RPI_CFBASE, RPI_VC_ADDR(cmd.pa));       /* STARTS PHASE 1 */
+	printf("hevc-m2: buffers pu=%u coeff=%u luma_stride=%u cols=%u\n", pu_size, coeff_size, luma_stride, cols);
 
-	if (poll_active(intc, ACTIVE1_INT_SET, 500) != 0) { printf("hevc-m2: PHASE 1 TIMEOUT (no ACTIVE1)\n"); return 5; }
-	uint32_t cfstatus = rd(hevc + RPI_CFSTATUS), cfnum = rd(hevc + RPI_CFNUM);
-	printf("hevc-m2: phase 1 done: CFSTATUS=%u CFNUM=%u %s\n", cfstatus, cfnum,
-		cfstatus == cfnum ? "[OK]" : "[MISMATCH]");
-	if (cfstatus != cfnum) {
-		uint32_t st = rd(hevc + RPI_STATUS);
-		printf("hevc-m2: RPI_STATUS=0x%x (PU_EXH=%d COEFF_EXH=%d)\n", st,
-			!!(st & RPI_STATUS_PU_EXHAUSTED), !!(st & RPI_STATUS_COEFF_EXHAUSTED));
+#ifdef CLIP_NFRAMES
+	/* All-intra video playback: decode + display each frame in sequence. Two passes so
+	 * the periodic HDMI snapshot is very likely to land on a mid-clip frame (= motion). */
+	fbmode_t fbm; int fbfd = -1; uint8_t *fb = fb_open(&fbm, &fbfd);
+	printf("hevc-m2: playing %d-frame all-intra %ux%u clip%s\n", CLIP_NFRAMES,
+		FRAME_WIDTH, FRAME_HEIGHT, fb ? " on HDMI" : " (headless — no fb0)");
+	uint32_t shown = 0;
+	for (int loop = 0; loop < 6; loop++) {   /* replay so a periodic HDMI snapshot lands mid-clip */
+		for (int f = 0; f < CLIP_NFRAMES; f++) {
+			int rc = decode_one(hevc, intc, &cmd, &bs, &pu, &coeff, &luma, &chroma,
+				clip_data + clip_frames[f].off, clip_frames[f].bfnum,
+				pu_stride, coeff_stride, luma_stride, chroma_stride, 0);
+			if (rc != 0) { printf("hevc-m2: frame %d decode failed rc=%d\n", f, rc); continue; }
+			if (fb) fb_blit(fb, fbm.pitch, fbm.width, fbm.height, luma.cpu, chroma.cpu,
+					FRAME_WIDTH, FRAME_HEIGHT, luma_stride, chroma_stride);
+			shown++;
+			{ struct timespec ts = { 0, 40000000 }; nanosleep(&ts, NULL); }  /* ~25 fps */
+		}
 	}
-
-	/* Phase-2 program + kick. */
-	wr(hevc + RPI_PURBASE, RPI_VC_ADDR(pu.pa));
-	wr(hevc + RPI_PURSTRIDE, RPI_VC_LEN(pu_stride));
-	wr(hevc + RPI_COEFFRBASE, RPI_VC_ADDR(coeff.pa));
-	wr(hevc + RPI_COEFFRSTRIDE, RPI_VC_LEN(coeff_stride));
-	wr(hevc + RPI_OUTYBASE, RPI_VC_ADDR(luma.pa));
-	wr(hevc + RPI_OUTCBASE, RPI_VC_ADDR(chroma.pa));
-	wr(hevc + RPI_OUTYSTRIDE, RPI_VC_LEN(luma_stride));
-	wr(hevc + RPI_OUTCSTRIDE, RPI_VC_LEN(chroma_stride));
-	for (uint32_t i = 0; i < 16; i++) {              /* IDR: all refs = current frame */
-		uint32_t roff = i * RPI_REFREGS_SIZE;
-		wr(hevc + RPI_REFBASE + roff + RPI_REF_YBASE, RPI_VC_ADDR(luma.pa));
-		wr(hevc + RPI_REFBASE + roff + RPI_REF_YSTRIDE, RPI_VC_LEN(luma_stride));
-		wr(hevc + RPI_REFBASE + roff + RPI_REF_CBASE, RPI_VC_ADDR(chroma.pa));
-		wr(hevc + RPI_REFBASE + roff + RPI_REF_CSTRIDE, RPI_VC_LEN(chroma_stride));
-	}
-	wr(hevc + RPI_CONFIG2, FRAME_CONFIG2);
-	wr(hevc + RPI_FRAMESIZE, (FRAME_HEIGHT << 16) | FRAME_WIDTH);
-	wr(hevc + RPI_CURRPOC, 0);                        /* IDR POC 0 */
-	wr(hevc + RPI_COLSTRIDE, RPI_VC_LEN(luma_stride));
-	wr(hevc + RPI_MVSTRIDE, RPI_VC_LEN(luma_stride));
-	wr(hevc + RPI_MVBASE, 0);                         /* temporal-mvp off */
-	wr(hevc + RPI_COLBASE, 0);
-	wr(hevc + RPI_NUMROWS, FRAME_CTB_HEIGHT);         /* STARTS PHASE 2 */
-
-	if (poll_active(intc, ACTIVE2_INT_SET, 500) != 0) { printf("hevc-m2: PHASE 2 TIMEOUT (no ACTIVE2)\n"); return 6; }
+	if (fb) { munmap(fb, fbm.smemlen); close(fbfd); }
+	printf("hevc-m2: clip done — decoded+displayed %u/%u frames\n", shown, (unsigned)(2 * CLIP_NFRAMES));
+	return shown ? 0 : 7;
+#else
+	/* Single frame: decode (verbose), verify bit-exact vs golden, display. */
+	printf("hevc-m2: buffers cmd_pa=0x%08llx bs_pa=0x%08llx\n",
+		(unsigned long long)cmd.pa, (unsigned long long)bs.pa);
+	int drc = decode_one(hevc, intc, &cmd, &bs, &pu, &coeff, &luma, &chroma,
+		slice_data, FRAME_DATA_LEN, pu_stride, coeff_stride, luma_stride, chroma_stride, 1);
+	if (drc != 0) { printf("hevc-m2: decode FAILED rc=%d\n", drc); return 6; }
 	printf("hevc-m2: phase 2 done (ACTIVE2) — frame decoded\n");
 
 	/* M4 verification: unpack SAND/COL128 -> linear and compare to the golden
@@ -409,4 +466,5 @@ int main(void)
 		"EXACT MATCH — HW decode == ffmpeg SW decode (bit-exact)" :
 		"decoded but pixels differ from golden (see counts above)");
 	return exact ? 0 : 7;
+#endif
 }
