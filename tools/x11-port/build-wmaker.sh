@@ -35,7 +35,13 @@ PREFIX=/tmp/x11-phoenix          # shared X11 prefix — READ-ONLY here
 DEPS=/tmp/wmaker-deps            # our isolated build prefix (X11 closure + font stack)
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SRC="$HERE/src"
-NFS="${SHOWCASE_STAGE_DIR:-/srv/phoenix-rpi4-nfs}"
+# Default to the fsid=0 NFSv4 pseudo-root actually served (the export the Pi
+# mounts as "/"), matching scripts/sync-netboot-tree.sh — hardcoding the old
+# /srv/phoenix-rpi4-nfs default silently staged wmaker+util (incl. wmsetbg) to
+# the wrong tree when the served export was renamed (e.g. the -gcc16 root), so
+# the desktop booted without wmsetbg -> black root. SHOWCASE_STAGE_DIR still wins.
+_fsid0_export="$(awk '$0 ~ /fsid=0/ && $1 ~ /^\// { print $1; exit }' /etc/exports 2>/dev/null || true)"
+NFS="${SHOWCASE_STAGE_DIR:-${_fsid0_export:-/srv/phoenix-rpi4-nfs}}"
 ART=${ROOT}/artifacts/x11
 
 # wmaker is installed under --prefix=/ so its compiled-in data paths
