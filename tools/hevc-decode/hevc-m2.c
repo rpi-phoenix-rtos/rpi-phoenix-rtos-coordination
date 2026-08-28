@@ -209,19 +209,25 @@ static void *map_block(uint32_t base, uint32_t size)
 		MAP_DEVICE | MAP_UNCACHED | MAP_PHYSMEM | MAP_ANONYMOUS, -1, (off_t)base);
 }
 
+#define VC_GET_CLOCK_STATE 0x00030001u
 static int hevc_clock_enable(uint32_t *rate_out)
 {
-	uint32_t in[3], out[2] = {0, 0}, max_rate = 0, set_rate = 0, cfg = 0;
+	uint32_t in[3], out[2] = {0, 0}, max_rate = 0, set_rate = 0, cfg = 0, st = 0, st2 = 0;
 	in[0] = RPI_FIRMWARE_HEVC_CLK_ID;
 	if (vcmbox_call(VC_GET_MAX_CLOCK_RATE, 8u, in, 1u, out, 2u) != 0) return -1;
 	max_rate = out[1]; if (max_rate == 0u) return -1;
 	in[0] = RPI_FIRMWARE_HEVC_CLK_ID; in[1] = 1u;
 	if (vcmbox_call(VC_SET_CLOCK_STATE, 8u, in, 2u, out, 2u) != 0) return -1;
+	st = out[1];  /* bit0 = on/off, bit1 = "clock not present" */
 	in[0] = RPI_FIRMWARE_HEVC_CLK_ID; in[1] = max_rate; in[2] = 0u;
 	if (vcmbox_call(VC_SET_CLOCK_RATE, 12u, in, 3u, out, 2u) != 0) return -1;
 	set_rate = out[1];
 	in[0] = RPI_FIRMWARE_HEVC_CLK_ID;
+	if (vcmbox_call(VC_GET_CLOCK_STATE, 8u, in, 1u, out, 2u) == 0) st2 = out[1];
+	in[0] = RPI_FIRMWARE_HEVC_CLK_ID;
 	if (vcmbox_call(VC_GET_CLOCK_RATE, 8u, in, 1u, out, 2u) == 0) cfg = out[1];
+	printf("hevc-m2: clock SET_STATE->0x%x GET_STATE->0x%x (on=%d present=%d) rate set=%u cfg=%u\n",
+		st, st2, (st2 & 1u), !(st2 & 2u), set_rate, cfg);
 	*rate_out = cfg ? cfg : set_rate;
 	return (*rate_out == 0u) ? -1 : 0;
 }
@@ -312,6 +318,14 @@ static int decode_one(volatile uint8_t *hevc, volatile uint8_t *intc,
 	g_cmd = (uint64_t *)cmd->cpu;
 	uint32_t clen = build_command_buffer(bs->pa, bfnum);
 
+	/* Barrier: the bitstream + command buffer are written through the uncached
+	 * CPU mapping; ensure those writes have drained to DRAM before the block's DMA
+	 * reads them at the CFBASE kick below. Without this the block can read a stale
+	 * command buffer -> non-deterministic phase-1/phase-2 stalls. (The original
+	 * inline code got away without it because printf()s between build and kick
+	 * provided incidental drain delay; the refactor removed them.) */
+	__sync_synchronize();
+
 	wr(hevc + RPI_PUWBASE, RPI_VC_ADDR(pu->pa));
 	wr(hevc + RPI_PUWSTRIDE, RPI_VC_LEN(pu_stride));
 	wr(hevc + RPI_COEFFWBASE, RPI_VC_ADDR(coeff->pa));
@@ -352,7 +366,16 @@ static int decode_one(volatile uint8_t *hevc, volatile uint8_t *intc,
 	wr(hevc + RPI_MVBASE, 0);
 	wr(hevc + RPI_COLBASE, 0);
 	wr(hevc + RPI_NUMROWS, FRAME_CTB_HEIGHT);         /* STARTS PHASE 2 */
-	if (poll_active(intc, ACTIVE2_INT_SET, 500) != 0) { if (verbose) printf("hevc-m2: PHASE 2 TIMEOUT\n"); return -6; }
+	if (poll_active(intc, ACTIVE2_INT_SET, 1500) != 0) {
+		if (verbose) {
+			uint32_t ic = rd(intc + ARG_IC_ICTRL), st = rd(hevc + RPI_STATUS);
+			const uint8_t *y = luma->cpu; uint32_t nz = 0;
+			for (uint32_t i = 0; i < 4096; i++) if (y[i]) nz++;
+			printf("hevc-m2: PHASE 2 TIMEOUT ICTRL=0x%08x STATUS=0x%x out_nz=%u pu_pa=0x%08llx coeff_pa=0x%08llx luma_pa=0x%08llx\n",
+				ic, st, nz, (unsigned long long)pu->pa, (unsigned long long)coeff->pa, (unsigned long long)luma->pa);
+		}
+		return -6;
+	}
 	return 0;
 }
 
