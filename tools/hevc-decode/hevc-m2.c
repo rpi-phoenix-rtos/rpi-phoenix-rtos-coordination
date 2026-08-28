@@ -61,6 +61,18 @@
 static inline uint32_t rd(const volatile void *a) { return *(const volatile uint32_t *)a; }
 static inline void wr(volatile void *a, uint32_t v) { *(volatile uint32_t *)a = v; }
 
+/* Full system barrier before a DMA doorbell. The command buffer + bitstream are
+ * written through a Normal-Non-Cacheable CPU mapping; the rpivid block fetches
+ * them as a NON-COHERENT SYSTEM (outer) DMA master. __sync_synchronize() emits
+ * only `dmb ish` (inner-shareable), which does NOT order those NC writes against a
+ * system-domain device before the doorbell store launches the fetch. `dsb sy`
+ * waits for all prior accesses to complete to the endpoint. Without it, a heavy
+ * Normal-NC store burst just before a frame (e.g. fb_blit's ~500K framebuffer
+ * stores during video playback) leaves the decode inputs still in the store/
+ * write-combine buffers when the block starts reading -> stale input -> an
+ * intermittent wrong frame that then poisons the ping-pong reference chain. */
+static inline void hevc_dma_fence(void) { __asm__ volatile("dsb sy" ::: "memory"); }
+
 /* ---- Contiguous, uncached DMA buffer (M1 idiom). ---- */
 typedef struct { void *cpu; addr_t pa; size_t size; } dma_buf_t;
 
@@ -375,17 +387,19 @@ static int decode_one(volatile uint8_t *hevc, volatile uint8_t *intc,
 		      uint32_t pu_stride, uint32_t coeff_stride, uint32_t luma_stride,
 		      uint32_t chroma_stride, int verbose)
 {
+	/* Drain any prior Normal-NC store burst (notably fb_blit's ~500K framebuffer
+	 * writes during playback) to the endpoint BEFORE writing this frame's inputs,
+	 * so a backed-up store/write-combine buffer can't interleave with the bitstream
+	 * memcpy / command-buffer build below. */
+	hevc_dma_fence();
 	memcpy(bs->cpu, slice, dbo + bfnum);
 	g_cmd = (uint64_t *)cmd->cpu;
 	uint32_t clen = build_command_buffer(bs->pa, dbo, bfnum, slice_qp, slice_const, num_msgs, msgs);
 
-	/* Barrier: the bitstream + command buffer are written through the uncached
-	 * CPU mapping; ensure those writes have drained to DRAM before the block's DMA
-	 * reads them at the CFBASE kick below. Without this the block can read a stale
-	 * command buffer -> non-deterministic phase-1/phase-2 stalls. (The original
-	 * inline code got away without it because printf()s between build and kick
-	 * provided incidental drain delay; the refactor removed them.) */
-	__sync_synchronize();
+	/* Order the NC command-buffer/bitstream writes above so the block observes them
+	 * before the CFBASE doorbell fetches them (see hevc_dma_fence: dsb sy, not the
+	 * inner-shareable dmb ish that __sync_synchronize would emit). */
+	hevc_dma_fence();
 
 	wr(hevc + RPI_PUWBASE, RPI_VC_ADDR(pu->pa));
 	wr(hevc + RPI_PUWSTRIDE, RPI_VC_LEN(pu_stride));
@@ -432,6 +446,7 @@ static int decode_one(volatile uint8_t *hevc, volatile uint8_t *intc,
 	wr(hevc + RPI_MVSTRIDE, 0);
 	wr(hevc + RPI_MVBASE, 0);
 	wr(hevc + RPI_COLBASE, 0);
+	hevc_dma_fence();                                 /* same ordering before the phase-2 doorbell */
 	wr(hevc + RPI_NUMROWS, g_ctb_h);                  /* STARTS PHASE 2 */
 	if (poll_active(intc, ACTIVE2_INT_SET, 1500) != 0) {
 		if (verbose) {

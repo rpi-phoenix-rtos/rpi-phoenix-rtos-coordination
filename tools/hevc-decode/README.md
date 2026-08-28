@@ -52,8 +52,12 @@ $GCC -O2 -static -Wall -Wextra -std=gnu11 -I$VCM -Itools/hevc-decode \
 
 ## Hard-won gotchas (each cost a debug cycle)
 
-1. **DMA ordering** — `__sync_synchronize()` after writing the uncached command-buffer/
-   bitstream, BEFORE the CFBASE kick; else the block DMA-reads a stale buffer → stall.
+1. **DMA doorbell ordering needs `dsb sy`, not `dmb ish`** — after writing the uncached
+   command-buffer/bitstream, before the CFBASE/NUMROWS kick, use a full system barrier
+   (`hevc_dma_fence()` = `dsb sy`), not `__sync_synchronize()` (which emits inner-shareable
+   `dmb ish`). The rpivid is a non-coherent SYSTEM DMA master outside the CPU inner domain,
+   so `dmb ish` does not order the Normal-NC input writes against it; else the block reads a
+   stale buffer → stall / wrong decode.
 2. **Per-frame QP** — x265 rate-control varies `slice_qp` per frame; a wrong QP feeds the
    wrong CABAC init table → entropy desync → stall (CFSTATUS one-short).
 3. **CABAC init_type** = `2 − slice_type` (I=0, P=1, B=2) — needs the full `prob_init[3]`.
@@ -65,18 +69,23 @@ $GCC -O2 -static -Wall -Wextra -std=gnu11 -I$VCM -Itools/hevc-decode \
 6. **x265 `wpp=0`** — WPP auto-enables past ~256px wide; the harness is single-tile/no-WPP.
 7. **Output is SAND / NV12_COL128 tiled** — unpack (pixel(x,y)=buf[(x/128)*stride + y*128 +
    x%128]) before any pixel compare / display.
-8. **Intermittent inter (P) corruption is gated on INTER-FRAME IDLE, not the decoder.**
-   Measured this session: **back-to-back decode is 600/600 bit-exact** (`-DIPPP_STRESS`,
-   no display, no sleep) — the decoder is reliable. Insert a 40 ms inter-frame gap and
-   ~1% of iterations corrupt; insert `fb_blit` + 40 ms (the real video-playback loop) and
-   ~25–35% corrupt — frame 0 (I) always exact, errors compounding down the P-chain.
-   Reproduces on the pristine pre-M3 engine (not the M3 refactor). It is **NOT** a
-   phase-1→phase-2 PU/COEFF drain: an `RPI_STATUS` read-back + `__sync_synchronize()`
-   there did not help (13/15 vs 10/15, noise). Leading hypothesis: the HEVC clock (set
-   once via the VideoCore mailbox at startup) is gated/scaled by firmware during idle, so
-   a decode starting mid-transition mis-runs. Repro with the `IPPP_STRESS` harness
-   (`-DIPPP_STRESS`, optional `-DSTRESS_SLEEP` / `-DSTRESS_SLEEP_MS=N`); a fix likely
-   re-asserts the HEVC clock per frame.
+8. **Residual intermittent inter (P) corruption during on-HDMI playback (OPEN).** The
+   decoder is reliable in isolation: **600/600 bit-exact back-to-back** (`-DIPPP_STRESS`,
+   no display). The corruption appears only when `fb_blit` runs between frames (real video
+   playback): the first corrupt frame fails its **own** golden (decode-input corruption),
+   then errors compound down the P-chain; frame 0 (I) is always exact. Systematically
+   REFUTED: phase-1→phase-2 PU/COEFF drain (RPI_STATUS read-back, no help); idle-gap
+   duration (40/100/200 ms with no fb all clean); framebuffer/DMA physical overlap (PAs
+   disjoint); MAP_UNCACHED cacheable alias (pmap: Normal-NC, no alias; Linux uses no
+   `dma_sync`); buffer-specific effect (a scratch-buffer `fb_blit` corrupts identically →
+   it's the fb *write* burst, not touching the output). Upgrading the pre-doorbell barrier
+   to `dsb sy` (gotcha 1) + a fence before the input memcpy helped only marginally
+   (~78% → ~90% pass, within n=24 noise) — so the residual is a deeper SoC memory-fabric /
+   write-combine interaction between `fb_blit`'s heavy Normal-NC store burst and the
+   subsequent decode, not closed by the architecturally-correct barrier. Repro with the
+   `IPPP_STRESS` harness (`-DIPPP_STRESS`, `-DSTRESS_SLEEP[_MS]`, `-DNO_FRAME_SLEEP`).
+   Impact: core decode + the `hevc-play` file player work; on-HDMI playback shows an
+   occasional glitched frame (~10%).
 
 ## M3: runtime `.265` file player (done)
 
