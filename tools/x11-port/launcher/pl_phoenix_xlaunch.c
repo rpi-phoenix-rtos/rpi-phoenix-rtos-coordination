@@ -405,7 +405,11 @@ int main(int argc, char *argv[])
 			static char *const clk_geom[2]  = { "-geometry", "164x164+1120+110" };
 			static char *const calc_geom[2] = { "-geometry", "+1120+330" };
 			static char *const eyes_geom[2] = { "-geometry", "220x160+1120+720" };
-			resolve_client(cp_bufs[0], sizeof(cp_bufs[0]), prefix, "twm");
+			/* Window Maker (not twm) as the WM: twm cannot XOpenDisplay against the
+			 * current Xphoenix (fails "unable to open display" even freshly built,
+			 * while WindowMaker + the Xt/Xaw apps connect fine — its WINGs lib retries
+			 * the handshake). WindowMaker honours the USPosition -geometry hints below. */
+			resolve_client(cp_bufs[0], sizeof(cp_bufs[0]), prefix, "wmaker");
 			resolve_client(cp_bufs[1], sizeof(cp_bufs[1]), prefix, "xterm");
 			resolve_client(cp_bufs[2], sizeof(cp_bufs[2]), prefix, "xclock");
 			resolve_client(cp_bufs[3], sizeof(cp_bufs[3]), prefix, "xcalc");
