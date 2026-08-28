@@ -408,8 +408,12 @@ static int decode_one(volatile uint8_t *hevc, volatile uint8_t *intc,
 	wr(hevc + RPI_CONFIG2, FRAME_CONFIG2);
 	wr(hevc + RPI_FRAMESIZE, (FRAME_HEIGHT << 16) | FRAME_WIDTH);
 	wr(hevc + RPI_CURRPOC, currpoc);
-	wr(hevc + RPI_COLSTRIDE, RPI_VC_LEN(luma_stride));
-	wr(hevc + RPI_MVSTRIDE, RPI_VC_LEN(luma_stride));
+	/* Collocated-MV strides MUST be 0 when temporal-MVP is off (driver: colmv_stride
+	 * stays 0 unless setup_colmv runs, phase2_claimed writes 0). A non-zero stride with
+	 * base 0 engages the colMV path on an inter frame -> first MV txn targets addr 0 ->
+	 * AXI hang (I-frames are inert since they have no MVs). This was the P phase-2 hang. */
+	wr(hevc + RPI_COLSTRIDE, 0);
+	wr(hevc + RPI_MVSTRIDE, 0);
 	wr(hevc + RPI_MVBASE, 0);
 	wr(hevc + RPI_COLBASE, 0);
 	wr(hevc + RPI_NUMROWS, FRAME_CTB_HEIGHT);         /* STARTS PHASE 2 */
