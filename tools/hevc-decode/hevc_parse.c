@@ -338,9 +338,9 @@ int hevc_parse_pps(const uint8_t *pps_nal, uint32_t len, hevc_pps_t *out)
 	out->entropy_coding_sync = (int)br_u(&b, 1);
 	if (out->tiles_enabled)
 		return fail("tiles_enabled (out of subset)");
-	if (out->entropy_coding_sync)   /* WPP: slice carries entry_point_offsets we don't parse
-					 * -> would give a wrong data_byte_offset. Reject, don't mis-handle. */
-		return fail("entropy_coding_sync/WPP (out of subset)");
+	/* WPP (entropy_coding_sync) is now supported: the slice entry_point_offsets are
+	 * parsed (to advance data_byte_offset) and the command buffer emits the wavefront
+	 * sequence; the HW derives the wavefront from CTB geometry. */
 	out->pps_loop_filter_across_slices = (int)br_u(&b, 1);
 	out->deblocking_filter_control_present = (int)br_u(&b, 1);
 	if (out->deblocking_filter_control_present) {
@@ -379,6 +379,7 @@ int hevc_parse_slice(const uint8_t *nal, uint32_t len, int nal_type,
 	int loop_filter_flag = pps ? pps->pps_loop_filter_across_slices : 1;
 	int cabac_init = pps ? pps->cabac_init_present : 0;
 	int lists_mod = pps ? pps->lists_modification_present : 0;
+	int wpp = pps ? pps->entropy_coding_sync : 0;
 	uint32_t nrl0_def = pps ? pps->num_ref_idx_l0_default_active_minus1 : 0;
 	uint32_t nrl1_def = pps ? pps->num_ref_idx_l1_default_active_minus1 : 0;
 
@@ -488,7 +489,20 @@ int hevc_parse_slice(const uint8_t *nal, uint32_t len, int nal_type,
 	}
 	if (loop_filter_flag)
 		br_u(&b, 1);                       /* slice_loop_filter_across_slices_enabled_flag */
-	/* No tiles/WPP => no entry_point_offsets. No header extension (subset). */
+	/* WPP: consume num_entry_point_offsets + the offsets (H.265 7.3.6.1). The offset
+	 * VALUES are discarded (the HW derives the wavefront from CTB geometry) — parsing
+	 * them only advances the bit position so data_byte_offset lands correctly. */
+	out->num_entry_point_offsets = 0;
+	if (wpp) {   /* tiles rejected in parse_pps, so only WPP reaches here */
+		out->num_entry_point_offsets = br_ue(&b);
+		if (out->num_entry_point_offsets > 0) {
+			uint32_t offset_len = br_ue(&b) + 1u;   /* offset_len_minus1 + 1 */
+			if (offset_len > 32) return fail("entry offset_len > 32");
+			for (uint32_t i = 0; i < out->num_entry_point_offsets; i++)
+				(void)br_u(&b, offset_len);         /* entry_point_offset_minus1[i] */
+		}
+	}
+	/* No slice_segment_header_extension (subset). */
 
 	if (b.overflow)
 		return fail("slice header parse ran past end of NAL");

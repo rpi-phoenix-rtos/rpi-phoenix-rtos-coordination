@@ -124,6 +124,10 @@ typedef struct {
 	/* SAO: RPI_SLICE BIT14/BIT15 (the HW CABAC-decodes the per-CTB sao() params). */
 	int slice_sao_luma;
 	int slice_sao_chroma;
+	/* WPP: num_entry_point_offsets>0 selects the wavefront command sequence. The
+	 * offset VALUES are not needed (the HW derives the wavefront from CTB geometry);
+	 * they're parsed only to advance the bit position for data_byte_offset. */
+	uint32_t num_entry_point_offsets;
 } hevc_slice_t;
 
 /* Human-readable reason for the most recent negative return, for diagnostics. */
