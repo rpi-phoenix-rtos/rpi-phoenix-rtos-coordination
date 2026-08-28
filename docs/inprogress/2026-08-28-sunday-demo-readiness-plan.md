@@ -82,3 +82,22 @@ built-on-demand). So the Sat-night sequence is:
   (2) xlaunch connect-probe + 800ms handshake settle (committed) for first-client robustness.
 - **In progress:** full x11-port rebuild (fresh libXt + twm + apps against current libX11) → then re-test the
   desktop demo (`deskapps` / GPU `showcase`).
+
+## Fri (early) — fresh-build demo verification + reproducibility fixes
+- **★ ALL 5 HEADLINE GAMES render CLEAN on the fresh gcc-16 netboot rootfs** (HDMI-verified, evidence in
+  `docs/inprogress/evidence/2026-08-28-fresh-build-*`): **GLQuake ✅ · Quake III q3dm7 ✅ · Quake II demo1 ✅ ·
+  vkQuake (Vulkan) ✅ · SuperTuxKart ✅** (loading screen clean once the stale shader cache was cleared).
+- **★ STK green-noise root-caused = STALE MESA SHADER CACHE** (not a GPU wedge). The gcc-16 promotion rebuilt the
+  host Mesa → QPU codegen changed, but the persistent NFS-export cache still held old gcc-14 blobs → wrong QPU
+  binaries → green speckle. `rm -rf .mesa-shader-cache` → clean. **Folded into the Sat-night recipe (step 4):
+  clearing the cache is MANDATORY after any toolchain/Mesa change.** Also: do NOT restart nfsd right before a boot
+  (grace period → exec err=-34).
+- **★ Desktop fonts now REPRODUCIBLE** (was the biggest desktop blocker for the Sat-night rebuild): the base build
+  produces no scalable TTF/fonts.conf/cache, so wmaker died "could not load any fonts" on a fresh export. Added
+  `scripts/stage-desktop-fonts.sh` (host DejaVu + the self-contained fonts.conf at `tools/x11-port/fontconfig/` +
+  `fc-cache --sysroot`), wired into `sync-netboot-tree.sh` so **every restage guarantees the fonts**. Verified
+  fc-match resolves sans serif/Sans/monospace/serif → DejaVu.
+- **REMAINING X-desktop blocker (next):** even with fonts, the wmaker root is black and app windows aren't visibly
+  drawing (needs a Pi-cycle debug). `twm` as WM client[0] fails XOpenDisplay against the current Xphoenix (deskapps
+  switched to wmaker as a workaround). This is the last thing standing between the demo and a good *apps* screenshot;
+  games are done.
