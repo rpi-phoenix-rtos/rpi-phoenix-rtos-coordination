@@ -101,3 +101,30 @@ built-on-demand). So the Sat-night sequence is:
   drawing (needs a Pi-cycle debug). `twm` as WM client[0] fails XOpenDisplay against the current Xphoenix (deskapps
   switched to wmaker as a workaround). This is the last thing standing between the demo and a good *apps* screenshot;
   games are done.
+
+## ★★ DEMO SHOWCASE COMPLETE (Thu 2026-08-28) — Sunday demo is READY EARLY
+The full showcase renders cleanly on the **fresh gcc-16 netboot NFS rootfs** (HDMI-verified, evidence committed):
+
+| Item | Command | Result |
+|---|---|---|
+| GLQuake | `rpi4-quake` | ✅ textured 3D + HUD |
+| Quake III | `quake3 +devmap q3dm7` | ✅ temple + HUD (CT0 wedge reset-recovers invisibly) |
+| Quake II | `quake2` | ✅ industrial map + HUD |
+| vkQuake (Vulkan) | `rpi4-vkquake -basedir /usr/share/quake` | ✅ start map |
+| SuperTuxKart | `stk` | ✅ clean loading (race proven M0-M7; slow load) |
+| X desktop | `startx deskapps` | ✅ WindowMaker + xterm(live shell) + xclock + xcalc on a **slate-blue** root |
+
+**The X-desktop was NOT actually broken** — the "black root / windows not drawing" was two missing pieces, both now
+fixed reproducibly: (1) **fonts** (`stage-desktop-fonts.sh`, wired into `sync-netboot-tree.sh`) unblocked all window
+rendering; (2) **wmsetbg** (was staged to the wrong export by `build-wmaker.sh`'s hardcoded NFS path — fixed to
+detect the fsid=0 export) unblocked the root background. Both fixes are in the Sat-night rebuild path.
+
+**Two demo-critical gotchas folded into the Sat-night recipe (§ above):** clear the Mesa shader cache after the
+clean rebuild (stale gcc-14 blobs → STK green corruption), and don't restart nfsd right before a boot (grace period
+→ exec err=-34).
+
+**Residual cosmetic-only (non-blocking):** xeyes exits 0x7f; `-adobe-symbol` core-font misses (Xaw apps fall back);
+`wmaker.inst`/user-GNUstep-dir warnings (system defaults used). None affect the screenshots.
+
+**Owner's parallel milestones remain open** (additive `tools/` work, must not destabilize the demo path): HEVC M1
+hardware decode, WiFi data-plane.
