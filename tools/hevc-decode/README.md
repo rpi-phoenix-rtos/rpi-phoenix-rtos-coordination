@@ -19,6 +19,7 @@ blob**. Ported register-by-register from the Linux `hevc_d_h265.c` driver.
 | **Bidirectional (B) inter** — 2 ref lists (past L0 + future L1) | ✅ bit-exact, ANY count of consecutive non-reference B (bframes 1/2/3+, b-adapt ok) |
 | **B-pyramid (hierarchical reference-B)** — general POC-indexed DPB | ✅ bit-exact (reference-B pics, 2-ref lists, RPS ref-lists, DPB eviction — x265 default) |
 | **Real HD default-x265 content** (720p 240 CTBs, 1080p 510 CTBs) | ✅ bit-exact — b-pyramid + multi-ref + tmvp + WPP combined at HD (testdata/hd720.265, hd1080b.265) |
+| **10-bit (Main10)** decode | ✅ bit-exact — 10-bit luma+chroma, NV12_10_COL128 packed output (testdata/main10.265). all-intra Rext profile still out-of-subset |
 | **Runtime `.265` file player (M3)** | ✅ `hevc-play <file.265>` — parse + decode + display I/P/B, no rebuild |
 | **`.mp4`/`.mov` container demux (M3)** | ✅ `hevc-play <file.mp4>` — in-tool ISOBMFF→Annex-B (no ffmpeg); video track read by sample tables so **audio tracks are skipped** (normal a/v files play); >1 video track / fragmented rejected loudly |
 | **`hevc-play` bit-exact conformance verify** | ✅ `hevc-play <f.265> <golden.nv12>` → VERIFY BIT-EXACT (ibp, mandelbrot, bframes=2/3, b-pyramid all 0 bad px) |
@@ -126,6 +127,20 @@ video track, non-fragmented — no-video / >1-video-track / fragmented (`moof`) 
 **rejected loudly** (`hevc_err()`). HW-proven: `hevc-play wp.mp4`/`dflt.mp4`
 (single-track) + `wpaudio.mp4`/`hd720aud.mp4` (audio+video, interleaved) all → VERIFY
 BIT-EXACT against the raw-`.265` goldens. Regenerate fixtures with `testdata/gen-mp4.sh`.
+
+**10-bit (Main10).** The decoder handles 10-bit 4:2:0 as well as 8-bit, keyed off the
+SPS bit depth at runtime (`g_bd_minus8`). Four things change vs 8-bit (per the Linux
+`hevc_d` driver): CONFIG2 low 10 bits `0x088→0x3AA` (BitDepthY/C nibbles 8→10 + the
+"depth≠8" flags), RPI_SPS0 bit-depth fields `+0x220000`, RPI_QP gains QpBdOffsetY
+(`6·2 = +12`), and the output is **NV12_10_COL128** — 3 samples packed LSB-first into
+each 32-bit little-endian word, so a 128-byte SAND column holds 96 samples (the stride
+register values are unchanged; the column *count* grows ×4/3). CABAC prob tables,
+PU/coeff/colMV strides are bit-depth-invariant. The `--verify` golden for 10-bit is
+`yuv420p10le` (16-bit LE, right-aligned 0..1023 — what the HW emits), not `p010le`
+(which is `<<6`). HW-proven bit-exact on a 256×256 Main10 clip (intra + inter P/B).
+Regenerate with `testdata/gen-10bit.sh`. (All-intra 10-bit x265 selects the
+Range-Extensions "Rext" profile with extra tools outside this subset — still rejected/
+mismatched; Main10 inter GOPs, which carry IDR I-frames, cover 10-bit intra.)
 
 Weighted prediction is applied purely via the per-ref slice-message descriptor: a
 weighted ref grows from 2 words to 8 — word0 gains marker bits `[6:5]=3`, then 6

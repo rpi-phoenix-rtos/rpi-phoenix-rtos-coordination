@@ -1,6 +1,8 @@
 /* play_subset.h — the FIXED HEVC/H.265 stream constants the rpivid register
- * values bake in for the x265 subset the player targets (8-bit 4:2:0, CTB 64,
- * single-slice/tile, no WPP/SAO/tmvp/scaling-lists/PCM/AMP, strong-intra=1).
+ * values bake in for the x265 subset the player targets (4:2:0, CTB 64,
+ * single-slice/tile, no scaling-lists/PCM/AMP, strong-intra=1). Bit depth is
+ * runtime now (8-bit or 10-bit, g_bd_minus8) — FRAME_BIT_DEPTH_LUMA_MINUS8 is
+ * only the 8-bit default for the build-time (non-PLAY_TOOL) modes.
  *
  * This is the PLAY_TOOL counterpart to the generated *_frame.h headers: it
  * defines ONLY the resolution-independent FRAME_* constants that build_command_

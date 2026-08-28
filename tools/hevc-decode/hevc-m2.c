@@ -186,6 +186,10 @@ static uint32_t g_frame_w, g_frame_h, g_ctb_w, g_ctb_h;
  * (write, when a reference); g_col_pa = the collocated ref's colMV IN (read). */
 static uint32_t g_config2, g_colmv_stride;
 static addr_t g_mv_pa, g_col_pa;
+/* Bit depth minus 8 (0 = 8-bit, 2 = 10-bit/Main10), from the SPS. Steers the
+ * SPS0 bit-depth fields, the RPI_QP QpBdOffset, and (via the player) CONFIG2 +
+ * the output SAND packing. 0 for the build-time FRAME_* modes. */
+static uint32_t g_bd_minus8;
 /* WPP (entropy_coding_sync): 1 => build_command_buffer emits the wavefront
  * entry-point sequence instead of the single-tile one. 0 = non-WPP (unchanged). */
 static int g_wpp;
@@ -235,8 +239,8 @@ static uint32_t build_command_buffer(addr_t bs_pa, uint32_t dbo, uint32_t bfnum,
 	   (ctb << 4) |
 	   ((FRAME_LOG2_MIN_TB) << 8) |               /* log2_min_luma_transform_block_size (=min_minus2+2) */
 	   ((FRAME_LOG2_MAX_TB) << 12) |              /* = min_tb + diff_max_min_tb */
-	   (8u << 16) |                               /* bit_depth_luma = 8 */
-	   (8u << 20) |                               /* bit_depth_chroma = 8 */
+	   ((8u + g_bd_minus8) << 16) |               /* bit_depth_luma (8 or 10) */
+	   ((8u + g_bd_minus8) << 20) |               /* bit_depth_chroma (8 or 10) */
 	   ((uint32_t)FRAME_MAX_TRAFO_INTRA << 24) |
 	   ((uint32_t)FRAME_MAX_TRAFO_INTER << 28));
 	p1(RPI_SPS1,
@@ -266,7 +270,7 @@ static uint32_t build_command_buffer(addr_t bs_pa, uint32_t dbo, uint32_t bfnum,
 	uint32_t h_last = g_frame_h & (cs - 1);
 	uint32_t slice_const = slice_const_arg ? slice_const_arg :
 		((0u << 0) | (0u << 4) | (0u << 8) | (FRAME_SLICE_TYPE << 12)); /* I: merge/refs 0, no SAO */
-	uint32_t qp = 6u * FRAME_BIT_DEPTH_LUMA_MINUS8 + slice_qp;
+	uint32_t qp = 6u * g_bd_minus8 + slice_qp;   /* + QpBdOffsetY (0 for 8-bit, 12 for 10-bit) */
 	/* emit one entry point at ctb (0,ctbrow) ending at row endy (h265.c new_entry_point).
 	 * TILE: endy=ctb_h-1, ctbrow=0. WPP: endy=ctbrow=the wavefront row. */
 #define ENTRY_POINT(endy_a, ctbrow_a, pause_mode, do_bte) do { \
@@ -998,14 +1002,31 @@ static uint32_t present_frame(uint8_t *fb, const fbmode_t *fbm, dma_buf_t *el, d
 			      const uint8_t *golden, uint32_t golden_nframes, uint32_t poc)
 {
 	uint32_t bad = 0;
-	if (golden && poc < golden_nframes) {
-		/* NV12 golden: each frame is w*h luma + w*h/2 interleaved chroma; the Y
-		 * plane we compare is the first w*h bytes of the poc-th w*h*3/2 frame. */
+	if (golden && poc < golden_nframes && g_bd_minus8 == 0) {
+		/* 8-bit NV12 golden: each frame is w*h luma + w*h/2 interleaved chroma; the
+		 * Y plane we compare is the first w*h bytes of the poc-th w*h*3/2 frame. */
 		size_t fstride = (size_t)g_frame_w * g_frame_h * 3u / 2u;
 		const uint8_t *yb = el->cpu, *g = golden + (size_t)poc * fstride;
 		for (uint32_t y = 0; y < g_frame_h; y++)
 			for (uint32_t x = 0; x < g_frame_w; x++)
 				if (yb[(x / 128u) * luma_stride + y * 128u + (x % 128u)] != g[y * g_frame_w + x]) bad++;
+	} else if (golden && poc < golden_nframes) {
+		/* 10-bit: golden = yuv420p10le (16-bit LE, right-aligned 0..1023). Decoder
+		 * output = NV12_10_COL128 — 3 samples packed LSB-first in each 32-bit LE
+		 * word, so a 128-byte column holds 96 samples. Sample x in a row of 128-byte
+		 * columns: col = x/96, s = x%96, word = s/3, lane = s%3. */
+		size_t fstride = (size_t)g_frame_w * g_frame_h * 3u;   /* yuv420p10le bytes/frame */
+		const uint8_t *yb = el->cpu;
+		const uint8_t *g = golden + (size_t)poc * fstride;     /* luma plane first */
+		for (uint32_t y = 0; y < g_frame_h; y++)
+			for (uint32_t x = 0; x < g_frame_w; x++) {
+				uint32_t col = x / 96u, s = x % 96u, word = s / 3u, lane = s % 3u;
+				const uint8_t *wp = yb + (size_t)col * luma_stride + (size_t)y * 128u + word * 4u;
+				uint32_t u = wp[0] | ((uint32_t)wp[1] << 8) | ((uint32_t)wp[2] << 16) | ((uint32_t)wp[3] << 24);
+				uint32_t v = (u >> (lane * 10u)) & 0x3FFu;
+				uint32_t gv = g[(y * g_frame_w + x) * 2u] | ((uint32_t)g[(y * g_frame_w + x) * 2u + 1u] << 8);
+				if (v != gv) bad++;
+			}
 	}
 	if (fb) fb_blit(fb, fbm->pitch, fbm->width, fbm->height, el->cpu, ec->cpu,
 			g_frame_w, g_frame_h, luma_stride, chroma_stride);
@@ -1056,9 +1077,14 @@ int main(int argc, char **argv)
 		}
 	}
 	if (!have_sps) { printf("hevc-play: no SPS found\n"); free(file); return 3; }
-	if (sps.chroma_format_idc != 1 || sps.bit_depth_luma_minus8 || sps.bit_depth_chroma_minus8) {
-		printf("hevc-play: only 8-bit 4:2:0 supported\n"); free(file); return 3;
+	if (sps.chroma_format_idc != 1) {
+		printf("hevc-play: only 4:2:0 supported\n"); free(file); return 3;
 	}
+	if (sps.bit_depth_luma_minus8 != sps.bit_depth_chroma_minus8 ||
+	    (sps.bit_depth_luma_minus8 != 0 && sps.bit_depth_luma_minus8 != 2)) {
+		printf("hevc-play: only 8-bit or 10-bit (luma==chroma) supported\n"); free(file); return 3;
+	}
+	g_bd_minus8 = sps.bit_depth_luma_minus8;   /* 0 = 8-bit, 2 = 10-bit (Main10) */
 	if (!nslices) { printf("hevc-play: no coded slices\n"); free(file); return 3; }
 
 	/* Runtime geometry from the SPS. */
@@ -1075,7 +1101,10 @@ int main(int argc, char **argv)
 		uint32_t glen = 0;
 		uint8_t *gbuf = slurp_265(argv[2], &glen);   /* raw slurp (name is generic) */
 		if (!gbuf) { free(file); return 2; }
-		size_t fsz_nv12 = (size_t)g_frame_w * g_frame_h * 3u / 2u;
+		/* 8-bit: NV12 (w*h*3/2 bytes/frame). 10-bit: yuv420p10le (16-bit samples,
+		 * right-aligned 0..1023 — w*h*3 bytes/frame). */
+		size_t fsz_nv12 = g_bd_minus8 ? (size_t)g_frame_w * g_frame_h * 3u
+					      : (size_t)g_frame_w * g_frame_h * 3u / 2u;
 		golden = gbuf; golden_nframes = (uint32_t)(glen / fsz_nv12);
 		printf("hevc-play: golden %s — %u frames @ %zu bytes/frame\n", argv[2], golden_nframes, fsz_nv12);
 		if (golden_nframes < nslices)
@@ -1091,9 +1120,13 @@ int main(int argc, char **argv)
 	 * our vectors — a fixed cap would silently overflow a high-bitrate frame). */
 	uint32_t wh = g_frame_w * g_frame_h;
 	uint32_t pu_size = round_up_size(wh / 4u), coeff_size = round_up_size(wh);
-	uint32_t luma_stride = ((g_frame_h + 15u) & ~15u) * 128u;
+	uint32_t luma_stride = ((g_frame_h + 15u) & ~15u) * 128u;   /* SAND stride: bit-depth independent */
 	uint32_t chroma_stride = luma_stride / 2u;
-	uint32_t cols = ((g_frame_w + 127u) & ~127u) / 128u;
+	/* Column count = (row byte width)/128. 8-bit: ALIGN(w,128) bytes. 10-bit
+	 * NV12_10_COL128 packs 3 samples per 32 bits, so byte width = ALIGN((w+2)/3,32)*4. */
+	uint32_t col_bytes = g_bd_minus8 ? ((((g_frame_w + 2u) / 3u) + 31u) & ~31u) * 4u
+					 : ((g_frame_w + 127u) & ~127u);
+	uint32_t cols = (col_bytes + 127u) / 128u;
 	size_t bs_size = ((size_t)max_nal + 4096u) & ~(size_t)4095u;
 	dma_buf_t cmd = {0}, bs = {0}, pu = {0}, coeff = {0};
 	/* General POC-indexed DPB pool, sized to sps_max_dec_pic_buffering + headroom.
@@ -1124,7 +1157,10 @@ int main(int argc, char **argv)
 	/* Verify mode (golden given) runs HEADLESS — no fb_blit — so the known
 	 * display-path store-burst residual (README gotcha 8) can't confound the
 	 * pure decode bit-exact check. Normal playback (no golden) displays. */
-	fbmode_t fbm; int fbfd = -1; uint8_t *fb = golden ? NULL : fb_open(&fbm, &fbfd);
+	fbmode_t fbm; int fbfd = -1;
+	if (g_bd_minus8 && !golden)
+		printf("hevc-play: 10-bit HDMI display not implemented — decode-only (use a golden to verify)\n");
+	uint8_t *fb = (golden || g_bd_minus8) ? NULL : fb_open(&fbm, &fbfd);
 
 	/* POC-indexed DPB decode (b-pyramid capable). Per slice: mark+remove (keep the
 	 * pictures in THIS slice's full RPS + any pending display), allocate a free
@@ -1181,9 +1217,13 @@ int main(int argc, char **argv)
 
 			/* Temporal-MVP colMV register state for this frame (globals consumed by
 			 * decode_one). tmvp off => FRAME_CONFIG2 + zeros (byte-identical). */
+			/* CONFIG2 base: FRAME_CONFIG2 (8-bit) with the bit-depth nibbles +
+			 * "depth != 8" flags patched for 10-bit (low 10 bits 0x088 -> 0x3AA). */
+			uint32_t base_config2 = g_bd_minus8
+				? ((FRAME_CONFIG2 & ~0x3FFu) | 0x3AAu) : FRAME_CONFIG2;
 			if (tmvp) {
 				g_colmv_stride = colmv_stride;
-				g_config2 = FRAME_CONFIG2;
+				g_config2 = base_config2;
 				g_mv_pa = 0; g_col_pa = 0;
 				if (is_ref_nal(n2.type)) { g_config2 |= (1u << 15); g_mv_pa = pool_mv[ob].pa; }  /* write own colMV */
 				if (s.slice_temporal_mvp_enabled) {
@@ -1193,7 +1233,7 @@ int main(int argc, char **argv)
 					if (ci < 0) { printf("hevc-play: frame %u POC %u — collocated POC %u not in DPB\n", frame, s.poc, s.collocated_poc); broke = 1; break; }
 					g_col_pa = pool_mv[ci].pa;
 				}
-			} else { g_config2 = FRAME_CONFIG2; g_colmv_stride = 0; g_mv_pa = 0; g_col_pa = 0; }
+			} else { g_config2 = base_config2; g_colmv_stride = 0; g_mv_pa = 0; g_col_pa = 0; }
 
 			int rc = play_frame(hevc, intc, &cmd, &bs, &pu, &coeff, &n2, &s, ol, oc,
 				refpa, slot_l0, slot_l1, pu_stride, coeff_stride, luma_stride, chroma_stride);
