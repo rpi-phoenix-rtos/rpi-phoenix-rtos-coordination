@@ -24,7 +24,8 @@ blob**. Ported register-by-register from the Linux `hevc_d_h265.c` driver.
 | Intermittent inter corruption during on-HDMI playback (~10%) | ⚠️ known, decoder bit-exact HEADLESS in isolation (see gotcha 8) |
 | **Multi-ref (ref>1)** | ✅ bit-exact (free via the general DPB + resolve_reflist) |
 | **Temporal-MVP (tmvp)** — collocated-MV path | ✅ bit-exact (per-DPB-slot colMV, x265 default-on; 64/128/320 verified) |
-| SAO, WPP/tiles, nonzero deblock beta/tc offsets | ⏳ out of subset — each a separate feature toward full real-content |
+| **SAO (Sample Adaptive Offset)** — in-loop filter | ✅ bit-exact (RPI_SLICE bit14/15; HW CABAC-decodes per-CTB sao(); x265 default-on) |
+| WPP/tiles, nonzero deblock beta/tc offsets | ⏳ out of subset — each a separate feature toward full real-content |
 | HW H.264 | ⛔ VCHIQ/firmware-walled (banked) |
 
 ## Layout
