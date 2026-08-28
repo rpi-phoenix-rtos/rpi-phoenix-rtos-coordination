@@ -369,6 +369,22 @@ typedef struct { uint16_t width, height, bpp, pitch; uint64_t smemlen, framebuff
 
 static inline uint8_t clip8(int v) { return v < 0 ? 0 : (v > 255 ? 255 : (uint8_t)v); }
 
+/* Fetch one sample from a SAND/COL128 plane. 8-bit: 1 byte/sample in 128-byte
+ * columns. 10-bit (NV12_10_COL128): 3 samples packed LSB-first per 32-bit LE
+ * word → 96 samples per 128-byte column. `sx` is the sample index along the row,
+ * `row` the row within the plane, `stride` the plane's SAND column stride. */
+static inline uint32_t sand8(const uint8_t *b, uint32_t stride, uint32_t sx, uint32_t row)
+{
+	return b[(sx / 128u) * stride + row * 128u + (sx % 128u)];
+}
+static inline uint32_t sand10(const uint8_t *b, uint32_t stride, uint32_t sx, uint32_t row)
+{
+	uint32_t col = sx / 96u, s = sx % 96u, word = s / 3u, lane = s % 3u;
+	const uint8_t *wp = b + (size_t)col * stride + (size_t)row * 128u + word * 4u;
+	uint32_t u = wp[0] | ((uint32_t)wp[1] << 8) | ((uint32_t)wp[2] << 16) | ((uint32_t)wp[3] << 24);
+	return (u >> (lane * 10u)) & 0x3FFu;
+}
+
 /* Best-effort: unpack the SAND/COL128 decode, convert NV12->RGBA (BT.601 limited
  * range), and blit the frame centered onto /dev/fb0 (R8G8B8A8, the proven scanout
  * format). No-op if fb0 is unavailable — the headless pixel check already ran. */
@@ -382,10 +398,17 @@ static void fb_blit(uint8_t *fb, uint32_t pitch, uint32_t fbw, uint32_t fbh,
 	uint32_t y0 = (fbh > H) ? (fbh - H) / 2u : 0;
 	for (uint32_t y = 0; y < H && (y0 + y) < fbh; y++) {
 		for (uint32_t x = 0; x < W && (x0 + x) < fbw; x++) {
-			int Y = yb[(x / 128u) * luma_stride + y * 128u + (x % 128u)];
 			uint32_t cxb = (x & ~1u), cy = y / 2u;   /* NV12: Cb at even col, Cr next */
-			int U = cbb[(cxb / 128u) * chroma_stride + cy * 128u + (cxb % 128u)];
-			int V = cbb[(((cxb + 1) / 128u)) * chroma_stride + cy * 128u + ((cxb + 1) % 128u)];
+			int Y, U, V;
+			if (g_bd_minus8) {   /* 10-bit packed → downshift 10→8 for RGB */
+				Y = (int)(sand10(yb, luma_stride, x, y) >> 2);
+				U = (int)(sand10(cbb, chroma_stride, cxb, cy) >> 2);
+				V = (int)(sand10(cbb, chroma_stride, cxb + 1u, cy) >> 2);
+			} else {
+				Y = (int)sand8(yb, luma_stride, x, y);
+				U = (int)sand8(cbb, chroma_stride, cxb, cy);
+				V = (int)sand8(cbb, chroma_stride, cxb + 1u, cy);
+			}
 			int C = Y - 16, D = U - 128, E = V - 128;
 			uint8_t *px = fb + (uint64_t)(y0 + y) * pitch + (uint64_t)(x0 + x) * 4u;
 			px[0] = clip8((298 * C + 409 * E + 128) >> 8);          /* R */
@@ -1016,16 +1039,28 @@ static uint32_t present_frame(uint8_t *fb, const fbmode_t *fbm, dma_buf_t *el, d
 		 * word, so a 128-byte column holds 96 samples. Sample x in a row of 128-byte
 		 * columns: col = x/96, s = x%96, word = s/3, lane = s%3. */
 		size_t fstride = (size_t)g_frame_w * g_frame_h * 3u;   /* yuv420p10le bytes/frame */
-		const uint8_t *yb = el->cpu;
+		const uint8_t *yb = el->cpu, *cbb = ec->cpu;
 		const uint8_t *g = golden + (size_t)poc * fstride;     /* luma plane first */
 		for (uint32_t y = 0; y < g_frame_h; y++)
 			for (uint32_t x = 0; x < g_frame_w; x++) {
-				uint32_t col = x / 96u, s = x % 96u, word = s / 3u, lane = s % 3u;
-				const uint8_t *wp = yb + (size_t)col * luma_stride + (size_t)y * 128u + word * 4u;
-				uint32_t u = wp[0] | ((uint32_t)wp[1] << 8) | ((uint32_t)wp[2] << 16) | ((uint32_t)wp[3] << 24);
-				uint32_t v = (u >> (lane * 10u)) & 0x3FFu;
+				uint32_t v = sand10(yb, luma_stride, x, y);
 				uint32_t gv = g[(y * g_frame_w + x) * 2u] | ((uint32_t)g[(y * g_frame_w + x) * 2u + 1u] << 8);
 				if (v != gv) bad++;
+			}
+		/* chroma: golden Cb then Cr planes ((w/2)x(h/2) each, 16-bit); decoder plane
+		 * is NV12-interleaved (Cb at even sample index, Cr at odd) — the same fetch
+		 * the display path uses, so this validates 10-bit colour too. */
+		uint32_t cw = g_frame_w / 2u, ch = g_frame_h / 2u;
+		const uint8_t *gcb = g + (size_t)g_frame_w * g_frame_h * 2u;
+		const uint8_t *gcr = gcb + (size_t)cw * ch * 2u;
+		for (uint32_t y = 0; y < ch; y++)
+			for (uint32_t x = 0; x < cw; x++) {
+				uint32_t cb = sand10(cbb, chroma_stride, x * 2u, y);
+				uint32_t cr = sand10(cbb, chroma_stride, x * 2u + 1u, y);
+				uint32_t gb = gcb[(y * cw + x) * 2u] | ((uint32_t)gcb[(y * cw + x) * 2u + 1u] << 8);
+				uint32_t gr = gcr[(y * cw + x) * 2u] | ((uint32_t)gcr[(y * cw + x) * 2u + 1u] << 8);
+				if (cb != gb) bad++;
+				if (cr != gr) bad++;
 			}
 	}
 	if (fb) fb_blit(fb, fbm->pitch, fbm->width, fbm->height, el->cpu, ec->cpu,
@@ -1157,10 +1192,7 @@ int main(int argc, char **argv)
 	/* Verify mode (golden given) runs HEADLESS — no fb_blit — so the known
 	 * display-path store-burst residual (README gotcha 8) can't confound the
 	 * pure decode bit-exact check. Normal playback (no golden) displays. */
-	fbmode_t fbm; int fbfd = -1;
-	if (g_bd_minus8 && !golden)
-		printf("hevc-play: 10-bit HDMI display not implemented — decode-only (use a golden to verify)\n");
-	uint8_t *fb = (golden || g_bd_minus8) ? NULL : fb_open(&fbm, &fbfd);
+	fbmode_t fbm; int fbfd = -1; uint8_t *fb = golden ? NULL : fb_open(&fbm, &fbfd);
 
 	/* POC-indexed DPB decode (b-pyramid capable). Per slice: mark+remove (keep the
 	 * pictures in THIS slice's full RPS + any pending display), allocate a free

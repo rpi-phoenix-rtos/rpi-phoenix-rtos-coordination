@@ -19,7 +19,7 @@ blob**. Ported register-by-register from the Linux `hevc_d_h265.c` driver.
 | **Bidirectional (B) inter** — 2 ref lists (past L0 + future L1) | ✅ bit-exact, ANY count of consecutive non-reference B (bframes 1/2/3+, b-adapt ok) |
 | **B-pyramid (hierarchical reference-B)** — general POC-indexed DPB | ✅ bit-exact (reference-B pics, 2-ref lists, RPS ref-lists, DPB eviction — x265 default) |
 | **Real HD default-x265 content** (720p 240 CTBs, 1080p 510 CTBs) | ✅ bit-exact — b-pyramid + multi-ref + tmvp + WPP combined at HD (testdata/hd720.265, hd1080b.265) |
-| **10-bit (Main10)** decode | ✅ bit-exact — 10-bit luma+chroma, NV12_10_COL128 packed output (testdata/main10.265). all-intra Rext profile still out-of-subset |
+| **10-bit (Main10)** decode + **HDMI display** | ✅ bit-exact luma+chroma, NV12_10_COL128 packed output; renders on /dev/fb0 (10→8 downshift). all-intra Rext profile still out-of-subset |
 | **Runtime `.265` file player (M3)** | ✅ `hevc-play <file.265>` — parse + decode + display I/P/B, no rebuild |
 | **`.mp4`/`.mov` container demux (M3)** | ✅ `hevc-play <file.mp4>` — in-tool ISOBMFF→Annex-B (no ffmpeg); video track read by sample tables so **audio tracks are skipped** (normal a/v files play); >1 video track / fragmented rejected loudly |
 | **`hevc-play` bit-exact conformance verify** | ✅ `hevc-play <f.265> <golden.nv12>` → VERIFY BIT-EXACT (ibp, mandelbrot, bframes=2/3, b-pyramid all 0 bad px) |
@@ -137,8 +137,10 @@ each 32-bit little-endian word, so a 128-byte SAND column holds 96 samples (the 
 register values are unchanged; the column *count* grows ×4/3). CABAC prob tables,
 PU/coeff/colMV strides are bit-depth-invariant. The `--verify` golden for 10-bit is
 `yuv420p10le` (16-bit LE, right-aligned 0..1023 — what the HW emits), not `p010le`
-(which is `<<6`). HW-proven bit-exact on a 256×256 Main10 clip (intra + inter P/B).
-Regenerate with `testdata/gen-10bit.sh`. (All-intra 10-bit x265 selects the
+(which is `<<6`); the verify checks both luma and chroma planes. HW-proven bit-exact
+on a 256×256 Main10 clip (intra + inter P/B), and it **displays on HDMI** (the SAND
+unpack — shared `sand10()` — downshifts 10→8 before the NV12→RGB blit; verified
+on-screen). Regenerate with `testdata/gen-10bit.sh`. (All-intra 10-bit x265 selects the
 Range-Extensions "Rext" profile with extra tools outside this subset — still rejected/
 mismatched; Main10 inter GOPs, which carry IDR I-frames, cover 10-bit intra.)
 
