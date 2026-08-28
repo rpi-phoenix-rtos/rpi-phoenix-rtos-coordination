@@ -185,6 +185,9 @@ static uint32_t g_frame_w, g_frame_h, g_ctb_w, g_ctb_h;
  * (write, when a reference); g_col_pa = the collocated ref's colMV IN (read). */
 static uint32_t g_config2, g_colmv_stride;
 static addr_t g_mv_pa, g_col_pa;
+/* WPP (entropy_coding_sync): 1 => build_command_buffer emits the wavefront
+ * entry-point sequence instead of the single-tile one. 0 = non-WPP (unchanged). */
+static int g_wpp;
 
 /* Build the full phase-1 command buffer for the single IDR I-slice
  * (decode_slice last_slice path, h265.c:1149). Returns cmd_len. */
@@ -254,28 +257,59 @@ static uint32_t build_command_buffer(addr_t bs_pa, uint32_t dbo, uint32_t bfnum,
 	/* no scaling factors (scaling-list disabled) */
 	p1(RPI_SLICESTART, 0);                        /* slice_segment_addr 0 -> ctb (0,0) */
 
-	/* 6) new_entry_point (h265.c:911). single tile spanning the whole frame, at (0,0),
-	 * do_bte, reset_qp_y, PAUSE_MODE_TILE. The tile end is the last CTB: for one tile
-	 * col_bd={0,ctb_w} row_bd={0,ctb_h}, so endx=col_bd[1]-1=ctb_w-1, endy=ctb_h-1
-	 * (multi-CTB frames need this — hardcoding 0 only decodes the first CTB). */
-	uint32_t endx = ctb_w - 1, endy = ctb_h - 1;
-	p1(RPI_TILESTART, 0);                         /* col_bd[0] | row_bd[0]<<16 */
-	p1(RPI_TILEEND, endx | (endy << 16));
-	p1(RPI_BEGINTILEEND, endx | (endy << 16));    /* do_bte */
-	/* write_slice (h265.c:884): slice_const | wlast<<17 | hlast<<24. */
+	/* 6) new_entry_point(s) (h265.c:911). Single implicit tile spanning the whole
+	 * frame (col_bd={0,ctb_w} row_bd={0,ctb_h}). write_slice (h265.c:884) packs
+	 * slice_const | wlast<<17 | hlast<<24 (its col/row args = endx/endy). */
+	uint32_t endx = ctb_w - 1;
 	uint32_t w_last = g_frame_w & (cs - 1);
 	uint32_t h_last = g_frame_h & (cs - 1);
 	uint32_t slice_const = slice_const_arg ? slice_const_arg :
 		((0u << 0) | (0u << 4) | (0u << 8) | (FRAME_SLICE_TYPE << 12)); /* I: merge/refs 0, no SAO */
-	p1(RPI_SLICE,
-	   slice_const |
-	   ((endx + 1 < ctb_w || !w_last ? cs : w_last) << 17) |
-	   ((endy + 1 < ctb_h || !h_last ? cs : h_last) << 24));
-	p1(RPI_QP, 6u * FRAME_BIT_DEPTH_LUMA_MINUS8 + slice_qp); /* reset_qp_y */
-	p1(RPI_MODE, RPI_MODE_TILE |
-	   ((endx == ctb_w - 1) ? RPI_MODE_LASTCOL : 0) |
-	   ((endy == ctb_h - 1) ? RPI_MODE_LASTROW : 0));
-	p1(RPI_CONTROL, 0);                           /* (ctb_col 0)|(ctb_row 0<<16) */
+	uint32_t qp = 6u * FRAME_BIT_DEPTH_LUMA_MINUS8 + slice_qp;
+	/* emit one entry point at ctb (0,ctbrow) ending at row endy (h265.c new_entry_point).
+	 * TILE: endy=ctb_h-1, ctbrow=0. WPP: endy=ctbrow=the wavefront row. */
+#define ENTRY_POINT(endy_a, ctbrow_a, pause_mode, do_bte) do { \
+		uint32_t _ey = (endy_a); \
+		p1(RPI_TILESTART, 0); \
+		p1(RPI_TILEEND, endx | (_ey << 16)); \
+		if (do_bte) p1(RPI_BEGINTILEEND, endx | (_ey << 16)); \
+		p1(RPI_SLICE, slice_const \
+		   | ((endx + 1 < ctb_w || !w_last ? cs : w_last) << 17) \
+		   | ((_ey + 1 < ctb_h || !h_last ? cs : h_last) << 24)); \
+		p1(RPI_QP, qp); \
+		p1(RPI_MODE, (pause_mode) \
+		   | ((endx == ctb_w - 1) ? RPI_MODE_LASTCOL : 0) \
+		   | ((_ey == ctb_h - 1) ? RPI_MODE_LASTROW : 0)); \
+		p1(RPI_CONTROL, ((uint32_t)(ctbrow_a) << 16)); \
+	} while (0)
+
+	if (!g_wpp) {
+		ENTRY_POINT(ctb_h - 1, 0u, RPI_MODE_TILE, 1);   /* single tile, endy=ctb_h-1, ctb_row=0 */
+	} else {
+		/* WPP wavefront (driver wpp_decode_slice, single independent full-frame
+		 * slice): first entry at row 0, then a per-row fill loop with mid-row CABAC
+		 * context snapshots (wpp_pause), then the tail pause. One bitstream submit;
+		 * the HW walks the wavefront — the entry-point offsets are geometry-derived. */
+		ENTRY_POINT(0u, 0u, RPI_MODE_WPP, 1);
+		for (uint32_t r = 1; r < ctb_h; r++) {
+			if (ctb_w > 2) {   /* wpp_pause(r-1): mid-row context backup at column 2 */
+				p1(RPI_STATUS, ((r - 1u) << 18) | 0x25u);
+				p1(RPI_TRANSFER, PROB_BACKUP);
+				p1(RPI_MODE, (r - 1u == ctb_h - 1u) ? 0x70000u : 0x30000u);
+				p1(RPI_CONTROL, ((r - 1u) << 16) + 2u);
+			}
+			p1(RPI_STATUS, ((r - 1u) << 18) | ((ctb_w - 1u) << 5) | 2u);
+			p1(RPI_TRANSFER, (ctb_w == 2u) ? PROB_BACKUP : PROB_RELOAD);
+			ENTRY_POINT(r, r, RPI_MODE_WPP, 0);
+		}
+		if (ctb_w > 2) {   /* tail wpp_pause(ctb_h-1) (entry_ctb_x==0 < 2) */
+			p1(RPI_STATUS, ((ctb_h - 1u) << 18) | 0x25u);
+			p1(RPI_TRANSFER, PROB_BACKUP);
+			p1(RPI_MODE, 0x70000u);
+			p1(RPI_CONTROL, ((ctb_h - 1u) << 16) + 2u);
+		}
+	}
+#undef ENTRY_POINT
 
 	/* 7) last_slice: final RPI_STATUS end marker. */
 	p1(RPI_STATUS, 1u | ((ctb_w - 1) << 5) | ((ctb_h - 1) << 18));
@@ -988,8 +1022,10 @@ int main(int argc, char **argv)
 	/* Runtime geometry from the SPS. */
 	g_frame_w = sps.width; g_frame_h = sps.height;
 	g_ctb_w = (sps.width + 63u) / 64u; g_ctb_h = (sps.height + 63u) / 64u;
-	printf("hevc-play: %ux%u  %u CTBs (%ux%u)  %u frames%s\n", g_frame_w, g_frame_h,
-		g_ctb_w * g_ctb_h, g_ctb_w, g_ctb_h, nslices, sps.temporal_mvp_enabled ? " [tmvp]" : "");
+	g_wpp = have_pps && pps.entropy_coding_sync;   /* wavefront command sequence */
+	printf("hevc-play: %ux%u  %u CTBs (%ux%u)  %u frames%s%s\n", g_frame_w, g_frame_h,
+		g_ctb_w * g_ctb_h, g_ctb_w, g_ctb_h, nslices,
+		sps.temporal_mvp_enabled ? " [tmvp]" : "", g_wpp ? " [wpp]" : "");
 
 	/* Optional golden (ffmpeg NV12, display order) for bit-exact conformance verify. */
 	const uint8_t *golden = NULL; uint32_t golden_nframes = 0;
