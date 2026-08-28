@@ -47,6 +47,14 @@ typedef struct {
 	int started;
 } hevc_nal_iter_t;
 
+/* One parsed short-term RPS (H.265 7.3.7 / 7.4.8): running DeltaPocSX + used flags. */
+typedef struct {
+	uint32_t num_neg, num_pos;
+	int32_t  delta_s0[16];            /* DeltaPocS0[i], running NEGATIVE */
+	int32_t  delta_s1[16];            /* DeltaPocS1[i], running POSITIVE */
+	uint8_t  used_s0[16], used_s1[16];
+} hevc_st_rps_t;
+
 /* Sequence parameter set — only the fields the slice parser / geometry need. */
 typedef struct {
 	uint32_t width, height;           /* pic_{width,height}_in_luma_samples */
@@ -55,6 +63,7 @@ typedef struct {
 	uint32_t bit_depth_chroma_minus8;
 	uint32_t log2_max_poc_lsb;        /* log2_max_pic_order_cnt_lsb_minus4 + 4 */
 	uint32_t num_short_term_rps;      /* num_short_term_ref_pic_sets */
+	hevc_st_rps_t sps_rps[16];        /* the SPS-level RPS list (st_ref_pic_set_sps_flag path) */
 	int sao_enabled;                  /* sample_adaptive_offset_enabled_flag */
 	int temporal_mvp_enabled;         /* sps_temporal_mvp_enabled_flag */
 } hevc_sps_t;
@@ -94,6 +103,16 @@ typedef struct {
 	int mvd_l1_zero_flag;       /* B: sets slice_reg_const BIT(16) */
 	int cabac_init_flag;        /* must be 0 for init_type = 2 - slice_type */
 	uint32_t max_num_merge_cand;/* 5 - five_minus_max_num_merge_cand (3 for our subset) */
+	/* Reference-picture lists for a general (b-pyramid) DPB. POC values, ordered,
+	 * default construction (H.265 8.3.4; no list modification in-subset). The
+	 * player maps these POCs to DPB buffers. */
+	uint32_t ref_poc_l0[16];    /* RefPicListL0[0..nb_refs_l0-1] */
+	uint32_t ref_poc_l1[16];    /* RefPicListL1[0..nb_refs_l1-1] (B only) */
+	/* Retention union: EVERY POC in this slice's RPS (Before ∪ After, incl used=0).
+	 * The DPB must keep exactly these (+ self if a reference) — NOT just the active
+	 * lists (used=0 entries are future candidates; §8.3.2 marking). */
+	uint32_t rps_poc[16];
+	uint32_t rps_n;
 } hevc_slice_t;
 
 /* Human-readable reason for the most recent negative return, for diagnostics. */

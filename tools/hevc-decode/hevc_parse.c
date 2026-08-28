@@ -163,8 +163,9 @@ static void skip_ptl_no_sublayers(br_t *b)
 	br_u(b, 8);                              /* general_level_idc */
 }
 
-/* short_term_ref_pic_set (subset: non-predicted only; predicted => reject). */
-static int parse_st_rps(br_t *b, uint32_t idx, uint32_t num_rps)
+/* short_term_ref_pic_set (subset: non-predicted only; predicted => reject).
+ * Fills *rps with running DeltaPocS0/S1 (H.265 7.4.8 eq 7-59/7-61) + used flags. */
+static int parse_st_rps(br_t *b, uint32_t idx, uint32_t num_rps, hevc_st_rps_t *rps)
 {
 	if (idx != 0) {
 		if (br_u(b, 1))            /* inter_ref_pic_set_prediction_flag */
@@ -174,8 +175,20 @@ static int parse_st_rps(br_t *b, uint32_t idx, uint32_t num_rps)
 	uint32_t npos = br_ue(b);
 	if (nneg > 16 || npos > 16)
 		return fail("implausible RPS pic counts");
-	for (uint32_t i = 0; i < nneg; i++) { br_ue(b); br_u(b, 1); }
-	for (uint32_t i = 0; i < npos; i++) { br_ue(b); br_u(b, 1); }
+	int32_t acc = 0;
+	for (uint32_t i = 0; i < nneg; i++) {
+		acc -= (int32_t)(br_ue(b) + 1u);        /* delta_poc_s0_minus1 + 1, running negative */
+		rps->delta_s0[i] = acc;
+		rps->used_s0[i] = (uint8_t)br_u(b, 1);
+	}
+	acc = 0;
+	for (uint32_t i = 0; i < npos; i++) {
+		acc += (int32_t)(br_ue(b) + 1u);        /* delta_poc_s1_minus1 + 1, running positive */
+		rps->delta_s1[i] = acc;
+		rps->used_s1[i] = (uint8_t)br_u(b, 1);
+	}
+	rps->num_neg = nneg;
+	rps->num_pos = npos;
 	(void)num_rps;
 	return 0;
 }
@@ -252,8 +265,10 @@ static int sps_parse_internal(const uint8_t *nal, uint32_t len, hevc_sps_t *out)
 	if (br_u(&b, 1))                           /* pcm_enabled_flag */
 		return fail("pcm_enabled (out of subset)");
 	out->num_short_term_rps = br_ue(&b);
+	if (out->num_short_term_rps > 16)
+		return fail("num_short_term_ref_pic_sets > 16 (out of subset)");
 	for (uint32_t i = 0; i < out->num_short_term_rps; i++)
-		if (parse_st_rps(&b, i, out->num_short_term_rps) < 0)
+		if (parse_st_rps(&b, i, out->num_short_term_rps, &out->sps_rps[i]) < 0)
 			return -1;
 	if (br_u(&b, 1))                           /* long_term_ref_pics_present */
 		return fail("long_term_ref_pics_present (out of subset)");
@@ -392,6 +407,9 @@ int hevc_parse_slice(const uint8_t *nal, uint32_t len, int nal_type,
 
 	uint32_t poc = 0;
 	int slice_tmvp = 0;
+	hevc_st_rps_t cur_rps;
+	memset(&cur_rps, 0, sizeof(cur_rps));
+	int have_rps = 0;
 	if (!is_idr) {
 		poc = br_u(&b, log2_poc);          /* slice_pic_order_cnt_lsb */
 		uint32_t st_sps = br_u(&b, 1);     /* short_term_ref_pic_set_sps_flag */
@@ -400,11 +418,15 @@ int hevc_parse_slice(const uint8_t *nal, uint32_t len, int nal_type,
 			uint32_t bits = 0;
 			while ((1u << bits) < num_rps)
 				bits++;
-			if (bits)
-				br_u(&b, bits);
+			uint32_t rps_idx = bits ? br_u(&b, bits) : 0;
+			if (!sps || rps_idx >= num_rps)
+				return fail("st_ref_pic_set_sps index out of range / no SPS");
+			cur_rps = sps->sps_rps[rps_idx];
+			have_rps = 1;
 		} else {
-			if (parse_st_rps(&b, num_rps, num_rps) < 0)
+			if (parse_st_rps(&b, num_rps, num_rps, &cur_rps) < 0)
 				return -1;
+			have_rps = 1;
 		}
 		if (tmvp_en)
 			slice_tmvp = (int)br_u(&b, 1); /* slice_temporal_mvp_enabled_flag */
@@ -469,5 +491,35 @@ int hevc_parse_slice(const uint8_t *nal, uint32_t len, int nal_type,
 	out->mvd_l1_zero_flag = mvd_l1_zero;
 	out->cabac_init_flag = cabac_init_flag;
 	out->max_num_merge_cand = mmc;
+
+	/* Reference-picture lists (default construction, H.265 8.3.2/8.3.4; no list
+	 * modification in-subset) + the full-RPS retention union. POC-LSB-direct
+	 * (no wrap within an IDR period; bound 2^log2_max_poc_lsb, guarded elsewhere). */
+	out->rps_n = 0;
+	out->ref_poc_l0[0] = out->ref_poc_l1[0] = 0;
+	if (have_rps && slice_type != 2 /* P or B */) {
+		uint32_t before[16], nb = 0, after[16], na = 0;
+		for (uint32_t i = 0; i < cur_rps.num_neg; i++) {
+			uint32_t p = (uint32_t)((int32_t)poc + cur_rps.delta_s0[i]);
+			if (out->rps_n < 16) out->rps_poc[out->rps_n++] = p;     /* retention: incl used=0 */
+			if (cur_rps.used_s0[i] && nb < 16) before[nb++] = p;     /* PocStCurrBefore */
+		}
+		for (uint32_t i = 0; i < cur_rps.num_pos; i++) {
+			uint32_t p = (uint32_t)((int32_t)poc + cur_rps.delta_s1[i]);
+			if (out->rps_n < 16) out->rps_poc[out->rps_n++] = p;
+			if (cur_rps.used_s1[i] && na < 16) after[na++] = p;      /* PocStCurrAfter */
+		}
+		/* RefPicListTemp0 = Before ++ After (repeat to fill); L1 = After ++ Before. */
+		uint32_t t0[32], nt0 = 0, t1[32], nt1 = 0;
+		for (uint32_t i = 0; i < nb; i++) t0[nt0++] = before[i];
+		for (uint32_t i = 0; i < na; i++) t0[nt0++] = after[i];
+		for (uint32_t i = 0; i < na; i++) t1[nt1++] = after[i];
+		for (uint32_t i = 0; i < nb; i++) t1[nt1++] = before[i];
+		for (uint32_t i = 0; i < out->nb_refs_l0 && i < 16; i++)
+			out->ref_poc_l0[i] = nt0 ? t0[i % nt0] : poc;            /* §8.3.4 wrap if active>temp */
+		if (slice_type == 0)   /* B has L1 */
+			for (uint32_t i = 0; i < out->nb_refs_l1 && i < 16; i++)
+				out->ref_poc_l1[i] = nt1 ? t1[i % nt1] : poc;
+	}
 	return 0;
 }

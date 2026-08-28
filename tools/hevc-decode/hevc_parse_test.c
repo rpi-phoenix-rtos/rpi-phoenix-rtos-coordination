@@ -70,14 +70,21 @@ int main(int argc, char **argv)
 				epb_hdr += hevc_count_epb(nal.data, s.data_byte_offset);
 				epb_data += hevc_count_epb(nal.data + s.data_byte_offset,
 				                           nal.len - s.data_byte_offset);
-				printf("ROW %s %d %d %u %u %s %u %d %u %u  l0=%u l1=%u mmc=%u mvdl1z=%d cabac=%d\n",
+				char l0[64] = "", l1[64] = "", rps[96] = "", tmp[16];
+				for (uint32_t k = 0; k < s.nb_refs_l0 && k < 16; k++) {
+					snprintf(tmp, sizeof(tmp), "%s%u", k ? "," : "", s.ref_poc_l0[k]); strcat(l0, tmp); }
+				for (uint32_t k = 0; k < s.nb_refs_l1 && k < 16; k++) {
+					snprintf(tmp, sizeof(tmp), "%s%u", k ? "," : "", s.ref_poc_l1[k]); strcat(l1, tmp); }
+				for (uint32_t k = 0; k < s.rps_n && k < 16; k++) {
+					snprintf(tmp, sizeof(tmp), "%s%u", k ? "," : "", s.rps_poc[k]); strcat(rps, tmp); }
+				printf("ROW %s %d %d %u %u %s %u %d %u %u  l0=%u l1=%u mmc=%u mvdl1z=%d cabac=%d  L0=[%s] L1=[%s] rps=[%s]\n",
 				       base, frame, nal.type,
 				       have_sps ? sps.width : 0,
 				       have_sps ? sps.height : 0,
 				       typename(s.slice_type), s.poc, s.slice_qp,
 				       s.data_byte_offset, s.bfnum,
 				       s.nb_refs_l0, s.nb_refs_l1, s.max_num_merge_cand,
-				       s.mvd_l1_zero_flag, s.cabac_init_flag);
+				       s.mvd_l1_zero_flag, s.cabac_init_flag, l0, l1, rps);
 				frame++;
 			}
 			/* other NAL types (VPS 32, SEI 39/40, AUD 35) ignored */
