@@ -16,3 +16,5 @@
 /hevc-ippp1080
 testdata/*.nv12
 /hd1080_frame.h
+/hevc_parse_test
+/hevc-play

@@ -1,0 +1,124 @@
+/* hevc_parse.h — minimal runtime HEVC/H.265 bitstream parser for the rpivid
+ * hardware decoder. Extracts the per-frame parameters hevc-m2.c needs (geometry
+ * from the SPS; slice_type / POC / slice_qp / data_byte_offset / bfnum from each
+ * slice header) at RUNTIME, replacing the build-time python generators
+ * (gen-frame-header.py / gen-clip-header.py / gen-ippp-header.py).
+ *
+ * Scope: the fixed x265 subset the player targets — 8-bit 4:2:0, single-slice,
+ * single-tile, no WPP, no SAO, no temporal-MVP, no scaling lists, no PCM, CTB 64.
+ * IDR (type 19/20) I-slices + TRAIL_R (type 1) P-slices referencing the
+ * immediately-previous frame. Anything outside the subset is rejected (a negative
+ * return + hevc_err()), never mis-handled — a silently wrong value corrupts decode.
+ *
+ * No external dependencies; freestanding C (uint*_t + memcmp only).
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
+ */
+#ifndef HEVC_PARSE_H
+#define HEVC_PARSE_H
+
+#include <stdint.h>
+
+/* NAL unit types we care about (H.265 Table 7-1). */
+enum {
+	HEVC_NAL_TRAIL_R = 1,   /* non-IRAP coded slice (our P-slices) */
+	HEVC_NAL_BLA_W_LP = 16,
+	HEVC_NAL_IDR_W_RADL = 19,
+	HEVC_NAL_IDR_N_LP = 20,
+	HEVC_NAL_CRA_NUT = 21,
+	HEVC_NAL_SPS = 33,
+	HEVC_NAL_PPS = 34,
+};
+
+/* One NAL unit, start-code stripped. `data` points at the 2-byte NAL header;
+ * `len` spans header + payload (RBSP with emulation-prevention bytes still in). */
+typedef struct {
+	int type;
+	const uint8_t *data;
+	uint32_t len;
+} hevc_nal_t;
+
+/* Cursor for hevc_nal_next(); zero-initialise before first call. */
+typedef struct {
+	const uint8_t *buf;
+	uint32_t size;
+	uint32_t pos;       /* byte offset of the next start code to scan from */
+	int started;
+} hevc_nal_iter_t;
+
+/* Sequence parameter set — only the fields the slice parser / geometry need. */
+typedef struct {
+	uint32_t width, height;           /* pic_{width,height}_in_luma_samples */
+	uint32_t chroma_format_idc;       /* 1 == 4:2:0 (required) */
+	uint32_t bit_depth_luma_minus8;
+	uint32_t bit_depth_chroma_minus8;
+	uint32_t log2_max_poc_lsb;        /* log2_max_pic_order_cnt_lsb_minus4 + 4 */
+	uint32_t num_short_term_rps;      /* num_short_term_ref_pic_sets */
+	int sao_enabled;                  /* sample_adaptive_offset_enabled_flag */
+	int temporal_mvp_enabled;         /* sps_temporal_mvp_enabled_flag */
+} hevc_sps_t;
+
+/* Picture parameter set — the flags that steer slice-header syntax. */
+typedef struct {
+	int32_t init_qp_minus26;
+	uint32_t num_extra_slice_header_bits;
+	uint32_t num_ref_idx_l0_default_active_minus1;
+	uint32_t num_ref_idx_l1_default_active_minus1;
+	int dependent_slice_segments_enabled;
+	int output_flag_present;
+	int cabac_init_present;
+	int weighted_pred;                /* P slices carry pred_weight_table() */
+	int weighted_bipred;              /* B slices carry pred_weight_table() */
+	int pps_slice_chroma_qp_offsets_present;
+	int deblocking_filter_control_present;
+	int deblocking_filter_override_enabled;
+	int pps_loop_filter_across_slices;
+	int tiles_enabled;
+	int entropy_coding_sync;
+	int lists_modification_present;
+} hevc_pps_t;
+
+/* Per-frame output — matches the python generators' per-frame fields exactly. */
+typedef struct {
+	int slice_type;             /* 0=B, 1=P, 2=I */
+	uint32_t poc;               /* slice_pic_order_cnt_lsb (0 for IDR) */
+	int slice_qp;               /* 26 + init_qp_minus26 + slice_qp_delta */
+	uint32_t data_byte_offset;  /* NAL-start byte offset of slice_segment_data */
+	uint32_t bfnum;             /* len - data_byte_offset (bytes the HW consumes) */
+} hevc_slice_t;
+
+/* Human-readable reason for the most recent negative return, for diagnostics. */
+const char *hevc_err(void);
+
+/* Count emulation-prevention (00 00 03) sequences in a byte range. */
+uint32_t hevc_count_epb(const uint8_t *s, uint32_t n);
+
+/* Iterate NAL units in a whole .265 file buffer. Returns 1 and fills *out for
+ * each unit (4-byte start codes checked before 3-byte to avoid double counting;
+ * a 0x00 immediately before the next start code is trimmed off this payload);
+ * returns 0 at end of buffer. */
+int hevc_nal_next(hevc_nal_iter_t *it, hevc_nal_t *out);
+
+/* Required entry point: parse the SPS just far enough for the frame geometry. */
+int hevc_parse_sps_dims(const uint8_t *sps_nal, uint32_t len,
+                        uint32_t *w, uint32_t *h);
+
+/* Full SPS parse (dims + the slice-steering fields). Rejects non-subset streams. */
+int hevc_parse_sps(const uint8_t *sps_nal, uint32_t len, hevc_sps_t *out);
+
+/* PPS parse (the flags the slice header depends on). */
+int hevc_parse_pps(const uint8_t *pps_nal, uint32_t len, hevc_pps_t *out);
+
+/* Parse a first-slice IDR or TRAIL_R slice_segment_header.
+ *
+ * DEVIATION from the task's 4-arg signature: this takes the already-parsed SPS
+ * and PPS. The task explicitly permits "parse the PPS" / "parse it from the SPS",
+ * and the ip128 vector is weighted-pred (needs weighted_pred_flag + the SPS
+ * log2_max_poc_lsb) — so a correct, general parser must see both. Pass NULL for
+ * either to fall back to the documented subset defaults (log2_max_poc_lsb=8,
+ * init_qp_minus26=0, no weighted pred, loop-filter flag present). */
+int hevc_parse_slice(const uint8_t *nal, uint32_t len, int nal_type,
+                     const hevc_sps_t *sps, const hevc_pps_t *pps,
+                     hevc_slice_t *out);
+
+#endif /* HEVC_PARSE_H */
