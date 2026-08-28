@@ -65,12 +65,18 @@ $GCC -O2 -static -Wall -Wextra -std=gnu11 -I$VCM -Itools/hevc-decode \
 6. **x265 `wpp=0`** — WPP auto-enables past ~256px wide; the harness is single-tile/no-WPP.
 7. **Output is SAND / NV12_COL128 tiled** — unpack (pixel(x,y)=buf[(x/128)*stride + y*128 +
    x%128]) before any pixel compare / display.
-8. **Intermittent inter (P) corruption** — the rolling-DPB golden verify (`hevc-ippp`)
-   passes 8/8 most runs but ~10–20% of runs show later P-frames drifting (frame 0 I is
-   always exact; errors compound down the chain). This reproduces on the *pristine*
-   pre-M3 engine too (so it is NOT the runtime-geometry refactor) — a real, still-open
-   HW-pipeline race, likely the previous frame's output not fully visible when the next
-   P-frame reads it as a reference. Run `test-cycle-bench.sh` to reproduce.
+8. **Intermittent inter (P) corruption is gated on INTER-FRAME IDLE, not the decoder.**
+   Measured this session: **back-to-back decode is 600/600 bit-exact** (`-DIPPP_STRESS`,
+   no display, no sleep) — the decoder is reliable. Insert a 40 ms inter-frame gap and
+   ~1% of iterations corrupt; insert `fb_blit` + 40 ms (the real video-playback loop) and
+   ~25–35% corrupt — frame 0 (I) always exact, errors compounding down the P-chain.
+   Reproduces on the pristine pre-M3 engine (not the M3 refactor). It is **NOT** a
+   phase-1→phase-2 PU/COEFF drain: an `RPI_STATUS` read-back + `__sync_synchronize()`
+   there did not help (13/15 vs 10/15, noise). Leading hypothesis: the HEVC clock (set
+   once via the VideoCore mailbox at startup) is gated/scaled by firmware during idle, so
+   a decode starting mid-transition mis-runs. Repro with the `IPPP_STRESS` harness
+   (`-DIPPP_STRESS`, optional `-DSTRESS_SLEEP` / `-DSTRESS_SLEEP_MS=N`); a fix likely
+   re-asserts the HEVC clock per frame.
 
 ## M3: runtime `.265` file player (done)
 

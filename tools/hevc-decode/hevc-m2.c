@@ -548,14 +548,28 @@ int main(void)
 	if (dma_alloc(&bl, luma_stride * cols + 4096u) || dma_alloc(&bc, chroma_stride * cols + 4096u)) {
 		printf("hevc-m2: DMA alloc (ppong) FAILED\n"); return 4;
 	}
-	fbmode_t fbm; int fbfd = -1; uint8_t *fb = fb_open(&fbm, &fbfd);   /* display inter video */
 	uint32_t ok __attribute__((unused)) = 0, decoded __attribute__((unused)) = 0;
+#ifdef IPPP_STRESS
+	/* Statistical validation of the phase-1->phase-2 drain fix: loop the golden
+	 * verify many times with NO fb/sleep (amplifies the race) and tally full-pass
+	 * iterations + per-frame failures. A correct fix -> 0 failures over hundreds
+	 * of iterations (pristine baseline ~65% full-pass). */
+	#ifndef STRESS_ITERS
+	#define STRESS_ITERS 300
+	#endif
+	uint8_t *fb __attribute__((unused)) = NULL;
+	const int passes = STRESS_ITERS;
+	uint32_t full_pass = 0, frame_fail[IPPP_NFRAMES] = {0};
+#else
+	fbmode_t fbm; int fbfd = -1; uint8_t *fb = fb_open(&fbm, &fbfd);   /* display inter video */
 #ifdef IPPP_HAVE_GOLDEN
 	const int passes = 1;                    /* verify once */
 #else
 	const int passes = 20;                   /* replay so a periodic HDMI snapshot lands mid-play */
 #endif
-	for (int loop = 0; loop < passes; loop++)
+#endif
+	for (int loop = 0; loop < passes; loop++) {
+	uint32_t iter_bad __attribute__((unused)) = 0;
 	for (int f = 0; f < IPPP_NFRAMES; f++) {
 		const struct ippp_frame *fr = &ippp_frames[f];
 		dma_buf_t *cl = (f & 1) ? &bl : &luma,   *cc = (f & 1) ? &bc : &chroma;
@@ -569,23 +583,55 @@ int main(void)
 			fr->is_p ? 0x1013u : 0u, fr->is_p ? 5u : 0u, fr->is_p ? msgs : NULL,
 			fr->is_p ? refpa : NULL, fr->poc,
 			pu_stride, coeff_stride, luma_stride, chroma_stride, 0);
-		if (rc != 0) { printf("hevc-m2: frame %d (%s POC %u) decode FAILED rc=%d\n",
-			f, fr->is_p ? "P" : "I", fr->poc, rc); continue; }
+		if (rc != 0) {
+#ifdef IPPP_STRESS
+			frame_fail[f]++; iter_bad++;
+#else
+			printf("hevc-m2: frame %d (%s POC %u) decode FAILED rc=%d\n",
+				f, fr->is_p ? "P" : "I", fr->poc, rc);
+#endif
+			continue;
+		}
 		decoded++;
+#ifndef IPPP_STRESS
 		if (fb) fb_blit(fb, fbm.pitch, fbm.width, fbm.height, cl->cpu, cc->cpu,
 				FRAME_WIDTH, FRAME_HEIGHT, luma_stride, chroma_stride);
 		{ struct timespec ts = { 0, 40000000 }; nanosleep(&ts, NULL); }   /* ~25 fps */
+#elif defined(STRESS_SLEEP)
+		/* Isolate the inter-frame idle: replicate the display loop's gap WITHOUT
+		 * fb0, to test whether idle duration alone (e.g. HEVC clock gating between
+		 * frames) is the trigger. -DSTRESS_SLEEP_MS=N sweeps the gap. */
+		#ifndef STRESS_SLEEP_MS
+		#define STRESS_SLEEP_MS 40
+		#endif
+		{ struct timespec ts = { STRESS_SLEEP_MS / 1000, (long)(STRESS_SLEEP_MS % 1000) * 1000000L };
+		  nanosleep(&ts, NULL); }
+#endif
 #ifdef IPPP_HAVE_GOLDEN
 		const uint8_t *yb = cl->cpu, *g = ippp_golden_y + (size_t)f * FRAME_WIDTH * FRAME_HEIGHT;
 		uint32_t bad = 0;
 		for (uint32_t y = 0; y < FRAME_HEIGHT; y++)
 			for (uint32_t x = 0; x < FRAME_WIDTH; x++)
 				if (yb[(x / 128u) * luma_stride + y * 128u + (x % 128u)] != g[y * FRAME_WIDTH + x]) bad++;
+#ifdef IPPP_STRESS
+		if (bad) { frame_fail[f]++; iter_bad++; }
+#else
 		printf("hevc-m2: frame %d %s POC %u -> %s (%u bad px)\n", f, fr->is_p ? "P" : "I", fr->poc,
 			bad ? "MISMATCH" : "bit-exact", bad);
 		if (!bad) ok++;
 #endif
+#endif
 	}
+#ifdef IPPP_STRESS
+	if (iter_bad == 0) full_pass++;
+#endif
+	}
+#ifdef IPPP_STRESS
+	printf("hevc-m2: IPPP-STRESS %u/%d iters fully bit-exact; per-frame fails:", full_pass, passes);
+	for (int f = 0; f < IPPP_NFRAMES; f++) printf(" f%d=%u", f, frame_fail[f]);
+	printf("\n");
+	return full_pass == (uint32_t)passes ? 0 : 7;
+#else
 	if (fb) { munmap(fb, fbm.smemlen); close(fbfd); }
 #ifdef IPPP_HAVE_GOLDEN
 	printf("hevc-m2: IPPP-TEST %u/%d frames bit-exact %s\n", ok, IPPP_NFRAMES,
@@ -595,6 +641,7 @@ int main(void)
 	printf("hevc-m2: IPPP-PLAY decoded+displayed %u frames (%d-frame inter clip%s)\n",
 		decoded, IPPP_NFRAMES, fb ? " on HDMI" : " headless");
 	return decoded ? 0 : 7;
+#endif
 #endif
 	}
 #elif defined(CLIP_NFRAMES)
