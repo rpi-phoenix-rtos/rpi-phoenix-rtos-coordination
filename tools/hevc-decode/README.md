@@ -19,6 +19,7 @@ blob**. Ported register-by-register from the Linux `hevc_d_h265.c` driver.
 | **Bidirectional (B) inter** — 2 ref lists (past L0 + future L1) | ✅ bit-exact, ANY count of consecutive non-reference B (bframes 1/2/3+, b-adapt ok) |
 | **B-pyramid (hierarchical reference-B)** — general POC-indexed DPB | ✅ bit-exact (reference-B pics, 2-ref lists, RPS ref-lists, DPB eviction — x265 default) |
 | **Runtime `.265` file player (M3)** | ✅ `hevc-play <file.265>` — parse + decode + display I/P/B, no rebuild |
+| **`.mp4`/`.mov` container demux (M3)** | ✅ `hevc-play <file.mp4>` — in-tool ISOBMFF→Annex-B (no ffmpeg); single-video-track only, audio/multi-track/fragmented rejected loudly |
 | **`hevc-play` bit-exact conformance verify** | ✅ `hevc-play <f.265> <golden.nv12>` → VERIFY BIT-EXACT (ibp, mandelbrot, bframes=2/3, b-pyramid all 0 bad px) |
 | Decode → SAND/COL128 unpack → NV12→RGB → /dev/fb0 → HDMI | ✅ |
 | Intermittent inter corruption during on-HDMI playback (~10%) | ⚠️ known, decoder bit-exact HEADLESS in isolation (see gotcha 8) |
@@ -111,6 +112,17 @@ $GCC -O2 -static -Wall -Wextra -std=gnu11 -I$VCM -Itools/hevc-decode -DPLAY_TOOL
     -o /tmp/hevc-play tools/hevc-decode/hevc-m2.c tools/hevc-decode/hevc_parse.c $VCM/libvcmbox.c
 # stage hevc-play to /bin and a .265 next to it, then: hevc-play /root/clip.265
 ```
+
+`hevc-play` also accepts an `.mp4`/`.mov` container directly (`hevc_mp4.{h,c}`): if
+the file opens with an `ftyp` box it is demuxed to an in-memory Annex-B stream (no
+ffmpeg / libavformat), then the existing raw pipeline runs unchanged. The demux is
+deliberately narrow — exactly one HEVC video track, non-fragmented; NAL boundaries
+come from the length-prefixed `mdat` samples (self-delimiting for a single track, so
+no stsz/stco/stsc needed) and VPS/SPS/PPS come from `hvcC`. Audio, multi-track and
+fragmented (`moof`) files are **rejected loudly** (`hevc_err()`) rather than silently
+mis-demuxed — strip to a lone video track with `ffmpeg -an -c copy out.mp4`. HW-proven:
+`hevc-play wp.mp4`/`dflt.mp4` → VERIFY BIT-EXACT against the raw-`.265` goldens; a
+2-track file is rejected. Regenerate fixtures with `testdata/gen-mp4.sh`.
 
 Weighted prediction is applied purely via the per-ref slice-message descriptor: a
 weighted ref grows from 2 words to 8 — word0 gains marker bits `[6:5]=3`, then 6

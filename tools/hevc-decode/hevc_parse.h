@@ -143,6 +143,9 @@ typedef struct {
 /* Human-readable reason for the most recent negative return, for diagnostics. */
 const char *hevc_err(void);
 
+/* Set the hevc_err() string and return -1 (shared error channel for hevc_mp4.c). */
+int hevc_set_err(const char *msg);
+
 /* Count emulation-prevention (00 00 03) sequences in a byte range. */
 uint32_t hevc_count_epb(const uint8_t *s, uint32_t n);
 

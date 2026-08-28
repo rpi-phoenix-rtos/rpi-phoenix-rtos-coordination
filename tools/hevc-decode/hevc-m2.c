@@ -39,6 +39,7 @@
  * time (hevc_parse.*), so we include only the FIXED subset constants, not a
  * build-time frame header with a baked slice_data[]/golden. */
 #include "hevc_parse.h"
+#include "hevc_mp4.h"
 #include "play_subset.h"
 #include <stdlib.h>
 #else
@@ -1020,6 +1021,17 @@ int main(int argc, char **argv)
 	uint8_t *file = slurp_265(argv[1], &fsz);
 	if (!file) return 2;
 	printf("hevc-play: %s (%u bytes)\n", argv[1], fsz);
+
+	/* Accept a `.mp4`/`.mov` container: demux the HEVC track to Annex-B in
+	 * place, then run the existing raw-Annex-B pipeline unchanged. */
+	if (hevc_mp4_detect(file, fsz)) {
+		uint8_t *ab; uint32_t ablen;
+		if (hevc_mp4_to_annexb(file, fsz, &ab, &ablen) < 0) {
+			printf("hevc-play: MP4 demux failed: %s\n", hevc_err()); free(file); return 3;
+		}
+		printf("hevc-play: MP4 demux -> Annex-B (%u -> %u bytes)\n", fsz, ablen);
+		free(file); file = ab; fsz = ablen;
+	}
 
 	/* Pass 1: parse SPS/PPS, count slice NALs, find the largest (bitstream buf size). */
 	hevc_sps_t sps; int have_sps = 0;

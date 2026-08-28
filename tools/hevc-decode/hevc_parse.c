@@ -10,6 +10,8 @@ static char g_err[128];
 
 const char *hevc_err(void) { return g_err; }
 
+int hevc_set_err(const char *msg);   /* shared with hevc_mp4.c (see hevc_parse.h) */
+
 static int fail(const char *msg)
 {
 	/* keep it short; caller prints on negative return */
@@ -20,6 +22,8 @@ static int fail(const char *msg)
 	g_err[n] = 0;
 	return -1;
 }
+
+int hevc_set_err(const char *msg) { return fail(msg); }
 
 /* --------------------------------------------------------------- bitreader
  * Raw reader: does NOT strip emulation-prevention bytes, so the bit position
