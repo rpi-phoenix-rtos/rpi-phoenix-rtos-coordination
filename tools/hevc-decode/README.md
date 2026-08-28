@@ -10,14 +10,16 @@ blob**. Ported register-by-register from the Linux `hevc_d_h265.c` driver.
 |---|---|
 | Block reachability (clock, version 0x202, INTC) | ✅ M0 (`hevc-probe`) |
 | DMA allocators + GIC SPI-98/irq-130 IRQ path | ✅ M1 (`hevc-m1.c`) |
-| **Intra (I) single-frame** decode | ✅ bit-exact 64×64 → 640×480 |
-| Multi-CTB, multi-COL128-column-block, partial CTBs | ✅ (128×128, 320×240, 640×480) |
+| **Intra (I) single-frame** decode | ✅ bit-exact 64×64 → 640×480; runs 1920×1080 full-screen |
+| Multi-CTB, multi-COL128-column-block, partial CTBs | ✅ (128×128, 320×240, 640×480, 1080p) |
 | **All-intra video** playback (per-frame QP, on HDMI) | ✅ 48-frame 320×240 clip, 288/288 |
 | **Inter (P) single-frame** — motion compensation | ✅ bit-exact (weighted + non-weighted) |
-| **Multi-frame inter (IPPP, rolling DPB)** | ✅ bit-exact 128×128 (8/8) + 640×480 (4/4) |
+| **Multi-frame inter (IPPP, rolling DPB)** | ✅ bit-exact 128×128 (8/8) + 640×480 (4/4); runs 1080p |
 | **Inter-coded video → HDMI playback** | ✅ 32-frame 320×240 IPPP |
+| **Runtime `.265` file player (M3)** | ✅ `hevc-play <file.265>` — parse + decode + display, no rebuild |
 | Decode → SAND/COL128 unpack → NV12→RGB → /dev/fb0 → HDMI | ✅ |
-| B-frames, runtime `.265` file parser (M3), >VGA | ⏳ not yet |
+| Intermittent inter (P) corruption (~10–20% of runs) | ⚠️ known, PRE-M3, under investigation (see gotcha 8) |
+| B-frames | ⏳ not yet |
 | HW H.264 | ⛔ VCHIQ/firmware-walled (banked) |
 
 ## Layout
@@ -63,12 +65,28 @@ $GCC -O2 -static -Wall -Wextra -std=gnu11 -I$VCM -Itools/hevc-decode \
 6. **x265 `wpp=0`** — WPP auto-enables past ~256px wide; the harness is single-tile/no-WPP.
 7. **Output is SAND / NV12_COL128 tiled** — unpack (pixel(x,y)=buf[(x/128)*stride + y*128 +
    x%128]) before any pixel compare / display.
+8. **Intermittent inter (P) corruption** — the rolling-DPB golden verify (`hevc-ippp`)
+   passes 8/8 most runs but ~10–20% of runs show later P-frames drifting (frame 0 I is
+   always exact; errors compound down the chain). This reproduces on the *pristine*
+   pre-M3 engine too (so it is NOT the runtime-geometry refactor) — a real, still-open
+   HW-pipeline race, likely the previous frame's output not fully visible when the next
+   P-frame reads it as a reference. Run `test-cycle-bench.sh` to reproduce.
 
-## Next (M3): a runtime `.265` file player
+## M3: runtime `.265` file player (done)
 
-Today each vector is parsed at *build* time (the python generators) and compiled in. A
-usable player needs a **runtime** minimal slice-header parser (the fields the generators
-extract) + runtime geometry from the SPS, so `hevc-play <file.265>` decodes + displays any
-I/P H.265 file (x265 params above) without a rebuild. The decode engine (`decode_one` +
-`build_command_buffer`) already takes per-frame params — the missing piece is moving the
-FRAME_* geometry macros to runtime variables + the bitstream parser.
+`hevc-play <file.265>` decodes + displays any I/P H.265 file in the x265 subset above with
+no rebuild. It parses geometry from the SPS (`hevc_parse.*`) into runtime globals
+(`g_frame_w/h`, `g_ctb_w/h`) — the fixed subset constants stay compile-time
+(`play_subset.h`, e.g. `CONFIG2`, CTB log2, bit-depth) since the register values bake them
+in. Per-frame params (type/POC/qp/data_byte_offset/bfnum) come from `hevc_parse_slice()`.
+The bitstream DMA buffer is sized to the file's largest slice NAL (not a fixed cap), so a
+high-bitrate frame can't silently overflow it. Build + run:
+
+```sh
+$GCC -O2 -static -Wall -Wextra -std=gnu11 -I$VCM -Itools/hevc-decode -DPLAY_TOOL \
+    -o /tmp/hevc-play tools/hevc-decode/hevc-m2.c tools/hevc-decode/hevc_parse.c $VCM/libvcmbox.c
+# stage hevc-play to /bin and a .265 next to it, then: hevc-play /root/clip.265
+```
+
+Out of scope / next: B-frames, weighted-P in the player (non-weighted only today),
+resolutions/params beyond the x265 subset, and wiring the decoder into the ffmpeg port.

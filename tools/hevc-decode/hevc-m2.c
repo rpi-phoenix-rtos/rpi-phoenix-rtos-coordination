@@ -34,6 +34,14 @@
 
 #include "libvcmbox.h"
 #include "hevc_regs.h"
+#ifdef PLAY_TOOL
+/* Runtime file player: geometry + per-frame params come from the bitstream at run
+ * time (hevc_parse.*), so we include only the FIXED subset constants, not a
+ * build-time frame header with a baked slice_data[]/golden. */
+#include "hevc_parse.h"
+#include "play_subset.h"
+#include <stdlib.h>
+#else
 /* Frame header: default idr64 (flat), override with -DFRAME_HEADER='"detail64_frame.h"'
  * for the real-content vector. Each header defines FRAME_* params, slice_data[], and
  * EXPECTED_Y(x,y)/EXPECTED_C(x,y) (scalar golden for flat, ref-array for real content). */
@@ -41,6 +49,7 @@
 #define FRAME_HEADER "idr64_frame.h"
 #endif
 #include FRAME_HEADER
+#endif
 
 /* VideoCore firmware property tags (mailbox channel 8). */
 #define VC_GET_MAX_CLOCK_RATE 0x00030004u
@@ -150,6 +159,13 @@ static void emit_prob(int slice_qp, int init_type)
 	p1(RPI_TRANSFER, PROB_BACKUP);
 }
 
+/* Runtime frame geometry. The only stream parameters that vary within the x265
+ * subset are the resolution + its CTB grid; everything else the register values
+ * encode is fixed (see play_subset.h). The build-time modes set these from their
+ * FRAME_* macros at main() entry (behaviour identical to the old direct-macro
+ * code); PLAY_TOOL sets them from the parsed SPS. */
+static uint32_t g_frame_w, g_frame_h, g_ctb_w, g_ctb_h;
+
 /* Build the full phase-1 command buffer for the single IDR I-slice
  * (decode_slice last_slice path, h265.c:1149). Returns cmd_len. */
 /* slice_const_arg: 0 => compute the I-slice const from FRAME_SLICE_TYPE; nonzero =>
@@ -159,8 +175,8 @@ static uint32_t build_command_buffer(addr_t bs_pa, uint32_t dbo, uint32_t bfnum,
 				     uint32_t slice_const_arg, uint32_t num_msgs, const uint16_t *msgs)
 {
 	const uint32_t ctb = FRAME_LOG2_CTB;             /* log2 CTB size (6 => 64) */
-	const uint32_t ctb_w = FRAME_CTB_WIDTH;          /* pic width in CTBs (1) */
-	const uint32_t ctb_h = FRAME_CTB_HEIGHT;         /* pic height in CTBs (1) */
+	const uint32_t ctb_w = g_ctb_w;                  /* pic width in CTBs (runtime) */
+	const uint32_t ctb_h = g_ctb_h;                  /* pic height in CTBs (runtime) */
 	const uint32_t cs = 1u << ctb;
 
 	g_cmd_len = 0;
@@ -225,8 +241,8 @@ static uint32_t build_command_buffer(addr_t bs_pa, uint32_t dbo, uint32_t bfnum,
 	p1(RPI_TILEEND, endx | (endy << 16));
 	p1(RPI_BEGINTILEEND, endx | (endy << 16));    /* do_bte */
 	/* write_slice (h265.c:884): slice_const | wlast<<17 | hlast<<24. */
-	uint32_t w_last = FRAME_WIDTH & (cs - 1);
-	uint32_t h_last = FRAME_HEIGHT & (cs - 1);
+	uint32_t w_last = g_frame_w & (cs - 1);
+	uint32_t h_last = g_frame_h & (cs - 1);
 	uint32_t slice_const = slice_const_arg ? slice_const_arg :
 		((0u << 0) | (0u << 4) | (0u << 8) | (FRAME_SLICE_TYPE << 12)); /* I: merge/refs 0, no SAO */
 	p1(RPI_SLICE,
@@ -406,7 +422,7 @@ static int decode_one(volatile uint8_t *hevc, volatile uint8_t *intc,
 		wr(hevc + RPI_REFBASE + roff + RPI_REF_CSTRIDE, RPI_VC_LEN(chroma_stride));
 	}
 	wr(hevc + RPI_CONFIG2, FRAME_CONFIG2);
-	wr(hevc + RPI_FRAMESIZE, (FRAME_HEIGHT << 16) | FRAME_WIDTH);
+	wr(hevc + RPI_FRAMESIZE, (g_frame_h << 16) | g_frame_w);
 	wr(hevc + RPI_CURRPOC, currpoc);
 	/* Collocated-MV strides MUST be 0 when temporal-MVP is off (driver: colmv_stride
 	 * stays 0 unless setup_colmv runs, phase2_claimed writes 0). A non-zero stride with
@@ -416,7 +432,7 @@ static int decode_one(volatile uint8_t *hevc, volatile uint8_t *intc,
 	wr(hevc + RPI_MVSTRIDE, 0);
 	wr(hevc + RPI_MVBASE, 0);
 	wr(hevc + RPI_COLBASE, 0);
-	wr(hevc + RPI_NUMROWS, FRAME_CTB_HEIGHT);         /* STARTS PHASE 2 */
+	wr(hevc + RPI_NUMROWS, g_ctb_h);                  /* STARTS PHASE 2 */
 	if (poll_active(intc, ACTIVE2_INT_SET, 1500) != 0) {
 		if (verbose) {
 			uint32_t ic = rd(intc + ARG_IC_ICTRL), st = rd(hevc + RPI_STATUS);
@@ -430,28 +446,42 @@ static int decode_one(volatile uint8_t *hevc, volatile uint8_t *intc,
 	return 0;
 }
 
+/* Bring the HEVC block up: enable clock, map MMIO + ARGON INTC, check the version
+ * register, enable + clear the INTC. Fills hevc_out and intc_out; returns 0 or a
+ * nonzero exit code. Shared by the build-time modes and the runtime player. */
+static int hevc_hw_up(volatile uint8_t **hevc_out, volatile uint8_t **intc_out)
+{
+	uint32_t rate = 0, ver;
+	if (hevc_clock_enable(&rate) != 0) { printf("hevc-m2: clock enable FAILED\n"); return 2; }
+	printf("hevc-m2: HEVC clock %u Hz\n", rate);
+	void *hevc_p = map_block(HEVC_BASE, HEVC_SIZE);
+	if (hevc_p == MAP_FAILED) { printf("hevc-m2: map HEVC FAILED\n"); return 3; }
+	void *intc_p = map_block(INTC_BASE, INTC_SIZE);
+	if (intc_p == MAP_FAILED) { printf("hevc-m2: map INTC FAILED\n"); return 3; }
+	volatile uint8_t *hevc = hevc_p, *intc = intc_p;
+	ver = rd(hevc + RPI_VERSION);
+	printf("hevc-m2: RPI_VERSION = 0x%x\n", ver);
+	if (ver != HEVC_EXPECT_VER) { printf("hevc-m2: version mismatch — abort\n"); return 1; }
+	/* ARGON INTC: enable + clear pending (hw_setup). */
+	wr(intc + ARG_IC_ICTRL, ACTIVE1_EN_SET | ACTIVE2_EN_SET);
+	wr(intc + ARG_IC_ICTRL, rd(intc + ARG_IC_ICTRL));
+	*hevc_out = hevc; *intc_out = intc;
+	return 0;
+}
+
+#ifndef PLAY_TOOL
 int main(void)
 {
-	void *hevc_p, *intc_p;
 	volatile uint8_t *hevc, *intc;
-	uint32_t rate = 0, ver;
 	dma_buf_t cmd = {0}, bs = {0}, pu = {0}, coeff = {0}, luma = {0}, chroma = {0};
 
 	setvbuf(stdout, NULL, _IONBF, 0);
 	printf("hevc-m2: single-IDR %ux%u hardware decode\n", FRAME_WIDTH, FRAME_HEIGHT);
+	g_frame_w = FRAME_WIDTH; g_frame_h = FRAME_HEIGHT;
+	g_ctb_w = FRAME_CTB_WIDTH; g_ctb_h = FRAME_CTB_HEIGHT;
 
-	if (hevc_clock_enable(&rate) != 0) { printf("hevc-m2: clock enable FAILED\n"); return 2; }
-	printf("hevc-m2: HEVC clock %u Hz\n", rate);
-	hevc_p = map_block(HEVC_BASE, HEVC_SIZE); if (hevc_p == MAP_FAILED) { printf("hevc-m2: map HEVC FAILED\n"); return 3; }
-	intc_p = map_block(INTC_BASE, INTC_SIZE); if (intc_p == MAP_FAILED) { printf("hevc-m2: map INTC FAILED\n"); return 3; }
-	hevc = hevc_p; intc = intc_p;
-	ver = rd(hevc + RPI_VERSION);
-	printf("hevc-m2: RPI_VERSION = 0x%x\n", ver);
-	if (ver != HEVC_EXPECT_VER) { printf("hevc-m2: version mismatch — abort\n"); return 1; }
-
-	/* ARGON INTC: enable + clear pending (hw_setup). */
-	wr(intc + ARG_IC_ICTRL, ACTIVE1_EN_SET | ACTIVE2_EN_SET);
-	wr(intc + ARG_IC_ICTRL, rd(intc + ARG_IC_ICTRL));
+	int hrc = hevc_hw_up(&hevc, &intc);
+	if (hrc) return hrc;
 
 	/* Buffers (allocated once; reused across frames in clip mode). */
 	uint32_t wh = FRAME_WIDTH * FRAME_HEIGHT;
@@ -639,3 +669,167 @@ int main(void)
 	return exact ? 0 : 7;
 #endif
 }
+#else  /* PLAY_TOOL: runtime .265 file player (M3) */
+
+/* Slurp a whole elementary stream into a malloc'd buffer. */
+static uint8_t *slurp_265(const char *path, uint32_t *len_out)
+{
+	FILE *f = fopen(path, "rb");
+	if (!f) { printf("hevc-play: cannot open %s\n", path); return NULL; }
+	fseek(f, 0, SEEK_END);
+	long n = ftell(f);
+	fseek(f, 0, SEEK_SET);
+	if (n <= 0) { printf("hevc-play: empty/unreadable %s\n", path); fclose(f); return NULL; }
+	uint8_t *b = malloc((size_t)n);
+	if (!b || fread(b, 1, (size_t)n, f) != (size_t)n) {
+		printf("hevc-play: read failed %s\n", path); free(b); fclose(f); return NULL;
+	}
+	fclose(f);
+	*len_out = (uint32_t)n;
+	return b;
+}
+
+/* Decode one slice NAL into (cl,cc); for P, ref[0] = the previous decoded frame
+ * (pl,pc). Returns decode_one's rc. */
+static int play_frame(volatile uint8_t *hevc, volatile uint8_t *intc,
+		      dma_buf_t *cmd, dma_buf_t *bs, dma_buf_t *pu, dma_buf_t *coeff,
+		      const hevc_nal_t *nal, const hevc_slice_t *s,
+		      dma_buf_t *cl, dma_buf_t *cc, dma_buf_t *pl, dma_buf_t *pc,
+		      uint32_t prev_poc, uint32_t pu_stride, uint32_t coeff_stride,
+		      uint32_t luma_stride, uint32_t chroma_stride)
+{
+	int is_p = (s->slice_type == 1);
+	uint16_t msgs[5] = { 0x5C06, 0x0000, (uint16_t)prev_poc, 0x0200, 0x0000 };
+	uint32_t refpa[16][2];
+	if (is_p) {
+		for (int i = 0; i < 16; i++) { refpa[i][0] = (uint32_t)cl->pa; refpa[i][1] = (uint32_t)cc->pa; }
+		refpa[0][0] = (uint32_t)pl->pa; refpa[0][1] = (uint32_t)pc->pa;   /* ref = previous frame */
+	}
+	return decode_one(hevc, intc, cmd, bs, pu, coeff, cl, cc,
+		nal->data, s->data_byte_offset, s->bfnum, s->slice_qp,
+		is_p ? 0x1013u : 0u, is_p ? 5u : 0u, is_p ? msgs : NULL,
+		is_p ? refpa : NULL, s->poc,
+		pu_stride, coeff_stride, luma_stride, chroma_stride, 0);
+}
+
+static int is_slice_nal(int t)
+{
+	return t == HEVC_NAL_TRAIL_R || t == HEVC_NAL_IDR_W_RADL || t == HEVC_NAL_IDR_N_LP;
+}
+
+int main(int argc, char **argv)
+{
+	setvbuf(stdout, NULL, _IONBF, 0);
+	if (argc < 2) { printf("usage: hevc-play <file.265>\n"); return 2; }
+
+	uint32_t fsz = 0;
+	uint8_t *file = slurp_265(argv[1], &fsz);
+	if (!file) return 2;
+	printf("hevc-play: %s (%u bytes)\n", argv[1], fsz);
+
+	/* Pass 1: parse SPS/PPS, count slice NALs, find the largest (bitstream buf size). */
+	hevc_sps_t sps; int have_sps = 0;
+	hevc_pps_t pps; int have_pps = 0;
+	hevc_nal_iter_t it = { file, fsz, 0, 0 };
+	hevc_nal_t nal;
+	uint32_t max_nal = 0, nslices = 0;
+	while (hevc_nal_next(&it, &nal)) {
+		if (nal.type == HEVC_NAL_SPS && !have_sps) {
+			if (hevc_parse_sps(nal.data, nal.len, &sps) < 0) {
+				printf("hevc-play: SPS rejected: %s\n", hevc_err()); free(file); return 3;
+			}
+			have_sps = 1;
+		} else if (nal.type == HEVC_NAL_PPS && !have_pps) {
+			if (hevc_parse_pps(nal.data, nal.len, &pps) < 0) {
+				printf("hevc-play: PPS rejected: %s\n", hevc_err()); free(file); return 3;
+			}
+			have_pps = 1;
+		} else if (is_slice_nal(nal.type)) {
+			if (nal.len > max_nal) max_nal = nal.len;
+			nslices++;
+		}
+	}
+	if (!have_sps) { printf("hevc-play: no SPS found\n"); free(file); return 3; }
+	if (sps.chroma_format_idc != 1 || sps.bit_depth_luma_minus8 || sps.bit_depth_chroma_minus8) {
+		printf("hevc-play: only 8-bit 4:2:0 supported\n"); free(file); return 3;
+	}
+	if (have_pps && pps.weighted_pred) {
+		printf("hevc-play: weighted_pred streams unsupported (non-weighted P only)\n"); free(file); return 3;
+	}
+	if (!nslices) { printf("hevc-play: no coded slices\n"); free(file); return 3; }
+
+	/* Runtime geometry from the SPS. */
+	g_frame_w = sps.width; g_frame_h = sps.height;
+	g_ctb_w = (sps.width + 63u) / 64u; g_ctb_h = (sps.height + 63u) / 64u;
+	printf("hevc-play: %ux%u  %u CTBs (%ux%u)  %u frames%s\n", g_frame_w, g_frame_h,
+		g_ctb_w * g_ctb_h, g_ctb_w, g_ctb_h, nslices, sps.temporal_mvp_enabled ? " [tmvp]" : "");
+
+	volatile uint8_t *hevc, *intc;
+	int hrc = hevc_hw_up(&hevc, &intc);
+	if (hrc) { free(file); return hrc; }
+
+	/* Runtime-sized DMA buffers + a ping-pong output pair for the rolling DPB. The
+	 * bitstream buffer is sized to the largest slice NAL (item: any file, not just
+	 * our vectors — a fixed cap would silently overflow a high-bitrate frame). */
+	uint32_t wh = g_frame_w * g_frame_h;
+	uint32_t pu_size = round_up_size(wh / 4u), coeff_size = round_up_size(wh);
+	uint32_t luma_stride = ((g_frame_h + 15u) & ~15u) * 128u;
+	uint32_t chroma_stride = luma_stride / 2u;
+	uint32_t cols = ((g_frame_w + 127u) & ~127u) / 128u;
+	size_t bs_size = ((size_t)max_nal + 4096u) & ~(size_t)4095u;
+	dma_buf_t cmd = {0}, bs = {0}, pu = {0}, coeff = {0};
+	dma_buf_t la = {0}, ca = {0}, lb = {0}, cb = {0};
+	if (dma_alloc(&cmd, 64u * 1024u) || dma_alloc(&bs, bs_size) ||
+	    dma_alloc(&pu, pu_size) || dma_alloc(&coeff, coeff_size) ||
+	    dma_alloc(&la, luma_stride * cols + 4096u) || dma_alloc(&ca, chroma_stride * cols + 4096u) ||
+	    dma_alloc(&lb, luma_stride * cols + 4096u) || dma_alloc(&cb, chroma_stride * cols + 4096u)) {
+		printf("hevc-play: DMA alloc FAILED\n"); free(file); return 4;
+	}
+	uint32_t pu_stride = (pu_size / g_ctb_h) & ~63u;
+	uint32_t coeff_stride = (coeff_size / g_ctb_h) & ~63u;
+	printf("hevc-play: buffers bs=%zu pu=%u coeff=%u luma_stride=%u cols=%u\n",
+		bs_size, pu_size, coeff_size, luma_stride, cols);
+
+	fbmode_t fbm; int fbfd = -1; uint8_t *fb = fb_open(&fbm, &fbfd);
+
+	/* Play the sequence, looping so a periodic HDMI snapshot lands mid-clip. Each
+	 * loop restarts at the IDR (DPB reset), so the rolling reference stays valid. */
+	const int passes = (nslices >= 8) ? 2 : 8;
+	uint32_t shown = 0;
+	for (int loop = 0; loop < passes; loop++) {
+		hevc_nal_iter_t it2 = { file, fsz, 0, 0 };
+		hevc_nal_t n2;
+		uint32_t frame = 0, prev_poc = 0;
+		dma_buf_t *pl = NULL, *pc = NULL;   /* previous decoded frame (DPB ref) */
+		while (hevc_nal_next(&it2, &n2)) {
+			if (!is_slice_nal(n2.type)) continue;
+			hevc_slice_t s;
+			if (hevc_parse_slice(n2.data, n2.len, n2.type, &sps, have_pps ? &pps : NULL, &s) < 0) {
+				printf("hevc-play: frame %u slice rejected: %s\n", frame, hevc_err()); break;
+			}
+			if (s.slice_type == 1 && !pl) {   /* P before any decoded I */
+				printf("hevc-play: frame %u is P with no reference — stream must start with IDR\n", frame); break;
+			}
+			if (n2.len > bs.size) {
+				printf("hevc-play: frame %u NAL %u > bitstream buf %zu\n", frame, n2.len, bs.size); break;
+			}
+			dma_buf_t *cl = (frame & 1) ? &lb : &la, *cc = (frame & 1) ? &cb : &ca;
+			int rc = play_frame(hevc, intc, &cmd, &bs, &pu, &coeff, &n2, &s, cl, cc,
+				pl, pc, prev_poc, pu_stride, coeff_stride, luma_stride, chroma_stride);
+			if (rc != 0) {
+				printf("hevc-play: frame %u (%s POC %u) decode FAILED rc=%d\n",
+					frame, s.slice_type == 1 ? "P" : "I", s.poc, rc); break;
+			}
+			if (fb) fb_blit(fb, fbm.pitch, fbm.width, fbm.height, cl->cpu, cc->cpu,
+					g_frame_w, g_frame_h, luma_stride, chroma_stride);
+			{ struct timespec ts = { 0, 40000000 }; nanosleep(&ts, NULL); }   /* ~25 fps */
+			pl = cl; pc = cc; prev_poc = s.poc; frame++; shown++;
+		}
+	}
+	if (fb) { munmap(fb, fbm.smemlen); close(fbfd); }
+	free(file);
+	printf("hevc-play: decoded+displayed %u frame-instances (%u unique frames)%s\n",
+		shown, nslices, fb ? " on HDMI" : " headless");
+	return shown ? 0 : 7;
+}
+#endif /* PLAY_TOOL */
