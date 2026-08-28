@@ -16,10 +16,11 @@ blob**. Ported register-by-register from the Linux `hevc_d_h265.c` driver.
 | **Inter (P) single-frame** — motion compensation | ✅ bit-exact (weighted + non-weighted) |
 | **Multi-frame inter (IPPP, rolling DPB)** | ✅ bit-exact 128×128 (8/8) + 640×480 (4/4); runs 1080p |
 | **Inter-coded video → HDMI playback** | ✅ 32-frame 320×240 IPPP |
+| **Bidirectional (B) inter** — 2 ref lists (past L0 + future L1) | ✅ bit-exact IPB (`IPB_TEST`, non-reference B, tmvp off) |
 | **Runtime `.265` file player (M3)** | ✅ `hevc-play <file.265>` — parse + decode + display, no rebuild |
 | Decode → SAND/COL128 unpack → NV12→RGB → /dev/fb0 → HDMI | ✅ |
-| Intermittent inter (P) corruption (~10–20% of runs) | ⚠️ known, PRE-M3, under investigation (see gotcha 8) |
-| B-frames | ⏳ not yet |
+| Intermittent inter corruption during on-HDMI playback (~10%) | ⚠️ known, decoder-reliable in isolation (see gotcha 8) |
+| Full real-content subset (multi-ref, b-pyramid, SAO, WPP, tmvp) | ⏳ decoder targets the x265 single-ref/no-SAO/no-tmvp subset |
 | HW H.264 | ⛔ VCHIQ/firmware-walled (banked) |
 
 ## Layout
