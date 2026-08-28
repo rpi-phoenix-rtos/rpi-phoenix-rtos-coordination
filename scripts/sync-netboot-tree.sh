@@ -49,4 +49,12 @@ rsync -a \
 	--exclude=/tmp \
 	--exclude=/mnt \
 	"$src/" "$export_dir/"
+
+# The base build produces no scalable TTF / fontconfig config / cache, so the X11
+# desktop (wmaker via WINGs, xterm, dillo) would have no Xft fonts on a fresh
+# re-export. Stage them reproducibly here (idempotent; non-fatal so a font hiccup
+# never blocks the rootfs sync). See scripts/stage-desktop-fonts.sh.
+RPI4B_NFS_EXPORT="$export_dir" "$repo/scripts/stage-desktop-fonts.sh" || \
+	printf 'sync-netboot-tree.sh: desktop-font staging reported an issue (non-fatal)\n'
+
 printf 'sync-netboot-tree.sh: done\n'
