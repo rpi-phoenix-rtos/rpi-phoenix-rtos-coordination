@@ -13,5 +13,6 @@
 /hevc-ipppplay
 /hevc-ippp640
 /hevc-hd1080
+/hevc-ippp1080
 testdata/*.nv12
 /hd1080_frame.h
