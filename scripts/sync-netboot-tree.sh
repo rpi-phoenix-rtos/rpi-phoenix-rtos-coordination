@@ -43,7 +43,11 @@ fi
 
 printf 'sync-netboot-tree.sh: syncing base rootfs -> NFS export (no --delete; hand-staged assets preserved)\n'
 printf '  src: %s\n  dst: %s\n' "$src" "$export_dir"
-rsync -a \
+# --no-owner --no-group: the sync runs as an unprivileged user and the NFS export
+# may contain root-owned files (e.g. the fontconfig cache from stage-desktop-fonts);
+# preserving owner/group needs root and makes rsync exit non-zero on chown/chgrp,
+# aborting the sync. Ownership is irrelevant for the served rootfs, so skip it.
+rsync -a --no-owner --no-group \
 	--exclude=/dev \
 	--exclude=/proc \
 	--exclude=/tmp \
