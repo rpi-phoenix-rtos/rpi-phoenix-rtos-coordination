@@ -29,6 +29,8 @@
 #include <errno.h>
 #include <time.h>
 #include <sys/mman.h>
+#include <fcntl.h>
+#include <sys/ioctl.h>
 
 #include "libvcmbox.h"
 #include "hevc_regs.h"
@@ -235,6 +237,50 @@ static int poll_active(volatile uint8_t *intc, uint32_t bit, int timeout_ms)
 	return -1;
 }
 
+/* rpi4-fb GETMODE ABI (video/rpi4-fb/rpi4-fb.h). */
+typedef struct { uint16_t width, height, bpp, pitch; uint64_t smemlen, framebuffer; } fbmode_t;
+#define FB_GETMODE _IOR('g', 1, fbmode_t)
+
+static inline uint8_t clip8(int v) { return v < 0 ? 0 : (v > 255 ? 255 : (uint8_t)v); }
+
+/* Best-effort: unpack the SAND/COL128 decode, convert NV12->RGBA (BT.601 limited
+ * range), and blit the frame centered onto /dev/fb0 (R8G8B8A8, the proven scanout
+ * format). No-op if fb0 is unavailable — the headless pixel check already ran. */
+static void hevc_show(const uint8_t *yb, const uint8_t *cbb,
+		      uint32_t W, uint32_t H, uint32_t luma_stride, uint32_t chroma_stride)
+{
+	int fd = open("/dev/fb0", O_RDWR);
+	if (fd < 0) { printf("hevc-m2: /dev/fb0 unavailable — skipping HDMI display\n"); return; }
+	fbmode_t m; memset(&m, 0, sizeof(m));
+	if (ioctl(fd, FB_GETMODE, &m) != 0 || m.framebuffer == 0 || m.bpp != 32) {
+		printf("hevc-m2: fb0 GETMODE failed — skipping display\n"); close(fd); return;
+	}
+	uint8_t *fb = mmap(NULL, m.smemlen, PROT_READ | PROT_WRITE,
+		MAP_PHYSMEM | MAP_UNCACHED | MAP_ANONYMOUS, -1, (off_t)m.framebuffer);
+	if (fb == MAP_FAILED) { printf("hevc-m2: fb mmap failed\n"); close(fd); return; }
+
+	uint32_t x0 = (m.width  > W) ? (m.width  - W) / 2u : 0;
+	uint32_t y0 = (m.height > H) ? (m.height - H) / 2u : 0;
+	for (uint32_t y = 0; y < H && (y0 + y) < m.height; y++) {
+		for (uint32_t x = 0; x < W && (x0 + x) < m.width; x++) {
+			int Y = yb[(x / 128u) * luma_stride + y * 128u + (x % 128u)];
+			uint32_t cxb = (x & ~1u), cy = y / 2u;   /* NV12: Cb at even col, Cr next */
+			int U = cbb[(cxb / 128u) * chroma_stride + cy * 128u + (cxb % 128u)];
+			int V = cbb[(((cxb + 1) / 128u)) * chroma_stride + cy * 128u + ((cxb + 1) % 128u)];
+			int C = Y - 16, D = U - 128, E = V - 128;
+			uint8_t *px = fb + (uint64_t)(y0 + y) * m.pitch + (uint64_t)(x0 + x) * 4u;
+			px[0] = clip8((298 * C + 409 * E + 128) >> 8);          /* R */
+			px[1] = clip8((298 * C - 100 * D - 208 * E + 128) >> 8);/* G */
+			px[2] = clip8((298 * C + 516 * D + 128) >> 8);          /* B */
+			px[3] = 0xff;                                           /* A */
+		}
+	}
+	printf("hevc-m2: displayed %ux%u decoded frame on fb0 (%ux%u) at (%u,%u)\n",
+		W, H, m.width, m.height, x0, y0);
+	munmap(fb, m.smemlen);
+	close(fd);
+}
+
 int main(void)
 {
 	void *hevc_p, *intc_p;
@@ -354,6 +400,9 @@ int main(void)
 	uint32_t y_tot = FRAME_WIDTH * FRAME_HEIGHT, c_tot = FRAME_WIDTH * (FRAME_HEIGHT / 2u);
 	printf("hevc-m2: luma   %u/%u match golden  (min %u max %u)\n", y_ok, y_tot, y_min, y_max);
 	printf("hevc-m2: chroma %u/%u match golden  (min %u max %u)\n", c_ok, c_tot, c_min, c_max);
+
+	/* Best-effort HDMI display of the decoded frame (visible end-to-end proof). */
+	hevc_show(yb, cb, FRAME_WIDTH, FRAME_HEIGHT, luma_stride, chroma_stride);
 
 	int exact = (y_bad == 0 && c_bad == 0);
 	printf("hevc-m2: M4 %s\n", exact ?
