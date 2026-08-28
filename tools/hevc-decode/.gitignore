@@ -10,4 +10,5 @@
 /hevc-ip
 /hevc-ipnw
 /hevc-ippp
+/hevc-ipppplay
 testdata/*.nv12

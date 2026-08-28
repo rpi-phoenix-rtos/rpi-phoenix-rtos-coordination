@@ -5,10 +5,12 @@
 # slice-header length (data_byte_offset derived from the trace's last slice-header
 # element). Non-weighted P (weightp=0) => 5 slice messages per P.
 #
-# Usage: gen-ippp-header.py <in.265> <W> <H> <GUARD> > out.h
+# Usage: gen-ippp-header.py <in.265> <W> <H> <GUARD> [nogolden] > out.h
+#   nogolden: skip the embedded per-frame golden luma (for long playback clips).
 # SPDX-License-Identifier: BSD-3-Clause
 import sys, subprocess, re
 f265, W, H, guard = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), sys.argv[4]
+want_golden = not (len(sys.argv) > 5 and sys.argv[5] == 'nogolden')
 d = open(f265, 'rb').read()
 
 # NAL boundaries (check 4-byte start code first to avoid double-count).
@@ -109,10 +111,11 @@ for fr in frames:
                                                fr['poc'], (fr['poc']-1) if fr['is_p'] else 0, fr['qp']))
 print("};")
 print(carr("clip_blob", blob))
-# per-frame golden luma
-allY = b''.join(ref[fi*fsz : fi*fsz + W*H] for fi in range(len(frames)))
-print("static const unsigned char ippp_golden_y[%d] = {" % len(allY))
-for j in range(0, len(allY), 20):
-    print("\t" + ",".join("0x%02x" % x for x in allY[j:j+20]) + ",")
-print("};")
+if want_golden:
+    print("#define IPPP_HAVE_GOLDEN 1")
+    allY = b''.join(ref[fi*fsz : fi*fsz + W*H] for fi in range(len(frames)))
+    print("static const unsigned char ippp_golden_y[%d] = {" % len(allY))
+    for j in range(0, len(allY), 20):
+        print("\t" + ",".join("0x%02x" % x for x in allY[j:j+20]) + ",")
+    print("};")
 print("#endif")

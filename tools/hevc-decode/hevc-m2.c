@@ -518,7 +518,14 @@ int main(void)
 	if (dma_alloc(&bl, luma_stride * cols + 4096u) || dma_alloc(&bc, chroma_stride * cols + 4096u)) {
 		printf("hevc-m2: DMA alloc (ppong) FAILED\n"); return 4;
 	}
-	uint32_t ok = 0;
+	fbmode_t fbm; int fbfd = -1; uint8_t *fb = fb_open(&fbm, &fbfd);   /* display inter video */
+	uint32_t ok __attribute__((unused)) = 0, decoded __attribute__((unused)) = 0;
+#ifdef IPPP_HAVE_GOLDEN
+	const int passes = 1;                    /* verify once */
+#else
+	const int passes = 20;                   /* replay so a periodic HDMI snapshot lands mid-play */
+#endif
+	for (int loop = 0; loop < passes; loop++)
 	for (int f = 0; f < IPPP_NFRAMES; f++) {
 		const struct ippp_frame *fr = &ippp_frames[f];
 		dma_buf_t *cl = (f & 1) ? &bl : &luma,   *cc = (f & 1) ? &bc : &chroma;
@@ -534,7 +541,11 @@ int main(void)
 			pu_stride, coeff_stride, luma_stride, chroma_stride, 0);
 		if (rc != 0) { printf("hevc-m2: frame %d (%s POC %u) decode FAILED rc=%d\n",
 			f, fr->is_p ? "P" : "I", fr->poc, rc); continue; }
-		/* Verify luma vs golden (COL128 unpack). */
+		decoded++;
+		if (fb) fb_blit(fb, fbm.pitch, fbm.width, fbm.height, cl->cpu, cc->cpu,
+				FRAME_WIDTH, FRAME_HEIGHT, luma_stride, chroma_stride);
+		{ struct timespec ts = { 0, 40000000 }; nanosleep(&ts, NULL); }   /* ~25 fps */
+#ifdef IPPP_HAVE_GOLDEN
 		const uint8_t *yb = cl->cpu, *g = ippp_golden_y + (size_t)f * FRAME_WIDTH * FRAME_HEIGHT;
 		uint32_t bad = 0;
 		for (uint32_t y = 0; y < FRAME_HEIGHT; y++)
@@ -543,10 +554,18 @@ int main(void)
 		printf("hevc-m2: frame %d %s POC %u -> %s (%u bad px)\n", f, fr->is_p ? "P" : "I", fr->poc,
 			bad ? "MISMATCH" : "bit-exact", bad);
 		if (!bad) ok++;
+#endif
 	}
+	if (fb) { munmap(fb, fbm.smemlen); close(fbfd); }
+#ifdef IPPP_HAVE_GOLDEN
 	printf("hevc-m2: IPPP-TEST %u/%d frames bit-exact %s\n", ok, IPPP_NFRAMES,
 		ok == IPPP_NFRAMES ? "— rolling-DPB inter sequence WORKS" : "");
 	return ok == IPPP_NFRAMES ? 0 : 7;
+#else
+	printf("hevc-m2: IPPP-PLAY decoded+displayed %u frames (%d-frame inter clip%s)\n",
+		decoded, IPPP_NFRAMES, fb ? " on HDMI" : " headless");
+	return decoded ? 0 : 7;
+#endif
 	}
 #elif defined(CLIP_NFRAMES)
 	/* All-intra video playback: decode + display each frame in sequence. Two passes so
