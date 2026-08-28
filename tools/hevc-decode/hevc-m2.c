@@ -82,8 +82,10 @@ static uint64_t *g_cmd;
 static uint32_t g_cmd_len;
 static void p1(uint16_t off, uint32_t data) { g_cmd[g_cmd_len++] = (uint64_t)off | ((uint64_t)data << 32); }
 
-/* CABAC init probabilities, init_type 0 = I-slice (hevc_d_h265.c:467). */
-static const uint8_t prob_init0[156] = {
+/* CABAC init probabilities (hevc_d_h265.c:467). Row = init_type: 0=I, 1=P (no
+ * cabac_init), 2=B (no cabac_init); cabac_init_flag swaps rows 1<->2. */
+static const uint8_t prob_init[3][156] = {
+	{
 	153, 200, 139, 141, 157, 154, 154, 154, 154, 154, 184, 154, 154,
 	154, 184, 63,  154, 154, 154, 154, 154, 154, 154, 154, 154, 154,
 	154, 154, 154, 153, 138, 138, 111, 141, 94,  138, 182, 154, 154,
@@ -96,15 +98,45 @@ static const uint8_t prob_init0[156] = {
 	94,  124, 108, 124, 107, 125, 141, 179, 153, 125, 107, 125, 141,
 	179, 153, 125, 107, 125, 141, 179, 153, 125, 140, 139, 182, 182,
 	152, 136, 152, 136, 153, 136, 139, 111, 136, 139, 111, 0,   0,
+	},
+	{
+	153, 185, 107, 139, 126, 197, 185, 201, 154, 149, 154, 139, 154,
+	154, 154, 152, 110, 122, 95,  79,  63,  31,  31,  153, 153, 168,
+	140, 198, 79,  124, 138, 94,  153, 111, 149, 107, 167, 154, 154,
+	154, 154, 196, 196, 167, 154, 152, 167, 182, 182, 134, 149, 136,
+	153, 121, 136, 137, 169, 194, 166, 167, 154, 167, 137, 182, 125,
+	110, 94,  110, 95,  79,  125, 111, 110, 78,  110, 111, 111, 95,
+	94,  108, 123, 108, 125, 110, 94,  110, 95,  79,  125, 111, 110,
+	78,  110, 111, 111, 95,  94,  108, 123, 108, 121, 140, 61,  154,
+	107, 167, 91,  122, 107, 167, 139, 139, 155, 154, 139, 153, 139,
+	123, 123, 63,  153, 166, 183, 140, 136, 153, 154, 166, 183, 140,
+	136, 153, 154, 166, 183, 140, 136, 153, 154, 170, 153, 123, 123,
+	107, 121, 107, 121, 167, 151, 183, 140, 151, 183, 140, 0,   0,
+	},
+	{
+	153, 160, 107, 139, 126, 197, 185, 201, 154, 134, 154, 139, 154,
+	154, 183, 152, 154, 137, 95,  79,  63,  31,  31,  153, 153, 168,
+	169, 198, 79,  224, 167, 122, 153, 111, 149, 92,  167, 154, 154,
+	154, 154, 196, 167, 167, 154, 152, 167, 182, 182, 134, 149, 136,
+	153, 121, 136, 122, 169, 208, 166, 167, 154, 152, 167, 182, 125,
+	110, 124, 110, 95,  94,  125, 111, 111, 79,  125, 126, 111, 111,
+	79,  108, 123, 93,  125, 110, 124, 110, 95,  94,  125, 111, 111,
+	79,  125, 126, 111, 111, 79,  108, 123, 93,  121, 140, 61,  154,
+	107, 167, 91,  107, 107, 167, 139, 139, 170, 154, 139, 153, 139,
+	123, 123, 63,  124, 166, 183, 140, 136, 153, 154, 166, 183, 140,
+	136, 153, 154, 166, 183, 140, 136, 153, 154, 170, 153, 138, 138,
+	122, 121, 122, 121, 167, 151, 183, 140, 151, 183, 140, 0,   0,
+	},
 };
 
-/* write_prob (h265.c:514) — I-slice: init_type 0, q = clamp(slice_qp,0,51). */
-static void emit_prob(int slice_qp)
+/* write_prob (h265.c:514) — init_type: I=0, P=1, B=2 (no cabac_init). q=clamp(qp,0,51). */
+static void emit_prob(int slice_qp, int init_type)
 {
 	int q = slice_qp < 0 ? 0 : (slice_qp > 51 ? 51 : slice_qp);
+	const uint8_t *p = prob_init[init_type];
 	uint8_t dst[156];
 	for (int i = 0; i < 154; i++) {
-		int v = prob_init0[i];
+		int v = p[i];
 		int m = (v >> 4) * 5 - 45;
 		int n = ((v & 15) << 3) - 16;
 		int pre = 2 * (((m * q) >> 4) + n) - 127;
@@ -120,7 +152,11 @@ static void emit_prob(int slice_qp)
 
 /* Build the full phase-1 command buffer for the single IDR I-slice
  * (decode_slice last_slice path, h265.c:1149). Returns cmd_len. */
-static uint32_t build_command_buffer(addr_t bs_pa, uint32_t bfnum, int slice_qp)
+/* slice_const_arg: 0 => compute the I-slice const from FRAME_SLICE_TYPE; nonzero =>
+ * use it verbatim (P/B slice_reg_const). num_msgs/msgs: the slice-message array
+ * (0 for I; P/B emit cmd_slice + per-ref descriptors). */
+static uint32_t build_command_buffer(addr_t bs_pa, uint32_t dbo, uint32_t bfnum, int slice_qp,
+				     uint32_t slice_const_arg, uint32_t num_msgs, const uint16_t *msgs)
 {
 	const uint32_t ctb = FRAME_LOG2_CTB;             /* log2 CTB size (6 => 64) */
 	const uint32_t ctb_w = FRAME_CTB_WIDTH;          /* pic width in CTBs (1) */
@@ -132,18 +168,24 @@ static uint32_t build_command_buffer(addr_t bs_pa, uint32_t bfnum, int slice_qp)
 	/* 1) pre_slice_decode: I-slice emits ZERO slice messages. */
 
 	/* 2) write_bitstream (h265.c:573). addr = bs_pa + data_byte_offset. */
-	addr_t addr = bs_pa + FRAME_DATA_BYTE_OFFSET;
+	addr_t addr = bs_pa + dbo;
 	uint32_t off = (uint32_t)(addr & 63);
 	p1(RPI_BFBASE, RPI_VC_ADDR(addr));
 	p1(RPI_BFNUM, bfnum);
 	p1(RPI_BFCONTROL, off + RPI_BFCONTROL_STOP);
 	p1(RPI_BFCONTROL, off + RPI_BFCONTROL_EMU);      /* V4L2 stream keeps emu-prevention bytes */
 
-	/* 3) write_prob (CABAC). */
-	emit_prob(slice_qp);
+	/* 3) write_prob (CABAC). init_type from slice type: I=0; P/B (no cabac_init) = 2-slice_type.
+	 * slice_type lives in bits 12+ of slice_const_arg (P/B); I uses the computed I const => 0. */
+	int slice_type = slice_const_arg ? (int)((slice_const_arg >> 12) & 0xf) : (int)FRAME_SLICE_TYPE;
+	int init_type = (slice_type == 2 /*I*/) ? 0 : (2 - slice_type);
+	emit_prob(slice_qp, init_type);
 
-	/* 4) program_slicecmds: SLICECMDS = num_msgs(0) + (sliceid(0)<<8) = 0. */
-	p1(RPI_SLICECMDS, 0);
+	/* 4) program_slicecmds (h265.c:697): SLICECMDS = num_msgs + (sliceid 0 <<8), then
+	 * the message array at 0x4000+4*i. I-slice: num_msgs=0. P/B: cmd_slice + ref descs. */
+	p1(RPI_SLICECMDS, num_msgs);
+	for (uint32_t i = 0; i < num_msgs; i++)
+		p1(RPI_SLICEMSGBASE + 4u * i, msgs[i]);
 
 	/* 5) new_slice_segment: SPS0/SPS1/PPS/SLICESTART (h265.c:613). */
 	p1(RPI_SPS0,
@@ -185,7 +227,8 @@ static uint32_t build_command_buffer(addr_t bs_pa, uint32_t bfnum, int slice_qp)
 	/* write_slice (h265.c:884): slice_const | wlast<<17 | hlast<<24. */
 	uint32_t w_last = FRAME_WIDTH & (cs - 1);
 	uint32_t h_last = FRAME_HEIGHT & (cs - 1);
-	uint32_t slice_const = (0u << 0) | (0u << 4) | (0u << 8) | (FRAME_SLICE_TYPE << 12); /* I: merge/refs 0, no SAO */
+	uint32_t slice_const = slice_const_arg ? slice_const_arg :
+		((0u << 0) | (0u << 4) | (0u << 8) | (FRAME_SLICE_TYPE << 12)); /* I: merge/refs 0, no SAO */
 	p1(RPI_SLICE,
 	   slice_const |
 	   ((endx + 1 < ctb_w || !w_last ? cs : w_last) << 17) |
@@ -310,13 +353,15 @@ static void __attribute__((unused)) hevc_show(const uint8_t *yb, const uint8_t *
  * bfnum bytes) into bs, builds + runs both HW phases. Returns 0 on success. */
 static int decode_one(volatile uint8_t *hevc, volatile uint8_t *intc,
 		      dma_buf_t *cmd, dma_buf_t *bs, dma_buf_t *pu, dma_buf_t *coeff,
-		      dma_buf_t *luma, dma_buf_t *chroma, const uint8_t *slice, uint32_t bfnum,
-		      int slice_qp, uint32_t pu_stride, uint32_t coeff_stride, uint32_t luma_stride,
+		      dma_buf_t *luma, dma_buf_t *chroma, const uint8_t *slice, uint32_t dbo, uint32_t bfnum,
+		      int slice_qp, uint32_t slice_const, uint32_t num_msgs, const uint16_t *msgs,
+		      const uint32_t (*refpa)[2], uint32_t currpoc,
+		      uint32_t pu_stride, uint32_t coeff_stride, uint32_t luma_stride,
 		      uint32_t chroma_stride, int verbose)
 {
-	memcpy(bs->cpu, slice, FRAME_DATA_BYTE_OFFSET + bfnum);
+	memcpy(bs->cpu, slice, dbo + bfnum);
 	g_cmd = (uint64_t *)cmd->cpu;
-	uint32_t clen = build_command_buffer(bs->pa, bfnum, slice_qp);
+	uint32_t clen = build_command_buffer(bs->pa, dbo, bfnum, slice_qp, slice_const, num_msgs, msgs);
 
 	/* Barrier: the bitstream + command buffer are written through the uncached
 	 * CPU mapping; ensure those writes have drained to DRAM before the block's DMA
@@ -351,16 +396,18 @@ static int decode_one(volatile uint8_t *hevc, volatile uint8_t *intc,
 	wr(hevc + RPI_OUTCBASE, RPI_VC_ADDR(chroma->pa));
 	wr(hevc + RPI_OUTYSTRIDE, RPI_VC_LEN(luma_stride));
 	wr(hevc + RPI_OUTCSTRIDE, RPI_VC_LEN(chroma_stride));
-	for (uint32_t i = 0; i < 16; i++) {              /* IDR: all refs = current frame */
+	for (uint32_t i = 0; i < 16; i++) {              /* refpa!=NULL: DPB refs; else all = current frame */
 		uint32_t roff = i * RPI_REFREGS_SIZE;
-		wr(hevc + RPI_REFBASE + roff + RPI_REF_YBASE, RPI_VC_ADDR(luma->pa));
+		uint32_t yp = refpa ? refpa[i][0] : (uint32_t)luma->pa;
+		uint32_t cp = refpa ? refpa[i][1] : (uint32_t)chroma->pa;
+		wr(hevc + RPI_REFBASE + roff + RPI_REF_YBASE, RPI_VC_ADDR(yp));
 		wr(hevc + RPI_REFBASE + roff + RPI_REF_YSTRIDE, RPI_VC_LEN(luma_stride));
-		wr(hevc + RPI_REFBASE + roff + RPI_REF_CBASE, RPI_VC_ADDR(chroma->pa));
+		wr(hevc + RPI_REFBASE + roff + RPI_REF_CBASE, RPI_VC_ADDR(cp));
 		wr(hevc + RPI_REFBASE + roff + RPI_REF_CSTRIDE, RPI_VC_LEN(chroma_stride));
 	}
 	wr(hevc + RPI_CONFIG2, FRAME_CONFIG2);
 	wr(hevc + RPI_FRAMESIZE, (FRAME_HEIGHT << 16) | FRAME_WIDTH);
-	wr(hevc + RPI_CURRPOC, 0);
+	wr(hevc + RPI_CURRPOC, currpoc);
 	wr(hevc + RPI_COLSTRIDE, RPI_VC_LEN(luma_stride));
 	wr(hevc + RPI_MVSTRIDE, RPI_VC_LEN(luma_stride));
 	wr(hevc + RPI_MVBASE, 0);
@@ -422,7 +469,44 @@ int main(void)
 	uint32_t coeff_stride = (coeff_size / FRAME_CTB_HEIGHT) & ~63u;
 	printf("hevc-m2: buffers pu=%u coeff=%u luma_stride=%u cols=%u\n", pu_size, coeff_size, luma_stride, cols);
 
-#ifdef CLIP_NFRAMES
+#if defined(IP_TEST)
+	/* Inter-prediction test: decode frame0 (I) into luma/chroma (kept as the DPB
+	 * reference), then frame1 (P) into lumaB/chromaB referencing it; verify P bit-exact. */
+	{
+	dma_buf_t lumaB = {0}, chromaB = {0};
+	if (dma_alloc(&lumaB, luma_stride * cols + 4096u) || dma_alloc(&chromaB, chroma_stride * cols + 4096u)) {
+		printf("hevc-m2: DMA alloc (P buffers) FAILED\n"); return 4;
+	}
+	int r0 = decode_one(hevc, intc, &cmd, &bs, &pu, &coeff, &luma, &chroma,
+		slice_data, FRAME_DATA_BYTE_OFFSET, FRAME_DATA_LEN, FRAME_SLICE_QP,
+		0, 0, NULL, NULL, 0, pu_stride, coeff_stride, luma_stride, chroma_stride, 1);
+	printf("hevc-m2: I frame (POC 0) rc=%d\n", r0);
+	if (r0 != 0) return 6;
+	/* P ref slots: [0] = the decoded I frame; [1..15] = current (fallback). */
+	uint32_t refpa[16][2];
+	for (int i = 0; i < 16; i++) { refpa[i][0] = (uint32_t)lumaB.pa; refpa[i][1] = (uint32_t)chromaB.pa; }
+	refpa[0][0] = (uint32_t)luma.pa; refpa[0][1] = (uint32_t)chroma.pa;
+	int r1 = decode_one(hevc, intc, &cmd, &bs, &pu, &coeff, &lumaB, &chromaB,
+		p_slice_nal, P_DBO, P_BFNUM, P_SLICE_QP,
+		P_SLICE_CONST, P_NUM_MSGS, p_msgs, refpa, P_CURRPOC,
+		pu_stride, coeff_stride, luma_stride, chroma_stride, 1);
+	printf("hevc-m2: P frame (POC 1) rc=%d\n", r1);
+	if (r1 != 0) return 7;
+	const uint8_t *yb = lumaB.cpu;
+	uint32_t y_ok = 0, y_bad = 0, y_min = 255, y_max = 0;
+	for (uint32_t y = 0; y < FRAME_HEIGHT; y++)
+		for (uint32_t x = 0; x < FRAME_WIDTH; x++) {
+			uint8_t v = yb[(x / 128u) * luma_stride + y * 128u + (x % 128u)];
+			if (v < y_min) y_min = v;
+			if (v > y_max) y_max = v;
+			if (v == ref_luma_p[y * FRAME_WIDTH + x]) y_ok++; else y_bad++;
+		}
+	printf("hevc-m2: P luma %u/%u match golden (min %u max %u)\n", y_ok, FRAME_WIDTH * FRAME_HEIGHT, y_min, y_max);
+	printf("hevc-m2: IP-TEST %s\n", y_bad == 0 ?
+		"P FRAME BIT-EXACT — inter-prediction works" : "P frame differs from golden");
+	return y_bad ? 7 : 0;
+	}
+#elif defined(CLIP_NFRAMES)
 	/* All-intra video playback: decode + display each frame in sequence. Two passes so
 	 * the periodic HDMI snapshot is very likely to land on a mid-clip frame (= motion). */
 	fbmode_t fbm; int fbfd = -1; uint8_t *fb = fb_open(&fbm, &fbfd);
@@ -433,7 +517,8 @@ int main(void)
 	for (int loop = 0; loop < passes; loop++) {
 		for (int f = 0; f < CLIP_NFRAMES; f++) {
 			int rc = decode_one(hevc, intc, &cmd, &bs, &pu, &coeff, &luma, &chroma,
-				clip_data + clip_frames[f].off, clip_frames[f].bfnum, clip_frames[f].qp,
+				clip_data + clip_frames[f].off, FRAME_DATA_BYTE_OFFSET, clip_frames[f].bfnum, clip_frames[f].qp,
+				0, 0, NULL, NULL, 0,   /* I-slice: I const, 0 msgs, all-current refs, POC 0 */
 				pu_stride, coeff_stride, luma_stride, chroma_stride, 0);
 			if (rc != 0) { printf("hevc-m2: frame %d decode failed rc=%d\n", f, rc); continue; }
 			if (fb) fb_blit(fb, fbm.pitch, fbm.width, fbm.height, luma.cpu, chroma.cpu,
@@ -450,7 +535,8 @@ int main(void)
 	printf("hevc-m2: buffers cmd_pa=0x%08llx bs_pa=0x%08llx\n",
 		(unsigned long long)cmd.pa, (unsigned long long)bs.pa);
 	int drc = decode_one(hevc, intc, &cmd, &bs, &pu, &coeff, &luma, &chroma,
-		slice_data, FRAME_DATA_LEN, FRAME_SLICE_QP, pu_stride, coeff_stride, luma_stride, chroma_stride, 1);
+		slice_data, FRAME_DATA_BYTE_OFFSET, FRAME_DATA_LEN, FRAME_SLICE_QP, 0, 0, NULL, NULL, 0,
+		pu_stride, coeff_stride, luma_stride, chroma_stride, 1);
 	if (drc != 0) { printf("hevc-m2: decode FAILED rc=%d\n", drc); return 6; }
 	printf("hevc-m2: phase 2 done (ACTIVE2) — frame decoded\n");
 
