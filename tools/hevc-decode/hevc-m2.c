@@ -816,30 +816,50 @@ static uint8_t *slurp_265(const char *path, uint32_t *len_out)
 
 /* Decode one slice NAL into (cl,cc); for P, ref[0] = the previous decoded frame
  * (pl,pc). Returns decode_one's rc. */
+/* Decode one I/P/B slice into (ol,oc). For P: l0 = the single L0 reference. For
+ * B: l0 = past (L0[0]), l1 = future (L1[0]). slice_const + cmd_slice are built
+ * from the parsed fields (driver slice_reg_const / cmd_slice formulas), so the
+ * correct max_num_merge_cand / mvd_l1_zero from the stream are used, not
+ * assumed. Non-weighted, single ref per list (the player's subset). */
 static int play_frame(volatile uint8_t *hevc, volatile uint8_t *intc,
 		      dma_buf_t *cmd, dma_buf_t *bs, dma_buf_t *pu, dma_buf_t *coeff,
 		      const hevc_nal_t *nal, const hevc_slice_t *s,
-		      dma_buf_t *cl, dma_buf_t *cc, dma_buf_t *pl, dma_buf_t *pc,
-		      uint32_t prev_poc, uint32_t pu_stride, uint32_t coeff_stride,
+		      dma_buf_t *ol, dma_buf_t *oc,
+		      dma_buf_t *l0l, dma_buf_t *l0c, dma_buf_t *l1l, dma_buf_t *l1c,
+		      uint32_t l0_poc, uint32_t l1_poc,
+		      uint32_t pu_stride, uint32_t coeff_stride,
 		      uint32_t luma_stride, uint32_t chroma_stride)
 {
-	int is_p = (s->slice_type == 1);
-	uint16_t msgs[5] = { 0x5C06, 0x0000, (uint16_t)prev_poc, 0x0200, 0x0000 };
 	uint32_t refpa[16][2];
-	if (is_p) {
-		for (int i = 0; i < 16; i++) { refpa[i][0] = (uint32_t)cl->pa; refpa[i][1] = (uint32_t)cc->pa; }
-		refpa[0][0] = (uint32_t)pl->pa; refpa[0][1] = (uint32_t)pc->pa;   /* ref = previous frame */
+	for (int i = 0; i < 16; i++) { refpa[i][0] = (uint32_t)ol->pa; refpa[i][1] = (uint32_t)oc->pa; }
+	uint32_t slice_const = 0, nmsg = 0, mmc = s->max_num_merge_cand;
+	uint16_t msgs[7];
+	if (s->slice_type == 1) {                /* P: 1 L0 ref */
+		refpa[0][0] = (uint32_t)l0l->pa; refpa[0][1] = (uint32_t)l0c->pa;
+		slice_const = mmc | (1u << 4) | (1u << 12);                 /* mmc | L0=1 | type P */
+		nmsg = 5;
+		msgs[0] = (uint16_t)(2u | (1u << 2) | (1u << 10) | (mmc << 11) | (1u << 14)); /* cmd_slice P */
+		msgs[1] = 0x0000; msgs[2] = (uint16_t)l0_poc; msgs[3] = 0x0200; msgs[4] = 0x0000;
+	} else if (s->slice_type == 0) {         /* B: 1 L0 (past) + 1 L1 (future) */
+		refpa[0][0] = (uint32_t)l0l->pa; refpa[0][1] = (uint32_t)l0c->pa;
+		refpa[1][0] = (uint32_t)l1l->pa; refpa[1][1] = (uint32_t)l1c->pa;
+		slice_const = mmc | (1u << 4) | (1u << 8) | ((uint32_t)s->mvd_l1_zero_flag << 16); /* type B=0 */
+		nmsg = 7;
+		msgs[0] = (uint16_t)(3u | (1u << 2) | (1u << 6) | (mmc << 11) | (1u << 14)); /* cmd_slice B, no_backward=0 */
+		msgs[1] = 0x0000; msgs[2] = (uint16_t)l0_poc;
+		msgs[3] = 0x0001; msgs[4] = (uint16_t)l1_poc; msgs[5] = 0x0200; msgs[6] = 0x0000;
 	}
-	return decode_one(hevc, intc, cmd, bs, pu, coeff, cl, cc,
+	return decode_one(hevc, intc, cmd, bs, pu, coeff, ol, oc,
 		nal->data, s->data_byte_offset, s->bfnum, s->slice_qp,
-		is_p ? 0x1013u : 0u, is_p ? 5u : 0u, is_p ? msgs : NULL,
-		is_p ? refpa : NULL, s->poc,
+		slice_const, nmsg, (s->slice_type == 2) ? NULL : msgs,
+		(s->slice_type == 2) ? NULL : refpa, s->poc,
 		pu_stride, coeff_stride, luma_stride, chroma_stride, 0);
 }
 
 static int is_slice_nal(int t)
 {
-	return t == HEVC_NAL_TRAIL_R || t == HEVC_NAL_IDR_W_RADL || t == HEVC_NAL_IDR_N_LP;
+	return t == HEVC_NAL_TRAIL_N || t == HEVC_NAL_TRAIL_R ||
+	       t == HEVC_NAL_IDR_W_RADL || t == HEVC_NAL_IDR_N_LP;
 }
 
 int main(int argc, char **argv)
@@ -878,8 +898,8 @@ int main(int argc, char **argv)
 	if (sps.chroma_format_idc != 1 || sps.bit_depth_luma_minus8 || sps.bit_depth_chroma_minus8) {
 		printf("hevc-play: only 8-bit 4:2:0 supported\n"); free(file); return 3;
 	}
-	if (have_pps && pps.weighted_pred) {
-		printf("hevc-play: weighted_pred streams unsupported (non-weighted P only)\n"); free(file); return 3;
+	if (have_pps && (pps.weighted_pred || pps.weighted_bipred)) {
+		printf("hevc-play: weighted (bi)pred streams unsupported (non-weighted only)\n"); free(file); return 3;
 	}
 	if (!nslices) { printf("hevc-play: no coded slices\n"); free(file); return 3; }
 
@@ -903,11 +923,15 @@ int main(int argc, char **argv)
 	uint32_t cols = ((g_frame_w + 127u) & ~127u) / 128u;
 	size_t bs_size = ((size_t)max_nal + 4096u) & ~(size_t)4095u;
 	dma_buf_t cmd = {0}, bs = {0}, pu = {0}, coeff = {0};
-	dma_buf_t la = {0}, ca = {0}, lb = {0}, cb = {0};
+	/* Two ping-pong ANCHOR (I/P, reference) slots + one B SCRATCH (non-reference).
+	 * ref=1 single-B subset: each new anchor reuses the 2-generations-old slot
+	 * (no longer referenced once the intervening B is past). */
+	dma_buf_t la = {0}, ca = {0}, lb = {0}, cb = {0}, ls = {0}, cs = {0};
 	if (dma_alloc(&cmd, 64u * 1024u) || dma_alloc(&bs, bs_size) ||
 	    dma_alloc(&pu, pu_size) || dma_alloc(&coeff, coeff_size) ||
 	    dma_alloc(&la, luma_stride * cols + 4096u) || dma_alloc(&ca, chroma_stride * cols + 4096u) ||
-	    dma_alloc(&lb, luma_stride * cols + 4096u) || dma_alloc(&cb, chroma_stride * cols + 4096u)) {
+	    dma_alloc(&lb, luma_stride * cols + 4096u) || dma_alloc(&cb, chroma_stride * cols + 4096u) ||
+	    dma_alloc(&ls, luma_stride * cols + 4096u) || dma_alloc(&cs, chroma_stride * cols + 4096u)) {
 		printf("hevc-play: DMA alloc FAILED\n"); free(file); return 4;
 	}
 	uint32_t pu_stride = (pu_size / g_ctb_h) & ~63u;
@@ -918,37 +942,69 @@ int main(int argc, char **argv)
 	fbmode_t fbm; int fbfd = -1; uint8_t *fb = fb_open(&fbm, &fbfd);
 
 	/* Play the sequence, looping so a periodic HDMI snapshot lands mid-clip. Each
-	 * loop restarts at the IDR (DPB reset), so the rolling reference stays valid. */
+	 * loop restarts at the IDR (anchor DPB reset), so the rolling refs stay valid.
+	 * Anchors (I/P) ping-pong two ref slots; B decodes to scratch (L0=past anchor,
+	 * L1=future anchor, decoded just before it). Frames are PRESENTED in display
+	 * (POC) order via a depth-2 reorder (emit the lower-POC of two held frames) —
+	 * correct for the max-1-consecutive-B subset. */
 	const int passes = (nslices >= 8) ? 2 : 8;
 	uint32_t shown = 0;
-	for (int loop = 0; loop < passes; loop++) {
+	struct timespec ts25 = { 0, 40000000 };
+	int broke = 0;
+	for (int loop = 0; loop < passes && !broke; loop++) {
 		hevc_nal_iter_t it2 = { file, fsz, 0, 0 };
 		hevc_nal_t n2;
-		uint32_t frame = 0, prev_poc = 0;
-		dma_buf_t *pl = NULL, *pc = NULL;   /* previous decoded frame (DPB ref) */
+		uint32_t frame = 0;
+		int parity = 0;
+		dma_buf_t *anew_l = NULL, *anew_c = NULL, *aold_l = NULL, *aold_c = NULL;
+		uint32_t anew_poc = 0, aold_poc = 0;
+		dma_buf_t *held_l = NULL, *held_c = NULL; uint32_t held_poc = 0; int held_valid = 0;
 		while (hevc_nal_next(&it2, &n2)) {
 			if (!is_slice_nal(n2.type)) continue;
 			hevc_slice_t s;
 			if (hevc_parse_slice(n2.data, n2.len, n2.type, &sps, have_pps ? &pps : NULL, &s) < 0) {
-				printf("hevc-play: frame %u slice rejected: %s\n", frame, hevc_err()); break;
-			}
-			if (s.slice_type == 1 && !pl) {   /* P before any decoded I */
-				printf("hevc-play: frame %u is P with no reference — stream must start with IDR\n", frame); break;
+				printf("hevc-play: frame %u slice rejected: %s\n", frame, hevc_err()); broke = 1; break;
 			}
 			if (n2.len > bs.size) {
-				printf("hevc-play: frame %u NAL %u > bitstream buf %zu\n", frame, n2.len, bs.size); break;
+				printf("hevc-play: frame %u NAL %u > bitstream buf %zu\n", frame, n2.len, bs.size); broke = 1; break;
 			}
-			dma_buf_t *cl = (frame & 1) ? &lb : &la, *cc = (frame & 1) ? &cb : &ca;
-			int rc = play_frame(hevc, intc, &cmd, &bs, &pu, &coeff, &n2, &s, cl, cc,
-				pl, pc, prev_poc, pu_stride, coeff_stride, luma_stride, chroma_stride);
-			if (rc != 0) {
-				printf("hevc-play: frame %u (%s POC %u) decode FAILED rc=%d\n",
-					frame, s.slice_type == 1 ? "P" : "I", s.poc, rc); break;
+			int is_b = (s.slice_type == 0), is_p = (s.slice_type == 1);
+			if (is_p && !anew_l) { printf("hevc-play: P before any I — stream must start with IDR\n"); broke = 1; break; }
+			if (is_b && (!anew_l || !aold_l)) { printf("hevc-play: B before two anchors\n"); broke = 1; break; }
+
+			dma_buf_t *ol, *oc;
+			if (is_b) { ol = &ls; oc = &cs; }                       /* B -> scratch */
+			else if (parity == 0) { ol = &la; oc = &ca; }           /* anchor -> slot A */
+			else { ol = &lb; oc = &cb; }                            /* anchor -> slot B */
+
+			int rc = play_frame(hevc, intc, &cmd, &bs, &pu, &coeff, &n2, &s, ol, oc,
+				is_b ? aold_l : anew_l, is_b ? aold_c : anew_c,          /* L0 = past */
+				is_b ? anew_l : NULL,  is_b ? anew_c : NULL,             /* L1 = future (B) */
+				is_b ? aold_poc : anew_poc, is_b ? anew_poc : 0,
+				pu_stride, coeff_stride, luma_stride, chroma_stride);
+			if (rc != 0) { printf("hevc-play: frame %u (%s POC %u) decode FAILED rc=%d\n",
+				frame, is_b ? "B" : is_p ? "P" : "I", s.poc, rc); broke = 1; break; }
+
+			if (!is_b) {   /* anchor: advance the rolling ref window + ping-pong slot */
+				aold_l = anew_l; aold_c = anew_c; aold_poc = anew_poc;
+				anew_l = ol; anew_c = oc; anew_poc = s.poc; parity ^= 1;
 			}
-			if (fb) fb_blit(fb, fbm.pitch, fbm.width, fbm.height, cl->cpu, cc->cpu,
+
+			/* depth-2 display reorder: emit the lower-POC of {held, new}. */
+			if (held_valid) {
+				dma_buf_t *el, *ec;
+				if (s.poc < held_poc) { el = ol; ec = oc; }                  /* new is earlier */
+				else { el = held_l; ec = held_c; held_l = ol; held_c = oc; held_poc = s.poc; }
+				if (fb) fb_blit(fb, fbm.pitch, fbm.width, fbm.height, el->cpu, ec->cpu,
+						g_frame_w, g_frame_h, luma_stride, chroma_stride);
+				nanosleep(&ts25, NULL); shown++;
+			} else { held_l = ol; held_c = oc; held_poc = s.poc; held_valid = 1; }
+			frame++;
+		}
+		if (!broke && held_valid) {   /* flush the last held frame */
+			if (fb) fb_blit(fb, fbm.pitch, fbm.width, fbm.height, held_l->cpu, held_c->cpu,
 					g_frame_w, g_frame_h, luma_stride, chroma_stride);
-			{ struct timespec ts = { 0, 40000000 }; nanosleep(&ts, NULL); }   /* ~25 fps */
-			pl = cl; pc = cc; prev_poc = s.poc; frame++; shown++;
+			nanosleep(&ts25, NULL); shown++;
 		}
 	}
 	if (fb) { munmap(fb, fbm.smemlen); close(fbfd); }
