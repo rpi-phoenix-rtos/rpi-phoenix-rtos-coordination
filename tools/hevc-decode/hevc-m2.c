@@ -337,9 +337,9 @@ static int decode_one(volatile uint8_t *hevc, volatile uint8_t *intc,
 	if (verbose) printf("hevc-m2: phase 1 done: CFSTATUS=%u CFNUM=%u %s\n", cfstatus, cfnum,
 		cfstatus == cfnum ? "[OK]" : "[MISMATCH]");
 	if (cfstatus != cfnum) {
-		if (verbose) { uint32_t st = rd(hevc + RPI_STATUS);
-			printf("hevc-m2: RPI_STATUS=0x%x (PU_EXH=%d COEFF_EXH=%d)\n", st,
-				!!(st & RPI_STATUS_PU_EXHAUSTED), !!(st & RPI_STATUS_COEFF_EXHAUSTED)); }
+		uint32_t st = rd(hevc + RPI_STATUS);
+		printf("hevc-m2: CF-MISMATCH CFSTATUS=%u CFNUM=%u RPI_STATUS=0x%x (PU_EXH=%d COEFF_EXH=%d)\n",
+			cfstatus, cfnum, st, !!(st & RPI_STATUS_PU_EXHAUSTED), !!(st & RPI_STATUS_COEFF_EXHAUSTED));
 		return -1;
 	}
 
