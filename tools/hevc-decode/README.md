@@ -17,11 +17,12 @@ blob**. Ported register-by-register from the Linux `hevc_d_h265.c` driver.
 | **Multi-frame inter (IPPP, rolling DPB)** | ✅ bit-exact 128×128 (8/8) + 640×480 (4/4); runs 1080p |
 | **Inter-coded video → HDMI playback** | ✅ 32-frame 320×240 IPPP |
 | **Bidirectional (B) inter** — 2 ref lists (past L0 + future L1) | ✅ bit-exact, ANY count of consecutive non-reference B (bframes 1/2/3+, b-adapt ok) |
+| **B-pyramid (hierarchical reference-B)** — general POC-indexed DPB | ✅ bit-exact (reference-B pics, 2-ref lists, RPS ref-lists, DPB eviction — x265 default) |
 | **Runtime `.265` file player (M3)** | ✅ `hevc-play <file.265>` — parse + decode + display I/P/B, no rebuild |
-| **`hevc-play` bit-exact conformance verify** | ✅ `hevc-play <f.265> <golden.nv12>` → VERIFY BIT-EXACT (ibp, mandelbrot, bframes=2/3 all 0 bad px) |
+| **`hevc-play` bit-exact conformance verify** | ✅ `hevc-play <f.265> <golden.nv12>` → VERIFY BIT-EXACT (ibp, mandelbrot, bframes=2/3, b-pyramid all 0 bad px) |
 | Decode → SAND/COL128 unpack → NV12→RGB → /dev/fb0 → HDMI | ✅ |
 | Intermittent inter corruption during on-HDMI playback (~10%) | ⚠️ known, decoder bit-exact HEADLESS in isolation (see gotcha 8) |
-| b-pyramid (reference B), multi-ref (ref>1), SAO, WPP, tmvp | ⏳ out of subset — need a general POC-indexed DPB / feature work |
+| multi-ref (ref>1), SAO, tmvp, WPP/tiles | ⏳ out of subset — each a separate feature toward full real-content |
 | HW H.264 | ⛔ VCHIQ/firmware-walled (banked) |
 
 ## Layout
