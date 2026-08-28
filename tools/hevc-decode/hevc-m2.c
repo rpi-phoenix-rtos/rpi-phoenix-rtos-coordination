@@ -459,7 +459,7 @@ int main(void)
 	uint32_t luma_stride = ((FRAME_HEIGHT + 15u) & ~15u) * 128u;   /* NV12MT_COL128 */
 	uint32_t chroma_stride = luma_stride / 2u;
 	uint32_t cols = ((FRAME_WIDTH + 127u) & ~127u) / 128u;
-#ifdef CLIP_NFRAMES
+#if defined(CLIP_NFRAMES) || defined(IPPP_TEST)
 	size_t bs_size = 256u * 1024u;                    /* covers the largest clip frame NAL */
 #else
 	size_t bs_size = sizeof(slice_data) + 128u;
@@ -509,6 +509,44 @@ int main(void)
 	printf("hevc-m2: IP-TEST %s\n", y_bad == 0 ?
 		"P FRAME BIT-EXACT — inter-prediction works" : "P frame differs from golden");
 	return y_bad ? 7 : 0;
+	}
+#elif defined(IPPP_TEST)
+	/* Rolling-DPB inter sequence: I + P... each P references the previous decoded
+	 * frame. Ping-pong two buffers (cur/prev); verify every frame vs the golden. */
+	{
+	dma_buf_t bl = {0}, bc = {0};   /* second frame buffer (ping-pong with luma/chroma) */
+	if (dma_alloc(&bl, luma_stride * cols + 4096u) || dma_alloc(&bc, chroma_stride * cols + 4096u)) {
+		printf("hevc-m2: DMA alloc (ppong) FAILED\n"); return 4;
+	}
+	uint32_t ok = 0;
+	for (int f = 0; f < IPPP_NFRAMES; f++) {
+		const struct ippp_frame *fr = &ippp_frames[f];
+		dma_buf_t *cl = (f & 1) ? &bl : &luma,   *cc = (f & 1) ? &bc : &chroma;
+		dma_buf_t *pl = (f & 1) ? &luma : &bl,   *pc = (f & 1) ? &chroma : &bc;
+		uint16_t msgs[5] = { 0x5C06, 0x0000, (uint16_t)fr->ref_poc, 0x0200, 0x0000 };
+		uint32_t refpa[16][2];
+		for (int i = 0; i < 16; i++) { refpa[i][0] = (uint32_t)cl->pa; refpa[i][1] = (uint32_t)cc->pa; }
+		refpa[0][0] = (uint32_t)pl->pa; refpa[0][1] = (uint32_t)pc->pa;   /* ref = previous frame */
+		int rc = decode_one(hevc, intc, &cmd, &bs, &pu, &coeff, cl, cc,
+			clip_blob + fr->off, fr->dbo, fr->bfnum, fr->qp,
+			fr->is_p ? 0x1013u : 0u, fr->is_p ? 5u : 0u, fr->is_p ? msgs : NULL,
+			fr->is_p ? refpa : NULL, fr->poc,
+			pu_stride, coeff_stride, luma_stride, chroma_stride, 0);
+		if (rc != 0) { printf("hevc-m2: frame %d (%s POC %u) decode FAILED rc=%d\n",
+			f, fr->is_p ? "P" : "I", fr->poc, rc); continue; }
+		/* Verify luma vs golden (COL128 unpack). */
+		const uint8_t *yb = cl->cpu, *g = ippp_golden_y + (size_t)f * FRAME_WIDTH * FRAME_HEIGHT;
+		uint32_t bad = 0;
+		for (uint32_t y = 0; y < FRAME_HEIGHT; y++)
+			for (uint32_t x = 0; x < FRAME_WIDTH; x++)
+				if (yb[(x / 128u) * luma_stride + y * 128u + (x % 128u)] != g[y * FRAME_WIDTH + x]) bad++;
+		printf("hevc-m2: frame %d %s POC %u -> %s (%u bad px)\n", f, fr->is_p ? "P" : "I", fr->poc,
+			bad ? "MISMATCH" : "bit-exact", bad);
+		if (!bad) ok++;
+	}
+	printf("hevc-m2: IPPP-TEST %u/%d frames bit-exact %s\n", ok, IPPP_NFRAMES,
+		ok == IPPP_NFRAMES ? "— rolling-DPB inter sequence WORKS" : "");
+	return ok == IPPP_NFRAMES ? 0 : 7;
 	}
 #elif defined(CLIP_NFRAMES)
 	/* All-intra video playback: decode + display each frame in sequence. Two passes so
