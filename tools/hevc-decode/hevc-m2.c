@@ -32,7 +32,13 @@
 
 #include "libvcmbox.h"
 #include "hevc_regs.h"
-#include "idr64_frame.h"   /* generated: FRAME_* params + slice_data[] (host-parsed) */
+/* Frame header: default idr64 (flat), override with -DFRAME_HEADER='"detail64_frame.h"'
+ * for the real-content vector. Each header defines FRAME_* params, slice_data[], and
+ * EXPECTED_Y(x,y)/EXPECTED_C(x,y) (scalar golden for flat, ref-array for real content). */
+#ifndef FRAME_HEADER
+#define FRAME_HEADER "idr64_frame.h"
+#endif
+#include FRAME_HEADER
 
 /* VideoCore firmware property tags (mailbox channel 8). */
 #define VC_GET_MAX_CLOCK_RATE 0x00030004u
@@ -329,7 +335,7 @@ int main(void)
 			uint8_t v = yb[(x / 128u) * luma_stride + y * 128u + (x % 128u)];
 			if (v < y_min) y_min = v;
 			if (v > y_max) y_max = v;
-			if (v == FRAME_EXPECT_Y) y_ok++; else y_bad++;
+			if (v == EXPECTED_Y(x, y)) y_ok++; else y_bad++;
 		}
 	}
 	/* NV12 chroma: interleaved CbCr, 4:2:0 -> W/2 x H/2 pairs = W bytes/row, H/2 rows. */
@@ -339,12 +345,12 @@ int main(void)
 			uint8_t v = cb[(x / 128u) * chroma_stride + y * 128u + (x % 128u)];
 			if (v < c_min) c_min = v;
 			if (v > c_max) c_max = v;
-			if (v == FRAME_EXPECT_C) c_ok++; else c_bad++;
+			if (v == EXPECTED_C(x, y)) c_ok++; else c_bad++;
 		}
 	}
 	uint32_t y_tot = FRAME_WIDTH * FRAME_HEIGHT, c_tot = FRAME_WIDTH * (FRAME_HEIGHT / 2u);
-	printf("hevc-m2: luma   %u/%u == %u  (min %u max %u)\n", y_ok, y_tot, FRAME_EXPECT_Y, y_min, y_max);
-	printf("hevc-m2: chroma %u/%u == %u  (min %u max %u)\n", c_ok, c_tot, FRAME_EXPECT_C, c_min, c_max);
+	printf("hevc-m2: luma   %u/%u match golden  (min %u max %u)\n", y_ok, y_tot, y_min, y_max);
+	printf("hevc-m2: chroma %u/%u match golden  (min %u max %u)\n", c_ok, c_tot, c_min, c_max);
 
 	int exact = (y_bad == 0 && c_bad == 0);
 	printf("hevc-m2: M4 %s\n", exact ?

@@ -53,6 +53,9 @@
  * unpacked from SAND/COL128, must match exactly. */
 #define FRAME_EXPECT_Y   126u
 #define FRAME_EXPECT_C   128u
+/* Uniform golden (flat frame) — per-pixel compare macros the harness uses. */
+#define EXPECTED_Y(x, y) FRAME_EXPECT_Y
+#define EXPECTED_C(x, y) FRAME_EXPECT_C
 
 /* Phase-2 CONFIG2 (mk_config2, h265.c:1524) — precomputed for this frame:
  * BitDepthY 8 | BitDepthC 8<<4 | log2_ctb 6<<10 | strong_smooth<<14
