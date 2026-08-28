@@ -193,15 +193,20 @@ static int parse_st_rps(br_t *b, uint32_t idx, uint32_t num_rps, hevc_st_rps_t *
 	return 0;
 }
 
-/* pred_weight_table (H.265 7.3.6.3); ChromaArrayType==1 for 4:2:0. */
-static void parse_pred_weight_table(br_t *b, uint32_t nrefl0, int is_b, uint32_t nrefl1)
+/* pred_weight_table (H.265 7.3.6.3 / 7.4.7.3); ChromaArrayType==1 for 4:2:0.
+ * Computes LumaWeight/Offset + ChromaWeight/Offset into *out (defaults for
+ * unflagged refs); the HW descriptor emits a 6-word block per active ref. */
+static void parse_pred_weight_table(br_t *b, uint32_t nrefl0, int is_b, uint32_t nrefl1,
+				    hevc_slice_t *out)
 {
-	int chroma = 1;
-	br_ue(b);                       /* luma_log2_weight_denom */
-	if (chroma)
-		br_se(b);               /* delta_chroma_log2_weight_denom */
+	const int chroma = 1;   /* 4:2:0 */
+	uint32_t lden = br_ue(b);
+	int32_t cden = (int32_t)lden + (chroma ? br_se(b) : 0);   /* + delta_chroma_log2_weight_denom */
+	out->luma_log2_weight_denom = lden;
+	out->chroma_log2_weight_denom = (uint32_t)cden;
 	for (int list = 0; list <= (is_b ? 1 : 0); list++) {
 		uint32_t nref = list ? nrefl1 : nrefl0;
+		if (nref > 16) nref = 16;
 		uint8_t lflag[16] = {0}, cflag[16] = {0};
 		for (uint32_t i = 0; i < nref; i++)
 			lflag[i] = (uint8_t)br_u(b, 1);
@@ -209,8 +214,27 @@ static void parse_pred_weight_table(br_t *b, uint32_t nrefl0, int is_b, uint32_t
 			for (uint32_t i = 0; i < nref; i++)
 				cflag[i] = (uint8_t)br_u(b, 1);
 		for (uint32_t i = 0; i < nref; i++) {
-			if (lflag[i]) { br_se(b); br_se(b); }
-			if (cflag[i]) { br_se(b); br_se(b); br_se(b); br_se(b); }
+			if (lflag[i]) {
+				int32_t dlw = br_se(b);
+				out->luma_weight[list][i] = (int32_t)(1 << lden) + dlw;
+				out->luma_offset[list][i] = br_se(b);
+			} else {
+				out->luma_weight[list][i] = (int32_t)(1 << lden);
+				out->luma_offset[list][i] = 0;
+			}
+			for (int j = 0; j < 2; j++) {
+				if (cflag[i]) {
+					int32_t dcw = br_se(b), dco = br_se(b);
+					int32_t cw = (int32_t)(1 << cden) + dcw;
+					out->chroma_weight[list][i][j] = cw;
+					/* ChromaOffsetLX = Clip3(-128,127, 128 + dco - ((128*cw)>>cden)) */
+					int32_t co = 128 + dco - ((128 * cw) >> cden);
+					out->chroma_offset[list][i][j] = co < -128 ? -128 : co > 127 ? 127 : co;
+				} else {
+					out->chroma_weight[list][i][j] = (int32_t)(1 << cden);
+					out->chroma_offset[list][i][j] = 0;
+				}
+			}
 		}
 	}
 }
@@ -443,6 +467,7 @@ int hevc_parse_slice(const uint8_t *nal, uint32_t len, int nal_type,
 		sao_chroma = (int)br_u(&b, 1);     /* slice_sao_chroma_flag */
 	}
 
+	out->weighted = 0;             /* set to 1 only if pred_weight_table() is present */
 	uint32_t nb_l0 = 1, nb_l1 = 0, mmc = 3;
 	int mvd_l1_zero = 0, cabac_init_flag = 0;
 	int coll_from_l0 = 1;          /* inferred 1 when not B (H.265 7.4.7.1) */
@@ -473,8 +498,10 @@ int hevc_parse_slice(const uint8_t *nal, uint32_t len, int nal_type,
 					return fail("collocated_ref_idx >= active refs");
 			}
 		}
-		if ((wp && slice_type == 1) || (wbp && is_b))
-			parse_pred_weight_table(&b, nrl0 + 1, is_b, nrl1 + 1);
+		if ((wp && slice_type == 1) || (wbp && is_b)) {
+			parse_pred_weight_table(&b, nrl0 + 1, is_b, nrl1 + 1, out);
+			out->weighted = 1;
+		}
 		mmc = 5u - br_ue(&b);              /* 5 - five_minus_max_num_merge_cand */
 	}
 

@@ -128,6 +128,16 @@ typedef struct {
 	 * offset VALUES are not needed (the HW derives the wavefront from CTB geometry);
 	 * they're parsed only to advance the bit position for data_byte_offset. */
 	uint32_t num_entry_point_offsets;
+	/* Weighted prediction (H.265 §7.3.6.3/§7.4.7.3). Populated only when weighted!=0;
+	 * the player emits a 6-word weight block per active ref. Indexed [list 0/1][ref].
+	 * COMPUTED values (not raw deltas), with defaults filled for unflagged refs. */
+	int weighted;                       /* (weighted_pred && P) || (weighted_bipred && B) */
+	uint32_t luma_log2_weight_denom;    /* 0..7 */
+	uint32_t chroma_log2_weight_denom;  /* luma_denom + delta_chroma_denom, 0..7 */
+	int32_t luma_weight[2][16];         /* LumaWeightLX[i]      = (1<<lden)+delta / default 1<<lden */
+	int32_t luma_offset[2][16];         /* luma_offset_lX[i]    (8-bit) / default 0 */
+	int32_t chroma_weight[2][16][2];    /* ChromaWeightLX[i][j] = (1<<cden)+delta / default 1<<cden */
+	int32_t chroma_offset[2][16][2];    /* ChromaOffsetLX[i][j] computed §7.4.7.3 / default 0 */
 } hevc_slice_t;
 
 /* Human-readable reason for the most recent negative return, for diagnostics. */

@@ -27,7 +27,7 @@ blob**. Ported register-by-register from the Linux `hevc_d_h265.c` driver.
 | **SAO (Sample Adaptive Offset)** — in-loop filter | ✅ bit-exact (RPI_SLICE bit14/15; HW CABAC-decodes per-CTB sao(); x265 default-on) |
 | **WPP (wavefront, entropy_coding_sync)** | ✅ bit-exact (single-submit HW wavefront + entry-point sequence; x265 default-on) |
 | **All default-on tools COMBINED** (SAO+WPP+tmvp+b-pyramid+multi-ref) | ✅ bit-exact on a near-default x265 clip (testdata/allfeat.265) |
-| Weighted prediction (x265 --weightp default-on) | ⏳ LAST default-on gap — parser parses pred_weight_table; player rejects it |
+| **Weighted prediction** (x265 `--weightp` default-on) | ✅ bit-exact (per-ref 8-word weight descriptor; luma + 2 chroma planes, computed §7.4.7.3 offsets; testdata/wp.265). Fully-default clip (tmvp+wpp+weightp) `dflt.265` → BIT-EXACT |
 | tiles, nonzero deblock offsets, amp, EPB-in-header (large frames) | ⏳ out of subset |
 | HW H.264 | ⛔ VCHIQ/firmware-walled (banked) |
 
@@ -112,5 +112,13 @@ $GCC -O2 -static -Wall -Wextra -std=gnu11 -I$VCM -Itools/hevc-decode -DPLAY_TOOL
 # stage hevc-play to /bin and a .265 next to it, then: hevc-play /root/clip.265
 ```
 
-Out of scope / next: B-frames, weighted-P in the player (non-weighted only today),
-resolutions/params beyond the x265 subset, and wiring the decoder into the ffmpeg port.
+Weighted prediction is applied purely via the per-ref slice-message descriptor: a
+weighted ref grows from 2 words to 8 — word0 gains marker bits `[6:5]=3`, then 6
+weight words (luma denom|weight + 8-bit offset, then the same for each chroma plane).
+The parser computes LumaWeight/ChromaWeight/ChromaOffset (§7.4.7.3, defaults for
+unflagged refs); no cmd_slice/CONFIG2/slice_const change. `-DHEVC_NO_WEIGHT` builds
+the non-weighted-descriptor negative control (`hevc-play-noweight`).
+
+Out of scope / next: resolutions/params beyond the x265 subset (tiles, nonzero
+deblock offsets, amp, EPB-in-header for large frames), and wiring the decoder into
+the ffmpeg port so arbitrary `.265` files feed through libavcodec.

@@ -904,12 +904,45 @@ static int play_frame(volatile uint8_t *hevc, volatile uint8_t *intc,
 			     | ((is_b && s->mvd_l1_zero_flag) ? (1u << 16) : 0u) | sao_bits;
 	/* collocated_from_l0_flag (h265.c:747-751): 1 unless a tmvp B-slice sets it 0. */
 	int coll_l0 = !s->slice_temporal_mvp_enabled || !is_b || s->collocated_from_l0;
-	uint16_t msgs[2 + 2 * 16 + 2];
+	/* Weighted prediction: each active ref descriptor grows from 2 words to 8 —
+	 * word0 gets marker bits [6:5]=3, followed by 6 weight words (luma + 2 chroma
+	 * planes: denom|weight<<3, then the 8-bit offset). Weights/offsets are the
+	 * COMPUTED §7.4.7.3 values from the parser (defaults filled for unflagged refs).
+	 * -DHEVC_NO_WEIGHT forces the non-weighted 2-word form (negative-control A/B). */
+#ifdef HEVC_NO_WEIGHT
+	const int wtd = 0;
+#else
+	const int wtd = s->weighted;
+#endif
+	const uint32_t lden = s->luma_log2_weight_denom, cden = s->chroma_log2_weight_denom;
+	uint16_t msgs[2 + 8 * 32 + 2];
 	uint32_t m = 0;
 	msgs[m++] = (uint16_t)((is_b ? 3u : 2u) | (nb0 << 2) | (nb1 << 6)
 			     | ((uint32_t)no_backward << 10) | (mmc << 11) | ((uint32_t)coll_l0 << 14));
-	for (uint32_t i = 0; i < nb0; i++) { msgs[m++] = (uint16_t)slot_l0[i]; msgs[m++] = (uint16_t)(s->ref_poc_l0[i] & 0xffffu); }
-	for (uint32_t i = 0; i < nb1; i++) { msgs[m++] = (uint16_t)slot_l1[i]; msgs[m++] = (uint16_t)(s->ref_poc_l1[i] & 0xffffu); }
+	for (uint32_t i = 0; i < nb0; i++) {
+		msgs[m++] = (uint16_t)(slot_l0[i] | (wtd ? (3u << 5) : 0u));
+		msgs[m++] = (uint16_t)(s->ref_poc_l0[i] & 0xffffu);
+		if (wtd) {
+			msgs[m++] = (uint16_t)(lden | ((s->luma_weight[0][i]     & 0x1ff) << 3));
+			msgs[m++] = (uint16_t)(s->luma_offset[0][i]              & 0xff);
+			msgs[m++] = (uint16_t)(cden | ((s->chroma_weight[0][i][0] & 0x1ff) << 3));
+			msgs[m++] = (uint16_t)(s->chroma_offset[0][i][0]         & 0xff);
+			msgs[m++] = (uint16_t)(cden | ((s->chroma_weight[0][i][1] & 0x1ff) << 3));
+			msgs[m++] = (uint16_t)(s->chroma_offset[0][i][1]         & 0xff);
+		}
+	}
+	for (uint32_t i = 0; i < nb1; i++) {
+		msgs[m++] = (uint16_t)(slot_l1[i] | (wtd ? (3u << 5) : 0u));
+		msgs[m++] = (uint16_t)(s->ref_poc_l1[i] & 0xffffu);
+		if (wtd) {
+			msgs[m++] = (uint16_t)(lden | ((s->luma_weight[1][i]     & 0x1ff) << 3));
+			msgs[m++] = (uint16_t)(s->luma_offset[1][i]              & 0xff);
+			msgs[m++] = (uint16_t)(cden | ((s->chroma_weight[1][i][0] & 0x1ff) << 3));
+			msgs[m++] = (uint16_t)(s->chroma_offset[1][i][0]         & 0xff);
+			msgs[m++] = (uint16_t)(cden | ((s->chroma_weight[1][i][1] & 0x1ff) << 3));
+			msgs[m++] = (uint16_t)(s->chroma_offset[1][i][1]         & 0xff);
+		}
+	}
 	msgs[m++] = 0x0200;   /* deblock (loop-filter-across-slices) */
 	msgs[m++] = 0x0000;   /* CMD_QPOFF */
 	return decode_one(hevc, intc, cmd, bs, pu, coeff, ol, oc,
@@ -1013,9 +1046,6 @@ int main(int argc, char **argv)
 	if (!have_sps) { printf("hevc-play: no SPS found\n"); free(file); return 3; }
 	if (sps.chroma_format_idc != 1 || sps.bit_depth_luma_minus8 || sps.bit_depth_chroma_minus8) {
 		printf("hevc-play: only 8-bit 4:2:0 supported\n"); free(file); return 3;
-	}
-	if (have_pps && (pps.weighted_pred || pps.weighted_bipred)) {
-		printf("hevc-play: weighted (bi)pred streams unsupported (non-weighted only)\n"); free(file); return 3;
 	}
 	if (!nslices) { printf("hevc-play: no coded slices\n"); free(file); return 3; }
 
