@@ -20,7 +20,7 @@ blob**. Ported register-by-register from the Linux `hevc_d_h265.c` driver.
 | **B-pyramid (hierarchical reference-B)** — general POC-indexed DPB | ✅ bit-exact (reference-B pics, 2-ref lists, RPS ref-lists, DPB eviction — x265 default) |
 | **Real HD default-x265 content** (720p 240 CTBs, 1080p 510 CTBs) | ✅ bit-exact — b-pyramid + multi-ref + tmvp + WPP combined at HD (testdata/hd720.265, hd1080b.265) |
 | **Runtime `.265` file player (M3)** | ✅ `hevc-play <file.265>` — parse + decode + display I/P/B, no rebuild |
-| **`.mp4`/`.mov` container demux (M3)** | ✅ `hevc-play <file.mp4>` — in-tool ISOBMFF→Annex-B (no ffmpeg); single-video-track only, audio/multi-track/fragmented rejected loudly |
+| **`.mp4`/`.mov` container demux (M3)** | ✅ `hevc-play <file.mp4>` — in-tool ISOBMFF→Annex-B (no ffmpeg); video track read by sample tables so **audio tracks are skipped** (normal a/v files play); >1 video track / fragmented rejected loudly |
 | **`hevc-play` bit-exact conformance verify** | ✅ `hevc-play <f.265> <golden.nv12>` → VERIFY BIT-EXACT (ibp, mandelbrot, bframes=2/3, b-pyramid all 0 bad px) |
 | Decode → SAND/COL128 unpack → NV12→RGB → /dev/fb0 → HDMI | ✅ |
 | Intermittent inter corruption during on-HDMI playback (~10%) | ⚠️ known, decoder bit-exact HEADLESS in isolation (see gotcha 8) |
@@ -116,14 +116,16 @@ $GCC -O2 -static -Wall -Wextra -std=gnu11 -I$VCM -Itools/hevc-decode -DPLAY_TOOL
 
 `hevc-play` also accepts an `.mp4`/`.mov` container directly (`hevc_mp4.{h,c}`): if
 the file opens with an `ftyp` box it is demuxed to an in-memory Annex-B stream (no
-ffmpeg / libavformat), then the existing raw pipeline runs unchanged. The demux is
-deliberately narrow — exactly one HEVC video track, non-fragmented; NAL boundaries
-come from the length-prefixed `mdat` samples (self-delimiting for a single track, so
-no stsz/stco/stsc needed) and VPS/SPS/PPS come from `hvcC`. Audio, multi-track and
-fragmented (`moof`) files are **rejected loudly** (`hevc_err()`) rather than silently
-mis-demuxed — strip to a lone video track with `ffmpeg -an -c copy out.mp4`. HW-proven:
-`hevc-play wp.mp4`/`dflt.mp4` → VERIFY BIT-EXACT against the raw-`.265` goldens; a
-2-track file is rejected. Regenerate fixtures with `testdata/gen-mp4.sh`.
+ffmpeg / libavformat), then the existing raw pipeline runs unchanged. The demux
+locates the HEVC video track's coded samples via its `stsc` → chunk → `stco`/`co64`
+mapping (sizes from `stsz`) and reads each sample from its **true file offset**, so a
+normal audio+video `.mp4` works — the audio track's interleaved chunks are simply not
+visited. Each sample is a run of length-prefixed NALs (emitted as Annex-B); VPS/SPS/PPS
+come from `hvcC`. Deliberately narrow ("reject don't mis-handle"): exactly one HEVC
+video track, non-fragmented — no-video / >1-video-track / fragmented (`moof`) files are
+**rejected loudly** (`hevc_err()`). HW-proven: `hevc-play wp.mp4`/`dflt.mp4`
+(single-track) + `wpaudio.mp4`/`hd720aud.mp4` (audio+video, interleaved) all → VERIFY
+BIT-EXACT against the raw-`.265` goldens. Regenerate fixtures with `testdata/gen-mp4.sh`.
 
 Weighted prediction is applied purely via the per-ref slice-message descriptor: a
 weighted ref grows from 2 words to 8 — word0 gains marker bits `[6:5]=3`, then 6

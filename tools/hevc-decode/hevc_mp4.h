@@ -4,16 +4,16 @@
  * feed the resulting Annex-B elementary stream to the existing NAL pipeline —
  * no ffmpeg / libavformat dependency.
  *
- * Scope (deliberately narrow, "reject don't mis-handle"): a single-video-track,
- * NON-fragmented file carrying exactly one HEVC (`hev1`/`hvc1`) track. Audio,
- * multi-track, fragmented (`moof`) and non-HEVC files are rejected loudly via
- * hevc_err() rather than silently mis-demuxed (audio bytes interleaved into
- * `mdat` would otherwise be read as bogus NAL lengths). Strip to a lone video
- * track with `ffmpeg -an -c copy out.mp4` if a file is rejected.
+ * Scope (deliberately narrow, "reject don't mis-handle"): a NON-fragmented file
+ * carrying exactly one HEVC (`hev1`/`hvc1`) video track. Other tracks (e.g. an
+ * audio track) are fine — the video track's samples are read by their true file
+ * offsets via the sample tables, so interleaved audio is skipped. Files with no
+ * video track, more than one video track, or fragmentation (`moof`) are rejected
+ * loudly via hevc_err() rather than silently mis-demuxed.
  *
- * NAL boundaries come from the length-prefixed samples in `mdat` — for a single
- * track those are self-delimiting, so the stsz/stco/stsc sample tables are not
- * needed. The VPS/SPS/PPS parameter sets come from the `hvcC` record.
+ * The video track's coded samples are located via its stsc → chunk → stco/co64
+ * mapping (sizes from stsz); each sample is a run of length-prefixed NALs, which
+ * are emitted as Annex-B. The VPS/SPS/PPS parameter sets come from `hvcC`.
  *
  * SPDX-License-Identifier: BSD-3-Clause
  */
