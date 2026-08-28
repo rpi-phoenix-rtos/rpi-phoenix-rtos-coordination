@@ -25,7 +25,10 @@ blob**. Ported register-by-register from the Linux `hevc_d_h265.c` driver.
 | **Multi-ref (ref>1)** | ✅ bit-exact (free via the general DPB + resolve_reflist) |
 | **Temporal-MVP (tmvp)** — collocated-MV path | ✅ bit-exact (per-DPB-slot colMV, x265 default-on; 64/128/320 verified) |
 | **SAO (Sample Adaptive Offset)** — in-loop filter | ✅ bit-exact (RPI_SLICE bit14/15; HW CABAC-decodes per-CTB sao(); x265 default-on) |
-| WPP/tiles, nonzero deblock beta/tc offsets | ⏳ out of subset — each a separate feature toward full real-content |
+| **WPP (wavefront, entropy_coding_sync)** | ✅ bit-exact (single-submit HW wavefront + entry-point sequence; x265 default-on) |
+| **All default-on tools COMBINED** (SAO+WPP+tmvp+b-pyramid+multi-ref) | ✅ bit-exact on a near-default x265 clip (testdata/allfeat.265) |
+| Weighted prediction (x265 --weightp default-on) | ⏳ LAST default-on gap — parser parses pred_weight_table; player rejects it |
+| tiles, nonzero deblock offsets, amp, EPB-in-header (large frames) | ⏳ out of subset |
 | HW H.264 | ⛔ VCHIQ/firmware-walled (banked) |
 
 ## Layout
