@@ -18,6 +18,7 @@ blob**. Ported register-by-register from the Linux `hevc_d_h265.c` driver.
 | **Inter-coded video → HDMI playback** | ✅ 32-frame 320×240 IPPP |
 | **Bidirectional (B) inter** — 2 ref lists (past L0 + future L1) | ✅ bit-exact, ANY count of consecutive non-reference B (bframes 1/2/3+, b-adapt ok) |
 | **B-pyramid (hierarchical reference-B)** — general POC-indexed DPB | ✅ bit-exact (reference-B pics, 2-ref lists, RPS ref-lists, DPB eviction — x265 default) |
+| **Real HD default-x265 content** (720p 240 CTBs, 1080p 510 CTBs) | ✅ bit-exact — b-pyramid + multi-ref + tmvp + WPP combined at HD (testdata/hd720.265, hd1080b.265) |
 | **Runtime `.265` file player (M3)** | ✅ `hevc-play <file.265>` — parse + decode + display I/P/B, no rebuild |
 | **`.mp4`/`.mov` container demux (M3)** | ✅ `hevc-play <file.mp4>` — in-tool ISOBMFF→Annex-B (no ffmpeg); single-video-track only, audio/multi-track/fragmented rejected loudly |
 | **`hevc-play` bit-exact conformance verify** | ✅ `hevc-play <f.265> <golden.nv12>` → VERIFY BIT-EXACT (ibp, mandelbrot, bframes=2/3, b-pyramid all 0 bad px) |
