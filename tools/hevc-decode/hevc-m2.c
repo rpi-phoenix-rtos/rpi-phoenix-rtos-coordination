@@ -821,38 +821,44 @@ static uint8_t *slurp_265(const char *path, uint32_t *len_out)
  * from the parsed fields (driver slice_reg_const / cmd_slice formulas), so the
  * correct max_num_merge_cand / mvd_l1_zero from the stream are used, not
  * assumed. Non-weighted, single ref per list (the player's subset). */
+/* Decode one I/P/B slice with GENERAL reference lists (b-pyramid capable).
+ * refpa[16][2] is caller-built (default = current frame; each referenced picture
+ * placed at its assigned HW slot). slot_l0[i]/slot_l1[i] = the HW REF-slot index
+ * for RefPicListL0/L1[i]. slice_const + cmd_slice are built from the parsed fields
+ * (driver slice_reg_const/cmd_slice formulas), incl. a COMPUTED no_backward_pred. */
 static int play_frame(volatile uint8_t *hevc, volatile uint8_t *intc,
 		      dma_buf_t *cmd, dma_buf_t *bs, dma_buf_t *pu, dma_buf_t *coeff,
 		      const hevc_nal_t *nal, const hevc_slice_t *s,
-		      dma_buf_t *ol, dma_buf_t *oc,
-		      dma_buf_t *l0l, dma_buf_t *l0c, dma_buf_t *l1l, dma_buf_t *l1c,
-		      uint32_t l0_poc, uint32_t l1_poc,
+		      dma_buf_t *ol, dma_buf_t *oc, const uint32_t refpa[16][2],
+		      const uint32_t *slot_l0, const uint32_t *slot_l1,
 		      uint32_t pu_stride, uint32_t coeff_stride,
 		      uint32_t luma_stride, uint32_t chroma_stride)
 {
-	uint32_t refpa[16][2];
-	for (int i = 0; i < 16; i++) { refpa[i][0] = (uint32_t)ol->pa; refpa[i][1] = (uint32_t)oc->pa; }
-	uint32_t slice_const = 0, nmsg = 0, mmc = s->max_num_merge_cand;
-	uint16_t msgs[7];
-	if (s->slice_type == 1) {                /* P: 1 L0 ref */
-		refpa[0][0] = (uint32_t)l0l->pa; refpa[0][1] = (uint32_t)l0c->pa;
-		slice_const = mmc | (1u << 4) | (1u << 12);                 /* mmc | L0=1 | type P */
-		nmsg = 5;
-		msgs[0] = (uint16_t)(2u | (1u << 2) | (1u << 10) | (mmc << 11) | (1u << 14)); /* cmd_slice P */
-		msgs[1] = 0x0000; msgs[2] = (uint16_t)l0_poc; msgs[3] = 0x0200; msgs[4] = 0x0000;
-	} else if (s->slice_type == 0) {         /* B: 1 L0 (past) + 1 L1 (future) */
-		refpa[0][0] = (uint32_t)l0l->pa; refpa[0][1] = (uint32_t)l0c->pa;
-		refpa[1][0] = (uint32_t)l1l->pa; refpa[1][1] = (uint32_t)l1c->pa;
-		slice_const = mmc | (1u << 4) | (1u << 8) | ((uint32_t)s->mvd_l1_zero_flag << 16); /* type B=0 */
-		nmsg = 7;
-		msgs[0] = (uint16_t)(3u | (1u << 2) | (1u << 6) | (mmc << 11) | (1u << 14)); /* cmd_slice B, no_backward=0 */
-		msgs[1] = 0x0000; msgs[2] = (uint16_t)l0_poc;
-		msgs[3] = 0x0001; msgs[4] = (uint16_t)l1_poc; msgs[5] = 0x0200; msgs[6] = 0x0000;
-	}
+	if (s->slice_type == 2)   /* I: no refs */
+		return decode_one(hevc, intc, cmd, bs, pu, coeff, ol, oc,
+			nal->data, s->data_byte_offset, s->bfnum, s->slice_qp,
+			0, 0, NULL, NULL, s->poc, pu_stride, coeff_stride, luma_stride, chroma_stride, 0);
+
+	int is_b = (s->slice_type == 0);
+	uint32_t nb0 = s->nb_refs_l0, nb1 = is_b ? s->nb_refs_l1 : 0, mmc = s->max_num_merge_cand;
+	/* no_backward_pred_flag (H.265 8.3.5): all L0+L1 refs have POC <= current. */
+	int no_backward = 1;
+	for (uint32_t i = 0; i < nb0; i++) if (s->ref_poc_l0[i] > s->poc) no_backward = 0;
+	for (uint32_t i = 0; i < nb1; i++) if (s->ref_poc_l1[i] > s->poc) no_backward = 0;
+
+	uint32_t slice_const = mmc | (nb0 << 4) | (nb1 << 8) | ((is_b ? 0u : 1u) << 12)
+			     | ((is_b && s->mvd_l1_zero_flag) ? (1u << 16) : 0u);
+	uint16_t msgs[2 + 2 * 16 + 2];
+	uint32_t m = 0;
+	msgs[m++] = (uint16_t)((is_b ? 3u : 2u) | (nb0 << 2) | (nb1 << 6)
+			     | ((uint32_t)no_backward << 10) | (mmc << 11) | (1u << 14)); /* coll_from_l0=1 (tmvp off) */
+	for (uint32_t i = 0; i < nb0; i++) { msgs[m++] = (uint16_t)slot_l0[i]; msgs[m++] = (uint16_t)(s->ref_poc_l0[i] & 0xffffu); }
+	for (uint32_t i = 0; i < nb1; i++) { msgs[m++] = (uint16_t)slot_l1[i]; msgs[m++] = (uint16_t)(s->ref_poc_l1[i] & 0xffffu); }
+	msgs[m++] = 0x0200;   /* deblock (loop-filter-across-slices) */
+	msgs[m++] = 0x0000;   /* CMD_QPOFF */
 	return decode_one(hevc, intc, cmd, bs, pu, coeff, ol, oc,
 		nal->data, s->data_byte_offset, s->bfnum, s->slice_qp,
-		slice_const, nmsg, (s->slice_type == 2) ? NULL : msgs,
-		(s->slice_type == 2) ? NULL : refpa, s->poc,
+		slice_const, m, msgs, refpa, s->poc,
 		pu_stride, coeff_stride, luma_stride, chroma_stride, 0);
 }
 
@@ -860,6 +866,38 @@ static int is_slice_nal(int t)
 {
 	return t == HEVC_NAL_TRAIL_N || t == HEVC_NAL_TRAIL_R ||
 	       t == HEVC_NAL_IDR_W_RADL || t == HEVC_NAL_IDR_N_LP;
+}
+static int is_ref_nal(int t)   /* reference picture (enters DPB) — everything but TRAIL_N */
+{
+	return t == HEVC_NAL_TRAIL_R || t == HEVC_NAL_IDR_W_RADL || t == HEVC_NAL_IDR_N_LP;
+}
+
+/* POC-indexed DPB entry (backs pool buffer of the same index). */
+typedef struct { int used; uint32_t poc; int pending; } dpb_ent_t;
+
+/* Resolve a RefPicList (POC array) → HW REF-slot indices. Each distinct referenced
+ * POC gets a slot (first-appearance order across L0 then L1); refpa[slot] is set to
+ * that picture's DPB buffer PA. Returns -1 if a referenced POC is not in the DPB. */
+static int resolve_reflist(const uint32_t *ref_poc, uint32_t nb, const dpb_ent_t *dpb,
+			   const dma_buf_t *pool_l, const dma_buf_t *pool_c, uint32_t pool_n,
+			   uint32_t refpa[16][2], uint32_t *slot_poc, uint32_t *nslot, uint32_t *slots)
+{
+	for (uint32_t i = 0; i < nb; i++) {
+		uint32_t p = ref_poc[i];
+		int sl = -1;
+		for (uint32_t k = 0; k < *nslot; k++) if (slot_poc[k] == p) { sl = (int)k; break; }
+		if (sl < 0) {
+			int di = -1;
+			for (uint32_t d = 0; d < pool_n; d++) if (dpb[d].used && dpb[d].poc == p) { di = (int)d; break; }
+			if (di < 0) return -1;
+			sl = (int)*nslot; slot_poc[*nslot] = p;
+			refpa[*nslot][0] = (uint32_t)pool_l[di].pa;
+			refpa[*nslot][1] = (uint32_t)pool_c[di].pa;
+			(*nslot)++;
+		}
+		slots[i] = (uint32_t)sl;
+	}
+	return 0;
 }
 
 /* Present one decoded frame: if a golden (ffmpeg NV12, display order) is given,
@@ -958,45 +996,45 @@ int main(int argc, char **argv)
 	uint32_t cols = ((g_frame_w + 127u) & ~127u) / 128u;
 	size_t bs_size = ((size_t)max_nal + 4096u) & ~(size_t)4095u;
 	dma_buf_t cmd = {0}, bs = {0}, pu = {0}, coeff = {0};
-	/* Two ping-pong ANCHOR (I/P, reference) slots + one B SCRATCH (non-reference).
-	 * ref=1 single-B subset: each new anchor reuses the 2-generations-old slot
-	 * (no longer referenced once the intervening B is past). */
-	dma_buf_t la = {0}, ca = {0}, lb = {0}, cb = {0}, ls = {0}, cs = {0};
-	if (dma_alloc(&cmd, 64u * 1024u) || dma_alloc(&bs, bs_size) ||
-	    dma_alloc(&pu, pu_size) || dma_alloc(&coeff, coeff_size) ||
-	    dma_alloc(&la, luma_stride * cols + 4096u) || dma_alloc(&ca, chroma_stride * cols + 4096u) ||
-	    dma_alloc(&lb, luma_stride * cols + 4096u) || dma_alloc(&cb, chroma_stride * cols + 4096u) ||
-	    dma_alloc(&ls, luma_stride * cols + 4096u) || dma_alloc(&cs, chroma_stride * cols + 4096u)) {
-		printf("hevc-play: DMA alloc FAILED\n"); free(file); return 4;
-	}
+	/* General POC-indexed DPB pool, sized to sps_max_dec_pic_buffering + headroom.
+	 * Any reference picture (I/P + reference-B) occupies a slot until dropped from
+	 * a slice's RPS; a non-reference B occupies one only until displayed. */
+	uint32_t pool_n = (sps.max_dec_pic_buffering ? sps.max_dec_pic_buffering : 4u) + 2u;
+	if (pool_n < 4u) pool_n = 4u;
+	if (pool_n > 16u) pool_n = 16u;
+	dma_buf_t pool_l[16] = {0}, pool_c[16] = {0};
+	int afail = dma_alloc(&cmd, 64u * 1024u) || dma_alloc(&bs, bs_size) ||
+		    dma_alloc(&pu, pu_size) || dma_alloc(&coeff, coeff_size);
+	for (uint32_t i = 0; i < pool_n && !afail; i++)
+		afail = dma_alloc(&pool_l[i], luma_stride * cols + 4096u) ||
+			dma_alloc(&pool_c[i], chroma_stride * cols + 4096u);
+	if (afail) { printf("hevc-play: DMA alloc FAILED\n"); free(file); return 4; }
 	uint32_t pu_stride = (pu_size / g_ctb_h) & ~63u;
 	uint32_t coeff_stride = (coeff_size / g_ctb_h) & ~63u;
-	printf("hevc-play: buffers bs=%zu pu=%u coeff=%u luma_stride=%u cols=%u\n",
-		bs_size, pu_size, coeff_size, luma_stride, cols);
+	printf("hevc-play: buffers bs=%zu pu=%u coeff=%u luma_stride=%u cols=%u pool=%u reorder=%u\n",
+		bs_size, pu_size, coeff_size, luma_stride, cols, pool_n, sps.max_num_reorder);
 
 	/* Verify mode (golden given) runs HEADLESS — no fb_blit — so the known
 	 * display-path store-burst residual (README gotcha 8) can't confound the
 	 * pure decode bit-exact check. Normal playback (no golden) displays. */
 	fbmode_t fbm; int fbfd = -1; uint8_t *fb = golden ? NULL : fb_open(&fbm, &fbfd);
 
-	/* Play the sequence, looping so a periodic HDMI snapshot lands mid-clip. Each
-	 * loop restarts at the IDR (anchor DPB reset), so the rolling refs stay valid.
-	 * Anchors (I/P) ping-pong two ref slots; B decodes to scratch (L0=past anchor,
-	 * L1=future anchor, decoded just before it). Frames are PRESENTED in display
-	 * (POC) order via a depth-2 reorder (emit the lower-POC of two held frames) —
-	 * correct for the max-1-consecutive-B subset. */
+	/* POC-indexed DPB decode (b-pyramid capable). Per slice: mark+remove (keep the
+	 * pictures in THIS slice's full RPS + any pending display), allocate a free
+	 * pool slot for the output, resolve RefPicListL0/L1 POCs → REF slots, decode,
+	 * insert. Verify mode checks golden[poc] immediately (order-independent);
+	 * playback presents in display/POC order via a bounded reorder. */
 	const int passes = (nslices >= 8) ? 2 : 8;
 	uint32_t shown = 0, total_bad = 0, verified = 0;
+	uint32_t reorder_max = sps.max_num_reorder;
 	struct timespec ts25 = { 0, 40000000 };
 	int broke = 0;
 	for (int loop = 0; loop < passes && !broke; loop++) {
+		dpb_ent_t dpb[16];
+		for (uint32_t i = 0; i < 16; i++) { dpb[i].used = 0; dpb[i].pending = 0; }
 		hevc_nal_iter_t it2 = { file, fsz, 0, 0 };
 		hevc_nal_t n2;
 		uint32_t frame = 0;
-		int parity = 0;
-		dma_buf_t *anew_l = NULL, *anew_c = NULL, *aold_l = NULL, *aold_c = NULL;
-		uint32_t anew_poc = 0, aold_poc = 0;
-		dma_buf_t *held_l = NULL, *held_c = NULL; uint32_t held_poc = 0; int held_valid = 0;
 		while (hevc_nal_next(&it2, &n2)) {
 			if (!is_slice_nal(n2.type)) continue;
 			hevc_slice_t s;
@@ -1006,41 +1044,69 @@ int main(int argc, char **argv)
 			if (n2.len > bs.size) {
 				printf("hevc-play: frame %u NAL %u > bitstream buf %zu\n", frame, n2.len, bs.size); broke = 1; break;
 			}
-			int is_b = (s.slice_type == 0), is_p = (s.slice_type == 1);
-			if (is_p && !anew_l) { printf("hevc-play: P before any I — stream must start with IDR\n"); broke = 1; break; }
-			if (is_b && (!anew_l || !aold_l)) { printf("hevc-play: B before two anchors\n"); broke = 1; break; }
 
-			dma_buf_t *ol, *oc;
-			if (is_b) { ol = &ls; oc = &cs; }                       /* B -> scratch */
-			else if (parity == 0) { ol = &la; oc = &ca; }           /* anchor -> slot A */
-			else { ol = &lb; oc = &cb; }                            /* anchor -> slot B */
+			/* MARK + REMOVE: keep DPB entries whose POC is in this slice's RPS, or
+			 * that are still pending display; free the rest (IDR: rps_n=0 → reset). */
+			for (uint32_t i = 0; i < pool_n; i++) if (dpb[i].used && !dpb[i].pending) {
+				int keep = 0;
+				for (uint32_t k = 0; k < s.rps_n; k++) if (dpb[i].poc == s.rps_poc[k]) { keep = 1; break; }
+				if (!keep) dpb[i].used = 0;
+			}
+			/* allocate a free pool slot for this picture's output */
+			int ob = -1;
+			for (uint32_t i = 0; i < pool_n; i++) if (!dpb[i].used) { ob = (int)i; break; }
+			if (ob < 0) { printf("hevc-play: DPB pool exhausted (pool=%u)\n", pool_n); broke = 1; break; }
+			dma_buf_t *ol = &pool_l[ob], *oc = &pool_c[ob];
+
+			/* refpa default = current frame; resolve L0/L1 POCs → REF slots. */
+			uint32_t refpa[16][2];
+			for (int i = 0; i < 16; i++) { refpa[i][0] = (uint32_t)ol->pa; refpa[i][1] = (uint32_t)oc->pa; }
+			uint32_t slot_l0[16] = {0}, slot_l1[16] = {0}, slot_poc[16], nslot = 0;
+			int ref_ok = 1;
+			if (s.slice_type != 2) {
+				if (resolve_reflist(s.ref_poc_l0, s.nb_refs_l0, dpb, pool_l, pool_c, pool_n,
+						    refpa, slot_poc, &nslot, slot_l0) < 0) ref_ok = 0;
+				if (ref_ok && s.slice_type == 0 &&
+				    resolve_reflist(s.ref_poc_l1, s.nb_refs_l1, dpb, pool_l, pool_c, pool_n,
+						    refpa, slot_poc, &nslot, slot_l1) < 0) ref_ok = 0;
+			}
+			if (!ref_ok) { printf("hevc-play: frame %u POC %u — a reference POC not in DPB\n", frame, s.poc); broke = 1; break; }
 
 			int rc = play_frame(hevc, intc, &cmd, &bs, &pu, &coeff, &n2, &s, ol, oc,
-				is_b ? aold_l : anew_l, is_b ? aold_c : anew_c,          /* L0 = past */
-				is_b ? anew_l : NULL,  is_b ? anew_c : NULL,             /* L1 = future (B) */
-				is_b ? aold_poc : anew_poc, is_b ? anew_poc : 0,
-				pu_stride, coeff_stride, luma_stride, chroma_stride);
-			if (rc != 0) { printf("hevc-play: frame %u (%s POC %u) decode FAILED rc=%d\n",
-				frame, is_b ? "B" : is_p ? "P" : "I", s.poc, rc); broke = 1; break; }
+				refpa, slot_l0, slot_l1, pu_stride, coeff_stride, luma_stride, chroma_stride);
+			if (rc != 0) { printf("hevc-play: frame %u POC %u decode FAILED rc=%d\n", frame, s.poc, rc); broke = 1; break; }
 
-			if (!is_b) {   /* anchor: advance the rolling ref window + ping-pong slot */
-				aold_l = anew_l; aold_c = anew_c; aold_poc = anew_poc;
-				anew_l = ol; anew_c = oc; anew_poc = s.poc; parity ^= 1;
+			dpb[ob].used = 1; dpb[ob].poc = s.poc; dpb[ob].pending = 1;   /* insert */
+			(void)is_ref_nal;   /* ref-ness is enforced by RPS marking, not the NAL type */
+
+			if (golden) {   /* verify immediately — order-independent (compare golden[poc]) */
+				total_bad += present_frame(NULL, &fbm, ol, oc, luma_stride, chroma_stride, golden, golden_nframes, s.poc);
+				verified++;
+				dpb[ob].pending = 0;
+			} else {        /* playback: bounded POC-order display reorder */
+				uint32_t npend = 0;
+				for (uint32_t i = 0; i < pool_n; i++) if (dpb[i].pending) npend++;
+				while (npend > reorder_max) {
+					int mi = -1; uint32_t mp = 0;
+					for (uint32_t i = 0; i < pool_n; i++)
+						if (dpb[i].pending && (mi < 0 || dpb[i].poc < mp)) { mi = (int)i; mp = dpb[i].poc; }
+					if (fb) fb_blit(fb, fbm.pitch, fbm.width, fbm.height, pool_l[mi].cpu, pool_c[mi].cpu,
+							g_frame_w, g_frame_h, luma_stride, chroma_stride);
+					nanosleep(&ts25, NULL); shown++; dpb[mi].pending = 0; npend--;
+				}
 			}
-
-			/* depth-2 display reorder: emit (present) the lower-POC of {held, new}. */
-			if (held_valid) {
-				dma_buf_t *el, *ec; uint32_t el_poc;
-				if (s.poc < held_poc) { el = ol; ec = oc; el_poc = s.poc; }   /* new is earlier */
-				else { el = held_l; ec = held_c; el_poc = held_poc; held_l = ol; held_c = oc; held_poc = s.poc; }
-				total_bad += present_frame(fb, &fbm, el, ec, luma_stride, chroma_stride, golden, golden_nframes, el_poc);
-				nanosleep(&ts25, NULL); shown++; verified++;
-			} else { held_l = ol; held_c = oc; held_poc = s.poc; held_valid = 1; }
 			frame++;
 		}
-		if (!broke && held_valid) {   /* flush the last held frame */
-			total_bad += present_frame(fb, &fbm, held_l, held_c, luma_stride, chroma_stride, golden, golden_nframes, held_poc);
-			nanosleep(&ts25, NULL); shown++; verified++;
+		if (!broke && !golden) {   /* flush remaining pending in POC order */
+			for (;;) {
+				int mi = -1; uint32_t mp = 0;
+				for (uint32_t i = 0; i < pool_n; i++)
+					if (dpb[i].pending && (mi < 0 || dpb[i].poc < mp)) { mi = (int)i; mp = dpb[i].poc; }
+				if (mi < 0) break;
+				if (fb) fb_blit(fb, fbm.pitch, fbm.width, fbm.height, pool_l[mi].cpu, pool_c[mi].cpu,
+						g_frame_w, g_frame_h, luma_stride, chroma_stride);
+				nanosleep(&ts25, NULL); shown++; dpb[mi].pending = 0;
+			}
 		}
 	}
 	if (fb) { munmap(fb, fbm.smemlen); close(fbfd); }

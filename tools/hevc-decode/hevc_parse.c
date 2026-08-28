@@ -249,7 +249,9 @@ static int sps_parse_internal(const uint8_t *nal, uint32_t len, hevc_sps_t *out)
 	int sub_present = br_u(&b, 1);             /* sps_sub_layer_ordering_info_present */
 	uint32_t lo = sub_present ? 0 : max_sub;   /* == 0 either way here */
 	for (uint32_t i = lo; i <= max_sub; i++) {
-		br_ue(&b); br_ue(&b); br_ue(&b);
+		out->max_dec_pic_buffering = br_ue(&b) + 1u;  /* sps_max_dec_pic_buffering_minus1 + 1 */
+		out->max_num_reorder = br_ue(&b);             /* sps_max_num_reorder_pics */
+		br_ue(&b);                                    /* sps_max_latency_increase_plus1 */
 	}
 	br_ue(&b);  /* log2_min_luma_coding_block_size_minus3 */
 	br_ue(&b);  /* log2_diff_max_min_luma_coding_block_size */

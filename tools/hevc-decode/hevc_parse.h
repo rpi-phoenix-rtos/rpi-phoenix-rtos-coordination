@@ -62,6 +62,8 @@ typedef struct {
 	uint32_t bit_depth_luma_minus8;
 	uint32_t bit_depth_chroma_minus8;
 	uint32_t log2_max_poc_lsb;        /* log2_max_pic_order_cnt_lsb_minus4 + 4 */
+	uint32_t max_dec_pic_buffering;   /* sps_max_dec_pic_buffering_minus1 + 1 (DPB size) */
+	uint32_t max_num_reorder;         /* sps_max_num_reorder_pics (display reorder depth) */
 	uint32_t num_short_term_rps;      /* num_short_term_ref_pic_sets */
 	hevc_st_rps_t sps_rps[16];        /* the SPS-level RPS list (st_ref_pic_set_sps_flag path) */
 	int sao_enabled;                  /* sample_adaptive_offset_enabled_flag */
