@@ -12,6 +12,19 @@
  * with copy size. The ratio is the oracle; the absolute bytes/transaction is
  * derived from the slope (known bytes moved / transaction delta).
  *
+ * Per-master attribution uses the vendor bus-name table (system_bus_string_2711[])
+ * so BUS_WATCH values map to named masters: 6=HVS(display), 7=ARGON(rpivid HEVC),
+ * 9=PERIPHERAL(genet ethernet), 10/11=ARM. To isolate a small master (genet at
+ * ~20 MB/s) against multi-GB/s time-proportional background (HVS ~0.5 GB/s), a
+ * size dose-response FAILS — read-size is a proxy for wall-clock, so any
+ * time-proportional master scales with it too. The correct discriminator holds
+ * TIME fixed and toggles the WORKLOAD: an idle window vs an equal-purpose NFS-read
+ * window, RATE-NORMALIZED (trans/s) so unequal durations don't skew it. HVS then
+ * cancels (~flat rate) and genet's RX-DMA writes on PERIPHERAL stand out.
+ *
+ * Requires a >=60 MB file at /stories15M.bin on the NFS root for NETSCAN + NET-ISO
+ * (skipped with a message if absent).
+ *
  * Observer only for the buses; the sole writes are to the perf block itself
  * (GEN_CTRL enable + BW0_CTRL configure) — no side effects on the monitored bus.
  */
@@ -35,7 +48,22 @@
 #define BW_RTRANS      0x1cu
 #define BW_CTRL_RESET  (1u << 31)
 #define BW_CTRL_ENABLE (1u << 30)
-#define BUS_ARM_L2     10u           /* scan found bus 10 shows CPU memcpy read+write traffic */
+#define BUS_ARM        10u           /* scan found bus 10 shows CPU memcpy read+write traffic */
+#define BUS_HVS         6u           /* display scanout (read-only, time-proportional) */
+#define BUS_PERIPHERAL  9u           /* genet ethernet + other peripherals live here */
+#define BUS_ARGON       7u           /* rpivid HEVC decoder block */
+
+/* Authoritative BCM2711 System-AXI bus names, from the vendor driver's
+ * system_bus_string_2711[] (raspberrypi_axi_monitor.c). Index == BUS_WATCH value. */
+static const char *const bus_name_2711[] = {
+	"DMA_L2", "TRANS", "JPEG", "VPU_UC", "DMA_UC", "SYSTEM_L2",
+	"HVS", "ARGON", "H264", "PERIPHERAL", "ARM_UC", "ARM_L2"
+};
+static const char *bus_name(int b)
+{
+	return (b >= 0 && b < (int)(sizeof(bus_name_2711) / sizeof(bus_name_2711[0])))
+		? bus_name_2711[b] : "?";
+}
 
 static volatile uint32_t *pmu;
 
@@ -88,7 +116,7 @@ int main(void)
 				r1b = rd(BW0_CTRL + BW_RTRANS); w1b = rd(BW0_CTRL + BW_WTRANS); a1b = rd(BW0_CTRL + BW_ATRANS);
 				for (z = 0; z < (8u << 20); z += 4096) chk += (unsigned char)dst[z];
 				(void)chk;
-				printf("axi-pmu: SCAN bus %2d: dR=%u dW=%u dA=%u\n", bus, r1b - r0b, w1b - w0b, a1b - a0b);
+				printf("axi-pmu: SCAN bus %2d %-10s: dR=%u dW=%u dA=%u\n", bus, bus_name(bus), r1b - r0b, w1b - w0b, a1b - a0b);
 			}
 		}
 		free(src); free(dst);
@@ -121,8 +149,8 @@ int main(void)
 					got += n;
 				}
 				r1b = rd(BW0_CTRL + BW_RTRANS); w1b = rd(BW0_CTRL + BW_WTRANS); a1b = rd(BW0_CTRL + BW_ATRANS);
-				printf("axi-pmu: NETSCAN bus %2d: dR=%u dW=%u dA=%u (read %zuKB)\n",
-					bus, r1b - r0b, w1b - w0b, a1b - a0b, got >> 10);
+				printf("axi-pmu: NETSCAN bus %2d %-10s: dR=%u dW=%u dA=%u (read %zuKB)\n",
+					bus, bus_name(bus), r1b - r0b, w1b - w0b, a1b - a0b, got >> 10);
 			}
 			fclose(nf);
 			printf("axi-pmu: NETSCAN read 60MB over NFS in %.0f ms (~%.1f MB/s)\n",
@@ -130,11 +158,11 @@ int main(void)
 		}
 	}
 
-	printf("axi-pmu: --- dose-response on bus %u ---\n", BUS_ARM_L2);
+	printf("axi-pmu: --- dose-response on bus %u ---\n", BUS_ARM);
 	/* Reconfigure BW0 for the chosen bus (the scan left it on bus 15). */
 	wr(GEN_CTRL, GEN_CTL_RESET);
 	wr(BW0_CTRL, BW_CTRL_RESET);
-	wr(BW0_CTRL, BW_CTRL_ENABLE | (BUS_ARM_L2 & 0x3fu));
+	wr(BW0_CTRL, BW_CTRL_ENABLE | (BUS_ARM & 0x3fu));
 	wr(GEN_CTRL, GEN_CTL_ENABLE | GEN_CTL_WATCH);
 
 	/* Vendor sequence (raspberrypi_axi_monitor.c): reset monitor, reset watcher,
@@ -142,7 +170,7 @@ int main(void)
 	 * WATCH bit (the piece that actually starts counting). */
 	wr(GEN_CTRL, GEN_CTL_RESET);
 	wr(BW0_CTRL, BW_CTRL_RESET);
-	wr(BW0_CTRL, BW_CTRL_ENABLE | (BUS_ARM_L2 & 0x3fu));
+	wr(BW0_CTRL, BW_CTRL_ENABLE | (BUS_ARM & 0x3fu));
 	wr(GEN_CTRL, GEN_CTL_ENABLE | GEN_CTL_WATCH);
 	printf("axi-pmu: GEN_CTRL=0x%08x BW0_CTRL=0x%08x\n", rd(GEN_CTRL), rd(BW0_CTRL));
 
@@ -153,7 +181,7 @@ int main(void)
 	r1 = rd(BW0_CTRL + BW_RTRANS);
 	w1 = rd(BW0_CTRL + BW_WTRANS);
 	printf("axi-pmu: 200ms background on bus %u: dR=%u dW=%u (bus 10 = all A72 memory traffic, never truly idle)\n",
-		BUS_ARM_L2, r1 - r0, w1 - w0);
+		BUS_ARM, r1 - r0, w1 - w0);
 
 	/* Dose-response: memcpy 4/8/16 MB x4 reps; transactions should scale linearly. */
 	for (k = 0; k < 3; k++) {
@@ -205,6 +233,81 @@ int main(void)
 		free(dst);
 	}
 
-	printf("axi-pmu: done (verify: idle~0, transactions scale ~linearly with copy size)\n");
+	/* NETWORK per-master isolation — idle-vs-NFS DIFFERENCING (not a size dose-response).
+	 *
+	 * WHY NOT dose-response: a bigger NFS read simply takes proportionally LONGER at
+	 * fixed link bandwidth, so read-size is a proxy for wall-clock TIME. Any
+	 * time-proportional background master (HVS display scanout ~350 MB/s; the
+	 * free-running counter on bus 13) then scales ~2x per size-doubling too — which
+	 * looks exactly like "tracks NFS bytes" but is a confound. Confirmed empirically:
+	 * bus 6(HVS) held a CONSTANT ~355 MB/s and bus 13 a constant ~2.85 GB/s across
+	 * 4/8/16 MB reads; and bus 6 had dW=0 throughout, so it can't be genet (an RX-DMA
+	 * WRITE master) at all.
+	 *
+	 * The correct discriminator holds TIME fixed and toggles the WORKLOAD: measure
+	 * each bus over a same-length IDLE window, then an equal-length NFS-READ window.
+	 * Time-proportional masters (HVS) contribute equally to both and cancel in the
+	 * difference; the genet path (bus 9 PERIPHERAL, per the vendor bus-name table)
+	 * only appears in the active window. Watch PERIPHERAL(9)/HVS(6)/ARM(10) at once. */
+	{
+		FILE *nf = fopen("/stories15M.bin", "rb");
+		if (nf == NULL) {
+			printf("axi-pmu: NET-ISO skipped (no /stories15M.bin)\n");
+		}
+		else {
+			static char nbuf[65536];
+			const uint32_t buses[3] = { BUS_PERIPHERAL, BUS_HVS, BUS_ARM };
+			const uint32_t bwc[3] = { BW0_CTRL, 0x80u, 0xc0u };
+			struct timespec win = { 1, 0 }; /* ~1 s idle window ≈ the time a 16 MB read takes */
+			uint32_t ir[3], iw[3], ar[3], aw[3];
+			double it0, it1, at0, at1, idt, adt;
+			size_t got = 0;
+			int b;
+
+			printf("axi-pmu: --- network isolation: idle vs NFS-read, RATE-normalized (BW0=PERIPHERAL BW1=HVS BW2=ARM) ---\n");
+			wr(GEN_CTRL, GEN_CTL_RESET);
+			for (b = 0; b < 3; b++) wr(bwc[b], BW_CTRL_RESET);
+			for (b = 0; b < 3; b++) wr(bwc[b], BW_CTRL_ENABLE | (buses[b] & 0x3fu));
+			wr(GEN_CTRL, GEN_CTL_ENABLE | GEN_CTL_WATCH);
+
+			/* idle window (measure its true length: nanosleep only approximates 1 s) */
+			for (b = 0; b < 3; b++) { ir[b] = rd(bwc[b] + BW_RTRANS); iw[b] = rd(bwc[b] + BW_WTRANS); }
+			it0 = now_ms();
+			nanosleep(&win, NULL);
+			it1 = now_ms();
+			for (b = 0; b < 3; b++) { ir[b] = rd(bwc[b] + BW_RTRANS) - ir[b]; iw[b] = rd(bwc[b] + BW_WTRANS) - iw[b]; }
+
+			/* NFS-read window (~16 MB). The read rarely lands on exactly the idle
+			 * window's duration, so we DON'T compare raw deltas — we normalize each
+			 * to transactions/second and difference the RATES. A time-proportional
+			 * master (HVS) then has ~equal idle/NFS rates and cancels; genet's RX-DMA
+			 * writes on PERIPHERAL show up as a large positive Δrate. */
+			for (b = 0; b < 3; b++) { ar[b] = rd(bwc[b] + BW_RTRANS); aw[b] = rd(bwc[b] + BW_WTRANS); }
+			at0 = now_ms();
+			fseek(nf, 0, SEEK_SET);
+			while (got < (16u << 20)) {
+				size_t n = fread(nbuf, 1, sizeof(nbuf), nf);
+				if (n == 0) break;
+				got += n;
+			}
+			at1 = now_ms();
+			for (b = 0; b < 3; b++) { ar[b] = rd(bwc[b] + BW_RTRANS) - ar[b]; aw[b] = rd(bwc[b] + BW_WTRANS) - aw[b]; }
+			fclose(nf);
+
+			idt = (it1 - it0) / 1000.0;
+			adt = (at1 - at0) / 1000.0;
+			printf("axi-pmu: idle window %.0f ms; NFS window read %zuKB in %.0f ms (~%.1f MB/s)\n",
+				it1 - it0, got >> 10, at1 - at0, (got / 1048576.0) / adt);
+			for (b = 0; b < 3; b++) {
+				double iwr = iw[b] / idt, awr = aw[b] / adt; /* write trans/s */
+				double irr = ir[b] / idt, arr = ar[b] / adt; /* read  trans/s */
+				printf("axi-pmu: bus%u %-10s: idle[R=%.0f/s W=%.0f/s] NFS[R=%.0f/s W=%.0f/s] => ΔW=%+.0f/s ΔR=%+.0f/s\n",
+					buses[b], bus_name(buses[b]), irr, iwr, arr, awr, awr - iwr, arr - irr);
+			}
+			printf("axi-pmu: (genet-RX is a WRITE master: bus 9 PERIPHERAL's +ΔW/s x ~256 B/burst ~= the NFS MB/s = the network data path)\n");
+		}
+	}
+
+	printf("axi-pmu: done (verify: idle~0, memcpy scales ~linearly, NFS Δ isolates the network bus)\n");
 	return 0;
 }
