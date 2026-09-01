@@ -55,4 +55,5 @@ echo "SUMMARY: $total_behind new upstream commit(s) across ${#behind_repos[@]} r
 [ ${#behind_repos[@]} -gt 0 ] && printf '  behind: %s\n' "${behind_repos[*]}"
 echo ""
 echo "To merge: ./scripts/git-pull-upstream-all.sh  (then REBUILD --scope core + boot-test"
-echo "before pushing; lwip must use the scrubbed/filtered publish flow, never a plain push)."
+echo "before pushing. lwip is a normal sibling since the 2026-09-01 de-tangle: it has real"
+echo "upstream ancestry, so plain pull/FF-push work -- no scrubbed or cherry-pick flow.)"
