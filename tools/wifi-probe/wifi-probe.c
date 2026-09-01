@@ -1814,11 +1814,17 @@ static int g_rx_ch2_frames = 0;        /* ch2 data frames observed */
 static uint8_t g_rx_offer_yiaddr[4] = {0};
 static uint8_t g_rx_offer_msgtype = 0; /* DHCP opt53 (2=OFFER, 5=ACK) */
 static uint32_t g_rx_offer_xid = 0u;
+static uint8_t g_dhcp_serverid[4] = {0}; /* opt54, needed for the REQUEST */
+static uint8_t g_rx_want = 0u;         /* required DHCP msgtype (0 = any) */
 
+/* Poll SDPCM ch2 for a BOOTP/DHCP reply whose opt53 == want (want==0 => any).
+ * Records msgtype/xid/yiaddr and captures opt54 (server-id). Sets
+ * g_rx_offer_seen on a matching reply. */
 static void diag_wifiRxDhcp(volatile uint8_t *sdhci, uint32_t sdio_core)
 {
 	int iter;
 
+	g_rx_offer_seen = 0;
 	for (iter = 0; iter < 400 && g_rx_offer_seen == 0; ++iter) {
 		uint16_t flen = 0u;
 		uint8_t chan = 0xffu;
@@ -1882,7 +1888,9 @@ static void diag_wifiRxDhcp(volatile uint8_t *sdhci, uint32_t sdio_core)
 			g_rx_offer_yiaddr[1] = g_rxf[bootp + 17u];
 			g_rx_offer_yiaddr[2] = g_rxf[bootp + 18u];
 			g_rx_offer_yiaddr[3] = g_rxf[bootp + 19u];
-			/* DHCP options: magic cookie @ bootp+236, then TLV; find opt 53 */
+			/* DHCP options: magic cookie @ bootp+236, then TLV; find opt53
+			 * (msg type) + opt54 (server-id, needed for the REQUEST). */
+			g_rx_offer_msgtype = 0u;
 			opt = bootp + 236u + 4u; /* skip the 4-byte magic cookie */
 			end = flen;
 			while (opt + 1u < end) {
@@ -1899,22 +1907,58 @@ static void diag_wifiRxDhcp(volatile uint8_t *sdhci, uint32_t sdio_core)
 				if (t == 53u && l >= 1u && opt + 2u < end) {
 					g_rx_offer_msgtype = g_rxf[opt + 2u];
 				}
+				if (t == 54u && l >= 4u && opt + 5u < end) {
+					g_dhcp_serverid[0] = g_rxf[opt + 2u];
+					g_dhcp_serverid[1] = g_rxf[opt + 3u];
+					g_dhcp_serverid[2] = g_rxf[opt + 4u];
+					g_dhcp_serverid[3] = g_rxf[opt + 5u];
+				}
 				opt += 2u + l;
 			}
-			g_rx_offer_seen = 1;
+			/* only a reply of the wanted type ends the poll (a late OFFER while
+			 * we wait for the ACK must not stop us). */
+			if (g_rx_want == 0u || g_rx_offer_msgtype == g_rx_want) {
+				g_rx_offer_seen = 1;
+			}
 		}
 	}
-	printf("wifi: RX-DHCP ch2_frames=%d offer_seen=%d msgtype=%u xid=0x%08x yiaddr=%u.%u.%u.%u\n",
-		g_rx_ch2_frames, g_rx_offer_seen, (unsigned)g_rx_offer_msgtype, (unsigned)g_rx_offer_xid,
-		g_rx_offer_yiaddr[0], g_rx_offer_yiaddr[1], g_rx_offer_yiaddr[2], g_rx_offer_yiaddr[3]);
+	printf("wifi: RX-DHCP want=%u seen=%d msgtype=%u xid=0x%08x yiaddr=%u.%u.%u.%u serverid=%u.%u.%u.%u ch2=%d\n",
+		(unsigned)g_rx_want, g_rx_offer_seen, (unsigned)g_rx_offer_msgtype, (unsigned)g_rx_offer_xid,
+		g_rx_offer_yiaddr[0], g_rx_offer_yiaddr[1], g_rx_offer_yiaddr[2], g_rx_offer_yiaddr[3],
+		g_dhcp_serverid[0], g_dhcp_serverid[1], g_dhcp_serverid[2], g_dhcp_serverid[3], g_rx_ch2_frames);
 	fflush(stdout);
 }
 
-/* radio-as-transport #4 Phase 2b step 1: TX one DHCP-DISCOVER 802.3 frame as an
- * SDPCM channel-2 DATA frame (4-byte BDC header), to prove the data-plane TX path
- * end-to-end (verify via tcpdump on the host AP 10.43.0.1). Mirrors diag_bcdcCmd's
- * F2 write but channel=2 and the BDC header instead of the 16-byte BCDC dcmd.
- * Byte-mode ok (frame ~305B < F2_FRAME_MAX). eth frame is built directly into g_txf
+/* IPv4 header checksum (16-bit ones-complement over the 20-byte header, cksum
+ * field pre-zeroed). Needed because the DHCP REQUEST's option block differs in
+ * length from the DISCOVER, changing the IP total-length. */
+static uint16_t diag_ipcksum(const uint8_t *p, int len)
+{
+	uint32_t sum = 0u;
+	int i;
+	for (i = 0; i + 1 < len; i += 2) {
+		sum += ((uint32_t)p[i] << 8) | (uint32_t)p[i + 1];
+	}
+	if ((len & 1) != 0) {
+		sum += (uint32_t)p[len - 1] << 8;
+	}
+	while ((sum >> 16) != 0u) {
+		sum = (sum & 0xffffu) + (sum >> 16);
+	}
+	return (uint16_t)(~sum);
+}
+
+/* DHCP message type this frame carries: 1 = DISCOVER (default), 3 = REQUEST
+ * (adds opt50 requested-IP = g_dhcp_reqip + opt54 server-id). */
+static int g_tx_dhcp_type = 1;
+static uint8_t g_dhcp_reqip[4] = {0};  /* offered IP, snapshotted for the REQUEST's opt50 */
+static int g_dhcp_ack_seen = 0;
+static uint8_t g_dhcp_bound[4] = {0};  /* IP confirmed by the ACK */
+
+/* radio-as-transport #4 Phase 2b step 1: TX a DHCP DISCOVER/REQUEST 802.3 frame
+ * as an SDPCM channel-2 DATA frame (4-byte BDC header), to drive the data-plane
+ * TX path end-to-end. Mirrors diag_bcdcCmd's F2 write but channel=2 and the BDC
+ * header instead of the 16-byte BCDC dcmd. eth frame is built directly into g_txf
  * at +16 (after SDPCM[12]+BDC[4]). Design: docs/inprogress/2026-08-13-wifi-dataplane-design.md. */
 static void diag_wifiDataTx(volatile uint8_t *sdhci, uint32_t sdio_core, uint8_t seq)
 {
@@ -1968,11 +2012,34 @@ static void diag_wifiDataTx(volatile uint8_t *sdhci, uint32_t sdio_core, uint8_t
 	for (i = 0; i < 6; ++i) {
 		g_txf[86 + i] = mac[i]; /* chaddr = MAC */
 	}
-	g_txf[294] = 0x63u; g_txf[295] = 0x82u; g_txf[296] = 0x53u; g_txf[297] = 0x63u; /* magic */
-	g_txf[298] = 0x35u; g_txf[299] = 0x01u; g_txf[300] = 0x01u; /* opt53 DISCOVER */
-	g_txf[301] = 0x37u; g_txf[302] = 0x01u; g_txf[303] = 0x01u; /* opt55 param req */
-	g_txf[304] = 0xffu; /* end */
-	elen = 289;
+	g_txf[294] = 0x63u; g_txf[295] = 0x82u; g_txf[296] = 0x53u; g_txf[297] = 0x63u; /* DHCP magic */
+	{
+		/* DHCP options (cursor p = absolute g_txf offset), then patch the IP
+		 * total-length / UDP length / IP checksum from the actual options end so
+		 * DISCOVER and the longer REQUEST are both well-formed. */
+		uint32_t p = 298u;
+		uint32_t udp_len, ip_total;
+		uint16_t cks;
+		g_txf[p++] = 53u; g_txf[p++] = 1u; g_txf[p++] = (uint8_t)g_tx_dhcp_type; /* opt53 msg type */
+		if (g_tx_dhcp_type == 3) {
+			g_txf[p++] = 50u; g_txf[p++] = 4u;                 /* opt50 requested IP = offered yiaddr */
+			g_txf[p++] = g_dhcp_reqip[0]; g_txf[p++] = g_dhcp_reqip[1];
+			g_txf[p++] = g_dhcp_reqip[2]; g_txf[p++] = g_dhcp_reqip[3];
+			g_txf[p++] = 54u; g_txf[p++] = 4u;                 /* opt54 server identifier */
+			g_txf[p++] = g_dhcp_serverid[0]; g_txf[p++] = g_dhcp_serverid[1];
+			g_txf[p++] = g_dhcp_serverid[2]; g_txf[p++] = g_dhcp_serverid[3];
+		}
+		g_txf[p++] = 55u; g_txf[p++] = 1u; g_txf[p++] = 1u;    /* opt55 param req (subnet) */
+		g_txf[p++] = 0xffu;                                    /* end */
+		udp_len = p - 50u;   /* UDP hdr(8) + BOOTP(236)+magic(4)+options */
+		ip_total = p - 30u;  /* IP hdr(20) + UDP */
+		g_txf[54] = (uint8_t)((udp_len >> 8) & 0xffu); g_txf[55] = (uint8_t)(udp_len & 0xffu);
+		g_txf[32] = (uint8_t)((ip_total >> 8) & 0xffu); g_txf[33] = (uint8_t)(ip_total & 0xffu);
+		g_txf[40] = 0u; g_txf[41] = 0u;
+		cks = diag_ipcksum(&g_txf[30], 20);
+		g_txf[40] = (uint8_t)((cks >> 8) & 0xffu); g_txf[41] = (uint8_t)(cks & 0xffu);
+		elen = (int)(p - 16u); /* eth payload length */
+	}
 	g_tx_len = elen;
 
 	/* --- SDIO TXGLOM on-wire format (matches brcmfmac; this fw expects the
@@ -2247,12 +2314,16 @@ static void diag_wifiJoin(volatile uint8_t *sdhci, uint32_t sdio_core)
 			g_pktcnt_pre_rc, g_pktcnt_pre[0], g_pktcnt_pre[1], g_pktcnt_pre[2], g_pktcnt_pre[3]);
 		fflush(stdout);
 
-		/* DHCP-client-like rounds: send a few DISCOVERs then poll ch2 for the
-		 * OFFER (the fw->host RX delivery + DHCP round-trip is timing-sensitive;
-		 * a single burst+immediate-poll raced the OFFER). Re-send each round so a
-		 * fresh OFFER is always inbound; stop as soon as one is parsed. */
+		/* Full DHCP over Wi-Fi (SELECTING): DISCOVER->OFFER->REQUEST->ACK, in
+		 * DHCP-client-like rounds (send a few, then a paced ch2 poll -- the
+		 * fw->host RX delivery + round-trip is timing-sensitive). TX+RX already
+		 * HW-proven; this completes the exchange to BIND a lease. */
 		{
-			int round;
+			int round, offered = 0;
+
+			/* Phase A: DISCOVER -> OFFER (opt53=2); capture yiaddr + server-id. */
+			g_tx_dhcp_type = 1;
+			g_rx_want = 2u;
 			for (round = 0; round < 4 && g_rx_offer_seen == 0; ++round) {
 				for (k = 0; k < 4; ++k) {
 					diag_wifiDataTx(sdhci, sdio_core, (uint8_t)(seq + k));
@@ -2261,29 +2332,50 @@ static void diag_wifiJoin(volatile uint8_t *sdhci, uint32_t sdio_core)
 					}
 				}
 				seq = (uint8_t)(seq + 4);
-				printf("wifi: DATATX-BURST round=%d total_frames=%d last_rc=%d len=%d\n",
-					round, g_dtx_burst, g_tx_rc, g_tx_len);
+				printf("wifi: DHCP-DISCOVER round=%d frames=%d last_rc=%d\n", round, g_dtx_burst, g_tx_rc);
 				fflush(stdout);
-				/* RX: read DHCP-OFFERs off SDPCM ch2. Drain ch2 BEFORE the pktcnt
-				 * GET (a ch0 ioctl) so the control read doesn't eat OFFER frames. */
 				diag_wifiRxDhcp(sdhci, sdio_core);
 			}
-		}
 
-		g_pktcnt_post_rc = diag_wifiPktcnt(sdhci, sdio_core, g_pktcnt_post, reqid++, seq++);
-		printf("wifi: PKTCNT-POST rc=%d rx_good=%u rx_bad=%u tx_good=%u tx_bad=%u\n",
-			g_pktcnt_post_rc, g_pktcnt_post[0], g_pktcnt_post[1], g_pktcnt_post[2], g_pktcnt_post[3]);
-		if (g_pktcnt_pre_rc == 0 && g_pktcnt_post_rc == 0) {
-			long d_txg = (long)g_pktcnt_post[2] - (long)g_pktcnt_pre[2];
-			long d_txb = (long)g_pktcnt_post[3] - (long)g_pktcnt_pre[3];
-			const char *verdict =
-				(d_txg > 0) ? "TX-GOOD-MOVED (fw TX'd -> dies at AP/802.11)" :
-				(d_txb > 0) ? "TX-BAD-MOVED (fw TX path failed)" :
-				"BOTH-FLAT (fw never queued -> host->fw ingest gate)";
-			printf("wifi: PKTCNT-DELTA burst=%d d_tx_good=%ld d_tx_bad=%ld => %s\n",
-				g_dtx_burst, d_txg, d_txb, verdict);
+			if (g_rx_offer_seen != 0 && g_rx_offer_msgtype == 2u) {
+				offered = 1;
+				g_dhcp_reqip[0] = g_rx_offer_yiaddr[0]; g_dhcp_reqip[1] = g_rx_offer_yiaddr[1];
+				g_dhcp_reqip[2] = g_rx_offer_yiaddr[2]; g_dhcp_reqip[3] = g_rx_offer_yiaddr[3];
+				printf("wifi: DHCP-OFFER accepted yiaddr=%u.%u.%u.%u serverid=%u.%u.%u.%u\n",
+					g_dhcp_reqip[0], g_dhcp_reqip[1], g_dhcp_reqip[2], g_dhcp_reqip[3],
+					g_dhcp_serverid[0], g_dhcp_serverid[1], g_dhcp_serverid[2], g_dhcp_serverid[3]);
+				fflush(stdout);
+
+				/* Phase B: REQUEST (opt50 reqip + opt54 serverid) -> ACK (opt53=5). */
+				g_tx_dhcp_type = 3;
+				g_rx_want = 5u;
+				for (round = 0; round < 5 && g_dhcp_ack_seen == 0; ++round) {
+					for (k = 0; k < 4; ++k) {
+						diag_wifiDataTx(sdhci, sdio_core, (uint8_t)(seq + k));
+						if (g_tx_rc == 0) {
+							g_dtx_burst++;
+						}
+					}
+					seq = (uint8_t)(seq + 4);
+					printf("wifi: DHCP-REQUEST round=%d reqip=%u.%u.%u.%u\n", round,
+						g_dhcp_reqip[0], g_dhcp_reqip[1], g_dhcp_reqip[2], g_dhcp_reqip[3]);
+					fflush(stdout);
+					diag_wifiRxDhcp(sdhci, sdio_core);
+					if (g_rx_offer_seen != 0 && g_rx_offer_msgtype == 5u) {
+						g_dhcp_ack_seen = 1;
+						g_dhcp_bound[0] = g_rx_offer_yiaddr[0]; g_dhcp_bound[1] = g_rx_offer_yiaddr[1];
+						g_dhcp_bound[2] = g_rx_offer_yiaddr[2]; g_dhcp_bound[3] = g_rx_offer_yiaddr[3];
+					}
+				}
+			}
+
+			printf("wifi: DHCP-RESULT offer=%d ack=%d bound_ip=%u.%u.%u.%u => %s\n",
+				offered, g_dhcp_ack_seen,
+				g_dhcp_bound[0], g_dhcp_bound[1], g_dhcp_bound[2], g_dhcp_bound[3],
+				g_dhcp_ack_seen ? "BOUND (full DHCP lease over WiFi)" :
+					(offered ? "OFFER-ONLY (REQUEST/ACK incomplete)" : "NO-OFFER"));
+			fflush(stdout);
 		}
-		fflush(stdout);
 		return;
 	}
 
