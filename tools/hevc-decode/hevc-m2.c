@@ -31,6 +31,8 @@
 #include <sys/mman.h>
 #include <fcntl.h>
 #include <sys/ioctl.h>
+#include <sys/interrupt.h>
+#include <sys/threads.h>
 
 #include "libvcmbox.h"
 #include "hevc_regs.h"
@@ -61,6 +63,29 @@
 
 static inline uint32_t rd(const volatile void *a) { return *(const volatile uint32_t *)a; }
 static inline void wr(volatile void *a, uint32_t v) { *(volatile uint32_t *)a = v; }
+
+/* IRQ-driven decode completion. The Linux hevc_d driver waits for the phase
+ * ACTIVE interrupt (CPU idle/blocked); our earlier port hot-polled ARG_IC_ICTRL
+ * every 10us, keeping the CPU active on the memory fabric throughout the decode
+ * (a measurable contributor to the intermittent corruption under DMA contention).
+ * Here the CPU BLOCKS in condWait until the SPI-98 handler wakes it, matching the
+ * driver. Robust either way: the waiter also re-checks ICTRL directly each wake,
+ * so it stays correct even if the IRQ is never delivered (degrades to a 2ms poll). */
+static volatile uint8_t *g_isr_intc;        /* INTC mapping, for the ISR */
+static volatile uint32_t g_active_bits;     /* ACTIVE1/2 INT bits latched by the ISR */
+static handle_t g_irq_cond, g_irq_mtx, g_irq_h;
+
+static int hevc_isr(unsigned int n, void *arg)
+{
+	(void)n; (void)arg;
+	uint32_t ic = rd(g_isr_intc + ARG_IC_ICTRL);
+	uint32_t a = ic & (ACTIVE1_INT_SET | ACTIVE2_INT_SET);
+	if (a) {
+		g_active_bits |= a;
+		wr(g_isr_intc + ARG_IC_ICTRL, ic & ~SET_ZERO_MASK);   /* ack: write-1-clear */
+	}
+	return 1;   /* signal g_irq_cond */
+}
 
 /* Full system barrier before a DMA doorbell. The command buffer + bitstream are
  * written through a Normal-Non-Cacheable CPU mapping; the rpivid block fetches
@@ -372,6 +397,29 @@ static int poll_active(volatile uint8_t *intc, uint32_t bit, int timeout_ms)
 	return -1;
 }
 
+/* Wait for an ARGON ACTIVE bit, blocking the CPU in condWait (IRQ-woken) instead
+ * of hot-polling. Falls back to poll_active if the IRQ wasn't registered. Returns
+ * 0 when the bit is seen (+acked), -1 on hard timeout. */
+static int wait_active(volatile uint8_t *intc, uint32_t bit, int timeout_ms)
+{
+	if (g_irq_mtx == 0)
+		return poll_active(intc, bit, timeout_ms);
+	int rc = -1, waited_us = 0, hard_us = timeout_ms * 1000;
+	mutexLock(g_irq_mtx);
+	for (;;) {
+		if (g_active_bits & bit) { g_active_bits &= ~bit; rc = 0; break; }  /* IRQ delivered it */
+		uint32_t ic = rd(intc + ARG_IC_ICTRL);                             /* fallback: IRQ never fired */
+		if (ic & bit) { wr(intc + ARG_IC_ICTRL, ic & ~SET_ZERO_MASK); rc = 0; break; }
+		if (waited_us >= hard_us) { rc = -1; break; }
+		condWait(g_irq_cond, g_irq_mtx, 2000);   /* block up to 2ms (or until the ISR wakes us) */
+		waited_us += 2000;
+	}
+	if (rc == 0)
+		hevc_dma_fence();   /* order the completion observation before the caller reads output */
+	mutexUnlock(g_irq_mtx);
+	return rc;
+}
+
 /* rpi4-fb GETMODE ABI (video/rpi4-fb/rpi4-fb.h). */
 typedef struct { uint16_t width, height, bpp, pitch; uint64_t smemlen, framebuffer; } fbmode_t;
 #define FB_GETMODE _IOR('g', 1, fbmode_t)
@@ -488,7 +536,7 @@ static int decode_one(volatile uint8_t *hevc, volatile uint8_t *intc,
 	wr(hevc + RPI_COEFFWSTRIDE, RPI_VC_LEN(coeff_stride));
 	wr(hevc + RPI_CFNUM, clen);
 	wr(hevc + RPI_CFBASE, RPI_VC_ADDR(cmd->pa));       /* STARTS PHASE 1 */
-	if (poll_active(intc, ACTIVE1_INT_SET, 500) != 0) { if (verbose) printf("hevc-m2: PHASE 1 TIMEOUT\n"); return -5; }
+	if (wait_active(intc, ACTIVE1_INT_SET, 500) != 0) { if (verbose) printf("hevc-m2: PHASE 1 TIMEOUT\n"); return -5; }
 	uint32_t cfstatus = rd(hevc + RPI_CFSTATUS), cfnum = rd(hevc + RPI_CFNUM);
 	if (verbose) printf("hevc-m2: phase 1 done: CFSTATUS=%u CFNUM=%u %s\n", cfstatus, cfnum,
 		cfstatus == cfnum ? "[OK]" : "[MISMATCH]");
@@ -530,7 +578,7 @@ static int decode_one(volatile uint8_t *hevc, volatile uint8_t *intc,
 	wr(hevc + RPI_COLBASE, RPI_VC_ADDR(g_col_pa));
 	hevc_dma_fence();                                 /* same ordering before the phase-2 doorbell */
 	wr(hevc + RPI_NUMROWS, g_ctb_h);                  /* STARTS PHASE 2 */
-	if (poll_active(intc, ACTIVE2_INT_SET, 1500) != 0) {
+	if (wait_active(intc, ACTIVE2_INT_SET, 1500) != 0) {
 		if (verbose) {
 			uint32_t ic = rd(intc + ARG_IC_ICTRL), st = rd(hevc + RPI_STATUS);
 			const uint8_t *y = luma->cpu; uint32_t nz = 0;
@@ -562,6 +610,20 @@ static int hevc_hw_up(volatile uint8_t **hevc_out, volatile uint8_t **intc_out)
 	/* ARGON INTC: enable + clear pending (hw_setup). */
 	wr(intc + ARG_IC_ICTRL, ACTIVE1_EN_SET | ACTIVE2_EN_SET);
 	wr(intc + ARG_IC_ICTRL, rd(intc + ARG_IC_ICTRL));
+	/* Register the SPI-98 (abs irq 130) completion handler so decode_one can BLOCK
+	 * in condWait rather than hot-poll. Best-effort: on any failure g_irq_mtx stays 0
+	 * and wait_active() transparently falls back to poll_active. */
+	g_isr_intc = intc;
+	if (condCreate(&g_irq_cond) == 0 && mutexCreate(&g_irq_mtx) == 0) {
+		if (interrupt(HEVC_IRQ, hevc_isr, NULL, g_irq_cond, &g_irq_h) < 0) {
+			g_irq_mtx = 0;   /* fall back to polling */
+			printf("hevc-m2: IRQ %u registration failed — using polled completion\n", HEVC_IRQ);
+		} else {
+			printf("hevc-m2: IRQ-driven completion (SPI-%u/irq %u)\n", HEVC_GIC_SPI, HEVC_IRQ);
+		}
+	} else {
+		g_irq_mtx = 0;
+	}
 	*hevc_out = hevc; *intc_out = intc;
 	return 0;
 }
