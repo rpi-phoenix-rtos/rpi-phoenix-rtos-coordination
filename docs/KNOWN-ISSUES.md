@@ -38,15 +38,29 @@ These affect the showcase apps, not the base system.
 
 ## Partial / not started
 
-- **WiFi (BCM43455) — data-plane proven (DHCP lease over WPA2); general
-  networking (an lwip netif) is the remaining integration step.** The driver
+- **WiFi (BCM43455) — data plane proven at FULL MTU in both directions; the
+  lwip netif is the remaining integration step.** The driver
   joins a real WPA2-PSK access point, completes the 4-way key handshake, **and
   carries real traffic over the air**: it obtains a full DHCP IP lease
   (DISCOVER → OFFER → REQUEST → ACK, confirmed by the AP's `DHCPACK`) via
-  `tools/wifi-probe jointxcnt`. What is **not** wired up yet is a general-purpose
-  transport — folding the TX/RX frame path into an lwip network interface so
-  arbitrary sockets use WiFi — so for everyday networking **use wired Ethernet**
-  (fully working) until that lands. (The earlier "TX reaches the firmware but
+  `tools/wifi-probe jointxcnt`. Beyond that lease, the frame path now carries
+  **full-size ethernet frames both ways**, verified byte-for-byte: the Pi sends
+  400/1000/**1472**-byte UDP payloads that a host socket receives bit-exact, and
+  reads back a host-sent 1472-byte tagged probe unchanged. Getting there needed
+  two fixes — SDIO byte-mode CMD53 caps a transfer at 512 bytes (larger requests
+  silently wrapped the 9-bit count field, so 525..2048 was a corruption band),
+  and function 2's block size had never been programmed, which made block mode
+  unusable on the data path. The driver now exposes `/dev/wifidata` (write a
+  frame / read a frame) as the seam for an lwip netif. What is **not** wired up
+  yet is that netif, so arbitrary sockets do not use WiFi and for everyday
+  networking you should still **use wired Ethernet** (fully working).
+
+  *Measurement note for anyone debugging this:* `tcpdump` on the host's AP
+  interface does **not** see frames sent by the Pi — not even the DHCP that the
+  host's own dnsmasq answers — so it is useless as an egress detector on this
+  rig and has twice produced a false "no egress" conclusion. Use an
+  application-level detector (a UDP socket, or dnsmasq's own logs);
+  `scripts/wifi-air-monitor.sh` wraps the ones that work. (The earlier "TX reaches the firmware but
   not the air" report was a measurement artifact — a link-layer counter that
   doesn't count broadcast/pre-lease frames; the application-layer DHCP exchange
   is the ground truth.) The proprietary Cypress firmware blobs are **not
