@@ -107,9 +107,11 @@ docker build -t phoenix-rpi \
 docker run --rm -v "$PWD/out":/out phoenix-rpi
 ```
 
-**3. Showcase + vkQuake** — as above and also builds the Vulkan (V3DV) stack and
-**vkQuake**. Adds a lot of build time and a large binary; vkQuake renders but its
-input is not wired yet (see [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md)).
+**3. Showcase + the Vulkan stack** — as above and also builds V3DV (Vulkan) and the
+**vkQuake** binary. Read the note under the table before using this: the boot image
+holds only *one* large GL/VK game binary, so this builds vkQuake but still ships
+GLQuake unless you swap the launch line by hand. vkQuake also renders without input
+wired yet (see [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md)).
 
 ```bash
 mkdir -p out
@@ -128,19 +130,32 @@ Then flash `./out/rpi4b-sd-2part.img` exactly as in
 Be aware of the current split — all five engines are proven on the hardware, but
 only two are wired into the **SD image** today:
 
-| Engine | In the SD image? | How to run it |
+| Engine | On the card? | How to run it |
 |---|---|---|
-| **GLQuake** (Quake I, OpenGL) | ✅ with `--with-showcase` | boots into it, or `quake` at `(psh)%` |
-| **vkQuake** (Quake I, Vulkan) | ✅ with `--with-vkquake` | `vkquake` (renders; input not wired yet) |
-| **Quake II** (yQuake2) | ❌ not yet | build-proven port; run over netboot (`docs/BUILD.md`) |
+| **GLQuake** (Quake I, OpenGL) | ✅ with `--with-showcase` | at the `(psh)%` prompt: `rpi4-quake ddr ddr` |
+| **vkQuake** (Quake I, Vulkan) | ⚠️ built, not bundled | needs a one-line swap (below) |
+| **Quake II** (yQuake2) | ❌ not yet | build-proven port; run over netboot ([docs/BUILD.md](docs/BUILD.md)) |
 | **Quake III** (quake3e) | ❌ not yet | build-proven port; run over netboot |
 | **SuperTuxKart 1.4** | ❌ not yet | built by `tools/`; run over netboot |
 
+Two things to know:
+
+- **GLQuake is bundled but not auto-started.** The ~18 MB binary lives in
+  `loader.disk` (it is too large to exec from the read-based ext2/NFS loader), and
+  its continuous render loop would flood the UART console, so it is not launched at
+  boot. Run `rpi4-quake ddr ddr` from `psh`; the game data sits at `/id1` on the
+  ext2 root.
+- **GLQuake and vkQuake swap — the image holds only one of them.** `loader.disk`
+  fits a single large GL/VK binary, so `--with-vkquake` builds the Vulkan stack and
+  the vkQuake binary but the image still bundles GLQuake. To ship vkQuake instead,
+  swap the two `app … rpi4-quake` / `app … rpi4-vkquake` launch lines in
+  `sources/phoenix-rtos-project/_projects/aarch64a72-generic-rpi4b/user.plo.yaml`
+  and rebuild.
+
 Quake II and Quake III exist as proper framework ports but are registered
-`if: false` in the project's `ports.yaml` — they are built and verified, and get
-flipped on once each is image-proven. Until then the SD image carries GLQuake
-(plus vkQuake on request), and the other three are exercised over the netboot
-NFS root. Wiring them into the image build is tracked as a follow-up.
+`if: false` in the project's `ports.yaml` — built and verified, flipped on once each
+is image-proven. Until then those three are exercised over the netboot NFS root;
+wiring them into the image build is tracked as a follow-up.
 
 ### Other build knobs
 
