@@ -20,7 +20,10 @@
  *      r_brush.c then use float32x4_t / uint8x8_t. Pull it in here.
  *   2. <stddef.h>/<stdint.h>: miniz.h references size_t before q_stdinc.h establishes it
  *      in some include orders.
- *   3. libphoenix <math.h> gaps: it lacks copysign/copysignf, rint/rintf, remainder/
+ *   3. libphoenix <math.h> gaps: DECLARATIONS only. Some of these (copysign) have
+ *      since landed in libphoenix/libm, so declaring is safe but DEFINING one
+ *      locally now breaks the link with a duplicate symbol. Historically absent:
+ *      copysign/copysignf, rint/rintf, remainder/
  *      remainderf, log2f, fmin/fmax (see the gap inventory). These are GCC builtins, so
  *      declaring the prototypes lets the engine compile; at LINK they resolve from libm /
  *      libgcc, OR — the upstreamable fix — by adding them to libphoenix's math (the same

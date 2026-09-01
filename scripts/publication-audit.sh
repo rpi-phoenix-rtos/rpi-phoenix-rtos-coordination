@@ -156,6 +156,105 @@ for repo in $(repos); do
 	done < <(find "$repo" -path '*/rootfs-overlay/*' -type f 2>/dev/null)
 done
 
+# --- E. external/ dependency clones -----------------------------------------
+# These are NOT siblings, but the build compiles them (mesa -> the V3D driver,
+# quakespasm -> GLQuake, ...), so the same question applies: would a fresh clone
+# build the same thing? Two ways it would not:
+#   * local commits/edits that were never pushed to our fork
+#   * a bootstrap PIN that no longer matches what is checked out here, so local
+#     builds compile different sources than any clean build -- the exact reason a
+#     Docker build can fail on code that "works locally"
+echo "== external/ dependency clones"
+BOOTSTRAP="$ROOT/scripts/bootstrap-linux-host.sh"
+for d in "$ROOT"/external/*/; do
+	[ -d "$d/.git" ] || continue
+	name=$(basename "$d")
+
+	# the pin, if bootstrap declares one: "<name>|<url>|<rev>[|patch]"
+	pin_branch=""
+	pin=$(grep -oE "\"$name\|[^\"]*\"" "$BOOTSTRAP" 2>/dev/null | head -1 |
+		tr -d '"' | cut -d'|' -f3)
+	# mesa's "pin" is an upstream TAG plus patches/mesa/, so its HEAD is
+	# deliberately not the pin -- exempt it from the pin comparison.
+	if [ "$name" = "mesa" ]; then
+		pin=""
+	fi
+	if [ -n "${pin:-}" ]; then
+		head_sha=$(git -C "$d" rev-parse HEAD 2>/dev/null)
+		# A pin can be an exact sha OR a branch/tag name. For a NAME, what a
+		# clean clone gets is that ref ON THE REMOTE, not whatever a stale local
+		# ref points at -- resolving it locally reports phantom drift.
+		case "$pin" in
+			????????????????????????????????????????)
+				# exactly 40 hex chars -> an exact commit
+				pin_sha=$(git -C "$d" rev-parse "$pin^{commit}" 2>/dev/null || echo "")
+				pin_branch=""
+				;;
+			*)
+				# a branch or tag name
+				pin_sha=$(git -C "$d" rev-parse "publish/$pin^{commit}" 2>/dev/null ||
+					git -C "$d" rev-parse "origin/$pin^{commit}" 2>/dev/null ||
+					git -C "$d" rev-parse "$pin^{commit}" 2>/dev/null || echo "")
+				pin_branch="$pin"
+				;;
+		esac
+		if [ -z "$pin_sha" ]; then
+			note "pin" "$name pinned to '$pin' (not resolvable here; a ref a clean clone fetches)"
+		elif [ "$pin_sha" != "$head_sha" ]; then
+			behind=$(git -C "$d" rev-list --count "$pin_sha..HEAD" 2>/dev/null)
+			[ -z "${behind:-}" ] && behind="?"
+			finding "$name: checked out HEAD is $behind commit(s) off the bootstrap pin '$pin' -- local builds compile different sources than a clean build"
+		else
+			note "pin" "$name at its pin ($pin)"
+		fi
+	fi
+
+	# unpushed work, only meaningful when we actually have a fork for it
+	if git -C "$d" remote | grep -qx publish; then
+		# Compare against the branch the BUILD uses. vkquake, for one, keeps its
+		# fork's master mirroring upstream and the port on the pinned branch, so
+		# comparing HEAD to publish/master would report the whole port as
+		# "unpushed" when it is fully published.
+		base="${pin_branch:-$(git -C "$d" branch --show-current 2>/dev/null)}"
+		if [ -n "$base" ] && git -C "$d" rev-parse --verify -q "publish/$base" >/dev/null; then
+			n=$(git -C "$d" rev-list --count "publish/$base..HEAD" 2>/dev/null || echo 0)
+			[ "$n" != 0 ] && finding "$name: $n commit(s) at HEAD not pushed to publish/$base"
+		fi
+	fi
+
+	# Local work in a clone with no org fork is unpublishable by construction --
+	# it exists on this host only. Reference-only clones (linux, u-boot, ...) are
+	# expected to be pristine, so the same check covers them for free.
+	if ! git -C "$d" remote | grep -qx publish; then
+		up=$(git -C "$d" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null || echo "")
+		if [ -n "$up" ]; then
+			n=$(git -C "$d" rev-list --count "$up..HEAD" 2>/dev/null || echo 0)
+			[ "$n" != 0 ] && finding "$name: $n local commit(s) and NO org fork (publish remote) -- this work exists on this host only"
+		else
+			note "detached" "$name has no upstream branch set (detached HEAD?) -- local commits cannot be compared"
+		fi
+	fi
+
+	# a dirty build-consumed tree builds here and nowhere else. mesa is exempt:
+	# its tree is derived by applying patches/mesa/ to an upstream tag.
+	if [ "$name" = "mesa" ]; then
+		if [ -d "$ROOT/patches/mesa" ]; then
+			note "by-design" "mesa tree is patch-derived (patches/mesa/ is committed)"
+		else
+			finding "mesa is patch-derived but patches/mesa/ is missing"
+		fi
+	else
+		while read -r f; do
+			[ -z "$f" ] && continue
+			finding "$name: modified tracked file affects the build: $f"
+		done < <(git -C "$d" diff --name-only HEAD 2>/dev/null)
+		while read -r f; do
+			[ -z "$f" ] && continue
+			note "stray" "$name/$f (untracked in a build-consumed clone)"
+		done < <(git -C "$d" status --porcelain --untracked-files=all 2>/dev/null | grep '^??' | cut -c4-)
+	fi
+done
+
 echo
 if [ "$FINDINGS" -eq 0 ]; then
 	echo "PUBLICATION-AUDIT: CLEAN — a fresh org clone builds from published sources only"

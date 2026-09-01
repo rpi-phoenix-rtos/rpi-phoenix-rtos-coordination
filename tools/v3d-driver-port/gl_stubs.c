@@ -5,8 +5,10 @@
  *      no disk cache) never exercises at runtime: the gallium `draw` module,
  *      SPIR-V, ASTC decode, disk cache, gallium trace, sw tgsi_exec. Stubbed to
  *      NULL/no-op (linkage is by name; generic signatures resolve the refs).
- *  (2) small libc gaps Phoenix lacks: posix_memalign, strtok_r,
- *      pthread_mutex_timedlock (lets c11 threads_posix.c link).
+ *  (2) small libc gaps Phoenix lacks: posix_memalign,
+ *      pthread_mutex_timedlock (lets c11 threads_posix.c link). Anything
+ *      libphoenix later implements MUST be dropped from here, or the duplicate
+ *      definition breaks the link.
  * Compiled WITHOUT the compat shim. Warnings off.
  *
  * Copyright 2026 Phoenix Systems  %LICENSE%
@@ -134,19 +136,12 @@ int posix_memalign(void **memptr, size_t alignment, size_t size)
 	return 0;
 }
 
-char *strtok_r(char *str, const char *delim, char **saveptr)
-{
-	char *s = str ? str : *saveptr, *tok;
-	if (!s)
-		return NULL;
-	s += strspn(s, delim);
-	if (*s == '\0') { *saveptr = s; return NULL; }
-	tok = s;
-	s = strpbrk(tok, delim);
-	if (s) { *s = '\0'; *saveptr = s + 1; }
-	else   { *saveptr = tok + strlen(tok); }
-	return tok;
-}
+/* strtok_r was here as a Phoenix libc gap. libphoenix provides it now (both
+ * libphoenix.a and libm.a export it), so keeping a local copy makes the link
+ * fail with `multiple definition of strtok_r` as soon as -lm is pulled in --
+ * which is exactly what broke a from-scratch build while dev trees with older
+ * .gpu-libs archives kept linking. If another libc gap closes upstream, delete
+ * the stub here in the same way. */
 
 /* c11 threads_posix.c uses pthread_mutex_timedlock (absent on Phoenix); a plain
  * blocking lock is a correct-enough fallback for Mesa's timed waits. */

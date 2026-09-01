@@ -30,9 +30,9 @@
  *     threads (detached, live for the whole process) we malloc a stack once and never
  *     free it.
  *
- * The libc gap `copysign` lives here too (libphoenix math/common.c is the upstream home;
- * see the note in the port status doc — editing sources/libphoenix would need a
- * toolchain re-sync to affect this host link, so we provide it locally for now).
+ * (The libc gap `copysign` used to live here. libphoenix implements it now, so the
+ * local copy was removed -- keeping it would fail the link with a duplicate
+ * definition. See the note at its old site below.)
  */
 #include <sys/threads.h>
 #include <sys/time.h>
@@ -433,14 +433,10 @@ int pthread_mutex_timedlock(pthread_mutex_t *mutex, const struct timespec *absti
 }
 
 /*
- * copysign: libphoenix math/common.c provides fabs but not copysign. Use signbit (both
- * exist) rather than __builtin_copysign (which can self-recurse to this symbol).
- * NOTE TO MAIN AGENT: the upstreamable home is sources/libphoenix/math/common.c (add
- * copysign alongside fabs); doing it there needs a libphoenix rebuild + toolchain
- * re-sync to affect this host link, so it is provided here for now.
+ * copysign used to be provided here as a libphoenix math gap, with a note that
+ * its real home was libphoenix math/common.c. That happened: libphoenix (and
+ * libm) now export copysign, so a local copy is a DUPLICATE DEFINITION and the
+ * link fails with `multiple definition of copysign` as soon as -lm is pulled in.
+ * Removed for that reason -- the same failure mode that a stale strtok_r stub in
+ * tools/v3d-driver-port/gl_stubs.c caused for the GLQuake link.
  */
-double copysign(double x, double y)
-{
-	double a = fabs(x);
-	return signbit(y) ? -a : a;
-}
