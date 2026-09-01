@@ -26,6 +26,7 @@
 #define SCRATCH_OFF (512ull * 1024 * 1024)   /* 512 MiB: past the boot/root partition */
 #define XFER_BYTES  (16u * 1024 * 1024)      /* 16 MiB transfer */
 #define PATTERN_XOR 0xA5A5A5A5u
+#define WIPE_BYTES  (4u * 1024 * 1024)       /* boot-sector wipe span (MBR + FAT header) */
 
 static double now_s(void)
 {
@@ -69,6 +70,49 @@ int main(int argc, char **argv)
 	}
 	else if (strcmp(mode, "verify") == 0) {
 		do_write = 0;
+	}
+
+	/* Destructive, owner-approved (D5 2026-09-01): zero the first WIPE_BYTES of
+	 * the card so the Pi firmware finds nothing bootable and ALWAYS falls
+	 * through to netboot -- removes the TFTP-vs-card-FAT boot-source variance
+	 * that made measurements non-comparable. Requires an explicit confirmation
+	 * token so it can never fire by accident. Owner reflashes the card when he
+	 * wants to test SD boot again. */
+	if (strcmp(mode, "wipe-boot") == 0) {
+		if (argc < 3 || strcmp(argv[2], "CONFIRM-DESTROY-BOOT") != 0) {
+			printf("SDTEST-WIPE refused: need `sdtest wipe-boot CONFIRM-DESTROY-BOOT`\n");
+			return 2;
+		}
+		fd = open(DEV, O_RDWR);
+		if (fd < 0) {
+			printf("SDTEST-WIPE-FAIL open(%s) errno=%d\n", DEV, errno);
+			return 1;
+		}
+		memset(wbuf, 0, XFER_BYTES);
+		if (lseek(fd, 0, SEEK_SET) != 0) {
+			printf("SDTEST-WIPE-FAIL lseek errno=%d\n", errno);
+			close(fd);
+			return 1;
+		}
+		{
+			size_t total = WIPE_BYTES, done = 0;
+			while (done < total) {
+				size_t chunk = ((total - done) > XFER_BYTES) ? XFER_BYTES : (total - done);
+				ssize_t w = write(fd, wbuf, chunk);
+				if (w <= 0) {
+					printf("SDTEST-WIPE-FAIL write at %zu errno=%d\n", done, errno);
+					close(fd);
+					return 1;
+				}
+				done += (size_t)w;
+			}
+		}
+		(void)fsync(fd);
+		close(fd);
+		printf("SDTEST-WIPE OK zeroed first %u MiB (MBR+boot partition gone; card is now raw)\n",
+			(unsigned)(WIPE_BYTES / (1024 * 1024)));
+		printf("SDTEST-RESULT WIPED (next boot should be a deterministic netboot)\n");
+		return 0;
 	}
 
 	if (argc > 1 && strcmp(argv[1], "--verify-host") == 0) {

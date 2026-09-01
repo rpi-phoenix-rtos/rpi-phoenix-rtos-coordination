@@ -5,7 +5,7 @@ Clone: `research/libnfs/` @ `f0b109df8fd865a2f8d39e78310fd875e15f3ac1`
 
 ## Compile-test against the Phoenix toolchain
 
-Compiler: `.toolchain/aarch64-phoenix/bin/aarch64-phoenix-gcc` (GCC 14.2.0).
+Compiler: `.toolchain/aarch64-phoenix/bin/aarch64-phoenix-gcc`. NOTE: these experiments were run under the then-current GCC 14.2.0; the project toolchain has been **GCC 16.2.0 + binutils 2.47** (the default) since 2026-08-28.
 
 1. `autoreconf`/`./bootstrap` NOT runnable here — autotools absent on this host.
    The libnfs git tree has no pre-generated `configure`. The port should use the

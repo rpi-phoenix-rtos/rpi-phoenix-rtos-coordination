@@ -359,7 +359,7 @@ the 36-archive client/render/font foundation above is the delivered, de-risked m
 
 ## Findings / cross-compile recipe (proven)
 
-- Toolchain `aarch64-phoenix-gcc 14.2.0` + sysroot
+- Toolchain: **`aarch64-phoenix-gcc` 16.2.0 + binutils 2.47** (the project default since 2026-08-28) + sysroot. *(This log was originally written against gcc 14.2.0.)*
   `.buildroot/_build/aarch64a72-generic-rpi4b/sysroot`. `config.sub` accepts
   `--host=aarch64-phoenix` (no triple-faking needed).
 - Static libs (`--disable-shared --enable-static`) — matches the Phoenix static-link
