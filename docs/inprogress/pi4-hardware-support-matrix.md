@@ -11,9 +11,10 @@ One row per peripheral/subsystem. For narrative gap analysis see
 > black-lightmap bug is fixed; residual = in-game mouse-look + an intermittent GPU binner wedge);
 > **Quake II renders its demo in textured 3D** via the `quake2` RAM-staging launcher; **vkQuake**
 > renders the full textured 3D start map through Vulkan/V3DV (the earlier post-menu hang is fixed —
-> a semaphore lost-wakeup; residual = un-wired input). **WiFi** control-plane
-> is up (WPA2 associated + 4-way keyed; data-plane under active debugging — not usable for
-> networking); **Bluetooth** driver-level bring-up works (`/dev/hci0`, HCI Inquiry; no host stack).
+> a semaphore lost-wakeup; residual = un-wired input). **WiFi** joins WPA2 and
+> **gets a DHCP IP lease over the air** (full DISCOVER→OFFER→REQUEST→ACK; TX+RX proven); general
+> transport (an lwip netif) is the remaining step, so use wired for now; **Bluetooth** driver-level
+> bring-up works (`/dev/hci0`, HCI Inquiry; no host stack).
 > **Dillo browses the live HTTPS internet** via a host NAT gateway. The 2026-08-06 blurb below is
 > retained for history.
 
@@ -65,7 +66,7 @@ One row per peripheral/subsystem. For narrative gap analysis see
 | SoC thermal + throttle | ✅ done | `/dev/thermal`,`/dev/throttled` (2026-06-05) | firmware owns the trip (telemetry only) |
 | Hardware RNG (RNG200) | ✅ done | `/dev/hwrng` (2026-06-05); **now also backs `/dev/urandom`** (posixsrv reads `/dev/hwrng` for entropy, rand() fallback) — HW-verified 2026-06-17 | kernel `getrandom()`/pool wiring (libc-level) still PRNG |
 | Watchdog / reboot / poweroff | ⏸ attended | works via diag-udp `r`/`h` (PM block #43) | productionize `_hal_systemReset` (kernel, boot-risk) |
-| WiFi (BCM43455 SDIO) | 🟡 partial | **control-plane up** — the firmware executes, the driver associates to a real WPA2-PSK AP and completes the 4-way key handshake (`tools/wifi-probe` `join`; `project_wifi_fw_exec_gate_91`) | **data-plane does not carry traffic yet** — TX reaches the firmware but not the air (SDPCM seq/credit); under active debugging (owner E7). Not usable for networking — use wired Ethernet. Then WPA3 |
+| WiFi (BCM43455 SDIO) | 🟡 partial | **joins WPA2 + gets a DHCP IP lease over the air** — firmware executes, driver associates to a real WPA2-PSK AP, completes the 4-way handshake, AND carries real traffic: a full DHCP exchange (DISCOVER→OFFER→REQUEST→ACK) binds an IP, confirmed by the AP's `DHCPACK` (`tools/wifi-probe jointxcnt`; `project_wifi_fw_exec_gate_91`). TX + RX (SDPCM ch2) both HW-proven | **no general-purpose transport yet** — the TX/RX frame path is not folded into an lwip netif, so arbitrary sockets can't use WiFi; use wired Ethernet for general networking. That netif is ⏸ owner-scoped (driver placement). Then WPA3. (The earlier "TX reaches fw not air / SDPCM seq/credit" was a link-counter measurement artifact — DHCP is the ground truth) |
 | Bluetooth (BCM43455 UART HCI) | 🟡 partial | **driver-level bring-up** — `/dev/hci0` up over self-routed mini-UART, firmware patchram 323/323, real BD_ADDR read, HCI Inquiry completes (`tools/bt-probe`, `project_bluetooth_bringup`) | **no host Bluetooth stack** — no pairing, profiles, or audio yet |
 | GPIO / pinctrl | 🟡 partial | `/dev/gpio` read-only observer device (#150): snapshot + per-pin `RPI4GPIO_GETPIN` devctl, `gpio/rpi4-gpio/` | **outputs** (GPSET/GPCLR/fsel set) need a bench rig to validate (⏸) |
 | I²C / SPI / PWM | ⬜ not started | plans exist | need GPIO alt-fn + clock-manager |
@@ -129,8 +130,8 @@ One row per peripheral/subsystem. For narrative gap analysis see
 3. **fb0 driver** — decide ABI + display ownership, then implement (attended).
 4. **X11** — DONE: the software kdrive desktop (Xphoenix + fbdev DDX + kbd/mouse input + JWM/
    Window Maker WMs + xterm) is live on HW. Remaining is the *accelerated* GPU-X research stretch.
-5. **WiFi #91** — control-plane up (firmware executes, WPA2 associated + 4-way keyed); the
-   **data-plane** (carrying traffic) is the remaining work, under active debugging.
+5. **WiFi #91** — joins WPA2 + 4-way keyed AND obtains a DHCP IP lease over the air (full
+   DISCOVER→OFFER→REQUEST→ACK, TX+RX proven); remaining = an lwip netif for general transport.
 6. **Bluetooth** — driver-level bring-up done (`/dev/hci0`, HCI Inquiry); needs a host BT stack.
 7. Greenfield: DMA framework → audio/I²C/SPI/PWM; GPIO full driver.
 

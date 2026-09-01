@@ -119,7 +119,7 @@ work; `⛔` blocked on external dependencies; `⬜` not started.
 | Audio (PWM, 3.5 mm jack) | 🟡 | `/dev/audio0` streaming DMA; Quakespasm audio backend |
 | X11 / windowing (kdrive) | ✅ | Xphoenix **fbdev DDX** (CPU shadow-blit — the default, always-on path) + kbd/mouse; WindowMaker/JWM/twm, xterm/xcalc/xedit/xeyes/xclock, plus mc/nano. Migrated to real `phoenix-rtos-ports` (the X server, xterm, WindowMaker and dillo build as framework ports). An **experimental glamor build** additionally runs GPU-accelerated 2D X on the V3D GPU — and, via the `v3d-server` daemon (row above), can now do so **concurrently with another GPU client** (accelerated desktop + a live GPU window at once), lifting the former single-GPU-process restriction. Modern modesetting/DRM remains a future goal |
 | posixsrv / psh userland | ✅ | pipes, ptys, `/dev/{null,zero,urandom,full}`, AF_UNIX |
-| WiFi (BCM43455 SDIO) | 🟡 | **Control-plane works** — associates to a real WPA2-PSK AP and completes the 4-way key handshake. The **data-plane does not carry traffic yet** (under active debugging). Not usable for wireless networking — **use wired Ethernet** |
+| WiFi (BCM43455 SDIO) | 🟡 | **Joins WPA2 + gets a DHCP IP lease over the air** — associates to a real WPA2-PSK AP, completes the 4-way handshake, and carries real traffic: a full DHCP exchange (DISCOVER→OFFER→REQUEST→ACK) binds an IP, confirmed by the AP's `DHCPACK` (`tools/wifi-probe jointxcnt`). Remaining: an lwip netif so arbitrary sockets use WiFi — until then **use wired Ethernet** for general networking |
 | Bluetooth (BCM43455) | 🟡 | **Driver-level bring-up works** — `/dev/hci0` up, firmware patchram loads (323/323), a real BD_ADDR is read, and an HCI Inquiry completes. **No host Bluetooth stack** — no pairing, profiles, or audio yet |
 | USB mass-storage, I²C/SPI/PWM, camera (CSI-2) | ⬜ | Not started |
 
@@ -137,7 +137,7 @@ Beyond the base system, a substantial ports ecosystem runs on the hardware
 |---|---|
 | GNU **coreutils 9.5** | the full tool set (~105 programs) builds + installs; core tools HW-verified bit-exact (`ls`, `cat`, `wc`, `sha256sum`, `seq`, `stat`, `stty`, …) |
 | GNU **bash 5.2** | runs; see caveat below |
-| **CPython 3.14** | static `python3` with `sqlite3`, `zlib`/`bz2`/`lzma` compression (full `tarfile`), `_ssl`/HTTPS, `hashlib` incl. `blake2`, `_decimal`, `ctypes`, and `.so` C-extension `dlopen` |
+| **CPython 3.14** | static `python3` with `sqlite3`, `zlib`/`bz2`/`lzma` compression (full `tarfile`), `_ssl`/HTTPS, `hashlib` incl. `blake2`, `_decimal`, `ctypes`, `curses` (TUI via the ncurses port), and `.so` C-extension `dlopen` |
 | **Redis 7.2** | in-memory data store, served over lwIP TCP |
 | **SQLite 3** | full SQL, in-memory + on-disk file VFS |
 | **jq** | JSON processor, incl. the `test`/`match`/`sub`/`gsub`/`splits`/`scan` **regex builtins** (Oniguruma) |

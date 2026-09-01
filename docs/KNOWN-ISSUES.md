@@ -38,14 +38,21 @@ These affect the showcase apps, not the base system.
 
 ## Partial / not started
 
-- **WiFi (BCM43455) — control-plane only; do NOT rely on wireless networking
-  yet.** The **control-plane works**: the driver associates to a real WPA2-PSK
-  access point and completes the 4-way key handshake. The **data-plane does not
-  carry traffic yet** — this is under active debugging, not abandoned (see
-  `docs/inprogress/wifi-bcm43455-impl.md`). Until it lands, **use wired Ethernet**
-  (fully working). The proprietary Cypress firmware blobs are **not vendored** in
-  this repository (copyright/EULA hygiene); `scripts/stage-bcm43455-firmware.sh`
-  stages them locally into a gitignored `.firmware/`.
+- **WiFi (BCM43455) — data-plane proven (DHCP lease over WPA2); general
+  networking (an lwip netif) is the remaining integration step.** The driver
+  joins a real WPA2-PSK access point, completes the 4-way key handshake, **and
+  carries real traffic over the air**: it obtains a full DHCP IP lease
+  (DISCOVER → OFFER → REQUEST → ACK, confirmed by the AP's `DHCPACK`) via
+  `tools/wifi-probe jointxcnt`. What is **not** wired up yet is a general-purpose
+  transport — folding the TX/RX frame path into an lwip network interface so
+  arbitrary sockets use WiFi — so for everyday networking **use wired Ethernet**
+  (fully working) until that lands. (The earlier "TX reaches the firmware but
+  not the air" report was a measurement artifact — a link-layer counter that
+  doesn't count broadcast/pre-lease frames; the application-layer DHCP exchange
+  is the ground truth.) The proprietary Cypress firmware blobs are **not
+  vendored** in this repository (copyright/EULA hygiene);
+  `scripts/stage-bcm43455-firmware.sh` stages them locally into a gitignored
+  `.firmware/`.
 - **Bluetooth (BCM43455) — driver-level bring-up only.** `/dev/hci0` comes up, the
   firmware patchram loads (323/323), a real BD_ADDR is read, and an HCI Inquiry
   completes. There is **no host Bluetooth stack** — no pairing, profiles, or audio
