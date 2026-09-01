@@ -59,19 +59,29 @@ where `g1` doesn't exist → ENOENT. Phoenix's cwd is a **userspace path string*
 map, so the stub couldn't chdir even if it wanted to. (Today's behaviour is
 fail-safe by luck — the wrong-cwd names don't exist, so nothing wrong is deleted.)
 
-### Fixes (see the plan row + commits)
+### Fixes — status
 
-1. **coreutils (unblocks `rm -r` now):** force gnulib to use its own tracked
-   `rpl_fchdir` by setting `ac_cv_func_fchdir=no` in the port's `config.site`.
-   gnulib then compiles `lib/fchdir.c` + its open/openat/dup2/close wrappers that
-   register each dir fd's name, and `fchdir` becomes `chdir(tracked_name)` — no
-   dup2 holes, zero libphoenix risk.
-2. **libphoenix hygiene:** make the stub honest — `fchdir` returns `-ENOSYS`
-   instead of a false `0` (a libc must never report success for work it didn't do)
-   + a contract test.
-3. **Long-term (flagged, attended):** a real `*at` family in libphoenix via the
-   fs-server oid-relative ops (cf. `rmdir()`'s `mtUnlink`-to-parent-oid). Needs a
-   kernel path to mint an fd→oid; scoped as a dedicated effort.
+1. **libphoenix hygiene — DONE (committed):** the stub now returns `-ENOSYS`
+   instead of a false `0` (a libc must never report success for work it didn't do),
+   turning the silent wrong-cwd corruption into a loud failure. Pinned by a contract
+   test (`test-libc-misc -g unistd_fsdir`, case `fchdir`): fchdir on a non-directory
+   fd must fail and leave cwd unchanged.
+2. **coreutils `rm -r` — root-caused, NOT yet fixed (the gnulib route cascades).**
+   Both gnulib angles hit walls: `ac_cv_func_fchdir=no` makes gnulib emit a *plain*
+   `fchdir` that **multiply-defines** against libphoenix's symbol; forcing
+   `REPLACE_FCHDIR=1` via `DIR_HAS_FD_MEMBER=0` (a configure patch — Phoenix's
+   `opendir()` leaves `DIR.fd=-1` so `dirfd()` is genuinely unreliable) emits
+   `rpl_fchdir` with no clash **but also swaps `DIR` for gnulib's `struct
+   gl_directory`**, which then conflicts with the system `DIR` in `lib/fdopendir.c`
+   / `lib/getcwd.c`. Making that consistent needs the whole dirent family
+   (opendir/fdopendir/readdir/closedir/dirfd) gnulib-replaced — a real multi-issue
+   gnulib port, out of scope for a quick toggle. Reverted; port builds as before.
+3. **The proper fix (flagged, dedicated): a real `*at` family in libphoenix.**
+   Implement `openat`/`unlinkat`/`fstatat`/… so gnulib uses them directly
+   (`HAVE_UNLINKAT=1`) and never needs the fchdir/cwd dance. Seed: `rmdir()` already
+   unlinks via `mtUnlink` to the parent dir's **oid** + leaf name, so the fs servers
+   support oid-relative ops; `openat` additionally needs a kernel path to mint an fd
+   from a (dir-oid, name).
 
 ## Other findings (psh/environment limits, lower priority)
 
