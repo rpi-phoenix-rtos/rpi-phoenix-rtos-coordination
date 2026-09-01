@@ -9,7 +9,7 @@ The authoritative rules for this project live in [AGENTS.md](AGENTS.md) and the 
 Read these three, in order, before any code change:
 
 1. [AGENTS.md](AGENTS.md) — rules, conventions, mandatory reading list
-2. [docs/inprogress/status.md](docs/inprogress/status.md) — current boot progress and active focus
+2. [docs/inprogress/WEEK-2026-W36.md](docs/inprogress/WEEK-2026-W36.md) — the CURRENT WEEKLY LOG: decisions needed from the owner, plan for the next days, in-progress work, progress, blocked items. This is the single planning/progress doc (see [docs/inprogress/README.md](docs/inprogress/README.md) for the weekly convention; history is in `docs/done/`)
 3. [tracking/current-step.md](tracking/current-step.md) — the single active implementation step
 
 Everything else in AGENTS.md's "Mandatory Reading Order" is **conditional** — read it when the task touches that area. Do not read all 14 docs on every session; that burns context with no gain.
@@ -33,7 +33,7 @@ This project depends on **deterministic rollback** when a step regresses boot pr
 
 ## Technical debt
 
-The Pi 4 bring-up is currently accepting known shortcuts to reach a first full boot. Each shortcut has an ID (e.g. `TD-01`) in [docs/inprogress/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md](docs/inprogress/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md) and a matching `TODO(TD-xx):` comment in source code. When touching transitional code, keep those markers; when resolving a debt item, remove both the marker and its entry.
+The Pi 4 bring-up is currently accepting known shortcuts to reach a first full boot. Each shortcut has an ID (e.g. `TD-01`) in [docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md](docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md) and a matching `TODO(TD-xx):` comment in source code. When touching transitional code, keep those markers; when resolving a debt item, remove both the marker and its entry.
 
 The code will be **published publicly**. Optimize for readability and upstreamability (see [docs/knowledge/code-quality-and-upstreaming.md](docs/knowledge/code-quality-and-upstreaming.md)). Remove diagnostic-only code whose hypothesis was disproved before closing a step.
 

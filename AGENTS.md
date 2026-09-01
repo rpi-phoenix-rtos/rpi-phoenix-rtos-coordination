@@ -13,7 +13,7 @@ The repository currently contains documentation and agent playbooks, not the imp
 
 Before making code changes in future sessions, read these files in order:
 
-1. `docs/inprogress/status.md`
+1. `docs/inprogress/WEEK-<current-ISO-week>.md` (the weekly log; see `docs/inprogress/README.md`)
 2. `docs/knowledge/implementation-dossier.md`
 3. `docs/knowledge/repository-work-breakdown.md`
 4. `docs/knowledge/git-repository-strategy.md`
@@ -125,11 +125,11 @@ Use them as follows:
 - When the user explicitly prioritizes the first Raspberry Pi 4 boot, use a boot-first fast lane:
   prefer the smallest steps that unlock common timer runtime validation, generic QEMU `virt`, PL011 console reuse, `plo` boot, and Pi 4 kernel handoff; defer generic cleanup that is not on that path.
 - Do not bury important findings in chat history. Update the docs when new constraints, addresses, boot flows, test commands, or risks are discovered.
-- If context becomes tight after a long session, re-read at least `docs/inprogress/status.md`, `docs/knowledge/repository-work-breakdown.md`, `docs/knowledge/testing-automation.md`, and the relevant platform note before proceeding.
+- If context becomes tight after a long session, re-read at least the current `docs/inprogress/WEEK-*.md` log, `docs/knowledge/repository-work-breakdown.md`, `docs/knowledge/testing-automation.md`, and the relevant platform note before proceeding.
 
 ## Documentation Maintenance Rules
 
-- Update `docs/inprogress/status.md` after every substantial implementation session.
+- Update the current `docs/inprogress/WEEK-*.md` weekly log after every substantial implementation session (keep it SHORT — decisions/plan/in-progress/progress/blocked only; deep detail goes to `docs/done/` or `docs/misc/`). Never create a new per-topic file in `docs/inprogress/`.
 - Update `docs/knowledge/manual-operator-instructions.md` whenever a new manual prerequisite, physical setup step, bootloader action, recovery procedure, or operator-only task is discovered.
 - Update `docs/knowledge/code-quality-and-upstreaming.md` whenever a new subsystem-specific style rule, review preference, or reliable quality check becomes known.
 - Update `tracking/current-step.md` before starting implementation code, and update `tracking/step-history.md` when a step is closed.

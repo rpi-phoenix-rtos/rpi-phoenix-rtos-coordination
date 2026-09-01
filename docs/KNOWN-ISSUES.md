@@ -5,7 +5,7 @@ the user-facing summary; the exhaustive engineering registries are:
 
 - [docs/inprogress/pi4-hardware-support-matrix.md](inprogress/pi4-hardware-support-matrix.md)
   — per-peripheral status with evidence.
-- [docs/inprogress/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md](inprogress/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md)
+- [docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md](TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md)
   — the `TD-NN` transitional-debt registry (its bottom "Tracking Checklist" is
   authoritative; most `TD` items are already resolved).
 

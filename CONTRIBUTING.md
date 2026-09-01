@@ -85,7 +85,7 @@ The intent is for the Pi 4 changes to flow back to the Phoenix-RTOS upstreams.
 Code should be written for readability and upstreamability — see
 [docs/knowledge/code-quality-and-upstreaming.md](docs/knowledge/code-quality-and-upstreaming.md).
 Transitional Pi-4 bring-up shortcuts are tracked as `TD-NN` items in
-[docs/inprogress/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md](docs/inprogress/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md);
+[docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md](docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md);
 each carries a matching `TODO(TD-NN):` marker in the source so it can be found
 and cleaned up before upstreaming.
 

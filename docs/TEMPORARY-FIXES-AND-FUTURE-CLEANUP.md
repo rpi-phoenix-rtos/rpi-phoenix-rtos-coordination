@@ -466,7 +466,7 @@ authoritative current state.
     (restored prog-reloc loop with NULL guards + 64-iter cap).
   - **Verification:** real-Pi-4 boot now reaches
     `main: spawned psh (9)` via the prog-reloc path; QEMU smoke
-    reaches `psh help`. See `docs/inprogress/status.md` 2026-04-30 entry.
+    reaches `psh help`. See `docs/inprogress/README.md (weekly logs)` 2026-04-30 entry.
 
 - **TD-04-hack-2: localization probes inside `_hal_init()`**
   - **Status:** ACTIVE HACK (TD-05-class diagnostic but pinned in
