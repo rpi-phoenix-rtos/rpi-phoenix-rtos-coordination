@@ -1755,6 +1755,8 @@ static char g_join_ssid[33] = "PhoenixNet";
 static char g_join_psk[64] = "phoenixpi2026";
 
 static int g_join_dtx = 0;             /* jointx: TX a DHCP-discover after join */
+static int g_join_dtx_cnt = 0;         /* jointxcnt: non-glom TX + fw pktcnt localization */
+static int g_tx_nonglom = 0;           /* diag_wifiDataTx: build a bare non-glom frame */
 static int g_tx_ran = 0;
 static int g_tx_mac_rc = -100;
 static int g_tx_rc = -100;
@@ -1763,6 +1765,40 @@ static int g_tx_len = 0;
  * single-frame RX reader, so the MAC must be fetched first). */
 static uint8_t g_txmac[6] = {0};
 static int g_txmac_valid = 0;
+
+/* E7 localization (fw pktcnt): GET the fw's packet counters (BRCMF_C_GET_PKTCNTS
+ * = 137 -> brcmf_pktcnt_le { rx_good, rx_bad, tx_good, tx_bad, rx_ocast }, all
+ * le32). Snapshotting tx_good/tx_bad across a burst of data-frame TX localizes
+ * where a DHCP-DISCOVER dies: tx_good climbs => fw TX'd it (dies at AP / 802.11
+ * addressing); tx_bad climbs => fw TX path failed; both flat => the fw never
+ * queued the frame (host->fw ingest gate). Uses the proven BCDC GET-ioctl path,
+ * NON-glom so the single-frame control-reply RX stays intact. */
+#define BRCMF_C_GET_PKTCNTS 137u
+static int g_pktcnt_pre_rc = -100, g_pktcnt_post_rc = -100;
+static uint32_t g_pktcnt_pre[5] = {0};
+static uint32_t g_pktcnt_post[5] = {0};
+static int g_dtx_burst = 0;            /* # of data frames actually TX'd */
+
+static int diag_wifiPktcnt(volatile uint8_t *sdhci, uint32_t sdio_core,
+	uint32_t out[5], uint32_t reqid, uint8_t seq)
+{
+	uint8_t buf[32];
+	uint32_t rxlen = 0u;
+	int rc, i;
+
+	for (i = 0; i < 32; ++i) {
+		buf[i] = 0u;
+	}
+	rc = diag_bcdcCmd(sdhci, sdio_core, /*is_set=*/0, BRCMF_C_GET_PKTCNTS,
+		NULL, 20u, buf, sizeof(buf), &rxlen, reqid, seq);
+	if (rc >= 0 && rxlen >= 20u) {
+		for (i = 0; i < 5; ++i) {
+			out[i] = diag_le32(buf + 4 * i);
+		}
+		return 0;
+	}
+	return (rc < 0) ? rc : -1;
+}
 
 /* radio-as-transport #4 Phase 2b step 1: TX one DHCP-DISCOVER 802.3 frame as an
  * SDPCM channel-2 DATA frame (4-byte BDC header), to prove the data-plane TX path
@@ -1838,7 +1874,28 @@ static void diag_wifiDataTx(volatile uint8_t *sdhci, uint32_t sdio_core, uint8_t
 	 * eth@26. (Linux's head_pad=2 comes from its skb alignment; we replicate it
 	 * byte-for-byte to rule the frame layout in or out.) The bare non-glom frame
 	 * we used before (SW@4, BDC@12, doff=12) was silently dropped by the fw. */
-	{
+	if (g_tx_nonglom) {
+		/* Bare non-glom SDPCM data frame (the fw's DEFAULT mode form, before any
+		 * bus:rxglom): HW[0-3] + SW[4-11] (seq/chan2/nextlen0/doff12) + BDC[12-15]
+		 * + eth@16 (already built above, untouched). This is the format every
+		 * non-scatter-gather brcmfmac host uses for data forever. */
+		uint32_t ng_total = 16u + (uint32_t)elen;
+		g_txf[0] = (uint8_t)(ng_total & 0xffu);
+		g_txf[1] = (uint8_t)((ng_total >> 8) & 0xffu);
+		g_txf[2] = (uint8_t)((~ng_total) & 0xffu);
+		g_txf[3] = (uint8_t)(((~ng_total) >> 8) & 0xffu);
+		g_txf[4] = seq;
+		g_tx_seq_used = seq;
+		g_txf[5] = 0x02u; /* channel = DATA */
+		g_txf[6] = 0u;    /* nextlen */
+		g_txf[7] = 12u;   /* data_offset = SDPCM_HWHDR+SWHDR = 12 (no HWEXT) */
+		g_txf[8] = 0u; g_txf[9] = 0u; g_txf[10] = 0u; g_txf[11] = 0u;
+		/* BDC header [12-15]: flags = BCDC proto ver 2 << 4; prio/flags2/doff = 0 */
+		g_txf[12] = 0x20u;
+		g_txf[13] = 0u; g_txf[14] = 0u; g_txf[15] = 0u;
+		total = ng_total;
+	}
+	else {
 		uint32_t glom_total = 26u + (uint32_t)elen; /* whole frame incl 4B HW tag */
 		uint32_t hwext;
 		int j;
@@ -2057,6 +2114,58 @@ static void diag_wifiJoin(volatile uint8_t *sdhci, uint32_t sdio_core)
 	printf("wifi: JOIN-DONE attempts=%d setssid=%d psksup=%d link=%d\n",
 		g_join_attempts, g_join_setssid_status, g_join_psksup_status, g_join_link_up);
 	fflush(stdout);
+
+	/* jointxcnt (E7 localization): NON-glom data TX with fw pktcnt differencing.
+	 * The prior glom matrix was all flat AND the original bare non-glom frame was
+	 * flat too -- so before building de-glom RX on the glom-state inference, read
+	 * the fw's own TX counters across a burst to LOCALIZE where the frame dies.
+	 * Stays non-glom so the pktcnt GET's control-reply RX is unperturbed. */
+	if (g_join_dtx_cnt) {
+		uint8_t macbuf[8] = {0};
+		uint32_t maclen = 0u;
+		int k;
+		g_tx_mac_rc = diag_iovar(sdhci, sdio_core, 0, "cur_etheraddr", NULL, 6u,
+			macbuf, sizeof(macbuf), &maclen, reqid++, seq++);
+		for (k = 0; k < 6; ++k) {
+			g_txmac[k] = macbuf[k];
+		}
+		g_txmac_valid = 1;
+		g_tx_nonglom = 1;
+
+		g_pktcnt_pre_rc = diag_wifiPktcnt(sdhci, sdio_core, g_pktcnt_pre, reqid++, seq++);
+		printf("wifi: PKTCNT-PRE rc=%d rx_good=%u rx_bad=%u tx_good=%u tx_bad=%u\n",
+			g_pktcnt_pre_rc, g_pktcnt_pre[0], g_pktcnt_pre[1], g_pktcnt_pre[2], g_pktcnt_pre[3]);
+		fflush(stdout);
+
+		/* burst: send the DHCP-DISCOVER many times so any tx counter delta is
+		 * unambiguous (a single frame could hide in counter noise). */
+		for (k = 0; k < 10; ++k) {
+			diag_wifiDataTx(sdhci, sdio_core, (uint8_t)(seq + k));
+			if (g_tx_rc == 0) {
+				g_dtx_burst++;
+			}
+		}
+		seq = (uint8_t)(seq + 10);
+		printf("wifi: DATATX-BURST non-glom frames=%d last_rc=%d len=%d\n",
+			g_dtx_burst, g_tx_rc, g_tx_len);
+		fflush(stdout);
+
+		g_pktcnt_post_rc = diag_wifiPktcnt(sdhci, sdio_core, g_pktcnt_post, reqid++, seq++);
+		printf("wifi: PKTCNT-POST rc=%d rx_good=%u rx_bad=%u tx_good=%u tx_bad=%u\n",
+			g_pktcnt_post_rc, g_pktcnt_post[0], g_pktcnt_post[1], g_pktcnt_post[2], g_pktcnt_post[3]);
+		if (g_pktcnt_pre_rc == 0 && g_pktcnt_post_rc == 0) {
+			long d_txg = (long)g_pktcnt_post[2] - (long)g_pktcnt_pre[2];
+			long d_txb = (long)g_pktcnt_post[3] - (long)g_pktcnt_pre[3];
+			const char *verdict =
+				(d_txg > 0) ? "TX-GOOD-MOVED (fw TX'd -> dies at AP/802.11)" :
+				(d_txb > 0) ? "TX-BAD-MOVED (fw TX path failed)" :
+				"BOTH-FLAT (fw never queued -> host->fw ingest gate)";
+			printf("wifi: PKTCNT-DELTA burst=%d d_tx_good=%ld d_tx_bad=%ld => %s\n",
+				g_dtx_burst, d_txg, d_txb, verdict);
+		}
+		fflush(stdout);
+		return;
+	}
 
 	/* jointx (step 1): after the join sequence, TX a DHCP-discover data frame so
 	 * the host AP's tcpdump proves the SDPCM channel-2 data-plane TX path. */
@@ -3083,6 +3192,26 @@ int main(int argc, char **argv)
 			g_join_mode = 1;
 			g_join_dtx = 1;
 			/* optional: jointx <ssid> <psk> */
+			if (ai + 2 < argc) {
+				size_t k;
+				for (k = 0; k + 1 < sizeof(g_join_ssid) && argv[ai + 1][k] != '\0'; ++k) {
+					g_join_ssid[k] = argv[ai + 1][k];
+				}
+				g_join_ssid[k] = '\0';
+				for (k = 0; k + 1 < sizeof(g_join_psk) && argv[ai + 2][k] != '\0'; ++k) {
+					g_join_psk[k] = argv[ai + 2][k];
+				}
+				g_join_psk[k] = '\0';
+				ai += 2;
+			}
+		}
+		else if (strcmp(argv[ai], "jointxcnt") == 0) {
+			/* E7 localization: join, then a NON-glom data-TX burst with fw
+			 * pktcnt pre/post differencing (localize where the frame dies). */
+			g_join_mode = 1;
+			g_join_dtx = 1;
+			g_join_dtx_cnt = 1;
+			/* optional: jointxcnt <ssid> <psk> */
 			if (ai + 2 < argc) {
 				size_t k;
 				for (k = 0; k + 1 < sizeof(g_join_ssid) && argv[ai + 1][k] != '\0'; ++k) {
