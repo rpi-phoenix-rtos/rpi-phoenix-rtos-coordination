@@ -13,3 +13,11 @@
 # Track this .gitignore so the dir exists in a fresh checkout; ignore the .a's.
 *.a
 !.gitignore
+
+# Also the built demo/daemon ELF clients that the same scripts drop here
+# (tools/x11-port/build-gl-x11-window.sh, scripts/build-showcase-apps.sh):
+# extension-less executables, so `*.a` above did not catch them and ~55 MB of
+# them was committed by accident on 2026-09-01. Ignore everything, track only
+# this file, so the directory still exists in a fresh checkout.
+*
+!.gitignore

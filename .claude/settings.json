@@ -57,7 +57,11 @@
       "Bash(./scripts/dbg-symbolize.sh:*)",
       "Bash(./scripts/git-siblings.sh:*)",
       "Bash(grep:*)",
-      "Bash(rg:*)"
+      "Bash(rg:*)",
+      "Bash(./scripts/publication-audit.sh)",
+      "Bash(./scripts/upstream-status.sh)",
+      "Bash(./scripts/publication-audit.sh:*)",
+      "Bash(./scripts/upstream-status.sh:*)"
     ],
     "deny": [
       "Bash(git push --force:*)",

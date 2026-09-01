@@ -42,3 +42,14 @@ exact SPS/PPS-derived register words. See `docs/misc/2026-08-28-hevc-m2-register
 
 `idr64.265` is a compressed gray 64×64 frame generated locally — encoded *data*, not a
 derivative of the encoder; no upstream code or third-party content. Safe to commit.
+
+## `*.trace.txt`
+
+`dflt.trace.txt` / `wp.trace.txt` are ffmpeg `-trace_headers` dumps of the
+matching `.265` stream, kept as reference fixtures because the decoder tests
+compare slice-header parameters (`data_byte_offset` varies per frame). Regenerate
+with:
+
+```
+ffmpeg -v trace -hide_banner -i dflt.265 -f null - 2> dflt.trace.txt
+```
