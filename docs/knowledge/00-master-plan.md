@@ -58,7 +58,7 @@ USB host complete through HID keystrokes
 DHCP/ICMP/TCP tier
 ([ethernet-genet-impl.md §1 Tier 3](../done/ethernet-genet-impl.md));
 GPU/VC6 Tier 1 (`/dev/fb0` mailbox-driven KMS shim)
-([gpu-vc6-impl.md §1](../todo/gpu-vc6-impl.md)); GPIO/pinctrl Tiers 0–3
+([gpu-vc6-impl.md §1](../done/gpu-vc6-impl.md)); GPIO/pinctrl Tiers 0–3
 ([gpio-pinctrl-impl.md §1](../done/gpio-pinctrl-impl.md)); RTC-thermal-power
 mailbox + watchdog + thermal + poweroff
 ([rtc-thermal-power-impl.md §1](../done/rtc-thermal-power-impl.md));
@@ -67,7 +67,7 @@ mailbox + watchdog + thermal + poweroff
 
 **Explicitly deferred features.** WiFi
 ([wifi-bcm43455-impl.md](../done/wifi-bcm43455-impl.md)) and Bluetooth
-([bluetooth-bcm43455-impl.md](../todo/bluetooth-bcm43455-impl.md)) are large
+([bluetooth-bcm43455-impl.md](../done/bluetooth-bcm43455-impl.md)) are large
 multi-month efforts; they are post-v1.0 unless externally driven. GPU
 Tier 2 (direct HVS scanout), GPU Tier 3 (V3D/Mesa), CSI camera, DSI
 display, HDMI/I²S audio, Compute Module 4, Pi 400, Pi 5/RP1, secure
@@ -331,7 +331,7 @@ prereqs, and a calendar duration estimate at 1 dev-FTE.
   `rootfs-overlay/etc/rc.psh` with a one-screen ANSI banner.
   Optional: `coremark` for the post-M2 speed-up showcase, one
   small ANSI game (~200–300 LoC) under `phoenix-rtos-utils/games/`.
-- **Plans:** [userspace-demo-apps.md §5](../todo/userspace-demo-apps.md).
+- **Plans:** [userspace-demo-apps.md §5](../done/userspace-demo-apps.md).
 - **Prereqs:** M3 (USB HID end-to-end). Soft prereq M2 for comfort
   (lua works pre-M2, just slow).
 - **Duration:** Tier A ~1 day, Tier A+B ~1.5 weeks
@@ -389,7 +389,7 @@ prereqs, and a calendar duration estimate at 1 dev-FTE.
   buffer flips work.
 - **Deliverable:** `rpi4-vc6-fb` server (Tier 1); fbcon library extracted;
   `vc6-mbox` shared transport; Linux-fbdev-shaped devctl ABI.
-- **Plans:** [gpu-vc6-impl.md §6 Phases 1–4](../todo/gpu-vc6-impl.md).
+- **Plans:** [gpu-vc6-impl.md §6 Phases 1–4](../done/gpu-vc6-impl.md).
 - **Prereqs:** M2 (gradient infeasible without caches); mailbox refactor.
 - **Duration:** 7–13 dev-days (gpu-vc6 §9 Tier 1 total).
 
@@ -418,7 +418,7 @@ prereqs, and a calendar duration estimate at 1 dev-FTE.
 
 - **Success:** BLE scan reports a known peer; (Tier 5) GATT
   client/server interop with `bluetoothctl`/`nRF Connect`.
-- **Plans:** [bluetooth-bcm43455-impl.md §6 Phases A–E](../todo/bluetooth-bcm43455-impl.md).
+- **Plans:** [bluetooth-bcm43455-impl.md §6 Phases A–E](../done/bluetooth-bcm43455-impl.md).
 - **Prereqs:** mailbox+expgpio, second pl011-tty, GPIO 30–33 mux.
 - **Duration:** 4–5 months to Tier 4, 1–2 more to Tier 5
   (bluetooth §10).
@@ -445,15 +445,15 @@ prereqs, and a calendar duration estimate at 1 dev-FTE.
   `usbkbd`); new `phoenix-rtos-devices/usb/usbmouse/` driver
   (mirrors `usbkbd` structure); X11 binaries + bitmap fonts
   packaged into the SD-card rootfs.
-- **Plans:** [tinyx-x11-demo.md](../todo/tinyx-x11-demo.md). Cross-cuts
-  [gpu-vc6-impl.md §6 Phase 2](../todo/gpu-vc6-impl.md) (`/dev/fb0` ABI
+- **Plans:** [tinyx-x11-demo.md](../done/tinyx-x11-demo.md). Cross-cuts
+  [gpu-vc6-impl.md §6 Phase 2](../done/gpu-vc6-impl.md) (`/dev/fb0` ABI
   Tier 1) and [usb-xhci-impl.md §6 Phases 3–4](../done/usb-xhci-impl.md)
   (USB HID keyboard).
 - **Prereqs:** M2 (caches — uncached pixman is unwatchable),
   M3 (USB HID keys), M4 (persistent rootfs for ~10 MB X assets),
   M8 (`/dev/fb0` Tier 1).
 - **Duration:** 4–8 weeks once prereqs land (best 3.5 wk, worst
-  ~12 wk; see [tinyx-x11-demo.md §8](../todo/tinyx-x11-demo.md)). Most of
+  ~12 wk; see [tinyx-x11-demo.md §8](../done/tinyx-x11-demo.md)). Most of
   the work is plumbing — evdev shim, USB mouse driver, image
   packaging — not tinyx itself.
 
@@ -502,7 +502,7 @@ with TD-04 contingency adding 20–40 % (scope §4 closing note).
 **Tinyx X11 demo (M13)** is a post-v1.0 stretch and is *not*
 included in either v1.0 figure. Adds 4–8 calendar weeks once its
 prereqs (M2 + M3 + M4 + M8) land — see
-[tinyx-x11-demo.md §7-§8](../todo/tinyx-x11-demo.md). Most cost is plumbing
+[tinyx-x11-demo.md §7-§8](../done/tinyx-x11-demo.md). Most cost is plumbing
 (evdev shim, USB mouse driver, asset packaging), not tinyx itself.
 
 WiFi and Bluetooth add 6–11 months even with two engineers in
@@ -544,13 +544,13 @@ actionable now or imminently.
 
 3. **BT stack choice: nimBLE (Apache 2.0) vs BTstack (non-commercial
    without paid licence).** Recommendation in
-   [bluetooth-bcm43455-impl.md §5, §9](../todo/bluetooth-bcm43455-impl.md):
+   [bluetooth-bcm43455-impl.md §5, §9](../done/bluetooth-bcm43455-impl.md):
    nimBLE for public release. **Decide before any BTstack source
    enters the tree, even privately.**
 
 4. **GPU tier ceiling: stop at Tier 1 (mailbox KMS) or aim for
    Tier 2 (direct HVS scanout)?** Recommendation in
-   [gpu-vc6-impl.md §10 Q1, Q5](../todo/gpu-vc6-impl.md): stop at Tier 1
+   [gpu-vc6-impl.md §10 Q1, Q5](../done/gpu-vc6-impl.md): stop at Tier 1
    for v1.0; Tier 2 only after counsel review of GPL exposure.
 
 5. **DTB consumption depth.** Hardcode Pi-4-specific tables vs full
@@ -563,7 +563,7 @@ actionable now or imminently.
    libgpiod-compatible (upstream-tooling-ready), Linux-watchdog-ish
    ioctls. Recommendations:
    - fbdev: yes, match Linux numbers
-     ([gpu-vc6 §4](../todo/gpu-vc6-impl.md));
+     ([gpu-vc6 §4](../done/gpu-vc6-impl.md));
    - gpiochip: ship Zynq-style Tier 1–3, decide libgpiod after first
      real consumer ([gpio §11 first open question](../done/gpio-pinctrl-impl.md));
    - watchdog: skip Linux ioctls for now; zero-userspace driver
@@ -584,29 +584,29 @@ actionable now or imminently.
 
 10. **Tier-D demo choice: lua, micropython, or both?**
     Recommendation in
-    [userspace-demo-apps.md §9 Q1–Q2](../todo/userspace-demo-apps.md): ship
+    [userspace-demo-apps.md §9 Q1–Q2](../done/userspace-demo-apps.md): ship
     lua for v1.0 (architecture-agnostic, ~250 KB, MIT); defer
     micropython aarch64 enablement to post-v1.0. Decide before M3.5
     starts.
 
 11. **busybox in the public demo image?** Recommendation in
-    [userspace-demo-apps.md §5.8](../todo/userspace-demo-apps.md): no — psh
+    [userspace-demo-apps.md §5.8](../done/userspace-demo-apps.md): no — psh
     + lua already cover the demo surface and busybox is GPL-2.0-only,
     which would extend a per-binary license boundary into the public
     image. Keep busybox available for internal soak only. Decide
     before M3.5 ships.
 
 12. **Tinyx vs Wayland for the v1 graphical demo.** Recommendation
-    in [tinyx-x11-demo.md §9 Q4](../todo/tinyx-x11-demo.md): tinyx, because
+    in [tinyx-x11-demo.md §9 Q4](../done/tinyx-x11-demo.md): tinyx, because
     PR `phoenix-rtos-ports#82` already exists as the implementation
     vehicle and Wayland on Phoenix would be a from-scratch port. A
     Wayland future is not foreclosed — `/dev/fb0` Tier 1 in
-    [gpu-vc6-impl.md](../todo/gpu-vc6-impl.md) is shape-compatible with
+    [gpu-vc6-impl.md](../done/gpu-vc6-impl.md) is shape-compatible with
     a future Weston backend — but the decision **for v1.0 is tinyx**.
     Decide formally before M13 scoping.
 
 13. **Tinyx input-stack design: extend usbkbd or new evdev shim?**
-    Two designs in [tinyx-x11-demo.md §4.2](../todo/tinyx-x11-demo.md);
+    Two designs in [tinyx-x11-demo.md §4.2](../done/tinyx-x11-demo.md);
     plan recommends the standalone evdev shim
     (`phoenix-rtos-devices/input/evdev/`) for separation of concerns
     and reuse with a future usbmouse driver. Decide in M13 Phase 4
@@ -615,7 +615,7 @@ actionable now or imminently.
 14. **Tinyx window manager: twm vs dwm.** twm is MIT-licensed and
     classical; dwm is GPL-2.0 and one C file. Public-image release
     license boundaries argue for twm. See
-    [tinyx-x11-demo.md §9 Q3](../todo/tinyx-x11-demo.md). Decide before M13
+    [tinyx-x11-demo.md §9 Q3](../done/tinyx-x11-demo.md). Decide before M13
     Phase 7.
 
 ---
@@ -756,7 +756,7 @@ Operating principles for executing this master plan:
 
 6. **License-sensitive code stays in named branches.** BTstack and
    any GPL-derived GPU Tier 2 code must live in a branch flagged
-   `LIC-` per [bluetooth §9](../todo/bluetooth-bcm43455-impl.md), with
+   `LIC-` per [bluetooth §9](../done/bluetooth-bcm43455-impl.md), with
    counsel sign-off recorded in
    [`docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md`](../TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md)
    before any merge to a public branch.
@@ -774,21 +774,21 @@ Source plans cited:
 
 - [`docs/done/cache-mmu-smp-impl.md`](../done/cache-mmu-smp-impl.md)
 - [`docs/done/usb-xhci-impl.md`](../done/usb-xhci-impl.md)
-- [`docs/todo/gpu-vc6-impl.md`](../todo/gpu-vc6-impl.md)
+- [`docs/todo/gpu-vc6-impl.md`](../done/gpu-vc6-impl.md)
 - [`docs/done/ethernet-genet-impl.md`](../done/ethernet-genet-impl.md)
 - [`docs/done/wifi-bcm43455-impl.md`](../done/wifi-bcm43455-impl.md)
-- [`docs/todo/bluetooth-bcm43455-impl.md`](../todo/bluetooth-bcm43455-impl.md)
+- [`docs/todo/bluetooth-bcm43455-impl.md`](../done/bluetooth-bcm43455-impl.md)
 - [`docs/done/gpio-pinctrl-impl.md`](../done/gpio-pinctrl-impl.md)
 - [`docs/done/rtc-thermal-power-impl.md`](../done/rtc-thermal-power-impl.md)
-- [`docs/todo/userspace-demo-apps.md`](../todo/userspace-demo-apps.md)
-- [`docs/todo/tinyx-x11-demo.md`](../todo/tinyx-x11-demo.md)
+- [`docs/todo/userspace-demo-apps.md`](../done/userspace-demo-apps.md)
+- [`docs/todo/tinyx-x11-demo.md`](../done/tinyx-x11-demo.md)
 - [`docs/knowledge/scope-pi4-uncovered.md`](scope-pi4-uncovered.md)
 
 Boot rules and operating policy:
 
 - [`AGENTS.md`](../../AGENTS.md)
 - [`CLAUDE.md`](../../CLAUDE.md)
-- [`docs/inprogress/status.md`](../inprogress/status.md)
+- [`docs/inprogress/status.md`](../done/2026-09-01-status-archive.md)
 - [`tracking/current-step.md`](../../tracking/current-step.md)
 - [`docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md`](../TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md)
 - [`docs/knowledge/unattended-agent-mode.md`](unattended-agent-mode.md)
