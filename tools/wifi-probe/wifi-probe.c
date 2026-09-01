@@ -1800,6 +1800,116 @@ static int diag_wifiPktcnt(volatile uint8_t *sdhci, uint32_t sdio_core,
 	return (rc < 0) ? rc : -1;
 }
 
+/* E7 RX data-plane: after TX'ing DHCP-DISCOVERs (proven to reach the host, which
+ * replies with DHCP-OFFERs over the air), read SDPCM channel-2 DATA frames from
+ * the F2 FIFO and parse a BOOTP/DHCP reply out of one. Frame layout (RX):
+ *   SDPCM HW[0-3] + SW[4-11] (data_offset = buf[7]) then BDC[buf[7]..] whose
+ *   byte 3 = data_offset in 4-byte words (brcmf_proto_bcdc_hdrpull: <<2); the
+ *   802.3 frame follows at buf[7] + 4 + (bdc[3]<<2). Then eth(14)+IP(20)+UDP(8)+
+ *   BOOTP: op@0(=2 reply), xid@4, yiaddr@16. This proves the Pi RECEIVES data
+ *   over WiFi -- the other half of a working data plane. Non-glom only (single
+ *   frame RX; glom RX is a separate de-glom reader we deliberately avoid). */
+static int g_rx_offer_seen = 0;        /* a ch2 DHCP reply (op=2) was parsed */
+static int g_rx_ch2_frames = 0;        /* ch2 data frames observed */
+static uint8_t g_rx_offer_yiaddr[4] = {0};
+static uint8_t g_rx_offer_msgtype = 0; /* DHCP opt53 (2=OFFER, 5=ACK) */
+static uint32_t g_rx_offer_xid = 0u;
+
+static void diag_wifiRxDhcp(volatile uint8_t *sdhci, uint32_t sdio_core)
+{
+	int iter;
+
+	for (iter = 0; iter < 400 && g_rx_offer_seen == 0; ++iter) {
+		uint16_t flen = 0u;
+		uint8_t chan = 0xffu;
+		int rc = diag_f2RecvFrame(sdhci, g_rxf, &flen, &chan);
+		if (rc < 0) {
+			continue; /* transient transport wedge; diag_f2RecvFrame reset DAT/CMD */
+		}
+		if (rc == 1) {
+			usleep(5000); /* FIFO empty: pace the poll so the ~400-iter window
+			               * spans ~2s (the DHCP round-trip + fw->host delivery),
+			               * instead of burning through in milliseconds. */
+			continue;
+		}
+		if (chan != 2u) {
+			continue; /* control (0) / event (1): not our data path */
+		}
+		g_rx_ch2_frames++;
+		{
+			uint32_t sdoff = g_rxf[7];
+			uint32_t eth, ip, udp, bootp, opt, end;
+			if (sdoff < 12u || sdoff + 4u > flen) {
+				continue;
+			}
+			eth = sdoff + 4u + ((uint32_t)g_rxf[sdoff + 3u] << 2);
+			/* diagnostic: dump the first few ch2 frames so we can identify what
+			 * the fw forwarded (ARP vs the IPv4 DHCP OFFER) and verify offsets. */
+			if (g_rx_ch2_frames <= 3) {
+				uint32_t d, dn = (eth + 42u <= flen) ? (eth + 42u) : flen;
+				printf("wifi: RX-CH2[%d] flen=%u sdoff=%u bdc=%02x %02x %02x %02x eth@%u etype=%02x%02x bytes[%u..]=",
+					g_rx_ch2_frames, flen, sdoff,
+					g_rxf[sdoff], g_rxf[sdoff + 1u], g_rxf[sdoff + 2u], g_rxf[sdoff + 3u],
+					eth, (eth + 13u < flen) ? g_rxf[eth + 12u] : 0u, (eth + 13u < flen) ? g_rxf[eth + 13u] : 0u, sdoff);
+				for (d = sdoff; d < dn; ++d) {
+					printf("%02x ", g_rxf[d]);
+				}
+				printf("\n");
+				fflush(stdout);
+			}
+			/* need eth(14)+IP(20)+UDP(8)+BOOTP(240 min incl magic) in-frame */
+			if (eth + 14u + 20u + 8u + 240u > flen) {
+				continue;
+			}
+			/* ethertype IPv4, IP proto UDP, UDP dst port 68 (BOOTP client) */
+			if (g_rxf[eth + 12u] != 0x08u || g_rxf[eth + 13u] != 0x00u) {
+				continue;
+			}
+			ip = eth + 14u;
+			if (g_rxf[ip + 9u] != 0x11u) {
+				continue; /* not UDP */
+			}
+			udp = ip + 20u;
+			if (g_rxf[udp + 2u] != 0x00u || g_rxf[udp + 3u] != 0x44u) {
+				continue; /* not ->68 */
+			}
+			bootp = udp + 8u;
+			if (g_rxf[bootp] != 0x02u) {
+				continue; /* not a BOOTP reply */
+			}
+			g_rx_offer_xid = diag_le32(&g_rxf[bootp + 4u]);
+			g_rx_offer_yiaddr[0] = g_rxf[bootp + 16u];
+			g_rx_offer_yiaddr[1] = g_rxf[bootp + 17u];
+			g_rx_offer_yiaddr[2] = g_rxf[bootp + 18u];
+			g_rx_offer_yiaddr[3] = g_rxf[bootp + 19u];
+			/* DHCP options: magic cookie @ bootp+236, then TLV; find opt 53 */
+			opt = bootp + 236u + 4u; /* skip the 4-byte magic cookie */
+			end = flen;
+			while (opt + 1u < end) {
+				uint8_t t = g_rxf[opt];
+				uint8_t l;
+				if (t == 0xffu) {
+					break; /* end option */
+				}
+				if (t == 0x00u) {
+					opt++; /* pad */
+					continue;
+				}
+				l = g_rxf[opt + 1u];
+				if (t == 53u && l >= 1u && opt + 2u < end) {
+					g_rx_offer_msgtype = g_rxf[opt + 2u];
+				}
+				opt += 2u + l;
+			}
+			g_rx_offer_seen = 1;
+		}
+	}
+	printf("wifi: RX-DHCP ch2_frames=%d offer_seen=%d msgtype=%u xid=0x%08x yiaddr=%u.%u.%u.%u\n",
+		g_rx_ch2_frames, g_rx_offer_seen, (unsigned)g_rx_offer_msgtype, (unsigned)g_rx_offer_xid,
+		g_rx_offer_yiaddr[0], g_rx_offer_yiaddr[1], g_rx_offer_yiaddr[2], g_rx_offer_yiaddr[3]);
+	fflush(stdout);
+}
+
 /* radio-as-transport #4 Phase 2b step 1: TX one DHCP-DISCOVER 802.3 frame as an
  * SDPCM channel-2 DATA frame (4-byte BDC header), to prove the data-plane TX path
  * end-to-end (verify via tcpdump on the host AP 10.43.0.1). Mirrors diag_bcdcCmd's
@@ -2137,18 +2247,28 @@ static void diag_wifiJoin(volatile uint8_t *sdhci, uint32_t sdio_core)
 			g_pktcnt_pre_rc, g_pktcnt_pre[0], g_pktcnt_pre[1], g_pktcnt_pre[2], g_pktcnt_pre[3]);
 		fflush(stdout);
 
-		/* burst: send the DHCP-DISCOVER many times so any tx counter delta is
-		 * unambiguous (a single frame could hide in counter noise). */
-		for (k = 0; k < 10; ++k) {
-			diag_wifiDataTx(sdhci, sdio_core, (uint8_t)(seq + k));
-			if (g_tx_rc == 0) {
-				g_dtx_burst++;
+		/* DHCP-client-like rounds: send a few DISCOVERs then poll ch2 for the
+		 * OFFER (the fw->host RX delivery + DHCP round-trip is timing-sensitive;
+		 * a single burst+immediate-poll raced the OFFER). Re-send each round so a
+		 * fresh OFFER is always inbound; stop as soon as one is parsed. */
+		{
+			int round;
+			for (round = 0; round < 4 && g_rx_offer_seen == 0; ++round) {
+				for (k = 0; k < 4; ++k) {
+					diag_wifiDataTx(sdhci, sdio_core, (uint8_t)(seq + k));
+					if (g_tx_rc == 0) {
+						g_dtx_burst++;
+					}
+				}
+				seq = (uint8_t)(seq + 4);
+				printf("wifi: DATATX-BURST round=%d total_frames=%d last_rc=%d len=%d\n",
+					round, g_dtx_burst, g_tx_rc, g_tx_len);
+				fflush(stdout);
+				/* RX: read DHCP-OFFERs off SDPCM ch2. Drain ch2 BEFORE the pktcnt
+				 * GET (a ch0 ioctl) so the control read doesn't eat OFFER frames. */
+				diag_wifiRxDhcp(sdhci, sdio_core);
 			}
 		}
-		seq = (uint8_t)(seq + 10);
-		printf("wifi: DATATX-BURST non-glom frames=%d last_rc=%d len=%d\n",
-			g_dtx_burst, g_tx_rc, g_tx_len);
-		fflush(stdout);
 
 		g_pktcnt_post_rc = diag_wifiPktcnt(sdhci, sdio_core, g_pktcnt_post, reqid++, seq++);
 		printf("wifi: PKTCNT-POST rc=%d rx_good=%u rx_bad=%u tx_good=%u tx_bad=%u\n",
