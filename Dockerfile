@@ -38,7 +38,7 @@ FROM ubuntu:${UBUNTU_TAG}
 
 ARG REPO_BASE=https://github.com/rpi-phoenix-rtos
 ARG UPSTREAM_BASE=https://github.com/rpi-phoenix-rtos
-ARG PAK0_URL=https://www.classicdosgames.com/files/games/id/quake106.zip
+ARG PAK0_URL=https://ftp.icm.edu.pl/pub/coast/games/idsoftware/quake/quake106.zip
 ARG PAK0_SHA256=35a9c55e5e5a284a159ad2a62e0e8def23d829561fe2f54eb402dbc0a9a946af
 # Quake II / Quake III demo data. These are the freely-downloadable id Software
 # demos (the same class as the Q1 shareware): the build downloads them at build
