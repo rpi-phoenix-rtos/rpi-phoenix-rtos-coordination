@@ -165,14 +165,25 @@ def build_objs(entries, srcs_outs, objdir, label):
         if rc == 0:
             ok.append(out)
         else:
-            fails.append((src, err.strip().splitlines()[-3:]))
+            fails.append((src, err, cmd))
     if incr:
         print(f"[{label}] INCR: {skipped} cached, {len(ok) - skipped} recompiled")
     print(f"[{label}] OK={len(ok)} FAIL={len(fails)}")
-    for src, errtail in fails:
+    for src, err, cmd in fails:
         print(f"  FAIL {os.path.relpath(src, MESA)}")
-        for l in errtail:
+        for l in err.strip().splitlines()[-3:]:
             print(f"       {l}")
+    # ...then the exact command + the COMPLETE compiler output for each failure.
+    # The 3-line tail above is a useful digest, but on its own it hid the real
+    # cause whenever the diagnostic that mattered was further up the log.
+    if fails:
+        print(f"[{label}] --- full compiler output per failure ---")
+        for src, err, cmd in fails:
+            print(f"===== {os.path.relpath(src, MESA)} =====")
+            print("$ " + " ".join(cmd))
+            print(err.strip() or "(no stderr)")
+            print()
+        sys.stdout.flush()
     return ok, fails
 
 
@@ -204,11 +215,20 @@ def ensure_generated_sources():
     ninja = "ninja" if not os.path.exists("/tmp/mesa-pyenv/bin/ninja") \
         else "/tmp/mesa-pyenv/bin/ninja"
     env = dict(os.environ, PATH="/tmp/mesa-pyenv/bin:" + os.environ.get("PATH", ""))
-    r = subprocess.run([ninja] + missing, cwd=HOSTBUILD, env=env,
+    cmd = [ninja] + missing
+    r = subprocess.run(cmd, cwd=HOSTBUILD, env=env,
                        capture_output=True, text=True)
     if r.returncode != 0:
+        # COMPLETE output, BOTH streams: ninja relays the failing compiler's
+        # diagnostics on stdout, so the old stderr[-400:] tail could hide the
+        # entire cause of a generated-source failure.
         print(f"[gen] WARNING: could not generate {len(missing)} sources via ninja "
-              f"(aux build may report them missing):\n{r.stderr.strip()[-400:]}")
+              f"(aux build may report them missing):")
+        print("$ " + " ".join(cmd))
+        if r.stdout.strip():
+            print("--- ninja stdout ---\n" + r.stdout.strip())
+        print("--- ninja stderr ---\n" + (r.stderr.strip() or "(no stderr)"))
+        sys.stdout.flush()
     else:
         print(f"[gen] materialized {len(missing)} generated sources in {HOSTBUILD}")
 
@@ -249,9 +269,18 @@ def main():
     # 2b. peripheral stubs (generic signatures -> compile warnings-off)
     stubs_c = f"{PORT}/v3d_phoenix_stubs.c"
     stubs_o = f"{DRVOBJ}/v3d_phoenix_stubs.o"
-    rc = subprocess.run([TC, "-c", stubs_c, "-o", stubs_o, "-std=gnu11", "-w",
-                         "-include", COMPAT], capture_output=True, text=True)
-    print(f"[stubs] rc={rc.returncode}" + ("" if rc.returncode == 0 else "\n" + rc.stderr))
+    stubs_cmd = [TC, "-c", stubs_c, "-o", stubs_o, "-std=gnu11", "-w",
+                 "-include", COMPAT]
+    rc = subprocess.run(stubs_cmd, capture_output=True, text=True)
+    print(f"[stubs] rc={rc.returncode}")
+    if rc.returncode != 0:
+        # Exact command + COMPLETE output (both streams) -- a failing compile has
+        # to show why, and stdout was previously dropped entirely.
+        print("$ " + " ".join(stubs_cmd))
+        print(rc.stderr.strip() or "(no stderr)")
+        if rc.stdout.strip():
+            print("--- compiler stdout ---\n" + rc.stdout.strip())
+        sys.stdout.flush()
 
     # 2c. libvcmbox client: serialized /dev/vcmbox access so v3d_phoenix_power's
     #     GET_VIRTUAL_WH goes through the single-FIFO arbitration server (race-free)
@@ -259,9 +288,16 @@ def main():
     #     without the mesa template flags (like the stubs), only -I{PORT} for its header.
     vcmbox_c = f"{PORT}/libvcmbox.c"
     vcmbox_o = f"{DRVOBJ}/libvcmbox.o"
-    rc = subprocess.run([TC, "-c", vcmbox_c, "-o", vcmbox_o, "-std=gnu11", "-w", f"-I{PORT}"],
-                        capture_output=True, text=True)
-    print(f"[vcmbox] rc={rc.returncode}" + ("" if rc.returncode == 0 else "\n" + rc.stderr))
+    vcmbox_cmd = [TC, "-c", vcmbox_c, "-o", vcmbox_o, "-std=gnu11", "-w", f"-I{PORT}"]
+    rc = subprocess.run(vcmbox_cmd, capture_output=True, text=True)
+    print(f"[vcmbox] rc={rc.returncode}")
+    if rc.returncode != 0:
+        # Exact command + COMPLETE output (both streams), as for [stubs] above.
+        print("$ " + " ".join(vcmbox_cmd))
+        print(rc.stderr.strip() or "(no stderr)")
+        if rc.stdout.strip():
+            print("--- compiler stdout ---\n" + rc.stdout.strip())
+        sys.stdout.flush()
 
     # 3. aux objs from the link-drive list (seed from the committed manifest if the
     #    /tmp working copy is absent, so a fresh checkout builds without re-resolving)
@@ -347,6 +383,18 @@ def main():
             print(f"    {s}")
         if len(undef) > 40:
             print(f"    ... +{len(undef)-40} more")
+        # Then the exact command + the COMPLETE linker output. The undefined-symbol
+        # digest above is the point of the link-drive loop, but on its own it says
+        # nothing when the link died of something else (a bare "collect2: error: ld
+        # returned 1 exit status" was all one Docker-on-macOS build ever printed).
+        print("--- link command ---")
+        print("$ " + " ".join(link))
+        print("--- complete linker output ---")
+        print(r.stderr.strip() or "(no stderr)")
+        if r.stdout.strip():
+            print("--- linker stdout ---")
+            print(r.stdout.strip())
+        sys.stdout.flush()
 
 
 if __name__ == "__main__":

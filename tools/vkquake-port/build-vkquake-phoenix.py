@@ -119,11 +119,15 @@ def compile_one(src, obj, extra=None):
             and os.path.getmtime(obj) >= os.path.getmtime(src):
         return None
     flags = CFLAGS + (extra or [])
-    r = subprocess.run([TC] + flags + ["-o", obj, src], capture_output=True, text=True)
+    cmd = [TC] + flags + ["-o", obj, src]
+    r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode == 0:
         return None
-    errs = [l for l in r.stderr.splitlines() if "error:" in l or "fatal error" in l]
-    return errs[0] if errs else (r.stderr.splitlines()[-1] if r.stderr else "?")
+    # The exact command + the COMPLETE stderr. This used to return only the first
+    # `error:`/`fatal error` line (or the last stderr line), which threw away the
+    # diagnostic that actually mattered whenever that line was not the informative
+    # one -- a build that fails has to show why.
+    return "$ " + " ".join(cmd) + "\n" + (r.stderr.strip() or "(no stderr; exit %d)" % r.returncode)
 
 
 def main():
@@ -196,7 +200,13 @@ def main():
     if fail:
         print(f"--- {len(fail)} FAILED ---")
         for u, e in fail:
-            print(f"  [{u}] {e}")
+            first = next((l for l in e.splitlines() if "error:" in l),
+                         (e.splitlines() or ["?"])[0])
+            print(f"  [{u}] {first}")
+        print("\n--- full compiler output per failure ---")
+        for u, e in fail:
+            print(f"===== {u} =====\n{e}\n")
+        sys.stdout.flush()
 
     if not do_link:
         return 0 if not fail else 1
@@ -235,6 +245,18 @@ def main():
     print(f"=== LINK: {len(undef)} undefined symbols ===")
     for s in undef:
         print(f"  U {s}")
+    # Then the exact command + the COMPLETE linker output. The undefined-symbol
+    # digest is the point of the closure probe, but on its own it says nothing when
+    # the link died of something else -- a bare "collect2: error: ld returned 1 exit
+    # status" with no cause was all one Docker-on-macOS build ever printed.
+    print("--- link command ---")
+    print("$ " + " ".join(link))
+    print("--- complete linker output ---")
+    print(r.stderr.strip() or "(no stderr)")
+    if r.stdout.strip():
+        print("--- linker stdout ---")
+        print(r.stdout.strip())
+    sys.stdout.flush()
     return 2
 
 

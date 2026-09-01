@@ -125,11 +125,17 @@ QUAKE_SHIMS = ["pl_phoenix_sys", "pl_phoenix_main", "pl_phoenix_stubs"]
 # GL-context glue: the shared Zlib GLUE, compiled with Mesa-side flags (below).
 
 def compile_one(src, flags, obj):
-    r = subprocess.run([TC] + flags + ["-o", obj, src], capture_output=True, text=True)
+    """Compile one TU. None on success, else the compiler's COMPLETE stderr
+    prefixed by the exact command.
+
+    This used to return only the first `error:` line, which threw away the
+    diagnostic that actually mattered whenever the first line was not the
+    informative one -- a build that fails has to show why."""
+    cmd = [TC] + flags + ["-o", obj, src]
+    r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode == 0:
         return None
-    errs = [l for l in r.stderr.splitlines() if "error:" in l]
-    return errs[0] if errs else (r.stderr.splitlines()[0] if r.stderr else "?")
+    return "$ " + " ".join(cmd) + "\n" + (r.stderr.strip() or "(no stderr; exit %d)" % r.returncode)
 
 def main():
     for p in (SDLLIB, GLLIB, V3DLIB):
@@ -164,7 +170,13 @@ def main():
     if fail:
         print(f"--- {len(fail)} FAILED ---")
         for u, e in fail:
-            print(f"  [{u}] {e}")
+            first = next((l for l in e.splitlines() if "error:" in l),
+                         (e.splitlines() or ["?"])[0])
+            print(f"  [{u}] {first}")
+        print("\n--- full compiler output per failure ---")
+        for u, e in fail:
+            print(f"===== {u} =====\n{e}\n")
+        sys.stdout.flush()
         return 1
 
     # Archive all objects into libquakespasm-sdl.a (the parallel artifact — the
@@ -195,13 +207,18 @@ def main():
         print(f"  U {s}")
     for l in mdef[:40]:
         print(f"  M {l}")
-    other = [l for l in r.stderr.splitlines()
-             if "undefined reference" not in l and "multiple definition" not in l
-             and ("error" in l.lower() or "cannot" in l.lower())][:10]
-    if other:
-        print("--- other link errors ---")
-        for l in other:
-            print(f"  {l}")
+    # Then the COMPLETE linker output. Filtering it to lines containing
+    # "error"/"cannot" (what this used to do, capped at 10) could reduce a real
+    # failure to a bare "collect2: error: ld returned 1 exit status" with no
+    # indication of the cause -- reported from a Docker build on macOS.
+    print("--- link command ---")
+    print("$ " + " ".join(link))
+    print("--- complete linker output ---")
+    print(r.stderr.strip() or "(no stderr)")
+    if r.stdout.strip():
+        print("--- linker stdout ---")
+        print(r.stdout.strip())
+    sys.stdout.flush()
     return 2
 
 if __name__ == "__main__":

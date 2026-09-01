@@ -122,6 +122,24 @@ def run(cmd, cwd=None, env=None):
     return subprocess.run(cmd, capture_output=True, text=True, cwd=cwd, env=env)
 
 
+def dump_failure(label, cmd, r):
+    """Print the exact command plus the COMPLETE stdout+stderr of a failed step.
+
+    Every caller of this used to print a TAIL only (last 10-25 lines, stderr-only
+    in places). A truncated log can drop the real cause entirely -- a configure/
+    make/link tail that ends at `collect2: error: ld returned 1 exit status` with
+    nothing explaining it, as reported from a Docker build on macOS. Both streams
+    are printed in full because make/configure put compiler errors on stdout."""
+    print(f"=== {label} (exit {r.returncode}) ===")
+    print("$ " + " ".join(cmd))
+    if r.stdout.strip():
+        print("--- complete stdout ---")
+        print(r.stdout.strip())
+    print("--- complete stderr ---")
+    print(r.stderr.strip() or "(no stderr)")
+    sys.stdout.flush()
+
+
 def fetch_source():
     """Clone + pin external/ffmpeg if absent. FFMPEG_SRC is used as-is (never
     cloned or checked out) so a shallow-graft test clone is left untouched."""
@@ -152,8 +170,7 @@ def configure(env):
     print("=== configure (decode-only, LGPL, asm on) ===")
     r = run(CONFIGURE, cwd=FFMPEG, env=env)
     if r.returncode != 0:
-        tail = "\n".join(r.stdout.splitlines()[-20:] + r.stderr.splitlines()[-20:])
-        print(f"CONFIGURE FAILED (exit {r.returncode}):\n{tail}")
+        dump_failure("CONFIGURE FAILED", CONFIGURE, r)
         return False
     print("configure: exit 0")
     return True
@@ -197,10 +214,10 @@ def build_archives(env):
             os.remove(a)
     targets = [os.path.relpath(a, FFMPEG) for a in ARCHIVES]
     print(f"=== make {' '.join(targets)} ===")
-    r = run(["make", "-j", str(os.cpu_count() or 4)] + targets, cwd=FFMPEG, env=env)
+    make = ["make", "-j", str(os.cpu_count() or 4)] + targets
+    r = run(make, cwd=FFMPEG, env=env)
     if r.returncode != 0:
-        tail = "\n".join(r.stdout.splitlines()[-15:] + r.stderr.splitlines()[-25:])
-        print(f"MAKE FAILED (exit {r.returncode}):\n{tail}")
+        dump_failure("MAKE FAILED", make, r)
         return False
     for a in ARCHIVES:
         if not os.path.exists(a):
@@ -214,9 +231,10 @@ def build_archives(env):
 def link_and_verify(env):
     obj = "/tmp/e4_decode_demo.o"
     print("=== compile demo ===")
-    r = run([TC, "-c", "-O2", "-g", "-I", FFMPEG, "-o", obj, DEMO], env=env)
+    cc = [TC, "-c", "-O2", "-g", "-I", FFMPEG, "-o", obj, DEMO]
+    r = run(cc, env=env)
     if r.returncode != 0:
-        print(f"DEMO COMPILE FAILED:\n{r.stderr}")
+        dump_failure("DEMO COMPILE FAILED", cc, r)
         return False
     # The proven link line: archives (format, codec, util) then the FRESH
     # libphoenix inside one group; -lm -lgcc trail. Fresh libphoenix is searched
@@ -234,8 +252,10 @@ def link_and_verify(env):
         print(f"LINK FAILED: {len(undef)} undefined")
         for s in undef:
             print(f"  U {s}")
-        for l in r.stderr.splitlines()[-10:]:
-            print(f"  {l}")
+        # Then the COMPLETE linker output. The last-10-lines tail this used to
+        # print could reduce a real failure to a bare "collect2: error: ld
+        # returned 1 exit status" with no indication of the cause.
+        dump_failure("LINK FAILED", link, r)
         return False
     print(f"link: exit 0 -> {ELF}")
 

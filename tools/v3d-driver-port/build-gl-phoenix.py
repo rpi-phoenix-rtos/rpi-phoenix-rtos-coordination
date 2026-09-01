@@ -12,7 +12,7 @@ frontend/harness). Excludes x86-only sse_minmax.c (portable fallback exists).
 
 Usage: python3 build-gl-phoenix.py
 """
-import os, json, subprocess, glob
+import os, json, subprocess, glob, sys
 import concurrent.futures
 
 # pull in transform/abssrc/by_abs/TC/MESA/HOSTBUILD/COMPAT/SHIM/PORT/AR
@@ -93,8 +93,28 @@ GEN_HEADERS = [
 
 
 def gen_headers():
-    r = subprocess.run(["ninja"] + GEN_HEADERS, cwd=HOSTBUILD, capture_output=True, text=True)
-    print(f"[gen-headers] ninja rc={r.returncode}" + ("" if r.returncode == 0 else "\n" + r.stderr[-400:]))
+    cmd = ["ninja"] + GEN_HEADERS
+    r = subprocess.run(cmd, cwd=HOSTBUILD, capture_output=True, text=True)
+    print(f"[gen-headers] ninja rc={r.returncode}")
+    if r.returncode != 0:
+        # Exact command + COMPLETE output, BOTH streams: ninja relays the failing
+        # compiler's diagnostics on stdout, so the old stderr[-400:] tail could
+        # hide the entire cause of a generated-header failure.
+        print("$ " + " ".join(cmd))
+        if r.stdout.strip():
+            print("--- ninja stdout ---\n" + r.stdout.strip())
+        print("--- ninja stderr ---\n" + (r.stderr.strip() or "(no stderr)"))
+        sys.stdout.flush()
+
+
+def fail_detail(cmd, r):
+    """The exact command + the COMPLETE stderr (and stdout if any) of a failed
+    compile, as one printable block. Never a filtered or truncated subset: a
+    build that fails has to show why."""
+    detail = "$ " + " ".join(cmd) + "\n" + (r.stderr.strip() or "(no stderr)")
+    if r.stdout.strip():
+        detail += "\n--- compiler stdout ---\n" + r.stdout.strip()
+    return detail
 
 
 def main():
@@ -113,7 +133,10 @@ def main():
         r = subprocess.run(cmd, cwd=HOSTBUILD, capture_output=True, text=True)
         if r.returncode == 0:
             return (out, None)
-        return (out, (label, [l for l in r.stderr.splitlines() if "error:" in l][:1]))
+        # Carry the exact command + the COMPLETE compiler output. This used to keep
+        # only the FIRST `error:` line, which threw away the diagnostic that
+        # actually mattered whenever that line was not the informative one.
+        return (out, (label, fail_detail(cmd, r)))
 
     work = []
     for e in files:
@@ -141,16 +164,25 @@ def main():
     # symbols (they supply what libGL/libv3d reference but lack).
     for shim, warn in (("v3d_phoenix_mathshim.c", []), ("gl_stubs.c", ["-w"])):
         out = f"{GLOBJ}/{shim}.o"
-        r = subprocess.run([TC, "-O2", "-c"] + warn + [f"{PORT}/{shim}", "-o", out],
-                           capture_output=True, text=True)
+        cmd = [TC, "-O2", "-c"] + warn + [f"{PORT}/{shim}", "-o", out]
+        r = subprocess.run(cmd, capture_output=True, text=True)
         if r.returncode == 0:
             objs.append(out)
         else:
-            fails.append((shim, [l for l in r.stderr.splitlines() if "error:" in l][:1]))
+            fails.append((shim, fail_detail(cmd, r)))
 
     print(f"[gl] OK={len(objs)} FAIL={len(fails)} (of {len(files)+len(GEN_C)})")
-    for f, errs in fails:
-        print(f"  FAIL {f} :: " + (errs[0].split('error:')[-1].strip()[:70] if errs else "?"))
+    for f, detail in fails:
+        first = next((l for l in detail.splitlines() if "error:" in l), "?")
+        print(f"  FAIL {f} :: " + first.split('error:')[-1].strip()[:70])
+    # ...then the COMPLETE output for each failure. The one-line-per-TU table above
+    # is a useful digest but hid the real cause whenever the first `error:` line was
+    # not the informative one (or there was none at all).
+    if fails:
+        print("--- full compiler output per failure ---")
+        for f, detail in fails:
+            print(f"===== {f} =====\n{detail}\n")
+        sys.stdout.flush()
     if objs:
         if os.path.exists(GL_LIB):
             os.remove(GL_LIB)

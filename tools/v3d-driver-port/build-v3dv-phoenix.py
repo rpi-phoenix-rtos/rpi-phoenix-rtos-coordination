@@ -109,6 +109,22 @@ def gen_entrypoints_entry():
     return None
 
 
+def dump_failure(label, cmd, stderr, stdout=""):
+    """Print the exact command + the COMPLETE stderr (and stdout if non-empty) of a
+    failed compile.
+
+    Every failure path below used to print only a 4-8 line tail of stderr (or its
+    last 400-600 chars), which can cut off the diagnostic that actually explains
+    the failure -- a build that fails has to show why."""
+    print(label)
+    print("$ " + " ".join(cmd))
+    print(stderr.strip() or "(no stderr)")
+    if stdout.strip():
+        print("--- compiler stdout ---")
+        print(stdout.strip())
+    sys.stdout.flush()
+
+
 def build_set(entries, objdir, label):
     os.makedirs(objdir, exist_ok=True)
     so = []
@@ -139,9 +155,7 @@ def main():
             gen_ok.append(out)
             print("[v3dv-gen] v3dv_entrypoints.c OK")
         else:
-            print("[v3dv-gen] v3dv_entrypoints.c FAIL")
-            for l in err.strip().splitlines()[-4:]:
-                print(f"       {l}")
+            dump_failure("[v3dv-gen] v3dv_entrypoints.c FAIL", cmd, err)
     else:
         print("[v3dv-gen] no v3dv_entrypoints.c in compile_commands")
 
@@ -175,13 +189,13 @@ def main():
     tmpl = by_abs.get(os.path.normpath(f"{MESA}/src/broadcom/vulkan/v3dv_device.c"))
     shim_objs = []
     out = f"{V3DV_OBJ}/v3dv_libdrm_shim.c.o"
-    r = subprocess.run([TC, "-c", f"{PORT}/v3dv_libdrm_shim.c", "-o", out, f"-I{SHIM}",
-                        f"-I{PORT}", "-std=gnu11", "-include", COMPAT] + ABI_FLAGS + ["-w"],
-                       capture_output=True, text=True)
+    cmd = ([TC, "-c", f"{PORT}/v3dv_libdrm_shim.c", "-o", out, f"-I{SHIM}",
+            f"-I{PORT}", "-std=gnu11", "-include", COMPAT] + ABI_FLAGS + ["-w"])
+    r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode == 0:
         shim_objs.append(out); print("[v3dv-shim] v3dv_libdrm_shim.c OK")
     else:
-        print(f"[v3dv-shim] v3dv_libdrm_shim.c FAIL\n{r.stderr.strip()[-600:]}")
+        dump_failure("[v3dv-shim] v3dv_libdrm_shim.c FAIL", cmd, r.stderr, r.stdout)
 
     # vk_icd_link.c needs <vulkan/vulkan.h> -> compile with the v3dv_device template.
     if tmpl:
@@ -190,20 +204,19 @@ def main():
         if rc == 0:
             shim_objs.append(out); print("[v3dv-shim] vk_icd_link.c OK")
         else:
-            print("[v3dv-shim] vk_icd_link.c FAIL")
-            for l in err.strip().splitlines()[-6:]:
-                print(f"       {l}")
+            dump_failure("[v3dv-shim] vk_icd_link.c FAIL", cmd, err)
 
     # v71 trap-stubs (dead V3D-7.1 dispatch branch) + libc/libdrm gap stubs. Plain C,
     # no Mesa headers -> warnings-off, no compat force-include needed.
     for shim in ("v3dv_v71_stubs.c", "v3dv_gap_stubs.c"):
         out = f"{V3DV_OBJ}/{shim}.o"
-        r = subprocess.run([TC, "-c", f"{PORT}/{shim}", "-o", out, f"-I{SHIM}", f"-I{PORT}",
-                            "-std=gnu11", "-w"] + ABI_FLAGS, capture_output=True, text=True)
+        cmd = ([TC, "-c", f"{PORT}/{shim}", "-o", out, f"-I{SHIM}", f"-I{PORT}",
+                "-std=gnu11", "-w"] + ABI_FLAGS)
+        r = subprocess.run(cmd, capture_output=True, text=True)
         if r.returncode == 0:
             shim_objs.append(out); print(f"[v3dv-shim] {shim} OK")
         else:
-            print(f"[v3dv-shim] {shim} FAIL\n{r.stderr.strip()[-400:]}")
+            dump_failure(f"[v3dv-shim] {shim} FAIL", cmd, r.stderr, r.stdout)
 
     # The REAL Phoenix V3D winsys (phoenix_v3d_ioctl + ioc_create_bo + lazy winsys_init that
     # powers V3D and builds the flat MMU) — the SAME backend the GL gallium port uses. Without
@@ -219,9 +232,7 @@ def main():
             if rc == 0:
                 shim_objs.append(out); print(f"[v3dv-winsys] {wsrc} OK")
             else:
-                print(f"[v3dv-winsys] {wsrc} FAIL")
-                for l in err.strip().splitlines()[-8:]:
-                    print(f"       {l}")
+                dump_failure(f"[v3dv-winsys] {wsrc} FAIL", cmd, err)
     else:
         print("[v3dv-winsys] no template -> winsys NOT built (BO alloc will fail)")
 
@@ -232,9 +243,7 @@ def main():
         if rc == 0:
             print("[v3dv-harness] OK")
         else:
-            print("[v3dv-harness] FAIL")
-            for l in err.strip().splitlines()[-6:]:
-                print(f"       {l}")
+            dump_failure("[v3dv-harness] FAIL", cmd, err)
             harness_o = None
     else:
         print("[v3dv-harness] no v3dv_device.c template entry"); harness_o = None
@@ -291,6 +300,18 @@ def main():
             print(f"    {s}")
         if len(undef) > 60:
             print(f"    ... +{len(undef)-60} more")
+        # Then the exact command + the COMPLETE linker output. The undefined-symbol
+        # digest above is the point of the link-drive loop, but on its own it says
+        # nothing when the link died of something else (a bare "collect2: error: ld
+        # returned 1 exit status" was all one Docker-on-macOS build ever printed).
+        print("--- link command ---")
+        print("$ " + " ".join(link))
+        print("--- complete linker output ---")
+        print(r.stderr.strip() or "(no stderr)")
+        if r.stdout.strip():
+            print("--- linker stdout ---")
+            print(r.stdout.strip())
+        sys.stdout.flush()
 
 
 if __name__ == "__main__":

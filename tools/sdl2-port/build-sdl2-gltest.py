@@ -57,12 +57,20 @@ def run(cmd):
 
 
 def compile_one(src, flags, obj):
-    r = run([TC] + flags + ["-o", obj, src])
+    cmd = [TC] + flags + ["-o", obj, src]
+    r = run(cmd)
     if r.returncode != 0:
-        errs = [l for l in r.stderr.splitlines() if "error:" in l]
+        # The exact command + the COMPLETE compiler output. This used to print
+        # only the `error:` lines, capped at 20, which can drop the diagnostic
+        # that actually explains the failure (notes, "required from here", the
+        # first fatal include error). A build that fails has to show why.
         print(f"=== COMPILE FAILED: {src} ===")
-        for l in (errs or r.stderr.splitlines())[:20]:
-            print(f"  {l}")
+        print("$ " + " ".join(cmd))
+        print(r.stderr.strip() or "(no stderr)")
+        if r.stdout.strip():
+            print("--- compiler stdout ---")
+            print(r.stdout.strip())
+        sys.stdout.flush()
         return None
     return obj
 
@@ -103,10 +111,18 @@ def main():
     print(f"=== LINK FAILED: {len(undef)} undefined symbols ===")
     for s in undef:
         print(f"  U {s}")
-    other = [l for l in r.stderr.splitlines()
-             if "undefined reference" not in l and ("error" in l.lower() or "cannot" in l.lower())][:10]
-    for l in other:
-        print(f"  {l}")
+    # Then the COMPLETE linker output. Filtering it to lines containing
+    # "error"/"cannot" (what this used to do, capped at 10) could reduce a real
+    # failure to a bare "collect2: error: ld returned 1 exit status" with no
+    # indication of the cause -- reported from a Docker build on macOS.
+    print("--- link command ---")
+    print("$ " + " ".join(link))
+    print("--- complete linker output ---")
+    print(r.stderr.strip() or "(no stderr)")
+    if r.stdout.strip():
+        print("--- linker stdout ---")
+        print(r.stdout.strip())
+    sys.stdout.flush()
     return 2
 
 

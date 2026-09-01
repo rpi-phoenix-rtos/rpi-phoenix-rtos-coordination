@@ -70,37 +70,62 @@ def undefined_syms(stderr):
     return sorted(u)
 
 
+def dump_failure(label, cmd, r):
+    """Print the exact command + the COMPLETE stderr (and stdout if non-empty) of a
+    failed compile/archive/link.
+
+    Every failure path below used to print a filtered or truncated subset instead
+    (`error:`-only lines, or the last 1500-2500 chars), which can drop the real
+    cause entirely -- e.g. a bare `collect2: error: ld returned 1 exit status`,
+    as reported from a Docker build on macOS."""
+    print(f"{label} (exit {r.returncode}):")
+    print("$ " + " ".join(cmd))
+    print(r.stderr.strip() or "(no stderr)")
+    if r.stdout.strip():
+        print("--- stdout ---")
+        print(r.stdout.strip())
+    sys.stdout.flush()
+
+
 # 1. compile the GL test with the exact Mesa GL include set (context.c template, cwd=HOSTBUILD)
 db = json.load(open(f"{HOSTBUILD}/compile_commands.json"))
 tmpl = next(e for e in db if e["file"].endswith("src/mesa/main/context.c"))
 print(">> COMPILE", os.path.basename(SRC))
-r = run(transform(tmpl, SRC, OBJ), cwd=HOSTBUILD)
+smoke_cmd = transform(tmpl, SRC, OBJ)
+r = run(smoke_cmd, cwd=HOSTBUILD)
 if r.returncode != 0:
-    errs = [l for l in r.stderr.splitlines() if "error:" in l]
-    print("COMPILE FAIL:\n" + ("\n".join(errs[:20]) if errs else r.stderr[-2000:]))
+    dump_failure("COMPILE FAIL", smoke_cmd, r)
     sys.exit(1)
 
 # 1b. link-glue stubs (trace_context_create_threaded + pthread_getcpuclockid) that
 #     gl_frontend_smoke.c does not carry inline. Plain compile (no mesa flags needed).
 STUBS_C = os.path.join(PORT_DIR, "gl_smoke_stubs.c")
 STUBS_O = f"{OUT_DIR}/gl_smoke_stubs.o"
-r = run([TC, "-c", STUBS_C, "-o", STUBS_O] + ABI_FLAGS + ["-O2", "-std=gnu11", "-lpthread"])
+stubs_cmd = [TC, "-c", STUBS_C, "-o", STUBS_O] + ABI_FLAGS + ["-O2", "-std=gnu11", "-lpthread"]
+r = run(stubs_cmd)
 if r.returncode != 0:
-    print("STUBS COMPILE FAIL:\n" + r.stderr[-1500:]); sys.exit(1)
+    dump_failure("STUBS COMPILE FAIL", stubs_cmd, r); sys.exit(1)
 
 # 2. build libv3d-client.a from the devices-repo source, with the SAME on-device ABI flags
 #    as the Mesa objects (cortex-a72 / strict-align) so the HW binary is ABI-consistent.
 CLIENT_C = os.path.join(DEV_DIR, "libv3d-client.c")
 CLIENT_O = f"{OUT_DIR}/libv3d-client.o"
 print(">> COMPILE libv3d-client.c (ABI-matched)")
-r = run([TC, "-c", CLIENT_C, "-o", CLIENT_O, f"-I{DEV_DIR}", f"-I{DEV_DIR}/uapi"]
-        + ABI_FLAGS + ["-O2", "-std=gnu11"])
+client_cmd = ([TC, "-c", CLIENT_C, "-o", CLIENT_O, f"-I{DEV_DIR}", f"-I{DEV_DIR}/uapi"]
+              + ABI_FLAGS + ["-O2", "-std=gnu11"])
+r = run(client_cmd)
 if r.returncode != 0:
-    print("CLIENT COMPILE FAIL:\n" + r.stderr[-2000:])
+    dump_failure("CLIENT COMPILE FAIL", client_cmd, r)
     sys.exit(1)
 if os.path.exists(CLIENT_A):
     os.remove(CLIENT_A)
-run([AR, "rcs", CLIENT_A, CLIENT_O])
+ar_cmd = [AR, "rcs", CLIENT_A, CLIENT_O]
+r = run(ar_cmd)
+if r.returncode != 0:
+    # Non-fatal (as before: this ar result used to be discarded entirely), but a
+    # failing archive step must at least say so rather than leaving the next link
+    # to fail for a reason that looks unrelated.
+    dump_failure("CLIENT AR FAIL", ar_cmd, r)
 
 # 3. BASELINE link (in-process): the known-good reference.
 print(">> LINK baseline (in-process winsys)")
@@ -108,13 +133,27 @@ base_link = [TCXX, "-static", OBJ, STUBS_O, "-Wl,--start-group", GL, V3D, "-Wl,-
              "-lphoenix", "-lm", "-lpthread", "-o", BASELINE]
 r = run(base_link)
 if r.returncode != 0:
-    print("BASELINE LINK FAIL:\n" + "\n".join(undefined_syms(r.stderr)[:40]) or r.stderr[-2000:])
+    # NB the old one-liner here was also buggy: `print(prefix + joined) or tail`
+    # binds as `print((prefix + joined) or tail)`, and the prefixed string is always
+    # truthy, so the r.stderr fallback could never fire -- a link that failed for any
+    # reason OTHER than undefined symbols printed a header and nothing else.
+    u = undefined_syms(r.stderr)
+    print(f"BASELINE LINK FAIL: {len(u)} undefined symbols:")
+    for s in u:
+        print(f"    {s}")
+    dump_failure("BASELINE LINK FAIL", base_link, r)
     sys.exit(2)
 print(f"   baseline OK -> {BASELINE} ({os.path.getsize(BASELINE)//1024} KiB)")
 
 # 4. DAEMON archive = V3D minus winsys+power.
 shutil.copy(V3D, V3D_DAEMON)
-run([AR, "d", V3D_DAEMON, "v3d_phoenix_winsys.o", "v3d_phoenix_power.o"])
+ar_del = [AR, "d", V3D_DAEMON, "v3d_phoenix_winsys.o", "v3d_phoenix_power.o"]
+r = run(ar_del)
+if r.returncode != 0:
+    # Non-fatal (this ar result used to be discarded), but report it in full: a
+    # silently-failed member delete makes the daemon link succeed for the WRONG
+    # reason (the in-process winsys still in the archive).
+    dump_failure("DAEMON AR FAIL", ar_del, r)
 print(">> built daemon archive (V3D minus winsys+power)")
 
 # 5. DAEMON-CLIENT link.
@@ -128,8 +167,7 @@ if r.returncode != 0:
     print(f"DAEMON LINK: {len(u)} undefined symbols:")
     for s in u:
         print(f"    {s}")
-    if not u:
-        print(r.stderr[-2500:])
+    dump_failure("DAEMON LINK FAIL", dae_link, r)
     sys.exit(3)
 print(f"   daemon-client OK -> {DAEMON} ({os.path.getsize(DAEMON)//1024} KiB)")
 
@@ -141,13 +179,15 @@ SRV_O = f"{OUT_DIR}/rpi4-v3d.o"
 print(">> BUILD v3d-server (rpi4-v3d)")
 for src, obj in ((os.path.join(DEV_DIR, "v3d_gpu.c"), GPU_O),
                  (os.path.join(DEV_DIR, "rpi4-v3d.c"), SRV_O)):
-    r = run([TC, "-c", src, "-o", obj, f"-I{DEV_DIR}", f"-I{DEV_DIR}/uapi"]
-            + ABI_FLAGS + ["-O2", "-std=gnu11"])
+    srv_cmd = ([TC, "-c", src, "-o", obj, f"-I{DEV_DIR}", f"-I{DEV_DIR}/uapi"]
+               + ABI_FLAGS + ["-O2", "-std=gnu11"])
+    r = run(srv_cmd)
     if r.returncode != 0:
-        print("SERVER COMPILE FAIL:\n" + r.stderr[-2000:]); sys.exit(4)
-r = run([TC, "-static", SRV_O, GPU_O, "-o", SRV])
+        dump_failure("SERVER COMPILE FAIL", srv_cmd, r); sys.exit(4)
+srv_link = [TC, "-static", SRV_O, GPU_O, "-o", SRV]
+r = run(srv_link)
 if r.returncode != 0:
-    print("SERVER LINK FAIL:\n" + r.stderr[-2000:]); sys.exit(4)
+    dump_failure("SERVER LINK FAIL", srv_link, r); sys.exit(4)
 print(f"   server OK -> {SRV} ({os.path.getsize(SRV)//1024} KiB)")
 
 print("\nBUILD OK: server + baseline + daemon-client all linked 0-undefined.")

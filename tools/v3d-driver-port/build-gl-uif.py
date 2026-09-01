@@ -37,8 +37,13 @@ cmd = transform(tmpl, SRC, OBJ)
 print(">> COMPILE", os.path.basename(SRC))
 r = subprocess.run(cmd, cwd=HOSTBUILD, capture_output=True, text=True)
 if r.returncode != 0:
-    errs = [l for l in r.stderr.splitlines() if "error:" in l]
-    print("COMPILE FAIL:\n" + ("\n".join(errs[:20]) if errs else r.stderr[-2000:]))
+    # Exact command + COMPLETE compiler output. The old `error:`-only (capped 20) /
+    # last-2000-chars filter could hide the diagnostic that explains the failure.
+    print("COMPILE FAIL:\n$ " + " ".join(cmd))
+    print(r.stderr.strip() or "(no stderr)")
+    if r.stdout.strip():
+        print("--- compiler stdout ---\n" + r.stdout.strip())
+    sys.stdout.flush()
     sys.exit(1)
 
 GL = f"{GPU_LIBS}/libGL-phoenix.a"
@@ -48,7 +53,19 @@ link = [TCXX, "-static", OBJ, "-Wl,--start-group", GL, V3D, "-Wl,--end-group",
 print(">> LINK (g++)")
 r = subprocess.run(link, capture_output=True, text=True)
 if r.returncode != 0:
+    # Keep the undefined-reference digest, then print the exact command + the
+    # COMPLETE linker output. The old capped/tailed filter could reduce a real
+    # failure to a bare "collect2: error: ld returned 1 exit status" with no
+    # indication of the cause -- reported from a Docker build on macOS.
     ud = [l for l in r.stderr.splitlines() if "undefined reference" in l]
-    print("LINK FAIL:\n" + ("\n".join(ud[:25]) if ud else r.stderr[-2500:]))
+    print(f"LINK FAIL: {len(ud)} undefined-reference lines")
+    for l in ud:
+        print("  " + l.strip())
+    print("--- link command ---\n$ " + " ".join(link))
+    print("--- complete linker output ---")
+    print(r.stderr.strip() or "(no stderr)")
+    if r.stdout.strip():
+        print("--- linker stdout ---\n" + r.stdout.strip())
+    sys.stdout.flush()
     sys.exit(2)
 print(f">> OK -> {OUT} ({os.path.getsize(OUT)//1024} KiB). Deploy: sudo cp {OUT} /srv/phoenix-rpi4-nfs/bin/gl-uif")
