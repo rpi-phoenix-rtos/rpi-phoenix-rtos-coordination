@@ -51,7 +51,10 @@ pass=0; fail=0; skip=0; err=0; nofile=0
 for t in $TESTS; do
   base=$(echo "$t" | tr '/' '_')
   if [ ! -f "$CU/$t" ]; then echo "CTEST $t NOFILE" >> "$OUT"; nofile=$((nofile+1)); continue; fi
-  ( cd /tmp && srcdir="$CU" bash "$CU/$t" ) > "$LOGD/$base.log" 2>&1
+  # `9>&2` is REQUIRED: coreutils' init.cfg sets stderr_fileno_=9 (paired with the
+  # automake harness's `exec 9>&2`). Without fd 9 open, init.sh's warn_ hits
+  # "Bad file descriptor" and tests skip/fail spuriously. Match the harness.
+  ( cd /tmp && srcdir="$CU" bash "$CU/$t" 9>&2 ) > "$LOGD/$base.log" 2>&1
   rc=$?
   case $rc in
     0)  r=PASS;       pass=$((pass+1));;

@@ -83,18 +83,28 @@ fd fails, cwd intact), 16/16 OK, boot healthy; `fsdiag2` `rm -r` now `rc=0` (was
 
 **Residual:** `printenv.sh` still fails, but *differently* — the old batch-wide
 `chmod: cannot access` cascade is gone; it now leaves a single
-`rm: … Directory not empty` (a deeper cleanup-cwd edge, likely gnulib's fd-based
-cwd-restore in `remove_tmp_`), under investigation. The `*at` family is no longer
-required for `rm -r` but remains a nice future addition (thin path-based wrappers on
-the same `sys_fdpath` record).
+`rm: … Directory not empty`. **Resolved (2026-09-01): that residual was a DRIVER
+bug, not Phoenix.** coreutils' `init.cfg` sets `stderr_fileno_=9` (paired with the
+automake harness's `exec 9>&2`); running tests **without** fd 9 open made init.sh's
+`warn_` hit `>&9` "Bad file descriptor", which spuriously skipped/failed tests and
+manifested as flaky cleanup errors. Invoking each test with `9>&2` (as `run.sh` now
+does) fixes it: **nl/printenv/echo/realpath/sync/seq… all PASS, 3/3 repeatably;
+`rm -r` itself is 100% solid (8/8 on fresh dirs).** So the rm -r fix is fully
+validated and coreutils tests genuinely pass on Phoenix. The `*at` family remains a
+nice future addition but is not needed. (`pathchk` legitimately SKIPs — must be
+non-root.)
 
 **Build footgun hit:** editing the kernel `syscalls.h` did **not** rebuild libphoenix's
 `arch/*/syscalls.S` object (make missed the installed-header dep) → `undefined
 reference to sys_fdpath`. Fix: `touch` the `.S` (or clean libphoenix) after a kernel
 syscall-list change.
 
-## Other findings (psh/environment limits, lower priority)
+## Harness-invocation requirements (NOT Phoenix bugs)
 
-- `init.sh` line 106 `$stderr_fileno_: Bad file descriptor` — a bash fd-redirection
-  limitation on Phoenix (surfaces in some tests' setup).
+- **Invoke each test with `9>&2`.** coreutils `init.cfg` sets `stderr_fileno_=9`; fd 9
+  must be an open dup of stderr (the automake harness does `exec 9>&2`). Phoenix bash
+  handles high-fd redirection fine (verified `exec 9>&2`/`20>&2`/file-on-fd-9 all work);
+  the earlier `$stderr_fileno_: Bad file descriptor` was purely our runner omitting it.
 - perl/gawk absent → `.pl` tests and gawk-specific tests are inherently SKIP.
+- Tests are process-spawn-heavy; over NFS on Phoenix each takes several seconds, so a
+  large batch may not finish inside one Pi cycle (throughput, not correctness).
