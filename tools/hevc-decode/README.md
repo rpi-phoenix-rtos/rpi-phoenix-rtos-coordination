@@ -24,7 +24,7 @@ blob**. Ported register-by-register from the Linux `hevc_d_h265.c` driver.
 | **`.mp4`/`.mov` container demux (M3)** | ✅ `hevc-play <file.mp4>` — in-tool ISOBMFF→Annex-B (no ffmpeg); video track read by sample tables so **audio tracks are skipped** (normal a/v files play); >1 video track / fragmented rejected loudly |
 | **`hevc-play` bit-exact conformance verify** | ✅ `hevc-play <f.265> <golden.nv12>` → VERIFY BIT-EXACT (ibp, mandelbrot, bframes=2/3, b-pyramid all 0 bad px) |
 | Decode → SAND/COL128 unpack → NV12→RGB → /dev/fb0 → HDMI | ✅ |
-| Intermittent inter corruption during on-HDMI playback (~10%) | ⚠️ known, decoder bit-exact HEADLESS in isolation (see gotcha 8) |
+| Intermittent decode corruption under memory-fabric contention | ⚠️ OPEN (SoC-level) — non-deterministic, worse under heavy DMA (complex clips / on-HDMI); simple clips clean; decoder-side software causes ruled out (see gotcha 8) |
 | **Multi-ref (ref>1)** | ✅ bit-exact (free via the general DPB + resolve_reflist) |
 | **Temporal-MVP (tmvp)** — collocated-MV path | ✅ bit-exact (per-DPB-slot colMV, x265 default-on; 64/128/320 verified) |
 | **SAO (Sample Adaptive Offset)** — in-loop filter | ✅ bit-exact (RPI_SLICE bit14/15; HW CABAC-decodes per-CTB sao(); x265 default-on) |
@@ -81,23 +81,36 @@ $GCC -O2 -static -Wall -Wextra -std=gnu11 -I$VCM -Itools/hevc-decode \
 6. **x265 `wpp=0`** — WPP auto-enables past ~256px wide; the harness is single-tile/no-WPP.
 7. **Output is SAND / NV12_COL128 tiled** — unpack (pixel(x,y)=buf[(x/128)*stride + y*128 +
    x%128]) before any pixel compare / display.
-8. **Residual intermittent inter (P) corruption during on-HDMI playback (OPEN).** The
-   decoder is reliable in isolation: **600/600 bit-exact back-to-back** (`-DIPPP_STRESS`,
-   no display). The corruption appears only when `fb_blit` runs between frames (real video
-   playback): the first corrupt frame fails its **own** golden (decode-input corruption),
-   then errors compound down the P-chain; frame 0 (I) is always exact. Systematically
-   REFUTED: phase-1→phase-2 PU/COEFF drain (RPI_STATUS read-back, no help); idle-gap
-   duration (40/100/200 ms with no fb all clean); framebuffer/DMA physical overlap (PAs
-   disjoint); MAP_UNCACHED cacheable alias (pmap: Normal-NC, no alias; Linux uses no
-   `dma_sync`); buffer-specific effect (a scratch-buffer `fb_blit` corrupts identically →
-   it's the fb *write* burst, not touching the output). Upgrading the pre-doorbell barrier
-   to `dsb sy` (gotcha 1) + a fence before the input memcpy helped only marginally
-   (~78% → ~90% pass, within n=24 noise) — so the residual is a deeper SoC memory-fabric /
-   write-combine interaction between `fb_blit`'s heavy Normal-NC store burst and the
-   subsequent decode, not closed by the architecturally-correct barrier. Repro with the
-   `IPPP_STRESS` harness (`-DIPPP_STRESS`, `-DSTRESS_SLEEP[_MS]`, `-DNO_FRAME_SLEEP`).
-   Impact: core decode + the `hevc-play` file player work; on-HDMI playback shows an
-   occasional glitched frame (~10%).
+8. **Residual intermittent decode corruption under memory-fabric contention (OPEN, SoC-level).**
+   A small number of wrong output pixels appear non-deterministically in a fraction of decodes.
+   It is **worse under heavier memory traffic** — a concurrent `fb_blit` during on-HDMI
+   playback, and (independently) high-complexity clips that do more PU/coeff/reference DMA —
+   and it is **content- and process-independent** (the same clip is bit-exact one run and
+   corrupt the next; even an IDR I-frame occasionally corrupts). Simple/low-traffic clips are
+   effectively always clean (e.g. an `ultrafast`-preset clip verified 15/15 back-to-back).
+   NOTE: an earlier belief that this was "fb_blit-only, bit-exact headless" was **corrected** —
+   it manifests headless too; it is amplified, not caused, by `fb_blit`.
+
+   The decoder-side software causes have been **exhaustively ruled out**:
+   - **Barriers are architecturally complete** — `dsb sy` before each doorbell (gotcha 1),
+     the ARGON INTC init-flush, and a `dsb sy` after the completion poll before the CPU reads
+     the Normal-NC output (mirrors the Linux driver's `readl`/`__iormb` ordering). The last one
+     measurably helped (an `ultrafast` clip went 3/10 → 15/15 clean) but did not close it.
+   - **Not PU/coeff buffer exhaustion** — `RPI_STATUS` never sets the `PU_EXHAUSTED`/
+     `COEFF_EXHAUSTED` bits on a corrupt frame, and `CFSTATUS == CFNUM` always.
+   - **Not CPU polling/bus contention** — switching completion from ICTRL hot-polling to true
+     IRQ-driven (`condWait` on SPI-98; the CPU blocks like Linux) left the rate unchanged.
+   - **No missing init** — a survey of the Linux `hevc_d` driver + BCM2711 DT found it programs
+     nothing beyond clock-enable + INTC-enable + version-check (no QoS/AXI-arbitration/reset/
+     power/2nd-clock/firmware tag); we already set the HEVC clock to the firmware **max** and
+     the DMA buffers are low-PA (no 36-bit truncation).
+
+   ⇒ the residual is a genuine SoC memory-fabric interaction under decode DMA load, not a
+   decoder-side software omission. The decisive next step is a Linux-on-the-same-Pi4 `hevc_d`
+   side-by-side on the same clips. Impact: core decode + the `hevc-play` file player work for
+   simple/low-traffic content; complex clips and on-HDMI playback show occasional glitched
+   pixels. Repro with the `IPPP_STRESS` harness (`-DIPPP_STRESS`, `-DSTRESS_SLEEP[_MS]`,
+   `-DNO_FRAME_SLEEP`) or any high-complexity clip via `hevc-play <clip> <golden>`.
 
 ## M3: runtime `.265` file player (done)
 
