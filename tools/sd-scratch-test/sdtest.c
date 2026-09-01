@@ -54,6 +54,22 @@ int main(int argc, char **argv)
 	double t0, t1, wsec, rsec;
 	size_t i, firstbad = (size_t)-1;
 	unsigned long long scratch = SCRATCH_OFF;
+	int do_write = 1, do_read = 1;
+	const char *mode = (argc > 1) ? argv[1] : "both";
+
+	/* Modes: `write` and `verify` split the test across two boots so the
+	 * read-back is CACHE-COLD (a power cycle wipes every Pi-side cache) --
+	 * the definitive on-disk check without needing a host card reader.
+	 *   boot 1: sdtest write   -> writes the pattern, reports write MB/s
+	 *   power cycle
+	 *   boot 2: sdtest verify  -> reads + compares, reports read MB/s
+	 * Default (no arg) does both in one run (in-Pi readback; may be cached). */
+	if (strcmp(mode, "write") == 0) {
+		do_read = 0;
+	}
+	else if (strcmp(mode, "verify") == 0) {
+		do_write = 0;
+	}
 
 	if (argc > 1 && strcmp(argv[1], "--verify-host") == 0) {
 		printf("SDTEST-PATTERN dev=%s off=%llu bytes=%u word_xor=0x%08x\n",
@@ -61,8 +77,8 @@ int main(int argc, char **argv)
 		return 0;
 	}
 
-	printf("SDTEST: %s scratch_off=%llu MiB xfer=%u MiB\n",
-		DEV, scratch / (1024 * 1024), XFER_BYTES / (1024 * 1024));
+	printf("SDTEST: %s mode=%s scratch_off=%llu MiB xfer=%u MiB\n",
+		DEV, mode, scratch / (1024 * 1024), XFER_BYTES / (1024 * 1024));
 
 	fd = open(DEV, O_RDWR);
 	if (fd < 0) {
@@ -73,6 +89,8 @@ int main(int argc, char **argv)
 	fill_pattern((uint32_t *)wbuf, XFER_BYTES / 4);
 
 	/* ---- WRITE ---- */
+	wsec = 0.0;
+	if (do_write) {
 	off = lseek(fd, (off_t)scratch, SEEK_SET);
 	if (off != (off_t)scratch) {
 		printf("SDTEST-FAIL lseek(write) off=%lld errno=%d\n", (long long)off, errno);
@@ -95,8 +113,11 @@ int main(int argc, char **argv)
 	(void)fsync(fd);
 	t1 = now_s();
 	wsec = t1 - t0;
+	}
 
 	/* ---- READ BACK (in-Pi; may be cache-served — host read-back is definitive) ---- */
+	rsec = 0.0;
+	if (do_read) {
 	off = lseek(fd, (off_t)scratch, SEEK_SET);
 	if (off != (off_t)scratch) {
 		printf("SDTEST-FAIL lseek(read) off=%lld errno=%d\n", (long long)off, errno);
@@ -119,9 +140,11 @@ int main(int argc, char **argv)
 	}
 	t1 = now_s();
 	rsec = t1 - t0;
+	}
 	close(fd);
 
 	/* ---- COMPARE ---- */
+	if (do_read) {
 	for (i = 0; i < XFER_BYTES; ++i) {
 		if (rbuf[i] != wbuf[i]) {
 			firstbad = i;
@@ -129,13 +152,25 @@ int main(int argc, char **argv)
 		}
 	}
 
+	}
 	{
 		double mb = (double)XFER_BYTES / (1024.0 * 1024.0);
-		printf("SDTEST-WRITE %.2f MiB in %.3f s = %.2f MB/s\n", mb, wsec, wsec > 0 ? mb / wsec : 0.0);
-		printf("SDTEST-READ  %.2f MiB in %.3f s = %.2f MB/s\n", mb, rsec, rsec > 0 ? mb / rsec : 0.0);
+		if (do_write) {
+			printf("SDTEST-WRITE %.2f MiB in %.3f s = %.2f MB/s\n", mb, wsec, wsec > 0 ? mb / wsec : 0.0);
+		}
+		if (do_read) {
+			printf("SDTEST-READ  %.2f MiB in %.3f s = %.2f MB/s\n", mb, rsec, rsec > 0 ? mb / rsec : 0.0);
+		}
+	}
+	if (!do_read) {
+		printf("SDTEST-RESULT WRITE-DONE (power-cycle, then: sdtest verify)\n");
+		return 0;
 	}
 	if (firstbad == (size_t)-1) {
-		printf("SDTEST-COMPARE OK (in-Pi readback matches; run host verify for cache-cold proof)\n");
+		/* NOTE: this tool cannot know whether a power cycle happened, so it must
+		 * not claim cache-coldness itself. `verify` only proves the bytes match;
+		 * coldness holds ONLY when the matching `write` ran in an EARLIER boot. */
+		printf("SDTEST-COMPARE OK%s\n", do_write ? " (same-boot readback; may be cache-served)" : " (read-back of a previously-written pattern; cache-cold IFF the write ran in an earlier boot)");
 		printf("SDTEST-RESULT PASS\n");
 		return 0;
 	}
