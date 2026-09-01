@@ -90,9 +90,14 @@ automake harness's `exec 9>&2`); running tests **without** fd 9 open made init.s
 manifested as flaky cleanup errors. Invoking each test with `9>&2` (as `run.sh` now
 does) fixes it: **nl/printenv/echo/realpath/sync/seq… all PASS, 3/3 repeatably;
 `rm -r` itself is 100% solid (8/8 on fresh dirs).** So the rm -r fix is fully
-validated and coreutils tests genuinely pass on Phoenix. The `*at` family remains a
-nice future addition but is not needed. (`pathchk` legitimately SKIPs — must be
-non-root.)
+validated and coreutils tests genuinely pass on Phoenix. (`pathchk` legitimately
+SKIPs — must be non-root.)
+
+**Follow-up DONE (2026-09-01): the native `*at` family shipped anyway** (libphoenix
+`eae5151`) — not needed for `rm -r`, but it lets gnulib ports skip the fchdir/cwd
+emulation (which is thread-unsafe). Confirmed: coreutils' configure now detects
+`ac_cv_func_openat=yes`/`unlinkat=yes` and uses them natively; the batch still passes
+on HW (7/7, pathchk SKIP). See `sources/libphoenix/unistd/at.c`.
 
 **Build footgun hit:** editing the kernel `syscalls.h` did **not** rebuild libphoenix's
 `arch/*/syscalls.S` object (make missed the installed-header dep) → `undefined
