@@ -357,7 +357,16 @@ static int poll_active(volatile uint8_t *intc, uint32_t bit, int timeout_ms)
 {
 	for (int i = 0; i < timeout_ms * 100; i++) {
 		uint32_t ic = rd(intc + ARG_IC_ICTRL);
-		if (ic & bit) { wr(intc + ARG_IC_ICTRL, ic & ~SET_ZERO_MASK); return 0; }
+		if (ic & bit) {
+			wr(intc + ARG_IC_ICTRL, ic & ~SET_ZERO_MASK);   /* W1C the latched bit */
+			/* Order this completion observation before the caller's reads of the
+			 * just-DMA'd output (Normal-NC). Our rd() is a plain volatile load with
+			 * no implicit barrier — unlike the driver's readl (__iormb) — so without
+			 * this fence the CPU can retire output loads before the ACTIVE poll
+			 * resolves and see pre-DMA bytes (intermittent tail-of-frame corruption). */
+			hevc_dma_fence();
+			return 0;
+		}
 		{ struct timespec ts = { 0, 10000 }; nanosleep(&ts, NULL); } /* 10us */
 	}
 	return -1;
