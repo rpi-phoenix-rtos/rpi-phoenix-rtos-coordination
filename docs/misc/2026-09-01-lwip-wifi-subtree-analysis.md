@@ -83,3 +83,20 @@ Real numbers need sockets, i.e. the netif:
 2. **After the netif:** real TCP/UDP throughput (iperf-style, and NFS-over-WiFi),
    comparable to the wired baseline (~30 MB/s read / ~20 MB/s write over gigabit).
    Report the negotiated PHY rate alongside, as WiFi rate adapts.
+
+---
+
+## OUTCOME (same day) — executed and HW-proven
+
+The `wi-fi/` deletion is **cleaned up**, and the fork now has real upstream
+ancestry. See `docs/misc/2026-09-01-lwip-detangle.md` for the method.
+
+- `wi-fi/` is back, **byte-identical to upstream** (116/116 files), still opt-in
+  behind `LWIP_WIFI_BUILD=yes` so it never enters our build. Per the owner's
+  rule, we stop deleting upstream code — and per his later call we do **not**
+  model or copy `cy_lwip.c` (licence); the WiFi netif will be built on our own
+  working TX/RX path with our `bcm-genet` netif as the in-repo template.
+- `git merge-base --is-ancestor origin/master master` → **YES**. The fork is
+  **0 commits behind** upstream with **11 clean commits** on top.
+- Divergence tightened from 31 files / 3324+ / 144− to **21 files / 3257+ / 19−**:
+  the 3-way merge stopped our fork reverting upstream's newer work.
