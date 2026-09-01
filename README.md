@@ -56,39 +56,123 @@ is in **[docs/BUILD.md](docs/BUILD.md)**.
 
 ## Build with Docker (reproducible, any host OS)
 
-The whole build is also packaged as a **single, self-contained Dockerfile**. It
-works on any machine with a Docker CLI (Linux/macOS/Windows) regardless of host
-OS or installed packages — the entire toolchain runs inside a container we fully
-control. Nothing is copied from the host: every source tree, Ubuntu package, font,
-and the freely-downloadable id Software game data (Quake I shareware + the Quake II
-and Quake III demos) is fetched over the network at build time and baked into the
-image *you* build — this repo distributes only the build scripts, never a built image.
+The whole build is packaged as a **single, self-contained Dockerfile**. It works on
+any machine with a Docker CLI (Linux/macOS/Windows) regardless of host OS or
+installed packages — the entire toolchain runs inside a container we fully control.
+Nothing is copied from the host: every source tree, Ubuntu package, font, and the
+freely-downloadable id Software game data (Quake I shareware + the Quake II and
+Quake III demos) is fetched over the network at build time and baked into the image
+*you* build — this repo distributes only the build scripts, never a built image.
 
-Requires a Docker CLI with **BuildKit/buildx** (Docker Desktop bundles it; on a
-minimal Linux docker.io install run `sudo apt-get install docker-buildx`).
+### Before you start
+
+| | |
+|---|---|
+| **Docker** | a CLI with **BuildKit/buildx**. Docker Desktop bundles it; on a minimal Linux `docker.io` install run `sudo apt-get install docker-buildx`. |
+| **Disk** | ~35 GB free for the build (it clones Mesa, builds a GCC cross-toolchain, then the whole OS). |
+| **Time** | 40–90 min on a modern 8-core machine, most of it the toolchain. |
+| **Network** | the build clones from GitHub/freedesktop and downloads the game data. |
+
+> **macOS / colima:** give the VM enough room up front — the default is too small
+> and the build dies deep in the toolchain stage:
+> ```bash
+> colima start --cpu 8 --memory 16 --disk 100
+> ```
+
+### Copy-paste: build a bootable SD image
+
+Pick **one** of these. Each is a complete recipe: build, then export the image.
+
+**1. Base system** — kernel, drivers, `psh`, networking. No games, fastest build.
 
 ```bash
 mkdir -p out
-# 1. build the image (clones all sources, builds the cross toolchain, builds the SD image)
 docker build -t phoenix-rpi \
+  --build-arg BUILD_FLAGS="" \
   https://raw.githubusercontent.com/rpi-phoenix-rtos/rpi-phoenix-rtos-coordination/main/Dockerfile
-# 2. export the finished SD-card image to ./out/
 docker run --rm -v "$PWD/out":/out phoenix-rpi
-# -> ./out/rpi4b-sd-2part.img   (flash it exactly like the native build)
+# -> ./out/rpi4b-sd-2part.img
 ```
 
-Useful `--build-arg`s (see the header of [`Dockerfile`](Dockerfile)): `UBUNTU_TAG`
-(base LTS, default `26.04` — the validated build host), `PAK0_URL` / `PAK0Q2_URL` /
-`PAK0Q3_URL` (Quake I/II/III game-data URLs, each defaulting to a verified upstream
-demo/shareware mirror; set one to `""` to build that engine without bundled data),
-`BUILD_VARIANT` (`sd`/`nfsroot`/`netboot`), `BUILD_FLAGS` (default
-`--with-showcase --with-ports`; use `""` for a base image).
+**2. The showcase image (recommended)** — everything above **plus** the X11 desktop
+(`wmaker`, `xterm`, `xclock`, `xcalc`), the ported command-line apps (`bash`,
+`python3`, `mc`, `nano`, coreutils, …) and **GLQuake** running on the V3D GPU.
+This is the default if you pass no `BUILD_FLAGS` at all:
 
-> **Building from a local checkout (before this port is on public GitHub):** the
-> Dockerfile clones from `REPO_BASE` (default GitHub). To build the current tree
-> without pushing, run `./scripts/build-sd-in-docker.sh` — it serves this repo (and
-> the sibling/external repos, committed state) over a local git+http server and
-> points the container at it, then exports to `./docker-out/`.
+```bash
+mkdir -p out
+docker build -t phoenix-rpi \
+  --build-arg BUILD_FLAGS="--with-showcase --with-ports" \
+  https://raw.githubusercontent.com/rpi-phoenix-rtos/rpi-phoenix-rtos-coordination/main/Dockerfile
+docker run --rm -v "$PWD/out":/out phoenix-rpi
+```
+
+**3. Showcase + vkQuake** — as above and also builds the Vulkan (V3DV) stack and
+**vkQuake**. Adds a lot of build time and a large binary; vkQuake renders but its
+input is not wired yet (see [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md)).
+
+```bash
+mkdir -p out
+docker build -t phoenix-rpi \
+  --build-arg BUILD_FLAGS="--with-showcase --with-ports --with-vkquake" \
+  https://raw.githubusercontent.com/rpi-phoenix-rtos/rpi-phoenix-rtos-coordination/main/Dockerfile
+docker run --rm -v "$PWD/out":/out phoenix-rpi
+```
+
+Then flash `./out/rpi4b-sd-2part.img` exactly as in
+[docs/BUILD.md](docs/BUILD.md) (macOS/Linux `dd`, or Raspberry Pi Imager's
+"Use custom" option), put the card in the Pi, and power on.
+
+### Which games end up on the card?
+
+Be aware of the current split — all five engines are proven on the hardware, but
+only two are wired into the **SD image** today:
+
+| Engine | In the SD image? | How to run it |
+|---|---|---|
+| **GLQuake** (Quake I, OpenGL) | ✅ with `--with-showcase` | boots into it, or `quake` at `(psh)%` |
+| **vkQuake** (Quake I, Vulkan) | ✅ with `--with-vkquake` | `vkquake` (renders; input not wired yet) |
+| **Quake II** (yQuake2) | ❌ not yet | build-proven port; run over netboot (`docs/BUILD.md`) |
+| **Quake III** (quake3e) | ❌ not yet | build-proven port; run over netboot |
+| **SuperTuxKart 1.4** | ❌ not yet | built by `tools/`; run over netboot |
+
+Quake II and Quake III exist as proper framework ports but are registered
+`if: false` in the project's `ports.yaml` — they are built and verified, and get
+flipped on once each is image-proven. Until then the SD image carries GLQuake
+(plus vkQuake on request), and the other three are exercised over the netboot
+NFS root. Wiring them into the image build is tracked as a follow-up.
+
+### Other build knobs
+
+See the header of [`Dockerfile`](Dockerfile). The useful ones: `UBUNTU_TAG` (base
+LTS, default `26.04` — the validated build host), `PAK0_URL` / `PAK0Q2_URL` /
+`PAK0Q3_URL` (game-data URLs, each defaulting to a verified upstream demo/shareware
+mirror; set one to `""` to build that engine without bundled data), `BUILD_VARIANT`
+(`sd` / `nfsroot` / `netboot`), and `BUILD_FLAGS` (above; `--with-tests` adds the
+`/bin/test-*` suites).
+
+### If the build fails
+
+Docker hides most of the compiler output by default, which makes a failure look
+like a bare `collect2: error: ld returned 1 exit status`. Re-run with plain
+progress and keep the log:
+
+```bash
+docker build --progress=plain --no-cache -t phoenix-rpi \
+  --build-arg BUILD_FLAGS="--with-showcase --with-ports" \
+  https://raw.githubusercontent.com/rpi-phoenix-rtos/rpi-phoenix-rtos-coordination/main/Dockerfile \
+  2>&1 | tee docker-build.log
+```
+
+The port build scripts print the failing command and the compiler/linker output in
+full, so `docker-build.log` will contain the actual cause. Common causes: the VM ran
+out of disk (see colima above), or a transient network failure while cloning — a
+plain re-run resumes from the last cached layer (omit `--no-cache`).
+
+> **Building from a local checkout** (your own edits, nothing pushed): run
+> `./scripts/build-sd-in-docker.sh` — it serves this repo and the sibling/external
+> repos (committed state) over a local git+http server, points the container at
+> them, and exports to `./docker-out/`.
 
 ## Capabilities
 

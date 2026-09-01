@@ -74,3 +74,4 @@ tools/wifi-probe/wifi-probe
 tools/v3d-driver-port/.build-csd-daemon/
 artifacts/q2-texbug/default/
 tools/cnn-mnist/mnist/
+artifacts/wifi-air/
