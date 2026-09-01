@@ -1181,7 +1181,11 @@ static void diag_sdhciResetDatCmd(volatile uint8_t *sdhci)
  * a 64-byte block (F2 blocksize set to 64 via CCCR FBR to reuse block-mode). */
 #define IOCTL_F2_ADDR 0x8000u
 #define WLC_GET_VERSION 1u
-#define F2_FRAME_MAX 512u    /* per-frame F2 read size (byte-mode cap; card pads short frames) */
+/* Max F2 frame we can hold: SDPCM(12) + BDC(4) + full-MTU eth(1514) + slack.
+ * Was 512, which silently TRUNCATED anything larger (fine for DHCP, wrong for
+ * real traffic). */
+#define F2_FRAME_MAX 2048u
+#define F2_HDR_LEN   12u     /* SDPCM HW(4) + SW(8): enough to learn the length */
 static int g_ioctl_mode = 0;
 static int g_ioctl_ran = 0;
 static uint32_t g_ioctl_is_pre = 0u;   /* intstatus before the sequence */
@@ -1215,12 +1219,16 @@ static void diag_setWindow18(volatile uint8_t *sdhci)
 	(void)diag_sdioCmd52(sdhci, 1, 1, 0x1000Cu, 0x18u, NULL);
 }
 
-/* Read one SDPCM frame from the F2 FIFO into buf (>= F2_FRAME_MAX). Reads a
- * fixed F2_FRAME_MAX bytes: a short read (< frame length) CRCs the SDIO data
- * phase, and the card pads a frame shorter than the request. Parses the HW
- * header: *outlen = SDPCM frame length, *outchan = SDPCM channel. Returns 0 on
- * a valid frame, 1 if none is ready (len|chk==0), <0 on a transport error (and
- * resets DAT/CMD to clear a wedge). */
+/* Read one SDPCM frame from the F2 FIFO into buf (>= F2_FRAME_MAX).
+ *
+ * TWO-PHASE read, mirroring brcmf_sdio_readframes: first pull the 12-byte
+ * SDPCM header to learn the real frame length, then pull exactly the remainder.
+ * The old single fixed 512-byte read both truncated larger frames and risked
+ * the wrong-length SDIO data-phase CRC wedge (2026-08-09 lesson).
+ *
+ * Parses the HW header: *outlen = SDPCM frame length, *outchan = SDPCM channel.
+ * Returns 0 on a valid frame, 1 if none is ready (len|chk==0), <0 on a
+ * transport error (and resets DAT/CMD to clear a wedge). */
 static int diag_f2RecvFrame(volatile uint8_t *sdhci, uint8_t *buf,
 	uint16_t *outlen, uint8_t *outchan)
 {
@@ -1230,8 +1238,9 @@ static int diag_f2RecvFrame(volatile uint8_t *sdhci, uint8_t *buf,
 	*outlen = 0u;
 	*outchan = 0xffu;
 	diag_setWindow18(sdhci);
+	/* phase 1: the SDPCM header only */
 	rc = diag_sdioCmd53ReadByteMode(sdhci, 2, /*incr=*/0, IOCTL_F2_ADDR,
-		F2_FRAME_MAX, buf);
+		F2_HDR_LEN, buf);
 	if (rc != 0) {
 		diag_sdhciResetDatCmd(sdhci);
 		return -30;
@@ -1245,13 +1254,23 @@ static int diag_f2RecvFrame(volatile uint8_t *sdhci, uint8_t *buf,
 		diag_sdhciResetDatCmd(sdhci);
 		return -31;
 	}
-	/* Clamp the fw-claimed length to what we actually read (512): `len` is a
-	 * fw-controlled 16-bit field, and every downstream offset check (event
-	 * stack: ehdr = sdoff + 4 + 4*data_offset, bss = ehdr+84, ...) is bounded
-	 * against *outlen -- an unclamped len would let a malformed large frame
-	 * drive those indices past g_rxf[512]. We only ever read one 512B frame. */
+	/* `len` is a fw-controlled 16-bit field and every downstream offset check is
+	 * bounded against *outlen, so refuse (rather than truncate) anything that
+	 * would not fit the buffer -- truncation is what silently corrupted large
+	 * frames before. */
 	if (len > (uint16_t)F2_FRAME_MAX) {
-		len = (uint16_t)F2_FRAME_MAX;
+		diag_sdhciResetDatCmd(sdhci);
+		return -32;
+	}
+	/* phase 2: exactly the rest of this frame (4-byte aligned request) */
+	if (len > (uint16_t)F2_HDR_LEN) {
+		uint32_t rest = ((uint32_t)len - F2_HDR_LEN + 3u) & ~3u;
+		rc = diag_sdioCmd53ReadByteMode(sdhci, 2, /*incr=*/0, IOCTL_F2_ADDR,
+			rest, buf + F2_HDR_LEN);
+		if (rc != 0) {
+			diag_sdhciResetDatCmd(sdhci);
+			return -33;
+		}
 	}
 	*outlen = len;
 	*outchan = (uint8_t)(buf[5] & 0x0fu);
