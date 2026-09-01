@@ -109,7 +109,7 @@ if a future Pi-4 board variant exposes the line.
 
 ## What's NOT in this document
 
-- **TD items in `docs/inprogress/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md`** are
+- **TD items in `docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md`** are
   Phoenix-internal shortcuts taken during bring-up. Those are fixable
   in software; this doc is only for issues Phoenix cannot fix.
 - **Test-infrastructure quirks** (e.g. TD-Eth-DHCP being infra-gated)

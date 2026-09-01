@@ -10,7 +10,7 @@ Authoritative companions:
 
 - `docs/inprogress/status.md` — current boot markers, active blocker.
 - `docs/done/roadmap-first-boot.md` — phase plan.
-- `docs/inprogress/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md` — TD-01..TD-06.
+- `docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md` — TD-01..TD-06.
 - `docs/knowledge/raspberry-pi-4.md` — board constants.
 
 ## 1. Confirmed Phoenix boot path (source-level)

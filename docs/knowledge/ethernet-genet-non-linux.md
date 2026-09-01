@@ -227,7 +227,7 @@ Reasoning:
 - **Circle's coherency model matches Phoenix's reality** — manual cache
   maintenance for payload buffers, descriptors in device memory, no
   CMA. Same regime BCM2711 forces on us per
-  `docs/inprogress/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md`.
+  `docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md`.
 - **License**: Circle is GPLv3+ derived from Linux GPLv2 — *do not copy
   Circle code*. Use it as a behavioral reference, write fresh code,
   cite Circle in comments. For a BSD-licensed reference of any specific

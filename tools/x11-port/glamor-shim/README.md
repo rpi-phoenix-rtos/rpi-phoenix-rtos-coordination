@@ -90,4 +90,4 @@ Write the non-empty `glamor_egl_screen_init` (install the phxgl context +
 `make_current`), link `libglamor.a` + `libGL-phoenix.a` + `libv3d-phoenix.a` into
 Xphoenix, wire the kdrive fbdev DDX to use glamor + present to `/dev/fb0`, HW-test.
 
-See `docs/inprogress/2026-08-21-e5-glamor-on-v3d-feasibility.md` for the full plan.
+See `docs/misc/2026-08-21-e5-glamor-on-v3d-feasibility.md` for the full plan.

@@ -156,7 +156,7 @@ Then use these names in the BIC/ORR lines. Drop the three old `_DISTANCE` / `DIS
 
 **WHAT:** `TODO(#126)` comment for `PL011_TTY_MOUSE_PATH "/dev/mouse"` says this is a "throwaway USB-mouse bring-up reader" to be removed once a real pointer consumer exists. The marker references a GitHub issue number (`#126`) rather than the project's `TD-xx` debt tracking convention.
 
-**WHY:** `docs/inprogress/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md` uses `TD-xx` identifiers for all source-code markers; `#126` is an issue-tracker reference not visible from the source alone. This creates an inconsistency in how temporary code is tracked.
+**WHY:** `docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md` uses `TD-xx` identifiers for all source-code markers; `#126` is an issue-tracker reference not visible from the source alone. This creates an inconsistency in how temporary code is tracked.
 
 **REC:** If the mouse path is genuinely deferred, assign a `TD-xx` ID in `TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md` and update the comment to `TODO(TD-xx)`. If the validation is complete and the path is no longer temporary, remove both the `#define` and the corresponding code in `pl011-tty.c`.
 

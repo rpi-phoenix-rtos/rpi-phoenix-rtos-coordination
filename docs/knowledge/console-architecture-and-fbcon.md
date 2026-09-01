@@ -162,6 +162,6 @@ When deciding whether to remove an existing print:
 ## Related TDs
 
 - TD-12 (boot-speed mitigations) — see
-  [TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md](../inprogress/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md)
+  [TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md](../TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md)
 - TD-14 (pl011-tty / psh slow-IPC workarounds) — same file
 - TD-15 (VC4 framebuffer + fbcon plumbing) — same file

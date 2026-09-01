@@ -50,7 +50,7 @@ blob**. Ported register-by-register from the Linux `hevc_d_h265.c` driver.
   extract slice params via ffmpeg `trace_headers` (data_byte_offset varies per frame —
   derived from the last slice-header element's bit position).
 - `testdata/*.265` — the committed test vectors + `gen-idr64.sh` (regenerate).
-- Register spec: `docs/inprogress/2026-08-28-hevc-m2-register-spec.md`.
+- Register spec: `docs/misc/2026-08-28-hevc-m2-register-spec.md`.
 
 ## Build + run a mode
 

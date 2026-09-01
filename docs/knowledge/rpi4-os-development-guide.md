@@ -1265,7 +1265,7 @@ xHCI MMIO from a side process? The "USB merge" finding established
 that two writing processes break; reads from a side process haven't
 been characterized. With `diag-udp` (see §"Network-routed
 observability") available, this becomes one UDP probe. See
-`docs/inprogress/usb-resumption-strategy.md` for the resumption plan that uses
+`docs/done/usb-resumption-strategy.md` for the resumption plan that uses
 this and three other hypotheses to revisit the parked USB wedge.
 
 ### USB resumption hypotheses (2026-05-25) — RE-ANALYZED 2026-05-29
@@ -1514,7 +1514,7 @@ losing most updates. Padding each slot to its own cache line (one
 `_Alignas(64)` struct per counter) restores plain `volatile ++` to
 ALU-speed throughput across all 4 cores. Documented as
 `TD-Pi4-FalseSharingPenalty` in
-`docs/inprogress/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md`; the pattern guide there
+`docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md`; the pattern guide there
 is the suggested reference for any future multi-threaded userspace
 code on Pi 4.
 
@@ -1904,7 +1904,7 @@ hunk to force it mapped). Implications:
   contention and/or a stalled per-page NFS text read) — NOT a clean `-ENOMEM` (that would print).
   A binary with tens of MB of BSS exec's reliably ~50% over netboot. Mitigations: trim the linked
   stack (cheap), boot from SD (local), or fix the kernel to demand-page exec-time anon (the proper
-  fix — makes exec O(1) in BSS size). See `docs/inprogress/2026-08-05-large-binary-exec-investigation.md`.
+  fix — makes exec O(1) in BSS size). See `docs/misc/2026-08-05-large-binary-exec-investigation.md`.
 
 ### Asset & exec I/O is NFS-bound over netboot
 Over netboot the root is NFS; a 100 Mbps link (a crossover cable wires only 2 pairs) is slow and

@@ -160,7 +160,7 @@ items" + "Decisions parked for you" sections below.
   to a scanout framebuffer for HDMI) + geometry + vertex/frag shaders (v3dv NIR→QPU) → triangle; then the
   vkQuake port itself (large). Plus a **cosmetic dispatch-gate bug** (vkGetDeviceProcAddr returns NULL for 3 vk_common
   framework entrypoints — GPU path unaffected, proven via direct calls; needs a one-boot runtime trace to
-  fix for the normal-API path). Full status: docs/inprogress/2026-06-18-vulkan-v3dv-noop-job-rootcause.md.
+  fix for the normal-API path). Full status: docs/done/2026-06-18-vulkan-v3dv-noop-job-rootcause.md.
 - **X11 — full lib stack + `xprobe`/`twm` exes build + run on HW; only the SERVER remains** — the kdrive
   Xfbdev server is a deep multi-session frontier (modern xorg-server dropped the fbdev kdrive backend; must
   restore/write one + xkb + a /dev/kbd0+/dev/mouse0 input driver). Host-side, no flagship risk. Until then
@@ -253,7 +253,7 @@ snapshot if visual) → commit in the touched repo → tick here. Boot budget is
    with a libv3d-rebuilding subagent.
 3. **[MED] RTC via NTP** — lwip SNTP client → set system clock at boot (Pi4 has no RTC).
    Fully autonomous, verify via `date`. Usability.
-4. **[BIG] X11 software path** — docs/inprogress/2026-06-16-x11-accelerated-desktop-plan.md +
+4. **[BIG] X11 software path** — docs/done/2026-06-16-x11-accelerated-desktop-plan.md +
    docs/todo/tinyx-x11-demo.md. Build the dep libs (pixman, libxcb, libX11) for aarch64-phoenix
    via ports; kdrive → /dev/fb0 shadow-fb; an xterm/twm visible on HDMI; input via /dev/kbd0.
    Big; make milestone progress (M0 server links → M1 draws to fb0).
@@ -302,7 +302,7 @@ aarch64 ELF with **0 undefined symbols** (`nm -u` clean, not just a passing link
 Mirrors the GL gallium port recipe. NOT boot-tested (HW serialized by main agent) — that
 is Tier 1.
 
-Full detail + Tier-1 next steps: `docs/inprogress/2026-06-17-vulkan-v3dv-tier0-progress.md`.
+Full detail + Tier-1 next steps: `docs/done/2026-06-17-vulkan-v3dv-tier0-progress.md`.
 
 **Committed in external/mesa @ dbd03bef831** (4 files, all `#if __phoenix__`-guarded, upstream +
 the main agent's GLQuake gallium build unchanged): `vulkan/runtime/vk_image.{h,c}` (extend the
@@ -324,7 +324,7 @@ I staged ONLY my files — the GL port's pre-existing uncommitted `gallium/drive
 - edited: `shim-include/{xf86drm.h,xf86drmMode.h,dlfcn.h}`, `phoenix_mesa_compat.h`,
   and `v3d_phoenix_winsys.c` (ioc_get_param: added SUPPORTS_MULTISYNC_EXT=1 / PERFMON=0 /
   CPU_QUEUE=0 — needed for Tier-1 device-create; read-only constants, GL path unaffected)
-- new doc: `docs/inprogress/2026-06-17-vulkan-v3dv-tier0-progress.md`
+- new doc: `docs/done/2026-06-17-vulkan-v3dv-tier0-progress.md`
 
 **Key engineering decisions (all advisor-reviewed):**
 - Reused `/tmp/libv3d-phoenix.a` back-end as-is (front-end-agnostic; plan §4.2).
@@ -662,7 +662,7 @@ count=1` → `vkCreateDevice -> 0` → **`PASS (instance+phys+device created)`**
 Vulkan instance→enumerate→**device-create** now works on the real Pi4 V3D. Flagship RESTORED after (Quake
 swapped back, rebuilt, verified in loader.disk). The user explicitly OK'd the flagship-swap risk; it was
 reversible + paid off. **Next (Tier 2):** a queue submit (cmd-buffer + clear) → expect ioc_submit_cl +
-fence-signalling blockers. Doc: docs/inprogress/2026-06-18-vulkan-v3dv-noop-job-rootcause.md.
+fence-signalling blockers. Doc: docs/done/2026-06-18-vulkan-v3dv-noop-job-rootcause.md.
 
 ### 2026-06-18 — Vulkan Tier-2 (queue submit) attempted + ⚠ flagship perf anomaly (thermal, cold-resting)
 Pushed Vulkan past device-create toward Tier 2 (a queue submit). Extended the harness with a minimal
@@ -708,7 +708,7 @@ decouple as Tier 2, bypassing the cosmetic dispatch-gate). Compile-verified (no 
 one paced boot: vkCreateImage/AllocateMemory/BindImageMemory/record-clear/QueueSubmit/QueueWaitIdle ALL →
 0, **PASS Tier 3**, 0 faults, 0 V3D timeouts. So the Pi4 V3D executes an actual Vulkan-issued render
 command end-to-end. Flagship restored after. Next Tier 4 = render pass + geometry/shaders → vkQuake. Doc:
-docs/inprogress/2026-06-18-vulkan-v3dv-noop-job-rootcause.md.
+docs/done/2026-06-18-vulkan-v3dv-noop-job-rootcause.md.
 
 ### 2026-06-18 — ★★★ Vulkan TIER 4a: a Vulkan clear PAINTS THE LIVE HDMI SCREEN
 Built on Tier 3 (offscreen clear, pixel-verified) to a VISIBLE result. Added a committable winsys one-shot

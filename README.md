@@ -27,7 +27,7 @@ on a desktop AMD GPU.
 > and a full `--with-ports` image (coreutils, bash, jq, Python, busybox, curl, …) builds on
 > gcc-16 and boots + runs on the Pi with 0 faults. (A Docker-reproducible gcc-16 release build
 > is the remaining nice-to-have.) Details in the
-> [gcc-16 release plan](docs/inprogress/gcc16-release-plan.md).
+> [gcc-16 release plan](docs/done/gcc16-release-plan.md).
 
 > 🚀 **First time here?** [**TUTORIAL.md**](TUTORIAL.md) is a single,
 > self-contained walkthrough: build the image, flash an SD card, boot the Pi,
@@ -115,7 +115,7 @@ work; `⛔` blocked on external dependencies; `⬜` not started.
 | GPIO observer | 🟡 | `/dev/gpio` read-only snapshot; outputs attended |
 | GPU (V3D 4.2) — OpenGL | ✅ | Ported Mesa `v3d` Gallium + GL → **GLQuake ~40 fps @ 1080p** |
 | GPU (V3D 4.2) — Vulkan (V3DV) | ✅ | Ported Mesa `v3dv` Vulkan driver on real V3D 4.2 — init, texture upload (no-WSI buffer→image copy), SPIR-V vertex/fragment/compute shaders and render passes all execute on the GPU (HW-validated); **vkQuake renders the full textured 3D start map**. The only remaining WIP is app-level: vkQuake's **keyboard/mouse input is not yet wired** (an intermittent V3D binner wedge on long GPU runs — not Vulkan-specific — is tracked separately). Fork: [rpi-phoenix-rtos/vkQuake](https://github.com/rpi-phoenix-rtos/vkQuake), branch `phoenix-rpi4-port` |
-| GPU concurrency (`v3d-server`) | ✅ | A userspace **`v3d-server` daemon** (`/dev/v3d-srv`, `/sbin/rpi4-v3d`) owns the single V3D and serializes GPU submits from multiple clients over a message port, so **an accelerated X desktop and a second GPU program can run at the same time**. HW-proven end-to-end: BO/compute/render/TFU submit bit-exact through the daemon, two concurrent compute clients serialized, and a glamor GPU-accelerated X desktop with a **live GPU-rendered window running concurrently** on one screen. Lifts the earlier single-GPU-process limit. Clients link `libv3d-client`; opt-in today (not the default boot). Details: [docs/inprogress/2026-08-22-concurrent-gpu-v3d-server-feasibility.md](docs/inprogress/2026-08-22-concurrent-gpu-v3d-server-feasibility.md) |
+| GPU concurrency (`v3d-server`) | ✅ | A userspace **`v3d-server` daemon** (`/dev/v3d-srv`, `/sbin/rpi4-v3d`) owns the single V3D and serializes GPU submits from multiple clients over a message port, so **an accelerated X desktop and a second GPU program can run at the same time**. HW-proven end-to-end: BO/compute/render/TFU submit bit-exact through the daemon, two concurrent compute clients serialized, and a glamor GPU-accelerated X desktop with a **live GPU-rendered window running concurrently** on one screen. Lifts the earlier single-GPU-process limit. Clients link `libv3d-client`; opt-in today (not the default boot). Details: [docs/misc/2026-08-22-concurrent-gpu-v3d-server-feasibility.md](docs/misc/2026-08-22-concurrent-gpu-v3d-server-feasibility.md) |
 | Audio (PWM, 3.5 mm jack) | 🟡 | `/dev/audio0` streaming DMA; Quakespasm audio backend |
 | X11 / windowing (kdrive) | ✅ | Xphoenix **fbdev DDX** (CPU shadow-blit — the default, always-on path) + kbd/mouse; WindowMaker/JWM/twm, xterm/xcalc/xedit/xeyes/xclock, plus mc/nano. Migrated to real `phoenix-rtos-ports` (the X server, xterm, WindowMaker and dillo build as framework ports). An **experimental glamor build** additionally runs GPU-accelerated 2D X on the V3D GPU — and, via the `v3d-server` daemon (row above), can now do so **concurrently with another GPU client** (accelerated desktop + a live GPU window at once), lifting the former single-GPU-process restriction. Modern modesetting/DRM remains a future goal |
 | posixsrv / psh userland | ✅ | pipes, ptys, `/dev/{null,zero,urandom,full}`, AF_UNIX |
@@ -124,7 +124,7 @@ work; `⛔` blocked on external dependencies; `⬜` not started.
 | USB mass-storage, I²C/SPI/PWM, camera (CSI-2) | ⬜ | Not started |
 
 The authoritative, per-peripheral matrix (with evidence and remaining work) is
-[docs/inprogress/pi4-hardware-support-matrix.md](docs/inprogress/pi4-hardware-support-matrix.md).
+[docs/pi4-hardware-support-matrix.md](docs/pi4-hardware-support-matrix.md).
 Open bugs and known limitations are in
 [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md).
 
@@ -224,7 +224,7 @@ player profile) and plays a **fully-lit in-game 3D race** — the kart, opponent
 the textured track, lighting and HUD all render on the GPU, 0 crashes. Its
 rendering was checked frame-for-frame against the same SuperTuxKart 1.4 on a
 desktop AMD GPU and matches closely (main-menu SSIM 0.991, in-race 0.873) — see
-[docs/inprogress/2026-08-27-stk-visual-parity.md](docs/inprogress/2026-08-27-stk-visual-parity.md).
+[docs/done/2026-08-27-stk-visual-parity.md](docs/done/2026-08-27-stk-visual-parity.md).
 Like the extra Quake engines it is built on demand (large mobile-reduced asset
 set, ~150 MB) rather than baked into the default image. The `-N` auto-race flags
 drive a race without any input, which is the simplest way to see it in motion;

@@ -128,7 +128,7 @@ Open work items as of bring-up to a new machine:
   live instrumentation of `pl011_fbcon_putc` to capture the bytes
   flowing through it between command output and the next prompt.
 - **General**: a number of TD-NN items in
-  [`docs/inprogress/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md`](../inprogress/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md)
+  [`docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md`](../TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md)
   describe transitional Pi-4-bringup shortcuts. Several are now
   resolvable; the doc is the source of truth.
 

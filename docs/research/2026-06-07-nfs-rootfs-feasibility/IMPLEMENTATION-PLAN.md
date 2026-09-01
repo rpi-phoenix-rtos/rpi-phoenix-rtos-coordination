@@ -613,7 +613,7 @@ until it returns. Consequences the implementer MUST encode:
 
 ### 5.6 Worker-thread stack size — the #120 lesson, applied
 
-**Hard requirement.** The SD-root saga (`docs/inprogress/2026-06-07-sd-exec-data-path.md`
+**Hard requirement.** The SD-root saga (`docs/done/2026-06-07-sd-exec-data-path.md`
 §"CORRECTED ROOT CAUSE") proved the default **8 KB pool-thread stack overflows** on this
 port's deep fs call chains, surfacing as mystery list-corruption Data Aborts; the fix was
 `16*_PAGE_SIZE` (64 KB). The NFS call chain (msgRecv → handler → libnfs sync → XDR

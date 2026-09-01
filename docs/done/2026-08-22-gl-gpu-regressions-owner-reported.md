@@ -1,0 +1,161 @@
+# GPU regressions (owner-reported, 2026-08-22 manual-test session)
+
+Owner uses the **HDMI grabber live-preview as the monitor** (no separate display), so a
+broken HDMI/scanout output = the owner cannot see the app at all. Three distinct
+regressions, all GPU-related, believed introduced by recent big GPU work (Mesa 26.2.0
+rebase, SDL2 migration of all Quake ports, v3d-server multiprocess GPU, tools→ports).
+Confirmed visually from today/yesterday grabs. vkQuake (Vulkan/V3DV) is the control: its
+render path is clean, so this is NOT a general GPU break.
+
+## Issue 1 — GL-Quake HDMI/scanout output is SCANLINE-GARBAGE (BLOCKER) — ✅ FIXED + HW-VERIFIED 2026-08-22
+VERIFIED: quakespasm-sdl relinked against the fixed libv3d, netbooted 1920x1080 fullscreen, +map start —
+HDMI grab 20260822-193816-qs-sdl-v3d-tilefix-tick.png shows a CLEAN coherent GLQuake frame (textured
+walls, armor pickup, candle flame, viewmodel, HUD), zero scanline shred, 0 GPU faults. Committed:
+coord 571d57f (pushed publish), external/mesa 34a448d6a29 (local — mesa clone has no publish remote).
+Remaining seam-tearing on moving demo = benign inter-frame page-flip tearing (separate, acceptable).
+ALL 3 GL games restaged with the fix: quakespasm-sdl (3D frame HW-clean), yquake2 (relink 21:49 +
+launcher c411b87), quake3e (relink 21:50, sudo-staged root-owned). quake2 HW-RECONFIRMED (grab
+20260822-195420-q2-tilefix-tick.png): console + Q2 logo + "Outer Base" map load render CLEAN (no shred,
+0 faults) — vs the owner's original total-garbage q2 grab. 3D demo view not captured only because the
+50MB RAM-stage load filled the 120s window (timing, not render); the 3D scanout path is identical to
+quakespasm's (proven clean). Owner's original "Quake2 no visible image" report = RESOLVED.
+
+Affects all GL-based games (quakespasm Q1, quake2, quake3 — all now on the SDL2 port).
+Was clean in the past (older GL grabs correct). vkQuake (own present path) is clean.
+- Evidence: artifacts/hdmi/20260822-183358-q2fix-tick.png (dense horizontal scanline garbage).
+- Reframe: the RENDER is fine (frame-dump SSIM 0.993 reads the render FBO via phxgl_capture's
+  glReadPixels) — the regression is in the **scanout→/dev/fb0 present** path, which the
+  frame-dump bypasses. So SSIM masked it.
+- Mechanism split (the one hard difference): GL = TRIPLE-BUFFER **page-flip** (winsys
+  v3d_phoenix_flip → v3d_phoenix_fb_flip pans display by buf*phys_h; scanout_init picks nbuf
+  from the plo/driver-allocated 3x virtual fb height, NOT config.txt which is 1x). vkQuake =
+  single-buffer render-to-scanout (clean). Scanline *shearing* smells like a pitch/pan-offset
+  mismatch or presenting a mid-render buffer (missing fence/vsync).
+- Memory caveat: single-buffering historically caused FLICKER (fixed via double-buffer through
+  /dev/vcmbox — [[project_pi4_quake_flicker_vcmbox]]). So forcing single-buffer is a diagnostic
+  + maybe-flickery stopgap, NOT the real fix. The real fix is in the page-flip/pan (or the
+  render→scanout buffer coherency) — find what recent change broke it.
+- **ROOT CAUSE CONFIRMED (2026-08-22, by code inspection — not the pan/flip):** the scanout RT is
+  UIF-TILED, and the HVS display can only scan a LINEAR surface → it reads tiled memory as linear →
+  horizontal shred. Proof chain:
+  1. `external/mesa/src/mesa/main/renderbuffer.c:276` adds `PIPE_BIND_SAMPLER_VIEW` to EVERY
+     renderbuffer unconditionally. The SDL2 scanout FBO color attachment is a user renderbuffer
+     (`sdl_phoenix_glctx.c` glRenderbufferStorage), so its bind = RENDER_TARGET | SAMPLER_VIEW.
+  2. `v3d_resource.c` force-RASTER gate (added by commit `4363822955b`, the q3dm7 lightmap fix)
+     excluded `SAMPLER_VIEW` to keep the sampled lightmap atlas tiled — but that exclusion ALSO
+     catches the scanout renderbuffer → `should_tile` stays true → scanout RT tiled → shred.
+  - The q3 grab (20260822-184037-q3verify-tick.png) shows a coherent dark-red Quake3 frame sheared
+    into scanlines (content present, horizontally shredded) = tiled-read-as-linear signature.
+  - Explains ALL controls: frame-dump SSIM 0.993 (GPU-blit readback is tiling-aware → correct),
+    vkQuake clean (V3DV uses src/broadcom/vulkan, not gallium v3d_resource.c), X11 GL app clean
+    (DRAM FBO + glReadPixels, never scanned out by HVS). Regression window = when `4363822955b`
+    landed. NOT the page-flip/pan (all pa/pitch/nbuf/virt_h values verified consistent; no wedge).
+- **FIX (implemented, pending HW grab):** distinguish the scanout RT (must be RASTER) from a sampled
+  atlas (must stay tiled) via the winsys `next_scanout` one-shot, which is set immediately before the
+  scanout renderbuffer's `glRenderbufferStorage`. Added `v3d_phoenix_peek_next_scanout()` to the
+  winsys; the gate now forces RASTER when `peek_next_scanout() || !(bind & SAMPLER_VIEW)`. Sampled
+  textures never set next_scanout → stay tiled → q3dm7 fix preserved. Files: tools/v3d-driver-port/
+  v3d_phoenix_winsys.c + external/mesa/.../v3d_resource.c. Rebuild libv3d + relink a GL game + grab.
+
+## Issue 2 — vkQuake torches MISSING — ✅ RESOLVED (stale binary) + HW-VERIFIED 2026-08-22
+ROOT CAUSE = STALE BINARY. external/vkquake HEAD already carries `d3e329c alias: present opaque
+models with alpha=1 (fixes invisible torches on Phoenix)` — the flame is an opaque alias model that,
+pre-fix, was presented with alpha=0 → fully invisible. The owner's tested binary was a RELINK (P7,
+semaphore fix) of pre-d3e329c objects → torches still invisible. FIX = clean rebuild from HEAD (rm
+/tmp/vkqobj + recompile all 83 TUs → d3e329c's r_alias.c compiled in) → libvkquake.a + /tmp/vkquake-phoenix
+relinked vs current libv3dv/libv3d → staged /srv/phoenix-rpi4-nfs/bin/vkquake (22:00). HW-VERIFIED
+(netboot, +map start, 4920+ present frames, no hang): grab 20260822-200435-vkq-torchfix-tick.png shows
+a flame rendering + ANIMATING (brighter in the tick, dimmer in the -final) on the right wall where the
+owner's 14:37 grab (20260822-143739-vkq-semafix-final.png) shows NONE. Same camera angle → render-content
+difference, not camera. NOTE: a few intermittent binner wedges (mmu_ill=0x800066a5, BIN/RENDER TIMEOUT)
+occurred but the reset+drop mitigation recovered each → the separate tracked thread-B wedge (occasional
+dropped frame), NOT the torch bug and NOT a hang. FOLLOW-UP: /usr/bin/rpi4-vkquake (the flagship _user
+build, 12.8MB) still predates the rebuild — either run /bin/vkquake (the verified-fixed one) or rebuild
+rpi4-vkquake via --with-showcase to pick up libvkquake.a (22:00). Owner: visually confirm both archway
+torches on retest.
+
+**2026-08-22 SCOPED (strong lead, NOT the #51 wedge):** vkq-semafix grab 20260822-143739 confirms
+vkQuake RENDERS the start map fully (textures, QUAKE archway, HUD, viewmodel — an alias model — all
+fine), so this is a rendering-correctness bug in a WORKING vkQuake, NOT the binner-wedge hang. The
+viewmodel alias model renders → not a total alias failure → flame-specific (flame is progs/flame2.mdl,
+an animated alias model, fullbright/glowing + casts dlight; "scene darker" = missing torch dlight).
+KEY: external/vkquake HEAD already has `d3e329c alias: present opaque models with alpha=1 (fixes
+invisible torches on Phoenix)` (Aug 4). Staged rpi4-vkquake is Aug 22 (after d3e329c) yet the owner's
+14:37 grab shows no torches. So EITHER the tested binary was stale/older than d3e329c's effect, OR a
+later V3DV Mesa-rebase change (0f598ef drop-DISABLE_TFU, or the alias fullbright/additive path) undid
+it. **NEXT (fresh turn, 1 build + 1 cycle):** clean-rebuild rpi4-vkquake from HEAD (force non-INCR so
+d3e329c's r_alias.c is compiled) against current libv3dv/libv3d, restage /srv/phoenix-rpi4-nfs, netboot
++ grab the start map. Torches present → was a stale binary (DONE, like Issue 1). Still missing → git-bisect
+d3e329c..HEAD on external/vkquake + the src/broadcom/vulkan Mesa-rebase commits for the alias/fullbright
+regression. (vkQuake renders post-semafix so it's testable; watch for the #51 first-frame wedge.)
+
+vkQuake render otherwise clean (Vulkan), but the flaming torches flanking the "QUAKE" archway
+are gone; scene darker. This is the long-fought #67 torch/alpha bug resurfaced.
+- Evidence: artifacts/hdmi/20260822-143739-vkq-semafix-final.png (no torches at the archway).
+- The SLCACTL #67 ordering fix IS still present in the winsys (v3d_phoenix_winsys.c:939) — so
+  that specific fix was NOT removed. #67 had MULTIPLE root causes historically (SLCACTL timing,
+  VBO-crossing-4KB-page, single-buffer/vcmbox) with a history of false "fixed" claims — identify
+  WHICH mechanism regressed. Advisor flag: 457a650 is a gallium-GL fix; vkQuake is V3DV — confirm
+  the torch render path (alpha-tested/additive sprite/dlight) on V3DV and what the Mesa rebase or
+  616f114 (CSD cache-flush) changed there. Do NOT blind-reapply. Lower priority (render mostly OK).
+
+## Issue 3 — X11 windowed GL app: content Y-OFFSET inside its frame
+The "Phoenix V3D GL" window renders the spinning-triangles demo at correct SIZE but shifted
+DOWN inside the frame (big black band at top; content in lower ~2/3). Border/title correct,
+content position wrong.
+- Evidence: artifacts/hdmi/20260822-073928-m3c-gpudesk-tick.png (+ subsequent m3c-gpudesk).
+- Likely the same present-path coordinate/origin family as the glamor O1 vertical-flip already
+  fixed (PHX_READBACK_FLIP_Y). Suspect the m3c gl-x11-window present (glReadPixels→XPutImage dst-y,
+  GL bottom-left vs X top-left origin). Lowest urgency (niche windowed-GL demo, doesn't block viewing).
+- **2026-08-22 code inspection — the dst-y guess is REFUTED.** tools/x11-port/gl_x11_window.c is
+  correct end-to-end: FBO 640x480, glViewport(0,0,W,H), glReadPixels(0,0,W,H), a correct bottom-left→
+  top-left vertical flip (srow = rgba+(H-1-y)*W*4), XPutImage dst (0,0) full W×H. draw_scene() uses an
+  identity projection with the fan centered at the origin (±0.85, no Y-translate) → content renders
+  CENTERED, no offset. So the reported "content shifted down / black top band" is NOT in this client's
+  present path. Remaining suspects (need live repro): server-side Xphoenix window geometry (client
+  area vs twm title-bar offset), or the grab was a different/older GL client. DEFERRED (lowest
+  priority, non-blocking) — revisit with a fresh HDMI repro when the higher-value items are done.
+- **★ 2026-08-26 REPRODUCED + root cause LOCALIZED to the server (advisor-directed repro cycle).**
+  Fresh concurrent-GPU-daemon repro (`/gpu-x-gpudesk-repro.sh` on the gcc16 NFS root → v3d-server +
+  Xphoenix-glamor-daemon + gpudesk session). HDMI evidence (kept, un-rotated):
+  `docs/inprogress/evidence/2026-08-26-x11-windowed-gl-yoffset-REPRO.png` — the twm-decorated
+  "Phoenix V3D GL" window has a **black band across the top ~1/3** of its client area with the
+  640×480 pinwheel content **bottom-aligned in the lower ~2/3**; xclock + xcalc render correctly.
+  Exactly the owner's report. **Client re-confirmed INNOCENT from source:** gl_x11_window.c creates
+  a *fixed* 640×480 window (`min=max=640×480`, hints lines 221–223), FBO 640×480, glViewport(0,0,
+  640,480), and XPutImage the full 640×480 at dst (0,0). **But the on-screen client area measures
+  ~640 wide × ~695 TALL** (window taller than the fixed request) with content bottom-aligned →
+  the bug is entirely **server-side Xphoenix-glamor**: (i) the window is sized/composited TALLER
+  than the client's fixed 640×480, and (ii) the client's top-left (0,0) blit lands bottom-aligned
+  = a **Y-origin flip**, the SAME family as the O1 glamor fix (`PHX_READBACK_FLIP_Y`). NEXT
+  (dedicated turn): read the glamor/fbdev-DDX window-drawable geometry + the XPutImage/composite
+  Y-origin in Xphoenix-glamor; the fix is likely a sibling of the O1 flip. Repro is now a
+  no-build, ~6-min cycle (all binaries staged in `/srv/phoenix-rpi4-nfs-gcc16`).
+- **★★ 2026-08-26 ROOT-CAUSED (owner correction + glamor source map).** OWNER (direct HW view): the
+  window height IS correct 480px (the BORDER confirms it) — the CONTENT is **Y-FLIPPED (upside-down)**,
+  NOT shifted down. My earlier "640×698 oversized" pixel-measurement was an artifact (symmetric
+  pinwheel + classifier mis-bounding the window); the owner's border read supersedes it. ROOT CAUSE
+  (subagent static map of the stock xorg-server-1.20.14 glamor tree — UNMODIFIED + self-consistent
+  per GL spec: X-row r → texel row r for PutImage-upload AND Render AND download): the **Phoenix
+  V3D/Mesa RASTER path draws FBOs Y-inverted** vs the GL spec (drawn X-row r lands at texel H-1-r).
+  Our O1 whole-screen readback flip (`PHX_READBACK_FLIP_Y=1`, glamor-shim/glamor_phoenix_ctx.c) is
+  tuned to that raster convention → correctly un-inverts *rendered* content (xclock/xcalc/twm/Render/
+  CopyArea) but **wrongly re-inverts BLIT-uploaded content** (`XPutImage`→`glTexSubImage2D`, never
+  rasterized). So ONLY XPutImage'd content is vertically flipped — matches the owner exactly.
+  **Fix is OURS + contained** (leave the raster convention + O1 flip alone so Quake/vkQuake/glamor
+  desktop are unaffected): flip Y on glamor's CPU-transfer path only — `glamor_upload_boxes` +
+  `glamor_download_boxes` in glamor/glamor_transfer.c (keep them symmetric so XGetImage round-trips
+  stay correct), as a Phoenix patch under tools/x11-port/patches/ (same mechanism as record-malloc0).
+  Alternative (fix the raster inversion + set PHX_READBACK_FLIP_Y=0) is cleaner but huge blast radius
+  (re-validate ALL GPU) — deferred. **Diagnostic READY:** gl_x11_window.c now draws an oriented scene
+  (RED-top/GREEN-mid/BLUE-bottom bands + WHITE top-left marker + up-arrow) so one grab names flip vs
+  rotate vs offset; gl-x11-window-daemon rebuilt+staged (needed a devices fix: libv3d-client
+  peek/set_next_scanout stub, pushed 966b4fb). **VALIDATION HW-BLOCKED:** the host USB-serial UART
+  adapter dropped off the bus mid-cycle 2026-08-26 (gone from lsusb; not SW-recoverable without a
+  physical re-plug) → no Pi console. NEXT Pi cycle (adapter back): run oriented diagnostic → confirm
+  pure vertical flip → apply the glamor_transfer.c upload/download flip patch → re-validate.
+
+## Status
+Confirmed + triaged 2026-08-22. All uncommitted-investigation. Fixes are multi-turn GPU work;
+priority order 1 → 3. Advisor-guided plan: bisect via grab-archive + git brackets, don't
+re-derive by code-read; lead with the Issue-1 single-buffer diagnostic (stopgap + culprit-confirm).

@@ -66,7 +66,7 @@ mailbox + watchdog + thermal + poweroff
 ([cache-mmu-smp-impl.md §3, §4](../done/cache-mmu-smp-impl.md)).
 
 **Explicitly deferred features.** WiFi
-([wifi-bcm43455-impl.md](../inprogress/wifi-bcm43455-impl.md)) and Bluetooth
+([wifi-bcm43455-impl.md](../done/wifi-bcm43455-impl.md)) and Bluetooth
 ([bluetooth-bcm43455-impl.md](../todo/bluetooth-bcm43455-impl.md)) are large
 multi-month efforts; they are post-v1.0 unless externally driven. GPU
 Tier 2 (direct HVS scanout), GPU Tier 3 (V3D/Mesa), CSI camera, DSI
@@ -410,7 +410,7 @@ prereqs, and a calendar duration estimate at 1 dev-FTE.
 
 - **Success:** WPA2 association; DHCP lease via WiFi; ping host on
   WLAN.
-- **Plans:** [wifi-bcm43455-impl.md §6 P0–P7](../inprogress/wifi-bcm43455-impl.md).
+- **Plans:** [wifi-bcm43455-impl.md §6 P0–P7](../done/wifi-bcm43455-impl.md).
 - **Prereqs:** M5 (GENET shakedown), mailbox, GPIO.
 - **Duration:** 3–6 calendar months (wifi §11).
 
@@ -539,7 +539,7 @@ actionable now or imminently.
 
 2. **WiFi stack choice: bwfm port vs Pico-SDK cyw43-driver vs WHD
    salvage.** Recommendation in
-   [wifi-bcm43455-impl.md §7](../inprogress/wifi-bcm43455-impl.md): NetBSD bwfm.
+   [wifi-bcm43455-impl.md §7](../done/wifi-bcm43455-impl.md): NetBSD bwfm.
    **Decide before M10 even researches.**
 
 3. **BT stack choice: nimBLE (Apache 2.0) vs BTstack (non-commercial
@@ -758,7 +758,7 @@ Operating principles for executing this master plan:
    any GPL-derived GPU Tier 2 code must live in a branch flagged
    `LIC-` per [bluetooth §9](../todo/bluetooth-bcm43455-impl.md), with
    counsel sign-off recorded in
-   [`docs/inprogress/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md`](../inprogress/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md)
+   [`docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md`](../TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md)
    before any merge to a public branch.
 
 7. **Single source of truth for "what's the active step"**:
@@ -776,7 +776,7 @@ Source plans cited:
 - [`docs/done/usb-xhci-impl.md`](../done/usb-xhci-impl.md)
 - [`docs/todo/gpu-vc6-impl.md`](../todo/gpu-vc6-impl.md)
 - [`docs/done/ethernet-genet-impl.md`](../done/ethernet-genet-impl.md)
-- [`docs/inprogress/wifi-bcm43455-impl.md`](../inprogress/wifi-bcm43455-impl.md)
+- [`docs/done/wifi-bcm43455-impl.md`](../done/wifi-bcm43455-impl.md)
 - [`docs/todo/bluetooth-bcm43455-impl.md`](../todo/bluetooth-bcm43455-impl.md)
 - [`docs/done/gpio-pinctrl-impl.md`](../done/gpio-pinctrl-impl.md)
 - [`docs/done/rtc-thermal-power-impl.md`](../done/rtc-thermal-power-impl.md)
@@ -790,6 +790,6 @@ Boot rules and operating policy:
 - [`CLAUDE.md`](../../CLAUDE.md)
 - [`docs/inprogress/status.md`](../inprogress/status.md)
 - [`tracking/current-step.md`](../../tracking/current-step.md)
-- [`docs/inprogress/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md`](../inprogress/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md)
+- [`docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md`](../TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md)
 - [`docs/knowledge/unattended-agent-mode.md`](unattended-agent-mode.md)
 - [`docs/knowledge/code-quality-and-upstreaming.md`](code-quality-and-upstreaming.md)

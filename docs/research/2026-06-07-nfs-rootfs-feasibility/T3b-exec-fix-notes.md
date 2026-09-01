@@ -83,7 +83,7 @@ failure. (A real load-path defect would surface as `-ENOEXEC`/`-EIO`/a fault, no
 ENOENT.)
 
 The parsimonious explanation, consistent with all evidence:
-- `docs/inprogress/2026-06-07-nfs-night-progress.md:14` lists the host export as having
+- `docs/done/2026-06-07-nfs-night-progress.md:14` lists the host export as having
   an **empty `bin/`** at the time the file inventory was written.
 - The exec target `/srv/phoenix-rpi4-nfs/bin/nfs-smoke` has **mtime 01:52**; the T3b
   read/write HW test (and the exec attempt) is timestamped "~01:5x" — **ambiguous /

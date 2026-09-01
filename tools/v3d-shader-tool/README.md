@@ -15,7 +15,7 @@ workgroup base, compute the global index, `mov tmud`=index / `add tmua`=base+idx
 the kernel-gen half of ML phase-2 (V3D GPU matmul); the winsys `ioc_submit_csd` handler
 already exists (untested) — NEXT is the on-Phoenix CSD harness (shader BO + uniforms BO
 carrying the SSBO GPU VA + output BO; fill `drm_v3d_submit_csd.cfg[]`; dispatch; read
-back + numeric-verify). See docs/inprogress/2026-08-13-ml-phase2-v3d-gpu-matmul-design.md.
+back + numeric-verify). See docs/done/2026-08-13-ml-phase2-v3d-gpu-matmul-design.md.
 
 Also: fixed `v3d_type_size` to return `unsigned` (Mesa 26.2.0's `nir_lower_io` changed the
 `type_size` callback signature int→unsigned; the tool predated the Mesa-26 rebase).

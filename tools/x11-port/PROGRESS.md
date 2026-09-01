@@ -346,7 +346,7 @@ has only `ephyr` (Xephyr, runs on another X) + `src` (the kdrive core) + `meson.
 Paths to a software X on `/dev/fb0` (for the next, attended-or-multi-session effort), best-first:
 1. **Restore/write a minimal kdrive fbdev backend** on the modern kdrive core (`hw/kdrive/src` +
    a small `fbdev` card/screen driver) using the shadow-FB + `write()`-to-`/dev/fb0` model
-   (no `mmap(fd,0)`; per `docs/inprogress/2026-06-05-fb0-attended-decisions.md`). Cleanest long-term.
+   (no `mmap(fd,0)`; per `docs/misc/2026-06-05-fb0-attended-decisions.md`). Cleanest long-term.
 2. Use the **PR #82 tinyx tree** (`phoenix-rtos-ports#82`) if it carries a restored Xfbdev — cherry-pick.
 3. An **old xorg-server (~1.13)** that still has `hw/kdrive/fbdev` — but decade-old autotools/deps.
 

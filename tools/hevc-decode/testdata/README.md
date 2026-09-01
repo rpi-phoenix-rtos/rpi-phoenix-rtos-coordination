@@ -36,7 +36,7 @@ NAL units: VPS(32), SPS(33), PPS(34), SEI_PREFIX(39), **IDR_N_LP(20)** slice.
 
 Still to extract on the host for the harness (M2): `data_byte_offset` (start of slice
 DATA past the slice header — the HW consumes data, not header) and `bit_size`, plus the
-exact SPS/PPS-derived register words. See `docs/inprogress/2026-08-28-hevc-m2-register-spec.md`.
+exact SPS/PPS-derived register words. See `docs/misc/2026-08-28-hevc-m2-register-spec.md`.
 
 ## License
 

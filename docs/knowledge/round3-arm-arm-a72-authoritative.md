@@ -172,7 +172,7 @@ There is no ARM-published "AArch64 boot protocol" document with the force of arc
 
 ## 8. The specific scenario: loader writes data with caches on, jumps to kernel with caches off, kernel enables caches
 
-This is the Phoenix-RTOS Pi 4 case described in `docs/inprogress/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md` TD-04. Walking it through the architecture:
+This is the Phoenix-RTOS Pi 4 case described in `docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md` TD-04. Walking it through the architecture:
 
 **Step A: Loader (PLO) executes with `SCTLR.C=1` and writes the kernel image into DRAM.**
 The writes land in the loader's L1 D-cache (write-back per the typical Cacheable mapping of loader text/data). Lines may be marked dirty. The L2 cache may also be populated (A72 L2 is inclusive of L1 D, so dirty L1 lines are reflected in L2 as Modified). Other observers in the IS domain — the other three A72 cores, any coherent DMA agent — may also have non-Modified copies.

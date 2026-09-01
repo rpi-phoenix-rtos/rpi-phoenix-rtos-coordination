@@ -21,7 +21,7 @@ return address = the "code pointer in events" #121 signature). Fix: usbkbd +
 usbmouse `msgstack` 1 KB → 8 KB (devices `f07b938`). Validated: WP-armed boot
 silent (no overflow) + **6/6 clean netboot boots** (psh, kbd0+mouse0, 0 faults)
 vs pre-fix ~3/11. Manifest `2026-06-09-usb121-stackfix-watchpoint.md`, image
-`d1e0c9e3`. Docs: `docs/inprogress/2026-06-09-usb-hid-attach-abort-localized.md`
+`d1e0c9e3`. Docs: `docs/done/2026-06-09-usb-hid-attach-abort-localized.md`
 (ROOT-CAUSED section). Memory: [[project_usb_kbd_attach_abort]],
 [[project_pi4_pool_thread_stacks_152]].
 
@@ -46,7 +46,7 @@ User directive: work on #156 and #152. Netboot live (card in host).
   `lib_listRemove` from `hub_thread:440` — NOT a stack-depth overflow (events sits above
   hub_thread's stack top; no thread stack neighbours it; size bumps leave geometry invariant).
   Live mechanism = #121 forward-overrun in usbkbd device-string formatting. Full writeup:
-  `docs/inprogress/2026-06-09-usb-hid-attach-abort-localized.md`. Reverted usb.c+hub.c.
+  `docs/done/2026-06-09-usb-hid-attach-abort-localized.md`. Reverted usb.c+hub.c.
 
 **#156 — residuals advanced:**
 - takeover-fail→RAM-root degrade: **verified ALREADY DONE in code** (`nfs_runTakeover` returns
@@ -310,7 +310,7 @@ Both major directive items — SMP and high-performance Ethernet — are
 now in a known-good state. Open candidates for the next initiative:
 
 - **WiFi (#36)**: BCM43455 SDIO bring-up. Large but now unblocked.
-  Plan in `docs/inprogress/wifi-bringup-plan.md`: 6–8 iterations. Tier 0 + 1a/1b
+  Plan in `docs/done/wifi-bringup-plan.md`: 6–8 iterations. Tier 0 + 1a/1b
   scout work done (controller is SDHCI @ 0xfe300000, accessible from
   userspace, fully clock/power-initialized at boot). Tier 1c is the
   next concrete step: GPFSEL3 → ALT3 + WL_REG_ON via mailbox + CMD5.
@@ -563,7 +563,7 @@ current state stands" become the next steps in priority order:
 3. **SMP cores 1-3** (TD-01) — cores wake from spin-table and park
    in WFE; needs active dispatch.
 4. **TD-cleanup sweep** — flip the actually-resolved TD-NN items in
-   `docs/inprogress/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md` (TD-04-hack-2/3,
+   `docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md` (TD-04-hack-2/3,
    TD-12, TD-16-cache-enable, TD-15 phase 5) to RESOLVED with their
    commit SHAs. Done partially this session; full sweep pending.
 
@@ -1103,7 +1103,7 @@ session once cache is either landed or definitively parked.
 ## Subordinate items
 
 * TD-01 … TD-16, TD-plo-dcache, TD-plo-icache, TD-15-mboxprobe,
-  TD-04 — see `docs/inprogress/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md`. The
+  TD-04 — see `docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md`. The
   cache-related TDs (TD-16, TD-plo-dcache, TD-plo-icache) remain
   open.
 * TD-04-hack-2 (asm probe stores in `_hal_init`) — REMOVED in

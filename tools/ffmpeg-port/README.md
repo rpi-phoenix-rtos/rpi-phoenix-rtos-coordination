@@ -169,5 +169,5 @@ None are toolchain/link blockers; they are runtime + infra:
    1080p is marginal. **VideoCore HW decode is out of scope** (Phoenix has no
    V4L2/MMAL codec path — a separate large driver project).
 
-See `docs/inprogress/2026-08-06-ffmpeg-port-feasibility.md` for the full
+See `docs/misc/2026-08-06-ffmpeg-port-feasibility.md` for the full
 feasibility assessment this driver productionizes.

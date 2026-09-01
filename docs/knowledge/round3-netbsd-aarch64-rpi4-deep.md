@@ -237,7 +237,7 @@ explicit clean-to-PoC is needed; coherency is in the inner
 shareable domain.
 
 This is precisely the trap Phoenix-RTOS keeps falling into (see
-`docs/inprogress/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md` TD-04): if kernel data
+`docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md` TD-04): if kernel data
 ends up in a non-cacheable or device mapping, or if the table-walker
 attributes don't match the data-side attributes, the missing `dc
 cvac` becomes load-bearing. NetBSD avoids the trap by construction —

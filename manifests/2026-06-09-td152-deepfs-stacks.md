@@ -3,7 +3,7 @@
 ## Summary
 
 - Date: 2026-06-09
-- Note: #152: libstorage STORAGE_DEEPFS_STACKSZ constant + bcm2711-emmc use; genet irq/link stacks widened (8->16K, 4->8K). Netboot smoke clean (psh/lwip/genet/IP, 0 faults), image 2726cbfe. USB stack-bump lead REFUTED+reverted (see docs/inprogress/2026-06-09-usb-hid-attach-abort-localized.md).
+- Note: #152: libstorage STORAGE_DEEPFS_STACKSZ constant + bcm2711-emmc use; genet irq/link stacks widened (8->16K, 4->8K). Netboot smoke clean (psh/lwip/genet/IP, 0 faults), image 2726cbfe. USB stack-bump lead REFUTED+reverted (see docs/done/2026-06-09-usb-hid-attach-abort-localized.md).
 - Generator: scripts/snapshot-integration-state.sh
 
 ## Repositories

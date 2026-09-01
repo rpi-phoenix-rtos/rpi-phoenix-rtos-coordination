@@ -60,7 +60,7 @@ one shot, and every cycle auto-reads `c` (thermal/clocks) at the end.
 | `M` | firmware walk |
 
 (The WiFi `s..G` set is bring-up instrumentation for the firmware-execution gate
-#91; expect to prune it once WiFi lands. See `docs/inprogress/2026-06-04-wifi-fw-exec-gate.md`.)
+#91; expect to prune it once WiFi lands. See `docs/done/2026-06-04-wifi-fw-exec-gate.md`.)
 
 ## Device nodes registered on the Pi 4 (netboot variant)
 

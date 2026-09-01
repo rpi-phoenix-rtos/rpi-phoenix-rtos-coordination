@@ -525,5 +525,5 @@ External:
 - [ARMv8 ARM D7.4](https://developer.arm.com/documentation/ddi0487/latest/)
   — dc isw vs civac PoC reach.
 - In-repo: [`boot-mmu-bringup-non-linux.md`](boot-mmu-bringup-non-linux.md);
-  [`TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md`](../inprogress/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md)
+  [`TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md`](../TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md)
   (TD-04, TD-05, TD-15, TD-16).
