@@ -59,29 +59,39 @@ where `g1` doesn't exist → ENOENT. Phoenix's cwd is a **userspace path string*
 map, so the stub couldn't chdir even if it wanted to. (Today's behaviour is
 fail-safe by luck — the wrong-cwd names don't exist, so nothing wrong is deleted.)
 
-### Fixes — status
+### Fix — DONE + HW-VERIFIED (2026-09-01): real `fchdir()` via a kernel fd→path record
 
-1. **libphoenix hygiene — DONE (committed):** the stub now returns `-ENOSYS`
-   instead of a false `0` (a libc must never report success for work it didn't do),
-   turning the silent wrong-cwd corruption into a loud failure. Pinned by a contract
-   test (`test-libc-misc -g unistd_fsdir`, case `fchdir`): fchdir on a non-directory
-   fd must fail and leave cwd unchanged.
-2. **coreutils `rm -r` — root-caused, NOT yet fixed (the gnulib route cascades).**
-   Both gnulib angles hit walls: `ac_cv_func_fchdir=no` makes gnulib emit a *plain*
-   `fchdir` that **multiply-defines** against libphoenix's symbol; forcing
-   `REPLACE_FCHDIR=1` via `DIR_HAS_FD_MEMBER=0` (a configure patch — Phoenix's
-   `opendir()` leaves `DIR.fd=-1` so `dirfd()` is genuinely unreliable) emits
-   `rpl_fchdir` with no clash **but also swaps `DIR` for gnulib's `struct
-   gl_directory`**, which then conflicts with the system `DIR` in `lib/fdopendir.c`
-   / `lib/getcwd.c`. Making that consistent needs the whole dirent family
-   (opendir/fdopendir/readdir/closedir/dirfd) gnulib-replaced — a real multi-issue
-   gnulib port, out of scope for a quick toggle. Reverted; port builds as before.
-3. **The proper fix (flagged, dedicated): a real `*at` family in libphoenix.**
-   Implement `openat`/`unlinkat`/`fstatat`/… so gnulib uses them directly
-   (`HAVE_UNLINKAT=1`) and never needs the fchdir/cwd dance. Seed: `rmdir()` already
-   unlinks via `mtUnlink` to the parent dir's **oid** + leaf name, so the fs servers
-   support oid-relative ops; `openat` additionally needs a kernel path to mint an fd
-   from a (dir-oid, name).
+`rm -r` (and all fts/openat consumers) is fixed by making `fchdir()` actually work,
+so gnulib's already-compiled fchdir emulation of `openat`/`unlinkat`/`fstatat`
+composes correctly — no coreutils port surgery, and every gnulib-based port heals.
+
+- **Kernel** (`posix.c`/`syscalls.c`, `sys_fdpath`): store the canonical path in the
+  refcounted `open_file_t` at `sys_open` (shared across `dup()` by construction — the
+  exact property a userspace fd→path table can't guarantee), and add an append-only
+  `sys_fdpath(fd, buf, size)` syscall to read it back. Freed in `posix_fileDeref`.
+- **libphoenix** (`unistd/dir.c`): `fchdir(fd)` = `sys_fdpath` → `chdir(path)`. Composes
+  with `resolve_path()`/`getcwd()`; a regular-file fd yields its path and `chdir` then
+  fails `ENOTDIR` (never a false success); a path-less fd (socket/pipe) yields `ENOENT`.
+- Earlier gnulib-only routes were dead ends (recorded so they aren't re-tried): a
+  plain-`fchdir` from `ac_cv_func_fchdir=no` **multiply-defines** vs libphoenix, and the
+  `REPLACE_FCHDIR=1` route swaps `DIR`→`struct gl_directory` and conflicts with the
+  system DIR in fdopendir/getcwd.
+
+**HW-verified:** `test-libc-misc -g unistd_fsdir` `fchdir` PASS (dir fd moves cwd; file
+fd fails, cwd intact), 16/16 OK, boot healthy; `fsdiag2` `rm -r` now `rc=0` (was rc=1
+"Directory not empty"); the previously-failing `nl.sh` flips to **PASS**.
+
+**Residual:** `printenv.sh` still fails, but *differently* — the old batch-wide
+`chmod: cannot access` cascade is gone; it now leaves a single
+`rm: … Directory not empty` (a deeper cleanup-cwd edge, likely gnulib's fd-based
+cwd-restore in `remove_tmp_`), under investigation. The `*at` family is no longer
+required for `rm -r` but remains a nice future addition (thin path-based wrappers on
+the same `sys_fdpath` record).
+
+**Build footgun hit:** editing the kernel `syscalls.h` did **not** rebuild libphoenix's
+`arch/*/syscalls.S` object (make missed the installed-header dep) → `undefined
+reference to sys_fdpath`. Fix: `touch` the `.S` (or clean libphoenix) after a kernel
+syscall-list change.
 
 ## Other findings (psh/environment limits, lower priority)
 
