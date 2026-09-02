@@ -13,7 +13,7 @@
  *
  * PRECONDITION (HW, Tier 1): the V3D must be powered on (v3d_phoenix_powerOn) before
  * the winsys touches MMIO — wired in the on-device launcher, not this link/smoke build.
- * Device enumeration's drmGetDevices2 scan is bypassed by the mesa-phoenix-port patch
+ * Device enumeration's drmGetDevices2 scan is bypassed by our Mesa patch (patches/mesa/phoenix-rpi4-v3d.patch)
  * (enumerate_devices -> create_physical_device with a FAKE_FD), see the Tier-0 doc.
  *
  * Copyright 2026 Phoenix Systems  %LICENSE%

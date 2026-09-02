@@ -15,7 +15,7 @@
  *
  * 2. Device-enumeration surface (drmGetDevices2 / drmGetVersion / drmFree*). Phoenix
  *    has no /dev/dri node and no real libdrm enumeration. enumerate_devices is patched
- *    (mesa-phoenix-port.patch) to bypass the drmGetDevices2 scan and call
+ *    (patches/mesa/phoenix-rpi4-v3d.patch) to bypass the drmGetDevices2 scan and call
  *    create_physical_device(instance, -1, FAKE_FD, -1) directly, but the symbols must
  *    still resolve for the link, and drmGetVersion is also called from
  *    create_physical_device itself -> return a tiny static "v3d" version.

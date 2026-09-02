@@ -72,7 +72,7 @@ drmVersionPtr drmGetVersion(int fd);
 void          drmFreeVersion(drmVersionPtr v);
 
 /* drmDevice enumeration — node/bus enums + a minimal device struct. The real scan is
- * bypassed (mesa-phoenix-port.patch patches enumerate_devices), so these only need to
+ * bypassed (patches/mesa/phoenix-rpi4-v3d.patch patches enumerate_devices), so these only need to
  * link; drmGetDevices2 returns 0 devices. */
 #define DRM_NODE_PRIMARY 0
 #define DRM_NODE_CONTROL 1

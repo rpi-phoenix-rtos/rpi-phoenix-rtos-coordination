@@ -1,0 +1,4 @@
+
+# Build outputs of the GPU compute probes (rebuild with their build-*.sh).
+csd-matmul
+csd-probe
