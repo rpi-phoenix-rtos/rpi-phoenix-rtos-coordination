@@ -207,3 +207,41 @@ spacing is still unaccounted for. **Next step: dump the bytes at the failing
 offset instead of reasoning about the stride** — the answer is in those 468
 bytes. The dumps and counters to do it are already on branch
 `wip/rpi4-wifi-glom`; master keeps the known-good driver.
+
+
+---
+
+## RESOLVED: glom de-aggregation — RX 0.14 → 3.0 MB/s
+
+The stride was in the bytes, not in the reasoning. Dumping a whole superframe
+and decoding it offline gave the answer immediately:
+
+```
+valid subframe headers at: 12, 96, 192, 288   (len=72, chan=2, doff=14 each)
+gaps:                      84, 96, 96
+superframe len 384; its descriptor listed 96-byte slots summing to exactly 384
+```
+
+**Subframes live in the descriptor's SLOTS, measured from the start of the
+superframe** — slot k spans `[sum(lens[0..k-1]), +lens[k])`. Slot 0 also carries
+the superframe's own 12-byte header, which is why the first gap is 84 and the
+rest are 96. Stepping by each subframe's own length (72) lands mid-header after
+the first one — exactly the "one good subframe per superframe, then a bad one"
+signature that three earlier guesses produced.
+
+### Result, three runs each
+
+| | TX | RX |
+|---|---|---|
+| before | 0.22–0.66 MB/s median (0.14–3.6 spread) | 0.13–0.29 MB/s |
+| **after** | **3.27 MB/s** (3.02–3.27) | **3.00 MB/s** (3.00–3.02) |
+
+RX is roughly **20× faster**, TX ~5×, and — the part worth noting — **the wild
+run-to-run variance is gone**. That variance was never the radio: it was frame
+loss driving TCP retransmit storms. Every superframe now de-aggregates cleanly
+(740 superframes → 3595 subframes, `bad=0`, `rx_err=0`).
+
+Wired genet remains ~30/20 MB/s, so WiFi is now within ~10× of the wired link
+rather than ~200×, and the per-frame overhead identified earlier is the next
+ceiling — though glom already amortises much of it, since one bus transfer now
+feeds several frames.
