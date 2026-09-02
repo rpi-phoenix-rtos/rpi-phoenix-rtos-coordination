@@ -261,3 +261,59 @@ Unexplained and worth a future look: something produced **2 EL1 faults** in
 `test-libc-unix-socket` on 2026-09-02 (`zfinal`) and in an earlier 05:32 run, then nothing
 across ~6 later runs. It is not fork-COW — 1024 COW writes in a forked child resolve zero
 faults on this kernel. The lazily-mapped path involved is unidentified.
+
+### The same construction-window bug is still live in the socket family (NOT fixed)
+
+`e88c8b75` fixed `posix_open`. The socket calls have the identical shape and were
+not touched — this is the highest-severity open item in this class:
+
+`posix_newFile()` (`posix/posix.c:321-328`) publishes `p->fds[fd].file` with
+`refs = 1` and **releases `p->lock` before returning**. Its callers then
+dereference `p->fds[fd].file` repeatedly with no lock, no reference of their own,
+and no re-check that the slot is still theirs:
+
+- `posix_socket`   — `posix.c:2310-2312` (AF_UNIX), `2321-2323` (AF_INET)
+- `posix_socketpair` — `posix.c:2377-2382`
+- `posix_accept4`  — `posix.c:2424-2426`, `2432-2434`
+
+Two consequences, both the class being hunted here:
+
+1. A racing `close(fd)` (or the exec CLOEXEC sweep) takes `refs` 1→0, so
+   `posix_fileDeref` frees `f` and NULLs the slot; the caller then writes
+   `p->fds[fd].file->type = …` through a freed pointer or a NULL. The error
+   paths call `posix_putUnusedFile` (`2332`, `2370`, `2390`, `2391`, `2446`),
+   which takes no lock, does not NULL-check, and ignores the refcount — so on
+   that path it is `proc_lockDone` on a freed lock plus a **second `vm_kfree` of
+   the same block**. Both `_vm_zfree` guards accept a legitimately block-aligned
+   pointer, so the block lands on the free list twice: one block, two owners,
+   next write overwrites the link. That is this document's whole subject.
+2. Between `posix_newFile` returning and the caller writing `oid`, the published
+   file has `oid.port == 0` — a live port, per `19dcbd5d`. `unix_accept4` /
+   `inet_accept4` **block until a connection arrives** inside that window, so it
+   is arbitrarily long.
+
+Fix is the same construction reference: `refs = 2` in `posix_newFile`, a
+slot re-check before each write, and a refcounted teardown in
+`posix_putUnusedFile`. The reproducer is the one in `tools/heap-stress`
+(`mode=race`) with `socket()`/`socketpair()` in place of `open()`.
+
+Also noted while reviewing: `posix_socketpair` returns `-EAFNOSUPPORT`
+(`posix.c:2358-2360`) without `pinfo_put(p)` — a leaked pinfo reference.
+
+### Lower-severity items from the same review (recorded, not fixed)
+
+- `posix_open`'s construction sentinel `f->oid.port = (u32)-1` is bit-identical
+  to `US_PORT`. Latent only — nothing tests `f->oid.port == US_PORT` today, but
+  `posix_truncate` already tests an oid that comes from `&f->oid`, so such a test
+  is one edit away. An explicit "under construction" `type` would be safer and
+  would also stop `F_SEEKABLE(f->type)` accepting a half-built file in `fcntl`.
+- `posix_open` publishes `f->path` before filling it (`posix.c:800-806`), so a
+  concurrent `posix_fdpath` can `hal_strlen` an uninitialised buffer. Build into
+  a local and store the pointer last.
+- `posix_open` returns `fd` even when the slot was lost to a racing close and
+  reallocated to a *different live file*. Returning `-EBADF` when
+  `p->fds[fd].file != f` costs one compare under a lock already held.
+- `posix_exit` derefs each fd but never NULLs `p->fds[fd].file`, leaving a
+  zombie's table full of dangling pointers.
+- `posix_exit`/`posix_exec` call `posix_fileDeref` while holding `p->lock`, and
+  its `refs == 0` branch does a blocking `proc_close`. Pre-existing.
