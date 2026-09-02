@@ -126,11 +126,11 @@ fi
 # Section 4: faults.
 echo
 echo "=== FAULTS ==="
-fault_count=$(grep -cE "Exception|Data Abort|panic|fault|ESR=|ELR=|FAR=|EC=" "$target")
+fault_count=$(grep -cE "Exception|Data Abort|panic|\bfault\b|ESR=|ELR=|FAR=|EC=" "$target")
 echo "fault_pattern_matches: $fault_count"
 if [ "$fault_count" -gt 0 ]; then
     echo "--- last 3 ---"
-    grep -nE "Exception|Data Abort|panic|fault|ESR=|ELR=|FAR=|EC=" "$target" | tail -n 3
+    grep -nE "Exception|Data Abort|panic|\bfault\b|ESR=|ELR=|FAR=|EC=" "$target" | tail -n 3
 fi
 
 # Section 5: timing.
