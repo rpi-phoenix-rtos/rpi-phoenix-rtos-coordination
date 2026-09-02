@@ -571,6 +571,7 @@ int main(int argc, char **argv)
 	int only_inherit = (strcmp(mode, "inherit") == 0) ? 1 : 0;
 	int only_exitcode = (strcmp(mode, "exitcode") == 0) ? 1 : 0;
 	int only_sigstat = (strcmp(mode, "sigstat") == 0) ? 1 : 0;
+	int only_dumpcorrupt = (strcmp(mode, "dumpcorrupt") == 0) ? 1 : 0;
 	long i;
 
 	/* Start from a clean slate: leftovers from a crashed run change which
@@ -737,6 +738,78 @@ int main(int argc, char **argv)
 	 * decoded as a normal exit with a nonsense code -- which would also mask
 	 * every child crash in this suite as a puzzling exit status.
 	 */
+	/* mode=dumpcorrupt: does the kernel's exception dump corrupt user memory?
+	 *
+	 * process_dumpException() builds its text in `char buff[SIZE_CTXDUMP]` on
+	 * the KERNEL STACK -- so the text is followed by uninitialised kernel stack,
+	 * which this kernel fills with 0xba -- and then passes that kernel address
+	 * to posix_write(2, ...), a syscall implementation that normally receives a
+	 * USER buffer. The corruption being chased splatters libphoenix's globals
+	 * with exactly that mixture: recent console text plus 0xba.
+	 *
+	 * So: make children fault on purpose (each one triggers a dump) and have the
+	 * PARENT check its own stdout pointer, atexit bookkeeping and a .data canary
+	 * after every one. If the dump path is the writer, this catches it without
+	 * needing the socket tests at all.
+	 */
+	if (only_dumpcorrupt != 0) {
+		FILE *saved_stdout = stdout;
+		const unsigned long salt = 0xd0d0d0d0d0d0d0d0UL;
+		size_t nw = sizeof(xf_data) / sizeof(xf_data[0]);
+		size_t i;
+		long iter, hits = 0;
+
+		for (i = 0; i < nw; ++i) {
+			xf_data[i] = xf_pattern(i, salt);
+		}
+
+		printf("HEAPSTRESS: dumpcorrupt, %ld deliberate child faults, watching stdout and a .data canary\n", n);
+		fflush(stdout);
+
+		for (iter = 0; iter < n; ++iter) {
+			int status = 0;
+			pid_t pid = fork();
+
+			if (pid < 0) {
+				printf("HEAPSTRESS-FAIL fork errno=%d\n", errno);
+				return 1;
+			}
+			if (pid == 0) {
+				*(volatile int *)0 = 1; /* fault -> kernel dumps the exception */
+				_exit(0);
+			}
+			(void)waitpid(pid, &status, 0);
+
+			if (stdout != saved_stdout) {
+				hits++;
+				printf("HEAPSTRESS-DUMPCORRUPT iter=%ld stdout changed %p -> %p\n",
+					iter, (void *)saved_stdout, (void *)stdout);
+				stdout = saved_stdout;
+				fflush(stdout);
+			}
+			/* NOTE: no _atexit_check() here. It exists in libphoenix now, but
+			 * this tool links the TOOLCHAIN sysroot's libphoenix.a, which is
+			 * older -- a stale-sysroot link error, not a missing function. The
+			 * stdout pointer and the .data canary detect the same corruption
+			 * without needing it. */
+			if (xf_scan(".data", xf_data, nw, salt) != 0) {
+				hits++;
+				printf("HEAPSTRESS-DUMPCORRUPT iter=%ld .data canary hit\n", iter);
+				fflush(stdout);
+				for (i = 0; i < nw; ++i) {
+					xf_data[i] = xf_pattern(i, salt);
+				}
+			}
+		}
+
+		if (hits != 0) {
+			printf("HEAPSTRESS-RESULT FAIL (dumpcorrupt: %ld corruption events across %ld faults)\n", hits, n);
+			return 1;
+		}
+		printf("HEAPSTRESS-RESULT PASS (dumpcorrupt %ld faults, parent memory intact)\n", n);
+		return 0;
+	}
+
 	if (only_sigstat != 0) {
 		long iter, wrong = 0;
 

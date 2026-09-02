@@ -825,3 +825,55 @@ A child can watch the exact victims from userspace, with no kernel changes: save
 `_atexit_check() == 0`, reporting the first call after which either trips. That names the
 syscall. Add it to `tools/heap-stress` as a child-side loop over the calls the failing
 tests make (`recv`, `recvmsg`, `send`, `poll`, `close`) while the parent drives the peer.
+
+---
+
+## 2026-09-02 (final): a measurement correction, and the boot change reverted
+
+### My own boot change was polluting this investigation
+
+Chasing the no-prompt boots turned up something that invalidates part of the failure
+data above. Counting boots that reached the NFS takeover and then never printed a prompt:
+
+| period | no-prompt boots |
+|---|---|
+| 2026-09-01 (before any of this) | **0 of 134** |
+| 2026-09-02, before `psh -i /etc/rc.nfsroot` | 2 of 108 |
+| 2026-09-02, after it | **5 of 88** |
+
+And crucially: **two runs I counted as test failures were no-prompt boots** — `zprobe1`
+and `zaxg3` both have `prompt=0` and `tests_ran=0`, i.e. the test never executed. A
+no-prompt boot and a failing test are indistinguishable if only the test summary is
+checked, which is what I was doing. Any rate quoted in the sections above that includes
+a "no summary" run is therefore an overestimate.
+
+**Rule for future counting here: a run only counts as a test result if the log contains a
+psh prompt AND at least one `TEST(...)` line.** Anything else is a boot failure.
+
+### The rc-script approach is reverted (project `a3fb926`)
+
+Neither `W`->`X` for the clock step nor dropping `T /dev/console` removed the residual,
+so `psh` is launched directly again as it was for months. What the script bought was two
+libc/misc clock tests; what it cost was a shell-less boot several times an hour. Set the
+clock from the shell when it matters (`ntpclient -s <server>`); the ntpclient robustness
+fixes are independent and stay. libc/misc is back to 207 tests / 2 failures (the clock
+tests) and unix-socket 25/0 on the verification run.
+
+I also broke the boot outright mid-revert -- a block replacement deleted the psh launch
+lines along with their comment -- and three boots came up with no shell before I caught
+it. Restored and verified 3/3.
+
+### Still untested: the exception-dump hypothesis
+
+`process_dumpException` (`proc/process.c`) builds its text in
+`char buff[SIZE_CTXDUMP]` **on the kernel stack** -- so the text is followed by
+uninitialised kernel stack, which this kernel fills with `0xba` -- and then hands that
+kernel address to `posix_write(2, buff, ...)`, a syscall implementation that normally
+receives a USER buffer. The corruption splatters libphoenix's globals with exactly that
+mixture: recent console text plus `0xba`. It also explains the cascade (12 aborts in one
+run): a fault dumps, the dump corrupts, the corruption faults.
+
+`heapstress dumpcorrupt` is written and staged to test it -- deliberate child faults
+while the parent watches its own `stdout` pointer and a `.data` canary -- but every
+attempt to run it landed on a no-prompt boot, so **it has never actually executed**.
+That is the first thing to run next, now that boot is reliable again.
