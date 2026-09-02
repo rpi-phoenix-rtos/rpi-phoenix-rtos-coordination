@@ -114,3 +114,42 @@ One more datum worth keeping: a short single transfer measured **3.56–3.61 MB/
 TX**, twice the previous best. The link is capable of far more than the medians
 suggest; what degrades is sustained transfer, which is consistent with a stream
 that loses alignment and recovers by accident.
+
+
+---
+
+## Root cause: the firmware is glomming, and we drop every aggregate
+
+Recording the SDPCM channel of the oversize frames settled it in one run:
+
+```
+rxxfer hdr=0 oversize=198 body=0 max_announced_len=9248 chan=3 (cap 2048)
+```
+
+**Channel 3 is `SDPCM_GLOM_CHANNEL`.** The firmware bundles several received
+frames into one superframe — measured at 9248 bytes, and later up to **23072** —
+and this driver has no de-aggregation, so every one is dropped. That is the
+~18% inbound loss, and it also explains the 16 KiB experiment above: with a
+bigger buffer the superframes were read successfully and then discarded anyway
+for not being channel 2, which is why RX got *worse*, not better.
+
+**It cannot be turned off.** `bus:rxglom = 0` is accepted by the firmware
+(`rc 0`, after being moved past the first command of the join — as the very
+first command it fails with a transport error) and simply ignored: superframes
+keep arriving. brcmfmac only ever sets this iovar to 1, to *enable* glom, and
+treats failure as acceptable; the chip's default is evidently on.
+
+So the frames must be split. A superframe is its own SDPCM header followed, from
+its `data_offset`, by back-to-back subframes each carrying a full SDPCM header.
+Splitting them is worth more than just recovering the lost 18%: one bus transfer
+would feed several frames, amortising exactly the per-frame overhead that limits
+this driver.
+
+**Status: attempted and reverted.** The first implementation does not pass
+traffic (TCP resets immediately, `rx_ok 7`, `glom supers 0`), so master keeps the
+known-good driver — re-verified after the revert at **TX 3.51 MB/s**, traffic
+normal. The work is preserved and published on branch `wip/rpi4-wifi-glom` in
+phoenix-rtos-devices, with the counters (`glom supers/subframes/bad`) already in
+place to debug it. One bug of this class was already found and fixed during the
+attempt: the frame copy-out still read the old buffer after the receive buffer
+changed, which delivered stale bytes as ethernet frames.
