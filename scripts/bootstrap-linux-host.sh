@@ -105,8 +105,13 @@ UPSTREAM_ONLY_REPOS=(
 #                            tools/v3d-driver-port builds libGL/libv3d/libv3dv.
 #                            NOT a fork — reproducible from the frozen tag, so it
 #                            cannot be broken by upstream drift.
-#   - external/quakespasm -> our org fork at a pinned commit; tools/quakespasm-port
-#                            builds libquakespasm.a (the rpi4-quake showcase).
+#   - external/quakespasm -> our org fork, branch phoenix-rpi4-port;
+#                            tools/quakespasm-port builds libquakespasm.a
+#                            (the rpi4-quake showcase).
+#   - external/yquake2, external/quake3e -> our org forks, same branch; the
+#                            Quake II / Quake III showcase ports. Added so a
+#                            fresh clone can build them at all -- that work
+#                            previously existed only on the dev host.
 #   - external/vkquake    -> our org fork (branch phoenix-rpi4-port); tools/vkquake-port
 #                            builds libvkquake.a -> rpi4-vkquake (the Vulkan/V3DV Quake
 #                            showcase). Only cloned/built when `--with-vkquake` is passed
@@ -124,10 +129,20 @@ UPSTREAM_ONLY_REPOS=(
 # comes from our org fork (its upstream pin is no longer fetchable). Bump refs
 # deliberately (mesa: rebased to the mesa-26.2.0 final tag 2026-08-13, 11 port
 # commits; 3 incidental non-v3d commits + upstream-backported ones dropped).
+#
+# Our OWN forks track the `phoenix-rpi4-port` branch rather than a frozen sha.
+# A sha went stale: quakespasm sat 16 commits behind the tree we actually test,
+# so every clean and Docker build shipped a different GLQuake than we validated
+# -- exactly the "works locally, fails in a clean build" class. Tracking the
+# branch keeps that from recurring, and it is not upstream drift: the branch is
+# in our org and only moves when we push a tested tree to it. Third-party pins
+# (mesa, and PI_FW_REF below) stay exact, because those DO move under us.
 EXTERNAL_DEPS=(
 	"mesa|https://gitlab.freedesktop.org/mesa/mesa.git|mesa-26.2.0|patches/mesa/phoenix-rpi4-v3d.patch"
-	"quakespasm|${EXTERNAL_FORK_BASE}/quakespasm.git|4abb3249fe45c835d3d8540845a18a114e283996"
+	"quakespasm|${EXTERNAL_FORK_BASE}/quakespasm.git|phoenix-rpi4-port"
 	"vkquake|${EXTERNAL_FORK_BASE}/vkquake.git|phoenix-rpi4-port"
+	"yquake2|${EXTERNAL_FORK_BASE}/yquake2.git|phoenix-rpi4-port"
+	"quake3e|${EXTERNAL_FORK_BASE}/quake3e.git|phoenix-rpi4-port"
 )
 
 # Raspberry Pi firmware blobs we need from raspberrypi/firmware boot tree.
