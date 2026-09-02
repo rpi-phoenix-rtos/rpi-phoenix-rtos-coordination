@@ -692,3 +692,47 @@ fork, busy-poll send/recv — with **canaries in the tool's own `.data` around a
 and on mismatch dump the offset, length and byte pattern of the clobber. That gives the
 shape of the write (how many bytes, what alignment, what content) which the crash dumps
 cannot, and it runs under a program I control rather than the upstream test.
+
+---
+
+## 2026-09-02 (night): canaried replica does NOT reproduce; and a self-inflicted boot regression
+
+### The replica came back clean (negative result)
+
+`heapstress transfer` now replicates the suite's shape — SCM_RIGHTS fd passing across
+a fork, then `unix_transfer`'s non-blocking socketpair with busy-poll send/recv — with
+canaries in **both `.data`** (partially initialised, so the linker places it there like
+`atexit_common`) **and `.bss`**, checked word-by-word afterwards and reporting offset,
+run length and bytes on a hit.
+
+100 iterations (200 socketpair+fork cycles): **canaries intact, no fault.** So the
+workload alone, in a program of my own, does not corrupt its own `.data`.
+
+Useful narrowing from the crash pattern itself: the real failures assert on
+`WIFEXITED(status)` for a **child**, and children die in `__cxa_finalize` — so the
+PARENT's `atexit_common` is already corrupt before `transfer`'s forks, and the write
+happens in an earlier phase of the suite than the one I replicated. The next replica
+should walk more of the suite's order (named sockets, `accept`/`connect` async and
+liveness, `poll`, `recv_msg_peek`) rather than just the two phases above.
+
+### A reliability regression I introduced, found and fixed
+
+One boot in this session reached the NFS takeover and then produced **no psh prompt at
+all**. Cause: `rc.nfsroot` ran `W /bin/ntpclient` (W = wait for exit), so the shell only
+launched after the clock step returned — and that boot printed no "System time set", so
+ntpclient never completed and the script never reached `X /bin/psh`.
+
+Two fixes:
+- `rc.nfsroot` now uses **`X`** for ntpclient (project `a314c46`): the clock step must
+  never gate the shell. The clock lands a moment after the prompt instead of before it,
+  which is immaterial — sub-second LAN round trip versus anything reading the clock
+  seconds later.
+- The likely hang itself: `getaddrinfo(host, "123", …)` had no `AI_NUMERICSERV`, so the
+  resolver could look the service up in **/etc/services — over NFS**, before the socket
+  exists and therefore outside the `SO_RCVTIMEO` added earlier (utils `20e0669`).
+
+Verified: three consecutive boots reach the prompt with the clock set and `date` correct.
+
+**Note for the record:** this is the second time the boot-time clock work has cost a
+boot (the first was the 5 s script-open retry). Both times the shell was the casualty,
+which is why it is now structurally independent of that step.

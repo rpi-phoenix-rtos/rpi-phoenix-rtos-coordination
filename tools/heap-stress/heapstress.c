@@ -321,6 +321,189 @@ static void ax_reporter(void)
 }
 
 
+/* mode=transfer: replicate test-libc-unix-socket's `transfer` workload -- the one
+ * that corrupts libphoenix's atexit_common in .data with the kernel's kstack
+ * fill byte -- but under a program that can watch its own memory.
+ *
+ * Canary regions in BOTH .data (partially initialised, so the linker puts it
+ * there like atexit_common) and .bss are painted with a position-dependent
+ * pattern; after the workload every word is checked, and a mismatch reports the
+ * offset, the run length and the bytes. Crash dumps show only where a corrupted
+ * pointer was USED; this shows the shape of the write itself.
+ */
+static unsigned long xf_data[8192] = { 1 };
+static unsigned long xf_bss[8192];
+
+static unsigned long xf_pattern(size_t i, unsigned long salt)
+{
+	return (unsigned long)i * 0x0101010101010101UL ^ salt;
+}
+
+
+static size_t xf_scan(const char *what, unsigned long *p, size_t n, unsigned long salt)
+{
+	size_t i, bad = 0, first = (size_t)-1;
+
+	for (i = 0; i < n; ++i) {
+		if (p[i] != xf_pattern(i, salt)) {
+			if (first == (size_t)-1) {
+				first = i;
+			}
+			bad++;
+		}
+	}
+	if (bad != 0) {
+		size_t run = 0;
+		printf("HEAPSTRESS-CLOBBER %s: %zu words differ, first at word %zu (byte +%zu)\n",
+			what, bad, first, first * sizeof(unsigned long));
+		for (i = first; (i < n) && (run < 6u); ++i, ++run) {
+			printf("HEAPSTRESS-CLOBBER   [%zu] got=0x%016lx want=0x%016lx\n",
+				i, p[i], xf_pattern(i, salt));
+		}
+	}
+	return bad;
+}
+
+
+/* The phase that precedes `transfer` in the suite: pass descriptors over
+ * AF_UNIX, across a fork, in both stream and datagram mode. The failing
+ * assertions in the real test are WIFEXITED on a CHILD, so the parent's
+ * atexit_common is already corrupt before transfer's forks -- meaning the write
+ * happens in an earlier phase, and this is that phase. */
+static int xf_fdpass(int type)
+{
+	int sv[2];
+	pid_t pid;
+
+	if (socketpair(AF_UNIX, type, 0, sv) != 0) {
+		return -1;
+	}
+
+	pid = fork();
+	if (pid < 0) {
+		return -1;
+	}
+
+	if (pid == 0) {
+		char cbuf[CMSG_SPACE_ONE];
+		char d = 'x';
+		struct iovec iov = { .iov_base = &d, .iov_len = 1 };
+		struct msghdr m;
+		struct cmsghdr *cm;
+		int passed = open(BASE, O_CREAT | O_RDWR, 0666);
+
+		if (passed < 0) {
+			_exit(1);
+		}
+		memset(&m, 0, sizeof(m));
+		memset(cbuf, 0, sizeof(cbuf));
+		m.msg_iov = &iov;
+		m.msg_iovlen = 1;
+		m.msg_control = cbuf;
+		m.msg_controllen = sizeof(cbuf);
+		cm = CMSG_FIRSTHDR(&m);
+		cm->cmsg_level = SOL_SOCKET;
+		cm->cmsg_type = SCM_RIGHTS;
+		cm->cmsg_len = CMSG_LEN(sizeof(int));
+		memcpy(CMSG_DATA(cm), &passed, sizeof(int));
+		m.msg_controllen = cm->cmsg_len;
+		(void)sendmsg(sv[1], &m, 0);
+		close(passed);
+		_exit(0);
+	}
+
+	{
+		char cbuf[CMSG_SPACE_ONE];
+		char d = 0;
+		struct iovec iov = { .iov_base = &d, .iov_len = 1 };
+		struct msghdr m;
+		struct cmsghdr *cm;
+		int status, got = -1;
+
+		memset(&m, 0, sizeof(m));
+		memset(cbuf, 0, sizeof(cbuf));
+		m.msg_iov = &iov;
+		m.msg_iovlen = 1;
+		m.msg_control = cbuf;
+		m.msg_controllen = sizeof(cbuf);
+		if (recvmsg(sv[0], &m, 0) > 0) {
+			cm = CMSG_FIRSTHDR(&m);
+			if ((cm != NULL) && (cm->cmsg_type == SCM_RIGHTS)) {
+				memcpy(&got, CMSG_DATA(cm), sizeof(int));
+				if (got >= 0) {
+					close(got);
+				}
+			}
+		}
+		(void)waitpid(pid, &status, 0);
+	}
+
+	close(sv[0]);
+	close(sv[1]);
+	return 0;
+}
+
+
+static int xf_once(int type, unsigned char *sbuf, size_t sbufsz)
+{
+	int fd[2];
+	pid_t pid;
+	size_t tot_len = 1u + (size_t)(rand() % (16 * 1024));
+
+	if (socketpair(AF_UNIX, type | SOCK_NONBLOCK, 0, fd) != 0) {
+		printf("HEAPSTRESS-FAIL socketpair errno=%d\n", errno);
+		return -1;
+	}
+
+	pid = fork();
+	if (pid < 0) {
+		printf("HEAPSTRESS-FAIL fork errno=%d\n", errno);
+		return -1;
+	}
+
+	if (pid == 0) {
+		size_t left = tot_len;
+		while (left > 0u) {
+			ssize_t n = recv(fd[1], sbuf, sbufsz, 0);
+			if (n > 0) {
+				left -= (size_t)n;
+			}
+			else if ((n < 0) && (errno != EAGAIN)) {
+				_exit(1);
+			}
+		}
+		_exit(0);
+	}
+
+	{
+		size_t left = tot_len, pos = 0;
+		int status;
+		while (left > 0u) {
+			size_t max = sbufsz - pos;
+			size_t len;
+			ssize_t n;
+			if (left < max) {
+				max = left;
+			}
+			len = 1u + (size_t)(rand() % (int)max);
+			n = send(fd[0], sbuf + pos, len, 0);
+			if (n > 0) {
+				left -= (size_t)n;
+				pos = (pos + (size_t)n) % sbufsz;
+			}
+			else if ((n < 0) && (errno != EAGAIN)) {
+				break;
+			}
+		}
+		(void)waitpid(pid, &status, 0);
+	}
+
+	close(fd[0]);
+	close(fd[1]);
+	return 0;
+}
+
+
 static int iter_nlink_tim(void)
 {
 	struct stat st;
@@ -383,6 +566,7 @@ int main(int argc, char **argv)
 	int only_zerocheck = (strcmp(mode, "zerocheck") == 0) ? 1 : 0;
 	int only_leakcheck = (strcmp(mode, "leakcheck") == 0) ? 1 : 0;
 	int only_atexit = (strcmp(mode, "atexit") == 0) ? 1 : 0;
+	int only_transfer = (strcmp(mode, "transfer") == 0) ? 1 : 0;
 	long i;
 
 	/* Start from a clean slate: leftovers from a crashed run change which
@@ -523,6 +707,58 @@ int main(int argc, char **argv)
 	 * Paint user buffers with a marker, call the syscalls that fill a
 	 * caller-supplied struct, and look for 0xba.
 	 */
+	if (only_transfer != 0) {
+		static unsigned char sbuf[4096];
+		const unsigned long salt_d = 0xd0d0d0d0d0d0d0d0UL;
+		const unsigned long salt_b = 0xb5b5b5b5b5b5b5b5UL;
+		size_t i, bad;
+		long iter;
+
+		for (i = 0; i < sizeof(xf_data) / sizeof(xf_data[0]); ++i) {
+			xf_data[i] = xf_pattern(i, salt_d);
+		}
+		for (i = 0; i < sizeof(xf_bss) / sizeof(xf_bss[0]); ++i) {
+			xf_bss[i] = xf_pattern(i, salt_b);
+		}
+		memset(sbuf, 0x5a, sizeof(sbuf));
+
+		printf("HEAPSTRESS: transfer workload, %ld iterations, canaries at .data=%p .bss=%p\n",
+			n, (void *)xf_data, (void *)xf_bss);
+		fflush(stdout);
+
+		for (iter = 0; iter < n; ++iter) {
+			/* fd passing first, mirroring the suite's order */
+			if (xf_fdpass(SOCK_STREAM) != 0) {
+				printf("HEAPSTRESS-FAIL fdpass stream\n");
+				return 1;
+			}
+			if (xf_fdpass(SOCK_DGRAM) != 0) {
+				printf("HEAPSTRESS-FAIL fdpass dgram\n");
+				return 1;
+			}
+			if (xf_once(SOCK_STREAM, sbuf, sizeof(sbuf)) != 0) {
+				return 1;
+			}
+			if (xf_once(SOCK_DGRAM, sbuf, sizeof(sbuf)) != 0) {
+				return 1;
+			}
+			if (((iter + 1) % 25) == 0) {
+				printf("HEAPSTRESS: %ld/%ld\n", iter + 1, n);
+				fflush(stdout);
+			}
+		}
+
+		bad = xf_scan(".data", xf_data, sizeof(xf_data) / sizeof(xf_data[0]), salt_d);
+		bad += xf_scan(".bss", xf_bss, sizeof(xf_bss) / sizeof(xf_bss[0]), salt_b);
+
+		if (bad != 0) {
+			printf("HEAPSTRESS-RESULT FAIL (transfer: %zu canary words clobbered)\n", bad);
+			return 1;
+		}
+		printf("HEAPSTRESS-RESULT PASS (transfer %ld iterations, canaries intact)\n", n);
+		return 0;
+	}
+
 	if (only_atexit != 0) {
 		long k;
 
