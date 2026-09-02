@@ -53,8 +53,16 @@ owner's two constraints: GitHub still shows our delta against the upstream proje
 5. **Verify on hardware, per game, before pushing** — step 2 or 3 can change what the
    binary contains. HDMI-confirm each game that changed source.
 
-## Known risk
+## Known risk — checked, and it is small
 
-If the fork's surplus includes the capture harness (TGA/TCP frame dump, bisect
-cvars), building from the fork ships that code. Confirm it is cvar- or compile-gated
-and inert by default; if it is not, gate it before step 3 rather than after.
+Building from the fork ships the capture harness. Checked whether it is inert:
+
+- **quakespasm: safe.** The harness defaults off (`gl_screen.c:114` `scr_capture "0"`,
+  plus `scr_capture_max "0"`) and the GL-blit path is compile-gated (`gl_screen.c:928`
+  `#ifdef QSS_PHOENIX`). Dormant unless a cvar is set.
+- **vkquake: one line to fix during step 1.** The texture trace is env-gated
+  (`gl_texmgr.c:1256`, `getenv("VKQ_TEXDBG")`), but our delta leaves one **ungated**
+  `fprintf(stderr, "vkq-tex-fix: '%s' region0 extent now ...")` in the #29 fix path.
+  Gate it behind `VKQ_TEXDBG` or drop it (it is diagnostic-only, and the fix it
+  reports is proven) before the fork becomes the shipped source. Not done yet on
+  purpose: the audit is diffing that working tree right now.
