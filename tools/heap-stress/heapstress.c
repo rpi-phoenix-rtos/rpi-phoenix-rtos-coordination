@@ -291,6 +291,36 @@ static int phase_sockrace(long secs)
 }
 
 
+/* mode=atexit: every registered handler must run exactly once.
+ *
+ * libphoenix keeps atexit handlers in nodes of ATEXIT_MAX (32) slots, chained
+ * by `prev`, and __cxa_finalize walks them backwards. Registering more than 32
+ * exercises the multi-node path, which is where the walk was restructured after
+ * finding that a stale index could run off the arrays. LIFO order means the
+ * FIRST handler registered runs LAST, so it is the one that reports the count.
+ */
+static int ax_expected;
+static int ax_ran;
+
+static void ax_handler(void)
+{
+	ax_ran++;
+}
+
+
+static void ax_reporter(void)
+{
+	ax_ran++;
+	if (ax_ran == ax_expected) {
+		printf("HEAPSTRESS-RESULT PASS (atexit: all %d handlers ran exactly once)\n", ax_ran);
+	}
+	else {
+		printf("HEAPSTRESS-RESULT FAIL (atexit: %d of %d handlers ran)\n", ax_ran, ax_expected);
+	}
+	fflush(stdout);
+}
+
+
 static int iter_nlink_tim(void)
 {
 	struct stat st;
@@ -352,6 +382,7 @@ int main(int argc, char **argv)
 	int only_fdpass = (strcmp(mode, "fdpass") == 0) ? 1 : 0;
 	int only_zerocheck = (strcmp(mode, "zerocheck") == 0) ? 1 : 0;
 	int only_leakcheck = (strcmp(mode, "leakcheck") == 0) ? 1 : 0;
+	int only_atexit = (strcmp(mode, "atexit") == 0) ? 1 : 0;
 	long i;
 
 	/* Start from a clean slate: leftovers from a crashed run change which
@@ -492,6 +523,28 @@ int main(int argc, char **argv)
 	 * Paint user buffers with a marker, call the syscalls that fill a
 	 * caller-supplied struct, and look for 0xba.
 	 */
+	if (only_atexit != 0) {
+		long k;
+
+		ax_expected = (int)n;
+		ax_ran = 0;
+
+		/* Registered first, so it runs last and sees the final tally. */
+		if (atexit(ax_reporter) != 0) {
+			printf("HEAPSTRESS-FAIL atexit(reporter)\n");
+			return 1;
+		}
+		for (k = 1; k < n; ++k) {
+			if (atexit(ax_handler) != 0) {
+				printf("HEAPSTRESS-FAIL atexit at %ld\n", k);
+				return 1;
+			}
+		}
+		printf("HEAPSTRESS: registered %ld atexit handlers (ATEXIT_MAX is 32, so this spans nodes)\n", n);
+		fflush(stdout);
+		return 0; /* handlers run during exit() */
+	}
+
 	if (only_leakcheck != 0) {
 		long iter;
 		size_t ba = 0, changed = 0;

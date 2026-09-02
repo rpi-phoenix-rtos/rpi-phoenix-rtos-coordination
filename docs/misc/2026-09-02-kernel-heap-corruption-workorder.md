@@ -637,3 +637,58 @@ writes user memory under two locks — any of those with a length that exceeds w
 initialised would put kstack bytes into user memory. Instrument a kernel-side check that
 the destination length matches what is actually written, or paint kstacks with a
 per-thread value so the *source* thread can be identified from the pattern.
+
+---
+
+## 2026-09-02 (very late): the corrupted object is IDENTIFIED — `atexit_common` in `.data`
+
+Disassembling the faulting instruction finally named the victim. At
+`__cxa_finalize+0x30`:
+
+```
+40affc: ldr w1, [x19, #24]      <- idx   = 180
+40b000: sub w3, w1, #1          <- 179
+40b010: ldr x20, [x2, x3, lsl #3]
+```
+
+with `x19 = 0x413048` = **`atexit_common`**, a libphoenix global in **`.data`**
+(`.data` starts `0x413040`; `.bss` at `0x413070`). Its fields:
+
+| offset | field | observed |
+|---|---|---|
+| +8 | `struct atexit_node *head` | `0xbabababa00000000`, later `0xbababababababbb2` |
+| +24 | `unsigned int idx` | **180**, against `ATEXIT_MAX == 32` |
+
+`far = x2 + 179*8` reproduces the reported address exactly. And note signature 1's
+EL1 `hal_memcpy` fault was on `0x004130c0` — the **same page**.
+
+### Fixed: the escalation path (libphoenix `e643fa5`)
+
+`_atexit_register` chained a new node on `idx == ATEXIT_MAX`. An equality test matches
+once: an idx that ever exceeded 32 never matched again, so every later registration
+wrote `destructors[idx]`/`args[idx]`/`handles[idx]` **past the node**. And
+`__cxa_finalize` decremented `idx` with no guard, where 0 is reachable (destructors run
+with the lock dropped and may register handlers, resetting idx to 0) so `0--` wrapped to
+`UINT_MAX`. Now `>=` plus a clamp, with the move-to-prev folded into the top of the walk.
+
+Verified including the multi-node path that restructure touches: 5 / 100 / 200 handlers
+each run exactly once (`heapstress atexit`; 200 spans seven nodes). No regression.
+
+### NOT fixed: whatever writes kernel stack bytes over user `.data`
+
+Rate after both fixes: **6 clean of 8** (~25%), and the failing run was again
+`__cxa_finalize` — this time with `head` = **full poison** (`0xbababababababbb2`), which
+no amount of index clamping can survive. So the atexit change is hardening of the
+consequence, not the cause.
+
+`0xba` is still only `hal_memset(t->kstack, 0xba, t->kstacksz)`. Eliminated so far:
+recycled anonymous pages (zeroed, 80 MB checked), the ELF bss-tail (a 64 KB `.bss`
+array reads zero at startup), fork isolation, and single-process SCM_RIGHTS.
+
+### Next step (concrete)
+
+Replicate `unix_transfer`'s workload inside `heapstress` — non-blocking socketpair,
+fork, busy-poll send/recv — with **canaries in the tool's own `.data` around a struct**,
+and on mismatch dump the offset, length and byte pattern of the clobber. That gives the
+shape of the write (how many bytes, what alignment, what content) which the crash dumps
+cannot, and it runs under a program I control rather than the upstream test.
