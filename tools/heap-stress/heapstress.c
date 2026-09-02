@@ -35,6 +35,7 @@
 #include <sys/stat.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <pthread.h>
 
 #define BASE  "test_stat.txt"                  /* the file everything links to */
 #define LNK_A "test_stat_symlink"
@@ -156,6 +157,79 @@ static int phase_pipe(void)
 }
 
 
+/* mode=race: an fd sweep racing an open.
+ *
+ * posix_open must publish p->fds[fd].file before the blocking IPCs, because the
+ * slot is how the descriptor is reserved. That makes a half-built open_file_t
+ * reachable from every other thread of the process, and a thread that walks the
+ * fd space closing everything (a close-all sweep, or the exit-time sweep) will
+ * find it. Before the construction reference, that close decremented an
+ * uninitialised refs and could free the file while open was still writing to it.
+ *
+ * Nothing here can assert on the race directly -- the pass condition is that
+ * the kernel neither faults nor reports a corrupt free list. */
+static volatile int race_stop;
+static long race_opens, race_closes;
+
+static void *race_opener(void *arg)
+{
+	(void)arg;
+	while (race_stop == 0) {
+		int fd = open(BASE, O_CREAT | O_RDWR, 0666);
+		if (fd >= 0) {
+			race_opens++;
+			close(fd);
+		}
+	}
+	return NULL;
+}
+
+
+static void *race_sweeper(void *arg)
+{
+	(void)arg;
+	while (race_stop == 0) {
+		int fd;
+		/* from 3: leave stdin/stdout/stderr alone so output survives */
+		for (fd = 3; fd < 32; ++fd) {
+			if (close(fd) == 0) {
+				race_closes++;
+			}
+		}
+	}
+	return NULL;
+}
+
+
+static int phase_race(long secs)
+{
+	pthread_t a, b;
+
+	race_stop = 0;
+	race_opens = 0;
+	race_closes = 0;
+
+	if (pthread_create(&a, NULL, race_opener, NULL) != 0) {
+		printf("HEAPSTRESS-FAIL pthread_create(opener)\n");
+		return -1;
+	}
+	if (pthread_create(&b, NULL, race_sweeper, NULL) != 0) {
+		race_stop = 1;
+		(void)pthread_join(a, NULL);
+		printf("HEAPSTRESS-FAIL pthread_create(sweeper)\n");
+		return -1;
+	}
+
+	sleep((unsigned int)secs);
+	race_stop = 1;
+	(void)pthread_join(a, NULL);
+	(void)pthread_join(b, NULL);
+
+	printf("HEAPSTRESS: race %ld opens, %ld sweep-closes\n", race_opens, race_closes);
+	return 0;
+}
+
+
 static int iter_nlink_tim(void)
 {
 	struct stat st;
@@ -208,6 +282,7 @@ int main(int argc, char **argv)
 	long n = (argc > 1) ? strtol(argv[1], NULL, 10) : 2000;
 	const char *mode = (argc > 2) ? argv[2] : "all";
 	int only_pipe = (strcmp(mode, "pipe") == 0) ? 1 : 0;
+	int only_race = (strcmp(mode, "race") == 0) ? 1 : 0;
 	long i;
 
 	/* Start from a clean slate: leftovers from a crashed run change which
@@ -221,6 +296,16 @@ int main(int argc, char **argv)
 
 	printf("HEAPSTRESS: %ld iterations mode=%s\n", n, mode);
 	fflush(stdout);
+
+	if (only_race != 0) {
+		/* n is seconds of racing here, not iterations. */
+		if (phase_race(n) != 0) {
+			return 1;
+		}
+		(void)unlink(BASE);
+		printf("HEAPSTRESS-RESULT PASS (%ld s race, clean)\n", n);
+		return 0;
+	}
 
 	for (i = 0; i < n; ++i) {
 		if (only_pipe != 0) {
