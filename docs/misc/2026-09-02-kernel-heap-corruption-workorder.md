@@ -325,9 +325,14 @@ Also noted while reviewing: `posix_socketpair` returns `-EAFNOSUPPORT`
   test — which was updated to assert the contract (succeed, or fail with EBADF,
   nothing else) rather than one side of a timing race.
 - ✅ `posix_exit` leaving dangling pointers in a zombie's fd table → slots cleared.
-- ⬜ `F_SEEKABLE` accepting a half-built file in `fcntl` — needs an explicit
-  "under construction" `type`; deferred as the only one of the five that touches
-  the `ftype` enum and every switch over it.
+- ✅ `F_SEEKABLE` accepting a half-built file in `fcntl` → new `ftConstructing`
+  type (appended to the enum, set at both publish sites). Every `f->type` test is
+  an equality against a real type or a switch with a default, so the state is now
+  rejected everywhere instead of looking like `ftRegular` (enumerator 0, which a
+  zeroed struct leaves behind). `posix_fileDeref` also short-circuits it: a
+  construction that opened nothing has nothing to close, and its oid names a
+  port that cannot exist, so the old `proc_close` only spent an IPC to be told
+  -EINVAL. kernel `see manifest 2026-09-02-ft-constructing`.
 - ⬜ `posix_exit`/`posix_exec` calling `posix_fileDeref` under `p->lock`, whose
   `refs == 0` branch does a blocking `proc_close` — pre-existing and structural
   (needs collecting the files, then dereferencing outside the lock).
