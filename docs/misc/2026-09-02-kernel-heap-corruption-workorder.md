@@ -780,3 +780,48 @@ The child's window is short: fork → a few socket calls → exit. Put the check
 window in a program I control — replicate the failing test's child (recv/recvmsg on an
 AF_UNIX socket inherited across fork), call `_atexit_check()` after each syscall, and
 report the first one after which it trips. That names the syscall rather than the phase.
+
+---
+
+## 2026-09-02 (night, last): the victim is a BULK OVERWRITE of libphoenix globals
+
+### Child failures now self-report, and that immediately paid off
+
+`CHILD_ASSERT` / `FAIL_OR_EXIT` exited silently, so child-side failures were
+indistinguishable from child crashes (tests `see commit`). With them reporting, a failing
+run showed **`CHILD-FAIL` never appeared** — the children are not failing checks, they
+are **crashing**.
+
+### All crash sites are libphoenix stdio/atexit globals
+
+One failing run produced **12 EL0 Data Aborts** at three sites:
+
+| count | pc | resolves to | far |
+|---|---|---|---|
+| 9 | `0x40a604` | **`fwrite`** (`stdio/file.c:700`, `mutexLock(stream->lock)`) | `0x38` |
+| 1 | `0x40a604` | same | `0xbababababababaea` |
+| 2 | `0x409ec0` | **`__fflush_unlocked`** (`stdio/file.c:805`) | `0x000a45534c410a63` |
+
+`fwrite` faults dereferencing `stream` itself, so the **`stdout` pointer** is corrupt.
+Together with `atexit_common` (earlier crashes) and `file_common.list`, three separate
+libphoenix globals in `.data` are being clobbered.
+
+And the third `far` is **ASCII**: `0x000a45534c410a63` little-endian is `c\nALSE\n` — a
+fragment of Unity's own `"...FALSE\n"` output. So the garbage written over these
+pointers is a mixture of **recent console text** and the kernel's **kstack fill byte**.
+
+### What that implies
+
+A buffer containing both recent console text and uninitialised kernel stack is a
+*kernel* buffer. Splattering it across a user process's `.data` is a copy-out to a wrong
+destination address — which is exactly signature 1 (an EL1 `hal_memcpy` faulting on a
+user address). The earlier eliminations still hold: it is not page recycling, not fork
+inheritance, and not the workload writing its own memory.
+
+### Next step (cheapest precise detector)
+
+A child can watch the exact victims from userspace, with no kernel changes: save
+`FILE *saved = stdout;` at entry, then after each syscall check `stdout == saved` and
+`_atexit_check() == 0`, reporting the first call after which either trips. That names the
+syscall. Add it to `tools/heap-stress` as a child-side loop over the calls the failing
+tests make (`recv`, `recvmsg`, `send`, `poll`, `close`) while the parent drives the peer.
