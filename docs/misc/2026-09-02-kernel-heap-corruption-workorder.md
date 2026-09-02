@@ -105,3 +105,84 @@ With poisoning on, the corruption did **not** reproduce in two runs. The memset
 per free changes allocation timing, so it may be masking the race; the next
 attempt should run many more iterations, and consider poisoning without the
 memset (link + freer word only) so timing is barely perturbed.
+
+---
+
+## 2026-09-02 (later): real defect found and fixed; the crash is NOT yet explained
+
+### Corrections to what this document said earlier
+
+1. **The "~2 runs in 5" rate was wrong — it conflated two different crashes.**
+   Scanning all 5100 UART logs, the heap signature (`pc` in `_vm_zalloc`,
+   `far=74735f747365742f` = `"/test_st"`) appears in exactly **two** logs, both
+   from 2026-09-02 (`07:00 nochmod-verify`, `07:35 poison-off-verify`). The third
+   log I had counted (`05:32 lwip-regression`) is an unrelated fault: `pc` in
+   **`hal_memcpy`**, `far=0x004130c0` (a *userspace* address) — an EL1 user-copy
+   fault, the class in `project_el1_usercopy_fault_prot_user`, not a heap issue.
+2. **"Poisoning's memset perturbs the timing that exposes the race" was
+   speculation and should not have been stated as the reason.** It may simply be
+   that the corruption is much rarer than the rate above implied.
+3. **The FIFO correlation is confounded.** `9a0593d0` ("posix: record
+   fd->canonical-path") landed 2026-09-01, in the same window as NFS FIFO
+   support. "Every sighting is after FIFO landed" is equally "every sighting is
+   after `open_file_t.path` landed".
+
+### The real defect found (fixed, kernel `e5c5f833`)
+
+`posix_fileDeref()` frees `f->path` unconditionally when non-NULL, but two of
+the three `open_file_t` allocation sites never initialised it — `posix_pipe()`
+and the `pp == NULL` branch of `posix_clone()` — and `vm_kmalloc` does not zero.
+So closing such an fd frees whatever the recycled block held there. A block last
+used by a regular file holds a **real, already-freed path pointer**: in range and
+block-aligned, so both `_vm_zfree` guards accept it and the block lands on the
+free list twice. That is precisely the shape needed to produce this crash.
+
+`posix_newFile()` (sockets) escapes it only because it `hal_memset`s — which is
+why sockets never triggered anything.
+
+**But it is currently latent, and I am not claiming it as the diagnosis.**
+Measured on hardware with a temporary probe on every `posix_fileDeref`:
+regular files (`type=0`) 51/51 carry a path; pipes (`type=1`) **60/60 read
+`path == NULL`**, because pipe blocks are currently served from a zone that has
+never held a path pointer (a property of the present allocation pattern, not a
+guarantee). Fixed as a defect on its own merits — zeroing the whole struct as
+`posix_newFile` does, which also covers `f->ln`.
+
+Falsification check the analysis proposed — *no sighting may predate `9a0593d0`*
+— **passes**: the signature exists in no log older than that commit.
+
+### Also fixed
+
+`_vm_zfree` returned void, so `_kmalloc_free` adjusted `allocsz`/`hdrblocks` and
+moved zones between lists even when the free had been **rejected** by the guards.
+Now returns `EOK`/`-EINVAL` and the caller skips the accounting (kernel
+`8522b1db`) — a loose end in `b516c8a4`.
+
+### Tools now in place
+
+- **Always-on link validation** in `_vm_zalloc` (kernel `521320e9`): the link is
+  checked before it becomes `zone->first`, so the corrupted block is *named* and
+  the list is truncated instead of followed. This converts the hard EL1 Data
+  Abort into a `vm: CORRUPT free-list link block=... link=...` line plus a
+  graceful allocation failure. Cost: two compares and an AND.
+- **Opt-in trace ring** (`-DVM_ZONE_TRACE=1`): block/caller/seq per alloc+free,
+  dumped for the corrupted block by the check above. No memset, unlike poisoning.
+- **`tools/heap-stress/heapstress.c`**: replays the crashing shape — the
+  `nlink` link/unlink churn then `tim`'s create-of-a-just-unlinked-name — plus
+  mkfifo, an AF_UNIX socket, a symlink chain, and the pipe recycle sequence.
+
+### Today's negative results (all on the shipped configuration)
+
+| Trial | Result |
+|---|---|
+| 6× `test-libc-misc` in one boot (trace on) | clean |
+| 5 further boots, one `test-libc-misc` each | clean |
+| `heapstress` 1500 iterations, link/unlink/recreate | clean |
+| `heapstress` 800+ iterations, + fifo/socket/symloop | clean |
+| `heapstress` 500 + 200 iterations, pipe recycle | clean, and 0 stale-path frees |
+| post-fix: misc 207/2, stdio 80/0, stress 300 | clean, 0 faults |
+
+**Status: open.** One real latent double-free removed; the crash itself has not
+reproduced under any instrumentation today, so nothing here may be reported as
+having fixed it. Next time it appears, the validation above should print the
+corrupted block instead of faulting — start from that line.
