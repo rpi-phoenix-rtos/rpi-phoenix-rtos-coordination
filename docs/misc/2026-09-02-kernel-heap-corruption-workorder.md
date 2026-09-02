@@ -354,3 +354,52 @@ Also noted while reviewing: `posix_socketpair` returns `-EAFNOSUPPORT`
   zombie's table full of dangling pointers.
 - `posix_exit`/`posix_exec` call `posix_fileDeref` while holding `p->lock`, and
   its `refs == 0` branch does a blocking `proc_close`. Pre-existing.
+
+
+---
+
+## 2026-09-02 (evening): a BETTER reproducer — `test-libc-unix-socket`
+
+The `test-libc-misc` sighting has not reproduced in ~20 runs. `test-libc-unix-socket`
+is a far better hunting ground: across 18 runs today it produced **4 fatal events**
+(run did not complete, or a test failed), plus 2 earlier non-fatal ones.
+
+| time | abort | result |
+|---|---|---|
+| 05:32 | 2 | 25/0 — recoverable EL1 user-copy faults (dumped then; silenced since `b49268e5`) |
+| 09:19 | 2 | 25/0 — same |
+| 09:41 → 14:12 | 0 | 25/0 × 10 |
+| **14:34** | 2 | **no summary** |
+| **14:42** | 1 | **no summary** |
+| 14:46, 14:48, 14:50 | 0 | 25/0 × 3 |
+| **14:53** | 2 | **25 Tests 1 Failures** |
+| **(reverted build) P** | 0 | **no summary** |
+| **(reverted build) Q** | 2 | **25 Tests 1 Failures** |
+| (reverted build) R | 0 | 25/0 |
+
+**Today's commits are NOT the cause.** The fatal events cluster after 14:21, which
+looked damning (0 in 12 runs before, 4 in 6 after) — so I reverted the two commits
+in that window (`7ac1bd10` ftConstructing, `39135453` fstat) and the fatal events
+**continued** (P and Q above). The clustering was sampling noise.
+
+### Four distinct signatures, all in the fork + AF_UNIX + accept region
+
+1. `pc` in `hal_memcpy`, `far=0x004130c0` (a *user* address) — EL1 user-copy, recoverable.
+2. `pc` in **`proc_threadWakeup`+0x58**, `far=0x753e4bed115dc310` — the kernel following
+   a **corrupted thread wait-queue link**. Wild, high-entropy address.
+3. EL0, registers full of `0xbabababa` (a freed-memory poison pattern), `far=0xbababac090909082`,
+   with ASCII path fragments (`mp/test_`, `file_15`) in other registers.
+4. EL0 `far=0x10` (near-NULL) in a **forked child**, which is why
+   `accept_connect_async` fails its `TEST_ASSERT(WIFEXITED(status))` at
+   `unix-socket.c:1482` — the child died rather than exiting.
+
+The variety of signatures — free-list link, wait-queue link, userspace poison — is
+the signature of memory corruption rather than a logic bug in any one path.
+
+### Next step
+
+Run `test-libc-unix-socket` repeatedly against a kernel built with
+`-DVM_ZONE_TRACE=1` (and the always-on link check). At ~1 fatal event in 3 runs this
+is cheap to catch, unlike the `test-libc-misc` crash. Signature 2 also suggests
+widening the check beyond the zone allocator: a corrupted `proc_threadWakeup` queue
+link means whatever scribbles is not confined to kmalloc blocks.
