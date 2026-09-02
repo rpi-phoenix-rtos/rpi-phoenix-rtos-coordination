@@ -6,11 +6,19 @@
 # BCM43455 WiFi).
 #
 # Usage:
-#   ./scripts/test-cycle-bench.sh <N> <label> [--capture-secs <s>]
+#   ./scripts/test-cycle-bench.sh <N> <label> [--capture-secs <s>] [-- <cmd>...]
 #
 # Examples:
 #   ./scripts/test-cycle-bench.sh 5 vl805-baseline
 #   ./scripts/test-cycle-bench.sh 10 dhcp-trial --capture-secs 240
+#   ./scripts/test-cycle-bench.sh 8 unixsock -- "/bin/test-libc-unix-socket -v"
+#
+# With `-- <cmd>...` each trial boots to the psh prompt and runs those commands
+# (via test-cycle-psh-interact.sh) instead of just capturing a boot, and the
+# summary additionally counts Unity results per trial. That is what an
+# intermittent USERSPACE bug needs: a boot-only bench cannot tell a run where
+# the test passed from one where it never executed, which is exactly the
+# A/B/C classing mistake recorded in the W36 log.
 #
 # Each trial is labeled "<label>-T<i>" and logged under
 # artifacts/rpi4b-uart/. After all trials run, uart-summary.sh is
@@ -37,6 +45,14 @@ if [ $# -ge 2 ] && [ "$1" = "--capture-secs" ]; then
     shift 2
 fi
 
+# Everything after `--` is a psh command line to run in each trial.
+cmds=()
+if [ $# -ge 1 ] && [ "$1" = "--" ]; then
+    shift
+    cmds=( "$@" )
+    set --
+fi
+
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${script_dir}/.." && pwd)"
 
@@ -51,7 +67,12 @@ logs=()
 for i in $(seq 1 "$N"); do
     trial_label="${label}-T${i}"
     printf '\n=== trial %d/%d (%s) ===\n' "$i" "$N" "$trial_label"
-    "${repo_root}/scripts/test-cycle-netboot.sh" --label "$trial_label" "${capture_secs_arg[@]}" || true
+    if [ "${#cmds[@]}" -gt 0 ]; then
+        "${repo_root}/scripts/test-cycle-psh-interact.sh" --label "$trial_label" \
+            --inter-cmd-secs 8 --idle-secs 60 --max-cmd-secs 150 -- "${cmds[@]}" || true
+    else
+        "${repo_root}/scripts/test-cycle-netboot.sh" --label "$trial_label" "${capture_secs_arg[@]}" || true
+    fi
     log=$(ls -t "${repo_root}/artifacts/rpi4b-uart"/rpi4b-uart-*-"$trial_label".log 2>/dev/null | head -n 1 || true)
     if [ -n "$log" ]; then
         logs+=( "$log" )
@@ -59,6 +80,26 @@ for i in $(seq 1 "$N"); do
 done
 
 printf '\n\n=== BENCH SUMMARY: label="%s" trials=%d logs=%d ===\n' "$label" "$N" "${#logs[@]}"
+
+# When commands were run, classify each trial the way the W36 counting rule
+# requires: a run only counts as a TEST RESULT if the log has a psh prompt AND
+# at least one "TEST(" line. Anything else is a boot/exec failure, not evidence.
+if [ "${#cmds[@]}" -gt 0 ]; then
+    printf '\n--- per-trial test results (class C only counts) ---\n'
+    for log in "${logs[@]}"; do
+        prompt=$(grep -ac '(psh)%' "$log" 2>/dev/null || echo 0)
+        ran=$(grep -ac 'TEST(' "$log" 2>/dev/null || echo 0)
+        summary=$(grep -aoE '[0-9]+ Tests [0-9]+ Failures [0-9]+ Ignored' "$log" 2>/dev/null | tail -n 1)
+        if [ "$prompt" -eq 0 ]; then
+            cls="A (no shell)"
+        elif [ "$ran" -eq 0 ]; then
+            cls="B (no output)"
+        else
+            cls="C (ran)"
+        fi
+        printf '  %-58s %-14s %s\n' "$(basename "$log")" "$cls" "${summary:-<no summary>}"
+    done
+fi
 
 if [ "${#logs[@]}" -eq 0 ]; then
     printf 'no logs produced — bench infrastructure broken\n' >&2
