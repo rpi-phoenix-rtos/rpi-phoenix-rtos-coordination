@@ -77,3 +77,40 @@ opt-in (`-DWIFI_STATS_TIMING=1`) because two `clock_gettime` calls per probe at
 Not yet measured: the negotiated PHY rate (the firmware knows it; `wifi mtu`
 should report it), and NFS-over-WiFi, which is only interesting once the above
 lands.
+
+
+---
+
+## Follow-up: what the RX errors actually were (2026-09-02, later)
+
+Splitting `rx_err` by cause settled it in one run. Every single RX error was
+`-32`: **this driver rejecting frames the firmware had announced**, up to
+**9248 bytes** against a 2048-byte cap — 184 of 1016 receives, so roughly **18%
+of all inbound frames were being dropped** and left for TCP to retransmit. Zero
+parse errors, zero transport failures.
+
+That reads like a textbook undersized buffer, and the fix looks obvious. It is
+wrong, which is why it was worth measuring rather than assuming:
+
+| cap | rx_err | rx_garbage | RX | max announced |
+|---|---|---|---|---|
+| 2048 | 184 | 876 | 0.10–0.29 MB/s | 9248 |
+| 16384 | **0** | **0** | **0.03 MB/s** (3 runs, identical) | **0** |
+
+Raising the cap eliminated every error — and made RX five to ten times *worse*,
+consistently. The decisive detail is the last column: with the bigger buffer, no
+oversize frame ever arrived again. Those 9248-byte headers were never real
+aggregation. They are what a receive stream that has lost frame alignment looks
+like, and the controller reset on the `-32` rejection path was quietly
+resynchronising it. Remove the rejection and the recovery goes with it.
+
+So the cap stays at 2048 and the real fix is the stream itself — SDPCM glom
+handling, or a resync strategy that does not depend on a rejection happening to
+fire. Also disproved along the way: the firmware's credit window is never the
+limit (`blocked=0`, `avail=39` across a full transfer), and the 64-consecutive
+bad-header resync fires almost never (`resyncs=0–1`), so neither is the cause.
+
+One more datum worth keeping: a short single transfer measured **3.56–3.61 MB/s
+TX**, twice the previous best. The link is capable of far more than the medians
+suggest; what degrades is sustained transfer, which is consistent with a stream
+that loses alignment and recovers by accident.
