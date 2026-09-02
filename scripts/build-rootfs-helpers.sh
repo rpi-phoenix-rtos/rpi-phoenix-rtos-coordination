@@ -70,6 +70,23 @@ buildroot="${RPI4B_BUILDROOT:-${repo_root}/.buildroot}"
 toolchain="${PHOENIX_AARCH64_TOOLCHAIN:-${repo_root}/.toolchain/aarch64-phoenix/bin}"
 cc="${toolchain}/aarch64-phoenix-gcc"
 
+# Build against the SYSROOT the rest of the build just produced, never the
+# toolchain's own bundled copy of libphoenix/libc/libm + headers.
+#
+# Why this is not optional: .toolchain/aarch64-phoenix/aarch64-phoenix/{lib,include}
+# is a HAND-MAINTAINED bundle (tools/x11-port/build-x11-phoenix.sh's
+# sync_toolchain_libc cp's libphoenix.a in; its include/ holds only the two headers
+# somebody copied by hand). Compiling with no --sysroot silently links these helpers
+# against whatever libphoenix happened to be copied there last — the documented
+# "stale .toolchain libphoenix.a" footgun (observed as CPython's
+# `create_gil PyCOND_INIT failed`). These launchers exec the game engines, which ARE
+# built against the fresh sysroot, so an ABI skew here is a runtime crash nobody
+# traces back to the build. Point at _build/<target>/sysroot and fail if it is absent.
+#
+# The three flags mirror phoenix-rtos-build/makes/setup-sysroot.mk:17-23 so the
+# search order matches what every other Phoenix component compiles with.
+sysroot="${PHOENIX_SYSROOT:-${buildroot}/_build/${target}/sysroot}"
+
 stage_dir="${SHOWCASE_STAGE_DIR:-${buildroot}/_fs/${target}/root}"
 while [ "$#" -gt 0 ]; do
 	case "$1" in
@@ -85,6 +102,8 @@ die()  { printf '\033[0;31m[helpers] ERROR\033[0m %s\n' "$*" >&2; exit 1; }
 
 [ -x "$cc" ] || die "cross compiler not found: $cc (run scripts/bootstrap-linux-host.sh)"
 [ -d "$stage_dir" ] || die "staging tree does not exist: $stage_dir (run a build first)"
+[ -f "$sysroot/lib/libphoenix.a" ] \
+	|| die "no built sysroot at $sysroot (expected lib/libphoenix.a). Run the core build first — refusing to fall back to the toolchain's hand-copied libphoenix bundle."
 
 # "<source>|<install path under the staging tree>"
 helpers=(
@@ -99,13 +118,16 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
 log "cc         = $cc"
+log "sysroot    = $sysroot"
 log "stage tree = $stage_dir"
 for entry in "${helpers[@]}"; do
 	src="${repo_root}/${entry%%|*}"
 	dst="${stage_dir}/${entry##*|}"
 	name="$(basename "$dst")"
 	[ -f "$src" ] || die "helper source missing: $src"
-	"$cc" -O2 -static -Wall -Wextra -o "${tmp}/${name}" "$src" \
+	"$cc" -O2 -static -Wall -Wextra \
+		--sysroot="${sysroot}/" -B"${sysroot}/lib/" -iprefix "${sysroot}/" \
+		-o "${tmp}/${name}" "$src" \
 		|| die "compile failed: $src"
 	# Phoenix has no dynamic loader for ordinary programs, so a PT_INTERP here
 	# would be a binary that cannot start at all — check rather than trust.

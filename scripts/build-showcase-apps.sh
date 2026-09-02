@@ -162,14 +162,46 @@ need_file() { [ -f "$1" ] || die "missing required file: $1 ($2)"; }
 # external/mesa/src/**/*.c leaves the port scripts untouched, so a tools-only check
 # silently ships a STALE archive (cost a build cycle 2026-07-18). Callers MUST pass
 # the external source dirs their archive is built from. --force bypasses.
+#
+# Two hardening rules added 2026-09-03, both preventing a SILENT stale archive:
+#
+#  1. Every freshness input directory must EXIST. The old body ended in
+#     `2>/dev/null`, so a renamed or migrated input dir (e.g. the tools/->ports
+#     migration moving tools/quakespasm-port away) turned into "find printed
+#     nothing" == "archive is fresh" == never rebuild. Same failure shape as the
+#     _user Makefile guard whose empty target list made GNU make silently skip the
+#     prerequisite (fixed in phoenix-rtos-project ca91eb9). Missing input => die.
+#
+#  2. The freshly built sysroot's libphoenix.a is a freshness input. These archives
+#     are cross-compiled against libphoenix headers; after a libphoenix/kernel
+#     rebuild an mtime check over Mesa/port sources alone still says "fresh", so an
+#     ABI-skewed libGL/libv3d/libv3dv would ship. (Absent sysroot = not yet built =
+#     not an input; the check just skips it.)
 archive_fresh() {
 	local a="$1"; shift
 	[ -f "$a" ] || return 1
 	[ "$force" = 0 ] || return 1
+
+	local inputs=(
+		"${repo_root}/sources/phoenix-rtos-devices/gpu/rpi4-v3d/mesa"
+		"${repo_root}/tools/v3d-driver-port"
+		"${repo_root}/tools/quakespasm-port"
+		"${repo_root}/tools/vkquake-port"
+		"$@"
+	)
+	local d
+	for d in "${inputs[@]}"; do
+		[ -e "$d" ] || die "archive_fresh: freshness input missing: $d
+       A missing input silently reads as 'nothing is newer' => the stale archive
+       $(basename "$a") would be reused forever. Fix the path list in this
+       function (or restore the directory) rather than letting it pass."
+	done
+
+	local libphoenix="${buildroot}/_build/${target}/sysroot/lib/libphoenix.a"
+	[ -f "$libphoenix" ] && inputs+=("$libphoenix")
+
 	local newest
-	newest="$(find "${repo_root}/sources/phoenix-rtos-devices/gpu/rpi4-v3d/mesa" \
-		"${repo_root}/tools/v3d-driver-port" "${repo_root}/tools/quakespasm-port" \
-		"${repo_root}/tools/vkquake-port" "$@" -type f -newer "$a" 2>/dev/null | head -1)"
+	newest="$(find "${inputs[@]}" -type f -newer "$a" -print -quit)"
 	[ -z "$newest" ]
 }
 

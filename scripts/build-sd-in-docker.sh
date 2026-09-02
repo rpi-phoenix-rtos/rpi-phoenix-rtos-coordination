@@ -27,6 +27,28 @@ PAK0_REL="sources/phoenix-rtos-project/_projects/aarch64a72-generic-rpi4b/rootfs
 
 mkdir -p "$OUT"
 
+# serve-repos-for-docker.sh serves each repo's .git dir, so the Docker build clones
+# the COMMITTED state and silently ignores every uncommitted edit in the working
+# tree. A "clean release build" that quietly omits the fix you are validating is the
+# exact class of failure this whole flow exists to rule out, so refuse to start with
+# a dirty tree. Override with ALLOW_DIRTY=1 when you really mean "build HEAD".
+if [ "${ALLOW_DIRTY:-0}" != 1 ]; then
+	dirty_repos=()
+	for repo in "$ROOT" "$ROOT"/sources/*/; do
+		[ -d "${repo}/.git" ] || continue
+		if [ -n "$(git -C "$repo" status --porcelain 2>/dev/null)" ]; then
+			dirty_repos+=("$(basename "${repo%/}")")
+		fi
+	done
+	if [ "${#dirty_repos[@]}" -gt 0 ]; then
+		echo "ERROR: uncommitted changes in: ${dirty_repos[*]}" >&2
+		echo "       The Docker build clones the COMMITTED state only — these edits would" >&2
+		echo "       NOT be in the image, and the build would look like it validated them." >&2
+		echo "       Commit them, or re-run with ALLOW_DIRTY=1 to build HEAD deliberately." >&2
+		exit 1
+	fi
+fi
+
 echo "== starting local repo server (git :$PORT + http :$HTTPPORT) =="
 GIT_SERVE_PORT="$PORT" GIT_SERVE_HTTP_PORT="$HTTPPORT" \
 	setsid bash "$ROOT/scripts/serve-repos-for-docker.sh" >/tmp/phoenix-docker-serve.log 2>&1 &

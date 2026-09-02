@@ -281,7 +281,16 @@ case "${scope}" in
 		scope_reason="forced full-clean scope"
 		;;
 	auto)
-		if [ "${#dirty_full[@]}" -gt 0 ]; then
+		if [ ! -d "${buildroot}/_build/${target}" ]; then
+			# COLD buildroot. `auto` keys purely off sibling-repo dirt, so a fresh
+			# checkout with clean repos (the Docker build at Dockerfile:113, or any
+			# first run after a full-clean nuke) resolved to `project image` — which
+			# reuses core objects that do not exist yet and produces a broken or
+			# empty image with no error naming the cause. Presence of the target
+			# build dir is the honest test for "is there anything to reuse".
+			build_args=(host fs core ports project image)
+			scope_reason="cold buildroot (${buildroot}/_build/${target} absent): full stage list"
+		elif [ "${#dirty_full[@]}" -gt 0 ]; then
 			# A dirty build-infra repo forces a `clean`; that clean wipes _fs and
 			# every staged port, so — exactly like `full-clean` above — `fs` and
 			# `ports` MUST be rebuilt too. Omitting `ports` strands libnfs and makes
@@ -426,6 +435,51 @@ fi
 # build keeps working for non-WiFi developers.
 "${repo_root}/scripts/gen-wifi-fw-c.sh"
 
+# --scope full-clean: wipe the caches that live OUTSIDE the buildroot.
+#
+# `build.sh clean` (phoenix-rtos-build/build.sh:186-189) removes exactly four
+# paths: _build/<target>, _build/host-generic-pc, _fs/<target>, _boot/<target>.
+# Everything below survives it, and each one has already shipped a stale artifact
+# at least once. This block is what makes `--scope full-clean` mean what its name
+# says: reuse NOTHING.
+#
+# Set RPI4B_KEEP_HOST_CACHES=1 to skip it (much faster, but then it is not a clean
+# build — say so in whatever you report).
+if [ "${scope}" = "full-clean" ] && [ "${RPI4B_KEEP_HOST_CACHES:-0}" != 1 ]; then
+	printf 'Full-clean: wiping the caches build.sh clean does NOT touch\n'
+
+	# _boot/host-generic-pc — clean only removes _boot/$TARGET, so the host
+	# metaelf/syspagen/mkrofs copies here outlive a "clean" build forever.
+	rm -rf "${buildroot}/_boot/host-generic-pc"
+
+	# tools/.gpu-libs/*.a — the GPU archives the five game ports link by absolute
+	# path. Nothing in build.sh knows they exist; only build-showcase-apps.sh's
+	# mtime check gates them, and that check cannot see a libphoenix ABI change.
+	# The dir also accumulates archives/binaries no longer produced by any script
+	# (libquakespasm*.a, libvkquake.a, e4-x11-play, gl-x11-window as of
+	# 2026-09-03) which look current to a human reading `ls`.
+	rm -f "${repo_root}"/tools/.gpu-libs/*.a
+	rm -f "${repo_root}"/tools/.gpu-libs/gl-x11-window \
+	      "${repo_root}"/tools/.gpu-libs/gl-x11-window-daemon \
+	      "${repo_root}"/tools/.gpu-libs/e4-x11-play
+
+	# Host-side /tmp intermediates. The Mesa meson trees are re-created by
+	# build-showcase-apps.sh --force, but the X11 prefix and the quakespasm object
+	# cache have NO freshness check at all: every tools/x11-port and tools/ports
+	# script skips its build when the output is already in /tmp/x11-phoenix, so an
+	# X lib built against last month's libphoenix is reused indefinitely.
+	rm -rf /tmp/mesa-v3d-build /tmp/mesa-v3dv-build /tmp/x11-phoenix /tmp/qsobj
+	rm -f  /tmp/v3dphx-aux.txt
+
+	printf 'Full-clean: wiped _boot/host-generic-pc, tools/.gpu-libs, /tmp/{mesa-v3d-build,mesa-v3dv-build,x11-phoenix,qsobj}\n'
+	printf 'Full-clean: NOT wiped (deliberate): the ports tarball cache under\n'
+	printf '            sources/phoenix-rtos-ports/*/ — every tarball is size+sha256\n'
+	printf '            verified on cold extract (port_prepare.sh), and port-sources/\n'
+	printf '            is gone with _build, so each port re-extracts and re-patches.\n'
+	printf 'Full-clean: NOT wiped (needs sudo, do it by hand): the Mesa shader disk\n'
+	printf '            cache on the NFS export — see docs/misc/2026-09-03-clean-rebuild-runbook.md\n'
+fi
+
 if [ "${do_prepare}" -eq 1 ]; then
 	run_build_shell "cd '${repo_root}' && ./scripts/prepare-buildroot.sh --copy-components '${buildroot}'"
 fi
@@ -435,10 +489,18 @@ fi
 # link them and are staged into the image by the project stage. Skipped unless
 # --with-showcase; only meaningful for --variant sd but harmless otherwise.
 if [ "${with_showcase}" = 1 ]; then
-	printf 'Showcase:  building GPU/Quake archives (phase gpu) before build.sh%s\n' \
-		"$( [ "${with_vkquake}" = 1 ] && printf ' (+vkQuake WIP)' )"
-	"${repo_root}/scripts/build-showcase-apps.sh" --phase gpu \
-		$( [ "${with_vkquake}" = 1 ] && printf -- '--with-vkquake' )
+	# --scope full-clean must force the GPU archives too. Without --force the gpu
+	# phase falls back to archive_fresh()'s mtime comparison against the Mesa/port
+	# SOURCES only — so on a full clean the archives look "fresh" and the five game
+	# ports link last week's libGL/libv3d/libv3dv into a freshly built rootfs. The
+	# wipe above already removed them; --force additionally re-runs `meson setup`
+	# (build-showcase-apps.sh:225-233 rm -rf's the /tmp mesa trees) so no generated
+	# Mesa source survives either.
+	gpu_force_arg=""
+	[ "${scope}" = "full-clean" ] && gpu_force_arg="--force"
+	printf 'Showcase:  building GPU archives (phase gpu) before build.sh%s\n' \
+		"$( [ -n "${gpu_force_arg}" ] && printf ' [--force: full-clean]' )"
+	"${repo_root}/scripts/build-showcase-apps.sh" --phase gpu ${gpu_force_arg}
 fi
 
 # GPU_LIBS: the rpi4-quake/-vkquake Makefiles compute this by climbing 4 levels

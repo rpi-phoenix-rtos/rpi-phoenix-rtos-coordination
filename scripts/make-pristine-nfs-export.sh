@@ -14,11 +14,28 @@
 # therefore arrives through the step-1 rsync like everything else.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
-FS=".buildroot/aarch64a72-generic-rpi4b-fs-placeholder"   # overridden below
-FS=".buildroot/_fs/aarch64a72-generic-rpi4b/root"
-EXP="/srv/phoenix-rpi4-nfs"
-NEW="/srv/phoenix-rpi4-nfs.fresh"
-BAK="/srv/phoenix-rpi4-nfs.PREV-cruft"
+FS="${RPI4B_BUILDROOT:-.buildroot}/_fs/${RPI4B_TARGET:-aarch64a72-generic-rpi4b}/root"
+
+# The export to replace is DERIVED, never hardcoded. Prevents the failure this
+# script hit on 2026-09-03: EXP was hardcoded to /srv/phoenix-rpi4-nfs while the
+# export actually served as the Pi's "/" is the fsid=0 one in /etc/exports
+# (/srv/phoenix-rpi4-nfs-gcc16). The pristine tree was swapped into a directory
+# nothing mounts, so the Pi kept booting the old, stale export and the whole
+# "clean export" step silently proved nothing. Same detection as
+# sync-netboot-tree.sh:32 so the two can never disagree.
+fsid0_export="$(awk '$0 ~ /fsid=0/ && $1 ~ /^\// { print $1; exit }' /etc/exports 2>/dev/null || true)"
+EXP="${RPI4B_NFS_EXPORT:-${fsid0_export:-}}"
+[ -n "$EXP" ] || {
+	echo "FATAL: cannot determine the NFS export to replace."
+	echo "       No fsid=0 entry in /etc/exports and RPI4B_NFS_EXPORT is unset."
+	echo "       Refusing to guess — a wrong guess swaps a pristine tree into a"
+	echo "       directory nothing mounts and hides a stale export."
+	exit 1
+}
+[ -d "$EXP" ] || { echo "FATAL: resolved export $EXP does not exist"; exit 1; }
+NEW="${EXP%/}.fresh"
+BAK="${EXP%/}.PREV-cruft"
+echo "== target export (fsid=0 / RPI4B_NFS_EXPORT): $EXP =="
 
 [ -d "$FS/usr/bin" ] || { echo "FATAL: fresh rootfs $FS not found/complete"; exit 1; }
 
