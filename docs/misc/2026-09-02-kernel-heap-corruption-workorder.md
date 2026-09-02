@@ -917,3 +917,29 @@ recycled anonymous pages · ELF bss-tail · fork isolation (both directions) · 
 transfer+fdpass workload writing its own memory · `waitpid` exit-code propagation ·
 signal-death decoding · the exception-dump path. Each has a committed, re-runnable probe
 in `tools/heap-stress`.
+
+### THREE failure classes, not one — and my rates have been mixing them
+
+This is why the numbers in this document kept moving. A run can fail in three ways that
+look identical if only the test summary is checked:
+
+| class | signature in the log | what it is |
+|---|---|---|
+| **A. boot failure** | no `(psh)%` at all; log ends at the NFS takeover | the shell never started |
+| **B. exec/startup failure** | prompt present, command echoed, **zero `TEST(...)` lines**, no fault | the binary produced nothing at all |
+| **C. test failure** | prompt present, `TEST(...)` lines present, then a fault / a failed assert / silence | the thing actually under investigation |
+
+Only class C is evidence about the corruption. Three consecutive trials at the end of
+this session produced one of each, which is a fair illustration of the problem.
+
+Corrections that follow from this:
+- The no-prompt boots I attributed to `psh -i /etc/rc.nfsroot` also occurred *before* it
+  (2 of 108 the same day), and four of the ones I counted afterwards were **my own broken
+  yaml** (the revert deleted the psh launch lines). The rc script may still have made it
+  worse, but the attribution was over-read; the revert stands on its own merits.
+- Restarting `nfs-server` (the known fix for stale-NFSv4 `exec` failures) did **not**
+  remove class B, so that is not simply NFS expiry.
+
+**Counting rule, for any future measurement here:** classify every run into A/B/C first
+and quote class C only. `grep -ac '(psh)%'` and `grep -ac 'TEST('` are enough to
+separate them.
