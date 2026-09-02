@@ -189,15 +189,20 @@ corrupted block instead of faulting — start from that line.
 
 ### Follow-ups found during this pass (verified by inspection, not yet fixed)
 
-1. **SMP hazard, `posix/posix.c:676` vs `722`** — `posix_open` publishes
-   `p->fds[fd].file = f` and drops `p->lock` **before** `f->refs`, `f->oid` and
-   `f->type` are initialised, across three blocking IPCs. A concurrent `close()`
-   or `getOpenFile()` on that fd from another thread of the same process
-   dereferences a garbage `refs` and can double-free `f`. Not the cause of the
-   crash above (the test is single-threaded), but this kernel runs 4-core SMP
-   with pthread-churn workloads, so it is reachable in principle.
+1. ~~**SMP hazard, `posix/posix.c:676` vs `722`**~~ — **FIXED, kernel
+   `e88c8b75`.** And it was not merely "reachable in principle": with a close
+   sweep racing an open loop, **869 of 869 raced closes read `refs == 0`**. It
+   never crashed because `posix_fileDeref` decrements to zero *before* freeing,
+   so a recycled `open_file_t` almost always reads 0 and `--refs` yields −1; the
+   real damage was a leaked file + path string per event. Fixed by holding a
+   construction reference for the duration of the open. A/B on hardware: unfixed
+   869/869 garbage `refs=0`, fixed 968/968 accounted `refs=2`, 0 garbage.
+   Regression test: `test-libc-pthread` → `test_pthread_fdrace`.
 2. **Leak, `posix_putUnusedFile` (`posix.c:181-187`)** — frees `f` but not
-   `f->path`; only on the `posix_clone` OOM path.
+   `f->path`. **Effectively mooted** by `e5c5f833`: its only call path is the
+   clone-tty OOM unwind, and those files now carry `path == NULL`. Left listed
+   because the asymmetry (a free of `f` that ignores `f->path`) is still there
+   and would bite if another caller appeared.
 3. **`unix_close` (`posix/unix.c:1278-1290`)** — one `unixsock_get` and **two**
    `unixsock_put`. Balanced by design (one for the get, one for the tree ref),
    but if the first put ever reached `refs == 0` the second would write into and
@@ -211,3 +216,24 @@ and faulted anyway — the diagnostic bought one allocation, not survival. The
 branch now also forces `used = blocks`, which genuinely retires the zone. Worth
 remembering if this check is ever ported elsewhere: truncating the list is not
 sufficient on its own.
+
+
+### Still open in this class (found while fixing the above; do NOT need the crash)
+
+- **`posix_open` stomps the flags of a descriptor it no longer owns.** The
+  construction reference closes the use-after-free and the leak, but one write
+  still assumes the fd is ours after the IPCs:
+  `p->fds[fd].flags = (oflag & O_CLOEXEC) ? FD_CLOEXEC : 0`. Raced sequence: a
+  concurrent close clears the slot, another thread's `open` re-allocates the
+  **same** fd (`_posix_allocfd` looks for `file == NULL`), and our flags write
+  then sets or clears `FD_CLOEXEC` on **someone else's** descriptor. Pre-existing
+  (the old code had the identical write) and not memory-unsafe, so it did not
+  block the fix; the remedy is the one-line pattern already used in the error
+  tail — guard the write with `if (p->fds[fd].file == f)` under `p->lock`.
+- **Wording to verify:** `e88c8b75`'s message says a racer observing the zeroed
+  file "fails cleanly" because `oid = {0,0}`. That rests on port 0 not being a
+  live port — worth one grep of the port allocator before the claim is repeated.
+- **Test hygiene:** `test_pthread_fdrace` unlinks its file in the test body, so a
+  failing run leaves `pthread_fdrace.txt` in the NFS export — the leftover-file
+  footgun that has bitten this project before. Move it to `TEST_TEAR_DOWN` next
+  time that file is touched.
