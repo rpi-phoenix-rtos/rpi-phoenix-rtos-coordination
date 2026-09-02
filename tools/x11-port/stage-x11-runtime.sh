@@ -35,18 +35,31 @@
 set -u
 
 PREFIX=/tmp/x11-phoenix
-NFS=/srv/phoenix-rpi4-nfs
+# Destination is DERIVED, never hardcoded. /srv/phoenix-rpi4-nfs stopped being the
+# served root when the export was renamed to /srv/phoenix-rpi4-nfs-gcc16 (it is the
+# fsid=0 entry in /etc/exports that the Pi mounts as "/"), so this script was
+# staging the locale DB and fonts into a directory nothing mounts, and the X clients
+# on the Pi went on using whatever was already there. Prefer the rootfs staging tree
+# (SHOWCASE_STAGE_DIR) so the content reaches the SD image as well; fall back to the
+# fsid=0 export. Same detection as scripts/sync-netboot-tree.sh.
+_fsid0_export="$(awk '$0 ~ /fsid=0/ && $1 ~ /^\// { print $1; exit }' /etc/exports 2>/dev/null || true)"
+NFS="${SHOWCASE_STAGE_DIR:-${RPI4B_NFS_EXPORT:-${_fsid0_export:-}}}"
 FONTDIR=$NFS/usr/share/fonts/X11/misc
 # Host X11 font tree (source of the standard bitmap fonts + encodings DB).
 HOSTFONTS=/usr/share/fonts/X11
 
 fail() { echo "FAIL: $*"; exit 1; }
 
+[ -n "$NFS" ] || fail "no staging destination: set SHOWCASE_STAGE_DIR, or add an fsid=0 export to /etc/exports"
 [ -d "$NFS" ] || fail "$NFS not present"
 
 # --- libX11 locale database ---
 if [ -f "$PREFIX/share/X11/locale/locale.dir" ]; then
 	mkdir -p "$NFS/usr/share/X11"
+	# rm first: `cp -a src dst` where dst already exists NESTS the tree as
+	# dst/locale/locale, leaving the real (stale) locale DB in place. The header
+	# claimed this script was idempotent; it was not.
+	rm -rf "$NFS/usr/share/X11/locale"
 	cp -a "$PREFIX/share/X11/locale" "$NFS/usr/share/X11/locale"
 	echo "staged locale DB -> $NFS/usr/share/X11/locale"
 else

@@ -463,15 +463,59 @@ if [ "${scope}" = "full-clean" ] && [ "${RPI4B_KEEP_HOST_CACHES:-0}" != 1 ]; the
 	      "${repo_root}"/tools/.gpu-libs/gl-x11-window-daemon \
 	      "${repo_root}"/tools/.gpu-libs/e4-x11-play
 
-	# Host-side /tmp intermediates. The Mesa meson trees are re-created by
-	# build-showcase-apps.sh --force, but the X11 prefix and the quakespasm object
-	# cache have NO freshness check at all: every tools/x11-port and tools/ports
-	# script skips its build when the output is already in /tmp/x11-phoenix, so an
-	# X lib built against last month's libphoenix is reused indefinitely.
-	rm -rf /tmp/mesa-v3d-build /tmp/mesa-v3dv-build /tmp/x11-phoenix /tmp/qsobj
-	rm -f  /tmp/v3dphx-aux.txt
+	# Host-side /tmp intermediates. NONE of these has a freshness check: every
+	# tools/ports and tools/x11-port script skips its build when the output is
+	# already present in its /tmp prefix, so a library built against last month's
+	# libphoenix is reused indefinitely. /tmp/wmaker-deps is the worst of them — it
+	# snapshots /tmp/x11-phoenix once and then refuses to refresh (cp -an).
+	rm -rf /tmp/mesa-v3d-build /tmp/mesa-v3dv-build /tmp/mesa-pyenv \
+	       /tmp/x11-phoenix /tmp/wmaker-deps \
+	       /tmp/phoenix-iconv /tmp/phoenix-ffi /tmp/phoenix-ncurses \
+	       /tmp/phoenix-glib /tmp/phoenix-mc /tmp/fltk-phoenix /tmp/dillo-phoenix \
+	       /tmp/python-port-build \
+	       /tmp/qsobj /tmp/qsobj-det /tmp/qsobj-sdl /tmp/vkqobj \
+	       /tmp/sdl2test-obj /tmp/sdl2audio-obj /tmp/gl-smoke-build
+	rm -f  /tmp/v3dphx-aux.txt /tmp/libv3d-phoenix-daemon.a /tmp/libv3d-client.a \
+	       /tmp/libv3d-client.o /tmp/glamor_phoenix_ctx.o /tmp/epoxy_shim.o \
+	       /tmp/gl_x11_window.o
 
-	printf 'Full-clean: wiped _boot/host-generic-pc, tools/.gpu-libs, /tmp/{mesa-v3d-build,mesa-v3dv-build,x11-phoenix,qsobj}\n'
+	# The EXTRACTED, PATCHED and CONFIGURED port trees. Wiping the /tmp prefixes
+	# alone is not enough and is the trap this block exists to avoid: every
+	# config.status, every ".already patched" stamp (.dillo-tls-mode,
+	# .mc-guard-configured, .phoenix-glamor-enabled) and — critically — the 25
+	# xorg-server core archives live under tools/{ports,x11-port}/src/, not /tmp.
+	# build-xserver-core.sh's core_built() checks those archives in the src tree, so
+	# with /tmp cleared but src/ kept it early-returns on last month's archives and
+	# Xphoenix links against them.
+	# Only the extracted DIRECTORIES go; the downloaded tarballs sitting next to
+	# them are kept, so this costs a re-extract, not a re-download (an x.org CDN
+	# outage killed a full clean build once already, session ~206).
+	for src_root in "${repo_root}/tools/ports/src" "${repo_root}/tools/x11-port/src"; do
+		[ -d "${src_root}" ] || continue
+		for tree in "${src_root}"/*/; do
+			[ -d "${tree}" ] && rm -rf "${tree}"
+		done
+	done
+
+	# Ad-hoc build dirs that live under tools/ rather than /tmp.
+	rm -rf "${repo_root}/tools/v3d-driver-port/.build-csd-daemon"
+
+	# The x.org distfile cache is KEPT (no re-download) but is unverified — no
+	# checksums anywhere in build-x11-phoenix.sh. A truncated tarball cached during
+	# a CDN outage would silently re-extract into a broken tree, so flag the
+	# suspiciously small ones rather than trusting it blindly.
+	distfiles="${PHOENIX_DISTFILES:-${HOME}/.phoenix-distfiles/x11}"
+	if [ -d "${distfiles}" ]; then
+		tiny="$(find "${distfiles}" -type f -size -10k -print 2>/dev/null)"
+		if [ -n "${tiny}" ]; then
+			printf 'Full-clean: WARNING suspiciously small files in the x.org distfile cache\n' >&2
+			printf '            (a CDN outage serves 95-byte stubs). Delete these and re-run:\n' >&2
+			printf '%s\n' "${tiny}" >&2
+		fi
+	fi
+
+	printf 'Full-clean: wiped _boot/host-generic-pc, tools/.gpu-libs, the /tmp build\n'
+	printf '            prefixes, and the extracted trees under tools/{ports,x11-port}/src\n'
 	printf 'Full-clean: NOT wiped (deliberate): the ports tarball cache under\n'
 	printf '            sources/phoenix-rtos-ports/*/ — every tarball is size+sha256\n'
 	printf '            verified on cold extract (port_prepare.sh), and port-sources/\n'
