@@ -314,7 +314,25 @@ slot re-check before each write, and a refcounted teardown in
 Also noted while reviewing: `posix_socketpair` returns `-EAFNOSUPPORT`
 (`posix.c:2358-2360`) without `pinfo_put(p)` — a leaked pinfo reference.
 
-### Lower-severity items from the same review (recorded, not fixed)
+### Lower-severity items from the same review — 3 of 5 now FIXED (kernel `c3f60f1b`)
+
+- ✅ `f->path` published before being filled → build into a local, publish last.
+- ✅ `posix_open` returning a descriptor a racing close had taken (and
+  `_posix_allocfd` may have reallocated to a different file) → now `-EBADF`.
+  **Behaviour change under a race, and pronounced on this port:** `open()` does
+  several blocking IPCs (root on NFS), so the window is far wider than a sweep
+  iteration and the sweeper wins essentially every attempt in the regression
+  test — which was updated to assert the contract (succeed, or fail with EBADF,
+  nothing else) rather than one side of a timing race.
+- ✅ `posix_exit` leaving dangling pointers in a zombie's fd table → slots cleared.
+- ⬜ `F_SEEKABLE` accepting a half-built file in `fcntl` — needs an explicit
+  "under construction" `type`; deferred as the only one of the five that touches
+  the `ftype` enum and every switch over it.
+- ⬜ `posix_exit`/`posix_exec` calling `posix_fileDeref` under `p->lock`, whose
+  `refs == 0` branch does a blocking `proc_close` — pre-existing and structural
+  (needs collecting the files, then dereferencing outside the lock).
+
+### Original list (for the record)
 
 - `posix_open`'s construction sentinel `f->oid.port = (u32)-1` is bit-identical
   to `US_PORT`. Latent only — nothing tests `f->oid.port == US_PORT` today, but
