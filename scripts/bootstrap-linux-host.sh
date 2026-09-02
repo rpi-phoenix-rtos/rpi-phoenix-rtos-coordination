@@ -81,6 +81,9 @@ declare -A SIBLING_BRANCHES=(
 	[phoenix-rtos-filesystems]=master
 	[phoenix-rtos-project]=master
 	[phoenix-rtos-build]=master
+	# Carries the whole framework-port tree (ports/<name>/port.def.sh + patches),
+	# including the supertuxkart port — see the EXTERNAL_DEPS notes below.
+	[phoenix-rtos-ports]=master
 )
 
 # Additional sibling repos that phoenix-rtos-project's .gitmodules
@@ -90,7 +93,6 @@ declare -A SIBLING_BRANCHES=(
 # doesn't exist yet, clone_repo falls back to the upstream remote.
 UPSTREAM_ONLY_REPOS=(
 	phoenix-rtos-corelibs
-	phoenix-rtos-ports
 	phoenix-rtos-lwip
 	phoenix-rtos-posixsrv
 	phoenix-rtos-tests
@@ -123,6 +125,21 @@ UPSTREAM_ONLY_REPOS=(
 #                         raspberrypi/firmware (stage_pi_firmware), never compiled.
 #   - external/rpi-eeprom Tier-2 lab/netboot only; prepare-pi-eeprom-netboot.sh
 #                         self-clones it on demand.
+#   - supertuxkart        DELIBERATELY not an external dep, and deliberately NOT
+#                         forked. STK is a framework port living in the
+#                         phoenix-rtos-ports sibling (ports/supertuxkart/): its
+#                         port.def.sh fetches PRISTINE upstream stk-code at the
+#                         immutable release tag 1.4 (size + sha256 pinned) and
+#                         b_port_apply_patches applies our 10 tracked patches.
+#                         That is the same "pinned tag + hosted patches" contract
+#                         as external/mesa above, so a fork would buy nothing:
+#                         the whole Phoenix delta is 10 files / 171+ / 7- across
+#                         14 hunks — a fifth of the mesa patch we already carry
+#                         flat. Adding an EXTERNAL_DEPS entry here would clone a
+#                         copy of STK that nothing builds from and fork a second
+#                         patch set that drifts from the one the build consumes.
+#                         The ~1 GB art assets (stk-assets) stay a separate
+#                         runtime concern, per ports/supertuxkart/port.def.sh.
 #
 # Format: "<subdir>|<git-url>|<pinned-ref>[|<port-patch-relpath>]". mesa clones
 # PRISTINE UPSTREAM at the tag and apply_dep_patch applies our diff; quakespasm
