@@ -110,10 +110,14 @@ UPSTREAM_ONLY_REPOS=(
 #   - external/quakespasm -> our org fork, branch phoenix-rpi4-port;
 #                            tools/quakespasm-port builds libquakespasm.a
 #                            (the rpi4-quake showcase).
-#   - external/yquake2, external/quake3e -> our org forks, same branch; the
-#                            Quake II / Quake III showcase ports. Added so a
-#                            fresh clone can build them at all -- that work
-#                            previously existed only on the dev host.
+#   - external/yquake2, external/quake3e -> our org forks, same branch. These
+#                            two are NOT built by build-showcase-apps.sh (their
+#                            tools/ build scripts were deleted on the migration
+#                            to framework ports). They are the SOURCE OF TRUTH
+#                            from which sources/phoenix-rtos-ports/{yquake2,
+#                            quake3}/patches/ is generated -- see
+#                            scripts/game-port-patch.sh. Clone them so that
+#                            generation and its drift check can run here.
 #   - external/vkquake    -> our org fork (branch phoenix-rpi4-port); tools/vkquake-port
 #                            builds libvkquake.a -> rpi4-vkquake (the Vulkan/V3DV Quake
 #                            showcase). Only cloned/built when `--with-vkquake` is passed
