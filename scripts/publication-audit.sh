@@ -255,6 +255,25 @@ for d in "$ROOT"/external/*/; do
 	fi
 done
 
+# The game ports' patches are GENERATED from their forks (one source of truth for
+# our engine changes -- see scripts/game-port-patch.sh). A stale patch means the
+# published tree builds something other than the fork we test on hardware, which
+# is exactly the drift that let yQuake2's fork and patch each lose a fix.
+echo
+echo "== game port patches (generated from the forks)"
+if [ -x scripts/game-port-patch.sh ]; then
+	while read -r line; do
+		[ -z "$line" ] && continue
+		printf '  %s\n' "$line"
+		case "$line" in
+		*STALE*) finding "game port patch is stale: ${line%% *} (run scripts/game-port-patch.sh --regen)" ;;
+		*FAIL*) finding "game port patch cannot be verified: $line" ;;
+		esac
+	done < <(./scripts/game-port-patch.sh --check 2>&1)
+else
+	note "stray" "scripts/game-port-patch.sh missing or not executable"
+fi
+
 echo
 if [ "$FINDINGS" -eq 0 ]; then
 	echo "PUBLICATION-AUDIT: CLEAN — a fresh org clone builds from published sources only"
