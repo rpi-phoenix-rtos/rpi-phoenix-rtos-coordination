@@ -232,6 +232,64 @@ static int phase_race(long secs)
 }
 
 
+/* mode=sockrace: an fd sweep racing socket()/socketpair()/accept-style creation.
+ *
+ * Same window as mode=race, but through posix_newFile instead of posix_open:
+ * the fd slot is published before the caller fills the file in, so a thread
+ * closing descriptors can clear the slot mid-construction. Before the
+ * construction reference, the socket paths wrote through p->fds[fd].file after
+ * that point and their error paths tore the file down without refcounting --
+ * a second free of the same block. */
+static void *sockrace_maker(void *arg)
+{
+	(void)arg;
+	while (race_stop == 0) {
+		int sv[2];
+		int s = socket(AF_UNIX, SOCK_STREAM, 0);
+		if (s >= 0) {
+			race_opens++;
+			close(s);
+		}
+		if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0) {
+			race_opens++;
+			close(sv[0]);
+			close(sv[1]);
+		}
+	}
+	return NULL;
+}
+
+
+static int phase_sockrace(long secs)
+{
+	pthread_t a, b;
+
+	race_stop = 0;
+	race_opens = 0;
+	race_closes = 0;
+
+	if (pthread_create(&a, NULL, sockrace_maker, NULL) != 0) {
+		printf("HEAPSTRESS-FAIL pthread_create(maker)\n");
+		return -1;
+	}
+	if (pthread_create(&b, NULL, race_sweeper, NULL) != 0) {
+		race_stop = 1;
+		(void)pthread_join(a, NULL);
+		printf("HEAPSTRESS-FAIL pthread_create(sweeper)\n");
+		return -1;
+	}
+
+	sleep((unsigned int)secs);
+	race_stop = 1;
+	(void)pthread_join(a, NULL);
+	(void)pthread_join(b, NULL);
+
+	printf("HEAPSTRESS: sockrace %ld sockets created, %ld sweep-closes\n",
+		race_opens, race_closes);
+	return 0;
+}
+
+
 static int iter_nlink_tim(void)
 {
 	struct stat st;
@@ -288,6 +346,7 @@ int main(int argc, char **argv)
 	int only_segv = (strcmp(mode, "segv") == 0) ? 1 : 0;
 	int only_badptr = (strcmp(mode, "badptr") == 0) ? 1 : 0;
 	int only_cow = (strcmp(mode, "cow") == 0) ? 1 : 0;
+	int only_sockrace = (strcmp(mode, "sockrace") == 0) ? 1 : 0;
 	long i;
 
 	/* Start from a clean slate: leftovers from a crashed run change which
@@ -375,6 +434,14 @@ int main(int argc, char **argv)
 		(void)waitpid(pid, NULL, 0);
 		printf("HEAPSTRESS-RESULT PASS (cow: %zu pages written in a forked child)\n",
 			len / 4096u);
+		return 0;
+	}
+
+	if (only_sockrace != 0) {
+		if (phase_sockrace(n) != 0) {
+			return 1;
+		}
+		printf("HEAPSTRESS-RESULT PASS (%ld s sockrace, clean)\n", n);
 		return 0;
 	}
 

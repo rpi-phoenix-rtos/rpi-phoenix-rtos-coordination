@@ -262,7 +262,21 @@ Unexplained and worth a future look: something produced **2 EL1 faults** in
 across ~6 later runs. It is not fork-COW — 1024 COW writes in a forked child resolve zero
 faults on this kernel. The lazily-mapped path involved is unidentified.
 
-### The same construction-window bug is still live in the socket family (NOT fixed)
+### The same construction-window bug in the socket family — **FIXED** (kernel `d3862861`)
+
+Resolved 2026-09-02: `posix_newFile` now returns the file with a construction
+reference (refs = 2) and `socket`/`socketpair`/`accept4` write through that
+pointer, never through the slot; `posix_fileConstructAbort/Done` end the state
+correctly. HW-proven that the window really fires: with 199k sockets created
+against 29k sweep-closes, a probe caught `slot stolen … refs=1` — the slot's
+reference already dropped by a racing close, only the construction reference
+keeping the file alive. On the old code that same event freed the file under the
+constructor, and the error path freed it a second time. Also replaced the
+all-ones construction oid with `POSIX_PORT_CONSTRUCTING` (all-ones is
+bit-identical to `US_PORT`) and fixed `posix_socketpair`'s leaked pinfo
+reference on `-EAFNOSUPPORT`. Original analysis follows.
+
+#### Original finding (for the record)
 
 `e88c8b75` fixed `posix_open`. The socket calls have the identical shape and were
 not touched — this is the highest-severity open item in this class:
