@@ -283,6 +283,8 @@ int main(int argc, char **argv)
 	const char *mode = (argc > 2) ? argv[2] : "all";
 	int only_pipe = (strcmp(mode, "pipe") == 0) ? 1 : 0;
 	int only_race = (strcmp(mode, "race") == 0) ? 1 : 0;
+	int only_segv = (strcmp(mode, "segv") == 0) ? 1 : 0;
+	int only_badptr = (strcmp(mode, "badptr") == 0) ? 1 : 0;
 	long i;
 
 	/* Start from a clean slate: leftovers from a crashed run change which
@@ -296,6 +298,44 @@ int main(int argc, char **argv)
 
 	printf("HEAPSTRESS: %ld iterations mode=%s\n", n, mode);
 	fflush(stdout);
+
+	/* mode=segv: deliberately take an UNRESOLVABLE fault, to prove the kernel
+	 * still reports one. map_pageFault no longer dumps a kernel-PC fault on a
+	 * user map up front (that printed a register dump on passing tests); the
+	 * guarantee that has to survive is that a fault vm_mapForce cannot satisfy
+	 * is still dumped. Expected: an "Exception #" dump naming this process,
+	 * then SIGSEGV. */
+	if (only_segv != 0) {
+		printf("HEAPSTRESS: taking a deliberate null write (expect an exception dump)\n");
+		fflush(stdout);
+		*(volatile int *)0 = 1;
+		printf("HEAPSTRESS-RESULT FAIL (null write did not fault)\n");
+		return 1;
+	}
+
+	/* mode=badptr: make the KERNEL fault on a user address it cannot map, by
+	 * handing a syscall an unmapped user buffer. This is precisely the case
+	 * map_pageFault no longer dumps up front (kernel PC, user map), so it is
+	 * the one that has to still be reported when vm_mapForce cannot satisfy it.
+	 * Expected: either a clean errno (the syscall validated the pointer) or an
+	 * exception dump naming this process -- never silence plus success. */
+	if (only_badptr != 0) {
+		void *bad = (void *)0x40000000000ULL; /* nothing is mapped up here */
+		ssize_t w;
+		int fd = open(BASE, O_CREAT | O_RDWR, 0666);
+
+		if (fd < 0) {
+			printf("HEAPSTRESS-FAIL open errno=%d\n", errno);
+			return 1;
+		}
+		printf("HEAPSTRESS: write() from an unmapped user buffer %p\n", bad);
+		fflush(stdout);
+		w = write(fd, bad, 64);
+		printf("HEAPSTRESS: write returned %zd errno=%d (no dump above = SILENCED, a bug)\n", w, errno);
+		close(fd);
+		(void)unlink(BASE);
+		return 0;
+	}
 
 	if (only_race != 0) {
 		/* n is seconds of racing here, not iterations. */
