@@ -153,3 +153,57 @@ phoenix-rtos-devices, with the counters (`glom supers/subframes/bad`) already in
 place to debug it. One bug of this class was already found and fixed during the
 attempt: the frame copy-out still read the old buffer after the receive buffer
 changed, which delivered stale bytes as ethernet frames.
+
+
+---
+
+## The glom wire format, captured from the hardware
+
+Two one-shot dumps settled what the aggregation actually looks like, replacing
+several rounds of guessing. Both frames are SDPCM channel 3; the SW header's
+`0x80` bit (brcmfmac `SDPCM_GLOMDESC`) tells them apart.
+
+**Descriptor** — `len=22 doff=12`, `buf[5]=0x83` (channel 3 **+** descriptor bit):
+
+```
+16 00 e9 ff | 3d 83 00 0c | 00 67 00 00 | 60 00 60 00 60 00 60 00 60 00
+^HW len 22   ^seq, chan|desc, doff 12    ^credits      ^five u16 strides = 96 each
+```
+
+Its payload is a list of subframe **slot sizes**, not data. Walking it as data
+was the first bug.
+
+**Superframe** — `len=480 doff=12`, `buf[5]=0x03` (channel 3, bit clear):
+
+```
+hdr  e0 01 1f fe | 35 03 00 0c | 00 4b 00 00
+sub  48 00 b7 ff | 35 02 00 0e | 00 4b 00 00 | 00 00 | 20 00 00 00 | <ethernet>
+     ^HW len 72    ^chan 2, data_offset 14    ^credits  ^2b pad     ^BDC
+```
+
+So each subframe carries a **full SDPCM header of its own**, then **two bytes of
+pad** (its `data_offset` is 14, not 12), then the BDC header and the frame. The
+first subframe parses exactly: 72 − 14 − 4 = 54 bytes, precisely a TCP ACK.
+
+## Where it still fails
+
+The walker extracts **one good subframe per superframe and then hits a bad
+header, every time** (`subframes N, bad N`). That is what landing mid-header
+looks like, so the spacing is still wrong. Tried, none of them fixed it:
+
+- stride = the subframe's own HW length (72)
+- stride = that length rounded up to 4
+- stride = the preceding descriptor's slot size (96)
+
+And one that actively broke reception, reverted: padding the superframe **read**
+up to the SDIO block size. `roundup(len, blocksize)` is what
+`brcmf_sdio_hdparse` expects, but that belongs to block-mode transfers — this
+driver reads the FIFO in byte mode, which pops exactly what is asked for, so
+rounding up reads past the frame and desynchronises the stream (receive died
+within a handful of frames).
+
+Note `480 − 12 = 468`, which divides evenly by neither 72 nor 96, so the real
+spacing is still unaccounted for. **Next step: dump the bytes at the failing
+offset instead of reasoning about the stride** — the answer is in those 468
+bytes. The dumps and counters to do it are already on branch
+`wip/rpi4-wifi-glom`; master keeps the known-good driver.
