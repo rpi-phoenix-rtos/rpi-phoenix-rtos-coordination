@@ -5,10 +5,12 @@ build-script changes of the last days, rebuild *everything* from source with **n
 reuse of objects, archives, port workdirs, staged rootfs or caches — then verify the
 nfsroot rootfs and the SD image were cut from the same tree.
 
-**Audience.** The operator (parent session) running the real build. This document is
-the single ordered procedure; the reasoning behind each wipe is in
-`docs/misc/2026-09-03-build-reuse-audit.md` (the reuse-point map) and in the comments
-of the scripts themselves.
+**Audience.** The operator running the real build. This document is the single
+ordered procedure. The reasoning behind each individual wipe and guard lives in the
+comments of the scripts themselves; the two commits that introduced them are
+`f9004c5` ("scripts: close the stale-artifact holes in the build/staging machinery")
+and `a2b4b64` ("full-clean also wipes the tools/ caches"), whose messages carry the
+per-fix rationale.
 
 **Status of the timings below: ESTIMATES.** They are inferred from tree sizes
 (`_build/<target>` is 5.1 GB, `port-sources/` 4.2 GB across 52 port workdirs,
@@ -346,6 +348,40 @@ directory the image was assembled from.)
 ## 6. Known residual risks — read before you interpret a failure
 
 Ordered by how likely they are to bite during *this* build.
+
+0. **THE ONE HOLE `--scope full-clean` CANNOT CLOSE: the GPU archives are compiled
+   against the toolchain's bundled libphoenix headers, one generation behind.**
+   `sources/phoenix-rtos-devices/gpu/rpi4-v3d/mesa/build-{v3d,gl,v3dv}-phoenix.py`
+   invoke `.toolchain/aarch64-phoenix/bin/aarch64-phoenix-gcc` with **no
+   `--sysroot`** (`build-v3d-phoenix.py:47`), so ~400 Mesa objects resolve libc
+   headers out of `.toolchain/aarch64-phoenix/aarch64-phoenix/include` — the
+   hand-maintained bundle, whose only recent contents are two headers somebody
+   copied by hand on Sep 1. And the ordering forces it: the gpu phase must run
+   *before* `build.sh` (the five game ports `b_die` without the archives), so at
+   the moment the archives are built the fresh libphoenix does not exist yet.
+   The five game ports then link those archives against the *new* libphoenix.
+
+   This was not introduced by anything in this cleanup — it is how the GPU stack has
+   always been built — and it is not fixable from the wrapper (you cannot interleave
+   the gpu phase into `build.sh`'s stage list, and adding `--sysroot` to the Mesa
+   compile is a ~400-object change nobody has validated). **Mitigation, if this
+   integration window changed libphoenix headers or ABI** — the owner's pending
+   TD-21 syscall-order revert is exactly such a change — after the first pass
+   completes, re-run:
+
+   ```
+   ./scripts/build-showcase-apps.sh --phase gpu --force
+   ./scripts/build-port.sh quakespasm yquake2 quake3 vkquake supertuxkart
+   ```
+
+   so the archives *and* the engines that link them are both built against the
+   final libphoenix. The Docker path (§7) is immune: it builds the toolchain from
+   the current libphoenix, so its bundle is never stale.
+
+   `archive_fresh()` now takes the built sysroot's `libphoenix.a` as a freshness
+   input, so on an *incremental* build a libphoenix rebuild at least invalidates the
+   archives. It cannot help on the first pass of a full clean, when no sysroot
+   exists yet.
 
 1. **A regenerated port patch does not rebuild its port.** `port.subr:68-74` keys
    re-application on `<basename>.applied` marker files, with no content hash;
