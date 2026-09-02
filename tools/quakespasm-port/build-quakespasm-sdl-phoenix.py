@@ -85,7 +85,7 @@ SDLBK = ["gl_vidsdl", "in_sdl", "snd_sdl"]
 
 PLAT = f"{ROOT}/tools/quakespasm-port/platform"
 MESA = f"{ROOT}/external/mesa"
-COMPAT = f"{ROOT}/tools/v3d-driver-port/phoenix_mesa_compat.h"
+COMPAT = f"{ROOT}/sources/phoenix-rtos-devices/gpu/rpi4-v3d/mesa/phoenix_mesa_compat.h"
 # Shared GL-context glue (Zlib): the SDL2 video driver inside libSDL2.a calls its
 # phxgl_* entry points. Same file the flagship links; here it is driven by SDL2,
 # not by pl_phoenix_vid.c.

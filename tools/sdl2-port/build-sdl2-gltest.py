@@ -19,7 +19,7 @@ import os, subprocess, sys
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 TC   = f"{ROOT}/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-gcc"
 MESA = f"{ROOT}/external/mesa"
-COMPAT = f"{ROOT}/tools/v3d-driver-port/phoenix_mesa_compat.h"
+COMPAT = f"{ROOT}/sources/phoenix-rtos-devices/gpu/rpi4-v3d/mesa/phoenix_mesa_compat.h"
 GPU_LIBS = f"{ROOT}/tools/.gpu-libs"
 GLLIB  = f"{GPU_LIBS}/libGL-phoenix.a"
 V3DLIB = f"{GPU_LIBS}/libv3d-phoenix.a"

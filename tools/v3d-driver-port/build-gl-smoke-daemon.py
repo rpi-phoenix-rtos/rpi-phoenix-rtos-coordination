@@ -26,6 +26,9 @@ import os, json, subprocess, sys, shutil
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 PORT_DIR = os.path.join(ROOT, "tools/v3d-driver-port")
+# The V3D/Mesa port glue + its build scripts now live in the phoenix-rtos-devices
+# sibling repo; this probe/harness tree stays in tools/ (see the D9/D2 migration).
+MESA_PORT_DIR = os.path.join(ROOT, "sources/phoenix-rtos-devices/gpu/rpi4-v3d/mesa")
 DEV_DIR = os.path.join(ROOT, "sources/phoenix-rtos-devices/gpu/rpi4-v3d")
 # Coordinator's primary choice: gl_frontend_smoke.c - the simplest CL-path exercise
 # (surfaceless: wrap an FBO-backed RT, glClear to green, glReadPixels). It never calls
@@ -40,8 +43,8 @@ if "--out-dir" in sys.argv:
 os.makedirs(OUT_DIR, exist_ok=True)
 
 # Reuse build-v3d-phoenix.py's prelude for TC/HOSTBUILD/GPU_LIBS/PORT/ABI_FLAGS/transform.
-_pre = open(os.path.join(PORT_DIR, "build-v3d-phoenix.py")).read().split("def main")[0]
-g = {"__file__": os.path.join(PORT_DIR, "build-v3d-phoenix.py")}
+_pre = open(os.path.join(MESA_PORT_DIR, "build-v3d-phoenix.py")).read().split("def main")[0]
+g = {"__file__": os.path.join(MESA_PORT_DIR, "build-v3d-phoenix.py")}
 exec(_pre, g)
 TC, HOSTBUILD, GPU_LIBS, ABI_FLAGS, transform = (
     g["TC"], g["HOSTBUILD"], g["GPU_LIBS"], g["ABI_FLAGS"], g["transform"])

@@ -32,7 +32,7 @@ NM="${ROOT}/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-nm"
 
 MESA="${ROOT}/external/mesa"
 MESABUILD="/tmp/mesa-v3d-build"
-COMPAT="${ROOT}/tools/v3d-driver-port/phoenix_mesa_compat.h"
+COMPAT="${ROOT}/sources/phoenix-rtos-devices/gpu/rpi4-v3d/mesa/phoenix_mesa_compat.h"
 GPU_LIBS="${ROOT}/tools/.gpu-libs"
 GLLIB="${GPU_LIBS}/libGL-phoenix.a"
 V3DLIB="${GPU_LIBS}/libv3d-phoenix.a"

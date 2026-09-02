@@ -22,6 +22,9 @@ NM=$TC/aarch64-phoenix-nm
 
 DEV=$TOP/sources/phoenix-rtos-devices/gpu/rpi4-v3d   # server + client + vendored uapi
 TOOLS=$TOP/tools/v3d-driver-port                     # csd_matmul.c (UNCHANGED) + its headers
+# shim-include (sys/ioccom.h for the DRM UAPI) moved into the devices repo with the
+# rest of the V3D/Mesa port glue; csd_matmul.c still needs it on the include path.
+SHIM=$TOP/sources/phoenix-rtos-devices/gpu/rpi4-v3d/mesa/shim-include
 OUT=${1:-$TOOLS/.build-csd-daemon}
 
 # The device tree builds with these flags (Makefile.common): -Wall -Werror etc.
@@ -47,7 +50,7 @@ set +x
 
 echo "== compile UNCHANGED csd_matmul.c (its own headers; no -Werror, matches today) =="
 set -x
-$GCC -O2 -Wall -I"$TOOLS" -I"$TOOLS/shim-include" -c "$TOOLS/csd_matmul.c" -o "$OUT/csd_matmul.o"
+$GCC -O2 -Wall -I"$TOOLS" -I"$SHIM" -c "$TOOLS/csd_matmul.c" -o "$OUT/csd_matmul.o"
 set +x
 
 echo "== link csd-matmul-daemon (csd_matmul.o + libv3d-client.a + libphoenix + libm, -static) =="

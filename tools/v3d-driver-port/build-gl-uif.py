@@ -19,14 +19,17 @@ import os, json, subprocess, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 PORT_DIR = os.path.join(ROOT, "tools/v3d-driver-port")
+# The V3D/Mesa port glue + its build scripts now live in the phoenix-rtos-devices
+# sibling repo; this probe/harness tree stays in tools/ (see the D9/D2 migration).
+MESA_PORT_DIR = os.path.join(ROOT, "sources/phoenix-rtos-devices/gpu/rpi4-v3d/mesa")
 SRC = os.path.join(PORT_DIR, "gl_uif_probe.c")
 OBJ = "/tmp/gl_uif_probe.o"
 OUT = os.environ.get("GL_UIF_OUT", "/tmp/gl-uif")
 
 # Reuse build-v3d-phoenix.py's prelude (everything before "def main") for TC/MESA/HOSTBUILD/
 # PORT/GPU_LIBS/transform. Give it a real __file__ so its ROOT derivation works.
-_pre = open(os.path.join(PORT_DIR, "build-v3d-phoenix.py")).read().split("def main")[0]
-g = {"__file__": os.path.join(PORT_DIR, "build-v3d-phoenix.py")}
+_pre = open(os.path.join(MESA_PORT_DIR, "build-v3d-phoenix.py")).read().split("def main")[0]
+g = {"__file__": os.path.join(MESA_PORT_DIR, "build-v3d-phoenix.py")}
 exec(_pre, g)
 TC, HOSTBUILD, GPU_LIBS, transform = g["TC"], g["HOSTBUILD"], g["GPU_LIBS"], g["transform"]
 TCXX = TC.replace("gcc", "g++")

@@ -1,9 +1,9 @@
 # Prebuilt GPU/engine archives — large generated artifacts, not source.
 #
 # These are produced by the coordination-repo build scripts:
-#   tools/v3d-driver-port/build-v3d-phoenix.py   -> libv3d-phoenix.a
-#   tools/v3d-driver-port/build-gl-phoenix.py    -> libGL-phoenix.a
-#   tools/v3d-driver-port/build-v3dv-phoenix.py  -> libv3dv-phoenix.a
+#   sources/phoenix-rtos-devices/gpu/rpi4-v3d/mesa/build-v3d-phoenix.py   -> libv3d-phoenix.a
+#   sources/phoenix-rtos-devices/gpu/rpi4-v3d/mesa/build-gl-phoenix.py    -> libGL-phoenix.a
+#   sources/phoenix-rtos-devices/gpu/rpi4-v3d/mesa/build-v3dv-phoenix.py  -> libv3dv-phoenix.a
 #   tools/quakespasm-port/build-quakespasm-phoenix.py -> libquakespasm.a
 #   tools/vkquake-port/build-vkquake-phoenix.py  -> libvkquake.a
 #

@@ -104,7 +104,7 @@ UPSTREAM_ONLY_REPOS=(
 # feed the V3D GPU / GL stack + the GLQuake showcase:
 #   - external/mesa       -> UPSTREAM Mesa at the immutable tag mesa-26.2.0 (final) +
 #                            our patch (patches/mesa/phoenix-rpi4-v3d.patch);
-#                            tools/v3d-driver-port builds libGL/libv3d/libv3dv.
+#                            the V3D/Mesa port scripts build libGL/libv3d/libv3dv.
 #                            NOT a fork — reproducible from the frozen tag, so it
 #                            cannot be broken by upstream drift.
 #   - external/quakespasm -> our org fork, branch phoenix-rpi4-port;

@@ -61,7 +61,8 @@ mesa_dir="${repo_root}/external/mesa"
 # the ext2 image; a standalone run may point it at the NFS export instead.
 stage_dir="${SHOWCASE_STAGE_DIR:-${buildroot}/_fs/${target}/root}"
 
-# Host Mesa build dirs (reused by the tools/v3d-driver-port/*.py scripts via
+# Host Mesa build dirs (reused by the V3D/Mesa port scripts in
+# sources/phoenix-rtos-devices/gpu/rpi4-v3d/mesa/*.py via
 # their hardcoded HOSTBUILD paths). Kept in /tmp to match those scripts.
 mesa_v3d_build="${MESA_V3D_BUILD:-/tmp/mesa-v3d-build}"
 mesa_v3dv_build="${MESA_V3DV_BUILD:-/tmp/mesa-v3dv-build}"
@@ -153,7 +154,8 @@ archive_fresh() {
 	[ -f "$a" ] || return 1
 	[ "$force" = 0 ] || return 1
 	local newest
-	newest="$(find "${repo_root}/tools/v3d-driver-port" "${repo_root}/tools/quakespasm-port" \
+	newest="$(find "${repo_root}/sources/phoenix-rtos-devices/gpu/rpi4-v3d/mesa" \
+		"${repo_root}/tools/v3d-driver-port" "${repo_root}/tools/quakespasm-port" \
 		"${repo_root}/tools/vkquake-port" "$@" -type f -newer "$a" 2>/dev/null | head -1)"
 	[ -z "$newest" ]
 }
@@ -313,20 +315,21 @@ phase_gpu() {
 
 	# --- GPU driver + GL archives (order: v3d driver -> GL frontend) ---
 	local py="python3"
-	# NB: libv3d is built from the Mesa tree AND the in-repo winsys under tools/v3d-driver-port/
+	# NB: libv3d is built from the Mesa tree AND the Phoenix winsys under
+	# sources/phoenix-rtos-devices/gpu/rpi4-v3d/mesa/
 	# (v3d_phoenix_winsys.c — where the #67 GPU-coherency fix lives). archive_fresh() already
-	# hard-codes tools/v3d-driver-port (+ quakespasm-/vkquake-port) as freshness inputs, so a
+	# hard-codes that mesa/ dir (+ tools/v3d-driver-port, quakespasm-/vkquake-port) as freshness inputs, so a
 	# winsys-only change (Mesa untouched) DOES trigger a rebuild — a stale pre-fix libv3d.a cannot
 	# silently ship. The mesa src/include args below are the additional Mesa-tree inputs.
 	if [ ! -f "${gpu_libs}/libv3d-phoenix.a" ] || [ "$force" = 1 ] || ! archive_fresh "${gpu_libs}/libv3d-phoenix.a" "${repo_root}/external/mesa/src" "${repo_root}/external/mesa/include"; then
 		log "build-v3d-phoenix.py (Mesa v3d gallium driver)"
-		"$py" "${repo_root}/tools/v3d-driver-port/build-v3d-phoenix.py" || die "build-v3d-phoenix.py failed"
+		"$py" "${repo_root}/sources/phoenix-rtos-devices/gpu/rpi4-v3d/mesa/build-v3d-phoenix.py" || die "build-v3d-phoenix.py failed"
 	else ok "libv3d-phoenix.a fresh"; fi
 	need_file "${gpu_libs}/libv3d-phoenix.a" "build-v3d-phoenix.py did not produce its archive"
 
 	if [ ! -f "${gpu_libs}/libGL-phoenix.a" ] || [ "$force" = 1 ] || ! archive_fresh "${gpu_libs}/libGL-phoenix.a" "${repo_root}/external/mesa/src" "${repo_root}/external/mesa/include"; then
 		log "build-gl-phoenix.py (Mesa OpenGL frontend)"
-		"$py" "${repo_root}/tools/v3d-driver-port/build-gl-phoenix.py" || die "build-gl-phoenix.py failed"
+		"$py" "${repo_root}/sources/phoenix-rtos-devices/gpu/rpi4-v3d/mesa/build-gl-phoenix.py" || die "build-gl-phoenix.py failed"
 	else ok "libGL-phoenix.a fresh"; fi
 	need_file "${gpu_libs}/libGL-phoenix.a" "build-gl-phoenix.py did not produce its archive"
 
@@ -366,7 +369,7 @@ phase_gpu() {
 
 		if [ ! -f "${gpu_libs}/libv3dv-phoenix.a" ] || [ "$force" = 1 ] || ! archive_fresh "${gpu_libs}/libv3dv-phoenix.a" "${repo_root}/external/mesa/src" "${repo_root}/external/mesa/include"; then
 			log "build-v3dv-phoenix.py (Mesa V3DV Vulkan ICD)"
-			"$py" "${repo_root}/tools/v3d-driver-port/build-v3dv-phoenix.py" \
+			"$py" "${repo_root}/sources/phoenix-rtos-devices/gpu/rpi4-v3d/mesa/build-v3dv-phoenix.py" \
 				|| { warn "build-v3dv-phoenix.py failed"; gpu_soft+=("build-v3dv-phoenix.py"); }
 		else ok "libv3dv-phoenix.a fresh"; fi
 
@@ -396,7 +399,7 @@ phase_gpu() {
 					# getter unresolved by the v3dv aux closure). The exact symbols are
 					# printed by build-vkquake-phoenix.py just above this warning; a new
 					# undefined symbol usually means adding a weak stub in
-					# tools/v3d-driver-port/v3dv_gap_stubs.c. See KNOWN-ISSUES.
+					# sources/phoenix-rtos-devices/gpu/rpi4-v3d/mesa/v3dv_gap_stubs.c. See KNOWN-ISSUES.
 					warn "build-vkquake-phoenix.py link failed (see undefined symbols above) — removing incomplete libvkquake.a so rpi4-vkquake is skipped (GLQuake unaffected)"
 					rm -f "${gpu_libs}/libvkquake.a"
 					gpu_soft+=("vkquake link failed (undefined symbols listed above) — archive removed, rpi4-vkquake skipped")

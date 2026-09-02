@@ -9,6 +9,9 @@ GCC=$TC/aarch64-phoenix-gcc
 AR=$TC/aarch64-phoenix-ar
 DEV=$TOP/sources/phoenix-rtos-devices/gpu/rpi4-v3d
 TOOLS=$TOP/tools/v3d-driver-port
+# shim-include (sys/ioccom.h for the DRM UAPI) moved into the devices repo with the
+# rest of the V3D/Mesa port glue; mlp_gpu.c still needs it on the include path.
+SHIM=$TOP/sources/phoenix-rtos-devices/gpu/rpi4-v3d/mesa/shim-include
 MLPH=$TOP/tools/cnn-mnist          # mlp_data.h
 OUT=${1:-$TOOLS/.build-csd-daemon}
 mkdir -p "$OUT"
@@ -23,7 +26,7 @@ $AR rcs "$OUT/libv3d-client.a" "$OUT/libv3d-client.o"
 $GCC -static "$OUT/rpi4-v3d.o" "$OUT/v3d_gpu.o" -o "$OUT/rpi4-v3d"
 
 echo "== compile mlp_gpu.c (+ mlp_data.h) =="
-$GCC -O2 -Wall -I"$TOOLS" -I"$TOOLS/shim-include" -I"$MLPH" -c "$TOOLS/mlp_gpu.c" -o "$OUT/mlp_gpu.o"
+$GCC -O2 -Wall -I"$TOOLS" -I"$SHIM" -I"$MLPH" -c "$TOOLS/mlp_gpu.c" -o "$OUT/mlp_gpu.o"
 echo "== link mlp-gpu-daemon =="
 $GCC -static "$OUT/mlp_gpu.o" "$OUT/libv3d-client.a" -lm -o "$OUT/mlp-gpu-daemon"
 "$TC/aarch64-phoenix-nm" -u "$OUT/mlp-gpu-daemon" | grep -c ' U ' | sed 's/^/mlp-gpu-daemon undefined syms: /'

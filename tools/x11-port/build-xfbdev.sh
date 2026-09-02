@@ -37,7 +37,7 @@ SHIM=${ROOT}/tools/x11-port/glamor-shim
 GPU_LIBS=${ROOT}/tools/.gpu-libs
 MESA=${ROOT}/external/mesa
 MESABUILD=/tmp/mesa-v3d-build
-MESA_COMPAT=${ROOT}/tools/v3d-driver-port/phoenix_mesa_compat.h
+MESA_COMPAT=${ROOT}/sources/phoenix-rtos-devices/gpu/rpi4-v3d/mesa/phoenix_mesa_compat.h
 
 SRCFILE=fbdev.c
 OUT=Xphoenix

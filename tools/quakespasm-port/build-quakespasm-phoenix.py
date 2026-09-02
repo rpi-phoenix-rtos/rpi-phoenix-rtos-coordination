@@ -46,7 +46,7 @@ CORE = ["strlcat", "strlcpy", "net_dgrm", "net_loop", "net_main", "net_udp",
 
 PLAT = f"{ROOT}/tools/quakespasm-port/platform"
 MESA = f"{ROOT}/external/mesa"
-COMPAT = f"{ROOT}/tools/v3d-driver-port/phoenix_mesa_compat.h"
+COMPAT = f"{ROOT}/sources/phoenix-rtos-devices/gpu/rpi4-v3d/mesa/phoenix_mesa_compat.h"
 # Shared GL-context glue (Zlib). Was a byte-identical per-port copy
 # (platform/pl_phoenix_glctx.c); deduped onto the SDL2 port's copy. Its entry
 # points are phxgl_* (the callers in pl_phoenix_vid.c / gl_screen.c were renamed

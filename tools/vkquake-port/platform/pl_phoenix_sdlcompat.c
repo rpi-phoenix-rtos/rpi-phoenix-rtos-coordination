@@ -438,5 +438,5 @@ int pthread_mutex_timedlock(pthread_mutex_t *mutex, const struct timespec *absti
  * libm) now export copysign, so a local copy is a DUPLICATE DEFINITION and the
  * link fails with `multiple definition of copysign` as soon as -lm is pulled in.
  * Removed for that reason -- the same failure mode that a stale strtok_r stub in
- * tools/v3d-driver-port/gl_stubs.c caused for the GLQuake link.
+ * sources/phoenix-rtos-devices/gpu/rpi4-v3d/mesa/gl_stubs.c caused for the GLQuake link.
  */

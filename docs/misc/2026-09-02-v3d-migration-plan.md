@@ -47,17 +47,18 @@ Makefile and is built by `build-standalone.sh`.
   `patches/mesa/phoenix-rpi4-v3d.patch`, and three source comments that named
   them were corrected), untracked `csd-matmul`/`csd-probe` (1.4 MB of build
   output). No consumer paths touched.
-- **Stage 1** — copy the glue + scripts into `gpu/rpi4-v3d/mesa/`, deduplicate the
-  UAPI headers against `gpu/rpi4-v3d/uapi/`, fix `ROOT` derivation (env-first,
-  mirroring `build-standalone.sh`), **no Makefile** (the devices root Makefile
-  `include`s any Makefile at depth ≥2 and would break every devices build).
-  Verify by archive equivalence: the scripts already guarantee deterministic
-  member order, so `nm -g --defined-only` on old vs new must be identical.
-- **Stage 2** — repoint consumers in lockstep: `build-showcase-apps.sh` (including
+- **Stage 1 — DONE (2026-09-02, owner approved D9 option A).** Glue + scripts moved
+  into `gpu/rpi4-v3d/mesa/`; UAPI headers deduplicated against
+  `gpu/rpi4-v3d/uapi/`; `ROOT` derivation fixed (env-first, mirroring
+  `build-standalone.sh`); **no Makefile** (the devices root Makefile `include`s any
+  Makefile at depth ≥2 and would break every devices build). Verified by archive
+  equivalence: the scripts already guarantee deterministic member order, so
+  `nm -g --defined-only` on old vs new is identical.
+- **Stage 2 — DONE (2026-09-02).** Repointed consumers in lockstep: `build-showcase-apps.sh` (including
   `archive_fresh()`'s freshness root — miss it and stale archives ship silently),
   five `port.def.sh` in phoenix-rtos-ports, the x11/sdl2/quakespasm build scripts,
   and two `$(info)` hints in `_user`. `tools/.gpu-libs/` paths do not change.
-- **Stage 3** — cross-repo commit, `--scope core --with-showcase` rebuild, and one
+- **Stage 3 — build-verified only (2026-09-02); the Pi cycle is still owed.** Cross-repo commit, `--scope core --with-showcase` rebuild, and one
   Pi cycle proving GLQuake **and** the X11 GPU desktop, then a manifest.
 - **Stage 4** — the ~3.2k lines of harnesses/probes stay behind; they are the open
   D4 "genuine tool" boundary and must not block D2.
@@ -70,3 +71,32 @@ in-process winsys for the client library. Renaming any moved file leaves the
 in-process winsys in the daemon build — two GPU owners at runtime, **with no
 build error**. Filenames must not change, and Stage 3 must include the X11 check,
 which is the only thing that catches it.
+
+
+## Stage 1/2 as executed (2026-09-02)
+
+Destination is `sources/phoenix-rtos-devices/gpu/rpi4-v3d/mesa/` (note: the repo has
+no `devices/` sub-level — the component path is `gpu/rpi4-v3d`). No `Makefile`, no
+`README`, no in-dir `.gitignore`, mirroring `wifi/rpi4-wifi`; the root Makefile's
+`find . -mindepth 2 -name Makefile` would otherwise `include` it and break every
+devices build. Moved: the 11 glue `.c`/`.h`, `shim-include/` (5 headers), the three
+`build-*-phoenix.py` scripts, `resolve-syms.py`, and the three committed Mesa source
+manifests. `ROOT` is now env-first (`PHOENIX_RPI_ROOT`) with `PORT` derived from
+`__file__`, so the two coord-repo scripts that `exec` the prelude keep working.
+
+Deviations from the sketch above, both deliberate:
+
+- **`libvcmbox.c`/`.h` were NOT moved — the duplicate was deleted.** The canonical
+  copy is `misc/rpi4-vcmbox/` in this same repo and the `tools/` copy had drifted
+  (missing a `valBufSize` bounds/alignment guard). `build-v3d-phoenix.py` now
+  compiles the canonical source. The guard is unreachable for the driver's single
+  call site (`vcmbox_call(VC_PROP_GET_VIRTUAL_WH, 8u, ...)` — 8 bytes, word-aligned).
+- **`drm.h`/`drm_mode.h`/`v3d_drm.h` stay in `tools/`.** Only the stay-behind
+  compute probes (`csd_*.c`, `mlp_gpu.c`) include them, and `gpu/rpi4-v3d/uapi/`
+  already holds the devices-side copies — so the dedupe is satisfied by *not*
+  moving them, and no Linux-UAPI header is newly introduced into a core repo.
+
+Stage 4 harnesses stay in `tools/v3d-driver-port/`; the two the link-drive loop needs
+(`harness_screen_create.c`, `v3dv_harness.c` + its generated `triangle_spirv.h`) are
+reached through the new `HARNESS_DIR` var (`V3D_HARNESS_DIR` to override), commented
+as the open D4 boundary.

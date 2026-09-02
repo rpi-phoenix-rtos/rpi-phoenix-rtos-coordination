@@ -43,7 +43,7 @@ sync with the `external-pins-v1` block below).
 
 | Dir | Upstream | Pinned SHA | Consumed by |
 | --- | --- | --- | --- |
-| external/mesa | https://gitlab.freedesktop.org/mesa/mesa.git | e8791b4bc1c10af74ddd3af029fbf06cafc11d56 | tools/v3d-driver-port → libGL/libv3d/libv3dv |
+| external/mesa | https://gitlab.freedesktop.org/mesa/mesa.git | e8791b4bc1c10af74ddd3af029fbf06cafc11d56 | sources/phoenix-rtos-devices/gpu/rpi4-v3d/mesa → libGL/libv3d/libv3dv |
 | external/quakespasm | https://github.com/sezero/quakespasm.git | 4abb3249fe45c835d3d8540845a18a114e283996 | tools/quakespasm-port → libquakespasm.a |
 | external/vkquake | https://github.com/Novum/vkQuake.git | f4d923e36f6a2cbb6e796031eb81c88f23db8520 | tools/vkquake-port → libvkquake.a |
 
