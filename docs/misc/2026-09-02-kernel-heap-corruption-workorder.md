@@ -877,3 +877,43 @@ run): a fault dumps, the dump corrupts, the corruption faults.
 while the parent watches its own `stdout` pointer and a `.data` canary -- but every
 attempt to run it landed on a no-prompt boot, so **it has never actually executed**.
 That is the first thing to run next, now that boot is reliable again.
+
+---
+
+## 2026-09-03 (early): exception-dump hypothesis DISPROVED
+
+`heapstress dumpcorrupt` and `dumpself` both ran (the earlier attempts had all landed on
+no-prompt boots, which is now fixed):
+
+- **dumpcorrupt** — 30 deliberate child faults, each producing a kernel exception dump;
+  the PARENT's `stdout` pointer and `.data` canary intact. But the dump is written to
+  fd 2 of the *faulting* process, so the parent was never the candidate victim.
+- **dumpself** — the right test: install a `SIGSEGV` handler, `longjmp` back, and let the
+  process inspect **its own** memory immediately after the kernel dumped an exception
+  through its fd 2. **20 of 20 faults survived with its own `stdout` and `.data` canary
+  intact.**
+
+So `process_dumpException` handing `char buff[SIZE_CTXDUMP]` (a kernel-stack buffer with
+an uninitialised `0xba` tail) to `posix_write(2, ...)` does **not** corrupt user memory.
+The write path evidently copes with a kernel source address. **Hypothesis closed.**
+
+### Where that leaves the garbage
+
+The two ingredients still have to come from one buffer:
+- the ASCII is the harness's **own stdout text**, which lives in a *user* buffer
+  (`buffAlloc` → mmap, and mmap memory is verifiably zeroed, so the `0xba` is not from
+  there);
+- `0xba` is kernel-stack fill, from exactly one line in the tree.
+
+A kernel buffer that received the user's write payload and whose tail was never
+initialised fits both. That makes the **message reply copy-back** the next place to look:
+if the kernel copies such a buffer back into the sender with a wrong destination or a
+receiver-influenced length, it would splatter text-plus-`0xba` across the sender's
+`.data`. An audit of `proc/msg.c`'s pack/map/copy-back paths is running.
+
+### Running tally of eliminated hypotheses
+
+recycled anonymous pages · ELF bss-tail · fork isolation (both directions) · the
+transfer+fdpass workload writing its own memory · `waitpid` exit-code propagation ·
+signal-death decoding · the exception-dump path. Each has a committed, re-runnable probe
+in `tools/heap-stress`.

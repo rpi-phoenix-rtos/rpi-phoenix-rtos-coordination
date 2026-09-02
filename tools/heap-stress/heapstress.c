@@ -38,6 +38,7 @@
 #include <pthread.h>
 #include <sys/wait.h>
 #include <signal.h>
+#include <setjmp.h>
 #include <sys/mman.h>
 
 #define BASE  "test_stat.txt"                  /* the file everything links to */
@@ -371,6 +372,24 @@ static size_t xf_scan(const char *what, unsigned long *p, size_t n, unsigned lon
  * assertions in the real test are WIFEXITED on a CHILD, so the parent's
  * atexit_common is already corrupt before transfer's forks -- meaning the write
  * happens in an earlier phase, and this is that phase. */
+/* mode=dumpself: does the kernel's exception dump corrupt the FAULTING
+ * process's own memory?
+ *
+ * dumpcorrupt checked the parent and found it clean -- but the dump is written
+ * to fd 2 of the process that faulted, so the parent was never the candidate
+ * victim. Survive the fault instead: install a SIGSEGV handler that jumps back,
+ * so this process can inspect its OWN stdout pointer and .data canary
+ * immediately after the kernel has dumped the exception through them.
+ */
+static jmp_buf ds_jmp;
+
+static void ds_handler(int sig)
+{
+	(void)sig;
+	longjmp(ds_jmp, 1);
+}
+
+
 static int xf_fdpass(int type)
 {
 	int sv[2];
@@ -572,6 +591,7 @@ int main(int argc, char **argv)
 	int only_exitcode = (strcmp(mode, "exitcode") == 0) ? 1 : 0;
 	int only_sigstat = (strcmp(mode, "sigstat") == 0) ? 1 : 0;
 	int only_dumpcorrupt = (strcmp(mode, "dumpcorrupt") == 0) ? 1 : 0;
+	int only_dumpself = (strcmp(mode, "dumpself") == 0) ? 1 : 0;
 	long i;
 
 	/* Start from a clean slate: leftovers from a crashed run change which
@@ -752,6 +772,60 @@ int main(int argc, char **argv)
 	 * after every one. If the dump path is the writer, this catches it without
 	 * needing the socket tests at all.
 	 */
+	if (only_dumpself != 0) {
+		FILE *saved_stdout = stdout;
+		const unsigned long salt = 0xd0d0d0d0d0d0d0d0UL;
+		size_t nw = sizeof(xf_data) / sizeof(xf_data[0]);
+		size_t i;
+		long iter, hits = 0, faults = 0;
+		struct sigaction sa;
+
+		for (i = 0; i < nw; ++i) {
+			xf_data[i] = xf_pattern(i, salt);
+		}
+
+		memset(&sa, 0, sizeof(sa));
+		sa.sa_handler = ds_handler;
+		if (sigaction(SIGSEGV, &sa, NULL) != 0) {
+			printf("HEAPSTRESS-FAIL sigaction errno=%d\n", errno);
+			return 1;
+		}
+
+		printf("HEAPSTRESS: dumpself, %ld self-inflicted faults, checking own stdout/.data after each\n", n);
+		fflush(stdout);
+
+		for (iter = 0; iter < n; ++iter) {
+			if (setjmp(ds_jmp) == 0) {
+				*(volatile int *)0 = 1; /* fault -> kernel dumps through fd 2 */
+				continue;               /* not reached */
+			}
+			faults++;
+
+			if (stdout != saved_stdout) {
+				hits++;
+				stdout = saved_stdout;
+				printf("HEAPSTRESS-DUMPSELF iter=%ld stdout was clobbered\n", iter);
+				fflush(stdout);
+			}
+			if (xf_scan(".data", xf_data, nw, salt) != 0) {
+				hits++;
+				printf("HEAPSTRESS-DUMPSELF iter=%ld .data canary hit\n", iter);
+				fflush(stdout);
+				for (i = 0; i < nw; ++i) {
+					xf_data[i] = xf_pattern(i, salt);
+				}
+			}
+		}
+
+		printf("HEAPSTRESS: survived %ld of %ld faults\n", faults, n);
+		if (hits != 0) {
+			printf("HEAPSTRESS-RESULT FAIL (dumpself: %ld corruption events)\n", hits);
+			return 1;
+		}
+		printf("HEAPSTRESS-RESULT PASS (dumpself %ld faults, own memory intact)\n", faults);
+		return 0;
+	}
+
 	if (only_dumpcorrupt != 0) {
 		FILE *saved_stdout = stdout;
 		const unsigned long salt = 0xd0d0d0d0d0d0d0d0UL;
