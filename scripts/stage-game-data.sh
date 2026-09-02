@@ -53,6 +53,7 @@
 #   PAK0Q2_URL        / PAK0Q2_SHA256     Quake II demo
 #   PAK0Q3_URL        / PAK0Q3_SHA256     Quake III demo
 #   STK_CODE_TARBALL  pinned stk-code source tarball (default: the port's copy)
+#   STK_CODE_URL      where to fetch it when absent (a fresh clone has none)
 #   STK_ASSETS_APK    pinned STK 1.4 APK (default: the port's copy, if present)
 #   STK_ASSETS_URL    / STK_ASSETS_SHA256 where to fetch the APK when absent
 #
@@ -84,6 +85,12 @@ PAK0Q3_SHA256="${PAK0Q3_SHA256-e77abad2466f45a0a7ea018445528f9b95a0fe7789fa1abc1
 # SuperTuxKart pins. The APK URL/sha are the ones recorded in phoenix-rtos-ports
 # commit 7ac46d8 ("supertuxkart: gitignore the 1.4 APK asset source").
 STK_CODE_TARBALL="${STK_CODE_TARBALL:-${ports_stk}/stk-code-1.4.tar.gz}"
+# ...and where to fetch it when absent. sources/phoenix-rtos-ports gitignores *.tar.gz,
+# so a FRESH CLONE (the Docker build, and the owner's clean-build determinism chain)
+# has no local copy — and this script runs before any ports stage could fetch one.
+# Same URL the port's own `source`/`archive_filename` resolve to; the sha256 is read
+# out of the port def below, so the pin cannot drift from the port's.
+STK_CODE_URL="${STK_CODE_URL-https://github.com/supertuxkart/stk-code/archive/refs/tags/1.4.tar.gz}"
 STK_ASSETS_APK="${STK_ASSETS_APK:-${ports_stk}/stk-1.4.apk}"
 STK_ASSETS_URL="${STK_ASSETS_URL-https://github.com/supertuxkart/stk-code/releases/download/1.4/SuperTuxKart-1.4.apk}"
 STK_ASSETS_SHA256="${STK_ASSETS_SHA256-29bded241025b4cca59e9cf6f7c2736002179c9c5e018fddaf747e1a4e08d454}"
@@ -140,26 +147,37 @@ stage_stk_data() {
 		log "[stk] data/ already staged in $dst — skipping"
 		return 0
 	fi
-	[ -f "$STK_CODE_TARBALL" ] \
-		|| die "[stk] pinned stk-code tarball not found: $STK_CODE_TARBALL (a ports build fetches it; or set STK_CODE_TARBALL)"
+	local tmp; tmp="$(mktemp -d)"
+	# shellcheck disable=SC2064
+	trap "rm -rf '$tmp'" RETURN
+	local tarball="$STK_CODE_TARBALL"
+	if [ ! -f "$tarball" ]; then
+		[ -n "$STK_CODE_URL" ] \
+			|| die "[stk] no local stk-code tarball ($STK_CODE_TARBALL) and STK_CODE_URL is empty"
+		log "[stk] fetching the pinned stk-code source: $STK_CODE_URL"
+		curl -fSL --retry 5 --retry-delay 5 -o "$tmp/stk-code.tar.gz" "$STK_CODE_URL" \
+			|| die "[stk] download failed from $STK_CODE_URL"
+		tarball="$tmp/stk-code.tar.gz"
+	else
+		log "[stk] using the pinned local stk-code source: $tarball"
+	fi
 	# Verify against the sha256 the port itself pins, so the two can never drift.
 	local want
 	want="$(grep -m1 -E '^[[:space:]]*sha256=' "${ports_stk}/port.def.sh" | sed -E 's/.*"([0-9a-f]{64})".*/\1/')"
 	if [ ${#want} -eq 64 ]; then
-		verify_sha "$STK_CODE_TARBALL" "$want"
+		verify_sha "$tarball" "$want"
 	else
 		warn "[stk] could not read the pinned sha256 out of ${ports_stk}/port.def.sh — staging unverified"
 	fi
-	log "[stk] extracting data/ from $(basename "$STK_CODE_TARBALL")"
-	local tmp; tmp="$(mktemp -d)"
-	# shellcheck disable=SC2064
-	trap "rm -rf '$tmp'" RETURN
-	tar xzf "$STK_CODE_TARBALL" -C "$tmp" --strip-components=2 'stk-code-1.4/data' \
-		|| die "[stk] could not extract stk-code-1.4/data from $STK_CODE_TARBALL"
+	log "[stk] extracting data/ from $(basename "$tarball")"
+	mkdir -p "$tmp/data"
+	tar xzf "$tarball" -C "$tmp/data" --strip-components=2 'stk-code-1.4/data' \
+		|| die "[stk] could not extract stk-code-1.4/data from $tarball"
 	rm -rf "$dst"
 	mkdir -p "$(dirname "$dst")"
-	mv "$tmp" "$dst"
-	trap - RETURN
+	mv "$tmp/data" "$dst"
+	# mktemp -d is 0700; the image must not ship a data root only root can traverse.
+	chmod 755 "$dst"
 	log "[stk] staged data/ -> $dst ($(du -sh "$dst" | cut -f1))"
 }
 
@@ -198,7 +216,7 @@ stage_stk_assets() {
 	mkdir -p "$(dirname "$dst")"
 	mv "$tmp/ex/assets/data" "$dst"
 	chmod -R u+w "$dst"
-	trap - RETURN
+	chmod 755 "$dst"
 	log "[stk] staged stk-assets/ -> $dst ($(du -sh "$dst" | cut -f1))"
 }
 

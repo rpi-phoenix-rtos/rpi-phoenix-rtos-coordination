@@ -161,11 +161,20 @@ wrappers** — they were the ad-hoc `tools/*-port` *engine* builds (23 MB / 25 M
 * **`scripts/stage-game-data.sh` (new)** — one command stages the data for all five
   engines into the rootfs overlay: q1/q2/q3 by delegating to the existing
   `fetch-quake-data.sh` (no second copy of that logic), SuperTuxKart `data/` from the
-  pinned `stk-code-1.4.tar.gz` (sha checked against the value the port itself pins, so
-  the two cannot drift) and `stk-assets/` from the pinned SuperTuxKart 1.4 Android
-  package (`…/releases/download/1.4/SuperTuxKart-1.4.apk`, sha256 `29bded24…`, the pin
-  recorded in ports commit `7ac46d8`). Idempotent, `--force` to re-fetch, per-game
-  selection, and a closing summary table.
+  pinned `stk-code-1.4.tar.gz` and `stk-assets/` from the pinned SuperTuxKart 1.4
+  Android package (`…/releases/download/1.4/SuperTuxKart-1.4.apk`, sha256 `29bded24…`,
+  the pin recorded in ports commit `7ac46d8`). Both STK sources are downloaded when
+  absent — `sources/phoenix-rtos-ports` gitignores `*.tar.gz` and `*.apk`, so a fresh
+  clone (the Docker build, and the owner's clean-build determinism chain) has neither,
+  and this script runs *before* any ports stage could fetch one. The stk-code tarball's
+  expected sha256 is read out of `supertuxkart/port.def.sh` itself, so the staging pin
+  cannot drift from the port's. Idempotent, `--force` to re-fetch, per-game selection,
+  a closing summary table, and `chmod 755` on both roots (a `mktemp -d` is 0700 and the
+  image must not ship a data root only root can traverse).
+  **Verified deterministic:** staging into a throwaway overlay with
+  `STK_CODE_TARBALL=/nonexistent` (forcing the download path) produced a tree
+  byte-identical to the local-tarball run — `stk-assets` 144,050,379 B / 4,120 files
+  and `data` 45,247,516 B in both, `diff -rq` reporting no differences.
 * **`scripts/build-rootfs-helpers.sh` (new)** — builds the five tiny static helpers
   above into the rootfs staging tree with the same `.toolchain` gcc as the engines, and
   refuses any artifact carrying a `PT_INTERP`. Wired into
@@ -241,7 +250,17 @@ STK — root-caused and fixed (see §2, `libpng/port.def.sh`); the retry is the 
 `app` line that could render a game under any env combination (the `RPI4B_WITH_SHOWCASE`
 variable is gone from both the yaml and the rebuild script). Diff is deletions only.
 
-### 3d. Regression check against the pre-regeneration binaries
+### 3d. vkQuake shaders are real SPIR-V, not placeholders
+
+Checked because it is the one remaining silent-black-screen mode after the build-id and
+stack fixes: `ports/vkquake/glue/vkquake_shaders.c` is 1,135,907 bytes of committed byte
+arrays and the first one (`alias_frag_spv[]`) starts `0x03, 0x02, 0x23, 0x07` — the
+little-endian SPIR-V magic `0x07230203`. So the port needs **no** glslang at build time
+(that was a dependency of the deleted ad-hoc `build-vkquake-phoenix.py`); the stale
+"glslang missing → placeholder shaders" warning was removed from
+`build-showcase-apps.sh` accordingly.
+
+### 3e. Regression check against the pre-regeneration binaries
 
 The coordinator flagged that the engines on the export were dated **Aug 28**, i.e. from
 before ports commit `0d9de9a` regenerated the patches from the forks. Two findings:
@@ -285,6 +304,14 @@ before ports commit `0d9de9a` regenerated the patches from the forks. Two findin
 
 ## 4. Open items / risks (nothing papered over)
 
+0. **First-rebuild preconditions (parent session owns these).** (a) The first real
+   `build.sh ports` run must NOT use `--skip-prepare`: `.buildroot/phoenix-rtos-ports`
+   is a stale Aug-27 copy, so without `prepare-buildroot.sh` the stage builds the
+   *pre-fix* `libpng`/`vkquake`/`yquake2` recipes. (b) No real ports stage has ever run
+   with the games `if: true` — every rc=0 above came through `build-port.sh`'s synthetic
+   one-off yaml. In particular `sdl2` being `if: false` but dependency-pullable via
+   `depends=` is asserted by its ports.yaml comment and supported by the dillo→fltk
+   precedent, but the first real ports-stage run is where it is actually proven.
 1. **`/tmp/mesa-v3d-build` is a hard prerequisite of the game ports.** All five recipes
    `b_die` unless `tools/.gpu-libs/lib{GL,v3d,v3dv}-phoenix.a` *and*
    `/tmp/mesa-v3d-build/src` exist (`quakespasm/port.def.sh:107-112` and equivalents).

@@ -395,11 +395,12 @@ phase_gpu() {
 			gpu_soft+=("libv3dv-phoenix.a missing (vkquake port cannot link)")
 		fi
 
-		# glslang is what turns vkQuake's GLSL into real SPIR-V; without it the
-		# shaders in the port's vendored glue are placeholders and nothing renders.
-		if ! command -v glslangValidator >/dev/null 2>&1 && ! command -v glslang >/dev/null 2>&1; then
-			warn "glslang not on PATH — vkquake shaders will be PLACEHOLDER (non-rendering). Install glslang-tools for real SPIR-V."
-		fi
+		# NOTE: glslang is NOT a build dependency of the vkquake PORT. The port's
+		# glue/vkquake_shaders.c carries the compiled SPIR-V as committed byte arrays
+		# (1.1 MB; verified to start with the 0x07230203 SPIR-V magic), regenerated
+		# out-of-band by tools/vkquake-port/gen-vkquake-shaders.py when the Shaders/
+		# tree changes. The old "glslang missing -> placeholder shaders" warning
+		# belonged to the deleted ad-hoc build-vkquake-phoenix.py and is gone with it.
 	fi
 
 	if [ "${#gpu_soft[@]}" -gt 0 ]; then
