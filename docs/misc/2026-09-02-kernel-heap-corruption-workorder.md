@@ -247,3 +247,17 @@ trade is at least consistent — but the recorded lesson is "never dismiss an
 exception-storm as benign". **Option, not built:** a per-boot counter of
 resolved kernel-PC user-map faults, printed once past a threshold, would
 restore the canary without the per-fault noise.
+
+### Canary semantics (designed, so nobody misreads a lone line)
+
+`map_usercopyFaults` never resets and the first report is an exact `== 64` match, then every
+1024. So a **storm** blows through 64 and keeps hitting milestones (the intended signal),
+while a **slow accumulation** over long uptime prints once at 64 and then only once per
+1024. That is deliberate noise control, not an undercount: a single
+`vm: 64 kernel user-copy page faults resolved so far` line means "this crossed 64 at some
+point", not "there were exactly 64". Read the milestone sequence, not one line.
+
+Unexplained and worth a future look: something produced **2 EL1 faults** in
+`test-libc-unix-socket` on 2026-09-02 (`zfinal`) and in an earlier 05:32 run, then nothing
+across ~6 later runs. It is not fork-COW — 1024 COW writes in a forked child resolve zero
+faults on this kernel. The lazily-mapped path involved is unidentified.
