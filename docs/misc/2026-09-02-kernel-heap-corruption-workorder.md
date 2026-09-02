@@ -987,3 +987,66 @@ delivered wrong bytes (a kernel data-path bug); if `data[]` is corrupt, this is 
 memory corruption showing up in a cheaper, earlier-firing detector than the crashes.
 Either answer collapses a lot of the search space, and the check is a few lines in the
 child's failure path.
+
+---
+
+## 2026-09-03: IT IS NOT MEMORY CORRUPTION — AF_UNIX delivers bytes that were never sent
+
+The discriminator answered on the first try, and repeatably (3 of 3 runs, now also seen
+on a 4th):
+
+```
+DATA-MISMATCH i=0 pos=3001 len=433 got=0xa2 want=0x21 data[]=INTACT
+DATA-MISMATCH  recv: a2 19 2f 23 17 65 4c a5
+DATA-MISMATCH  want: 21 a7 97 3a bb d2 b3 ec
+DATA-MISMATCH  recv bytes appear nowhere in data[] (never sent)
+```
+
+Two facts, both decisive:
+
+1. **`data[]=INTACT`** — the expected pattern still checksums to what it was when
+   `TEST_SETUP` filled it. The test's own memory is fine, so this failure is **not** the
+   memory corruption this document has been chasing.
+2. **the received bytes are not anywhere in `data[]`** — so it is not a lost-sync shift
+   either (that would find them at a different offset and name the amount). AF_UNIX
+   handed the receiver bytes that **were never sent on that socket**: foreign or
+   uninitialised data.
+
+The mismatch is always at `i == 0`, i.e. the very first byte of a received chunk.
+
+### What this rules in and out
+
+`lib/cbuffer.c` was audited and is correct in isolation, and datagram framing is atomic
+(`send` requires `free >= len + sizeof(len)`). So the likely mechanism is not the ring
+buffer arithmetic but **which buffer is being read**: a socket object whose `remote` still
+points at a freed-and-reused peer would let a reader see another instance's buffer, and
+`unixsock_alloc` deliberately **reuses freed ids** (`unix.c:194-215`). `remote` remains a
+weak pointer even after the connecting-list use-after-free fix (`9c60b783`), so a stale
+peer pointer is still possible.
+
+### Next step
+
+Instrument the kernel side: log `(socket id, direction, bytes)` for the transfer path and
+correlate a mismatching read against the writes that preceded it. If the reader's socket
+id does not match the writer's peer, cross-talk between socket instances is confirmed and
+the fix is to make `remote` a counted reference (the ownership refactor already sketched
+earlier in this file).
+
+### Also landed (kernel `31045b7f`)
+
+An audit of the message-passing buffer paths turned up three places where uninitialised
+kernel memory could reach userspace. These matter more here than they look, because
+**kernel stacks are `vm_kmalloc`'d 8 KiB blocks filled with `0xba` and freed on thread
+exit** — so a recycled kernel-heap block routinely holds that fill plus console text
+parked by `msg_ipack`. That is precisely the "text mixed with 0xba" garbage seen earlier.
+
+1. `object_fetchCluster` did not clamp the byte count a backing store reported; an
+   over-report pushed `total` past the read window and every page was then copied in full
+   out of a buffer whose tail was never written — into a demand-paged `.data` page. Now
+   clamped and logged. (**The clamp has not fired on hardware yet.**)
+2. `posix_ioctl`'s `msg_t` was the only un-zeroed kernel-stack `msg_t` in `posix.c`, and
+   `ioctl_processResponse` copies `o.raw` back to the caller for any `IOC_OUT` request —
+   so a server answering without writing `o.raw` returned the caller's kernel stack.
+   `log_devctl` does exactly that for `TCGETS`, which is what `isatty()` sends. The copy
+   is now also gated on success.
+3. `_log_msgRespond`'s `msg_t` was likewise un-zeroed.
