@@ -1102,3 +1102,38 @@ targeted.
 **Note on scope:** this does not explain a *kernel heap* fault on its own, and
 the earlier `_vm_zalloc` sighting (2 logs in 5100) stays open and instrumented.
 It does explain the failure this hunt actually kept reproducing.
+
+## COW zero-page hypothesis: examined, largely exonerated (2026-09-03)
+
+The child crashes point at "a region of memory became zeros" (NULL `FILE *` →
+`fwrite` faults at `far=0x30`; NULL free-list link → `_malloc_chunkRemove` →
+`lib_listRemove` faults at `far=0x10`). The obvious kernel producer is a
+copy-on-write fault that installs a fresh zero page instead of a copy, and
+`vm/amap.c:amap_page()` does contain exactly those two sibling branches:
+
+    if (a != NULL || o != NULL) { ... hal_memcpy(w, v, SIZE_PAGE); }
+    else                        { hal_memset(v, 0, SIZE_PAGE); }
+
+**The zero branch is reached only when `a == NULL && o == NULL`**, and in that
+case `*page` came from `vm_objectPage()`, which for `o == NULL` returns a
+**freshly allocated** page (`object.c:354-357`) without touching the amap lock.
+Zeroing a fresh anonymous page is correct, so this is not the bug.
+
+The one place `amap_page()` really does lose its lock is `vm_objectPage()`'s
+backing-store path (`object.c:384-388`, "amap could be invalidated while
+fetching from the object's store"). On return the code does **not** re-read
+`amap->anons[aoffs / SIZE_PAGE]`, so a concurrently installed anon is missed —
+but that path requires `o != NULL`, which selects the COPY branch. The damage
+there would be object content where anon content was expected, not zeros.
+
+**Latent gap noted, not the active bug:** `amap_map()` (`amap.c:206-212`) passes
+its `page_t *p` straight to `vm_mmap`/`_vm_mmap` with no NULL check. A NULL page
+would not fail; it would map a fresh anonymous page, and the subsequent
+`hal_memcpy(w, v, SIZE_PAGE)` would copy ZEROS over the destination — the exact
+observed signature. `a->page` is assigned once at anon creation (`amap.c:198`),
+so this needs a NULL `p` to be reachable before it matters; worth a defensive
+check regardless, since the failure mode is silent data loss rather than a fault.
+
+Next: the userspace canaries (tests `83eda31`) remain the cheaper detector —
+they report the offset, offset-within-page, run length and whether the run is
+zeros, which distinguishes a zeroed PAGE from a smaller clobber.
