@@ -58,8 +58,28 @@ Makefile and is built by `build-standalone.sh`.
   `archive_fresh()`'s freshness root — miss it and stale archives ship silently),
   five `port.def.sh` in phoenix-rtos-ports, the x11/sdl2/quakespasm build scripts,
   and two `$(info)` hints in `_user`. `tools/.gpu-libs/` paths do not change.
-- **Stage 3 — build-verified only (2026-09-02); the Pi cycle is still owed.** Cross-repo commit, `--scope core --with-showcase` rebuild, and one
-  Pi cycle proving GLQuake **and** the X11 GPU desktop, then a manifest.
+- **Stage 3 — DONE, HW-VERIFIED (2026-09-02).** Cross-repo commit, `--scope core --with-showcase`
+  rebuild + restage (shader cache cleared first), and three Pi cycles, all 0 faults
+  (`Exception`/`Data Abort`/`Fatal`/`process "` = 0 in every log). Manifest:
+  `manifests/2026-09-02-d9-v3d-mesa-migration-hw-verified.md`.
+  - GLQuake (`/usr/bin/rpi4-quake`, log `…-221813-d9quake`): textured 3D demo playback at
+    37–43 fps. **`v3d-winsys: scanout init … virt_h=3240 -> 3 buffer(s) TRIPLE-BUFFER+page-flip`** —
+    so the de-duplicated `libvcmbox` (canonical `misc/rpi4-vcmbox/` copy, with the
+    `valBufSize` guard) works: hazard 2 cleared. Consecutive HDMI ticks are clean and
+    flicker-free (`artifacts/hdmi/20260902-2020{14,31}-d9quake-tick.png`).
+  - X11 GPU desktop (`startx_gpu deskapps`, log `…-222215-d9xgpu`): WindowMaker + painted
+    root + xterm (live BusyBox shell) + xclock + xcalc, stable over 3.5 min, all V3D work
+    routed through `rpi4-v3d` (`CL submit #N done`) — so the `ar d` surgery really did
+    remove the in-process winsys.
+  - `gl-x11-window-daemon` as the sole client (`startx_gpu /bin/gl-x11-window-daemon`, log
+    `…-222807-d9xglwin`): 1380+ GPU-rendered frames, 0 wedges — the SECOND `ar`-surgery
+    consumer, runtime-proven too. Hazard 1 fully cleared (also statically: `nm` on both
+    fresh daemons shows only the three client symbols, no `v3d_phoenix_scanout_init`/
+    `_flip`/`_last_bin_crc`).
+  - En route, one real build bug was found + fixed (phoenix-rtos-project `ca91eb9`): the
+    rpi4-quake stale-archive guard was a **no-op** (`binary.mk` resets `NAME :=`, so
+    `$(OBJS.$(NAME))` expanded to an empty target list, which GNU make silently ignores),
+    so the freshly rebuilt archives would NOT have relinked the engine.
 - **Stage 4** — the ~3.2k lines of harnesses/probes stay behind; they are the open
   D4 "genuine tool" boundary and must not block D2.
 
