@@ -237,3 +237,13 @@ sufficient on its own.
   failing run leaves `pthread_fdrace.txt` in the NFS export — the leftover-file
   footgun that has bitten this project before. Move it to `TEST_TEAR_DOWN` next
   time that file is touched.
+
+### Trade-off accepted in `b49268e5`/`a follow-up` (fault-dump narrowing)
+
+Not dumping recoverable kernel-PC/user-map faults also hides a *storm* of
+them. That matters here: the PROT_USER COW-storm was diagnosed precisely
+because every fault printed. EL0 faults already have this blindness, so the
+trade is at least consistent — but the recorded lesson is "never dismiss an
+exception-storm as benign". **Option, not built:** a per-boot counter of
+resolved kernel-PC user-map faults, printed once past a threshold, would
+restore the canary without the per-fault noise.
