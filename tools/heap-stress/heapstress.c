@@ -36,6 +36,8 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <pthread.h>
+#include <sys/wait.h>
+#include <sys/mman.h>
 
 #define BASE  "test_stat.txt"                  /* the file everything links to */
 #define LNK_A "test_stat_symlink"
@@ -285,6 +287,7 @@ int main(int argc, char **argv)
 	int only_race = (strcmp(mode, "race") == 0) ? 1 : 0;
 	int only_segv = (strcmp(mode, "segv") == 0) ? 1 : 0;
 	int only_badptr = (strcmp(mode, "badptr") == 0) ? 1 : 0;
+	int only_cow = (strcmp(mode, "cow") == 0) ? 1 : 0;
 	long i;
 
 	/* Start from a clean slate: leftovers from a crashed run change which
@@ -334,6 +337,44 @@ int main(int argc, char **argv)
 		printf("HEAPSTRESS: write returned %zd errno=%d (no dump above = SILENCED, a bug)\n", w, errno);
 		close(fd);
 		(void)unlink(BASE);
+		return 0;
+	}
+
+	/* mode=cow: generate RESOLVABLE page faults on demand. Page faults are
+	 * otherwise almost nonexistent here (the system maps eagerly -- a whole
+	 * three-suite test run resolved exactly one), which makes the kernel's
+	 * fault paths hard to exercise deliberately. Touch a buffer, fork, then
+	 * have the child write every page: each write hits a copy-on-write page
+	 * and must be resolved by the kernel. */
+	if (only_cow != 0) {
+		size_t len = 4u * 1024u * 1024u;
+		unsigned char *buf = mmap(NULL, len, PROT_READ | PROT_WRITE,
+			MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+		size_t k;
+		pid_t pid;
+
+		if (buf == MAP_FAILED) {
+			printf("HEAPSTRESS-FAIL mmap errno=%d\n", errno);
+			return 1;
+		}
+		for (k = 0; k < len; k += 4096u) {
+			buf[k] = 1u; /* fault them in / dirty them in the parent */
+		}
+
+		pid = fork();
+		if (pid < 0) {
+			printf("HEAPSTRESS-FAIL fork errno=%d\n", errno);
+			return 1;
+		}
+		if (pid == 0) {
+			for (k = 0; k < len; k += 4096u) {
+				buf[k] = 2u; /* each one is a COW fault in the child */
+			}
+			_exit(0);
+		}
+		(void)waitpid(pid, NULL, 0);
+		printf("HEAPSTRESS-RESULT PASS (cow: %zu pages written in a forked child)\n",
+			len / 4096u);
 		return 0;
 	}
 
