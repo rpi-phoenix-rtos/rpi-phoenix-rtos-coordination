@@ -529,3 +529,51 @@ is unjustifiable on design grounds, not on those numbers.
 
 **For any future attempt here: n >= 8 runs per configuration**, and count hangs as
 failures. Anything less cannot separate a real effect from this test's own noise.
+
+---
+
+## 2026-09-02 (night): S1 + S2 FIXED — every crash signature gone, one hang left
+
+Kernel `9c60b783`. The second attempt kept the existing lifetime model instead of
+fighting it (the first attempt's reference-owning list turned the bug into a hang,
+because `remote` is deliberately weak — see the previous section):
+
+- The queued socket now records **which listener holds it** (guarded by
+  `unix_common.lock`; the list itself stays under the listener's spinlock), so
+  `unixsock_put` unlinks itself on the way out from **any** path — closing while
+  queued, the non-blocking `-EINPROGRESS` path, anything. That is S2.
+- `unixsock_put` also **drains its own `connecting` list** when a listener is freed,
+  clearing each back-pointer and waking each connector with `US_PEER_CLOSED` so a
+  blocking `connect()` stops waiting. That replaces the last FIXME.
+- `unix_accept4` takes `unix_common.lock` **before** unlinking and holds it until it is
+  finished with the peer; `unixsock_put` takes the same lock, so the peer cannot be
+  freed in that window. The lock is deliberately **not** held across
+  `proc_threadWait` — that sleeps, and the connector needs the lock to make progress.
+
+### Measured (n = 9, per the methodology rule in the previous section)
+
+| | before | after |
+|---|---|---|
+| `test-libc-unix-socket` | ~50% of runs bad | **8 of 9 clean** |
+| crash signatures 1-4 | all four observed | **none observed** |
+| hang (no summary, 0 aborts) | observed at baseline | **1 of 9, unchanged place** |
+
+If the bad rate were still 0.5, seeing ≤1 bad in 9 has probability ~1%, so the
+improvement is not sampling noise — unlike the two readings I got wrong earlier today.
+
+No regression: pthread 24/0, libc/misc 207/0, inet-socket 1/0, stdio 80/0, and X11
+comes up with the desktop rendering (Xphoenix accepting connections, wmaker connected)
+— worth checking explicitly because every `socket`/`accept4`/`close` in the system runs
+through this path.
+
+### What is still open
+
+**The hang.** 1 run in 9, stopping after `dgram_sock_msg_fork` with no exception and
+psh still alive, exactly where the baseline hangs stopped. So it is the residual of the
+same area, not something this fix introduced. Next: instrument that specific point —
+which thread is blocked and on what queue — rather than sampling whole runs.
+
+Still unfixed and unrelated to this repro, from the earlier audit: the user-controlled
+`cmsg_len` heap-overflow primitive in `fdpass_pack`, the `CMSG_NXTHDR` mis-advance in
+both the kernel and libphoenix, `unix_shutdown` dropping one reference too many, and
+`fdpass_*` dereferencing under `p->lock`.
