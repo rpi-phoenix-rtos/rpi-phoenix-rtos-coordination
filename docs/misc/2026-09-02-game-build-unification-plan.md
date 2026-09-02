@@ -60,9 +60,16 @@ Building from the fork ships the capture harness. Checked whether it is inert:
 - **quakespasm: safe.** The harness defaults off (`gl_screen.c:114` `scr_capture "0"`,
   plus `scr_capture_max "0"`) and the GL-blit path is compile-gated (`gl_screen.c:928`
   `#ifdef QSS_PHOENIX`). Dormant unless a cvar is set.
-- **vkquake: one line to fix during step 1.** The texture trace is env-gated
-  (`gl_texmgr.c:1256`, `getenv("VKQ_TEXDBG")`), but our delta leaves one **ungated**
-  `fprintf(stderr, "vkq-tex-fix: '%s' region0 extent now ...")` in the #29 fix path.
-  Gate it behind `VKQ_TEXDBG` or drop it (it is diagnostic-only, and the fix it
-  reports is proven) before the fork becomes the shipped source. Not done yet on
-  purpose: the audit is diffing that working tree right now.
+- **vkquake: safe too (earlier note was wrong).** The `vkq-tex-fix:` print I read as
+  ungated is guarded by `if (getenv("VKQ_TEXDBG"))` on the line above it
+  (`gl_texmgr.c:1256`) -- my grep showed the print without its guard. Nothing to fix.
+
+## Status 2026-09-02
+
+Step 1 and 3 are **done**, by generation rather than by hand: `scripts/game-port-patch.sh`
+derives each patch from its fork, `publication-audit.sh --check`s it, and the yQuake2
+fork/patch split is reconciled (fork `ee181885`, ports `0d9de9a`). Step 4's guard is the
+ancestry check inside the generator. **Step 2 (one build path) and step 5 (per-game HW
+proof) remain** and need the Pi: flip each `if: false` in `ports.yaml` to `true` while
+dropping that game's ad-hoc step, one game per cycle, plus retiring the hand-copy of the
+yquake2/quake3e binaries in `make-pristine-nfs-export.sh:29-32`.
