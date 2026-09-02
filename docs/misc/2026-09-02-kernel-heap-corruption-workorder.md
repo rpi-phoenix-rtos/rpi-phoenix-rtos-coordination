@@ -943,3 +943,47 @@ Corrections that follow from this:
 **Counting rule, for any future measurement here:** classify every run into A/B/C first
 and quote class C only. `grep -ac '(psh)%'` and `grep -ac 'TEST('` are enough to
 separate them.
+
+---
+
+## 2026-09-03: the "stall" is a DATA MISMATCH — and the test's buffers live in .bss
+
+Adding a per-test `fflush` plus the child-failure reporting turned the longest-standing
+mystery in this file into one line:
+
+```
+CHILD-FAIL phoenix-rtos-tests/libc/socket/unix-socket.c:826:
+           unix_data_cmp(buf, pos, n) == 0
+```
+
+That is `unix_transfer`'s child: the bytes it received did **not** match the expected
+pattern. It then `exit(1)`s, so nobody drains the socket and the parent spins forever in
+its non-blocking `send()` loop — **that is the "stall"**, and why the run stops after
+`dgram_sock_msg_fork` with no further output and no fault.
+
+### The kernel's buffer code is not obviously at fault
+
+Audited `lib/cbuffer.c` (107 lines): `_cbuffer_write`, `_cbuffer_peek`/`_cbuffer_read`
+and `_cbuffer_free` handle the wrapped, empty and full cases correctly (the `full` flag
+resolves the `w == r` ambiguity, and the wrap-around second `hal_memcpy` is bounded by
+the opposite index in both directions). Datagram framing is atomic: `send` checks
+`_cbuffer_free(&r->buffer) >= len + sizeof(len)` before writing the length and the
+payload, so a partial write cannot desync the length prefix. For a socketpair, sender and
+receiver serialise on the same socket's `lock`.
+
+### Why this is probably the SAME bug, not a new one
+
+`unix-socket.c` keeps both `data[]` (the expected pattern) and `buf[]` (the received
+bytes) in **`.bss`** — the very region already proven to be corrupted in this process
+(`stdout`, `file_common.list` and `atexit_common` are all `.data`/`.bss` neighbours). A
+comparison between two arrays, one of which may have been overwritten, fails exactly like
+a socket that delivered wrong bytes.
+
+### The decisive next experiment
+
+Distinguish the two readings directly. In the child, when `unix_data_cmp` fails, first
+re-verify `data[]` itself against its generator: if `data[]` is intact, the socket really
+delivered wrong bytes (a kernel data-path bug); if `data[]` is corrupt, this is the
+memory corruption showing up in a cheaper, earlier-firing detector than the crashes.
+Either answer collapses a lot of the search space, and the check is a few lines in the
+child's failure path.
