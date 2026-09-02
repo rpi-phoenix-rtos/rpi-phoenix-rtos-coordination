@@ -87,8 +87,12 @@ printf '\n\n=== BENCH SUMMARY: label="%s" trials=%d logs=%d ===\n' "$label" "$N"
 if [ "${#cmds[@]}" -gt 0 ]; then
     printf '\n--- per-trial test results (class C only counts) ---\n'
     for log in "${logs[@]}"; do
-        prompt=$(grep -ac '(psh)%' "$log" 2>/dev/null || echo 0)
-        ran=$(grep -ac 'TEST(' "$log" 2>/dev/null || echo 0)
+        # NB: `grep -c` PRINTS 0 and EXITS 1 when there are no matches, so a
+        # `|| echo 0` fallback appends a second line and the count becomes
+        # "0\n0" -- which makes [ "$x" -eq 0 ] fail and silently misclassify a
+        # class-B run (no output) as class C (ran). Use `|| true`.
+        prompt=$(grep -ac '(psh)%' "$log" || true)
+        ran=$(grep -ac 'TEST(' "$log" || true)
         summary=$(grep -aoE '[0-9]+ Tests [0-9]+ Failures [0-9]+ Ignored' "$log" 2>/dev/null | tail -n 1)
         if [ "$prompt" -eq 0 ]; then
             cls="A (no shell)"
