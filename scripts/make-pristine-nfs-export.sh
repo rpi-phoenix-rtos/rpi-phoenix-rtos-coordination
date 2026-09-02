@@ -26,21 +26,20 @@ echo "== 2. overlay legit hand-staged game/media content from the old export =="
 for d in usr/share/quake2 usr/share/quake3; do
 	[ -d "$EXP/$d" ] && { sudo mkdir -p "$NEW/$(dirname "$d")"; sudo cp -a "$EXP/$d" "$NEW/$(dirname "$d")/"; echo "  + $d"; }
 done
-# Q2/Q3 engines (not in the standard build)
-for b in usr/bin/yquake2 usr/bin/quake3e usr/bin/quake2 usr/bin/quake3; do
-	[ -e "$EXP/$b" ] && { sudo cp -a "$EXP/$b" "$NEW/$b"; echo "  + $b"; }
-done
-# Game/media launcher scripts + e4 ffmpeg video tools
-for b in bin/quakespasm bin/quakespasm-sdl bin/vkquake bin/ram-stage-play bin/quake-det bin/e4-play bin/e4-x11-play; do
-	[ -e "$EXP/$b" ] && { sudo cp -a "$EXP/$b" "$NEW/$b"; echo "  + $b"; }
-done
-# Legit hand-staged TOOLS not in the standard build (default ports lack them): bash + CPython
-# (python3 + its /lib/python3.14 stdlib) + WiFi supplicant tools + the pty bash-tty helper.
-# (These are real capabilities the owner tests — dropping them made the export incomplete.)
-for b in bin/bash bin/python3 usr/bin/python3 usr/bin/wpa_supplicant usr/bin/wpa_cli usr/bin/pty-run; do
-	[ -e "$EXP/$b" ] && { sudo mkdir -p "$NEW/$(dirname "$b")"; sudo cp -a "$EXP/$b" "$NEW/$b"; echo "  + $b"; }
-done
-[ -d "$EXP/lib/python3.14" ] && { sudo cp -a "$EXP/lib/python3.14" "$NEW/lib/"; echo "  + lib/python3.14 (CPython stdlib)"; }
+# NO BINARY COPY-FORWARD. Owner directive 2026-09-03: "Why are you hand copying
+# old binaries. This make zero sense! Never do this!"
+#
+# This block used to carry usr/bin/{yquake2,quake3e,quake2,quake3} and the
+# bin/{quakespasm,vkquake,ram-stage-play,...} launchers over from the previous
+# export "because they are not in the standard build". That defeats the purpose
+# of a pristine export: it hides whichever ports the build does not actually
+# produce, and it means the Pi runs binaries nobody can rebuild -- the two
+# engines carried this way were still dated Aug 28, i.e. from before we
+# regenerated their port patches, so tests against them proved nothing about
+# current source. Anything executable must now come from the build; if it is
+# missing after this script, the BUILD is what needs fixing.
+# Same rule for CPython's stdlib: the python port installs it, so a build that
+# does not produce it is a build to fix, not a tree to patch up by hand.
 
 echo "== 3. verify $NEW is clean (no junk) + complete =="
 echo "  -- junk check (should list NOTHING) --"
