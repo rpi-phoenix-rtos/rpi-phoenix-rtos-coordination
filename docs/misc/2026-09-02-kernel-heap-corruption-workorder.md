@@ -577,3 +577,63 @@ Still unfixed and unrelated to this repro, from the earlier audit: the user-cont
 `cmsg_len` heap-overflow primitive in `fdpass_pack`, the `CMSG_NXTHDR` mis-advance in
 both the kernel and libphoenix, `unix_shutdown` dropping one reference too many, and
 `fdpass_*` dereferencing under `p->lock`.
+
+---
+
+## 2026-09-02 (late night): CORRECTION — the crash class is reduced, not eliminated
+
+**I claimed "all four crash signatures gone" on the strength of 9 runs. That was
+premature.** Run 11 (window raised to 150 s) crashed with `abort=2` and no summary. So
+the honest figure after `9c60b783` is **1 crash in 11 runs (~9%), down from ~50%** — a
+large, real improvement, but not a fix of the class.
+
+### The residual failure is localised
+
+- It is in **`TEST(test_unix_socket, transfer)`** — the test immediately after
+  `dgram_sock_msg_fork`, whose name never prints because Unity prints on completion.
+- `transfer` uses a **non-blocking** socketpair and both sides **busy-poll** on EAGAIN,
+  so a stall there cannot be a missed wakeup.
+- Not slowness: run in isolation it passes at the default `--transfer-loop-cnt 50`
+  (and at 1) well inside a 100 s window.
+
+### Sharper signature: exit-time libphoenix lists, corrupted with a KERNEL pattern
+
+| run | site | detail |
+|---|---|---|
+| earlier | `__fflush_unlocked` (`stdio/file.c:805`) | walking `file_common.list`; `iter` = `0xbababababababaea`, and in another run a small integer (`far=0x30`) |
+| run 11 | **`__cxa_finalize`** (`stdlib/atexit.c:108`) | `far=0xbababa000005a0`, `x2=0xbabababa00000000` — a 64-bit pointer whose **upper half** is `0xbabababa` |
+
+Both are **exit-time** walks of a libphoenix global list, and `0xba` occurs in exactly
+one place in the entire tree: `proc/threads.c:653`,
+`hal_memset(t->kstack, 0xba, t->kstacksz)` — the kernel's fresh thread-stack fill. So a
+kernel pattern is landing in user data. That is the thread to pull.
+
+### Hypotheses tested and ELIMINATED (do not repeat these)
+
+- **Fresh anonymous memory is not zeroed** → false. 40 × 2 MB mapped after process
+  churn: every byte zero, and `.bss` is zero at startup (`heapstress zerocheck`).
+- **fork does not isolate the parent** → false. 200 iterations, parent heap/stack/.data
+  untouched by the child (`heapstress forkiso`).
+- **SCM_RIGHTS receiving scribbles outside the control buffer** → not in a single
+  process: 3000 round trips, 4 MB canary intact (`heapstress fdpass`). Untested across
+  processes.
+- **`fstat`/`ftConstructing`/the sweep changes caused it** → false, ruled out by revert
+  (see the earlier section).
+
+### One test that proved nothing — flagged so it is not miscounted
+
+`heapstress leakcheck` (scan a caller-supplied `sockaddr` for `0xba` after
+`getsockname`/`getpeername`) reported **"0 bytes written by the kernel"**: those calls
+write nothing for an AF_UNIX socketpair on this port, so the buffer was never touched
+and the pass is **vacuous**. A real version has to use a call that genuinely fills a
+user struct — `accept()` with an address buffer, or `recvmsg` with `msg_name` — on a
+*named* socket.
+
+### Next step
+
+Find the kernel→user write vector. The audit already showed `recv`/`send` copy directly
+into and out of user buffers under `s->lock` via `lib/cbuffer.c`, and `fdpass_unpack`
+writes user memory under two locks — any of those with a length that exceeds what was
+initialised would put kstack bytes into user memory. Instrument a kernel-side check that
+the destination length matches what is actually written, or paint kstacks with a
+per-thread value so the *source* thread can be identified from the pattern.

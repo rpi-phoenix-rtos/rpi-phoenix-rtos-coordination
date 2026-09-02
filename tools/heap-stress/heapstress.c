@@ -350,6 +350,8 @@ int main(int argc, char **argv)
 	int only_sockrace = (strcmp(mode, "sockrace") == 0) ? 1 : 0;
 	int only_forkiso = (strcmp(mode, "forkiso") == 0) ? 1 : 0;
 	int only_fdpass = (strcmp(mode, "fdpass") == 0) ? 1 : 0;
+	int only_zerocheck = (strcmp(mode, "zerocheck") == 0) ? 1 : 0;
+	int only_leakcheck = (strcmp(mode, "leakcheck") == 0) ? 1 : 0;
 	long i;
 
 	/* Start from a clean slate: leftovers from a crashed run change which
@@ -464,6 +466,147 @@ int main(int argc, char **argv)
 	 * then scan the canary. A stray descriptor number shows up as a small
 	 * integer written over the pattern, and the offset says where.
 	 */
+	/* mode=zerocheck: is fresh anonymous memory really zero?
+	 *
+	 * A crash in the exiting test process showed a 64-bit pointer whose UPPER
+	 * half was 0xbabababa -- and 0xba is the KERNEL's fresh thread-stack fill
+	 * (hal_memset(t->kstack, 0xba, ...)). A kernel pattern inside user data
+	 * means a page that had been a kernel stack was handed to userspace without
+	 * being cleared, which would silently corrupt anything living in
+	 * zero-expected memory: .bss, calloc, and libphoenix's own global lists
+	 * (which is where the stdio and atexit crashes were).
+	 *
+	 * So: churn processes first (every process and thread allocates a kstack and
+	 * fills it with 0xba, then frees it), then map anonymous memory and look for
+	 * anything non-zero -- reporting the pattern if found.
+	 */
+	/* mode=leakcheck: do the socket syscalls copy uninitialised KERNEL STACK
+	 * bytes out to userspace?
+	 *
+	 * 0xba appears exactly once in the whole tree -- the kernel's fresh
+	 * thread-stack fill -- yet a user pointer was seen with 0xbabababa in its
+	 * upper half, and fresh anonymous memory is provably zeroed. That leaves a
+	 * kernel-to-user copy that writes more than it initialised, which would
+	 * both leak kernel memory and corrupt whatever the caller had there.
+	 *
+	 * Paint user buffers with a marker, call the syscalls that fill a
+	 * caller-supplied struct, and look for 0xba.
+	 */
+	if (only_leakcheck != 0) {
+		long iter;
+		size_t ba = 0, changed = 0;
+
+		for (iter = 0; iter < n; ++iter) {
+			int sv[2];
+			unsigned char abuf[512];
+			socklen_t alen = (socklen_t)sizeof(abuf);
+			size_t k;
+
+			if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) {
+				printf("HEAPSTRESS-FAIL socketpair errno=%d\n", errno);
+				return 1;
+			}
+
+			memset(abuf, 0x11, sizeof(abuf));
+			if (getsockname(sv[0], (struct sockaddr *)abuf, &alen) == 0) {
+				for (k = 0; k < sizeof(abuf); ++k) {
+					if (abuf[k] != 0x11u) {
+						changed++;
+						if (abuf[k] == 0xbau) {
+							ba++;
+						}
+					}
+				}
+			}
+
+			memset(abuf, 0x11, sizeof(abuf));
+			alen = (socklen_t)sizeof(abuf);
+			if (getpeername(sv[0], (struct sockaddr *)abuf, &alen) == 0) {
+				for (k = 0; k < sizeof(abuf); ++k) {
+					if (abuf[k] != 0x11u) {
+						changed++;
+						if (abuf[k] == 0xbau) {
+							ba++;
+						}
+					}
+				}
+			}
+
+			close(sv[0]);
+			close(sv[1]);
+		}
+
+		printf("HEAPSTRESS: leakcheck %ld iters: %zu bytes written by the kernel, %zu of them 0xba\n",
+			n, changed, ba);
+		if (ba != 0) {
+			printf("HEAPSTRESS-RESULT FAIL leakcheck: kernel stack bytes reached userspace\n");
+			return 1;
+		}
+		printf("HEAPSTRESS-RESULT PASS (leakcheck, no 0xba in caller buffers)\n");
+		return 0;
+	}
+
+	if (only_zerocheck != 0) {
+		size_t len = 2u * 1024u * 1024u;
+		long iter;
+		size_t bad_total = 0, ba_total = 0;
+
+		/* .bss must be zero at startup. */
+		{
+			static unsigned char bss[65536];
+			size_t k, bad = 0;
+			for (k = 0; k < sizeof(bss); ++k) {
+				if (bss[k] != 0u) {
+					bad++;
+				}
+			}
+			printf("HEAPSTRESS: bss non-zero bytes = %zu\n", bad);
+			bad_total += bad;
+		}
+
+		for (iter = 0; iter < n; ++iter) {
+			unsigned char *p;
+			size_t k;
+			pid_t pid;
+
+			/* churn: a fork+exit pair allocates and frees kernel stacks */
+			pid = fork();
+			if (pid == 0) {
+				_exit(0);
+			}
+			if (pid > 0) {
+				(void)waitpid(pid, NULL, 0);
+			}
+
+			p = mmap(NULL, len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+			if (p == MAP_FAILED) {
+				printf("HEAPSTRESS-FAIL mmap errno=%d\n", errno);
+				return 1;
+			}
+			for (k = 0; k < len; ++k) {
+				if (p[k] != 0u) {
+					bad_total++;
+					if (p[k] == 0xbau) {
+						ba_total++;
+					}
+					if (bad_total == 1u) {
+						printf("HEAPSTRESS: FIRST non-zero at iter=%ld off=%zu val=0x%02x\n",
+							iter, k, p[k]);
+					}
+				}
+			}
+			(void)munmap(p, len);
+		}
+
+		if (bad_total != 0) {
+			printf("HEAPSTRESS-RESULT FAIL zerocheck: %zu non-zero bytes in fresh anonymous memory (%zu of them 0xba)\n",
+				bad_total, ba_total);
+			return 1;
+		}
+		printf("HEAPSTRESS-RESULT PASS (zerocheck %ld iterations, fresh memory all zero)\n", n);
+		return 0;
+	}
+
 	if (only_fdpass != 0) {
 		size_t len = 4u * 1024u * 1024u;
 		unsigned char *canary = malloc(len);
