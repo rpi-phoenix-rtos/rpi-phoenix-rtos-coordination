@@ -1050,3 +1050,55 @@ parked by `msg_ipack`. That is precisely the "text mixed with 0xba" garbage seen
    `log_devctl` does exactly that for `TCGETS`, which is what `isatty()` sends. The copy
    is now also gated on success.
 3. `_log_msgRespond`'s `msg_t` was likewise un-zeroed.
+
+---
+
+## ROOT CAUSE FOUND (2026-09-02, by code reading — fix implemented, HW test pending)
+
+**AF_UNIX socket ids were recycled, so a stale socket *name* could resolve to a
+live, unrelated socket.** That is the mechanism behind "AF_UNIX delivers bytes
+that were never sent".
+
+The chain, all in `posix/unix.c`:
+
+1. `unix_bind` publishes a filesystem node for the socket whose identity is the
+   pair `{US_PORT, socket id}` (`dev.port = US_PORT; dev.id = socket;` then
+   `proc_create(... otDev, S_IFSOCK, dev ...)`).
+2. Closing the socket removes **nothing**. `unix_close` only drops references,
+   and `unix_unlink` is a no-op stub (`/* TODO: broken - socket may be phony */`).
+   That is POSIX-correct in itself — a bound socket's name lives until
+   `unlink()`, not until `close()`.
+3. `unixsock_alloc` handed out the **lowest free id** (an rbtree gap search), so
+   a just-freed id came back almost immediately.
+4. `unix_connect` and `send` both resolve a pathname to an oid and then call
+   `unixsock_get(oid.id)`. With the id recycled, that call returns a **different,
+   unrelated socket** — and `send` writes the payload straight into *its*
+   buffer.
+
+The reader of that socket then returns a chunk nobody sent it. Every observation
+fits: the payload is foreign (it is another pair's traffic, so it appears nowhere
+in the receiver's expected pattern), it starts at a **chunk boundary** (a whole
+datagram / stream write), the receiver's own memory is **intact** (`data[]`
+checksums correctly — this was never memory corruption), and it is intermittent
+at a few percent because it depends on id-recycling order, i.e. on test ordering
+and timing.
+
+**Why Linux cannot do this:** there the name resolves to an inode holding a
+pointer to the socket, and that pointer is cleared when the socket dies, so a
+stale name yields `ECONNREFUSED`.
+
+**Fix (kernel, implemented):** allocate socket ids **monotonically** (wrapping,
+skipping 0 and any id still in the tree, bounded retry) instead of lowest-free.
+A stale name's id then never names a live socket again: `unixsock_get` returns
+NULL and the caller gets `ECONNREFUSED` — exactly the Linux semantics. The
+lowest-gap comparator (`unixsock_gapcmp`) is deleted with it.
+
+**Still to do:** build + `libc/socket/unix-socket` on hardware, n >= 8 runs,
+counting A/B/C classes per the rule above. The `UNIX_XTALK_TRACE` correlator
+added alongside this remains available (default off) to confirm the mechanism
+directly: under the old allocator a recv should show `self=` an id no send ever
+targeted.
+
+**Note on scope:** this does not explain a *kernel heap* fault on its own, and
+the earlier `_vm_zalloc` sighting (2 logs in 5100) stays open and instrumented.
+It does explain the failure this hunt actually kept reproducing.
