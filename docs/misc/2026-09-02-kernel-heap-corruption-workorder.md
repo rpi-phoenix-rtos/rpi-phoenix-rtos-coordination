@@ -490,3 +490,42 @@ either kstack poison (`0xbababababababaea`) or a **small integer** (`far=0x30`).
 parent's libphoenix stream-list pointer is the thing being overwritten, with varying
 garbage — a fixed target, which is worth exploiting: a guard/canary around that global,
 or catching the writer, should be quicker than chasing the allocator.
+
+---
+
+## 2026-09-02 (later): attempted the S1/S2 fix, reverted — and why the obvious fix is wrong
+
+**Attempt** (kept for reference as `docs/misc/2026-09-02-unix-connecting-ref-attempt.c.txt`):
+make the `connecting` list own a reference — `s->refs++` before
+`LIST_ADD(&r->connecting, s)` in `unix_connect`; `unix_accept4` inherits it when it
+unlinks the node and releases it at the end; the `-ETIME` path releases it; and the
+listener's teardown drains the list, waking each queued connector.
+
+That fixes S1 and S2 *as stated* — a queued socket can no longer be freed while linked,
+and `accept4` no longer touches an unreferenced object.
+
+**But it is wrong, and reverted.** `remote` is a WEAK pointer in this design (nothing
+holds a reference for the connection; `unixsock_put` clears the peer's `remote` and sets
+`US_PEER_CLOSED` at teardown). So for the sequence `accept_connect_async` actually
+drives — non-blocking `connect()` returns `-EINPROGRESS`, the app closes the socket, the
+listener accepts it later — the list's reference is the LAST one, and releasing it in
+`accept4` frees the peer at the instant the connection is established: `new->remote`
+goes NULL, the freshly accepted socket is dead on arrival, and the test blocks forever.
+Previously that was a leak, which masked it.
+
+**So the real fix needs the connection to own references symmetrically** (`r->remote`
+and `new->remote` each holding one, released when the peer relationship is torn down),
+which is a genuine ownership refactor of `unix.c`, not a two-line reference bump. That
+is the next attempt.
+
+### Methodology note — I mis-measured this twice today
+
+The reproducer is roughly **50% flaky**, and it has (at least) two failure modes:
+a crash (`abort>0`) and a silent **hang** (no summary, `abort=0`). Both are pre-existing:
+baseline after reverting gave clean / hang / failure on three runs. My attempt gave 4 bad
+of 4, which I first read as "my change made it worse" — with n=4 against n=3 at ~50%
+flakiness that conclusion was unsupportable, and the honest statement is that the attempt
+is unjustifiable on design grounds, not on those numbers.
+
+**For any future attempt here: n >= 8 runs per configuration**, and count hangs as
+failures. Anything less cannot separate a real effect from this test's own noise.
