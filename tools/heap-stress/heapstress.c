@@ -37,6 +37,7 @@
 #include <sys/un.h>
 #include <pthread.h>
 #include <sys/wait.h>
+#include <signal.h>
 #include <sys/mman.h>
 
 #define BASE  "test_stat.txt"                  /* the file everything links to */
@@ -567,6 +568,9 @@ int main(int argc, char **argv)
 	int only_leakcheck = (strcmp(mode, "leakcheck") == 0) ? 1 : 0;
 	int only_atexit = (strcmp(mode, "atexit") == 0) ? 1 : 0;
 	int only_transfer = (strcmp(mode, "transfer") == 0) ? 1 : 0;
+	int only_inherit = (strcmp(mode, "inherit") == 0) ? 1 : 0;
+	int only_exitcode = (strcmp(mode, "exitcode") == 0) ? 1 : 0;
+	int only_sigstat = (strcmp(mode, "sigstat") == 0) ? 1 : 0;
 	long i;
 
 	/* Start from a clean slate: leftovers from a crashed run change which
@@ -707,6 +711,180 @@ int main(int argc, char **argv)
 	 * Paint user buffers with a marker, call the syscalls that fill a
 	 * caller-supplied struct, and look for 0xba.
 	 */
+	/* mode=inherit: does a forked CHILD see its parent's memory intact?
+	 *
+	 * forkiso already showed the child's writes do not leak INTO the parent.
+	 * This is the other direction, and the one the evidence now points at: an
+	 * integrity probe in the parent never fires, yet forked children die at
+	 * their own exit walking libphoenix's atexit list -- so the corruption is in
+	 * the CHILD's copy of memory that the parent still holds correctly.
+	 *
+	 * The child verifies .data, .bss and a heap buffer against the pattern the
+	 * parent wrote, and reports the first mismatch with its offset and bytes.
+	 */
+	/* mode=exitcode: does waitpid report the code the child actually passed?
+	 *
+	 * test-libc-unix-socket only ever calls exit(0), exit(1), exit(2) or
+	 * exit(3), yet its parent was seen asserting on WEXITSTATUS == 70. If the
+	 * wait status can carry a value the child never produced, that is a far
+	 * narrower bug than the memory corruption hunt -- so check it directly.
+	 */
+	/* mode=sigstat: how is a child that dies from a SIGNAL reported?
+	 *
+	 * A parent in test-libc-unix-socket asserted on WEXITSTATUS == 70 although
+	 * the test only ever calls exit(0..3), and plain exit codes propagate
+	 * correctly (mode=exitcode, 1500 forks). That points at a signal death being
+	 * decoded as a normal exit with a nonsense code -- which would also mask
+	 * every child crash in this suite as a puzzling exit status.
+	 */
+	if (only_sigstat != 0) {
+		long iter, wrong = 0;
+
+		printf("HEAPSTRESS: sigstat check, %ld children dying by SIGSEGV\n", n);
+		fflush(stdout);
+
+		for (iter = 0; iter < n; ++iter) {
+			int status = 0;
+			pid_t pid = fork();
+
+			if (pid < 0) {
+				printf("HEAPSTRESS-FAIL fork errno=%d\n", errno);
+				return 1;
+			}
+			if (pid == 0) {
+				*(volatile int *)0 = 1; /* deliberate SIGSEGV */
+				_exit(9);
+			}
+			if (waitpid(pid, &status, 0) < 0) {
+				printf("HEAPSTRESS-FAIL waitpid errno=%d\n", errno);
+				return 1;
+			}
+			if (!WIFSIGNALED(status) || (WTERMSIG(status) != SIGSEGV)) {
+				wrong++;
+				if (wrong <= 3) {
+					printf("HEAPSTRESS-SIGSTAT status=0x%08x signalled=%d sig=%d exited=%d code=%d\n",
+						(unsigned int)status, WIFSIGNALED(status) ? 1 : 0,
+						WIFSIGNALED(status) ? WTERMSIG(status) : -1,
+						WIFEXITED(status) ? 1 : 0,
+						WIFEXITED(status) ? WEXITSTATUS(status) : -1);
+					fflush(stdout);
+				}
+			}
+		}
+
+		if (wrong != 0) {
+			printf("HEAPSTRESS-RESULT FAIL (sigstat: %ld of %ld signal deaths mis-reported)\n", wrong, n);
+			return 1;
+		}
+		printf("HEAPSTRESS-RESULT PASS (sigstat %ld deaths, all reported as SIGSEGV)\n", n);
+		return 0;
+	}
+
+	if (only_exitcode != 0) {
+		long iter, bad = 0;
+
+		printf("HEAPSTRESS: exitcode check, %ld forks, codes 0..3\n", n);
+		fflush(stdout);
+
+		for (iter = 0; iter < n; ++iter) {
+			int want = (int)(iter & 3);
+			int status = 0;
+			pid_t pid = fork();
+
+			if (pid < 0) {
+				printf("HEAPSTRESS-FAIL fork errno=%d\n", errno);
+				return 1;
+			}
+			if (pid == 0) {
+				exit(want);
+			}
+
+			if (waitpid(pid, &status, 0) < 0) {
+				printf("HEAPSTRESS-FAIL waitpid errno=%d\n", errno);
+				return 1;
+			}
+			if (!WIFEXITED(status) || (WEXITSTATUS(status) != want)) {
+				bad++;
+				printf("HEAPSTRESS-BADSTATUS iter=%ld want=%d status=0x%08x exited=%d got=%d\n",
+					iter, want, (unsigned int)status, WIFEXITED(status) ? 1 : 0,
+					WIFEXITED(status) ? WEXITSTATUS(status) : -1);
+				fflush(stdout);
+			}
+			if (((iter + 1) % 200) == 0) {
+				printf("HEAPSTRESS: %ld/%ld\n", iter + 1, n);
+				fflush(stdout);
+			}
+		}
+
+		if (bad != 0) {
+			printf("HEAPSTRESS-RESULT FAIL (exitcode: %ld of %ld wait statuses wrong)\n", bad, n);
+			return 1;
+		}
+		printf("HEAPSTRESS-RESULT PASS (exitcode %ld forks, every status correct)\n", n);
+		return 0;
+	}
+
+	if (only_inherit != 0) {
+		const unsigned long salt_d = 0xd0d0d0d0d0d0d0d0UL;
+		const unsigned long salt_b = 0xb5b5b5b5b5b5b5b5UL;
+		size_t nw = sizeof(xf_data) / sizeof(xf_data[0]);
+		size_t i;
+		long iter, bad_iters = 0;
+		unsigned long *heap = malloc(nw * sizeof(unsigned long));
+
+		if (heap == NULL) {
+			printf("HEAPSTRESS-FAIL malloc\n");
+			return 1;
+		}
+		for (i = 0; i < nw; ++i) {
+			xf_data[i] = xf_pattern(i, salt_d);
+			xf_bss[i] = xf_pattern(i, salt_b);
+			heap[i] = xf_pattern(i, salt_d ^ 0xffUL);
+		}
+
+		printf("HEAPSTRESS: inherit check, %ld forks, %zu words each in .data/.bss/heap\n", n, nw);
+		fflush(stdout);
+
+		for (iter = 0; iter < n; ++iter) {
+			pid_t pid = fork();
+			int status = 0;
+
+			if (pid < 0) {
+				printf("HEAPSTRESS-FAIL fork errno=%d\n", errno);
+				return 1;
+			}
+			if (pid == 0) {
+				size_t bad = 0;
+
+				bad += xf_scan("child.data", xf_data, nw, salt_d);
+				bad += xf_scan("child.bss", xf_bss, nw, salt_b);
+				bad += xf_scan("child.heap", heap, nw, salt_d ^ 0xffUL);
+				_exit((bad != 0) ? 2 : 0);
+			}
+
+			(void)waitpid(pid, &status, 0);
+			if (!WIFEXITED(status) || (WEXITSTATUS(status) != 0)) {
+				bad_iters++;
+				printf("HEAPSTRESS: iter %ld child status=0x%x (exited=%d code=%d)\n",
+					iter, status, WIFEXITED(status) ? 1 : 0,
+					WIFEXITED(status) ? WEXITSTATUS(status) : -1);
+				fflush(stdout);
+			}
+			if (((iter + 1) % 50) == 0) {
+				printf("HEAPSTRESS: %ld/%ld\n", iter + 1, n);
+				fflush(stdout);
+			}
+		}
+
+		if (bad_iters != 0) {
+			printf("HEAPSTRESS-RESULT FAIL (inherit: %ld of %ld children saw corrupt inherited memory or died)\n",
+				bad_iters, n);
+			return 1;
+		}
+		printf("HEAPSTRESS-RESULT PASS (inherit %ld forks, children saw intact memory)\n", n);
+		return 0;
+	}
+
 	if (only_transfer != 0) {
 		static unsigned char sbuf[4096];
 		const unsigned long salt_d = 0xd0d0d0d0d0d0d0d0UL;

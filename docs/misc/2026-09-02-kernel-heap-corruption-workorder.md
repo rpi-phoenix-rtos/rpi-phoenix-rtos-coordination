@@ -736,3 +736,47 @@ Verified: three consecutive boots reach the prompt with the clock set and `date`
 **Note for the record:** this is the second time the boot-time clock work has cost a
 boot (the first was the 5 s script-open retry). Both times the shell was the casualty,
 which is why it is now structurally independent of that step.
+
+---
+
+## 2026-09-02 (night, later): corruption is CHILD-side; four more hypotheses eliminated
+
+### The decisive narrowing
+
+A temporary `_atexit_check()` probe in the suite's per-test tear-down **never fired**,
+across runs that still failed. The probe runs in the PARENT — so the parent's
+`atexit_common` stays sane through the whole suite, while forked children die at their
+own exit inside `__cxa_finalize`. **The corruption is in the child, after the fork.**
+
+### Eliminated this pass (all with committed, re-runnable probes)
+
+| hypothesis | result | probe |
+|---|---|---|
+| the transfer + fd-pass workload corrupts its own `.data`/`.bss` | **no** — 100 iterations (200 socketpair+fork cycles), canaries intact | `heapstress transfer` |
+| a forked child inherits corrupted memory | **no** — 300 forks, children verified 8192 words of `.data`, `.bss` and heap | `heapstress inherit` |
+| `waitpid` mis-reports exit codes | **no** — 1500 forks, codes 0..3, every status correct | `heapstress exitcode` |
+| signal deaths decode as exits | **no** — 40 SIGSEGV deaths, all reported as `WIFSIGNALED`/`SIGSEGV` | `heapstress sigstat` |
+
+### The mysterious `WEXITSTATUS == 70` is a symptom, not a second bug
+
+`accept_connect_async`'s parent asserted `Expected 0 Was 70`, yet the test only ever
+calls `exit(0/1/2/3)`. Exit codes propagate correctly and signal deaths decode
+correctly, so the consistent reading is that the child **crashed while already inside
+`exit()`** — which is precisely where it does crash (`__cxa_finalize`) — leaving the
+kernel with a partly-recorded exit and a hybrid status. Worth remembering when reading
+these logs: a nonsense `WEXITSTATUS` here means "the child died during exit", not
+"the child chose that code".
+
+### Landed: `__cxa_finalize` no longer walks a corrupt list (libphoenix `8dc40bb`)
+
+`_atexit_check()` plus a guard at the top of the walk. This does not fix the corruption;
+it turns "fault deep in the C runtime at exit" into a one-line report and a clean exit,
+and gives any caller a way to ask *when* the damage appeared. Verified not to fire on
+healthy runs.
+
+### Next step
+
+The child's window is short: fork → a few socket calls → exit. Put the check INSIDE that
+window in a program I control — replicate the failing test's child (recv/recvmsg on an
+AF_UNIX socket inherited across fork), call `_atexit_check()` after each syscall, and
+report the first one after which it trips. That names the syscall rather than the phase.
