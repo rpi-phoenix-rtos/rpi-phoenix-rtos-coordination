@@ -62,21 +62,46 @@ Worth checking first:
   `f->path` (a leak, not this bug, but it shows the paths are not symmetric);
 - anything freeing a buffer that a message send still references.
 
-## How to reproduce
+## How to reproduce — CORRECTED
 
-It appeared only after removing the redundant `nfs_chmod` from `nfs_ops_create`
-(commit message in phoenix-rtos-filesystems explains why that chmod exists). That
-change removes one RPC per file create, so it shifts allocation timing — it does
-not itself write anything. Restoring the chmod made the crash go away and both
-suites pass, which is the state currently shipped.
+The first sighting followed removing the redundant `nfs_chmod` from
+`nfs_ops_create`, and I wrongly attributed it to that. **It reproduces in the
+shipped configuration too** (chmod restored, poisoning off), with a
+byte-identical signature: same `pc`, same `far` = `/test_st`, same `x7` =
+`//link1`, same `x16/x17` = `aaaaaaaa`, and the same preceding tests
+(`symloop_max`, `fifo_type`, `sock_type` pass, `chr_type` ignored,
+`stat_nlink_size_blk_tim/nlink` passes, then the fault during `tim`).
 
-To reproduce: drop that chmod again, rebuild `--scope core`, and run
-`/bin/test-libc-misc` repeatedly. Expect it to be intermittent.
+So: `/bin/test-libc-misc` on an NFS root, repeatedly. Roughly 2 runs in 5.
 
-## Suggested first move
+**What changed to make it appear:** every sighting is from a run *after* NFS FIFO
+support landed. Before that, `mkfifo()` failed early with `-1`, so the kernel's
+mkfifo path stopped at `posix_create` and never completed. Now `fifo_type`
+passes, which means `posix_mkfifo`'s full sequence — `proc_create` of the pipe in
+posixsrv, `proc_link` into posixsrv's namespace, then `posix_create` of the
+otDev node — runs to completion for the first time. That newly reachable kernel
+path is the prime suspect, not the filesystem change that reached it.
 
-Before hunting, make the allocator fail loudly instead of silently: validate in
-`vm_kfree`/`_vm_zfree` that the pointer lies inside the zone and is
-block-aligned, and poison freed blocks. Silent corruption that surfaces an
-unbounded time later is what makes this expensive; a clean assert at the bad
-free would name the culprit directly.
+Note also that the corrupting content is a *full path* beginning with `/`, and
+`posix_create` is precisely the function that `lib_strdup`s the full path into a
+kernel block (`name`) and frees it at the end. Its own alloc/free is balanced;
+the question is whether anything else holds or re-frees that block, or an
+interior pointer into it (`lib_splitname` hands out `basename`/`dirname` pointing
+*into* `name`).
+
+## Tools now in place
+
+Both halves of the earlier suggestion are implemented:
+
+- `_vm_zfree` rejects a **misaligned** free (kernel `b516c8a4`). Does not fix
+  this bug — it is a write-after-free, not a misaligned free — but closes the
+  neighbouring hole.
+- **Free-block poisoning**, off by default, build with `-DVM_ZONE_POISON=1`
+  (kernel `3e913c24`). Stamps freed blocks with 0xa5, records the freeing site,
+  and verifies on the next allocation, printing block/freer/first-bad-offset and
+  the first 16 bytes as hex+ASCII.
+
+With poisoning on, the corruption did **not** reproduce in two runs. The memset
+per free changes allocation timing, so it may be masking the race; the next
+attempt should run many more iterations, and consider poisoning without the
+memset (link + freer word only) so timing is barely perturbed.
