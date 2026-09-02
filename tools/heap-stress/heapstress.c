@@ -46,6 +46,7 @@
 #define FIFO  "test_stat_fifo"
 #define SOCKP "/tmp/test_stat_socket"
 #define SYMLOOP 8
+#define CMSG_SPACE_ONE 64u
 
 /* fifo_type: mkfifo reaches posix_mkfifo -> proc_create/proc_link ->
  * posix_create, the sequence the work order names as the prime suspect. On an
@@ -347,6 +348,8 @@ int main(int argc, char **argv)
 	int only_badptr = (strcmp(mode, "badptr") == 0) ? 1 : 0;
 	int only_cow = (strcmp(mode, "cow") == 0) ? 1 : 0;
 	int only_sockrace = (strcmp(mode, "sockrace") == 0) ? 1 : 0;
+	int only_forkiso = (strcmp(mode, "forkiso") == 0) ? 1 : 0;
+	int only_fdpass = (strcmp(mode, "fdpass") == 0) ? 1 : 0;
 	long i;
 
 	/* Start from a clean slate: leftovers from a crashed run change which
@@ -434,6 +437,181 @@ int main(int argc, char **argv)
 		(void)waitpid(pid, NULL, 0);
 		printf("HEAPSTRESS-RESULT PASS (cow: %zu pages written in a forked child)\n",
 			len / 4096u);
+		return 0;
+	}
+
+	/* mode=forkiso: does a forked child's writes stay out of the parent?
+	 *
+	 * Chasing an intermittent crash in test-libc-unix-socket where the PARENT
+	 * faults in __fflush_unlocked on a FILE full of 0xba, immediately after the
+	 * fork tests. If fork's copy is not isolating pages, a child's writes land
+	 * in the parent's memory and corrupt arbitrary parent state -- which would
+	 * explain that and several other signatures at once.
+	 *
+	 * The parent fills a heap buffer with 0xAA, forks, the child overwrites it
+	 * with 0xBB and _exit()s (no stdio flush), and the parent then checks its
+	 * own copy is untouched. Also checks a stack buffer and a .data object.
+	 */
+	/* mode=fdpass: does SCM_RIGHTS receiving scribble outside its control buffer?
+	 *
+	 * The kernel's fdpass_unpack() writes the new descriptor numbers into the
+	 * receiver's control buffer. One captured signature of the intermittent
+	 * corruption is an EL1 fault in hal_memcpy on a USER address, and another is
+	 * the parent faulting on poisoned stdio state -- both consistent with the
+	 * kernel storing a few bytes at a user address it should not.
+	 *
+	 * So: paint a large canary region, pass descriptors over AF_UNIX many times,
+	 * then scan the canary. A stray descriptor number shows up as a small
+	 * integer written over the pattern, and the offset says where.
+	 */
+	if (only_fdpass != 0) {
+		size_t len = 4u * 1024u * 1024u;
+		unsigned char *canary = malloc(len);
+		int sv[2];
+		long iter;
+		size_t k, bad = 0, firstbad = (size_t)-1;
+
+		if (canary == NULL) {
+			printf("HEAPSTRESS-FAIL malloc\n");
+			return 1;
+		}
+		for (k = 0; k < len; ++k) {
+			canary[k] = (unsigned char)(k ^ 0x5Au);
+		}
+
+		if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) {
+			printf("HEAPSTRESS-FAIL socketpair errno=%d\n", errno);
+			return 1;
+		}
+
+		for (iter = 0; iter < n; ++iter) {
+			int passed = open(BASE, O_CREAT | O_RDWR, 0666);
+			char cbuf[CMSG_SPACE_ONE];
+			char data = 'x';
+			struct iovec iov = { .iov_base = &data, .iov_len = 1 };
+			struct msghdr msg;
+			struct cmsghdr *cm;
+			int got = -1;
+
+			if (passed < 0) {
+				printf("HEAPSTRESS-FAIL open errno=%d\n", errno);
+				return 1;
+			}
+
+			memset(&msg, 0, sizeof(msg));
+			memset(cbuf, 0, sizeof(cbuf));
+			msg.msg_iov = &iov;
+			msg.msg_iovlen = 1;
+			msg.msg_control = cbuf;
+			msg.msg_controllen = sizeof(cbuf);
+			cm = CMSG_FIRSTHDR(&msg);
+			cm->cmsg_level = SOL_SOCKET;
+			cm->cmsg_type = SCM_RIGHTS;
+			cm->cmsg_len = CMSG_LEN(sizeof(int));
+			memcpy(CMSG_DATA(cm), &passed, sizeof(int));
+			msg.msg_controllen = cm->cmsg_len;
+
+			if (sendmsg(sv[0], &msg, 0) < 0) {
+				printf("HEAPSTRESS-FAIL sendmsg errno=%d\n", errno);
+				return 1;
+			}
+			close(passed);
+
+			memset(&msg, 0, sizeof(msg));
+			memset(cbuf, 0, sizeof(cbuf));
+			msg.msg_iov = &iov;
+			msg.msg_iovlen = 1;
+			msg.msg_control = cbuf;
+			msg.msg_controllen = sizeof(cbuf);
+			if (recvmsg(sv[1], &msg, 0) < 0) {
+				printf("HEAPSTRESS-FAIL recvmsg errno=%d\n", errno);
+				return 1;
+			}
+			cm = CMSG_FIRSTHDR(&msg);
+			if ((cm != NULL) && (cm->cmsg_type == SCM_RIGHTS)) {
+				memcpy(&got, CMSG_DATA(cm), sizeof(int));
+				if (got >= 0) {
+					close(got);
+				}
+			}
+		}
+
+		for (k = 0; k < len; ++k) {
+			if (canary[k] != (unsigned char)(k ^ 0x5Au)) {
+				if (firstbad == (size_t)-1) {
+					firstbad = k;
+				}
+				bad++;
+			}
+		}
+		close(sv[0]);
+		close(sv[1]);
+		(void)unlink(BASE);
+
+		if (bad != 0) {
+			printf("HEAPSTRESS-RESULT FAIL fdpass: %zu canary bytes changed, first at +%zu (val=0x%02x)\n",
+				bad, firstbad, canary[firstbad]);
+			return 1;
+		}
+		printf("HEAPSTRESS-RESULT PASS (fdpass %ld iterations, canary intact)\n", n);
+		return 0;
+	}
+
+	if (only_forkiso != 0) {
+		static unsigned char sdata[8192];
+		size_t len = 256u * 1024u;
+		unsigned char *heap = malloc(len);
+		unsigned char stackbuf[4096];
+		pid_t pid;
+		size_t k, bad_heap = 0, bad_stack = 0, bad_data = 0;
+		long iter;
+
+		if (heap == NULL) {
+			printf("HEAPSTRESS-FAIL malloc\n");
+			return 1;
+		}
+
+		for (iter = 0; iter < n; ++iter) {
+			memset(heap, 0xAA, len);
+			memset(stackbuf, 0xAA, sizeof(stackbuf));
+			memset(sdata, 0xAA, sizeof(sdata));
+
+			pid = fork();
+			if (pid < 0) {
+				printf("HEAPSTRESS-FAIL fork errno=%d\n", errno);
+				return 1;
+			}
+			if (pid == 0) {
+				memset(heap, 0xBB, len);
+				memset(stackbuf, 0xBB, sizeof(stackbuf));
+				memset(sdata, 0xBB, sizeof(sdata));
+				_exit(0);
+			}
+			(void)waitpid(pid, NULL, 0);
+
+			for (k = 0; k < len; ++k) {
+				if (heap[k] != 0xAAu) {
+					bad_heap++;
+				}
+			}
+			for (k = 0; k < sizeof(stackbuf); ++k) {
+				if (stackbuf[k] != 0xAAu) {
+					bad_stack++;
+				}
+			}
+			for (k = 0; k < sizeof(sdata); ++k) {
+				if (sdata[k] != 0xAAu) {
+					bad_data++;
+				}
+			}
+			if ((bad_heap | bad_stack | bad_data) != 0) {
+				printf("HEAPSTRESS-RESULT FAIL iter=%ld heap=%zu stack=%zu data=%zu bytes changed by the child\n",
+					iter, bad_heap, bad_stack, bad_data);
+				return 1;
+			}
+		}
+
+		printf("HEAPSTRESS-RESULT PASS (forkiso %ld iterations, parent memory untouched)\n", n);
 		return 0;
 	}
 

@@ -403,3 +403,90 @@ Run `test-libc-unix-socket` repeatedly against a kernel built with
 is cheap to catch, unlike the `test-libc-misc` crash. Signature 2 also suggests
 widening the check beyond the zone allocator: a corrupted `proc_threadWakeup` queue
 link means whatever scribbles is not confined to kmalloc blocks.
+
+---
+
+## 2026-09-02 (late): the AF_UNIX audit — named suspects, and two of my framings corrected
+
+### Corrections to what I wrote earlier today
+
+1. **`0xba` is not a userspace malloc poison. It is the kernel's fresh thread-stack
+   fill** — `proc/threads.c:653`, `hal_memset(t->kstack, 0xba, t->kstacksz)`. So
+   signature 3 (`0xbabababa` everywhere, `far=0xbababac090909082`) means a freed block
+   was **recycled as a thread kstack and then read** — a read-after-free, not a
+   structured overflow. That reframes the whole signature.
+2. **"Always in the fork + fd-passing tests" was wrong.** `accept_connect_async`
+   contains no `fork()`, no `sendmsg`, and no `SCM_RIGHTS`. What the crashing tests
+   actually share is high **socket churn**. (Also `dgram_sock_fd_flags` is
+   code-identical to the crashing `stream_sock_fd_flags` and has never crashed.)
+
+### Prime suspects, both reachable and both cross-process (NOT yet fixed)
+
+**S1 — `unix_accept4` uses the connecting socket with no reference held.**
+`posix/unix.c:486-503`: `r = s->connecting;` comes straight off a list, never through
+`unixsock_get()`, so `r->refs` is not incremented — and the code says so itself, two
+lines down: `/* FIXME: handle connecting socket removal */`. The accepting thread then
+writes `r->state`, `r->remote`, takes `r->spinlock` and calls
+`proc_threadWakeup(&r->queue)` on an object another core may be freeing in
+`unixsock_put` (`unix.c:284-331`), which does `proc_lockDone`, `hal_spinlockDestroy`
+and `vm_kfree`. **This is signature 2 exactly**: `pc` in `proc_threadWakeup+0x58` with
+a high-entropy `far`.
+
+**S2 — `unixsock_put` never unlinks a socket from its peer's `connecting` list.**
+A socket mid-connect has `remote == NULL` by definition (`unix_connect` waits on
+exactly that, `unix.c:735`), so the `s->remote != NULL` cleanup is skipped and the
+`else` branch is an unfixed `/* FIXME: handle connecting socket */` (`unix.c:313`).
+The code already knows the consequence — `unix.c:753` carries
+*"a socket left on the list would cause use-after-free in unix_accept()"* — but that
+guard exists **only on the `-ETIME` path**. The non-blocking `-EINPROGRESS` path
+(`unix.c:729-733`) returns to userspace with the socket still linked and no cleanup
+hook, and `accept_connect_async` drives precisely that path in a loop over
+`SOCK_STREAM` and `SOCK_SEQPACKET`.
+
+Aggravator: `unixsock_alloc` deliberately **reuses freed ids** (`unix.c:194-215`), so a
+stale `oid.id` aliases a *different process's* socket on the next `socket()` call.
+
+Fixing S2 needs a design choice: a connecting socket does not record which listener's
+list it is on, so either add a back-pointer (set/cleared under the listener's
+spinlock) or have `unixsock_put` search. S1 alone is not sufficient — S2 is what
+leaves a freed node linked in the first place.
+
+### Also found (real, none of them this repro)
+
+- **`fdpass_pack` trusts a user-controlled `cmsg_len`** (`fdpass.c:79-128`): never
+  checked against `controllen` nor for `>= sizeof(struct cmsghdr)`, re-read from user
+  memory in a second loop, and `tot_cnt` accumulates in `unsigned int` so it can wrap —
+  giving an allocation of 40 bytes and a loop that pushes up to 0x3FFFFFFC entries with
+  no bound check in `FDPACK_PUSH`. An unbounded kernel-heap write from any userspace
+  process. Not the repro (the tests always send `cmsg_len == CMSG_LEN(4n)`), but it
+  should be fixed on its own merits.
+- **`CMSG_NXTHDR` advances by `CMSG_SPACE(cmsg_len)`** (`fdpass.c:28`) where `cmsg_len`
+  already includes the header, so it over-advances by 12 bytes: **multi-cmsg messages
+  can never be parsed**. `libphoenix/include/sys/socket.h:49-63` has the identical
+  error, which is why single-cmsg works. Its guard is also `>` where it should be `>=`.
+- **`unix_shutdown` drops one reference too many** (`unix.c:1145-1162`: one
+  `unixsock_get`, two `unixsock_put`). With id reuse, the still-open fd then aliases
+  another socket and the eventual `close()` destroys **someone else's**. No test uses
+  `shutdown()`.
+- `fdpass_unpack`/`fdpass_discard` call `posix_fileDeref` under `p->lock`, whose last-ref
+  branch does a blocking `proc_close` — the same hazard just removed from the exit/exec
+  sweeps. `fdpass_discard` also ignores its own failure return, which would leak every
+  packed reference.
+
+### Fixed this pass
+
+✅ **`recv()` now reports the control length it delivered** (kernel `381152c6`). It only
+ever wrote `*controllen` on the deliver path, so EOF/`-EWOULDBLOCK`/`MSG_PEEK` left the
+caller's input length over an untouched buffer — and the test suite's own helper then
+parses uninitialised stack and memcpys an arbitrary length into its fd array. Closes one
+userspace-smash mechanism (a good fit for signature 4) but **not the bug**: fatal events
+continue at the same rate (1 in 4 runs).
+
+### New evidence on where the corruption lands
+
+Across runs the EL0 crashes are all the **same site**: `__fflush_unlocked`
+(`libphoenix/stdio/file.c:805`), walking `file_common.list`, with `iter` corrupted to
+either kstack poison (`0xbababababababaea`) or a **small integer** (`far=0x30`). So the
+parent's libphoenix stream-list pointer is the thing being overwritten, with varying
+garbage — a fixed target, which is worth exploiting: a guard/canary around that global,
+or catching the writer, should be quicker than chasing the allocator.
