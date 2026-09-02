@@ -30,9 +30,15 @@
 #                 download/extract/verify FAILS the build — never a half-baked image.
 #   PAK0_SHA256   expected sha256 of the resulting pak0.pak; mismatch fails the build
 #                 ("" disables the check).
+#   PAK0Q2_URL / PAK0Q2_SHA256, PAK0Q3_URL / PAK0Q3_SHA256
+#                 same for the Quake II and Quake III demo data.
+#   STK_ASSETS_URL / STK_ASSETS_SHA256
+#                 the SuperTuxKart 1.4 art asset package (see below).
 #   BUILD_VARIANT sd (default) | nfsroot | netboot.
-#   BUILD_FLAGS   extra rebuild flags. Default: --with-showcase --with-ports
-#                 (GLQuake + X11/WindowMaker + busybox). Use "" for a base image.
+#   BUILD_FLAGS   extra rebuild flags. Default: --with-showcase --with-ports, which
+#                 builds ONE image containing all five game engines (QuakeSpasm,
+#                 vkQuake, Quake II, Quake III, SuperTuxKart) on the rootfs plus the
+#                 X11/WindowMaker desktop and busybox. Use "" for a base image.
 ARG UBUNTU_TAG=26.04
 FROM ubuntu:${UBUNTU_TAG}
 
@@ -51,6 +57,14 @@ ARG PAK0Q2_URL=https://deponie.yamagi.org/quake2/idstuff/q2-314-demo-x86.exe
 ARG PAK0Q2_SHA256=cae257182f34d3913f3d663e1d7cf865d668feda6af393d4ecf3e9e408b48d09
 ARG PAK0Q3_URL=https://ftp.gwdg.de/pub/misc/ftp.idsoftware.com/idstuff/quake3/linux/linuxq3ademo-1.11-6.x86.gz.sh
 ARG PAK0Q3_SHA256=e77abad2466f45a0a7ea018445528f9b95a0fe7789fa1abc1a7718bbf0754b08
+# SuperTuxKart 1.4 art assets. The engine's data/ comes from the pinned stk-code
+# source tarball the port already fetches; the ~149 MB art set (karts, tracks,
+# models, textures, music, sfx, library) does not ship in the source archive and is
+# taken from the official SuperTuxKart 1.4 Android package (GPL/CC content,
+# version-locked to stk-code 1.4). Set to "" to build STK without art (it will not
+# have anything to race on).
+ARG STK_ASSETS_URL=https://github.com/supertuxkart/stk-code/releases/download/1.4/SuperTuxKart-1.4.apk
+ARG STK_ASSETS_SHA256=29bded241025b4cca59e9cf6f7c2736002179c9c5e018fddaf747e1a4e08d454
 ARG BUILD_VARIANT=sd
 ARG BUILD_FLAGS=--with-showcase --with-ports
 ENV DEBIAN_FRONTEND=noninteractive
@@ -76,17 +90,24 @@ RUN PROJECT_DIR=/build/phoenix-rpi \
     EXTERNAL_FORK_BASE="${REPO_BASE}" \
     ./scripts/bootstrap-linux-host.sh
 
-# 3. Quake game data: download the id Software demos and bake them into the
-#    rootfs overlay so the showcase Quake engines have playable data. Delegated
-#    to the shared scripts/fetch-quake-data.sh (same path used by SD + netboot
-#    builds): Q1 shareware (quake106.zip), Q2 demo (baseq2/pak0.pak), Q3 demo
-#    (demoq3/pak0.pk3). Each defaults to a verified upstream URL; set a PAK0*_URL
-#    to "" to skip that game (engine still built). A non-empty URL that fails to
-#    download/extract/verify FAILS the build (never ship a half-baked image).
-RUN set -eu; \
-    ./scripts/fetch-quake-data.sh q1 "${PAK0_URL}"   "${PAK0_SHA256}"; \
-    ./scripts/fetch-quake-data.sh q2 "${PAK0Q2_URL}" "${PAK0Q2_SHA256}"; \
-    ./scripts/fetch-quake-data.sh q3 "${PAK0Q3_URL}" "${PAK0Q3_SHA256}"
+# 3. Game data for ALL FIVE shipped engines: download the id Software demos and the
+#    SuperTuxKart 1.4 art set and bake them into the rootfs overlay, so the one image
+#    this build produces has playable data for every game. Delegated to the shared
+#    scripts/stage-game-data.sh (the same single path a local SD or netboot build
+#    uses, so Docker and local builds stage the SAME bytes):
+#      q1  quake106.zip                -> usr/share/quake/id1/pak0.pak
+#      q2  q2-314-demo-x86.exe         -> usr/share/quake2/baseq2/pak0.pak
+#      q3  linuxq3ademo-...gz.sh       -> usr/share/quake3/demoq3/pak0.pk3
+#      stk pinned stk-code tarball     -> usr/share/supertuxkart/data/
+#          pinned SuperTuxKart 1.4 APK -> usr/share/supertuxkart/stk-assets/
+#    Every source is sha256-pinned; set a *_URL to "" to skip that game (the engine
+#    is still built and shipped). A non-empty URL that fails to download/extract/
+#    verify FAILS the build (never ship a half-baked image).
+RUN PAK0_URL="${PAK0_URL}" PAK0_SHA256="${PAK0_SHA256}" \
+    PAK0Q2_URL="${PAK0Q2_URL}" PAK0Q2_SHA256="${PAK0Q2_SHA256}" \
+    PAK0Q3_URL="${PAK0Q3_URL}" PAK0Q3_SHA256="${PAK0Q3_SHA256}" \
+    STK_ASSETS_URL="${STK_ASSETS_URL}" STK_ASSETS_SHA256="${STK_ASSETS_SHA256}" \
+    ./scripts/stage-game-data.sh all
 
 # 4. Full SD-card image build.
 RUN ./scripts/rebuild-rpi4b-fast.sh --variant "${BUILD_VARIANT}" ${BUILD_FLAGS}

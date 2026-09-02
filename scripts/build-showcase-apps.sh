@@ -15,12 +15,21 @@
 # ---------------------------------------------------------------------------
 # PHASES (two-phase by design — see the timing note below):
 #
-#   gpu    : host Mesa meson builds + the 5 GPU/quake archive builds ->
-#            tools/.gpu-libs/*.a. These archives MUST exist before the main
-#            `build.sh project` stage runs, because the rpi4-quake / rpi4-vkquake
-#            _user components link them and are staged into the image by that
-#            stage. (rebuild-rpi4b-fast.sh --with-showcase runs this BEFORE it
-#            invokes build.sh, and passes GPU_LIBS so the Makefiles find them.)
+#   gpu    : host Mesa meson builds + the three GPU archive builds ->
+#            tools/.gpu-libs/{libv3d,libGL,libv3dv}-phoenix.a. These archives MUST
+#            exist before the main `build.sh ports` stage runs, because the five
+#            game ports (quakespasm, yquake2, quake3, vkquake, supertuxkart) link
+#            them by absolute path and b_die without them. (rebuild-rpi4b-fast.sh
+#            --with-showcase runs this BEFORE it invokes build.sh.)
+#
+#            The GAME ENGINE archives that used to be built here
+#            (libquakespasm.a via tools/quakespasm-port/build-quakespasm-phoenix.py,
+#            libvkquake.a via tools/vkquake-port/build-vkquake-phoenix.py) are GONE:
+#            they existed only to feed the _user/rpi4-quake and _user/rpi4-vkquake
+#            loader.disk wrappers, which were deleted 2026-09-03 when the games
+#            became framework ports installing into the rootfs (decision D10, "one
+#            way to build each game"). The ports build their engines from the
+#            pinned tarball + the fork-generated patch.
 #
 #   stage  : port libs (libiconv/libffi/ncurses/glib2/fltk) + X11 lib stack +
 #            X11 apps (xterm/xedit/xcalc/wmaker/...) + userland ports
@@ -77,9 +86,12 @@ export PATH="$HOME/.local/bin:$PATH"
 
 phase="all"
 force=0
-# vkQuake/V3DV is a work-in-progress capstone (not yet functional), so it is NOT
-# part of the default showcase. Skipped unless --with-vkquake is passed.
-skip_vulkan=1
+# The V3DV Vulkan ICD is now REQUIRED by the default showcase: the `vkquake` port
+# is `if: true` in ports.yaml and links libv3dv-phoenix.a, so a ports stage without
+# it fails. vkQuake renders on hardware, so there is no reason to keep it opt-in.
+# --skip-vulkan still exists for a GL-only GPU-stack build, but such a build cannot
+# then run the ports stage with vkquake enabled.
+skip_vulkan=0
 skip_x11=0
 
 usage() {
@@ -90,9 +102,9 @@ Build the Phoenix-RTOS RPi4 showcase-app layer (GPU/GL/Vulkan + Quake, X11
 server + apps, dillo/mc/nano) reproducibly, in dependency order.
 
 Phases:
-  --phase gpu     host Mesa builds + GPU/quake archives -> tools/.gpu-libs/*.a
-                  (run BEFORE build.sh; archives are linked by the _user
-                  rpi4-quake/rpi4-vkquake components)
+  --phase gpu     host Mesa builds + GPU archives -> tools/.gpu-libs/*.a
+                  (run BEFORE build.sh; the archives are linked by the five
+                  game ports in ports.yaml)
   --phase stage   port libs + X11 libs + X11 apps + ports, staged into
                   $SHOWCASE_STAGE_DIR (run AFTER build.sh populated the rootfs)
   --phase all     gpu then stage (default; for a standalone full run)
@@ -100,9 +112,10 @@ Phases:
 Options:
   --force         rebuild archives even if present + fresh (default: skip
                   up-to-date archives for iteration speed)
-  --with-vkquake  ALSO build the WIP V3DV/vkQuake path (OFF by default; vkQuake is
-                  not yet functional and is not part of the default showcase)
-  --skip-vulkan   (default) skip the V3DV/vkquake path (GL/GLQuake still built)
+  --with-vkquake  no-op, kept for compatibility: the V3DV Vulkan stack is ON by
+                  default now (the vkquake port needs libv3dv-phoenix.a)
+  --skip-vulkan   skip the V3DV path (GL only). Incompatible with the vkquake
+                  port being enabled in ports.yaml — the ports stage will fail
   --skip-x11      skip the X11 lib stack + X11 apps (ports dillo/mc/nano still
                   attempted; note dillo needs fltk which needs the X11 libs, so
                   --skip-x11 also skips dillo)
@@ -333,25 +346,26 @@ phase_gpu() {
 	else ok "libGL-phoenix.a fresh"; fi
 	need_file "${gpu_libs}/libGL-phoenix.a" "build-gl-phoenix.py did not produce its archive"
 
-	# --- GLQuake engine archive (needs libGL + libv3d; NO glslang) ---
-	if [ ! -f "${gpu_libs}/libquakespasm.a" ] || [ "$force" = 1 ] || ! archive_fresh "${gpu_libs}/libquakespasm.a" "${repo_root}/external/quakespasm/Quake"; then
-		log "build-quakespasm-phoenix.py (GLQuake engine)"
-		need_dir "${repo_root}/external/quakespasm" "external/quakespasm — clone the quakespasm fork"
-		"$py" "${repo_root}/tools/quakespasm-port/build-quakespasm-phoenix.py" || die "build-quakespasm-phoenix.py failed"
-	else ok "libquakespasm.a fresh"; fi
-	need_file "${gpu_libs}/libquakespasm.a" "build-quakespasm-phoenix.py did not produce its archive"
+	# NOTE: no game-engine archive is built here any more. The GLQuake
+	# (libquakespasm.a) and vkQuake (libvkquake.a) archive steps were removed
+	# 2026-09-03 together with the _user/rpi4-quake / _user/rpi4-vkquake wrappers
+	# that consumed them; the engines are now built by the framework ports
+	# (sources/phoenix-rtos-ports/{quakespasm,vkquake}) from the pinned tarball plus
+	# the patch generated from our fork. This phase's job is only the GPU stack the
+	# ports link against.
 
 	if [ "$skip_vulkan" = 1 ]; then
-		log "V3DV/vkQuake is opt-in (loader.disk holds one large GL/VK binary; GLQuake is the default) — pass --with-vkquake to also build the Vulkan stack + vkQuake"
-		ok "PHASE gpu complete (GL/GLQuake)"; return 0
+		warn "--skip-vulkan: no libv3dv-phoenix.a will be produced. The vkquake port (ports.yaml if:true) links it and will b_die in the ports stage."
+		ok "PHASE gpu complete (GL only)"; return 0
 	fi
 
-	# --- Vulkan V3DV + vkquake (BEST-EFFORT) --------------------------------
-	# vkQuake is a work-in-progress capstone ("renders the first frame"); GLQuake
-	# above is the proven bar. So the whole Vulkan path is soft: a failure here is
-	# recorded and reported, never fatal, so the GL+quake spine (and the caller's
-	# --with-showcase image build) always proceeds. (separate host build with
-	# -Dvulkan-drivers=broadcom.)
+	# --- Vulkan V3DV ICD (SOFT) ---------------------------------------------
+	# Separate host Mesa build with -Dvulkan-drivers=broadcom. The steps stay SOFT
+	# (recorded and reported, never fatal) so a Vulkan hiccup does not abort the GL
+	# spine mid-phase and the caller still gets a diagnosable run. Note that the
+	# consequence has changed: libv3dv-phoenix.a is now a HARD requirement of the
+	# vkquake port, so a soft failure here surfaces as a b_die in the ports stage
+	# naming the missing archive.
 	local gpu_soft=()
 	if ! setup_mesa_host_build "${mesa_v3dv_build}" -Dvulkan-drivers=broadcom; then
 		warn "v3dv meson setup failed — skipping Vulkan path"; gpu_soft+=("v3dv meson setup")
@@ -373,45 +387,23 @@ phase_gpu() {
 				|| { warn "build-v3dv-phoenix.py failed"; gpu_soft+=("build-v3dv-phoenix.py"); }
 		else ok "libv3dv-phoenix.a fresh"; fi
 
-		if [ -f "${gpu_libs}/libv3dv-phoenix.a" ]; then
-			# vkquake needs REAL SPIR-V shaders -> glslang. Warn loudly if absent.
-			if ! command -v glslangValidator >/dev/null 2>&1 && ! command -v glslang >/dev/null 2>&1; then
-				warn "glslang not on PATH — vkquake shaders will be PLACEHOLDER (non-rendering). Install glslang-tools for real SPIR-V."
-			fi
-			if [ ! -d "${repo_root}/external/vkquake" ]; then
-				warn "external/vkquake absent — skipping vkquake archive"; gpu_soft+=("vkquake (no external/vkquake)")
-			elif [ ! -f "${gpu_libs}/libvkquake.a" ] || [ "$force" = 1 ] || ! archive_fresh "${gpu_libs}/libvkquake.a" "${repo_root}/external/vkquake" "${repo_root}/external/mesa/src"; then
-				log "build-vkquake-phoenix.py --link (vkQuake engine)"
-				if "$py" "${repo_root}/tools/vkquake-port/build-vkquake-phoenix.py" --link; then
-					[ -f "${gpu_libs}/libvkquake.a" ] || { warn "libvkquake.a not produced"; gpu_soft+=("libvkquake.a missing"); }
-				else
-					# build-vkquake-phoenix.py writes the archive BEFORE its final
-					# standalone link-drive verification, so a nonzero return can
-					# leave a linkable-looking but incomplete libvkquake.a on disk.
-					# The rpi4-vkquake _user Makefile guard treats archive-present
-					# as buildable, so a broken archive would make `build.sh project`
-					# (make -C _user all) HARD-FAIL and abort the whole image build.
-					# GATE: remove the archive on link failure so the _user guard
-					# skips rpi4-vkquake, GLQuake still ships, and the base build is
-					# unaffected. The specific undefined symbol(s) vary with the mesa
-					# version/config (past clean-host causes: spirv_print_asm from a
-					# -DHAVE_SPIRV_TOOLS host build; driQueryOptionstr from a driconf
-					# getter unresolved by the v3dv aux closure). The exact symbols are
-					# printed by build-vkquake-phoenix.py just above this warning; a new
-					# undefined symbol usually means adding a weak stub in
-					# sources/phoenix-rtos-devices/gpu/rpi4-v3d/mesa/v3dv_gap_stubs.c. See KNOWN-ISSUES.
-					warn "build-vkquake-phoenix.py link failed (see undefined symbols above) — removing incomplete libvkquake.a so rpi4-vkquake is skipped (GLQuake unaffected)"
-					rm -f "${gpu_libs}/libvkquake.a"
-					gpu_soft+=("vkquake link failed (undefined symbols listed above) — archive removed, rpi4-vkquake skipped")
-				fi
-			else ok "libvkquake.a fresh"; fi
-		else
-			warn "no libv3dv-phoenix.a — skipping vkquake"; gpu_soft+=("vkquake (no v3dv archive)")
+		# The vkquake ENGINE archive is no longer built here (see the note in the
+		# GL section above): the vkquake framework port builds and links the engine
+		# itself. All this phase owes it is libv3dv-phoenix.a, checked below.
+		if [ ! -f "${gpu_libs}/libv3dv-phoenix.a" ]; then
+			warn "no libv3dv-phoenix.a — the vkquake port will b_die in the ports stage"
+			gpu_soft+=("libv3dv-phoenix.a missing (vkquake port cannot link)")
+		fi
+
+		# glslang is what turns vkQuake's GLSL into real SPIR-V; without it the
+		# shaders in the port's vendored glue are placeholders and nothing renders.
+		if ! command -v glslangValidator >/dev/null 2>&1 && ! command -v glslang >/dev/null 2>&1; then
+			warn "glslang not on PATH — vkquake shaders will be PLACEHOLDER (non-rendering). Install glslang-tools for real SPIR-V."
 		fi
 	fi
 
 	if [ "${#gpu_soft[@]}" -gt 0 ]; then
-		warn "PHASE gpu: GL+GLQuake spine OK; Vulkan path had ${#gpu_soft[@]} soft failure(s) (non-fatal):"
+		warn "PHASE gpu: GL spine OK; Vulkan path had ${#gpu_soft[@]} soft failure(s) (non-fatal):"
 		printf '  - %s\n' "${gpu_soft[@]}" >&2
 	fi
 	ok "PHASE gpu complete — archives in ${gpu_libs}:"
@@ -457,6 +449,14 @@ phase_stage() {
 
 	local X11="${repo_root}/tools/x11-port"
 	local PORTS="${repo_root}/tools/ports"
+
+	# --- game launchers (hard-fail: without them three of the five games have no
+	# usable entry point from psh, which cannot set env vars or chain commands) ---
+	# The engines themselves come from the ports stage; this only builds the tiny
+	# static glue binaries (ram-stage-play, quake2, quake3, stk). Their game DATA is
+	# staged into the rootfs overlay by scripts/stage-game-data.sh.
+	run_step "rootfs helper binaries (launchers, ram-stage-play, pty-run)" "${repo_root}/scripts/build-rootfs-helpers.sh" \
+		--stage-dir "${stage_dir}"
 
 	# --- port libraries (dependency order; hard-fail: apps need these) ---
 	# libiconv/libffi/ncurses have no cross-deps. glib2 and fltk both consume
@@ -523,7 +523,7 @@ phase_stage() {
 	fi
 	ok "PHASE stage complete — staged into ${stage_dir}"
 	log "showcase binaries now in ${stage_dir}/bin:"
-	ls "${stage_dir}/bin" 2>/dev/null | grep -Ei 'xterm|xedit|xcalc|wmaker|dillo|^mc$|nano|Xphoenix|xbill|startx|xclock|xlogo' || true
+	ls "${stage_dir}/bin" 2>/dev/null | grep -Ei 'xterm|xedit|xcalc|wmaker|dillo|^mc$|nano|Xphoenix|xbill|startx|xclock|xlogo|^stk$|ram-stage-play' || true
 }
 
 ##############################################################################

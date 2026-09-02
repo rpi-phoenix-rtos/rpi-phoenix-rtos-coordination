@@ -27,12 +27,13 @@ Options:
       full-clean:
         run build.sh clean host core project image
   --with-showcase
-      build + bundle the showcase-app layer (GPU/GL/Vulkan stack, Quake, X11
-      server + apps, dillo/mc/nano) via scripts/build-showcase-apps.sh. Only
-      meaningful with --variant sd (the apps live on the ext2 root). Runs the
-      GPU archive builds before build.sh and stages X11/ports into the rootfs
-      after. Adds host deps (meson/ninja/mako/libdrm-dev/glslang) — install via
-      scripts/bootstrap-linux-host.sh.
+      build the showcase-app layer (GPU/GL/Vulkan stack, X11 server + apps,
+      dillo/mc/nano) via scripts/build-showcase-apps.sh. Runs the GPU archive
+      builds BEFORE build.sh — the five game ports link them — and stages the
+      X11/ports app binaries into the rootfs after. Adds host deps
+      (meson/ninja/mako/libdrm-dev/glslang) — install via
+      scripts/bootstrap-linux-host.sh. The games themselves come from the ports
+      stage, which --with-showcase forces into the stage list.
   --with-tests
       build phoenix-rtos-tests for aarch64 (incl. the libc Unity suite) via the
       build.sh `test` stage and stage the binaries into the rootfs so they can be
@@ -90,11 +91,10 @@ do_qemu_sanity=0
 with_ports=0
 with_tests=0
 ports_only=0
-# --with-showcase: build the showcase-app layer (GPU/GL/Vulkan + Quake, X11
-# server + apps, dillo/mc/nano) and bundle it into the image. Only meaningful
-# for --variant sd (the ext2 root is where the apps live). Two-phase: the GPU
-# archives are built BEFORE build.sh (the rpi4-quake/-vkquake _user components
-# link them); the X11/ports binaries are staged into _fs/<target>/root AFTER
+# --with-showcase: build the showcase-app layer (GPU/GL/Vulkan stack, X11 server
+# + apps, dillo/mc/nano) and put it in the image. Two-phase: the GPU archives are
+# built BEFORE build.sh (the five game ports in ports.yaml link them by absolute
+# path); the X11/ports app binaries are staged into _fs/<target>/root AFTER
 # build.sh, before the ext2 image is packed.
 with_showcase=0
 with_vkquake=0
@@ -141,10 +141,10 @@ while [ "$#" -gt 0 ]; do
 			with_showcase=1
 			;;
 		--with-vkquake)
-			# opt-in the Vulkan/vkQuake path (implies --with-showcase). vkQuake renders
-			# correctly (clean, lightmapped) on the V3D GPU via Vulkan; kept opt-in because
-			# loader.disk holds only one large GL/VK binary (GLQuake is the default showcase),
-			# so --with-vkquake builds+installs the vkQuake stack alongside it.
+			# Retained for compatibility only: the V3DV/Vulkan stack is part of the
+			# default showcase since 2026-09-03 (the vkquake port is `if: true` and
+			# links libv3dv-phoenix.a, so it is not optional). This now just implies
+			# --with-showcase.
 			with_showcase=1
 			with_vkquake=1
 			;;
@@ -448,21 +448,25 @@ fi
 # archives are absent (the Makefiles still skip the component gracefully).
 gpu_libs_env="GPU_LIBS='${repo_root}/tools/.gpu-libs' "
 
-# --with-showcase: tell the plo render (image_builder.py reads os.environ) to
-# bundle the rpi4-quake blob into loader.disk (launch-free `app` line gated on
-# RPI4B_WITH_SHOWCASE in user.plo.yaml). Only set it if the GLQuake archive was
-# actually produced by the gpu phase — otherwise the _user Makefile skips
-# rpi4-quake, the binary would be absent, and the plo `app rpi4-quake` line
-# would fail at boot (brick). Unset otherwise, so the base image and the
-# netboot/nfsroot variants are unchanged.
+# --with-showcase: no game binary is bundled into loader.disk any more (2026-09-03).
+# RPI4B_WITH_SHOWCASE used to gate an `app ... rpi4-quake` line in user.plo.yaml; that
+# line is gone, so the variable is no longer exported. What IS load-bearing now is a
+# precondition check: the five game ports (ports.yaml if:true) link
+# tools/.gpu-libs/lib{GL,v3d,v3dv}-phoenix.a by absolute path and b_die without them,
+# so verify the gpu phase actually produced them and say so plainly here rather than
+# letting the ports stage fail deep inside port_manager.
 showcase_env=""
-if [ "${with_showcase}" = 1 ] && [ -f "${repo_root}/tools/.gpu-libs/libquakespasm.a" ] \
-		&& [ -f "${repo_root}/tools/.gpu-libs/libGL-phoenix.a" ] \
-		&& [ -f "${repo_root}/tools/.gpu-libs/libv3d-phoenix.a" ]; then
-	showcase_env="RPI4B_WITH_SHOWCASE='1' "
-	printf 'Showcase:  bundling rpi4-quake into loader.disk (run it from psh; not auto-launched)\n'
-elif [ "${with_showcase}" = 1 ]; then
-	printf 'Showcase:  GLQuake archives absent after gpu phase; NOT bundling rpi4-quake\n' >&2
+if [ "${with_showcase}" = 1 ]; then
+	missing_gpu=()
+	for gpu_archive in libGL-phoenix.a libv3d-phoenix.a libv3dv-phoenix.a; do
+		[ -f "${repo_root}/tools/.gpu-libs/${gpu_archive}" ] || missing_gpu+=("${gpu_archive}")
+	done
+	if [ "${#missing_gpu[@]}" -eq 0 ]; then
+		printf 'Showcase:  GPU archives present; the five game ports will build into the rootfs (/usr/bin)\n'
+	else
+		printf 'Showcase:  MISSING GPU archives after the gpu phase: %s\n' "${missing_gpu[*]}" >&2
+		printf '           The game ports link these by absolute path and will fail the ports stage.\n' >&2
+	fi
 fi
 
 build_args_str="${build_args[*]}"
@@ -524,12 +528,21 @@ if [ "${variant}" = "sd" ]; then
 	# 2-part image.
 	two_part_img="${buildroot}/_boot/${target}/rpi4b-sd-2part.img"
 	exported_two_part="${repo_root}/artifacts/rpi4b/rpi4b-sd-2part.img"
-	# The showcase apps (large static X11 binaries + fonts + WindowMaker share +
-	# mc skins) do not fit the default 256 MiB ext2 root; grow it to 768 MiB when
-	# --with-showcase. The downstream partition geometry is computed from the actual
-	# image size, so this only enlarges partition 2. Override with RPI4B_ROOTFS_BLOCKS.
+	# The showcase root has to hold a lot more now, so --with-showcase grows it to
+	# 1.5 GiB (was 768 MiB, which no longer fits). Arithmetic, measured 2026-09-03:
+	#   base rootfs (psh/servers/ports/X11)   ~55 MiB
+	#   five game engines in /usr/bin        ~108 MiB  (quakespasm 18.5 + yquake2
+	#                                        19.1 + quake3e 19.2 + vkquake 12.8 +
+	#                                        supertuxkart 38.0)
+	#   game data in /usr/share              ~308 MiB  (quake/id1 18 + quake2 50 +
+	#                                        quake3 46 + supertuxkart 194)
+	# => ~470 MiB of content, and mke2fs -b 1024 -i 2048 spends roughly an eighth of
+	# the volume on the inode table, so 768 MiB left almost no slack (STK's asset
+	# tree is tens of thousands of small files, each rounded up to a 1 KiB block).
+	# The downstream partition geometry is computed from the actual image size, so
+	# this only enlarges partition 2. Override with RPI4B_ROOTFS_BLOCKS.
 	rootfs_blocks="${RPI4B_ROOTFS_BLOCKS:-262144}"
-	[ "${with_showcase}" = 1 ] && rootfs_blocks="${RPI4B_ROOTFS_BLOCKS:-786432}"
+	[ "${with_showcase}" = 1 ] && rootfs_blocks="${RPI4B_ROOTFS_BLOCKS:-1572864}"
 	env RPI4B_BUILDROOT="${buildroot}" RPI4B_ROOTFS_BLOCKS="${rootfs_blocks}" \
 		"${repo_root}/scripts/build-rpi4b-rootfs-ext2.sh"
 	RPI4B_REMOTE_SDIMG="${two_part_img}" \

@@ -27,7 +27,10 @@ trap 'rm -rf "$TMPD"' EXIT
 
 # Unpublished-by-design payloads: "<path glob>|<script that (re)creates it>"
 KNOWN_PAYLOADS=(
-	"*/rootfs-overlay/usr/share/quake/id1/pak0.pak|scripts/fetch-quake-shareware-pak.sh"
+	"*/rootfs-overlay/usr/share/quake/id1/pak0.pak|scripts/stage-game-data.sh"
+	"*/rootfs-overlay/usr/share/quake2/*|scripts/stage-game-data.sh"
+	"*/rootfs-overlay/usr/share/quake3/*|scripts/stage-game-data.sh"
+	"*/rootfs-overlay/usr/share/supertuxkart/*|scripts/stage-game-data.sh"
 	"*wifi-fw-43455.*|scripts/gen-wifi-fw-c.sh"
 	"*wifi-nvram-43455.*|scripts/gen-wifi-nvram-py.py"
 	"*clm-43455.h|tools/wifi-probe/gen-clm.py"
