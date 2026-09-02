@@ -186,3 +186,28 @@ Now returns `EOK`/`-EINVAL` and the caller skips the accounting (kernel
 reproduced under any instrumentation today, so nothing here may be reported as
 having fixed it. Next time it appears, the validation above should print the
 corrupted block instead of faulting — start from that line.
+
+### Follow-ups found during this pass (verified by inspection, not yet fixed)
+
+1. **SMP hazard, `posix/posix.c:676` vs `722`** — `posix_open` publishes
+   `p->fds[fd].file = f` and drops `p->lock` **before** `f->refs`, `f->oid` and
+   `f->type` are initialised, across three blocking IPCs. A concurrent `close()`
+   or `getOpenFile()` on that fd from another thread of the same process
+   dereferences a garbage `refs` and can double-free `f`. Not the cause of the
+   crash above (the test is single-threaded), but this kernel runs 4-core SMP
+   with pthread-churn workloads, so it is reachable in principle.
+2. **Leak, `posix_putUnusedFile` (`posix.c:181-187`)** — frees `f` but not
+   `f->path`; only on the `posix_clone` OOM path.
+3. **`unix_close` (`posix/unix.c:1278-1290`)** — one `unixsock_get` and **two**
+   `unixsock_put`. Balanced by design (one for the get, one for the tree ref),
+   but if the first put ever reached `refs == 0` the second would write into and
+   re-free a freed `unixsock_t`.
+
+### A caveat on the quarantine (kernel `1ff99ec4`)
+
+My first cut of the link check (`521320e9`) truncated the free list but left
+`used < blocks`, so the next allocation from that zone loaded `first == NULL`
+and faulted anyway — the diagnostic bought one allocation, not survival. The
+branch now also forces `used = blocks`, which genuinely retires the zone. Worth
+remembering if this check is ever ported elsewhere: truncating the list is not
+sufficient on its own.

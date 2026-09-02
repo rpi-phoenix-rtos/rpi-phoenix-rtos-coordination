@@ -245,6 +245,6 @@ int main(int argc, char **argv)
 		}
 	}
 
-	printf("HEAPSTRESS-RESULT PASS (%ld iterations, no fault)\n", n);
+	printf("HEAPSTRESS-RESULT PASS (%ld iterations, clean)\n", n);
 	return 0;
 }

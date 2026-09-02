@@ -1,0 +1,4 @@
+# Build output: an extension-less ARM ELF. Extension-less binaries are exactly
+# what slipped past tools/.gpu-libs/.gitignore (it matched only *.a) and put
+# ~55 MB of ELFs into this repo's history -- see decision D6. Ignore by name.
+heapstress
