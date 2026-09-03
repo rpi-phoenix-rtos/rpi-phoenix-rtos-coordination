@@ -491,28 +491,28 @@ phase_stage() {
 	run_step "rootfs helper binaries (launchers, ram-stage-play, pty-run)" "${repo_root}/scripts/build-rootfs-helpers.sh" \
 		--stage-dir "${stage_dir}"
 
-	# --- port libraries (dependency order; hard-fail: apps need these) ---
-	# libiconv/libffi/ncurses have no cross-deps. glib2 and fltk both consume
-	# zlib/png/jpeg from the X11 prefix (/tmp/x11-phoenix), so the X11 lib stack
-	# MUST be built before them. (glib2's zlib copy is `|| true`, so a missing
-	# X11 prefix fails glib2 silently downstream — order matters.)
-	run_step "port lib: libiconv" "${PORTS}/build-libiconv.sh"
-	run_step "port lib: libffi"   "${PORTS}/build-libffi.sh"
-	run_step "port lib: ncurses"  "${PORTS}/build-ncurses.sh"
-
+	# --- port libraries ---
+	# GONE (2026-09-03): libiconv, libffi, ncurses and glib2 no longer have ad-hoc
+	# steps. Every consumer is now a framework port that pulls them transitively
+	# via depends=, so these four existed only to duplicate what the ports
+	# framework already builds — with different versions in two places:
+	#
+	#   libiconv  tools/ = a 1,974-byte hand-written ASCII/UTF-8 identity STUB,
+	#             installed into the SHARED sysroot; framework = real GNU 1.18
+	#   libffi    tools/ = 3.3                    framework = 3.4.6
+	#   zlib      (via glib2) tools/ = 1.3.1      framework = 1.2.11
+	#
+	# gl-x11-window was the last thing still linking the stub, and it linked it by
+	# -L search order alone (coord 41d0fef18). Consumers verified absent before
+	# deleting: nano/mc/dillo/python are framework ports; no X11 script references
+	# ncurses/glib2/libffi; build-pango.sh only mentions the glib prefix in a
+	# comment and is not invoked at all.
 	if [ "$skip_x11" = 0 ]; then
-		# X11 lib stack first (provides zlib/png/jpeg + the X client libs).
+		# X11 lib stack stays: it provides zlib/png/jpeg + the X client libs to the
+		# small ad-hoc X apps (xedit/xcalc/...) out of /tmp/x11-phoenix.
 		run_step "X11 lib stack" "${X11}/build-x11-phoenix.sh"
-		run_step "port lib: glib2" "${PORTS}/build-glib2.sh"
-		# fltk removed (#7 2026-08-22): dillo — its only consumer — is now a framework
-		# port (ports.yaml if:true) and pulls fltk transitively via depends=. The ad-hoc
-		# X11 lib stack + glib2 stay: the small ad-hoc X apps (xedit/xcalc/...) and mc
-		# still need the /tmp/x11-phoenix prefix + ad-hoc glib2.
 	else
-		warn "--skip-x11: skipping X11 libs + fltk (dillo/X apps will be skipped)"
-		# glib2 needs zlib from the X11 prefix; without X11 it may fail — attempt
-		# it soft so nano/mc that only need ncurses still stage.
-		run_step_soft "port lib: glib2 (no X11 prefix — may fail)" "${PORTS}/build-glib2.sh"
+		warn "--skip-x11: skipping the X11 lib stack (the ad-hoc X apps will be skipped)"
 	fi
 
 	# --- userland ports (soft) ---
