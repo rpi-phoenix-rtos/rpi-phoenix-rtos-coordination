@@ -516,7 +516,9 @@ phase_stage() {
 	fi
 
 	# --- userland ports (soft) ---
-	run_step_soft "port app: nano" "${PORTS}/build-nano.sh"
+	# nano is a FRAMEWORK PORT now (ports.yaml if:true) — no step here. Adding one
+	# back would stage a second, different binary, and this phase runs AFTER the
+	# ports stage into the same rootfs, so the copy written here would silently win.
 	run_step_soft "port app: mc"   "${PORTS}/build-mc.sh"
 	# dillo removed (#7 2026-08-22): now a framework port (ports.yaml if:true) — the
 	# ports stage builds + stages /bin/dillo into the rootfs.
