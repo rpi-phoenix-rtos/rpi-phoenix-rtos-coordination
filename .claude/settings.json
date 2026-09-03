@@ -26,6 +26,7 @@
       "Bash(python3 scripts/summarize-rpi4b-uart-log.py:*)",
       "Bash(python3 scripts/psh-interact.py:*)",
       "Bash(./scripts/verify-rpi4b-sdimg.sh:*)",
+      "Bash(./scripts/verify-sd-image-contents.sh:*)",
       "Bash(./scripts/rebuild-rpi4b-fast.sh:*)",
       "Bash(./scripts/test-cycle-netboot.sh:*)",
       "Bash(./scripts/test-cycle-bench.sh:*)",
