@@ -241,23 +241,6 @@ stage_q1_video_cfg() {
 // Shipped by scripts/stage-game-data.sh so the game is full-screen out of the
 // box. QuakeSpasm's default is 800x600; the Pi 4 scanout is 1920x1080, and a
 // smaller mode leaves stale console pixels around the frame.
-//
-// r_lerpmodels 2 is a WORKAROUND for #67 on V3D, and the only form of it that is
-// actually verified on hardware. Models on r_nolerp_list -- the start-map torch
-// flames among them -- are otherwise pinned to a single pose, which makes
-// pose1 == pose2, forces blend to 0 in the alias draw, and vkQuake then renders
-// NOTHING for them. Measured at a fixed viewpoint with
-// scripts/check-torch-rois.py: default 0 and 0 lit px in both archway ROIs
-// across 7 frames (3 runs); with r_lerpmodels 2, 274-599 lit px, 7/7 frames
-// (2 runs). Harmless for quakespasm, which renders the flames either way.
-//
-// Two attempts to reproduce this IN THE ENGINE both failed on hardware and were
-// reverted rather than left looking like fixes: binding Pose2 to a different
-// pose at blend == 0, and dropping the MOD_NOLERP exclusion in r_alias.c. The
-// second should have been equivalent to this cvar and was not, so the mechanism
-// is NOT yet understood -- see docs/misc/2026-09-03-vkquake-torch-rootcause-candidates.md.
-// Cost: models upstream marks NOLERP animate more smoothly than vanilla.
-r_lerpmodels "2"
 vid_width "1920"
 vid_height "1080"
 vid_fullscreen "1"
