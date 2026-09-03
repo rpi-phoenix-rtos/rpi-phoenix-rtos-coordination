@@ -125,8 +125,32 @@ Then flash `./out/rpi4b-sd-2part.img` exactly as in
 `--with-showcase` ships every one of them on the same card. Nothing is swapped by
 hand, and no game lives in the boot blob: `loader.disk` is **4.5 MB and contains
 zero game bytes** (it was ~22 MB back when GLQuake was bundled into it). Games are
-launched from the rootfs; binaries of 18–38 MB exec fine from both the ext2 root
-and the NFS root — `supertuxkart` is 38 MB.
+launched from the rootfs; large binaries exec fine from both the ext2 root and
+the NFS root.
+
+That last point used to be documented the other way round ("the GLQuake binary is
+too large to run from the ext2/NFS loader"), so here it is as a check anyone can
+re-run against the image rather than a claim to take on trust:
+
+```
+IMG=artifacts/rpi4b/rpi4b-sd-2part.img
+OFF=$((135168 * 512))          # start of partition 2, from `fdisk -l $IMG`
+debugfs -R "stat /bin/python3" "$IMG?offset=$OFF"
+```
+
+Sizes actually present in the ext2 root of the verified image, every one of them
+exec-proven on the hardware:
+
+| Binary | Size |
+|---|---|
+| `bin/python3` | 57.1 MB |
+| `usr/bin/supertuxkart` | 38.5 MB |
+| `usr/bin/quake3e` | 19.2 MB |
+| `usr/bin/yquake2` | 19.1 MB |
+| `usr/bin/quakespasm` | 18.6 MB |
+| `usr/bin/vkquake` | 12.8 MB |
+
+The 57 MB `python3` is the ceiling we have evidence for, not a limit.
 
 | Engine | Binary on the card | How to run it |
 |---|---|---|
