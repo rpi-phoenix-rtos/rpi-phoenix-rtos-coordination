@@ -84,4 +84,11 @@ echo "== 4. SWAP: old -> $BAK (backup, kept), new -> $EXP =="
 sudo rm -rf "$BAK"
 sudo mv "$EXP" "$BAK"
 sudo mv "$NEW" "$EXP"
+# Re-export after the swap. The kernel NFS server pins the exported directory by
+# its inode, so renaming the old tree aside and moving a new one into place
+# leaves nfsd serving the OLD (now renamed) directory: the Pi then retries the
+# mount ~40 times and falls back to its RAM root with every binary missing.
+# Costs nothing when the export is unchanged.
+sudo exportfs -ra || echo "WARNING: exportfs -ra failed; the Pi will mount the OLD tree"
+
 echo "DONE: pristine export at $EXP ; old cruft backed up at $BAK (delete after owner confirms)"
