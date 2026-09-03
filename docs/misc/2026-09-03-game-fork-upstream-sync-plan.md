@@ -245,3 +245,37 @@ review the glue-replaced TUs for upstream fixes that will never reach us → pus
 **Cheap win available before any of this:** cherry-pick yquake2 `9b891e59`
 (*GLES3: Use glInvalidateFramebuffer()*, 4 files, +56/−21, `YQ2_GL3_GLES`-guarded) onto the yquake2
 fork on its own. It is the highest value-to-risk commit found in this analysis.
+
+
+---
+
+## Correction 2026-09-03: `9b891e59` is NOT independently cherry-pickable
+
+Tested in a scratch clone (`git cherry-pick 9b891e59` onto our fork HEAD): it
+**conflicts in 2 of its 4 files**, and not because of our delta. The commit sits
+on top of upstream's later draw-call batching/stats rework — the `GL3_EndFrame`
+it brings references `gl3_show_draw_stats`, `GL3_DrawCurrent2Dbatch`,
+`gl3_numBufferVtxData`, none of which exist in our tree, and upstream has moved
+that function from `gl3_sdl.c` to `gl3_draw.c`. Taking it means taking that
+chain, which belongs in the full yquake2 sync rather than ahead of it.
+
+Its call would also be **wrong for us as written**: it passes
+`GL_COLOR_ATTACHMENT0 / GL_DEPTH_ATTACHMENT / GL_STENCIL_ATTACHMENT`, but this
+is the *default* framebuffer, where GLES wants `GL_DEPTH`/`GL_STENCIL` (the
+attachment enums are for user FBOs). And it discards colour immediately before
+the buffer swap — the frame being presented.
+
+**So the idea was implemented directly instead**: fork commit `9d423b6b`, a
+31-line change in the file our tree actually has. Both `GL_DEPTH` and
+`GL_STENCIL` are named deliberately — with a packed depth/stencil buffer Mesa
+drops the discard entirely unless both appear (`fbobject.c`,
+`discard_attachments()`: `mask &= ~zsmask`), so the obvious depth-only version
+would compile, run, and do nothing. A `gl3_discardfb` cvar (default on) makes it
+A/B-able in one boot instead of two builds. **Not yet run on hardware.**
+
+Two process notes this produced:
+- `external/yquake2`'s detached HEAD is fixed — it is now on a named
+  `phoenix-rpi4-port` branch at the same commit, which was step 0 of that sync.
+- The lesson generalizes: "small diff, guarded by the right ifdef" does not imply
+  "cherry-pickable". Check the prerequisites, and read what the call actually
+  does against our own Mesa before adopting it.
