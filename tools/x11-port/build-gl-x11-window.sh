@@ -39,6 +39,13 @@ V3DLIB="${GPU_LIBS}/libv3d-phoenix.a"
 
 XPREFIX="/tmp/x11-phoenix"
 SYSROOT="${ROOT}/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot"
+# Where FRAMEWORK ports install their libraries. It must be searched BEFORE
+# ${SYSROOT}/lib: this link pulls -liconv, and until 2026-09-03 it silently got
+# the 1,974-byte identity stub that tools/ports/build-libiconv.sh dropped into
+# the sysroot, instead of the real 1,258,986-byte GNU libiconv 1.18 the framework
+# port builds. Both files were present; the search order decided, and it picked
+# the stub.
+PORTLIB="${ROOT}/.buildroot/_build/aarch64a72-generic-rpi4b/lib"
 
 SRC="${ROOT}/tools/x11-port/gl_x11_window.c"
 OBJ="/tmp/gl_x11_window.o"
@@ -100,7 +107,7 @@ fi
 
 echo "=== linking $ELF ==="
 "$TC" "$OBJ" \
-	-L"${XPREFIX}/lib" -L"${SYSROOT}/lib" \
+	-L"${PORTLIB}" -L"${XPREFIX}/lib" -L"${SYSROOT}/lib" \
 	-Wl,--start-group \
 		"$GLLIB" "$V3D_ARCHIVE" $CLIENT_A \
 		-lX11 -lxcb -lXau -lXdmcp -liconv \
