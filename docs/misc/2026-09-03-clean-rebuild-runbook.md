@@ -143,6 +143,23 @@ Pi kept running months-old binaries that nothing on the host could rebuild.
 
 So: **one big invocation, then only `--skip-prepare` follow-ups.**
 
+> **Footgun that cost two restarts on 2026-09-03.** `--skip-prepare` also means
+> your SOURCE EDITS DO NOT REACH THE BUILD: `.buildroot/phoenix-rtos-*` are
+> copies, refreshed only by `prepare-buildroot.sh`. Fix a recipe or a build
+> script mid-run and the resumed build will happily rebuild the *old* one, and
+> fail identically — which reads like "my fix didn't work" when in fact it was
+> never used. After editing anything under `sources/` during a resume, copy that
+> file into `.buildroot` explicitly, e.g.
+>
+> ```
+> diff -rq sources/phoenix-rtos-ports .buildroot/phoenix-rtos-ports | grep '^Files '
+> cp sources/phoenix-rtos-ports/<port>/port.def.sh .buildroot/phoenix-rtos-ports/<port>/port.def.sh
+> ```
+>
+> Do NOT re-run `prepare-buildroot.sh` to achieve this: its `rsync --delete`
+> wipes `_fs/<target>/root`, i.e. the rootfs the interrupted build had already
+> staged.
+
 ### 2a. Single full clean build (produces core + ports + GPU + rootfs + SD image)
 
 ```
