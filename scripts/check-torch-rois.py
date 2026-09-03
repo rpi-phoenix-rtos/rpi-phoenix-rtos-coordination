@@ -67,8 +67,12 @@ def flame_pixels(img, box, basis_w):
     if x1 <= x0 or y1 <= y0:
         return 0
     crop = img.crop((x0, y0, x1, y1)).convert("RGB")
+    # tobytes() rather than getdata(): getdata() is deprecated in Pillow 12 and
+    # warns on every ROI of every frame, which is a lot of noise in a bench run.
+    raw = crop.tobytes()
     n = 0
-    for r, g, b in crop.getdata():
+    for i in range(0, len(raw), 3):
+        r, g, b = raw[i], raw[i + 1], raw[i + 2]
         if r > 100 and r > g + 20 and r > b + 20:
             n += 1
     return n
