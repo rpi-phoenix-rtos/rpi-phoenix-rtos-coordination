@@ -624,3 +624,29 @@ software side ever needs it.
 
 One cycle, ~7 minutes wall clock, zero source changes, zero risk to the SD card (the
 test is netboot-only). The UART line answers the owner's question outright.
+
+---
+
+## Status 2026-09-03: candidate fetched, A/B staged, cycle pending
+
+Step 1 of §5 is done (host-only, nothing in the build tree touched):
+
+| | commit | VideoCore build id | built |
+|---|---|---|---|
+| baseline (pinned) | `ae9a8ea9…` | `ae9a8ea9f3ca745de6f357bd7fc8307721ad38b7` | **May 8 2026** |
+| candidate | `eef9c230…` (tag `1.20260824`) | `f5e89631afbb7b4db1bb28971eb79d74fcc84c7d` | **Aug 10 2026** |
+
+Fetched to `/tmp/fw-new` (sparse `boot/` only). `start4.elf` is 2,298,048 bytes
+vs the baseline's 2,304,512 — a different build, as intended, three months newer.
+
+Steps 3-4 (`RPI4B_FIRMWARE_DIR=/tmp/fw-new/boot scripts/assemble-rpi4b-bootfs.sh`,
+then re-read the staged `VC_BUILD_ID_VERSION`) rewrite
+`.buildroot/_boot/…/rpi4b-bootfs/`, which the full-clean build is writing right
+now, so they wait for it. The Pi cycle also waits: the card is out of the Pi, so
+netboot is the available path and it must not TFTP a half-written `loader.disk`.
+
+Reminder of the two conclusions the owner asked about: **no EEPROM reflash is
+needed** for a `start4.elf` bump, and the pin's recorded justification
+(`virt_h=0` on newer firmware) does not survive contact with our own logs — that
+reading came from the VideoCore mailbox race we fixed in July, on the *pinned*
+firmware.
