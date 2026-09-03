@@ -162,6 +162,14 @@ first written — a genuine out-of-sample test of the prediction in E1, and it h
 hypothesis that the verdict is independent of the marker, the probability that the three PRESENT
 boots are exactly the three marker-free boots is `1/C(26,3) = 1/2600 ≈ 3.8 × 10⁻⁴`.
 
+**Read that p-value with the discount it deserves.** The marker `0acd5|0acd0` was **selected after
+seeing the first 25 runs**, with two free page choices out of ~30 observed pages, so the quoted
+figure — which treats the marker as pre-specified — materially overstates the evidence. The honest
+statement is: *the marker is a post-hoc fit with one clean pre-registered out-of-sample confirmation
+(`T8`, 1/1).* E1 grows that out-of-sample record for free with every bench trial, and only that
+record should be quoted as evidence. This project's five false closures all had this shape; do not
+repeat it by citing 3.8 × 10⁻⁴ as if it were a pre-registered test.
+
 Note also `vkq-lerp2b-T4` vs `vkq-lerp2b-T6`: **same binary, same command, same wedge count (3), two
 of three wedge addresses identical** — they differ only in whether the third wedge hit `acd0`
 (T4, ABSENT) or `ac35` (T6, PRESENT).
@@ -197,6 +205,33 @@ and stores it to the destination. One such job per model upload, run once, at ma
 That is exactly what the wedge one-liners show: RCLs of **0x65 / 0x7a bytes** and BCLs of **0x0e
 bytes** — single-tile meta-copy control lists, not scene renders (a `start.bsp` scene RCL is orders
 of magnitude larger). **The jobs that wedge in a vkQuake run are the upload jobs.**
+
+### 4.2c Measured: a dropped job is only permanent for the ONE-SHOT uploads
+
+The obvious objection to R1 is visible in the PRESENT rows of §4.1: `vkq-lerp3` dropped **4** jobs
+and `vkq-lerp2b-T6` dropped **3**, and both render the torches — so what did *those* drops lose?
+And `acc7` appears in ~24 of 26 runs, PRESENT and ABSENT alike.
+
+Measured answer: **nothing visible.** A 12×8 block diff of the two PRESENT final frames at the same
+viewpoint — `artifacts/hdmi/20260903-100725-vkq-lerp-rep-final.png` (**0** wedges) vs
+`artifacts/hdmi/20260903-115842-vkq-lerp2b-T6-final.png` (**3** wedges), both 3840×2160 — gives a
+mean-absolute-difference of **0.0** in 87 of 96 blocks. The only non-zero blocks are the whole top
+row (the console-notify text band, mad 10–12) and one block on the lavaball/particle trail (mad 3.1,
+moving content). The torch blocks themselves read mad 0.4. **No model, texture or surface is missing
+from the 3-wedge frame that is present in the 0-wedge frame.**
+
+That is not a problem for R1 — it is the constraint that makes R1 precise. Most meta-copy jobs in
+vkQuake are **re-issued every frame**: the shim flushes staging inside `GL_EndRendering`
+(`sources/phoenix-rtos-ports/vkquake/glue/pl_phoenix_main.c:167`), the dynamic UBO/vertex ring is
+re-uploaded per frame, and the GPU-compute lightmap path re-runs per frame. Dropping one of those
+costs a single frame and is invisible by the next. **Only a one-shot upload — a model's vertex/index
+data, uploaded exactly once at map load — latches when it is dropped.** So the correct statement of
+R1 is: *the drop is silent always, but permanent only for the one-shot transfers*, and `0acd5`/
+`0acd0` are the marker for a drop landing on one of those. The near-universal `acc7`/`acce` drops are
+verdict-neutral precisely because their jobs repeat.
+
+**This is inference from job repetition, not from instrumentation.** E3's job log is what turns it
+into a measurement.
 
 ### 4.3 The caveat, stated plainly
 
@@ -625,7 +660,9 @@ State these up front so the next session cannot close #67 on a coincidence:
    boots. (If zero-wedge boots turn out to be reliably PRESENT, R1 is close to proven; if a
    zero-wedge boot loses the torches, the answer moves to R3 — a silent coherency race on the same
    upload submit, which produces wrong bytes with *no* wedge line.)
-4. **E2b (staging alignment 4) making the torches 8/8 reliable** would confirm R2 as the
+4. **A PRESENT boot found to be missing some *other* one-shot-uploaded asset** would confirm R1's
+   blast radius directly (§4.2c found none in the one pair checked, n = 1 pair).
+5. **E2b (staging alignment 4) making the torches 8/8 reliable** would confirm R2 as the
    susceptibility and, by itself, be a shippable workaround — but it would **not** absolve R1's
    silent drop, which stays a latent hazard for every other one-shot transfer in the system. Fix
    both.
