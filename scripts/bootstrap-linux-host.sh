@@ -129,6 +129,10 @@ UPSTREAM_ONLY_REPOS=(
 #                         raspberrypi/firmware (stage_pi_firmware), never compiled.
 #   - external/rpi-eeprom Tier-2 lab/netboot only; prepare-pi-eeprom-netboot.sh
 #                         self-clones it on demand.
+#   - external/ioquake3  needed by ONE asset only (the Quake III QVM pak), so
+#                         tools/quake3-vm/build-quake3-vms.sh self-clones it at
+#                         its own pinned SHA on demand rather than making every
+#                         bootstrap pay for it. See assets/quake3-qvm/README.md.
 #   - supertuxkart        DELIBERATELY not an external dep, and deliberately NOT
 #                         forked. STK is a framework port living in the
 #                         phoenix-rtos-ports sibling (ports/supertuxkart/): its
