@@ -32,7 +32,10 @@ trap 'rm -rf "${TMP}"' EXIT
 # The served export is whichever path carries fsid=0, not a hardcoded name —
 # getting this wrong is how a "pristine" tree ended up somewhere nothing mounts
 # (see make-pristine-nfs-export.sh).
-EXP="${RPI4B_NFS_EXPORT:-$(awk '$0 ~ /fsid=0/ && $1 ~ /^\// { print $1; exit }' /etc/exports 2>/dev/null || true)}"
+# Scan /etc/exports.d/*.exports too: the canonical entry lives there (declaring
+# it in both files makes `exportfs -ra` fail), and a detector that reads only
+# /etc/exports finds nothing and falls back to the wrong tree.
+EXP="${RPI4B_NFS_EXPORT:-$(awk '$0 ~ /fsid=0/ && $1 ~ /^\// { print $1; exit }' /etc/exports /etc/exports.d/*.exports 2>/dev/null || true)}"
 
 full=0
 [ "${1:-}" = "--full" ] && full=1
