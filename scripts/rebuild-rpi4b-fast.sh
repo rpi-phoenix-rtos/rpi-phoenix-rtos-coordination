@@ -251,8 +251,17 @@ scope_reason=
 
 case "${scope}" in
 	project)
-		build_args=(project image)
-		scope_reason="forced project scope"
+		# `fs` belongs here for the same reason it does under `core`, plus a worse
+		# one: prepare-buildroot.sh rsyncs _fs/<target>/root with --delete on EVERY
+		# run, so by the time this stage list is chosen the staged rootfs is already
+		# gone. Without `fs` nothing re-applies root-skel or the rootfs-overlay, and
+		# the build completes with a rootfs missing /etc and all ~300 MB of game
+		# data -- silently, because no stage failed. Observed 2026-09-03: after a
+		# `--scope project` run, _fs/.../root/usr/share had no game data at all
+		# while the overlay held pak0.pk3 + pak1.pk3 + q3key correctly. `fs` is a
+		# cheap idempotent copy, and build.sh orders stages itself.
+		build_args=(fs project image)
+		scope_reason="forced project scope (+fs: prepare deletes the staged rootfs)"
 		;;
 	core)
 		# `fs` (root-skel -> _fs/<target>/root) must precede ports/project on a
