@@ -248,6 +248,38 @@ CFG
 	log "q1: staged config.cfg (1920x1080 fullscreen)"
 }
 
+# Quake III needs OUR ioquake3-built QVMs and a format-valid key, or it dies
+# before the menu.
+#
+# The free demo pak0.pk3 carries the 1999 QVMs (UI API version 3); quake3e
+# expects version 6 and refuses them:
+#   ERROR: User Interface is version 3, expected 6
+# The three ioq3 QVMs in assets/quake3-qvm/ are version 6 and make the game run
+# on the DEMO data — no retail content involved. The UI's Com_CDKeyValidate
+# checks only the key FORMAT (16 chars from a fixed alphabet, no checksum), so a
+# generated key of that shape satisfies it; this is the free demo, not a retail
+# key. See coord 98162de9d (the C5 capstone) for the original configuration.
+#
+# The ports migration dropped both, which is what made Quake III look like it
+# required retail paks.
+stage_q3_vms() {
+	local dst="${overlay_root}/usr/share/quake3/demoq3"
+	local src="${repo_root}/assets/quake3-qvm/pak1-ioq3-vms.pk3"
+
+	if [ ! -f "$src" ]; then
+		log "[q3] WARNING: $src missing — Quake III will fail with 'User Interface is version 3, expected 6'"
+		return 0
+	fi
+	cp "$src" "$dst/pak1.pk3"
+	log "[q3] staged pak1.pk3 (ioq3 VMs, UI API 6)"
+
+	# 16 chars from the format-valid alphabet, fixed so the image is reproducible.
+	if [ ! -f "$dst/q3key" ]; then
+		printf '%s' 'ABCD23GH7JLPRSTW' >"$dst/q3key"
+		log "[q3] staged q3key (format-valid demo key, no checksum)"
+	fi
+}
+
 log "overlay root: $overlay_root"
 mkdir -p "$overlay_root"
 for g in "${games[@]}"; do
@@ -255,7 +287,8 @@ for g in "${games[@]}"; do
 		q1)  stage_quake q1 usr/share/quake/id1     "$PAK0_URL"   "$PAK0_SHA256"
 		     stage_q1_video_cfg ;;
 		q2)  stage_quake q2 usr/share/quake2/baseq2 "$PAK0Q2_URL" "$PAK0Q2_SHA256" ;;
-		q3)  stage_quake q3 usr/share/quake3/demoq3 "$PAK0Q3_URL" "$PAK0Q3_SHA256" ;;
+		q3)  stage_quake q3 usr/share/quake3/demoq3 "$PAK0Q3_URL" "$PAK0Q3_SHA256"
+		     stage_q3_vms ;;
 		stk) stage_stk_data; stage_stk_assets ;;
 	esac
 done
