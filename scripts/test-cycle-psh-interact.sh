@@ -124,6 +124,30 @@ trap cleanup EXIT INT TERM
 
 if [ "$skip_server_up" = 0 ]; then
 	"$repo/scripts/netboot-server-up.sh"
+
+	# Refuse a netboot cycle when the TFTP boot blob is the SD variant.
+	#
+	# Building `--variant sd` (which the flashable image needs) overwrites
+	# loader.disk in the very tree TFTP serves. Boot that with no card in the Pi
+	# and sdstorage_srv spends 50 tries looking for /dev/mmcblk0p2, never mounts a
+	# root, and no user-space program runs -- so the cycle "succeeds", captures a
+	# screenful of nothing, and the failure looks like whatever you were testing.
+	# It has cost this project two rounds of wasted Pi cycles and one bogus
+	# regression hunt, so make it impossible rather than remembering it.
+	#
+	# Fix when it fires: ./scripts/rebuild-rpi4b-fast.sh --scope project \
+	#   --variant nfsroot --with-showcase --with-ports --with-tests
+	_ld="$repo/.buildroot/_boot/${RPI4B_TARGET:-aarch64a72-generic-rpi4b}/rpi4b-bootfs/loader.disk"
+	if [ -f "$_ld" ] && strings -a "$_ld" 2>/dev/null | grep -q 'mmcblk0p2'; then
+		printf '\n[test-cycle-psh-interact] REFUSING: the TFTP loader.disk is the SD-BOOT\n' >&2
+		printf '  variant (it mounts /dev/mmcblk0p2). A netboot cycle with no card in the\n' >&2
+		printf '  Pi will not reach user space, and every result would be a false negative.\n' >&2
+		printf '  Rebuild the nfsroot boot blob first:\n' >&2
+		printf '    ./scripts/rebuild-rpi4b-fast.sh --scope project --variant nfsroot \\\n' >&2
+		printf '      --with-showcase --with-ports --with-tests\n' >&2
+		printf '  (Or pass --skip-server-up if you really are SD-booting with a card in.)\n' >&2
+		exit 3
+	fi
 fi
 
 printf '[test-cycle-psh-interact] power cycle\n'
