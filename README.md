@@ -7,12 +7,13 @@ Model B / BCM2711** (Cortex-A72, AArch64).
 The port was taken from "does not boot" to a system that boots to an
 interactive shell, drives the real hardware, serves its root filesystem from
 an SD card or over NFS, and runs a graphical userland: an X11 desktop with
-Window Maker, a web browser, and **GLQuake rendering on the V3D GPU via
-OpenGL** (a Vulkan/V3DV path drives the GPU too — vkQuake renders its full
-textured 3D map on the GPU, though its input is not yet wired — see the
-capabilities table). A **modern 3D game — SuperTuxKart 1.4 — also races on the
-V3D GPU via OpenGL ES**, rendering close to frame-for-frame with the same game
-on a desktop AMD GPU.
+Window Maker, a web browser, and **four id-Software engines rendering on the V3D
+GPU** — GLQuake, Quake II and Quake III through OpenGL/GLES, and vkQuake through
+Vulkan/V3DV. All four ship on the SD image, along with a **modern 3D game,
+SuperTuxKart 1.4**, which renders on the same GPU via OpenGL ES (an in-game race
+was verified on hardware in August 2026, close to frame-for-frame with the same
+game on a desktop AMD GPU; what is confirmed on the current clean image is in
+[Which games end up on the card?](#which-games-end-up-on-the-card)).
 
 > This repository is the **coordination repo** — docs, build scripts, and
 > integration manifests. The Phoenix-RTOS source lives in sibling repositories
@@ -31,8 +32,8 @@ on a desktop AMD GPU.
 
 > 🚀 **First time here?** [**TUTORIAL.md**](TUTORIAL.md) is a single,
 > self-contained walkthrough: build the image, flash an SD card, boot the Pi,
-> and launch everything in the distribution — GLQuake, the X11 desktop with
-> Window Maker, `mc`, `dillo`, the editors, MicroPython, Lua, and more.
+> and launch everything in the distribution — the five game engines, the X11
+> desktop with Window Maker, `dillo`, Python, Lua, and more.
 > *(Tested on a Raspberry Pi 4 Model B with 4 GB RAM.)*
 >
 > 🌐 **Want a network dev setup?** [**TUTORIAL-NETBOOT.md**](TUTORIAL-NETBOOT.md)
@@ -60,8 +61,9 @@ The whole build is packaged as a **single, self-contained Dockerfile**. It works
 any machine with a Docker CLI (Linux/macOS/Windows) regardless of host OS or
 installed packages — the entire toolchain runs inside a container we fully control.
 Nothing is copied from the host: every source tree, Ubuntu package, font, and the
-freely-downloadable id Software game data (Quake I shareware + the Quake II and
-Quake III demos) is fetched over the network at build time and baked into the image
+freely-downloadable game data (Quake I shareware, the Quake II and Quake III
+demos, and the SuperTuxKart 1.4 assets) is fetched over the network at build time
+(each from a pinned URL) and baked into the image
 *you* build — this repo distributes only the build scripts, never a built image.
 
 ### Before you start
@@ -96,8 +98,9 @@ docker run --rm -v "$PWD/out":/out phoenix-rpi
 
 **2. The showcase image (recommended)** — everything above **plus** the X11 desktop
 (`wmaker`, `xterm`, `xclock`, `xcalc`), the ported command-line apps (`bash`,
-`python3`, `mc`, `nano`, coreutils, …) and **GLQuake** running on the V3D GPU.
-This is the default if you pass no `BUILD_FLAGS` at all:
+`python3`, coreutils, …) and **all five game engines** (GLQuake, vkQuake,
+Quake II, Quake III, SuperTuxKart) running on the V3D GPU. This is the default if
+you pass no `BUILD_FLAGS` at all:
 
 ```bash
 mkdir -p out
@@ -107,19 +110,9 @@ docker build -t phoenix-rpi \
 docker run --rm -v "$PWD/out":/out phoenix-rpi
 ```
 
-**3. Showcase + the Vulkan stack** — as above and also builds V3DV (Vulkan) and the
-**vkQuake** binary. Read the note under the table before using this: the boot image
-holds only *one* large GL/VK game binary, so this builds vkQuake but still ships
-GLQuake unless you swap the launch line by hand. vkQuake also renders without input
-wired yet (see [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md)).
-
-```bash
-mkdir -p out
-docker build -t phoenix-rpi \
-  --build-arg BUILD_FLAGS="--with-showcase --with-ports --with-vkquake" \
-  https://raw.githubusercontent.com/rpi-phoenix-rtos/rpi-phoenix-rtos-coordination/main/Dockerfile
-docker run --rm -v "$PWD/out":/out phoenix-rpi
-```
+Recipe 2 already includes the V3DV Vulkan stack and vkQuake — the Vulkan path is
+built by default, and `--with-vkquake` is now a no-op kept only for compatibility.
+There is no third recipe and nothing to swap by hand.
 
 Then flash `./out/rpi4b-sd-2part.img` exactly as in
 [docs/BUILD.md](docs/BUILD.md) (macOS/Linux `dd`, or Raspberry Pi Imager's
@@ -127,42 +120,64 @@ Then flash `./out/rpi4b-sd-2part.img` exactly as in
 
 ### Which games end up on the card?
 
-Be aware of the current split — all five engines are proven on the hardware, but
-only two are wired into the **SD image** today:
+**All five engines.** Each is built by the ports framework (all five are registered
+`if: true` in the project's `ports.yaml`) and installed **into the rootfs**, so
+`--with-showcase` ships every one of them on the same card. Nothing is swapped by
+hand, and no game lives in the boot blob: `loader.disk` is **4.5 MB and contains
+zero game bytes** (it was ~22 MB back when GLQuake was bundled into it). Games are
+launched from the rootfs; binaries of 18–38 MB exec fine from both the ext2 root
+and the NFS root — `supertuxkart` is 38 MB.
 
-| Engine | On the card? | How to run it |
+| Engine | Binary on the card | How to run it |
 |---|---|---|
-| **GLQuake** (Quake I, OpenGL) | ✅ with `--with-showcase` | at the `(psh)%` prompt: `rpi4-quake ddr ddr` |
-| **vkQuake** (Quake I, Vulkan) | ⚠️ built, not bundled | needs a one-line swap (below) |
-| **Quake II** (yQuake2) | ❌ not yet | build-proven port; run over netboot ([docs/BUILD.md](docs/BUILD.md)) |
-| **Quake III** (quake3e) | ❌ not yet | build-proven port; run over netboot |
-| **SuperTuxKart 1.4** | ❌ not yet | built by `tools/`; run over netboot |
+| **GLQuake** (Quake I, OpenGL) | `/usr/bin/quakespasm` | `quakespasm` |
+| **vkQuake** (Quake I, Vulkan) | `/usr/bin/vkquake` | `vkquake` |
+| **Quake II** (yQuake2, gl3/GLES3) | `/usr/bin/yquake2` | `quake2` (launcher) |
+| **Quake III** (quake3e) | `/usr/bin/quake3e` | `quake3 +map q3dm1` (launcher) |
+| **SuperTuxKart 1.4** | `/usr/bin/supertuxkart` | `stk` (launcher) |
 
-Two things to know:
+What has been verified on the hardware from the clean image, each with an HDMI
+capture under `artifacts/hdmi/`:
 
-- **GLQuake is bundled but not auto-started.** The ~18 MB binary lives in
-  `loader.disk` (it is too large to exec from the read-based ext2/NFS loader), and
-  its continuous render loop would flood the UART console, so it is not launched at
-  boot. Run `rpi4-quake ddr ddr` from `psh`; the game data sits at `/id1` on the
-  ext2 root.
-- **GLQuake and vkQuake swap — the image holds only one of them.** `loader.disk`
-  fits a single large GL/VK binary, so `--with-vkquake` builds the Vulkan stack and
-  the vkQuake binary but the image still bundles GLQuake. To ship vkQuake instead,
-  swap the two `app … rpi4-quake` / `app … rpi4-vkquake` launch lines in
-  `sources/phoenix-rtos-project/_projects/aarch64a72-generic-rpi4b/user.plo.yaml`
-  and rebuild.
+- **GLQuake** — full-screen in-game (`20260903-032501-final-qs-tick.png`). It needs
+  the `id1/config.cfg` the image ships: QuakeSpasm's SDL2 path defaults to
+  800x600, which renders a small frame inside the 1080p scanout.
+- **Quake II** — full textured 3D through the `quake2` launcher
+  (`20260903-020858-relink-q2-tick.png`).
+- **Quake III** — full 3D gameplay **on the free demo data**
+  (`20260903-051855-q3-restore-tick.png`); see the note below.
+- **vkQuake** — renders the start map on Vulkan/V3DV
+  (`20260903-040557-vkq-rep2-tick.png`).
+- **GPU-accelerated X11 desktop** (`startx_gpu deskapps`) — Window Maker plus an
+  xterm with a live shell, `xclock` and `xcalc`
+  (`20260903-053119-final-xgpu-tick.png`).
+- **SuperTuxKart** — its GPU-drawn UI renders with **0 wedges and 0 faults**, but
+  the 194 MB of assets served over NFS does not finish loading inside a ~5 minute
+  window, so **in-game is not yet verified on the clean image**.
 
-Quake II and Quake III exist as proper framework ports but are registered
-`if: false` in the project's `ports.yaml` — built and verified, flipped on once each
-is image-proven. Until then those three are exercised over the netboot NFS root;
-wiring them into the image build is tracked as a follow-up.
+**Quake III needs no retail content and no retail CD key.** Besides the free demo
+`pak0.pk3` it needs two more files, both staged by `scripts/stage-game-data.sh`
+from `assets/quake3-qvm/`: a `pak1.pk3` holding three QVMs we built from
+**ioquake3** (the demo's 1999 QVMs report UI API 3, while quake3e requires 6), and
+a `q3key` file whose **format alone** is checked. Honest caveat: the QVM build
+recipe is not yet in this repo, so that pak is *staged* rather than rebuilt from
+source — see [`assets/quake3-qvm/README.md`](assets/quake3-qvm/README.md).
+
+Game data for all five engines is staged into the rootfs overlay by
+`scripts/stage-game-data.sh` (the Docker build calls the same script), under
+`/usr/share/{quake,quake2,quake3,supertuxkart}`. The engine binaries are
+**byte-identical across the build tree, the NFS export and the SD ext2 image** —
+`scripts/compare-rootfs-binaries.sh` checks ten binaries and all ten match — so a
+game verified over netboot is the same artifact that runs from the card.
 
 ### Other build knobs
 
 See the header of [`Dockerfile`](Dockerfile). The useful ones: `UBUNTU_TAG` (base
 LTS, default `26.04` — the validated build host), `PAK0_URL` / `PAK0Q2_URL` /
-`PAK0Q3_URL` (game-data URLs, each defaulting to a verified upstream demo/shareware
-mirror; set one to `""` to build that engine without bundled data), `BUILD_VARIANT`
+`PAK0Q3_URL` (Quake game-data URLs, each defaulting to a verified upstream
+demo/shareware mirror; set one to `""` to build that engine without bundled data),
+`STK_ASSETS_URL` / `STK_ASSETS_SHA256` (the pinned SuperTuxKart 1.4 asset
+package), `BUILD_VARIANT`
 (`sd` / `nfsroot` / `netboot`), and `BUILD_FLAGS` (above; `--with-tests` adds the
 `/bin/test-*` suites).
 
@@ -213,10 +228,10 @@ work; `⛔` blocked on external dependencies; `⬜` not started.
 | Hardware RNG (RNG200) | ✅ | `/dev/hwrng`; also backs `/dev/urandom` |
 | GPIO observer | 🟡 | `/dev/gpio` read-only snapshot; outputs attended |
 | GPU (V3D 4.2) — OpenGL | ✅ | Ported Mesa `v3d` Gallium + GL → **GLQuake ~40 fps @ 1080p** |
-| GPU (V3D 4.2) — Vulkan (V3DV) | ✅ | Ported Mesa `v3dv` Vulkan driver on real V3D 4.2 — init, texture upload (no-WSI buffer→image copy), SPIR-V vertex/fragment/compute shaders and render passes all execute on the GPU (HW-validated); **vkQuake renders the full textured 3D start map**. The only remaining WIP is app-level: vkQuake's **keyboard/mouse input is not yet wired** (an intermittent V3D binner wedge on long GPU runs — not Vulkan-specific — is tracked separately). Fork: [rpi-phoenix-rtos/vkQuake](https://github.com/rpi-phoenix-rtos/vkQuake), branch `phoenix-rpi4-port` |
+| GPU (V3D 4.2) — Vulkan (V3DV) | ✅ | Ported Mesa `v3dv` Vulkan driver on real V3D 4.2 — init, texture upload (no-WSI buffer→image copy), SPIR-V vertex/fragment/compute shaders and render passes all execute on the GPU (HW-validated); **vkQuake renders the start map** — re-verified on the clean SD image, `artifacts/hdmi/20260903-040557-vkq-rep2-tick.png`. (An intermittent V3D binner wedge on long GPU runs — not Vulkan-specific — is tracked separately.) Fork: [rpi-phoenix-rtos/vkQuake](https://github.com/rpi-phoenix-rtos/vkQuake), branch `phoenix-rpi4-port` |
 | GPU concurrency (`v3d-server`) | ✅ | A userspace **`v3d-server` daemon** (`/dev/v3d-srv`, `/sbin/rpi4-v3d`) owns the single V3D and serializes GPU submits from multiple clients over a message port, so **an accelerated X desktop and a second GPU program can run at the same time**. HW-proven end-to-end: BO/compute/render/TFU submit bit-exact through the daemon, two concurrent compute clients serialized, and a glamor GPU-accelerated X desktop with a **live GPU-rendered window running concurrently** on one screen. Lifts the earlier single-GPU-process limit. Clients link `libv3d-client`; opt-in today (not the default boot). Details: [docs/misc/2026-08-22-concurrent-gpu-v3d-server-feasibility.md](docs/misc/2026-08-22-concurrent-gpu-v3d-server-feasibility.md) |
 | Audio (PWM, 3.5 mm jack) | 🟡 | `/dev/audio0` streaming DMA; Quakespasm audio backend |
-| X11 / windowing (kdrive) | ✅ | Xphoenix **fbdev DDX** (CPU shadow-blit — the default, always-on path) + kbd/mouse; WindowMaker/JWM/twm, xterm/xcalc/xedit/xeyes/xclock, plus mc/nano. Migrated to real `phoenix-rtos-ports` (the X server, xterm, WindowMaker and dillo build as framework ports). An **experimental glamor build** additionally runs GPU-accelerated 2D X on the V3D GPU — and, via the `v3d-server` daemon (row above), can now do so **concurrently with another GPU client** (accelerated desktop + a live GPU window at once), lifting the former single-GPU-process restriction. Modern modesetting/DRM remains a future goal |
+| X11 / windowing (kdrive) | ✅ | Xphoenix **fbdev DDX** (CPU shadow-blit — the default, always-on path) + kbd/mouse; WindowMaker/JWM/twm, xterm/xcalc/xedit/xeyes/xclock. Migrated to real `phoenix-rtos-ports` (the X server, xterm, WindowMaker and dillo build as framework ports). An **experimental glamor build** additionally runs GPU-accelerated 2D X on the V3D GPU — `startx_gpu deskapps` on the clean SD image brings up Window Maker with an xterm running a live shell plus `xclock` and `xcalc` (`artifacts/hdmi/20260903-053119-final-xgpu-tick.png`; known cosmetic issue: the root window paints black instead of mauve) — and, via the `v3d-server` daemon (row above), can now do so **concurrently with another GPU client** (accelerated desktop + a live GPU window at once), lifting the former single-GPU-process restriction. Modern modesetting/DRM remains a future goal |
 | posixsrv / psh userland | ✅ | pipes, ptys, `/dev/{null,zero,urandom,full}`, AF_UNIX |
 | WiFi (BCM43455 SDIO) | 🟡 | **Joins WPA2 + gets a DHCP IP lease over the air** — associates to a real WPA2-PSK AP, completes the 4-way handshake, and carries real traffic: a full DHCP exchange (DISCOVER→OFFER→REQUEST→ACK) binds an IP, confirmed by the AP's `DHCPACK` (`tools/wifi-probe jointxcnt`). Remaining: an lwip netif so arbitrary sockets use WiFi — until then **use wired Ethernet** for general networking |
 | Bluetooth (BCM43455) | 🟡 | **Driver-level bring-up works** — `/dev/hci0` up, firmware patchram loads (323/323), a real BD_ADDR is read, and an HCI Inquiry completes. **No host Bluetooth stack** — no pairing, profiles, or audio yet |
@@ -257,13 +272,17 @@ Boot the image and log in to the `(psh)%` prompt, with an **HDMI display** and a
 ### GLQuake (Quake 1)
 
 ```
-rpi4-quake
+quakespasm
 ```
 
-Renders the shareware episode in textured 3D on the V3D GPU (~40 fps @ 1080p).
-The shareware `pak0` is baked into the image at `/usr/share/quake/id1/`. Open the
-in-game console with `` ` `` and type `quit` to exit (or Esc → menu → Quit).
-GLQuake links the V3D driver in-process, so no separate GPU daemon is needed.
+Renders the shareware episode in textured 3D on the V3D GPU (~40 fps @ 1080p);
+verified full-screen in-game on the clean image
+(`artifacts/hdmi/20260903-032501-final-qs-tick.png`). The shareware `pak0` is
+baked into the image at `/usr/share/quake/id1/`, together with a `config.cfg`
+that selects 1920x1080 — without it QuakeSpasm's SDL2 path defaults to 800x600
+and renders a small frame inside the 1080p scanout. Open the in-game console with
+`` ` `` and type `quit` to exit (or Esc → menu → Quit). GLQuake links the V3D
+driver in-process, so no separate GPU daemon is needed.
 
 ### X11 desktop (twm / Window Maker)
 
@@ -289,24 +308,38 @@ Drive the desktop with the USB mouse + keyboard. Exit the window manager to tear
 down X and return to `(psh)%`. If a crash ever leaves a stale lock, `rm -f
 /tmp/.X0-lock` and relaunch.
 
+`startx_gpu deskapps` was verified on the clean image — Window Maker with an
+xterm running a live shell, plus `xclock` and `xcalc`
+(`artifacts/hdmi/20260903-053119-final-xgpu-tick.png`). One known cosmetic issue:
+the root window paints black instead of mauve.
+
 ### Midnight Commander and nano
 
-Both are terminal UIs, so set `TERM` for correct rendering over the console:
-
-```
-TERM=vt100 mc                   # file manager; quit with F10
-TERM=vt100 nano /etc/profile    # editor; quit with Ctrl-X
-```
+`mc` and `nano` **currently fail to build**, so they are not on the image; both
+are convenience ports and the failures are tracked in
+[docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md). When they do build, both are
+terminal UIs and need `TERM` set for correct rendering over the console
+(`TERM=vt100 mc`, `TERM=vt100 nano /etc/profile`).
 
 ### Quake II, Quake III, vkQuake
 
-These build but are **not yet part of the default `--with-showcase` image**
-(GLQuake is the bundled game). vkQuake additionally needs `--build-arg
-BUILD_FLAGS="--with-showcase --with-vkquake"` and renders the menu and the full
-textured 3D start map on the GPU; the remaining work-in-progress is **input
-wiring** (keyboard/mouse not yet delivered to the game) — see
-[docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md). Wiring Quake II/III into the
-default image build is tracked as a follow-up.
+All three ship on the image; run them from `psh`:
+
+```
+quake2                  # yQuake2, gl3/GLES3 renderer (launcher: RAM-stages assets)
+quake3 +map q3dm1       # quake3e (launcher: RAM-stages assets)
+vkquake                 # Quake I through Vulkan / V3DV
+```
+
+Verified on the clean image: **Quake II** renders full textured 3D
+(`artifacts/hdmi/20260903-020858-relink-q2-tick.png`); **Quake III** renders full
+3D gameplay **on the free demo data**
+(`artifacts/hdmi/20260903-051855-q3-restore-tick.png`) — it needs no retail
+content and no retail CD key, see the note in
+[Which games end up on the card?](#which-games-end-up-on-the-card); **vkQuake**
+renders the start map (`artifacts/hdmi/20260903-040557-vkq-rep2-tick.png`). The
+Vulkan stack is built by default — `--with-vkquake` is a no-op kept for
+compatibility.
 
 ### SuperTuxKart 1.4
 
@@ -318,16 +351,25 @@ stk                                  # boot to the main menu
 stk -N --track=olivermath            # jump straight into an AI race
 ```
 
-`stk` boots straight to a clean main menu (logo, mode buttons, the seeded
-player profile) and plays a **fully-lit in-game 3D race** — the kart, opponents,
-the textured track, lighting and HUD all render on the GPU, 0 crashes. Its
-rendering was checked frame-for-frame against the same SuperTuxKart 1.4 on a
-desktop AMD GPU and matches closely (main-menu SSIM 0.991, in-race 0.873) — see
+SuperTuxKart is built by the `supertuxkart` framework port and **ships on the
+image** (`/usr/bin/supertuxkart`, launched via `stk`); its two asset roots
+(`data/` plus `stk-assets/`, 194 MB together) are staged into the rootfs by
+`scripts/stage-game-data.sh`.
+
+On the current clean image, what is verified is that STK's **GPU-drawn UI renders
+with 0 wedges and 0 faults** — but the 194 MB of assets served over NFS does not
+finish loading inside a ~5 minute window, so **in-game is not yet verified on the
+clean image**. Booting from the SD card, where the assets are local, is the way to
+test that.
+
+Earlier, on the hand-staged export (2026-08-27), `stk` was HW-verified booting to
+a clean main menu and driving a **fully-lit in-game 3D race** — kart, opponents,
+textured track, lighting and HUD all on the GPU, 0 crashes — and its rendering
+was checked frame-for-frame against the same SuperTuxKart 1.4 on a desktop AMD
+GPU, matching closely (main-menu SSIM 0.991, in-race 0.873); see
 [docs/done/2026-08-27-stk-visual-parity.md](docs/done/2026-08-27-stk-visual-parity.md).
-Like the extra Quake engines it is built on demand (large mobile-reduced asset
-set, ~150 MB) rather than baked into the default image. The `-N` auto-race flags
-drive a race without any input, which is the simplest way to see it in motion;
-interactive keyboard/mouse control is the same input path as the other GPU apps.
+The `-N` auto-race flags drive a race without any input, which is the simplest
+way to see it in motion.
 
 ## Repository layout
 
@@ -336,7 +378,10 @@ phoenix-rpi/                     this coordination repo — docs, scripts, manif
 ├── scripts/                     bootstrap, build, flash, and lab-rig helpers
 ├── manifests/                   pinned integration states for reproducible builds
 ├── docs/                        documentation (see links below)
-├── tools/                       out-of-tree ports (X11, GPU/Mesa, quake engines)
+├── tools/                       out-of-tree work: the GPU/Mesa stack, game
+│                                launchers, probes, and superseded ad-hoc recipes
+│                                (the shipped game engines build as framework
+│                                ports under sources/phoenix-rtos-ports/)
 ├── sources/                     Phoenix-RTOS sibling repos (cloned by bootstrap)
 │   ├── phoenix-rtos-kernel/
 │   ├── phoenix-rtos-devices/

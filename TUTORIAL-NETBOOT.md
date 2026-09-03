@@ -250,7 +250,7 @@ Phoenix → a RAM root comes up → lwip/genet gets a lease → **NFS takes over
   v4` and a psh prompt.
 
 Once at psh, everything from the [SD tutorial's app section](TUTORIAL.md#6-the-showcase--what-to-try-and-how-to-start-it)
-works the same way (`startx wmaker`, `mc`, `micropython`, …).
+works the same way (`startx`, `quakespasm`, `python3`, …).
 
 > There's also a fully automated one-shot cycle for iteration:
 > `./scripts/test-cycle-netboot.sh --label mytest` (power-cycles the Pi, captures
@@ -281,39 +281,43 @@ the client-side dir cache and `ENOENT` once; retry and it's there.)
 
 ---
 
-## 8. (Optional) Quake game data over NFS
+## 8. (Optional) Game data over NFS
 
-A native build doesn't fetch the Quake game data (the Docker image does). Drop the
-data files into the NFS export at the paths each engine expects, then run the
-matching command on the Pi. The engines run without data too (menu/engine only).
+The simplest route is **`scripts/stage-game-data.sh`**, which stages the data for
+all five engines into the project's `rootfs-overlay` — the one staging path that
+reaches both the SD ext2 packer and the netboot NFS export:
 
-**Quake 1 — GLQuake / vkQuake** (freely-redistributable **shareware** `pak0.pak`):
+```bash
+./scripts/stage-game-data.sh all      # or: q1 q2 q3 stk  (idempotent; --force re-fetches)
+```
+
+It fetches the Quake I **shareware** pak, the Quake II and Quake III **demos**
+(each from a pinned URL) and both SuperTuxKart 1.4 asset roots, and it also stages
+Quake III's `pak1.pk3` + `q3key` from `assets/quake3-qvm/`. **Quake III needs no
+retail content and no retail CD key** — see `assets/quake3-qvm/README.md`. The
+Docker build calls the same script with the same pins.
+
+If you would rather drop files into an existing export by hand, these are the
+paths each engine expects (the engines also run without data — menu/engine only):
+
+| Engine | Command on the Pi | Data path under the export |
+|---|---|---|
+| GLQuake | `quakespasm` | `usr/share/quake/id1/pak0.pak` (+ `config.cfg`) |
+| vkQuake | `vkquake` | same `usr/share/quake/id1` |
+| Quake II | `quake2` | `usr/share/quake2/baseq2/pak0.pak` |
+| Quake III | `quake3 +map q3dm1` | `usr/share/quake3/demoq3/{pak0.pk3,pak1.pk3,q3key}` |
+| SuperTuxKart | `stk` | `usr/share/supertuxkart/{data,stk-assets}` |
 
 ```bash
 sudo mkdir -p /srv/phoenix-rpi4-nfs/usr/share/quake/id1
-# fetch + extract the shareware pak0 (see TUTORIAL.md for the source), then:
 sudo cp pak0.pak /srv/phoenix-rpi4-nfs/usr/share/quake/id1/
 ```
-Then run `rpi4-quake` (or `rpi4-vkquake`) on the Pi.
 
-**Quake II — `quake2`** (`baseq2/pak0.pak`):
-
-```bash
-sudo mkdir -p /srv/phoenix-rpi4-nfs/usr/share/quake2/baseq2
-sudo cp pak0.pak /srv/phoenix-rpi4-nfs/usr/share/quake2/baseq2/
-```
-Then run `quake2` on the Pi. Its launcher RAM-stages the assets to `/tmp` first,
-so the demo loads fast even over NFS.
-
-**Quake III — `quake3`** (`demoq3/pak0.pk3` + `pak1.pk3`):
-
-```bash
-sudo mkdir -p /srv/phoenix-rpi4-nfs/usr/share/quake3/demoq3
-sudo cp pak0.pk3 pak1.pk3 /srv/phoenix-rpi4-nfs/usr/share/quake3/demoq3/
-```
-Then run `quake3` on the Pi (also RAM-stages the assets). `q3dm1` and `q3dm7`
-render fully lit (the earlier black-lightmap bug is fixed); `q3dm7` does
-intermittently wedge the GPU binner on some boots (reset-recovered).
+The `quake2`, `quake3` and `stk` launchers RAM-stage their assets to `/tmp` first,
+so they load fast even over NFS. Two caveats over **netboot NFS specifically**:
+`q3dm7` intermittently wedges the GPU binner on some boots (reset-recovered), and
+SuperTuxKart's 194 MB of assets do not finish loading inside a ~5 minute window —
+boot from the SD card, where the assets are local, to try STK in-game.
 
 ---
 

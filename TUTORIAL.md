@@ -1,9 +1,9 @@
 # Phoenix-RTOS on Raspberry Pi 4 — First-Time User Tutorial
 
 A single, self-contained quick-start: build the full system image, flash an SD
-card, boot your Pi, and try out everything in the "distribution" — GLQuake, an
-X11 desktop with window managers, a file manager, a web browser, editors,
-scripting languages, benchmarks and more.
+card, boot your Pi, and try out everything in the "distribution" — five 3-D game
+engines, an X11 desktop with window managers, a web browser, scripting
+languages, benchmarks and more.
 
 > **Hardware tested:** This has only been validated on a **Raspberry Pi 4
 > Model B with 4 GB RAM**. Other Pi 4 variants (1/2/8 GB) and other boards are
@@ -41,7 +41,8 @@ You do **not** need a Raspberry Pi to build — only to run the result.
 The whole system builds from the public `rpi-phoenix-rtos` GitHub org in one
 command. Docker fetches the `Dockerfile`, clones every repository, builds the
 cross toolchain, compiles the kernel + drivers + all applications, downloads the
-freely-redistributable Quake **shareware** data, and produces a ready-to-flash
+freely-redistributable game data (Quake **shareware**, the Quake II and Quake III
+**demos**, and the SuperTuxKart 1.4 assets), and produces a ready-to-flash
 2-partition SD image.
 
 ```bash
@@ -68,10 +69,15 @@ Notes:
   clear `ERROR`** rather than producing an incomplete image — fix your
   connectivity (or override a URL) and re-run. It will never silently ship a
   half-baked system.
-- Quake data: the build uses the official Quake **shareware** `pak0.pak`
-  (freely redistributable). To build the engine *without* game data, add
-  `--build-arg PAK0_URL=`. To use your own data, pass `--build-arg
-  PAK0_URL=<url-to-pak0.pak>`.
+- Game data: the build stages the official Quake **shareware** `pak0.pak`, the
+  Quake II and Quake III **demo** paks and the SuperTuxKart 1.4 asset roots
+  (all freely redistributable, each from a pinned URL) via
+  `scripts/stage-game-data.sh`. To build a Quake engine *without* its game data,
+  add `--build-arg PAK0_URL=` (or `PAK0Q2_URL=` / `PAK0Q3_URL=`). To use your own
+  data, pass e.g. `--build-arg PAK0_URL=<url-to-pak0.pak>`.
+- **Quake III needs no retail content and no retail CD key** — the image ships
+  the free demo pak plus a `pak1.pk3` of QVMs built from ioquake3 and a
+  format-valid `q3key`.
 - Prefer building natively on Linux instead of Docker? See
   [docs/BUILD.md](docs/BUILD.md) (`scripts/bootstrap-linux-host.sh` then
   `scripts/rebuild-rpi4b-fast.sh --variant sd --with-showcase --with-ports`).
@@ -142,13 +148,15 @@ The headline demo: id Software's Quake, rendered on the Pi's V3D GPU via a porte
 Mesa driver, output over HDMI.
 
 ```bash
-rpi4-quake
+quakespasm
 ```
 
 - It renders on the HDMI screen; control it with the **USB keyboard** (arrows /
   `Ctrl` to fire, `` ` `` for the console, `Esc` for the menu).
 - The **shareware** episode and its demo loops play out of the box (the data is
-  in `/usr/share/quake/id1/pak0.pak`).
+  in `/usr/share/quake/id1/pak0.pak`), together with a `config.cfg` that selects
+  1920x1080 — without it QuakeSpasm's SDL2 path defaults to 800x600 and draws a
+  small frame inside the 1080p screen.
 - *Caveats:* single-player and demos are the tested path; **direct-IP multiplayer
   works** — the client joins a dedicated server and runs in-game (HW-validated,
   bug #68 fixed 2026-08-10); LAN broadcast server-discovery is skipped and
@@ -162,27 +170,30 @@ data into a `/tmp` RAM disk first**, then run — so the first launch copies ass
 (a few seconds) and then plays from RAM:
 
 ```bash
-quake2                # yQuake2 (OpenGL ref_gl1) — plays its demo in textured 3D
-quake3                # quake3e — renders gameplay on the GPU
+quake2                # yQuake2 (gl3/GLES3) — full textured 3D
+quake3 +map q3dm1     # quake3e — full 3-D gameplay on the free demo data
 ```
 
-- *Quake III:* `q3dm1` and `q3dm7` render fully lit and correct (the earlier
-  black-lightmap bug is fixed). Residual rough edges: `q3dm7` intermittently
-  wedges the GPU binner on ~half of boots (reset-recovered), and in-game
-  mouse-look is not yet wired.
-- *Quake II:* renders its demo in textured 3D. (It used to show a black screen on
-  slow NFS asset loads; the RAM-staging launcher fixed that.)
+- *Quake III:* renders full 3-D gameplay **on the free demo data** — it needs
+  **no retail content and no retail CD key**. Alongside the demo `pak0.pk3` the
+  image ships a `pak1.pk3` holding three QVMs built from **ioquake3** (the demo's
+  1999 QVMs report UI API 3, while quake3e requires 6) and a `q3key` whose
+  *format* alone is checked. `q3dm1` and `q3dm7` render fully lit and correct (the
+  earlier black-lightmap bug is fixed). Residual rough edges: `q3dm7`
+  intermittently wedges the GPU binner (reset-recovered), and in-game mouse-look
+  is not yet wired.
+- *Quake II:* renders full textured 3D. (It used to show a black screen on slow
+  NFS asset loads; the RAM-staging launcher fixed that.)
 
 ### 🎮 vkQuake (Vulkan / V3DV)
 
 ```bash
-rpi4-vkquake          # Quake rendered through the Vulkan (V3DV) driver
+vkquake               # Quake rendered through the Vulkan (V3DV) driver
 ```
 
-*Caveat:* vkQuake renders the menu and goes on to draw the full textured 3D start
-map through the GPU (3150+ frames — the earlier post-menu hang is fixed). What is
-still missing for actual play: **keyboard/mouse input is not yet wired**, and the
-GPU binner can intermittently wedge. Use `rpi4-quake` (GLQuake) to actually play.
+vkQuake renders the menu and goes on to draw the textured 3-D start map through
+the GPU (the earlier post-menu hang is fixed), re-verified on the clean SD image.
+*Caveat:* the GPU binner can intermittently wedge on long runs.
 
 ### 🎮 SuperTuxKart 1.4 (a modern 3-D game on the V3D GPU)
 
@@ -194,14 +205,20 @@ stk                             # boots to the main menu
 stk -N --track=olivermath       # jump straight into an AI race (no input needed)
 ```
 
-- Boots to a clean main menu and drives a **fully-lit in-game 3-D race** — kart,
-  opponents, textured track, lighting and HUD all on the GPU, 0 crashes.
-- Its rendering was compared frame-for-frame against the same SuperTuxKart 1.4 on
-  a desktop AMD GPU and matches closely (menu SSIM 0.991, in-race 0.873).
-- *Caveats:* it is **built on demand**, not baked into the default image (its
-  mobile-reduced asset set is ~150 MB). The `-N` auto-race flags are the easiest
-  way to watch it in motion; interactive control uses the same USB input path as
-  the other GPU apps.
+- It **ships on the image** (`/usr/bin/supertuxkart`, launched via `stk`), with
+  both of its asset roots (`data/` + `stk-assets/`, 194 MB together).
+- On the current clean image what is confirmed is that its **GPU-drawn UI renders
+  with 0 wedges and 0 faults**; the 194 MB of assets served over **NFS** does not
+  finish loading inside a ~5 minute window, so the **in-game race is not yet
+  verified on the clean image**. Booting from the SD card, where the assets are
+  local, is the way to try it.
+- Earlier, on a hand-staged NFS export (2026-08-27), `stk` was verified booting to
+  a clean main menu and driving a **fully-lit in-game 3-D race** — kart,
+  opponents, textured track, lighting and HUD all on the GPU, 0 crashes — and its
+  rendering matched the same SuperTuxKart 1.4 on a desktop AMD GPU closely (menu
+  SSIM 0.991, in-race 0.873).
+- The `-N` auto-race flags are the easiest way to watch it in motion; interactive
+  control uses the same USB input path as the other GPU apps.
 
 ### 🖥️ X11 desktop and applications
 
@@ -251,21 +268,16 @@ gateway** (`scripts/pi-internet-nat.sh`) — the Pi reaches the internet through
 the dev host, a lab/netboot setup rather than the Pi routing on its own. On a
 plain LAN without that gateway you can still browse hosts reachable directly.
 
-### 📂 Midnight Commander — text-mode file manager
-
-```bash
-mc
-```
-The classic two-pane file manager, in the console (or inside an `xterm`). Full
-skins and syntax highlighting are bundled.
-
 ### 📝 Text editors
 
 ```bash
-nano /etc/profile     # friendly modeless editor
 vi   /etc/profile     # busybox vi
 ```
 (`xedit` above is the graphical X11 editor.)
+
+> **Not currently on the image:** `mc` (Midnight Commander) and `nano` **fail to
+> build** at the moment, so neither is installed. Both are convenience ports;
+> see [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md).
 
 ### 🐍 Scripting languages
 
@@ -387,9 +399,15 @@ USB HID, HDMI, GPU) is solid, but some showcase edges are rough. Highlights:
 - **Quake III:** `q3dm1`/`q3dm7` render fully lit; `q3dm7` intermittently wedges
   the GPU binner (~half of boots, reset-recovered) and in-game mouse-look is not
   yet wired.
-- **vkQuake:** renders the full textured 3D start map, but keyboard/mouse input
-  is not yet wired (and the binner can intermittently wedge) — use `rpi4-quake`
-  (GLQuake) to actually play.
+- **vkQuake:** renders the textured 3D start map; the GPU binner can
+  intermittently wedge on long runs.
+- **SuperTuxKart:** its GPU-drawn UI renders with 0 wedges and 0 faults, but on
+  the clean image its 194 MB of assets over NFS do not finish loading inside a
+  ~5 minute window, so **in-game is not yet verified there** — try it from the
+  SD card, where the assets are local.
+- **GPU-accelerated X (`startx_gpu`):** the root window paints black instead of
+  mauve (cosmetic).
+- **`mc` and `nano` do not currently build**, so they are not on the image.
 - **xbill:** may exit silently on some runs.
 - **Only the 4 GB Pi 4B is validated.** Other RAM sizes/boards are untested.
 - USB mass storage, I²C/SPI/PWM general-purpose, camera and DSI are not

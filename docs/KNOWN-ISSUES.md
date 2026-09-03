@@ -1,6 +1,6 @@
 # Known issues and limitations
 
-Open items in the Phoenix-RTOS Raspberry Pi 4 port, as of 2026-08-27. This is
+Open items in the Phoenix-RTOS Raspberry Pi 4 port, as of 2026-09-03. This is
 the user-facing summary; the exhaustive engineering registries are:
 
 - [docs/pi4-hardware-support-matrix.md](pi4-hardware-support-matrix.md)
@@ -20,7 +20,10 @@ These affect the showcase apps, not the base system.
 |---|---|---|
 | #64 | SD-side filesystem stack pressure under load (deep fs call chains). | Open. |
 | #66 | Stale `/tmp/.X0-lock` prevents the X server restarting after an unclean exit. | Open; remove `/tmp/.X0-lock` before relaunching the X server. |
-| vkQuake-input | **vkQuake keyboard/mouse input is not wired** — events don't reach the game, so it renders but is not interactive. An intermittent V3D GPU binner wedge is also under investigation. | Open (input is owner-attended). |
+| STK-nfs-assets | **SuperTuxKart has not been verified in-game on the clean image.** `stk` ships on the card (`/usr/bin/supertuxkart`) and its GPU-drawn UI renders with **0 wedges and 0 faults**, but its 194 MB of assets served over **NFS** does not finish loading inside a ~5 minute window, so the in-game race is not yet confirmed on the clean image. This is asset throughput, not rendering. | Open; test from the SD card, where the asset roots are local. |
+| X-root-black | With the GPU-accelerated X server (`startx_gpu`), the **root window paints black instead of mauve**. Cosmetic only — the window manager, xterm, `xclock` and `xcalc` all render and the xterm shell is live (`artifacts/hdmi/20260903-053119-final-xgpu-tick.png`). | Open, cosmetic (`wmsetbg` path). |
+| mc/nano-build | **`mc` and `nano` currently fail to build**, so they are not on the image. Both are convenience ports; nothing else depends on them, and `build-showcase-apps.sh` records them as soft failures rather than aborting the run. | Open. |
+| q3-qvm-recipe | Quake III's `pak1.pk3` (three QVMs built from **ioquake3**, needed because the free demo's 1999 QVMs report UI API 3 while quake3e requires 6) is **staged from `assets/quake3-qvm/` rather than rebuilt from source** — the QVM build recipe is not yet in the repo. The game itself needs no retail content and no retail CD key; see `assets/quake3-qvm/README.md`. | Open (reproducibility gap, not a runtime bug). |
 
 ## System-level limitations
 

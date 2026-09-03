@@ -75,8 +75,10 @@ This is idempotent — safe to re-run if anything fails partway. It:
    points at the org (`github.com/rpi-phoenix-rtos/<repo>`) so the published set
    is self-contained; override `PHOENIX_UPSTREAM_BASE=https://github.com/phoenix-rtos`
    to wire `origin` at the phoenix-rtos upstream instead.
-3. Clones the build-required external deps (Mesa, Quakespasm, vkQuake) into
-   `external/`, pinned to known-good commits.
+3. Clones the external deps into `external/`: **Mesa** (pinned; a build
+   requirement for the GPU/GL/Vulkan archives) and the four game-engine forks
+   (tracked by branch, development conveniences — the game ports build from
+   their own pinned upstream tarballs, not from these clones).
 4. Stages the Raspberry Pi firmware blobs (`start4.elf`, `fixup4.dat`, the
    `bcm2711-rpi-4-b.dtb` device tree, and overlays) from `raspberrypi/firmware`
    into `.bootblobs/`. The DTB is fetched ready-made — it is never compiled.
@@ -172,12 +174,17 @@ the microSD card, and write.
 
 The base SD image boots to a shell and drives the hardware, but it does **not**
 include the graphical showcase applications (the X11 desktop with Window Maker
-and xterm, the Dillo web browser, Midnight Commander, and GLQuake on the V3D
-GPU). Those are built by a separate, opt-in orchestrator,
-`scripts/build-showcase-apps.sh`, which compiles the out-of-tree ports under
-`tools/` (the ported Mesa GPU/GL/Vulkan driver, the quake engines, the X11 lib
-stack + apps, and the extra userland ports) against `external/mesa` and the
-vendored tarballs in `tools/ports/src/`.
+and xterm, the Dillo web browser, and the five game engines on the V3D GPU).
+Those are enabled by `--with-showcase`, which does two things:
+
+- runs the opt-in orchestrator `scripts/build-showcase-apps.sh` to build the
+  ported Mesa GPU/GL/Vulkan driver archives (against `external/mesa`) plus the
+  X11 lib stack + apps and the extra userland ports (against the vendored
+  tarballs in `tools/ports/src/`), and
+- lets the project's ports stage build the five **game framework ports**
+  (`quakespasm`, `yquake2`, `quake3`, `vkquake`, `supertuxkart` — all
+  `if: true` in the project's `ports.yaml`), which install their engines
+  **into the rootfs** at `/usr/bin/`. No game goes into `loader.disk`.
 
 A companion `--with-ports` flag adds the **CLI tools and languages ecosystem** to
 the image — all HW-verified: GNU **coreutils 9.5** (full tool set, ~105 programs build + install), GNU **bash 5.2**,
@@ -195,8 +202,39 @@ in `bootstrap-linux-host.sh`'s apt list (the "Showcase build deps" block):
 orchestrator provisions a local `meson`/`ninja`/`mako` in a `uv` venv at
 `/tmp/mesa-pyenv` automatically; nothing to install by hand.
 
-`external/mesa` (and, for the quake engines, `external/quakespasm` /
-`external/vkquake`) must be cloned — the bootstrap does this.
+`external/mesa` must be cloned — the bootstrap does this. The game engines no
+longer build from `external/` clones: each game port fetches its own pinned
+upstream commit-archive (URL + size + sha256 recorded in its `port.def.sh`), so
+the `external/quakespasm` / `external/vkquake` / `external/quake3e` /
+`external/yquake2` clones are development conveniences, not build inputs.
+
+### Game data
+
+The engines are only the binaries; their data is staged separately by
+**`scripts/stage-game-data.sh`**, which populates the project's
+`rootfs-overlay` — the one staging path that reaches both the SD ext2 packer and
+the netboot NFS export:
+
+```bash
+./scripts/stage-game-data.sh all        # or: q1 q2 q3 stk (idempotent; --force re-fetches)
+```
+
+It fetches the Quake I shareware pak and the Quake II / Quake III demos (each
+from a pinned URL) and both SuperTuxKart 1.4 asset roots (`data/` +
+`stk-assets/`), ~306 MB in total. For Quake III it additionally stages
+`pak1.pk3` and `q3key` from `assets/quake3-qvm/` — see that directory's
+`README.md`; **no retail content and no retail CD key are involved.** The Docker
+build calls the same script with the same pins.
+
+**`scripts/build-rootfs-helpers.sh`** builds the small static helpers the engines
+need at runtime (`ram-stage-play`, the `quake2` / `quake3` / `stk` launchers,
+`pty-run`) into the rootfs staging tree. It is wired into
+`build-showcase-apps.sh --phase stage` as a hard-fail step.
+
+Because the engines (~108 MB) plus their data (~306 MB) now live in the rootfs,
+the `--with-showcase` ext2 root is **1.5 GiB** (it was 768 MiB before the games
+moved out of `loader.disk`). Partition geometry is computed from the actual image
+size, so only partition 2 grows.
 
 ### One-command showcase SD image
 
@@ -208,42 +246,48 @@ Pass `--with-showcase` to the same SD build from Step 3:
 
 This runs the orchestrator in two phases around the normal build:
 
-1. **Before `build.sh`** it builds the GPU/GL/Vulkan + Quake static archives
-   into `tools/.gpu-libs/` (`libv3d-phoenix.a`, `libGL-phoenix.a`,
-   `libquakespasm.a`, and — unless `--skip-vulkan` — `libv3dv-phoenix.a`,
-   `libvkquake.a`). The in-tree `rpi4-quake` / `rpi4-vkquake` `_user`
-   components link these and are bundled into `loader.disk` by the project
-   stage. (The rebuild script passes `GPU_LIBS=<repo>/tools/.gpu-libs`
-   explicitly so the archives are always found.)
+1. **Before `build.sh`** it builds the GPU/GL/Vulkan static archives into
+   `tools/.gpu-libs/` (`libv3d-phoenix.a`, `libGL-phoenix.a`, and — unless
+   `--skip-vulkan` — `libv3dv-phoenix.a`). The five **game ports** link these
+   during the project's ports stage and install their engines into the rootfs;
+   nothing links them into `loader.disk`. (The rebuild script passes
+   `GPU_LIBS=<repo>/tools/.gpu-libs` explicitly so the archives are always
+   found.)
 2. **After the image is built, before the ext2 root is packed** it builds the
    port libraries (libiconv, libffi, ncurses, glib2, fltk), the X11 lib stack,
    and every app (xterm, xedit, xcalc, xclock, xlogo, xbill, Window Maker, the
-   Xphoenix server, `dillo`, `mc`, `nano`) and stages their binaries + data
-   files into the ext2 rootfs tree (`_fs/<target>/root`).
+   Xphoenix server, `dillo`) plus the rootfs helpers
+   (`scripts/build-rootfs-helpers.sh`), and stages their binaries + data files
+   into the ext2 rootfs tree (`_fs/<target>/root`). `mc` and `nano` are in this
+   list but **currently fail to build**; they are recorded as soft failures at
+   the end of the run.
 
 ### Running the orchestrator standalone
 
 You can also run it directly (e.g. to iterate on just the GPU libs):
 
 ```bash
-./scripts/build-showcase-apps.sh --phase gpu     # GPU/Quake archives only
-./scripts/build-showcase-apps.sh --phase stage   # X11/ports into the rootfs
+./scripts/build-showcase-apps.sh --phase gpu     # GPU/GL/Vulkan archives only
+./scripts/build-showcase-apps.sh --phase stage   # X11/ports + rootfs helpers
 ./scripts/build-showcase-apps.sh                  # both (phase "all")
 ```
 
-Useful flags: `--force` (rebuild archives even if fresh), `--skip-vulkan` (GL
-only, no vkQuake — also skips the glslang requirement), `--skip-x11` (skip the
-X11 lib stack + X apps + dillo), `--stage-dir DIR` (stage into an arbitrary
+Useful flags: `--force` (rebuild archives even if fresh), `--skip-vulkan` (build
+`libGL`/`libv3d` but not `libv3dv-phoenix.a` — **this now makes the ports stage
+fail**, because the `vkquake` port is `if: true` and links that archive; Vulkan
+is on by default, and `--with-vkquake` is a no-op kept for compatibility),
+`--skip-x11` (skip the X11 lib stack + X apps + dillo), `--stage-dir DIR` (stage into an arbitrary
 rootfs tree, e.g. an NFS export). It is idempotent (skips up-to-date archives)
 and fail-loud (each step is gated on its expected output existing). The X11
 apps and userland ports are treated as best-effort: a single app failing is
 recorded and reported at the end rather than aborting the whole run, so you get
 as many of the showcase apps as build cleanly.
 
-> **GLQuake vs. vkQuake shaders.** GLQuake (`libquakespasm` → `rpi4-quake`) is
-> pure GL and needs no shader compiler. vkQuake needs real SPIR-V shaders from
-> `glslang`; if `glslangValidator` is missing the vkQuake archive still links
-> but with non-rendering placeholder shaders (the orchestrator warns loudly).
+> **Shaders.** GLQuake is the `quakespasm` port (`/usr/bin/quakespasm`); it is
+> pure GL and needs no shader compiler. The `vkquake` port needs no shader
+> compiler either: its SPIR-V shader blobs are committed in the port's glue
+> (`vkquake_shaders.c`), so `glslang` is not a build-time dependency of the
+> engine.
 
 ## Troubleshooting
 
