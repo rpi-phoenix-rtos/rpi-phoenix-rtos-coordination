@@ -96,7 +96,27 @@ case "$url" in
     found="$(find "$tmp/ex" -iname "$pak" | head -1)"
     [ -n "$found" ] \
       || { echo "ERROR: [$game] $pak not found inside the archive from $url"; exit 1; }
-    cp "$found" "$dst/$pak"; chmod u+w "$dst/$pak" ;;   # demo paks are often read-only
+    cp "$found" "$dst/$pak"; chmod u+w "$dst/$pak"   # demo paks are often read-only
+
+    # Take the PATCH paks too, not just pak0.
+    #
+    # The Quake III demo ships pak0.pk3 (content) AND pak1.pk3 (the point-release
+    # patch), and the patch pak is where the UPDATED QVMs live. Staging only pak0
+    # gives an engine that dies with "User Interface is version 3, expected 6",
+    # because pak0's ui.qvm is the original 1.11 one while quake3e expects
+    # UI_API_VERSION 6. That is a data gap, not an engine bug -- and it stayed
+    # hidden for as long as the hand-maintained NFS export happened to carry a
+    # pak1.pk3 nobody could rebuild.
+    while IFS= read -r extra; do
+      [ -f "$extra" ] || continue
+      b="$(basename "$extra")"
+      [ -f "$dst/$b" ] && continue
+      cp "$extra" "$dst/$b"; chmod u+w "$dst/$b"
+      echo "[$game] staged extra pak: $b ($(stat -c%s "$extra") bytes)"
+    done <<EOF
+$(find "$tmp/ex" -iname 'pak[1-9].pk3' -o -iname 'pak[1-9].pak')
+EOF
+    ;;
 esac
 
 got="$(sha256sum "$dst/$pak" | cut -d' ' -f1)"
