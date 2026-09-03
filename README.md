@@ -315,11 +315,14 @@ the root window paints black instead of mauve.
 
 ### Midnight Commander and nano
 
-`mc` and `nano` **currently fail to build**, so they are not on the image; both
-are convenience ports and the failures are tracked in
-[docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md). When they do build, both are
-terminal UIs and need `TERM` set for correct rendering over the console
-(`TERM=vt100 mc`, `TERM=vt100 nano /etc/profile`).
+Both build again as of 2026-09-03 and are staged into the image. Each had been
+broken by a stale-artifact bug rather than a missing feature: `mc`'s build script
+copied its own obsolete `mntent.h` stub over the shared sysroot header (hiding
+the `hasmntopt` that libphoenix now implements), and `nano` 2.2.6 initializes a
+`bool` from `NULL`, which GCC 14+ rejects. Both are terminal UIs and need `TERM`
+set for correct rendering over the console (`TERM=vt100 mc`,
+`TERM=vt100 nano /etc/profile`). Neither has been exercised interactively on the
+hardware yet — they are built, linked and staged, not use-tested.
 
 ### Quake II, Quake III, vkQuake
 
