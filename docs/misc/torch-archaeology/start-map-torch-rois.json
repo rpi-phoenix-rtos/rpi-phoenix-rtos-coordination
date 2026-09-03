@@ -4,7 +4,9 @@
   "_frame_basis": [1920, 1080],
   "_scale_rule": "multiply all boxes by (frame_width / 1920); HDMI tick grabs are 3840x2160 -> factor 2",
   "_box_format": "[x0, y0, x1, y1] inclusive-exclusive, in the 1920x1080 basis",
-  "_pass_rule": "for each require:true ROI, count pixels with R>180 && R>G+40 && G>B+20 (flame fullbright core); ROI passes at >=8 such pixels; the frame passes when both required ROIs pass; the CYCLE passes when >=2 tick frames pass (the flame animates and single frames can tear)",
+  "_pass_rule": "for each require:true ROI, count pixels with R>100 && R>G+20 && R>B+20 (warm-biased pixel brighter than the surrounding stone); ROI passes at >=8 such pixels; the frame passes when both required ROIs pass; the CYCLE passes when >=2 frames pass (the flame animates and a single grab can tear)",
+  "_pass_rule_calibration": "CORRECTED 2026-09-03 after implementing scripts/check-torch-rois.py. The original rule (R>180 && R>G+40 && G>B+20, an orange flame core) counts ZERO pixels in the host reference ITSELF: at the start map light level the flame sprite renders pale warm grey peaking near R=123, not saturated orange. It would have failed a known-good frame. Measured with the corrected rule: reference 17 and 11 lit px; vkQuake grab (torches absent) 0 and 0, peaking R=63..74 -- about 2x separation in peak brightness.",
+  "_viewpoint_rule": "These are FIXED boxes, so they only mean anything for a frame taken at the reference viewpoint. The checker first compares a 160x90 grey thumbnail against the reference and reports UNUSABLE above mae 8.0. Measured: reference vs itself 0.0; vkQuake grabs sitting at spawn ~3.5; quakespasm frames from Quake DEMO ATTRACT MODE (what the engine shows when left at the menu) 14-17. So idle HDMI ticks are NOT gradeable -- capture with an explicit `+map start`.",
   "rois": [
     {
       "id": "archway_torch_left",
