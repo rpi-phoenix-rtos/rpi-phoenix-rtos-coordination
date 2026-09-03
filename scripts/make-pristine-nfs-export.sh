@@ -74,15 +74,14 @@ echo "== 2. overlay the little that still has no in-build path =="
 echo "== 3. verify $NEW is clean (no junk) + complete =="
 echo "  -- junk check (should list NOTHING) --"
 ls "$NEW" 2>/dev/null | grep -iE "stackbomb|csd-matmul|gl-smoke|gpu-.*\.sh|^rpi4-v3d$|nfsbench|qdet-|stories.*\.bin|tok.*\.bin|dump\.rdb|waltest|selftest|selfcheck|\.jq$|\.sql$|\.test$|dectest|ctypestest|ext_test|sotest|console_history|index\.html|^&1$|^\(null\)|^aaaa|symShort|test_stat|test_readdir|linuxrc|redis-|cu-.*\.txt|\.raw$" || echo "    (clean — no junk at root)"
-echo "  -- completeness check --"
-for p in bin/psh bin/busybox usr/bin/Xphoenix bin/xterm bin/wmaker \
-	usr/bin/quakespasm usr/bin/vkquake usr/bin/yquake2 usr/bin/quake3e usr/bin/supertuxkart \
-	bin/ram-stage-play usr/bin/quake2 usr/bin/quake3 bin/stk \
-	usr/share/quake/id1/pak0.pak usr/share/quake2/baseq2/pak0.pak \
-	usr/share/quake3/demoq3/pak0.pk3 usr/share/supertuxkart/data/stk_config.xml \
-	usr/share/supertuxkart/stk-assets/karts; do
-	[ -e "$NEW/$p" ] && echo "    OK  $p" || echo "    MISS $p"
-done
+# Completeness is checked by scripts/check-rootfs-complete.sh, which OWNS the
+# list -- one copy, shared with the ext2 image path. The list used to live here,
+# printed "MISS" and exited 0, and that is how an image shipped without
+# usr/share/quake3/demoq3/pak1.pk3 (Quake III then dies with "User Interface is
+# version 3, expected 6"). Record the verdict and report it at the end; the swap
+# still happens, because a usable-but-incomplete export beats no export.
+complete_rc=0
+"$(dirname "${BASH_SOURCE[0]}")/check-rootfs-complete.sh" "$NEW" || complete_rc=$?
 echo "  -- sizes --"; du -sh "$NEW" 2>/dev/null
 
 echo "== 4. SWAP: old -> $BAK (backup, kept), new -> $EXP =="
@@ -96,4 +95,11 @@ sudo mv "$NEW" "$EXP"
 # Costs nothing when the export is unchanged.
 sudo exportfs -ra || echo "WARNING: exportfs -ra failed; the Pi will mount the OLD tree"
 
+if [ "${complete_rc}" -ne 0 ]; then
+	echo ""
+	echo "!! INCOMPLETE EXPORT: check-rootfs-complete.sh reported missing REQUIRED paths."
+	echo "!! Most likely the rootfs-overlay is stale: local builds never run"
+	echo "!! scripts/stage-game-data.sh (only the Dockerfile does). Fix, then re-run"
+	echo "!! the fs+image stages so the SD image gets it too."
+fi
 echo "DONE: pristine export at $EXP ; old cruft backed up at $BAK (delete after owner confirms)"

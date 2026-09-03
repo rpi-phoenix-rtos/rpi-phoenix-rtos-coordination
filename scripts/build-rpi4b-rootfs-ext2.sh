@@ -45,6 +45,28 @@ mkdir -p "$stage/dev" "$stage/tmp" "$stage/root" "$stage/mnt"
 printf '=== rootfs tree (%s) ===\n' "$(du -sh "$stage" | cut -f1)"
 ls "$stage"
 
+# Gate the IMAGE, not just the export. An image is the artifact someone flashes
+# and boots, so shipping one that is missing a required file costs a flash, a
+# boot and a debugging session -- which is exactly what happened on 2026-09-03
+# with usr/share/quake3/demoq3/pak1.pk3 absent (Quake III then dies at startup
+# with "User Interface is version 3, expected 6"). The list lives in
+# check-rootfs-complete.sh so this path and the NFS export path cannot disagree.
+#
+# RPI4B_ALLOW_INCOMPLETE_ROOTFS=1 downgrades it to a warning, for deliberately
+# partial images (a kernel-only or test-only build).
+if ! "$(dirname "${BASH_SOURCE[0]}")/check-rootfs-complete.sh" "$stage"; then
+	if [ "${RPI4B_ALLOW_INCOMPLETE_ROOTFS:-0}" = 1 ]; then
+		printf '\n!! continuing anyway: RPI4B_ALLOW_INCOMPLETE_ROOTFS=1\n\n'
+	else
+		printf '\nRefusing to build an incomplete SD image.\n' >&2
+		printf 'Game data missing? local builds do NOT run scripts/stage-game-data.sh\n' >&2
+		printf '(only the Dockerfile does), so a stale rootfs-overlay persists silently:\n' >&2
+		printf '  ./scripts/stage-game-data.sh all && ./scripts/rebuild-rpi4b-fast.sh --variant sd ...\n' >&2
+		printf 'Or set RPI4B_ALLOW_INCOMPLETE_ROOTFS=1 for a deliberately partial image.\n' >&2
+		exit 1
+	fi
+fi
+
 # Deterministic, fsck-clean ext2 image populated from the directory.
 mke2fs -q -t ext2 -b 1024 -i 2048 -d "$stage" \
 	-U 00000000-0000-0000-0000-000000000000 -L rootfs \
