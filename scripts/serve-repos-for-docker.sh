@@ -12,7 +12,8 @@
 # Exposes, as <name>.git:
 #   phoenix-rpi            (this coordination repo)
 #   <each sources/* sibling>
-#   mesa quakespasm vkquake (external/ build deps)
+#   quakespasm vkquake yquake2 quake3e (external/ game forks)
+# mesa is NOT served here: bootstrap fetches it from freedesktop at a pinned tag.
 # The Raspberry Pi firmware is cloned by bootstrap directly from public GitHub.
 #
 # Usage:
@@ -43,11 +44,35 @@ link_repo "$ROOT" rpi-phoenix-rtos-coordination
 for d in "$ROOT"/sources/*/; do
 	[ -d "${d%/}/.git" ] && link_repo "${d%/}" "$(basename "${d%/}")"
 done
-# quakespasm + vkquake are served as forks (external Quake engines). mesa is
-# fetched from upstream freedesktop @ a pinned tag + patched (bootstrap
-# EXTERNAL_DEPS), NOT from here. lwip handled below.
-for e in quakespasm vkquake; do
-	[ -d "$ROOT/external/$e/.git" ] && link_repo "$ROOT/external/$e" "$e"
+# All four game forks are served. mesa is fetched from upstream freedesktop @ a
+# pinned tag + patched (bootstrap EXTERNAL_DEPS), NOT from here. lwip below.
+#
+# This list used to be just "quakespasm vkquake", from when only those two were a
+# build input. Since every game became a framework port built from its fork, a
+# Docker build against this server died with
+#   fatal: remote error: access denied or repository not exported: /yquake2.git
+# so the list must cover every fork bootstrap clones.
+#
+# bootstrap checks out the branch phoenix-rpi4-port. The local clones do not agree
+# on which branch carries the work (quakespasm -> master, quake3e -> main), so
+# point that branch at each clone's HEAD before serving, or the clone succeeds and
+# the checkout fails with
+#   error: pathspec 'phoenix-rpi4-port' did not match any file(s) known to git
+# Done non-destructively: the branch is only created/moved when it is absent or
+# already equal to HEAD, so a real phoenix-rpi4-port branch is never rewritten.
+FORK_BRANCH="phoenix-rpi4-port"
+for e in quakespasm vkquake yquake2 quake3e; do
+	[ -d "$ROOT/external/$e/.git" ] || continue
+	head_sha="$(git -C "$ROOT/external/$e" rev-parse HEAD 2>/dev/null || true)"
+	br_sha="$(git -C "$ROOT/external/$e" rev-parse -q --verify "refs/heads/$FORK_BRANCH" 2>/dev/null || true)"
+	if [ -n "$head_sha" ] && [ -z "$br_sha" ]; then
+		echo "serve-repos: $e: creating $FORK_BRANCH at HEAD ${head_sha:0:12}"
+		git -C "$ROOT/external/$e" branch -f "$FORK_BRANCH" "$head_sha"
+	elif [ -n "$head_sha" ] && [ "$br_sha" != "$head_sha" ]; then
+		echo "serve-repos: WARNING $e: $FORK_BRANCH (${br_sha:0:12}) != HEAD (${head_sha:0:12});" \
+			"serving the branch as-is -- the build will NOT contain your HEAD" >&2
+	fi
+	link_repo "$ROOT/external/$e" "$e"
 done
 # lib-lwip vendored submodule: bootstrap points submodule.lib-lwip.url at
 # ${EXTERNAL_FORK_BASE}/lwip.git, so expose it too. Its objects live in the parent
