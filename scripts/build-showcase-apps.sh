@@ -543,6 +543,15 @@ phase_stage() {
 		# `gpudesk`/`deskapps`. HW-proven end-to-end: docs/inprogress/2026-08-22-concurrent-
 		# gpu-v3d-server-feasibility.md. Soft steps (GPU-lib dependent); staged into /bin.
 		# Requires the GPU phase (Mesa/libGL + libv3d-phoenix.a) to have run first.
+		# The glamor daemon links libglamor.a, which only exists if the xorg-server
+		# core was CONFIGURED with --enable-glamor. Nothing here did that, so on a
+		# clean tree the daemon died with "missing libglamor.a — configure core with
+		# --enable-glamor first". It passed on an incremental tree purely because an
+		# old ad-hoc --enable-glamor reconfigure had left the archive behind — the
+		# exact stale-artifact dependency build-xserver-core.sh's --glamor flag was
+		# added to retire. Build it explicitly; the script's own glamor marker makes
+		# this a no-op once the core is already configured that way.
+		run_step_soft "X11: xorg-server core (glamor)" "${X11}/build-xserver-core.sh" --glamor
 		run_step_soft "X11: Xphoenix-glamor-daemon (concurrent-GPU X)" "${X11}/build-xfbdev.sh" --glamor-daemon
 		xgd="$(find "${X11}/src" -name Xphoenix-glamor-daemon -type f 2>/dev/null | head -1)"
 		if [ -n "$xgd" ]; then cp -v "$xgd" "${stage_dir}/bin/Xphoenix-glamor-daemon"; else warn "Xphoenix-glamor-daemon not built — skipped staging"; fi
