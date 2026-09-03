@@ -72,10 +72,23 @@ fail() { echo "FAIL: $*"; exit 1; }
 [ -f "$SYSROOT/lib/libglib-2.0.a" ] || { "$HERE/build-glib2.sh" || fail "build-glib2.sh failed"; }
 [ -f "$NCPREFIX/lib/libncurses.a" ] || { "$HERE/build-ncurses.sh" || fail "build-ncurses.sh failed"; }
 
-# mc-support: langinfo (no <langinfo.h>, no nl_langinfo) still needs a staged
-# header + stub so mc's strutil.c (nl_langinfo(CODESET)->"UTF-8") builds.
+# BOTH mc-support shims are GONE. libphoenix implements the mntent family AND
+# nl_langinfo, so mc builds against the real libc.
 #
-# The mntent shim is GONE. libphoenix implements the whole family now
+# The langinfo shim was the more dangerous of the two, and it broke a DIFFERENT
+# port: it copied its own <langinfo.h> over the SHARED
+# $SYSROOT/usr/include/langinfo.h, and that stub declares only DAY_1/ABDAY_1
+# where libphoenix (locale/langinfo.c + include/langinfo.h) defines the full
+# POSIX item set. CPython's Modules/_localemodule.c enumerates all of them, so
+# once the stub was in place python failed to compile with
+#   ./Modules/_localemodule.c:596: error: 'DAY_2' undeclared here ... did you mean 'DAY_1'?
+# The failure was invisible for months because it is BUILD-ORDER dependent:
+# python is a framework port (ports stage) and mc is a showcase step that runs
+# after it, so a full build compiled python before the pollution landed. Only a
+# rebuild that recompiled python afterwards -- against the poisoned header left
+# behind in the sysroot -- surfaced it.
+#
+# The mntent shim was the same shape. libphoenix implements the whole family now
 # (getmntent/setmntent/endmntent/addmntent/hasmntopt -- libphoenix 29f5373,
 # mntent/mntent.c), so:
 #   * copying mc-support/mntent.h over $SYSROOT/usr/include/mntent.h actively
@@ -86,14 +99,15 @@ fail() { echo "FAIL: $*"; exit 1; }
 #     set HAVE_HASMNTOPT. It also mutated a SHARED sysroot header from inside one
 #     port's build, so any other port needing mntent got the stub too.
 #   * linking mntent-stub.o would now multiply-define the libphoenix symbols.
-# mc gets the real mount table instead of a hardcoded "no mounts" list.
-cp -a "$HERE/mc-support/langinfo.h" "$SYSROOT/usr/include/langinfo.h"
-# Rebuild libmcsupport.a UNCONDITIONALLY: the langinfo stub's CODESET depends on
-# MC_VARIANT ($MC_CODESET_DEF), so a cached lib from a different variant would be
-# stale. libmcsupport.a is also not a make dependency of src/mc, so this rebuild
-# plus the src/mc removal below are what force the codeset change into the binary.
-${TC}gcc --sysroot="$SYSROOT" -O2 $MC_CODESET_DEF -c "$HERE/mc-support/langinfo-stub.c" -I"$HERE/mc-support" -o /tmp/mc-langinfo.o || fail "mc-support langinfo compile failed"
-MCSUPPORT_OBJS="/tmp/mc-langinfo.o"
+# mc gets the real mount table plumbing instead of a hardcoded "no mounts" list.
+#
+# Note the deliberate codeset change: the stub answered CODESET="UTF-8", which
+# sent mc down str_utf8_init(). libphoenix answers "ANSI_X3.4-1968" on purpose --
+# its multibyte layer maps bytes 1:1 with no UTF-8 decoder, so consumers that
+# read CODESET must stay single-byte or they misrender -- so mc now takes the
+# 8-bit str_ascii_init() path, consistent with ncurses. MC_VARIANT/MC_CODESET_DEF
+# no longer have anything to switch, since the codeset comes from libc.
+MCSUPPORT_OBJS=""
 # guard variant: compile the redzone/canary allocator shim -O0 -g
 # -fno-omit-frame-pointer and bundle it as a MEMBER of libmcsupport.a (which is
 # already on mc's final link line via GLIB_LIBS' -lmcsupport). It must be an
