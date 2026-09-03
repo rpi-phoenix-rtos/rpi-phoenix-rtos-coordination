@@ -417,10 +417,14 @@ agents, not required reading to build or use the port.
 ## License
 
 Phoenix-RTOS and its components carry their own licenses (predominantly
-BSD/MIT-style). The out-of-tree ports under `tools/` and `external/` carry the
-licenses of their upstream projects (Mesa, Quakespasm, vkQuake, X.org, etc.).
-In particular the Quake/vkQuake platform glue under `tools/quakespasm-port/` and
-`tools/vkquake-port/` is **GPL-2.0-or-later** (derivative of those GPL engines) —
-optional, opt-in showcases kept separate from the BSD core. See
-[LICENSING.md](LICENSING.md) for the full breakdown. The Quake game data is not
-included and is subject to id Software's terms.
+BSD/MIT-style). The ports carry the licenses of their upstream projects (Mesa,
+QuakeSpasm, yQuake2, quake3e, vkQuake, SuperTuxKart, X.org, etc.). In particular
+the four Quake framework ports under
+`sources/phoenix-rtos-ports/{quakespasm,yquake2,quake3,vkquake}/` — recipe, glue
+and patches — are **GPL-2.0-or-later** and the `supertuxkart` port is
+**GPL-3.0-or-later** (derivative of those GPL engines); they are optional,
+opt-in showcases kept separate from the BSD core. See
+[LICENSING.md](LICENSING.md) for the full breakdown. The game data is **not
+included in this repo**: the build fetches the freely-redistributable Quake
+shareware/demo paks and the SuperTuxKart assets from pinned URLs into the image
+*you* build, subject to their upstream terms.
