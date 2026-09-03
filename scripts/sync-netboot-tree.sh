@@ -46,7 +46,12 @@ src="$buildroot/_fs/$target/root"
 # (e.g. a leftover -gcc16 root) but the sync keeps writing the old default, so the
 # Pi silently boots a stale userspace. An explicit RPI4B_NFS_EXPORT still wins;
 # fall back to the historical default if no fsid=0 export is found.
-fsid0_export="$(awk '$0 ~ /fsid=0/ && $1 ~ /^\// { print $1; exit }' /etc/exports 2>/dev/null || true)"
+# NB: scan /etc/exports.d/*.exports too, not just /etc/exports. A duplicate
+# export declared in both files makes `exportfs -ra` fail, so the canonical entry
+# lives in exports.d -- and a detector that reads only /etc/exports then finds
+# nothing and silently falls back to the WRONG directory (which is how a sync
+# landed in /srv/phoenix-rpi4-nfs while the Pi mounts /srv/phoenix-rpi4-nfs-gcc16).
+fsid0_export="$(awk '$0 ~ /fsid=0/ && $1 ~ /^\// { print $1; exit }' /etc/exports /etc/exports.d/*.exports 2>/dev/null || true)"
 export_dir="${RPI4B_NFS_EXPORT:-${fsid0_export:-/srv/phoenix-rpi4-nfs}}"
 
 if [ ! -d "$export_dir" ]; then

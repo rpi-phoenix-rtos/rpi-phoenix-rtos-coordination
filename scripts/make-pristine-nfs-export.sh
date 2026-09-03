@@ -23,7 +23,12 @@ FS="${RPI4B_BUILDROOT:-.buildroot}/_fs/${RPI4B_TARGET:-aarch64a72-generic-rpi4b}
 # nothing mounts, so the Pi kept booting the old, stale export and the whole
 # "clean export" step silently proved nothing. Same detection as
 # sync-netboot-tree.sh:32 so the two can never disagree.
-fsid0_export="$(awk '$0 ~ /fsid=0/ && $1 ~ /^\// { print $1; exit }' /etc/exports 2>/dev/null || true)"
+# NB: scan /etc/exports.d/*.exports too, not just /etc/exports. A duplicate
+# export declared in both files makes `exportfs -ra` fail, so the canonical entry
+# lives in exports.d -- and a detector that reads only /etc/exports then finds
+# nothing and silently falls back to the WRONG directory (which is how a sync
+# landed in /srv/phoenix-rpi4-nfs while the Pi mounts /srv/phoenix-rpi4-nfs-gcc16).
+fsid0_export="$(awk '$0 ~ /fsid=0/ && $1 ~ /^\// { print $1; exit }' /etc/exports /etc/exports.d/*.exports 2>/dev/null || true)"
 EXP="${RPI4B_NFS_EXPORT:-${fsid0_export:-}}"
 [ -n "$EXP" ] || {
 	echo "FATAL: cannot determine the NFS export to replace."
