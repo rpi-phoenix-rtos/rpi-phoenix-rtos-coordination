@@ -32,6 +32,7 @@ SPDX-License-Identifier: BSD-3-Clause
 import argparse
 import glob
 import json
+import re
 import os
 import sys
 
@@ -96,6 +97,91 @@ def viewpoint_mae(path, ref_small, size=(160, 90)):
     return sum(i * n for i, n in enumerate(hist)) / float(total)
 
 
+def classify(frames, args, spec, basis_w, required, thresh, ref_small):
+    """Return (verdict, n_at_viewpoint, best_counts) for one trial's frames."""
+    passed = 0
+    at_vp = 0
+    best = (0, 0)
+    for path in frames:
+        try:
+            img = Image.open(path)
+        except Exception:                                         # noqa: BLE001
+            continue
+        if ref_small is not None and viewpoint_mae(path, ref_small) > args.viewpoint_mae:
+            continue
+        at_vp += 1
+        counts = [flame_pixels(img, r["box"], basis_w) for r in required]
+        if min(counts) > min(best):
+            best = tuple(counts[:2])
+        if all(n >= thresh for n in counts):
+            passed += 1
+    if at_vp == 0:
+        return ("INCONCLUSIVE", at_vp, best)
+    if passed >= args.min_pass:
+        return ("PRESENT", at_vp, best)
+    return ("ABSENT", at_vp, best)
+
+
+def rate_mode(args, spec, basis_w, required, ignored, thresh):
+    """Score every trial of a test-cycle-bench run and report a pass RATE.
+
+    A single boot cannot settle an intermittent render. #67 was "fixed" five
+    times historically, each confirmed by one screenshot, and this project then
+    measured the same configuration PRESENT twice and ABSENT six times -- so the
+    unit of evidence has to be a rate over trials, not a verdict on one frame.
+
+    INCONCLUSIVE is reported separately and never counted as a failure: it means
+    no frame in that trial was taken at the reference viewpoint (the map did not
+    load, or the console covered the view). The capture path has its own flake
+    rate and lumping it into "absent" would understate the render.
+    """
+    ref_small = None
+    if not args.no_viewpoint_check:
+        ref_small = Image.open(args.reference).convert("L").resize((160, 90),
+                                                                   Image.BILINEAR)
+
+    pat = os.path.join(REPO, "artifacts", "hdmi", "*-%s-T*-*.png" % args.rate)
+    allf = sorted(glob.glob(pat))
+    if not allf:
+        sys.exit("check-torch-rois: no frames for bench label %r "
+                 "(expected artifacts/hdmi/*-%s-T<i>-*.png)" % (args.rate, args.rate))
+
+    trials = {}
+    for f in allf:
+        m = re.search(r"-%s-(T\d+)-" % re.escape(args.rate), os.path.basename(f))
+        if m:
+            trials.setdefault(m.group(1), []).append(f)
+
+    print("bench label: %s   trials: %d   threshold: %d lit px   min-pass: %d frames"
+          % (args.rate, len(trials), thresh, args.min_pass))
+    print("")
+    print("%-8s %-13s %-12s %s" % ("TRIAL", "VERDICT", "AT-VIEWPOINT", "BEST L/R"))
+
+    tally = {"PRESENT": 0, "ABSENT": 0, "INCONCLUSIVE": 0}
+    for t in sorted(trials, key=lambda x: int(x[1:])):
+        verdict, at_vp, best = classify(trials[t], args, spec, basis_w, required,
+                                        thresh, ref_small)
+        tally[verdict] += 1
+        print("%-8s %-13s %-12d %d / %d" % (t, verdict, at_vp, best[0],
+                                            best[1] if len(best) > 1 else 0))
+
+    gradeable = tally["PRESENT"] + tally["ABSENT"]
+    print("")
+    print("present %d   absent %d   inconclusive %d" %
+          (tally["PRESENT"], tally["ABSENT"], tally["INCONCLUSIVE"]))
+    if gradeable == 0:
+        print("RATE: n/a -- every trial was inconclusive; the capture path, not the")
+        print("render, is what needs fixing first.")
+        return 2
+    print("RATE: %d/%d gradeable trials rendered torches (%.0f%%)"
+          % (tally["PRESENT"], gradeable, 100.0 * tally["PRESENT"] / gradeable))
+    if tally["INCONCLUSIVE"]:
+        print("NOTE: %d trial(s) never reached the reference viewpoint -- excluded from"
+              % tally["INCONCLUSIVE"])
+        print("the rate, not counted as failures. Capture flake, measure it separately.")
+    return 0 if tally["PRESENT"] == gradeable else 1
+
+
 def main():
     ap = argparse.ArgumentParser(add_help=True)
     ap.add_argument("frames", nargs="*", help="PNG frames to score")
@@ -112,6 +198,9 @@ def main():
                     help="max mean-abs-difference from the reference viewpoint (default 8)")
     ap.add_argument("--no-viewpoint-check", action="store_true",
                     help="score the ROIs regardless of viewpoint (diagnostics only)")
+    ap.add_argument("--rate", metavar="LABEL",
+                    help="grade a test-cycle-bench run: score every <LABEL>-T<i> trial "
+                         "and report a PASS RATE instead of a single verdict")
     args = ap.parse_args()
 
     with open(args.spec) as fh:
@@ -120,6 +209,9 @@ def main():
     required = [r for r in spec["rois"] if r.get("require") and not r.get("ignore")]
     ignored = [r for r in spec["rois"] if r.get("ignore")]
     thresh = args.threshold if args.threshold is not None else 8
+
+    if args.rate:
+        return rate_mode(args, spec, basis_w, required, ignored, thresh)
 
     frames = list(args.frames)
     if args.label:
