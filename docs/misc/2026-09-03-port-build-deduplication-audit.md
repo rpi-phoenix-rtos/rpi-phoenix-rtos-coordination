@@ -865,8 +865,10 @@ reads its output.
    under `TERM=vt100`. **Do this one first — it is the reference migration.**
 2. **`mc`** (after 0a) — flip `if: true`, delete step `:520`. Framework `mc` pulls
    `ncurses` + `glib2` + `libiconv` through `depends=`, which means this single
-   flip also brings **glib2, ncurses and real GNU libiconv** onto the framework
-   path for the first time. Breakage if the script vanished today: the legacy
+   flip puts **mc's whole chain** — glib2, ncurses and real GNU libiconv — on
+   the framework path for the first time. (libiconv itself is already
+   framework-built via `dillo`'s `depends=`; what is new is that *mc* gets the
+   real one instead of the stub.) Breakage if the script vanished today: the legacy
    `libmcsupport.a` and `langinfo.h` in the shared sysroot disappear (good), and
    the four diagnostic variants (`mc-ascii`/`mc-dbg`/`mc-guard`) go — delete them
    per the project's diagnostic-code rule rather than migrating. Test: mount
