@@ -15,6 +15,15 @@
 #   ./scripts/compare-rootfs-binaries.sh            # key binaries (fast)
 #   ./scripts/compare-rootfs-binaries.sh --full     # + whole-tree diff
 #
+#   # verify the EXPORTED artifact (what actually gets flashed) rather than the
+#   # build's bare ext2, which a later build of a different --variant replaces:
+#   RPI4B_SD_IMAGE=artifacts/rpi4b/rpi4b-sd-2part.img ./scripts/compare-rootfs-binaries.sh
+#
+# DO NOT run this while a build is in flight. prepare-buildroot.sh rsyncs
+# _fs/<target>/root with --delete, so mid-build the build-tree column reads as
+# MISSING for most paths and a half-copied file hashes differently -- which looks
+# exactly like the staging bug this script exists to catch. Wait for the build.
+#
 # Exit 0 only when every compared path matches in all three places.
 #
 # Copyright 2026 Phoenix Systems
@@ -24,7 +33,19 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET="${RPI4B_TARGET:-aarch64a72-generic-rpi4b}"
+# Default to the build's bare ext2. RPI4B_SD_IMAGE lets you point this at the
+# EXPORTED 2-partition image instead -- i.e. verify the artifact that actually
+# gets flashed, not a build intermediate that a later build of a different
+# --variant may have replaced. debugfs reads a partition inside an image via the
+# "file?offset=N" syntax, so resolve partition 2's start from the partition table
+# rather than hardcoding it.
 E2="${ROOT}/.buildroot/_boot/${TARGET}/part_rootfs.ext2"
+if [ -n "${RPI4B_SD_IMAGE:-}" ]; then
+	[ -f "${RPI4B_SD_IMAGE}" ] || { printf 'compare-rootfs-binaries: no such image: %s\n' "${RPI4B_SD_IMAGE}" >&2; exit 2; }
+	part2_start="$(partx -g -o START -n 2 "${RPI4B_SD_IMAGE}" 2>/dev/null | tr -d ' ')"
+	[ -n "${part2_start}" ] || { printf 'compare-rootfs-binaries: cannot read partition 2 start from %s\n' "${RPI4B_SD_IMAGE}" >&2; exit 2; }
+	E2="${RPI4B_SD_IMAGE}?offset=$((part2_start * 512))"
+fi
 FS="${ROOT}/.buildroot/_fs/${TARGET}/root"
 TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP}"' EXIT
@@ -62,7 +83,10 @@ die() {
 	exit 2
 }
 
-[ -f "${E2}" ] || die "no ext2 rootfs image at ${E2} — run the sd-variant build first"
+case "${E2}" in
+*\?offset=*) : ;;   # already validated above
+*) [ -f "${E2}" ] || die "no ext2 rootfs image at ${E2} — run the sd-variant build first" ;;
+esac
 [ -d "${FS}" ] || die "no build rootfs tree at ${FS} — the fs/ports stages did not run"
 [ -n "${EXP}" ] && [ -d "${EXP}" ] || die "cannot locate the fsid=0 NFS export (set RPI4B_NFS_EXPORT)"
 command -v debugfs >/dev/null 2>&1 || die "debugfs not found (e2fsprogs) — needed to read the image without root"
