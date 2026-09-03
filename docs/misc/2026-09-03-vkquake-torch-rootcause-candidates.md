@@ -18,7 +18,7 @@ Measured starting point (not inferred):
 ### 0.1 Does V3DV expose `fillModeNonSolid`? Yes — but the port throws it away.
 
 - **V3DV advertises it:** `external/mesa/src/broadcom/vulkan/v3dv_device.c:334` → `.fillModeNonSolid = true`.
-- **The shim even enables it on the device:** `sources/phoenix-rtos-ports/vkquake/glue/pl_phoenix_vk_vid.c:872`
+- **The shim even enables it on the device:** `sources/phoenix-rtos-ports/vkquake/glue/pl_phoenix_vk_vid.c:231`
   copies `device_features.fillModeNonSolid` into `VkPhysicalDeviceFeatures enabled`.
 - **Then the shim hardcodes the engine flag off:** `pl_phoenix_vk_vid.c:876` →
   `vulkan_globals.non_solid_fill = false;` (in the block that also forces `screen_effects_sops`,
