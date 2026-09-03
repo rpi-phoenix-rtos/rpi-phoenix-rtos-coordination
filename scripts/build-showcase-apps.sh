@@ -481,7 +481,6 @@ phase_stage() {
 	mkdir -p "${stage_dir}/usr/share" "${stage_dir}/etc" "${stage_dir}/usr/lib"
 
 	local X11="${repo_root}/tools/x11-port"
-	local PORTS="${repo_root}/tools/ports"
 
 	# --- game launchers (hard-fail: without them three of the five games have no
 	# usable entry point from psh, which cannot set env vars or chain commands) ---
