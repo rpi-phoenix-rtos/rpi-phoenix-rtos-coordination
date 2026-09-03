@@ -19,9 +19,10 @@ Companions: [`2026-09-03-quake-torch-regression-archaeology.md`](2026-09-03-quak
 otherwise-correct frame.** But this analysis found something the record did not have, and it is
 *not* a "no connection" answer either:
 
-> **The torch verdict is perfectly predicted, across all 25 gradeable boots on record, by whether
+> **The torch verdict is perfectly predicted, across all 26 gradeable boots on record, by whether
 > the run logged a GPU wedge on a control list at GPU-VA page `0x0acd5xxx` or `0x0acd0xxx`.**
-> 22/22 ABSENT boots have such a line. 3/3 PRESENT boots do not. p ≈ 4.3 × 10⁻⁴ (§4).
+> 23/23 ABSENT boots have such a line. 3/3 PRESENT boots do not. p ≈ 3.8 × 10⁻⁴ (§4), and one of
+> the 23 (`vkq-lerp2b-T8`) arrived *after* the prediction was written down — it held.
 > Every wedge in every vkQuake run occurs **before the map-load print** — i.e. during
 > `Host_Init` + `Cbuf_Execute("map start")`, the one-shot staging/meta-copy upload phase — and
 > **not one** wedge occurs during the ~2.5 minutes of steady-state rendering that follows.
@@ -55,13 +56,13 @@ different, unaligned hardware store path from all the others. That is the **susc
 ## 1. New measurement A — the absence is PER-BOOT LATCHED, not per-frame
 
 This had never been measured. Grading every gradeable HDMI tick of every vkQuake boot on record
-(`./scripts/check-torch-rois.py --label <label>`, 25 gradeable boots, 7–9 gradeable frames each,
-~190 frames):
+(`./scripts/check-torch-rois.py --label <label>`, 26 gradeable boots, 7–9 gradeable frames each,
+~200 frames):
 
 | | boots | frames per boot | mixed boots |
 | --- | --- | --- | --- |
 | PRESENT boots | 3 | **all** gradeable frames pass (e.g. `vkq-lerp2b-T6` 9/9, values 281–599 lit px, animating) | — |
-| ABSENT boots | 22 | **every** gradeable frame reads **exactly 0** lit px in both ROIs | — |
+| ABSENT boots | 23 | **every** gradeable frame reads **exactly 0** lit px in both ROIs | — |
 | **mixed (some frames present, some absent) within one boot** | **0** | | **0** |
 
 There is not a single mixed boot. An ABSENT boot renders ~120 consecutive frames over ~2.5 minutes
@@ -102,7 +103,7 @@ specifically."* That is now false. Every vkQuake run on record logs 1–5 `GPU w
 | verdict | wedge counts observed |
 | --- | --- |
 | PRESENT | `vkq-lerp-rep` **0**, `vkq-lerp3` **4**, `vkq-lerp2b-T6` **3** |
-| ABSENT | 1, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5 |
+| ABSENT | 1, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 5, 5 |
 
 PRESENT occurs with 0 wedges **and** with 4. ABSENT occurs with 1 through 5. **The wedge count is
 uncorrelated with the torch verdict.** Anyone reaching for "more GPU trouble ⇒ torches vanish" is
@@ -150,14 +151,16 @@ the (never rate-limited) `BIN TIMEOUT` / `RENDER TIMEOUT` one-liners, against th
 | `vkq-lerp2b-T4` | ABSENT | 3 | acc7 acce **acd0** | yes |
 | `vkq-lerp2b-T5` | ABSENT | 3 | ac09 acc7 **acd5** | yes |
 | `vkq-lerp2b-T7` | ABSENT | 4 | abf0 ac43 acc7 **acd5** | yes |
+| `vkq-lerp2b-T8` | ABSENT | 3 | abc5 acc7 **acd5** | yes |
 
 Non-gradeable runs (viewpoint gate; excluded from the statistic, listed for completeness):
 `vkq-lerp2` INCONCLUSIVE, 146 wedges, has `acd0`; `vkq-trace` INCONCLUSIVE, has `acd5`;
 `vkq-def-d1` INCONCLUSIVE, has `acd5`.
 
-**25/25 perfect separation.** Under the null hypothesis that the verdict is independent of the
-marker, the probability that the three PRESENT boots are exactly the three marker-free boots is
-`1/C(25,3) = 1/2300 ≈ 4.3 × 10⁻⁴`.
+**26/26 perfect separation** (`vkq-lerp2b-T8` was added by the running bench after this table was
+first written — a genuine out-of-sample test of the prediction in E1, and it held). Under the null
+hypothesis that the verdict is independent of the marker, the probability that the three PRESENT
+boots are exactly the three marker-free boots is `1/C(26,3) = 1/2600 ≈ 3.8 × 10⁻⁴`.
 
 Note also `vkq-lerp2b-T4` vs `vkq-lerp2b-T6`: **same binary, same command, same wedge count (3), two
 of three wedge addresses identical** — they differ only in whether the third wedge hit `acd0`
