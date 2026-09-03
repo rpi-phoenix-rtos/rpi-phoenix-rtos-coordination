@@ -66,7 +66,7 @@ INSTALL=0
 for arg in "$@"; do
 	case "$arg" in
 		--install) INSTALL=1 ;;
-		-h|--help) sed -n '2,40p' "${BASH_SOURCE[0]:-$0}"; exit 0 ;;
+		-h|--help) sed -n '2,58p' "${BASH_SOURCE[0]:-$0}"; exit 0 ;;
 		*) echo "unknown option: $arg" >&2; exit 2 ;;
 	esac
 done
