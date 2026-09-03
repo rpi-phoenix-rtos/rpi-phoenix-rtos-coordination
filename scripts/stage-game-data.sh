@@ -228,24 +228,42 @@ stage_stk_assets() {
 # the hand-maintained NFS export happened to carry a config.cfg written by an
 # earlier run; a pristine rootfs correctly has no such runtime state, so the
 # mode has to be part of the image.
+# Shipped settings go in autoexec.cfg, NOT config.cfg. quake.rc (inside pak0.pak)
+# execs default.cfg -> config.cfg -> autoexec.cfg -> stuffcmds, so autoexec is
+# read every start and WINS over config.cfg without ever clobbering it. config.cfg
+# is the game's own file: it is rewritten on every clean exit, so anything we put
+# there is both fragile and in the way.
+#
+# The old version wrote config.cfg and returned early when the file already
+# existed ("do not clobber a config the user has written"). That intent was right
+# but the effect was a silent no-op: on any export that had ever run the game, a
+# newly shipped setting was skipped with only a log line to say so. That cost a
+# real experiment -- an `r_lerpmodels "2"` line added to this heredoc on
+# 2026-09-03 never reached the Pi, and the resulting "the cvar does nothing from
+# config.cfg" reading became a phantom engine mystery that was chased through the
+# command-buffer exec order before the guard turned out to be the whole story.
+#
+# There is a second reason not to use config.cfg: vkQuake's CONFIG_NAME is
+# "vkQuake.cfg" (Quake/quakedef.h:33) and COM_FindFile prefers it, so one clean
+# exit of vkQuake plants a file that permanently shadows any config.cfg we ship.
+# autoexec.cfg is unaffected by that lookup.
 stage_q1_video_cfg() {
-	local dst="${overlay_root}/usr/share/quake/id1/config.cfg"
+	local dst="${overlay_root}/usr/share/quake/id1/autoexec.cfg"
 
-	# Do not clobber a config the user (or the game) has written.
-	if [ -f "$dst" ]; then
-		log "q1: config.cfg already present — left alone"
-		return 0
-	fi
-
+	# Ours to own, so always refresh it -- that is the point.
 	cat >"$dst" <<'CFG'
 // Shipped by scripts/stage-game-data.sh so the game is full-screen out of the
 // box. QuakeSpasm's default is 800x600; the Pi 4 scanout is 1920x1080, and a
 // smaller mode leaves stale console pixels around the frame.
+//
+// vkQuake does not register the vid_* cvars (its Phoenix video shim replaces
+// gl_vidsdl.c), so it prints three harmless `Unknown command "vid_..."` lines
+// on startup. That is expected, not a fault.
 vid_width "1920"
 vid_height "1080"
 vid_fullscreen "1"
 CFG
-	log "q1: staged config.cfg (1920x1080 fullscreen)"
+	log "q1: staged autoexec.cfg (1920x1080 fullscreen; always refreshed)"
 }
 
 # Quake III needs OUR ioquake3-built QVMs and a format-valid key, or it dies
