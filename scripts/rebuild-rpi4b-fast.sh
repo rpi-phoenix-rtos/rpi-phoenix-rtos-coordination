@@ -479,6 +479,24 @@ if [ "${scope}" = "full-clean" ] && [ "${RPI4B_KEEP_HOST_CACHES:-0}" != 1 ]; the
 	       /tmp/libv3d-client.o /tmp/glamor_phoenix_ctx.o /tmp/epoxy_shim.o \
 	       /tmp/gl_x11_window.o
 
+	# The EXTRACTED port source trees (tools/{ports,x11-port}/src/<pkg>/) keep
+	# their .o files and their config.status, and every tools/ports script skips
+	# configure when config.status is present. So a full-clean still recompiles
+	# those ports from objects built against an older libphoenix.
+	#
+	# Not wiped by default, deliberately: re-extracting ~40 packages re-runs every
+	# configure (adds well over an hour), and the Docker --no-cache build already
+	# proves the from-nothing path -- it clones fresh, so no extracted tree exists
+	# at all. Set RPI4B_CLEAN_PORT_SOURCES=1 to close the hole here too; the
+	# tarballs are kept, so this re-extracts and re-patches without re-downloading.
+	if [ "${RPI4B_CLEAN_PORT_SOURCES:-0}" = 1 ]; then
+		printf 'Full-clean: re-extracting port sources (RPI4B_CLEAN_PORT_SOURCES=1)\n'
+		for srcdir in "${repo_root}"/tools/ports/src "${repo_root}"/tools/x11-port/src; do
+			[ -d "${srcdir}" ] || continue
+			find "${srcdir}" -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} +
+		done
+	fi
+
 	# The EXTRACTED, PATCHED and CONFIGURED port trees. Wiping the /tmp prefixes
 	# alone is not enough and is the trap this block exists to avoid: every
 	# config.status, every ".already patched" stamp (.dillo-tls-mode,
