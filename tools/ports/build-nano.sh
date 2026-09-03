@@ -25,6 +25,8 @@ HERE=${ROOT}/tools/ports
 SRC=$HERE/src
 XDIR=$SRC/$NV
 SHIM=$HERE/nano-phoenix-shim.h
+# Single source of truth for the source fixes: the framework port's patch dir.
+PATCHES=${ROOT}/sources/phoenix-rtos-ports/nano/patches
 NFS="${SHOWCASE_STAGE_DIR:-/srv/phoenix-rpi4-nfs}"
 
 fail() { echo "FAIL: $*"; exit 1; }
@@ -35,6 +37,16 @@ mkdir -p "$SRC"
 if [ ! -d "$XDIR" ]; then
 	[ -f "$SRC/$NV.tar.gz" ] || { echo "=== fetching $URL ==="; curl -sSL --max-time 120 -o "$SRC/$NV.tar.gz" "$URL" || fail "download failed"; }
 	tar -C "$SRC" -xf "$SRC/$NV.tar.gz" || fail "extract failed"
+
+	# Apply the SAME patches the framework port applies, from the same directory,
+	# so the two build paths cannot diverge. Only on a fresh extract: patch(1) is
+	# not idempotent, and re-running this script must not re-apply.
+	for p in "$PATCHES"/*.patch; do
+		[ -f "$p" ] || continue
+		( cd "$XDIR" && patch -p1 -i "$p" ) >/tmp/nano-patch.log 2>&1 \
+			|| { tail -20 /tmp/nano-patch.log; fail "patch $(basename "$p") failed"; }
+		echo "=== applied $(basename "$p") ==="
+	done
 fi
 
 # Refresh config.sub/guess if too old to know "phoenix".
