@@ -220,11 +220,40 @@ stage_stk_assets() {
 	log "[stk] staged stk-assets/ -> $dst ($(du -sh "$dst" | cut -f1))"
 }
 
+# QuakeSpasm's SDL2 video path defaults to 800x600, and it reads config.cfg
+# BEFORE VID_Init, so the shipped image has to state the mode or the game comes
+# up in a 800x600 window inside the 1920x1080 scanout -- the rest of the
+# framebuffer keeps whatever the console last drew, which looks exactly like a
+# torn/shredded frame and reads as a GPU bug. It only ever worked before because
+# the hand-maintained NFS export happened to carry a config.cfg written by an
+# earlier run; a pristine rootfs correctly has no such runtime state, so the
+# mode has to be part of the image.
+stage_q1_video_cfg() {
+	local dst="${overlay_root}/usr/share/quake/id1/config.cfg"
+
+	# Do not clobber a config the user (or the game) has written.
+	if [ -f "$dst" ]; then
+		log "q1: config.cfg already present — left alone"
+		return 0
+	fi
+
+	cat >"$dst" <<'CFG'
+// Shipped by scripts/stage-game-data.sh so the game is full-screen out of the
+// box. QuakeSpasm's default is 800x600; the Pi 4 scanout is 1920x1080, and a
+// smaller mode leaves stale console pixels around the frame.
+vid_width "1920"
+vid_height "1080"
+vid_fullscreen "1"
+CFG
+	log "q1: staged config.cfg (1920x1080 fullscreen)"
+}
+
 log "overlay root: $overlay_root"
 mkdir -p "$overlay_root"
 for g in "${games[@]}"; do
 	case "$g" in
-		q1)  stage_quake q1 usr/share/quake/id1     "$PAK0_URL"   "$PAK0_SHA256" ;;
+		q1)  stage_quake q1 usr/share/quake/id1     "$PAK0_URL"   "$PAK0_SHA256"
+		     stage_q1_video_cfg ;;
 		q2)  stage_quake q2 usr/share/quake2/baseq2 "$PAK0Q2_URL" "$PAK0Q2_SHA256" ;;
 		q3)  stage_quake q3 usr/share/quake3/demoq3 "$PAK0Q3_URL" "$PAK0Q3_SHA256" ;;
 		stk) stage_stk_data; stage_stk_assets ;;
