@@ -25,7 +25,25 @@ The ioq3 UI enforces `Com_CDKeyValidate`, which only checks the FORMAT: 16
 characters from `{2,3,7,A,B,C,D,G,H,J,L,P,R,S,T,W}` and no checksum. A generated
 key of that shape satisfies it. This is the free demo, not a retail key.
 
-## Reproducibility — open gap
+## Reproducibility — how to rebuild these (open gap)
+
+Concrete recipe, established 2026-09-03:
+
+* `external/quake3e` **does** carry the VM sources we need — `code/game`,
+  `code/cgame`, `code/ui` — so the QVMs can be built from the SAME pinned engine
+  tree, which is what guarantees the API versions match (`UI_API_VERSION 6`).
+* quake3e does **not** ship the QVM compiler: `code/tools/lcc` and
+  `code/tools/asm` are absent (it expects an external toolchain). So the missing
+  piece is `q3lcc` + `q3asm`, which live in **ioquake3** (GPL-2.0) under
+  `code/tools/`. Those are HOST tools (x86), not cross-compiled.
+* Steps: pin an ioquake3 revision -> build `q3lcc`/`q3asm` on the host ->
+  compile `code/{game,cgame,ui}` from `external/quake3e` with them -> `zip` the
+  three `vm/*.qvm` into `pak1.pk3`. No id content is involved at any step.
+* Licensing note: the QVMs are GPL-2.0 game-logic binaries. They belong in the
+  IMAGE as game data (this directory / `stage-game-data.sh`), never inside a
+  Phoenix core repo.
+
+## Why this is still staged rather than rebuilt
 
 These QVMs are a build artifact whose build recipe is NOT yet in the repo, so
 this file is currently staged rather than rebuilt. The proper fix is a port step
