@@ -396,7 +396,7 @@ clone_external_deps() {
 					warn "couldn't check out pinned ref $ref for external/$subdir"
 				apply_dep_patch "$dest" "$patch"
 			else
-				log "  already present: external/$subdir (leaving as-is)"
+				log "  already present: external/$subdir (leaving as-is) at $(git -C "$dest" rev-parse --short HEAD 2>/dev/null || echo '?')"
 			fi
 			continue
 		fi
@@ -409,6 +409,12 @@ clone_external_deps() {
 			warn "couldn't check out pinned ref $ref for external/$subdir"
 		# A fresh clone is pristine upstream — apply the Phoenix port patch.
 		apply_dep_patch "$dest" "$patch"
+		# Record the SHA this build actually got. A branch pin is not provenance:
+		# on 2026-09-03 a clean-room image was built from a fork commit that was
+		# reverted an hour later, and nothing in the 4.3 MB build log said which
+		# commit went in -- the only way to find out afterwards was to grep strings
+		# out of the shipped ELF. One line here makes every future build auditable.
+		log "  external/$subdir at $(git -C "$dest" rev-parse --short HEAD 2>/dev/null || echo '?') ($(git -C "$dest" log -1 --format=%cs 2>/dev/null || echo '?'))"
 	done
 }
 
