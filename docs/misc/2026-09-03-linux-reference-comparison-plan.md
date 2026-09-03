@@ -90,3 +90,41 @@ never be found without a control implementation.
   single UART/TFTP rig, one at a time.
 - The torch verdict must come from `--rate` over >=8 boots, never a screenshot.
   This bug has five false closures on single frames.
+
+---
+
+## Readiness audit, 2026-09-03 (measured, not assumed)
+
+The claim above that this is "cheap and NOT owner-blocked" holds on the boot side
+and **fails on the software side**. What is actually in `artifacts/linux-netboot/`:
+
+- `rootfs/` is **Debian 13 (trixie) arm64**, 5.5 GB, NFS-root netboot, and it boots
+  with no card — so the *hardware* half is genuinely unblocked, as claimed.
+- But the Vulkan stack is **absent**: no `vulkaninfo`, no `libvulkan.so.1`, no
+  `/usr/share/vulkan/icd.d` (so no V3DV ICD), no `vkquake`, and no `git`. It does
+  have `gcc`.
+
+So step 1 of the plan ("netboot Linux, confirm V3DV is live") cannot run as written —
+`vulkaninfo` does not exist yet. Corrected step 0, to run before it:
+
+0. **Bring up the Vulkan stack inside the Linux rootfs.** Two routes; prefer (a):
+   a. **On the Pi, over the network.** Netboot Linux, then `apt install
+      mesa-vulkan-drivers vulkan-tools` (+ SDL2/build deps for vkQuake). The Pi
+      already reaches the internet through the host NAT + dnsmasq path we use for
+      the browsing demo, so this is unattended. Slowest link is NFS-root write
+      speed, not bandwidth.
+   b. **On the host, into the rootfs.** Needs `qemu-user-static` binfmt to chroot an
+      arm64 tree from this x86 host. More moving parts, and it writes to a
+      root-owned tree; only worth it if (a) turns out to need a console.
+   Record the Mesa version apt installs and compare it to `external/mesa` — the
+   comparison is only meaningful with that delta written down.
+
+**Literature check, done 2026-09-03 (the owner explicitly invited this):** searched
+for any report of missing torch/flame alias models in vkQuake on Pi 4 / V3D / V3DV,
+and for a Mesa-v3d defect around two vertex attributes bound at the same buffer
+offset. **Nothing found either way** — no bug report describing our symptom, and no
+Mesa issue matching the suspected mechanism. That is a *null result*, not evidence
+of absence: our symptom is specific enough that nobody may have looked. It leaves
+the prior in this document unchanged (Igalia's dev log has vkQuake 1/2/3 working on
+V3DV, so "Linux renders it correctly" stays the more likely outcome) and it means
+the running experiment, not the literature, has to settle the owner's question.
