@@ -1,0 +1,30 @@
+{
+  "_doc": "ROIs for the Quake start-map archway torch-presence gate. See docs/misc/2026-09-03-quake-torch-regression-archaeology.md section 5.1.",
+  "_reference": "docs/misc/torch-archaeology/host-reference-start-map.png (host quakespasm, map start, info_player_start 544 288 32 angle 90)",
+  "_frame_basis": [1920, 1080],
+  "_scale_rule": "multiply all boxes by (frame_width / 1920); HDMI tick grabs are 3840x2160 -> factor 2",
+  "_box_format": "[x0, y0, x1, y1] inclusive-exclusive, in the 1920x1080 basis",
+  "_pass_rule": "for each require:true ROI, count pixels with R>180 && R>G+40 && G>B+20 (flame fullbright core); ROI passes at >=8 such pixels; the frame passes when both required ROIs pass; the CYCLE passes when >=2 tick frames pass (the flame animates and single frames can tear)",
+  "rois": [
+    {
+      "id": "archway_torch_left",
+      "entity": "light_torch_small_walltorch (394 762 84), progs/flame.mdl",
+      "box": [705, 435, 765, 510],
+      "require": true
+    },
+    {
+      "id": "archway_torch_right",
+      "entity": "light_torch_small_walltorch (698 762 84), progs/flame.mdl",
+      "box": [1158, 440, 1218, 515],
+      "require": true
+    },
+    {
+      "id": "lavaball_decoy",
+      "entity": "misc_fireball (864 992 -168) launches progs/lavaball.mdl",
+      "box": [1240, 200, 1330, 700],
+      "require": false,
+      "ignore": true,
+      "_why": "DO NOT COUNT THIS. It is a MOVING projectile on a periodic timer, so it is present in some frames and absent in others, and it looks like an orange/red flame. On 2026-08-22 this decoy was mistaken for a restored wall torch and closed the bug on a false positive (grab 20260822-200435-vkq-torchfix-tick.png). It is listed here only so a future checker excludes it explicitly."
+    }
+  ]
+}

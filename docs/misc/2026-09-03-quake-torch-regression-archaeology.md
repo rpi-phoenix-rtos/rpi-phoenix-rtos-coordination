@@ -30,8 +30,7 @@ external/quakespasm/Quake/quakespasm -basedir <scratch> -width 1920 -height 1080
 → `docs/misc/torch-archaeology/host-reference-start-map.png` (1920x1080).
 
 Ground truth for `start.bsp` (entity lump extracted from
-`/srv/phoenix-rpi4-nfs/usr/share/quake/id1/pak0.pak`, md5 `5906e5998f…`, **identical in all
-9 staged copies** — game data is *not* a variable here):
+`/srv/phoenix-rpi4-nfs/usr/share/quake/id1/pak0.pak`, md5 `5906e5998f…`, **identical across the 6 staged copies checked** — game data is *not* a variable here):
 
 | classname | count | model | entity kind |
 | --- | --- | --- | --- |
@@ -115,8 +114,8 @@ failure and is bit-for-bit the **pre-`d3e329c` symptom**.
 | `__phoenix__` guard actually defined? | yes | `aarch64-phoenix-gcc -dM -E` → `#define __phoenix__ 1` |
 | shipped ELF | current | `/srv/phoenix-rpi4-nfs-gcc16/usr/bin/vkquake`, 12,799,520 B, 2026-09-03 09:28:58 == `.buildroot/…/prog.stripped/vkquake` |
 
-And the shader bytes are **identical to the ones that ran on the day the fix was declared
-working**: the 2026-08-04 00:00 UART log `rpi4b-uart-20260804-000020-vkq-alpha1.log` reports
+And the shader modules are **the same generation as the ones that ran on the day the fix was
+declared working**: the 2026-08-04 00:00 UART log `rpi4b-uart-20260804-000020-vkq-alpha1.log` reports
 `shmod alias_frag size=2036 / alias_alphatest_frag 2120 / alias_oit_frag 2716 /
 alias_alphatest_oit_frag 2800` — byte-for-byte the current blob's array sizes.
 
@@ -136,7 +135,8 @@ Two smaller live hazards found en route (real, but *not* the cause here):
 ## 4. Mechanism verdict
 
 The recurrence is **not** caused by dual build paths or fork↔patch drift. Both were checked
-and both are clean for these two ports today: the `tools/quakespasm-port` /
+and both are clean for these two ports' **engine sources** today (the hand-maintained `glue/`
+shims *are* drifting — see §5.2 — but the drifting file is not torch-related): the `tools/quakespasm-port` /
 `tools/vkquake-port` scripts are invoked by nothing (`build-showcase-apps.sh:381-385` records
 their retirement on 2026-09-03), `phase_stage()` stages no engine binary, and
 `game-port-patch.sh --check` reports both games byte-current against their forks. The
@@ -220,6 +220,17 @@ falls back to a 5-word placeholder module** if no glslang is on `PATH`.
 - Have `gen-vkquake-shaders.py` write a header line `/* generated from Shaders/ @ sha256:<h> (mode: REAL|PLACEHOLDER) */`, hashing the concatenated sorted `Shaders/*.{vert,frag,comp,inc,h}`.
 - Extend `scripts/game-port-patch.sh --check` with a `vkquake-shaders` row that recomputes that hash from `external/vkquake/Shaders` and reports `STALE` on mismatch.
 - Make `port.def.sh` **`b_die`** if the blob's mode is `PLACEHOLDER` or if any `*_spv` array is ≤ 20 bytes. A placeholder shader must never reach a ship build.
+
+The same blind spot exists one level over, and it is **live today**: the `glue/` shims are
+hand-maintained in `sources/phoenix-rtos-ports/<port>/glue/` with a second copy under
+`tools/<port>-port/`, and `--check` compares neither. Four files currently differ, and in
+`vkquake/glue/pl_phoenix_sdlcompat.c` the **`tools/` copy is the newer one**: it dropped a
+local `double copysign(double,double)` on 2026-09-02 because libphoenix/libm now export it,
+while the shipping copy still defines it — the link only survives because `port.def.sh:251`
+passes `-Wl,--allow-multiple-definition`, so the shipped `vkquake` binds our stale local
+`copysign`. Not torch-related, but it is a live instance of exactly the family the owner
+suspects. Extend `--check` with a `glue` row that diffs each shipping shim against its
+`tools/` counterpart (or delete the `tools/` copies now that nothing invokes them).
 
 ### 5.3 Close the regen trap that would delete the torch fix
 
