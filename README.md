@@ -347,8 +347,8 @@ A **modern 3D kart racer** — not a 1990s engine — running on the V3D GPU via
 its SP renderer on **OpenGL ES 3.x**:
 
 ```
-stk                                  # boot to the main menu
-stk -N --track=olivermath            # jump straight into an AI race
+stk                                  # launch SuperTuxKart
+stk -N --track=olivermath            # auto-race flags: drive a race with no input
 ```
 
 SuperTuxKart is built by the `supertuxkart` framework port and **ships on the

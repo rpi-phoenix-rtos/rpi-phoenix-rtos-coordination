@@ -313,8 +313,10 @@ sudo mkdir -p /srv/phoenix-rpi4-nfs/usr/share/quake/id1
 sudo cp pak0.pak /srv/phoenix-rpi4-nfs/usr/share/quake/id1/
 ```
 
-The `quake2`, `quake3` and `stk` launchers RAM-stage their assets to `/tmp` first,
-so they load fast even over NFS. Two caveats over **netboot NFS specifically**:
+The `quake2` and `quake3` launchers RAM-stage their assets to `/tmp` first, so
+they load fast even over NFS. (`stk` does **not** — it reads its asset roots in
+place and only puts its writable save dir in `/tmp`.) Two caveats over **netboot
+NFS specifically**:
 `q3dm7` intermittently wedges the GPU binner on some boots (reset-recovered), and
 SuperTuxKart's 194 MB of assets do not finish loading inside a ~5 minute window —
 boot from the SD card, where the assets are local, to try STK in-game.

@@ -201,8 +201,8 @@ Not a 1990s engine — the current **SuperTuxKart 1.4** kart racer, rendered on 
 V3D GPU through its SP renderer on **OpenGL ES 3.x**:
 
 ```bash
-stk                             # boots to the main menu
-stk -N --track=olivermath       # jump straight into an AI race (no input needed)
+stk                             # launch SuperTuxKart
+stk -N --track=olivermath       # auto-race flags: drive a race with no input
 ```
 
 - It **ships on the image** (`/usr/bin/supertuxkart`, launched via `stk`), with
