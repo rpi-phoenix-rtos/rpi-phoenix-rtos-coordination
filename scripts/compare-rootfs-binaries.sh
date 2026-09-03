@@ -53,6 +53,8 @@ PATHS=(
 	usr/bin/Xphoenix
 	bin/python3
 	bin/bash
+	bin/nano
+	bin/mc
 )
 
 die() {
