@@ -72,19 +72,28 @@ fail() { echo "FAIL: $*"; exit 1; }
 [ -f "$SYSROOT/lib/libglib-2.0.a" ] || { "$HERE/build-glib2.sh" || fail "build-glib2.sh failed"; }
 [ -f "$NCPREFIX/lib/libncurses.a" ] || { "$HERE/build-ncurses.sh" || fail "build-ncurses.sh failed"; }
 
-# mc-support: Phoenix lacks the mntent API (empty <mntent.h>, no getmntent) and
-# langinfo (no <langinfo.h>, no nl_langinfo). Stage glibc-compatible headers +
-# build a stub libmcsupport.a so mc's mountlist.c (no-mounts) and strutil.c
-# (nl_langinfo(CODESET)->"UTF-8") build + link. See GLIB2-MC-PORT-NOTES.md.
-cp -a "$HERE/mc-support/mntent.h" "$SYSROOT/usr/include/mntent.h"
+# mc-support: langinfo (no <langinfo.h>, no nl_langinfo) still needs a staged
+# header + stub so mc's strutil.c (nl_langinfo(CODESET)->"UTF-8") builds.
+#
+# The mntent shim is GONE. libphoenix implements the whole family now
+# (getmntent/setmntent/endmntent/addmntent/hasmntopt -- libphoenix 29f5373,
+# mntent/mntent.c), so:
+#   * copying mc-support/mntent.h over $SYSROOT/usr/include/mntent.h actively
+#     BROKE the build. That stub predates the libphoenix implementation and does
+#     not declare hasmntopt, which mountlist.c calls, so mc died with
+#     "mountlist.c:728: implicit declaration of function 'hasmntopt'" while
+#     configure -- reading the real header before the overwrite -- had correctly
+#     set HAVE_HASMNTOPT. It also mutated a SHARED sysroot header from inside one
+#     port's build, so any other port needing mntent got the stub too.
+#   * linking mntent-stub.o would now multiply-define the libphoenix symbols.
+# mc gets the real mount table instead of a hardcoded "no mounts" list.
 cp -a "$HERE/mc-support/langinfo.h" "$SYSROOT/usr/include/langinfo.h"
 # Rebuild libmcsupport.a UNCONDITIONALLY: the langinfo stub's CODESET depends on
 # MC_VARIANT ($MC_CODESET_DEF), so a cached lib from a different variant would be
 # stale. libmcsupport.a is also not a make dependency of src/mc, so this rebuild
 # plus the src/mc removal below are what force the codeset change into the binary.
-${TC}gcc --sysroot="$SYSROOT" -O2 -c "$HERE/mc-support/mntent-stub.c" -I"$HERE/mc-support" -o /tmp/mc-mntent.o || fail "mc-support mntent compile failed"
 ${TC}gcc --sysroot="$SYSROOT" -O2 $MC_CODESET_DEF -c "$HERE/mc-support/langinfo-stub.c" -I"$HERE/mc-support" -o /tmp/mc-langinfo.o || fail "mc-support langinfo compile failed"
-MCSUPPORT_OBJS="/tmp/mc-mntent.o /tmp/mc-langinfo.o"
+MCSUPPORT_OBJS="/tmp/mc-langinfo.o"
 # guard variant: compile the redzone/canary allocator shim -O0 -g
 # -fno-omit-frame-pointer and bundle it as a MEMBER of libmcsupport.a (which is
 # already on mc's final link line via GLIB_LIBS' -lmcsupport). It must be an
@@ -100,6 +109,12 @@ if [ "$MC_GUARD" = "1" ]; then
 	${TC}gcc --sysroot="$SYSROOT" -O0 -g -fno-omit-frame-pointer -c "$HERE/mc-support/mc-guard-wrap.c" -I"$HERE/mc-support" -o /tmp/mc-guard-wrap.o || fail "mc-support guard compile failed"
 	MCSUPPORT_OBJS="$MCSUPPORT_OBJS /tmp/mc-guard-wrap.o"
 fi
+# Create the archive FRESH. `ar rcs` only REPLACES the members you name and
+# leaves every other one in place, so a member that a previous build added and
+# this one no longer produces survives forever -- which is exactly how the
+# retired mc-mntent.o kept colliding with libphoenix's own mntent
+# ("multiple definition of setmntent") after the shim was removed.
+rm -f "$SYSROOT/lib/libmcsupport.a"
 ${TC}ar rcs "$SYSROOT/lib/libmcsupport.a" $MCSUPPORT_OBJS || fail "mc-support ar failed"
 
 mkdir -p "$SRC"
