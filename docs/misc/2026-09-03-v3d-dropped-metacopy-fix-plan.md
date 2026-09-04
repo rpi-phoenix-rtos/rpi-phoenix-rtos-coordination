@@ -1,5 +1,12 @@
 # Dropped V3D meta-copy jobs (#67): drop path, CL decode, and a CPU-emulation fix plan
 
+> **SUPERSEDED 2026-09-04 — read this as evidence, not as a plan.** The "second, distinct, unfixed defect"
+> described below (an RCL BO holding image data instead of a control list) was root-caused: pages handed to an
+> *uncached* mapping still carried the previous owner's dirty cache lines, which were evicted later on top of
+> Mesa's uncached writes. That is exactly why the leading byte is a previous owner's texel and never a defined
+> CLE opcode. Fixed in the kernel (`5d8645f6`); see `docs/done/2026-09-04-uncached-page-stale-cache-rootcause.md`.
+> The byte-level statistics here remain the best surviving fingerprint of the defect.
+
 Date: 2026-09-03
 Scope: **read-only source analysis + a written patch proposal.** No build, no `make`, no Pi cycle
 (an authoritative Docker build owns the machine). No file under `sources/` or `external/` was
@@ -28,10 +35,12 @@ one of its premises in the existing in-code comment is wrong.** Three findings d
    14 bytes = `NUMBER_OF_LAYERS(2) + TILE_BINNING_MODE_CFG(9) + FLUSH_VCD_CACHE(1) +
    START_TILE_BINNING(1) + FLUSH(1)`. That is a tight, cheap, structural fingerprint. §2.3
 3. **Only about half of the recorded drops have a decodable control list.** Across all
-   `artifacts/rpi4b-uart/*.log`, 56 `RCLBYTES` dumps exist; **27 begin with `0x79`**
-   (`TILE_RENDERING_MODE_CFG`, a valid RCL) and **29 begin with RGBA pixel data or zeros**
-   (13 × `0x74`, 11 × `0x2a`, 3 × `0xff`, 2 × `0x00`), all with `park_off=0x0` — i.e. CT1 stopped on
-   byte 0 of a list that is not a list. For those, **there is nothing to decode: no LOAD packet, no
+   `artifacts/rpi4b-uart/*.log`, 56 `RCLBYTES` dumps exist; **25 begin with `0x79`**
+   (`TILE_RENDERING_MODE_CFG`, a valid RCL) and **31 begin with RGBA pixel data or zeros**
+   (13 × `0x74`, 11 × `0x2a`, 3 × `0xff`, 2 × `0x90`, 2 × `0x00`) — 29 of those 31 with
+   `park_off=0x0`, i.e. CT1 stopped on byte 0 of a list that is not a list. None of `0x74`, `0x2a`,
+   `0x90`, `0xff` is a defined CLE opcode (no `code="116"`, `"42"`, `"144"`, `"255"` in
+   `v3d_packet.xml`), which is why the CLE halts with `int_sts=0`. For those, **there is nothing to decode: no LOAD packet, no
    STORE packet, no src/dst address, no extent.** A decode-and-memcpy fallback rejects them and
    changes nothing. That is a **second, distinct, unfixed defect** (the RCL BO holds image data at
    submit time) and it is arguably the higher-value target. §6.
@@ -722,8 +731,11 @@ to improve but not necessarily to zero.
 | --- | --- | --- | --- |
 | `0x79` | `0xffffffff` | 11 | valid RCL, CT1 never started → **bin** timeout; fully emulatable |
 | `0x79` | `0x43` | 4 | valid RCL, parked on the 2nd GFXH-1742 dummy store; emulatable |
-| `0x79` | `0x1000`/`0x1001`/`0x70`/`0xf6329f2c` | 12 | valid RCL, park outside/odd; still emulatable (decode does not use the park) |
-| `0x74`, `0x2a`, `0xff`, `0x00` | `0x0` (mostly) | 29 | **RCL is RGBA pixel data or zeros** — CT1 stopped on byte 0 of a non-list |
+| `0x79` | `0x1000`(4) / `0xf6329f2c`(3) / `0x70`(2) / `0x1001`(1) | 10 | valid RCL, park outside/odd; still emulatable (the decode never uses the park) |
+| `0x74`(13), `0x2a`(11), `0xff`(3), `0x90`(2), `0x00`(2) | `0x0` for 29 of 31 | 31 | **RCL is RGBA pixel data or zeros** — CT1 stopped on byte 0 of a non-list |
+
+(25 decodable + 31 non-decodable = 56. Reproduce with
+`grep -h RCLBYTES artifacts/rpi4b-uart/*.log | sed 's/.*park_off=\(0x[0-9a-f]*\): >*\([0-9a-f][0-9a-f]\).*/park=\1 first=\2/' | sort | uniq -c | sort -rn`.)
 
 Example (`rpi4b-uart-20260903-200200-vkq-mutex-T8.log`):
 
@@ -735,8 +747,8 @@ RCLBYTES gpuva=0x0acd5000 n=101 park_off=0x0: >74 56 30 ff 00 00 00 ff 00 00 00 
 A single, unambiguous BO whose base *is* `rcl_start`, and its first bytes are RGBA texels
 (every 4th byte `0xff`). Since `DRM_V3D_MMAP_BO` hands Mesa this very pointer (**:1938-1947**), this
 is not an instrumentation artifact: **the control list Mesa built is not in the buffer Mesa
-submitted.** `0x74` is not a defined CLE opcode, so the CLE stops at byte 0 with `int_sts=0` — which
-is exactly the reported signature. `rcl_end - rcl_start` is still `92 + 3n`, so V3DV's *bookkeeping*
+submitted.** `0x74` is not a defined CLE opcode (`v3d_packet.xml` has no `code="116"`), so the CLE stops at
+byte 0 with `int_sts=0` — which is exactly the reported signature. `rcl_end - rcl_start` is still `92 + 3n`, so V3DV's *bookkeeping*
 was right; only the *content* is wrong. Candidates worth one instrumented boot: a `v3dv_bo` cache
 recycle handing one winsys handle to two logical objects, the double `munmap` of the same address
 (V3DV's `v3dv_bo_free` and our `ioc_close_bo` at **:743** both unmap `b->cpu`), or a BO closed and
@@ -754,9 +766,12 @@ corruption predates the GPU (a Mesa/BO-lifetime bug); if it is valid at entry an
 time, something overwrote it during the job. One boot settles it, no rebuild of anything but the GPU
 lib.
 
-**7.2 Reuse the decoder in the diagnostics.** Print the decoded copy descriptor (src/dst/bytes)
-alongside `DROPPED job` even when the rescue is disabled, so the "is `0acd5` flame.mdl's upload?"
-question in torch-doc §4.3 is answered by a dst address instead of inferred from a VA page.
+**7.2 Reuse the decoder in the diagnostics, and dump the tile list.** Print the decoded copy
+descriptor (src/dst/bytes) alongside `DROPPED job` even when the rescue is disabled, so the "is
+`0acd5` flame.mdl's upload?" question in torch-doc §4.3 is answered by a dst address instead of
+inferred from a VA page. Five more lines: when the RCL decodes, hexdump the **32-byte generic tile
+list** too (`gpuva_to_cpu(tl_start)`) — without it a log can never validate stage 3 or recover the
+src/dst addresses offline, which is the gap §8 has to work around today.
 
 **7.3 Entry-time emulation, measured.** Emulating every buffer copy on the CPU would remove the
 wedge and the reset hitch entirely (and mirrors what upstream does from 7.1 by using the TFU). The
@@ -773,9 +788,13 @@ That would fix the trigger rather than paper over the loss.
 
 ## 8. Validation (after the Docker build finishes; none of it was run here)
 
-- **Zero hardware first:** run the decoder logic by hand against the `RCLBYTES` hex already recorded
-  in `artifacts/rpi4b-uart/*.log`. It must accept all 27 `0x79` dumps and reject all 29 others. The
-  101-byte example in §2.3 is a worked case with the expected answer `w=183, h=1`.
+- **Zero hardware first, but only stages 0-2.** The `RCLBYTES` dump contains the **RCL bytes only**,
+  so replaying it by hand validates the size gates, the RCL opcode walk, the extent decode and the
+  `tl_end - tl_start == 32` check (the tile-list start/end are inside the dumped bytes) — it
+  **cannot** validate stage 3, because the 32-byte indirect tile list is never dumped. Expect:
+  stages 0-2 pass on all **25** `0x79` dumps and reject all **31** others. The 101-byte example in
+  §2.3 is a worked case with the expected answer `w=183, h=1, tile list 0x0acd6000..0x0acd6020`.
+  (Stage 3 and the BCL fingerprint need one instrumented boot — see 7.2.)
 - **Then a pass RATE, never a screenshot** (#67 standing rule; 5 prior false closures):
   `./scripts/test-cycle-bench.sh 8 vkq-copyrescue -- "vkquake +map start"` then
   `./scripts/check-torch-rois.py --rate`. Correlate `COPY RESCUED` counts with the verdict.
