@@ -71,7 +71,12 @@ ls -l "$ART/$OUT"
 # fbdev X convenience mode), and startx_gpu (same modes but the experimental
 # glamor GPU X server + rpi4-v3d daemon). All are plain COPIES (the binary keys
 # its GPU behaviour on argv[0] == "startx_gpu"), so all must be refreshed together.
-NFS_BIN="${SHOWCASE_STAGE_DIR:-/srv/phoenix-rpi4-nfs}/bin"
+# Stage into the export the Pi actually mounts (fsid=0), not a hardcoded name.
+# This script staged to /srv/phoenix-rpi4-nfs while the Pi mounts the -gcc16
+# export, so a freshly built startx never reached the target -- the same defect
+# already fixed for rpi4-wifi/rpi4-hci (devices 843d193).
+_fsid0="$(awk '$0 ~ /fsid=0/ && $1 ~ /^\// { print $1; exit }' /etc/exports /etc/exports.d/*.exports 2>/dev/null || true)"
+NFS_BIN="${SHOWCASE_STAGE_DIR:-${_fsid0:-/srv/phoenix-rpi4-nfs}}/bin"
 if [ -d "$NFS_BIN" ]; then
   cp "$LAUNCHDIR/$OUT" "$NFS_BIN/$OUT"
   cp "$LAUNCHDIR/$OUT" "$NFS_BIN/startx"
