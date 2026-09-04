@@ -112,6 +112,12 @@ helpers=(
 	"tools/quake3-port/quake3-launcher.c|usr/bin/quake3"
 	"tools/supertuxkart-port/stk-launcher.c|bin/stk"
 	"tools/pty-run/pty-run.c|usr/bin/pty-run"
+	# Diagnostic: writes known bytes to /dev/fb0 so the framebuffer's CHANNEL
+	# ORDER can be read off the screen instead of inferred. plo asks for
+	# SET_PIXEL_ORDER=1 (RGB) and the X DDX trusts that, while the V3D scanout
+	# winsys swaps R/B to look right and Window Maker's blue-grey root came out
+	# mauve -- three sources that cannot all be correct (2026-09-04).
+	"tools/fbprobe/fbprobe.c|bin/fbprobe"
 )
 
 tmp="$(mktemp -d)"
