@@ -91,7 +91,9 @@ stop)
 report)
 	echo "=== UDP :9998 listener (the trustworthy TX detector) ==="
 	cat "$OUT_DIR/tx-listener.log" 2>/dev/null | head -8
-	total=$(grep -c "^[0-9][0-9]:" "$CAP" 2>/dev/null || echo 0)
+	# grep -c prints "0" AND exits 1 on no match, so `|| echo 0` would make this
+	# two lines and break the arithmetic below. Assign, then default.
+	total=$(grep -c "^[0-9][0-9]:" "$CAP" 2>/dev/null) || total="${total:-0}"
 	echo "=== frames on the air that are not the host's own: $total"
 	if [ "$total" = "0" ]; then
 		echo "    NOTE: 0 frames means the DETECTOR failed (the Pi's DHCP frames"

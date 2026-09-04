@@ -235,7 +235,21 @@ def main():
             ready_re = re.compile(args.ready_line.encode()) if args.ready_line else None
             ready_at = None
             tail = b""
-            while time.time() - quiet_since < args.idle_secs:
+            # END CONDITIONS, in priority order. The loop condition used to be
+            # `while now - quiet_since < idle_secs`, which meant the IDLE timer
+            # silently pre-empted everything else: a program that announces
+            # nothing while it works (vkQuake compiling 67 pipelines on a cold
+            # Mesa shader cache) went quiet for 20 s, the window closed, the Pi
+            # was powered off mid-work, and NEITHER the ready-line message nor
+            # the max-cmd-secs message printed -- so the run looked like a hang
+            # at whatever the last log line happened to be. Cost 2 Pi cycles and
+            # a wrong "the GPU archives regressed" conclusion on 2026-09-04.
+            #
+            # With a --ready-line set, silence is NOT an end condition until the
+            # marker matches: max-cmd-secs is the deadline for REACHING it (which
+            # is what this code always claimed to do). Without a --ready-line the
+            # old idle behaviour is unchanged.
+            while True:
                 now = time.time()
                 if ready_at is not None:
                     # Readiness reached: hold the line for a fixed, useful window
@@ -244,6 +258,8 @@ def main():
                     if now - ready_at >= args.ready_extra_secs:
                         print(f"\n*** ready + {args.ready_extra_secs:.0f}s captured, moving on")
                         break
+                elif ready_re is None and (now - quiet_since) >= args.idle_secs:
+                    break
                 elif args.max_cmd_secs and (now - cmd_start) >= args.max_cmd_secs:
                     if ready_re is not None:
                         print(f"\n*** max-cmd-secs ({args.max_cmd_secs}s) reached WITHOUT "

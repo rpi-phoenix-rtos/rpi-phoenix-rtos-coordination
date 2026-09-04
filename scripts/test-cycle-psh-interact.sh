@@ -125,8 +125,14 @@ start_hdmi_periodic() {
 		# Switch to the dense cadence the first time the marker shows up. grep -c,
 		# not -q: -q exits on the first match, and a SIGPIPE'd producer in a
 		# pipeline has bitten this repo before.
+		#
+		# `grep -c` PRINTS "0" *and* exits 1 when nothing matched, so the old
+		# `$(grep -c ... || echo 0)` produced TWO lines ("0\n0") and every
+		# iteration failed with `[: 0 0: integer expected` -- i.e. the dense
+		# cadence could never engage, silently. Assign first, then default.
+		dense_hits="$(grep -acE "$hdmi_dense_on" "$log_path" 2>/dev/null)" || dense_hits="${dense_hits:-0}"
 		if [ -n "$hdmi_dense_on" ] && [ "$interval" != "$hdmi_dense_interval" ] &&
-			[ "$(grep -acE "$hdmi_dense_on" "$log_path" 2>/dev/null || echo 0)" -gt 0 ]; then
+			[ "${dense_hits:-0}" -gt 0 ]; then
 			interval="$hdmi_dense_interval"
 			printf 'HDMI: marker matched, snapshotting every %ss\n' "$interval" >&2
 		fi
