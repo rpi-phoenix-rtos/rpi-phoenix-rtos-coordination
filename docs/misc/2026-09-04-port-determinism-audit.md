@@ -44,9 +44,31 @@ first; whether turbo then overwrites it is port-manager state. On an incremental
 turbo's files already exist, so `xorg_fonts` skips jpeg entirely. The header and the
 archive can even end up from **different** implementations.
 
-**Fix direction:** the owner's own rule — one build path per port. Give `xorg_fonts` a
-dependency on the `libjpeg` port and delete its private jpeg-9e build. Turbo is
-API-compatible with IJG for consumers, so this is a removal, not a port.
+**Fix, resolved to an exact edit 2026-09-04 (verified, not yet applied).** It is a pure
+deletion — no dependency edge needs adding, and no consumer changes:
+
+* `xorg_fonts:15` says outright that it builds jpeg for the *downstream* "WindowMaker +
+  Xft stack", and nothing in `xorg_fonts` itself uses jpeg (its later blocks are freetype,
+  expat, fontconfig, Xft, cairo, Xpm, Xaw7 — none consume libjpeg).
+* **Every actual consumer already depends on the `libjpeg` port**, so they already order
+  against turbo: `fltk:27` (`xorg_libs libpng libjpeg`), `supertuxkart:36` (`libjpeg …
+  xorg_fonts`), and `dillo:28` transitively via `fltk`.
+* So deleting `xorg_fonts:103-111` (the guarded jpeg-9e block) leaves turbo as the single
+  producer, and the race disappears. `xorg_fonts` needs no `depends` change, because it
+  never used the library it was building.
+* Also drop `jpeg(IJG)` from the `license=` list at `:28` and the word `jpeg` from the
+  stack comment at `:15`.
+
+API risk is the opposite of what it looks like: turbo defaults to the libjpeg **6.2** API,
+which is the classic 6b interface (`jpeg_std_error`, `jpeg_create_decompress`,
+`jpeg_read_header`, `jpeg_read_scanlines`, …) that all four consumers use. IJG 9e is the
+*newer* outlier here. Nothing in the tree calls a 9-only entry point.
+
+Sequenced AFTER the authoritative clean build rather than into it: it touches a large port,
+and a mistake costs the whole build. Verify standalone — `build-port.sh libjpeg`, then
+`xorg_fonts`, then one consumer (`fltk`) — and confirm afterwards that
+`$PREFIX/include/jconfig.h` still reports `JPEG_LIB_VERSION 62` with
+`LIBJPEG_TURBO_VERSION`, i.e. exactly one implementation remains.
 
 **2. Same collision for libpng. [reported]** `xorg_fonts:92` vs `libpng:38-51`, both
 targeting `$PREFIX/lib/libpng16.a`. Same version (1.6.40) but different flag sets, so
