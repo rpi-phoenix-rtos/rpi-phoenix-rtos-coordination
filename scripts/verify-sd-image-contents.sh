@@ -50,6 +50,28 @@ for p in usr/bin/quakespasm usr/bin/yquake2 usr/bin/quake3e usr/bin/vkquake \
 	else printf '  MISS %s\n' "$p"; rc=1; fi
 done
 
+echo "== build provenance =="
+# /etc/build-versions names the exact commit of every Phoenix repo that went into
+# this image (coordination scripts/gen-build-versions.sh -> printed at boot by
+# rpi4-sysinfo). An image without it can still boot, but every log it produces is
+# ambiguous about what it was built from -- which is the problem the owner asked
+# us to remove on 2026-09-05. Require a plausible list, not merely the file.
+if dump etc/build-versions; then
+	bv_repos="$(grep -avc '^#' "$TMP/x" || true)"
+	if [ "${bv_repos:-0}" -ge 10 ]; then
+		printf '  OK   %-40s %s repos\n' "etc/build-versions" "${bv_repos}"
+		# A build from a modified tree is exactly where a bare sha misleads, so
+		# say it out loud rather than letting it pass silently.
+		bv_dirty="$(grep -ac '+dirty' "$TMP/x" || true)"
+		[ "${bv_dirty:-0}" -eq 0 ] ||
+			printf '  WARN %s repo(s) were DIRTY at build time (see etc/build-versions)\n' "${bv_dirty}"
+	else
+		printf '  FAIL etc/build-versions lists only %s repos (expected >= 10)\n' "${bv_repos}"; rc=1
+	fi
+else
+	echo "  MISS etc/build-versions — the image cannot say which commits built it"; rc=1
+fi
+
 echo "== positive markers (fixes that must be present) =="
 # The V3D submit mutex: its failure fprintf string is unique to the fixed driver.
 if dump usr/bin/vkquake && [ "$(marker_count 'submits UNSERIALIZED')" -gt 0 ]; then
