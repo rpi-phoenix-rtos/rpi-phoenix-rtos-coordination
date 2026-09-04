@@ -1,7 +1,33 @@
 # The GPU archives compile against a July snapshot of libphoenix's headers
 
-**Status (2026-09-04): measured, latent, not yet biting. The fix is known and is the
-rule this repo already wrote down for a different set of binaries.**
+**Status (2026-09-04, later the same day): FIXED. `--sysroot` now applies to all three
+GPU archive builds (devices `e8e1f81`), ordered `core -> gpu -> ports` by the
+coordination repo (`f6d69a6a1`). The skew is zero by construction — the archives compile
+against the same `_build/<target>/sysroot` as everything else, and the scripts FAIL HARD
+if that sysroot is absent rather than falling back to the bundle.**
+
+**What the fix uncovered — a second, live defect (devices `abb4670`).** With the toolchain
+bundle out of the search path, `v3dv_queue.c` stopped compiling: `#include "drm.h"` had
+been resolving to the **host x86** `/usr/include/libdrm/drm.h`, reaching the *cross*
+compiler only because `scripts/build-showcase-apps.sh:311` exports
+`C_INCLUDE_PATH=/usr/include/libdrm` for the whole gpu phase (the host meson/ninja codegen
+steps genuinely need it). A host header was being compiled into the Phoenix driver, and it
+appeared in **no compile command** — which is why 30 build logs showed `97/0` while running
+the same script standalone fails outright. Consequence beyond hygiene: whenever that env var
+was not set, the archive shipped **without `v3dv_queue.c.o`** and the link lost
+`v3dv_queue_driver_submit`. Fixed by a `shim-include/drm.h` that forwards to Mesa's own
+vendored `include/drm-uapi/drm.h` (byte-identical for the `!__linux__` branch we compile:
+`stdint.h` + `sys/types.h` + `sys/ioccom.h`, the last supplied by the same shim dir).
+Verified with `C_INCLUDE_PATH` **unset**: 97/0, 119 objects, harness link PASS.
+
+**Method note worth keeping.** Before treating that failure as a regression from the
+`--sysroot` change, the failing compile was re-run with the three flags stripped — it failed
+identically. That is what pointed at the environment instead of the change, and it is the
+cheap check that distinguishes "my edit broke it" from "my edit revealed it".
+
+---
+
+*Original analysis, as written before the fix:*
 
 ## What is actually true
 
