@@ -366,6 +366,37 @@ directory the image was assembled from.)
 
 Ordered by how likely they are to bite during *this* build.
 
+0-bis. **THREE TRAPS FOUND ON 2026-09-04 — all three make a run LOOK like a
+   different failure than it is.**
+
+   a. **A later `--scope core` rebuild EMPTIES the games out of the build tree.**
+      `prepare-buildroot.sh` rsyncs `_fs/<target>/root` with `--delete`, so after
+      any `--scope core` run the ports/games exist only on the NFS export. That is
+      not a staging bug and the obvious repair is WRONG: these engines embed
+      `__DATE__`/`__TIME__`, so rebuilding them yields a *different*, untested
+      binary. Either re-run a build that includes `--with-showcase --with-ports`,
+      or leave the export alone as the verified artifact. `compare-rootfs-binaries.sh`
+      will report MISSING-in-build-tree for every game in this state; read that as
+      "core rebuild happened", not "staging broke".
+
+   b. **Staging into a dead export.** The live root is whichever path carries
+      `fsid=0` in `/etc/exports` OR `/etc/exports.d/*.exports` (today
+      `/srv/phoenix-rpi4-nfs-gcc16`). Scripts that hardcode the historical
+      `/srv/phoenix-rpi4-nfs` write where nothing mounts, and the run then
+      exercises whatever the live root already held. Both radio drivers did exactly
+      this until devices `843d193`; ~37 references remain in legacy
+      `tools/*/build-*.sh` (superseded by the ports migration — treat as suspect).
+      After any stage step: `strings <live-export>/bin/<prog> | grep -c <marker>`.
+
+   c. **A visual check that "fails" may never have started.** HDMI snapshots run on
+      a fixed cadence from power-on, so a slow-starting GPU app can have every
+      frame land during loading and the grader sees nothing at the reference
+      viewpoint. Pass `--ready-line`/`--ready-extra-secs` (and `--hdmi-dense-on`)
+      to `test-cycle-psh-interact.sh`, or `test-cycle-bench.sh` for a rate; a run
+      that never matches now says so explicitly. vkQuake needs this since its
+      shader-module count went 34 -> 67: use `--ready-line 'present 30'` and a
+      ~195 s window.
+
 0. **THE ONE HOLE `--scope full-clean` CANNOT CLOSE: the GPU archives are compiled
    against the toolchain's bundled libphoenix headers, one generation behind.**
    `sources/phoenix-rtos-devices/gpu/rpi4-v3d/mesa/build-{v3d,gl,v3dv}-phoenix.py`
