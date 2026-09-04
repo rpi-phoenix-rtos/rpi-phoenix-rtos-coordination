@@ -232,10 +232,25 @@ says mc degrades to monochrome without the skins). A `build.sh fs project image`
 a clean therefore yields an image missing `/bin/{xterm,wmaker,xcalc,…}` **with no error**,
 while an incremental run has them surviving from the previous ports stage.
 
-**9. `coreutils` installs whatever AArch64 ELF is in `src/`. [reported]** `:62-79` —
+**9. `coreutils` installs whatever AArch64 ELF is in `src/`. [VERIFIED 2026-09-04]** `:62-79` —
 `make -k … || true`, then install by `readelf | grep -q AArch64`, backstopped only by a
 `>= 100` count. A binary from a previous successful link is indistinguishable from one
 built this run.
+
+*Verified reading (`coreutils:62-79`).* `make -k … || true`, then a loop over
+`src/*` that installs every file whose `readelf -h` says AArch64, with
+`[ "${n}" -ge 100 ] || b_die` as the only backstop. On a **clean** build `src/` starts
+empty, so only this run's binaries exist and the behaviour is safe — which is why this has
+never bitten. On an **incremental** build after a partial failure it is not: a tool left
+from a previous successful link is indistinguishable from one built now, `make -k || true`
+means a broken tool does not fail the build, and 102 stale binaries still satisfy the
+count check.
+
+**Minimal fix (designed, not applied):** `touch "${PREFIX_PORT_WORKDIR}/.build-start"`
+immediately before the `make`, then add `[ "${f}" -nt "${PREFIX_PORT_WORKDIR}/.build-start" ] || continue`
+to the install loop. That distinguishes "linked in this run" from "left over" without
+touching the deliberate `-k`/`|| true` (some tools legitimately fail to build), and keeps
+the count check as a second line of defence.
 
 **10. `micropython` generates its golden test results with the BUILD HOST's python3.
 [reported]** `:118-129`, guarded by `[ -f "$test.exp" ] && continue`, so the `.exp` files
