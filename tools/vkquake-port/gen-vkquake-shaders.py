@@ -5,7 +5,16 @@
 """Generate the embedded-SPIR-V C arrays vkQuake's renderer references at link
 (world_vert_spv, alias_frag_spv, *_comp_spv, ...) for the aarch64-phoenix build.
 
-vkQuake embeds each GLSL shader (Shaders/*.{vert,frag,comp}) as a
+The set of modules is NOT "every file in Shaders/": upstream compiles some sources
+several times with different preprocessor defines (basic.frag -> basic.frag,
+basic_oit.frag, basic_mboit_moment.frag, ...). That matrix lives in
+external/vkquake/meson.build as `shaders` + `shader_variants`, and this generator
+PARSES it rather than keeping a second copy -- a hand-transcribed copy is exactly
+what went stale over the 217-commit upstream sync of 2026-09-04, when upstream
+consolidated 14 separate shader files into define-variants and the link lost 40
+*_spv symbols.
+
+vkQuake embeds each GLSL shader as a
   const unsigned char <name>_spv[];
   const int          <name>_spv_size;
 pair (see Shaders/shaders.h DECLARE_SHADER_SPV + Shaders/bintoc.c). The symbol name
@@ -32,7 +41,7 @@ Output: one C file (default tools/vkquake-port/vkquake_shaders.c) defining all t
 
 Usage: python3 gen-vkquake-shaders.py [out.c]
 """
-import os, struct, subprocess, sys, shutil
+import os, re, struct, subprocess, sys, shutil
 
 ROOT    = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 SHADERS = f"{ROOT}/external/vkquake/Shaders"
@@ -46,6 +55,40 @@ EXT_SUFFIX = {".vert": "_vert", ".frag": "_frag", ".comp": "_comp"}
 SPIRV_MAGIC   = 0x07230203
 SPIRV_VERSION = 0x00010000   # SPIR-V 1.0 (Vulkan 1.0 baseline)
 PLACEHOLDER_HEADER = struct.pack("<5I", SPIRV_MAGIC, SPIRV_VERSION, 0, 1, 0)
+
+
+MESON = f"{ROOT}/external/vkquake/meson.build"
+
+
+def _meson_list(text, name):
+    """Extract a top-level `name = [ ... ]` literal list from meson.build."""
+    m = re.search(r"^%s\s*=\s*\[(.*?)^\]" % re.escape(name), text, re.S | re.M)
+    if not m:
+        raise SystemExit(f"gen-vkquake-shaders: cannot find `{name} = [...]` in {MESON}")
+    return m.group(1)
+
+
+def parse_shader_jobs():
+    """Reproduce meson.build's `shader_jobs`: (source path, output name, extra args).
+
+    `shaders` entries compile once under their own basename (with --target-env
+    vulkan1.1 for the *sops* subgroup-ops variants, as meson does); `shader_variants`
+    entries name their own output and carry their own -D defines."""
+    text = open(MESON).read()
+    jobs = []
+
+    for path in re.findall(r"'(Shaders/[^']+)'", _meson_list(text, "shaders")):
+        name = os.path.basename(path)
+        extra = ["--target-env", "vulkan1.1"] if "sops" in path else []
+        jobs.append((name, name, extra))
+
+    for row in re.findall(r"\[\s*'(Shaders/[^']+)'\s*,\s*'([^']+)'\s*,\s*\[([^\]]*)\]\s*\]",
+                          _meson_list(text, "shader_variants")):
+        src, out_name, args = row
+        extra = re.findall(r"'([^']+)'", args)
+        jobs.append((os.path.basename(src), out_name, extra))
+
+    return jobs
 
 
 def find_glslang():
@@ -67,9 +110,11 @@ def find_spirv_opt():
     return p, ("--canonicalize-ids" in (r.stdout or ""))
 
 
-def compile_real(tool, path, shader_file, is_sops, spirv_opt, has_canon):
+def compile_real(tool, path, shader_file, extra_args, spirv_opt, has_canon):
     """Compile GLSL -> SPIR-V exactly as external/vkquake/meson.build does:
-      glslangValidator -V [--target-env vulkan1.1 for *sops*] -o X.spv INPUT
+      glslangValidator -V --quiet <per-job args> -o X.spv INPUT
+    where <per-job args> are meson's own (the -D defines of a shader_variants entry,
+    plus --target-env vulkan1.1 for the subgroup-ops compute variants)
     then the optimize pass meson runs on EVERY shader (not just sops):
       spirv-opt -Os [--canonicalize-ids --strip-debug] X.spv -o X.spv
     The canonicalize/strip variant is used when spirv-opt advertises --canonicalize-ids
@@ -78,13 +123,10 @@ def compile_real(tool, path, shader_file, is_sops, spirv_opt, has_canon):
     it makes the embedded SPIR-V byte-identical to vkQuake's authoritative meson build."""
     out = "/tmp/_vkq_shader.spv"
     if tool == "glslc":
-        cmd = [path, shader_file, "-o", out]
-        if is_sops:
-            cmd += ["--target-env=vulkan1.1"]
+        cmd = [path, shader_file, "-o", out] + [
+            a.replace("--target-env ", "--target-env=") for a in extra_args]
     else:  # glslangValidator / glslang
-        cmd = [path, "-V", "--quiet", shader_file, "-o", out]
-        if is_sops:
-            cmd += ["--target-env", "vulkan1.1"]
+        cmd = [path, "-V", "--quiet"] + list(extra_args) + [shader_file, "-o", out]
     r = subprocess.run(cmd, capture_output=True, text=True, cwd=SHADERS)
     if r.returncode != 0:
         sys.stderr.write(f"  ! {os.path.basename(shader_file)} compile failed: "
@@ -123,11 +165,9 @@ def main():
     mode = f"REAL ({tool}{optdesc})" if real else "PLACEHOLDER (no glslang on PATH)"
     sys.stderr.write(f"gen-vkquake-shaders: mode = {mode}\n")
 
-    shaders = []
-    for f in sorted(os.listdir(SHADERS)):
-        ext = os.path.splitext(f)[1]
-        if ext in EXT_SUFFIX:
-            shaders.append(f)
+    jobs = parse_shader_jobs()
+    sys.stderr.write(f"gen-vkquake-shaders: {len(jobs)} modules from meson.build "
+                     f"(shaders + shader_variants)\n")
 
     out_lines = [
         "/* SPDX-License-Identifier: GPL-2.0-or-later",
@@ -150,13 +190,12 @@ def main():
         "",
     ]
     n_real = 0
-    for f in shaders:
-        base, ext = os.path.splitext(f)
+    for src, out_name, extra in jobs:
+        base, ext = os.path.splitext(out_name)
         name = base + EXT_SUFFIX[ext] + "_spv"
-        is_sops = "sops" in base
         blob = None
         if real:
-            blob = compile_real(tool, path, f, is_sops, spirv_opt, has_canon)
+            blob = compile_real(tool, path, src, extra, spirv_opt, has_canon)
             if blob is not None:
                 n_real += 1
         if blob is None:
@@ -167,9 +206,9 @@ def main():
     with open(OUT, "w") as fh:
         fh.write("\n".join(out_lines))
 
-    kind = f"{n_real} real, {len(shaders) - n_real} placeholder" if real \
-        else f"{len(shaders)} placeholder"
-    sys.stderr.write(f"gen-vkquake-shaders: wrote {len(shaders)} shader arrays "
+    kind = f"{n_real} real, {len(jobs) - n_real} placeholder" if real \
+        else f"{len(jobs)} placeholder"
+    sys.stderr.write(f"gen-vkquake-shaders: wrote {len(jobs)} shader arrays "
                      f"({kind}) -> {OUT}\n")
     return 0
 
