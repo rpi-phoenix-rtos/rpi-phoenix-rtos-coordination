@@ -165,6 +165,20 @@ if [ "$skip_server_up" = 0 ]; then
 	# Fix when it fires: ./scripts/rebuild-rpi4b-fast.sh --scope project \
 	#   --variant nfsroot --with-showcase --with-ports --with-tests
 	_ld="$repo/.buildroot/_boot/${RPI4B_TARGET:-aarch64a72-generic-rpi4b}/rpi4b-bootfs/loader.disk"
+	# TWO checks, because the negative one alone failed open on 2026-09-04: the Pi
+	# booted the SD syspage (bcm2711-emmc;-r;/dev/mmcblk0p2:ext2) while this test
+	# saw nothing to refuse, and the cycle burned three minutes to report "marker
+	# NOT seen". A netboot loader must POSITIVELY carry the NFS-root syspage entry
+	# (`nfs;/;<server>;/;v4;takeover`), so require it rather than only rejecting a
+	# known-bad marker -- a missing string then fails closed instead of passing.
+	if [ -f "$_ld" ] && ! strings -a "$_ld" 2>/dev/null | grep -q 'nfs;/'; then
+		printf '\n[test-cycle-psh-interact] REFUSING: the TFTP loader.disk has no NFS-root\n' >&2
+		printf '  syspage entry (`nfs;/`), so it will not mount a root over the network and\n' >&2
+		printf '  no user-space program will run. Rebuild the nfsroot boot blob first:\n' >&2
+		printf '    ./scripts/rebuild-rpi4b-fast.sh --scope project --variant nfsroot --skip-prepare\n' >&2
+		printf '  (Or pass --skip-server-up if you really are SD-booting with a card in.)\n' >&2
+		exit 3
+	fi
 	if [ -f "$_ld" ] && strings -a "$_ld" 2>/dev/null | grep -q 'mmcblk0p2'; then
 		printf '\n[test-cycle-psh-interact] REFUSING: the TFTP loader.disk is the SD-BOOT\n' >&2
 		printf '  variant (it mounts /dev/mmcblk0p2). A netboot cycle with no card in the\n' >&2
