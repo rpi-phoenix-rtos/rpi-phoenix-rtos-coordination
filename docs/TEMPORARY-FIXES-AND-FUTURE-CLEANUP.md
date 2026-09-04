@@ -252,7 +252,7 @@ authoritative current state.
 
 ## TD-21: syscall table diverges from upstream (mutex syscalls kept append-only)
 
-- **Status:** **IN PROGRESS 2026-09-04** — syscalls.h reverted (kernel `d9048511`); the table is now upstream-identical except our own appended `sys_fdpath`. Remaining: the full-clean rebuild of everything + the boot verification below. **Not RESOLVED until step 3 passes.** **Binary-level check already PASSED 2026-09-04:** the freshly built `sysroot/lib/libphoenix.a` stub for `mutexConsistent` disassembles to `svc #0x14` (= 20), exactly its index in the reverted table, and the downstream shift is coherent — `mutexUnlock` `svc #0x13` (19), `schedSet` `svc #0x6b` (107), `sys_fdpath` `svc #0x6c` (108). Kernel and libphoenix cannot disagree here by construction: the dispatch array (`syscalls.c:2124`) and the stubs (`libphoenix/arch/aarch64/syscalls.S:58`) both expand `SYSCALLS()` from this one header. So what step 3 still has to prove is only that no STALE binary survives — not that the renumber itself is right.
+- **Status:** **RESOLVED 2026-09-04** (kernel `d9048511`; verified on hardware — see below). Superseded detail: — syscalls.h reverted (kernel `d9048511`); the table is now upstream-identical except our own appended `sys_fdpath`. Remaining: the full-clean rebuild of everything + the boot verification below. **Not RESOLVED until step 3 passes.** **Binary-level check already PASSED 2026-09-04:** the freshly built `sysroot/lib/libphoenix.a` stub for `mutexConsistent` disassembles to `svc #0x14` (= 20), exactly its index in the reverted table, and the downstream shift is coherent — `mutexUnlock` `svc #0x13` (19), `schedSet` `svc #0x6b` (107), `sys_fdpath` `svc #0x6c` (108). Kernel and libphoenix cannot disagree here by construction: the dispatch array (`syscalls.c:2124`) and the stubs (`libphoenix/arch/aarch64/syscalls.S:58`) both expand `SYSCALLS()` from this one header. So what step 3 still has to prove is only that no STALE binary survives — not that the renumber itself is right.
 - **Owner directive (2026-08-28):** "I don't like the commit d9d09cc to the
   kernel. It is done to save us time and effort short term. But it will only
   bring confusion and unneeded difference between our port and upstream. Revert
@@ -296,6 +296,29 @@ authoritative current state.
      Run the same sweep against the **NFS export** after the build's *project* stage,
      and rebuild whatever it flags. A mid-build run over-reports: `/sbin/nfs` (nfs-fs)
      looks unproduced but is built in the **project** stage
+- **HARDWARE VERIFICATION (2026-09-04) — PASSED.** Everything below came from the one
+  full-clean build that carries the revert, so nothing is mixed:
+  - **Binary level:** `mutexConsistent` → `svc #0x14` (20), `mutexUnlock` 19, `schedSet`
+    107, `sys_fdpath` 108 — the move and the downstream +2 shift are both correct.
+  - **Stale-binary sweep** (`scripts/check-no-stale-binaries.sh`): image rootfs **332
+    ELF, 0 stale**; pristine NFS export **332 ELF, 0 stale**.
+  - **Boot itself** is the broadest test and it passes: kernel, `nfs-fs` (NFS root
+    mounted, `ip=10.42.0.12`), `psh`, `lwip`/genet, USB kbd+mouse — all renumbered, 0
+    faults.
+  - **Ports/libc:** `nano --version` → `GNU nano, version 9.2`.
+  - **GPU + games:** `vkquake +map start` → 1,740 presents, **torches present in 9/9
+    frames** at the reference viewpoint, 0 faults, 0 wedges, 0 corrupt lists.
+  - **The rebuilt standalone tools** (the category this entry had missed): after
+    `scripts/sync-toolchain-from-sysroot.sh` refreshed the bundle (libphoenix.a + 16
+    headers drifted) and the tools were rebuilt, `rpi4-wifi` reports `WL_REG_ON
+    readback=1` and registers `/dev/wifi`, and `rpi4-hci` reports `core_clk=250000000
+    Hz`, `BT_REG_ON readback=1`, `HCI_RESET reply`, `controller alive`. `rpi4-wifi`'s own
+    `mutexConsistent` stub disassembles to `svc #0x14`, i.e. it agrees with the kernel.
+  - **NOT part of this verification, and not a TD-21 symptom:** `python3` exits instantly
+    with no output. Proven pre-existing by A/B — the binary from the **09-03** export
+    backup fails identically, so it cannot be a stale-syscall effect. Tracked separately
+    in the weekly log. `startx` likewise produced no output and is unconfirmed either way.
+
      (`rebuild-rpi4b-fast.sh:279-283`, whose comment already warns about "silently
      reuse a STALE nfs-fs that is ABI-mismatched against the freshly built"
      libphoenix). The genuinely hand-staged candidates are the 5 radio tools
