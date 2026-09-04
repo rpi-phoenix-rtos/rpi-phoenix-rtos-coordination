@@ -252,7 +252,7 @@ authoritative current state.
 
 ## TD-21: syscall table diverges from upstream (mutex syscalls kept append-only)
 
-- **Status:** **IN PROGRESS 2026-09-04** — syscalls.h reverted (kernel `d9048511`); the table is now upstream-identical except our own appended `sys_fdpath`. Remaining: the full-clean rebuild of everything + the boot verification below. **Not RESOLVED until step 3 passes.**
+- **Status:** **IN PROGRESS 2026-09-04** — syscalls.h reverted (kernel `d9048511`); the table is now upstream-identical except our own appended `sys_fdpath`. Remaining: the full-clean rebuild of everything + the boot verification below. **Not RESOLVED until step 3 passes.** **Binary-level check already PASSED 2026-09-04:** the freshly built `sysroot/lib/libphoenix.a` stub for `mutexConsistent` disassembles to `svc #0x14` (= 20), exactly its index in the reverted table, and the downstream shift is coherent — `mutexUnlock` `svc #0x13` (19), `schedSet` `svc #0x6b` (107), `sys_fdpath` `svc #0x6c` (108). Kernel and libphoenix cannot disagree here by construction: the dispatch array (`syscalls.c:2124`) and the stubs (`libphoenix/arch/aarch64/syscalls.S:58`) both expand `SYSCALLS()` from this one header. So what step 3 still has to prove is only that no STALE binary survives — not that the renumber itself is right.
 - **Owner directive (2026-08-28):** "I don't like the commit d9d09cc to the
   kernel. It is done to save us time and effort short term. But it will only
   bring confusion and unneeded difference between our port and upstream. Revert
