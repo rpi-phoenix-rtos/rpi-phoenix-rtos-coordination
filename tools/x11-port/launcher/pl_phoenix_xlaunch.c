@@ -17,7 +17,7 @@
  * e.g. on netboot/NFS:
  *   pl_phoenix_xlaunch /bin/Xphoenix \
  *                      /usr/share/fonts/X11/misc \
- *                      /bin/xeyes
+ *                      /bin/xlogo
  *
  * The server is always launched as ":0" with "-ac" (disable access control;
  * a local client has no xauth cookie) and "-nolisten tcp".
@@ -26,8 +26,8 @@
  * AND one or more client apps in a single session — useful so the screen shows
  * a managed, decorated window the user can drag, rather than a bare black root.
  * In "startx" convenience mode (argc < 4) the special client name `desktop`
- * expands to the list [twm, xeyes]: twm comes up as the window manager first,
- * then xeyes launches as a managed (titlebar-decorated, draggable) window. The
+ * expands to the list [wmaker, xlogo]: Window Maker comes up as the WM first,
+ * then xlogo launches as a managed (titlebar-decorated, draggable) window. The
  * server is brought up first in every mode; the clients are forked after the
  * listening socket appears. The supervisor keeps the server (and the other
  * clients) alive when any single client exits.
@@ -304,10 +304,10 @@ int main(int argc, char *argv[])
 		 * (a bare name resolved under /bin, an absolute path, or a reserved mode):
 		 *   startx           -> Window Maker desktop (the DEFAULT session)
 		 *   startx wmaker    -> Window Maker            (same as bare startx)
-		 *   startx twm       -> /bin/twm                (WM only, bare root)
-		 *   startx desktop   -> twm (WM) + xeyes (managed window)
+		 *   startx twm       -> Window Maker            (twm is not shipped; see below)
+		 *   startx desktop   -> Window Maker (WM) + xlogo (managed window)
 		 *   startx term      -> twm (WM) + xterm (managed terminal window)
-		 *   startx deskapps  -> twm + xterm + xclock + xcalc + xeyes
+		 *   startx deskapps  -> Window Maker + xterm + xclock + xcalc + xlogo
 		 *   startx wmmedia   -> Window Maker + GPU window + H.264 video + clock
 		 *   startx /bin/foo  -> run /bin/foo as the sole client
 		 */
@@ -334,19 +334,19 @@ int main(int argc, char *argv[])
 			/* WM first so it adopts the app's window when it maps; then the
 			 * app comes up as a managed, decorated, draggable window.
 			 *
-			 * xeyes is given an explicit -geometry so twm AUTO-PLACES it. The
+			 * xlogo is given an explicit -geometry so the WM AUTO-PLACES it. The
 			 * compiled-in twm config has no RandomPlacement, so a window that
 			 * carries no position hint triggers twm's INTERACTIVE placement (a
 			 * rubber-band outline that follows the pointer until the user
 			 * clicks to drop it). A geometry supplies a USPosition hint, which
 			 * twm honours by placing the window immediately — so the user sees
-			 * a decorated xeyes at once rather than an outline they must click. */
-			static char *const xeyes_geom[2] = { "-geometry", "300x200+360+240" };
-			resolve_client(cp_bufs[0], sizeof(cp_bufs[0]), prefix, "twm");
-			resolve_client(cp_bufs[1], sizeof(cp_bufs[1]), prefix, "xeyes");
+			 * a decorated xlogo at once rather than an outline they must click. */
+			static char *const xlogo_geom[2] = { "-geometry", "300x200+360+240" };
+			resolve_client(cp_bufs[0], sizeof(cp_bufs[0]), prefix, "wmaker");
+			resolve_client(cp_bufs[1], sizeof(cp_bufs[1]), prefix, "xlogo");
 			client_path[0] = cp_bufs[0];
 			client_path[1] = cp_bufs[1];
-			client_extra[1] = xeyes_geom;
+			client_extra[1] = xlogo_geom;
 			n_client_extra[1] = 2;
 			n_clients = 2;
 		}
@@ -361,7 +361,7 @@ int main(int argc, char *argv[])
 			 * USPosition hint so twm places the window immediately (see the
 			 * desktop-mode note) instead of an interactive rubber-band. */
 			static char *const xterm_geom[2] = { "-geometry", "80x24+48+48" };
-			resolve_client(cp_bufs[0], sizeof(cp_bufs[0]), prefix, "twm");
+			resolve_client(cp_bufs[0], sizeof(cp_bufs[0]), prefix, "wmaker");
 			resolve_client(cp_bufs[1], sizeof(cp_bufs[1]), prefix, "xterm");
 			client_path[0] = cp_bufs[0];
 			client_path[1] = cp_bufs[1];
@@ -371,29 +371,29 @@ int main(int argc, char *argv[])
 		}
 		else if (strcmp(client, "showcase") == 0) {
 			/* A multi-window DESKTOP: twm (WM) + the V3D GPU window + an analog clock +
-			 * a calculator + mouse-tracking eyes, each placed via -geometry (USPosition)
+			 * a calculator + a logo window, each placed via -geometry (USPosition)
 			 * so twm decorates + auto-places them. Proves the X server concurrently
 			 * multiplexes a GPU-presenting client AND several software clients AND a
 			 * window manager at once — the real desktop substrate (toward XFce/D3). The
 			 * GPU window (gl-x11-window) self-hints its own position. */
 			static char *const clk_geom[2]  = { "-geometry", "164x164+1120+110" };
 			static char *const calc_geom[2] = { "-geometry", "+1120+330" };
-			static char *const eyes_geom[2] = { "-geometry", "220x160+1120+720" };
-			resolve_client(cp_bufs[0], sizeof(cp_bufs[0]), prefix, "twm");
+			static char *const xlogo2_geom[2] = { "-geometry", "220x160+1120+720" };
+			resolve_client(cp_bufs[0], sizeof(cp_bufs[0]), prefix, "wmaker");
 			resolve_client(cp_bufs[1], sizeof(cp_bufs[1]), prefix, "gl-x11-window");
 			resolve_client(cp_bufs[2], sizeof(cp_bufs[2]), prefix, "xclock");
 			resolve_client(cp_bufs[3], sizeof(cp_bufs[3]), prefix, "xcalc");
-			resolve_client(cp_bufs[4], sizeof(cp_bufs[4]), prefix, "xeyes");
+			resolve_client(cp_bufs[4], sizeof(cp_bufs[4]), prefix, "xlogo");
 			client_path[0] = cp_bufs[0];
 			client_path[1] = cp_bufs[1];
 			client_path[2] = cp_bufs[2]; client_extra[2] = clk_geom;  n_client_extra[2] = 2;
 			client_path[3] = cp_bufs[3]; client_extra[3] = calc_geom; n_client_extra[3] = 2;
-			client_path[4] = cp_bufs[4]; client_extra[4] = eyes_geom; n_client_extra[4] = 2;
+			client_path[4] = cp_bufs[4]; client_extra[4] = xlogo2_geom; n_client_extra[4] = 2;
 			n_clients = 5;
 		}
 		else if (strcmp(client, "deskapps") == 0) {
 			/* A 2D multi-window DESKTOP with NO second GPU client: twm (WM) + xterm +
-			 * xclock + xcalc + xeyes, each -geometry-placed (USPosition) so twm decorates
+			 * xclock + xcalc + xlogo, each -geometry-placed (USPosition) so the WM decorates
 			 * + auto-places them. Unlike `showcase`/`mediadesk` this omits gl-x11-window /
 			 * e4-x11-play, so it runs correctly when the X server itself is the sole GPU
 			 * client (e.g. Xphoenix-glamor OR the daemon-client Xphoenix-glamor-daemon):
@@ -404,7 +404,7 @@ int main(int argc, char *argv[])
 			static char *const term_geom[2] = { "-geometry", "80x24+60+90" };
 			static char *const clk_geom[2]  = { "-geometry", "164x164+1120+110" };
 			static char *const calc_geom[2] = { "-geometry", "+1120+330" };
-			static char *const eyes_geom[2] = { "-geometry", "220x160+1120+720" };
+			static char *const xlogo2_geom[2] = { "-geometry", "220x160+1120+720" };
 			/* Window Maker (not twm) as the WM: twm cannot XOpenDisplay against the
 			 * current Xphoenix (fails "unable to open display" even freshly built,
 			 * while WindowMaker + the Xt/Xaw apps connect fine — its WINGs lib retries
@@ -413,12 +413,12 @@ int main(int argc, char *argv[])
 			resolve_client(cp_bufs[1], sizeof(cp_bufs[1]), prefix, "xterm");
 			resolve_client(cp_bufs[2], sizeof(cp_bufs[2]), prefix, "xclock");
 			resolve_client(cp_bufs[3], sizeof(cp_bufs[3]), prefix, "xcalc");
-			resolve_client(cp_bufs[4], sizeof(cp_bufs[4]), prefix, "xeyes");
+			resolve_client(cp_bufs[4], sizeof(cp_bufs[4]), prefix, "xlogo");
 			client_path[0] = cp_bufs[0];
 			client_path[1] = cp_bufs[1]; client_extra[1] = term_geom; n_client_extra[1] = 2;
 			client_path[2] = cp_bufs[2]; client_extra[2] = clk_geom;  n_client_extra[2] = 2;
 			client_path[3] = cp_bufs[3]; client_extra[3] = calc_geom; n_client_extra[3] = 2;
-			client_path[4] = cp_bufs[4]; client_extra[4] = eyes_geom; n_client_extra[4] = 2;
+			client_path[4] = cp_bufs[4]; client_extra[4] = xlogo2_geom; n_client_extra[4] = 2;
 			n_clients = 5;
 		}
 		else if (strcmp(client, "gpudesk") == 0) {
@@ -433,7 +433,7 @@ int main(int argc, char *argv[])
 			 * gl-x11-window-daemon self-hints its position; the 2D apps -geometry-place. */
 			static char *const clk_geom[2]  = { "-geometry", "164x164+1120+110" };
 			static char *const calc_geom[2] = { "-geometry", "+1120+330" };
-			resolve_client(cp_bufs[0], sizeof(cp_bufs[0]), prefix, "twm");
+			resolve_client(cp_bufs[0], sizeof(cp_bufs[0]), prefix, "wmaker");
 			resolve_client(cp_bufs[1], sizeof(cp_bufs[1]), prefix, "gl-x11-window-daemon");
 			resolve_client(cp_bufs[2], sizeof(cp_bufs[2]), prefix, "xclock");
 			resolve_client(cp_bufs[3], sizeof(cp_bufs[3]), prefix, "xcalc");
@@ -481,7 +481,7 @@ int main(int argc, char *argv[])
 			 * a real media-capable desktop / D3 XFce). GPU + video windows self-place /
 			 * -geometry-place so twm decorates them immediately. */
 			static char *const clk_geom[2] = { "-geometry", "150x150+1120+120" };
-			resolve_client(cp_bufs[0], sizeof(cp_bufs[0]), prefix, "twm");
+			resolve_client(cp_bufs[0], sizeof(cp_bufs[0]), prefix, "wmaker");
 			resolve_client(cp_bufs[1], sizeof(cp_bufs[1]), prefix, "gl-x11-window");
 			resolve_client(cp_bufs[2], sizeof(cp_bufs[2]), prefix, "e4-x11-play");
 			resolve_client(cp_bufs[3], sizeof(cp_bufs[3]), prefix, "xclock");
@@ -497,7 +497,7 @@ int main(int argc, char *argv[])
 			 * decorates + places it immediately (no -geometry arg needed here). Proves
 			 * accelerated OpenGL as a managed, decorated X window under a window manager
 			 * — the substrate for a GPU-capable desktop (XFce, D1/D2/D3). */
-			resolve_client(cp_bufs[0], sizeof(cp_bufs[0]), prefix, "twm");
+			resolve_client(cp_bufs[0], sizeof(cp_bufs[0]), prefix, "wmaker");
 			resolve_client(cp_bufs[1], sizeof(cp_bufs[1]), prefix, "gl-x11-window");
 			client_path[0] = cp_bufs[0];
 			client_path[1] = cp_bufs[1];
