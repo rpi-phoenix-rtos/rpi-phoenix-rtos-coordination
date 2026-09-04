@@ -48,6 +48,12 @@ echo "== 1. fresh rootfs -> $NEW (clean base: core + X + ports + all five games 
 sudo rm -rf "$NEW"; sudo mkdir -p "$NEW"
 sudo rsync -a --exclude=/dev --exclude=/proc --exclude=/tmp --exclude=/mnt "$FS/" "$NEW/"
 sudo mkdir -p "$NEW/dev" "$NEW/proc" "$NEW/tmp" "$NEW/mnt"
+# /tmp must be world-writable (1777) like a real /tmp, not the 0755 root-owned
+# directory mkdir leaves behind. X clients create /tmp/.X11-unix there, and with
+# 0755 the Pi could not: `startx` forked the server and then waited forever for a
+# socket that could never appear, printing nothing (2026-09-04). The Pi sees the
+# mode as 666 -- no search bit at all -- so the directory is not even traversable.
+sudo chmod 1777 "$NEW/tmp"
 
 echo "== 2. overlay the little that still has no in-build path =="
 # NO GAME DATA COPY-FORWARD either (2026-09-03). usr/share/{quake,quake2,quake3,
