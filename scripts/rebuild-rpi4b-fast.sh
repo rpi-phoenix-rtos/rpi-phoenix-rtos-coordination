@@ -694,6 +694,15 @@ else
 	run_phoenix_build "${build_args[@]}"
 fi
 
+# Record WHICH COMMIT of every Phoenix repo produced these binaries, into the
+# staged rootfs, so rpi4-sysinfo can print it at boot (owner request 2026-09-05:
+# a UART log should say what the system IS, not only what it did). Written after
+# the build so the `fs` stage cannot overwrite it, and before the SD/ext2 image
+# is assembled from the same tree in the artifact tail. Non-fatal: a missing
+# component list is a diagnostic gap, not a broken build.
+"${repo_root}/scripts/gen-build-versions.sh" ||
+	printf 'WARNING: could not record component commit ids; the boot banner will say so\n' >&2
+
 if [ "${do_qemu_sanity}" -eq 1 ]; then
 	# QEMU path differs between hosts. On Darwin we use the in-VM
 	# QEMU 10.2; on Linux we use /opt/qemu-11 (Ubuntu host install).
