@@ -253,9 +253,24 @@ touching the deliberate `-k`/`|| true` (some tools legitimately fail to build), 
 the count check as a second line of defence.
 
 **10. `micropython` generates its golden test results with the BUILD HOST's python3.
-[reported]** `:118-129`, guarded by `[ -f "$test.exp" ] && continue`, so the `.exp` files
+[VERIFIED 2026-09-04]** `:118-129`, guarded by `[ -f "$test.exp" ] && continue`, so the `.exp` files
 are kept forever from whenever the port was first tested. Test verdicts are
 host-dependent and not reproducible in a clean room.
+
+*Verified reading (`micropython:118-130`).* For every test it runs
+`cd … && $CPYTHON3_CMD "$(basename "$test")" >"$test.exp" 2>&1 || true`, guarded by
+`[ -f "$test.exp" ] && continue`. So the expectations are produced by whichever CPython
+the BUILD HOST happened to have, `|| true` means a failed generation still leaves a file,
+and the guard keeps that file forever. `repr()` formatting and exception text change
+between CPython releases, so the pass/fail verdicts are host-dependent and not
+reproducible in a clean room.
+
+Scope note, to keep this proportionate: this affects the micropython **test** stage only,
+not any shipped artifact. **Fix directions**, cheapest first: (a) record which CPython
+produced the `.exp` set (a stamp beside them) so a mismatch is visible; (b) regenerate
+them whenever that stamp changes, the same shape as
+`b_port_invalidate_stale_configure`; (c) commit the `.exp` files as data so the host is
+irrelevant.
 
 Lower-tier, tabled in the agent's full report and not repeated here: `glib2`/`mc` donor
 `config.sub` picked from whatever other port happens to be extracted (`glib2:45`,
