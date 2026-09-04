@@ -94,14 +94,27 @@ done
 
 mkdir -p "${buildroot}"
 
-# _fs is a BUILD OUTPUT, like _build and _boot: it is the staged rootfs
-# (_fs/<target>/root, ~650 MB of core binaries + every port + all five games and
-# their data). The project source tree has no _fs, so without this exclude the
-# --delete below WIPES it on every prepare -- and only a full ports+project
-# rebuild can put it back, because the `fs` stage restores just root-skel and the
-# overlay. That is the recurring "the build tree no longer holds the ports/games"
-# state (weekly log 2026-09-04): a prepare deleted them and the next partial
-# build re-staged only part of the tree.
+# _fs holds BOTH tracked source and build output, so it needs a filter, not a
+# blanket rule:
+#
+#  * _fs/root-skel/ is SOURCE (22 tracked files -- /etc/{passwd,group,inittab,
+#    lighttpd.conf,...}). It MUST be copied: PREFIX_ROOTSKEL points at
+#    $PREFIX_PROJECT/_fs/root-skel/, and build.sh's fs stage is silently SKIPPED
+#    when that directory is absent (`[ -d "${PREFIX_ROOTSKEL}" ]`). Excluding all
+#    of _fs therefore broke every COLD build: the clean-room Docker build failed at
+#    `lighttpd: lighttpd.conf not found in rootfs or root-skel`, while warm local
+#    buildroots kept working because they already had the skeleton.
+#  * _fs/<target>/root is the ~650 MB staged rootfs (core binaries, every port, all
+#    five games + their data) -- build output like _build and _boot. The project
+#    source has none, so a blanket --delete WIPED it on every prepare and only a
+#    full ports+project rebuild could put it back. That is the recurring "the build
+#    tree no longer holds the ports/games" state (weekly log 2026-09-04).
+#
+# So: include _fs itself and root-skel recursively, exclude everything else under
+# it. Excluded paths are also protected from --delete (rsync does not delete
+# excluded files without --delete-excluded), which is what preserves the staged
+# rootfs. The include rules must precede the exclude that would otherwise swallow
+# them -- rsync applies the first matching filter rule.
 rsync_args=(
 	-a
 	--delete
@@ -111,8 +124,12 @@ rsync_args=(
 	_build
 	--exclude
 	_boot
+	--include
+	/_fs/
+	--include
+	/_fs/root-skel/***
 	--exclude
-	_fs
+	/_fs/*
 )
 
 for path in "${submodule_paths[@]}"; do
