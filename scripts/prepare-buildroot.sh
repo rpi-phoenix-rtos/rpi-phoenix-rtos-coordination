@@ -94,6 +94,14 @@ done
 
 mkdir -p "${buildroot}"
 
+# _fs is a BUILD OUTPUT, like _build and _boot: it is the staged rootfs
+# (_fs/<target>/root, ~650 MB of core binaries + every port + all five games and
+# their data). The project source tree has no _fs, so without this exclude the
+# --delete below WIPES it on every prepare -- and only a full ports+project
+# rebuild can put it back, because the `fs` stage restores just root-skel and the
+# overlay. That is the recurring "the build tree no longer holds the ports/games"
+# state (weekly log 2026-09-04): a prepare deleted them and the next partial
+# build re-staged only part of the tree.
 rsync_args=(
 	-a
 	--delete
@@ -103,6 +111,8 @@ rsync_args=(
 	_build
 	--exclude
 	_boot
+	--exclude
+	_fs
 )
 
 for path in "${submodule_paths[@]}"; do
