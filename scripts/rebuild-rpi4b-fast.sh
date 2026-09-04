@@ -635,6 +635,26 @@ run_phoenix_build() {
 	printf 'Build:     ./phoenix-rtos-build/build.sh %s\n' "${stages}"
 	run_build_shell \
 		"set -euo pipefail; export PATH='${repo_root}/.venv/bin':'${toolchain_path}':\$PATH; cd '${buildroot}'; env ${log_to_file_env}${gpu_libs_env}${showcase_env}RPI4B_DTB_PATH='${dtb_path}' RPI4B_VARIANT='${variant}' TARGET='${target}' ./phoenix-rtos-build/build.sh ${stages}"
+
+	# The CORE stage regenerates the sysroot, so this is the one moment where the
+	# toolchain's BUNDLED libc copy can be refreshed from a generated artifact
+	# instead of by hand. It matters because some things still compile with no
+	# --sysroot and therefore resolve libc out of that bundle: the openssl port
+	# (its Configure target in openssl111/30-phoenix.conf hardcodes cflags and
+	# never sees the framework's sysroot flags -- verified 2026-09-04: 0
+	# occurrences of "sysroot" in its build log) and the standalone radio/probe
+	# tools. A hand-maintained copy goes stale silently, and the measured
+	# consequence was five macro VALUES disagreeing with live libphoenix, two
+	# pairs swapped (docs/misc/2026-09-04-toolchain-header-skew.md).
+	#
+	# Not fatal on failure: a stale bundle is a hazard, not a broken build, and
+	# the check is also available standalone (--check reports drift only).
+	case " ${stages} " in
+	*" core "*)
+		"${repo_root}/scripts/sync-toolchain-from-sysroot.sh" ||
+			printf 'WARNING: toolchain bundle sync failed; bare-toolchain builds may see a stale libc\n' >&2
+		;;
+	esac
 }
 
 # core -> gpu -> ports. The GPU archives must compile against the sysroot the
