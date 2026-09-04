@@ -492,7 +492,7 @@ much of the port's patch set / accommodation set must be reworked. Effort is a
 | # | Action | Value | Effort | The specific thing that unblocks it |
 |---|---|---|---|---|
 | 1 | ~~**Delete `mc`'s `mc-support` stub + the `hasmntopt=no` override**~~ — **ALREADY DONE 2026-09-03** (ports `319130f` staging removal, `a33541b` cache flip), i.e. this row was stale the day it was written. Residual = four orphaned git-tracked files under `mc/mc-support/`, referenced by nothing; delete them. Verified 2026-09-04: libphoenix is a strict *superset* of the stub (it also has `hasmntopt`/`getmntent_r`/`addmntent`, which the stub lacked — that gap **was** the shadowing bug), `mc.cache` needs no further change, and no port stages a `<mntent.h>`/`<langinfo.h>` any more | High — removes a live *correctness* divergence (stub says `CODESET="UTF-8"`, libphoenix deliberately says ASCII) and a whole staged-header shadowing hack; exactly the nano pattern at accommodation level | **Low** | libphoenix `getmntent` family — `mntent/mntent.c`, commit **`29f5373`** (2026-08-13); `nl_langinfo` — `locale/langinfo.c`, **`7bf090f`** (2026-07-12, codeset corrected in `491618c`) |
-| 2 | **Drop the `rint`/`rintf` shims** in `fltk` (its own TODO), `windowmaker` (`-Drint=round`) and `dillo` | High per unit of work — the aliases are semantically wrong (`round` ignores the rounding mode) and the ports' own comments schedule the removal | **Low** | libphoenix libm `rint`/`rintf` — `libm/phoenix/exp.c:475,509` (2026-08-14…17 libm wave) |
+| 2 | **Drop the `rint`/`rintf` shims** — edit list verified 2026-09-04, see §7c below; NOT a uniform delete (dillo's shim also carries `AI_*` fallbacks that must stay) | High per unit of work — the aliases are semantically wrong (`round` ignores the rounding mode) and the ports' own comments schedule the removal | **Low** | libphoenix libm `rint`/`rintf` — `libm/phoenix/exp.c:475,509` (2026-08-14…17 libm wave) |
 | 3 | **zlib 1.2.11 → 1.3.x** (framework port **and** the re-pin at `tools/python-port/build.sh:80`) | High — two known fixed defects (CVE-2018-25032, CVE-2022-37434) on paths that decompress untrusted data, in **every** image; 8 dependent ports benefit at once | **Low-medium** (API/ABI compatible; the risk is breadth, not depth: 8 consumers + a second build path) | Nothing had to be fixed — this is a pin with **no recorded reason** that simply never got revisited |
 | 4 | **harfbuzz 2.6.7 → 14.x** | Medium — 6 years of shaping correctness/security for STK; retires a pin whose only stated reason was parity with a retired script | **Medium** | The stated reason is parity with `tools/x11-port/build-harfbuzz.sh` autotools, but the framework port already drives **CMake**, and harfbuzz **14.4.0 still ships `CMakeLists.txt`** (verified HTTP 200, 2026-09-03) |
 | 5 | **openssl 1.1.1a → 1.1.1w** (in-branch), then decide on a separate `openssl3` port | High — recovers ~5 years of TLS fixes for Python `_ssl`, `wpa_supplicant`, `lighttpd`, `openiked`, `sscep`, `openvpn` at same-API cost | **Low-medium** in-branch; **High** for 3.x | No Phoenix blocker was ever recorded; the port *name* (`openssl111`) is the only trace of the decision |
@@ -525,6 +525,47 @@ fetch 404s. (1.1.1a resolves today only because the local tarball is already cac
 Both are in-branch, API/ABI-stable moves; the risk is breadth (openssl has six dependent
 ports: Python `_ssl`, `wpa_supplicant`, `lighttpd`, `openiked`, `sscep`, `openvpn`), so each
 gets its own build + a dependent check, exactly as zlib 1.3.1 did.
+
+## 7c. Verified edit list for the `rint`/`rintf` shims (2026-09-04)
+
+`rint` is real in libphoenix — `libm/phoenix/exp.c:475` (generic body: `modf` + explicit
+ties-to-even), `rintf` at `:509`; built under **either** `LIBM_USE_LIBMCS` setting
+(`libm/Makefile:44-47` vs `:42`), present as `T rint`/`T rintf` in `libphoenix.a` and
+`libm.a`, declared in the sysroot `math.h:125,210`. Nuance worth keeping honest: it
+hard-codes ties-to-even and does **not** read `fegetround()`, so the correctness claim
+holds for the default FE_TONEAREST tie behaviour, not for full fenv honouring.
+`rintl` is **declared but never defined** — do not introduce a use of it.
+
+**The shims are not uniform; only fltk's can go wholesale.**
+
+| Port | Edit | Keep |
+|---|---|---|
+| `fltk` | delete `fltk-phoenix-shim.h` entirely, drop `-include ${shim}` + the `local shim=` line (`port.def.sh:52-53`) and the TODO at `:41-44`/`:35` | — (the shim holds nothing else) |
+| `dillo` | delete **only** `dillo-phoenix-shim.h` lines 20-33 | the shim FILE and its `-include` (`port.def.sh:90`) — lines 43-58 carry the `AI_ADDRCONFIG`/`AI_NUMERICSERV`/`AI_V4MAPPED` fallbacks `dns.c` needs |
+| `windowmaker` | drop **only** the `-Drint=round` token from `gapdefs` (`port.def.sh:99`) + comments `:50-51`, `:96-97`, `README.md:41` | `-include wmaker-phoenix-compat.h`, `libftw.a`, `files/ftw-phoenix/` — `ftw`/`nftw`/`scandir`/`alphasort`/`nice` are still absent from libphoenix |
+
+Build **fltk before dillo** (dillo statically links `libfltk.a`). Per-port check:
+`nm <artifact> | grep -w rint` must show the real symbol referenced/pulled in, where
+before the edit there was no `rint` at all.
+
+**Rebuild footgun that would fake a pass:** all three gate configure on
+`[ ! -f config.status ]` and bake CFLAGS at configure time (wmaker also into
+`make CFLAGS=`), so an *incremental* rebuild keeps the old flags and the shim. Wipe the
+port workdir first — same class as the documented stale-core hazard.
+
+**Behaviour this genuinely changes** (exact `.5` ties only; `round` goes away-from-zero,
+real `rint` to-even — the new behaviour matches upstream Linux):
+- **Reachable:** wmaker `WINGs/wbrowser.c:568` — one column of overflow with the scroller
+  at mid-travel gives exactly `0.5`, so the browser scroll position shifts by one column.
+- **Likely visible:** FLTK half-pixel geometry (`fl_vertex.cxx:107,247-250`, `Fl_Chart.cxx`)
+  and value snapping (`Fl_Valuator.cxx:128,147` — a slider with step 0.5/0.25 now snaps to
+  the even step).
+- **Provably not:** dillo `dw/style.cc` (`borderWidth/3.0` can never land on a tie) and
+  wmaker `wcolorpanel.c` (2.55 is not representable; wheel coords irrational).
+
+**Adjacent find, separate cleanup:** every symbol in vkQuake's `__PHOENIX_VKQ_MATH_GAPS`
+block (`vkquake/glue/vkq_phoenix_compat.h:45-46` and neighbours — copysign, remainder,
+log2f, fmin/fmax…) is now in `libm.a`, so that whole block is droppable too.
 
 ## 8. Answers to the questions this audit was asked
 
