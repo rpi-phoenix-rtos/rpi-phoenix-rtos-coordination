@@ -171,7 +171,16 @@ if [ "$skip_server_up" = 0 ]; then
 	# NOT seen". A netboot loader must POSITIVELY carry the NFS-root syspage entry
 	# (`nfs;/;<server>;/;v4;takeover`), so require it rather than only rejecting a
 	# known-bad marker -- a missing string then fails closed instead of passing.
-	if [ -f "$_ld" ] && ! strings -a "$_ld" 2>/dev/null | grep -q 'nfs;/'; then
+	# Count, never `grep -q`, under `set -o pipefail` (line 25). `grep -q` exits on
+	# its FIRST match and closes the pipe, `strings` then dies of SIGPIPE, and the
+	# PIPELINE status becomes 141 -- so a check written with -q inverts its own
+	# meaning whenever the string IS present. That single mistake caused both
+	# failures seen on 2026-09-04: the original mmcblk0p2 test failed OPEN on a real
+	# SD blob, and a `! ... grep -q 'nfs;/'` test refused a perfectly good nfsroot
+	# blob. Same trap already documented in verify-sd-image-contents.sh.
+	_ld_has() { [ "$(strings -a "$_ld" 2>/dev/null | grep -c -- "$1" || true)" -gt 0 ]; }
+
+	if [ -f "$_ld" ] && ! _ld_has 'nfs;/'; then
 		printf '\n[test-cycle-psh-interact] REFUSING: the TFTP loader.disk has no NFS-root\n' >&2
 		printf '  syspage entry (`nfs;/`), so it will not mount a root over the network and\n' >&2
 		printf '  no user-space program will run. Rebuild the nfsroot boot blob first:\n' >&2
@@ -179,7 +188,7 @@ if [ "$skip_server_up" = 0 ]; then
 		printf '  (Or pass --skip-server-up if you really are SD-booting with a card in.)\n' >&2
 		exit 3
 	fi
-	if [ -f "$_ld" ] && strings -a "$_ld" 2>/dev/null | grep -q 'mmcblk0p2'; then
+	if [ -f "$_ld" ] && _ld_has 'mmcblk0p2'; then
 		printf '\n[test-cycle-psh-interact] REFUSING: the TFTP loader.disk is the SD-BOOT\n' >&2
 		printf '  variant (it mounts /dev/mmcblk0p2). A netboot cycle with no card in the\n' >&2
 		printf '  Pi will not reach user space, and every result would be a false negative.\n' >&2
