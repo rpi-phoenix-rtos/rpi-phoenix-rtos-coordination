@@ -507,6 +507,25 @@ much of the port's patch set / accommodation set must be reworked. Effort is a
 
 ---
 
+## 7b. Prepared upgrade inputs (fetched + hashed 2026-09-04, edits pending)
+
+Ranked items #5 and #6 are now a mechanical pin change — the artifacts were fetched and
+hashed, so nothing has to be discovered at edit time:
+
+| Port | From | To | size | sha256 |
+|---|---|---|---|---|
+| `openssl111` | 1.1.1a | **1.1.1w** | `9893384` | `cf3098950cb4d853ad95c0841f1f9c6d3dc102dccfcacd521d93925208b76ac8` |
+| `mbedtls` | 2.28.0 | **2.28.10** | `4369619` | `0f2e0525903a89ae1d39ce439d858be66933bda54c5b6102b72a29ed8fe7c088` |
+
+**Trap for the openssl bump:** the port's `source="https://www.openssl.org/source/"` only
+serves the *current* release of a branch. 1.1.1w now lives under
+`https://www.openssl.org/source/old/1.1.1/`, so `source=` must move with `version=` or the
+fetch 404s. (1.1.1a resolves today only because the local tarball is already cached.)
+
+Both are in-branch, API/ABI-stable moves; the risk is breadth (openssl has six dependent
+ports: Python `_ssl`, `wpa_supplicant`, `lighttpd`, `openiked`, `sscep`, `openvpn`), so each
+gets its own build + a dependent check, exactly as zlib 1.3.1 did.
+
 ## 8. Answers to the questions this audit was asked
 
 **Is the nano case unique?** No, but it is the only *pure* instance — a version pinned
