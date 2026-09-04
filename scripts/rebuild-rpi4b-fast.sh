@@ -47,7 +47,12 @@ Options:
       any core/project artifact. Use when staging ports onto an external
       rootfs (e.g. the NFS export) without touching the boot image.
   --skip-prepare
-      do not refresh the copied VM-local buildroot first
+      do not refresh the copied VM-local buildroot first.
+      CAVEAT: the buildroot holds COPIES of phoenix-rtos-{build,ports} and of
+      _projects/, and the build reads the copies. So with --skip-prepare an edit
+      to a port.def.sh, a plo yaml or the port_manager has NO effect -- the same
+      stale-copy trap as the documented stale-core hazard. Skip prepare only to
+      re-run a build whose inputs have not changed (it also saves the _fs rsync).
   --qemu-sanity
       run the direct Pi 4 QEMU serial sanity lane after build
   --buildroot PATH
