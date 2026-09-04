@@ -81,8 +81,9 @@ The generated header's *input* lives outside the workdir, but the guard keys on 
 inside it, and `b_port_invalidate_stale_configure` only fires on a libphoenix API change,
 never on a `lighttpd.conf` change. So the anchored-grep fix committed earlier today takes
 effect on a clean build and **not** on an incremental one: editing `lighttpd.conf` does
-not change the linked plugin table. **Fix:** move the generation out of the guard; it is
-cheap and its input is external.
+not change the linked plugin table. **FIXED 2026-09-04** (ports `c396a75`): the CONFIGFILE
+lookup and the generation now run outside the guard, so the table tracks the config on
+every build; configure itself stays guarded, which is what that stamp is for.
 
 **4. Ports that stage headers into the shared prefix change other ports' configure
 answers. [reported]** `windowmaker:84-93` stages `libftw.a` + `ftw.h`, and libphoenix has
@@ -116,6 +117,60 @@ framework-fetched anchor. `xorg_libs`/`xorg_fonts` additionally cache into
 `${PHOENIX_DISTFILES:-$HOME/.phoenix-distfiles}/xorg`, **outside the buildroot**, keyed by
 basename and reused unverified forever. This host therefore builds from a `$HOME` cache
 nothing verifies while a clean room re-downloads whatever the mirror serves that day.
+
+**Finding 7, prepared 2026-09-04 — the cache is (probably) genuine, and here are the
+hashes to pin.** The host cache holds **33** tarballs, 64 MB, in
+`~/.phoenix-distfiles/xorg`, reused unverified forever. Two sampled tarballs
+(`libX11-1.8.7`, `pixman-0.42.2`) were re-fetched from the recipe's own mirror
+(`artfiles.org`) and **agree byte-for-byte** with the cached copies, and several of the
+sums below match widely published values. Stated honestly: **mirror agreement is not a
+signature check** — it rules out local corruption and a stale cache entry, not a
+compromised mirror. x.org's `.sha256` side-files are not served at the paths tried
+(`www.x.org/releases/individual/...` returns HTML), so the tarball-vs-tarball comparison
+above is the strongest cheap check available.
+
+*Note:* the cache holds **both** `libXt-1.3.0` and `libXt-1.3.1`, i.e. a version bump left
+the superseded tarball behind — harmless, but it shows the cache only ever accumulates.
+
+**Fix shape:** give `_fetch_extract` a third argument (expected sha256), verify after
+download and before extraction, and `b_die` on mismatch — the same contract the framework
+already applies to every `sha256=`-pinned anchor. The table is the input:
+
+| tarball | sha256 |
+|---|---|
+| `libXaw-1.0.16.tar.gz` | `012f90adf8739f2f023d63a5fee1528949cf2aba92ef7ac1abcfc2ae9cf28798` |
+| `libICE-1.1.1.tar.gz` | `04fbd34a11ba08b9df2e3cdb2055c2e3c1c51b3257f683d7fcf42dabcf8e1210` |
+| `xcb-util-image-0.4.1.tar.gz` | `0ebd4cf809043fdeb4f980d58cdcf2b527035018924f8c14da76d1c81001293b` |
+| `libXext-1.3.5.tar.gz` | `1a3dcda154f803be0285b46c9338515804b874b5ccc7a2b769ab7fd76f1035bd` |
+| `freetype-2.13.2.tar.gz` | `1ac27e16c134a7f2ccea177faba19801131116fd682efc1f5737037c5db224b5` |
+| `xcb-util-keysyms-0.4.1.tar.gz` | `1fa21c0cea3060caee7612b6577c1730da470b88cbdf846fa4e3e0ff78948e54` |
+| `xcb-util-0.4.1.tar.gz` | `21c6e720162858f15fe686cef833cf96a3e2a79875f84007d76f6d00417f593a` |
+| `libXdmcp-1.1.5.tar.gz` | `31a7abc4f129dcf6f27ae912c3eedcb94d25ad2e8f317f69df6eda0bc4e4f2f3` |
+| `libXft-2.3.8.tar.gz` | `32e48fe2d844422e64809e4e99b9d8aed26c1b541a5acf837c5037b8d9f278a8` |
+| `libXau-1.0.11.tar.gz` | `3a321aaceb803577a4776a5efe78836eb095a9e44bbc7a465d29463e1a14f189` |
+| `jpegsrc.v9e.tar.gz` | `4077d6a6a75aeb01884f708919d25934c93305e49f7e3f36db9129320e6f4f3d` |
+| `libxcb-1.16.tar.gz` | `4348566aa0fbf196db5e0a576321c65966189210cb51328ea2bb2be39c711d71` |
+| `libSM-1.2.4.tar.gz` | `51464ce1abce323d5b6707ceecf8468617106e1a8a98522f8342db06fd024c15` |
+| `libpthread-stubs-0.5.tar.gz` | `59da566decceba7c2a7970a4a03b48d9905f1262ff94410a649224e33d2442bc` |
+| `cairo-1.16.0.tar.xz` | `5e7b29b3f113ef870d1e3ecf8adf21f923396401604bda16d44be45e66052331` |
+| `libXrender-0.9.11.tar.gz` | `6aec3ca02e4273a8cbabf811ff22106f641438eb194a12c0ae93c7e08474b667` |
+| `expat-2.5.0.tar.bz2` | `6f0e6e01f7b30025fa05c85fdad1e5d0ec7fd35d9f61b22f34998de11969ff67` |
+| `libX11-1.8.7.tar.gz` | `793ebebf569f12c864b77401798d38814b51790fce206e01a431e5feb982e20b` |
+| `libpng-1.6.40.tar.gz` | `8f720b363aa08683c9bf2a563236f45313af2c55d542b5481ae17dd8d183bb42` |
+| `libXpm-3.5.17.tar.gz` | `959466c7dfcfcaa8a65055bfc311f74d4c43d9257900f85ab042604d286df0c6` |
+| `xcb-proto-1.16.0.tar.gz` | `a75a1848ad2a89a82d841a51be56ce988ff3c63a8d6bf4383ae3219d8d915119` |
+| `xtrans-1.5.0.tar.gz` | `a806f8a92f879dcd0146f3f1153fdffe845f2fc0df9b1a26c19312b7b0a29c86` |
+| `libXfont2-2.0.6.tar.gz` | `a944df7b6837c8fa2067f6a5fc25d89b0acc4011cd0bc085106a03557fb502fc` |
+| `libfontenc-1.1.8.tar.gz` | `b55039f70959a1b2f02f4ec8db071e5170528d2c9180b30575dccf7510d7fb9f` |
+| `libXmu-1.2.1.tar.gz` | `bf0902583dd1123856c11e0a5085bd3c6e9886fbbd44954464975fd7d52eb599` |
+| `libxkbfile-1.1.3.tar.gz` | `c4c2687729d1f920f165ebb96557a1ead2ef655809ab5eaa66a1ad36dc31050d` |
+| `libXrandr-1.5.4.tar.gz` | `c72c94dc3373512ceb67f578952c5d10915b38cc9ebb0fd176a49857b8048e22` |
+| `libXt-1.3.1.tar.gz` | `cf2212189869adb94ffd58c7d9a545a369b83d2274930bfbe148da354030b355` |
+| `fontconfig-2.14.2.tar.xz` | `dba695b57bce15023d2ceedef82062c2b925e51f5d4cc4aef736cf13f60a468b` |
+| `xcb-util-wm-0.4.2.tar.gz` | `dcecaaa535802fd57c84cceeff50c64efe7f2326bf752e16d2b77945649c8cd7` |
+| `libXt-1.3.0.tar.gz` | `de4a80c4cc7785b9620e572de71026805f68e85a2bf16c386009ef0e50be3f77` |
+| `xcb-util-renderutil-0.3.10.tar.gz` | `e04143c48e1644c5e074243fa293d88f99005b3c50d1d54358954404e635128a` |
+| `pixman-0.42.2.tar.gz` | `ea1480efada2fd948bc75366f7c349e1c96d3297d09a3fe62626e38e234a625e` |
 
 **8. Ports that write into the rootfs outside `b_install`. [reported]** `xorg_apps`,
 `windowmaker`, `xterm`, `xbill`, `mc`, `dropbear`, `busybox` write directly into
