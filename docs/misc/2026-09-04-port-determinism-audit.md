@@ -86,7 +86,7 @@ lookup and the generation now run outside the guard, so the table tracks the con
 every build; configure itself stays guarded, which is what that stamp is for.
 
 **4. Ports that stage headers into the shared prefix change other ports' configure
-answers. [reported]** `windowmaker:84-93` stages `libftw.a` + `ftw.h`, and libphoenix has
+answers. [VERIFIED 2026-09-04 for glib2]** `windowmaker:84-93` stages `libftw.a` + `ftw.h`, and libphoenix has
 no `<ftw.h>` — so `AC_CHECK_HEADERS(ftw.h)` answers differently before and after
 windowmaker runs. `glib2:61-70` stages **stub** `libintl.h`, `resolv.h`, `arpa/nameser.h`
 and a stub `libresolv.a` whose own comment says it fails at runtime — and `mc:96` already
@@ -94,6 +94,22 @@ links `-lresolv`. `ncurses:55-57` flattens ncurses headers into the shared inclu
 the scar tissue is already in-tree, `xterm:89` must seed `cf_cv_lib_tgetent=no` because
 configure otherwise finds a tgetent provider in the sysroot. Same class as the `mc`
 `<mntent.h>`/`<langinfo.h>` incident this repo already paid for.
+
+*Verification of the glib2 half (2026-09-04).* `glib2:61-70` unconditionally copies stub
+`libintl.h`, `arpa/nameser.h` and `resolv.h` into the **shared** `PREFIX_H`, and builds a
+stub `libresolv.a` into the shared `PREFIX_A`. Its own comment states the resolv stub
+"fails cleanly at runtime" and is needed only for gio's gresolver, "not built for the
+mc-critical libglib-2.0" — yet `mc:96` links `-lresolv`, so **mc ships against the stub**.
+That is tolerable for mc (no DNS needed to browse locally); the real hazard is the shared
+prefix: any port configured *after* glib2 probes `resolv.h` / `res_query` and the gettext
+macros successfully **against stubs** — order-dependent on a clean build, universal on an
+incremental one.
+
+**Fix direction (not yet implemented):** stage such stubs into a **port-private** include
+dir and add `-I` for the consuming port only, instead of the shared `PREFIX_H`/`PREFIX_A`.
+Same treatment for `windowmaker`'s `ftw.h`/`libftw.a` and `ncurses`'s header flattening.
+Each is its own controlled change — three ports, three builds — and none should ride along
+with an unrelated turn.
 
 **5. The four game ports include `-I/tmp/mesa-v3d-build/src`. [reported]**
 `quake3:150`, `quakespasm:128`, `yquake2:124`, `supertuxkart:226`, with directory
