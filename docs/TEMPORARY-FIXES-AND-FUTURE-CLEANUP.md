@@ -252,7 +252,7 @@ authoritative current state.
 
 ## TD-21: syscall table diverges from upstream (mutex syscalls kept append-only)
 
-- **Status:** PENDING (owner-directed; deferred to the next scheduled full rebuild)
+- **Status:** **IN PROGRESS 2026-09-04** — syscalls.h reverted (kernel `d9048511`); the table is now upstream-identical except our own appended `sys_fdpath`. Remaining: the full-clean rebuild of everything + the boot verification below. **Not RESOLVED until step 3 passes.**
 - **Owner directive (2026-08-28):** "I don't like the commit d9d09cc to the
   kernel. It is done to save us time and effort short term. But it will only
   bring confusion and unneeded difference between our port and upstream. Revert
@@ -280,6 +280,16 @@ authoritative current state.
      prebuilt binary in the netboot NFS root (games/X11/python/coreutils/etc.),
      since their baked syscall numbers shift. A partial rebuild would leave
      stale binaries calling the wrong syscall (silent misbehavior).
+     **Category this entry originally missed (found 2026-09-04): the standalone
+     driver/probe tools.** `rpi4-wifi`, `rpi4-hci`, `wifi-probe` and `bt-probe`
+     are built by their own `build-standalone.sh`/`build.sh` against the
+     TOOLCHAIN's bundled libphoenix.a (`tools/wifi-probe/build.sh:7`: "with the
+     toolchain's default libphoenix + CRT"), **not** the freshly built sysroot.
+     The main build does not touch them, so they keep the OLD syscall numbers
+     until `.toolchain/aarch64-phoenix/aarch64-phoenix/lib/libphoenix.a` is
+     re-synced from the new build AND each tool is rebuilt. Verify with the
+     drivers, not just the games: `rpi4-wifi` must still register `/dev/wifi`
+     and `rpi4-hci` must still answer HCI_RESET.
   3. Boot-verify (netboot + the prebuilt-binary suite: a game, an X app, python)
      to confirm no stale-syscall breakage.
 - **Trigger:** the next scheduled full clean rebuild for any other reason
