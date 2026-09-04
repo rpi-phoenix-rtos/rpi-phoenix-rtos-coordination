@@ -212,8 +212,19 @@ static void phx_make_current(struct glamor_context *glamor_ctx)
  * and reverse the rows into dst, which is band-correct for both the partial
  * damage-region flush and the full-frame flush (verified: dst row 0 <-> fb row y0).
  *
- * Channel order: glReadPixels(GL_RGBA, GL_UNSIGNED_BYTE) writes byte0=R, byte1=G,
- * byte2=B, matching the Pi fb's RGB byte order (DDX redMask 0x0000ff, the #19 fix).
+ * Channel order: the Pi framebuffer really is RGB -- byte0=R, proven on hardware
+ * 2026-09-05 with tools/fbprobe, which writes {FF,00,00,00} and {00,00,FF,00} as
+ * labelled bands: the first reads RED, the second BLUE. The DDX's
+ * redMask=0x000000ff is therefore right, and the SOFTWARE X path renders correct
+ * colours (measured: Window Maker's configured rgb:50/50/75 arrives as
+ * (79,81,109) on screen).
+ *
+ * But reading the glamor screen texture with GL_RGBA produced R and B EXCHANGED
+ * (the same background came out mauve, ~(117,80,80)): glamor's screen pixmap
+ * holds the X pixel bytes in BGRA order on this stack, so GL_RGBA re-labels them
+ * and the swap lands on screen. Read GL_BGRA and the bytes arrive in the fb's
+ * RGB order unchanged. Do NOT "fix" this in the DDX masks instead -- they are
+ * correct, and changing them would break the software path that works.
  */
 #define PHX_READBACK_FLIP_Y 1
 
@@ -274,7 +285,7 @@ void glamor_phx_screen_readback(unsigned int tex, int width, int y0, int rows,
 			 * not bound to the active unit). */
 			glBindTexture(GL_TEXTURE_2D, (GLuint)tex);
 			glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &H);
-			glReadPixels(0, H - (y0 + rows), width, rows, GL_RGBA,
+			glReadPixels(0, H - (y0 + rows), width, rows, GL_BGRA,
 			             GL_UNSIGNED_BYTE, scratch);
 			for (r = 0; r < rows; r++)
 				memcpy((unsigned char *)dst + (size_t)r * width * 4,
@@ -283,7 +294,7 @@ void glamor_phx_screen_readback(unsigned int tex, int width, int y0, int rows,
 		}
 	}
 #else
-	glReadPixels(0, y0, width, rows, GL_RGBA, GL_UNSIGNED_BYTE, dst);
+	glReadPixels(0, y0, width, rows, GL_BGRA, GL_UNSIGNED_BYTE, dst);
 #endif
 
 	glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)prev_fbo);
