@@ -89,6 +89,21 @@ same treatment. So the fix is to apply the existing rule:
    snapshot hid. That is the point, and under C23 they surface as errors, not as
    silent misbehaviour.
 
+**Correction to step 2's cost (2026-09-04, after reading the orchestration).** "Move the
+gpu phase after core" is not a two-line swap. `rebuild-rpi4b-fast.sh:562-574` runs the gpu
+phase before a **single** `build.sh` invocation, and that one invocation covers core *and*
+ports *and* fs *and* project. The real constraint is narrower than the comment there
+implies: since 2026-09-03 no game binary goes into `loader.disk`, so what actually needs
+the archives is the **ports** stage (the five game ports link
+`tools/.gpu-libs/lib{GL,v3d,v3dv}-phoenix.a` by absolute path and `b_die` without them —
+`:590-600`). Core needs nothing from the gpu phase.
+
+So the ordering wanted is `core → gpu → ports`, which needs `build.sh` split across two
+invocations. The building blocks already exist (`--scope core`, `--ports-only`), so this is
+an orchestration change of maybe 30 lines, not a refactor — but it is more than a swap, and
+with exposure currently nil it is a **planned improvement, not an urgent fix**. Do it when
+the clean-image chain is green, not in the middle of it.
+
 ## Cheapest verification
 
 After the change, the skew must be zero by construction. Re-run the macro-value scan
