@@ -21,6 +21,7 @@ switch), autodetect /dev/cu.usbserial-*.
 from __future__ import annotations
 
 import argparse
+import re
 import datetime
 import glob
 import os
@@ -97,6 +98,21 @@ def main():
         "[T+SS.ss] measured from when the current command was sent. Lets you measure "
         "startup latency of a launched program (grep the log for the marker preceding a "
         "known output line). Off by default so it never disturbs other log consumers.",
+    )
+    ap.add_argument(
+        "--ready-line",
+        default=None,
+        help="extended regular expression marking the command as READY (e.g. a game's "
+             "first presented frame). Until it matches, --max-cmd-secs is only the "
+             "deadline for REACHING it; once it matches, capture continues for "
+             "--ready-extra-secs more. Without this, a slow start silently eats the "
+             "whole window and the run looks like a failure instead of a late start.",
+    )
+    ap.add_argument(
+        "--ready-extra-secs",
+        type=float,
+        default=60.0,
+        help="seconds of capture to guarantee after --ready-line matches (default 60)",
     )
     ap.add_argument(
         "--max-cmd-secs",
@@ -216,9 +232,25 @@ def main():
             # every ~1 s) or the command launched a never-exiting program.
             cmd_start = time.time()
             quiet_since = cmd_start
+            ready_re = re.compile(args.ready_line.encode()) if args.ready_line else None
+            ready_at = None
+            tail = b""
             while time.time() - quiet_since < args.idle_secs:
-                if args.max_cmd_secs and (time.time() - cmd_start) >= args.max_cmd_secs:
-                    print(f"\n*** max-cmd-secs ({args.max_cmd_secs}s) reached, moving on")
+                now = time.time()
+                if ready_at is not None:
+                    # Readiness reached: hold the line for a fixed, useful window
+                    # regardless of max-cmd-secs, which was only the budget for
+                    # getting here.
+                    if now - ready_at >= args.ready_extra_secs:
+                        print(f"\n*** ready + {args.ready_extra_secs:.0f}s captured, moving on")
+                        break
+                elif args.max_cmd_secs and (now - cmd_start) >= args.max_cmd_secs:
+                    if ready_re is not None:
+                        print(f"\n*** max-cmd-secs ({args.max_cmd_secs}s) reached WITHOUT "
+                              f"matching --ready-line {args.ready_line!r} -- this run never "
+                              f"got started, do not read it as a failure of what it was testing")
+                    else:
+                        print(f"\n*** max-cmd-secs ({args.max_cmd_secs}s) reached, moving on")
                     break
                 data = ser.read(256)
                 if data:
@@ -229,6 +261,14 @@ def main():
                     log.write(data)
                     log.flush()
                     quiet_since = time.time()
+                    if ready_re is not None and ready_at is None:
+                        # Match across read boundaries: a marker can straddle two reads.
+                        tail = (tail + data)[-512:]
+                        if ready_re.search(tail):
+                            ready_at = time.time()
+                            print(f"\n*** ready after {ready_at - cmd_start:.0f}s "
+                                  f"(--ready-line matched); capturing "
+                                  f"{args.ready_extra_secs:.0f}s more")
         print("\n*** done")
         return 0
     finally:

@@ -42,6 +42,14 @@ uart_baud="115200"
 # the framebuffer). Skips cleanly if the grabber device is absent.
 hdmi_grabber="${RPI4B_HDMI_GRABBER:-/dev/video4}"
 hdmi_interval="${RPI4B_HDMI_INTERVAL:-15}"
+# Once the run reaches a known-ready marker in the UART log (a game's first
+# presented frame, say), snapshot DENSELY: the fixed 15 s cadence is what made
+# visual checks flaky -- on a slow start every tick landed during loading and the
+# grader had no frame to judge, which reads as a failure of the thing under test.
+hdmi_dense_on="${RPI4B_HDMI_DENSE_ON:-}"
+hdmi_dense_interval="${RPI4B_HDMI_DENSE_INTERVAL:-5}"
+ready_line="${PSH_READY_LINE:-}"
+ready_extra_secs="${PSH_READY_EXTRA_SECS:-60}"
 hdmi_dir="${RPI4B_HDMI_DIR:-$repo/artifacts/hdmi}"
 hdmi_pid=""
 
@@ -51,6 +59,11 @@ Usage: test-cycle-psh-interact.sh [options] [-- command1 command2 ...]
 
   --label TEXT       short label appended to the log filename
   --wait-secs N      seconds to wait for psh prompt (default $wait_secs)
+  --ready-line ERE   regex marking the command ready (e.g. 'present [0-9]+'); until it
+                     matches, --max-cmd-secs is only the deadline for REACHING it
+  --ready-extra-secs N  capture this long after --ready-line matches (default $ready_extra_secs)
+  --hdmi-dense-on ERE   once this matches the UART log, snapshot every
+                     \$RPI4B_HDMI_DENSE_INTERVAL s (default $hdmi_dense_interval) instead of $hdmi_interval s
   --idle-secs N      seconds of UART idle after each command (default $idle_secs)
   --inter-cmd-secs N seconds to wait between commands (default $inter_cmd_secs;
                      raise it so a post-takeover retry lands after NFS root mounts)
@@ -68,6 +81,9 @@ while [ $# -gt 0 ]; do
 	case "$1" in
 		--label)            label="$2"; shift 2 ;;
 		--wait-secs)        wait_secs="$2"; shift 2 ;;
+		--ready-line)       ready_line="$2"; shift 2 ;;
+		--ready-extra-secs) ready_extra_secs="$2"; shift 2 ;;
+		--hdmi-dense-on)    hdmi_dense_on="$2"; shift 2 ;;
 		--idle-secs)        idle_secs="$2"; shift 2 ;;
 		--inter-cmd-secs)   inter_cmd_secs="$2"; shift 2 ;;
 		--max-cmd-secs)     max_cmd_secs="$2"; shift 2 ;;
@@ -103,7 +119,18 @@ start_hdmi_periodic() {
 	[ "$hdmi_interval" -gt 0 ] || return 0
 	[ -e "$hdmi_grabber" ] || { printf 'HDMI: grabber %s absent, skipping snapshots\n' "$hdmi_grabber" >&2; return 0; }
 	mkdir -p "$hdmi_dir"
-	( while sleep "$hdmi_interval"; do hdmi_grab_one "$(hdmi_label_base)-tick.png" || true; done ) &
+	( interval="$hdmi_interval"
+	  while sleep "$interval"; do
+		hdmi_grab_one "$(hdmi_label_base)-tick.png" || true
+		# Switch to the dense cadence the first time the marker shows up. grep -c,
+		# not -q: -q exits on the first match, and a SIGPIPE'd producer in a
+		# pipeline has bitten this repo before.
+		if [ -n "$hdmi_dense_on" ] && [ "$interval" != "$hdmi_dense_interval" ] &&
+			[ "$(grep -acE "$hdmi_dense_on" "$log_path" 2>/dev/null || echo 0)" -gt 0 ]; then
+			interval="$hdmi_dense_interval"
+			printf 'HDMI: marker matched, snapshotting every %ss\n' "$interval" >&2
+		fi
+	  done ) &
 	hdmi_pid=$!
 }
 stop_hdmi_periodic() {
@@ -164,6 +191,11 @@ printf '[test-cycle-psh-interact] commands: %s\n' "${commands[*]}"
 # the `trap cleanup EXIT` above, so the Pi would never get powered off when the
 # interactive session ends (it was left running every time). Run python as a
 # child and let the EXIT trap fire on return; preserve its exit status.
+ready_args=()
+if [ -n "$ready_line" ]; then
+	ready_args=( --ready-line "$ready_line" --ready-extra-secs "$ready_extra_secs" )
+fi
+
 python3 "$repo/scripts/psh-interact.py" \
 	--baud "$uart_baud" \
 	--log "$log_path" \
@@ -171,6 +203,7 @@ python3 "$repo/scripts/psh-interact.py" \
 	--idle-secs "$idle_secs" \
 	--inter-cmd-secs "$inter_cmd_secs" \
 	--max-cmd-secs "$max_cmd_secs" \
+	"${ready_args[@]}" \
 	$( [ "$stamp" = 1 ] && printf -- '--stamp' ) \
 	--commands "${commands[@]}"
 exit $?
