@@ -44,7 +44,11 @@ REQUIRED=(
 	usr/bin/quake3e
 	usr/bin/supertuxkart
 	usr/share/quake/id1/pak0.pak
-	usr/share/quake/id1/config.cfg
+	# Shipped Quake settings live in autoexec.cfg, not config.cfg: quake.rc execs
+	# default.cfg -> config.cfg -> autoexec.cfg, so autoexec is read every start and
+	# wins without clobbering the game's own file (which a fresh rootfs correctly
+	# does not have, and which vkQuake shadows with vkQuake.cfg anyway).
+	usr/share/quake/id1/autoexec.cfg
 	usr/share/quake2/baseq2/pak0.pak
 	usr/share/quake3/demoq3/pak0.pk3
 	usr/share/quake3/demoq3/pak1.pk3
