@@ -111,6 +111,43 @@ ports (whose `CMakeCache.txt` caches compiler and libc probe results), `ffmpeg` 
 first configured. `ffmpeg:88-94`'s hand-flip of `HAVE_ERF/EXP2/EXP2F/LOG2F` from 0→1,
 commented "fresh-libc reconcile", is a manual patch over exactly this.
 
+**Finding 6, designed 2026-09-04 (verified against the source, not yet applied).**
+`b_port_invalidate_stale_configure` (`port_manager/port.subr:200-275`) keys a stamp on
+the sha256 of libphoenix.a's exported symbol list and, when that changes, deletes the
+configure outputs so the port reconfigures against the new libc. Its gate at `:209`
+returns early unless `config.status` or `config.log` sits at the workdir root, and the
+comment explains why `Makefile` is deliberately excluded from detection: for busybox and
+friends the Makefile IS the shipped source.
+
+That reasoning is right but leaves the CMake ports out, and their `CMakeCache.txt` caches
+the compiler identification plus every `try_compile`/`check_function_exists` answer — i.e.
+exactly what a libc change invalidates. The fix is safe because a CMake port's outputs are
+segregated: every one of them does `mkdir -p "${PREFIX_PORT_WORKDIR}/build"` and configures
+*into* that directory (verified in `zlib:36-41`, which guards on `build/Makefile`), so
+`build/` is pure output and can go wholesale — nothing shipped lives there.
+
+Shape:
+
+1. Replace the early return with type detection — `autoconf` when
+   `config.status`/`config.log` is present, `cmake` when `build/CMakeCache.txt` is,
+   otherwise return 0 as today (so busybox-style trees stay untouched).
+2. After the key comparison, branch the deletion: for `cmake`, `rm -rf "${workdir}/build"`
+   and write the stamp. Recipes guard on `build/Makefile`, which disappears with it.
+3. Add `${workdir}/ffbuild/config.log` to the autoconf detection. That is the only reason
+   ffmpeg is missed — its log is not at the workdir root — and the existing
+   `[ -f Makefile.in ]` guard already protects ffmpeg's *shipped* Makefile, so the
+   deletion stays safe. ffmpeg is the port most exposed here: `:88-94` hand-asserts
+   `HAVE_ERF/EXP2/EXP2F/LOG2F=1` against configure's own probe result of 0, a standing
+   claim about libphoenix's libm that nothing re-validates.
+
+**Still not covered, deliberately:** `openssl111`. It guards its configure on `Makefile`
+and ships no `Makefile.in`, so the Makefile deletion is skipped by the existing safety
+check and openssl keeps a stale Makefile. Covering it needs an openssl-specific marker;
+out of scope for a change that should stay one mechanism wide.
+
+Verify by construction: touch libphoenix (any exported-symbol change), rebuild one CMake
+port, and confirm the "libc API changed" line appears and `build/` was recreated.
+
 **7. ~35 X11 tarballs fetched with no sha256. [reported]** `xorg_libs:73-91`,
 `xorg_fonts:69-89`, `xorg_apps:94-106` — `curl` with no checksum, unlike every
 framework-fetched anchor. `xorg_libs`/`xorg_fonts` additionally cache into
