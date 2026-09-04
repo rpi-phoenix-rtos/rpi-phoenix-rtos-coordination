@@ -555,11 +555,15 @@ if [ "${do_prepare}" -eq 1 ]; then
 	run_build_shell "cd '${repo_root}' && ./scripts/prepare-buildroot.sh --copy-components '${buildroot}'"
 fi
 
-# --with-showcase, phase 1 (GPU): build the GPU/GL/Vulkan + Quake archives into
-# tools/.gpu-libs BEFORE build.sh, so the _user rpi4-quake/-vkquake components
-# link them and are staged into the image by the project stage. Skipped unless
-# --with-showcase; only meaningful for --variant sd but harmless otherwise.
-if [ "${with_showcase}" = 1 ]; then
+# --with-showcase, phase gpu: build the GPU/GL/Vulkan + Quake archives into
+# tools/.gpu-libs. What needs them is the PORTS stage (the five game ports link
+# tools/.gpu-libs/lib{GL,v3d,v3dv}-phoenix.a by absolute path and b_die without
+# them); nothing in core does. So this runs BETWEEN core and ports -- see
+# run_phoenix_build + the stage split below -- because the Mesa objects must compile
+# against the sysroot core produces, not against the hand-maintained toolchain
+# bundle (docs/misc/2026-09-04-toolchain-header-skew.md).
+run_gpu_phase() {
+	[ "${with_showcase}" = 1 ] || return 0
 	# --scope full-clean must force the GPU archives too. Without --force the gpu
 	# phase falls back to archive_fresh()'s mtime comparison against the Mesa/port
 	# SOURCES only — so on a full clean the archives look "fresh" and the five game
@@ -572,7 +576,7 @@ if [ "${with_showcase}" = 1 ]; then
 	printf 'Showcase:  building GPU archives (phase gpu) before build.sh%s\n' \
 		"$( [ -n "${gpu_force_arg}" ] && printf ' [--force: full-clean]' )"
 	"${repo_root}/scripts/build-showcase-apps.sh" --phase gpu ${gpu_force_arg}
-fi
+}
 
 # GPU_LIBS: the rpi4-quake/-vkquake Makefiles compute this by climbing 4 levels
 # from their own dir, which is correct for the sources/... tree but off-by-one
@@ -589,8 +593,9 @@ gpu_libs_env="GPU_LIBS='${repo_root}/tools/.gpu-libs' "
 # so verify the gpu phase actually produced them and say so plainly here rather than
 # letting the ports stage fail deep inside port_manager.
 showcase_env=""
-if [ "${with_showcase}" = 1 ]; then
-	missing_gpu=()
+check_gpu_archives() {
+	[ "${with_showcase}" = 1 ] || return 0
+	local missing_gpu=() gpu_archive
 	for gpu_archive in libGL-phoenix.a libv3d-phoenix.a libv3dv-phoenix.a; do
 		[ -f "${repo_root}/tools/.gpu-libs/${gpu_archive}" ] || missing_gpu+=("${gpu_archive}")
 	done
@@ -600,9 +605,8 @@ if [ "${with_showcase}" = 1 ]; then
 		printf 'Showcase:  MISSING GPU archives after the gpu phase: %s\n' "${missing_gpu[*]}" >&2
 		printf '           The game ports link these by absolute path and will fail the ports stage.\n' >&2
 	fi
-fi
+}
 
-build_args_str="${build_args[*]}"
 # Task #31: pass RPI4_LOG_TO_FILE into the build env ONLY when the board macro is
 # set, so the plo render (image_builder.py reads os.environ) gates the rpi4-klogd
 # launch. In a DEBUG build the var stays unset and user.plo.yaml's
@@ -611,12 +615,59 @@ log_to_file_env=""
 if [ "${log_to_file}" = 1 ]; then
 	log_to_file_env="RPI4_LOG_TO_FILE='1' "
 fi
+
+# One build.sh invocation with the given stage list. build.sh runs stages in its
+# own fixed order (clean -> fs -> host -> core -> test -> ports -> project ->
+# image), so a stage list is a SET; splitting the set across two invocations is
+# how an external phase gets sequenced in between.
+#
 # Prepend the repo's uv venv bin so the build's bare `python3` (used by
 # phoenix-rtos-build/build-ports.sh -> port_manager) finds resolvelib/jinja2/
 # PyYAML/rich from the venv rather than the PEP668-managed system Python. A
 # non-existent PATH entry is harmless, so this is safe even without the venv.
-run_build_shell \
-	"set -euo pipefail; export PATH='${repo_root}/.venv/bin':'${toolchain_path}':\$PATH; cd '${buildroot}'; env ${log_to_file_env}${gpu_libs_env}${showcase_env}RPI4B_DTB_PATH='${dtb_path}' RPI4B_VARIANT='${variant}' TARGET='${target}' ./phoenix-rtos-build/build.sh ${build_args_str}"
+run_phoenix_build() {
+	local stages="$*"
+	printf 'Build:     ./phoenix-rtos-build/build.sh %s\n' "${stages}"
+	run_build_shell \
+		"set -euo pipefail; export PATH='${repo_root}/.venv/bin':'${toolchain_path}':\$PATH; cd '${buildroot}'; env ${log_to_file_env}${gpu_libs_env}${showcase_env}RPI4B_DTB_PATH='${dtb_path}' RPI4B_VARIANT='${variant}' TARGET='${target}' ./phoenix-rtos-build/build.sh ${stages}"
+}
+
+# core -> gpu -> ports. The GPU archives must compile against the sysroot the
+# CORE stage produces (_build/<target>/sysroot); the ports stage is the only
+# consumer of the archives. When both stages are in this build's stage list,
+# split build.sh at `ports` and run the gpu phase in the gap. `fs` deliberately
+# stays in the FIRST invocation only: re-running it after core would re-apply
+# root-skel over core's output, which today's fs-before-core order never does.
+#
+# When the list has no `core` (a warm `project image` rebuild) or no `ports`,
+# there is nothing to sequence: the gpu phase runs first, as before, against
+# whatever sysroot the previous core build left behind.
+pre_stages=()
+post_stages=()
+if [ "${with_showcase}" = 1 ] &&
+	printf '%s\n' "${build_args[@]}" | grep -qx core &&
+	printf '%s\n' "${build_args[@]}" | grep -qx ports; then
+	for arg in "${build_args[@]}"; do
+		if [ "${#post_stages[@]}" -gt 0 ] || [ "${arg}" = "ports" ]; then
+			post_stages+=("${arg}")
+		else
+			pre_stages+=("${arg}")
+		fi
+	done
+fi
+
+if [ "${#post_stages[@]}" -gt 0 ]; then
+	printf 'Order:     core -> gpu -> ports (build.sh split: [%s] then [%s])\n' \
+		"${pre_stages[*]}" "${post_stages[*]}"
+	run_phoenix_build "${pre_stages[@]}"
+	run_gpu_phase
+	check_gpu_archives
+	run_phoenix_build "${post_stages[@]}"
+else
+	run_gpu_phase
+	check_gpu_archives
+	run_phoenix_build "${build_args[@]}"
+fi
 
 if [ "${do_qemu_sanity}" -eq 1 ]; then
 	# QEMU path differs between hosts. On Darwin we use the in-VM
