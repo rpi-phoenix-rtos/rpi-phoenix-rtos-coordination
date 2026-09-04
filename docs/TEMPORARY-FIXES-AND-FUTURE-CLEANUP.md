@@ -290,6 +290,18 @@ authoritative current state.
      re-synced from the new build AND each tool is rebuilt. Verify with the
      drivers, not just the games: `rpi4-wifi` must still register `/dev/wifi`
      and `rpi4-hci` must still answer HCI_RESET.
+     **Method for step 3, and a preliminary result (2026-09-04).** Sweep every ELF in
+     the tree and flag any whose mtime predates the build: for the image rootfs this
+     reported **327 ELF files, 0 stale**, so the image itself is clean by construction.
+     Run the same sweep against the **NFS export** after the build's *project* stage,
+     and rebuild whatever it flags. A mid-build run over-reports: `/sbin/nfs` (nfs-fs)
+     looks unproduced but is built in the **project** stage
+     (`rebuild-rpi4b-fast.sh:279-283`, whose comment already warns about "silently
+     reuse a STALE nfs-fs that is ABI-mismatched against the freshly built"
+     libphoenix). The genuinely hand-staged candidates are the 5 radio tools
+     (`rpi4-wifi`, `rpi4-hci`, `wifi`, `wifi-probe`, `btctl`) and the 5 X11 helpers
+     (`startx`, `startx_gpu`, `pl_phoenix_xlaunch`, `Xphoenix-glamor-daemon`,
+     `gl-x11-window-daemon`) -- confirm against the finished build, do not assume.
   3. Boot-verify (netboot + the prebuilt-binary suite: a game, an X app, python)
      to confirm no stale-syscall breakage.
 - **Trigger:** the next scheduled full clean rebuild for any other reason
