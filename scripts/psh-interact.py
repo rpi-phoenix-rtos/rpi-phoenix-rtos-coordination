@@ -266,6 +266,11 @@ def main():
                         tail = (tail + data)[-512:]
                         if ready_re.search(tail):
                             ready_at = time.time()
+                            # A program that goes QUIET after announcing itself
+                            # would otherwise be cut by the idle timer instead of
+                            # getting its --ready-extra-secs; restart the silence
+                            # clock so the post-ready window is really granted.
+                            quiet_since = ready_at
                             print(f"\n*** ready after {ready_at - cmd_start:.0f}s "
                                   f"(--ready-line matched); capturing "
                                   f"{args.ready_extra_secs:.0f}s more")

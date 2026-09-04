@@ -52,6 +52,41 @@ off. Skip the netboot server for SD.
 - UART log: `artifacts/rpi4b-uart/rpi4b-uart-<ts>-<label>.log`. HDMI snapshots (if
   `/dev/video4` present): `artifacts/hdmi/` (periodic `-tick.png` + a `-final.png`).
 
+### Grading anything VISUAL: use a readiness marker, or the run may score as a failure
+
+HDMI snapshots run on a fixed cadence from power-on, so a slow-starting program
+(any GPU game; vkQuake especially, since its 67 shader modules push first frame
+out) can have **every** frame land during loading. The visual grader then has
+nothing at the reference viewpoint and the run looks like a failure of whatever it
+was testing. Two knobs fix that (added 2026-09-04):
+
+```
+./scripts/test-cycle-psh-interact.sh --label vkq --idle-secs 175 --max-cmd-secs 200 \
+  --ready-line 'present 30' --ready-extra-secs 90 --hdmi-dense-on 'present 30' \
+  -- "vkquake +map start"
+```
+
+- `--ready-line ERE` — until it matches, `--max-cmd-secs` is only the deadline for
+  **reaching** readiness; once matched, capture is guaranteed `--ready-extra-secs`
+  longer. A run that never matches says so explicitly, so you can tell "never
+  started" from "started and failed".
+- `--hdmi-dense-on ERE` — snapshot every 5 s (not 15 s) once the marker appears.
+  Measured effect on vkQuake: 20 frames / 13 at the reference viewpoint, vs
+  13–16 / 6–9 before.
+
+`test-cycle-bench.sh` takes the same four flags, so a pass-RATE bench can use them:
+
+```
+./scripts/test-cycle-bench.sh 4 vkq --idle-secs 175 --max-cmd-secs 200 \
+  --ready-line 'present 30' --ready-extra-secs 90 -- "vkquake +map start"
+```
+
+Games launch through their own `/usr/bin/<game>` helper where one exists
+(`quake2`, `quake3`, `stk`); it sets the video mode and map. Hand-rolling the
+engine command line is how a run ends up at 640x480 (blank) or double-loading the
+map — both look exactly like render regressions. `quakespasm` and `vkquake` need
+no launcher.
+
 Example (this is how the libc suite is run):
 ```
 ./scripts/test-cycle-psh-interact.sh --skip-server-up --label libc -- \

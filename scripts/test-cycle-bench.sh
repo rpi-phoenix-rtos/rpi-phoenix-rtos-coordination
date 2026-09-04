@@ -12,6 +12,10 @@
 #   ./scripts/test-cycle-bench.sh 5 vl805-baseline
 #   ./scripts/test-cycle-bench.sh 10 dhcp-trial --capture-secs 240
 #   ./scripts/test-cycle-bench.sh 8 unixsock -- "/bin/test-libc-unix-socket -v"
+#   # a GPU game needs a longer window AND a readiness marker, or a slow start
+#   # scores INCONCLUSIVE (which reads like a failure until you open the log):
+#   ./scripts/test-cycle-bench.sh 4 vkq --idle-secs 175 --max-cmd-secs 200 \
+#       --ready-line 'present 30' --ready-extra-secs 90 -- "vkquake +map start"
 #
 # With `-- <cmd>...` each trial boots to the psh prompt and runs those commands
 # (via test-cycle-psh-interact.sh) instead of just capturing a boot, and the
@@ -31,7 +35,8 @@ set -u
 set -o pipefail
 
 if [ $# -lt 2 ]; then
-    echo "usage: test-cycle-bench.sh <N> <label> [--capture-secs <s>]" >&2
+    echo "usage: test-cycle-bench.sh <N> <label> [--capture-secs <s>] [--idle-secs <s>]" >&2
+    echo "       [--max-cmd-secs <s>] [--ready-line <ERE>] [--ready-extra-secs <s>] [-- <cmd>...]" >&2
     exit 1
 fi
 
@@ -39,11 +44,27 @@ N="$1"
 label="$2"
 shift 2
 
+# Per-trial window. The old hardcoded 60/150 was not enough for a GPU game after
+# the 2026-09-04 vkQuake sync (upstream's shader-module count went 34 -> 67, so
+# first frame arrives later): trials ended mid-load and scored INCONCLUSIVE, which
+# is indistinguishable from a failure unless you read the log. --ready-line makes
+# max-cmd-secs the deadline for REACHING readiness rather than the whole budget.
+idle_secs=60
+max_cmd_secs=150
+ready_args=()
 capture_secs_arg=()
-if [ $# -ge 2 ] && [ "$1" = "--capture-secs" ]; then
-    capture_secs_arg=( --capture-secs "$2" )
-    shift 2
-fi
+# A LOOP, not an if/elif chain: the original consumed at most ONE option, so a
+# second flag would have been silently swallowed into the command list.
+while [ $# -ge 2 ]; do
+    case "$1" in
+    --capture-secs)     capture_secs_arg=( --capture-secs "$2" ); shift 2 ;;
+    --idle-secs)        idle_secs="$2"; shift 2 ;;
+    --max-cmd-secs)     max_cmd_secs="$2"; shift 2 ;;
+    --ready-line)       ready_args+=( --ready-line "$2" ); shift 2 ;;
+    --ready-extra-secs) ready_args+=( --ready-extra-secs "$2" ); shift 2 ;;
+    *)                  break ;;
+    esac
+done
 
 # Everything after `--` is a psh command line to run in each trial.
 cmds=()
@@ -69,7 +90,8 @@ for i in $(seq 1 "$N"); do
     printf '\n=== trial %d/%d (%s) ===\n' "$i" "$N" "$trial_label"
     if [ "${#cmds[@]}" -gt 0 ]; then
         "${repo_root}/scripts/test-cycle-psh-interact.sh" --label "$trial_label" \
-            --inter-cmd-secs 8 --idle-secs 60 --max-cmd-secs 150 -- "${cmds[@]}" || true
+            --inter-cmd-secs 8 --idle-secs "$idle_secs" --max-cmd-secs "$max_cmd_secs" \
+            "${ready_args[@]}" -- "${cmds[@]}" || true
     else
         "${repo_root}/scripts/test-cycle-netboot.sh" --label "$trial_label" "${capture_secs_arg[@]}" || true
     fi
