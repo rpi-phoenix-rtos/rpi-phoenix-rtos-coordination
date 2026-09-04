@@ -54,6 +54,8 @@
       "Bash(./scripts/qemu-shell-smoke.sh:*)",
       "Bash(./scripts/qemu-debug.sh:*)",
       "Bash(./scripts/uart-summary.sh:*)",
+      "Bash(./scripts/check-netboot-blob.sh:*)",
+      "Bash(./scripts/diff-boot-variants.py:*)",
       "Bash(./scripts/uart-list.sh:*)",
       "Bash(./scripts/dbg-symbolize.sh:*)",
       "Bash(./scripts/git-siblings.sh:*)",

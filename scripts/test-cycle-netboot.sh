@@ -196,6 +196,11 @@ trap ensure_powered_off EXIT INT TERM HUP
 
 # 1. Server up.
 if [ "$skip_server_up" = 0 ]; then
+	# The TFTP root IS the build tree, so a `--variant sd` build silently replaces
+	# the netboot loader.disk with one that mounts /dev/mmcblk0p2. With no card in
+	# the Pi that boot reaches no user space and every result is a false negative
+	# (the same guard test-cycle-psh-interact.sh already carries).
+	"$repo/scripts/check-netboot-blob.sh" --expect nfsroot || exit 3
 	"$repo/scripts/netboot-server-up.sh"
 fi
 

@@ -266,6 +266,17 @@ if [ "$sd_boot" -eq 1 ]; then
 	fi
 	log "make sure a bootable Phoenix SD card is in the Pi (network-boot will time out first, ~15-30s)."
 else
+	# Refuse a netboot session when the TFTP boot blob is the SD-rootfs variant.
+	# dnsmasq serves the build tree directly, so a `--variant sd` build overwrites
+	# this loader.disk in place: the Pi then TFTPs fine, looks for /dev/mmcblk0p2
+	# that is not in the slot, mounts no root and runs no user-space program --
+	# with no error to explain it. That is exactly what happened on 2026-09-04.
+	# check-netboot-blob.sh reads the variant out of the artifact and prints the
+	# rebuild command, so this fails closed instead of wasting a live session.
+	if ! "$repo/scripts/check-netboot-blob.sh" --expect nfsroot; then
+		log "ERROR: the TFTP boot blob would not mount an NFS root. Aborting."
+		exit 1
+	fi
 	log "ensuring netboot server (dnsmasq DHCP+TFTP) is up..."
 	if ! "$repo/scripts/netboot-server-up.sh"; then
 		log "ERROR: netboot-server-up.sh failed; cannot serve the Pi. Aborting."
