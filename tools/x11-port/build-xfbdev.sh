@@ -80,6 +80,10 @@ cp "$DDX_SRC/hid_evdev_map.h" "$DDX/hid_evdev_map.h"
 # STALE prebuilt archive (same stale-archive hazard as the toolchain libphoenix).
 # patch -N is idempotent; `make -C record` is a fast no-op when nothing changed.
 PATCHDIR=${ROOT}/tools/x11-port/patches
+# The RECORD malloc(0)->NULL assert guard is RETIRED: libphoenix's malloc(0) now
+# returns a valid non-NULL pointer (stdlib/malloc_dl.c), so xallocarray(0, ...) no
+# longer trips assert(ppAllContextsCopy). Same retirement the framework port made.
+# Keeping the hook costs nothing and picks a patch back up if one is ever added.
 RECORD_PATCH="$PATCHDIR/xorg-server-1.20.14-record-malloc0.patch"
 if [ -f "$RECORD_PATCH" ]; then
   echo "=== applying + rebuilding RECORD (malloc(0)->NULL assert guard) ==="
