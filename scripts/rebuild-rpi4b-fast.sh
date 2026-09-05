@@ -703,6 +703,23 @@ fi
 "${repo_root}/scripts/gen-build-versions.sh" ||
 	printf 'WARNING: could not record component commit ids; the boot banner will say so\n' >&2
 
+# Report ABI staleness in the staged rootfs while the build log is still in front
+# of you. It stays green by construction now that binary.mk relinks every program
+# when libphoenix changes -- but that rule is exactly the kind of thing a future
+# refactor drops silently, and on 2026-09-04 this gate was what caught 119 of 336
+# ELFs still linked against the previous libc after a full `--scope core` build.
+#
+# Reported, NOT enforced: a flagged file is not automatically a defect. The sd
+# variant legitimately keeps a /sbin/nfs from an earlier nfsroot cut (build.project
+# builds the NFS server only for nfsroot/netboot), and the hand-built radio/X11
+# helpers have their own build scripts. Print the verdict and let the operator
+# judge -- the check's own header explains how.
+if [ -x "${repo_root}/scripts/check-no-stale-binaries.sh" ]; then
+	printf '\n== ABI staleness of the staged rootfs ==\n'
+	"${repo_root}/scripts/check-no-stale-binaries.sh" \
+		--root "${buildroot}/_fs/${target}/root" 2>&1 | tail -n 12 || true
+fi
+
 if [ "${do_qemu_sanity}" -eq 1 ]; then
 	# QEMU path differs between hosts. On Darwin we use the in-VM
 	# QEMU 10.2; on Linux we use /opt/qemu-11 (Ubuntu host install).
