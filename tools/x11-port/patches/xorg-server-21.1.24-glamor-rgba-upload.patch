@@ -1,0 +1,88 @@
+--- a/glamor/glamor_transfer.c	2026-09-05 09:04:32.785494417 +0200
++++ b/glamor/glamor_transfer.c	2026-09-05 09:04:32.795332370 +0200
+@@ -24,6 +24,35 @@
+ #include "glamor_transfer.h"
+ 
+ /*
++ * Phoenix RPi4: the fbdev DDX and fb use RGBA byte order (byte0 = R, the #19
++ * SET_PIXEL_ORDER=1 fix) and glamor's internal textures are GL_RGBA, so the
++ * CPU<->pixmap transfers must describe RGBA bytes, not the stock little-endian
++ * BGRA/8888_REV -- which reads R as B and swaps red<->blue on XPutImage'd content.
++ *
++ * xorg-server 1.20 had this as a depth switch inside glamor_upload_boxes(); 21.1
++ * moved pixel formats into the glamor_format table (glamor_add_format() in
++ * glamor.c). The table feeds ~46 other call sites across glamor, so the override
++ * stays HERE, in the two CPU-transfer paths -- the same blast radius the 1.20
++ * patch had.
++ */
++static void
++glamor_phoenix_transfer_format(PixmapPtr pixmap, const struct glamor_format *f,
++                               GLenum *format, GLenum *type)
++{
++    switch (pixmap->drawable.depth) {
++    case 24:
++    case 32:
++        *format = GL_RGBA;
++        *type = GL_UNSIGNED_BYTE;
++        break;
++    default:
++        *format = f->format;
++        *type = f->type;
++        break;
++    }
++}
++
++/*
+  * Write a region of bits into a pixmap
+  */
+ void
+@@ -38,6 +67,9 @@
+     int                         box_index;
+     const struct glamor_format *f = glamor_format_for_pixmap(pixmap);
+     int                         bytes_per_pixel = PICT_FORMAT_BPP(f->render_format) >> 3;
++    GLenum                      format, type;
++
++    glamor_phoenix_transfer_format(pixmap, f, &format, &type);
+ 
+     glamor_make_current(glamor_priv);
+ 
+@@ -75,14 +107,14 @@
+                 glTexSubImage2D(GL_TEXTURE_2D, 0,
+                                 x1 - box->x1, y1 - box->y1,
+                                 x2 - x1, y2 - y1,
+-                                f->format, f->type,
++                                format, type,
+                                 bits + ofs);
+             } else {
+                 for (; y1 < y2; y1++, ofs += byte_stride)
+                     glTexSubImage2D(GL_TEXTURE_2D, 0,
+                                     x1 - box->x1, y1 - box->y1,
+                                     x2 - x1, 1,
+-                                    f->format, f->type,
++                                    format, type,
+                                     bits + ofs);
+             }
+         }
+@@ -138,6 +170,9 @@
+     int box_index;
+     const struct glamor_format *f = glamor_format_for_pixmap(pixmap);
+     int bytes_per_pixel = PICT_FORMAT_BPP(f->render_format) >> 3;
++    GLenum format, type;
++
++    glamor_phoenix_transfer_format(pixmap, f, &format, &type);
+ 
+     glamor_make_current(glamor_priv);
+ 
+@@ -172,10 +207,10 @@
+ 
+             if (glamor_priv->has_pack_subimage ||
+                 x2 - x1 == byte_stride / bytes_per_pixel) {
+-                glReadPixels(x1 - box->x1, y1 - box->y1, x2 - x1, y2 - y1, f->format, f->type, bits + ofs);
++                glReadPixels(x1 - box->x1, y1 - box->y1, x2 - x1, y2 - y1, format, type, bits + ofs);
+             } else {
+                 for (; y1 < y2; y1++, ofs += byte_stride)
+-                    glReadPixels(x1 - box->x1, y1 - box->y1, x2 - x1, 1, f->format, f->type, bits + ofs);
++                    glReadPixels(x1 - box->x1, y1 - box->y1, x2 - x1, 1, format, type, bits + ofs);
+             }
+         }
+     }
