@@ -556,8 +556,18 @@ phase_stage() {
 		# this a no-op once the core is already configured that way.
 		run_step_soft "X11: xorg-server core (glamor)" "${X11}/build-xserver-core.sh" --glamor
 		run_step_soft "X11: Xphoenix-glamor-daemon (concurrent-GPU X)" "${X11}/build-xfbdev.sh" --glamor-daemon
-		xgd="$(find "${X11}/src" -name Xphoenix-glamor-daemon -type f 2>/dev/null | head -1)"
-		if [ -n "$xgd" ]; then cp -v "$xgd" "${stage_dir}/bin/Xphoenix-glamor-daemon"; else warn "Xphoenix-glamor-daemon not built — skipped staging"; fi
+		# Take the daemon from the xorg-server tree the build scripts are PINNED to,
+		# not `find | head -1`: once a second xorg-server-<ver>/ exists under src/
+		# (an upgrade in progress), find returns whichever directory it walks first
+		# and the image silently ships the OLD server. Measured 2026-09-05 -- a
+		# 21.1.24 daemon was staged, then overwritten by the 1.20.14 one.
+		xgd_ver="$(sed -n 's/^VER=\(.*\)$/\1/p' "${X11}/build-xserver-core.sh" | head -1)"
+		xgd="${X11}/src/xorg-server-${xgd_ver}/hw/kdrive/fbdev/Xphoenix-glamor-daemon"
+		if [ -n "$xgd_ver" ] && [ -f "$xgd" ]; then
+			cp -v "$xgd" "${stage_dir}/bin/Xphoenix-glamor-daemon"
+		else
+			warn "Xphoenix-glamor-daemon not built for VER='${xgd_ver}' — skipped staging"
+		fi
 		run_step_soft "X11: gl-x11-window-daemon (GPU window client)" "${X11}/build-gl-x11-window.sh" --daemon
 		if [ -f "${gpu_libs}/gl-x11-window-daemon" ]; then cp -v "${gpu_libs}/gl-x11-window-daemon" "${stage_dir}/bin/gl-x11-window-daemon"; else warn "gl-x11-window-daemon not built — skipped staging"; fi
 	fi
