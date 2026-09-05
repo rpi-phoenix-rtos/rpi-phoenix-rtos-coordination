@@ -605,3 +605,44 @@ reason for `a` rather than `w` exists nowhere.
 
 **Re-verify:** the "current upstream" column was captured 2026-09-03 via
 `git ls-remote`. Re-run before acting on any row.
+
+---
+
+## ADDENDUM 2026-09-05 — §2 done; §3 re-measured against the real 21.1 source
+
+**§2 harfbuzz: DONE.** 2.6.7 → **14.4.0** (ports `da41b10`). No source change, no
+undefined `hb_*`; SuperTuxKart (the only consumer) HW-verified rendering correctly
+*shaped* text. The only extra work was turning off `HB_BUILD_RASTER` /
+`HB_BUILD_VECTOR` / `HB_BUILD_GPU`, three libraries 14.x adds with default ON.
+
+**§4a and §4b: already done** — the `mc` stub library is retired (`port.def.sh`
+documents it), and no `rint`/`rintf` shim survives in `fltk`, `windowmaker` or
+`dillo`. Nothing to do.
+
+**§3 xorg_server: the predicted cost is not there.** This section warned that "the
+kdrive/DDX internal ABI did change across 1.20→21.1 and our DDX is our own code, so
+it *will* need real work." Measured against the actual 21.1.24 tarball
+(sha256 `1a4eb36ca65cc3b1b936566d677a9786e13c11cd5806e951ac55f3f5ce3984af`), that is
+**not what the source says**:
+
+| check | result |
+|---|---|
+| `hw/kdrive/src/kdrive.h` 1.20.14 vs 21.1.24 | **byte-identical** |
+| the 21 `Kd*` APIs our DDX calls | **all 21 signatures identical** |
+| `fb/fb.h`, `miext/shadow/shadow.h` | **byte-identical** |
+| `include/windowstr.h`, `include/xkbsrv.h` | 2 diff lines each |
+| `include/scrnintstr.h` | 32 lines — comment `master/slave`→`primary/secondary` renames plus `slave_list`/`slave_head`/`output_slaves` field renames |
+| `include/inputstr.h` | 32 lines — **additive**: XI 2.4 gesture structs, `XI2LASTEVENT` bumped |
+| does our DDX reference any renamed/removed field? | **no** (`slave_list`, `slave_head`, `output_slaves`, `XI2LASTEVENT`, `GestureInfo`: zero hits in `files/ddx/`) |
+| new mandatory dep `libxcvt` | only inside the `XORG` branch of `configure.ac` (lines 1767-1774), which `--disable-xorg` excludes |
+| build system | still autotools, as §3 already established |
+
+So the DDX-facing surface did **not** churn. The remaining unknown is the *build
+plumbing* — configure flag drift and the hand-`ld` link of the kdrive core archives —
+which is a build experiment, not a porting effort. Re-classify §3 from "unblocked
+candidate, substantial residual risk" to **"unblocked, cost concentrated in the build
+recipe"**, and note that the payoff (five years of X server CVE fixes) is unchanged.
+
+Not yet attempted: the actual 21.1.24 configure+build. That is the next step, and it
+must be done in a scratch prefix — the shipping `Xphoenix` is part of a verified
+image, so nothing about this may touch the live tree until it links and runs.
