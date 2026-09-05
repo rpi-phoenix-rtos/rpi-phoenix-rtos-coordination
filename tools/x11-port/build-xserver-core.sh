@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Phoenix-RTOS — fetch, configure and build the xorg-server 1.20.14 kdrive CORE
+# Phoenix-RTOS — fetch, configure and build the xorg-server 21.1.24 kdrive CORE
 # archives for aarch64-phoenix.
 #
 # This is the step that build-xfbdev.sh depends on: it links Xphoenix out of the
@@ -29,7 +29,7 @@ TC=${ROOT}/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-
 SYSROOT=${ROOT}/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot
 PREFIX=/tmp/x11-phoenix
 SRC=${ROOT}/tools/x11-port/src
-VER=1.20.14
+VER=21.1.24
 NV=xorg-server-$VER
 KD=$SRC/$NV
 # x.org individual release; the www.x.org URL 301-redirects to xorg.freedesktop.org

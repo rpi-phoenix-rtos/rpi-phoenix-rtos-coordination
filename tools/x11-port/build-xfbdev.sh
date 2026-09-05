@@ -2,9 +2,9 @@
 #
 # Phoenix-RTOS — build the kdrive fbdev DDX server (Xphoenix) for aarch64-phoenix.
 #
-# Compiles tools/x11-port/src/xorg-server-1.20.14/hw/kdrive/fbdev/fbdev.c (the
+# Compiles tools/x11-port/src/xorg-server-21.1.24/hw/kdrive/fbdev/fbdev.c (the
 # Phoenix /dev/fb0 kdrive backend) and links it against the already-built
-# xorg-server 1.20.14 core archives + the X11 lib stack in /tmp/x11-phoenix,
+# xorg-server 21.1.24 core archives + the X11 lib stack in /tmp/x11-phoenix,
 # producing a static aarch64-phoenix `Xphoenix` server ELF.
 #
 # Host-side only. Does NOT touch the flagship image. Idempotent.
@@ -28,7 +28,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)"
 TC=${ROOT}/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-
 SYSROOT=${ROOT}/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot
 PREFIX=/tmp/x11-phoenix
-KD=${ROOT}/tools/x11-port/src/xorg-server-1.20.14
+KD=${ROOT}/tools/x11-port/src/xorg-server-21.1.24
 DDX=$KD/hw/kdrive/fbdev
 CC=${TC}gcc
 
@@ -84,7 +84,7 @@ PATCHDIR=${ROOT}/tools/x11-port/patches
 # returns a valid non-NULL pointer (stdlib/malloc_dl.c), so xallocarray(0, ...) no
 # longer trips assert(ppAllContextsCopy). Same retirement the framework port made.
 # Keeping the hook costs nothing and picks a patch back up if one is ever added.
-RECORD_PATCH="$PATCHDIR/xorg-server-1.20.14-record-malloc0.patch"
+RECORD_PATCH="$PATCHDIR/xorg-server-${VER:-21.1.24}-record-malloc0.patch"
 if [ -f "$RECORD_PATCH" ]; then
   echo "=== applying + rebuilding RECORD (malloc(0)->NULL assert guard) ==="
   patch -d "$KD" -p1 -N <"$RECORD_PATCH" >/dev/null 2>&1 || true
