@@ -235,4 +235,14 @@ python3 "$repo/scripts/psh-interact.py" \
 	"${ready_args[@]}" \
 	$( [ "$stamp" = 1 ] && printf -- '--stamp' ) \
 	--commands "${commands[@]}"
-exit $?
+rc=$?
+
+# Was the capture actually evidence? A log that stops at the echo of the last
+# command looks exactly like a program that printed nothing, and that misreading
+# cost three wrong conclusions on 2026-09-05 (QuakeSpasm "did not start", the
+# desktop "does not draw", the 21.1 glamor server "does not draw" -- all three
+# were fine, the window was just too short). Say it out loud here instead of
+# leaving a short log to be interpreted later.
+"$repo/scripts/check-capture-complete.py" "$log_path" --commands "${commands[@]}" || true
+
+exit "$rc"
