@@ -63,18 +63,30 @@ cp "$LAUNCHDIR/$OUT" "$ART/$OUT"
 echo "=== published -> $ART/$OUT ==="
 ls -l "$ART/$OUT"
 
-# Stage to the NFS export so a netboot picks the new binary up. The launcher is
-# installed under TWO names — pl_phoenix_xlaunch (explicit form) and startx
-# (convenience/desktop mode keyed on argv[0]). startx is a plain COPY, not a
-# symlink, so BOTH must be refreshed or `startx desktop` runs a stale binary.
-# Installed under THREE names — pl_phoenix_xlaunch (explicit), startx (software
-# fbdev X convenience mode), and startx_gpu (same modes but the experimental
-# glamor GPU X server + rpi4-v3d daemon). All are plain COPIES (the binary keys
-# its GPU behaviour on argv[0] == "startx_gpu"), so all must be refreshed together.
-# Stage into the export the Pi actually mounts (fsid=0), not a hardcoded name.
-# This script staged to /srv/phoenix-rpi4-nfs while the Pi mounts the -gcc16
-# export, so a freshly built startx never reached the target -- the same defect
-# already fixed for rpi4-wifi/rpi4-hci (devices 843d193).
+# Stage into the BUILD TREE first -- that is what ends up in every artifact.
+#
+# This script used to copy only into the NFS export, which loses the race with
+# scripts/sync-netboot-tree.sh: a test cycle syncs _fs/<target>/root OVER the
+# export, so a freshly built launcher was silently replaced by the older one from
+# the tree (the same way four earlier startx experiments tested a stale binary,
+# and the same class as build-standalone.sh writing to a dead export). The tree
+# copy also means the SD image and the pristine export get the new launcher for
+# free.
+_target="${RPI4B_TARGET:-aarch64a72-generic-rpi4b}"
+_treebin="${RPI4B_BUILDROOT:-$ROOT/.buildroot}/_fs/${_target}/root/bin"
+if [ -d "$_treebin" ]; then
+  for _n in "$OUT" startx startx_gpu; do
+    cp "$LAUNCHDIR/$OUT" "$_treebin/$_n"
+  done
+  echo "=== staged -> $_treebin/{$OUT,startx,startx_gpu} (build tree) ==="
+else
+  echo "=== build tree $_treebin absent — run a build first; artifact only ==="
+fi
+
+# Then the live export too, so a netboot picks it up without a full re-sync.
+# Resolved from fsid=0, never hardcoded: this script staged to
+# /srv/phoenix-rpi4-nfs while the Pi mounts the -gcc16 export, so a freshly built
+# startx never reached the target.
 _fsid0="$(awk '$0 ~ /fsid=0/ && $1 ~ /^\// { print $1; exit }' /etc/exports /etc/exports.d/*.exports 2>/dev/null || true)"
 NFS_BIN="${SHOWCASE_STAGE_DIR:-${_fsid0:-/srv/phoenix-rpi4-nfs}}/bin"
 if [ -d "$NFS_BIN" ]; then

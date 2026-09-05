@@ -328,7 +328,12 @@ int main(int argc, char *argv[])
 			if (stat(sp_buf, &xst) != 0)
 				snprintf(sp_buf, sizeof(sp_buf), "%s/bin/%s", prefix, srv);
 		}
-		snprintf(fd_buf, sizeof(fd_buf), "%s/usr/share/fonts/X11/misc", prefix);
+		/* Both dirs: misc-fixed answers "fixed"/8x13-style names (with font-alias),
+		 * 75dpi answers the -adobe-* XLFDs the Xaw/Xt widgets ask for -- xcalc
+		 * wants -adobe-symbol-*-120 and drew nothing when only misc was on the
+		 * path (measured 2026-09-05). */
+		snprintf(fd_buf, sizeof(fd_buf), "%s/usr/share/fonts/X11/misc,%s/usr/share/fonts/X11/75dpi",
+			prefix, prefix);
 
 		if (strcmp(client, "desktop") == 0) {
 			/* WM first so it adopts the app's window when it maps; then the
