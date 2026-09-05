@@ -30,7 +30,11 @@ repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Resolve the export dir the same way sync-netboot-tree.sh does: the fsid=0
 # NFSv4 pseudo-root actually served (the export the Pi mounts as "/"), overridable
 # by RPI4B_NFS_EXPORT, falling back to the historical default.
-fsid0_export="$(awk '$0 ~ /fsid=0/ && $1 ~ /^\// { print $1; exit }' /etc/exports 2>/dev/null || true)"
+# Read /etc/exports.d/*.exports too: the Phoenix export is declared there, and
+# reading only /etc/exports silently fell through to the historical default
+# /srv/phoenix-rpi4-nfs -- a directory nothing mounts, so the staging appeared to
+# succeed while the Pi kept the old fonts (the dead-export trap again).
+fsid0_export="$(awk '$0 ~ /fsid=0/ && $1 ~ /^\// { print $1; exit }' /etc/exports /etc/exports.d/*.exports 2>/dev/null || true)"
 export_dir="${RPI4B_NFS_EXPORT:-${fsid0_export:-/srv/phoenix-rpi4-nfs}}"
 
 host_dejavu="${DEJAVU_SRC:-/usr/share/fonts/truetype/dejavu}"
@@ -73,7 +77,7 @@ printf '  config: /etc/fonts/fonts.conf\n'
 #    still resolves fonts at runtime, just slower on first open.
 install -d "$cache_dir"
 if command -v fc-cache >/dev/null 2>&1; then
-	fc-cache -f --sysroot "$export_dir" /usr/share/fonts >/dev/null 2>&1 || \
+	fc-cache -f --sysroot "$export_dir" /usr/share/fonts/truetype >/dev/null 2>&1 || \
 		printf '  cache: fc-cache reported an issue (non-fatal; runtime dir-scan still works)\n'
 	printf '  cache: /var/cache/fontconfig (%s files)\n' "$(ls -1 "$cache_dir" 2>/dev/null | wc -l | tr -d ' ')"
 else
