@@ -41,11 +41,17 @@ dump() { rm -f "$TMP/x"; debugfs -R "dump /$1 $TMP/x" "$E2" >/dev/null 2>&1; [ -
 marker_count() { strings "$TMP/x" | grep -c -- "$1" || true; }
 
 echo "== required paths =="
+# bin/wmsetbg: wmaker EXECS it to paint the root window (src/misc.c:953). Without
+#   it the GPU desktop is a black screen with a live cursor, which was reported as
+#   "no wmaker running" on 2026-09-04 when in fact the session was healthy.
+# bin/fbprobe: the framebuffer channel-order probe. Cheap to ship, and the one
+#   tool that settles an RGB-vs-BGR argument by looking at the screen.
 for p in usr/bin/quakespasm usr/bin/yquake2 usr/bin/quake3e usr/bin/vkquake \
          usr/bin/supertuxkart bin/psh bin/python3 bin/bash bin/nano bin/mc \
          usr/bin/Xphoenix usr/share/quake/id1/pak0.pak usr/share/quake2/baseq2/pak0.pak \
          usr/share/quake3/demoq3/pak0.pk3 usr/share/quake3/demoq3/pak1.pk3 \
-         usr/share/quake3/demoq3/q3key; do
+         usr/share/quake3/demoq3/q3key \
+         bin/wmsetbg bin/fbprobe; do
 	if dump "$p"; then printf '  OK   %-40s %s\n' "$p" "$(stat -c%s "$TMP/x")"
 	else printf '  MISS %s\n' "$p"; rc=1; fi
 done
