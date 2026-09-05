@@ -74,3 +74,48 @@ bool epoxy_has_gl_extension(const char *ext)
 	}
 	return false;
 }
+
+
+/*
+ * FRAMEBUFFER-0 GUARD — see the banner in epoxy/gl.h.
+ *
+ * This file deliberately does NOT include <epoxy/gl.h>, so the macros defined
+ * there are absent here and these wrappers call the real Mesa entry points.
+ */
+static GLuint phx_fb0_stand_in;   /* a real FBO used wherever GL would see 0 */
+static GLuint phx_fb_current;
+
+static GLuint phx_fb0_get(void)
+{
+	if (phx_fb0_stand_in == 0) {
+		glGenFramebuffers(1, &phx_fb0_stand_in);
+	}
+	return phx_fb0_stand_in;
+}
+
+
+void phx_glBindFramebuffer(GLenum target, GLuint framebuffer)
+{
+	if (framebuffer == 0) {
+		framebuffer = phx_fb0_get();
+	}
+	phx_fb_current = framebuffer;
+	glBindFramebuffer(target, framebuffer);
+}
+
+
+void phx_glDeleteFramebuffers(GLsizei n, const GLuint *framebuffers)
+{
+	GLsizei i;
+
+	/* Deleting the bound FBO makes Mesa re-bind framebuffer 0 -- the NULL
+	 * winsys buffer. Step off it first so that path is never taken. */
+	for (i = 0; i < n; i++) {
+		if (framebuffers[i] != 0 && framebuffers[i] == phx_fb_current) {
+			phx_fb_current = phx_fb0_get();
+			glBindFramebuffer(GL_FRAMEBUFFER, phx_fb_current);
+			break;
+		}
+	}
+	glDeleteFramebuffers(n, framebuffers);
+}

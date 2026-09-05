@@ -52,6 +52,13 @@
 #include "GL/gl.h"
 #include "GL/glext.h"
 
+/* FB-0 guard (see the banner in glamor-shim/epoxy/gl.h): this context has no
+ * window-system framebuffer, so handing GL framebuffer 0 faults inside Mesa.
+ * The readback path below saves and restores GL_FRAMEBUFFER_BINDING, which can
+ * legitimately read back as 0 -- route both calls through the guard. */
+void phx_glBindFramebuffer(GLenum target, GLuint framebuffer);
+#define glBindFramebuffer(target, fb) phx_glBindFramebuffer((target), (fb))
+
 /* glamor_context.h references Bool (its trailing glamor_glx_screen_init decl).
  * Provide the same minimal int Bool the epoxy glx shim uses, WITHOUT pulling in
  * any X server / Xlib header (mirrors glamor_glx.c's include discipline). */
