@@ -34,7 +34,14 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 Q3_SRC="$ROOT/external/quake3e"
 HOSTDIR="${QUAKE3_HOST_DIR:-/tmp/quake3-host}"
 # Read-only source of the game paks (the Pi NFS export).
-PAK_SRC="${QUAKE3_PAK_SRC:-/srv/phoenix-rpi4-nfs/usr/share/quake3/demoq3}"
+# Resolve the LIVE export (the fsid=0 one the Pi actually mounts), not the
+# historical /srv/phoenix-rpi4-nfs literal: that tree is superseded by the -gcc16
+# export and nothing mounts it, so a default pointing there reads stale assets (or
+# nothing at all). Read /etc/exports.d/*.exports too -- the Phoenix export lives
+# there, and scripts that looked only at /etc/exports fell through to the dead path.
+_fsid0="$(awk '$0 ~ /fsid=0/ && $1 ~ /^\// { print $1; exit }' /etc/exports /etc/exports.d/*.exports 2>/dev/null || true)"
+_export="${RPI4B_NFS_EXPORT:-${_fsid0:-/srv/phoenix-rpi4-nfs}}"
+PAK_SRC="${QUAKE3_PAK_SRC:-${_export}/usr/share/quake3/demoq3}"
 DEMO_SRC="${QUAKE3_DEMO_SRC:-$ROOT/tools/quake3-port/demos/cap.dm_68}"
 DEMO="${QUAKE3_DEMO:-cap}"          # demo name (without demos/ prefix or .dm_68)
 FPS="${QUAKE3_FPS:-25}"             # cl_aviFrameRate: demo-time per frame = 1000/FPS ms

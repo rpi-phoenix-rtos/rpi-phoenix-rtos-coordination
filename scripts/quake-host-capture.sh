@@ -8,7 +8,14 @@ set -euo pipefail
 
 QUAKE_SRC="$(cd "$(dirname "$0")/.." && pwd)/external/quakespasm/Quake"
 HOSTDIR="${QUAKE_HOST_DIR:-/tmp/quake-host}"
-PAK0_SRC="${PAK0_SRC:-/srv/phoenix-rpi4-nfs/id1/pak0.pak}"
+# Resolve the LIVE export (the fsid=0 one the Pi actually mounts), not the
+# historical /srv/phoenix-rpi4-nfs literal: that tree is superseded by the -gcc16
+# export and nothing mounts it, so a default pointing there reads stale assets (or
+# nothing at all). Read /etc/exports.d/*.exports too -- the Phoenix export lives
+# there, and scripts that looked only at /etc/exports fell through to the dead path.
+_fsid0="$(awk '$0 ~ /fsid=0/ && $1 ~ /^\// { print $1; exit }' /etc/exports /etc/exports.d/*.exports 2>/dev/null || true)"
+_export="${RPI4B_NFS_EXPORT:-${_fsid0:-/srv/phoenix-rpi4-nfs}}"
+PAK0_SRC="${PAK0_SRC:-${_export}/usr/share/quake/id1/pak0.pak}"
 NSHOTS="${NSHOTS:-120}"        # number of frames to capture
 EVERY="${EVERY:-5}"           # capture every Nth rendered frame
 DT="${DT:-0.05}"             # fixed demo-time per frame (host_framerate)

@@ -19,7 +19,14 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 YQ2="$ROOT/external/yquake2"
 WT="${QUAKE2_HOST_SRC:-/tmp/yq2-host-src}"      # clean worktree (HEAD, no Phoenix port patch)
 HOSTDIR="${QUAKE2_HOST_DIR:-/tmp/quake2-host}"
-PAK0_SRC="${PAK0_SRC:-/srv/phoenix-rpi4-nfs/usr/share/quake2/baseq2/pak0.pak}"
+# Resolve the LIVE export (the fsid=0 one the Pi actually mounts), not the
+# historical /srv/phoenix-rpi4-nfs literal: that tree is superseded by the -gcc16
+# export and nothing mounts it, so a default pointing there reads stale assets (or
+# nothing at all). Read /etc/exports.d/*.exports too -- the Phoenix export lives
+# there, and scripts that looked only at /etc/exports fell through to the dead path.
+_fsid0="$(awk '$0 ~ /fsid=0/ && $1 ~ /^\// { print $1; exit }' /etc/exports /etc/exports.d/*.exports 2>/dev/null || true)"
+_export="${RPI4B_NFS_EXPORT:-${_fsid0:-/srv/phoenix-rpi4-nfs}}"
+PAK0_SRC="${PAK0_SRC:-${_export}/usr/share/quake2/baseq2/pak0.pak}"
 DEMO="${DEMO:-q2demo1.dm2}"        # shipped demo inside pak0 (demos/q2demo1.dm2)
 NSHOTS="${NSHOTS:-120}"            # number of frames to capture
 EVERY="${EVERY:-5}"               # capture every Nth rendered 3D frame
