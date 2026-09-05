@@ -646,3 +646,26 @@ recipe"**, and note that the payoff (five years of X server CVE fixes) is unchan
 Not yet attempted: the actual 21.1.24 configure+build. That is the next step, and it
 must be done in a scratch prefix — the shipping `Xphoenix` is part of a verified
 image, so nothing about this may touch the live tree until it links and runs.
+
+### Addendum follow-up — the GLAMOR server cannot follow the port bump for free
+
+`/bin/Xphoenix-glamor-daemon` (built by `tools/x11-port/build-xserver-core.sh`, the
+GPU/`startx_gpu` path) stays on **1.20.14**, and that is a measured decision, not an
+oversight. It carries two version-specific patches; against 21.1.24:
+
+| patch | result |
+|---|---|
+| `xorg-server-1.20.14-glamor-screen-upload-yflip.patch` | **applies clean** |
+| `xorg-server-1.20.14-glamor-rgba-upload.patch` | **fails** — 1 hunk |
+
+The failing one forces `GL_RGBA`/`GL_UNSIGNED_BYTE` in `glamor_upload_boxes()`'s
+depth-24/32 case, because our fb is RGBA byte order. In 21.1 that switch is **gone**:
+upstream moved pixel formats into a `struct glamor_format` table built by
+`glamor_add_format()` in `glamor/glamor.c` (the depth-24/32 entries hardcode
+`GL_BGRA`, lines ~581-583). So the fix has to be re-expressed as a table entry, not a
+switch case — small, but it lands exactly on the red/blue-swap bug class we already
+fought twice on this stack, so it needs its own HW verification of the GPU desktop
+(and of GLQuake/Q2/Q3/vkQuake/STK, which all present through it).
+
+Sequenced separately for that reason. Doing it also removes the last duplicate X
+server build path, which is the owner's tools-vs-ports rule.
