@@ -84,6 +84,14 @@ int main(int argc, char **argv)
 	int scr, step = 0, w = steps[0].w, h = steps[0].h;
 	unsigned long white, red, green, blue, yellow;
 	int period = (argc > 1) ? atoi(argv[1]) : 12; /* seconds between resizes */
+	/* argv[2] selects which of the interactive-resize ops to exercise, so the
+	 * two can be bisected against each other:
+	 *   "band"  - only the XOR rubber band on the root
+	 *   "copy"  - only the in-window XCopyArea
+	 *   "both"  - both (default) */
+	const char *mode = (argc > 2) ? argv[2] : "both";
+	int do_band = (strcmp(mode, "copy") != 0);
+	int do_copy = (strcmp(mode, "band") != 0);
 	struct timeval next;
 	GC rootgc;
 	Window root;
@@ -223,7 +231,7 @@ int main(int argc, char **argv)
 
 		/* Rubber-band the target geometry the way a WM would: draw, settle,
 		 * draw again to undo. */
-		{
+		if (do_band != 0) {
 			int i, rw = steps[step].w, rh = steps[step].h;
 
 			for (i = 0; i < 2; i++) {
@@ -240,8 +248,11 @@ int main(int argc, char **argv)
 
 		/* Scroll our own content with XCopyArea: a screen-source copy, the other
 		 * op an interactive resize leans on. */
-		XCopyArea(dpy, win, win, gc, 0, 40, w, h - 40, 0, 30);
-		XFlush(dpy);
+		if (do_copy != 0) {
+			fprintf(stderr, "xresizer: XCopyArea scroll\n");
+			XCopyArea(dpy, win, win, gc, 0, 40, w, h - 40, 0, 30);
+			XFlush(dpy);
+		}
 
 		fprintf(stderr, "xresizer: STEP %d -> resize %dx%d (repaint=%d)\n",
 				step, steps[step].w, steps[step].h, steps[step].repaint);
