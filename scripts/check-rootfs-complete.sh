@@ -54,6 +54,13 @@ REQUIRED=(
 	usr/share/quake3/demoq3/pak1.pk3
 	usr/share/quake3/demoq3/q3key
 	usr/share/supertuxkart/data/stk_config.xml
+	# Trusted root CA store (ca_certificates port). Without these two files every
+	# TLS client we ship silently falls back to "no trust anchors": Dillo reports
+	# "Trusting 0 TLS certificates." and refuses real https:// sites, and
+	# openssl/python3's ssl module have no default CAfile. Two REAL copies, not a
+	# symlink -- see ca_certificates/port.def.sh for which consumer reads which.
+	etc/ssl/certs/ca-certificates.crt
+	etc/ssl/cert.pem
 )
 
 # Expected but not fatal: launchers and conveniences. Reported, never silent.
