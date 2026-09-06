@@ -28,6 +28,26 @@
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 
+/* Report where the window really is: under a reparenting WM the client's own
+ * coordinates are relative to the WM frame, so a window that is drawn but never
+ * seen is either mis-placed by the WM or dropped by the server -- and only the
+ * root-relative position tells the two apart. */
+static void report_placement(Display *dpy, Window win)
+{
+	Window root, parent, *kids = NULL, child;
+	unsigned int nkids = 0;
+	int rx = -1, ry = -1;
+
+	if (XQueryTree(dpy, win, &root, &parent, &kids, &nkids) != 0) {
+		if (kids != NULL) {
+			XFree(kids);
+		}
+		(void)XTranslateCoordinates(dpy, win, root, 0, 0, &rx, &ry, &child);
+		fprintf(stderr, "xresizer: parent=0x%lx (root=0x%lx) root-relative %d,%d\n",
+				(unsigned long)parent, (unsigned long)root, rx, ry);
+	}
+}
+
 struct step {
 	int w, h;
 	int repaint; /* 0 = deliberately leave the new area untouched */
@@ -65,6 +85,8 @@ int main(int argc, char **argv)
 	unsigned long white, red, green, blue, yellow;
 	int period = (argc > 1) ? atoi(argv[1]) : 12; /* seconds between resizes */
 	struct timeval next;
+	GC rootgc;
+	Window root;
 
 	dpy = XOpenDisplay(NULL);
 	if (dpy == NULL) {
@@ -83,6 +105,16 @@ int main(int argc, char **argv)
 	win = XCreateSimpleWindow(dpy, RootWindow(dpy, scr), 260, 180, w, h, 2,
 			BlackPixel(dpy, scr), white);
 
+	/* NorthWest bit gravity: without it the default is ForgetGravity and the
+	 * server may legally discard the old contents on every resize, which makes
+	 * the repaint-suppressed steps say nothing about a real artefact. */
+	{
+		XSetWindowAttributes swa;
+
+		swa.bit_gravity = NorthWestGravity;
+		XChangeWindowAttributes(dpy, win, CWBitGravity, &swa);
+	}
+
 	/* USPosition so a window manager places it immediately instead of asking
 	 * for an interactive rubber-band we have no pointer to drive. */
 	memset(&hints, 0, sizeof(hints));
@@ -93,11 +125,37 @@ int main(int argc, char **argv)
 	hints.height = h;
 	XSetNormalHints(dpy, win, &hints);
 	XStoreName(dpy, win, "xresizer");
+	{
+		XClassHint cls;
+
+		cls.res_name = "xresizer";
+		cls.res_class = "Xresizer";
+		XSetClassHint(dpy, win, &cls);
+	}
 
 	XSelectInput(dpy, win, ExposureMask | StructureNotifyMask);
 	XMapWindow(dpy, win);
+	XSync(dpy, False);
+	report_placement(dpy, win);
 
 	gc = XCreateGC(dpy, win, 0, NULL);
+
+	/* An XOR GC on the ROOT window is what a reparenting WM uses to rubber-band
+	 * an interactive resize (WindowMaker included).  GXxor has no GPU path in
+	 * glamor, so every such line takes the CPU fallback: download the screen
+	 * pixmap, do the op with fb, upload it again -- i.e. straight through the
+	 * two functions our own glamor patches touch.  Drawing the same rectangle
+	 * twice must restore the screen exactly; anything left behind is the
+	 * artefact the owner reported. */
+	root = RootWindow(dpy, scr);
+	{
+		XGCValues gcv;
+
+		gcv.function = GXxor;
+		gcv.foreground = white ^ blue;
+		gcv.subwindow_mode = IncludeInferiors;
+		rootgc = XCreateGC(dpy, root, GCFunction | GCForeground | GCSubwindowMode, &gcv);
+	}
 
 	gettimeofday(&next, NULL);
 	next.tv_sec += period;
@@ -114,7 +172,9 @@ int main(int argc, char **argv)
 			if (ev.type == ConfigureNotify) {
 				w = ev.xconfigure.width;
 				h = ev.xconfigure.height;
-				fprintf(stderr, "xresizer: configure %dx%d\n", w, h);
+				fprintf(stderr, "xresizer: configure %dx%d at %d,%d\n", w, h,
+						ev.xconfigure.x, ev.xconfigure.y);
+				report_placement(dpy, win);
 			}
 			if ((ev.type == Expose) && (ev.xexpose.count == 0)) {
 				fprintf(stderr, "xresizer: expose, paint %dx%d\n", w, h);
@@ -160,6 +220,28 @@ int main(int argc, char **argv)
 			fprintf(stderr, "xresizer: all %d steps done\n", NSTEPS);
 			break;
 		}
+
+		/* Rubber-band the target geometry the way a WM would: draw, settle,
+		 * draw again to undo. */
+		{
+			int i, rw = steps[step].w, rh = steps[step].h;
+
+			for (i = 0; i < 2; i++) {
+				XDrawRectangle(dpy, root, rootgc, 240, 160, rw + 40, rh + 40);
+				XDrawRectangle(dpy, root, rootgc, 244, 164, rw + 32, rh + 32);
+				XFlush(dpy);
+				if (i == 0) {
+					fprintf(stderr, "xresizer: rubber band %dx%d drawn\n", rw, rh);
+					usleep(400000);
+				}
+			}
+			fprintf(stderr, "xresizer: rubber band undone\n");
+		}
+
+		/* Scroll our own content with XCopyArea: a screen-source copy, the other
+		 * op an interactive resize leans on. */
+		XCopyArea(dpy, win, win, gc, 0, 40, w, h - 40, 0, 30);
+		XFlush(dpy);
 
 		fprintf(stderr, "xresizer: STEP %d -> resize %dx%d (repaint=%d)\n",
 				step, steps[step].w, steps[step].h, steps[step].repaint);
