@@ -240,7 +240,10 @@ int main(int argc, char **argv)
 				XFlush(dpy);
 				if (i == 0) {
 					fprintf(stderr, "xresizer: rubber band %dx%d drawn\n", rw, rh);
-					usleep(400000);
+					/* Hold the band on screen long enough that a periodic HDMI
+					 * grab is certain to sample it; at 400 ms the corrupted
+					 * state was caught only by luck. */
+					sleep(4);
 				}
 			}
 			fprintf(stderr, "xresizer: rubber band undone\n");
