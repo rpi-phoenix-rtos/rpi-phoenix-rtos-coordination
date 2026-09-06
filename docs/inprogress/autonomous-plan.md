@@ -2,7 +2,7 @@
 
 Planning and progress now live in **one short weekly log**:
 
-### ➡ [`docs/inprogress/WEEK-2026-W36.md`](WEEK-2026-W36.md)
+### ➡ [`docs/inprogress/WEEK-2026-W37.md`](WEEK-2026-W37.md)
 
 That file holds: decisions needed from Witold · plan for the next days ·
 in-progress work · progress this week · blocked items. Nothing else.

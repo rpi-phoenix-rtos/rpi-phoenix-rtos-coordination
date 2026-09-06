@@ -9,7 +9,7 @@ The authoritative rules for this project live in [AGENTS.md](AGENTS.md) and the 
 Read these three, in order, before any code change:
 
 1. [AGENTS.md](AGENTS.md) — rules, conventions, mandatory reading list
-2. [docs/inprogress/WEEK-2026-W36.md](docs/inprogress/WEEK-2026-W36.md) — the CURRENT WEEKLY LOG: decisions needed from the owner, plan for the next days, in-progress work, progress, blocked items. This is the single planning/progress doc (see [docs/inprogress/README.md](docs/inprogress/README.md) for the weekly convention; history is in `docs/done/`)
+2. [docs/inprogress/WEEK-2026-W37.md](docs/inprogress/WEEK-2026-W37.md) — the CURRENT WEEKLY LOG: decisions needed from the owner, plan for the next days, in-progress work, progress, blocked items. This is the single planning/progress doc (see [docs/inprogress/README.md](docs/inprogress/README.md) for the weekly convention; history is in `docs/done/`)
 3. [tracking/current-step.md](tracking/current-step.md) — the single active implementation step
 
 Everything else in AGENTS.md's "Mandatory Reading Order" is **conditional** — read it when the task touches that area. Do not read all 14 docs on every session; that burns context with no gain.
