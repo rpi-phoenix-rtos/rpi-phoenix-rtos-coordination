@@ -74,6 +74,36 @@ static unsigned long alloc_colour(Display *d, Colormap cm, int r, int g, int b)
 	return c.pixel;
 }
 
+static void paint(Display *dpy, Window win, GC gc, int scr, int w, int h,
+		unsigned long white, unsigned long red, unsigned long green,
+		unsigned long blue, unsigned long yellow, int step)
+{
+	/* asymmetric bars: red only at the TOP, blue only at the
+	 * BOTTOM, so a vertical mirror is unmistakable */
+	XSetForeground(dpy, gc, white);
+	XFillRectangle(dpy, win, gc, 0, 0, w, h);
+	XSetForeground(dpy, gc, red);
+	XFillRectangle(dpy, win, gc, 0, 0, w, 28);
+	XSetForeground(dpy, gc, blue);
+	XFillRectangle(dpy, win, gc, 0, h - 14, w, 14);
+	XSetForeground(dpy, gc, green);
+	XFillRectangle(dpy, win, gc, 0, 0, 10, h);
+	XSetForeground(dpy, gc, yellow);
+	XFillRectangle(dpy, win, gc, w - 40, 0, 40, h);
+	/* diagonal: top-left -> bottom-right, plus a mid cross */
+	XSetForeground(dpy, gc, BlackPixel(dpy, scr));
+	XDrawLine(dpy, win, gc, 0, 0, w - 1, h - 1);
+	XDrawLine(dpy, win, gc, 0, h / 2, w - 1, h / 2);
+	XDrawRectangle(dpy, win, gc, 4, 4, w - 9, h - 9);
+	{
+		char label[64];
+		int n = snprintf(label, sizeof(label), "xresizer %dx%d step %d",
+				w, h, step);
+		XDrawString(dpy, win, gc, 24, 60, label, n);
+	}
+	XFlush(dpy);
+}
+
 int main(int argc, char **argv)
 {
 	Display *dpy;
@@ -90,6 +120,11 @@ int main(int argc, char **argv)
 	 *   "copy"  - only the in-window XCopyArea
 	 *   "both"  - both (default) */
 	const char *mode = (argc > 2) ? argv[2] : "both";
+	/* "drag" reproduces what a mouse actually does: tens of XResizeWindow calls a
+	 * second for a few seconds, then STOP and let the client repaint.  The earlier
+	 * corrupted capture is best explained as a mid-repaint sample, and the only way
+	 * to tell that apart from real corruption is to grade the SETTLED frame. */
+	int do_drag = (strcmp(mode, "drag") == 0);
 	int do_band = (strcmp(mode, "copy") != 0);
 	int do_copy = (strcmp(mode, "band") != 0);
 	struct timeval next;
@@ -165,6 +200,52 @@ int main(int argc, char **argv)
 		rootgc = XCreateGC(dpy, root, GCFunction | GCForeground | GCSubwindowMode, &gcv);
 	}
 
+	if (do_drag != 0) {
+		int step_i, k;
+
+		XMapWindow(dpy, win);
+		XSync(dpy, False);
+		for (step_i = 0; step_i < 4; step_i++) {
+			fprintf(stderr, "xresizer: DRAG %d start\n", step_i);
+			for (k = 0; k < 120; k++) {
+				int dw = 360 + ((k * 7) % 560);
+				int dh = 240 + ((k * 5) % 420);
+
+				XResizeWindow(dpy, win, (unsigned)dw, (unsigned)dh);
+				XFlush(dpy);
+				usleep(25000); /* ~40 resizes/second, like a real drag */
+			}
+			/* Settle: stop resizing, drain events, repaint, hold still so an
+			 * HDMI tick samples a QUIESCENT frame. */
+			XResizeWindow(dpy, win, 700u, 480u);
+			XFlush(dpy);
+			fprintf(stderr, "xresizer: DRAG %d settled at 700x480\n", step_i);
+			{
+				time_t t0 = time(NULL);
+
+				while ((time(NULL) - t0) < 12) {
+					while (XPending(dpy) != 0) {
+						XEvent ev;
+
+						XNextEvent(dpy, &ev);
+						if (ev.type == ConfigureNotify) {
+							w = ev.xconfigure.width;
+							h = ev.xconfigure.height;
+						}
+						if ((ev.type == Expose) && (ev.xexpose.count == 0)) {
+							paint(dpy, win, gc, scr, w, h, white, red, green,
+									blue, yellow, step_i);
+						}
+					}
+					usleep(50000);
+				}
+			}
+		}
+		fprintf(stderr, "xresizer: drag test done\n");
+		XCloseDisplay(dpy);
+		return 0;
+	}
+
 	gettimeofday(&next, NULL);
 	next.tv_sec += period;
 
@@ -186,30 +267,8 @@ int main(int argc, char **argv)
 			}
 			if ((ev.type == Expose) && (ev.xexpose.count == 0)) {
 				fprintf(stderr, "xresizer: expose, paint %dx%d\n", w, h);
-				/* asymmetric bars: red only at the TOP, blue only at the
-				 * BOTTOM, so a vertical mirror is unmistakable */
-				XSetForeground(dpy, gc, white);
-				XFillRectangle(dpy, win, gc, 0, 0, w, h);
-				XSetForeground(dpy, gc, red);
-				XFillRectangle(dpy, win, gc, 0, 0, w, 28);
-				XSetForeground(dpy, gc, blue);
-				XFillRectangle(dpy, win, gc, 0, h - 14, w, 14);
-				XSetForeground(dpy, gc, green);
-				XFillRectangle(dpy, win, gc, 0, 0, 10, h);
-				XSetForeground(dpy, gc, yellow);
-				XFillRectangle(dpy, win, gc, w - 40, 0, 40, h);
-				/* diagonal: top-left -> bottom-right, plus a mid cross */
-				XSetForeground(dpy, gc, BlackPixel(dpy, scr));
-				XDrawLine(dpy, win, gc, 0, 0, w - 1, h - 1);
-				XDrawLine(dpy, win, gc, 0, h / 2, w - 1, h / 2);
-				XDrawRectangle(dpy, win, gc, 4, 4, w - 9, h - 9);
-				{
-					char label[64];
-					int n = snprintf(label, sizeof(label), "xresizer %dx%d step %d",
-							w, h, step);
-					XDrawString(dpy, win, gc, 24, 60, label, n);
-				}
-				XFlush(dpy);
+				paint(dpy, win, gc, scr, w, h, white, red, green, blue,
+						yellow, step);
 			}
 		}
 
