@@ -15,19 +15,26 @@
 #
 # This is also the owner's own suggested experiment (one archive -> RAM), which had
 # never actually run: both earlier attempts wrote to /ramtmp, i.e. back onto NFS.
-# NOTE: the ported `df` has no -h (it prints its help and the script loses the
-# line), and gzip-decompressing 122 MB on the Pi consumed a whole capture window.
-# Read an UNCOMPRESSED tar instead: 194 MB at ~25 MB/s is I/O, not CPU.
-mkdir -p /tmp/assets
+# Transfer with cp -r, NOT tar: the host tar emits GNU LongLink entries (typeflag
+# 0x4c) for names over 100 chars, which the Pi's tar rejects -- it aborted at
+# 162 of 194 MB, STK saw an incomplete tree and silently fell back to NFS.
+# /tmp is the real tmpfs: df reports 262144 1K-blocks = 256 MiB
+# (board_config.h:110), so the full 194 MB fits with room to spare.
+echo "sr: tmpfs before"
+df /tmp
+mkdir -p /tmp/assets/supertuxkart
 t0=$(date +%s)
-echo "sr: tmpfs before"; df /tmp
-tar xf /stk-assets.tar -C /tmp/assets
-echo "sr: tar rc=$?"
+cp -r /usr/share/supertuxkart/data /tmp/assets/supertuxkart/
+echo "sr: cp data rc=$?"
+cp -r /usr/share/supertuxkart/stk-assets /tmp/assets/supertuxkart/
+echo "sr: cp stk-assets rc=$?"
 t1=$(date +%s)
-echo "sr: extracted 194 MB / 5441 entries in $((t1 - t0)) s"
-ls /tmp/assets/supertuxkart | tr '\n' ' '; echo
-echo "sr: tmpfs after"; df /tmp
-echo "sr: asset file count on tmpfs:"
+echo "sr: copied in $((t1 - t0)) s"
+echo "sr: tmpfs after"
+df /tmp
+echo "sr: sanity -- the file STK looks for must exist on tmpfs:"
+ls -l /tmp/assets/supertuxkart/data/stk_config.xml
+echo "sr: stk-assets top-level entries:"
 ls /tmp/assets/supertuxkart/stk-assets | wc -l
 
 export SUPERTUXKART_DATADIR=/tmp/assets/supertuxkart
