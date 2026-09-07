@@ -1,0 +1,64 @@
+Phoenix RPi4: don't re-register an already-registered stipple damage.
+
+glamor_track_stipple() is called from glamor_validate_gc() on every GCStipple
+change, but the DamagePtr is created once and cached in gc_priv, so from the
+second stipple change onward it called DamageRegister() on a damage that was
+already the head of the drawable's damage list.
+
+damageInsertDamage() prepends unconditionally (its "Damage already on list"
+check is behind DAMAGE_VALIDATE_ENABLE, off in normal builds), so the node
+self-links: pDamage->pNext == pDamage. damageRemoveDamage() then unlinks the
+first match and writes *pPrev = pDamage->pNext -- i.e. pDamage again -- so the
+list head still references the node after DamageDestroy() has freed it. A later
+DamageUnregister() reads a recycled heap chunk as a DamagePtr and dereferences
+pDamage->pDrawable->pScreen.
+
+Observed on Pi 4 as a Data Abort (EL0) in the X desktop-exit path, every run:
+
+  doFreeResource -> FreeGC -> glamor_destroy_gc -> glamor_invalidate_stipple
+    -> DamageUnregister (damage.c:1796 damageScrPriv(pScreen))
+      -> dixLookupPrivate -> dixGetPrivate  ldr x0,[x0]
+  far = x0 = 0x60, x1 = 0  =>  pScreen->devPrivates == NULL,
+  damageScrPrivateKeyRec.offset == 0x60
+  pDamage->pDrawable = 0x3ad9c8, outside both the image (0x400000-0x1baac80)
+  and the heap, with a self-pointer at +16 -- i.e. allocator metadata in a
+  freed chunk, not a live drawable.
+
+Fix: register only when the damage is not already on the drawable we want, and
+move it (unregister first) if the GC's stipple pixmap changed.
+--- a/glamor/glamor_core.c
++++ b/glamor/glamor_core.c
+@@ -182,8 +182,31 @@
+                                                    glamor_stipple_damage_destroy,
+                                                    DamageReportNonEmpty,
+                                                    TRUE, gc->pScreen, gc);
+-        if (gc_priv->stipple_damage)
+-            DamageRegister(&gc->stipple->drawable, gc_priv->stipple_damage);
++        if (gc_priv->stipple_damage) {
++            DrawablePtr stipple = &gc->stipple->drawable;
++
++            /* Register only if this damage is not already on that drawable.
++             *
++             * DamageRegister() -> damageInsertDamage() prepends
++             * unconditionally; its "Damage already on list" check is compiled
++             * out unless DAMAGE_VALIDATE_ENABLE. Re-registering a damage that
++             * is already the head of the drawable's list therefore self-links
++             * it (pNext == pDamage), and damageRemoveDamage() then leaves the
++             * head pointing at the node it just unlinked. The list keeps a
++             * dangling reference after DamageDestroy() frees the damage, so a
++             * later DamageUnregister() reads a recycled heap chunk as a
++             * DamagePtr and faults on pDamage->pDrawable->pScreen.
++             *
++             * glamor_track_stipple() is called from glamor_validate_gc() on
++             * every GCStipple change while the damage is created once and
++             * cached in gc_priv, so without this guard the second stipple
++             * change on a GC double-registers. */
++            if (gc_priv->stipple_damage->pDrawable != stipple) {
++                if (gc_priv->stipple_damage->pDrawable != NULL)
++                    DamageUnregister(gc_priv->stipple_damage);
++                DamageRegister(stipple, gc_priv->stipple_damage);
++            }
++        }
+     }
+ }
+ 
