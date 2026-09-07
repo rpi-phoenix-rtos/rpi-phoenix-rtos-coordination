@@ -116,10 +116,18 @@ if [ "${#cmds[@]}" -gt 0 ]; then
         prompt=$(grep -ac '(psh)%' "$log" || true)
         ran=$(grep -ac 'TEST(' "$log" || true)
         summary=$(grep -aoE '[0-9]+ Tests [0-9]+ Failures [0-9]+ Ignored' "$log" 2>/dev/null | tail -n 1)
-        if [ "$prompt" -eq 0 ]; then
+        # A trial whose capture ended at (or just after) the command produced NO
+        # EVIDENCE -- it must not be counted as a failure. Without this, a bench
+        # of a non-test command (a desktop launch, a game) reports every trial as
+        # "B (no output)" and a truncated capture is indistinguishable from a real
+        # failure. That exact confusion has produced false conclusions here before.
+        if ! "$script_dir/check-capture-complete.py" --quiet "$log" \
+                --commands "${cmds[@]}" >/dev/null 2>&1; then
+            cls="VOID (capture truncated)"
+        elif [ "$prompt" -eq 0 ]; then
             cls="A (no shell)"
         elif [ "$ran" -eq 0 ]; then
-            cls="B (no output)"
+            cls="B (ran, no test output)"
         else
             cls="C (ran)"
         fi
