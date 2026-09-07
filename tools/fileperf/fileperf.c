@@ -30,9 +30,61 @@ static long long now_us(void)
 	return ((long long)ts.tv_sec * 1000000LL) + (ts.tv_nsec / 1000);
 }
 
+/* Depth mode: stat the SAME file through paths that differ only in how many
+ * components they have, by padding with "./" segments.  Same file, same
+ * directory, same inode -- only the component count changes.  If the cost
+ * scales with the count, path resolution is doing a round-trip per component. */
+static int depth_mode(const char *path)
+{
+	int extra;
+
+	printf("FILEPERF depth-mode target=%s\n", path);
+	for (extra = 0; extra <= 8; extra += 2) {
+		char p[1024];
+		long long t0;
+		int i, k, ok = 0;
+		size_t n;
+
+		/* build "<dir>/./././<base>" with `extra` dot segments */
+		p[0] = '\0';
+		{
+			const char *slash = strrchr(path, '/');
+			size_t dlen = (slash != NULL) ? (size_t)(slash - path) : 0;
+
+			if (dlen > 0) {
+				memcpy(p, path, dlen);
+				p[dlen] = '\0';
+			}
+			for (k = 0; k < extra; k++) {
+				strncat(p, "/.", sizeof(p) - strlen(p) - 1);
+			}
+			strncat(p, (slash != NULL) ? slash : "/", sizeof(p) - strlen(p) - 1);
+		}
+		n = strlen(p);
+
+		t0 = now_us();
+		for (i = 0; i < 20; i++) {
+			struct stat st;
+
+			if (stat(p, &st) == 0) {
+				ok++;
+			}
+		}
+		printf("FILEPERF depth extra=%d comps~%d len=%zu ok=%d stat_avg=%lldus\n",
+				extra, extra + 2, n, ok, (now_us() - t0) / 20);
+	}
+
+	return 0;
+}
+
+
 int main(int argc, char **argv)
 {
 	const char *dir = (argc > 1) ? argv[1] : ".";
+
+	if ((argc > 2) && (strcmp(argv[1], "--depth") == 0)) {
+		return depth_mode(argv[2]);
+	}
 	int maxf = (argc > 2) ? atoi(argv[2]) : 200;
 	long long t_open = 0, t_read = 0, t_close = 0, t_stat = 0, t_readdir = 0;
 	long long bytes = 0, t0;
