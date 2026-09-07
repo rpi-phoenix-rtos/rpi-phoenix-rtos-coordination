@@ -130,12 +130,21 @@ int main(int argc, char **argv)
 	seed_file("/tmp/stk/config-0.10/players.xml", SEED_PLAYERS_XML);
 	seed_file("/tmp/stk/config-0.10/config.xml", SEED_CONFIG_XML);
 
-	if (setenv("SUPERTUXKART_DATADIR", "/usr/share/supertuxkart", 1) != 0 ||
-			setenv("SUPERTUXKART_SAVEDIR", "/tmp/stk", 1) != 0 ||
-			setenv("SUPERTUXKART_ASSETS_DIR", "/usr/share/supertuxkart/stk-assets", 1) != 0) {
+	/* overwrite=0: these are DEFAULTS, not mandates. Anything already exported by
+	 * the caller wins, so assets can be staged somewhere else -- e.g. copied to
+	 * the RAM-backed /tmp, which loads markedly faster than NFS and is what
+	 * board_config.h's raised DUMMYFS_SIZE_MAX is there for. With overwrite=1 the
+	 * launcher silently replaced an explicitly-set path, which cost a round of
+	 * measurements that looked like the variable had never arrived at all. */
+	if (setenv("SUPERTUXKART_DATADIR", "/usr/share/supertuxkart", 0) != 0 ||
+			setenv("SUPERTUXKART_SAVEDIR", "/tmp/stk", 0) != 0 ||
+			setenv("SUPERTUXKART_ASSETS_DIR", "/usr/share/supertuxkart/stk-assets", 0) != 0) {
 		fprintf(stderr, "stk: setenv failed: %s\n", strerror(errno));
 		return 1;
 	}
+	printf("stk: DATADIR=%s ASSETS_DIR=%s SAVEDIR=%s\n",
+			getenv("SUPERTUXKART_DATADIR"), getenv("SUPERTUXKART_ASSETS_DIR"),
+			getenv("SUPERTUXKART_SAVEDIR"));
 
 	static char *base[] = {
 		"supertuxkart",
