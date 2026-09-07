@@ -11,14 +11,14 @@
 #   loads clean    => the asset path is implicated and attribution flips
 #
 # This is also the owner's own suggested experiment (one archive -> ramdisk).
-echo "sr: ramdisk space before"
-df -h /ramtmp 2>/dev/null | tail -1
+# NOTE: the ported `df` has no -h (it prints its help and the script loses the
+# line), and gzip-decompressing 122 MB on the Pi consumed a whole capture window.
+# Read an UNCOMPRESSED tar instead: 194 MB at ~25 MB/s is I/O, not CPU.
 mkdir -p /ramtmp/stk
 t0=$(date +%s)
-tar xzf /stk-assets.tar.gz -C /ramtmp/stk 2>/dev/null
+tar xf /stk-assets.tar -C /ramtmp/stk 2>/dev/null
 t1=$(date +%s)
-echo "sr: extracted 194 MB in $((t1 - t0)) s"
-df -h /ramtmp 2>/dev/null | tail -1
+echo "sr: extracted 194 MB / 5441 entries in $((t1 - t0)) s"
 ls /ramtmp/stk/supertuxkart | tr '\n' ' '; echo
 echo "sr: asset file count on ramdisk:"
 ls /ramtmp/stk/supertuxkart/stk-assets | wc -l
