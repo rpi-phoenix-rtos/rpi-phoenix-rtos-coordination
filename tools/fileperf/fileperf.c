@@ -97,8 +97,8 @@ static int depth_mode(const char *path)
  * Leaves the tree behind on purpose (cheap to inspect, trivially rm -r'd). */
 static int mkdepth_mode(const char *root)
 {
-	char dir[1024];
-	char leaf[1100];
+	char dir[512];
+	char leaf[600];
 	int d;
 
 	printf("FILEPERF mkdepth root=%s\n", root);
@@ -114,14 +114,14 @@ static int mkdepth_mode(const char *root)
 		int i, ok = 0, fd;
 
 		if (d > 0) {
-			char next[1024];
+			/* Append in place: one buffer, so there is no size to get wrong. */
+			size_t dlen = strlen(dir);
 
-			snprintf(next, sizeof(next), "%s/d%d", dir, d);
-			if ((mkdir(next, 0777) != 0) && (errno != EEXIST)) {
-				printf("FILEPERF mkdepth FAILED mkdir %s errno=%d\n", next, errno);
+			snprintf(dir + dlen, sizeof(dir) - dlen, "/d%d", d);
+			if ((mkdir(dir, 0777) != 0) && (errno != EEXIST)) {
+				printf("FILEPERF mkdepth FAILED mkdir %s errno=%d\n", dir, errno);
 				return 1;
 			}
-			snprintf(dir, sizeof(dir), "%s", next);
 		}
 
 		snprintf(leaf, sizeof(leaf), "%s/x", dir);
