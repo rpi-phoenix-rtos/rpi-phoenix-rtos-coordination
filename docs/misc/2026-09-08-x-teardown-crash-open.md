@@ -151,26 +151,39 @@ own bookkeeping said "registered" while the drawable underneath was already gone
 pixmap glamor registered the stipple damage on is freed without the damage being unregistered
 or destroyed.**
 
-One concrete, unexamined mechanism for exactly that was found while reading the source and is
-where the next attempt should start:
+**Primary hypothesis — `damageDestroyPixmap`'s `refcnt == 1` guard.**
 
-* `glamor_destroy_pixmap()` (`glamor/glamor.c:266`) calls **`fbDestroyPixmap()` directly**, not
-  `(*pScreen->DestroyPixmap)()`. It therefore **bypasses damage.c's `damageDestroyPixmap`
-  wrapper**, which is the only thing that walks a dying pixmap's damage list and destroys the
-  entries. Any pixmap freed through that path leaves its registered damages dangling.
-* Complication to check first: the damage is registered on `gc->stipple` (the *client's*
-  bitmap, `glamor_core.c:186`) while `glamor_destroy_pixmap()` is called on `gc_priv->stipple`
-  (glamor's converted copy, created in `glamor_transform.c:244`). Those are different pixmaps,
-  so the bypass only explains the crash if the two coincide on some path, or if the client
-  bitmap dies through another non-wrapper route.
-* `damageDestroyPixmap` also skips cleanup entirely unless `pPixmap->refcnt == 1`, which is
-  worth instrumenting.
+```c
+if (pPixmap->refcnt == 1) {          /* damage.c:1493 */
+    ... walk the pixmap's damage list, DamageDestroy() each ...
+}
+unwrap(...); (*pScreen->DestroyPixmap)(pPixmap); wrap(...);
+```
 
-**Do not patch on a hypothesis again.** The cheap decisive experiment is one diagnostic build
-that prints, in `glamor_track_stipple` at register time and in `glamor_invalidate_stipple`
-before the unregister: the `DamagePtr`, the drawable it is being registered on / was registered
-on, that drawable's `type` and `refcnt`, and `gc->stipple` vs `gc_priv->stipple`. One Pi cycle
-then says which pixmap died and by what route.
+`gc->stipple` — the pixmap the damage is registered on — is referenced by the GC. So when the
+client's pixmap **resource** is freed during `FreeAllResources()` with the GC still holding a
+reference, `refcnt` is 2, the damage cleanup is **skipped entirely**, and the pixmap survives
+with the damage still registered. The open question is whether the *final* release (when the GC
+lets go) routes back through the wrapped `DestroyPixmap` at all — that is a question about
+**`FreeGC`'s ordering**, not about glamor. This fits every observed value: the damage stays
+registered, its drawable is freed underneath it, and `DamageUnregister` at `glamor_destroy_gc`
+time reads recycled memory.
+
+**Cheapest decisive probe, and it does not depend on glamor cooperating:** one `ErrorF` in
+`damageDestroyPixmap` on the `refcnt != 1` branch printing the pixmap pointer, its `refcnt`, and
+whether its damage list is non-empty. That directly tests the hypothesis and fires regardless of
+what the GC path does. Add the glamor-side prints (`DamagePtr`, drawable registered on, its
+`type`/`refcnt`, `gc->stipple` vs `gc_priv->stipple`) in the same build — one Pi cycle covers
+both.
+
+**Footnote, already ruled out as the mechanism:** `glamor_destroy_pixmap()` (`glamor/glamor.c:266`)
+calls `fbDestroyPixmap()` directly rather than `(*pScreen->DestroyPixmap)()`, bypassing
+`damageDestroyPixmap`. That is a real latent defect, but it **cannot** be this crash: it runs on
+`gc_priv->stipple`, which `glamor_transform.c:244` always creates fresh via
+`glamor_create_pixmap()`, so it never coincides with the `gc->stipple` the damage is registered
+on (`glamor_core.c:186`). Do not spend a cycle rediscovering that.
+
+**Do not patch on a hypothesis again** — instrument first.
 
 ## Harness traps hit this session — read these before the next cycle
 

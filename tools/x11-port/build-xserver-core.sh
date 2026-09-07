@@ -97,6 +97,11 @@ core_built() {
   [ "$GLAMOR" = 0 ] || [ -f "$GLAMOR_A" ]
 }
 if core_built; then
+  # NOTE: this early return is ABOVE the durable-patch block further down, so a
+  # patch added there is silently SKIPPED on every run after the first successful
+  # build. If you add a core-source patch, move its application above this point
+  # (or delete an archive to force the slow path). See
+  # docs/misc/2026-09-08-x-teardown-crash-open.md.
   echo "=== xorg-server $VER core archives already built (glamor=$GLAMOR) — skipping ==="
   exit 0
 fi
