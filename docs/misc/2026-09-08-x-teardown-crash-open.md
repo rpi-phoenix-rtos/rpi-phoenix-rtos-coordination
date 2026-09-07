@@ -97,11 +97,17 @@ its `x29 == sp`:
 | `pDrawable` | `0x3ad9c8` | `0x2438e78` | **not a live drawable** (see below) |
 | `pScreen` | `0x3ad9d8` | `0x2438d88` | garbage `devPrivates` |
 
-The ELF loads `0x400000–0x1baac80` and the heap is above it. In run 1, `pDrawable = 0x3ad9c8`
-is **below the image and outside the heap**, with a self-pointer at `+16` — allocator/list
-bookkeeping, not a `DrawableRec`. In run 2 it is in the heap but only `0xF0` below `pScreen`,
-whereas a `ScreenRec` is `0x3d8+` bytes — so the two allegedly-distinct objects overlap, which
-they cannot. Both runs say the same thing: **`pDamage->pDrawable` is stale.**
+In every run the word at `pDrawable + 16` — i.e. `pDrawable->pScreen` — reads back as
+`pDrawable + 16` **itself**: a self-pointer, which is allocator/list bookkeeping, not a
+`ScreenRec` address. That is the reliable tell that the drawable has been freed and its chunk
+recycled.
+
+⚠️ An earlier version of this file also argued that `pDrawable = 0x3ad9c8` "cannot be a live
+object because it is below the image (`0x400000-0x1baac80`) and outside the heap". **That
+argument was wrong** — the later instrumented runs show live GCs and pixmaps at `0x3adc38`,
+`0x3b4938`, `0x3b4860`, so that low region is a perfectly valid allocation arena in this
+process. The conclusion (a freed drawable) survives, but it rests on the self-pointer and on the
+`ENTER` measurement below, not on address ranges.
 
 Corroboration: in both runs the stack just below `sp` still holds dead
 `lib_rbInsert` / `lib_rbRemove` / `_malloc_chunkRemove` frames — a `free()` had run on this
@@ -144,46 +150,68 @@ Attempts 1–3 all targeted the **glamor screen private allocation**; attempt 4 
 
 1–3 were reverted in `ports 21bd0ec`; 4 in this session.
 
-## The surviving hypothesis, and the next step
+## MEASURED (2026-09-08, three instrumented Pi cycles): the drawable dies with the damage still attached
 
-With attempt 4's guard in place `DamageUnregister` was **still reached**, which means glamor's
-own bookkeeping said "registered" while the drawable underneath was already gone. So: **the
-pixmap glamor registered the stipple damage on is freed without the damage being unregistered
-or destroyed.**
+Diagnostics were added to `glamor_track_stipple` (REG), `glamor_invalidate_stipple` (UNREG) and
+`damageDestroyPixmap` (ENTER, keyed on a `phx_watch_pixmap` global that glamor sets to the exact
+pixmap it registered on), then reverted. All three runs agree.
 
-**Primary hypothesis — `damageDestroyPixmap`'s `refcnt == 1` guard.**
+Representative run (`dmgwatch`):
 
-```c
-if (pPixmap->refcnt == 1) {          /* damage.c:1493 */
-    ... walk the pixmap's damage list, DamageDestroy() each ...
-}
-unwrap(...); (*pScreen->DestroyPixmap)(pPixmap); wrap(...);
+```
+glamor/phx: REG   dmg=0x2a64b50 gc=0x3b4938 on stipple=0x3b4860 refcnt=2 type=1 (#1)
+glamor/phx: UNREG dmg=0x2a64b50 gc=0x3b4938 gc->stipple=0x3b4860 priv->stipple=0x2a50860 (#1)
 ```
 
-`gc->stipple` — the pixmap the damage is registered on — is referenced by the GC. So when the
-client's pixmap **resource** is freed during `FreeAllResources()` with the GC still holding a
-reference, `refcnt` is 2, the damage cleanup is **skipped entirely**, and the pixmap survives
-with the damage still registered. The open question is whether the *final* release (when the GC
-lets go) routes back through the wrapped `DestroyPixmap` at all — that is a question about
-**`FreeGC`'s ordering**, not about glamor. This fits every observed value: the damage stays
-registered, its drawable is freed underneath it, and `DamageUnregister` at `glamor_destroy_gc`
-time reads recycled memory.
+and from the crash's stack window in the two runs that reached it, `pDamage` / `pDrawable` are
+**exactly the registered pair** (`0x2a61d28` / `0x3adb38`; `0x2a40d28` / `0x2437f18`).
 
-**Cheapest decisive probe, and it does not depend on glamor cooperating:** one `ErrorF` in
-`damageDestroyPixmap` on the `refcnt != 1` branch printing the pixmap pointer, its `refcnt`, and
-whether its damage list is non-empty. That directly tests the hypothesis and fires regardless of
-what the GC path does. Add the glamor-side prints (`DamagePtr`, drawable registered on, its
-`type`/`refcnt`, `gc->stipple` vs `gc_priv->stipple`) in the same build — one Pi cycle covers
-both.
+What that establishes:
 
-**Footnote, already ruled out as the mechanism:** `glamor_destroy_pixmap()` (`glamor/glamor.c:266`)
-calls `fbDestroyPixmap()` directly rather than `(*pScreen->DestroyPixmap)()`, bypassing
-`damageDestroyPixmap`. That is a real latent defect, but it **cannot** be this crash: it runs on
-`gc_priv->stipple`, which `glamor_transform.c:244` always creates fresh via
-`glamor_create_pixmap()`, so it never coincides with the `gc->stipple` the damage is registered
-on (`glamor_core.c:186`). Do not spend a cycle rediscovering that.
+1. **The damage is registered exactly once** (`REG` prints `#1` and never again), on `gc->stipple`,
+   a `DRAWABLE_PIXMAP` with `refcnt = 2`. Confirms attempt 4's refutation independently.
+2. **The damage object is intact and still correctly registered at crash time** — `pDamage` is the
+   same pointer, and its `pDrawable` still points at the pixmap it was registered on. Nothing
+   corrupted the damage.
+3. **That pixmap has been freed**: its memory now reads a self-pointer at `+16`, so
+   `pDrawable->pScreen` yields allocator bookkeeping whose `devPrivates` is garbage (`0` /
+   `0xFFFFFFFF` across runs) — the fault.
+4. **`gc->stipple` != `gc_priv->stipple`** (`0x3b4860` vs `0x2a50860`, measured). So
+   `glamor_destroy_pixmap()`'s `fbDestroyPixmap` wrapper-bypass runs on a *different* pixmap and is
+   **ruled out by measurement**, not just by reading the source.
+5. **`damageDestroyPixmap` is never entered for that pixmap.** The `ENTER` probe is
+   unconditional on the watched pointer and prints on entry; it never fired. In the `dmgwatch`
+   run `UNREG` — which happens *later* than `FreeGC`'s stipple release — did flush, so the
+   missing `ENTER` is a real absence, not output lost to the crash.
 
-**Do not patch on a hypothesis again** — instrument first.
+`FreeGC` (`dix/gc.c:780-783`) releases the stipple **before** calling the DDX `DestroyGC`:
+
+```c
+if (pGC->stipple)
+    (*pGC->pScreen->DestroyPixmap) (pGC->stipple);   /* 781 */
+(*pGC->funcs->DestroyGC) (pGC);                       /* 783 -> glamor_destroy_gc */
+```
+
+Line 781 therefore ran, and `damageDestroyPixmap` did not. **Conclusion: damage.c's
+`damageDestroyPixmap` is not in this screen's `DestroyPixmap` chain**, so *no* pixmap free ever
+cleans up registered damages. glamor's stipple damage outlives its drawable, and `FreeGC` then
+drives an unregister against freed memory.
+
+### The one remaining question, and the probe for it
+
+Why is the wrapper missing? `DamageSetup()` (`damage.c:1674`) does
+`wrap(pScrPriv, pScreen, DestroyPixmap, damageDestroyPixmap)`, and it clearly ran — `pScrPriv` is
+valid (`DamageRegister` dereferences `pScrPriv->funcs.Register` successfully). Its only callers in
+this tree are `mi/misprite.c:283`, `damageext/damageext.c:734` and `miext/shadow/shadow.c:122`.
+So either the wrap never happened, or **something later overwrote `pScreen->DestroyPixmap`** —
+a wrapper-chain LIFO violation, which `damageDestroyPixmap` itself invites by unwrapping and
+re-wrapping around its downstream call.
+
+**Next probe (small, and it should settle it):** print `pScreen->DestroyPixmap` immediately after
+`DamageSetup`'s `wrap`, and again at `glamor_destroy_gc` entry, alongside the address of
+`damageDestroyPixmap`. If they differ, find who assigned it; if `DamageSetup`'s print never
+appears, find why the screen has a `pScrPriv` without the wrap. Note glamor's own screen init also
+wraps screen hooks, so it is the first candidate for clobbering the chain.
 
 ## Harness traps hit this session — read these before the next cycle
 
