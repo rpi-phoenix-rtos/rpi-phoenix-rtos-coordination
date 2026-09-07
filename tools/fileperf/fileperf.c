@@ -85,6 +85,31 @@ int main(int argc, char **argv)
 	if ((argc > 2) && (strcmp(argv[1], "--depth") == 0)) {
 		return depth_mode(argv[2]);
 	}
+
+	/* --stat: time stat() on each given path.  Comparing a MOUNT POINT against a
+	 * file inside it, and a 1-component file on the (nfs) root against a deep
+	 * one, says whether the cost is paid crossing the root mount or inside each
+	 * server. */
+	if ((argc > 2) && (strcmp(argv[1], "--stat") == 0)) {
+		int a;
+
+		for (a = 2; a < argc; a++) {
+			long long t0 = now_us();
+			int i, ok = 0;
+
+			for (i = 0; i < 20; i++) {
+				struct stat st;
+
+				if (stat(argv[a], &st) == 0) {
+					ok++;
+				}
+			}
+			printf("FILEPERF stat %-42s ok=%2d avg=%lldus\n", argv[a], ok,
+					(now_us() - t0) / 20);
+		}
+
+		return 0;
+	}
 	int maxf = (argc > 2) ? atoi(argv[2]) : 200;
 	long long t_open = 0, t_read = 0, t_close = 0, t_stat = 0, t_readdir = 0;
 	long long bytes = 0, t0;
