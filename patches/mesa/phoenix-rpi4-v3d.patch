@@ -381,7 +381,7 @@ index d1b2e4d0c97..fbce1015a3d 100644
     case V3DV_JOB_TYPE_GPU_CL:
        return handle_cl_job(queue, job, counter_pass_idx, sync_info);
 diff --git a/src/gallium/auxiliary/util/u_vbuf.c b/src/gallium/auxiliary/util/u_vbuf.c
-index 882f683e2a3..f6c64334d4c 100644
+index 882f683e2a3..ae7dfe409e5 100644
 --- a/src/gallium/auxiliary/util/u_vbuf.c
 +++ b/src/gallium/auxiliary/util/u_vbuf.c
 @@ -468,6 +468,18 @@ u_vbuf_translate_buffers(struct u_vbuf *mgr, struct translate_key *key,
@@ -403,6 +403,63 @@ index 882f683e2a3..f6c64334d4c 100644
     /* Map buffers we want to translate. */
     mask = vb_mask;
     while (mask) {
+@@ -1669,6 +1681,20 @@ void u_vbuf_draw_vbo(struct pipe_context *pipe, const struct pipe_draw_info *inf
+              * performance. */
+             if (!indirect &&
+                 !new_info.primitive_restart &&
++#if defined(__phoenix__)
++                /* Phoenix-RTOS RPi4: do NOT take the index-unrolling
++                 * optimisation.  On HW it is the ONLY reason u_vbuf enters the
++                 * translate path for Quake III's world surfaces (the report says
++                 * incompat_vb=0, incompat_elem=0, misaligned=0, unroll=1), and
++                 * u_vbuf_translate_begin() then fails and SKIPS pipe->draw_vbo
++                 * entirely -- the surface is silently dropped, which is why the
++                 * world rendered black.  Unrolling is a pure upload-ratio
++                 * optimisation, so declining it is always correct; the draw takes
++                 * the ordinary indexed path instead.  (Why translate_generic
++                 * cannot build that key here is still open -- aarch64 has no
++                 * translate_sse, so the generic path is the only one.) */
++                false &&
++#endif
+                 util_is_vbo_upload_ratio_too_large(new_draw.count, num_vertices) &&
+                 !u_vbuf_mapping_vertex_buffer_blocks(mgr, misaligned)) {
+                unroll_indices = true;
+@@ -1694,7 +1720,34 @@ void u_vbuf_draw_vbo(struct pipe_context *pipe, const struct pipe_draw_info *inf
+          if (!u_vbuf_translate_begin(mgr, &new_info, &new_draw,
+                                      start_vertex, num_vertices,
+                                      min_index, unroll_indices, misaligned, &releasebuf)) {
+-            debug_warn_once("u_vbuf_translate_begin() failed");
++            /* Phoenix-RTOS RPi4: this failure path SKIPS pipe->draw_vbo entirely,
++             * so the draw is silently dropped -- which on HW showed up as Quake
++             * III's world rendering BLACK during a bot match (the multitexture
++             * path adds a second texcoord element).  debug_warn_once is a no-op in
++             * release builds, so it failed with no trace at all.  Say so, once,
++             * unconditionally, and name the element that could not be translated. */
++            {
++               static bool phx_reported = false;
++
++               if (!phx_reported) {
++                  unsigned i;
++
++                  phx_reported = true;
++                  fprintf(stderr, "u_vbuf: TRANSLATE FAILED - DRAW DROPPED "
++                          "unroll=%d incompat_vb=0x%x incompat_elem=0x%x "
++                          "misaligned=0x%x nelem=%u\n",
++                          (int)unroll_indices, incompatible_vb_mask,
++                          mgr->ve->incompatible_elem_mask, misaligned,
++                          mgr->ve->count);
++                  for (i = 0; i < mgr->ve->count; i++) {
++                     fprintf(stderr, "u_vbuf:   ve[%u] fmt=%s off=%u stride=%u vb=%u\n",
++                             i, util_format_short_name(mgr->ve->ve[i].src_format),
++                             mgr->ve->ve[i].src_offset,
++                             mgr->ve->ve[i].src_stride,
++                             mgr->ve->ve[i].vertex_buffer_index);
++                  }
++               }
++            }
+             goto out;
+          }
+ 
 diff --git a/src/gallium/drivers/v3d/v3d_blit.c b/src/gallium/drivers/v3d/v3d_blit.c
 index c5c07d1deb0..68c38ad1092 100644
 --- a/src/gallium/drivers/v3d/v3d_blit.c
