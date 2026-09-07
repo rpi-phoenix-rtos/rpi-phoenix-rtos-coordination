@@ -181,12 +181,6 @@ if [ "$GLAMOR" = 1 ]; then
   # content shows upside-down). Gated on the screen pixmap; offscreen pixmaps untouched.
   GLAMOR_YFLIP_PATCH="$ROOT/tools/x11-port/patches/xorg-server-${VER}-glamor-screen-upload-yflip.patch"
   [ -f "$GLAMOR_YFLIP_PATCH" ] && patch -d "$KD" -p1 -N <"$GLAMOR_YFLIP_PATCH" >/dev/null 2>&1 || true
-  # Stipple-damage double-register fix: glamor_track_stipple() re-registered a
-  # damage that was already on the drawable's list, self-linking the node and
-  # leaving the list holding a dangling pointer after DamageDestroy(). That is
-  # the X desktop-exit Data Abort (EL0) in DamageUnregister -> dixGetPrivate.
-  GLAMOR_STIPPLE_PATCH="$ROOT/tools/x11-port/patches/xorg-server-${VER}-glamor-stipple-damage-double-register.patch"
-  [ -f "$GLAMOR_STIPPLE_PATCH" ] && patch -d "$KD" -p1 -N <"$GLAMOR_STIPPLE_PATCH" >/dev/null 2>&1 || true
 fi
 
 echo "=== building $NV core (make -j$(nproc)) ==="
