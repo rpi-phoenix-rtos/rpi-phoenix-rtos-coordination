@@ -68,6 +68,7 @@
       "Bash(./scripts/publication-audit.sh:*)",
       "Bash(./scripts/upstream-status.sh:*)",
       "Bash(./scripts/build-port.sh:*)",
+      "Bash(./scripts/build-diag-tool.sh:*)",
       "Bash(./scripts/stage-game-data.sh:*)",
       "Bash(./scripts/build-rootfs-helpers.sh:*)",
       "Bash(./scripts/build-showcase-apps.sh:*)"

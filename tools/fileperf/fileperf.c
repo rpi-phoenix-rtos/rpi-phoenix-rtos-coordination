@@ -8,6 +8,8 @@
  * specific call rather than to a harness.
  *
  * Usage: fileperf <dir> [max_files]
+ *        fileperf --stat <path>...      time stat() on each path
+ *        fileperf --mkdepth <root>      cost of one more REAL path component
  *
  * Copyright 2026 Phoenix Systems  %LICENSE%
  */
@@ -19,6 +21,7 @@
 #include <fcntl.h>
 #include <dirent.h>
 #include <time.h>
+#include <errno.h>
 #include <sys/stat.h>
 
 static long long now_us(void)
@@ -31,9 +34,12 @@ static long long now_us(void)
 }
 
 /* Depth mode: stat the SAME file through paths that differ only in how many
- * components they have, by padding with "./" segments.  Same file, same
- * directory, same inode -- only the component count changes.  If the cost
- * scales with the count, path resolution is doing a round-trip per component. */
+ * components they have, by padding with "./" segments.
+ *
+ * INVALID -- kept only so the mistake is not repeated.  "." segments are
+ * normalised away before any path is sent to a server, so this cannot detect
+ * depth by construction, and its flat result is not evidence of anything.  Use
+ * --mkdepth, which builds REAL nested directories. */
 static int depth_mode(const char *path)
 {
 	int extra;
@@ -78,12 +84,87 @@ static int depth_mode(const char *path)
 }
 
 
+/* Real-depth mode: build <root>/d1/d2/... with a file "x" at every level, then
+ * stat each of those x's.  Component count is the ONLY thing that varies, and
+ * the directories genuinely exist, so this measures what resolving one more
+ * component actually costs.
+ *
+ * Reports the FIRST call separately from the average of the rest: with an
+ * attribute cache in the filesystem server the two differ, and conflating them
+ * is how a cache gets credited with more than it does.  Point it at a ramdisk
+ * to see the cost that is NOT network round trips.
+ *
+ * Leaves the tree behind on purpose (cheap to inspect, trivially rm -r'd). */
+static int mkdepth_mode(const char *root)
+{
+	char dir[1024];
+	char leaf[1100];
+	int d;
+
+	printf("FILEPERF mkdepth root=%s\n", root);
+	if ((mkdir(root, 0777) != 0) && (errno != EEXIST)) {
+		printf("FILEPERF mkdepth FAILED mkdir %s errno=%d\n", root, errno);
+		return 1;
+	}
+	snprintf(dir, sizeof(dir), "%s", root);
+
+	for (d = 0; d <= 8; d++) {
+		long long t0, tfirst;
+		struct stat st;
+		int i, ok = 0, fd;
+
+		if (d > 0) {
+			char next[1024];
+
+			snprintf(next, sizeof(next), "%s/d%d", dir, d);
+			if ((mkdir(next, 0777) != 0) && (errno != EEXIST)) {
+				printf("FILEPERF mkdepth FAILED mkdir %s errno=%d\n", next, errno);
+				return 1;
+			}
+			snprintf(dir, sizeof(dir), "%s", next);
+		}
+
+		snprintf(leaf, sizeof(leaf), "%s/x", dir);
+		fd = open(leaf, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+		if (fd < 0) {
+			printf("FILEPERF mkdepth FAILED create %s errno=%d\n", leaf, errno);
+			return 1;
+		}
+		(void)write(fd, "x", 1);
+		close(fd);
+
+		/* First stat of this path in this process: nothing above it is warm
+		 * except what the previous depth touched (its parent chain). */
+		t0 = now_us();
+		if (stat(leaf, &st) == 0) {
+			ok++;
+		}
+		tfirst = now_us() - t0;
+
+		t0 = now_us();
+		for (i = 0; i < 20; i++) {
+			if (stat(leaf, &st) == 0) {
+				ok++;
+			}
+		}
+		printf("FILEPERF mkdepth comps=%2d ok=%2d first=%6lldus warm_avg=%6lldus  %s\n",
+				d + 1, ok, tfirst, (now_us() - t0) / 20, leaf);
+	}
+
+	return 0;
+}
+
+
 int main(int argc, char **argv)
 {
 	const char *dir = (argc > 1) ? argv[1] : ".";
 
 	if ((argc > 2) && (strcmp(argv[1], "--depth") == 0)) {
 		return depth_mode(argv[2]);
+	}
+
+	if ((argc > 2) && (strcmp(argv[1], "--mkdepth") == 0)) {
+		return mkdepth_mode(argv[2]);
 	}
 
 	/* --stat: time stat() on each given path.  Comparing a MOUNT POINT against a
