@@ -211,6 +211,23 @@ resolve_client(char *cp_buf, size_t cp_sz, const char *prefix, const char *clien
 		snprintf(cp_buf, cp_sz, "%s/bin/%s", prefix, client);
 }
 
+/* --quit-after: fire SIGALRM so the supervise loop below can end the session on
+ * a timer. Exists to make the DESKTOP TEARDOWN PATH testable without a mouse:
+ * the owner's "exit Window Maker -> Data Abort" report has no automated repro
+ * because the image ships no `ps` and no `pkill`, so a test script cannot find
+ * the WM's pid, and xlaunch blocks in waitpid so it cannot be driven from a
+ * second psh command. Three attempts at reproducing it were invalid for exactly
+ * that reason. */
+static volatile sig_atomic_t xlaunch_quitRequested = 0;
+
+
+static void xlaunch_onAlarm(int sig)
+{
+	(void)sig;
+	xlaunch_quitRequested = 1;
+}
+
+
 int main(int argc, char *argv[])
 {
 	const char *server_path, *font_dir;
@@ -279,6 +296,21 @@ int main(int argc, char *argv[])
 	 * glamor server). Consume the two slots so the mode parsing below is
 	 * unchanged; argv[0] (program name) is preserved. Applies to the convenience
 	 * modes; the explicit form already takes the server as argv[1]. */
+	/* Optional leading `--quit-after <secs>`: SIGTERM the window manager after
+	 * that many seconds, so the ordinary "session leader exited" teardown below
+	 * runs on a timer. Deliberately signals the WM rather than tearing down
+	 * directly, so the path exercised is the REAL one a user triggers from the
+	 * WM's own Exit menu item. */
+	long quit_after = 0;
+	if (argc >= 3 && strcmp(argv[1], "--quit-after") == 0) {
+		int i;
+		quit_after = strtol(argv[2], NULL, 10);
+		for (i = 1; i + 2 < argc; i++) {
+			argv[i] = argv[i + 2];
+		}
+		argc -= 2;
+	}
+
 	const char *server_override = NULL;
 	if (argc >= 3 && strcmp(argv[1], "--server") == 0) {
 		int i;
@@ -708,11 +740,33 @@ int main(int argc, char *argv[])
 	}
 
 	/* --- supervise: block in waitpid; server death kills all clients --- */
+	if (quit_after > 0) {
+		struct sigaction sa;
+
+		(void)memset(&sa, 0, sizeof(sa));
+		sa.sa_handler = xlaunch_onAlarm;
+		/* No SA_RESTART: waitpid must return EINTR so the loop can act. */
+		if (sigaction(SIGALRM, &sa, NULL) == 0) {
+			(void)alarm((unsigned)quit_after);
+			fprintf(stderr, "xlaunch: --quit-after %ld s armed (will SIGTERM the WM)\n", quit_after);
+		}
+		else {
+			fprintf(stderr, "xlaunch: sigaction(SIGALRM) failed: %s\n", strerror(errno));
+		}
+	}
+
 	for (;;) {
 		w = waitpid(-1, &status, 0);
 		if (w < 0) {
-			if (errno == EINTR)
+			if (errno == EINTR) {
+				if ((xlaunch_quitRequested != 0) && (n_clients > 0) && (cli_pid[0] > 0)) {
+					xlaunch_quitRequested = 0;
+					fprintf(stderr, "xlaunch: --quit-after fired — SIGTERM to client[0] (WM) pid %d\n",
+						(int)cli_pid[0]);
+					(void)kill(cli_pid[0], SIGTERM);
+				}
 				continue;
+			}
 			fprintf(stderr, "xlaunch: waitpid failed: %s\n", strerror(errno));
 			break;
 		}
