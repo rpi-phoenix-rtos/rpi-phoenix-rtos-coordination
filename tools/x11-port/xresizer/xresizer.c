@@ -205,7 +205,7 @@ int main(int argc, char **argv)
 
 		XMapWindow(dpy, win);
 		XSync(dpy, False);
-		for (step_i = 0; step_i < 4; step_i++) {
+		for (step_i = 0; step_i < 10; step_i++) {
 			fprintf(stderr, "xresizer: DRAG %d start\n", step_i);
 			for (k = 0; k < 120; k++) {
 				int dw = 360 + ((k * 7) % 560);
@@ -219,7 +219,33 @@ int main(int argc, char **argv)
 			 * HDMI tick samples a QUIESCENT frame. */
 			XResizeWindow(dpy, win, 700u, 480u);
 			XFlush(dpy);
-			fprintf(stderr, "xresizer: DRAG %d settled at 700x480\n", step_i);
+			/* The decisive line: ask the SERVER what size the window actually is
+			 * and print it next to what this client believes.  A disagreement says
+			 * the client missed a ConfigureNotify; agreement with a visibly wrong
+			 * frame says the server/WM left the window at an intermediate size. */
+			{
+				Window rootret, parent, *kids = NULL, child;
+				unsigned int gw = 0, gh = 0, gb = 0, gd = 0, nkids = 0;
+				int gx = 0, gy = 0, rx = -1, ry = -1;
+				unsigned int pw = 0, ph = 0, pb = 0, pd = 0;
+				int px = 0, py = 0;
+
+				XSync(dpy, False);
+				(void)XGetGeometry(dpy, win, &rootret, &gx, &gy, &gw, &gh, &gb, &gd);
+				(void)XTranslateCoordinates(dpy, win, rootret, 0, 0, &rx, &ry, &child);
+				if (XQueryTree(dpy, win, &rootret, &parent, &kids, &nkids) != 0) {
+					if (kids != NULL) {
+						XFree(kids);
+					}
+					(void)XGetGeometry(dpy, parent, &rootret, &px, &py, &pw, &ph,
+							&pb, &pd);
+				}
+				fprintf(stderr, "xresizer: SETTLE %d asked=700x480 server=%ux%u "
+						"client=%dx%d frame=%ux%u root=%d,%d %s\n",
+						step_i, gw, gh, w, h, pw, ph, rx, ry,
+						((gw == 700u) && (gh == 480u) && (w == 700) && (h == 480))
+								? "OK" : "MISMATCH");
+			}
 			{
 				time_t t0 = time(NULL);
 
