@@ -74,6 +74,19 @@ static unsigned long alloc_colour(Display *d, Colormap cm, int r, int g, int b)
 	return c.pixel;
 }
 
+static void srv_size(Display *dpy, Window win, unsigned int *w, unsigned int *h)
+{
+	Window rootret;
+	int x = 0, y = 0;
+	unsigned int b = 0, d = 0;
+
+	*w = 0;
+	*h = 0;
+	XSync(dpy, False);
+	(void)XGetGeometry(dpy, win, &rootret, &x, &y, w, h, &b, &d);
+}
+
+
 static void paint(Display *dpy, Window win, GC gc, int scr, int w, int h,
 		unsigned long white, unsigned long red, unsigned long green,
 		unsigned long blue, unsigned long yellow, int step)
@@ -205,7 +218,7 @@ int main(int argc, char **argv)
 
 		XMapWindow(dpy, win);
 		XSync(dpy, False);
-		for (step_i = 0; step_i < 10; step_i++) {
+		for (step_i = 0; step_i < 3; step_i++) {
 			fprintf(stderr, "xresizer: DRAG %d start\n", step_i);
 			for (k = 0; k < 120; k++) {
 				int dw = 360 + ((k * 7) % 560);
@@ -219,32 +232,38 @@ int main(int argc, char **argv)
 			 * HDMI tick samples a QUIESCENT frame. */
 			XResizeWindow(dpy, win, 700u, 480u);
 			XFlush(dpy);
-			/* The decisive line: ask the SERVER what size the window actually is
-			 * and print it next to what this client believes.  A disagreement says
-			 * the client missed a ConfigureNotify; agreement with a visibly wrong
-			 * frame says the server/WM left the window at an intermediate size. */
+			/* Probe 1: does the WM EVER apply the final request?  Poll the server
+			 * for 3 s.  Probe 2: then ask for a DIFFERENT size (701x481).  If that
+			 * one applies while 700x480 never did, the WM believed it was already
+			 * at 700x480 -- i.e. the cached-size early-out in wWindowConfigure
+			 * (window.c:2098) -- which is the hypothesis this run exists to test. */
 			{
-				Window rootret, parent, *kids = NULL, child;
-				unsigned int gw = 0, gh = 0, gb = 0, gd = 0, nkids = 0;
-				int gx = 0, gy = 0, rx = -1, ry = -1;
-				unsigned int pw = 0, ph = 0, pb = 0, pd = 0;
-				int px = 0, py = 0;
+				unsigned int gw = 0, gh = 0;
+				int t;
 
-				XSync(dpy, False);
-				(void)XGetGeometry(dpy, win, &rootret, &gx, &gy, &gw, &gh, &gb, &gd);
-				(void)XTranslateCoordinates(dpy, win, rootret, 0, 0, &rx, &ry, &child);
-				if (XQueryTree(dpy, win, &rootret, &parent, &kids, &nkids) != 0) {
-					if (kids != NULL) {
-						XFree(kids);
+				for (t = 0; t < 15; t++) {
+					usleep(200000);
+					srv_size(dpy, win, &gw, &gh);
+					if ((gw == 700u) && (gh == 480u)) {
+						break;
 					}
-					(void)XGetGeometry(dpy, parent, &rootret, &px, &py, &pw, &ph,
-							&pb, &pd);
 				}
-				fprintf(stderr, "xresizer: SETTLE %d asked=700x480 server=%ux%u "
-						"client=%dx%d frame=%ux%u root=%d,%d %s\n",
-						step_i, gw, gh, w, h, pw, ph, rx, ry,
-						((gw == 700u) && (gh == 480u) && (w == 700) && (h == 480))
-								? "OK" : "MISMATCH");
+				fprintf(stderr, "xresizer: PROBE1 round %d after %d polls server=%ux%u %s\n",
+						step_i, t, gw, gh,
+						((gw == 700u) && (gh == 480u)) ? "APPLIED" : "NEVER-APPLIED");
+
+				XResizeWindow(dpy, win, 701u, 481u);
+				XFlush(dpy);
+				for (t = 0; t < 15; t++) {
+					usleep(200000);
+					srv_size(dpy, win, &gw, &gh);
+					if ((gw == 701u) && (gh == 481u)) {
+						break;
+					}
+				}
+				fprintf(stderr, "xresizer: PROBE2 round %d asked=701x481 server=%ux%u %s\n",
+						step_i, gw, gh,
+						((gw == 701u) && (gh == 481u)) ? "APPLIED" : "NEVER-APPLIED");
 			}
 			{
 				time_t t0 = time(NULL);
@@ -265,6 +284,37 @@ int main(int argc, char **argv)
 					}
 					usleep(50000);
 				}
+			}
+			/* Measured AFTER the hold, so the window is provably quiescent.  The
+			 * earlier version read this immediately after XResizeWindow and raced
+			 * the round-trip, which produced a bogus "the WM lost the resize"
+			 * reading -- the numbers it printed were just the pre-resize size. */
+			{
+				Window rootret, parent, *kids = NULL, child;
+				unsigned int gw = 0, gh = 0, gb = 0, gd = 0, nkids = 0;
+				int gx = 0, gy = 0, rx = -1, ry = -1;
+				unsigned int pw = 0, ph = 0, pb = 0, pd = 0;
+				int px = 0, py = 0;
+
+				XSync(dpy, False);
+				(void)XGetGeometry(dpy, win, &rootret, &gx, &gy, &gw, &gh, &gb, &gd);
+				(void)XTranslateCoordinates(dpy, win, rootret, 0, 0, &rx, &ry, &child);
+				if (XQueryTree(dpy, win, &rootret, &parent, &kids, &nkids) != 0) {
+					if (kids != NULL) {
+						XFree(kids);
+					}
+					(void)XGetGeometry(dpy, parent, &rootret, &px, &py, &pw, &ph,
+							&pb, &pd);
+				}
+				/* The verdict that matters is whether the SERVER and the CLIENT
+				 * agree, and whether the frame matches the client plus decorations.
+				 * (PROBE2 deliberately leaves the window at 701x481, so comparing
+				 * against the drag's 700x480 target would always look wrong.) */
+				fprintf(stderr, "xresizer: SETTLE %d server=%ux%u client=%dx%d "
+						"frame=%ux%u root=%d,%d %s\n",
+						step_i, gw, gh, w, h, pw, ph, rx, ry,
+						(((int)gw == w) && ((int)gh == h) && (pw >= gw) && (ph >= gh))
+								? "CONSISTENT" : "MISMATCH");
 			}
 		}
 		fprintf(stderr, "xresizer: drag test done\n");
