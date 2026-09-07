@@ -6,6 +6,24 @@
 - Note: 6/6 demo components gated 3 trials each (21 boots, 0 faults) PLUS reliable USB input: 6/6 boots with full enumeration and keyboard+mouse active. Adds the xHCI Disable-Slot recovery fix on top of the six-component image.
 - Generator: scripts/snapshot-integration-state.sh
 
+## Image artifact
+
+| field | value |
+| --- | --- |
+| path | `artifacts/rpi4b/rpi4b-sd-2part.img` |
+| size | 1680867328 bytes (1.57 GiB) |
+| sha256 | `0ddcee676f46ac57f607e7f7bd9f26b5e575fa0621863adc9b6428a0baaaa91e` |
+| variant | `sd` (2-partition: FAT boot + ext2 root) |
+
+Verified still byte-intact 2026-09-08. Flash with:
+
+```
+sudo dd if=artifacts/rpi4b/rpi4b-sd-2part.img of=/dev/sda bs=4M conv=fsync status=progress
+```
+
+(`/dev/sda` is always the SD card on this host; `rpi4b-sd.img` is FAT-boot-only — do not flash
+that one.)
+
 ## Repositories
 
 | Repository | Branch | Commit SHA | Remote |
