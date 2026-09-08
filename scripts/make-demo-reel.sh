@@ -57,7 +57,7 @@ segments=(
 	"20260908-202248-shell-demo|164|22|Python 3.14 + ncurses — Conway's Game of Life, 239x66 on the HDMI console"
 	"20260908-200441-x-restored|74|26|X11 desktop — Window Maker on glamor GPU-accelerated X, with a live OpenGL window, top and xbill"
 	"20260908-161800-dillo-browse|38|13|Dillo web browser — page fetched over TCP/IP, rendered under glamor X"
-	"20260908-205153-hevcwin6|76|24|Hardware H.265 decode — BCM2711 rpivid, windowed over the live console"
+	"20260908-223402-hevc-fastblit|78|24|Hardware H.265 decode — BCM2711 rpivid at 25 fps, windowed over the live console"
 	"20260908-191446-qs-fps2|95|22|QuakeSpasm — OpenGL on Mesa v3d, id1 demo1 playback, 35 FPS on screen"
 	"20260908-193011-q2-fps|112|20|Quake II — yQuake2 on OpenGL ES, q2demo1 playback, 27.8 fps on screen"
 	"20260908-192454-vkq-fps|158|22|vkQuake — Vulkan via V3DV, id1 demo2 playback, 73 FPS on screen"
