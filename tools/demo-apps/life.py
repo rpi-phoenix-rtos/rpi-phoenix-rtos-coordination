@@ -13,13 +13,25 @@ Deliberately dependency-free: standard library only, no numpy, no colours
 required. It sizes itself to whatever terminal it is given and runs until the
 generation limit or a keypress.
 
-    python3 /usr/share/demo/life.py [generations]
+    python3 /usr/share/demo/life.py [generations] [--ansi]
 
-Keys: q quits, space pauses/resumes, r reseeds.
+Keys (curses mode): q quits, space pauses/resumes, r reseeds.
+
+Two renderers
+-------------
+curses is the default and gives the status bar and keys. But curses needs a
+usable TERM and a terminfo entry, and the HDMI framebuffer console is not
+guaranteed to supply either -- so there is a second renderer that writes plain
+ANSI (cursor-home + erase) and needs nothing but a tty. It is used
+automatically when curses cannot start, and can be forced with --ansi. A demo
+that dies with `setupterm: could not find terminal` on the console it was meant
+to run on is worse than one that draws with two escape sequences.
 """
 
 import curses
+import os
 import random
+import shutil
 import sys
 import time
 
@@ -112,15 +124,75 @@ def run(stdscr, limit):
         time.sleep(0.05)
 
 
+def run_ansi(limit):
+    """Plain-ANSI renderer: cursor-home + erase-down each frame, no terminfo, no
+    input handling (the generation limit is the exit). Deliberately minimal so it
+    works on any tty, including the pl011 fbcon console."""
+    try:
+        cols_t, rows_t = shutil.get_terminal_size(fallback=(100, 30))
+    except Exception:
+        cols_t, rows_t = 100, 30
+    # Leave the last line for the status bar, and keep a column of slack so a
+    # terminal that wraps on the final glyph does not scroll the field away.
+    rows = max(8, rows_t - 2)
+    cols = max(16, cols_t - 1)
+
+    grid = seed(rows, cols)
+    gen = 0
+    started = time.time()
+    out = sys.stdout
+    out.write("\033[2J")            # erase once; afterwards just redraw in place
+
+    while limit == 0 or gen < limit:
+        population = 0
+        lines = []
+        for r in range(rows):
+            row = grid[r]
+            population += sum(row)
+            lines.append("".join(GLYPH if v else " " for v in row))
+
+        rate = gen / max(1e-6, time.time() - started)
+        status = (f" Game of Life on Phoenix-RTOS  |  {cols}x{rows}  "
+                  f"gen {gen}  pop {population}  {rate:4.1f} gen/s ")
+        # \033[H homes the cursor; \033[J erases from there down, so the frame is
+        # replaced rather than scrolled.
+        out.write("\033[H\033[J" + "\n".join(lines) + "\n" + status[:cols])
+        out.flush()
+
+        grid = step(grid, rows, cols)
+        gen += 1
+        time.sleep(0.05)
+
+    out.write("\n")
+    out.flush()
+
+
 def main():
     limit = 0
-    if len(sys.argv) > 1:
+    force_ansi = False
+    for a in sys.argv[1:]:
+        if a == "--ansi":
+            force_ansi = True
+            continue
         try:
-            limit = int(sys.argv[1])
+            limit = int(a)
         except ValueError:
-            print(f"usage: {sys.argv[0]} [generations]", file=sys.stderr)
+            print(f"usage: {sys.argv[0]} [generations] [--ansi]", file=sys.stderr)
             return 2
-    curses.wrapper(run, limit)
+
+    if force_ansi:
+        run_ansi(limit)
+        return 0
+
+    try:
+        curses.wrapper(run, limit)
+    except Exception as exc:
+        # curses could not start (no TERM, no terminfo, not a tty it recognises).
+        # Say so once and draw anyway -- on a demo machine, falling back beats
+        # exiting with a traceback.
+        print(f"life: curses unavailable ({exc}); falling back to plain ANSI",
+              file=sys.stderr)
+        run_ansi(limit)
     return 0
 
 

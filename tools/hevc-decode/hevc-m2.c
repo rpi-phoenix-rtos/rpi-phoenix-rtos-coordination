@@ -1016,6 +1016,24 @@ int main(void)
 }
 #else  /* PLAY_TOOL: runtime .265 file player (M3) */
 
+/* Progress every PROGRESS_EVERY presented frames.
+ *
+ * Not decoration: hevc-play printed nothing between its start banner and its
+ * final line, so on a 297-frame clip the test harness's idle timer (no UART
+ * output for N seconds => assume finished) powered the Pi off mid-playback and
+ * the run produced no completion line at all. A periodic line keeps the console
+ * alive for exactly as long as the decoder is working, and gives the log a frame
+ * count to check against the clip. Cheap: one printf per 25 presented frames. */
+#define PROGRESS_EVERY 25u
+
+static void hevc_play_progress(uint32_t shown, uint32_t total)
+{
+	if (shown != 0u && (shown % PROGRESS_EVERY) == 0u) {
+		printf("hevc-play: presented %u/%u frames\n", shown, total);
+	}
+}
+
+
 /* Slurp a whole elementary stream into a malloc'd buffer. */
 static uint8_t *slurp_265(const char *path, uint32_t *len_out)
 {
@@ -1481,6 +1499,7 @@ int main(int argc, char **argv)
 					if (fb) fb_blit(fb, fbm.pitch, fbm.width, fbm.height, pool_l[mi].cpu, pool_c[mi].cpu,
 							g_frame_w, g_frame_h, luma_stride, chroma_stride);
 					nanosleep(&ts25, NULL); shown++; dpb[mi].pending = 0; npend--;
+				hevc_play_progress(shown, nslices);
 				}
 			}
 			frame++;
@@ -1494,6 +1513,7 @@ int main(int argc, char **argv)
 				if (fb) fb_blit(fb, fbm.pitch, fbm.width, fbm.height, pool_l[mi].cpu, pool_c[mi].cpu,
 						g_frame_w, g_frame_h, luma_stride, chroma_stride);
 				nanosleep(&ts25, NULL); shown++; dpb[mi].pending = 0;
+				hevc_play_progress(shown, nslices);
 			}
 		}
 	}

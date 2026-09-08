@@ -36,14 +36,33 @@ repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 vid_dir="${RPI4B_HDMI_VIDEO_DIR:-$repo/artifacts/hdmi-video}"
 out="${1:-$vid_dir/$(date -u +%Y%m%d-%H%M%S)-phoenix-rtos-rpi4-showcase.mp4}"
 
+# The showcase, in the order the owner asked for (2026-09-08): boot once at the
+# start, then shell action, then X11 with movement and the GL-accelerated
+# window, then the browser and video, then the games.
+#
+# Every clip below is a real HDMI capture of the Pi running the netboot root --
+# nothing is a host recording or a screen-grab of a desktop emulator. The
+# windows were chosen by measuring the clips, not by eye: for the games, the
+# usable window is bounded because `+playdemo demo1` plays ONE demo and then
+# drops to the console; for the X desktop it stops at ~150 s because life.py
+# freezes there (open bug); and the first ~30 s of any capture is skipped
+# because the grabber's first frames are a stale pink card, not the Pi.
+#
+# The four Quake segments and SuperTuxKart all carry the engine's OWN on-screen
+# frame-rate readout, so the performance figures in this reel are the system
+# reporting itself rather than a claim in a caption.
 segments=(
-	"20260908-004253-demo-x-and-quake|88|22|X11 desktop — Window Maker, xterm, xclock, xcalc (glamor GPU-accelerated X on V3D)"
-	"20260908-151410-qs-demo1|95|22|QuakeSpasm — OpenGL on Mesa v3d, id1 demo1 playback"
-	"20260908-152520-q2-demo|95|22|Quake II — yQuake2 OpenGL, q2demo1 playback"
-	"20260908-154903-q3-bots|151|15|Quake III Arena — OpenGL, bot deathmatch on q3dm1"
-	"20260908-154042-vk-demo2b|112|22|vkQuake — Vulkan via V3DV, id1 demo2 playback"
-	"20260908-103201-stk-driven-5fps|180|24|SuperTuxKart 1.4 — OpenGL ES 3.1, 4-kart race"
+	"20260908-202248-shell-demo|32|24|Boot — plo -> kernel -> lwIP -> NFS root -> psh, on real hardware"
+	"20260908-202248-shell-demo|96|26|Shell — uname, the ported /usr/bin userland, Lua 5.4.7 / jq 1.7.1 / Python 3.14.4"
+	"20260908-202248-shell-demo|164|22|Python 3.14 + ncurses — Conway's Game of Life, 239x66 on the HDMI console"
+	"20260908-200441-x-restored|74|26|X11 desktop — Window Maker on glamor GPU-accelerated X, with a live OpenGL window, top and xbill"
 	"20260908-161800-dillo-browse|38|13|Dillo web browser — page fetched over TCP/IP, rendered under glamor X"
+	"20260908-201439-psh-hevcwin|79|20|Hardware H.265 decode — BCM2711 rpivid, windowed over the live console"
+	"20260908-191446-qs-fps2|95|22|QuakeSpasm — OpenGL on Mesa v3d, id1 demo1 playback, 35 FPS on screen"
+	"20260908-193011-q2-fps|112|20|Quake II — yQuake2 on OpenGL ES, q2demo1 playback, 27.8 fps on screen"
+	"20260908-192454-vkq-fps|158|22|vkQuake — Vulkan via V3DV, id1 demo2 playback, 73 FPS on screen"
+	"20260908-195219-q3-orbit3|198|22|Quake III Arena — 5-bot deathmatch on q3dm1, orbiting camera, 46 fps on screen"
+	"20260908-182836-stk-fps3|196|24|SuperTuxKart 1.4 — OpenGL ES 3.1, 4-kart AI race"
 )
 
 command -v ffmpeg >/dev/null 2>&1 || { echo "make-demo-reel: ffmpeg not found" >&2; exit 1; }
