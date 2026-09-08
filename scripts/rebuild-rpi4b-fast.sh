@@ -775,10 +775,18 @@ if [ "${variant}" = "sd" ]; then
 	# the volume on the inode table, so 768 MiB left almost no slack (STK's asset
 	# tree is tens of thousands of small files, each rounded up to a 1 KiB block).
 	# The downstream partition geometry is computed from the actual image size, so
-	# this only enlarges partition 2. Override with RPI4B_ROOTFS_BLOCKS.
-	rootfs_blocks="${RPI4B_ROOTFS_BLOCKS:-262144}"
-	[ "${with_showcase}" = 1 ] && rootfs_blocks="${RPI4B_ROOTFS_BLOCKS:-1572864}"
-	env RPI4B_BUILDROOT="${buildroot}" RPI4B_ROOTFS_BLOCKS="${rootfs_blocks}" \
+	# this only enlarges partition 2.
+	#
+	# The size is NO LONGER keyed off --with-showcase. It used to be
+	# (262144 blocks, or 1572864 with the flag), which tied the volume size to a
+	# build flag while the CONTENT came from whatever was already staged in
+	# _fs/<target>/root. Re-cutting an image with `--scope project --variant sd`
+	# -- reasonable when nothing needs rebuilding -- therefore picked 256 MiB for
+	# a 682 MB showcase rootfs and mke2fs failed with "Could not allocate block
+	# in ext2 filesystem". build-rpi4b-rootfs-ext2.sh now measures the staged
+	# tree itself; pass RPI4B_ROOTFS_BLOCKS to override.
+	env RPI4B_BUILDROOT="${buildroot}" \
+		${RPI4B_ROOTFS_BLOCKS:+RPI4B_ROOTFS_BLOCKS="${RPI4B_ROOTFS_BLOCKS}"} \
 		"${repo_root}/scripts/build-rpi4b-rootfs-ext2.sh"
 	RPI4B_REMOTE_SDIMG="${two_part_img}" \
 		RPI4B_EXPORT_SDIMG_PATH="${exported_two_part}" \

@@ -25,7 +25,14 @@ bootfs_img="${RPI4B_BOOTFS_IMG:-$boot_dir/rpi4b-bootfs.img}"
 sd2_img="${RPI4B_SDIMG2_PATH:-$boot_dir/rpi4b-sd-2part.img}"
 
 # ext2 image geometry
-size_blocks="${RPI4B_ROOTFS_BLOCKS:-262144}" # 1 KiB blocks -> 256 MiB
+# Filesystem size, in 1 KiB blocks. Sized from the tree that is actually staged
+# unless RPI4B_ROOTFS_BLOCKS is set explicitly -- see the auto_size_blocks call
+# below. Sizing it from a BUILD FLAG instead (which is what rebuild-rpi4b-fast.sh
+# used to do, keying 1.5 GiB off --with-showcase) means the content and the
+# volume size are decided independently: re-cutting an image without that flag
+# picked the 256 MiB default against an already-staged 682 MB showcase rootfs and
+# mke2fs died with "Could not allocate block in ext2 filesystem".
+size_blocks="${RPI4B_ROOTFS_BLOCKS:-}"
 sector_size=512
 part_start_sectors="${RPI4B_SDIMG_PART_START_SECTORS:-2048}"
 gap_sectors=2048   # 1 MiB-aligned gap between partitions
@@ -65,6 +72,25 @@ if ! "$(dirname "${BASH_SOURCE[0]}")/check-rootfs-complete.sh" "$stage"; then
 		printf 'Or set RPI4B_ALLOW_INCOMPLETE_ROOTFS=1 for a deliberately partial image.\n' >&2
 		exit 1
 	fi
+fi
+
+# Size the volume from the staged content. mke2fs -b 1024 -i 2048 is inode-dense
+# and spends roughly an eighth of the volume on the inode table, and STK's asset
+# tree is tens of thousands of small files each rounded up to a 1 KiB block, so
+# the raw byte count is not enough. `du -sk` on the host already over-reports
+# (host 4 KiB blocks vs ext2 1 KiB), which errs in the safe direction; 1.5x on
+# top covers the inode table plus slack. Floor at 256 MiB for tiny/test roots.
+if [ -z "$size_blocks" ]; then
+	staged_kib="$(du -sk "$stage" | awk '{print $1}')"
+	size_blocks=$((staged_kib * 3 / 2))
+	if [ "$size_blocks" -lt 262144 ]; then
+		size_blocks=262144
+	fi
+	printf '=== rootfs volume auto-sized: %s KiB staged -> %s x 1 KiB blocks (%s MiB)\n' \
+		"$staged_kib" "$size_blocks" "$((size_blocks / 1024))"
+else
+	printf '=== rootfs volume size from RPI4B_ROOTFS_BLOCKS: %s x 1 KiB blocks (%s MiB)\n' \
+		"$size_blocks" "$((size_blocks / 1024))"
 fi
 
 # Deterministic, fsck-clean ext2 image populated from the directory.
