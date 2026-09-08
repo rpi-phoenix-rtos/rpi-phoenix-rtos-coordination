@@ -397,3 +397,86 @@ refuted by their own probes, which is cheaper than two wrong fixes.
 
 The diagnostic patch has been removed from the tree and from
 `glamor_core_patches` now that it has answered its question.
+
+---
+
+## 10. Bug #5 ROOT-CAUSED: render orientation is decided by a SIZE heuristic
+
+The third probe closes the search. Instrumenting `glamor_phx_screen_readback()` over a
+whole `startx_gpu action` session
+(`artifacts/rpi4b-uart/rpi4b-uart-20260908-234853-x-readback.log`) gives, on **every**
+call:
+
+```
+glamor-phx: readback #N y0=0 rows=1080 H=1080 width=1920 gl_y=0
+```
+
+`H` is exactly the screen height, the GL origin is never negative, and there are **no
+partial-damage flushes at all** — the readback always takes the whole screen and flips it
+uniformly. It therefore cannot produce a per-region mirror, and §9's leading suspect is
+eliminated along with the other two:
+
+| path | verdict | evidence |
+|---|---|---|
+| `glamor_spans.c` | ❌ not the path | 0 probe hits on the screen pixmap |
+| `glamor_copy.c` (5 routes) | ❌ not the path | 1 copy in a whole session, neither side the screen pixmap |
+| presentation readback | ❌ not the path | always `y0=0 rows=1080 H=1080`, uniform flip |
+
+Also worth recording, because it kills a tempting hypothesis: a **wrong `H` cannot produce
+a mirror**. Screen row `y` is read from texel row `H-1-y`, so with the invariant "texel row
+`t` holds screen row `fbHeight-1-t`" the delivered content is screen row `y + (fbHeight - H)`
+— a pure vertical **translation**. Only the *presence or absence* of a flip produces a
+mirror.
+
+### So the mirrored content is already in the texture, and the writer is the rasterizer
+
+Which lands on the orientation decision — and it is a **size test**, in two independent
+places, both in the same Mesa tree:
+
+`src/mesa/state_tracker/st_atom_framebuffer.c:137`
+```c
+if (st->state.fb_orientation == Y_0_BOTTOM &&
+    fb->Width >= 1024 && fb->Height >= 768)
+   st->state.fb_orientation = Y_0_TOP;
+```
+
+`src/gallium/drivers/v3d/v3d_resource.c:143`
+```c
+... rsc->base.width0 >= 1024 && rsc->base.height0 >= 768) ? V3D_CREATE_BO_SCANOUT : 0;
+```
+
+So "is this the scanout?" is answered by "is it at least 1024×768?". For the 1920×1080
+screen pixmap that is right, and the desktop renders upright. For **any other** FBO that
+happens to be ≥1024×768 it is wrong, and the consequence is asymmetric:
+
+- the **BO** side is safe — the winsys refuses a second claim
+  (`else if (!W.scanout_claimed)` in `v3d_phoenix_winsys.c`, and a bounded
+  `scanout_claim_idx` in double-buffer mode), so a second large resource gets fresh DRAM
+  rather than aliasing the framebuffer's pages. A tempting "two pixmaps share the fb"
+  explanation is therefore **wrong**, and was discarded on reading that guard.
+- the **orientation** side is *not* guarded. Nothing ties the `Y_0_TOP` forcing to whether
+  the FBO actually claimed scanout, so a large non-scanout FBO is rendered with the
+  viewport inverted — content written upside down relative to what glamor expects of an
+  ordinary offscreen pixmap. Read back through a uniform whole-screen flip, that is
+  exactly a mirror.
+
+**This is the same defect as the owner's bug #2**, whose entry already names the fix
+("declare the scanout FBO `FlipY` and delete the `st_atom_framebuffer.c:137` size gate,
+which also removes glamor's three hand-rolled flips"). Bug #5 is not a separate bug, and
+fixing #2 properly should close both.
+
+### The fix, and the one experiment still owed
+
+The correct discriminator already exists and is already used in the same file:
+`PIPE_BIND_SCANOUT` (`v3d_resource.c:907`, `:956`). Both size tests should key off the
+resource's bind flags instead of its dimensions — an exact identity test rather than a
+heuristic that a large pixmap can trip.
+
+Still owed, and cheap to design though it needs a Mesa rebuild: log every resource that
+takes the `>=1024x768` branch at `v3d_resource.c:143` during an X session, together with
+whether it actually claimed scanout. **One** such resource would refute the mechanism above;
+more than one confirms it. That measurement should come before the fix — three hypotheses
+have now been refuted by their own probes, which is far cheaper than three wrong fixes.
+
+⚠️ The fix itself is **owner-gated**: it invalidates the six-application hardware gate and
+needs a re-verification pass over the five games plus the desktop.
