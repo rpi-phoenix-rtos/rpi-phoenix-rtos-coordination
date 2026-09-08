@@ -9,7 +9,12 @@
 #
 # Host-side only: reads existing captures, never touches the Pi. Segments are
 # listed below as "<clip basename>|<start s>|<length s>|<label>" -- edit that
-# table when new footage supersedes a clip. Offsets were chosen by sampling
+# table when new footage supersedes a clip.
+#
+# Four of the six segments are now real MOVEMENT, from the demos the games ship:
+# QuakeSpasm/vkQuake play id1 demo1/demo2, Quake II plays q2demo1, and STK is an
+# AI-driven race. Quake III stays a static arena view because its shipped demos
+# are the 1999 `.dm3` protocol and the engine only looks for `dm_66/67/68/71`. Offsets were chosen by sampling
 # frames; re-check them if a clip is re-recorded, because they are positions in
 # a specific capture, not properties of the app.
 #
@@ -22,10 +27,10 @@ out="${1:-$vid_dir/$(date -u +%Y%m%d-%H%M%S)-phoenix-rtos-rpi4-showcase.mp4}"
 
 segments=(
 	"20260908-004253-demo-x-and-quake|88|22|X11 desktop — Window Maker, xterm, xclock, xcalc (glamor GPU-accelerated X on V3D)"
-	"20260908-004253-demo-x-and-quake|200|20|QuakeSpasm — OpenGL on Mesa v3d"
-	"20260908-020040-demo-quake2|200|20|Quake II — yQuake2, OpenGL"
-	"20260908-030847-demo-quake3|174|20|Quake III Arena — OpenGL"
-	"20260908-054838-demo-vkquake|214|20|vkQuake — Vulkan via V3DV"
+	"20260908-151410-qs-demo1|95|22|QuakeSpasm — OpenGL on Mesa v3d, id1 demo1 playback"
+	"20260908-152520-q2-demo|95|22|Quake II — yQuake2 OpenGL, q2demo1 playback"
+	"20260908-030847-demo-quake3|174|20|Quake III Arena — OpenGL, q3dm1"
+	"20260908-154042-vk-demo2b|112|22|vkQuake — Vulkan via V3DV, id1 demo2 playback"
 	"20260908-103201-stk-driven-5fps|180|24|SuperTuxKart 1.4 — OpenGL ES 3.1, 4-kart race"
 )
 
