@@ -106,3 +106,46 @@ path as packed ASCII (`x7`=`haciend`, `x9`=`stk-asse`). A stack-range line
 exhaustion in the report path is the first thing to check. Profile-report path
 only — **not** on the demo path, and the `--no-sound` normal-mode run did not
 crash.
+
+## Re-tested on the valid metric: not fill-rate bound (confirmed)
+
+Same benchmark at both resolutions. Profile mode runs a **fixed tick budget**, so
+the frame count is deterministic and identical — this is a controlled
+fixed-workload A/B, not a rate comparison:
+
+| resolution | frames | wall time | fps | pixels |
+|---|---|---|---|---|
+| 1920x1080 | 1326 | 236.055 s | 5.617 | 2073600 |
+| 640x480 | 1326 | 236.329 s | 5.611 | 307200 |
+
+**6.75x fewer pixels, 0.12% slower.** The same 1326 frames take the same wall
+time either way, so the withdrawn conclusion is now re-established on sound
+evidence: **STK is not fill-rate bound.** Per-frame cost is ~178 ms and is
+independent of pixel count.
+
+Where that 178 ms goes, as the leading hypothesis: fixed per-pass/per-submit
+overhead in the V3D path. The boot log shows STK's SP renderer compiling a
+deferred pipeline — `sunlight`, `pointlight`, `pointlightscatter`,
+`combine_diffuse_color`, `tonemap`, `gaussian6v`, `gaussian6h`, `sky`,
+`passthrough` — i.e. many render passes per frame, each an FBO switch. For
+scale, vkQuake reaches ~22-29 fps (~35-45 ms/frame) with essentially one submit
+per frame, so STK's frame costs ~4-5x that. A fixed cost per submit is exactly
+resolution-independent, which is what was measured.
+
+To test it, count CL submits per frame in the in-process winsys
+(`v3d_phoenix_winsys.c`) — games use that path, not the `/dev/v3d-srv` daemon.
+Lowering resolution or graphics level will **not** help; reducing the number of
+passes would.
+
+## Infrastructure note
+
+The first 640x480 attempt produced a **completely silent** run: boot reached psh
+and mounted the NFS root with 0 faults, the command echoed, and then nothing for
+330 s — not even the launcher's own first `printf` (`stk: DATADIR=…`), which is
+present in every working run. Same binary and arguments succeeded on an
+immediate re-run. Absence of that first line means the process never reached its
+first statement, i.e. a silent `exec` failure, matching the known stale-nfsd
+signature. Diagnosis rule: **grep the log for the launcher's `DATADIR` line before
+concluding anything about STK** — its absence indicts `exec`, not the game. The
+boot-stage table is no help here; it is byte-identical between the silent and
+working runs (several `[NO]` detectors simply do not match this boot config).
