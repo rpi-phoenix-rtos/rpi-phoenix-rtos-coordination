@@ -61,22 +61,36 @@ for an unknown pid, `posix/posix.c:3246-3249`).
 Failure modes are all in the safe direction — a zombie and a reused pid both read as *alive*, so
 the sweep under-reclaims rather than freeing a live client's memory.
 
-## Why no code landed this turn
+## RESOLVED 2026-09-08 — Option B shipped (`devices 1eb8608`)
 
-Option B looked safe enough to implement until one hazard surfaced: **reaping a dead client's BOs
-can free memory a GPU job is still reading.** The daemon has no way to know whether a submitted
-job referencing those BOs has retired, and this is the same class as the render wedges that took
-several sessions to chase. Freeing a BO out from under CT0/CT1 would be far worse than the leak.
+The hazard this document originally gave for not landing code — "reaping can free memory a GPU
+job is still reading" — **was wrong**, and checking it took two greps:
 
-Weighed against a 15.7 MB-per-session cost on a 4 GB board — no demo impact — that is not a
-trade worth making right now, especially with a core stdio change already landed this session
-and needing to stay verified. Option A does not have the hazard in the same way (the `mtClose`
-arrives through the kernel after the process is fully gone) but it modifies
-`libv3d-client.c`, which every game and the X desktop link.
+* `ioc_submit_cl` waits for `FLDONE` (bin/CT0) then `FRDONE` (render/CT1) with wedge recovery
+  (`v3d_gpu.c:951-1015`), so submits are **synchronous**.
+* `v3d_srv_thread` is called once from `main` (`rpi4-v3d.c:261`) and is a plain
+  `msgRecv`/switch/`msgRespond` loop — the daemon is **single-threaded**.
 
-**Recommended order when this is picked up:** implement Option A, and gate the reap on job
-completion (or drain the GPU) before freeing. Verify with the `/bin/mem` 3-lifecycle measurement
-below.
+So at the top of the message loop no GPU job can be in flight. Putting the sweep there makes it
+safe by construction, which is what shipped:
+
+* `struct pbo` gains `owner`; cleared on close so a recycled slot cannot inherit it.
+* `v3d_gpu_setBoOwner()` / `v3d_gpu_reapOwners(dead)` — the liveness *policy* stays in the
+  server, the table stays private to the GPU core, and `dead()` is asked at most once per
+  distinct owner per sweep.
+* `v3d_srv_ownerDead()` probes with `kill(pid, 0)` (`-ESRCH` ⇒ gone). Both error directions
+  under-reclaim: a zombie and a recycled pid both read as **alive**, so a live client's buffers
+  can never be freed.
+* Swept every 64th message, so the cost is one `kill(2)` per distinct live owner, amortized.
+
+**Measured effect** (`/bin/mem`, two X lifecycles in one boot, before → after):
+second-session cost **15.7 MB → 2.3 MB**, map entries **+85 → +8**, with
+`reaped 80 BO(s) from exited client(s)` logged. No regression: X 2 lifecycles, vkQuake 2/2
+torches at reference viewpoint, QuakeSpasm renders, 0 faults throughout.
+
+Option A (the ptmx/ade9113 session-id pattern) remains the *exact* fix and is still worth doing
+if per-`open_file_t` semantics are ever needed — it would also make reclamation immediate rather
+than at the next sweep. It is no longer urgent.
 
 ## Measurement notes
 
