@@ -80,3 +80,48 @@ specific to the deferred pipeline and warms up once per boot. Next probe: it is
 most likely first-use compilation or GPU-side setup of the deferred pipeline's
 shader variants that the disk cache is not capturing — instrument the Mesa cache
 hit/miss counts, or time `ShaderFilesManager` per shader.
+
+## The ~30 s is NOT shader compilation either (2026-09-08)
+
+Free probe, no instrumentation: count cache entries either side of one
+full-deferred first-run-of-boot.
+
+```
+entries BEFORE: 200
+sync-netboot-tree.sh: Mesa shader disk cache KEPT — GPU driver unchanged (200 entries)
+profile: Number of frames: 1325 time 49.840004
+compiles: 50
+entries AFTER:  200
+```
+
+**Zero new entries while 50 shaders "compiled"** — every one was a disk-cache
+*hit*, and the run still took 49.8 s against no-deferred's 22.4 s. (The cache is
+demonstrably being written when it needs to be: it grew 134 → 200 during the
+preceding no-deferred run.) So the backend compile is worth only the ~5.5 s the
+persistent cache already saved, and **~27 s of the deferred-pipeline first-run
+cost is something else entirely.**
+
+What the constraints leave. It must be (a) specific to the deferred pipeline —
+no-deferred never pays it, both measured as first-run-of-boot; (b) warmed
+per-*boot*, not per-process — full-deferred as a second run in the same boot is
+20.0 s in a fresh process; and (c) not asset reads, not shader source reads, not
+the shader cache, and not steady-state rendering.
+
+That combination rules out anything process-local. The leading hypothesis is the
+**kernel's contiguous physical allocator**: every V3D BO is
+`mmap(MAP_CONTIGUOUS)`, and the deferred pipeline allocates many more and larger
+render targets at 1080p (G-buffer, shadow maps, blur chain). First use has to
+find/compact contiguous ranges; a second run reuses ranges just freed and already
+coalesced, which is exactly a per-boot warm-up that a fresh process still
+benefits from.
+
+To test: time the `mmap` calls in `ioc_create_bo` (the winsys already has a
+`V3D_BO_TRACE` env gate at `v3d_phoenix_winsys.c:345`, though psh cannot set
+environment variables so it needs a marker-file gate like the frame diagnostic
+used), and compare total mmap time and largest-allocation latency between a
+first and second run.
+
+**Priority note:** this is now understood well enough to be worth little. It is a
+one-time ~27 s wait on the first race after a boot, it is avoidable outright with
+`--disable-dynamic-lights --shadows=0`, and it is trivially cut in editing. Not
+worth further Pi cycles unless it turns out to affect something else.
