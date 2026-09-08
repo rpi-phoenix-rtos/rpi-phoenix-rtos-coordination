@@ -553,3 +553,74 @@ the next thing to establish, before any code.
 shared `libv3d-phoenix.a` rebuilt without it (0 probe strings — the games link this archive,
 so leaving a per-allocation `fprintf` in it would have been a real regression), the X daemon
 relinked clean, and the 0-fault demo binary restored to both roots.
+
+---
+
+## 12. Why the X desktop is slow: presentation is a 300 ms full-screen timer, and the damage path never runs
+
+§2 measured the GL-accelerated X window at ~1 update/s and left it "not yet root-caused". This is
+the cause, and it bounds the **whole desktop**, not just that window.
+
+The DDX has two presentation paths (`tools/x11-port/ddx/fbdev.c`):
+
+1. **damage-driven** — `fbdevShadowUpdate()` flushes the damaged Y extent as content is drawn;
+2. **a periodic timer** — `FBDEV_FLUSH_MS 300`, flushing the whole frame as an idle safety net.
+
+Instrumenting the damage path (a print on entry, every 64 calls) gives **zero lines across two
+separate X sessions**. `fbdevShadowUpdate` is never called with glamor active: the damage tracker is
+wrapped *below* glamor (`shadowSetup()` at `fbdev.c:591`, before `glamor_init()` at `:603` — the same
+layering that caused the DestroyPixmap bug), so glamor's GL rendering never marks the shadow
+damaged. That matches the earlier readback measurement exactly: **every** flush was
+`y0=0 rows=1080`, because the only path presenting anything is the full-screen timer.
+
+So the desktop's presentation rate is capped at `1000/300 = 3.3 Hz` before any work is done — and
+each flush is expensive twice over: `glReadPixels` pulls 1920×1080×4 = 8.3 MB out of the glamor
+screen texture, then `write()` pushes 8.3 MB to `/dev/fb0`, with both the GL readback and the
+framebuffer uncached. ~1 update/s is consistent with a 300 ms interval plus roughly 700 ms of
+round trip.
+
+### Two fix directions, neither cheap
+
+- **Make damage work under glamor**: wrap the damage tracker *above* glamor rather than below. That
+  is the same restructuring the DestroyPixmap fix wanted, and it would turn a full-screen flush into
+  a per-window one.
+- **Skip the round trip entirely.** The screen pixmap's BO *does* get `V3D_CREATE_BO_SCANOUT`
+  (§11: `rsc #1 … create_flags=0x2`), and the whole point of that path per Mesa's own comment is
+  that "the GPU raster-stores straight to the displayed surface — no per-frame
+  glReadPixels/blit/fb0 CPU copies". If the screen texture really is backed by the framebuffer's
+  pages, then the readback and the write are copying the framebuffer onto itself and can go. That
+  needs confirming (§11 showed two RTs claim scanout and only the first gets the pages — it must be
+  established that the *screen pixmap's* is the one that won).
+
+An attempt at a third, cheaper option — flushing the damaged **rows** instead of the damage
+bounding box, which on a desktop with scattered clients degenerates to the whole screen — was
+written, and then **reverted**: with the damage path dead under glamor it is unreachable for the
+glamor desktop, so it cannot help what this section is about. (It also had two defects worth
+recording as a lesson, found only because the display went black: a missing `<stdlib.h>` left
+`realloc` implicitly declared, which truncates its pointer on aarch64; and a `runs == 0` early
+return that skipped presentation where the old code always flushed. A presentation path must have
+no way to present nothing.)
+
+## 13. CORRECTION to §8: current Mesa is not usable for the X server after all
+
+§8 concluded "the X server **can** be relinked onto current Mesa" because the isolation build did
+not SIGILL. That was right about the SIGILL — the crash was the partial libglamor rebuild — but I
+generalised too far from one signal. With the display actually examined:
+
+| daemon | Mesa | faults | display |
+|---|---|---|---|
+| known-good (02:12) | `git-e4be116324` | **0** | desktop renders and animates (mean 101, std 68) |
+| current-Mesa builds | `git-aa916f2f06` | **4** `RENDER MMU-VIO` + wedge-reset, every run | black in one run, full-screen vertical stripes in another |
+
+So it does not crash, but it does not render either. Glamor work **is** still blocked on this, and
+§8's "not blocked" is withdrawn. What remains true from §8: the SIGILL was the partial rebuild, and
+the build script now forces a full rebuild when a glamor patch lands.
+
+Caveat kept explicit: both corrupt-display runs also had the (now reverted) damage-rows change
+compiled in, so those two runs cannot separate the two changes on their own. The 4 MMU-VIO faults,
+however, appear in the current-Mesa build **with and without** it, and the known-good build shows 0
+— which is why the suspicion sits on Mesa. Settling it needs one run of the current-Mesa daemon,
+with no DDX change, with the display checked rather than only the log.
+
+**The Pi is left on the known-good binary, re-verified this turn: 0 faults, desktop rendering and
+animating.**
