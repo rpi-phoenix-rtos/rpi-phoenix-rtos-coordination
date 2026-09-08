@@ -80,6 +80,23 @@ static const char SEED_CONFIG_XML[] =
 	"    <!-- Status of internet: 0 user wasn't asked, 1: allowed, 2: not allowed -->\n"
 	"    <enable_internet value=\"2\" />\n"
 	"\n"
+	/*
+	 * On-screen frame counter, ON by default in this build. This is a showcase
+	 * image and a live fps figure is the most useful single number to have on
+	 * screen -- STK's own key is `show_fps` (user_config.hpp: m_display_fps), and
+	 * there is no command-line option for it, so seeding the config is the only
+	 * route.
+	 *
+	 * NB it must be an ATTRIBUTE OF THE GROUP ELEMENT, not a standalone
+	 * `<show_fps value="true"/>`: show_fps belongs to m_video_group, whose XML
+	 * name is "Video", and GroupUserConfigParam::findYourDataInAChildOf() looks
+	 * up the child node and then reads each member as an attribute of it
+	 * (user_config.cpp:146-161). The flat form parses without error and is simply
+	 * ignored -- which is how the first attempt produced a race with no counter.
+	 * Ungrouped params like enable_internet above do use the flat form.
+	 */
+	"    <Video show_fps=\"true\" />\n"
+	"\n"
 	"</stkconfig>\n";
 
 /*

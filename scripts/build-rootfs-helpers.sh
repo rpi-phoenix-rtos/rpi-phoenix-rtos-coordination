@@ -131,6 +131,14 @@ helpers=(
 	"tools/thermal-soak/thermal-soak.c|bin/thermal-soak"
 )
 
+# Data files copied verbatim (not compiled): "<source>|<install path>|<mode>".
+# Kept in this script because it already owns "small in-repo things that belong in
+# the rootfs" and has the staging tree resolved; a separate script for two file
+# copies would just be another thing to remember to run.
+data_files=(
+	"tools/demo-apps/life.py|usr/share/demo/life.py|644"
+)
+
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
@@ -153,6 +161,14 @@ for entry in "${helpers[@]}"; do
 	fi
 	install -Dm755 "${tmp}/${name}" "$dst"
 	log "built $(printf '%-14s' "$name") -> ${dst#"${stage_dir}"/} ($(stat -c%s "$dst") bytes)"
+done
+
+for entry in "${data_files[@]}"; do
+	IFS='|' read -r rel dst mode <<< "$entry"
+	src="${repo_root}/${rel}"
+	[ -f "$src" ] || die "data file missing: $src"
+	install -Dm"$mode" "$src" "${stage_dir}/${dst}"
+	log "staged $(printf '%-14s' "$(basename "$dst")") -> ${dst} ($(stat -c%s "${stage_dir}/${dst}") bytes)"
 done
 
 log "done"

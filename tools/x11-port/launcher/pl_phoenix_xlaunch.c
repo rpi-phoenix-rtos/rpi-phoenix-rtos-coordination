@@ -342,6 +342,7 @@ int main(int argc, char *argv[])
 		 *   startx deskapps  -> Window Maker + xterm + xclock + xcalc + xlogo
 		 *   startx wmmedia   -> Window Maker + GPU window + H.264 video + clock
  *   startx browse [url] -> Window Maker + Dillo (web browser)
+ *   startx action    -> WM + GPU window + xterm(Game of Life) + xbill + xclock
 		 *   startx /bin/foo  -> run /bin/foo as the sole client
 		 */
 		const char *prefix = ""; /* root install ("/" — nfsroot default / sd) */
@@ -486,6 +487,39 @@ int main(int argc, char *argv[])
 			client_extra[1] = dillo_argv;
 			n_client_extra[1] = (argc >= 3) ? 3 : 2;
 			n_clients = 2;
+		}
+		else if (strcmp(client, "action") == 0) {
+			/* SHOWCASE DESKTOP WITH MOVEMENT. The owner's review of the first reel was
+			 * that the X11 segment "is totally static - nothing happens on screen - like
+			 * a 20sec screenshot presentation", which was fair: `deskapps` is a WM plus
+			 * four idle Xaw apps. Everything here animates by itself, with no input:
+			 *
+			 *   gl-x11-window-daemon  live GPU render in a managed window (V3D via the
+			 *                         v3d-server, so it coexists with glamor-X on the
+			 *                         single V3D -- see the gpudesk note below)
+			 *   xterm -e life.py      CPython + ncurses Game of Life, continuous motion,
+			 *                         and it shows Python running at the same time
+			 *   xbill                 an animated game (sprites move on their own)
+			 *   xclock                second hand
+			 *
+			 * Same -geometry/USPosition placement as deskapps so Window Maker decorates
+			 * and places rather than asking the user to drop each window. */
+			static char *const glwin_geom[2] = { "-geometry", "640x480+40+60" };
+			static char *const term_life[6] = { "-geometry", "84x26+700+60",
+				"-e", "/bin/python3", "/usr/share/demo/life.py", NULL };
+			static char *const bill_geom[2] = { "-geometry", "+40+580" };
+			static char *const clk_geom2[2] = { "-geometry", "164x164+1520+60" };
+			resolve_client(cp_bufs[0], sizeof(cp_bufs[0]), prefix, "wmaker");
+			resolve_client(cp_bufs[1], sizeof(cp_bufs[1]), prefix, "gl-x11-window-daemon");
+			resolve_client(cp_bufs[2], sizeof(cp_bufs[2]), prefix, "xterm");
+			resolve_client(cp_bufs[3], sizeof(cp_bufs[3]), prefix, "xbill");
+			resolve_client(cp_bufs[4], sizeof(cp_bufs[4]), prefix, "xclock");
+			client_path[0] = cp_bufs[0];
+			client_path[1] = cp_bufs[1]; client_extra[1] = glwin_geom; n_client_extra[1] = 2;
+			client_path[2] = cp_bufs[2]; client_extra[2] = term_life;  n_client_extra[2] = 5;
+			client_path[3] = cp_bufs[3]; client_extra[3] = bill_geom;  n_client_extra[3] = 2;
+			client_path[4] = cp_bufs[4]; client_extra[4] = clk_geom2;  n_client_extra[4] = 2;
+			n_clients = 5;
 		}
 		else if (strcmp(client, "gpudesk") == 0) {
 			/* CONCURRENT-GPU DESKTOP (#13 M3c): twm (WM) + a live GPU-rendered window
