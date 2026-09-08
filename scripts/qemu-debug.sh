@@ -143,6 +143,18 @@ QEMU_BASE=( "$QEMU_BIN"
     -kernel "$PLO_ELF"
     -device "loader,file=$LOADER,addr=0x08000000,force-raw=on" )
 
+# plo takes the firmware DTB address from x19 (set from x0 at entry) and requires
+# the 0xd00dfeed magic there (hal.c:229); with no -dtb QEMU supplies none, so
+# hs->firmwareDtb stays 0, the kernel gets no device tree and faults in early init
+# -- observed as core 0 running at pc=0x200 (an exception vector with VBAR still
+# unset) immediately after "kernel entry". Point QEMU_DTB at a bcm2711 DTB to
+# supply one; the flashable image carries one in its FAT partition.
+if [ -n "${QEMU_DTB:-}" ]; then
+    [ -f "$QEMU_DTB" ] || { echo "qemu-debug: QEMU_DTB not found: $QEMU_DTB" >&2; exit 1; }
+    echo "qemu-debug: dtb=$QEMU_DTB"
+    QEMU_BASE+=( -dtb "$QEMU_DTB" )
+fi
+
 if [ "$GDB" -eq 1 ]; then
     # GDB mode: launch qemu paused with the gdb stub, attach gdb-multiarch
     # with an auto-script that breaks at low-PA kernel markers and dumps
