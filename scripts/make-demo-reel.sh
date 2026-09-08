@@ -11,10 +11,21 @@
 # listed below as "<clip basename>|<start s>|<length s>|<label>" -- edit that
 # table when new footage supersedes a clip.
 #
-# Four of the six segments are now real MOVEMENT, from the demos the games ship:
-# QuakeSpasm/vkQuake play id1 demo1/demo2, Quake II plays q2demo1, and STK is an
-# AI-driven race. Quake III stays a static arena view because its shipped demos
-# are the 1999 `.dm3` protocol and the engine only looks for `dm_66/67/68/71`. Offsets were chosen by sampling
+# Every segment but the desktop now has motion. QuakeSpasm/vkQuake play id1
+# demo1/demo2, Quake II plays q2demo1, STK is an AI-driven race, and Quake III is
+# a live bot deathmatch.
+#
+# Quake III took a detour worth recording. Its shipped demos are the 1999 `.dm3`
+# protocol while the engine only ever looks for `demos/<name>.dm_66/67/68/71`, so
+# they can never be found and that protocol is unsupported -- demo playback is a
+# netcode project, not a config. Bots work instead (the demo pak ships botfiles/
+# and q3dm1.aas). The window chosen is 15 s because our own player is stationary
+# and gets fragged, and the scoreboard overlay then covers the screen; 151-166 is
+# a clean stretch with a bot running through frame. Trying to get a MOVING camera
+# via `+team spectator`/`+follow` did not take (the HUD still showed our health),
+# and `+set cg_thirdPerson 1 +set cg_cameraOrbit 2` broke startup outright -- the
+# game never left the main menu, because those are cgame cvars that cannot be set
+# before the game module loads. Offsets were chosen by sampling
 # frames; re-check them if a clip is re-recorded, because they are positions in
 # a specific capture, not properties of the app.
 #
@@ -29,7 +40,7 @@ segments=(
 	"20260908-004253-demo-x-and-quake|88|22|X11 desktop — Window Maker, xterm, xclock, xcalc (glamor GPU-accelerated X on V3D)"
 	"20260908-151410-qs-demo1|95|22|QuakeSpasm — OpenGL on Mesa v3d, id1 demo1 playback"
 	"20260908-152520-q2-demo|95|22|Quake II — yQuake2 OpenGL, q2demo1 playback"
-	"20260908-030847-demo-quake3|174|20|Quake III Arena — OpenGL, q3dm1"
+	"20260908-154903-q3-bots|151|15|Quake III Arena — OpenGL, bot deathmatch on q3dm1"
 	"20260908-154042-vk-demo2b|112|22|vkQuake — Vulkan via V3DV, id1 demo2 playback"
 	"20260908-103201-stk-driven-5fps|180|24|SuperTuxKart 1.4 — OpenGL ES 3.1, 4-kart race"
 )
