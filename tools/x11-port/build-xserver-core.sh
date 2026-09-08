@@ -68,19 +68,36 @@ core_archives=(
   Xi/.libs/libXi.a Xi/.libs/libXistubs.a xkb/.libs/libxkb.a xkb/.libs/libxkbstubs.a
   composite/.libs/libcomposite.a config/.libs/libconfig.a os/.libs/libos.a
 )
-# glamor DestroyPixmap chain fix (see the patch header). Applied on BOTH paths --
-# the slow full-build path and the "already built" early return -- because the
-# archive must be rebuilt for the fix to reach the link. patch -N is idempotent.
+# Durable glamor core-source fixes (each patch header explains itself). Applied
+# on BOTH paths -- the slow full-build path and the "already built" early return
+# -- because libglamor.a must be rebuilt for a fix to reach the link. patch -N is
+# idempotent, and libglamor is rebuilt once after the last patch that landed.
+#
+# When adding a patch here, name it xorg-server-$VER-glamor-*.patch and append it
+# to this list; do NOT add a second apply function (the early-return path would
+# then need updating twice, which is how the chain fix was silently skipped for
+# a while).
+glamor_core_patches=(
+  glamor-destroypixmap-chain
+  glamor-spans-yflip
+)
 apply_glamor_chain_patch() {
   [ "$GLAMOR" = 1 ] || return 0
-  local pf="$ROOT/tools/x11-port/patches/xorg-server-${VER}-glamor-destroypixmap-chain.patch"
-  [ -f "$pf" ] || return 0
-  if patch -d "$KD" -p1 -N --dry-run <"$pf" >/dev/null 2>&1; then
-    echo "=== applying glamor DestroyPixmap chain fix + rebuilding libglamor ==="
-    patch -d "$KD" -p1 -N <"$pf" >/dev/null 2>&1 || true
+  local name pf applied=0
+  for name in "${glamor_core_patches[@]}"; do
+    pf="$ROOT/tools/x11-port/patches/xorg-server-${VER}-${name}.patch"
+    [ -f "$pf" ] || continue
+    if patch -d "$KD" -p1 -N --dry-run <"$pf" >/dev/null 2>&1; then
+      echo "=== applying glamor core patch: $name ==="
+      patch -d "$KD" -p1 -N <"$pf" >/dev/null 2>&1 || true
+      applied=1
+    fi
+  done
+  if [ "$applied" = 1 ]; then
+    echo "=== rebuilding libglamor after core patches ==="
     make -C "$KD/glamor" \
       GLAMOR_CFLAGS="-I$GLAMOR_SHIM -I$GLAMOR_MESA_GL" >/dev/null 2>&1 \
-      || { echo "glamor rebuild FAIL after chain patch"; exit 1; }
+      || { echo "glamor rebuild FAIL after core patches"; exit 1; }
   fi
 }
 

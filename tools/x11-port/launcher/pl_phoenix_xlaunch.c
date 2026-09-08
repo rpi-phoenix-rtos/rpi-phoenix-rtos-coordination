@@ -489,37 +489,41 @@ int main(int argc, char *argv[])
 			n_clients = 2;
 		}
 		else if (strcmp(client, "action") == 0) {
-			/* SHOWCASE DESKTOP WITH MOVEMENT. The owner's review of the first reel was
-			 * that the X11 segment "is totally static - nothing happens on screen - like
-			 * a 20sec screenshot presentation", which was fair: `deskapps` is a WM plus
-			 * four idle Xaw apps. Everything here animates by itself, with no input:
+			/* SHOWCASE DESKTOP WITH MOVEMENT. Everything here animates by itself, with
+			 * no input: a live GPU render, two terminals (Conway's Life in CPython +
+			 * curses, and top), an animated game, and a clock.
 			 *
-			 *   gl-x11-window-daemon  live GPU render in a managed window (V3D via the
-			 *                         v3d-server, so it coexists with glamor-X on the
-			 *                         single V3D -- see the gpudesk note below)
-			 *   xterm -e life.py      CPython + ncurses Game of Life, continuous motion,
-			 *                         and it shows Python running at the same time
-			 *   xbill                 an animated game (sprites move on their own)
-			 *   xclock                second hand
+			 * LAYOUT IS DELIBERATE. The first version stacked windows at overlapping
+			 * offsets and the owner's review was that xbill ended up hidden under the
+			 * Python terminal, the GL window was partly covered, and much of the
+			 * background was empty. These geometries tile a 1920x1080 screen in two
+			 * rows with no overlap:
 			 *
-			 * Same -geometry/USPosition placement as deskapps so Window Maker decorates
-			 * and places rather than asking the user to drop each window. */
-			static char *const glwin_geom[2] = { "-geometry", "640x480+40+60" };
-			static char *const term_life[6] = { "-geometry", "84x26+700+60",
+			 *   row 1 (y=30):   GL 640x480 @x20 | xterm Life @x690 | xclock @x1500
+			 *   row 2 (y=560):  xbill @x20      | xterm top  @x690
+			 *
+			 * Window Maker adds a titlebar (~24 px) and honours the USPosition/USSize
+			 * hint from -geometry, so the y offsets leave room for decoration. */
+			static char *const glwin_geom[2] = { "-geometry", "640x480+20+30" };
+			static char *const term_life[6] = { "-geometry", "96x28+690+30",
 				"-e", "/bin/python3", "/usr/share/demo/life.py", NULL };
-			static char *const bill_geom[2] = { "-geometry", "+40+580" };
-			static char *const clk_geom2[2] = { "-geometry", "164x164+1520+60" };
+			static char *const clk_geom2[2] = { "-geometry", "190x190+1500+30" };
+			static char *const bill_geom[2] = { "-geometry", "+20+560" };
+			static char *const term_top[4] = { "-geometry", "96x24+690+560",
+				"-e", "/bin/top" };
 			resolve_client(cp_bufs[0], sizeof(cp_bufs[0]), prefix, "wmaker");
 			resolve_client(cp_bufs[1], sizeof(cp_bufs[1]), prefix, "gl-x11-window-daemon");
 			resolve_client(cp_bufs[2], sizeof(cp_bufs[2]), prefix, "xterm");
-			resolve_client(cp_bufs[3], sizeof(cp_bufs[3]), prefix, "xbill");
-			resolve_client(cp_bufs[4], sizeof(cp_bufs[4]), prefix, "xclock");
+			resolve_client(cp_bufs[3], sizeof(cp_bufs[3]), prefix, "xclock");
+			resolve_client(cp_bufs[4], sizeof(cp_bufs[4]), prefix, "xbill");
+			resolve_client(cp_bufs[5], sizeof(cp_bufs[5]), prefix, "xterm");
 			client_path[0] = cp_bufs[0];
 			client_path[1] = cp_bufs[1]; client_extra[1] = glwin_geom; n_client_extra[1] = 2;
 			client_path[2] = cp_bufs[2]; client_extra[2] = term_life;  n_client_extra[2] = 5;
-			client_path[3] = cp_bufs[3]; client_extra[3] = bill_geom;  n_client_extra[3] = 2;
-			client_path[4] = cp_bufs[4]; client_extra[4] = clk_geom2;  n_client_extra[4] = 2;
-			n_clients = 5;
+			client_path[3] = cp_bufs[3]; client_extra[3] = clk_geom2;  n_client_extra[3] = 2;
+			client_path[4] = cp_bufs[4]; client_extra[4] = bill_geom;  n_client_extra[4] = 2;
+			client_path[5] = cp_bufs[5]; client_extra[5] = term_top;   n_client_extra[5] = 4;
+			n_clients = 6;
 		}
 		else if (strcmp(client, "gpudesk") == 0) {
 			/* CONCURRENT-GPU DESKTOP (#13 M3c): twm (WM) + a live GPU-rendered window
