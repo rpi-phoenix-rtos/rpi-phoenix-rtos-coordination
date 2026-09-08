@@ -116,3 +116,11 @@ first lap (trivially cut in editing, same steady frame rate). Quick take → add
 `--disable-dynamic-lights --shadows=0`, 22 s on any boot. Detail + the still-open question of what
 the ~30 s actually is: `docs/misc/2026-09-08-stk-time-to-race.md`.
 
+
+
+## Queued-polish list as it stood in the weekly log
+
+**Queued polish, deliberately not started:** `ncurses --enable-overwrite`; micropython
+golden files; ~37 dead `/srv/phoenix-rpi4-nfs` references in legacy `tools/*/build.sh`
+(live export is `-gcc16` — treat staging through them as unverified); **TD-21** syscall
+order revert, due at the next full rebuild; mc's `/etc/mc/sfs.ini` not staged.
