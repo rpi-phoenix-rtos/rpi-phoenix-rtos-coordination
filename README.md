@@ -424,6 +424,14 @@ pointing at the `rpi-phoenix-rtos/*` work fork — see [CONTRIBUTING.md](CONTRIB
 
 ## Documentation
 
+- **★ [docs/PHOENIX-RTOS-RPI4-CHANGES.md](docs/PHOENIX-RTOS-RPI4-CHANGES.md)** —
+  **what this fork actually changed in Phoenix-RTOS.** The single clearest
+  outline of the work: the defects this port found in *upstream's* own code, the
+  platform gaps every future port will hit, and then a per-repository account of
+  the kernel/bootloader, libc, driver, networking, filesystem, port and
+  build-system changes — with the hardware measurements behind the performance
+  claims and an honest statement of scope and open defects. Start here if you
+  want to know what was done rather than how to build it.
 - **[docs/BUILD.md](docs/BUILD.md)** — build a bootable SD image from an empty
   directory, and flash + boot it (Tier 1: no special hardware).
 - **[docs/HARDWARE.md](docs/HARDWARE.md)** — the optional author's test lab

@@ -14,6 +14,9 @@ submitted upstream. The work falls into four kinds, and the distinction matters 
 3. **New drivers** for Pi 4 on-board hardware — new code in new directories, of interest mainly
    if you care about this board.
 4. **Application and game ports**, whose carried patches are evidence of platform gaps.
+5. **Programs built on Phoenix rather than changes to it** — hardware experiments that live in
+   the coordination repo, not in your repositories. They are in here because of what they say
+   about Phoenix's userspace driver model, and they are kept in their own section at the end.
 
 ## Scope, honestly
 
@@ -481,7 +484,8 @@ Phoenix rather than a port of an existing one. `phoenix-rtos-usb` is the mirror 
 board work there is a new userspace NFSv4 client filesystem (`filesystems/nfs/`, 2 700 lines) that lets a
 Phoenix box boot with `/` on an NFS export, and a BCM2711 gigabit Ethernet driver for lwIP.
 Note on scope: the BCM2711 HEVC (`rpivid`) hardware video decoder lives outside these four repos
-(`tools/hevc-decode/` in the coordination repo) and is not covered here.
+(`tools/hevc-decode/` in the coordination repo); it is covered in
+[Hardware experiments outside the Phoenix repos](#hardware-experiments-outside-the-phoenix-repos).
 
 ### 1. New Pi 4 on-board device drivers
 
@@ -702,6 +706,20 @@ by a `readdir` of the export, and does not survive a remount — which matches w
 listing, tens of KB per reclaim, because with the dircache disabled nothing in libnfs would ever free
 it). Verification is stated in test terms throughout: over the netboot NFS root, `libc/stdio` 80 tests
 0 failures, `libc/misc` 207 tests down to 2 known-clock failures, `libc/dirent` 38/0.
+
+### 7. V3D compute (CSD) — three changes an unrelated experiment surfaced
+
+The winsys had an implemented-but-never-called `DRM_V3D_SUBMIT_CSD` handler (coord `1067af16a`,
+"implement CSD — was a no-op stub"). The first code to actually dispatch compute on it was the
+machine-learning work in the coordination repo (see the last section), and it immediately found
+two defects. Both are compute-only; the render `SUBMIT_CL` path is untouched by all three.
+
+| change | where | what/why |
+|---|---|---|
+| ★★ A debug print that dominated every compute measurement | `gpu/rpi4-v3d/v3d_gpu.c` (`95542eb`) | `ioc_submit_csd` logged `rpi4-v3d: CSD done cfg0=… num_completed=N` to the UART on **every** dispatch. At serial baud that is ~6 ms per line, which swamped the work being timed: an *empty* CSNOP kernel "measured" 21 ms/dispatch while a real 256×256 matmul "measured" 11.5 ms — the ordering is the tell. Gating the print to timeout/error only moved the same benchmark to 0.377 ms/dispatch against a 0.020 ms empty-dispatch floor, and **inverted the recorded verdict** on GPU compute from "6.6× slower than the CPU" to parity. The generalisable point: a per-operation console print in a driver hot path is not a diagnostic, it is a measurement defect. |
+| ★ CSD post-dispatch cache flush did not match the hardware's requirement | `gpu/rpi4-v3d/mesa/v3d_phoenix_winsys.c` (~2358), `v3d_gpu.c` (~914); originally coord `616f114db`, migrated by `b0c9cdb` | Compute TMU-general stores **never reached DRAM**. The winsys issued one combined `L2TFLS\|TMUWCF` with `FLM=FLUSH`; Linux's `v3d_clean_caches` drains `TMUWCF` *alone* (and waits), and only then flushes `L2TFLS` with `FLM=CLEAN`. Replicating that order made the compute write path work — the store-and-read-back milestone passed immediately. |
+| `SUBMIT_CSD` through the GPU daemon | `gpu/rpi4-v3d/` (`c40d0fe`, `1010570`, `92070af`) | Compute dispatch and client BO mapping routed through `/dev/v3d-srv`, so a GPU-compute client runs without linking the winsys in-process. Later hardened by sizing the CSD completion wait for real dispatches and refusing to kick CSD into a busy unit (draining it after a timeout). |
+
 ## Application and game ports, target integration, build system
 
 This section covers three of the fork's repositories: `phoenix-rtos-ports` (174 commits, +55 210/−397), `phoenix-rtos-project` (222 commits, +3 412/−18) and `phoenix-rtos-build` (35 commits, +957/−23). The ports repo grew **41 new `port.def.sh` recipes** (36 userland, 5 3D game engines) and modified 7 existing ones; nothing was removed. The project repo carries the whole Raspberry Pi 4 board bring-up — a new `_targets/aarch64a72/generic` target plus an `aarch64a72-generic-rpi4b` project with its own ARM stub, relocating `kernel8.img` trampoline, firmware `config.txt` and three boot variants (NFS-root / netboot / SD). The build repo adds aarch64 generic target admission, the gcc-16.2 / binutils-2.47 toolchain rebase, and — most reusable — a set of `port_manager` staleness fixes that close real silent-stale-build holes. Note for reviewers: `phoenix-rtos-project/.gitmodules` is repointed at the `rpi-phoenix-rtos` org forks (commit `3a38eb5`), so submodule gitlinks in this repo do not reference canonical upstream.
@@ -840,6 +858,210 @@ Everything here is board-independent and reusable. The common theme is *silent s
 - **★ `PhxVersion` learns upstream letter patch-releases** (`575632a`, `port_manager/version.py`). openssl ships `1.1.1`, `1.1.1a` … `1.1.1w`. PEP 440 knows only `a`/`b`/`c`/`rc` and reads them as **pre**-releases, so `PhxVersion("1.1.1w")` raised `InvalidVersion` and aborted `discover_ports()` outright, while the letters that *did* parse sorted backwards (`1.1.1a < 1.1.1`, the opposite of upstream's meaning). A trailing letter is now translated to a PEP 440 post-release (`a → .post1` … `w → .post23`), giving `1.1.1 < 1.1.1a < 1.1.1w < 1.1.2` for all 26 letters, while `__str__` still returns the original string so namevers and install directories read `1.1.1w`. Covered by doctests and `port_manager_test.py`.
 - **`port.subr` grows two public helpers** — `b_port_apply_patches` (content-hashed markers, self-healing refusal) and `b_port_invalidate_stale_configure` — plus a `b_port_download` form that saves a remote file under a different local name, which is what makes GitHub's `/<tag>.tar.gz` and `/archive/<sha>.tar.gz` endpoints usable as reproducible, hash-pinned sources. Seven ports here pin a commit archive that way.
 - **Toolchain rebase to gcc-16.2.0 + binutils-2.47** (`f90bc71`, `96f5697`, `20bc28f`): `binutils-2.47-04-aarch64-phoenix.patch` (BFD/config.bfd target vector), `gcc-16.2.0-11-aarch64-phoenix.patch` (`aarch64*-*-phoenix*` in `config.gcc`), `-05-libstdcpp.patch` (265 lines, libstdc++ PIC configury), `-09-fix-libc-spec.patch` (`STD_LIB_SPEC` → `LIB_SPEC`), `-04-arm-pic_crtstuff.patch`. Plus multi-mirror GNU fetch (`643293e`), `-j nproc` for toolchain and image builds (`7463000`), and autotools host-triplet normalisation for aarch64 (`2a6aebb`).
+
+---
+
+## Hardware experiments outside the Phoenix repos
+
+Three bodies of work in this port are not changes to Phoenix at all: they are programs *built
+on* Phoenix, living in the coordination repo under `tools/`, written to answer a hardware
+question. They are here because two of them exercise the SoC harder than any driver in the
+fork, and because one — the H.265 decoder — is a complete non-coherent DMA-master device driver
+written entirely in Phoenix **userspace**, with no kernel change, no driver-framework change
+and no new syscall. That is a claim about Phoenix's userspace driver model, which is why it
+belongs in this document rather than outside it.
+
+All three are fork-authored and BSD-3. None is a shipped image component; each is
+cross-compiled and staged into the netboot root by hand. Provenance caveat at the end.
+
+### 1. BCM2711 HEVC / H.265 hardware video decode (`tools/hevc-decode/`)
+
+The Pi 4's `rpivid` / `hevc_dec` block is a fixed-function, register-driven **stateless** H.265
+decoder at ARM-physical `0xfeb00000`, with its own ARGON interrupt controller at `0xfeb10000`
+(GIC SPI 98 → Phoenix absolute IRQ 130). Unlike the SoC's H.264 decoder — which runs on the
+VideoCore firmware and is reachable only through VCHIQ + MMAL, a firmware-comms wall this fork
+deliberately did **not** climb — the HEVC block needs no firmware blob at decode time: the
+mailbox enables its clock, and everything after that is MMIO. That made it the only tractable
+hardware-offload target on this board, and it was ported register-by-register from Linux's
+`drivers/media/platform/raspberrypi/hevc_dec/hevc_d_h265.c` with the V4L2 layer dropped.
+
+Decode is two hardware phases: phase 1 executes a **DMA command buffer** of
+`u64 addr|(data<<32)` entries after a `CFBASE` doorbell (cross-checked by `CFSTATUS == CFNUM`);
+phase 2 is direct APB, kicked by `NUMROWS`, with completion signalled on the ARGON
+`ACTIVE1`/`ACTIVE2` bits. The result is roughly **2 900 hand-written lines** — `hevc-m2.c`
+(1 388), a from-scratch Annex-B/SPS/PPS/slice parser `hevc_parse.c` (599), an ISOBMFF demuxer
+`hevc_mp4.c` (276), the cited register map `hevc_regs.h` (119), plus the M0/M1 bring-up probes
+— that decode real H.265 **bit-exact against ffmpeg's software decoder**, unpack Broadcom's
+SAND/COL128 tiled output to linear, and display on `/dev/fb0`.
+
+Coverage is a subset, not "H.265 support": every coding tool **x265 enables by default** is
+covered bit-exact — I/P/B slices, arbitrary non-reference-B counts, hierarchical b-pyramid over
+a general POC-indexed DPB, multi-reference, temporal MVP, SAO, WPP wavefront and weighted
+prediction — from 64×64 to 1080p, in 8-bit and 10-bit (Main10). Tools *outside* that subset
+(tiles, non-zero deblock offsets, AMP, emulation-prevention bytes inside headers, the
+Range-Extensions intra profile) are rejected or mismatch, and are listed as out-of-subset
+rather than as bugs.
+
+| change | where | what/why |
+|---|---|---|
+| ★ H.265 hardware decode with no VCHIQ, no V4L2, no firmware blob | `tools/hevc-decode/hevc-m2.c`, `hevc_regs.h` (coord `34bbecb75` → `bf02fd8c7`) | The rpivid block driven directly: mailbox clock (`RPI_FIRMWARE_HEVC_CLK_ID` 11) set to the firmware-reported maximum, version-register `0x202` gate, phase-1 DMA command buffer + phase-2 APB, CABAC `prob_init` per `init_type = 2 − slice_type`, SPS/PPS/slice/QP/CONFIG2 register packing, plain-physical `>>6` addressing (the scb bus has no `dma-ranges`). First hardware video decode on Phoenix. |
+| Bring-up probes: reachability, DMA, IRQ | `tools/hevc-probe/hevc-probe.c` (M0), `tools/hevc-decode/hevc-m1.c` (M1) | M0 proves the block is reachable without VCHIQ (clock, `VERSION == 0x202`, ARGON INTC). M1 proves the two facilities a DMA master needs **already exist in Phoenix**: `mmap(MAP_UNCACHED\|MAP_CONTIGUOUS\|MAP_ANONYMOUS)` + `va2pa()` yields contiguous sub-4 GB uncached buffers, and `interrupt(130, …)` registers the GIC SPI-98 handler with zero spurious IRQs. |
+| ★ Bit-exact conformance harness against ffmpeg | `hevc-play <file> <golden.nv12>`; `testdata/*.265` + `gen-*.sh` (coord `98352206c`) | Every capability claim is a byte-compare of the hardware's output against an ffmpeg software decode of the same bitstream: 37 committed test vectors (`.265` plus four `.mp4`) from scripted x265 encodes. Negative controls are committed too — `-DHEVC_NO_WEIGHT` builds a deliberately non-weighted decoder that mismatches by 491 284 pixels, proving the weighted-prediction path is actually exercised. |
+| Runtime `.265` player + in-tool MP4/MOV demux | `hevc_parse.c`, `hevc_mp4.c` (coord `7a2fb69ea`, `c90e95dcc`, `ca466493b`) | `hevc-play` parses geometry from the SPS and per-frame params from each slice header, so arbitrary in-subset files decode with no rebuild. An `.mp4`/`.mov` is demuxed to Annex-B in-tool (no libavformat): the video track's samples are located through `stsc` → `stco`/`co64` with sizes from `stsz`, so a normal interleaved audio+video file plays and the audio chunks are simply never visited. Deliberately narrow — exactly one HEVC video track, non-fragmented; `moof`, no-video and multi-video files are **rejected loudly** rather than mis-handled. |
+| 10-bit (Main10) decode and display | coord `b302065cf`, `bf02fd8c7` | Four register deltas keyed off the SPS bit depth (CONFIG2 low 10 bits `0x088`→`0x3AA`, `RPI_SPS0` +`0x220000`, `RPI_QP` += `QpBdOffsetY`), and an `NV12_10_COL128` output layout packing 3 samples LSB-first per 32-bit little-endian word (96 samples per 128-byte SAND column). Bit-exact on luma **and** chroma, and renders on HDMI after a 10→8 downshift. |
+| ★ Non-coherent DMA ordering: `dsb sy`, not `dmb ish` | `hevc_dma_fence()` (coord `5f9945956`, `f3767112d`) | The doorbell needs a **full system** barrier. `__sync_synchronize()` emits inner-shareable `dmb ish`, which does not order Normal-NC writes against a DMA master outside the CPU inner domain — the block then reads a stale command buffer. The mirror-image case is the *completion read*: `f3767112d` adds a `dsb sy` after acking ARGON `ACTIVE` and before the CPU reads the output, because a plain relaxed volatile read can be hoisted ahead of the DMA whereas Linux's `readl` carries an implicit `__iormb`. **A general lesson for any Phoenix userspace DMA driver on a non-coherent SoC, not an rpivid quirk.** |
+| IRQ-driven completion | coord `1fd69c736` | Decode blocks in `condWait` on the SPI-98 handler instead of hot-polling `ARG_IC_ICTRL` every 10 µs, matching Linux. Dual-checked (ISR flag plus a 2 ms direct-poll fallback) so it is correct whether or not the IRQ fires, and falls back to polling if unregistered. The IRQ genuinely fires — ~2 ISR calls per frame, one per phase. |
+
+**Limits.**
+
+- **One open, non-software defect.** A small number of output pixels are wrong
+  non-deterministically in a fraction of decodes — the same clip is bit-exact on one run and
+  corrupt on the next, occasionally even an IDR I-frame. It is worse under heavier memory
+  traffic (a concurrent `fb_blit` during on-HDMI playback, and independently on
+  high-complexity clips that do more PU/coeff/reference DMA); simple low-traffic clips are
+  effectively always clean (an `ultrafast` clip verified 15/15 back-to-back). Every
+  decoder-side software cause has been ruled out and each refutation is recorded: the barriers
+  are architecturally complete (the completion-read barrier measurably helped, 3/10 → 15/15
+  clean on one clip, but did not close it); it is **not** PU/coeff buffer exhaustion
+  (`RPI_STATUS` never sets the exhaustion bits on a corrupt frame and `CFSTATUS == CFNUM`
+  always); it is **not** CPU polling contention (true IRQ-driven completion left the rate
+  unchanged); and a survey of the Linux driver plus the BCM2711 DT found no missing
+  initialisation — Linux programs nothing beyond clock-enable, INTC-enable and the version
+  check, and this port already sets the clock to the firmware maximum with low-PA DMA buffers.
+  The recorded conclusion is a genuine SoC memory-fabric interaction under decode DMA load,
+  and the decisive next step named is a Linux-on-the-same-Pi-4 side-by-side. An earlier belief
+  that it was `fb_blit`-only and bit-exact headless was **explicitly corrected** — it
+  manifests headless too.
+- **Subset, not a codec** (see the out-of-subset list above).
+- **Not wired into anything.** The `ffmpeg` port is registered `if: false` with no in-tree
+  consumer; there is no libavcodec integration and no `/dev/` node. This is a standalone tool,
+  not a Phoenix video subsystem.
+- **H.264 is walled, deliberately.** There is no directly-addressable H.264 register block on
+  BCM2711; H.264 decode lives on the VideoCore firmware behind VCHIQ + MMAL. Scoped and
+  banked, not attempted.
+- **No decode-rate figure.** All claims here are correctness (bit-exactness) and resolution; no
+  frames-per-second or MB/s measurement exists for any clip.
+- Full register spec: `docs/misc/2026-08-28-hevc-m2-register-spec.md`. Capability matrix and the
+  eight hard-won gotchas: `tools/hevc-decode/README.md`.
+
+### 2. Machine-learning inference, CPU and V3D GPU compute (`tools/cnn-mnist/`, `tools/v3d-driver-port/csd_*.c`)
+
+The question was whether the Pi 4's V3D GPU can accelerate small neural-network inference under
+Phoenix. Answering it required bringing up V3D **compute** (CSD) for the first time — the winsys
+had a `DRM_V3D_SUBMIT_CSD` handler that nothing had ever called (the two driver defects that
+surfaced are in the drivers section, §7). Three staged milestones proved dispatch, then a store
+reaching DRAM, then work-group IDs; from there a matmul compute kernel was generated through
+`tools/v3d-shader-tool` (NIR → `v3d_compile`, not hand-assembled QPU) and found **numerically
+bit-identical to the CPU** — `max_rel_err = 0`.
+
+The performance story is the honest part, and it went through two retractions worth recording
+because both were measurement defects rather than results. The first verdict was "GPU 6.63×
+slower" (11.96 vs 1.80 ms/matmul). That was ~97 % **UART print latency** — see §7 of the
+drivers section; the tell was that an *empty* kernel "measured" 21 ms, more than the real
+matmul. Gating that print moved the same benchmark to 0.377 ms/dispatch against a 1.644 ms CPU
+baseline, and a size sweep then reported 10.9×/11.0×/3.6×/parity at N = 256/512/1024/2048. But
+the **end-to-end** measurement retracted that framing in turn: a real 3-layer MLP
+(784→256→256→10) with every matmul on the GPU runs at **1.75 ms/image versus 1.57 ms on the CPU
+— 0.90×, parity, the GPU marginally slower** — because the microbenchmark's CPU baseline was
+cache-cold and inflated, where the MLP's identical layer takes ~0.38 ms cache-hot.
+
+So the defensible claim is narrow, and it is a correctness claim rather than a speed claim:
+**GPU neural-network inference on Phoenix is numerically correct and at CPU parity.** The GPU
+predictions match the numpy reference 12/12 including a digit the model itself misclassifies.
+
+| change | where | what/why |
+|---|---|---|
+| ★ First V3D GPU **compute** dispatch on Phoenix | `tools/v3d-driver-port/csd_probe.c` (coord `10b3522e1`, `a58c2e83d`, `2ed54d3f7`) | Three staged hardware milestones: an empty CSNOP kernel dispatches through `SUBMIT_CSD` (`rc = 0`, `CSDDONE`, 0 faults) → a constant store reaches DRAM and reads back → work-group IDs correct. This validated the winsys' previously-untested `ioc_submit_csd`, and it is what surfaced the cache-flush defect. |
+| Numerically bit-exact GPU matmul | `tools/v3d-driver-port/csd_matmul.c` (coord `3c631da59`, `3b6ebd4b3`) | 256×256 matrix-vector on V3D CSD versus CPU, persistent buffer objects, `max_rel_err = 0` — including the first working TMU *general loads*. Later made runtime-`N`: `N` is read from a fourth SSBO so it drives both the loop bound and the row stride — a compile-time constant had let the compiler bake the stride as an immediate while only the bound tracked the uniform, silently corrupting every `N != 256`. |
+| ★ End-to-end GPU NN inference — correct, at CPU parity | `tools/cnn-mnist/mlp_train_export.py`, `tools/v3d-driver-port/mlp_gpu.c` (coord `7239b0313`) | A 784→256→256→10 ReLU MLP with every matmul on the GPU, run as a `/dev/v3d-srv` client with persistent per-layer weight BOs and the 10-class layer zero-padded to the fixed 256-row grid. **Predictions match the numpy reference 12/12**, including a model-misclassified digit. Steady state over 50 × 12 images: **GPU 1.75 vs CPU 1.57 ms/image = 0.90×**. The per-dispatch facts that survive: 0.377 ms/matmul, 0.020 ms empty-dispatch floor. |
+| CNN inference on the CPU | `tools/cnn-mnist/cnn.c`, `cnn_train_export.py` (coord `7be8d0fe4`, `e20fbaa95`) | A self-contained trained convnet — 1×28×28 → 3×3 conv (8 ch) → ReLU → 2×2 maxpool → flatten(1352) → linear head → argmax, weights exported from a numpy im2col-backprop trainer. On hardware all 10 test predictions match the numpy reference exactly, including a digit the model gets wrong, with 0 faults — so conv/ReLU/pool/dense compute is correct on Phoenix. |
+| LLM inference on the CPU | `phoenix-rtos-ports/llama2/` — see the `llama2` row in the application-ports table | llama2.c, CPU only, bit-identical to the host reference. **Never integrated with the GPU path**: an LLM token costs dozens of matmuls, and at parity-or-worse per matmul that is strictly a loss. |
+
+**Limits.**
+
+- **No GPU speedup is claimed or proven.** End-to-end it is parity (0.90×). The 4.4× and ~11×
+  microbenchmark ratios rest on a CPU baseline the project's own later measurement called
+  inflated; they are recorded as superseded framing, not as results. What is proven is
+  numerical correctness and a negligible dispatch floor.
+- **The one attempt at a decisive win is a recorded failure.**
+  `tools/v3d-driver-port/csd_gemm8.c` (coord `2fc2638d4`) is a batched 8-column GEMM — the
+  shape that gives weight reuse a per-vector GEMV lacks. It compiles clean host-side but
+  **hangs the hardware**: the dispatch times out with `CSD status = 0x7`, `num_completed = 0`
+  and garbage output, apparently because the 8-accumulator kernel drops to 2 threads under
+  register pressure and never signals completion. Kept in-tree as an honest record of the
+  attempt; a tiled/shared-memory GEMM was explicitly ruled out as an optimisation grind.
+- **GPU time is super-linear in the reduction length** with the naive per-row GEMV (each of the
+  256 invocations re-reads the whole input vector), so it hits a bandwidth wall past roughly
+  N = 1024. Small/medium reductions are the favourable regime; LLM-scale reductions are not.
+- **The models are small** (~62 000 MACs per image for the CNN) and were evaluated on 10 (CNN)
+  and 12 (MLP) embedded digits. That establishes correctness, not throughput. The 95.5 % /
+  97.75 % accuracies come from the host trainer, not from a run on the Pi.
+- **There is no GPU-accelerated CNN** — only a GPU-accelerated MLP. The conv-as-im2col GEMM
+  that would have put the CNN on the GPU was named as the next step and never built.
+- Design and feasibility notes: `docs/done/2026-08-13-ml-phase2-v3d-gpu-matmul-design.md`.
+
+### 3. Per-master memory-bus attribution: the BCM2711 AXI performance monitor (`tools/axi-pmu/`)
+
+Every bandwidth number elsewhere in this port — NFS throughput, genet RX, V3D fill rate — was
+*inferred* from wall-clock timing. `tools/axi-pmu/` (313 lines) reads the BCM2711's **System AXI
+bandwidth monitors** at `0xfe009800` instead, so bus traffic is measured at the hardware. It is
+the Phoenix analogue of the Linux `drivers/perf/` Raspberry Pi AXI PMU driver: mmap the perf
+block (page-aligned, so `0xfe009000` + `0x800`), program one of three bandwidth watchers
+(`BW0/1/2` at `0x40/0x80/0xc0`) with a 6-bit `BUS_WATCH` master selector, and read 31-bit
+address/write/read transaction counters. The enable sequence matters and is easy to get wrong:
+reset the monitor, reset the watcher, configure it, then enable **with the WATCH bit** — omit
+that last bit and every counter reads zero.
+
+Bus indices are not guessed. They come from the vendor driver's `system_bus_string_2711[]`
+table (`0 DMA_L2, 1 TRANS, 2 JPEG, 3 VPU_UC, 4 DMA_UC, 5 SYSTEM_L2, 6 HVS, 7 ARGON, 8 H264,
+9 PERIPHERAL, 10 ARM_UC, 11 ARM_L2`), which the tool prints inline; index ≥ 12 is unnamed and
+not chased.
+
+The transferable result is a **method**, recorded specifically so it is not re-tried the wrong
+way. The first attempt at attributing the network path read 4/8/16 MB over NFS and looked for
+the bus whose transaction count doubled per step. Every candidate did — because at fixed link
+bandwidth a larger read simply takes proportionally *longer*, so read size is a proxy for
+wall-clock time and any time-proportional master scales with it (HVS held a constant ~355 MB/s
+and an unnamed free-running counter ~2.85 GB/s across all three sizes). The discriminator that
+works is to **hold time fixed, toggle the workload, and normalise each window to transactions
+per second before differencing** — the windows are never equal (a 1 000 ms idle `nanosleep`
+versus a ~680 ms 16 MB read), so raw deltas are invalid and rates are valid. Time-proportional
+masters then cancel and the target master stands out.
+
+| change | where | what/why |
+|---|---|---|
+| ★ BCM2711 System AXI bandwidth-monitor reader | `tools/axi-pmu/axi-pmu.c` (coord `31fa83325`, `abb608319`) | First measurement of real bus traffic in this port rather than inference from throughput. Base `0xfe009800`, three bandwidth watchers, per-watcher A/W/R transaction + wait + max-outstanding counters masked to 31 bits, with the vendor enable sequence. Written as a plain userspace tool against `MAP_PHYSMEM`, in the same idiom as `rpi4-thermal`/`rpi4-hwrng`. |
+| ★ Rate-normalised idle-vs-workload differencing | `tools/axi-pmu/axi-pmu.c` NET-ISO mode; `README.md` (coord `7e599a798`) | The method for isolating one small master against large, time-proportional background traffic — documented together with the confound it replaces, expressly so the size dose-response is not re-attempted. |
+| genet RX-DMA identified as bus 9 (PERIPHERAL) | coord `7e599a798` | PERIPHERAL's **write** rate rises 94 K/s → 187 K/s (+92.7 K/s) during an NFS read. Independent magnitude cross-check: 92.7 K writes/s × ~256 B per burst ≈ 23.7 MB/s, against a measured 23.5 MB/s NFS read — so this is the network *data* path, not background. Bus 6 (HVS) cancels to −0.02 % across the same windows and is write-zero throughout, ruling it out for an RX-DMA **write** master; bus 10 (ARM) gains +1.12 M writes/s, the CPU copying received data. |
+| Vendor bus-name table adopted | coord `7e599a798` | `system_bus_string_2711[]` from `external/linux/drivers/perf/raspberrypi_axi_monitor.c`, printed inline, replacing guessed bus identities. This settles bus 6 as display scanout (an earlier note had guessed it was genet-adjacent) and identifies **bus 7 = ARGON = the rpivid HEVC decoder** — the watch value for measuring the decoder's own memory traffic, and the intended instrument for the open HEVC memory-fabric defect in §1. |
+| Mechanism validated against a known workload | coord `abb608319`; `README.md` | A CPU `memcpy` dose-response on bus 10 is exactly linear — 4/8/16 MB × 4 gives 1.05/2.13/4.26 M read transactions, a clean 2× per size step — with read ≈ write symmetry (as a memcpy must have) and a **stable 16 bytes per transaction across all three sizes**, a hardware-plausible 128-bit AXI burst. |
+
+**Limits** — the tool's own recorded caveats, not smoothed over:
+
+- **The absolute GB/s figures are partly definitional.** "1.43 GB/s measured versus 1.40 GB/s
+  wall-clock" uses a *hardcoded* 16 B/transfer that was itself back-derived from known bytes ÷
+  transactions, so the agreement is near-tautological. The load-bearing evidence is the
+  linearity, the read ≈ write symmetry and the constant 16-byte burst — not an independent
+  absolute oracle.
+- **"Bus 10 = the CPU memcpy path" is measured, not an architectural identity.** The vendor enum
+  labels 10 = `ARM_UC` and 11 = `ARM_L2`, but bus 11 read zero throughout.
+- **The idle control is unreconciled.** An idle window returned ~4 M reads per 200 ms rather
+  than the ~0 predicted. It is labelled "never truly idle" and the README says plainly: do not
+  lean on it.
+- **Scope.** System-monitor MMIO only. The second, VPU-side monitor block (`0xfee08000`, reached
+  through the VideoCore mailbox) is deferred, as is any `/dev/axiperf` device — this is a tool,
+  not a driver, and nothing in the shipped image consumes it.
+- **Bus 7 was never measured during a live decode.** ARGON is *identified* as the rpivid decoder
+  and named as the instrument for §1's open defect, but the two were never combined.
+
+**Provenance.** Every number in this section was measured on this board by the tool named beside
+it, and each is recorded in the commit that produced it plus the tool's README. Raw UART
+captures are **not** retained in the repository (`artifacts/uart/` was emptied by the
+pre-publication cleanup, `a4396edc8`), so the commit message and README are the primary record.
+Where a measurement was later found to be an artefact of its own instrument — the GPU-compute
+timings — both the retracted figure and the correction are stated above, not only the
+correction.
+
 
 ---
 
