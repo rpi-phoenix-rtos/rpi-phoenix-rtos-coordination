@@ -28,7 +28,8 @@
 #   ./tools/hevc-decode/transcode-for-phoenix.sh <input> [output.265] [options]
 #     --height N     scale to N lines, keeping aspect (default 1080; 0 = keep)
 #     --fps N        cap frame rate (default 30; 0 = keep)
-#     --secs N       take only the first N seconds (default: whole clip)
+#     --start N      skip the first N seconds of the source (default 0)
+#     --secs N       take only N seconds after --start (default: whole clip)
 #     --10bit        encode Main10 instead of 8-bit Main (both are verified)
 #     --no-stage     do not copy into the netboot root
 #
@@ -44,6 +45,7 @@ out=""
 height=1080
 fps=30
 secs=""
+start=""
 depth=8
 stage=1
 
@@ -52,6 +54,7 @@ while [ $# -gt 0 ]; do
 	--height) height="${2:?}"; shift 2 ;;
 	--fps) fps="${2:?}"; shift 2 ;;
 	--secs) secs="${2:?}"; shift 2 ;;
+	--start) start="${2:?}"; shift 2 ;;
 	--10bit) depth=10; shift ;;
 	--no-stage) stage=0; shift ;;
 	-h | --help) sed -n '2,40p' "${BASH_SOURCE[0]}"; exit 0 ;;
@@ -84,7 +87,16 @@ ffprobe -v error -select_streams v:0 \
 #   wpp           wavefront IS verified (and is x265's default)
 #   no-open-gop   every GOP starts at an IDR, so playback can begin anywhere
 #   log-level     keep the encoder quiet; we care about the bitstream
-x265_params="wpp=1:no-amp=1:deblock=0,0:no-open-gop=1:log-level=none"
+#
+# temporal-MVP is IN the verified decode subset (hevc-m2 decodes it bit-exact),
+# but hevc-play's DPB management has an open defect that trips on it: at POC 12
+# of a 750-frame clip it reported "collocated POC 0 not in DPB" and stopped after
+# 10 presented frames. Its retention rule keeps a picture only while its POC is
+# in the CURRENT slice's RPS, and that is evidently not sufficient to keep every
+# collocated reference alive. Until that is fixed, playback clips are encoded
+# without TMVP -- a player workaround, NOT a codec-subset restriction, and the
+# distinction matters: do not "simplify" the conformance vectors the same way.
+x265_params="wpp=1:no-amp=1:deblock=0,0:no-open-gop=1:no-temporal-mvp=1:log-level=none"
 
 # Written out longhand rather than with `$( [ ] && echo )`: under `set -e` a
 # command substitution that exits non-zero makes the whole ASSIGNMENT fail, so
@@ -101,7 +113,7 @@ if [ "$fps" != 0 ]; then vf="fps=${fps},$vf"; fi
 
 set -x
 ffmpeg -y -hide_banner -loglevel warning \
-	${secs:+-t "$secs"} -i "$in" \
+	${start:+-ss "$start"} ${secs:+-t "$secs"} -i "$in" \
 	-an -sn -dn -map 0:v:0 \
 	-vf "$vf" \
 	-c:v libx265 -profile:v "$profile" -preset medium -crf 22 \

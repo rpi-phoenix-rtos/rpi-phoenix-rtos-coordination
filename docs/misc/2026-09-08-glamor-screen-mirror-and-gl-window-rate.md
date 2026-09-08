@@ -236,3 +236,68 @@ and a relink now moves it onto a Mesa that crashes it. So the next X-server chan
 that first — either by finding what in `aa916f2f060` upsets glamor's draw path (the same
 index-unrolling code glamor's copy and composite paths lean on), or by pinning the X server's
 Mesa link. Do not start an X-server change without budgeting for it.
+
+---
+
+## 6. Open defect in `hevc-play`: a collocated TMVP reference is evicted from the DPB
+
+Found while cutting the video segment of the showcase reel, on a 750-frame
+1280×720 clip produced by `tools/hevc-decode/transcode-for-phoenix.sh` from real
+gameplay footage (`artifacts/rpi4b-uart/rpi4b-uart-20260908-224139-hevcwin4.log`):
+
+```
+hevc-play: 1280x720  240 CTBs (20x12)  750 frames [tmvp] [wpp]
+hevc-play: buffers bs=217088 pu=393216 coeff=1572864 luma_stride=92160 cols=10 pool=7 reorder=2 tmvp=1 colmv=61440
+hevc-play: frame 12 POC 12 — collocated POC 0 not in DPB
+hevc-play: decoded+displayed 10 frame-instances (750 unique frames) on HDMI
+```
+
+Playback stops after 10 frames. The retention rule (`hevc-m2.c`, the MARK+REMOVE
+block) keeps a DPB entry only while **its POC appears in the current slice's
+RPS**, or while it is still pending display:
+
+```c
+for (uint32_t i = 0; i < pool_n; i++) if (dpb[i].used && !dpb[i].pending) {
+        int keep = 0;
+        for (uint32_t k = 0; k < s.rps_n; k++) if (dpb[i].poc == s.rps_poc[k]) { keep = 1; break; }
+        if (!keep) dpb[i].used = 0;
+}
+```
+
+Per H.265 the collocated picture is drawn from the current slice's reference
+picture lists, which are built from the RPS — so on a conforming stream this rule
+*should* be sufficient and POC 0 should still be present at POC 12. It is not, so
+one of these is wrong and the next step is to find out which, on this exact
+bitstream:
+
+1. the RPS parse drops a long-term / IDR entry that x265 really did signal, or
+2. `collocated_poc` is resolved from the wrong `collocated_ref_idx` / wrong list
+   (`collocated_from_l0` handling is at `hevc-m2.c:1097-1098`), or
+3. the eviction runs *before* something the collocated lookup still needs.
+
+Not chased in this turn — it is a player-side defect, the hardware decode itself
+is bit-exact on the committed conformance vectors, and the reel needed a working
+segment. Two things follow from it:
+
+- **The reel's clips are encoded `--no-temporal-mvp`.** That is a *player*
+  workaround, not a codec-subset restriction: `hevc-m2` decodes TMVP bit-exact
+  and TMVP stays in the verified subset. Do **not** "simplify" the committed
+  conformance vectors the same way — they are what proves the subset.
+- **`hevc-play` gained periodic progress output** (`presented N/M frames`, every
+  25). It previously printed nothing between its banner and its final line, so
+  the test harness's idle timer — no UART output for N seconds means finished —
+  powered the Pi off mid-playback on a 297-frame clip, and the run produced no
+  completion line at all. That is the same class of trap as a silent truncation:
+  the absence of output was read as the absence of work.
+
+## 7. The HDMI text console runs at UART speed
+
+Worth recording because it bounds every console-based demo. `life.py` under
+curses on the framebuffer console sizes itself to **239×66** and reports **1.0
+gen/s** — where the same program in an xterm under X reported 12–13 gen/s. The
+arithmetic says why: a full redraw of that field is ~16 KB, the console is driven
+by `pl011-tty` which mirrors every byte to the 115200-baud UART (~11.5 KB/s), and
+16 KB / 11.5 KB/s ≈ 1.4 s ≈ the observed rate. So the HDMI console's throughput
+is the serial port's, not the framebuffer's. Stated as a hypothesis consistent
+with the numbers, not as a measured isolation — the test that would settle it is
+one run with the UART console detached.
