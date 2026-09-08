@@ -461,11 +461,69 @@ static uint32_t g_win_border = 2;   /* px; drawn once per frame so the window re
 /* Blit one decoded frame (SAND/COL128 -> NV12 -> RGBA, BT.601) into a mapped
  * R8G8B8A8 framebuffer: centered at native size, or scaled into the --window
  * rectangle when one was given. */
+/* Linear row cache for the SAND->linear step.
+ *
+ * The blit used to read every luma and chroma sample straight out of the decode
+ * output with sand8(), i.e. three UNCACHED byte reads per output pixel, and store
+ * the result as four UNCACHED byte writes. Measured on hardware at 1280x720 that
+ * came to 193 ms of a 236 ms frame -- 82% of the wall clock, against ~3 ms for the
+ * hardware decode itself. Playback was never decode-bound; it was bound by the
+ * CPU touching uncached DRAM ~6.5M times a frame.
+ *
+ * SAND/COL128 helps here: for a FIXED row, each group of 128 samples is
+ * contiguous (column base + row*128), so a whole source row is a handful of
+ * 128-byte memcpys strided by the column stride. Copying those into a cached
+ * buffer turns the per-sample uncached reads into burst reads, and the inner loop
+ * then reads normal cached memory. The store side becomes one 32-bit write per
+ * pixel instead of four byte writes.
+ *
+ * 10-bit (Main10) keeps the original per-sample path: it is not what the demo
+ * uses, and NV12_10_COL128 packs three samples per 32-bit word, so it wants its
+ * own unpacker rather than a shared one. */
+static uint8_t *g_row_lum, *g_row_chr;
+static uint32_t g_row_cap;
+static uint32_t g_row_lum_y = 0xffffffffu, g_row_chr_y = 0xffffffffu;
+
+static int row_cache_ensure(uint32_t W)
+{
+	if (g_row_cap >= W && g_row_lum != NULL && g_row_chr != NULL) {
+		return 0;
+	}
+	free(g_row_lum);
+	free(g_row_chr);
+	/* +128 so a trailing partial column can be copied whole without a bounds
+	 * test in the inner copy loop. */
+	g_row_lum = malloc(W + 128u);
+	g_row_chr = malloc(W + 128u);
+	g_row_cap = (g_row_lum != NULL && g_row_chr != NULL) ? W : 0u;
+	g_row_lum_y = g_row_chr_y = 0xffffffffu;
+	return (g_row_cap != 0u) ? 0 : -1;
+}
+
+
+/* Gather one SAND row into a linear cached buffer: ceil(W/128) contiguous
+ * 128-byte chunks, one per column, strided by `stride`. */
+static void sand_row8(uint8_t *dst, const uint8_t *b, uint32_t stride,
+                      uint32_t row, uint32_t W)
+{
+	uint32_t x = 0;
+
+	while (x < W) {
+		memcpy(dst + x, b + (size_t)(x / 128u) * stride + (size_t)row * 128u, 128u);
+		x += 128u;
+	}
+}
+
+
+/* Blit one decoded frame (SAND/COL128 -> NV12 -> RGBA, BT.601) into a mapped
+ * R8G8B8A8 framebuffer: centered at native size, or scaled into the --window
+ * rectangle when one was given. */
 static void fb_blit(uint8_t *fb, uint32_t pitch, uint32_t fbw, uint32_t fbh,
 		    const uint8_t *yb, const uint8_t *cbb, uint32_t W, uint32_t H,
 		    uint32_t luma_stride, uint32_t chroma_stride)
 {
-	uint32_t x0, y0, dw, dh;
+	uint32_t x0, y0, dw, dh, sx_step = 1u << 16, sy_step = 1u << 16;
+	int fast = (g_bd_minus8 == 0) && (row_cache_ensure(W) == 0);
 
 	if (g_win_w != 0u && g_win_h != 0u) {
 		dw = g_win_w; dh = g_win_h;
@@ -478,75 +536,93 @@ static void fb_blit(uint8_t *fb, uint32_t pitch, uint32_t fbw, uint32_t fbh,
 		if (y0 + dh > fbh) dh = fbh - y0;
 		/* Fixed-point 16.16 source step, so a 1080p source into a 960x540 window
 		 * costs one multiply-shift per pixel and no division. */
-		uint32_t sx_step = (W << 16) / dw, sy_step = (H << 16) / dh;
-		for (uint32_t dy = 0; dy < dh; dy++) {
-			uint32_t y = (dy * sy_step) >> 16;
-			if (y >= H) y = H - 1u;
-			for (uint32_t dx = 0; dx < dw; dx++) {
-				uint32_t x = (dx * sx_step) >> 16;
-				if (x >= W) x = W - 1u;
-				uint32_t cxb = (x & ~1u), cy = y / 2u;
-				int Y, U, V;
-				if (g_bd_minus8) {
-					Y = (int)(sand10(yb, luma_stride, x, y) >> 2);
-					U = (int)(sand10(cbb, chroma_stride, cxb, cy) >> 2);
-					V = (int)(sand10(cbb, chroma_stride, cxb + 1u, cy) >> 2);
-				} else {
-					Y = (int)sand8(yb, luma_stride, x, y);
-					U = (int)sand8(cbb, chroma_stride, cxb, cy);
-					V = (int)sand8(cbb, chroma_stride, cxb + 1u, cy);
-				}
-				int C = Y - 16, D = U - 128, E = V - 128;
-				uint8_t *px = fb + (uint64_t)(y0 + dy) * pitch + (uint64_t)(x0 + dx) * 4u;
-				px[0] = clip8((298 * C + 409 * E + 128) >> 8);
-				px[1] = clip8((298 * C - 100 * D - 208 * E + 128) >> 8);
-				px[2] = clip8((298 * C + 516 * D + 128) >> 8);
-				px[3] = 0xff;
-			}
-		}
-		/* Border: a white frame just outside the video, clipped to the fb. Without
-		 * it a dark scene has no visible edge and the "window" reading is lost. */
-		for (uint32_t b = 1; b <= g_win_border; b++) {
-			uint32_t bx0 = (x0 >= b) ? x0 - b : 0, by0 = (y0 >= b) ? y0 - b : 0;
-			uint32_t bx1 = (x0 + dw + b - 1u < fbw) ? x0 + dw + b - 1u : fbw - 1u;
-			uint32_t by1 = (y0 + dh + b - 1u < fbh) ? y0 + dh + b - 1u : fbh - 1u;
-			for (uint32_t x = bx0; x <= bx1; x++) {
-				uint8_t *t = fb + (uint64_t)by0 * pitch + (uint64_t)x * 4u;
-				uint8_t *m = fb + (uint64_t)by1 * pitch + (uint64_t)x * 4u;
-				t[0] = t[1] = t[2] = t[3] = 0xff;
-				m[0] = m[1] = m[2] = m[3] = 0xff;
-			}
-			for (uint32_t y = by0; y <= by1; y++) {
-				uint8_t *l = fb + (uint64_t)y * pitch + (uint64_t)bx0 * 4u;
-				uint8_t *r = fb + (uint64_t)y * pitch + (uint64_t)bx1 * 4u;
-				l[0] = l[1] = l[2] = l[3] = 0xff;
-				r[0] = r[1] = r[2] = r[3] = 0xff;
-			}
-		}
-		return;
+		sx_step = (W << 16) / dw;
+		sy_step = (H << 16) / dh;
+	}
+	else {
+		/* Native size, centered, 1:1 (the steps stay 1.0). */
+		dw = (W < fbw) ? W : fbw;
+		dh = (H < fbh) ? H : fbh;
+		x0 = (fbw > W) ? (fbw - W) / 2u : 0u;
+		y0 = (fbh > H) ? (fbh - H) / 2u : 0u;
 	}
 
-	x0 = (fbw > W) ? (fbw - W) / 2u : 0;
-	y0 = (fbh > H) ? (fbh - H) / 2u : 0;
-	for (uint32_t y = 0; y < H && (y0 + y) < fbh; y++) {
-		for (uint32_t x = 0; x < W && (x0 + x) < fbw; x++) {
-			uint32_t cxb = (x & ~1u), cy = y / 2u;   /* NV12: Cb at even col, Cr next */
-			int Y, U, V;
-			if (g_bd_minus8) {   /* 10-bit packed → downshift 10→8 for RGB */
+	/* A new frame invalidates the cached rows even at the same row index. */
+	g_row_lum_y = g_row_chr_y = 0xffffffffu;
+
+	for (uint32_t dy = 0; dy < dh; dy++) {
+		uint32_t y = (sy_step == (1u << 16)) ? dy : ((dy * sy_step) >> 16);
+		uint32_t cy;
+		uint8_t *dstrow;
+
+		if (y >= H) y = H - 1u;
+		cy = y / 2u;
+		dstrow = fb + (uint64_t)(y0 + dy) * pitch + (uint64_t)x0 * 4u;
+
+		if (fast) {
+			if (g_row_lum_y != y) {
+				sand_row8(g_row_lum, yb, luma_stride, y, W);
+				g_row_lum_y = y;
+			}
+			if (g_row_chr_y != cy) {
+				sand_row8(g_row_chr, cbb, chroma_stride, cy, W);
+				g_row_chr_y = cy;
+			}
+		}
+
+		for (uint32_t dx = 0; dx < dw; dx++) {
+			uint32_t x = (sx_step == (1u << 16)) ? dx : ((dx * sx_step) >> 16);
+			uint32_t cxb;
+			int Y, U, V, C, D, E;
+
+			if (x >= W) x = W - 1u;
+			cxb = x & ~1u;   /* NV12: Cb at the even column, Cr next to it */
+
+			if (fast) {
+				Y = g_row_lum[x];
+				U = g_row_chr[cxb];
+				V = g_row_chr[cxb + 1u];
+			}
+			else if (g_bd_minus8) {   /* 10-bit packed -> downshift 10->8 */
 				Y = (int)(sand10(yb, luma_stride, x, y) >> 2);
 				U = (int)(sand10(cbb, chroma_stride, cxb, cy) >> 2);
 				V = (int)(sand10(cbb, chroma_stride, cxb + 1u, cy) >> 2);
-			} else {
+			}
+			else {
 				Y = (int)sand8(yb, luma_stride, x, y);
 				U = (int)sand8(cbb, chroma_stride, cxb, cy);
 				V = (int)sand8(cbb, chroma_stride, cxb + 1u, cy);
 			}
-			int C = Y - 16, D = U - 128, E = V - 128;
-			uint8_t *px = fb + (uint64_t)(y0 + y) * pitch + (uint64_t)(x0 + x) * 4u;
-			px[0] = clip8((298 * C + 409 * E + 128) >> 8);          /* R */
-			px[1] = clip8((298 * C - 100 * D - 208 * E + 128) >> 8);/* G */
-			px[2] = clip8((298 * C + 516 * D + 128) >> 8);          /* B */
-			px[3] = 0xff;                                           /* A */
+
+			C = Y - 16; D = U - 128; E = V - 128;
+			/* One 32-bit store (R,G,B,A little-endian) instead of four byte
+			 * stores: the framebuffer is uncached, so each byte write was its
+			 * own bus transaction. dstrow is 4-byte aligned (pitch and x0*4
+			 * both are). */
+			*(uint32_t *)(dstrow + (uint64_t)dx * 4u) =
+				  (uint32_t)clip8((298 * C + 409 * E + 128) >> 8)
+				| ((uint32_t)clip8((298 * C - 100 * D - 208 * E + 128) >> 8) << 8)
+				| ((uint32_t)clip8((298 * C + 516 * D + 128) >> 8) << 16)
+				| 0xff000000u;
+		}
+	}
+
+	if (g_win_w != 0u && g_win_h != 0u) {
+		/* Border: a white frame just outside the video, clipped to the fb. Without
+		 * it a dark scene has no visible edge and the "window" reading is lost. */
+		for (uint32_t b = 1; b <= g_win_border; b++) {
+			uint32_t bx0 = (x0 >= b) ? x0 - b : 0;
+			uint32_t by0 = (y0 >= b) ? y0 - b : 0;
+			uint32_t bx1 = (x0 + dw + b - 1u < fbw) ? x0 + dw + b - 1u : fbw - 1u;
+			uint32_t by1 = (y0 + dh + b - 1u < fbh) ? y0 + dh + b - 1u : fbh - 1u;
+			for (uint32_t x = bx0; x <= bx1; x++) {
+				*(uint32_t *)(fb + (uint64_t)by0 * pitch + (uint64_t)x * 4u) = 0xffffffffu;
+				*(uint32_t *)(fb + (uint64_t)by1 * pitch + (uint64_t)x * 4u) = 0xffffffffu;
+			}
+			for (uint32_t y = by0; y <= by1; y++) {
+				*(uint32_t *)(fb + (uint64_t)y * pitch + (uint64_t)bx0 * 4u) = 0xffffffffu;
+				*(uint32_t *)(fb + (uint64_t)y * pitch + (uint64_t)bx1 * 4u) = 0xffffffffu;
+			}
 		}
 	}
 }
@@ -1016,6 +1092,57 @@ int main(void)
 }
 #else  /* PLAY_TOOL: runtime .265 file player (M3) */
 
+/* Phase timing for the player: how much of a frame's wall clock is the CPU
+ * detile+colour-convert blit, as opposed to the hardware decode?
+ *
+ * Worth measuring rather than assuming, because BOTH sides of that blit are
+ * uncached: the decode output buffers are mmap'd MAP_UNCACHED|MAP_CONTIGUOUS and
+ * /dev/fb0 is MAP_PHYSMEM|MAP_UNCACHED, so the inner loop does three uncached
+ * byte reads (Y, U, V through sand8) and four uncached byte stores per output
+ * pixel. At 1280x720 that is ~2.8M uncached reads and ~3.7M uncached writes per
+ * frame. The owner reports playback as slow (~4.7 fps presented), and this says
+ * whether the blit or the decode is the reason. */
+static uint64_t g_blit_ns, g_blit_frames, g_play_t0;
+
+static uint64_t now_ns(void)
+{
+	struct timespec t;
+	clock_gettime(CLOCK_MONOTONIC, &t);
+	return (uint64_t)t.tv_sec * 1000000000ull + (uint64_t)t.tv_nsec;
+}
+
+
+/* Pace presentation at no more than PACE_NS per frame, sleeping only for the
+ * time actually left.
+ *
+ * This replaces an unconditional nanosleep(40 ms) per presented frame. That was
+ * 40 ms of a measured 236 ms frame -- 17% of the wall clock spent sleeping while
+ * already running at a sixth of the target rate. Pacing is still wanted so a
+ * cheap clip does not race, but it should cost nothing when the frame was late,
+ * which is the normal case here. */
+#define PACE_NS 40000000ull
+
+static void pace_frame(void)
+{
+	static uint64_t next;
+	uint64_t t = now_ns();
+
+	if (next != 0u && t < next) {
+		struct timespec d;
+		uint64_t left = next - t;
+
+		d.tv_sec = (time_t)(left / 1000000000ull);
+		d.tv_nsec = (long)(left % 1000000000ull);
+		(void)nanosleep(&d, NULL);
+		next += PACE_NS;
+	}
+	else {
+		/* Late (or first frame): do not accumulate debt. */
+		next = t + PACE_NS;
+	}
+}
+
+
 /* Progress every PROGRESS_EVERY presented frames.
  *
  * Not decoration: hevc-play printed nothing between its start banner and its
@@ -1029,7 +1156,16 @@ int main(void)
 static void hevc_play_progress(uint32_t shown, uint32_t total)
 {
 	if (shown != 0u && (shown % PROGRESS_EVERY) == 0u) {
-		printf("hevc-play: presented %u/%u frames\n", shown, total);
+		uint64_t wall = (g_play_t0 != 0u) ? (now_ns() - g_play_t0) : 0u;
+		double per = (shown != 0u) ? (double)wall / shown / 1e6 : 0.0;
+		double blit = (g_blit_frames != 0u)
+		            ? (double)g_blit_ns / g_blit_frames / 1e6 : 0.0;
+
+		printf("hevc-play: presented %u/%u frames  %.1f ms/frame "
+		       "(blit %.1f ms = %.0f%%)  %.2f fps\n",
+		       shown, total, per, blit,
+		       (per > 0.0) ? (blit / per * 100.0) : 0.0,
+		       (per > 0.0) ? (1000.0 / per) : 0.0);
 	}
 }
 
@@ -1412,8 +1548,8 @@ int main(int argc, char **argv)
 	 * playback presents in display/POC order via a bounded reorder. */
 	const int passes = (nslices >= 8) ? 2 : 8;
 	uint32_t shown = 0, total_bad = 0, verified = 0;
+	g_play_t0 = now_ns();
 	uint32_t reorder_max = sps.max_num_reorder;
-	struct timespec ts25 = { 0, 40000000 };
 	int broke = 0;
 	for (int loop = 0; loop < passes && !broke; loop++) {
 		dpb_ent_t dpb[16];
@@ -1496,9 +1632,11 @@ int main(int argc, char **argv)
 					int mi = -1; uint32_t mp = 0;
 					for (uint32_t i = 0; i < pool_n; i++)
 						if (dpb[i].pending && (mi < 0 || dpb[i].poc < mp)) { mi = (int)i; mp = dpb[i].poc; }
+					{ uint64_t _t0 = now_ns();
 					if (fb) fb_blit(fb, fbm.pitch, fbm.width, fbm.height, pool_l[mi].cpu, pool_c[mi].cpu,
 							g_frame_w, g_frame_h, luma_stride, chroma_stride);
-					nanosleep(&ts25, NULL); shown++; dpb[mi].pending = 0; npend--;
+					g_blit_ns += now_ns() - _t0; g_blit_frames++; }
+					pace_frame(); shown++; dpb[mi].pending = 0; npend--;
 				hevc_play_progress(shown, nslices);
 				}
 			}
@@ -1510,9 +1648,11 @@ int main(int argc, char **argv)
 				for (uint32_t i = 0; i < pool_n; i++)
 					if (dpb[i].pending && (mi < 0 || dpb[i].poc < mp)) { mi = (int)i; mp = dpb[i].poc; }
 				if (mi < 0) break;
+				{ uint64_t _t0 = now_ns();
 				if (fb) fb_blit(fb, fbm.pitch, fbm.width, fbm.height, pool_l[mi].cpu, pool_c[mi].cpu,
 						g_frame_w, g_frame_h, luma_stride, chroma_stride);
-				nanosleep(&ts25, NULL); shown++; dpb[mi].pending = 0;
+				g_blit_ns += now_ns() - _t0; g_blit_frames++; }
+				pace_frame(); shown++; dpb[mi].pending = 0;
 				hevc_play_progress(shown, nslices);
 			}
 		}
