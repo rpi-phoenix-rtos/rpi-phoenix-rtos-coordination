@@ -341,6 +341,7 @@ int main(int argc, char *argv[])
 		 *   startx term      -> twm (WM) + xterm (managed terminal window)
 		 *   startx deskapps  -> Window Maker + xterm + xclock + xcalc + xlogo
 		 *   startx wmmedia   -> Window Maker + GPU window + H.264 video + clock
+ *   startx browse [url] -> Window Maker + Dillo (web browser)
 		 *   startx /bin/foo  -> run /bin/foo as the sole client
 		 */
 		const char *prefix = ""; /* root install ("/" — nfsroot default / sd) */
@@ -457,6 +458,34 @@ int main(int argc, char *argv[])
 			client_path[3] = cp_bufs[3]; client_extra[3] = calc_geom; n_client_extra[3] = 2;
 			client_path[4] = cp_bufs[4]; client_extra[4] = xlogo2_geom; n_client_extra[4] = 2;
 			n_clients = 5;
+		}
+		else if (strcmp(client, "browse") == 0) {
+			/* WEB BROWSER on the desktop: Window Maker (WM) + Dillo, for showing that
+			 * this port does X11 *and* the TCP/IP stack *and* HTML/CSS rendering at once
+			 * -- a capability the showcase reel had no segment for.
+			 *
+			 * Run under a WM on purpose. `startx_gpu /bin/dillo` already works via the
+			 * sole-client path, but with nothing to manage the window Dillo comes up at
+			 * its own small default size on a black screen (measured 2026-09-08), which
+			 * renders the page correctly but looks unfinished on a recording. Window
+			 * Maker honours the USPosition/USSize hint from -g, so the browser fills the
+			 * screen and is decorated.
+			 *
+			 * The URL is optional: `startx_gpu browse` uses Dillo's configured start page
+			 * (dillorc `home=`), `startx_gpu browse <url>` overrides it. Dillo takes both
+			 * -g and a positional URL. */
+			static char *const dillo_args[3] = { "-g", "1780x980+40+40", NULL };
+			static char *dillo_argv[3];
+			resolve_client(cp_bufs[0], sizeof(cp_bufs[0]), prefix, "wmaker");
+			resolve_client(cp_bufs[1], sizeof(cp_bufs[1]), prefix, "dillo");
+			dillo_argv[0] = dillo_args[0];
+			dillo_argv[1] = dillo_args[1];
+			dillo_argv[2] = (argc >= 3) ? argv[2] : NULL;
+			client_path[0] = cp_bufs[0];
+			client_path[1] = cp_bufs[1];
+			client_extra[1] = dillo_argv;
+			n_client_extra[1] = (argc >= 3) ? 3 : 2;
+			n_clients = 2;
 		}
 		else if (strcmp(client, "gpudesk") == 0) {
 			/* CONCURRENT-GPU DESKTOP (#13 M3c): twm (WM) + a live GPU-rendered window

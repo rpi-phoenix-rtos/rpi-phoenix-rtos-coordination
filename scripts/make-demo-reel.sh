@@ -43,6 +43,7 @@ segments=(
 	"20260908-154903-q3-bots|151|15|Quake III Arena — OpenGL, bot deathmatch on q3dm1"
 	"20260908-154042-vk-demo2b|112|22|vkQuake — Vulkan via V3DV, id1 demo2 playback"
 	"20260908-103201-stk-driven-5fps|180|24|SuperTuxKart 1.4 — OpenGL ES 3.1, 4-kart race"
+	"20260908-161800-dillo-browse|38|13|Dillo web browser — page fetched over TCP/IP, rendered under glamor X"
 )
 
 command -v ffmpeg >/dev/null 2>&1 || { echo "make-demo-reel: ffmpeg not found" >&2; exit 1; }
