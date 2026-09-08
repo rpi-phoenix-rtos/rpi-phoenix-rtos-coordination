@@ -760,3 +760,62 @@ investigated before the artefact itself. Three defences are now in place:
 **Method note worth keeping:** when an artefact misbehaves and every source suspect has been
 cleared, diff the artefact. Two `size` invocations and an `nm` diff answered in minutes what four Pi
 cycles could not.
+
+---
+
+## 16. Bug #5's mechanism RE-VERIFIED on the correct build — confirmed, and worse
+
+§15 established that every X run this session used a mis-built server (in-process winsys staged into
+the daemon slot). That invalidates the *runs* behind §§5a, 9, 10, 11 and 12, so the §11 mechanism —
+"two full-screen render targets both classified as the scanout" — had to be re-measured. The
+in-process winsys creates its own scanout FBO, so the second RT could simply have been the winsys'.
+
+**It was not.** Re-run with a correctly built `--glamor-daemon` server, current Mesa, 0 faults
+(`rpi4b-uart-20260909-014959-x-rsc-correct.log`), 171 large resources logged, of which the render
+targets are:
+
+```
+rsc #1  1920x1080  rt=1  -> create_flags=0x2
+rsc #4  1920x1080  rt=1  -> create_flags=0x2
+rsc #9  1024x1024  rt=1  -> create_flags=0x2     <-- not the scanout by any reading
+```
+
+**Three** resources take the scanout branch, not two — and the third is **1024×1024**, which cannot
+be the display under any interpretation. That is the cleanest possible demonstration that
+
+```c
+(bind & PIPE_BIND_RENDER_TARGET) && width0 >= 1024 && height0 >= 768
+```
+
+is answering "is this the scanout?" with something that a glamor internal pixmap trips. The
+matching `Y_0_TOP` forcing in `st_atom_framebuffer.c:137` is applied on the same test and is
+unguarded, so all three render with an inverted viewport while only one is the real display. The
+mirror follows.
+
+Also note the mirror **reproduces on the correct build** — the clip-icon artefact is present in the
+verified `x-daemon-correct` capture at the same offset and the same 5.03 mean&#124;diff&#124; as in
+the owner's original report. Bug #5 is real and is not an artefact of the mis-built server.
+
+### An interim discriminator that is much tighter than the current one
+
+The proper fix is still "ask the winsys which BO actually got the scanout pages" (§11). But this
+measurement offers a far better *heuristic* for the meantime: the real scanout is exactly the
+framebuffer's mode size. Testing `width0 == mode.width && height0 == mode.height` instead of
+`>= 1024 && >= 768` immediately excludes the 1024×1024 case, and it uses information the winsys
+already holds. It does not separate `rsc #1` from `rsc #4` — both are 1920×1080 — so it is not the
+fix, but it shrinks the wrong set from three to two and is a one-line change.
+
+### ⚠️ Three findings still owed a re-run
+
+These were measured on the mis-built server and are **not** to be relied on until repeated on a
+`--glamor-daemon` build:
+
+| finding | why it matters | status |
+|---|---|---|
+| `glamor_spans` never runs on the screen pixmap (0 hits) | ruled out a fix location | **unverified** |
+| `glamor_copy`: one copy per session, neither side the screen pixmap | ruled out a fix location | **unverified** |
+| the presentation readback is always `y0=0 rows=1080`, and `fbdevShadowUpdate` is never called | the whole §12 account of the desktop's ~1 fps rests on it | **unverified** |
+
+The third is the load-bearing one: if damage *does* fire on a correctly built server, then §12's
+"presentation is a 300 ms full-screen timer" is wrong and the row-accurate flush that was written
+and reverted becomes worth having after all. That is the next thing to measure, and it is one cycle.
