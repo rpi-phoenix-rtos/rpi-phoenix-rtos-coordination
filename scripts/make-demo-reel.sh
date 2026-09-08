@@ -51,7 +51,15 @@ for seg in "${segments[@]}"; do
 	esc="${esc//\'/}"
 	printf 'make-demo-reel: [%d/%d] %s +%ss %ss\n' "$i" "${#segments[@]}" "$clip" "$start" "$len"
 	# Re-encode every segment with identical parameters so the concat demuxer can
-	# join them without a filter graph. A banner strip keeps the label legible over
+	# join them without a filter graph.
+	#
+	# Colour: the capture card delivers FULL-range MJPEG, which ffmpeg carried
+	# through as yuvj420p tagged color_range=pc with color_space=bt470bg -- an SD
+	# matrix on HD content, primaries and transfer unknown. Self-consistent, so
+	# compliant players got it right, but yuvj420p is deprecated and that tagging
+	# is not the portable form for a video that may be published. Convert to
+	# limited range and tag bt709 explicitly. A/B'd on a Quake III frame before
+	# adopting it: visually identical, only the expected range round-trip. A banner strip keeps the label legible over
 	# both the bright kart track and the very dark Quake interiors.
 	# The label shows for the first 4 s of each segment and then gets out of the
 	# way: a permanent bottom banner clipped real HUD (Quake III's health/armour
@@ -60,8 +68,10 @@ for seg in "${segments[@]}"; do
 	ffmpeg -y -hide_banner -loglevel error \
 		-ss "$start" -t "$len" -i "$src" \
 		-vf "drawbox=x=0:y=ih-64:w=iw:h=64:color=black@0.62:t=fill:enable='lt(t,4)',\
-drawtext=text='$esc':x=24:y=h-44:fontsize=26:fontcolor=white:enable='lt(t,4)'" \
-		-c:v libx264 -preset veryfast -crf 20 -pix_fmt yuv420p -r 30 -an \
+drawtext=text='$esc':x=24:y=h-44:fontsize=26:fontcolor=white:enable='lt(t,4)',\
+scale=in_range=pc:out_range=tv,format=yuv420p" \
+		-c:v libx264 -preset veryfast -crf 20 -r 30 -an \
+		-color_range tv -colorspace bt709 -color_primaries bt709 -color_trc bt709 \
 		"$part" </dev/null
 	printf "file '%s'\n" "$part" >> "$list"
 done

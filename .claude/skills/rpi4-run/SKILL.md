@@ -183,6 +183,22 @@ RPI4B_HDMI_INTERVAL=0 ./scripts/test-cycle-psh-interact.sh --label demo \
 
 The script fails early with that instruction if the device is already held.
 
+## Multi-trial benches: always pass a command
+
+`./scripts/test-cycle-bench.sh N <label> --capture-secs S` with **no** `-- <cmd>` (the
+boot-only path) stops after trial 1. Give it a command instead — the psh path is reliable and
+captures the same boot evidence:
+
+```
+./scripts/test-cycle-bench.sh 3 mylabel --idle-secs 18 --max-cmd-secs 40 -- "/bin/mem"
+```
+
+Notes checked on 2026-09-08, so you don't re-derive them: `rc=143` from
+`test-cycle-netboot.sh --capture-secs S` is **normal** — it is what the capture watchdog killing
+the serial tool produces, and the capture is complete and usable. It also powers the Pi off
+correctly (plug queried immediately after: OFF). Why the bench stops anyway is not root-caused.
+To check the plug yourself: `/home/houp/meross-plug/plug.py status`.
+
 ## Gotchas
 
 - One Pi cycle at a time (exclusive UART). Wait for a cycle to finish before the next.
