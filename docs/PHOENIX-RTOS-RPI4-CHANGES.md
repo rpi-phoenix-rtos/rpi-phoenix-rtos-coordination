@@ -5,7 +5,7 @@ commits, what this fork contains and which parts might be worth your attention.
 
 This is a downstream fork that ports Phoenix-RTOS to the Raspberry Pi 4 (BCM2711, Cortex-A72,
 aarch64). It pulls from canonical `phoenix-rtos` and is maintained separately; nothing here is
-submitted upstream. The work falls into four kinds, and the distinction matters to you:
+submitted upstream. The work falls into five kinds, and the distinction matters to you:
 
 1. **Fixes to defects in your code** that are not Pi-specific and would bite any target. These
    are marked **★** throughout, and the shortlist is directly below.
@@ -642,7 +642,8 @@ Mesa with a measured cost and benefit.
 
 ### 3. ★ General bug fixes
 
-These are defects in shared Phoenix code that would bite any target.
+These are defects that would bite any target: mostly in shared Phoenix code, plus a few in the new
+Pi 4 drivers whose *mechanism* generalises even where the register does not.
 
 **USB / xHCI**
 
