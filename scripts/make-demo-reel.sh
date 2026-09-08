@@ -53,11 +53,11 @@ out="${1:-$vid_dir/$(date -u +%Y%m%d-%H%M%S)-phoenix-rtos-rpi4-showcase.mp4}"
 # reporting itself rather than a claim in a caption.
 segments=(
 	"20260908-202248-shell-demo|32|24|Boot — plo -> kernel -> lwIP -> NFS root -> psh, on real hardware"
-	"20260908-202248-shell-demo|96|26|Shell — uname, the ported /usr/bin userland, Lua 5.4.7 / jq 1.7.1 / Python 3.14.4"
+	"20260908-202248-shell-demo|112|26|Shell — uname, the ported /usr/bin userland, Lua 5.4.7 / jq 1.7.1 / Python 3.14.4"
 	"20260908-202248-shell-demo|164|22|Python 3.14 + ncurses — Conway's Game of Life, 239x66 on the HDMI console"
 	"20260908-200441-x-restored|74|26|X11 desktop — Window Maker on glamor GPU-accelerated X, with a live OpenGL window, top and xbill"
 	"20260908-161800-dillo-browse|38|13|Dillo web browser — page fetched over TCP/IP, rendered under glamor X"
-	"20260908-201439-psh-hevcwin|79|20|Hardware H.265 decode — BCM2711 rpivid, windowed over the live console"
+	"20260908-205153-hevcwin6|76|24|Hardware H.265 decode — BCM2711 rpivid, windowed over the live console"
 	"20260908-191446-qs-fps2|95|22|QuakeSpasm — OpenGL on Mesa v3d, id1 demo1 playback, 35 FPS on screen"
 	"20260908-193011-q2-fps|112|20|Quake II — yQuake2 on OpenGL ES, q2demo1 playback, 27.8 fps on screen"
 	"20260908-192454-vkq-fps|158|22|vkQuake — Vulkan via V3DV, id1 demo2 playback, 73 FPS on screen"

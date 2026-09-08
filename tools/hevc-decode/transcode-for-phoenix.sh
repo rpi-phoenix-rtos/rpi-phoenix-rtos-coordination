@@ -88,15 +88,20 @@ ffprobe -v error -select_streams v:0 \
 #   no-open-gop   every GOP starts at an IDR, so playback can begin anywhere
 #   log-level     keep the encoder quiet; we care about the bitstream
 #
-# temporal-MVP is IN the verified decode subset (hevc-m2 decodes it bit-exact),
-# but hevc-play's DPB management has an open defect that trips on it: at POC 12
-# of a 750-frame clip it reported "collocated POC 0 not in DPB" and stopped after
-# 10 presented frames. Its retention rule keeps a picture only while its POC is
-# in the CURRENT slice's RPS, and that is evidently not sufficient to keep every
-# collocated reference alive. Until that is fixed, playback clips are encoded
-# without TMVP -- a player workaround, NOT a codec-subset restriction, and the
-# distinction matters: do not "simplify" the conformance vectors the same way.
-x265_params="wpp=1:no-amp=1:deblock=0,0:no-open-gop=1:no-temporal-mvp=1:log-level=none"
+# PLAYBACK clips are encoded IPPP (bframes=0, ref=1) because hevc-play has an
+# open DPB defect on richer reference structures. On a 750-frame clip with x265's
+# defaults it stopped after 10 frames with "collocated POC 0 not in DPB"; with
+# temporal-MVP disabled it stopped after 11 with "a reference POC not in DPB" --
+# a DIFFERENT message one frame later, which localises the fault to RPS/DPB
+# retention rather than to TMVP. IPPP with a single reference is the structure
+# the project has already proven end-to-end ("single + multi-frame IPPP rolling
+# DPB"), so it is the reliable shape for a demo clip.
+#
+# This is a PLAYER workaround, NOT a codec-subset restriction: hevc-m2 decodes
+# B slices, b-pyramid, multi-reference and TMVP bit-exact against ffmpeg, and all
+# of those stay in the verified subset. Do NOT "simplify" the committed
+# conformance vectors the same way -- they are what proves the subset.
+x265_params="wpp=1:no-amp=1:deblock=0,0:no-open-gop=1:bframes=0:ref=1:log-level=none"
 
 # Written out longhand rather than with `$( [ ] && echo )`: under `set -e` a
 # command substitution that exits non-zero makes the whole ASSIGNMENT fail, so
