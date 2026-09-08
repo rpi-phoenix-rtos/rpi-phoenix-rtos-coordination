@@ -82,6 +82,27 @@ uploaded), invariant to kart count, entirely CPU-side, and invisible to ioctl
 timing because the stores happen in Mesa *between* ioctls. It also explains why
 QuakeSpasm manages ~40 fps on the same winsys: it uploads far less per frame.
 
+### Sanity-check the magnitude first — it constrains the experiment
+
+825 ms is a lot to explain, and a bandwidth story alone does not fit:
+
+| mechanism | rate | bytes/frame needed |
+|---|---|---|
+| cached write-back | ~3 GB/s | 2475 MB — impossible |
+| uncached, write-combined streaming | ~300 MB/s | 248 MB — implausible |
+| uncached, scattered small stores | ~60 MB/s | 50 MB — still large |
+
+A kart scene does not upload tens of MB per frame, so if uncached memory is the
+cause it is via **per-store latency, not bandwidth**: at 60–200 ns per
+non-combined store, 825 ms is 4–14 M stores/frame, which *is* plausible when Mesa
+writes millions of small values (per-vertex attributes, per-object uniforms, CL
+packets) one at a time into `MAP_UNCACHED` memory.
+
+That distinction decides the experiment: **a `memcpy` benchmark alone could
+mislead**, because a large `memcpy` into Normal-NC memory may still write-combine
+and look fast. The benchmark must measure *scattered small stores* (e.g. a strided
+`uint32_t` write loop) alongside streaming `memcpy`, cached vs uncached.
+
 **Not yet proven — do not record it as the cause.** The decisive experiment, in
 order of cost:
 
