@@ -47,6 +47,11 @@ PSH_PROMPT_MARKER = b"(psh)%"
 DEFAULT_COMMANDS = ["help", "ps", "df", "meminfo"]
 
 
+# psh's historical interactive command-buffer size (pshapp CMDSZ). Anything
+# longer was truncated without a word; see the warning below.
+PSH_CMDSZ_LEGACY = 128
+
+
 def autodetect_device():
     host_os = platform.system()
     if host_os == "Darwin":
@@ -209,6 +214,20 @@ def main():
         # phase 2: send commands
         for cmd in args.commands:
             time.sleep(args.inter_cmd_secs)
+            # psh's interactive line buffer is CMDSZ bytes and used to drop
+            # everything past it SILENTLY -- no bell, no error, and the UART echo
+            # looks like a normal complete line, so the run reads as evidence.
+            # Cost two Pi cycles chasing a Quake III "bug" that was a 167-char
+            # launch line executed as its first 128 characters (the +devmap
+            # argument was in the discarded tail, so the engine sat in its menu).
+            # pshapp now uses 1024 on 64-bit and beeps on overflow, but an older
+            # binary may still be on the target, so warn against the OLD limit.
+            if len(cmd) > PSH_CMDSZ_LEGACY:
+                print(f"\n*** WARNING: command is {len(cmd)} chars; psh builds before "
+                      f"the CMDSZ fix truncate at {PSH_CMDSZ_LEGACY} and execute the "
+                      f"prefix SILENTLY.\n***          If this run behaves as though "
+                      f"the tail were missing, that is why — move the tail into a "
+                      f"config file the program reads.")
             print(f"\n*** SENDING: {cmd!r}")
             ser.write((cmd + "\n").encode("ascii"))
             ser.flush()
