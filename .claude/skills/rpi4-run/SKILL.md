@@ -164,6 +164,25 @@ harness. "Slow boot"/"truncated" is usually a crash: grep the whole log for
 `Exception`/`Data Abort` and check the last few HDMI frames (the final one is
 often black from power-off).
 
+## Recording the screen (for a demo / published video)
+
+The cycles grab periodic PNGs (`artifacts/hdmi/*-tick.png`) — right for grading, useless as a
+demo. For continuous video use `./scripts/record-hdmi.sh` (output:
+`artifacts/hdmi-video/<ts>-<label>.mp4`, H.264 + faststart so it plays anywhere).
+
+The capture card is a **single-opener** V4L2 device, so the recorder and a cycle's snapshotter
+cannot both hold it. Disable the snapshots for that cycle and run the recorder alongside — the
+recorder only reads the grabber, so it neither touches the UART nor takes the Pi lock:
+
+```
+RPI4B_HDMI_INTERVAL=0 ./scripts/test-cycle-psh-interact.sh --label demo \
+    --wait-secs 150 --idle-secs 240 --max-cmd-secs 300 -- "startx_gpu deskapps"
+# in parallel:
+./scripts/record-hdmi.sh --label demo --secs 240
+```
+
+The script fails early with that instruction if the device is already held.
+
 ## Gotchas
 
 - One Pi cycle at a time (exclusive UART). Wait for a cycle to finish before the next.

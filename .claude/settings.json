@@ -55,6 +55,7 @@
       "Bash(./scripts/restore-integration-state.sh:*)",
       "Bash(./scripts/qemu-shell-smoke.sh:*)",
       "Bash(./scripts/qemu-debug.sh:*)",
+      "Bash(./scripts/record-hdmi.sh:*)",
       "Bash(./scripts/uart-summary.sh:*)",
       "Bash(./scripts/check-netboot-blob.sh:*)",
       "Bash(./scripts/diff-boot-variants.py:*)",
@@ -71,7 +72,8 @@
       "Bash(./scripts/build-diag-tool.sh:*)",
       "Bash(./scripts/stage-game-data.sh:*)",
       "Bash(./scripts/build-rootfs-helpers.sh:*)",
-      "Bash(./scripts/build-showcase-apps.sh:*)"
+      "Bash(./scripts/build-showcase-apps.sh:*)",
+      "Bash(./scripts/check-hdmi-content.py:*)"
     ],
     "deny": [
       "Bash(git push --force:*)",
