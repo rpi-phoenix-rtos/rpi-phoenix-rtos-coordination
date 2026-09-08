@@ -163,3 +163,76 @@ At the last good frame the status line reads `gen 536 … 12.2 gen/s`, so it had
 point and stopped some 30–50 s later. Unresolved; the fix for a demo take is to capture the
 first ~90 s of the desktop, and the diagnosis is to run `life.py` with its output redirected to
 a file on the NFS root.
+
+---
+
+## 5. The spans hypothesis was WRONG — and relinking the X server onto current Mesa breaks it
+
+Recorded because both halves are results, and the second one matters more than the first.
+
+### 5a. `glamor_spans.c` is not the path (hypothesis refuted)
+
+§1 named `glamor_get_spans_gl` / `glamor_set_spans_gl` as the two unpatched pixel-transfer sites
+and predicted they were reading the screen pixmap unflipped. The patch that fixed them carried a
+one-shot `ErrorF` per direction precisely so the hypothesis could fail loudly:
+
+> if these paths turn out never to run on the screen pixmap, the absence of the message is the
+> evidence, and this patch is then a no-op that should be reverted rather than kept.
+
+The diagnostic channel was validated first — `ErrorF` from the DDX demonstrably reaches the UART
+capture (`[fbdev] glamor initialised` arrives that way, and so does the shim's own
+`glamor-phx: screen-readback FBO status`). In the cycle
+`artifacts/rpi4b-uart/rpi4b-uart-20260908-215755-x-spansfix.log`, with a daemon whose binary
+contains both markers (`strings … | grep -c 'on the SCREEN pixmap'` = 2):
+
+```
+spans diag hits: 0
+```
+
+Neither span path ran on the screen pixmap at all, so the flip added there could not have
+changed a pixel. **Patch reverted**, and the build-script patch list is back to one entry. The
+candidate set narrows to the remaining screen-pixmap consumer the geometry already pointed at:
+`glamor_copy.c`. Both measured offsets are copy-shaped (+13 px is one xterm text row, i.e. a
+one-line scroll; +2 px is a frame inset), and `glamor_copy_fbo_fbo_draw`'s shader samples
+`fill_pos = (fill_offset + primitive.xy) * fill_size_inv` — texel row = pixmap row, with no
+screen-pixmap flip, while the destination gets its flip from the rasterizer. That asymmetry is
+the signature. The open objection is frequency: a systematically broken CopyArea should corrupt
+every scroll, and it does not, so something must gate which copies take that route. Next step is
+to instrument `glamor_copy.c`'s four routes the same way, not to patch first.
+
+### 5b. ⚠️ The shipped X server is linked against a Mesa that predates our own `u_vbuf` fix, and current Mesa crashes it
+
+This fell out of the same cycle and is the more consequential finding.
+
+| | Mesa in the binary | result |
+|---|---|---|
+| the daemon that has been shipping (built 2026-09-08 02:12) | `git-e4be116324` | X desktop works, 0 faults |
+| relinked from the current tree (21:38) | `git-aa916f2f06` | **X server dies with SIGILL** |
+
+`aa916f2f060` is *our* commit `u_vbuf: do not silently drop draws on the index-unrolling path
+(Phoenix RPi4)` — the fix for the owner's bug #3 (Quake III glitches). It is in the shipped image
+for the *games*, which link Mesa in-process; the X server was simply never relinked after it
+landed, so glamor has been running on the previous Mesa the whole time.
+
+Failure shape, in order, from the log: server starts, glamor initialises, all six clients launch,
+then `v3d-winsys: RENDER MMU-VIO`, `v3d-winsys: BIN MMU-VIO vio_addr=0x00470808
+fault_va=0x47080800`, then `libphoenix: NULL handler for signal 4` (SIGILL) and
+`xlaunch: server exited (status=0x300) — killing clients`. Screen goes flat.
+
+Attribution: the spans patch is excluded as a cause by §5a (its paths never ran, and for every
+other pixmap `PHX_SPAN_FLIP_ROW` is the identity), so the delta that remains is the Mesa link.
+Not airtight — the relink also refreshed the xorg core archives — but the Mesa version is the one
+visible change and the fault is in the V3D winsys.
+
+**Recovery, done:** the known-good daemon was never overwritten (`build-xfbdev.sh` writes
+`Xphoenix-glamor`, and staging renames it to `Xphoenix-glamor-daemon`), so
+`tools/x11-port/src/xorg-server-21.1.24/hw/kdrive/fbdev/Xphoenix-glamor-daemon` still held the
+02:12 build. Restored to both `.buildroot/_fs/.../bin` and the live fsid=0 export
+(sha256 `8e003ab45ef41009…`, 27 948 336 bytes, `git-e4be116324`, 0 spans markers) and re-verified
+on hardware.
+
+**What this means going forward:** any future change to the glamor X server requires a relink,
+and a relink now moves it onto a Mesa that crashes it. So the next X-server change has to fix
+that first — either by finding what in `aa916f2f060` upsets glamor's draw path (the same
+index-unrolling code glamor's copy and composite paths lean on), or by pinning the X server's
+Mesa link. Do not start an X-server change without budgeting for it.

@@ -79,7 +79,6 @@ core_archives=(
 # a while).
 glamor_core_patches=(
   glamor-destroypixmap-chain
-  glamor-spans-yflip
 )
 apply_glamor_chain_patch() {
   [ "$GLAMOR" = 1 ] || return 0
