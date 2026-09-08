@@ -70,33 +70,44 @@ core_archives=(
 )
 # Durable glamor core-source fixes (each patch header explains itself). Applied
 # on BOTH paths -- the slow full-build path and the "already built" early return
-# -- because libglamor.a must be rebuilt for a fix to reach the link. patch -N is
-# idempotent, and libglamor is rebuilt once after the last patch that landed.
+# -- because the archives must be rebuilt for a fix to reach the link. patch -N is
+# idempotent.
 #
 # When adding a patch here, name it xorg-server-$VER-glamor-*.patch and append it
 # to this list; do NOT add a second apply function (the early-return path would
 # then need updating twice, which is how the chain fix was silently skipped for
 # a while).
+#
+# ⚠️  A patch that lands must force a FULL rebuild, not a rebuild of libglamor
+# alone. This used to `make -C $KD/glamor` and return, leaving one freshly
+# compiled archive linked against xorg core archives from an earlier build. That
+# is a partial rebuild, and on 2026-09-08 it produced an X server that started,
+# brought up all its clients, and then died with SIGILL -- which cost a wrong
+# root-cause (the crash was blamed on a Mesa bump that turned out to be innocent;
+# see docs/misc/2026-09-08-glamor-screen-mirror-and-gl-window-rate.md §8).
+# Rebuilding one archive is faster and occasionally wrong, which is the worst
+# trade available here.
 glamor_core_patches=(
   glamor-destroypixmap-chain
 )
+# Set to 1 by apply_glamor_chain_patch when a patch actually landed, so the
+# "already built" early return below is skipped and the full build runs.
+GLAMOR_PATCH_LANDED=0
 apply_glamor_chain_patch() {
   [ "$GLAMOR" = 1 ] || return 0
-  local name pf applied=0
+  local name pf
   for name in "${glamor_core_patches[@]}"; do
     pf="$ROOT/tools/x11-port/patches/xorg-server-${VER}-${name}.patch"
     [ -f "$pf" ] || continue
     if patch -d "$KD" -p1 -N --dry-run <"$pf" >/dev/null 2>&1; then
       echo "=== applying glamor core patch: $name ==="
       patch -d "$KD" -p1 -N <"$pf" >/dev/null 2>&1 || true
-      applied=1
+      GLAMOR_PATCH_LANDED=1
     fi
   done
-  if [ "$applied" = 1 ]; then
-    echo "=== rebuilding libglamor after core patches ==="
-    make -C "$KD/glamor" \
-      GLAMOR_CFLAGS="-I$GLAMOR_SHIM -I$GLAMOR_MESA_GL" >/dev/null 2>&1 \
-      || { echo "glamor rebuild FAIL after core patches"; exit 1; }
+  if [ "$GLAMOR_PATCH_LANDED" = 1 ]; then
+    echo "=== a glamor core patch landed — forcing a FULL core rebuild ==="
+    echo "=== (rebuilding libglamor alone links it against stale siblings) ==="
   fi
 }
 
@@ -124,16 +135,23 @@ fi
 # Already-built = software archives present AND the configured glamor state matches
 # the request AND (for --glamor) libglamor.a is present.
 core_built() {
+  # A patch that just landed invalidates every archive, not only libglamor.
+  [ "$GLAMOR_PATCH_LANDED" = 0 ] || return 1
   all_present || return 1
   glamor_marker_matches || return 1
   [ "$GLAMOR" = 0 ] || [ -f "$GLAMOR_A" ]
 }
+# Apply the durable core-source patches BEFORE deciding whether the tree is
+# already built. Two ordering mistakes have been made here, in opposite
+# directions, so both are spelled out: the apply used to sit BELOW the early
+# return, which silently skipped any newly added patch on every run after the
+# first successful build; and it then sat INSIDE the early-return branch, where
+# it could rebuild libglamor but could no longer influence the already-evaluated
+# core_built decision. It has to run first, and core_built has to consult its
+# result.
+apply_glamor_chain_patch
+
 if core_built; then
-  # Durable core-source patches must be applied and their archive rebuilt even on
-  # the "already built" path — this early return used to sit ABOVE the patch block
-  # further down, which silently skipped any patch added there on every run after
-  # the first successful build.
-  apply_glamor_chain_patch
   echo "=== xorg-server $VER core archives already built (glamor=$GLAMOR) — skipping ==="
   exit 0
 fi
