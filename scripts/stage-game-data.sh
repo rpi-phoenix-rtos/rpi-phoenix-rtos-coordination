@@ -262,8 +262,22 @@ stage_q1_video_cfg() {
 vid_width "1920"
 vid_height "1080"
 vid_fullscreen "1"
+
+// On-screen frame-rate readout, for the showcase recording. scr_showfps alone is
+// not enough to SEE it: the counter draws through CANVAS_BOTTOMRIGHT, whose scale
+// is glwidth/vid.conwidth (gl_draw.c), and at 1920 wide with the default
+// scr_conscale 1 that is 1.0 -- i.e. 8-pixel-tall text, unreadable in any
+// downscaled recording. scr_conscale 4 sets vid.conwidth to 480 (gl_screen.c
+// SCR_Conwidth_f), giving a scale of 4 and roughly 32 px glyphs. It enlarges the
+// console as well, which reads better on a 1080p capture anyway.
+//
+// Both Quake engines read this one file (vkQuake's basedir resolves to the same
+// id1), so this covers QuakeSpasm and vkQuake together. Measured on hardware:
+// QuakeSpasm 35 FPS, vkQuake 73 FPS.
+scr_showfps 1
+scr_conscale 4
 CFG
-	log "q1: staged autoexec.cfg (1920x1080 fullscreen; always refreshed)"
+	log "q1: staged autoexec.cfg (1920x1080 fullscreen + fps readout; always refreshed)"
 }
 
 # Quake III needs OUR ioquake3-built QVMs and a format-valid key, or it dies
@@ -298,6 +312,43 @@ stage_q3_vms() {
 	fi
 }
 
+# Quake III's showcase settings.
+#
+# They live in a config file rather than on the launch line for a specific
+# reason: psh's interactive line buffer silently truncated anything past 128
+# characters and executed the prefix (fixed in phoenix-rtos-utils 02d733d, but an
+# older psh may still be on a target). A 167-character launch line lost its
+# `+devmap q3dm1` tail and the engine sat in its menu, which read as a game bug
+# and cost two hardware cycles. With these here the launch line is
+# `quake3 +devmap q3dm1` -- 21 characters.
+#
+# Q3 execs autoexec.cfg from the game directory during Com_Init, before `devmap`
+# enables cheats. cg_thirdPerson and cg_cameraOrbit are CVAR_CHEAT, but they are
+# only *registered* with that flag at cgame init, which happens after the server
+# has set sv_cheats -- so the values set here survive.
+#
+# Why an orbit camera at all: the demos Quake III ships are the 1999 .dm3
+# protocol and the engine only looks for dm_66/67/68/71, so they can never load.
+# A bot deathmatch gives the action, and the orbiting third-person camera gives
+# the movement that a stationary player view lacks.
+stage_q3_showcase_cfg() {
+	local dst="${overlay_root}/usr/share/quake3/demoq3/autoexec.cfg"
+
+	cat >"$dst" <<'CFG'
+// Shipped by scripts/stage-game-data.sh -- see the comment on
+// stage_q3_showcase_cfg for why these are here and not on the command line.
+set cg_drawFPS 1
+set bot_enable 1
+set bot_minplayers 5
+set g_spSkill 3
+set cg_thirdPerson 1
+set cg_thirdPersonRange 120
+set cg_cameraOrbit 2
+set cg_cameraOrbitDelay 60
+CFG
+	log "[q3] staged autoexec.cfg (fps readout, 5 bots, orbit camera)"
+}
+
 log "overlay root: $overlay_root"
 mkdir -p "$overlay_root"
 for g in "${games[@]}"; do
@@ -306,7 +357,7 @@ for g in "${games[@]}"; do
 		     stage_q1_video_cfg ;;
 		q2)  stage_quake q2 usr/share/quake2/baseq2 "$PAK0Q2_URL" "$PAK0Q2_SHA256" ;;
 		q3)  stage_quake q3 usr/share/quake3/demoq3 "$PAK0Q3_URL" "$PAK0Q3_SHA256"
-		     stage_q3_vms ;;
+		     stage_q3_vms; stage_q3_showcase_cfg ;;
 		stk) stage_stk_data; stage_stk_assets ;;
 	esac
 done
