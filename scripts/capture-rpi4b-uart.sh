@@ -454,6 +454,19 @@ wait "$watchdog_pid" 2>/dev/null || true
 exec 3>&-
 rm -rf "$stdin_dir"
 
+# The serial tool is started BEFORE the Pi is powered on (so early boot output is
+# not missed). While the Pi is off, the USB-UART driver re-serves its last buffer
+# instead of blocking, and the tool loops on it -- so a capture can open with
+# hundreds of thousands of copies of whatever line the PREVIOUS session ended on.
+# Measured 227k-368k lines / 7+ MB on 2026-09-07/08, and twice mistaken for a
+# target-side bug. Collapse those runs: every distinct line and the repeat count
+# are kept, so nothing is lost and the artifact labels itself. Non-fatal by
+# design -- if it fails, the raw capture is left exactly as written.
+collapse_tool="${repo_root}/scripts/collapse-uart-log-floods.py"
+if [ -s "$log_path" ] && [ -x "$collapse_tool" ]; then
+	"$collapse_tool" "$log_path" || true
+fi
+
 if [ "$capture_rc" -ne 0 ]; then
 	printf 'UART capture stopped after %ss (capture rc=%s)\n' "$watchdog_secs" "$capture_rc" >&2
 	exit 0

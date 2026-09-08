@@ -3,6 +3,50 @@
 **Status: root-caused, fix proposed, NOT implemented.** It is a `--scope core` change to the
 most-used code path in the system, so it wants its own turn plus a broad rebuild + soak.
 
+
+---
+
+## ⚠️ CORRECTION (2026-09-08, later the same day): the flood was NOT this bug
+
+The 234k-line UART flood described below as the motivating symptom is a **host-side capture
+artifact**, not target output. The stdio defect and its fix are still real and are proven by the
+regression test (`phoenix-rtos-tests 9eb0343`: FAILS without the fix with
+`Expected 109 Was 97`, PASSES with it) — but they are **not** what produced the flood, and the
+"open question" this document originally ended on (why a *tail* rather than a *prefix* repeats)
+is answered by the artifact, not by stdio.
+
+Evidence, all from logs already on disk:
+
+* **The flood recurred with the fix in place** — `rpi4b-uart-20260908-043854-stdiotest.log`,
+  235 121 lines, captured on a build that already contained `libphoenix 9029813`.
+* **It appears in logs of runs that never executed the flooding program.**
+  `rpi4b-uart-20260907-223725-wmexit2.log` is a Window Maker test; it is flooded with 360 275
+  copies of `vkvid: present 4170` — a **vkQuake** line. vkQuake was not running.
+* **It sits entirely before the boot banner in every case** (e.g. flood lines 1..367 764, banner
+  at 367 978), i.e. in the window where `capture-rpi4b-uart.sh` has the serial tool open but the
+  Pi is still powered off.
+* **A spliced variant proves host-side re-reading**: 7 489 copies of
+  `vkvid: pvkvid: present 4170` — the same buffer re-served at a shifted offset. A target
+  writing that string would never produce it.
+* ~7.5 MB of identical content is far more than any USB-UART adapter buffers, so the driver is
+  re-serving its last buffer in a loop rather than blocking or reporting EOF while the device is
+  unpowered.
+
+Mitigation shipped: `scripts/collapse-uart-log-floods.py`, called non-fatally at the end of
+`capture-rpi4b-uart.sh`. It collapses runs of >=200 identical consecutive lines to one line plus
+an explicit `[collapse-uart-log-floods: previous line repeated N more times]` marker, so every
+distinct line and the repeat count survive and the artifact labels itself. Verified on real
+flooded logs (7.79 MB -> 386 KB; 7.32 MB -> 16 KB with `uart-summary.sh` output unchanged) and
+harmless on clean ones (no-op). It has **not** yet been observed firing in a live cycle — the
+artifact is intermittent (~10 of ~60 recent captures) and did not recur in two deliberate
+attempts.
+
+**Lesson:** the flood was mistaken for a target bug twice — first as a vkQuake per-frame
+diagnostic, then as this stdio defect. The discriminator that settles it is cheap and was
+available the whole time: *check whether the flooded line could have been produced by the program
+that was actually running, and where the flood sits relative to the boot banner.*
+
+---
 ## How it surfaced
 
 A Quake II soak log was **7 MB / 228k lines**. Almost all of it was one 30-byte fragment
