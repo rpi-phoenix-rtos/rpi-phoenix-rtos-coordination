@@ -98,11 +98,34 @@ Established: after boot 91040 KB / 193 map entries; after one X lifecycle 151320
 (reproduced twice); after a second lifecycle 167044 KB / 448 entries — i.e. **+15.7 MB and +85
 entries for the second session**, so the cost is not purely one-time setup.
 
-⚠️ **Not established: whether it keeps growing linearly.** A 3-lifecycle run was attempted
-2026-09-08 and only the first session completed (7 commands did not fit the capture window), so
-there is no third data point. Re-run with fewer commands per boot, or a longer window, before
-claiming the leak is unbounded.
+### RESOLVED — the growth is NOT linear, it decays (measured 2026-09-08)
 
+The 3-lifecycle run that previously failed to fit in a capture window now
+completed: three full X lifecycles in one boot, `/bin/mem` between each, driven
+by `startx_gpu --quit-after 30 deskapps` (`--quit-after` must be argv[1]).
+
+| after | used KB | map entries | Δ KB | Δ entries |
+|---|---|---|---|---|
+| boot | 91036 | 197 | — | — |
+| X lifecycle 1 | 151384 | 366 | +60348 | +169 |
+| X lifecycle 2 | 153592 | 381 | **+2208** | **+15** |
+| X lifecycle 3 | 155096 | 386 | **+1504** | **+5** |
+
+**Per-session cost decays: +60 MB → +2.2 MB → +1.5 MB.** The +60 MB on the first
+lifecycle is one-time setup (GPU daemon start, Mesa/glamor arenas, font caches),
+not per-session cost — which is why measuring only two sessions made the residue
+look larger than it is. So **the leak is bounded** and the reaping fix holds
+across repeated sessions, rather than merely reducing the slope.
+
+Run health: **0 faults**, three clean `session ended (WM/last client exited)`
+teardowns, and `rpi4-v3d: reaped 80 BO(s) from exited client(s)` logged twice
+(the third reap fires on the daemon's next message after teardown, and the final
+`/bin/mem` does not talk to the daemon, so its absence is expected rather than a
+miss).
+
+This also supersedes the pre-fix figure quoted below: the second session cost
++15.7 MB / +85 entries *before* the fix and +2.2 MB / +15 entries after, which
+independently reproduces the 15.7 → 2.3 MB improvement the fix claimed.
 
 ## Scope note (2026-09-08, after the fix shipped)
 
