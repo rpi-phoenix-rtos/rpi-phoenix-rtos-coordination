@@ -624,3 +624,60 @@ with no DDX change, with the display checked rather than only the log.
 
 **The Pi is left on the known-good binary, re-verified this turn: 0 faults, desktop rendering and
 animating.**
+
+---
+
+## 14. The glamor-breaking Mesa delta is in the BUILD, not the source (three suspects cleared)
+
+§13 established that a daemon linked against today's `libv3d-phoenix.a` does not render the desktop.
+This turn isolated it properly, one variable at a time.
+
+**1. The DDX is exonerated.** Current Mesa, `fbdev.c` clean against HEAD, display checked rather
+than only the log (`rpi4b-uart-20260908-230837-x-mesa-display.log`): flat grey (mean 89.0, std
+**0.8** — uniform, not a desktop) then black, 3 fault matches. The known-good build in the same
+conditions gives mean 101 / std 68 and 0 faults. So §13's caveat resolves in the DDX's favour, and
+the reverted damage-rows change had nothing to do with it.
+
+**2. The `u_vbuf` guard is exonerated — by A/B, against my own hypothesis.** `aa916f2f060` is the
+only Mesa commit between the working archive and the broken one, so it was the obvious suspect.
+Neutralising just that hunk (`false &&` → `true &&`), rebuilding the archive and relinking gives
+**still black** (`rpi4b-uart-...-x-ab-noguard`, 2 fault matches). Reading the code agrees: the guard
+only suppresses an index-unrolling *optimisation* inside the indexed-draw branch, and the two
+predicates it short-circuits are pure — there is no mechanism for a GPU fault. Both the reasoning
+and the experiment now say the same thing.
+
+**3. The other candidate source deltas are inert.** The winsys (`gpu/rpi4-v3d/mesa/`, compiled into
+the same archive) has only add-then-revert pairs since 2026-09-07 — net zero. The two uncommitted
+files in the Mesa tree (`src/broadcom/meson.build` modified, `src/broadcom/compiler/v3d_shader_dump.c`
+untracked) are **not** in the archive and **not** referenced by `build-v3d-phoenix.py` — checked with
+`ar t` and a grep, not assumed.
+
+### So the source is fully accounted for, and the difference is in the build
+
+Every source delta between the archive the working daemon was linked against and today's archive is
+either exonerated by experiment or provably not compiled in. What is left is the build itself.
+
+**And a sharp narrowing that came free:** today's archive renders **all four Quakes and SuperTuxKart
+correctly** — every game capture in the current reel was taken *after* the archive was rebuilt at
+12:47. So this is not a general v3d/Mesa regression. It breaks only **glamor's** use of the driver:
+2D, many small draws, render-to-texture. That is a much smaller search space than "Mesa broke".
+
+### The reason this is hard, and the lesson
+
+**We never saved the archives the known-good daemon was linked against** — only the daemon binary
+(`artifacts/x11/known-good/Xphoenix-glamor-daemon.mesa-e4be116324`). They were overwritten in place
+by later rebuilds, so there is nothing to diff or bisect against, and the version string baked into
+the binary (`git-e4be116324`) identifies the Mesa *commit* but not the build.
+
+So the practice to adopt: whenever an X daemon is promoted to known-good, save
+`tools/.gpu-libs/*.a` **beside it**. A known-good binary you cannot rebuild is a dead end the moment
+it needs one change — which is exactly the position glamor work is in now.
+
+Next step, in order: capture a known-good archive set the next time one is proven, then bisect the
+build (not the source) against it. Do not spend more Pi cycles guessing at the source; three
+suspects have now been cleared and the remaining space is the build.
+
+**State left:** the `u_vbuf` guard is restored and the archive rebuilt with it (verified present in
+the source the archive was built from), so a future game build keeps bug #3's fix; the Mesa tree
+carries only the two pre-existing uncommitted files; and the demo runs the known-good daemon
+(sha256 `8e003ab45ef41009…`), the identical file verified rendering correctly one cycle earlier.
