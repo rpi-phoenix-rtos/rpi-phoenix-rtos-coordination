@@ -48,6 +48,15 @@ is **93 files / +5 874**, not the 338 / +32 886 the raw stat suggests.
 | phoenix-rtos-build | 35 | +957 |
 | corelibs / posixsrv | 3 / 2 | +231 / +47 |
 
+Those 14 are the *Phoenix* repositories, and they are not the whole build. The GPU stack
+additionally depends on **upstream Mesa at the immutable tag `mesa-26.2.0` plus a 981-line
+fork-authored patch** (`patches/mesa/phoenix-rpi4-v3d.patch`, in the coordination repo), fetched
+and applied by `scripts/bootstrap-linux-host.sh`. Deliberately *not* a fork — pinning a frozen
+tag means upstream drift cannot break it — but it is load-bearing, and two of its hunks are
+generic upstream Mesa defects rather than Phoenix plumbing (see the V3D material in the drivers
+section). Anyone reproducing the GPU results needs it and cannot get there from the 14 repos
+alone.
+
 ## ★ Start here: fixes to Phoenix that are not Pi-specific
 
 If you read nothing else, read these. Each is a defect in code you ship, found because this port
@@ -55,7 +64,7 @@ exercised it hard, and each is described with its root cause in the section that
 
 | # | defect | where | why it matters to you |
 |---|---|---|---|
-| 1 | **Stale cache lines survive into uncached DMA mappings** | `hal/aarch64/pmap.c` `5d8645f6` + `usb/mem.c` `12c4fe8` | Nothing retires dirty lines when a previously-cached page becomes uncached DMA memory, so a later eviction silently overwrites live DMA data. Hit SD, Ethernet, USB and WiFi. Measured ~12 corrupt GPU control lists per 8 boots → 0. **Two independent instances of one class.** |
+| 1 | **Stale cache lines survive into uncached DMA mappings** | `hal/aarch64/pmap.c` `5d8645f6` + `usb/mem.c` `12c4fe8` | Nothing retires dirty lines when a previously-cached page becomes uncached DMA memory, so a later eviction silently overwrites live DMA data. Hit SD, Ethernet, USB and WiFi. Measured ~12 corrupt GPU control lists per 8 boots → 0. **Three independent instances of one class** (the third, in the V3D winsys, was a driver-local `dc civac` retired once the kernel guaranteed it). |
 | 2 | **`open()`/socket construction race** | `posix/posix.c` `e88c8b75` | A half-built `open_file_t` is published in the fd slot before init and is reachable across blocking IPCs; a racing `close()` frees it under its own constructor and double-frees onto the zone free list. `accept4` blocks *inside* that window. |
 | 3 | **`semaphoreUp` lost wakeup** | libphoenix `e75c4fe` | Signals the condvar only on a 0→1 transition, so N units with N waiters wakes exactly one — deadlocking any multi-consumer pool. Introduced by the RTOS-1250 rewrite. |
 | 4 | **Heap overflow amplified by `free()`** | libphoenix `839b24b`, `aae70f0` | `vasprintf` overflowed a fixed 1 KiB buffer; `free()` then derived a *second, unbounded* write from the corrupted chunk header, so the fault always surfaced far from its cause. |
@@ -83,6 +92,21 @@ Found by porting 41 packages; each cost real debugging time and will recur.
 - **`<stdio.h>` exposes no `__freadahead`/`__freading`/`__fseterr`**, so gnulib needs
   per-platform branches poking directly at `FILE` internals; without the `fseterr` branch, nano
   does not build.
+- **`mprotect` cannot escalate past a mapping's original protection**, so every JIT and bytecode
+  engine must ask for RWX at `mmap` time. `map_checkProt(baseProt, newProt)` is
+  `(baseProt | newProt) ^ baseProt` (`vm/map.c:725`) and `vm_mprotect` returns **`-EACCES`** for
+  any bit `e->protOrig` lacks (`:976`), where `protOrig` is stamped at map time and never widened
+  — a deliberate W^X policy, worth knowing rather than rediscovering. Quake III's aarch64 JIT
+  could not add `PROT_EXEC` after the fact and now allocates the code buffer RWX up front; it is
+  also why the dl loader maps text/RO file-backed at *final* protection (the doc states that
+  consequence in the dl entry without stating the cause).
+- **A server has no way to learn that a client died** unless the client held an fd on it. The
+  kernel's only client-death signal is a synthesized `mtClose`, delivered solely to servers the
+  dead process held an fd on (`process_destroy` -> `posix_sweepFds` -> `proc_close`); there is no
+  death notification to port owners. So any server handing out resources over bare `msgSend` —
+  no `open()`, no fd — leaks everything a killed client held. Found the expensive way, as a real
+  per-session GPU BO leak (see the drivers section). Sharp edge for anyone taking the fd-based
+  route instead: do **not** key the death `mtClose` on `msg.pid`, which arrives as pid 1.
 
 ## How to read the rest
 
@@ -141,7 +165,7 @@ repos outside this section's scope. What is here:
 
 | change | where | what/why |
 |---|---|---|
-| VideoCore mailbox framebuffer | plo `hal/aarch64/generic/video.c` (new, +376) | Mailbox property interface: query/set physical mode, read framebuffer base and pitch, render the 3-stage boot-progress panel. Later extended to request a **triple-height virtual framebuffer in one allocation** so a GPU renderer can page-flip via `SET_VIRTUAL_OFFSET` (2 buffers still race the vsync latch); degrades to 2x then 1x if the firmware cannot grant the memory. The physical size is reported onward, so fbcon/graphmode see one 1080p buffer. |
+| VideoCore mailbox framebuffer | plo `hal/aarch64/generic/video.c` (new, +376) | Mailbox property interface: query/set physical mode, read framebuffer base and pitch, render the 3-stage boot-progress panel. Later extended to request a **triple-height virtual framebuffer in one allocation** so a GPU renderer can page-flip via `SET_VIRTUAL_OFFSET` (2 buffers still race the vsync latch); degrades to 2x then 1x if the firmware cannot grant the memory. The physical size is reported onward, so fbcon/graphmode see one 1080p buffer. Worth stating *why* three, since it is not a capability but a fix: GPU render wedges were contention between the GPU writing and the HVS display engine reading the live scanout buffer, and the measured progression was render-to-scanout ~40 % of boots wedged → blit-resolve to a DRAM target (rare) → double-buffer (~1/boot) → **triple-buffer, 0 wedges over 95 FPS samples / ~190 s**. Triple buffering is what guarantees the GPU never writes the buffer being scanned out. |
 | Graphmode handoff | plo `syspage.c`; kernel `syspage.c`, `include/arch/aarch64/generic/syspage.h`, `generic.c` | Framebuffer geometry + base travel plo -> syspage -> `platformctl(pctl_graphmode)`, gated on `HAS_GRAPHICS`. |
 | PL011 + GIC in plo | kernel `hal/aarch64/pl011.{c,h}` (new); plo `generic/{console,interrupts,timer}.c` (new) | Reusable PL011 helper split out of the console; plo gains its own GICv2 Group-1 init, timer and console for the generic board. |
 
@@ -151,7 +175,7 @@ This is the section upstream should read. All of these are defects in shared Pho
 
 | change | where | root cause in one sentence |
 |---|---|---|
-| ★★★ Stale dirty lines survive into a NON-CACHED mapping | `hal/aarch64/pmap.c` (`5d8645f6`) | A page mapped Normal-NC may still carry dirty cache lines from a previous owner that had it mapped cached: `_pmap_destroy()` releases a process's pages with no cache maintenance, and the only callers of `_pmap_cacheOpBeforeChange()` are `_pmap_enter()` and the unmap path, so nothing retires them — they can be evicted at any later moment, landing on top of whatever was written through the new uncached mapping. Every uncached DMA mapping in the system has this exposure (SD, genet, USB, WiFi), so intermittent address-dependent faults in those subsystems are the same bug class; the fix clean+invalidates on the `MAIR_IDX_NONCACHED` transition only (Device mappings hold no lines). The location is aarch64-specific, the defect class is not. Measured: GPU control-list corruption at 64-byte granularity went from ~12 corrupt lists per 8 boots to 0, and a dependent rendering bug from 0/15 to 7/7. |
+| ★★★ Stale dirty lines survive into a NON-CACHED mapping | `hal/aarch64/pmap.c` (`5d8645f6`) | A page mapped Normal-NC may still carry dirty cache lines from a previous owner that had it mapped cached: `_pmap_destroy()` releases a process's pages with no cache maintenance, and the only callers of `_pmap_cacheOpBeforeChange()` are `_pmap_enter()` and the unmap path, so nothing retires them — they can be evicted at any later moment, landing on top of whatever was written through the new uncached mapping. Every uncached DMA mapping in the system has this exposure (SD, genet, USB, WiFi), so intermittent address-dependent faults in those subsystems are the same bug class; the fix clean+invalidates on the `MAIR_IDX_NONCACHED` transition only (Device mappings hold no lines). The location is aarch64-specific, the defect class is not. Measured: GPU control-list corruption at 64-byte granularity went from ~12 corrupt lists per 8 boots to 0, and a dependent rendering bug from 0/15 to 7/7. The V3D driver had independently worked around the *same* class with its own `dc civac` on every new BO (devices `9bac0f7`, "stale dirty lines were eating control lists") and could delete it once this landed (`6cdf597`) — so the shortlist's "three instances" is three real subsystems, not three guesses. |
 | ★ 32 KiB main-thread user stack + double-fault on signal push | `hal/aarch64/generic/config.h` (`SIZE_USTACK`, `8ae20864`) | Phoenix has no auto-stack-growth, so the 8-page main-thread stack is a hard ceiling that a real POSIX userland exceeds — coreutils `cksum` and `od` overflow it and SIGSEGV. Worse, the kernel then **double-faults pushing the signal frame below the exhausted SP** (`hal_cpuPushSignal` -> `hal_memcpy` on an unmapped user stack), which also corrupts the crash dump, so the overflow does not even report itself. Raised to 256 pages here (demand-paged, so only touched pages cost anything); the 1 MiB value is Pi-tuned but the ceiling and the double-fault are general. The double-fault itself is *not* fixed. |
 | ★★★ open()/socket construction window | `posix/posix.c` (`e88c8b75`, `19dcbd5d`, `c3f60f1b`, `d3862861`, `7ac1bd10`, `39135453`) | `posix_open`/`posix_newFile` publish `p->fds[fd].file` *before* the file is initialised (the slot is how the fd is reserved) and then drop `p->lock` across several blocking IPCs, so a half-built `open_file_t` — uninitialised `refs`, `oid`, `type` — is reachable by every other thread; a concurrent `close()` or exec CLOEXEC sweep decrements that garbage refcount, frees the file under its own constructor, and the error paths then free it a second time, putting one block on the zone free list twice. Fixed by a construction reference (`refs = 2`, one for the slot, one for the caller), an `ftConstructing` file type so a half-built file is never mistaken for a regular file, a sentinel oid that cannot resolve to a live port, and slot-still-ours re-checks before writing flags or returning the descriptor. `unix_accept4`/`inet_accept4` *block* inside this window, so it is wide. |
 | ★★★ AF_UNIX socket-id recycling | `posix/unix.c` (`69d9a448`) | `unixsock_alloc()` handed out the lowest free id while `unix_bind()` publishes a filesystem name keyed on `{US_PORT, id}` that POSIX keeps until `unlink()`, so a stale pathname resolved to a *different, live* socket and `send()` wrote its payload into that socket's buffer where an unrelated reader consumed it. Allocating ids monotonically reproduces Linux's behaviour (stale name -> `ECONNREFUSED`); `send()` also stopped reporting `ENOTSOCK` (which describes the caller's fd) for a dead destination. Removes the lowest-free rbtree augment machinery, net -19 lines. |
@@ -180,10 +204,11 @@ EL0 residual still open. Working notes:
 
 | change | where | measured |
 |---|---|---|
-| ★★ Read-ahead clustering for file-backed faults | `vm/object.c` (`8834eaf3`) | A file-backed fault fetched one 4 KB page and paid three synchronous server round-trips (`proc_open` + `proc_read` + `proc_close`) for it. `object_fetchCluster()` fills a bounded 16-page / 64 KB window in one open+read+close and installs the read-ahead pages in the object's cache. A 24 MB static binary exec'd from ext2-on-SD reached `main()` at **T+68.0 s -> T+5.5 s (~12x)**. Bounded, clamped to the object's backing pages, zero-fills past EOF, degrades to one page under heap pressure. |
+| ★★ Read-ahead clustering for file-backed faults | `vm/object.c` (`8834eaf3`) | A file-backed fault fetched one 4 KB page and paid three synchronous server round-trips (`proc_open` + `proc_read` + `proc_close`) for it. `object_fetchCluster()` fills a bounded 16-page / 64 KB window in one open+read+close and installs the read-ahead pages in the object's cache. A 24 MB static binary exec'd from ext2-on-SD reached `main()` at **T+68.0 s -> T+5.5 s (~12x)**. Bounded, clamped to the object's backing pages, zero-fills past EOF, degrades to one page under heap pressure. **Honest boundary, from the controlled follow-up:** raising `OBJECT_READAHEAD_PAGES` 16 → 64 (256 KiB clusters) measured 7.686 s against the cluster-16 baseline's 7.669 s — a 4x larger cluster with the total unchanged, which *refutes* the per-cluster-round-trip model for cold exec paging over NFS (that path is per-page-fault and message-copy bound). Reverted; manifest `2026-08-12-readahead-cluster-64`. |
 | ★★ Demand-zero the anonymous `.bss` | `proc/process.c` (`b446114f`) | `process_load{32,64}` `hal_memset` the entire `.bss` at exec under `map->lock` — ~14k pages for a 26 MB game binary. But the bulk `.bss` past the last file page is an anonymous mapping the VM already demand-zeroes per fault, so only the tail sharing the last file-backed page needs zeroing (it is COW'd from the file). Matches Linux. Turned a 26 MB-`.bss` exec from "hangs over flaky NFS" into fast and robust. |
 | ★★ Demand-page the ELF header map | `proc/process.c` (`432f537b`) | `process_load` mapped the whole ELF image into the kernel map, which on an MMU target is eagerly populated — so exec of a large binary pulled the entire file in one page-read per page even though only phdrs, shdrs and `.shstrtab` are dereferenced. Now mapped lazily with only the metadata ranges explicitly forced (strided by `sizeof()` so a malformed `e_*entsize` cannot leave a touched page unforced); other ELF classes keep the old behaviour. A force failure propagates its real code instead of being masked as `-ENOEXEC`. |
 | ★★ Readiness-woken `poll()`/`select()` | `posix/posix.c`, `posix/unix.c` (`01715f09`, `7a52147c`, `9a6d4743`) | `posix_poll` was a poll-and-sleep loop with a 100 ms re-check, so every X client round trip (libxcb waits each reply in `poll(-1)`) cost up to 100 ms. AF_UNIX fds now block on a global unix poll queue broadcast by every socket state change; the timed loop survives only as the fallback for remote-server fds and the safety-net timeout, back at 20 ms. Lost-wakeup safe via the existing `wakeupPending` sentinel; a missed broadcast degrades to <=20 ms, never a stall. **Note the inet half is narrower than it reads**: for a poll on *exactly one* `ftInetSocket` fd, the block timeout is packed into the high bits of the `atPollStatus` attr value above the 16-bit event mask, and only the lwip socket server decodes it — everything else keeps the legacy path. |
+| ★ ~100 s of every boot was a diagnostic dump | `usb/xhci/bcm2711-pcie.c` (devices `3f82638`), kernel `6cdf217e` | A "Pi-firmware bridge state" dump read 10 RC / MEM_WIN registers *before* `bcm2711PrepareHostBridge` clears `SERDES_IDDQ`; each read took the PCIe external-abort recovery path at **~10.8 s** and returned `0x0`. Deleting it took the boot span **165.9–177.5 s -> 66–74 s**. Its own hypothesis ("the firmware leaves the bridge working") was disproved by its all-zero output. Worth stating because the follow-on claim was withdrawn: the post-fix study also credited it with "USB enumeration 3/10 -> 10/10", and a controlled 8+8 A/B — with the build identity gated by `strings loader.disk`, i.e. verifying the *measurement* — gave 6/8 with the dump against 8/8 without, **Fisher p ≈ 0.47, not significant**. Enumeration was intermittently flaky either way. |
 | plo `dc ivac` sweep -> set/way invalidate-all | plo `hal/aarch64/generic/hal.c` (`54bf7c3`) | `hal_dcacheInval(0, 0xfc000000)` walked 4 GB with ~65M `dc ivac` through the EL2 MMU, including the 76 MB GPU reserve mapped as Device (where `dc ivac` is CONSTRAINED UNPREDICTABLE). Replaced with a set/way invalidate-all, which is the right tool for a full invalidate and does not go through the MMU. |
 
 ### 5. Stability / robustness
@@ -262,6 +287,7 @@ most cases the failure was *silent or misattributed* — the fault surfaced far 
 | ★ `aae70f0` `free()` amplified an overflow | `stdlib/malloc_dl.c` | `free()` derived `malloc_chunkSetFooter`'s write address from the chunk header, so one caller overflow became a second, unbounded write at an arbitrary address. Added `malloc_chunkValid()` (page-aligned heap, chunk in range, size 8-aligned ≥ `CHUNK_MIN_SIZE`, no run past heap end); on failure it reports the *smashed* block via `debug()` and leaks it. The diagnostic deliberately avoids `printf` (re-entering malloc under its own lock). |
 | ★ `6465a4a` `malloc(0)` returned NULL | `stdlib/malloc_dl.c` | Legal per C, but glibc/BSD/dlmalloc all return a unique freeable pointer and portable code relies on it (jq's `jv_mem_calloc` mis-reported OOM on every empty collection). Size 0 is now treated as 1. |
 | ★ `5fa3847` double `fclose()` was a NULL write | `sys/list.c`, `stdio/file.c` | Fixed at both layers: `lib_listRemove()` treated a node with NULL links as still linked and did `t->prev->next = ...` through NULL; and `fclose()` now *unlinks first* (`file_unlink`/`file_release` split, membership by walking the open list) and returns `EOF`/`EBADF` for an already-closed FILE instead of re-flushing freed memory, closing a recycled fd and double-freeing. Found as a `far=0x10` EL0 Data Abort in quake3e. |
+| ★ `9029813` `fflush` re-transmitted an already-written prefix | `stdio/file.c` | `__fflush_one()` treated a short write from `full_write()` as "keep the entire buffer": it set `F_ERROR` and left `bufpos` spanning everything, *including the bytes already gone out*. But `full_write()` deliberately returns a short count on `EAGAIN` (`return (errno == EAGAIN) ? total : -1;`) — which is what a tty does whenever a program prints faster than the UART drains. The next flush restarted from `stream->buffer` with the same `bufpos`, so the written prefix went out twice and the unwritten remainder was never resumed; `F_ERROR` also stuck permanently on a stream that had only met backpressure. `write_buffer()` — the flush path taken when the buffer *fills*, ten lines below in the same file — already did `bufpos -= err` and memmoved the remainder down, so the two paths disagreed about what a short write means. Evidence: a vkQuake run printing at frame rate produced **234 113 identical copies of one 31-byte buffer tail** on the UART (7 MB in ~200 s), perfectly contiguous. Ships with a regression test. Stated in-commit: the observed symptom is a repeated *tail* while this defect explains a repeated *prefix*, so the fix is correct but not proven to be the whole story. |
 | `5674368` printf output shredded into 15-char lines | `stdio/fprintf.c` | `format_feed()` flushed every 15 chars; on an unbuffered stream or raw fd each chunk became its own `write()`. Buffer 16 → 256. |
 | `01f74b0` scanf returned EOF on a matching failure | `stdio/scanf.c` | POSIX distinguishes matching failure (return items assigned) from input failure (EOF); `sscanf("!@#", "%d", &d)` returned −1 instead of 0. |
 | `eb60be1`, `cbe4946` `fopen` mode parsing | `stdio/file.c` | `string2mode("")` read past the terminator; the modifier scan accepted `b` in one fixed slot only and rejected `t`, so `fopen(..., "rt")` failed (X11's libXfont2 had a downstream workaround). Rewritten to scan modifiers in any order; `x`→`O_EXCL`, `e`→`O_CLOEXEC`. |
@@ -503,7 +529,7 @@ All are userspace servers in the standard Phoenix idiom (`mmap(MAP_PHYSMEM)` + `
 | BCM43455 SDIO WiFi | `devices/wifi/rpi4-wifi/` (4 805 lines) + `lwip/drivers/wifi43455.c` | `/dev/wifi` (text scan/ctl), `/dev/wifidata` (raw frames), `wifi` CLI, lwIP netif `wl2` | Firmware download, WPA2 join via the firmware supplicant, full-MTU data path, DHCP lease over the air. Throughput is poll-bound (§4). |
 | BCM43455 Bluetooth | `devices/bt/rpi4-hci/` | `/dev/hci0` (raw H4 HCI), `btctl` | Controller reset, patch-RAM upload, `BD_ADDR`, HCI inquiry. Raw HCI byte stream only — no host stack (L2CAP/GAP) above it. |
 | PWM audio (3.5 mm jack) | `devices/audio/rpi4-audio/` | `/dev/audio0` (s16 PCM write) | Self-chained DMA ring, DREQ-paced, with playback-rate backpressure and PIO fallback. No `snd` backend; audible sign-off is attended. |
-| SoC thermal / throttle | `devices/sensors/rpi4-thermal/` | `/dev/thermal`, `/dev/throttled` | Complete for what the SoC allows: telemetry only, the VideoCore firmware owns the trip point. |
+| SoC thermal / throttle | `devices/sensors/rpi4-thermal/` | `/dev/thermal`, `/dev/throttled` | Complete for what the SoC allows: telemetry only, the VideoCore firmware owns the trip point. Then used to answer the obvious question about a passively cooled board rendering 3D: **6.3 min under QuakeSpasm, 35.0 °C → a 53–55 °C plateau (flat from t = 240 s), `throttle=0x0` on all 19 samples**, 0 faults — no under-voltage, no ARM capping, no sticky bits, ~5 °C of headroom to the first soft cap. Limits: 6.3 min not 30, one board, open-air bench. |
 | Hardware RNG (iproc RNG200) | `devices/misc/rpi4-hwrng/` | `/dev/hwrng` | Complete; backs `/dev/urandom` and `getentropy`. |
 | GPIO | `devices/gpio/rpi4-gpio/` | `/dev/gpio` (snapshot), `RPI4GPIO_GETPIN` | **Read-only by design.** Driving outputs needs a bench rig and is deferred. |
 | ★ USB HID keyboard / mouse | `devices/tty/usbkbd/`, `devices/tty/usbmouse/` | `/dev/kbd0`, `/dev/mouse0` | Cooked ASCII stream *and* a raw 8-byte HID report mode (so a game can see key-up). Hosted inside the `usb` daemon; `N_URBS=1`, so the interrupt path is lossy under fast input. |
@@ -536,6 +562,62 @@ ioctls to it. It is HW-proven and built as a first-class component, but it is **
 taking exclusive ownership conflicts with the in-process-winsys GPU apps that currently ship, so the
 shipping path today is one app at a time with the winsys linked in-process.
 
+Three submit engines are implemented, not one. `DRM_V3D_SUBMIT_TFU` and `DRM_V3D_SUBMIT_CSD` each
+started as an unhandled ioctl falling through to `default: return 0`, so *every* Texture Formatting
+Unit job and *every* compute dispatch was a silent no-op with the destination left unwritten. TFU is
+the buffer→image path V3DV uses for every tiled texture upload, blit and mipmap generation, so
+Vulkan textures were simply black until `ioc_submit_tfu` existed — Mesa carried a matching
+`DISABLE_TFU` force in the meantime and dropped it once the ioctl landed. (CSD's own story is §7.)
+The hardware findings inside these paths are the transferable part:
+
+- **GPU VA-window sizing is a bug class, not a tuning knob**, because the MMU just walks a flat
+  `PT[va>>12]` array from `MMU_PT_PA_BASE` with no page-table-length register to bound it. The
+  table began as a single 4 KiB page = 1024 PTEs = 4 MiB of GPU VA, so a 1024×768 colour + depth
+  target (3 MiB each) overflowed it: `create_bo` wrote PTEs *past the table* **and** placed the BO
+  at an unmapped VA, so the GPU store landed nowhere and the render target came back all-zero —
+  misread for a while as tile-state sizing. It is now 256 pages = 1 GiB with a loud bounds guard
+  instead of silent corruption (`v3d_gpu.c:156`, `4bfc06a`), the in-source rationale recording
+  that a full SuperTuxKart race exhausts 256 MiB of it.
+- **Unacknowledged QPU interrupts stall fragment dispatch.** Linux clears them on every IRQ; this
+  driver polls, so it now W1Cs only the QPU bits mid-render (never bit 0, so `FRDONE` cannot be
+  lost). In-source and HW-verified: "this collapsed the STK in-game render wedge **330 -> 0**"
+  (`v3d_gpu.c:1080`, `5be4655`).
+- **Binner wedges came in two sub-modes and neither register appears in Linux's V3D 4.2 path.**
+  One is overflow exhaustion: the binner spills per-tile primitive lists when Mesa's initial
+  `tile_alloc` runs out, and a fixed 4 MiB pool was enough at 1024×768 (~192 tiles) but not at
+  1080p (~510), where a heavy scene exhausted it and the binner wedged *every* frame
+  (`OUTOMEM|SPILLUSE`, ~3 fps) — now a persistent 32 MiB pool handed over whole on the first
+  `OUTOMEM`, with the residual case logged rather than hidden (Linux instead allocates a fresh
+  256 KiB BO per event, unbounded). The other is the QPU bin-vs-render reserve: `CTL_MISCCFG`'s
+  `QRMAXCNT` field is now written once at init, low favouring fragment shaders and high favouring
+  the coordinate shader, tuned to a value with 0 bin *and* 0 render wedges. In-source note worth
+  keeping: **Linux on V3D 4.2 never writes `MISCCFG` at all**, so this is a deliberate divergence.
+- **Submits were unserialised** (`e8a72e9`) — vkQuake submits from threads — and BOs of clients
+  that died without `GEM_CLOSE` were never reclaimed (`1eb8608`; see the platform gap about client
+  death). Measured across two X lifecycles in one boot: second-session cost **15.7 MB -> 2.3 MB**
+  and **+85 -> +8** map entries, with `reaped 80 BO(s) from exited client(s)` logged. Honest
+  scope, from the same write-up: whether the leak grew linearly was never established.
+- **Mesa's on-disk shader cache was five no-op stubs**, so every GL app recompiled its shaders on
+  the V3D each boot; `v3d_phoenix_stubs.c` now implements it (BLAKE3 keys, one file per key,
+  atomic temp+`rename`, a version-segmented `/vN` directory). HW: a cold boot wrote 52 blobs, a
+  warm boot hit all 52 with no recompile. Its failure mode is worth carrying — see the caveats.
+
+Mesa itself is patched, and not only for Phoenix. Two of the 16 carried commits are ordinary
+upstream `u_vbuf` defects that would bite any gallium driver on a non-x86 host: a missing NULL
+check on the translate object (`translate_generic_create` can fail, and aarch64 has no
+`translate_sse` to fall back on — quake3 crashed mid-combat), and a draw silently dropped when
+`u_vbuf_translate_begin` fails on the index-unrolling path (`goto out` skips `draw_vbo` and
+`debug_warn_once` is inert in release builds — Quake III's world rendered black while player
+models stayed correct). A third is an upstream V3D limitation rather than a Phoenix bug: the TFU
+multi-level mipmap generator supplies OPAD only for level 0 and *infers* the tiling of levels ≥ 1,
+and that inference matches `v3d_setup_slices`/the TMU only for power-of-two bases — so Quake II's
+NPOT model skins (banner 260×195, soldier 288×195) scrambled at distance while every POT texture
+was correct. Fix: decline the TFU fast path for NPOT bases and fall back to render-based mipmap
+generation. Also fork-local and load-bearing: Early-Z is force-disabled on Phoenix, because a
+depth-tested *tilted* quad hung the GPU while a parallel one was clean — the commit records
+"avoids constant depth-drain render wedge (5fps->38fps)", so it is a live divergence from upstream
+Mesa with a measured cost and benefit.
+
 ### 2. Changes to existing Phoenix drivers and subsystems
 
 - `devices/pcie/server/pcie.c` (+763): BCM2711 host-bridge support for the generic PCIe server — an
@@ -554,6 +636,9 @@ shipping path today is one app at a time with the winsys linked in-process.
   list exposed for out-of-tree netifs, `/dev/ipstats`, socket-layer fixes (§3), and lwIP checksum
   algorithm 3 as the default (word-at-a-time; a measurable win on the A72, no-op where overridden).
 - ★ `usb/` (all 37 commits): the shared USB framework — DMA allocator, hub, enumeration. See §3 and §5.
+- Known divergence worth stating: the xHCI HCD registers **no interrupt handler at all** — it is
+  poll-only, where the EHCI HCD it sits beside is interrupt-driven. That is an SMP performance item
+  and a difference an upstream reviewer should see stated rather than discover.
 
 ### 3. ★ General bug fixes
 
@@ -597,8 +682,64 @@ These are defects in shared Phoenix code that would bite any target.
   give-up limit fixes that, and `3c7fdb2` fixes the follow-on: the counter was only cleared when a
   *tracked* device disconnected, and a device that never enumerated was never tracked — so a port that
   hit the limit ignored every later replug, permanently.
+- ★ `xhci.c` `148bf48` — **an event-ring consumer must key on the TRB, not on (slot, endpoint).** A
+  short control-IN read emits a `SHORT_PACKET` event on the Data TRB *in addition to* the Status IOC
+  event, but `ep0ControlRead` consumed one event per call and matched only on (slot, ep0) — so
+  transfer *N* matched *N−1*'s Status TRB. The drift began at the first short string-descriptor read,
+  and every later read then returned a stale residual-0 completion *before its own data landed*: the
+  hub-class GET_DESCRIPTOR reported 15 bytes into an all-zero buffer, `bNbrPorts` came back 0, and
+  `calloc(0, 8)` made the log say **`usbhub: Out of memory!` with ~3.8 GB free**. Both ep0 paths now
+  drain the whole TD's events until their own Status-TRB physical address, which also clears events a
+  prior transfer left behind (in-source at `xhci.c:2622`).
+- ★ **A missing barrier before the doorbell** — a generic aarch64 driver hazard, not a Pi 4 one. The
+  command ring had `dsb sy` before its doorbell; the ep0 and interrupt doorbells did not, so
+  Normal-NC TRB writes could reorder past the Device-memory doorbell write and the controller could
+  DMA-read a ring whose newest TRB or cycle bit had not landed. Centralised into `xhci_dbWrite32()`
+  (`xhci.c:538`), mirroring Linux's wmb-before-doorbell.
+- ★ **No command-ring recovery existed**, so a reported "3/3 retries failed" was one hung command
+  plus two unreachable retries: a command the controller dequeues but never completes parks its
+  dequeue on that TRB while the producer runs ahead, so the framework's retry loop never
+  re-executed anything. `xhci_cmdRingRecover()` (`xhci.c:1631`) does CRCR.CA abort → wait CRR=0 →
+  drain the event ring → re-init, which makes retries real *and* exposes the true per-attempt
+  failure rate.
+- **A behind-hub low-speed device needs a Configure Endpoint on the *hub's own* slot context.**
+  Beyond the route string and TT fields, the controller will not route split transactions below a
+  hub until that hub's slot context carries `Hub=1` + `NumberOfPorts` — and it must be a Configure
+  Endpoint, not an Evaluate Context (xHCI §4.6.6). Also required: per-slot interrupt pipes (a single
+  shared `interruptPriv` was hub-owned) and `N_STATUSTHRS` 1 → 2 so the host actually ran the
+  URB-completion consumer.
+- **PCI `BUS_MASTER` clear silently drops MMIO writes to operational xHCI registers.** In-source at
+  `bcm2711-pcie.c:1033`: on the BCM2711 root + VL805, leaving `BUS_MASTER` clear lets writes to
+  DCBAAP, CRCR and CONFIG be dropped after HCRST *while capability reads still work*. A write that
+  vanishes while reads keep working is a nasty debugging shape.
+- **HCRST does not clear the VL805's internal CRCR** — which is *why* one daemon owns both the
+  bridge and the controller (the doc reports that design in §2 without the cause). A boot-time
+  daemon that programmed a command ring and exited left the controller answering a later process's
+  fresh ring with Command Completion Events carrying the **old** ring's physical address, even
+  though post-HCRST `USBSTS` read clean. So no process may touch the controller before the one that
+  intends to drive it; hence the `--bridge-only` mode. Traceability caveat: the evidence is a
+  2026-05-28 UART capture, not a surviving in-tree comment.
 - `usb/dev.c` `e0911ce` — `sprintf` of `/dev/usb-%04x-%04x-if%02d` into `char[32]`; `%02d` is a *minimum*
   width, so a corrupt interface number overflowed the stack buffer.
+
+**GENET (gigabit Ethernet)**
+
+- ★ `bcm-genet.c` (lwip `55090e6`) — **gigabit netboot was 100 % broken until the RX status prefix
+  matched the firmware, not Linux.** This is a hard functional failure, unrelated to the throughput
+  work in §4. The 64-byte status-block path in the RBUF **RX front-end** (`RBUF_CTRL.RBUF_64B_EN`)
+  dropped a frame that closely trailed the Pi's *own* TX at gigabit — no FCS error, MIB-uncounted,
+  gigabit-only — so the peer's reply at ~100 µs was lost and only its ~1 s RTO retransmit arrived,
+  which is what timed out every NFS mount. Fix: drop `RBUF_64B_EN` and keep `RBUF_ALIGN_2B` for
+  lwIP's `ETH_PAD`, taking the RX status prefix 66 → 2 (in-source at `bcm-genet.c:927`). After it,
+  NFS mounts at gigabit with 0 failed attempts, the **SYN→SYN-ACK gap collapses 1 s → 7 ms**, drops
+  4 → 0, and a full 128 MB read completes (134 217 728 B in 15.334 s), reliable over n=3 mounts.
+  Two things about *how* it was found are the reusable part: it came from a register-by-register
+  diff of the VideoCore firmware's known-good GENET state against ours (`rbufctl` fw `0xc040` vs
+  phx `0xc043`), because **our configuration matched Linux and the firmware's did not**; and the
+  first candidate from that diff was a recorded negative — disabling the RX checksum checker to
+  match the firmware changed nothing ("gap still ~1.0 s"), so the checker should not be
+  re-suspected. The 8.5 MB/s that followed is the separate pre-existing NFS-read ceiling, which is
+  the work §4's 29.9 MB/s figure comes from.
 
 **tty and filesystems**
 
@@ -626,6 +767,30 @@ These are defects in shared Phoenix code that would bite any target.
   GPU: BO handles and closed BOs' CPU addresses were being recycled, so a stale handle resolved to a
   live BO and a new mapping landed on a live one. Fix: never recycle handles or mappings, and invalidate
   a BO's PTEs on close.
+- ★ **A general V3D tiling rule, learned twice.** The fork's own `should_tile` optimisation forced
+  large `PIPE_BIND_RENDER_TARGET` surfaces to RASTER so `glReadPixels` stayed a fast linear copy —
+  but Mesa marks **every** renderable RGBA8 texture `PIPE_BIND_RENDER_TARGET`, so Quake III's 1024²
+  *sampled* merged-lightmap atlas was laid out linear and the TMU sampled linear-as-UIF: the
+  q3dm7 "lightmap-black" bug, plus Quake II floor speckle and vkQuake striping. (A 512² atlas
+  escaped only because it was under the width gate, which is why the smaller map looked fine.)
+  Confirmed at descriptor level by a runtime `V3DTEX` dump — pre-fix the 1024 atlas read
+  `tiling=RASTER`, post-fix `tiling=UIF_XOR`, identical to the working 512. Adding
+  `!(bind & PIPE_BIND_SAMPLER_VIEW)` to the gate then caused a **worse** second bug, which is the
+  instructive half: Mesa stamps `PIPE_BIND_SAMPLER_VIEW` on *every* renderbuffer
+  (`main/renderbuffer.c:276`), so the fullscreen scanout target was excluded too and left tiled,
+  and the HVS display engine — which scans LINEAR only — read it as linear, shredding every GL
+  game's HDMI output into horizontal stripes. Fixed by having the winsys flag the next scanout so
+  the gate forces RASTER regardless of the spurious bit. **The transferable rule: anything the
+  display engine scans out must be RASTER; anything the TMU samples must stay tiled.** Note what
+  masked the regression — the frame-dump SSIM path reads back through a tiling-*aware* GPU blit and
+  scored 0.993 while the actual HDMI output was garbage.
+- ★ **`glGenerateMipmap` is pathologically expensive on this port**, because every mip level is a
+  separate TFU copy plus an L2T flush. yQuake2's gl3/GLES3 renderer mipmaps every texture and so
+  took 7+ minutes to load a map, never reaching the 3D view; defaulting `gl3_nomip=1` (override
+  `YQ2_GL3_MIPMAP=1`) drops that to seconds and produced the first full textured first-person
+  GLES3 frame on HDMI, at a stated cost of bilinear rather than trilinear filtering. This is a
+  reusable per-level cost model for any GLES client on V3D, and it is the GPU-side half of the
+  "asset load is slow" note on the yquake2 row.
 
 ### 4. Performance
 
@@ -649,6 +814,19 @@ ceiling (an N µs sleep caps you near one frame per N µs), and each frame costs
 a backplane window setup plus four PIO SDIO transfers. An event-driven read and F2 DMA are the named
 next levers. Two other measured findings were kept but explicitly *disproved* as the cause: SDPCM credit
 windows never closed (`blocked=0`), and byte-mode RX is 5× faster than block mode here.
+
+One bound on all of the storage numbers, because it says where *not* to optimise: **NFS is
+latency-bound, not bandwidth-bound, and the floor is not a Phoenix defect.** `tools/nfs-bench`
+measured a random 4 KiB NFS read at **1.46 ms (687/s)** against tmpfs's **0.07 ms (14 025/s)** —
+about **20×** — and a host-side `tcpdump`/`tshark` breakdown over ~2000 READ RPCs put nfsd's own
+processing at a median 0.030 ms against a client round-trip of 0.687 ms, so the read is dominated
+by wire RTT and the Phoenix client's own overhead is modest. Measured over the 100 Mbit link of
+the time; the recorded conclusion is that this floor is network-inherent rather than a fixable
+client defect, which was the question being asked. That is what makes RAM-staging assets worth doing per application (see the yquake2 row) and jumbo
+frames not worth trying (ruled out both by the lab switch and as moot, since Linux reaches
+112 MB/s at standard MTU). Not everything slow is explained by it: SuperTuxKart's ~27 s first-run
+cost was measured *not* to be shader compilation, asset reads or steady-state rendering, and the
+leading remaining hypothesis is the kernel's contiguous physical allocator.
 
 ### 5. Stability and robustness
 
@@ -740,8 +918,8 @@ The single most valuable material for upstream is not the port count but §3: ne
 | **★ sdl2** | 2.30.12 | Real SDL 2.30.12 with two *new upstream-shaped backends* written for Phoenix: `src/video/phoenix` (one fullscreen `/dev/fb0` window, input drained from `/dev/kbd0` + `/dev/mouse0`) and `src/audio/phoenix` (pull model over `/dev/audio0`). Zlib licence; the GL-context glue is kept outside `libSDL2.a` to preserve that |
 | **★ libnfs** | 6.0.2 | Backs NFS-as-rootfs. Carries three real NFSv4 bug fixes (see §3). LGPL-2.1 |
 | xorg_libs | 2023.2 | 24 tarballs in one recipe (libX11 1.8.7, libxcb 1.16, libXt/Xaw/Xmu/Xpm/Xext/Xrandr/Xrender, xcb-util family, pixman 0.42.2, xtrans, xkbfile). Version anchored on xorgproto |
-| xorg_server | 21.1.24 | Xorg with a **new Phoenix DDX** in-tree at `xorg_server/files/ddx/` (`fbdev.c` 1020 lines, `ddxLoad.c` 631, built-in keymap, HID→evdev map). Both a software-fb and a glamor/GPU server are built |
-| xorg_fonts | 2.13.2 | freetype 2.13.2 + fontconfig 2.14.2 + cairo 1.16 + expat + libXft/libXfont2/libfontenc + PCF fonts (`font-misc-misc`, `font-cursor-misc`, `font-adobe-75dpi`, `encodings`, `font-alias`) |
+| xorg_server | 21.1.24 | Xorg with a **new Phoenix DDX** in-tree at `xorg_server/files/ddx/` (`fbdev.c` 1020 lines, `ddxLoad.c` 631, built-in keymap, HID→evdev map). Both a software-fb and a glamor/GPU server are built. The GPU server additionally carries **four patches to upstream glamor**: an R↔B swap on `XPutImage`'d content (RGBA transfer format), a screen-pixmap upload Y-mirror plus its symmetric download flip, an extension of that flip to the two `glamor_spans.c` transfer sites the first patch missed, and the `DestroyPixmap` hook-chain fix in §3 — the last being a genuine upstream glamor defect. Build-lineage caveat, stated because this section otherwise reads as though all X lives in the ports repo: `xorg_server/` has no `patches/` directory, so the glamor-accelerated server is built from the coordination repo's `tools/x11-port/build-xserver-core.sh` path instead |
+| xorg_fonts | 2.13.2 | freetype 2.13.2 + fontconfig 2.14.2 + cairo 1.16 + expat + libXft/libXfont2/libfontenc + PCF fonts (`font-misc-misc`, `font-cursor-misc`, `font-adobe-75dpi`, `encodings`, `font-alias`). Two of those are mandatory rather than decorative: `font-cursor-misc` is a separate upstream package and the only source of the `cursor` font every `XCreateFontCursor` caller opens, and `font-alias` is what fixes Xt's `Cannot convert string "8x13" to type FontStruct`. **A generalisable trap for fontconfig on a network root:** point it at `/usr/share/fonts/truetype` only, never the parent — the X core bitmaps are served by the X server's own `-fp` and never resolve through Xft, so indexing them buys nothing, and it made WindowMaker's first Xft font load `FT_New_Face`-open all **412 core PCFs** over NFS. That took desktop startup to 5 min 40 s and was misread as "the window manager does not draw" for a night; root-caused with this fork's own `libdbg` (`dbg_arm_watchdog` + `addr2line`), which named the stack `WMCreateFont → XftInit → FcConfigBuildFonts → FcFileScanFontConfig → FT_New_Face → sys_open`. Coord `71ab64d9a`, ports `de63acf`: startup 5 min 40 s → ~1 min |
 | xorg_apps | 1.1.2 | xcalc, xclock, xlogo, xedit (Xaw/Xt clients) in one recipe, anchored on xcalc |
 | windowmaker | 0.95.9 | Window manager; the desktop actually used on HDMI. GPL-2.0-or-later |
 | xterm | 396 | Interactive terminal emulator over `/dev/ptmx` — see the pty gap in §3 |
@@ -755,7 +933,7 @@ The single most valuable material for upstream is not the port count but §3: ne
 | glib2 | 2.56.4 | With `libintl`/`nameser`/`resolv` stub headers supplied by the recipe. LGPL-2.1-or-later |
 | fltk | 1.3.10 | Dillo's widget toolkit. LGPL-2.0-only |
 | harfbuzz | 14.4.0 | Text shaping (STK) |
-| **★ ffmpeg** | 6.1 | Registered `if: false` (build-proven, no in-tree consumer). LGPL-2.1-or-later |
+| **★ ffmpeg** | 6.1 | Registered `if: false`: no *image* component consumes the recipe, but the decode core is hardware-proven — MJPEG (plane-0 avg 127 vs host ffmpeg 127.03) and H.264 (avg 123, bit-exact) decode on the Pi, display on `/dev/fb0`, and play in an X window (`tools/ffmpeg-port/e4_x11_play.c`, 2 898 frames, 0 faults, concurrent with a GPU app). LGPL-2.1-or-later, built without `--enable-gpl`. Its own porting gap: heavy decoders overflow the default main-thread stack, so the decode body runs on an ≥8 MB pthread — the same `SIZE_USTACK` ceiling as coreutils, reached from a different direction |
 | libjpeg-turbo | 3.0.4 | IJG AND BSD-3-Clause AND Zlib |
 | libpng | 1.6.40 | |
 | libogg | 1.3.5 | Ogg container; STK/game music |
@@ -770,7 +948,14 @@ The single most valuable material for upstream is not the port count but §3: ne
 | **★ llama2** | 20240529 (`350e04f`) | llama2.c CPU inference: 260K model at 370 tok/s, 15M at 5.8 tok/s, bit-identical to host. MIT |
 
 **Existing recipes modified** (a different review ask — these are fixes/bumps to upstream's own ports):
-`openssl111` 1.1.1a → **1.1.1w** (`e8fc54f`, plus the EOL `old/1.1.1/` source URL and a timestamp-preserving install patch); `zlib` 1.2.11 → **1.3.1**; `mbedtls` 2.28.0 → **2.28.10**; `wpa_supplicant` 2.9 → **2.11**; `lua` **5.3.6 → 5.4.7** (whole patch set migrated and rebased, incl. the healthcheck/priority patches); `curl` gains `--with-zlib` and `--with-ca-bundle=` (a cross build silently left `CURL_CA_BUNDLE` undefined, so *every* HTTPS transfer had no trust store); `lighttpd` gains a webdav mmap guard plus a fix to its static-plugin-table generation (the old `grep mod_` also matched **commented-out** modules, compiling 13 plugins where the config enables 9); `busybox` config enables awk, xz decompress and seamless tar.
+**★★ `openssl111`'s Phoenix aarch64 target left `bn_ops` unset**, which is more important than the
+version bump below it and will recur on riscv64 and any future 64-bit Phoenix target. Without it
+`bn_ops` defaults to `THIRTY_TWO_BIT` while the aarch64 bignum asm uses 64-bit limbs — a size
+mismatch that overflows the heap inside every TLS handshake, corrupting allocator metadata; it is
+what blocked HTTPS for every consumer. One line, `bn_ops => "SIXTY_FOUR_BIT_LONG RC4_CHAR"`,
+applied to both 64-bit targets, with the reasoning written into `openssl111/30-phoenix.conf:37`.
+Also: `openssl111`
+1.1.1a → **1.1.1w** (`e8fc54f`, plus the EOL `old/1.1.1/` source URL and a timestamp-preserving install patch); `zlib` 1.2.11 → **1.3.1**; `mbedtls` 2.28.0 → **2.28.10**; `wpa_supplicant` 2.9 → **2.11**; `lua` **5.3.6 → 5.4.7** (whole patch set migrated and rebased, incl. the healthcheck/priority patches); `curl` gains `--with-zlib` and `--with-ca-bundle=` (a cross build silently left `CURL_CA_BUNDLE` undefined, so *every* HTTPS transfer had no trust store); `lighttpd` gains a webdav mmap guard plus a fix to its static-plugin-table generation (the old `grep mod_` also matched **commented-out** modules, compiling 13 plugins where the config enables 9); `busybox` config enables awk, xz decompress and seamless tar.
 
 ### 2. Game ports
 
@@ -778,18 +963,39 @@ Five 3D engines, all folded into a **single static ELF each** (Phoenix has no dy
 
 | engine | version (pin) | renderer path | state |
 |---|---|---|---|
-| **★ quakespasm** (GLQuake) | 0.97.0 (`f5fe178`) | desktop GL → Mesa/V3D → `/dev/fb0` | Flagship. Textured real levels at ~1080p/~40 fps on HDMI, audio wired. Cleanest HW evidence of the five |
-| **★ supertuxkart** | 1.4 | GLES3 (STK "SP" renderer) | Boot → fully-lit in-game 3D race, 0 crashes, host-comparison SSIM 0.991. 11 patches, 12 port dependencies |
-| yquake2 (Quake II) | 8.71 (`a9e88f6`) | `ref_gl3` / GLES3 default, `ref_gl1` selectable | Renders full 3D. Client + integrated server + baseq2 game + one renderer in one ELF. Asset load is slow over NFS (mitigated by RAM-staging to `/tmp`) |
-| quake3e (Quake III) | 1.32 (in-tree "Q3 1.32e", `f694bbb`) | desktop GL → Mesa/V3D | Runs; QVM bytecode modules need no `dlopen`. Known open defect: a V3D CT0 binner wedge on `q3dm7` (a lightmap-black bug on the same map was root-caused and fixed) |
+| **★ quakespasm** (GLQuake) | 0.97.0 (`f5fe178`) | desktop GL → Mesa/V3D → `/dev/fb0` | Flagship. Textured real levels at ~1080p/~40 fps on HDMI, audio wired. Cleanest HW evidence of the five. Also the only *networked* demonstration: the multiplayer client joins a real dedicated server, loads the map and runs in-game at 26 fps over Phoenix's own TCP/IP stack (the two enabling lwIP defects — the `getnameinfo` out-of-bounds write and `FIONBIO` — are in the drivers section, §3) |
+| **★ supertuxkart** | 1.4 | GLES3 (STK "SP" renderer) | Boot → fully-lit in-game 3D race, 0 crashes, host-comparison SSIM 0.991, **5.84 fps** (~171 ms/frame, GPU-bound). It ran at *exactly* 1 fps until a libstdc++ toolchain defect was root-caused — see §3. 11 patches, 12 port dependencies |
+| yquake2 (Quake II) | 8.71 (`a9e88f6`) | `ref_gl3` / GLES3 default, `ref_gl1` selectable | Renders full 3D. Client + integrated server + baseq2 game + one renderer in one ELF. Asset load is slow over NFS, mitigated by RAM-staging to `/tmp` — **per application, not in general**: measured 5.49× for quake3e (`CL_InitCGame` 63.77 s → 11.61 s) and 3.6× for quakespasm, but a net *loss* for SuperTuxKart, where 73 s of copying saved 2.7 s. RAM-staging is also the real justification for the `DUMMYFS_SIZE_MAX` 32 → 256 MiB bump reported in §4 |
+| quake3e (Quake III) | 1.32 (in-tree "Q3 1.32e", `f694bbb`) | desktop GL → Mesa/V3D | Runs; QVM bytecode modules need no `dlopen`, but its aarch64 JIT does need the code buffer `mmap`'d RWX up front, because `mprotect` cannot add `PROT_EXEC` later (see *Platform gaps*). Known open defect: a V3D CT0 binner wedge on `q3dm7` (a lightmap-black bug on the same map was root-caused and fixed — see the V3D tiling rule in the drivers section) |
 | vkquake | 1.34 (`1aa13a5`) | **Vulkan** via the ported V3DV ICD (SPIR-V→NIR→QPU) | Runs — the only user-shader Vulkan consumer. No SDL dependency at all: SDL is *entirely* shimmed (`glue/sdl-shim/SDL.h` + `pl_phoenix_sdlcompat.c`). Known open defect: torch sprites intermittently missing (~10–20 % of runs) |
 
 Per engine the recipe carries a `glue/pl_phoenix_*.c` Phoenix backend plus one generated single-ELF patch (`quakespasm` 857 lines, `vkquake` 557, `yquake2` 476, `quake3` 331). vkQuake additionally vendors pre-compiled shaders (`vkquake_shaders.c`, 30 506 lines) and Vulkan entry trampolines (`vk_trampolines.c`, 648 lines).
 
-Two structural notes a maintainer may care about more than the games themselves:
+Three structural notes a maintainer may care about more than the games themselves:
 
 - **The `.so` seam is the recurring problem, not the graphics.** yQuake2 has two dynamic-load seams (game DLL, renderer DLL) and quake3e has three module slots; each port had to be re-plumbed into one link unit. Any Phoenix port of a plugin-architecture application will hit this until `PT_INTERP`/auxv loading exists.
-- **Four of the five sit on the ported SDL2** (`depends="sdl2"`), so the SDL video/audio backends in `phoenix-rtos-ports/sdl2/overlay/src/{video,audio}/phoenix/` are the real reusable asset here: ~1 300 lines of driver that any future SDL application on Phoenix inherits for free. vkQuake is the exception and shims SDL away entirely.
+- **Four of the five sit on the ported SDL2** (`depends="sdl2"`), so the SDL video/audio backends in `phoenix-rtos-ports/sdl2/overlay/src/{video,audio}/phoenix/` are the real reusable asset here: ~1 300 lines of driver that any future SDL application on Phoenix inherits for free. vkQuake is the exception and shims SDL away entirely. Anyone inheriting those backends should know what was missing: they called only `SDL_SendKeyboardKey` (scancodes) and never `SDL_SendKeyboardText`, so **no `SDL_TEXTINPUT` event was ever generated** — a whole input category, which is why Quake III's `~` console accepted only Enter. Fixed with a SHIFT-aware HID→char mapping (`c019e12`). The same investigation cleared the mouse path as source-correct; those failures were the `N_URBS=1` and xHCI issues covered elsewhere.
+- **★ Redirecting GL's default framebuffer 0 to a real FBO turns upstream GLES *hints* into destructive operations** — a reusable design warning for anyone implementing GL/GLES on a framebuffer-only target. What makes surfaceless V3D work at all is that `glBindFramebuffer(target, 0)` is redirected to a user FBO backed by the scanout buffer, and that silently changes the meaning of every GL call whose behaviour differs between the winsys framebuffer and a user FBO. It cost a 100 %-black screen with no GL error and the game running: yQuake2's GLES3 renderer calls `glInvalidateFramebuffer(GL_FRAMEBUFFER, 3, {COLOR_ATTACHMENT0, DEPTH_ATTACHMENT, STENCIL_ATTACHMENT})` pre-swap, which on a windowed driver is a no-op hint because those enums are invalid on FB 0 — but against our FBO they are *valid*, so Mesa reached `v3d_invalidate_resource`, the unflushed job lost its colour tile store, and the page flip presented a buffer the GPU never wrote. Fixed in the port glue rather than the game (`96c0f4b`), precisely because the trap waits for any GLES client; the same class is documented and still unwrapped for `glDrawBuffers`, `glClearBufferfv` and `glDiscardFramebufferEXT`.
+
+Two of the game-side defects are really findings about the platform, and both were misdiagnosed
+repeatedly first:
+
+- **A single-pose alias-model VBO crossing exactly one 4 KiB page corrupted the model.** Found by
+  rendering all 61 Quake alias models through the unmodified path with an on-screen block code for
+  attribution: among `numposes == 1` models the broken set was `{g_light 227, g_nail 217, g_nail2
+  228, suit 237}` verts and the clean set `{g_rock 165, g_rock2 164, g_shot 90, … ≤ 165}`. At 24
+  bytes/vert — an earlier "fix" had allocated a *duplicate* pose block — the boundary is exactly
+  4096: 165×24 = 3960 clean, 217×24 = 5208 broken. The duplicate block was dead code (Pose2 is
+  disabled at blend == 0, and `numposes == 1` is always blend == 0), so deleting it takes
+  single-pose VBOs to `nverts*16`, whose maximum in Quake data is 237×16 = 3792. **61/61 render
+  clean.** It sat behind five earlier false "fixed" claims.
+- **Every Quake `+command` was silently ignored on shareware data, which invalidated the visual
+  test evidence.** `Cmd_StuffCmds_f()` iterates the `cmdline` cvar, and upstream sets that cvar
+  only in the *registered* branch of `COM_CheckRegistered()` — after the `gfx/pop.lmp` checksum,
+  which the shareware branch returns before. All testing here uses the free shareware pak, so no
+  `+command` had ever taken effect and every HDMI comparison was captured at wherever the attract
+  demo happened to be. An upstream Quake bug, fixed in both forks (`b2a47ae`, vkquake `65f599e`),
+  and the reason a visual defect survived five re-diagnoses.
 
 ### 3. ★ Phoenix gaps found by porting
 
@@ -811,6 +1017,22 @@ Bugs the fork fixed in *its own dependencies* while chasing these, worth mention
 
 Further gaps, same evidence standard:
 
+- **★★ `std::chrono::steady_clock` has 1-*second* resolution here** — a libstdc++ configury defect,
+  and the most transferable toolchain finding in the fork. libstdc++ for `aarch64-phoenix` is
+  configured with **no time backends at all** (verified in the shipped sysroot's `c++config.h`:
+  `_GLIBCXX_USE_CLOCK_MONOTONIC`, `_GLIBCXX_USE_CLOCK_REALTIME`, `_GLIBCXX_USE_GETTIMEOFDAY` and
+  `_GLIBCXX_USE_NANOSLEEP` are all `#undef`), so `steady_clock::now()` falls all the way back to
+  `std::time()`. Cross-configure cannot run target test programs, so these probes default off —
+  meaning *any* Phoenix C++ target built this way inherits the defect, and it fails silently
+  everywhere except where a zero-delta guard makes it catastrophic. It did: SuperTuxKart ran at
+  **exactly 1 fps**, because `getLimitedDt()` sits in `while (dt == 0) { sleep(1); … }` and the
+  frame loop therefore slept ~1000 × 1 ms per frame. The per-port workaround
+  (`supertuxkart/patches/0012-stk-phoenix-monotonic-clock.patch`, ports `6f08c26`) reads
+  `CLOCK_MONOTONIC` directly under `__phoenix__` and took the game to **~171 ms/frame, 5.84 fps**,
+  matching an independently measured frame budget. The real fix is rebuilding libstdc++ with
+  `--enable-libstdcxx-time=rt`; note that `steady_clock::now()` is compiled into `libstdc++.a`
+  (`src/c++11/chrono.cc`), so defining the macros in `c++config.h` alone changes nothing. C is
+  unaffected — `clock_gettime(CLOCK_MONOTONIC)` has real nanosecond resolution here.
 - **No `dlfcn.h` / dynamic-executable loading at port time.** `sdl2/patches/0003-dynapi-disable-on-phoenix.patch`; all five games fold their `.so` seams into one ELF. libphoenix has since gained `dlopen`/`dlsym`/`dlclose` for `ET_DYN` objects, but `PT_INTERP`/auxv is still unimplemented — and the `zlib` recipe documents the sharp edge that follows: a stray `libz.so` in the shared prefix makes the linker prefer it, stamping a `PT_INTERP` requesting `/lib/ld.so.1` into the binary, which then **dies before `main()` with no message** (on 2026-09-04 that shipped Xphoenix, python3, dillo, wmaker, curl and lighttpd all unrunnable).
 - **`pthread_getschedparam`/`pthread_setschedparam` are declared but not implemented** — link error, not compile error. `sdl2/patches/0004-systhread-priority-noop-on-phoenix.patch`.
 - **`-pthread` is rejected by the driver and there is no `libpthread`** (it is a symlink to `libphoenix.a`), so stock autoconf/CMake pthread probes fail. `sdl2/patches/0001-cmake-phoenix-pthread-detection.patch`; also the cause of a link-line collision fixed in the build repo (§5).
@@ -821,6 +1043,7 @@ Further gaps, same evidence standard:
 - **No `/proc` and no `kvm`/`sysctl`,** so WindowMaker's `GetCommandForPid()` had no implementation. `windowmaker/patches/0001-phoenix-getcommandforpid.patch` implements it from the kernel's `threadsinfo()` table — the author marks it upstream-inclinable.
 - **`malloc(0)` returned NULL** (found via jq; fixed in `libphoenix/malloc_dl.c` to allocate size 1). Helps every port that assumes `malloc(0) != NULL`.
 - **Reported as a strength, not a gap:** `xorg_libs/patches/libX11-1.8.7-phoenix-fontset-basename-ownership-58.patch` is a genuine upstream libX11 bug — `destroy_oc()` `Xfree()`s a `.rodata` string literal. glibc silently tolerated it; **libphoenix's allocator correctly aborted** (status 0x46), which is how it was found. The patch is upstreamable to xorg/libX11 as-is.
+- **★ Also a genuine upstream bug, in glamor this time**, and the most upstreamable finding in the X11 work: `glamor_init()` saves the previous `screen->DestroyPixmap` into `glamor_priv->saved_procs.destroy_pixmap` and installs `glamor_destroy_pixmap()`, which ends in a hard `return fbDestroyPixmap(pixmap)` and **never calls the saved pointer** — it is only read again to restore the hook at CloseScreen. Anything wrapped *below* glamor is silently cut out of the chain. Upstream xf86 never notices, because `glamor_init()` runs at ScreenInit and `DamageSetup()` later at extension init, so damage always wraps *above* glamor; this DDX brings damage up via `shadowSetup()` (`tools/x11-port/ddx/fbdev.c:591`) **before** `glamor_init()` (`:603`), i.e. into the one slot glamor does not honour. Consequence: `damageDestroyPixmap()` never ran for *any* pixmap, so `damage.c`'s teardown never destroyed `DamagePtr`s on dying pixmaps, glamor's stipple damage outlived its drawable, and `FreeGC` (`dix/gc.c:781`) released `gc->stipple` before the DDX `DestroyGC` at `:783` → `glamor_destroy_gc` → `glamor_invalidate_stipple` → `DamageUnregister()` on freed memory. Fixed by a screen-hook-only wrapper that does the same FBO teardown then calls `saved_procs.destroy_pixmap`, reinstating its own slot afterwards because `damageDestroyPixmap` unwraps and re-wraps with itself; the exported `glamor_destroy_pixmap()` is left untouched, since ~15 internal glamor callers use it to drop private pixmaps and must *not* traverse the screen chain. `tools/x11-port/patches/xorg-server-21.1.24-glamor-destroypixmap-chain.patch`, coord `bde9a44a3` — **6/6 X sessions crashed before it, 0/18 after**. The kernel half of the same crash is the vfork kstack / borrowed-map lifetime work above (`6d8f40a5`).
 
 ### 4. New board / target integration
 
@@ -829,7 +1052,7 @@ Further gaps, same evidence standard:
 `phoenix-rtos-project` adds a conventional shared target (`_targets/aarch64a72/generic/`: `build.project`, `nvm.yaml` — a 32 MB `loader` disk with `plo` at 0 and `kernel` at 0x200000 — `preinit.plo.yaml`, `user.plo.yaml`), a mirror `aarch64a53/generic`, and the board project `_projects/aarch64a72-generic-rpi4b/`. What the board actually required beyond a normal target:
 
 - **`board_config.h`** (113 lines): GIC-400 distributor/CPU bases, PL011 base + 48 MHz clock + an early virtual address, BCM2711 mailbox at `0xfe00b880`, the PCIe outbound window (`0x6_00000000` CPU ↔ `0xf8000000` PCIe) and the VL805 xHCI BDF/class, framebuffer geometry, `PLO_SMP_ENABLE`, and two capacity knobs whose rationale is written into the header: `KERNEL_LOG_SIZE` 2 KiB → 64 KiB (the 2 KiB klog ring overflowed before userspace attached to drain it, making the replayed boot log non-deterministic — a genuinely confusing symptom) and `DUMMYFS_SIZE_MAX` 32 → 256 MiB for RAM-staging game assets.
-- **`phoenix-armstub8-rpi4.S`** (464 lines, BSD-3, derived from the Raspberry Pi / Circle armstub8 lineage): EL3 → EL2/EL1 drop, `SCR_EL3`, GIC and local-timer/prescaler init, `CPUECTLR_EL1.SMPEN`, and the spin-table release for cores 1–3.
+- **`phoenix-armstub8-rpi4.S`** (464 lines, BSD-3, derived from the Raspberry Pi / Circle armstub8 lineage): EL3 → EL2/EL1 drop, `SCR_EL3`, GIC and local-timer/prescaler init, `CPUECTLR_EL1.SMPEN`, and the spin-table release for cores 1–3. **★ It also applies the Cortex-A72 r0p3 errata that ARM Trusted Firmware applies in `cortex_a72_reset_func` — and it has to**, because `CPUACTLR_EL1` (`S3_1_C15_C2_0`) and `CPUECTLR_EL1` are implementation-defined and *trap from EL1* on this part, so the kernel cannot apply them; an earlier kernel-side attempt hung on the very first `mrs`. Applied: **859971** → `CPUACTLR_EL1[32]` `DIS_INSTR_PREFETCH` (required before the I-cache is safe to enable on A72 r0–r0p3), **1319367** → `CPUACTLR_EL1[46]` `DIS_HW_PAGE_AGGREGATION`, plus `DIS_LOAD_PASS_STORE`, `DIS_L1D_HW_PREFETCH` and an L2/table-walk prefetch policy write. Two things a maintainer bringing Phoenix up on another A72/A5x board needs and would otherwise learn the hard way: the in-file note that the *previous* code wrote `CPUACTLR2_EL1[0]` against an **undefined A72 sysreg encoding** ("a no-op at best, silent state corruption at worst"), and the documented ordering rule that **`CPUACTLR_EL1` must be written before `SMPEN`**, since writes after the core joins the coherency domain may be silently dropped on r0–r0p3. Derivation: `docs/done/a72-errata-sweep.md`.
 - **`phoenix-kernel8-reloc.S` + `.lds`** (129 + 26 lines): a position-independent `kernel8.img` trampoline that carries `plo` as a `.payload` section, copies it to `PLO_RPI_PLO_DEST` with cache maintenance and re-inits the UART to 115200 so early failures are visible. It exists because the firmware's load address and plo's link address differ.
 - **`config.txt`** (65 lines, mostly comments recording *why*): `armstub=`, `initramfs loader.disk 0x08000000`, `dtoverlay=vc4-fkms-v3d` (fake-KMS so the firmware ungates V3D — its MMIO reads `0xdeadbeef` otherwise — while the firmware framebuffer stays for fbcon), `gpu_mem=128` + `max_framebuffer_height=4096` sized for a triple-height framebuffer, and `uart_2ndstage=0` because VideoCore firmware shares the console UART and once dumped 191 000 lines of xHCI trace into a test run.
 - **Three boot variants driven by `RPI4B_VARIANT`**, in `build.project` (285 lines) and `user.plo.yaml` (290 lines):
@@ -840,13 +1063,35 @@ Further gaps, same evidence standard:
 
   The variant also decides what gets *built*: `nfs` and `nfs-smoke` link the libnfs **port**, which the ports stage builds *after* core, so neither can be a core default component (that would demand a not-yet-built port during a cold-sysroot build). They are built in `b_build_project` per variant instead (`aa177cd`) — a dependency-ordering constraint any project mixing ports into the boot set will meet.
 - **`lwip/lwipopts.h`** (119 lines) with a documented gigabit tuning series: `LWIP_TCPIP_CORE_LOCKING_INPUT=1` (~1.8× RX, `d2c4a6f`), `LWIP_CHKSUM_ALGORITHM=3` moved into the lwIP `arch/cc.h` to avoid clashing with a stock build (`b49fb77`), `TCP_WND` 32→44×MSS (`0993e81`), `LWIP_INGRESS_CREDIT` (`07ba705`) — NFS read 26.3 → 29.9 MB/s. A second netif token `wifi43455` is registered (`0281848`).
-- **Two further projects ride the same target definitions:** `_projects/aarch64a53-generic-rpi4b/` (an A53-flavoured Pi 4 project — same SoC, generic-A53 core settings, its own `config.txt`; commit `22376b7` corrects its GIC-400 base addresses) and `_projects/aarch64a53-generic-qemu/` with `scripts/aarch64a53-generic-qemu.sh`, which gives the aarch64 work a QEMU lane that needs no board at all. Useful precedent: the generic `_targets/aarch64aXX/generic` split means a third aarch64 board should need only a `_projects/` directory.
+- **Two further projects ride the same target definitions:** `_projects/aarch64a53-generic-rpi4b/` (an A53-flavoured Pi 4 project — same SoC, generic-A53 core settings, its own `config.txt`; commit `22376b7` corrects its GIC-400 base addresses) and `_projects/aarch64a53-generic-qemu/` with `scripts/aarch64a53-generic-qemu.sh`. **Be precise about what that QEMU lane is: it is plo-only — the kernel never starts.** plo needs a firmware DTB in `x0` and QEMU supplies none, so it faults in early hal init, and `-dtb` does not help; the ceiling is recorded in `docs/misc/2026-09-08-qemu-boot-ceiling.md` so nobody re-attempts it. The lane is still useful, but as a *structural* boot check on cut SD images (`scripts/qemu-boot-sdimage.sh`), not as a place to develop kernel changes. Useful precedent: the generic `_targets/aarch64aXX/generic` split means a third aarch64 board should need only a `_projects/` directory.
 - Also: a 1120-line `busybox_config`, a rootfs overlay (`etc/rc.psh`, `etc/ntp.conf` for boot-time clock sync, a curses smoke test), firmware staging + DTB staging helpers (`rpi4b_stageDtb`, `rpi4b_stageFirmware`, with an optional `fdtput` memory patch for the QEMU lane), and `ports.yaml` (266 lines) — the per-project port selection list, whose comments record the deliberate `if: false` → `if: true` promotion order (sdl2 → X11 stack → dillo/nano/mc → python → games).
 
 ### 5. Build system improvements
 
 Everything here is board-independent and reusable. The common theme is *silent staleness*: in each case the build produced a plausible, working artefact that did not contain the change that had just been made, and in each case the fix is a dependency or invalidation key that upstream's build was missing rather than a workaround.
 
+- **★ The whole image builds reproducibly from a blank OS, and that is gated.** Worth stating
+  first, because it is the first thing an outside reader wants to know. A wiped VM on a fresh
+  Ubuntu 24.04 cloud image → `git clone` the coordination repo → bootstrap →
+  `rebuild-rpi4b-fast.sh --variant sd --with-showcase` produced an 835 MiB SD image with
+  `BUILD_RC=0`, containing base + GLQuake + the X11 desktop, with no rsync and no VM-side edits.
+  The release gate is `docker build --no-cache --pull` against the repo's own `Dockerfile`.
+  **The masking trap is worth as much as the result:** `rm -rf .buildroot` is *not* a clean-build
+  proxy — out-of-tree caches survive it and hide fresh-toolchain breakage (the toolchain-bundled
+  sysroot headers under `.toolchain/…/usr/include`, the legacy X server core archives,
+  `/tmp/x11-phoenix`, `/tmp/phoenix-iconv`), and even plain `docker build` reuses a stale clone
+  layer. This is also the real reason for the `.gitmodules` repoint reported above: several pinned
+  upstream sources had *vanished* — Mesa `e8791b4`, quakespasm `4abb324`, vkquake `f4d923e` all
+  answer `not our ref` and their archive URLs 404 — so mirroring every pin in the fork's own org
+  is a **correctness requirement, not tidiness**.
+- **★ A fourth silent-build class: a port staging a system header into the shared sysroot breaks a
+  *different* port, build-order-dependently.** Same family as the three below — no isolation
+  between a port's staged headers and the shared sysroot — and it hid for months. The Midnight
+  Commander recipe staged its own stub `<langinfo.h>` and `<mntent.h>` over the real libphoenix
+  ones in the shared prefix; the `mntent.h` stub lacked `hasmntopt`, so `configure` (reading the
+  real header) set `HAVE_HASMNTOPT` while the compile saw no declaration. Invisible because the
+  victim built *before* the offender and merely inherited the poisoned header on the next run.
+  Now documented in-tree at `mc/port.def.sh:64`.
 - **★ Relink every program when libphoenix changes.** `makes/binary.mk` + `Makefile.common` (`382d7dd`, `a80c1fe`). Most components never name libphoenix in `LIBS` — they get it from the sysroot — so their link rule had no dependency on it. On 2026-09-04 a libphoenix stdio fix left **119 of 336 rootfs ELFs still linked against the previous libc**; the ABI was unchanged, so they worked, which is precisely why nobody would notice. The fix adds `$(wildcard $(PREFIX_SYSROOT)/lib/libphoenix.a)` as a prerequisite. Its own footgun is fixed in the same series: prerequisites are expanded *inside* `--whole-archive`, and since `libc`/`libm`/`libpthread` are all symlinks to `libphoenix.a`, the sentinel collided with `-lpthread` ("multiple definition of `setsid`" ×40) — hence `LINK_INPUTS = $(filter-out $(LIBC_RELINK_DEP),$^)`.
 - **★ `port_manager` staleness model** (`5868ef9`, `4361efc`, `f44fd69`, `49ca648`, `f05ded2`, `24bf9c1`, `fc3de5c`, `15d5fc6`, `925550b`, `18c3e04`). Three independent silent-stale-build classes closed:
 
@@ -857,7 +1102,7 @@ Everything here is board-independent and reusable. The common theme is *silent s
 - **★ Pin the language standard.** `Makefile.common`: `CFLAGS += -std=gnu17`, `CXXFLAGS += -std=gnu++17`, placed before the `EXPORT_*FLAGS` capture so ports inherit it. gcc ≥ 15 defaults to C23, where an implicit function declaration is a hard error — which breaks every gnulib-based port. No-op on gcc-14.
 - **★ `PhxVersion` learns upstream letter patch-releases** (`575632a`, `port_manager/version.py`). openssl ships `1.1.1`, `1.1.1a` … `1.1.1w`. PEP 440 knows only `a`/`b`/`c`/`rc` and reads them as **pre**-releases, so `PhxVersion("1.1.1w")` raised `InvalidVersion` and aborted `discover_ports()` outright, while the letters that *did* parse sorted backwards (`1.1.1a < 1.1.1`, the opposite of upstream's meaning). A trailing letter is now translated to a PEP 440 post-release (`a → .post1` … `w → .post23`), giving `1.1.1 < 1.1.1a < 1.1.1w < 1.1.2` for all 26 letters, while `__str__` still returns the original string so namevers and install directories read `1.1.1w`. Covered by doctests and `port_manager_test.py`.
 - **`port.subr` grows two public helpers** — `b_port_apply_patches` (content-hashed markers, self-healing refusal) and `b_port_invalidate_stale_configure` — plus a `b_port_download` form that saves a remote file under a different local name, which is what makes GitHub's `/<tag>.tar.gz` and `/archive/<sha>.tar.gz` endpoints usable as reproducible, hash-pinned sources. Seven ports here pin a commit archive that way.
-- **Toolchain rebase to gcc-16.2.0 + binutils-2.47** (`f90bc71`, `96f5697`, `20bc28f`): `binutils-2.47-04-aarch64-phoenix.patch` (BFD/config.bfd target vector), `gcc-16.2.0-11-aarch64-phoenix.patch` (`aarch64*-*-phoenix*` in `config.gcc`), `-05-libstdcpp.patch` (265 lines, libstdc++ PIC configury), `-09-fix-libc-spec.patch` (`STD_LIB_SPEC` → `LIB_SPEC`), `-04-arm-pic_crtstuff.patch`. Plus multi-mirror GNU fetch (`643293e`), `-j nproc` for toolchain and image builds (`7463000`), and autotools host-triplet normalisation for aarch64 (`2a6aebb`).
+- **Toolchain rebase to gcc-16.2.0 + binutils-2.47** (`f90bc71`, `96f5697`, `20bc28f`): `binutils-2.47-04-aarch64-phoenix.patch` (BFD/config.bfd target vector), `gcc-16.2.0-11-aarch64-phoenix.patch` (`aarch64*-*-phoenix*` in `config.gcc`), `-05-libstdcpp.patch` (265 lines, libstdc++ PIC configury), `-09-fix-libc-spec.patch` (`STD_LIB_SPEC` → `LIB_SPEC`), `-04-arm-pic_crtstuff.patch`. Plus multi-mirror GNU fetch (`643293e`), `-j nproc` for toolchain and image builds (`7463000`), and autotools host-triplet normalisation for aarch64 (`2a6aebb`). One known hole in the libstdc++ configury survives this rebase and is worth fixing upstream of the fork: **no time backends are enabled**, so `std::chrono::steady_clock` has 1-second resolution — the defect described in §3. `--enable-libstdcxx-time=rt` is the fix; it was deliberately not attempted here.
 
 ---
 
@@ -933,9 +1178,11 @@ rather than as bugs.
   that it was `fb_blit`-only and bit-exact headless was **explicitly corrected** — it
   manifests headless too.
 - **Subset, not a codec** (see the out-of-subset list above).
-- **Not wired into anything.** The `ffmpeg` port is registered `if: false` with no in-tree
-  consumer; there is no libavcodec integration and no `/dev/` node. This is a standalone tool,
-  not a Phoenix video subsystem.
+- **Not wired into anything.** There is no libavcodec integration and no `/dev/` node for the
+  rpivid block: this is a standalone tool, not a Phoenix video subsystem. Do not read that as a
+  statement about the `ffmpeg` port — that port's *software* MJPEG/H.264 decode is separately
+  hardware-proven on `/dev/fb0` and in an X window (see its row in the application-ports table).
+  The two results are independent and should not be conflated.
 - **H.264 is walled, deliberately.** There is no directly-addressable H.264 register block on
   BCM2711; H.264 decode lives on the VideoCore firmware behind VCHIQ + MMAL. Scoped and
   banked, not attempted.
@@ -1069,16 +1316,63 @@ correction.
 
 Stated plainly so nothing here is taken on trust.
 
+**Closed since this document was first drafted:**
+- **X desktop-exit crash — fixed, and the root cause is an upstream glamor bug.** Closing the
+  desktop session faulted the glamor X server in `dixGetPrivate`. Three fixes were attempted and
+  all reverted (`4133eff`, `4569f79`, `cf235b4`, reverted by `21bd0ec`) — all three were on the
+  wrong object, and the fix that worked is in a different file. The record of those attempts is
+  `docs/misc/2026-09-08-x-teardown-crash-open.md`, which predates the fix. Root cause and fix are
+  `bde9a44a3` plus `tools/x11-port/patches/xorg-server-21.1.24-glamor-destroypixmap-chain.patch`,
+  described in the ports section (§3). Quantified: **6/6 X sessions crashed before the fix, 0/18
+  after.**
+
 **Known-open defects in this fork** (not hidden in the sections above):
-- **X desktop-exit crash.** Closing the desktop session faults the glamor X server in
-  `dixGetPrivate`. Reproducible on demand, three fixes attempted and all reverted — the model
-  behind them was disproven. Evidence and the failed attempts:
-  `docs/misc/2026-09-08-x-teardown-crash-open.md`. Shutdown-only; the box stays up.
 - **vkQuake intermittent missing torches** — present at a low rate; measured 9/9 clean on the
   current build, which bounds the rate rather than closing the defect.
-- **Quake III `q3dm7` CT0 binner wedge** — open, banked.
+- **Quake III `q3dm7` CT0 binner wedge** — open and banked, but the investigation reached a
+  definite conclusion worth recording so the next person does not re-chase it. **It is not an MMU
+  fault.** With the real fault-report registers instrumented (`MMU_VIO_ADDR` 0x1234, `MMU_VIO_ID`
+  0x122c, offsets confirmed against Linux `v3d_regs.h`), a wedged trial reported `vio_addr=0`,
+  `vio_id=0`, `int_sts=0`, no binner overflow, and `ct0ca` parked *inside* its own valid BCL BO —
+  a binner front-end pipeline stall with zero error status. The earlier "`mmu_ill=0x8000886x` ⇒
+  stale PTE" reading was a red herring: `MMU_ILLEGAL_ADDR` is the scratch-page redirect *we
+  program*, so reading it back only echoes `scratch_pa`. It is intermittent (~50 % of boots) and
+  workload-specific (q3dm1's 1942 faces never wedge, q3dm7's 5823 do), `r_mergeLightmaps 0` is
+  **not** a fix (it wedged with the cvar set, after one lucky clean run), and a reset+drop
+  mitigation ships. Named next step: diff our binner/tile-alloc setup (`TILE_BINNING_MODE_CFG`,
+  tile_alloc/tile_state sizing, CT0QMA/CT0QMS) and CPU→GPU coherency before the CT0 kick against
+  Mesa/Linux v3d, since Linux renders the same map on the same silicon.
+- **SuperTuxKart crashes on the `--profile-time` benchmark path**, while formatting the per-kart
+  report — after the race and after the FPS line. The demo path (`--race-now`) is clean. Stated
+  because it is 11 of the 17 fault-bearing logs in the reliability figure below.
+- **Quake II's underwater view is Y-mirrored — fixed with a stopgap the fix itself calls one.** It
+  is "a conditional correction on a conditional bug", and it over-corrects at `viewsize <= 71`.
+  The structural fix is to declare the scanout FBO `FlipY` and delete the size gate in
+  `st_atom_framebuffer.c`, which would also remove glamor's three hand-rolled flips; that is not
+  hypothetical, since the driver's own `GL_EXTENSIONS` dump shows `GL_MESA_framebuffer_flip_y` is
+  supported. Same FB-0-redirect seam as the GLES-hint trap in the game-ports section.
+- **A stale Mesa shader-cache blob renders as green speckle over an otherwise-valid frame.**
+  Phoenix has no ELF build-id, so the on-disk shader cache keys on shader source only and a host
+  toolchain change silently invalidates nothing: after the gcc-16.2 promotion the persistent cache
+  still held gcc-14-era blobs, the GPU executed stale QPU binaries, and SuperTuxKart's loading
+  screen came up speckled; `rm -rf` of the cache directory cleared it. Useful diagnostic tell —
+  coloured speckle *over a valid frame* means stale-blob execution, where a real GPU wedge drops
+  whole frames and logs one. Bump `V3D_PHX_CACHE_VERSION` or clear the cache on any clean rebuild.
+- **GPU X11 xterm resize artefacts — investigated and not reproduced by a sound measurement.**
+  Recorded as such rather than omitted: resize correctness was verified (server and client agree
+  once settled), and the residual hypothesis is intermittent frames during a fast drag, since this
+  stack has no compositing and presents by GPU readback.
 - Individual drivers state their own limits in the drivers section (e.g. SD writes are PIO,
   GPIO is read-only, V3DV has no WSI).
+
+**Reliability, system-level.** Computed from the UART logs already on disk rather than from a
+fresh campaign (one `test-cycle-*` invocation = one power-on = one log; success = the `(psh)%`
+prompt appears; fault pattern = the same markers `scripts/uart-summary.sh` uses): **132 boots, 132
+reached the prompt — 100.0 %.** 17 of the 132 logs contain a fault pattern and **all 17 are
+attributed, 0 unexplained** — 11 the SuperTuxKart `--profile-time` crash above, 6 the X
+desktop-exit bug being deliberately reproduced before it was fixed. **The caveat travels with the
+number: all 132 are netboot.** SD boot is unverified (no card in the host reader).
+`docs/misc/2026-09-08-boot-stability-tally.md`.
 
 **Licensing.** The five game engines are GPL (GPL-2.0+, SuperTuxKart GPL-3.0+) and live only in
 `phoenix-rtos-ports` as recipes plus glue — no GPL code was introduced into Phoenix core repos.
@@ -1086,7 +1380,32 @@ New drivers carry the upstream `%LICENSE%` marker; fork-authored tools are BSD-3
 
 **Measurement claims.** Where a number appears (throughput, latency, pass rates) it came from
 hardware on this board with the tool named beside it. Claims that could not be corroborated from
-the diff were rewritten to describe what the diff does.
+the diff were rewritten to describe what the diff does. Several methodology findings are the
+reason some of the visual claims are trustworthy and one earlier claim was not:
+
+- **An HDMI grab of animated GPU content proves nothing either way.** The discriminator run:
+  `quake3 +devmap q3dm1`, a simple map, produced a clean GPU log yet a striped HDMI grab, while
+  the same cycle's *static* bootloader grab was perfectly clean — so the striping is tearing of
+  continuously page-flipped content, present regardless of GPU health. The GPU parity numbers here
+  therefore come from a coherent per-frame TCP capture sink (`scripts/quake-capture-sink.py`,
+  `scripts/quake-visual-compare.py`) paired frame-for-frame against a host llvmpipe reference:
+  **Quake II SSIM mean 0.993 / min 0.940 over 23 pairs at 1920×1080; q3dm7 SSIM 0.989 / min 0.985
+  over 136 frames**, plus STK's 0.991.
+- **…and a tiling-aware comparison hid a real corruption bug entirely.** That same frame-dump path
+  reads back through a tiling-*aware* GPU blit and scored 0.993 "renders fine" while the actual
+  HDMI output was shredded, because the HVS raw scan is exactly what the blit bypasses. Recorded in
+  the Mesa commit that fixed it.
+- **An intermittent visual defect must be judged by a pass rate over trials, never a screenshot.**
+  Five premature closures of the vkQuake torch bug came from doing the latter, which is why
+  `scripts/check-torch-rois.py` has a `--rate` mode and why the torch caveat above quotes 9/9
+  rather than "fixed".
+- **Historical failure rates are bounded by a host-side artefact.** A class of apparent target
+  defects — "Firmware not found" netboot loops, `exec … err=-34` — was the *host's* USB NIC
+  dropping frames on wake with Energy-Efficient Ethernet enabled; `netboot-server.sh` now disables
+  host EEE and the offloads on every bring-up. Distinct from the BCM54213PE-side de-advertisement.
+- One retraction is stated in full above rather than only its correction: the boot-time fix in the
+  kernel performance table also had a USB-enumeration improvement credited to it, which a
+  controlled A/B measured as not significant, and it was withdrawn.
 
 ## Repo map
 
