@@ -149,3 +149,49 @@ signature. Diagnosis rule: **grep the log for the launcher's `DATADIR` line befo
 concluding anything about STK** — its absence indicts `exec`, not the game. The
 boot-stage table is no help here; it is byte-identical between the silent and
 working runs (several `[NO]` detectors simply do not match this boot config).
+
+## RETRACTION of the section above: the resolution A/B is void too
+
+The 1080p-vs-640x480 comparison **does not test resolution**. I verified that STK
+*accepted* `--screensize=640x480`, not that it *rendered* at 640x480. It did not.
+Grepping the actual render surface out of both logs:
+
+| run | STK parsed | `phxgl: scanout FBO(s)` | `v3d-winsys: scanout init` |
+|---|---|---|---|
+| `stk-profile` | 1920x1080 | **1920x1080** | **1920x1080** |
+| `stk-prof640b` | 640x480 | **1920x1080** | **1920x1080** |
+
+Both runs rendered at 1920x1080. That is why the frame count was *identical*
+(1326) and the wall time matched to 0.12% — the independent variable never
+changed. "Not fill-rate bound" is **unproven**, not confirmed. It remains
+plausible but there is no evidence for it.
+
+**Mechanism.** The scanout FBO is bound to `/dev/fb0`'s native mode — `rpi4-fb`
+registers `1920x1080 bpp=32 pitch=7680` and `v3d-winsys` initialises scanout
+directly from that physical address with triple-buffer page-flip. In this port
+the "window" *is* the scanout, so a requested window size cannot change the
+render target, and the request is dropped without a warning. `--fullscreen` (a
+launcher base arg) makes this certain, but removing it would not obviously help:
+there is no windowing system underneath to give STK a smaller surface.
+
+**To actually vary render resolution** you must change the framebuffer mode
+itself (VideoCore mailbox / `config.txt` / `rpi4-fb`), or render to a smaller FBO
+and blit up. A `--screensize` flag cannot do it. That is a real work order, not
+a one-cycle experiment.
+
+**Diagnosis rule.** Confirm resolution from `phxgl: scanout FBO(s) <W>x<H>` in
+the UART log. STK's `main: You choose to use <W>x<H>` is *config parsing only*
+and says nothing about the surface it renders into.
+
+**Same mistake, third time today** — verified the input, not the effect (cf. `nm`
+on stripped binaries reporting 0 symbols; the staged daemon overwritten by the
+`/bin` re-sync). The tell was available and I set it aside: I cropped the race
+clock at x=1620 of a 1920-wide frame from the "640x480" capture and it landed
+perfectly framed, and the stills showed crisp 1080p detail.
+
+### Also softened
+
+The "vkQuake ~22-29 fps (~35-45 ms/frame)" scale reference above was derived by
+dividing 5850 presented frames by an *assumed* 200-260 s window, not measured.
+Treat it only as "vkQuake is materially faster than STK"; get a real per-frame
+number from a counter before using it in any ratio.
