@@ -95,9 +95,19 @@ fi
 # Native build artifacts (this repo's buildroot).
 BUILD="${PHOENIX_BUILDROOT:-$COORD/.buildroot}"
 BOOT="$BUILD/_boot/aarch64a72-generic-rpi4b"
-PLO_ELF="$BOOT/plo.elf"
-LOADER="$BOOT/rpi4b/loader.disk"
-[ -f "$LOADER" ] || LOADER="$BOOT/rpi4b-bootfs/loader.disk"
+PLO_ELF="${QEMU_PLO_ELF:-$BOOT/plo.elf}"
+if [ -n "${QEMU_LOADER:-}" ]; then
+    # Override to boot a loader.disk from somewhere other than the live build --
+    # in particular one extracted out of a flashable SD image, so the artifact the
+    # owner actually flashes gets its syspage parsed and reaches kernel entry even
+    # when no SD card is available to boot it for real. plo itself does not differ
+    # between the sd/nfsroot/netboot variants; loader.disk is what carries the
+    # syspage and program list, so swapping only that isolates the difference.
+    LOADER="$QEMU_LOADER"
+else
+    LOADER="$BOOT/rpi4b/loader.disk"
+    [ -f "$LOADER" ] || LOADER="$BOOT/rpi4b-bootfs/loader.disk"
+fi
 KERNEL_ELF="$BUILD/_build/aarch64a72-generic-rpi4b/prog/phoenix-aarch64a72-generic.elf"
 
 if [ ! -f "$PLO_ELF" ]; then
@@ -120,6 +130,7 @@ GDB_LOG="$COORD/artifacts/qemu/${STAGE_BASE}.gdb.log"
 echo "qemu-debug: qemu=$QEMU_BIN ($("$QEMU_BIN" --version | head -1 | awk '{print $NF}'))"
 echo "qemu-debug: timeout=${TIMEOUT}s label=$LABEL gdb=$GDB mem=$QEMU_MEM"
 echo "qemu-debug: plo=$PLO_ELF"
+echo "qemu-debug: loader=$LOADER${QEMU_LOADER:+  (QEMU_LOADER override)}"
 echo "qemu-debug: host log: $UART_LOG"
 
 QEMU_BASE=( "$QEMU_BIN"
