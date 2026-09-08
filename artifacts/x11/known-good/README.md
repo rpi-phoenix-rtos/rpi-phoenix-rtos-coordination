@@ -1,31 +1,28 @@
-# Known-good X server binaries
+# Known-good X server binaries (kept on disk, NOT in git — see D6 on ELF bloat)
 
-`Xphoenix-glamor-daemon.mesa-e4be116324` — sha256 `8e003ab45ef41009…`, built 2026-09-08 02:12.
-Renders the Window Maker desktop with **0 faults**; re-verified on hardware repeatedly on
-2026-09-08/09. This is what the demo and the showcase reel run.
+| file | Mesa | state |
+|---|---|---|
+| `Xphoenix-glamor-daemon.mesa-aa916f2f06` | current (`aa916f2f06`) | **current known-good.** 0 faults, desktop renders + animates (mean 102, std 68), verified 2026-09-09 |
+| `Xphoenix-glamor-daemon.mesa-e4be116324` | older | previous known-good, 0 faults |
+| `libv3d-phoenix.a.mesa-aa916f2f06`, `libGL-…`, `libv3dv-…` | current | the archives the current binary was linked against |
 
-## ⚠️ Save the archives too, not just the binary
+The archives are saved **beside** the binary now, so a known-good state can always be
+rebuilt and diffed. Not doing that cost a session: see
+`docs/misc/2026-09-08-glamor-screen-mirror-and-gl-window-rate.md` §13–§15.
 
-This directory holds a binary that **cannot be rebuilt**. Every attempt to relink the glamor X
-server against the current `tools/.gpu-libs/*.a` produces a server that starts, brings up all its
-clients, and then shows a grey or black screen with GPU faults — and the cause could not be found,
-because the archives this binary was linked against were overwritten in place by later rebuilds.
-Three source suspects were cleared by experiment (the DDX, the Mesa `u_vbuf` guard, the winsys), so
-the difference is in the build, and there is nothing left to diff it against.
-
-Full account: `docs/misc/2026-09-08-glamor-screen-mirror-and-gl-window-rate.md` §13–§14.
-
-**So when promoting an X daemon to known-good, copy the archives beside it:**
+## ⚠️ There are TWO GPU X servers. Build the right one.
 
 ```
-cp -p tools/.gpu-libs/libv3d-phoenix.a  artifacts/x11/known-good/libv3d-phoenix.a.<tag>
-cp -p tools/.gpu-libs/libGL-phoenix.a   artifacts/x11/known-good/libGL-phoenix.a.<tag>
-cp -p tools/.gpu-libs/libv3dv-phoenix.a artifacts/x11/known-good/libv3dv-phoenix.a.<tag>
+build-xfbdev.sh --glamor         -> Xphoenix-glamor          IN-PROCESS winsys
+build-xfbdev.sh --glamor-daemon  -> Xphoenix-glamor-daemon   /dev/v3d-srv CLIENT
 ```
 
-They are ~40 MB together, which is cheap against the cost of a known-good binary that can never
-take another change.
+`startx_gpu` starts the `rpi4-v3d` daemon, so it needs the **`-daemon`** build. Staging the
+in-process build into that slot means **two processes driving V3D**, which presents as MMU
+violations, GPU wedges and a grey or black screen — and looks exactly like a Mesa or driver
+regression. The two binaries are within 440 bytes of each other and the filenames differ by one
+word, so the mistake is invisible.
 
-Note the same archives render **all four Quakes and SuperTuxKart correctly** — the breakage is
-specific to glamor's use of the driver (2D, many small draws, render-to-texture), not a general v3d
-regression.
+`build-xfbdev.sh` now asserts the linked backend matches the requested target
+(`v3d_cli_bo` present for `--glamor-daemon`, absent for `--glamor`) and fails the build
+otherwise, so this cannot recur silently.

@@ -258,6 +258,42 @@ if [ $rc -ne 0 ]; then
   echo "(full log: $LINKLOG)"
   exit 1
 fi
+# Assert the linked V3D backend matches the target that was asked for.
+#
+# There are two GPU X servers and they differ ONLY in this: Xphoenix-glamor links
+# the IN-PROCESS winsys and drives V3D itself, while Xphoenix-glamor-daemon links
+# libv3d-client and RPCs to /dev/v3d-srv. `startx_gpu` starts the rpi4-v3d daemon,
+# so it needs the daemon build -- and running the in-process one there means TWO
+# processes driving the GPU, which shows up as MMU violations, wedges and a grey or
+# black screen.
+#
+# That is not hypothetical: on 2026-09-09 a whole session was spent chasing it
+# through Mesa, the DDX and a Mesa commit (all three exonerated by experiment) after
+# `--glamor` output was repeatedly copied into the `-daemon` slot. The binaries are
+# within 440 bytes of each other and the filenames differ by one word, so nothing
+# about the mistake was visible. A symbol check costs nothing and makes it
+# impossible.
+if [ "$GLAMOR" = 1 ]; then
+  _nm="${TC}nm"
+  if command -v "$_nm" >/dev/null 2>&1; then
+    _has_client=$("$_nm" --defined-only "$DDX/$OUT" 2>/dev/null | grep -c ' v3d_cli_bo$' || true)
+    if [ "$DAEMON" = 1 ]; then
+      [ "$_has_client" -ge 1 ] || {
+        echo "FATAL: $OUT was asked for as the DAEMON client but has no v3d_cli_bo"
+        echo "       (it linked the in-process winsys -- it would fight rpi4-v3d for the GPU)"
+        exit 1
+      }
+      echo "=== backend OK: daemon client (v3d_cli_bo present) ==="
+    else
+      [ "$_has_client" = 0 ] || {
+        echo "FATAL: $OUT was asked for as the IN-PROCESS build but links the daemon client"
+        exit 1
+      }
+      echo "=== backend OK: in-process winsys ==="
+    fi
+  fi
+fi
+
 echo "=== OK: $DDX/$OUT ==="
 file "$DDX/$OUT"
 ls -l "$DDX/$OUT"
