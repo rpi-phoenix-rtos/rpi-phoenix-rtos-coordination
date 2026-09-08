@@ -301,3 +301,52 @@ by `pl011-tty` which mirrors every byte to the 115200-baud UART (~11.5 KB/s), an
 is the serial port's, not the framebuffer's. Stated as a hypothesis consistent
 with the numbers, not as a measured isolation — the test that would settle it is
 one run with the UART console detached.
+
+
+---
+
+## 8. CORRECTION to §5b: current Mesa is NOT what crashed the X server
+
+§5b attributed the X server's SIGILL to being relinked onto Mesa `aa916f2f060`, with the honest
+caveat that the relink had also refreshed the xorg core archives. **The caveat was the load-bearing
+part: the attribution was wrong.** Isolated by experiment
+(`artifacts/rpi4b-uart/rpi4b-uart-20260908-232845-x-mesa-isolate.log`):
+
+| build | Mesa | spans patch | result |
+|---|---|---|---|
+| shipping (02:12) | `git-e4be116324` | no | works, 0 faults |
+| §5b's crashing build (21:38) | `git-aa916f2f06` | **yes** | SIGILL |
+| **this isolation (23:28)** | `git-aa916f2f06` | **no** | **no SIGILL, all six clients up** |
+
+Two variables were changed together and I named the wrong one. Reading the Mesa commit afterwards
+agrees with the experiment rather than with §5b: `aa916f2f060` only adds a `false &&` guard that
+declines index-unrolling plus a diagnostic `fprintf`, and the two predicates it short-circuits
+(`util_is_vbo_upload_ratio_too_large`, `u_vbuf_mapping_vertex_buffer_blocks`) are pure — the latter
+takes a `const struct u_vbuf *` and only does mask arithmetic. There is no mechanism there for a
+binner fault.
+
+**So what did crash it?** The spans-patch build, and most likely not the patch's *logic* — which is
+the identity transform for every non-screen pixmap and provably never ran on the screen pixmap
+(§5a). The remaining suspect is *how* it was built: `apply_glamor_chain_patch` rebuilds **only**
+`libglamor.a` after applying a patch, and links it against xorg core archives left from an earlier
+configure/build. A partial rebuild of one archive against stale siblings is a classic way to get
+inconsistent inlines and execute garbage, and SIGILL is what that looks like. The isolation build
+did a full pass (the patch was already applied, so `patch --dry-run` failed, `applied=0`, and no
+partial libglamor rebuild happened).
+
+**Consequences, all of which are better than §5b's:**
+
+- The X server **can** be relinked onto current Mesa. The hazard §5b warned about does not exist,
+  and glamor work is not blocked.
+- The real hazard is the **partial libglamor rebuild** in `build-xserver-core.sh`. Anything that
+  applies a glamor core patch must rebuild the whole server, not one archive.
+- The new binary is not fault-free: 4 fault-pattern matches, all `RENDER MMU-VIO
+  vio_addr=0x00000000 fault_va=0x00000000` followed by `GPU wedged — true reset + drop this frame`,
+  survived by the existing mitigation. The log itself notes the zero VA is the scratch-cfg echo and
+  "NOT the fault". The 02:12 binary showed 0. That difference is unexplained and is the reason the
+  **demo keeps the 0-fault binary** (`artifacts/x11/known-good/Xphoenix-glamor-daemon.mesa-e4be116324`,
+  sha256 `8e003ab45ef41009…`) until it is understood.
+
+Method note for next time: two changes, one experiment. The spans patch and the Mesa bump went to
+hardware together, and one run could not separate them — exactly the trap
+`docs/misc/2026-09-08-*` keeps recording in other forms.
