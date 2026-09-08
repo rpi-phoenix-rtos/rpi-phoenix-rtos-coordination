@@ -124,6 +124,11 @@ helpers=(
 	# per-store latency, which is the distinction that decides the hypothesis
 	# (2026-09-08, docs/misc/2026-09-08-stk-frame-budget.md).
 	"tools/v3dmemprobe/v3dmemprobe.c|bin/v3dmemprobe"
+	# Diagnostic: run a program and sample SoC temperature + the VideoCore throttle
+	# bitmask while it runs. The stability evidence is a large sample of SHORT runs;
+	# a presentation may run a game for tens of minutes, and throttling would show
+	# up on stage as the frame rate quietly degrading rather than as a crash.
+	"tools/thermal-soak/thermal-soak.c|bin/thermal-soak"
 )
 
 tmp="$(mktemp -d)"
