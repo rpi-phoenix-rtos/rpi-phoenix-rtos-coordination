@@ -109,6 +109,42 @@ static void seed_file(const char *path, const char *contents)
 	fclose(f);
 }
 
+/*
+ * True when the caller passed the same option as `base_arg`, so the built-in
+ * default must be dropped.
+ *
+ * The old code appended user args after the base set and assumed "later wins".
+ * STK's CommandLine does NOT work that way: a duplicated parameter is REJECTED
+ * ("Invalid parameter: --screensize=640x480") and, worse, rejected
+ * non-fatally -- so an override silently had no effect and the game kept the
+ * built-in 1080p. Found 2026-09-08 while trying to lower the resolution to test
+ * whether STK's ~1 fps in-race is fill-rate bound. With the override working,
+ * 640x480 measured 0.994 fps against 1080p's 1.006 -- 1.3% apart for 6.75x
+ * fewer pixels, so it is not.
+ */
+static int user_overrides(const char *base_arg, int argc, char **argv)
+{
+	const char *eq;
+	size_t klen;
+	int i;
+
+	if (strncmp(base_arg, "--", 2) != 0) {
+		return 0; /* argv[0] ("supertuxkart") is never dropped */
+	}
+
+	eq = strchr(base_arg, '=');
+	klen = (eq != NULL) ? (size_t)(eq - base_arg) : strlen(base_arg);
+
+	for (i = 1; i < argc; i++) {
+		if (strncmp(argv[i], base_arg, klen) == 0
+				&& (argv[i][klen] == '\0' || argv[i][klen] == '=')) {
+			return 1;
+		}
+	}
+	return 0;
+}
+
+
 int main(int argc, char **argv)
 {
 	/* STK writes its config/players/hardware-detection files into SAVEDIR; make
@@ -176,10 +212,12 @@ int main(int argc, char **argv)
 		return 1;
 	}
 	for (i = 0; i < nbase; i++) {
-		a[n++] = base[i];
+		if (!user_overrides(base[i], argc, argv)) {
+			a[n++] = base[i];
+		}
 	}
 	for (i = 1; i < argc; i++) {
-		a[n++] = argv[i]; /* user args appended after → they win */
+		a[n++] = argv[i]; /* caller's value is the only one passed for that option */
 	}
 	a[n] = NULL;
 
