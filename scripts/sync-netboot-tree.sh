@@ -80,16 +80,45 @@ printf '  src: %s\n  dst: %s\n' "$src" "$export_dir"
 # renders GREEN SPECKLE over an otherwise valid frame, which reads as a GPU wedge and
 # has cost debugging cycles. rsync never touches it (root-owned, and not in the source
 # tree), so warn loudly and try to clear it; a failure here is informational only.
+#
+# Clearing it UNCONDITIONALLY (the behaviour until 2026-09-08) threw the cache away on
+# every cycle, so the first GL app after each boot recompiled every shader from source.
+# Measured on SuperTuxKart: 77 shader compiles and 55.5 s to finish a profile lap on the
+# first run of a boot, against 20.0 s for the same run once the cache was warm -- ~35 s
+# of pure recompilation before every first race. So clear it only when the GPU driver
+# actually changed, keyed on a fingerprint of the archives the blobs were produced by.
+# That keeps the safety property (a driver rebuild still invalidates the cache) without
+# paying the recompile on every boot.
 shader_cache="$export_dir/.mesa-shader-cache"
+fingerprint_file="${buildroot}/.mesa-shader-cache.driver-id"
+gpu_libs="${repo}/tools/.gpu-libs"
+
+driver_fingerprint=""
+for _a in libv3d-phoenix.a libGL-phoenix.a libv3dv-phoenix.a; do
+	if [ -f "$gpu_libs/$_a" ]; then
+		driver_fingerprint="${driver_fingerprint}$(sha256sum "$gpu_libs/$_a" | cut -d' ' -f1)"
+	fi
+done
+
 if [ -d "$shader_cache" ]; then
-	if sudo -n rm -rf "$shader_cache" 2>/dev/null; then
-		printf 'sync-netboot-tree.sh: cleared stale Mesa shader disk cache (%s)\n' "$shader_cache"
+	fingerprint_have="$(cat "$fingerprint_file" 2>/dev/null || true)"
+	if [ -n "$driver_fingerprint" ] && [ "$driver_fingerprint" = "$fingerprint_have" ]; then
+		printf 'sync-netboot-tree.sh: Mesa shader disk cache KEPT — GPU driver unchanged (%s entries)\n' \
+			"$(ls "$shader_cache"/v* 2>/dev/null | wc -l | tr -d ' ')"
+	elif sudo -n rm -rf "$shader_cache" 2>/dev/null; then
+		printf 'sync-netboot-tree.sh: cleared Mesa shader disk cache — GPU driver changed (or first run)\n'
 	else
 		printf 'sync-netboot-tree.sh: WARNING stale Mesa shader disk cache present and NOT cleared:\n' >&2
 		printf '                      %s\n' "$shader_cache" >&2
 		printf '                      Run: sudo rm -rf %s\n' "$shader_cache" >&2
 		printf '                      Leaving it can render green speckle that looks like a GPU wedge.\n' >&2
 	fi
+fi
+
+# Record the current driver fingerprint either way, so the next sync can tell whether the
+# cache the Pi is about to write belongs to this driver build.
+if [ -n "$driver_fingerprint" ]; then
+	printf '%s' "$driver_fingerprint" > "$fingerprint_file" 2>/dev/null || true
 fi
 # --no-owner --no-group: the sync runs as an unprivileged user and the NFS export
 # may contain root-owned files (e.g. the fontconfig cache from stage-desktop-fonts);
