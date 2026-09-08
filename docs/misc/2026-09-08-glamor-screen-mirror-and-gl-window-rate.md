@@ -350,3 +350,50 @@ partial libglamor rebuild happened).
 Method note for next time: two changes, one experiment. The spans patch and the Mesa bump went to
 hardware together, and one run could not separate them — exactly the trap
 `docs/misc/2026-09-08-*` keeps recording in other forms.
+
+---
+
+## 9. The mirror is NOT in `glamor_copy` either — the scanout readback is what is left
+
+A second probe, built the same falsifiable way as §5a's, instrumented **all five**
+`glamor_copy` routes (`bail`, `cpu_fbo`, `fbo_cpu`, `fbo_fbo_draw`,
+`fbo_fbo_temp`), reporting the route and whether the screen pixmap was source,
+destination or both, once at each power of two. Result over a whole `startx_gpu
+action` session (`artifacts/rpi4b-uart/rpi4b-uart-20260908-233901-x-copyprobe.log`):
+
+```
+fbo_fbo_draw  n=1  src_screen=0  dst_screen=0
+```
+
+**One copy in the entire session, and neither side was the screen pixmap.** So
+`glamor_copy` never touches it, exactly as `glamor_spans` never did. Both
+copy-shaped hypotheses are dead, and it is worth being clear that the geometric
+argument that pointed at them (the +13 px = one text row, +2 px = frame inset
+offsets) was suggestive but not evidence — two probes have now refuted it.
+
+### What that leaves
+
+If nothing *reads* the screen pixmap, the mirrored content cannot be arriving by
+a copy. The remaining path that touches whole bands of screen rows is the one the
+DDX uses to present: `glamor_phx_screen_readback()`
+(`tools/x11-port/glamor-shim/glamor_phoenix_ctx.c`), which for an fb band
+`[y0, y0+rows)` reads the GL band `[H-(y0+rows), H-y0)` and reverses the rows into
+the shadow buffer the DDX write()s to `/dev/fb0`. Both artefacts are band-shaped,
+which fits.
+
+Two specifics make it the strongest remaining candidate:
+
+1. **`H` is a queried TEXTURE height, not the screen height** — `glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &H)`. glamor recycles FBOs from a size-bucketed cache, so the texture backing the screen pixmap need not be exactly 1080 rows. Any H other than the screen height puts the whole flip about the wrong axis.
+2. **The measured mirror constants are not equal.** `dst_y + src_y` is **1092** for the xterm band and **1081** for the clip icon. A single fixed axis would give one constant for both, so whatever computes the axis is varying per flush — which is what a per-band `y0`/`rows`/`H` computation does, and what a fixed screen height would not.
+
+### Next step, stated so it is not re-guessed
+
+Instrument the readback itself: log `(y0, rows, H, width)` per call plus the fb row
+the DDX writes that band to, then check it against the two measured pairs
+(dst 192–232 ← src 861–901, and dst 1008–1076 ← src 6–74). That is a direct
+comparison of the suspect arithmetic against the observed offsets, not another
+plausibility argument. Do **not** patch first: two hypotheses have now been
+refuted by their own probes, which is cheaper than two wrong fixes.
+
+The diagnostic patch has been removed from the tree and from
+`glamor_core_patches` now that it has answered its question.

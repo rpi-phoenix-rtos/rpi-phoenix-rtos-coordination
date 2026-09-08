@@ -134,9 +134,27 @@ fi
 
 # Already-built = software archives present AND the configured glamor state matches
 # the request AND (for --glamor) libglamor.a is present.
+# Any glamor source newer than the built archive means the archive is stale --
+# whoever changed it (a patch from the list, or a hand edit while iterating on a
+# diagnostic) will otherwise get the OLD binary with no warning. This has now
+# bitten twice: the second time, a probe was added to glamor_copy.c, the patch
+# was already applied so `patch --dry-run` failed, GLAMOR_PATCH_LANDED stayed 0,
+# and the fast path shipped a binary with none of the probe in it -- the tell
+# being `strings | grep -c` returning 0 on a freshly dated file.
+glamor_src_newer_than_archive() {
+  [ "$GLAMOR" = 1 ] || return 1
+  [ -f "$GLAMOR_A" ] || return 0
+  [ -n "$(find "$KD/glamor" -maxdepth 1 \( -name '*.c' -o -name '*.h' \) \
+          -newer "$GLAMOR_A" -print -quit 2>/dev/null)" ]
+}
+
 core_built() {
   # A patch that just landed invalidates every archive, not only libglamor.
   [ "$GLAMOR_PATCH_LANDED" = 0 ] || return 1
+  if glamor_src_newer_than_archive; then
+    echo "=== glamor source is newer than libglamor.a — rebuilding ==="
+    return 1
+  fi
   all_present || return 1
   glamor_marker_matches || return 1
   [ "$GLAMOR" = 0 ] || [ -f "$GLAMOR_A" ]
