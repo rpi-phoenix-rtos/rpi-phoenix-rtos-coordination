@@ -124,3 +124,80 @@ all five game binaries in `.buildroot/_fs` and on the NFS export — 24 bounded
 stderr lines per run, on UART only, invisible on HDMI. The **flashable image
 `486acda5…` was cut before this and does not contain it.** Remove the
 instrumentation when this step closes.
+
+---
+
+# RESOLVED: `std::chrono::steady_clock` has 1-second resolution on this target
+
+The 825 ms was **STK sleeping**, not working, and the cause is in the toolchain,
+not in the renderer.
+
+`.toolchain/aarch64-phoenix/aarch64-phoenix/include/c++/aarch64-phoenix/bits/c++config.h`:
+
+```
+/* #undef _GLIBCXX_USE_CLOCK_MONOTONIC */
+/* #undef _GLIBCXX_USE_CLOCK_REALTIME */
+/* #undef _GLIBCXX_USE_GETTIMEOFDAY */
+/* #undef _GLIBCXX_USE_NANOSLEEP */
+/* #undef _GLIBCXX_USE_SCHED_YIELD */
+```
+
+libstdc++ was built with **none** of its time backends detected, so
+`std::chrono::steady_clock::now()` falls all the way back to `std::time()` and
+advances in whole seconds. `StkTime::getMonoTimeMs()` (`utils/time.hpp:106`) is
+built on it, and `MainLoop::getLimitedDt()` contains:
+
+```c
+while (dt == 0) { StkTime::sleep(1); m_curr_time = StkTime::getMonoTimeMs(); dt = ...; }
+```
+
+`StkTime::sleep` is a real `usleep`, so with a 1-second-granular clock the frame
+loop sleeps ~1000 × 1 ms waiting for `time()` to roll over. **Exactly one frame
+per second, whatever is on screen.**
+
+It also explains the race clock independently: `dt` returns 1000 ms, MainLoop
+caps it at `MAX_ELAPSED_TIME` = 50 ms, so game time advances 0.05 s per frame —
+matching the 0.0497–0.0511 s/s measured off HDMI. That metric was never
+"saturated"; it was reporting a real 1 fps.
+
+## Fixed and measured
+
+`phoenix-rtos-ports 6f08c26` (patch `0012-stk-phoenix-monotonic-clock.patch`)
+reads `CLOCK_MONOTONIC` directly under `__phoenix__`.
+
+| | wall per 32 frames | ms/frame | fps |
+|---|---|---|---|
+| before | ~32000 ms | 1000 | 1.00 |
+| after | 5252 / 5800 / 5670 / 5531 / 5302 / 5323 | **~171** | **~5.84** |
+
+**5.8×**, landing exactly on the budget's prediction of ~173 ms (150 ms GPU +
+23 ms physics). `cl_ms` is unchanged across the fix, so the GPU was never the
+variable — STK is now GPU-bound, with ~88% of the frame in command-list submits.
+
+## What found it, and what did not
+
+The tell was **precision, not magnitude**: 1000.0 ms/frame within 0.08% across
+two tracks, 1920x1080, the entire deferred pipeline disabled, and sound off. A
+workload does not hold that still while the camera moves through a track; a clock
+does. Every earlier hypothesis was measured and refuted first — render passes
+(1.7%), uncached BO stores (`v3dmemprobe`: uncached is *faster* for scattered
+stores), the VideoCore page-flip mailbox (1–9 ms per 32 frames), audio, kart
+count, scene complexity.
+
+## The general defect — worth its own fix
+
+This is not an STK bug. **Any C++ code on this toolchain that times with
+`std::chrono` gets 1-second granularity**, and `_GLIBCXX_USE_NANOSLEEP` /
+`_GLIBCXX_USE_SCHED_YIELD` being undefined also degrade
+`std::this_thread::sleep_for` and `yield`. STK is where it was catastrophic only
+because of that `while (dt == 0)` spin; elsewhere it will be silent — a timeout
+that is far coarser than intended, a rate limiter that does nothing, a benchmark
+that reads zero.
+
+The proper fix is to rebuild libstdc++ with its time backends enabled
+(`--enable-libstdcxx-time=rt`, or fixing the cross-configure probes so
+`clock_gettime` is detected). Note that `steady_clock::now()` is compiled into
+`libstdc++.a` (`src/c++11/chrono.cc`), so **defining the macros in `c++config.h`
+alone changes nothing** — the library must be rebuilt. That is a toolchain change
+and a whole-system C++ rebuild, so it wants scheduling rather than doing
+mid-demo-prep; the per-port workaround is in place meanwhile.
