@@ -69,3 +69,17 @@ rate limiter that does nothing). Proper fix = rebuild libstdc++ with `--enable-l
 changes nothing. That's a whole-system C++ rebuild, so I have NOT started it mid-demo-prep; the
 per-port workaround is in. Detail: `docs/misc/2026-09-08-stk-frame-budget.md`.
 
+
+
+## STK launcher + profile-crash block as it stood in the weekly log
+
+**Fixed:** `stk-launcher` silently ignored every caller option (`697cd21a3`). It appended user
+args after its own and assumed "later wins"; STK's `CommandLine` *rejects* a duplicate, and
+rejects it **non-fatally**, so `--screensize=640x480` was accepted on the command line and the
+game ran at 1080p anyway. HW-verified: `invalid_param=0`, STK logs "You choose to use 640x480."
+
+**New crash, not on the demo path:** `--profile-time` prints its report, then takes a Data Abort
+(EL0) formatting the per-kart table — `esr=0x92000044` (write, translation fault L0), `far` and
+x4/x5 hold a 16-bit ascending sequence dereferenced as a pointer, with a stack-range line printed
+just before. Stack exhaustion is the first suspect. `--no-sound` normal-mode run did not crash.
+
