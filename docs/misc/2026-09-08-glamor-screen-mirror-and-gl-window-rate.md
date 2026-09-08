@@ -480,3 +480,76 @@ have now been refuted by their own probes, which is far cheaper than three wrong
 
 ⚠️ The fix itself is **owner-gated**: it invalidates the six-application hardware gate and
 needs a re-verification pass over the five games plus the desktop.
+
+---
+
+## 11. Bug #5 mechanism CONFIRMED — and the fix proposed in §10 does not work
+
+The measurement §10 asked for, instrumented at the branch itself and run over a full
+`startx_gpu action` session
+(`artifacts/rpi4b-uart/rpi4b-uart-20260909-001014-x-rscprobe.log`). Every resource of
+≥1024 width or ≥768 height, with its bind flags and the resulting create flags:
+
+```
+rsc #0     4096x1     bind=0x40  rt=0  scanout_bind=0  -> create_flags=0x0
+rsc #1  1920x1080     bind=0x0a  rt=1  scanout_bind=0  -> create_flags=0x2
+rsc #2   524288x1     bind=0x10  rt=0  scanout_bind=0  -> create_flags=0x0
+rsc #3   524288x1     bind=0x10  rt=0  scanout_bind=0  -> create_flags=0x0
+rsc #4  1920x1080     bind=0x0a  rt=1  scanout_bind=0  -> create_flags=0x2
+rsc #5   524288x1     bind=0x10  rt=0  scanout_bind=0  -> create_flags=0x0
+rsc #6   524288x1     bind=0x10  rt=0  scanout_bind=0  -> create_flags=0x0
+rsc #7  1048576x1     bind=0x70  rt=0  scanout_bind=0  -> create_flags=0x0
+rsc #8     4096x1     bind=0x40  rt=0  scanout_bind=0  -> create_flags=0x0
+```
+
+**Two answers, and they point in opposite directions.**
+
+### 1. The mechanism is confirmed: there are TWO "scanout" render targets
+
+`rsc #1` and `rsc #4` are both 1920×1080 render targets and **both** get
+`V3D_CREATE_BO_SCANOUT`. The winsys hands the framebuffer's physical pages to the first
+claim only (`else if (!W.scanout_claimed)`), so the second gets fresh DRAM — but nothing
+stops `st_atom_framebuffer.c` forcing `Y_0_TOP` on **both**, because it re-derives
+"is this the scanout?" from the same size test. The second full-screen render target is
+therefore rendered with an inverted viewport, and read back through the uniform whole-screen
+flip that §10 measured, which is exactly a mirror. One such resource would have refuted
+this; two confirm it.
+
+(Correction to §10, which quoted only the size half of the test: the real condition is
+`(bind & PIPE_BIND_RENDER_TARGET) && width0 >= 1024 && height0 >= 768` — narrower than
+stated, and it is why only the two RTs and none of the seven buffers take the branch.)
+
+### 2. The fix §10 proposed cannot work: `PIPE_BIND_SCANOUT` is never set
+
+`scanout_bind=0` on all nine, including both render targets. Nothing in this stack sets
+`PIPE_BIND_SCANOUT` — the two uses in `v3d_resource.c` (`:907`, `:956`) are on the
+`screen->ro` renderonly path, which this port does not use. So "key both tests off the
+resource's bind flags" is not available, and §10's fix direction is withdrawn. This is
+precisely why the plan was measure-then-fix: the fix would have compiled, changed nothing,
+and cost a Pi cycle plus a re-gate to discover.
+
+`struct v3d_bo` does carry a `bool scanout` (`v3d_bufmgr.h:69`), but it is set from the
+*requested* create flags, so both RTs would carry it too — also not a discriminator.
+
+### The fix direction that is left
+
+The only component that actually knows which BO got the scanout pages is the winsys, in
+`sel_pa != 0`. So:
+
+1. winsys reports the real outcome back from the BO allocation (out-param or query);
+2. `v3d_bo_alloc_flags` sets `bo->scanout` from that outcome rather than from the request;
+3. the `Y_0_TOP` forcing keys off the first colour attachment's BO actually having scanout
+   pages, instead of off `fb->Width`/`fb->Height`.
+
+Step 3 crosses the st↔driver boundary, which is the awkward part and the reason to look
+first at the cheaper question this measurement raises: **why are there two full-screen
+render targets at all?** If the second is avoidable — or if the two can be told apart by
+something the driver already knows — the symptom goes away without new plumbing. That is
+the next thing to establish, before any code.
+
+⚠️ Still owner-gated: the fix expires the six-application hardware gate.
+
+**Cleanup done:** the Mesa probe is reverted (`v3d_resource.c` clean against HEAD), the
+shared `libv3d-phoenix.a` rebuilt without it (0 probe strings — the games link this archive,
+so leaving a per-allocation `fprintf` in it would have been a real regression), the X daemon
+relinked clean, and the 0-fault demo binary restored to both roots.
