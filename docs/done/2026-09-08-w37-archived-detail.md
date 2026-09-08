@@ -575,3 +575,193 @@ Checked before reporting; the same class of error as the ANSI-anchored grep earl
 - **Everything is pushed:** coord `main` → `publish` (`a843c807..f9b1e7a9`), and all 14
   siblings were already level with `publish` (0 ahead).
 
+
+---
+
+## Second trim, 2026-09-08 — WEEK-2026-W37 351 → 149 lines
+
+The weekly log had grown to 351 lines across 13 sections. Everything below is the
+"how we got there" record moved out of it: measurement tables, refuted hypotheses,
+retracted figures and per-cycle detail. Sub-headings name the source section.
+Live pointers that survived the trim: the analysis for §2b/§2b-bis/§2c/§2e detail is
+`docs/misc/2026-09-08-glamor-screen-mirror-and-gl-window-rate.md`; §2d's is
+`manifests/2026-09-08-psh-cmdsz-hevc-window.md`.
+
+### from §1b — the 5 doc remarks, remark by remark
+
+| # | owner remark (2026-09-08) | status |
+|---|---|---|
+| 1 | no mention of HW video decode | ✅ added (`14480b662`) |
+| 2 | no mention of the ML CPU-vs-GPU work | ✅ added — framed **parity-first** (end-to-end GPU MLP is 0.90×; the 4.4×/11× microbench ratios rested on an inflated CPU baseline and are recorded as superseded) |
+| 3 | no mention of AXI-PMU | ✅ added |
+| 4 | study the old archive docs for other uncredited work | ✅ **done** — 35 gaps found, **33 integrated** (13 ★★ + 16 ★ + 4 marginal); doc 885 → **1427 lines**. Two were **corrections to claims the doc made**: the caveats section opened with the X desktop-exit crash as *open* when it is fixed (6/6 crashes before → 0/18 after, and the root cause is an *upstream glamor* bug), and the ffmpeg entry read as if nothing used it. Scope corrected for a 15th patched tree (`external/mesa`). Several sweep claims were **dropped or corrected on verification** — a cited file that no longer exists, a fontconfig figure that disagreed with its own commit, and an inference presented as a measurement. |
+| 5 | point to it from `README.md` | ✅ first entry under Documentation (`14480b662`) |
+
+All three new areas live in one new final section, **"Hardware experiments outside the Phoenix
+repos"** — they are programs *built on* Phoenix in `tools/`, not changes to it (verified: `git log
+--all --grep` for hevc/argon/rpivid/axi across kernel, libphoenix and devices returns nothing), so
+the per-repository structure had no place for them. Each carries an explicit limits block.
+
+### from §2 — showcase-reel v5 per-point status table
+
+Every row was closed except nano/mc, which is why the table came out of the log.
+
+| owner point | status |
+|---|---|
+| X11 segment totally static | ✅ `startx_gpu action` — WM + GL window + Python GoL + xbill + xclock + `top` |
+| STK frozen frame | ✅ was my error (pre-clock-fix footage), re-recorded |
+| on-screen FPS figures | ✅ all four Quakes + STK |
+| Quake III no demo | ✅ bot deathmatch + orbit camera (its `.dm3` demos can never load) |
+| boot + shell + Python | ✅ captured |
+| HW video playback | ✅ **windowed over the terminal** |
+| Dillo | ✅ kept |
+| nano/mc in the shell segment | ⏳ **not done** — `mc` renders blank on fbcon, and `nano` is interactive so psh automation cannot drive or exit it |
+
+Numbers behind the two reel caveats that stayed in the log as one-liners: `life.py`'s canvas is
+0.09 % changed between t=160 and t=235 while the GL window is 49.9 %, `top` 6.7 %, `xbill` 5.1 %,
+xclock 1.3 %; its last good frame reads `gen 536 … 12.2 gen/s`. For the console, a full 239×66
+redraw is ~16 KB, `pl011-tty` mirrors every byte to the 115200 UART (~11.5 KB/s), and
+16/11.5 ≈ 1.4 s matches the observed 1.0 gen/s. That last one is a hypothesis consistent with the
+numbers; the test that settles it is one run with the UART console detached.
+
+### from §2b — the refuted `glamor_spans.c` hypothesis
+
+**First suspect tried and REFUTED — by its own built-in diagnostic.** The fork's screen-pixmap
+Y-flip was hand-rolled into `glamor_transfer.c` only, and `glamor_spans.c:234`/`:345` index the FBO
+row straight from the X row. That patch shipped with a one-shot `ErrorF` per direction so it could
+fail loudly, and it did: **0 hits** in a cycle whose daemon binary provably contained both markers.
+Neither span path runs on the screen pixmap, so the flip could not have moved a pixel. **Reverted.**
+(The diagnostic channel was validated *before* trusting its silence.) The clip mirror is painted
+once at Window Maker startup and never repaired; the xterm one is transient (GoL bright-pixel share
+26.0 % at t=112 vs 4–8 % either side). Kept in the log: the measurement, the screen-pixmap
+conclusion and the `glamor_copy.c` suspect.
+
+### from §2b-bis — the Mesa-relink hazard, cycle detail
+
+| daemon | Mesa in the binary | result |
+|---|---|---|
+| the one that has been shipping (built 02:12) | `git-e4be116324` | works, 0 faults |
+| relinked from the current tree (21:38) | `git-aa916f2f06` | **SIGILL — X server dies** |
+
+`aa916f2f060` is **our own** `u_vbuf: do not silently drop draws on the index-unrolling path` — the
+fix for bug #3 (Quake III glitches). The *games* link Mesa in-process and have it; the X server was
+simply never relinked after it landed, so glamor has been running on the previous Mesa all along.
+Failure shape: two `v3d-winsys` MMU violations → `signal 4` → `server exited (status=0x300)`.
+Restore path: `build-xfbdev.sh` writes `Xphoenix-glamor` and staging renames it, so the known-good
+binary was never overwritten; put back into both `_fs` and the live export (sha `8e003ab45ef41009…`,
+`git-e4be116324`) and confirmed on hardware — 0 faults, six clients up, desktop identical.
+
+### from §2c — the superseded reel v4, and the 1 fps measurement detail
+
+Reel v4, kept here only as the record it superseded:
+`artifacts/hdmi-video/20260908-162023-phoenix-rtos-rpi4-showcase.mp4` (140 s, 7 segments):
+QuakeSpasm `demo1` · Quake II `q2demo1` · vkQuake `demo2` · Quake III bot deathmatch ·
+SuperTuxKart AI race · Dillo web browser · X desktop. Four segments are real gameplay motion;
+browser and desktop are static by nature. Superseded by v5 (245 s, 11 segments).
+
+The 1 fps figure's workings: 120 consecutive captured frames (4.00 s at 30 fps), GL-window crop,
+**4 changed pairs → ~1.0 update/s**, one every ~0.73 s. Not a grabber limit — the same frames show
+`top` and `xbill` changing far more often, and the same card recorded 35 / 73 fps game counters
+that evening. From the same frame's `top`: `/sbin/rpi4-v3d` **76.9 % CPU**, CPU0 **100 %**,
+`Xphoenix-glamor-daemon` 17.9 %.
+
+### from §2d — psh CMDSZ: how it was found, and the `autoexec.cfg` trap
+
+Cost two Pi cycles on a Quake III "bug". `pshapp` had `#define CMDSZ 128` and dropped every
+character past it with **no bell, no message and no refusal**, then executed the prefix. The UART
+echo of the line looks complete, so the run reads as evidence about the *program*. A 167-char
+launch line lost `+devmap q3dm1`, and Quake III sat in its menu. `CMDSZ` backs one malloc plus a
+same-size static clipboard, and the NOMMU/MCU targets shouldn't pay ~2 KiB for a Pi 4 problem —
+hence 1024 on 64-bit MMU targets only (overridable with `-DCMDSZ`). The harness warns against the
+old limit too (`0c89ccf88`), since an older psh binary can still be on the target. Verified
+functionally, not by "the build succeeded": a **156-character** command was sent and its **tail
+token survived** (`… PHX_TAIL_OK` in the program's *output*, not just the echo). `CMDSZ` is a
+compile-time constant, so `strings` could not have told us this.
+
+**The rebuild caught a self-inflicted trap:** it re-ran `stage_q1_video_cfg` and replaced
+`id1/autoexec.cfg` with the canonical `vid_*` block, **silently dropping the `scr_conscale` line
+every FPS capture depends on**. Hand-staging into a tree a build script owns regresses on the next
+cut. Both configs now ship **from `scripts/stage-game-data.sh`** (`89bd713fb`) — the q1 file
+carries the fps readout alongside `vid_*`, and a new `stage_q3_showcase_cfg` ships the Q3 bots +
+orbit camera — so an image cut keeps them.
+
+### from §2e — video playback, the parts that are workings not answers
+
+The reel's clip is **30 s of our own vkQuake gameplay put through `transcode-for-phoenix.sh`** — so
+it also exercises the transcoder on a real-world source, the same path an iPhone clip will take.
+Getting there found **one open defect and one trap**: `hevc-play` stops after ~10 frames on richer
+reference structures (`collocated POC 0 not in DPB`; with TMVP off it stops one frame later with
+`a reference POC not in DPB`, which localises it to **RPS/DPB retention**, not TMVP). Playback
+clips are therefore encoded **IPPP** — a *player* workaround, **not** a codec-subset restriction:
+the hardware decodes B slices, b-pyramid, multi-reference and TMVP bit-exact, and the conformance
+vectors keep all of it. (`docs/misc/2026-09-08-glamor-screen-mirror-and-gl-window-rate.md` §6.)
+
+Windowing implementation detail: `hevc-play --window 960x540+480+270 <clip>` scales the decode into
+that rectangle with a 2 px white border and writes **only inside it**. `WxH` alone centres it;
+omitting `--window` keeps the old full-screen blit; a geometry running off the edge is clamped, not
+refused. Nearest-neighbour with a 16.16 fixed-point step (one multiply-shift per pixel) — a CPU
+loop per frame; the point is to show the decode is ours, not to resample well. On hardware: the
+clip decodes on the rpivid block into a bordered window while the live boot log and the psh prompt
+stay readable all around it, with the `hevc-play --window …` command line and its own
+`presented N/750 frames` progress visible on screen beside the video. **300 frames presented,
+continuous motion, 0 faults.**
+
+Why the transcoder does **not** stream-copy the iPhone's own HEVC even though that is the obvious
+move: our decoder covers the tools x265 enables by default and rejects or mismatches on the rest
+(tiles, non-zero deblock offsets, AMP, emulation-prevention bytes in headers), Apple may use any of
+them, and there is no way to tell from outside — so it re-encodes through the exact parameter set
+the conformance harness exercises. Rotation (phones store landscape + a matrix), frame rate
+(240 fps slow-mo is decimated — `hevc-play` has no clock) and chroma/bit-depth are handled;
+**HDR is not**.
+
+### from §4 — WHAT GOT DONE THIS WEEK, the narration
+
+**★★ STK was capped at exactly 1 fps by a broken C++ clock — fixed, now 5.84 fps (5.8×).**
+libstdc++ for aarch64-phoenix is built with **none** of its time backends, so
+`std::chrono::steady_clock` falls back to `std::time()` and ticks in whole **seconds**; STK's frame
+loop sat in `while (dt == 0) { StkTime::sleep(1); … }` waiting for it. Patch reads
+`CLOCK_MONOTONIC` (`ports 6f08c26`). STK is now GPU-bound (~171 ms/frame, ~88% CL submits).
+Found by *precision, not magnitude* — 1000.0 ms/frame within 0.08% across two tracks and settings
+is a clock, not a workload. Detail: `docs/misc/2026-09-08-stk-frame-budget.md`.
+
+**Also fixed / added:** trusted root CAs (121, real HTTPS) · libphoenix stdio partial-write +
+regression test · V3D per-session BO leak (15.7 MB → 2.3 MB; leak proven **bounded**: per-session
+cost decays +60 MB → +2.2 → +1.5 over three X lifecycles) · `stk-launcher` now honours caller
+options · vkQuake demo playback via `id1/phoenix-demo.cfg` (`ports d7de9aa`) · `startx_gpu browse`
+= Window Maker + Dillo · ext2 volume sized from content · `scripts/make-demo-reel.sh`,
+`qemu-boot-sdimage.sh`, `record-hdmi.sh`, `tools/v3dmemprobe`.
+
+**Measurement traps found the hard way:** `fault_pattern_matches: 0` is vacuously true when the
+program never ran · an ffmpeg `blackframe` check passes on a text console · mpdecimate measures
+scene change, not frame rate · an in-boot A/B needs the arms **swapped** · RAM-staging STK's assets
+is a measured **loss** (73 s of copying to save 2.7 s).
+
+**QEMU ceiling:** plo-only. The kernel never starts — plo needs a firmware DTB in x0 and QEMU
+supplies none, so it faults in early hal init. `-dtb` does not help.
+`docs/misc/2026-09-08-qemu-boot-ceiling.md`.
+
+### from §4e — STK time-to-race
+
+Best-looking: keep the deferred pipeline, accept a one-time ~50 s before the first lap after a
+boot (cut in editing; steady-state fps is the same or better). Quick take: add
+`--disable-dynamic-lights --shadows=0` → same lap in 22 s on any boot. The ~27 s first-run cost is
+**not** shader compilation, asset reads, or steady-state rendering — all measured and excluded;
+leading hypothesis is the kernel's contiguous allocator. RAM-staging STK's assets is a measured
+**loss** (73 s of copying to save 2.7 s; keep using `ram-stage-play` for Quake).
+Full workings: `docs/misc/2026-09-08-stk-time-to-race.md`.
+
+### from §4f — upstream sync, 7th and 8th sweeps
+
+**8th sweep 2026-09-08 — 1 commit in, verified, pushed.** plo `953bba7` (upstream: include
+`board_config.h` in stm32 `peripherals.h`; touches only `hal/armv7m/stm32/*` + `hal/armv8m/stm32/*`,
+no aarch64). Merged clean, **0 conflicts** across all 16 siblings. plo is a core repo so the rule
+was followed regardless of it looking STM32-only: `--scope core` rebuild (plo.elf confirmed
+rebuilt by mtime) → Pi boot test **0 faults**, psh + lwip up, `test-libc-exit` **31 Tests 0
+Failures OK** → pushed. All four game-port patches `--check` **OK**. Now **0 behind everywhere**.
+7th sweep: libphoenix `7218adc` (`execve("")`→ENOENT), same treatment.
+
+### from §2 — harness note kept out of the owner-facing log
+
+⚠️ Cutting a `--variant sd` image replaces the TFTP `loader.disk`, so netboot refuses until restored
+with `./scripts/rebuild-rpi4b-fast.sh --scope project --variant nfsroot --skip-prepare`. It also
+relinks the games, which expires their HW gate — budget 6 cycles after any image cut.
