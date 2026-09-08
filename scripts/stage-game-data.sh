@@ -343,8 +343,28 @@ set bot_minplayers 5
 set g_spSkill 3
 set cg_thirdPerson 1
 set cg_thirdPersonRange 120
-set cg_cameraOrbit 2
-set cg_cameraOrbitDelay 60
+// Step the orbit ONCE PER RENDERED FRAME, not in coarse jumps.
+//
+// cg_cameraOrbit is degrees per step and cg_cameraOrbitDelay is the minimum ms
+// between steps (cg_view.c: `if (cg.time > cg.nextOrbitTime) { nextOrbitTime =
+// cg.time + delay; cg_thirdPersonAngle += cg_cameraOrbit; }`). With the previous
+// 2 degrees / 60 ms the camera moved ~16 times a second while the engine rendered
+// at 43-46 fps, and since the camera is the only thing moving much in view, the
+// PICTURE only changed ~16 times a second. Measured on the capture: Quake III
+// showed 13.5 visible updates/s against 28-30 for QuakeSpasm and vkQuake, at
+// four times the frame-interval variance (CoV 1.06 vs 0.26/0.33) -- which is
+// exactly the owner's report that Quake III looked "significantly less smooth"
+// while its fps counter read high. 0.7 degrees at delay 1 keeps the same ~31
+// deg/s but takes a step every frame.
+//
+// 1 is the SMALLEST usable step, not a rounding: cg_view.c gates the whole
+// feature on `cg_cameraOrbit.integer` while applying `cg_cameraOrbit.value`, so
+// 0.7 truncates to 0, disables the orbit outright and leaves a completely static
+// third-person view. Measured that way: 0 changed frames in 2 s. So the rate is
+// set by the step (1 deg) and the delay is 1 ms, i.e. one step per rendered
+// frame -- ~45 deg/s at 45 fps, a revolution every 8 s.
+set cg_cameraOrbit 1
+set cg_cameraOrbitDelay 1
 CFG
 	log "[q3] staged autoexec.cfg (fps readout, 5 bots, orbit camera)"
 }

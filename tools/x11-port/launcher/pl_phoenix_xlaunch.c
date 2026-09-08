@@ -505,8 +505,14 @@ int main(int argc, char *argv[])
 			 * Window Maker adds a titlebar (~24 px) and honours the USPosition/USSize
 			 * hint from -geometry, so the y offsets leave room for decoration. */
 			static char *const glwin_geom[2] = { "-geometry", "640x480+20+30" };
-			static char *const term_life[6] = { "-geometry", "96x28+690+30",
-				"-e", "/bin/python3", "/usr/share/demo/life.py", NULL };
+			/* --log: life.py froze after ~80 s here while the rest of the
+			 * desktop stayed live, and there was nothing to diagnose from --
+			 * a Python exception goes to the xterm's stderr, which nothing
+			 * captures, and the UART log showed no fault. The log lands on
+			 * the NFS root so the host can read where and when it stopped. */
+			static char *const term_life[8] = { "-geometry", "96x28+690+30",
+				"-e", "/bin/python3", "/usr/share/demo/life.py",
+				"--log", "/var/log/life.log", NULL };
 			static char *const clk_geom2[2] = { "-geometry", "190x190+1500+30" };
 			static char *const bill_geom[2] = { "-geometry", "+20+560" };
 			static char *const term_top[4] = { "-geometry", "96x24+690+560",
@@ -519,7 +525,7 @@ int main(int argc, char *argv[])
 			resolve_client(cp_bufs[5], sizeof(cp_bufs[5]), prefix, "xterm");
 			client_path[0] = cp_bufs[0];
 			client_path[1] = cp_bufs[1]; client_extra[1] = glwin_geom; n_client_extra[1] = 2;
-			client_path[2] = cp_bufs[2]; client_extra[2] = term_life;  n_client_extra[2] = 5;
+			client_path[2] = cp_bufs[2]; client_extra[2] = term_life;  n_client_extra[2] = 7;
 			client_path[3] = cp_bufs[3]; client_extra[3] = clk_geom2;  n_client_extra[3] = 2;
 			client_path[4] = cp_bufs[4]; client_extra[4] = bill_geom;  n_client_extra[4] = 2;
 			client_path[5] = cp_bufs[5]; client_extra[5] = term_top;   n_client_extra[5] = 4;

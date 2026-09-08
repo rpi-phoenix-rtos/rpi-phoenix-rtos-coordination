@@ -13,7 +13,7 @@ Deliberately dependency-free: standard library only, no numpy, no colours
 required. It sizes itself to whatever terminal it is given and runs until the
 generation limit or a keypress.
 
-    python3 /usr/share/demo/life.py [generations] [--ansi]
+    python3 /usr/share/demo/life.py [generations] [--ansi] [--log PATH]
 
 Keys (curses mode): q quits, space pauses/resumes, r reseeds.
 
@@ -34,6 +34,28 @@ import random
 import shutil
 import sys
 import time
+import traceback
+
+# --log PATH: append "gen <n> t <secs>" every LOG_EVERY generations, and the
+# traceback if the loop dies. Exists because this program froze after ~80 s under
+# X while the rest of the desktop stayed live (GoL canvas 0.09 % changed over 75 s
+# vs 49.9 % for the GL window next to it), and there was no evidence to work
+# from: a Python-level exception goes to the xterm's stderr, which nothing
+# captures, and the UART log showed no fault. With a log on the NFS root the
+# failure says where and when it stopped, and whether it raised.
+LOG_EVERY = 20
+_logf = None
+
+
+def _log(msg):
+    if _logf is None:
+        return
+    try:
+        _logf.write(msg + "\n")
+        _logf.flush()
+        os.fsync(_logf.fileno())   # the interesting case is a process that stops
+    except Exception:              # writing; an unflushed buffer would hide it
+        pass
 
 # Live-cell glyph. A solid block reads clearly on both the HDMI framebuffer
 # console and a scaled-down screen recording; '#' is the fallback if the
@@ -44,6 +66,26 @@ GLYPH = "#"
 # travelling across the field rather than only local churn settling into
 # still-lifes.
 GLIDER = ((0, 1), (1, 2), (2, 0), (2, 1), (2, 2))
+
+# Conway's Life on a bounded field ALWAYS dies down: random soup collapses into
+# still-lifes and period-2 oscillators, after which the screen stops changing.
+# That is what looked like a hang -- the program was reported "frozen" after ~80 s
+# under X, and its own log later showed it running happily at generation 3640
+# with the population pinned at 76 since generation ~360. The simulation was fine;
+# it had simply finished. A showcase needs continuous motion, so inject a fresh
+# glider whenever the population has not moved for STALE_GENS generations.
+STALE_GENS = 60
+
+
+def inject_glider(grid, rows, cols):
+    """Drop one glider at a random position, oriented so it travels into the
+    field. Cheap (5 cells) and enough to restart local activity."""
+    if rows < 6 or cols < 6:
+        return
+    base_r = random.randrange(1, rows - 4)
+    base_c = random.randrange(1, cols - 4)
+    for dr, dc in GLIDER:
+        grid[base_r + dr][base_c + dc] = 1
 
 
 def seed(rows, cols, density=0.22):
@@ -84,6 +126,7 @@ def run(stdscr, limit):
     rows, cols = max(1, height - 1), max(1, width - 1)
     grid = seed(rows, cols)
     gen = 0
+    last_pop, stale = -1, 0
     paused = False
     started = time.time()
 
@@ -119,8 +162,20 @@ def run(stdscr, limit):
 
         stdscr.refresh()
         if not paused:
+            if population == last_pop:
+                stale += 1
+                if stale >= STALE_GENS:
+                    inject_glider(grid, rows, cols)
+                    stale = 0
+                    _log(f"curses gen {gen} population static at {population}"
+                         f" for {STALE_GENS} gens — injected a glider")
+            else:
+                stale = 0
+            last_pop = population
             grid = step(grid, rows, cols)
             gen += 1
+            if gen % LOG_EVERY == 0:
+                _log(f"curses gen {gen} pop {population} t {time.time() - started:.1f}")
         time.sleep(0.05)
 
 
@@ -139,6 +194,7 @@ def run_ansi(limit):
 
     grid = seed(rows, cols)
     gen = 0
+    last_pop, stale = -1, 0
     started = time.time()
     out = sys.stdout
     out.write("\033[2J")            # erase once; afterwards just redraw in place
@@ -159,8 +215,18 @@ def run_ansi(limit):
         out.write("\033[H\033[J" + "\n".join(lines) + "\n" + status[:cols])
         out.flush()
 
+        if population == last_pop:
+            stale += 1
+            if stale >= STALE_GENS:
+                inject_glider(grid, rows, cols)
+                stale = 0
+        else:
+            stale = 0
+        last_pop = population
         grid = step(grid, rows, cols)
         gen += 1
+        if gen % LOG_EVERY == 0:
+            _log(f"ansi gen {gen} pop {population} t {time.time() - started:.1f}")
         time.sleep(0.05)
 
     out.write("\n")
@@ -168,25 +234,47 @@ def run_ansi(limit):
 
 
 def main():
+    global _logf
     limit = 0
     force_ansi = False
-    for a in sys.argv[1:]:
+    args = sys.argv[1:]
+    i = 0
+    while i < len(args):
+        a = args[i]
         if a == "--ansi":
             force_ansi = True
-            continue
-        try:
-            limit = int(a)
-        except ValueError:
-            print(f"usage: {sys.argv[0]} [generations] [--ansi]", file=sys.stderr)
-            return 2
+        elif a == "--log" and i + 1 < len(args):
+            i += 1
+            try:
+                _logf = open(args[i], "a", buffering=1)
+            except OSError as exc:
+                print(f"life: cannot open log {args[i]}: {exc}", file=sys.stderr)
+        else:
+            try:
+                limit = int(a)
+            except ValueError:
+                print(f"usage: {sys.argv[0]} [generations] [--ansi] [--log PATH]",
+                      file=sys.stderr)
+                return 2
+        i += 1
+
+    _log(f"start pid {os.getpid()} limit {limit} ansi {force_ansi} "
+         f"term {os.environ.get('TERM', '<unset>')}")
 
     if force_ansi:
-        run_ansi(limit)
+        try:
+            run_ansi(limit)
+        except BaseException:
+            _log("ansi renderer raised:\n" + traceback.format_exc())
+            raise
+        _log("ansi renderer returned normally")
         return 0
 
     try:
         curses.wrapper(run, limit)
+        _log("curses renderer returned normally")
     except Exception as exc:
+        _log("curses renderer raised:\n" + traceback.format_exc())
         # curses could not start (no TERM, no terminfo, not a tty it recognises).
         # Say so once and draw anyway -- on a demo machine, falling back beats
         # exiting with a traceback.
