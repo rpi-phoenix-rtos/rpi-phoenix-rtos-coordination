@@ -301,8 +301,14 @@ fi
 mkdir -p "$output_dir"
 
 if [ -z "$log_path" ]; then
-	timestamp="$(date +%Y%m%d-%H%M%S)"
-	log_name="rpi4b-uart-$timestamp"
+	# NOT `timestamp` -- that is the numeric --timestamp flag (set at the top and
+	# tested further down when building the serial command). Reusing the name here
+	# clobbered the flag with a date string, so `[ "$timestamp" -eq 1 ]` became a
+	# bash "integer expected" error evaluating false: --timestamp was silently
+	# dead for every caller that did not pass an explicit --log path, which is
+	# almost all of them.
+	log_stamp="$(date +%Y%m%d-%H%M%S)"
+	log_name="rpi4b-uart-$log_stamp"
 	if [ -n "$label" ]; then
 		log_name="${log_name}-$(safe_label "$label")"
 	fi
