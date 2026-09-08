@@ -445,14 +445,89 @@ static inline uint32_t sand10(const uint8_t *b, uint32_t stride, uint32_t sx, ui
 /* Best-effort: unpack the SAND/COL128 decode, convert NV12->RGBA (BT.601 limited
  * range), and blit the frame centered onto /dev/fb0 (R8G8B8A8, the proven scanout
  * format). No-op if fb0 is unavailable — the headless pixel check already ran. */
-/* Blit one decoded frame (SAND/COL128 -> NV12 -> RGBA, BT.601) centered into a
- * mapped R8G8B8A8 framebuffer. */
+/* Optional destination window (PLAY_TOOL --window WxH+X+Y). g_win_w == 0 keeps the
+ * historical behaviour: full-size, centered, no scaling. When set, the frame is
+ * scaled with nearest-neighbour into that rectangle and everything outside it is
+ * left untouched -- so HW video plays as a window OVER whatever already owns the
+ * framebuffer (the fbcon terminal), instead of covering the screen. The owner's
+ * reason: a full-screen capture "looks strange as you can not tell if this was a
+ * playback in the system or a segment of external video glued together".
+ * Nearest-neighbour on purpose -- this runs on the CPU per frame, and the point is
+ * to prove the decode is ours, not to resample well. */
+static uint32_t g_win_w = 0, g_win_h = 0, g_win_x = 0, g_win_y = 0;
+static int g_win_center_x = 0, g_win_center_y = 0;   /* resolved once fb geometry is known */
+static uint32_t g_win_border = 2;   /* px; drawn once per frame so the window reads as one */
+
+/* Blit one decoded frame (SAND/COL128 -> NV12 -> RGBA, BT.601) into a mapped
+ * R8G8B8A8 framebuffer: centered at native size, or scaled into the --window
+ * rectangle when one was given. */
 static void fb_blit(uint8_t *fb, uint32_t pitch, uint32_t fbw, uint32_t fbh,
 		    const uint8_t *yb, const uint8_t *cbb, uint32_t W, uint32_t H,
 		    uint32_t luma_stride, uint32_t chroma_stride)
 {
-	uint32_t x0 = (fbw > W) ? (fbw - W) / 2u : 0;
-	uint32_t y0 = (fbh > H) ? (fbh - H) / 2u : 0;
+	uint32_t x0, y0, dw, dh;
+
+	if (g_win_w != 0u && g_win_h != 0u) {
+		dw = g_win_w; dh = g_win_h;
+		x0 = g_win_center_x ? ((fbw > dw) ? (fbw - dw) / 2u : 0u) : g_win_x;
+		y0 = g_win_center_y ? ((fbh > dh) ? (fbh - dh) / 2u : 0u) : g_win_y;
+		/* Clamp to the framebuffer rather than refusing: a caller-supplied
+		 * geometry that runs off the edge should still show what fits. */
+		if (x0 >= fbw || y0 >= fbh) return;
+		if (x0 + dw > fbw) dw = fbw - x0;
+		if (y0 + dh > fbh) dh = fbh - y0;
+		/* Fixed-point 16.16 source step, so a 1080p source into a 960x540 window
+		 * costs one multiply-shift per pixel and no division. */
+		uint32_t sx_step = (W << 16) / dw, sy_step = (H << 16) / dh;
+		for (uint32_t dy = 0; dy < dh; dy++) {
+			uint32_t y = (dy * sy_step) >> 16;
+			if (y >= H) y = H - 1u;
+			for (uint32_t dx = 0; dx < dw; dx++) {
+				uint32_t x = (dx * sx_step) >> 16;
+				if (x >= W) x = W - 1u;
+				uint32_t cxb = (x & ~1u), cy = y / 2u;
+				int Y, U, V;
+				if (g_bd_minus8) {
+					Y = (int)(sand10(yb, luma_stride, x, y) >> 2);
+					U = (int)(sand10(cbb, chroma_stride, cxb, cy) >> 2);
+					V = (int)(sand10(cbb, chroma_stride, cxb + 1u, cy) >> 2);
+				} else {
+					Y = (int)sand8(yb, luma_stride, x, y);
+					U = (int)sand8(cbb, chroma_stride, cxb, cy);
+					V = (int)sand8(cbb, chroma_stride, cxb + 1u, cy);
+				}
+				int C = Y - 16, D = U - 128, E = V - 128;
+				uint8_t *px = fb + (uint64_t)(y0 + dy) * pitch + (uint64_t)(x0 + dx) * 4u;
+				px[0] = clip8((298 * C + 409 * E + 128) >> 8);
+				px[1] = clip8((298 * C - 100 * D - 208 * E + 128) >> 8);
+				px[2] = clip8((298 * C + 516 * D + 128) >> 8);
+				px[3] = 0xff;
+			}
+		}
+		/* Border: a white frame just outside the video, clipped to the fb. Without
+		 * it a dark scene has no visible edge and the "window" reading is lost. */
+		for (uint32_t b = 1; b <= g_win_border; b++) {
+			uint32_t bx0 = (x0 >= b) ? x0 - b : 0, by0 = (y0 >= b) ? y0 - b : 0;
+			uint32_t bx1 = (x0 + dw + b - 1u < fbw) ? x0 + dw + b - 1u : fbw - 1u;
+			uint32_t by1 = (y0 + dh + b - 1u < fbh) ? y0 + dh + b - 1u : fbh - 1u;
+			for (uint32_t x = bx0; x <= bx1; x++) {
+				uint8_t *t = fb + (uint64_t)by0 * pitch + (uint64_t)x * 4u;
+				uint8_t *m = fb + (uint64_t)by1 * pitch + (uint64_t)x * 4u;
+				t[0] = t[1] = t[2] = t[3] = 0xff;
+				m[0] = m[1] = m[2] = m[3] = 0xff;
+			}
+			for (uint32_t y = by0; y <= by1; y++) {
+				uint8_t *l = fb + (uint64_t)y * pitch + (uint64_t)bx0 * 4u;
+				uint8_t *r = fb + (uint64_t)y * pitch + (uint64_t)bx1 * 4u;
+				l[0] = l[1] = l[2] = l[3] = 0xff;
+				r[0] = r[1] = r[2] = r[3] = 0xff;
+			}
+		}
+		return;
+	}
+
+	x0 = (fbw > W) ? (fbw - W) / 2u : 0;
+	y0 = (fbh > H) ? (fbh - H) / 2u : 0;
 	for (uint32_t y = 0; y < H && (y0 + y) < fbh; y++) {
 		for (uint32_t x = 0; x < W && (x0 + x) < fbw; x++) {
 			uint32_t cxb = (x & ~1u), cy = y / 2u;   /* NV12: Cb at even col, Cr next */
@@ -1139,15 +1214,62 @@ static uint32_t present_frame(uint8_t *fb, const fbmode_t *fbm, dma_buf_t *el, d
 	return bad;
 }
 
+/* Parse "WxH+X+Y" (X/Y optional -> centered). Returns 0 on success. */
+static int parse_window_geom(const char *g)
+{
+	uint32_t w = 0, h = 0; int x = -1, y = -1;
+	if (sscanf(g, "%ux%u+%d+%d", &w, &h, &x, &y) < 2) {
+		if (sscanf(g, "%ux%u", &w, &h) != 2) return -1;
+	}
+	if (w == 0u || h == 0u) return -1;
+	g_win_w = w; g_win_h = h;
+	/* -1 means "centre it"; done here rather than in fb_blit so the geometry is
+	 * printed once, resolved, instead of recomputed per frame. */
+	g_win_x = (x >= 0) ? (uint32_t)x : 0u;
+	g_win_y = (y >= 0) ? (uint32_t)y : 0u;
+	g_win_center_x = (x < 0); g_win_center_y = (y < 0);
+	return 0;
+}
+
 int main(int argc, char **argv)
 {
 	setvbuf(stdout, NULL, _IONBF, 0);
-	if (argc < 2) { printf("usage: hevc-play <file.265> [golden.nv12]\n"); return 2; }
+
+	/* Options first, then up to two positionals (stream, optional golden). Kept
+	 * hand-rolled: psh does not strip quotes and this tool ships without getopt
+	 * long-option use elsewhere. */
+	const char *pos[2] = { NULL, NULL };
+	int npos = 0;
+	for (int i = 1; i < argc; i++) {
+		if (strcmp(argv[i], "--window") == 0 && i + 1 < argc) {
+			if (parse_window_geom(argv[++i]) != 0) {
+				printf("hevc-play: bad --window geometry '%s' (want WxH+X+Y)\n", argv[i]);
+				return 2;
+			}
+		} else if (strncmp(argv[i], "--window=", 9) == 0) {
+			if (parse_window_geom(argv[i] + 9) != 0) {
+				printf("hevc-play: bad --window geometry '%s' (want WxH+X+Y)\n", argv[i] + 9);
+				return 2;
+			}
+		} else if (npos < 2) {
+			pos[npos++] = argv[i];
+		} else {
+			printf("hevc-play: unexpected argument '%s'\n", argv[i]);
+			return 2;
+		}
+	}
+	if (npos < 1) {
+		printf("usage: hevc-play [--window WxH+X+Y] <file.265|.mp4> [golden.nv12]\n");
+		printf("       --window plays into that rectangle over the existing screen\n");
+		printf("                (the fbcon terminal stays visible around it);\n");
+		printf("                omit it for the historical full-size centered blit.\n");
+		return 2;
+	}
 
 	uint32_t fsz = 0;
-	uint8_t *file = slurp_265(argv[1], &fsz);
+	uint8_t *file = slurp_265(pos[0], &fsz);
 	if (!file) return 2;
-	printf("hevc-play: %s (%u bytes)\n", argv[1], fsz);
+	printf("hevc-play: %s (%u bytes)\n", pos[0], fsz);
 
 	/* Accept a `.mp4`/`.mov` container: demux the HEVC track to Annex-B in
 	 * place, then run the existing raw-Annex-B pipeline unchanged. */
@@ -1203,16 +1325,16 @@ int main(int argc, char **argv)
 
 	/* Optional golden (ffmpeg NV12, display order) for bit-exact conformance verify. */
 	const uint8_t *golden = NULL; uint32_t golden_nframes = 0;
-	if (argc >= 3) {
+	if (pos[1] != NULL) {
 		uint32_t glen = 0;
-		uint8_t *gbuf = slurp_265(argv[2], &glen);   /* raw slurp (name is generic) */
+		uint8_t *gbuf = slurp_265(pos[1], &glen);   /* raw slurp (name is generic) */
 		if (!gbuf) { free(file); return 2; }
 		/* 8-bit: NV12 (w*h*3/2 bytes/frame). 10-bit: yuv420p10le (16-bit samples,
 		 * right-aligned 0..1023 — w*h*3 bytes/frame). */
 		size_t fsz_nv12 = g_bd_minus8 ? (size_t)g_frame_w * g_frame_h * 3u
 					      : (size_t)g_frame_w * g_frame_h * 3u / 2u;
 		golden = gbuf; golden_nframes = (uint32_t)(glen / fsz_nv12);
-		printf("hevc-play: golden %s — %u frames @ %zu bytes/frame\n", argv[2], golden_nframes, fsz_nv12);
+		printf("hevc-play: golden %s — %u frames @ %zu bytes/frame\n", pos[1], golden_nframes, fsz_nv12);
 		if (golden_nframes < nslices)
 			printf("hevc-play: WARNING golden has %u < %u frames; late frames unverified\n", golden_nframes, nslices);
 	}
