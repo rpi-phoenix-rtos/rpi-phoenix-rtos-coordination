@@ -41,9 +41,26 @@ Every other file in `/bin` (164) and `/sbin` (19) is **byte-identical** to the g
 same file sets, no additions or removals — so the five game engines and their data are
 unchanged and carry their existing gate.
 
-⚠️ **NOT verified: the SD boot path itself.** There was no SD card in the host reader this
-session, so this image was never flashed or booted. All evidence above comes from netboot on
-byte-identical binaries. Treat SD boot as re-verification pending.
+⚠️ **NOT verified by booting: the SD path itself.** There was no SD card in the host reader,
+so this image was never flashed or booted; the runtime evidence above is netboot on
+byte-identical binaries. QEMU cannot substitute — the `raspi4b` lane loads `plo.elf` directly
+and does not emulate the VideoCore firmware → FAT handoff.
+
+**Structurally verified instead** (2026-09-08), which bounds the flash risk:
+
+| check | result |
+| --- | --- |
+| `verify-rpi4b-sdimg.sh` | OK |
+| partition table | p1 FAT32 64 MiB bootable @2048; p2 Linux @135168 |
+| FAT boot contents | `phoenix-armstub8-rpi4.bin`, `kernel8.img`, `start4.elf`, `fixup4.dat`, `bcm2711-rpi-4-b.dtb`, `overlays/`, `config.txt`, `loader.disk` — complete |
+| `config.txt` | `armstub=`, `kernel=kernel8.img`, `initramfs loader.disk 0x08000000`, `enable_uart=1` |
+| `loader.disk` variant | SD (no `nfs;/` syspage entry), syspage carries `bcm2711-emmc;-r;/dev/mmcblk0p2:ext2` |
+| root partition | that `mmcblk0p2` is this image's ext2 partition |
+| `e2fsck -fn` on p2 | **clean**, all 5 passes, 10496 files, 799583/1033998 blocks |
+
+So the boot chain is structurally sound and the rootfs is fsck-clean; what remains unproven is
+only the firmware/EMMC2 handoff on real hardware, which is unchanged code from the image that
+booted 21 times.
 
 ⚠️ The rootfs volume is 881 MiB here vs ~1.5 GiB in the gated image (the volume is now sized
 from content — see `scripts/build-rpi4b-rootfs-ext2.sh`). Free space on the running Pi drops
