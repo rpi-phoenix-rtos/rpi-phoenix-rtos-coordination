@@ -765,3 +765,33 @@ Failures OK** → pushed. All four game-port patches `--check` **OK**. Now **0 b
 ⚠️ Cutting a `--variant sd` image replaces the TFTP `loader.disk`, so netboot refuses until restored
 with `./scripts/rebuild-rpi4b-fast.sh --scope project --variant nfsroot --skip-prepare`. It also
 relinks the games, which expires their HW gate — budget 6 cycles after any image cut.
+
+### from §2f — the Quake III smoothness measurement, and the Game-of-Life "freeze"
+
+The owner's review item: *"Quake3 … screen updates significantly less smooth than other Quakes, as if
+there was no double/triple buffering. FPS is high. Frames are rendered correctly."* Right, and it was
+**not** buffering. New metric — 60 consecutive captured frames (2 s at 30 fps), counting pairs that
+differ, plus the variance:
+
+| | visible updates/s | CoV |
+|---|---|---|
+| QuakeSpasm | 29.5 *(= the grabber's 30 fps ceiling)* | 0.26 |
+| vkQuake | 28.5 | 0.33 |
+| Quake II | 24.0 | 0.82 |
+| **Quake III, before** | **13.5** | **1.06** |
+| **Quake III, after** | **25.0 / 26.5 / 29.5** | **0.55 / 0.43 / 0.11** |
+
+The picture changed on exactly every *other* captured frame (`0.1 4.7 0.1 4.7 …`) — ~15 Hz of visible
+motion inside a 43–46 fps render. Cause: **the orbit camera added for the demo.** `cg_view.c` steps it by
+`cg_cameraOrbit` degrees no oftener than every `cg_cameraOrbitDelay` ms, and 2°/60 ms is ~16 steps/s; with
+our player standing still the camera is the only thing moving much, so the *image* only changed 16 times a
+second. Now one step per rendered frame — and the step is 1° and not smaller because `cg_view.c` gates the
+feature on `cg_cameraOrbit.**integer**` while applying its `.value`, so 0.7 truncates to 0 and disables the
+orbit outright (measured: 0 changed frames in 2 s — which is how that was caught).
+
+**The "frozen" Game of Life never hung — it *finished*.** Conway's Life on a bounded field always dies down
+into still-lifes and period-2 oscillators. `life.py`'s own new log (`--log`, wired into the X launcher
+because a Python exception goes to the xterm's stderr where nothing captures it) shows it at **generation
+3640 after 210 s with the population pinned at 76 since generation ~360**. It now injects a fresh glider
+whenever the population has not moved for 60 generations. This supersedes the earlier "life.py freezes
+after ~80 s" caveat, which was recorded as unresolved.
