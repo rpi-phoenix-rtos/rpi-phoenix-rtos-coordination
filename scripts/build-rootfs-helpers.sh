@@ -118,6 +118,12 @@ helpers=(
 	# winsys swaps R/B to look right and Window Maker's blue-grey root came out
 	# mauve -- three sources that cannot all be correct (2026-09-04).
 	"tools/fbprobe/fbprobe.c|bin/fbprobe"
+	# Diagnostic: cached vs uncached store cost for BO memory. STK spends ~83% of
+	# a ~1000 ms frame on CPU work outside the V3D driver, and the winsys maps
+	# every BO MAP_UNCACHED by default; this separates streaming bandwidth from
+	# per-store latency, which is the distinction that decides the hypothesis
+	# (2026-09-08, docs/misc/2026-09-08-stk-frame-budget.md).
+	"tools/v3dmemprobe/v3dmemprobe.c|bin/v3dmemprobe"
 )
 
 tmp="$(mktemp -d)"
