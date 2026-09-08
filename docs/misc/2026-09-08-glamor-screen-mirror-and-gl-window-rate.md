@@ -681,3 +681,82 @@ suspects have now been cleared and the remaining space is the build.
 the source the archive was built from), so a future game build keeps bug #3's fix; the Mesa tree
 carries only the two pre-existing uncommitted files; and the demo runs the known-good daemon
 (sha256 `8e003ab45ef41009…`), the identical file verified rendering correctly one cycle earlier.
+
+---
+
+## 15. ROOT CAUSE of every X failure in this session: the wrong X server target was built
+
+§8, §13 and §14 chased a display failure through the DDX, a Mesa commit, the winsys and finally
+"the build". The last one was right in the most literal sense: **the wrong binary was being built.**
+
+There are two GPU X servers, differing only in how they reach V3D:
+
+```
+build-xfbdev.sh --glamor         -> Xphoenix-glamor          links the IN-PROCESS winsys
+build-xfbdev.sh --glamor-daemon  -> Xphoenix-glamor-daemon   links libv3d-client (/dev/v3d-srv)
+```
+
+`startx_gpu` starts the `rpi4-v3d` daemon, so it requires the `-daemon` build. I ran `--glamor`
+every time and copied the result into the `-daemon` slot — so an in-process-winsys X server ran
+**alongside** `rpi4-v3d`, two processes driving the same GPU. That is what produced, on different
+runs, MMU violations, GPU wedges, SIGILL, a black screen, full-screen vertical stripes and a flat
+grey screen.
+
+### How it was found — on the host, no Pi cycle
+
+Both binaries are unstripped static ELFs, so they can simply be compared:
+
+```
+             text        data      bss
+known-good   23779467   578996   395604
+fresh build  23800683   579012   510916     <-- BSS +115,312
+```
+
+A +115 KB BSS jump is not a compiler difference, it is a large static object appearing. The symbol
+diff named it immediately:
+
+| known-good only | fresh build only |
+|---|---|
+| `v3d_cli_bo` (98 304 B), `v3d_cli` | `W` (213 112 B), `bo_hist`, `scanout_cpu`, `v3d_submit_lock`, `v3d_phoenix_render_timeouts` |
+
+`v3d_cli_bo` is the daemon client's BO table; `W` is the in-process winsys' global state
+(`v3d_phoenix_winsys.c`). Different backends, in a binary whose *name* said daemon.
+
+### Verification
+
+Built correctly as `--glamor-daemon` against **current Mesa** (`aa916f2f06`), staged, and run:
+**0 faults, desktop renders and animates** (mean 102, std 68, frame-to-frame diffs 6.6–8.6) —
+identical in character to the older known-good.
+
+### What this withdraws
+
+- §13's "current Mesa is not usable for the X server" — **wrong.** Current Mesa is fine.
+- §14's "the difference is in the build, and there is nothing left to diff against" — the first half
+  was right, the second was not: the *binaries* were always diffable, and that is what settled it.
+- §8's "glamor work is not blocked" was right after all, for the wrong reason; §13's withdrawal of
+  it is itself withdrawn. **Glamor work is not blocked.**
+- The three exonerations stand and were never wrong: the DDX, the Mesa `u_vbuf` guard and the
+  winsys deltas were all genuinely innocent. Every one of those A/Bs was measuring a run whose X
+  server had the wrong backend.
+
+Note also that §14's "partial libglamor rebuild" explanation for the original SIGILL is no longer
+needed and should not be relied on — that run had the wrong backend too. The build-script fix it
+prompted (a landed glamor patch forces a full rebuild) is still a real improvement, and the
+staleness guard added alongside it caught a genuine stale build the same day; neither claim about
+the SIGILL rests on them now.
+
+### Why it took a whole session, and what stops it recurring
+
+The two binaries are within **440 bytes** of each other, their filenames differ by one word, and
+the failure looks exactly like a driver regression — so every plausible source suspect got
+investigated before the artefact itself. Three defences are now in place:
+
+1. `build-xfbdev.sh` asserts the linked backend matches the requested target (`v3d_cli_bo` present
+   for `--glamor-daemon`, absent for `--glamor`) and **fails the build** otherwise.
+2. The known-good directory now holds the **archives** beside the binary, so a known-good state can
+   be rebuilt and diffed.
+3. `artifacts/x11/known-good/README.md` states the two-servers distinction at the point of use.
+
+**Method note worth keeping:** when an artefact misbehaves and every source suspect has been
+cleared, diff the artefact. Two `size` invocations and an `nm` diff answered in minutes what four Pi
+cycles could not.
