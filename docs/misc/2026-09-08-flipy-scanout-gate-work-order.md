@@ -101,3 +101,39 @@ scanout RT rendered as `Y_0_TOP`), which the marker route leaves in place. It is
 `gl3_draw.c:398-401` itself recommends. Costs a change in every present layer, and it was not
 confirmed that these in-process contexts actually advertise the extension
 (`extensions_table.h:397` gates it at GL 4.3 / ES 3.0).
+
+---
+
+## ⚠️ ARCHITECTURE CORRECTION (2026-09-08) — read before doing edit #1
+
+Edit #1 below ("`c->flags &= ~0x2u;` in the winsys refusal branch, safe by construction because
+Mesa reads the same struct back") is only half true, because **the V3D stack is split into two
+paths** and they behave differently. Measured from boot logs:
+
+| component | path | evidence in the UART log |
+| --- | --- | --- |
+| GPU X desktop (`startx_gpu`) | **daemon** `/dev/v3d-srv` | `v3d-srv` present, `v3d-winsys` absent |
+| games (SuperTuxKart, vkQuake, …) | **in-process winsys** | `v3d-winsys` present, `v3d-srv` absent |
+
+Consequences for the plan:
+
+* **Games (in-process winsys):** Mesa calls the winsys directly on its own
+  `struct drm_v3d_create_bo`, so an in-place `c->flags &= ~0x2u;` *is* visible to
+  `v3d_bufmgr.c`. Edit #1 works as written here.
+* **X desktop (daemon):** it does not use the winsys at all — the arbitration lives in the
+  daemon's own `v3d_gpu.c` `ioc_create_bo`. And the client marshals over RPC:
+  `libv3d-client.c` sends `req.flags = c->flags` and receives a `v3d_rpc_resp_t` carrying only
+  `handle`/`pa`/`size`/`gpuva`, then never writes back to `c->flags`. **`v3d_rpc_resp_t` has no
+  flags field**, so a refusal cannot reach Mesa. Making the honored-flag visible on this path
+  needs an RPC protocol change (add `flags` to the response, return it from the daemon, write it
+  back in the client) — three files and a struct used by every GPU client, not the one-liner the
+  plan implies.
+
+So edit #1 must be done **twice**, once per path, and the daemon half is a protocol change. Budget
+for that before starting.
+
+Independently established while checking this: the BO-cache concern this document raised for
+edit #2 is **not** a real risk. `v3d_bufmgr.c:141` uses the *local* request flag for the cache
+lookup, which is correct and must stay (the outcome is unknown at that point), and the free-side
+guard's own comment gives the reason as "scanout aliases a fixed framebuffer PA" — which a
+*refused* BO does not. Caching a refused, plain-DRAM BO is correct by that invariant.

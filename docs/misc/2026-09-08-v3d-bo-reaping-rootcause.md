@@ -102,3 +102,13 @@ entries for the second session**, so the cost is not purely one-time setup.
 2026-09-08 and only the first session completed (7 commands did not fit the capture window), so
 there is no third data point. Re-run with fewer commands per boot, or a longer window, before
 claiming the leak is unbounded.
+
+
+## Scope note (2026-09-08, after the fix shipped)
+
+The reaping fix applies to the **daemon** path only, which is the GPU X desktop. Measured from
+boot logs: `startx_gpu` runs against `/dev/v3d-srv` (`v3d-srv` in the log, no `v3d-winsys`),
+while the games — SuperTuxKart and vkQuake both checked — use the **in-process winsys**
+(`v3d-winsys`, no `v3d-srv`). That is consistent with where the leak was measured (X lifecycles)
+and with the fix firing there and nowhere else, but the leak class does not apply to the games:
+they never allocate through the daemon, so there is no cross-process BO to orphan.
