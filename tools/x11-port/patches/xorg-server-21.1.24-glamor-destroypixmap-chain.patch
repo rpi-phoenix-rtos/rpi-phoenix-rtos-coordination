@@ -1,0 +1,95 @@
+Phoenix RPi4: chain glamor's DestroyPixmap screen hook instead of short-cutting
+straight to fbDestroyPixmap.
+
+glamor_init() saves the previous screen->DestroyPixmap into
+glamor_priv->saved_procs.destroy_pixmap and installs glamor_destroy_pixmap(),
+but that function ends in a hard `return fbDestroyPixmap(pixmap);` -- it never
+calls the saved pointer, which is only ever read again to restore the hook at
+CloseScreen. So anything wrapped BELOW glamor is cut out of the chain.
+
+Upstream xf86 never notices: glamor_init() runs at ScreenInit and DamageSetup()
+runs later at extension-init time, so damage always wraps ABOVE glamor. This
+DDX brings damage up through shadowSetup() (tools/x11-port/ddx/fbdev.c:591)
+BEFORE glamor_init() (:603), so damage sits below glamor -- in exactly the slot
+glamor does not honour.
+
+Consequence: damageDestroyPixmap() never ran for ANY pixmap, so damage.c's
+teardown loop (damage.c:1493-1501) never destroyed DamagePtrs attached to dying
+pixmaps. glamor's own stipple damage then outlived its drawable, and at desktop
+exit FreeGC() (dix/gc.c:781) released gc->stipple before calling the DDX
+DestroyGC (:783) -> glamor_destroy_gc -> glamor_invalidate_stipple ->
+DamageUnregister(), which dereferenced the freed pixmap:
+
+  pc=0x51d444 (dixGetPrivate+0x68, `ldr x0,[x0]`), far=0x60, x1=0
+  => pScreen->devPrivates read from a recycled chunk
+
+Measured on hardware: pDamage/pDrawable at the fault were exactly the pair
+glamor had registered, and an instrumented damageDestroyPixmap was never
+entered for that pixmap.
+
+Fix: add a screen-hook-only wrapper that does the same FBO teardown and then
+calls saved_procs.destroy_pixmap. glamor_destroy_pixmap() itself is _X_EXPORT
+and is called directly from ~15 places inside glamor to drop private pixmaps --
+those must NOT traverse the screen chain -- so the exported function is left
+untouched and only the hook slot changes. The wrapper reinstates its own slot
+after the downstream call because damageDestroyPixmap() unwraps and re-wraps
+screen->DestroyPixmap with itself.
+--- a/glamor/glamor.c
++++ b/glamor/glamor.c
+@@ -272,6 +272,47 @@
+     return fbDestroyPixmap(pixmap);
+ }
+ 
++/*
++ * Screen-hook form of the above: tears down the FBO exactly as
++ * glamor_destroy_pixmap() does, but then chains to whatever was installed below
++ * glamor instead of jumping straight to fbDestroyPixmap().
++ *
++ * glamor_destroy_pixmap() is _X_EXPORT and is called directly from ~15 places
++ * inside glamor to drop a private pixmap; those callers must NOT go through the
++ * screen chain, so the exported function is left alone and only the hook slot
++ * changes.
++ *
++ * Why this matters here: upstream xf86 runs glamor_init() at ScreenInit and
++ * DamageSetup() later at extension-init time, so damage always wraps ABOVE
++ * glamor and glamor's short-cut to fbDestroyPixmap() is harmless. This DDX
++ * brings damage up via shadowSetup() BEFORE glamor_init(), so damage sits below
++ * glamor -- in the one slot glamor did not honour. The result was that
++ * damageDestroyPixmap() never ran for any pixmap, so damage.c's teardown loop
++ * never destroyed DamagePtrs attached to dying pixmaps. glamor's own stipple
++ * damage then outlived its drawable and DamageUnregister() faulted on freed
++ * memory at desktop exit.
++ */
++static Bool
++glamor_destroy_pixmap_hook(PixmapPtr pixmap)
++{
++    ScreenPtr screen = pixmap->drawable.pScreen;
++    glamor_screen_private *glamor_priv = glamor_get_screen_private(screen);
++    Bool ret;
++
++    if (pixmap->refcnt == 1) {
++        glamor_pixmap_destroy_fbo(pixmap);
++    }
++
++    ret = (*glamor_priv->saved_procs.destroy_pixmap) (pixmap);
++
++    /* The callee below us may be a wrapper that unwraps and re-wraps
++     * screen->DestroyPixmap with ITSELF (damageDestroyPixmap does exactly
++     * that), which would drop us out of the chain. Reinstate our slot. */
++    screen->DestroyPixmap = glamor_destroy_pixmap_hook;
++
++    return ret;
++}
++
+ void
+ glamor_block_handler(ScreenPtr screen)
+ {
+@@ -662,7 +703,7 @@
+     screen->CloseScreen = glamor_close_screen;
+ 
+     glamor_priv->saved_procs.destroy_pixmap = screen->DestroyPixmap;
+-    screen->DestroyPixmap = glamor_destroy_pixmap;
++    screen->DestroyPixmap = glamor_destroy_pixmap_hook;
+ 
+     /* If we are using egl screen, call egl screen init to
+      * register correct close screen function. */

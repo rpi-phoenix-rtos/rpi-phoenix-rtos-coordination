@@ -68,6 +68,22 @@ core_archives=(
   Xi/.libs/libXi.a Xi/.libs/libXistubs.a xkb/.libs/libxkb.a xkb/.libs/libxkbstubs.a
   composite/.libs/libcomposite.a config/.libs/libconfig.a os/.libs/libos.a
 )
+# glamor DestroyPixmap chain fix (see the patch header). Applied on BOTH paths --
+# the slow full-build path and the "already built" early return -- because the
+# archive must be rebuilt for the fix to reach the link. patch -N is idempotent.
+apply_glamor_chain_patch() {
+  [ "$GLAMOR" = 1 ] || return 0
+  local pf="$ROOT/tools/x11-port/patches/xorg-server-${VER}-glamor-destroypixmap-chain.patch"
+  [ -f "$pf" ] || return 0
+  if patch -d "$KD" -p1 -N --dry-run <"$pf" >/dev/null 2>&1; then
+    echo "=== applying glamor DestroyPixmap chain fix + rebuilding libglamor ==="
+    patch -d "$KD" -p1 -N <"$pf" >/dev/null 2>&1 || true
+    make -C "$KD/glamor" \
+      GLAMOR_CFLAGS="-I$GLAMOR_SHIM -I$GLAMOR_MESA_GL" >/dev/null 2>&1 \
+      || { echo "glamor rebuild FAIL after chain patch"; exit 1; }
+  fi
+}
+
 all_present() {
   local a
   for a in "${core_archives[@]}"; do
@@ -97,11 +113,11 @@ core_built() {
   [ "$GLAMOR" = 0 ] || [ -f "$GLAMOR_A" ]
 }
 if core_built; then
-  # NOTE: this early return is ABOVE the durable-patch block further down, so a
-  # patch added there is silently SKIPPED on every run after the first successful
-  # build. If you add a core-source patch, move its application above this point
-  # (or delete an archive to force the slow path). See
-  # docs/misc/2026-09-08-x-teardown-crash-open.md.
+  # Durable core-source patches must be applied and their archive rebuilt even on
+  # the "already built" path — this early return used to sit ABOVE the patch block
+  # further down, which silently skipped any patch added there on every run after
+  # the first successful build.
+  apply_glamor_chain_patch
   echo "=== xorg-server $VER core archives already built (glamor=$GLAMOR) — skipping ==="
   exit 0
 fi
@@ -186,6 +202,10 @@ if [ "$GLAMOR" = 1 ]; then
   # content shows upside-down). Gated on the screen pixmap; offscreen pixmaps untouched.
   GLAMOR_YFLIP_PATCH="$ROOT/tools/x11-port/patches/xorg-server-${VER}-glamor-screen-upload-yflip.patch"
   [ -f "$GLAMOR_YFLIP_PATCH" ] && patch -d "$KD" -p1 -N <"$GLAMOR_YFLIP_PATCH" >/dev/null 2>&1 || true
+  # DestroyPixmap chain fix: applied here for the full build (the archive is built
+  # by the make below, so no separate rebuild is needed on this path).
+  GLAMOR_CHAIN_PATCH="$ROOT/tools/x11-port/patches/xorg-server-${VER}-glamor-destroypixmap-chain.patch"
+  [ -f "$GLAMOR_CHAIN_PATCH" ] && patch -d "$KD" -p1 -N <"$GLAMOR_CHAIN_PATCH" >/dev/null 2>&1 || true
 fi
 
 echo "=== building $NV core (make -j$(nproc)) ==="
