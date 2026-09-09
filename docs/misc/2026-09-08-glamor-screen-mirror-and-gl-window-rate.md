@@ -1660,3 +1660,13 @@ Not yet explained. Two notes for whoever picks it up:
 
 Neither is a regression: every STK run that reached the exit since 2026-09-07 shows
 the same two aborts, including runs that still returned `rc=0`.
+
+### Where the regression test goes (owner's standing rule: always add a libphoenix test)
+
+`sources/phoenix-rtos-tests/libc/stdlib/stdlib_alloc.c` already covers
+malloc/calloc/realloc/free (Unity: `TEST(stdlib_alloc, ...)` + a matching
+`RUN_TEST_CASE` in `TEST_GROUP_RUNNER(stdlib_alloc)` at `:522`, run as
+`test-libc-stdlib`). The missing case is the one this crash needs: **fragment a
+heap, then fully drain it, repeatedly** — that is what exercises the
+fully-free/`munmap` path at `malloc_dl.c:593`. Add it there once the host harness
+names the exact sequence, so the test asserts the real failure rather than a guess.
