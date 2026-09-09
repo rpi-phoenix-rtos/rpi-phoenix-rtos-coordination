@@ -1731,3 +1731,56 @@ detectors reported a defect on a clean build.
   turn and a careful invalidate.
 * xbill ignores its `-geometry` **position** (Xt sets PPosition; Window Maker
   auto-places). Worked around by laying the desktop out around where it lands.
+
+## §29 — the slow 3D window is ROUND-TRIP COUNT, and the count is set by the AF_UNIX ring
+
+The owner's remaining X complaint ("the 3D rendering window is still animating
+slow"). Presents are no longer the cost — 13.4 ms each at 25.6/s — so the residual
+had to be in the request path. Probe on the server's read loop, two cycles with the
+SAME instrumented binary:
+
+| clients | got/read | mean gap | gaps >5 ms | reads/frame | `put` | fps |
+|---|---|---|---|---|---|---|
+| 6 (`action`) | 32.6 kB | **2.839 ms** | 17% | 37.8 | 68.6 ms | 9.46 |
+| 2 (GL only) | 40.7 kB | **2.785 ms** | 23% | ~30 | 50.3 ms | **11.87** |
+
+Two things fall out.
+
+**Refuted: the thundering herd.** Every read and every write in `posix/unix.c` does
+`proc_threadBroadcast(&unix_common.pollQueue)` — waking *all* AF_UNIX pollers
+system-wide through one global lock (`:502`, `:727`, `:983`, `:1130`). That looked
+like an obvious per-poller cost. Going from 6 clients to 2 left the mean gap
+**unchanged** (2.839 → 2.785 ms), so the broadcast is not what the time is going
+on. Worth knowing before someone redesigns it.
+
+**Confirmed: cost = round-trips × a fixed ~2.79 ms.** What actually changed between
+the two runs is how much the ring hands over per refill (32.6 → 40.7 kB, because
+with less competition the writer gets further ahead), so reads/frame fell ~20% and
+fps rose ~25%. **The frame rate scales inversely with the number of round-trips**,
+and the per-round-trip cost is constant.
+
+Note the ring only ever transfers about **half** its capacity per refill — a
+producer/consumer race: the writer blocks when full, the reader drains it, so the
+reader on average finds it half-full. With a 64 kB ring that is ~32 kB per refill
+and a 1.2 MB `XPutImage` therefore costs ~38 round-trips.
+
+Also worth recording: **2.79 ms is a very slow same-machine round-trip** (two thread
+wakeups; microseconds would be normal). The waits are correct — `proc_threadWait`
+with timeout 0, properly signalled in both directions — so this is not the poll
+fallback. It is close to a scheduler quantum, which would mean AF_UNIX round-trip
+latency is *tick-quantized*. That is a deeper and more valuable finding than the
+buffer size, but a much larger change; recorded, not attempted.
+
+### The bounded fix, and the prediction
+
+`US_MAX_BUFFER_SIZE` (kernel `posix/unix.c:31`) caps `SO_RCVBUF` at 64 kB. Raising
+it to 256 kB should give ~128–160 kB per refill:
+
+* reads/frame **38 → ~9**
+* `put` **68.6 → ~24 ms**
+* frame **105.8 → ~61 ms**, i.e. **9.46 → ~16 fps**
+
+If fps does *not* scale with the round-trip count, the inverse law above is wrong
+and the cost is per-byte somewhere else. If the ring allocation fails, the socket
+silently keeps the 4 kB **default** (worse than today), so the X server must step
+down 256 kB → 64 kB rather than ask once.
