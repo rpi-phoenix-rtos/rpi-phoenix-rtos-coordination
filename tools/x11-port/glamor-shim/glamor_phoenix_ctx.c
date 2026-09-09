@@ -267,13 +267,23 @@ static void phx_make_current(struct glamor_context *glamor_ctx)
 
 static GLuint phx_readback_fbo = 0;
 
-void glamor_phx_screen_readback(unsigned int tex, int width, int y0, int rows,
-                                void *dst)
+/*
+ * Read the box [x0, x0+cols) x [y0, y0+rows) out of the screen-pixmap texture
+ * into `dst`, whose rows are `rowLength` pixels apart (i.e. the caller's shadow
+ * stride in pixels, not the width of the box). GL_PACK_ROW_LENGTH is what makes a
+ * sub-rectangle land at the right offset in a full-width destination, so a narrow
+ * band costs only its own pixels: this readback is per-pixel CPU work (the
+ * BGRA<->RGBA shuffle, see the comment above), so its cost scales with AREA, and
+ * a 640-wide band in a 1920-wide screen is a 3x saving on the dominant term of a
+ * present.
+ */
+void glamor_phx_screen_readback(unsigned int tex, int x0, int cols, int rowLength,
+                                int y0, int rows, void *dst)
 {
 	GLint prev_fbo = 0;
 	static int checked = 0;
 
-	if (phx_st == NULL || tex == 0 || rows <= 0 || dst == NULL)
+	if (phx_st == NULL || tex == 0 || rows <= 0 || cols <= 0 || dst == NULL)
 		return;
 
 	_mesa_make_current(phx_st->ctx, NULL, NULL);
@@ -306,7 +316,7 @@ void glamor_phx_screen_readback(unsigned int tex, int width, int y0, int rows,
 	{
 		static unsigned char *scratch = NULL;
 		static int scratch_bytes = 0;
-		int need = width * rows * 4;
+		int need = cols * rows * 4;
 		int r;
 
 		if (need > scratch_bytes) {
@@ -322,16 +332,20 @@ void glamor_phx_screen_readback(unsigned int tex, int width, int y0, int rows,
 			 * not bound to the active unit). */
 			glBindTexture(GL_TEXTURE_2D, (GLuint)tex);
 			glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &H);
-			glReadPixels(0, H - (y0 + rows), width, rows, PHX_READBACK_FORMAT,
+			glReadPixels(x0, H - (y0 + rows), cols, rows, PHX_READBACK_FORMAT,
 			             GL_UNSIGNED_BYTE, scratch);
 			for (r = 0; r < rows; r++)
-				memcpy((unsigned char *)dst + (size_t)r * width * 4,
-				       scratch + (size_t)(rows - 1 - r) * width * 4,
-				       (size_t)width * 4);
+				memcpy((unsigned char *)dst + (size_t)r * rowLength * 4,
+				       scratch + (size_t)(rows - 1 - r) * cols * 4,
+				       (size_t)cols * 4);
 		}
 	}
 #else
-	glReadPixels(0, y0, width, rows, PHX_READBACK_FORMAT, GL_UNSIGNED_BYTE, dst);
+	/* ROW_LENGTH lets a narrow box be written into a wider destination without a
+	 * bounce buffer; 0 restores the default (= the box width) for other callers. */
+	glPixelStorei(GL_PACK_ROW_LENGTH, rowLength);
+	glReadPixels(x0, y0, cols, rows, PHX_READBACK_FORMAT, GL_UNSIGNED_BYTE, dst);
+	glPixelStorei(GL_PACK_ROW_LENGTH, 0);
 #endif
 
 	glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)prev_fbo);

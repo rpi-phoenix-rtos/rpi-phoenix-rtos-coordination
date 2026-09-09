@@ -82,8 +82,9 @@ static Bool fbdev_glamor_active = FALSE;
  * texture `tex` (from glamor_get_pixmap_texture) into `dst`, tightly packed
  * width*4 bytes/row, byte0=R (matches the Pi fb RGB byte order, DDX redMask 0xff).
  */
-extern void glamor_phx_screen_readback(unsigned int tex, int width,
-                                        int y0, int rows, void *dst);
+extern void glamor_phx_screen_readback(unsigned int tex, int x0, int cols,
+                                        int rowLength, int y0, int rows,
+                                        void *dst);
 
 /*
  * Shadow-RAM card cursor (defined in the cursor section below). fbdevFlushRegion
@@ -340,8 +341,27 @@ fbdevScreenInit(KdScreenInfo *screen)
  */
 #define FBDEV_BAND_MERGE_GAP 32
 
+/*
+ * Presents read back only the damaged COLUMNS but always write FULL-WIDTH rows.
+ * That asymmetry is measured, not assumed.
+ *
+ * The readback is per-pixel CPU work (the BGRA<->RGBA shuffle, see
+ * glamor_phoenix_ctx.c) so it scales with AREA: restricting it to the damaged x
+ * extent took it from 13.1 ms to 4.93 ms for a typical 232-row band.
+ *
+ * The /dev/fb0 write does not scale that way. Writing only the damaged columns
+ * needs an lseek()+write() PER ROW, and a row costs **80 us** on this port --
+ * 18.66 ms for 232 rows, against 3.48 ms for the same rows as ONE contiguous
+ * full-width write. Partial-X on the write side was therefore a net loss (23.6 ms
+ * versus 16.6 ms for full-width rows), which is why it is not done.
+ *
+ * Rewriting the undamaged columns is correct: nothing changed there, so the
+ * shadow still holds the pixels already on screen and the write is a no-op in
+ * content. It is simply cheaper to ship those bytes than to skip them.
+ */
+
 static void
-fbdevFlushRegion(ScreenPtr pScreen, int y0, int y1)
+fbdevFlushRegion(ScreenPtr pScreen, int x0, int x1, int y0, int y1)
 {
     KdScreenPriv(pScreen);
     KdScreenInfo *screen = pScreenPriv->screen;
@@ -350,7 +370,8 @@ fbdevFlushRegion(ScreenPtr pScreen, int y0, int y1)
     int fbHeight = priv->mode.height;
     CARD8 *shadow = (CARD8 *) screen->fb.frameBuffer;
     int shadowStride = screen->fb.byteStride;
-    int rows;
+    int fbWidth = priv->mode.width;
+    int rows, cols;
     off_t off;
     size_t len;
     ssize_t w;
@@ -365,6 +386,16 @@ fbdevFlushRegion(ScreenPtr pScreen, int y0, int y1)
     if (y1 <= y0)
         return;
     rows = y1 - y0;
+
+    if (x0 < 0)
+        x0 = 0;
+    if (x1 > fbWidth)
+        x1 = fbWidth;
+    if (x1 <= x0)
+        return;
+    cols = x1 - x0;
+
+
 
 #ifdef GLAMOR_PHOENIX
     /*
@@ -381,8 +412,9 @@ fbdevFlushRegion(ScreenPtr pScreen, int y0, int y1)
         unsigned int tex = glamor_get_pixmap_texture(screen_pixmap);
 
         if (tex != 0)
-            glamor_phx_screen_readback(tex, priv->mode.width, y0, rows,
-                                       shadow + (off_t) y0 * shadowStride);
+            glamor_phx_screen_readback(tex, x0, cols, shadowStride / 4, y0, rows,
+                                       shadow + (off_t) y0 * shadowStride
+                                              + (off_t) x0 * 4);
     }
 #endif
 
@@ -487,23 +519,42 @@ static Bool fbdevAccumReady = FALSE;
  * FBDEV_BAND_MERGE_GAP).
  */
 static int
-fbdevNextSpan(BoxPtr rects, int nrects, int i, int *y1_out, int *y2_out)
+fbdevNextSpan(BoxPtr rects, int nrects, int i, int *x1_out, int *x2_out,
+              int *y1_out, int *y2_out)
 {
     int span_y1 = rects[i].y1;
     int span_y2 = rects[i].y2;
+    int span_x1 = rects[i].x1;
+    int span_x2 = rects[i].x2;
 
-    while (i < nrects && rects[i].y1 == span_y1 && rects[i].y2 == span_y2)
+    while (i < nrects && rects[i].y1 == span_y1 && rects[i].y2 == span_y2) {
+        /* X extent of the whole span: rects within a band are x-sorted, but a
+         * merged span spans several bands, so track both ends. */
+        if (rects[i].x1 < span_x1)
+            span_x1 = rects[i].x1;
+        if (rects[i].x2 > span_x2)
+            span_x2 = rects[i].x2;
         i++;
+    }
 
     while (i < nrects && rects[i].y1 >= span_y2 &&
            rects[i].y1 - span_y2 < FBDEV_BAND_MERGE_GAP) {
         int band_y1 = rects[i].y1, band_y2 = rects[i].y2;
 
         span_y2 = band_y2;
-        while (i < nrects && rects[i].y1 == band_y1 && rects[i].y2 == band_y2)
+        while (i < nrects && rects[i].y1 == band_y1 && rects[i].y2 == band_y2) {
+            if (rects[i].x1 < span_x1)
+                span_x1 = rects[i].x1;
+            if (rects[i].x2 > span_x2)
+                span_x2 = rects[i].x2;
             i++;
+        }
     }
 
+    if (x1_out != NULL)
+        *x1_out = span_x1;
+    if (x2_out != NULL)
+        *x2_out = span_x2;
     if (y1_out != NULL)
         *y1_out = span_y1;
     if (y2_out != NULL)
@@ -529,21 +580,22 @@ fbdevPresentRegion(ScreenPtr pScreen, RegionPtr region)
     /* Count merged spans first, so an over-fragmented region can take the single
      * bounding-box present instead of a storm of tiny ones. */
     for (i = 0, bands = 0; i < nrects && bands < FBDEV_MAX_FLUSH_BANDS; bands++)
-        i = fbdevNextSpan(rects, nrects, i, NULL, NULL);
+        i = fbdevNextSpan(rects, nrects, i, NULL, NULL, NULL, NULL);
 
     if (i < nrects) {
         BoxPtr extents = RegionExtents(region);
 
-        fbdevFlushRegion(pScreen, extents->y1, extents->y2);
+        fbdevFlushRegion(pScreen, extents->x1, extents->x2,
+                         extents->y1, extents->y2);
         return;
     }
 
     (void) priv;
     for (i = 0; i < nrects;) {
-        int y1, y2;
+        int x1, x2, y1, y2;
 
-        i = fbdevNextSpan(rects, nrects, i, &y1, &y2);
-        fbdevFlushRegion(pScreen, y1, y2);
+        i = fbdevNextSpan(rects, nrects, i, &x1, &x2, &y1, &y2);
+        fbdevFlushRegion(pScreen, x1, x2, y1, y2);
     }
 }
 
@@ -621,18 +673,22 @@ static void fbdevMouseRead(int fd, int ready, void *data);
  * bypassed damage's CreateGC wrapper; see fbdevFinishInitScreen), so this timer
  * was the only thing putting pixels on HDMI and the desktop reached the screen
  * ~2.3 times a second. With damage working it is a real display-rate tick that
- * drains accumulated damage.
+ * drains accumulated damage, and a tick with no damage costs nothing.
+ *
+ * The interval trades screen-update rate against client CPU, because a present
+ * pass runs on the single dispatch thread. Measured, all on the same desktop:
+ *
+ *   300 ms, whole-screen presents : 2.3 presents/s, client 8.88 fps
+ *    16 ms, whole-screen presents : 21.0            client 5.48
+ *    50 ms, Y-bands only          : 21.0            client 6.90-7.35
+ *    50 ms, + partial-X readback  : 21.3            client 8.33
+ *    33 ms, + partial-X readback  : 25.6            client 8.22   <- shipped
+ *
+ * Making presents cheaper (partial-X readback: 17.3 -> 13.4 ms each) is what
+ * bought the last two rows: 33 ms now costs essentially nothing in client fps
+ * (8.22 vs 8.33 is inside the ~4% run-to-run spread) for 20% more presents.
  */
-/*
- * 50 ms rather than a display-rate 16 ms. A present pass costs ~32 ms of the
- * single dispatch thread for a typical desktop's damage, so the tick interval is
- * a direct trade between how often the screen changes and how much CPU clients
- * get. Measured: at 16 ms the screen updated 21x/s but clients fell to 5.5 fps
- * (67% of the thread spent presenting); at the old 300 ms the screen updated
- * 2.3x/s with clients at 8.9. 50 ms sits where both are good -- ~12 screen
- * updates/s for ~15% of the client cost.
- */
-#define FBDEV_FLUSH_MS 50
+#define FBDEV_FLUSH_MS 33
 
 /* Ticks of quiet before the one-shot idle whole-screen present (~1 s). */
 #define FBDEV_IDLE_FLUSH_TICKS 20
@@ -685,7 +741,7 @@ fbdevFlushTimerCb(OsTimerPtr timer, CARD32 now, void *arg)
         return FBDEV_FLUSH_MS;
 
     fbdevIdleFlushed = TRUE;
-    fbdevFlushRegion(pScreen, 0, priv->mode.height);
+    fbdevFlushRegion(pScreen, 0, priv->mode.width, 0, priv->mode.height);
     /* Return the interval (non-zero) to re-arm; returning 0 fires only once. */
     return FBDEV_FLUSH_MS;
 }
