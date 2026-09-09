@@ -274,3 +274,41 @@ Remaining probes, cheapest first:
    worth eliminating but is not the likely culprit.
 2. instrument STK itself: log `fb_orientation` per FBO bind for one frame at 0.5 and at 0.75. That
    directly shows which pass changes class, instead of inferring it from a synthetic band.
+
+## ⛔ 2026-09-09 CONCLUSION: the fps case for this work is DEAD. Mesa's orientation plumbing is fine.
+
+Third and final probe done. All three candidate explanations for STK's flip are now **measured and
+refuted**, so the argument that fixing this gate unlocks STK's 2.2x does not survive.
+
+| probe | configuration | result |
+|---|---|---|
+| C | one mismatched hop: 960x540 RTT (`Y_0_BOTTOM`) -> quad -> 1920x1080 dest (`Y_0_TOP`) | **preserved** |
+| D | two hops: RTT -> RTT -> dest | **preserved** |
+| **E** | **RTT -> quad -> a genuinely SCANOUT-BACKED dest** (`scanout_init` + claim `active=1 nbuf=3`, page-flipped, read off the SCREEN) | **preserved** |
+
+E's evidence, since it is the one that matters: five consecutive HDMI frames during the hold show
+the band at screen rows **543..1079**, and the coverage profile is 0.00 for rows 0-539 against
+0.87-0.96 for rows 540-1079 — a clean bottom-half band, exactly where an NDC bottom-half band
+belongs. Getting there needed two fixes to the harness, both mine: `scanout_init(pa,w,h,pitch)` must
+run **before any FBO is allocated** (the game platform layers do this from `/dev/fb0`
+`RPI4FB_GETMODE`; without it `ioc_create_bo` refuses the claim), and once the destination *is*
+scanout-backed the CPU `texture_map` readback returns nothing usable — for a scanout target the
+screen is the only valid instrument.
+
+**What this means.**
+* Mesa's per-FBO orientation handling is **well-behaved** in every configuration reachable here.
+  A correct scanout predicate would not flip STK, and it would not speed it up either.
+* **STK's flip at `scale_rtts_factor=0.5` is therefore an STK-side (or scale_rtts-interaction)
+  problem, not a symptom of this gate.** It remains unexplained, and the 2.2x is still potentially
+  reachable — but by understanding STK's render graph, not by touching the winsys or the RPC.
+* **Do not do the winsys + RPC + five-compensator change for performance reasons.** The only case
+  left for it is code hygiene: five per-app compensators today, and the next port with a large
+  offscreen FBO renders upside down until someone adds a sixth. That is a real but modest case, and
+  it does not justify the risk while a demo is live.
+
+Next step if anyone picks up the STK 2.2x: instrument STK, not Mesa — log `fb_orientation` and the
+FBO dimensions at every bind for one frame at 0.5 and one at 0.75, and diff them. That shows which
+pass changes class. Note it needs a full STK port rebuild (its build keeps no reusable objects).
+
+Harness: `tools/v3d-driver-port/gl_fbo_orientation.c` (steps A-E, prints its own verdict, and now
+says explicitly when a step did not really run).

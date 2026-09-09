@@ -44,6 +44,9 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/ioctl.h>
 #include "pipe/p_screen.h"
 #include "pipe/p_context.h"
 #include "pipe/p_state.h"
@@ -74,6 +77,20 @@ extern unsigned char _mesa_make_current(struct gl_context *ctx,
 extern void v3d_phoenix_set_next_scanout(void) __attribute__((weak));
 extern int v3d_phoenix_scanout_active(void) __attribute__((weak));
 extern int v3d_phoenix_scanout_nbuf(void) __attribute__((weak));
+
+/* rpi4-fb ABI, mirrored locally the way the game platform layers do
+ * (sources/phoenix-rtos-devices/video/rpi4-fb/rpi4-fb.h). */
+typedef struct {
+	uint16_t width;
+	uint16_t height;
+	uint16_t bpp;
+	uint16_t pitch;
+	uint64_t smemlen;
+	uint64_t framebuffer;
+} rpi4fb_mode_t;
+#define RPI4FB_GETMODE _IOR('g', 1, rpi4fb_mode_t)
+extern int v3d_phoenix_scanout_init(uint32_t pa, uint32_t w, uint32_t h, uint32_t pitch) __attribute__((weak));
+extern void v3d_phoenix_flip(int buf) __attribute__((weak));
 
 #define SMALL_W 960
 #define SMALL_H 540
@@ -145,7 +162,8 @@ static GLuint program(const char *vs_src, const char *fs_src, int with_uv)
 
 /* Which MEMORY rows of `rt` contain red? Returns 0 on success. */
 static int redRows(struct pipe_context *pipe, struct pipe_resource *rt,
-                   unsigned int w, unsigned int h, int *firstRow, int *lastRow, unsigned int *nRows)
+                   unsigned int w, unsigned int h, int *firstRow, int *lastRow, unsigned int *nRows,
+                   unsigned int *swapped)
 {
 	struct pipe_box box = { 0 };
 	struct pipe_transfer *xfer = NULL;
@@ -164,6 +182,7 @@ static int redRows(struct pipe_context *pipe, struct pipe_resource *rt,
 	*firstRow = -1;
 	*lastRow = -1;
 	*nRows = 0u;
+	*swapped = 0u;
 
 	/* texture_map hands back a linear staging copy with stride == w*4 for these
 	 * sizes; sample the row centre to avoid any edge/AA ambiguity. */
@@ -171,9 +190,18 @@ static int redRows(struct pipe_context *pipe, struct pipe_resource *rt,
 		const volatile uint32_t *row = &((volatile uint32_t *)map)[(size_t)y * w];
 		unsigned int red = 0u;
 		for (x = w / 4u; x < (3u * w) / 4u; x += (w / 8u)) {
-			/* R8G8B8A8_UNORM little-endian: red is 0xff0000ff. */
+			/* Accept EITHER channel order. A scanout-backed RT trips the winsys
+			 * swap_color_rb heuristic (documented in sdl_phoenix_glctx.c: rendering
+			 * straight into the scanout BO is exactly one swap), so the band comes
+			 * back as 0xffff0000 rather than 0xff0000ff. Matching only the first
+			 * made the whole scanout run read as "no pixels at all" and the
+			 * orientation question unanswerable -- a detector bug, not a GPU one. */
 			if (row[x] == 0xff0000ffu) {
 				red++;
+			}
+			else if (row[x] == 0xffff0000u) {
+				red++;
+				(*swapped)++;
 			}
 		}
 		if (red >= 2u) {
@@ -202,6 +230,7 @@ int main(void)
 	GLuint progFlat, progTex, vbo = 0;
 	int fA = -1, lA = -1, fB = -1, lB = -1, fC = -1, lC = -1;
 	unsigned int nA = 0u, nB = 0u, nC = 0u;
+	unsigned int swfA = 0u, swfB = 0u, swfC = 0u;
 
 	/* Bottom half in NDC: y from -1 to 0. */
 	static const float bandVerts[8] = {
@@ -235,6 +264,32 @@ int main(void)
 	printf("fboorient: GL_VERSION=%s\n", (const char *)glGetString(GL_VERSION));
 	printf("fboorient: SMALL=%dx%d (below the 1024x768 gate -> expect Y_0_BOTTOM)\n", SMALL_W, SMALL_H);
 	printf("fboorient: LARGE=%dx%d (at/above the gate -> expect Y_0_TOP)\n", LARGE_W, LARGE_H);
+
+	/* Hand the winsys the scanout PA BEFORE any FBO is allocated. The game
+	 * platform layers do exactly this (pl_phoenix_vid.c, SDL_phoenixvideo.c) and
+	 * their comment says why: the full-screen RT is allocated during context
+	 * create, so the winsys must already know the scanout PA to back it. Calling
+	 * set_next_scanout() later without this is why step E's claim was refused. */
+	if (v3d_phoenix_scanout_init != NULL) {
+		int fbfd = open("/dev/fb0", O_WRONLY);
+		if (fbfd >= 0) {
+			rpi4fb_mode_t mode;
+			memset(&mode, 0, sizeof(mode));
+			if ((ioctl(fbfd, RPI4FB_GETMODE, &mode) == 0) && (mode.framebuffer != 0u)) {
+				int sc = v3d_phoenix_scanout_init((uint32_t)mode.framebuffer, mode.width,
+				                                 mode.height, mode.pitch);
+				printf("fboorient: scanout_init PA=0x%08x %ux%u pitch=%u -> nbuf=%d\n",
+				       (uint32_t)mode.framebuffer, mode.width, mode.height, mode.pitch, sc);
+			}
+			else {
+				printf("fboorient: RPI4FB_GETMODE failed — step E will stay unclaimed\n");
+			}
+			(void)close(fbfd);
+		}
+		else {
+			printf("fboorient: /dev/fb0 open failed — step E will stay unclaimed\n");
+		}
+	}
 
 	tmpl.target = PIPE_TEXTURE_2D;
 	tmpl.format = PIPE_FORMAT_R8G8B8A8_UNORM;
@@ -294,9 +349,9 @@ int main(void)
 	glClear(GL_COLOR_BUFFER_BIT);
 	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 	glFinish();
-	(void)redRows(pipe, rtSmall, SMALL_W, SMALL_H, &fA, &lA, &nA);
-	printf("fboorient: [A] NDC bottom-half band drawn into SMALL -> memory rows %d..%d (%u of %d)\n",
-	       fA, lA, nA, SMALL_H);
+	(void)redRows(pipe, rtSmall, SMALL_W, SMALL_H, &fA, &lA, &nA, &swfA);
+	printf("fboorient: [A] NDC bottom-half band drawn into SMALL -> memory rows %d..%d (%u of %d, rb-swapped=%u)\n",
+	       fA, lA, nA, SMALL_H, swfA);
 
 	/* ---- B: same band straight into LARGE ---- */
 	glBindFramebuffer(GL_FRAMEBUFFER, fboLarge);
@@ -306,9 +361,9 @@ int main(void)
 	glClear(GL_COLOR_BUFFER_BIT);
 	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 	glFinish();
-	(void)redRows(pipe, rtLarge, LARGE_W, LARGE_H, &fB, &lB, &nB);
-	printf("fboorient: [B] NDC bottom-half band drawn into LARGE -> memory rows %d..%d (%u of %d)\n",
-	       fB, lB, nB, LARGE_H);
+	(void)redRows(pipe, rtLarge, LARGE_W, LARGE_H, &fB, &lB, &nB, &swfB);
+	printf("fboorient: [B] NDC bottom-half band drawn into LARGE -> memory rows %d..%d (%u of %d, rb-swapped=%u)\n",
+	       fB, lB, nB, LARGE_H, swfB);
 
 	/* ---- C: band into SMALL, then SMALL textured onto LARGE ---- */
 	glBindFramebuffer(GL_FRAMEBUFFER, fboSmall);
@@ -333,9 +388,9 @@ int main(void)
 	glClear(GL_COLOR_BUFFER_BIT);
 	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 	glFinish();
-	(void)redRows(pipe, rtLarge, LARGE_W, LARGE_H, &fC, &lC, &nC);
-	printf("fboorient: [C] band via SMALL RTT, textured quad onto LARGE -> memory rows %d..%d (%u of %d)\n",
-	       fC, lC, nC, LARGE_H);
+	(void)redRows(pipe, rtLarge, LARGE_W, LARGE_H, &fC, &lC, &nC, &swfC);
+	printf("fboorient: [C] band via SMALL RTT, textured quad onto LARGE -> memory rows %d..%d (%u of %d, rb-swapped=%u)\n",
+	       fC, lC, nC, LARGE_H, swfC);
 	printf("fboorient: GL error=0x%x\n", glGetError());
 
 	/* ---- D: two-hop chain (SMALL -> SMALL2 -> LARGE) ----
@@ -345,7 +400,7 @@ int main(void)
 		struct pipe_resource *rtSmall2;
 		GLuint texSmall2 = 0, fboSmall2 = 0;
 		int fD = -1, lD = -1;
-		unsigned int nD = 0u;
+		unsigned int nD = 0u, swfD = 0u;
 
 		tmpl.width0 = SMALL_W;
 		tmpl.height0 = SMALL_H;
@@ -379,7 +434,7 @@ int main(void)
 			glClear(GL_COLOR_BUFFER_BIT);
 			glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 			glFinish();
-			(void)redRows(pipe, rtLarge, LARGE_W, LARGE_H, &fD, &lD, &nD);
+			(void)redRows(pipe, rtLarge, LARGE_W, LARGE_H, &fD, &lD, &nD, &swfD);
 			printf("fboorient: [D] two hops (SMALL->SMALL2->LARGE) -> memory rows %d..%d (%u of %d)\n",
 			       fD, lD, nD, LARGE_H);
 		}
@@ -393,7 +448,7 @@ int main(void)
 		struct pipe_resource *rtScan;
 		GLuint texScan = 0, fboScan = 0;
 		int fE = -1, lE = -1, claimed = 0;
-		unsigned int nE = 0u;
+		unsigned int nE = 0u, swfE = 0u;
 
 		tmpl.width0 = LARGE_W;
 		tmpl.height0 = LARGE_H;
@@ -438,10 +493,24 @@ int main(void)
 			glClear(GL_COLOR_BUFFER_BIT);
 			glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 			glFinish();
-			(void)redRows(pipe, rtScan, LARGE_W, LARGE_H, &fE, &lE, &nE);
+			(void)redRows(pipe, rtScan, LARGE_W, LARGE_H, &fE, &lE, &nE, &swfE);
 			claimed = ((v3d_phoenix_scanout_active != NULL) && (v3d_phoenix_scanout_active() != 0));
 			printf("fboorient: [E] band via SMALL RTT onto a %s dest -> memory rows %d..%d (%u of %d)\n",
 			       claimed ? "SCANOUT-BACKED" : "plain-DRAM (CLAIM REFUSED)", fE, lE, nE, LARGE_H);
+			/* CPU readback cannot see a scanout-backed target here: with nbuf=3 and
+			 * RASTER tiling aliasing the fixed framebuffer PA, texture_map returns
+			 * nothing recognisable (measured: 0 red rows where the identical code
+			 * read 540..1079 before scanout_init was called). For a scanout dest the
+			 * correct instrument is the SCREEN, so page-flip it and hold it up long
+			 * enough for the cycle's HDMI capture to catch it. An NDC bottom-half
+			 * band must appear in the BOTTOM half of the display. */
+			if ((claimed != 0) && (v3d_phoenix_flip != NULL)) {
+				v3d_phoenix_flip(0);
+				printf("fboorient: [E] flipped to buffer 0 — HOLDING 12 s for the HDMI capture.\n");
+				printf("fboorient: [E] EXPECT: red band in the BOTTOM half of the screen.\n");
+				(void)sleep(12);
+				printf("fboorient: [E] hold done\n");
+			}
 			if (claimed == 0) {
 				/* Do not let this read as a scanout result. The claim needs
 				 * v3d_phoenix_scanout_init(pa, w, h, pitch) to have run first --
