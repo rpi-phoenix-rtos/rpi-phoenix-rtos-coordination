@@ -1294,3 +1294,91 @@ makes a faster present rate affordable.
 
 **Not started.** Recorded here with the probe patch reverted and the clean build
 restored; this is the next step, not something half-done in the tree.
+
+## §24 — damage confirmed DEAD; the present cost is a hard 77 ms, so damage is the only real fix
+
+### The confirmation §23 asked for
+
+Probe splitting the present counter by caller. Two prints, one cycle, 0 faults:
+
+```
+[phx-tick] timer flushes=256 skips=0 | damage calls=0
+[phx-tick] timer flushes=320 skips=0 | damage calls=0
+```
+
+**`damage calls = 0`. `skips = 0`.** `fbdevShadowUpdate` is never invoked, so the
+timer never takes its `fbdevDirtySinceTick` skip either. 100% of presents are the
+300 ms idle safety net, whole-screen. 320 presents over ~140 s = **2.3
+presents/second** — the period is 300 ms + the 77 ms the present itself costs.
+
+So the §23 inference is now measured: **HDMI updates ~2.3 times a second whatever
+the clients do.** `gl-x11`'s 8.9 fps is what the client achieves, not what is seen.
+
+Why damage is dead is *not* yet explained. The obvious order argument says it
+should work: `glamor_init` wraps `CreateGC` at `fbdev.c:646`, `KdShadowSet` →
+`shadowAdd` → `DamageRegister` → `DamageSetup` wraps it afterwards at `:753`, so
+damage should be the outer layer and `damageGCOps` should record. It does not.
+Note this contradicts nothing measured — it just means the mechanism is elsewhere
+(a `DamageSetup` that already ran earlier for this screen would explain it, and
+matches the `DestroyPixmap`-chain finding that damage sits *below* glamor).
+
+### Where the 77 ms goes, and a refuted hypothesis
+
+| | ms | rate |
+|---|---|---|
+| `glReadPixels` whole screen (8.3 MB) | 60.8 | 137 MB/s |
+| `write()` the same bytes to `/dev/fb0` | 16.2 | 512 MB/s |
+
+The 3.7× gap between reading and writing the same 8.3 MB pointed at the readback
+asking for `GL_BGRA` out of an RGBA8 texture — a per-pixel CPU shuffle over
+2 073 600 pixels. A tree comment supported it: the `glamor-rgba-upload` patch
+states the DDX, the fb *and* glamor's internal textures are all RGBA byte order.
+
+**Tested, and the colour half is refuted.** `GL_RGBA` put the Window Maker root at
+**(108,76,77)** instead of **(79,81,109)** — exactly the mauve the original
+readback note described. So glamor's screen pixmap really does hold BGRA-ordered
+bytes, the original `GL_BGRA` is correct, and the two comments disagree because
+`glamor-rgba-upload` fixed only the CPU-transfer description, not glamor's render
+path. Reverted.
+
+**But the cost half is confirmed and is worth banking as a number:** the
+no-conversion readback ran at **41.4 ms** against 60.8 ms, so **the swizzle is
+19.4 ms of every present** (32%). Recovering it means making glamor's *render*
+path RGBA-consistent so that the fast readback is also the correct one — a
+separate job, and not a change to the readback define.
+
+### The present-rate trade, measured at both ends
+
+With damage dead, `FBDEV_FLUSH_MS` *is* the present clock. Measured:
+
+| `FBDEV_FLUSH_MS` | presents/s | client fps | client `put` |
+|---|---|---|---|
+| 300 (shipped) | 2.3 | **8.88** | 78 ms |
+| 16 | **12.8** | 3.10 | 273 ms |
+
+Each present blocks the single dispatch thread for 77 ms, so at 16 ms the server
+presents 78% of the time and **every client slows ~3×**. New content still only
+reaches the screen at `min(client, presents)` — 3.1 vs 2.3 — so the aggressive
+setting buys better cursor/idle-window latency at the price of a 3× across-the-
+board client slowdown. **That is not a trade to make on my judgment, so 300 ms
+stays shipped.** Restored and re-verified: 112.6 ms/frame, colours (77,79,110),
+mirror MAD 74.98, 0 faults.
+
+### Conclusion — the next step is damage, and nothing else
+
+Both knobs are dead ends while a present costs 77 ms for all 1080 rows: the rate
+trade is zero-sum against dispatch, and the swizzle is only 19.4 ms of it. Damage
+fixes both at once — it makes presents *partial* (a 500-row GL window band is
+~26 ms; an xclock second-hand update is ~2 ms) **and** on-demand. So:
+
+1. Find why `DamageRegister` on the screen pixmap records nothing under glamor.
+   Cheapest probe: count calls and empty-region exits inside
+   `miext/shadow/shadow.c`'s `shadowBlockHandler` — it distinguishes "block
+   handler never runs" from "region always empty" in one cycle.
+2. Then present per Y-band, not per bounding box. `RegionExtents` is useless here
+   (six clients spanning y=0..1080 make the box full-height every time); X11
+   regions are stored as Y-bands, so collapsing consecutive same-span rects gives
+   disjoint bands for free. Cap the band count and fall back to extents above it.
+
+Nothing half-done in the tree: both probes reverted, both knobs back to their
+shipped values, HW-verified.
