@@ -193,3 +193,47 @@ answers the question in one cycle with no Mesa change at all.
 ⚠ And if you do edit the gate to experiment: rebuilding the archives leaves them holding the
 experimental code. Revert the source **and rebuild `--phase gpu` again**, or the next link silently
 picks up the experiment.
+
+## 2026-09-09 (later) — MEASURED: the objection I raised is REFUTED, but STK's flip is now unexplained
+
+Ran the harness (`tools/v3d-driver-port/gl_fbo_orientation.c`, in-process winsys, one Pi cycle,
+0 faults, GL error 0). It uses today's gate to obtain the mismatched pair — a 960x540 RTT
+(`Y_0_BOTTOM`) and a 1920x1080 destination (`Y_0_TOP`) — and a textured full-screen quad, i.e. STK's
+construction:
+
+| step | what | result (MEMORY rows) |
+|---|---|---|
+| A | NDC bottom-half band drawn into SMALL 960x540 | **0..269** |
+| B | same band drawn into LARGE 1920x1080 | **540..1079** |
+| C | band into SMALL, then SMALL as a textured quad onto LARGE | **540..1079** |
+
+**A vs B measures the gate**: identical NDC geometry lands in *opposite* memory halves depending
+only on FBO size. That is the defect, now quantified rather than inferred.
+
+**B vs C is the answer**: identical. So routing through a mismatched-orientation RTT introduces
+**no** flip — `st` does compensate across the RTT->destination quad.
+
+**Consequence for this work order: the blocker recorded in the previous section is refuted.** A
+correct scanout predicate would NOT flip STK on account of the orientation mismatch, so the
+`PIPE_BIND_SCANOUT` marker route is not disqualified and the `GL_MESA_framebuffer_flip_y`
+alternative is not forced.
+
+**But this raises a new question rather than closing the topic, and it should not be glossed over:
+the harness does NOT reproduce STK's flip.** STK at `scale_rtts_factor=0.5` renders upside down,
+yet the isolated configuration it is supposedly in comes back orientation-preserving. So the cause
+of STK's flip is something else, still unidentified. Candidates not yet excluded:
+
+* STK chains **several** scaled RTTs (8 FBO binds/frame), not the single hop measured here; the flip
+  may enter at a specific pass rather than the final pass-through.
+* the games' destination is a genuinely **scanout-backed BO** (`sdl_phoenix_glctx.c` renders straight
+  into it, deliberately — see its `swap_color_rb`/blit-fallback note), whereas the harness's LARGE is
+  a plain texture that the size gate merely *classified* as `Y_0_TOP`. Same orientation class, but the
+  scanout BO carries the `swap_color_rb` heuristic and a page-flip; one of those may be orientation-
+  sensitive.
+* something in STK's own render graph keyed to the orientation it expects from upstream Mesa.
+
+**Do not start the winsys/RPC edit until STK's flip is explained.** The measurement removes one
+objection; it does not establish that the predicate change makes STK upright at 0.5, which is the
+outcome actually wanted. The cheapest next probe is to extend this harness to a two-hop chain
+(RTT -> RTT -> dest) and then to a scanout-backed destination via `v3d_phoenix_set_next_scanout()`,
+which is the one structural difference between the harness and the games.
