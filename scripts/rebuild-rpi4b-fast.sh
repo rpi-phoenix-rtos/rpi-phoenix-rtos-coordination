@@ -794,6 +794,29 @@ if [ "${variant}" = "sd" ]; then
 	exported_sha="$(shasum -a 256 "${exported_two_part}" | awk '{print $1}')"
 	RPI4B_SDIMG_PATH="${exported_two_part}" \
 		"${repo_root}/scripts/verify-rpi4b-sdimg.sh"
+
+	# ...and gate the CONTENTS, not just the integrity. verify-rpi4b-sdimg.sh above
+	# only answers "did this image copy correctly"; it cannot see that the FAT boot
+	# partition is missing kernel8.img, or that config.txt names a file that is not
+	# there. That matters more for `sd` than for any other variant, because SD boot
+	# is the one path this bench cannot test (no card in the host reader, none in
+	# the Pi) -- the owner is the first person to boot it. An uninvoked gate would
+	# have been uninvoked on the day it mattered, so it runs here, in the build.
+	#
+	# The showcase expectation comes from the STAGED TREE, deliberately not from the
+	# image: deriving it from the image would let a staging failure (tree has
+	# Xphoenix, image does not) silently downgrade itself to a SKIP. Two independent
+	# sources means a disagreement still fails. Note this is NOT `${with_showcase}`
+	# -- a `--scope project --variant sd` re-cut has that flag at 0 while re-packing
+	# a fully staged showcase rootfs, which is exactly how the demo image is re-cut.
+	if [ -e "${buildroot}/_fs/aarch64a72-generic-rpi4b/root/usr/bin/Xphoenix" ]; then
+		contents_expect=showcase
+	else
+		contents_expect=base
+	fi
+	"${repo_root}/scripts/verify-sd-image-contents.sh" \
+		--expect "${contents_expect}" "${exported_two_part}"
+
 	printf 'Exported 2-partition SD image: %s\n' "${exported_two_part}"
 	printf 'Exported SHA256: %s\n' "${exported_sha}"
 else

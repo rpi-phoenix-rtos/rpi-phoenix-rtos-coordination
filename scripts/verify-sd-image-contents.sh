@@ -19,7 +19,29 @@
 # and (2) and still shipped a yQuake2 that wedged the GPU on nearly every frame,
 # because it cloned a fork commit that was reverted an hour later.
 set -uo pipefail
-IMG="${1:?usage: verify-sd-image.sh <image.img>}"
+
+# --expect showcase (default) requires the games, X11 and their data; --expect base
+# is for an image built WITHOUT --with-showcase, where those are legitimately
+# absent. The caller must not guess this from the image itself -- that would make
+# a staging failure ("the tree had Xphoenix, the image does not") downgrade itself
+# to a SKIP. rebuild-rpi4b-fast.sh derives it from the staged _fs tree, which is an
+# independent source, so a disagreement between tree and image still FAILS here.
+expect=showcase
+args=()
+while [ $# -gt 0 ]; do
+	case "$1" in
+		--expect)
+			case "${2:-}" in
+				base|showcase) expect="$2"; shift 2 ;;
+				*) echo "usage: --expect base|showcase" >&2; exit 2 ;;
+			esac
+			;;
+		*) args+=("$1"); shift ;;
+	esac
+done
+set -- ${args+"${args[@]}"}
+
+IMG="${1:?usage: verify-sd-image-contents.sh [--expect base|showcase] <image.img>}"
 [ -f "$IMG" ] || { echo "no such image: $IMG" >&2; exit 2; }
 command -v debugfs >/dev/null || { echo "need e2fsprogs (debugfs)" >&2; exit 2; }
 
@@ -40,18 +62,23 @@ dump() { rm -f "$TMP/x"; debugfs -R "dump /$1 $TMP/x" "$E2" >/dev/null 2>&1; [ -
 # clean. grep -c drains the pipe, so the pipeline exits 0.
 marker_count() { strings "$TMP/x" | grep -c -- "$1" || true; }
 
-echo "== required paths =="
+echo "== required paths (expect: ${expect}) =="
 # bin/wmsetbg: wmaker EXECS it to paint the root window (src/misc.c:953). Without
 #   it the GPU desktop is a black screen with a live cursor, which was reported as
 #   "no wmaker running" on 2026-09-04 when in fact the session was healthy.
 # bin/fbprobe: the framebuffer channel-order probe. Cheap to ship, and the one
 #   tool that settles an RGB-vs-BGR argument by looking at the screen.
-for p in usr/bin/quakespasm usr/bin/yquake2 usr/bin/quake3e usr/bin/vkquake \
-         usr/bin/supertuxkart bin/psh bin/python3 bin/bash bin/nano bin/mc \
-         usr/bin/Xphoenix usr/share/quake/id1/pak0.pak usr/share/quake2/baseq2/pak0.pak \
-         usr/share/quake3/demoq3/pak0.pk3 usr/share/quake3/demoq3/pak1.pk3 \
-         usr/share/quake3/demoq3/q3key \
-         bin/wmsetbg bin/fbprobe; do
+required_paths=(bin/psh)
+if [ "${expect}" = showcase ]; then
+	required_paths+=(usr/bin/quakespasm usr/bin/yquake2 usr/bin/quake3e usr/bin/vkquake
+	                 usr/bin/supertuxkart bin/python3 bin/bash bin/nano bin/mc
+	                 usr/bin/Xphoenix usr/share/quake/id1/pak0.pak
+	                 usr/share/quake2/baseq2/pak0.pak
+	                 usr/share/quake3/demoq3/pak0.pk3 usr/share/quake3/demoq3/pak1.pk3
+	                 usr/share/quake3/demoq3/q3key
+	                 bin/wmsetbg bin/fbprobe)
+fi
+for p in "${required_paths[@]}"; do
 	if dump "$p"; then printf '  OK   %-40s %s\n' "$p" "$(stat -c%s "$TMP/x")"
 	else printf '  MISS %s\n' "$p"; rc=1; fi
 done
@@ -78,6 +105,11 @@ else
 	echo "  MISS etc/build-versions — the image cannot say which commits built it"; rc=1
 fi
 
+if [ "${expect}" != showcase ]; then
+	echo "== showcase markers =="
+	echo "  SKIP --expect base: no games/X in this image, so their markers do not apply"
+fi
+if [ "${expect}" = showcase ]; then
 echo "== positive markers (fixes that must be present) =="
 # The V3D submit mutex: its failure fprintf string is unique to the fixed driver.
 if dump usr/bin/vkquake && [ "$(marker_count 'submits UNSERIALIZED')" -gt 0 ]; then
@@ -121,6 +153,9 @@ else
 	echo "  MISS yquake2 not in image"; rc=1
 fi
 
+fi  # expect = showcase
+
+# The FAT section runs for EVERY variant: it is the boot path, not the payload.
 echo "== FAT boot partition (the path no gate could reach) =="
 # Everything above inspects the ext2 rootfs. Nothing did the FIRST thing the
 # VideoCore firmware does: read the FAT partition. That matters more here than it
