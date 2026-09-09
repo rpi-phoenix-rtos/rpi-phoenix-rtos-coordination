@@ -1,6 +1,6 @@
 --- a/os/connection.c
 +++ b/os/connection.c
-@@ -687,6 +687,33 @@
+@@ -687,6 +687,41 @@
  
      _XSERVTransSetOption(new_trans_conn, TRANS_NONBLOCKING, 1);
  
@@ -25,10 +25,18 @@
 +     * the option) just keeps the default, so the result is slow, not broken.
 +     */
 +    {
-+        int rcvbuf = 65536;
++        /* Step DOWN rather than ask once: the kernel's unix_bufferSetSize()
++         * reallocates the ring and, if that allocation fails, leaves the socket on
++         * its ONE-PAGE default -- which is far worse than the 64 kB we used to
++         * get. So try the large size first and fall back. */
++        static const int rcvbufs[] = { 262144, 65536 };
++        unsigned i;
 +
-+        (void) setsockopt(newconn, SOL_SOCKET, SO_RCVBUF,
-+                          &rcvbuf, sizeof(rcvbuf));
++        for (i = 0; i < sizeof(rcvbufs) / sizeof(rcvbufs[0]); i++) {
++            if (setsockopt(newconn, SOL_SOCKET, SO_RCVBUF,
++                           &rcvbufs[i], sizeof(rcvbufs[i])) == 0)
++                break;
++        }
 +    }
 +
      if (trans_conn->flags & TRANS_NOXAUTH)
