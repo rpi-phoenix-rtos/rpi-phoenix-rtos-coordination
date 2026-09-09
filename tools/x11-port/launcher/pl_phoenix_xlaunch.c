@@ -499,22 +499,35 @@ int main(int argc, char *argv[])
 			 * background was empty. These geometries tile a 1920x1080 screen in two
 			 * rows with no overlap:
 			 *
-			 *   row 1 (y=30):   GL 640x480 @x20 | xterm Life @x690 | xclock @x1500
-			 *   row 2 (y=560):  xbill @x20      | xterm top  @x690
+			 *   row 1 (y=30):   GL 640x480 @x20 | [xbill lands here] | xclock @x1500
+			 *   row 2 (y=560):  xterm Life @x20 | xterm top @x690
 			 *
-			 * Window Maker adds a titlebar (~24 px) and honours the USPosition/USSize
-			 * hint from -geometry, so the y offsets leave room for decoration. */
+			 * ⚠️ xbill IGNORES its -geometry POSITION. Measured on hardware twice: with
+			 * "-geometry +20+560" and again with "400x460+20+560", the process list
+			 * confirms it received the argument, the SIZE is applied (the window came
+			 * back 400x460), but the window still lands at roughly (945, 0). Xt is
+			 * setting PPosition rather than USPosition and Window Maker auto-places it.
+			 * Rather than fight that, the layout is built AROUND where it actually
+			 * lands: nothing else is placed in x 900..1400 of row 1, so xbill is fully
+			 * visible. That is what the owner reported twice as "xbill is covered so
+			 * you cannot tell what is happening".
+			 *
+			 * Window Maker adds a titlebar (~24 px) and honours USPosition/USSize from
+			 * -geometry, so the y offsets leave room for decoration. */
 			static char *const glwin_geom[2] = { "-geometry", "640x480+20+30" };
 			/* --log: life.py froze after ~80 s here while the rest of the
 			 * desktop stayed live, and there was nothing to diagnose from --
 			 * a Python exception goes to the xterm's stderr, which nothing
 			 * captures, and the UART log showed no fault. The log lands on
 			 * the NFS root so the host can read where and when it stopped. */
-			static char *const term_life[8] = { "-geometry", "96x28+690+30",
+			static char *const term_life[8] = { "-geometry", "96x28+20+560",
 				"-e", "/bin/python3", "/usr/share/demo/life.py",
 				"--log", "/var/log/life.log", NULL };
 			static char *const clk_geom2[2] = { "-geometry", "190x190+1500+30" };
-			static char *const bill_geom[2] = { "-geometry", "+20+560" };
+			/* Requested position matches where it ACTUALLY lands (see the note
+			 * above), so the request and reality agree and the layout still holds if
+			 * a future WM/Xt combination starts honouring it. */
+			static char *const bill_geom[2] = { "-geometry", "400x460+945+30" };
 			static char *const term_top[4] = { "-geometry", "96x24+690+560",
 				"-e", "/bin/top" };
 			resolve_client(cp_bufs[0], sizeof(cp_bufs[0]), prefix, "wmaker");
