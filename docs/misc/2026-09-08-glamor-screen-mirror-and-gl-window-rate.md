@@ -1520,3 +1520,63 @@ range**. Plus, new for this change and the one most likely to break: a **seam
 check** — partial-X presents can leave a stale vertical margin, which
 coverage-across-frames would not catch. Compare the pixels *outside* the damaged X
 extent against a full-width-present frame of the same scene.
+
+### Result — the readback half wins, the write half loses, and the split is 1.3×
+
+Prediction branch 2 fired exactly ("if readback drops but total present time does
+not, the per-row writes ate it"). Differencing presents 96→128 of the first cycle:
+
+| 232-row band | readback | write | total |
+|---|---|---|---|
+| partial-X on **both** sides | 4.93 ms | **18.66 ms** | 23.6 ms |
+| partial-X readback, full-width write | 4.93 ms | 3.48 ms | **8.4 ms** |
+| no partial-X (Y-bands only) | 13.10 ms | 3.48 ms | 16.6 ms |
+
+A per-row `lseek()+write()` costs **80 µs** — 16× the 5 µs I had guessed, which is
+why the threshold guard mattered. Partial-X on the write side is a **net loss**
+(23.6 vs 16.6 ms); partial-X on the readback alone is a clear win. The first cut
+did both and saturated the server so thoroughly that X printed nothing inside a
+130 s capture — the symptom of an over-eager present path, not a hang.
+
+So the shipped shape is: **read the damaged columns, write full-width rows.**
+Rewriting the undamaged columns is correct — nothing changed there, so those bytes
+are already what is on screen — and it is simply cheaper to ship them than to skip
+them. The threshold constant is gone: a narrow readback is unconditionally
+cheaper, with no syscall penalty to trade against.
+
+### The tick, re-measured on the cheaper presents
+
+| | presents/s | client fps |
+|---|---|---|
+| 300 ms, whole-screen | 2.3 | 8.88 |
+| 16 ms, whole-screen | 21.0 | 5.48 |
+| 50 ms, Y-bands only | 21.0 | 6.90–7.35 |
+| 50 ms, + partial-X readback | 21.3 | 8.33 |
+| **33 ms, + partial-X readback** | **25.6** | **8.22** |
+
+8.22 vs 8.33 is inside the ~4% run-to-run spread, so 33 ms buys 20% more presents
+for nothing. **25.6 presents/s is 11× the 2.3/s of two turns ago, and the client is
+faster than it was at 50 ms with full-width presents.**
+
+Verified on the shipped, probe-free binary: 0 faults · colours (77,79,110) ·
+mirror MAD 74.98 · fan coverage 23.5–41.6% (inside the 23–54% baseline) · 8.53 fps.
+**Seam check** (the one this change most needed): 128 000 flat-background pixels
+all exactly (77,79,110), zero column-to-column jumps — no stale x-margin. My first
+seam attempt used regions containing `top`'s live output and animated icons and
+reported large differences that were just content; the flat-background scan is the
+check that actually discriminates.
+
+### Still open
+
+* The 19.4 ms BGRA→RGBA swizzle (§24) is now the majority of a present's readback.
+  Fixing glamor's render-path byte order would roughly halve it again.
+* **STK teardown crash, next up** — resolved to `_malloc_chunkJoin` →
+  `malloc_chunkIsLast`, `libphoenix/stdlib/malloc_dl.c:346`/`:149`, reading an
+  unmapped page (`far=0xceef000`, translation fault L3, read). Either `it->heap` or
+  `malloc_chunkNext(it)` points off a heap region. It is **deterministic** (same 2
+  faults in every run that reaches STK's exit since 2026-09-07), which points at a
+  systematic boundary bug rather than random corruption — `malloc_chunkIsLast`
+  compares against `chunk->heap + chunk->heap->size` and `malloc_chunkNext` is then
+  dereferenced, so a chunk exactly at a region boundary is the suspect. The second
+  abort is **EL1** and is separately unexplained; do not let the EL0 diagnosis
+  absorb it.
