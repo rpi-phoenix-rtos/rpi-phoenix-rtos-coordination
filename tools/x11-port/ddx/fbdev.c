@@ -322,6 +322,24 @@ fbdevScreenInit(KdScreenInfo *screen)
  * sub-extent per row.) Used by both the damage-driven flush (damaged Y span)
  * and the periodic full-screen flush (0..height).
  */
+/* Most spans one present pass may ship separately before falling back to a single
+ * bounding-box present (see fbdevPresentRegion). */
+#define FBDEV_MAX_FLUSH_BANDS 24
+
+/*
+ * Two damaged bands separated by fewer than this many clean rows are presented as
+ * one span.
+ *
+ * Fitted from two hardware measurements -- a 1080-row present costs 77 ms, and ten
+ * 21-row presents in one pass cost 32 ms -- a present costs about 1.74 ms fixed
+ * (FBO bind, glReadPixels' GPU sync, lseek, write) plus 0.07 ms per row. Merging
+ * across a gap of G rows saves the 1.74 ms and costs G * 0.07 ms, so it pays for
+ * any G below ~25. Rounded up a little: the fixed term is the GPU-sync end of the
+ * estimate and is likelier under- than over-stated. Widely separated windows do
+ * NOT merge, which is correct -- for them, separate presents really are cheaper.
+ */
+#define FBDEV_BAND_MERGE_GAP 32
+
 static void
 fbdevFlushRegion(ScreenPtr pScreen, int y0, int y1)
 {
@@ -423,26 +441,131 @@ fbdevFlushRegion(ScreenPtr pScreen, int y0, int y1)
  * locking — same thread as both the damage update and this timer.)
  */
 static int fbdevDirtySinceTick = 0;
+static int fbdevIdleTicks = 0;
+static Bool fbdevIdleFlushed = FALSE;
+
+/*
+ * Accumulated damage, presented by the flush timer rather than by the damage
+ * callback.
+ *
+ * Presenting straight from the damage callback was measured at 336 presents/s
+ * (one per Y-band per block-handler pass, ~4.8 bands each) which shipped 3x MORE
+ * total rows than the old whole-screen timer did and dropped clients from 8.9 to
+ * 5.1 fps: the per-present fixed cost (FBO bind + glReadPixels setup + lseek +
+ * write) dominates at 21.8 rows a time. Accumulating instead and presenting on a
+ * display-rate tick bounds presents to 1000/FBDEV_FLUSH_MS per second, coalesces
+ * every client's damage for that interval into one pass, and keeps the rows
+ * proportional to what actually changed.
+ */
+static RegionRec fbdevAccum;
+static Bool fbdevAccumReady = FALSE;
+
+/*
+ * Present a damage region, one disjoint Y BAND at a time.
+ *
+ * RegionExtents() is useless on a populated desktop: with the Window Maker Clip
+ * at y 0..63 and the icon row at y 1016..1079, the bounding box of any two
+ * damaged clients is the full screen height, so an extents-based present shipped
+ * all 1080 rows every time (measured: 1080.0 rows/present, mean over 256
+ * presents, 77 ms each). X11 regions are stored as Y-bands -- every rect within a
+ * band shares y1/y2, and bands are disjoint and sorted -- so collapsing
+ * consecutive rects with an identical span yields disjoint bands directly, and no
+ * row is ever presented twice.
+ *
+ * Above FBDEV_MAX_FLUSH_BANDS, fall back to the single bounding-box present:
+ * heavily fragmented damage would otherwise become a storm of small presents
+ * whose fixed cost exceeds the rows saved.
+ */
+/*
+ * Walk one presentable span starting at rect `i`; return the index of the first
+ * rect after it, and the span's Y range through y1_out/y2_out (pass NULL to just
+ * count).
+ *
+ * X11 regions are stored as Y-bands: every rect within a band shares y1/y2, and
+ * bands are disjoint and sorted by y1. So consecutive rects with an identical span
+ * form one band, and a following band close enough below is absorbed (see
+ * FBDEV_BAND_MERGE_GAP).
+ */
+static int
+fbdevNextSpan(BoxPtr rects, int nrects, int i, int *y1_out, int *y2_out)
+{
+    int span_y1 = rects[i].y1;
+    int span_y2 = rects[i].y2;
+
+    while (i < nrects && rects[i].y1 == span_y1 && rects[i].y2 == span_y2)
+        i++;
+
+    while (i < nrects && rects[i].y1 >= span_y2 &&
+           rects[i].y1 - span_y2 < FBDEV_BAND_MERGE_GAP) {
+        int band_y1 = rects[i].y1, band_y2 = rects[i].y2;
+
+        span_y2 = band_y2;
+        while (i < nrects && rects[i].y1 == band_y1 && rects[i].y2 == band_y2)
+            i++;
+    }
+
+    if (y1_out != NULL)
+        *y1_out = span_y1;
+    if (y2_out != NULL)
+        *y2_out = span_y2;
+    return i;
+}
 
 static void
-fbdevShadowUpdate(ScreenPtr pScreen, shadowBufPtr pBuf)
+fbdevPresentRegion(ScreenPtr pScreen, RegionPtr region)
 {
     KdScreenPriv(pScreen);
     KdScreenInfo *screen = pScreenPriv->screen;
     FbdevPriv *priv = screen->card->driver;
-    RegionPtr damage = DamageRegion(pBuf->pDamage);
-    BoxPtr extents;
+    int nrects, i, bands;
+    BoxPtr rects;
 
-    if (RegionNotEmpty(damage)) {
-        extents = RegionExtents(damage);
+    if (!RegionNotEmpty(region))
+        return;
+
+    nrects = RegionNumRects(region);
+    rects = RegionRects(region);
+
+    /* Count merged spans first, so an over-fragmented region can take the single
+     * bounding-box present instead of a storm of tiny ones. */
+    for (i = 0, bands = 0; i < nrects && bands < FBDEV_MAX_FLUSH_BANDS; bands++)
+        i = fbdevNextSpan(rects, nrects, i, NULL, NULL);
+
+    if (i < nrects) {
+        BoxPtr extents = RegionExtents(region);
+
         fbdevFlushRegion(pScreen, extents->y1, extents->y2);
+        return;
     }
-    else {
-        /* No damage info → flush the whole frame. */
-        fbdevFlushRegion(pScreen, 0, priv->mode.height);
+
+    (void) priv;
+    for (i = 0; i < nrects;) {
+        int y1, y2;
+
+        i = fbdevNextSpan(rects, nrects, i, &y1, &y2);
+        fbdevFlushRegion(pScreen, y1, y2);
     }
-    /* Tell the periodic timer the display is current so it can skip its full
-     * blit this interval (see fbdevDirtySinceTick / fbdevFlushTimerCb). */
+}
+
+/*
+ * Damage callback. Does no I/O: it only unions the damaged region into the
+ * accumulator, which fbdevFlushTimerCb drains on the next tick.
+ */
+static void
+fbdevShadowUpdate(ScreenPtr pScreen, shadowBufPtr pBuf)
+{
+    RegionPtr damage = DamageRegion(pBuf->pDamage);
+
+    (void) pScreen;
+    if (!RegionNotEmpty(damage))
+        return;
+
+    if (!fbdevAccumReady) {
+        RegionNull(&fbdevAccum);
+        fbdevAccumReady = TRUE;
+    }
+    RegionUnion(&fbdevAccum, &fbdevAccum, damage);
+    /* Tell the timer there is something to present (see fbdevFlushTimerCb). */
     fbdevDirtySinceTick = 1;
 }
 
@@ -492,7 +615,28 @@ static FbdevPtr fbdevPtr = { -1, NULL };
 static void fbdevKbdRead(int fd, int ready, void *data);
 static void fbdevMouseRead(int fd, int ready, void *data);
 
-#define FBDEV_FLUSH_MS 300
+/*
+ * The present clock. Was 300 ms as an "idle safety net", on the assumption that
+ * the damage path did the real presenting -- but damage fired ZERO times (glamor
+ * bypassed damage's CreateGC wrapper; see fbdevFinishInitScreen), so this timer
+ * was the only thing putting pixels on HDMI and the desktop reached the screen
+ * ~2.3 times a second. With damage working it is a real display-rate tick that
+ * drains accumulated damage.
+ */
+/*
+ * 50 ms rather than a display-rate 16 ms. A present pass costs ~32 ms of the
+ * single dispatch thread for a typical desktop's damage, so the tick interval is
+ * a direct trade between how often the screen changes and how much CPU clients
+ * get. Measured: at 16 ms the screen updated 21x/s but clients fell to 5.5 fps
+ * (67% of the thread spent presenting); at the old 300 ms the screen updated
+ * 2.3x/s with clients at 8.9. 50 ms sits where both are good -- ~12 screen
+ * updates/s for ~15% of the client cost.
+ */
+#define FBDEV_FLUSH_MS 50
+
+/* Ticks of quiet before the one-shot idle whole-screen present (~1 s). */
+#define FBDEV_IDLE_FLUSH_TICKS 20
+
 
 static OsTimerPtr fbdevFlushTimer = NULL;
 
@@ -516,16 +660,31 @@ fbdevFlushTimerCb(OsTimerPtr timer, CARD32 now, void *arg)
                FBDEV_FLUSH_MS);
     }
 
-    /* The damage path already updated the display this interval — skip the
-     * expensive full-screen blit (measured ~17 ms for the 8 MB frame) so
-     * interactive redraws are never stalled by it. The full blit then runs only
-     * when the screen went a whole interval with no damage (idle safety net for
-     * static content that produced none). */
+    /*
+     * This tick IS the present clock. Drain whatever damage accumulated since the
+     * last tick, as disjoint Y bands.
+     */
     if (fbdevDirtySinceTick) {
         fbdevDirtySinceTick = 0;
+        fbdevIdleTicks = 0;
+        fbdevIdleFlushed = FALSE;
+        if (fbdevAccumReady) {
+            fbdevPresentRegion(pScreen, &fbdevAccum);
+            RegionEmpty(&fbdevAccum);
+        }
         return FBDEV_FLUSH_MS;
     }
 
+    /*
+     * Idle safety net, for anything that reaches the shadow without going through
+     * X drawing (so without damage). One whole-screen present after a second of
+     * quiet, then nothing until damage arrives again -- repeating it would burn
+     * 77 ms every second forever on a static desktop.
+     */
+    if (fbdevIdleFlushed || ++fbdevIdleTicks < FBDEV_IDLE_FLUSH_TICKS)
+        return FBDEV_FLUSH_MS;
+
+    fbdevIdleFlushed = TRUE;
     fbdevFlushRegion(pScreen, 0, priv->mode.height);
     /* Return the interval (non-zero) to re-arm; returning 0 fires only once. */
     return FBDEV_FLUSH_MS;
@@ -588,17 +747,39 @@ fbdevInitScreen(ScreenPtr pScreen)
 static Bool
 fbdevFinishInitScreen(ScreenPtr pScreen)
 {
-    if (!shadowSetup(pScreen))
-        return FALSE;
-
 #ifdef GLAMOR_PHOENIX
     /*
-     * Bring glamor up on the framebuffer once fb + shadow are ready. EGL-screen
-     * mode installs our in-process V3D GL context (glamor_egl_screen_init in
-     * glamor_phoenix_ctx.c); NO_DRI3 because Phoenix has no DRM/PRIME buffer
-     * sharing. Non-fatal: a glamor failure must not take the software fbdev
-     * server down (M1a is the link/bring-up milestone; runtime pixmap-accel
-     * wiring is M1b). This call is also what pulls libglamor.a into the link.
+     * glamor MUST come up BEFORE shadowSetup(), and the order is load-bearing.
+     *
+     * shadowSetup() calls DamageSetup() (miext/shadow/shadow.c:122), which wraps
+     * screen->CreateGC with damageCreateGC. glamor_init() then wraps CreateGC with
+     * glamor_create_gc -- and glamor_create_gc (glamor/glamor_core.c:283) ends in a
+     * hard `fbCreateGC(gc); gc->funcs = &glamor_gc_funcs;`. It never calls the
+     * saved CreateGC. So with shadow first, damageCreateGC was BYPASSED for every
+     * GC ever created: damage never wrapped gc->funcs, damageValidateGC never ran,
+     * damageGCOps was never installed, and the damage region stayed empty forever.
+     *
+     * Measured before this change: `damage calls=0, skips=0` across 320 presents,
+     * i.e. fbdevShadowUpdate was never invoked and the ONLY thing putting pixels on
+     * HDMI was the 300 ms idle safety-net timer -- the desktop reached the screen
+     * ~2.3 times a second no matter how fast its clients ran.
+     *
+     * Initialising glamor first puts damage ABOVE glamor, which is what upstream
+     * xf86 gets for free (glamor_init at ScreenInit, DamageSetup later at
+     * extension-init time). damageCreateGC is then outermost, chains down into
+     * glamor_create_gc, and installs its own funcs last -- so damage records and
+     * then hands the op to glamor. The same reordering is what the
+     * glamor-destroypixmap-chain patch describes as the upstream arrangement.
+     *
+     * glamor_init needs the fb screen ops (fbSetupScreen, done earlier in
+     * ScreenInit) and the shadow BUFFER (KdShadowFbAlloc, also earlier) -- not
+     * shadowSetup(), which only registers the shadow screen private and wrappers.
+     *
+     * EGL-screen mode installs our in-process V3D GL context
+     * (glamor_egl_screen_init in glamor_phoenix_ctx.c); NO_DRI3 because Phoenix has
+     * no DRM/PRIME buffer sharing. Non-fatal: a glamor failure must not take the
+     * software fbdev server down. This call is also what pulls libglamor.a into
+     * the link.
      */
     if (!glamor_init(pScreen, GLAMOR_USE_EGL_SCREEN | GLAMOR_NO_DRI3)) {
         ErrorF("[fbdev] glamor_init failed — continuing without GL acceleration\n");
@@ -614,6 +795,9 @@ fbdevFinishInitScreen(ScreenPtr pScreen)
         ErrorF("[fbdev] glamor initialised (V3D GL 2D acceleration)\n");
     }
 #endif
+
+    if (!shadowSetup(pScreen))
+        return FALSE;
 
     return TRUE;
 }
