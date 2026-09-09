@@ -49,6 +49,12 @@ GLAMOR=0
 GLAMOR_SHIM="$ROOT/tools/x11-port/glamor-shim"
 GLAMOR_MESA_GL="$ROOT/external/mesa/include"
 GLAMOR_A="$KD/glamor/.libs/libglamor.a"
+# ⚠️ To force a glamor rebuild by hand, delete the libtool objects TOO:
+#   rm -f $KD/glamor/*.lo $KD/glamor/*.la $KD/glamor/.libs/*
+# Deleting only *.o leaves the *.lo stamps newer than their sources, so make
+# considers each TU up to date and never recreates the .o -- the build then dies
+# on `ar: glamor_glx.o: No such file or directory`, which does not hint at the
+# cause. Cost a cycle on 2026-09-09.
 # Records the glamor state the tree was last configured in; a mismatch vs the
 # requested state forces a reconfigure (the config.status skip would keep it stale).
 GLAMOR_MARK="$KD/.phoenix-glamor-enabled"
