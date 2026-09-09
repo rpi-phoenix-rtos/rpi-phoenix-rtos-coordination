@@ -40,7 +40,12 @@ manifests_dir="${coord_root}/manifests"
 [ -d "$sources_dir" ] || die "sources directory not found: $sources_dir"
 [ -d "$manifests_dir" ] || die "manifests directory not found: $manifests_dir"
 
-date_iso="$(date -u +%Y-%m-%d)"
+# Local time, matching every other artifact name in this repo. It was `date -u`,
+# which files a manifest cut after ~22:00 local under the PREVIOUS day -- this
+# very manifest landed as 2026-09-09 at 01:14 on 2026-09-10. Manifests are how
+# rollback is chosen, so a date that disagrees with the weekly log and the UART
+# logs is worse than merely untidy. Same fix as the cycle scripts.
+date_iso="$(date +%Y-%m-%d)"
 # If the slug already starts with a YYYY-MM-DD- prefix, don't re-prepend it.
 case "$slug" in
 	[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*) out="${manifests_dir}/${slug}.md" ;;
