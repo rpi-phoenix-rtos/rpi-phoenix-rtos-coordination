@@ -1382,3 +1382,92 @@ fixes both at once — it makes presents *partial* (a 500-row GL window band is
 
 Nothing half-done in the tree: both probes reverted, both knobs back to their
 shipped values, HW-verified.
+
+## §25 — FIXED: the damage path was dead because glamor's CreateGC does not chain
+
+§24 left this as "why damage is dead is not yet explained". It is explained, and
+it was found by reading, not by a Pi cycle.
+
+`fbdevFinishInitScreen` called `shadowSetup()` **before** `glamor_init()`.
+`shadowSetup()` calls `DamageSetup()` (`miext/shadow/shadow.c:122`), which wraps
+`screen->CreateGC` with `damageCreateGC`. `glamor_init()` then wraps `CreateGC`
+with `glamor_create_gc` — and that function (`glamor/glamor_core.c:283`) is:
+
+```c
+if (!fbCreateGC(gc))
+    return FALSE;
+gc->funcs = &glamor_gc_funcs;
+```
+
+It calls `fbCreateGC` **directly** and never touches
+`glamor_priv->saved_procs.create_gc`. So `damageCreateGC` was bypassed for every
+GC ever created: damage never wrapped `gc->funcs`, `damageValidateGC` never ran,
+`damageGCOps` was never installed, and `DamageRegion` stayed empty forever.
+
+The `glamor-destroypixmap-chain` patch header already names this ordering
+("This DDX brings damage up through shadowSetup() BEFORE glamor_init(), so damage
+sits below glamor — in exactly the slot glamor does not honour"). It fixed the
+`DestroyPixmap` consequence. The `CreateGC` one went unnoticed because its symptom
+was not a crash but a silently dead damage path.
+
+### Three changes, each forced by the previous one
+
+**1. `glamor_init()` before `shadowSetup()`** → damage sits *above* glamor, which
+is what upstream xf86 gets for free (glamor at ScreenInit, `DamageSetup` later at
+extension-init time). `damageCreateGC` becomes outermost and chains down.
+
+Result: `damage calls 0 → 9856` in a 140 s run.
+
+**2. Present per Y band, not per `RegionExtents`.** Rows/present **1080 → 21.8**.
+Extents is a bounding box and useless here — the Clip at y 0..63 plus the icon row
+at y 1016..1079 make it full-height whenever two clients are dirty.
+
+**3. Accumulate damage; present from the timer, not the damage callback.**
+Presenting directly gave **336 presents/s** and shipped *3× more total rows* than
+the old whole-screen timer, dropping clients 8.9 → 5.1 fps. At 21 rows a present
+the fixed cost dominates.
+
+Fitting the two hardware points — 1080 rows = 77 ms, ten 21-row presents = 32 ms —
+gives **≈1.74 ms fixed + 0.07 ms/row** per present. Merging across a gap of G rows
+saves 1.74 ms and costs 0.07·G, so it pays below **G ≈ 25**; `FBDEV_BAND_MERGE_GAP`
+is 32. That cut presents per pass **10 → 1.9** (243 rows each) with **0 fallbacks**
+to the bounding box. Widely separated windows correctly do *not* merge.
+
+### The remaining trade, measured at three points
+
+A present pass costs ~32 ms of the single dispatch thread, so the tick interval
+trades screen-update rate against client CPU directly:
+
+| `FBDEV_FLUSH_MS` | screen updates/s | client fps |
+|---|---|---|
+| 300 (old, whole screen) | 2.3 | 8.88 |
+| 16 | 21.0 | 5.48 |
+| **50 (shipped)** | **11.0** | **7.35** |
+
+50 ms buys **4.8× the screen update rate for 17% of the client rate**. The
+`min(client, presents)` figure — how often new content in an animating window
+actually reaches HDMI — goes **2.3 → 7.35, i.e. 3.2×**.
+
+### Verification, and one check that mattered
+
+0 faults. Colours (77,79,110). Mirror check MAD 74.98 (still fixed). Desktop
+complete, all six clients drawn, no stale regions.
+
+Band-based presents can in principle tear, and the GL fan *looked* partly drawn.
+Measuring fan coverage across four frames per run settled it: **xbal 39.2% mean
+versus baselines of 30.6 / 34.0 / 49.9%** — the variation is the rotating
+animation, and the new path sits inside the baseline range. No tearing introduced.
+Worth noting because the single frame was genuinely misleading.
+
+### Open
+
+* **The desktop-EXIT path is not soaked.** Damage now sits above glamor, which is
+  the arrangement `glamor-destroypixmap-chain` was written to emulate, and damage
+  re-wraps the `DestroyPixmap` slot last so the chain ends correct — but the crash
+  this patch fixed lived exactly here, and `startx_gpu` has no self-exiting mode.
+  Build one and soak it **before the demo image is re-cut**.
+* The present itself is still 77 ms for a full screen, of which 19.4 ms is the
+  BGRA→RGBA CPU swizzle (§24). Making glamor's render path RGBA-consistent would
+  recover that and shift the whole trade table.
+* Partial-X presents (only the damaged columns, not full-width rows) are still
+  untried; `fbdevFlushRegion`'s own comment flags them.
