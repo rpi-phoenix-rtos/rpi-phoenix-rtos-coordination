@@ -1580,3 +1580,83 @@ check that actually discriminates.
   dereferenced, so a chunk exactly at a region boundary is the suspect. The second
   abort is **EL1** and is separately unexplained; do not let the EL0 diagnosis
   absorb it.
+
+## §27 — the STK teardown crash is TWO allocator faults, one userspace and one KERNEL
+
+Both aborts from the STK teardown are now localised. They are not the same bug.
+
+### #36 — EL0, libphoenix's allocator
+
+`_malloc_chunkJoin` → `malloc_chunkIsLast`, `libphoenix/stdlib/malloc_dl.c:346`/`:149`.
+`esr=0x92000007` = translation fault **level 3, READ**; `far=0x000000000ceef000`,
+exactly page-aligned.
+
+Layout says which pointer died: `heap_t` is `{size_t size; size_t freesz;
+uint8_t space[];}` so `size` sits at offset 0, and heaps come from `mmap()` so they
+are page-aligned (the file says so at `:218`). `malloc_chunkIsLast` reads
+`chunk->heap->size`. A page-aligned fault address at offset 0 of a page-aligned
+object is therefore **`chunk->heap` pointing at a heap that is no longer mapped**.
+Corroborating: `x19=0xce22010` and `x23=0xce1a010` both end in `0x010` =
+`offsetof(heap_t, space)`, i.e. they are first-chunk pointers of *other* heaps.
+
+The suspect path is `free()` at `:593`:
+
+```c
+if (heap->freesz == heap->size - sizeof(heap_t)) {
+    chunk = (chunk_t *) heap->space;
+    _malloc_chunkRemove(chunk);
+    munmap(heap, heap->size);
+}
+```
+
+which assumes a heap reported entirely free holds **exactly one** chunk. The free
+bins (`malloc_common.sbins[]`, `lbins[]`) are **global across heaps**, so if
+`_malloc_chunkJoin` ever fails to coalesce fully, a second free chunk stays in a
+bin while its heap is unmapped — precisely this fault. `realloc()`'s shrink path
+(`:638`/`:642`) adjusts `freesz` and joins but does *not* run the fully-free check,
+which is worth checking too.
+
+A host harness compiling the real `malloc_dl.c` with stubs (host `mmap`/`munmap`,
+so a use-after-unmap really faults) is under construction to reproduce this without
+Pi cycles; the invariants it asserts are "a fully-free heap holds one chunk" and "no
+binned chunk references an unmapped range".
+
+### #37 — EL1, the KERNEL's allocator. Separate bug.
+
+`esr=0x96000044` → EC 0x25 = Data Abort **from EL1**, DFSC `0b000100` =
+translation fault **level 0**, WnR=1 = **WRITE**. Resolved against the kernel ELF:
+
+```
+pc=0xffffffffc00247ac  lib_listRemove   kernel/lib/list.c:47
+lr=0xffffffffc000e4b0  _kmalloc_free    kernel/vm/kmalloc.c:115
+```
+
+`kmalloc.c:115` is `LIST_REMOVE(&kmalloc_common.used, z)`, and `list.c:46-47` writes
+through the node's stored `prev`/`next`:
+
+```c
+*((addr_t *)((void *)(*((addr_t *)(t + poff))) + noff)) = *((addr_t *)(t + noff));
+```
+
+`far=0x80000001c46ccf88` and `x4=0x80000001c46ccf80`, so `noff = 8` and the stored
+`prev` is **`0x80000001c46ccf80`** where a kernel pointer would be
+**`0xffffffffc46ccf80`** — the low 40 bits are right, the top 24 are wrong.
+
+**Refuted cheaply:** an `addr_t`/pointer width mismatch in those macros —
+`addr_t` is `__u64` on aarch64 (`include/arch/aarch64/types.h:24`), the same width
+as a pointer. So the value was genuinely written wrong, not truncated by the macro.
+
+Not yet explained. Two notes for whoever picks it up:
+
+* It fires during teardown of a process that has *just taken a fatal EL0 fault*, so
+  it is plausibly fallout from that path rather than an independent corruption —
+  **fix #36 first and re-check whether #37 still reproduces.**
+* Regardless of trigger, a user-space crash must never fault the kernel. The kernel
+  already ships the primitive for a guard here: `lib_listBelongs()` /
+  `LIST_BELONGS_EX` (`kernel/lib/list.h:50`) validates that an element really
+  belongs to a list before removal. Using it in `_kmalloc_free` would turn this
+  abort into a detected inconsistency. That is hardening, not a root cause, so it
+  should land *after* #36 — not instead of it.
+
+Neither is a regression: every STK run that reached the exit since 2026-09-07 shows
+the same two aborts, including runs that still returned `rc=0`.
