@@ -819,3 +819,58 @@ These were measured on the mis-built server and are **not** to be relied on unti
 The third is the load-bearing one: if damage *does* fire on a correctly built server, then §12's
 "presentation is a 300 ms full-screen timer" is wrong and the row-accurate flush that was written
 and reverted becomes worth having after all. That is the next thing to measure, and it is one cycle.
+
+---
+
+## 17. §12 is WRONG and fully withdrawn: the DDX does not present at all
+
+§16 owed a re-run of §12's account of the desktop's ~1 fps ("presentation is a 300 ms full-screen
+timer; the damage path never fires"). Re-measured on a correctly built `--glamor-daemon` server, and
+it does not survive.
+
+`fbdevFlushRegion()` has exactly **three** call sites in `tools/x11-port/ddx/fbdev.c`: the damage
+extent, the empty-damage full-frame fallback, and the periodic timer. All three were probed in one
+build:
+
+| probe | result |
+|---|---|
+| `fbdevShadowUpdate`, damage non-empty | **0 lines** |
+| `fbdevShadowUpdate`, damage empty → full frame | **0 lines** |
+| `fbdevFlushTimerCb` tick counter | **0 lines** |
+| the timer's one-shot "flush armed" banner | **absent** |
+
+…while the desktop **renders correctly** at 0 faults.
+
+The measurement was verified rather than trusted, because a silent probe is exactly the failure mode
+that has bitten this investigation twice: all four format strings are present in the binary that ran
+(`strings | grep -c` = 1 each, including a control string known to appear in the log), and the staged
+binary's sha256 matches the build tree's. So the silence is real.
+
+**Conclusion: `fbdevShadowUpdate` never runs, the periodic timer never arms, and the DDX presents
+nothing.** §12's mechanism — a 300 ms timer whose full-screen readback-plus-write round trip costs
+~700 ms — is therefore withdrawn in full. Its `y0=0 rows=1080` observation came from the readback
+probe on a mis-built server (§15) and is withdrawn with it.
+
+### What that implies, and what is NOT yet known
+
+If the DDX never calls `fbdevFlushRegion`, it never calls `glamor_phx_screen_readback` either (that
+is the only caller, `fbdev.c:366`) — so the screen texture is never copied to the shadow, and the
+~8 MB read + ~8 MB write per frame that §12 blamed for the frame rate **does not happen**. The most
+likely remaining explanation is that render-to-scanout is genuinely working: the screen pixmap's BO
+takes the scanout branch (§16 measured `create_flags=0x2` on it), so the GPU may be storing straight
+into the framebuffer's pages with no CPU copy at all.
+
+That is a hypothesis, not a finding. Note it sits awkwardly against `v3d_gpu.c:22`/`:638`, which say
+the daemon deliberately leaves `W.scanout_pa` unset so `sel_pa` stays 0 and "the default DRAM path
+runs" — i.e. the *daemon* does not hand out scanout pages. Both cannot be true as stated, and which
+one is wrong is exactly the next thing to establish.
+
+**So the desktop's ~1 fps currently has no established explanation.** §2c of the weekly log is
+withdrawn, not merely flagged. The honest state is: the update rate is measured (~1 update/s, §2)
+and the cause is unknown.
+
+**Next step, named:** find what actually writes `/dev/fb0` in the glamor + daemon-client
+configuration — grep the daemon client and the daemon for the writer, and check whether the screen
+BO really is backed by scanout pages in *this* configuration (the §16 flag says it was requested;
+`v3d_gpu.c` says the daemon does not grant it). Measure that before proposing any fix, and do not
+reuse any number from §12.
