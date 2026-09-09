@@ -1237,3 +1237,60 @@ unambiguous. Recording this because the wrong check nearly cost a good result.
 * The full work order (a real scanout predicate replacing the size test for
   *everyone*, removing Quake II's compensating un-flip) is still open and still
   wants the 6-app soak. This change deliberately did not go there.
+
+## §23 — NEW FINDING: the desktop is only PRESENTED ~2.7 times a second, always whole-screen
+
+This is where the residual `XPutImage` time goes, and it is a bigger deal than the
+number suggested. Probe in `fbdevFlushRegion` counting presents, rows presented,
+and splitting the GPU readback from the `/dev/fb0` write. One cycle, 0 faults:
+
+```
+[phx-flush] flushes=256  1080.0 rows/flush (of 1080)  readback 60.804 ms  fbwrite 16.165 ms  per flush
+```
+
+Three facts, in order of importance:
+
+1. **Every present is the entire screen.** 1080.0 rows of 1080, as a *mean over
+   256 presents* — not one partial band in the whole run. `fbdevShadowUpdate`
+   does pass `RegionExtents(damage)`, but extents is a *bounding box*: with six
+   clients scattered from the Clip at y 0–63 to the icon row at y 1016–1079, the
+   bounding box of any two of them is essentially the full height. Extents was
+   never going to be selective on a populated desktop.
+2. **One present costs 77 ms** — 60.8 ms `glReadPixels` of the 8.3 MB screen
+   texture (137 MB/s) plus 16.2 ms writing it to `/dev/fb0`.
+3. **Presents happen ~2.7 times a second.** Only one report line appeared in the
+   run (they print every 256), and it landed at roughly client frame 870 — so
+   ~256 presents against ~870 client frames, ≈0.3 presents per frame. 2.7/s is
+   almost exactly `FBDEV_FLUSH_MS` (300 ms → 3.3/s) minus the 77 ms each present
+   costs.
+
+**Inference, not yet a measurement:** that rate says the periodic timer is doing
+essentially all the presenting and the damage path is barely firing. There is a
+mechanism that predicts exactly this — *our DDX wraps damage BELOW glamor, where
+upstream wraps above* (the same arrangement behind the `DestroyPixmap` chain bug,
+see `project_x11_glamor_destroypixmap_chain`). Damage wrapped below glamor never
+sees glamor's GPU rendering, so GPU-drawn content generates no damage and only
+the idle safety-net timer ever pushes pixels. If that holds, **the user-visible
+frame rate of the GPU X desktop is ~2.7 fps no matter how fast the clients run** —
+`gl-x11`'s 9.45 fps is what the client achieves, not what reaches HDMI. That would
+account for the desktop still *feeling* slow after two real speedups.
+
+To confirm: split the flush counter by caller (damage vs timer). One build, one
+cycle. Do that before designing the fix, because it decides which fix:
+
+* **damage barely fires** → the fix is where damage is wrapped, or an explicit
+  glamor-side damage report. Making the timer faster cannot work: at 77 ms per
+  present the ceiling is ~13/s and it would eat a core.
+* **damage fires but extents defeat it** → the fix is in `fbdevShadowUpdate`:
+  walk `RegionRects` and flush each Y *band* instead of one bounding box. X11
+  regions are stored as Y-bands (every rect in a band shares y1/y2, bands are
+  disjoint and sorted), so collapsing consecutive same-span rects gives disjoint
+  bands for free. Cap the band count and fall back to extents above it, so
+  heavily fragmented damage cannot turn into a syscall storm.
+
+Either way the 60.8 ms readback is worth attacking on its own — 8.3 MB at
+137 MB/s is the single largest item in the present, and a cheaper present is what
+makes a faster present rate affordable.
+
+**Not started.** Recorded here with the probe patch reverted and the clean build
+restored; this is the next step, not something half-done in the tree.
