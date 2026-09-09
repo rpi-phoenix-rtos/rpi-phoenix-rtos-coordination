@@ -199,6 +199,20 @@ __attribute__((unused)) static void draw_orient_scene(void)
 	glEnd();
 }
 
+/* Per-phase timing for the present loop.
+ *
+ * The windowed GL path was measured at 1.0 screen updates/s against 35 fps for the
+ * same GPU driven in-process full-screen. Fixing the server-side per-row upload
+ * (one glTexSubImage2D per row, each an RPC to /dev/v3d-srv) took it to 2.5/s, so
+ * the row loop was real but not the whole story. Rather than guess at the rest,
+ * time the four phases this client actually performs. */
+static uint64_t glx_now_ns(void)
+{
+	struct timespec t;
+	clock_gettime(CLOCK_MONOTONIC, &t);
+	return (uint64_t)t.tv_sec * 1000000000ull + (uint64_t)t.tv_nsec;
+}
+
 int main(void)
 {
 	setvbuf(stdout, NULL, _IONBF, 0);
@@ -306,14 +320,20 @@ int main(void)
 
 	/* ---- 3. render / readback / present loop -------------------------------- */
 	glPixelStorei(GL_PACK_ALIGNMENT, 1);
+	uint64_t t_draw = 0, t_read = 0, t_pack = 0, t_put = 0, t_loop0 = glx_now_ns();
 	for (int frame = 0; frame < NFRAMES; frame++) {
 		float angle = (float)frame * 2.0f;
+		uint64_t _t0, _t1;
 
+		_t0 = glx_now_ns();
 		glBindFramebuffer(GL_FRAMEBUFFER, fbo);
 		draw_scene(angle);
 		glFinish();
+		_t1 = glx_now_ns(); t_draw += _t1 - _t0; _t0 = _t1;
 		glReadPixels(0, 0, W, H, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+		_t1 = glx_now_ns(); t_read += _t1 - _t0;
 
+		_t0 = glx_now_ns();
 		/* pack RGBA readback into the XImage, honouring the visual masks and
 		 * flipping vertically (glReadPixels origin bottom-left -> X top-left). */
 		for (int y = 0; y < H; y++) {
@@ -331,8 +351,10 @@ int main(void)
 			}
 		}
 
+		_t1 = glx_now_ns(); t_pack += _t1 - _t0; _t0 = _t1;
 		XPutImage(dpy, win, gc, img, 0, 0, 0, 0, W, H);
 		XFlush(dpy);
+		t_put += glx_now_ns() - _t0;
 
 		/* drain pending events; re-present on Expose, ignore the rest. */
 		while (XPending(dpy)) {
@@ -344,8 +366,16 @@ int main(void)
 			}
 		}
 
-		if ((frame % 30) == 0)
-			fprintf(stderr, "gl-x11: frame %d/%d angle=%.0f\n", frame, NFRAMES, angle);
+		if ((frame % 30) == 0 && frame > 0) {
+			double n = frame, wall = (double)(glx_now_ns() - t_loop0) / 1e6;
+
+			fprintf(stderr, "gl-x11: frame %d/%d  %.1f ms/frame "
+				"(draw %.1f  read %.1f  pack %.1f  put %.1f)  %.2f fps\n",
+				frame, NFRAMES, wall / n,
+				(double)t_draw / n / 1e6, (double)t_read / n / 1e6,
+				(double)t_pack / n / 1e6, (double)t_put / n / 1e6,
+				1000.0 * n / wall);
+		}
 
 		usleep(16000);
 	}

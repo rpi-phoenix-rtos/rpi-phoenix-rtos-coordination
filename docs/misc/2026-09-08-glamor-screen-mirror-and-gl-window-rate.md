@@ -874,3 +874,53 @@ configuration — grep the daemon client and the daemon for the writer, and chec
 BO really is backed by scanout pages in *this* configuration (the §16 flag says it was requested;
 `v3d_gpu.c` says the daemon does not grant it). Measure that before proposing any fix, and do not
 reuse any number from §12.
+
+---
+
+## 18. The windowed-GL bottleneck is `XPutImage`, at ~3.6 MB/s over a local socket
+
+§17 left the desktop's update rate unexplained; the per-row screen upload accounted for 1.0 → 2.5
+updates/s and no more. Rather than guess at the rest, the demo client now times its four phases.
+Measured on hardware, 0 faults, steady over hundreds of frames
+(`rpi4b-uart-20260909-033751-x-glphase.log`):
+
+```
+gl-x11: frame 360/20000  376.2 ms/frame (draw 1.5  read 10.7  pack 6.3  put 337.2)  2.66 fps
+```
+
+| phase | ms/frame | share |
+|---|---|---|
+| `draw_scene` + `glFinish` | **1.5** | 0.4 % |
+| `glReadPixels` (640×480×4 = 1.2 MB, uncached FBO) | 10.7 | 2.8 % |
+| CPU repack to the XImage (307 k px, 3 channel scales each) | 6.3 | 1.7 % |
+| **`XPutImage` + `XFlush`** | **337.2** | **90 %** |
+
+**The GPU is not the problem and never was** — it renders the frame in 1.5 ms. Nor is the CPU
+pixel work: readback and repack together are 17 ms, and both are the uncached-memory pattern that
+was worth 10× in `hevc-play`, so there is little left there either.
+
+The anomaly is the transfer: 1.2 MB per frame in 337 ms is **~3.6 MB/s**. A local AF_UNIX
+round trip on this hardware should manage two orders of magnitude more; NFS over gigabit does
+29.9 MB/s through a far longer path. `XPutImage` is nominally asynchronous, but a 1.2 MB request
+does not fit the socket buffer, so the client blocks until the server drains it — which makes this
+number the *combined* cost of the AF_UNIX copies and whatever the server does per chunk, and it is
+what a re-measurement has to separate.
+
+### Next step, stated precisely
+
+Measure AF_UNIX bulk throughput **in isolation**, not through X: send a few MB between two local
+processes and report MB/s. `tools/rpi4-ipcprobe` already exists for AF_UNIX validation and is the
+natural place. Three outcomes, each pointing somewhere different:
+
+- **~3–5 MB/s in isolation** → the socket path itself is the bug, and fixing it speeds up *every* X
+  client, not this demo. Note the two AF_UNIX defects already found in this port (the EL1 user-copy
+  `PROT_USER` COW storm, and `poll()` not being readiness-woken) — a third is plausible.
+- **~100 MB/s in isolation** → the socket is fine and the 337 ms is server-side per-request work,
+  so the next probe belongs in the server's PutImage path.
+- anything between → both, and the split is the useful number.
+
+Do not optimise before that measurement. The per-row upload fix was found by measuring and was
+worth 2.5×; the two hypotheses before it were wrong and cost four Pi cycles.
+
+The phase timing is kept in the client: one `fprintf` per 30 frames, and it is the readout that
+says whether a future change helped.
