@@ -89,6 +89,7 @@ core_archives=(
 # trade available here.
 glamor_core_patches=(
   glamor-destroypixmap-chain
+  glamor-screen-upload-bulk
 )
 # Set to 1 by apply_glamor_chain_patch when a patch actually landed, so the
 # "already built" early return below is skipped and the full build runs.

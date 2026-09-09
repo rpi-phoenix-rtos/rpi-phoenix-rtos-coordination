@@ -1,0 +1,122 @@
+Phoenix RPi4: upload the screen-pixmap Y-flip in ONE call, not one call per row.
+
+xorg-server-21.1.24-glamor-screen-upload-yflip.patch made CPU uploads to the X
+screen pixmap Y-mirrored, to match the raster-flipped rendered content. It did the
+flip the simplest way: one glTexSubImage2D per row.
+
+That is correct, and pathologically slow in the configuration the desktop actually
+runs in. `startx_gpu` uses Xphoenix-glamor-daemon, which reaches the GPU through
+/dev/v3d-srv -- so every GL call is an RPC to another process. A 640x480 XPutImage
+from the GL demo client therefore cost 480 round trips per frame, and that window
+was measured updating about once a second while full-screen in-process GL runs at
+35 fps.
+
+This flips into a packed scratch buffer and issues a single bulk upload: same
+destination rows, same bytes, one RPC instead of N. The memcpy is cached-to-cached
+and far cheaper than the calls it replaces. Out of memory falls back to the
+original per-row loop, which is still correct.
+
+Destination arithmetic, since it is easy to get wrong: the row loop sent source
+row `yy` to texel row `(h-1-yy) - box->y1`, so over yy in [y1,y2) the texel rows
+span `(h-y2) - box->y1` upward. The bulk call therefore uses origin
+`(h-y2) - box->y1` with height `rows`, and scratch row 0 must be source row y2-1.
+GL_UNPACK_ROW_LENGTH is set to 0 around the call because the scratch is packed at
+the box width rather than at the source stride, and restored afterwards.
+
+Applies on top of the -yflip patch.
+
+--- a/glamor/glamor_transfer.c
++++ b/glamor/glamor_transfer.c
+@@ -22,6 +22,37 @@
+ 
+ #include "glamor_priv.h"
+ #include "glamor_transfer.h"
++#include <stdlib.h>   /* realloc, for the screen-upload flip scratch */
++
++/* Phoenix RPi4: grow-only scratch for the screen-pixmap upload flip.
++ *
++ * The flip used to be done by uploading ONE ROW PER glTexSubImage2D call. That is
++ * correct but pathologically slow in the configuration the desktop actually runs:
++ * Xphoenix-glamor-daemon reaches the GPU through /dev/v3d-srv, so every GL call is
++ * an RPC to another process. A 640x480 XPutImage from the GL demo client therefore
++ * cost 480 round trips per frame, and that window updated about once a second.
++ *
++ * Flipping into a packed scratch buffer and issuing ONE bulk upload is exactly
++ * equivalent -- same destination rows, same bytes -- for one RPC instead of N. The
++ * copy is cached-to-cached memory, far cheaper than the calls it replaces. */
++static void *
++phx_flip_scratch(size_t need)
++{
++    static void *buf;
++    static size_t cap;
++
++    if (need > cap) {
++        void *nb = realloc(buf, need);
++
++        if (!nb)
++            return NULL;    /* caller falls back to the per-row loop */
++        buf = nb;
++        cap = need;
++    }
++    return buf;
++}
++
++
+ 
+ /*
+  * Phoenix RPi4: the fbdev DDX and fb use RGBA byte order (byte0 = R, the #19
+@@ -114,15 +145,47 @@
+                 continue;
+ 
+             if (phx_screen_flip) {
+-                /* Phoenix: screen-pixmap upload written Y-mirrored, row by row, so it
+-                 * matches the raster-flipped rendered content (see banner above). */
+-                int yy;
+-                for (yy = y1; yy < y2; yy++, ofs += byte_stride)
++                /* Phoenix: screen-pixmap upload is written Y-mirrored to match the
++                 * raster-flipped rendered content (banner above). Flip into a packed
++                 * scratch buffer and upload in ONE call -- the row-at-a-time version
++                 * issued one glTexSubImage2D per row, and in the daemon configuration
++                 * every GL call is an RPC to /dev/v3d-srv. */
++                int rows = y2 - y1;
++                int w = x2 - x1;
++                size_t rowbytes = (size_t) w * bytes_per_pixel;
++                uint8_t *scr = phx_flip_scratch(rowbytes * (size_t) rows);
++
++                if (scr) {
++                    int r;
++
++                    /* scratch row 0 is the LOWEST destination texel row, i.e. source
++                     * row y2-1 -- the same mapping the row loop had. */
++                    for (r = 0; r < rows; r++)
++                        memcpy(scr + (size_t) r * rowbytes,
++                               bits + ofs + (size_t) (rows - 1 - r) * byte_stride,
++                               rowbytes);
++                    /* the scratch is packed at `w`, not at the source stride */
++                    if (glamor_priv->has_unpack_subimage)
++                        glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+                     glTexSubImage2D(GL_TEXTURE_2D, 0,
+-                                    x1 - box->x1, (phx_pix_h - 1 - yy) - box->y1,
+-                                    x2 - x1, 1,
++                                    x1 - box->x1, (phx_pix_h - y2) - box->y1,
++                                    w, rows,
+                                     format, type,
+-                                    bits + ofs);
++                                    scr);
++                    if (glamor_priv->has_unpack_subimage)
++                        glPixelStorei(GL_UNPACK_ROW_LENGTH,
++                                      byte_stride / bytes_per_pixel);
++                } else {
++                    /* Out of memory: the slow path is still correct. */
++                    int yy;
++
++                    for (yy = y1; yy < y2; yy++, ofs += byte_stride)
++                        glTexSubImage2D(GL_TEXTURE_2D, 0,
++                                        x1 - box->x1, (phx_pix_h - 1 - yy) - box->y1,
++                                        x2 - x1, 1,
++                                        format, type,
++                                        bits + ofs);
++                }
+             } else if (glamor_priv->has_unpack_subimage ||
+                 x2 - x1 == byte_stride / bytes_per_pixel) {
+                 glTexSubImage2D(GL_TEXTURE_2D, 0,
