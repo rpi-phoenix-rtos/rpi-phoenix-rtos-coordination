@@ -44,9 +44,18 @@ out="${1:-$vid_dir/$(date -u +%Y%m%d-%H%M%S)-phoenix-rtos-rpi4-showcase.mp4}"
 # nothing is a host recording or a screen-grab of a desktop emulator. The
 # windows were chosen by measuring the clips, not by eye: for the games, the
 # usable window is bounded because `+playdemo demo1` plays ONE demo and then
-# drops to the console; for the X desktop it stops at ~150 s because life.py
-# freezes there (open bug); and the first ~30 s of any capture is skipped
-# because the grabber's first frames are a stale pink card, not the Pi.
+# drops to the console; and the first ~30 s of any capture is skipped because the
+# grabber's first frames are a stale pink card, not the Pi.
+#
+# The X11 clip was re-recorded 2026-09-09 and replaces the old x-restored capture,
+# which predated the whole X11 fix series and showed the mirrored-Clip artefact,
+# grey bands bleeding between xterms, xbill hidden under another window, and a
+# desktop reaching HDMI only ~2.3 times a second. The replacement was measured
+# rather than eyeballed: across all 100 s of it the desktop is fully populated
+# (22-24% bright pixels) and xbill's board is 95.5% white, i.e. every client is up
+# and unobstructed for the entire clip, so any window works -- the old note about
+# stopping at ~150 s "because life.py freezes" no longer applies (that was Conway
+# converging to still lifes, not a hang).
 #
 # The four Quake segments and SuperTuxKart all carry the engine's OWN on-screen
 # frame-rate readout, so the performance figures in this reel are the system
@@ -55,7 +64,7 @@ segments=(
 	"20260908-202248-shell-demo|32|24|Boot — plo -> kernel -> lwIP -> NFS root -> psh, on real hardware"
 	"20260908-202248-shell-demo|112|26|Shell — uname, the ported /usr/bin userland, Lua 5.4.7 / jq 1.7.1 / Python 3.14.4"
 	"20260908-202248-shell-demo|164|22|Python 3.14 + ncurses — Conway's Game of Life, 239x66 on the HDMI console"
-	"20260908-200441-x-restored|74|26|X11 desktop — Window Maker on glamor GPU-accelerated X, with a live OpenGL window, top and xbill"
+	"20260909-065105-x-fixed|20|26|X11 desktop — Window Maker on glamor GPU-accelerated X: live OpenGL window, Python 3.14 + ncurses Game of Life, top, xbill and xclock"
 	"20260908-161800-dillo-browse|38|13|Dillo web browser — page fetched over TCP/IP, rendered under glamor X"
 	"20260908-223402-hevc-fastblit|78|24|Hardware H.265 decode — BCM2711 rpivid at 25 fps, windowed over the live console"
 	"20260908-191446-qs-fps2|95|22|QuakeSpasm — OpenGL on Mesa v3d, id1 demo1 playback, 35 FPS on screen"
