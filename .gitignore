@@ -79,3 +79,6 @@ artifacts/wifi-air/
 # Quake III QVM build outputs (host tools + bytecode + pk3). The RECIPE is
 # tracked (tools/quake3-vm/build-quake3-vms.sh); the artifacts are rebuildable.
 tools/quake3-vm/build/
+
+# Transcoded demo clips: large, and reproducible via transcode-for-phoenix.sh
+tools/hevc-decode/testdata/*-phoenix.265

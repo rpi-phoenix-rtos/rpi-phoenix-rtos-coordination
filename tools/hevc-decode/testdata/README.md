@@ -53,3 +53,18 @@ with:
 ```
 ffmpeg -v trace -hide_banner -i dflt.265 -f null - 2> dflt.trace.txt
 ```
+
+## Generated demo assets are NOT committed
+
+The small `.265` files here are conformance vectors (~12 kB each) and are tracked. A
+transcoded *demo* clip is not: `IMG_8331-phoenix.265` is 19.7 MB, about 1600x the size of
+everything else in this directory, and it is reproducible in one command from the source
+the owner supplied:
+
+```
+./tools/hevc-decode/transcode-for-phoenix.sh ~/Downloads/IMG_8331.MOV
+```
+
+That stages it to both the buildroot rootfs and the live NFS export. It plays with
+`hevc-play /usr/share/demo/IMG_8331-phoenix.265` (HW-measured 1080p, 1058 frames,
+21.7 fps, 0 faults -- and note ~90% of each frame is the framebuffer blit, not the decode).
