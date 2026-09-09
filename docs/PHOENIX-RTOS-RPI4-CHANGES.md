@@ -78,6 +78,8 @@ exercised it hard, and each is described with its root cause in the section that
 | 12 | **`select(…, NULL)` never blocked** | libphoenix `033ee1f` | Became a 0 ms poll, so every readline-based program aborted at its first prompt. |
 | 13 | **`fcntl` record locks were a stub** | kernel `3844d204` | Returned `EOK` without locking, so two processes could both "acquire" the same lock. |
 | 14 | **`std::atomic<int>` in `pthread_mutex_t`** | libphoenix `94df683` | Made the type non-copyable, so modern libstdc++ would not compile against libphoenix at all. |
+| 15 | **A kernel diagnostic that self-deadlocks the scheduler** | `proc/threads.c`, `vm/map.c` `ce445804` | `lib_printf` called from inside `_threads_schedule` re-enters `threads_common.spinlock` via `log_write` → `proc_lockSet`, on a HAL whose spinlock is non-recursive — so the **first character hangs that CPU** with the global scheduler lock held, and the other cores wedge at their next scheduler entry. Any target with a non-recursive spinlock and a mutex-taking log path has this. It is why a "corrupt process pointer" line had never once appeared in a log despite the condition being detected, and why a UART log stopped **mid-word**. Compounding it, the fallback then asserted with the pointer it had just nulled, and `LIB_ASSERT_ALWAYS` → `hal_cpuReboot()` on **BCM2711 is `for(;;) hal_cpuHalt()`** — a permanent halt, no reboot. Together they turned one corrupt pointer into a dead board on ~1 in 6 X11 desktop exits; now 20/20 clean. |
+| 16 | **`process_getName` faults the kernel on a corrupt `argv`** | `proc/process.c` `3c8009b7` | Three defects in one function, all reachable from an ordinary `top`: `argv` entries were dereferenced unvalidated (they are one kernel `vm_kmalloc` block, so a single garbage slot faults **EL1** inside `hal_strlen`), the loop had **no bound** on `argc` (a missing NULL terminator walks off the array), and `*(sbuf - 1) = '\0'` ran unconditionally — writing **one byte before the caller's buffer** when `argv[0]` was NULL. Observed as **2982 identical EL1 aborts in a single run**, because `top` re-enumerates every process on each refresh. |
 
 ## Platform gaps that every future port will hit
 
@@ -157,6 +159,29 @@ through a documented per-platform override hook.
 | EL0 counter + cache-maintenance enable | `hal/aarch64/_init.S` | `CNTKCTL_EL1.EL0VCTEN|EL0PCTEN` (reset value is architecturally UNKNOWN, so `mrs cntvct_el0` from userspace was trapping and killing binaries) and `SCTLR_EL1.UCI=1` for EL0 `dc civac`/`ic ivau`, needed for userspace streaming-DMA drivers on this non-coherent SoC. Both match Linux; both are generally useful on aarch64. |
 | Fork-local divergences to be aware of | `hal/aarch64/spinlock.c`, `pmap.c`, `proc/name.c`, `syscalls.c` | (a) `hal_spinlockSet/Clear` take a DAIF-only fake-lock path under `#if NUM_CPUS == 1`, and `hal_spinlockCreate` skips the registry lock before `hal_started()`. (b) `_pmap_preinit` does `if (nBanks == 0) while (1) wfe;` — a silent hard hang where upstream would want an error path (also space-indented amid tabs). (c) `proc/name.c` adds a cached-`devfs_oid` fast path in `proc_portLookup` (TD-14) to dodge a Pi 4 cold-boot race against devfs's own `portRegister` that produced 20-second IPC hangs; a fork-local workaround, not an optimisation. (d) The syscall table is byte-identical to upstream again except an appended `sys_fdpath`, but restoring upstream order shifted ~93 syscall numbers — anyone cherry-picking must rebuild every binary. |
 
+**Same class, 2026-09-09: upstream widened the priority space 8 → 64.** A 64-bit ready bitmask
+replaced the linear ready-queue scan, and `priority()` was split into `setPriority()`/`getPriority()`
+across kernel/devices/usb/utils/corelibs — a coordinated API break. Two details worth carrying:
+the syscall was **renamed in place** (`ID(priority)` → `ID(sys_priority)`, same slot 54 of 109), so
+nothing was renumbered and existing binaries still invoke correct ordinals; but the syscall **gained
+a second argument** (an out-pointer), so an old caller passes one argument and the kernel reads the
+second from a garbage stack slot. That is unreachable in practice here — 0 undefined references
+across all 229 built programs, and `objdump` finds 0 call sites in every demo binary, because
+`priority()` is dead linkage pulled in from `libphoenix.a`. And when adapting local code to the
+bitmask: **dropping a corrupt ready queue must clear its bitmask bit**, or `_readyMinPrioIdx()`
+returns the same index forever and hangs the scheduler on the exact path the guard exists to survive.
+
+**libphoenix allocator, further hardening (2026-09-09).** Beyond the coalesce-neighbour validation
+noted above: `free()` now checks that a chunk's `heap` pointer lies inside the window of heaps the
+allocator has actually `mmap`'d, and free-bin links are **value-checked before `LIST_REMOVE`
+dereferences them** — on garbage the bin is abandoned rather than followed, which is the userspace
+twin of the kernel fix in shortlist row 15. Two cautions from doing it: the first version required
+`sizeof(chunk_t)` to fit below the window top, which **rejects a legitimate chunk at a heap's end**
+and, because the failure action abandons the bin, silently **leaked live memory** — it passed both
+libc suites and a desktop session, and only a real application exercised a boundary chunk. And do
+not assume low addresses are invalid: a real process reports `heapLo=0x2000`, so the **first heap
+lives at page 2** on this port.
+
 ### 2. New hardware support
 
 Little new *device* code lands in these three repos — the Pi 4 drivers (genet, V3D/Mesa, EMMC2/SD,
@@ -209,7 +234,7 @@ EL0 residual still open. Working notes:
 | ★★ Demand-page the ELF header map | `proc/process.c` (`432f537b`) | `process_load` mapped the whole ELF image into the kernel map, which on an MMU target is eagerly populated — so exec of a large binary pulled the entire file in one page-read per page even though only phdrs, shdrs and `.shstrtab` are dereferenced. Now mapped lazily with only the metadata ranges explicitly forced (strided by `sizeof()` so a malformed `e_*entsize` cannot leave a touched page unforced); other ELF classes keep the old behaviour. A force failure propagates its real code instead of being masked as `-ENOEXEC`. |
 | ★★ Readiness-woken `poll()`/`select()` | `posix/posix.c`, `posix/unix.c` (`01715f09`, `7a52147c`, `9a6d4743`) | `posix_poll` was a poll-and-sleep loop with a 100 ms re-check, so every X client round trip (libxcb waits each reply in `poll(-1)`) cost up to 100 ms. AF_UNIX fds now block on a global unix poll queue broadcast by every socket state change; the timed loop survives only as the fallback for remote-server fds and the safety-net timeout, back at 20 ms. Lost-wakeup safe via the existing `wakeupPending` sentinel; a missed broadcast degrades to <=20 ms, never a stall. **Note the inet half is narrower than it reads**: for a poll on *exactly one* `ftInetSocket` fd, the block timeout is packed into the high bits of the `atPollStatus` attr value above the 16-bit event mask, and only the lwip socket server decodes it — everything else keeps the legacy path. |
 | ★ ~100 s of every boot was a diagnostic dump | `usb/xhci/bcm2711-pcie.c` (devices `3f82638`), kernel `6cdf217e` | A "Pi-firmware bridge state" dump read 10 RC / MEM_WIN registers *before* `bcm2711PrepareHostBridge` clears `SERDES_IDDQ`; each read took the PCIe external-abort recovery path at **~10.8 s** and returned `0x0`. Deleting it took the boot span **165.9–177.5 s -> 66–74 s**. Its own hypothesis ("the firmware leaves the bridge working") was disproved by its all-zero output. Worth stating because the follow-on claim was withdrawn: the post-fix study also credited it with "USB enumeration 3/10 -> 10/10", and a controlled 8+8 A/B — with the build identity gated by `strings loader.disk`, i.e. verifying the *measurement* — gave 6/8 with the dump against 8/8 without, **Fisher p ≈ 0.47, not significant**. Enumeration was intermittently flaky either way. |
-| ★ AF_UNIX rings are ONE PAGE, so bulk IPC pays a round-trip per 4 kB | `posix/unix.c` (`137ec58f`) | `US_DEF_BUFFER_SIZE` is `SIZE_PAGE`, and a `SOCK_STREAM` write copies only what currently fits before blocking — so a large transfer costs one blocking round-trip per refill, and a ring hands over only about *half* its capacity per refill (writer blocks when full, reader drains it, so the reader finds it half-full). An X client pushing a 1.2 MB `XPutImage` took **~38 round-trips at a fixed ~2.79 ms each = 68.6 ms of its 105.8 ms frame**. `SO_RCVBUF` is honoured and resizes the socket's *own* ring — the one the peer writes into — so the receiving end is the knob; its ceiling was raised 64 kB → 256 kB. **Honest scope, because the obvious conclusion is wrong:** at 256 kB the round-trips fell 2.8× exactly as predicted *and the per-round-trip cost rose 2.5×*, leaving throughput flat at ~12 MB/s and buying only +12% (9.46 → 10.62 fps). The ring is therefore **not** the constraint: `rpi4-ipcprobe` reaches **213 MB/s cross-process** (`fork` + `socketpair`) on the *default 4 kB* ring with no `poll()` in the loop — 17× faster than the X path — so the cost is the per-operation overhead of that path (server does `poll`→`read`→`poll`→`read`; `io.c:402` returns to the dispatch loop on every incomplete request), not buffering. Kept because it is measured net-positive and stops being marginal if that overhead is fixed. |
+| ★ AF_UNIX rings are ONE PAGE, so bulk IPC pays a round-trip per 4 kB | `posix/unix.c` (`137ec58f`) | `US_DEF_BUFFER_SIZE` is `SIZE_PAGE`, and a `SOCK_STREAM` write copies only what currently fits before blocking — so a large transfer costs one blocking round-trip per refill, and a ring hands over only about *half* its capacity per refill (writer blocks when full, reader drains it, so the reader finds it half-full). An X client pushing a 1.2 MB `XPutImage` took **~512 round-trips = 355.2 ms of a 395.9 ms frame** at the one-page ring. Raising the receive ring took the frame to **112.6 ms (3.5x)**; what remains after that is **~38 round-trips at ~2.79 ms each = 68.6 ms of a 105.8 ms frame**. `SO_RCVBUF` is honoured and resizes the socket's *own* ring — the one the peer writes into — so the receiving end is the knob; its ceiling was raised 64 kB → 256 kB. **Honest scope, because the obvious conclusion is wrong:** at 256 kB the round-trips fell 2.8× exactly as predicted *and the per-round-trip cost rose 2.5×*, leaving throughput flat at ~12 MB/s and buying only +12% (9.46 → 10.62 fps) — so beyond 64 kB the ring is **not** the constraint, though at the original 4 kB it certainly was (3.5x): `rpi4-ipcprobe` reaches **213 MB/s cross-process** (`fork` + `socketpair`) on the *default 4 kB* ring with no `poll()` in the loop — 17× faster than the X path — so the cost is the per-operation overhead of that path (server does `poll`→`read`→`poll`→`read`; `io.c:402` returns to the dispatch loop on every incomplete request), not buffering. Kept because it is measured net-positive and stops being marginal if that overhead is fixed. |
 | plo `dc ivac` sweep -> set/way invalidate-all | plo `hal/aarch64/generic/hal.c` (`54bf7c3`) | `hal_dcacheInval(0, 0xfc000000)` walked 4 GB with ~65M `dc ivac` through the EL2 MMU, including the 76 MB GPU reserve mapped as Device (where `dc ivac` is CONSTRAINED UNPREDICTABLE). Replaced with a set/way invalidate-all, which is the right tool for a full invalidate and does not go through the MMU. |
 
 ### 5. Stability / robustness
@@ -985,7 +1010,7 @@ Five 3D engines, all folded into a **single static ELF each** (Phoenix has no dy
 | engine | version (pin) | renderer path | state |
 |---|---|---|---|
 | **★ quakespasm** (GLQuake) | 0.97.0 (`f5fe178`) | desktop GL → Mesa/V3D → `/dev/fb0` | Flagship. Textured real levels at ~1080p/~40 fps on HDMI, audio wired. Cleanest HW evidence of the five. Also the only *networked* demonstration: the multiplayer client joins a real dedicated server, loads the map and runs in-game at 26 fps over Phoenix's own TCP/IP stack (the two enabling lwIP defects — the `getnameinfo` out-of-bounds write and `FIONBIO` — are in the drivers section, §3) |
-| **★ supertuxkart** | 1.4 | GLES3 (STK "SP" renderer) | Boot → fully-lit in-game 3D race, 0 crashes, host-comparison SSIM 0.991, **5.84 fps** (~171 ms/frame, GPU-bound). It ran at *exactly* 1 fps until a libstdc++ toolchain defect was root-caused — see §3. 11 patches, 12 port dependencies |
+| **★ supertuxkart** | 1.4 | GLES3 (STK "SP" renderer) | Boot → fully-lit in-game 3D race, 0 crashes, host-comparison SSIM 0.991, **8/9/9 fps** on the shipped image (`scale_rtts_factor=0.75`; it was 5.84 fps / ~171 ms per frame at full resolution). It ran at *exactly* 1 fps until a libstdc++ toolchain defect was root-caused — see §3. 11 patches, 12 port dependencies |
 | yquake2 (Quake II) | 8.71 (`a9e88f6`) | `ref_gl3` / GLES3 default, `ref_gl1` selectable | Renders full 3D. Client + integrated server + baseq2 game + one renderer in one ELF. Asset load is slow over NFS, mitigated by RAM-staging to `/tmp` — **per application, not in general**: measured 5.49× for quake3e (`CL_InitCGame` 63.77 s → 11.61 s) and 3.6× for quakespasm, but a net *loss* for SuperTuxKart, where 73 s of copying saved 2.7 s. RAM-staging is also the real justification for the `DUMMYFS_SIZE_MAX` 32 → 256 MiB bump reported in §4 |
 | quake3e (Quake III) | 1.32 (in-tree "Q3 1.32e", `f694bbb`) | desktop GL → Mesa/V3D | Runs; QVM bytecode modules need no `dlopen`, but its aarch64 JIT does need the code buffer `mmap`'d RWX up front, because `mprotect` cannot add `PROT_EXEC` later (see *Platform gaps*). Known open defect: a V3D CT0 binner wedge on `q3dm7` (a lightmap-black bug on the same map was root-caused and fixed — see the V3D tiling rule in the drivers section) |
 | vkquake | 1.34 (`1aa13a5`) | **Vulkan** via the ported V3DV ICD (SPIR-V→NIR→QPU) | Runs — the only user-shader Vulkan consumer. No SDL dependency at all: SDL is *entirely* shimmed (`glue/sdl-shim/SDL.h` + `pl_phoenix_sdlcompat.c`). Known open defect: torch sprites intermittently missing (~10–20 % of runs) |
@@ -1232,8 +1257,11 @@ rather than as bugs.
 - **H.264 is walled, deliberately.** There is no directly-addressable H.264 register block on
   BCM2711; H.264 decode lives on the VideoCore firmware behind VCHIQ + MMAL. Scoped and
   banked, not attempted.
-- **No decode-rate figure.** All claims here are correctness (bit-exactness) and resolution; no
-  frames-per-second or MB/s measurement exists for any clip.
+- **Decode rate, measured 2026-09-09.** A real 1080p H.265 phone clip (1058 frames) plays on
+  `/dev/fb0` at **21.7 fps, 0 faults**. The decoder is not the limit: ~41.5 ms of each 46 ms frame
+  is the **framebuffer blit** and ~4.5 ms is the decode, so this is a framebuffer-bandwidth number
+  and full-screen 1080p is its worst case. (Earlier revisions of this document stated that no rate
+  figure existed for any clip.)
 - Full register spec: `docs/misc/2026-08-28-hevc-m2-register-spec.md`. Capability matrix and the
   eight hard-won gotchas: `tools/hevc-decode/README.md`.
 
@@ -1392,7 +1420,7 @@ risky change:
   code). Any graphics claim below ~10% has to be repeated before it means anything — which is why
   several single-run figures in the X11 history should be read as directional only.
 
-**The one change that would still move GL-in-a-window**, and it is a project rather than a tuning
+**⛔ CLOSED by the owner 2026-09-09 — do not implement. The one change that would still have moved GL-in-a-window**, and it is a project rather than a tuning
 pass: the client renders to an FBO, `glReadPixels` into its own memory, then `XPutImage` **1.2 MB per
 frame** back to the server, which uploads it into the screen texture — GPU → CPU → socket → CPU → GPU
 every frame, and the transfer *is* the cost (disabling presents alone took it 10.62 → 14.94 fps, so
@@ -1418,9 +1446,16 @@ would be a mini-DRI3 for this port. It affects only GL-in-a-window; the desktop 
   mitigation ships. Named next step: diff our binner/tile-alloc setup (`TILE_BINNING_MODE_CFG`,
   tile_alloc/tile_state sizing, CT0QMA/CT0QMS) and CPU→GPU coherency before the CT0 kick against
   Mesa/Linux v3d, since Linux renders the same map on the same silicon.
-- **SuperTuxKart crashes on the `--profile-time` benchmark path**, while formatting the per-kart
-  report — after the race and after the FPS line. The demo path (`--race-now`) is clean. Stated
-  because it is 11 of the 17 fault-bearing logs in the reliability figure below.
+- **SuperTuxKart faults intermittently in its own code** — historically ~40% of runs, at *varying*
+  sites. ⚠ Earlier revisions of this document scoped this to "the `--profile-time` report path,
+  after the race", which is **wrong**: `addr2line` on four distinct fault PCs gives
+  `SkiddingAI::findNonCrashingPoint()`, `FontManager::loadFonts()` (**startup**, before any race),
+  and **two inside libphoenix's allocator** (`lib_listRemove`, `_malloc_chunkJoin`). The allocator
+  is the victim, not the cause — a 4.8 M-op harness exonerated it of any internal defect — and both
+  of those sites are now guarded (a corrupt free-bin link abandons the bin instead of being
+  followed). A 6-trial bench afterwards came back 0/6, which is suggestive only: no guard fired, so
+  the corruption did not occur, and relinking STK perturbed its heap layout. The 11-of-17
+  attribution in the reliability figure below inherits this error.
 - **Quake II's underwater view is Y-mirrored — fixed with a stopgap the fix itself calls one.** It
   is "a conditional correction on a conditional bug", and it over-corrects at `viewsize <= 71`.
   The structural fix is to declare the scanout FBO `FlipY` and delete the size gate in
@@ -1445,8 +1480,15 @@ would be a mini-DRI3 for this port. It affects only GL-in-a-window; the desktop 
 fresh campaign (one `test-cycle-*` invocation = one power-on = one log; success = the `(psh)%`
 prompt appears; fault pattern = the same markers `scripts/uart-summary.sh` uses): **132 boots, 132
 reached the prompt — 100.0 %.** 17 of the 132 logs contain a fault pattern and **all 17 are
-attributed, 0 unexplained** — 11 the SuperTuxKart `--profile-time` crash above, 6 the X
-desktop-exit bug being deliberately reproduced before it was fixed. **The caveat travels with the
+attributed, 0 unexplained** — 11 attributed to a SuperTuxKart crash (see the corrected entry above:
+that attribution is not sound), 6 the X desktop-exit bug being deliberately reproduced before it was
+fixed.
+
+⚠ **Recompute this before quoting it.** It was measured with a `uart-summary.sh` that could see
+neither a **truncated** fault message nor a **mid-print stop**. A desktop-exit wedge that hung the
+entire board reported *zero faults* under that tool, and that wedge was live across this very
+window — so both the 100 % denominator and "0 unexplained" are unsupported until re-derived with the
+fixed detector. The tool was fixed 2026-09-09; the figure was not re-run. **The caveat travels with the
 number: all 132 are netboot.** SD boot is unverified (no card in the host reader).
 `docs/misc/2026-09-08-boot-stability-tally.md`.
 

@@ -26,8 +26,9 @@ game on a desktop AMD GPU; what is confirmed on the current clean image is in
 > is kept as a rollback). The **entire system is gcc-16-built and HW-verified**: the kernel,
 > drivers, libc, lwip and NFS boot to a shell and serve the NFS root on real Pi 4 hardware,
 > and a full `--with-ports` image (coreutils, bash, jq, Python, busybox, curl, …) builds on
-> gcc-16 and boots + runs on the Pi with 0 faults. (A Docker-reproducible gcc-16 release build
-> is the remaining nice-to-have.) Details in the
+> gcc-16 and boots + runs on the Pi with 0 faults. (The Docker `--no-cache` clean build from the
+> org Dockerfile is the authoritative release gate and has produced `BUILD_RC=0` from a blank OS.)
+> Details in the
 > [gcc-16 release plan](docs/done/gcc16-release-plan.md).
 
 > 🚀 **First time here?** [**TUTORIAL.md**](TUTORIAL.md) is a single,
@@ -175,9 +176,13 @@ capture under `artifacts/hdmi/`:
 - **GPU-accelerated X11 desktop** (`startx_gpu deskapps`) — Window Maker plus an
   xterm with a live shell, `xclock` and `xcalc`
   (`20260903-053119-final-xgpu-tick.png`).
-- **SuperTuxKart** — its GPU-drawn UI renders with **0 wedges and 0 faults**, but
-  the 194 MB of assets served over NFS does not finish loading inside a ~5 minute
-  window, so **in-game is not yet verified on the clean image**.
+- **SuperTuxKart** — **races in-game** on the shipped image at `FPS: 8/9/9` (its
+  own on-screen counter), with `scale_rtts_factor=0.75` as the shipped default,
+  up from 5/6/6 at full resolution. It still faults intermittently in its own
+  code — see [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md).
+- **Hardware H.265 decode** — the BCM2711 `rpivid` block decodes a real 1080p
+  phone clip and plays it on `/dev/fb0` at **21.7 fps, 0 faults** (~90% of each
+  frame is the framebuffer blit; the decode itself is ~4.5 ms).
 
 **Quake III needs no retail content and no retail CD key.** Besides the free demo
 `pak0.pk3` it needs two more files, both staged by `scripts/stage-game-data.sh`
@@ -255,7 +260,7 @@ work; `⛔` blocked on external dependencies; `⬜` not started.
 | GPU (V3D 4.2) — Vulkan (V3DV) | ✅ | Ported Mesa `v3dv` Vulkan driver on real V3D 4.2 — init, texture upload (no-WSI buffer→image copy), SPIR-V vertex/fragment/compute shaders and render passes all execute on the GPU (HW-validated); **vkQuake renders the start map** — re-verified on the clean SD image, `artifacts/hdmi/20260903-040557-vkq-rep2-tick.png`. (An intermittent V3D binner wedge on long GPU runs — not Vulkan-specific — is tracked separately.) Fork: [rpi-phoenix-rtos/vkQuake](https://github.com/rpi-phoenix-rtos/vkQuake), branch `phoenix-rpi4-port` |
 | GPU concurrency (`v3d-server`) | ✅ | A userspace **`v3d-server` daemon** (`/dev/v3d-srv`, `/sbin/rpi4-v3d`) owns the single V3D and serializes GPU submits from multiple clients over a message port, so **an accelerated X desktop and a second GPU program can run at the same time**. HW-proven end-to-end: BO/compute/render/TFU submit bit-exact through the daemon, two concurrent compute clients serialized, and a glamor GPU-accelerated X desktop with a **live GPU-rendered window running concurrently** on one screen. Lifts the earlier single-GPU-process limit. Clients link `libv3d-client`; opt-in today (not the default boot). Details: [docs/misc/2026-08-22-concurrent-gpu-v3d-server-feasibility.md](docs/misc/2026-08-22-concurrent-gpu-v3d-server-feasibility.md) |
 | Audio (PWM, 3.5 mm jack) | 🟡 | `/dev/audio0` streaming DMA; Quakespasm audio backend |
-| X11 / windowing (kdrive) | ✅ | Xphoenix **fbdev DDX** (CPU shadow-blit — the default, always-on path) + kbd/mouse; WindowMaker/JWM/twm, xterm/xcalc/xedit/xeyes/xclock. Migrated to real `phoenix-rtos-ports` (the X server, xterm, WindowMaker and dillo build as framework ports). An **experimental glamor build** additionally runs GPU-accelerated 2D X on the V3D GPU — `startx_gpu deskapps` on the clean SD image brings up Window Maker with an xterm running a live shell plus `xclock` and `xcalc` (`artifacts/hdmi/20260903-053119-final-xgpu-tick.png`; known cosmetic issue: the root window paints black instead of mauve) — and, via the `v3d-server` daemon (row above), can now do so **concurrently with another GPU client** (accelerated desktop + a live GPU window at once), lifting the former single-GPU-process restriction. Modern modesetting/DRM remains a future goal |
+| X11 / windowing (kdrive) | ✅ | Xphoenix **fbdev DDX** (CPU shadow-blit — the default, always-on path) + kbd/mouse; WindowMaker/JWM/twm, xterm/xcalc/xedit/xeyes/xclock. Migrated to real `phoenix-rtos-ports` (the X server, xterm, WindowMaker and dillo build as framework ports). A **glamor build** runs GPU-accelerated 2D X on the V3D GPU and is now the desktop of record (mirror artefacts, the dead damage path, the AF_UNIX one-page ring and two distinct desktop-exit crashes were all fixed 2026-09-08/09; HDMI updates went 2.3 → 25.6 per second and desktop exits are 20/20 clean) — `startx_gpu deskapps` on the clean SD image brings up Window Maker with an xterm running a live shell plus `xclock` and `xcalc` (`artifacts/hdmi/20260903-053119-final-xgpu-tick.png`; known cosmetic issue: the root window paints black instead of mauve) — and, via the `v3d-server` daemon (row above), can now do so **concurrently with another GPU client** (accelerated desktop + a live GPU window at once), lifting the former single-GPU-process restriction. Modern modesetting/DRM remains a future goal |
 | posixsrv / psh userland | ✅ | pipes, ptys, `/dev/{null,zero,urandom,full}`, AF_UNIX |
 | WiFi (BCM43455 SDIO) | 🟡 | **Joins WPA2 + gets a DHCP IP lease over the air** — associates to a real WPA2-PSK AP, completes the 4-way handshake, and carries real traffic: a full DHCP exchange (DISCOVER→OFFER→REQUEST→ACK) binds an IP, confirmed by the AP's `DHCPACK` (`tools/wifi-probe jointxcnt`). Remaining: an lwip netif so arbitrary sockets use WiFi — until then **use wired Ethernet** for general networking |
 | Bluetooth (BCM43455) | 🟡 | **Driver-level bring-up works** — `/dev/hci0` up, firmware patchram loads (323/323), a real BD_ADDR is read, and an HCI Inquiry completes. **No host Bluetooth stack** — no pairing, profiles, or audio yet |
@@ -299,7 +304,7 @@ Boot the image and log in to the `(psh)%` prompt, with an **HDMI display** and a
 quakespasm
 ```
 
-Renders the shareware episode in textured 3D on the V3D GPU (~40 fps @ 1080p);
+Renders the shareware episode in textured 3D on the V3D GPU (**37 FPS** measured on the shipped image, on-screen counter);
 verified full-screen in-game on the clean image
 (`artifacts/hdmi/20260903-032501-final-qs-tick.png`). The shareware `pak0` is
 baked into the image at `/usr/share/quake/id1/`, together with a `config.cfg`
@@ -319,7 +324,8 @@ startx desktop      # twm + xeyes
 startx deskapps     # twm + xterm + xclock + xcalc + xeyes
 ```
 
-For **GPU-accelerated** X (experimental glamor server on the V3D GPU, via the
+For **GPU-accelerated** X (the glamor server on the V3D GPU — now the desktop of
+record, via the
 `rpi4-v3d` daemon), use **`startx_gpu`** with the exact same modes — it
 auto-starts the GPU daemon and renders the desktop on the GPU:
 
@@ -383,11 +389,12 @@ image** (`/usr/bin/supertuxkart`, launched via `stk`); its two asset roots
 (`data/` plus `stk-assets/`, 194 MB together) are staged into the rootfs by
 `scripts/stage-game-data.sh`.
 
-On the current clean image, what is verified is that STK's **GPU-drawn UI renders
-with 0 wedges and 0 faults** — but the 194 MB of assets served over NFS does not
-finish loading inside a ~5 minute window, so **in-game is not yet verified on the
-clean image**. Booting from the SD card, where the assets are local, is the way to
-test that.
+On the shipped image STK **races in-game** at `FPS: 8/9/9` over netboot/NFS — the
+old ~5-minute asset-loading window is no longer a blocker. `scale_rtts_factor=0.75`
+is the shipped default: it renders the deferred pipeline at 0.75 scale and upscales,
+which took it from 5/6/6 to 8/9/9 while leaving the 1080p HUD crisp. STK is
+fill-rate/bandwidth bound, not per-submit bound. It does still fault intermittently
+in its own code — see [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md).
 
 Earlier, on the hand-staged export (2026-08-27), `stk` was HW-verified booting to
 a clean main menu and driving a **fully-lit in-game 3D race** — kart, opponents,
