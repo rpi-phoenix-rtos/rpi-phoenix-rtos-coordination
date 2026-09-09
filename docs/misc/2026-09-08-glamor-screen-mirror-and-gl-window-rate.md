@@ -1197,3 +1197,43 @@ Either way the fix holds; the cycle only picks which. The check is the same crop
 scan the left strip for icon bands and expect **one**, not two. A *partial* fix —
 some artefacts gone, some not — would refute the structural account and mean
 there is a second, independent bug.
+
+### Result — confirmed, and it was S1
+
+One `startx_gpu action` cycle, probe-free build, **0 faults**:
+
+| | before | after |
+|---|---|---|
+| bottom-left tile vs vflip(top-left Clip), best MAD | **6.85** (exact mirror) | **74.98** (unrelated) |
+| frame | 112.6 ms | **105.8 ms** |
+| `XPutImage` | 77.6 ms | **70.1 ms** |
+| fps | 8.88 | **9.45** |
+
+S1 as predicted: the desktop renders upright with the readback flip off, so
+glamor does lay pixmap row 0 into texture row 0 the way it does upstream. The
+mirrored Clip is gone, the GoL xterm shows only Game of Life (no white blocks, no
+mirrored `top` text), and all six clients render.
+
+It also got *faster*, which was not predicted but follows: the retired bulk patch
+still had to build a mirrored copy in a scratch buffer before uploading, and
+upstream's unflipped path uploads the client's rows directly.
+
+**My band-count check was a bad discriminator** and reported FAIL on a frame that
+was actually correct: Window Maker legitimately keeps app icons at bottom-left, so
+"one icon band" was never the right test. The content comparison is, and it is
+unambiguous. Recording this because the wrong check nearly cost a good result.
+
+**Cumulative for the X desktop this session: 395.9 → 105.8 ms/frame (3.7×), 355.2
+→ 70.1 ms on the XPutImage path (5.1×), and the mirror artefacts fixed.**
+
+### Follow-up this leaves open
+
+* `tools/.gpu-libs/{libv3d,libGL}-phoenix.a` were rebuilt with `--force`. The five
+  game binaries were **not** relinked, so nothing about them changed in this
+  cycle — but the next full image build will relink them against these archives,
+  and that build is where the games want re-verifying.
+* The residual ~60 ms/frame of byte-proportional server-side work (1.2 MB at
+  ~20 MB/s) is untouched and independent of both fixes.
+* The full work order (a real scanout predicate replacing the size test for
+  *everyone*, removing Quake II's compensating un-flip) is still open and still
+  wants the 6-app soak. This change deliberately did not go there.
