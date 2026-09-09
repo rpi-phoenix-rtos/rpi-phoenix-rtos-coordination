@@ -86,6 +86,28 @@ else
 	echo "  MISS v3d submit mutex marker absent from vkquake"; rc=1
 fi
 
+# The shipped game CONFIGS, not just their presence. check-rootfs-complete.sh
+# already asserts id1/autoexec.cfg EXISTS, and that is not enough: on 2026-09-09
+# an image passed every gate while shipping an autoexec.cfg that had the vid_*
+# block but had lost the on-screen fps readout, so the reel's headline figures
+# were absent and nothing complained. The cause is worth knowing -- game data is
+# staged by scripts/stage-game-data.sh, which the tree states plainly that
+# "local builds do NOT run" (only the Dockerfile does), so an edit to that script
+# does nothing for a local cut until it is run by hand. Assert the CONTENT.
+for cfg_spec in \
+	"usr/share/quake/id1/autoexec.cfg|scr_conscale|Quake 1/vkQuake fps readout" \
+	"usr/share/quake3/demoq3/autoexec.cfg|cg_cameraOrbit|Quake III showcase camera"; do
+	cfg_path=${cfg_spec%%|*}
+	cfg_rest=${cfg_spec#*|}
+	cfg_marker=${cfg_rest%%|*}
+	cfg_what=${cfg_rest#*|}
+	if dump "$cfg_path" && [ "$(marker_count "$cfg_marker")" -gt 0 ]; then
+		echo "  OK   $cfg_what present ($cfg_path)"
+	else
+		echo "  MISS $cfg_what absent from $cfg_path — run scripts/stage-game-data.sh"; rc=1
+	fi
+done
+
 echo "== negative markers (reverted code that must be ABSENT) =="
 # gl3_discardfb: the pre-swap Z/S discard, reverted 2026-09-03 (fork d5413235).
 # The cvar NAME string only exists in the binary if the code does.
