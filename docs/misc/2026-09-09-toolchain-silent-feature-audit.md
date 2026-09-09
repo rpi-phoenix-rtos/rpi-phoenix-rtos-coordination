@@ -57,6 +57,10 @@ clock_gettime(CLOCK_MONOTONIC, &tp);
 `_POSIX_TIMERS` is undefined, so the declaration is preprocessed away. **This is the C-side gap (§3)
 causing the C++ bug.**
 
+ⓘ For these three checks the compile error is what I *observed*; the missing `-lstdc++` of Cause 1
+would also have stopped them, but a compile error comes first, so only Cause 2 is established here.
+Either way both barriers are removed by the same fix.
+
 ### Why neither is fixable with a flag or a cache
 
 The clock results live in plain shell variables (`ac_has_clock_monotonic`, `ac_has_clock_realtime`,
@@ -71,6 +75,14 @@ A third, smaller cause is worth recording: `GCC_CHECK_TLS`, `AC_CHECK_FUNCS(gete
 not. That is why `_GLIBCXX_HAVE_TLS` is `#undef` even though `--enable-tls` is passed and the C
 compiler emits real TLS (`__thread int x;` → `mrs x0, tpidr_el0`) — `--enable-tls` gates whether the
 check *runs*, never its outcome (`if test "$enable_tls $gcc_cv_have_tls" = "yes yes"`).
+
+### Two things pre-verified before the rebuild finishes
+
+- `target_os='phoenix'` in the libstdc++ `config.log`, so the patch's `phoenix*)` arm matches (that
+  `case` has no default arm, so a mismatch would have silently left all four clock macros off).
+- A `printf "%s\n" "#define HAVE_X 1" >>confdefs.h` in the `*-phoenix*` stanza does survive to the
+  installed header with the `_GLIBCXX_` prefix — `HAVE_HYPOT`, `HAVE_SINF`, `HAVE_STRTOF` and
+  `HAVE_STRTOLD` are set exactly that way today and appear as `_GLIBCXX_HAVE_*` in `c++config.h`.
 
 ### The fix
 
