@@ -124,13 +124,53 @@ else
 fi
 
 # Section 4: faults.
+#
+# The pattern list must tolerate a TRUNCATED message, which is why the kernel
+# diagnostic prefixes below are matched on their first words rather than on
+# "fault". Learned the hard way on 2026-09-09: a desktop-exit run that HUNG the
+# board logged only "vm: page" -- the target died partway through printing
+# "vm: page fault with a corrupt process pointer" -- so "\bfault\b" did not match
+# and this section reported fault_pattern_matches: 0 on a wedged run. A detector
+# that needs the target to finish its sentence is no good for exactly the faults
+# that matter most.
+fault_re="Exception|Data Abort|panic|\bfault\b|ESR=|ELR=|FAR=|EC=|vm: page|corrupt process|LIB_ASSERT|assertion"
 echo
 echo "=== FAULTS ==="
-fault_count=$(grep -cE "Exception|Data Abort|panic|\bfault\b|ESR=|ELR=|FAR=|EC=" "$target")
+fault_count=$(grep -cE "$fault_re" "$target")
 echo "fault_pattern_matches: $fault_count"
 if [ "$fault_count" -gt 0 ]; then
     echo "--- last 3 ---"
-    grep -nE "Exception|Data Abort|panic|\bfault\b|ESR=|ELR=|FAR=|EC=" "$target" | tail -n 3
+    grep -nE "$fault_re" "$target" | tail -n 3
+fi
+
+# Section 4b: the silent wedge.
+#
+# Independent of any keyword: if the last byte of the log is not a newline, the
+# target stopped in the MIDDLE of a print, which catches a wedge whose message we
+# have never seen before.
+#
+# It is a HEURISTIC, not proof, and the exemptions below were each found by running
+# it over all 92 of one day's logs rather than by reasoning:
+#   * a psh PROMPT has no trailing newline, so a perfectly clean cycle ends mid-line
+#     too -- the first version of this check flagged the clean desktop-exit run;
+#   * Quake III's console prompt is a bare "]", same story, 4 more logs;
+#   * a log whose tail is only ANSI escapes has no text in flight at all.
+# What survives all three is a partial line with real TEXT in it, which is the
+# signature worth looking at. Reported as SUSPECT, never as a verdict.
+if [ -s "$target" ] && [ "$(tail -c 1 "$target" | wc -l)" -eq 0 ]; then
+    partial=$(tail -n 1 "$target" | tr -d '\r' | sed -e 's/\x1b\[[0-9;]*[a-zA-Z]//g' -e 's/\x1b//g')
+    partial_trimmed=$(printf '%s' "$partial" | tr -s ' ' | sed -e 's/^ *//' -e 's/ *$//')
+    case "$partial_trimmed" in
+        ''|'(psh)%'|'(psh)%'*'(psh)%'|']')
+            echo "ends_mid_line: no (ends on an interactive prompt or bare escapes)"
+            ;;
+        *)
+            echo "ends_mid_line: SUSPECT  <-- target may have stopped WHILE PRINTING (wedge/crash)"
+            printf '    last partial line: %s\n' "$(printf '%s' "$partial_trimmed" | cut -c1-120)"
+            ;;
+    esac
+else
+    echo "ends_mid_line: no"
 fi
 
 # Section 5: timing.
