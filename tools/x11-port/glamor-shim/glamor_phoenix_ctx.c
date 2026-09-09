@@ -239,13 +239,25 @@ static void phx_make_current(struct glamor_context *glamor_ctx)
  * colours (measured: Window Maker's configured rgb:50/50/75 arrives as
  * (79,81,109) on screen).
  *
- * But reading the glamor screen texture with GL_RGBA produced R and B EXCHANGED
- * (the same background came out mauve, ~(117,80,80)): glamor's screen pixmap
- * holds the X pixel bytes in BGRA order on this stack, so GL_RGBA re-labels them
- * and the swap lands on screen. Read GL_BGRA and the bytes arrive in the fb's
- * RGB order unchanged. Do NOT "fix" this in the DDX masks instead -- they are
- * correct, and changing them would break the software path that works.
+ * The readback MUST ask for the swapped order (GL_BGRA), and this was re-tested on
+ * hardware 2026-09-09: reading GL_RGBA put the Window Maker root at (108,76,77)
+ * instead of (79,81,109) -- the mauve the original note described. glamor's screen
+ * pixmap really does hold the X pixel bytes in BGRA order on this stack, even
+ * though the glamor-rgba-upload patch made the CPU<->pixmap *transfers* describe
+ * RGBA. So glamor's RENDER path and its CPU-transfer path disagree about byte
+ * order, and this readback is what reconciles them.
+ *
+ * That costs real time: the swizzle is a per-pixel CPU shuffle over 2 073 600
+ * pixels, measured at 19.4 ms of the 60.8 ms whole-screen readback (GL_RGBA, the
+ * no-conversion path, came back at 41.4 ms). Recovering those 19.4 ms means making
+ * glamor's render path RGBA-consistent so the no-conversion readback is also the
+ * correct one -- a separate job, not a change to this define.
+ *
+ * Do NOT "fix" colour order in the DDX masks instead -- they are correct, and
+ * changing them would break the software path that works.
  */
+#define PHX_READBACK_FORMAT GL_BGRA
+
 /* Compensator for the Mesa size gate, now disabled (phx_scanout_flip_gate = 0):
  * with the screen pixmap left Y_0_BOTTOM, glamor lays its rows down in the
  * texture the way upstream does, so glReadPixels at the requested band hands the
@@ -310,7 +322,7 @@ void glamor_phx_screen_readback(unsigned int tex, int width, int y0, int rows,
 			 * not bound to the active unit). */
 			glBindTexture(GL_TEXTURE_2D, (GLuint)tex);
 			glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &H);
-			glReadPixels(0, H - (y0 + rows), width, rows, GL_BGRA,
+			glReadPixels(0, H - (y0 + rows), width, rows, PHX_READBACK_FORMAT,
 			             GL_UNSIGNED_BYTE, scratch);
 			for (r = 0; r < rows; r++)
 				memcpy((unsigned char *)dst + (size_t)r * width * 4,
@@ -319,7 +331,7 @@ void glamor_phx_screen_readback(unsigned int tex, int width, int y0, int rows,
 		}
 	}
 #else
-	glReadPixels(0, y0, width, rows, GL_BGRA, GL_UNSIGNED_BYTE, dst);
+	glReadPixels(0, y0, width, rows, PHX_READBACK_FORMAT, GL_UNSIGNED_BYTE, dst);
 #endif
 
 	glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)prev_fbo);
