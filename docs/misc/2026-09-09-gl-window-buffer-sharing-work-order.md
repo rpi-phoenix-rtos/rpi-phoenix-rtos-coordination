@@ -1,9 +1,36 @@
 # Work order: stop shipping 1.2 MB/frame through the X socket (a mini-DRI3 for this port)
 
-**Status: steps 0 and 2 DONE and verified on hardware. Steps 3-4 (X server, client) not started.** Everything below is verified against the
-sources named; no code changed. Written because the verdict changed: this was recorded three
-times as "a real project, not a tuning pass", and the spike shows **three of the four pieces
-already exist**.
+## ⛔ CLOSED BY THE OWNER, 2026-09-09. Do not implement this.
+
+> "Let's keep X11 GL as is for now. We don't do D7. If we are to invest in it — we should fully
+> rethink the strategy and build a Phoenix-RTOS specific DRI and/or DRM layer. For now we stop with
+> what we have and only update docs on why windowed GL in X11 will be relatively slow."
+
+So the decision is not "later" but "not like this". The design below is a **point fix**: it teaches
+one client and one DDX path to pass a buffer handle through an X property. Even done perfectly it
+leaves the port with no general answer to "how does a GL client share a surface with the X server",
+which is what DRI3/DMA-BUF is for on Linux. The owner's judgement is that if this is worth paying
+for, it is worth paying for properly — a Phoenix-RTOS buffer-sharing layer (a DRI/DRM equivalent)
+that every client and the server use, rather than a bespoke channel for the demo's GL window.
+
+**Kept for reference, not as a plan.** Everything below is still accurate and the measurements are
+still true; steps 0 and 2 remain done and hardware-verified. Anyone designing that general layer
+should read it, because it establishes what the daemon and Mesa can already do:
+
+* the daemon's BO handles are **global**, so a second process can already name and map a buffer it
+  did not create (`0/65536 bytes wrong`, both directions);
+* Mesa's `v3d_bo_open_handle()` needs exactly one daemon call (`GET_BO_OFFSET`) and works for a
+  foreign handle; `v3d_resource_from_handle()` builds a `pipe_resource` from it, and an imported BO
+  is **renderable**, not merely samplable (FBO complete, `0/16384 bytes wrong`, no R/B swap);
+* `glamor_set_pixmap_texture()` is already exported, so the server side can wrap a texture;
+* MIT-SHM is not an option here (no shm, extension not built), and there is **no export path** —
+  this port has `resource_from_handle` but no `resource_get_handle`.
+
+The user-visible consequence is written up for the owner in `docs/KNOWN-ISSUES.md`; the short version
+is that a windowed GL app copies its pixels GPU -> CPU -> socket -> CPU -> GPU every frame, and the
+ceiling even with sharing would have been ~1.7x, not ~5x, because the DDX present survives it.
+
+---
 
 ## What it fixes, and why nothing cheaper will
 
