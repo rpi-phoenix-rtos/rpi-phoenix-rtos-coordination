@@ -121,6 +121,79 @@ else
 	echo "  MISS yquake2 not in image"; rc=1
 fi
 
+echo "== FAT boot partition (the path no gate could reach) =="
+# Everything above inspects the ext2 rootfs. Nothing did the FIRST thing the
+# VideoCore firmware does: read the FAT partition. That matters more here than it
+# looks, because SD boot is the ONE path that cannot be tested on this bench --
+# verified 2026-09-09 that there is no card in the host reader (/dev/sda absent)
+# and none in the Pi ("sdcard: no card present in slot 0"), so the image is flashed
+# and booted for the first time by the owner. verify-rpi4b-sdimg.sh only checks
+# size, sha256 and that `mdir` can list the root; a missing or renamed boot file
+# would produce a black screen and no gate would have said a word.
+#
+# So: assert the required files exist, and cross-check that every file config.txt
+# NAMES is actually present. That catches the realistic failure -- a rename or a
+# staging omission that leaves config.txt pointing at nothing.
+fat_off="$(python3 - "$IMG" <<'PYEOF'
+import sys, struct
+with open(sys.argv[1], 'rb') as f:
+    mbr = f.read(512)
+lba = struct.unpack('<I', mbr[446 + 8:446 + 12])[0]
+print(lba * 512 if lba else 0)
+PYEOF
+)"
+if [ -z "$fat_off" ] || [ "$fat_off" = "0" ]; then
+	echo "  FAIL cannot locate the FAT partition from the MBR"; rc=1
+elif ! command -v mdir >/dev/null 2>&1; then
+	echo "  SKIP mtools not installed — cannot inspect the FAT partition"
+else
+	fat_ls="$(mdir -i "${IMG}@@${fat_off}" :: 2>/dev/null)"
+	# mdir prints a valid 8.3 name as two space-separated COLUMNS with no dot
+	# ("config   txt"), and only shows a literal long name when the 8.3 form had
+	# to be truncated ("LOADER~1 DIS ... loader.disk"). Matching the literal
+	# filename alone therefore misses exactly the short-named files -- which is how
+	# the first version of this check reported config.txt/kernel8.img/start4.elf
+	# missing from an image that plainly had them. Accept either form.
+	fat_has() {
+		local f="$1" base ext
+		base="${f%.*}"; ext="${f##*.}"
+		printf '%s\n' "$fat_ls" | grep -qiE "(^|[[:space:]])${f}([[:space:]]|$)" && return 0
+		printf '%s\n' "$fat_ls" | grep -qiE "^${base}[[:space:]]+${ext}([[:space:]]|$)" && return 0
+		return 1
+	}
+	for f in bcm2711-rpi-4-b.dtb config.txt kernel8.img loader.disk \
+	         phoenix-armstub8-rpi4.bin start4.elf; do
+		if fat_has "$f"; then
+			echo "  OK   FAT: $f"
+		else
+			echo "  MISS FAT: $f — the firmware needs this to boot"; rc=1
+		fi
+	done
+
+	cfg="$(mtype -i "${IMG}@@${fat_off}" ::config.txt 2>/dev/null)"
+	if [ -z "$cfg" ]; then
+		echo "  MISS FAT: config.txt unreadable"; rc=1
+	else
+		# A 32-bit boot would load the kernel and fail silently.
+		if printf '%s\n' "$cfg" | grep -qE '^[[:space:]]*arm_64bit=1'; then
+			echo "  OK   config.txt: arm_64bit=1"
+		else
+			echo "  FAIL config.txt: arm_64bit=1 missing — would boot 32-bit"; rc=1
+		fi
+		# Cross-check every file config.txt references against the FAT listing.
+		refs="$(printf '%s\n' "$cfg" \
+			| sed -nE 's/^[[:space:]]*(armstub|kernel|device_tree)=([^[:space:]#]+).*/\2/p;
+			           s/^[[:space:]]*initramfs[[:space:]]+([^[:space:]#]+).*/\1/p')"
+		for r in $refs; do
+			if fat_has "$r"; then
+				echo "  OK   config.txt -> $r present"
+			else
+				echo "  FAIL config.txt names $r but it is NOT in the FAT partition"; rc=1
+			fi
+		done
+	fi
+fi
+
 echo
 [ "$rc" -eq 0 ] && echo "RESULT: image PASSES — safe to flash" || echo "RESULT: image FAILS — do not flash"
 exit "$rc"
