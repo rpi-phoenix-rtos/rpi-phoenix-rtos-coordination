@@ -1,6 +1,6 @@
 # Work order: stop shipping 1.2 MB/frame through the X socket (a mini-DRI3 for this port)
 
-**Status: step 0 VERIFIED on hardware; steps 1-4 not started.** Everything below is verified against the
+**Status: step 0 verified on hardware; step 2 LANDED (inert, not yet exercised); steps 3-4 not started.** Everything below is verified against the
 sources named; no code changed. Written because the verdict changed: this was recorded three
 times as "a real project, not a tuning pass", and the spike shows **three of the four pieces
 already exist**.
@@ -67,7 +67,27 @@ import is confirmed on hardware.
 "two processes, same handle, compare bytes" — which the probe already did through the raw RPC. A
 wrapper with no caller adds nothing; write it when step 3 needs it.
 
-**Step 2 is now the whole remaining Mesa question, and it is small:** one *additive* case in
+**Step 2 — LANDED, mesa `3b339c93a07`.** `WINSYS_HANDLE_TYPE_SHARED` now routes, under
+`__phoenix__`, to a new `v3d_bo_open_phoenix_handle()` that supplies the mutex
+`v3d_bo_open_handle()` requires. Size comes from `whandle->stride * tmpl->height0` — the region the
+caller intends to use — since the daemon's size is unreachable through the DRM ioctl surface
+(`drm_v3d_mmap_bo` has no size field) and `winsys_handle` has none either; a larger real BO only
+makes the offset-overflow check stricter, which is the safe direction.
+
+**It is inert until step 3.** Nothing on this port calls `resource_from_handle`, and the case it
+repurposes was unreachable anyway (no flink names). Regression-checked rather than assumed: archives
+rebuild clean (driver 29/0, core 333/0, gl 325/0) and the glamor desktop is unchanged on HW — 0
+faults, colours (77,79,110), mirror MAD 75.55, 10.76 fps.
+
+**➡ Next: exercise it.** A headless daemon-client GL harness that creates a BO through the raw RPC,
+imports it via `pscreen->resource_from_handle` with `TYPE_SHARED`, textures from it and reads it
+back, comparing against the pattern written through the raw mapping. `tools/v3d-driver-port/`
+already has headless GL harnesses (`gl_es_smoke.c`, `gl_frontend_smoke.c`) and
+`tools/x11-port/glamor-shim/glamor_phoenix_ctx.c` is a working example of bringing up an st context
+as a *daemon* client — between them the harness is mostly assembly rather than new ground. Do that
+before step 3, so the import is proven in isolation rather than debugged inside the X server.
+
+**Original framing of step 2, kept for the record:** one *additive* case in
 `v3d_resource_from_handle`'s `whandle->type` switch (`v3d_resource.c:1050`, currently only `SHARED`
 → `v3d_bo_open_name` and `FD` → `v3d_bo_open_dmabuf`, neither available here) routing a Phoenix
 handle type straight to `v3d_bo_open_handle`. Two details to get right:
