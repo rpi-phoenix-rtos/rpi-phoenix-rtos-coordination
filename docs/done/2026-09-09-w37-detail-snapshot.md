@@ -1,0 +1,957 @@
+# W37 working log — full detail snapshot (2026-09-09)
+
+The weekly log is what the owner reads, so it is kept short and re-compacted when it
+grows. This is the 943-line state of `docs/inprogress/WEEK-2026-W37.md` immediately
+before the 2026-09-09 compaction, kept verbatim so no finding is lost. The current
+log is the authority; where the two disagree, the current log is right (two internal
+contradictions were fixed during the compaction: a `§3c` reference to a section that
+never existed, and a STK note saying "2 Data Aborts in teardown" that §2p had
+already corrected to "intermittent, ~40% of runs, varying sites incl. startup").
+
+Earlier detail from the same week: `docs/done/2026-09-08-w37-archived-detail.md`.
+
+---
+
+# Week 2026-W37 (Mon 2026-09-07 → Sun 2026-09-13)
+
+Phoenix-RTOS RPi4 — weekly working log. **This file is the whole picture.** History: `docs/done/` (W36
+`docs/done/WEEK-2026-W36.md`), analyses: `docs/misc/`. Convention: `docs/inprogress/README.md`.
+
+---
+
+## 1. DECISIONS NEEDED FROM WITOLD
+- **D4** — the "genuine tool" boundary: you'll decide later, nothing is blocked on it.
+- **D2** — final move of **Mesa itself** into `phoenix-rtos-devices` (the glue already moved): optional,
+  queued.
+
+- **★ D7 (new, 2026-09-09) — the GL window's speed: spend a rewrite on it, or ship as is?**
+  This is your fourth X11 point and the only one still open. It is fixable and the design is proven in
+  isolation, but it is not a small change: the client cannot *export* its buffer (Mesa on this port has
+  `resource_from_handle` but no `resource_get_handle`), so the fix inverts the allocation — the client
+  mints the buffer through the raw daemon RPC and becomes an **st/gallium** client instead of a GL one —
+  and the X server gains a **new GPU-blit path inside its damage timer**. That is a rewrite of the two
+  components the demo depends on. Measured ceiling is **~1.7x** (96 → ~55-60 ms/frame, 10.4 → ~17 fps),
+  not the ~5x the arithmetic suggests, because ~35 ms of the frame is the DDX present, which buffer
+  sharing does not remove. Design + numbers:
+  `docs/misc/2026-09-09-gl-window-buffer-sharing-work-order.md`. I have **not** started it.
+
+**Nothing else is waiting on the owner.** All three open questions were answered 2026-09-08.
+
+**Settled, never re-ask:**
+- Toolchain is **GCC 16.2.0 + binutils 2.47** (owner-approved 2026-08-28).
+- **★ FORK-ONLY, never upstream (owner, 2026-09-08).** "We don't send anything upstream. We get changes
+  from upstream to our fork and we maintain our fork. In our fork we fix all the bugs we can in the best
+  possible way - to provide good solution for the Pi4 and if possible, not to break other architectures."
+  So: do not propose upstreaming anything, and do not treat it as a pending decision. Keep the standard it
+  implies — best fix for the Pi 4, root-caused, designed so other arches still build (per-arch define +
+  fallback, best-effort `mprotect`).
+- **Game forks: if our version works, leave it.** yquake2 (10 behind) and vkquake (30) stay as they are —
+  not a decision, settled. Stop re-listing them as deferred each sweep; only revisit if one of those games
+  actually breaks.
+- **D6** (purge build-output ELFs from coord git history, needs a force-push): **leave as is.**
+
+**★ OWNER GOAL (2026-09-06):** a **stable build with the games and X11 good enough for a public
+presentation / a screen recording published online**. Everything below is ranked against that.
+
+## 1b. ✅ full-project change study — all 5 of your remarks done
+**[`docs/PHOENIX-RTOS-RPI4-CHANGES.md`](../PHOENIX-RTOS-RPI4-CHANGES.md)** — HW video decode, the ML
+CPU-vs-GPU work (**parity-first**: GPU MLP is 0.90× end-to-end, the old 4.4×/11× ratios superseded) and
+AXI-PMU are in, and the archive sweep integrated **33 of 35** gaps (885 → **1427** lines).
+`docs/done/2026-09-08-fork-vs-upstream-study.md` + the archived detail.
+
+## 2. STATE / WHAT'S NEXT
+**★ The standing goal looks MET.** Five games + the X desktop HW-gated at 0 faults with frames checked, on
+a flashable image that also passes a contents and a QEMU structural boot gate.
+
+**⏸ OWNER ACTION — ★ FLASH THIS:** `artifacts/rpi4b/rpi4b-sd-2part.img` · SHA256
+`5ace5d4b59c830c40f3d012cd6543ce655bfabeaaf0d1684c21c5de4a64e5782` · manifest
+`manifests/2026-09-09-x11-utils-merge-demo-image.md`.
+```
+udisksctl unmount -b /dev/sda1 2>/dev/null || true
+sudo dd if=artifacts/rpi4b/rpi4b-sd-2part.img of=/dev/sda bs=4M conv=fsync status=progress && sync
+```
+(`/dev/sda` is the SD card here; do **not** flash `rpi4b-sd.img` — FAT-boot-only.)
+
+**★ WATCH THIS ONE, NOT `x-bulkupload.mp4`:**
+`artifacts/hdmi-video/20260909-122231-x-shipped-image.mp4` — 120 s of the desktop, recorded today
+from the exact binaries in the image above. Three of your four X11 points are fixed and **the file
+you reviewed predates all three of them**: `20260909-013210-x-bulkupload.mp4` is from 01:32, the
+mirror fix landed 03:24 and the xbill layout fix 08:55. Measured, same detector on both files:
+
+| | mirrored Clip | xbill hidden | GoL bands |
+|---|---|---|---|
+| your `x-bulkupload.mp4` | **326/442 frames**, MAD 0.00 (exact mirror) | **354/442** | — (old layout) |
+| new clip, shipped image | **0/360**, MAD 71.5 | **0/360**, 91% visible | **0/360**, 48 px (AA only) |
+
+0 faults. Full 11-segment reel: `20260909-084929-phoenix-rtos-rpi4-showcase.mp4`.
+
+**Your fourth point is the one still open:** the GL window animates at **10.4 fps** (96 ms/frame, of
+which **58 ms is handing the image to X** — draw is only 2.7 ms). That is the buffer-sharing work in
+§3c, not a GPU limit.
+
+
+**★ RE-CUT AGAIN 2026-09-09 (later) — the previous image had NONE of the X11 work.** It predated all
+three X fixes from today, so flashing it would have shown the old mirrored-icon glamor bug and a
+desktop presenting 2.3×/s. The new image carries **all three**, verified in the shipped binary
+itself (`phx_scanout_flip_gate`, `fbdevNextSpan`/`fbdevPresentRegion`, the `SO_RCVBUF` call site),
+probe-free, correct daemon backend.
+
+**Gates on this image — all PASS:**
+
+| gate | result |
+|---|---|
+| image contents (paths + provenance + config-CONTENT markers) | **PASS — safe to flash** |
+| QEMU structural boot | **PASS** (`bcm2711-emmc refs=4, nfs refs=0` → SD variant) |
+| desktop-**exit** soak (the one I flagged as missing last turn) | **3/3 clean, 0 faults** |
+| 6 HW app checks over netboot | see below |
+
+| app | evidence (HW, this image's binaries) |
+|---|---|
+| X desktop (`startx_gpu action`) | **re-gated on the shipped binaries** (§3b): 0 faults · mirror MAD 71.5 · xbill 91% visible · GoL 48 px · **10.4 fps** (the earlier 6.78 was the pre-relink build) |
+| QuakeSpasm (`quakespasm +playdemo demo1`) | textured 3D gameplay, **37 FPS** overlay on screen, 0 faults |
+| Quake III (`quake3 +devmap q3dm1`) | 1390 files in 2 pk3s, animating (motion 8.7–17.3), 0 faults |
+| Quake II (`quake2 +demomap q2demo1.dm2`) | animating (motion 16–31), 0 faults |
+| vkQuake (`vkquake +map start`) | animating (motion 11–25), 0 faults |
+| SuperTuxKart (`stk --profile-laps=2 --track=hacienda --numkarts=4`) | racing, animating (motion 22–43); ⚠ 2 Data Aborts in **teardown** |
+
+⚠ **STK teardown, and it is NOT a regression:** every older STK run that actually reached the exit
+(2026-09-07) shows the *same* 2 Data Aborts, including ones that still returned `rc=0`. The recent
+gates never reached the exit at all (no `stk exited rc=` in any of them), so this path was simply
+never exercised. Gameplay is unaffected. Worth fixing, and worth not dismissing — logged, not
+hand-waved.
+
+⚠ **Two harness-usage errors of mine, for the record:** the games are launched through their
+RAM-staging wrappers (`quake3`, `quake2`), not the raw `quake3e`/`yquake2` — bare `quake3e` finds no
+data (`Search paths: * /`) because there is no wrapper and no compiled-in basepath. And only ONE
+game per Pi cycle: they do not exit, so a second command is typed into the running game.
+
+
+## 2b. ✅ FIXED: the glamor mirror artefacts you reported (both of them)
+
+Your two reports — white blocks in the GoL xterm that looked like a Y-flipped copy of the other
+xterm, and the mirrored clippy at bottom-left — were **one bug**, and it is fixed and HW-verified.
+
+**How it was pinned, without burning a Pi cycle:** a crop test on a static HDMI frame. The
+bottom-left tile is the top-left Clip, Y-mirrored, at exactly `y' = H-1-y`:
+
+| bottom-left tile compared against | mean abs diff |
+|---|---|
+| top-left Clip as-is | 51.4 |
+| **vflip(top-left Clip)** | **6.85** ← exact, through capture noise |
+| hflip / rot180 | 64.2 / 57.6 |
+
+**Cause — structural, not one bad function.** Mesa forces `Y_0_TOP` for any FBO ≥1024×768,
+assuming full-screen means scanout. glamor's screen pixmap is 1920×1080 but is **not**
+scanout-backed — it is a plain GL texture the DDX presents by `glReadPixels` into a shadow it
+writes to `/dev/fb0`. So every glamor GL path was running in a flipped coordinate world held
+upright by **three** hand-rolled compensating flips; any path that missed one mirrored its box.
+That is why hunting for the guilty function was the wrong move.
+
+**Fix:** the shim opts this context out of the heuristic (`phx_scanout_flip_gate = 0`), so the
+screen pixmap stays `Y_0_BOTTOM` — plain upstream behaviour — and **all three compensators are
+deleted**. Net removal of code.
+
+| | was | now |
+|---|---|---|
+| mirrored-Clip match | 6.85 (exact) | **74.98 (unrelated)** |
+| frame | 395.9 ms | **105.8 ms** |
+| `XPutImage` | 355.2 ms | **70.1 ms** |
+| fps | 2.53 | **9.45** |
+
+0 faults, desktop upright, GoL xterm clean, all six clients render. **No game changed this cycle**
+— the flag defaults to 1, only the X shim clears it, and no game binary was relinked. ⚠️ But I did
+rebuild `tools/.gpu-libs/{libv3d,libGL}-phoenix.a`, so the **next full image build** relinks all five
+games against fresh archives; that build is where the games want re-verifying, and I have not
+established that the previous archives came from an identical Mesa working tree.
+Commits: coord `8f3c094b7`, mesa `d5852136ba0`. Doc §22.
+
+**So the X desktop is 3.7× faster and the artefacts are gone.** Two independent root causes, both
+this session: the AF_UNIX one-page ring (§2c) and this one.
+
+**Still deliberately NOT done** (unchanged, still wants your call): replacing the size test with a
+real scanout predicate for *everyone*, which is what finally removes Quake II's compensating
+un-flip and stops the next large-FBO port from rendering upside down. That one expires the 6-app
+gate — work order in `docs/misc/2026-09-08-flipy-scanout-gate-work-order.md`.
+
+
+## 2b-bis. ✅ NOT BLOCKED after all — I was building the wrong X server
+
+Retracting what I told you last turn. Every X failure this session (SIGILL, black screen, vertical
+stripes, flat grey, MMU violations) was **one build mistake of mine**, not Mesa and not the driver.
+
+There are two GPU X servers, differing only in how they reach V3D:
+`--glamor` → `Xphoenix-glamor` (**in-process** winsys) · `--glamor-daemon` → `Xphoenix-glamor-**daemon**`
+(**`/dev/v3d-srv` client**). `startx_gpu` starts `rpi4-v3d`, so it needs the `-daemon` build — and I
+ran `--glamor` every time and copied it into the `-daemon` slot, so **two processes drove the GPU**.
+
+**Found on the host, no Pi cycle:** the two binaries are unstripped, so `size` + `nm` settle it —
+BSS **+115 KB**, and the symbol diff names the backends (`v3d_cli_bo` 98 KB in the good one vs `W`
+213 KB, the winsys global state, in mine). Built correctly on **current Mesa**: **0 faults, desktop
+renders and animates** (mean 102, std 68).
+
+**Withdrawn:** "current Mesa is not usable" (it is fine) · "the X server cannot be rebuilt" (it can)
+· "glamor work is blocked" (**it is not**). The three source exonerations stand — the DDX, the Mesa
+`u_vbuf` guard and the winsys were all genuinely innocent; those A/Bs were just measuring runs with
+the wrong backend.
+
+**Won't recur:** `build-xfbdev.sh` now **fails the build** if the linked backend does not match the
+requested target; the known-good set holds the **archives** beside the binary; and the distinction is
+written at the point of use. Current known-good promoted to Mesa `aa916f2f06`. Analysis doc §15.
+**Method note:** when an artefact misbehaves and every source suspect is cleared, **diff the
+artefact** — two `size` calls answered what four Pi cycles could not.
+
+
+## 2c. ✅ ROOT-CAUSED + FIXED: X was **3.5× slow because AF_UNIX gives every socket ONE PAGE**
+
+The 360 ms `XPutImage` from last turn is solved, and it was not the GPU, the DDX, Mesa or glamor.
+I instrumented the server's request-read loop on hardware: **512 `read()` calls per frame at
+0.785 ms each = 402 ms**, which is the entire 396 ms frame. Nothing left to attribute elsewhere.
+(My 20 ms poll-fallback hypothesis was **wrong** — the wait probe measured 0.384 ms blocked.)
+
+Cause: `posix/unix.c:29` `US_DEF_BUFFER_SIZE = SIZE_PAGE`. Every AF_UNIX socket gets a **4 kB**
+ring, and a stream write copies only what fits before blocking — so a 1.2 MB `XPutImage` crosses
+the socket in ~300 fill/drain round-trips.
+
+Fix needs **no kernel change**: `SO_RCVBUF` resizes a socket's *own* buffer, which is the one the
+peer writes into, so the server's accepted fd is the right end. Set to the kernel's 64 kB max right
+after `accept()` (before any client byte — the resize discards contents).
+
+| | before | after |
+|---|---|---|
+| frame | 395.9 ms | **112.6 ms** |
+| `XPutImage` | 355.2 ms | **77.6 ms** (4.6×) |
+| reads/frame | 512 | **37** |
+| fps | 2.53 | **8.88** |
+
+HW-verified over netboot, **0 faults**, desktop renders. This speeds up **every** X client in
+proportion to request size, not just the GL window. Commit `1688e88b2`. Doc §21.
+
+**Honest limits:** `US_MAX_BUFFER_SIZE` caps at 64 kB, so this is as far as it goes without a kernel
+constant bump; extrapolating the measured per-read cost, a bigger ring buys only ~77 → ~66 ms. The
+residual ~60 ms/frame is byte-proportional server-side work (1.2 MB at ~20 MB/s) — that is the next
+target, and it is a **different** bug from the glamor mirror below.
+
+**Also fixed a recurring footgun:** the "already built" early return in `build-xserver-core.sh`
+watched only `glamor/`, so an `os/` edit would have shipped an unpatched binary — the third time that
+trap fired. The staleness check now covers `os/`, `dix/` and `hw/kdrive/src/`.
+
+
+## 3b. ✅ X desktop re-gated on the SHIPPED image + the detectors are now a script
+
+The 6-app re-gate after the `--scope core` relink ran **only the five games** — the X desktop entry in
+§2's table is from the pre-relink build. Closed that with one cycle on the current tree:
+**0 faults, 0 exceptions**, all three artefacts absent from 360/360 frames, GL window 10.4 fps.
+
+The three detectors now live in **`scripts/grade-x-desktop-video.py`** instead of my shell history.
+That matters because they have been wrong seven times between them, and two of the seven happened
+while writing this script: one sliced a column strip instead of a corner tile and returned NaN — which
+compares False, so it reported a clean PASS on your video's 326 mirrored frames; the next absorbed the
+**neighbouring** windows into the xterm's ROI and flagged the GL window's render as contamination on a
+clean build. Both are now impossible by construction (NaN aborts; the ROI is found by walking
+contiguous dark pixels, so it cannot cross a window border) and the reasons are in the code.
+
+Validated in **both** directions, which is the part that was missing before: FAIL on your
+`x-bulkupload.mp4`, PASS on the current build. A detector that has only ever returned PASS is untested.
+
+## 3a. ⚠ SD boot CANNOT be tested here — so I gated the FAT partition instead
+
+Checked properly for the first time: **there is no SD card in either place** — `/dev/sda` absent on
+the host, and the Pi reports `sdcard: no card present in slot 0`. So the image cannot be flashed or
+SD-booted on this bench: **you will be the first to boot it from a card.** Everything gated so far is
+the ext2 rootfs, QEMU's structural boot, and netboot.
+
+Worse, nothing was checking the *first* thing the firmware reads. `verify-rpi4b-sdimg.sh` only checks
+size, sha256 and that `mdir` lists the FAT root — a missing or renamed boot file would have given you
+a black screen with every gate green.
+
+Closed that: the contents gate now asserts the six files the firmware needs (dtb, `config.txt`,
+`kernel8.img`, `loader.disk`, armstub, `start4.elf`), that `arm_64bit=1` is set (a 32-bit boot fails
+silently), and — the check that catches the realistic failure — that **every file `config.txt` names
+actually exists** in the partition. Current image: all green.
+
+**I validated the gate against a known-bad input, not just a good one:** on a throwaway copy with
+`kernel8.img` deleted it reports MISS + cross-check FAIL + "do not flash", and the real image is
+byte-identical afterwards. My first matcher was wrong in the other direction (it called
+`config.txt`/`kernel8.img`/`start4.elf` missing from an image that had them — `mdir` prints 8.3 names
+as two columns with no dot); fixed and noted in the code.
+
+Zero Pi cycles. Image SHA unchanged (`5ace5d4b…`).
+
+
+## 2z. ✅ IMAGE RE-CUT + full 6-app re-gate (the two relinks owed it)
+
+**★ FLASH THIS:** SHA256 `5ace5d4b…a64e5782` · manifest `manifests/2026-09-09-x11-utils-merge-demo-image.md`
+
+Adds the upstream psh `ps`/`top` priority-width merge to everything already in the previous image.
+Verified present in the shipped binaries: mirror flag, damage fix, probe-free, daemon backend, the
+256k/64k `SO_RCVBUF` step-down, the xbill geometry, `top`'s `%4s` header, and the (inert) Mesa
+BO-import symbol.
+
+| gate | result |
+|---|---|
+| contents + provenance + config markers | **PASS — safe to flash** |
+| QEMU structural boot | **PASS** (SD variant) |
+| X desktop | 0 faults · colours (77,79,110) · mirror MAD 81.50 · no seam · 10.96 fps |
+| QuakeSpasm | demo played, autoexec ran, 0 faults |
+| Quake III | 0 faults, motion 20.0/9.2 |
+| Quake II | 0 faults, motion 29.5 |
+| vkQuake | 0 faults, motion 9.0/19.0/25.7 |
+| SuperTuxKart | races (scene loaded, motion 23.2) — **then its known intermittent crash** |
+
+**Honest on STK:** it faulted again, at a **third** distinct site (`malloc_chunkSize`,
+`far=0x0cef4000`; previously `_malloc_chunkJoin` and `FontManager::loadFonts`). Now **3/6 runs**. My
+neighbour validation did **not** fire — it guards the join loops and this arrives another way, so it
+narrows the blast radius but does not make this diagnosable; saying otherwise would oversell it.
+STK races before faulting, so the image is no worse than the previous one on that app. App-side
+corruption, deprioritised by you. Doc §34.
+
+**Two false alarms of mine, both the same cause:** QuakeSpasm gated `motion 0.0` and STK looked hung
+earlier — both were a **cold Mesa shader cache** after `sync-netboot-tree.sh` clears it, not
+regressions. QuakeSpasm's log ended at `Sound Initialization`; re-run with a longer window it passed.
+Now written down (§33) since it has cost three cycles.
+
+**Buffer sharing:** MIT-SHM ruled out as a shortcut (no `sys/shm.h`; `MITSHM` is `#undef` in our
+build). Remaining design recorded: an X property read from the DDX via `dixLookupProperty`, then a
+GPU blit into the window's screen-pixmap region.
+
+
+## 2y. ✅ The whole SERVER-SIDE chain for buffer sharing is proven — step 3 is now one call + a channel
+
+Extended `gl_bo_import.c` to the half the X server actually needs: wrap the imported BO as a **GL
+texture** via `st_context_teximage()`, attach it to an FBO, read it back through GL and compare
+against the pattern written through the raw physical mapping. On HW, 0 faults:
+
+```
+raw BO handle=4 pa=0x28b10000 gpuva=0x2477000
+imported resource 64x64 fmt=84
+mapped stride=256 (raw stride=256)   compare MATCH (0/16384 bytes wrong)
+imported-texture FBO status=0x8cd5 (complete)
+GL readback of the imported texture: MATCH (0/16384 bytes wrong)
+VERDICT PASS
+```
+
+So the chain `daemon handle → resource_from_handle → st_context_teximage → GL texture` works, and
+`glamor_set_pixmap_texture()` takes exactly a texture name. **Step 3 is reduced to that one call plus
+a way to carry `{handle, w, h, stride}`** — the import will not need debugging inside the
+demo-critical server.
+
+Two findings beyond pass/fail: an imported buffer is **renderable** (FBO complete), not just
+samplable — the server could render *into* a client's buffer; and the bytes match with **no R/B
+swap**, which says this stack's documented BGRA/RGBA seam is in glamor's own render path, not in the
+import. (The comparison reports "MATCH-with-R/B-SWAP" as a distinct outcome so a channel-order
+problem would be named, not left a mystery.)
+
+1 Pi cycle. Remaining: the client→server channel + the glamor call (step 3), then the client dropping
+`glReadPixels`/`pack`/`XPutImage` (step 4).
+
+
+## 2x. ✅ Upstream sweep: 1 commit in, conflict resolved by hand, HW-verified
+
+**phoenix-rtos-utils** was 1 behind: upstream `10029f7` widens psh `ps`/`top`'s printed priority from
+2 to 4 columns (priority is now `[-32,31]`). It **conflicted** with our threads-mode "CPU" column in
+`top`, which had split the single header printf in two and carried its own fixed-column arithmetic.
+
+Resolved keeping both: upstream's `%4s` in both branches, fixed totals 61→**63** (non-threads) and
+65→**67** (threads). The non-threads figure landing on 63 is a useful cross-check — exactly the
+constant upstream wrote for its single-column case. The row printf was already `%4d` on both sides,
+so upstream is really fixing a header/row mismatch; header and row now line up in both modes.
+Merge `13247f9`, pushed. **All 16 siblings now 0 behind.**
+
+Verified rather than assumed (utils ships `psh`/`ps`/`top` in the image and `top` is one of the six
+demo-desktop clients): clean `--scope core` rebuild, then HW — **0 faults**, colours (77,79,110),
+mirror MAD 81.50, desktop intact, `top` rendering with the wider PR column aligned.
+
+Game forks: all four `--check` **OK**, no drift; forks left alone per your settled "if our version
+works, leave it".
+
+⚠ This relinked all binaries, so the next image cut owes the 6-app re-gate (as does the earlier
+archive rebuild).
+
+
+## 2w. ✅ Buffer sharing step 2 PROVEN on hardware — Mesa imports a BO it did not allocate
+
+Last turn's Mesa import shipped inert. Now exercised in isolation, *before* touching the X server —
+new `tools/v3d-driver-port/gl_bo_import.c` creates a BO through the **raw daemon RPC** (so Mesa never
+allocates it), fills it via its `MAP_PHYSMEM` view, imports it with `resource_from_handle`, then maps
+the imported resource **through the pipe context** and compares:
+
+```
+raw BO handle=2 pa=0x292d0000 size=65536 gpuva=0x247b000
+imported resource 64x64 fmt=84
+mapped stride=256 (raw stride=256)
+compare MATCH (0/16384 bytes wrong)
+VERDICT PASS
+```
+
+0 faults. The stride agreeing matters as much as the bytes — `v3d_setup_slices()` accepted the
+caller's stride for an imported linear resource rather than recomputing a layout, which is what the
+X-server step will rely on.
+
+**Steps 0 and 2 are now done and verified.** Remaining: step 3 (X server accepts `{handle, geometry}`,
+imports, wraps via the already-exported `glamor_set_pixmap_texture()`, composites on damage) and step
+4 (client drops `glReadPixels`/`pack`/`XPutImage` and sends damage). Those are the bigger pieces and
+touch the demo-critical server, so they keep the recorded rule: add the shared path with the existing
+`XPutImage` path intact and default until proven.
+
+Reused the existing daemon-client build recipe (`GL_SMOKE_SRC` is overridable), so no new build
+plumbing. 1 Pi cycle.
+
+
+## 2v. ✅ Buffer sharing step 2 LANDED in Mesa (inert) — BO import by daemon handle
+
+`WINSYS_HANDLE_TYPE_SHARED` was **dead** on this port (it needs GEM_OPEN/flink names, which Phoenix
+has not), so it is repurposed under `__phoenix__` to mean what "shared by handle" actually means
+here: the v3d-srv daemon's global handle namespace. New `v3d_bo_open_phoenix_handle()` supplies the
+mutex `v3d_bo_open_handle()` requires; that function then needs only `GET_BO_OFFSET`, which last
+turn's probe verified works for a foreign handle.
+
+Size is caller-supplied (`stride * height`) because the daemon's size is unreachable through the DRM
+ioctl surface and `winsys_handle` has no size field — a larger real BO only makes the
+offset-overflow check stricter, the safe direction.
+
+**Inert until step 3:** nothing calls `resource_from_handle` yet, and the case was unreachable
+anyway. Regression-checked, not assumed — archives rebuild clean (driver 29/0, core 333/0, gl 325/0)
+and the desktop is unchanged on HW: 0 faults, colours (77,79,110), mirror MAD 75.55, 10.76 fps.
+mesa `3b339c93a07`.
+
+**➡ Next: exercise it in isolation** with a headless daemon-client GL harness (create a BO via raw
+RPC → import → texture → read back → compare), *before* wiring the X server, so the import is proven
+rather than debugged inside the demo-critical server. The pieces exist:
+`tools/v3d-driver-port/gl_es_smoke.c` for headless GL, `glamor-shim/glamor_phoenix_ctx.c` as a
+working daemon-client st-context example.
+
+⚠ Archives were rebuilt, so the next image cut relinks the games and owes the 6-app re-gate.
+
+
+## 2u. ✅ Buffer sharing: everything the DAEMON must supply is now verified; the Mesa change is ~10 lines
+
+`v3d_bo_open_handle()` — the function Mesa's importer would use — makes exactly **one** daemon call,
+`GET_BO_OFFSET` (no GEM_OPEN, no dmabuf), then asserts the offset is non-zero. Tested for a
+*foreign* handle:
+
+```
+parent created handle=2 pa=0x29420000 size=65536 gpuva=0x2491000
+child GET_BO_OFFSET(handle=2) rc=0 gpuva=0x2491000 (parent gpuva=0x2491000) SAME+NONZERO
+```
+
+So with MMAP_BO already verified last turn, **every daemon-side prerequisite for the import is
+confirmed on hardware** and `v3d_bo_open_handle` should work here unchanged.
+
+**Step 1 dropped as written** — it proposed a `libv3d-client` wrapper whose verification was exactly
+what the probe already did via the raw RPC; a wrapper with no caller adds nothing.
+
+**Step 2 is the whole remaining Mesa question and it is small:** one *additive* case in
+`v3d_resource_from_handle`'s type switch routing a Phoenix handle to `v3d_bo_open_handle`. Two
+details recorded so they are not rediscovered: `winsys_handle` has **no size field** (so the size
+must come from `MMAP_BO`, not the template), and the caller must hold `screen->bo_handles_mutex`
+because `v3d_bo_open_handle` unlocks it on exit. Additive, so it cannot disturb the `SHARED`/`FD`
+paths the games never take.
+
+2 Pi cycles. Doc: `docs/misc/2026-09-09-gl-window-buffer-sharing-work-order.md`.
+
+
+## 2t. ✅ Buffer-sharing step 0 VERIFIED on hardware — the foundation is real
+
+The work order's premise (the v3d daemon's BO handles are **global**, so the X server can name a BO
+the GL client created) was read out of the source and never tested. Given how many confident
+readings have died on contact with measurement here — the cached-alias plan, the ring size, the
+poller broadcast — I tested it before building on it. New `tools/boshare-probe`:
+
+```
+parent created handle=4 pa=0x29420000 size=65536
+child MMAP_BO -> pa=0x29420000 size=65536 (parent pa=0x29420000) SAME
+parent read child's pattern: MATCH (0/65536 bytes wrong)
+VERDICT SHAREABLE — handles are global, pa matches, writes visible BOTH ways
+```
+
+A second process maps a handle it did not create, gets the same physical pages, and writes cross in
+**both** directions. Uses only the documented RPC; changes no shipped component.
+
+**➡ Next is step 2, not step 1.** Step 1 (a `libv3d-client` wrapper) would only add an unused
+function — the verification it proposed is exactly what the probe just did via the raw RPC. The real
+unknown is step 2: whether Mesa's existing `v3d_resource_from_handle` / `v3d_bo_open_handle` work on
+this stack when fed a daemon handle. That is a change in Mesa, which the five games share, so it
+wants its own turn behind a fallback.
+
+Also recorded in the work order: `sudo cp` into the NFS export leaves a root-owned file, the next
+`netboot-server-up` rsync then fails to fix its permissions, and the binary silently does not run —
+zero output, which reads like a crash. Cost one cycle.
+
+
+## 2s. 🔬 The slow 3D window is now SCOPED, not deferred — 3 of 4 pieces already exist
+
+I had recorded "share the GPU buffer instead of shipping 1.2 MB/frame" three times as *a real
+project, not a tuning pass*, and kept picking other work. A feasibility spike changes that verdict:
+
+| piece | state |
+|---|---|
+| cross-process BO reference | **already works** — the daemon's handles are **global** (`v3d_gpu.c` one `W.bos[]`, `handle == slot+1`, no per-client scoping), and `V3D_RPC_MMAP_BO` already returns the `pa` |
+| Mesa import | **already exists** — `v3d_resource_from_handle` (`v3d_resource.c:1009`, wired `:1278`) + `v3d_bo_open_handle` (`v3d_bufmgr.c:339`), and `MOD_LINEAR` is accepted |
+| server-side pixmap wrap | **already exists** — `glamor_set_pixmap_texture()` is `_X_EXPORT`ed (`glamor.h:113`) |
+| **the gap** | a Phoenix `winsys_handle` flavour routed to `v3d_bo_open_handle`, plus a side channel for the client to send `{handle, geometry}` once and **damage** per frame |
+
+Worth `put + read + pack` ≈ **85 ms of the 105 ms frame** — every cheaper avenue is now measured and
+closed (ring size, poller herd, cached alias, present deferral, a `glReadPixels` fast path worth only
+~20% that would touch all five games).
+
+Four steps, each independently verifiable, in
+`docs/misc/2026-09-09-gl-window-buffer-sharing-work-order.md`. **Rule recorded with it:** build it as
+an *addition* with the existing `XPutImage` path intact and default until proven, so a failed import
+falls back instead of breaking the demo-critical desktop — and repeat every measurement, given the
+±4.5% spread.
+
+Not started: I did not want to leave the X server half-changed at the end of a turn. Zero Pi cycles.
+
+
+## 2r. ✅ CHANGES DOC brought up to date — and two of its claims corrected
+
+`docs/PHOENIX-RTOS-RPI4-CHANGES.md` (the outline you asked for, linked from the README) predated this
+week's whole X11 arc. 1427 → **1502 lines**.
+
+**Added:** the AF_UNIX one-page-ring finding in kernel performance (with its honest +12% scope and
+the `ipcprobe` 213 MB/s figure that shows the ring was never the constraint); the libphoenix allocator
+neighbour-validation work in robustness (including how the 4.8 M-op harness bounded the search); and
+a **"measured dead ends"** block in caveats so nobody re-runs them — uncached DRAM only 1.3× slower
+than cached, the poller broadcast not being the cost, present-deferral buying nothing, and the
+**±4.5% run-to-run spread** that makes sub-10% graphics claims meaningless unrepeated.
+
+**Corrected two stale claims:** the ports table said "four patches to upstream glamor" — three were
+Y-flip compensators, now retired, since they only existed because Mesa's `≥1024×768` heuristic tests
+SIZE not scanout-ness. And the `DestroyPixmap` entry described the damage-before-glamor ordering as
+context; that ordering *was* a bug in its own right, with a second silent consequence
+(`glamor_create_gc` does not chain either → `damage calls = 0` → HDMI updated 2.3×/s regardless of
+client speed). Commit `HEAD`.
+
+Zero Pi cycles. Nothing outstanding on X11, the image, or the reel.
+
+
+## 2q. ★ NEW SHOWCASE REEL — the X11 segment now shows the fixed desktop
+
+The reel's X11 clip was from **before** this week's X work, so it showed exactly what you reported
+from a recording of that vintage: mirrored Clip bottom-left, grey bands bleeding between the two
+xterms, xbill hidden, desktop reaching HDMI ~2.3×/s. Replaced with a current capture.
+
+**★ WATCH:** `artifacts/hdmi-video/20260909-084929-phoenix-rtos-rpi4-showcase.mp4` (247 s, 11 segments)
+
+Verified in the **rendered** reel at four points inside the X segment: mirror MAD **71–72** (an
+artefact reads ~7), xbill **86–88% white** (visible, unobstructed), longest solid grey run in the
+Game-of-Life window **5 px** (glyph anti-aliasing only). The clip window was measured rather than
+eyeballed — the desktop is fully populated for all 100 s of the source.
+
+**Zero Pi cycles:** every other segment is unchanged, per your "all Quakes look good enough / would
+not invest more in Quake". Also dropped a stale note claiming the X clip had to stop at ~150 s
+"because life.py freezes" — that was Conway converging to still lifes, not a hang. Commit
+`099c2d3ee`.
+
+
+## 2p. 🛑 STK crash: intermittent and NOT one bug — stopping here (your call on STK stands)
+
+The new allocator validation was meant to name the block STK overflows. Five runs later:
+
+| run | aborts | site | far |
+|---|---|---|---|
+| gstk | 2 | `_malloc_chunkJoin` | 0x0ceef000 |
+| g2stk / stkdiag / stkdiag2 | **0** | — | — |
+| stkexit | 2 | `FontManager::loadFonts()` (**startup**) | **0x10** |
+
+**3 of 5 runs are clean, and the two that fault do so at completely different sites** — one in the
+allocator's coalesce path, one a near-NULL read inside STK's font manager during startup, in a run
+that never reached racing. **My validation never fired**, so there was no chunk-header corruption on
+those paths (it also never false-positived across 5 runs + the libc suite + the desktop).
+
+Intermittent faults at varying sites, with the allocator cleared by a 4.8 M-op harness, is the
+signature of **memory corruption inside STK's own code** — an upstream-app bug. Per your "I don't
+know if we can do anything about it / at least STK renders correctly", I am stopping here.
+
+**Two of my own earlier claims were wrong and are corrected in the doc:** "the STK *teardown*
+crash" (I inferred that from where the fault sat in a log; `stkexit` faults at startup) and
+"deterministic" (it is ~40% of runs, at varying sites — only the long-enough runs were being
+compared).
+
+**Also confirmed from these runs:** STK races correctly (verified visually — Hacienda, HUD,
+minimap) and its own overlay reads **`FPS: 4/4/6 – 55 KTris`**, independently matching your "~6 fps".
+Doc §32.
+
+**Status: nothing on the X11 or image side is outstanding.** Correctness fixed and frame-verified,
+performance closed by measurement, image `7f3de597…` cut and 6-app gated.
+
+
+## 2o. ✅ X perf CLOSED (a probe killed the last plan) + libphoenix allocator hardened
+
+**The cached-alias plan is dead, and it cost one cheap probe instead of a risky change.** §30 blamed
+the `MAP_UNCACHED` mapping of the X server's GPU buffers for the present's slow readback. New
+`tools/memprobe` (own anonymous memory, no GPU, no coherency question) measured on HW:
+
+| mapping | sequential read |
+|---|---|
+| cached | **1316 MB/s** |
+| `MAP_UNCACHED` | **1001 MB/s** |
+
+Uncached reads are **5× faster than the ~200 MB/s the readback actually gets**, so memory attributes
+are not the bottleneck and a cached alias would buy ≤1.3×. **X performance is now at diminishing
+returns** — the present's floor is ~8 ms of 13.4, worth maybe +10% on the GL client, barely twice
+the ±4.5% noise. The one change that *would* fix the 3D window is to stop shipping 1.2 MB per frame
+through the socket at all (share the GPU buffer, send damage) — a mini-DRI3 for this port, a real
+project, and only for GL-in-a-window. Doc §31.
+
+**Then, the bounded work: libphoenix allocator hardened** (from the host harness's findings).
+`_malloc_chunkJoin` walked into neighbour chunks whose headers were never validated — that is the
+exact path STK's teardown Data Abort took, and it gave no clue which allocation was at fault. Now
+each neighbour is validated against the heap the caller already vouched for, so it reports and names
+the block instead of faulting. Also closed: `realloc()` had **no** header guard at all (unlike
+`free()`), and `malloc_chunkPrev` used `unsigned` for a `size_t` footer (32-bit on LP64 — it
+mis-truncated corrupted footers into plausible small offsets, defeating the validation).
+
+libphoenix `bd6ae05` · tests `6925aff` (new `malloc_fragment_and_drain` — nothing previously emptied
+a heap, so the coalesce loops and the munmap path were untested).
+**HW: 25 tests / 0 failures, zero false corruption reports, desktop unchanged at 0 faults.**
+
+⚠ This relinked all binaries again, so the flashable image (`7f3de597…`) is one libphoenix commit
+behind. It is a diagnostic-only change; re-cut at the next natural point rather than immediately.
+
+
+## 2n. ✅ IMAGE RE-CUT with the complete X11 work — every gate PASS, including the owed 6-app re-gate
+
+The flashable image was four changes behind (damage fix, partial-X readback, xbill layout, kernel
+`SO_RCVBUF`), and the `--scope core` kernel relink owed a full app re-gate. Both settled.
+
+**★ FLASH THIS:** SHA256 `7f3de597…3561da7f` · manifest `manifests/2026-09-09-x11-complete-demo-image.md`
+
+Verified present in the shipped binaries, not just assumed: mirror-fix flag, damage fix
+(`fbdevNextSpan`), probe-free, daemon backend, the 256k/64k `SO_RCVBUF` step-down, the xbill
+geometry string, and the kernel's `0x40000` ceiling.
+
+| gate | result |
+|---|---|
+| image contents + provenance + config markers | **PASS — safe to flash** |
+| QEMU structural boot | **PASS** (SD variant confirmed) |
+| X desktop | 0 faults · colours (77,79,110) · mirror MAD 81.50 · 9.53 fps |
+| QuakeSpasm | demo ran, motion 12–21, 0 faults |
+| Quake III | 1390 files in 2 pk3s, motion 9.9–14.9, 0 faults |
+| Quake II | motion 26–36, 0 faults |
+| vkQuake | motion 9–22, 0 faults |
+| SuperTuxKart | racing, motion 28–50, 0 faults |
+
+All six games/desktop re-verified after the kernel relink — no regression from it.
+
+
+## 2m. 🔎 Slow 3D window ROOT CAUSE: the screen present stalls the client's upload
+
+The server is single-threaded, so the 13.4 ms screen present runs in the same dispatch loop that
+reads client requests — and `io.c:402` returns to that loop on every incomplete request. ~2.4
+presents land inside each frame's 1.2 MB upload. Measured:
+
+| presents | `put` | frame | fps |
+|---|---|---|---|
+| on (33 ms tick) | 55.2 ms | 94.4 ms | 10.62 |
+| **off** | **30.3 ms** | 66.9 ms | **14.94** |
+
+**Presents stalling the in-flight upload cost ~30–35% of the GL window's frame rate.** Also settled
+for free: Xlib sends a big image in ONE `writev`, so the refills happen inside the kernel's send
+loop, not as client syscalls.
+
+**Tried and dropped:** deferring the present while a request is in flight (10.03 fps vs a
+9.73–10.62 baseline — inside the noise). Reverted. My first read of that as "worse" was wrong.
+
+**⚠ Run-to-run spread MEASURED: ±4.5%** (10.56 / 10.62 / 9.73 fps, identical probe-free code). Any X
+claim under ~10% must be repeated before it counts — that applies to some of my own earlier
+single-run numbers, which should be read as directional.
+
+**➡ Next: make presents cheaper, not rarer.** A present is 8.9 ms readback + 4.8 ms write, and the
+readback is bounded by the X server's GPU buffers being mapped **`MAP_UNCACHED`** (~200 MB/s even
+with no format conversion). A cached mapping + range invalidate is the fix class that took video
+playback 4.2 → 25 fps; it should roughly halve the per-frame stall. Coherency-sensitive → its own
+turn, with repeated runs. Doc §30.
+
+Tree is back to the pushed state; 0 faults, colours correct, mirror MAD 75.55, no seam.
+
+
+## 2l. 🔎 Slow 3D window: ring size REFUTED. The socket path is 17× off its own primitive
+
+Chasing your "3D rendering window is still animating slow". Presents are no longer the cost
+(13.4 ms, 25.6/s), so it is the request path. Two hypotheses tested, one kept, both informative.
+
+**Refuted #1 — the poller thundering herd.** Every AF_UNIX read/write broadcasts to *all* pollers
+system-wide through one global lock. Same server, 6 clients → 2 clients: mean gap **2.839 → 2.785 ms**,
+unchanged. Not the cost. (Worth knowing before anyone redesigns it.)
+
+**Refuted #2 — the ring size** (my own prediction, and I shipped the change anyway because it is
+measured-positive):
+
+| ring | got/read | reads/frame | mean gap | `put` | fps |
+|---|---|---|---|---|---|
+| 64 kB | 32.6 kB | 37.8 | 2.839 ms | 68.6 ms | 9.46 |
+| **256 kB** | 92.8 kB | **13.4** | 7.205 ms | 55.2 ms | **10.62** |
+
+Round-trips fell 2.8× as predicted — and the per-round-trip cost rose 2.5×, so throughput stayed
+**flat at ~12 MB/s both ways**. Predicted ~16 fps, got 10.62 (+12%).
+
+**★ The number that reframes it:** `rpi4-ipcprobe` reaches **213 MB/s cross-process** (`fork` +
+`socketpair`) on the **default 4 kB ring with no `poll()`** — the same kernel primitive, a ring 16×
+*smaller*, **17× faster** than the X path. So it is not buffering, not the ring, not the broadcast.
+What is left is **per-operation overhead**: the server does `poll`→`read`→`poll`→`read`, and Xlib
+chunks the 1.2 MB into its own output-buffer-sized writes. ipcprobe does neither.
+
+**➡ Next, and it is the untested half — both userspace, no kernel change:** instrument the *client*
+to count `write`/`writev` calls per `XPutImage`. ~75 writes of 16 kB would mean the fix is handing
+the image over in one large `writev` (or raising Xlib's `bufmax`), with the server's poll-per-read
+as the other half.
+
+Kept the 256 kB ceiling: +12%, 0 faults, no regression, and it stops being marginal once that
+overhead is fixed. Kernel `137ec58f`, manifest `manifests/2026-09-09-x11-rcvbuf-256k.md`.
+⚠ `--scope core` relinked **all** userspace binaries, so an SD image cut from this tree needs the
+full 6-app re-gate. Doc §29.
+
+
+## 2k. ✅ YOUR TWO X11 ARTEFACTS — checked frame by frame; both gone. Your video predates the fix
+
+`x-bulkupload.mp4` is `artifacts/hdmi-video/20260909-013210-...` — **01:32**, and the mirror fix was
+verified at 03:24. Its name is the bulk-upload patch that fix retired. But "white lines at random
+moments" is *transient* and all my earlier checks were **single static frames** — a real gap — so I
+scanned every frame of both videos at 3 fps:
+
+| | mirrored-Clip frames | best MAD | GoL grey-block frames | longest run |
+|---|---|---|---|---|
+| **your `x-bulkupload.mp4`** (495) | **377** | **0.00** (exact mirror) | **188** | **516 px** |
+| current build (300) | **0** | 76.80 | **0** | 5 px |
+| current build + layout fix (300) | **0** | 72.45 | **0** | 5 px |
+
+Both artefacts are real, both are in your recording, **both are absent from every frame of the
+current build.** 516 px is a half-window-wide band — exactly the "lines copied from the other
+xterm". (Two of my detectors had to be corrected first: one counted JPEG/anti-alias halo as
+contamination, the next included the xterm's own status bar. Both reported a defect on a clean
+build.)
+
+**★ Fresh recordings to watch:** `artifacts/hdmi-video/20260909-065105-x-fixed.mp4` (current build +
+xbill fix) and `...-063829-x-current.mp4`. 0 faults in both.
+
+**✅ xbill no longer covered.** It *ignores* its `-geometry` position — `top` confirms it gets the
+argument and applies the SIZE, but Xt sets PPosition and Window Maker auto-places it at ~(945,0).
+The two xterms honour the same form. So the desktop is now laid out *around* where xbill lands;
+HW-verified, splash and Game/Info menu fully visible. Commit `96ba31e4f`.
+
+**➡ On the slow 3D window (your other point):** the client is ~8.5 fps and its own `XPutImage` is
+**79 ms of a 117 ms frame**. Presents are no longer the cost (13.4 ms each, 25.6/s), so the residual
+is in the request path — socket read + glamor's upload. That is the next measurement. A likely big
+lever also found: the X server's GPU buffers are mapped **`MAP_UNCACHED`**, which is why even a
+no-conversion readback ran at ~200 MB/s; a cached mapping + range invalidate is the same fix class
+that took video playback 4.2 → 25 fps. Coherency-sensitive, so its own turn.
+
+**On STK ~6 fps and Quake:** noted, not being worked, per your call. Doc §28.
+
+
+## 2j. 🐞 STK teardown crash: it is **TWO** allocator bugs, one of them in the KERNEL
+
+Both aborts localised (addr2line against the unstripped binaries — the installed ones are stripped
+by design).
+
+**#36 — EL0, libphoenix's allocator.** `_malloc_chunkJoin` → `malloc_chunkIsLast`,
+`malloc_dl.c:346`/`:149`. Translation fault L3, **read**, `far=0xceef000` — exactly page-aligned.
+Since `heap_t.size` is at offset 0 and heaps are page-aligned (mmap), that is **`chunk->heap`
+pointing at a heap that is no longer mapped**. Suspect: `free()` at `:593` munmaps a heap whose
+`freesz` says "entirely free" on the assumption it holds exactly ONE chunk — and the free bins are
+**global across heaps**, so any coalescing hole leaves a stale chunk in a bin pointing into the
+unmapped heap. `realloc()`'s shrink path skips that check entirely.
+
+**#37 — EL1, the KERNEL's allocator. A different bug.** `_kmalloc_free` (`vm/kmalloc.c:115`) →
+`lib_listRemove` (`lib/list.c:47`), translation fault L0, **write**. The zone's stored `prev` is
+`0x80000001c46ccf80` where a kernel pointer needs `0xffffffffc46ccf80` — low 40 bits right, top 24
+wrong. Refuted cheaply: not an `addr_t` width bug (`addr_t` is `__u64`, same as a pointer).
+
+**Order matters:** #37 fires while tearing down a process that just took a fatal #36, so it may be
+fallout — **fix #36 first, then re-check #37**. But a userspace crash must never fault the kernel,
+and the kernel already ships `lib_listBelongs()`/`LIST_BELONGS_EX` (`lib/list.h:50`) to validate
+membership before `LIST_REMOVE`; using it in `_kmalloc_free` would turn this abort into a detected
+inconsistency. Hardening, so it lands *after* the root cause, not instead of it.
+
+Neither is a regression (same two aborts in every run reaching STK's exit since 2026-09-07).
+
+**✅ RESOLVED — and my hypothesis was WRONG.** A host harness (4.8 M ops, 24 seeds, 9 invariants,
+detector proven on 5 forged violations) found **zero** allocator violations: coalescing, `freesz`
+accounting, the `realloc` shrink path, RB-tree structure and bin/binmap consistency all clean, and
+heaps mmap'd == munmap'd exactly (142 478 each). The "unmapped heap" idea is *geometrically
+impossible*: chunks live at `heap + 16 + k`, never `heap + 0`, so a use-after-unmap faults on a chunk
+header, which is never page-aligned. Only one injected scenario reproduces the exact signature
+(`malloc_chunkIsLast:149` ← `:346` ← `free:591`, page-aligned `far`): **a smashed footer plus a forged
+neighbour header**. So this is **caller-side heap corruption in STK reaching `free()`** — an overflow
+out of the *preceding* block smashes its footer, `malloc_chunkPrev:155` derives a bogus sibling, the
+backward loop promotes it, and the forward loop is the first dereference of its garbage `heap`.
+libphoenix is exonerated.
+
+Cheap and worth doing when STK is next touched: extend `malloc_chunkValid` to the chunks
+`malloc_chunkPrev`/`malloc_chunkNext` return — that turns this Data Abort into a localized "corrupt
+chunk header" report **naming the block STK overflowed**. Harness also flagged: `realloc()` has no
+`malloc_chunkValid` guard at all (asymmetric with `free()`), and `malloc_chunkPrev:155` declares
+`unsigned prevSize` (32-bit on LP64). Harness kept at `tools/malloc-harness/`. Doc §27.
+
+
+## 2i. ✅ Upstream sweep + X presents now **25.6/s** (was 2.3 two turns ago)
+
+**Upstream sweep: nothing to do.** All 16 siblings **0 behind** `origin/master`; all four
+game-port patches `--check` **OK**, no drift. Game forks stay as settled.
+
+**Then: presents read back only the damaged COLUMNS.** They were partial in Y but still
+full-width in X. The readback is per-pixel CPU work so it scales with area, and a typical band is
+~710 of 1920 columns.
+
+The write side deliberately does **not** go partial, and that is measured: a per-row
+`lseek()+write()` costs **80 µs** (16× my guess), so for a 232-row band —
+
+| | readback | write | total |
+|---|---|---|---|
+| partial-X **both** sides | 4.93 ms | **18.66 ms** | 23.6 ms |
+| partial-X readback + full-width write | 4.93 ms | 3.48 ms | **8.4 ms** |
+| no partial-X | 13.10 ms | 3.48 ms | 16.6 ms |
+
+My first cut did both and saturated the server so hard X printed nothing in a 130 s capture. The
+split is the fix. Cheaper presents then let the tick drop 50 → 33 ms:
+
+| | presents/s | client fps |
+|---|---|---|
+| 50 ms, Y-bands only | 21.0 | 6.90–7.35 |
+| **33 ms, + partial-X readback** | **25.6** | **8.22** |
+
+**11× the 2.3 presents/s of two turns ago, and clients are faster than before too.** HW-verified,
+0 faults, colours correct, mirror still fixed, and **seam-checked** for this change specifically
+(128 000 flat-background pixels exact, zero column jumps). Commit `ff8434d79`, doc §26.
+
+**➡ Next: the STK teardown crash**, now localised without guesswork — `_malloc_chunkJoin` →
+`malloc_chunkIsLast`, `libphoenix/stdlib/malloc_dl.c:346`/`:149`, reading an unmapped page
+(`far=0xceef000`). Deterministic since 2026-09-07, so a systematic heap-boundary bug, not random
+corruption. The second abort is **EL1** and separately unexplained.
+
+⚠ The flashable image (§2) predates this present-rate work — worth one re-cut once the STK
+teardown item is settled, rather than two cuts.
+
+
+## 2h. ✅ FIXED: HDMI updated only **2.3×/s** — the damage path was DEAD. Now **11×/s**
+
+Found by reading, no Pi cycle needed. `fbdevFinishInitScreen` called `shadowSetup()` (which calls
+`DamageSetup`, wrapping `CreateGC`) **before** `glamor_init()`. glamor then wrapped `CreateGC` with
+`glamor_create_gc`, which ends in a hard `fbCreateGC(gc); gc->funcs = &glamor_gc_funcs;` — it
+**never calls the saved CreateGC**. So damage's wrapper was bypassed for every GC ever created and
+the damage region stayed empty forever (`damage calls=0` across 320 presents). The only thing
+putting pixels on HDMI was the 300 ms *idle safety net*, always all 1080 rows.
+
+The `glamor-destroypixmap-chain` patch header already named this ordering — it fixed the
+`DestroyPixmap` consequence; the `CreateGC` one went unnoticed because its symptom was not a crash
+but a silently dead damage path.
+
+Three changes, each forced by the last:
+1. **`glamor_init` before `shadowSetup`** → damage sits *above* glamor (upstream's arrangement).
+   `damage calls 0 → 9856`.
+2. **Present per damaged Y band, not `RegionExtents`** (the bounding box is full-height whenever
+   two clients are dirty). Rows/present **1080 → 21.8**.
+3. **Accumulate damage, present from the timer.** Presenting straight from the callback gave 336
+   presents/s and *more* total rows than before. Fitting two HW points (1080 rows = 77 ms; ten
+   21-row presents = 32 ms) → **≈1.74 ms fixed + 0.07 ms/row**, so bands under ~25 clean rows apart
+   are merged too: presents/pass **10 → 1.9**, 0 fallbacks.
+
+| `FBDEV_FLUSH_MS` | screen updates/s | client fps |
+|---|---|---|
+| 300 (old) | 2.3 | 8.88 |
+| 16 | 21.0 | 5.48 |
+| **50 (shipped)** | **11.0** | **7.35** |
+
+**4.8× the screen update rate for 17% of the client rate**; new content actually reaching HDMI goes
+**2.3 → 7.35/s (3.2×)**. HW-verified, 0 faults, colours correct, mirror still fixed, desktop
+complete. Checked for tearing properly: fan coverage 39.2% mean vs baselines 30.6/34.0/49.9% — the
+variation is the animation, not tearing. Commit `7093916bd`, doc §25.
+
+**⚠ Before the demo image is re-cut:** the desktop-**exit** path is not soaked. Damage now sits
+above glamor — the arrangement `glamor-destroypixmap-chain` was written to emulate, and damage
+re-wraps the `DestroyPixmap` slot last — but the crash that patch fixed lived exactly here and
+`startx_gpu` has no self-exiting mode. Build one and soak it.
+
+**Also still open:** 19.4 ms of every 77 ms present is the BGRA→RGBA CPU swizzle (§24); fixing
+glamor's render path would recover it and shift the whole table. Partial-X presents untried.
+
+
+## 2g. ✅ FIXED: "video playback rather slow" — 4.2 → **25.0 fps** (6×)
+
+Your review said playback was slow. Measured the split before touching anything, and it was not
+where it looked — the **hardware decode was never the constraint** (~3 ms/frame):
+
+| | frame | CPU blit | fps |
+|---|---|---|---|
+| before | 236.3 ms | 193.8 ms (**82 %**) | 4.23 |
+| after | 40.0 ms | 18.8 ms (47 %) | **25.01** |
+
+**Root cause: both sides of the blit are uncached.** The decode buffers are
+`MAP_UNCACHED|MAP_CONTIGUOUS` and `/dev/fb0` is `MAP_PHYSMEM|MAP_UNCACHED`, and the loop did 3
+uncached byte *reads* per output pixel (Y,U,V) and 4 uncached byte *stores* — ~6.5 M separate bus
+transactions per frame at 1280×720. Fixed by using what the SAND/COL128 layout already gives:
+along a **fixed row** each 128-sample group is contiguous, so a source row is a few 128-byte
+`memcpy`s into a **cached** buffer, after which the inner loop reads normal memory; plus **one
+32-bit store** per pixel instead of four. Blit **10.3× faster**. The unconditional 40 ms pacing
+sleep is now adaptive (sleeps only the time actually left).
+
+Playback is now **pace-limited at the clip's native 25 fps, not compute-limited** — 47 % of a 40 ms
+frame, so there is headroom for ~45 fps. Reel's video segment re-cut: **25.5 visible updates/s**,
+level with the games (was 15.5). Channel order was verified against the source clip, not eyeballed
+(mean R−B +10.72 captured vs +11.25 decoded on the host — an R/B swap is invisible in luma).
+
+## 2d. 🐞 ROOT-CAUSED + FIXED: psh silently truncated any command past 128 chars
+`pshapp`'s `CMDSZ 128` dropped every character past it with **no bell, no message, no refusal** and ran
+the prefix — and the UART echo looks complete, so a truncated launch line read as evidence about the
+*program* (a 167-char line lost `+devmap q3dm1`; that was the Quake III "bug"). **Fixed**
+(`phoenix-rtos-utils 02d733d`): 1024 on 64-bit MMU targets plus a bell at the limit; HW-verified with a
+156-char command whose tail token reached the program's *output*. `manifests/2026-09-08-psh-cmdsz-hevc-window.md`.
+
+## 2e. ✅ VIDEO PLAYBACK — your three questions
+**(a)/(c) Windowed HW playback over the fbcon terminal — ✅ BUILT AND HW-VERIFIED** (`0ad4f10d6`; the older
+windowed player was software-decode only). `hevc-play --window 960x540+480+270 <clip>` decodes on the rpivid
+block inside that rectangle while the **live boot log and psh prompt stay readable all around it** — **300
+frames, continuous motion, 0 faults**. ⚠️ Open defect: it stops after ~10 frames on richer reference
+structures (**RPS/DPB retention**), so clips are encoded **IPPP** — a *player* workaround, not a codec limit.
+**(b) Send an iPhone clip — ✅ yes, please do.** `tools/hevc-decode/transcode-for-phoenix.sh <clip>`
+(`60e6eb5bc`), verified on a real 1080p30 mp4; it re-encodes rather than stream-copying Apple's HEVC.
+Rotation, frame rate and chroma/bit-depth handled; **HDR is not**. Analysis doc §6.
+
+## 2f. ✅ YOUR LATEST REVIEW — both new items were MINE, and both are fixed
+**"Quake III … less smooth, as if there were no double/triple buffering."** Right, but it was **not**
+buffering: **the orbit camera I added for the demo** only steps every `cg_cameraOrbitDelay` ms, so with the
+player standing still the *image* changed ~15×/s inside a 43–46 fps render. Now one step per rendered frame
+— visible updates **13.5/s → 25.0–29.5/s** (CoV 1.06 → 0.11), i.e. at the grabber's own 30 fps ceiling. The
+step is 1° and no smaller because `cg_view.c` gates the feature on `cg_cameraOrbit.integer` while applying
+its `.value`, so 0.7 truncates to 0 and disables the orbit outright.
+**The "frozen" Game of Life never hung — it *finished*.** Life on a bounded field dies down into
+still-lifes and period-2 oscillators; `life.py --log` shows generation 3640 at 210 s with the population
+pinned at 76 since ~gen 360. It now injects a fresh glider after 60 static generations. (This supersedes
+the earlier "life.py freezes" caveat.)
+**From your review:** the **X11 glamor mirror is FIXED** (§2b) and the desktop is 3.7× faster (§2c). Still open: **STK
+~6 fps** — GPU-bound, and the only real lever is rendering below 1080p, which needs a framebuffer mode
+change; and **video playback**, ~4.7 fps presentation, whose "small visual issues" are most likely the known
+intermittent wrong-pixel defect under decode DMA load (`docs/PHOENIX-RTOS-RPI4-CHANGES.md`, HW video
+section). Measurement table + workings: `docs/done/2026-09-08-w37-archived-detail.md`.
+
+## 3. THE FOUR BUGS YOU REPORTED — status
+| # | bug | status |
+|---|-----|--------|
+| #4 | Data Abort on exiting Window Maker | ✅ **FIXED** — kernel half + the glamor `DestroyPixmap` chain fix. Soak-tested: 6/6 crashed before, 0/18 after. |
+| #3 | Quake III glitches early in gameplay | ✅ fixed — Mesa `u_vbuf` dropped-draw fix, in the shipped image (but see §2b-bis) |
+| #2 | Quake II underwater view Y-mirrored | ✅ fixed (`83235581` + ports `a196466`). ⚠️ documented **stopgap**: a conditional correction on a conditional bug — over-corrects at `viewsize <= 71`. Real fix = declare the scanout FBO `FlipY` and delete the `st_atom_framebuffer.c:137` size gate, which also removes glamor's three hand-rolled flips. Queued; needs one build + a re-verification pass over 5 games + the desktop. Work order: `docs/misc/2026-09-08-flipy-scanout-gate-work-order.md`. |
+| #1 | GPU X11 xterm resize artefacts | **not reproduced** by a sound measurement. Resize *correctness* verified (server and client agree once settled). Most likely intermittent frames during a fast drag — this stack has no compositing and presents by GPU readback. Worth confirming whether the artefacts persisted *after* you let go of the mouse; if so it needs a different hypothesis. |
+
+## 4. WHAT GOT DONE THIS WEEK (short)
+**★★ STK was capped at exactly 1 fps by a broken C++ clock — fixed, now 5.84 fps (5.8×).** libstdc++ here
+has **no** time backends, so `std::chrono::steady_clock` falls back to `std::time()` — whole-**second**
+ticks; the per-port patch reads `CLOCK_MONOTONIC` (`ports 6f08c26`). `docs/misc/2026-09-08-stk-frame-budget.md`.
+
+**⚠️ YOUR CALL — the general fix.** A **toolchain** defect: all C++ `std::chrono` timing here has 1-second
+granularity and fails *silently* elsewhere. Fix = rebuild libstdc++ with `--enable-libstdcxx-time=rt`
+(`steady_clock::now()` is in `libstdc++.a`, so no header define helps) — whole-system C++ rebuild, **not**
+started unattended.
+
+**Also:** root CAs, the libphoenix stdio partial-write fix, the V3D BO leak proven bounded and the 7th +
+8th sweeps (**0 behind everywhere**) — `docs/done/2026-09-08-w37-archived-detail.md`. QEMU:
+`docs/misc/2026-09-08-qemu-boot-ceiling.md`.
+
+**Upstream sweep #9 (2026-09-09): nothing to do.** All 16 siblings **0 behind** `origin/master`; no
+merge, no conflict, no rebuild, nothing pushed. All four game-port patches `--check` **OK** (no drift,
+the forks remain the source of truth). Game forks left alone per your settled call.
+
+## 5. BLOCKED / WAITING
+- **SD host card-reader** shares the USB-C port with power/eth, so it is detached; I'll ask for it.
+- **bash `-i`** interactive — needs a live terminal (psh automation sees EOF).
+- **ffmpeg audio/player** — needs the attended `/dev/audio0` sign-off.
