@@ -209,6 +209,7 @@ EL0 residual still open. Working notes:
 | ★★ Demand-page the ELF header map | `proc/process.c` (`432f537b`) | `process_load` mapped the whole ELF image into the kernel map, which on an MMU target is eagerly populated — so exec of a large binary pulled the entire file in one page-read per page even though only phdrs, shdrs and `.shstrtab` are dereferenced. Now mapped lazily with only the metadata ranges explicitly forced (strided by `sizeof()` so a malformed `e_*entsize` cannot leave a touched page unforced); other ELF classes keep the old behaviour. A force failure propagates its real code instead of being masked as `-ENOEXEC`. |
 | ★★ Readiness-woken `poll()`/`select()` | `posix/posix.c`, `posix/unix.c` (`01715f09`, `7a52147c`, `9a6d4743`) | `posix_poll` was a poll-and-sleep loop with a 100 ms re-check, so every X client round trip (libxcb waits each reply in `poll(-1)`) cost up to 100 ms. AF_UNIX fds now block on a global unix poll queue broadcast by every socket state change; the timed loop survives only as the fallback for remote-server fds and the safety-net timeout, back at 20 ms. Lost-wakeup safe via the existing `wakeupPending` sentinel; a missed broadcast degrades to <=20 ms, never a stall. **Note the inet half is narrower than it reads**: for a poll on *exactly one* `ftInetSocket` fd, the block timeout is packed into the high bits of the `atPollStatus` attr value above the 16-bit event mask, and only the lwip socket server decodes it — everything else keeps the legacy path. |
 | ★ ~100 s of every boot was a diagnostic dump | `usb/xhci/bcm2711-pcie.c` (devices `3f82638`), kernel `6cdf217e` | A "Pi-firmware bridge state" dump read 10 RC / MEM_WIN registers *before* `bcm2711PrepareHostBridge` clears `SERDES_IDDQ`; each read took the PCIe external-abort recovery path at **~10.8 s** and returned `0x0`. Deleting it took the boot span **165.9–177.5 s -> 66–74 s**. Its own hypothesis ("the firmware leaves the bridge working") was disproved by its all-zero output. Worth stating because the follow-on claim was withdrawn: the post-fix study also credited it with "USB enumeration 3/10 -> 10/10", and a controlled 8+8 A/B — with the build identity gated by `strings loader.disk`, i.e. verifying the *measurement* — gave 6/8 with the dump against 8/8 without, **Fisher p ≈ 0.47, not significant**. Enumeration was intermittently flaky either way. |
+| ★ AF_UNIX rings are ONE PAGE, so bulk IPC pays a round-trip per 4 kB | `posix/unix.c` (`137ec58f`) | `US_DEF_BUFFER_SIZE` is `SIZE_PAGE`, and a `SOCK_STREAM` write copies only what currently fits before blocking — so a large transfer costs one blocking round-trip per refill, and a ring hands over only about *half* its capacity per refill (writer blocks when full, reader drains it, so the reader finds it half-full). An X client pushing a 1.2 MB `XPutImage` took **~38 round-trips at a fixed ~2.79 ms each = 68.6 ms of its 105.8 ms frame**. `SO_RCVBUF` is honoured and resizes the socket's *own* ring — the one the peer writes into — so the receiving end is the knob; its ceiling was raised 64 kB → 256 kB. **Honest scope, because the obvious conclusion is wrong:** at 256 kB the round-trips fell 2.8× exactly as predicted *and the per-round-trip cost rose 2.5×*, leaving throughput flat at ~12 MB/s and buying only +12% (9.46 → 10.62 fps). The ring is therefore **not** the constraint: `rpi4-ipcprobe` reaches **213 MB/s cross-process** (`fork` + `socketpair`) on the *default 4 kB* ring with no `poll()` in the loop — 17× faster than the X path — so the cost is the per-operation overhead of that path (server does `poll`→`read`→`poll`→`read`; `io.c:402` returns to the dispatch loop on every incomplete request), not buffering. Kept because it is measured net-positive and stops being marginal if that overhead is fixed. |
 | plo `dc ivac` sweep -> set/way invalidate-all | plo `hal/aarch64/generic/hal.c` (`54bf7c3`) | `hal_dcacheInval(0, 0xfc000000)` walked 4 GB with ~65M `dc ivac` through the EL2 MMU, including the 76 MB GPU reserve mapped as Device (where `dc ivac` is CONSTRAINED UNPREDICTABLE). Replaced with a set/way invalidate-all, which is the right tool for a full invalidate and does not go through the MMU. |
 
 ### 5. Stability / robustness
@@ -384,6 +385,25 @@ declaration with no definition — i.e. they were previously *link errors or sil
 
 ### Stability / robustness
 
+* ★ `bd6ae05` **the allocator's coalesce loops walked into unvalidated neighbours**
+  (`stdlib/malloc_dl.c`). `free()` validates the chunk being freed (`malloc_chunkValid`), but
+  `_malloc_chunkJoin()` then walks the chunks on *either side* of it, and those headers were never
+  checked. An overflow out of the **preceding** block smashes that block's footer,
+  `malloc_chunkPrev()` derives a bogus sibling from it, the backward loop promotes it (`it = sibling`),
+  and the forward loop's `malloc_chunkIsLast()` is the first code to dereference its garbage `->heap`
+  — observed on hardware as a Data Abort inside the allocator with a page-aligned fault address and
+  no indication of which allocation was actually at fault. Each neighbour is now validated against the
+  heap the caller already vouched for, so the fault becomes a message naming the block and coalescing
+  stops instead of deriving a write address from a corrupt size. Two related gaps closed with it:
+  `realloc()` had **no** header guard at all, unlike `free()`; and `malloc_chunkPrev()` declared
+  `unsigned prevSize` for a `size_t` footer — 32-bit on LP64, so it mis-truncated a *corrupted* footer
+  into a plausible small offset, defeating the very validation being added. Behaviour on a healthy heap
+  is unchanged. **How the search was bounded:** a host harness compiling the real `malloc_dl.c` against
+  host `mmap`/`munmap` ran 4.8 M operations over 24 seeds checking nine invariants (coalescing
+  completeness, `freesz` accounting, RB-tree structure, bin/binmap consistency, heaps
+  mmap'd == munmap'd) and found **no allocator defect** — which is what redirected the investigation to
+  the caller. Test `6925aff` adds `malloc_fragment_and_drain`: nothing in the suite previously emptied a
+  heap, so the coalesce loops and `free()`'s `munmap` of a fully-free heap were untested.
 * ★ `4c97a79` → `c8ee89e` **detached-thread stack teardown** (`pthread/pthread.c`). The old `to_cleanup`
   scheme had each exiting detached thread defer its stack to a global slot for the *next* exiting thread
   to `munmap` — a cross-thread free racing the owner still executing on that stack, which on SMP was a
@@ -919,7 +939,7 @@ The single most valuable material for upstream is not the port count but §3: ne
 | **★ sdl2** | 2.30.12 | Real SDL 2.30.12 with two *new upstream-shaped backends* written for Phoenix: `src/video/phoenix` (one fullscreen `/dev/fb0` window, input drained from `/dev/kbd0` + `/dev/mouse0`) and `src/audio/phoenix` (pull model over `/dev/audio0`). Zlib licence; the GL-context glue is kept outside `libSDL2.a` to preserve that |
 | **★ libnfs** | 6.0.2 | Backs NFS-as-rootfs. Carries three real NFSv4 bug fixes (see §3). LGPL-2.1 |
 | xorg_libs | 2023.2 | 24 tarballs in one recipe (libX11 1.8.7, libxcb 1.16, libXt/Xaw/Xmu/Xpm/Xext/Xrandr/Xrender, xcb-util family, pixman 0.42.2, xtrans, xkbfile). Version anchored on xorgproto |
-| xorg_server | 21.1.24 | Xorg with a **new Phoenix DDX** in-tree at `xorg_server/files/ddx/` (`fbdev.c` 1020 lines, `ddxLoad.c` 631, built-in keymap, HID→evdev map). Both a software-fb and a glamor/GPU server are built. The GPU server additionally carries **four patches to upstream glamor**: an R↔B swap on `XPutImage`'d content (RGBA transfer format), a screen-pixmap upload Y-mirror plus its symmetric download flip, an extension of that flip to the two `glamor_spans.c` transfer sites the first patch missed, and the `DestroyPixmap` hook-chain fix in §3 — the last being a genuine upstream glamor defect. Build-lineage caveat, stated because this section otherwise reads as though all X lives in the ports repo: `xorg_server/` has no `patches/` directory, so the glamor-accelerated server is built from the coordination repo's `tools/x11-port/build-xserver-core.sh` path instead |
+| xorg_server | 21.1.24 | Xorg with a **new Phoenix DDX** in-tree at `xorg_server/files/ddx/` (`fbdev.c` 1020 lines, `ddxLoad.c` 631, built-in keymap, HID→evdev map). Both a software-fb and a glamor/GPU server are built. The GPU server additionally carries patches to upstream glamor. **The set shrank on 2026-09-09 and the reason is the interesting part:** it was an R↔B swap on `XPutImage`'d content (RGBA transfer format), a screen-pixmap upload Y-mirror plus its symmetric download flip, an extension of that flip to the `glamor_spans.c` transfer sites, and the `DestroyPixmap` hook-chain fix in §3. All three Y-flip compensators are now **retired**: they existed because Mesa forced `Y_0_TOP` for the 1920x1080 glamor screen pixmap under a heuristic that tests SIZE, not scanout-ness (`st_atom_framebuffer.c`, `fb->Width >= 1024 && fb->Height >= 768`), even though that pixmap is a plain GL texture presented by `glReadPixels` into a shadow — nothing about it is scanout-backed. Forcing `Y_0_TOP` put every glamor GL path into a flipped coordinate world held upright by hand-rolled flips, and any path that missed one emitted its box at `y' = H-1-y`. Opting this one context out (`phx_scanout_flip_gate`, mesa `d5852136ba0`; shim clears it before `st_create_context`) leaves the pixmap `Y_0_BOTTOM` — plain upstream behaviour — and deletes all three compensators, which is a net *removal* of code. So what remains is the R↔B swap, the `DestroyPixmap` chain fix, and one new non-glamor patch to `os/connection.c` that asks for a 256 kB receive ring (see the AF_UNIX row in the kernel performance table). Build-lineage caveat, stated because this section otherwise reads as though all X lives in the ports repo: `xorg_server/` has no `patches/` directory, so the glamor-accelerated server is built from the coordination repo's `tools/x11-port/build-xserver-core.sh` path instead |
 | xorg_fonts | 2.13.2 | freetype 2.13.2 + fontconfig 2.14.2 + cairo 1.16 + expat + libXft/libXfont2/libfontenc + PCF fonts (`font-misc-misc`, `font-cursor-misc`, `font-adobe-75dpi`, `encodings`, `font-alias`). Two of those are mandatory rather than decorative: `font-cursor-misc` is a separate upstream package and the only source of the `cursor` font every `XCreateFontCursor` caller opens, and `font-alias` is what fixes Xt's `Cannot convert string "8x13" to type FontStruct`. **A generalisable trap for fontconfig on a network root:** point it at `/usr/share/fonts/truetype` only, never the parent — the X core bitmaps are served by the X server's own `-fp` and never resolve through Xft, so indexing them buys nothing, and it made WindowMaker's first Xft font load `FT_New_Face`-open all **412 core PCFs** over NFS. That took desktop startup to 5 min 40 s and was misread as "the window manager does not draw" for a night; root-caused with this fork's own `libdbg` (`dbg_arm_watchdog` + `addr2line`), which named the stack `WMCreateFont → XftInit → FcConfigBuildFonts → FcFileScanFontConfig → FT_New_Face → sys_open`. Coord `71ab64d9a`, ports `de63acf`: startup 5 min 40 s → ~1 min |
 | xorg_apps | 1.1.2 | xcalc, xclock, xlogo, xedit (Xaw/Xt clients) in one recipe, anchored on xcalc |
 | windowmaker | 0.95.9 | Window manager; the desktop actually used on HDMI. GPL-2.0-or-later |
@@ -1045,6 +1065,31 @@ Further gaps, same evidence standard:
 - **`malloc(0)` returned NULL** (found via jq; fixed in `libphoenix/malloc_dl.c` to allocate size 1). Helps every port that assumes `malloc(0) != NULL`.
 - **Reported as a strength, not a gap:** `xorg_libs/patches/libX11-1.8.7-phoenix-fontset-basename-ownership-58.patch` is a genuine upstream libX11 bug — `destroy_oc()` `Xfree()`s a `.rodata` string literal. glibc silently tolerated it; **libphoenix's allocator correctly aborted** (status 0x46), which is how it was found. The patch is upstreamable to xorg/libX11 as-is.
 - **★ Also a genuine upstream bug, in glamor this time**, and the most upstreamable finding in the X11 work: `glamor_init()` saves the previous `screen->DestroyPixmap` into `glamor_priv->saved_procs.destroy_pixmap` and installs `glamor_destroy_pixmap()`, which ends in a hard `return fbDestroyPixmap(pixmap)` and **never calls the saved pointer** — it is only read again to restore the hook at CloseScreen. Anything wrapped *below* glamor is silently cut out of the chain. Upstream xf86 never notices, because `glamor_init()` runs at ScreenInit and `DamageSetup()` later at extension init, so damage always wraps *above* glamor; this DDX brings damage up via `shadowSetup()` (`tools/x11-port/ddx/fbdev.c:591`) **before** `glamor_init()` (`:603`), i.e. into the one slot glamor does not honour. Consequence: `damageDestroyPixmap()` never ran for *any* pixmap, so `damage.c`'s teardown never destroyed `DamagePtr`s on dying pixmaps, glamor's stipple damage outlived its drawable, and `FreeGC` (`dix/gc.c:781`) released `gc->stipple` before the DDX `DestroyGC` at `:783` → `glamor_destroy_gc` → `glamor_invalidate_stipple` → `DamageUnregister()` on freed memory. Fixed by a screen-hook-only wrapper that does the same FBO teardown then calls `saved_procs.destroy_pixmap`, reinstating its own slot afterwards because `damageDestroyPixmap` unwraps and re-wraps with itself; the exported `glamor_destroy_pixmap()` is left untouched, since ~15 internal glamor callers use it to drop private pixmaps and must *not* traverse the screen chain. `tools/x11-port/patches/xorg-server-21.1.24-glamor-destroypixmap-chain.patch`, coord `bde9a44a3` — **6/6 X sessions crashed before it, 0/18 after**. The kernel half of the same crash is the vfork kstack / borrowed-map lifetime work above (`6d8f40a5`).
+
+  **★ Update (2026-09-09): the ordering described above was itself the bug, and it had a second,
+  silent consequence — this is the largest single X11 finding in the fork.** `shadowSetup()` calls
+  `DamageSetup()`, which wraps `screen->CreateGC` with `damageCreateGC`; `glamor_init()` then wraps
+  `CreateGC` with `glamor_create_gc`, and that function (`glamor/glamor_core.c:283`) ends in a hard
+  `fbCreateGC(gc); gc->funcs = &glamor_gc_funcs;` — it **never calls the saved `CreateGC` either**.
+  So with shadow first, `damageCreateGC` was bypassed for *every GC ever created*: damage never
+  wrapped `gc->funcs`, `damageValidateGC` never ran, `damageGCOps` was never installed, and
+  `DamageRegion` stayed **empty forever**. Measured: `damage calls = 0` across 320 presents. The only
+  thing putting pixels on HDMI was the DDX's 300 ms *idle safety-net* timer, always all 1080 rows — so
+  **the GPU desktop reached the screen ~2.3 times a second no matter how fast its clients ran**, which
+  is why it read as "sluggish" rather than as a bug. Unlike the `DestroyPixmap` case this produced no
+  crash, only silence, which is why it went unnoticed for so long. Fixed by initialising glamor
+  **before** `shadowSetup()`, i.e. putting damage *above* glamor — what upstream xf86 gets for free —
+  after which damage fires and presents become both partial and on-demand: **2.3 → 25.6 presents/s**.
+  Two DDX changes were needed to get there, and both were measured rather than assumed:
+  presenting per damaged **Y band** instead of per `RegionExtents` (a bounding box is full-height
+  whenever two clients are dirty, so it shipped all 1080 rows every time: 1080 → 21.8 rows/present),
+  and **accumulating** damage to present on a timer instead of from the damage callback — presenting
+  directly measured 336 presents/s and shipped *more* total rows than the whole-screen timer had.
+  Fitting two hardware points (1080 rows = 77 ms; ten 21-row presents = 32 ms) gives ≈1.74 ms fixed +
+  0.07 ms/row per present, from which bands closer than ~25 clean rows are worth merging. Reading back
+  only the damaged *columns* is a further 1.3× — but only on the readback: a per-row `lseek()+write()`
+  to `/dev/fb0` costs **80 µs**, so partial-X on the write side was a net loss (23.6 ms against
+  16.6 ms) and full-width rows are still written. Coord `7093916bd`, `ff8434d79`.
 
 ### 4. New board / target integration
 
@@ -1326,6 +1371,36 @@ Stated plainly so nothing here is taken on trust.
   `bde9a44a3` plus `tools/x11-port/patches/xorg-server-21.1.24-glamor-destroypixmap-chain.patch`,
   described in the ports section (§3). Quantified: **6/6 X sessions crashed before the fix, 0/18
   after.**
+
+**Measured dead ends, recorded so nobody re-runs them.** This fork's X11 performance work ended by
+*refuting* its own remaining hypotheses, and each refutation cost a cheap experiment instead of a
+risky change:
+
+- **Memory attributes are not the graphics bottleneck.** The X server's V3D buffers are mapped
+  `MAP_UNCACHED`, and the present's readback ran at ~200 MB/s, so a cached alias plus a range
+  invalidate looked like a large win — and would have been a coherency-sensitive change. `tools/memprobe`
+  (its own anonymous memory: no GPU, no device, no coherency question) measured **uncached sequential
+  reads at 1001 MB/s against cached 1316 MB/s** — only 1.3× apart, and *5× faster* than the readback
+  actually achieves. The mapping was never the constraint; the readback's cost is Mesa's own
+  `glReadPixels` work plus the BGRA↔RGBA CPU swizzle.
+- **The AF_UNIX poller broadcast is not the cost either.** Every read and write broadcasts to *all*
+  AF_UNIX pollers system-wide through one global lock, which looks obviously expensive. Going from 6 X
+  clients to 2 left the mean inter-read gap **unchanged** (2.839 → 2.785 ms).
+- **Deferring the screen present while a client request is in flight** buys nothing measurable
+  (10.03 fps against a 9.73–10.62 baseline). Reverted.
+- **Run-to-run spread on this stack is ±4.5%** (10.56 / 10.62 / 9.73 fps from identical, probe-free
+  code). Any graphics claim below ~10% has to be repeated before it means anything — which is why
+  several single-run figures in the X11 history should be read as directional only.
+
+**The one change that would still move GL-in-a-window**, and it is a project rather than a tuning
+pass: the client renders to an FBO, `glReadPixels` into its own memory, then `XPutImage` **1.2 MB per
+frame** back to the server, which uploads it into the screen texture — GPU → CPU → socket → CPU → GPU
+every frame, and the transfer *is* the cost (disabling presents alone took it 10.62 → 14.94 fps, so
+presents stalling that transfer are ~30–35% of it). The fix is not to make the transfer faster but to
+not do it: share the GPU buffer and send damage instead. Client and server already talk to the same
+`/dev/v3d-srv` and two concurrent daemon clients were proven bit-exact, so the plumbing exists — this
+would be a mini-DRI3 for this port. It affects only GL-in-a-window; the desktop itself is already at
+25.6 presents/s.
 
 **Known-open defects in this fork** (not hidden in the sections above):
 - **vkQuake intermittent missing torches** — present at a low rate; measured 9/9 clean on the
