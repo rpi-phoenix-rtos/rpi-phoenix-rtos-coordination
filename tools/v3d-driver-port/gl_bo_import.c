@@ -30,12 +30,19 @@
 #include <errno.h>
 #include <sys/mman.h>
 #include <sys/msg.h>
+#include <stdlib.h>
 
 #include "pipe/p_screen.h"
 #include "pipe/p_context.h"
 #include "pipe/p_state.h"
 #include "util/box.h"
 #include "frontend/winsys_handle.h"
+#include "main/menums.h"                 /* gl_api */
+#include "frontend/api.h"                /* st_config_options */
+#include "main/mtypes.h"                 /* gl_config, gl_context */
+#include "state_tracker/st_context.h"    /* st_create_context, st_context_teximage */
+#include "GL/gl.h"
+#include "GL/glext.h"
 #include "drm-uapi/drm_fourcc.h"
 
 /* The daemon's RPC ABI. Included by relative path deliberately: the shared
@@ -56,6 +63,7 @@
 struct pipe_screen_config;
 struct pipe_screen *v3d_screen_create(int fd, const struct pipe_screen_config *config,
                                       struct renderonly *ro);
+extern unsigned char _mesa_make_current(struct gl_context *ctx, void *draw, void *read);
 
 static oid_t v3d_oid;
 
@@ -208,7 +216,109 @@ int main(void)
 		printf("gl_bo_import: VERDICT FAIL — import mapped the wrong memory\n");
 		return 1;
 	}
-	printf("gl_bo_import: VERDICT PASS — Mesa imported a BO it did not allocate"
-	       " and sees the same pixels\n");
+	printf("gl_bo_import: [1/2] pipe-level import OK\n");
+
+	/*
+	 * Second half: wrap the imported resource as a GL TEXTURE and read it back
+	 * through GL. This is the rest of the server-side chain the X server needs --
+	 * resource_from_handle -> st_context_teximage -> a GL texture name, which is
+	 * all glamor_set_pixmap_texture() wants. Proving it here means step 3 only has
+	 * to add the glamor call and a way to carry {handle, geometry}, rather than
+	 * debugging the import inside the demo-critical server.
+	 */
+	{
+		struct gl_config visual;
+		struct st_config_options opts;
+		struct st_context *st;
+		GLuint tex = 0, fbo = 0;
+		GLenum fbs;
+		unsigned char *back;
+		unsigned rb_swapped = 0;
+
+		memset(&visual, 0, sizeof(visual));
+		memset(&opts, 0, sizeof(opts));
+		st = st_create_context(API_OPENGL_COMPAT, pipe, &visual, NULL, &opts, 0, 0);
+		if (st == NULL) {
+			printf("gl_bo_import: FAIL st_create_context\n");
+			return 1;
+		}
+		_mesa_make_current(st->ctx, NULL, NULL);
+
+		glGenTextures(1, &tex);
+		glBindTexture(GL_TEXTURE_2D, tex);
+		st_context_teximage(st, GL_TEXTURE_2D, 0, PIPE_FORMAT_R8G8B8A8_UNORM,
+			imported, 0);
+
+		glGenFramebuffers(1, &fbo);
+		glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+			GL_TEXTURE_2D, tex, 0);
+		fbs = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+		printf("gl_bo_import: imported-texture FBO status=0x%x (complete=0x%x)\n",
+			fbs, GL_FRAMEBUFFER_COMPLETE);
+		if (fbs != GL_FRAMEBUFFER_COMPLETE) {
+			printf("gl_bo_import: FAIL cannot render/read through the imported texture\n");
+			return 1;
+		}
+
+		back = malloc(TEX_BYTES);
+		if (back == NULL) {
+			printf("gl_bo_import: FAIL malloc\n");
+			return 1;
+		}
+		memset(back, 0, TEX_BYTES);
+		glFinish();
+		glReadPixels(0, 0, TEX_W, TEX_H, GL_RGBA, GL_UNSIGNED_BYTE, back);
+		glFinish();
+
+		/* glReadPixels' origin is bottom-left, so row i of the GL result is row
+		 * (TEX_H-1-i) of the linear buffer. Compare accordingly. */
+		bad = 0;
+		for (i = 0; i < TEX_H; i++) {
+			unsigned src_row = TEX_H - 1u - i;
+			unsigned j;
+
+			for (j = 0; j < TEX_STRIDE; j++) {
+				if (back[i * TEX_STRIDE + j] != pat(src_row * TEX_STRIDE + j)) {
+					bad++;
+				}
+			}
+		}
+		/* If it mismatches, say whether it is merely R<->B swapped: this stack has
+		 * a documented BGRA/RGBA seam, so name it rather than leaving a mystery. */
+		if (bad != 0) {
+			unsigned k;
+
+			rb_swapped = 1;
+			for (i = 0; i < TEX_H && rb_swapped; i++) {
+				unsigned src_row = TEX_H - 1u - i;
+
+				for (k = 0; k < TEX_W; k++) {
+					const unsigned char *g = &back[i * TEX_STRIDE + k * 4];
+					unsigned o = src_row * TEX_STRIDE + k * 4;
+
+					if (g[0] != pat(o + 2) || g[1] != pat(o + 1) ||
+					    g[2] != pat(o + 0) || g[3] != pat(o + 3)) {
+						rb_swapped = 0;
+						break;
+					}
+				}
+			}
+		}
+		printf("gl_bo_import: GL readback of the imported texture: %s (%u/%u bytes wrong)\n",
+			(bad == 0) ? "MATCH" : (rb_swapped ? "MATCH-with-R/B-SWAP" : "MISMATCH"),
+			bad, (unsigned)TEX_BYTES);
+		free(back);
+
+		if (bad != 0 && rb_swapped == 0) {
+			printf("gl_bo_import: VERDICT FAIL — GL sees different pixels\n");
+			return 1;
+		}
+		printf("gl_bo_import: [2/2] GL-texture wrap OK%s\n",
+			(bad == 0) ? "" : " (channel order differs — expected on this stack)");
+	}
+
+	printf("gl_bo_import: VERDICT PASS — a BO Mesa did not allocate is importable,"
+	       " mappable and usable as a GL texture\n");
 	return 0;
 }
