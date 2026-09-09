@@ -1484,11 +1484,34 @@ attributed, 0 unexplained** — 11 attributed to a SuperTuxKart crash (see the c
 that attribution is not sound), 6 the X desktop-exit bug being deliberately reproduced before it was
 fixed.
 
-⚠ **Recompute this before quoting it.** It was measured with a `uart-summary.sh` that could see
-neither a **truncated** fault message nor a **mid-print stop**. A desktop-exit wedge that hung the
-entire board reported *zero faults* under that tool, and that wedge was live across this very
-window — so both the 100 % denominator and "0 unexplained" are unsupported until re-derived with the
-fixed detector. The tool was fixed 2026-09-09; the figure was not re-run. **The caveat travels with the
+⚠ **The figure above was measured with a detector that could not see a board hang** — a
+`uart-summary.sh` blind to both a **truncated** fault message and a **mid-print stop**. A desktop-exit
+wedge that hung the entire board reported *zero faults* under it, and that wedge was live across the
+same window.
+
+**Recomputed 2026-09-09 with the fixed detector** (`scripts/reliability-tally.sh --since 20260908`,
+so the number is reproducible rather than hand-derived):
+
+| | |
+|---|---|
+| logs (non-empty) | **313** |
+| reached the `(psh)%` prompt | **313 — 100.0%** |
+| fault-bearing logs | **36** |
+| **logs ending MID-PRINT (board hang)** | **5** |
+
+The prompt rate survives. What the old figure missed is the last row, and the reason it matters is
+structural: **every one of those 5 runs had already reached a prompt**, because the hang happened
+*after* boot — so "reached the prompt" cannot see this class at all, and "0 unexplained" was
+unsupported rather than merely optimistic.
+
+All five are now attributed: two are the desktop-exit wedge (`xexit2`, `kmguard` — the run that
+reported zero faults), one is the `process_getName` fault storm (`dfree4`), and the remaining two are
+benign mid-line prints (console art from the shell demo, and a hex value from an A/B probe). **The
+three real hangs are all fixed** (shortlist rows 15 and 16).
+
+⚠ Scope the window when re-running: over *every* log on disk the same script reports 88.2% and 50%
+fault-bearing, because the archive reaches back to bring-up when the board frequently did not boot and
+faults were being reproduced on purpose. `--since` is therefore mandatory. **The caveat travels with the
 number: all 132 are netboot.** SD boot is unverified (no card in the host reader).
 `docs/misc/2026-09-08-boot-stability-tally.md`.
 
