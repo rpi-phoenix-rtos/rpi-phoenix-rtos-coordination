@@ -159,6 +159,45 @@ handle type straight to `v3d_bo_open_handle`. Two details to get right:
    composite that pixmap into the window on damage.
 4. Client: drop `glReadPixels`/`pack`/`XPutImage`; send the handle once and damage per frame.
 
+## ⚠ Step 4 as written is not implementable, and the ceiling is lower than it looks
+
+Two findings from orienting on the actual files (2026-09-09), before any code was
+written. Both change whether this work is worth doing, so they belong above the
+implementation notes rather than inside them.
+
+**1. "The client sends the handle" presupposes an export path that does not exist.**
+Step 2 gave this port `resource_from_handle` (import). There is no
+`resource_get_handle` (export), so a GL client has no way to ask Mesa for the
+daemon handle behind a texture it allocated. The way around it is to invert the
+allocation: the **client** creates the BO through the raw daemon RPC
+(`V3D_RPC_CREATE_BO`), imports it into its own Mesa with `resource_from_handle`,
+binds it as a GL texture with `st_context_teximage` and renders into it — so it
+knows the handle because it minted it. The server imports the same handle by the
+same route. `tools/v3d-driver-port/gl_bo_import.c` already proves every link of
+that chain on HW (FBO **complete**, readback `0/16384 bytes wrong`, no R/B swap),
+and it proves it for *both* sides, because both sides do the identical import.
+
+The cost of that inversion is the part to be honest about: it makes
+`gl_x11_window.c` an **st/gallium** client rather than a GL client, the way
+`tools/x11-port/glamor-shim/glamor_phoenix_ctx.c` is. That is a rewrite of the
+demo's GL client, not the "drop three calls" that step 4 describes.
+
+**2. The present survives buffer sharing, so the ceiling is ~1.7x, not ~5x.**
+Measured on the shipped image: 96.0 ms/frame = draw 2.7 + read 12.5 + pack 6.7 +
+put 58.0. Buffer sharing removes read + pack + put, which reads as 96 -> 22 ms.
+It does not, because the DDX still has to present the changed rows to
+`/dev/fb0`, and the fitted present cost is **1.74 ms + 0.07 ms/row**
+(`2026-09-08-glamor-screen-mirror-and-gl-window-rate.md`). A 480-row window is
+~35 ms of present per frame either way, and today that cost is hidden inside the
+58 ms `put`. So the realistic floor is **~55-60 ms/frame (~17 fps)**, from 96 ms
+(~10.4 fps).
+
+That is a real improvement and the design is sound. But it is a rewrite of the two
+components the demo depends on — the GL client and the X server's damage path — for
+~1.7x, on a bench that cannot test SD boot, against an image the owner has not yet
+flashed. **Owner decision, logged in the weekly log's section 1.** Everything needed
+to resume is in this file; nothing is half-applied.
+
 ## Risk, and the rule for doing it
 
 This touches the **demo-critical** X server, and the current build is verified and gated
