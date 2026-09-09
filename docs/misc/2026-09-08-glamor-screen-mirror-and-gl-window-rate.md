@@ -972,3 +972,67 @@ Measure it before touching it: time `v3d_store_tiled_image` (or the `v3d_resourc
 calls it) per upload and compare against the 331 ms. If it accounts for most of it, the same
 treatment that worked for the video blit applies. If it does not, the remaining suspect is the
 BO map/sync around the upload.
+
+---
+
+## 20. Mesa's upload path is exonerated too — the 360 ms is WAITING, and the arithmetic names it
+
+§19 predicted Mesa's CPU tiling. Measured both upload sites in one build, on a correct
+`--glamor-daemon` server, 0 faults (`rpi4b-uart-20260909-041027`, `…-x-xfer`):
+
+```
+v3d-phx: texture_subdata  n=32    map 0.00 ms  store 0.02 ms    1349 px/call  cpp=1
+v3d-phx: transfer_unmap   n=2784  0.15 ms/call               287147 px/call  cpp=4
+```
+
+Two things fall out.
+
+**The tiling hypothesis is wrong.** `v3d_texture_subdata` runs **32 times in a whole session** at
+1349 px with `cpp=1` — that is glamor's glyph cache, not the screen. The screen pixmap never reaches
+it, because the full-screen RT is forced RASTER (`should_tile`), so it takes the `!rsc->tiled`
+branch into the transfer path.
+
+**And the transfer path is not the cost either.** `transfer_unmap` at 287 147 px/call and `cpp=4`
+*is* the 640×480 window upload — and it costs **0.15 ms**. Even at the observed ~10 calls per frame
+the entire Mesa upload path is ~1.5 ms/frame, against 360 ms in `put`. So **Mesa is exonerated**,
+along with the GPU (1.5 ms), the CPU pixel work (17 ms) and AF_UNIX (213 MB/s).
+
+### Everything that does work is accounted for, so the time is being spent waiting
+
+Nothing in the chain is CPU-bound: the server sits at 37 % of one core of four, the socket is two
+orders of magnitude faster than needed, and every stage that touches pixels is now measured in
+single-digit milliseconds. A 1.2 MB `XPutImage` taking 360 ms with no component busy means the
+request is **blocked**, not computed.
+
+And there is an arithmetic fit worth testing before anything else. This port's `poll()` work records
+that AF_UNIX fds are readiness-woken but "the timed loop survives only as the fallback … back at
+20 ms". A 1.2 MB request does not fit a socket buffer, so it is drained in chunks:
+
+```
+1.2 MB / 64 KiB  = 18.75 chunks
+18.75 x 20 ms    = 375 ms      vs measured put = 337-360 ms
+```
+
+That is close enough to be worth one targeted test and too close to be coincidence. **Hypothesis:
+the X server's client fd is taking the 20 ms polling fallback rather than being readiness-woken, so
+every chunk of a large request costs a full poll tick.** If true it is a Phoenix-level defect that
+slows *every* X client in proportion to request size, and the desktop's sluggishness is one symptom.
+
+### The one test that settles it
+
+Instrument the server's request read loop: count `read()` calls per `XPutImage` and time the wait
+before each. Three outcomes:
+
+- **~19 reads, ~20 ms apart** → confirmed; fix the readiness wakeup for this fd class, and expect
+  the whole desktop to get faster, not just this window.
+- **~19 reads, back-to-back** → the socket buffer is the limit and the fix is a larger buffer or a
+  chunked client; the 360 ms would then need another explanation.
+- **1 read** → the request is not chunked at all and the wait is elsewhere in dispatch.
+
+Note the count-per-frame anomaly to check at the same time: 2784 unmaps over ~275 frames is ~10
+uploads per frame for a single 640×480 window. If that is real rather than an artefact of averaging,
+the client is being asked to upload the same region ten times over, which is its own bug.
+
+**Four hypotheses have now been refuted by measurement in this investigation** (spans, copy,
+readback, CPU tiling) and one confirmed (the per-row upload, worth 2.5×). Measuring first has been
+cheaper than patching first every single time.
