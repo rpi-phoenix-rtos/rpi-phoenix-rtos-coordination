@@ -1784,3 +1784,44 @@ If fps does *not* scale with the round-trip count, the inverse law above is wron
 and the cost is per-byte somewhere else. If the ring allocation fails, the socket
 silently keeps the 4 kB **default** (worse than today), so the X server must step
 down 256 kB → 64 kB rather than ask once.
+
+### §29 result — prediction REFUTED; the ring is not the constraint
+
+| ring | got/read | reads/frame | mean gap | read-span/frame | `put` | fps |
+|---|---|---|---|---|---|---|
+| 64 kB | 32.6 kB | 37.8 | 2.839 ms | 107 ms | 68.6 ms | 9.46 |
+| **256 kB** | **92.8 kB** | **13.4** | **7.205 ms** | 96.5 ms | 55.2 ms | **10.62** |
+
+Round-trips fell **2.8×**, exactly as predicted — and the per-round-trip cost rose
+**2.5×**, so the product barely moved. End-to-end throughput is **flat at ~12 MB/s
+in both configurations**. Predicted ~16 fps; got 10.62. The inverse law of §29 is
+wrong: the cost is not a fixed per-round-trip latency.
+
+**The number that reframes it:** `rpi4-ipcprobe`'s `thr_one()` uses **`fork()` +
+`socketpair()`** — genuinely cross-process — and reaches **213 MB/s on the DEFAULT
+4 kB ring with no `poll()` in the loop**. So the same kernel primitive, with a ring
+16× *smaller* than the one we just raised, is **17× faster** than the X path.
+
+That rules out buffering, the ring, and (per the earlier test) the poller
+broadcast. What is left is the **per-operation overhead of the X path**: the
+server does `ospoll_wait` → `read` → `ospoll_wait` → `read`, and Xlib chunks the
+client's 1.2 MB into its own output-buffer-sized writes. ipcprobe does neither —
+tight blocking `write`/`read` with no poll. At 12 MB/s and ~1.2 MB/frame the budget
+is ~94 ms/frame, which is ~1.2 ms per 16 kB Xlib write if Xlib's buffer is the
+chunk size.
+
+**Next measurement, and it is the untested half:** instrument the CLIENT — count
+`write`/`writev` calls and bytes per `XPutImage` in `gl_x11_window.c`'s frame. If
+it is ~75 writes of 16 kB, the fix is to make Xlib hand the image over in one large
+`writev` (or raise `dpy->bufmax`), and the server's `poll`-per-read is the other
+half. Both are userspace, no kernel change.
+
+The 256 kB ceiling is kept: measured +12%, no regression, and it stops being
+marginal once the per-operation overhead is addressed. Kernel
+`phoenix-rtos-kernel 137ec58f`, manifest `manifests/2026-09-09-x11-rcvbuf-256k.md`.
+
+**Detector note, third occurrence:** the post-change seam check reported SEAM — on
+my own stale ROI. The xbill layout fix moved the GoL xterm into the strip that used
+to be bare desktop. Re-checked on strips that are actually bare in the new layout:
+244 000 pixels exact, zero column jumps, NO SEAM. Every ROI-based check in this
+file has now had to be re-aimed at least once; aim them at the *current* layout.
