@@ -1114,3 +1114,86 @@ round-trips are not inherently expensive; the difference is almost certainly tha
 ipcprobe's reader spins while the X server goes through `ospoll_wait` every time
 (mean blocked 0.384 ms). If that holds, the buffer fix is **necessary but not
 sufficient**, and lands nearer 50 ms/frame than 25.
+
+## §22 — the mirror artefacts: signature confirmed, then fixed by opting glamor OUT of the size gate
+
+### The crop test that settled the mechanism
+
+I had read the owner's bottom-left "mirrored clippy" two different ways in the
+same session — *content copied to the mirrored screen position* versus *content
+flipped in place* — and those are different bugs. The static HDMI frame
+`artifacts/hdmi/20260909-025215-xclean-tick.png` settles it without a Pi cycle.
+
+Scanning the left 70 px strip for non-background rows finds exactly two icon
+bands: **y 0–63** and **y 1018–1079**. Window Maker draws its Clip once, at
+top-left; nothing belongs at bottom-left. Cropping both 64×64 tiles:
+
+| comparison | mean abs diff |
+|---|---|
+| bottom vs top, as-is | 51.4 |
+| bottom vs **vflip(top)** | 30.5 → **6.85** at dy=+2 |
+| bottom vs hflip(top) | 64.2 |
+| bottom vs rot180(top) | 57.6 |
+
+6.85 with a two-pixel offset is an exact match through HDMI capture noise. And
+the tile sits at 1016–1079, which for H=1080 is precisely `y' = H-1-y` of
+0–63. So it is **both**: the box was written to its Y-mirrored screen position
+*and* with its rows reversed — one single `y' = H-1-y` transform applied to a box
+on the screen pixmap, while everything around it was not.
+
+(The GoL-xterm band could not be confirmed the same way — MAD 112 against the
+mirror source — which is expected: `top` is live, so the mirrored band is a stale
+snapshot of what it showed when the bad transfer happened. The static Clip is the
+clean instance.)
+
+### Why that transform existed at all
+
+`st_atom_framebuffer.c` forces `Y_0_TOP` for any FBO `>= 1024x768`, on the theory
+that a full-screen FBO is the scanout surface. glamor's screen pixmap is
+1920x1080 and so was caught by it — but it is **not** scanout-backed: it is a
+plain GL texture that the DDX presents by `glReadPixels` into a shadow it
+`write()`s to `/dev/fb0`. Forcing `Y_0_TOP` therefore put every glamor GL path
+into a flipped coordinate world, which needed **three** hand-rolled compensating
+flips to come out upright: the `glamor_transfer.c` upload flip, the matching
+download flip, and `PHX_READBACK_FLIP_Y` in the shim. Any path that missed one
+emitted its box at `y' = H-1-y`. That is the artefact, and it is a *structural*
+consequence of the arrangement, not a bug in one function — which is why hunting
+for the specific caller was the wrong move.
+
+### The fix (X path only; the games are untouched)
+
+`phx_scanout_flip_gate`, a new `int` in `st_atom_framebuffer.c` defaulting to
+**1**, now gates the heuristic. `glamor_phoenix_ctx.c` sets it to **0** before
+`st_create_context`, so the X server's screen pixmap stays `Y_0_BOTTOM` — exactly
+what upstream Mesa would give it — and all three compensators are deleted:
+
+* `xorg-server-21.1.24-glamor-screen-upload-yflip.patch` → `reverted_core_patches`
+* `xorg-server-21.1.24-glamor-screen-upload-bulk.patch` → `reverted_core_patches`
+  (it only ever made the *mirrored* upload one `glTexSubImage2D` instead of one
+  per row; upstream's unflipped path is a single bulk call already, so reverting
+  it **keeps** the 2.5× and drops the scratch buffer)
+* `PHX_READBACK_FLIP_Y` 1 → 0
+
+`libv3d-phoenix.a` is shared with the five games, but the flag defaults to 1 and
+only the X shim clears it, so the games' behaviour is bit-identical and their
+binaries are not even relinked. This is deliberately **not** the full work order
+(`docs/misc/2026-09-08-flipy-scanout-gate-work-order.md`): that replaces the size
+test with a real scanout predicate for *everyone* and needs a 6-app soak. This
+change needs one X cycle, and cannot regress a game.
+
+### Prediction, recorded before the cycle
+
+Two coherent end-states exist, and they differ by one `#define`:
+
+* **S1 — what is built:** gate off, transfers unflipped, readback unflipped. If
+  glamor lays pixmap row 0 into texture row 0 the way it does upstream, the
+  desktop renders upright and **the mirrored Clip tile at y 1016–1079 is gone**.
+* **S2 — if the whole desktop comes back upside down:** my readback convention is
+  inverted; put `PHX_READBACK_FLIP_Y` back to 1 and nothing else. glamor is still
+  internally consistent (all its paths agree, only presentation flips), so the
+  artefact class is fixed in S2 as well.
+
+Either way the fix holds; the cycle only picks which. The check is the same crop:
+scan the left strip for icon bands and expect **one**, not two. A *partial* fix —
+some artefacts gone, some not — would refute the structural account and mean
+there is a second, independent bug.
