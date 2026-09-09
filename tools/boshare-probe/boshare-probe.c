@@ -79,6 +79,7 @@ int main(void)
 	uint32_t handle;
 	uint64_t pa_parent;
 	uint32_t size;
+	uint32_t gpuva_parent;
 	void *cpu;
 	pid_t pid;
 	int st, rc;
@@ -102,8 +103,9 @@ int main(void)
 	handle = resp.handle;
 	pa_parent = resp.pa;
 	size = resp.size;
-	printf("boshare-probe: parent created handle=%u pa=0x%llx size=%u\n",
-		handle, (unsigned long long)pa_parent, size);
+	gpuva_parent = resp.gpuva;
+	printf("boshare-probe: parent created handle=%u pa=0x%llx size=%u gpuva=0x%x\n",
+		handle, (unsigned long long)pa_parent, size, gpuva_parent);
 
 	cpu = map_pa(pa_parent, size);
 	if (cpu == NULL) {
@@ -144,6 +146,30 @@ int main(void)
 			(resp.pa == pa_parent) ? "SAME" : "DIFFERENT");
 		if (resp.pa != pa_parent) {
 			_exit(2);
+		}
+
+		/* The only daemon-side call Mesa's importer makes:
+		 * v3d_bo_open_handle() (v3d_bufmgr.c:339) needs DRM_IOCTL_V3D_GET_BO_OFFSET
+		 * to succeed for the handle and asserts the returned offset is non-zero.
+		 * If that works for a FOREIGN handle, the import is mechanical. */
+		{
+			uint32_t bo_size = resp.size;
+			v3d_rpc_req_t oreq;
+			v3d_rpc_resp_t oresp;
+
+			memset(&oreq, 0, sizeof(oreq));
+			oreq.op = V3D_RPC_GET_BO_OFFSET;
+			oreq.handle = handle;
+			rc = call(&oreq, &oresp);
+			printf("boshare-probe:   child GET_BO_OFFSET(handle=%u) rc=%d gpuva=0x%x"
+			       " (parent gpuva=0x%x) %s\n", handle, rc, oresp.gpuva,
+			       gpuva_parent,
+			       (rc == 0 && oresp.gpuva == gpuva_parent && oresp.gpuva != 0)
+			               ? "SAME+NONZERO" : "PROBLEM");
+			if (rc != 0 || oresp.gpuva != gpuva_parent || oresp.gpuva == 0) {
+				_exit(2);
+			}
+			resp.size = bo_size;
 		}
 
 		ccpu = map_pa(resp.pa, resp.size);
