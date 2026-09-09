@@ -1889,3 +1889,47 @@ invalidate before readback is the same fix class that took `hevc-play` 4.2 → 2
 If the readback drops to ~1–2 ms, a present becomes ~6 ms and the per-frame stall
 roughly halves. Coherency-sensitive, so it wants a careful invalidate and its own
 turn — and, given the spread above, repeated runs.
+
+## §31 — the cached-alias plan is DEAD: uncached DRAM is 5× faster than the readback
+
+§30 named the `MAP_UNCACHED` mapping of the X server's V3D buffers as the likely
+cap on the present's readback, and a cached alias plus range invalidate as the fix.
+That would have been a coherency-sensitive change, so the prize was priced first
+with `tools/memprobe` — its own anonymous memory, no GPU, no device, no coherency
+question. 8 MiB per pass, best of 4, on hardware:
+
+| mapping | sequential read | memcpy out |
+|---|---|---|
+| cached (default) | 6.1 ms — **1316 MB/s** | 12.1 ms — 661 MB/s |
+| `MAP_UNCACHED` | 8.0 ms — **1001 MB/s** | 19.2 ms — 417 MB/s |
+| uncached + contiguous | 8.0 ms — 1001 MB/s | 18.9 ms — 424 MB/s |
+
+**Uncached sequential reads do 1001 MB/s — 5× faster than the ~200 MB/s the
+no-conversion readback achieves.** So the mapping is not the bottleneck, cached
+would buy at most 1.3×, and the plan is dead. One cheap probe replaced a delicate
+change that could not have paid for itself.
+
+Where the whole-screen readback (8.3 MB) actually goes, now that memory is priced:
+
+| | ms |
+|---|---|
+| irreducible uncached memcpy of those bytes | ~19 |
+| Mesa's `glReadPixels` overhead above that | ~22 |
+| BGRA↔RGBA CPU swizzle (§24) | ~19 |
+
+**X performance is now at diminishing returns.** The present is 13.4 ms and its
+floor is ~8 ms even if both software terms were halved, which would cut the GL
+client's per-frame stall from ~25 ms to ~15 ms — around +10%, i.e. barely twice
+the ±4.5% run-to-run spread of §30. Not worth further risk.
+
+### The one change that WOULD fix the GL window, and its cost
+
+The client renders to an FBO, `glReadPixels` into its own memory, then `XPutImage`
+1.2 MB back to the server, which uploads it into the screen texture: GPU → CPU →
+socket → CPU → GPU every frame. The transfer itself is the cost, so the fix is not
+to make it faster but to **not do it** — share the GPU buffer, and send damage
+instead of pixels. Both the client and the server already talk to the same
+`/dev/v3d-srv`, and two concurrent daemon clients were proven bit-exact (M3b), so
+the plumbing exists. That is a mini-DRI3 for this port: a real project, not a
+tuning pass, and it only matters for GL-in-a-window (a demo app), not for the
+desktop, which is already at 25.6 presents/s.
