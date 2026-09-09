@@ -237,3 +237,40 @@ objection; it does not establish that the predicate change makes STK upright at 
 outcome actually wanted. The cheapest next probe is to extend this harness to a two-hop chain
 (RTT -> RTT -> dest) and then to a scanout-backed destination via `v3d_phoenix_set_next_scanout()`,
 which is the one structural difference between the harness and the games.
+
+### Second measurement pass: two hops also preserve, and the scanout probe did NOT run
+
+Extended the harness with two more steps and re-ran (0 faults):
+
+| step | what | memory rows in the 1920x1080 dest |
+|---|---|---|
+| C | one hop: band -> SMALL RTT -> quad -> LARGE | 540..1079 |
+| **D** | **two hops: SMALL -> SMALL2 -> LARGE** | **540..1079 — same** |
+| E | intended: quad onto a real SCANOUT-backed dest | **claim REFUSED (`active=0 nbuf=1`)** |
+
+**D removes the "8 passes, not one hop" hypothesis:** chaining a second mismatched-orientation RTT
+does not accumulate a flip either.
+
+**E did not test what it was meant to.** `v3d_phoenix_set_next_scanout()` alone is not enough — the
+claim also needs `v3d_phoenix_scanout_init(pa, w, h, pitch)` to have run, which the games' SDL
+present layer does with the fb's physical address from `/dev/fb0` and this harness does not. With
+`W.scanout_*` unset, `ioc_create_bo` refuses and the destination is a plain DRAM BO, i.e. E was
+just a second copy of C. The harness now says so in its own output instead of printing
+"SCANOUT dest" regardless.
+
+**Where that leaves the work order — the value case is now WEAKER, not stronger.** Three candidate
+explanations for STK's flip were listed; two are now measured and refuted (single mismatched hop,
+multi-hop chaining). The orientation plumbing in Mesa looks well-behaved. That makes it
+progressively less likely that STK's flip lives in the size gate at all — and if it does not, then
+**fixing the gate would not deliver STK's 2.2x**, which was the main new argument for doing this
+work. The gate is still a real defect worth removing for its own sake (five per-app compensators,
+and every future large-FBO port flipping until someone adds a sixth), but the fps case should be
+treated as unproven until STK's flip is actually located.
+
+Remaining probes, cheapest first:
+1. finish E properly: call `v3d_phoenix_scanout_init()` with the PA from `/dev/fb0`
+   (`RPI4FB_GETMODE`) before the claim. Note the scanout BO differs in **tiling** (forced RASTER)
+   and trips the `swap_color_rb` heuristic — both documented as COLOUR concerns, not Y, so this is
+   worth eliminating but is not the likely culprit.
+2. instrument STK itself: log `fb_orientation` per FBO bind for one frame at 0.5 and at 0.75. That
+   directly shows which pass changes class, instead of inferring it from a synthetic band.

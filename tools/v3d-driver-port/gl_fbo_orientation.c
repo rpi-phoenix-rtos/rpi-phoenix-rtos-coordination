@@ -63,6 +63,18 @@ extern unsigned char _mesa_make_current(struct gl_context *ctx,
                                         struct gl_framebuffer *drawFb,
                                         struct gl_framebuffer *readFb);
 
+/* In-process winsys (v3d_phoenix_winsys.c): claim the HDMI scanout pages for the
+ * NEXT BO created. This is how the games' present layer gets a genuinely
+ * scanout-backed destination, and it is the one structural difference between
+ * steps A-C and what STK actually does. */
+/* Weak, so the DAEMON flavour of this harness still links: the daemon archive is
+ * "V3D minus winsys", so these winsys symbols are absent there. The harness is
+ * about the in-process path (which is what the games use) -- the daemon build is
+ * just a by-product of the shared builder. */
+extern void v3d_phoenix_set_next_scanout(void) __attribute__((weak));
+extern int v3d_phoenix_scanout_active(void) __attribute__((weak));
+extern int v3d_phoenix_scanout_nbuf(void) __attribute__((weak));
+
 #define SMALL_W 960
 #define SMALL_H 540
 #define LARGE_W 1920
@@ -325,6 +337,128 @@ int main(void)
 	printf("fboorient: [C] band via SMALL RTT, textured quad onto LARGE -> memory rows %d..%d (%u of %d)\n",
 	       fC, lC, nC, LARGE_H);
 	printf("fboorient: GL error=0x%x\n", glGetError());
+
+	/* ---- D: two-hop chain (SMALL -> SMALL2 -> LARGE) ----
+	 * STK chains 8 FBO binds per frame, not one. If the flip enters per hop
+	 * rather than once, two hops land opposite to one hop. */
+	{
+		struct pipe_resource *rtSmall2;
+		GLuint texSmall2 = 0, fboSmall2 = 0;
+		int fD = -1, lD = -1;
+		unsigned int nD = 0u;
+
+		tmpl.width0 = SMALL_W;
+		tmpl.height0 = SMALL_H;
+		rtSmall2 = pscreen->resource_create(pscreen, &tmpl);
+		if (rtSmall2 != NULL) {
+			glGenTextures(1, &texSmall2);
+			glBindTexture(GL_TEXTURE_2D, texSmall2);
+			st_context_teximage(st, GL_TEXTURE_2D, 0, PIPE_FORMAT_R8G8B8A8_UNORM, rtSmall2, 0);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+			glGenFramebuffers(1, &fboSmall2);
+			glBindFramebuffer(GL_FRAMEBUFFER, fboSmall2);
+			glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texSmall2, 0);
+
+			/* hop 1: SMALL (already holds the band from step C) -> SMALL2 */
+			glViewport(0, 0, SMALL_W, SMALL_H);
+			glUseProgram(progTex);
+			glUniform1i(glGetUniformLocation(progTex, "src"), 0);
+			glActiveTexture(GL_TEXTURE0);
+			glBindTexture(GL_TEXTURE_2D, texSmall);
+			glBufferData(GL_ARRAY_BUFFER, sizeof(fullVerts), fullVerts, GL_STATIC_DRAW);
+			glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, (void *)0);
+			glClear(GL_COLOR_BUFFER_BIT);
+			glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+			glFinish();
+
+			/* hop 2: SMALL2 -> LARGE */
+			glBindFramebuffer(GL_FRAMEBUFFER, fboLarge);
+			glViewport(0, 0, LARGE_W, LARGE_H);
+			glBindTexture(GL_TEXTURE_2D, texSmall2);
+			glClear(GL_COLOR_BUFFER_BIT);
+			glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+			glFinish();
+			(void)redRows(pipe, rtLarge, LARGE_W, LARGE_H, &fD, &lD, &nD);
+			printf("fboorient: [D] two hops (SMALL->SMALL2->LARGE) -> memory rows %d..%d (%u of %d)\n",
+			       fD, lD, nD, LARGE_H);
+		}
+	}
+
+	/* ---- E: destination is a REAL scanout-backed BO ----
+	 * The decisive difference from B/C. For a scanout BO memory row 0 IS the top
+	 * of the display, so this yields an ABSOLUTE answer: an NDC bottom-half band
+	 * should end up in the BOTTOM half of the screen. */
+	{
+		struct pipe_resource *rtScan;
+		GLuint texScan = 0, fboScan = 0;
+		int fE = -1, lE = -1, claimed = 0;
+		unsigned int nE = 0u;
+
+		tmpl.width0 = LARGE_W;
+		tmpl.height0 = LARGE_H;
+		if (v3d_phoenix_set_next_scanout == NULL) {
+			printf("fboorient: [E] SKIPPED (no in-process winsys in this build)\n");
+			rtScan = NULL;
+		}
+		else {
+			v3d_phoenix_set_next_scanout();
+			rtScan = pscreen->resource_create(pscreen, &tmpl);
+			printf("fboorient: [E] scanout claim: active=%d nbuf=%d\n",
+			       (v3d_phoenix_scanout_active != NULL) ? v3d_phoenix_scanout_active() : -1,
+			       (v3d_phoenix_scanout_nbuf != NULL) ? v3d_phoenix_scanout_nbuf() : -1);
+		}
+		if (rtScan != NULL) {
+			glGenTextures(1, &texScan);
+			glBindTexture(GL_TEXTURE_2D, texScan);
+			st_context_teximage(st, GL_TEXTURE_2D, 0, PIPE_FORMAT_R8G8B8A8_UNORM, rtScan, 0);
+			glGenFramebuffers(1, &fboScan);
+			glBindFramebuffer(GL_FRAMEBUFFER, fboScan);
+			glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texScan, 0);
+			printf("fboorient: [E] scanout FBO status=0x%x\n", glCheckFramebufferStatus(GL_FRAMEBUFFER));
+
+			/* Re-author the band in SMALL, then quad it onto the scanout dest. */
+			glBindFramebuffer(GL_FRAMEBUFFER, fboSmall);
+			glViewport(0, 0, SMALL_W, SMALL_H);
+			glUseProgram(progFlat);
+			glBufferData(GL_ARRAY_BUFFER, sizeof(bandVerts), bandVerts, GL_STATIC_DRAW);
+			glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, (void *)0);
+			glClear(GL_COLOR_BUFFER_BIT);
+			glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+			glFinish();
+
+			glBindFramebuffer(GL_FRAMEBUFFER, fboScan);
+			glViewport(0, 0, LARGE_W, LARGE_H);
+			glUseProgram(progTex);
+			glUniform1i(glGetUniformLocation(progTex, "src"), 0);
+			glActiveTexture(GL_TEXTURE0);
+			glBindTexture(GL_TEXTURE_2D, texSmall);
+			glBufferData(GL_ARRAY_BUFFER, sizeof(fullVerts), fullVerts, GL_STATIC_DRAW);
+			glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, (void *)0);
+			glClear(GL_COLOR_BUFFER_BIT);
+			glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+			glFinish();
+			(void)redRows(pipe, rtScan, LARGE_W, LARGE_H, &fE, &lE, &nE);
+			claimed = ((v3d_phoenix_scanout_active != NULL) && (v3d_phoenix_scanout_active() != 0));
+			printf("fboorient: [E] band via SMALL RTT onto a %s dest -> memory rows %d..%d (%u of %d)\n",
+			       claimed ? "SCANOUT-BACKED" : "plain-DRAM (CLAIM REFUSED)", fE, lE, nE, LARGE_H);
+			if (claimed == 0) {
+				/* Do not let this read as a scanout result. The claim needs
+				 * v3d_phoenix_scanout_init(pa, w, h, pitch) to have run first --
+				 * the games' SDL present layer does that with the fb's physical
+				 * address from /dev/fb0; this harness does not, so W.scanout_* is
+				 * unset and ioc_create_bo refuses. Without it [E] is just a second
+				 * copy of [C]. */
+				printf("fboorient: [E] NOT A SCANOUT TEST — needs v3d_phoenix_scanout_init(pa,w,h,pitch)\n"
+				       "           first (pa from /dev/fb0 RPI4FB_GETMODE). Treat [E] as a repeat of [C].\n");
+			}
+			else if (nE > 0u) {
+				printf("fboorient: [E] => the band is in the %s half of the SCREEN (row 0 = top); "
+				       "an NDC bottom-half band should read BOTTOM\n",
+				       (fE < (LARGE_H / 2)) ? "TOP" : "BOTTOM");
+			}
+		}
+	}
 
 	/* Verdict. B is the band drawn straight into the destination; C is the same
 	 * band routed through the mismatched-orientation RTT. Same half => the round
