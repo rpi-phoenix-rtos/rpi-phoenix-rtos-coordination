@@ -88,8 +88,20 @@ core_archives=(
 # Rebuilding one archive is faster and occasionally wrong, which is the worst
 # trade available here.
 glamor_core_patches=(
+  glamor-rgba-upload
   glamor-destroypixmap-chain
+)
+# Patches that were applied in the past and must now be REVERSED out of an
+# existing build tree (a fresh extract simply never gets them). Both were
+# compensators for Mesa's size-based scanout Y-flip, which the glamor shim now
+# opts out of (phx_scanout_flip_gate = 0), so the flip they corrected is gone:
+#   - screen-upload-yflip: wrote screen-pixmap uploads AND downloads Y-mirrored.
+#   - screen-upload-bulk:  made that mirrored upload one glTexSubImage2D instead
+#     of one per row. Reverting it keeps the speed -- upstream's unflipped path
+#     is a single bulk glTexSubImage2D already.
+reverted_core_patches=(
   glamor-screen-upload-bulk
+  glamor-screen-upload-yflip
 )
 # Patches to os/ and other backend-independent core code. Applied for every
 # build, glamor or not.
@@ -99,6 +111,19 @@ os_core_patches=(
 # Set to 1 by apply_core_patches when a patch actually landed, so the
 # "already built" early return below is skipped and the full build runs.
 GLAMOR_PATCH_LANDED=0
+revert_core_patches() {
+  local name pf
+  for name in "${reverted_core_patches[@]}"; do
+    pf="$ROOT/tools/x11-port/patches/xorg-server-${VER}-${name}.patch"
+    [ -f "$pf" ] || continue
+    if patch -d "$KD" -p1 -R -N --dry-run <"$pf" >/dev/null 2>&1; then
+      echo "=== reverting retired core patch: $name ==="
+      patch -d "$KD" -p1 -R -N <"$pf" >/dev/null 2>&1 || true
+      GLAMOR_PATCH_LANDED=1
+    fi
+  done
+}
+
 apply_core_patches() {
   local name pf list=("${os_core_patches[@]}")
   [ "$GLAMOR" = 1 ] && list+=("${glamor_core_patches[@]}")
@@ -184,6 +209,7 @@ core_built() {
 # it could rebuild libglamor but could no longer influence the already-evaluated
 # core_built decision. It has to run first, and core_built has to consult its
 # result.
+revert_core_patches
 apply_core_patches
 
 if core_built; then
@@ -257,25 +283,14 @@ fi
 # build-xfbdev.sh from these archives), so `make` only compiles the libs. It can
 # still exit non-zero on a trailing no-op target; the archive presence check below
 # is the authoritative success gate.
-# Phoenix RPi4 glamor R/B-swap fix (durable core-source patch): glamor's depth-24/32
-# CPU<->pixmap transfer describes stock little-endian BGRA/8888_REV, but this port's
-# fbdev DDX + fb use RGBA byte order (byte0=R, the #19 SET_PIXEL_ORDER fix) and glamor's
-# internal textures are GL_RGBA — so XPutImage'd content came out red<->blue swapped.
-# Apply before the glamor build so libglamor.a picks it up. patch -N is idempotent (a
-# fresh-extracted tree gets it; an already-patched tree is a no-op).
-if [ "$GLAMOR" = 1 ]; then
-  GLAMOR_RGBA_PATCH="$ROOT/tools/x11-port/patches/xorg-server-${VER}-glamor-rgba-upload.patch"
-  [ -f "$GLAMOR_RGBA_PATCH" ] && patch -d "$KD" -p1 -N <"$GLAMOR_RGBA_PATCH" >/dev/null 2>&1 || true
-  # Y-flip fix: screen-pixmap uploads are written Y-mirrored to match the raster-flipped
-  # rendered content that the readback shim un-flips whole-screen (else XPutImage'd
-  # content shows upside-down). Gated on the screen pixmap; offscreen pixmaps untouched.
-  GLAMOR_YFLIP_PATCH="$ROOT/tools/x11-port/patches/xorg-server-${VER}-glamor-screen-upload-yflip.patch"
-  [ -f "$GLAMOR_YFLIP_PATCH" ] && patch -d "$KD" -p1 -N <"$GLAMOR_YFLIP_PATCH" >/dev/null 2>&1 || true
-  # DestroyPixmap chain fix: applied here for the full build (the archive is built
-  # by the make below, so no separate rebuild is needed on this path).
-  GLAMOR_CHAIN_PATCH="$ROOT/tools/x11-port/patches/xorg-server-${VER}-glamor-destroypixmap-chain.patch"
-  [ -f "$GLAMOR_CHAIN_PATCH" ] && patch -d "$KD" -p1 -N <"$GLAMOR_CHAIN_PATCH" >/dev/null 2>&1 || true
-fi
+# The glamor core patches (R/B-swap fix, DestroyPixmap chain) are applied by
+# apply_core_patches above, which dry-runs each one first. They used to be applied
+# here with a bare `patch -N`, on the assumption that -N makes a re-apply a no-op.
+# It does not, reliably: once reverting the retired Y-flip patches shifted the
+# surrounding lines, -N stopped recognising the R/B hunks as already applied and
+# stacked SEVEN copies of glamor_phoenix_transfer_format into glamor_transfer.c,
+# so libglamor.a failed to build ("redefinition of ..."). Never apply a patch
+# without a dry-run guard.
 
 echo "=== building $NV core (make -j$(nproc)) ==="
 ( cd "$KD" && make -j"$(nproc)" >/tmp/$NV-build.log 2>&1 ) \

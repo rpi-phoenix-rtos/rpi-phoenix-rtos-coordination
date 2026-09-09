@@ -94,6 +94,9 @@ struct pipe_screen_config;
 struct renderonly;
 struct pipe_screen *v3d_screen_create(int fd, const struct pipe_screen_config *config,
                                       struct renderonly *ro);
+/* Mesa: st_atom_framebuffer.c -- 0 disables the size-based scanout Y-flip. */
+extern int phx_scanout_flip_gate;
+
 extern unsigned char _mesa_make_current(struct gl_context *ctx,
                                         struct gl_framebuffer *drawFb,
                                         struct gl_framebuffer *readFb);
@@ -173,6 +176,16 @@ static int phx_gl_bringup(void)
 
 	memset(&visual, 0, sizeof(visual));
 	memset(&opts, 0, sizeof(opts));
+	/* Our screen pixmap is a plain GL texture that the DDX presents by
+	 * glReadPixels into a shadow it write()s to /dev/fb0 -- it is NOT
+	 * scanout-backed, so Mesa's ">=1024x768 means scanout, render Y_0_TOP"
+	 * heuristic must not fire for this context. Leaving it on put every glamor
+	 * GL path into a flipped coordinate world that needed three hand-rolled
+	 * compensating flips (this upload flip, the download flip, and the readback
+	 * flip below); any path that missed one mirrored its box to y' = H-1-y.
+	 * With the gate off we are simply upstream glamor on an upstream driver. */
+	phx_scanout_flip_gate = 0;
+
 	phx_st = st_create_context(API_OPENGL_COMPAT, pipe, &visual, NULL, &opts, 0, 0);
 	if (phx_st == NULL) {
 		fprintf(stderr, "glamor-phx: st_create_context NULL\n");
@@ -233,7 +246,12 @@ static void phx_make_current(struct glamor_context *glamor_ctx)
  * RGB order unchanged. Do NOT "fix" this in the DDX masks instead -- they are
  * correct, and changing them would break the software path that works.
  */
-#define PHX_READBACK_FLIP_Y 1
+/* Compensator for the Mesa size gate, now disabled (phx_scanout_flip_gate = 0):
+ * with the screen pixmap left Y_0_BOTTOM, glamor lays its rows down in the
+ * texture the way upstream does, so glReadPixels at the requested band hands the
+ * DDX X scanlines in top-to-bottom order already and no flip is wanted. If the
+ * whole desktop comes back upside down, this is the single knob to put back. */
+#define PHX_READBACK_FLIP_Y 0
 
 static GLuint phx_readback_fbo = 0;
 
