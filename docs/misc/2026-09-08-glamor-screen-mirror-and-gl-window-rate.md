@@ -1933,3 +1933,55 @@ instead of pixels. Both the client and the server already talk to the same
 the plumbing exists. That is a mini-DRI3 for this port: a real project, not a
 tuning pass, and it only matters for GL-in-a-window (a demo app), not for the
 desktop, which is already at 25.6 presents/s.
+
+## §32 — STK's crash is INTERMITTENT and not in one place; "teardown" was my inference, not a fact
+
+The allocator validation from `libphoenix bd6ae05` was meant to name the block STK
+overflows. Five STK runs later, here is what it actually established.
+
+| run | aborts | pc | far | site |
+|---|---|---|---|---|
+| gstk (pre-hardening) | 2 | 0x91ce60 | 0x0ceef000 | `_malloc_chunkJoin` |
+| g2stk (pre-hardening) | **0** | — | — | — |
+| stkdiag | **0** | — | — | — |
+| stkdiag2 | **0** | — | — | — |
+| stkexit | 2 | 0x4a9af8 | **0x10** | `FontManager::loadFonts()` |
+
+**Three of five runs are clean, and the two that fault do so at completely
+different sites** — one in the allocator's coalesce path with a page-aligned
+address, one a near-NULL read at offset 0x10 inside STK's font manager, during
+**startup**, in a run that never reached racing at all.
+
+**My validation never fired in any run** (0 neighbour reports, 0 header reports).
+So no chunk-header corruption was present on those paths: the hardening is
+correct, it just is not what catches this. It also did not false-positive across
+five runs plus the libc suite plus the desktop, which is the other thing worth
+knowing about it.
+
+### Two corrections to the record
+
+* **"The STK teardown crash"** was my framing, and it does not hold. I inferred
+  "teardown" from the fault sitting near the end of a log (`gstk`, line 225989 of
+  226018). `stkexit` faults during startup. There is no single teardown bug;
+  there is an intermittent fault that lands wherever the heap happens to be.
+* **"Deterministic, same 2 aborts in every run that reaches the exit"** — also
+  wrong. It is ~40% of runs (2/5), at varying sites. What made it look
+  deterministic was that only the runs long enough to fault were being compared.
+
+Intermittent faults at varying sites, with the allocator itself cleared by a
+4.8 M-operation harness, is the signature of **memory corruption inside STK's own
+code**. That is an upstream-application bug, not a Phoenix one, and the owner has
+explicitly deprioritised STK ("I don't know if we can do anything about it… at
+least STK renders correctly"). Stopping here deliberately.
+
+### Two useful facts from the same runs
+
+* **STK renders and races correctly** — verified visually on the Hacienda track
+  with HUD, minimap and lap counter, and it carries its own overlay reading
+  **`FPS: 4/4/6 – 55 KTris`**, which independently confirms the owner's "~6 fps".
+* STK's UART goes silent once racing starts, and it produces **no** `CL submit`
+  lines at all, because it uses the **in-process** V3D winsys — that logging comes
+  from the `rpi4-v3d` daemon, which only the X server uses. A quiet UART ending on
+  a shader-compile line is therefore *expected* for STK and says nothing about
+  whether it is rendering. I briefly mis-read that as a regression from the
+  libphoenix relink; the HDMI frame settled it.
