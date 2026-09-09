@@ -13,10 +13,16 @@ It also should not be a single screenshot. Per-trial variation is real (one of
 eight trials read 7/7/9 where the rest read 8/9/9), so quote a rate across
 trials, never one frame -- see docs/misc/2026-09-09-stk-fps-scale-rtts.md.
 
-This picks, for each trial of a labelled bench, the LARGEST snapshot (PNG size
-tracks scene complexity, so the biggest frame is a rendered 3D scene rather
-than a black or console frame), crops the HUD, and stacks the crops into one
-contact sheet to read in a single glance.
+This picks, for each trial of a labelled bench, the LARGEST snapshot, crops the
+HUD, and stacks the crops into one contact sheet to read in a single glance.
+
+Largest works HERE because an in-race STK frame is dense 3D, but do not
+generalise it: PNG size tracks detail, not "did it render". A dense text screen
+beats a flat one. The Pi firmware's red netboot screen (~333 kB) outweighs a
+rendered Window Maker desktop (~178 kB), so picking the biggest frame of an X
+session hands you the *boot screen* and makes a working desktop look dead. That
+cost a wrong "did not render" call on 2026-09-10. For anything that is not a
+dense 3D scene, look at the LAST frame.
 
 Usage:
   ./scripts/stk-fps-from-hdmi.py <label> [-o out.png] [--trials 8]
