@@ -1670,3 +1670,64 @@ malloc/calloc/realloc/free (Unity: `TEST(stdlib_alloc, ...)` + a matching
 heap, then fully drain it, repeatedly** — that is what exercises the
 fully-free/`munmap` path at `malloc_dl.c:593`. Add it there once the host harness
 names the exact sequence, so the test asserts the real failure rather than a guess.
+
+## §28 — the owner's two artefacts, checked FRAME BY FRAME against their own recording
+
+The owner reported the mirrored Clip and "white lines appearing at random moments"
+in the Game-of-Life xterm, from `x-bulkupload.mp4`. That file is
+`artifacts/hdmi-video/20260909-013210-x-bulkupload.mp4` — **01:32**, and the mirror
+fix was verified at 03:24 and re-confirmed at 04:02. Its name is literally the
+bulk-upload patch that the mirror fix retired.
+
+But "at random moments" is *transient*, and every check I had run was a **single
+static frame**. That is a real gap, so both recordings were scanned frame by frame
+at 3 fps.
+
+Two detectors, and both had to be corrected before they discriminated:
+
+* **Mirrored Clip** — MAD of the 64×64 tile at y 1016 against `vflip` of the tile
+  at y 0, over dy ∈ {−2,0,2}.
+* **GoL contamination** — `top`'s window is light grey with dark text, the GoL cell
+  area is white glyphs on black. A first attempt counted *any* grey pixel and fired
+  on 300/300 current frames at ≤446 px; localising them showed they were scattered
+  ≤16 per row across the whole window — JPEG/anti-alias halo around the glyphs, not
+  blocks. The discriminator is a **contiguous run**. A second attempt then fired on
+  the new layout because its ROI included the xterm's own **status line** (a 516-px
+  light bar). Restricting to the cell area settles it.
+
+| | mirrored-Clip frames | best MAD | GoL solid-grey-run frames | longest run |
+|---|---|---|---|---|
+| **owner's `x-bulkupload.mp4`** (495 frames) | **377** | **0.00** (exact mirror) | **188** | **516 px** |
+| current build, old layout (300) | **0** | 76.80 | **0** | 5 px |
+| current build, fixed layout (300) | **0** | 72.45 | **0** | 5 px |
+
+So both artefacts are real, both are present in the owner's recording, and **both
+are absent from every frame of the current build**. 516 px is a half-window-wide
+band, which is exactly the "white lines copied from the other xterm" described.
+
+Fresh recordings for the owner:
+`artifacts/hdmi-video/20260909-063829-x-current.mp4` (current build, old layout) and
+`artifacts/hdmi-video/20260909-065105-x-fixed.mp4` (current build + the xbill layout
+fix). 0 faults in both cycles.
+
+**Lesson, and it is the third time in this file:** a single-frame check cannot
+refute a transient report, and a detector must be validated against a
+known-good input before its output means anything. Both of my first two GoL
+detectors reported a defect on a clean build.
+
+### Still open on X11, in the owner's priority order
+
+* **The GL window still animates slowly** — the client is at ~8.5 fps and its own
+  `XPutImage` is **79 ms of a 117 ms frame**. The present path is no longer the
+  cost (a present is 13.4 ms and they run 25.6/s), so the residual is in the
+  request path: socket read plus glamor's upload into the screen pixmap. That is
+  the next measurement, and it is well posed — probe `io.c` read totals against
+  `glamor_upload_boxes` time for one frame.
+* **A likely large lever, not yet tried:** the X server's BOs are mapped
+  `MAP_UNCACHED` (`libv3d-client.c:348/408`, "to match the server's default"), which
+  is why even the no-conversion readback ran at only ~200 MB/s. A cached mapping
+  plus an explicit range invalidate before readback is the same class of fix that
+  took `hevc-play` 4.2 → 25 fps. It is coherency-sensitive, so it wants its own
+  turn and a careful invalidate.
+* xbill ignores its `-geometry` **position** (Xt sets PPosition; Window Maker
+  auto-places). Worked around by laying the desktop out around where it lands.
