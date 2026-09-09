@@ -101,12 +101,21 @@ if [ ${#commands[@]} -eq 0 ]; then
 	commands=( "${commands_default[@]}" )
 fi
 
+# All artifact names in this repo are stamped in LOCAL time. Do not switch this
+# to `date -u`: capture-rpi4b-uart.sh stamps local, reliability-tally.sh parses
+# the date back OUT of the log filename for its --since window, and a mixed
+# convention silently misfiles every cycle that straddles the UTC offset. It
+# already did: a netboot cycle run at 00:07 local on 2026-09-10 was filed as
+# `rpi4b-uart-20260909-220735-...`, two hours and one DAY off, so a
+# `--since 20260910` tally would have dropped it. The HDMI snapshots were on the
+# opposite clock from the UART log of the same cycle, which made correlating the
+# two by name impossible.
 ts="$(date +%Y%m%d-%H%M%S)"
 log_path="$repo/artifacts/rpi4b-uart/rpi4b-uart-${ts}-${label}.log"
 
 hdmi_label_base() {
 	local ts2
-	ts2="$(date -u +%Y%m%d-%H%M%S)"
+	ts2="$(date +%Y%m%d-%H%M%S)"
 	if [ -n "$label" ]; then printf '%s/%s-%s' "$hdmi_dir" "$ts2" "$label"; else printf '%s/%s' "$hdmi_dir" "$ts2"; fi
 }
 hdmi_grab_one() {
