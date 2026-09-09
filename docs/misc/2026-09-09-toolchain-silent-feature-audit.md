@@ -93,11 +93,32 @@ in libphoenix, **and autoconf itself answers "yes" for it** when the same config
 a sysroot that already has libstdc++.a. `--enable-libstdcxx-time` is dropped, because passing it
 takes the branch that runs the broken link tests instead of the target case the patch extends.
 
-⚠ **Verification status: pending.** A clean from-scratch rebuild is running into `.toolchain-v2/`; the
-check is the *installed* `c++config.h`, install-to-install against `.toolchain-chrono`, then
-SuperTuxKart on hardware. An earlier "verified at configure level" claim in this file was withdrawn:
-that probe ran in a tree where libstdc++ was already installed, so `-lstdc++` existed and ~16 of the
-flips it showed came from Cause 1 disappearing, not from the change under test.
+✅ **VERIFIED on hardware, 2026-09-09 23:52.** Clean rebuild into `.toolchain-v2/`; the installed
+`c++config.h` gained **23** macros install-to-install against `.toolchain-chrono` with **0
+regressions** (`_GLIBCXX_HAVE_SLEEP`/`_USLEEP` went off, which is correct: `acinclude.m4` only probes
+them in the `else` branch taken when nanosleep is absent). Then the same C++ probe program built with
+both toolchains and run on the Pi:
+
+| probe | old toolchain | v2 (fixed) |
+|---|---|---|
+| `steady_clock` tick | **1 000 000 000 ns** | **2 000 ns** — 500 000× finer |
+| `sleep_for(20ms)`, by `steady_clock` | 1 000 000 µs | **20 023 µs** |
+| …the same sleep, by C `clock_gettime` | **760 280 µs** — it really slept 0.76 s | **20 029 µs** |
+| `thread::hardware_concurrency()` | 0 | **4** |
+| `random_device` first draw | `3499211612` — mt19937's canonical first output for seed 5489 | varies per run |
+| `filesystem::create_symlink` | errno 38 (ENOSYS) | **0** |
+| `filesystem::is_symlink` | **false** | **true** |
+| `filesystem::current_path()` | `''`, errno 38 | **`/`** |
+| `clock_getres` | absent from libphoenix | rc=0, 1000 ns |
+
+ⓘ One measurement trap worth recording: the probe first read `hardware_concurrency() == 0` even with
+`_GLIBCXX_USE_SC_NPROCESSORS_ONLN 1`. That was the probe's own fault, not the toolchain's —
+`libphoenix`'s `sysconf(_SC_NPROCESSORS_*)` is gated on `#if defined(__aarch64__) &&
+defined(__CPU_GENERIC)` (`unistd/conf.c:60`), and the libphoenix *inside the toolchain sysroot* is
+built without `__CPU_GENERIC`, so its `conf.o` has no `platformctl` reference at all. Relinking the
+probe against `.buildroot/_build/aarch64a72-generic-rpi4b/sysroot/lib/libphoenix.a` — the one real
+apps link — gives **4**. Anything measuring a libc-backed value must link the *buildroot* libphoenix,
+not the toolchain's.
 
 ### What was off, ranked by consequence
 
