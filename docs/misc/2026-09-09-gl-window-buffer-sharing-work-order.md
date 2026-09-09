@@ -1,6 +1,6 @@
 # Work order: stop shipping 1.2 MB/frame through the X socket (a mini-DRI3 for this port)
 
-**Status: step 0 verified on hardware; step 2 LANDED (inert, not yet exercised); steps 3-4 not started.** Everything below is verified against the
+**Status: steps 0 and 2 DONE and verified on hardware. Steps 3-4 (X server, client) not started.** Everything below is verified against the
 sources named; no code changed. Written because the verdict changed: this was recorded three
 times as "a real project, not a tuning pass", and the spike shows **three of the four pieces
 already exist**.
@@ -74,7 +74,16 @@ caller intends to use — since the daemon's size is unreachable through the DRM
 (`drm_v3d_mmap_bo` has no size field) and `winsys_handle` has none either; a larger real BO only
 makes the offset-overflow check stricter, which is the safe direction.
 
-**It is inert until step 3.** Nothing on this port calls `resource_from_handle`, and the case it
+**Step 2 is EXERCISED and PASSES** (`tools/v3d-driver-port/gl_bo_import.c`): a BO created outside
+Mesa through the raw daemon RPC, filled through its `MAP_PHYSMEM` view, imported with
+`resource_from_handle(TYPE_SHARED)`, then mapped *through the pipe context* and compared —
+`mapped stride=256 (raw stride=256)`, `compare MATCH (0/16384 bytes wrong)`, 0 faults. The stride
+agreeing matters as much as the bytes: `v3d_setup_slices()` accepted the caller's stride for an
+imported linear resource instead of recomputing a different layout, which is what step 3 will rely
+on. Build it with `GL_SMOKE_SRC=gl_bo_import.c python3 tools/v3d-driver-port/build-gl-smoke-daemon.py`
+(daemon flavour only — the in-process winsys would fight the daemon for the GPU).
+
+**Earlier note, now superseded:** Nothing on this port calls `resource_from_handle`, and the case it
 repurposes was unreachable anyway (no flink names). Regression-checked rather than assumed: archives
 rebuild clean (driver 29/0, core 333/0, gl 325/0) and the glamor desktop is unchanged on HW — 0
 faults, colours (77,79,110), mirror MAD 75.55, 10.76 fps.
