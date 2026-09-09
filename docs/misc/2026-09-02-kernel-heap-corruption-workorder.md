@@ -1137,3 +1137,84 @@ check regardless, since the failure mode is silent data loss rather than a fault
 Next: the userspace canaries (tests `83eda31`) remain the cheaper detector —
 they report the offset, offset-within-page, run length and whether the run is
 zeros, which distinguishes a zeroed PAGE from a smaller clobber.
+
+
+## 2026-09-09 — the EL1 kmalloc abort re-derived from the register dump: three earlier claims were WRONG
+
+The `_kmalloc_free` → `lib_listRemove` abort was written up (W37, now
+`docs/done/2026-09-09-w37-detail-snapshot.md`) with three statements that do not survive
+a disassembly of the code that faulted. Corrected here because the wrong ones pointed at
+a fix that cannot work.
+
+**1. The corrupt field is `next`, not `prev`.** `lib/list.c:46` is
+`t->prev->next = t->next` and `:47` is `t->next->prev = t->prev`. The fault is at `:47`,
+so the pointer being dereferenced is `t->next`. The store on `:46` **committed first**,
+which independently proves `t->prev` was *valid* — and means the predecessor node now
+carries the corrupt value too, so any recovery has to repair the list, not just skip a
+remove.
+
+**2. The corruption is 32/32, not 40/24.** `next = 0x80000001c46ccf80` against an
+expected `0xffffffffc46ccf80`: the low **32** bits are intact and bytes `z+4..z+7` went
+`ff ff ff ff` → `01 00 00 80`. XOR is `0x7ffffffe00000000`. A 40-bit truncation would
+have preserved bits 32..39, so it is not that; the shape is a **32-bit store into the
+upper half of a 64-bit pointer slot** (or a free-list link, see below). `esr=0x96000044`
+decodes as a level-**0** translation fault on a write, which for a `far` with bit 63 set
+but bits 62..48 clear means a **non-canonical** address — a garbage pointer, not a valid
+kernel pointer whose page was unmapped (that would be level 2/3 at a canonical address).
+
+**3. ⚠ `lib_listBelongs()` would NOT have caught this, and the note proposing it was
+wrong.** It discards `poff` entirely (`lib/list.c:61`) and returns `1` at `lib/list.c:69`
+as soon as the walk reaches the node — **before** the `iter = *(addr_t *)(iter + noff)` on
+`:72`. The zone *was* legitimately on `kmalloc_common.used` (proven by point 1), so the
+guard returns 1 without ever reading `z->next` and the fault is byte-identical. It is a
+**membership** predicate, not an **integrity** one, and it is blind to pointer-value
+corruption by construction. It would also add a *new* fault site, because its walk
+dereferences the predecessor link that point 1 shows is already poisoned.
+
+**What was actually done instead (kernel change, this date):** a cheap **value** test on
+the two pointers about to be dereferenced — both links must be `>= VADDR_KERNEL` — at all
+three zone `LIST_REMOVE` sites (`_kmalloc_free`, `_kmalloc_alloc`, `_kmalloc_freeAtom`).
+On failure the zone is **stranded** (left on its current list, one zone leaked) and named
+in a `lib_printf` with its `used`/`blocks`/`blocksz`/`vaddr`, rather than the kernel
+dying with only a register dump. A range test is used rather than an aarch64 canonicality
+test because `VADDR_KERNEL` is defined by every HAL, so ia32/armv7a/riscv64/sparcv8leon
+keep building, and "in kernel space" is strictly stronger than "canonical".
+
+**The class, not the instance.** This value shape recurs across unrelated kernel
+structures — `far=0x0000000600000028` and `0x0000000a0000002c` in `pinfo_cmp`
+(`posix/posix.c:440`), `0x0000000c00000032` in `lib_idtreeCmp`, `far=0x52524d2f52524365`
+(ASCII) in `pmap_destroy`, `0x7e0000c400000006` in `_map_force`. Different runs, different
+values, **same shape: one plausible half and one garbage half.** So this is a systemic
+kernel-heap-integrity problem with several victims, and fixing whatever userspace triggers
+any single one of them will not make the class go away.
+
+**Also corrected:** the claim that the two aborts appear "in every run reaching STK's
+exit" is false — `rpi4b-uart-20260909-103932-stkexit.log` has the EL0 fault twice and **no**
+EL1 abort, and only one log in `artifacts/rpi4b-uart/` carries this signature at all. Treat
+it as **n=1**.
+
+**Ranked candidates for the writer** (none confirmed; the kernel disassembly contains no
+`0x80000001` immediate anywhere, so the value is *data*):
+1. a zone header block freed while still live and re-issued — note `0xc46ccf80` is
+   `z + 0xf80`, i.e. block 31 of 32 *in z's own page*, so the low half is equally explained
+   as a **free-list link** (`_vm_zfree` writes `zone->first` at offset 0);
+2. a plain use-after-free/overflow into a live 128-byte block — `sizeof(vm_zone_t)==88`
+   puts zone headers in the **128-byte class shared with every `vm_kmalloc(65..128)`**,
+   whose callers include `amap_page`, `amap_create`, `vm_objectGet` and `_posix_allocfd`,
+   all of which churn hard during process teardown, which is when this fired;
+3. foreign DMA/GPU write into a recycled physical page (needs a separate PA-lifetime bug).
+
+**Cheapest confirmation, one build + one run:** build with `-DVM_ZONE_TRACE=1` (verified
+off today) and dump the ring on the new guard's failure path — it records
+`(block, caller, alloc|free)` and answers the discriminating question directly: does the
+zone header address appear as a *free* while it was still a live zone header? Do **not**
+use `VM_ZONE_POISON` for this: `zone_poison()` writes `((void **)block)[1]`, i.e. offset 8
+— `prev` — which contaminates this exact signature, and the 2026-09-02 pass already found
+that its `memset` perturbs the timing enough to stop the corruption reproducing.
+
+**Two latent items found in the same pass** (not this bug, safe today by accident rather
+than by invariant): `_kmalloc_freeAtom` calls `_vm_zoneDestroy` → `vm_munmap` while holding
+the non-recursive `kmalloc_common.lock`, which would self-deadlock if kernel zone mappings
+ever carried an amap; and `_vm_zoneDestroy` clears `zone->vaddr` before `lib_rbRemove`,
+leaving a zone in a tree whose comparator dereferences `vaddr`.
+
