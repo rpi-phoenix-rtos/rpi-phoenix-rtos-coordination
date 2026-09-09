@@ -59,6 +59,17 @@ Removing the transfer is worth `put + read + pack` ≈ **85 ms of a 105 ms frame
 
 ## Steps, in dependency order
 
+**The whole server-side chain is now proven in isolation** (`tools/v3d-driver-port/gl_bo_import.c`,
+HW): `daemon handle → resource_from_handle → st_context_teximage → GL texture`, with the imported
+texture's FBO **complete** and a GL readback matching the pattern written through the raw physical
+mapping, `0/16384 bytes wrong`, **no R/B swap**. Since `glamor_set_pixmap_texture()` takes exactly a
+texture name, step 3 is reduced to that one call plus a way to carry `{handle, w, h, stride}`.
+
+Two findings worth keeping: an imported buffer is **renderable** (FBO complete), not merely
+samplable — so the server could render into a client's buffer; and the absence of an R/B swap here
+says this stack's documented BGRA/RGBA seam lives in glamor's own render path, not in the import.
+
+
 **Step 0 — DONE.** Cross-process sharing verified by `tools/boshare-probe`: same `pa`, same non-zero
 `gpuva`, coherent both directions (pieces 1 and 2 above). Everything the daemon must supply for the
 import is confirmed on hardware.
