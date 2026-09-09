@@ -36,7 +36,11 @@ Removing the transfer is worth `put + read + pack` ≈ **85 ms of a 105 ms frame
    `pbo_get()` (`:431`) looks the handle up in that table with no client scoping. So the X server
    can already name a BO the GL client created. `V3D_RPC_MMAP_BO` already returns its physical
    address. **No daemon change needed.**
-2. **Mesa import — ALREADY EXISTS.** `v3d_resource_from_handle()`
+2. **Mesa import — ALREADY EXISTS, and its daemon-side prerequisites are now TESTED.**
+   `v3d_bo_open_handle()` makes exactly **one** daemon call, `DRM_IOCTL_V3D_GET_BO_OFFSET` — no
+   GEM_OPEN, no dmabuf — and then asserts the offset is non-zero. Verified for a *foreign* handle:
+   `child GET_BO_OFFSET(handle=2) rc=0 gpuva=0x2491000 (parent gpuva=0x2491000) SAME+NONZERO`. The
+   CPU map it needs later is `MMAP_BO`, also verified. So this function should work here unchanged. `v3d_resource_from_handle()`
    (`v3d_resource.c:1009`, wired at `:1278`) builds a `pipe_resource` from a `winsys_handle`, and
    `v3d_bo_open_handle(screen, handle, size)` (`v3d_bufmgr.c:339`) builds the `v3d_bo`. Both are
    upstream code we already compile. `DRM_FORMAT_MOD_LINEAR` is accepted, which is what we want —
@@ -55,7 +59,24 @@ Removing the transfer is worth `put + read + pack` ≈ **85 ms of a 105 ms frame
 
 ## Steps, in dependency order
 
-**Step 0 — DONE.** Cross-process sharing verified by `tools/boshare-probe` (see piece 1 above).
+**Step 0 — DONE.** Cross-process sharing verified by `tools/boshare-probe`: same `pa`, same non-zero
+`gpuva`, coherent both directions (pieces 1 and 2 above). Everything the daemon must supply for the
+import is confirmed on hardware.
+
+**Step 1 is dropped as written.** It proposed a `libv3d-client` wrapper whose verification was
+"two processes, same handle, compare bytes" — which the probe already did through the raw RPC. A
+wrapper with no caller adds nothing; write it when step 3 needs it.
+
+**Step 2 is now the whole remaining Mesa question, and it is small:** one *additive* case in
+`v3d_resource_from_handle`'s `whandle->type` switch (`v3d_resource.c:1050`, currently only `SHARED`
+→ `v3d_bo_open_name` and `FD` → `v3d_bo_open_dmabuf`, neither available here) routing a Phoenix
+handle type straight to `v3d_bo_open_handle`. Two details to get right:
+  - **`v3d_bo_open_handle` needs a `size`, and `winsys_handle` has no size field** (type, layer,
+    plane, handle, stride, array_stride, image_stride, offset, modifier, format). `MMAP_BO` already
+    returns the BO size, so the natural source is the client, not the template.
+  - The caller must hold `screen->bo_handles_mutex` — `v3d_bo_open_handle` unlocks it at `done:`.
+    The existing two cases do this; a new one must too.
+  Being additive, it cannot affect the `SHARED`/`FD` paths the five games never take either.
 
 1. `libv3d-client.c`: `phoenix_v3d_open_handle(handle)` → `MMAP_BO`, `mmap(MAP_PHYSMEM, pa)`,
    register in the existing handle table. Verifiable alone: two processes, same handle, compare
