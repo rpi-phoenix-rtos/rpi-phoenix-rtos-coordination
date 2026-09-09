@@ -137,3 +137,33 @@ edit #2 is **not** a real risk. `v3d_bufmgr.c:141` uses the *local* request flag
 lookup, which is correct and must stay (the outcome is unknown at that point), and the free-side
 guard's own comment gives the reason as "scanout aliases a fixed framebuffer PA" — which a
 *refused* BO does not. Caching a refused, plain-DRAM BO is correct by that invariant.
+
+## 2026-09-09 — a REPRODUCER and a decisive test now exist (and the payoff doubled)
+
+Still not started. But two things changed that materially de-risk it, both from the STK fps work
+(`2026-09-09-stk-fps-scale-rtts.md`):
+
+**1. There is now a one-command reproducer.** Set `scale_rtts_factor="0.5"` in STK's config: the
+deferred RTTs become 960x540, i.e. *below* the 1024x768 size gate while the scanout FBO is above
+it, and STK's 3D scene renders **upside down** while its 2D HUD stays upright. At 0.75
+(1440x810) both sides of the blit are above the gate, agree, and the picture is correct. No
+swimming, no re-added cvar, no Quake II required — and it takes one Pi cycle.
+
+**2. The payoff is no longer just retiring hacks.** The flip is what caps STK: 0.5 measures
+**10/13/15 fps** against 0.75's **8/9/9** and the 1.0 baseline's **5/6/6**. So the gate is
+currently worth ~1.4x of STK's frame rate, on top of the five per-app compensators it forces.
+The owner asked for STK fps on 2026-09-09, which makes this work requested rather than optional.
+
+**3. A subtlety to settle FIRST, because it decides whether the plan is even right.** A *correct*
+scanout predicate makes the two FBOs in one frame legitimately DISAGREE: the scanout FBO is
+`Y_0_TOP`, the offscreen deferred RTT is `Y_0_BOTTOM`. That is precisely the configuration that
+produces today's flip at 0.5. The fix therefore does not work by making them agree — it works only
+if the state tracker compensates for the orientation difference across the RTT->scanout blit
+(which is what upstream Mesa relies on, and why upstream can have per-FBO orientation at all).
+
+So before touching the winsys or the RPC protocol, answer this: does `st` actually compensate on
+this path? **The cheapest experiment is the reproducer above.** If STK at 0.5 renders upright once
+the predicate is correct, the whole approach is validated; if it still flips, the marker route is
+wrong and the `GL_MESA_framebuffer_flip_y` alternative (which sets `FlipY` explicitly per present
+layer) is the one to take. Either way that is one cycle, and it should be the first step, not the
+last.
