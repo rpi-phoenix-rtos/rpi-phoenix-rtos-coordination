@@ -57,6 +57,38 @@ Removing the transfer is worth `put + read + pack` ≈ **85 ms of a 105 ms frame
    - The client must tell the server `{handle, width, height, stride, format}` once, then send
      **damage** per frame instead of pixels.
 
+## Ruled out: MIT-SHM, the standard shortcut
+
+Before designing a channel, the obvious question is whether X's own shared-memory
+extension would capture most of the win with no new protocol —  `XShmPutImage`
+would remove exactly the term that hurts (`put`, 65.8 ms of a 105 ms frame) while
+leaving the server's upload alone. **It is not available here**, on two counts:
+
+* libphoenix has no `sys/shm.h` — no SysV `shmget`/`shmat`.
+* `MITSHM` is `/* #undef */` in the X server's generated `include/xorg-server.h`,
+  i.e. the extension is not compiled in.
+
+The fd-passing variant (`ShmAttachFd` + `memfd_create`) is closer to reachable —
+the kernel does have `posix/fdpass.c` — but it still needs `memfd_create` and the
+extension enabled, which is more work than the BO path that is already proven.
+
+## The channel: an X property read from the DDX
+
+The remaining design question for step 3 was how the client names its buffer to the
+server. A full X extension is the "proper" answer and is heavy. The cheap and
+legitimate alternative: the client sets a property (`_PHOENIX_V3D_BO` =
+`{handle, w, h, stride}`) on its own window, and the DDX — which runs inside the
+server process — reads it with `dixLookupProperty()`. That is core dix API, needs
+no protocol extension, and solves the binding problem the launcher-argv idea could
+not: it associates the buffer with a specific *window* at runtime.
+
+Note what the server then has to do with it. Without a compositor a window's pixels
+live in the screen pixmap, so the server cannot simply adopt the client's buffer as
+the window's storage; it must **blit** from the shared texture into the window's
+region of the screen pixmap on damage. That is a GPU-to-GPU blit rather than a
+1.2 MB CPU round trip, which is exactly the win — but it is real work in the
+glamor/DDX layer, and it is where the demo-critical risk sits.
+
 ## Steps, in dependency order
 
 **The whole server-side chain is now proven in isolation** (`tools/v3d-driver-port/gl_bo_import.c`,
