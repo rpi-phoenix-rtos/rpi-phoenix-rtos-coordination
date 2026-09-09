@@ -1036,3 +1036,81 @@ the client is being asked to upload the same region ten times over, which is its
 **Four hypotheses have now been refuted by measurement in this investigation** (spans, copy,
 readback, CPU tiling) and one confirmed (the per-row upload, worth 2.5×). Measuring first has been
 cheaper than patching first every single time.
+
+## §21 — the residual 355 ms IS the AF_UNIX buffer: 4 kB, ~512 round-trips per frame
+
+§20 predicted "~19 reads, ~20 ms apart" if the poll fallback were to blame. Both
+halves are wrong, and the instrumented server says so precisely.
+
+One `startx_gpu action` cycle, `Xphoenix-glamor-daemon` with probes in
+`os/io.c` (before each `_XSERVTransRead`) and `os/WaitFor.c` (around
+`ospoll_wait`), 0 faults:
+
+```
+[phx-io]   reads=187392  mean gap 0.785 ms  mean 118852 B/read   <- B = buffer OFFERED
+[phx-wait] waits=186880  timeouts=85975 (46%)  mean blocked 0.384 ms
+gl-x11: frame 360/20000  395.9 ms/frame (draw 2.8  read 10.7  pack 6.3  put 355.2)  2.53 fps
+```
+
+Differencing consecutive cumulative means gives the steady state directly:
+**512 reads per 401.9 ms** = 0.785 ms/read. The frame is 395.9 ms. So the reads
+are not *part* of the frame cost, they *are* the frame cost — 512 of them, and
+nothing is left over to attribute elsewhere. The wait probe kills the 20 ms
+theory outright: mean blocked is 0.384 ms, not 20 ms.
+
+Why 512? `sources/phoenix-rtos-kernel/posix/unix.c:29`
+
+```c
+#define US_DEF_BUFFER_SIZE SIZE_PAGE     /* 4096 on aarch64 */
+#define US_MAX_BUFFER_SIZE 65536U
+```
+
+Every AF_UNIX socket gets a **one-page circular buffer**, and the SOCK_STREAM
+send path (`unix.c:1104`) does a plain `_cbuffer_write(&r->buffer, buf, len)` —
+it copies only what currently fits and returns short, then blocks. A 640x480
+XPutImage is 1.2 MB, so 1.2 MB / 4 kB = ~293 fill/drain round-trips; measured
+512 including request headers and short fills. Right on the nose.
+
+The 118852 B figure was a probe bug on my side: it recorded
+`oci->size - oci->bufcnt`, the buffer the server *offers*, not what `read()`
+returns. The offered buffer was never the constraint.
+
+### The fix, and why it needs no kernel change
+
+`SO_RCVBUF` is honoured (`unix_setsockopt`, `unix.c:1300`) and
+`unix_bufferSetSize` resizes **this socket's own** `s->buffer` — which is exactly
+the buffer the peer writes into (`unix.c:1104` writes into the *remote's*
+buffer). So the receiving end is the correct end to set it on, and for
+client→server request traffic that is the X server's accepted fd. No kernel
+edit, no `--scope core`, no boot-regression risk.
+
+`tools/x11-port/patches/xorg-server-21.1.24-os-client-rcvbuf.patch` sets
+`SO_RCVBUF = 65536` in `EstablishNewConnections` immediately after
+`_XSERVTransAccept`, before `AllocNewConnection`. That placement is load-bearing:
+`unix_bufferSetSize` reinitialises the cbuffer and **discards its contents**, so
+it must run before any client byte arrives. `SO_SNDBUF` is *not* implemented
+(`-ENOPROTOOPT`), which is fine — this direction does not need it.
+
+Also generalised `core_src_newer_than_archive()` in `build-xserver-core.sh` to
+watch `os/`, `dix/` and `hw/kdrive/src/` and not only `glamor/`. The
+already-built early return had let an unpatched binary ship twice before; an
+`os/connection.c` change would have been the third.
+
+### Prediction, recorded before the cycle
+
+- 4 kB → 64 kB is 16x fewer round-trips: **reads/frame 512 → ~35**
+  (1.2 MB / 64 kB = 18.75, plus headers).
+- **put 355 ms → 25–40 ms**, **frame 396 ms → 50–70 ms** — draw 2.8 + read 10.7
+  + pack 6.3 are untouched and become the dominant terms.
+- If reads/frame drops 16x but frame time does **not**, the per-round-trip cost
+  is the poll wakeup path rather than the buffer, and the in-read/outside split
+  probe is the next instrument.
+- If reads/frame does **not** drop, the setsockopt did not take effect (clamp,
+  wrong end, or reinit-after-data) — read it off `[phx-io]`, do not assume.
+
+Caveat worth stating up front: `rpi4-ipcprobe` measured 213 MB/s over a
+socketpair on this *same* 4 kB buffer — ~19 µs per round-trip, not 0.785 ms. So
+round-trips are not inherently expensive; the difference is almost certainly that
+ipcprobe's reader spins while the X server goes through `ospoll_wait` every time
+(mean blocked 0.384 ms). If that holds, the buffer fix is **necessary but not
+sufficient**, and lands nearer 50 ms/frame than 25.

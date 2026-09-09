@@ -91,23 +91,28 @@ glamor_core_patches=(
   glamor-destroypixmap-chain
   glamor-screen-upload-bulk
 )
-# Set to 1 by apply_glamor_chain_patch when a patch actually landed, so the
+# Patches to os/ and other backend-independent core code. Applied for every
+# build, glamor or not.
+os_core_patches=(
+  os-client-rcvbuf
+)
+# Set to 1 by apply_core_patches when a patch actually landed, so the
 # "already built" early return below is skipped and the full build runs.
 GLAMOR_PATCH_LANDED=0
-apply_glamor_chain_patch() {
-  [ "$GLAMOR" = 1 ] || return 0
-  local name pf
-  for name in "${glamor_core_patches[@]}"; do
+apply_core_patches() {
+  local name pf list=("${os_core_patches[@]}")
+  [ "$GLAMOR" = 1 ] && list+=("${glamor_core_patches[@]}")
+  for name in "${list[@]}"; do
     pf="$ROOT/tools/x11-port/patches/xorg-server-${VER}-${name}.patch"
     [ -f "$pf" ] || continue
     if patch -d "$KD" -p1 -N --dry-run <"$pf" >/dev/null 2>&1; then
-      echo "=== applying glamor core patch: $name ==="
+      echo "=== applying core patch: $name ==="
       patch -d "$KD" -p1 -N <"$pf" >/dev/null 2>&1 || true
       GLAMOR_PATCH_LANDED=1
     fi
   done
   if [ "$GLAMOR_PATCH_LANDED" = 1 ]; then
-    echo "=== a glamor core patch landed — forcing a FULL core rebuild ==="
+    echo "=== a core patch landed — forcing a FULL core rebuild ==="
     echo "=== (rebuilding libglamor alone links it against stale siblings) ==="
   fi
 }
@@ -142,20 +147,31 @@ fi
 # was already applied so `patch --dry-run` failed, GLAMOR_PATCH_LANDED stayed 0,
 # and the fast path shipped a binary with none of the probe in it -- the tell
 # being `strings | grep -c` returning 0 on a freshly dated file.
-glamor_src_newer_than_archive() {
-  [ "$GLAMOR" = 1 ] || return 1
-  [ -f "$GLAMOR_A" ] || return 0
-  [ -n "$(find "$KD/glamor" -maxdepth 1 \( -name '*.c' -o -name '*.h' \) \
-          -newer "$GLAMOR_A" -print -quit 2>/dev/null)" ]
+# Third recurrence of the same footgun, so the guard now covers every directory
+# a fix can land in, not just glamor/: an os/connection.c change was invisible to
+# a glamor-only check and would have shipped an unpatched binary again.
+stale_dirs=("glamor:$GLAMOR_A" "os:$KD/os/.libs/libos.a" "dix:$KD/dix/.libs/libdix.a"
+            "hw/kdrive/src:$KD/hw/kdrive/src/.libs/libkdrive.a")
+core_src_newer_than_archive() {
+  local ent dir arch
+  for ent in "${stale_dirs[@]}"; do
+    dir="$KD/${ent%%:*}"; arch="${ent#*:}"
+    [ "$dir" = "$KD/glamor" ] && [ "$GLAMOR" != 1 ] && continue
+    [ -d "$dir" ] || continue
+    [ -f "$arch" ] || return 0
+    if [ -n "$(find "$dir" -maxdepth 1 \( -name '*.c' -o -name '*.h' \) \
+               -newer "$arch" -print -quit 2>/dev/null)" ]; then
+      echo "=== $dir source is newer than $(basename "$arch") — rebuilding ==="
+      return 0
+    fi
+  done
+  return 1
 }
 
 core_built() {
   # A patch that just landed invalidates every archive, not only libglamor.
   [ "$GLAMOR_PATCH_LANDED" = 0 ] || return 1
-  if glamor_src_newer_than_archive; then
-    echo "=== glamor source is newer than libglamor.a — rebuilding ==="
-    return 1
-  fi
+  core_src_newer_than_archive && return 1
   all_present || return 1
   glamor_marker_matches || return 1
   [ "$GLAMOR" = 0 ] || [ -f "$GLAMOR_A" ]
@@ -168,7 +184,7 @@ core_built() {
 # it could rebuild libglamor but could no longer influence the already-evaluated
 # core_built decision. It has to run first, and core_built has to consult its
 # result.
-apply_glamor_chain_patch
+apply_core_patches
 
 if core_built; then
   echo "=== xorg-server $VER core archives already built (glamor=$GLAMOR) — skipping ==="

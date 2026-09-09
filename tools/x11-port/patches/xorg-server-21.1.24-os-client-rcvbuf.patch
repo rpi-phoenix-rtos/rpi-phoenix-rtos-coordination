@@ -1,0 +1,36 @@
+--- a/os/connection.c
++++ b/os/connection.c
+@@ -687,6 +687,33 @@
+ 
+     _XSERVTransSetOption(new_trans_conn, TRANS_NONBLOCKING, 1);
+ 
++    /* Phoenix: enlarge the receive buffer on the freshly accepted client fd.
++     *
++     * Phoenix's AF_UNIX sockets default to a one-page (4 kB) circular buffer
++     * (kernel posix/unix.c, US_DEF_BUFFER_SIZE), and a stream write only copies
++     * what currently fits, so a client pushing a large request blocks and
++     * resumes once per 4 kB. A 640x480 XPutImage is 1.2 MB, i.e. ~300
++     * fill/drain round-trips; measured on hardware that was 512 server reads
++     * per frame at 0.785 ms apiece -- 402 ms, the entire frame time, for one
++     * window (docs/misc/2026-09-08-glamor-screen-mirror-and-gl-window-rate.md).
++     *
++     * SO_RCVBUF resizes this socket's OWN buffer, which is the one the peer
++     * writes into, so the server side is the correct end to set it on. The
++     * kernel clamps to US_MAX_BUFFER_SIZE (64 kB) and rounds up to a power of
++     * two. It must be set before any client bytes arrive, because the resize
++     * reinitialises the buffer and discards its contents -- here, immediately
++     * after accept(), nothing has been read yet.
++     *
++     * Best-effort: a transport that does not support it (or a kernel without
++     * the option) just keeps the default, so the result is slow, not broken.
++     */
++    {
++        int rcvbuf = 65536;
++
++        (void) setsockopt(newconn, SOL_SOCKET, SO_RCVBUF,
++                          &rcvbuf, sizeof(rcvbuf));
++    }
++
+     if (trans_conn->flags & TRANS_NOXAUTH)
+         new_trans_conn->flags = new_trans_conn->flags | TRANS_NOXAUTH;
+ 
