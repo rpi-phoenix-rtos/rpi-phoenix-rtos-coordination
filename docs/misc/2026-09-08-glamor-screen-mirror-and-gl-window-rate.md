@@ -1985,3 +1985,32 @@ least STK renders correctly"). Stopping here deliberately.
   a shader-compile line is therefore *expected* for STK and says nothing about
   whether it is rendering. I briefly mis-read that as a regression from the
   libphoenix relink; the HDMI frame settled it.
+
+
+## §33 — operational: `sync-netboot-tree.sh` clears the shader cache, so the FIRST app run after it is slow
+
+This has now cost a cycle three times and been mis-read twice, so it belongs in the
+notes rather than in someone's memory.
+
+`sync-netboot-tree.sh` prints `cleared Mesa shader disk cache — GPU driver changed
+(or first run)` and means it. The next run of any GL app therefore recompiles its
+shaders (~50 for SuperTuxKart), which can add a minute or more to startup.
+
+Consequences seen, and how each was mis-read at first:
+
+* **SuperTuxKart** appeared not to reach racing in a 180 s window, twice, and the
+  identical UART tail (ending on a shader-compile line) looked like a hang. It was
+  a cold cache; the HDMI frame showed it racing normally once given time.
+* **QuakeSpasm** returned `motion 0.0` in a gate with a 90 s window that had passed
+  before. The log ended at `Sound Initialization` — still starting up. Re-run at
+  135 s: demo played, 0 faults, same static-console end state (mean 27.4) as the
+  earlier verified run.
+
+So: **after a sync, budget extra time for the first run of each GL app**, and when a
+gate regresses right after a sync, check the UART tail for "still initialising"
+before concluding anything. A frozen-looking screen plus a plausible last log line
+is exactly what a cold shader cache looks like.
+
+Related: STK produces **no** `CL submit` lines at all because it uses the in-process
+winsys — that logging comes from the `rpi4-v3d` daemon, which only the X server
+uses. A quiet UART is normal for it and says nothing about whether it is rendering.
