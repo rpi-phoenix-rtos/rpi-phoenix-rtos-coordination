@@ -1825,3 +1825,67 @@ my own stale ROI. The xbill layout fix moved the GoL xterm into the strip that u
 to be bare desktop. Re-checked on strips that are actually bare in the new layout:
 244 000 pixels exact, zero column jumps, NO SEAM. Every ROI-based check in this
 file has now had to be re-aimed at least once; aim them at the *current* layout.
+
+## §30 — the GL window's cost is the PRESENT stalling the transfer, and run-to-run spread is ±4.5%
+
+Following §29's "measure the client's writes" step, a free source read settled that
+half first: Xlib's `_XSend` hands a large image over in **one `writev`** (three
+iovecs), so the ~38 refills are not client write syscalls. They happen **inside the
+kernel's `unixsock_send` loop** — write what fits, wake the reader, wait for space —
+so the refill count is `bytes / (ring/2)` no matter how few syscalls the client makes.
+
+Then `io.c:402` shows why each refill is expensive:
+
+```c
+if (gotnow < needed) {
+    /* Still don't have enough; punt. */
+    YieldControlNoInput(client);
+    return 0;
+}
+```
+
+One read per call. An incomplete request **returns to the dispatch loop**, which
+re-polls — and that same single-threaded loop also runs the screen-present timer.
+
+### The measurement that matters
+
+| presents | `put` | frame | fps |
+|---|---|---|---|
+| on (33 ms tick) | 55.2 ms | 94.4 ms | 10.62 |
+| **off** | **30.3 ms** | 66.9 ms | **14.94** |
+
+~2.4 presents land inside each frame's transfer × 13.4 ms ≈ the 25 ms difference.
+**Presents stalling the in-flight upload cost ~30–35% of the GL window's frame
+rate**, and that is far outside the noise band below.
+
+### Tried and dropped: deferring the present while a request is in flight
+
+Flag set at the punt site, cleared when a complete request reaches Dispatch; the
+flush timer skips up to 3 consecutive ticks. Result **10.03 fps** against a
+baseline of 9.73–10.62 — i.e. **inside the run-to-run spread**, no measurable
+effect. Reverted: complexity for no demonstrated gain.
+
+My first reading of this was "it made things worse", which was **wrong** — a 6%
+difference against a ±4.5% spread is not a result. The mechanism I proposed for it
+(deferral lets damage accumulate, so the eventual present is bigger) is plausible
+but is *not* supported by this data either way.
+
+### Run-to-run spread, measured — needed for every future comparison
+
+Three cycles of **identical, probe-free code**: **10.56, 10.62, 9.73 fps**, i.e.
+±4.5% around ~10.3. Presence of the UART probe was not the driver (10.62 *with* it,
+10.56 without). **Any X change claiming less than ~10% must be repeated before it
+counts.** Several earlier single-run comparisons in this file are inside that band
+and should be read as directional only.
+
+### Next: make presents CHEAPER, not rarer
+
+Deferral does not help and a slower tick trades away screen updates, so the lever
+is the 13.4 ms present itself — 8.9 ms readback + 4.8 ms write. The readback is
+bounded by the X server's BOs being mapped **`MAP_UNCACHED`**
+(`libv3d-client.c:348/408`, "to match the server's default"), which is why even a
+no-conversion readback ran at ~200 MB/s. A cached mapping plus an explicit range
+invalidate before readback is the same fix class that took `hevc-play` 4.2 → 25 fps.
+If the readback drops to ~1–2 ms, a present becomes ~6 ms and the per-frame stall
+roughly halves. Coherency-sensitive, so it wants a careful invalidate and its own
+turn — and, given the spread above, repeated runs.
