@@ -167,3 +167,29 @@ the predicate is correct, the whole approach is validated; if it still flips, th
 wrong and the `GL_MESA_framebuffer_flip_y` alternative (which sets `FlipY` explicitly per present
 layer) is the one to take. Either way that is one cycle, and it should be the first step, not the
 last.
+
+### How to actually stage that experiment (learned the hard way, 2026-09-09)
+
+Two obstacles found while attempting it, both of which change the plan:
+
+1. **`--scope core` does NOT rebuild Mesa.** The gate lives in `libGL-phoenix.a`, which is
+   produced by `scripts/build-showcase-apps.sh --phase gpu`, not by the core build. A core
+   rebuild after editing `st_atom_framebuffer.c` leaves the archives untouched, so the change is
+   absent from every GL binary and the experiment silently measures the OLD behaviour. Verify by
+   timestamp: `tools/.gpu-libs/*.a` must be NEWER than the Mesa edit.
+2. **STK cannot be cheaply relinked.** Its port build keeps no reusable objects (2 `.o` files in
+   the port tree), so picking up a new archive means a full recompile of a large C++ port.
+
+So do **not** stage the decisive test through STK. Write a small purpose-built harness instead,
+modelled on `tools/v3d-driver-port/gl_es_smoke.c` (94 lines, `st_create_context` +
+`st_context_teximage` + `texture_map` readback, so it needs no HDMI and prints its own verdict).
+It must reproduce STK's actual construction to be conclusive: render a vertically asymmetric
+pattern into a **sub-1024** RTT (which the current gate leaves `Y_0_BOTTOM`), then draw it as a
+**textured full-screen quad** — not `glBlitFramebuffer`, whose orientation handling in `st` is
+different from a shader draw — into the 1920×1080 scanout FBO (`Y_0_TOP`), and read back which
+rows the pattern lands on. That is the configuration a correct scanout predicate produces, and it
+answers the question in one cycle with no Mesa change at all.
+
+⚠ And if you do edit the gate to experiment: rebuilding the archives leaves them holding the
+experimental code. Revert the source **and rebuild `--phase gpu` again**, or the next link silently
+picks up the experiment.
