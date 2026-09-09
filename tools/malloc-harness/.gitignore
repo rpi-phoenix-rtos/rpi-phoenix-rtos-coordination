@@ -1,0 +1,3 @@
+malloc-harness
+*.o
+*.log
