@@ -95,7 +95,27 @@ static const char SEED_CONFIG_XML[] =
 	 * ignored -- which is how the first attempt produced a race with no counter.
 	 * Ungrouped params like enable_internet above do use the flat form.
 	 */
-	"    <Video show_fps=\"true\" />\n"
+	/*
+	 * scale_rtts_factor: render the DEFERRED pipeline's render targets at this
+	 * fraction of the window and upscale the result to 1080p in the final
+	 * pass-through (rtts.cpp multiplies every RTT by it; the 1080p GUI/HUD is
+	 * unaffected and stays crisp). Measured on hardware, hacienda, 4 karts:
+	 *
+	 *   1.0  (1920x1080)  FPS 5/6/6      <- was the default
+	 *   0.75 (1440x810)   FPS 8/9/9      <- shipped: ~1.5x, renders correctly
+	 *   0.5  (960x540)    FPS 10/13/15   <- 2.2x, but the 3D scene comes out
+	 *                                       UPSIDE DOWN
+	 *
+	 * The 0.5 flip is not an STK bug: Mesa's st_atom_framebuffer.c forces
+	 * Y_0_TOP only for FBOs >= 1024x768, so at 960x540 the deferred RTTs fall
+	 * on the other side of that size test and the upscale blit lands flipped
+	 * while the GUI (drawn straight to the scanout FBO) stays upright. 0.75 is
+	 * chosen to sit safely ABOVE the threshold -- the minimum that clears it is
+	 * 0.711 (768/1080). Removing the size test in favour of a real scanout
+	 * predicate would unlock the 2.2x AND retire the Quake II underwater
+	 * stopgap: docs/misc/2026-09-08-flipy-scanout-gate-work-order.md
+	 */
+	"    <Video show_fps=\"true\" scale_rtts_factor=\"0.75\" />\n"
 	"\n"
 	"</stkconfig>\n";
 
