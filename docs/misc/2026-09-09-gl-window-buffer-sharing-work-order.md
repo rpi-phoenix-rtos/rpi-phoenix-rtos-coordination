@@ -1,6 +1,6 @@
 # Work order: stop shipping 1.2 MB/frame through the X socket (a mini-DRI3 for this port)
 
-**Status: NOT STARTED — feasibility spike only.** Everything below is verified against the
+**Status: step 0 VERIFIED on hardware; steps 1-4 not started.** Everything below is verified against the
 sources named; no code changed. Written because the verdict changed: this was recorded three
 times as "a real project, not a tuning pass", and the spike shows **three of the four pieces
 already exist**.
@@ -28,7 +28,10 @@ Removing the transfer is worth `put + read + pack` ≈ **85 ms of a 105 ms frame
 
 ## The four pieces — three already exist
 
-1. **Cross-process BO reference — ALREADY WORKS.** The daemon's BO handles are **global**, not
+1. **Cross-process BO reference — ALREADY WORKS, and now TESTED (`tools/boshare-probe`).**
+   Measured on hardware: `parent created handle=4 pa=0x29420000` → `child MMAP_BO -> pa=0x29420000
+   SAME` → `parent read child's pattern: MATCH (0/65536 bytes wrong)`. A second process maps a handle
+   it did not create, gets the same physical pages, and writes are visible **both** directions. The daemon's BO handles are **global**, not
    per-client: `v3d_gpu.c` keeps one `W.bos[]` array, `handle == slot + 1` (`:705`), and
    `pbo_get()` (`:431`) looks the handle up in that table with no client scoping. So the X server
    can already name a BO the GL client created. `V3D_RPC_MMAP_BO` already returns its physical
@@ -52,6 +55,8 @@ Removing the transfer is worth `put + read + pack` ≈ **85 ms of a 105 ms frame
 
 ## Steps, in dependency order
 
+**Step 0 — DONE.** Cross-process sharing verified by `tools/boshare-probe` (see piece 1 above).
+
 1. `libv3d-client.c`: `phoenix_v3d_open_handle(handle)` → `MMAP_BO`, `mmap(MAP_PHYSMEM, pa)`,
    register in the existing handle table. Verifiable alone: two processes, same handle, compare
    bytes.
@@ -72,3 +77,12 @@ an A/B is one argument, not a rebuild.
 Verification is the set that has converged for X work: 0 faults · colours `(77,79,110)` · mirror
 check MAD > 40 · fan coverage across four frames inside the 23–54% baseline · **and repeated runs**,
 because the run-to-run spread on this stack is ±4.5% (`docs/misc/2026-09-08-glamor-screen-mirror-and-gl-window-rate.md` §30).
+
+## Operational note (cost one Pi cycle)
+
+Staging a probe into the NFS export with `sudo cp` leaves it **root-owned**, and the next
+`netboot-server-up` rsync then fails with `failed to set permissions ... Operation not permitted`
+and the binary does not run — the symptom is a command that produces *zero* output, which reads
+like a crash. Copy as the normal user, or `chown houp:houp` afterwards. Also: `rpi4-v3d` is not a
+psh-friendly foreground command; bring the daemon up with `startx_gpu --quit-after N wmaker`, which
+tears down X but deliberately leaves the daemon running for reuse.
