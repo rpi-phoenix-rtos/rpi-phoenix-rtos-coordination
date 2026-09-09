@@ -73,10 +73,26 @@ Grouped params must be **attributes of the group element** (`<Video .../>` for
 `scale_rtts_factor`/`max_texture_size`, `<GFX .../>` for `light_scatter`/`anisotropic`);
 the flat form parses silently and is ignored. Keep `version="8"` and `enable_internet="2"`.
 
-## Untested levers, ranked (all config-only, no driver risk)
+## Tested: `light_scatter="false"` is NOT worth shipping (and it confirms the diagnosis)
 
-1. `light_scatter="false"` -- removes 3 of the 8 passes (hacienda sets `fog="true"`). Holds
-   pixels while cutting pass count, so it is the clean complement to `scale_rtts_factor`.
+Measured on top of the shipped 0.75, settled mid-race (timer 00:24, 0 faults):
+**9/9/10 vs 8/9/9** -- min +1, avg unchanged, max +1, i.e. inside single-run noise.
+
+That is a useful negative. It removes 3 of the 8 passes, but those three are the
+**half-resolution** light-scatter passes (~13% of the frame's tiles), so cutting them buys almost
+nothing -- exactly what pixel-proportional cost predicts and the opposite of what a
+fixed-per-submit-cost model would predict. Taken with the 0.75 result, the frame is
+**fill-rate/bandwidth bound**, confirmed from two directions. Not shipped: no measurable gain, and
+it costs the fog's light-scatter glow on hacienda.
+
+⚠ **Measurement footgun found while doing it.** The first attempt read **9/9/10** off the final
+frame and looked like a small win. It was invalid: STK had taken two `Exception #36` EL0 aborts
+(its known ~40%-of-runs app-side crash), the last two frame transitions had motion of exactly
+**0.000**, and the frame showed a *restarted* race at timer `00:00.033` -- a cumulative fps
+counter with almost no samples. Rule: for an STK fps reading, require a **non-trivial race timer**
+and a **non-zero motion** delta into that frame, and check the run's fault count first.
+
+## Untested levers, ranked (all config-only, no driver risk)
 2. `--disable-hd-textures` + `max_texture_size="256"` -- reproduces upstream's Broadcom rule.
    Both halves needed; the flag alone leaves the size at 512.
 3. `--anisotropic=0`, `--disable-particles` -- free CLI probes; aniso 4x is live and
