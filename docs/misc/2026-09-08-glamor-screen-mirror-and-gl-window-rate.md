@@ -924,3 +924,51 @@ worth 2.5×; the two hypotheses before it were wrong and cost four Pi cycles.
 
 The phase timing is kept in the client: one `fprintf` per 30 frames, and it is the readout that
 says whether a future change helped.
+
+---
+
+## 19. AF_UNIX is exonerated (213 MB/s) — and §17's stated mechanism was wrong
+
+§18's branch resolves cleanly. `rpi4-ipcprobe` now measures AF_UNIX bulk throughput in isolation
+(8 MiB over a socketpair, writer/reader in separate processes). On hardware:
+
+```
+chunk= 65536 B   8.00 MB in 0.038 s ->  213.29 MB/s
+chunk=  4096 B   8.00 MB in 0.038 s ->  211.80 MB/s
+```
+
+**The socket is not the bottleneck.** It is ~59× faster than the 3.6 MB/s the X path achieves, and
+chunk-size-independent, so it is not per-write syscall overhead either. 1.2 MB at 213 MB/s is
+5.6 ms; the X path spends 337 ms. So **~331 ms per frame is server-side work**, and the "socket path
+is the bug" branch of §18 is closed.
+
+### Correction to §17: the per-row upload was not "one RPC per row"
+
+§17 explained the per-row `glTexSubImage2D` cost as "every GL call is an RPC to /dev/v3d-srv". **That
+is wrong.** The daemon client (`libv3d-client.c`) forwards **`phoenix_v3d_ioctl`** — BO allocation,
+CL submission — not GL calls. Mesa runs *in the X server's own process*, so `glTexSubImage2D` never
+crosses to the daemon and the pixel data never went over a socket.
+
+The measured improvement stands and was verified three ways (1.0 → 2.5 updates/s, Game of Life
+12.2 → 17.0 gen/s, `rpi4-v3d` CPU 76.9 % → 14.1 %). What was wrong is the *reason*: the cost is
+per-call overhead **inside Mesa** — state validation and, more likely, a map/sync of the destination
+BO per call — not inter-process round trips. The `rpi4-v3d` CPU drop is still consistent with that,
+since fewer ioctls follow from fewer upload calls.
+
+Worth stating plainly because it is the same error twice in one investigation: a correct fix with a
+wrong explanation is still a wrong explanation, and it will mislead the next change.
+
+### Next target, now specific
+
+`glamor_put_image_gl` does **not** bail — it goes through `glamor_upload_region` →
+`glamor_upload_boxes`, i.e. the bulk path. So the 331 ms is inside the upload itself, and the
+candidate is Mesa's **CPU tiling**: V3D textures are UIF/LT tiled, so a linear upload must be
+re-laid-out per pixel by `v3d_store_tiled_image()` (`src/broadcom/common/v3d_tiling.c:481`, called
+from `v3d_resource.c:174` and `:459`). That is 1.2 MB of per-pixel address arithmetic per frame,
+into a BO that may well be uncached — precisely the pattern that cost 10× in `hevc-play`'s blit and
+was fixed there by gathering rows and packing stores.
+
+Measure it before touching it: time `v3d_store_tiled_image` (or the `v3d_resource` transfer that
+calls it) per upload and compare against the 331 ms. If it accounts for most of it, the same
+treatment that worked for the video blit applies. If it does not, the remaining suspect is the
+BO map/sync around the upload.
