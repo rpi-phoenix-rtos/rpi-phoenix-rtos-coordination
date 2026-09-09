@@ -1471,3 +1471,52 @@ Worth noting because the single frame was genuinely misleading.
   recover that and shift the whole trade table.
 * Partial-X presents (only the damaged columns, not full-width rows) are still
   untried; `fbdevFlushRegion`'s own comment flags them.
+
+## §26 — partial-X presents: ship only the damaged COLUMNS, not full-width rows
+
+`fbdevFlushRegion`'s own comment has flagged this since it was written ("A future
+optimisation can write only a damaged X sub-extent per row"). §25 made presents
+partial in Y; they were still full-width in X.
+
+The readback is the dominant term (60.8 ms of a 77 ms full-screen present) and it
+is **per-pixel CPU work** — the BGRA↔RGBA shuffle of §24 — so it scales with
+*area*. A 640-wide window band in a 1920-wide screen is a 3× saving on it.
+`glReadPixels` takes an x offset, and `GL_PACK_ROW_LENGTH` lets a narrow box land
+at the right offset inside the full-width shadow with no bounce buffer.
+
+### The asymmetry that makes a threshold necessary
+
+The `/dev/fb0` write does **not** scale the same way. Full-width rows are one
+contiguous `write()` per band; a partial-X band needs an `lseek()+write()` **per
+row**. So partial-X trades a large saving on the readback against `rows` extra
+syscalls, and **the per-row write cost has not been measured** — the earlier fit
+put a whole present's fixed cost at ~1.74 ms, which is not a reassuring scale for
+"a syscall is cheap".
+
+So the path is gated: a band is presented with its own X extent only if it is at
+most **half** the screen width (`FBDEV_PARTIAL_X_MAX_NUM/DEN`). That guarantees at
+least a 2× readback saving on that band — a wide margin against the syscall cost —
+and leaves full-width damage on exactly the single-write path it has today, so the
+change cannot regress the common case. The threshold gets tuned from the measured
+per-row cost, not from a guess.
+
+`fbdevNextSpan` now also returns each span's X extent (min x1 / max x2 across the
+merged bands), so no rect is ever partially presented.
+
+### Prediction, recorded before the cycle
+
+* Narrow bands should show **readback falling roughly with the width ratio** — for
+  the GL window (~640 of 1920), ~3× on that band's readback.
+* If readback drops but total present time does not, **the per-row writes ate it**
+  — raise the threshold (require narrower bands) or drop partial-X on the write
+  side and keep it only for the readback.
+* If neither drops, the sub-rect readback is not taking the fast path — check that
+  `GL_PACK_ROW_LENGTH` is actually applied and that a sub-rect `glReadPixels` is
+  not falling into a slower Mesa path.
+
+Verification is the set that has converged: **0 faults · colours (77,79,110) ·
+mirror MAD > 40 · fan coverage across four frames inside the 23–54% baseline
+range**. Plus, new for this change and the one most likely to break: a **seam
+check** — partial-X presents can leave a stale vertical margin, which
+coverage-across-frames would not catch. Compare the pixels *outside* the damaged X
+extent against a full-width-present frame of the same scene.
