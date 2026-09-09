@@ -2014,3 +2014,32 @@ is exactly what a cold shader cache looks like.
 Related: STK produces **no** `CL submit` lines at all because it uses the in-process
 winsys — that logging comes from the `rpi4-v3d` daemon, which only the X server
 uses. A quiet UART is normal for it and says nothing about whether it is rendering.
+
+
+## §34 — STK: a THIRD fault site, and my validation does not cover it
+
+Re-gate run `r3stk` faulted again, at a site neither previous run used:
+
+| run | site | far |
+|---|---|---|
+| gstk | `_malloc_chunkJoin` | 0x0ceef000 |
+| stkexit | `FontManager::loadFonts` (startup) | 0x10 |
+| **r3stk** | **`malloc_chunkSize`** | **0x0cef4000** |
+
+Now **3 of 6** runs fault, at three different places. `malloc_chunkSize()` reads
+`chunk->size` at offset 0, so a page-aligned `far` again means a chunk pointer into
+an unmapped page — the same shape as the first, and in a neighbouring address range
+(0xceef000 vs 0xcef4000).
+
+**The neighbour validation from `libphoenix bd6ae05` did not fire** (0 reports).
+That is worth stating plainly rather than leaving implied: the validation guards the
+chunks the *join loops* walk into, and this fault reaches `malloc_chunkSize` by some
+other route. So the hardening narrows the blast radius but does not catch this, and
+claiming it "makes the crash diagnosable" would be overselling it.
+
+STK **did race first** in this run (scene loaded, motion 23.2 between frames) and
+faulted after — so the shipped image is no worse than the previously gated one on
+this app. The conclusion of §32 stands and strengthens: intermittent faults at
+varying sites with the allocator itself cleared by a 4.8 M-operation harness is
+memory corruption inside STK's own code, an upstream-application bug, and the owner
+has deprioritised STK.
