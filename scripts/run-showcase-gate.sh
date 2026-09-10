@@ -88,6 +88,25 @@ label="gate"
 wait_secs=150
 idle_secs=240
 max_cmd_secs=300
+# Wait this long after the psh prompt before typing the launch command.
+#
+# NOT cosmetic: the NFS root is not usable the moment the prompt appears.
+# rpi4-sysinfo measures it and says so -- "/etc/build-versions appeared after
+# 5000 ms (root filesystem mounted late)" -- so for ~5 s after the nfs-fs root
+# takeover a large NFS-resident binary can be exec'd before the root is settled.
+# It then HANGS BEFORE main() rather than failing: no output at all after the
+# command echo, and psh never gets its prompt back.
+#
+# Measured 2026-09-10 on QuakeSpasm. The gate used to inherit
+# test-cycle-psh-interact.sh's 3 s default and lost one app that way; every
+# trial that waited 8 s (test-cycle-bench.sh hardcodes 8) reached main(). The
+# correlation is exact in the logs: 1 line between "registered / (takeover)"
+# and the command echo => hung, 23 lines => ran.
+#
+# 8 clears the measured 5 s window. The underlying hang is a real libphoenix or
+# nfs-fs defect -- an exec that races the root should fail, not wedge -- and this
+# only avoids it; see docs/inprogress for the open item.
+inter_cmd_secs=8
 only=""
 
 usage() {
@@ -109,6 +128,7 @@ while [ $# -gt 0 ]; do
 		--only)         only="$2"; shift 2 ;;
 		--wait-secs)    wait_secs="$2"; shift 2 ;;
 		--idle-secs)    idle_secs="$2"; shift 2 ;;
+		--inter-cmd-secs) inter_cmd_secs="$2"; shift 2 ;;
 		--max-cmd-secs) max_cmd_secs="$2"; shift 2 ;;
 		-h|--help)      usage; exit 0 ;;
 		*)              echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
@@ -144,6 +164,7 @@ for entry in "${apps[@]}"; do
 		--wait-secs "${wait_secs}" \
 		--idle-secs "${idle_secs}" \
 		--max-cmd-secs "${max_cmd_secs}" \
+		--inter-cmd-secs "${inter_cmd_secs}" \
 		-- "${cmd}"
 	cycle_rc=$?
 
