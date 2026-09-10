@@ -226,3 +226,32 @@ The question is now narrow: **how does a heap base get into a free bin?** Candid
 Note that nothing wrote `next`/`prev` on this entry (`next` is the heap's own bytes, not a
 self-link), which argues the entry reached the bin **without** going through `_malloc_chunkAdd`'s
 `LIST_ADD` — favouring (2) or (3) over (1).
+
+## First-cause candidates REFUTED by reading the code (2026-09-10)
+
+The heap-release guard (`cdea6dc`) is containment: it stops a dangling bin entry from being
+*created*, but the invariant it defends only breaks after some earlier problem. Three candidates for
+that earlier problem are now ruled out — do not re-walk them:
+
+1. **Runt splits leaving an unreachable chunk.** `malloc_chunkCanSplit()` requires
+   `malloc_chunkSize(chunk) >= size + CHUNK_MIN_SIZE`, so a split always leaves a remainder of at
+   least `CHUNK_MIN_SIZE` (40). No sub-minimum sibling is ever created, so `malloc_chunkNext()`'s
+   `+ CHUNK_MIN_SIZE` slack in `malloc_chunkIsLast()` cannot skip over a real chunk.
+2. **A chunk handed out while still in its bin, via the no-split path.** `_malloc_allocFrom()` is
+   `if (canSplit) split(); else _malloc_chunkRemove(chunk);` — both branches unlink. (The split
+   branch unlinks inside `_malloc_chunkSplit()`.)
+3. **`freesz` mis-accounting on a split.** `_malloc_allocFrom()` decrements by the *post-split*
+   `malloc_chunkSize(chunk)`, and the sibling stays free and stays counted. Consistent.
+
+Also checked and NOT the source: `_malloc_chunkJoin()` validates each neighbour against the freed
+chunk's own heap (`malloc_chunkValid(sibling, heap)`), so a coalesce cannot walk out of its heap into
+an adjacent one — it reports `stopping coalesce` and breaks instead.
+
+### The instrument that would settle it
+
+If the new `heap fully free but not one chunk` diagnostic does NOT fire while corruption still
+appears, the dangling-entry story is wrong and guessing further is waste. The direct instrument is a
+small ring buffer of the last N `munmap`ed `(base, size)` pairs, consulted when a free-bin link is
+rejected: if the rejected address falls inside a recently released heap, the stale-pointer-into-a-
+reused-heap mechanism is **proven** rather than merely consistent. Cheap, and independent of whether
+the guard fires.
