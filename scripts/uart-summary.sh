@@ -133,7 +133,25 @@ fi
 # and this section reported fault_pattern_matches: 0 on a wedged run. A detector
 # that needs the target to finish its sentence is no good for exactly the faults
 # that matter most.
-fault_re="Exception|Data Abort|panic|\bfault\b|ESR=|ELR=|FAR=|EC=|vm: page|corrupt process|LIB_ASSERT|assertion"
+#
+# 2026-09-10 addition -- `malloc: ` and `Double free detected`. The list above had
+# NO pattern for the libphoenix allocator's corruption reports, so every
+# heap-corruption occurrence in the archive was invisible to this detector: 31
+# double-free reports across 23 logs (2026-06-28 -> 09-10) plus 18 corrupt-header
+# / corrupt-neighbour / bad-bin-link reports, and all of them were counted as
+# CLEAN. That is the same mistake as the truncated-message one above, in a new
+# class: the figure said "0 fault-bearing" about runs that had detected heap
+# corruption and _exit(EX_SOFTWARE)'d on it.
+#
+# Matched on the distinctive report TEXT, not on a `malloc:` prefix, for two
+# measured reasons. A bare `malloc: ` is a substring of `test_malloc: Starting`,
+# the banner six soak logs open with -- it turned the clean 1M-line mallocsoak run
+# fault-bearing. And anchoring with \bmalloc: fixes that but then misses the
+# report's own continuation lines, which carry a literal ANSI `[0m` immediately
+# before `malloc:` so there is no word boundary there. The report wordings below
+# have neither problem, and none of them collides with the USB driver's separate
+# `usb_mem:` allocator tracer (`free-list head corrupt`, its own `caller=`).
+fault_re="Exception|Data Abort|panic|\bfault\b|ESR=|ELR=|FAR=|EC=|vm: page|corrupt process|LIB_ASSERT|assertion|double free\(\)|Double free detected|handed out twice|corrupt chunk header|corrupt next neighbour|not a plausible chunk"
 echo
 echo "=== FAULTS ==="
 fault_count=$(grep -cE "$fault_re" "$target")
