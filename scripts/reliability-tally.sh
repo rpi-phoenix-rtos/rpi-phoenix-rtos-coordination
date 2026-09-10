@@ -65,7 +65,14 @@ done
 # before `malloc:` so there is no word boundary there. The report wordings below
 # have neither problem, and none of them collides with the USB driver's separate
 # `usb_mem:` allocator tracer (`free-list head corrupt`, its own `caller=`).
-fault_re="Exception|Data Abort|panic|\bfault\b|ESR=|ELR=|FAR=|EC=|vm: page|corrupt process|LIB_ASSERT|assertion|double free\(\)|Double free detected|handed out twice|corrupt chunk header|corrupt next neighbour|not a plausible chunk"
+#
+# ⚠ And pick a fragment that CANNOT be split by an ANSI escape. The first version
+# used `corrupt next neighbour`, which matched nothing: that report reaches the log
+# as `malloc: corrupt ^[[0mnext^[[0m neighbour chunk header`, with escapes around a
+# word in the MIDDLE of the phrase. Matching the tail `stopping coalesce` instead.
+# Verified archive-wide: these patterns hit exactly the 3 known-positive logs
+# (stk-flipdiag, stkguard1, stkship) out of 4679, and nothing else.
+fault_re="Exception|Data Abort|panic|\bfault\b|ESR=|ELR=|FAR=|EC=|vm: page|corrupt process|LIB_ASSERT|assertion|double free\(\)|Double free detected|handed out twice|corrupt chunk header|stopping coalesce|not a plausible chunk"
 
 total=0
 prompt=0
