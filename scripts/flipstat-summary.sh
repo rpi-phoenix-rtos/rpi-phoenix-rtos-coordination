@@ -14,6 +14,12 @@
 # screenshot could ever settle anything. Quote the mean AND the range, over a
 # window long enough to cover the workload.
 #
+# ⚠ READ A FINISHED LOG. The mean moves while a cycle is still capturing: the same
+# STK log read 2.59 fps over 11 samples and 3.51 over 13 a few minutes later,
+# because more lines had landed. Same trap stk-fps-from-hdmi.py documents for its
+# own frame pick. Within-run and relative comparisons are fine either way; do not
+# quote a mean as "app X runs at Y fps" from a log that is still growing.
+#
 # ⚠ NO LINES IS NOT ZERO FPS. Two cases produce silence by design:
 #   * single-buffer (blit-resolve) scanout -- there are no page flips to count.
 #     Check the "scanout init ... N buffer(s)" line for the buffer count first.
