@@ -176,7 +176,8 @@ capture under `artifacts/hdmi/`:
 - **GPU-accelerated X11 desktop** (`startx_gpu deskapps`) — Window Maker plus an
   xterm with a live shell, `xclock` and `xcalc`
   (`20260903-053119-final-xgpu-tick.png`).
-- **SuperTuxKart** — **races in-game** on the shipped image at `FPS: 8/9/9` (its
+- **SuperTuxKart** — **races in-game** on the shipped image at `FPS: 7/7/9`–`8/9/9` (6-trial bench,
+  mostly 7/7/9; the earlier `8/9/9` was 7 trials on the *previous* image) (its
   own on-screen counter), with `scale_rtts_factor=0.75` as the shipped default,
   up from 5/6/6 at full resolution. It still faults intermittently in its own
   code — see [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md).
@@ -304,7 +305,9 @@ Boot the image and log in to the `(psh)%` prompt, with an **HDMI display** and a
 quakespasm
 ```
 
-Renders the shareware episode in textured 3D on the V3D GPU (**37 FPS** measured on the shipped image, on-screen counter);
+Renders the shareware episode in textured 3D on the V3D GPU (**48 FPS** read off the on-screen counter on
+the current shipped image; 37 was read on the previous one — it is a single reading and the counter
+varies with the scene, so treat it as indicative);
 verified full-screen in-game on the clean image
 (`artifacts/hdmi/20260903-032501-final-qs-tick.png`). The shareware `pak0` is
 baked into the image at `/usr/share/quake/id1/`, together with a `config.cfg`
@@ -389,7 +392,7 @@ image** (`/usr/bin/supertuxkart`, launched via `stk`); its two asset roots
 (`data/` plus `stk-assets/`, 194 MB together) are staged into the rootfs by
 `scripts/stage-game-data.sh`.
 
-On the shipped image STK **races in-game** at `FPS: 8/9/9` over netboot/NFS — the
+On the shipped image STK **races in-game** at `FPS: 7/7/9`–`8/9/9` over netboot/NFS — the
 old ~5-minute asset-loading window is no longer a blocker. `scale_rtts_factor=0.75`
 is the shipped default: it renders the deferred pipeline at 0.75 scale and upscales,
 which took it from 5/6/6 to 8/9/9 while leaving the 1080p HUD crisp. STK is

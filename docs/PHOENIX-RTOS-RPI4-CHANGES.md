@@ -1063,12 +1063,26 @@ Bugs the fork fixed in *its own dependencies* while chasing these, worth mention
 
 Further gaps, same evidence standard:
 
-- **★★ `std::chrono::steady_clock` has 1-*second* resolution here** — a libstdc++ configury defect,
-  and the most transferable toolchain finding in the fork. libstdc++ for `aarch64-phoenix` is
-  configured with **no time backends at all** (verified in the shipped sysroot's `c++config.h`:
+- **★★ `std::chrono::steady_clock` had 1-*second* resolution here — FIXED 2026-09-10** — a libstdc++
+  configury defect, and the most transferable toolchain finding in the fork. It was **~30 features
+  off, not one**: `random_device` returned an identical sequence every boot, `hardware_concurrency()`
+  returned 0 on a 4-core part, `filesystem::is_symlink()` was always false, `last_write_time()` had
+  1-second resolution. libstdc++ for `aarch64-phoenix` **was**
+  configured with **no time backends at all** (verified in the pre-fix sysroot's `c++config.h`:
   `_GLIBCXX_USE_CLOCK_MONOTONIC`, `_GLIBCXX_USE_CLOCK_REALTIME`, `_GLIBCXX_USE_GETTIMEOFDAY` and
   `_GLIBCXX_USE_NANOSLEEP` are all `#undef`), so `steady_clock::now()` falls all the way back to
-  `std::time()`. Cross-configure cannot run target test programs, so these probes default off —
+  `std::time()`. ★ **Corrected cause** — it is *not* that cross-configure cannot run target programs. Two things,
+  both silent: every libstdc++ probe is a `GCC_TRY_COMPILE_OR_LINK` in **C++** mode and
+  `libstdc++.a` does not exist yet when it is configured, so they all fail with
+  `ld: cannot find -lstdc++`; and the clock probes additionally wrap their body in
+  `#if _POSIX_TIMERS > 0 && defined(_POSIX_MONOTONIC_CLOCK)`, which libphoenix never defines, so
+  they fail to *compile* (`'tp' was not declared in this scope`). Neither is fixable with a flag or
+  a config cache — the results live in plain shell variables. Fixed by
+  `gcc-16.2.0-12-libstdcxx-phoenix-features.patch`, which hardcodes the answers for `*-phoenix*` the
+  way rtems/freebsd/solaris already do. HW-verified: tick 1 s → 2 µs; a 20 ms `sleep_for` really
+  sleeps 20.0 ms where it used to sleep 760 ms. Full audit:
+  `docs/misc/2026-09-09-toolchain-silent-feature-audit.md`. The original wording below is kept
+  because the *symptom* description is still accurate —
   meaning *any* Phoenix C++ target built this way inherits the defect, and it fails silently
   everywhere except where a zero-delta guard makes it catastrophic. It did: SuperTuxKart ran at
   **exactly 1 fps**, because `getLimitedDt()` sits in `while (dt == 0) { sleep(1); … }` and the
