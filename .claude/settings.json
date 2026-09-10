@@ -75,6 +75,7 @@
       "Bash(./scripts/build-port.sh:*)",
       "Bash(./scripts/force-port-rebuild.sh:*)",
       "Bash(./scripts/run-showcase-gate.sh:*)",
+      "Bash(./scripts/flipstat-summary.sh:*)",
       "Bash(./scripts/build-diag-tool.sh:*)",
       "Bash(./scripts/stage-game-data.sh:*)",
       "Bash(./scripts/build-rootfs-helpers.sh:*)",
