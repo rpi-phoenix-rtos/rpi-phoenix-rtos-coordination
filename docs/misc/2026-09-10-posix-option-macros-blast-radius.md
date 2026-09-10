@@ -20,6 +20,23 @@ extracted port source trees in `.buildroot/…/port-sources`:
 
 **SDL2, glib2, coreutils/gnulib, curl and Mesa do not test any of them.**
 
+⚠ **Two amendments to this table, both found while landing the change.**
+
+**(a) It measured ten macros; eleven were shipped.** `_POSIX_THREAD_ATTR_STACKADDR` was never in
+the table. Measured after the fact: **zero consumers**, same as the other inert five.
+
+**(b) The criterion matters — "names the macro" is not "tests the macro".** A broader
+`grep -rl` (any occurrence, any file type) adds **bash** to *seven* of these rows, which reads as a
+flat contradiction of the zero-consumer claim. It is a false positive, and worth writing down because
+the obvious re-measurement reproduces it: every hit is in
+`bash-5.2.21/examples/loadables/getconf.c`, where the macro names appear only as **string literals**
+in a lookup table that maps them to `_SC_*` sysconf codes. bash contains **no**
+`#if`/`#ifdef`/`#elif` test of any of them, `examples/loadables/` is not compiled for this target
+(no objects, and no `getconf` binary ships), and the table's values are read through `sysconf()` at
+runtime rather than from the header. The row that counts is "files that preprocessor-test the macro",
+which is what this table measures.
+
+
 ## What would actually change
 
 - **Half the macros are free.** Five have zero consumers: defining them changes nothing today and
