@@ -131,3 +131,98 @@ on it gives the chunk size **directly** (ending the stride inference), `size & C
 (write-after-free vs duplicate hand-out), and whether the corruption runs past the two
 link fields. A source-only search cannot resolve the size, because both surviving
 candidates are data-dependent on assets absent from this repo.
+
+---
+
+# ★★★ UPDATE 2026-09-10 (widened report): the "corruption" is a HEAP BASE in a free bin
+
+The widened report (libphoenix `7bc30ed`) ran on hardware and **overturns the reading above**.
+This section supersedes the audio-path framing; keep the elimination table, it is still useful, but
+stop looking for an audio buffer.
+
+A representative event from `rpi4b-uart-20260910-125321-stkfix.log` (13 events in one run):
+
+```
+malloc: free-bin link is not a plausible chunk -- abandoning the bin
+malloc:   chunk = 0x000000000cd72000
+malloc:   next  = 0x0000000000008003
+malloc:   prev  = 0x000000000cd72000
+malloc:   size  = 0x000000000000d000
+malloc:   heap  = 0x0000000000000000     <-- a chunk can never have this
+malloc:   pay2  = 0x000000000cc71a70
+malloc:   pay3  = 0x0000000000000000
+```
+
+`chunk->heap == NULL` is impossible for a real chunk: `malloc_chunkInit()` sets `->heap` on every
+chunk it creates, and `malloc_chunkIsLast()`/`malloc_chunkIsFirst()` dereference it. So this address
+is **not a chunk**. Reinterpreting the same bytes as a `heap_t` header followed by its first chunk
+makes every single field consistent:
+
+| offset | as `chunk_t` | value | as `heap_t` + first chunk |
+|---|---|---|---|
+| +0 | `size` | `0xd000` | `heap->size` — an exact page multiple (13 pages) |
+| +8 | `heap` | `0` | `heap->freesz == 0`, i.e. nothing free |
+| +16 | `next` | `0x8003` | first chunk's `size`: 0x8000 with `CUSED\|PUSED` set |
+| +24 | `prev` | *== chunk* | first chunk's `heap`, pointing back at the heap base |
+| +32 | `pay2` | pointer | that chunk's payload, or an rbnode field |
+
+The arithmetic closes: a `0xd000` heap has `0xd000 - sizeof(heap_t)` = 53232 usable bytes, and
+`32768 + 20464 = 53232`, both allocated — which is exactly why `freesz` is 0. The earlier outliers
+`0x7fa3` and `0x8043` are simply other first-chunk sizes (`0x7fa0`, `0x8040`) carrying the same two
+flag bits, not "PCM near full scale".
+
+## What this explains, and what it kills
+
+Explains, without any audio involvement:
+
+* **page-aligned "chunks"** — heap bases come from `mmap()`, so they are page-aligned by
+  construction, whereas a heap's first chunk sits at `heap_base + 16` and can never be;
+* **the exact `0xd000` stride** — consecutive same-size heaps, `heapSize = CEIL(sizeof(heap_t) + n, _PAGE_SIZE)`;
+* **`prev == chunk`** — not a single-element list self-link, but a valid `->heap` back-pointer;
+* **`next` failing the 8-alignment test** — `0x8003 & 7 == 3` because it is a size *with flag bits*,
+  which is why the range test never fired: `0x8003` is inside `[heapLo, heapHi)`.
+
+Kills:
+
+* the **`sfx_buffer.cpp:189`** candidate and the whole ~53232-byte search — the 53248 figure was
+  the heap size, never a request size, so the `[53193, 53232]` window was an artefact;
+* the **"302 ms of 16-bit stereo at 44.1 kHz"** coincidence, which was numerology on a page multiple;
+* the **write-after-free by an audio owner** mechanism. Nothing was written into a freed block; a
+  pointer to a heap header got into a free bin.
+
+Still standing: `--no-sound` gives 0 events. That now reads as the audio path being what *drives the
+large-allocation path* (MojoAL/Vorbis/libsamplerate do the big allocations), not as the audio path
+being the writer.
+
+## The remaining crash is the same defect, one step further along
+
+The same run still ends in a fault, and it is now inside the allocator rather than in STK:
+
+```
+Exception #36: Data Abort (EL0)  esr=0x92000004  pc=0x91c9a8  far=0x4423400051392000
+pc -> malloc_chunkSize (malloc_dl.c:101)   in "/usr/bin/supertuxkart"
+```
+
+`far` is wild, so `malloc_chunkSize()` dereferenced a non-chunk. The plausibility check catches 13
+of these and abandons the bin; one gets past it and faults. Two of the four fault PCs recorded in
+the STK-crash row were already inside the allocator — consistent with this being that row's actual
+mechanism rather than a separate bug.
+
+## Where to look next (not yet done)
+
+The question is now narrow: **how does a heap base get into a free bin?** Candidates, in order:
+
+1. `_malloc_chunkSplit()` — `sibling = chunk + size`, and if `malloc_chunkSize(chunk) == size` the
+   sibling lands on the heap's end byte. Heaps here are *adjacent* (the `0xd000` stride proves
+   `mmap` is handing out neighbouring regions), so a zero-size split at the last chunk would point
+   the sibling straight at the next heap's base and `_malloc_chunkAdd()` it. Check
+   `malloc_chunkCanSplit()` covers the equality case at the heap's last chunk.
+2. `_malloc_allocLarge()`'s rbtree path — `lib_treeof(chunk_t, node, ...)` subtracts
+   `offsetof(chunk_t, node) == 32`, so a tree link pointing at `heap_base + 32` yields exactly the
+   heap base. `heap_base + 32` is the first chunk's payload, i.e. live user data.
+3. The large-bin abandon path itself (`lbins[idx].root = NULL`) versus entries still threaded
+   through `next`/`prev`.
+
+Note that nothing wrote `next`/`prev` on this entry (`next` is the heap's own bytes, not a
+self-link), which argues the entry reached the bin **without** going through `_malloc_chunkAdd`'s
+`LIST_ADD` — favouring (2) or (3) over (1).
