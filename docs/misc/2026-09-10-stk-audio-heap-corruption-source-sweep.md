@@ -302,3 +302,52 @@ Next places to look, in order:
 
 The 1 event with `hbase?=0` is worth a separate look: it is either a genuinely corrupted chunk
 header or a heap whose first chunk had already been split, and the two need different fixes.
+
+---
+
+# UPDATE 3: the stale-transplant amplifier is ALSO refuted — third mechanism down
+
+Bench `stalefix` (3 STK trials, libphoenix `ccc0bc1`):
+
+| trial | `not a plausible chunk` | `stale large-bin node` | `not one chunk` | faults | frames |
+|---|---|---|---|---|---|
+| T1 | **10** (all `hbase?=1`) | **0** | 0 | 2 | 152 |
+| T2 | 0 | 0 | 0 | 0 | 1433 |
+| T3 | 0 | 0 | 0 | 0 | 1456 |
+
+`stale large-bin node` never fired, so the guarded write through a stale `rb_transplant` parent is
+**not** the path being taken. Keep `ccc0bc1` — writing 8 bytes through a pointer the tree no longer
+owns is unsafe regardless — but it is **not** this defect's mechanism. That is three refuted:
+
+1. audio write-after-free (refuted by the field decode),
+2. heap release with multiple free chunks (`not one chunk` = 0 across 7 runs),
+3. stale large-bin transplant (`stale large-bin node` = 0 across 3 runs).
+
+## What T1 does pin down
+
+`hbase?=1` means `_malloc_chunkRemove()` was **called with a heap base**. Walking the callers, only
+one can produce that:
+
+`_malloc_allocLarge()` finds a chunk via
+`lib_treeof(chunk_t, node, lib_rbFindEx(lbins[idx].root, &t.node, malloc_find))`, which subtracts
+`offsetof(chunk_t, node) == 32`. A tree link landing on `heap_base + 32` therefore yields
+`heap_base`, which then goes to `_malloc_allocFrom()` → `_malloc_chunkSplit()` →
+`_malloc_chunkRemove()` — exactly where the report fires. Every other caller passes either
+`heap->space` (heap + 16, never the base) or a chunk that `malloc_chunkValid()` has already
+range-checked, and `malloc_chunkValid()` explicitly rejects anything below `base + sizeof(heap_t)`.
+
+So the tree is being walked into memory that is **no longer a node**: `heap_base + 32` is the first
+chunk's payload. The remaining question is narrow and structural:
+
+> **how does a large-bin tree node survive its chunk being allocated?**
+
+Once one does, its `left`/`right` are live user data, and a walk follows pointer-shaped bytes to
+arbitrary addresses — which is why the surfaced values look like plausible heap bases.
+
+## The fix that does not require answering that first
+
+`_malloc_allocLarge()` uses the tree's answer **unvalidated**, while the free-bin links right next to
+it are checked by `malloc_linkPlausible()`. Validating the lookup result before handing it to
+`_malloc_allocFrom()` — and falling back to a fresh heap when it fails — converts this from
+corruption into a contained, named event, independently of what puts the bad node there. That is the
+next change to make, and it is symmetric with hardening already in this file.
