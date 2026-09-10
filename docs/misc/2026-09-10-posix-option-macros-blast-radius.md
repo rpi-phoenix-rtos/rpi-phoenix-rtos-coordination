@@ -28,10 +28,25 @@ extracted port source trees in `.buildroot/…/port-sources`:
   `Include/cpython/pthread_stubs.h:8` is `#ifndef _POSIX_THREADS / #define _POSIX_THREADS 1`, and its
   `config.log` confirms `#define _POSIX_THREADS 1`. The `#ifndef` guard means no redefinition
   warning either. It is CPython's only consumer, so this row is settled.
-- **Two are fixes, of the exact bug fixed in yquake2 today.** `openssl/crypto/rand/rand_unix.c:858`
-  reads `#elif defined(_POSIX_MONOTONIC_CLOCK) → CLOCK_MONOTONIC` / `#else → CLOCK_REALTIME`, so
-  openssl's entropy timing currently runs off the **wall clock**, which `ntpclient` steps. micropython
-  is the same shape. Defining the macro moves both to `CLOCK_MONOTONIC`.
+- **Two are fixes, of the exact bug fixed in yquake2 today.** micropython's `ticks_ms`/`ticks_us`
+  fell through to `gettimeofday()`, and openssl's DRBG additional-data timer did the same. Defining
+  the macros moves both to `CLOCK_MONOTONIC`.
+
+  ⓘ **Correction, after reading the built object rather than the source.** The openssl row above
+  named the wrong gate. The `#elif defined(_POSIX_MONOTONIC_CLOCK)` at `rand_unix.c:858` sits *inside*
+  `#elif defined(OSSL_POSIX_TIMER_OKAY)`, and `OSSL_POSIX_TIMER_OKAY` is itself defined only under
+  `#if defined(_POSIX_TIMERS) && _POSIX_TIMERS > 0` (line 72). So before the change the **whole POSIX
+  arm was dead**, not merely biased to realtime, and `get_timer_bits()` fell through to the
+  `gettimeofday()` block below it. It is `_POSIX_TIMERS` that does the work here, with
+  `_POSIX_MONOTONIC_CLOCK` then selecting the clock (`CLOCK_BOOTTIME` takes precedence but is not
+  defined on Phoenix). Both macros were needed; either alone would have left it on the wall clock.
+
+  Verified in the rebuilt `rand_unix.o`, not the preprocessor: `get_timer_bits` is inlined into
+  `rand_pool_add_additional_data`, which now calls `clock_gettime` on the fall-through of
+  `cbnz w0, …` after `OPENSSL_rdtsc` — i.e. exactly where `w0 == 0`, and `CLOCK_MONOTONIC` **is** 0 on
+  Phoenix, so the compiler emitted no `mov w0, #0` at all. (A `mov w0, #0x2` does appear in this
+  object, in `rand_pool_add_nonce_data`; that one is `get_time_stamp()` and wants `CLOCK_REALTIME`
+  deliberately, because a nonce wants wall-clock uniqueness. Unchanged, and correctly so.)
 - **yquake2 is already handled** — its `system.c` was the live instance found and fixed today
   (`4a166c4`, now unconditional), so the macro is a no-op for it.
 - **redis tests it in `configure.ac`**, i.e. configure-time: it only takes effect on a reconfigure,
