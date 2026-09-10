@@ -48,11 +48,19 @@ Options:
       rootfs (e.g. the NFS export) without touching the boot image.
   --skip-prepare
       do not refresh the copied VM-local buildroot first.
-      CAVEAT: the buildroot holds COPIES of phoenix-rtos-{build,ports} and of
-      _projects/, and the build reads the copies. So with --skip-prepare an edit
-      to a port.def.sh, a plo yaml or the port_manager has NO effect -- the same
-      stale-copy trap as the documented stale-core hazard. Skip prepare only to
-      re-run a build whose inputs have not changed (it also saves the _fs rsync).
+      CAVEAT: the buildroot holds COPIES of EVERY sibling repo -- not just
+      phoenix-rtos-{build,ports} and _projects/, but the core repos too
+      (.buildroot/libphoenix, .buildroot/phoenix-rtos-kernel, ...) -- and the
+      build reads the copies. So with --skip-prepare, an edit to ANY sibling
+      source has NO effect: not a port.def.sh, not a plo yaml, not the
+      port_manager, and not a kernel or libphoenix .c file either.
+      `--scope core --skip-prepare` after a libphoenix edit is therefore a
+      SILENT NO-OP that still exits 0 and still exports an image. Measured
+      2026-09-10: a libphoenix string/string.c fix was invisible because
+      .buildroot/libphoenix was 97 minutes stale; the only hint was this
+      script's own drift table printing `libphoenix.a  identical`.
+      Skip prepare only to re-run a build whose inputs have not changed (it
+      also saves the _fs rsync).
   --qemu-sanity
       run the direct Pi 4 QEMU serial sanity lane after build
   --buildroot PATH
