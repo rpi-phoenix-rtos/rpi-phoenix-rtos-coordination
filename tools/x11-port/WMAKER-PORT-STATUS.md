@@ -67,7 +67,7 @@ The heaviest window manager ported to the Pi 4 X11 stack so far. Window Maker
 | expat 2.5.0      | static `.a` (fontconfig's XML parser)               |
 | fontconfig 2.14.2| static `.a` (2 Phoenix source fixes, gperf host dep)|
 | libXft 2.3.8     | static `.a`                                         |
-| libftw (gap-fill)| static `.a` — nftw/ftw, scandir/alphasort, nice     |
+| libftw (gap-fill)| static `.a` — nftw/ftw, scandir/alphasort (nice REMOVED, libphoenix has it) |
 | **wmaker**       | **5.1 MB static aarch64 ELF, nm -u = 0**            |
 | util helpers (13)| all static, nm -u = 0 (wmsetbg, wdwrite, wmiv, …)   |
 
@@ -105,7 +105,7 @@ concurrent rebuilds of the shared prefix.
 | `_SC_LINE_MAX`               | **Committed to libphoenix** (`include/unistd.h` + `unistd/conf.c`, commit on the libphoenix sibling): sysconf returns `_POSIX2_LINE_MAX`. Build also passes `-D_SC_LINE_MAX=5` so it compiles against the un-rebuilt sysroot. |
 | `<ftw.h>` / `nftw()` / `ftw()`| **No libphoenix header/impl.** Minimal correct impl in `ftw-phoenix/ftw.c`. Upstream-worthy libphoenix addition (not committed — a new libc feature, untested mid-session). |
 | `scandir()` / `alphasort()`  | Absent from libphoenix `<dirent.h>`. POSIX impl in `ftw-phoenix/ftw.c`. Upstream-worthy. |
-| `nice()`                     | No process-priority API in libphoenix. No-op stub (returns 0) in `ftw-phoenix/ftw.c`; the one caller (wmsetbg) only warns on failure. |
+| `nice()`                     | **CLOSED 2026-09-10.** libphoenix implements it (`0961476`, a SCHED_RR no-op) and declares it in `<unistd.h>`, so the old stub in `ftw-phoenix/ftw.c` became a **hard link error** that broke the wmaker build. The stub is removed; do not re-add it. |
 | `rint()`                     | libphoenix libm has no `rint`. Build define `-Drint=round` (adequate for wmaker's UI coordinate/colour rounding; differs only on .5 ties). Upstream `rint` in libm would remove the define. |
 | `random()`/`initstate()`/`setstate()` | Absent. Forced fontconfig's FcRandom onto its `rand_r()` path via configure cache vars. No libphoenix change needed. |
 | `FcRandom` static init       | `static unsigned int seed = time(NULL)` is not a constant expression. **Local fontconfig patch** seeds lazily. (fontconfig source bug on the non-glibc path, not a libphoenix gap.) |
@@ -130,7 +130,7 @@ Host build dependency installed this session: **gperf** (`apt-get install gperf`
    `/share/WindowMaker` with warnings, which is acceptable for a first
    boot; (c) the same input/`/dev/kbd0`-EBUSY caveats as the rest of the X stack.
 
-2. **Upstream libphoenix** — `nftw`/`ftw`, `scandir`/`alphasort`, `nice`, and
+2. **Upstream libphoenix** — `nftw`/`ftw`, `scandir`/`alphasort`, and
    `rint` (libm) are the candidate libc additions that would let the gap-fill
    lib and the `-D` defines be dropped. Only `_SC_LINE_MAX` was committed (a
    safe 2-line change); the others are larger and were left as build-local
