@@ -16,6 +16,12 @@ trials, never one frame -- see docs/misc/2026-09-09-stk-fps-scale-rtts.md.
 This picks, for each trial of a labelled bench, the LARGEST snapshot, crops the
 HUD, and stacks the crops into one contact sheet to read in a single glance.
 
+CAVEAT: the pick is only stable once the bench has FINISHED. Run it against a
+trial that is still capturing and a later, larger frame can change the answer --
+T4 of the 2026-09-10 bench read 8/9/9 from a 4-trial pass and 7/7/9 from the
+6-trial pass, same trial, because more frames had landed. Read the sheet after
+the bench exits, not during.
+
 Largest works HERE because an in-race STK frame is dense 3D, but do not
 generalise it: PNG size tracks detail, not "did it render". A dense text screen
 beats a flat one. The Pi firmware's red netboot screen (~333 kB) outweighs a
