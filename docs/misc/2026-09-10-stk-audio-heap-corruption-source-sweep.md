@@ -255,3 +255,50 @@ small ring buffer of the last N `munmap`ed `(base, size)` pairs, consulted when 
 rejected: if the rejected address falls inside a recently released heap, the stale-pointer-into-a-
 reused-heap mechanism is **proven** rather than merely consistent. Cheap, and independent of whether
 the guard fires.
+
+---
+
+# ★★★ UPDATE 2: `hbase?` PROVED the heap-base reading; the munmap mechanism is REFUTED
+
+Run `rpi4b-uart-20260910-155535-postsd.log`, STK, 25 events, with libphoenix `3e78cbf`:
+
+* **`hbase?=1` on 24 of 25 events.** The bin held a pointer to a **heap base**, not a corrupted
+  chunk. No longer an inference from a hand decode — the allocator says so.
+* **`heap = 0x4ff0` = 20464**, which is *exactly* the remainder derived by hand from the first
+  event (`32768 + 20464 = 53232 = 0xd000 - sizeof(heap_t)`). Under the heap reading that field is
+  `heap->freesz`, so this heap has 32768 bytes allocated and 20464 free.
+
+That second number settles a question the first event could not, because there `freesz` read 0:
+**the heap is LIVE, not fully free.** Consequences:
+
+* The **munmap / dangling-bin-entry mechanism is refuted.** A partially allocated heap is never a
+  release candidate, and the guard's own diagnostic (`heap fully free but not one chunk`) fired
+  **0 times** across this run and the 3-trial bench. `cdea6dc` is harmless and worth keeping as
+  hardening, but it is **not** this defect's mechanism. Retracted.
+* The entry did **not** arrive through `_malloc_chunkAdd`: its `next` still reads the heap's own
+  bytes (`0x8003`, the first chunk's size-with-flags) rather than the self-link `LIST_ADD` writes.
+
+## Where the evidence now points
+
+Large bins are an rbtree plus a same-size list. The tree is walked with
+`lib_treeof(chunk_t, node, ...)`, which subtracts `offsetof(chunk_t, node) == 32`. So **a tree link
+pointing at `heap_base + 32` yields exactly `heap_base`** — and `heap_base + 32` is the *payload* of
+the heap's first chunk, i.e. live user data. A 32768-byte STK buffer holding pointer-like bytes is
+enough for a walk that strays into it to surface arbitrary addresses.
+
+So the question is now: **how does a large-bin tree link come to point into user data?** Checked and
+NOT an obvious gap: `_malloc_chunkRemove()` does relocate the tree node when the chunk being removed
+owns it but its same-size list is non-empty (`next->node = chunk->node` + `rb_transplant()` +
+re-parenting both children), and it calls `lib_rbRemove()` when the list empties. The
+`chunk->node.parent == &chunk->node` marker distinguishes "in the list only" from "in the tree".
+
+Next places to look, in order:
+1. `rb_transplant()` when the transplanted node is the tree **root** — does `lbins[idx].root` get
+   updated, or left pointing at the old node inside a block about to be handed out?
+2. The abandon path's `lbins[idx].root = NULL` versus entries still threaded through `next`/`prev`:
+   the tree is dropped but the same-size lists are not, so a later `_malloc_chunkAdd` can
+   `lib_rbInsert` into a tree whose root was discarded while stale list links persist.
+3. `realloc()`'s `_malloc_chunkJoin(sibling)` path, which is the one caller not yet read closely.
+
+The 1 event with `hbase?=0` is worth a separate look: it is either a genuinely corrupted chunk
+header or a heap whose first chunk had already been split, and the two need different fixes.
