@@ -102,12 +102,54 @@ a hang. It was not one: the harness reported `max-cmd-secs (300s) reached, movin
 ~538 ms fills exactly 300 s, and the *next* cycle's stale-buffer flood contains `launch 563/600` —
 past where its own log ended. The bash run completed properly and printed `DONE 2500 ok, 0 failed`.
 
+## ★★★ REPRODUCED (2026-09-11) — it IS per-launch, but only for QuakeSpasm
+
+Storming the **real binary** caught it on the **26th launch**. The subject is
+`/usr/bin/quakespasm -loadbench` — a hook the port already ships that exits 0 right after
+`Host_Init`, so it runs the full pre-`main` path plus the game-data load of the real 18.5 MB ELF and
+then quits.
+
+```
+spawn-storm: 40 launches of /usr/bin/quakespasm, 1 at a time
+spawn-storm: launch 1/40   … pl011-tty: kbd bridge opened /dev/kbd0     <- 25 of these
+spawn-storm: launch 26/40                                               <- no completion, ever
+*** max-cmd-secs (300s) reached, moving on
+```
+
+**26 launch lines, 25 completions, no `BAD status`.** The driver's `kbd bridge opened` line is
+printed by **pl011-tty**, not the child — its kbd thread reacquires `/dev/kbd0` when a full-screen
+app releases it — so one line marks the *end* of each launch. Launch 26 never produced one.
+
+### Why this is a stall and not the harness cutting off
+
+`slowest` was **3254 ms** (launch 1, cold) and **no launch after it ever set a new slowest**, so
+launches 2–25 were each ≤3.254 s ⇒ ≤81 s for all 25. The harness reported the command still alive at
+its 300 s cap. **Launch 26 therefore made no progress for ≥218 s.**
+ⓘ The slowest-tracking is not silently broken: it updated twice in the `python3` run (launches 1 and
+35) and twice in `cxxprobe` (pids 26 and 56), so every launch really is measured.
+
+### What this does to the earlier negatives
+
+It **does not overturn them, it explains them.** The fault is **per-launch AND binary-specific**:
+~4200 launches of `bash`, `python3` and `cxxprobe` never reproduced it, while QuakeSpasm did in 26.
+This is exactly why the earlier write-up was careful not to claim "the per-launch model is dead" —
+that claim would now be false. What *is* dead is the idea that any convenient binary can stand in
+for QuakeSpasm.
+
+★ **The payoff is a cheap reproducer at last:** ~1 event per 26 launches ≈ **one per Pi cycle**,
+instead of one per 30 boots. That is roughly a 30× improvement in hunting throughput.
+
 ## ⏭ What is actually left to try
 
-- **Boot-scoped trials of the real failing binary** (QuakeSpasm), since binary-dependence survives.
-- **Reproduce under gate-like load** — X server + GPU + NFS traffic. Plain 4-way process
-  concurrency is now ruled out, so if load matters it is the *kind* of load (a live X server and GPU
-  submits) rather than concurrent startup as such.
+1. **Re-run the QuakeSpasm storm with the child's output VISIBLE.** Children are currently silenced
+   to `/dev/null`, which was only ever needed for `-p > 1` (interleaving); a sequential run has no
+   such problem. Restoring it answers the one question that matters: does the stalled launch print
+   `quakespasm: main() entered (argc=…)` first? If **no**, the hang is genuinely pre-`main` and the
+   `_libc_init` localisation holds. If **yes**, it is inside `main()` and the whole `isatty`
+   hypothesis is wrong.
+2. **Then build the port with `LIBC_STARTUP_TRACE=y`** — note this needs a *ports relink*, not
+   `--scope core`, and must be confirmed with `strings /usr/bin/quakespasm | grep libc-init`.
+3. Gate-like load (live X + GPU) is now a *lower* priority: a quiet system reproduces it fine.
 
 ## ⚠ Traps recorded so a future hunt is not wasted
 
