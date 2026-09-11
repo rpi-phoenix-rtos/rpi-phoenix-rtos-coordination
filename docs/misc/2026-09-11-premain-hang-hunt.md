@@ -28,7 +28,7 @@ seven initialisers, emitted with `debug()` — a raw syscall, so it is safe befo
 an `fprintf` would deadlock on the very machinery under test. 22 boot-scoped trials with it live:
 **22/22 reached `main`**. The hypothesis is *untested*, not confirmed.
 
-## Not reproduced in 3563 launches of two *other* binaries (measured)
+## Not reproduced in ~4200 launches of three *other* binaries (measured)
 
 The hunt had been costed wrong. Both known pre-`main` faults — this hang and `atexit-null-head` —
 are **large binaries demand-paged from the NFS root**, so the unit of exposure is a **launch**, not a
@@ -42,17 +42,18 @@ returns leaves its index as the last line of the UART log — no watchdog needed
 |---|---|---|---|---|---|
 | `python3 -V` (58 MB, port-linked) | ~563 | 0 | 557 ms (launch 35) | 0 | 0 |
 | `bash -c true` (1.4 MB, port-linked) | 2500 | 0 | 92 ms (launch 1) | 0 | 0 |
+| `cxxprobe` (1.5 MB, **C++**/libstdc++ static init) | 589 (500 reaped) | 0 | 522 ms | 0 | 0 |
 
 **Zero failures.** Conclusions, stated no more strongly than the data allows:
 
 1. Since `_libc_init()` runs identically in every process, this points **away from `_libc_init`
    itself** and toward something specific to **the failing binary** or to **boot state**.
-2. The `isatty`/`tcgetattr` hypothesis loses its cheapest test: 3063 processes ran exactly that code
-   with the tty port warm and none blocked.
-3. **Byproduct worth keeping:** `vfork`+`execv` is solid — 3063 cycles, 0 failures, and the slowest
-   launch was the **cold first one** in both runs (no latency drift, no leak). Process spawn is not a
-   demo risk.
-4. **`0 object EOF at` across all ~3563 NFS-paged launches** — a result, not just a column. The
+2. The `isatty`/`tcgetattr` hypothesis loses its cheapest test: ~4200 processes ran exactly that
+   code, many with the tty port contended, and none blocked.
+3. **Byproduct worth keeping:** `vfork`+`execv` is solid — ~4200 cycles, 0 failures, and the slowest
+   launch was the **cold first one** in both the `bash` and `python3` sequential runs (no latency
+   drift, no leak). Process spawn is not a demo risk.
+4. **`0 object EOF at` across all ~4200 NFS-paged launches** — a result, not just a column. The
    premature-EOF path shipped in kernel `6cd3adec` does not fire even under heavy demand-paging
    load, which bounds how often that zero-fill can be occurring.
 
@@ -61,12 +62,15 @@ returns leaves its index as the last line of the UART log — no watchdog needed
 **That the fault is not per-launch *for QuakeSpasm*.** The 1-in-30 rate was measured on QuakeSpasm
 alone. Using it to predict an expected failure count for `bash`/`python3` would assume the very
 binary-independence the experiment set out to test — a circular inference, and an earlier draft of
-this file made it ("~100 expected"). The honest statement is that the fault does not fire on `bash`
-or `python3` startup at any rate these runs could detect.
+this file made it ("~100 expected"). The honest statement is that the fault does not fire on `bash`,
+`python3` or `cxxprobe` startup at any rate these runs could detect.
 
-Nor do they cover QuakeSpasm's **shape**: it is an **18.5 MB C++** static ELF with a 7-entry
-`.init_array`, while both storm subjects are **C** with a smaller pre-`main` surface. The C++
-static-construction path is untested by any of this.
+Nor did the first two cover QuakeSpasm's **shape**: it is an **18.5 MB C++** static ELF with a
+7-entry `.init_array`, while `bash` and `python3` are **C**. ✅ That gap is now closed — `cxxprobe`
+(a C++ binary whose startup runs real libstdc++ static init: `chrono`, `std::filesystem`) storms
+clean too, **589 launched / 500 reaped / 0 failed**. So the C++ static-construction path is covered,
+and what remains untested is QuakeSpasm's own `.init_array` at its own size, boot-cold state, and a
+live X + GPU load.
 
 ### Concurrency does not reproduce it either (4-way, same day)
 
@@ -100,9 +104,6 @@ past where its own log ended. The bash run completed properly and printed `DONE 
 
 ## ⏭ What is actually left to try
 
-- **Storm a C++ subject** — the cheapest untested variable, since both storms were C. `cxxprobe` /
-  `cxxprobebr` are already on the export; if neither exits on its own, `stk --version` or a
-  QuakeSpasm invocation that bails early are the next candidates. No rebuild needed.
 - **Boot-scoped trials of the real failing binary** (QuakeSpasm), since binary-dependence survives.
 - **Reproduce under gate-like load** — X server + GPU + NFS traffic. Plain 4-way process
   concurrency is now ruled out, so if load matters it is the *kind* of load (a live X server and GPU
