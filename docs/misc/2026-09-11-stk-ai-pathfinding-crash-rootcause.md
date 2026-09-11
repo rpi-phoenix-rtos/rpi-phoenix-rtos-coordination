@@ -63,3 +63,29 @@ graph (rescue, off-track, first frames after a respawn) — hence "1 run in 3" r
 
 ⚠ Any code fix belongs in the **port patch** (`sources/phoenix-rtos-ports/supertuxkart/patches/`),
 not in a Phoenix core repo: STK is GPL-3 and the owner's policy keeps GPL out of core.
+
+## A FOURTH route, found while auditing the callers (2026-09-11, not yet guarded)
+
+`LinearWorld::getRescuePositionIndex()` (`src/modes/linear_world.cpp:821`) is declared
+**`unsigned int`** but returns `getTrackSector(kart_id)->getCurrentGraphNode()`, which is
+`Graph::UNKNOWN_SECTOR` (-1) precisely when the kart is off the drive graph. So the same
+signed→unsigned conversion happens here, and then:
+
+* `Graph::get()->getQuad(index)->isIgnored()` is indexed with it **before any check**, inside the
+  function itself; and
+* the caller passes it to `getRescueTransform(index)` (`linear_world.cpp:843`), which does
+  `getNode(index)` twice and `Track::getCurrentTrack()->getAngle(index)` — and `Track::getAngle`
+  (`track.cpp:2922`) is `DriveGraph::get()->getAngleToNext(n, 0)`.
+
+**That reaches the exact observed fault site**, `getAngleToNext`, so the rescue path can produce the
+same Data Abort as the AI path. It is also the *most* likely moment for an invalid sector, since a
+rescue is triggered by the kart leaving the graph.
+
+⚠ The three guards committed in `0014-stk-guard-unknown-sector.patch` do **not** cover this route.
+Whether they were sufficient in practice is a separate question from whether this route is sound: it
+is not. Fix in the same style — reject an out-of-range index at
+`getRescuePositionIndex()` (fall back to `findOutOfRoadSector()`, which the function already does
+for the ignored-quad case) rather than inside the graph accessors.
+
+Deliberately not added mid-verification: a 6-trial bench was running on the three-guard build, and
+changing the patch under it would have invalidated the test. Sequence the change after that result.
