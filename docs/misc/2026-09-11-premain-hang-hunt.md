@@ -52,6 +52,29 @@ returns leaves its index as the last line of the UART log — no watchdog needed
    launch was the **cold first one** in both runs (no latency drift, no leak). Process spawn is not a
    demo risk.
 
+### Concurrency does not reproduce it either (4-way, same day)
+
+Sequential runs all started a process on a quiet system, while the original failure happened with a
+desktop and a GPU app live — so concurrency was the untested variable, and startup's one blocking
+call is an ioctl to the tty *through a port*. This target has already had a multi-waiter wakeup bug
+(libphoenix `semaphoreUp` signalling only 0→1), so contention there was worth a direct test.
+`spawn-storm -p N` overlaps N launches (tests `8d00cda`).
+
+| run | launches | reaped | failed | slowest | `object EOF at` | exceptions |
+|---|---|---|---|---|---|---|
+| `python3 -V`, `-p 4` | 556 | ≥500 | **0** | **2214 ms** | 0 | 0 |
+
+The slowest launch went **557 ms → 2214 ms** against the sequential run, which confirms the four
+children really were contending rather than serialising. Still **zero** failures.
+
+⚠ **The first concurrent attempt had to be thrown away — the instrument was lying.** Children share
+the tty, and their writes shredded the parent's lines (`torm: pid 33 is the new slowest`,
+`id 26 is the new slowest`), so a `BAD status` line could have been mangled past any grep: the
+`0 failures` it reported was not evidence of anything. Fixed by redirecting child stdout/stderr to
+`/dev/null` (their exit status is the real evidence) and banking a `PROGRESS` tally every 100 reaps,
+since a harness cutoff — not `DONE` — is how these runs normally end. The re-run shows **0 mangled
+lines**, which is what makes its zero trustworthy.
+
 ### Reading the two runs honestly
 
 The python3 run has **no `DONE` line** and its log ends at `launch 558/600`, which looks identical to
@@ -62,9 +85,9 @@ past where its own log ended. The bash run completed properly and printed `DONE 
 ## ⏭ What is actually left to try
 
 - **Boot-scoped trials of the real failing binary** (QuakeSpasm), since binary-dependence survives.
-- **Reproduce under gate-like load** — X server + GPU + NFS traffic — rather than on a quiet system.
-  Every storm above ran in a quiet system, which is the one variable the original failure had and
-  these runs did not.
+- **Reproduce under gate-like load** — X server + GPU + NFS traffic. Plain 4-way process
+  concurrency is now ruled out, so if load matters it is the *kind* of load (a live X server and GPU
+  submits) rather than concurrent startup as such.
 
 ## ⚠ Traps recorded so a future hunt is not wasted
 
