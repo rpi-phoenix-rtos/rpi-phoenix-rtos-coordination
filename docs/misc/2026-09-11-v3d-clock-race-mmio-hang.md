@@ -81,10 +81,12 @@ real, serialized path unaffected, is exactly what the fix predicts.
 
 ## ⏭ Remaining
 
-- **Propagate**: only `quakespasm` has been relinked against the fixed `libv3d`. The other four game
-  ports (yquake2, quake3e, vkquake, supertuxkart) still link the old archive. ⚠ A GPU-archive change
-  does **not** invalidate port state — force each port, and require a
-  `Build state changed for <port>, cleaning` line plus the string in the binary.
+- ✅ **Propagated to all five games**, each verified by `strings … | grep 'refusing to read V3D MMIO'`.
+  ⚠ A GPU-archive change does **not** invalidate port state, so every port had to be force-rebuilt.
+- ✅ **Regression-checked on rendering**, not just startup: Quake II ran **4743 frames at 38.8 fps**
+  with `clk=on`, 0 refusals, 0 retries, 0 faults.
+  ⚠ Launch `/usr/bin/quake2` (the ram-stage launcher), never `/usr/bin/yquake2` — the bare ELF dies on
+  `GetPCXPalette: Couldn't load pics/colormap.pcx`, which looks like a regression and is not one.
 - Route the diagnostic GET queries through `/dev/vcmbox` too, to stop ~9% of cold-state lines being
   garbage.
 - Keep accumulating launches for a statistical case.
