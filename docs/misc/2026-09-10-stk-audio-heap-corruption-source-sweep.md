@@ -351,3 +351,22 @@ it are checked by `malloc_linkPlausible()`. Validating the lookup result before 
 `_malloc_allocFrom()` — and falling back to a fresh heap when it fails — converts this from
 corruption into a contained, named event, independently of what puts the bad node there. That is the
 next change to make, and it is symmetric with hardening already in this file.
+
+## Also checked and CLEARED — `realloc()` (2026-09-11)
+
+`realloc()` was on the original shortlist and had never been read closely. It changes `chunk->size`
+on both in-place paths and **never calls `malloc_chunkSetFooter()`** — which looks alarming, because
+`malloc_chunkPrev()` derives the previous chunk's address from that footer
+(`*((size_t *)chunk - 1)`), and a bogus sibling there is exactly how a corrupt grid propagates.
+
+It is nevertheless sound:
+
+* **Shrink path** — adds the remainder as a sibling and calls `_malloc_chunkJoin(sibling)`, which
+  ends in `malloc_chunkSetFooter(it)`. The footer does get written.
+* **Grow-in-place path** — the resized chunk stays `CHUNK_CUSED`, and `malloc_chunkPrev()` reads the
+  footer **only when `CHUNK_PUSED` is clear**, i.e. only when the predecessor is free. An allocated
+  chunk's stale footer is never consulted. `_malloc_allocFrom(next, …)` also keeps `freesz` and the
+  following chunk's `PUSED` correct.
+
+So: no defect, and the missing `setFooter` is not one either. Recorded so the next session does not
+spend a cycle on it.
