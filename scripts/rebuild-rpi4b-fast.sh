@@ -649,10 +649,23 @@ fi
 # bogus "0" readings on 2026-09-11 (libphoenix.a lives in _build/<t>/lib/ and
 # _build/<t>/sysroot/lib/, NOT _build/<t>/libphoenix/).
 libc_trace_env=""
-if [ "${LIBC_STARTUP_TRACE:-}" = "y" ]; then
+libc_trace_stamp="${buildroot}/.libc-startup-trace-state"
+libc_trace_want="${LIBC_STARTUP_TRACE:-n}"
+if [ "${libc_trace_want}" = "y" ]; then
 	libc_trace_env="LIBC_STARTUP_TRACE='y' "
-	touch "${sources_dir}/libphoenix/misc/init.c" 2>/dev/null || true
 	printf 'Diagnostic: LIBC_STARTUP_TRACE=y (pre-main trace ON -- do not ship this build)\n'
+fi
+# Touch the guarded source whenever the knob CHANGES STATE, in either direction. Turning a
+# -D off does not invalidate the objects it changed any more than turning it on does, so
+# without this a build that drops the flag happily relinks the traced misc/init.o and exits
+# 0 -- i.e. silently SHIPS A DIAGNOSTIC BUILD. That is the more dangerous direction, and the
+# earlier version of this block only handled the "on" case.
+if [ "$(cat "${libc_trace_stamp}" 2>/dev/null || echo n)" != "${libc_trace_want}" ]; then
+	touch "${sources_dir}/libphoenix/misc/init.c" 2>/dev/null || true
+	printf 'LIBC_STARTUP_TRACE changed (%s -> %s): forcing libphoenix init.c rebuild\n' \
+		"$(cat "${libc_trace_stamp}" 2>/dev/null || echo n)" "${libc_trace_want}"
+	mkdir -p "${buildroot}" 2>/dev/null || true
+	printf '%s' "${libc_trace_want}" > "${libc_trace_stamp}" 2>/dev/null || true
 fi
 
 # One build.sh invocation with the given stage list. build.sh runs stages in its
