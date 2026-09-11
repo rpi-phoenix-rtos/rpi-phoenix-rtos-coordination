@@ -661,9 +661,20 @@ fi
 # 0 -- i.e. silently SHIPS A DIAGNOSTIC BUILD. That is the more dangerous direction, and the
 # earlier version of this block only handled the "on" case.
 if [ "$(cat "${libc_trace_stamp}" 2>/dev/null || echo n)" != "${libc_trace_want}" ]; then
-	touch "${sources_dir}/libphoenix/misc/init.c" 2>/dev/null || true
-	printf 'LIBC_STARTUP_TRACE changed (%s -> %s): forcing libphoenix init.c rebuild\n' \
+	printf 'LIBC_STARTUP_TRACE changed (%s -> %s): deleting init.o + libphoenix.a to force a rebuild\n' \
 		"$(cat "${libc_trace_stamp}" 2>/dev/null || echo n)" "${libc_trace_want}"
+	# DELETE the artefacts, do not touch the source. Measured 2026-09-12: a touch is not
+	# enough -- the buildroot's init.c was already NEWER than init.o (00:26 vs 21:54) and the
+	# core stage still did not recompile it, so the knob flipped with no effect while this
+	# block printed a reassuring message. Removing the object and the archive leaves make no
+	# choice. (Touching the sibling source is doubly useless here: prepare-buildroot has
+	# already copied it by the time this block runs.)
+	# ONLY the object. Deleting libphoenix.a itself breaks the build: libc.a, libm.a and
+	# libpthread.a are SYMLINKS to it, so removing it leaves dangling links and every port
+	# link then fails with "cannot find .../sysroot/lib/libpthread.a" (done 2026-09-12,
+	# it took a --scope core run to repair). Removing the object is enough -- make
+	# recompiles it and re-archives libphoenix.a in place, symlinks intact.
+	rm -f "${buildroot}/_build/${target}/libphoenix/misc/init.o" 2>/dev/null || true
 	mkdir -p "${buildroot}" 2>/dev/null || true
 	printf '%s' "${libc_trace_want}" > "${libc_trace_stamp}" 2>/dev/null || true
 fi
