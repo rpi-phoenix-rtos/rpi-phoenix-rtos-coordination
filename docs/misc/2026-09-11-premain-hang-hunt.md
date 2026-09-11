@@ -136,8 +136,31 @@ This is exactly why the earlier write-up was careful not to claim "the per-launc
 that claim would now be false. What *is* dead is the idea that any convenient binary can stand in
 for QuakeSpasm.
 
-★ **The payoff is a cheap reproducer at last:** ~1 event per 26 launches ≈ **one per Pi cycle**,
-instead of one per 30 boots. That is roughly a 30× improvement in hunting throughput.
+### ⚠ Rate corrected by two further cycles
+
+Both went **85/85 clean**, so the honest tally is **1 event in 196 quakespasm launches (~0.5%)** —
+the launch-26 hit was luckier than it looked. Still the reproducer this hunt has lacked: at 85
+launches per cycle that is **~1 event every 2–3 cycles**, against one per 30 boots before.
+
+### ✅ The startup trace is deployed and proven working
+
+It had been "armed" since it was written but never actually verified inside a port binary.
+`LIBC_STARTUP_TRACE=y` plus a **forced ports relink** puts 8 markers in `/usr/bin/quakespasm`, and a
+run shows **106 processes × all 8 markers at equal counts** — so every process completed libc init
+and no trace is partial. When a launch does stall, its **last marker names the initialiser**.
+
+⚠ Two traps cost real time getting there:
+- **`--scope core` does not run the ports stage.** Follow it with `--ports-only`, and require BOTH a
+  `Build state changed for <port>, cleaning` line and the marker in the binary.
+- **`strings` on a missing path greps clean.** Three "0 = trace absent" readings were measured
+  against a path that does not exist: `libphoenix.a` lives in `_build/<t>/lib/` and
+  `_build/<t>/sysroot/lib/`, **not** `_build/<t>/libphoenix/`. The build had been fine all along, and
+  a claim that the env-var recipe "could never have worked" was written on that bad measurement and
+  then retracted — `env VAR=… cmd` keeps the inherited environment and `bash -lc` does not scrub it.
+
+ⓘ **The netboot export currently carries the DIAGNOSTIC (traced) build**, deliberately, so the next
+cycles can catch the stall with the trace live. It prints per-process markers and must not ship; the
+delivered SD image is untouched.
 
 ## ⏭ What is actually left to try
 

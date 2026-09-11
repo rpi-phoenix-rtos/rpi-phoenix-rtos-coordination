@@ -629,6 +629,32 @@ if [ "${log_to_file}" = 1 ]; then
 	log_to_file_env="RPI4_LOG_TO_FILE='1' "
 fi
 
+# libphoenix's pre-main startup trace (LIBC_STARTUP_TRACE=y -> -DLIBC_STARTUP_TRACE
+# in libphoenix/Makefile) is a DIAGNOSTIC knob for the pre-main hang.
+#
+# The forwarding below is belt-and-braces: `env VAR=... build.sh` keeps the
+# inherited environment and `bash -lc` does not scrub it, so the bare
+# `LIBC_STARTUP_TRACE=y ./scripts/rebuild-rpi4b-fast.sh ...` already reached make.
+# Naming it in the same allowlist as the other build knobs just makes that
+# explicit rather than incidental.
+#
+# What this block is really for:
+#   1. `touch misc/init.c` -- a -D change does NOT invalidate cached objects, so
+#      without this the knob flips and the build reuses an init.o compiled the
+#      other way, exiting 0. That trap is on record (and it bit in reverse when
+#      the trace was first REMOVED).
+#   2. The banner -- this build prints per-process trace lines and must not ship.
+# Confirm with `strings <binary> | grep libc-init`, never the exit code, and
+# mind the path: `strings` on a MISSING file also greps clean, which cost three
+# bogus "0" readings on 2026-09-11 (libphoenix.a lives in _build/<t>/lib/ and
+# _build/<t>/sysroot/lib/, NOT _build/<t>/libphoenix/).
+libc_trace_env=""
+if [ "${LIBC_STARTUP_TRACE:-}" = "y" ]; then
+	libc_trace_env="LIBC_STARTUP_TRACE='y' "
+	touch "${sources_dir}/libphoenix/misc/init.c" 2>/dev/null || true
+	printf 'Diagnostic: LIBC_STARTUP_TRACE=y (pre-main trace ON -- do not ship this build)\n'
+fi
+
 # One build.sh invocation with the given stage list. build.sh runs stages in its
 # own fixed order (clean -> fs -> host -> core -> test -> ports -> project ->
 # image), so a stage list is a SET; splitting the set across two invocations is
@@ -642,7 +668,7 @@ run_phoenix_build() {
 	local stages="$*"
 	printf 'Build:     ./phoenix-rtos-build/build.sh %s\n' "${stages}"
 	run_build_shell \
-		"set -euo pipefail; export PATH='${repo_root}/.venv/bin':'${toolchain_path}':\$PATH; cd '${buildroot}'; env ${log_to_file_env}${gpu_libs_env}${showcase_env}RPI4B_DTB_PATH='${dtb_path}' RPI4B_VARIANT='${variant}' TARGET='${target}' ./phoenix-rtos-build/build.sh ${stages}"
+		"set -euo pipefail; export PATH='${repo_root}/.venv/bin':'${toolchain_path}':\$PATH; cd '${buildroot}'; env ${log_to_file_env}${libc_trace_env}${gpu_libs_env}${showcase_env}RPI4B_DTB_PATH='${dtb_path}' RPI4B_VARIANT='${variant}' TARGET='${target}' ./phoenix-rtos-build/build.sh ${stages}"
 
 	# The CORE stage regenerates the sysroot, so this is the one moment where the
 	# toolchain's BUNDLED libc copy can be refreshed from a generated artifact
