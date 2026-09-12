@@ -81,6 +81,18 @@ for path in sys.argv[1:]:
 
         if in_table and is_row:
             if blank_run_start is not None:
+                # A blank line followed by a row that is ITSELF a new header --
+                # i.e. the next line is a |---|---| delimiter -- is two adjacent
+                # tables, which is perfectly legal. Only a blank followed by a
+                # bare continuation row is the bug.
+                nxt = lines[n] if n < len(lines) else ''
+                if re.match(r'^\|[-\s|:]+\|$', nxt):
+                    in_table = True
+                    tables += 1
+                    header_cells = cells(s)
+                    header_line = n
+                    blank_run_start = None
+                    continue
                 problems.append((blank_run_start,
                     "blank line inside a table (started at header line %d) -- "
                     "rows below it render as plain text on GitHub" % header_line))

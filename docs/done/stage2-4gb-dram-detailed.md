@@ -152,7 +152,7 @@ Pi 4 peripheral DMA constraints (BCM2711 datasheet ch. "ARM peripherals", plus `
 | GENET (1 GbE) | 32-bit | `0xc0000000` legacy or `0x00000000` 40-bit | Kernel quirk required to enable 40-bit on early firmware. |
 | SDHCI / SDIO | 32-bit | `0xc0000000` | Firmware-mediated for arasan SDHCI; on emmc2 only. |
 | PCIe RC (xHCI hub, NVMe) | 30-bit (1 GiB) | `0xc0000000` | The PCIe outbound mapping in `board_config.h` line 39 is `0x6_0000_0000` PA → `0xf800_0000` PCIe; PCIe inbound restricts DMA targets to the lower 1 GiB unless the inbound window is reprogrammed. |
-| V3D (GPU shader) | 32-bit | mapped via SMMU when present, else legacy alias. |
+| V3D (GPU shader) | 32-bit | — (conditional) | mapped via SMMU when present, else legacy alias. |
 | DMA channel 0–6 (legacy) | 32-bit | `0xc0000000` | Used by audio, MMC. |
 | DMA channel 11–14 (40-bit) | 40-bit | `0x00000000` | Limited use today. |
 

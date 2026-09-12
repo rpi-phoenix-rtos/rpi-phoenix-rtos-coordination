@@ -450,8 +450,8 @@ DejaVu Sans Mono.
 | **`/dev/fb0`** | `phoenix-rtos-devices/video/rpi4-fb/` | **DONE** | The X server's display target (shadow-FB + `write()`-blit). |
 | **USB HID keyboard** | `phoenix-rtos-devices/tty/usbkbd/` (raw HID mode) | **DONE** | Keyboard input via kdrive input driver. |
 | **USB HID mouse** | `phoenix-rtos-devices/usb/usbmouse/` | **DONE** | Pointer input (same kdrive input driver). |
-| **SDHCI + FAT/ext2 (M4)** | [`scope-pi4-uncovered.md` §2.1, §2.2](../knowledge/scope-pi4-uncovered.md) | X assets (~10 MB) don't fit syspage. Phase 6/7 fully blocked without it. |
-| **Companion Phoenix PRs** | kernel#572 sockets, kernel#596 graphmode, devices#515 fbcon, ports#88 libpng | All listed in PR #82's description. |
+| **SDHCI + FAT/ext2 (M4)** | [`scope-pi4-uncovered.md` §2.1, §2.2](../knowledge/scope-pi4-uncovered.md) | — | X assets (~10 MB) don't fit syspage. Phase 6/7 fully blocked without it. |
+| **Companion Phoenix PRs** | kernel#572 sockets, kernel#596 graphmode, devices#515 fbcon, ports#88 libpng | — | All listed in PR #82's description. |
 
 This plan **does not** require:
 
