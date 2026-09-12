@@ -54,3 +54,24 @@ The session that found this had a verified demo image delivered and a Pi busy wi
 hunt. A ground-up transport rewrite on the demo-critical path is not a thing to land unattended at
 the end of a long session; the standing rule ("if it is not clearly mechanical, leave it and record
 it") is exactly right here.
+
+
+## ★ 2026-09-12: it is a TWO-REPO re-port, not kernel-only (measured)
+
+`phoenix-rtos-tests` is 2 commits behind with **745 lines of new UNIX socket tests** (shutdown
+half-close, shutdown errnos, blocked reader/sender peer-close, two blocked readers, connect abort,
+dgram `MSG_PEEK`, dgram sender isolation). Tests is not a core repo and the conflict is **mechanical**
+— both sides only append test bodies and `RUN_TEST_CASE` entries — so it looks safe to take on its own.
+
+**It is not.** Merged and built clean (0 errors), then on hardware: **6 EL0 Data Aborts, only 10 of
+the suite's tests ran**, against a baseline of **27 tests / 0 failures / `OK`**. Those tests target
+upstream's **rewritten** AF_UNIX — the 5 kernel commits — which we do not have. Reverted (never
+pushed) and re-verified back at 27/27, 0 faults.
+
+⇒ Plan the re-port as **kernel + tests together**. Taking the tests first gives a red suite; taking
+the kernel first leaves the new behaviour untested. `phoenix-rtos-project`'s single commit only bumps
+those two submodule pointers, so it follows both.
+
+⚠ Resolution gotcha for whoever does it: the tests conflict boundary does **not** fall on a function
+boundary, so a naive "keep both" splice leaves one side's closing brace attached to the other's last
+function. Compare brace balance against **both** parents (each 0) — a naive splice reads +1.
