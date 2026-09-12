@@ -942,7 +942,9 @@ what was found:
 |---|---|
 | inline assembly, architecture intrinsics | **none** |
 | `#ifdef __aarch64__` / `__arm__` / `__x86_64__` / `__riscv` or any arch conditional | **none** |
-| BCM2711 / Pi / VideoCore / genet headers, MMIO addresses, board device paths | **none in code.** The only occurrences are explanatory comments and one cosmetic string, `nfs4_set_client_name(nfs, "phoenix-rpi4-nfsfs")` (`srv.c:396`) — rename when upstreaming |
+| BCM2711 / Pi / VideoCore / genet headers, MMIO addresses, board device paths | **none in code** — the only occurrences are explanatory comments and one string, `nfs4_set_client_name(nfs, "phoenix-rpi4-nfsfs")` (`srv.c:396`); see C2 below, which is more than cosmetic |
+| network-interface assumptions | **none** — discovery reads `/dev/ifstatus` and is deliberately name-agnostic (`srv.c:131-173` names both the Pi 4 `en0` and ia32-qemu `en1`, and filters `lo`/`wl`/`sc` prefixes rather than allow-listing a NIC) |
+| alignment (strict-alignment targets) | **safe by construction** — libnfs's XDR word accesses are always 4-aligned: `zdrs->pos` only advances in multiples of 4 (`libnfs-zdr.c:282-290`) and the base buffer is `malloc`'d or that allocation +4. Matters for sparcv8leon and trapping RISC-V cores |
 | hardcoded page size | **none** — stack sizes are `N * _PAGE_SIZE` (`srv.c:71-77`), not `N * 4096` |
 | endianness / XDR byte-order handling | **none in the server** — all wire encoding lives inside libnfs, which is portable and widely used across architectures |
 | 64-bit file offsets on a 32-bit target | **safe** — sizes, offsets and attributes are `long long` (≥64-bit by C99) and `struct nfs_stat_64`; there is no bare `long` carrying a file offset |
@@ -957,11 +959,40 @@ instead of POSIX's 512, so `du`/`ls -s` under-reported ~8× — the NFSv3 path w
 value, so **every** create was sent as an NFSv4 `EXCLUSIVE4` open). The third,
 `01-nfs4-renew-lease`, adds the NFSv4 RENEW operation for lease maintenance.
 
+Type widths were checked against the actual Phoenix typedefs rather than assumed: `off_t` is
+`__s64`, `ino_t` is `unsigned long long` and `time_t` is `long long` on **every** architecture
+(`kernel/include/types.h`, `posix-types.h`), so 64-bit file offsets and NFSv4 fileids do not truncate
+on a 32-bit target.
+
+**Caveats, none of which require changing NFS code:**
+
+- **C1 — footprint, not architecture.** ~136 KB of static thread stacks (`srv.c:92-94`) and a 1 MB
+  read/write max (`srv.c:412`) are irrelevant on any MMU/A-class target but effectively rule out the
+  **nommu Cortex-M** projects. So "ARMv7" splits: **A-class fine, M-class not**. Both numbers are
+  single-constant tunables.
+- **C2 — the fixed NFSv4 client id is more than a cosmetic string.** `"phoenix-rpi4-nfsfs"` is
+  deliberately stable so that a *reboot* reclaims prior state (RFC 7530), but the same mechanism means
+  **two boards mounting the same server evict each other's leases**. Derive the suffix from MAC or
+  hostname before any multi-board use.
+- **C3** — the libnfs `config.h` HAVE_\* set was verified against the aarch64 sysroot only; re-walk it
+  on a new target rather than trusting it.
+- **C4 — porting work is project wiring, not code.** `nfs/Makefile` is already picked up on every
+  target by the `ALL_MAKES` glob, so a new board needs `libnfs` in its `ports.yaml`, a post-ports
+  `make nfs nfs-install`, and a `plo` launch entry. No NFS source changes.
+- **C5 — one inherited limit, shared with every other Phoenix fs.** `msg.i.io.len` is `size_t`
+  (`phoenix/msg.h:88`), which is pointer-width, so `truncate` caps at 4 GB on 32-bit targets. dummyfs,
+  ext2 and jffs2 have exactly the same ceiling — it is a property of the Phoenix message API, and
+  fixing it is a kernel/libphoenix change, not an NFS one.
+
+ⓘ One of our workarounds points at a **Phoenix-wide** defect worth fixing at the source:
+`nfs_set_poll_timeout(nfs, 1)` (`srv.c:405`) exists because the Phoenix socket `poll()` does not wake
+on data-ready and blocks the full timeout. That is the lwIP port's socket layer, shared by every
+target — making `poll`/`select` wake on readiness would benefit every polling application and let this
+1 ms busy-poll cadence go away.
+
 ⚠ Stated honestly: this is a **code audit, not a second-target bring-up**. The client has only ever
-been *run* on the Pi 4B, so "portable" here means nothing in it is tied to this board or ISA — not
-that another target has been booted on it. The one thing a second target would genuinely exercise is
-alignment strictness, since this port's aarch64 build runs with `-mstrict-align` and would already
-have caught unaligned accesses in our own code, but not necessarily inside libnfs.
+been *run* on the Pi 4B, so "portable" means nothing in it is tied to this board or ISA — not that
+another target has been booted on it.
 
 ### 7. V3D compute (CSD) — three changes an unrelated experiment surfaced
 
