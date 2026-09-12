@@ -64,3 +64,48 @@ local explanation too. Recorded so the coincidence is not rediscovered a fourth 
   the bytes after the boundary belong to some other object, the page-content theory is confirmed;
   if they are plausible-but-stale STK data, it is a reuse/lifetime bug instead.
 - Rate is ~**1 in 10** recent STK runs, so a repro costs ~10 cycles.
+
+---
+
+# Addendum: a predicted root cause for the drive-graph crash
+
+*Recorded BEFORE the test that checks it, so it is a prediction and not a post-hoc story.*
+
+`DriveGraph::computeDirectionData()` bounds both its loops correctly (`i < m_all_nodes.size()`,
+`succ_index < getNode(i)->getNumberOfSuccessors()`). The unchecked step is inside
+`determineDirection()`:
+
+```cpp
+unsigned int next = getNode(current)->getSuccessor(succ_index);  // succ_index valid
+float angle_next  = getAngleToNext(next, 0);                     // `next` assumed a valid NODE index
+next = getNode(next)->getSuccessor(0);                           // assumes EVERY node has >= 1 successor
+```
+
+Two assumptions are never checked: that a stored successor value is a valid node index, and that
+every node has at least one successor. `getSuccessor(0)` on a node with **zero** successors indexes
+an **empty** vector — the raw unchecked index that patch 0018 guards.
+
+## Why this explains the INTERMITTENCY
+
+The out-of-bounds read happens **every** time, but what it returns is whatever memory sits past the
+vector's data — which varies run to run with heap layout. That value is then used as a node index:
+
+- sometimes it lands inside `m_all_nodes` ⇒ no crash, just a silently wrong AI decision;
+- sometimes it lands on an unmapped page ⇒ Data Abort.
+
+That accounts for a ~1-in-10 rate, a *different* `far` each occurrence, and indices "far out of
+range" — with **no memory corruption required**. It also fits why four caller-side guards
+(0014/0015) reduced but did not eliminate it: they fixed specific callers, not this path.
+
+## The prediction
+
+Patch 0018 prints `DriveNode::getSuccessor(i) out of range (n successors)`. If this analysis is
+right, the report should read **`getSuccessor(0) out of range (0 successors)`** — a dead-end node.
+
+- If it prints that, the root cause is STK's own unchecked traversal of a node with no successors.
+- If it prints a large `i` with a sane `n`, the index is arriving corrupt from somewhere else and
+  the memory-corruption thread is back in play.
+- If `n` itself is absurd, the vector's own header is corrupt — which would tie this to the font
+  crash, where a vector's `_M_start` was bad.
+
+Each outcome points somewhere different, which is what makes it worth running rather than arguing.
