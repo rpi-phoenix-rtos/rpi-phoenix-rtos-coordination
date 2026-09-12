@@ -178,7 +178,11 @@ delivered SD image is untouched.
 
 - `--scope core` does **not** put the trace into port binaries — they link their own libc. Check
   `strings <app> | grep libc-init` returns nonzero *before* believing any trial.
-- psh **cannot set env vars**, so the trace has to stay compile-time gated.
+- ⚠ **CORRECTED 2026-09-12: psh CAN set env vars.** `export` is a registered psh app
+  (`psh/pshapp/env.c:154`), and the V3D winsys cites a working precedent (`VKQ_ALIASTRACE`). What psh
+  lacks is the inline `VAR=val cmd` form (`pshapp.c:1919`) — so `export VAR=1` on its own line, then
+  the command, works. The earlier claim here was wrong and it is why this trace was made
+  compile-time gated; a runtime-gated knob would have been reachable all along.
 - Never read a bench's per-trial log while the bench is still running: a half-written log is
   indistinguishable from a hang. A false reproduction was reported and retracted that way.
 - Turning a `-D` knob off does **not** invalidate the objects it changed. A "clean" rebuild reused
