@@ -157,7 +157,7 @@ through a documented per-platform override hook.
 | Firmware DTB handoff | plo `hal/aarch64/generic/hal.c`; kernel `hal.c` | The Pi 4 firmware patches the DTB at runtime to add the high memory bank, but the pointer arrives at plo as `x0 == 0` (chain not root-caused). plo reads `dtb_ptr32` directly from armstub PA `0xf8` as a fallback; the kernel prefers the firmware DTB over the initramfs one. This unlocked the full 3.94 GB (plo `SIZE_DDR` 948 MB -> 3.94 GB). Workaround, by the author's own note. |
 | ★★ SMP: 4-core scheduling | `hal/aarch64/generic/config.h` (`NUM_CPUS 4U`), `_init.S`, `interrupts_gicv2.c`, `gtimer_timer.c`, `proc/threads.c`, `main.c` | ~40 commits of phased experiments, most reverted. Surviving mechanism: firmware releases secondaries into the armstub spin-table; each secondary waits on `hal_smpPrimaryReady` (published by the primary after vm/proc/threads init), then does its own `_hal_interruptsInitPerCPU` / `_hal_cpuInit` / `_hal_timerInitPerCPU`, enables its own **banked** GICD_ISENABLER0 PPI bit, arms its own CNTV, and re-arms CNTV in `threads_timeintr` so the level-triggered PPI does not stick asserted. All four cores run the scheduler. Residual: no PSCI/memory-poke fallback, so a core the firmware never releases stays down. |
 | SError handler (dormant) | `hal/aarch64/exceptions.c`, `cpu.c` | `exceptions_serrorHandler` dumps ESR/ELR/FAR and halts (never reboots). **SError stays masked** — `NO_SERR` is now set in the `cpu.c` PSR templates — because unmasking exposes a live external abort in BCM2711 PCIe/VL805 bring-up (`esr=0xbf000002`, imprecise; isolation-proven absent with USB disabled). Infrastructure, not live handling. |
-| EL0 counter + cache-maintenance enable | `hal/aarch64/_init.S` | `CNTKCTL_EL1.EL0VCTEN|EL0PCTEN` (reset value is architecturally UNKNOWN, so `mrs cntvct_el0` from userspace was trapping and killing binaries) and `SCTLR_EL1.UCI=1` for EL0 `dc civac`/`ic ivau`, needed for userspace streaming-DMA drivers on this non-coherent SoC. Both match Linux; both are generally useful on aarch64. |
+| EL0 counter + cache-maintenance enable | `hal/aarch64/_init.S` | `CNTKCTL_EL1.EL0VCTEN\|EL0PCTEN` (reset value is architecturally UNKNOWN, so `mrs cntvct_el0` from userspace was trapping and killing binaries) and `SCTLR_EL1.UCI=1` for EL0 `dc civac`/`ic ivau`, needed for userspace streaming-DMA drivers on this non-coherent SoC. Both match Linux; both are generally useful on aarch64. |
 | Fork-local divergences to be aware of | `hal/aarch64/spinlock.c`, `pmap.c`, `proc/name.c`, `syscalls.c` | (a) `hal_spinlockSet/Clear` take a DAIF-only fake-lock path under `#if NUM_CPUS == 1`, and `hal_spinlockCreate` skips the registry lock before `hal_started()`. (b) `_pmap_preinit` does `if (nBanks == 0) while (1) wfe;` — a silent hard hang where upstream would want an error path (also space-indented amid tabs). (c) `proc/name.c` adds a cached-`devfs_oid` fast path in `proc_portLookup` (TD-14) to dodge a Pi 4 cold-boot race against devfs's own `portRegister` that produced 20-second IPC hangs; a fork-local workaround, not an optimisation. (d) The syscall table is byte-identical to upstream again except an appended `sys_fdpath`, but restoring upstream order shifted ~93 syscall numbers — anyone cherry-picking must rebuild every binary. |
 
 **Same class, 2026-09-09: upstream widened the priority space 8 → 64.** A 64-bit ready bitmask
@@ -931,6 +931,37 @@ by a `readdir` of the export, and does not survive a remount — which matches w
 listing, tens of KB per reclaim, because with the dircache disabled nothing in libnfs would ever free
 it). Verification is stated in test terms throughout: over the netboot NFS root, `libc/stdio` 80 tests
 0 failures, `libc/misc` 207 tests down to 2 known-clock failures, `libc/dirent` 38/0.
+
+**★ The NFS client is board- and architecture-independent, and we think it is upstreamable as a
+general Phoenix-RTOS feature.** Nothing in `filesystems/nfs/` is Pi-specific; it is written against
+generic Phoenix APIs (message ports, `mount`, lwIP sockets) and should build and run on any
+Phoenix-RTOS target that has working networking. Audited rather than assumed — what was checked, and
+what was found:
+
+| checked for | result |
+|---|---|
+| inline assembly, architecture intrinsics | **none** |
+| `#ifdef __aarch64__` / `__arm__` / `__x86_64__` / `__riscv` or any arch conditional | **none** |
+| BCM2711 / Pi / VideoCore / genet headers, MMIO addresses, board device paths | **none in code.** The only occurrences are explanatory comments and one cosmetic string, `nfs4_set_client_name(nfs, "phoenix-rpi4-nfsfs")` (`srv.c:396`) — rename when upstreaming |
+| hardcoded page size | **none** — stack sizes are `N * _PAGE_SIZE` (`srv.c:71-77`), not `N * 4096` |
+| endianness / XDR byte-order handling | **none in the server** — all wire encoding lives inside libnfs, which is portable and widely used across architectures |
+| 64-bit file offsets on a 32-bit target | **safe** — sizes, offsets and attributes are `long long` (≥64-bit by C99) and `struct nfs_stat_64`; there is no bare `long` carrying a file offset |
+| DMA, cache-maintenance or coherency assumptions | **none** — this is a socket client, it never touches device memory |
+| architecture or board pins in the build | **none** — the `Makefile` is plain `static-lib.mk` + `binary.mk` with one warning downgrade |
+
+The three libnfs patches we carry (`ports/libnfs/patches/`) are likewise generic, with **zero**
+architecture-specific content, and two of them are plain upstream libnfs bugs worth sending there
+rather than keeping: `02-nfs4-st-blocks-512-units` (NFSv4 divided used-space by `NFS_BLKSIZE` 4096
+instead of POSIX's 512, so `du`/`ls -s` under-reported ~8× — the NFSv3 path was already correct) and
+`03-nfs4-open-create-excl-typo` (`data->filler.flags|O_EXCL`, a bitwise OR that is non-zero for every
+value, so **every** create was sent as an NFSv4 `EXCLUSIVE4` open). The third,
+`01-nfs4-renew-lease`, adds the NFSv4 RENEW operation for lease maintenance.
+
+⚠ Stated honestly: this is a **code audit, not a second-target bring-up**. The client has only ever
+been *run* on the Pi 4B, so "portable" here means nothing in it is tied to this board or ISA — not
+that another target has been booted on it. The one thing a second target would genuinely exercise is
+alignment strictness, since this port's aarch64 build runs with `-mstrict-align` and would already
+have caught unaligned accesses in our own code, but not necessarily inside libnfs.
 
 ### 7. V3D compute (CSD) — three changes an unrelated experiment surfaced
 

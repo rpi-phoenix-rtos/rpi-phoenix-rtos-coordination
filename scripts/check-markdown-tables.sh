@@ -28,6 +28,18 @@ fi
 python3 - "${files[@]}" <<'PYEOF'
 import re, sys
 
+
+def cells(s):
+    """Count cell separators, ignoring BACKSLASH-ESCAPED pipes.
+
+    `\\|` is a literal pipe in GitHub-flavoured markdown, not a separator, and
+    it is the normal way to write `A|B` inside a cell. Counting raw '|' flags
+    every such row as broken -- a false alarm that would train the reader to
+    ignore this check, which is worse than not having it.
+    """
+    return len(re.findall(r'(?<!\\)\|', s)) - 1
+
+
 rc = 0
 for path in sys.argv[1:]:
     try:
@@ -50,7 +62,7 @@ for path in sys.argv[1:]:
         if is_row and not in_table:
             in_table = True
             tables += 1
-            header_cells = s.count('|') - 1
+            header_cells = cells(s)
             header_line = n
             blank_run_start = None
             continue
@@ -85,11 +97,11 @@ for path in sys.argv[1:]:
                     "row does not end with '|' -- text was appended after the "
                     "last cell, which adds a column: %s" % s[-60:]))
                 continue
-            cells = s.count('|') - 1
-            if cells != header_cells:
+            n_cells = cells(s)
+            if n_cells != header_cells:
                 problems.append((n,
                     "row has %d cells, header at line %d has %d: %s"
-                    % (cells, header_line, header_cells, s[:60])))
+                    % (n_cells, header_line, header_cells, s[:60])))
 
     if problems:
         rc = 1
