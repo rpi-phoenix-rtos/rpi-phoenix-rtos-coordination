@@ -649,7 +649,11 @@ fi
 # bogus "0" readings on 2026-09-11 (libphoenix.a lives in _build/<t>/lib/ and
 # _build/<t>/sysroot/lib/, NOT _build/<t>/libphoenix/).
 libc_trace_env=""
-libc_trace_stamp="${buildroot}/.libc-startup-trace-state"
+# NOT under ${buildroot}: prepare-buildroot.sh runs BEFORE this block and wipes the
+# buildroot root, taking the stamp with it -- so `cat` fell back to "n", matched want="n",
+# and a y->n transition was never detected. That is how a traced build survived an
+# un-tracing rebuild on 2026-09-12 (the third distinct way this net has failed).
+libc_trace_stamp="${repo_root}/artifacts/.libc-startup-trace-state"
 libc_trace_want="${LIBC_STARTUP_TRACE:-n}"
 if [ "${libc_trace_want}" = "y" ]; then
 	libc_trace_env="LIBC_STARTUP_TRACE='y' "
@@ -675,7 +679,7 @@ if [ "$(cat "${libc_trace_stamp}" 2>/dev/null || echo n)" != "${libc_trace_want}
 	# it took a --scope core run to repair). Removing the object is enough -- make
 	# recompiles it and re-archives libphoenix.a in place, symlinks intact.
 	rm -f "${buildroot}/_build/${target}/libphoenix/misc/init.o" 2>/dev/null || true
-	mkdir -p "${buildroot}" 2>/dev/null || true
+	mkdir -p "${repo_root}/artifacts" 2>/dev/null || true
 	printf '%s' "${libc_trace_want}" > "${libc_trace_stamp}" 2>/dev/null || true
 fi
 
@@ -688,11 +692,35 @@ fi
 # phoenix-rtos-build/build-ports.sh -> port_manager) finds resolvelib/jinja2/
 # PyYAML/rich from the venv rather than the PEP668-managed system Python. A
 # non-existent PATH entry is harmless, so this is safe even without the venv.
+# Check what actually came out, instead of trusting the forcing logic above. That logic has
+# now failed THREE distinct ways (a touch that did not invalidate the object; deleting
+# libphoenix.a and breaking the libc/libm/libpthread symlinks; a stamp under the buildroot
+# that prepare-buildroot wiped). A build that silently keeps the pre-main trace ships
+# per-process diagnostics, so verify the artifact and say so loudly either way.
+verify_libc_trace_state() {
+	local lib="${buildroot}/_build/${target}/sysroot/lib/libphoenix.a"
+	local found
+
+	[ -f "${lib}" ] || return 0
+	found=$(strings "${lib}" 2>/dev/null | grep -c 'libc-init' || true)
+
+	if [ "${libc_trace_want}" = "y" ] && [ "${found}" = "0" ]; then
+		printf '\n*** WARNING: LIBC_STARTUP_TRACE=y but libphoenix.a carries NO trace markers.\n'
+		printf '***          The knob did not take. Delete _build/%s/libphoenix/misc/init.o and rebuild.\n\n' "${target}"
+	elif [ "${libc_trace_want}" != "y" ] && [ "${found}" != "0" ]; then
+		printf '\n*** WARNING: the pre-main startup trace is STILL COMPILED IN (%s markers) with the\n' "${found}"
+		printf '***          knob OFF. DO NOT SHIP THIS BUILD. Delete _build/%s/libphoenix/misc/init.o\n' "${target}"
+		printf '***          and rebuild --scope core, then re-check.\n\n'
+	fi
+}
+
 run_phoenix_build() {
 	local stages="$*"
 	printf 'Build:     ./phoenix-rtos-build/build.sh %s\n' "${stages}"
 	run_build_shell \
 		"set -euo pipefail; export PATH='${repo_root}/.venv/bin':'${toolchain_path}':\$PATH; cd '${buildroot}'; env ${log_to_file_env}${libc_trace_env}${gpu_libs_env}${showcase_env}RPI4B_DTB_PATH='${dtb_path}' RPI4B_VARIANT='${variant}' TARGET='${target}' ./phoenix-rtos-build/build.sh ${stages}"
+
+	verify_libc_trace_state
 
 	# The CORE stage regenerates the sysroot, so this is the one moment where the
 	# toolchain's BUNDLED libc copy can be refreshed from a generated artifact
