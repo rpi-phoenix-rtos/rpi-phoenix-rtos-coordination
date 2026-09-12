@@ -109,3 +109,29 @@ right, the report should read **`getSuccessor(0) out of range (0 successors)`** 
   crash, where a vector's `_M_start` was bad.
 
 Each outcome points somewhere different, which is what makes it worth running rather than arguing.
+
+## ⛔ Prediction REFUTED offline (same day, no Pi time)
+
+Hacienda's drive graph is a plain closed loop:
+
+```xml
+<node-list from-quad="0" to-quad="108"/>   <!-- 109 nodes -->
+<edge-loop  from="0"      to="108"/>       <!-- 0->1->...->108->0 -->
+```
+
+**Every node has exactly one successor**, so `getSuccessor(0)` is always in range and there are no
+dead ends on this track. The "node with zero successors" story cannot be what happens here.
+
+That is worth more than a wasted theory: if the stored graph is a clean loop with indices 0..108,
+then a `next` that lands far outside `m_all_nodes` did **not** come from the track data or from
+STK's traversal logic. It arrived **corrupt** — which puts the memory-corruption thread back at the
+centre, alongside the font crash where a vector's `_M_start` was likewise bad.
+
+So of the three branches recorded above, the live ones are now:
+
+- **large `i`, sane `n`** ⇒ the index arrives corrupt from elsewhere;
+- **absurd `n`** ⇒ the vector's own header is corrupt, which would tie this directly to the font
+  crash (a `std::vector` whose internals were wrong).
+
+ⓘ Minor, unexplained: `quads.xml` has 110 `<quad` matches while the node list covers quads 0..108.
+Probably a container element in the grep count rather than a real off-by-one; noted, not chased.
