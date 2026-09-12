@@ -1075,8 +1075,8 @@ Five 3D engines, all folded into a **single static ELF each** (Phoenix has no dy
 | **★ quakespasm** (GLQuake) | 0.97.0 (`f5fe178`) | desktop GL → Mesa/V3D → `/dev/fb0` | Flagship. Textured real levels at ~1080p/~40 fps on HDMI, audio wired. Cleanest HW evidence of the five. Also the only *networked* demonstration: the multiplayer client joins a real dedicated server, loads the map and runs in-game at 26 fps over Phoenix's own TCP/IP stack (the two enabling lwIP defects — the `getnameinfo` out-of-bounds write and `FIONBIO` — are in the drivers section, §3) |
 | **★ supertuxkart** | 1.4 | GLES3 (STK "SP" renderer) | Boot → fully-lit in-game 3D race, 0 crashes, host-comparison SSIM 0.991, **8/9/9 fps** on the shipped image (`scale_rtts_factor=0.75`; it was 5.84 fps / ~171 ms per frame at full resolution). It ran at *exactly* 1 fps until a libstdc++ toolchain defect was root-caused — see §3. 11 patches, 12 port dependencies |
 | yquake2 (Quake II) | 8.71 (`a9e88f6`) | `ref_gl3` / GLES3 default, `ref_gl1` selectable | Renders full 3D. Client + integrated server + baseq2 game + one renderer in one ELF. Asset load is slow over NFS, mitigated by RAM-staging to `/tmp` — **per application, not in general**: measured 5.49× for quake3e (`CL_InitCGame` 63.77 s → 11.61 s) and 3.6× for quakespasm, but a net *loss* for SuperTuxKart, where 73 s of copying saved 2.7 s. RAM-staging is also the real justification for the `DUMMYFS_SIZE_MAX` 32 → 256 MiB bump reported in §4 |
-| quake3e (Quake III) | 1.32 (in-tree "Q3 1.32e", `f694bbb`) | desktop GL → Mesa/V3D | Runs; QVM bytecode modules need no `dlopen`, but its aarch64 JIT does need the code buffer `mmap`'d RWX up front, because `mprotect` cannot add `PROT_EXEC` later (see *Platform gaps*). Known open defect: a V3D CT0 binner wedge on `q3dm7` (a lightmap-black bug on the same map was root-caused and fixed — see the V3D tiling rule in the drivers section) |
-| vkquake | 1.34 (`1aa13a5`) | **Vulkan** via the ported V3DV ICD (SPIR-V→NIR→QPU) | Runs — the only user-shader Vulkan consumer. No SDL dependency at all: SDL is *entirely* shimmed (`glue/sdl-shim/SDL.h` + `pl_phoenix_sdlcompat.c`). Known open defect: torch sprites intermittently missing (~10–20 % of runs) |
+| quake3e (Quake III) | 1.32 (in-tree "Q3 1.32e", `f694bbb`) | desktop GL → Mesa/V3D | Runs; QVM bytecode modules need no `dlopen`, but its aarch64 JIT does need the code buffer `mmap`'d RWX up front, because `mprotect` cannot add `PROT_EXEC` later (see *Platform gaps*). Known open defect `V3D-binner-wedge` (a lightmap-black bug on the same map was root-caused and fixed — see the V3D tiling rule in the drivers section); status and evidence in [KNOWN-ISSUES.md](KNOWN-ISSUES.md) |
+| vkquake | 1.34 (`1aa13a5`) | **Vulkan** via the ported V3DV ICD (SPIR-V→NIR→QPU) | Runs — the only user-shader Vulkan consumer. No SDL dependency at all: SDL is *entirely* shimmed (`glue/sdl-shim/SDL.h` + `pl_phoenix_sdlcompat.c`). Known open defect `#67`, torch sprites intermittently missing; status and the pass-rate protocol in [KNOWN-ISSUES.md](KNOWN-ISSUES.md) |
 
 Per engine the recipe carries a `glue/pl_phoenix_*.c` Phoenix backend plus one generated single-ELF patch (`quakespasm` 857 lines, `vkquake` 557, `yquake2` 476, `quake3` 331). vkQuake additionally vendors pre-compiled shaders (`vkquake_shaders.c`, 30 506 lines) and Vulkan entry trampolines (`vk_trampolines.c`, 648 lines).
 
@@ -1463,11 +1463,12 @@ correction.
 
 ---
 
-## Caveats, open defects, and licensing
+## Caveats, methodology, and licensing
 
-Stated plainly so nothing here is taken on trust.
+Stated plainly so nothing here is taken on trust. **Open defects are not listed here** — they live in
+[docs/KNOWN-ISSUES.md](KNOWN-ISSUES.md), which is the single source of truth for them.
 
-**Closed since this document was first drafted:**
+**One fix worth recording here, because the wrong diagnosis was published first:**
 - **X desktop-exit crash — fixed, and the root cause is an upstream glamor bug.** Closing the
   desktop session faulted the glamor X server in `dixGetPrivate`. Three fixes were attempted and
   all reverted (`4133eff`, `4569f79`, `cf235b4`, reverted by `21bd0ec`) — all three were on the
@@ -1497,61 +1498,31 @@ risky change:
   code). Any graphics claim below ~10% has to be repeated before it means anything — which is why
   several single-run figures in the X11 history should be read as directional only.
 
-**⛔ CLOSED by the owner 2026-09-09 — do not implement. The one change that would still have moved GL-in-a-window**, and it is a project rather than a tuning
-pass: the client renders to an FBO, `glReadPixels` into its own memory, then `XPutImage` **1.2 MB per
-frame** back to the server, which uploads it into the screen texture — GPU → CPU → socket → CPU → GPU
-every frame, and the transfer *is* the cost (disabling presents alone took it 10.62 → 14.94 fps, so
-presents stalling that transfer are ~30–35% of it). The fix is not to make the transfer faster but to
-not do it: share the GPU buffer and send damage instead. Client and server already talk to the same
-`/dev/v3d-srv` and two concurrent daemon clients were proven bit-exact, so the plumbing exists — this
-would be a mini-DRI3 for this port. It affects only GL-in-a-window; the desktop itself is already at
-25.6 presents/s.
+**⛔ GL-in-a-window — closed by the owner 2026-09-09, do not implement.** The client renders to an
+FBO, `glReadPixels` into its own memory, then `XPutImage` **1.2 MB per frame** back to the server:
+GPU → CPU → socket → CPU → GPU every frame, and the transfer *is* the cost (disabling presents alone
+took it 10.62 → 14.94 fps). The fix would not be a faster transfer but sharing the GPU buffer and
+sending damage — a mini-DRI3 for this port. Affects only GL-in-a-window; the desktop itself is at
+25.6 presents/s. Full rationale and the measured ceiling are in
+[docs/KNOWN-ISSUES.md](KNOWN-ISSUES.md).
 
-**Known-open defects in this fork** (not hidden in the sections above):
-- **vkQuake intermittent missing torches** — present at a low rate; measured 9/9 clean on the
-  current build, which bounds the rate rather than closing the defect.
-- **Quake III `q3dm7` CT0 binner wedge** — open and banked, but the investigation reached a
-  definite conclusion worth recording so the next person does not re-chase it. **It is not an MMU
-  fault.** With the real fault-report registers instrumented (`MMU_VIO_ADDR` 0x1234, `MMU_VIO_ID`
-  0x122c, offsets confirmed against Linux `v3d_regs.h`), a wedged trial reported `vio_addr=0`,
-  `vio_id=0`, `int_sts=0`, no binner overflow, and `ct0ca` parked *inside* its own valid BCL BO —
-  a binner front-end pipeline stall with zero error status. The earlier "`mmu_ill=0x8000886x` ⇒
-  stale PTE" reading was a red herring: `MMU_ILLEGAL_ADDR` is the scratch-page redirect *we
-  program*, so reading it back only echoes `scratch_pa`. It is intermittent (~50 % of boots) and
-  workload-specific (q3dm1's 1942 faces never wedge, q3dm7's 5823 do), `r_mergeLightmaps 0` is
-  **not** a fix (it wedged with the cvar set, after one lucky clean run), and a reset+drop
-  mitigation ships. Named next step: diff our binner/tile-alloc setup (`TILE_BINNING_MODE_CFG`,
-  tile_alloc/tile_state sizing, CT0QMA/CT0QMS) and CPU→GPU coherency before the CT0 kick against
-  Mesa/Linux v3d, since Linux renders the same map on the same silicon.
-- **SuperTuxKart faults intermittently in its own code** — historically ~40% of runs, at *varying*
-  sites. ⚠ Earlier revisions of this document scoped this to "the `--profile-time` report path,
-  after the race", which is **wrong**: `addr2line` on four distinct fault PCs gives
-  `SkiddingAI::findNonCrashingPoint()`, `FontManager::loadFonts()` (**startup**, before any race),
-  and **two inside libphoenix's allocator** (`lib_listRemove`, `_malloc_chunkJoin`). The allocator
-  is the victim, not the cause — a 4.8 M-op harness exonerated it of any internal defect — and both
-  of those sites are now guarded (a corrupt free-bin link abandons the bin instead of being
-  followed). A 6-trial bench afterwards came back 0/6, which is suggestive only: no guard fired, so
-  the corruption did not occur, and relinking STK perturbed its heap layout. The 11-of-17
-  attribution in the reliability figure below inherits this error.
-- **Quake II's underwater view is Y-mirrored — fixed with a stopgap the fix itself calls one.** It
-  is "a conditional correction on a conditional bug", and it over-corrects at `viewsize <= 71`.
-  The structural fix is to declare the scanout FBO `FlipY` and delete the size gate in
-  `st_atom_framebuffer.c`, which would also remove glamor's three hand-rolled flips; that is not
-  hypothetical, since the driver's own `GL_EXTENSIONS` dump shows `GL_MESA_framebuffer_flip_y` is
-  supported. Same FB-0-redirect seam as the GLES-hint trap in the game-ports section.
-- **A stale Mesa shader-cache blob renders as green speckle over an otherwise-valid frame.**
-  Phoenix has no ELF build-id, so the on-disk shader cache keys on shader source only and a host
-  toolchain change silently invalidates nothing: after the gcc-16.2 promotion the persistent cache
-  still held gcc-14-era blobs, the GPU executed stale QPU binaries, and SuperTuxKart's loading
-  screen came up speckled; `rm -rf` of the cache directory cleared it. Useful diagnostic tell —
-  coloured speckle *over a valid frame* means stale-blob execution, where a real GPU wedge drops
-  whole frames and logs one. Bump `V3D_PHX_CACHE_VERSION` or clear the cache on any clean rebuild.
-- **GPU X11 xterm resize artefacts — investigated and not reproduced by a sound measurement.**
-  Recorded as such rather than omitted: resize correctness was verified (server and client agree
-  once settled), and the residual hypothesis is intermittent frames during a fast drag, since this
-  stack has no compositing and presents by GPU readback.
-- Individual drivers state their own limits in the drivers section (e.g. SD writes are PIO,
-  GPIO is read-only, V3DV has no WSI).
+**Open defects — see [docs/KNOWN-ISSUES.md](KNOWN-ISSUES.md).**
+
+That file is the **single source of truth** for what is currently broken, and an item is *removed*
+from it the moment it stops being an issue. Duplicating the list here would guarantee the two drift,
+and they already had: this section still described defects that were fixed weeks ago. Everything that
+used to be listed here — the vkQuake torches, the `q3dm7` binner wedge (including the evidence that it
+is **not** an MMU fault, and the named next step), SuperTuxKart's intermittent fault, the shader-cache
+speckle and its `V3D_PHX_CACHE_VERSION` remedy, and the xterm resize artefacts — now lives there with
+its full detail. Individual drivers still state their own limits in the drivers section (SD writes are
+PIO, GPIO is read-only, V3DV has no WSI).
+
+⚠ One correction worth keeping visible, because a wrong version of it was published here: SuperTuxKart's
+intermittent fault was once scoped to "the `--profile-time` report path, after the race". That is
+**wrong** — `addr2line` on four distinct fault PCs gives `SkiddingAI::findNonCrashingPoint()`,
+`FontManager::loadFonts()` (**startup**, before any race) and two sites **inside libphoenix's**
+**allocator**. The allocator is the victim, not the cause. The 11-of-17 attribution in the reliability
+figure below inherits that error.
 
 **Reliability, system-level.** Computed from the UART logs already on disk rather than from a
 fresh campaign (one `test-cycle-*` invocation = one power-on = one log; success = the `(psh)%`
