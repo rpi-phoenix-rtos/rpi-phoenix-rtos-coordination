@@ -102,7 +102,7 @@ demonstrably move between them, so `cl.time` is advancing) the two torch ROIs ar
 | 091243 | 3.52 | 0 / 63 / 31.5 | 0 / 74 / 32.3 |
 | 091253 (final) | 3.64 | 0 / 63 / 31.5 | 0 / 74 / 32.3 |
 | quakespasm ref | 3.55 | **468** / 255 / 37.8 | **545** / 255 / 39.1 |
-| 091015/091031/091047/091102 | 21–132 | — (pre-map: white/black/loading, not gradeable) |
+| 091015/091031/091047/091102 | 21–132 | — (pre-map: white/black/loading, not gradeable) | — |
 
 (Frames 091015–091102 are the boot/loading screens — `mae` 21–132 — and are correctly excluded by
 the viewpoint gate.)

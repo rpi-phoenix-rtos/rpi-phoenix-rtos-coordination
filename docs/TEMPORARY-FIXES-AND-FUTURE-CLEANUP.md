@@ -1987,7 +1987,7 @@ longer needed.
 | TD-06 | KNOWN LIMITATION (board-portability) | kernel side is DTB-driven (`dtb.c` parses `/memory@0`+`/reserved-memory`+`/soc/dma-ranges`); residual = single-IRQ-controller assumption + 1/2/8 GiB models unvalidated |
 | TD-07 | PENDING | QEMU 11.x installed on Linux host (`/opt/qemu-11`); Lima VM QEMU still old |
 | TD-08 | PENDING | QEMU+gdb debugging not exercised since cache resolved |
-| TD-09 | N/A on Linux host (no socket_vmnet bridge); macOS-only concern |
+| TD-09 | N/A on Linux host | No `socket_vmnet` bridge here; macOS-only concern |
 | TD-10 | KNOWN LIMITATION (HW-gated) | dump-and-halt SError handler implemented + armed; mask stays only because a live PCIe/VL805 USB external-abort SError is not yet root-caused (unmask regresses boot) |
 | TD-11 | ✅ RESOLVED 2026-05-21 alongside TD-01 (kernel `fb9669f4` activated LDAXR/STXR spinlocks via `NUM_CPUS=4`) | real exclusives are live with 4-core SMP |
 | TD-12 | RESOLVED 2026-05-17 (project `42b2db5` + plo `84ffbea`; manifest `2026-05-17-pi4-full-4gb-ram-unlocked`) | both 4 GB banks visible (`pmap: nBanks=2`, 948 MB + 3008 MB) |
