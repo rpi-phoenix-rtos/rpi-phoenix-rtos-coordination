@@ -17,6 +17,9 @@
 #include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <sys/stat.h>
+#include <stdint.h>
+#include <pthread.h>
 #include <time.h>
 
 static long long now_us(void)
@@ -133,6 +136,199 @@ static void run_syscall_floor(const char *dir)
 }
 
 
+
+/* Is the ~1.5 ms specific to write(), or does every operation on a regular file
+ * pay it? lseek moves no data and touches no storage; fstat returns metadata the
+ * server already holds. If those cost the same as write(), the price is being
+ * paid per FILE OPERATION, and looking inside the write path would be the wrong
+ * place to look. */
+static void run_op_mix(const char *dir)
+{
+	char path[256];
+	char buf[64];
+	struct stat st;
+	long long t0, t1;
+	int i, fd;
+	const int N = 200;
+
+	(void)snprintf(path, sizeof(path), "%s/wc_ops", dir);
+	fd = open(path, O_RDWR | O_CREAT | O_TRUNC, 0644);
+	if (fd < 0) {
+		printf("WCRESULT ops SKIP open-failed\n");
+		fflush(stdout);
+		return;
+	}
+	(void)memset(buf, 'x', sizeof(buf));
+	(void)write(fd, buf, sizeof(buf));
+
+	t0 = now_us();
+	for (i = 0; i < N; i++) {
+		(void)lseek(fd, 0, SEEK_SET);
+	}
+	t1 = now_us();
+	printf("WCRESULT ops lseek        calls=%d per_call_us=%lld\n", N, (t1 - t0) / N);
+
+	t0 = now_us();
+	for (i = 0; i < N; i++) {
+		(void)fstat(fd, &st);
+	}
+	t1 = now_us();
+	printf("WCRESULT ops fstat        calls=%d per_call_us=%lld\n", N, (t1 - t0) / N);
+
+	t0 = now_us();
+	for (i = 0; i < N; i++) {
+		(void)lseek(fd, 0, SEEK_SET);
+		(void)read(fd, buf, sizeof(buf));
+	}
+	t1 = now_us();
+	printf("WCRESULT ops seek+read    calls=%d per_call_us=%lld\n", N, (t1 - t0) / N);
+
+	t0 = now_us();
+	for (i = 0; i < N; i++) {
+		(void)lseek(fd, 0, SEEK_SET);
+		(void)write(fd, buf, sizeof(buf));
+	}
+	t1 = now_us();
+	printf("WCRESULT ops seek+write   calls=%d per_call_us=%lld\n", N, (t1 - t0) / N);
+
+	(void)close(fd);
+	(void)unlink(path);
+	fflush(stdout);
+}
+
+
+
+/* msg_map() maps the payload into the receiver, but a buffer that does not start
+ * and end on a page boundary takes a COPY path instead (it allocates a page and
+ * copies the partial head/tail). So compare a page-aligned, exactly-page-sized
+ * write against a deliberately misaligned one of the same length. If the aligned
+ * case is much cheaper, the cost is that copy path; if they match, it is the
+ * mapping itself and alignment is a red herring. */
+static void run_alignment(const char *dir)
+{
+	char path[256];
+	char *raw, *aligned;
+	long long t0, t1;
+	int i, fd;
+	const int N = 100;
+
+	raw = malloc(3 * 4096);
+	if (raw == NULL) {
+		printf("WCRESULT align SKIP malloc-failed\n");
+		fflush(stdout);
+		return;
+	}
+	aligned = (char *)(((uintptr_t)raw + 4095U) & ~(uintptr_t)4095U);
+	(void)memset(raw, 'x', 3 * 4096);
+
+	(void)snprintf(path, sizeof(path), "%s/wc_align", dir);
+	fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+	if (fd < 0) {
+		printf("WCRESULT align SKIP open-failed\n");
+		free(raw);
+		fflush(stdout);
+		return;
+	}
+
+	t0 = now_us();
+	for (i = 0; i < N; i++) {
+		(void)lseek(fd, 0, SEEK_SET);
+		(void)write(fd, aligned, 4096);
+	}
+	t1 = now_us();
+	printf("WCRESULT align page-aligned-4096  calls=%d per_call_us=%lld\n", N, (t1 - t0) / N);
+
+	t0 = now_us();
+	for (i = 0; i < N; i++) {
+		(void)lseek(fd, 0, SEEK_SET);
+		(void)write(fd, aligned + 17, 4096);
+	}
+	t1 = now_us();
+	printf("WCRESULT align misaligned-4096    calls=%d per_call_us=%lld\n", N, (t1 - t0) / N);
+
+	t0 = now_us();
+	for (i = 0; i < N; i++) {
+		(void)lseek(fd, 0, SEEK_SET);
+		(void)write(fd, aligned, 1);
+	}
+	t1 = now_us();
+	printf("WCRESULT align page-aligned-1B    calls=%d per_call_us=%lld\n", N, (t1 - t0) / N);
+
+	(void)close(fd);
+	(void)unlink(path);
+	free(raw);
+	fflush(stdout);
+}
+
+
+
+/* Is the ~1.5 ms spent WAITING or WORKING?
+ *
+ * It is uniform across payload size, alignment and filesystem, and a write to
+ * /dev/null through the same transport costs 27 us -- so it is neither the
+ * message mapping nor the round trip. A flat cost like that is what a wait for
+ * the next timer tick looks like.
+ *
+ * Distinguish them without any kernel instrumentation: run the same writes from
+ * several threads at once. If the time is spent blocked, the waits overlap and
+ * N threads finish in about the time of one. If it is CPU work in the server,
+ * they serialise and N threads take about N times as long.
+ */
+static const char *g_dir;
+static int g_iters;
+
+static void *writer(void *arg)
+{
+	char path[256];
+	char buf[64];
+	int i, fd;
+
+	(void)snprintf(path, sizeof(path), "%s/wc_thr%ld", g_dir, (long)(intptr_t)arg);
+	(void)memset(buf, 'x', sizeof(buf));
+	fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+	if (fd < 0) {
+		return NULL;
+	}
+	for (i = 0; i < g_iters; i++) {
+		(void)write(fd, buf, sizeof(buf));
+	}
+	(void)close(fd);
+	(void)unlink(path);
+	return NULL;
+}
+
+
+static void run_concurrency(const char *dir)
+{
+	pthread_t th[4];
+	long long t0, t1;
+	int nthreads, i;
+
+	g_dir = dir;
+	g_iters = 50;
+
+	for (nthreads = 1; nthreads <= 4; nthreads *= 2) {
+		t0 = now_us();
+		for (i = 0; i < nthreads; i++) {
+			if (pthread_create(&th[i], NULL, writer, (void *)(intptr_t)i) != 0) {
+				printf("WCRESULT conc SKIP pthread_create-failed\n");
+				fflush(stdout);
+				return;
+			}
+		}
+		for (i = 0; i < nthreads; i++) {
+			(void)pthread_join(th[i], NULL);
+		}
+		t1 = now_us();
+		/* per_write_us falling as threads rise => the time was spent WAITING. */
+		printf("WCRESULT conc threads=%d writes=%d wall_us=%lld per_write_us=%lld\n",
+			nthreads, nthreads * g_iters, t1 - t0,
+			(t1 - t0) / (long long)(nthreads * g_iters));
+		fflush(stdout);
+	}
+}
+
+
 int main(int argc, char **argv)
 {
 	const char *dir = (argc > 1) ? argv[1] : "/ramtmp";
@@ -147,6 +343,9 @@ int main(int argc, char **argv)
 	run(dir, "x4096", total, 4096); /* one write           */
 
 	run_syscall_floor(dir);
+	run_op_mix(dir);
+	run_alignment(dir);
+	run_concurrency(dir);
 
 	printf("WCBENCH done\n");
 	fflush(stdout);
