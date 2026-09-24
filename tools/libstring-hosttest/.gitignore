@@ -1,0 +1,6 @@
+sdiff
+*.o
+redef.txt
+.buggy.c
+.redef_bug.txt
+.sdiff_bug
