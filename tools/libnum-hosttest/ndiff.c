@@ -32,17 +32,15 @@ int ph_atoi(const char *);
 static unsigned long total, diffs;
 
 /*
- * Two differences are deliberate and documented in README.md, not defects: the
- * C23 `0b` binary prefix (a glibc extension C17 does not require) and one
- * last-bit subnormal in strtod. They are counted separately so the exit status
- * stays meaningful -- a tool that always reports failure gates nothing.
+ * One difference is deliberate and documented in README.md, not a defect: the
+ * C23 `0b` binary prefix, a glibc extension C17 does not require. It is counted
+ * separately so the exit status stays meaningful -- a tool that always reports
+ * failure gates nothing. (The subnormal strtod case that used to be listed here
+ * was a REAL defect and is now fixed; it must never be excused again.)
  */
 static int benign_case(const char *fn, const char *in, int base)
 {
 	if ((base == 0 || base == 2) && strncmp(in, "0b", 2) == 0) {
-		return 1;
-	}
-	if (strcmp(fn, "strtod") == 0 && strcmp(in, "4.9406564584124654e-324") == 0) {
 		return 1;
 	}
 	return 0;
@@ -140,8 +138,10 @@ static void cmp_d(const char *fn, const char *in, double pa, double ga,
 	}
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
+	long iters = (argc > 1) ? atol(argv[1]) : 200000;
+	unsigned long long seed = (argc > 2) ? strtoull(argv[2], NULL, 0) : 88172645463325252uLL;
 	static const char *const INTS[] = {
 		"0", "1", "-1", "+1", "42", "  42", "\t 42", "42abc", "abc", "", "  ",
 		"-", "+", "0x", "0x1f", "0X1F", "-0x10", "0xg", "010", "08", "0b101",
@@ -263,6 +263,60 @@ int main(void)
 				rep("strtof", s, 0, "bits", x, y);
 			}
 		}
+	}
+
+	/*
+	 * Randomised round-trip. "%.17g" uniquely identifies a double, so a
+	 * correctly-rounded parser MUST return the exact original bits. Any
+	 * mismatch is a Phoenix defect, not a disagreement -- there is no room for
+	 * interpretation here, which makes this a far stronger probe than a
+	 * hand-picked corpus. Random bit patterns reach exponents and mantissas no
+	 * human would think to write down, including subnormals.
+	 */
+	{
+		unsigned long long st = seed;
+		unsigned long rt_fail = 0;
+		long it;
+
+		for (it = 0; it < iters; it++) {
+			unsigned long long bits;
+			double d;
+			char buf[64];
+			char *pe, *ge;
+			double pd, gd;
+			unsigned long long pb, gb, db;
+
+			/* xorshift64* */
+			st ^= st >> 12;
+			st ^= st << 25;
+			st ^= st >> 27;
+			bits = st * 2685821657736338717uLL;
+
+			memcpy(&d, &bits, sizeof(d));
+			if (isnan(d) || isinf(d)) {
+				continue;
+			}
+
+			snprintf(buf, sizeof(buf), "%.17g", d);
+
+			pd = ph_strtod(buf, &pe);
+			gd = strtod(buf, &ge);
+			memcpy(&pb, &pd, sizeof(pb));
+			memcpy(&gb, &gd, sizeof(gb));
+			memcpy(&db, &d, sizeof(db));
+
+			total++;
+			if (pb != gb || pb != db) {
+				rt_fail++;
+				if (rt_fail <= 10) {
+					printf("NDIFF strtod-rt in=\"%s\" ph=%016llx glibc=%016llx orig=%016llx%s\n",
+							buf, pb, gb, db,
+							(gb != db) ? "  (glibc also differs -- suspect the harness)" : "");
+				}
+				diffs++;
+			}
+		}
+		printf("NUM-HOST roundtrip iters=%ld mismatches=%lu\n", iters, rt_fail);
 	}
 
 	printf("NUM-HOST total=%lu diffs=%lu known=%lu\n", total, diffs, benign);

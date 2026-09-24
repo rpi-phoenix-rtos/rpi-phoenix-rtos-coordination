@@ -31,11 +31,37 @@ First run: **68 differences in 3161 comparisons.**
   complement, so behaviour was correct, but the compiler may assume they cannot happen —
   and both emitted `-Woverflow` on a normal host build while the target flags stayed silent.
 
-Remaining **9 differences, both deliberate non-defects**, left as-is:
+Remaining **8 differences, one deliberate non-defect**, left as-is: `0b101` for bases 0 and 2, where
+glibc implements the C23 binary prefix as an extension that C17 does not require. It is classified
+inside the tool so the exit status still gates.
 
-| case | count | why |
-|---|---|---|
-| `0b101` | 8 | glibc implements the C23 binary prefix as an extension; C17 does not require it. |
-| `strtod("4.9406564584124654e-324")` | 1 | Exactly `DBL_TRUE_MIN`. libphoenix returns `0.0` where glibc returns the smallest subnormal (`0x…01`). A last-bit subnormal rounding gap; `5e-324` parses correctly. Not fixed — narrow, and worth its own change with its own test. |
+## The strtod subnormal defect — and how I first understated it
+
+↩ **This README originally called it "a last-bit subnormal rounding gap" and judged it too narrow to
+fix. That was wrong**, and the correction is the useful part.
+
+Probing it properly: **all 4000 of the smallest subnormals parsed as `0.0`**, and the discriminator is
+**significant-digit count, not magnitude**. `strtod("4.94e-324")` was correct; `strtod("4.9407e-324")`
+— the same value — returned 0. Root cause at `strtod.c`: the underflow guard rejects a number from its
+exponent alone, and `exp_min = DBL_MIN_10_EXP - UINT64_MAX_DEC_DIGITS` allows for the mantissa's
+digits but **not for the subnormal range**, which reaches ~17 decimal exponents below the smallest
+*normal* value. A longer mantissa carries a more negative exponent for the same number, so
+`49407e-328` trips a guard set at -327. The hex branches already subtract the mantissa width; the
+decimal ones did not.
+
+Why it mattered more than "subnormals are rare": the 17-digit form `%.17g` produces **always**
+vanished, so any double serialised through printf and read back became 0.
+
+Fixed by subtracting the mantissa width in the decimal branches too. Being over-generous there is
+harmless — a value that really is too small still scales to zero and reports `ERANGE`.
+
+⚠ Two methodology notes worth keeping:
+
+* **A binary search over bit patterns gave a confident, meaningless answer** ("0.449% of subnormals
+  affected"). The property is not monotonic in bit pattern; plain decimal strings disproved it
+  immediately. Do not binary-search a property you have not shown to be monotonic.
+* **200k random round-trips did not find this.** Random 64-bit patterns essentially never land on the
+  smallest subnormals, so randomised testing and a targeted sweep catch different things — the
+  round-trip arm proves the normal range is correctly rounded, the sweep proves the subnormal edge is.
 
 Sibling harnesses: `tools/libstring-hosttest/`, `tools/libwchar-hosttest/`, `tools/libext2-hosttest/`.
