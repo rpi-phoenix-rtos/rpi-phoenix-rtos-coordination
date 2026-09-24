@@ -442,6 +442,61 @@ static void run_cpu_vs_wait(const char *dir)
 }
 
 
+
+/* Does a no-payload operation reach the server as fast as fstat claims?
+ *
+ * fstat on a /ramtmp file measures 56 us while write on the same fd measures
+ * 1488 us -- same client, same kernel path, same server. Either the round trip
+ * really is ~56 us and the cost is specific to carrying data, or fstat never
+ * reached dummyfs at all (answered from kernel state) and the round trip itself
+ * is the 1.5 ms.
+ *
+ * ftruncate carries no payload but MUST reach the filesystem (mtTruncate), so it
+ * separates the two: ~56 us means the server is fast and data is the problem;
+ * ~1.5 ms means every round trip to this server is slow and fstat was a red
+ * herring.
+ */
+static void run_roundtrip(const char *dir)
+{
+	char path[256];
+	long long t0, t1;
+	int i, fd;
+	const int N = 100;
+
+	(void)snprintf(path, sizeof(path), "%s/wc_rt", dir);
+	fd = open(path, O_RDWR | O_CREAT | O_TRUNC, 0644);
+	if (fd < 0) {
+		printf("WCRESULT rt SKIP open-failed\n");
+		fflush(stdout);
+		return;
+	}
+
+	t0 = now_us();
+	for (i = 0; i < N; i++) {
+		(void)ftruncate(fd, 64);
+	}
+	t1 = now_us();
+	printf("WCRESULT rt ftruncate     calls=%d per_call_us=%lld\n", N, (t1 - t0) / N);
+	fflush(stdout);
+
+	(void)close(fd);
+
+	t0 = now_us();
+	for (i = 0; i < N; i++) {
+		int f2 = open(path, O_RDONLY);
+
+		if (f2 >= 0) {
+			(void)close(f2);
+		}
+	}
+	t1 = now_us();
+	printf("WCRESULT rt open+close    calls=%d per_call_us=%lld\n", N, (t1 - t0) / N);
+	fflush(stdout);
+
+	(void)unlink(path);
+}
+
+
 int main(int argc, char **argv)
 {
 	const char *dir = (argc > 1) ? argv[1] : "/ramtmp";
@@ -460,6 +515,7 @@ int main(int argc, char **argv)
 	run_alignment(dir);
 	run_concurrency(dir);
 	run_cpu_vs_wait(dir);
+	run_roundtrip(dir);
 
 	printf("WCBENCH done\n");
 	fflush(stdout);
