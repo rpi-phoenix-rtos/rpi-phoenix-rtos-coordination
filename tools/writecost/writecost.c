@@ -329,6 +329,119 @@ static void run_concurrency(const char *dir)
 }
 
 
+
+#define NHOGS 4
+static volatile int g_hogStop;
+
+static void *cpu_hog(void *arg)
+{
+	volatile unsigned long x = 0;
+
+	(void)arg;
+	while (g_hogStop == 0) {
+		x++;
+	}
+	return NULL;
+}
+
+
+/* The last fork in the road: is the server BURNING CPU or WAITING?
+ *
+ * Run the identical write loop with and without a CPU-bound thread alongside.
+ * If the 1.5 ms is CPU work, the hog competes for the core and the writes get
+ * slower. If the server is asleep waiting for something, the hog simply uses the
+ * idle time and the writes are unaffected.
+ *
+ * Also price pwrite() against lseek()+write(): if a regular-file write costs
+ * more than one message -- say an extra round trip to carry the file offset --
+ * the two will differ. 1488/56 is about 27 round trips, so this is worth ruling
+ * in or out before anyone goes looking inside a server.
+ */
+static void run_cpu_vs_wait(const char *dir)
+{
+	char path[256];
+	char buf[64];
+	pthread_t hogs[NHOGS];
+	long long t0, t1, quiet, busy;
+	int i, fd;
+	const int N = 100;
+
+	(void)snprintf(path, sizeof(path), "%s/wc_hog", dir);
+	(void)memset(buf, 'x', sizeof(buf));
+	fd = open(path, O_RDWR | O_CREAT | O_TRUNC, 0644);
+	if (fd < 0) {
+		printf("WCRESULT hog SKIP open-failed\n");
+		fflush(stdout);
+		return;
+	}
+
+	t0 = now_us();
+	for (i = 0; i < N; i++) {
+		(void)lseek(fd, 0, SEEK_SET);
+		(void)write(fd, buf, sizeof(buf));
+	}
+	t1 = now_us();
+	quiet = (t1 - t0) / N;
+	printf("WCRESULT hog quiet        per_write_us=%lld\n", quiet);
+	fflush(stdout);
+
+	/* One hog is useless on a 4-core board -- it just takes an idle core and
+	 * never contends with the server. Saturate every core instead. */
+	g_hogStop = 0;
+	{
+		int h, spawned = 0;
+
+		for (h = 0; h < NHOGS; h++) {
+			if (pthread_create(&hogs[h], NULL, cpu_hog, NULL) == 0) {
+				spawned++;
+			}
+		}
+		printf("WCRESULT hog spawned=%d cores=%ld\n", spawned, sysconf(_SC_NPROCESSORS_ONLN));
+		fflush(stdout);
+	}
+	if (1) {
+		t0 = now_us();
+		for (i = 0; i < N; i++) {
+			(void)lseek(fd, 0, SEEK_SET);
+			(void)write(fd, buf, sizeof(buf));
+		}
+		t1 = now_us();
+		busy = (t1 - t0) / N;
+		g_hogStop = 1;
+		{
+			int h;
+
+			for (h = 0; h < NHOGS; h++) {
+				(void)pthread_join(hogs[h], NULL);
+			}
+		}
+		printf("WCRESULT hog with-cpu-hog per_write_us=%lld  (>> quiet => CPU work; ~= quiet => waiting)\n",
+			busy);
+	}
+	fflush(stdout);
+
+	/* one message or several? */
+	t0 = now_us();
+	for (i = 0; i < N; i++) {
+		(void)pwrite(fd, buf, sizeof(buf), 0);
+	}
+	t1 = now_us();
+	printf("WCRESULT msgs pwrite      per_call_us=%lld\n", (t1 - t0) / N);
+
+	t0 = now_us();
+	for (i = 0; i < N; i++) {
+		(void)lseek(fd, 0, SEEK_SET);
+		(void)write(fd, buf, sizeof(buf));
+	}
+	t1 = now_us();
+	printf("WCRESULT msgs seek+write  per_call_us=%lld\n", (t1 - t0) / N);
+
+	(void)close(fd);
+	(void)unlink(path);
+	fflush(stdout);
+}
+
+
 int main(int argc, char **argv)
 {
 	const char *dir = (argc > 1) ? argv[1] : "/ramtmp";
@@ -346,6 +459,7 @@ int main(int argc, char **argv)
 	run_op_mix(dir);
 	run_alignment(dir);
 	run_concurrency(dir);
+	run_cpu_vs_wait(dir);
 
 	printf("WCBENCH done\n");
 	fflush(stdout);
