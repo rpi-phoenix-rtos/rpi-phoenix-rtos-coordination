@@ -497,6 +497,73 @@ static void run_roundtrip(const char *dir)
 }
 
 
+
+/* Is stdio BUFFERED for a regular file?
+ *
+ * `echo > file` costs 6.6 s on ext2 while one dd write costs ~0.1 s, and an
+ * appending write measures 12.5 ms -- so the shell is paying ~513 of them for a
+ * 513-byte line. Whether that is bash's doing or libphoenix's depends on whether
+ * a FILE* to a regular file is line/unbuffered or fully buffered.
+ *
+ * Time 512 bytes written one putc() at a time against the same bytes in one
+ * fwrite(), and both against a raw write(). If putc-by-putc costs ~512x a single
+ * write, stdio is not buffering and that is a libc defect worth fixing centrally.
+ * If it matches fwrite, stdio buffers correctly and the shell is doing its own
+ * unbuffered output.
+ */
+static void run_stdio(const char *dir)
+{
+	char path[256];
+	char buf[512];
+	FILE *fp;
+	long long t0, t1;
+	int i;
+
+	(void)memset(buf, 'x', sizeof(buf));
+
+	(void)snprintf(path, sizeof(path), "%s/wc_stdio", dir);
+
+	fp = fopen(path, "w");
+	if (fp == NULL) {
+		printf("WCRESULT stdio SKIP fopen-failed\n");
+		fflush(stdout);
+		return;
+	}
+	t0 = now_us();
+	for (i = 0; i < (int)sizeof(buf); i++) {
+		(void)putc(buf[i], fp);
+	}
+	(void)fclose(fp);
+	t1 = now_us();
+	printf("WCRESULT stdio putc-x512   total_us=%lld\n", t1 - t0);
+	fflush(stdout);
+
+	fp = fopen(path, "w");
+	if (fp != NULL) {
+		t0 = now_us();
+		(void)fwrite(buf, 1, sizeof(buf), fp);
+		(void)fclose(fp);
+		t1 = now_us();
+		printf("WCRESULT stdio fwrite-512  total_us=%lld\n", t1 - t0);
+	}
+	fflush(stdout);
+
+	{
+		int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+
+		if (fd >= 0) {
+			t0 = now_us();
+			(void)write(fd, buf, sizeof(buf));
+			(void)close(fd);
+			t1 = now_us();
+			printf("WCRESULT stdio rawwrite-512 total_us=%lld\n", t1 - t0);
+		}
+	}
+	(void)unlink(path);
+	fflush(stdout);
+}
+
+
 int main(int argc, char **argv)
 {
 	const char *dir = (argc > 1) ? argv[1] : "/ramtmp";
@@ -504,6 +571,13 @@ int main(int argc, char **argv)
 
 	printf("WCBENCH start dir=%s total=%zu\n", dir, total);
 	fflush(stdout);
+
+	if ((argc > 2) && (strcmp(argv[2], "stdio") == 0)) {
+		run_stdio(dir);
+		printf("WCBENCH done\n");
+		fflush(stdout);
+		return 0;
+	}
 
 	run(dir, "x1", total, 1);      /* one byte per write  */
 	run(dir, "x16", total, 16);
