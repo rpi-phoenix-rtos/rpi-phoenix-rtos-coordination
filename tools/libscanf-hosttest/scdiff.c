@@ -38,16 +38,10 @@ static unsigned long known;
  *     correctness gain.
  *  2. The C23 `0b` binary prefix, which glibc implements as an extension and
  *     C17 does not require (same call as in tools/libnum-hosttest/).
- *  3. ⚠ A REAL defect, left for its own change: the float conversion accepts an
- *     incomplete item. C17 7.21.6.2p12-13 says the input item is the longest
- *     sequence that IS, OR IS A PREFIX OF, a matching sequence, and if that item
- *     is not itself a matching sequence the directive FAILS. "1e" is only a
- *     prefix, so scanf must fail; Phoenix instead converts the valid sub-prefix
- *     and reports success -- sscanf("1e", "%lf", &d) returns 1 with d == 1.0
- *     where glibc returns 0. Same for "1e+", "1.5e" and "0x". Fixing it means
- *     scanning greedily per the float grammar and then requiring strtod to
- *     consume the whole item, which is a restructure of the CT_FLOAT case
- *     rather than a patch -- so it is recorded here rather than guessed at.
+
+ * (The incomplete-float-item defect that used to be listed here -- sscanf("1e",
+ * "%lf") returning 1 -- was FIXED, so it is deliberately no longer excused: a
+ * fixed bug left in this list would hide its own regression.)
  */
 static int known_case(const char *in, const char *fmt)
 {
@@ -58,11 +52,6 @@ static int known_case(const char *in, const char *fmt)
 		return 1;
 	}
 	if (strstr(in, "0b") != NULL) {
-		return 1;
-	}
-	if ((strstr(fmt, "lf") != NULL) &&
-			(strcmp(in, "1e") == 0 || strcmp(in, "1e+") == 0 ||
-					strcmp(in, "1.5e") == 0 || strcmp(in, "0x") == 0)) {
 		return 1;
 	}
 	return 0;
