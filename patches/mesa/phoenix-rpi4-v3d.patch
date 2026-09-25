@@ -1541,10 +1541,10 @@ index 98b3cd6f8d8..16de49d8b28 100644
  
  static inline void *
 diff --git a/src/util/ralloc.c b/src/util/ralloc.c
-index 5736dd6dd48..6a68f975e47 100644
+index 5736dd6dd48..2707677e577 100644
 --- a/src/util/ralloc.c
 +++ b/src/util/ralloc.c
-@@ -681,6 +681,40 @@ get_gc_header(const void *ptr)
+@@ -681,6 +681,56 @@ get_gc_header(const void *ptr)
  
     gc_block_header *info = (gc_block_header *)c_ptr;
     assert(info->canary == GC_CANARY);
@@ -1569,6 +1569,22 @@ index 5736dd6dd48..6a68f975e47 100644
 +    * ret= is __builtin_return_address(0); this function is small enough to be
 +    * inlined, so read it as "inside the caller", not as an exact call site.
 +    */
++   /* POSITIVE CONTROL. Without this, "the implausible-header check never fired"
++    * is worthless: it reads identically whether the header is always sane or
++    * this function is simply never reached. That exact mistake -- banking a
++    * null from a detector that had no opportunity to fire -- is already on
++    * record in this hunt (the closed-BO quarantine reported "nothing written"
++    * across 5 runs in which the event never occurred). One line per process,
++    * so a reader can tell the two apart. */
++   {
++      static unsigned c1_live;
++
++      if (c1_live == 0u) {
++         c1_live = 1u;
++         printf("ralloc: C1-hunt: get_gc_block_header LIVE (first call in this process)\n");
++      }
++   }
++
 +   if ((info->bucket > NUM_FREELIST_BUCKETS) ||
 +       ((info->bucket < NUM_FREELIST_BUCKETS) && (info->slab_offset >= SLAB_SIZE))) {
 +      static unsigned c1_reported;
