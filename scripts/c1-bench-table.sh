@@ -31,7 +31,12 @@ fi
 printf '%-40s %6s %6s %8s %7s %5s %s\n' LOG FIRES ARMED FRAMES FAULTS TDOWN VERDICT
 tot_f=0; tot_fire=0; valid=0; void=0
 for log in $(printf '%s\n' "${logs[@]}" | sort); do
-	fires=$(grep -ac 'why   =' "$log")
+	# ⚠ Count EVERY allocator guard, not just the corrupt-header one. The
+	# `why   =` line belongs to one guard; the page-poison guard prints
+	# "POISON BROKEN" and no `why`. Counting only `why` called
+	# c1armA-3 clean when it had 4 poison breaks, and produced a bogus
+	# "C1 has gone quiet" reading across the whole archive on 2026-09-25.
+	fires=$(grep -acE 'why   =|POISON BROKEN|chunk handed out twice|large-bin lookup returned|small-bin head is not a chunk' "$log")
 	armed=$(grep -ac 'C1-hunt: created' "$log")
 	frames=$(grep -ao 'total [0-9]*)' "$log" | tail -1 | tr -dc 0-9)
 	frames=${frames:-0}
