@@ -52,7 +52,12 @@ for log in $(printf '%s\n' "${logs[@]}" | sort); do
 	# entirely), then a five-message list that still omitted "free-bin link is not
 	# a plausible chunk", which has fired in 17 archived logs.
 	fires=$(grep -acE 'hhi32 = 0x0*8000000[01]|p4got  = 0x0*8000000[01]|= 0x8000000[01][0-9a-f]{8}' "$log")
-	guards=$(grep -ac 'malloc: ' "$log")
+	# Exclude the C1-hunt TRACE's own lines. They are malloc: prefixed, and with
+	# the trace armed they dwarf everything else -- one run showed GUARD=923 whose
+	# entire content was 179 trace reports and zero actual guards. An instrument
+	# must not inflate the metric it is being read alongside.
+	guards=$(grep -a 'malloc: ' "$log" \
+		| grep -vcE 'C1-hunt: created|c1size =|c1base =|c1req  =|c1call =')
 	armed=$(grep -ac 'C1-hunt: created' "$log")
 	frames=$(grep -ao 'total [0-9]*)' "$log" | tail -1 | tr -dc 0-9)
 	frames=${frames:-0}
