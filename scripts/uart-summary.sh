@@ -92,7 +92,11 @@ check_stage() {
 }
 
 check_stage "firmware boot       " "arm_loader: Starting ARM" dbg
-check_stage "armstub markers     " "132AS0|^132" dbg
+# Early bring-up markers: gated off by default (RPI4_EARLY_MARKERS, D9), so
+# this is a dbg stage. The old pattern "132AS0|^132" never matched -- the
+# armstub prints one char per core, i.e. 1111444422225555AS0, not 132AS0.
+check_stage "armstub markers     " "AS0" dbg
+check_stage "trampoline markers  " "^TR[0-3]" dbg
 check_stage "plo console_init    " "hal: console_init done"
 check_stage "plo sctlr-M         " "mem: post-sctlr-M" dbg
 check_stage "plo hal_init done   " "hal: init complete"

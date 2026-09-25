@@ -149,6 +149,23 @@ def collect_observations(lines: list[str], matches: list[dict[str, object]]) -> 
             "failure is likely between the firmware entry handoff and trampoline entry"
         )
 
+    # The early markers are compiled out by default (D9), so their absence is
+    # normal and must not read as a failure. It only costs us something when the
+    # log also never reached plo -- that is the one case where they were the
+    # only available evidence, so say how to get them back instead of silently
+    # classifying the boot as "firmware-load"/"unknown".
+    reached_plo = any(
+        phase in phases for phase in ("phoenix_plo", "phoenix_kernel", "phoenix_userspace")
+    )
+    if not saw_armstub and not saw_trampoline and not reached_plo:
+        observations.append(
+            "no early bring-up markers and no plo output: those markers (armstub 1/4/2/5 + AS0, "
+            "trampoline TR0..TR3) are compiled out by default via RPI4_EARLY_MARKERS=0 in the "
+            "target's board_config.h, so this log cannot separate a firmware-handoff failure "
+            "from a trampoline one. Set RPI4_EARLY_MARKERS to 1, touch "
+            "plo/hal/aarch64/generic/_init.S, rebuild --scope core, and re-run to localise it"
+        )
+
     return observations
 
 
