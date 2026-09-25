@@ -28,7 +28,7 @@ if [ ${#logs[@]} -eq 0 ]; then
 	exit 1
 fi
 
-printf '%-46s %6s %6s %8s %7s %s\n' LOG FIRES ARMED FRAMES FAULTS VERDICT
+printf '%-40s %6s %6s %8s %7s %5s %s\n' LOG FIRES ARMED FRAMES FAULTS TDOWN VERDICT
 tot_f=0; tot_fire=0; valid=0; void=0
 for log in $(printf '%s\n' "${logs[@]}" | sort); do
 	fires=$(grep -ac 'why   =' "$log")
@@ -41,8 +41,16 @@ for log in $(printf '%s\n' "${logs[@]}" | sort); do
 	else
 		verdict=ok; valid=$((valid+1)); tot_f=$((tot_f+frames)); tot_fire=$((tot_fire+fires))
 	fi
-	printf '%-46s %6s %6s %8s %7s %s\n' "$(basename "$log" .log | cut -c11-)" \
-		"$fires" "$armed" "$frames" "$faults" "$verdict"
+	# TDOWN: did the app run to completion and tear down? Measured 2026-09-25:
+	# the two runs that reached STK's profile summary produced 79 of the 108
+	# archived fires (78 in one), because the exit free-storm re-walks every heap
+	# and re-detects corruption that happened earlier. It is a detection
+	# AMPLIFIER, not a precondition -- 6 of the 8 firing runs never got there and
+	# still fired 1-12 times. A bench of runs that all show no is not void, but it
+	# is weaker than one that completes.
+	if grep -aq 'Number of frames:' "$log"; then tdown=yes; else tdown=no; fi
+	printf '%-40s %6s %6s %8s %7s %5s %s\n' "$(basename "$log" .log | cut -c11-)" \
+		"$fires" "$armed" "$frames" "$faults" "$tdown" "$verdict"
 done
 
 echo "---"
