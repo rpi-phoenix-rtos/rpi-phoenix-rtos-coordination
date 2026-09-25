@@ -102,6 +102,16 @@ echo
 
 # --- hunt instruments ---------------------------------------------------------
 echo "== instruments =="
-echo "   0xd000-heap creations: $(grep -ac 'C1-hunt: created' "$log")"
+# ⚠ 0 here does NOT mean STK created no victim heap. Since 2026-09-25 this trace
+# is env-gated (C1_HEAP_TRACE=1) and OFF by default, because it was four blocking
+# debug() writes per creation -- ~200 ms of UART inside heap creation, in every
+# process -- and it was added after the last fire. On a default run 0 is expected;
+# `export C1_HEAP_TRACE=1` before the app to arm it as a positive control.
+c1_created=$(grep -ac 'C1-hunt: created' "$log")
+if [ "$c1_created" = "0" ]; then
+	echo "   0xd000-heap creations: 0  (trace OFF by default -- export C1_HEAP_TRACE=1 to arm)"
+else
+	echo "   0xd000-heap creations: $c1_created  (trace ran: env-armed, or a pre-2026-09-25 build where it was unconditional)"
+fi
 echo "   implausible gc header: $(grep -ac 'implausible gc header' "$log")"
 echo "   EL0/EL1 exceptions:    $(grep -ac '(EL0)' "$log") / $(grep -ac '(EL1)' "$log")"
