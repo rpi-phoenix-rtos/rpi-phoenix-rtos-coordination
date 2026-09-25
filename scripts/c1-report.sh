@@ -28,10 +28,29 @@ else
 fi
 [ -n "${log:-}" ] && [ -f "$log" ] || { echo "no log found for '${arg}'" >&2; exit 1; }
 
+# ⚠ This picks the NEWEST archived ELF, which is only right when the log came
+# from that same build. SuperTuxKart is relinked by every --scope core build and
+# `caller=` is an absolute address in a no-ASLR static binary, so symbolizing an
+# older log against a newer ELF yields a plausible-looking WRONG function. It did
+# exactly that on 2026-09-25, resolving a 09-24 log against f2efc4b0, a binary
+# that did not exist when that log was written. There is nothing in a UART log
+# that identifies the binary, and the archived ELFs all carry copy-times rather
+# than build-times, so this cannot be resolved automatically -- say so instead of
+# quietly implying a match.
 elf="$(ls -t "$SYMDIR"/*.elf 2>/dev/null | head -1)"
+nelf="$(ls -1 "$SYMDIR"/*.elf 2>/dev/null | wc -l)"
 
 echo "log:  $(basename "$log")"
-if [ -n "$elf" ]; then echo "syms: $(basename "$elf")"; else echo "syms: <none archived>"; fi
+if [ -n "$elf" ]; then
+	echo "syms: $(basename "$elf")"
+	if [ "$nelf" -gt 1 ]; then
+		echo "      ⚠ newest of $nelf archived ELFs, NOT matched to this log. Any symbol below is"
+		echo "        only valid if this log came from that exact binary; otherwise it is noise."
+		echo "        Archived: $(ls -1 "$SYMDIR"/*.elf | xargs -n1 basename | tr '\n' ' ')"
+	fi
+else
+	echo "syms: <none archived>"
+fi
 echo
 
 plain() { sed 's/\x1b\[[0-9;]*m//g' "$log"; }
