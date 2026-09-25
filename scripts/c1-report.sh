@@ -119,6 +119,43 @@ else
 fi
 echo
 
+# --- mailbox-PA correlation ---------------------------------------------------
+# The decisive C1 comparison. The corrupting write is a 32-bit
+# 0x80000000/0x80000001 at page+4, and a VideoCore property buffer is an mmap'd
+# PAGE whose msg[1] -- exactly page+4 -- is where the firmware writes precisely
+# those two response codes. So if a poisoned page that later breaks carries the
+# SAME physical page as one of the in-process mailbox request buffers, the
+# mechanism is named outright.
+#
+# rpi4-vcmbox is NOT a candidate: it serialises through one PERSISTENT bounce
+# buffer (it logs buf_pa once and never frees it), so its PA is printed here only
+# as the reference that should NEVER match.
+echo "== mailbox-PA correlation =="
+mbox_pa=$(plain | grep -oE 'mbox req buf pa=0x[0-9a-f]+' | grep -oE '0x[0-9a-f]+' | sort -u)
+brk_pa=$(plain | grep -oE 'p4pa   = 0x[0-9a-f]+' | grep -oE '0x[0-9a-f]+' | sed 's/^0x0*/0x/' | sort -u)
+vcm_pa=$(plain | grep -oE 'buf_pa=0x[0-9a-f]+' | grep -oE '0x[0-9a-f]+' | sort -u)
+if [ -z "$mbox_pa" ] && [ -z "$brk_pa" ]; then
+	echo "   (no mailbox PA log and no poison break in this run)"
+else
+	echo "   in-process mbox request pages: $(echo ${mbox_pa:-none} | tr '\n' ' ')"
+	echo "   broken poison page PAs:        $(echo ${brk_pa:-none} | tr '\n' ' ')"
+	echo "   vcmbox persistent buffer:      ${vcm_pa:-none}  (must NOT match)"
+	hit=""
+	for b in $brk_pa; do
+		bp=$(printf "0x%x" $(( $b & ~0xfff )))
+		for m in $mbox_pa; do
+			mp=$(printf "0x%x" $(( $m & ~0xfff )))
+			[ "$bp" = "$mp" ] && hit="$hit $bp"
+		done
+	done
+	if [ -n "$hit" ]; then
+		echo "   *** MATCH on page(s):$hit -- a broken page WAS a mailbox request buffer"
+	elif [ -n "$brk_pa" ] && [ -n "$mbox_pa" ]; then
+		echo "   no match: these broken pages were never in-process mailbox buffers"
+	fi
+fi
+echo
+
 # --- hunt instruments ---------------------------------------------------------
 echo "== instruments =="
 # ⚠ 0 here does NOT mean STK created no victim heap. Since 2026-09-25 this trace
