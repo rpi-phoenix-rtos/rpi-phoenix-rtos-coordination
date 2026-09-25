@@ -84,6 +84,8 @@ check_stage() {
     if grep -qE "$pattern" "$target"; then
         first=$(grep -nE "$pattern" "$target" | head -n 1 | cut -d: -f1)
         echo "[YES] $label  (line $first)"
+    elif [ "$dbg" = "gone" ]; then
+        echo "[ - ] $label  (retired: the string is no longer emitted by any source; kept to read archived logs)"
     elif [ -n "$dbg" ]; then
         echo "[ - ] $label  (debug-build marker, absent in a stock build)"
     else
@@ -98,14 +100,13 @@ check_stage "firmware boot       " "arm_loader: Starting ARM" dbg
 check_stage "armstub markers     " "AS0" dbg
 check_stage "trampoline markers  " "^TR[0-3]" dbg
 check_stage "plo console_init    " "hal: console_init done"
-check_stage "plo sctlr-M         " "mem: post-sctlr-M" dbg
 check_stage "plo hal_init done   " "hal: init complete"
 check_stage "plo banner          " "Phoenix-RTOS loader"
-check_stage "plo->kernel handoff " "hal: jump exit el1|hal: jump exit" dbg
+# Retired: stripped from plo source, but 735 archived logs still contain it,
+# so the pattern earns its keep for reading history.
+check_stage "plo->kernel handoff " "hal: jump exit el1|hal: jump exit" gone
 check_stage "kernel banner       " "Phoenix-RTOS microkernel"
-check_stage "threads scheduler   " "threads: ready queued|threads: schedule" dbg
 check_stage "init thread spawn   " "main: Starting syspage programs|main: spawn dummyfs-root"
-check_stage "spawn loop done     " "main: spawn loop done|entering proc_reap" dbg
 check_stage "fbcon up            " "fbcon: ok"
 check_stage "pcie running        " "pcie: [0-9a-f]{2}:[0-9a-f]{2}\\.[0-9] ven|pcie: enter main|pcie: linkUp"
 # Renamed 2026-09-17: both markers are PRE-initialisation. `xhci_capProbe`
@@ -117,7 +118,6 @@ check_stage "pcie running        " "pcie: [0-9a-f]{2}:[0-9a-f]{2}\\.[0-9] ven|pc
 # "interrupt-IN pipe ready", which would false-NEGATIVE on a bench with no USB
 # device attached; the honest fix here is the label.
 check_stage "xhci probe started  " "xhci: capProbe|xhci: pre reset"
-check_stage "psh tty open        " "psh: tty open|psh: ready" dbg
 check_stage "psh prompt          " "\\(psh\\)%"
 # Network stages — matches test-cycle-netboot.sh's own boot-health probes
 # and surfaces the late-boot subsystems the test-cycle banner doesn't.
