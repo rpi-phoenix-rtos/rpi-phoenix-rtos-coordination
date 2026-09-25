@@ -38,7 +38,7 @@ if [ "$_days" -gt 1 ]; then
 	printf '⚠ label %s matches logs from %s different DAYS -- probably over-matching.\n' "$pref" "$_days"
 	printf '  dates: %s\n\n' "$(printf '%s\n' "${logs[@]}" | sed 's/.*rpi4b-uart-\([0-9]\{8\}\)-.*/\1/' | sort -u | tr '\n' ' ')"
 fi
-printf '%-36s %5s %5s %6s %6s %8s %5s %5s %5s %s\n' LOG SIG VICT GUARD ARMED FRAMES KFLT UFLT TDOWN VERDICT
+printf '%-36s %5s %5s %6s %5s %6s %8s %5s %5s %5s %s\n' LOG SIG VICT GUARD CORR ARMED FRAMES KFLT UFLT TDOWN VERDICT
 tot_f=0; tot_fire=0; valid=0; void=0
 for log in $(printf '%s\n' "${logs[@]}" | sort); do
 	# ⚠ Count EVERY allocator guard, not just the corrupt-header one. The
@@ -66,8 +66,70 @@ for log in $(printf '%s\n' "${logs[@]}" | sort); do
 	# the trace armed they dwarf everything else -- one run showed GUARD=923 whose
 	# entire content was 179 trace reports and zero actual guards. An instrument
 	# must not inflate the metric it is being read alongside.
-	guards=$(grep -a 'malloc: ' "$log" \
-		| grep -vcE 'C1-hunt: created|c1size =|c1base =|c1req  =|c1call =')
+	#
+	# ⚠ ALSO exclude UART-CORRUPTED lines, or this column measures the serial link
+	# rather than the allocator. Measured 2026-09-25: ~5 of every ~375 malloc trace
+	# lines (~1.3%) arrive with a bit-error, and a single corrupted character
+	# defeats the exclusion regex above -- "C1-hunt: created" arriving as "Cn-hunt:
+	# created" or "C1 hunt: created" is no longer excluded and counts as a guard.
+	# That is the whole content of GUARD=5/9/6 on the three clean c1hpa trials:
+	# zero real guards. Corruption is unambiguous where a fixed-width hex field is
+	# involved -- one line read `0x00F00000091U6000`, and `U` is not a hex digit --
+	# so treat a `= 0x` line whose payload is not exactly 16 hex digits as corrupt,
+	# count it separately in CORR, and keep it out of GUARD.
+	#
+	# CORR is reported rather than silently dropped because link quality is itself
+	# evidence: at a non-zero bit-error rate a corrupted digit could in principle
+	# fabricate or erase a C1 signature, so a run with an unusual CORR deserves a
+	# second look before its SIG is believed.
+	# ⚠ Corruption lands mostly in the LABEL, not the hex payload: `c6base`,
+	# `c1sizes`, `c1req 8=` all carry a perfectly well-formed 16-digit value. A
+	# filter aimed at the hex field therefore changes nothing -- which is exactly
+	# what the first attempt at this did, leaving GUARD at 5/9/6.
+	#
+	# So count guard EVENTS structurally instead of counting lines. Every guard
+	# announces itself with a PROSE line and then prints its fields as `label =
+	# 0x...`; dropping every line containing `0x` leaves one line per event and no
+	# field lines at all, with no list of guard literals to get wrong. The only
+	# prose this build emits routinely is the trace's "created a victim-size heap",
+	# and all three corrupted variants seen (`Cn-hunt`, `C1 hunt`, `he)p`) still
+	# contain "created a victim-size", so a loose match on that substring excludes
+	# them too.
+	#
+	# Result on the three clean c1hpa trials: GUARD 5/9/6 -> 0/0/0. There were
+	# never any guards; the column was reporting serial-link bit-errors.
+	# Chasing each corruption SHAPE with another regex is a losing game -- the
+	# residue after the first two attempts was still all noise (`cr=ated`,
+	# `victim-siIe`, `acvictim-size`, and hex whose `0x` itself was mangled into
+	# `0U0`/`hx0`/`0s0`, which slips past a `0x` filter). So classify POSITIVELY
+	# instead: match the distinctive words real guards use, every one of which is
+	# absent from the trace line. The union below is derived mechanically from the
+	# source, so it can be regenerated rather than guessed:
+	#
+	#   grep -aoE 'debug\("malloc: [^"]*"' sources/libphoenix/stdlib/malloc_dl.c
+	#
+	# A single-character corruption can still break one of these matches and lose
+	# a guard -- but that line then fails every classifier and lands in CORR, so
+	# it shows up as unexplained rather than vanishing. That is the property that
+	# makes this safe where the earlier guard-NAME list was not: nothing is
+	# silently dropped, and a NEW guard message not in the union also lands in
+	# CORR. Eyeball CORR whenever it is non-zero.
+	_gre='gone bad|NOT MAPPED|POISON BROKEN|handed out twice|double free|plausible chunk'
+	_gre="$_gre"'|WRITTEN TO|corrupt chunk header|plausible heap size|not releasing it'
+	_gre="$_gre"'|ABANDONED|large-bin|small-bin|OVERLAPPING|munmap of a released'
+	_gre="$_gre"'|LIVE HEAP BASE|wild pointer|not transplanting|leaking the'
+	_mtot=$(grep -ac 'malloc: ' "$log")
+	_mfield=$(grep -acE 'malloc:.*= 0x[0-9a-f]{16}([ \r]*)$' "$log")
+	_mtrace=$(grep -acE 'malloc: C1-hunt: created a victim-size heap([ \r]*)$' "$log")
+	guards=$(grep -acE "$_gre" "$log")
+	# CORR: everything that is neither a well-formed field, nor an exact trace
+	# line, nor a guard event -- i.e. the corrupted residue. Reported rather than
+	# silently dropped because link quality is itself evidence: at a non-zero
+	# bit-error rate a corrupted digit could in principle fabricate or erase a C1
+	# signature, so a run with an unusual CORR deserves a second look before its
+	# SIG is believed.
+	corr=$(( _mtot - _mfield - _mtrace - guards ))
+	if [ "$corr" -lt 0 ]; then corr=0; fi
 	# VICT: DISTINCT corrupted heaps. SIG counts report LINES, and one corrupt
 	# heap is re-reported on every later free from it -- run c1pa1 @22:22 showed
 	# SIG=552 from just FOUR distinct heaps. Quoting SIG as an event count
@@ -109,8 +171,8 @@ for log in $(printf '%s\n' "${logs[@]}" | sort); do
 	# still fired 1-12 times. A bench of runs that all show no is not void, but it
 	# is weaker than one that completes.
 	if grep -aq 'Number of frames:' "$log"; then tdown=yes; else tdown=no; fi
-	printf '%-36s %5s %5s %6s %6s %8s %5s %5s %5s %s\n' "$(basename "$log" .log | cut -c11-)" \
-		"$fires" "$vict" "$guards" "$armed" "$frames" "$kflt" "$uflt" "$tdown" "$verdict"
+	printf '%-36s %5s %5s %6s %5s %6s %8s %5s %5s %5s %s\n' "$(basename "$log" .log | cut -c11-)" \
+		"$fires" "$vict" "$guards" "$corr" "$armed" "$frames" "$kflt" "$uflt" "$tdown" "$verdict"
 	# A UFLT is only interesting once you know WHOSE fault it was, and this bench
 	# has already mistaken its own instrument's crash for a property of the run
 	# (2026-09-25, c1hpa01: a malloc_dl guard dereferencing an unmapped live[]
