@@ -132,13 +132,17 @@ echo
 # as the reference that should NEVER match.
 echo "== mailbox-PA correlation =="
 mbox_pa=$(plain | grep -oE 'mbox req buf pa=0x[0-9a-f]+' | grep -oE '0x[0-9a-f]+' | sort -u)
-brk_pa=$(plain | grep -oE 'p4pa   = 0x[0-9a-f]+' | grep -oE '0x[0-9a-f]+' | sed 's/^0x0*/0x/' | sort -u)
+# Both signatures now carry a physical page: p4pa from a poison break, hpa from a
+# corrupt-header fire. The header path is much the commoner of the two -- run
+# c1pa1 @22:22 gave 139 header fires and zero breaks -- so relying on p4pa alone
+# left the decisive comparison waiting on the rarer event.
+brk_pa=$(plain | grep -oE '(p4pa|hpa) +=[ ]*0x[0-9a-f]+' | grep -oE '0x[0-9a-f]+' | sed 's/^0x0*/0x/' | sort -u)
 vcm_pa=$(plain | grep -oE 'buf_pa=0x[0-9a-f]+' | grep -oE '0x[0-9a-f]+' | sort -u)
 if [ -z "$mbox_pa" ] && [ -z "$brk_pa" ]; then
 	echo "   (no mailbox PA log and no poison break in this run)"
 else
 	echo "   in-process mbox request pages: $(echo ${mbox_pa:-none} | tr '\n' ' ')"
-	echo "   broken poison page PAs:        $(echo ${brk_pa:-none} | tr '\n' ' ')"
+	echo "   corrupted page PAs (hpa/p4pa): $(echo ${brk_pa:-none} | tr '\n' ' ')"
 	echo "   vcmbox persistent buffer:      ${vcm_pa:-none}  (must NOT match)"
 	hit=""
 	for b in $brk_pa; do
