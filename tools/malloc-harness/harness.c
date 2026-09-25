@@ -108,6 +108,7 @@ enum {
 	HZ_V_DATA_CORRUPT,         /* payload clobbered => overlapping allocations */
 	HZ_V_SEGV,
 	HZ_V_CANARY,               /* --fragile: not a bug, exercises the shrinker */
+	HZ_V_LIVE_RING,            /* live[] names a page that is not mapped */
 };
 
 static const char *const hz_vname[] = {
@@ -128,6 +129,7 @@ static const char *const hz_vname[] = {
 	"allocation payload corrupted (overlapping blocks)",
 	"SIGSEGV",
 	"harness canary (--fragile): heap chunk count exceeded",
+	"live[] ring names a heap that is not currently mapped",
 };
 
 static int hz_violation;
@@ -638,6 +640,74 @@ static void hz_checkAll(void)
 		return;
 	}
 	hz_cov.checks++;
+
+	/* The live[] ring must agree with reality.
+	 *
+	 * Added 2026-09-25 for the defect this harness exists to catch in its own
+	 * right: on the Pi, /bin/ntpclient faulted inside malloc_heapSizeValid()
+	 * reading a live[] entry that named base 0x5000, a page that was NOT mapped
+	 * (run c1hpa01). The allocator's stated invariant is that a non-zero entry
+	 * is a heap it still has mapped -- munmap() is the only return-to-OS in the
+	 * file and the clear loop is unconditional, exhaustive and runs before it --
+	 * so by construction this should be unfalsifiable. It was not. 0 faults in
+	 * 878 boots and then one, which is exactly the shape a host harness can hunt
+	 * far faster than the bench can.
+	 *
+	 * Checked against hz_regions[], the harness's OWN shadow of every mmap and
+	 * munmap, and against msync() via va2pa() -- both independent of the
+	 * bookkeeping under test, so a pass is meaningful rather than circular. */
+	for (i = 0; i < 256; i++) {
+		uintptr_t lb = malloc_common.live[i];
+		size_t ls = malloc_common.liveSize[i];
+		int found = 0;
+
+		if (lb == 0u) {
+			/* Base and size must be cleared together, or malloc_liveOverlap()
+			 * (which now trusts liveSize[] instead of dereferencing) would test
+			 * a stale extent against a slot it believes is empty. */
+			if (ls != 0u) {
+				HZ_FAIL(HZ_V_LIVE_RING,
+						"live[%d] base is 0 but liveSize is 0x%zx -- cleared out of step", i, ls);
+				return;
+			}
+			continue;
+		}
+
+		for (k = 0; k < hz_nregions; k++) {
+			if (hz_regions[k].base != lb) {
+				continue;
+			}
+			found = 1;
+			if (hz_regions[k].mapped == 0) {
+				HZ_FAIL(HZ_V_LIVE_RING,
+						"live[%d] = 0x%lx is a heap already munmap()ed (seq %lu) -- the c1hpa01 signature",
+						i, (unsigned long)lb, hz_regions[k].unmapSeq);
+				return;
+			}
+			if (ls != hz_regions[k].size) {
+				HZ_FAIL(HZ_V_LIVE_RING,
+						"live[%d] = 0x%lx records size 0x%zx but was mmap()ed with 0x%zx",
+						i, (unsigned long)lb, ls, hz_regions[k].size);
+				return;
+			}
+			break;
+		}
+
+		if (found == 0) {
+			HZ_FAIL(HZ_V_LIVE_RING,
+					"live[%d] = 0x%lx was NEVER returned by mmap() -- a corrupt slot",
+					i, (unsigned long)lb);
+			return;
+		}
+
+		/* And ask the kernel directly, not just our own table. */
+		if (va2pa((void *)lb) == 0u) {
+			HZ_FAIL(HZ_V_LIVE_RING,
+					"live[%d] = 0x%lx is not mapped (msync) though the region table says it is",
+					i, (unsigned long)lb);
+			return;
+		}
+	}
 
 	/* Invariant 2, direct form: nothing reachable from a bin may live in an
 	 * unmapped heap.  hz_collectBins() range-checks before every deref, so a
@@ -1495,6 +1565,68 @@ static int hz_selftest(void)
 	hz_checkAll();
 	bad += hz_expect(HZ_V_BIN_IN_DEAD_HEAP, "orphan after munmap");
 
+	/* (2c-e) The live[] ring checker, in its three failure modes. A detector for
+	 * a defect seen ONCE on hardware is worthless unless it is shown to fire, so
+	 * forge each one. Slot 255 is used throughout: liveIdx starts at 0 and this
+	 * workload never wraps, so writing there cannot evict a real entry. */
+	{
+		int ri, done = 0;
+
+		/* (2c) The c1hpa01 signature itself: an entry naming a heap that has
+		 * been munmap()ed. Forged from the region table's own tombstone, so the
+		 * address is one the allocator really did map and really did release --
+		 * not a value invented by the test. */
+		hz_reset();
+		hz_violation = HZ_OK;
+		hz_vdetail[0] = '\0';
+		p = phx_malloc(64);
+		phx_free(p);
+		for (ri = 0; ri < hz_nregions; ri++) {
+			if (hz_regions[ri].mapped == 0) {
+				malloc_common.live[255] = hz_regions[ri].base;
+				malloc_common.liveSize[255] = hz_regions[ri].size;
+				done = 1;
+				break;
+			}
+		}
+		if (done == 0) {
+			printf("selftest %-22s -> NO RELEASED HEAP -- case NOT exercised   <== DETECTOR FAILED\n",
+					"live[] stale entry");
+			bad++;
+		}
+		else {
+			hz_checkAll();
+			bad += hz_expect(HZ_V_LIVE_RING, "live[] stale entry");
+		}
+		malloc_common.live[255] = 0u;
+		malloc_common.liveSize[255] = 0u;
+
+		/* (2d) A slot holding an address that was never an mmap() return at all
+		 * -- the "corrupt slot" reading. 0x5000 is the literal value that killed
+		 * ntpclient. */
+		hz_reset();
+		hz_violation = HZ_OK;
+		hz_vdetail[0] = '\0';
+		malloc_common.live[255] = 0x5000u;
+		malloc_common.liveSize[255] = 0x1000u;
+		hz_checkAll();
+		bad += hz_expect(HZ_V_LIVE_RING, "live[] never-mmapped base");
+		malloc_common.live[255] = 0u;
+		malloc_common.liveSize[255] = 0u;
+
+		/* (2e) Base and size cleared out of step. malloc_liveOverlap() now trusts
+		 * liveSize[] instead of dereferencing, so a stale size on an empty slot
+		 * would have it test a phantom extent. */
+		hz_reset();
+		hz_violation = HZ_OK;
+		hz_vdetail[0] = '\0';
+		malloc_common.live[255] = 0u;
+		malloc_common.liveSize[255] = 0x1000u;
+		hz_checkAll();
+		bad += hz_expect(HZ_V_LIVE_RING, "live[] size without base");
+		malloc_common.liveSize[255] = 0u;
+	}
+
 	/* (3) INV1: a fully-free heap holding two chunks. */
 	hz_reset();
 	hz_violation = HZ_OK;
@@ -1903,15 +2035,25 @@ static int hz_whySelftest(void)
 			bad++;
 		}
 		else {
-			bad += hz_whyExpect(malloc_liveOverlap(lbase + 16u, 256u) == lbase, 1,
+			/* malloc_liveOverlap now hands back the OVERLAPPED heap's recorded
+			 * size through an out-param, so it never dereferences a live[]
+			 * entry (2026-09-25). Check that size too: it is the field the
+			 * not-mapped report leans on, and an out-param nobody asserts is an
+			 * out-param that can silently rot. */
+			size_t ovs = 0u;
+
+			bad += hz_whyExpect(malloc_liveOverlap(lbase + 16u, 256u, &ovs) == lbase, 1,
 					"overlap: inside a live heap");
-			bad += hz_whyExpect(malloc_liveOverlap(lbase, lsize) == lbase, 1,
+			bad += hz_whyExpect(ovs == lsize, 1, "overlap: reports the live heap's size");
+			bad += hz_whyExpect(malloc_liveOverlap(lbase, lsize, &ovs) == lbase, 1,
 					"overlap: same base (total)");
-			bad += hz_whyExpect(malloc_liveOverlap(lbase + lsize - 16u, 32u) == lbase, 1,
+			bad += hz_whyExpect(malloc_liveOverlap(lbase + lsize - 16u, 32u, &ovs) == lbase, 1,
 					"overlap: straddles the end");
+			ovs = 0xdeadu;
 			bad += hz_whyExpect(
-					malloc_liveOverlap(malloc_common.heapLo - 0x2000u, 0x1000u) == 0u, 1,
+					malloc_liveOverlap(malloc_common.heapLo - 0x2000u, 0x1000u, &ovs) == 0u, 1,
 					"overlap: below the window");
+			bad += hz_whyExpect(ovs == 0u, 1, "overlap: clears the size when it finds nothing");
 		}
 	}
 
