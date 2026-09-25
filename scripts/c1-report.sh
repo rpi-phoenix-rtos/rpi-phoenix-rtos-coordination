@@ -185,19 +185,45 @@ if [ -z "$capa" ]; then
 elif [ -z "$mbox_pa" ]; then
 	echo "   heap pages sampled: $(echo "$capa" | grep -c .)  but NO mailbox PA logged -- nothing to compare"
 else
-	chit=""
+	# ⚠ A raw PA match is NOT evidence on its own. Phoenix recycles physical
+	# frames across mmap/munmap constantly, so a heap that was RELEASED and whose
+	# frame the v3d driver later took for a mailbox buffer produces capa==mbox_pa
+	# while the two never coexisted. That is benign reuse, and printing it as a
+	# discovery would be the worst kind of false positive -- the report's
+	# strongest-worded line, earned by nothing.
+	#
+	# So the match has to be temporal. `carel` records each page at RELEASE time
+	# (emitted while still mapped, so va2pa can answer). A coincidence counts only
+	# if the heap page was logged BEFORE the mailbox line and was NOT released in
+	# between; otherwise it is reuse and is reported as such.
+	chit=""; creuse=""
+	mbox_ln=$(plain | grep -n 'mbox req buf pa' | head -1 | cut -d: -f1)
 	for c in $capa; do
 		cp=$(printf "0x%x" $(( c & ~0xfff )))
+		matched=0
 		for m in $mbox_pa; do
 			mp=$(printf "0x%x" $(( m & ~0xfff )))
-			[ "$cp" = "$mp" ] && chit="$chit $cp"
+			[ "$cp" = "$mp" ] && matched=1
 		done
+		[ "$matched" = "0" ] && continue
+		# Was this page released before the first mailbox line?
+		rel_ln=$(plain | grep -n "carel  = .*$(printf '%x' $(( c & ~0xfff )))" | head -1 | cut -d: -f1)
+		if [ -n "$rel_ln" ] && [ -n "$mbox_ln" ] && [ "$rel_ln" -lt "$mbox_ln" ]; then
+			creuse="$creuse $cp"
+		else
+			chit="$chit $cp"
+		fi
 	done
-	echo "   heap pages sampled:   $(echo "$capa" | grep -c .)  (capa cap is 64/process)"
+	echo "   heap pages sampled:   $(echo "$capa" | grep -c .)  (per-PAGE; budget 512 lines/process)"
+	echo "   pages released again: $(plain | grep -c 'carel  =')"
 	echo "   mailbox pages:        $(echo $mbox_pa | tr '\n' ' ')"
 	if [ -n "$chit" ]; then
-		echo "   *** COINCIDENCE on page(s):$chit -- firmware and allocator owned the same physical page"
-	else
+		echo "   *** COINCIDENCE on page(s):$chit -- heap still LIVE when the mailbox took the page"
+	fi
+	if [ -n "$creuse" ]; then
+		echo "   benign PA reuse on:$creuse -- heap was released BEFORE the mailbox line, so they never coexisted"
+	fi
+	if [ -z "$chit" ] && [ -z "$creuse" ]; then
 		echo "   no coincidence in this sample -- weakens the mailbox route IN PROPORTION to the sample above"
 	fi
 fi
