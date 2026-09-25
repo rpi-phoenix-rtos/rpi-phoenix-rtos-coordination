@@ -70,6 +70,7 @@
       "Bash(./scripts/uart-summary.sh:*)",
       "Bash(./scripts/check-netboot-blob.sh:*)",
       "Bash(./scripts/check-early-markers.sh:*)",
+      "Bash(./scripts/c1-bench-table.sh:*)",
       "Bash(./scripts/diff-boot-variants.py:*)",
       "Bash(./scripts/uart-list.sh:*)",
       "Bash(./scripts/dbg-symbolize.sh:*)",
