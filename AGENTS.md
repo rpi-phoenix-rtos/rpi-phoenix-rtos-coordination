@@ -32,6 +32,10 @@ Before making code changes in future sessions, read these files in order:
 
 Read `docs/knowledge/raspberry-pi-5.md` when the task touches Pi 5 or RP1.
 Read `skills/README.md` when choosing a local project skill.
+Read `docs/knowledge/libc-host-harnesses.md` **before changing anything in `sources/libphoenix`**,
+and run `./scripts/run-libc-hosttests.sh` first: it diffs libphoenix's real source against glibc
+in a few seconds with no Pi cycle, so the exclusive bench stays the confirmation step rather than
+the discovery loop.
 
 ## Local Skills
 
