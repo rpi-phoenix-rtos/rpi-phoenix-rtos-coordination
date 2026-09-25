@@ -25,7 +25,14 @@ wchar_phx.o: $(LIBPH)/wchar/wchar.c
 wdiff: wdiff.c wchar_phx.o
 	$(CC) $(CFLAGS) -o $@ $^
 
+# Compare against glibc's C locale -- the contract libphoenix actually
+# implements. Running without an argument uses C.UTF-8 and reports ~138
+# BY-DESIGN differences, which is how the first run of this harness produced a
+# list of false alarms.
+run: wdiff
+	./wdiff C
+
 clean:
 	rm -f wdiff wchar_ph.o wchar_phx.o redef.txt
 
-.PHONY: all clean
+.PHONY: all run clean

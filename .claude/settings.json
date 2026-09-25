@@ -30,6 +30,7 @@
       "Bash(./scripts/stk-fps-from-hdmi.py:*)",
       "Bash(./scripts/diff-sdimage-vs-export.sh:*)",
       "Bash(./scripts/verify-sd-image-contents.sh:*)",
+      "Bash(./scripts/run-libc-hosttests.sh:*)",
       "Bash(./scripts/rebuild-rpi4b-fast.sh:*)",
       "Bash(./scripts/test-cycle-netboot.sh:*)",
       "Bash(./scripts/test-cycle-bench.sh:*)",
