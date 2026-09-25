@@ -38,7 +38,7 @@ if [ "$_days" -gt 1 ]; then
 	printf '⚠ label %s matches logs from %s different DAYS -- probably over-matching.\n' "$pref" "$_days"
 	printf '  dates: %s\n\n' "$(printf '%s\n' "${logs[@]}" | sed 's/.*rpi4b-uart-\([0-9]\{8\}\)-.*/\1/' | sort -u | tr '\n' ' ')"
 fi
-printf '%-38s %5s %6s %6s %8s %7s %5s %s\n' LOG SIG GUARD ARMED FRAMES FAULTS TDOWN VERDICT
+printf '%-36s %5s %5s %6s %6s %8s %6s %5s %s\n' LOG SIG VICT GUARD ARMED FRAMES FAULTS TDOWN VERDICT
 tot_f=0; tot_fire=0; valid=0; void=0
 for log in $(printf '%s\n' "${logs[@]}" | sort); do
 	# ⚠ Count EVERY allocator guard, not just the corrupt-header one. The
@@ -68,6 +68,11 @@ for log in $(printf '%s\n' "${logs[@]}" | sort); do
 	# must not inflate the metric it is being read alongside.
 	guards=$(grep -a 'malloc: ' "$log" \
 		| grep -vcE 'C1-hunt: created|c1size =|c1base =|c1req  =|c1call =')
+	# VICT: DISTINCT corrupted heaps. SIG counts report LINES, and one corrupt
+	# heap is re-reported on every later free from it -- run c1pa1 @22:22 showed
+	# SIG=552 from just FOUR distinct heaps. Quoting SIG as an event count
+	# overstates the evidence by two orders of magnitude.
+	vict=$(grep -aoE 'heap  = 0x[0-9a-f]{16}' "$log" | sort -u | wc -l)
 	armed=$(grep -ac 'C1-hunt: created' "$log")
 	frames=$(grep -ao 'total [0-9]*)' "$log" | tail -1 | tr -dc 0-9)
 	frames=${frames:-0}
@@ -85,8 +90,8 @@ for log in $(printf '%s\n' "${logs[@]}" | sort); do
 	# still fired 1-12 times. A bench of runs that all show no is not void, but it
 	# is weaker than one that completes.
 	if grep -aq 'Number of frames:' "$log"; then tdown=yes; else tdown=no; fi
-	printf '%-38s %5s %6s %6s %8s %7s %5s %s\n' "$(basename "$log" .log | cut -c11-)" \
-		"$fires" "$guards" "$armed" "$frames" "$faults" "$tdown" "$verdict"
+	printf '%-36s %5s %5s %6s %6s %8s %6s %5s %s\n' "$(basename "$log" .log | cut -c11-)" \
+		"$fires" "$vict" "$guards" "$armed" "$frames" "$faults" "$tdown" "$verdict"
 done
 
 echo "---"
