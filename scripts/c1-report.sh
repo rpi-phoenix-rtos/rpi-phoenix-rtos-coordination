@@ -160,6 +160,49 @@ else
 fi
 echo
 
+# --- live-heap PA coincidence (does NOT need C1 to fire) ----------------------
+# The correlation above is FIRE-GATED: hpa/p4pa exist only once a guard trips. On
+# five clean trials of series #3 that meant 24 mailbox PAs per run and not one
+# heap PA to compare them with -- the decisive test could not even be attempted.
+#
+# That is a bad place to be, because the archive says instruments SUPPRESS C1
+# (five in a row drove the rate to 0), so a design that needs the event to fire
+# is fighting its own instrumentation. `capa` (C1_HEAP_TRACE_ALL) logs the
+# physical page of EVERY heap creation, which reframes the question into one a
+# CLEAN run can answer: does a mailbox request buffer's physical page ever
+# coincide with a live heap's?
+#
+# Read it carefully, in both directions:
+#   a MATCH means the firmware owns a page the allocator also owns -- the
+#     mechanism, demonstrated without needing corruption to occur;
+#   NO match over many heaps is evidence AGAINST the hypothesis, but only in
+#     proportion to how many heaps were sampled -- capa is capped at 64 per
+#     process, so quote the sample size with the verdict, never "no match" alone.
+echo "== live-heap PA coincidence (capa vs mailbox, no fire needed) =="
+capa=$(plain | grep -oE 'capa +=[ ]*0x[0-9a-f]+' | grep -oE '0x[0-9a-f]+' | sed 's/^0x0*/0x/' | sort -u)
+if [ -z "$capa" ]; then
+	echo "   (no all-trace in this run -- arm with C1_HEAP_TRACE_ALL=1 on the command itself)"
+elif [ -z "$mbox_pa" ]; then
+	echo "   heap pages sampled: $(echo "$capa" | grep -c .)  but NO mailbox PA logged -- nothing to compare"
+else
+	chit=""
+	for c in $capa; do
+		cp=$(printf "0x%x" $(( c & ~0xfff )))
+		for m in $mbox_pa; do
+			mp=$(printf "0x%x" $(( m & ~0xfff )))
+			[ "$cp" = "$mp" ] && chit="$chit $cp"
+		done
+	done
+	echo "   heap pages sampled:   $(echo "$capa" | grep -c .)  (capa cap is 64/process)"
+	echo "   mailbox pages:        $(echo $mbox_pa | tr '\n' ' ')"
+	if [ -n "$chit" ]; then
+		echo "   *** COINCIDENCE on page(s):$chit -- firmware and allocator owned the same physical page"
+	else
+		echo "   no coincidence in this sample -- weakens the mailbox route IN PROPORTION to the sample above"
+	fi
+fi
+echo
+
 # --- hunt instruments ---------------------------------------------------------
 echo "== instruments =="
 # ⚠ 0 here does NOT mean STK created no victim heap. Since 2026-09-25 this trace
