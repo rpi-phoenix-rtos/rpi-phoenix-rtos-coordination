@@ -28,7 +28,7 @@ if [ ${#logs[@]} -eq 0 ]; then
 	exit 1
 fi
 
-printf '%-40s %6s %6s %8s %7s %5s %s\n' LOG FIRES ARMED FRAMES FAULTS TDOWN VERDICT
+printf '%-38s %5s %6s %6s %8s %7s %5s %s\n' LOG SIG GUARD ARMED FRAMES FAULTS TDOWN VERDICT
 tot_f=0; tot_fire=0; valid=0; void=0
 for log in $(printf '%s\n' "${logs[@]}" | sort); do
 	# ⚠ Count EVERY allocator guard, not just the corrupt-header one. The
@@ -36,7 +36,23 @@ for log in $(printf '%s\n' "${logs[@]}" | sort); do
 	# "POISON BROKEN" and no `why`. Counting only `why` called
 	# c1armA-3 clean when it had 4 poison breaks, and produced a bogus
 	# "C1 has gone quiet" reading across the whole archive on 2026-09-25.
-	fires=$(grep -acE 'why   =|POISON BROKEN|chunk handed out twice|large-bin lookup returned|small-bin head is not a chunk' "$log")
+	# Two independent columns, because neither alone is trustworthy:
+	#
+	#  SIG   the C1 signature itself -- 0x80000000/0x80000001 sitting in the HIGH
+	#        half of a 64-bit word, however it is reported (hhi32, p4got, a
+	#        corrupted hsize/heap). This is the selector to believe: it does not
+	#        care which guard printed it.
+	#  GUARD any allocator guard message at all. Kept because a guard can fire
+	#        WITHOUT the signature (that is a different defect, e.g. c1keep-4's
+	#        "small-bin head is not a chunk"), and because it catches new guards.
+	#
+	# Guard-NAME counting was tried and is fragile: malloc_dl.c can emit 20+
+	# distinct literals, and picking a subset produced two wrong conclusions on
+	# 2026-09-25 -- first `why   =` alone (which misses the page-poison guard
+	# entirely), then a five-message list that still omitted "free-bin link is not
+	# a plausible chunk", which has fired in 17 archived logs.
+	fires=$(grep -acE 'hhi32 = 0x0*8000000[01]|p4got  = 0x0*8000000[01]|= 0x8000000[01][0-9a-f]{8}' "$log")
+	guards=$(grep -ac 'malloc: ' "$log")
 	armed=$(grep -ac 'C1-hunt: created' "$log")
 	frames=$(grep -ao 'total [0-9]*)' "$log" | tail -1 | tr -dc 0-9)
 	frames=${frames:-0}
@@ -54,10 +70,10 @@ for log in $(printf '%s\n' "${logs[@]}" | sort); do
 	# still fired 1-12 times. A bench of runs that all show no is not void, but it
 	# is weaker than one that completes.
 	if grep -aq 'Number of frames:' "$log"; then tdown=yes; else tdown=no; fi
-	printf '%-40s %6s %6s %8s %7s %5s %s\n' "$(basename "$log" .log | cut -c11-)" \
-		"$fires" "$armed" "$frames" "$faults" "$tdown" "$verdict"
+	printf '%-38s %5s %6s %6s %8s %7s %5s %s\n' "$(basename "$log" .log | cut -c11-)" \
+		"$fires" "$guards" "$armed" "$frames" "$faults" "$tdown" "$verdict"
 done
 
 echo "---"
 printf 'valid trials: %s   void (0 frames, NOT counted): %s\n' "$valid" "$void"
-printf 'fires across valid trials: %s   frames: %s\n' "$tot_fire" "$tot_f"
+printf 'C1-signature hits across valid trials: %s   frames: %s\n' "$tot_fire" "$tot_f"
