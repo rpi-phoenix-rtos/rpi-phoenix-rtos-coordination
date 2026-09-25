@@ -310,9 +310,29 @@ authoritative current state.
   firmware/armstub/PLO (not TF-A), and the first post-D-cache large zeroing
   operation (`_log_init`'s `log_common` memset) hangs on real hardware with no
   exception output. The hang does not reproduce in QEMU.
-- **Resolution requirements:** Prove the EL2 trap state for DC ZVA on Pi 4
-  (HW-only — does not repro in QEMU). If ZVA is safe, drop the
-  `MEMSET_WITHOUT_ZVA` gate and the `TODO(TD-20)` marker.
+- **Resolution requirements:** ~~Prove the EL2 trap state for DC ZVA on Pi 4~~
+  — **DONE 2026-09-25, and the hypothesis was WRONG.** `tools/dczid-probe/`
+  reads `DCZID_EL0` (an EL0-readable register) on the real Pi 4:
+
+      DCZID raw=0x4  DZP=0 (PERMITTED)  BS=4 (block = 64 bytes)
+      EXEC=ok (64 bytes zeroed, neighbouring byte intact)
+
+  **`HCR_EL2.TDZ` is NOT set**: `dc zva` is permitted from EL0/EL1 and executes
+  correctly with the MMU and caches up. So the EL2 trap this entry was blocked
+  on does not exist, and no amount of further EL2 investigation will unblock it.
+
+  ⚠ **The gate still stands, for a different and better-supported reason.** The
+  header of `hal_memset` itself says the routine *"may not work for uncached
+  memory"*, and the recorded failure is a **hang with no exception output** in
+  `_log_init`'s first large zeroing immediately after the D-cache is enabled —
+  which fits `dc zva` against a region that is not Normal cacheable memory at
+  that moment, not a trap (a trap would have produced an exception).
+
+  So lifting the gate is no longer gated on EL2 proof; it is gated on showing
+  that **no caller of `hal_memset` can pass uncached memory**, which is a
+  whole-kernel argument rather than a measurement. Enabling it without that is
+  a correctness gamble for a performance-only gain. ⛔ Do NOT re-run the EL2
+  probe — the answer is above.
 
 ## TD-21: syscall table diverges from upstream (mutex syscalls kept append-only)
 
