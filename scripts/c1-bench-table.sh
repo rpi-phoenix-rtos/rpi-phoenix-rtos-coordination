@@ -120,7 +120,11 @@ for log in $(printf '%s\n' "${logs[@]}" | sort); do
 	_gre="$_gre"'|LIVE HEAP BASE|wild pointer|not transplanting|leaking the'
 	_mtot=$(grep -ac 'malloc: ' "$log")
 	_mfield=$(grep -acE 'malloc:.*= 0x[0-9a-f]{16}([ \r]*)$' "$log")
-	_mtrace=$(grep -acE 'malloc: C1-hunt: created a victim-size heap([ \r]*)$' "$log")
+	# Both traces: the STK-tuned one ("created a victim-size heap") and the
+	# unfiltered all-trace ("heap created (all-trace)") armed by C1_HEAP_TRACE_ALL
+	# for small processes. Neither is a guard; if the second were not listed here
+	# its prose would land in CORR and read as link corruption.
+	_mtrace=$(grep -acE 'malloc: C1-hunt: (created a victim-size heap|heap created \(all-trace\))([ \r]*)$' "$log")
 	# Scoped to `malloc: ` lines: several of these words ("double free", "wild
 	# pointer", "leaking the", "ABANDONED") are generic enough to appear in other
 	# processes' or the kernel's output, and an unscoped match would import them.
