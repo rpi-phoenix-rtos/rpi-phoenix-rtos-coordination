@@ -45,6 +45,7 @@
       "Bash(./scripts/record-hdmi.sh:*)",
       "Bash(./scripts/make-demo-reel.sh:*)",
       "Bash(python3 scripts/analyze-bo-trace.py:*)",
+      "Bash(python3 scripts/c1-correlate-breaks.py:*)",
       "Bash(./scripts/capture-rpi4b-uart.sh:*)",
       "Bash(./scripts/pi_power_off.sh)",
       "Bash(./scripts/pi_power_off.sh:*)",
