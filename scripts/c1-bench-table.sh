@@ -38,7 +38,7 @@ if [ "$_days" -gt 1 ]; then
 	printf '⚠ label %s matches logs from %s different DAYS -- probably over-matching.\n' "$pref" "$_days"
 	printf '  dates: %s\n\n' "$(printf '%s\n' "${logs[@]}" | sed 's/.*rpi4b-uart-\([0-9]\{8\}\)-.*/\1/' | sort -u | tr '\n' ' ')"
 fi
-printf '%-36s %5s %5s %6s %6s %8s %6s %5s %s\n' LOG SIG VICT GUARD ARMED FRAMES FAULTS TDOWN VERDICT
+printf '%-36s %5s %5s %6s %6s %8s %5s %5s %5s %s\n' LOG SIG VICT GUARD ARMED FRAMES KFLT UFLT TDOWN VERDICT
 tot_f=0; tot_fire=0; valid=0; void=0
 for log in $(printf '%s\n' "${logs[@]}" | sort); do
 	# ⚠ Count EVERY allocator guard, not just the corrupt-header one. The
@@ -76,7 +76,26 @@ for log in $(printf '%s\n' "${logs[@]}" | sort); do
 	armed=$(grep -ac 'C1-hunt: created' "$log")
 	frames=$(grep -ao 'total [0-9]*)' "$log" | tail -1 | tr -dc 0-9)
 	frames=${frames:-0}
-	faults=$(grep -acE 'Exception|Data Abort|Fatal' "$log")
+	# ⚠ EVERY fault dump reaches the UART TWICE, so a raw line count is 2x the
+	# truth. process_dumpException() (kernel proc/process.c:259-261) emits the
+	# SAME buffer down two paths: hal_consolePrint() to the kernel console AND
+	# posix_write(2, ...) to the faulting process's stderr -- which on this bench
+	# is also the UART. Verified 2026-09-25 as a fixed 2:1 ratio of "Exception #"
+	# lines to fault events across four independent logs (6:3, 6:3, 2:1, 2:1),
+	# and visible directly in c1hpa01, where another process's output interleaves
+	# BETWEEN the two copies. So halve, and split by exception level: an EL1
+	# entry is a kernel fault and must be 0, an EL0 entry killed a user process
+	# and may be the INSTRUMENT's own doing rather than the workload's.
+	#
+	# ⚠ The doubling is EL0-ONLY, and getting this wrong is worse than not
+	# splitting at all. An EL1 dump is a KERNEL fault: there is no live user
+	# stderr to write to, so only the console copy appears -- measured on
+	# c1pw-on-216762 (2026-09-24), which carries exactly ONE "(EL1)" line. Had
+	# KFLT been halved too, that log would have graded KFLT=0 by integer
+	# division and a kernel fault would have vanished from the table. Halve the
+	# EL0 count; take the EL1 count as-is.
+	kflt=$(grep -ac 'Exception #[0-9]*:.*(EL1)' "$log")
+	uflt=$(( $(grep -ac 'Exception #[0-9]*:.*(EL0)' "$log") / 2 ))
 	if [ "$frames" -eq 0 ]; then
 		verdict=VOID; void=$((void+1))
 	else
@@ -90,8 +109,21 @@ for log in $(printf '%s\n' "${logs[@]}" | sort); do
 	# still fired 1-12 times. A bench of runs that all show no is not void, but it
 	# is weaker than one that completes.
 	if grep -aq 'Number of frames:' "$log"; then tdown=yes; else tdown=no; fi
-	printf '%-36s %5s %5s %6s %6s %8s %6s %5s %s\n' "$(basename "$log" .log | cut -c11-)" \
-		"$fires" "$vict" "$guards" "$armed" "$frames" "$faults" "$tdown" "$verdict"
+	printf '%-36s %5s %5s %6s %6s %8s %5s %5s %5s %s\n' "$(basename "$log" .log | cut -c11-)" \
+		"$fires" "$vict" "$guards" "$armed" "$frames" "$kflt" "$uflt" "$tdown" "$verdict"
+	# A UFLT is only interesting once you know WHOSE fault it was, and this bench
+	# has already mistaken its own instrument's crash for a property of the run
+	# (2026-09-25, c1hpa01: a malloc_dl guard dereferencing an unmapped live[]
+	# entry killed /bin/ntpclient, and the raw count read as "the workload
+	# faulted twice"). Name the victim and the PC so the reader can addr2line it
+	# rather than guess; the PC is build-specific, so resolve it against the
+	# prog/ ELF of the build that produced THIS log.
+	if [ "$uflt" -gt 0 ]; then
+		while read -r _p; do
+			printf '    ^ EL0 %s  victim(s): %s\n' "$_p" \
+				"$(grep -aoE 'process "[^"]*"' "$log" | sort -u | tr '\n' ' ')"
+		done < <(grep -aoE 'pc=[0-9a-f]{16} esr=[0-9a-f]{16} far=[0-9a-f]{16}' "$log" | sort -u)
+	fi
 done
 
 echo "---"
