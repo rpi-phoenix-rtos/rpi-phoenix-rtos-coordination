@@ -109,9 +109,9 @@ echo "== instruments =="
 # `export C1_HEAP_TRACE=1` before the app to arm it as a positive control.
 c1_created=$(grep -ac 'C1-hunt: created' "$log")
 if [ "$c1_created" = "0" ]; then
-	echo "   0xd000-heap creations: 0  (trace OFF by default -- export C1_HEAP_TRACE=1 to arm)"
+	echo "   victim-size heap creations: 0  (trace OFF by default -- export C1_HEAP_TRACE=1 to arm)"
 else
-	echo "   0xd000-heap creations: $c1_created  (trace ran: env-armed, or a pre-2026-09-25 build where it was unconditional)"
+	echo "   victim-size heap creations: $c1_created  (trace ran; pre-2026-09-25 builds counted 0xd000 ONLY, later ones 0xd000+0x2000)"
 fi
 echo "   implausible gc header: $(grep -ac 'implausible gc header' "$log")"
 echo "   EL0/EL1 exceptions:    $(grep -ac '(EL0)' "$log") / $(grep -ac '(EL1)' "$log")"
