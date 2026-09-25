@@ -121,9 +121,17 @@ for log in $(printf '%s\n' "${logs[@]}" | sort); do
 	_mtot=$(grep -ac 'malloc: ' "$log")
 	_mfield=$(grep -acE 'malloc:.*= 0x[0-9a-f]{16}([ \r]*)$' "$log")
 	_mtrace=$(grep -acE 'malloc: C1-hunt: created a victim-size heap([ \r]*)$' "$log")
-	guards=$(grep -acE "$_gre" "$log")
+	# Scoped to `malloc: ` lines: several of these words ("double free", "wild
+	# pointer", "leaking the", "ABANDONED") are generic enough to appear in other
+	# processes' or the kernel's output, and an unscoped match would import them.
+	guards=$(grep -a 'malloc: ' "$log" | grep -acE "$_gre")
 	# CORR: everything that is neither a well-formed field, nor an exact trace
-	# line, nor a guard event -- i.e. the corrupted residue. Reported rather than
+	# line, nor a guard event. ⚠ It is an UNEXPLAINED residue, not pure
+	# corruption: a guard's own sub-lines that match no classifier land here too
+	# (`heapsz = <heap pointer outside the mmap'd window; not read>`, `(no logged
+	# large free covers this page)`, `p4bo = no v3d driver in this binary`), so on
+	# a firing run the count is mixed. Read it as "lines this table could not
+	# account for", which is exactly what makes it useful. Reported rather than
 	# silently dropped because link quality is itself evidence: at a non-zero
 	# bit-error rate a corrupted digit could in principle fabricate or erase a C1
 	# signature, so a run with an unusual CORR deserves a second look before its
