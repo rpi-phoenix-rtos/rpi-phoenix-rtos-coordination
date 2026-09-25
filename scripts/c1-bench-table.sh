@@ -34,9 +34,29 @@ fi
 # aggregate mixing three days of archived runs. Warn when the matched logs
 # span more than a day -- a single bench never does.
 _days=$(printf '%s\n' "${logs[@]}" | sed 's/.*rpi4b-uart-\([0-9]\{8\}\)-.*/\1/' | sort -u | wc -l)
+#
+# ⚠ ...but an overnight bench legitimately crosses midnight, and this warning
+# fired on the 8-trial c1hpa series for exactly that reason. A guard that cries
+# wolf on correct input gets ignored, which is worse than not having it. So
+# treat "exactly two dates, one calendar day apart" as a midnight-spanning run
+# and say so, and reserve the over-matching warning for genuinely scattered days.
+_datelist=$(printf '%s\n' "${logs[@]}" | sed 's/.*rpi4b-uart-\([0-9]\{8\}\)-.*/\1/' | sort -u)
 if [ "$_days" -gt 1 ]; then
-	printf '⚠ label %s matches logs from %s different DAYS -- probably over-matching.\n' "$pref" "$_days"
-	printf '  dates: %s\n\n' "$(printf '%s\n' "${logs[@]}" | sed 's/.*rpi4b-uart-\([0-9]\{8\}\)-.*/\1/' | sort -u | tr '\n' ' ')"
+	_span=99
+	if [ "$_days" -eq 2 ]; then
+		_d1=$(echo "$_datelist" | head -1)
+		_d2=$(echo "$_datelist" | tail -1)
+		_s1=$(date -d "$_d1" +%s 2>/dev/null || echo 0)
+		_s2=$(date -d "$_d2" +%s 2>/dev/null || echo 0)
+		[ "$_s1" -gt 0 ] && [ "$_s2" -gt 0 ] && _span=$(( (_s2 - _s1) / 86400 ))
+	fi
+	if [ "$_span" -eq 1 ]; then
+		printf 'ℹ label %s spans midnight (%s) -- consecutive days, so this looks like ONE overnight bench.\n\n' \
+			"$pref" "$(echo $_datelist | tr '\n' ' ')"
+	else
+		printf '⚠ label %s matches logs from %s different DAYS -- probably over-matching.\n' "$pref" "$_days"
+		printf '  dates: %s\n\n' "$(echo $_datelist | tr '\n' ' ')"
+	fi
 fi
 printf '%-36s %5s %5s %6s %5s %6s %8s %5s %5s %5s %s\n' LOG SIG VICT GUARD CORR ARMED FRAMES KFLT UFLT TDOWN VERDICT
 tot_f=0; tot_fire=0; valid=0; void=0
