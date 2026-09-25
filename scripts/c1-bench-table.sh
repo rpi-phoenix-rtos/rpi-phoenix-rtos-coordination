@@ -28,6 +28,16 @@ if [ ${#logs[@]} -eq 0 ]; then
 	exit 1
 fi
 
+# ⚠ The label is matched as a SUBSTRING, so a short one silently pulls in
+# unrelated runs: "c1s" also matches c1stk, c1sweep, c1solo, c1soak and
+# c1smoke, which on 2026-09-25 turned a 1-trial series into a 19-trial
+# aggregate mixing three days of archived runs. Warn when the matched logs
+# span more than a day -- a single bench never does.
+_days=$(printf '%s\n' "${logs[@]}" | sed 's/.*rpi4b-uart-\([0-9]\{8\}\)-.*/\1/' | sort -u | wc -l)
+if [ "$_days" -gt 1 ]; then
+	printf '⚠ label %s matches logs from %s different DAYS -- probably over-matching.\n' "$pref" "$_days"
+	printf '  dates: %s\n\n' "$(printf '%s\n' "${logs[@]}" | sed 's/.*rpi4b-uart-\([0-9]\{8\}\)-.*/\1/' | sort -u | tr '\n' ' ')"
+fi
 printf '%-38s %5s %6s %6s %8s %7s %5s %s\n' LOG SIG GUARD ARMED FRAMES FAULTS TDOWN VERDICT
 tot_f=0; tot_fire=0; valid=0; void=0
 for log in $(printf '%s\n' "${logs[@]}" | sort); do
