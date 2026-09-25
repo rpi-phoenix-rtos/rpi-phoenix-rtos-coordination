@@ -207,6 +207,7 @@ else
 		done
 		[ "$matched" = "0" ] && continue
 		# Was this page released before the first mailbox line?
+		# (carel = a malloc HEAP release; see below for the mailbox side.)
 		rel_ln=$(plain | grep -n "carel  = .*$(printf '%x' $(( c & ~0xfff )))" | head -1 | cut -d: -f1)
 		if [ -n "$rel_ln" ] && [ -n "$mbox_ln" ] && [ "$rel_ln" -lt "$mbox_ln" ]; then
 			creuse="$creuse $cp"
@@ -219,6 +220,24 @@ else
 	echo "   mailbox pages:        $(echo $mbox_pa | tr '\n' ' ')"
 	if [ -n "$chit" ]; then
 		echo "   *** COINCIDENCE on page(s):$chit -- heap still LIVE when the mailbox took the page"
+		# Which side of the coincidence is dangerous depends on whether the
+		# FIRMWARE was finished with the page. The driver logs a RELEASED line
+		# only on the success path, i.e. only once its response had surfaced --
+		# so a mailbox page with a matching RELEASED line is one VideoCore is
+		# provably done with, and a match on it is harmless recycling.
+		#
+		# A mailbox page with NO release line is the whole point: that is the
+		# shape of the one route left untested after release-by-munmap was
+		# refuted -- a process exiting with a property call in flight, where the
+		# kernel reclaims the page with no munmap and nothing to count it.
+		for h in $chit; do
+			hs=$(printf '%x' $(( h )))
+			if plain | grep -q "RELEASED pa=0x0*$hs"; then
+				echo "       $h: firmware HAD finished (RELEASED logged) -- benign recycling"
+			else
+				echo "       $h: ⚠ NO release logged for this mailbox page -- firmware may still own it"
+			fi
+		done
 	fi
 	if [ -n "$creuse" ]; then
 		echo "   benign PA reuse on:$creuse -- heap was released BEFORE the mailbox line, so they never coexisted"
