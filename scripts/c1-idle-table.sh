@@ -68,8 +68,15 @@ for log in $(printf '%s\n' "${logs[@]}" | sort); do
 	# cycle prints immediately after, so this does not rely on ordering.
 	cache="-"
 	if [ -n "$drv" ] && [ -f "$drv" ]; then
+		# ⚠ WHEN THE CACHE DIRECTORY IS ABSENT THE SYNC PRINTS NOTHING AT ALL.
+		# sync-netboot-tree.sh guards its whole message on `if [ -d $shader_cache ]`,
+		# so a trial whose cache was deliberately `rm -rf`ed produces NO line -- and
+		# grading on the message alone would read the coldest possible trial as
+		# "unknown". The series script's own `cleared at HH:MM:SS` covers that case;
+		# whichever marker came last before this trial's `log:` line wins.
 		cache=$(awk -v want="$base" '
-			/Mesa shader disk cache/ { st = (/cleared/) ? "COLD" : "warm" }
+			/^cleared at /            { st = "COLD" }
+			/Mesa shader disk cache/  { st = (/cleared/) ? "COLD" : "warm" }
 			/rpi4b-uart-.*\.log/ {
 				if (index($0, want) > 0 && st != "") { print st; exit }
 			}' "$drv")
@@ -105,6 +112,15 @@ for log in $(printf '%s\n' "${logs[@]}" | sort); do
 		# var never reached the winsys as properly armed. Measured on c1idleK1:
 		# 2 matches for the variable name, only one of them the driver's.
 		note="VOID (K arm NOT armed: no driver banner)"
+		void=$((void + 1))
+	elif [ "$arm" = "C" ] && [ "$cache" = "warm" ]; then
+		# ⛔ A cold-arm trial whose cache was warm: the rm failed, or the sync kept
+		# it. Not a cold datum, and a clean result from it would be read as the
+		# cold arm failing to fire.
+		note="VOID (C arm but cache was warm)"
+		void=$((void + 1))
+	elif [ "$arm" = "W" ] && [ "$cache" = "COLD" ]; then
+		note="VOID (W arm but cache was COLD)"
 		void=$((void + 1))
 	elif [ "$arm" = "K" ] && [ "$kmun" -ne 0 ]; then
 		# ★ The MECHANISTIC guard, which is stronger than any banner: with
