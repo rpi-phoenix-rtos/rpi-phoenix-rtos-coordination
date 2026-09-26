@@ -23,6 +23,17 @@ cflags=(-std=gnu11 -g -O0 -Wall -Wextra -pthread
 	-Wno-unused-parameter -Wno-unused-function -Wno-sign-compare
 	-I"$here/stubs")
 
+# Extra flags, so the allocator's COMPILE-TIME arms can be exercised here rather
+# than only on the Pi. The one that matters today is -DC1_P4_WIDE, which arms all
+# four page-poison probe offsets instead of the default single +0x4; without a way
+# to build it, "three probes never report" looks like a detector gap when it is
+# simply an unarmed configuration.
+#   MH_CFLAGS="-DC1_P4_WIDE" ./tools/malloc-harness/build.sh
+if [ -n "${MH_CFLAGS:-}" ]; then
+	# shellcheck disable=SC2206
+	cflags+=($MH_CFLAGS)
+fi
+
 set -x
 gcc "${cflags[@]}" $san -c -o "$here/rb.o"      "$lp/sys/rb.c"
 gcc "${cflags[@]}" $san -c -o "$here/list.o"    "$lp/sys/list.c"

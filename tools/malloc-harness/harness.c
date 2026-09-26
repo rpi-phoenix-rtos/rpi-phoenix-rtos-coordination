@@ -2181,7 +2181,18 @@ static int hz_p4Probes(void)
 		}
 		phx_free(keep);
 	}
-	printf("  (a probe with no 'PAGE POISON BROKEN / p4off' line above is BLIND)\n");
+	/* ⚠ "no report" means BLIND only for an offset this build actually ARMS.
+	 * c1P4Off[] is {4} by default and {4, 0x404, 0x804, 0xc04} only under
+	 * -DC1_P4_WIDE, because arming all four changes the write pattern enough to
+	 * stop the bug reproducing. So on a default build the last three probes are
+	 * silent BY DESIGN, and reading that as a detector gap is a false alarm --
+	 * one I raised myself before checking. Say which offsets are armed. */
+	printf("  armed probe offsets in THIS build (C1_P4_NPROBE=%u):", (unsigned)C1_P4_NPROBE);
+	for (i = 0; i < C1_P4_NPROBE; i++) {
+		printf(" +0x%lx", (unsigned long)c1P4Off[i]);
+	}
+	printf("\n  (an ARMED probe with no 'PAGE POISON BROKEN / p4off' line above is BLIND;\n"
+		"   an UNARMED one is silent by design -- build with -DC1_P4_WIDE to arm all four)\n");
 
 	/* The POISON path must ask the BO attribution too.
 	 *
