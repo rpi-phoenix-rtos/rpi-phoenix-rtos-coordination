@@ -353,3 +353,71 @@ and an earlier edit left an orphaned sentence fragment.
 
 **Open and ACTIVE; root cause open.** ➔ **Records: [hunt of 2026-09-25](misc/2026-09-25-c1-hunt-night.md)** (tonight, incl. two verbatim copies of this cell) and **[the dossier](misc/2026-09-25-c1-dossier.md)** (everything before). ★ **Invariant — the only thing to quote:** the **high 32 bits of a 64-bit word become `0x80000000` or `0x80000001`, low half intact** — on `heap->size` (`0xd000` *and* `0x2000`), on a `chunk->heap` pointer at `chunk+12`, on a free chunk's poison at page+4, and on the STK crash `far=0x800000010c845168`. Both values are exactly the two VideoCore property-mailbox response codes. ⛔ "Always `0xd000`" and "the victim is a whole `0x5000` heap" are **REFUTED**. ↩↩ **But "always page+4" is RE-ESTABLISHED — I refuted it in error.** I read the `chunk->heap` fire as landing at `chunk+12` and never checked where that falls: `CHUNK_OVERHEAD` is 16 and `ptr = chunk + CHUNK_OVERHEAD`, so `ptr=0x0c9ce008` → `chunk=0x0c9cdff8` → `&chunk->heap = 0x0c9ce000` (**page-aligned**) → its high half at **`0x0c9ce004` = page+4**. ★★ **All three detection paths agree, and two of them are independent of the poison instrument** — so page+4 is no longer "where the instrument looks": (a) `heap->size`'s high half is at `heap+4`, and heaps are mmap'd page-aligned; (b) the `chunk->heap` case above; (c) the poison at `p4off=4`. ➕ That yields a single unified model: **the writer stores a 32-bit `0x8000000x` at PAGE+4, and we only notice on the pages where page+4 happens to hold something validated**. ⚠ **Bounded by `tools/memtrip`**, which watched page+4 across 64 MiB of anonymous pages in a **separate process** and never saw it: so the targets are **not arbitrary pages** — they are specific ones, consistent with the victim window and with pages that were recently something else (the `KEEP_CLOSED_BO` result points at recycled BO pages). "Page+4 of many pages" would contradict memtrip; "page+4 of the pages it targets" does not — a heap size's high half, a `chunk->heap` high half, or a poison word. It also explains the apparent chunk-alignment coincidence: only a chunk sitting at page−8 puts its `heap` field's high half on page+4. **Rate (by signature, never by guard name):** 24/793 GPU runs before 2026-09-24 16:00, 4/65 since; by app **STK 27/552 (4.9%)**, quake3 1/84, **0** in quake2/quakespasm/vkquake — hunt on STK. **Impact:** C1 crashes STK inside malloc's own large-bin rbtree (`lib_rbRemoveBalance`, `sys/rb.c:148`) during *shutdown*; the **kernel survives** (0 EL1 faults). ✅ **One supported fact:** `V3D_KEEP_CLOSED_BO=1` suppresses (0/20 by signature). ⛔ **Do not re-walk:** double BO ownership; the mailbox page-after-free mechanism (all 9 sites audited safe); the allocator itself (400 seeds / 7.45 bn chunks, plus 161 M allocs / 16 threads, 0 violations); and **ralloc `get_gc_block_header` — ELIMINATED** with a positive control proving the function is reached while C1 was rampant and the check stayed silent. ➕ **Live experiment:** `p4pa` tests the device-write model (a repeating **physical** address while virtual ones scatter would confirm it); `p4heap`/`p4hsize` name the victim heap directly; the trace is address-window filtered to where all 25 archived victims live; runs use `/usr/bin/env C1_HEAP_TRACE=1 stk …` as one command. Grade every run on **SIG**, **TDOWN** and **LIVE** — each has misled once. ⚠ Five measurement retractions tonight, every one from a **too-narrow selector**; select on the property, and check known positives survive the filter. ★★★★★ **2026-09-25 — address AND value both match a VideoCore mailbox response, independently.** Every mailbox buffer in this system is an mmap'd **page** (`msg_page = mmap(NULL, _PAGE_SIZE, …); msg = msg_page` in `v3d_phoenix_power.c`; `vcmbox.buf = buf_page` in `rpi4-vcmbox`), and the firmware's response code goes to **`msg[1]`** — i.e. **page+4**. So C1's *address* (page+4, now established from three detectors, two independent of the poison probe) and its *value* (`0x80000000`/`0x80000001`, exactly the success and parse-error response codes) are **both** exactly what the firmware writes into a property buffer. ⚠ **This does not overturn the earlier refutation, it relocates it.** That refutation rested on `mboxProp`'s `leak` counter reading 0, which only covers the **post-doorbell timeout release**. The coincidence says the *mechanism* is right and our model of the **release path** is wrong. Paths the counter cannot see: **process exit while a call is in flight** (the kernel reclaims with no `munmap` and no counter — still untested), or a coherency window where the FIFO reply is observed before the buffer write lands and the page is unmapped in between. ➕ **Decisive next test, already half-built:** `p4pa` gives the **physical** address of a broken page; log the PA of each mailbox request buffer and compare. A match names the mechanism outright. ⚠⚠ **State the tension honestly: a positive control for this very mechanism already FAILED.** `V3D_MBOX_LEAKTEST` (compiled out unless `V3D_C1_HUNT`) returns the message page to the kernel **before** ringing the doorbell, so VideoCore is *guaranteed* to reply into a page the kernel has already reclaimed — the mechanism, forced. Its own comment set the bar: *"if this still does not raise C1 above the baseline, the mechanism cannot produce the signature and the candidate is dead."* Measured **leak 0/3 vs control 1/3** — it did **not** raise the rate. ➕ So two strong facts point opposite ways: the **address+value coincidence** (page+4 and the two response codes, both independently derived) argues the firmware *is* the writer, while a **forced** leak of exactly that kind produced nothing. Possible resolutions, in order of how cheaply they can be tested: (a) n=3 is far too small — at today's measured few-%-per-run rate a 3-run arm could not have shown an effect either way, so the control is **underpowered, not negative**; (b) the forced leak differs from the real one (a page freed pre-doorbell may be re-mapped differently from one freed after a *successful* call); (c) the coincidence is real but the writer is a different VideoCore agent that reuses the same response encoding. ⛔ Do not quote the control as a refutation without noting (a) — and the `p4pa` comparison now settles it directly, without needing either.
 
+
+---
+
+## 2026-09-26 (early hours) — the four findings that changed the hunt
+
+Recorded here in full; the KNOWN-ISSUES C1 row keeps only the conclusions.
+
+### 1. C1 HALTS THE KERNEL (severity raised)
+
+Run `c1pfn1`, 03:45. `KFLT` had been 0 in every C1 run on record.
+
+```
+Exception #37: Data Abort (EL1)
+ x0=ffffffffc4718000  x1=80000001c4718600  x2=ffffffffc4718000
+ pc=ffffffffc00268a4  esr=0000000096000004  far=80000001c4718610
+```
+
+`pc` → **`lib_idtreeAugment`, `lib/idtree.c:36`** (`if (it->parent->right == it)`).
+`esr=0x96000004`: bit 6 clear ⇒ a **READ**, level-0 translation fault.
+
+**The page+4 claim is established by disassembly, not inference.** The faulting instruction is
+`ldr x3, [x1, #16]` followed by `cmp x3, x2`, so `x1` is `it->parent` (corrupted) and **`x2` is
+`it`** = `0xffffffffc4718000`, **page-aligned**. `right` is at offset 16 and
+`0x…600 + 0x10 = 0x…610 = far`, closing the arithmetic. `idnode_t` begins with `rbnode_t linkage`
+and `rbnode_t` begins with `parent`, so the corrupted word is at `it+0` and its high half at
+**`it+4` = page+4**.
+
+The fault follows teardown (line 1641 vs teardown at 1622) with **no progress lines after it** in a
+1664-line log: the system stopped.
+
+**Victim identity:** only `resource_t` and `port_t` begin with `idnode_t linkage`, and
+`process->resources` is the tree walked during teardown — `thread_t` puts `idlinkage` ~0x38 in, so
+it cannot be page-aligned. **And "kernel memory" vs "recycled BO page" is a false choice:** kernel
+zones take pages from `vm_pageAlloc` (`vm/zone.c:177`) while user mappings return them via
+`vm_pageFree` (`vm/map.c`) — the same allocator.
+
+⚠ Corrections made while analysing it: the faulting line is `it->parent->right`, not `p->id`; the
+ESR is a read, not a write; and `KFLT=2` is **one** fault reported twice (identical `sp`/`fp`),
+which also refutes an earlier note that EL1 dumps always print once.
+
+### 2. The mailbox route is EXCLUDED on a firing run
+
+`c1coin` fired (`SIG=107`, `VICT=1`). Corrupted heap page `hpa=0x8112000` (majority vote 50:1 —
+`sort -u` had invented a second value from a UART bit-error) matched **none** of the 20 distinct
+mailbox request buffers, which lie in disjoint clusters.
+
+★ And the bound does not limit it: the driver's deliberate-leak message is **unbounded** and fired
+**0 times**, so no mailbox call timed out anywhere in the run — and that timeout path is the only
+one that returns a page while the firmware still owns it. Framebuffer (`0x3d3b2000`–`0x3db9b000`)
+and the vcmbox persistent buffer (`0x03d3f000`) are also excluded by address.
+
+### 3. The "4-in-10 baseline" is not in the archive
+
+Counting every STK-class run by day: **30 fires / 276 runs = 10.9 %**, range 0–22 %, no day at
+40 %. Recomputed at that rate, the single-arm suppression nulls give p = 0.25 (0/12), 0.56 (0/5),
+0.45 (0/7), 0.40 (0/8), 0.50 (0/6) — **none significant**. Only the **paired**
+`V3D_KEEP_CLOSED_BO` arm (0/12 vs 7/19, Fisher p = 0.019) survives, because it assumes no baseline.
+
+### 4. "C1 cannot be studied by adding instrumentation" is REFUTED
+
+`malloc_dl.c` called this "the single most important fact about C1". The refutation is **positive**,
+not another null: the heavily instrumented build — `capa`, `carel`, `hbopa`, `p4bopa` and a 4 KiB
+closed-BO table, changing both write pattern and layout — fired **2 in 15 runs (13.3 %)** against
+the 10.9 % baseline, P(≥2 in 15) = 0.50. It tracks baseline exactly. One of those fires halted the
+kernel.
+
+⚠ Refuted precisely: the *strong* claim ("any change"). A specific heavy instrument might still
+suppress; this build is mostly **fire-only**, so it does not test a 96 KiB table.
