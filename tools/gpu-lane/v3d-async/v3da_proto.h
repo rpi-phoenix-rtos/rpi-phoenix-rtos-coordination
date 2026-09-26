@@ -403,7 +403,17 @@ enum v3da_mode { V3DA_MODE_SERIAL = 0, V3DA_MODE_PIPELINE = 1 };
 #define V3DA_KNOB_NO_FIXA         (1u << 2)   /* E2 step 7: drop fix-A (regressed on 2026-07-26) */
 #define V3DA_KNOB_NO_HANDOFF_WAIT (1u << 3)   /* E2 step 11: do not wait for the bin->render L2T flush */
 #define V3DA_KNOB_CL_CACHE_CLEAN  (1u << 4)   /* E2 step 16: honour SUBMIT_CL_FLUSH_CACHE (TMUWCF + clean) */
-#define V3DA_KNOB_ALL             0x1fu
+/* E2b / H7 (docs/gpu-new-lane/E2b-v3d-render-slowness.md): make the per-job L2T maintenance
+ * match Linux v3d_bin_job_run / v3d_render_job_run (v3d_sched.c:238,292 -> v3d_gem.c:250). */
+#define V3DA_KNOB_NO_POST_CLEAN   (1u << 5)   /* E2 step 15: no L2T CLEAN after FRDONE (Linux: none after CL) */
+#define V3DA_KNOB_NO_HANDOFF_FLUSH (1u << 6)  /* diagnostic: no L2T flush at all before CT1 (Linux HAS one) */
+#define V3DA_KNOB_LINUX_ORDER     (1u << 7)   /* pre-bin: L2T flush THEN slice invalidate, as Linux */
+#define V3DA_KNOB_PX_LOG          (1u << 8)   /* diagnostic, no GPU effect: log a 16x16 grid hash of every pan */
+/* The Linux per-job sequence: TLB on PTE change, one unwaited L2T FLUSH + slices before CT0
+ * and before CT1, no fix-A, no post-render clean. */
+#define V3DA_KNOB_LINUX           (V3DA_KNOB_TLB_ON_CHANGE | V3DA_KNOB_NO_L2T_WAIT_NEW | V3DA_KNOB_NO_FIXA | \
+                                   V3DA_KNOB_NO_HANDOFF_WAIT | V3DA_KNOB_NO_POST_CLEAN | V3DA_KNOB_LINUX_ORDER)
+#define V3DA_KNOB_ALL             0x1ffu
 
 #define V3DA_SET_MODE  (1u << 0)
 #define V3DA_SET_KNOBS (1u << 1)

@@ -1,5 +1,5 @@
 diff --git a/gpu/rpi4-v3d/mesa/v3d_phoenix_winsys.c b/gpu/rpi4-v3d/mesa/v3d_phoenix_winsys.c
-index 286addb..49c964b 100644
+index 286addb..43aaa69 100644
 --- a/gpu/rpi4-v3d/mesa/v3d_phoenix_winsys.c
 +++ b/gpu/rpi4-v3d/mesa/v3d_phoenix_winsys.c
 @@ -1019,6 +1019,8 @@ enum {
@@ -11,16 +11,17 @@ index 286addb..49c964b 100644
  	SP_CL_POST,     /* FRDONE -> return: wedge handling, post clean, FLUSH_CACHE */
  	SP_TFU_PRE,     /* dsb + TLB flush + SLCACTL + waited L2T flush */
  	SP_TFU_SPIN,    /* TFU kick -> TFUC/TFUF (or BUSY fallback) */
-@@ -1065,6 +1067,8 @@ static uint64_t sp_frame_gpu;       /* GPU spins inside the current frame */
+@@ -1065,6 +1067,9 @@ static uint64_t sp_frame_gpu;       /* GPU spins inside the current frame */
  static unsigned long sp_frame_idx;
  static long sp_pf_from = -1, sp_pf_count;   /* V3D_SUBPROF_FRAMES[_FROM] */
  static int sp_banner;
 +static uint64_t sp_last_len;        /* E2b: length of the phase sp_mark() just credited */
 +static unsigned sp_job_idx;         /* E2b: CL jobs since the last flip (the job's slot) */
++static uint32_t pc_pt_gen;          /* H7: PTE-change generation (defined with the H7 block) */
  
  static inline uint64_t sp_now(void)
  {
-@@ -1111,6 +1115,7 @@ static inline void sp_mark(int p)
+@@ -1111,6 +1116,7 @@ static inline void sp_mark(int p)
  	uint64_t now = sp_now();
  
  	sp_win.phase[p] += now - sp_last;
@@ -28,7 +29,17 @@ index 286addb..49c964b 100644
  	if ((p == SP_CL_BIN) || (p == SP_CL_RENDER) || (p == SP_TFU_SPIN) || (p == SP_CSD_SPIN)) {
  		sp_frame_gpu += now - sp_last;
  	}
-@@ -1162,6 +1167,7 @@ static void sp_ioctl(unsigned long request, uint64_t t0, uint64_t t1, uint64_t t
+@@ -1143,6 +1149,9 @@ static void sp_ioctl(unsigned long request, uint64_t t0, uint64_t t1, uint64_t t
+ 
+ 	sp_win.lock += t1 - t0;
+ 	sp_win.ioc[k] += t2 - t1;
++	if ((k == SPK_CREATE) || (k == SPK_CLOSE)) {
++		pc_pt_gen++;    /* H7: a PTE may have changed -> the next "linux" job flushes the TLB */
++	}
+ 	sp_win.iocn[k]++;
+ 	if ((k == SPK_CL) || (k == SPK_TFU) || (k == SPK_CSD)) {
+ 		if (sp_gpu_exit != 0u) {
+@@ -1162,6 +1171,7 @@ static void sp_ioctl(unsigned long request, uint64_t t0, uint64_t t1, uint64_t t
  static void sp_flip(uint64_t t0, uint64_t t1)
  {
  	sp_init_once();
@@ -36,7 +47,7 @@ index 286addb..49c964b 100644
  	sp_win.flip += t1 - t0;
  	sp_flip_done = t1;      /* re-stamped at the end, after any per-frame print */
  	if (sp_win_t0 == 0u) {
-@@ -1205,6 +1211,364 @@ static void sp_flip(uint64_t t0, uint64_t t1)
+@@ -1205,6 +1215,463 @@ static void sp_flip(uint64_t t0, uint64_t t1)
  	sp_flip_done = sp_now();
  }
  
@@ -108,6 +119,12 @@ index 286addb..49c964b 100644
 +
 +static uint32_t pc_clk(uint32_t tag, uint32_t id);
 +static void pc_core_clock_knob(void);
++static uint32_t pc_pt_gen;
++static void pc_emit(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
++/* H7 state (defined with the H7 block below). */
++static int pc_l2t;
++static uint32_t pc_tlb_done, pc_tlb_skip, pc_px_n, pc_px_same, pc_px_black;
++static long pc_px_every;
 +
 +/* Mesa's hook (v3d_job.c under -DV3D_PHX_JOB_NOTE, declared weak there): the job about to
 + * be submitted. Word 0 is the layout version; see the Mesa side for the layout. */
@@ -320,6 +337,11 @@ index 286addb..49c964b 100644
 +	if (v3d_phx_res_census_report != NULL) {
 +		v3d_phx_res_census_report();
 +	}
++	if (pc_l2t > 0 || pc_px_every > 0) {
++		pc_emit("h7 t=%lums fr=%u l2t=%d tlb_flush=%u tlb_skip=%u px_n=%u px_same=%u px_black=%u",
++			t_ms, fr, pc_l2t, pc_tlb_done, pc_tlb_skip, pc_px_n, pc_px_same, pc_px_black);
++		pc_tlb_done = pc_tlb_skip = pc_px_n = pc_px_same = pc_px_black = 0u;
++	}
 +	if (pc_mode <= 0) {
 +		return;
 +	}
@@ -343,7 +365,9 @@ index 286addb..49c964b 100644
 +		pc_clk(0x00030002u, 4u));
 +	pc_print_vals("pctr-b", t_ms, fr, pc_bc);
 +	pc_print_vals("pctr-r", t_ms, fr, rc);
-+	if ((pc_every > 0) && ((pc_win_idx % (unsigned)pc_every) == 0u)) {
++	/* In AB mode the sets alternate per window, so count PAIRS -- with a per-window count and an
++	 * even `every`, set B never got slot lines (found on e2b-base1). */
++	if ((pc_every > 0) && ((((pc_mode == 3) ? (pc_win_idx >> 1) : pc_win_idx) % (unsigned)pc_every) == 0u)) {
 +		for (k = 0; k < PC_NSLOT; k++) {
 +			struct pc_slot *sl = &pc_slots[k];
 +			char nb[PC_NOTE_N * 11];
@@ -398,10 +422,96 @@ index 286addb..49c964b 100644
 +		W.core0[CTL_MISCCFG/4]);
 +}
 +
++/* ---------------------------------------------------------------------------------------
++ * E2b / H7: per-job L2T maintenance as Linux does it (docs/gpu-new-lane/E2b-v3d-render-slowness.md,
++ * "H7"). Env V3D_PHX_L2T:
++ *   unset   the shipped sequence (per CL job: SLCACTL, MMU flush every job, waited L2T flush,
++ *           fix-A = a second waited flush, waited L2T flush + SLCACTL at the bin->render
++ *           hand-off, an L2T CLEAN after FRDONE);
++ *   linux   Linux v3d_bin_job_run / v3d_render_job_run exactly (v3d_sched.c:238,292 ->
++ *           v3d_gem.c:250 v3d_invalidate_caches): before each of CT0 and CT1 an L2T FLUSH
++ *           (FLM=0) that is issued and NOT waited, then the slice invalidate; no fix-A; no
++ *           post-render clean; MMU TLB flushed only after a PTE change (create/close since the
++ *           last flush, as Linux v3d_mmu_insert/remove_ptes). The GFXH-1897 wait-old before
++ *           each L2TCACTL write is kept (hygiene; it normally finds the unit idle);
++ *   nohand  linux, minus the hand-off L2T flush (diagnostic only: CT1 may then read stale L2T
++ *           lines of tile lists -> expect wedges if the flush is load-bearing).
++ * Env V3D_PHX_PXLOG=N: every Nth flip hash a 16x16 grid of the displayed buffer and count
++ * black (all-zero) and frozen (hash equal to the previous sample) frames -- a cheap guard
++ * that an arm still draws, next to the wedge counters and the HDMI snapshots. */
++static int pc_l2t = -1;                 /* 0 shipped, 1 linux, 2 nohand */
++static uint32_t pc_pt_gen = 1u, pc_tlb_gen;
++static uint32_t pc_tlb_done, pc_tlb_skip;
++static long pc_px_every = -1;
++static uint32_t pc_px_n, pc_px_same, pc_px_black, pc_px_last;
++static unsigned long pc_px_flip;
++static const volatile uint32_t *pc_px_fb;
++
++static int pc_l2t_mode(volatile uint32_t *c0)
++{
++	static const char *const names[3] = { "shipped", "linux", "nohand" };
++
++	if (pc_l2t < 0) {
++		const char *e = getenv("V3D_PHX_L2T");
++
++		pc_l2t = (e == NULL) ? 0 : (strcmp(e, "linux") == 0) ? 1 : (strcmp(e, "nohand") == 0) ? 2 : 0;
++		fprintf(stderr, "v3d-winsys: h7 l2t-mode=%s L2TCACTL=0x%08x L2TFLSTA=0x%08x L2TFLEND=0x%08x "
++			"L2CACTL=0x%08x SLCACTL=0x%08x GMP_CFG=0x%08x GMP_STATUS=0x%08x MMUC_CONTROL=0x%08x "
++			"MMU_CTL=0x%08x HUB_AXICFG=0x%08x\n", names[pc_l2t], c0[CTL_L2TCACTL/4],
++			c0[CTL_L2TFLSTA/4], c0[CTL_L2TFLEND/4], c0[CTL_L2CACTL/4], c0[CTL_SLCACTL/4],
++			c0[GMP_CFG/4], c0[GMP_STATUS/4], W.hub[MMUC_CONTROL/4], W.hub[MMU_CTL/4],
++			W.hub[HUB_AXICFG/4]);
++	}
++	return pc_l2t;
++}
++
++/* Every flip: the grid sample of the buffer about to be shown (its render has completed). */
++static void pc_pxlog(int buf)
++{
++	uint32_t k, l, h = 2166136261u, zero = 0u, pitch, width, v;
++
++	if (pc_px_every < 0) {
++		const char *e = getenv("V3D_PHX_PXLOG");
++
++		pc_px_every = (e != NULL) ? atol(e) : 0;
++	}
++	if (pc_px_every <= 0 || W.scanout_pa == 0u || W.scanout_phys_h == 0u ||
++			((pc_px_flip++ % (unsigned long)pc_px_every) != 0u)) {
++		return;
++	}
++	if (pc_px_fb == NULL) {
++		void *m = mmap(NULL, (size_t)(W.scanout_nbuf ? W.scanout_nbuf : 1) * W.scanout_bytes,
++			PROT_READ, MAP_SHARED | MAP_UNCACHED | MAP_ANONYMOUS | MAP_PHYSMEM, -1,
++			(addr_t)W.scanout_pa);
++
++		if (m == MAP_FAILED) {
++			pc_px_every = 0;
++			return;
++		}
++		pc_px_fb = (const volatile uint32_t *)m;
++	}
++	pitch = W.scanout_bytes / W.scanout_phys_h;
++	width = pitch / 4u;
++	for (k = 1u; k <= 16u; k++) {
++		for (l = 1u; l <= 16u; l++) {
++			size_t off = (size_t)buf * W.scanout_bytes + (size_t)((W.scanout_phys_h * k) / 17u) * pitch +
++				(size_t)((width * l) / 17u) * 4u;
++
++			v = pc_px_fb[off / 4u];
++			zero += ((v & 0x00ffffffu) == 0u) ? 1u : 0u;
++			h = (h ^ v) * 16777619u;
++		}
++	}
++	pc_px_black += (zero == 256u) ? 1u : 0u;
++	pc_px_same += (pc_px_n != 0u && h == pc_px_last) ? 1u : 0u;
++	pc_px_last = h;
++	pc_px_n++;
++}
++
  /* Close the window: called from the flipstat block after its own prints. cg_us is
   * flipstat's clock_gettime window, printed beside the counter window as a check. */
  static void sp_report(uint64_t cg_us, unsigned long t_ms)
-@@ -1253,6 +1617,8 @@ static void sp_report(uint64_t cg_us, unsigned long t_ms)
+@@ -1253,6 +1720,8 @@ static void sp_report(uint64_t cg_us, unsigned long t_ms)
  		a->iocn[SPK_MMAP], sp_us(a->ioc[SPK_MMAP]), a->iocn[SPK_UNLOCKED], sp_us(a->ioc[SPK_UNLOCKED]),
  		a->iocn[SPK_OTHER], sp_us(a->ioc[SPK_OTHER]));
  
@@ -410,7 +520,27 @@ index 286addb..49c964b 100644
  	/* Open the next window now; the cost of the three prints above is its first `rep`. */
  	memset(&sp_win, 0, sizeof(sp_win));
  	{
-@@ -2615,6 +2981,7 @@ static void apply_core_regs(void)
+@@ -1324,6 +1793,7 @@ void v3d_phoenix_flip(int buf)
+ 		V3D_SP(uint64_t sp_f0 = sp_now();)
+ 		v3d_phoenix_fb_flip((unsigned)buf * W.scanout_phys_h);
+ 		V3D_SP(sp_flip(sp_f0, sp_now());)
++		V3D_SP(pc_pxlog(buf);)
+ 
+ 		if (v3d_flipstat < 0) {
+ 			const char *e = getenv("V3D_FLIPSTAT");
+@@ -2592,6 +3062,11 @@ static void apply_core_regs(void)
+ 	if (W.scratch_pa)
+ 		W.hub[MMU_ILLEGAL_ADDR/4] = (uint32_t)(W.scratch_pa>>PAGE_SHIFT) | MMU_ILLEGAL_ENABLE;
+ 	W.hub[MMUC_CONTROL/4] = MMUC_ENABLE;
++#ifdef V3D_PHX_SUBMIT_PROFILE
++	/* H7 arm: Linux never writes L2CACTL on V3D >= 3.3 (v3d_gem.c v3d_invalidate_l2c returns
++	 * early; the L2C was V3D 3.2's cache). V3D_PHX_NO_L2C=1 leaves it at its power-on value. */
++	if (getenv("V3D_PHX_NO_L2C") == NULL || getenv("V3D_PHX_NO_L2C")[0] != '1')
++#endif
+ 	W.core0[CTL_L2CACTL/4] = L2CACTL_L2CCLR | L2CACTL_L2CENA;
+ 	/* Define the L2T flush range as the WHOLE cache (L2TFLSTA=0, L2TFLEND=~0), matching what
+ 	 * the Linux v3d driver programs at core init. Without this, every L2TCACTL flush we issue
+@@ -2615,6 +3090,7 @@ static void apply_core_regs(void)
  	 * (init + reset path), so QRMAXCNT is NOT clobbered per submit (that was the binner-wedge bug). */
  	W.core0[CTL_MISCCFG/4] = ((uint32_t)(V3D_QRMAXCNT) << MISCCFG_QRMAXCNT_SHIFT) | MISCCFG_OVRTMUOUT;
  #endif
@@ -418,7 +548,7 @@ index 286addb..49c964b 100644
  }
  
  /* Render-stall MITIGATION + probe: how many times a submit recovered a wedged GPU by
-@@ -2694,6 +3061,7 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
+@@ -2694,6 +3170,7 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
  
  	int attempt = 0;        /* kept for the timeout-dump "attempt" field (always 0 now: no resubmit) */
  
@@ -426,7 +556,43 @@ index 286addb..49c964b 100644
  	V3D_SP(sp_begin();)
  
  	/* Drain CPU stores BEFORE reading the list below. Mesa writes control lists
-@@ -2904,6 +3272,7 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
+@@ -2853,6 +3330,29 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
+ 	 * invalidate to the front maximizes its settle window using waits already on the path (zero fps
+ 	 * cost); the idle core does not refill the slice caches in the interim, so the earlier drop holds.
+ 	 * See docs/inprogress/2026-07-26-gpu-linux-ordering-analysis.md. */
++#ifdef V3D_PHX_SUBMIT_PROFILE
++	if (pc_l2t_mode(c0) != 0) {
++		/* H7 "linux"/"nohand": Linux v3d_bin_job_run -- TLB only after a PTE change, then
++		 * v3d_invalidate_caches (L2T FLUSH issued, not waited; slice invalidate), then kick. */
++		sp_mark(SP_CL_PRE);
++		if (pc_tlb_gen != pc_pt_gen) {
++			mmu_flush_tlb(h);
++			pc_tlb_gen = pc_pt_gen;
++			pc_tlb_done++;
++		}
++		else {
++			pc_tlb_skip++;
++		}
++		sp_mark(SP_CL_TLB);
++		l2t_flush_wait(c0);                   /* GFXH-1897 wait-old (normally idle) */
++		c0[CTL_L2TCACTL/4] = L2TCACTL_L2TFLS;
++		c0[CTL_SLCACTL/4] = SLCACTL_INVAL_ALL;
++		sp_mark(SP_CL_L2T);
++		sp_mark(SP_CL_FIXA);
++	}
++	else
++#endif
++	{
+ 	c0[CTL_SLCACTL/4] = SLCACTL_INVAL_ALL;
+ 	V3D_SP(sp_mark(SP_CL_PRE);)
+ 	/* Flush the MMU PTE cache + TLB before the job. ioc_create_bo writes fresh PTEs but
+@@ -2899,11 +3399,13 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
+ 	c0[CTL_L2TCACTL/4] = L2TCACTL_L2TFLS;
+ 	l2t_flush_wait(c0);
+ 	V3D_SP(sp_mark(SP_CL_FIXA);)
++	}
+ 	/* --- bin (CT0); wait FLDONE --- */
+ 	/* Also clear any latched QPU-interrupt bits (27:16). Linux's IRQ handler clears the
  	 * FULL INT status every interrupt (v3d_irq.c: INT_CLR = INT_STS); this poll-based winsys
  	 * historically cleared only FLDONE|FRDONE, so QPU bits could stay latched across jobs.
  	 * Suspected in the STK in-game render stall (int_sts=0x00ff0000, FRDONE never fires). */
@@ -434,7 +600,7 @@ index 286addb..49c964b 100644
  	c0[CTL_INT_CLR/4] = INT_FLDONE|INT_FRDONE|INT_QPU_MASK;
  	c0[PTB_BPOS/4] = 0;
  	if (s->qma) { c0[CLE_CT0QMA/4]=s->qma; c0[CLE_CT0QMS/4]=s->qms; }
-@@ -2954,6 +3323,7 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
+@@ -2954,6 +3456,7 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
  			}
  		}
  		V3D_SP(sp_mark(SP_CL_BIN);)
@@ -442,7 +608,7 @@ index 286addb..49c964b 100644
  		if (spins == 0) {
  			job_failed = 1;
  			fprintf(stderr, "v3d-winsys: BIN TIMEOUT int_sts=0x%08x ct0cs=0x%08x "
-@@ -3047,6 +3417,7 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
+@@ -3047,6 +3550,7 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
  		}
  	}
  	/* If the binner wedged, don't kick the render against a bad tile state — reset+retry. */
@@ -450,7 +616,32 @@ index 286addb..49c964b 100644
  	if (job_failed)
  		goto job_retry;
  	c0[CTL_INT_CLR/4]=INT_FLDONE|INT_FRDONE|INT_QPU_MASK;   /* +QPU bits: Linux-parity full-status clear */
-@@ -3082,6 +3453,7 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
+@@ -3063,10 +3567,24 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
+ 	 * on a heavy frame the flush was still in flight when CT1 began fetching. Correct order:
+ 	 * clean + WAIT, then invalidate, then kick. Linux v3d runs an invalidate before both bin
+ 	 * and render for the same coherency reason. */
++#ifdef V3D_PHX_SUBMIT_PROFILE
++	if (pc_l2t != 0) {
++		/* H7: Linux v3d_render_job_run -- L2T FLUSH issued, not waited, slice invalidate.
++		 * "nohand" drops the L2T flush (diagnostic). */
++		if (pc_l2t == 1) {
++			l2t_flush_wait(c0);
++			c0[CTL_L2TCACTL/4] = L2TCACTL_L2TFLS;
++		}
++		c0[CTL_SLCACTL/4] = SLCACTL_INVAL_ALL;
++	}
++	else
++#endif
++	{
+ 	l2t_flush_wait(c0);                       /* wait-old: any prior L2T flush must be idle */
+ 	c0[CTL_L2TCACTL/4]=L2TCACTL_L2TFLS;       /* clean the binner's tile-list output to RAM */
+ 	l2t_flush_wait(c0);                       /* wait-new: it must COMPLETE before CT1 fetches */
+ 	c0[CTL_SLCACTL/4] = SLCACTL_INVAL_ALL;    /* then drop stale render-side slice-cache lines */
++	}
+ 	/* NOTE (2026-07-25): a symmetric handoff completion barrier here did NOT fix the reported
+ 	 * dynamic-lighting (r_dynamic 1) anomaly, so it is NOT a render-side sample-coherency race.
+ 	 * Follow-up instrumentation then ruled out the two data hypotheses too: the STATIC lightmap
+@@ -3082,6 +3600,7 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
  	 * read fault. Placed AFTER the flush completes and BEFORE the CT1 kick. */
  	bincrc_capture(s->qma, s->qms);
  	V3D_SP(sp_mark(SP_CL_HANDOFF);)
@@ -458,7 +649,7 @@ index 286addb..49c964b 100644
  	/* --- render (CT1); wait FRDONE --- */
  	c0[CLE_CT1QBA/4]=s->rcl_start; c0[CLE_CT1QEA/4]=s->rcl_end;
  	/* Wait for FRDONE, detecting a wedge two ways: (a) FAST — ct1ca FROZEN (the confirmed wedge
-@@ -3113,6 +3485,7 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
+@@ -3113,6 +3632,7 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
  		}
  	}
  	V3D_SP(sp_mark(SP_CL_RENDER);)
@@ -466,3 +657,17 @@ index 286addb..49c964b 100644
  	if (spins == 0) {
  		uint32_t ca1 = c0[0x0114/4];
  		v3d_phoenix_render_timeouts++;   /* stall counter for the repro harness */
+@@ -3287,8 +3807,13 @@ job_retry:
+ 		 * Left as a comment so nobody re-tries the retry. */
+ 	}
+ 	/* L2T flush so RT stores reach RAM before CPU readback (scout finding). */
++#ifdef V3D_PHX_SUBMIT_PROFILE
++	if (pc_l2t == 0)    /* H7 "linux"/"nohand": Linux runs no clean after a CL job */
++#endif
++	{
+ 	l2t_flush_wait(c0);                       /* GFXH-1897: render flush must complete first */
+ 	c0[CTL_L2TCACTL/4]=L2TCACTL_L2TFLS|(2u<<1); /* FLM_CLEAN */
++	}
+ 
+ 	/* DRM_V3D_SUBMIT_CL_FLUSH_CACHE. Mesa sets this on a job whose shaders wrote
+ 	 * through the TMU -- `job->tmu_dirty_rcl && screen->has_cache_flush`, v3d_job.c:694

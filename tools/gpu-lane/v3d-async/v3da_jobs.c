@@ -398,11 +398,16 @@ static void kick_bin(v3da_job_t *j)
 	const v3da_cl_desc_t *s = &j->d.cl;
 
 	__asm__ volatile("dsb sy" ::: "memory");              /* steps 1, 3: Normal-NC BO stores -> DRAM */
-	C0()[CTL_SLCACTL / 4u] = SLCACTL_INVAL_ALL;           /* step 4: early (#67 ordering fix) */
+	if ((srv.knobs & V3DA_KNOB_LINUX_ORDER) == 0u) {
+		C0()[CTL_SLCACTL / 4u] = SLCACTL_INVAL_ALL;       /* step 4: early (#67 ordering fix) */
+	}
 	tlb_step();                                           /* step 5 */
 	l2t_flush(((srv.knobs & V3DA_KNOB_NO_L2T_WAIT_NEW) == 0u) ? 1 : 0);   /* step 6 */
 	if ((srv.knobs & V3DA_KNOB_NO_FIXA) == 0u) {
 		l2t_flush(1);                                     /* step 7: fix-A */
+	}
+	if ((srv.knobs & V3DA_KNOB_LINUX_ORDER) != 0u) {
+		C0()[CTL_SLCACTL / 4u] = SLCACTL_INVAL_ALL;       /* Linux v3d_invalidate_caches: L2T, then slices */
 	}
 	drain_for_kick(INT_FLDONE, 0u);                       /* step 8 */
 	C0()[PTB_BPOS / 4u] = 0u;
@@ -427,7 +432,9 @@ static void kick_render(v3da_job_t *j)
 	/* Step 11, the bin->render hand-off, now the render prologue: waited L2T
 	 * flush (binner tile lists to RAM before CT1 fetches them), then the slice
 	 * invalidate. */
-	l2t_flush(((srv.knobs & V3DA_KNOB_NO_HANDOFF_WAIT) == 0u) ? 1 : 0);
+	if ((srv.knobs & V3DA_KNOB_NO_HANDOFF_FLUSH) == 0u) {
+		l2t_flush(((srv.knobs & V3DA_KNOB_NO_HANDOFF_WAIT) == 0u) ? 1 : 0);
+	}
 	C0()[CTL_SLCACTL / 4u] = SLCACTL_INVAL_ALL;
 	drain_for_kick(INT_FRDONE, 0u);
 	C0()[CLE_CT1QBA / 4u] = s->rcl_start;                 /* step 12 */
@@ -1031,8 +1038,10 @@ void v3da_jobs_events(uint32_t core, uint32_t hub, uint64_t now)
 		if (j != NULL) {
 			/* Step 15: post-render clean, NOT waited (the next prologue's wait-old
 			 * absorbs it). Step 16 only with the knob (old default: off). */
-			v3da_hw_l2t_flush_wait(&srv.hw);
-			C0()[CTL_L2TCACTL / 4u] = L2TCACTL_L2TFLS | L2TCACTL_FLM_CLEAN;
+			if ((srv.knobs & V3DA_KNOB_NO_POST_CLEAN) == 0u) {
+				v3da_hw_l2t_flush_wait(&srv.hw);
+				C0()[CTL_L2TCACTL / 4u] = L2TCACTL_L2TFLS | L2TCACTL_FLM_CLEAN;
+			}
 			if (((j->d.cl.flags & V3DA_CL_FLUSH_CACHE) != 0u) && ((srv.knobs & V3DA_KNOB_CL_CACHE_CLEAN) != 0u)) {
 				clean_caches();
 			}
@@ -1373,6 +1382,31 @@ static uint32_t px_sample(uint32_t buf)
 }
 
 
+/* H7 correctness guard (V3DA_KNOB_PX_LOG): a 16x16 grid hash of buffer `buf`. Printed for
+ * EVERY pan with the pan index (~40 short lines/s: use it in guard runs, not fps runs), so two runs of a deterministic workload (quakespasm
+ * timedemo) can be compared frame for frame (h7-pxcompare.py). 256 uncached reads. */
+static uint32_t px_grid(uint32_t buf, uint32_t *zero)
+{
+	uint32_t k, l, v, h = 2166136261u;
+	size_t off;
+
+	*zero = 0u;
+	for (k = 1u; k <= 16u; k++) {
+		for (l = 1u; l <= 16u; l++) {
+			off = (size_t)buf * srv.scan.bytes + (size_t)((srv.scan.height * k) / 17u) * srv.scan.pitch +
+				(size_t)((srv.scan.width * l) / 17u) * 4u;
+			if (off + 4u > srv.scan.fb_len) {
+				return h;
+			}
+			v = srv.scan.fb[off / 4u];
+			*zero += ((v & 0x00ffffffu) == 0u) ? 1u : 0u;
+			h = (h ^ v) * 16777619u;
+		}
+	}
+	return h;
+}
+
+
 static void pan(uint32_t buf)
 {
 	int rc;
@@ -1387,6 +1421,12 @@ static void pan(uint32_t buf)
 			srv.scan.px_changed++;
 		}
 		srv.scan.px_last = h;
+		if ((srv.knobs & V3DA_KNOB_PX_LOG) != 0u) {
+			uint32_t zero;
+			uint32_t g = px_grid(buf, &zero);
+
+			printf("V3DA srv pxlog n=%u h=%08x zero=%u\n", srv.scan.px_sampled, g, zero);
+		}
 		srv.scan.px_sampled++;
 	}
 	rc = v3da_hw_vc_prop2(VC_PROP_SET_VIRTUAL_OFFSET, 0u, buf * srv.scan.height, 2u, NULL, NULL);

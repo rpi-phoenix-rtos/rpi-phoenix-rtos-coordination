@@ -136,3 +136,11 @@ STKPROF_MESA=<external/mesa worktree with e2b-mesa.patch> \
 Runtime knobs (psh `export`): `V3D_PCTR=A|B|AB|0`, `V3D_PCTR_SLOTS_EVERY=N`, `V3D_PHX_EZ=1`,
 `V3D_PHX_CORE_HZ=<Hz>`, `V3D_PHX_QRMAXCNT=0..7`. Read with
 `python3 tools/gpu-lane/stkprof/e2b-summarize.py <log>`.
+
+### H7 build (`supertuxkart-e2bh7`, `artifacts/stkprof-e2b-h7/`)
+
+Same command with `STKPROF_OUT=artifacts/stkprof-e2b-h7 STKPROF_NAME=e2bh7`. Extra knobs:
+`V3D_PHX_L2T=linux|nohand`, `V3D_PHX_NO_L2C=1`, `V3D_PHX_PXLOG=N` (see the E2b doc, "H7").
+Async-server side: `V3DA_KNOB_*` bits 5-8 (`-k 0xaf` = Linux's per-job sequence, `|0x100` = pxlog),
+built with `tools/gpu-lane/v3d-async/build.sh --out out-h7`; compare pxlog runs with
+`h7-pxcompare.py <logA> <logB>`.

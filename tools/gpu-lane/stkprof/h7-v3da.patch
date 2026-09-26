@@ -1,0 +1,137 @@
+diff --git a/tools/gpu-lane/v3d-async/.gitignore b/tools/gpu-lane/v3d-async/.gitignore
+index cba7492d8..969f62884 100644
+--- a/tools/gpu-lane/v3d-async/.gitignore
++++ b/tools/gpu-lane/v3d-async/.gitignore
+@@ -2,3 +2,4 @@
+ out/
+ out-p2/
+ out-p*/
++out-h7/
+diff --git a/tools/gpu-lane/v3d-async/v3da_jobs.c b/tools/gpu-lane/v3d-async/v3da_jobs.c
+index 235b63e7a..96d8c8412 100644
+--- a/tools/gpu-lane/v3d-async/v3da_jobs.c
++++ b/tools/gpu-lane/v3d-async/v3da_jobs.c
+@@ -398,12 +398,17 @@ static void kick_bin(v3da_job_t *j)
+ 	const v3da_cl_desc_t *s = &j->d.cl;
+ 
+ 	__asm__ volatile("dsb sy" ::: "memory");              /* steps 1, 3: Normal-NC BO stores -> DRAM */
+-	C0()[CTL_SLCACTL / 4u] = SLCACTL_INVAL_ALL;           /* step 4: early (#67 ordering fix) */
++	if ((srv.knobs & V3DA_KNOB_LINUX_ORDER) == 0u) {
++		C0()[CTL_SLCACTL / 4u] = SLCACTL_INVAL_ALL;       /* step 4: early (#67 ordering fix) */
++	}
+ 	tlb_step();                                           /* step 5 */
+ 	l2t_flush(((srv.knobs & V3DA_KNOB_NO_L2T_WAIT_NEW) == 0u) ? 1 : 0);   /* step 6 */
+ 	if ((srv.knobs & V3DA_KNOB_NO_FIXA) == 0u) {
+ 		l2t_flush(1);                                     /* step 7: fix-A */
+ 	}
++	if ((srv.knobs & V3DA_KNOB_LINUX_ORDER) != 0u) {
++		C0()[CTL_SLCACTL / 4u] = SLCACTL_INVAL_ALL;       /* Linux v3d_invalidate_caches: L2T, then slices */
++	}
+ 	drain_for_kick(INT_FLDONE, 0u);                       /* step 8 */
+ 	C0()[PTB_BPOS / 4u] = 0u;
+ 	srv.ovf.bin_waiting = 0;
+@@ -427,7 +432,9 @@ static void kick_render(v3da_job_t *j)
+ 	/* Step 11, the bin->render hand-off, now the render prologue: waited L2T
+ 	 * flush (binner tile lists to RAM before CT1 fetches them), then the slice
+ 	 * invalidate. */
+-	l2t_flush(((srv.knobs & V3DA_KNOB_NO_HANDOFF_WAIT) == 0u) ? 1 : 0);
++	if ((srv.knobs & V3DA_KNOB_NO_HANDOFF_FLUSH) == 0u) {
++		l2t_flush(((srv.knobs & V3DA_KNOB_NO_HANDOFF_WAIT) == 0u) ? 1 : 0);
++	}
+ 	C0()[CTL_SLCACTL / 4u] = SLCACTL_INVAL_ALL;
+ 	drain_for_kick(INT_FRDONE, 0u);
+ 	C0()[CLE_CT1QBA / 4u] = s->rcl_start;                 /* step 12 */
+@@ -1031,8 +1038,10 @@ void v3da_jobs_events(uint32_t core, uint32_t hub, uint64_t now)
+ 		if (j != NULL) {
+ 			/* Step 15: post-render clean, NOT waited (the next prologue's wait-old
+ 			 * absorbs it). Step 16 only with the knob (old default: off). */
+-			v3da_hw_l2t_flush_wait(&srv.hw);
+-			C0()[CTL_L2TCACTL / 4u] = L2TCACTL_L2TFLS | L2TCACTL_FLM_CLEAN;
++			if ((srv.knobs & V3DA_KNOB_NO_POST_CLEAN) == 0u) {
++				v3da_hw_l2t_flush_wait(&srv.hw);
++				C0()[CTL_L2TCACTL / 4u] = L2TCACTL_L2TFLS | L2TCACTL_FLM_CLEAN;
++			}
+ 			if (((j->d.cl.flags & V3DA_CL_FLUSH_CACHE) != 0u) && ((srv.knobs & V3DA_KNOB_CL_CACHE_CLEAN) != 0u)) {
+ 				clean_caches();
+ 			}
+@@ -1373,6 +1382,31 @@ static uint32_t px_sample(uint32_t buf)
+ }
+ 
+ 
++/* H7 correctness guard (V3DA_KNOB_PX_LOG): a 16x16 grid hash of buffer `buf`. Printed for
++ * EVERY pan with the pan index (~40 short lines/s: use it in guard runs, not fps runs), so two runs of a deterministic workload (quakespasm
++ * timedemo) can be compared frame for frame (h7-pxcompare.py). 256 uncached reads. */
++static uint32_t px_grid(uint32_t buf, uint32_t *zero)
++{
++	uint32_t k, l, v, h = 2166136261u;
++	size_t off;
++
++	*zero = 0u;
++	for (k = 1u; k <= 16u; k++) {
++		for (l = 1u; l <= 16u; l++) {
++			off = (size_t)buf * srv.scan.bytes + (size_t)((srv.scan.height * k) / 17u) * srv.scan.pitch +
++				(size_t)((srv.scan.width * l) / 17u) * 4u;
++			if (off + 4u > srv.scan.fb_len) {
++				return h;
++			}
++			v = srv.scan.fb[off / 4u];
++			*zero += ((v & 0x00ffffffu) == 0u) ? 1u : 0u;
++			h = (h ^ v) * 16777619u;
++		}
++	}
++	return h;
++}
++
++
+ static void pan(uint32_t buf)
+ {
+ 	int rc;
+@@ -1387,6 +1421,12 @@ static void pan(uint32_t buf)
+ 			srv.scan.px_changed++;
+ 		}
+ 		srv.scan.px_last = h;
++		if ((srv.knobs & V3DA_KNOB_PX_LOG) != 0u) {
++			uint32_t zero;
++			uint32_t g = px_grid(buf, &zero);
++
++			printf("V3DA srv pxlog n=%u h=%08x zero=%u\n", srv.scan.px_sampled, g, zero);
++		}
+ 		srv.scan.px_sampled++;
+ 	}
+ 	rc = v3da_hw_vc_prop2(VC_PROP_SET_VIRTUAL_OFFSET, 0u, buf * srv.scan.height, 2u, NULL, NULL);
+diff --git a/tools/gpu-lane/v3d-async/v3da_main.c b/tools/gpu-lane/v3d-async/v3da_main.c
+index 4f7ef69fe..ec1623083 100644
+--- a/tools/gpu-lane/v3d-async/v3da_main.c
++++ b/tools/gpu-lane/v3d-async/v3da_main.c
+@@ -23,7 +23,7 @@
+  *               or pipeline (bin N+1 overlaps render N); switch at runtime with
+  *               DBG_SET_MODE (`v3dasync-ping mode-pipeline`)
+  *   -k knobs    cache-maintenance drops for A/B (V3DA_KNOB_*, default 0 = the
+- *               old lane's full sequence)
++ *               old lane's full sequence; 0xaf = Linux's per-job L2T sequence, E2b H7)
+  *   -c KiB      binner-overflow chunk size (default 1024; pool 32 MiB)
+  *   -w ms       watchdog: no control-list progress this long = wedge (default 500)
+  *   -s ms       periodic "V3DA srv qstat" line while GPU jobs run (default 5000, 0 = off)
+diff --git a/tools/gpu-lane/v3d-async/v3da_proto.h b/tools/gpu-lane/v3d-async/v3da_proto.h
+index f518a7550..332f9a0b3 100644
+--- a/tools/gpu-lane/v3d-async/v3da_proto.h
++++ b/tools/gpu-lane/v3d-async/v3da_proto.h
+@@ -403,7 +403,17 @@ enum v3da_mode { V3DA_MODE_SERIAL = 0, V3DA_MODE_PIPELINE = 1 };
+ #define V3DA_KNOB_NO_FIXA         (1u << 2)   /* E2 step 7: drop fix-A (regressed on 2026-07-26) */
+ #define V3DA_KNOB_NO_HANDOFF_WAIT (1u << 3)   /* E2 step 11: do not wait for the bin->render L2T flush */
+ #define V3DA_KNOB_CL_CACHE_CLEAN  (1u << 4)   /* E2 step 16: honour SUBMIT_CL_FLUSH_CACHE (TMUWCF + clean) */
+-#define V3DA_KNOB_ALL             0x1fu
++/* E2b / H7 (docs/gpu-new-lane/E2b-v3d-render-slowness.md): make the per-job L2T maintenance
++ * match Linux v3d_bin_job_run / v3d_render_job_run (v3d_sched.c:238,292 -> v3d_gem.c:250). */
++#define V3DA_KNOB_NO_POST_CLEAN   (1u << 5)   /* E2 step 15: no L2T CLEAN after FRDONE (Linux: none after CL) */
++#define V3DA_KNOB_NO_HANDOFF_FLUSH (1u << 6)  /* diagnostic: no L2T flush at all before CT1 (Linux HAS one) */
++#define V3DA_KNOB_LINUX_ORDER     (1u << 7)   /* pre-bin: L2T flush THEN slice invalidate, as Linux */
++#define V3DA_KNOB_PX_LOG          (1u << 8)   /* diagnostic, no GPU effect: log a 16x16 grid hash of every pan */
++/* The Linux per-job sequence: TLB on PTE change, one unwaited L2T FLUSH + slices before CT0
++ * and before CT1, no fix-A, no post-render clean. */
++#define V3DA_KNOB_LINUX           (V3DA_KNOB_TLB_ON_CHANGE | V3DA_KNOB_NO_L2T_WAIT_NEW | V3DA_KNOB_NO_FIXA | \
++                                   V3DA_KNOB_NO_HANDOFF_WAIT | V3DA_KNOB_NO_POST_CLEAN | V3DA_KNOB_LINUX_ORDER)
++#define V3DA_KNOB_ALL             0x1ffu
+ 
+ #define V3DA_SET_MODE  (1u << 0)
+ #define V3DA_SET_KNOBS (1u << 1)

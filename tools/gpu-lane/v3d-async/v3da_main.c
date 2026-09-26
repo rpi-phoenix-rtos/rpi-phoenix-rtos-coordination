@@ -23,7 +23,7 @@
  *               or pipeline (bin N+1 overlaps render N); switch at runtime with
  *               DBG_SET_MODE (`v3dasync-ping mode-pipeline`)
  *   -k knobs    cache-maintenance drops for A/B (V3DA_KNOB_*, default 0 = the
- *               old lane's full sequence)
+ *               old lane's full sequence; 0xaf = Linux's per-job L2T sequence, E2b H7)
  *   -c KiB      binner-overflow chunk size (default 1024; pool 32 MiB)
  *   -w ms       watchdog: no control-list progress this long = wedge (default 500)
  *   -s ms       periodic "V3DA srv qstat" line while GPU jobs run (default 5000, 0 = off)

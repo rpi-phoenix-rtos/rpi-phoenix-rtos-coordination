@@ -346,6 +346,10 @@ clock; the April UART reason for pinning 250 is obsolete for the PL011 console).
 
 ## Result — base arm, trial 1 (`e2b-base1`, build 9, core 250 MHz, V3D 500 MHz)
 
+> ↩ **Superseded by "Review of base1 by the E2b agent (23:40)" below:** the QPU shares here used the wrong
+> denominator (corrected: fragment shading 62 %, idle 13 % → the render phase is **shader-bound**), and the
+> "L2T hit rate 6.7 %" rests on counters whose labels contradict each other — not a finding.
+
 Render 91.2 ms/frame (set A) / 93.6 (set B), bin 3.3 ms; counter reads cost 0.06 ms/frame.
 - **Shader cores are not the limit:** QPU idle 3.3 %, fragment-active 15.6 %, valid instructions 20.3 %,
   QPU waiting on TMU 0.1 % — the QPUs are busy but not executing much, i.e. they are fed slowly.
@@ -526,5 +530,5 @@ shader-issue bound) matter more than H7 for the 3× question.
 - **base2** reproduces base1: render 93.7 ms/frame, L2T hit 6.6 %, TMU stalled 78 %, late-Z reject 34.9 %.
 - **ez1** (`V3D_PHX_EZ=1`, upstream early-Z): EZ engaged (3 job slots `ez=LT`, one slot early-Z-clips 51.5 %
   of quads; late-Z reject 35 → ~25 %), **0 wedges**, but render **91.1 ms/frame, 7.24 fps — unchanged.**
-  ⇒ H2 (overdraw) is real but not what costs the time. The memory/texture path (H1/H7: L2T hit 6.7 %, TMU
-  stalled ~79 %) is now the lead; H7 test design in progress. (ez2, qr1 running.)
+  ⇒ H2 (overdraw) is real but not what costs the time. (↩ The "memory/texture path leads" conclusion drawn here
+  used the uncorrected counters — see the agent's review: the render phase is shader-bound.) (ez2, qr1 running.)
