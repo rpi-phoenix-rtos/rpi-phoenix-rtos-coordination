@@ -976,3 +976,86 @@ jobs completing, `phxgl: scanout FBO(s) … resolve=1 double=1`. So the GPU work
 is not what the display shows (wrong pages, wrong pan offset, or a frozen scanout). **The +26 % may
 come from a present path that does not actually present**, so it is not claimed. P2-B must be re-run
 after the present path is fixed, graded on HDMI content first.
+
+> **Superseded by the correction below:** the display IS verified; the frozen snapshots predate the game launch.
+
+### Correction (same evening): the new lane DOES present — the ⛔ above was a grading error
+
+**Verdict: no present-path defect.** The new-lane frames reach HDMI in every new-lane cycle. The
+snapshots quoted above were all taken **before `quakespasm-v3da` was launched**.
+
+**Evidence: the snapshots themselves** (md5 of every tick, `artifacts/hdmi/*-m1qs-{new,pipe}-*`):
+
+| cycle | identical-hash ticks (frozen console) | ticks after them |
+|---|---|---|
+| new-1 | 211230 … 211420 (9 ticks, one hash) | **211436: game mid-timedemo** ("You receive 25 health / You get 2 rockets", matches the UART order); 211453 differs; **211504-final: Quake console showing `969 frames 25.5 seconds 38.1 fps`** |
+| new-2 | 211805 … 211955 (8) | 212011, **212027: game** ("You got the nails", 36 fps counter), 212043, final |
+| new-3 | 212347 … 212537 (8) | **212553: console WITH the `(psh)% /usr/bin/quakespasm-v3da +timedemo demo1` echo** and QuakeSpasm's first stdout lines; 212608, 212624/final differ |
+| pipe-1 | 212742 … 212917 (7) | **212932/212948: echo + QuakeSpasm startup text**, then 213004, 213020 differ |
+| pipe-2 | 213136 … 213342 (9) | **213358: game** ("You got the nailgun", 39 fps counter), 213414, final |
+
+The clincher is new-1's `-final.png`: the on-screen timedemo result reads **38.1 fps**, the new lane's own
+number (UART: `969 frames 25.5 seconds 38.1 fps`); the old lane never scored above 30.6. That frame can
+only have come from the new lane's page-flipped scanout buffers.
+
+**Why the frozen ticks exist (the mechanism).** `psh-interact.py` applies `--ready-line` to **every**
+command (psh-interact.py:319-341). The new-lane arm has two commands; the server command never prints
+`frames … fps`, so its window runs to the 120 s `max-cmd-secs` deadline — the
+`*** capture-window ended after 120.2s` line right after `V3DA srv detached` in every new-lane log.
+Nothing is printed on the console during those 120 s, so 7–9 ticks are byte-identical, and only the
+last 3–4 ticks of the cycle cover the game. The old arm has one command and its whole ~40 s window is
+the timedemo, so almost every tick shows the game. The "missing command echo" was simply the command
+not having been typed yet (new-3 212553 and pipe-1 212948 show the echo appearing on schedule).
+
+**The other questions of the original investigation, answered:**
+- `2025/2026 pages on the fb` is by design and identical in the old lane (`… 2025/2026 pages (1 scratch)`,
+  old-1 log line 158-160). The RGBA8 RT is tile-padded to 1088 rows (BO 8298496 B = 2026 pages) while
+  one visible buffer is 1920×1080×4 = 8294400 B = 2025 pages; the padding page maps the BO's own DRAM
+  (v3d_phoenix_winsys.c:1727-1741, mirrored in v3da_bo.c:186-201). Rows ≥ 1080 are never scanned out.
+- Pan call: same tag (`SET_VIRTUAL_OFFSET` 0x48009), same value words `{0, buf*1080}`, same 8-byte
+  value buffer as the old lane (v3da_jobs.c `pan()` vs v3d_phoenix_power.c:627); the new lane goes
+  through the serialized `/dev/vcmbox` (no `rpi4-vcmbox: tag … FAILED` line in any new-lane log).
+  Neither lane checked the firmware answer — fixed in the server now (below).
+- Scanout BO PTEs: same PFN arithmetic and PTE bits as the old lane (`pa>>12 | PTE_W | PTE_V`).
+
+⇒ **The P2-B/C fps result stands with the display verified:** serial+IRQ 38.2 fps vs old lane 30.4
+(+26 %), pipeline+IRQ 38.4, 0 wedges, 0 faults, game visibly rendering. (Open, unrelated to present:
+`MESA: error: Draw call returned Invalid argument.  Expect corruption.` — exactly once per run in
+**all 5 new-lane runs and 0 of 3 old-lane runs**, so it is new-lane-specific: some submit returns
+`-EINVAL` from the server/adapter where the old winsys accepted it. Must be explained before M1
+closes; a dropped draw may also flatter the fps slightly.)
+
+**Grading rule, pre-registered for every later cycle:** HDMI is graded only on ticks whose timestamp is
+**after the app command's echo** in the UART log (in practice: the ticks after the last run of
+identical hashes, plus `-final.png`) — never on "every snapshot". To stop the server start burning a
+120 s window, pass a ready line that matches either command's marker:
+`--ready-line 'V3DA srv detached|frames .* seconds .* fps'` (the match buffer is reset per command,
+psh-interact.py:308, so the server window closes `--ready-extra-secs` after `detached` and the game
+window still waits for the timedemo line).
+
+### On-Pi present self-check (server build `out-p3`, not yet run on hardware)
+
+So a present failure shows in the UART log without HDMI, the server's `qstat` line gains
+`pan_err=<n> px_chg=<n>/<m>`:
+- `pan_err` — `SET_VIRTUAL_OFFSET` calls whose `/dev/vcmbox` answer was an error (the rc was
+  discarded before; old lane still discards it).
+- `px_chg=<changed>/<sampled>` — at every pan the server reads 16 pixels of the buffer it is about to
+  show (an uncached read-only map of the firmware fb, taken at `SCANOUT_INFO`) and hashes them; a pan
+  whose hash differs from the previous pan's counts as "changed". A GPU that renders somewhere else
+  (wrong PTEs) gives `px_chg≈0/<flips>`; a live game gives most flips changed (the demo camera moves).
+  It proves the GPU wrote the fb pages the server pans to, not that the display scans them — HDMI
+  remains the first grade.
+
+Clone: unchanged (the adapter did not change); `artifacts/quakespasm-v3da` stays valid.
+
+**Verification (pre-registered, one new-lane cycle, same command set as P2-B serial):** stage
+`out-p3/rpi4-v3d-async` in place of the current server binary.
+1. HDMI first: a tick after the `quakespasm-v3da` echo shows demo1 rendering, and `-final.png` shows
+   QuakeSpasm's `N frames X seconds Y fps` line with the same Y as the UART.
+2. Then fps: `timedemo demo1` within ±3 % of 38.2 (the self-check costs 16 uncached reads per flip).
+3. Then the self-check: `pan_err=0`; `px_chg` graded as a **per-window delta** (the counters are
+   cumulative — subtract successive qstat lines): clearly nonzero in the timedemo windows (16 diagonal
+   pixels of a dark scene can repeat between frames, so no fixed percentage), and it may go flat after
+   the timedemo when QuakeSpasm sits on a static console. FAIL only if the delta is ≈0 while `flips`
+   advances during the demo. `selfcheck=on` must appear on the `V3DA srv scanout` line.
+If 1 fails while 3 passes, the fault is between memory and the display (pan/firmware), not the GPU.

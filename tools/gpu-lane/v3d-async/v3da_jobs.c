@@ -38,6 +38,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <sys/mman.h>
 #include <sys/threads.h>
 
 #include "v3da.h"
@@ -1271,13 +1272,14 @@ static void stat_print(uint64_t now)
 	srv.stat_jobs_seen = 0u;
 	acct(now);
 	printf("V3DA srv qstat t=%llums mode=%s knobs=0x%02x bin=%u/%llums render=%u/%llums tfu=%u/%llums csd=%u/%llums "
-		"busy=%llums overlap=%llums win=%llums oom=%u starved=%u err=%u wedges=%u flips=%u\n",
+		"busy=%llums overlap=%llums win=%llums oom=%u starved=%u err=%u wedges=%u flips=%u pan_err=%u px_chg=%u/%u\n",
 		(unsigned long long)(now / 1000u), (srv.mode == V3DA_MODE_SERIAL) ? "serial" : "pipeline", srv.knobs,
 		b->st_jobs, (unsigned long long)(b->st_busy_us / 1000u), r->st_jobs, (unsigned long long)(r->st_busy_us / 1000u),
 		t->st_jobs, (unsigned long long)(t->st_busy_us / 1000u), c->st_jobs, (unsigned long long)(c->st_busy_us / 1000u),
 		(unsigned long long)(srv.any_busy_us / 1000u), (unsigned long long)(srv.overlap_us / 1000u),
 		(unsigned long long)((now - srv.acct_t0_us) / 1000u), b->st_oom, srv.ovf.starved,
-		b->st_errors + r->st_errors + t->st_errors + c->st_errors, srv.wedges, srv.scan.flips);
+		b->st_errors + r->st_errors + t->st_errors + c->st_errors, srv.wedges, srv.scan.flips, srv.scan.pan_err,
+		srv.scan.px_changed, srv.scan.px_sampled);
 }
 
 
@@ -1315,6 +1317,25 @@ int v3da_scanout_info(const v3da_scanout_req_t *rq, v3da_scanout_resp_t *out)
 	if (nbuf < 1u) {
 		nbuf = 1u;
 	}
+	/* Present self-check: map the stacked buffers uncached (the GPU writes them
+	 * behind the CPU's back). Only read here; PROT_WRITE matches the physmem map
+	 * flags proven elsewhere (the adapter's readback). Remapped only when the
+	 * geometry changes; a failed map just disables the pixel sample. */
+	if ((srv.scan.fb != NULL) && ((srv.scan.pa != (uint32_t)rq->pa) ||
+			(srv.scan.fb_len != (size_t)nbuf * rq->pitch * rq->height))) {
+		(void)munmap((void *)srv.scan.fb, srv.scan.fb_len);
+		srv.scan.fb = NULL;
+		srv.scan.fb_len = 0u;
+	}
+	if (srv.scan.fb == NULL) {
+		size_t len = (size_t)nbuf * rq->pitch * rq->height;
+		void *m = mmap(NULL, len, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_UNCACHED | MAP_ANONYMOUS | MAP_PHYSMEM, -1,
+			(addr_t)rq->pa);
+		if (m != MAP_FAILED) {
+			srv.scan.fb = (const volatile uint32_t *)m;
+			srv.scan.fb_len = len;
+		}
+	}
 	srv.scan.pa = (uint32_t)rq->pa;
 	srv.scan.width = rq->width;
 	srv.scan.height = rq->height;
@@ -1322,8 +1343,8 @@ int v3da_scanout_info(const v3da_scanout_req_t *rq, v3da_scanout_resp_t *out)
 	srv.scan.bytes = rq->pitch * rq->height;
 	srv.scan.virt_h = vh;
 	srv.scan.nbuf = nbuf;
-	printf("V3DA srv scanout pa=0x%08x %ux%u pitch=%u virt=%ux%u rc=%d -> %u buffer(s)\n", srv.scan.pa, rq->width,
-		rq->height, rq->pitch, vw, vh, rc, nbuf);
+	printf("V3DA srv scanout pa=0x%08x %ux%u pitch=%u virt=%ux%u rc=%d -> %u buffer(s) selfcheck=%s\n", srv.scan.pa,
+		rq->width, rq->height, rq->pitch, vw, vh, rc, nbuf, (srv.scan.fb != NULL) ? "on" : "off(map failed)");
 	out->nbuf = nbuf;
 	out->virt_h = vh;
 	out->bytes = srv.scan.bytes;
@@ -1332,9 +1353,50 @@ int v3da_scanout_info(const v3da_scanout_req_t *rq, v3da_scanout_resp_t *out)
 }
 
 
+/* Hash 16 pixels spread along the diagonal of buffer `buf`, as the display
+ * would scan them. Cheap (16 uncached reads per flip). */
+static uint32_t px_sample(uint32_t buf)
+{
+	uint32_t k, x, y, h = 2166136261u;
+	size_t off;
+
+	for (k = 1u; k <= 16u; k++) {
+		x = (srv.scan.width * k) / 17u;
+		y = (srv.scan.height * k) / 17u;
+		off = (size_t)buf * srv.scan.bytes + (size_t)y * srv.scan.pitch + (size_t)x * 4u;
+		if (off + 4u > srv.scan.fb_len) {
+			break;
+		}
+		h = (h ^ srv.scan.fb[off / 4u]) * 16777619u;
+	}
+	return h;
+}
+
+
 static void pan(uint32_t buf)
 {
-	(void)v3da_hw_vc_prop2(VC_PROP_SET_VIRTUAL_OFFSET, 0u, buf * srv.scan.height, 2u, NULL, NULL);
+	int rc;
+
+	/* The render behind this flip has completed (fence gate or the client's own
+	 * wait), so the sample sees the frame about to be shown. A GPU writing
+	 * anywhere but the fb pages leaves the sample constant. */
+	if (srv.scan.fb != NULL) {
+		uint32_t h = px_sample(buf);
+
+		if ((srv.scan.px_sampled != 0u) && (h != srv.scan.px_last)) {
+			srv.scan.px_changed++;
+		}
+		srv.scan.px_last = h;
+		srv.scan.px_sampled++;
+	}
+	rc = v3da_hw_vc_prop2(VC_PROP_SET_VIRTUAL_OFFSET, 0u, buf * srv.scan.height, 2u, NULL, NULL);
+	if (rc != 0) {
+		if (srv.scan.pan_err == 0u) {
+			printf("V3DA srv pan FAILED buf=%u yoff=%u rc=%d (counted in qstat pan_err)\n", buf,
+				buf * srv.scan.height, rc);
+		}
+		srv.scan.pan_err++;
+	}
 	srv.scan.shown = buf;
 	srv.scan.flips++;
 }

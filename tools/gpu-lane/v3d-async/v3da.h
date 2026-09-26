@@ -246,6 +246,14 @@ typedef struct {
 	uint32_t flips;
 	uint32_t flips_deferred;
 	uint32_t shown;               /* buffer on screen */
+	/* Present self-check (qstat pan_err= px_chg=): the firmware's answer to each
+	 * pan, and whether the buffer being panned to changed since the last pan. */
+	uint32_t pan_err;             /* SET_VIRTUAL_OFFSET calls that returned an error */
+	const volatile uint32_t *fb;  /* uncached read-only map of all nbuf buffers, or NULL */
+	size_t fb_len;
+	uint32_t px_last;             /* sample hash at the previous pan */
+	uint32_t px_sampled;          /* pans sampled */
+	uint32_t px_changed;          /* ... whose sample differed from the previous pan's */
 } v3da_scanout_t;
 
 
