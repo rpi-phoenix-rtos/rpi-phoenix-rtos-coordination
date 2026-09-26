@@ -144,7 +144,12 @@ for log in $(printf '%s\n' "${logs[@]}" | sort); do
 	# unfiltered all-trace ("heap created (all-trace)") armed by C1_HEAP_TRACE_ALL
 	# for small processes. Neither is a guard; if the second were not listed here
 	# its prose would land in CORR and read as link corruption.
-	_mtrace=$(grep -acE 'malloc: C1-hunt: (created a victim-size heap|heap created \(all-trace\))([ \r]*)$' "$log")
+	# ⚠ The WIDE-arm banner is a known line too, and omitting it inflates CORR by
+	# ~23 per run (one per process that arms the poison) -- measured: CORR went
+	# from ~5 to ~30 the moment the wide arm shipped, which reads as the serial
+	# link having suddenly degraded. CORR must mean "lines this table cannot
+	# account for", so an announcement it knows about belongs here.
+	_mtrace=$(grep -acE 'malloc: C1-hunt: (created a victim-size heap|heap created \(all-trace\)|p4 probe arm = WIDE[^\r]*)([ \r]*)$' "$log")
 	# Scoped to `malloc: ` lines: several of these words ("double free", "wild
 	# pointer", "leaking the", "ABANDONED") are generic enough to appear in other
 	# processes' or the kernel's output, and an unscoped match would import them.
@@ -202,7 +207,14 @@ for log in $(printf '%s\n' "${logs[@]}" | sort); do
 	# EL0 count; take the EL1 count as-is.
 	kflt=$(grep -ac 'Exception #[0-9]*:.*(EL1)' "$log")
 	uflt=$(( $(grep -ac 'Exception #[0-9]*:.*(EL0)' "$log") / 2 ))
-	if [ "$frames" -eq 0 ]; then
+	# ⚠ A log exists from the MOMENT a trial starts, so "N logs" is not "N trials
+	# finished" -- I graded a running trial as a result (492 frames, tdown=no,
+	# verdict "ok") by counting logs. If the file is still being written, say so
+	# instead of scoring it; a partial frame count is not a measurement.
+	_age=$(( $(date +%s) - $(stat -c %Y "$log" 2>/dev/null || echo 0) ))
+	if [ "$_age" -lt 90 ]; then
+		verdict=RUNNING
+	elif [ "$frames" -eq 0 ]; then
 		verdict=VOID; void=$((void+1))
 	else
 		verdict=ok; valid=$((valid+1)); tot_f=$((tot_f+frames)); tot_fire=$((tot_fire+fires))
