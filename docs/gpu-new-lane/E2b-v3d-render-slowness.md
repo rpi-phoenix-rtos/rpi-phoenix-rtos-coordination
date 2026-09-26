@@ -532,3 +532,17 @@ shader-issue bound) matter more than H7 for the 3× question.
   of quads; late-Z reject 35 → ~25 %), **0 wedges**, but render **91.1 ms/frame, 7.24 fps — unchanged.**
   ⇒ H2 (overdraw) is real but not what costs the time. (↩ The "memory/texture path leads" conclusion drawn here
   used the uncorrected counters — see the agent's review: the render phase is shader-bound.) (ez2, qr1 running.)
+
+## Result — arm summary (queue7, build 9, core 250 MHz)
+
+| arm | fps (gameplay mean) | render ms/frame | bin ms/frame | wedges | note |
+|---|---|---|---|---|---|
+| base1 / base2 | 7.30 / 7.33 (E2-style) | 91.2 / 93.7 | 3.3 / 2.9 | 0 | shader-bound (corrected reading) |
+| ez1 / ez2 (`V3D_PHX_EZ=1`) | 7.24 / 7.26 | 91.1 / 90.9 | 3.3 / 2.8 | 0 / 0 | early-Z engages (up to 51 % clipped in one slot), **no gain**, no wedges |
+| qr1 (`V3D_PHX_QRMAXCNT=3`) | **7.60** | 90.5 | **2.0** | 0 | small gain, bin −1 ms; one trial — confirm before adopting |
+| core 500 (queue5, shipped stk) | 8.39 | — | — | 0 | +13 % (adoption gate queued) |
+
+Reading: none of the render-side knobs (EZ, L2T sequence pending) moves the ~91 ms render phase; the core
+clock does. The remaining big question is whether ~91 ms is normal for this workload on V3D 4.2 at these
+settings — **E2c (the same STK settings on Raspberry Pi OS, same board) is being prepared** and decides
+whether a 3× gap exists at all.
