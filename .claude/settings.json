@@ -70,6 +70,7 @@
       "Bash(./scripts/syntax-check.sh:*)",
       "Bash(./scripts/syntax-check-v3d.sh:*)",
       "Bash(./scripts/c1-fire-position.sh:*)",
+      "Bash(./scripts/c1-pace-read.sh:*)",
       "Bash(./scripts/uart-summary.sh:*)",
       "Bash(./scripts/check-netboot-blob.sh:*)",
       "Bash(./scripts/check-early-markers.sh:*)",
