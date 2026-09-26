@@ -1059,3 +1059,285 @@ Clone: unchanged (the adapter did not change); `artifacts/quakespasm-v3da` stays
    the timedemo when QuakeSpasm sits on a static console. FAIL only if the delta is ≈0 while `flips`
    advances during the demo. `selfcheck=on` must appear on the `V3DA srv scanout` line.
 If 1 fails while 3 passes, the fault is between memory and the display (pan/firmware), not the GPU.
+
+## EINVAL draw — analysis and fix (2026-09-27)
+
+**Symptom.** `MESA: error: Draw call returned Invalid argument.  Expect corruption.` in 5/5 new-lane
+timedemo runs, 0/3 old-lane runs. Mesa prints it with `mesa_loge_once`
+(`v3d_job.c:715`), so **"once" means printed once, not happened once** — how many frames were
+dropped is not in the logs (the server had no reject counter, and `cl=` only counts successes).
+
+**Which request.** That line is printed only when `DRM_IOCTL_V3D_SUBMIT_CL` fails (`v3d_job_submit`);
+a failed submit drops the whole frame's bin + render job. The text is `strerror(EINVAL)`, which rules
+out every `-ENOENT` return (unknown BO handle — `v3da_bo_pin_for_job` — or unknown syncobj) and
+`-ENODEV`. The EINVAL sources left on the SUBMIT_CL path:
+
+| where | check | can it vary at run time? |
+|---|---|---|
+| adapter `collect_sems` | extension id ≠ MULTI_SYNC; > 16 sems | no — gallium sets only `FLUSH_CACHE`, no extensions |
+| `libv3da-client` `v3da_submit` | nbo > 4096, nin/nout > 16 | no — a few hundred BOs per job |
+| server `v3da_submit` | op, `desc_size`, caps, `size < need` | no — structural, would fail every frame or never |
+| server `v3da_submit` | **`bcl_end < bcl_start`** or `rcl_end <= rcl_start` | **yes — depends on GPU-VA layout** |
+
+**Why that check is wrong.** `bcl_start` is captured in `v3dX(start_binning)` from the *first* BCL BO;
+`bcl_end = job->bcl.bo->offset + cl_offset()` is taken at submit from the *current* BCL BO. When the
+BCL outgrows its BO, `v3d_cl_ensure_space_with_branch` allocates a new BO (double size), emits a
+`BRANCH` to it and makes it `cl->bo` — so `bcl_end` lies in the **last BO of the chain**. `CT0QEA` is the
+address at which the CLE stops after following branches, not the end of a range. The server's VA
+allocator is first-fit over holes (`v3da_hw_va_alloc`), and Mesa's BO cache frees stale BOs, so a new
+CL BO taken from a hole can sit **below** the first one → `bcl_end < bcl_start` → `-EINVAL` → frame
+dropped. Linux (`v3d_submit_cl_ioctl`) never compares the two addresses; its only rule is
+`bcl_start != bcl_end` ⇒ there is a bin job (else render-only). The old in-process winsys writes
+`CT0QBA/CT0QEA` straight from the struct with no check (`v3d_phoenix_winsys.c:2911`), and its
+`ioc_submit_cl` has no failing return at all — which is why the old lane never printed it, even though
+its `va_alloc` also serves from holes.
+
+**Corroboration from the 5 logs.** In every run the error lands in the one 5 s window where the
+adapter's `create=` jumps (75 / 99 / 50 / 51 / 91, against 11–13 before and 0–1 after): a burst of
+fresh BO creates, i.e. BO-cache misses that place new BOs, CL BOs included, at new VAs (the §17 caveat).
+The window is the same stretch of demo1 in all 5 runs (after `total ≈ 277` frames, ~10–15 s into the
+demo) — the demo is deterministic. The server's `err=0 wedges=0` fits too: a rejected submit never
+becomes a job.
+
+**The fix** (`v3da_jobs.c` `v3da_submit`, server only; protocol stays v2, so any client works with it):
+- the ordering check is gone; `bcl_end < bcl_start` is accepted and counted (`bclwrap=` on the qstat
+  line, plus one `V3DA srv note submit_cl chained BCL ends below its start bcl=…..… rcl=…..… accepted n=`
+  line for the first 4);
+- DRM's rule is honoured: `bcl_start == bcl_end` ⇒ **render job only** (no bin job; its in-syncs, BCL
+  stage included, all gate the render — never weaker than DRM). Before, the server kicked CT0 on an
+  empty list. Counted as `ronly=`. Gallium never sends it (`start_binning` always emits);
+- kept, deliberately stricter than DRM: `rcl_start == rcl_end` (an empty render list) is refused —
+  CT1 would be kicked on nothing, and no client sends one. `rcl_end < rcl_start` (a chained RCL) is now
+  accepted, as in DRM.
+
+**Diagnostics added** (so the next run names the cause even if this analysis is wrong):
+- server: every refused submit prints `V3DA reject submit_cl|submit_tfu|submit_csd reason=<op|desc_size|
+  nbo|nsems|short_data|in_sync|out_sync|rcl_empty|bo_handle> rc=<rc> val=0x<a>/0x<b> n=<count>` (first 8,
+  then every 256th); cumulative `rej=` on the qstat line. `bo_handle` names the first unknown handle and
+  its index.
+- adapter (in the clone): every failed SUBMIT_CL/TFU/CSD prints `v3da-winsys: reject submit_cl
+  where=sems|server rc=… flags=… nbo=… desc=<bcl_start>/<bcl_end>/<rcl_start>/<rcl_end> n=…` (same rate
+  limit) — this also catches EINVALs that never reach the server (adapter, client library, `msgSend`).
+
+**Build** (`build-quakespasm-v3da.sh` with `QSV3DA_OUT=tools/gpu-lane/v3d-async/out-einval`, git-ignored;
+`-Wall -Wextra -Werror` clean; control relink == shipped `prog/quakespasm` byte-identical):
+- server `tools/gpu-lane/v3d-async/out-einval/v3da/rpi4-v3d-async` (sha256 `36c89c10…`) — also carries the
+  `out-p3` present self-check (same tree);
+- clone `tools/gpu-lane/v3d-async/out-einval/quakespasm-v3da.stripped` (sha256 `f7eadcbb…`), stage as
+  `/usr/bin/quakespasm-v3da`.
+
+**Confidence.** High that this check is the one that fired (it is the only EINVAL on the path that can
+depend on run-time state, and the timing matches a BO-create burst); moderate on the exact mechanism
+(a CL BO below the first one), which only the Pi can confirm — hence the pre-registered check.
+
+### Pre-registered Pi check (one new-lane cycle; P2-B serial command set, `-m serial -i`)
+
+Stage `out-einval/v3da/rpi4-v3d-async` + `out-einval/quakespasm-v3da.stripped`. Use
+`--ready-line 'V3DA srv detached|frames .* seconds .* fps'` (§ Correction above). Grep the UART log
+with `grep -a`:
+
+| line | predicted | meaning if not |
+|---|---|---|
+| `Draw call returned` | **0** | still present → read the `reject` lines below; they name the check |
+| `V3DA srv note submit_cl chained BCL` | **≥ 1**, first one ~10–15 s after `Playing demo`, with `bcl_end < bcl_start` | absent while the Mesa line is also gone → **not confirmed** (the case did not occur this run; the fix is untested, keep the item open) |
+| last `qstat … rej= bclwrap= ronly=` | `rej=0`, `bclwrap ≥ 1`, `ronly=0`; `err=0 wedges=0` | `rej>0` → the `V3DA reject … reason=` line is the real cause; `err>0`/a wedge in the `bclwrap` window → a chained-BCL job fails on the hardware (new finding — the old lane ran these fine) |
+| `V3DA reject` / `v3da-winsys: reject` | **0** | `where=server` with no server `V3DA reject` line → the EINVAL came from the client library or `msgSend`; `where=sems` → the adapter's extension path |
+| `N frames X seconds Y fps` | within ±3 % of 38.2 | lower by more → the dropped frames had flattered the P2-B number (report the new figure as the valid one) |
+
+Verdict: **FIXED** = 0 Mesa lines **and** `bclwrap ≥ 1` **and** `rej=0`, `err=0`. 0 Mesa lines with
+`bclwrap=0` = not confirmed (re-run). Any Mesa line = not fixed; the reject lines name the cause.
+`bclwrap` magnitude: a handful (1–5) fits the "rare BO-cache miss" mechanism; a large count with
+`rej=0 err=0` is *stronger* confirmation (many chained lists, all run fine), not a problem.
+
+**Control arm, recommended first if two cycles are available** (the only arm that proves the cause
+*before* the fix, with the actual values): the **new clone** with the
+**old server** the 5 runs used (`artifacts/quakespasm-v3da/v3da/rpi4-v3d-async`). Predicted: the Mesa
+line once, and `v3da-winsys: reject submit_cl where=server rc=-22 … desc=A/B/C/D` lines with
+**B < A** (bcl_end below bcl_start); their `n=` gives the number of frames the old server dropped.
+
+## STK clone (stk-v3da) — build (2026-09-27)
+
+M1's "STK clone" item. STK is the workload whose frame is 70 % GPU wait (E2: render 91 ms of a
+135 ms frame, CPU 40 ms, strictly serial), so async submit should matter most here: E2's upper
+bounds are ×1.43 (U1, CPU ∥ GPU) and ×1.48 (U2, plus bin ∥ render).
+
+### Build
+
+```
+tools/gpu-lane/v3d-async/build-stk-v3da.sh            # ~8 s; --no-control skips the control relink
+```
+
+[`build-stk-v3da.sh`](../../tools/gpu-lane/v3d-async/build-stk-v3da.sh) (BSD-3) = the archive swap of
+`build-quakespasm-v3da.sh` plus the STK relink of `tools/gpu-lane/stkprof/build-stkprof.sh`:
+1. `build.sh --out out-stk/v3da` (server, ping, adapter objects — one snapshot: the script fails if a
+   `*.c`/`*.h` in `tools/gpu-lane/v3d-async/` changes while `build.sh` runs, and records their git
+   state in `BUILD-INFO.txt`);
+2. copy `tools/.gpu-libs/libv3d-phoenix.a`; in the copy `ar d` the three in-process winsys members and
+   `ar r` `v3da_winsys.o` + `libv3da-client.o` (411 → 410 members, checked);
+3. re-run the port's stage-4 link from its build tree (`CMakeFiles/supertuxkart.dir/link.txt` + the
+   two SDL2-glue objects + the same `--start-group` as `sources/phoenix-rtos-ports/supertuxkart/port.def.sh`),
+   archive substituted, `-o` into `out-stk/`;
+4. launcher `stk-v3da` = `tools/supertuxkart-port/stk-launcher.c` with exactly three lines rewritten
+   (exec path `/usr/bin/supertuxkart-v3da`, the `stk-v3da: exec` error text, the `stk-v3da: DATADIR=`
+   banner; checked by `diff`). Same argv defaults as `stk` (`--screensize=1920x1080 --fullscreen
+   --disable-texture-compression --disable-addon-karts --disable-addon-tracks`), same env, same
+   seeded `config.xml` (**`scale_rtts_factor=0.75`** — it sets the render workload, so running the
+   engine bare is not equivalent). The new lane needs no extra environment: the adapter finds
+   `/dev/v3d-async` itself and reads only `V3D_FLIPSTAT` / `V3D_FLIPSTAT_MS` (old-winsys meaning).
+
+Writes only `tools/gpu-lane/v3d-async/out-stk/` (git-ignored; the script refuses `out/` and every
+other `out-*/`). Touches no `.buildroot` output, no `tools/.gpu-libs` (so `sync-netboot-tree.sh`'s
+driver fingerprint — and with it the Mesa shader cache — is unaffected), no `/srv`.
+
+**Evidence (build of 2026-09-27 00:30 CEST; `BUILD-INFO.txt` stamps UTC, 22:3x on 09-26):**
+
+| check | result |
+|---|---|
+| control relink with the untouched archive vs shipped `prog/supertuxkart` | **byte-identical** (the recipe reproduces shipped; the clone differs only by the GPU layer) |
+| `aarch64-phoenix-nm -u` | clone **0**, shipped 0 |
+| symbols | `T phoenix_v3d_ioctl`, `drmSyncobjExportSyncFile`, `v3d_phoenix_flip`, `v3da_connect` present; `winsys_init`, `boPool_take`, `mboxProp`, `v3d_c1_lookup_pa`, `v3d_phoenix_rcl_bad_at_entry`, `v3d_phoenix_render_{recoveries,timeouts}` absent |
+| `strings -a` clone / shipped `usr/bin/supertuxkart` | `v3da-winsys: connected` 1/0, `v3da-winsys: cstat` 1/0, `v3da-winsys: reject` 1/0, `v3d-winsys: flipstat` 1/1 (kept on purpose, every grader reads it); `v3d-winsys: RT scanout` 0/1, `v3d-pool: BO page pool ON` 0/1, `v3d-coldstate:` 0/2 |
+| sizes | `supertuxkart-v3da.stripped` **38 820 768 B** vs shipped 38 836 064 B (−15 KB); unstripped 46 678 840 vs 46 603 672 B; `stk-v3da` 877 784 B (= shipped `bin/stk`) |
+| shared inputs (shipped archive, libGL, prog, stripped bin, `bin/stk`, `link.txt`, glue objects) | unchanged (sha256 before = after) |
+
+⚠ **Built from uncommitted sources:** `v3da.h`, `v3da_jobs.c`, `v3da_proto.h`, `v3da_winsys.c` carry
+the EINVAL fix (section above) and its reject tags, still uncommitted when this was built. The
+server in `out-stk/v3da/` is **byte-identical to `out-einval/v3da/rpi4-v3d-async`** (sha256
+`36c89c10…`); `V3DA_PROTO_VERSION` is still 2 (the wire struct did not change). After that work is
+committed, re-run the script (8 s) so `BUILD-INFO.txt` reads `clean`. **STK needs the EINVAL fix:**
+the committed server refused every chained BCL (`bcl_end < bcl_start`), and STK's control lists are
+larger and chain more often than a quakespasm timedemo's — on the old server STK would drop whole frames.
+
+### Stage (coordinator)
+
+```
+export_dir="$(awk '$0 ~ /fsid=0/ && $1 ~ /^\// { print $1; exit }' /etc/exports /etc/exports.d/*.exports)"
+o=tools/gpu-lane/v3d-async/out-stk
+sudo install -m 755 $o/supertuxkart-v3da.stripped "$export_dir/usr/bin/supertuxkart-v3da"
+sudo install -m 755 $o/stk-v3da                   "$export_dir/bin/stk-v3da"
+sudo install -m 755 $o/v3da/rpi4-v3d-async        "$export_dir/bin/rpi4-v3d-async"   # the matching server
+sudo install -m 755 $o/v3da/v3dasync-ping         "$export_dir/bin/v3dasync-ping"
+grep -a -c 'v3da-winsys: connected' "$export_dir/usr/bin/supertuxkart-v3da"   # 1
+grep -a -c 'v3da-winsys: connected' "$export_dir/usr/bin/supertuxkart"        # 0 (shipped untouched)
+cmp $o/v3da/rpi4-v3d-async "$export_dir/bin/rpi4-v3d-async" && echo server-ok
+```
+
+Stage the clone with **its own** server (or the byte-identical `out-einval` one), never an `out-p*`
+server. The same server also serves the existing `quakespasm-v3da` (protocol 2). `sync-netboot-tree.sh`
+is additive, so the files survive a normal cycle; `SYNC_DELETE=1` / `make-pristine-nfs-export.sh`
+remove them.
+
+### psh command lines
+
+```
+/bin/rpi4-v3d-async -r 1 -m serial -i
+/bin/stk-v3da --track=hacienda --numkarts=4 --profile-laps=2
+```
+
+Never `stk` and `stk-v3da` (or any old-lane GPU app, or X) in the same boot (§1.2 single-owner rule).
+Pipeline arm: `-m pipeline -i` instead of `-m serial -i`.
+
+### Pre-registered A/B — old lane `stk` vs new lane `stk-v3da`
+
+**Question.** Does the async server make STK faster, with identical output and no new failure?
+
+**Arms** (consecutive fresh boots, same image, same staged data, interleaved old/new/old/new/old/new,
+3 each, then 2 pipeline cycles). Both arms use identical capture flags so their windows are
+comparable. ⚠ **Wall clock:** an E2b cycle with the same 420 s window took **10 min 15 s** end to end
+(`e2b-ez1` 23:20:28→23:30:43, `e2b-ez2` 23:30:47→23:41:03), and the new arm adds ~15 s — longer than
+the 600 s Bash-tool cap. Run each cycle detached (`setsid`, as the E2b queue did) or from the
+coordinator's queue script, never under a foreground Bash `timeout`; a harness-killed cycle is void.
+
+```
+# old lane (shipped binary, in-process winsys)
+./scripts/test-cycle-psh-interact.sh --label m1stk-old-N --inter-cmd-secs 8 --idle-secs 60 \
+    --max-cmd-secs 420 --ready-line 'V3DA srv detached' --ready-extra-secs 5 -- \
+    "/bin/stk --track=hacienda --numkarts=4 --profile-laps=2"
+# new lane, serial + IRQ
+./scripts/test-cycle-psh-interact.sh --label m1stk-v3da-N --inter-cmd-secs 8 --idle-secs 60 \
+    --max-cmd-secs 420 --ready-line 'V3DA srv detached' --ready-extra-secs 5 -- \
+    "/bin/rpi4-v3d-async -r 1 -m serial -i" \
+    "/bin/stk-v3da --track=hacienda --numkarts=4 --profile-laps=2"
+# new lane, pipeline + IRQ (after the three serial pairs)
+    ... same, label m1stk-pipe-N, "/bin/rpi4-v3d-async -r 1 -m pipeline -i"
+```
+
+The ready line only closes the server's window 5 s after `detached`; STK never prints it, so the game
+window is the fixed 420 s budget in **both** arms (the E2b capture length: ~65 gameplay windows) and
+ends with psh-interact's `max-cmd-secs … WITHOUT matching` message — expected here, not a failed start.
+The race does not finish in 420 s at ~8 fps; no end marker is graded.
+
+**Arm assertions (from the log, never from the command sent; a trial failing them is void):**
+old — `stk: DATADIR=`, no `v3da-winsys:` and no `V3DA srv` line; new — `stk-v3da: DATADIR=`,
+`V3DA srv ready … mode=serial|pipeline`, exactly one `v3da-winsys: connected to rpi4-v3d-async`,
+`v3da-winsys: scanout init … -> N buffer(s) page-flip` (N = 2 or 3), N `v3da-winsys: RT scanout bufK` lines,
+`phxgl: scanout FBO(s) … resolve=1 double=1`. Both — the cycle's `Mesa shader disk cache KEPT` line
+(warm; a `cleared` cycle is a warm-up, re-run it; staging the clone does not change the fingerprint).
+Same `config.txt` `core_freq` in every cycle of the series (the core-500 adoption must not land mid-series).
+
+**Metric.** Per trial: the `v3d-winsys: flipstat … = X fps` lines (both lanes print the identical line)
+over **gameplay windows only** — windows with fps > 3, the contiguous race run, first and last race
+window dropped, windows excluded that contain a wedge / `TIMEOUT` / `GPU wedged` / `DROPPED job` /
+reject line. Trial fps = **mean of the per-window fps**; ≥ 10 windows or the trial is void. Arm fps =
+mean of the trial means; arm spread = min..max of the trial means. (`./scripts/flipstat-summary.sh
+--seq <label>` lists the windows; the frame-weighted Σframes/Σms is reported beside it, not graded.)
+Also per new-lane window: `v3da-winsys: cstat … cl= tfu= create= wait_us= ipc_waits=` and the server's
+`V3DA srv qstat … busy= overlap= rej= bclwrap= err= wedges=` (counters cumulative: grade deltas).
+
+**Correctness gate (every new-lane trial; failing it = FAIL, whatever the fps):**
+0 `V3DA srv … TIMEOUT` / `GPU wedged` lines and last qstat `wedges=0 err=0`; **`rej=0`, 0 `V3DA reject`
+and 0 `v3da-winsys: reject` lines** — graded from these tags, **not** from Mesa's `Draw call returned
+Invalid argument` line, which `mesa_loge_once` prints at most once per process whatever the count; any
+Mesa `Draw call returned` line is itself a fail; 0 EL1 faults (an EL1 fault stops the series:
+addr2line the PC first); HDMI graded **only on ticks after the `stk-v3da` command's echo** in the UART
+log (in practice the ticks after the last run of identical hashes, plus `-final.png`): the race
+visibly renders with the same look as the old arm's post-echo ticks — no black, torn, flickering or
+upside-down 3D scene.
+
+**Outcomes (Δ = new-serial arm fps / old arm fps − 1):**
+
+| outcome | reading |
+|---|---|
+| gate passes, **Δ ≥ +5 % and new trial min > old trial max** | **PASS — async submit speeds STK up**; report Δ against E2's ×1.43 bound; `wait_us` per window shows how much CPU∥GPU overlap was bought |
+| gate passes, −3 % ≤ Δ < +5 % (or within the spread) | **PASS (no regression, §11.2 gate)**, no measurable gain: expected if the glue's per-frame `glFinish` + STK's own per-frame `glClientWaitSync` (below) re-serialise the frame; next lever = a clone without the glue `glFinish` |
+| gate passes, Δ < −3 % | **FAIL (regression)**: read `cstat` — `create=` high → BO-cache misses + server memset (R17); `ipc_waits` ≈ every wait → the fence-page fast path misses; `wait_us` ≫ GPU busy → event latency (confirm IRQ mode) |
+| Δ > +48 % (above U2) | **not a win until explained**: something else changed — dropped work (`rej`, reject tags), a different workload (the log must show `stk-v3da: DATADIR=`, i.e. the seeded `scale_rtts_factor=0.75`), or frames not rendered (HDMI) |
+| any wedge / `err>0` only on the new lane | **FAIL** — a finding (R2, a cache-step difference, or a chained-BCL job failing on the hardware) to explain before any fps counts; the wedged windows are excluded, not averaged |
+| `rej>0` / reject tags / Mesa EINVAL line | **FAIL** — dropped GPU work flatters fps; the `reason=` tag names the check; that trial's fps is void |
+| EL0 fault in `supertuxkart-v3da` | trial void if < 10 windows; addr2line with the unstripped `out-stk/supertuxkart-v3da`. The clone is a different layout: never fold its faults into the C1 statistics — but a C1 signature (`0x8000000x` high word) on the new lane, where no in-process winsys exists, is worth recording |
+| server survives a wedge and the game continues | the §15.4 recovery works under STK (record it; the trial still fails the gate) |
+
+Pipeline arm: reported as a ratio vs old (not gated); `overlap/busy > 0` in `qstat` is the evidence
+that CT0 ∥ CT1 happened with a real workload (P2-A could not show it).
+
+### What STK uses that quakespasm did not (checked by reading; not changed here)
+
+The adapter was not edited (another agent owns it). The link needed nothing new: STK uses the same
+SDL2 glue objects, libGL and libv3d archive as quakespasm, and the four symbols only the old winsys
+exported (`v3d_c1_lookup_pa`, `v3d_phoenix_rcl_bad_at_entry`, `v3d_phoenix_render_{recoveries,timeouts}`)
+are referenced by nothing STK links. Checked for parity: GPU VA window 1 GiB in both lanes
+(`v3da_hw.c` = old `GPUVA_PT_PAGES 256`, which STK's uncompressed textures needed); 4096 BOs in both;
+single GL context (Irrlicht's SDL device); `GET_PARAM` unknown = 0 in both. Runtime paths quakespasm
+never exercised:
+
+1. **`glFenceSync` / `glClientWaitSync` every frame** (`src/graphics/draw_calls.cpp:218-231`,
+   `shader_based_renderer.cpp:402/486`): STK fences the frame's instance-data draws and waits on it
+   before re-uploading (poll with timeout 0, then 1 ms steps). Old lane: the fence is always already
+   signalled. New lane: a real wait, through `drmSyncobjExportSyncFile` (dup'd fd + ring of 64) →
+   Mesa `v3d_fence_finish` → `drmSyncobjCreate` + `drmSyncobjImportSyncFile` + `drmSyncobjWait` +
+   `drmSyncobjDestroy` — **three server round trips per poll iteration** besides the wait, i.e. up to
+   ~90 per frame when it waits for a ~91 ms render in 1 ms steps. Watch `ipc_waits`/`wait_us`; a
+   possible adapter fast path (keep a temporary syncobj that only imports a known fence client-side,
+   no IPC) is a later optimisation, not needed for correctness. A `Failed to import` / stuck
+   `GL_TIMEOUT_EXPIRED` loop would show as a hang with the server's qstat still advancing.
+2. **`GL_TIME_ELAPSED` queries** (`src/graphics/glwrap.cpp:187-212`) → Mesa's CPU-queue timestamp job
+   (`DRM_IOCTL_V3D_SUBMIT_CPU`, since the server advertises `SUPPORTS_CPU_QUEUE=1` as the old lane
+   did). The adapter's `default: return 0` makes it a silent no-op (so was the old lane's): results
+   read 0 and the query syncobj stays empty. Gated on `m_profiler_enabled` — **off in these runs**; it
+   breaks only STK's in-game GPU profiler.
+3. **Many CL submits per frame** (E2: 8.0) and TFU mipmap generation (`glGenerateMipmap`) under load —
+   both already supported; chained BCLs are common → the EINVAL fix is required (above).
+4. **BO churn at load time** (uncompressed textures, `--disable-texture-compression`): every
+   `CREATE_BO` is a round trip with a server-side zeroing memset under `srv.lock` (R17) — loading
+   may be slower than on the old lane; graded only if it breaks the 420 s budget (fewer than 10
+   gameplay windows).
