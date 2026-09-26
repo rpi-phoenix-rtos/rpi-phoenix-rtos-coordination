@@ -91,6 +91,12 @@ for log in $(printf '%s\n' "${logs[@]}" | sort); do
 	frames=$(grep -ao 'total [0-9]*)' "$log" | tr -dc '0-9 \n' | tail -1)
 	frames=${frames:-0}
 	fires=$(grep -acE "$SIG" "$log")
+	# ★ C1 also shows up as a CRASH with no detector hit: an EL0 Data Abort whose
+	# fault address has the C1 high word (0x8000000x) over an intact low half --
+	# the "STK high-bits pointer crash". c1coldC4 (2026-09-26) died this way in
+	# irr::scene::ISceneNode::OnAnimate with 0 signature lines and was first
+	# graded as a clean trial. Presence only: EL0 dumps reach the UART twice.
+	hbc=$(grep -acE 'far=8000000[0-9a-f]{9}' "$log")
 	# EL1 entries only, and NOT halved: every EL0 dump reaches the UART twice but
 	# an EL1 one does not, and halving a kernel fault could round it to zero.
 	kflt=$(grep -acE 'Exception #[0-9]+ .*EL1|Data Abort.*EL1' "$log")
@@ -139,8 +145,11 @@ for log in $(printf '%s\n' "${logs[@]}" | sort); do
 	else
 		key="$arm $mode"
 		n_mode[$key]=$(( ${n_mode[$key]:-0} + 1 ))
-		[ "$fires" -gt 0 ] && n_fire[$key]=$(( ${n_fire[$key]:-0} + 1 ))
-		[ "$fires" -gt 0 ] && note="FIRED"
+		if [ "$fires" -gt 0 ] || [ "$hbc" -gt 0 ]; then
+			n_fire[$key]=$(( ${n_fire[$key]:-0} + 1 ))
+			note="FIRED"
+			[ "$hbc" -gt 0 ] && note="FIRED (high-bits crash, far=0x8000000x...)"
+		fi
 	fi
 
 	printf '%-30s %-4s %-6s %-6s %8s %6s %5s %5s %s\n' \
