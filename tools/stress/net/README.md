@@ -104,10 +104,9 @@ python3 tools/stress/net/flood.py --host 10.42.0.12 --mode ping --secs 20
 
 - **udp** — blasts small (1 B), large (1400 B, one frame), and oversized
   (8000 B, fragmented → reassembly) datagrams as fast as possible. Fire-and-
-  forget; **needs no responder**. Default port 9999 (diag-udp's port if that
-  responder is present in the image; a closed port still loads RX and triggers
-  ICMP port-unreachable, which is itself RX work). Host-side this can't FAULT —
-  the verdict lives in the Pi UART.
+  forget; **needs no responder**. Default port 9999 (nothing listens there; a
+  closed port still loads RX and triggers ICMP port-unreachable, which is itself
+  RX work). Host-side this can't FAULT — the verdict lives in the Pi UART.
 - **tcp** — connect/teardown storm. Point `--tcp-port` at a **real listener**
   (lighttpd :80 or stress-net :7777) so it exercises accept + teardown, not just
   RST. Refused/reset = `LIMIT` (backlog/capacity). Connect timeouts *alongside*

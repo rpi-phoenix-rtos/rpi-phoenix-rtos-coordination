@@ -68,7 +68,6 @@ The harness's static command validator can't allowlist piped, chained, or `cd`-p
   change while a Pi bench is running, since a full build ends in the image stage and overwrites the
   TFTP `loader.disk`
 - `./scripts/test-cycle-bench.sh <N> <label>` for multi-trial pass-rate benches (replaces ad-hoc `for trial in T1 T2 T3; do ...; done` shell loops; delegates to `uart-summary.sh` per trial)
-- `./scripts/diag-udp-probe.sh <cmd> <label> [ready_wait] [send_timeout]` to send a single diag-udp command to the booted Pi (port 9999) and capture the reply under `artifacts/diag-udp/`
 - `./scripts/qemu-debug.sh` (with `--gdb` for state capture) for any QEMU rpi4b iteration
 
 ### Test cycles: pick `--capture-secs` for what you need, pass Bash `timeout`

@@ -39,7 +39,7 @@ def strip_nvram(src_text):
     while len(out) % 4 != 0:
         out.append(0)
     # Pad further so that (stripped + 4-byte trailer) is a multiple of
-    # 64. This lets the diag-udp loader use a single CMD53 multi-block
+    # 64. This lets the WiFi loader use a single CMD53 multi-block
     # write with block_size=64. The padding zeros land between the
     # parseable data and the trailer; firmware accepts that.
     target = ((len(out) + 4 + 63) // 64) * 64 - 4

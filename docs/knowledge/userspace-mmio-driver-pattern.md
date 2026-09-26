@@ -102,5 +102,5 @@ on UART logs — they contain control bytes).
   canary + boot; a `GET*` devctl has no client at boot, so it stays correct-by-
   construction until a real client runs.
 
-See also: `pi4-hardware-support-matrix.md`, `diag-udp-reference.md`, and the
+See also: `pi4-hardware-support-matrix.md` and the
 `feedback_unattended_scoping` discipline (additive + self-log + cannot-silently-regress).

@@ -2,8 +2,8 @@
 #
 # Generate sources/phoenix-rtos-lwip/port/wifi-fw-43455.{c,h} from
 # .firmware/brcmfmac43455-sdio.bin. The .c emits the Cypress firmware
-# blob as `const uint8_t wifi_fw_43455[]` for the WiFi P3 firmware
-# loader (diag-udp 'I' sub-command).
+# blob as `const uint8_t wifi_fw_43455[]` for the WiFi firmware loaders
+# (wifi/rpi4-wifi in phoenix-rtos-devices, tools/wifi-probe).
 #
 # The generated files are gitignored:
 #   - the firmware itself is under Cypress EULA (not BSD), see

@@ -1263,8 +1263,8 @@ outlier that forced re-discovery.
 A follow-up question worth testing — what about *read-only* access to
 xHCI MMIO from a side process? The "USB merge" finding established
 that two writing processes break; reads from a side process haven't
-been characterized. With `diag-udp` (see §"Network-routed
-observability") available, this becomes one UDP probe. See
+been characterized. It was later answered (H3 below) with the since-removed
+diag-udp responder (see §"Network-routed observability"). See
 `docs/done/usb-resumption-strategy.md` for the resumption plan that uses
 this and three other hypotheses to revisit the parked USB wedge.
 
@@ -1405,7 +1405,8 @@ doc note explaining what changed.
   and is the recommended observability surface for any future
   multi-threaded Phoenix-on-aarch64 work. Manifest:
   `2026-05-25-eth-tier5c-diag-udp.md`. See also the "Network-routed
-  observability" subsection below.
+  observability" subsection below. (The responder was removed on
+  2026-06-06, lwip `05b8ba4`; this entry is kept as history.)
 - **Tier 5d — autonomous DHCP (TD-Eth-DHCP CLOSED 2026-05-28).** With
   the GENET driver in steady state, `dhcp_start()` was re-enabled in
   `genet_dhcpStartCb` (previously commented-out because the early-Tier
@@ -1415,8 +1416,9 @@ doc note explaining what changed.
   flags=0x1f UP LINK DHCP rx=5 tx=12 mac_src=mailbox`. The static
   `10.42.0.99/24` fallback is kept for the dnsmasq-less / raw-cable
   bring-up case. Two tooling additions made the closure cheap:
-  `scripts/test-cycle-netboot.sh --probe q` runs a background diag-udp
-  probe in the same test cycle, and `scripts/get-pi-ip.sh` resolves
+  `scripts/test-cycle-netboot.sh --probe q` ran a background diag-udp
+  probe in the same test cycle (retired with the responder), and
+  `scripts/get-pi-ip.sh` resolves
   the current DHCP-assigned IP by reading
   `artifacts/netboot/dnsmasq.leases` so probes don't need a hard-coded
   address. Manifest: `2026-05-28-eth-tier5d-dhcp-closed.md`.
@@ -1457,8 +1459,10 @@ executes. The arc broke into:
 1. **Block-mode CMD53.** Earlier tiers used CMD52 (byte-at-a-time)
    which is unusable for a 643 KB firmware blob. CMD53 in block
    mode + 4-bit bus width is the production path. The Phoenix
-   implementation lives in `port/diag-udp.c`
-   (`diag_sdioCmd53Read`/`Write`) and is **PIO**, not DMA — it polls
+   implementation began in the (since-removed) lwip-port diag-udp
+   responder and now lives in
+   `sources/phoenix-rtos-devices/wifi/rpi4-wifi/rpi4-wifi.c`
+   (`diag_sdioCmd53Read`/`Write`); it is **PIO**, not DMA — it polls
    `BUFFER_READ_READY` / `BUFFER_WRITE_READY` and writes 32-bit
    words to `SDHCI_DATA_PORT`. No host-side DMA buffer is used; the
    lwip i.MX6ULL `cyhal_sdio.c` DMA path is not on the Pi 4 boot
@@ -1501,7 +1505,8 @@ public references inspected), so the leading hypotheses are:
 
 Parked behind USB for now; resumes once a USB enumeration is in
 hand to compare two BCM43455-class chip-bring-up paths against the
-same diag-udp infrastructure.
+same diag-udp infrastructure (since removed; the WiFi bring-up now lives
+in `wifi/rpi4-wifi` in phoenix-rtos-devices).
 
 **Bonus finding: per-thread shared-counter false sharing.** The first
 burn implementation used a `volatile unsigned long long counters[4]`
@@ -1519,6 +1524,14 @@ is the suggested reference for any future multi-threaded userspace
 code on Pi 4.
 
 ### Network-routed observability
+
+> **Removed 2026-06-06 (lwip `05b8ba4`).** The Phoenix responder described
+> here is gone: it was an unauthenticated network control surface (reboot,
+> physmem dumps, live SDIO register writes) and diagnostic-only. The pattern
+> write-up is kept because it generalises. On today's Pi 4 image, inspect the
+> running system from psh instead (`scripts/test-cycle-psh-interact.sh`),
+> through device nodes (`/dev/thermal`, `/dev/throttled`, `/dev/gpio`), or with
+> a standalone probe binary run from psh (the `tools/wifi-probe` pattern).
 
 The single biggest accelerator after Tier 4 was the discovery that —
 once ethernet works — we don't need UART for runtime introspection any
@@ -1609,7 +1622,7 @@ Each is small (~30-80 lines) and worth pulling forward:
   bus). So WiFi bus-side bring-up is one GPFSEL3 write + a mailbox
   `WL_REG_ON` assert.
 - **WiFi SDIO Tiers 1c–4 (DONE 2026-05-26).** The full Phoenix-side
-  SDIO bring-up to chip-id readback is implemented as diag-udp
+  SDIO bring-up to chip-id readback was first implemented as diag-udp
   sub-commands `'w'/'i'/'e'/'f'`. Pi 4 result: CMD5 returns OCR
   `0x30ffff00` (3 IO funcs, 2.0-3.6V); CMD3/CMD7 enumerate to
   RCA=0x0001; CCCR rev byte `0x43` (SDIO 3.00 + CCCR/FBR 1.20);
@@ -1647,28 +1660,15 @@ find these helpful:
   refresh.
 - `scripts/test-cycle-netboot.sh` — power-cycle the Pi over a smart
   outlet, serve TFTP, capture UART, recover the netboot bridge on
-  DHCP timeout. The `--probe <CMD>` flag spawns a background
-  diag-udp probe inside the same cycle so a single Bash invocation
-  produces both a UART log and a diag-udp reply file under
-  `artifacts/diag-udp/`.
+  DHCP timeout. `scripts/test-cycle-psh-interact.sh` does the same
+  and then drives psh commands over the UART.
 - `scripts/get-pi-ip.sh` — resolves the Pi's current
   DHCP-assigned IP from `artifacts/netboot/dnsmasq.leases` (default
-  MAC `dc:a6:32:3c:dd:f1`). Auto-IP is now the default for
-  `scripts/diag-udp-probe.sh`; the static `10.42.0.99` fallback
-  remains for the raw-cable / no-dnsmasq case.
-- `scripts/pi_reboot.sh` — once a netif is up, replaces the smart-outlet
-  power-cycle with a `nc -u` to diag-udp's `r` command (BCM2711 PM
-  watchdog). ~30 s faster per iteration.
+  MAC `dc:a6:32:3c:dd:f1`).
 - `scripts/uart-summary.sh` / `scripts/uart-list.sh` — UART log
   analysis helpers.
 - `scripts/qemu-debug.sh --gdb` — QEMU rpi4b model with gdbstub for
   early-boot state capture.
-- `sources/phoenix-rtos-lwip/port/diag-udp.c` (~600 LOC) — single
-  source file containing the UDP responder, per-driver stats
-  callback wire-up, watchdog/thermal/GPIO/SDHCI/mailbox helpers,
-  and the 4-thread SMP saturation burner. The smallest concrete
-  example of all the platform primitives the guide discusses,
-  exercised live on every Pi 4 boot.
 
 
 ## Pointers for newcomers

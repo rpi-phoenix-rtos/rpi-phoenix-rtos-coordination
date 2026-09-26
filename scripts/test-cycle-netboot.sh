@@ -66,11 +66,6 @@ Usage: test-cycle-netboot.sh [options]
   --baud N                 picocom baud (default 115200; try 103448 if
                            plo output is garbled — start4.elf reprograms
                            PL011 to 103448 right before kernel handoff)
-  --probe CMD              after the Pi reaches "lwip: genet" in the
-                           captured UART, send a single diag-udp probe
-                           (one char like 'q' or 'X') and capture the
-                           reply under artifacts/diag-udp/. Useful for
-                           queries that need the network stack up.
   --sd-boot                Pi boots Phoenix directly from its SD card: no
                            netboot DHCP/TFTP. Implies --skip-server-up and
                            --dhcp-wait-secs 0 (no DHCP watchdog / server
@@ -86,7 +81,6 @@ the boot once. After two failures it exits 1.
 EOF
 }
 
-probe_cmd=""
 while [ $# -gt 0 ]; do
 	case "$1" in
 		--label)                 label="$2"; shift 2 ;;
@@ -97,7 +91,6 @@ while [ $# -gt 0 ]; do
 		--sd-boot)               sd_boot=1; shift ;;
 		--baud)                  uart_baud="$2"; shift 2 ;;
 		--timestamp)             timestamp_flag="--timestamp"; shift ;;
-		--probe)                 probe_cmd="$2"; shift 2 ;;
 		-h|--help)               usage; exit 0 ;;
 		*) printf 'unknown arg: %s\n' "$1" >&2; usage >&2; exit 1 ;;
 	esac
@@ -349,65 +342,7 @@ if [ "$dhcp_wait_secs" -gt 0 ]; then
 	fi
 fi
 
-# Optional: send a single diag-udp probe to the Pi once it reaches
-# lwip-port. Used to query netif state (ip/gw/DHCP flag etc.) inside
-# the capture window without separately wiring up the timing. The
-# probe runs in the background; we wait for it alongside capture_pid.
-probe_pid=""
-if [ -n "$probe_cmd" ]; then
-	(
-		# Wait up to capture_secs for lwip to come up before probing.
-		# The probe script itself does its own ICMP-ready wait.
-		end=$(( $(date +%s) + capture_secs ))
-		while [ "$(date +%s)" -lt "$end" ]; do
-			if [ -s "$log_path" ] && grep -aq "lwip: genet" "$log_path"; then
-				break
-			fi
-			sleep 1
-		done
-		"$repo/scripts/diag-udp-probe.sh" "$probe_cmd" "${label:-cycle}-probe" 30 5 >/dev/null 2>&1 || true
-	) &
-	probe_pid=$!
-fi
-
 wait "$capture_pid" || true
-if [ -n "$probe_pid" ]; then
-	wait "$probe_pid" 2>/dev/null || true
-fi
-
-# Thermal/throttle safeguard. The capture window is done but the Pi is still
-# powered (power-off happens in the EXIT trap), so read the SoC temperature +
-# throttle state via diag-udp 'c' (clocks+thermal). Best-effort: it needs lwip
-# (Ethernet) up, so a stalled/early-failed boot just reports "unreachable" —
-# which itself flags that the boot never reached the network stack. The point
-# is to catch an overheat (e.g. a runaway loop pinning a core) before it can
-# stress the board. Never fails the cycle.
-read_thermal() {
-	local lbl out line temp_mc
-	lbl="${label:-cycle}-thermal"
-	printf '\n[test-cycle] reading SoC thermal/throttle via diag-udp (best-effort)...\n'
-	if ! "$repo/scripts/diag-udp-probe.sh" c "$lbl" 20 5 >/dev/null 2>&1; then
-		printf '[test-cycle] thermal: Pi unreachable via diag-udp (lwip/Ethernet not up?)\n'
-		return 0
-	fi
-	out=$(ls -1t "$repo/artifacts/diag-udp/"*"${lbl}".txt 2>/dev/null | head -1)
-	[ -n "$out" ] || { printf '[test-cycle] thermal: no reply file\n'; return 0; }
-	line=$(grep -E 'thermal: temp_mC=' "$out" 2>/dev/null | head -1)
-	if [ -z "$line" ]; then
-		printf '[test-cycle] thermal: diag-udp replied but no thermal line\n'
-		return 0
-	fi
-	printf '[test-cycle] %s\n' "$line"
-	temp_mc=$(printf '%s' "$line" | sed -n 's/.*temp_mC=\([0-9]\{1,\}\).*/\1/p')
-	if [ -n "$temp_mc" ] && [ "$temp_mc" -ge 80000 ] 2>/dev/null; then
-		printf '[test-cycle] WARNING: SoC temp %s mC (>=80C) — possible runaway/overheat!\n' "$temp_mc" >&2
-	fi
-	if printf '%s' "$line" | grep -q 'throttle-now\|uv-now\|arm-cap-now'; then
-		printf '[test-cycle] WARNING: active throttle/undervoltage flagged in thermal reply\n' >&2
-	fi
-	return 0
-}
-read_thermal || true
 
 # 5. Power off handled by EXIT trap.
 

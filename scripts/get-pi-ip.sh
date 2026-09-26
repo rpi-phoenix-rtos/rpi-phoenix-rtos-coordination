@@ -5,7 +5,7 @@
 # Reads artifacts/netboot/dnsmasq.leases, finds the line whose MAC
 # matches RPI4B_MAC (default dc:a6:32:3c:dd:f1), and prints the IP.
 #
-# Useful for follow-on tooling (e.g. diag-udp-probe.sh) that needs the
+# Useful for host-side tooling (e.g. tools/stress/net/flood.py --host) that needs the
 # Pi's current address. When Phoenix's lwip uses the static-IP fallback
 # (10.42.0.99), the dnsmasq lease still reflects the netboot-firmware-
 # stage DHCP (a different IP). To probe a running Phoenix that has

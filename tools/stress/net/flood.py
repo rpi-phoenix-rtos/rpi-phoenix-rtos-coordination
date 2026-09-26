@@ -5,9 +5,9 @@ network stack (task #40). Host-side; blasts the Pi's genet RX path. Stdlib only.
 
 Three sub-tests (run all by default, or select with --mode):
   udp   Blast small AND large UDP datagrams at a Pi port as fast as possible
-        (fire-and-forget; needs NO responder). Default target port 9999 — the
-        diag-udp responder's port if present; a CLOSED port still loads RX and
-        the kernel will emit ICMP port-unreachable, which is itself RX work.
+        (fire-and-forget; needs NO responder). Default target port 9999 —
+        nothing listens there; a CLOSED port still loads RX and the stack
+        will emit ICMP port-unreachable, which is itself RX work.
   tcp   TCP connect/teardown storm: open many connections rapidly and close
         them immediately. Aim at a REAL listener (lighttpd :80 / stress-net
         :7777) so it exercises accept()+teardown, not just RST generation.
@@ -231,7 +231,7 @@ def main():
     ap.add_argument("--host", required=True, help="Pi IP (e.g. 10.42.0.12)")
     ap.add_argument("--mode", choices=["all", "udp", "tcp", "ping"], default="all")
     ap.add_argument("--secs", type=float, default=20.0, help="duration per sub-test (s)")
-    ap.add_argument("--udp-port", type=int, default=9999, help="UDP target port (default 9999, diag-udp)")
+    ap.add_argument("--udp-port", type=int, default=9999, help="UDP target port (default 9999; a closed port is fine)")
     ap.add_argument("--tcp-port", type=int, default=80, help="TCP target port — a REAL listener (lighttpd 80 / stress-net 7777)")
     ap.add_argument("--threads", type=int, default=4, help="flood threads per sub-test")
     ap.add_argument("--connect-timeout", type=float, default=3.0, help="TCP connect timeout (s)")
