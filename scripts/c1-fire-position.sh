@@ -162,6 +162,24 @@ awk '$3 <= 60 && $3 >= -15 && $1 >= 40 {
 	}
 ' "$grp"
 
+# Stronger than the buckets, and on the same data: regress the fire time on the
+# race start. Slope 1 = the fires follow race start; slope 0 = they are pinned to
+# the first frame. Bucketing throws away the within-group spread; this does not.
+awk '$3 <= 60 && $3 >= -15 && $1 >= 40 { n++; x[n] = $1; y[n] = $2; sx += $1; sy += $2 }
+	END {
+		if (n < 4) { print "  (too few in-window fires to regress)"; exit }
+		mx = sx / n; my = sy / n
+		for (i = 1; i <= n; i++) { dx = x[i] - mx; sxx += dx * dx; sxy += dx * (y[i] - my) }
+		b = sxy / sxx; a = my - b * mx
+		for (i = 1; i <= n; i++) { r = y[i] - (a + b * x[i]); sse += r * r }
+		se = sqrt(sse / (n - 2) / sxx)
+		printf "\n  regression of fire time on race start (n = %d): slope %+.3f (se %.3f)\n", n, b, se
+		printf "    vs slope 1 -- fires FOLLOW race start  : t = %+.2f\n", (b - 1) / se
+		printf "    vs slope 0 -- fires pinned to FRAME 1  : t = %+.2f\n", b / se
+		printf "    intercept %.1f s after the first frame\n", a
+	}
+' "$grp"
+
 echo
 echo "AXIS 3 -- seconds since the race starts  ⚠ REFUTED as the anchor, printed to keep it refuted"
 if [ ! -s "$rel" ]; then
