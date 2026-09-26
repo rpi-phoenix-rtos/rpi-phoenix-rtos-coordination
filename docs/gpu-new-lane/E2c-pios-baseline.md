@@ -282,3 +282,16 @@ sudo chmod -R a+rX $R/opt/e2c
 ## Result
 
 *(empty until the first boot: per-arm tables of the E2C lines above, gates, reading.)*
+
+## Run 1 (queue11, 2026-09-27 01:01) — VOID: no vc4 KMS card, benchmarks skipped
+
+`E2C ERROR no vc4 KMS card -- GPU benchmarks skipped` (arm `stock`; `phxclk250` identical by
+construction). dmesg: `vc4-drm gpu: bound fe400000.hvs` and nothing further — vc4 is a component
+driver and its HDMI encoder never bound, because `e2c-bench.sh` runs as PID 1 with no udev, so
+the modalias-driven modules were never loaded; the missing one is `i2c-brcmstb` (the HDMI DDC
+adapter, alias `brcm,bcm2711-hdmi-i2c`; `clk-bcm2711-dvp` is built in). v3d itself came up
+(`card0 driver=v3d`, `gpu_stats` present), clocks as expected (`core=500 MHz v3d=500 MHz`,
+`arm=1500 MHz`, governor performance), Mesa 26.2.2 sees `V3D 4.2.14.0`.
+Fix: `e2c-bench.sh` now coldplugs (one `modprobe -a` over every device modalias, as udev does),
+names the GPU drivers, logs `E2C modules …`, and waits for the vc4-bound card specifically
+(`E2C drm wait_half_s=`). Re-run queued (`queue15`).

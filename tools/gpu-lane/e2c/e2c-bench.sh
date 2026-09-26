@@ -84,14 +84,31 @@ say boot arm=$ARM label=$LABEL only=$ONLY stkruns=$STKRUNS results=$RES
 say cmdline $(cat /proc/cmdline)
 
 # ---------------------------------------------------------------- drivers
-# No udev: the GPU drivers are modules and nothing loads them for us.
-modprobe vc4 2>&1 | head -3
-modprobe v3d 2>&1 | head -3
+# No udev: the GPU drivers are modules and nothing loads them for us. Loading
+# vc4 and v3d by name is not enough: vc4 is a component driver whose HDMI
+# encoder only binds once its own dependencies are present (the DVP clock,
+# clk-bcm2711-dvp, and the DDC adapter, i2c-brcmstb), which udev's coldplug
+# would normally load from their modaliases. The 2026-09-27 stock run showed
+# exactly that: "vc4-drm gpu: bound fe400000.hvs" and then nothing, no card.
+# So do what udev's coldplug does -- one modprobe per device modalias -- then
+# name the GPU drivers anyway, and wait for the vc4 card below.
+find /sys/devices -name modalias -type f 2>/dev/null | xargs cat 2>/dev/null | sort -u \
+	| xargs -r modprobe -a -q -b 2>/dev/null
+for m in clk-bcm2711-dvp i2c-brcmstb vc4 v3d; do
+	modprobe "$m" 2>&1 | head -3
+done
+say modules $(lsmod | awk 'NR > 1 && $1 ~ /^(vc4|v3d|clk_bcm2711_dvp|i2c_brcmstb|snd_soc_hdmi_codec|cec)$/ { printf "%s ", $1 }')
 i=0
+# Wait for the vc4 (KMS) card, not just any card: v3d's render card appears first.
 while [ $i -lt 40 ]; do
-	ls /dev/dri/renderD128 >/dev/null 2>&1 && ls /dev/dri/card* >/dev/null 2>&1 && break
+	if ls /dev/dri/renderD128 >/dev/null 2>&1; then
+		for c in /sys/class/drm/card[0-9]; do
+			case "$(readlink -f "$c/device/driver" 2>/dev/null)" in *vc4*) break 2 ;; esac
+		done
+	fi
 	sleep 0.5; i=$((i + 1))
 done
+say drm wait_half_s=$i
 # The KMS card is the one bound to vc4 (v3d is render-only). The v3d device's
 # sysfs gpu_stats (kernel >= 6.8) gives per-queue job counts and busy time: the
 # Linux counterpart of the Phoenix E2 bin/render spin times.
