@@ -319,6 +319,9 @@ typedef struct {
 	uint32_t wedges;
 	uint64_t stat_next_us;
 	uint32_t stat_jobs_seen;
+	uint32_t submit_rejects;      /* SUBMIT_* refused (each names itself in a `V3DA reject` line) */
+	uint32_t cl_bcl_wrap;         /* SUBMIT_CL accepted with bcl_end < bcl_start (a chained BCL) */
+	uint32_t cl_render_only;      /* SUBMIT_CL with bcl_start == bcl_end: no bin job (DRM semantics) */
 
 	v3da_bo_t bos[V3DA_MAX_BOS];
 	uint32_t bo_gen[V3DA_MAX_BOS];   /* per-slot handle generation */

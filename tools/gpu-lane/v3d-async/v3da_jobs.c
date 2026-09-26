@@ -745,6 +745,22 @@ static void add_dep(v3da_job_t *j, const v3da_syncobj_t *s)
 }
 
 
+/* Every refused submit names its check and the offending values in one tagged
+ * line: the first 8, then every 256th (a per-frame failure cannot flood the UART;
+ * the cumulative count is also the qstat line's `rej=`). */
+static int submit_reject(int op, int rc, const char *reason, uint32_t v1, uint32_t v2)
+{
+	const char *name = (op == V3DA_OP_SUBMIT_CL) ? "submit_cl" : (op == V3DA_OP_SUBMIT_TFU) ? "submit_tfu" :
+		(op == V3DA_OP_SUBMIT_CSD) ? "submit_csd" : "submit_?";
+
+	srv.submit_rejects++;
+	if ((srv.submit_rejects <= 8u) || ((srv.submit_rejects & 255u) == 0u)) {
+		printf("V3DA reject %s reason=%s rc=%d val=0x%x/0x%x n=%u\n", name, reason, rc, v1, v2, srv.submit_rejects);
+	}
+	return rc;
+}
+
+
 int v3da_submit(v3da_client_t *c, int op, const v3da_submit_t *hdr, const void *data, size_t size,
 	v3da_submit_resp_t *out)
 {
@@ -756,21 +772,26 @@ int v3da_submit(v3da_client_t *c, int op, const v3da_submit_t *hdr, const void *
 	v3da_job_t *first = NULL, *last = NULL;
 	v3da_syncobj_t *s;
 	uint32_t i;
-	int rc;
+	int rc, bin_job = 0;
 
 	switch (op) {
 		case V3DA_OP_SUBMIT_CL:  want_desc = sizeof(v3da_cl_desc_t); break;
 		case V3DA_OP_SUBMIT_TFU: want_desc = sizeof(v3da_tfu_desc_t); break;
 		case V3DA_OP_SUBMIT_CSD: want_desc = sizeof(v3da_csd_desc_t); break;
-		default: return -EINVAL;
+		default: return submit_reject(op, -EINVAL, "op", (uint32_t)op, 0u);
 	}
-	if ((hdr->desc_size != want_desc) || (hdr->nbo > V3DA_SUBMIT_MAX_BOS) ||
-			(hdr->nin > V3DA_SUBMIT_MAX_SEMS) || (hdr->nout > V3DA_SUBMIT_MAX_SEMS)) {
-		return -EINVAL;
+	if (hdr->desc_size != want_desc) {
+		return submit_reject(op, -EINVAL, "desc_size", hdr->desc_size, (uint32_t)want_desc);
+	}
+	if (hdr->nbo > V3DA_SUBMIT_MAX_BOS) {
+		return submit_reject(op, -EINVAL, "nbo", hdr->nbo, V3DA_SUBMIT_MAX_BOS);
+	}
+	if ((hdr->nin > V3DA_SUBMIT_MAX_SEMS) || (hdr->nout > V3DA_SUBMIT_MAX_SEMS)) {
+		return submit_reject(op, -EINVAL, "nsems", hdr->nin, hdr->nout);
 	}
 	need = want_desc + (size_t)hdr->nbo * sizeof(uint32_t) + ((size_t)hdr->nin + hdr->nout) * sizeof(v3da_sem_t);
 	if ((p == NULL) || (size < need)) {
-		return -EINVAL;
+		return submit_reject(op, -EINVAL, "short_data", (uint32_t)size, (uint32_t)need);
 	}
 	bos = (const uint32_t *)(p + want_desc);
 	in = (const v3da_sem_t *)(p + want_desc + (size_t)hdr->nbo * sizeof(uint32_t));
@@ -778,27 +799,50 @@ int v3da_submit(v3da_client_t *c, int op, const v3da_submit_t *hdr, const void *
 
 	for (i = 0u; i < hdr->nin; i++) {
 		if (v3da_syncobj_get(c, in[i].handle) == NULL) {
-			return -ENOENT;
+			return submit_reject(op, -ENOENT, "in_sync", in[i].handle, i);
 		}
 	}
 	for (i = 0u; i < hdr->nout; i++) {
 		if (v3da_syncobj_get(c, outs[i].handle) == NULL) {
-			return -ENOENT;
+			return submit_reject(op, -ENOENT, "out_sync", outs[i].handle, i);
 		}
 	}
 	if (op == V3DA_OP_SUBMIT_CL) {
 		const v3da_cl_desc_t *d = (const v3da_cl_desc_t *)p;
-		if ((d->bcl_end < d->bcl_start) || (d->rcl_end <= d->rcl_start)) {
-			return -EINVAL;
+		/* bcl_end/rcl_end are CLE stop addresses, not range ends: a list that grew
+		 * past its first BO ends in a later BO of a BRANCH chain, which the VA
+		 * allocator (first-fit holes) may well have placed BELOW the first one.
+		 * DRM (and the old in-process lane) never compared them; an ordering check
+		 * here dropped whole frames (EINVAL analysis, M1 doc). DRM's one rule is
+		 * kept: bcl_start == bcl_end means "no bin job". An empty RCL is still
+		 * refused: CT1 would be kicked on nothing, and no client sends one. */
+		if (d->rcl_start == d->rcl_end) {
+			return submit_reject(op, -EINVAL, "rcl_empty", d->rcl_start, d->rcl_end);
 		}
+		bin_job = (d->bcl_start != d->bcl_end) ? 1 : 0;
 	}
 
 	rc = v3da_bo_pin_for_job(bos, hdr->nbo);
 	if (rc != 0) {
-		return rc;
+		for (i = 0u; (i < hdr->nbo) && (v3da_bo_find(bos[i]) != NULL); i++) {
+		}
+		return submit_reject(op, rc, "bo_handle", (i < hdr->nbo) ? bos[i] : 0u, i);
+	}
+	if (op == V3DA_OP_SUBMIT_CL) {
+		const v3da_cl_desc_t *d = (const v3da_cl_desc_t *)p;
+		if (d->bcl_end < d->bcl_start) {
+			srv.cl_bcl_wrap++;
+			if (srv.cl_bcl_wrap <= 4u) {
+				printf("V3DA srv note submit_cl chained BCL ends below its start bcl=0x%08x..0x%08x rcl=0x%08x..0x%08x "
+					"accepted n=%u\n", d->bcl_start, d->bcl_end, d->rcl_start, d->rcl_end, srv.cl_bcl_wrap);
+			}
+		}
+		if (bin_job == 0) {
+			srv.cl_render_only++;
+		}
 	}
 
-	if (op == V3DA_OP_SUBMIT_CL) {
+	if (bin_job != 0) {
 		first = job_new(c, V3DA_Q_BIN, now);
 		last = job_new(c, V3DA_Q_RENDER, now);
 		if ((first == NULL) || (last == NULL)) {
@@ -813,7 +857,10 @@ int v3da_submit(v3da_client_t *c, int op, const v3da_submit_t *hdr, const void *
 		last->bin = first;
 	}
 	else {
-		first = job_new(c, (op == V3DA_OP_SUBMIT_TFU) ? V3DA_Q_TFU : V3DA_Q_CSD, now);
+		/* TFU, CSD, or a render-only CL (its in-syncs, BCL stage included, all
+		 * gate the render: never weaker than DRM, which drops in_sync_bcl then). */
+		first = job_new(c, (op == V3DA_OP_SUBMIT_CL) ? V3DA_Q_RENDER : (op == V3DA_OP_SUBMIT_TFU) ? V3DA_Q_TFU :
+			V3DA_Q_CSD, now);
 		if (first == NULL) {
 			v3da_bo_unpin(bos, hdr->nbo);
 			return -ENOMEM;
@@ -1281,14 +1328,15 @@ static void stat_print(uint64_t now)
 	srv.stat_jobs_seen = 0u;
 	acct(now);
 	printf("V3DA srv qstat t=%llums mode=%s knobs=0x%02x bin=%u/%llums render=%u/%llums tfu=%u/%llums csd=%u/%llums "
-		"busy=%llums overlap=%llums win=%llums oom=%u starved=%u err=%u wedges=%u flips=%u pan_err=%u px_chg=%u/%u\n",
+		"busy=%llums overlap=%llums win=%llums oom=%u starved=%u err=%u wedges=%u flips=%u pan_err=%u px_chg=%u/%u "
+		"rej=%u bclwrap=%u ronly=%u\n",
 		(unsigned long long)(now / 1000u), (srv.mode == V3DA_MODE_SERIAL) ? "serial" : "pipeline", srv.knobs,
 		b->st_jobs, (unsigned long long)(b->st_busy_us / 1000u), r->st_jobs, (unsigned long long)(r->st_busy_us / 1000u),
 		t->st_jobs, (unsigned long long)(t->st_busy_us / 1000u), c->st_jobs, (unsigned long long)(c->st_busy_us / 1000u),
 		(unsigned long long)(srv.any_busy_us / 1000u), (unsigned long long)(srv.overlap_us / 1000u),
 		(unsigned long long)((now - srv.acct_t0_us) / 1000u), b->st_oom, srv.ovf.starved,
 		b->st_errors + r->st_errors + t->st_errors + c->st_errors, srv.wedges, srv.scan.flips, srv.scan.pan_err,
-		srv.scan.px_changed, srv.scan.px_sampled);
+		srv.scan.px_changed, srv.scan.px_sampled, srv.submit_rejects, srv.cl_bcl_wrap, srv.cl_render_only);
 }
 
 

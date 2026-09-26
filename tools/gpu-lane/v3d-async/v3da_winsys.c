@@ -564,6 +564,24 @@ static void after_submit(const uint32_t *bos, uint32_t nbo, const v3da_sem_t *ou
 }
 
 
+/* A failed submit is dropped GPU work (Mesa prints its "Expect corruption" line
+ * only ONCE per process): name every one, with where it failed - `sems` (this
+ * adapter's extension/syncobj flattening) or `server` (libv3da-client or the
+ * server; the server's own `V3DA reject` line then names the check). The first 8,
+ * then every 256th. */
+static void submit_failed(const char *op, const char *where, int rc, uint32_t flags, uint32_t nbo,
+	uint32_t a, uint32_t b, uint32_t c, uint32_t d)
+{
+	static uint32_t n;
+
+	n++;
+	if ((n <= 8u) || ((n & 255u) == 0u)) {
+		fprintf(stderr, "v3da-winsys: reject %s where=%s rc=%d flags=0x%x nbo=%u desc=0x%08x/0x%08x/0x%08x/0x%08x n=%u\n",
+			op, where, rc, flags, nbo, a, b, c, d, n);
+	}
+}
+
+
 static int ioc_submit_cl(const struct drm_v3d_submit_cl *s)
 {
 	v3da_cl_desc_t d;
@@ -571,6 +589,7 @@ static int ioc_submit_cl(const struct drm_v3d_submit_cl *s)
 	v3da_submit_resp_t r;
 	uint32_t nin, nout, lin[2], lfl[2];
 	const uint32_t *bos = (const uint32_t *)(uintptr_t)s->bo_handles;
+	uint32_t nbo = (bos != NULL) ? s->bo_handle_count : 0u;
 	int rc;
 
 	d.bcl_start = s->bcl_start;
@@ -587,15 +606,16 @@ static int ioc_submit_cl(const struct drm_v3d_submit_cl *s)
 	lfl[1] = V3DA_SEM_RENDER;
 	rc = collect_sems(s->flags, s->extensions, lin, lfl, 2u, s->out_sync, 1, in, &nin, out, &nout);
 	if (rc != 0) {
+		submit_failed("submit_cl", "sems", rc, s->flags, nbo, d.bcl_start, d.bcl_end, d.rcl_start, d.rcl_end);
 		return fail(rc);
 	}
-	rc = v3da_submit(&A.conn, V3DA_OP_SUBMIT_CL, &d, sizeof(d), (bos != NULL) ? bos : NULL,
-		(bos != NULL) ? s->bo_handle_count : 0u, in, nin, out, nout, &r);
+	rc = v3da_submit(&A.conn, V3DA_OP_SUBMIT_CL, &d, sizeof(d), bos, nbo, in, nin, out, nout, &r);
 	if (rc != 0) {
+		submit_failed("submit_cl", "server", rc, s->flags, nbo, d.bcl_start, d.bcl_end, d.rcl_start, d.rcl_end);
 		return fail(rc);
 	}
 	A.n_cl++;
-	after_submit(bos, (bos != NULL) ? s->bo_handle_count : 0u, out, nout, &r, 1);
+	after_submit(bos, nbo, out, nout, &r, 1);
 	return 0;
 }
 
@@ -623,10 +643,12 @@ static int ioc_submit_tfu(const struct drm_v3d_submit_tfu *t)
 	}
 	rc = collect_sems(t->flags, t->extensions, &t->in_sync, &lfl, 1u, t->out_sync, 0, in, &nin, out, &nout);
 	if (rc != 0) {
+		submit_failed("submit_tfu", "sems", rc, t->flags, nbo, d.icfg, d.iia, d.ioa, d.ios);
 		return fail(rc);
 	}
 	rc = v3da_submit(&A.conn, V3DA_OP_SUBMIT_TFU, &d, sizeof(d), bos, nbo, in, nin, out, nout, &r);
 	if (rc != 0) {
+		submit_failed("submit_tfu", "server", rc, t->flags, nbo, d.icfg, d.iia, d.ioa, d.ios);
 		return fail(rc);
 	}
 	A.n_tfu++;
@@ -648,11 +670,15 @@ static int ioc_submit_csd(const struct drm_v3d_submit_csd *s)
 	memcpy(d.coef, s->coef, sizeof(d.coef));
 	rc = collect_sems(s->flags, s->extensions, &s->in_sync, &lfl, 1u, s->out_sync, 0, in, &nin, out, &nout);
 	if (rc != 0) {
+		submit_failed("submit_csd", "sems", rc, s->flags, (bos != NULL) ? s->bo_handle_count : 0u, d.cfg[0], d.cfg[1],
+			d.cfg[4], d.cfg[5]);
 		return fail(rc);
 	}
 	rc = v3da_submit(&A.conn, V3DA_OP_SUBMIT_CSD, &d, sizeof(d), bos, (bos != NULL) ? s->bo_handle_count : 0u,
 		in, nin, out, nout, &r);
 	if (rc != 0) {
+		submit_failed("submit_csd", "server", rc, s->flags, (bos != NULL) ? s->bo_handle_count : 0u, d.cfg[0],
+			d.cfg[1], d.cfg[4], d.cfg[5]);
 		return fail(rc);
 	}
 	A.n_csd++;

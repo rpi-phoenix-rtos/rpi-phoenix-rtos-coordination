@@ -497,8 +497,13 @@ typedef struct {
  * ABI stays fixed whatever the DRM uapi snapshot does. The client library fills
  * them from drm_v3d_submit_cl / _tfu / _csd field by field. */
 typedef struct {
-	uint32_t bcl_start, bcl_end;   /* binner control list [start, end) */
-	uint32_t rcl_start, rcl_end;   /* render control list [start, end) */
+	/* CTnQBA / CTnQEA: where the CLE starts and the address at which it stops.
+	 * NOT an address range: a list that outgrew its BO continues through a BRANCH
+	 * in a new BO (Mesa v3d_cl_ensure_space_with_branch), so `end` lies in the LAST
+	 * BO of the chain and may be below `start`. bcl_start == bcl_end = no bin job
+	 * (render only), as in DRM. */
+	uint32_t bcl_start, bcl_end;   /* binner control list */
+	uint32_t rcl_start, rcl_end;   /* render control list */
 	uint32_t qma, qms;             /* tile-allocation memory address / size (CT0QMA/QMS) */
 	uint32_t qts;                  /* tile-state address (CT0QTS), 0 = none */
 	uint32_t flags;                /* V3DA_CL_* */
