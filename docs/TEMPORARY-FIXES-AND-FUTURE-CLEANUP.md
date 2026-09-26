@@ -1215,7 +1215,7 @@ under TD-13-spawn-cap and the priority ladder.
 
 ### TD-14-console-open-fastpath: skip duplicate `/dev/console` canonicalization
 
-- **Status:** ACTIVE WORKAROUND (libphoenix `3c76bba`, 2026-05-02)
+- **Status:** ✅ RESOLVED 2026-09-26 — removed; `open()` matches upstream again (KNOWN-ISSUES D2 closed). Originally: ACTIVE WORKAROUND (libphoenix `3c76bba`, 2026-05-02).
 - **Where:** `sources/libphoenix/unistd/file.c` `open()`.
 - **Why:** Real Pi logs showed `open("/dev/console", O_RDWR)` spending most
   of the capture in the second `resolve_path()` pass. The earlier `stat()`
@@ -1225,7 +1225,7 @@ under TD-13-spawn-cap and the priority ladder.
 - **Risk accepted:** This relies on `/dev/console` being a direct alias, not
   a symlink that needs final resolution. Remove it together with
   TD-14-console-alias once canonical `/dev` traversal is fast.
-- **Marker grep:** `grep -n "TD-14-console-open-fastpath" sources/libphoenix/unistd/file.c`
+- **Marker grep:** `grep -n "TD-14-console-open-fastpath" sources/libphoenix/unistd/file.c` — returns nothing since 2026-09-26 (resolved)
 
 ### TD-14-tiocspgrp-pgrp: TIOCSPGRP stores pgrp directly
 
@@ -1272,7 +1272,7 @@ under TD-13-spawn-cap and the priority ladder.
 
 ### TD-14-deferred-fbcon: pl011-tty defers fbcon init to main thread
 
-- **Status:** ACTIVE WORKAROUND (devices `7929591`)
+- **Status:** ✅ RESOLVED — stale entry, closed 2026-09-26. `main()` now initialises fbcon before the klog and drain threads start (#127), and the marker below no longer exists. Originally: ACTIVE WORKAROUND (devices `7929591`).
 - **Where:** `sources/phoenix-rtos-devices/tty/pl011-tty/pl011-tty.c`.
   `pl011_fbcon_init()` was previously called inline at the end of
   `pl011_init()`; it's now invoked from `main()` *after*
@@ -1296,7 +1296,7 @@ under TD-13-spawn-cap and the priority ladder.
 
 ### TD-14-tty0-nonfatal: pl011_createTty0() failure non-fatal
 
-- **Status:** ACTIVE WORKAROUND (devices `8b80f4c`, 2026-05-02)
+- **Status:** ✅ RESOLVED 2026-09-26 — `pl011_createTty0()` deleted; `/dev/tty0` and `/dev/console` both register through `create_dev()`, fatal on failure, as upstream's UART drivers do. Measured before the change: 0 `tty0 register failed` in 7 067 boot logs. Originally: ACTIVE WORKAROUND (devices `8b80f4c`, 2026-05-02).
 - **Where:** `sources/phoenix-rtos-devices/tty/pl011-tty/pl011-tty.c`
   in `main()`. `pl011_createTty0()`'s return value used to be fatal;
   now its failure is logged ("tty0 failed (non-fatal)") and `main()`
@@ -1317,11 +1317,11 @@ under TD-13-spawn-cap and the priority ladder.
     notification-based wait (TD-14-startup-settle below).
   - Restore the fatal path once IPC fragility is rooted out and
     pl011_createTty0 always succeeds.
-- **Marker grep:** `grep -n "TD-14-tty0-nonfatal" sources/phoenix-rtos-devices/tty/pl011-tty/pl011-tty.c`
+- **Marker grep:** `grep -n "TD-14-tty0-nonfatal" sources/phoenix-rtos-devices/tty/pl011-tty/pl011-tty.c` — returns nothing since 2026-09-26 (resolved)
 
 ### TD-14-pl011-retry: reduced lookup-devfs retries inside createTty0
 
-- **Status:** ACTIVE TUNING (devices `8b80f4c`, 2026-05-02)
+- **Status:** ✅ RESOLVED 2026-09-26 — removed with `pl011_createTty0()`. Originally: ACTIVE TUNING (devices `8b80f4c`, 2026-05-02).
 - **Where:** `pl011_createTty0()`. The retry count was 50 (5 s wall);
   reduced to 30 (3 s wall) so the loop falls through to the
   TD-14-tty0-nonfatal path more quickly when devfs is unresponsive.
@@ -1331,11 +1331,11 @@ under TD-13-spawn-cap and the priority ladder.
   non-fatal.
 - **Resolution requirements:** Restore to 50 (or remove entirely)
   alongside reverting TD-14-tty0-nonfatal.
-- **Marker grep:** `grep -n "TD-14-pl011-retry" sources/phoenix-rtos-devices/tty/pl011-tty/pl011-tty.c`
+- **Marker grep:** `grep -n "TD-14-pl011-retry" sources/phoenix-rtos-devices/tty/pl011-tty/pl011-tty.c` — returns nothing since 2026-09-26 (resolved)
 
 ### TD-14-psh-retry: PSH_TTYOPEN_RETRIES retry budget
 
-- **Status:** ACTIVE TUNING, **mostly wound down** (value verified 2026-06-09).
+- **Status:** ✅ RESOLVED 2026-09-26 — **accepted fork deviation** (owner, 2026-09-26): same 500 ms budget as upstream's 5 × 100 ms, in 10 ms steps so the shell starts as soon as the console exists. The marker is now a "Deliberate deviation from upstream" comment.
   The historical 20 s budget (200 × 100 ms) has since been **cut ~40× to ~0.5 s**:
   current `pshapp.c` has `PSH_TTYOPEN_RETRIES 50` × `PSH_TTYOPEN_RETRY_US 10000`
   (10 ms) = 0.5 s wall. That large reduction reflects that the underlying IPC
@@ -1348,11 +1348,11 @@ under TD-13-spawn-cap and the priority ladder.
   enough so it was bumped to 20 s.
 - **Resolution requirements:** Reduce toward the upstream default (or drop the
   loop) once startup ordering is fully deterministic; 0.5 s is already close.
-- **Marker grep:** `grep -n "TD-14-psh-retry" sources/phoenix-rtos-utils/psh/pshapp/pshapp.c`
+- **Marker grep:** `grep -n "Deliberate deviation" sources/phoenix-rtos-utils/psh/pshapp/pshapp.c` (the TD marker was replaced 2026-09-26)
 
 ### TD-14-ttyopen-nonfatal: psh_run continues if /dev/console open fails
 
-- **Status:** ACTIVE WORKAROUND (utils `b25b0f8`, 2026-05-02)
+- **Status:** ✅ RESOLVED 2026-09-26 — upstream's `return err` restored. The only `ttyopen … failed` in 7 067 boot logs (`20260901-193504-sd-revert-check`) came from a boot whose ext2 root was already broken, not from console latency. Originally: ACTIVE WORKAROUND (utils `b25b0f8`, 2026-05-02).
 - **Where:** `sources/phoenix-rtos-utils/psh/pshapp/pshapp.c`,
   `psh_run()`. The retry loop's `if (err < 0) return err;` is
   replaced with a warning print and the function continues with
@@ -1367,7 +1367,7 @@ under TD-13-spawn-cap and the priority ladder.
 - **Risk accepted:** Without `/dev/console`, psh has no usable
   stdin from a terminal. The shell prompt prints but interactive
   input doesn't work.
-- **Marker grep:** `grep -n "TD-14-ttyopen-nonfatal" sources/phoenix-rtos-utils/psh/pshapp/pshapp.c`
+- **Marker grep:** `grep -n "TD-14-ttyopen-nonfatal" sources/phoenix-rtos-utils/psh/pshapp/pshapp.c` — returns nothing since 2026-09-26 (resolved)
 
 ### TD-14-devfs-direct: kernel stores the `devfs` namespace OID directly
 
@@ -2186,16 +2186,16 @@ markers. Its debt idiom is `BRING-UP` prose instead.
 | TD-13-spawn-cap | RESOLVED | #132 direct dump proved list circular on real HW; cap removed in #158 (kernel `1594a550`), diagnostic reverted (`2ea366be`) |
 | TD-14 | RESOLVED 2026-05-02; refined further by libphoenix `bd61195` + kernel `c8a81d5e` | devfs fast-path predicate restored after Pass-4 regression |
 | TD-14-stat-skip | RESOLVED 2026-05-02 | open() stat skip removed |
-| TD-14-deferred-fbcon | likely RESOLVED via TD-12 speed bundle | re-verify in devices `3899d38` neighborhood |
-| TD-14-tty0-nonfatal | LIKELY STILL ACTIVE (acceptable risk per TD-12 baseline) | re-verify |
-| TD-14-pl011-retry | superseded by TD-12 retry tuning (utils `18aed2a`: 50 × 10 ms) | n/a |
-| TD-14-psh-retry | **STILL ACTIVE** (row corrected 2026-09-17 — it said "superseded … n/a") | The ID was retired but the debt was not: the marker is live at `pshapp.c:70` and `PSH_TTYOPEN_RETRIES 50` / `PSH_TTYOPEN_RETRY_US 10000` (`:73,:79`) still deviate from the upstream default (20 × 100 ms). TD-12's tuning *set* this value, it did not remove the deviation. Close it by restoring the upstream default once devfs registration is fast, then drop the marker. |
-| TD-14-ttyopen-nonfatal | LIKELY STILL ACTIVE | re-verify against utils `18aed2a` |
+| TD-14-deferred-fbcon | ✅ RESOLVED 2026-09-26 (KNOWN-ISSUES D2 closed) — stale | the deferral is gone: `main()` now initialises fbcon *before* the klog and drain threads start (#127), and the `fbcon init deferred` marker no longer exists |
+| TD-14-tty0-nonfatal | ✅ RESOLVED 2026-09-26 (KNOWN-ISSUES D2 closed) | the hand-rolled `pl011_createTty0()` is deleted; `/dev/tty0` registers through `create_dev()` like `/dev/console` and upstream's UART drivers, fatal on failure (0 `tty0 register failed` in 7 067 boot logs) |
+| TD-14-pl011-retry | ✅ RESOLVED 2026-09-26 (KNOWN-ISSUES D2 closed) | went with `pl011_createTty0()`; `create_dev()` has its own devfs retry |
+| TD-14-psh-retry | ✅ RESOLVED 2026-09-26 (KNOWN-ISSUES D2 closed) — accepted fork deviation | 50 × 10 ms has the same 500 ms budget as upstream's 5 × 100 ms, only a finer step; the marker is now a "Deliberate deviation from upstream" comment |
+| TD-14-ttyopen-nonfatal | ✅ RESOLVED 2026-09-26 (KNOWN-ISSUES D2 closed) | upstream's `return err` restored. The one `ttyopen … failed` in 7 067 logs was a boot whose ext2 root was already broken (`mkdir /dev: Not a directory`, posixsrv failing), not a console race |
 | TD-14-devfs-direct | ✅ RESOLVED 2026-09-26 — accepted fork deviation (owner rule) | marker is now a "Deliberate deviation" comment |
-| TD-14-console-alias | LIKELY STILL ACTIVE | re-verify |
-| TD-14-psh-ttyopen-errno | STILL ACTIVE diagnostic | low priority cleanup |
+| TD-14-console-alias | ✅ RESOLVED 2026-09-26 (KNOWN-ISSUES D2 closed) | the extra `portRegister("/dev/console")` is removed: the canonical path resolves on every lane (dummyfs `bind devfs /dev`, ext2 bind on SD, and the NFS server re-binds `/dev` at takeover) |
+| TD-14-psh-ttyopen-errno | ✅ RESOLVED 2026-09-26 (KNOWN-ISSUES D2 closed) | the errno print went with the non-fatal path |
 | TD-14-probe-strip | RESOLVED 2026-05-02 + Pass-4 cleanup 2026-05-18 (kernel `334638ee`, libphoenix `bd61195`, utils `18aed2a`) | all paths stripped |
-| TD-14-console-open-fastpath | STILL ACTIVE — **tracked with the `/dev/console` fallbacks in KNOWN-ISSUES D2** | not accepted as a permanent deviation: its own comment says "during Pi 4 bring-up", and it is only correct while TD-14-console-alias exists |
+| TD-14-console-open-fastpath | ✅ RESOLVED 2026-09-26 (KNOWN-ISSUES D2 closed) | `open()` is upstream's again: no `/dev/console` special case, one `resolve_path()` for every name |
 | TD-14-tiocspgrp-pgrp | ✅ RESOLVED 2026-09-26 — accepted fork deviation; ours is POSIX-correct | commented so an upstream merge does not revert it |
 | TD-14-psh-debug-probes | RESOLVED in utils `18aed2a` (Pass-4 strip) | n/a |
 | TD-15 | MOSTLY RESOLVED (2026-05-29) | DONE: phase 1; 4 GiB usable (ddrh); DTB `/memory@0`+`/reserved-memory`+`/soc/dma-ranges` parsed & consumed by pmap; `dtb_armToBus` helper present. REMAINING: plo syspage map still hardcoded (mis-maps 2/8 GiB boards — substantive, deferred to careful work); VC4 quiesce + mailbox-move (low value); drivers use identity va2pa (do NOT naively wire dtb_armToBus — would break GENET, see entry hazard note) |
