@@ -179,6 +179,7 @@ static int hz_quiet;
  * what, and returns a canned hit. It proves the call site executes and passes the
  * page-aligned physical address -- everything except the driver's own table. */
 static int hz_boLookupCalls;
+static int hz_boProbeCalls0;
 static unsigned long hz_boLookupArg;
 
 int v3d_c1_lookup_pa(unsigned long pa, unsigned int *npages, unsigned int *ord,
@@ -2147,6 +2148,7 @@ static int hz_p4Probes(void)
 
 	hz_reset();
 	printf("\n--- page-poison probes: can each offset fail? ---\n");
+	hz_boProbeCalls0 = hz_boLookupCalls;
 	for (i = 0; i < sizeof(offs) / sizeof(offs[0]); i++) {
 		unsigned char *b = phx_malloc(64u * 1024u);
 		void *keep;
@@ -2180,6 +2182,22 @@ static int hz_p4Probes(void)
 		phx_free(keep);
 	}
 	printf("  (a probe with no 'PAGE POISON BROKEN / p4off' line above is BLIND)\n");
+
+	/* The POISON path must ask the BO attribution too.
+	 *
+	 * It was wired only to the corrupt-header path at first, which is the mirror
+	 * image of the mistake that path was created to fix -- and hardware showed the
+	 * cost immediately: run c1pfn1 fired with TWO poison breaks and ZERO header
+	 * reports, so a rare fire produced no attribution at all. Both detectors see
+	 * the same defect and both know a physical page; assert both ask. */
+	if (hz_boLookupCalls > hz_boProbeCalls0) {
+		printf("  poison path asked the BO attribution %d time(s) -- wired\n",
+			hz_boLookupCalls - hz_boProbeCalls0);
+	}
+	else {
+		printf("  poison path did NOT ask the BO attribution   <== DETECTOR FAILED\n");
+		bad++;
+	}
 	return bad;
 }
 
