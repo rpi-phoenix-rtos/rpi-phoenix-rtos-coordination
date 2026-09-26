@@ -94,3 +94,18 @@ throughput.
 **Issue:** **Five unmerged local branches hold work that was never landed or discarded.** ★ `devices/wip/rpi4-wifi-glom` triaged 2026-09-23 and it is **landable**: SDPCM glom de-aggregation (the firmware packs several subframes into one SDIO superframe; without de-aggregation you get one per read, which is the 0.14 MB/s), **one file, +201/−14, zero leftover diagnostics**, it **compiles clean against today's tree**, and `diag_wifiFrameRx` puts it in the **real RX path** feeding the `/dev/wifidata` lwip seam — so the claimed 0.14 → 3.0 MB/s is about networking, not a probe. The others: `lwip/agent/rpi4-genet` (+115), `lwip/full-history-backup` (+178), `lwip/rpi4-port-clean` (+6, drops unused Cypress WHD source), `lwip/wifi-wip` (+146). ✅ *22 merged branches deleted 2026-09-23, each verified in `master` first.*
 
 **Last measured:** Open — a keep/land/discard call per branch. **`rpi4-wifi-glom` needs only an AP + credentials to verify**, which is yours; before landing, check its file-scope `g_glom_*` state against however many consumers the driver has. ↩ *Correction to my own note: `syntax-check.sh` cannot check this file not because of a tooling gap but because the driver is **not in the project build at all** — it is standalone by design. The right instrument is its own `build-standalone.sh`, and under that **both master and this branch link with 0 undefined symbols** against today's tree.* ↩ **2026-09-23 — `rpi4-wifi-glom` never needed an AP: it was already landed.** Master carries `4e8a7e9 rpi4-wifi: de-aggregate SDPCM glom frames -- RX 0.14 -> 3.0 MB/s`, and master's `rpi4-wifi.c` has 69 `glom` mentions. Diffed master→branch: **+2/−16**, and the "+2" are merely the *pre-improvement* versions of lines master later fixed (`843d193`, mailbox-failure reporting) — the branch is strictly behind master with nothing unique. **Deleted.** ⚠ My earlier `master..branch` reading of "93 files, −10150 lines" was the wrong comparison: the branch forks from 2026-09-02, so that diff shows master's newer work as deletions. The branch's own change is the `+201/−14` the row already claimed. **Four `lwip/*` branches remain** (`agent/rpi4-genet`, `full-history-backup`, `rpi4-port-clean`, `wifi-wip`) and are still a keep/land/discard call.
+
+**2026-09-26 (later) — runtime join.** The netif's join thread is now a supervisor that lives as
+long as the netif: it re-reads `/etc/wifi.conf` every 3 s (by content — NFS attribute caching and the
+boot-time clock step make mtime unreliable) and joins, rejoins or leaves to match. Leaving releases
+the DHCP lease while the link can still carry the DHCPRELEASE, then sends the daemon's new `leave`
+(`BRCMF_C_DISASSOC`). The user tool: `wifi connect <ssid> <psk>` (validates, writes the file
+atomically, waits for the lease), `wifi disconnect`, `wifi status`. Verified in `wifirt1-d2`
+(lwip `8d7940e`, devices `fe884bf`): with no credentials the netif waited; connect → lease
+`10.43.0.89` → ping 5/5; disconnect → **DHCPRELEASE seen on the AP**, address gone; connect again
+→ fresh DISCOVER…ACK → ping 5/5. WiFi takes the default route only when Ethernet has no usable
+address (not provable on netboot, where genet holds one). Known gaps: the first `joinwpa` after the
+daemon starts returns `setssid=-100` (no SET_SSID event in 5 tries) and the retry 10 s later
+succeeds — seen in both runs so far, cause unknown (the join already does CLM + `WLC_UP` itself, so
+"needs a scan first" is not it); link loss after a join is not detected, because the daemon's data
+path drops channel-1 event frames.

@@ -548,8 +548,8 @@ Flagged so nothing above reads as more finished than it is.
   consumes no kernel fd, so it never reaches `EMFILE` — a design difference, not addressed.
 * `libm/phoenix` remains incomplete against C99 (upstream's own `libm/README.md` says so); the fork
   filled only what its ports needed.
-* One transitional marker survives: `TODO(TD-14-console-open-fastpath)` in the `/dev/console` open path.
-  The rest of the TD-12/13/14 UART trace probes were added and stripped again within this range and
+* The last transitional marker, `TODO(TD-14-console-open-fastpath)` in the `/dev/console` open path,
+  was removed 2026-09-26 (`a844f10`): `open()` is upstream's again. The TD-12/13/14 UART trace probes were added and stripped again within this range and
   leave no net diff, as does `d5461a9` (reverted by `4b5cc61`).
 ## Device drivers, USB, networking, filesystems
 
@@ -579,7 +579,7 @@ All are userspace servers in the standard Phoenix idiom (`mmap(MAP_PHYSMEM)` + `
 | HDMI framebuffer | `devices/video/rpi4-fb/` | `/dev/fb0` (read/write + `RPI4FB_GETMODE`) | Byte read/write and geometry only. Deliberately **no** `FBIOGET_*` veneer and **no** `mmap(fd,0)` of the surface (needs new kernel VM work); no arbitration against the boot console. |
 | ★ HDMI framebuffer console + PL011 UART tty | `devices/tty/pl011-tty/` (+ vendored `teken/`) | `/dev/tty0`, `/dev/console`, `FBCONSETMODE` | Full VT100/xterm console driven by FreeBSD `teken` (BSD-2). GNU nano and mc render correctly. |
 | BCM2711 EMMC2 SD card | `devices/storage/bcm2711-emmc/` | `/dev/mmcblk0`, ext2 root | Boots from SD. UHS-I DDR50, 128 KiB multi-block transfers, **ADMA2 scatter-gather for reads *and* writes** (§4). |
-| BCM43455 SDIO WiFi | `devices/wifi/rpi4-wifi/` (4 805 lines) + `lwip/drivers/wifi43455.c` | `/dev/wifi` (text scan/ctl), `/dev/wifidata` (raw frames), `wifi` CLI, lwIP netif `wl2` | Firmware download, WPA2 join via the firmware supplicant, full-MTU data path, DHCP lease over the air. Throughput is poll-bound (§4). |
+| BCM43455 SDIO WiFi | `devices/wifi/rpi4-wifi/` (4 870 lines) + `lwip/drivers/wifi43455.c` | `/dev/wifi` (text scan/ctl, incl. `leave`/`status`), `/dev/wifidata` (raw frames), `wifi` CLI (`connect`/`disconnect`/`status`/`scan`), lwIP netif `wl2` | Firmware download, WPA2 join via the firmware supplicant, full-MTU data path. Ordinary sockets route over the netif (ping 5/5, AP-side capture); the netif joins, rejoins and leaves at run time by following `/etc/wifi.conf`, releasing its DHCP lease on leave. Throughput is poll-bound (§4). |
 | BCM43455 Bluetooth | `devices/bt/rpi4-hci/` | `/dev/hci0` (raw H4 HCI), `btctl` | Controller reset, patch-RAM upload, `BD_ADDR`, HCI inquiry. Raw HCI byte stream only — no host stack (L2CAP/GAP) above it. |
 | PWM audio (3.5 mm jack) | `devices/audio/rpi4-audio/` | `/dev/audio0` (s16 PCM write) | Self-chained DMA ring, DREQ-paced, with playback-rate backpressure and PIO fallback. No `snd` backend; audible sign-off is attended. |
 | SoC thermal / throttle | `devices/sensors/rpi4-thermal/` | `/dev/thermal`, `/dev/throttled` | Complete for what the SoC allows: telemetry only, the VideoCore firmware owns the trip point. Then used to answer the obvious question about a passively cooled board rendering 3D: **6.3 min under QuakeSpasm, 35.0 °C → a 53–55 °C plateau (flat from t = 240 s), `throttle=0x0` on all 19 samples**, 0 faults — no under-voltage, no ARM capping, no sticky bits, ~5 °C of headroom to the first soft cap. Limits: 6.3 min not 30, one board, open-air bench. |
@@ -986,7 +986,12 @@ mtu/hwaddr/flags defaults only to a hardcoded list of driver names, so the drive
 including `NETIF_FLAG_UP` (without it `dhcp_start()` returns `ERR_ARG`, which showed up on hardware as
 `dhcp_start: -16` right after a successful join); and since the WiFi daemon starts *after* lwIP, init
 must register link-DOWN and wait for its device files rather than requiring them. It also stopped calling
-`netif_set_default()` unconditionally, which had been silently pushing all off-subnet traffic over WiFi.
+`netif_set_default()` unconditionally, which had been silently pushing all off-subnet traffic over WiFi;
+it now takes the default route only when the primary interface has no usable address (an SD boot with
+no cable), which the old `netif_default == NULL` test could never detect because genet registers first.
+The join thread is a supervisor rather than a one-shot: it follows `/etc/wifi.conf` by content, and every
+lwIP mutation (link up/down, `dhcp_start`, `dhcp_release_and_stop`, the default route) goes through
+`netifapi_netif_common()` so it runs in the tcpip thread and completes before the thread moves on.
 
 **NFS.** `filesystems/nfs/` is a new userspace NFSv4 client filesystem server on libnfs (`srv.c`,
 `nfs_ops.c`, `nfs_node.c`, ~2 700 lines) with a node cache keyed by both path and id, a filehandle
