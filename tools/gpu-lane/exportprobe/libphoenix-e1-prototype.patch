@@ -1,0 +1,31 @@
+diff --git a/include/sys/mman.h b/include/sys/mman.h
+index dd84e49..b058fb7 100644
+--- a/include/sys/mman.h
++++ b/include/sys/mman.h
+@@ -66,6 +66,26 @@ extern int munlockall(void);
+ extern addr_t va2pa(void *va);
+ 
+ 
++/* Memory export (Phoenix-specific).
++ *
++ * memExport() publishes the page-aligned range [vaddr, vaddr + size) of the caller's
++ * MAP_ANONYMOUS | MAP_CONTIGUOUS mapping under *oid, whose port must be one the caller owns.
++ * Any process holding a descriptor that carries that oid (opened through the owner's
++ * namespace, or received over SCM_RIGHTS) can then mmap() the same physical pages.
++ *
++ * The memory type of the caller's mapping (cached, or MAP_UNCACHED) is fixed for the export:
++ * mmap() with any other type, or past the end, fails with EINVAL. The pages stay allocated
++ * until the export is withdrawn -- memUnexport(), or release of the port -- and the last
++ * mapping is gone. Mappings of exported memory are shared, not copied, across fork().
++ *
++ * Both return 0 or a negative error code (EPERM: port not owned by the caller, EINVAL: range
++ * not exportable, EEXIST: oid in use, ENOENT: nothing exported under oid). */
++extern int memExport(const oid_t *oid, void *vaddr, size_t size);
++
++
++extern int memUnexport(const oid_t *oid);
++
++
+ #ifdef __cplusplus
+ }
+ #endif
