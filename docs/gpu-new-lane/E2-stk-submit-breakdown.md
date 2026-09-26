@@ -232,3 +232,17 @@ runs it at 30+ — and STK's fps is known to be resolution-independent, so this 
 render phase itself is ~3× too slow → experiment **E2b** (`E2b-v3d-render-slowness.md`) investigates
 tiling (RASTER vs UIF), MMU/cache configuration, per-job flushes, shader build flags and V3D
 performance counters. Trials 2–4 (shipped-warm overhead check, two more prof-warm) are running.
+
+## Result — all four trials (E2 complete)
+
+| trial | arm | fps (gameplay) | frame ms | render ms | bin ms | CPU ms | maint ms |
+|---|---|---|---|---|---|---|---|
+| W1 | prof-warm | 7.38 | 135.4 | 91.35 | 3.21 | 40.37 | 0.28 |
+| W2 | shipped-warm | 7.47 (flipstat mean) | — | — | — | — | — |
+| W3 | prof-warm | 7.32 | 136.5 | 92.03 | 2.70 | 41.20 | 0.28 |
+| W4 | prof-warm | 7.53 | 132.8 | 91.03 | 2.44 | 38.68 | 0.28 |
+
+Instrument overhead vs the shipped binary: 7.40 vs 7.47 fps (0.9 %, under the 5 % validity bar).
+The three profiled trials agree within 1.5 %. **E2 verdict stands: SERIAL MIX** — M1's async
+submit is worth ≤ ×1.44 for STK; the dominant cost is the **~91 ms V3D render phase per frame**
+(→ E2b). Cold-cache arm skipped: it changes loading, not the race, and would bias the C1 bench.
