@@ -160,6 +160,45 @@ else
 fi
 echo
 
+# --- BO attribution of the corrupted FRAME ------------------------------------
+# The measurement that separates the two readings of the KEEP_CLOSED_BO result:
+# under "recycling is merely necessary" the victim frame is ordinary pool churn
+# and was never a BO; under "recycling is the TRIGGER" it was one.
+#
+# Both detectors report it, because a fire arrives through either and wiring it
+# to one costs a whole fire (run c1pfn1: two poison breaks, zero header reports,
+# no attribution at all):
+#   header path : hbopa / hbotot / hbonpg / hboord
+#   poison path : p4bopa / p4botl / p4bonp / p4bord
+#
+# ⚠ "0 matches out of N closes" is a REAL answer, not a missing instrument --
+# it says the driver closed N BOs and this frame was not among them. The case
+# that means nothing is tot==0, which says the lookup never ran.
+echo "== BO attribution of the corrupted frame =="
+_bo_line() {
+	local label="$1" nre="$2" tre="$3" ore="$4"
+	local n t o
+	n=$(plain | grep -oE "$nre" | grep -oE '0x[0-9a-f]+' | tail -1)
+	t=$(plain | grep -oE "$tre" | grep -oE '0x[0-9a-f]+' | tail -1)
+	o=$(plain | grep -oE "$ore" | grep -oE '0x[0-9a-f]+' | tail -1)
+	if [ -z "$t" ]; then
+		printf '   %-12s (not reported -- no fire on this path, or build predates it)\n' "$label"
+		return
+	fi
+	if [ "$((t))" -eq 0 ]; then
+		printf '   %-12s ⚠ closes recorded = 0 -- the lookup never ran; says NOTHING\n' "$label"
+	elif [ -n "$n" ] && [ "$((n))" -gt 0 ]; then
+		printf '   %-12s *** WAS A CLOSED BO -- %s match(es) of %s closes, closed %s ordinal(s) ago\n' \
+			"$label" "$((n))" "$((t))" "$(( $((t)) - $((${o:-0})) ))"
+	else
+		printf '   %-12s not a closed BO -- 0 matches out of %s recorded closes (a real answer)\n' \
+			"$label" "$((t))"
+	fi
+}
+_bo_line "header:" 'hbopa = 0x[0-9a-f]+' 'hbotot= 0x[0-9a-f]+' 'hboord= 0x[0-9a-f]+'
+_bo_line "poison:" 'p4bopa= 0x[0-9a-f]+' 'p4botl= 0x[0-9a-f]+' 'p4bord= 0x[0-9a-f]+'
+echo
+
 # --- live-heap PA coincidence (does NOT need C1 to fire) ----------------------
 # The correlation above is FIRE-GATED: hpa/p4pa exist only once a guard trips. On
 # five clean trials of series #3 that meant 24 mailbox PAs per run and not one
