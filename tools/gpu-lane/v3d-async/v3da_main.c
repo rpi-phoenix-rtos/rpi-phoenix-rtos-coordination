@@ -9,7 +9,10 @@
  * old-lane GPU user (any game, the glamor X server, the rpi4-v3d daemon): the V3D
  * has one page-table base register and no arbitration, and this server resets it.
  *
- * Usage: rpi4-v3d-async [-i] [-I irq] [-r threads] [-p poll_us] [-v]
+ * Usage: rpi4-v3d-async [-f] [-i] [-I irq] [-r threads] [-p poll_us] [-v] [&]
+ *   (detaches itself: psh has no job control, so `cmd &` would run in the
+ *    foreground; a stray "&" argument is accepted and ignored)
+ *   -f          stay in the foreground (no fork)
  *   -i          start with interrupt-driven completion (default: poll mode; switch
  *               at runtime with DBG_IRQ_MODE, e.g. `v3dasync-ping irq-on`)
  *   -I irq      interrupt number (default 106 = GIC SPI 74)
@@ -514,21 +517,22 @@ static void dispatch_loop(void *arg)
 
 static void usage(const char *prog)
 {
-	printf("usage: %s [-i] [-I irq] [-r threads] [-p poll_us] [-v]\n", prog);
+	printf("usage: %s [-f] [-i] [-I irq] [-r threads] [-p poll_us] [-v]\n", prog);
 }
 
 
 int main(int argc, char **argv)
 {
 	oid_t dev;
-	int c, rc, i, nthreads = 2, irq_at_start = 0;
+	int c, rc, i, nthreads = 2, irq_at_start = 0, foreground = 0, readyfd = -1;
 
 	setvbuf(stdout, NULL, _IOLBF, 0);   /* every graded line is a stdout line */
 	srv.hw.irq_num = V3D_IRQ;
 	srv.poll_us = 200u;
 
-	while ((c = getopt(argc, argv, "iI:r:p:vh")) != -1) {
+	while ((c = getopt(argc, argv, "fiI:r:p:vh")) != -1) {
 		switch (c) {
+			case 'f': foreground = 1; break;
 			case 'i': irq_at_start = 1; break;
 			case 'I': srv.hw.irq_num = (unsigned)strtoul(optarg, NULL, 0); break;
 			case 'r': nthreads = atoi(optarg); break;
@@ -537,11 +541,56 @@ int main(int argc, char **argv)
 			default: usage(argv[0]); return 1;
 		}
 	}
+	/* psh has no job control: a trailing "&" is NOT a background request, it
+	 * arrives as a plain argument (and the command runs in the foreground). The
+	 * server detaches itself anyway, so tolerate it. */
+	for (i = optind; i < argc; i++) {
+		if (strcmp(argv[i], "&") != 0) {
+			printf("V3DA srv unexpected argument '%s'\n", argv[i]);
+			usage(argv[0]);
+			return 1;
+		}
+	}
 	if ((nthreads < 1) || (nthreads > V3DA_MAX_DISPATCH)) {
 		nthreads = 2;
 	}
 	if (srv.poll_us == 0u) {
 		srv.poll_us = 200u;
+	}
+
+	/* Detach, so psh gets its prompt back (the ipcprobe pattern). This happens
+	 * BEFORE any port, thread, mapping, GPU power-on or interrupt() exists: none of
+	 * those survive a fork, so the child does all of the setup. The parent waits on
+	 * a pipe for one byte 'R', written by the child once /dev/v3d-async is
+	 * registered AND the GPU is owned and the threads are running; a child that
+	 * fails exits, which closes the pipe (EOF). */
+	if (foreground == 0) {
+		int pfd[2];
+		pid_t pid;
+		char r = 0;
+
+		if (pipe(pfd) < 0) {
+			printf("V3DA srv FAIL pipe errno=%d\n", errno);
+			return 1;
+		}
+		fflush(stdout);
+		pid = fork();
+		if (pid < 0) {
+			printf("V3DA srv FAIL fork errno=%d\n", errno);
+			return 1;
+		}
+		if (pid > 0) {
+			close(pfd[1]);
+			if ((read(pfd[0], &r, 1) != 1) || (r != 'R')) {
+				printf("V3DA srv FAIL child did not come up (see its lines above)\n");
+				return 1;
+			}
+			printf("V3DA srv detached pid=%d\n", (int)pid);
+			fflush(stdout);
+			_exit(0);
+		}
+		close(pfd[0]);
+		readyfd = pfd[1];
 	}
 
 	/* Claim the device node FIRST: create_dev is the single-owner guard. A second
@@ -593,6 +642,13 @@ int main(int argc, char **argv)
 	printf("V3DA srv ready dev=/dev/%s irq=%s irqnum=%u threads=%d poll_us=%u fence_pa=0x%08lx slots=%u\n",
 		V3DA_DEV_NAME, (srv.hw.irq_on != 0) ? "on" : "off", srv.hw.irq_num, nthreads, srv.poll_us,
 		(unsigned long)srv.fp_pa, V3DA_FENCE_NSLOTS);
+
+	if (readyfd >= 0) {
+		char r = 'R';
+
+		(void)write(readyfd, &r, 1);
+		close(readyfd);
+	}
 
 	(void)setPriority(3);
 	dispatch_loop(NULL);

@@ -552,14 +552,23 @@ halfway, so a failure of the interrupt path is isolated from everything before i
 
 ```
 ./scripts/test-cycle-psh-interact.sh --label m1-v3da-ping --idle-secs 20 -- \
-    "/bin/rpi4-v3d-async -r 1 &" \
+    "/bin/rpi4-v3d-async -r 1" \
     "/bin/v3dasync-ping all" \
     "/bin/v3dasync-ping irq-on" \
     "/bin/v3dasync-ping all" \
     "/bin/v3dasync-ping quit"
 ```
 
-(Bash `timeout: 600000`.) psh passes no quotes; none are used. **`-r 1` (one dispatch thread) is
+(Bash `timeout: 600000`.) psh passes no quotes; none are used. **No `&`:** psh has no background
+jobs — `cmd &` runs `cmd` in the foreground (psh vforks and waits in `waitpid`,
+`psh/runfile/runfile.c:33-48`; the bare `&` is passed on as an argument), which is what voided the
+first E5 attempt. The server therefore **detaches itself** (the fixed `ipcprobe server` pattern):
+`fork()` before any port, thread, mapping, GPU power-on or `interrupt()` exists (none survive a
+fork); the child does all set-up and writes one byte into a pipe once `/dev/v3d-async` is registered,
+the GPU is owned and its threads run; the parent then prints `V3DA srv detached pid=<n>` and exits,
+so psh gets its prompt back. A child that fails exits, the pipe reads EOF, and the parent prints
+`V3DA srv FAIL child did not come up`. A stray `&` argument is accepted and ignored; `-f` keeps the
+server in the foreground (no fork). **`-r 1` (one dispatch thread) is
 deliberate:** `DBG_QUIT` exits the server 50 ms after answering; with a second dispatch thread, the
 ping's own `mtClose` (sent when it exits) could be *received* by that thread just before `exit()` —
 a received-but-unanswered request whose sender is then parked forever (E5 condition 2), which would
@@ -576,7 +585,8 @@ it as a failure.
 | `V3DA srv power vcmbox=ok qpu=0 domain=0 clk=on tries=<n> … asb_m=ok asb_s=ok` | `clk=on`, `tries` 0 (≥1 = the clock race was caught, fine) | `vcmbox=missing` → server exits 3 (vcmbox not up at that point; retry later in boot). `clk=NOT-CONFIRMED` → stop: power path broken, no MMIO was read |
 | `V3DA srv ident core0=0x04443356 …` | all seven values equal the old client's constants | `0xdeadbeef` → unpowered despite `clk=on` (bridge/ASB issue); any other difference → a different V3D revision than the constants assume — record it, it changes GET_PARAM |
 | `V3DA srv mmu pt_pa=… reset_msk_core=… reset_msk_hub=… clk_rate_hz=… clk_meas_hz=…` | `clk_rate_hz` 500000000 (research §1.3); the two `reset_msk_*` values are **recorded, not predicted** — they answer R5 | `clk_meas_hz` far from `clk_rate_hz` → PLL not settled (the old render-stall suspect) |
-| `V3DA srv ready dev=/dev/v3d-async irq=off irqnum=106 threads=1 …` | printed once | missing → read the preceding error line |
+| `V3DA srv ready dev=/dev/v3d-async irq=off irqnum=106 threads=1 …` | printed once (by the child) | missing → read the preceding error line |
+| `V3DA srv detached pid=<n>` | printed once, right after `ready`; psh prompt returns | `FAIL child did not come up` → the child's own error line above says why (vcmbox, power, ident); no psh prompt at all → the detach did not happen (check the binary is the rebuilt one) |
 | `V3DAPING connect` | `ok=1 id>=1 slot>=0 proto=1` | `open_rc<0` → devfs/`mtOpen` path; `hello_rc<0` → ioctl unpack path; `id==0` → the positive-`mtOpen` multiplexer reading (E5 §1(b)) is wrong |
 | `V3DAPING info` | `ident_match=1` | 0 → see ident line |
 | `V3DAPING fencepage` | `magic_ok=1 heartbeat_moves=1` | `map_rc<0` → `MAP_PHYSMEM` of a cached page failed; `heartbeat_moves=0` → the event thread is not looping |
@@ -609,7 +619,7 @@ attribution comment):
 | `v3da_proto.h` | the wire protocol (§10), fence-page layout, memrefs, static asserts |
 | `v3da_regs.h` | V3D 4.2 register map (old daemon's, plus INT_MSK/INT_SET/IDENT/CTnRA/MMU fault regs from Linux `v3d_regs.h` — hardware facts only) |
 | `v3da.h` | server-internal types (clients, BOs, queues, jobs, waits) |
-| `v3da_main.c` | args, dispatch threads, message decode, client open/close/HELLO, `mtGetAttr(atMode)` (path resolution asks every component; answered like `rpi4-fb`) |
+| `v3da_main.c` | args, self-detach (fork before any set-up, readiness pipe; `-f` = foreground; a stray `&` is ignored), dispatch threads, message decode, client open/close/HELLO, `mtGetAttr(atMode)` (path resolution asks every component; answered like `rpi4-fb`) |
 | `v3da_param.c` | GET_PARAM (own file: the vendored DRM uapi's `sys/ioccom.h` shim clashes with `<sys/ioctl.h>`) |
 | `v3da_hw.c` | vcmbox power-on with read-back, MMIO map, identity, MMU PT + scratch, `apply_core_regs`, interrupt masks, handler, poll, runtime IRQ switch, self-test |
 | `v3da_sched.c` | queues, seqnos, fence page, event thread, NOP CPU job, parked waits (claim-once), syncobjs |
