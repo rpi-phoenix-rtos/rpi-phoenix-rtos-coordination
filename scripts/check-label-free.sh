@@ -32,13 +32,23 @@ fi
 shopt -s nullglob
 rc=0
 
+# ⚠ Build the archive's label list ONCE, with shell parameter expansion.
+# It used to re-scan every log inside the per-label loop and fork basename for
+# each one: 7400 logs x 8 labels = ~59000 forks, and the check took over two
+# minutes. A launch-time guard that slow does not get used, which defeats the
+# whole point of it being free to run before a bench.
+existing=()
+for f in "$art"/*.log; do
+	base=${f##*/}
+	base=${base%.log}
+	lab=${base#rpi4b-uart-????????-??????-}
+	[ "$lab" = "$base" ] && continue
+	existing+=("$lab")
+done
+
 for label in "$@"; do
 	hits=()
-	for f in "$art"/*.log; do
-		# The label as the harness writes it: rpi4b-uart-<ts>-<label>.log
-		base=$(basename "$f" .log)
-		lab=${base#rpi4b-uart-????????-??????-}
-		[ "$lab" = "$base" ] && continue
+	for lab in "${existing[@]}"; do
 		case "$lab" in
 			*"$label"*) hits+=("$lab") ;;              # old log would match a grep for the new label
 			*) case "$label" in *"$lab"*) hits+=("$lab") ;; esac ;;  # new label would match a grep for the old
