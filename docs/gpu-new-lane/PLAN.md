@@ -19,9 +19,14 @@ lane**, then migrate every GPU user and delete the old lane.
 4. **Parallel work, serialized hardware.** Subagents write and compile code (`syntax-check.sh`,
    standalone builds into their own directories). They never run Pi cycles or `rebuild-rpi4b-fast.sh`
    (its image stage overwrites the TFTP `loader.disk`); the coordinating session does.
-5. **Every experiment is pre-registered** (question, method, what each outcome means) in its own file
+5. **Agents editing existing sibling code work in git worktrees** on a temporary `gpu-lane/<topic>`
+   branch (e.g. `/home/houp/.claude/jobs/…/wt-libphoenix`), never in `sources/<repo>` directly: every
+   image build compiles the `sources/` working trees, so an uncommitted edit leaks into an unrelated
+   build. The coordinator reviews, merges to `master` and deletes the branch (no stray branches).
+   New files in brand-new directories that no Makefile references are the one exception.
+6. **Every experiment is pre-registered** (question, method, what each outcome means) in its own file
    here before its first Pi cycle, and gets a result section afterwards.
-6. **Migration is the last step.** When M3 (or M4 for X) is ready, all GPU users move in one planned
+7. **Migration is the last step.** When M3 (or M4 for X) is ready, all GPU users move in one planned
    migration with the full showcase gate, then the old winsys, scanout hooks and kdrive DDX are removed.
 
 ## Milestones
@@ -53,3 +58,6 @@ lane**, then migrate every GPU user and delete the old lane.
 - 2026-09-26 19:00: all four M0 agents delivered. Queue: E5 → build 8 (tree fix) → `c1tf` ×6 → E2 →
   build 9 (E1 + vcmbox-xl) → E1 + E3 probes. Started in parallel: M1 design + skeleton (new binary,
   old `rpi4-v3d` untouched) and E7 (libdrm + Mesa GBM/EGL build study, own build dir).
+- 19:05: E7 done — libdrm + Mesa DRM path compile; a static GBM+EGL+GLES+KMS program links
+  ([E7-drm-userspace-build.md](E7-drm-userspace-build.md)). E5 first run void (psh has no `&`);
+  probe fixed, re-run queued. libphoenix-gaps agent started in worktrees (`gpu-lane/libc-gaps`).
