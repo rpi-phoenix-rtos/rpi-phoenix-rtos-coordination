@@ -98,6 +98,7 @@ through the allocator, all in the startup window where the fire lands.
 | **Closed-BO pages are enriched among victims, not exclusive** | 1 of 5 attributed victims sat on a page the V3D driver had closed, against **~2 %** of all heaps (`hbo`/`hbop` = 153–163 of 7920–8331) — ~12× — but P(≥1 of 5 \| 2 %) = 0.096 | suggestive, **n = 5** |
 | **Within-run control** | `c1ccC2`: two victims minutes apart, one on a closed-BO page (`p4bopa = 1`), one not (`hbopa = 0`) | one run |
 | **Recycling starts long before the fire window** | first pool-declined unmap, first physical-frame reuse and first GPU-VA reuse all at **8.6 s**; first heap on a closed-BO page at **20.8 s** | strong |
+| **The victim page head keeps changing while its chunk is free** (`p4ckOK = 0`) | the page-head checksum written at free time no longer matches at the break, on every poison-path hit read so far (4/4 in the first run that had it, 4/4 in `c1coldC1`) — by the instrument's definition a **live buffer the allocator believes is free**, not an isolated four-byte store into stale memory | consistent; changes what "the write" is (§6) |
 
 ⚠ **The "~90 s" is a DETECTION time.** The poison is written when a chunk is freed and read only
 when the allocator next walks it — and when heap growth stops, the allocator starts reusing free
