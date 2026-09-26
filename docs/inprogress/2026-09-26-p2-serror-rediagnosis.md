@@ -80,4 +80,20 @@ unmasking will not fix that hang.
 
 ## 7. Results
 
-(none yet — experiments start after the WiFi runtime-join / D2 cycle)
+### E1 — pre-registered 15:20, before the build finished
+
+Build 5 = build 4 + the uncommitted E1 kernel change (threads start with A clear; exception and
+syscall dispatch unmask A with I and re-mask both before the context restore; spinlocks mask A too,
+so the logging handler never runs under a held lock; handler logs and continues — full dump ×4, one
+line to 256, then every 1024th). Cycle `p2e1`: `ls /dev`, `rpi4-wifi &` (netif auto-joins),
+`cat /dev/thermal`, 16 MiB `dd` read of the SD card, `quakespasm -loadbench` (V3D), `wifi status`,
+`ping` over WiFi, **then** `serrprobe fd506000 3`, then `ls /dev`.
+- **Handler check first.** The injector must produce ≥ 1 `P2-E1 SError` line. If it produces none,
+  the whole run's zero is uninformative (a Phoenix read of that address may simply not abort) and a
+  different injector is needed before any conclusion.
+- **Boot does not reach psh:** the last lines localise it; the handler no longer halts, so a hang
+  is not the SError itself — record, then fall back to the build-4 manifest.
+- **0 SError lines before the injector, injector fires:** hypothesis 1 (nothing left in the
+  production paths) holds **for the drivers exercised** — the case for unmasking permanently.
+- **SError lines before the injector:** attribute each by position between command echoes and by
+  ELR (EL1 → addr2line on the kernel; EL0 → the process running then). That is the finding.
