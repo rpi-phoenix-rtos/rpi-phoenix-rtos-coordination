@@ -69,12 +69,16 @@ SIG='hhi32 = 0x0*8000000[01]|p4got  = 0x0*8000000[01]|= 0x8000000[01][0-9a-f]{8}
 # One pass: the curve, the 90 s baseline, and the last line before any fire.
 awk -v sig="$SIG" '
 	function fields(s,   a) {
-		# t=<ms> frames=<n> boc=<n> bore=<n> heaps=<n> heapkb=<n>
-		t = ""; fr = ""; boc = ""; bore = ""; hp = ""; hk = ""
+		# t=<ms> frames=<n> boc=<n> bore=<n> vaa=<n> var=<n> heaps=<n> heapkb=<n>
+		# ⚠ vaa/var are absent from the FIRST pacing build; treated as -1 so an
+		# older log still reads rather than failing on a field that did not exist.
+		t = ""; fr = ""; boc = ""; bore = ""; va = -1; vr = -1; hp = ""; hk = ""
 		if (match(s, /t=[0-9]+ms/))      t    = substr(s, RSTART + 2, RLENGTH - 4) + 0
 		if (match(s, /frames=[0-9]+/))   fr   = substr(s, RSTART + 7, RLENGTH - 7) + 0
 		if (match(s, /boc=[0-9]+/))      boc  = substr(s, RSTART + 4, RLENGTH - 4) + 0
 		if (match(s, /bore=[0-9]+/))     bore = substr(s, RSTART + 5, RLENGTH - 5) + 0
+		if (match(s, /vaa=[0-9]+/))      va   = substr(s, RSTART + 4, RLENGTH - 4) + 0
+		if (match(s, /var=[0-9]+/))      vr   = substr(s, RSTART + 4, RLENGTH - 4) + 0
 		if (match(s, /heaps=[0-9]+/))    hp   = substr(s, RSTART + 6, RLENGTH - 6) + 0
 		if (match(s, /heapkb=[0-9]+/))   hk   = substr(s, RSTART + 7, RLENGTH - 7) + 0
 		return (t != "" && hk != "")
@@ -87,6 +91,7 @@ awk -v sig="$SIG" '
 			if (!fields($0)) { bad++; next }
 			n++
 			T[n] = t; F[n] = fr; B[n] = boc; R[n] = bore; H[n] = hp; K[n] = hk
+			VA[n] = va; VR[n] = vr
 		}
 	}
 	END {
@@ -95,20 +100,33 @@ awk -v sig="$SIG" '
 		printf "\n\n"
 		if (n == 0) { print "no usable pace line"; exit 1 }
 
-		print "  t(s)  frames    boc   bore  heaps  heapkb   d(heapkb)/dt"
+		print "  t(s)  frames    boc   bore    vaa    var  heaps  heapkb   d(heapkb)/dt"
 		for (i = 1; i <= n; i++) {
 			d = (i > 1 && T[i] > T[i-1]) ? (K[i] - K[i-1]) * 1000.0 / (T[i] - T[i-1]) : 0
 			mark = ""
 			if (fired && i == fi) mark = "   <== FIRE"
-			printf "%6.1f %7d %6d %6d %6d %7d %10.1f kB/s%s\n",
-				T[i]/1000.0, F[i], B[i], R[i], H[i], K[i], d, mark
+			printf "%6.1f %7d %6d %6d %6d %6d %6d %7d %10.1f kB/s%s\n",
+				T[i]/1000.0, F[i], B[i], R[i], VA[i], VR[i], H[i], K[i], d, mark
+			if (VR[i] > 0 && vr0 == 0) vr0 = i
+			if (R[i] > 0 && br0 == 0)  br0 = i
 		}
 
 		# The pre-registered 90 s baselines: nearest line to t = 90 s.
 		best = 1; bd = 1e18
 		for (i = 1; i <= n; i++) { dd = (T[i] > 90000) ? T[i] - 90000 : 90000 - T[i]; if (dd < bd) { bd = dd; best = i } }
+		# The two recycling onsets, which is the discriminator KEEP_CLOSED_BO cannot give.
+		printf "\nRECYCLING ONSETS (KEEP_CLOSED_BO=1 removes BOTH; these separate them):\n"
+		if (br0 > 0) printf "  first PHYSICAL-frame reuse (bore>0): t = %.1f s\n", T[br0]/1000.0
+		else         printf "  first PHYSICAL-frame reuse (bore>0): never in this trial\n"
+		if (VR[1] < 0) print "  first GPU-VA reuse (var>0)        : field absent -- build predates the vaa/var counters"
+		else if (vr0 > 0) printf "  first GPU-VA reuse (var>0)        : t = %.1f s\n", T[vr0]/1000.0
+		else              printf "  first GPU-VA reuse (var>0)        : never in this trial\n"
+		print "  -> the fire window opens at ~76 s of render. An onset that lands there is a"
+		print "     candidate mechanism; one that is already long past is not."
+
 		printf "\nBASELINE at t = %.1f s (nearest to 90 s):\n", T[best]/1000.0
-		printf "  frames=%d  boc=%d  bore=%d  heaps=%d  heapkb=%d\n", F[best], B[best], R[best], H[best], K[best]
+		printf "  frames=%d  boc=%d  bore=%d  vaa=%d  var=%d  heaps=%d  heapkb=%d\n",
+			F[best], B[best], R[best], VA[best], VR[best], H[best], K[best]
 		printf "  -> bore here is what the on-fire read compares against. A fire well BELOW it\n"
 		printf "     means the event lives in the FIRST recycles; at or above it, that framing is dead.\n"
 
@@ -141,8 +159,8 @@ awk -v sig="$SIG" '
 
 		if (fired) {
 			printf "\nAT THE FIRE (last pace line before the signature, up to 5 s stale):\n"
-			printf "  t=%.1f s  frames=%d  boc=%d  bore=%d  heaps=%d  heapkb=%d\n",
-				T[fi]/1000.0, F[fi], B[fi], R[fi], H[fi], K[fi]
+			printf "  t=%.1f s  frames=%d  boc=%d  bore=%d  vaa=%d  var=%d  heaps=%d  heapkb=%d\n",
+				T[fi]/1000.0, F[fi], B[fi], R[fi], VA[fi], VR[fi], H[fi], K[fi]
 			printf "  archive says t should be ~90 s. Compare frames and heapkb against the\n"
 			printf "  clean-run spread, not against a number guessed beforehand.\n"
 		}
