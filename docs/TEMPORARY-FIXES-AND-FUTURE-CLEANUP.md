@@ -9,8 +9,8 @@
 > RESOLVED 2026-05-17; SCTLR.{M,C,I} set, all Normal RAM WB-cacheable) — the recurring
 > "caches off = perf lever" claim is wrong; and the GENET cacheable-RX experiment (a separate
 > lever) was CONCLUDED UNVIABLE (corrupts the GPU framebuffer under load, #11 re-opened,
-> default-off). Genuinely-open workarounds are tracked in the checklist (e.g. TD-10 masked
-> SError, TD-20 DC-ZVA gate).
+> default-off). Genuinely-open workarounds are tracked in the checklist (e.g. TD-20 DC-ZVA
+> gate; TD-10's masked SError was resolved 2026-09-26).
 
 This document is the registry of transitional shortcuts and workarounds
 accepted during the Raspberry Pi 4 bring-up. Each item has a stable ID
@@ -842,13 +842,7 @@ authoritative current state.
 
 ## TD-10: SError masked across all early kernel paths on Pi 4
 
-- **Status:** KNOWN LIMITATION (HW-gated). A correct dump-and-halt SError
-  handler is implemented and armed (`exceptions_serrorHandler`); the mask
-  stays only because real Pi 4 has a live external-abort SError in the
-  PCIe/VL805 USB bring-up that has not yet been root-caused. This is a
-  documented design decision, not an unexplained hack: unmasking before that
-  abort is fixed regresses the boot. Root-causing the bridge NACK is HW-deep
-  and tied to the USB investigation (not unattended).
+- **Status:** ✅ **RESOLVED 2026-09-26** (kernel `df9da09d`): SError is unmasked exactly as upstream and the dedicated handler is removed (upstream route: EL0 fault kills the process, EL1 asserts). Re-diagnosed: the 2026-05 aborts came from diagnostic PCIe reads removed in June; an unmasked boot through USB, WiFi, SD, the thermal mailbox and V3D bring-up raised none, and a deliberate bad PCIe read raised one per read (`esr=0xbf000002`). Remaining deviation, deliberate: spinlocks also mask SError (see `hal/aarch64/spinlock.c`). Record: `docs/inprogress/2026-09-26-p2-serror-rediagnosis.md`. The history below is kept as it was.
 - **2026-05-29 progress + finding:**
   - Implemented `exceptions_serrorHandler` (kernel `bcb64610`): a
     dedicated dump-and-halt SError handler registered for `EXC_SERROR`,
@@ -2179,7 +2173,7 @@ markers. Its debt idiom is `BRING-UP` prose instead.
 | TD-07 | PENDING | QEMU 11.x installed on Linux host (`/opt/qemu-11`); Lima VM QEMU still old |
 | TD-08 | PENDING | QEMU+gdb debugging not exercised since cache resolved |
 | TD-09 | N/A on Linux host | No `socket_vmnet` bridge here; macOS-only concern |
-| TD-10 | KNOWN LIMITATION (HW-gated) | dump-and-halt SError handler implemented + armed; mask stays only because a live PCIe/VL805 USB external-abort SError is not yet root-caused (unmask regresses boot) |
+| TD-10 | ✅ RESOLVED 2026-09-26 (kernel `df9da09d`) | SError unmasked as upstream; the 2026-05 sources were diagnostic PCIe reads removed in June; unmasked boot raised none; spinlock-masks-SError kept as a deliberate deviation |
 | TD-11 | ✅ RESOLVED 2026-05-21 alongside TD-01 (kernel `fb9669f4` activated LDAXR/STXR spinlocks via `NUM_CPUS=4`) | real exclusives are live with 4-core SMP |
 | TD-12 | RESOLVED 2026-05-17 (project `42b2db5` + plo `84ffbea`; manifest `2026-05-17-pi4-full-4gb-ram-unlocked`) | both 4 GB banks visible (`pmap: nBanks=2`, 948 MB + 3008 MB) |
 | TD-13 | RESOLVED at runtime layer | residual cleanup also done in kernel `334638ee` (Pass-4 debug strip) |

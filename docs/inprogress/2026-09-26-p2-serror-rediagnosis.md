@@ -112,3 +112,19 @@ line to 256, then every 1024th). Cycle `p2e1`: `ls /dev`, `rpi4-wifi &` (netif a
 - ⇒ **Hypothesis 1 holds for everything exercised: nothing in today's production paths raises an
   SError.** The 2026-05 sources were diagnostic reads that no longer exist. The mask was hiding
   nothing — and it is not what makes an unclocked-V3D read hang (see §5).
+
+### Final — kernel `df9da09d`, verified in cycle `p2final` (build 6)
+
+SError is unmasked exactly as upstream (initial thread PSR, `hal_jmp`, `daifClr/Set #7` in exception
+and syscall dispatch, `#4` in IRQ dispatch — diffed line-for-line against `origin/master`), and the
+dedicated dump-and-halt handler is removed, so SError takes upstream's route: EL0 →
+`process_exception` (dump + SIGKILL of that process), EL1 → assert. One deliberate deviation: a held
+spinlock masks SError too (`daifSet #7`), so the handler, which prints under `console_common.lock`,
+can never run on a CPU already holding it.
+
+`p2final`: boot, USB, `rpi4-wifi` join, then `serrprobe fd506000 3` → **one** SError, dump reads
+`process "/bin/serrprobe" (PID: 27)`, the probe was killed before its first `read` line, and the
+system carried on — `ls /dev` complete, `wifi status` joined, `ping` 3/3.
+
+**Coverage still thin:** GPU *rendering* (V3D was only powered up and loaded). The `c1pad` STK runs
+use this kernel; an SError there would now kill STK with a named dump rather than pass silently.
