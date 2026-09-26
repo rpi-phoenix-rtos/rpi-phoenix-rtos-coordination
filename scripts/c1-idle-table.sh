@@ -20,7 +20,9 @@
 # arm was armed; a K trial without it is VOID, and this prints it as VOID rather
 # than as a clean zero.
 #
-# Usage: scripts/c1-idle-table.sh [label-prefix]     (default: c1idle)
+# Usage: scripts/c1-idle-table.sh [label-prefix] [series-driver-log]
+#          default prefix c1idle; the driver log adds the CACHE column, which is
+#          host-side and therefore absent from every UART log.
 set -uo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -32,6 +34,9 @@ repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 #   C1_ART_DIR=/tmp/fake scripts/c1-idle-table.sh <prefix>
 art="${C1_ART_DIR:-$repo/artifacts/rpi4b-uart}"
 pref="${1:-c1idle}"
+# Optional: the SERIES driver log, which is the only place the cycle's
+# `cleared`/`KEPT` line lives. Without it the CACHE column reads "-".
+drv="${2:-}"
 
 SIG='hhi32 = 0x0*8000000[01]|p4got  = 0x0*8000000[01]|= 0x8000000[01][0-9a-f]{8}'
 
@@ -39,7 +44,7 @@ shopt -s nullglob
 logs=("$art"/*"$pref"*.log)
 [ ${#logs[@]} -eq 0 ] && { echo "no logs matching '*${pref}*.log'" >&2; exit 1; }
 
-printf '%-30s %-4s %-6s %8s %6s %5s %5s %s\n' RUN ARM MODE 'RACE@s' FRAMES KFLT FIRES NOTE
+printf '%-30s %-4s %-6s %-6s %8s %6s %5s %5s %s\n' RUN ARM CACHE MODE 'RACE@s' FRAMES KFLT FIRES NOTE
 
 declare -A n_mode n_fire
 void=0
@@ -51,8 +56,25 @@ for log in $(printf '%s\n' "${logs[@]}" | sort); do
 		*I[0-9]) arm=I ;;
 		*B[0-9]) arm=B ;;
 		*K[0-9]) arm=K ;;
+		*C[0-9]) arm=C ;;   # c1cc: shader cache deliberately CLEARED before this trial
+		*W[0-9]) arm=W ;;   # c1cc: cache left alone (WARM -- rebuilt by the C trial)
 		*)       arm=? ;;
 	esac
+
+	# ★ The cache state is HOST-side: the cycle prints `cleared` or `KEPT` into the
+	# SERIES driver log, never into the UART. Without it the arm is graded by the
+	# label alone -- i.e. by what the script INTENDED, not by what happened, and a
+	# failed `rm` would read as a clean cold trial. Paired by the `log:` line the
+	# cycle prints immediately after, so this does not rely on ordering.
+	cache="-"
+	if [ -n "$drv" ] && [ -f "$drv" ]; then
+		cache=$(awk -v want="$base" '
+			/Mesa shader disk cache/ { st = (/cleared/) ? "COLD" : "warm" }
+			/rpi4b-uart-.*\.log/ {
+				if (index($0, want) > 0 && st != "") { print st; exit }
+			}' "$drv")
+		cache=${cache:--}
+	fi
 
 	race=$(awk '{ if (match($0, /flipstat [0-9]+ frames in [0-9]+ ms = [0-9.]+ fps/)) {
 			split(substr($0, RSTART, RLENGTH), a, " "); d = a[5] + 0
@@ -98,13 +120,13 @@ for log in $(printf '%s\n' "${logs[@]}" | sort); do
 		[ "$fires" -gt 0 ] && note="FIRED"
 	fi
 
-	printf '%-30s %-4s %-6s %8s %6s %5s %5s %s\n' \
-		"$(echo "$base" | cut -c17-)" "$arm" "$mode" "$race" "$frames" "$kflt" "$fires" "$note"
+	printf '%-30s %-4s %-6s %-6s %8s %6s %5s %5s %s\n' \
+		"$(echo "$base" | cut -c17-)" "$arm" "$cache" "$mode" "$race" "$frames" "$kflt" "$fires" "$note"
 done
 
 echo "---"
 printf '%-6s %6s %6s %8s\n' ARM LATE early 'fired'
-for a in I B K; do
+for a in I B K C W; do
 	l=${n_mode[$a LATE]:-0}; e=${n_mode[$a early]:-0}
 	f=$(( ${n_fire[$a LATE]:-0} + ${n_fire[$a early]:-0} ))
 	printf '%-6s %6s %6s %8s\n' "$a" "$l" "$e" "$f"
