@@ -34,7 +34,7 @@ lane**, then migrate every GPU user and delete the old lane.
 | # | What | Status |
 |---|---|---|
 | **M0** | E1 kernel export prototype; E2 STK submit breakdown; E3/E6 firmware planes + SMI vblank + scanout range; E5 deferred reply / event blocking | ✅ done 2026-09-26 (E1/E3/E5 PASS on the Pi, E2 = serial mix + render phase 3× slow → E2b; E7 builds) |
-| M1 | async multi-queue render server (`rpi4-v3d` evolved), fence page, syncobjs; cloned games on it | ▶ design + part 1 skeleton + part 2 submission written (`tools/gpu-lane/v3d-async/`, [M1 doc](M1-async-render-server.md)); `quakespasm-v3da` clone links; Pi: part-1 ping (queue2b) → P2-A smoke (queue4) → P2-B/C timedemo A/B |
+| M1 | async multi-queue render server (`rpi4-v3d` evolved), fence page, syncobjs; cloned games on it | ▶ **quakespasm-v3da +26 % (38.2 vs 30.4 fps), on HDMI, 0 wedges**; part-1 + P2-A PASS (IRQ works, jobs pixel-exact). Open: one EINVAL draw per run; STK clone; pipeline overlap proof |
 | M2 | `rpi4-kms` Stage A: firmware planes, vblank events, atomic flips, dumb-BO pool, fbdev emulation | ▶ design + server/test tool compile (`tools/gpu-lane/kms/`, [M2 doc](M2-kms-server.md)); SET_PLANE default, pan fallback; first Pi cycle `m2-kms-a` pre-registered |
 | M3 | kernel export productised; libdrm-phoenix; Mesa GBM/EGL; SDL2 KMSDRM | — |
 | M4 | Xorg + modesetting + glamor + DRI3/Present | — |
@@ -71,3 +71,7 @@ lane**, then migrate every GPU user and delete the old lane.
 - 23:10: **M0 complete.** E3 Stage A viable (60 Hz vblank, planes on HDMI, 12k flips/s); E1 + port-death
   PASS; M1: part-1 + P2-A PASS, P2-B +26 % timedemo **but frames not on HDMI** → present-path agent;
   core clock 500 MHz = +13 % (adoption agent); M2 skeleton compiles (doc being finished).
+- 23:30: M1 P2-B **PASS** (my "frames not on HDMI" was a misread of pre-launch snapshots — corrected);
+  M2 server + kmstest compile, cycle queued; E3 corrected (scan-out only below 1 GiB); libphoenix gaps
+  done on branch `gpu-lane/libc-gaps` (merge = build 10, needs the old-lane Mesa barrier shim removed first);
+  core-500 gate queued. Queues: E2b arms → core-500 gate → M2 first cycle.
