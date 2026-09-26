@@ -83,8 +83,8 @@ static volatile uint32_t *map_dev(addr_t pa, size_t len)
 /* Power / clock through /dev/vcmbox                                          */
 /* ========================================================================= */
 
-/* One property call, two value words. Returns 0 and the answer word, or <0. */
-static int vc_prop2(uint32_t tag, uint32_t w0, uint32_t w1, uint32_t nIn, uint32_t *answer)
+/* One property call, two value words. Returns 0 and both answer words, or <0. */
+int v3da_hw_vc_prop2(uint32_t tag, uint32_t w0, uint32_t w1, uint32_t nIn, uint32_t *ans0, uint32_t *ans1)
 {
 	uint32_t in[2], out[2];
 	int rc;
@@ -94,10 +94,22 @@ static int vc_prop2(uint32_t tag, uint32_t w0, uint32_t w1, uint32_t nIn, uint32
 	out[0] = 0u;
 	out[1] = 0u;
 	rc = vcmbox_call(tag, 8u, in, nIn, out, 2u);
-	if ((rc == 0) && (answer != NULL)) {
-		*answer = out[1];
+	if (rc == 0) {
+		if (ans0 != NULL) {
+			*ans0 = out[0];
+		}
+		if (ans1 != NULL) {
+			*ans1 = out[1];
+		}
 	}
 	return rc;
+}
+
+
+/* The id+value form (clock / power-domain tags answer in word 1). */
+static int vc_prop2(uint32_t tag, uint32_t w0, uint32_t w1, uint32_t nIn, uint32_t *answer)
+{
+	return v3da_hw_vc_prop2(tag, w0, w1, nIn, NULL, answer);
 }
 
 
@@ -208,9 +220,8 @@ static int v3d_power_on(v3da_hw_t *hw)
 
 
 /* TRUE V3D reset: quiesce both bridges, hold PM_V3DRSTN asserted, power on again.
- * Used by the wedge recovery (part 2). */
-int v3da_hw_reset_power(v3da_hw_t *hw);
-int v3da_hw_reset_power(v3da_hw_t *hw)
+ * Used by the wedge recovery (v3da_hw_reset). */
+static int v3da_hw_reset_power(v3da_hw_t *hw)
 {
 	volatile uint32_t *pm, *asb;
 	uint32_t grafx;
@@ -251,6 +262,30 @@ static void apply_core_regs(v3da_hw_t *hw)
 	hw->core0[CTL_L2TFLEND / 4u] = ~0u;
 	hw->hub[HUB_AXICFG / 4u] = HUB_AXICFG_MAX_LEN;   /* GFXH-1383 */
 	hw->core0[CTL_MISCCFG / 4u] = (V3D_QRMAXCNT << MISCCFG_QRMAXCNT_SHIFT) | MISCCFG_OVRTMUOUT;
+}
+
+
+/* Best-effort AXI drain before a reset: ask the GMP to quiesce outstanding
+ * transactions (old daemon's idle_axi, v3d_gpu.c:1041-1049; Linux v3d_idle_axi). */
+static void idle_axi(v3da_hw_t *hw)
+{
+	uint32_t spins;
+
+	hw->core0[GMP_CFG / 4u] = GMP_CFG_STOP_REQ;
+	for (spins = 1000000u; spins != 0u; spins--) {
+		if ((hw->core0[GMP_STATUS / 4u] & (GMP_STATUS_RD_WR_CNT | GMP_STATUS_CFG_BUSY)) == 0u) {
+			break;
+		}
+	}
+}
+
+
+void v3da_hw_l2t_flush_wait(v3da_hw_t *hw)
+{
+	uint32_t spins;
+
+	for (spins = 1000000u; (spins != 0u) && ((hw->core0[CTL_L2TCACTL / 4u] & L2TCACTL_L2TFLS) != 0u); spins--) {
+	}
 }
 
 
@@ -353,13 +388,17 @@ static inline uint32_t hw_service(v3da_hw_t *hw, uint32_t *hub_out)
 	}
 	if ((core & INT_OUTOMEM) != 0u) {
 		/* Hand the pre-staged overflow chunk at once: the binner is stalled until
-		 * it gets memory, and waking a thread first would add its latency. */
+		 * it gets memory, and waking a thread first would add its latency. With
+		 * nothing staged, count it: the event thread grants from the pool. */
 		va = __atomic_exchange_n(&hw->ovf_stage_va, 0u, __ATOMIC_ACQ_REL);
 		if (va != 0u) {
 			size = __atomic_load_n(&hw->ovf_stage_size, __ATOMIC_ACQUIRE);
 			hw->core0[PTB_BPOA / 4u] = va;
 			hw->core0[PTB_BPOS / 4u] = size;
 			__atomic_store_n(&hw->ovf_consumed, va, __ATOMIC_RELEASE);
+		}
+		else {
+			(void)__atomic_add_fetch(&hw->ovf_missed, 1u, __ATOMIC_RELEASE);
 		}
 	}
 	if (core != 0u) {
@@ -402,6 +441,32 @@ static int v3da_irq_handler(unsigned int n, void *arg)
 		return 1;
 	}
 	return ((core | hub) != 0u) ? 1 : -1;   /* -1: nothing for us, no wake-up */
+}
+
+
+/* Thread context, before a kick: fold every pending status bit EXCEPT OUTOMEM
+ * into the event words and clear it. OUTOMEM stays latched so that exactly one
+ * path (handler or poll) hands out overflow memory - two grants for one stall
+ * would re-point a binner that already runs on the first chunk. Safe against a
+ * concurrent handler: both only read, W1C and OR. */
+void v3da_hw_drain(v3da_hw_t *hw)
+{
+	uint32_t core = hw->core0[CTL_INT_STS / 4u] & ~INT_OUTOMEM;
+	uint32_t hub = hw->hub[HUB_INT_STS / 4u];
+
+	if (core != 0u) {
+		hw->core0[CTL_INT_CLR / 4u] = core;
+		(void)__atomic_fetch_or(&hw->ev_core, core, __ATOMIC_RELEASE);
+	}
+	if (hub != 0u) {
+		if ((hub & HUB_INT_MMU_ANY) != 0u) {
+			uint32_t ctl = hw->hub[MMU_CTL / 4u];
+			__atomic_store_n(&hw->mmu_ctl_seen, ctl, __ATOMIC_RELAXED);
+			hw->hub[MMU_CTL / 4u] = ctl;
+		}
+		hw->hub[HUB_INT_CLR / 4u] = hub;
+		(void)__atomic_fetch_or(&hw->ev_hub, hub, __ATOMIC_RELEASE);
+	}
 }
 
 
@@ -448,6 +513,37 @@ void v3da_hw_irq_disable(v3da_hw_t *hw)
 		(void)resourceDestroy(hw->irq_handle);
 		hw->irq_on = 0;
 	}
+}
+
+
+/* Wedge recovery (design section 7). Called with srv.lock held by the event
+ * thread. Same order as the old lane's reset_reinit_core (drain GMP, true reset,
+ * core registers over the surviving page table), plus: interrupts masked across
+ * the reset and re-enabled after (Linux v3d_irq_reset), a TLB flush, and every
+ * handler-shared word cleared (a stale staged chunk must not survive). */
+int v3da_hw_reset(v3da_hw_t *hw)
+{
+	int rc;
+
+	hw->core0[CTL_INT_MSK_SET / 4u] = ~0u;
+	hw->hub[HUB_INT_MSK_SET / 4u] = ~0u;
+	idle_axi(hw);
+	rc = v3da_hw_reset_power(hw);
+	apply_core_regs(hw);
+	irq_mask_all(hw);
+	__atomic_store_n(&hw->ovf_stage_va, 0u, __ATOMIC_RELEASE);
+	__atomic_store_n(&hw->ovf_stage_size, 0u, __ATOMIC_RELEASE);
+	__atomic_store_n(&hw->ovf_consumed, 0u, __ATOMIC_RELEASE);
+	__atomic_store_n(&hw->ovf_missed, 0u, __ATOMIC_RELEASE);
+	__atomic_store_n(&hw->ev_core, 0u, __ATOMIC_RELEASE);
+	__atomic_store_n(&hw->ev_hub, 0u, __ATOMIC_RELEASE);
+	hw->pt_gen++;
+	v3da_hw_mmu_flush(hw);
+	if (hw->irq_on != 0) {
+		hw->core0[CTL_INT_MSK_CLR / 4u] = CORE_IRQS;
+		hw->hub[HUB_INT_MSK_CLR / 4u] = HUB_IRQS;
+	}
+	return rc;
 }
 
 

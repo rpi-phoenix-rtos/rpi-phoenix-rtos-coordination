@@ -3,13 +3,14 @@
  *
  * Raspberry Pi 4 (BCM2711) V3D 4.2 asynchronous render server (/dev/v3d-async)
  *
- * NEW GPU LANE, M1 part 1 (docs/gpu-new-lane/M1-async-render-server.md). The sole
+ * NEW GPU LANE, M1 (docs/gpu-new-lane/M1-async-render-server.md). The sole
  * owner of the V3D while it runs: power/clock through /dev/vcmbox, the one MMU page
  * table, the GPU-VA space, BOs, queues, fences. It must never run next to an
  * old-lane GPU user (any game, the glamor X server, the rpi4-v3d daemon): the V3D
  * has one page-table base register and no arbitration, and this server resets it.
  *
- * Usage: rpi4-v3d-async [-f] [-i] [-I irq] [-r threads] [-p poll_us] [-v] [&]
+ * Usage: rpi4-v3d-async [-f] [-i] [-I irq] [-r threads] [-p poll_us] [-m serial|pipeline]
+ *                       [-k knobs] [-c chunk_kib] [-w wedge_ms] [-s stat_ms] [-v] [&]
  *   (detaches itself: psh has no job control, so `cmd &` would run in the
  *    foreground; a stray "&" argument is accepted and ignored)
  *   -f          stay in the foreground (no fork)
@@ -18,10 +19,18 @@
  *   -I irq      interrupt number (default 106 = GIC SPI 74)
  *   -r threads  dispatch threads receiving on the port (1..4, default 2)
  *   -p poll_us  poll period while hardware is busy in poll mode (default 200)
+ *   -m mode     serial (default: one hardware job at a time, the old lane's order)
+ *               or pipeline (bin N+1 overlaps render N); switch at runtime with
+ *               DBG_SET_MODE (`v3dasync-ping mode-pipeline`)
+ *   -k knobs    cache-maintenance drops for A/B (V3DA_KNOB_*, default 0 = the
+ *               old lane's full sequence)
+ *   -c KiB      binner-overflow chunk size (default 1024; pool 32 MiB)
+ *   -w ms       watchdog: no control-list progress this long = wedge (default 500)
+ *   -s ms       periodic "V3DA srv qstat" line while GPU jobs run (default 5000, 0 = off)
  *
- * Part 1 serves: HELLO, GET_INFO, GET_PARAM, BO create/close/mmap/offset/wait,
- * the NOP test job + FENCE_WAIT, syncobjs, and the debug ops. SUBMIT_CL/TFU/CSD
- * answer -ENOSYS until part 2.
+ * Serves: HELLO, GET_INFO, GET_PARAM, BO create/close/mmap/offset/wait (incl.
+ * scanout BOs), SUBMIT_CL/TFU/CSD + the NOP test job, FENCE_WAIT, syncobjs (incl.
+ * import), SCANOUT_INFO/FLIP (firmware pan), and the debug ops.
  *
  * Copyright 2026 Phoenix Systems
  * Author: Witold Bołt
@@ -280,6 +289,33 @@ static int handle_raw(msg_t *msg, msg_rid_t rid, v3da_wait_t **answer)
 			rc = v3da_submit_nop(c, req.u.nop.delay_us, &r->u.fence.fence);
 			break;
 
+		case V3DA_OP_SUBMIT_CL:
+		case V3DA_OP_SUBMIT_TFU:
+		case V3DA_OP_SUBMIT_CSD:
+			/* i.data is mapped only until we respond: v3da_submit copies what it keeps. */
+			rc = v3da_submit(c, (int)req.op, &req.u.submit, msg->i.data, msg->i.size, &r->u.submit);
+			break;
+
+		case V3DA_OP_SYNCOBJ_IMPORT:
+			rc = v3da_syncobj_import(c, req.u.syncobj_import.handle, &req.u.syncobj_import.fence);
+			break;
+
+		case V3DA_OP_SCANOUT_INFO:
+			rc = v3da_scanout_info(&req.u.scanout, &r->u.scanout);
+			break;
+
+		case V3DA_OP_FLIP:
+			rc = v3da_flip(c, &req.u.flip, &r->u.flip);
+			break;
+
+		case V3DA_OP_DBG_SET_MODE:
+			rc = v3da_set_mode(&req.u.mode, &r->u.mode);
+			break;
+
+		case V3DA_OP_DBG_QSTATS:
+			rc = v3da_qstats(&req.u.qstats, r);
+			break;
+
 		case V3DA_OP_FENCE_WAIT:
 			if (v3da_fence_valid(c, &req.u.fence_wait.fence) == 0) {
 				rc = -EINVAL;
@@ -368,19 +404,14 @@ static int handle_raw(msg_t *msg, msg_rid_t rid, v3da_wait_t **answer)
 			rc = 0;
 			break;
 
-		/* M1 part 2 and later */
-		case V3DA_OP_SUBMIT_CL:
-		case V3DA_OP_SUBMIT_TFU:
-		case V3DA_OP_SUBMIT_CSD:
+		/* later milestones */
 		case V3DA_OP_SUBMIT_CPU:
 		case V3DA_OP_BO_IMPORT:
 		case V3DA_OP_PERFMON_CREATE:
 		case V3DA_OP_PERFMON_DESTROY:
 		case V3DA_OP_PERFMON_GET_VALUES:
 		case V3DA_OP_PERFMON_GET_COUNTER:
-		case V3DA_OP_SCANOUT_INFO:
 		case V3DA_OP_SCANOUT_BO:
-		case V3DA_OP_FLIP:
 			rc = -ENOSYS;
 			break;
 
@@ -517,7 +548,8 @@ static void dispatch_loop(void *arg)
 
 static void usage(const char *prog)
 {
-	printf("usage: %s [-f] [-i] [-I irq] [-r threads] [-p poll_us] [-v]\n", prog);
+	printf("usage: %s [-f] [-i] [-I irq] [-r threads] [-p poll_us] [-m serial|pipeline] [-k knobs] [-c chunk_kib] "
+		"[-w wedge_ms] [-s stat_ms] [-v]\n", prog);
 }
 
 
@@ -529,9 +561,30 @@ int main(int argc, char **argv)
 	setvbuf(stdout, NULL, _IOLBF, 0);   /* every graded line is a stdout line */
 	srv.hw.irq_num = V3D_IRQ;
 	srv.poll_us = 200u;
+	srv.mode = V3DA_MODE_SERIAL;
+	srv.knobs = 0u;
+	srv.ovf_chunk_kib = 1024u;
+	srv.wedge_ms = 500u;
+	srv.stat_ms = 5000u;
 
-	while ((c = getopt(argc, argv, "fiI:r:p:vh")) != -1) {
+	while ((c = getopt(argc, argv, "fiI:r:p:m:k:c:w:s:vh")) != -1) {
 		switch (c) {
+			case 'm':
+				if (strcmp(optarg, "pipeline") == 0) {
+					srv.mode = V3DA_MODE_PIPELINE;
+				}
+				else if (strcmp(optarg, "serial") == 0) {
+					srv.mode = V3DA_MODE_SERIAL;
+				}
+				else {
+					usage(argv[0]);
+					return 1;
+				}
+				break;
+			case 'k': srv.knobs = (uint32_t)strtoul(optarg, NULL, 0) & V3DA_KNOB_ALL; break;
+			case 'c': srv.ovf_chunk_kib = (uint32_t)strtoul(optarg, NULL, 0); break;
+			case 'w': srv.wedge_ms = (uint32_t)strtoul(optarg, NULL, 0); break;
+			case 's': srv.stat_ms = (uint32_t)strtoul(optarg, NULL, 0); break;
 			case 'f': foreground = 1; break;
 			case 'i': irq_at_start = 1; break;
 			case 'I': srv.hw.irq_num = (unsigned)strtoul(optarg, NULL, 0); break;
@@ -556,6 +609,9 @@ int main(int argc, char **argv)
 	}
 	if (srv.poll_us == 0u) {
 		srv.poll_us = 200u;
+	}
+	if (srv.wedge_ms < 100u) {
+		srv.wedge_ms = 100u;
 	}
 
 	/* Detach, so psh gets its prompt back (the ipcprobe pattern). This happens
@@ -618,7 +674,7 @@ int main(int argc, char **argv)
 	}
 	rc = v3da_sched_init();
 	if (rc != 0) {
-		printf("V3DA srv fence page allocation failed (%d)\n", rc);
+		printf("V3DA srv fence page / overflow pool allocation failed (%d)\n", rc);
 		return 4;
 	}
 
@@ -639,9 +695,11 @@ int main(int argc, char **argv)
 		}
 	}
 
-	printf("V3DA srv ready dev=/dev/%s irq=%s irqnum=%u threads=%d poll_us=%u fence_pa=0x%08lx slots=%u\n",
+	printf("V3DA srv ready dev=/dev/%s irq=%s irqnum=%u threads=%d poll_us=%u fence_pa=0x%08lx slots=%u "
+		"mode=%s knobs=0x%02x ovf=%ux%uKiB wedge_ms=%u proto=%u\n",
 		V3DA_DEV_NAME, (srv.hw.irq_on != 0) ? "on" : "off", srv.hw.irq_num, nthreads, srv.poll_us,
-		(unsigned long)srv.fp_pa, V3DA_FENCE_NSLOTS);
+		(unsigned long)srv.fp_pa, V3DA_FENCE_NSLOTS, (srv.mode == V3DA_MODE_SERIAL) ? "serial" : "pipeline",
+		srv.knobs, srv.ovf.nchunks, srv.ovf.chunk_bytes / 1024u, srv.wedge_ms, V3DA_PROTO_VERSION);
 
 	if (readyfd >= 0) {
 		char r = 'R';

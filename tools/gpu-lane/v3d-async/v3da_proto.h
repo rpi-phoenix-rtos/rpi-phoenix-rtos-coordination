@@ -47,7 +47,7 @@
 
 
 #define V3DA_DEV_NAME      "v3d-async"   /* old lane: "v3d-srv" (gpu/rpi4-v3d/v3d_rpc.h) */
-#define V3DA_PROTO_VERSION 1u
+#define V3DA_PROTO_VERSION 2u   /* 2: M1 part 2 (submits, scanout/flip, modes) */
 #define V3DA_MAGIC         0x41443356u   /* "V3DA" little-endian; bit 31 clear */
 #define V3DA_FENCE_MAGIC   0x46443356u   /* "V3DF" */
 
@@ -176,21 +176,24 @@ enum v3da_op {
 	V3DA_OP_SYNCOBJ_RESET,
 	V3DA_OP_SYNCOBJ_SIGNAL,
 	V3DA_OP_SYNCOBJ_QUERY,
+	V3DA_OP_SYNCOBJ_IMPORT,        /* attach a fence (sync-file emulation: drmSyncobjImportSyncFile) */
 
 	V3DA_OP_PERFMON_CREATE = 64,   /* reserved: -ENOSYS */
 	V3DA_OP_PERFMON_DESTROY,
 	V3DA_OP_PERFMON_GET_VALUES,
 	V3DA_OP_PERFMON_GET_COUNTER,
 
-	V3DA_OP_SCANOUT_INFO = 80,     /* reserved: transitional present family (M1 part 2) */
-	V3DA_OP_SCANOUT_BO,
-	V3DA_OP_FLIP,
+	V3DA_OP_SCANOUT_INFO = 80,     /* transitional present family (retired by M2 KMS): fb geometry */
+	V3DA_OP_SCANOUT_BO,            /* reserved (scanout BOs are BO_CREATE with V3DA_BO_SCANOUT) */
+	V3DA_OP_FLIP,                  /* firmware pan to buffer k, optionally after a fence */
 
 	V3DA_OP_DBG_IRQ_MODE = 112,    /* switch interrupt-driven completion on/off at runtime */
 	V3DA_OP_DBG_IRQ_SELFTEST,      /* raise core FLDONE + hub TFUC via INT_SET, report what arrived */
 	V3DA_OP_DBG_BO_CHECKSUM,       /* server-side checksum of a BO range (sharing proof) */
 	V3DA_OP_DBG_STATS,
-	V3DA_OP_DBG_QUIT
+	V3DA_OP_DBG_QUIT,
+	V3DA_OP_DBG_SET_MODE,          /* serialized / pipelined scheduling + cache-maintenance knobs */
+	V3DA_OP_DBG_QSTATS             /* per-queue busy / overlap counters */
 };
 
 
@@ -235,7 +238,7 @@ typedef struct {
 } v3da_get_param_resp_t;
 
 #define V3DA_BO_CACHEABLE (1u << 0)   /* == DRM V3D_CREATE_BO_CACHEABLE-style: map cached */
-#define V3DA_BO_SCANOUT   (1u << 1)   /* reserved: back with firmware-fb pages (part 2) */
+#define V3DA_BO_SCANOUT   (1u << 1)   /* == DRM V3D_CREATE_BO flag bit 1: GPU pages = firmware-fb buffer */
 
 typedef struct {
 	uint32_t size;
@@ -243,11 +246,11 @@ typedef struct {
 } v3da_bo_create_req_t;
 
 typedef struct {
-	uint32_t handle;        /* global, nonzero */
+	uint32_t handle;        /* global, nonzero, never reused while the server lives (generation in the high bits) */
 	uint32_t gpuva;         /* == the DRM offset */
 	uint32_t size;          /* page-rounded */
-	uint32_t pad;
-	v3da_memref_t mem;
+	uint32_t scanout;       /* 0, or 1 + the firmware-fb buffer index backing this BO's GPU pages */
+	v3da_memref_t mem;      /* the CPU view (for a scanout BO: its own DRAM, which the GPU does NOT use) */
 } v3da_bo_create_resp_t;
 
 typedef struct {
@@ -346,6 +349,113 @@ typedef struct {
 	uint32_t first_word;
 } v3da_bo_checksum_resp_t;
 
+/* SYNCOBJ_IMPORT: attach `fence` to syncobj `handle` (state FENCE). */
+typedef struct {
+	uint32_t handle;
+	uint32_t pad;
+	v3da_fence_t fence;
+} v3da_syncobj_import_req_t;
+
+/* SCANOUT_INFO: the firmware framebuffer the SDL glue found through /dev/fb0.
+ * The server asks the firmware for the granted virtual height (GET_VIRTUAL_WH,
+ * through /dev/vcmbox) and derives how many stacked page-flip buffers exist. */
+typedef struct {
+	uint64_t pa;
+	uint32_t width;
+	uint32_t height;
+	uint32_t pitch;
+	uint32_t pad;
+} v3da_scanout_req_t;
+
+typedef struct {
+	uint32_t nbuf;          /* 1 (single, render in place), 2 or 3 (page flip) */
+	uint32_t virt_h;        /* firmware-granted virtual height (0 = query failed) */
+	uint32_t bytes;         /* one buffer: pitch * height */
+	uint32_t claimed;       /* bitmask of buffers backing a live scanout BO */
+} v3da_scanout_resp_t;
+
+#define V3DA_FLIP_AFTER_FENCE (1u << 0)   /* pan only once `fence` has signalled */
+
+typedef struct {
+	uint32_t buf;           /* 0..nbuf-1 */
+	uint32_t flags;         /* V3DA_FLIP_* */
+	v3da_fence_t fence;
+} v3da_flip_req_t;
+
+typedef struct {
+	uint32_t deferred;      /* 1 = queued behind its fence, 0 = panned before the reply */
+	uint32_t pending;       /* flips still queued */
+	uint32_t flips;         /* pans issued so far */
+	uint32_t pad;
+} v3da_flip_resp_t;
+
+/* Scheduling modes (DBG_SET_MODE, `-m`). SERIAL is the bring-up default: one job
+ * in flight across ALL hardware queues - the old synchronous lane's ordering with
+ * asynchronous completion. PIPELINE runs every queue concurrently (one job each),
+ * so bin(N+1) overlaps render(N). */
+enum v3da_mode { V3DA_MODE_SERIAL = 0, V3DA_MODE_PIPELINE = 1 };
+
+/* Cache-maintenance knobs. Every bit is a DROP of a step of the proven sequence
+ * (design section 5 / E2 steps); the default 0 is the old lane's sequence. For
+ * E10-style A/B only. */
+#define V3DA_KNOB_TLB_ON_CHANGE   (1u << 0)   /* E2 step 5: flush the MMU TLB only when a PTE changed */
+#define V3DA_KNOB_NO_L2T_WAIT_NEW (1u << 1)   /* E2 step 6: do not wait for the pre-bin L2T flush */
+#define V3DA_KNOB_NO_FIXA         (1u << 2)   /* E2 step 7: drop fix-A (regressed on 2026-07-26) */
+#define V3DA_KNOB_NO_HANDOFF_WAIT (1u << 3)   /* E2 step 11: do not wait for the bin->render L2T flush */
+#define V3DA_KNOB_CL_CACHE_CLEAN  (1u << 4)   /* E2 step 16: honour SUBMIT_CL_FLUSH_CACHE (TMUWCF + clean) */
+#define V3DA_KNOB_ALL             0x1fu
+
+#define V3DA_SET_MODE  (1u << 0)
+#define V3DA_SET_KNOBS (1u << 1)
+
+typedef struct {
+	uint32_t set;           /* V3DA_SET_*: which fields to apply (0 = query) */
+	uint32_t mode;          /* enum v3da_mode */
+	uint32_t knobs;         /* V3DA_KNOB_* */
+	uint32_t pad;
+} v3da_mode_req_t;
+
+typedef struct {
+	uint32_t mode;
+	uint32_t knobs;
+	int32_t rc;             /* -EBUSY: jobs in flight, mode not changed */
+	uint32_t pad;
+} v3da_mode_resp_t;
+
+#define V3DA_QSTATS_GLOBAL 0xffu
+
+typedef struct {
+	uint32_t which;         /* a queue (enum v3da_queue) or V3DA_QSTATS_GLOBAL */
+	uint32_t reset;         /* 1 = zero the counters after reading */
+} v3da_qstats_req_t;
+
+/* Per queue: every figure since the last reset. */
+typedef struct {
+	uint32_t jobs;          /* completed */
+	uint32_t errors;        /* completed with an error (wedge, TFUF, failed dependency) */
+	uint64_t busy_us;       /* sum of kick -> done */
+	uint64_t wait_us;       /* sum of submit -> kick (queueing + dependencies) */
+	uint32_t max_us;        /* longest kick -> done */
+	uint32_t oom;           /* BIN: overflow chunks handed out */
+	uint32_t pending;       /* queued now (not yet kicked) */
+	uint32_t active;        /* 1 = a job is on the hardware now */
+} v3da_qstats_q_t;
+
+/* Global: hardware-queue concurrency. */
+typedef struct {
+	uint64_t window_us;     /* time since the last reset */
+	uint64_t any_busy_us;   /* >= 1 hardware queue busy */
+	uint64_t overlap_us;    /* >= 2 hardware queues busy (bin || render etc.) */
+	uint32_t mode;
+	uint32_t knobs;
+	uint32_t wedges;        /* watchdog verdicts */
+	uint32_t resets;        /* GPU resets */
+	uint32_t ovf_free;      /* overflow chunks free now */
+	uint32_t ovf_total;
+	uint32_t ovf_starved;   /* OUTOMEM with nothing staged / pool empty */
+	uint32_t flips;
+} v3da_qstats_g_t;
+
 typedef struct {
 	uint32_t clients;
 	uint32_t bos_live;
@@ -370,32 +480,59 @@ typedef struct {
 
 
 /* ------------------------------------------------------------------------- */
-/* Submit marshaling (M1 part 2)                                              */
+/* Submit marshaling                                                          */
 /* ------------------------------------------------------------------------- */
 
-/* A syncobj reference inside a submit (MULTI_SYNC flattened). */
+/* The job descriptors are this protocol's own (not the DRM structs): the wire
+ * ABI stays fixed whatever the DRM uapi snapshot does. The client library fills
+ * them from drm_v3d_submit_cl / _tfu / _csd field by field. */
+typedef struct {
+	uint32_t bcl_start, bcl_end;   /* binner control list [start, end) */
+	uint32_t rcl_start, rcl_end;   /* render control list [start, end) */
+	uint32_t qma, qms;             /* tile-allocation memory address / size (CT0QMA/QMS) */
+	uint32_t qts;                  /* tile-state address (CT0QTS), 0 = none */
+	uint32_t flags;                /* V3DA_CL_* */
+} v3da_cl_desc_t;
+
+#define V3DA_CL_FLUSH_CACHE (1u << 0)   /* == DRM_V3D_SUBMIT_CL_FLUSH_CACHE */
+
+typedef struct {
+	uint32_t icfg, iia, iis, ica, iua, ioa, ios;
+	uint32_t coef[4];
+} v3da_tfu_desc_t;
+
+typedef struct {
+	uint32_t cfg[7];               /* CSD_QUEUED_CFG0..6; CFG0 kicks */
+	uint32_t coef[4];              /* unused on V3D 4.2 (DRM parity) */
+} v3da_csd_desc_t;
+
+/* A syncobj reference inside a submit (legacy in/out_sync fields and the
+ * MULTI_SYNC extension, flattened). */
 typedef struct {
 	uint32_t handle;
-	uint32_t flags;
+	uint32_t flags;         /* V3DA_SEM_* */
 } v3da_sem_t;
+
+#define V3DA_SEM_RENDER (1u << 0)   /* in-sync: the RENDER job waits (CL in_sync_rcl); else the first job */
 
 /*
  * SUBMIT_CL / TFU / CSD: v3da_submit_t in the request's u, and a flat buffer in
  * msg.i.data (the library keeps it page-aligned - E5: every unaligned end costs a
  * shadow page and a copy):
- *     [ drm_v3d_submit_* descriptor      ] desc_size bytes (pointer fields ignored)
+ *     [ v3da_cl_desc_t | v3da_tfu_desc_t | v3da_csd_desc_t ]  desc_size bytes
  *     [ uint32_t bo_handles[nbo]         ] every BO the job touches: WAIT_BO and the
  *                                          in-flight references depend on it
- *     [ v3da_sem_t in[nin]               ] waited before the (first) job starts
+ *     [ v3da_sem_t in[nin]               ] resolved to fences AT SUBMIT TIME (DRM)
  *     [ v3da_sem_t out[nout]             ] get the (last) job's fence
- * The reply's u holds v3da_submit_resp_t.
+ * The reply's u holds v3da_submit_resp_t. The server copies what it keeps before
+ * it replies: the window is gone afterwards.
  */
 typedef struct {
 	uint32_t desc_size;
 	uint32_t nbo;
 	uint32_t nin;
 	uint32_t nout;
-	uint32_t flags;         /* DRM_V3D_SUBMIT_* */
+	uint32_t flags;         /* reserved, 0 */
 	uint32_t pad;
 } v3da_submit_t;
 
@@ -428,6 +565,11 @@ typedef struct {
 		v3da_irq_mode_req_t irq_mode;
 		v3da_bo_checksum_req_t bo_checksum;
 		v3da_submit_t submit;
+		v3da_syncobj_import_req_t syncobj_import;
+		v3da_scanout_req_t scanout;
+		v3da_flip_req_t flip;
+		v3da_mode_req_t mode;
+		v3da_qstats_req_t qstats;
 	} u;
 } v3da_req_t;
 
@@ -449,6 +591,11 @@ typedef struct {
 		v3da_stats_t stats;
 		v3da_quit_resp_t quit;
 		v3da_submit_resp_t submit;
+		v3da_scanout_resp_t scanout;
+		v3da_flip_resp_t flip;
+		v3da_mode_resp_t mode;
+		v3da_qstats_q_t qstats_q;
+		v3da_qstats_g_t qstats_g;
 	} u;
 } v3da_resp_t;
 
@@ -464,6 +611,9 @@ _Static_assert(sizeof(v3da_fence_slot_t) == V3DA_FENCE_SLOT_SIZE, "fence page sl
 _Static_assert(sizeof(v3da_fence_page_t) <= V3DA_FENCE_PAGE_SIZE, "fence page overflows one page");
 _Static_assert(sizeof(v3da_stats_t) <= 56, "stats must fit o.raw");
 _Static_assert(V3DA_Q_COUNT <= 8, "fence header arrays hold 8 queues");
+_Static_assert(sizeof(v3da_qstats_q_t) <= 56, "qstats must fit o.raw");
+_Static_assert(sizeof(v3da_qstats_g_t) <= 56, "qstats must fit o.raw");
+_Static_assert(sizeof(v3da_submit_resp_t) <= 56, "submit reply must fit o.raw");
 #endif
 
 

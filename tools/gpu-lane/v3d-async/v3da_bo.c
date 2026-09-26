@@ -12,6 +12,13 @@
  *     every queue has passed the hw_submitted snapshot taken at release -> only
  *     then the block is reused (design section 9.2). No V3D job the server knows
  *     of can write a page after it changed owner.
+ *   - Handles carry a per-slot generation and are never reused while the server
+ *     lives (the winsys's monotonic-handle lesson).
+ *   - In-flight references: every BO a submit names is pinned until the job that
+ *     holds the list completes; a close while pinned only drops the handle.
+ *   - SCANOUT BOs (the transitional present family): the GPU pages of the visible
+ *     rows are the firmware framebuffer buffer's pages; the CPU view (memref) is
+ *     the BO's own DRAM, exactly as the in-process winsys does it.
  *   - Blocks go to a server-owned POOL, not back to the kernel: a stale device or
  *     stale client MAP_PHYSMEM write then lands in another GPU buffer, never in a
  *     malloc heap (the C1 class), and the last-munmap-of-a-contiguous-object kernel
@@ -38,15 +45,26 @@
 #include "v3da_regs.h"
 
 
-v3da_bo_t *v3da_bo_find(uint32_t handle)
+/* Any LIVE BO with this exact handle (pinned-but-closed ones included). */
+static v3da_bo_t *bo_lookup(uint32_t handle)
 {
+	uint32_t slot = handle & V3DA_HANDLE_SLOT_MASK;
 	v3da_bo_t *b;
 
-	if ((handle == 0u) || (handle > srv.nbos)) {
+	if ((slot == 0u) || (slot > srv.nbos)) {
 		return NULL;
 	}
-	b = &srv.bos[handle - 1u];
+	b = &srv.bos[slot - 1u];
 	return ((b->state == V3DA_BO_LIVE) && (b->handle == handle)) ? b : NULL;
+}
+
+
+/* A BO a client may still name: LIVE and not closed by every handle holder. */
+v3da_bo_t *v3da_bo_find(uint32_t handle)
+{
+	v3da_bo_t *b = bo_lookup(handle);
+
+	return ((b != NULL) && (b->refs > 0u)) ? b : NULL;
 }
 
 
@@ -103,16 +121,38 @@ static void block_put(void *cpu, uintptr_t pa, uint32_t pages, int cached)
 }
 
 
+/* Which firmware-fb buffer a new scanout BO takes: the lowest free one, as the
+ * winsys hands buffer 0, 1, 2 to the glue's scanout FBOs in creation order.
+ * -1 = none (no SCANOUT_INFO yet, or every buffer taken: a normal BO then, as
+ * the winsys does). */
+static int scanout_pick(void)
+{
+	uint32_t i;
+
+	for (i = 0u; i < srv.scan.nbuf; i++) {
+		if (srv.scan.claimed[i] == 0u) {
+			return (int)i;
+		}
+	}
+	return -1;
+}
+
+
 int v3da_bo_create(uint32_t client, uint32_t size, uint32_t flags, v3da_bo_create_resp_t *out)
 {
-	uint32_t pages, slot, gpuva, i;
+	uint32_t pages, slot, gpuva, i, scan_pages = 0u, buf_pa = 0u;
 	int cached = ((flags & V3DA_BO_CACHEABLE) != 0u) ? 1 : 0;
+	int scan = -1;
 	uintptr_t pa;
 	void *cpu;
 	v3da_bo_t *b;
 
 	if ((flags & V3DA_BO_SCANOUT) != 0u) {
-		return -ENOSYS;   /* transitional present family: part 2 */
+		scan = scanout_pick();
+		if (scan >= 0) {
+			cached = 0;   /* the RT is GPU-written; its own DRAM view stays uncached */
+			buf_pa = srv.scan.pa + (uint32_t)scan * srv.scan.bytes;
+		}
 	}
 	if (size > 0x40000000u) {
 		return -EINVAL;
@@ -144,9 +184,19 @@ int v3da_bo_create(uint32_t client, uint32_t size, uint32_t flags, v3da_bo_creat
 		return -ENOMEM;
 	}
 	/* Map each page by its own physical address (per-page va2pa is correct for
-	 * contiguous and non-contiguous backing alike - v3d_gpu.c:778-783). */
+	 * contiguous and non-contiguous backing alike - v3d_gpu.c:778-783). A scanout
+	 * BO maps its visible rows to the fb buffer instead; the tile-padding rows
+	 * beyond it (1088 stored rows for a 1080 RT) stay on the BO's own DRAM
+	 * (winsys ioc_create_bo scanout branch). */
+	if (scan >= 0) {
+		scan_pages = srv.scan.bytes / (uint32_t)_PAGE_SIZE;
+		if (scan_pages > pages) {
+			scan_pages = pages;
+		}
+	}
 	for (i = 0u; i < pages; i++) {
-		uintptr_t ppa = (uintptr_t)va2pa((char *)cpu + (size_t)i * _PAGE_SIZE);
+		uintptr_t ppa = (i < scan_pages) ? ((uintptr_t)buf_pa + (uintptr_t)i * _PAGE_SIZE) :
+			(uintptr_t)va2pa((char *)cpu + (size_t)i * _PAGE_SIZE);
 		srv.hw.pt[(gpuva >> V3D_PAGE_SHIFT) + i] = (uint32_t)(ppa >> V3D_PAGE_SHIFT) | PTE_W | PTE_V;
 	}
 	srv.hw.pt_gen++;
@@ -156,7 +206,11 @@ int v3da_bo_create(uint32_t client, uint32_t size, uint32_t flags, v3da_bo_creat
 	b = &srv.bos[slot];
 	memset(b, 0, sizeof(*b));
 	b->state = V3DA_BO_LIVE;
-	b->handle = slot + 1u;
+	srv.bo_gen[slot]++;
+	if ((srv.bo_gen[slot] & (0xffffffffu >> V3DA_HANDLE_SLOT_BITS)) == 0u) {
+		srv.bo_gen[slot] = 1u;   /* keep handles nonzero-generation after a wrap */
+	}
+	b->handle = (srv.bo_gen[slot] << V3DA_HANDLE_SLOT_BITS) | (slot + 1u);
 	b->owner = client;
 	b->refs = 1u;
 	b->flags = flags;
@@ -164,11 +218,23 @@ int v3da_bo_create(uint32_t client, uint32_t size, uint32_t flags, v3da_bo_creat
 	b->pa = pa;
 	b->gpuva = gpuva;
 	b->pages = pages;
+	if (cached != 0) {
+		b->flags |= V3DA_BO_CACHEABLE;
+	}
+	else {
+		b->flags &= ~V3DA_BO_CACHEABLE;
+	}
+	if (scan >= 0) {
+		b->scanout = scan + 1;
+		srv.scan.claimed[scan] = b->handle;
+		printf("V3DA srv scanout BO handle=0x%x buf%d pa=0x%08x gpuva=0x%08x %u/%u pages on the fb\n",
+			b->handle, scan, buf_pa, gpuva, scan_pages, pages);
+	}
 
 	out->handle = b->handle;
 	out->gpuva = gpuva;
 	out->size = pages * (uint32_t)_PAGE_SIZE;
-	out->pad = 0u;
+	out->scanout = (uint32_t)b->scanout;
 	out->mem.kind = V3DA_MEM_PHYS;
 	out->mem.cache = (cached != 0) ? V3DA_CACHE_CACHED : V3DA_CACHE_UNCACHED;
 	out->mem.port = 0u;
@@ -189,6 +255,10 @@ static void quarantine_begin(v3da_bo_t *b)
 		srv.hw.pt[(b->gpuva >> V3D_PAGE_SHIFT) + i] = 0u;
 	}
 	srv.hw.pt_gen++;
+	if ((b->scanout > 0) && ((uint32_t)b->scanout <= V3DA_SCANOUT_MAX) &&
+			(srv.scan.claimed[b->scanout - 1] == b->handle)) {
+		srv.scan.claimed[b->scanout - 1] = 0u;   /* the next scanout RT may take it */
+	}
 	b->clear_pt_gen = srv.hw.pt_gen;
 	for (q = 0; q < V3DA_Q_COUNT; q++) {
 		b->pass[q] = v3da_load64(&srv.fp->hdr.hw_submitted[q]);
@@ -200,6 +270,88 @@ static void quarantine_begin(v3da_bo_t *b)
 		v3da_hw_mmu_flush(&srv.hw);   /* else: the next job prologue flushes (step 5) */
 	}
 	b->state = V3DA_BO_QUARANTINE;
+}
+
+
+/* Validate every handle, then pin them all (a submit names each BO once or more;
+ * duplicates are pinned once per mention and unpinned the same way). */
+int v3da_bo_pin_for_job(const uint32_t *handles, uint32_t n)
+{
+	uint32_t i;
+
+	for (i = 0u; i < n; i++) {
+		if (v3da_bo_find(handles[i]) == NULL) {
+			return -ENOENT;
+		}
+	}
+	for (i = 0u; i < n; i++) {
+		v3da_bo_find(handles[i])->inflight++;
+	}
+	return 0;
+}
+
+
+/* Implicit sync: the BO's last user on this queue is `f` (WAIT_BO waits for all). */
+void v3da_bo_mark_use(const uint32_t *handles, uint32_t n, const v3da_fence_t *f)
+{
+	uint32_t i;
+	v3da_bo_t *b;
+
+	for (i = 0u; i < n; i++) {
+		b = bo_lookup(handles[i]);
+		if ((b != NULL) && (f->queue < V3DA_Q_COUNT)) {
+			b->last[f->queue] = *f;
+		}
+	}
+}
+
+
+void v3da_bo_unpin(const uint32_t *handles, uint32_t n)
+{
+	uint32_t i;
+	v3da_bo_t *b;
+
+	for (i = 0u; i < n; i++) {
+		b = bo_lookup(handles[i]);
+		if (b == NULL) {
+			continue;
+		}
+		if (b->inflight > 0u) {
+			b->inflight--;
+		}
+		if ((b->refs == 0u) && (b->inflight == 0u)) {
+			quarantine_begin(b);
+		}
+	}
+}
+
+
+/* The binner-overflow pool (old daemon, v3d_gpu.c:644-665): uncached contiguous
+ * pages, zeroed, premapped at one stable GPU VA so a grant never needs a TLB
+ * flush. Owned by the server for its whole life. */
+int v3da_bo_map_ovf_pool(uint32_t bytes, uint32_t *gpuva)
+{
+	uint32_t pages = bytes / (uint32_t)_PAGE_SIZE, va, i;
+	void *cpu;
+
+	va = v3da_hw_va_alloc(&srv.hw, pages);
+	if (va == 0u) {
+		return -ENOMEM;
+	}
+	cpu = mmap(NULL, bytes, PROT_READ | PROT_WRITE, MAP_UNCACHED | MAP_CONTIGUOUS | MAP_ANONYMOUS, -1, 0);
+	if (cpu == MAP_FAILED) {
+		v3da_hw_va_free(&srv.hw, va, pages);
+		return -ENOMEM;
+	}
+	memset(cpu, 0, bytes);
+	for (i = 0u; i < pages; i++) {
+		uintptr_t ppa = (uintptr_t)va2pa((char *)cpu + (size_t)i * _PAGE_SIZE);
+		srv.hw.pt[(va >> V3D_PAGE_SHIFT) + i] = (uint32_t)(ppa >> V3D_PAGE_SHIFT) | PTE_W | PTE_V;
+	}
+	srv.hw.pt_gen++;
+	v3da_hw_mmu_flush(&srv.hw);
+	*gpuva = va;
+	return 0;
 }
 
 
@@ -322,7 +474,7 @@ void v3da_bo_client_gone(uint32_t client)
 
 	for (i = 0u; i < srv.nbos; i++) {
 		b = &srv.bos[i];
-		if ((b->state != V3DA_BO_LIVE) || (b->owner != client)) {
+		if ((b->state != V3DA_BO_LIVE) || (b->owner != client) || (b->refs == 0u)) {
 			continue;
 		}
 		b->owner = 0u;

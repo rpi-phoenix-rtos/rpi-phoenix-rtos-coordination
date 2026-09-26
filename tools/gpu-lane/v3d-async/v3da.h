@@ -31,6 +31,16 @@
 #define V3DA_MAX_HOLES    2048u
 #define V3DA_MAX_SYNCOBJS 256u                /* per client */
 #define V3DA_MAX_POOL     1024u               /* pooled BO blocks */
+#define V3DA_MAX_CHUNKS   512u                /* binner-overflow chunks */
+#define V3DA_MAX_FLIPS    4u                  /* queued (fence-gated) flips */
+#define V3DA_SCANOUT_MAX  3u                  /* firmware-fb page-flip buffers */
+
+/* Handles: (generation << 13) | (slot + 1). A handle is never reused while the
+ * server lives (until a slot's generation wraps after 2^19 reuses), so a stale
+ * handle fails cleanly instead of naming a newer BO - the winsys learned this
+ * the hard way (a recycled handle put texture data into a control list). */
+#define V3DA_HANDLE_SLOT_BITS 13u
+#define V3DA_HANDLE_SLOT_MASK ((1u << V3DA_HANDLE_SLOT_BITS) - 1u)
 
 
 /* ------------------------------------------------------------------------- */
@@ -75,10 +85,13 @@ typedef struct {
 	volatile uint32_t storm;      /* set by the handler's storm guard (1 spurious, 2 burst) */
 	volatile uint32_t mmu_ctl_seen;
 	/* Pre-staged binner-overflow chunk the handler may hand out on OUTOMEM
-	 * (part 2; zero = nothing staged). */
+	 * (zero = nothing staged). ovf_consumed = VA of the chunk it handed out (the
+	 * event thread attributes it); ovf_missed counts OUTOMEMs that found nothing
+	 * staged (the event thread grants those directly). */
 	volatile uint32_t ovf_stage_va;
 	volatile uint32_t ovf_stage_size;
 	volatile uint32_t ovf_consumed;
+	volatile uint32_t ovf_missed;
 } v3da_hw_t;
 
 
@@ -93,14 +106,15 @@ typedef struct {
 	uint32_t handle;              /* slot + 1 */
 	uint32_t owner;               /* creating client id (0 = server) */
 	uint32_t refs;                /* handle refs: creator + importers */
-	uint32_t inflight;            /* jobs referencing it (part 2) */
+	uint32_t inflight;            /* jobs referencing it (dropped when the job's fence completes) */
 	uint32_t flags;               /* V3DA_BO_* */
 	void *cpu;                    /* server's own mapping */
 	uintptr_t pa;
 	uint32_t gpuva;
 	uint32_t pages;
-	/* last use per queue (part 2: WAIT_BO / implicit sync) */
+	/* last use per queue (WAIT_BO / implicit sync) */
 	v3da_fence_t last[V3DA_Q_COUNT];
+	int scanout;                  /* 0, or 1 + the firmware-fb buffer backing its GPU pages */
 	/* quarantine */
 	uint64_t clear_pt_gen;        /* pt_gen after the PTE clear */
 	uint64_t pass[V3DA_Q_COUNT];  /* hw_submitted snapshot: wait for hw_completed >= pass */
@@ -145,7 +159,44 @@ typedef struct v3da_job {
 	int queue;                    /* enum v3da_queue */
 	uint32_t client;              /* client id */
 	v3da_fence_t fence;
+	uint64_t gseq;                /* global submission order */
+	uint64_t t_submit_us;
 	uint64_t t_kick_us;
+	int error;                    /* completes with an error */
+
+	/* In-fences, resolved from the submit's in-syncobjs at submit time. */
+	v3da_fence_t dep[V3DA_SUBMIT_MAX_SEMS];
+	uint32_t ndep;
+
+	/* CL pairs: bin->render points at its render job, render->bin at its bin job
+	 * while that is not yet complete (NULL afterwards). A render whose bin failed
+	 * is completed with an error without ever being kicked. */
+	struct v3da_job *render;
+	struct v3da_job *bin;
+	int dep_error;
+
+	/* BOs referenced by the submit (held by the LAST job of the submit: the
+	 * render, TFU or CSD job). Dropped at completion. */
+	uint32_t *bos;
+	uint32_t nbo;
+
+	/* Binner-overflow chunks written by this job's bin (chunk index list; moved
+	 * from the bin job to its render job at bin completion, freed when the render
+	 * completes: the render reads the tile lists the binner wrote there). */
+	int ovf_head;
+
+	/* Watchdog */
+	uint64_t wd_check_us;         /* next progress check */
+	uint64_t wd_progress_us;      /* last time progress was seen */
+	uint32_t wd_ca, wd_ra;        /* CTnCA / CTnRA (CSD: CURRENT_CFG4) at the last check */
+	uint32_t qpu_acks;
+
+	union {
+		v3da_cl_desc_t cl;
+		v3da_tfu_desc_t tfu;
+		v3da_csd_desc_t csd;
+	} d;
+
 	/* NOP test job */
 	uint32_t delay_us;
 	uint64_t done_at_us;
@@ -156,7 +207,46 @@ typedef struct {
 	v3da_job_t *tail[V3DA_MAX_CLIENTS];
 	v3da_job_t *active;                   /* one job in flight */
 	uint32_t rr;                          /* round-robin cursor (client index) */
+	uint32_t pending;                     /* queued, not kicked */
+
+	/* statistics (DBG_QSTATS) */
+	uint32_t st_jobs, st_errors, st_max_us, st_oom;
+	uint64_t st_busy_us, st_wait_us;
 } v3da_queue_t;
+
+/* Binner-overflow pool: premapped at init (uncached, contiguous, one GPU VA
+ * range), cut into equal chunks. A chunk is FREE, STAGED (armed for the IRQ
+ * handler), or owned by exactly one job (chunk_next links a job's list). */
+typedef struct {
+	uint32_t gpuva;               /* base of the pool */
+	uint32_t chunk_bytes;
+	uint32_t nchunks;
+	int free_head;
+	uint32_t nfree;
+	int staged;                   /* chunk index armed in hw.ovf_stage_*, -1 = none */
+	int next[V3DA_MAX_CHUNKS];
+	uint32_t starved;             /* stat: OUTOMEM with nothing to hand out at once */
+	int bin_waiting;              /* the active bin job is stalled for memory */
+} v3da_ovf_t;
+
+/* Transitional present family (firmware pan through /dev/vcmbox). */
+typedef struct {
+	uint32_t pa;                  /* buffer 0 */
+	uint32_t width, height, pitch;
+	uint32_t bytes;               /* one buffer */
+	uint32_t virt_h;
+	uint32_t nbuf;                /* 0 = no SCANOUT_INFO yet */
+	uint32_t claimed[V3DA_SCANOUT_MAX];   /* handle of the BO backed by buffer i, 0 = free */
+	struct {
+		uint32_t buf;
+		int gated;
+		v3da_fence_t fence;
+	} q[V3DA_MAX_FLIPS];
+	uint32_t nq;
+	uint32_t flips;
+	uint32_t flips_deferred;
+	uint32_t shown;               /* buffer on screen */
+} v3da_scanout_t;
 
 
 /* ------------------------------------------------------------------------- */
@@ -205,8 +295,25 @@ typedef struct {
 	uint64_t slot_gen[V3DA_MAX_CLIENTS];
 
 	v3da_queue_t q[V3DA_Q_COUNT];
+	int mode;                     /* enum v3da_mode */
+	uint32_t knobs;               /* V3DA_KNOB_* */
+	uint32_t wedge_ms;            /* no progress this long = wedge (default 500) */
+	uint32_t stat_ms;             /* periodic qstat line (0 = off) */
+	uint32_t ovf_chunk_kib;       /* -c */
+	v3da_ovf_t ovf;
+	v3da_scanout_t scan;
+
+	/* concurrency accounting (all under srv.lock) */
+	uint32_t nbusy;               /* hardware queues with a job on the hardware */
+	uint64_t acct_t_us;           /* last accounting point */
+	uint64_t acct_t0_us;          /* window start */
+	uint64_t any_busy_us, overlap_us;
+	uint32_t wedges;
+	uint64_t stat_next_us;
+	uint32_t stat_jobs_seen;
 
 	v3da_bo_t bos[V3DA_MAX_BOS];
+	uint32_t bo_gen[V3DA_MAX_BOS];   /* per-slot handle generation */
 	uint32_t nbos;                /* high-water mark of slots ever used */
 	v3da_pool_block_t pool[V3DA_MAX_POOL];
 	uint32_t npool;
@@ -214,6 +321,7 @@ typedef struct {
 	v3da_wait_t *waits;           /* parked requests (doubly linked) */
 	uint32_t nparked;
 	uint32_t parked_max;
+	uint64_t dead_flush[V3DA_MAX_CLIENTS][V3DA_Q_COUNT];   /* last seqno of a dead client's discarded jobs */
 
 	/* poll-mode knobs */
 	uint32_t poll_us;
@@ -255,17 +363,29 @@ int v3da_hw_init(v3da_hw_t *hw);
 int v3da_hw_irq_enable(v3da_hw_t *hw);      /* locked; returns interrupt() rc */
 void v3da_hw_irq_disable(v3da_hw_t *hw);    /* locked */
 void v3da_hw_poll_status(v3da_hw_t *hw);    /* poll mode: read + W1C STS into the event words */
+void v3da_hw_drain(v3da_hw_t *hw);          /* before a kick: fold + W1C everything but OUTOMEM */
 void v3da_hw_mmu_flush(v3da_hw_t *hw);      /* MMUC flush + TLB clear, bounded spins */
 uint32_t v3da_hw_va_alloc(v3da_hw_t *hw, uint32_t pages);
 void v3da_hw_va_free(v3da_hw_t *hw, uint32_t gpuva, uint32_t pages);
 int v3da_hw_selftest(v3da_hw_t *hw, v3da_irq_selftest_resp_t *out);   /* called unlocked */
 void v3da_hw_shutdown(v3da_hw_t *hw);       /* locked: mask + unregister */
+/* Wedge recovery (locked): mask, drain the GMP, true V3D reset (PM_V3DRSTN held,
+ * power on again through vcmbox with clock read-back), core registers, TLB,
+ * interrupt masks back if IRQ mode is on. Returns the power-on result. */
+int v3da_hw_reset(v3da_hw_t *hw);
+void v3da_hw_l2t_flush_wait(v3da_hw_t *hw); /* bounded spin: no L2T flush pending (GFXH-1897) */
+/* Firmware property call through /dev/vcmbox (2 value words). */
+int v3da_hw_vc_prop2(uint32_t tag, uint32_t w0, uint32_t w1, uint32_t nIn, uint32_t *ans0, uint32_t *ans1);
 
 /* v3da_param.c (separate: the DRM uapi headers clash with <sys/ioctl.h>) */
 int v3da_get_param(uint32_t param, uint64_t *value);
 
 /* v3da_bo.c */
 int v3da_bo_create(uint32_t client, uint32_t size, uint32_t flags, v3da_bo_create_resp_t *out);
+int v3da_bo_pin_for_job(const uint32_t *handles, uint32_t n);   /* validate + inflight++ (all or none) */
+void v3da_bo_mark_use(const uint32_t *handles, uint32_t n, const v3da_fence_t *f);
+void v3da_bo_unpin(const uint32_t *handles, uint32_t n);        /* inflight--, quarantine if unreferenced */
+int v3da_bo_map_ovf_pool(uint32_t bytes, uint32_t *gpuva);      /* init: the binner-overflow pool */
 int v3da_bo_close(uint32_t client, uint32_t handle);
 int v3da_bo_mmap(uint32_t handle, v3da_bo_resp_t *out);
 int v3da_bo_offset(uint32_t handle, uint32_t *gpuva);
@@ -277,6 +397,13 @@ v3da_bo_t *v3da_bo_find(uint32_t handle);
 
 /* v3da_sched.c */
 int v3da_sched_init(void);
+int v3da_submit(v3da_client_t *c, int op, const v3da_submit_t *hdr, const void *data, size_t size,
+	v3da_submit_resp_t *out);
+int v3da_set_mode(const v3da_mode_req_t *rq, v3da_mode_resp_t *out);
+int v3da_qstats(const v3da_qstats_req_t *rq, v3da_resp_t *r);
+int v3da_scanout_info(const v3da_scanout_req_t *rq, v3da_scanout_resp_t *out);
+int v3da_flip(v3da_client_t *c, const v3da_flip_req_t *rq, v3da_flip_resp_t *out);
+int v3da_syncobj_import(v3da_client_t *c, uint32_t handle, const v3da_fence_t *f);
 void v3da_event_thread(void *arg);
 int v3da_submit_nop(v3da_client_t *c, uint32_t delay_us, v3da_fence_t *out);
 int v3da_fence_signaled(const v3da_fence_t *f, int *error);
@@ -296,6 +423,15 @@ void v3da_jobs_client_gone(uint32_t client);
 void v3da_kick_event_thread(void);          /* locked */
 int v3da_slot_busy(uint32_t slot);          /* a job of this slot is still in flight */
 void v3da_slot_assign(uint32_t slot);       /* new generation, zeroed row */
+
+/* v3da_jobs.c (all locked) */
+int v3da_ovf_init(void);
+int v3da_jobs_hw_busy(void);
+void v3da_jobs_events(uint32_t core, uint32_t hub, uint64_t now);   /* event thread */
+void v3da_jobs_tick(uint64_t now);                                  /* event thread */
+uint64_t v3da_jobs_next_deadline(uint64_t now);
+void v3da_sched_run(void);
+void v3da_fence_complete(const v3da_job_t *j, int error);           /* v3da_sched.c */
 
 /* syncobjs (v3da_sched.c) */
 int v3da_syncobj_create(v3da_client_t *c, uint32_t flags, uint32_t *handle);

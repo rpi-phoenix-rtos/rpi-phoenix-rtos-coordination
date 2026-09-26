@@ -4,8 +4,9 @@
  * Raspberry Pi 4 (BCM2711) V3D 4.2 asynchronous render server - client library
  *
  * Thin veneer over /dev/v3d-async (protocol: v3da_proto.h). In M3 this becomes the
- * v3d half of libdrm-phoenix; in M1 part 2 it gains the phoenix_v3d_ioctl() entry
- * point Mesa calls and the transitional present family the SDL2 glue uses.
+ * v3d half of libdrm-phoenix. The Mesa-facing adapter (phoenix_v3d_ioctl, the
+ * drmSyncobj* surface and the SDL glue's present hooks) is v3da_winsys.c, built
+ * on this library.
  *
  * Every function returns 0 or a negative errno unless stated otherwise.
  *
@@ -34,6 +35,10 @@ typedef struct {
 	const volatile v3da_fence_page_t *fp;    /* read-only, cached */
 	int wait_poll;                           /* V3DA_WAIT=poll: never park in the server */
 	uint32_t ipc_waits;                      /* slow-path waits issued (statistics) */
+	handle_t lock;                           /* guards the submit buffer */
+	int lock_ok;
+	void *sbuf;                              /* page-aligned submit marshaling buffer (mmap) */
+	size_t sbuf_size;
 } v3da_conn_t;
 
 
@@ -58,6 +63,17 @@ int v3da_bo_wait(v3da_conn_t *c, uint32_t handle, int64_t timeout_ns);
 
 int v3da_submit_nop(v3da_conn_t *c, uint32_t delay_us, v3da_fence_t *out);
 
+/* SUBMIT_CL / TFU / CSD. desc is a v3da_cl_desc_t / v3da_tfu_desc_t /
+ * v3da_csd_desc_t; bos = every BO the job touches (implicit sync + in-flight
+ * references); in/out = syncobjs (in resolved at submit time). resp = the job
+ * fences (CL: first = bin, last = render). */
+int v3da_submit(v3da_conn_t *c, uint32_t op, const void *desc, uint32_t desc_size,
+	const uint32_t *bos, uint32_t nbo, const v3da_sem_t *in, uint32_t nin,
+	const v3da_sem_t *out, uint32_t nout, v3da_submit_resp_t *resp);
+
+/* 1 if the fence completed with an error (GPU reset, TFU fail, failed dependency). */
+int v3da_fence_error(const v3da_conn_t *c, const v3da_fence_t *f);
+
 /* Fast path: one acquire load of the fence page. 1 = signalled, 0 = not. */
 int v3da_fence_signaled(const v3da_conn_t *c, const v3da_fence_t *f);
 /* Wait: fast path, a short spin, then bounded server waits (each <= V3DA_WAIT_MAX_MS)
@@ -73,6 +89,11 @@ int v3da_syncobj_signal(v3da_conn_t *c, uint32_t handle);
 int v3da_syncobj_query(v3da_conn_t *c, uint32_t handle, v3da_syncobj_resp_t *out);
 int v3da_syncobj_wait(v3da_conn_t *c, const uint32_t *handles, uint32_t n, uint32_t flags,
 	int64_t timeout_ns, uint32_t *first);
+int v3da_syncobj_import(v3da_conn_t *c, uint32_t handle, const v3da_fence_t *f);
+
+/* Transitional present family (firmware pan; retired by M2 KMS). */
+int v3da_scanout_info(v3da_conn_t *c, uint64_t pa, uint32_t w, uint32_t h, uint32_t pitch, v3da_scanout_resp_t *out);
+int v3da_flip(v3da_conn_t *c, uint32_t buf, const v3da_fence_t *after, v3da_flip_resp_t *out);
 
 /* Debug / test operations. */
 int v3da_dbg_irq_mode(v3da_conn_t *c, uint32_t on, v3da_irq_mode_resp_t *out);
@@ -80,5 +101,7 @@ int v3da_dbg_irq_selftest(v3da_conn_t *c, v3da_irq_selftest_resp_t *out);
 int v3da_dbg_bo_checksum(v3da_conn_t *c, uint32_t handle, uint32_t off, uint32_t len, v3da_bo_checksum_resp_t *out);
 int v3da_dbg_stats(v3da_conn_t *c, v3da_stats_t *out);
 int v3da_dbg_quit(v3da_conn_t *c, v3da_quit_resp_t *out);
+int v3da_dbg_set_mode(v3da_conn_t *c, uint32_t set, uint32_t mode, uint32_t knobs, v3da_mode_resp_t *out);
+int v3da_dbg_qstats(v3da_conn_t *c, uint32_t which, uint32_t reset, v3da_resp_t *out);
 
 #endif /* _LIBV3DA_CLIENT_H_ */

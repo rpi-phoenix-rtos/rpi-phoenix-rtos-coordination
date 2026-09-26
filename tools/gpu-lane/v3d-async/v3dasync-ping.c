@@ -11,8 +11,20 @@
  * path (self-test via INT_SET). Pre-registration and predictions:
  * docs/gpu-new-lane/M1-async-render-server.md section 12.
  *
+ * Part 2 adds real GPU jobs, each checked in memory by the CPU:
+ *   cl-smoke   bin + render clear of a 64x64 RGBA8 raster RT (3 colours)
+ *   tfu-smoke  TFU raster -> UBLINEAR-2-column copy of a 16x16 image
+ *   csd-smoke  the CSCONST compute kernel (out[0] = 0xC0DE1234)
+ *   cl-burst   8 clears queued back to back without waiting (queueing; bin/render
+ *              overlap in pipeline mode), all 8 RTs checked
+ *   gpu        = cl-smoke tfu-smoke csd-smoke cl-burst qstats
+ * and controls: mode-serial, mode-pipeline, qstats, qstats-reset.
+ * Job generators: v3da_clgen.c (Mesa's packet packers, verbatim).
+ *
  * Usage: v3dasync-ping [all|connect|info|param|fencepage|bo|nopwait|fastpath|
- *                       timeout|many|syncobj|irqtest|stats|irq-on|irq-off|quit]
+ *                       timeout|many|syncobj|irqtest|stats|irq-on|irq-off|quit|
+ *                       cl-smoke|tfu-smoke|csd-smoke|cl-burst|gpu|
+ *                       mode-serial|mode-pipeline|qstats|qstats-reset]
  * Every result is one line "V3DAPING <test> key=value ..."; a run ends with
  * "V3DAPING RESULT failures=<n> verdict=PASS|FAIL".
  *
@@ -33,8 +45,9 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "v3d_drm.h"   /* DRM_V3D_PARAM_* */
+#include "v3d_drm.h"   /* DRM_V3D_PARAM_*, drm_v3d_submit_* (filled by the generators) */
 #include "libv3da-client.h"
+#include "v3da_clgen.h"
 #include "v3da_regs.h"
 
 
@@ -440,6 +453,372 @@ static void t_quit(void)
 
 
 /* ------------------------------------------------------------------------- */
+/* Part 2: GPU jobs                                                           */
+/* ------------------------------------------------------------------------- */
+
+#define JOB_WAIT_NS 2000000000LL
+
+typedef struct {
+	v3da_bo_create_resp_t r;
+	volatile uint32_t *cpu;
+} tbo_t;
+
+
+static int tbo_new(tbo_t *b, uint32_t size)
+{
+	int rc = v3da_bo_create(&conn, size, 0u, &b->r);
+
+	if (rc != 0) {
+		b->cpu = NULL;
+		return rc;
+	}
+	b->cpu = v3da_map(&b->r.mem, 1);
+	if (b->cpu == NULL) {
+		(void)v3da_bo_close(&conn, b->r.handle);
+		return -ENOMEM;
+	}
+	return 0;
+}
+
+
+static void tbo_free(tbo_t *b)
+{
+	if (b->cpu != NULL) {
+		v3da_unmap((void *)b->cpu, &b->r.mem);
+		(void)v3da_bo_close(&conn, b->r.handle);
+		b->cpu = NULL;
+	}
+}
+
+
+static v3da_clgen_buf_t tbuf(tbo_t *b)
+{
+	v3da_clgen_buf_t g;
+
+	g.cpu = (void *)b->cpu;
+	g.gpuva = b->r.gpuva;
+	g.size = b->r.size;
+	return g;
+}
+
+
+/* Wait for a fence and time it. Returns the wait rc; *err = fence error flag. */
+static int job_wait(const v3da_fence_t *f, uint64_t *us, int *err)
+{
+	uint64_t t0 = now_us();
+	int rc = v3da_fence_wait(&conn, f, JOB_WAIT_NS);
+
+	*us = now_us() - t0;
+	*err = v3da_fence_error(&conn, f);
+	return rc;
+}
+
+
+/* One 64x64 clear job: BOs, CLs, submit. The caller waits and checks. */
+typedef struct {
+	tbo_t bcl, rcl, ta, ts, rt;
+	uint32_t w, h, colour;
+	v3da_submit_resp_t fences;
+	int rc;
+} clear_job_t;
+
+
+static int clear_prepare(clear_job_t *j, uint32_t w, uint32_t h, uint32_t colour)
+{
+	uint32_t bsz, rsz, tasz, tssz, i;
+	struct drm_v3d_submit_cl s;
+	v3da_clgen_buf_t b, r;
+	v3da_cl_desc_t d;
+	uint32_t bos[5];
+	int rc;
+
+	memset(j, 0, sizeof(*j));
+	j->w = w;
+	j->h = h;
+	j->colour = colour;
+	rc = v3da_clgen_clear_sizes(w, h, &bsz, &rsz, &tasz, &tssz);
+	if (rc == 0) rc = tbo_new(&j->bcl, bsz);
+	if (rc == 0) rc = tbo_new(&j->rcl, rsz);
+	if (rc == 0) rc = tbo_new(&j->ta, tasz);
+	if (rc == 0) rc = tbo_new(&j->ts, tssz);
+	if (rc == 0) rc = tbo_new(&j->rt, V3DA_CLGEN_CLEAR_RT_SIZE(w, h));
+	if (rc != 0) {
+		return rc;
+	}
+	for (i = 0u; i < w * h; i++) {
+		j->rt.cpu[i] = 0xdeadbeefu;   /* sentinel: "not written" */
+	}
+	b = tbuf(&j->bcl);
+	r = tbuf(&j->rcl);
+	rc = v3da_clgen_clear(w, h, j->rt.r.gpuva, colour, &b, &r, j->ta.r.gpuva, j->ta.r.size, j->ts.r.gpuva, &s);
+	if (rc != 0) {
+		return rc;
+	}
+	__asm__ volatile("dsb sy" ::: "memory");
+	d.bcl_start = s.bcl_start;
+	d.bcl_end = s.bcl_end;
+	d.rcl_start = s.rcl_start;
+	d.rcl_end = s.rcl_end;
+	d.qma = s.qma;
+	d.qms = s.qms;
+	d.qts = s.qts;
+	d.flags = 0u;
+	bos[0] = j->bcl.r.handle;
+	bos[1] = j->rcl.r.handle;
+	bos[2] = j->ta.r.handle;
+	bos[3] = j->ts.r.handle;
+	bos[4] = j->rt.r.handle;
+	return v3da_submit(&conn, V3DA_OP_SUBMIT_CL, &d, sizeof(d), bos, 5u, NULL, 0u, NULL, 0u, &j->fences);
+}
+
+
+/* Count RT pixels that differ from the clear colour. */
+static uint32_t clear_check(const clear_job_t *j, uint32_t *first_bad)
+{
+	uint32_t i, bad = 0u;
+
+	*first_bad = 0u;
+	for (i = 0u; i < j->w * j->h; i++) {
+		if (j->rt.cpu[i] != j->colour) {
+			if (bad++ == 0u) {
+				*first_bad = j->rt.cpu[i];
+			}
+		}
+	}
+	return bad;
+}
+
+
+static void clear_free(clear_job_t *j)
+{
+	tbo_free(&j->rt);
+	tbo_free(&j->ts);
+	tbo_free(&j->ta);
+	tbo_free(&j->rcl);
+	tbo_free(&j->bcl);
+}
+
+
+static void t_cl_smoke(void)
+{
+	static const uint32_t colours[3] = { 0x80402010u, 0xff00ff00u, 0x12345678u };
+	clear_job_t j;
+	uint64_t us;
+	uint32_t bad, first;
+	int k, rc, err, bw;
+
+	for (k = 0; k < 3; k++) {
+		rc = clear_prepare(&j, 64u, 64u, colours[k]);
+		if (rc != 0) {
+			printf("V3DAPING cl-smoke n=%d prepare_rc=%d\n", k, rc);
+			verdict(0);
+			clear_free(&j);
+			continue;
+		}
+		rc = job_wait(&j.fences.last, &us, &err);
+		bad = clear_check(&j, &first);
+		/* implicit sync: the RT's last user is this render, which has completed */
+		bw = v3da_bo_wait(&conn, j.rt.r.handle, 0);
+		printf("V3DAPING cl-smoke n=%d colour=0x%08x wait_rc=%d fence_err=%d us=%llu bin_seq=%llu render_seq=%llu "
+			"bad_px=%u/%u first_bad=0x%08x bo_wait=%d ok=%d\n", k, colours[k], rc, err, (unsigned long long)us,
+			(unsigned long long)j.fences.first.seqno, (unsigned long long)j.fences.last.seqno, bad, j.w * j.h,
+			first, bw, ((rc == 0) && (err == 0) && (bad == 0u) && (bw == 0)) ? 1 : 0);
+		verdict((rc == 0) && (err == 0) && (bad == 0u) && (bw == 0));
+		clear_free(&j);
+	}
+}
+
+
+#define BURST 8
+
+static void t_cl_burst(void)
+{
+	static clear_job_t jobs[BURST];
+	uint64_t t0, us;
+	uint32_t bad = 0u, first, b, nsub = 0u;
+	int k, rc = 0, err = 0, e;
+
+	t0 = now_us();
+	for (k = 0; k < BURST; k++) {
+		jobs[k].rc = clear_prepare(&jobs[k], 64u, 64u, 0x01010101u * (uint32_t)(k + 1));
+		if (jobs[k].rc == 0) {
+			nsub++;
+		}
+	}
+	for (k = 0; k < BURST; k++) {
+		if (jobs[k].rc != 0) {
+			continue;
+		}
+		e = 0;
+		if (job_wait(&jobs[k].fences.last, &us, &e) != 0) {
+			rc++;
+		}
+		err += e;
+		b = clear_check(&jobs[k], &first);
+		bad += b;
+	}
+	us = now_us() - t0;
+	for (k = 0; k < BURST; k++) {
+		clear_free(&jobs[k]);
+	}
+	printf("V3DAPING cl-burst jobs=%u/%d wait_fail=%d fence_err=%d bad_px=%u total_us=%llu ok=%d\n", nsub, BURST, rc, err,
+		bad, (unsigned long long)us, ((nsub == BURST) && (rc == 0) && (err == 0) && (bad == 0u)) ? 1 : 0);
+	verdict((nsub == BURST) && (rc == 0) && (err == 0) && (bad == 0u));
+}
+
+
+static void t_tfu_smoke(void)
+{
+	const uint32_t w = 16u, h = 16u;
+	tbo_t src, dst;
+	struct drm_v3d_submit_tfu t;
+	v3da_tfu_desc_t d;
+	v3da_submit_resp_t f;
+	uint32_t x, y, bad = 0u, bos[2], first = 0u;
+	uint64_t us = 0u;
+	int rc, err = 0;
+
+	memset(&src, 0, sizeof(src));
+	memset(&dst, 0, sizeof(dst));
+	rc = tbo_new(&src, v3da_clgen_tfu_src_size(w, h));
+	if (rc == 0) rc = tbo_new(&dst, v3da_clgen_tfu_out_size(w, h));
+	if (rc == 0) {
+		for (y = 0u; y < h; y++) {
+			for (x = 0u; x < w; x++) {
+				src.cpu[y * w + x] = v3da_clgen_tfu_pattern(x, y);
+			}
+		}
+		for (x = 0u; x < v3da_clgen_tfu_out_size(w, h) / 4u; x++) {
+			dst.cpu[x] = 0u;
+		}
+		__asm__ volatile("dsb sy" ::: "memory");
+		rc = v3da_clgen_tfu(w, h, src.r.gpuva, src.r.size, dst.r.gpuva, dst.r.size, &t);
+	}
+	if (rc == 0) {
+		d.icfg = t.icfg;
+		d.iia = t.iia;
+		d.iis = t.iis;
+		d.ica = t.ica;
+		d.iua = t.iua;
+		d.ioa = t.ioa;
+		d.ios = t.ios;
+		memcpy(d.coef, t.coef, sizeof(d.coef));
+		bos[0] = dst.r.handle;
+		bos[1] = src.r.handle;
+		rc = v3da_submit(&conn, V3DA_OP_SUBMIT_TFU, &d, sizeof(d), bos, 2u, NULL, 0u, NULL, 0u, &f);
+	}
+	if (rc == 0) {
+		rc = job_wait(&f.last, &us, &err);
+		for (y = 0u; y < h; y++) {
+			for (x = 0u; x < w; x++) {
+				if (dst.cpu[v3da_clgen_tfu_out_offset(x, y) / 4u] != src.cpu[y * w + x]) {
+					if (bad++ == 0u) {
+						first = dst.cpu[v3da_clgen_tfu_out_offset(x, y) / 4u];
+					}
+				}
+			}
+		}
+	}
+	printf("V3DAPING tfu-smoke rc=%d fence_err=%d us=%llu bad_px=%u/%u first_bad=0x%08x out0=0x%08x ok=%d\n", rc, err,
+		(unsigned long long)us, bad, w * h, first, (dst.cpu != NULL) ? dst.cpu[0] : 0u,
+		((rc == 0) && (err == 0) && (bad == 0u)) ? 1 : 0);
+	verdict((rc == 0) && (err == 0) && (bad == 0u));
+	tbo_free(&dst);
+	tbo_free(&src);
+}
+
+
+static void t_csd_smoke(void)
+{
+	tbo_t sh, un, out;
+	v3da_clgen_buf_t bs, bu;
+	v3da_csd_desc_t d;
+	v3da_submit_resp_t f;
+	uint32_t bos[3], i, others = 0u;
+	uint64_t us = 0u;
+	int rc, err = 0;
+
+	memset(&sh, 0, sizeof(sh));
+	memset(&un, 0, sizeof(un));
+	memset(&out, 0, sizeof(out));
+	rc = tbo_new(&sh, 4096u);
+	if (rc == 0) rc = tbo_new(&un, 4096u);
+	if (rc == 0) rc = tbo_new(&out, 4096u);
+	if (rc == 0) {
+		for (i = 0u; i < 1024u; i++) {
+			out.cpu[i] = 0xeeeeeeeeu;
+		}
+		bs = tbuf(&sh);
+		bu = tbuf(&un);
+		memset(&d, 0, sizeof(d));
+		rc = v3da_clgen_csd(&bs, &bu, out.r.gpuva, d.cfg);
+		__asm__ volatile("dsb sy" ::: "memory");
+	}
+	if (rc == 0) {
+		bos[0] = sh.r.handle;
+		bos[1] = un.r.handle;
+		bos[2] = out.r.handle;
+		rc = v3da_submit(&conn, V3DA_OP_SUBMIT_CSD, &d, sizeof(d), bos, 3u, NULL, 0u, NULL, 0u, &f);
+	}
+	if (rc == 0) {
+		rc = job_wait(&f.last, &us, &err);
+		for (i = 1u; i < 1024u; i++) {
+			if (out.cpu[i] != 0xeeeeeeeeu) {
+				others++;
+			}
+		}
+	}
+	printf("V3DAPING csd-smoke rc=%d fence_err=%d us=%llu out0=0x%08x others_written=%u ok=%d\n", rc, err,
+		(unsigned long long)us, (out.cpu != NULL) ? out.cpu[0] : 0u, others,
+		((rc == 0) && (err == 0) && (out.cpu != NULL) && (out.cpu[0] == V3DA_CLGEN_CSD_VALUE)) ? 1 : 0);
+	verdict((rc == 0) && (err == 0) && (out.cpu != NULL) && (out.cpu[0] == V3DA_CLGEN_CSD_VALUE));
+	tbo_free(&out);
+	tbo_free(&un);
+	tbo_free(&sh);
+}
+
+
+static void t_mode(uint32_t mode)
+{
+	v3da_mode_resp_t r;
+	int rc;
+
+	memset(&r, 0, sizeof(r));
+	rc = v3da_dbg_set_mode(&conn, V3DA_SET_MODE, mode, 0u, &r);
+	printf("V3DAPING mode rc=%d want=%s mode=%s knobs=0x%02x\n", rc, (mode == V3DA_MODE_SERIAL) ? "serial" : "pipeline",
+		(r.mode == V3DA_MODE_SERIAL) ? "serial" : "pipeline", r.knobs);
+	verdict((rc == 0) && (r.mode == mode));
+}
+
+
+static void t_qstats(uint32_t reset)
+{
+	static const char *const qn[4] = { "bin", "render", "tfu", "csd" };
+	v3da_resp_t r;
+	uint32_t q;
+	int rc;
+
+	for (q = 0u; q < 4u; q++) {
+		memset(&r, 0, sizeof(r));
+		rc = v3da_dbg_qstats(&conn, q, 0u, &r);
+		printf("V3DAPING qstats q=%s rc=%d jobs=%u errors=%u busy_us=%llu wait_us=%llu max_us=%u oom=%u pending=%u "
+			"active=%u\n", qn[q], rc, r.u.qstats_q.jobs, r.u.qstats_q.errors,
+			(unsigned long long)r.u.qstats_q.busy_us, (unsigned long long)r.u.qstats_q.wait_us, r.u.qstats_q.max_us,
+			r.u.qstats_q.oom, r.u.qstats_q.pending, r.u.qstats_q.active);
+	}
+	memset(&r, 0, sizeof(r));
+	rc = v3da_dbg_qstats(&conn, V3DA_QSTATS_GLOBAL, reset, &r);
+	printf("V3DAPING qstats q=global rc=%d window_us=%llu any_busy_us=%llu overlap_us=%llu mode=%s knobs=0x%02x "
+		"wedges=%u resets=%u ovf_free=%u/%u starved=%u flips=%u reset=%u\n", rc,
+		(unsigned long long)r.u.qstats_g.window_us, (unsigned long long)r.u.qstats_g.any_busy_us,
+		(unsigned long long)r.u.qstats_g.overlap_us, (r.u.qstats_g.mode == V3DA_MODE_SERIAL) ? "serial" : "pipeline",
+		r.u.qstats_g.knobs, r.u.qstats_g.wedges, r.u.qstats_g.resets, r.u.qstats_g.ovf_free, r.u.qstats_g.ovf_total,
+		r.u.qstats_g.ovf_starved, r.u.qstats_g.flips, reset);
+	verdict((rc == 0) && (r.u.qstats_g.ovf_free == r.u.qstats_g.ovf_total));
+}
+
+
+/* ------------------------------------------------------------------------- */
 
 int main(int argc, char **argv)
 {
@@ -490,6 +869,34 @@ int main(int argc, char **argv)
 	}
 	if (all || (strcmp(cmd, "stats") == 0)) {
 		t_stats();
+	}
+	{
+		int gpu = (strcmp(cmd, "gpu") == 0) ? 1 : 0;
+
+		if (gpu || (strcmp(cmd, "cl-smoke") == 0)) {
+			t_cl_smoke();
+		}
+		if (gpu || (strcmp(cmd, "tfu-smoke") == 0)) {
+			t_tfu_smoke();
+		}
+		if (gpu || (strcmp(cmd, "csd-smoke") == 0)) {
+			t_csd_smoke();
+		}
+		if (gpu || (strcmp(cmd, "cl-burst") == 0)) {
+			t_cl_burst();
+		}
+		if (gpu || (strcmp(cmd, "qstats") == 0)) {
+			t_qstats(0u);
+		}
+	}
+	if (strcmp(cmd, "qstats-reset") == 0) {
+		t_qstats(1u);
+	}
+	if (strcmp(cmd, "mode-serial") == 0) {
+		t_mode(V3DA_MODE_SERIAL);
+	}
+	if (strcmp(cmd, "mode-pipeline") == 0) {
+		t_mode(V3DA_MODE_PIPELINE);
 	}
 	if (strcmp(cmd, "irq-on") == 0) {
 		t_irqmode(1u);

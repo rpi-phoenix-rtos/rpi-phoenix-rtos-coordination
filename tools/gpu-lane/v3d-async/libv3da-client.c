@@ -33,6 +33,7 @@
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/msg.h>
+#include <sys/threads.h>
 
 #include "libv3da-client.h"
 
@@ -116,6 +117,11 @@ int v3da_connect(v3da_conn_t *c)
 	}
 	c->oid.port = dev.port;
 	c->oid.id = c->hello.client_id;
+	if (mutexCreate(&c->lock) != EOK) {
+		v3da_disconnect(c);
+		return -ENOMEM;
+	}
+	c->lock_ok = 1;
 
 	fp = v3da_map(&c->hello.fence_page, 0);
 	if (fp == NULL) {
@@ -129,6 +135,15 @@ int v3da_connect(v3da_conn_t *c)
 
 void v3da_disconnect(v3da_conn_t *c)
 {
+	if (c->sbuf != NULL) {
+		(void)munmap(c->sbuf, c->sbuf_size);
+		c->sbuf = NULL;
+		c->sbuf_size = 0u;
+	}
+	if (c->lock_ok != 0) {
+		(void)resourceDestroy(c->lock);
+		c->lock_ok = 0;
+	}
 	if (c->fp != NULL) {
 		v3da_unmap((void *)c->fp, &c->hello.fence_page);
 		c->fp = NULL;
@@ -309,6 +324,102 @@ int v3da_submit_nop(v3da_conn_t *c, uint32_t delay_us, v3da_fence_t *out)
 }
 
 
+/* The flat submit buffer lives in whole pages we own (mmap): a page-aligned start
+ * AND end means the kernel maps it into the server with no shadow page or copy
+ * (E5 section 1). */
+int v3da_submit(v3da_conn_t *c, uint32_t op, const void *desc, uint32_t desc_size,
+	const uint32_t *bos, uint32_t nbo, const v3da_sem_t *in, uint32_t nin,
+	const v3da_sem_t *out, uint32_t nout, v3da_submit_resp_t *resp)
+{
+	v3da_req_t req;
+	v3da_resp_t rsp;
+	msg_t msg;
+	size_t need, alloc;
+	uint8_t *p;
+	void *nb;
+	int err;
+
+	if ((nbo > V3DA_SUBMIT_MAX_BOS) || (nin > V3DA_SUBMIT_MAX_SEMS) || (nout > V3DA_SUBMIT_MAX_SEMS)) {
+		return -EINVAL;
+	}
+	need = desc_size + (size_t)nbo * sizeof(uint32_t) + ((size_t)nin + nout) * sizeof(v3da_sem_t);
+	alloc = (need + _PAGE_SIZE - 1u) & ~((size_t)_PAGE_SIZE - 1u);
+
+	(void)mutexLock(c->lock);
+	if (c->sbuf_size < alloc) {
+		nb = mmap(NULL, alloc, PROT_READ | PROT_WRITE, MAP_ANONYMOUS, -1, 0);
+		if (nb == MAP_FAILED) {
+			(void)mutexUnlock(c->lock);
+			return -ENOMEM;
+		}
+		if (c->sbuf != NULL) {
+			(void)munmap(c->sbuf, c->sbuf_size);
+		}
+		c->sbuf = nb;
+		c->sbuf_size = alloc;
+	}
+	p = c->sbuf;
+	memcpy(p, desc, desc_size);
+	p += desc_size;
+	if (nbo != 0u) {
+		memcpy(p, bos, (size_t)nbo * sizeof(uint32_t));
+		p += (size_t)nbo * sizeof(uint32_t);
+	}
+	if (nin != 0u) {
+		memcpy(p, in, (size_t)nin * sizeof(v3da_sem_t));
+		p += (size_t)nin * sizeof(v3da_sem_t);
+	}
+	if (nout != 0u) {
+		memcpy(p, out, (size_t)nout * sizeof(v3da_sem_t));
+	}
+
+	memset(&req, 0, sizeof(req));
+	req.magic = V3DA_MAGIC;
+	req.op = op;
+	req.u.submit.desc_size = desc_size;
+	req.u.submit.nbo = nbo;
+	req.u.submit.nin = nin;
+	req.u.submit.nout = nout;
+
+	memset(&msg, 0, sizeof(msg));
+	msg.type = mtDevCtl;
+	msg.oid = c->oid;
+	memcpy(msg.i.raw, &req, sizeof(req));
+	msg.i.data = c->sbuf;
+	msg.i.size = alloc;
+	err = msgSend(c->oid.port, &msg);
+	(void)mutexUnlock(c->lock);
+	if (err < 0) {
+		return err;
+	}
+	if (msg.o.err < 0) {
+		return msg.o.err;
+	}
+	memcpy(&rsp, msg.o.raw, sizeof(rsp));
+	if ((rsp.err == 0) && (resp != NULL)) {
+		*resp = rsp.u.submit;
+	}
+	return rsp.err;
+}
+
+
+int v3da_fence_error(const v3da_conn_t *c, const v3da_fence_t *f)
+{
+	const volatile v3da_fence_slot_t *s;
+	uint64_t es;
+
+	if ((c->fp == NULL) || (f->slot >= V3DA_FENCE_NSLOTS)) {
+		return 0;
+	}
+	s = &c->fp->slot[f->slot];
+	if ((uint32_t)__atomic_load_n(&s->gen, __ATOMIC_ACQUIRE) != f->gen) {
+		return 0;
+	}
+	es = __atomic_load_n(&s->error_seq, __ATOMIC_ACQUIRE);
+	return ((es != 0u) && ((es >> 56) == f->queue) && ((es & 0x00ffffffffffffffULL) >= f->seqno)) ? 1 : 0;
+}
+
+
 int v3da_fence_signaled(const v3da_conn_t *c, const v3da_fence_t *f)
 {
 	const volatile v3da_fence_slot_t *s;
@@ -468,6 +579,85 @@ int v3da_syncobj_wait(v3da_conn_t *c, const uint32_t *handles, uint32_t n, uint3
 		*first = resp.u.syncobj.first;
 	}
 	return rc;
+}
+
+
+int v3da_syncobj_import(v3da_conn_t *c, uint32_t handle, const v3da_fence_t *f)
+{
+	v3da_req_t req;
+
+	req_init(&req, V3DA_OP_SYNCOBJ_IMPORT);
+	req.u.syncobj_import.handle = handle;
+	req.u.syncobj_import.fence = *f;
+	return v3da_call(c, &req, NULL);
+}
+
+
+int v3da_scanout_info(v3da_conn_t *c, uint64_t pa, uint32_t w, uint32_t h, uint32_t pitch, v3da_scanout_resp_t *out)
+{
+	v3da_req_t req;
+	v3da_resp_t resp;
+	int rc;
+
+	req_init(&req, V3DA_OP_SCANOUT_INFO);
+	req.u.scanout.pa = pa;
+	req.u.scanout.width = w;
+	req.u.scanout.height = h;
+	req.u.scanout.pitch = pitch;
+	rc = v3da_call(c, &req, &resp);
+	if ((rc == 0) && (out != NULL)) {
+		*out = resp.u.scanout;
+	}
+	return rc;
+}
+
+
+int v3da_flip(v3da_conn_t *c, uint32_t buf, const v3da_fence_t *after, v3da_flip_resp_t *out)
+{
+	v3da_req_t req;
+	v3da_resp_t resp;
+	int rc;
+
+	req_init(&req, V3DA_OP_FLIP);
+	req.u.flip.buf = buf;
+	if (after != NULL) {
+		req.u.flip.flags = V3DA_FLIP_AFTER_FENCE;
+		req.u.flip.fence = *after;
+	}
+	rc = v3da_call(c, &req, &resp);
+	if ((rc == 0) && (out != NULL)) {
+		*out = resp.u.flip;
+	}
+	return rc;
+}
+
+
+int v3da_dbg_set_mode(v3da_conn_t *c, uint32_t set, uint32_t mode, uint32_t knobs, v3da_mode_resp_t *out)
+{
+	v3da_req_t req;
+	v3da_resp_t resp;
+	int rc;
+
+	req_init(&req, V3DA_OP_DBG_SET_MODE);
+	req.u.mode.set = set;
+	req.u.mode.mode = mode;
+	req.u.mode.knobs = knobs;
+	rc = v3da_call(c, &req, &resp);
+	if ((rc == 0) && (out != NULL)) {
+		*out = resp.u.mode;
+	}
+	return rc;
+}
+
+
+int v3da_dbg_qstats(v3da_conn_t *c, uint32_t which, uint32_t reset, v3da_resp_t *out)
+{
+	v3da_req_t req;
+
+	req_init(&req, V3DA_OP_DBG_QSTATS);
+	req.u.qstats.which = which;
+	req.u.qstats.reset = reset;
+	return v3da_call(c, &req, out);
 }
 
 

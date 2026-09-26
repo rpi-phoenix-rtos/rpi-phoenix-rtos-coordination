@@ -6,9 +6,12 @@ Milestone M1 of the [new-lane plan](PLAN.md), from the design in
 [E5](E5-deferred-reply.md) (deferred replies, parked clients), [E2](E2-stk-submit-breakdown.md) (the
 synchronous submit path, step by step) and [E1](E1-vm-object-export.md) (the future buffer export).
 
-**Status (2026-09-26):** part 1. This file holds the design, a compiling skeleton
-([`tools/gpu-lane/v3d-async/`](../../tools/gpu-lane/v3d-async/)) and the pre-registered first Pi
-test (§12). No Pi cycle has run. Nothing is committed. The old lane is untouched.
+**Status (2026-09-26, evening):** part 2 code complete and compiling (`-Wall -Wextra -Werror`),
+**no Pi cycle yet**. Part 1 (skeleton, ownership + fences, §12) is queued for its first cycle from
+`out/`; part 2 (real job submission, the Mesa adapter, the `quakespasm-v3da` clone) builds into
+`out-p2/` and `artifacts/quakespasm-v3da/` so it cannot replace the part-1 binaries. What part 2
+implements, and where it differs from the design below, is §15; its pre-registered Pi tests are §16;
+the numbers that prove M1 are §17. Nothing is committed. The old lane is untouched.
 
 Evidence tags as in the research doc: **[read]** = read in source at the cited place;
 **[measured]** = measured on this hardware (source cited); **[inferred]** = reasoning, not verified.
@@ -25,7 +28,7 @@ through E2's step table (`cad97dc` numbering), so E10's A/B names the same steps
 | Names | server binary `rpi4-v3d-async`, device **`/dev/v3d-async`**, client library `libv3da-client`, probe `v3dasync-ping`. The old daemon registers `/dev/v3d-srv` (`gpu/rpi4-v3d/v3d_rpc.h:75`); the in-process winsys registers nothing; no other `create_dev` in the devices tree names `v3d*` (grep, §1.2). |
 | Process shape | one process: N dispatch threads (`msgRecv`), one **event thread** (IRQ-driven or polling, same code), later one CPU-queue worker. One server mutex. |
 | Interrupt | GIC SPI 74 = Phoenix IRQ **106**, one line for hub **and** core (§3). Handler = W1C + OR into an event word. **Off by default**; switched on at runtime (`DBG_IRQ_MODE`) so the first cycle proves poll mode before it risks the interrupt. |
-| Queues | BIN, RENDER, TFU, CSD, CACHE_CLEAN, CPU. One job in flight per queue; queues run concurrently; render(N) waits for bin(N). |
+| Queues | BIN, RENDER, TFU, CSD, CACHE_CLEAN, CPU. One job in flight per queue; queues run concurrently; render(N) waits for bin(N). **As built (§15):** CACHE_CLEAN unused (FLUSH_CACHE inline, knob-gated); concurrency is a runtime mode, `serial` (one hardware job at a time, oldest first) by default, `pipeline` switchable. |
 | OUTOMEM | pre-mapped overflow pool cut into chunks; the IRQ handler hands the **pre-staged** chunk itself (register writes only); the event thread re-stages and attributes chunks to the bin job; a chunk returns to the pool when *its render job* completes. |
 | Cache maintenance | **every empirically needed step of the old path is kept by default** (§5, E2 steps 1–16). Candidates to drop are flags, off, for E10-style A/B only. |
 | Fences | one read-only fence page (cached, `MAP_PHYSMEM` today, E1 export later); fence = `(slot, queue, seqno)`, where `slot` is the **submitting client's** row, so seqnos are known at submit time and complete in order. |
@@ -461,7 +464,8 @@ support it is the client side (`MAP_PHYSMEM` of one PA range) — hence the memr
   error), free its fence slot after its last in-flight job (slot `gen++`). The old daemon's
   `kill(pid, 0)` sweep (`rpi4-v3d.c:92-98,223-231`) returns in part 2 as a backstop in case the
   kernel's `mtClose` does not arrive (Q1).
-* **Handles** stay global (`slot + 1`), as today: Mesa's Phoenix import path opens a foreign handle
+* *(Superseded by §15.2: handles are global but generation-tagged, `(gen << 13) | (slot + 1)`,
+  never reused while the server lives.)* **Handles** stay global (`slot + 1`), as today: Mesa's Phoenix import path opens a foreign handle
   by number (`v3d_bufmgr.c:464-503`). An import takes an explicit ref (`BO_IMPORT`); the old
   implicit route (MMAP_BO of a foreign handle) is accepted and converted to an import ref.
 
@@ -493,14 +497,15 @@ Header: [`tools/gpu-lane/v3d-async/v3da_proto.h`](../../tools/gpu-lane/v3d-async
 | `BO_GET_OFFSET` | `V3D_GET_BO_OFFSET` | `GET_BO_OFFSET` | ✅ |
 | `BO_WAIT` | `V3D_WAIT_BO` | client no-op | ✅ (parks on last fences; none yet in part 1) |
 | `BO_IMPORT` | `GEM_OPEN` / PRIME import | implicit | reserved |
-| `SUBMIT_CL / TFU / CSD` | `V3D_SUBMIT_CL / TFU / CSD` (+ MULTI_SYNC ext) | same, synchronous | `-ENOSYS` (part 2) |
+| `SUBMIT_CL / TFU / CSD` | `V3D_SUBMIT_CL / TFU / CSD` (+ MULTI_SYNC ext) | same, synchronous | part 2 ✅ (own wire descriptors, §15.2) |
 | `SUBMIT_CPU` | `V3D_SUBMIT_CPU` (ext 0x02–0x07) | silently 0 | reserved |
 | `SUBMIT_NOP` | — (test job on the CPU queue) | — | ✅ |
 | `FENCE_WAIT` | — (library fast path's slow half) | — | ✅ |
-| `SYNCOBJ_CREATE/DESTROY/WAIT/RESET/SIGNAL/QUERY` | `DRM_IOCTL_SYNCOBJ_*` | stubs in `v3d_libdrm_shim.c` | ✅ server objects (no submits attach yet) |
+| `SYNCOBJ_CREATE/DESTROY/WAIT/RESET/SIGNAL/QUERY` | `DRM_IOCTL_SYNCOBJ_*` | stubs in `v3d_libdrm_shim.c` | ✅ server objects; part 2: submits attach fences, `SYNCOBJ_IMPORT` (sync-file emulation) |
 | `PERFMON_*` | `V3D_PERFMON_*` | no-op | reserved `-ENOSYS` |
-| `SCANOUT_INFO / SCANOUT_BO / FLIP` | — (transitional present family for the SDL glue) | winsys-only | reserved (part 2) |
+| `SCANOUT_INFO / SCANOUT_BO / FLIP` | — (transitional present family for the SDL glue) | winsys-only | part 2 ✅ `SCANOUT_INFO`, `FLIP` (fence-gated); a scanout BO is `BO_CREATE` + `V3DA_BO_SCANOUT` (`SCANOUT_BO` stays reserved) |
 | `DBG_IRQ_MODE / DBG_IRQ_SELFTEST / DBG_BO_CHECKSUM / DBG_STATS / DBG_QUIT` | — | — | ✅ |
+| `DBG_SET_MODE / DBG_QSTATS` | — | — | part 2 ✅ serial/pipeline + cache knobs; per-queue busy/overlap counters |
 
 **Transitional present family.** The games' SDL2 glue calls the winsys's
 `v3d_phoenix_scanout_active/double/nbuf`, `v3d_phoenix_set_next_scanout` and `v3d_phoenix_flip`
@@ -658,6 +663,273 @@ sudo cp tools/gpu-lane/v3d-async/out/rpi4-v3d-async tools/gpu-lane/v3d-async/out
 | Q1 | Does `mtOpen`'s positive return → fd `oid.id` hold for a devfs node served by a user server, and does the kernel send `mtClose` with that id at process exit? | `connect` proves the first; a `die` test (follow-up) the second |
 | Q2 | Is 1 MiB the right overflow chunk? | A/B in part 2 (OUTOMEM counts, bin time) |
 | Q3 | Should the server itself flip (FLIP after fence) or should the client wait then flip? | server-side first (removes a CPU wait); compare in part 2 |
+| R11 | Part 2 has never run: the smoke CLs are generated from Mesa's packers but untested on this GPU; a wrong packet reads as a wedge | P2-A grades each generator separately (CL / TFU / CSD); the server's recovery is validated by the same wedge |
+| R12 | Implicit sync on a BO covers only the adapter's own submits (M1: one GL client) | two GL clients need the server-side `BO_WAIT` for every wait (M3 / libdrm-phoenix) |
+| R13 | Poll-mode completion latency (R6) is paid twice per CL submit | fps only in IRQ mode (§17) |
+| R14 | `PTB_BPOA/BPOS` written by the handler while a second, directly-granted chunk is pending — assumed impossible (OUTOMEM left latched by the drain; the handler serves at most one staged chunk per OUTOMEM) | `starved` counter + the `cl-burst`/timedemo runs; the old lane never overlapped jobs so this is new ground |
+| R15 | No post-wedge CL hexdump yet (old `wedge_cl_dump`) | port it if a wedge needs attribution |
+| R16 | Overflow pool exhaustion fails the bin instead of growing the pool | old lane never saw 32 MiB exhausted; grow only if `starved` says so |
+| R17 | Two `srv.lock` deviations from §2 ("heavy work outside the lock"): `BO_CREATE` zeroes the BO under the lock (an 8 MB uncached RT ≈ tens of ms, during which no job completes and no wait is answered), and `pan()` does a vcmbox IPC under the lock | visible as `cstat wait_us` spikes; move both out of the lock (claim → unlock → work → relock) once measured |
+| R18 | The smoke generators' own uncertainties: the TFU copy moves the data typed as R32F (Mesa's exact-copy trick; the pattern keeps every word a normal float); the per-tile generic list sits inside the RCL buffer after `rcl_end` (Mesa uses a separate BO) | a `tfu-smoke`/`cl-smoke` failure with a clean fence is read against these first |
+
+---
+
+## 15. Part 2 — what is implemented (compiles; not yet run on hardware)
+
+Files (all in [`tools/gpu-lane/v3d-async/`](../../tools/gpu-lane/v3d-async/), `%LICENSE%` unless
+noted):
+
+| File | Part 2 contents |
+|---|---|
+| `v3da_jobs.c` (new) | submission, per-queue FIFOs, the scheduler (serial / pipeline), kick + completion sequences of BIN/RENDER/TFU/CSD, binner-overflow chunks, watchdog, wedge → reset, `SCANOUT_INFO`/`FLIP`, `DBG_SET_MODE`, `DBG_QSTATS`, the periodic `V3DA srv qstat` line |
+| `v3da_sched.c` | now only fence page, parked waits, syncobjs (+ `SYNCOBJ_IMPORT`) and the event-thread loop that drives `v3da_jobs.c` |
+| `v3da_hw.c` | + `v3da_hw_reset` (mask → GMP drain → PM_V3DRSTN reset + vcmbox power-on with clock read-back → `apply_core_regs` → TLB → masks back), `v3da_hw_drain`, the handler counts OUTOMEMs it could not serve (`ovf_missed`) |
+| `v3da_bo.c` | generation-tagged handles, in-flight pins, scanout BOs, the premapped 32 MiB overflow pool |
+| `libv3da-client.{c,h}` | + `v3da_submit` (page-aligned, whole-page `i.data`), `v3da_fence_error`, `v3da_syncobj_import`, `v3da_scanout_info`, `v3da_flip`, `v3da_dbg_set_mode/qstats` |
+| `v3da_winsys.c` (new) | **the Mesa adapter** (§15.5) |
+| `v3da_clgen.{c,h}` (new) | CPU-side generators for the smoke jobs; the 26 `V3D42_*_pack()` functions are copied verbatim from Mesa's generated MIT `v3d_packet_v42_pack.h` (checked line by line), packet sequences transcribed from `v3dx_draw.c` / `v3dx_rcl.c` / `v3d_job.c` / `v3dx_tfu.c`, the CSD kernel from `tools/v3d-driver-port/csd_probe.c` (HW-proven through the old winsys) |
+| `v3dasync-ping.c` | + `cl-smoke`, `tfu-smoke`, `csd-smoke`, `cl-burst`, `gpu`, `mode-serial`, `mode-pipeline`, `qstats`, `qstats-reset` |
+| `build.sh` | output dir `--out <dir>` / `$V3DA_OUT` (default `out/`); part 2 builds into `out-p2/` (git-ignored); project target flags (`-mcpu=cortex-a72 -mstrict-align -ffunction-sections -fdata-sections`) |
+| `build-quakespasm-v3da.sh` (new, BSD-3) | the clone relink (§15.6) |
+
+**Binary compatibility — read before staging.** Part 2 bumped `V3DA_PROTO_VERSION` to 2. A part-1
+ping (`out/`) against a part-2 server (or the reverse) fails at HELLO with `-EPROTO`, which the §12
+table would misread as a broken ioctl path. (a) Never mix binaries across `out/`, `out-p2/` and
+`artifacts/quakespasm-v3da/v3da/`. (b) Never rebuild `out/` from the current tree for the §12 cycle:
+the shared sources are already part 2, so a rebuild there silently turns the pre-registered part-1
+run into a part-2 run. The part-1 binaries in `out/` (built 19:02) are the ones §12 grades.
+
+### 15.1 Job path as built
+
+`SUBMIT_*` (dispatch thread, `srv.lock`): validate the flat buffer → every in-/out-syncobj exists
+(`-ENOENT`) → **pin** every listed BO (`inflight++`, all or none) → create the job(s) (CL = a bin
+job + a render job linked both ways) → resolve each in-syncobj to a fence **now** (DRM semantics;
+an empty or already-signalled syncobj adds nothing — Mesa's first frame waits on a freshly created
+`out_sync`) → assign seqnos → mark each BO's last use = the last job's fence → replace every
+out-syncobj's fence → push to the client's FIFOs → `v3da_sched_run()` → reply with both fences.
+The server copies the BO list before replying (the `i.data` window dies with the reply).
+
+Readiness: in-fences signalled (fence page) and, for a render, its bin job complete. A render whose
+bin **failed** is completed with an error without ever being kicked (the old lane skipped the render
+too). Completion (event thread only): the job's BO pins drop (a closed BO then enters quarantine),
+overflow chunks move from bin(N) to render(N) and are freed when render(N) completes, the fence
+page advances, parked waits are answered, `v3da_sched_run()` runs. A job completed without ever
+reaching the hardware bumps `hw_submitted` first, so `hw_completed` can never run ahead of it (that
+would let a quarantined BO pass while an older job still runs).
+
+**Modes** (runtime, `-m` or `DBG_SET_MODE`; both switches are safe at any time):
+* `serial` (**default**): at most one hardware job across BIN/RENDER/TFU/CSD; among ready FIFO heads
+  the **globally oldest** (a global submission counter) — i.e. exactly the old synchronous lane's
+  order (bin N, render N, TFU, bin N+1 …), only the completion is asynchronous.
+* `pipeline`: every hardware queue runs one job concurrently, round-robin over clients, so bin(N+1)
+  overlaps render(N) and TFU/CSD run beside CL work (Linux `v3d_sched` shape).
+
+Mesa's gallium driver sets only `in_sync_rcl = out_sync` (the previous job) and no `in_sync_bcl`
+(`v3d_job.c:657-690`), so in pipeline mode bin(N+1) of one client really can start while render(N)
+runs (R7 answered by reading; to be observed).
+
+### 15.2 Wire format decisions that differ from the design text
+
+* **Own job descriptors** (`v3da_cl_desc_t`, `v3da_tfu_desc_t`, `v3da_csd_desc_t`) instead of the
+  DRM structs: the wire ABI no longer depends on the DRM uapi snapshot; the adapter copies field by
+  field. `V3DA_PROTO_VERSION` is 2.
+* **Handles are generation-tagged**, `(gen << 13) | (slot + 1)`, never reused while the server lives
+  (§9.2 said "slot + 1, as today" — but the in-process winsys itself moved to monotonic handles after
+  a recycled handle put texture data into a control list, `v3d_phoenix_winsys.c` ioc_create_bo). The
+  old `v3d_bufmgr.c` import-by-number path still works (a handle is a number).
+* **`SCANOUT_BO` is not an opcode**: a scanout BO is `BO_CREATE` with `V3DA_BO_SCANOUT` (DRM flag bit
+  1, or the glue's one-shot `v3d_phoenix_set_next_scanout()`); the reply's `scanout` field says which
+  firmware buffer backs its GPU pages.
+* The **CACHE_CLEAN queue is not used**: `SUBMIT_CL_FLUSH_CACHE` (E2 step 16) runs inline in the
+  render epilogue, and only with knob `V3DA_KNOB_CL_CACHE_CLEAN` (old default: off).
+
+### 15.3 Per-job maintenance as built (E2 steps; default = every step of the old lane)
+
+| Kick / completion | Sequence | Knob that drops a step (default off) |
+|---|---|---|
+| BIN kick | `dsb sy` (1, 3) → `SLCACTL=INVAL_ALL` (4) → MMUC flush + TLB clear (5) → waited L2T flush (6) → **fix-A** second waited flush (7) → stale-latch drain (8, see below) → `PTB_BPOS=0` → stage one overflow chunk → `CT0QMA/QMS`, `CT0QTS=ENABLE\|qts` → `CT0QBA/QEA` | `TLB_ON_CHANGE` (5), `NO_L2T_WAIT_NEW` (6), `NO_FIXA` (7) |
+| RENDER kick | waited L2T flush + `SLCACTL` (11, the old hand-off, now the render prologue) → drain → `CT1QBA/QEA` (12) | `NO_HANDOFF_WAIT` (11) |
+| FRDONE | wait-old + `L2TFLS\|FLM_CLEAN` **not** waited (15); TMUWCF + waited clean only for `FLUSH_CACHE` jobs with `CL_CACHE_CLEAN` (16) | `CL_CACHE_CLEAN` enables 16 |
+| TFU kick / TFUC | `dsb` + TLB + `SLCACTL` + waited L2T flush; drain TFUC/TFUF; regs; `ICFG\|IOC` / TMUWCF (spun) + waited clean + `SLCACTL`; TFUF = error; BUSY-cleared-without-TFUC after 250 ms = done (old fallback) | `TLB_ON_CHANGE` |
+| CSD kick / CSDDONE | `dsb` + `SLCACTL` + TLB + waited L2T flush; bounded wait for "no CURRENT dispatch" (stuck → reset); drain CSDDONE; CFG1..6, CFG0 / TMUWCF + waited clean + `dsb` | `TLB_ON_CHANGE` |
+| every 125 ms of a render | ack latched QPU interrupt bits, never FRDONE (13) | — |
+
+**Step 8 replaced by a drain.** The old `INT_CLR = FLDONE|FRDONE|QPU` before the bin kick would, in
+pipeline mode, erase render(N-1)'s FRDONE. `v3da_hw_drain()` instead folds every pending status bit
+**except OUTOMEM** into the event words and W1Cs it, then the kick drops only its own queue's done
+bits from the event words (the queue is idle, so they can only be stale). OUTOMEM stays latched so
+exactly one path (handler or poll) hands out memory — two grants for one stall would re-point a
+binner already running on the first chunk.
+
+### 15.4 OUTOMEM, watchdog, reset
+
+* **Overflow**: 32 MiB premapped at init (as the old daemon), cut into `-c` KiB chunks (default
+  1 MiB → 32 chunks). One chunk is **staged** for the handler at every bin kick and re-staged after
+  each hand-out; on OUTOMEM the handler (IRQ mode) or the poll path writes `PTB_BPOA/BPOS` from the
+  staged slot. An OUTOMEM that finds nothing staged is counted (`ovf_missed`) and granted directly by
+  the event thread from the pool; if the pool is empty the binner stays stalled until a render frees
+  chunks (legitimate: the watchdog does not count it while a render runs). Empty pool **and** no
+  render running → `binner overflow pool EXHAUSTED` → the bin fails through the wedge path. Pool
+  growth is not implemented (old lane: one 32 MiB grant, never observed exhausted).
+* **Watchdog** (event thread, every 125 ms per hardware job): progress = `CTnCA`/`CTnRA` (bin,
+  render), `CSD_CURRENT_CFG4` (CSD); no progress for `-w` ms (default 500) or 10 s total → **wedge**:
+  the old lane's one-line dumps (`V3DA srv BIN|RENDER|TFU|CSD TIMEOUT …`, `V3DA srv DBG fdbg…`),
+  `v3da_hw_reset`, `reset_gen++`, every job on the hardware completes **with error** (the reset killed
+  all of them; a bin's render follows as a failed dependency), queued jobs stay, then `V3DA srv GPU
+  wedged (<why>) - true reset rc=… N job(s) failed, drops=…`. The frame is dropped, not retried (the
+  wedge is data-dependent, old lane). The old lane's post-wedge CL hexdump (`wedge_cl_dump`) is not
+  carried yet.
+
+### 15.5 The Mesa adapter `v3da_winsys.c`
+
+It replaces the three in-process members of `libv3d-phoenix.a` — `v3d_phoenix_winsys.o`,
+`v3d_phoenix_power.o`, `v3d_libdrm_shim.o` — and exports every symbol the rest of the archive,
+`libGL-phoenix.a`, libSDL2 and the SDL glue reference (checked with `nm` against the archive):
+`phoenix_v3d_ioctl`, the nine `drm*` functions of the shim, `v3d_phoenix_scanout_init/_active/
+_double/_nbuf`, `_set_next_scanout`, `_peek_next_scanout`, `_flip`, `_flip_count`, `_scanout_readback`,
+`_set_scanout`, `_harness_reset`, `_last_bin_crc`, `_powerOn/_reset/_fb_flip/_fb_virtual_height/
+_logColdState` (power is the server's: these are inert or forward).
+
+Three traps that would pass every link-time check and fail on the Pi:
+1. **`WAIT_BO`** answers "not yet" as `errno = ETIME; return -1` (Mesa's `v3d_wait_bo_ioctl` decodes
+   only `-1`/`errno`; `v3d_bo_wait` **aborts** on anything but `-ETIME`), and really waits:
+   `v3d_bo_map()` waits (infinite) before every CPU access, and the BO cache probes with timeout 0.
+   Fast path: the adapter records each BO's last-use fence from its own submits and answers from the
+   fence page with no IPC; a BO it did not create goes to the server's `BO_WAIT`.
+2. **`drmSyncobjWait` takes an absolute `CLOCK_MONOTONIC` deadline** (`os_time_get_absolute_timeout`,
+   `INT64_MAX` = forever); converted to relative. The adapter mirrors its own syncobjs' fences, so
+   `glFinish` / context-destroy waits are fence-page loads (plus one bounded server wait if not done).
+3. **`glFinish` needs a fence fd.** The Phoenix Mesa patch in `v3d_pipe_flush` turns an exported fd
+   of `-1` into a NULL fence and `st_finish` then waits for nothing — harmless with a synchronous
+   submit, a torn frame with an asynchronous one. `drmSyncobjExportSyncFile` returns a **real**
+   descriptor (a `dup` of the device fd; the kernel refcounts dups, `posix_fileDeref`, so Mesa's
+   `close()` never closes the device) mapped to a snapshot of the syncobj's fence;
+   `drmSyncobjImportSyncFile` attaches that fence to a syncobj in the server (`SYNCOBJ_IMPORT`).
+
+Present: `v3d_phoenix_scanout_init()` → `SCANOUT_INFO` (the server asks the firmware for the granted
+virtual height through vcmbox and derives 1–3 buffers); `v3d_phoenix_flip(k)` → `FLIP(k, after =
+the last render fence this client submitted)`: the **server** pans through `/dev/vcmbox`
+(`SET_VIRTUAL_OFFSET`) as soon as that fence passes — the old `v3d_phoenix_fb_flip` drove the raw
+mailbox FIFO. The glue's own `glFinish` before the flip stays (Q3 is then measurable by removing it
+in a later clone). The flip also prints the in-process winsys's **identical** `v3d-winsys: flipstat …`
+line (every existing grader reads it) plus `v3da-winsys: cstat t= fr= cl= tfu= csd= create=
+wait_us= ipc_waits=` — submits, BO creates and the client's time blocked in GPU waits per window.
+
+M1 limits: implicit sync on a BO covers this process's submits only (one GL client per server in M1);
+no GEM_OPEN/FLINK/PRIME; MULTI_SYNC is flattened (≤ 16 each), other extensions (CPU queue) are
+refused with `EINVAL`.
+
+### 15.6 The clone relink — `build-quakespasm-v3da.sh` (done; the clone links)
+
+1. `build.sh --out artifacts/quakespasm-v3da/v3da` (server, ping, adapter objects);
+2. copy `tools/.gpu-libs/libv3d-phoenix.a`; in the copy `ar d` the three winsys members and `ar r`
+   `v3da_winsys.o` + `libv3da-client.o` (411 → 410 members, checked);
+3. re-run the port's final link **exactly as recorded** in
+   `.buildroot/_build/<target>/port-sources/quakespasm-0.97.0/build.log` (the one `+ aarch64-phoenix-gcc
+   … -o …/prog//quakespasm` line), with the archive path and `-o` substituted.
+
+Proofs it prints (2026-09-26 19:40): **control relink with the untouched archive == shipped
+`prog/quakespasm`, byte-identical**; the clone defines `phoenix_v3d_ioctl`, `v3da_connect`,
+`drmSyncobjExportSyncFile`, carries none of `winsys_init`/`boPool_take`/`mboxProp`/…, has no undefined
+symbols, carries the adapter banner and not the winsys strings; the shared inputs are unchanged.
+Output: `artifacts/quakespasm-v3da/quakespasm-v3da.stripped` (18.56 MB vs shipped 18.58 MB) → stage as
+`/usr/bin/quakespasm-v3da`, with the matching server `artifacts/quakespasm-v3da/v3da/rpi4-v3d-async`.
+No launcher is needed (the quakespasm glue finds the staged data itself). The adapter keeps its
+tables in `.bss` (an initialised struct first put ~600 KiB into `.data` of the game).
+
+---
+
+## 16. Pre-registered Pi tests for part 2
+
+Prerequisite: the part-1 cycle (§12) has run; its `irqtest` verdict decides whether part 2 runs in
+IRQ mode (`-i`) or poll mode. Every cycle: **no game and no X on the old lane in the same boot**
+(single-owner rule, §1.2), server started first, `-r 1` (R1). Binaries from `out-p2/` (or the
+identical ones in `artifacts/quakespasm-v3da/v3da/`), staged by the coordinator.
+
+### 16.1 Cycle P2-A — GPU smoke, serial then pipeline (one netboot cycle)
+
+```
+./scripts/test-cycle-psh-interact.sh --label m1p2-smoke --inter-cmd-secs 8 --idle-secs 20 -- \
+    "/bin/rpi4-v3d-async -r 1 -m serial" \
+    "/bin/v3dasync-ping all" \
+    "/bin/v3dasync-ping gpu" \
+    "/bin/v3dasync-ping irq-on" \
+    "/bin/v3dasync-ping gpu" \
+    "/bin/v3dasync-ping qstats-reset" \
+    "/bin/v3dasync-ping mode-pipeline" \
+    "/bin/v3dasync-ping gpu" \
+    "/bin/v3dasync-ping stats" \
+    "/bin/v3dasync-ping quit"
+```
+(Bash `timeout: 600000`.) If §12 showed the IRQ path broken, drop `irq-on` (the rest still grades).
+
+| Line | Predicted | If instead… |
+|---|---|---|
+| `V3DA srv ready … mode=serial knobs=0x00 ovf=32x1024KiB wedge_ms=500 proto=2` | once | `ovf=0x…` → the 32 MiB contiguous pool failed (`fence page / overflow pool allocation failed`) |
+| `V3DAPING all` lines | as §12 (`proto=2`) | part-1 regression from the part-2 changes |
+| `cl-smoke n=0..2` | `wait_rc=0 fence_err=0 bad_px=0/4096 bo_wait=0 ok=1`, `us` ≲ 1000 (poll) | `wait_rc=-110` + `V3DA srv BIN TIMEOUT` → the BCL or CT0 set-up is wrong (the dump's `ct0ca` vs `[bcl]` says where); `RENDER TIMEOUT` → RCL/tile lists; `bad_px=4096 first_bad=0xdeadbeef` with `ok` fence → the store never wrote (RT address / store packet); `bad_px` partial → tiling/clipping; any `MMU fault` line → a VA not mapped (the line names the address). **A wedge here that the server survives** (next test still runs, `resets=1`) is itself the validation of §15.4 |
+| `tfu-smoke` | `rc=0 fence_err=0 bad_px=0/256 ok=1` | `fence_err=1` + `TFU FAIL` → descriptor fields; `bad_px` > 0 with the fence ok → the layout formula (the generator's address model, not the server) |
+| `csd-smoke` | `out0=0xc0de1234 others_written=0 ok=1` | `out0=0xeeeeeeee` → the dispatch never stored (cfg/uniforms/TMU clean); `CSD TIMEOUT` → the unit never raised CSDDONE |
+| `cl-burst` | `jobs=8/8 wait_fail=0 fence_err=0 bad_px=0 ok=1` | `bad_px` > 0 → queued jobs corrupt each other (BO pinning / overflow attribution) |
+| `qstats` (serial, 1st `gpu`) | bin/render `jobs` = 11 each (3 `cl-smoke` + 8 `cl-burst`; the 2nd `gpu` reads cumulative 22 — the reset comes after it), tfu/csd 1 each, `errors=0`, `overlap_us=0`, `ovf_free=32/32` (32 = the default `-c 1024`) | `overlap_us>0` in serial → the SERIAL gate leaks; `ovf_free<32` → a chunk leak |
+| 2nd `gpu` (IRQ) | as the 1st; `us` per job lower than in poll mode | a hang/timeout only in IRQ mode → a completion lost between handler and event thread |
+| `mode` | `rc=0 want=pipeline mode=pipeline` | — |
+| 3rd `gpu` (pipeline) | all `ok=1`; `qstats … overlap_us` **> 0** after `cl-burst` (bin(N+1) ∥ render(N)) | `overlap_us=0` → the pipeline never overlapped (Mesa-shaped deps absent here: each clear is independent, so overlap must appear); any wedge only in pipeline mode → R2 (concurrent L2T flush / TLB clear): keep `serial` as the default, A/B the knobs |
+| `stats` / `quit` | `parked=0 to_kernel=0`, `quit rc=0 inflight=0` | `inflight>0` → a job never completed |
+| `V3DA srv qstat …` lines | one per 5 s while jobs ran, `err=0 wedges=0` | — |
+| kernel | 0 EL1 faults | an EL1 fault → addr2line the PC first |
+
+### 16.2 Cycles P2-B/C — `quakespasm-v3da +timedemo demo1` against the shipped `quakespasm`
+
+Two GPU owners cannot share a boot, so the arms are **consecutive cycles**, interleaved
+old/new/old/new/old/new (3 each), same image, same staged data, each a fresh boot:
+
+```
+# old lane (shipped binary, in-process winsys)
+./scripts/test-cycle-psh-interact.sh --label m1p2-qs-old --inter-cmd-secs 8 --idle-secs 60 \
+    --ready-line 'frames .* seconds .* fps' --ready-extra-secs 5 -- \
+    "/usr/bin/quakespasm +timedemo demo1"
+# new lane (clone + server; serial mode first, IRQ mode if §12/P2-A proved it)
+./scripts/test-cycle-psh-interact.sh --label m1p2-qs-v3da --inter-cmd-secs 8 --idle-secs 60 \
+    --ready-line 'frames .* seconds .* fps' --ready-extra-secs 5 -- \
+    "/bin/rpi4-v3d-async -r 1 -m serial -i" \
+    "/usr/bin/quakespasm-v3da +timedemo demo1"
+```
+(Bash `timeout: 600000`.) One timedemo per boot: QuakeSpasm returns to its console after a timedemo
+and does not exit. After three serial pairs, three more `quakespasm-v3da` cycles with `-m pipeline`.
+
+| Line | Predicted | If instead… |
+|---|---|---|
+| `v3da-winsys: connected to rpi4-v3d-async …` | once, then `scanout init … -> 3 buffer(s) page-flip`, two/three `RT scanout bufN` lines, `phxgl: scanout FBO(s) … resolve=1 double=1` | `unavailable (rc=…)` → the server was not up (its `ready` line?); `resolve=0` → scanout BOs not granted (server `scanout` line) |
+| `N frames X seconds Y fps` (QuakeSpasm) | printed by both arms | missing in the new arm with no wedge line → a wait never returned (check `V3DA srv qstat` still advancing) |
+| `v3d-winsys: flipstat …` | both arms | — |
+| `v3da-winsys: cstat … wait_us=` | per window; `ipc_waits` ≪ frames × submits | `ipc_waits` ≈ every WAIT_BO → the BO fast path does not hit |
+| server | `wedges=0`, `err=0`, `starved` small | wedges only in the new arm → R2 or a cache-step difference |
+| HDMI tick snapshots | demo1 visibly rendering, same look as the old arm | torn / flickering frames → flip before render completion (fence gate) — compare against `+map start` reference MAE as in the Quake notes |
+
+**Not predicted:** the fps ratio. The design gate (§11.2) is new ≥ old − 3 % in serial mode — serial
+is the old order plus IPC and event-thread latency, so parity is the expectation, not a win; the
+pipeline arm's gain is bounded by E2's U2 (bin ∥ render) and is what M1 exists to measure.
+
+## 17. The numbers that prove M1
+
+| Number | Source | M1 verdict |
+|---|---|---|
+| timedemo fps, old vs `-m serial` vs `-m pipeline` | QuakeSpasm's `frames … fps` line, 3 boots per arm | serial ≥ old − 3 % (no regression); pipeline reported as a ratio vs old |
+| per-queue GPU busy | `V3DA srv qstat … bin=n/ms render=n/ms` (Σ kick→done) over the timedemo window | bin + render busy vs wall = the GPU share E2's G measures on the old lane |
+| overlap | `qstat … busy= overlap=` (≥ 1 and ≥ 2 hardware queues busy) | pipeline: `overlap/busy` > 0 is the evidence that CT0 ∥ CT1 happened; serial: must be 0 |
+| client blocked time | `v3da-winsys: cstat … wait_us` per 5 s window vs the window length | the CPU∥GPU overlap the async submit bought (U1): serial mode still blocks in glFinish before every flip |
+| correctness | 0 wedges, 0 EL1 faults, `ovf_free` back to total after the run, same HDMI look | any wedge only on the new lane is a finding to explain before any fps number counts |
+
+BO-cache caveat: on the old lane Mesa's BO cache probe `v3d_bo_wait(bo, 0)` never saw a busy BO; on
+the new lane it can, so `v3d_bo_from_cache` misses more often → more `CREATE_BO` round trips, each
+with a server-side memset of the BO under `srv.lock` (R17). A fps dip can come from that path rather
+than from IPC or event latency; `cstat … create=` counts the creates per window to tell them apart.
+
+Poll mode caveat: in poll mode each completion is noticed at the next event-thread poll (`-p`,
+default 200 µs, subject to the kernel's `condWait` timeout granularity — R6); a CL submit is two
+completions. **fps comparisons use IRQ mode**; poll mode is a correctness fallback.
+
 
 ## Result
 

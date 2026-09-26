@@ -11,10 +11,9 @@
  * filled; in poll mode it reads the status registers itself through the same
  * service routine - so the completion path is identical in both modes.
  *
- * Part 1 runs only the NOP test job on the CPU queue: enough to exercise seqnos,
- * the fence page, deferred answers from the event thread and bounded timeouts
- * without touching the GPU. The hardware queues have their structures and the
- * scheduler walks them, but nothing can be submitted to them yet (part 2).
+ * The jobs themselves (submission, kicks, completions, watchdog, reset,
+ * overflow memory, present) live in v3da_jobs.c; this file owns the fence page,
+ * parked waits, syncobjs and the event-thread loop that drives v3da_jobs.c.
  *
  * Copyright 2026 Phoenix Systems
  * Author: Witold Bołt
@@ -45,7 +44,6 @@
 #define ERR_SEQ(q, s)     (((uint64_t)(q) << 56) | ((s) & 0x00ffffffffffffffULL))
 
 static int kick_pending;
-static uint64_t dead_flush[V3DA_MAX_CLIENTS][V3DA_Q_COUNT];
 
 
 uint64_t v3da_now_us(void)
@@ -87,7 +85,9 @@ int v3da_sched_init(void)
 	srv.fp->hdr.server_pid = (uint32_t)getpid();
 	__atomic_thread_fence(__ATOMIC_RELEASE);
 	srv.fp_pa = (uintptr_t)va2pa(p);   /* after the first write: the page is present */
-	return 0;
+	srv.acct_t_us = v3da_now_us();
+	srv.acct_t0_us = srv.acct_t_us;
+	return v3da_ovf_init();
 }
 
 
@@ -141,14 +141,14 @@ int v3da_fence_valid(const v3da_client_t *c, const v3da_fence_t *f)
 }
 
 
-static void fence_complete(const v3da_job_t *j, int error)
+void v3da_fence_complete(const v3da_job_t *j, int error)
 {
 	uint64_t seq = j->fence.seqno;
 	uint32_t slot = j->fence.slot;
 	int q = j->queue;
 
-	if ((srv.clients[slot].used == 0) && (dead_flush[slot][q] > seq)) {
-		seq = dead_flush[slot][q];   /* discarded jobs of a dead client complete with it */
+	if ((srv.clients[slot].used == 0) && (srv.dead_flush[slot][q] > seq)) {
+		seq = srv.dead_flush[slot][q];   /* discarded jobs of a dead client complete with it */
 		error = 1;
 	}
 	if (error != 0) {
@@ -183,164 +183,11 @@ void v3da_slot_assign(uint32_t slot)
 
 	for (q = 0; q < V3DA_Q_COUNT; q++) {
 		v3da_store64(&srv.fp->slot[slot].completed[q], 0u);
-		dead_flush[slot][q] = 0u;
+		srv.dead_flush[slot][q] = 0u;
 	}
 	v3da_store64(&srv.fp->slot[slot].error_seq, 0u);
 	srv.slot_gen[slot]++;
 	v3da_store64(&srv.fp->slot[slot].gen, srv.slot_gen[slot]);
-}
-
-
-/* ========================================================================= */
-/* Queues                                                                     */
-/* ========================================================================= */
-
-static void fifo_push(v3da_queue_t *q, uint32_t slot, v3da_job_t *j)
-{
-	j->next = NULL;
-	if (q->tail[slot] != NULL) {
-		q->tail[slot]->next = j;
-	}
-	else {
-		q->head[slot] = j;
-	}
-	q->tail[slot] = j;
-}
-
-
-static v3da_job_t *fifo_pop(v3da_queue_t *q, uint32_t slot)
-{
-	v3da_job_t *j = q->head[slot];
-
-	if (j != NULL) {
-		q->head[slot] = j->next;
-		if (q->head[slot] == NULL) {
-			q->tail[slot] = NULL;
-		}
-		j->next = NULL;
-	}
-	return j;
-}
-
-
-/* Is this FIFO head allowed to start? Part 1: in-fences and the bin->render
- * dependency do not exist yet, so every head is ready. */
-static int job_ready(const v3da_job_t *j)
-{
-	(void)j;
-	return 1;
-}
-
-
-static void job_kick(v3da_job_t *j)
-{
-	j->t_kick_us = v3da_now_us();
-	v3da_store64(&srv.fp->hdr.hw_submitted[j->queue], v3da_load64(&srv.fp->hdr.hw_submitted[j->queue]) + 1u);
-	switch (j->queue) {
-		case V3DA_Q_CPU:
-			j->done_at_us = j->t_kick_us + j->delay_us;
-			break;
-		default:
-			/* Part 2: prologue (design section 5) + register kick. Unreachable in
-			 * part 1: the dispatcher refuses SUBMIT_CL/TFU/CSD. */
-			break;
-	}
-}
-
-
-/* Round-robin per queue over clients whose FIFO head is ready; one job in flight
- * per queue. Called with srv.lock held by whoever changed state. */
-static void sched_run(void)
-{
-	uint32_t i, idx;
-	int q;
-	v3da_queue_t *qu;
-
-	for (q = 0; q < V3DA_Q_COUNT; q++) {
-		qu = &srv.q[q];
-		if (qu->active != NULL) {
-			continue;
-		}
-		for (i = 0u; i < V3DA_MAX_CLIENTS; i++) {
-			idx = (qu->rr + i) % V3DA_MAX_CLIENTS;
-			if ((qu->head[idx] != NULL) && (job_ready(qu->head[idx]) != 0)) {
-				qu->active = fifo_pop(qu, idx);
-				qu->rr = idx + 1u;
-				job_kick(qu->active);
-				break;
-			}
-		}
-	}
-}
-
-
-int v3da_submit_nop(v3da_client_t *c, uint32_t delay_us, v3da_fence_t *out)
-{
-	v3da_job_t *j;
-
-	if (delay_us > 10000000u) {
-		return -EINVAL;
-	}
-	j = calloc(1, sizeof(*j));
-	if (j == NULL) {
-		return -ENOMEM;
-	}
-	j->queue = V3DA_Q_CPU;
-	j->client = c->id;
-	j->delay_us = delay_us;
-	j->fence.slot = (uint16_t)c->slot;
-	j->fence.queue = V3DA_Q_CPU;
-	j->fence.gen = (uint32_t)srv.slot_gen[c->slot];
-	j->fence.seqno = ++c->next_seq[V3DA_Q_CPU];
-	*out = j->fence;
-
-	fifo_push(&srv.q[V3DA_Q_CPU], c->slot, j);
-	sched_run();
-	v3da_kick_event_thread();
-	return 0;
-}
-
-
-uint32_t v3da_jobs_inflight(void)
-{
-	uint32_t n = 0u, s;
-	int q;
-	const v3da_job_t *j;
-
-	for (q = 0; q < V3DA_Q_COUNT; q++) {
-		if (srv.q[q].active != NULL) {
-			n++;
-		}
-		for (s = 0u; s < V3DA_MAX_CLIENTS; s++) {
-			for (j = srv.q[q].head[s]; j != NULL; j = j->next) {
-				n++;
-			}
-		}
-	}
-	return n;
-}
-
-
-/* Discard a dead client's unstarted jobs. Their fences complete (with an error)
- * together with the client's in-flight job, or now if it has none. */
-void v3da_jobs_client_gone(uint32_t client)
-{
-	uint32_t slot = client - 1u;
-	int q;
-	v3da_job_t *j;
-
-	for (q = 0; q < V3DA_Q_COUNT; q++) {
-		while ((j = fifo_pop(&srv.q[q], slot)) != NULL) {
-			free(j);
-		}
-		dead_flush[slot][q] = srv.clients[slot].next_seq[q];
-		if ((srv.q[q].active == NULL) || (srv.q[q].active->fence.slot != slot)) {
-			if (dead_flush[slot][q] > v3da_load64(&srv.fp->slot[slot].completed[q])) {
-				v3da_store64(&srv.fp->slot[slot].error_seq, ERR_SEQ(q, dead_flush[slot][q]));
-				v3da_store64(&srv.fp->slot[slot].completed[q], dead_flush[slot][q]);
-			}
-		}
-	}
 }
 
 
@@ -645,6 +492,30 @@ int v3da_syncobj_signal(v3da_client_t *c, uint32_t handle)
 }
 
 
+/* Sync-file emulation: the library exported a fence snapshot as an fd and now
+ * imports it into (usually a temporary) syncobj. */
+int v3da_syncobj_import(v3da_client_t *c, uint32_t handle, const v3da_fence_t *f)
+{
+	v3da_syncobj_t *s = v3da_syncobj_get(c, handle);
+
+	if (s == NULL) {
+		return -EINVAL;
+	}
+	if (f->seqno == 0u) {
+		s->state = V3DA_SYNC_SIGNALED;   /* an "already signalled" snapshot */
+	}
+	else if (v3da_fence_valid(c, f) != 0) {
+		s->state = V3DA_SYNC_FENCE;
+		s->fence = *f;
+	}
+	else {
+		return -EINVAL;
+	}
+	v3da_kick_event_thread();
+	return 0;
+}
+
+
 int v3da_syncobj_query(v3da_client_t *c, uint32_t handle, v3da_syncobj_resp_t *out)
 {
 	v3da_syncobj_t *s = v3da_syncobj_get(c, handle);
@@ -663,30 +534,14 @@ int v3da_syncobj_query(v3da_client_t *c, uint32_t handle, v3da_syncobj_resp_t *o
 /* The event thread                                                           */
 /* ========================================================================= */
 
-static int hw_busy(void)
-{
-	int q;
-
-	for (q = 0; q < V3DA_Q_COUNT; q++) {
-		if ((q != V3DA_Q_CPU) && (srv.q[q].active != NULL)) {
-			return 1;
-		}
-	}
-	return 0;
-}
-
-
 static uint32_t next_timeout_us(uint64_t now)
 {
 	uint64_t t = IDLE_TIMEOUT_US, d;
 	const v3da_wait_t *w;
-	const v3da_job_t *j = srv.q[V3DA_Q_CPU].active;
 
-	if (j != NULL) {
-		d = (j->done_at_us > now) ? (j->done_at_us - now) : 1u;
-		if (d < t) {
-			t = d;
-		}
+	d = v3da_jobs_next_deadline(now);
+	if (d < t) {
+		t = d;
 	}
 	for (w = srv.waits; w != NULL; w = w->next) {
 		d = (w->deadline_us > now) ? (w->deadline_us - now) : 1u;
@@ -694,70 +549,22 @@ static uint32_t next_timeout_us(uint64_t now)
 			t = d;
 		}
 	}
+	if ((srv.scan.nq != 0u) && (t > 1000u)) {
+		t = 1000u;   /* a fence-gated flip: re-check soon (completions also kick us) */
+	}
 	/* IRQ mode: the handler's broadcast can land between our "no events" check and
 	 * condWait (it does not take srv.lock), so a lost wake-up must be bounded even
-	 * when nothing is in flight - the self-test raises interrupts on idle queues. */
+	 * when nothing is in flight - the self-test raises interrupts on idle queues.
+	 * The same bound keeps the 125 ms job watchdog honest. */
 	if (srv.hw.irq_on != 0) {
 		if (IRQ_BACKSTOP_US < t) {
 			t = IRQ_BACKSTOP_US;
 		}
 	}
-	else if ((hw_busy() != 0) && (srv.poll_us < t)) {
+	else if ((v3da_jobs_hw_busy() != 0) && (srv.poll_us < t)) {
 		t = srv.poll_us;
 	}
 	return (t == 0u) ? 1u : (uint32_t)t;   /* condWait: 0 would mean "forever" */
-}
-
-
-/* Status bits drained from the handler (IRQ mode) or read by the poll path. */
-static void handle_events(uint32_t core, uint32_t hub)
-{
-	static unsigned mmu_logged;
-
-	if ((core & INT_FLDONE) != 0u) {
-		if (srv.q[V3DA_Q_BIN].active == NULL) {
-			srv.stray_fldone++;   /* the self-test's FLDONE, or a real anomaly */
-		}
-		/* part 2: complete the bin job, release its render job */
-	}
-	if ((core & INT_FRDONE) != 0u) {
-		/* part 2: render epilogue (E2 step 15), complete, free overflow chunks */
-	}
-	if ((core & INT_CSDDONE) != 0u) {
-		/* part 2 */
-	}
-	if ((core & INT_OUTOMEM) != 0u) {
-		/* part 2: attribute ovf_consumed to the bin job, stage the next chunk */
-	}
-	if ((core & INT_GMPV) != 0u) {
-		printf("V3DA srv GMP violation addr=0x%08x\n", srv.hw.core0[GMP_VIO_ADDR / 4u]);
-	}
-	if ((hub & HUB_INT_TFUC) != 0u) {
-		if (srv.q[V3DA_Q_TFU].active == NULL) {
-			srv.stray_tfuc++;
-		}
-	}
-	if (((hub & HUB_INT_MMU_ANY) != 0u) && (mmu_logged < 16u)) {
-		mmu_logged++;
-		printf("V3DA srv MMU fault hub=0x%08x vio_id=0x%08x vio_addr=0x%08x mmu_ctl=0x%08x%s%s%s\n",
-			hub, srv.hw.hub[MMU_VIO_ID / 4u], srv.hw.hub[MMU_VIO_ADDR / 4u], srv.hw.mmu_ctl_seen,
-			((hub & HUB_INT_MMU_WRV) != 0u) ? " write-violation" : "",
-			((hub & HUB_INT_MMU_PTI) != 0u) ? " pte-invalid" : "",
-			((hub & HUB_INT_MMU_CAP) != 0u) ? " cap-exceeded" : "");
-	}
-}
-
-
-static void complete_cpu_jobs(uint64_t now)
-{
-	v3da_job_t *j = srv.q[V3DA_Q_CPU].active;
-
-	if ((j != NULL) && (now >= j->done_at_us)) {
-		srv.q[V3DA_Q_CPU].active = NULL;
-		fence_complete(j, 0);
-		srv.nops_done++;
-		free(j);
-	}
 }
 
 
@@ -792,18 +599,15 @@ void v3da_event_thread(void *arg)
 			srv.fp->hdr.flags = (srv.fp->hdr.flags & ~V3DA_FP_IRQ) | V3DA_FP_STORM;
 		}
 
-		if ((srv.hw.irq_on == 0) && (hw_busy() != 0)) {
+		if ((srv.hw.irq_on == 0) && (v3da_jobs_hw_busy() != 0)) {
 			v3da_hw_poll_status(&srv.hw);
 		}
 		core = __atomic_exchange_n(&srv.hw.ev_core, 0u, __ATOMIC_ACQ_REL);
 		hub = __atomic_exchange_n(&srv.hw.ev_hub, 0u, __ATOMIC_ACQ_REL);
-		if ((core | hub) != 0u) {
-			handle_events(core, hub);
-		}
-
-		complete_cpu_jobs(now);
+		v3da_jobs_events(core, hub, now);
+		v3da_jobs_tick(now);
 		v3da_bo_quarantine_poll();
-		sched_run();
+		v3da_sched_run();
 
 		answer = NULL;
 		waits_scan(now, &answer);
