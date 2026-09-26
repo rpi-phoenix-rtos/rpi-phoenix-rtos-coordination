@@ -34,9 +34,9 @@ lane**, then migrate every GPU user and delete the old lane.
 | # | What | Status |
 |---|---|---|
 | **M0** | E1 kernel export prototype; E2 STK submit breakdown; E3/E6 firmware planes + SMI vblank + scanout range; E5 deferred reply / event blocking | ✅ done 2026-09-26 (E1/E3/E5 PASS on the Pi, E2 = serial mix + render phase 3× slow → E2b; E7 builds) |
-| M1 | async multi-queue render server (`rpi4-v3d` evolved), fence page, syncobjs; cloned games on it | ▶ **quakespasm-v3da +26 % (38.2 vs 30.4 fps), on HDMI, 0 wedges**; part-1 + P2-A PASS (IRQ works, jobs pixel-exact). Open: one EINVAL draw per run; STK clone; pipeline overlap proof |
+| M1 | async multi-queue render server (`rpi4-v3d` evolved), fence page, syncobjs; cloned games on it | ▶ **quakespasm-v3da +26 % (38.2 vs 30.4 fps), on HDMI, 0 wedges**; part-1 + P2-A PASS (IRQ works, jobs pixel-exact). EINVAL draw: cause found (server refused a chained BCL ending below its start), fix `05141ff7d`, Pi check queued (`queue13`). Open: STK clone (building); pipeline overlap proof |
 | M2 | `rpi4-kms` Stage A: firmware planes, vblank events, atomic flips, dumb-BO pool, fbdev emulation | ▶ design + server/test tool compile (`tools/gpu-lane/kms/`, [M2 doc](M2-kms-server.md)); SET_PLANE default, pan fallback; first Pi cycle `m2-kms-a` pre-registered |
-| M3 | kernel export productised; libdrm-phoenix; Mesa GBM/EGL; SDL2 KMSDRM | — |
+| M3 | kernel export productised; libdrm-phoenix; Mesa GBM/EGL; SDL2 KMSDRM | ▶ part 1: **libdrm-phoenix** builds (patched libdrm + backend, [M3 doc](M3-libdrm-phoenix.md)); host tests 134/134 + end-to-end vs modelled servers PASS; Pi cycle `m3-drmprobe` pre-registered. Part 2 (server gaps G1 BO import, G2 fstat, G3 atSize, G10 `/dev/dri` names) in progress |
 | M4 | Xorg + modesetting + glamor + DRI3/Present | — |
 | M5 | Vulkan WSI (display, xcb) | — |
 | M6 | Wayland (Weston DRM backend) | — |
