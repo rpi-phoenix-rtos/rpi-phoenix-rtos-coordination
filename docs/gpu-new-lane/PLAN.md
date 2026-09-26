@@ -76,3 +76,6 @@ lane**, then migrate every GPU user and delete the old lane.
   M2 server + kmstest compile, cycle queued; E3 corrected (scan-out only below 1 GiB); libphoenix gaps
   done on branch `gpu-lane/libc-gaps` (merge = build 10, needs the old-lane Mesa barrier shim removed first);
   core-500 gate queued. Queues: E2b arms → core-500 gate → M2 first cycle.
+- 2026-09-27 00:25: Pi queue: core-500 gate (G1 BT PASS at 500 MHz) → M2 `m2-kms-a` → E2b H7 arms →
+  E2c Pi OS baseline → WiFi first-join wake test. Agents: M3 libdrm-phoenix (running), M1 EINVAL-draw
+  analysis (server tags every submit reject), M1 `stk-v3da` clone build.
