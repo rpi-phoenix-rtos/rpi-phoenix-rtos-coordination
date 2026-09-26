@@ -1,0 +1,5 @@
+# Built probe binaries (sources are committed; build commands are in each README/doc)
+ipcprobe/ipcprobe
+kmsprobe/kmsprobe
+exportprobe/exportprobe
+exportprobe/exportprobe-*
