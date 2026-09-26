@@ -80,6 +80,20 @@ EOF
 # file's position in its directory.
 #
 # So match on the source path, and require exactly one hit.
+#
+# ⚠ The project's build.project EXPORTS make variables that Makefiles test, e.g.
+# `export PCI_EXPRESS_BCM2711_INDEXED_CFG=y`, which usb/xhci/Makefile turns into a
+# -D. A bare `make -n` never sees them, so bcm2711-pcie.c failed here with
+# `ECAM_SIZE undeclared` while the real build compiled it (found 2026-09-26).
+# Import every plain `export NAME=literal` line; values built from `$(...)` or
+# other variables are skipped, since sourcing the whole script is not safe here.
+if [ -f "${proj}/build.project" ]; then
+    while IFS= read -r _kv; do
+        export "${_kv?}"
+    done <<EOF
+$(grep -E '^export [A-Z_][A-Z0-9_]*=[^$" ]*$' "${proj}/build.project" | sed -e 's/^export //')
+EOF
+fi
 cmd=$(cd "$bdir" && PATH="${tc}:$PATH" TARGET="$target" make -n "$obj" 2>/dev/null \
         | grep -- '-phoenix-gcc ' | grep -F -- "$(basename "$rel")" || true)
 n=$(printf '%s' "$cmd" | grep -c . || true)
