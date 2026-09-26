@@ -564,5 +564,26 @@ GPU client — the M2→M1 integration cycle), `-B`, `-C`, overlays.
 
 ## Result
 
-*(to be filled after the §13 cycle: log path, snapshot paths, the tagged lines, the rows that
-applied, and the M2 decision)*
+### Cycle `m2-kms-a` (queue9, build 9 + core_freq=500, 2026-09-27 00:38) — **partial: display PASS, events FAIL**
+
+Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-003845-m2-kms-a.log`; HDMI `artifacts/hdmi/20260927-0040*-m2-kms-a-tick.png`.
+
+| Area | Result |
+|---|---|
+| Bring-up | `KMS srv ready … backend=plane planes=0x81 vblank_src=irq mode=1920x1080 refresh_mhz=60000 xl=1 pool=1 pool_mib=32`; pool at PA `0x2c000000` (below 1 GiB); vblank measured **60.000 Hz** over 120 IRQs |
+| `kmstest info` | PASS — caps, resources, connector (EDID, 600×340 mm), mode, encoder, CRTC, 2 planes (primary + zpos-7 overlay), IN_FORMATS blob |
+| `kmstest pool` | PASS — dumb BO create/map, zeroed, server/client checksum match, wrong memtype refused (-22), name gone after destroy |
+| scan-out | ✅ HDMI shows kmstest's test pattern (colour bars, grey ramp, checkerboard on the second plane) from pool BOs through firmware planes; server reports `flips_completed=602` (plane) / `302` (pan) |
+| `test_only`, `EBUSY` | PASS (`test_only rc=0`, second commit while one is pending → `-16`) |
+| `kmstest flip` | ❌ **FAIL: every flip-complete event read returns 32 bytes of zeros** (`event_bad rc=32 type=0 len=0 user=0x0`), so 0/600 counted; same on the pan backend (0/300); `vblank` FAIL for the same reason |
+| negative test | PASS — a pool BO flip on the pan backend is refused `-22` |
+| server exit | ❌ `Exception #34: PC alignment fault` at `pc=lr=0x1e1e1e1e1e1e1e1e` after `KMS srv exit … restored=1`, both runs: x18–x28 hold the kernel's fresh-thread fill (`0x12…0x1c`), i.e. a server **thread entry function returned** instead of calling `endthread()` |
+
+**Reading.** The display half of M2 works on hardware (planes, pool, vblank IRQ, atomic test/EBUSY).
+The event half does not: the reply length is right but the payload is lost. The same kernel path
+carries correct payloads for E5's `ipcprobe` (its wake latency is computed from the event's own
+timestamp, 20 µs p50 — impossible with zeros), so the fault is in rpi4-kms or kmstest, not in
+deferred `msgRespond`. Static reading of `ev_push`/`ev_fill`/`park`/`serve_reads`/`kms_answer` and
+kmstest's `read_event` found nothing; the next build adds a tagged dump of the first served reads
+(size, dst, first words after `ev_fill`) and of the raw bytes the client receives. Both defects go to
+one fix pass after the M3 part-2 agent (which edits the same directory) finishes. M2 stays ▶.
