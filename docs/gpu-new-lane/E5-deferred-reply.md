@@ -295,3 +295,25 @@ probe's message handling were never exercised. The pre-registration's "psh has `
 ## Result
 
 *(to be filled after the cycle)*
+
+## Result — second run (2026-09-26 19:25, build 8, `rpi4b-uart-*-e5-ipcprobe.log`): **PASS, `fails=0`**
+
+| Line | Result | Meaning for M1/M2 |
+|---|---|---|
+| `rtt small` | p50 **31.2 µs**, p90 46.6, p99 63.4 | the per-submit round trip is ~30 µs, not 20 — still negligible per frame |
+| `rtt small_handoff` (answered by another thread) | p50 45.3 µs | +14 µs for deferring to a worker |
+| `rtt i4k_aligned` / `i4k_unaligned` | 40.9 / 72.6 µs | page-aligned payloads are cheap; unaligned costs ~30 µs more (shadow pages) — align ioctl structs/arrays in libdrm-phoenix |
+| `rtt *_hog3` (3 busy threads) | p50 ~34–52 µs, **p99 ~725–780 µs** | tail latency under CPU load: fence waits must not be on a per-draw path |
+| `deferred` | **32/32**, 4 outstanding, answered out of order, `recv_while_outstanding=32` | deferred `msgRespond` from another thread works; the receiver keeps receiving meanwhile |
+| `wait` (fence WAIT answered from the "irq" thread) | 200/200, wake p50 **23.5 µs**, max 46 µs | slow-path fence waits are cheap |
+| `read` (blocked read answered at "vblank") | 60/60, wake p50 **19.9 µs**, 0 missed | a DRM event fd served by blocking `read()` works today |
+| `poll` | wake p50 **8.2 ms**, max 16.7 ms, `block_ms_seen=0` | as predicted: `poll()` on a server fd rides the 20 ms cycle — M4/M6 need the additive `block_ms` kernel change (§5) |
+| `timeout` | 4/4 return −110 at 100–101 ms | bounded waits behave |
+| `signal` | handler ran only after the 3 s reply, `interrupted=0` | confirms condition 1: a parked client cannot be interrupted |
+| `fence` (shared page, 1 kHz writer) | 49.8 M reads, 0 non-monotonic, visibility p50 **0.13 µs** | the fence page (fast path, no IPC) works with today's `MAP_PHYSMEM` |
+| `fence_rw` / `fence_ro` | a RW mapping sees client writes; the RO mapping faults a writing child (SIGSEGV, the one expected dump) | read-only sharing is enforceable per mapping — but nothing stops a process from mapping it RW (E1 fixes ownership) |
+| server `quit` | `cancelled=0`, `responds_from_irq=262` | clean shutdown with nothing left parked |
+
+**Decisions this settles:** fence waits = shared page fast path + deferred WAIT slow path (both proven);
+DRM events = blocking `read()` now, `poll()` after the `block_ms` change; per-flip implicit-sync query
+from `rpi4-kms` to `rpi4-v3d` costs ~30–45 µs — acceptable for M2 (resv page only with E1).
