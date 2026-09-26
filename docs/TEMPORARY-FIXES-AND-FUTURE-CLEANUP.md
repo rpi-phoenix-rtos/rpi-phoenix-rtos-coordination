@@ -1209,7 +1209,7 @@ under TD-13-spawn-cap and the priority ladder.
 
 ### TD-14-console-open-fastpath: skip duplicate `/dev/console` canonicalization
 
-- **Status:** ✅ RESOLVED 2026-09-26 — removed; `open()` matches upstream again (KNOWN-ISSUES D2 closed). Originally: ACTIVE WORKAROUND (libphoenix `3c76bba`, 2026-05-02).
+- **Status:** ✅ RESOLVED 2026-09-26 — removed; `open()` matches upstream again (KNOWN-ISSUES D2 closed — verified on netboot and SD boot). Originally: ACTIVE WORKAROUND (libphoenix `3c76bba`, 2026-05-02).
 - **Where:** `sources/libphoenix/unistd/file.c` `open()`.
 - **Why:** Real Pi logs showed `open("/dev/console", O_RDWR)` spending most
   of the capture in the second `resolve_path()` pass. The earlier `stat()`
@@ -2180,16 +2180,16 @@ markers. Its debt idiom is `BRING-UP` prose instead.
 | TD-13-spawn-cap | RESOLVED | #132 direct dump proved list circular on real HW; cap removed in #158 (kernel `1594a550`), diagnostic reverted (`2ea366be`) |
 | TD-14 | RESOLVED 2026-05-02; refined further by libphoenix `bd61195` + kernel `c8a81d5e` | devfs fast-path predicate restored after Pass-4 regression |
 | TD-14-stat-skip | RESOLVED 2026-05-02 | open() stat skip removed |
-| TD-14-deferred-fbcon | ✅ RESOLVED 2026-09-26 (KNOWN-ISSUES D2 closed) — stale | the deferral is gone: `main()` now initialises fbcon *before* the klog and drain threads start (#127), and the `fbcon init deferred` marker no longer exists |
-| TD-14-tty0-nonfatal | ✅ RESOLVED 2026-09-26 (KNOWN-ISSUES D2 closed) | the hand-rolled `pl011_createTty0()` is deleted; `/dev/tty0` registers through `create_dev()` like `/dev/console` and upstream's UART drivers, fatal on failure (0 `tty0 register failed` in 7 067 boot logs) |
-| TD-14-pl011-retry | ✅ RESOLVED 2026-09-26 (KNOWN-ISSUES D2 closed) | went with `pl011_createTty0()`; `create_dev()` has its own devfs retry |
-| TD-14-psh-retry | ✅ RESOLVED 2026-09-26 (KNOWN-ISSUES D2 closed) — accepted fork deviation | 50 × 10 ms has the same 500 ms budget as upstream's 5 × 100 ms, only a finer step; the marker is now a "Deliberate deviation from upstream" comment |
-| TD-14-ttyopen-nonfatal | ✅ RESOLVED 2026-09-26 (KNOWN-ISSUES D2 closed) | upstream's `return err` restored. The one `ttyopen … failed` in 7 067 logs was a boot whose ext2 root was already broken (`mkdir /dev: Not a directory`, posixsrv failing), not a console race |
+| TD-14-deferred-fbcon | ✅ RESOLVED 2026-09-26 (KNOWN-ISSUES D2 closed — verified on netboot and SD boot) — stale | the deferral is gone: `main()` now initialises fbcon *before* the klog and drain threads start (#127), and the `fbcon init deferred` marker no longer exists |
+| TD-14-tty0-nonfatal | ✅ RESOLVED 2026-09-26 (KNOWN-ISSUES D2 closed — verified on netboot and SD boot) | the hand-rolled `pl011_createTty0()` is deleted; `/dev/tty0` registers through `create_dev()` like `/dev/console` and upstream's UART drivers, fatal on failure (0 `tty0 register failed` in 7 067 boot logs) |
+| TD-14-pl011-retry | ✅ RESOLVED 2026-09-26 (KNOWN-ISSUES D2 closed — verified on netboot and SD boot) | went with `pl011_createTty0()`; `create_dev()` has its own devfs retry |
+| TD-14-psh-retry | ✅ RESOLVED 2026-09-26 (KNOWN-ISSUES D2 closed — verified on netboot and SD boot) — accepted fork deviation | 50 × 10 ms has the same 500 ms budget as upstream's 5 × 100 ms, only a finer step; the marker is now a "Deliberate deviation from upstream" comment |
+| TD-14-ttyopen-nonfatal | ✅ RESOLVED 2026-09-26 (KNOWN-ISSUES D2 closed — verified on netboot and SD boot) | upstream's `return err` restored. The one `ttyopen … failed` in 7 067 logs was a boot whose ext2 root was already broken (`mkdir /dev: Not a directory`, posixsrv failing), not a console race |
 | TD-14-devfs-direct | ✅ RESOLVED 2026-09-26 — accepted fork deviation (owner rule) | marker is now a "Deliberate deviation" comment |
-| TD-14-console-alias | ✅ RESOLVED 2026-09-26 (KNOWN-ISSUES D2 closed) | the extra `portRegister("/dev/console")` is removed: the canonical path resolves on every lane (dummyfs `bind devfs /dev`, ext2 bind on SD, and the NFS server re-binds `/dev` at takeover) |
-| TD-14-psh-ttyopen-errno | ✅ RESOLVED 2026-09-26 (KNOWN-ISSUES D2 closed) | the errno print went with the non-fatal path |
+| TD-14-console-alias | ✅ RESOLVED 2026-09-26 (KNOWN-ISSUES D2 closed — verified on netboot and SD boot) | the extra `portRegister("/dev/console")` is removed: the canonical path resolves on every lane (dummyfs `bind devfs /dev`, ext2 bind on SD, and the NFS server re-binds `/dev` at takeover) |
+| TD-14-psh-ttyopen-errno | ✅ RESOLVED 2026-09-26 (KNOWN-ISSUES D2 closed — verified on netboot and SD boot) | the errno print went with the non-fatal path |
 | TD-14-probe-strip | RESOLVED 2026-05-02 + Pass-4 cleanup 2026-05-18 (kernel `334638ee`, libphoenix `bd61195`, utils `18aed2a`) | all paths stripped |
-| TD-14-console-open-fastpath | ✅ RESOLVED 2026-09-26 (KNOWN-ISSUES D2 closed) | `open()` is upstream's again: no `/dev/console` special case, one `resolve_path()` for every name |
+| TD-14-console-open-fastpath | ✅ RESOLVED 2026-09-26 (KNOWN-ISSUES D2 closed — verified on netboot and SD boot) | `open()` is upstream's again: no `/dev/console` special case, one `resolve_path()` for every name |
 | TD-14-tiocspgrp-pgrp | ✅ RESOLVED 2026-09-26 — accepted fork deviation; ours is POSIX-correct | commented so an upstream merge does not revert it |
 | TD-14-psh-debug-probes | RESOLVED in utils `18aed2a` (Pass-4 strip) | n/a |
 | TD-15 | MOSTLY RESOLVED (2026-05-29) | DONE: phase 1; 4 GiB usable (ddrh); DTB `/memory@0`+`/reserved-memory`+`/soc/dma-ranges` parsed & consumed by pmap; `dtb_armToBus` helper present. REMAINING: plo syspage map still hardcoded (mis-maps 2/8 GiB boards — substantive, deferred to careful work); VC4 quiesce + mailbox-move (low value); drivers use identity va2pa (do NOT naively wire dtb_armToBus — would break GENET, see entry hazard note) |
