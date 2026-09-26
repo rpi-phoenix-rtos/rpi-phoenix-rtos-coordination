@@ -1,0 +1,164 @@
+--- a/lib/libfuse/fuse.c	2026-09-26 16:32:17.517246961 +0200
++++ b/lib/libfuse/fuse.c	2026-09-26 16:43:56.034314899 +0200
+@@ -61,6 +61,9 @@
+ 	FUSE_OPT_KEY("auto_cache",		KEY_STUB),
+ 	FUSE_OPT_KEY("noauto_cache",		KEY_STUB),
+ 	FUSE_OPT_KEY("big_writes",		KEY_STUB),
++	FUSE_OPT_KEY("blkdev",			KEY_STUB),	/* PHOENIX: Linux fuseblk opts */
++	FUSE_OPT_KEY("blksize=",		KEY_STUB),
++	FUSE_OPT_KEY("user=",			KEY_STUB),
+ 	FUSE_OPT_KEY("debug",			KEY_DEBUG),
+ 	FUSE_OPT_KEY("-d",			KEY_DEBUG),
+ 	FUSE_OPT_KEY("entry_timeout=",		KEY_STUB),
+@@ -117,100 +120,35 @@
+ }
+ DEF(fuse_loop);
+ 
++/* PHOENIX: no /dev/fuse and no mount(2): the channel is a Phoenix port which
++ * phx_mount() creates and binds at the mount point. */
++extern int phx_mount(const char *dir, struct fuse_chan *fc);
++extern void phx_unmount(const char *dir, struct fuse_chan *fc);
++
+ struct fuse_chan *
+ fuse_mount(const char *dir, struct fuse_args *args)
+ {
+-	struct fusefs_args fargs;
+ 	struct fuse_mount_opts opts;
+ 	struct fuse_chan *fc;
+-	const char *errcause;
+-	char *mnt_dir;
+-	int mnt_flags;
+ 
+-	if (dir == NULL)
++	if (dir == NULL || (fc = calloc(1, sizeof(*fc))) == NULL)
+ 		return (NULL);
+-
+-	fc = calloc(1, sizeof(*fc));
+-	if (fc == NULL)
+-		return (NULL);
+-
+-	mnt_dir = realpath(dir, NULL);
+-	if (mnt_dir == NULL) {
+-		fprintf(stderr, "fuse: realpath %s: %s\n", dir,
+-		    strerror(errno));
+-		goto bad;
+-	}
+-
+-	if ((fc->fd = open("/dev/fuse0", O_RDWR|O_CLOEXEC)) == -1) {
+-		perror("/dev/fuse0");
+-		goto bad;
+-	}
+-
++	/* consume mount options (ro, allow_other, fsname=...) */
+ 	memset(&opts, 0, sizeof(opts));
+-	if (fuse_opt_parse(args, &opts, fuse_mount_opts, NULL) == -1)
+-		goto bad;
+-
+-	mnt_flags = 0;
+-	if (opts.rdonly)
+-		mnt_flags |= MNT_RDONLY;
+-	if (opts.noatime)
+-		mnt_flags |= MNT_NOATIME;
+-
+-	if (opts.max_read > FUSEBUFMAXSIZE) {
+-		fprintf(stderr, "fuse: invalid max_read (%d > %d)\n",
+-		    opts.max_read, FUSEBUFMAXSIZE);
+-		goto bad;
+-	}
+-
+-	memset(&fargs, 0, sizeof(fargs));
+-	fargs.fd = fc->fd;
+-	fargs.max_read = opts.max_read;
+-	fargs.allow_other = opts.allow_other;
+-
+-	if (mount(MOUNT_FUSEFS, mnt_dir, mnt_flags, &fargs)) {
+-		switch (errno) {
+-		case EMFILE:
+-			errcause = "mount table full";
+-			break;
+-		case EOPNOTSUPP:
+-			errcause = "filesystem not supported by kernel";
+-			break;
+-		default:
+-			errcause = strerror(errno);
+-			break;
+-		}
+-		fprintf(stderr, "fuse: %s: %s\n", mnt_dir, errcause);
+-		goto bad;
++	if (fuse_opt_parse(args, &opts, fuse_mount_opts, NULL) == -1 ||
++	    phx_mount(dir, fc) != 0) {
++		free(fc);
++		return (NULL);
+ 	}
+-
+ 	return (fc);
+-bad:
+-	if (fc->fd != -1)
+-		close(fc->fd);
+-	free(mnt_dir);
+-	free(fc);
+-	return (NULL);
+ }
+-DEF(fuse_mount);
+ 
+ void
+ fuse_unmount(const char *dir, struct fuse_chan *ch)
+ {
+-	if (ch == NULL)
+-		return;
+-
+-	/*
+-	 * Close the device before unmounting to prevent deadlocks with
+-	 * FBT_DESTROY if fuse_loop() has already terminated.
+-	 */
+-	if (close(ch->fd) == -1)
+-		DPERROR(__func__);
+-
+-	if (!ch->dead)
+-		if (unmount(dir, MNT_FORCE) == -1)
+-			DPERROR(__func__);
++	if (ch != NULL)
++		phx_unmount(dir, ch);
+ }
+-DEF(fuse_unmount);
+ 
+ int
+ fuse_is_lib_option(const char *opt)
+@@ -318,10 +256,8 @@
+ int
+ fuse_daemonize(int foreground)
+ {
+-	if (foreground)
+-		return (0);
+-
+-	return (daemon(0, 0));
++	(void)foreground;	/* PHOENIX: servers are spawned in the background already */
++	return (0);
+ }
+ DEF(fuse_daemonize);
+ 
+--- a/lib/libfuse/fuse_private.h	2026-09-26 16:32:17.518350006 +0200
++++ b/lib/libfuse/fuse_private.h	2026-09-26 16:39:38.954259253 +0200
+@@ -112,9 +112,10 @@
+ };
+ 
+ /* fuse_lowlevel.h */
++struct phx_reply;
+ struct fuse_req {
+ 	struct fuse_ctx		ctx;
+-	struct fusebuf		*fbuf;
++	struct phx_reply	*rep;	/* PHOENIX: reply scratch instead of fusebuf */
+ 	struct fuse_session	*se;
+ 	struct fuse_chan	*ch;
+ };
+@@ -154,8 +155,8 @@
+ #define FUSE_VERSION_PKG_INFO "2.8.0"
+ #define unused __attribute__ ((unused))
+ 
+-#define	PROTO(x)	__dso_hidden typeof(x) x asm("__"#x)
+-#define	DEF(x)		__strong_alias(x, __##x)
++#define PROTO(x)
++#define DEF(x)
+ 
+ PROTO(fuse_daemonize);
+ PROTO(fuse_teardown);
