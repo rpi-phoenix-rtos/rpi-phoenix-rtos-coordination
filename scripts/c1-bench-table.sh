@@ -58,8 +58,15 @@ if [ "$_days" -gt 1 ]; then
 		printf '  dates: %s\n\n' "$(echo $_datelist | tr '\n' ' ')"
 	fi
 fi
-printf '%-36s %5s %5s %4s %6s %5s %6s %8s %5s %5s %5s %s\n' LOG SIG VICT P4V GUARD CORR ARMED FRAMES KFLT UFLT TDOWN VERDICT
+# ★ MODE is not cosmetic. C1's fire rate is 35.3% after an idle >300 s and 7.1%
+# back-to-back (p = 1.6e-06), and STK's race start is the visible proxy: the
+# first flipstat bin above 3 fps lands at ~70 s (back-to-back) or ~82 s
+# (post-idle). A series read without it is averaging two populations 5x apart,
+# which is how a 25-trial "drought" and a suppression that was not there both got
+# believed. See docs/KNOWN-ISSUES.md C1.
+printf '%-36s %5s %5s %4s %6s %5s %6s %8s %5s %5s %5s %-5s %s\n' LOG SIG VICT P4V GUARD CORR ARMED FRAMES KFLT UFLT TDOWN MODE VERDICT
 tot_f=0; tot_fire=0; valid=0; void=0
+nlate=0; flate=0; nearly=0; fearly=0
 for log in $(printf '%s\n' "${logs[@]}" | sort); do
 	# ⚠ Count EVERY allocator guard, not just the corrupt-header one. The
 	# `why   =` line belongs to one guard; the page-poison guard prints
@@ -187,6 +194,12 @@ for log in $(printf '%s\n' "${logs[@]}" | sort); do
 	armed=$(grep -ac 'C1-hunt: created' "$log")
 	frames=$(grep -ao 'total [0-9]*)' "$log" | tail -1 | tr -dc 0-9)
 	frames=${frames:-0}
+
+	# Race start = the first flipstat bin above 3 fps, as elapsed render time.
+	mode=$(awk '{ if (match($0, /flipstat [0-9]+ frames in [0-9]+ ms = [0-9.]+ fps/)) {
+			split(substr($0, RSTART, RLENGTH), a, " "); d = a[5] + 0
+			if (d > 0 && d < 60000) { ms += d; if (race == 0 && a[8] + 0 > 3) race = ms } } }
+		END { if (race == 0) print "-"; else print (race/1000 >= 76 ? "LATE" : "early") }' "$log")
 	# ⚠ EVERY fault dump reaches the UART TWICE, so a raw line count is 2x the
 	# truth. process_dumpException() (kernel proc/process.c:259-261) emits the
 	# SAME buffer down two paths: hal_consolePrint() to the kernel console AND
@@ -218,6 +231,10 @@ for log in $(printf '%s\n' "${logs[@]}" | sort); do
 		verdict=VOID; void=$((void+1))
 	else
 		verdict=ok; valid=$((valid+1)); tot_f=$((tot_f+frames)); tot_fire=$((tot_fire+fires))
+		case "$mode" in
+			LATE)  nlate=$((nlate+1));  [ "$fires" -gt 0 ] && flate=$((flate+1)) ;;
+			early) nearly=$((nearly+1)); [ "$fires" -gt 0 ] && fearly=$((fearly+1)) ;;
+		esac
 	fi
 	# TDOWN: did the app run to completion and tear down? Measured 2026-09-25:
 	# the two runs that reached STK's profile summary produced 79 of the 108
@@ -227,8 +244,8 @@ for log in $(printf '%s\n' "${logs[@]}" | sort); do
 	# still fired 1-12 times. A bench of runs that all show no is not void, but it
 	# is weaker than one that completes.
 	if grep -aq 'Number of frames:' "$log"; then tdown=yes; else tdown=no; fi
-	printf '%-36s %5s %5s %4s %6s %5s %6s %8s %5s %5s %5s %s\n' "$(basename "$log" .log | cut -c11-)" \
-		"$fires" "$vict" "$p4v" "$guards" "$corr" "$armed" "$frames" "$kflt" "$uflt" "$tdown" "$verdict"
+	printf '%-36s %5s %5s %4s %6s %5s %6s %8s %5s %5s %5s %-5s %s\n' "$(basename "$log" .log | cut -c11-)" \
+		"$fires" "$vict" "$p4v" "$guards" "$corr" "$armed" "$frames" "$kflt" "$uflt" "$tdown" "$mode" "$verdict"
 	# A UFLT is only interesting once you know WHOSE fault it was, and this bench
 	# has already mistaken its own instrument's crash for a property of the run
 	# (2026-09-25, c1hpa01: a malloc_dl guard dereferencing an unmapped live[]
@@ -247,3 +264,15 @@ done
 echo "---"
 printf 'valid trials: %s   void (0 frames, NOT counted): %s\n' "$valid" "$void"
 printf 'C1-signature hits across valid trials: %s   frames: %s\n' "$tot_fire" "$tot_f"
+# ★ Report the two populations separately. Pooling them is what made a 25-trial
+# back-to-back stretch look like a drought and a back-to-back 0/20 look like a
+# suppression; the rates differ 5x (35.3% post-idle vs 7.1% back-to-back).
+printf 'by schedule mode:  LATE(post-idle) %s trial(s), %s fired   |   early(back-to-back) %s trial(s), %s fired\n' \
+	"$nlate" "$flate" "$nearly" "$fearly"
+if [ "$nlate" -gt 0 ] && [ "$nearly" -gt 0 ]; then
+	echo '  ⚠ MIXED series: do not quote a single pooled rate for it.'
+elif [ "$nearly" -gt 0 ] && [ "$nlate" -eq 0 ]; then
+	echo '  ⓘ All back-to-back. Expect ~7% per trial; a clean run of these is not evidence of anything.'
+elif [ "$nlate" -gt 0 ] && [ "$nearly" -eq 0 ]; then
+	echo '  ⓘ All post-idle. Expect ~35% per trial.'
+fi
