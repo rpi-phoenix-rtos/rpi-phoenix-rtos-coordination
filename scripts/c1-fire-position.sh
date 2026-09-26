@@ -21,8 +21,13 @@
 #   time since race start     +22 s vs  +7.8 s  <- moves (t ~ 3.5)
 #   frames rendered             244 vs 131      <- moves (1.9x)
 #
-# So C1 is pinned to ELAPSED TIME, not to work done: between the two groups the
-# frame count at the fire differs by 1.9x while the wall-clock time agrees to 3%.
+# So C1 is NOT paced by frames. ⚠ That is not the same as "not paced by work",
+# which an earlier version of this header claimed: group B spends its extra ~12 s
+# in the sub-1-fps ASSET-LOAD phase, which allocates heavily while rendering
+# almost nothing, so the two groups can have similar ALLOCATION counts despite the
+# 1.9x frame difference. Elapsed time and allocation count are not separable from
+# anything in these logs -- which is why the `v3d-winsys: pace` line now carries
+# heaps/heapkb/boc, and why scripts/c1-pace-read.sh exists.
 # All three axes are printed, because the wrong ones are what rule the right one in.
 #
 # ⚠ UART CORRUPTION. This link flips ~1.3% of lines, and one flipped digit in
