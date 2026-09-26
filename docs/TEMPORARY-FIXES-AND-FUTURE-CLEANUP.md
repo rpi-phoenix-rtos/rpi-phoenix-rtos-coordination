@@ -1229,7 +1229,7 @@ under TD-13-spawn-cap and the priority ladder.
 
 ### TD-14-tiocspgrp-pgrp: TIOCSPGRP stores pgrp directly
 
-- **Status:** ACTIVE FIX (devices `3ee4702`, 2026-05-02)
+- **Status:** ✅ RESOLVED 2026-09-26 — **accepted fork deviation**, no longer debt. Owner rule (2026-09-26): a deliberate difference from upstream that is needed, correct in our configuration, and neither a hack nor a "fix later" is simply how the fork works. The source marker is now a plain "Deliberate deviation from upstream" comment so an upstream merge does not revert it. Originally: ACTIVE FIX (devices `3ee4702`, 2026-05-02). ⭑ Ours is the POSIX-correct behaviour; upstream's `getpgid(*pid)` only works while the group leader is alive.
 - **Where:** `sources/phoenix-rtos-devices/tty/libtty/libtty.c`.
 - **Why:** POSIX `tcsetpgrp(fd, pgrp)` passes a foreground process-group ID.
   `libtty` treated that value as a PID and called `getpgid(*pid)` inside the
@@ -1371,7 +1371,7 @@ under TD-13-spawn-cap and the priority ladder.
 
 ### TD-14-devfs-direct: kernel stores the `devfs` namespace OID directly
 
-- **Status:** ACTIVE WORKAROUND (kernel `60703368`, 2026-05-02)
+- **Status:** ✅ RESOLVED 2026-09-26 — **accepted fork deviation**, no longer debt. Owner rule (2026-09-26): a deliberate difference from upstream that is needed, correct in our configuration, and neither a hack nor a "fix later" is simply how the fork works. The source marker is now a plain "Deliberate deviation from upstream" comment so an upstream merge does not revert it. Originally: ACTIVE WORKAROUND (kernel `60703368`, 2026-05-02). ⚠ The "generic non-filesystem namespace roots" idea below is kept as a design note, not an open item: the special case is needed (removing it restored 20 s cold-boot IPC hangs, kernel `c8a81d5e`) and asking the root filesystem server about a non-filesystem namespace is wrong regardless of speed.
 - **Where:** `sources/phoenix-rtos-kernel/proc/name.c`.
 - **Why:** Real Pi logs showed `name: register devfs` followed by later
   `lookup("devfs")` dcache misses and root dummyfs queries. Those root
@@ -2191,12 +2191,12 @@ markers. Its debt idiom is `BRING-UP` prose instead.
 | TD-14-pl011-retry | superseded by TD-12 retry tuning (utils `18aed2a`: 50 × 10 ms) | n/a |
 | TD-14-psh-retry | **STILL ACTIVE** (row corrected 2026-09-17 — it said "superseded … n/a") | The ID was retired but the debt was not: the marker is live at `pshapp.c:70` and `PSH_TTYOPEN_RETRIES 50` / `PSH_TTYOPEN_RETRY_US 10000` (`:73,:79`) still deviate from the upstream default (20 × 100 ms). TD-12's tuning *set* this value, it did not remove the deviation. Close it by restoring the upstream default once devfs registration is fast, then drop the marker. |
 | TD-14-ttyopen-nonfatal | LIKELY STILL ACTIVE | re-verify against utils `18aed2a` |
-| TD-14-devfs-direct | STILL ACTIVE (fast-path predicate); kernel `c8a81d5e` restored it | works as designed |
+| TD-14-devfs-direct | ✅ RESOLVED 2026-09-26 — accepted fork deviation (owner rule) | marker is now a "Deliberate deviation" comment |
 | TD-14-console-alias | LIKELY STILL ACTIVE | re-verify |
 | TD-14-psh-ttyopen-errno | STILL ACTIVE diagnostic | low priority cleanup |
 | TD-14-probe-strip | RESOLVED 2026-05-02 + Pass-4 cleanup 2026-05-18 (kernel `334638ee`, libphoenix `bd61195`, utils `18aed2a`) | all paths stripped |
-| TD-14-console-open-fastpath | STILL ACTIVE | kept post-bringup as designed (strdup short-circuit for `/dev/console`) |
-| TD-14-tiocspgrp-pgrp | STILL ACTIVE (correct semantics) | upstreamable as-is |
+| TD-14-console-open-fastpath | STILL ACTIVE — **tracked with the `/dev/console` fallbacks in KNOWN-ISSUES D2** | not accepted as a permanent deviation: its own comment says "during Pi 4 bring-up", and it is only correct while TD-14-console-alias exists |
+| TD-14-tiocspgrp-pgrp | ✅ RESOLVED 2026-09-26 — accepted fork deviation; ours is POSIX-correct | commented so an upstream merge does not revert it |
 | TD-14-psh-debug-probes | RESOLVED in utils `18aed2a` (Pass-4 strip) | n/a |
 | TD-15 | MOSTLY RESOLVED (2026-05-29) | DONE: phase 1; 4 GiB usable (ddrh); DTB `/memory@0`+`/reserved-memory`+`/soc/dma-ranges` parsed & consumed by pmap; `dtb_armToBus` helper present. REMAINING: plo syspage map still hardcoded (mis-maps 2/8 GiB boards — substantive, deferred to careful work); VC4 quiesce + mailbox-move (low value); drivers use identity va2pa (do NOT naively wire dtb_armToBus — would break GENET, see entry hazard note) |
 | TD-15-mboxprobe | RESOLVED (no drift confirmed; probe stripped in plo `c988e6a`) | |
