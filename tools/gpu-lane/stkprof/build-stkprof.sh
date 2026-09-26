@@ -39,6 +39,19 @@
 #   --verify-only  only the byte-identity proof of the default build; no link
 # Env:  STKPROF_OUT, TARGET (default aarch64a72-generic-rpi4b), RPI4B_BUILDROOT
 #
+# E2b extensions (docs/gpu-new-lane/E2b-v3d-render-slowness.md) -- all unset = E2 as before:
+#   STKPROF_DEVICES  take v3d_phoenix_winsys.c from this phoenix-rtos-devices tree (a
+#                    gpu-lane/* worktree) instead of sources/phoenix-rtos-devices. The
+#                    compile FLAGS still come from the main tree's build-v3d-phoenix.py, and
+#                    PROOF 1 compares against the file at merge-base(worktree HEAD, master).
+#   STKPROF_MESA     a worktree of external/mesa: v3d_job.c, v3d_resource.c and v3dx_draw.c
+#                    (the V3D_VERSION=42 variant) are compiled from it with
+#                    -DV3D_PHX_JOB_NOTE -DV3D_PHX_RES_CENSUS -DV3D_PHX_EZ_KNOB and replace
+#                    their members in the prof archive copy. Each gets the same proof as the
+#                    winsys: worktree-without-macros == pristine external/mesa compile.
+#   STKPROF_NAME     binary suffix (default "prof"): usr/bin/supertuxkart-$NAME + stk-$NAME,
+#                    so an E2b build never overwrites the E2 clone on the export.
+#
 # Copyright 2026 Phoenix Systems
 # SPDX-License-Identifier: BSD-3-Clause
 
@@ -55,10 +68,15 @@ strip="${tc}/aarch64-phoenix-strip"
 objcopy="${tc}/aarch64-phoenix-objcopy"
 readelf="${tc}/aarch64-phoenix-readelf"
 
-devices="${repo_root}/sources/phoenix-rtos-devices"
+main_devices="${repo_root}/sources/phoenix-rtos-devices"
+devices="${STKPROF_DEVICES:-${main_devices}}"
 winsys_rel="gpu/rpi4-v3d/mesa/v3d_phoenix_winsys.c"
 winsys="${devices}/${winsys_rel}"
-builder="${devices}/gpu/rpi4-v3d/mesa/build-v3d-phoenix.py"
+builder="${main_devices}/gpu/rpi4-v3d/mesa/build-v3d-phoenix.py"   # flags: always the main tree's
+mesa_main="${repo_root}/external/mesa"
+mesa_wt="${STKPROF_MESA:-}"
+name="${STKPROF_NAME:-prof}"
+case "$name" in *[!a-z0-9]*|"") echo "build-stkprof: STKPROF_NAME must be [a-z0-9]+" >&2; exit 2 ;; esac
 shipped_lib="${repo_root}/tools/.gpu-libs/libv3d-phoenix.a"
 gllib="${repo_root}/tools/.gpu-libs/libGL-phoenix.a"
 pfx="${buildroot}/_build/${target}"                       # the ports' shared install prefix
@@ -124,7 +142,7 @@ check_guarded() {
 # --- compile the winsys with the port's own flags -----------------------------
 # $1 = source, $2 = output object, rest = extra flags. cwd=HOSTBUILD as the port does.
 compile_winsys() {
-	PY_BUILDER="$builder" PY_SRC="$1" PY_OUT="$2" python3 - "${@:3}" <<'PYEOF'
+	PHOENIX_RPI_ROOT="$repo_root" PY_BUILDER="$builder" PY_SRC="$1" PY_OUT="$2" python3 - "${@:3}" <<'PYEOF'
 import sys
 sys.dont_write_bytecode = True    # no __pycache__ in the devices repo
 import importlib.util, os, subprocess
@@ -157,8 +175,54 @@ same_code() {
 	rm -f "$ta" "$tb"; echo "DIFFERENT"; return 1
 }
 
-log "devices HEAD $(git -C "$devices" rev-parse --short HEAD); winsys diff vs HEAD: $(git -C "$devices" diff --stat -- "$winsys_rel" | tail -1)"
-git -C "$devices" show "HEAD:${winsys_rel}" > "$out/src/v3d_phoenix_winsys.c"   # same basename
+# Compile one Mesa driver file with the flags of ITS OWN compile_commands entry (the entry
+# is looked up by the pristine external/mesa path; $4, when set, is a token the entry must
+# carry, e.g. -DV3D_VERSION=42 for the v42 variant of a v3dx_*.c file).
+# $1 = mesa-relative path, $2 = source to compile, $3 = output object, $4 = required token.
+compile_mesa() {
+	PHOENIX_RPI_ROOT="$repo_root" PY_BUILDER="$builder" PY_REL="$1" PY_SRC="$2" PY_OUT="$3" \
+	PY_NEED="${4:-}" python3 - "${@:5}" <<'PYEOF'
+import sys
+sys.dont_write_bytecode = True
+import importlib.util, os, shlex, subprocess
+extra = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("bv", os.environ["PY_BUILDER"])
+mod = importlib.util.module_from_spec(spec)
+saved, sys.argv = sys.argv, ["bv"]
+try:
+    spec.loader.exec_module(mod)
+finally:
+    sys.argv = saved
+want = os.path.normpath(os.path.join(mod.MESA, os.environ["PY_REL"]))
+need = os.environ["PY_NEED"]
+cands = [e for e in mod.db if mod.abssrc(e["file"]) == want and
+         (not need or need in shlex.split(e.get("command") or " ".join(e["arguments"])))]
+if len(cands) != 1:
+    print(f"compile_mesa: {len(cands)} compile_commands entries for {want} {need!r} (want 1)")
+    raise SystemExit(2)
+cmd = mod.transform(cands[0], os.environ["PY_SRC"], os.environ["PY_OUT"]) + extra
+r = subprocess.run(cmd, cwd=mod.HOSTBUILD, capture_output=True, text=True)
+msg = (r.stderr or "") + (r.stdout or "")
+# Warnings located IN the compiled file matter in our (macro) compile; the shim headers'
+# known DRM_SYNCOBJ_* redefinition warnings are pre-existing noise in every build.
+import re
+own = [l for l in msg.splitlines()
+       if re.search(re.escape(os.environ["PY_SRC"]) + r":\d+:\d+: .*(warning|error)",
+                    re.sub(r"\x1b\[[0-9;]*[mK]", "", l))]
+if r.returncode != 0 or (extra and own):
+    print("$ " + " ".join(cmd))
+    print(msg.rstrip())
+raise SystemExit(r.returncode)
+PYEOF
+}
+
+if [ "$devices" = "$main_devices" ]; then
+	pristine_ref="HEAD"
+else
+	pristine_ref="$(git -C "$devices" merge-base HEAD master)" || die "no merge-base of $devices HEAD and master"
+fi
+log "devices tree $devices (HEAD $(git -C "$devices" rev-parse --short HEAD), pristine ref $(git -C "$devices" rev-parse --short "$pristine_ref")); winsys diff: $(git -C "$devices" diff --stat "$pristine_ref" -- "$winsys_rel" | tail -1)"
+git -C "$devices" show "${pristine_ref}:${winsys_rel}" > "$out/src/v3d_phoenix_winsys.c"   # same basename
 
 log "compile: pristine HEAD winsys, no macro"
 compile_winsys "$out/src/v3d_phoenix_winsys.c" "$out/obj/pristine/v3d_phoenix_winsys.o" || die "pristine compile failed"
@@ -186,6 +250,42 @@ v="$(same_code "$out/obj/prof/v3d_phoenix_winsys.o" "$out/obj/plain/v3d_phoenix_
 [ "$(strings -a "$out/obj/plain/v3d_phoenix_winsys.o" | grep -c "$marker")" = 0 ] || die "default object carries '$marker'"
 log "  profile object differs and carries '$marker'; default object does not"
 
+# --- E2b: instrumented Mesa objects from a worktree (STKPROF_MESA) ---------------
+mesa_members=""
+if [ -n "$mesa_wt" ]; then
+	[ -d "$mesa_wt/src/gallium/drivers/v3d" ] || die "STKPROF_MESA=$mesa_wt is not a Mesa tree"
+	[ -z "$(git -C "$mesa_main" status --porcelain -- src/gallium/drivers/v3d)" ] \
+		|| die "external/mesa has uncommitted v3d changes -- the pristine compile would not be HEAD"
+	mesa_macros="-DV3D_PHX_JOB_NOTE -DV3D_PHX_RES_CENSUS -DV3D_PHX_EZ_KNOB"
+	mkdir -p "$out/obj/mesa-pristine" "$out/obj/mesa-plain" "$out/obj/mesa-instr" "$out/obj/mesa-shipped"
+	# rel-path | archive member | required compile_commands token | marker string in the instr object
+	for spec in \
+		"src/gallium/drivers/v3d/v3d_job.c|v3d_job.c.o||v3d-job-note" \
+		"src/gallium/drivers/v3d/v3d_resource.c|v3d_resource.c.o||v3d-res-census" \
+		"src/gallium/drivers/v3d/v3dx_draw.c|v3dx_draw.c_v42.o|-DV3D_VERSION=42|V3D_PHX_EZ"; do
+		IFS='|' read -r rel member need mark <<< "$spec"
+		log "Mesa: $rel -> $member"
+		compile_mesa "$rel" "$mesa_main/$rel" "$out/obj/mesa-pristine/$member" "$need" || die "pristine compile of $rel failed"
+		compile_mesa "$rel" "$mesa_wt/$rel" "$out/obj/mesa-plain/$member" "$need" || die "worktree compile of $rel failed"
+		compile_mesa "$rel" "$mesa_wt/$rel" "$out/obj/mesa-instr/$member" "$need" $mesa_macros || die "instrumented compile of $rel failed"
+		v="$(same_code "$out/obj/mesa-plain/$member" "$out/obj/mesa-pristine/$member")" \
+			|| die "PROOF M1 $member: worktree WITHOUT macros differs from pristine external/mesa ($v)"
+		log "  PROOF M1 (worktree, no macros == pristine): $v"
+		( cd "$out/obj/mesa-shipped" && "$ar" x "$shipped_lib" "$member" ) || die "no $member in $shipped_lib"
+		if v="$(same_code "$out/obj/mesa-pristine/$member" "$out/obj/mesa-shipped/$member")"; then
+			log "  PROOF M1b (pristine == shipped archive member): $v"
+		else
+			warn "$member: shipped archive member differs from a compile of external/mesa HEAD ($v):"
+			warn "  the archive predates the Mesa HEAD; the instrumented binary is then not 'shipped + hooks'."
+		fi
+		[ "$(same_code "$out/obj/mesa-instr/$member" "$out/obj/mesa-plain/$member" || true)" = "DIFFERENT" ] \
+			|| die "$member: the macros changed nothing"
+		[ "$(strings -a "$out/obj/mesa-instr/$member" | grep -c "$mark")" -ge 1 ] || die "$member lacks marker '$mark'"
+		[ "$(strings -a "$out/obj/mesa-plain/$member" | grep -c "$mark")" = 0 ] || die "$member default object carries '$mark'"
+		mesa_members="$mesa_members $member"
+	done
+fi
+
 if [ "$verify_only" = 1 ]; then
 	check_guarded
 	log "verify-only: done"
@@ -200,6 +300,13 @@ n_ship="$("$ar" t "$shipped_lib" | wc -l)"; n_prof="$("$ar" t "$prof_lib" | wc -
 [ "$n_ship" = "$n_prof" ] || die "member count changed ($n_ship -> $n_prof): the replace appended instead of replacing"
 [ "$(strings -a "$prof_lib" | grep -c "$marker")" -ge 1 ] || die "prof archive lacks '$marker'"
 log "prof archive: $prof_lib ($n_prof members, winsys replaced)"
+if [ -n "$mesa_wt" ]; then
+	for m in $mesa_members; do
+		"$ar" r "$prof_lib" "$out/obj/mesa-instr/$m" || die "replacing $m failed"
+	done
+	[ "$("$ar" t "$prof_lib" | wc -l)" = "$n_ship" ] || die "member count changed after the Mesa replacements"
+	log "  + Mesa members replaced: $mesa_members"
+fi
 
 # --- the stage-4 link, as sources/phoenix-rtos-ports/supertuxkart/port.def.sh does it
 linkcmd="$(cat "$linktxt")"
@@ -239,42 +346,47 @@ if [ "$do_control" = 1 ]; then
 fi
 
 log "prof relink"
-relink "$prof_lib" "$out/supertuxkart-prof"
-"$strip" -o "$out/supertuxkart-prof.stripped" "$out/supertuxkart-prof"
-[ "$(strings -a "$out/supertuxkart-prof.stripped" | grep -c "$marker")" -ge 1 ] || die "prof ELF lacks '$marker'"
+relink "$prof_lib" "$out/supertuxkart-$name"
+"$strip" -o "$out/supertuxkart-$name.stripped" "$out/supertuxkart-$name"
+[ "$(strings -a "$out/supertuxkart-$name.stripped" | grep -c "$marker")" -ge 1 ] || die "prof ELF lacks '$marker'"
 [ "$(strings -a "$shipped_bin" | grep -c "$marker")" = 0 ] || die "the SHIPPED supertuxkart carries '$marker' -- a profile build leaked into the real build"
 log "  prof ELF carries '$marker'; shipped usr/bin/supertuxkart does not"
 
 # --- stk-prof launcher -----------------------------------------------------------
-lsrc="$out/src/stk-prof.c"
-sed -e 's|"/usr/bin/supertuxkart"|"/usr/bin/supertuxkart-prof"|' \
-    -e 's|"stk: exec /usr/bin/supertuxkart"|"stk-prof: exec /usr/bin/supertuxkart-prof"|' \
-    -e 's|"stk: DATADIR=|"stk-prof: DATADIR=|' \
+lsrc="$out/src/stk-$name.c"
+sed -e "s|\"/usr/bin/supertuxkart\"|\"/usr/bin/supertuxkart-$name\"|" \
+    -e "s|\"stk: exec /usr/bin/supertuxkart\"|\"stk-$name: exec /usr/bin/supertuxkart-$name\"|" \
+    -e "s|\"stk: DATADIR=|\"stk-$name: DATADIR=|" \
     "$launcher_src" > "$lsrc"
-[ "$(grep -c '"/usr/bin/supertuxkart-prof"' "$lsrc")" = 1 ] || die "launcher exec path rewrite did not match exactly once"
-[ "$(grep -c '"stk-prof: DATADIR=' "$lsrc")" = 1 ] || die "launcher banner rewrite did not match exactly once"
+[ "$(grep -c "\"/usr/bin/supertuxkart-$name\"" "$lsrc")" = 1 ] || die "launcher exec path rewrite did not match exactly once"
+[ "$(grep -c "\"stk-$name: DATADIR=" "$lsrc")" = 1 ] || die "launcher banner rewrite did not match exactly once"
 [ "$(grep -c '/usr/bin/supertuxkart"' "$lsrc")" = 0 ] || die "launcher still names the shipped engine"
 "$cc" -O2 -static -Wall -Wextra --sysroot="${sysroot}/" -B"${sysroot}/lib/" -iprefix "${sysroot}/" \
-	-o "$out/stk-prof" "$lsrc" || die "launcher compile failed"
-if "$readelf" -l "$out/stk-prof" 2>/dev/null | grep -q INTERP; then die "stk-prof has a PT_INTERP segment"; fi
+	-o "$out/stk-$name" "$lsrc" || die "launcher compile failed"
+if "$readelf" -l "$out/stk-$name" 2>/dev/null | grep -q INTERP; then die "stk-$name has a PT_INTERP segment"; fi
 
 # --- provenance -----------------------------------------------------------------
 {
 	echo "built:            $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-	echo "devices HEAD:     $(git -C "$devices" rev-parse HEAD)"
+	echo "devices tree:     $devices"
+	echo "devices HEAD:     $(git -C "$devices" rev-parse HEAD) (pristine ref $(git -C "$devices" rev-parse "$pristine_ref"))"
 	echo "winsys (tree):    $(sha "$winsys")"
+	if [ -n "$mesa_wt" ]; then
+		echo "mesa worktree:    $mesa_wt (HEAD $(git -C "$mesa_wt" rev-parse HEAD))"
+		for m in $mesa_members; do echo "mesa instr $m: $(sha "$out/obj/mesa-instr/$m")"; done
+	fi
 	echo "libv3d (shipped): $(sha "$shipped_lib")"
 	echo "libGL:            $(sha "$gllib")"
 	echo "libphoenix.a:     $(sha "$sysroot/lib/libphoenix.a")"
 	echo "link.txt:         $(sha "$linktxt")"
 	echo "shipped stripped: $(sha "$shipped_bin")"
-	echo "prof stripped:    $(sha "$out/supertuxkart-prof.stripped")"
-	echo "stk-prof:         $(sha "$out/stk-prof")"
+	echo "prof stripped:    $(sha "$out/supertuxkart-$name.stripped")"
+	echo "stk-$name:         $(sha "$out/stk-$name")"
 } > "$out/BUILD-INFO.txt"
 
 check_guarded
 log "done:"
-log "  $out/supertuxkart-prof.stripped  -> stage as /usr/bin/supertuxkart-prof"
-log "  $out/supertuxkart-prof           (unstripped, for addr2line)"
-log "  $out/stk-prof                    -> stage as /bin/stk-prof"
+log "  $out/supertuxkart-$name.stripped  -> stage as /usr/bin/supertuxkart-$name"
+log "  $out/supertuxkart-$name           (unstripped, for addr2line)"
+log "  $out/stk-$name                    -> stage as /bin/stk-$name"
 log "  $out/BUILD-INFO.txt              (input SHAs; libphoenix drift confounds an A/B vs shipped)"

@@ -112,3 +112,27 @@ v3d-winsys: subprof-x  t=<ms> fr= tfu=<n>/<us>[pre spin diag post] csd=<n>/<us>[
 
 All times are µs summed over the window; divide by `fr` for per-frame figures. `cpu` is computed
 (`wall − ioc − lock − flip − rep`), `cg` is flipstat's `clock_gettime` window for the same period.
+
+## E2b: V3D performance counters + Mesa job notes (`supertuxkart-e2b`)
+
+Design, hypotheses and the pre-registered plan:
+[`docs/gpu-new-lane/E2b-v3d-render-slowness.md`](../../../docs/gpu-new-lane/E2b-v3d-render-slowness.md).
+Same script, three env overrides (all unset = the E2 build above, unchanged):
+
+```
+STKPROF_OUT=artifacts/stkprof-e2b STKPROF_NAME=e2b \
+STKPROF_DEVICES=<phoenix-rtos-devices worktree with e2b-winsys.patch> \
+STKPROF_MESA=<external/mesa worktree with e2b-mesa.patch> \
+  tools/gpu-lane/stkprof/build-stkprof.sh
+```
+
+* `STKPROF_DEVICES` — winsys source from a `gpu-lane/*` worktree; flags still from the main
+  tree's `build-v3d-phoenix.py`; PROOF 1 compares against merge-base(worktree HEAD, master).
+* `STKPROF_MESA` — `v3d_job.c`, `v3d_resource.c`, `v3dx_draw.c` (v42) compiled from the worktree
+  with `-DV3D_PHX_JOB_NOTE -DV3D_PHX_RES_CENSUS -DV3D_PHX_EZ_KNOB`, each with PROOF M1 (worktree
+  without macros == pristine `external/mesa` compile) and M1b (== shipped archive member).
+* `STKPROF_NAME` — outputs `supertuxkart-$NAME` / `stk-$NAME`, so the E2 clone is never overwritten.
+
+Runtime knobs (psh `export`): `V3D_PCTR=A|B|AB|0`, `V3D_PCTR_SLOTS_EVERY=N`, `V3D_PHX_EZ=1`,
+`V3D_PHX_CORE_HZ=<Hz>`, `V3D_PHX_QRMAXCNT=0..7`. Read with
+`python3 tools/gpu-lane/stkprof/e2b-summarize.py <log>`.

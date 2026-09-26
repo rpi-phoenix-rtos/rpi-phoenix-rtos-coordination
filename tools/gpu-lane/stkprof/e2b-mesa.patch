@@ -1,0 +1,218 @@
+diff --git a/src/gallium/drivers/v3d/v3d_job.c b/src/gallium/drivers/v3d/v3d_job.c
+index 229754c761a..dc6bf196b53 100644
+--- a/src/gallium/drivers/v3d/v3d_job.c
++++ b/src/gallium/drivers/v3d/v3d_job.c
+@@ -619,6 +619,71 @@ enable_double_buffer_mode(struct v3d_job *job)
+         v3d_X(devinfo, job_emit_enable_double_buffer)(job);
+ }
+ 
++#ifdef V3D_PHX_JOB_NOTE
++/* Phoenix experiment E2b (docs/gpu-new-lane/E2b-v3d-render-slowness.md in the
++ * phoenix-rpi coordination repo), compiled only into a cloned profiling binary.
++ * Hands the in-process winsys a description of the job it is about to execute, so the
++ * GPU performance counters it reads per job can be attributed to a pass (size, tiles,
++ * render targets, draws, load/store masks, early-Z state). The winsys defines the
++ * receiver only in its -DV3D_PHX_SUBMIT_PROFILE build, hence the weak reference.
++ *
++ * Layout (word 0 = layout version 1): 1 draw_width, 2 draw_height, 3 tiles_x,
++ * 4 tiles_y, 5 tile_w, 6 tile_h, 7 nr_cbufs, 8 internal_bpp, 9 draw_calls_queued,
++ * 10 msaa, 11 double_buffer, 12 clear_tlb, 13 load, 14 store, 15 invalidated_load,
++ * 16 first_ez_state, 17 ez_state, 18 zs present | zs tiling<<8 | zs cpp<<16,
++ * 19 cbuf0 tiling | cbuf0 scanout-BO<<8 | cbuf0 cpp<<16, 20 tmu_dirty_rcl,
++ * 21 num_layers, 22 scissor count | scissor disabled<<16, 23 clear_draw | blit_tlb<<16.
++ * PIPE_CLEAR_* bits: 1 depth, 2 stencil, 4 << i colour buffer i. */
++extern void v3d_phx_job_note(const uint32_t *v, unsigned n) __attribute__((weak));
++
++static void
++v3d_phx_note_job(struct v3d_job *job)
++{
++        static bool banner;
++        uint32_t v[24] = { 1 };
++
++        if (v3d_phx_job_note == NULL)
++                return;
++        if (!banner) {
++                banner = true;
++                fprintf(stderr, "v3d-job-note: E2b per-job notes on (layout 1)\n");
++        }
++        v[1] = job->draw_width;
++        v[2] = job->draw_height;
++        v[3] = job->tile_desc.draw_x;
++        v[4] = job->tile_desc.draw_y;
++        v[5] = job->tile_desc.width;
++        v[6] = job->tile_desc.height;
++        v[7] = job->nr_cbufs;
++        v[8] = job->internal_bpp;
++        v[9] = job->draw_calls_queued;
++        v[10] = job->msaa;
++        v[11] = job->double_buffer;
++        v[12] = job->clear_tlb;
++        v[13] = job->load;
++        v[14] = job->store;
++        v[15] = job->invalidated_load;
++        v[16] = job->first_ez_state;
++        v[17] = job->ez_state;
++        if (job->zsbuf.texture) {
++                struct v3d_resource *rsc = v3d_resource(job->zsbuf.texture);
++                v[18] = 1 | (rsc->slices[job->zsbuf.level].tiling << 8) |
++                        (rsc->cpp << 16);
++        }
++        if (job->nr_cbufs > 0 && job->cbufs[0].texture) {
++                struct v3d_resource *rsc = v3d_resource(job->cbufs[0].texture);
++                v[19] = rsc->slices[job->cbufs[0].level].tiling |
++                        ((rsc->bo && rsc->bo->scanout) ? 1u << 8 : 0) |
++                        (rsc->cpp << 16);
++        }
++        v[20] = job->tmu_dirty_rcl;
++        v[21] = job->num_layers;
++        v[22] = job->scissor.count | (job->scissor.disabled ? 1u << 16 : 0);
++        v[23] = job->clear_draw | (job->blit_tlb << 16);
++        v3d_phx_job_note(v, 24);
++}
++#endif
++
+ /**
+  * Submits the job to the kernel and then reinitializes it.
+  */
+@@ -710,6 +775,9 @@ v3d_job_submit(struct v3d_context *v3d, struct v3d_job *job)
+ 
+         if (!V3D_DBG(NORAST)) {
+                 int ret;
++#ifdef V3D_PHX_JOB_NOTE
++                v3d_phx_note_job(job);
++#endif
+                 ret = v3d_ioctl(v3d->fd, DRM_IOCTL_V3D_SUBMIT_CL, &job->submit);
+                 if (ret) {
+                         mesa_loge_once("Draw call returned %s.  Expect corruption.",
+diff --git a/src/gallium/drivers/v3d/v3d_resource.c b/src/gallium/drivers/v3d/v3d_resource.c
+index 52d54969f93..6f0045ddae5 100644
+--- a/src/gallium/drivers/v3d/v3d_resource.c
++++ b/src/gallium/drivers/v3d/v3d_resource.c
+@@ -862,6 +862,69 @@ v3d_resource_setup(struct pipe_screen *pscreen,
+  * cannot scan a UIF-tiled surface). */
+ int v3d_phoenix_peek_next_scanout(void);
+ 
++#ifdef V3D_PHX_RES_CENSUS
++/* Phoenix experiment E2b (docs/gpu-new-lane/E2b-v3d-render-slowness.md in the
++ * phoenix-rpi coordination repo), compiled only into a cloned profiling binary: which
++ * memory layout did every resource get? Counts CREATED resources by class and by the
++ * level-0 tiling mode, and prints each render target / depth buffer / large texture as
++ * it is created. v3d_phx_res_census_report() is called by the winsys once per profile
++ * window and prints the table when it changed. */
++enum { PHX_RC_BUF, PHX_RC_TEX, PHX_RC_RT, PHX_RC_DS, PHX_RC_N };
++static uint32_t phx_rc_n[PHX_RC_N][6];
++static uint64_t phx_rc_kb[PHX_RC_N][6];
++static bool phx_rc_dirty;
++
++void v3d_phx_res_census_report(void);
++void
++v3d_phx_res_census_report(void)
++{
++        static const char cls[PHX_RC_N] = { 'b', 't', 'r', 'd' };
++        char buf[512];
++        size_t o = 0;
++
++        if (!phx_rc_dirty)
++                return;
++        phx_rc_dirty = false;
++        for (int c = 0; c < PHX_RC_N; c++) {
++                o += snprintf(buf + o, sizeof(buf) - o, " %c=", cls[c]);
++                for (int t = 0; t < 6 && o < sizeof(buf) - 32; t++)
++                        o += snprintf(buf + o, sizeof(buf) - o, t ? ",%u/%llu" : "%u/%llu",
++                                      phx_rc_n[c][t], (unsigned long long)phx_rc_kb[c][t]);
++        }
++        /* per class: count/KiB for tiling RASTER,LINEARTILE,UBLINEAR1,UBLINEAR2,UIF,UIF_XOR */
++        fprintf(stderr, "v3d-res-census:%s\n", buf);
++}
++
++static void
++v3d_phx_res_census(struct v3d_resource *rsc)
++{
++        const struct pipe_resource *p = &rsc->base;
++        int c, t = rsc->slices[0].tiling;
++
++        if (p->target == PIPE_BUFFER)
++                c = PHX_RC_BUF;
++        else if (p->bind & PIPE_BIND_DEPTH_STENCIL)
++                c = PHX_RC_DS;
++        else if (p->bind & PIPE_BIND_RENDER_TARGET)
++                c = PHX_RC_RT;
++        else
++                c = PHX_RC_TEX;
++        if (t < 0 || t > 5)
++                t = 5;
++        phx_rc_n[c][t]++;
++        phx_rc_kb[c][t] += rsc->size / 1024;
++        phx_rc_dirty = true;
++        if (c == PHX_RC_RT || c == PHX_RC_DS ||
++            (c == PHX_RC_TEX && (p->width0 >= 1024 || p->height0 >= 1024))) {
++                fprintf(stderr, "v3d-res-census: new %c %ux%u fmt=%u bind=0x%x lvls=%u "
++                        "samples=%u tiling=%d tiled=%d size=%u scanout_bo=%d\n",
++                        "btrd"[c], p->width0, p->height0, p->format, p->bind,
++                        p->last_level + 1, p->nr_samples, t, rsc->tiled, rsc->size,
++                        rsc->bo ? rsc->bo->scanout : -1);
++        }
++}
++#endif
++
+ static struct pipe_resource *
+ v3d_resource_create_with_modifiers(struct pipe_screen *pscreen,
+                                    const struct pipe_resource *tmpl,
+@@ -991,6 +1054,9 @@ v3d_resource_create_with_modifiers(struct pipe_screen *pscreen,
+                         goto fail;
+         }
+ 
++#ifdef V3D_PHX_RES_CENSUS
++        v3d_phx_res_census(rsc);
++#endif
+         return prsc;
+ fail:
+         v3d_resource_destroy(pscreen, prsc);
+diff --git a/src/gallium/drivers/v3d/v3dx_draw.c b/src/gallium/drivers/v3d/v3dx_draw.c
+index b33e88f50b2..2f41859fb21 100644
+--- a/src/gallium/drivers/v3d/v3dx_draw.c
++++ b/src/gallium/drivers/v3d/v3dx_draw.c
+@@ -914,6 +914,28 @@ v3d_update_primitives_generated_counter(struct v3d_context *v3d,
+         v3d->prims_generated += prims;
+ }
+ 
++#ifdef V3D_PHX_EZ_KNOB
++/* Phoenix experiment E2b (docs/gpu-new-lane/E2b-v3d-render-slowness.md in the
++ * phoenix-rpi coordination repo), compiled only into a cloned profiling binary:
++ * `export V3D_PHX_EZ=1` lets upstream's early-Z state machine run instead of the
++ * port's unconditional force-off below. Unset (the default, even in the profiling
++ * build) keeps the shipped behaviour. */
++static int
++v3d_phx_ez_allowed(void)
++{
++        static int allowed = -1;
++
++        if (allowed < 0) {
++                const char *e = getenv("V3D_PHX_EZ");
++
++                allowed = (e != NULL && e[0] == '1');
++                fprintf(stderr, "V3D_PHX_EZ knob: early-Z %s\n",
++                        allowed ? "UPSTREAM (knob on)" : "forced off (shipped)");
++        }
++        return allowed;
++}
++#endif
++
+ static void
+ v3d_update_job_ez(struct v3d_context *v3d, struct v3d_job *job)
+ {
+@@ -929,8 +951,14 @@ v3d_update_job_ez(struct v3d_context *v3d, struct v3d_job *job)
+          * 26.2's codegen re-triggers the stall, so keep EZ off on 26.2. Falls through to
+          * the existing first_ez_state==DISABLED early-return below.) TODO(v3d-26.2-ez):
+          * root-cause why 26.2 makes the EZTEST drain stall constant to safely re-enable EZ. */
++#ifdef V3D_PHX_EZ_KNOB
++        if (!v3d_phx_ez_allowed()) {
++#endif
+         job->first_ez_state = V3D_EZ_DISABLED;
+         job->ez_state = V3D_EZ_DISABLED;
++#ifdef V3D_PHX_EZ_KNOB
++        }
++#endif
+ 
+         /* If first_ez_state is V3D_EZ_DISABLED it means that we have already
+          * determined that we should disable EZ completely for all draw calls

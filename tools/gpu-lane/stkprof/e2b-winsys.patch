@@ -1,0 +1,468 @@
+diff --git a/gpu/rpi4-v3d/mesa/v3d_phoenix_winsys.c b/gpu/rpi4-v3d/mesa/v3d_phoenix_winsys.c
+index 286addb..49c964b 100644
+--- a/gpu/rpi4-v3d/mesa/v3d_phoenix_winsys.c
++++ b/gpu/rpi4-v3d/mesa/v3d_phoenix_winsys.c
+@@ -1019,6 +1019,8 @@ enum {
+ 	SP_CL_BIN,      /* CT0 kick -> FLDONE seen (binner spin, OUTOMEM servicing) */
+ 	SP_CL_HANDOFF,  /* FLDONE -> CT1 kick: waited L2T flush, SLCACTL, bincrc */
+ 	SP_CL_RENDER,   /* CT1 kick -> FRDONE seen (render spin) */
++	SP_CL_PCTR,     /* E2b: reading the V3D performance counters after FLDONE and FRDONE
++	                 * (kept inside the CL phase sum so sum == ioctl still holds) */
+ 	SP_CL_POST,     /* FRDONE -> return: wedge handling, post clean, FLUSH_CACHE */
+ 	SP_TFU_PRE,     /* dsb + TLB flush + SLCACTL + waited L2T flush */
+ 	SP_TFU_SPIN,    /* TFU kick -> TFUC/TFUF (or BUSY fallback) */
+@@ -1065,6 +1067,8 @@ static uint64_t sp_frame_gpu;       /* GPU spins inside the current frame */
+ static unsigned long sp_frame_idx;
+ static long sp_pf_from = -1, sp_pf_count;   /* V3D_SUBPROF_FRAMES[_FROM] */
+ static int sp_banner;
++static uint64_t sp_last_len;        /* E2b: length of the phase sp_mark() just credited */
++static unsigned sp_job_idx;         /* E2b: CL jobs since the last flip (the job's slot) */
+ 
+ static inline uint64_t sp_now(void)
+ {
+@@ -1111,6 +1115,7 @@ static inline void sp_mark(int p)
+ 	uint64_t now = sp_now();
+ 
+ 	sp_win.phase[p] += now - sp_last;
++	sp_last_len = now - sp_last;
+ 	if ((p == SP_CL_BIN) || (p == SP_CL_RENDER) || (p == SP_TFU_SPIN) || (p == SP_CSD_SPIN)) {
+ 		sp_frame_gpu += now - sp_last;
+ 	}
+@@ -1162,6 +1167,7 @@ static void sp_ioctl(unsigned long request, uint64_t t0, uint64_t t1, uint64_t t
+ static void sp_flip(uint64_t t0, uint64_t t1)
+ {
+ 	sp_init_once();
++	sp_job_idx = 0;         /* E2b: the next CL job is slot 0 of the next frame */
+ 	sp_win.flip += t1 - t0;
+ 	sp_flip_done = t1;      /* re-stamped at the end, after any per-frame print */
+ 	if (sp_win_t0 == 0u) {
+@@ -1205,6 +1211,364 @@ static void sp_flip(uint64_t t0, uint64_t t1)
+ 	sp_flip_done = sp_now();
+ }
+ 
++/* ---------------------------------------------------------------------------------------
++ * E2b: V3D PERFORMANCE COUNTERS PER CL JOB (docs/gpu-new-lane/E2b-v3d-render-slowness.md)
++ *
++ * E2 found the render spin is 91 ms of a 135 ms STK frame. This asks the GPU where those
++ * cycles go. V3D 4.2 has 32 counter slots in CORE0 (register layout and source ids are
++ * hardware facts, cross-checked against Linux v3d_regs.h / v3d_perfmon.c and Mesa's
++ * v3d_performance_counters.h, whose v42 tables agree entry for entry): PCTR_0_EN (0x650)
++ * enables slots by mask, PCTR_0_CLR (0x654) zeroes them, PCTR_0_OVERFLOW (0x658) latches
++ * wraps, PCTR_0_SRC_x (0x660 + 4x, x = 0..7) picks four 7-bit source ids per register,
++ * PCTR_0_PCTRi (0x680 + 4i) reads slot i. Source 32 is the core cycle counter, which
++ * doubles as the instrument's self-check: cycles / (render spin wall) must read ~500 MHz.
++ *
++ * Per CL job: program + clear before the CT0 kick, read the slots at FLDONE (the bin
++ * phase), clear before the CT1 kick, read again at FRDONE (the render phase). Sums go to
++ * a per-window total and to a per-SLOT total, the slot being the job's index since the
++ * last flip -- STK's frame is a fixed sequence of 8 jobs, so slot k is "the same pass"
++ * every frame. Mesa (with -DV3D_PHX_JOB_NOTE, e2b Mesa worktree) hands over what the job
++ * is -- size, tiles, MRTs, draws, load/store masks, EZ -- through v3d_phx_job_note().
++ *
++ * Env (psh `export`): V3D_PCTR=0 off | A (default) | B | AB (alternate A,B per window);
++ * V3D_PCTR_SLOTS_EVERY=N per-slot lines every Nth window (default 4, 0 = never);
++ * V3D_PHX_QRMAXCNT=0..7 overrides the MISCCFG QPU-reserve field at every core init;
++ * V3D_PHX_CORE_HZ=<Hz> asks the firmware (SET_CLOCK_RATE, CORE clock id 4) for that core
++ * clock once, before the first job -- config.txt pins core_freq=250 (Pi OS: 500). */
++#include <stdarg.h>
++#include "libvcmbox.h"
++
++#define PC_EN        0x0650u
++#define PC_CLR       0x0654u
++#define PC_OVF       0x0658u
++#define PC_SRC(x)    (0x0660u + 4u * (x))
++#define PC_VAL(i)    (0x0680u + 4u * (i))
++#define PC_NSLOT     12u        /* per-frame job slots; later jobs pool in the last one */
++#define PC_NOTE_N    24u        /* v3d_phx_job_note() words kept per slot */
++
++/* Set A: where do the cycles go (QPU busy/idle/stalls, TMU, L2T, early/late Z). */
++static const uint8_t pc_set_a[32] = {
++	32, 13, 14, 15, 16, 17, 18, 19, 33, 34, 20, 21, 22, 23, 24, 25,
++	85, 49, 53, 54, 28, 29, 30, 31, 26, 27,  0,  1,  2,  3,  5,  6
++};
++/* Set B: the memory system (who reads/writes DRAM, L2T per-client hit/miss, stalls). */
++static const uint8_t pc_set_b[32] = {
++	32,  9,  8,  7, 48, 35, 71, 75, 72, 76, 73, 77, 74, 79, 78, 80,
++	81, 82, 83, 84, 50, 51, 56, 64, 57, 65, 58, 66, 59, 60, 68, 52
++};
++
++struct pc_slot {
++	uint32_t n, nfail, notes;
++	uint64_t bin_t, rend_t;         /* counter ticks of the bin / render spins */
++	uint64_t bcl, rcl;              /* control-list bytes, summed */
++	uint64_t draws;                 /* note word 9 summed (draw calls) */
++	uint64_t rc[32];                /* render-phase counter sums */
++	uint32_t note[PC_NOTE_N];       /* the last note seen in this slot */
++};
++
++static int pc_mode = -1;            /* -1 unread, 0 off, 1 A, 2 B, 3 AB */
++static int pc_cur;                  /* 0 = set A, 1 = set B, for this window */
++static int pc_every = 4;
++static unsigned pc_win_idx;
++static uint32_t pc_ovf;             /* windows' OR of the overflow register */
++static uint64_t pc_bc[32];          /* bin-phase counter sums, whole window */
++static struct pc_slot pc_slots[PC_NSLOT];
++static uint32_t pc_note[PC_NOTE_N];
++static unsigned pc_note_n;          /* words in the pending note (0 = none) */
++static int pc_ident_done;
++
++static uint32_t pc_clk(uint32_t tag, uint32_t id);
++static void pc_core_clock_knob(void);
++
++/* Mesa's hook (v3d_job.c under -DV3D_PHX_JOB_NOTE, declared weak there): the job about to
++ * be submitted. Word 0 is the layout version; see the Mesa side for the layout. */
++void v3d_phx_job_note(const uint32_t *v, unsigned n);
++void v3d_phx_job_note(const uint32_t *v, unsigned n)
++{
++	if (n > PC_NOTE_N) {
++		n = PC_NOTE_N;
++	}
++	memcpy(pc_note, v, n * sizeof(uint32_t));
++	pc_note_n = n;
++}
++
++/* Mesa's resource census (v3d_resource.c under -DV3D_PHX_RES_CENSUS), weak: absent unless
++ * the census object is linked. Prints one line when anything changed. */
++extern void v3d_phx_res_census_report(void) __attribute__((weak));
++
++static void pc_init_env(void)
++{
++	const char *e = getenv("V3D_PCTR");
++
++	if (e == NULL || strcmp(e, "A") == 0 || strcmp(e, "1") == 0) {
++		pc_mode = 1;
++	}
++	else if (strcmp(e, "B") == 0) {
++		pc_mode = 2;
++	}
++	else if (strcmp(e, "AB") == 0) {
++		pc_mode = 3;
++	}
++	else {
++		pc_mode = 0;
++	}
++	pc_cur = (pc_mode == 2) ? 1 : 0;
++	e = getenv("V3D_PCTR_SLOTS_EVERY");
++	if (e != NULL) {
++		pc_every = atoi(e);
++	}
++}
++
++/* Before the CT0 kick. Programs the sources every job: 10 posted writes, and it survives
++ * the wedge path's core reset (which clears the counter block) without any bookkeeping. */
++static void pc_job_start(volatile uint32_t *c0)
++{
++	const uint8_t *set;
++	uint32_t x;
++
++	if (pc_mode < 0) {
++		pc_init_env();
++	}
++	if (pc_mode == 0) {
++		return;
++	}
++	if (pc_ident_done == 0) {
++		/* Mesa's device info comes from ioc_get_param's CONSTANTS, not the hardware.
++		 * Print the live registers once so a mismatch (QPU count, VPM size) is visible. */
++		pc_ident_done = 1;
++		fprintf(stderr, "v3d-winsys: pctr-ident live CORE0_IDENT1=0x%08x IDENT2=0x%08x "
++			"HUB_IDENT1=0x%08x HUB_UIFCFG=0x%08x MISCCFG=0x%08x (constants: 0x81001422 "
++			"0x40078121 0x000e1124 0x00000045) mode=%d every=%d\n",
++			c0[0x0004/4], c0[0x0008/4], W.hub[0x000c/4], W.hub[0x0004/4],
++			c0[CTL_MISCCFG/4], pc_mode, pc_every);
++		pc_core_clock_knob();
++	}
++	set = (pc_cur == 0) ? pc_set_a : pc_set_b;
++	for (x = 0; x < 8u; x++) {
++		c0[PC_SRC(x)/4] = (uint32_t)set[4u*x] | ((uint32_t)set[4u*x + 1u] << 8) |
++			((uint32_t)set[4u*x + 2u] << 16) | ((uint32_t)set[4u*x + 3u] << 24);
++	}
++	c0[PC_EN/4] = 0xffffffffu;
++	c0[PC_CLR/4] = 0xffffffffu;
++	c0[PC_OVF/4] = 0xffffffffu;
++}
++
++/* After FLDONE: bin-phase counts into the window total. */
++static void pc_bin_done(volatile uint32_t *c0)
++{
++	uint32_t i;
++
++	if (pc_mode <= 0) {
++		return;
++	}
++	for (i = 0; i < 32u; i++) {
++		pc_bc[i] += c0[PC_VAL(i)/4];
++	}
++	pc_ovf |= c0[PC_OVF/4];
++}
++
++/* Right before the CT1 kick. */
++static inline void pc_render_start(volatile uint32_t *c0)
++{
++	if (pc_mode > 0) {
++		c0[PC_CLR/4] = 0xffffffffu;
++		c0[PC_OVF/4] = 0xffffffffu;
++	}
++}
++
++/* After FRDONE (or a render wedge): render counts + times into the job's slot. */
++static void pc_render_done(volatile uint32_t *c0, const struct drm_v3d_submit_cl *s,
++	uint64_t bin_t, uint64_t rend_t, int failed)
++{
++	struct pc_slot *sl = &pc_slots[(sp_job_idx < PC_NSLOT) ? sp_job_idx : (PC_NSLOT - 1u)];
++	uint32_t i;
++
++	sp_job_idx++;
++	if (pc_mode <= 0) {
++		pc_note_n = 0;
++		return;
++	}
++	if (failed != 0) {
++		sl->nfail++;    /* a wedge's ~0.8 s of spinning must not become "render time" */
++		pc_note_n = 0;
++		return;
++	}
++	sl->n++;
++	sl->bin_t += bin_t;
++	sl->rend_t += rend_t;
++	sl->bcl += s->bcl_end - s->bcl_start;
++	sl->rcl += s->rcl_end - s->rcl_start;
++	for (i = 0; i < 32u; i++) {
++		sl->rc[i] += c0[PC_VAL(i)/4];
++	}
++	pc_ovf |= c0[PC_OVF/4];
++	if (pc_note_n != 0u) {
++		memcpy(sl->note, pc_note, sizeof(sl->note));
++		sl->notes++;
++		if (pc_note_n > 9u) {
++			sl->draws += pc_note[9];
++		}
++		pc_note_n = 0;
++	}
++}
++
++/* Measured clock (Hz) through the serialized /dev/vcmbox, 0 on failure. */
++static uint32_t pc_clk(uint32_t tag, uint32_t id)
++{
++	uint32_t in[1], out[2] = { 0u, 0u };
++
++	in[0] = id;
++	return (vcmbox_call(tag, 8u, in, 1u, out, 2u) == 0) ? out[1] : 0u;
++}
++
++/* Print one counter line with a checksum: the UART corrupts ~1.3 % of lines, and a line of
++ * 32 numbers is several times longer than most, so a flipped digit would otherwise pass
++ * straight into the ratios. ck = FNV-1a 32 over the text from "pctr-" to the space before
++ * " ck=" (e2b-summarize.py recomputes it and drops a mismatching line, counting it). */
++static void pc_emit(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
++static void pc_emit(const char *fmt, ...)
++{
++	char buf[1024];
++	uint32_t h = 2166136261u;
++	const char *c;
++	va_list ap;
++
++	va_start(ap, fmt);
++	vsnprintf(buf, sizeof(buf), fmt, ap);
++	va_end(ap);
++	for (c = buf; *c != '\0'; c++) {
++		h = (h ^ (uint8_t)*c) * 16777619u;
++	}
++	fprintf(stderr, "v3d-winsys: %s ck=%08x\n", buf, h);
++}
++
++static void pc_print_vals(const char *tag, unsigned long t_ms, unsigned fr, const uint64_t *v)
++{
++	char buf[32 * 22];
++	size_t o = 0;
++	uint32_t i;
++
++	for (i = 0; i < 32u && o < sizeof(buf) - 24u; i++) {
++		o += (size_t)snprintf(buf + o, sizeof(buf) - o, (i == 0u) ? "%llu" : ",%llu",
++			(unsigned long long)v[i]);
++	}
++	pc_emit("%s t=%lums fr=%u set=%c v=%s", tag, t_ms, fr, (pc_cur == 0) ? 'A' : 'B', buf);
++}
++
++/* The fabric-clock A/B without touching config.txt. Prints before/after and the firmware's
++ * max (config.txt's core_freq may cap it, in which case the firmware clamps silently). The
++ * mini-UART (Bluetooth) baud follows the core clock; the PL011 console does not
++ * (init_uart_clock pins it). */
++static void pc_core_clock_knob(void)
++{
++	const char *e = getenv("V3D_PHX_CORE_HZ");
++	uint32_t before = pc_clk(0x00030047u, 4u), maxhz = pc_clk(0x00030004u, 4u);
++	uint32_t in[3], out[2] = { 0u, 0u };
++	int r;
++
++	fprintf(stderr, "v3d-winsys: pctr-clk core meas=%u cfg=%u max=%u min=%u v3d meas=%u "
++		"max=%u arm meas=%u\n", before, pc_clk(0x00030002u, 4u), maxhz,
++		pc_clk(0x00030007u, 4u), pc_clk(0x00030047u, 5u), pc_clk(0x00030004u, 5u),
++		pc_clk(0x00030047u, 3u));
++	if (e == NULL) {
++		return;
++	}
++	in[0] = 4u;                              /* CORE */
++	in[1] = (uint32_t)strtoul(e, NULL, 0);
++	in[2] = 0u;                              /* skip_setting_turbo = 0 */
++	r = vcmbox_call(0x00038002u, 12u, in, 3u, out, 2u);
++	fprintf(stderr, "v3d-winsys: pctr-clk CORE SET_CLOCK_RATE(%u) r=%d reply=%u -> meas now %u "
++		"(was %u)\n", in[1], r, out[1], pc_clk(0x00030047u, 4u), before);
++}
++
++/* Window close, called from sp_report (its UART time lands in the next window's rep). */
++static void pc_report(unsigned long t_ms, unsigned fr)
++{
++	uint64_t rc[32];
++	uint32_t n = 0, nfail = 0, i, k;
++	uint64_t bt = 0, rt = 0;
++
++	if (v3d_phx_res_census_report != NULL) {
++		v3d_phx_res_census_report();
++	}
++	if (pc_mode <= 0) {
++		return;
++	}
++	memset(rc, 0, sizeof(rc));
++	for (k = 0; k < PC_NSLOT; k++) {
++		n += pc_slots[k].n;
++		nfail += pc_slots[k].nfail;
++		bt += pc_slots[k].bin_t;
++		rt += pc_slots[k].rend_t;
++		for (i = 0; i < 32u; i++) {
++			rc[i] += pc_slots[k].rc[i];
++		}
++	}
++	/* ARM(3) / CORE(4) / V3D(5) measured + CORE configured: the V3D clock alone was
++	 * checked before; the fabric ("core") clock never was, and config.txt pins it. */
++	pc_emit("pctr-w t=%lums fr=%u set=%c n=%u fail=%u bin=%lu rend=%lu "
++		"pct=%lu ovf=0x%08x clk_arm=%u clk_core=%u clk_v3d=%u core_cfg=%u",
++		t_ms, fr, (pc_cur == 0) ? 'A' : 'B', n, nfail, sp_us(bt), sp_us(rt),
++		sp_us(sp_win.phase[SP_CL_PCTR]), pc_ovf,
++		pc_clk(0x00030047u, 3u), pc_clk(0x00030047u, 4u), pc_clk(0x00030047u, 5u),
++		pc_clk(0x00030002u, 4u));
++	pc_print_vals("pctr-b", t_ms, fr, pc_bc);
++	pc_print_vals("pctr-r", t_ms, fr, rc);
++	if ((pc_every > 0) && ((pc_win_idx % (unsigned)pc_every) == 0u)) {
++		for (k = 0; k < PC_NSLOT; k++) {
++			struct pc_slot *sl = &pc_slots[k];
++			char nb[PC_NOTE_N * 11];
++			size_t o = 0;
++
++			if (sl->n == 0u && sl->nfail == 0u) {
++				continue;
++			}
++			for (i = 0; i < PC_NOTE_N && o < sizeof(nb) - 12u; i++) {
++				o += (size_t)snprintf(nb + o, sizeof(nb) - o, (i == 0u) ? "%u" : ",%u",
++					sl->note[i]);
++			}
++			pc_emit("pctr-j t=%lums fr=%u set=%c s=%u n=%u fail=%u "
++				"bin=%lu rend=%lu bcl=%llu rcl=%llu notes=%u draws=%llu note=%s",
++				t_ms, fr, (pc_cur == 0) ? 'A' : 'B', k, sl->n, sl->nfail,
++				sp_us(sl->bin_t), sp_us(sl->rend_t), (unsigned long long)sl->bcl,
++				(unsigned long long)sl->rcl, sl->notes, (unsigned long long)sl->draws, nb);
++			{
++				char tag[16];
++
++				snprintf(tag, sizeof(tag), "pctr-js%u", k);
++				pc_print_vals(tag, t_ms, fr, sl->rc);
++			}
++		}
++	}
++	memset(pc_slots, 0, sizeof(pc_slots));
++	memset(pc_bc, 0, sizeof(pc_bc));
++	pc_ovf = 0;
++	pc_win_idx++;
++	if (pc_mode == 3) {
++		pc_cur ^= 1;
++	}
++}
++
++/* Called at the end of apply_core_regs (init + the wedge reset): the QPU-reserve A/B knob.
++ * The shipped value is V3D_QRMAXCNT (2); the cold/firmware value read at init is 3, and
++ * Linux never writes MISCCFG on V3D 4.2. */
++static void pc_misccfg_override(void)
++{
++	const char *e = getenv("V3D_PHX_QRMAXCNT");
++	int q;
++
++	if (e == NULL || W.core0 == NULL) {
++		return;
++	}
++	q = atoi(e);
++	if (q < 0 || q > 7) {
++		return;
++	}
++	W.core0[CTL_MISCCFG/4] = ((uint32_t)q << MISCCFG_QRMAXCNT_SHIFT) | MISCCFG_OVRTMUOUT;
++	fprintf(stderr, "v3d-winsys: pctr QRMAXCNT override -> %d (MISCCFG=0x%08x)\n", q,
++		W.core0[CTL_MISCCFG/4]);
++}
++
+ /* Close the window: called from the flipstat block after its own prints. cg_us is
+  * flipstat's clock_gettime window, printed beside the counter window as a check. */
+ static void sp_report(uint64_t cg_us, unsigned long t_ms)
+@@ -1253,6 +1617,8 @@ static void sp_report(uint64_t cg_us, unsigned long t_ms)
+ 		a->iocn[SPK_MMAP], sp_us(a->ioc[SPK_MMAP]), a->iocn[SPK_UNLOCKED], sp_us(a->ioc[SPK_UNLOCKED]),
+ 		a->iocn[SPK_OTHER], sp_us(a->ioc[SPK_OTHER]));
+ 
++	V3D_SP(pc_report(t_ms, a->frames);)   /* E2b counter lines (booked to the next rep) */
++
+ 	/* Open the next window now; the cost of the three prints above is its first `rep`. */
+ 	memset(&sp_win, 0, sizeof(sp_win));
+ 	{
+@@ -2615,6 +2981,7 @@ static void apply_core_regs(void)
+ 	 * (init + reset path), so QRMAXCNT is NOT clobbered per submit (that was the binner-wedge bug). */
+ 	W.core0[CTL_MISCCFG/4] = ((uint32_t)(V3D_QRMAXCNT) << MISCCFG_QRMAXCNT_SHIFT) | MISCCFG_OVRTMUOUT;
+ #endif
++	V3D_SP(pc_misccfg_override();)
+ }
+ 
+ /* Render-stall MITIGATION + probe: how many times a submit recovered a wedged GPU by
+@@ -2694,6 +3061,7 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
+ 
+ 	int attempt = 0;        /* kept for the timeout-dump "attempt" field (always 0 now: no resubmit) */
+ 
++	V3D_SP(uint64_t pc_bin_t = 0;)
+ 	V3D_SP(sp_begin();)
+ 
+ 	/* Drain CPU stores BEFORE reading the list below. Mesa writes control lists
+@@ -2904,6 +3272,7 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
+ 	 * FULL INT status every interrupt (v3d_irq.c: INT_CLR = INT_STS); this poll-based winsys
+ 	 * historically cleared only FLDONE|FRDONE, so QPU bits could stay latched across jobs.
+ 	 * Suspected in the STK in-game render stall (int_sts=0x00ff0000, FRDONE never fires). */
++	V3D_SP(pc_job_start(c0);)
+ 	c0[CTL_INT_CLR/4] = INT_FLDONE|INT_FRDONE|INT_QPU_MASK;
+ 	c0[PTB_BPOS/4] = 0;
+ 	if (s->qma) { c0[CLE_CT0QMA/4]=s->qma; c0[CLE_CT0QMS/4]=s->qms; }
+@@ -2954,6 +3323,7 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
+ 			}
+ 		}
+ 		V3D_SP(sp_mark(SP_CL_BIN);)
++		V3D_SP(pc_bin_t = sp_last_len; pc_bin_done(c0); sp_mark(SP_CL_PCTR);)
+ 		if (spins == 0) {
+ 			job_failed = 1;
+ 			fprintf(stderr, "v3d-winsys: BIN TIMEOUT int_sts=0x%08x ct0cs=0x%08x "
+@@ -3047,6 +3417,7 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
+ 		}
+ 	}
+ 	/* If the binner wedged, don't kick the render against a bad tile state — reset+retry. */
++	V3D_SP(if (job_failed) { pc_render_done(c0, s, 0u, 0u, 1); })
+ 	if (job_failed)
+ 		goto job_retry;
+ 	c0[CTL_INT_CLR/4]=INT_FLDONE|INT_FRDONE|INT_QPU_MASK;   /* +QPU bits: Linux-parity full-status clear */
+@@ -3082,6 +3453,7 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
+ 	 * read fault. Placed AFTER the flush completes and BEFORE the CT1 kick. */
+ 	bincrc_capture(s->qma, s->qms);
+ 	V3D_SP(sp_mark(SP_CL_HANDOFF);)
++	V3D_SP(pc_render_start(c0);)
+ 	/* --- render (CT1); wait FRDONE --- */
+ 	c0[CLE_CT1QBA/4]=s->rcl_start; c0[CLE_CT1QEA/4]=s->rcl_end;
+ 	/* Wait for FRDONE, detecting a wedge two ways: (a) FAST — ct1ca FROZEN (the confirmed wedge
+@@ -3113,6 +3485,7 @@ static int ioc_submit_cl(struct drm_v3d_submit_cl *s)
+ 		}
+ 	}
+ 	V3D_SP(sp_mark(SP_CL_RENDER);)
++	V3D_SP(pc_render_done(c0, s, pc_bin_t, sp_last_len, spins == 0); sp_mark(SP_CL_PCTR);)
+ 	if (spins == 0) {
+ 		uint32_t ca1 = c0[0x0114/4];
+ 		v3d_phoenix_render_timeouts++;   /* stall counter for the repro harness */
