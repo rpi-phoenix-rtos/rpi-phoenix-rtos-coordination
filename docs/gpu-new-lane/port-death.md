@@ -285,3 +285,16 @@ showcase gate is green, the coordinator merges `gpu-lane/port-death` and deletes
 ## Result
 
 *(to be filled after the cycle)*
+
+## Result — Pi runs (2026-09-26): baseline FAIL as predicted, fixed kernel PASS
+
+| mode | build 8 (unfixed) | build 9 (fixed, kernel `38ad32cf`) |
+|---|---|---|
+| respond | PASS | PASS |
+| stale | **FAIL** `b_err=99` (misdelivered) | PASS `b_err=2` |
+| queued | not run (UAF risk on the old kernel) | PASS 6/6 `-EINVAL`, ≤ 1 ms after death |
+| exit | **FAIL** `hung=6` (psh wedged until the cycle ended) | PASS 6/6 `-EINVAL`, ≤ 1 ms |
+| kill | — | PASS 6/6 `-EINVAL`, ≤ 2 ms |
+| exit ×16 | — | PASS 16/16, ≤ 2 ms |
+
+0 faults. The test was shown to fail on the old kernel before being trusted on the new one.

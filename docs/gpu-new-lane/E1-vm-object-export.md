@@ -275,3 +275,15 @@ existing caller**, so:
 ## Result
 
 *(to be filled in after the Pi cycle)*
+
+## Result — Pi run (build 9, kernel `38ad32cf`, 2026-09-26 ~21:05, `rpi4b-uart-20260926-210132-e1-portdeath.log`): **PASS ×2, 0 faults**
+
+Two consecutive `exportprobe` runs, every key `=1`: `kernel_has_export`, refusals (anonymous
+memory, past the mapping, unaligned, foreign port, duplicate, oversize, offset past end, foreign
+unexport, re-import after withdrawal), `same_pa`, cross-writes both directions cached **and**
+uncached (before and after mapping), memory-type enforcement both ways (cached-as-uncached and
+uncached-as-cached refused), partial mapping at the same PA, `fork_shared`, **`scm_rights_same_pa`**
+(the export crosses AF_UNIX as an fd and maps the same pages) with memory type still enforced,
+`survives_unexport` (importer keeps its data after the exporter withdraws), and the kernel's
+`vm: port 23 released with 1 memory export(s) still published, withdrawn` line exactly once per run.
+`free_delta_a=1056768` (expected ~1 MiB). ⇒ **M3's dma-buf equivalent exists and works.**
