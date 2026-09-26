@@ -104,8 +104,8 @@ atomically, waits for the lease), `wifi disconnect`, `wifi status`. Verified in 
 (lwip `8d7940e`, devices `fe884bf`): with no credentials the netif waited; connect → lease
 `10.43.0.89` → ping 5/5; disconnect → **DHCPRELEASE seen on the AP**, address gone; connect again
 → fresh DISCOVER…ACK → ping 5/5. WiFi takes the default route only when Ethernet has no usable
-address (not provable on netboot, where genet holds one). Known gaps: the first `joinwpa` after the
-daemon starts returns `setssid=-100` (no SET_SSID event in 5 tries) and the retry 10 s later
-succeeds — seen in both runs so far, cause unknown (the join already does CLM + `WLC_UP` itself, so
+address (not provable on netboot, where genet holds one). Known gaps: one `joinwpa` returned `setssid=-100`
+(no SET_SSID event in 5 tries) and the retry 10 s later succeeded — 1 of 4 runs (↩ first recorded
+as "the first join always fails, 2/2"; `p2e1`, `p2final` and `wifilwip1` all joined on attempt 1), cause unknown (the join already does CLM + `WLC_UP` itself, so
 "needs a scan first" is not it); link loss after a join is not detected, because the daemon's data
 path drops channel-1 event frames.
