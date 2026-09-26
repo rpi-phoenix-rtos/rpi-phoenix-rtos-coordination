@@ -95,6 +95,18 @@ awk -v sig="$SIG" '
 			# ⚠ A corrupted line (this UART flips ~1.3%) fails the field match and is
 			# dropped rather than parsed into a wrong number.
 			if (!fields($0)) { bad++; next }
+			# ⚠ MONOTONICITY, not just parseability. This UART flips ~1.3% of lines,
+			# and a flipped DIGIT inside a numeric field still parses -- seen live on
+			# the first trial: heapkb went 470812 -> 47469 between two adjacent lines.
+			# Every counter here only ever increases, so a value that goes backwards
+			# is a corrupted character, not data. Dropping the whole line is right:
+			# the fields come from one fprintf, so one bad digit indicts all of them.
+			if (n > 0) {
+				if (t < T[n] || fr < F[n] || boc < B[n] || bore < R[n] || hk < K[n] || hp < H[n]) {
+					back++
+					next
+				}
+			}
 			n++
 			T[n] = t; F[n] = fr; B[n] = boc; R[n] = bore; H[n] = hp; K[n] = hk
 			VR[n] = vr; MC[n] = mc; MP[n] = mp; MK[n] = mk; PL[n] = pl; BH[n] = bh; BP[n] = bp
@@ -102,7 +114,8 @@ awk -v sig="$SIG" '
 	}
 	END {
 		printf "pace lines: %d usable", n
-		if (bad > 0) printf ", %d dropped as corrupt", bad
+		if (bad > 0)  printf ", %d unparseable", bad
+		if (back > 0) printf ", %d dropped as non-monotonic (corrupt digit)", back
 		printf "\n\n"
 		if (n == 0) { print "no usable pace line"; exit 1 }
 
