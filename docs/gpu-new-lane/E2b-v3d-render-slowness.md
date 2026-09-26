@@ -343,3 +343,22 @@ the 3× gap: the core/bus clock is a contributor, not the main cause. Next: the 
 and early-Z. Adopting `core_freq=500` needs the core-clock dependents checked first
 (`rpi4-wifi.c:284` hard-codes 250 MHz; the Bluetooth mini-UART's baud divisor follows the core
 clock; the April UART reason for pinning 250 is obsolete for the PL011 console).
+
+## Result — base arm, trial 1 (`e2b-base1`, build 9, core 250 MHz, V3D 500 MHz)
+
+Render 91.2 ms/frame (set A) / 93.6 (set B), bin 3.3 ms; counter reads cost 0.06 ms/frame.
+- **Shader cores are not the limit:** QPU idle 3.3 %, fragment-active 15.6 %, valid instructions 20.3 %,
+  QPU waiting on TMU 0.1 % — the QPUs are busy but not executing much, i.e. they are fed slowly.
+- **H2 overdraw — confirmed as a factor:** 35 % of fragment quads reach the tile buffer and fail Z there
+  (`late_z_reject`), 0 % are early-Z clipped (EZ forced off). → `ez` arm (queued).
+- **Memory / texture path — the strongest signal:** TMU stalled **79 %** of its active cycles; **L2T hit
+  rate 6.7 %** (render: 3.58 M L2T misses vs 0.26 M hits per frame; TMU reads 3.44 M misses/frame, CLE reads
+  98 % misses). Texture data is effectively refetched from DRAM every job. Candidates: the per-job L2T
+  flush/clean sequence (E2 steps: waited L2T flush before bin, again before render, fix-A, post-job clean —
+  8 jobs/frame ⇒ the cache is emptied 16–24× per frame), or an L2T/GMP configuration that disables caching
+  for TMU traffic. → new hypothesis **H7 (L2T effectively disabled/flushed)**, test: drop the pre-render L2T
+  flush and fix-A in the clone (knobs exist in the async server; for the old winsys a profile-macro knob) and
+  re-read `l2t_hit%`; also read L2TCACTL/GMP config at runtime.
+- Per slot: the 1440×810 lit pass (s1, 36 % of render, 32.7 ms/job, only 3 draws but 2.40 quads/px, MRT ×2)
+  and s5 (24.6 %, 3.12 quads/px) dominate; the final 1920×1080 composite (s7) is a RASTER scanout target as
+  on Pi OS.
