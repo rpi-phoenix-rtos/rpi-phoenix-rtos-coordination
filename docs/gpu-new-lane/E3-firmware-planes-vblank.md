@@ -407,3 +407,19 @@ The old lane's V3D is gated for that boot (display is unaffected). The probe nee
 
 *(to be filled after Cycle A: log path, snapshot paths, the tagged lines, the outcome row that
 applies, and the resulting M2 decision)*
+
+## Result — Pi run (build 9, vcmbox-xl, 2026-09-26 ~21:05, `rpi4b-uart-20260926-210421-e3-kms.log`): **Stage A VIABLE**
+
+- **Vblank:** SMI IRQ 144 at **60.01 Hz**, jitter 59 µs, 0 spurious (`vblank verdict irq=yes poll=yes hvs=yes`);
+  polling and the firmware vsync call (16.67 ms) agree; HVS frame counter agrees.
+- **Planes:** `SET_PLANE` over `/dev/vcmbox` XL works; two planes + the firmware fb appear in the HVS display
+  list (`stack` 1–5 as predicted: layering, fb blank/unblank, clean unset). **HDMI confirms** a full-screen
+  CPU-drawn primary plane (colour bars) with overlay squares (`artifacts/hdmi/20260926-210633-e3-kms-tick.png`).
+- **Vsynced flips:** 1201 in 20 s = **60/s, 0 missed**, `SET_PLANE` p50 100 µs (p99 2.1 ms), overlay p50 75 µs.
+- **E4 throughput (vsync off):** **12 443 flips/s**, `SET_PLANE` p50 78 µs, p99 112 µs — the plane call is not
+  a bottleneck; the published "44 vs 141 fps under fkms" gap is not the mailbox.
+- **E6 range:** low buffers (0x2c000000), the fb's second buffer, and **high memory (0xf8000000, above 1 GiB)**
+  all scan out with the raw PA; the 0xC0000000 alias also works where it fits. Contiguous allocation: a single
+  256 MiB block succeeds; 32 × 8 MiB chunks (24 below 1 GiB, 8 between 1–4 GiB).
+- Every mode restored the firmware fb (`restore done fb_in_dlist=1`). 0 faults.
+⇒ **M2 Stage A (firmware planes + SMI vblank) is viable**; no native HVS needed for M2–M6.
