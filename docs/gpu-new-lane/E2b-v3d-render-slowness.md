@@ -546,3 +546,34 @@ Reading: none of the render-side knobs (EZ, L2T sequence pending) moves the ~91 
 clock does. The remaining big question is whether ~91 ms is normal for this workload on V3D 4.2 at these
 settings — **E2c (the same STK settings on Raspberry Pi OS, same board) is being prepared** and decides
 whether a 3× gap exists at all.
+
+## Result — H7 quakespasm arms (queue10, 2026-09-27 00:50–01:35, core_freq=500, new lane serial+IRQ)
+
+9 cycles, interleaved `0x100` (pixel log only = base) / `0x1af` (Linux L2T order + no post-clean +
+PX_LOG) / `0x1ef` (+ no handoff flush), 3 each. Logs `artifacts/rpi4b-uart/*-h7-k<K>-<n>.log`.
+
+| K | fps (3 runs) | mean | wedges | exc |
+|---|---|---|---|---|
+| `0x100` (base) | 40.2 / 40.4 / 40.2 | 40.27 | 0 | 0 |
+| `0x1af` | 40.4 / 40.2 / 40.2 | 40.27 | 0 | 0 |
+| `0x1ef` | 40.5 / 40.2 / 40.3 | 40.33 | 0 | 0 |
+
+(Every run still prints the one Mesa `Draw call returned Invalid argument` — the frozen H7 server
+predates the EINVAL fix `05141ff7d`; not an H7 effect. The absolute 40.3 vs P2-B's 38.2 is the
+core clock, adopted in between, not H7.)
+
+**Speed: H7 refuted as a lever** — the arms move fps by 0.0–0.2 %, far below the pre-registered 5 %
+(as predicted: the render phase is shader-issue bound, and the extra L2T/TLB maintenance costs
+nothing measurable). Linux's order is **not adopted**.
+
+**Correctness guard: the pre-registered 95 % rule is miscalibrated.** Every arm "fails" it
+(91.7–94.7 %), but so does a third *base* run (93.4 %): the frame hashes cross the UART (~1.3 % of
+lines corrupted) and some frames are not deterministic, so the rule sits inside base-to-base noise.
+Re-analysed leave-one-out (`tools/gpu-lane/stkprof/h7-loo.py`): a held-out base disagrees with the
+other two on **3.0 / 5.4 / 6.6 %** of the deterministic frames (longest mismatch run 5 / 8 / 9); the
+arms, averaged over the three base pairs, on **5.1–8.2 %** (mean 6.6; longest runs 10.3–12.7);
+0 new black frames anywhere. The arms sit at or just above the top of the base range with
+consistently longer mismatch runs — **mildly unfavourable, not conclusive** (n = 3 each). With no
+speed to gain there is nothing to pursue: the knobs stay default-off, and the STK L2T arms
+(h7-stk-linux/nohand) are **dropped** — they were gated on this guard and could only have bought
+correctness risk. Use `h7-loo.py` (calibrated on the bases) for any future pixel guard.
