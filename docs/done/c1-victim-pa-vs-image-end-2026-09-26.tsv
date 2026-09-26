@@ -1,0 +1,19 @@
+run	start(09-26)	build	path	PA	MiB>0x08000000	imageEnd	delta_KiB	class
+c1coin	01:19	build-core 01:07	hpa	0x08112000	1.07	0x0849b508	-3621	inside
+c1coin	01:19	build-core 01:07	p4pa	0x083be000	3.74	0x0849b508	-885	inside
+c1coin	01:19	build-core 01:07	p4pa	0x0842c000	4.17	0x0849b508	-445	inside
+c1coin	01:19	build-core 01:07	p4pa	0x084e4000	4.89	0x0849b508	+291	<=+1MiB
+c1coin	01:19	build-core 01:07	p4pa	0x085d4000	5.83	0x0849b508	+1251	>+1MiB
+c1pfn1	03:32	build-bo 03:29	p4pa	0x080db000	0.86	0x0849b510	-3841	inside
+c1pfn1	03:32	build-bo 03:29	p4pa	0x082e4000	2.89	0x0849b510	-1757	inside
+c1pace1	10:55	build-pace 10:52	p4pa	0x0847c000	4.48	0x0849c5f0	-129	inside
+c1idleI1	11:39	build-pace2 11:28	p4pa	0x08390000	3.56	0x0849e650	-1082	inside
+c1ccC1	12:36	build-pace2	p4pa	0x08461000	4.38	0x0849e650	-246	inside
+c1ccC2	12:53	build-pace2	hpa	0x08423000	4.14	0x0849e650	-494	inside
+c1ccC2	12:53	build-pace2	p4pa	0x084df000	4.87	0x0849e650	+258	<=+1MiB
+c1coldC1	14:00	build3 13:50	p4pa	0x084c4000	4.77	0x084a5780	+122	<=+1MiB
+c1coldC1	14:00	build3 13:50	p4pa	0x084c5000	4.77	0x084a5780	+126	<=+1MiB
+c1coldC5	14:32	build3	p4pa	0x08496000	4.59	0x084a5780	-62	inside
+c1coldC5	14:32	build3	p4pa	0x084e3000	4.89	0x084a5780	+246	<=+1MiB
+c1coldC6	14:40	build3	p4pa	0x08408000	4.03	0x084a5780	-630	inside
+c1coldC6	14:40	build3	p4pa	0x08409000	4.04	0x084a5780	-626	inside
