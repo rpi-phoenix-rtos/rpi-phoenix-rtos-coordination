@@ -1,0 +1,109 @@
+#!/bin/bash
+# Grade the paired idle-vs-back-to-back-vs-KEEP series in one command.
+#
+# WHY A DEDICATED READER. `c1-bench-table.sh` already prints the schedule MODE
+# per trial, but this series' whole point is the 2x2 of ARM against MODE, and the
+# arm is encoded in the label (I / B / K). Reading that by eye across nine trials
+# is exactly where a mixed result gets rounded to whichever answer was expected.
+#
+# THE QUESTION. C1's fire rate is 35.3% after an idle >300 s and 7.1%
+# back-to-back (p = 1.6e-06) -- but in the archive nearly every long gap IS a
+# build, so "the bench was idle" and "the binary was freshly built" have never
+# been separated. This series idles with no build. The primary endpoint is the
+# MODE, not the fire: n is far too small for a 35%-vs-7% rate, but every trial
+# reports its mode whether it fires or not.
+#
+# ⚠ THE K ARM NEEDS ITS OWN GUARD. V3D_KEEP_CLOSED_BO=1 is passed through psh ->
+# /usr/bin/env -> the stk launcher -> execv. If any link drops it the trial runs
+# as a DEFAULT trial and its clean result would be read as suppression. The
+# banner `V3D_KEEP_CLOSED_BO=1 -- not unmapping closed BOs` is the only proof the
+# arm was armed; a K trial without it is VOID, and this prints it as VOID rather
+# than as a clean zero.
+#
+# Usage: scripts/c1-idle-table.sh [label-prefix]     (default: c1idle)
+set -uo pipefail
+
+repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# ⚠ Overridable ONLY so a synthetic test set never has to be copied into the real
+# archive. Validating this script the obvious way -- dropping nine fake logs into
+# artifacts/rpi4b-uart/ -- puts fabricated trials where every future archive-wide
+# query (fire rates, schedule modes, race starts) would silently count them. They
+# were removed immediately, but the right fix is to make the directory a knob:
+#   C1_ART_DIR=/tmp/fake scripts/c1-idle-table.sh <prefix>
+art="${C1_ART_DIR:-$repo/artifacts/rpi4b-uart}"
+pref="${1:-c1idle}"
+
+SIG='hhi32 = 0x0*8000000[01]|p4got  = 0x0*8000000[01]|= 0x8000000[01][0-9a-f]{8}'
+
+shopt -s nullglob
+logs=("$art"/*"$pref"*.log)
+[ ${#logs[@]} -eq 0 ] && { echo "no logs matching '*${pref}*.log'" >&2; exit 1; }
+
+printf '%-30s %-4s %-6s %8s %6s %5s %5s %s\n' RUN ARM MODE 'RACE@s' FRAMES KFLT FIRES NOTE
+
+declare -A n_mode n_fire
+void=0
+
+for log in $(printf '%s\n' "${logs[@]}" | sort); do
+	base=$(basename "$log" .log)
+	lab=${base##*-}
+	case "$lab" in
+		*I[0-9]) arm=I ;;
+		*B[0-9]) arm=B ;;
+		*K[0-9]) arm=K ;;
+		*)       arm=? ;;
+	esac
+
+	race=$(awk '{ if (match($0, /flipstat [0-9]+ frames in [0-9]+ ms = [0-9.]+ fps/)) {
+			split(substr($0, RSTART, RLENGTH), a, " "); d = a[5] + 0
+			if (d > 0 && d < 60000) { ms += d; if (r == 0 && a[8] + 0 > 3) r = ms } } }
+		END { printf "%.1f", r / 1000 }' "$log")
+	mode=$(awk -v r="$race" 'BEGIN { print (r <= 0) ? "-" : (r >= 76 ? "LATE" : "early") }')
+	frames=$(grep -ao 'total [0-9]*)' "$log" | tr -dc '0-9 \n' | tail -1)
+	frames=${frames:-0}
+	fires=$(grep -acE "$SIG" "$log")
+	# EL1 entries only, and NOT halved: every EL0 dump reaches the UART twice but
+	# an EL1 one does not, and halving a kernel fault could round it to zero.
+	kflt=$(grep -acE 'Exception #[0-9]+ .*EL1|Data Abort.*EL1' "$log")
+
+	note=""
+	if [ "$frames" -eq 0 ]; then
+		note="VOID (0 frames)"
+		void=$((void + 1))
+	elif [ "$arm" = "K" ] && [ "$(grep -ac 'V3D_KEEP_CLOSED_BO=1' "$log")" -eq 0 ]; then
+		# ⛔ Not a clean K result -- the arm never armed.
+		note="VOID (K arm NOT armed: no banner)"
+		void=$((void + 1))
+	else
+		key="$arm $mode"
+		n_mode[$key]=$(( ${n_mode[$key]:-0} + 1 ))
+		[ "$fires" -gt 0 ] && n_fire[$key]=$(( ${n_fire[$key]:-0} + 1 ))
+		[ "$fires" -gt 0 ] && note="FIRED"
+	fi
+
+	printf '%-30s %-4s %-6s %8s %6s %5s %5s %s\n' \
+		"$(echo "$base" | cut -c17-)" "$arm" "$mode" "$race" "$frames" "$kflt" "$fires" "$note"
+done
+
+echo "---"
+printf '%-6s %6s %6s %8s\n' ARM LATE early 'fired'
+for a in I B K; do
+	l=${n_mode[$a LATE]:-0}; e=${n_mode[$a early]:-0}
+	f=$(( ${n_fire[$a LATE]:-0} + ${n_fire[$a early]:-0} ))
+	printf '%-6s %6s %6s %8s\n' "$a" "$l" "$e" "$f"
+done
+[ "$void" -gt 0 ] && printf 'void trials (NOT counted above): %s\n' "$void"
+
+echo "---"
+echo "PRE-REGISTERED READ (docs/inprogress/WEEK-2026-W39.md):"
+echo "  I mostly LATE  + B mostly early -> the IDLE causes the mode; schedule rule established."
+echo "  I mostly early + B mostly early -> it was NEVER the idle. Leading replacement is CACHE"
+echo "                                     EVICTION by the build, not a fresh binary -- next test"
+echo "                                     is to drop the host caches during the idle, no build."
+echo "  both arms LATE                  -> something moved the whole series; the comparison is"
+echo "                                     VOID, not positive. Re-run."
+echo "  mixed                           -> a dose result. Report the split and raise IDLE before"
+echo "                                     concluding. 4.7% of back-to-back trials are late anyway,"
+echo "                                     so one discordant trial in three is expected."
+echo "  K arm: fires at ~the I rate     -> the KEEP_CLOSED_BO demotion is confirmed."
+echo "         0 fires vs I firing      -> first real evidence it does something beyond schedule."
