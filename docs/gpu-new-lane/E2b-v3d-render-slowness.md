@@ -328,3 +328,18 @@ window; `V3D_PCTR_SLOTS_EVERY=N`) — all five end in `ck=<fnv1a32>`, `v3d-job-n
 ## Result
 
 *(empty until the first trials: per-arm tables from `e2b-summarize.py`, verdicts, decision.)*
+
+## Result — step 1: core clock A/B (queue5, build 9, shipped `stk`, warm cache, interleaved)
+
+| trial | `core_freq` | gameplay fps (flipstat mean, windows) | exceptions |
+|---|---|---|---|
+| T1 | 250 | 7.30 (69) | 0 |
+| T2 | 500 | 8.39 (72) | 0 |
+| T3 | 250 | 7.56 (72) | 0 |
+| T4 | 500 | 8.39 (72) | 0 |
+
+**500 MHz core is +13 % (7.43 → 8.39 fps), reproducible.** A real gain for every GPU app — but not
+the 3× gap: the core/bus clock is a contributor, not the main cause. Next: the counter run (E2b base)
+and early-Z. Adopting `core_freq=500` needs the core-clock dependents checked first
+(`rpi4-wifi.c:284` hard-codes 250 MHz; the Bluetooth mini-UART's baud divisor follows the core
+clock; the April UART reason for pinning 250 is obsolete for the PL011 console).
