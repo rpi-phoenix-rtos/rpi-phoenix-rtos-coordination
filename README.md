@@ -185,8 +185,11 @@ capture under `artifacts/hdmi/`:
   That was true when written and is no longer: **0 crashes in 131 STK engine starts** since the
   2026-09-12 allocator-ownership fix, against **30 in the 242 runs before it**, same detector both
   sides ([docs/misc/2026-09-17-stk-rate-and-allocator-guard-fires.md](docs/misc/2026-09-17-stk-rate-and-allocator-guard-fires.md)).
-  A contained heap guard still fires rarely without faulting — see
-  [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md).
+  ⚠ One open defect remains around it: **C1**, a stray 4-byte write that corrupts a heap header in
+  SuperTuxKart. Usually it only leaks memory silently, but it has crashed the game and, once
+  (2026-09-26), halted the kernel. It is much more likely on a run that starts with a **cold shader
+  cache** — i.e. the first run after the GPU driver changes — so warm the app once before a demo
+  (see the demo notes below). Full record: [docs/c1-heap-corruption.md](docs/c1-heap-corruption.md).
 - **Hardware H.265 decode** — the BCM2711 `rpivid` block decodes a real 1080p
   phone clip and plays it on `/dev/fb0` at **21.7 fps, 0 faults** (~90% of each
   frame is the framebuffer blit; the decode itself is ~4.5 ms).
@@ -326,6 +329,9 @@ Boot the image and log in to the `(psh)%` prompt, with an **HDMI display** and a
 > Quake III, vkQuake and SuperTuxKart each still compiled their own shaders for
 > the first time. **So warm every app you plan to show, individually. Warming one
 > does not warm the others, and the system will not tell you.**
+> ⚠ **A cold cache is also the one condition known to make the C1 heap corruption likely** — in
+> SuperTuxKart it fired in 4 of 5 cold-cache runs against 0 of 5 warm ones (2026-09-26). One more
+> reason to warm SuperTuxKart before showing it.
 > ✅ **Measured on the card (2026-09-17), not assumed:** the cache is written to
 > `/.mesa-shader-cache/v1` on the persistent ext2 root and **survives a power
 > cycle** — a second boot that ran no GPU app at all still listed 27 shader blobs.
