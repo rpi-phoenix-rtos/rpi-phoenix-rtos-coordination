@@ -60,6 +60,20 @@ document: [c1-heap-corruption.md](c1-heap-corruption.md).
 
 **Last measured:** Open. ✅ Partly unblocked 2026-09-23: `build-standalone.sh` run against today's tree, **0 undefined symbols**, and `rpi4-wifi` + `wifi` staged to the NFS root — so WiFi is now actually runnable on the netboot lane (`rpi4-wifi &` then `wifi scan`). ⚠ The previously staged copy dated from **2026-09-04**, i.e. linked against a months-old libphoenix — the known "a tool left over from before a core rebuild measures the old libc" trap. ⚠ The SD image has no WiFi userspace either. Deciding this means choosing whether to bring the driver into the project build, which needs an answer on shipping the EULA'd blobs. ★ **2026-09-23 — WiFi re-verified end to end against a host AP, on today's tree.** `radio-ap-up.sh` brings up a WPA2 AP (`PhoenixNet`, ch6, `10.43.0.1/24`) on the host's spare `wlp3s0` via NetworkManager AP mode, on a subnet separate from netboot — both `10.42.0.1` and `10.43.0.1` and both dnsmasq instances verified coexisting. Rebuilt `rpi4-wifi`/`wifi` with `build-standalone.sh` first, because the staged copies dated 04:04 and libphoenix changed four times today (the "tool built before a core rebuild measures the old libc" trap). Result: `join ssid=PhoenixNet ... link=1`, then `DHCP-RESULT offer=1 ack=1 bound_ip=10.43.0.89 => BOUND`. ⚠ **But throughput still cannot be measured, and that is the real gap** — the driver does DHCP itself from raw frames; nothing binds an IP stack to the WiFi netif. `WIFISTATS frames tx_ok=0 rx_ok=3`: the Pi never answers the ARP for its own lease. `glom descs=0 supers=0 subframes=0` in that session is expected, not a defect — three RX frames give aggregation nothing to aggregate. So the landed `0.14 → 3.0 MB/s` claim remains **unverified by measurement**, and what it needs is the `/dev/wifidata` lwip seam carrying bulk traffic, not an AP.
 
+**2026-09-26 — WiFi carries real IP traffic through lwip.** The lwip `wifi43455` netif (join
+thread, RX/TX, `dhcp_start`) was fully written and in the boot line all along; it logged
+"no credentials; link stays down" on every boot because `/etc/wifi.conf` did not exist on the
+export. With `ssid=PhoenixNet` / `psk=…` staged there (export-only — never in the rootfs-overlay,
+or it ships in SD images), `radio-ap-up.sh`, and `rpi4-wifi &` at psh: join succeeded on the second
+`joinwpa` attempt; the host AP's `tcpdump` then shows DISCOVER → OFFER → REQUEST → ACK, RFC 5227
+ARP probes and a gratuitous ARP, and the Pi **answering ARP** for `10.43.0.89`; `ifconfig` shows
+`wl2 … inet addr:10.43.0.89 … UP RUNNING`; `ping -c 5 10.43.0.1` got 5/5 replies (2.44–8.59 ms),
+with all five requests and replies visible at the AP. ⓘ The Pi's broadcasts appear twice in the AP
+capture and its unicasts once — the AP re-broadcasting station broadcasts, not a double transmit.
+Also fixed on the way: `build-standalone.sh` linked the **toolchain's** libphoenix, not the tree's
+(devices, 2026-09-26). Remaining: ship it, runtime join + a `wifi join/status` tool, routing,
+throughput.
+
 <a id="d3"></a>
 ## D3
 
