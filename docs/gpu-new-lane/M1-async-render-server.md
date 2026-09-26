@@ -959,3 +959,20 @@ completions. **fps comparisons use IRQ mode**; poll mode is a correctness fallba
   The smoke jobs take 20–30 µs each (render `max_us=29`), shorter than the ~30 µs submit round trip
   (E5), so the next job is never queued while one runs — the test cannot exhibit overlap; it is not
   evidence against pipelining. The overlap proof moves to P2-B/C (quakespasm timedemo, ms-scale jobs).
+
+## Result — P2-B/C timedemo A/B (queue6, build 9, 2026-09-26 21:09–21:30): fps +26 %, but **display NOT verified → gate NOT passed**
+
+| arm | runs | `timedemo demo1` fps | wedges | faults |
+|---|---|---|---|---|
+| old lane (shipped quakespasm, in-process winsys) | 3 | 30.2 / 30.6 / 30.5 (mean 30.4) | 0 | 0 |
+| new lane serial + IRQ (`quakespasm-v3da` + rpi4-v3d-async) | 3 | 38.1 / 38.0 / 38.5 (mean 38.2) | 0 | 0 |
+| new lane pipeline + IRQ | 2 | 38.5 / 38.3 | 0 | 0 |
+
+⛔ **But the new lane's frames never reached HDMI.** Old-lane snapshots show the game; every new-lane
+snapshot (`artifacts/hdmi/*-m1qs-new-1-*.png`, also during the timedemo) shows the same frozen console
+ending at the psh prompt — not even the `quakespasm-v3da` command echo appears. Meanwhile the server
+reports `flips=1370`, scanout BOs on the firmware-fb pages (`2025/2026 pages on the fb`), render
+jobs completing, `phxgl: scanout FBO(s) … resolve=1 double=1`. So the GPU work runs, but the result
+is not what the display shows (wrong pages, wrong pan offset, or a frozen scanout). **The +26 % may
+come from a present path that does not actually present**, so it is not claimed. P2-B must be re-run
+after the present path is fixed, graded on HDMI content first.
