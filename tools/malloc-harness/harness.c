@@ -72,6 +72,7 @@ static unsigned long hz_seq;
  * reached the paths under suspicion. */
 static struct {
 	unsigned long mmaps;
+	unsigned long mmapBytes;
 	unsigned long munmaps;
 	unsigned long checks;
 	unsigned long chunksWalked;
@@ -87,6 +88,24 @@ static struct {
 
 static void *hz_mmap(void *addr, size_t len, int prot, int flags, int fd, off_t off);
 static int hz_munmap(void *addr, size_t len);
+
+/* Baselines for the pacing cross-check. hz_cov is zeroed between seeds and the
+ * region table is torn down between runs, but malloc_c1Pacing() counts for the
+ * life of the PROCESS -- so the two can only be compared as deltas since the
+ * last reset. Comparing the raw totals is what the first version did, and it
+ * reported "heaps = 2839 but the harness saw 1 mmap()s" on seed two: a real
+ * mismatch, of the harness's own bookkeeping rather than the allocator's. */
+/* Declared here because malloc_dl.c is #included further down (line ~182) and
+ * this runs above it. Must match the definition there exactly. */
+void malloc_c1Pacing(unsigned long *heaps, unsigned long *bytes);
+
+static unsigned long hz_paceBaseHeaps;
+static unsigned long hz_paceBaseBytes;
+
+static void hz_paceRebase(void)
+{
+	malloc_c1Pacing(&hz_paceBaseHeaps, &hz_paceBaseBytes);
+}
 
 /* Violation reporting -------------------------------------------------- */
 
@@ -109,6 +128,7 @@ enum {
 	HZ_V_SEGV,
 	HZ_V_CANARY,               /* --fragile: not a bug, exercises the shrinker */
 	HZ_V_LIVE_RING,            /* live[] names a page that is not mapped */
+	HZ_V_PACING,               /* malloc_c1Pacing() disagrees with the harness's own mmap tally */
 };
 
 static const char *const hz_vname[] = {
@@ -130,6 +150,7 @@ static const char *const hz_vname[] = {
 	"SIGSEGV",
 	"harness canary (--fragile): heap chunk count exceeded",
 	"live[] ring names a heap that is not currently mapped",
+	"malloc_c1Pacing() disagrees with the harness's own mmap tally",
 };
 
 static int hz_violation;
@@ -670,6 +691,40 @@ static void hz_checkAll(void)
 	}
 	hz_cov.checks++;
 
+	/* The pacing counters must agree with the harness's OWN mmap tally.
+	 *
+	 * malloc_c1Pacing() reports how many heaps the allocator has created and how
+	 * many bytes they came to. Those numbers now steer a bench experiment -- they
+	 * are what a C1 fire gets placed against on the heap-growth axis -- so a
+	 * counter that quietly drifts would not announce itself; it would just move
+	 * a conclusion. hz_cov is incremented inside hz_mmap(), independent of
+	 * anything in malloc_dl.c, so this is a real cross-check rather than the
+	 * counter agreeing with itself.
+	 *
+	 * ⚠ Equality, not ">=". Every mmap the allocator makes IS a heap creation
+	 * here (the comment on the region table), so a mismatch in either direction
+	 * is a defect: too low means a creation path skips the counter, too high
+	 * means something counts twice. */
+	{
+		unsigned long pcHeaps = 0u, pcBytes = 0u;
+
+		malloc_c1Pacing(&pcHeaps, &pcBytes);
+		pcHeaps -= hz_paceBaseHeaps;
+		pcBytes -= hz_paceBaseBytes;
+		if (pcHeaps != hz_cov.mmaps) {
+			HZ_FAIL(HZ_V_PACING,
+					"malloc_c1Pacing counted %lu heaps since the last reset but the harness saw %lu mmap()s",
+					pcHeaps, hz_cov.mmaps);
+			return;
+		}
+		if (pcBytes != hz_cov.mmapBytes) {
+			HZ_FAIL(HZ_V_PACING,
+					"malloc_c1Pacing counted %lu bytes since the last reset but the harness mapped %lu",
+					pcBytes, hz_cov.mmapBytes);
+			return;
+		}
+	}
+
 	/* The live[] ring must agree with reality.
 	 *
 	 * Added 2026-09-25 for the defect this harness exists to catch in its own
@@ -915,6 +970,7 @@ static void *hz_mmap(void *addr, size_t len, int prot, int flags, int fd, off_t 
 	if (p != MAP_FAILED) {
 		hz_regionAdd((uintptr_t)p, len);
 		hz_cov.mmaps++;
+		hz_cov.mmapBytes += (unsigned long)len;
 	}
 
 	return p;
@@ -1030,6 +1086,8 @@ static void hz_reset(void)
 	}
 	hz_nregions = 0;
 	hz_seq = 0;
+	memset(&hz_cov, 0, sizeof(hz_cov));
+	hz_paceRebase();
 	hz_checkUnmap = 1;
 
 	memset(hz_slot, 0, sizeof(hz_slot));
@@ -2511,6 +2569,7 @@ int main(int argc, char **argv)
 				hz_cov.joinBackward, hz_cov.joinForward,
 				hz_cov.maxLiveHeaps, hz_cov.maxChunksInHeap, hz_cov.maxBinChunks);
 		memset(&hz_cov, 0, sizeof(hz_cov));
+		hz_paceRebase();
 		if (v != HZ_OK) {
 			printf("  at op %ld: %s\n", hz_vop, hz_vdetail);
 			rc = 1;
