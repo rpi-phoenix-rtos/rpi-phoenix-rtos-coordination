@@ -164,6 +164,34 @@ static int hz_quiet;
 
 #include "../../sources/libphoenix/stdlib/malloc_dl.c"
 
+
+/* ------------------------------------------------------------------ */
+/* Fake v3d BO-attribution table, so the WIRING can be tested on the host.
+ *
+ * malloc asks v3d_c1_lookup_pa() on a corrupt-header fire: "was this physical
+ * frame a closed buffer object?". On hardware the v3d driver supplies it and the
+ * answer only appears when C1 actually fires -- roughly 1 run in 16. Shipping an
+ * instrument whose call site has never been executed and then waiting hours for a
+ * rare event to discover it was never wired is exactly the trap this project keeps
+ * paying for ("check a new detector can fire BEFORE trusting its silence").
+ *
+ * This definition satisfies the weak symbol, records that it was called and with
+ * what, and returns a canned hit. It proves the call site executes and passes the
+ * page-aligned physical address -- everything except the driver's own table. */
+static int hz_boLookupCalls;
+static unsigned long hz_boLookupArg;
+
+int v3d_c1_lookup_pa(unsigned long pa, unsigned int *npages, unsigned int *ord,
+	unsigned int *total)
+{
+	hz_boLookupCalls++;
+	hz_boLookupArg = pa;
+	if (npages != NULL) *npages = 3u;
+	if (ord != NULL) *ord = 42u;
+	if (total != NULL) *total = 300u;
+	return 1;
+}
+
 /* ------------------------------------------------------------------ */
 /* Region table implementation (after the include; it calls no allocator). */
 
@@ -1564,6 +1592,33 @@ static int hz_selftest(void)
 	hz_checkUnmap = 1;
 	hz_checkAll();
 	bad += hz_expect(HZ_V_BIN_IN_DEAD_HEAP, "orphan after munmap");
+
+	/* (2f) The BO-attribution call site actually EXECUTES, and is handed the
+	 * page-aligned physical address.
+	 *
+	 * On hardware this only runs when C1 fires (~1 run in 16), so a mis-wired call
+	 * site would cost hours and a rare event to discover. Drive the reporter
+	 * directly instead and check the fake table was consulted. */
+	{
+		void *bp = phx_malloc(64);
+		chunk_t *bc = (chunk_t *)((uintptr_t)bp - CHUNK_OVERHEAD);
+		heap_t *bh = bc->heap;
+		int calls0 = hz_boLookupCalls;
+		int ok;
+
+		hz_quiet = 1;                 /* the reporter is chatty; we want the call, not the noise */
+		malloc_reportHeapSize(bh);
+		hz_quiet = 0;
+
+		ok = (hz_boLookupCalls == calls0 + 1)
+			&& (hz_boLookupArg == ((unsigned long)va2pa((void *)((uintptr_t)bh & ~(uintptr_t)(_PAGE_SIZE - 1)))));
+		printf("selftest %-22s -> %s (calls +%d, arg 0x%lx)%s\n", "BO attribution wired",
+			ok ? "called with the page PA" : "NOT CALLED",
+			hz_boLookupCalls - calls0, hz_boLookupArg,
+			ok ? "" : "   <== DETECTOR FAILED");
+		bad += ok ? 0 : 1;
+		phx_free(bp);
+	}
 
 	/* (2c-e) The live[] ring checker, in its three failure modes. A detector for
 	 * a defect seen ONCE on hardware is worthless unless it is shown to fire, so
