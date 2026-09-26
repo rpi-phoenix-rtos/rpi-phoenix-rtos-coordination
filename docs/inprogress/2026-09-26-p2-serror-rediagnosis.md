@@ -97,3 +97,18 @@ line to 256, then every 1024th). Cycle `p2e1`: `ls /dev`, `rpi4-wifi &` (netif a
   production paths) holds **for the drivers exercised** — the case for unmasking permanently.
 - **SError lines before the injector:** attribute each by position between command echoes and by
   ELR (EL1 → addr2line on the kernel; EL0 → the process running then). That is the finding.
+
+### E1 — result (cycle `p2e1`, `rpi4b-uart-20260926-152232-p2e1.log`, build 5)
+
+- **Handler check: PASS.** `serrprobe fd506000 3` → exactly **3** SErrors, one per read, each
+  `esr=0xbf000002 far=0` (identical to Linux on this board), taken at **EL0** (`psr=0x20000000`) with
+  `pc` at the load in `serrprobe` — delivery is effectively precise for a load. Each read returned
+  `0x00000000`; the handler logged and the program finished.
+- **Production paths: 0 SErrors.** Boot to psh, USB (xHCI/VL805 bring-up, keyboard, mass storage),
+  `rpi4-wifi` bring-up + WPA2 join + DHCP, `ping` over WiFi 3/3, `/dev/thermal` (mailbox), a 16 MiB
+  SD read, `quakespasm -loadbench` (V3D power-up + load; it exits after loading, so rendering was
+  barely exercised — the STK runs of `c1pad` on the same kernel cover that).
+- After the injector the system stayed healthy: `ls /dev` complete, no other exceptions.
+- ⇒ **Hypothesis 1 holds for everything exercised: nothing in today's production paths raises an
+  SError.** The 2026-05 sources were diagnostic reads that no longer exist. The mask was hiding
+  nothing — and it is not what makes an unclocked-V3D read hang (see §5).
