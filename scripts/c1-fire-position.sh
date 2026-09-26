@@ -9,13 +9,21 @@
 # carries a periodic `v3d-winsys: flipstat … (total N)` line, so the position of
 # the first signature hit is recoverable for free from data already on disk.
 #
-# ★ THREE AXES, AND ONLY THE THIRD IS SHARP. Frames answered the bench question
-# (front-loaded, z = -4.3). But STK renders its menu/load phase at 0.1-0.9 fps for
-# ~70 s and then jumps to ~7.5 fps when the race begins, so a frame count mixes
-# two completely different regimes. Re-expressed as SECONDS SINCE THAT JUMP, the
-# same 33 fires collapse into a window a few tens of seconds wide. That is the
-# axis to read; the other two are kept because they are what the bench arithmetic
-# and the earlier weekly entries are stated in.
+# ★ THE AXIS THAT MATTERS IS SECONDS SINCE THE FIRST FRAME -- and it took a wrong
+# answer to find it. Frames settled the bench question (front-loaded, z = -4.3).
+# STK then renders its menu/load phase at 0.1-0.9 fps for ~70 s before jumping to
+# ~7.5 fps when the race starts, which made "seconds since the race starts" look
+# like the natural clock, and on it the fires do cluster. ⚠ THAT AXIS IS WRONG.
+# Race start is bimodal (70-74 s vs 80-84 s) on the SAME binary, which splits the
+# archive into two groups and asks which axis stays put:
+#
+#   time since first frame   93.3 s vs 90.6 s   <- invariant (t = 0.66, ns)
+#   time since race start     +22 s vs  +7.8 s  <- moves (t ~ 3.5)
+#   frames rendered             244 vs 131      <- moves (1.9x)
+#
+# So C1 is pinned to ELAPSED TIME, not to work done: between the two groups the
+# frame count at the fire differs by 1.9x while the wall-clock time agrees to 3%.
+# All three axes are printed, because the wrong ones are what rule the right one in.
 #
 # ⚠ UART CORRUPTION. This link flips ~1.3% of lines, and one flipped digit in
 # `total N` invents a frame count that never happened -- which in a MAX would
@@ -47,8 +55,8 @@ logs=("$art"/*"$pref"*.log)
 
 printf '%-30s %7s %7s %6s %9s %8s\n' RUN 'FIRE@fr' TOTALfr 'FRAC%' 'FIRE@s' 'POST-RACE'
 
-tmp=$(mktemp); rel=$(mktemp)
-trap 'rm -f "$tmp" "$rel"' EXIT
+tmp=$(mktemp); rel=$(mktemp); abs=$(mktemp); grp=$(mktemp)
+trap 'rm -f "$tmp" "$rel" "$abs" "$grp"' EXIT
 
 for log in $(printf '%s\n' "${logs[@]}" | sort); do
 	grep -aqE "$SIG" "$log" || continue
@@ -79,6 +87,9 @@ for log in $(printf '%s\n' "${logs[@]}" | sort); do
 	if [ "$race" -gt 0 ]; then
 		post=$(awk -v f="$fms" -v r="$race" 'BEGIN{printf "%+.1f", (f-r)/1000}')
 		echo "$post" >> "$rel"
+		# race-seconds, abs-seconds, race-relative, frames -- for the bimodal split
+		awk -v r="$race" -v f="$fms" -v p="$post" -v n="$ffr" \
+			'BEGIN{printf "%.1f %.1f %s %d\n", r/1000, f/1000, p, n}' >> "$grp"
 	else
 		post="-"
 	fi
@@ -86,6 +97,7 @@ for log in $(printf '%s\n' "${logs[@]}" | sort); do
 		"$(basename "$log" .log | cut -c17-)" "$ffr" "$totfr" "$frac" \
 		"$(awk -v v="$fms" 'BEGIN{printf "%.1f", v/1000}')" "$post"
 	echo "$frac" >> "$tmp"
+	awk -v v="$fms" 'BEGIN{printf "%.1f\n", v/1000}' >> "$abs"
 done
 
 echo "---"
@@ -116,7 +128,42 @@ awk '
 ' "$tmp"
 
 echo
-echo "AXIS 2 -- seconds since the race starts (the fps jump out of the menu/load phase)"
+echo "AXIS 2 -- seconds since the FIRST FRAME  ★ the invariant axis"
+awk '
+	{ v[NR] = $1 + 0 }
+	END {
+		n = NR
+		for (i = 1; i <= n; i++) for (j = i + 1; j <= n; j++) if (v[j] < v[i]) { t = v[i]; v[i] = v[j]; v[j] = t }
+		printf "  n = %d   min %.1fs   median %.1fs   max %.1fs\n", n, v[1], v[int((n+1)/2)], v[n]
+		for (i = 1; i <= n; i++) if (v[i] >= 70 && v[i] <= 115) w++
+		printf "  in 70..115 s after the first frame: %d of %d (%.0f%%)\n", w+0, n, 100*w/n
+		print "  histogram (20 s bins since the first frame):"
+		for (i = 1; i <= n; i++) { b = int(v[i] / 20); h[b]++; if (b > mx) mx = b }
+		for (b = 0; b <= mx; b++) {
+			bar = ""; for (k = 0; k < h[b]; k++) bar = bar "#"
+			printf "    %4d..%4d s  %-24s %s\n", b * 20, b * 20 + 19, bar, (h[b] ? h[b] : "")
+		}
+	}
+' "$abs"
+
+echo
+echo "THE SPLIT THAT PICKS THE AXIS -- race start is bimodal, so ask which axis stays put"
+echo "  (in-window fires only: -15s..+60s of race start)"
+# $1 >= 40 keeps this to the STK workload: the one archived quake3 fire races at
+# 5 s and would otherwise land in group A and drag its mean.
+awk '$3 <= 60 && $3 >= -15 && $1 >= 40 {
+		g = ($1 < 76) ? "A race~70" : "B race~82"
+		n[g]++; a[g] += $2; r[g] += $3; f[g] += $4
+	}
+	END {
+		printf "  %-10s %4s %14s %14s %10s\n", "GROUP", "n", "SINCE-FRAME-1", "SINCE-RACE", "FRAMES"
+		for (g in n) printf "  %-10s %4d %12.1f s %12.1f s %10.0f\n", g, n[g], a[g]/n[g], r[g]/n[g], f[g]/n[g]
+		print "  => the row that barely moves is the anchor. Frames and race-relative both move ~2x."
+	}
+' "$grp"
+
+echo
+echo "AXIS 3 -- seconds since the race starts  ⚠ REFUTED as the anchor, printed to keep it refuted"
 if [ ! -s "$rel" ]; then
 	echo "  no run had an identifiable race start -- axis unavailable"
 	exit 0
@@ -129,9 +176,9 @@ awk '
 			for (j = i + 1; j <= n; j++)
 				if (v[j] < v[i]) { t = v[i]; v[i] = v[j]; v[j] = t }
 		printf "  n = %d   min %+.1fs   median %+.1fs   max %+.1fs\n", n, v[1], v[int((n+1)/2)], v[n]
-		# The headline: how much of the hazard sits in the first ~36 s of racing.
 		for (i = 1; i <= n; i++) if (v[i] <= 40 && v[i] >= -10) w++
-		printf "  within -10s..+40s of race start: %d of %d (%.0f%%)\n", w+0, n, 100*w/n
+		printf "  within -10s..+40s of race start: %d of %d (%.0f%%) -- looks tight, but see AXIS 2:\n", w+0, n, 100*w/n
+		print "  race start is bimodal (70-74 s vs 80-84 s) and the fires do NOT follow it."
 		print "  histogram (20 s bins since race start):"
 		for (i = 1; i <= n; i++) { b = int((v[i] + 20) / 20); if (b < 0) b = 0; h[b]++ ; if (b > mx) mx = b }
 		for (b = 0; b <= mx; b++) {
