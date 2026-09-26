@@ -51,7 +51,7 @@ Important current UART facts from the official documentation:
   - `dtoverlay=miniuart-bt`
   - `init_uart_clock=48000000`
   - `force_turbo=1`
-  - `core_freq=250`
+  - `core_freq=500` (was `250` until 2026-09-27; `force_turbo=1` is what keeps it fixed)
 
 ## 1.2 Arm64 MMU And Higher-Half Boot References
 

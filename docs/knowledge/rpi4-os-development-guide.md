@@ -871,8 +871,9 @@ init_uart_clock=48000000
 ```
 
 The `init_uart_clock=48000000` line pins the PL011 reference clock to
-48 MHz. Combined with `force_turbo=1` + `core_freq=250` it gives a stable
-PL011 divisor independent of CPU clock scaling.
+48 MHz, so the PL011 divisor is independent of the core clock. `force_turbo=1` keeps the core
+clock fixed at `core_freq` (500 MHz since 2026-09-27; it was pinned at 250 before), which the
+Bluetooth mini-UART needs: its baud divisor is computed once from the core clock at driver start.
 
 ### Two paths to the wire
 
@@ -1160,7 +1161,7 @@ init_uart_baud=115200
 init_uart_clock=48000000
 dtoverlay=miniuart-bt
 force_turbo=1
-core_freq=250
+core_freq=500
 gpu_mem=76
 hdmi_force_hotplug=1
 disable_overscan=1

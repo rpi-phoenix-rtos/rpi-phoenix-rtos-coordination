@@ -214,3 +214,21 @@ fps > 3, taking the mean. Two trials.
 
 Rollback: revert project `e70e124` (config only). Devices `27db916` is safe at either clock and can
 stay.
+
+## Result — gate PASS, adopted (queue8, 2026-09-26 23:51 → 2026-09-27 00:45)
+
+| # | Check | Result |
+|---|---|---|
+| G0 | new rpi4-wifi at core 250 | `SDHCI base clock (EMMC) = 250000000 Hz`; joined (1st join `setssid=-100`, retry OK — the known flake); ping 5/5 |
+| P1 | boot stages | all YES (genet link, DHCP, netif IP), 0 fault patterns |
+| P2 | firmware applied 500 | `rpi4-hci: core_clk=500000000 Hz -> AUX_MU_BAUD=541` |
+| P3 | Bluetooth | `HCI_RESET ok`, patchram 323/323, `BD_ADDR dc:a6:32:3c:dd:f5`, `/dev/hci0`, `Inquiry Complete (status=0x00)` |
+| P4 | EMMC clock | **N = 250000000** at core 500 ⇒ the EMMC clock does not follow `core_freq`; the old hard-code was right by coincidence, the query stays (it is correct on any config) |
+| P5 | WiFi | joined (1st join `setssid=-100` again, retry OK — same at 250 and 500, so not the clock), `address 10.43.0.89`, ping **5/5** from the Pi. ⚠ Graded on the Pi side (ICMP replies received); no AP-side tcpdump was recorded — a deviation from the pre-registration, but a received echo reply proves both directions |
+| P6 | audio | `clk BUSY … /dev/audio0 ready` |
+| P7 | STK ≥ 8.2 fps ×2 | **8.25** and **8.30** (72 gameplay windows each) — vs 7.43 at 250 MHz (E2b) |
+| P8 | exceptions | 0 in G1, 0 in both G2 trials |
+
+Adopted: devices `27db916` (EMMC clock query) and project `e70e124` (`core_freq=500`, `force_turbo=1`
+kept) pushed to `master`; branches and worktrees deleted. The first-join `setssid=-100` flake it met
+twice is investigated separately (F1, branch `wifi/join-wake`).

@@ -79,7 +79,7 @@ So `BT_REG_ON` is `expgpio[0]`. There is **no** dedicated `BT_HOST_WAKE` / `BT_D
 UART0 (PL011, the "real" UART) is wired to BT on GPIO 32/33 (TX/RX) plus GPIO 30/31 (CTS/RTS). UART1 (mini-UART) is the default debug console on GPIO 14/15. Three relevant `config.txt` knobs:
 
 - `dtoverlay=disable-bt` — frees UART0 for general use, leaves BT silicon powered down. **This is what the Phoenix bring-up has used so far.**
-- `dtoverlay=miniuart-bt` — swaps: BT keeps UART0, debug console moves to mini-UART. Mini-UART baud tracks core clock so `core_freq=250` is required.
+- `dtoverlay=miniuart-bt` — swaps: BT keeps UART0, debug console moves to mini-UART. Mini-UART baud tracks the core clock, so the clock must be fixed (`force_turbo=1`); the Phoenix driver reads the rate with `GET_CLOCK_RATE` and computes the divisor from it (500 MHz → `AUX_MU_BAUD=541` since 2026-09-27).
 - `enable_uart=1` — enables the chosen debug UART.
 
 For BT enablement on Phoenix we'd remove `disable-bt`, add `miniuart-bt` (or accept losing the debug console), and own UART0 in the kernel.

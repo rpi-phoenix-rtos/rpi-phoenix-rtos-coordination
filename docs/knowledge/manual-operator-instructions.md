@@ -724,7 +724,7 @@ Current UART-output expectations:
   - `init_uart_clock=48000000`
   - `dtoverlay=miniuart-bt`
   - `force_turbo=1`
-  - `core_freq=250`
+  - `core_freq=500` (the Pi 4 default; was pinned at 250 until 2026-09-27)
 - so a working cable should help even without EEPROM debug, because the
   firmware second stage, custom armstub, reloc trampoline, and later Phoenix
   serial path can become visible

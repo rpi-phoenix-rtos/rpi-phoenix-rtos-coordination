@@ -142,7 +142,7 @@ recovery.
     - `init_uart_clock=48000000`
     - `dtoverlay=miniuart-bt`
     - `force_turbo=1`
-    - `core_freq=250`
+    - `core_freq=500` (the Pi 4 default; was pinned at 250 until 2026-09-27)
   - if earlier bootloader output is needed, enable Raspberry Pi EEPROM:
     - `BOOT_UART=1`
 - current armstub and trampoline UART breadcrumbs to look for on the latest image:
