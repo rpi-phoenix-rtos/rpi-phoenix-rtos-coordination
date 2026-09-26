@@ -160,6 +160,43 @@ else
 fi
 echo
 
+# --- WHERE in the page did the write land? ------------------------------------
+# The experiment that tests the FIXED-OFFSET premise. The genet / xHCI / ADMA2
+# suspects were excluded on the grounds that "their writes vary in offset" --
+# a property nothing could observe while only ONE word per page (+4) was poisoned,
+# which made "the corruption always lands at page+4" unfalsifiable.
+#
+# ⚠ THE ARM MUST BE READ BEFORE THE RESULT. "Only +4 broke" is the expected
+# outcome BOTH when the writer is offset-specific AND when +4 was the only offset
+# armed -- opposite conclusions from identical output. The allocator prints a
+# one-shot banner under -DC1_P4_WIDE for exactly this reason, so the log is
+# self-describing and a reader months later needs no access to the binary.
+echo "== probe-offset distribution (tests the fixed-offset premise) =="
+if plain | grep -q 'p4 probe arm = WIDE'; then
+	echo "   arm: WIDE (4 offsets armed -- the question is answerable in this run)"
+	_off=$(plain | grep -oE 'p4off  = 0x[0-9a-f]+' | grep -oE '0x[0-9a-f]+' | sed 's/^0x0*/0x/' | sort | uniq -c | sort -rn)
+	if [ -z "$_off" ]; then
+		echo "   no poison break in this run -- says nothing about offsets"
+	else
+		echo "$_off" | sed 's/^/   broke at /'
+		_n=$(echo "$_off" | grep -c .)
+		if [ "$_n" -le 1 ]; then
+			echo "   ⇒ only ONE offset broke: consistent with an OFFSET-SPECIFIC writer,"
+			echo "     which is what the genet/xHCI/ADMA2 exclusions assume."
+		else
+			echo "   ⇒ *** $_n DIFFERENT offsets broke: the writer does NOT hit a fixed offset."
+			echo "     The fixed-offset framing is wrong, and every exclusion built on it"
+			echo "     (genet, xHCI, SD ADMA2) REOPENS."
+		fi
+	fi
+else
+	echo "   arm: single probe (+0x4 only) -- this build cannot answer the question."
+	echo "   ⚠ Do NOT read 'only +4 broke' as evidence of an offset-specific writer here:"
+	echo "     +4 is the only place this build looked. Rebuild with"
+	echo "     LIBC_DIAG=\"-DC1_P4_WIDE\" to make it answerable."
+fi
+echo
+
 # --- BO attribution of the corrupted FRAME ------------------------------------
 # The measurement that separates the two readings of the KEEP_CLOSED_BO result:
 # under "recycling is merely necessary" the victim frame is ordinary pool churn
