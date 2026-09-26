@@ -61,6 +61,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 target="${TARGET:-aarch64a72-generic-rpi4b}"
 buildroot="${RPI4B_BUILDROOT:-${repo_root}/.buildroot}"
 out="${STKPROF_OUT:-${repo_root}/artifacts/stkprof}"
+out="$(realpath -m "$out")"   # the compile steps run from other directories: a relative STKPROF_OUT broke them (2026-09-26)
 tc="${repo_root}/.toolchain/aarch64-phoenix/bin"
 cc="${tc}/aarch64-phoenix-gcc"
 ar="${tc}/aarch64-phoenix-gcc-ar"
