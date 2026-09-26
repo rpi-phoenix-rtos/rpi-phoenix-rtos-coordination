@@ -58,7 +58,7 @@ if [ "$_days" -gt 1 ]; then
 		printf '  dates: %s\n\n' "$(echo $_datelist | tr '\n' ' ')"
 	fi
 fi
-printf '%-36s %5s %5s %6s %5s %6s %8s %5s %5s %5s %s\n' LOG SIG VICT GUARD CORR ARMED FRAMES KFLT UFLT TDOWN VERDICT
+printf '%-36s %5s %5s %4s %6s %5s %6s %8s %5s %5s %5s %s\n' LOG SIG VICT P4V GUARD CORR ARMED FRAMES KFLT UFLT TDOWN VERDICT
 tot_f=0; tot_fire=0; valid=0; void=0
 for log in $(printf '%s\n' "${logs[@]}" | sort); do
 	# ⚠ Count EVERY allocator guard, not just the corrupt-header one. The
@@ -166,7 +166,19 @@ for log in $(printf '%s\n' "${logs[@]}" | sort); do
 	# heap is re-reported on every later free from it -- run c1pa1 @22:22 showed
 	# SIG=552 from just FOUR distinct heaps. Quoting SIG as an event count
 	# overstates the evidence by two orders of magnitude.
+	# ⚠ Count victims from BOTH detectors, not just the header one. The poison
+	# probe samples FOUR offsets per page, so a poison-only run reports SIG=4 with
+	# no `heap  =` line at all and VICT read 0 -- while actually having real
+	# victims. Measured on c1env-off-1: SIG=4, 4 POISON BROKEN events, but only
+	# TWO distinct p4page values. A column that reads 0 on a run with two
+	# corrupted pages is worse than no column, because it grades as clean.
+	# ...but do NOT fold them into one number. VICT has been quoted as "distinct
+	# corrupted HEAPS" in the issue row and the weekly log, and silently widening
+	# it to include poison pages would rewrite those numbers (c1coin would read 5
+	# where every record says 1). Keep VICT as-is and give the poison detector its
+	# own column.
 	vict=$(grep -aoE 'heap  = 0x[0-9a-f]{16}' "$log" | sort -u | wc -l)
+	p4v=$(grep -aoE 'p4page = 0x[0-9a-f]{16}' "$log" | sort -u | wc -l)
 	armed=$(grep -ac 'C1-hunt: created' "$log")
 	frames=$(grep -ao 'total [0-9]*)' "$log" | tail -1 | tr -dc 0-9)
 	frames=${frames:-0}
@@ -203,8 +215,8 @@ for log in $(printf '%s\n' "${logs[@]}" | sort); do
 	# still fired 1-12 times. A bench of runs that all show no is not void, but it
 	# is weaker than one that completes.
 	if grep -aq 'Number of frames:' "$log"; then tdown=yes; else tdown=no; fi
-	printf '%-36s %5s %5s %6s %5s %6s %8s %5s %5s %5s %s\n' "$(basename "$log" .log | cut -c11-)" \
-		"$fires" "$vict" "$guards" "$corr" "$armed" "$frames" "$kflt" "$uflt" "$tdown" "$verdict"
+	printf '%-36s %5s %5s %4s %6s %5s %6s %8s %5s %5s %5s %s\n' "$(basename "$log" .log | cut -c11-)" \
+		"$fires" "$vict" "$p4v" "$guards" "$corr" "$armed" "$frames" "$kflt" "$uflt" "$tdown" "$verdict"
 	# A UFLT is only interesting once you know WHOSE fault it was, and this bench
 	# has already mistaken its own instrument's crash for a property of the run
 	# (2026-09-25, c1hpa01: a malloc_dl guard dereferencing an unmapped live[]
