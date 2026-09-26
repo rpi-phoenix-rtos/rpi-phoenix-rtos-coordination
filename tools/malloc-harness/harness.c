@@ -78,6 +78,7 @@ static struct {
 	unsigned long chunksWalked;
 	unsigned long freeChunksSeen;
 	unsigned long reallocShrinkSplit;
+	unsigned long memalign; /* aligned allocations made (--memalign) */
 	unsigned long reallocGrowInPlace;
 	unsigned long joinBackward;
 	unsigned long joinForward;
@@ -183,7 +184,13 @@ static int hz_quiet;
 #define _malloc_init       phx_malloc_init
 #define malloc_test        phx_malloc_test
 
-#include "../../sources/libphoenix/stdlib/malloc_dl.c"
+/* MH_MALLOC_DL_SRC lets the harness check an allocator that is not (yet) in
+ * sources/ -- e.g. a worktree branch:
+ *   MH_CFLAGS='-DMH_MALLOC_DL_SRC="/path/to/wt/stdlib/malloc_dl.c"' ./build.sh */
+#ifndef MH_MALLOC_DL_SRC
+#define MH_MALLOC_DL_SRC "../../sources/libphoenix/stdlib/malloc_dl.c"
+#endif
+#include MH_MALLOC_DL_SRC
 
 
 /* ------------------------------------------------------------------ */
@@ -1004,7 +1011,13 @@ static int hz_munmap(void *addr, size_t len)
 #define HZ_SLOTS   1024
 #define HZ_MAX_OPS 400000
 
-enum { OP_NOP = 0, OP_ALLOC, OP_CALLOC, OP_FREE, OP_REALLOC, OP_DRAIN };
+enum { OP_NOP = 0, OP_ALLOC, OP_CALLOC, OP_FREE, OP_REALLOC, OP_DRAIN, OP_MEMALIGN };
+
+/* Percentage of generator steps that emit an aligned allocation (--memalign N).
+ * 0 by default, and the generator draws no extra random numbers then, so every
+ * existing seed replays the exact op stream it always did. Needs an allocator
+ * with _malloc_aligned() -- build with MH_CFLAGS=-DHZ_MEMALIGN. */
+static int hz_memalignPct;
 
 typedef struct {
 	uint8_t op;
@@ -1152,7 +1165,26 @@ static void hz_gen(uint64_t seed, int nops)
 	hz_nops = 0;
 
 	while (hz_nops < nops && hz_nops < HZ_MAX_OPS) {
-		uint32_t r = hz_rndBelow(100);
+		uint32_t r;
+
+		if ((hz_memalignPct > 0) && (hz_rndBelow(100) < (uint32_t)hz_memalignPct)) {
+			/* Aligned burst: same size and alignment, so they pack into one heap
+			 * and the leading free chunks they carve get coalesced with each other
+			 * and with whatever the strided sweeps free around them. Alignment
+			 * 2^3..2^16 (8 B: the plain-malloc path; 64 KiB: bigger than a heap). */
+			uint32_t sz = hz_pickSize();
+			uint32_t lg = 3u + hz_rndBelow(14);
+			int base = (int)hz_rndBelow(HZ_SLOTS);
+			int n = 1 + (int)hz_rndBelow(24);
+			int i;
+
+			for (i = 0; i < n; i++) {
+				hz_emit(OP_MEMALIGN, (base + i) % HZ_SLOTS, sz, lg);
+			}
+			continue;
+		}
+
+		r = hz_rndBelow(100);
 
 		if (r < 26) {
 			/* Burst: same-size blocks land adjacent inside one heap. */
@@ -1391,6 +1423,36 @@ static void hz_applyOp(const hz_op_t *o, long idx)
 			}
 			break;
 
+		case OP_MEMALIGN:
+#ifdef HZ_MEMALIGN
+			if (hz_slot[s] != NULL) {
+				if (hz_verify(s) != 0) {
+					return;
+				}
+				phx_free(hz_slot[s]);
+				hz_slot[s] = NULL;
+			}
+			p = _malloc_aligned((size_t)1 << o->b, o->a);
+			if (p != NULL) {
+				if (((uintptr_t)p & (((uintptr_t)1 << o->b) - 1u)) != 0u) {
+					HZ_FAIL(HZ_V_DATA_CORRUPT, "_malloc_aligned(%lu, %u) = %p is misaligned",
+							1ul << o->b, o->a, p);
+					return;
+				}
+				if (phx_malloc_usable_size(p) < o->a) {
+					HZ_FAIL(HZ_V_DATA_CORRUPT, "_malloc_aligned(%lu, %u) = %p has only %zu usable bytes",
+							1ul << o->b, o->a, p, phx_malloc_usable_size(p));
+					return;
+				}
+				hz_cov.memalign++;
+				hz_slot[s] = p;
+				hz_slotSz[s] = o->a;
+				hz_slotTag[s] = (uint8_t)(idx ^ s ^ 0x69);
+				hz_fill(s);
+			}
+#endif
+			break;
+
 		case OP_DRAIN: {
 			int i;
 
@@ -1523,6 +1585,13 @@ static void hz_emitRepro(const hz_op_t *ops, int n)
 				}
 				break;
 			}
+			case OP_MEMALIGN:
+				if (used[s]) {
+					printf("free(p[%d]);\n", s);
+				}
+				printf("p[%d] = aligned_alloc(%lu, %u);\n", s, 1ul << ops[i].b, ops[i].a);
+				used[s] = 1;
+				break;
 			case OP_DRAIN: {
 				int j;
 
@@ -1939,7 +2008,24 @@ static void *hz_mtWorker(void *arg)
 		}
 		else {
 			size_t ns = hz_mtSize(&w->rng);
-			void *p = ((r & 7u) == 0u) ? phx_calloc(1u, ns) : phx_malloc(ns);
+			void *p;
+
+#ifdef HZ_MEMALIGN
+			/* With --memalign, that share of allocations is aligned (2^3..2^16). */
+			if ((hz_memalignPct > 0) && ((unsigned int)((r >> 24) % 100u) < (unsigned int)hz_memalignPct)) {
+				size_t al = (size_t)1 << (3u + (unsigned int)((r >> 40) % 14u));
+
+				p = _malloc_aligned(al, ns);
+				if ((p != NULL) && (((uintptr_t)p & (al - 1u)) != 0u)) {
+					w->mism++;
+					printf("mt[%u]: _malloc_aligned(%zu, %zu) = %p is MISALIGNED\n", w->id, al, ns, p);
+				}
+			}
+			else
+#endif
+			{
+				p = ((r & 7u) == 0u) ? phx_calloc(1u, ns) : phx_malloc(ns);
+			}
 
 			if (p == NULL) {
 				w->oom++;
@@ -2496,6 +2582,13 @@ int main(int argc, char **argv)
 		else if ((strcmp(argv[i], "--exp") == 0) && (i + 1 < argc)) {
 			onlyExp = argv[++i];
 		}
+		else if ((strcmp(argv[i], "--memalign") == 0) && (i + 1 < argc)) {
+			hz_memalignPct = atoi(argv[++i]);
+#ifndef HZ_MEMALIGN
+			fprintf(stderr, "--memalign needs a build with MH_CFLAGS=-DHZ_MEMALIGN\n");
+			return 2;
+#endif
+		}
 		else if ((strcmp(argv[i], "--fragile") == 0) && (i + 1 < argc)) {
 			hz_fragile = atoi(argv[++i]);
 		}
@@ -2563,11 +2656,11 @@ int main(int argc, char **argv)
 				(v != HZ_OK) ? "" : "");
 		printf("    coverage: mmap=%lu munmap=%lu checks=%lu chunksWalked=%lu freeChunks=%lu\n"
 				"              realloc shrink-split=%lu grow-in-place=%lu | join back=%lu fwd=%lu\n"
-				"              max live heaps=%d  max chunks in one heap=%d  max binned chunks=%d\n",
+				"              max live heaps=%d  max chunks in one heap=%d  max binned chunks=%d  memalign=%lu\n",
 				hz_cov.mmaps, hz_cov.munmaps, hz_cov.checks, hz_cov.chunksWalked,
 				hz_cov.freeChunksSeen, hz_cov.reallocShrinkSplit, hz_cov.reallocGrowInPlace,
 				hz_cov.joinBackward, hz_cov.joinForward,
-				hz_cov.maxLiveHeaps, hz_cov.maxChunksInHeap, hz_cov.maxBinChunks);
+				hz_cov.maxLiveHeaps, hz_cov.maxChunksInHeap, hz_cov.maxBinChunks, hz_cov.memalign);
 		memset(&hz_cov, 0, sizeof(hz_cov));
 		hz_paceRebase();
 		if (v != HZ_OK) {
