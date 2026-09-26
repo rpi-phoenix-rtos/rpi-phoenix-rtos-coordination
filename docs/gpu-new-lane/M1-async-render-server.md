@@ -948,3 +948,14 @@ completions. **fps comparisons use IRQ mode**; poll mode is a correctness fallba
   `core_msk=0x00ff0058 hub_msk=0x00000005`.
 - `ipc_waits=87`, `resets=0`, `parked_max=4`. Four `V3DAPING RESULT … verdict=PASS` lines.
 ⇒ Part 2 (real jobs) can use IRQ mode; P2-A queued.
+
+## Result — P2-A smoke (cycle `m1p2-smoke`, build 9, 2026-09-26 ~20:25): correctness PASS; overlap not shown
+
+- Nine `V3DAPING RESULT … verdict=PASS`, 0 faults, `wedges=0 resets=0`, `ovf_free=32/32`.
+- **Real GPU jobs through the new server, all three modes** (serial/poll, serial/IRQ, pipeline):
+  `cl-smoke` ×3 colours `bad_px=0/4096`, `tfu-smoke bad_px=0/256`, `csd-smoke out0=0xc0de1234`,
+  `cl-burst jobs=8/8 bad_px=0`. Per-job latency after warm-up 5–26 µs.
+- ✗ **Pre-registered overlap check not met:** pipeline mode shows `overlap_us=0` after `cl-burst`.
+  The smoke jobs take 20–30 µs each (render `max_us=29`), shorter than the ~30 µs submit round trip
+  (E5), so the next job is never queued while one runs — the test cannot exhibit overlap; it is not
+  evidence against pipelining. The overlap proof moves to P2-B/C (quakespasm timedemo, ms-scale jobs).
