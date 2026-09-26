@@ -4,8 +4,9 @@
  * Experiment E5 of docs/gpu-new-lane/PLAN.md; pre-registration and the kernel
  * reading behind every test: docs/gpu-new-lane/E5-deferred-reply.md.
  *
- *   ipcprobe server [-r recv_threads] [-t tick_us] [-v vblank_us]
- *       Registers /dev/ipcprobe. One or more threads msgRecv(); requests are
+ *   ipcprobe server [-f] [-r recv_threads] [-t tick_us] [-v vblank_us]
+ *       Detaches itself (psh has no "&" job control; -f stays in the
+ *       foreground) and returns once /dev/ipcprobe is registered. One or more threads msgRecv(); requests are
  *       either answered at once or parked and answered LATER from another
  *       thread: a "worker" (deadlines, timeouts) or a higher-priority "irq"
  *       thread that advances a fence seqno every tick_us and raises an emulated
@@ -353,6 +354,21 @@ static void worker_thread(void *arg)
 				next = s->deadline;
 			}
 		}
+
+		if ((n == 0) && (ndup == 0)) {
+			/* Nothing due. Sleep WITHOUT having dropped the lock since the
+			 * scan, or a request parked in between would be missed until the
+			 * old deadline (forever, if there was none). */
+			if (next == 0) {
+				tmo = 0;
+			}
+			else {
+				now = now_cnt();
+				tmo = (next > now) ? (time_t)(cnt_to_ns(next - now) / 1000u) + 1 : 1;
+			}
+			(void)condWait(srv.cond, srv.lock, tmo);
+			continue;
+		}
 		mutexUnlock(srv.lock);
 
 		for (i = 0; i < ndup; i++) {
@@ -389,18 +405,7 @@ static void worker_thread(void *arg)
 			respond(r);
 		}
 
-		mutexLock(srv.lock);
-		if (n != 0 || ndup != 0) {
-			continue;
-		}
-		if (next == 0) {
-			tmo = 0;
-		}
-		else {
-			now = now_cnt();
-			tmo = (next > now) ? (time_t)(cnt_to_ns(next - now) / 1000u) + 1 : 1;
-		}
-		(void)condWait(srv.cond, srv.lock, tmo);
+		mutexLock(srv.lock); /* and rescan */
 	}
 	mutexUnlock(srv.lock);
 	endthread();
@@ -715,6 +720,38 @@ static int handle(request_t *r)
 }
 
 
+/* One line the FIRST time each message type (and each devctl op) arrives, so
+ * a hang localises to "never reached the server" vs "reached it, no reply".
+ * Bounded: at most mtCount + 16 lines per server lifetime. */
+static void trace_first(const request_t *r)
+{
+	static uint32_t seenType, seenOp;
+	uint32_t op = 0, bit;
+	int print = 0;
+
+	if (r->msg.type == mtDevCtl) {
+		op = ((const req_t *)r->msg.i.raw)->op;
+	}
+	mutexLock(srv.lock);
+	if ((r->msg.type == mtDevCtl) && (op < 32)) {
+		bit = 1u << op;
+		print = ((seenOp & bit) == 0) ? 1 : 0;
+		seenOp |= bit;
+	}
+	else if ((r->msg.type >= 0) && (r->msg.type < 32)) {
+		bit = 1u << r->msg.type;
+		print = ((seenType & bit) == 0) ? 1 : 0;
+		seenType |= bit;
+	}
+	mutexUnlock(srv.lock);
+	if (print != 0) {
+		printf("IPCPROBE server first type=%d op=%u oid.id=%u rid=%d pid=%d\n", r->msg.type, op,
+			(unsigned int)r->msg.oid.id, r->rid, r->msg.pid);
+		fflush(stdout);
+	}
+}
+
+
 static void recv_thread(void *arg)
 {
 	(void)arg;
@@ -731,6 +768,7 @@ static void recv_thread(void *arg)
 			continue;
 		}
 		r->t_recv = now_cnt();
+		trace_first(r);
 
 		mutexLock(srv.lock);
 		if (srv.outstanding != 0) {
@@ -758,7 +796,7 @@ static int start_thread(void (*fn)(void *), int prio)
 
 static int server_main(int argc, char **argv)
 {
-	int nrecv = 1, i, opt;
+	int nrecv = 1, i, opt, foreground = 0, readyfd = -1;
 	void *page;
 
 	srv.tick_us = 1000;
@@ -768,19 +806,62 @@ static int server_main(int argc, char **argv)
 	srv.st.late_respond_rc = 1; /* sentinel: no OP_HOLD was answered */
 
 	optind = 2;
-	while ((opt = getopt(argc, argv, "r:t:v:")) != -1) {
+	while ((opt = getopt(argc, argv, "fr:t:v:")) != -1) {
 		switch (opt) {
+			case 'f': foreground = 1; break;
 			case 'r': nrecv = atoi(optarg); break;
 			case 't': srv.tick_us = (uint64_t)atoi(optarg); break;
 			case 'v': srv.vblank_us = (uint64_t)atoi(optarg); break;
 			default:
-				fprintf(stderr, "usage: ipcprobe server [-r recv_threads] [-t tick_us] [-v vblank_us]\n");
+				fprintf(stderr, "usage: ipcprobe server [-f] [-r recv_threads] [-t tick_us] [-v vblank_us]\n");
 				return 2;
+		}
+	}
+	/* psh has no job control: a trailing "&" is NOT a background request, it
+	 * arrives here as a plain argument (psh_parseRedirections passes it
+	 * through). Tolerate it -- the server backgrounds itself anyway. */
+	for (i = optind; i < argc; i++) {
+		if (strcmp(argv[i], "&") != 0) {
+			fprintf(stderr, "ipcprobe: unexpected argument '%s'\n", argv[i]);
+			return 2;
 		}
 	}
 	if ((nrecv < 1) || (nrecv > 8) || (srv.tick_us < 100) || (srv.vblank_us < srv.tick_us)) {
 		fprintf(stderr, "ipcprobe: bad server arguments\n");
 		return 2;
+	}
+
+	/* Detach, so the shell gets its prompt back. The parent waits on a pipe
+	 * until the child has registered DEV_PATH (one byte 'R'), then exits; a
+	 * child that fails closes the pipe instead (EOF). This happens before any
+	 * port, thread or mapping exists -- none of those survive a fork. */
+	if (foreground == 0) {
+		int pfd[2];
+		pid_t pid;
+		char c = 0;
+
+		if (pipe(pfd) < 0) {
+			printf("IPCPROBE server FAIL pipe errno=%d\n", errno);
+			return 1;
+		}
+		fflush(stdout);
+		pid = fork();
+		if (pid < 0) {
+			printf("IPCPROBE server FAIL fork errno=%d\n", errno);
+			return 1;
+		}
+		if (pid > 0) {
+			close(pfd[1]);
+			if ((read(pfd[0], &c, 1) != 1) || (c != 'R')) {
+				printf("IPCPROBE server FAIL child did not come up\n");
+				return 1;
+			}
+			printf("IPCPROBE server detached pid=%d\n", (int)pid);
+			fflush(stdout);
+			_exit(0);
+		}
+		close(pfd[0]);
+		readyfd = pfd[1];
 	}
 
 	/* The fence page: MAP_CONTIGUOUS gives an object-backed page whose PA
@@ -829,6 +910,12 @@ static int server_main(int argc, char **argv)
 			printf("IPCPROBE server FAIL recv thread\n");
 			return 1;
 		}
+	}
+
+	if (readyfd >= 0) {
+		const char c = 'R';
+		(void)write(readyfd, &c, 1);
+		close(readyfd);
 	}
 
 	/* The main thread only waits for OP_QUIT. Receivers blocked in msgRecv
@@ -894,6 +981,9 @@ static int client_resolve(void)
 
 	for (i = 0; i < 50; i++) {
 		if (lookup(DEV_PATH, NULL, &dev_oid) == 0) {
+			printf("IPCPROBE client resolved oid=%u/%u after_ms=%d\n", (unsigned int)dev_oid.port,
+				(unsigned int)dev_oid.id, i * 100);
+			fflush(stdout);
 			return 0;
 		}
 		(void)usleep(100000);
@@ -1766,7 +1856,7 @@ int main(int argc, char **argv)
 	if ((argc >= 2) && (strcmp(argv[1], "client") == 0)) {
 		return client_main(argc, argv);
 	}
-	fprintf(stderr, "usage: ipcprobe server [-r n] [-t tick_us] [-v vblank_us]\n"
+	fprintf(stderr, "usage: ipcprobe server [-f] [-r n] [-t tick_us] [-v vblank_us]\n"
 					"       ipcprobe client {rtt|deferred|timeout|wait|read|poll|fence|fence-rw|fence-ro|signal|ridreuse|all|quit}\n");
 	return 2;
 }

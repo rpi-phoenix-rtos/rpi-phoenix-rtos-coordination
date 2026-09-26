@@ -4,8 +4,9 @@ Experiment E5 of the [new-lane plan](PLAN.md), for the design in
 [`2026-09-26-gpu-drm-architecture.md`](../research/2026-09-26-gpu-drm-architecture.md) §4.3 (fence waits),
 §4.5 (vblank events, implicit sync) and §6.
 
-**Status:** kernel reading done, probe written and compiled. The Pi run below is pre-registered and has
-not been run yet. Kernel read at `sources/phoenix-rtos-kernel` `master` @ `df9da09d`.
+**Status:** kernel reading done, probe written and compiled. The first Pi run (2026-09-26 18:41)
+produced no data: the run plan used a psh feature that does not exist (see "First run" below). The
+probe is fixed and the run is re-registered in §3. Kernel read at `sources/phoenix-rtos-kernel` `master` @ `df9da09d`.
 
 ## Questions
 
@@ -118,7 +119,9 @@ server chooses.
 `tools/gpu-lane/ipcprobe/ipcprobe.c`: one static binary, SPDX BSD-3-Clause, no shipped component
 touched.
 
-- `ipcprobe server [-r recv_threads] [-t tick_us] [-v vblank_us]` registers `/dev/ipcprobe`. It runs
+- `ipcprobe server [-f] [-r recv_threads] [-t tick_us] [-v vblank_us]` **detaches itself**: it forks,
+  and the parent returns to the shell once the child has registered `/dev/ipcprobe`. `-f` keeps it
+  in the foreground. psh has no `&` (see "First run"). The server runs
   receive thread(s) (priority 4), a **worker** (priority 3; deadlines, timeouts, handoffs) and an
   **"irq" thread** (priority 2). Every `tick_us` (default 1000) the irq thread advances a fence seqno
   in the fence page. Every `vblank_us` (default 16667) it raises an emulated vblank. It answers WAIT,
@@ -126,7 +129,10 @@ touched.
   `mtClose`, `mtRead` (a 32-byte vblank event, parked until the next vblank) and `atPollStatus` (it
   honours `block_ms` if it ever arrives and counts every query). Every parked request has one owner,
   claimed under the lock. On quit the server answers all parked requests before the process exits.
-  It prints a single `IPCPROBE server ready …` banner and then nothing until it quits.
+  It prints a `IPCPROBE server ready …` banner and a `detached pid=` line. After that it prints one
+  `IPCPROBE server first type= op=` line the **first** time each message type or devctl op arrives
+  (at most about 30 lines in total), so a hang shows whether a request reached the server. The client
+  prints `IPCPROBE client resolved oid=port/id` before its first call.
 - `ipcprobe client <test>`: `rtt deferred timeout wait read poll fence fence-rw signal ridreuse
   fence-ro`, or `all`, or `quit`. Timestamps come from `cntvct_el0`, which EL0 can read on every core
   (`hal/aarch64/_init.S:325-336`), so server-side stamps returned in `o.raw` give one-way latencies.
@@ -166,13 +172,13 @@ wake-up cheap enough for M1/M2 as designed?
 
 ```
 ./scripts/test-cycle-psh-interact.sh --label e5-ipcprobe --idle-secs 25 -- \
-    "/bin/ipcprobe server &" \
+    "/bin/ipcprobe server" \
     "/bin/ipcprobe client all" \
     "/bin/ipcprobe client quit"
 ```
 
-(Bash `timeout: 600000`.) The server prints only its banner and then stays silent, so the harness
-moves on after the idle window. `client all` prints a result line every ≤ 3 s. Its longest silent
+(Bash `timeout: 600000`.) `ipcprobe server` returns to the prompt once its device is registered
+(`server ready`, then `server detached`), so the next command runs after the idle window. `client all` prints a result line every ≤ 3 s. Its longest silent
 stretch is the 3 s `signal` test, and the whole run takes ≈ 15 s. `fence-ro` runs last and is
 **expected** to print one EL0 permission-fault dump for the child `ipcprobe` (twice, as every EL0
 dump is). The dump names `process "/bin/ipcprobe"`: that is the forked **child**. The parent's
@@ -256,6 +262,35 @@ corruption: re-read a garbled line rather than count it as a failure.
   racing `quit` could still be caught by condition 2. Run `quit` last.
 - `create_dev` of `/dev/ipcprobe` is not removed on exit. A second `ipcprobe server` in the same
   boot may fail to register.
+
+## First run (2026-09-26 18:41, build 7 = kernel `df9da09d` + libphoenix `a844f10`): void, harness error
+
+Log: `artifacts/rpi4b-uart/rpi4b-uart-20260926-184106-e5-ipcprobe.log`. `/bin/ipcprobe server &` printed
+`IPCPROBE server ready port=22 … fence_pa=0x3b0c000 …`. Then **no `(psh)%` prompt came back**, and
+`client all` and `client quit` printed nothing, not even `client start` or the 5 s
+`cannot resolve` fallback, so neither client ever ran.
+
+**Root cause: psh has no background jobs.** psh runs an external command through `psh_runfile`,
+which `vfork`s, gives the terminal to the child and blocks in `waitpid`
+(`phoenix-rtos-utils/psh/runfile/runfile.c:33-48`). Nothing in `pshapp.c` treats a trailing `&` as a
+job request. The only `&` handling is the `&>` redirection in `psh_parseRedirections`
+(`pshapp.c:1157`), which passes a bare `&` through unchanged as `argv[2]`. `getopt` stopped at it,
+so the server ran in the **foreground** and psh waited for it for the rest of the cycle. The two
+later commands were typed into a terminal that no reader owned. The kernel, the IPC path and the
+probe's message handling were never exercised. The pre-registration's "psh has `&`" was wrong.
+(Add this to the psh-limitation memory next to no `;`, `>` or `|`.)
+
+**Fixes (probe only):**
+1. `ipcprobe server` detaches itself: `fork` before any port, thread or mapping exists, then a pipe
+   handshake so the parent exits only after the child has registered the device. A stray `&`
+   argument is tolerated.
+2. Traces added: the client prints `resolved oid=`, and the server prints one line the first time
+   each message type or op arrives.
+3. A latent bug found in review and fixed: the worker thread released its lock between scanning
+   the parked list and calling `condWait`. A request parked in that gap (e.g. the first
+   `small_handoff`) would have waited until the previous deadline, or forever if there was none,
+   which would have hung the `rtt` test at `small_handoff`. The worker now waits without dropping
+   the lock after a scan that found nothing due.
 
 ## Result
 
