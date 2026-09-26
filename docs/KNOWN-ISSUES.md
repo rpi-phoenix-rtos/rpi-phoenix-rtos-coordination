@@ -17,7 +17,7 @@ Every issue we know about and have **not** fixed, in one list. Nothing else.
 
 Verified against the tree, the git history and the boot-log archive on **2026-09-22**; cut back
 to a register on **2026-09-26** (rows compressed, full text moved to the details doc, resolved
-D4/D9 archived).
+D4/D6/D9 archived).
 
 ## 1. Correctness — crashes and data loss
 
