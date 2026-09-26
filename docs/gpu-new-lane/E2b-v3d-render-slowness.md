@@ -362,3 +362,169 @@ Render 91.2 ms/frame (set A) / 93.6 (set B), bin 3.3 ms; counter reads cost 0.06
 - Per slot: the 1440×810 lit pass (s1, 36 % of render, 32.7 ms/job, only 3 draws but 2.40 quads/px, MRT ×2)
   and s5 (24.6 %, 3.12 quads/px) dominate; the final 1920×1080 composite (s7) is a RASTER scanout target as
   on Pi OS.
+
+## Review of base1 by the E2b agent (2026-09-26, 23:40) — two corrections, and H7
+
+Re-read of `rpi4b-uart-20260926-230207-e2b-base1.log` with the fixed `e2b-summarize.py`.
+
+### Correction 1 — QPU shares were normalised wrongly (instrument bug, mine)
+
+The QPU-state counters (idle / active / stalled / valid-instruction) have a capacity of **2 per core
+cycle, not 8** (8 QPUs × one count per 4-clock instruction slot, or equivalently per slice). Proof
+from the run itself: idle + active(vertex, fragment) + stalled(vertex, fragment) sums to **0.998–1.000
+× (2 × cycle-count)** in slots s1, s3, s4, s5, s6, s7 and 0.944 over the whole render phase (per
+window 0.932–0.967), against 0.24 × (8 × cycles). The summarizer now normalises by 2 and prints the
+partition as check **V0b** on every run. Corrected render phase: **QPU idle 13 %, fragment active
+(issuing) 62 %, fragment stalled 18 %**, TMU-only waits 0.3 % (not "idle 3 %, valid 20 %"). Note that
+ID 16 "valid instructions" is **active + stalled** ("work resident"), not issue: render 81.2 % =
+62.4 + 17.9 + 0.9 vertex; s1 96.4 % = 83.7 + 12.7 exactly. Per slot, issuing: s1 (lit pass, 36 % of
+render) **84 %**, s2 83 %, s6 65 %, s5 44 % (+ 32 % stalled, 22 % idle), s3/s4 (half-res blurs)
+54–61 % with 35–44 % idle. The 18 % fragment stalls are not TMU-only, scoreboard or varyings stalls
+(all ≈ 0) — their cause is uncategorised by these counters. Caveat: s0 and s2 (partition 0.61 /
+0.66) and the bin phase (0.40) leave 35–60 % of QPU capacity in no counted state, so for them the
+shares are lower bounds, not a split. This is a correction of a normalisation error, not a moved
+threshold; with it the pre-registered **H6 (shader-bound, valid-instr ≥ 60 %) fires** — the render
+phase is dominated by fragment-shader execution (the lit pass above all), next to H2 (35 % late-Z
+rejects: shaded work thrown away) and the H1 TMU pattern (TMU stalled 79 % of its active cycles —
+but the QPUs rarely stall on the TMU alone, so the TMU is not what holds the QPUs back).
+
+### Correction 2 — the L2T hit/miss counters are not trustworthy on V3D 4.2
+
+All 64 source IDs of sets A and B match Mesa's and Linux's v4.2 tables entry for entry (the two
+tables agree on all 87 entries; `v3d_performance_counters.h:133-218`, `v3d_perfmon.c` v42 table) — so
+the instrument programs exactly what the published tables name. But the L2T rows contradict their
+labels, within one run:
+
+| observation (per frame, render phase) | why it cannot be what the label says |
+|---|---|
+| ID 56 "L2T-TMU-reads" = **0**, ID 64 "L2T-TMU-read-miss" = **3.44 M** | misses > accesses |
+| ID 57 "L2T-CLE-reads" = **258 914** = ID 76 "L2T-memory-reads" = **258 914** (same windows) | two IDs, one signal |
+| ID 30 "L2T-total-cache-hit" = 258 196 (set A) ≈ ID 76 memory reads = 258 914 (set B) | "hits" track memory fills, i.e. behave like misses |
+| ID 31 "misses" = 3.58 M ≈ Σ per-client "miss" IDs 64+65+66+68 = 3.89 M (other windows) | "misses" track total requests |
+
+Mesa's V3D 7.1 table (same file, :82-87) names the per-client counters "read hits"/"read misses",
+which hints the 4.2 "reads" labels are really something else [inferred]. If 30/31 are swapped the
+L2T hit rate is ~93 %, not 6.7 %. The summarizer now prints these contradictions as
+`L2T LABEL INCONSISTENT` and labels the ratios `(label?)`. **Do not use an L2T hit rate from these
+IDs.**
+
+What *is* trustworthy is the DRAM accounting, because it can be calibrated. TLB store transactions
+(225 000/frame) against the bytes the Mesa job notes require (Σ W×H×cpp of the stored buffers of the
+8 jobs = 57.28 MB) → **255 B/transaction** (loads: 254 B; TLB words/transaction = 16.0 → 16 × 16 B).
+In 256-B transactions: DRAM reads **84 MB/frame** (L2T 66.3, TLB loads 9.4, unattributed 8.4), writes
+**57.6 MB/frame**. What is measured vs inferred: the 256-B unit is **calibrated** for TLB stores and
+loads only. Applying it to L2T and core reads is **inferred** from the additive identity
+core_rd ≈ l2t_rd + tlb_rd + pse_rd + … (329 k ≈ 296 k + 33 k unattributed, all in one unit) and from a
+lower bound: if an L2T memory read were a 64-B line, L2T reads would be 16.6 MB/frame — below the
+≈ 58 MB the render targets alone must supply — so the L2T transaction must average ≳ 220 B. So the render phase moves 142 MB in 91 ms = **1.55 GB/s** — far below what the
+LPDDR4 delivers — and the 66 MB of L2T memory reads are about the pipeline's *compulsory* texture
+traffic [inferred, hand estimate from the job notes: the RTT samplings alone are ≈ 58 MB/frame — s1 reads normal+depth 9.3 MB, s2 depth
+4.7, s3/s4 2.3 each, s5 diffuse/specular/half/normal/colour/depth ≈ 26, s6 9.3, s7 4.7 — plus the scene
+textures of s0]. **Re-fetching caused by L2T flushes can therefore be at most ~10 MB/frame (~15 % of
+L2T reads)**, and less of the render time, since the phase is not bandwidth-bound.
+
+### H7 — per-job L2T maintenance vs Linux (facts)
+
+| step | Linux (`drivers/gpu/drm/v3d`) | old winsys (`v3d_phoenix_winsys.c`) | async server (`v3da_jobs.c`) |
+|---|---|---|---|
+| MMU TLB + PTE cache | only when PTEs change (`v3d_mmu.c:146,159`, insert/remove) | every CL, TFU and CSD job (`mmu_flush_tlb`) | every job; `V3DA_KNOB_TLB_ON_CHANGE` (bit 0) |
+| before CT0 | `v3d_bin_job_run` → `v3d_invalidate_caches` (`v3d_sched.c:238`, `v3d_gem.c:250-261`): **L2T FLUSH (FLM=0) issued, not waited** ("L2T accesses will be stalled until the flush has completed", `v3d_gem.c:177-190`), then slice invalidate | SLCACTL first (#67 ordering), L2T FLUSH **waited**, then **fix-A**: a second waited FLUSH | same; bits 1 (no wait-new), 2 (no fix-A); **new bit 7 LINUX_ORDER** (L2T then slices) |
+| before CT1 | `v3d_render_job_run` → `v3d_invalidate_caches` again (`v3d_sched.c:292`): FLUSH not waited + slices | waited FLUSH + SLCACTL | same; bit 3 (no wait); **new bit 6 NO_HANDOFF_FLUSH** (diagnostic) |
+| after FRDONE | nothing; a CLEAN only through a CACHE_CLEAN job when the submit asks (`v3d_sched.c:695-702`) | L2T **CLEAN** (FLM=2) issued, not waited | same; **new bit 5 NO_POST_CLEAN** |
+| flush mode / range | FLM_FLUSH=0; `L2TFLSTA=0`, `L2TFLEND=~0` (`v3d_gem.c:35-36`) | identical (`L2TCACTL_L2TFLS`; `apply_core_regs`) | identical (`v3da_hw.c:261-262`) |
+| L2C (`L2CACTL`) | never written on ver ≥ 33 (`v3d_gem.c:165-168`) | `L2CCLR|L2CENA` at every core init | same (`v3da_hw.c:260`) |
+| MISCCFG | not written on 4.2 | QRMAXCNT=2 \| OVRTMUOUT | same (`v3da_hw.c:264`) |
+| AXICFG / GMP | MAX_LEN after a bridge reset (GFXH-1383); GMP only STOP_REQ while resetting (`v3d_gem.c:42,80`) | same | same |
+
+So **the L2T is emptied at exactly the same two points per job on Linux** (clean + invalidate before
+the bin job and before the render job): a Linux render job also starts with a cold L2T. What we do
+*more* is: waits (Linux relies on the hardware interlock), fix-A (a redundant second flush), a CLEAN
+after every render, a TLB flush on every job, and the `L2CACTL` write. None of these changes what the
+L2T holds when the render job starts, except the TLB/PTE-cache flush (cold MMU TLB). **Nothing in the
+configuration can make TMU reads uncacheable**: the V3D PTE format has no cache attribute
+(`v3d_mmu.c:27-30`: superpage, bigpage, writeable, valid + PFN; ours `PTE_W|PTE_V`), GMP is
+protection (never enabled here or in Linux), and Linux's register map has no L2T enable bit
+(`L2TCACTL` = L2TFLS, FLM, TMUWCF only). The one register we write that Linux does not is `L2CACTL`
+(V3D 3.2's cache controller; its effect on 4.2 is unknown) — hence the `l2c` arm.
+
+**Prediction [inferred, pre-registered]:** H7 is weak. With both the DRAM accounting (≈ compulsory)
+and the Linux comparison (same flush points), the "linux" arm should move render time ≤ 5 % and L2T
+memory reads ≤ 10 %. Its possible CPU-side gain (no waits, no fix-A, fewer TLB flushes) shows in the
+submit phases, not the render spin.
+
+### H7 instrument (built, default-off)
+
+**Old-lane clone `stk-e2bh7`** (`artifacts/stkprof-e2b-h7/`, new name — the staged `stk-e2b` and
+`artifacts/stkprof-e2b/` are untouched). Same E2b worktree, profile macro only, all proofs
+byte-identical (PROOF 1/1b/M1/M1b, PROOF 2 passed at 23:24). Env knobs:
+* `V3D_PHX_L2T=linux` — per CL job exactly Linux's sequence: TLB flush only after a CREATE_BO/GEM_CLOSE
+  since the last flush; before CT0 an unwaited L2T FLUSH then the slice invalidate; no fix-A; before
+  CT1 an unwaited FLUSH + slices; no post-render CLEAN. The GFXH-1897 wait-old before each
+  `L2TCACTL` write is kept (it normally finds the unit idle).
+* `V3D_PHX_L2T=nohand` — `linux` minus the pre-CT1 L2T flush (diagnostic: CT1 may read stale L2T lines
+  of tile lists; expect wedges if the flush is load-bearing).
+* `V3D_PHX_NO_L2C=1` — do not write `L2CACTL` at core init (Linux never does on 4.2).
+* `V3D_PHX_PXLOG=N` — every Nth flip hash a 16×16 grid of the displayed buffer; per window `h7`
+  line: `tlb_flush= tlb_skip= px_n= px_same= px_black=` (frozen / black frame guard).
+* Once: `h7 l2t-mode=… L2TCACTL= L2TFLSTA= L2TFLEND= L2CACTL= SLCACTL= GMP_CFG= GMP_STATUS=
+  MMUC_CONTROL= MMU_CTL= HUB_AXICFG=` — the live configuration the coordinator asked for.
+* Also fixed: in `V3D_PCTR=AB` mode, per-slot lines now appear for set B too (they were only ever
+  printed in set-A windows: an even `every` over alternating sets).
+
+**Async server** (`tools/gpu-lane/v3d-async/`, edited in place — committed tree was clean at 23:11;
+diff also in `tools/gpu-lane/stkprof/h7-v3da.patch`; built into `out-h7/`, `-Werror` clean). New
+`V3DA_KNOB_*` bits, all default 0 = unchanged behaviour: bit 5 `NO_POST_CLEAN`, bit 6
+`NO_HANDOFF_FLUSH`, bit 7 `LINUX_ORDER`, bit 8 `PX_LOG` (no GPU effect: prints
+`V3DA srv pxlog n= h= zero=` for **every** pan — use in guard runs, not fps runs), and
+`V3DA_KNOB_LINUX = 0xaf` (bits 0,1,2,3,5,7). The game clone is unchanged (knobs are server-side).
+`tools/gpu-lane/stkprof/h7-pxcompare.py <base1> <base2> <arm>` aligns the pxlog sequences
+(quakespasm's timedemo is frame-deterministic), takes the frames on which the two base runs agree
+(the deterministic, changing subset — particles and water warp make the rest differ run to run) and
+requires the arm to be identical on ≥ 95 % of them with no new black frames (`GUARD PASS/FAIL`).
+
+⚠ **The STK guard (`px_black`/`px_same`) cannot catch the failure the `linux` arm is most likely to
+cause.** Removing the L2T waits previously produced *geometry mangle* (torches, small models; the
+#67 analysis quoted in the winsys comment above the pre-bin flush), not black or frozen frames. So
+the quakespasm pixel guard is the load-bearing correctness test and runs **before** any STK L2T arm;
+HDMI snapshots are the only STK-side check for mangle.
+
+Note for readers of base1: it has **no set-B per-slot lines** (the AB/`every` bug above), so the
+per-slot DRAM view exists only from `stk-e2bh7` on.
+
+### H7 pre-registered arms
+
+| arm | binary / command | runs | reads |
+|---|---|---|---|
+| h7-stk-base | `export V3D_PCTR=AB`, `export V3D_PHX_PXLOG=8`, `stk-e2bh7 --track=hacienda --numkarts=4 --profile-laps=2` | 1 | the new binary's baseline (+ set-B slot DRAM lines) |
+| h7-stk-linux | + `export V3D_PHX_L2T=linux` | 2 | render ms/f, L2T memory reads (ID 76), core reads, per-slot DRAM, `tlb_skip` |
+| h7-stk-nohand | + `export V3D_PHX_L2T=nohand` | 1, after linux passes | as above + wedges |
+| h7-stk-l2c | + `export V3D_PHX_NO_L2C=1` (L2T mode shipped) | 1 | as above; `h7` line shows `L2CACTL` |
+| h7-qs-fps | `/bin/rpi4-v3d-async -r 1 -m serial -i -k <K>` then `quakespasm-v3da +timedemo demo1`, K = `0x0`, `0xaf`, `0xef`, interleaved | 3 per K | timedemo fps; `qstat` render busy; wedges/err |
+| h7-qs-guard (first) | same with K \| `0x100`: `0x100` ×2, `0x1af` ×1, `0x1ef` ×1 | 4 | `h7-pxcompare.py base1 base2 arm` → `GUARD PASS/FAIL` |
+
+Grading (fixed now): an arm **moves** a quantity if its trial mean differs from its base by > 5 %
+(render ms/frame, fps) or > 10 % (L2T memory reads) and by more than the base trials' spread.
+**Correctness gate** (an arm that fails it is void, whatever its speed): 0 wedges / TIMEOUT /
+DROPPED lines, server `err=0 wedges=0`; STK: `px_black=0`, `px_same` not above base, HDMI snapshots
+look like base; quakespasm: `h7-pxcompare.py` GUARD PASS (≥ 95 % identical on the base-deterministic
+subset, no new black frames). **An STK L2T arm runs only after its quakespasm guard passed.**
+
+| outcome | reading |
+|---|---|
+| linux moves render time/L2T reads by < 5 % / < 10 % | H7 refuted as a GPU-time cause (as predicted); keep Linux's sequence only if it wins CPU time or fps and passes the correctness gate |
+| linux lowers L2T memory reads ≥ 20 % **and** render ≥ 10 % | H7 real: re-fetch after our extra maintenance matters (most likely the TLB/PTE-cache flush) — split with a TLB-only arm next |
+| nohand wedges or corrupts | the pre-CT1 flush is load-bearing, as Linux assumes; never drop it |
+| nohand clean and faster than linux | the handoff flush costs render time; still unsafe without a proof that CT1 cannot see stale tile-list lines |
+| l2c moves anything | the `L2CACTL` write has an effect on 4.2 → drop it (Linux parity) through the normal gate |
+
+Run order suggestion: h7-qs-fps/guard can go first (short, deterministic); the `ez` arm (H2) and
+E2c (same settings on Pi OS — now the most informative comparison, since the render phase is
+shader-issue bound) matter more than H7 for the 3× question.
+
+## Result — base2 + ez1
+
+- **base2** reproduces base1: render 93.7 ms/frame, L2T hit 6.6 %, TMU stalled 78 %, late-Z reject 34.9 %.
+- **ez1** (`V3D_PHX_EZ=1`, upstream early-Z): EZ engaged (3 job slots `ez=LT`, one slot early-Z-clips 51.5 %
+  of quads; late-Z reject 35 → ~25 %), **0 wedges**, but render **91.1 ms/frame, 7.24 fps — unchanged.**
+  ⇒ H2 (overdraw) is real but not what costs the time. The memory/texture path (H1/H7: L2T hit 6.7 %, TMU
+  stalled ~79 %) is now the lead; H7 test design in progress. (ez2, qr1 running.)
