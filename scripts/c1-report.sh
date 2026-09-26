@@ -172,7 +172,14 @@ echo
 # one-shot banner under -DC1_P4_WIDE for exactly this reason, so the log is
 # self-describing and a reader months later needs no access to the binary.
 echo "== probe-offset distribution (tests the fixed-offset premise) =="
-if plain | grep -q 'p4 probe arm = WIDE'; then
+# ⚠ NOT `plain | grep -q`. This script sets `pipefail`, and `grep -q` exits on the
+# FIRST match, which SIGPIPEs sed; pipefail then propagates sed's 141 and the
+# `if` takes the ELSE branch even though the string is present. It is a RACE --
+# standalone the sed often finishes first and it looks fine -- so it fooled a
+# direct test before `bash -x` showed the branch. Left unfixed it would have made
+# every WIDE run read as NARROW, silently: exactly the misreading this guard
+# exists to prevent. `grep -c` consumes all input, so no SIGPIPE.
+if [ "$(plain | grep -c 'p4 probe arm = WIDE')" -gt 0 ]; then
 	echo "   arm: WIDE (4 offsets armed -- the question is answerable in this run)"
 	_off=$(plain | grep -oE 'p4off  = 0x[0-9a-f]+' | grep -oE '0x[0-9a-f]+' | sed 's/^0x0*/0x/' | sort | uniq -c | sort -rn)
 	if [ -z "$_off" ]; then
@@ -308,7 +315,10 @@ else
 		# kernel reclaims the page with no munmap and nothing to count it.
 		for h in $chit; do
 			hs=$(printf '%x' $(( h )))
-			if plain | grep -q "RELEASED pa=0x0*$hs"; then
+			# Same pipefail/grep -q race as the arm check above -- and here the
+			# false branch is the DANGEROUS one: a spurious miss reports "firmware
+			# may still own it", turning benign reuse into an apparent smoking gun.
+			if [ "$(plain | grep -c "RELEASED pa=0x0*$hs")" -gt 0 ]; then
 				echo "       $h: firmware HAD finished (RELEASED logged) -- benign recycling"
 			else
 				echo "       $h: ⚠ NO release logged for this mailbox page -- firmware may still own it"
