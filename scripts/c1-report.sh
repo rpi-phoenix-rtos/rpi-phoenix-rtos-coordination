@@ -172,13 +172,19 @@ echo
 # one-shot banner under -DC1_P4_WIDE for exactly this reason, so the log is
 # self-describing and a reader months later needs no access to the binary.
 echo "== probe-offset distribution (tests the fixed-offset premise) =="
-# ⚠ NOT `plain | grep -q`. This script sets `pipefail`, and `grep -q` exits on the
-# FIRST match, which SIGPIPEs sed; pipefail then propagates sed's 141 and the
-# `if` takes the ELSE branch even though the string is present. It is a RACE --
-# standalone the sed often finishes first and it looks fine -- so it fooled a
-# direct test before `bash -x` showed the branch. Left unfixed it would have made
-# every WIDE run read as NARROW, silently: exactly the misreading this guard
-# exists to prevent. `grep -c` consumes all input, so no SIGPIPE.
+# ⚠ NOT `plain | grep -q`. `plain` is a FUNCTION, so it runs in a SUBSHELL;
+# `grep -q` exits on the first match, SIGPIPEs the sed inside that subshell, and
+# pipefail propagates the subshell's 141 -- so the `if` takes the ELSE branch
+# although the string is present. Deterministic: rc=141 every time.
+#
+# ↩ It is NOT a race, and it is NOT a property of piped greps in general. A
+# direct `sed file | grep -q PAT` returns 0 reliably, because bash does not
+# propagate the SIGPIPE death of a plain external command there. Testing that
+# direct form by hand returned rc=0 repeatedly and led to two wrong explanations
+# before the exact form -- function and all -- reproduced it.
+#
+# Left unfixed it made every WIDE run read as NARROW, silently: exactly the
+# misreading the arm banner exists to prevent. `grep -c` consumes all input.
 if [ "$(plain | grep -c 'p4 probe arm = WIDE')" -gt 0 ]; then
 	echo "   arm: WIDE (4 offsets armed -- the question is answerable in this run)"
 	_off=$(plain | grep -oE 'p4off  = 0x[0-9a-f]+' | grep -oE '0x[0-9a-f]+' | sed 's/^0x0*/0x/' | sort | uniq -c | sort -rn)
