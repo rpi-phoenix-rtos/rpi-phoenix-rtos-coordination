@@ -99,7 +99,14 @@ for log in $(printf '%s\n' "${logs[@]}" | sort); do
 	kmun=${kmun:-0}
 
 	note=""
-	if [ "$frames" -eq 0 ]; then
+	# ⚠ A trial that is still RUNNING has 0 frames too, and calling it VOID would
+	# quietly subtract a live trial from the denominator mid-series -- the exact
+	# way a partial read turns into a wrong verdict. Keyed on the log's mtime,
+	# which a live capture updates continuously.
+	age=$(( $(date +%s) - $(stat -c %Y "$log" 2>/dev/null || echo 0) ))
+	if [ "$age" -lt 120 ] && [ "$frames" -lt 50 ]; then
+		note="RUNNING (${age}s since last write) -- not counted"
+	elif [ "$frames" -eq 0 ]; then
 		note="VOID (0 frames)"
 		void=$((void + 1))
 	elif [ "$arm" = "K" ] && [ "$(grep -ac 'not unmapping closed BOs' "$log")" -eq 0 ]; then
