@@ -64,6 +64,19 @@ if [ "$(grep -ac 'heaps=?' "$log")" -gt 0 ]; then
 	exit 1
 fi
 
+# ⛔ THE THIRD HALF. `hbo` comes from a SECOND weak libphoenix symbol
+# (malloc_c1HeapBoHits), so a build can ship the driver and malloc_c1Pacing while
+# that one stays unresolved. Treating a missing hbo as "field absent" is correct
+# for the first pacing build, which never had it, and WRONG for any later one --
+# there it is a broken instrument reporting as a tidy blank. `munp=` only exists
+# on builds that also have `hbo=`, so it is the marker that tells the two apart.
+if [ "$(grep -ac 'munp=' "$log")" -gt 0 ] && [ "$(grep -ac 'hbo=[0-9]' "$log")" -eq 0 ]; then
+	echo "FAIL: the pace line has munp= (so this build HAS the hbo counter) but no numeric hbo=."
+	echo "      libphoenix's weak malloc_c1HeapBoHits did not resolve -- a stale libc half."
+	echo "      Do NOT read this trial's BO-route result: absent is not zero."
+	exit 1
+fi
+
 SIG='hhi32 = 0x0*8000000[01]|p4got  = 0x0*8000000[01]|= 0x8000000[01][0-9a-f]{8}'
 
 # One pass: the curve, the 90 s baseline, and the last line before any fire.
