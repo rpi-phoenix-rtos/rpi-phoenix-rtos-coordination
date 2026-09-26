@@ -94,8 +94,12 @@ awk '
 		printf "in the first 20%% of a run  : %d   in the last 20%%: %d   (uniform expects %.1f each)\n", lo+0, hi+0, n/5
 		print "---"
 		if (z < -2) {
-			print "verdict: FRONT-LOADED -- the fires cluster early. A per-boot event that is"
-			print "         merely detected later. Longer runs buy nothing; prefer MORE BOOTS."
+			print "verdict: FRONT-LOADED -- the fires cluster early, so the hazard is NOT uniform"
+			print "         in frames. ⚠ That is all this measures. It does NOT choose between a"
+			print "         per-BOOT event and a per-ALLOCATION one whose allocations are themselves"
+			print "         front-loaded; nothing here can separate those two."
+			print "         Either way the bench answer is the same: longer runs buy little, so"
+			print "         prefer MORE BOOTS over more frames per boot."
 		} else if (z > 2) {
 			print "verdict: BACK-LOADED -- fires cluster late. Something accumulates; longer"
 			print "         runs are worth more than their frame count alone suggests."
