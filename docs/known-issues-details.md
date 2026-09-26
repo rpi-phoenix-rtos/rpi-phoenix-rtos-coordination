@@ -109,3 +109,12 @@ address (not provable on netboot, where genet holds one). Known gaps: one `joinw
 as "the first join always fails, 2/2"; `p2e1`, `p2final` and `wifilwip1` all joined on attempt 1), cause unknown (the join already does CLM + `WLC_UP` itself, so
 "needs a scan first" is not it); link loss after a join is not detected, because the daemon's data
 path drops channel-1 event frames.
+
+**2026-09-26 (evening) — link-loss detection** (devices `cf35fce`, lwip `7c509c5`). The daemon's
+data path now reads channel-1 event frames it used to drop: `WLC_E_LINK` down, `WLC_E_DEAUTH(_IND)`,
+`WLC_E_DISASSOC(_IND)` mark the association lost, and `status` reports `joined=0 … losses=N`. The
+netif polls `status` every 3 s while joined and rejoins (with its back-off) on `joined=0`. Verified
+in `wifill1`: the host AP was taken down for 45 s → `association LOST (event 6)` → `lost; rejoining`
+→ joins fail with `setssid=3` (no network) while it is gone → rejoined and a fresh DISCOVER…ACK when
+it returned. The occasional failed join (`setssid=-100`, no event at all) was seen again at the
+first join: 2 of 5 runs, always recovered by the retry.
