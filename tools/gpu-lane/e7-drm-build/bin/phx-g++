@@ -1,0 +1,5 @@
+#!/bin/sh
+# E7: the aarch64-phoenix gcc rejects -pthread (meson's generic threads dep adds it).
+# Phoenix pthreads live in libphoenix, so dropping the flag is exact.
+for a; do shift; [ "$a" = "-pthread" ] || set -- "$@" "$a"; done
+exec /home/houp/phoenix-rpi/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-g++ "$@"

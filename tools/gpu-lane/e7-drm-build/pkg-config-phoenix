@@ -1,0 +1,5 @@
+#!/bin/sh
+# pkg-config restricted to the Phoenix port prefix (+ E7's own install prefix).
+export PKG_CONFIG_LIBDIR=/home/houp/.claude/jobs/c8f1289c/tmp/e7/prefix/lib/pkgconfig:/home/houp/.claude/jobs/c8f1289c/tmp/e7/prefix/share/pkgconfig:/home/houp/phoenix-rpi/.buildroot/_build/aarch64a72-generic-rpi4b/lib/pkgconfig:/home/houp/phoenix-rpi/.buildroot/_build/aarch64a72-generic-rpi4b/share/pkgconfig
+unset PKG_CONFIG_PATH
+exec /usr/bin/pkg-config --static "$@"

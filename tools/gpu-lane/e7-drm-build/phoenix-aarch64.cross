@@ -1,0 +1,25 @@
+# E7 meson cross file for aarch64-phoenix (Pi 4). Host-side study only.
+[binaries]
+c = '/home/houp/.claude/jobs/c8f1289c/tmp/e7/bin/phx-gcc'
+cpp = '/home/houp/.claude/jobs/c8f1289c/tmp/e7/bin/phx-g++'
+ar = '/home/houp/phoenix-rpi/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-gcc-ar'
+nm = '/home/houp/phoenix-rpi/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-nm'
+strip = '/home/houp/phoenix-rpi/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-strip'
+objcopy = '/home/houp/phoenix-rpi/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-objcopy'
+pkg-config = '/home/houp/.claude/jobs/c8f1289c/tmp/e7/pkg-config-phoenix'
+
+[host_machine]
+system = 'phoenix'
+cpu_family = 'aarch64'
+cpu = 'cortex-a72'
+endian = 'little'
+
+[properties]
+needs_exe_wrapper = true
+
+[built-in options]
+c_args = ['--sysroot=/home/houp/phoenix-rpi/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot/', '-B/home/houp/phoenix-rpi/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot/lib/', '-iprefix', '/home/houp/phoenix-rpi/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot/', '-mcpu=cortex-a72', '-mtune=cortex-a72', '-mstrict-align', '-mno-outline-atomics', '-fomit-frame-pointer', '-ffunction-sections', '-fdata-sections', '-I/home/houp/phoenix-rpi/.buildroot/_build/aarch64a72-generic-rpi4b/include']
+cpp_args = ['--sysroot=/home/houp/phoenix-rpi/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot/', '-B/home/houp/phoenix-rpi/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot/lib/', '-iprefix', '/home/houp/phoenix-rpi/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot/', '-mcpu=cortex-a72', '-mtune=cortex-a72', '-mstrict-align', '-mno-outline-atomics', '-fomit-frame-pointer', '-ffunction-sections', '-fdata-sections', '-I/home/houp/phoenix-rpi/.buildroot/_build/aarch64a72-generic-rpi4b/include']
+c_link_args = ['--sysroot=/home/houp/phoenix-rpi/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot/', '-B/home/houp/phoenix-rpi/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot/lib/', '-L/home/houp/phoenix-rpi/.buildroot/_build/aarch64a72-generic-rpi4b/lib', '-Wl,-z,max-page-size=0x1000']
+cpp_link_args = ['--sysroot=/home/houp/phoenix-rpi/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot/', '-B/home/houp/phoenix-rpi/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot/lib/', '-L/home/houp/phoenix-rpi/.buildroot/_build/aarch64a72-generic-rpi4b/lib', '-Wl,-z,max-page-size=0x1000']
+default_library = 'static'
