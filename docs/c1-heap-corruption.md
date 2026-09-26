@@ -17,7 +17,7 @@ had never been. Current as of the `c1cc` series and build 2 of the pacing instru
 | **Where it shows** | Almost only SuperTuxKart (STK 27/552 historically; quake3 1/84; none in quake2/quakespasm/vkquake). |
 | **How to make it happen** | **Clear the Mesa shader cache before the run** — see §3. Cold cache: fired in 4 of 5 trials. Warm cache: 0 of 5. |
 | **Leading picture** | A **stale physical pointer into a recycled contiguous block** — a device (DMA master) writing back to memory it no longer owns, which malloc has since received. Not proven. |
-| **Next instruments** | Build 3: `hpalo/hpahi/hpalast` (is the victim band special?) and `p4age` (when did the write happen?). Then, if the band is special: a kernel-side log of every `MAP_CONTIGUOUS` allocation. |
+| **Next instruments** | Build 3 answered both of its questions (§4, `c1cold`, 2026-09-26). Next: log the physical address of every 13-page (`0xd000`) heap at creation — does one heap *class* land in the 880 KiB victim window? — and the process-exit-with-a-property-call-in-flight path, the one mailbox release route no counter sees. |
 
 ---
 
@@ -95,10 +95,13 @@ through the allocator, all in the startup window where the fire lands.
 | **The cold-cache knob** | §3; 10/10 cache→mode, 4/5 vs 0/5 fired | strong |
 | **Fires land ~90 s after the first rendered frame**, not at a frame count and not at race start | 33 archived fires; across the bimodal race-start split the frame count differs 1.9× while elapsed time agrees to 3 %; fire-time-on-race-start slope −0.21 ± 0.38 (rejects race-tracking, p ≈ 0.005); reproduced out-of-sample (88.9 s, 98.6 s, 113.8 s) | strong — but see the caveat below |
 | **The fire coincides with the END of heap growth** | pre-registered flatten test passed **3/3**: 4245.8 → 0.0, 2391.0 → 0.0, 4719.5 → 0.3 kB/s; heap creation stops at t ≈ 79–88 s and the fire follows within ~10–25 s | strong for coincidence; causation open |
-| **Closed-BO pages are enriched among victims, not exclusive** | 1 of 5 attributed victims sat on a page the V3D driver had closed, against **~2 %** of all heaps (`hbo`/`hbop` = 153–163 of 7920–8331) — ~12× — but P(≥1 of 5 \| 2 %) = 0.096 | suggestive, **n = 5** |
+| **Closed-BO pages are enriched among victims, not exclusive** | **2 of 9** attributed victim heaps sat on pages the V3D driver had closed (1 of 5 through `c1cc`, 1 of 4 in `c1cold`), against **~2–3 %** of all heaps (`hbo`/`hbop`) | suggestive, **n = 9** |
 | **Within-run control** | `c1ccC2`: two victims minutes apart, one on a closed-BO page (`p4bopa = 1`), one not (`hbopa = 0`) | one run |
 | **Recycling starts long before the fire window** | first pool-declined unmap, first physical-frame reuse and first GPU-VA reuse all at **8.6 s**; first heap on a closed-BO page at **20.8 s** | strong |
 | **The victim page head keeps changing while its chunk is free** (`p4ckOK = 0`) | the page-head checksum written at free time no longer matches at the break, on every poison-path hit read so far (4/4 in the first run that had it, 4/4 in `c1coldC1`) — by the instrument's definition a **live buffer the allocator believes is free**, not an isolated four-byte store into stale memory | consistent; changes what "the write" is (§6) |
+| **The victim band is special** | `c1cold` (6 cold trials, build 3): all 6 victim pages in `0x08408000`–`0x084e3000` — 880 KiB, 4.03–4.89 MiB above `RAM_ADDR` — twice as adjacent pairs, while heaps span essentially all RAM (`0x048c4000`–`0xfaf5e000` every trial) and the newest heap at the plateau is never in the band (640 MiB–1.13 GiB) | strong for "not just where late heaps land"; ⚠ does not exclude one heap class (every victim heap is `0xd000`) landing there |
+| **The write is old by the time it is seen** | `p4age = 0xffffffff` on 16/16 poison-path hits in `c1cold`: each victim page's poisoning had been evicted from the 256-entry age table | supports "~90 s is a detection time"; measures table churn, not seconds |
+| **C1 can crash with no detector line** | `c1coldC4`: STK EL0 Data Abort, `far=0x800000010c7e5668`, in `irr::scene::ISceneNode::OnAnimate`, 0 signature lines — `c1-idle-table.sh` counts this as a fire since 2026-09-26 | one run |
 
 ⚠ **The "~90 s" is a DETECTION time.** The poison is written when a chunk is freed and read only
 when the allocator next walks it — and when heap growth stops, the allocator starts reusing free
@@ -161,8 +164,8 @@ a recycled contiguous block**, and a closed BO is merely the one previous owner 
 
 | question | instrument | status |
 |---|---|---|
-| Is the 0.86–5.83 MiB band special, or just where *late* heaps land? (`capa` only sees the first 64 heaps — startup, at 58–77 MiB.) | `hpalo` / `hpahi` / `hpalast` on the pace line | **build 3** |
-| When did the write happen, versus when was it seen? | `p4age` / `p4tick` — poison-write tick per page, reported at the break | **build 3** |
+| Is the 0.86–5.83 MiB band special, or just where *late* heaps land? (`capa` only sees the first 64 heaps — startup, at 58–77 MiB.) | `hpalo` / `hpahi` / `hpalast` on the pace line | ✅ **answered** — special (`c1cold`, §4) |
+| When did the write happen, versus when was it seen? | `p4age` / `p4tick` — poison-write tick per page, reported at the break | ✅ **answered** — seen long after (`c1cold`, §4) |
 | Who owned the victim page before malloc, when it was not a V3D BO? | kernel-side log of every `MAP_CONTIGUOUS` allocation's physical range | not started — waits on the band answer |
 | Does the late heap burst matter? `c1ccC3` alone had a second burst at t ≈ 290 s in which ~1 new heap in 3 landed on a just-closed BO page (2.4 % at startup). | re-observe with the knob | one event; may explain the archive's late fatal cluster |
 | Which DMA masters are live during a run? | PA-logging for genet, ADMA2/eMMC, HVS, rpivid | not started |
