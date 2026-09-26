@@ -3,3 +3,4 @@ ipcprobe/ipcprobe
 kmsprobe/kmsprobe
 exportprobe/exportprobe
 exportprobe/exportprobe-*
+portdeath/portdeath
