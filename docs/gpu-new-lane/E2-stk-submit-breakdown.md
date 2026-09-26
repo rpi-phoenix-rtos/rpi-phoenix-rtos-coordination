@@ -209,3 +209,26 @@ bytes of UART per 5 s (booked to R).
 
 *(empty until the first trials; append the per-trial table from `e2-summarize.py`, the verdict, and
 the decision taken.)*
+
+## Result — trial 1 (prof-warm, build 8, 2026-09-26, `rpi4b-uart-20260926-192136-e2-prof-W1.log`)
+
+68 gameplay windows, 2545 frames, **7.38 fps, 135.4 ms/frame**, 8.0 CL submits/frame; self-checks
+pass (phase-sum/ioctl 1.000, counter/wall 1.0000, instrument cost 0.0 %).
+
+| share | ms/frame | % |
+|---|---|---|
+| **G** GPU waits | 94.56 (bin 3.21, **render 91.35**) | 69.8 |
+| **M** cache/TLB maintenance (fix-A 0.02, TLB 0.00) | 0.28 | 0.2 |
+| **C** CPU outside the winsys | 40.37 | 29.8 |
+| B / P / R | 0.04 / 0.16 / 0.01 | ~0.1 |
+
+**Pre-registered verdict: SERIAL MIX** — CPU and GPU comparable and strictly serial. Upper bounds:
+async submit (U1) ×1.43; U1 + bin‖render (U2) ×1.48 (bin is small); dropping fix-A/TLB (U3) ×1.00.
+So M1 is worth ≤ ~1.4× for STK, and cache maintenance is **not** a lever.
+
+⚠ **The bigger finding:** the V3D **render phase takes 91 ms per frame** at a measured 500 MHz
+V3D clock. Even with perfect CPU/GPU overlap STK would be capped near 11 fps, while Raspberry Pi OS
+runs it at 30+ — and STK's fps is known to be resolution-independent, so this is not fill rate. The
+render phase itself is ~3× too slow → experiment **E2b** (`E2b-v3d-render-slowness.md`) investigates
+tiling (RASTER vs UIF), MMU/cache configuration, per-job flushes, shader build flags and V3D
+performance counters. Trials 2–4 (shipped-warm overhead check, two more prof-warm) are running.
