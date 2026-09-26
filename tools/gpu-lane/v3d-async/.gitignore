@@ -1,3 +1,4 @@
 # build.sh output (rebuild with tools/gpu-lane/v3d-async/build.sh)
 out/
 out-p2/
+out-p*/
