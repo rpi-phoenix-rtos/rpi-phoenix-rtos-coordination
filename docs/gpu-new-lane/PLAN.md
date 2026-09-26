@@ -41,12 +41,15 @@ lane**, then migrate every GPU user and delete the old lane.
 
 | ID | Question | File | Status |
 |---|---|---|---|
-| E1 | Can the kernel expose server-owned pages under an oid for zero-copy, refcounted `mmap(fd)`? | [E1-vm-object-export.md](E1-vm-object-export.md) | ▶ code |
-| E2 | What is STK's ~88 % "in submit" made of? | [E2-stk-submit-breakdown.md](E2-stk-submit-breakdown.md) | ▶ code |
-| E3 / E6 | Does the pinned firmware honour `SET_PLANE` + raise SMI vblank IRQs? Which physical range can it scan? | [E3-firmware-planes-vblank.md](E3-firmware-planes-vblank.md) | ▶ code |
-| E5 | Can a server `msgRespond` later from another thread? Does `block_ms` event blocking work? | [E5-deferred-reply.md](E5-deferred-reply.md) | ▶ code |
+| E1 | Can the kernel expose server-owned pages under an oid for zero-copy, refcounted `mmap(fd)`? | [E1-vm-object-export.md](E1-vm-object-export.md) | code done (patch in `tools/gpu-lane/exportprobe/`); ★ found a real kernel bug (contiguous-object rb-remove empties the object tree) — fixed alone (kernel `d0fb0ca9`), build 8 + C1 A/B queued; E1 itself → build 9 |
+| E2 | What is STK's ~88 % "in submit" made of? | [E2-stk-submit-breakdown.md](E2-stk-submit-breakdown.md) | code done (devices `0425f93`, default build byte-identical; clone `stk-prof`); Pi runs queued on build 8 |
+| E3 / E6 | Does the pinned firmware honour `SET_PLANE` + raise SMI vblank IRQs? Which physical range can it scan? | [E3-firmware-planes-vblank.md](E3-firmware-planes-vblank.md) | code done; `SET_PLANE` (60 B) exceeds `/dev/vcmbox` (48 B) → additive `vcmbox-xl.patch` goes into build 9 |
+| E5 | Can a server `msgRespond` later from another thread? Does `block_ms` event blocking work? | [E5-deferred-reply.md](E5-deferred-reply.md) | kernel reading definitive: yes (same process); `read()` blocks, `poll()` 0–20 ms late; a dead server wedges parked clients. Pi run queued (build 7) |
 
 ## Log
 
 - 2026-09-26: plan created; four M0 agents launched in parallel (code only); Pi cycles queued behind
   the running `c1sd` series.
+- 2026-09-26 19:00: all four M0 agents delivered. Queue: E5 → build 8 (tree fix) → `c1tf` ×6 → E2 →
+  build 9 (E1 + vcmbox-xl) → E1 + E3 probes. Started in parallel: M1 design + skeleton (new binary,
+  old `rpi4-v3d` untouched) and E7 (libdrm + Mesa GBM/EGL build study, own build dir).
