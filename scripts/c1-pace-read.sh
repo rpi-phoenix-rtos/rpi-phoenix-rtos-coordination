@@ -167,6 +167,15 @@ awk -v sig="$SIG" '
 		print "     a malloc heap header. The rest are the driver half and prove nothing alone."
 		print "  ⚠ pool should read 0: the boPool is opt-in (V3D_BO_POOL=1) and OFF by default,"
 		print "     so every close unmaps. A non-zero pool means this was not a default trial."
+		# ⛔ The wrap check, free on the same line: with the pool off every close
+		# unmaps, so munc+munp IS the total close count, and c1_closed holds 512.
+		if (MC[n] >= 0 && MP[n] >= 0) {
+			tot = MC[n] + MP[n]
+			if (tot > 512)
+				printf "  ⛔ closes = %d > 512: the closed-BO ring HAS WRAPPED. hbo=0 means \"not among\n     the last 512 closes\", NOT \"never\". Do not read a zero as an elimination.\n", tot
+			else
+				printf "  ✔ closes = %d <= 512: the closed-BO ring has not wrapped, so hbo=0 would be a\n     real negative over the whole run.\n", tot
+		}
 
 		printf "\nBASELINE at t = %.1f s (nearest to 90 s):\n", T[best]/1000.0
 		printf "  frames=%d  boc=%d  bore=%d  var=%d  munc=%d  munp=%d  pool=%d  hbo=%d/%d  heaps=%d  heapkb=%d\n",
