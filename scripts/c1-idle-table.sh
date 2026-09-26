@@ -65,14 +65,31 @@ for log in $(printf '%s\n' "${logs[@]}" | sort); do
 	# EL1 entries only, and NOT halved: every EL0 dump reaches the UART twice but
 	# an EL1 one does not, and halving a kernel fault could round it to zero.
 	kflt=$(grep -acE 'Exception #[0-9]+ .*EL1|Data Abort.*EL1' "$log")
+	# Total BO unmaps at the last pace line: 0 is the signature of an armed K trial.
+	kmun=$(grep -ao 'munc=[0-9]* munp=[0-9]*' "$log" | tail -1 | tr -dc '0-9 ' | awk '{print ($1 + $2) + 0}')
+	kmun=${kmun:-0}
 
 	note=""
 	if [ "$frames" -eq 0 ]; then
 		note="VOID (0 frames)"
 		void=$((void + 1))
-	elif [ "$arm" = "K" ] && [ "$(grep -ac 'V3D_KEEP_CLOSED_BO=1' "$log")" -eq 0 ]; then
+	elif [ "$arm" = "K" ] && [ "$(grep -ac 'not unmapping closed BOs' "$log")" -eq 0 ]; then
 		# ⛔ Not a clean K result -- the arm never armed.
-		note="VOID (K arm NOT armed: no banner)"
+		#
+		# ⚠ MATCH THE DRIVER'S BANNER, NOT THE VARIABLE NAME. The first version
+		# grepped for `V3D_KEEP_CLOSED_BO=1`, which also matches psh's echo of the
+		# command line -- so it passed on the string the SHELL printed rather than
+		# the one the driver printed, and would have graded a trial where the env
+		# var never reached the winsys as properly armed. Measured on c1idleK1:
+		# 2 matches for the variable name, only one of them the driver's.
+		note="VOID (K arm NOT armed: no driver banner)"
+		void=$((void + 1))
+	elif [ "$arm" = "K" ] && [ "$kmun" -ne 0 ]; then
+		# ★ The MECHANISTIC guard, which is stronger than any banner: with
+		# KEEP_CLOSED_BO=1 the driver never unmaps, so munc+munp must be 0. A K
+		# trial that unmapped anything was not running the arm it claims to,
+		# whatever the banner says.
+		note="VOID (K arm banner present but munc+munp=$kmun, not 0)"
 		void=$((void + 1))
 	else
 		key="$arm $mode"
