@@ -118,3 +118,19 @@ in `wifill1`: the host AP was taken down for 45 s → `association LOST (event 6
 → joins fail with `setssid=3` (no network) while it is gone → rejoined and a fresh DISCOVER…ACK when
 it returned. The occasional failed join (`setssid=-100`, no event at all) was seen again at the
 first join: 2 of 5 runs, always recovered by the retry.
+
+**2026-09-27 00:40 — first-join failure: a lead, and a pre-registered test** (devices branch
+`wifi/join-wake`, `16d4d20`). The new `JOIN-RC` line splits the four joins recorded with it
+cleanly: both failures (`core-g0`, `core-g1`, 250 and 500 MHz core clock) have `events=0 em=-1041`,
+the transport failing the CMD53 write of the join's *first* command (`event_msgs`) while every later
+command returns 0; both successes have `events=4 em=0`. So the firmware was never asked for join
+events. Hypothesis: the chip dozes or drops its HT backplane clock while the host is idle, and
+brcmfmac's per-control-frame clock request (`brcmf_sdio_clkctl(CLK_AVAIL)`) is missing here. The
+branch adds `diag_chipWake()` (KSO until DEVON, then HT_AVAIL_REQ → HT_AVAIL) at join start plus one
+wake-and-resend for a failed control-frame write, and logs `JOIN-WAKE clkcsr=.. ht=.. resent=..`.
+*Test (pre-registered):* 6 netboot boots, each auto-joining from `/etc/wifi.conf`.
+PASS = 0 of 6 first joins with `setssid=-100` **and** `ht=1` on every JOIN-WAKE line.
+The hypothesis is **confirmed** if some boots show `clkcsr` without bit 0x80 at entry (the chip really was
+off HT), and **refuted** if every entry already shows HT_AVAIL yet a join still fails — then the
+-1041 is something else (e.g. SDHCI state left by the previous transfer), and the resend count says
+whether the retry masked it.
