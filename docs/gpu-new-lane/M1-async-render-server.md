@@ -934,3 +934,17 @@ completions. **fps comparisons use IRQ mode**; poll mode is a correctness fallba
 ## Result
 
 *(to be filled after the §12 cycle)*
+
+## Result — part-1 ping (cycle `m1-v3da-ping`, build 8, 2026-09-26 19:55): **PASS, 0 faults**
+
+- Server detached (`V3DA srv detached pid=26`), powered V3D through `/dev/vcmbox`
+  (`grafx=0x1000->0x1040`, `asb_m/asb_s=ok`), identity `core0=0x04443356 … match=1`, clock
+  500 MHz (measured 499.99 MHz).
+- Poll mode: connect, info, fence page (heartbeat moving), BO create → zeroed → checksum → close →
+  quarantine passed → pooled (never returned to the kernel), stale handle `-22`, NOP fence wait
+  19 ms, timeout `-110` at 100 ms, `irqtest ok=1` (status seen, handler not yet registered).
+- **IRQ mode (`irq-on`): the V3D interrupt reaches a userspace server** — `irqtest mode=irq
+  handler_delta=1`, `irq_count=1`, no storm; same checks pass again. Masks after unmask:
+  `core_msk=0x00ff0058 hub_msk=0x00000005`.
+- `ipc_waits=87`, `resets=0`, `parked_max=4`. Four `V3DAPING RESULT … verdict=PASS` lines.
+⇒ Part 2 (real jobs) can use IRQ mode; P2-A queued.
