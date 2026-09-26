@@ -51,7 +51,12 @@ fi
 echo "syntax-check-v3d: $(basename "$src")  (real mesa-port flags, no artifact)"
 
 PY_SRC="$src" PY_BUILDER="$builder" python3 - <<'PYEOF'
-import importlib.util, os, subprocess, sys
+import sys
+# Do NOT leave a __pycache__ in the sibling repo: this imports a module that
+# lives inside phoenix-rtos-devices, and a stray __pycache__/ shows up as
+# untracked there. Every turn is supposed to end with the siblings clean.
+sys.dont_write_bytecode = True
+import importlib.util, os, subprocess
 
 src = os.environ["PY_SRC"]
 builder = os.environ["PY_BUILDER"]
