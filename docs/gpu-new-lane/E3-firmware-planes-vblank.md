@@ -418,8 +418,13 @@ applies, and the resulting M2 decision)*
 - **Vsynced flips:** 1201 in 20 s = **60/s, 0 missed**, `SET_PLANE` p50 100 µs (p99 2.1 ms), overlay p50 75 µs.
 - **E4 throughput (vsync off):** **12 443 flips/s**, `SET_PLANE` p50 78 µs, p99 112 µs — the plane call is not
   a bottleneck; the published "44 vs 141 fps under fkms" gap is not the mailbox.
-- **E6 range:** low buffers (0x2c000000), the fb's second buffer, and **high memory (0xf8000000, above 1 GiB)**
-  all scan out with the raw PA; the 0xC0000000 alias also works where it fits. Contiguous allocation: a single
+- **E6 range:** low buffers (0x2c000000) and the fb's second buffer scan out correctly with the raw PA and
+  with the 0xC0000000 alias. ↩ **Correction (same night, from the HDMI snapshot, found by the M2 agent):** the
+  `range hi` buffer at 0xf8000000 was accepted into the display list but showed **black noise**, not its
+  cyan/black pattern — the firmware keeps only the low 30 bits, so it scanned VideoCore memory at 0x38000000.
+  **Scan-out reaches only the low 1 GiB**; I had graded `hi` from the display-list word alone.
+- **Update point:** a `SET_PLANE` takes effect at a fixed point ~1.6 ms before the next vblank (48/48 samples);
+  calls never block for vblank and only the last one before that point wins (so no tearing flips). Contiguous allocation: a single
   256 MiB block succeeds; 32 × 8 MiB chunks (24 below 1 GiB, 8 between 1–4 GiB).
 - Every mode restored the firmware fb (`restore done fb_in_dlist=1`). 0 faults.
 ⇒ **M2 Stage A (firmware planes + SMI vblank) is viable**; no native HVS needed for M2–M6.
