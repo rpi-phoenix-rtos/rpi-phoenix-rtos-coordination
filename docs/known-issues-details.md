@@ -119,7 +119,7 @@ in `wifill1`: the host AP was taken down for 45 s → `association LOST (event 6
 it returned. The occasional failed join (`setssid=-100`, no event at all) was seen again at the
 first join: 2 of 5 runs, always recovered by the retry.
 
-**2026-09-27 00:40 — first-join failure: a lead, and a pre-registered test** (devices branch
+**2026-09-27 00:15 — first-join failure: a lead, and a pre-registered test** (devices branch
 `wifi/join-wake`, `16d4d20`). The new `JOIN-RC` line splits the four joins recorded with it
 cleanly: both failures (`core-g0`, `core-g1`, 250 and 500 MHz core clock) have `events=0 em=-1041`,
 the transport failing the CMD53 write of the join's *first* command (`event_msgs`) while every later
