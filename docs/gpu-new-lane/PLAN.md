@@ -34,7 +34,7 @@ lane**, then migrate every GPU user and delete the old lane.
 | # | What | Status |
 |---|---|---|
 | **M0** | E1 kernel export prototype; E2 STK submit breakdown; E3/E6 firmware planes + SMI vblank + scanout range; E5 deferred reply / event blocking | ▶ started 2026-09-26 |
-| M1 | async multi-queue render server (`rpi4-v3d` evolved), fence page, syncobjs; cloned games on it | — |
+| M1 | async multi-queue render server (`rpi4-v3d` evolved), fence page, syncobjs; cloned games on it | ▶ design + part 1 skeleton + part 2 submission written (`tools/gpu-lane/v3d-async/`, [M1 doc](M1-async-render-server.md)); `quakespasm-v3da` clone links; Pi: part-1 ping (queue2b) → P2-A smoke (queue4) → P2-B/C timedemo A/B |
 | M2 | `rpi4-kms` Stage A: firmware planes, vblank events, atomic flips, dumb-BO pool, fbdev emulation | — |
 | M3 | kernel export productised; libdrm-phoenix; Mesa GBM/EGL; SDL2 KMSDRM | — |
 | M4 | Xorg + modesetting + glamor + DRI3/Present | — |
@@ -47,9 +47,11 @@ lane**, then migrate every GPU user and delete the old lane.
 | ID | Question | File | Status |
 |---|---|---|---|
 | E1 | Can the kernel expose server-owned pages under an oid for zero-copy, refcounted `mmap(fd)`? | [E1-vm-object-export.md](E1-vm-object-export.md) | code done (patch in `tools/gpu-lane/exportprobe/`); ★ found a real kernel bug (contiguous-object rb-remove empties the object tree) — fixed alone (kernel `d0fb0ca9`), build 8 + C1 A/B queued; E1 itself → build 9 |
-| E2 | What is STK's ~88 % "in submit" made of? | [E2-stk-submit-breakdown.md](E2-stk-submit-breakdown.md) | code done (devices `0425f93`, default build byte-identical; clone `stk-prof`); Pi runs queued on build 8 |
+| E2 | What is STK's ~88 % "in submit" made of? | [E2-stk-submit-breakdown.md](E2-stk-submit-breakdown.md) | ✅ **SERIAL MIX**: 70 % GPU wait (render **91 ms/frame**), 30 % CPU, maintenance 0.2 %; async submit ≤ ×1.43 for STK; clone overhead 0.9 %. ★ The V3D render phase is ~3× too slow → **E2b** |
 | E3 / E6 | Does the pinned firmware honour `SET_PLANE` + raise SMI vblank IRQs? Which physical range can it scan? | [E3-firmware-planes-vblank.md](E3-firmware-planes-vblank.md) | code done; `SET_PLANE` (60 B) exceeds `/dev/vcmbox` (48 B) → additive `vcmbox-xl.patch` goes into build 9 |
-| E5 | Can a server `msgRespond` later from another thread? Does `block_ms` event blocking work? | [E5-deferred-reply.md](E5-deferred-reply.md) | kernel reading definitive: yes (same process); `read()` blocks, `poll()` 0–20 ms late; a dead server wedges parked clients. Pi run queued (build 7) |
+| E2b | Why is the V3D render phase 91 ms/frame at 500 MHz, resolution-independent? | [E2b-v3d-render-slowness.md](E2b-v3d-render-slowness.md) | ▶ analysis agent |
+| E7 | Does libdrm + Mesa GBM/EGL build for Phoenix? | [E7-drm-userspace-build.md](E7-drm-userspace-build.md) | ✅ compiles; static GBM+EGL+GLES+KMS program links; seams + libphoenix gaps (agent in worktrees) |
+| E5 | Can a server `msgRespond` later from another thread? Does `block_ms` event blocking work? | [E5-deferred-reply.md](E5-deferred-reply.md) | ✅ PASS: RTT 31 µs, deferred replies 32/32, fence WAIT 23 µs, blocking read 20 µs, `poll()` 0–20 ms (needs `block_ms` change for M4/M6); dead-server wedge fixed on branch `gpu-lane/port-death` (build 9) |
 
 ## Log
 
@@ -61,3 +63,7 @@ lane**, then migrate every GPU user and delete the old lane.
 - 19:05: E7 done — libdrm + Mesa DRM path compile; a static GBM+EGL+GLES+KMS program links
   ([E7-drm-userspace-build.md](E7-drm-userspace-build.md)). E5 first run void (psh has no `&`);
   probe fixed, re-run queued. libphoenix-gaps agent started in worktrees (`gpu-lane/libc-gaps`).
+- 19:55: E5 PASS; E2 = SERIAL MIX (render phase 91 ms/frame is the real gap → E2b agent); c1tf shows
+  the object-tree fix is not C1's cause (fix kept); M1 part 2 written; port-death kernel fix on a
+  branch. Queues: M1 ping → portdeath baseline → build 9 (E1 + port-death + vcmbox-xl) → smoke →
+  E1/port-death probes → E3 → M1 P2-A.
