@@ -9,6 +9,8 @@
 #  3. glib: shims g_string_replace against the host GLib's own (>= 2.68)
 #  4. sync: compat C11 threads + semaphores (foot's render-worker pattern) + wcs*
 #  5. epoll_pwait: compat epoll_pwait over the M6 epoll emulation, foot's signal pattern
+#  6. timerfd_read: read() of an emulated timer (foot's delayed-render timers; the m7b
+#     failure), with a negative control built without the read() wrapper
 # Needs a build.sh run first (the extracted wlroots tree).
 set -eu
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -57,5 +59,23 @@ cc ${CF} -DWLPHX_HAVE_ITIMERSPEC -I"${top}/compat/include" -I"${W}/compat/includ
 	"${W}/compat/src/wlphx_epoll.c" "${top}/compat/src/lwphx_epoll_pwait.c" "${here}/epoll_pwait_test.c" \
 	-o "${out}/epoll_pwait_test" -lpthread
 t "${out}/epoll_pwait_test"
+# timerfd read(): the fix (wrapper linked) must PASS; without the wrapper (the m7b binaries)
+# the FOOT ROWs must fail -- the negative control passes when the plain build FAILS
+# -U_FORTIFY_SOURCE: a fortified read() becomes __read_chk, which --wrap=read does not see
+TF="-U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -DWLPHX_HAVE_ITIMERSPEC -I${top}/compat/include -I${W}/compat/include -Wl,--wrap=close -Wl,--wrap=write"
+cc ${CF} ${TF} -DNEGATIVE_NAME='"timerfd_read"' -Wl,--wrap=read "${W}/compat/src/wlphx_epoll.c" \
+	"${top}/compat/src/lwphx_read.c" "${here}/timerfd_read_test.c" -o "${out}/timerfd_read_test" -lpthread
+t "${out}/timerfd_read_test"
+cc ${CF} ${TF} -DNEGATIVE_NAME='"timerfd_read-without-wrapper"' "${W}/compat/src/wlphx_epoll.c" \
+	"${here}/timerfd_read_test.c" -o "${out}/timerfd_read_nowrap" -lpthread
+neg="$("${out}/timerfd_read_nowrap" 2>&1 || true)"
+nfail=$(printf '%s\n' "${neg}" | grep -c '^FAIL .*FOOT ROW' || true)
+if [ "${nfail}" -ge 3 ]; then
+	echo "LWHOST timerfd_read-negative-control foot_rows_failing=${nfail} verdict=PASS"
+else
+	echo "LWHOST timerfd_read-negative-control foot_rows_failing=${nfail} verdict=FAIL"
+	rc=1
+fi
+
 echo "LWHOST all verdict=$([ "${rc}" = 0 ] && echo PASS || echo FAIL)"
 exit "${rc}"

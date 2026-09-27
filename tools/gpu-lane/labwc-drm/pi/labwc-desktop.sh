@@ -32,6 +32,10 @@
 #   /bin/rpi4-kms-g7 -G -p 96        (add -C to hand the console keyboard to labwc)
 #   /bin/shmsrv -v                   (memfd_create/shm_open backing: wl_shm pools, keymaps)
 #
+# FOOT, FUZZEL, SWAYBG (client binaries, default /bin/foot, /bin/fuzzel, /bin/swaybg; with
+# another value the configuration copy in /tmp/labwc-conf has /bin/foot etc. replaced in
+# rc.xml, menu.xml and autostart, so labwc's own launches use it too -- e.g. the m7b2
+# rebuilds /bin/foot-2, /bin/fuzzel-2 with /bin/labwc-2),
 # Environment knobs: LABWC (binary; /bin/tinywl = wlroots' tinywl instead), CONF_DIR (labwc -C, default
 # /etc/xdg/labwc = the m7a/m7b configuration, /etc/xdg/labwc-m7c = m7c's; for any
 # client other than autostart the script uses a copy without the autostart file), HOLD
@@ -60,6 +64,9 @@ CONF_DIR=${CONF_DIR:-/etc/xdg/labwc}
 HOLD=${HOLD:-30}
 VERBOSE=${VERBOSE:-1}
 FOOT_LOG=${FOOT_LOG:-info}
+FOOT=${FOOT:-/bin/foot}
+FUZZEL=${FUZZEL:-/bin/fuzzel}
+SWAYBG=${SWAYBG:-/bin/swaybg}
 HW_CURSORS=${HW_CURSORS:-0}
 
 export HOME=/root
@@ -92,10 +99,10 @@ case "${RENDERER}" in
 esac
 case "${CLIENT}" in
 	shm) CMD="/bin/weston-simple-shm ${CLIENT_ARGS}" ;;
-	foot) CMD="/bin/foot --log-level=${FOOT_LOG} ${CLIENT_ARGS}" ;;
-	colors) CMD="/bin/foot --log-level=${FOOT_LOG} ${CLIENT_ARGS} -e /bin/bash /bin/m7b-colors.sh" ;;
-	mc) CMD="/bin/foot --log-level=${FOOT_LOG} ${CLIENT_ARGS} -e /bin/mc /" ;;
-	fuzzel|desktop) CMD="/bin/fuzzel --log-level=${FOOT_LOG} ${CLIENT_ARGS}" ;;
+	foot) CMD="${FOOT} --log-level=${FOOT_LOG} ${CLIENT_ARGS}" ;;
+	colors) CMD="${FOOT} --log-level=${FOOT_LOG} ${CLIENT_ARGS} -e /bin/bash /bin/m7b-colors.sh" ;;
+	mc) CMD="${FOOT} --log-level=${FOOT_LOG} ${CLIENT_ARGS} -e /bin/mc /" ;;
+	fuzzel|desktop) CMD="${FUZZEL} --log-level=${FOOT_LOG} --terminal=${FOOT} ${CLIENT_ARGS}" ;;
 	autostart|none) CMD="" ;;
 	*) echo "LABWC FAIL unknown client ${CLIENT}"; exit 2 ;;
 esac
@@ -106,13 +113,25 @@ rm -f "${XDG_RUNTIME_DIR}"/wayland-* 2>/dev/null
 
 # Only the autostart and desktop clients run labwc's autostart file: the others use a
 # copy of the configuration without it, so exactly one client is up.
+# Other client binaries (FOOT/FUZZEL/SWAYBG) also mean a copy: their paths are replaced in
+# it with bash alone (the export has no sed).
+files="rc.xml menu.xml environment"
+{ [ "${CLIENT}" = autostart ] || [ "${CLIENT}" = desktop ]; } && files="${files} autostart"
 conf="${CONF_DIR}"
-if [ "${CLIENT}" != autostart ] && [ "${CLIENT}" != desktop ]; then
+if [ "${CLIENT}" != autostart ] && [ "${CLIENT}" != desktop ] || [ "${FOOT}" != /bin/foot ] ||
+		[ "${FUZZEL}" != /bin/fuzzel ] || [ "${SWAYBG}" != /bin/swaybg ]; then
 	conf=/tmp/labwc-conf
 	rm -rf "${conf}"
 	mkdir -p "${conf}"
-	for f in rc.xml menu.xml environment; do
-		[ -f "${CONF_DIR}/${f}" ] && cp "${CONF_DIR}/${f}" "${conf}/${f}"
+	for f in ${files}; do
+		[ -f "${CONF_DIR}/${f}" ] || continue
+		c="$(< "${CONF_DIR}/${f}")"
+		c="${c//\/bin\/foot /${FOOT} }"
+		c="${c//\/bin\/foot\"/${FOOT}\"}"
+		c="${c//\/bin\/fuzzel\"/${FUZZEL}\"}"
+		c="${c//\/bin\/fuzzel /${FUZZEL} }"
+		c="${c//\/bin\/swaybg /${SWAYBG} }"
+		printf '%s\n' "${c}" > "${conf}/${f}"
 	done
 fi
 have=""
@@ -126,7 +145,7 @@ case "${VERBOSE}" in
 	*) vflag="-V" ;;
 esac
 
-echo "LABWC start renderer=${RENDERER} client=${CLIENT} labwc=${LABWC} conf=${conf} files=${have%,} hold=${HOLD} input=${LIBINPUT_PHOENIX_DEVICES:-none} drm_devices=${WLR_DRM_DEVICES:-udev} hw_cursors=${HW_CURSORS} atomic=${ATOMIC:-1} no_modifiers=${NO_MODIFIERS:-0} verbose=${VERBOSE} trace=${DRMPHX_TRACE:-1} wlphx_trace=${WLPHX_TRACE:-1}"
+echo "LABWC start renderer=${RENDERER} client=${CLIENT} labwc=${LABWC} foot=${FOOT} fuzzel=${FUZZEL} swaybg=${SWAYBG} conf=${conf} files=${have%,} hold=${HOLD} input=${LIBINPUT_PHOENIX_DEVICES:-none} drm_devices=${WLR_DRM_DEVICES:-udev} hw_cursors=${HW_CURSORS} atomic=${ATOMIC:-1} no_modifiers=${NO_MODIFIERS:-0} verbose=${VERBOSE} trace=${DRMPHX_TRACE:-1} wlphx_trace=${WLPHX_TRACE:-1}"
 # LABWC=/bin/tinywl: wlroots' own minimal compositor (no pango/GLib/libxml2, no config):
 # the fallback that separates wlroots from labwc's text stack
 case "${LABWC##*/}" in

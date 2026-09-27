@@ -9,7 +9,10 @@
  * closable, pollable descriptor) plus a record in a per-process table indexed by
  * the descriptor number:
  *   epoll    the interest list; the socket itself never becomes readable
- *   timer    a deadline; reported EPOLLIN by epoll_wait while expired
+ *   timer    a deadline and a count of expirations not yet read; reported EPOLLIN by
+ *            epoll_wait while the count is non-zero. read() of the count (Linux: an
+ *            8-byte uint64) is wlphx_timer_read(), for a program that links a
+ *            read() wrapper (labwc-drm's compat does: foot reads its timers)
  *   signal   the peer end receives one signalfd_siginfo per caught signal, so
  *            the descriptor is readable exactly when a signal is pending; the
  *            signals are deliverable only inside epoll_wait (see there)
@@ -61,8 +64,10 @@ struct wlphx_epoll {
 struct wlphx_timer {
 	clockid_t clock;
 	int armed;
+	int nonblock;
 	struct timespec deadline; /* absolute, on `clock` */
 	struct timespec interval;
+	uint64_t pending;         /* expirations since the last read()/settime() */
 };
 
 struct wlphx_signal {
@@ -351,25 +356,48 @@ static uint32_t from_poll(short rev, uint32_t want)
 }
 
 
-/* Expired-timer test and deadline advance for periodic timers (under the lock). */
-static int timer_expired(struct wlphx_timer *t)
+/* Account expirations up to now (under the lock): a one-shot timer fires once and
+ * disarms; a periodic one adds every interval that has passed and steps its deadline
+ * past now. Returns the expirations not yet read (timerfd semantics: the descriptor
+ * is readable while that count is non-zero). */
+static uint64_t timer_update(struct wlphx_timer *t)
 {
 	struct timespec now;
 
-	if (!t->armed) {
-		return 0;
+	if (t->armed) {
+		clock_gettime(t->clock, &now);
+		if (ts_cmp(&now, &t->deadline) >= 0) {
+			if (ts_is_zero(&t->interval)) {
+				t->pending++;
+				t->armed = 0;
+			}
+			else {
+				while (ts_cmp(&now, &t->deadline) >= 0) {
+					ts_add(&t->deadline, &t->deadline, &t->interval);
+					t->pending++;
+				}
+			}
+		}
 	}
-	clock_gettime(t->clock, &now);
-	return ts_cmp(&now, &t->deadline) >= 0;
+	return t->pending;
 }
 
 
-/* Milliseconds until the timer fires (>= 0), or -1 when disarmed. */
+static int timer_expired(struct wlphx_timer *t)
+{
+	return timer_update(t) != 0u;
+}
+
+
+/* Milliseconds until the timer is readable (0 = now), or -1 when it never will be. */
 static int timer_ms_left(struct wlphx_timer *t)
 {
 	struct timespec now, d;
 	long long ms;
 
+	if (timer_update(t) != 0u) {
+		return 0;
+	}
 	if (!t->armed) {
 		return -1;
 	}
@@ -509,17 +537,11 @@ int epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout)
 		for (i = 0; (i < n) && (count < maxevents); i++) {
 			struct wlphx_slot *t = slot_get(items[i].fd, WLPHX_TIMER);
 			if ((t != NULL) && ((items[i].events & EPOLLIN) != 0) && timer_expired(&t->u.tm)) {
+				/* level-triggered: readable until read() takes the count or
+				 * timerfd_settime() resets it (libwayland re-arms, never reads) */
 				events[count].events = EPOLLIN;
 				events[count].data = items[i].data;
 				count++;
-				/* Periodic timers: step to the next deadline in the future. A one-shot
-				 * timer stays expired (readable) until it is re-armed or disarmed. */
-				if (!ts_is_zero(&t->u.tm.interval)) {
-					clock_gettime(t->u.tm.clock, &now);
-					while (ts_cmp(&now, &t->u.tm.deadline) >= 0) {
-						ts_add(&t->u.tm.deadline, &t->u.tm.deadline, &t->u.tm.interval);
-					}
-				}
 			}
 		}
 		pthread_mutex_unlock(&wlphx_lock);
@@ -565,6 +587,7 @@ int timerfd_create(int clockid, int flags)
 	}
 	s = slots[fd];
 	s->u.tm.clock = (clockid_t)clockid;
+	s->u.tm.nonblock = ((flags & TFD_NONBLOCK) != 0);
 	return fd;
 }
 
@@ -597,6 +620,7 @@ int timerfd_settime(int fd, int flags, const struct itimerspec *nv, struct itime
 		}
 	}
 	s->u.tm.interval = nv->it_interval;
+	s->u.tm.pending = 0u; /* arming or disarming discards unread expirations */
 	if (ts_is_zero(&nv->it_value)) {
 		s->u.tm.armed = 0;
 	}
@@ -634,6 +658,64 @@ int timerfd_gettime(int fd, struct itimerspec *cv)
 	}
 	pthread_mutex_unlock(&wlphx_lock);
 	return 0;
+}
+
+
+/* read() of a timer descriptor, for a read() wrapper: 1 when `fd` is an emulated
+ * timer (the result is in *ret, errno set when it is -1), 0 otherwise. Linux
+ * semantics: the buffer must hold a uint64_t; the call returns the expirations since
+ * the last read and resets the count; with none, EAGAIN on a TFD_NONBLOCK timer,
+ * otherwise it sleeps until the next expiration (a disarmed blocking timer blocks
+ * forever, as on Linux). */
+int wlphx_timer_read(int fd, void *buf, size_t n, ssize_t *ret)
+{
+	struct wlphx_slot *s;
+	uint64_t v;
+	int ms;
+
+	/* every read() of the program comes here: leave non-emulated descriptors without
+	 * taking the lock (slots[] is set before an emulated fd is ever returned) */
+	if ((fd < 0) || (fd >= WLPHX_MAX_FDS) || (slots[fd] == NULL)) {
+		return 0;
+	}
+	for (;;) {
+		pthread_mutex_lock(&wlphx_lock);
+		s = slot_get(fd, WLPHX_TIMER);
+		if (s == NULL) {
+			pthread_mutex_unlock(&wlphx_lock);
+			return 0;
+		}
+		if (n < sizeof(v)) {
+			pthread_mutex_unlock(&wlphx_lock);
+			errno = EINVAL;
+			*ret = -1;
+			return 1;
+		}
+		v = timer_update(&s->u.tm);
+		if (v != 0u) {
+			s->u.tm.pending = 0u;
+			pthread_mutex_unlock(&wlphx_lock);
+			memcpy(buf, &v, sizeof(v));
+			*ret = (ssize_t)sizeof(v);
+			return 1;
+		}
+		ms = timer_ms_left(&s->u.tm);
+		if (s->u.tm.nonblock) {
+			pthread_mutex_unlock(&wlphx_lock);
+			errno = EAGAIN;
+			*ret = -1;
+			return 1;
+		}
+		pthread_mutex_unlock(&wlphx_lock);
+		{
+			/* not poll(NULL, 0, ms): Phoenix's poll() without descriptors returns at once */
+			struct timespec d;
+			int w = (ms < 0) ? 1000 : ((ms == 0) ? 1 : ms);
+			d.tv_sec = w / 1000;
+			d.tv_nsec = (long)(w % 1000) * 1000000L;
+			(void)nanosleep(&d, NULL);
+		}
+	}
 }
 
 

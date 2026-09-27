@@ -1138,3 +1138,88 @@ so labwc renders on the new lane. foot's window never appears: foot `err: shm.c:
 memory file: Invalid argument`, labwc `[xdg.c:372] client (foot) did not respond to configure request in 100 ms`,
 `KMS srv flipstat flips=4` over 30 s, and wlroots' `[backend/session/session.c:352] Stat failed: Function not
 implemented` every second. Sent back to the labwc agent (foot map path + the session stat loop).
+
+### m7b analysis and fixes (labwc agent, 2026-09-27 evening) — rebuilt as `*-2`, cycle `m7b2-foot`
+
+**Root cause 1 — foot never draws: `read()` of an emulated timerfd always said `EAGAIN`.** The M6 compat timers
+(`weston-drm/compat/src/wlphx_epoll.c`) are table entries over a socketpair that never carries data: epoll reports
+them, but a `read()` goes to the empty socket. libwayland never reads its timers; **foot does**. When the shell's
+prompt arrives, foot arms its delayed-render timers (`terminal.c:357`, `is_armed = true`) and renders the grid only
+when a timer's `read()` returns an expiration count > 0 (`fdm_delayed_render`, `render.c:4349`: `grid &&
+!is_armed`). Every read was `EAGAIN`, `is_armed` never cleared, so no grid frame was ever committed after the first
+configure: `did not respond to configure request`, no window, and a busy epoll loop on the always-"expired" timer.
+The seal error (`F_ADD_SEALS` → `EINVAL`, shmsrv has no seals) is non-fatal by foot's own code and unrelated.
+**Fix:** real timerfd semantics in the M6 compat. Each timer counts expirations not yet read (one-shot: fires once
+and disarms; periodic: every elapsed interval); readable while the count is non-zero; `timerfd_settime()` discards
+it; `wlphx_timer_read()` returns the uint64 count and resets it (`EAGAIN` for an unexpired `TFD_NONBLOCK` timer, a
+sleep for a blocking one). Programs reach it through `-Wl,--wrap=read` → `labwc-drm/compat/src/lwphx_read.c`
+(labwc-drm links every program with it; Weston's links are unchanged and its behaviour too: libwayland re-arms,
+never reads). **Host test** `hosttest/timerfd_read_test.c` (foot's pattern: arm, epoll, read = 1, then not
+readable; periodic count; settime reset; blocking read; pipes untouched): 15/15 PASS; its **negative control**, the
+same test linked without the wrapper (= the m7b binaries), fails the 4 "FOOT ROW" checks exactly as the Pi did.
+The M6 host tests still pass.
+
+**Root cause 2 — `session.c:352 Stat failed: Function not implemented` every second = the keyboard.**
+`wlr_session_open_file()` `fstat()`s every device it opens and gives up on failure; Phoenix's usbkbd server does not
+answer the attribute requests behind `fstat()` (usbmouse does: m7b configured `mouse0`). libinput-phoenix retried
+the keyboard once a second, so labwc never had one. **Fix:** wlroots patch 0004 `session: open devices whose
+fstat() fails on Phoenix-RTOS` (device number 0; it is only compared with udev events of DRM devices).
+
+**Also:** foot and fuzzel are now built with buildtype `plain` + `-O2 -g`: meson's `debug*` buildtypes define
+`_DEBUG`, which made foot's `UNITTEST` blocks constructors that ran at every start (m7b's `layout 'se'` XKB errors
+were a unit test). Assertions stay on.
+
+| file (`build-out-m7b2/`, frozen in `…/tmp/m7b2-frozen/`) | staged as | sha256 stripped (first 16) | unstripped |
+|---|---|---|---|
+| `labwc-stripped` (wlroots 0004) | `/bin/labwc-2` | **`3632cb541660af71`** | `f79fa6ab725f9fb9` |
+| `foot-stripped` (timerfd read, no unit tests) | `/bin/foot-2` | **`ec603ce5f8f4dc1c`** | `81461b5d7e4693d9` |
+| `fuzzel-stripped` (same; fuzzel reads its timers too) | `/bin/fuzzel-2` | **`180c52bc28242872`** | `65d158fd79960fe3` |
+| `pi/labwc-desktop.sh` (+ `WLR_LIBINPUT_NO_DEVICES=1` from `62c15b58d`, + knobs below) | `/bin/labwc-desktop-2.sh` | **`8ab8a4f247bf8ba3`** | — |
+
+swaybg needs no change (no timerfd). Nothing already staged was overwritten (`/bin/labwc` `c8a78d3d…`, `/bin/foot`
+`54d42325…`, `/bin/fuzzel` `bc4e09ea…`, both earlier scripts re-checked). **New knobs** in `labwc-desktop-2.sh`:
+`LABWC`, **`FOOT`**, **`FUZZEL`**, **`SWAYBG`**; with a non-default value the configuration copy in
+`/tmp/labwc-conf` has `/bin/foot`, `/bin/fuzzel`, `/bin/swaybg` replaced in rc.xml, menu.xml and autostart (bash
+only; the export has no sed), so labwc's own launches (autostart, menu, keybinds) use the new binaries too. fuzzel
+started by the script gets `--terminal=$FOOT`. Not covered: the `.desktop` entries and `/etc/xdg/fuzzel/fuzzel.ini`
+still name `/bin/foot` — once `m7b2` passes, re-staging `/bin/foot`, `/bin/labwc`, `/bin/fuzzel` in place from the
+m7b2-frozen set is the clean end state.
+
+#### Cycle `m7b2-foot` (re-registration of m7b; Bash `timeout: 600000`)
+
+```
+./scripts/test-cycle-psh-interact.sh --label m7b2-foot --idle-secs 45 --max-cmd-secs 200 \
+    --hdmi-dense-on 'LABWC client start|LABWC socket=up' -- \
+    "/bin/rpi4-v3d-async-g6 -r 1 -m serial -i" \
+    "/bin/rpi4-kms-g7 -G -p 96 -C" \
+    "/bin/shmsrv -v" \
+    "export LABWC=/bin/labwc-2" \
+    "export FOOT=/bin/foot-2" \
+    "/bin/bash /bin/labwc-desktop-2.sh pixman colors input" \
+    "/bin/bash /bin/labwc-desktop-2.sh pixman mc input" \
+    "/bin/bash /bin/labwc-desktop-2.sh pixman autostart input" \
+    "/bin/shmsrv -s" \
+    "/bin/kmstest-poll stats"
+```
+
+Predictions: the m7b table, with these changes. Row 1 reads `LABWC start … labwc=/bin/labwc-2 foot=/bin/foot-2 …
+conf=/tmp/labwc-conf`. Arm C's `run session script` names `/tmp/labwc-conf/autostart`, a copy that runs
+`/bin/foot-2`. **No `Stat failed` lines.** Expect `configuring input device … (kbd0)` next to `mouse0` and
+`using the builtin XKB keymap`. There are **no** `xkbcommon: ERROR … layout 'se'` lines, because the unit tests
+are gone. `failed to seal SHM backing memory file` stays: it is expected and not fatal. **No `did not respond to
+configure request`**, or at most one early line, and the foot window then maps. Rows 6–8 are unchanged: the colour
+ramps and Unicode line, mc's two panels, and the autostarted prompt. If foot still does not map, grade from foot's
+lines after `shm.c`. A new `err:` there, or a busy loop, means the timerfd fix did not reach the binary: check
+`aarch64-phoenix-nm tools/gpu-lane/labwc-drm/build-out-m7b2/foot | grep wlphx_timer_read`.
+
+**Cycles to rerun or re-point:**
+- `m7b2-foot`: above.
+- `m7c-desktop`: use `/bin/labwc-desktop-2.sh` and add `export LABWC=/bin/labwc-2`, `export FOOT=/bin/foot-2`,
+  `export FUZZEL=/bin/fuzzel-2` before it (`CONF_DIR=/etc/xdg/labwc-m7c` as registered). With the old binaries,
+  foot and fuzzel would not draw and the keyboard would not open.
+- `m7a2-labwc`: runs as queued (weston-simple-shm has no timerfd reads, and it is `noinput`). `export
+  LABWC=/bin/labwc-2` is optional; it also fixes the keyboard of the `input` runs.
+- `m7f-thunar` and `m7h-xfce` (`xfce-desktop.sh`): export `LABWC=/bin/labwc-2` so the keyboard opens. Any
+  foot/fuzzel those sessions start must come from `/bin/foot-2` / `/bin/fuzzel-2` (xfce-desktop.sh or its
+  autostart), or wait for the in-place re-stage. GTK clients are not affected by the timerfd bug: GLib uses its own
+  poll loop.
