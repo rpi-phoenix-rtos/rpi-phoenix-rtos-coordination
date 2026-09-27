@@ -39,7 +39,7 @@ lane**, then migrate every GPU user and delete the old lane.
 | M3 | kernel export productised; libdrm-phoenix; Mesa GBM/EGL; SDL2 KMSDRM | ▶ libdrm-phoenix ✅; server gaps ✅ (`drmprobe` 36/36); **Mesa GBM/EGL ✅ kmscube on HDMI at 60.00 fps** (was 30: rpi4-kms never woke on a fence-deferred flip, fixed `efa4c1f9f`; kernel `pollNotify` shipped, P9 mitigated); **SDL2 KMSDRM ✅ `quakespasm-drm` 30.9 fps** (GPU-bound + vblank wait). First-crash root cause: Mesa never queried DRM_CAP_PRIME on Phoenix (patch 0008) |
 | M4 | Xorg + modesetting + glamor + DRI3/Present | ▶ **first light (m4c): Xorg-drm with glamor X acceleration on V3D 4.2 (GLES 3.1), xclock on HDMI**; **m4d: Window Maker desktop** (dock, clip, cursor) on it. Fixes on the way: xf86PostProbe without libpciaccess; libphoenix ctype double evaluation (fixed at source). Next: Window Maker + input, DRI3/Present clients (G4/G6/G16), page flips ([M4 doc](M4-xorg-modesetting.md)) |
 | M5 | Vulkan WSI (display, xcb) | ▶ **display half PASS (m5b): vkcube (static v3dv + VK_KHR_display) renders on HDMI — 60.15 fps with the fixed rpi4-kms (m5c)**. Fixes: G4a re-export, G17 universal planes, raw SYNC_IOC_MERGE via an ioctl interposer (G15). xcb half waits on M4 DRI3/Present + G4/G6 ([M5 doc](M5-vulkan.md)) |
-| M6 | Wayland (Weston DRM backend) | — |
+| M6 | Wayland (Weston DRM backend) | ▶ prep: **Weston 14 builds** static (DRM backend, GL + pixman renderers, kiosk shell, builtin modules, poll-based epoll/timerfd/signalfd emulation, memExport-backed `shmsrv` for wl_shm, baked xkb keymap; [M6 doc](M6-wayland.md)); cycles m6a (shm) + m6b (egl) queued. G4 sidestepped by opt-in Mesa 0012 |
 | Migration | all GPU users moved, old lane deleted | — |
 
 ## M0 experiments
