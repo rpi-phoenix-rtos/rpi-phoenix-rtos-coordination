@@ -1484,7 +1484,22 @@ int mock_dup(int fd)
 }
 
 
+/* mock_ioctl = ioctl() everywhere in the host build (library + drmprobe): it goes
+ * through libdrm-phoenix's __wrap_ioctl exactly as the Pi link does
+ * (--wrap=ioctl), and __wrap_ioctl's __real_ioctl is the fake device below. */
 int mock_ioctl(int fd, unsigned long req, ...)
+{
+	va_list ap;
+	void *arg;
+
+	va_start(ap, req);
+	arg = va_arg(ap, void *);
+	va_end(ap);
+	return __wrap_ioctl(fd, req, arg);
+}
+
+
+int __real_ioctl(int fd, unsigned long req, ...)
 {
 	va_list ap;
 	void *arg;

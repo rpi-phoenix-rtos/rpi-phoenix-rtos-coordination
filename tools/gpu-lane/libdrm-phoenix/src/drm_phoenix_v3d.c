@@ -193,6 +193,18 @@ static int fence_wait(drmphx_conn_t *c, const v3da_fence_t *f, int64_t rel_ns)
 }
 
 
+int drmphx_v3d_fence_signaled(const drmphx_conn_t *c, const v3da_fence_t *f)
+{
+	return fence_signaled(c, f);
+}
+
+
+int drmphx_v3d_fence_wait(drmphx_conn_t *c, const v3da_fence_t *f)
+{
+	return fence_wait(c, f, FOREVER_NS);
+}
+
+
 /* ========================================================================= */
 /* Implicit sync for flips (G13, M3 part 2)                                   */
 /* ========================================================================= */

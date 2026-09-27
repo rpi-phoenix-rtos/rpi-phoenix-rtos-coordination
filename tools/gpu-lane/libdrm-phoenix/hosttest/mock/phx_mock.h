@@ -39,6 +39,8 @@ void *__wrap_mmap(void *addr, size_t length, int prot, int flags, int fd, off_t 
 void *__real_mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset);
 int mock_munmap(void *addr, size_t length);
 int mock_ioctl(int fd, unsigned long req, ...);
+int __wrap_ioctl(int fd, unsigned long req, ...);
+int __real_ioctl(int fd, unsigned long req, ...);
 int mock_open(const char *path, int flags, ...);
 int mock_close(int fd);
 int mock_dup(int fd);

@@ -48,11 +48,12 @@ gcc -std=gnu11 -O1 -g -w -fsanitize=address,undefined -fno-omit-frame-pointer -D
 	"${root}/tools/gpu-lane/v3d-async/v3da_clgen.c" \
 	"${src}/xf86drm.c" "${src}/xf86drmMode.c" "${src}/xf86drmHash.c" "${src}/xf86drmRandom.c" "${src}/xf86drmSL.c" \
 	"${src}/phoenix/xf86drm_phoenix.c" "${src}/phoenix/drm_phoenix_kms.c" "${src}/phoenix/drm_phoenix_v3d.c" \
-	"${src}/phoenix/drm_phoenix_logic.c" "${src}/phoenix/drm_phoenix_wrap.c"
+	"${src}/phoenix/drm_phoenix_logic.c" "${src}/phoenix/drm_phoenix_wrap.c" \
+	"${src}/phoenix/drm_phoenix_wrap_ioctl.c"
 for mode in legacy dri; do
 	log="${out}/e2e-${mode}.log"
 	"${out}/e2e" "${mode}" > "${log}" 2>&1 || true
-	grep -E 'DRMPROBE (RESULT|device |open |identity|fstat|card1|dmabuf_size|atomic_universal|prime_|import_clear|implicit_flip)|HOSTE2E|ERROR|runtime error' "${log}" || true
+	grep -E 'DRMPROBE (RESULT|device |open |identity|fstat|card1|dmabuf_size|atomic_universal|sync_merge|prime_|import_clear|implicit_flip)|HOSTE2E|ERROR|runtime error' "${log}" || true
 	why=""
 	grep -q 'DRMPROBE RESULT .*failed=cl_clear,cl_clear_dep,import_clear,implicit_flip, ' "${log}" || why="${why} failed-set"
 	grep -qE 'ERROR: AddressSanitizer|runtime error' "${log}" && why="${why} sanitizer"
@@ -62,6 +63,7 @@ for mode in legacy dri; do
 	grep -q 'DRMPROBE prime_reimport .* ok=1' "${log}" || why="${why} reimport"
 	grep -q 'DRMPROBE prime_reexport_render rc=0 .* ok=1' "${log}" || why="${why} reexport"   # M5 (G4a)
 	grep -q 'DRMPROBE atomic_universal .* ok=1' "${log}" || why="${why} atomic_universal"   # M5
+	grep -q 'DRMPROBE sync_merge setup=0 merge=0 .* ok=1' "${log}" || why="${why} sync_merge"   # M5b (G15)
 	grep -q 'DRMPROBE implicit_flip submit=0 flip=0 events=1 ' "${log}" || why="${why} implicit_flip"
 	grep -qE 'HOSTE2E m3p2 .* imports=1 imports_closed=1 deferred_flips=[1-9]' "${log}" || why="${why} m3p2-counters"
 	if [ "${mode}" = dri ]; then

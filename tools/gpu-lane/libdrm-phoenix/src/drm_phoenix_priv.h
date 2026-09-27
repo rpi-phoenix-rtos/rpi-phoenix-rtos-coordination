@@ -154,8 +154,19 @@ void drmphx_prime_fd_note(int fd, const kms_memref_t *m, int srv, uint32_t handl
 /* Sync-file emulation: an exported "sync file" is a dup() of the render node
  * descriptor plus a fence snapshot (process-local; cross-process sync files are
  * a server gap). */
+#define DRMPHX_SYNCFILE_FENCES 8u   /* distinct {slot, queue} timelines one merged sync file keeps */
 int drmphx_syncfile_new(int dev_fd, const v3da_fence_t *f);
+/* One fence for a consumer that holds one (syncobj import, kms IN_FENCE_FD): a
+ * merged sync file with several pending fences is reduced by CPU-waiting all but
+ * one of them. seqno 0 = signalled. */
 int drmphx_syncfile_get(int fd, v3da_fence_t *f);
+/* M5 (G15, in-process): the sync_file ioctls, for __wrap_ioctl.
+ * is: 1 if fd is an emulated sync file of this process.
+ * merge: a new sync file (O_CLOEXEC) signalled when both are -> fd, or -errno.
+ * status: 1 all signalled, 0 active, -errno; *nfences = fences it holds. */
+int drmphx_syncfile_is(int fd);
+int drmphx_syncfile_merge(int fd1, int fd2);
+int drmphx_syncfile_status(int fd, uint32_t *nfences);
 
 /* Map a memref (PHYS: MAP_PHYSMEM; OID: open(<ns>/<id>) + mmap). */
 void *drmphx_map_memref(uint16_t kind, uint16_t cache, uint32_t port, uint64_t size, uint64_t addr, size_t len,
@@ -181,6 +192,9 @@ int drmphx_v3d_hello(drmphx_conn_t *c, int fd);
 void drmphx_v3d_release(drmphx_conn_t *c);
 int drmphx_v3d_stale(const drmphx_conn_t *c);
 int drmphx_v3d_token_memref(drmphx_conn_t *c, uint32_t handle, v3da_memref_t *m);
+/* The fence page check and a bounded-slice wait until signalled (for sync files). */
+int drmphx_v3d_fence_signaled(const drmphx_conn_t *c, const v3da_fence_t *f);
+int drmphx_v3d_fence_wait(drmphx_conn_t *c, const v3da_fence_t *f);
 
 /* G13 (M3 part 2): implicit sync for flips of GPU-rendered buffers, in-process.
  * A render-node PRIME import of an exported buffer {ns port, id} is recorded; the

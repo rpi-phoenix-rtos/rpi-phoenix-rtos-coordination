@@ -62,7 +62,8 @@ static struct {
 	struct {
 		int used;
 		int fd;
-		v3da_fence_t fence;
+		uint32_t nfence;                         /* 0 = an already-signalled snapshot */
+		v3da_fence_t fence[DRMPHX_SYNCFILE_FENCES];   /* a merged sync file holds several (M5) */
 	} sf[DRMPHX_MAX_SYNCFD];       /* sync-file emulation (newest wins) */
 	uint32_t sf_next;
 
@@ -1187,26 +1188,63 @@ int drmphx_prime_fd_lookup(int fd, kms_memref_t *m)
 }
 
 
-int drmphx_syncfile_new(int dev_fd, const v3da_fence_t *f)
+/* Add fence f to a set, one entry per {slot, queue, gen} (completion within one
+ * slot queue is ordered: the higher seqno implies the lower). Returns the new count,
+ * or max + 1 when the set is full and f is a new timeline. */
+static uint32_t fence_set_add(v3da_fence_t *set, uint32_t n, uint32_t max, const v3da_fence_t *f)
 {
-	int nfd = dup(dev_fd);
+	uint32_t i;
+
+	if (f->seqno == 0u) {
+		return n;   /* signalled: contributes nothing */
+	}
+	for (i = 0u; i < n; i++) {
+		if ((set[i].slot == f->slot) && (set[i].queue == f->queue) && (set[i].gen == f->gen)) {
+			if (f->seqno > set[i].seqno) {
+				set[i].seqno = f->seqno;
+			}
+			return n;
+		}
+	}
+	if (n >= max) {
+		return max + 1u;
+	}
+	set[n] = *f;
+	return n + 1u;
+}
+
+
+static int syncfile_add(int nfd, const v3da_fence_t *set, uint32_t n)
+{
 	uint32_t k;
 
-	if (nfd < 0) {
-		return -errno;
-	}
 	(void)pthread_mutex_lock(&G.lock);
 	k = G.sf_next;
 	G.sf[k].used = 1;
 	G.sf[k].fd = nfd;
-	G.sf[k].fence = *f;
+	G.sf[k].nfence = n;
+	if (n != 0u) {
+		memcpy(G.sf[k].fence, set, n * sizeof(set[0]));
+	}
 	G.sf_next = (k + 1u) % DRMPHX_MAX_SYNCFD;
 	(void)pthread_mutex_unlock(&G.lock);
 	return nfd;
 }
 
 
-int drmphx_syncfile_get(int fd, v3da_fence_t *f)
+int drmphx_syncfile_new(int dev_fd, const v3da_fence_t *f)
+{
+	int nfd = dup(dev_fd);
+
+	if (nfd < 0) {
+		return -errno;
+	}
+	return syncfile_add(nfd, f, (f->seqno != 0u) ? 1u : 0u);
+}
+
+
+/* The fence set of an emulated sync file (newest table entry for a recycled fd). */
+static int syncfile_set(int fd, v3da_fence_t *set, uint32_t *n)
 {
 	uint32_t i, k;
 	int rc = -EINVAL;
@@ -1218,11 +1256,137 @@ int drmphx_syncfile_get(int fd, v3da_fence_t *f)
 	for (i = 0u; i < DRMPHX_MAX_SYNCFD; i++) {   /* newest first: a recycled fd number resolves to its latest export */
 		k = (G.sf_next + DRMPHX_MAX_SYNCFD - 1u - i) % DRMPHX_MAX_SYNCFD;
 		if ((G.sf[k].used != 0) && (G.sf[k].fd == fd)) {
-			*f = G.sf[k].fence;
+			*n = G.sf[k].nfence;
+			memcpy(set, G.sf[k].fence, G.sf[k].nfence * sizeof(set[0]));
 			rc = 0;
 			break;
 		}
 	}
 	(void)pthread_mutex_unlock(&G.lock);
 	return rc;
+}
+
+
+/* Drop signalled fences; with keep_one, CPU-wait every pending fence but the last
+ * so the set shrinks to at most one (a DRM syncobj and a kms plane in-fence hold
+ * one fence). The descriptor is a dup() of the render node, so it names the render
+ * connection itself. */
+static int fence_set_reduce(int fd, v3da_fence_t *set, uint32_t *n, int keep_one)
+{
+	drmphx_conn_t *c;
+	uint32_t i, m = 0u;
+	int rc;
+
+	rc = drmphx_get(fd, &c);
+	if (rc != 0) {
+		return rc;
+	}
+	if (c->srv != DRMPHX_SRV_V3D) {
+		drmphx_put(c);
+		return -EINVAL;
+	}
+	for (i = 0u; i < *n; i++) {
+		if (drmphx_v3d_fence_signaled(c, &set[i]) == 0) {
+			set[m++] = set[i];
+		}
+	}
+	while ((keep_one != 0) && (m > 1u) && (rc == 0)) {
+		rc = drmphx_v3d_fence_wait(c, &set[0]);   /* ordered by nothing: any order is correct */
+		memmove(&set[0], &set[1], (m - 1u) * sizeof(set[0]));
+		m--;
+	}
+	drmphx_put(c);
+	*n = m;
+	return rc;
+}
+
+
+int drmphx_syncfile_get(int fd, v3da_fence_t *f)
+{
+	v3da_fence_t set[DRMPHX_SYNCFILE_FENCES];
+	uint32_t n = 0u;
+	int rc;
+
+	rc = syncfile_set(fd, set, &n);
+	if (rc != 0) {
+		return rc;
+	}
+	if (n > 1u) {
+		rc = fence_set_reduce(fd, set, &n, 1);
+		if (rc != 0) {
+			return rc;
+		}
+	}
+	if (n == 0u) {
+		memset(f, 0, sizeof(*f));   /* seqno 0: signalled */
+	}
+	else {
+		*f = set[0];
+	}
+	return 0;
+}
+
+
+int drmphx_syncfile_is(int fd)
+{
+	v3da_fence_t set[DRMPHX_SYNCFILE_FENCES];
+	uint32_t n;
+
+	return (syncfile_set(fd, set, &n) == 0) ? 1 : 0;
+}
+
+
+int drmphx_syncfile_merge(int fd1, int fd2)
+{
+	v3da_fence_t a[DRMPHX_SYNCFILE_FENCES], b[DRMPHX_SYNCFILE_FENCES];
+	uint32_t na = 0u, nb = 0u, i, t;
+	int rc, nfd;
+
+	if ((syncfile_set(fd1, a, &na) != 0) || (syncfile_set(fd2, b, &nb) != 0)) {
+		return -EINVAL;   /* not both sync files of this process (cross-process: G6) */
+	}
+	for (i = 0u; i < nb; i++) {
+		t = fence_set_add(a, na, DRMPHX_SYNCFILE_FENCES, &b[i]);
+		if (t > DRMPHX_SYNCFILE_FENCES) {
+			/* full of distinct timelines: drop what already signalled, then retry;
+			 * still full = wait until one set of work is done (rare: 8 timelines) */
+			rc = fence_set_reduce(fd1, a, &na, 0);
+			if ((rc == 0) && (na >= DRMPHX_SYNCFILE_FENCES)) {
+				rc = fence_set_reduce(fd1, a, &na, 1);
+			}
+			if (rc != 0) {
+				return rc;
+			}
+			t = fence_set_add(a, na, DRMPHX_SYNCFILE_FENCES, &b[i]);
+		}
+		na = t;
+	}
+	nfd = dup(fd1);   /* another dup() of the render node, like every emulated sync file */
+	if (nfd < 0) {
+		return -errno;
+	}
+	(void)fcntl(nfd, F_SETFD, FD_CLOEXEC);   /* Linux sync files are O_CLOEXEC */
+	return syncfile_add(nfd, a, na);
+}
+
+
+int drmphx_syncfile_status(int fd, uint32_t *nfences)
+{
+	v3da_fence_t set[DRMPHX_SYNCFILE_FENCES];
+	uint32_t n = 0u;
+	int rc;
+
+	rc = syncfile_set(fd, set, &n);
+	if (rc != 0) {
+		return rc;
+	}
+	*nfences = n;
+	if (n == 0u) {
+		return 1;
+	}
+	rc = fence_set_reduce(fd, set, &n, 0);
+	if (rc != 0) {
+		return rc;
+	}
+	return (n == 0u) ? 1 : 0;   /* 1 = every fence signalled, 0 = active */
 }

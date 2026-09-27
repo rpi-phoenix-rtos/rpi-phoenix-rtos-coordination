@@ -32,6 +32,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 
@@ -41,6 +42,25 @@
 
 #include "v3d_drm.h"
 #include "v3da_clgen.h"
+
+/* linux/sync_file.h, by layout (Mesa util/libsync.h carries the same copy). */
+struct probe_sync_merge_data {
+	char name[32];
+	int32_t fd2;
+	int32_t fence;
+	uint32_t flags;
+	uint32_t pad;
+};
+struct probe_sync_file_info {
+	char name[32];
+	int32_t status;
+	uint32_t flags;
+	uint32_t num_fences;
+	uint32_t pad;
+	uint64_t sync_fence_info;
+};
+#define PROBE_SYNC_IOC_MERGE     _IOWR('>', 3, struct probe_sync_merge_data)
+#define PROBE_SYNC_IOC_FILE_INFO _IOWR('>', 4, struct probe_sync_file_info)
 
 
 extern int sys_fdpath(int fd, char *buf, size_t size);
@@ -902,6 +922,55 @@ static void t_render_clear(void)
 		printf(TAG "syncobj export=%d sfd=%d import=%d wait=%d first=%u transfer=%d wait_t=%d wait_empty=%d signal=%d "
 			"wait_s=%d ok=%d\n", rc_exp, sfd, rc_imp, rc_w2, first, rc_tr, rc_w3, rc_empty, rc_sig, rc_w4, ok);
 		verdict("syncobj", ok);
+	}
+
+	/* M5 (G15 in-process): Linux sync_file ioctls on the emulated sync files, raw
+	 * ioctl() as Mesa's libsync issues them (v3dv merge_syncobjs on every signalling
+	 * vkQueueSubmit): merge a pending job fence with a signalled one, FILE_INFO,
+	 * import the merge into a syncobj, wait. Needs -Wl,--wrap=ioctl. */
+	if (rc == 0) {
+		struct probe_sync_merge_data md;
+		struct probe_sync_file_info fi;
+		uint32_t s4 = 0, s5 = 0, s6 = 0;
+		int fa = -1, fb = -1, rc_m = -1, e_m = 0, rc_i = -1, st = -1, rc_im = -1, rc_w = -1, px3 = 0, rc_j;
+		unsigned nf = 99u;
+		rc_j = drmSyncobjCreate(P.render, 0, &s4);
+		if (rc_j == 0) rc_j = cl_clear(&rt, &bcl, &rcl, &ta, &ts, 0xff123456u, 0u, &s4, &px3, 0);   /* pending, not waited */
+		if (rc_j == 0) rc_j = drmSyncobjCreate(P.render, DRM_SYNCOBJ_CREATE_SIGNALED, &s5);
+		if (rc_j == 0) rc_j = drmSyncobjExportSyncFile(P.render, s4, &fa);
+		if (rc_j == 0) rc_j = drmSyncobjExportSyncFile(P.render, s5, &fb);
+		if (rc_j == 0) {
+			memset(&md, 0, sizeof(md));
+			strcpy(md.name, "drmprobe");
+			md.fd2 = fb;
+			rc_m = ioctl(fa, PROBE_SYNC_IOC_MERGE, &md);
+			e_m = (rc_m != 0) ? errno : 0;
+		}
+		if (rc_m == 0) {
+			memset(&fi, 0, sizeof(fi));
+			rc_i = ioctl(md.fence, PROBE_SYNC_IOC_FILE_INFO, &fi);
+			st = fi.status;
+			nf = fi.num_fences;
+			if (drmSyncobjCreate(P.render, 0, &s6) == 0) {
+				rc_im = drmSyncobjImportSyncFile(P.render, s6, md.fence);
+				rc_w = drmSyncobjWait(P.render, &s6, 1, INT64_MAX, 0, NULL);
+			}
+			close(md.fence);
+		}
+		ok = (rc_j == 0) && (rc_m == 0) && (md.fence >= 0) && (rc_i == 0) && (nf <= 1u) && (rc_im == 0) && (rc_w == 0);
+		printf(TAG "sync_merge setup=%d merge=%d errno=%d mfd=%d info=%d status=%d nfences=%u import=%d wait=%d ok=%d gap=%d\n",
+			rc_j, rc_m, e_m, (rc_m == 0) ? md.fence : -1, rc_i, st, nf, rc_im, rc_w, ok, e_m == ENOTTY);
+		if ((rc_m != 0) && (e_m == ENOTTY)) {
+			P.gap++;   /* no --wrap=ioctl / a library from before M5b: the sync_file ioctl reached the server */
+		}
+		else {
+			verdict("sync_merge", ok);
+		}
+		if (fa >= 0) close(fa);
+		if (fb >= 0) close(fb);
+		if (s4 != 0u) (void)drmSyncobjDestroy(P.render, s4);
+		if (s5 != 0u) (void)drmSyncobjDestroy(P.render, s5);
+		if (s6 != 0u) (void)drmSyncobjDestroy(P.render, s6);
 	}
 
 	/* cross-server fence: flip to a buffer only after a GPU job, IN_FENCE_FD = the sync file */

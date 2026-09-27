@@ -6,7 +6,15 @@ Milestone M5 of the [new-lane plan](PLAN.md), from the design in
 build, kmscube and quakespasm-drm passing on the Pi) and the two servers `rpi4-kms` ([M2](M2-kms-server.md))
 and `rpi4-v3d-async` ([M1](M1-async-render-server.md)).
 
-**Status (2026-09-27): builds, links, host-tested; no Pi cycle yet** (pre-registered in §7).
+**Status (2026-09-27, latest):** first Pi cycle `m5-vkcube` (queue25): **drmprobe-m5 PASS (38/0/1:
+G4a + G17 proven on hardware); vkcube enumerated everything, then hung in its first `vkQueueSubmit`** —
+Mesa's `sync_merge()` issues a raw `ioctl(SYNC_IOC_MERGE)` on libdrm-phoenix's emulated sync files,
+which only a Linux kernel understands. Fixed in libdrm-phoenix (G15 in-process: `-Wl,--wrap=ioctl`
+interposer + fence-set sync files), host-tested with a negative control; `vkcube-drm` relinked. Result,
+diagnosis and fix in [§9](#9-result--m5-vkcube-queue25-2026-09-27-hang-in-the-first-vkqueuesubmit);
+the next cycle `m5b-vkcube` is pre-registered in [§10](#10-pre-registered-pi-cycle-m5b-vkcube).
+
+**Earlier status: builds, links, host-tested; no Pi cycle yet** (pre-registered in §7).
 Upstream Mesa 26.2.0's **v3dv** is built as a **static ICD** and linked, with a small loader stand-in
 (`phxvk`), libdrm-phoenix and upstream **vkcube** (Vulkan-Tools, Apache-2.0), into one static
 binary, `vkcube-drm`: 0 undefined symbols, no old-lane string, no `dlopen`. The two gaps that
@@ -357,3 +365,179 @@ a render problem.
 * **Memory:** v3dv's heap is a percentage of `sysconf(_SC_PHYS_PAGES)`; with 0 every allocation
   fails `VK_ERROR_OUT_OF_DEVICE_MEMORY` (a pre-build-10 libphoenix — not this binary).
 * **kms pool:** 3 × 8.3 MB of 32 MiB — a 4th image (another app asking `minImageCount + 2`) needs `-p 48`.
+
+## 9. Result — `m5-vkcube` (queue25, 2026-09-27): hang in the first `vkQueueSubmit`
+
+Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-070924-m5-vkcube.log` (`grep -a`).
+
+**What passed (as pre-registered):** `drmprobe-m5` → `DRMPROBE RESULT pass=38 fail=0 gap=1 verdict=PASS`
+(`atomic_universal … planes=2 primary=1 ok=1` = **G17**, `prime_reexport_render … ok=1` = **G4a**, on
+hardware). vkcube: phxvk banner, `ICD interface version 7 (negotiate result=0)`, connections to card0,
+card1 and renderD128 in the predicted order, 11 `V3D_GET_PARAM`s, the syncobj probe,
+`Selected GPU 0: V3D 4.2.14.0, type: IntegratedGpu`, `AUTH_MAGIC`, `SET_CLIENT_CAP cap=0x3`,
+`DROP_MASTER`, connector/CRTC/plane/property/blob enumeration (all `rc=0`), then vkcube's prepare
+phase: BOs, 4 queue syncobjs (handles 1–4, created signalled), texture staging, 5 more syncobjs, one
+`V3D_SUBMIT_TFU rc=0 … flags=0x2` (the staging-buffer → texture copy, MULTI_SYNC), then
+`SYNCOBJ_HANDLE_TO_FD handle=1 flags=0x1 fd=6` and `handle=2 … fd=7` — and **nothing more**: no third
+export, no vkcube assertion, no prompt; the second vkcube command never started (psh was still
+waiting for the first). Server: `qstat … tfu=1 … err=0 wedges=0` — the TFU job completed.
+The swapchain was never reached: vkcube creates it after `demo_prepare`'s first submit.
+
+### 9.1 Where it blocks [read + built]
+
+vkcube's `demo_flush_init_cmd` (`cube.c:825`) submits the prepare command buffer **with a fence**.
+`vkQueueSubmit` → `vk_common_QueueSubmit2` → `vk_queue_submit` (IMMEDIATE mode) →
+`v3dv_queue_driver_submit` (`v3dv_queue.c:1078`): the TFU job goes out, then — because the submit has a
+signal operation (the fence) — **`merge_syncobjs()`** (`v3dv_queue.c:1028`) folds the last-job syncobjs
+of **all four** v3dv queues into the fence's syncobj:
+
+```
+for each queue sync:  drmSyncobjExportSyncFile(render_fd, sync, &queue_fd)   <- fd 6 (handle 1), fd 7 (handle 2)
+                      accum = sync_merge("v3dv_merged_fence", accum, queue_fd) <- HERE, after the 2nd export
+drmSyncobjImportSyncFile(render_fd, dst, accum)
+```
+
+`sync_merge()` (`util/libsync.h:151`) is `do { ioctl(fd1, SYNC_IOC_MERGE, &data); } while (ret == -1 &&
+(errno == EINTR || errno == EAGAIN));` — a **raw `ioctl()`**, not `drmIoctl()`, so libdrm-phoenix never
+sees it (hence no trace line). The trace pins it: the loop's second export returned (`fd=7`) and the
+third export never came. `objdump` of the binary: `v3dv_queue_driver_submit` calls `ioctl` directly
+(2 sites, with the `__errno_location` retry loop). vkcube asserts on every `VkResult`
+(`assert(!err)` compiled in, stderr unbuffered — the `Selected GPU` line proves it reaches the UART), and
+no assertion appeared: **`vkQueueSubmit` never returned**.
+
+### 9.2 Why
+
+libdrm-phoenix's sync files are an **in-process emulation** (M3 §2.8): `SYNCOBJ_HANDLE_TO_FD(EXPORT_SYNC_FILE)`
+returns a `dup()` of the render node descriptor plus a fence snapshot in a process table. That serves
+everything that goes back through libdrm (`SYNCOBJ_FD_TO_HANDLE`, kms `IN_FENCE_FD`), which is all M3's
+clients needed. But Linux sync files are **kernel objects with their own ioctls** (`SYNC_IOC_MERGE`,
+`SYNC_IOC_FILE_INFO`), and Mesa calls those directly — M3 listed this as gap **G15** ("reach the render
+server as unknown ioctls, `-ENOTTY`") and predicted only EGL native-fence merging would need it. **v3dv
+needs it on every signalling submit**, so the first `vkQueueSubmit` with a fence is the first time the
+raw ioctl ran on hardware.
+
+On the dup'ed descriptor the request goes (kernel `posix_ioctl` → `mtDevCtl`) to **rpi4-v3d-async**,
+whose ioctl handler knows only `HELLO` and, by its source, answers everything else `-ENOTTY`
+(`v3da_main.c:434`). Had that answer arrived, `merge_syncobjs` would have returned
+`VK_ERROR_DEVICE_LOST` and vkcube would have printed its assertion — it did not, so on hardware the
+request **did not come back** (or came back `EINTR`/`EAGAIN` forever, which libsync retries without
+bound). Which of the two is not decidable from the log or the source (the kernel/server path reads
+correct; a dup'ed render descriptor's only earlier ioctl was `HELLO`, answered on the same path); it
+does not change the fix: **a sync_file ioctl must never leave the process** — Phoenix has no kernel
+sync files, so any server that receives one can only answer "unknown", and v3dv needs a real merge, not
+an error. (Open follow-up, server/kernel side: send an unknown ioctl to rpi4-v3d-async through a dup'ed
+descriptor in a probe and see whether it returns — a latent hazard for any future raw ioctl.)
+
+### 9.3 Fix: G15 in-process — `--wrap=ioctl` and fence-set sync files (libdrm-phoenix, additive)
+
+| Where | Change |
+|---|---|
+| `src/drm_phoenix_wrap_ioctl.c` (new, 172 lines, own archive member) | **`__wrap_ioctl`**: a program linked with `-Wl,--wrap=ioctl` sends every `ioctl()` here. `SYNC_IOC_MERGE` / `SYNC_IOC_FILE_INFO` (matched on type `'>'`, number 3/4 and the struct size — both `_IOC` encodings) are answered **in-process**: on an emulated sync file, merge → a new emulated sync file (`O_CLOEXEC`) holding both fence sets, info → status (1 signalled / 0 active) + fence count (+ per-fence records when asked); on **any other** descriptor `-ENOTTY` locally, as Linux answers for a non-sync-file — the request never reaches a server. Everything else → `__real_ioctl` unchanged. Its own member, like `drm_phoenix_wrap.c` (it references `__real_ioctl`, which exists only under `--wrap=ioctl`): binaries linked with `--wrap=mmap` alone (kmscube, quakespasm-drm, Xorg-drm, drmprobe-m5) are unaffected. `DRMPHX_TRACE` logs `DRMPHX sync  fd=… nr=3 rc=0 merged_fd=…`. |
+| `src/xf86drm_phoenix.c` | a sync file now holds a **fence set** (up to 8 distinct `{slot, queue, gen}` timelines; within one timeline the higher seqno implies the lower, so a merge keeps the max). `drmphx_syncfile_get()` — the one-fence view that syncobj import and kms `IN_FENCE_FD` need — drops signalled fences (fence page, no IPC) and, if more than one is still pending (fences on **different** GPU queues: a DRM syncobj holds one), **CPU-waits all but one** before handing out the last. New `drmphx_syncfile_is/merge/status`. A merged descriptor is another `dup()` of the render node. |
+| `src/drm_phoenix_v3d.c`, `src/drm_phoenix_priv.h` | public `drmphx_v3d_fence_signaled/_wait` (the fence-page check and the bounded-slice wait) for the set logic; declarations |
+| `patches/0004-meson-phoenix-ioctl-interposer.patch` (new, +1) | builds the new file |
+| `build.sh` | `drmprobe` now links `-Wl,--wrap=ioctl` |
+| `drmprobe/drmprobe.c`, `hosttest/run.sh`, `hosttest/mock/{fake.c,phx_mock.h}` | new check **`sync_merge`**: a pending CL job's syncobj and a signalled one exported as sync files, raw `ioctl(SYNC_IOC_MERGE)` (Mesa's exact call), `ioctl(SYNC_IOC_FILE_INFO)` on the result, import into a syncobj, wait. The host mock routes `ioctl()` through `__wrap_ioctl` exactly as the Pi link does. |
+| `tools/gpu-lane/vulkan-drm/build.sh` | vkcube links `-Wl,--wrap=ioctl` (default library `build-out-m5b`); the verification now **fails the build if any code calls the real `ioctl` except `__wrap_ioctl`** (objdump: the callers of `__wrap_ioctl` are `v3dv_queue_driver_submit` = `merge_syncobjs`, `vk_drm_syncobj_copy_payloads` and `wsi_create_sync_for_image_syncobj` — Mesa's other two `sync_merge` users — plus libdrm-phoenix's HELLOs and libphoenix `tcgetattr`) |
+
+Why the library and not a Mesa patch: `sync_merge` has five callers in the Vulkan runtime, v3dv, WSI and
+gallium (`v3d_fence.c`, `dri2.c` for EGL native fences); one interposer covers all with no Mesa change,
+the same pattern as `--wrap=mmap` (M3 §2.6).
+
+Cost/limits: a merge = one `dup()` + table work, no IPC; `FILE_INFO` of an active set and a
+multi-queue import touch the fence page (a first use of a new descriptor number costs one `HELLO`).
+The CPU wait happens only when a merged set still has **two or more unsignalled fences on different
+queues** at import time (vkcube per frame: only the render queue is pending; the TFU/CSD/CPU queue
+syncs are signalled). `poll()` on an emulated sync file is still G15 (nothing on this path polls one);
+a sync file duplicated by the program itself (`os_dupfd_cloexec`, v3dv's perfmon-query path only) is
+not in the table — its sync_file ioctls now fail fast with `-ENOTTY` instead of hanging. Cross-process
+sync files stay G6.
+
+### 9.4 Host tests [host]
+
+`DRMPHX_OUT=tools/gpu-lane/libdrm-phoenix/build-out-m5b tools/gpu-lane/libdrm-phoenix/hosttest/run.sh`:
+
+```
+HOSTTEST libdrm-phoenix checks=134 fails=0 verdict=PASS
+DRMPROBE sync_merge setup=0 merge=0 errno=0 mfd=8 info=0 status=0 nfences=1 import=0 wait=0 ok=1 gap=0
+HOSTE2E legacy verdict=PASS (only the fake-GPU pixel checks failed, as expected)
+DRMPROBE sync_merge setup=0 merge=0 errno=0 mfd=9 info=0 status=0 nfences=1 import=0 wait=0 ok=1 gap=0
+HOSTE2E dri verdict=PASS (only the fake-GPU pixel checks failed, as expected)
+```
+
+(`status=0`: the fake GPU completes jobs lazily, so the merged set is still active — it exercises the
+fence-page path; `atomic_universal` and `prime_reexport_render` still `ok=1`; `unaligned_ends=0`,
+`imports=1 imports_closed=1 deferred_flips=1` unchanged.) **Negative control:** the same tree with the
+in-process answer disabled (the interposer answers `-ENOTTY` for every sync request) →
+`sync_merge … merge=-1 errno=25 … ok=0`, both modes `verdict=FAIL (sync_merge …)`. Not host-tested:
+the multi-queue reduction (drmprobe has no TFU/CSD job, so its merges stay on one timeline). Note: the
+host test now needs a build dir with `drm_phoenix_wrap_ioctl.c` (`build-out-m5b` or later); older dirs
+fail to link the e2e by design.
+
+### 9.5 Builds (new outputs; earlier ones kept)
+
+| Artifact | Path | sha256 (first 16) |
+|---|---|---|
+| libdrm-phoenix (G4a + G17 + G15 in-process) | `tools/gpu-lane/libdrm-phoenix/build-out-m5b/prefix/lib/libdrm.a` | `a508e207a8d293cf` |
+| drmprobe (`--wrap=mmap --wrap=ioctl`) | `tools/gpu-lane/libdrm-phoenix/build-out-m5b/drmprobe` | `83f5caf3a6e52556` |
+| **vkcube-drm** (Mesa set `60dd139d1e2bb22b`, ICD `69c689ad4926672b` unchanged, libdrm m5b) | `tools/gpu-lane/vulkan-drm/build-out/vkcube-drm.stripped` / unstripped `vkcube-drm` | `a24709236d050597` / `0952d5209f2a1c4a` |
+
+`nm -u` 0, old-lane strings 0, `__wrap_ioctl` + `__wrap_mmap` linked, the real `ioctl` called only from
+`__wrap_ioctl`; libdrm backend 0 warnings (the 9 upstream ones). The m5 binaries (`vkcube-drm` sha
+`10a20407…`, `drmprobe-m5`) are superseded but still on disk.
+
+**Other new-lane binaries:** kmscube / quakespasm-drm / Xorg-drm do not link `--wrap=ioctl`; their GL
+paths call `sync_merge` only for EGL native-fence merging (`kmscube -A`, not run yet) — relink them with
+`--wrap=ioctl` before any cycle that uses `EGL_ANDROID_native_fence_sync`.
+
+## 10. Pre-registered Pi cycle `m5b-vkcube`
+
+**Question:** with Mesa's sync_file ioctls answered in-process, does vkcube get through its first
+signalling submit, build the `VK_KHR_display` swapchain (G4a, G17 now proven) and present on HDMI?
+
+**Preconditions:** as §7 (same image, the staged `-m3p2` servers — no server changed).
+
+**Stage (coordinator)** — new names, the m5 binaries stay:
+
+| Source | Export path |
+|---|---|
+| `tools/gpu-lane/vulkan-drm/build-out/vkcube-drm.stripped` | `<export>/bin/vkcube-drm-m5b` |
+| `tools/gpu-lane/libdrm-phoenix/build-out-m5b/drmprobe` | `<export>/bin/drmprobe-m5b` |
+
+(`sudo install -m 755`, then `cmp`; keep the unstripped `vkcube-drm` for `addr2line`.)
+
+**One cycle** (Bash `timeout: 600000`):
+
+```
+./scripts/test-cycle-psh-interact.sh --label m5b-vkcube --idle-secs 30 --max-cmd-secs 150 \
+    --hdmi-dense-on 'phxvk: new GPU lane' -- \
+    "/bin/rpi4-v3d-async-m3p2 -r 1 -m serial -i" \
+    "/bin/rpi4-kms-m3p2 -G" \
+    "/bin/drmprobe-m5b -n 30" \
+    "export DRMPHX_TRACE=1" \
+    "/bin/vkcube-drm-m5b --wsi display --c 60" \
+    "export DRMPHX_TRACE=0" \
+    "/bin/vkcube-drm-m5b --wsi display --c 600" \
+    "/bin/kmstest-m3p2 stats"
+```
+
+Grade as §7 (add `DRMPHX sync` to the grep: `'^(phxvk|Selected GPU|DRMPHX|DRMPROBE|KMS|KMSTEST|V3DA|MESA|WSI|Cannot|vkcube|Assertion|Error|Usage)'`).
+HDMI rule unchanged: only snapshots after the `(psh)% /bin/vkcube-drm-m5b --wsi display --c 60` echo.
+
+**Predictions** — §7's table holds from the `CREATE_DUMB` row on (the rows before it were confirmed by
+`m5-vkcube`), with these changes/additions:
+
+| Line / observation | Predicted | If instead… |
+|---|---|---|
+| `DRMPROBE sync_merge setup=0 merge=0 errno=0 mfd=<n> info=0 status=0\|1 nfences=1 import=0 wait=0 ok=1 gap=0`; `DRMPROBE RESULT pass=39 fail=0 gap=1 … verdict=PASS` | G15 in-process on hardware (pass = m5's 38 + `sync_merge`) | `merge=-1 errno=25 gap=1`: a drmprobe without `--wrap=ioctl` staged (`cmp`); the probe **hangs** at this line: the interposer is not in the binary — stop. |
+| after `V3D_SUBMIT_TFU … flags=0x2`: `SYNCOBJ_HANDLE_TO_FD handle=1..4 … flags=0x1`, interleaved with **`DRMPHX sync  fd=<a> nr=3 rc=0 merged_fd=<m>`** ×3, then `SYNCOBJ_FD_TO_HANDLE … flags=0x1 fd=<m>` (import into the fence) and `SYNCOBJ_WAIT … count=1` (vkcube's `vkWaitForFences`) | **the m5 hang point passes**: 4 exports, 3 in-process merges, 1 import per signalling submit | nothing after the 2nd export again: the binary lacks the interposer (`BUILD-INFO.txt`, `vkcube-drm-m5b` sha `a2470923…`); `nr=3 rc=-22`: `flags`/`pad` non-zero in Mesa's request (read the struct); `FD_TO_HANDLE rc=-1 errno=22`: the merged fd was not found in the sync-file table (ring overflow — report). |
+| `Assertion '!err' failed in file …cube.c:826` | absent | the submit now fails instead of hanging: the preceding `DRMPHX` line with `rc=-1` names the step. |
+| the §7 swapchain rows: `MODE_CREATE_DUMB … w=1024 h=2025` ×3, card0 export → render import (+ `V3DA srv import …`) → render re-export (G4a) → card0 self-import → `MODE_ADDFB2 … flags=0x2 … mod=0x0`; `CREATEPROPBLOB`; `ATOMIC … flags=0x700` (TEST_ONLY) | as §7 | as §7 |
+| per frame: `DRMPHX sync … nr=3` lines (first 16 of each request are traced, then the rate limit hides them), `V3D_SUBMIT_CL rc=0`, `ATOMIC … flags=0x601` then `0x201` | render + present | as §7 |
+| `phxvk: first present result=0`, `phxvk: run presents=N … fps=F` every 2 s, `phxvk: exit presents=60 …` / `600 …` | **F ≈ 30** (G12), as §7 | as §7; additionally F < 20 with `V3DA` mostly idle: look for the CPU-wait reduction (it only runs when ≥ 2 queues are pending at import — should not happen per frame). |
+| HDMI | the rotating textured cube (LunarG logo), full screen | as §7 |
+| `KMSTEST stats … bos=0 exports=0`, 0 faults | as §7 | as §7 |
+
+**What the cycle decides:** the cube on HDMI with `phxvk: exit presents=600` = M5's display half done
+(then the swapchain/present rows of §7 are graded for the first time). A new stop point is named by
+the first `rc=-1` `DRMPHX` line after the last successful one.

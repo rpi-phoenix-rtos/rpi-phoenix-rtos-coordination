@@ -5,7 +5,7 @@
 #   Mesa 26.2 v3dv built as a STATIC ICD      (tools/gpu-lane/mesa-drm/build.sh --vulkan)
 #   + phxvk, a static stand-in for the Vulkan loader (phxvk/phxvk_loader.c)
 #   + upstream vkcube (Vulkan-Tools, Apache-2.0) with its VK_KHR_display WSI only
-#   + libdrm-phoenix, linked -Wl,--wrap=mmap
+#   + libdrm-phoenix, linked -Wl,--wrap=mmap -Wl,--wrap=ioctl (BO maps; sync_file ioctls, M5 §9)
 #   -> one static aarch64-phoenix binary, vkcube-drm.
 #
 # Writes only into build-out/ (gitignored):
@@ -21,7 +21,7 @@
 # tools/.gpu-libs) is never read or linked.
 #
 # Usage: tools/gpu-lane/vulkan-drm/build.sh [--clean] [--skip-mesa] [-j N]
-#                                           [--libdrm-prefix <dir>]   (default libdrm-phoenix/build-out-m5/prefix)
+#                                           [--libdrm-prefix <dir>]   (default libdrm-phoenix/build-out-m5b/prefix)
 # Stage (coordinator only):
 #   sudo install -m 755 tools/gpu-lane/vulkan-drm/build-out/vkcube-drm.stripped <live NFS export>/bin/vkcube-drm
 #
@@ -33,7 +33,7 @@ out="${here}/build-out"
 clean=0
 skip_mesa=0
 jobs="$(nproc)"
-libdrm_src_prefix="${root}/tools/gpu-lane/libdrm-phoenix/build-out-m5/prefix"
+libdrm_src_prefix="${root}/tools/gpu-lane/libdrm-phoenix/build-out-m5b/prefix"
 while [ $# -gt 0 ]; do
 	case "$1" in
 		--clean) clean=1 ;;
@@ -135,9 +135,12 @@ echo "  cube.c + phxvk_loader.c: $(grep -c 'warning:' "${out}/cc.log" || true) w
 # pulls an archive member -- linked normally, every entry point whose object nothing else
 # references would silently resolve to NULL. --gc-sections then drops what the tables do
 # not reach. -Wl,--wrap=mmap: v3dv maps BOs with mmap(render_fd, MMAP_BO token);
-# libdrm-phoenix's __wrap_mmap resolves the tokens (M3 §2.6).
+# libdrm-phoenix's __wrap_mmap resolves the tokens (M3 §2.6). -Wl,--wrap=ioctl: v3dv
+# merges its per-queue fences with Mesa libsync's raw ioctl(SYNC_IOC_MERGE) on EVERY
+# signalling vkQueueSubmit; libdrm-phoenix's __wrap_ioctl answers the sync_file
+# ioctls on its in-process sync files (M5 §9 -- without it m5-vkcube hung there).
 echo "== link"
-"${PHXCXX}" "${TFLAGS[@]}" -static -Wl,--gc-sections -Wl,-z,max-page-size=0x1000 -Wl,--wrap=mmap \
+"${PHXCXX}" "${TFLAGS[@]}" -static -Wl,--gc-sections -Wl,-z,max-page-size=0x1000 -Wl,--wrap=mmap -Wl,--wrap=ioctl \
 	-Wl,-Map,"${out}/vkcube-drm.map" -o "${out}/vkcube-drm" "${obj}/cube.o" "${obj}/phxvk_loader.o" \
 	-Wl,--whole-archive "${ICD}" -Wl,--no-whole-archive \
 	-Wl,--start-group "${LD_PREFIX}/lib/libdrm.a" "${COMPAT_A}" "${B}/lib/libz.a" -Wl,--end-group -lm \
@@ -158,7 +161,7 @@ for s in phxvk_GetInstanceProcAddr vk_icdGetInstanceProcAddr vk_icdNegotiateLoad
 		v3dv_CreateInstance vk_common_QueueSubmit2 v3dv_queue_driver_submit v3dv_CmdDraw v3dv_CreateGraphicsPipelines v3dv_AllocateMemory \
 		v3dv_GetMemoryFdKHR wsi_CreateDisplayPlaneSurfaceKHR wsi_GetPhysicalDeviceDisplayPropertiesKHR \
 		wsi_CreateSwapchainKHR wsi_QueuePresentKHR wsi_AcquireNextImage2KHR \
-		__wrap_mmap drmPhoenixMmap drm_phoenix_ioctl drmModeAtomicCommit drmCrtcQueueSequence; do
+		__wrap_mmap __wrap_ioctl drmPhoenixMmap drm_phoenix_ioctl drmModeAtomicCommit drmCrtcQueueSequence; do
 	if grep -qE " [TtWw] ${s}\$" <<< "${syms}"; then echo "  symbol ${s}: yes"; else echo "  symbol ${s}: NO"; missing=1; fi
 done
 strs="$(strings -a "${out}/vkcube-drm.stripped")"
@@ -175,6 +178,14 @@ for s in 'v3d-winsys:' 'v3da-winsys:' phoenix_v3d_ioctl peek_next_scanout v3d-sr
 	echo "  old-lane string '${s}': ${n}"
 	[ "${n}" = 0 ] || bad=1
 done
+# Every raw ioctl() must go through __wrap_ioctl (the sync_file emulation): the only
+# direct call of the real ioctl is inside __wrap_ioctl itself.
+dis="$("${TC}-objdump" -d --no-show-raw-insn "${out}/vkcube-drm")"
+direct="$(awk '/^[0-9a-f]+ <[^>]+>:$/ {fn=$2} /\tbl\t[0-9a-f]+ <ioctl>$/ {print fn}' <<< "${dis}" | sort | uniq -c)"
+wrapped="$(awk '/^[0-9a-f]+ <[^>]+>:$/ {fn=$2} /\tbl\t[0-9a-f]+ <__wrap_ioctl>$/ {print fn}' <<< "${dis}" | sort -u | tr '\n' ' ')"
+echo "  direct bl <ioctl> from: $(tr -s ' \n' ' ' <<< "${direct}")"
+echo "  bl <__wrap_ioctl> from: ${wrapped}"
+grep -qvE '^ *[0-9]+ <__wrap_ioctl>:$' <<< "${direct}" && [ -n "${direct}" ] && { echo "build.sh: ioctl() called outside __wrap_ioctl" >&2; bad=1; }
 if grep -qE ' [Tt] dlopen$' <<< "${syms}"; then
 	echo "  note: dlopen is linked (referenced by: $(grep -B1 -E '^ +0x[0-9a-f]+ +dlopen$' "${out}/vkcube-drm.map" | head -1 | tr -s ' ' | cut -c1-120))"
 fi
