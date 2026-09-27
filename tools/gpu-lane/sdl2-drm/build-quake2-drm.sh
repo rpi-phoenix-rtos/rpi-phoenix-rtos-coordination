@@ -24,7 +24,14 @@
 # sdl2-drm/build.sh or mesa-drm/build.sh, and touches no /srv, TFTP loader, .buildroot output or
 # sources/.
 #
-# Usage: tools/gpu-lane/sdl2-drm/build-quake2-drm.sh [--no-control] [--libdrm-prefix <dir>]
+# Usage: tools/gpu-lane/sdl2-drm/build-quake2-drm.sh [--no-control] [--libdrm-prefix <dir>] [--variant <v>]
+#   --variant <v>  link the libSDL2.a of an sdl2-drm `build.sh --out build-out-<v>` tree and name
+#           everything quake2-drm-<v>: out build-out/quake2-drm-<v>/, yquake2-drm-<v> + launcher
+#           quake2-drm-<v> (execs /usr/bin/yquake2-drm-<v>), banner/flipstat tag quake2-drm-<v>.
+#           frame-pacing.md: `pace` (build.sh --extra-patches patches-pace) and its control `ctl`
+#           (the default patch set, built at the same time into build-out-ctl).
+# Env:   Q2DRM_PORT_SHADOW=<dir>  relink from a gamedrm/shadow-port-build.sh output instead of the
+#        port's .buildroot tree (see that script)
 # Env:   Q2DRM_OUT, TARGET (default aarch64a72-generic-rpi4b), RPI4B_BUILDROOT
 # Stage (coordinator only; the live export is the fsid=0 one):
 #   install -m 755 $OUT/yquake2-drm.stripped <export>/usr/bin/yquake2-drm
@@ -40,18 +47,30 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${here}/../../.." && pwd)"
 G_DO_CONTROL=1
 G_LIBDRM_SRC="${repo_root}/tools/gpu-lane/libdrm-phoenix/build-out-m5b/prefix"
+variant=""
 while [ "$#" -gt 0 ]; do
 	case "$1" in
 		--no-control) G_DO_CONTROL=0 ;;
+		--variant) shift; variant="${1:?--variant needs a name}" ;;
+		--variant=*) variant="${1#--variant=}" ;;
 		--libdrm-prefix) shift; G_LIBDRM_SRC="${1:?--libdrm-prefix needs a directory}" ;;
 		--libdrm-prefix=*) G_LIBDRM_SRC="${1#--libdrm-prefix=}" ;;
-		-h|--help) sed -n '2,35p' "${BASH_SOURCE[0]}"; exit 0 ;;
+		-h|--help) sed -n '2,40p' "${BASH_SOURCE[0]}"; exit 0 ;;
 		*) echo "build-quake2-drm: unknown option: $1" >&2; exit 2 ;;
 	esac
 	shift
 done
 G_LIBDRM_SRC="$(realpath -m "${G_LIBDRM_SRC}")"
 G_APP=quake2-drm
+G_OUT_DEFAULT="${here}/build-out/quake2-drm"
+if [ -n "${variant}" ]; then
+	case "${variant}" in *[!a-z0-9]*) echo "build-quake2-drm: --variant must be [a-z0-9]+" >&2; exit 2 ;; esac
+	G_APP="quake2-drm-${variant}"
+	G_OUT_DEFAULT="${here}/build-out/quake2-drm-${variant}"
+	G_SDL_DIR="${here}/build-out-${variant}"
+	G_SUFFIX="-drm-${variant}"
+	[ -f "${G_SDL_DIR}/sdl-prefix/lib/libSDL2.a" ] || { echo "build-quake2-drm: no ${G_SDL_DIR}/sdl-prefix/lib/libSDL2.a (run build.sh --out build-out-${variant} first)" >&2; exit 1; }
+fi
 G_ENGINE=yquake2
 G_PORTDIR=yquake2-8.71
 G_GL=gles
@@ -59,7 +78,8 @@ G_API_TEXT=GLES
 G_LAUNCHER_SRC="${repo_root}/tools/yquake2-port/quake2-launcher.c"
 G_LAUNCHER=quake2
 G_ENGINE_SYMS="GL3_Init GL3_EndFrame gladLoadGLES2Loader GetRefAPI Qcommon_Init"
-G_OUT="$(realpath -m "${Q2DRM_OUT:-${here}/build-out/quake2-drm}")"
+G_OUT="$(realpath -m "${Q2DRM_OUT:-${G_OUT_DEFAULT}}")"
+[ -z "${Q2DRM_PORT_SHADOW:-}" ] || G_PORT_SHADOW="$(realpath -m "${Q2DRM_PORT_SHADOW}")"
 
 # shellcheck source=gamedrm/relink-sdl-gl-game.sh
 . "${here}/gamedrm/relink-sdl-gl-game.sh"

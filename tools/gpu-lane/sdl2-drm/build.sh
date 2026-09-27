@@ -26,10 +26,15 @@
 #
 # Usage: tools/gpu-lane/sdl2-drm/build.sh [--out <dir>] [--clean] [-j N]
 #                                         [--libdrm-prefix <dir>] [--skip-mesa] [--skip-sdl]
+#                                         [--extra-patches <dir>] [--name <clone name>]
 #   --skip-mesa  reuse <out>/mesa-gl as is (default: run mesa-drm/build.sh, a no-op when current)
 #   --skip-sdl   reuse <out>/sdl-prefix as is: (re)build quakespasm-drm only. The SDL cmake tree
 #                tracks the sysroot headers too, so after a libphoenix install a plain run
 #                recompiles libSDL2.a -- which stk-drm, quake2/3-drm and vkquake-drm also link.
+#   --extra-patches  apply <dir>/*.patch after patches/ (part of the source stamp). For a variant
+#                built into its own --out, e.g. patches-pace (frame-pacing.md): the default set,
+#                and so the default build-out's libSDL2.a, stay as they are.
+#   --name       the clone's name in its banner/flipstat/swapstat lines (default quakespasm-drm)
 # Stage (coordinator only):
 #   sudo install -m 755 <out>/quakespasm-drm.stripped <live NFS export>/usr/bin/quakespasm-drm
 #
@@ -42,6 +47,8 @@ jobs="$(nproc)"
 clean=0
 skip_mesa=0
 skip_sdl=0
+extra_patches=""
+qs_name=quakespasm-drm
 # m3p3 = the part-2 library (G1 import, G2/G3 users, /dev/dri names, G13) + opt-in DRMPHX_TRACE.
 libdrm_prefix="${root}/tools/gpu-lane/libdrm-phoenix/build-out-m3p3/prefix"
 while [ $# -gt 0 ]; do
@@ -55,12 +62,20 @@ while [ $# -gt 0 ]; do
 		--out=*) out="${1#--out=}" ;;
 		--libdrm-prefix) shift; libdrm_prefix="${1:?--libdrm-prefix needs a directory}" ;;
 		--libdrm-prefix=*) libdrm_prefix="${1#--libdrm-prefix=}" ;;
-		-h|--help) sed -n '2,35p' "${BASH_SOURCE[0]}"; exit 0 ;;
+		--extra-patches) shift; extra_patches="${1:?--extra-patches needs a directory}" ;;
+		--extra-patches=*) extra_patches="${1#--extra-patches=}" ;;
+		--name) shift; qs_name="${1:?--name needs a name}" ;;
+		--name=*) qs_name="${1#--name=}" ;;
+		-h|--help) sed -n '2,40p' "${BASH_SOURCE[0]}"; exit 0 ;;
 		*) echo "build.sh: unknown argument $1" >&2; exit 2 ;;
 	esac
 	shift
 done
 case "${out}" in /*) ;; *) out="${PWD}/${out}" ;; esac
+if [ -n "${extra_patches}" ]; then
+	case "${extra_patches}" in /*) ;; *) extra_patches="${PWD}/${extra_patches}" ;; esac
+	ls "${extra_patches}"/*.patch > /dev/null 2>&1 || { echo "build.sh: no *.patch in ${extra_patches}" >&2; exit 2; }
+fi
 if [ "${clean}" = 1 ]; then
 	rm -rf "${out}"
 	echo "cleaned ${out}"
@@ -117,7 +132,9 @@ if [ "${skip_sdl}" = 1 ]; then
 	log "SDL: reusing ${SP} as is (--skip-sdl; patch/overlay set ${stamp})"
 else
 	src="${out}/sdl-src"
-	stamp="$( (sha256sum "${SDL_TARBALL}"; cat "${here}"/patches/*.patch; find "${here}/overlay" -type f | sort | xargs cat) \
+	# Without --extra-patches the stamp is the one of the default set, byte for byte.
+	stamp="$( (sha256sum "${SDL_TARBALL}"; cat "${here}"/patches/*.patch; find "${here}/overlay" -type f | sort | xargs cat
+		if [ -n "${extra_patches}" ]; then cat "${extra_patches}"/*.patch; fi) \
 		| sha256sum | cut -c1-16)"
 	if [ "$(cat "${out}/sdl-src.stamp" 2>/dev/null || true)" != "${stamp}" ]; then
 		log "SDL ${SDL_VERSION} source: tarball + $(ls "${here}"/patches/*.patch | wc -l) patches + overlay (set ${stamp})"
@@ -126,9 +143,10 @@ else
 		tar -C "${out}/sdl-tmp" -xzf "${SDL_TARBALL}"
 		mv "${out}/sdl-tmp/SDL2-${SDL_VERSION}" "${src}"
 		rmdir "${out}/sdl-tmp"
-		for p in "${here}"/patches/*.patch; do
+		for p in "${here}"/patches/*.patch ${extra_patches:+"${extra_patches}"/*.patch}; do
 			patch -d "${src}" -p1 -s --no-backup-if-mismatch < "${p}" || die "patch failed: $(basename "${p}")"
 		done
+		[ -z "${extra_patches}" ] || log "  + $(ls "${extra_patches}"/*.patch | wc -l) extra patch(es) from ${extra_patches}"
 		cp -a "${here}/overlay/." "${src}/"
 		echo "${stamp}" > "${out}/sdl-src.stamp"
 	fi
@@ -275,7 +293,7 @@ done < "${out}/qs-tus.txt"
 HOOKS_SRC="${here}/gamedrm/gamedrm_hooks.c"
 HOOKS_O="${QO}/gamedrm_hooks.o"
 "${TC}-gcc" -O2 -g -std=gnu17 -Wall -Wextra -Werror "${TFLAGS[@]}" -I"${SP}/include" \
-	-DGAMEDRM_NAME='"quakespasm-drm"' -DGAMEDRM_API='"desktop GL"' -c "${HOOKS_SRC}" -o "${HOOKS_O}" \
+	-DGAMEDRM_NAME="\"${qs_name}\"" -DGAMEDRM_API='"desktop GL"' -c "${HOOKS_SRC}" -o "${HOOKS_O}" \
 	|| die "gamedrm_hooks.c compile failed"
 objs+=("${HOOKS_O}")
 log "  compiled ${#objs[@]} objects ($(grep -c 'warning:' "${out}/qs-cc.log" || true) warning line(s), ${out}/qs-cc.log)"
@@ -330,7 +348,7 @@ done
 if grep -qE ' [Tt] dlopen$' <<< "${syms}"; then log "  note: dlopen is linked (libphoenix); SDL's loadso is the dummy one"; fi
 strs="$(strings -a "${QS}.stripped")"
 for s in 'KMS/DRM Video Driver' '/dev/dri/' 'libdrm-phoenix:' '/dev/kbd0' '/dev/audio0' 'EGL_KHR_platform_gbm' \
-		'quakespasm-drm:' 'quakespasm-drm flipstat' 'quakespasm-drm swapstat' 'V3D 4.2' 'kmsro'; do
+		"${qs_name}:" "${qs_name} flipstat" "${qs_name} swapstat" 'V3D 4.2' 'kmsro'; do
 	n=$(grep -cF -- "${s}" <<< "${strs}" || true)
 	log "  strings '${s}': ${n}"
 	[ "${n}" != 0 ] || bad=1
@@ -369,7 +387,7 @@ log "  ${QS}: $(stat -c %s "${QS}") bytes; stripped $(stat -c %s "${QS}.stripped
 	echo "Mesa:               $(cat "${M}/mesa-src.stamp") (mesa-drm patch set), opengl=true"
 	echo "libdrm-phoenix:     $(sed -n 3p "${M}/libdrm-snapshot.txt" | cut -c1-16) from ${libdrm_prefix}"
 	echo "quakespasm:         ${QS_COMMIT} + $(basename "${QS_PATCH}") ($(sha "${QS_PATCH}"))"
-	echo "gamedrm_hooks.c:    $(sha "${HOOKS_SRC}") (quakespasm-drm, desktop GL; --wrap=SDL_GL_SwapWindow)"
+	echo "gamedrm_hooks.c:    $(sha "${HOOKS_SRC}") (${qs_name}, desktop GL; --wrap=SDL_GL_SwapWindow)"
 	echo "quakespasm-drm:     $(sha "${QS}") $(stat -c %s "${QS}") bytes"
 	echo "quakespasm-drm.stripped: $(sha "${QS}.stripped") $(stat -c %s "${QS}.stripped") bytes"
 } > "${out}/BUILD-INFO.txt"

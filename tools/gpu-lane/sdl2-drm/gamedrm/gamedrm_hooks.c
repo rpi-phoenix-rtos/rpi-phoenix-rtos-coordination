@@ -22,6 +22,12 @@
  *    front buffer + drmModePageFlip). V3D_FLIPSTAT=0 turns both off (as on the old lane).
  *    KMSDRM itself prints nothing per frame, and neither engine prints its fps outside
  *    `timedemo`, so without this the gate would have no frames figure for the clone.
+ * 4. GAMEDRM_EXIT_SECS=<N> (unset = never): at the first window boundary at least N s after
+ *    the first swap, print `<name>: exit after ... (GAMEDRM_EXIT_SECS=N)` and _exit(0). The
+ *    engines never exit on their own (a demo loop; quakespasm stays at the console after a
+ *    timedemo), so without it a psh cycle can run only one of them, last; with it, two
+ *    binaries can be compared in one boot (frame-pacing.md). _exit(), not exit(): no engine
+ *    or stdio teardown on the way out, only the kernel closing the process's descriptors.
  *
  * Copyright 2026 Phoenix Systems
  * SPDX-License-Identifier: BSD-3-Clause
@@ -63,6 +69,7 @@ static struct {
 	unsigned long win_frames;
 	uint64_t win_swap_us;
 	uint64_t win_swap_max;
+	unsigned exit_secs;  /* GAMEDRM_EXIT_SECS, 0 = never */
 } S;
 
 
@@ -124,6 +131,8 @@ static void first_swap(SDL_Window *window, uint64_t t)
 	S.state = ((e != NULL) && (e[0] == '0')) ? 2 : 1;
 	e = getenv("V3D_FLIPSTAT_MS");
 	S.window_ms = ((e != NULL) && (atoi(e) > 0)) ? (unsigned)atoi(e) : 5000u;
+	e = getenv("GAMEDRM_EXIT_SECS");
+	S.exit_secs = ((e != NULL) && (atoi(e) > 0)) ? (unsigned)atoi(e) : 0u;
 	S.first_us = t;
 	S.win_t0 = t;
 	if (window != NULL) {
@@ -174,4 +183,9 @@ void __wrap_SDL_GL_SwapWindow(SDL_Window *window)
 	S.win_frames = 0u;
 	S.win_swap_us = 0u;
 	S.win_swap_max = 0u;
+	if ((S.exit_secs != 0u) && ((t1 - S.first_us) >= (uint64_t)S.exit_secs * 1000000u)) {
+		out(GAMEDRM_NAME ": exit after %lu swaps in %lu ms since the first swap (GAMEDRM_EXIT_SECS=%u)\n", S.total,
+			(unsigned long)((t1 - S.first_us) / 1000u), S.exit_secs);
+		_exit(0);
+	}
 }

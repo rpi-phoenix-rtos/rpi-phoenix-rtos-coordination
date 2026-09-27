@@ -18,6 +18,14 @@
 #   G_OUT            output directory
 #   G_DO_CONTROL     1 = run the control relink
 #   G_LIBDRM_SRC     libdrm-phoenix prefix
+# and optionally (a variant build; the defaults are the clone's):
+#   G_SDL_DIR        an sdl2-drm build.sh --out dir whose sdl-prefix/ libSDL2.a to link
+#                    (default sdl2-drm/build-out; Mesa always comes from build-out/mesa-gl)
+#   G_SUFFIX         suffix of the staged names: /usr/bin/<G_ENGINE><G_SUFFIX> and the launcher
+#                    /usr/bin/<G_LAUNCHER><G_SUFFIX> that execs it (default -drm)
+#   G_PORT_SHADOW    a gamedrm/shadow-port-build.sh output dir: read the port's build.log and
+#                    objects from there instead of .buildroot's port-sources/ (gone after a
+#                    failed ports stage); its link names <dir>/prog/<G_ENGINE> as the output
 #
 # HOW:
 #   1. snapshot libdrm-phoenix m5b (include/ + libdrm.a);
@@ -63,6 +71,11 @@ g_main() {
 
 	local out="${G_OUT}"
 	local buildlog="${pfx}/port-sources/${G_PORTDIR}/build.log"
+	local port_prog="${pfx}/prog"
+	if [ -n "${G_PORT_SHADOW:-}" ]; then
+		buildlog="${G_PORT_SHADOW}/build.log"
+		port_prog="${G_PORT_SHADOW}/prog"
+	fi
 	local old_sdl="${pfx}/lib/libSDL2.a"
 	local old_gl="${repo_root}/tools/.gpu-libs/libGL-phoenix.a"
 	local old_v3d="${repo_root}/tools/.gpu-libs/libv3d-phoenix.a"
@@ -71,15 +84,16 @@ g_main() {
 	local shipped_launcher="${buildroot}/_fs/${target}/root/usr/bin/${G_LAUNCHER}"
 	local hooks_src="${here}/gamedrm/gamedrm_hooks.c"
 	local SD="${here}/build-out"
-	local SP="${SD}/sdl-prefix"
+	local SDLD="${G_SDL_DIR:-${SD}}"
+	local SP="${SDLD}/sdl-prefix"
 	local SDL_A="${SP}/lib/libSDL2.a"
 	local M="${SD}/mesa-gl"
 	local MB="${M}/mesa-build"
 	local COMPAT_A="${M}/compat/libmesadrm-compat.a"
 	local GL_BRIDGE="${MB}/src/mesa/glapi/glapi/libglapi_bridge.a"
-	local engine_drm="${G_ENGINE}-drm"
+	local engine_drm="${G_ENGINE}${G_SUFFIX:--drm}"
 	local elf="${out}/${engine_drm}"
-	local launcher_drm="${G_LAUNCHER}-drm"
+	local launcher_drm="${G_LAUNCHER}${G_SUFFIX:--drm}"
 
 	log()  { printf '[%s] %s\n' "${G_APP}" "$*"; }
 	warn() { printf '[%s] WARNING: %s\n' "${G_APP}" "$*" >&2; }
@@ -141,9 +155,9 @@ g_main() {
 
 	# --- the port's final link, from its build log ---------------------------------------
 	local linkline
-	linkline="$(grep -E -- "^\+ aarch64-phoenix-gcc .* -o ${pfx}/prog//?${G_ENGINE}\$" "$buildlog" || true)"
+	linkline="$(grep -E -- "^\+ aarch64-phoenix-gcc .* -o ${port_prog}//?${G_ENGINE}\$" "$buildlog" || true)"
 	[ "$(grep -c . <<< "$linkline")" = 1 ] \
-		|| die "${buildlog} must hold exactly one '+ aarch64-phoenix-gcc ... -o ${pfx}/prog/${G_ENGINE}' line -- the port recipe changed; update this script"
+		|| die "${buildlog} must hold exactly one '+ aarch64-phoenix-gcc ... -o ${port_prog}/${G_ENGINE}' line -- the port recipe changed; update this script"
 	linkline="${linkline#+ }"
 	local objs=() ctl_args=() tok
 	# The command has no quoting: every token is a flag or an absolute path (checked).
@@ -367,7 +381,7 @@ g_main() {
 		echo "built:               $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 		echo "script/hooks git:    $( [ -n "$src_git" ] && echo "DIRTY/untracked" || echo "clean at $(git -C "$repo_root" rev-parse HEAD)")"
 		echo "gamedrm_hooks.c:     $(sha "$hooks_src")"
-		echo "libSDL2.a (KMSDRM):  $(sha "$SDL_A") ($(cat "${SD}/sdl-src.stamp" 2>/dev/null || echo '?') = sdl2-drm patch/overlay set)"
+		echo "libSDL2.a (KMSDRM):  $(sha "$SDL_A") ($(cat "${SDLD}/sdl-src.stamp" 2>/dev/null || echo '?') = sdl2-drm patch/overlay set)"
 		echo "Mesa (mesa-gl):      patch set $(cat "${M}/mesa-src.stamp"), $(cat "${M}/mesa-opengl.txt"); libgallium $(sha "$GALLIUM_A" | cut -c1-16); API ${G_GL}"
 		echo "libdrm-phoenix:      $(sha "$LDP/lib/libdrm.a") from ${G_LIBDRM_SRC}"
 		echo "port build log:      $(sha "$buildlog") (${buildlog})"
