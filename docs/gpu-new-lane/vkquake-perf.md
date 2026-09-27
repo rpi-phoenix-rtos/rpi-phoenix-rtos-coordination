@@ -769,6 +769,8 @@ VKQDRM_OUT=tools/gpu-lane/sdl2-drm/build-out/vkquake-drm-g VKQDRM_TARGET=/usr/bi
   * `scripts/check-gpu-lane-ports-sync.sh` (untracked, another agent's work) maps `patches-vkquake/` to
     `sources/phoenix-rtos-ports/vkquake_drm/patches`. That port directory does not exist in the checked-out
     ports tree yet, so when it lands it needs `0008` and `0009` copied in.
+  * **`0010-gl_vidsdl-three-image-fifo-by-default-on-phoenix.patch`** (see "Three images by default" below)
+    must be copied into phoenix-rtos-ports `vkquake_drm/patches/` as well when that port lands.
 
 ### Staged (`/srv/phoenix-rpi4-nfs-gcc16`, `sudo -n install -m 755`, both targets absent before, `cmp` OK)
 
@@ -951,3 +953,99 @@ carved from one contiguous pool (`kms_bo.c` `bo_from_pool`, `pool_mib=32` in the
   Medians above are over `uniq`'d lines. The chain scripts' median must dedupe from now on.
 - Next: make three images the new-lane default (launcher `+vid_vsync 2`, or `minImageCount` 3 in the WSI), then
   swap `/usr/bin/vkquake-drm` to the promoted bytes and re-run the migration row.
+
+## Three images by default — patch 0010, binary `-h` (2026-09-28, host only: build + staging, no Pi cycle yet)
+
+### Patch
+
+**`patches-vkquake/0010-gl_vidsdl-three-image-fifo-by-default-on-phoenix.patch`** (sha256 `ba3d522b6bfe3c1e…`):
+`vid_vsync` "2" under `__phoenix__` (`gl_vidsdl.c:112`, CVAR_ARCHIVE as upstream), the 0006/0008/0009 pattern.
+Patch set stamp **`8b253adba2459964`**.
+
+**Why `vid_vsync 2` and not a minImageCount change** [read]:
+* On this WSI the present mode is FIFO for every `vid_vsync` value (only FIFO is offered, see "Why f2 reads exactly
+  30.00 fps"). So on Phoenix `vid_vsync` only decides two things: `minImageCount` 3 for `>= 2`, else 2
+  (`gl_vidsdl.c:2928`), and whether present-wait2 caps the queue at `vid_maxframelatency` (`> 0`, `:4023`).
+* Both were in effect in `pace-vkq-g`, so defaulting `vid_vsync 2` reproduces the measured configuration exactly.
+  Its log shows `pwait=235/~90us/≤3.7ms`, one call per frame, so the latency cap does not limit anything. Raising
+  `minImageCount` under `vid_vsync 0` instead would give an unmeasured configuration (3 images, no pwait).
+* It keeps upstream's meaning (the video menu cycles 0/1/2 and labels 2 "triple buffer", `:5255`, `:5409`) and
+  the run-time switch: `Cvar_SetCallback (&vid_vsync, VID_VsyncChanged_f)` calls `VID_Restart`, so `vid_vsync 0`
+  or `1` at the console goes back to two images.
+* The header gives the numbers: mig-vkq-g 29.71 fps (n=111), `kmsbuf id=1,2`, acquire ~10–11.7 ms, pwait 0 calls
+  → pace-vkq-g 44.21 fps (n=113, max 44.48), `kmsbuf id=1,2,3`, acquire ~32 µs, 0 CSD, no tearing.
+
+Dry run on a fresh tarball extraction: 0001–0010 apply with `patch -p1`, no fuzz, no offsets, and the resulting
+`gl_vidsdl.c` is byte-identical to the edited scratch copy. 0010 touches line 112 only; 0005 (`:1565`) and 0007
+(`:1427`) are elsewhere in the same file.
+
+### Build
+
+```
+VKQDRM_OUT=tools/gpu-lane/sdl2-drm/build-out/vkquake-drm-h VKQDRM_TARGET=/usr/bin/vkquake-drm-h \
+  tools/gpu-lane/sdl2-drm/build-vkquake-drm.sh
+```
+
+* rc 0, 83 TUs, 0 warning lines, the script's proofs pass, 12 guarded shared files unchanged, 52 GB free on `/`.
+* Output files:
+  * `vkquake-drm.stripped` **`53eb25309585a3d4ad0b8faf96c0bef3f79bdc82f4559359adcf630ee9401008`** (13 368 776 B);
+  * unstripped `vkquake-drm` `53435fe2fb15c5c21b0fa4e6cacfbfabcd1ce7cad376453bde2414a0284088ae` (for addr2line);
+  * launcher `vkq-drm` **`2e4696268b716205c6494a09906efedc11e134977b21ba1e688ea00158d32344`** (execs
+    `/usr/bin/vkquake-drm-h`, nothing appended after `+map start`).
+* Inputs as in `-g`: ICD `69c689ad4926672b`, libdrm-phoenix m5b `a508e207…`, libphoenix.a `94a3e1e6…`, SDL
+  source set `cd1e07eb499835db`. BUILD-INFO says `DIRTY/untracked` for the same reason as `-g` (another agent's
+  uncommitted `build-vkquake-drm.sh` edit). Its "shipped vkquake" line now reads `d44bf6f9…` (it was `1d34692d…`
+  for `-g`): that is the old lane's `ports/vkquake` binary in the buildroot, rebuilt in between by someone else,
+  and it is only the old-lane inverse control, not an input.
+* **Checks on the ELF** (`gdb-multiarch -batch`): `'gl_vidsdl.c'::vid_vsync.string = "2"`, flags CVAR_ARCHIVE;
+  `vid_maxframelatency.string = "2"`; and 0006/0008/0009 are still in: `r_gpulightmapupdate = "0"` (CVAR_NONE),
+  `r_waterwarpcompute = "0"` (CVAR_ARCHIVE), `r_oit = "0"`. `strings` on the launcher shows
+  `vkq-drm: exec /usr/bin/vkquake-drm-h -basedir /usr/share/quake -width 1920 -height 1080 -fullscreen +r_rtshadows 0 +map start`.
+* `id1/autoexec.cfg` and `id1/config.cfg` on the export set neither `vid_vsync` nor `vid_maxframelatency`, so the
+  compiled default is what runs.
+
+### Staged (`/srv/phoenix-rpi4-nfs-gcc16`, `sudo -n install -m 755`, both targets absent before, `cmp` OK)
+
+| path | sha256 |
+|---|---|
+| **`/usr/bin/vkquake-drm-h`** | `53eb25309585a3d4…` |
+| **`/bin/vkq-drm-h`** | `2e4696268b716205…` |
+| untouched: `/usr/bin/vkquake-drm`, `/bin/vkq-drm` | `22755bb450b09e0f…`, `e49a7444fc782d0f…` |
+| untouched: `/usr/bin/vkquake-drm-g`, `/bin/vkq-drm-g` | `15354b95b42f7c6b…`, `22345b634bf71bae…` |
+
+### Pre-registered `mig-vkq-h` — three images from the compiled default
+
+Exactly the `pace-vkq-g` command, with the launcher `/bin/vkq-drm-h` and no extra argument:
+
+```
+./scripts/test-cycle-psh-interact.sh --label mig-vkq-h --wait-secs 220 --inter-cmd-secs 8 --idle-secs 60 \
+    --max-cmd-secs 300 --ready-line 'V3DA srv detached|KMS srv detached' --ready-extra-secs 20 \
+    --hdmi-dense-on 'vkquake-drm: new GPU lane' -- \
+    "/bin/rpi4-v3d-async-csdprof -r 1 -m serial -i -C" \
+    "/bin/rpi4-kms-gate -G" \
+    "export V3D_DEBUG=shaderdb" \
+    "/bin/vkq-drm-h"
+./scripts/check-torch-rois.py --label mig-vkq-h
+```
+
+⚠ **fps medians only after the boot banner**, or from a log already run through
+`scripts/collapse-uart-log-floods.py`. A log can open with ~10⁵ copies of the previous cycle's last `phxvk: run … fps=`
+line (the UART flood trap in "Result — mig-vkq-g …"); counting them put pace-vkq-g's first-pass median at 29.82.
+
+| Line / quantity | `pace-vkq-g` (measured) | predicted `mig-vkq-h` | if instead… |
+|---|---|---|---|
+| exec line | `… +map start +vid_vsync 2` | **`vkq-drm: exec /usr/bin/vkquake-drm-h … +r_rtshadows 0 +map start`**, nothing appended | `+vid_vsync 2` appended or `-g` in the path: the `-g` launcher ran, so `cmp` the staged bytes |
+| `Using FIFO present mode` | yes | yes | — |
+| kmsbuf imports | `id=1,2,3` | **`id=1,2,3`** | `id=1,2`: the compiled default did not take. First check `id1/config.cfg` on the export for `vid_vsync` (CVAR_ARCHIVE, a saved value overrides the default), then `cmp` `/usr/bin/vkquake-drm-h` |
+| `flipstat` fps (median, steady, after the banner) | 44.21 (max 44.48) | **44 ± 3** | ≈ 30.00: two images (see the row above); < 41 with 3 images: diff against pace-vkq-g's qstat rows |
+| `waitstat acquire` avg / `pwait` | ~32 µs / ~1 call per frame, ~90 µs | **< 3 ms / ≈ 1 call per frame, small avg** | acquire ≈ 10 ms: two images; pwait 0 calls: `vid_vsync` is not > 0 |
+| `V3DA srv csd cfg5=…` class lines / qstat `csd` | none / `0/0ms` | **none / `0/0ms` (0 CSD)** | any: 0009 lost, so check the build's patch list |
+| HDMI | spawn view lit, "41 / 47 FPS", no tearing | same | tearing: not FIFO; a black or frozen teleporter: raster warp broken |
+| torch ROI check | — | PASS or inconclusive (viewpoint) | torches dark: a real finding |
+| qstat err / wedges / rej, exceptions | 0 | 0 | any: FAIL; addr2line `build-out/vkquake-drm-h/vkquake-drm` |
+| `id1/config.cfg` on the export after the run | unchanged | unchanged (the cycle kills vkQuake without a clean quit) | contains `vid_vsync`: restore it before the next cycle |
+
+**Decision:** if every row holds, 0010 stays in `patches-vkquake/` and these same `vkquake-drm.stripped` bytes
+(`53eb2530…`) are what gets installed as `/usr/bin/vkquake-drm`. The engine does not depend on `VKQDRM_TARGET`, so
+the existing `/bin/vkq-drm` (`e49a7444…`) already execs the right path. Then re-run the migration row. If it
+fails, revert 0010; `-g` plus `+vid_vsync 2` stays the measured fallback.
