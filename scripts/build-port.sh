@@ -19,6 +19,7 @@
 #
 #   scripts/build-port.sh libpng libjpeg          # clean build (default)
 #   scripts/build-port.sh --incremental ncurses   # skip the clean re-extract
+#   scripts/build-port.sh 'xorg_server_drm[x11demo]'  # with USE flags (ports.yaml `use:`)
 #
 # Environment:
 #   RPI4B_BUILDROOT   buildroot to build in (default <repo>/.buildroot). A scratch
@@ -108,6 +109,7 @@ export EXPORT_CFLAGS EXPORT_CXXFLAGS EXPORT_LDFLAGS EXPORT_STRIP
 if [ "${clean}" = 1 ]; then
 	echo ">> clean: removing extracted port sources + build state for: ${ports[*]}"
 	for p in "${ports[@]}"; do
+		p="${p%%\[*}"
 		rm -rf "${PREFIX_BUILD}/port-sources/${p}-"* 2>/dev/null || true
 		rm -f "${PREFIX_BUILD}/.port_state/${p}-"*.json 2>/dev/null || true
 	done
@@ -119,7 +121,9 @@ trap 'rm -f "${tmp_yaml}"' EXIT
 {
 	echo 'ports:'
 	for p in "${ports[@]}"; do
-		echo "  - name: ${p}"
+		# name[flag,flag] -> `use: [flag, flag]`
+		echo "  - name: ${p%%\[*}"
+		case "${p}" in *\[*\]) echo "    use: [${p#*\[}" | sed 's/,/, /g' ;; esac
 	done
 } > "${tmp_yaml}"
 

@@ -290,13 +290,11 @@ old strings (`/dev/fb0`, `phoenix-map.cfg`) and none of the new ones.
 
 ### 4.1 Ports (graphics) — the new lane stored in phoenix-rtos-ports [built]
 
-> ⚠ **Draft (2026-09-28 00:10):** written by the ports agent, which the API spend limit stopped before it committed.
-> The branch named below is **not pushed yet**; the recipes exist only in its worktree. Being finished now.
-
 Owner request 2026-09-27: "make sure that all the ports (the recent ones) are correctly stored in
 phoenix-rtos-ports". The graphics half of the new lane (this section; the Wayland-desktop half —
 labwc, gtk3, dbus, xfce — is branch `feat/new-lane-wayland-ports`) is now a set of framework recipes on
-phoenix-rtos-ports branch **`feat/new-lane-graphics-ports`** (pushed to `publish`, **not merged**). They
+phoenix-rtos-ports branch **`feat/new-lane-graphics-ports`** (`78d3428`, 7 commits off `35abace`, pushed to
+`publish`, **not merged**). They
 are **opt-in**: no project `ports.yaml` names them, so the default image is unchanged (items 1–6 above
 are what adopting them means). The old-lane ports (`sdl2`, the four game ports, `xorg_server`, …) are
 untouched and build exactly as before.
@@ -341,12 +339,33 @@ port as plain upstream libdrm + patches. Until then the vendored copies are held
 
 **Verification** (scratch buildroot `scripts/make-scratch-buildroot.sh`, never the image's `.buildroot`;
 `RPI4B_BUILDROOT=<scratch> RPI4B_PORTS_DIR=<ports worktree> scripts/build-port.sh <port>`; outputs compared
-with `scripts/gpu-lane-compare.sh` against the tools builds): see §4.2 below for the verdicts.
+with `scripts/gpu-lane-compare.sh` against the tools builds). Verdict scale: IDENTICAL (sha256) > CODE-IDENTICAL
+(equal after `strip --strip-debug`, or disassembly + relocations equal) > CODE-EQUIVALENT (the same with
+string-literal offsets / literal addresses masked; the remaining string differences listed are the
+`__FILE__` build paths and the build timestamp only).
+
+| Port | How verified | Result |
+|---|---|---|
+| `libdrm_phoenix` | **framework build** (scratch) | `libdrm.a` CODE-IDENTICAL, headers identical; `drmprobe` CODE-EQUIVALENT (1 path string) |
+| `mesa_drm` | **framework build**, GLES alone and again with USE `opengl`+`vulkan` (pulled by the consumers below) | vs the tools `mesa-gl` (same 16-patch set `4a457a1e…`): `libGLESv2.a`, `libmesadrm-compat.a` CODE-IDENTICAL; `libEGL.a`, `libgbm.a`, `libgallium-26.2.0.a` CODE-EQUIVALENT (paths + the `(git-9f0a761020)` suffix: a tarball build has no git). The tools `build-out` (GLES) and `build-out-vulkan` are older patch sets (`d71e7ff7…`, `60dd139d…`, 11 patches) → the ICD differs by exactly those patches, not comparable |
+| `sdl2_kmsdrm` (+ USE `vulkan`) | **framework build** + recipe harness | both `libSDL2.a` CODE-EQUIVALENT (paths), headers identical |
+| `quakespasm_drm` | **framework build** + harness against the tools inputs | harness: **CODE-IDENTICAL** to `sdl2-drm/build-out/quakespasm-drm.stripped` (2 strings: build time) — after one fix found this way: `link-gl.txt` must put `libglapi_bridge.a` first, as the tools link does (member order decides layout) |
+| `yquake2_drm`, `quake3_drm`, `supertuxkart_drm` | recipe harness (the real `p_prepare`/`p_build`, framework env, deps = the tools-lane Mesa/SDL/libdrm) against a fresh tools run | **byte-IDENTICAL** engines and launchers (`yquake2-drm` `8cb9e7f1…`, `quake2-drm` `36dc0ef5…`, `quake3e-drm` `a18989e7…`, `quake3-drm` `af7ac68e…`, `supertuxkart-drm` `a930687f…`, `stk-drm` `c9187a39…`); every control relink byte-identical to the game port's `prog/`. Not through port_manager: that rebuilds the old game ports (and STK's 12 dependencies) in the scratch prefix |
+| `vkquake_drm`, `vkcube_drm`, `kmscube_drm` | **framework build** + harness | `vkquake-drm` CODE-EQUIVALENT to the tools build (paths), `vkq-drm` IDENTICAL, the generated trampoline/GL-stub lists identical; vkcube/kmscube: same symbol sets, but the tools builds used older Mesa/libdrm snapshots (`build-out-vulkan` 11 patches, kmscube 04:51 with libdrm m3p3) — no like-for-like reference |
+| `wayland` | **framework build** | `libwayland-client.a` CODE-IDENTICAL, `shmsrv` IDENTICAL |
+| `weston` | **framework build** (with `mesa_drm[wayland]`) | builds, links and passes all its checks; the tools `build-out` predates today's compat/shim changes (20:16), so no current reference to compare |
+| `libxshmfence_phoenix`, `libepoxy` | framework build (as dependencies) + harness | CODE-IDENTICAL to `x11-drm/build-out/xshmfence-prefix` / `xorg-drm/build-out-noshim/deps-prefix` |
+| `xorg_server_drm` (+ `x11demo`) | static only (`bash -n`, `validate`, `--dry build`) | the framework build stopped in its OLD-lane dependency `xorg_server` (needed for `libmd.a`): its kdrive `Xphoenix` link fails in a from-scratch buildroot — the first real build of `xorg_server_drm` is still to do |
+
+Sync check: `scripts/check-gpu-lane-ports-sync.sh <branch tree>` → 160 files in 45 mappings identical.
 
 **Not converted:** the host tests (`*/hosttest`), the tools' variant/debug switches (`--relink`,
 `--extra-patches`, `--variant`, `VKQDRM_EXTRA_PATCHES`), `pi/xorg-drm-m4a.sh` (a one-off cycle script), the
 servers themselves (`kms`, `v3d-async` → devices, item 7) and the probes (`kmsprobe`, `exportprobe`, …).
-Known debt carried into the ports, all documented in the recipes: `xorg_server_drm` depends on the
+Pending in `tools/gpu-lane/sdl2-drm/patches-vkquake`: 0008 (raster warp) and a CPU-lightmap default — copy
+them into `vkquake_drm/patches/` when promoted (the sync check shows the drift; noted in the recipe).
+Overlap with the Wayland half (not merged now): its `wayland_phoenix` vs this branch's `wayland`, and its
+gtk3's own libepoxy vs `libepoxy`. Known debt carried into the ports, all documented in the recipes: `xorg_server_drm` depends on the
 old-lane `xorg_server` port for `libmd.a` (SHA1); `yquake2_drm` / `quake3_drm` / `supertuxkart_drm` relink the
 old ports' objects (item 4: fold the substitution into those ports' `p_build` when the old lane goes);
 `vkquake_drm` reads the SPIR-V from the `vkquake` port's `glue/`.
