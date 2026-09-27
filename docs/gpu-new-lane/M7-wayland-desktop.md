@@ -5,6 +5,32 @@ light and minimal, but modern and currently maintained", scheduled **as a contin
 The M1–M6 queue and the migration continue in parallel. M7 is new-lane only (new dirs and binaries). The old X
 desktop (`startx_gpu`) stays untouched until the migration retires it.
 
+## ★ Decision 2026-09-27 (owner: "analyse more deeply and choose"): **XFCE 4.20 on labwc**
+
+XFCE's own window manager (xfwm4) is X11-only. Since 4.20 (Dec 2024) the XFCE project's Wayland session
+runs its components under a wlroots compositor, and **labwc is the one it documents**. The panel and desktop use
+layer-shell (gtk-layer-shell) and the window list uses libxfce4windowing (wlr-foreign-toplevel, which labwc
+implements). So the labwc base below stays. XFCE on top gives a recognisable, complete desktop for a public
+demo: a panel with app menu, clock and window buttons; the desktop background; **Thunar** (the file manager,
+replacing the PCManFM plan); the settings manager; the app finder. The terminal stays **foot** (xfce4-terminal
+needs VTE, which is heavy).
+
+| extra piece | status / risk |
+|---|---|
+| gtk-layer-shell (MIT) | small |
+| libxfce4util, xfconf, libxfce4ui, garcon, exo, libxfce4windowing | plain GTK3/GLib C libraries |
+| xfce4-panel, Thunar, xfdesktop, xfce4-settings, xfce4-appfinder | same toolchain |
+| **D-Bus session bus** | **the main risk; not ported.** xfconf (every XFCE setting) needs a bus. Phoenix AF_UNIX has `SCM_RIGHTS` but no `SO_PEERCRED`/`SCM_CREDENTIALS` (D-Bus's EXTERNAL auth). Stage 1: `dbus-daemon` with ANONYMOUS auth on a private socket. Follow-up: `SO_PEERCRED` in the kernel's AF_UNIX (small, general) |
+
+**Staged so that something is always demo-able:**
+1. labwc + foot + `mc` (the first Wayland desktop) — in progress;
+2. GTK3 + gtk3-hello — in progress;
+3. D-Bus session bus (`dbus-daemon` + libdbus; GIO's GDBus on top);
+4. XFCE libraries, then xfce4-panel + Thunar + xfdesktop + xfce4-settings + xfce4-appfinder under labwc: **the showcase**.
+
+Fallback if D-Bus/xfconf proves hard: the Raspberry Pi OS recipe (labwc + PCManFM + a small panel, no D-Bus).
+GTK4 is not needed (owner, 2026-09-27): the light desktop ecosystem is GTK3.
+
 ## Choice
 
 | role | pick | why |
@@ -59,8 +85,8 @@ fix), shmsrv for wl_shm, Mesa GBM/EGL/GLES (static, `--wayland`), libdrm-phoenix
 | `m7b-foot` | foot opens in labwc and draws text; keyboard input reaches it (`rpi4-kms -C` frees the console keyboard) |
 | `m7c-desktop` | wallpaper + foot + fuzzel launcher; window move/resize with the mouse; clean exit |
 | `m7e-gtk3` | a GTK3 demo window (gtk3-demo / a minimal GtkWindow) under Weston, then under labwc |
-| `m7f-pcmanfm` | PCManFM browses `/` and `/usr/share` under labwc: icons, a folder open by double-click, a file copy |
-| `m7g-gtk4` | GTK4 (GL renderer on V3D) window / gtk4-demo under labwc |
+| `m7f-dbus` | `dbus-daemon --session` up; `dbus-send` ping round trip; GDBus client connects |
+| `m7h-xfce` | ★ labwc + xfce4-panel + xfdesktop + Thunar + foot: the showcase desktop; Thunar browses `/`, the panel's app menu launches foot |
 | `m7d-gl-client` | weston-simple-egl / kmscube-style GL client inside labwc (G4/G6/G7 in a real compositor) |
 
 ## Scheduling
