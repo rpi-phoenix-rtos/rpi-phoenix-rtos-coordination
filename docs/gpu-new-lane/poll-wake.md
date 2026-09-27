@@ -650,3 +650,12 @@ kmscube result was not a poll problem (rpi4-kms deferred-flip wake, fixed separa
 flip took exactly two vblanks; with it, one. `pollNotify` removes the last 1 % (C → B). Quakespasm
 lands in the predicted 29–33 band: its ~19.5 ms of GPU time per frame plus the vblank wait bound it,
 not the flip path. **kmscube at 60 Hz through Mesa GBM/EGL on the new stack.**
+
+## Follow-up — always-interruptible wait (kernel `fb8b66ee`, build 13, 2026-09-27): PASS, pushed
+
+`pollwake_wait()` now always waits interruptibly (the "keep server-only sets uninterruptible" premise
+was a prediction error, see above). Gate: disassembly of the built kernel — `pollwake_wait` has 0 calls
+to `proc_threadWait` and 1 to `proc_threadWaitInterruptible` (control: build 12 had 1 uninterruptible);
+Pi `pollwake-intr`: `eintr set=server rc=-1 errno=4 elapsed_ms=1000.1` (was 1001.4), `set=mixed` 1000.0,
+notify p50 38.1 µs unchanged, legacy 8.5 ms; showcase gate `intr-gate` 6/6, HDMI checked. Manifest
+`2026-09-27-build13-pollwake-intr.md`.
