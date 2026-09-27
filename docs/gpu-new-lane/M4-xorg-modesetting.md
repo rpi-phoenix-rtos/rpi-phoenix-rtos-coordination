@@ -716,3 +716,18 @@ timing is right after pollwake. A failure names its step in §P2.1.
 grade the flip attempt and its copy fallback (G7); (d) under Window Maker (`CLIENT=/bin/wmaker`
 started first, the demo from a second script — needs a two-client script); (e) Xorg-drm with
 `-debug dmabuf_capable` once G4 exists (UIF client buffers, no shadow tiling).
+
+### Result — m4p2a (queue33, 2026-09-27 10:37–10:49): **PASS — windowed GL in X at render rate**
+
+`eglx11-demo` (EGL on X11 via DRI3/Present, Mesa-DRM `--x11`) in a 640×480 window on `Xorg-drm-m4p2`
+(glamor), `rpi4-v3d-async -m serial`, `rpi4-kms-gate -G`, shmsrv for the xshmfence pages; 0 exceptions.
+- **Run 1, swap interval 1: 60.00 fps** in every 2 s window after start-up (swap_avg 16.32 ms, max
+  17.45 ms); 57.8 fps over the whole 45 s including start-up. Vsync-locked — the pollNotify kernel +
+  rpi4-kms-gate deliver Present's vblank on time.
+- **Run 2, swap interval 0: 484.7 fps** over 45 s (21 811 frames, 2 s windows 483–488, swap_avg 1.70 ms,
+  frame_max ≤ 4.6 ms) — **the M4 "windowed GL at render rate" gate**. The old lane's GL-in-X path
+  (KNOWN-ISSUES G1: pixels GPU → CPU → socket → CPU → GPU every frame) measured ~14 fps at this size.
+- HDMI (`artifacts/hdmi/20260927-104552-m4p2a-eglx11-tick.png`): the rotating shaded hexagon in the
+  window on the black root.
+The Phoenix xshmfence backend (G16) worked on first contact; the pre-registered soft `Failed to export
+gem bo` / G7 path is the copy path Present used.
