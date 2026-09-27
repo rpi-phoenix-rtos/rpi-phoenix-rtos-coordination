@@ -853,9 +853,9 @@ server's own code is only proven on the Pi. `prime_export_xproc` needs a real ke
 
 | file | sha256 | notes |
 |---|---|---|
-| `tools/gpu-lane/v3d-async/out-g4/rpi4-v3d-async` | `b1ee93800992223a` | server, proto 3; `strings … \| grep -c ns=v3dbuf` = 3 |
+| `tools/gpu-lane/v3d-async/out-g4/rpi4-v3d-async` | `49f16a56a66a0957` | server, proto 3; `strings … \| grep -c ns=v3dbuf` = 3 |
 | `tools/gpu-lane/v3d-async/out-g4/v3dasync-ping` | `89db1a2aaf2eedd9` | not staged (the staged proto-2 one is the compatibility check) |
-| `tools/gpu-lane/libdrm-phoenix/build-out-g4/drmprobe` | `19e826ed614c6563` | G4 tests incl. `prime_export_xproc` |
+| `tools/gpu-lane/libdrm-phoenix/build-out-g4/drmprobe` | `19e826ed614c6563` | G4 tests incl. `prime_export_xproc` (`strings -a … \| grep -c prime_export_xproc` = 3) |
 | `tools/gpu-lane/libdrm-phoenix/build-out-g4/prefix/lib/libdrm.a` | `2b648f08c887224f` | the snapshot the programs below link (checked in `weston-simple-egl.map`) |
 | `tools/gpu-lane/weston-drm/build-out-g4/weston-simple-egl-stripped` | `c1dadf865814a9ae` | Mesa `build-out-wayland` (unchanged) + the G4 libdrm |
 | `tools/gpu-lane/weston-drm/build-out-g4/weston-stripped` | `1efe7d7525a7d42a` | built, **not staged**: Weston imports with its proto-2 library, which is itself a compatibility check |
@@ -930,7 +930,7 @@ Allow for about 1.3 % UART line corruption (re-read the line, don't count it); E
 | 7 | `DRMPROBE RESULT pass=42 fail=0 gap=0 failed=- … verdict=PASS` | m5b's 39 + the three G4 keys | any `failed=` key: its row |
 | 8 | Weston up as in m6c arm B: `Using GL renderer`, output `HDMI-A-1`; `WESTONDRM start … shared_scanout=0 …` | as m6c | `shared_scanout=1` or no field: the old script is staged (`cmp`) |
 | 9 | client trace: `DRMPHX conn … path=/dev/dri/renderD128 node=render …` (the render node, confirming m6d's inference), `DRMPHX ioctl node=render … name=DRM_IOCTL_PRIME_HANDLE_TO_FD rc=0 errno=0 … fdpath=/v3dbuf/<h>` | the client exports | `rc=-1 errno=38`: the m6d client binary is staged (sha `c1dadf86…`) |
-| 10 | per client back buffer (2–4): `V3DA srv export … pages≈2000–2200` (1920×1080 UIF), then `V3DA srv import … ns=v3dbuf … self=0` from Weston's render client | Weston imports each buffer once (EGL dma-buf import → `BO_IMPORT ns=v3dbuf`) | an import `FAIL rc=-2`: the name was withdrawn before Weston imported (lifetime); `Couldn't get size of dmabuf fd` (Mesa): `atSize` not answered |
+| 10 | per client back buffer (2–4): `V3DA srv export … pages≈2000–2200` (1920×1080 UIF), then `V3DA srv import … ns=v3dbuf … self=0` from Weston's render client | Weston imports each buffer once (EGL dma-buf import → `BO_IMPORT ns=v3dbuf`) | an import `FAIL rc=-2`: the name was withdrawn before Weston imported (lifetime); `Couldn't get size of dmabuf fd` (Mesa): `atSize` not answered; a protocol error on `zwp_linux_buffer_params` in the client (e.g. `invalid buffer stride or height`): Weston's own `lseek(SEEK_END)` check of offset + stride × height against the whole-block size the namespace answers, not the export itself. The `V3DA srv v3dbuf open/close` lines are capped at 64 per server run (every OID mapping opens and closes the name once), so grade Weston's phase by the uncapped `export`/`import … opens=<n>` lines |
 | 11 | **no** `MESA: error: Failed to export gem bo` | the m6d stop is gone | present: rows 9–10 say which half |
 | 12 | `N frames in 5 seconds: X fps`, X ≈ 20–30 | Weston's repaint rate (m6c: about 27 flips/s) bounds it | < 10: an IPC per frame or a copy (read `DRMPHX`/`V3DA` rates); none: frame callbacks never came (Weston did not attach the buffer) |
 | 13 | HDMI | **the rotating RGB triangle, full screen, GPU-rendered by the client** (dense snapshots) | black with the export/import lines present: Weston's EGL import or its sampling of the UIF buffer — Weston's log (`linux_dmabuf`, `EGL`). **Torn/partial triangles are an expected risk** (no cross-process implicit sync, §8), not a G4 failure — note it |

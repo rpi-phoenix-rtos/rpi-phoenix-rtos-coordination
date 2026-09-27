@@ -1018,7 +1018,7 @@ void v3da_bufns_thread(void *arg)
 					b->fd_opens++;
 					b->refs++;
 					msg.o.err = 0;
-					if ((srv.verbose != 0) || (notes < 16u)) {
+					if ((srv.verbose != 0) || (notes < 64u)) {
 						notes++;
 						printf("V3DA srv v3dbuf open id=%u pid=%d opens=%u refs=%u\n", b->handle, msg.pid, b->fd_opens,
 							b->refs);
@@ -1032,7 +1032,7 @@ void v3da_bufns_thread(void *arg)
 				b = ((msg.oid.id != 0u) && (msg.oid.id <= 0xffffffffu)) ? bo_lookup((uint32_t)msg.oid.id) : NULL;
 				if ((b != NULL) && (b->fd_opens > 0u)) {
 					b->fd_opens--;
-					if ((srv.verbose != 0) || (notes < 16u)) {
+					if ((srv.verbose != 0) || (notes < 64u)) {
 						notes++;
 						printf("V3DA srv v3dbuf close id=%u pid=%d opens=%u refs=%u\n", b->handle, msg.pid, b->fd_opens,
 							b->refs - 1u);
