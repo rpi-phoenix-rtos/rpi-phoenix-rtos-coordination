@@ -276,7 +276,7 @@ boot (§4 item 7), the prelude disappears and the app list is the old one with r
 | key | old command | new-lane command | HDMI check (the same as today) |
 |---|---|---|---|
 | `x` | `startx_gpu action` | the Xorg-drm `action` launcher (to write, §3) | Window Maker + GL window animating + both xterms + xbill + xclock, the xlaunch layout |
-| `qspasm` | `quakespasm` | `/usr/bin/quakespasm-drm` (with a flipstat relink) | the attract demo renders (lit, textured, HUD) |
+| `qspasm` | `quakespasm` | `/usr/bin/quakespasm-drm` (flipstat relink done, §6.4) | the attract demo renders (lit, textured, HUD) |
 | `q3` | `/usr/bin/quake3 +map q3dm1` | `/usr/bin/quake3-drm +map q3dm1` | q3dm1 lit, textured (lightmaps), not the main menu |
 | `q2` | `/usr/bin/quake2` | `/usr/bin/quake2-drm` | demo1 in full textured 3D |
 | `vkq` | `vkquake` | `/bin/vkq-drm` | start map; `check-torch-rois.py --label <label>-vkq` PASS (≥ 2 frames, both archway torches lit, viewpoint MAE < 8) |
