@@ -148,6 +148,7 @@ typedef struct {
 	int pevent;
 	uint64_t parmed_cnt;         /* cntvct when the last mailbox call of the commit returned */
 	uint64_t pqueued_cnt;        /* cntvct when the commit was accepted */
+	uint64_t pqueued_seq;        /* seq when the commit was accepted (flip latency in vblanks) */
 	uint64_t ptarget_seq;        /* armed: the vblank from which the new state is scanned */
 
 	/* vblank */
@@ -211,6 +212,21 @@ extern const kms_backend_t kms_backend_plane;
 /* Server state                                                               */
 /* ------------------------------------------------------------------------- */
 
+/* Flip-latency counters, printed as one `KMS srv flipstat` line when a client
+ * that flipped closes, then reset. Server-local: kms_stats_t (the kmstest wire
+ * struct) is unchanged. */
+typedef struct {
+	uint32_t flips;              /* completed commits */
+	uint32_t vbl1, vbl2, vbl3p;  /* completed 1, 2, >= 3 vblanks after they were accepted */
+	uint32_t deferred;           /* accepted with an unsignalled in-fence */
+	uint32_t applied_gate;       /* deferred commits armed by the fence poll (between vblanks) */
+	uint32_t applied_vblank;     /* deferred commits armed at a vblank */
+	uint32_t kicks;              /* vbl_wait() calls ended by gate_kick */
+	uint32_t late_target;        /* armed too late for the next latch: scanned 2 vblanks on */
+	uint64_t q2a_us_sum;         /* accepted -> armed */
+	uint32_t q2a_us_max;
+} kms_flipstat_t;
+
 typedef struct {
 	/* options */
 	int foreground;
@@ -222,6 +238,7 @@ typedef struct {
 	uint64_t pool_max_end;       /* pool must end at or below this PA */
 	int want_vbl;                /* -V: forced vblank source, KMS_VBL_NONE = auto */
 	uint32_t gate_us;            /* fence poll period while a commit waits for its fence */
+	int no_kick;                 /* -K: A/B control, a deferred commit does not wake the vblank thread */
 	int connect_v3d;             /* -G: map rpi4-v3d-async's fence page for in-fences */
 	uint32_t latch_guard_us;     /* -L: a call returning later than frame - guard after a vblank misses the next one */
 	int blank_fb;                /* -B: FRAMEBUFFER_BLANK the firmware fb while the primary plane shows */
@@ -267,7 +284,10 @@ typedef struct {
 	/* vblank */
 	int vbl_src;                 /* enum kms_vblank_src in use */
 	handle_t vbl_lock, vbl_cond; /* the ISR signals vbl_cond */
-	handle_t evt_cond;           /* dispatch -> vblank thread: a fence-gated commit is waiting */
+	/* dispatch -> vblank thread: a fence-gated commit is waiting. commit() bumps
+	 * it and signals vbl_cond; vbl_wait() returns early when it changes, so the
+	 * fence poll (gate_us) starts at once instead of at the next vblank. */
+	uint32_t gate_kick;
 	int hvs_ch;
 
 	/* render-server fence page (optional) */
@@ -275,6 +295,7 @@ typedef struct {
 
 	/* stats */
 	kms_stats_t st;
+	kms_flipstat_t fst;
 	uint32_t nparked;
 	int quit;
 } kms_srv_t;

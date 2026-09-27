@@ -278,18 +278,28 @@ static int hvs_channel(void)
 /* Waiting                                                                    */
 /* ========================================================================= */
 
+/* Has commit() deferred a commit since the caller read srv.gate_kick? */
+static int kicked(uint32_t kick)
+{
+	return __atomic_load_n(&srv.gate_kick, __ATOMIC_ACQUIRE) != kick;
+}
+
+
 /* Wait up to max_us for the next vblank. 1 = vblank(s) happened (*n of them,
- * *stamp = cntvct of the last), 0 = timeout. */
-static int vbl_wait(uint32_t max_us, uint64_t *stamp, uint32_t *n)
+ * *stamp = cntvct of the last), 0 = timeout, or commit() bumped srv.gate_kick
+ * past `kick` (irq and hvs sources; fwvsync blocks in the firmware and timer
+ * sleeps, so those two notice a kick only when they next return). A vblank that
+ * is already in wins over a kick. */
+static int vbl_wait(uint32_t max_us, uint32_t kick, uint64_t *stamp, uint32_t *n)
 {
 	uint64_t t0 = kms_cnt(), lim = kms_us_cnt(max_us);
 
 	switch (srv.vbl_src) {
 		case KMS_VBL_IRQ:
 			(void)mutexLock(srv.vbl_lock);
-			while ((vb.head == vb.seen) && ((kms_cnt() - t0) < lim)) {
-				/* The ISR does not take the mutex, so a wake-up can land between the
-				 * check and the wait: a <= 2 ms timeout bounds that. */
+			while ((vb.head == vb.seen) && !kicked(kick) && ((kms_cnt() - t0) < lim)) {
+				/* Neither the ISR nor commit() takes the mutex, so a wake-up can land
+				 * between the check and the wait: a <= 2 ms timeout bounds that. */
 				uint64_t left = kms_cnt_us(lim - (kms_cnt() - t0));
 				(void)condWait(srv.vbl_cond, srv.vbl_lock, (left > 2000u) ? 2000u : ((left == 0u) ? 1u : left));
 			}
@@ -312,7 +322,7 @@ static int vbl_wait(uint32_t max_us, uint64_t *stamp, uint32_t *n)
 					*stamp = kms_cnt();
 					return 1;
 				}
-				if ((kms_cnt() - t0) >= lim) {
+				if (((kms_cnt() - t0) >= lim) || kicked(kick)) {
 					return 0;
 				}
 				usleep(250);
@@ -364,7 +374,7 @@ static int probe_src(int src)
 			if (irq_register() != 0) {
 				return 0;
 			}
-			got = vbl_wait(100000u, &stamp, &n);
+			got = vbl_wait(100000u, srv.gate_kick, &stamp, &n);   /* no client yet: no kick */
 			if (!got) {
 				irq_unregister();
 			}
@@ -375,7 +385,7 @@ static int probe_src(int src)
 				return 0;
 			}
 			vb.hvs_last = hvs_frcnt(srv.hvs_ch);
-			return vbl_wait(100000u, &stamp, &n);
+			return vbl_wait(100000u, srv.gate_kick, &stamp, &n);
 		case KMS_VBL_FWVSYNC: {
 			uint64_t t0 = kms_cnt();
 			uint32_t z = 0u;
@@ -485,15 +495,18 @@ void kms_vblank_thread(void *arg)
 	static kms_parked_t answers[KMS_MAX_PARKED];
 	kms_crtc_state_t *c = &srv.crtc[0];
 	uint64_t stamp = 0u, last_tick = kms_cnt();
-	uint32_t n = 0u, nans, max_us;
+	uint32_t n = 0u, nans, max_us, kick;
 	int got, quit, gate;
 
 	(void)arg;
 	vb.last_vbl = kms_cnt();
 	for (;;) {
+		/* kick before pend: commit() stores pend, then bumps gate_kick (release), so
+		 * either this read of pend sees the commit or vbl_wait sees the kick. */
+		kick = __atomic_load_n(&srv.gate_kick, __ATOMIC_ACQUIRE);
 		gate = (c->pend == KMS_PEND_FENCE);   /* racy read: at worst one extra/late poll */
 		max_us = gate ? srv.gate_us : 20000u;
-		got = vbl_wait(max_us, &stamp, &n);
+		got = vbl_wait(max_us, kick, &stamp, &n);
 
 		(void)mutexLock(srv.lock);
 		nans = 0u;
@@ -503,8 +516,16 @@ void kms_vblank_thread(void *arg)
 			measure(c, stamp, n);
 			kms_on_vblank(c, stamp, n, answers, &nans);
 		}
-		else if (gate) {
-			(void)kms_try_apply(c);   /* its fence may have signalled mid-frame */
+		else if (c->pend == KMS_PEND_FENCE) {
+			/* Between vblanks: the gate_us poll, or the first look after a kick.
+			 * Its fence may have signalled mid-frame; arming now makes the next
+			 * latch when there is time before it (kms_try_apply's guard rule). */
+			if (!gate && kicked(kick)) {
+				srv.fst.kicks++;
+			}
+			if (kms_try_apply(c)) {
+				srv.fst.applied_gate++;
+			}
 		}
 		kms_expire_parked(kms_cnt(), answers, &nans);
 		srv.st.vblank_src = (uint32_t)srv.vbl_src;

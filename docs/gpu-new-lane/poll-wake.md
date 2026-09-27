@@ -6,10 +6,12 @@ Branches: `phoenix-rtos-kernel` **`gpu-lane/poll-wake`** and `libphoenix` **`gpu
 (worktrees, not merged). Tools: `tools/gpu-lane/pollwake/` (new) and `tools/gpu-lane/kms/`
 (`--poll-notify`, additive).
 
-**Status:** code written, the kernel links with `-Werror` from the worktree, and the tools build.
-No Pi cycle has run. The run is pre-registered in §7 and the merge gate is in §8. Existing callers
-keep their semantics, signal behaviour included (§5). Returning POSIX `EINTR` for sets of server-only
-fds is left as a separate one-line decision.
+**Status (2026-09-27, after build 11):** both branches are merged (kernel `ee5939fc`, libphoenix
+`d40050c`) and cycles 1–3 have run. The microbenchmark PASSES: a notifying device fd wakes `poll()`
+in 38–62 µs. The kmscube and quakespasm predictions FAILED: 30.00 and 29.0 fps. The root cause is in
+`rpi4-kms`, not the kernel. The fix is built as `tools/gpu-lane/kms/out-gate`, and the next cycle is
+pre-registered in "Result + analysis — build 11 cycles" at the end. §§1–9 below are the
+pre-registration as written, with ↩ markers where build 11 proved them wrong.
 
 ## 1. The problem
 
@@ -210,6 +212,8 @@ prototype and contract comment only.
   single-inet path, as before.
 - **Unchanged paths:** single-inet `block_ms`; pure AF_UNIX sets (`usocket_pollWait`, the X
   desktop's proven path); `poll()` with no valid fds.
+- ↩ *Corrected after build 11: the premise below is wrong. The old kernel also returned `EINTR`
+  for server-only sets, from the re-query's `proc_send`. See "Result + analysis", finding 3.*
 - **Signals: unchanged.** A mixed set (AF_UNIX + server fds) sleeps interruptibly, as it did in
   `usocket_pollWait`, so a caught signal still ends it with `-1/EINTR`. A set of server-only fds
   sleeps uninterruptibly with the same ≤ 20 ms deadline. The old code ignored the interruption of
@@ -390,3 +394,234 @@ Predicted: 24.4 fps rises to **≥ 36 fps**, parity with `quakespasm-v3da` at 40
 - **Not tested on the Pi** (a coordinator step). The 32-bit targets are not compiled (no toolchain
   here). The hash uses only 32-bit multiplies, and `id_t` is widened before the shift, so an
   `id_t` of `u32` (armv7r, sparcv8leon) is fine.
+
+## Result + analysis — build 11 cycles (2026-09-27)
+
+Build 11 has kernel `ee5939fc` and libphoenix `d40050c`, both on `master` (build-versions in each
+log). Three cycles ran: `pollwake` (`rpi4b-uart-20260927-061124-pollwake.log`),
+`pollwake-kmscube` (`…-061400-…`) and `pollwake-qsdrm` (`…-061949-…`).
+
+### Pi numbers
+
+**Cycle 1, the microbenchmark: PASS.** `POLLWAKE server ready … notify_supported=1 probe_rc=0`,
+`client done fails=0`, `server quit events=244 notifies=244 notify_errs=0`.
+
+| Row | p50 | p99 / max | Other | Verdict |
+|---|---|---|---|---|
+| `single dev=notify` | **38.1 µs** | 67.7 µs | 60 events, `per_event` 2.28, `notifies=60` | ✅ |
+| `pipe dev=notify` (the kmscube shape) | **62.4 µs** | 89.7 µs | | ✅ |
+| `unix dev=notify` (the Xorg shape) | **42.8 µs** | 65.3 µs | | ✅ |
+| `single` / `pipe` / `unix dev=legacy` | 9.0 / 10.5 / 11.5 ms | ≤ 20.0 ms | min 0.1–0.8 ms | ✅ unchanged |
+| `pipewake` | 9.2 ms | 19.5 ms | | ✅ |
+| `unixwake` | 40.1 µs | 54.0 µs | | ✅ |
+| `timeout` | | 100.0–100.0 ms | `rc_nonzero=0 early=0` | ✅ |
+| `eintr set=mixed` | | | `rc=-1 errno=4 1000.0 ms handler_ran=1` | ✅ as predicted |
+| `eintr set=server` | | | **`rc=-1 errno=4 1001.4 ms`** | ✗ the prediction was wrong, not the kernel (finding 3) |
+
+**Cycle 2, kmscube A/B: the prediction failed.** The "render server" is `rpi4-v3d-async-m3p2 -r 1
+-m serial -i`, as in m3p3b. `rpi4-kms-poll` printed `KMS srv poll_notify=1 rc=0`.
+
+| | Server | Frames / time | fps | Vblanks spanned |
+|---|---|---|---|---|
+| A | `rpi4-kms-base -G` | 599 / 20.049 s | 29.88 | 1203 = 2 × 599 + 5 |
+| B | `rpi4-kms-poll -G` | 599 / 19.966 s | **30.000** (every 2 s window 30.00x) | **1198 = 2 × 599 exactly** |
+
+`kmstest stats` after B reported `applied=601 completed=601 fence_deferred=600 events=600
+dropped=0 apply_us_max=5535`. `V3DA qstat` for the 600 frames of B reported bin 600 jobs / 65 ms
+and render 600 jobs / 1144 ms, so the GPU spends **1.9 ms per frame** and sits idle about 94 % of
+the time.
+
+**Cycle 3, quakespasm-drm with `rpi4-kms-poll -G`:** `969 frames 33.5 seconds 29.0 fps`. The
+m3p4 run without notify got 24.4. The `≥ 36` prediction failed. The only exceptions in that log
+are ntpclient's C9 fault, which is unrelated.
+
+### Finding 1: kmscube's 30 fps comes from the display server, not from poll
+
+Every kmscube flip takes exactly two vblanks after poll-wake. The cause is in `rpi4-kms`: a flip
+that has to wait for its in-fence cannot reach the next latch.
+
+1. **Every kmscube flip is fence-deferred.** kmscube renders, calls `eglSwapBuffers`, and then
+   calls `drmModePageFlip` without a fence. libdrm-phoenix's G13 `implicit_attach` gives the flip
+   the BO's last render fence. The render has only just been submitted, so `commit()` finds the
+   fence unsignalled and takes the deferred branch. That accounts for `fence_deferred=600` out of
+   600 flips. (`kmstest` flips dumb BOs with no fence: `fence_deferred=0` in m2-kms-b, and it runs
+   at 60.00 fps. That is the control.)
+2. **Nothing tells the vblank thread that a commit is waiting.** `kms_vblank_thread` reads
+   `gate = (c->pend == KMS_PEND_FENCE)` once, at the top of its loop, and only then picks its wait:
+   `gate_us` (500 µs fence polls) when a commit is waiting, otherwise up to 20 ms for the next vblank.
+   When the vblank that completes flip *k* is processed, `pend` is `NONE`, so the thread goes back
+   into the 20 ms wait. kmscube's commit for frame *k+1* lands during that wait. `commit()` neither
+   signals the thread nor sets a flag, and `vbl_wait`'s loop only tests `vb.head == vb.seen`. The
+   field meant for this, `srv.evt_cond` ("dispatch → vblank thread: a fence-gated commit is
+   waiting"), was declared in `kms.h` and never wired up.
+3. **So the fence is first checked at the next vblank V+1.** It has signalled by then: the render
+   takes about 2 ms. `kms_on_vblank` → `kms_try_apply` arms the commit at V+1 with `since ≈ 0`, sets
+   `ptarget_seq = seq + 1`, and the commit completes, event included, at **V+2**. kmscube wakes about
+   60 µs later (poll-wake), renders, flips, and the cycle repeats. That is **two vblanks per frame by
+   construction, whatever the poll latency or GPU speed**. Run B is exactly 30.000.
+4. **Run A adds only 5 vblanks in 599 frames.** The 20 ms quantum only matters when kmscube's wake
+   plus its CPU work run past V+1. The event→commit window is a whole frame, not the latch margin,
+   so this rarely happened. P9's 20 ms quantum was real and is fixed (quakespasm 24.4 → 29.0), but
+   **it was never kmscube's binding constraint.** §1 and the M3/PLAN lines that attribute kmscube's
+   29.9 fps to it are wrong on that point.
+
+Hypotheses from the brief, checked against the code and logs:
+
+| | Hypothesis | Verdict and evidence |
+|---|---|---|
+| (a) | `select()` takes another path or misses the waiter | **Refuted.** libphoenix `sys/select.c` builds a `pollfd` array and calls `poll()`, so it goes through the same `posix_poll`. {stdin (pl011-tty/posixsrv), card0} is two server fds, which takes the waiter path. The microbenchmark's `pipe dev=notify` row (62 µs) is exactly that shape. |
+| (b) | The event arrives one frame late | **Confirmed, and it is the root cause**, with the mechanism above. The latch rule itself (E3, `guard_us=2000`) is fine. The commit is armed at the vblank instead of mid-frame, so `ptarget_seq` is always V+2. |
+| (c) | GPU latency or serial mode | **Refuted for kmscube.** Render takes 1.9 ms per frame and the GPU is 94 % idle. `fence_deferred=600` shows the fence was pending at commit time, but that costs about 2 ms, not a frame. |
+| (d) | libdrm-phoenix blocks in `drmHandleEvent` / `drmWaitVBlank` | **Refuted.** The server logs `read_dump … path=immediate`: reads are answered at once, never parked. kmscube's legacy loop never calls `drmWaitVBlank`. |
+| (e) | 2-BO double buffering caps it at 30 | **Refuted as a cap.** kmscube's legacy loop renders only after the flip event (`drm-legacy.c`: draw → swap → `drmModePageFlip` → `select` until the event → release the old BO). That runs at 60 as long as event → commit → fence → arm fits in one frame minus the 2 ms guard. It needs about 2–4 ms. |
+| — | The `SYNCOBJ_WAIT timeout=∞` in every frame of the m3p3b DRMPHX trace | **Not a stall.** It is Mesa's DRI swap throttle: it exports this frame's fence (`HANDLE_TO_FD`) and waits on the **previous** frame's fd, which alternates 8/9. That fence signalled long ago. It is named here so nobody chases it. |
+
+### Finding 2: quakespasm-drm is limited by vsync'd flip latency plus GPU time per frame
+
+The kmscube bug costs quakespasm almost nothing. Quake's GPU time per displayed frame is about
+**19.5 ms** (14.2 s of render in a 25 s window at 29 fps, 1.25 jobs per frame, 57 % busy), so its
+fence nearly always signals **after** V+1. From then on the existing `gate_us` poll is already
+running and arms the commit mid-frame.
+
+SDL KMSDRM keeps one flip in flight: swap N waits for flip N−1's event. So each frame costs about
+L = (swap → fence ≈ 19.5 ms) + (wait for the next latch, 0–16.7 ms plus guard misses) ≈ 28–33 ms,
+which is 30–35 fps. The observed 29.0 matches. **The ≥ 36 fps prediction was wrong** because it
+counted only the poll quantum.
+
+quakespasm-v3da's 40.4 fps (24.7 ms per frame) has no vsync'd flip in its loop. Getting above about
+33 fps with vsync needs a shorter GPU frame (E2b render phase, bin∥render `overlap=0` in serial
+mode), or a present path that does not wait on the pending flip. Both are out of scope here.
+
+This is a model, not a measurement. The `flipstat` line added below measures it in the next cycle.
+
+### Finding 3: why `eintr set=server` returned `EINTR` after 1001.4 ms
+
+- `pollwake_wait` for a server-only set calls `proc_threadWait`, which is **not** interruptible
+  (`_proc_threadEnqueue(…, 0)`). `threads_sigpost` does not wake the thread. It only sets
+  `sigpend`, because `thread->interruptible == 0`.
+- After at most `POLL_INTERVAL` (20 ms) the wait times out and `do_poll_iteration` re-queries the
+  fd. That `proc_send` is `proc_sendEx(…, interruptible=1)`: the message is still `msg_waiting`, so
+  it calls `proc_threadWaitInterruptible`. That checks `_threads_checkSignal` **before** enqueueing,
+  finds SIGALRM pending with a handler installed, and returns `-EINTR`. The signal is still pending
+  because delivery happens only on the return to user mode. `proc_sendEx` unlinks the message and
+  returns `-EINTR`. `do_poll_iteration` passes it straight through (`if (err == -EINTR) return err;`),
+  and `posix_poll` returns it.
+- **The old kernel did the same, only sooner.** `38ad32cf`'s `posix_poll` slept in
+  `proc_threadSleep`. `_proc_threadSleepAbs` sets `interruptible = 1`, so the signal woke it at once
+  (the `-EINTR` return value was ignored). The very next `do_poll_iteration` → `proc_send` then
+  returned `-EINTR` exactly as above. So the §5 and §7 baseline "`rc=0` ≈ 3000 ms, as before" was a
+  code-reading error. It looked only at the sleep's ignored return value and missed the interruptible
+  re-query. Cycle 0 (`pollwake-base`) was never run, so nothing on the Pi checked it.
+- **This is the intended POSIX behaviour.** `poll()` shall fail with `EINTR` when a signal is caught
+  before any requested event. Both kernels comply for both set shapes.
+- **The one real change:** a server-only set now notices a signal up to 20 ms **later**. The 1.4 ms
+  here is what was left of the uninterruptible chunk the signal landed in; `set=mixed` returns at
+  1000.0. The §9 thread-kill risk is the same effect. **Recommended follow-up, not done here:** make
+  `pollwake_wait` always use `proc_threadWaitInterruptible`. That one line restores the old immediate
+  reaction without changing any semantics. Predicted result: `eintr set=server rc=-1 errno=4
+  elapsed_ms≈1000.0`.
+
+### The fix (tools, additive): `rpi4-kms` wakes its vblank thread for a deferred commit
+
+The fix is in `tools/gpu-lane/kms` and applies to both build variants:
+
+- `commit()`'s deferred branch now bumps `srv.gate_kick` (atomic, release) and calls
+  `condSignal(srv.vbl_cond)`.
+- The vblank thread reads `gate_kick` **before** `pend` at the top of its loop and passes it to
+  `vbl_wait`, which returns 0 once it changes. The irq source checks it in its 2 ms `condWait`
+  chunks; hvs checks it in its 250 µs polls. A vblank that has already arrived still takes priority.
+- The between-vblanks branch now tests `c->pend == KMS_PEND_FENCE` instead of the stale `gate`, so
+  the first look happens right after the kick. From the next iteration the thread polls the fence
+  every `gate_us`.
+- **Race-free:** `commit()` stores `pend` before the release bump. The thread's acquire load of
+  `gate_kick` either sees the bump, and then also sees `pend`, or it does not, and then `vbl_wait`
+  sees the bump. A lost `condSignal` is bounded by the existing 2 ms chunk.
+- The unused `evt_cond` is replaced by `gate_kick`.
+- `-K` restores the old behaviour, as an A/B control inside one binary. The `srv ready` line now
+  prints `gate_us=… kick=…`.
+- New server-local counters (`kms_stats_t` and the kmstest wire format are unchanged): when a client
+  that flipped closes, the server prints one line
+  `KMS srv flipstat client=… flips vbl1 vbl2 vbl3p deferred applied_gate applied_vblank kicks
+  late_target q2a_us_avg q2a_us_max kick gate_us` and then resets the counters. `vblN` is the
+  number of vblanks from commit acceptance to completion.
+
+Built with `tools/gpu-lane/kms/build.sh`:
+
+| Output | Build | Check |
+|---|---|---|
+| `out-gate/rpi4-kms` | `--poll-notify --out out-gate`, which printed `pollNotify from the sysroot libphoenix.a` (no shim) | 2 `bl pollNotify` (the probe and `ev_push`), stub `svc #0x6e`, 1 `bl condSignal` |
+| `out-gate-base/rpi4-kms` | `--out out-gate-base` | 0 `bl pollNotify`, 1 `bl condSignal` |
+
+`out-poll/` and `out-base/`, the binaries staged for build 11, are untouched. libdrm-phoenix is not
+changed and does not include `kms.h`, so its host test was not re-run.
+
+A note on the binaries staged for cycle 2: `out-poll/rpi4-kms` calls `pollNotify` from
+`ev_push.constprop.0` at `0x401240`, behind the `m.poll_notify` test, and from the start-up probe
+at `0x400674`. The stub is `svc #0x6e` (110). `out-base/rpi4-kms` links the same stub, because the
+sysroot's syscall stubs come in together, but has **no** call site. So run B's notifies were real,
+which is what the 38 µs microbenchmark wake and the unchanged 30.000 both require.
+
+### Pre-registered next cycle
+
+**Staging (coordinator):**
+
+| Built file (under `tools/gpu-lane/kms/`) | Staged as |
+|---|---|
+| `out-gate/rpi4-kms` | **`rpi4-kms-gate`** |
+| `out-gate-base/rpi4-kms` | **`rpi4-kms-gate-base`** |
+
+Stage with `sudo install -m 755` into the live `fsid=0` export's `/bin`, then `cmp`. `kmstest-poll`
+from build 11 still works: the protocol is unchanged.
+
+Two cycles, split in advance so neither comes near the 10 min cap. For scale, the 7-command build-11
+kmscube cycle spent about 260 s in capture windows plus about 90 s booting. Each run gets two
+readouts, because the UART corrupts about 1.3 % of lines: the server's `KMS srv flipstat` line, and a
+`KMSTEST stats` line from `kmstest-poll stats`. The two must agree: `flips` ≈ `completed` minus
+whatever that server had completed before this client, and `deferred` = the `fence_deferred`
+increase.
+
+**Cycle `pollwake-gate`** (runs A and B plus the unfenced-flip check; Bash `timeout: 600000`):
+
+```
+./scripts/test-cycle-psh-interact.sh --label pollwake-gate --idle-secs 30 --max-cmd-secs 150 \
+    --hdmi-dense-on 'Using display' -- \
+    "/bin/rpi4-v3d-async-m3p2 -r 1 -m serial -i" \
+    "/bin/rpi4-kms-gate -G -K" \
+    "/bin/kmscube-m3p3b -D /dev/dri/card0 -N -c 600" \
+    "/bin/kmstest-poll stats quit" \
+    "/bin/rpi4-kms-gate -G" \
+    "/bin/kmscube-m3p3b -D /dev/dri/card0 -N -c 600" \
+    "/bin/kmstest-poll stats" \
+    "/bin/kmstest-poll -n 300 flip" \
+    "/bin/kmstest-poll stats quit"
+```
+
+**Cycle `pollwake-gate-c`** (run C; Bash `timeout: 600000`):
+
+```
+./scripts/test-cycle-psh-interact.sh --label pollwake-gate-c --idle-secs 30 --max-cmd-secs 150 \
+    --hdmi-dense-on 'Using display' -- \
+    "/bin/rpi4-v3d-async-m3p2 -r 1 -m serial -i" \
+    "/bin/rpi4-kms-gate-base -G" \
+    "/bin/kmscube-m3p3b -D /dev/dri/card0 -N -c 600" \
+    "/bin/kmstest-poll stats quit"
+```
+
+| Run | Predicted | If instead… |
+|---|---|---|
+| A: `-K` (old behaviour, notify on) | 29.9–30.0 fps. flipstat: `vbl2 ≥ 590`, `vbl1 ≈ 0`, `applied_vblank ≈ 600`, `applied_gate ≈ 0`, `kicks=0`, `kick=0` | Anything else: the new counters or the `-K` path are wrong. Fix the instrument before believing B. |
+| B: the fix (kick + notify) | **58–60 fps**, steady. flipstat: `vbl1 ≥ 570`, `applied_gate ≈ deferred ≈ 600`, `applied_vblank ≈ 0`, `kicks ≈ 600`, `late_target ≈ 0`, `q2a_us_avg` 2000–5000. HDMI shows the cube as before, with no torn or partial frames: the fence still gates every flip. | **≈ 30 with `kicks=0`:** the kick never reaches `vbl_wait`. Check that `condSignal` on the ISR's cond wakes a thread waiter. **≈ 30 with `kicks ≈ 600` and `applied_vblank ≈ 600`:** the fence page publishes completion late, so the render server is the next suspect. **40–55 with `late_target` high:** arms land within 2 ms of the vblank. Read `q2a_us_avg` against the frame budget. **`vbl1` high but fps < 55:** the latency is client-side (kmscube CPU). |
+| `kmstest-poll -n 300 flip` against B | 300 flips at 60.00 fps. Between the two `stats` lines `fence_deferred` is unchanged, because dumb BOs take the immediate path. That client's flipstat shows `vbl1 ≈ 300 deferred=0` | < 60: the kick path disturbed unfenced flips, which would be a regression |
+| C: the fix without notify (`rpi4-kms-gate-base`) | 35–55 fps with jitter. Once commits can make V+1, the 0–20 ms poll quantum decides whether a frame gets there. flipstat: `vbl1` 30–80 % | ≈ 60: the poll quantum does not matter after the fix, so notify is not needed for kmscube (it still is for quakespasm, 24.4 → 29.0). ≈ 30: C behaves like A, and the fix only works together with notify. Explain before merging. |
+
+**Cycle `pollwake-gate-qsdrm`:** the `pollwake-qsdrm` command with `/bin/rpi4-kms-gate -G`, followed
+by `kmstest-poll stats quit`. The flipstat line prints when quakespasm's client closes.
+
+| Observation | Predicted | If instead… |
+|---|---|---|
+| timedemo fps | **29–33**: no significant change from 29.0 (finding 2) | ≥ 36: the model is wrong and the kick bug did cost quake frames. Re-check with flipstat. |
+| flipstat | `vbl2 + vbl3p ≫ vbl1`, `applied_gate ≈ deferred`, `applied_vblank` small, `q2a_us_avg` ≈ 15 000–22 000 (the GPU frame) | `q2a_us_avg ≪ 10 000` with `vbl2` dominant: frames miss the latch for another reason. Look at `late_target`. |
+
+**Gate for adopting `rpi4-kms-gate` as the M3 server:** run B ≥ 55 fps, the kmstest flip rate
+unchanged, 0 exceptions, and the cube renders cleanly on HDMI. The kernel follow-up (interruptible
+`pollwake_wait`) is separate, and needs its own worktree branch plus the §8 gate.

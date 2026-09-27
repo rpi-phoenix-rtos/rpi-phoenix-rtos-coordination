@@ -16,7 +16,7 @@
  * they only touch slot 0, which this server never hands out.
  *
  * Usage: rpi4-kms [-f] [-b plane|pan] [-o overlays] [-p pool_mib] [-m <max_end>] [-c]
- *                 [-V irq|hvs|fwvsync|timer] [-g gate_us] [-L guard_us] [-G] [-B] [-C] [-F] [-v] [&]
+ *                 [-V irq|hvs|fwvsync|timer] [-g gate_us] [-K] [-L guard_us] [-G] [-B] [-C] [-F] [-v] [&]
  *        rpi4-kms -R        restore the display (unset planes, unblank, pan to 0, fbcon on) and exit
  *   (detaches itself: psh has no job control; a stray "&" argument is ignored)
  *   -f          stay in the foreground
@@ -29,6 +29,9 @@
  *   -c          hand the firmware 0xC0000000|PA instead of the raw PA (both work, E6)
  *   -V src      force the vblank source (default: auto irq > hvs > fwvsync > timer)
  *   -g us       fence poll period while a commit waits for its in-fence (default 500)
+ *   -K          A/B control only: a fence-deferred commit does not wake the vblank
+ *               thread, so its fence is first checked at the next vblank (the
+ *               behaviour before 2026-09-27; every GPU-rendered flip takes 2 vblanks)
  *   -L us       firmware latch guard (default 2000; E3: the list is written ~1.6 ms
  *               before the vblank)
  *   -G          connect to rpi4-v3d-async and map its fence page (in-fences)
@@ -585,6 +588,14 @@ int kms_try_apply(kms_crtc_state_t *c)
 		uint64_t since = (c->last_vbl_cnt != 0u) ? kms_cnt_us(c->parmed_cnt - c->last_vbl_cnt) : period;
 		c->ptarget_seq = c->seq + (((since + srv.latch_guard_us) < period) ? 1u : 2u);
 	}
+	{
+		uint32_t q2a = (uint32_t)kms_cnt_us(c->parmed_cnt - c->pqueued_cnt);
+		srv.fst.q2a_us_sum += q2a;
+		srv.fst.q2a_us_max = (q2a > srv.fst.q2a_us_max) ? q2a : srv.fst.q2a_us_max;
+		if (c->ptarget_seq > c->seq + 1u) {
+			srv.fst.late_target++;
+		}
+	}
 	srv.st.flips_applied++;
 	if (maxlat > srv.st.apply_us_max) {
 		srv.st.apply_us_max = maxlat;
@@ -614,6 +625,19 @@ static void complete(kms_crtc_state_t *c, uint64_t cnt)
 	c->pend = KMS_PEND_NONE;
 	c->pmask = 0u;
 	srv.st.flips_completed++;
+	{
+		uint64_t k = c->seq - c->pqueued_seq;
+		srv.fst.flips++;
+		if (k <= 1u) {
+			srv.fst.vbl1++;
+		}
+		else if (k == 2u) {
+			srv.fst.vbl2++;
+		}
+		else {
+			srv.fst.vbl3p++;
+		}
+	}
 	console_update();
 }
 
@@ -630,7 +654,9 @@ void kms_on_vblank(kms_crtc_state_t *c, uint64_t cnt, uint32_t nvbl, kms_parked_
 		complete(c, cnt);
 	}
 	else if (c->pend == KMS_PEND_FENCE) {
-		(void)kms_try_apply(c);
+		if (kms_try_apply(c)) {
+			srv.fst.applied_vblank++;
+		}
 	}
 
 	for (i = 0u; i < KMS_MAX_VBL_EVENTS; i++) {
@@ -694,6 +720,7 @@ static int commit(uint32_t client, kms_crtc_state_t *c, const kms_atomic_plane_t
 	c->puser = user;
 	c->pevent = ((flags & KMS_PAGE_FLIP_EVENT) != 0u) ? 1 : 0;
 	c->pqueued_cnt = kms_cnt();
+	c->pqueued_seq = c->seq;
 	c->pend = KMS_PEND_FENCE;
 	if (out != NULL) {
 		out->sequence = c->seq;
@@ -706,6 +733,16 @@ static int commit(uint32_t client, kms_crtc_state_t *c, const kms_atomic_plane_t
 	}
 	else {
 		srv.st.flips_fence_deferred++;
+		srv.fst.deferred++;
+		/* The vblank thread chose its wait when no commit was pending, so it would
+		 * look at this fence only at the next vblank: arm there, scan out one vblank
+		 * later, i.e. every GPU-rendered flip takes two frames (30 fps at 60 Hz for
+		 * a client that renders after each flip event, the pollwake-kmscube result).
+		 * Wake it now; from its next iteration it polls the fence every gate_us. */
+		if (!srv.no_kick) {
+			(void)__atomic_add_fetch(&srv.gate_kick, 1u, __ATOMIC_RELEASE);
+			(void)condSignal(srv.vbl_cond);
+		}
 	}
 	return 0;
 }
@@ -777,6 +814,16 @@ static void client_close(id_t id, kms_parked_t *answer, uint32_t *n)
 	kms_bo_client_gone((uint32_t)id);
 	cl->used = 0;
 	KMS_LOG("srv client %u closed planes_off=%u dropped_events=%u", (unsigned)id, off, cl->dropped);
+	if ((srv.fst.flips != 0u) || (srv.fst.deferred != 0u)) {
+		const kms_flipstat_t *f = &srv.fst;
+		uint32_t napplied = f->flips;   /* every armed commit completed (client_close settles its own) */
+		KMS_LOG("srv flipstat client=%u flips=%u vbl1=%u vbl2=%u vbl3p=%u deferred=%u applied_gate=%u "
+			"applied_vblank=%u kicks=%u late_target=%u q2a_us_avg=%u q2a_us_max=%u kick=%d gate_us=%u",
+			(unsigned)id, f->flips, f->vbl1, f->vbl2, f->vbl3p, f->deferred, f->applied_gate, f->applied_vblank,
+			f->kicks, f->late_target, (napplied != 0u) ? (uint32_t)(f->q2a_us_sum / napplied) : 0u, f->q2a_us_max,
+			!srv.no_kick, srv.gate_us);
+		memset(&srv.fst, 0, sizeof(srv.fst));
+	}
 }
 
 
@@ -1766,7 +1813,7 @@ static void on_signal(int sig)
 static void usage(const char *prog)
 {
 	printf("usage: %s [-f] [-b plane|pan] [-o overlays] [-p pool_mib] [-m <max_end>] [-c] "
-		"[-V irq|hvs|fwvsync|timer] [-g gate_us] [-L guard_us] [-G] [-B] [-C] [-F] [-v]\n"
+		"[-V irq|hvs|fwvsync|timer] [-g gate_us] [-K] [-L guard_us] [-G] [-B] [-C] [-F] [-v]\n"
 		"       %s -R   (restore the display and exit)\n",
 		prog, prog);
 }
@@ -1811,7 +1858,7 @@ int main(int argc, char **argv)
 	srv.next_fb = KMS_ID_FB_BASE;
 	srv.next_blob = KMS_ID_BLOB_BASE;
 
-	while ((c = getopt(argc, argv, "fb:o:p:m:cV:g:L:GBCFvRh")) != -1) {
+	while ((c = getopt(argc, argv, "fb:o:p:m:cV:g:KL:GBCFvRh")) != -1) {
 		switch (c) {
 			case 'f': srv.foreground = 1; break;
 			case 'b': bname = optarg; break;
@@ -1830,6 +1877,7 @@ int main(int argc, char **argv)
 					KMS_VBL_NONE;
 				break;
 			case 'g': srv.gate_us = (uint32_t)strtoul(optarg, NULL, 0); break;
+			case 'K': srv.no_kick = 1; break;
 			case 'G': srv.connect_v3d = 1; break;
 			case 'L': srv.latch_guard_us = (uint32_t)strtoul(optarg, NULL, 0); break;
 			case 'B': srv.blank_fb = 1; break;
@@ -1962,11 +2010,11 @@ int main(int argc, char **argv)
 	}
 
 	KMS_LOG("srv ready dev=/dev/%s buf=%s backend=%s planes=0x%02x vblank_src=%s mode=%ux%u refresh_mhz=%u xl=%d "
-		"pool=%d pool_mib=%u slots=%u fmt=%.4s bus=%s v3d=%d console_off=%d blank_fb=%d guard_us=%u proto=%u",
+		"pool=%d pool_mib=%u slots=%u fmt=%.4s bus=%s v3d=%d console_off=%d blank_fb=%d guard_us=%u gate_us=%u kick=%d proto=%u",
 		KMS_DEV_NAME, KMS_BUF_NS, srv.be->name, srv.crtc[0].plane_mask, kms_vbl_name(srv.vbl_src),
 		srv.crtc[0].mode.hdisplay, srv.crtc[0].mode.vdisplay, srv.crtc[0].refresh_mhz, srv.xl, srv.pool_ok,
 		srv.pool_mib, srv.fb_slots, (const char *)&srv.fb_format, srv.bus_c0 ? "c0" : "raw", srv.v3d_fp != NULL,
-		srv.console_off, srv.blank_fb, srv.latch_guard_us, KMS_PROTO_VERSION);
+		srv.console_off, srv.blank_fb, srv.latch_guard_us, srv.gate_us, !srv.no_kick, KMS_PROTO_VERSION);
 
 	if (readyfd >= 0) {
 		char r = 'R';
