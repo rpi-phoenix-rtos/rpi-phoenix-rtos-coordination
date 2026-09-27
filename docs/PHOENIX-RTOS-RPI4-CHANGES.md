@@ -250,6 +250,12 @@ EL0 residual still open. Working notes:
 
 Most of the lifetime and race work is in §3. What is specific to robustness here:
 
+- ★ **A message payload in device memory is refused instead of looping the kernel** (`proc/msg.c`, `hal/aarch64/arch/pmap.h`,
+  `794bf591`). `msg_map` copied a partial first/last page through a kernel view with the sender's memory type; for
+  Device memory (a `MAP_DEVICE` mapping) the unaligned `hal_memcpy` takes an alignment fault that no mapping can
+  resolve, and the page-fault handler re-forced the same PTE forever (pl011-tty looped ~4200 EL1 dumps in 300 s).
+  On aarch64 such a payload now fails with `-EINVAL` and a bounded line names the sender; other HALs unchanged.
+  Test `test-msg-devmem` 13/0 on the Pi; showcase gate 6/6 with no in-tree driver refused. Same code upstream.
 - ★ **Bounded, backed-off re-drive of the exec-path open** (`vm/object.c`, `c25ed0cb`, `7e6cbe37`,
   `b74db0da`). `object_fetchCluster`'s `proc_open` had none of the read path's resilience and
   hard-coded `-EIO`, discarding the real errno, so one transient blip aborted a ~17 MB exec. Now
@@ -409,6 +415,13 @@ most cases the failure was *silent or misattributed* — the fault surfaced far 
 
 Additive; grouped rather than enumerated. Most entries replaced a stub that returned 0/NULL or a
 declaration with no definition — i.e. they were previously *link errors or silent no-ops*.
+
+- **`<execinfo.h>`, `struct ipv6_mreq`, `libdl.a`** (`62e76b8`, `17c4fae`, `c69ffda`, `322d6a4`): `backtrace()` walks the aarch64
+  frame-pointer chain with bounds (other architectures return 0), `backtrace_symbols()`/`_fd()` print addresses;
+  `struct ipv6_mreq` with `IPV6_ADD/DROP_MEMBERSHIP`, the IPv6 option numbers now equal lwip's (setsockopt passes
+  them unchanged); `IN6_IS_ADDR_MC_*` parenthesise their argument and compare only the scope nibble (RFC 4291).
+  `libdl.a` is installed as an alias of libphoenix.a, as glibc and musl ship one — CPython appends `-ldl` once
+  `backtrace()` exists. Tests `test-libc-execinfo` 4/0, `misc netinet_in_ipv6_mreq` 3/0 on the Pi.
 
 | area | what landed | what it unblocked |
 | --- | --- | --- |
