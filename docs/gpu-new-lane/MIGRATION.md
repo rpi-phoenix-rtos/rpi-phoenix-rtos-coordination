@@ -11,8 +11,11 @@ daemon, no kdrive `Xphoenix`, no SDL `/dev/fb0` video backend, no Mesa fork.
 `quake2-drm`, `quake3-drm`, `vkquake-drm` (§2, all static checks pass, **no Pi cycle yet** — pre-registered
 in §6). With `quakespasm-drm` and `stk-drm` (Pi-proven) every showcase game has a new-lane binary; the X
 desktop has `Xorg-drm` (Pi-proven for Window Maker and a DRI3/Present GL client) but not yet the showcase
-`action` layout (§1, §3). Nothing committed, nothing staged; no old-lane file, port recipe, shipped binary
-or sibling repo touched.
+`action` layout (§1, §3). Nothing staged; no old-lane file, port recipe or shipped binary touched.
+**Update 2026-09-27 (later):** `quakespasm-drm` now prints the gate's `flipstat` counter (the shared
+`gamedrm` hooks, §6.4 `mig-qs` pre-registered), and the two libphoenix gaps vkquake-drm bridged —
+`struct ipv6_mreq` and `<execinfo.h>` — are implemented on sibling branches `feat/ipv6mreq-execinfo`
+(libphoenix + tests + a ports guard, §3), not yet merged.
 
 Evidence tags as elsewhere: **[Pi]** measured on hardware, **[built]** cross build / link / static check,
 **[read]** read in source, **[inferred]** reasoning only.
@@ -28,7 +31,7 @@ GL games (`depends="sdl2"`: quakespasm, quake3, yquake2, supertuxkart) [read].
 
 | User | Old lane (today) | New-lane binary | Status | Remaining before it can replace the old one |
 |---|---|---|---|---|
-| **GLQuake** | `/usr/bin/quakespasm`: ports SDL2 (`/dev/fb0` video backend) + `sdl_phoenix_glctx` + libGL-phoenix + in-process winsys | `quakespasm-drm` (`sdl2-drm/build.sh`: SDL KMSDRM + Mesa GBM/EGL desktop GL) | ✅ [Pi] 30.9 fps timedemo (`rpi4-kms-gate`, poll-wake) vs old lane 33.4 | **no `flipstat` counter** → the gate's `frames` column would be `-` and fail: relink with `gamedrm/gamedrm_hooks.c` + `-Wl,--wrap=SDL_GL_SwapWindow` (as quake2-drm). Vsync-bound (poll-wake Finding 2: one flip in flight ⇒ 30–35 fps) |
+| **GLQuake** | `/usr/bin/quakespasm`: ports SDL2 (`/dev/fb0` video backend) + `sdl_phoenix_glctx` + libGL-phoenix + in-process winsys | `quakespasm-drm` (`sdl2-drm/build.sh`: SDL KMSDRM + Mesa GBM/EGL desktop GL) | ✅ [Pi] 30.9 fps timedemo (`rpi4-kms-gate`, poll-wake) vs old lane 33.4; `flipstat` counter [built] | Pi cycle `mig-qs` (§6.4) to see the counter on hardware (`build.sh` now links `gamedrm/gamedrm_hooks.c` + `-Wl,--wrap=SDL_GL_SwapWindow`, as quake2-drm). Vsync-bound (poll-wake Finding 2: one flip in flight ⇒ 30–35 fps) |
 | **Quake II** | `/usr/bin/quake2` (ram-stage launcher) → `/usr/bin/yquake2` (ref_gl3 = GLES3) | `quake2-drm` → `yquake2-drm` (**this pass**, §2.1) | 🟡 [built] | Pi cycle `mig-q2` (§6.1); SDL audio on `/dev/audio0` (KNOWN-ISSUES C5) now through the sdl2-drm audio driver |
 | **Quake III** | `/usr/bin/quake3` → `/usr/bin/quake3e` (opengl1, QVM JIT) | `quake3-drm` → `quake3e-drm` (**this pass**, §2.2) | 🟡 [built] | Pi cycle `mig-q3` (§6.2) |
 | **vkQuake** | `/usr/bin/vkquake`: SDL fully shimmed, no WSI — renders into a LINEAR VkImage mapped on `/dev/fb0` (`pl_phoenix_vk_vid.c`), old v3dv fork via `libv3dv-phoenix.a` | `vkq-drm` → `vkquake-drm` (**this pass**, §2.3): upstream vkQuake + SDL KMSDRM Vulkan (`VK_KHR_display`) + Mesa v3dv via phxvk | 🟡 [built] | Pi cycle `mig-vkq` (§6.3) incl. the #67 torch ROI check; FIFO-only present ⇒ ≤ 60 fps (old lane showed 73 on screen, no vsync) |
@@ -51,7 +54,8 @@ All three live in `tools/gpu-lane/sdl2-drm/` and write only `build-out/<app>-drm
 runs `sdl2-drm/build.sh`, `mesa-drm/build.sh` or `vulkan-drm/build.sh`; each checks that the shared inputs
 it reads are unchanged afterwards (the default `libSDL2.a` `4abf34e0…`, `quakespasm-drm` `ac29ad23…`,
 `supertuxkart-drm` `567f12b5…`, `vkcube-drm`, the ICD, libdrm m5b, the shipped binaries — all verified
-unchanged).
+unchanged). `quakespasm-drm` has since been relinked with the frame counter (§6.4: `e6335955…`); the
+scripts snapshot their guarded inputs per run, so they compare against whatever is current.
 
 ```
 tools/gpu-lane/sdl2-drm/build-quake2-drm.sh    # ~1 min: control relink + clone relink + proofs + launcher
@@ -161,8 +165,9 @@ old strings (`/dev/fb0`, `phoenix-map.cfg`) and none of the new ones.
   `presentstat` every 5 s (vkQuake's own fps is on-screen only).
 * **Two libphoenix gaps, bridged for these TUs only:** `vkqdrm/vkqdrm_compat.h` (`<arm_neon.h>`, which
   upstream gets from its PCH; `struct ipv6_mreq`, as the port's compat header) and
-  `vkqdrm/include/execinfo.h` (zero-frame `backtrace()` for `Sys_StackTrace`). Real fixes belong in
-  libphoenix (`ipv6_mreq`, `execinfo`).
+  `vkqdrm/include/execinfo.h` (zero-frame `backtrace()` for `Sys_StackTrace`). The real fixes are on
+  libphoenix branch `feat/ipv6mreq-execinfo` (§3); both bridges step aside by themselves once the
+  sysroot has them (`#ifndef IPV6_ADD_MEMBERSHIP`; `-idirafter`), and are deleted after the merge.
 * **Link:** vkcube-drm's shape (C++ driver, `-static`, `--gc-sections`, 4 KiB pages, the ICD
   whole-archive, `--wrap=mmap/ioctl`) + the loadso wraps + the port's 32 MiB main stack. Link log empty.
 * **Launcher `vkq-drm`** (`vkqdrm/vkq-drm-launcher.c`): upstream `main_sdl.c` takes argv, so the port's
@@ -185,7 +190,8 @@ old strings (`/dev/fb0`, `phoenix-map.cfg`) and none of the new ones.
 | Blocker | Affects | State | Needed for migration? |
 |---|---|---|---|
 | Pi cycles of the three clones | q2, q3, vkq | pre-registered §6 | **yes** |
-| `flipstat` in quakespasm-drm | the gate's `frames` column | small relink (§1) | **yes** (else the gate fails mechanically) |
+| `flipstat` in quakespasm-drm | the gate's `frames` column | ✅ [built] 2026-09-27: `sdl2-drm/build.sh` links the shared `gamedrm/gamedrm_hooks.c` (`-DGAMEDRM_NAME='"quakespasm-drm"' -DGAMEDRM_API='"desktop GL"'`, replacing `qsdrm/qsdrm_banner.c`, whose banner and SDL log levels it reproduces byte for byte) and `-Wl,--wrap=SDL_GL_SwapWindow`; objdump `GL_EndRendering → b __wrap_SDL_GL_SwapWindow → bl SDL_GL_SwapWindow`, one direct call of the real swap (the wrapper's). Pi check: `mig-qs` (§6.4) | **yes** (else the gate fails mechanically) — done pending `mig-qs` |
+| libphoenix gaps `struct ipv6_mreq` + `<execinfo.h>` | vkquake-drm (bridged in `vkqdrm/`), and the yquake2/quake3/vkquake ports (own `ipv6_mreq` copies) | ✅ [built] on branches `feat/ipv6mreq-execinfo` (pushed to `publish`, **not merged**): libphoenix `17c4fae` (`ipv6_mreq` + `IPV6_ADD/DROP_MEMBERSHIP`; `IPV6_JOIN_GROUP`/`LEAVE_GROUP`/`V6ONLY` renumbered to lwip's 12/13/27 — lwip receives optname unchanged) + `62e76b8` (`backtrace()` = aarch64 frame-record walk, 0 frames elsewhere; `backtrace_symbols[_fd]` = `0x<hex>`, one block); phoenix-rtos-tests `a8f2d6b` (`test-libc-execinfo`, `misc/netinet_in.c`); phoenix-rtos-ports `35abace` (the three ports' copies skip themselves when `IPV6_ADD_MEMBERSHIP` is defined — without it the libphoenix merge breaks their builds: a second `struct ipv6_mreq` is an error under gnu11/gnu17). On rpi4b lwip is built without IPv6, so `IPPROTO_IPV6` options stay ENOPROTOOPT whatever the number | no (the bridges work). **Merge order:** ports `35abace` first (or together), then libphoenix, then tests. **After the libphoenix merge, delete:** `tools/gpu-lane/sdl2-drm/vkqdrm/include/execinfo.h` and the `ipv6_mreq` block of `vkqdrm/vkqdrm_compat.h` (+ its `-idirafter` in `build-vkquake-drm.sh`), and the three ports' copies (`yquake2`/`quake3` `glue/pl_phoenix_compat.h`, `vkquake/glue/vkq_phoenix_compat.h`) |
 | X `action` launcher on Xorg-drm + a GL window client | X desktop | not written | **yes** |
 | Shader disk cache in Mesa-DRM | every GL/Vulkan app: cold shader compiles at every start (STK loads at < 1 fps for a while) | not built | no (startup time only); wanted before shipping |
 | libphoenix `fclose(stdout)` UAF fix | STK exit fault (old and new lane) | branch `fix/stdstream-fclose-uaf` | yes for a 0-fault gate (the fault is at exit, inside the capture) |
@@ -282,9 +288,9 @@ old-lane strings (`v3d-winsys:`, `/dev/fb0` in GPU apps, `phxgl`, `V3DV_PHOENIX`
 fps of each app is recorded against the last old-lane gate (it is not a pass criterion, but a regression
 beyond the vsync quantisation — 60/n on the new lane — is a finding to explain before deleting).
 
-## 6. Pre-registered Pi cycles — the three new clones
+## 6. Pre-registered Pi cycles — the three new clones (+ `mig-qs`)
 
-Common to all three: netboot image as the stk-drm cycle (core_freq=500, build ≥ 11); **single-owner rule**
+Common to all four: netboot image as the stk-drm cycle (core_freq=500, build ≥ 11); **single-owner rule**
 — no old-lane GPU app, X or `rpi4-v3d` in the same boot; `rpi4-v3d-async-m3p2` and `rpi4-kms-gate` are
 already staged from earlier cycles, as is the game data (`/usr/share/quake2/baseq2`, `/usr/share/quake3/
 demoq3` with pak1 + q3key, `/usr/share/quake/id1`). ⚠ Wall clock: netboot 60–150 s + two server windows +
@@ -309,9 +315,12 @@ export, `awk '!/^#/ && /fsid=0/{print $1; exit}' /etc/exports`), sources under
 | `quake3-drm/quake3-drm` | `<export>/usr/bin/quake3-drm` |
 | `vkquake-drm/vkquake-drm.stripped` | `<export>/usr/bin/vkquake-drm` |
 | `vkquake-drm/vkq-drm` | `<export>/bin/vkq-drm` |
+| `quakespasm-drm.stripped` (§6.4; replaces the m3p4/poll-wake copy) | `<export>/usr/bin/quakespasm-drm` |
 
 Check afterwards: `grep -a -c '<app>: new GPU lane'` = 1 on each staged engine, 0 on the shipped
-`yquake2`/`quake3e`/`vkquake`. Keep the unstripped ELFs on the host for `addr2line`.
+`yquake2`/`quake3e`/`vkquake`; for quakespasm-drm also `grep -a -c 'quakespasm-drm flipstat'` = 1 on the
+staged copy (0 on the earlier one — that is how a stale staging shows). Keep the unstripped ELFs on the
+host for `addr2line`.
 
 **Grade** (all three; ~1.3 % UART line corruption — re-read, don't count; EL0 dumps print twice):
 `./scripts/uart-summary.sh <label>`, `./scripts/flipstat-summary.sh --seq <label>`, and
@@ -407,6 +416,45 @@ Upstream `Sys_Quit` → `Host_Shutdown` → `Host_WriteConfiguration` writes `vk
 over NFS, which the port's glue skipped deliberately (the NFS large-write hang it cites); an exit cycle
 (`+quit` after a timed demo, or a keyboard `quit`) is a separate check before the gate.
 
+### 6.4 `mig-qs`
+
+**Question:** does quakespasm-drm, relinked with the shared `gamedrm` hooks (no other change: same SDL
+`libSDL2.a` `4abf34e0…`, same Mesa-GL build, same libdrm-phoenix m3p3 snapshot, same link line plus
+`--wrap=SDL_GL_SwapWindow`), print the `flipstat … (total N)` lines the gate's `frames` column reads, on the
+gate's own command (the attract demo, no `+timedemo`), and at the fps the poll-wake cycle measured?
+
+**Build:** `tools/gpu-lane/sdl2-drm/build.sh --skip-mesa --skip-sdl` (≈ 1 min: engine TUs + hooks + link +
+checks). `--skip-sdl` (new) reuses `build-out/sdl-prefix` as is — a plain run would recompile SDL against
+the reinstalled sysroot headers and move `libSDL2.a`, which stk-drm/quake2-drm/quake3-drm/vkquake-drm also
+link. Output 2026-09-27: `quakespasm-drm.stripped` 17 938 096 B **`fa40faae5acd1359…`**, unstripped
+`quakespasm-drm` `e633595577d140bd…` (quakespasm embeds `__DATE__`/`__TIME__`, so every build has a new
+sha). `nm -u` 0, no PT_INTERP, `__wrap_SDL_GL_SwapWindow` present, `GL_EndRendering → __wrap_SDL_GL_SwapWindow`
+(a tail-call `b`), the wrapper the only caller of the real `SDL_GL_SwapWindow`, old-lane strings 0; libSDL2.a,
+stk-drm, quake2-drm, quake3-drm and vkquake-drm outputs sha256-identical before and after.
+
+```
+./scripts/test-cycle-psh-interact.sh --label mig-qs --wait-secs 220 --inter-cmd-secs 8 --idle-secs 60 \
+    --max-cmd-secs 300 --ready-line 'V3DA srv detached|KMS srv detached' --ready-extra-secs 20 \
+    --hdmi-dense-on 'quakespasm-drm: new GPU lane' -- \
+    "/bin/rpi4-v3d-async-m3p2 -r 1 -m serial -i" \
+    "/bin/rpi4-kms-gate -G" \
+    "/usr/bin/quakespasm-drm"
+```
+
+(m3p4's command with the gate's app line and §6's server pair; no `frames .* seconds .* fps` ready-line —
+that line exists only under `+timedemo`, so the game runs to `--max-cmd-secs`, as in the gate.)
+
+| Line / observation | Predicted | If instead… |
+|---|---|---|
+| `quakespasm-drm: new GPU lane -- … (desktop GL) …` then `quakespasm: main() entered` | once each (the hooks' banner is byte-identical to the old `qsdrm_banner.c` one) | two banners: a stale object with both constructors; none: shipped binary staged (`cmp`) |
+| KMSDRM `DEBUG:` init lines, `GL_RENDERER` V3D 4.2, `GL_VERSION` Mesa 26.2.0 | as in m3p4 | — (nothing else changed in the link) |
+| `quakespasm-drm: first swap … window 1920x1080 drawable 1920x1080 swap_interval … flipstat on` | one line | no line but the game renders: the wrap did not take — `objdump` the staged binary |
+| `quakespasm-drm flipstat … fps (total N)` every 5 s, `total` rising | **28–33 fps** over the demo windows (poll-wake Finding 2: one flip in flight + ~19.5 ms GPU/frame ⇒ 30–35; timedemo measured 30.9) | < 25: the counter's own cost is ~2 `clock_gettime` per frame, so look at `swapstat swap_us_avg` and `KMS srv flipstat` first; ≥ 36: not vsync-paced |
+| `./scripts/flipstat-summary.sh --seq mig-qs`; the gate's `frames` (`run-showcase-gate.sh:262`, last `(total N)` of any `flipstat` line) | both parse the lines (their patterns ignore the prefix) | `KMS srv flipstat` lines carry no `(total N)`, so they cannot be mistaken for the game's |
+| `V3DA srv qstat` | `err=0 wedges=0 rej=0` | any: FAIL |
+| HDMI | attract demo lit + textured, HUD | as m3p4 |
+| faults | 0 | addr2line the unstripped `build-out/quakespasm-drm` |
+
 **What the three cycles decide:** each PASS retires one old-lane game from the migration list (§3); a
 FAIL is fixed in the clone's build or the stack before the gate (§5) is attempted. The gate itself runs
 only after all six apps have a PASSing single cycle and the servers start at boot.
@@ -449,6 +497,8 @@ build (the clean-build release gate) and the §5 gate once more on that image.
 | `tools/gpu-lane/sdl2-drm/patches-vkquake/0001–0005` | the port's four non-video engine fixes, split per file, + 0005 (no timestamp queries until G5) |
 | `tools/gpu-lane/sdl2-drm/vkqdrm/vkqdrm_hooks.c` | loadso answers (phxvk), present counter (BSD-3) |
 | `tools/gpu-lane/sdl2-drm/vkqdrm/gen-vk-trampolines.py` | the vk* link-symbol trampolines, generated per build |
-| `tools/gpu-lane/sdl2-drm/vkqdrm/vkqdrm_compat.h`, `vkqdrm/include/execinfo.h` | the two libphoenix-gap bridges |
+| `tools/gpu-lane/sdl2-drm/vkqdrm/vkqdrm_compat.h`, `vkqdrm/include/execinfo.h` | the two libphoenix-gap bridges; self-retiring against `feat/ipv6mreq-execinfo`, delete after its merge (§3) |
 | `tools/gpu-lane/sdl2-drm/vkqdrm/vkq-drm-launcher.c` | `/bin/vkq-drm` |
+| `tools/gpu-lane/sdl2-drm/build.sh` | quakespasm-drm: links `gamedrm_hooks.c` + `--wrap=SDL_GL_SwapWindow`, swap-path proofs, new `--skip-sdl` (§6.4) |
+| ~~`tools/gpu-lane/sdl2-drm/qsdrm/qsdrm_banner.c`~~ | deleted: `gamedrm_hooks.c` prints the same banner and sets the same SDL log levels |
 | `docs/gpu-new-lane/MIGRATION.md` | this document |

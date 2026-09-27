@@ -1,8 +1,8 @@
 /*
  * gamedrm: process-level hooks of the SDL2 GL game clones on the full DRM stack
- * (SDL 2.30.12 KMSDRM + Mesa GBM/EGL + libdrm-phoenix): quake2-drm (yQuake2, GLES3) and
- * quake3-drm (quake3e, desktop GL). Nothing engine-side: this object is linked only into
- * those clones, never into libSDL2.a, so quakespasm-drm and stk-drm are unaffected.
+ * (SDL 2.30.12 KMSDRM + Mesa GBM/EGL + libdrm-phoenix): quake2-drm (yQuake2, GLES3),
+ * quake3-drm (quake3e) and quakespasm-drm (desktop GL). Nothing engine-side: linked only
+ * into those clones, never into libSDL2.a, so stk-drm (own hooks) is unaffected.
  * Build with -DGAMEDRM_NAME='"quake2-drm"' -DGAMEDRM_API='"GLES"' (or "desktop GL").
  *
  * The stk-drm hooks (stkdrm/stkdrm_hooks.c) with the name as a parameter:
