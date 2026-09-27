@@ -624,7 +624,7 @@ designed; `prime_export_render` = the G4 gap) — the library the client links i
 |---|---|
 | **G16** DRI3 fences | ✅ closed for Phoenix (libxshmfence backend + shmsrv), host-tested; hardware = §P2.6 |
 | Mesa client platform | ✅ `--x11` build + 3 patches + demo client |
-| G4 render-node export | not needed for DRI3 while `dmabuf_capable` is off; needed for UIF (tiled) client buffers = no shadow-tiling of each frame in the server (`-debug dmabuf_capable` + modifiers), for Wayland dmabuf of render-allocated buffers, and v3dv external memory |
+| G4 render-node export (implemented 2026-09-27, pending Pi `m6g-g4`, [M6 §15](M6-wayland.md)) | not needed for DRI3 while `dmabuf_capable` is off; needed for UIF (tiled) client buffers = no shadow-tiling of each frame in the server (`-debug dmabuf_capable` + modifiers), for Wayland dmabuf of render-allocated buffers, and v3dv external memory |
 | G7 kms import of a foreign buffer + `BO_LAST_FENCE` | needed for Present **flips** of full-screen client windows (today: copy fallback) and for pipeline-mode render servers (cross-process implicit sync) |
 | G6 cross-process syncobj / sync files | DRI3 1.4 explicit sync (xcb ≥ 1.17, a newer server), Vulkan xcb WSI (M5 second half) |
 | shmsrv | lives in `tools/gpu-lane/weston-drm/shmsrv/` (M6, untracked at the time of writing); x11-drm compiles the same source and includes `shm_proto.h` from there. **Recommend promoting it to a shared `tools/gpu-lane/shmsrv/`** and adding a one-page minimum capacity for small objects |

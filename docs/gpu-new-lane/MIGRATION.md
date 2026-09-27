@@ -189,7 +189,7 @@ old strings (`/dev/fb0`, `phoenix-map.cfg`) and none of the new ones.
 | X `action` launcher on Xorg-drm + a GL window client | X desktop | not written | **yes** |
 | Shader disk cache in Mesa-DRM | every GL/Vulkan app: cold shader compiles at every start (STK loads at < 1 fps for a while) | not built | no (startup time only); wanted before shipping |
 | libphoenix `fclose(stdout)` UAF fix | STK exit fault (old and new lane) | branch `fix/stdstream-fclose-uaf` | yes for a 0-fault gate (the fault is at exit, inside the capture) |
-| **G4** render-node export (`V3DA_OP_BO_EXPORT` + `/v3dbuf`) | UIF client buffers in X, Wayland dmabuf, v3dv external memory | open | no (DRI3 with `dmabuf_capable` off works — m4p2a) |
+| **G4** render-node export (`V3DA_OP_BO_EXPORT` + `/v3dbuf`) | UIF client buffers in X, Wayland dmabuf, v3dv external memory | implemented 2026-09-27 (`52f039791`), pending Pi `m6g-g4` ([M6 §15](M6-wayland.md)) | no (DRI3 with `dmabuf_capable` off works — m4p2a) |
 | **G6** cross-process syncobj / sync-file fds | DRI3 1.4 explicit sync, Vulkan **xcb** WSI | open | no (no shipped Vulkan-in-X user) |
 | **G7** kms import of a foreign buffer (+ `BO_LAST_FENCE`) | Present flips of client buffers, zero-copy HEVC | open | no (copy fallback) |
 | **G5** `SUBMIT_CPU` | every Vulkan query (v3dv runs timestamp resets/writes, query copies and indirect CSD as CPU jobs) | open | sidestepped for vkQuake by patch 0005 (its only queries feed `scr_speeds`); **needed** before any Vulkan app that relies on queries ships |
