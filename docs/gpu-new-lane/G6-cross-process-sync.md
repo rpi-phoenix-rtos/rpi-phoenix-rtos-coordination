@@ -101,6 +101,10 @@ errors: -ENOENT unknown / withdrawn name, -EINVAL bad ns/port/flags or a fence n
         -EBUSY (attach: > 16 dependencies)
 ```
 
+The dma-buf ioctls' own `flags` (`DMA_BUF_SYNC_READ` / `WRITE`) are validated (non-zero, no other
+bits: else `EINVAL`, as Linux) and then dropped: the server has one kind of fence, every use counts
+as a write, so a `READ` export returns the same set as `WRITE`.
+
 | binary | against the G6 server | against a proto-3 (G4/G7) server |
 |---|---|---|
 | everything staged today (proto 2: `rpi4-kms-gate`/`-g7 -G`, `v3dasync-ping`, games; proto 3: `drmprobe-g4/-g7`, `weston-g7`, the G4 `weston-simple-egl`) | **unchanged** (HELLO 2 accepted; no G6 op is sent). They do get item 1 for free: their submits now wait for other clients' pending use of a shared BO | — |
@@ -186,7 +190,8 @@ The same probe, the same library; the library falls back to proto 3:
 Without G6 the consumer reads all 4096 words stale, and the flip completes in 15 µs with the
 producer's job still pending and every one of the 2 073 600 on-screen words stale; with G6 the
 read waits and sees the producer's colour, the flip is deferred until the job is done (the fake
-kms counts it, `deferred_flips=2`) and shows the producer's pixels. Every other key passes in both
+kms counts it: `HOSTE2E g6 … deferred_flips=2` against `1` — only G13's `implicit_flip` — in the
+negative run, both pinned in `run.sh`) and shows the producer's pixels. Every other key passes in both
 runs (G4 export included: `g4-regressed` check).
 
 **What the host cannot show.** The server's code — implicit dependencies, `BO_LAST_FENCE` over
@@ -234,6 +239,13 @@ cmp /home/houp/.claude/jobs/c8f1289c/tmp/g7-frozen/rpi4-kms-g7 "$EXPORT/bin/rpi4
 Preconditions as M6 §9: netboot image ≥ build 11 (the E1 kernel), no GPU app, no X, no old-lane
 `rpi4-v3d`.
 
+Notes for grading: **rpi4-kms is not rebuilt or staged** (the cycle runs `rpi4-kms-g7`; a
+compile check against the new header passed). The G6 `weston-simple-egl-g6` changes only its
+`WAIT_BO` of its own exported back buffers (it calls no dma-buf ioctl): the G4 client would give
+the same rows 10–14; it is staged so the whole Wayland pair uses one library. Weston's
+`V3DA srv g6 stats` line arrives only when its render connection closes (at exit): for a Weston
+that hangs, the live indicator is the `V3DA srv g6 last_fence client=<weston's c> …` lines.
+
 ### Cycle `g6-sync` (Bash `timeout: 600000`)
 
 **Question:** does the render server keep one reservation object per shared BO across processes —
@@ -248,7 +260,7 @@ waits in place (no tearing on direct scan-out)?
     "/bin/rpi4-v3d-async-g6 -r 1 -m serial -i" \
     "/bin/rpi4-kms-g7 -G -p 96" \
     "/bin/shmsrv -v" \
-    "/bin/drmprobe-g6 -n 30" \
+    "/bin/drmprobe-g6 -n 30 -g 1024" \
     "export WESTON=/bin/weston-g6" \
     "export EGL_CLIENT=/bin/weston-simple-egl-g6" \
     "/bin/bash /bin/weston-m6a-g6.sh gl egl noinput" \
@@ -257,7 +269,8 @@ waits in place (no tearing on direct scan-out)?
     "/bin/v3dasync-ping stats"
 ```
 
-Only the render server, the probe, Weston and the client move against `m6h-g7`
+`-g 1024`: the producer chains 1024 dependent clears (the default 256 may finish before the hand-over
+on hardware — see row 6). Only the render server, the probe, Weston and the client move against `m6h-g7`
 (`artifacts/rpi4b-uart/rpi4b-uart-20260927-144453-m6h-g7.log`: drmprobe `pass=44`, Weston direct
 scan-out of the client, 45 fps, `flips=907 deferred=285`). Grade:
 
@@ -278,9 +291,9 @@ client id, `<s>` = a fence-page slot (= client id − 1), `<h>` = a render handl
 | 2 | `KMS v3d connect=1 …` (rpi4-kms-g7, proto 2, HELLOs the proto-4 server); `KMS srv ready … proto=1..2 import=v3dbuf` | as m6h | `connect=0 why=hello`: the HELLO range check — compatibility blocker |
 | 3 | drmprobe rows up to `prime_export_xproc … ok=1` exactly as m6h (44 keys) | unchanged | a regression outside G6: compare with the m6h log |
 | 4 | `DRMPROBE dmabuf_sync_probe export_errno=0 import_errno=0 idle_fences=0 ok=1` | Mesa's WSI probe passes | `export_errno=25`: the library fell back to proto 3 (row 1) or the probe's `drmIoctl` never reached the dma-buf branch (a pre-G6 drmprobe: `strings`) |
-| 5 | `DRMPROBE dmabuf_sync_import setup=0 import_errno=0 reexport_errno=0 pending_after_import=1 nfences=1 wait=0 chain_done=1 jobs=256 ok=1`; server `V3DA srv g6 attach client=<c> ns=2 id=<h> handle=0x0 bos=1 fence=<s>/1/<n> deps=1 join=<j> n=1` | the join job on hardware | `pending_after_import=0`: the chain had finished before the import (note, not a fail; the join then answered seqno 0 and no `attach` line appears); `chain_done=0` with `wait=0`: the join job completed before its dependency — **blocker** (read `job_ready` on the CPU queue); a hang here: the join job never completed (event-thread tick) — **blocker** |
-| 6 | `DRMPROBE dmabuf_sync_read producer=child jobs=256 chain_us=<T> export_errno=0 pending_at_export=1 nfences=1 wait=0 early_stale=1 bad_words=0 done_at_read=1 ok=1`, T ≈ 20–150 ms; server `V3DA srv g6 last_fence client=<parent c> ns=2 id=<h> handle=0x0 pending=1 newest=<child s>/1/<n> more=0` | **a second process reads the producer's finished frame after waiting on the dma-buf's fences** | `pending_at_export=0 early_stale=0`: the chain was done before the hand-over — the race was not provoked (not a fail; re-run with `-g 2048`); **`bad_words>0` with `wait=0`: the exported fence did not cover the producer's job — blocker**; `export_errno=2` (+ no `last_fence` line): the name was not resolvable (`bo_by_export`) |
-| 7 | `DRMPROBE dmabuf_sync_flip producer=child jobs=256 chain_us=<T2> addfb=0 pending_at_commit=1 flipped=1 flip_us=<F> done_at_flip=1 flipped_back=1 report=1 ok=1`, F ≥ 17 ms and of the order of T2; `KMS import … scanout=1`, `KMS scanout import … (first flip)`; HDMI (dense snapshots): a banded gradient for ~1 s (not m6h's 8 bands) | **a flip of another process's buffer is held until its GPU work is done** | `done_at_flip=0`: the flip was not gated — a `V3DA srv g6 last_fence` line for this id shows the library asked (then rpi4-kms: started without `-G`? `KMS srv ready … v3d=0`); no such line: the library took the G13 path (port check in `implicit_attach`); `addfb=-22` + `KMS fb FAIL … why=above_1g`: graded `gap=1` |
+| 5 | `DRMPROBE dmabuf_sync_import setup=0 import_errno=0 reexport_errno=0 pending_after_import=1 nfences=1 wait=0 chain_done=1 jobs=1024 ok=1`; server `V3DA srv g6 attach client=<c> ns=2 id=<h> handle=0x0 bos=1 fence=<s>/1/<n> deps=1 join=<j> n=1` | the join job on hardware | `pending_after_import=0`: the chain had finished before the import (note, not a fail; the join then answered seqno 0 and no `attach` line appears); `chain_done=0` with `wait=0`: the join job completed before its dependency — **blocker** (read `job_ready` on the CPU queue); a hang here: the join job never completed (event-thread tick) — **blocker** |
+| 6 | `DRMPROBE dmabuf_sync_read producer=child jobs=1024 chain_us=<T> export_errno=0 pending_at_export=1 nfences=1 wait=0 early_stale=1 bad_words=0 done_at_read=1 ok=1`, T ≈ 80–600 ms; server `V3DA srv g6 last_fence client=<parent c> ns=2 id=<h> handle=0x0 pending=1 newest=<child s>/1/<n> more=0` | **a second process reads the producer's finished frame after waiting on the dma-buf's fences** | **`pending_at_export=0`: the cycle did NOT decide G6** — the chain was done before the hand-over, so the export had nothing to wait for and the row cannot tell a working sync from a no-op (on the Pi there is no ground-truth hook like the host's). Re-run with `-g 4096`; not a pass; **`bad_words>0` with `wait=0`: the exported fence did not cover the producer's job — blocker**; `export_errno=2` (+ no `last_fence` line): the name was not resolvable (`bo_by_export`) |
+| 7 | `DRMPROBE dmabuf_sync_flip producer=child jobs=1024 chain_us=<T2> addfb=0 pending_at_commit=1 flipped=1 flip_us=<F> done_at_flip=1 flipped_back=1 report=1 ok=1`, F ≥ 17 ms and of the order of T2; `KMS import … scanout=1`, `KMS scanout import … (first flip)`; HDMI (dense snapshots): a banded gradient for ~1 s (not m6h's 8 bands) | **a flip of another process's buffer is held until its GPU work is done** | **`pending_at_commit=0`: the cycle did NOT decide the flip gate** (the producer was done before the commit — re-run with a larger `-g`, as row 6). `done_at_flip=0`: the flip was not gated — a `V3DA srv g6 last_fence` line for this id shows the library asked (then rpi4-kms: started without `-G`? `KMS srv ready … v3d=0`); no such line: the library took the G13 path (port check in `implicit_attach`); `addfb=-22` + `KMS fb FAIL … why=above_1g`: graded `gap=1` |
 | 8 | `KMS srv flipstat client=<drmprobe's> … deferred=D …` with D ≥ 1 (m6h: `deferred=0`) | the G6 flip was deferred by the gate | D = 0 with row 7 passing: the chain was done before the commit (`pending_at_commit=0`) |
 | 9 | `DRMPROBE RESULT pass=48 fail=0 gap=0 failed=- … verdict=PASS` (m6h's 44 + 4); `pass=47 … gap=1` with row 7's `above_1g` | as listed | any `failed=` key: its row |
 | 10 | `WESTONDRM start renderer=gl client=egl weston=/bin/weston-g6 … egl_client=/bin/weston-simple-egl-g6`; Weston up as m6h; `WESTONDRM client start: /bin/weston-simple-egl-g6` | the exports reached the script | `weston=/bin/weston` or `egl_client=/bin/weston-simple-egl`: psh's `export` did not reach bash — then pre-G6 binaries ran; grade rows 11–13 as m6h |
@@ -291,7 +304,8 @@ client id, `<s>` = a fence-page slot (= client id − 1), `<h>` = a render handl
 | 15 | exit: `KMS import released …` per import, `V3DA srv export withdrawn … live=0`, `weston exited rc=0`; `SHMSRV stats live=0`, `KMSTEST stats … bos=0 exports=0`, `V3DAPING stats … bos_live=0 parked=0 … verdict=PASS` (the staged proto-2 ping HELLOs the proto-4 server; join jobs are not counted as NOPs) | no leaks, compatibility | `V3DAPING … nops_done` mismatch: join jobs counted as NOPs (server stats) |
 | 16 | fault dumps | 0 kernel, 0 EL0 | EL0 in the server: `aarch64-phoenix-addr2line -f -e tools/gpu-lane/v3d-async/out-g6/rpi4-v3d-async <pc>`; in drmprobe: the unstripped `build-out-g6/drmprobe`; in Weston: `weston-drm/build-out-g6/weston` |
 
-**Decides:** rows 4–9 PASS = G6 closed on hardware (the server's reservation object, the join
+**Decides:** rows 4–9 PASS **with `pending_at_export=1` (row 6) and `pending_at_commit=1` (row 7)** = G6 closed on
+hardware; either pending flag 0 = not decided, re-run with a larger `-g` (rows 6/7 are then no-ops) (the server's reservation object, the join
 job, the dma-buf ioctls, the foreign flip gate). Rows 11–14 PASS = Weston's composition and direct
 scan-out of a GPU client are synchronised across processes; M6 §8's "tearing expected" row is
 closed. Then: `vkcube-drm-g6` (§9) and, for explicit sync, G6b.
@@ -301,8 +315,9 @@ closed. Then: `vkcube-drm-g6` (§9) and, for explicit sync, G6b.
 - **Server paths never run on hardware:** the CPU-queue join job (kick when ready, completion on
   the next tick, `hw_submitted`/`hw_completed` accounting on the CPU queue), implicit
   dependencies in a real schedule, `last_gseq` ordering.
-- **The race may not be provoked:** 256 chained 64×64 clears may finish before the parent's
-  export (row 6 `pending_at_export=0`). The test stays correct, but proves less; `-g` widens it.
+- **The race may not be provoked:** the chained 64×64 clears may finish before the parent's
+  export (row 6 `pending_at_export=0`, row 7 `pending_at_commit=0`). Then the sync rows are
+  no-ops and the cycle has not decided G6 (re-run with a larger `-g`); the cycle passes `-g 1024`.
 - **Weston per-flip IPC:** one `BO_LAST_FENCE` per direct-scan-out flip (~30 µs, E5); a CPU wait
   only for the same client's work on another queue (normally none).
 - **Implicit dependencies change Weston's schedule:** its composite job now waits for a pending

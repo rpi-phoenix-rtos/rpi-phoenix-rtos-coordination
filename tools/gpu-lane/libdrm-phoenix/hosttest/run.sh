@@ -87,6 +87,9 @@ for mode in legacy dri; do
 	grep -q 'DRMPROBE dmabuf_sync_read producer=foreign export_errno=0 pending_at_export=1 nfences=1 wait=0 early_stale=1 bad_words=0 done_at_read=1 ok=1' "${log}" || why="${why} g6-read"
 	grep -q 'DRMPROBE dmabuf_sync_flip producer=foreign addfb=0 pending_at_commit=1 flipped=1 .* done_at_flip=1 bad_words=0 flipped_back=1 ok=1' "${log}" || why="${why} g6-flip"
 	grep -qE 'HOSTE2E g6 .* last_fence_queries=[1-9]' "${log}" || why="${why} g6-counters"
+	# deferred flips: G13's implicit_flip (1, as before G6) + the G6 foreign flip (1): the second
+	# one exists only because the library asked the server (g6-negative shows 1)
+	grep -q 'HOSTE2E g6 .* deferred_flips=2$' "${log}" || why="${why} g6-deferred"
 	if [ "${mode}" = dri ]; then
 		grep -q 'DRMPROBE identity node=card1 version=v3d .* node_type=0 .* ok=1' "${log}" || why="${why} card1"
 		grep -q 'DRMPROBE fstat_nodes n=3 ' "${log}" || why="${why} fstat-n3"
@@ -165,7 +168,7 @@ grep -q 'DRMPROBE dmabuf_sync_probe export_errno=25 ' "${log}" || why="${why} pr
 grep -q 'DRMPROBE dmabuf_sync_read producer=foreign export_errno=25 .* bad_words=4096 done_at_read=0 ok=0' "${log}" || why="${why} read-not-stale"
 grep -q 'DRMPROBE dmabuf_sync_flip producer=foreign addfb=0 .* flipped=1 .* done_at_flip=0 .* ok=0' "${log}" || why="${why} flip-not-ungated"
 grep -q 'DRMPROBE prime_export_render rc=0 .* ok=1' "${log}" || why="${why} g4-regressed"
-grep -q 'HOSTE2E g6 .* server_proto=3 last_fence_queries=0' "${log}" || why="${why} g6-counters"
+grep -q 'HOSTE2E g6 .* server_proto=3 last_fence_queries=0 deferred_flips=1$' "${log}" || why="${why} g6-counters"   # only G13's
 grep -qE 'ERROR: AddressSanitizer|runtime error' "${log}" && why="${why} sanitizer"
 if [ -z "${why}" ]; then
 	echo "HOSTE2E g6-negative verdict=PASS (the G6 tests fail against a proto-3 server: stale read, ungated flip; the rest as before)"
