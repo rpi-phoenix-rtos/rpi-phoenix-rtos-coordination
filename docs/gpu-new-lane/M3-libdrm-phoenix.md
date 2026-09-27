@@ -1159,3 +1159,178 @@ chatty: ~150–300 lines in the first second.)
 the `CREATE_DUMB 1024×2026` line is the next link of the chain, named by the first `rc=-1` DRMPHX line.
 If `CREATE_DUMB 1024×2026` is missing, 0008 did not take.
 
+## M3 part 4 — SDL2 KMSDRM + quakespasm-drm (2026-09-27)
+
+**Status:** **builds and links; no Pi cycle yet** (pre-registered below). SDL 2.30.12 — the version
+`ports/sdl2` ships — built **static** with its **stock KMSDRM video driver** on Mesa's GBM + EGL
+(desktop GL) and libdrm-phoenix, and **`quakespasm-drm`**: a clone of the quakespasm port rebuilt
+against it. 0 undefined symbols, no old-lane string, no dynamic loading. Nothing committed, nothing
+staged; no server, no libdrm-phoenix source, no old-lane file (`ports/sdl2`, the Mesa fork,
+`tools/.gpu-libs`, the shipped `/usr/bin/quakespasm`) and no sibling repo touched.
+Code: [`tools/gpu-lane/sdl2-drm/`](../../tools/gpu-lane/sdl2-drm/).
+
+### Build
+
+```
+tools/gpu-lane/sdl2-drm/build.sh                 # Mesa-GL (via mesa-drm) + SDL + quakespasm-drm, ≈5 min cold
+tools/gpu-lane/sdl2-drm/build.sh --skip-mesa     # SDL + quakespasm-drm only, ≈1.5 min
+tools/gpu-lane/sdl2-drm/build.sh --libdrm-prefix tools/gpu-lane/libdrm-phoenix/build-out-<x>/prefix   # relink on another libdrm-phoenix (default build-out-m3p3)
+tools/gpu-lane/sdl2-drm/build.sh --clean
+```
+
+Writes only `tools/gpu-lane/sdl2-drm/build-out/` (gitignored, `.gitignore` added):
+
+| Step | What |
+|---|---|
+| 1. Mesa with desktop GL | `mesa-drm/build.sh --opengl --out build-out/mesa-gl --libdrm-prefix …/build-out-m3p3/prefix` (m3p3 = the part-2 library + the opt-in `DRMPHX_TRACE`; b233581…). quakespasm is a **desktop-GL** program (`glBegin`, fixed function + GLSL) and the committed mesa-drm build is GLES-only, so **`--opengl` is a new opt-in option of `mesa-drm/build.sh`** (default unchanged, still `-Dopengl=false`; a build dir configured the other way refuses to be reused — `mesa-opengl.txt`, seeded from the dir's own meson summary for dirs older than the label). It adds `-Dopengl=true` (GLES2 stays on) and builds `src/mesa/glapi/glapi/libglapi_bridge.a` — the static `gl*` entry points libGL would export, which meson does not build with `glx=disabled` (`build_by_default: false`); `nm` shows `T glBegin`, `glVertex3f`, `glClear`. The same run relinks a GL-enabled kmscube there (unused). The delivered build is a **full** Mesa build (fresh `mesa-gl/`) with mesa-drm's committed patches 0001–**0009** (patch set `278cdef4539b4a27`): 0008 (`u_screen` queries DRM_CAP_PRIME on Phoenix — the kmscube first-run fix) matters here exactly as for kmscube, because SDL creates its GBM surface the same way; checked in the binary: `u_init_pipe_screen_caps` has 1 `bl drmGetCap`. `libglapi_bridge.a` is a meson **thin** archive (it points into `mesa-gl/mesa-build/`): a `--clean` of `mesa-gl` means a full Mesa rebuild (≈5 min), not a relink. |
+| 2. SDL source | `ports/sdl2`'s tarball (read-only) + `patches/000{1..8}` + `overlay/` → `build-out/sdl-src` (re-extracted when the tarball/patch/overlay stamp changes). |
+| 3. SDL configure | cmake as the port (`CMAKE_SYSTEM_NAME=Generic`, `-DPHOENIX=ON`, static only) with `-DSDL_KMSDRM=ON -DSDL_KMSDRM_SHARED=OFF -DSDL_OPENGL=ON -DSDL_OPENGLES=ON -DSDL_VULKAN=OFF -DSDL_HIDAPI=OFF`, every host backend off. Flags = mesa-drm's target flags + the tree sysroot — **not** the port's `-I<ports prefix>/include` (it holds other ports' `GL/`/`X11/` headers). `PKG_CONFIG` is a wrapper restricted to `mesa-gl/prefix` (egl, gbm), mesa-drm's libdrm-phoenix snapshot (libdrm) and its private zlib prefix; it strips the `-pthread` Mesa's `.pc` files carry (aarch64-phoenix-gcc rejects it). The build **fails** unless `SDL_config.h` has `SDL_VIDEO_DRIVER_KMSDRM`, `SDL_VIDEO_OPENGL_EGL`, `SDL_VIDEO_OPENGL`, `SDL_INPUT_PHOENIX`, `SDL_AUDIO_DRIVER_PHOENIX`, pthreads + unix timer, and none of `SDL_VIDEO_DRIVER_KMSDRM_DYNAMIC`, `SDL_VIDEO_DRIVER_PHOENIX` (old lane), X11/Wayland, `SDL_INPUT_LINUXEV`, `SDL_LOADSO_DLOPEN`, Vulkan. |
+| 4. quakespasm-drm | the port's pinned commit `f5fe178` + the port's single patch `0001-quakespasm-phoenix-v3d-single-elf.patch` + the port's three Phoenix glue files (all read-only from `sources/phoenix-rtos-ports/quakespasm/`, GPL-2.0+, an application — as the shipped port), the port's exact TU list (`gl_vidsdl`/`in_sdl`/`snd_sdl` + `pl_phoenix_{sys,main,stubs}`) and flags (`-DUSE_SDL2 -DNO_SDL_CONFIG -ffreestanding -O2 …`), GL headers from the clone's own Mesa source. **Not built:** the old lane's GL-context glue `ports/sdl2/glue/sdl_phoenix_glctx.c` (SDL's KMSDRM + EGL own the context now). Added: `qsdrm/qsdrm_banner.c`, a constructor that writes one line (`quakespasm-drm: new GPU lane -- SDL 2.30.12 KMSDRM + Mesa 26.2 GBM/EGL (desktop GL) + libdrm-phoenix -> …`, `write(1)`, no stdio before `main()`'s `setvbuf`) so a UART log names the lane, and sets SDL's VIDEO + INPUT log categories to DEBUG so KMSDRM reports its init steps (a dozen `DEBUG:` lines at start, nothing per frame) without an `export` in the cycle. |
+| 5. link | mesa-drm's kmscube shape: C++ driver, `-static`, `--gc-sections`, `-z max-page-size=0x1000`, **`-Wl,--wrap=mmap`**, `libgallium-26.2.0.a` whole-archive, one group of `libSDL2.a` + **`libglapi_bridge.a` (instead of `libGLESv2.a`, whose `gl*` would clash)** + libEGL/libgbm/dri_gbm/libglapi/v3d/broadcom/winsys/util archives + `libdrm.a` + the compat shim + the ports' `libz.a`; plus the port's `-z stack-size=33554432`. Link log empty. |
+
+### SDL patches (`tools/gpu-lane/sdl2-drm/patches/`)
+
+| # | Patch | Lines | Origin / rationale |
+|---|---|---|---|
+| 0001 | `cmake-phoenix-pthread-detection` | +5/−2 | **verbatim** from `ports/sdl2` (pthreads live in libphoenix; gcc rejects `-pthread`) |
+| 0002 | `cmake-phoenix-platform-branch` | +21/−0 | **verbatim** (the PHOENIX cmake branch that skips the host probes; unix timer + pthreads) |
+| 0003 | `dynapi-disable-on-phoenix` | +2/−0 | **verbatim** (static only) |
+| 0004 | `systhread-priority-noop-on-phoenix` | +5/−2 | **verbatim** (`pthread_{get,set}schedparam` unimplemented) |
+| 0005 | `cmake-phoenix-audio-driver` | +15/−0 | **adapted** from ports/sdl2 0006: same hunks, rebased onto a tree **without** the old lane's video patch 0005. The driver (`overlay/src/audio/phoenix/`, `/dev/audio0` pull model) is copied **verbatim** from the ports/sdl2 overlay. |
+| 0006 | `kmsdrm-static-egl-on-phoenix` | +39/−2 | **new.** The PHOENIX branch calls exactly `CheckEGL()` + `CheckKMSDRM()` (pkg-config on the cross prefixes), refuses `SDL_KMSDRM_SHARED=ON` (then `SDL_kmsdrmdyn.c` binds `KMSDRM_drm*`/`gbm_*` directly), sets GL/GLES2 attribute plumbing + renderers (all via `SDL_GL_GetProcAddress`, no link dependency). `SDL_egl.c`: Phoenix takes the branch the static ANGLE/Vita builds take — `LOAD_FUNC` references the EGL functions directly and the `SDL_LoadObject("libGL…"/"libEGL…")` block is skipped; GL entry points come from `eglGetProcAddress` (EGL 1.5). |
+| 0007 | `kmsdrm-phoenix-hid-input` | +17/−0 | **new.** `SDL_INPUT_PHOENIX`, a third KMSDRM input source beside evdev/wscons (Init/PumpEvents/Quit). The code, `overlay/src/core/phoenix/SDL_phoenixhid.c` (280 lines, zlib), is the old phoenix video driver's HID report handling (8-byte keyboard reports diffed into key events + US-QWERTY `SDL_TEXTINPUT`, 4-byte relative mouse packets, bounded non-blocking drains, bounded lazy open), detached from that driver: events go to the focused window. |
+| 0008 | `kmsdrm-xrgb8888-scanout-on-phoenix` | +9/−0 | **new.** KMSDRM hard-codes an ARGB8888 GBM surface; rpi4-kms maps AR24 to the firmware's `VC_IMAGE_ARGB8888` on a primary plane stacked **above the console framebuffer**, so a game leaving alpha < 1 (glClear alpha 0, blended passes) could show console text through the picture. XRGB8888 (kmscube's default; the EGLConfig follows through `SDL_EGL_SetRequiredVisualId`). |
+
+**Not taken from ports/sdl2:** its 0005 + `overlay/src/video/phoenix/` (the old lane's `/dev/fb0` video
+driver) and `glue/` (the in-process GL context).
+
+### Verification (the delivered binary)
+
+| Check | Result |
+|---|---|
+| static link | OK, link log empty; no `PT_INTERP` |
+| `aarch64-phoenix-nm -u quakespasm-drm` | **0** symbols |
+| `size` | text 17 365 166, data 565 476, bss 6 175 276; file 101 500 632 B, **stripped 17 938 024 B** (shipped `/usr/bin/quakespasm` 18 578 808 B, `quakespasm-v3da.stripped` 18 562 600 B); `libSDL2.a` 9 615 722 B |
+| sha256 (first 16) | `quakespasm-drm` `ac29ad23653cc553`, `quakespasm-drm.stripped` `51526dfcb18edda8` (`build-out/BUILD-INFO.txt`); inputs: SDL set `2f79883be1753ceb`, Mesa set `278cdef4539b4a27`, libdrm.a `b23358170ceea578` (m3p3) |
+| SDL KMSDRM, static | symbols `KMSDRM_CreateDevice`, `KMSDRM_GLES_SwapWindow`, `SDL_EGL_LoadLibrary`, `SDL_PHOENIX_HID_Poll`; strings `KMS/DRM Video Driver`, `/dev/dri/` (4), `/dev/kbd0`, `/dev/audio0`; `eglChooseConfig`/`eglGetPlatformDisplay` referenced directly by `SDL_EGL_LoadLibraryInternal`; SDL's loadso is the dummy one |
+| Mesa + libdrm-phoenix | `gbmint_get_backend`, `kmsro_drm_screen_create`, `v3d_drm_screen_create_renderonly`, `glBegin` (bridge), `eglGetPlatformDisplayEXT`, `drm_phoenix_ioctl`, `drmPhoenixMmap`, `__wrap_mmap`; strings `libdrm-phoenix:`, `DRMPHX_TRACE`, `EGL_KHR_platform_gbm`, `V3D 4.2`, `kmsro`, `quakespasm-drm:`. `objdump`: `gbm_dri_bo_create`, `v3d_bo_map_unsynchronized`, `vc4_bo_map_unsynchronized`, `dri_sw/kms_sw_displaytarget_map` and libphoenix's `malloc`/`fopen` call `__wrap_mmap`; the only direct `bl mmap` are inside `__wrap_mmap` |
+| old lane absent | strings `v3d-winsys:` 0, `v3da-winsys:` 0, `phxgl` 0, `/dev/fb0` 0, `RPI4FB_GETMODE` 0, `phoenix_v3d_ioctl` 0, `peek_next_scanout` 0, `v3d-srv` 0; symbols `PHOENIX_bootstrap`, `PHOENIX_PumpEvents`, `phxgl_init`, `winsys_init`, `v3da_connect` absent (`build.sh` fails on any) |
+| warnings | SDL: 20 × upstream `__ieee754_sqrt redefined` (`src/libm`), 5 × upstream `-Wundef` in the always-compiled hidapi stub; 0 in patched code. quakespasm 0. Mesa 56 (mesa-drm's known upstream set). |
+
+### Runtime path (what the Pi will exercise, in order)
+
+1. `SDL_Init(VIDEO)` → `KMSDRM_Available`: `opendir("/dev/dri/")`, open each `card*` `O_RDWR`,
+   `drmModeGetResources` (card1 = v3d primary → `-EOPNOTSUPP` → skipped; card0 → 1 connector),
+   `drmSetMaster` + `drmAuthMagic(fd, 0)` (both accepted no-ops on card0, so not `-EACCES`).
+2. `KMSDRM_VideoInit`: re-open card0, connector/encoder/CRTC, the single 1920×1080 mode;
+   `DRM_CAP_ASYNC_PAGE_FLIP` = 0; `drmDropMaster` (no-op) keeps the fd; HID `/dev/kbd0` + `/dev/mouse0`
+   open attempts.
+3. `SDL_CreateWindow(800×600, OPENGL)` → `gbm_create_device` (G2 fstat, kmsro pairing as kmscube) →
+   `eglGetPlatformDisplay(GBM)` → cursor BO (64×64 dumb, `GBM_BO_USE_CURSOR|WRITE`; soft on failure) →
+   closest mode = **1920×1080** (the only one; any window size gets it) → `gbm_surface_create(1920×1080,
+   XRGB8888, SCANOUT|RENDERING)` → EGL window surface → `RESIZED` to 1920×1080, which quakespasm reads
+   back (`VID_GetCurrentWidth` = `SDL_GetWindowSize`).
+4. `SDL_GL_CreateContext`: `eglBindAPI(EGL_OPENGL_API)`, a desktop GL 2.1 (compat) context — the first
+   desktop-GL context on the new lane.
+5. Per frame `SDL_GL_SwapWindow` → `KMSDRM_WaitPageflip` (`poll()` on card0 + `drmHandleEvent`) →
+   `eglSwapBuffers` → `gbm_surface_lock_front_buffer` → `drmModeAddFB2` (once per BO) → first frame
+   `drmModeSetCrtc`, then `drmModePageFlip(EVENT)` (G13 attaches the imported BO's fence; `rpi4-kms -G`
+   gates the flip).
+
+### Gaps
+
+| Gap | Effect | Remedy |
+|---|---|---|
+| **Keyboard probably needs the console handed over** | per the old driver's notes pl011-tty's console bridge holds `/dev/kbd0` while fbcon is in text mode; on the new lane only `rpi4-kms -C` disables it. With `-G` alone (the cycle below) either the open keeps failing (bounded retries; no `phoenix-hid: /dev/kbd0 open` DEBUG line) or it succeeds and the RAW-mode switch competes with the console bridge for the reports [inferred, not read] — harmless for a timedemo, which needs no input. | a follow-up cycle with `rpi4-kms-m3p2 -G -C` (then type in the Quake console); it grades both outcomes |
+| HID code not run on hardware in this form | the report handling is the old driver's proven code; the detached version is host-compiled only | the `-G -C` cycle |
+| No hardware cursor | `MODE_CURSOR` is a library stub (`-ENOSYS`, §3.2); SDL treats it as soft (debug-level log). quakespasm hides the cursor anyway | cursor plane mapping in libdrm-phoenix (§3.2 follow-up) |
+| Mode list = the current mode | Stage A: every window is 1920×1080 (SDL picks the closest mode) — as the old lane's always-native `/dev/fb0` window [inferred] | kms Stage B modesets |
+| `SetWindowGammaRamp` | `drmModeCrtcSetGamma` is a stub → SDL gamma fails; quakespasm uses its GLSL gamma path when available | — |
+| G12 `poll()` quantum | `KMSDRM_WaitPageflip` `poll(-1)`s the card fd: when the previous flip has not completed at swap time, the wake rides the kernel's 20 ms cycle | kernel (E5) |
+| no joystick / filesystem / power / sensor backends | SDL dummy drivers, as the shipped port | — |
+| libdrm-phoenix is embedded | every library-side libdrm-phoenix fix needs a relink (the binary embeds `libdrm.a`, now m3p3) | `build.sh --libdrm-prefix …/build-out-<x>/prefix` (≈2 min, Mesa objects unaffected) |
+
+### Pre-registered Pi cycle `m3p4-qsdrm` (one netboot cycle)
+
+**Question:** does an unmodified SDL2 game — SDL's stock KMSDRM driver + Mesa GBM/EGL desktop GL —
+run on the full DRM-shaped stack (libdrm-phoenix → `rpi4-kms` + `rpi4-v3d-async`), render on HDMI,
+and at what `timedemo demo1` rate compared with the old lane and `quakespasm-v3da`?
+
+**Gate:** after `m3p3b-kmscube` (the re-run with Mesa 0008/0009 + libdrm m3p3, the same Mesa patch set
+and libdrm this binary embeds) shows a rotating cube — same GBM/EGL/kmsro/import chain; a kmscube
+failure would fail here for the same reason and add nothing.
+
+**Preconditions:** netboot image ≥ build 9 with `core_freq=500` (as the 40.4 fps reference); no GPU
+app, X or `rpi4-v3d` in the boot; the m3p2 servers staged; `/usr/share/quake/id1/pak0.pak` present
+(as for the shipped quakespasm).
+
+**Stage (coordinator)** (`sudo install -m 755 <source> <path>`, `cmp` afterwards; `<export>` = the live
+fsid=0 export, `awk '!/^#/ && /fsid=0/{print $1; exit}' /etc/exports`):
+
+| Source | Export path |
+|---|---|
+| `tools/gpu-lane/sdl2-drm/build-out/quakespasm-drm.stripped` | `<export>/usr/bin/quakespasm-drm` |
+| `tools/gpu-lane/v3d-async/out-m3p2/rpi4-v3d-async` | `<export>/bin/rpi4-v3d-async-m3p2` (if not staged by m3p2) |
+| `tools/gpu-lane/kms/out-m3p2/rpi4-kms` | `<export>/bin/rpi4-kms-m3p2` (if not staged by m3p2) |
+
+Keep the unstripped `build-out/quakespasm-drm` on the host for `addr2line`.
+
+**One cycle** (Bash `timeout: 600000`):
+
+```
+./scripts/test-cycle-psh-interact.sh --label m3p4-qsdrm --idle-secs 30 --max-cmd-secs 240 \
+    --ready-line 'V3DA srv detached|KMS srv detached|frames .* seconds .* fps' --ready-extra-secs 15 \
+    --hdmi-dense-on 'quakespasm-drm: new GPU lane' -- \
+    "/bin/rpi4-v3d-async-m3p2 -r 1 -m serial -i" \
+    "/bin/rpi4-kms-m3p2 -G" \
+    "/usr/bin/quakespasm-drm +timedemo demo1"
+```
+
+* `--idle-secs` is inert here: with `--ready-line` set, psh-interact ends a command only at the
+  ready-line (+ `--ready-extra-secs`) or at `--max-cmd-secs`.
+* **No environment is needed and none is set:** KMSDRM is the only real video driver in this SDL
+  (the dummy driver answers only `SDL_VIDEODRIVER=dummy`), and an `export` line would print nothing that
+  matches `--ready-line`, so it would burn the whole `--max-cmd-secs` (psh-interact applies the
+  ready-line to every command, M1 §16 correction). The same holds for `DRMPHX_TRACE=1`: keep it for a
+  diagnostic re-run, not the first cycle. Fallback only if the log shows
+  `Failed to open directory '/dev/dri/'`: a second cycle with `"export SDL_KMSDRM_DEVICE_INDEX=0"` first.
+* The game is **last**: quakespasm returns to its console after a timedemo and never exits, so
+  nothing after it would run (no `stats`/`quit` lines).
+* Budget: netboot 60–150 s + 2 × (detach + 15 s) + game ≤ 240 s (pak load over NFS + first-frame
+  shader compile, Mesa shader cache off + 969 frames ≈ 25–40 s) + 15 s ≈ 5–8 min.
+
+Grade (tagged lines; ~1.3 % UART line corruption — re-read, don't count; EL0 dumps print twice):
+
+```
+grep -a -E '^(quakespasm|KMS |V3DA |GL_|Video mode|[0-9]+ frames|libdrm-phoenix|libEGL|os_same_file|MESA|DRI2|DEBUG|ERROR|WARN|Quake Error)' \
+    artifacts/rpi4b-uart/rpi4b-uart-*-m3p4-qsdrm.log
+./scripts/uart-summary.sh m3p4-qsdrm
+```
+
+**HDMI grading rule:** only snapshots **after** the `(psh)% /usr/bin/quakespasm-drm +timedemo demo1`
+echo / the `quakespasm-drm: new GPU lane` line count (dense 5 s ticks from the banner); every earlier tick
+shows the console during the two server commands and says nothing about the game (the M1 P2-B grading
+error).
+
+**Predictions** and what each alternative means:
+
+| Line / observation | Predicted | If instead… |
+|---|---|---|
+| `V3DA srv detached …`, `KMS srv detached …`, the part-2 `dri name=… registered=1` lines | as in `m3p2-drmprobe` | a server missing: staging/boot problem, stop. |
+| `quakespasm-drm: new GPU lane -- SDL 2.30.12 KMSDRM …` then `quakespasm: main() entered (argc=3)` | once | a different banner / none: the wrong binary is staged (`cmp`). |
+| `DEBUG: Opening device /dev/dri/card0`, `DEBUG: Opened DRM FD (n)`, `DEBUG: /dev/dri/card0 connector, encoder and CRTC counts are: 1 1 1` (SDL KMSDRM) | at video init | no KMSDRM `DEBUG:` line at all: the log priority did not take (then read the `Quake Error` line); `Failed to open KMSDRM device /dev/dri/cardN, errno: …`: an open failed (card1 failing is harmless, card0 is not). |
+| `KMS srv fstat answered …`, `V3DA srv fstat answered …` (first answers) | during video init | `Quake Error: Couldn't create window` (quakespasm prints no SDL detail here): GBM/EGL init failed inside `KMSDRM_CreateWindow` — G2 or the kmsro pairing; compare the server lines with the kmscube cycle's. `Quake Error: Couldn't init SDL video: No available video device`: `KMSDRM_Available` found no usable `card*` — `opendir("/dev/dri/")` failed (→ the index fallback above) or open/GetResources of `/dev/dri/card0` failed (read the `KMS` lines). |
+| `os_same_file_description couldn't determine …` | at most once (no `kcmp`) | — |
+| `V3DA srv import handle=… ns=kmsbuf … pages=2026 … contiguous=1` × 3 (maybe 4) + `KMS srv kmsbuf atSize id=… (first; G3)`, and one `DEBUG: New DRM FB (n): 1920x1080, from BO 0x…` per buffer | **the GBM surface's scan-out buffers imported on the render node** (the kmscube prediction, same sizes: 1920×1080 linear) | `libEGL warning: DRI2: GBM surface buffer has no DRI image …`: Mesa 0008 missing (stale Mesa); `Failed to create scanout resource` / `DRM_IOCTL_MODE_CREATE_DUMB failed`: kms pool exhausted (4 × 7.9 MiB + the 16 KiB cursor BO in 32 MiB) → re-run with `rpi4-kms-m3p2 -G -p 48`; `Failed to get v3d handle for dmabuf`: G1; `mmap of bo … failed`: the `--wrap=mmap` path. |
+| `GL_VENDOR: Broadcom`, `GL_RENDERER: V3D 4.2…`, `GL_VERSION: 2.1 Mesa 26.2.0` (or a higher compat version) | a **desktop GL** V3D context through EGL | `Quake Error: Couldn't create GL context`: the EGLConfig has no `EGL_OPENGL_BIT` (desktop GL not in this Mesa → `mesa-opengl.txt`) or `eglBindAPI(EGL_OPENGL_API)` failed; a renderer `llvmpipe`/`softpipe` is impossible (not built) — a `kms_swrast` name means the render node was not found. |
+| `Video mode 1920x1080x32 60Hz (24-bit z-buffer, 0x FSAA) initialized` (quakespasm) | 1920×1080 (the only mode) | 800×600: SDL did not resize the window (`RESIZED` path) — the picture would occupy a corner. |
+| HDMI after the echo | **demo1 playing full screen** (E1M3 walkthrough: "You got the nails" etc.), no console text over it, no tearing; at the end the Quake console with the `… fps` line | console text bleeding through the picture: an alpha format reached scan-out (patch 0008 not in the build); black with `frames` advancing: rendering lands elsewhere (compare `V3DA srv import pa0` with `KMS pool pa`); frozen first frame: flips stopped (`ERROR: Could not queue pageflip` / `Wait for previous pageflip failed`); torn/half-drawn frames: G13 did not gate (`libdrm-phoenix: rpi4-kms runs without -G` line). |
+| `969 frames X seconds Y fps` | **Y = 30–45**. Reference: `quakespasm-v3da` 40.4 fps (core 500, same server flags), old lane 30.4 fps (core 250; a core-500 old-lane figure is still open). Y ≥ 36 = parity with the v3da clone through a real DRM client stack; 25–36 with the rest clean = present-path cost, most likely **G12** (a swap that finds the previous flip pending waits for the next 20 ms poll cycle) — not a render regression; flips are vsynced by construction (`ASYNC_PAGE_FLIP` = 0), so Y ≤ 60 | no `frames` line within `--max-cmd-secs`: a wait that never returns (V3DA wedge lines, or `poll()` on card0 never waking — `KMS` event lines) or a load stall (last quakespasm line tells which). |
+| `ERROR:`/`WARN:` lines from SDL | none, except possibly cursor-related ones (`drmModeSetCursor` is a stub; SDL reports those at DEBUG, which is on here) | anything else: read it — SDL's KMSDRM errors are specific. |
+| fault dumps (`uart-summary.sh`) | 0 kernel, 0 EL0 | an EL0 fault in quakespasm-drm: `aarch64-phoenix-addr2line -f -e tools/gpu-lane/sdl2-drm/build-out/quakespasm-drm <pc>` (unstripped, same link). |
+
+**What the cycle decides:** demo1 on HDMI with a `frames … fps` line = **M3's "SDL2 KMSDRM" item
+done — the first unmodified SDL2 game on the DRM-shaped stack**; the fps says whether the present path
+(G12, G13 gating) costs anything against `quakespasm-v3da`. Next: the keyboard cycle (`-G -C`, type in
+the console), the old-lane quakespasm at core 500 for a same-clock three-way comparison, then the other
+SDL2 games as clones.

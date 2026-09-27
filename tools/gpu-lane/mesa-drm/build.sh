@@ -22,9 +22,14 @@
 # build-out/prefix. No Pi, no rebuild-rpi4b-fast.sh, no /srv.
 #
 # Usage: tools/gpu-lane/mesa-drm/build.sh [--clean] [--out <dir>] [--relink] [-j N]
-#                                         [--libdrm-prefix <dir>]
+#                                         [--libdrm-prefix <dir>] [--opengl]
 #   --relink   skip Mesa; re-snapshot libdrm-phoenix and relink kmscube only (every
 #              library-side libdrm-phoenix fix needs this: kmscube embeds libdrm.a)
+#   --opengl   ALSO build desktop OpenGL (-Dopengl=true; GLES2 stays on) and the static
+#              GL entry-point archive src/mesa/glapi/glapi/libglapi_bridge.a (the gl*
+#              symbols libGL would export; not built by default with glx=disabled).
+#              Use it with --out <another dir>: the default build-out/ stays GLES-only.
+#              Consumer: tools/gpu-lane/sdl2-drm (quakespasm-drm needs desktop GL).
 # Stage (coordinator only):
 #   sudo cp tools/gpu-lane/mesa-drm/build-out/kmscube-stripped <live NFS export>/bin/kmscube
 #
@@ -37,6 +42,7 @@ clean=0
 relink=0
 jobs="$(nproc)"
 libdrm_src_prefix="${root}/tools/gpu-lane/libdrm-phoenix/build-out/prefix"
+opengl=false
 while [ $# -gt 0 ]; do
 	case "$1" in
 		--clean) clean=1 ;;
@@ -47,6 +53,7 @@ while [ $# -gt 0 ]; do
 		--out=*) out="${1#--out=}" ;;
 		--libdrm-prefix) shift; libdrm_src_prefix="${1:?--libdrm-prefix needs a directory}" ;;
 		--libdrm-prefix=*) libdrm_src_prefix="${1#--libdrm-prefix=}" ;;
+		--opengl) opengl=true ;;
 		*) echo "build.sh: unknown argument $1" >&2; exit 2 ;;
 	esac
 	shift
@@ -222,14 +229,28 @@ EOF
 		meson setup "${MB}" "${src}" --cross-file "${cross}" --prefix "${out}/prefix" \
 			--buildtype=debugoptimized -Db_ndebug=true --wrap-mode=nodownload \
 			-Dgallium-drivers=v3d,vc4 -Dvulkan-drivers= -Dplatforms= \
-			-Degl=enabled -Dgbm=enabled -Dglx=disabled -Dopengl=false -Dgles1=disabled -Dgles2=enabled \
+			-Degl=enabled -Dgbm=enabled -Dglx=disabled -Dopengl=${opengl} -Dgles1=disabled -Dgles2=enabled \
 			-Dllvm=disabled -Dspirv-tools=disabled -Dvideo-codecs= -Dgallium-va=disabled \
 			-Dshader-cache=disabled -Dxmlconfig=disabled -Dexpat=disabled -Dzstd=disabled \
 			-Dlibunwind=disabled -Dvalgrind=disabled -Dlmsensors=disabled -Dperfetto=false \
 			-Dbuild-tests=false -Dtools= \
 			> "${out}/mesa-setup.log" 2>&1 || { tail -40 "${out}/mesa-setup.log"; exit 1; }
 	fi
-	ninja -C "${MB}" -j"${jobs}" > "${out}/mesa-ninja.log" 2>&1 || { grep -E 'error|FAILED' "${out}/mesa-ninja.log" | head -40; exit 1; }
+	# A build dir configured the other way round would silently keep its old option. A dir
+	# from before this label existed gets it from its own meson summary first.
+	if [ ! -f "${out}/mesa-opengl.txt" ]; then
+		if grep -qE '^ *OpenGL *: *YES' "${out}/mesa-setup.log" 2>/dev/null; then
+			echo "opengl=true" > "${out}/mesa-opengl.txt"
+		elif grep -qE '^ *OpenGL *: *NO' "${out}/mesa-setup.log" 2>/dev/null; then
+			echo "opengl=false" > "${out}/mesa-opengl.txt"
+		fi
+	fi
+	grep -q "^opengl=${opengl}\$" "${out}/mesa-opengl.txt" 2>/dev/null || [ ! -f "${out}/mesa-opengl.txt" ] \
+		|| { echo "build.sh: ${MB} was configured with $(cat "${out}/mesa-opengl.txt"); use --clean or another --out" >&2; exit 1; }
+	echo "opengl=${opengl}" > "${out}/mesa-opengl.txt"
+	extra_targets=()
+	[ "${opengl}" = true ] && extra_targets+=(src/mesa/glapi/glapi/libglapi_bridge.a)
+	ninja -C "${MB}" -j"${jobs}" all "${extra_targets[@]}" > "${out}/mesa-ninja.log" 2>&1 || { grep -E 'error|FAILED' "${out}/mesa-ninja.log" | head -40; exit 1; }
 	ninja -C "${MB}" install > "${out}/mesa-install.log" 2>&1 || { tail -20 "${out}/mesa-install.log"; exit 1; }
 	nwarn=$(grep -c 'warning:' "${out}/mesa-ninja.log" || true)
 	echo "  Mesa built: ${nwarn} compiler warning line(s) (${out}/mesa-ninja.log)"
