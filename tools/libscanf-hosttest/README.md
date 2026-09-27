@@ -12,6 +12,14 @@ The numeric leaves (`strtod`, `strtoll`, …) are deliberately left bound to gli
 difference here is scanf's **own** parsing rather than a conversion routine that
 `tools/libnum-hosttest/` already covers.
 
+## What it found (2026-09-27)
+
+**Signed hex prefix.** `sscanf("-0x10", "%li")` stored 0: the `0x` test required exactly one
+consumed character, so a sign in front defeated it (found on the Pi by the new
+`stdlib_inttypes` group; the harness had no signed-hex input). Also `"0x"` with no hex digit
+was converted as 0 instead of failing the match as glibc (and C11 7.21.6.2) does. Inputs
+`-0x10 +0x1f -0X1F -0x -0 0x 0xg "0x 1"` added: 20 diffs before the fix, 0 after.
+
 ## What it found (2026-09-25)
 
 **A defect cluster in the suppressed-conversion path, now fixed.** `scanf.c` recorded how much
