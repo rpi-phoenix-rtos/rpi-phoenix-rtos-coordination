@@ -1,6 +1,6 @@
 # Differential + round-trip harness for libphoenix's printf FORMATTING engine.
 #
-#   make run   663 conversion comparisons against glibc, plus 200k randomised
+#   make run   832 conversion comparisons against glibc, plus 200k randomised
 #              format/parse round-trips through libphoenix's OWN strtod.
 #
 # The round-trip arm needs no reference implementation to be authoritative:

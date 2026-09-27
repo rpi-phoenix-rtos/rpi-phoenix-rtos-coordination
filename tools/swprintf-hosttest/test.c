@@ -89,6 +89,13 @@ int main(void)
 	cmp("star-width", 64, L"[%*d]", 6, 42);
 	cmp("star-prec", 64, L"[%.*f]", 3, 3.14159);
 	cmp("mixed", 64, L"%d/%s/%ls/%c", 7, "ab", L"cd", 'e');
+	/* POSIX ' (grouping) flag: no separator in the C locale; the trailing
+	 * conversion proves the argument was consumed */
+	cmp("group-d", 64, L"[%'d|%d]", 1234567, 99);
+	cmp("group-lu", 64, L"[%'lu bytes|%d]", 16535624089ul, 99);
+	cmp("group-f", 64, L"[%'10.3f|%d]", 1234.5678, 99);
+	cmp("group-left", 64, L"[%-'8d|%d]", 1234, 99);
+	cmp("group-zero", 64, L"[%0'8d|%d]", 1234, 99);
 
 	/* The trap: truncation must be NEGATIVE, not the would-be length. */
 	cmp("exact-fit", 6, L"12345");

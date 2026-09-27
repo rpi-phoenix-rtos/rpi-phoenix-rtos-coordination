@@ -15,7 +15,8 @@ make run
    original bits. This is a closed self-consistency property — glibc is not the authority,
    arithmetic is — and any failure is a real defect on one side or the other.
 2. **String equality** against glibc's `snprintf`, over a matrix of float and integer
-   conversions with assorted widths, precisions and flags (663 comparisons).
+   conversions with assorted widths, precisions and flags (832 comparisons, 169 of
+   them for the `'` grouping flag -- see below).
 
 A canary compares `"a"` against `"b"` first and aborts if that does not register, so a clean
 run cannot come from a comparison path that never fires.
@@ -62,3 +63,12 @@ still bind normally.
 
 Sibling harnesses: `tools/libnum-hosttest/`, `tools/libstring-hosttest/`,
 `tools/libwchar-hosttest/`, `tools/libext2-hosttest/`.
+
+## The `'` grouping flag (2026-09-27)
+
+POSIX/XSI `'` groups the integer part with LC_NUMERIC's `thousands_sep`, which is empty in the
+C locale, so the output must equal the flag-less conversion. libphoenix did not know the flag:
+`"%'lu"` printed `%'lu` literally **and left the argument on the va_list**, shifting every later
+conversion (Thunar: `73 files: 15.4 GiB (%'lu bytes)`). 169 cases, each followed by `|%d` to
+catch the shift, compared against glibc with `LC_NUMERIC=C`: 169 FDIFF before the fix, 0 after.
+To run against a libphoenix worktree: `make clean && make LIBPH=<worktree> run`.

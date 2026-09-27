@@ -22,6 +22,7 @@
 #include <stdarg.h>
 #include <math.h>
 #include <float.h>
+#include <locale.h>
 
 #include "format.h"
 
@@ -171,6 +172,76 @@ int main(int argc, char **argv)
 				cmp_str(fm, desc, pb, gb);
 			}
 		}
+	}
+
+	/*
+	 * ---- the POSIX/XSI ' flag (thousands grouping) -----------------------
+	 * Groups the integer part with LC_NUMERIC's thousands_sep, which is ""
+	 * in the C/POSIX locale -- so there the output must equal the flag-less
+	 * conversion. glibc honours that, so it is the oracle once LC_NUMERIC is
+	 * pinned to "C". The trailing "|%d" proves the argument was consumed: an
+	 * unrecognised flag used to emit "%'" literally and leave the value on
+	 * va_list, shifting every later argument (Thunar: "(%'lu bytes)").
+	 */
+	setlocale(LC_NUMERIC, "C");
+	{
+		static const long long GVALS[] = { 0, 7, -7, 1234, -1234, 1234567,
+			-1234567, 2147483647LL, -2147483648LL };
+		static const double GDVALS[] = { 0.0, 1.5, -1.5, 1234.5678,
+			-1234567.891, 1e9 };
+		static const char *const GIFMTS[] = { "%'d|%d", "%'i|%d", "%-'8d|%d",
+			"%0'8d|%d", "%'+d|%d", "%' d|%d", "%'10.3d|%d", "%''d|%d" };
+		static const char *const GLFMTS[] = { "%'lu|%d", "%'ld|%d", "%'lld|%d",
+			"%'zu|%d", "%-'12lu|%d", "%0'12lu|%d" };
+		static const char *const GDFMTS[] = { "%'10.3f|%d", "%'.2f|%d", "%'f|%d",
+			"%'g|%d", "%'G|%d", "%-'12.1f|%d", "%0'12.1f|%d" };
+		int a, b2;
+
+		for (a = 0; a < (int)(sizeof(GIFMTS) / sizeof(GIFMTS[0])); a++) {
+			for (b2 = 0; b2 < (int)(sizeof(GVALS) / sizeof(GVALS[0])); b2++) {
+				snprintf(desc, sizeof(desc), "v=%lld", GVALS[b2]);
+				ph_snprintf(pb, sizeof(pb), GIFMTS[a], (int)GVALS[b2], 99);
+				snprintf(gb, sizeof(gb), GIFMTS[a], (int)GVALS[b2], 99);
+				cmp_str(GIFMTS[a], desc, pb, gb);
+			}
+		}
+		for (a = 0; a < (int)(sizeof(GLFMTS) / sizeof(GLFMTS[0])); a++) {
+			for (b2 = 0; b2 < (int)(sizeof(GVALS) / sizeof(GVALS[0])); b2++) {
+				const char *fm = GLFMTS[a];
+				snprintf(desc, sizeof(desc), "v=%lld", GVALS[b2]);
+				if (strstr(fm, "ll") != NULL) {
+					ph_snprintf(pb, sizeof(pb), fm, GVALS[b2], 99);
+					snprintf(gb, sizeof(gb), fm, GVALS[b2], 99);
+				}
+				else if (strchr(fm, 'z') != NULL) {
+					ph_snprintf(pb, sizeof(pb), fm, (size_t)GVALS[b2], 99);
+					snprintf(gb, sizeof(gb), fm, (size_t)GVALS[b2], 99);
+				}
+				else if (strchr(fm, 'u') != NULL) {
+					ph_snprintf(pb, sizeof(pb), fm, (unsigned long)GVALS[b2], 99);
+					snprintf(gb, sizeof(gb), fm, (unsigned long)GVALS[b2], 99);
+				}
+				else {
+					ph_snprintf(pb, sizeof(pb), fm, (long)GVALS[b2], 99);
+					snprintf(gb, sizeof(gb), fm, (long)GVALS[b2], 99);
+				}
+				cmp_str(fm, desc, pb, gb);
+			}
+		}
+		for (a = 0; a < (int)(sizeof(GDFMTS) / sizeof(GDFMTS[0])); a++) {
+			for (b2 = 0; b2 < (int)(sizeof(GDVALS) / sizeof(GDVALS[0])); b2++) {
+				snprintf(desc, sizeof(desc), "v=%.17g", GDVALS[b2]);
+				ph_snprintf(pb, sizeof(pb), GDFMTS[a], GDVALS[b2], 99);
+				snprintf(gb, sizeof(gb), GDFMTS[a], GDVALS[b2], 99);
+				cmp_str(GDFMTS[a], desc, pb, gb);
+			}
+		}
+		/* the Thunar status-bar string, verbatim */
+		ph_snprintf(pb, sizeof(pb), "%d files: %s (%'lu bytes)", 73, "15.4 GiB",
+				16535624089ul);
+		snprintf(gb, sizeof(gb), "%d files: %s (%'lu bytes)", 73, "15.4 GiB",
+				16535624089ul);
+		cmp_str("thunar", "status-bar", pb, gb);
 	}
 
 	/*
