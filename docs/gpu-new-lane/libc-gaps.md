@@ -276,3 +276,25 @@ gcc -std=gnu11 -O0 -g -pthread -Itools/malloc-harness/stubs -DHZ_MEMALIGN \
     '-DMH_MALLOC_DL_SRC="<wt>/stdlib/malloc_dl.c"' -c tools/malloc-harness/harness.c ...
 ./mh --memalign 15 --seeds 8 --ops 100000 ; ./mh --memalign 30 --threads 4 --mt-ops 200000 --seeds 0
 ```
+
+## Merge + build 10 (2026-09-27 04:50) — pre-registered gate
+
+Merged: libphoenix `8fb82ae` (merge of `gpu-lane/libc-gaps`), tests ff to `15818aa`. The same pass removed
+three local copies that would now be duplicate definitions in the static link:
+devices `rpi4-v3d/mesa`: the barrier typedefs in `phoenix_mesa_compat.h`, the no-op
+`pthread_barrier_*` and the 16-byte `posix_memalign` in `gl_stubs.c`; ports `windowmaker`:
+`scandir`/`alphasort` in `ftw-phoenix`. **The barrier change alters the OLD lane's behaviour**: the stub
+`pthread_barrier_wait` returned at once, so Mesa's `util_queue_finish` never waited for the queue
+threads; now it does. Build: `rebuild-rpi4b-fast.sh --scope core --with-tests --with-ports --with-showcase`.
+
+**Gates (all must hold):**
+1. Build: `BUILD_RC=0`; `aarch64-phoenix-nm` of the buildroot `libphoenix.a` shows `T pthread_barrier_wait`,
+   `T open_memstream`, `T scandir`; the old-lane GPU apps link (no multiple-definition errors).
+2. Unity groups (the list above): every group `OK`, 0 failures; full `test-libc-misc/stdlib/pthread/stdio/dirent`
+   binaries: failures only where recorded before the merge.
+3. Old-lane showcase (behaviour changed): `quakespasm +timedemo demo1` fps within ±3 % of the core-500 old-lane
+   figure (to be measured in the same queue as a baseline would be ideal; failing that, compare with
+   quakespasm-v3da's control-arm logic: no hang, no fault, sane fps), STK old lane ≥ 8.0 fps (queue14:
+   8.34), X desktop `startx_gpu` reaches Window Maker on HDMI; 0 `Exception #` lines, 0 wedges.
+   A hang in `util_queue_finish` (a barrier that never releases) would show as an app that stops mid-run
+   with the GPU idle — the one new failure mode this change can introduce.
