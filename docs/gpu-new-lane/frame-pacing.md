@@ -144,7 +144,10 @@ truly GPU-bound at about 25 ms. Quake II is not GPU-bound: the old lane's 25.7 m
 **in series**. Once they overlap, the vblank is the limit. The Pi will show whether the GPU stays at
 about 14.8 ms per frame at twice the rate (memory bandwidth), which is the +10/+20 % rows.
 
-## 5. The fix: `patches-pace/0001-kmsdrm-submit-frame-before-waiting-for-previous-flip.patch`
+## 5. The fix: `patches/0009-kmsdrm-submit-frame-before-waiting-for-previous-flip.patch`
+
+(Built and measured as `patches-pace/0001`; adopted into the default set after the gate, see
+"Adopted" at the end.)
 
 New order: `eglSwapBuffers` → `gbm_surface_lock_front_buffer` → `KMSDRM_FBFromBO` →
 `KMSDRM_WaitPageflip` (previous flip) → release the old front buffer → `drmModeSetCrtc` (first frame) or
@@ -175,6 +178,10 @@ and rpi4-v3d-async. **kmscube is unaffected by construction.** It does not link 
 re-run of kmscube would be a control, not a requirement.
 
 ## 6. Build [host]
+
+*§6–§7 record the A/B as it was run, before adoption: `patches-pace/` no longer exists (its patch is
+`patches/0009`), so the `--extra-patches patches-pace` command below is historical and `build-out-ctl`
+would now also get the reorder.*
 
 ### 6.1 What was added (all opt-in; the default build and binaries are byte-for-byte as before)
 
@@ -332,9 +339,8 @@ every window ≥ 38, pace-qs mean ≥ 1.3 × ctl, 0 SDL errors, 0 faults, and cl
 
 ## 8. Follow-ups (not done here)
 
-* After the gate passes: `patches-pace/0001` → `patches/0009`, one default SDL rebuild, and relinking
-  of all SDL clones. Update MIGRATION §6.1/§6.4, whose "28–33 fps vsync-bound" predictions assumed that
-  one flip in flight must cost a whole frame. It does not.
+* ~~After the gate passes: `patches-pace/0001` → `patches/0009`, one default SDL rebuild, and relinking
+  of all SDL clones. Update MIGRATION §6.1/§6.4.~~ Done, see "Adopted" below.
 * stk-drm (GPU 92 % busy, about 10 jobs per frame) probably submits most of its GPU work mid-frame
   through FBO passes [inferred]. If so, the reorder gains it little; it is expected to be neutral or
   slightly positive.
@@ -358,3 +364,29 @@ The model's predictions held: q2 ≥ 38 in every steady window (60), qs ≥ 1.3�
 
 **Decides:** adopt `patches-pace/0001` into the default SDL patch set and relink every SDL clone (§7 gate met).
 Quake 2 on the new lane is now **60 fps vsynced vs 38.86 unsynced on the old lane**.
+
+## Adopted (2026-09-27, after build 17)
+
+`patches-pace/0001` is now **`tools/gpu-lane/sdl2-drm/patches/0009-kmsdrm-submit-frame-before-waiting-for-previous-flip.patch`**,
+byte for byte; `patches-pace/` is gone (`build.sh --extra-patches` stays as the generic A/B hook). The default
+SDL was rebuilt (`build.sh`: patch/overlay set `2f79883b…` → **`d145b0e6…`**, `libSDL2.a` `4abf34e0…` →
+**`7a1de5d1…`**) and every SDL clone relinked into its default out dir. The Mesa-GL build moved with it to
+mesa-drm's committed 16-patch set `4a457a1e…` (MIGRATION §2 explains why 0013–0016 do not reach these
+games).
+
+**Gate check** (no string marks the patch): `tools/gpu-lane/sdl2-drm/gamedrm/check-swap-order.sh <unstripped ELF>`
+— in the objdump of `KMSDRM_GLES_SwapWindow` the first `bl KMSDRM_WaitPageflip` must follow `bl
+KMSDRM_FBFromBO`. Checked against the A/B binaries first: `yquake2-drm-pace` / `quakespasm-drm` (pace)
+`submit-first`, `yquake2-drm-ctl` and the pre-adoption defaults `wait-first`. The four build scripts now run
+it and fail on `wait-first` (relink variants with their own `G_SDL_DIR` only report it).
+
+| Clone (default out dir) | staged file sha256 (16) | unstripped | swap order |
+|---|---|---|---|
+| quakespasm-drm | `quakespasm-drm.stripped` `ca2d740b82e9be1e` | `8f0c99658bb0e28f` | submit-first |
+| quake2-drm | `yquake2-drm.stripped` `b39f49cf6e2c4427`, launcher `quake2-drm` `b08ee6a4c1088fb3` | `b0804f9b754cc0b6` | submit-first |
+| quake3-drm | `quake3e-drm.stripped` `5fab2b12058d84f1`, launcher `quake3-drm` `0f1045c2b200159f` | `b9f41df24240deef` | submit-first |
+| stk-drm | `supertuxkart-drm.stripped` `71ac4f58a678dc20`, launcher `stk-drm` `ea3a5667004c793b` | `ebf60a87830a60e2` | submit-first |
+| vkquake-drm | `vkquake-drm.stripped` `22755bb450b09e0f`, launcher `vkq-drm` `e49a7444fc782d0f` | `c656f27c61e0230d` | submit-first (linked, unused: Vulkan WSI) |
+
+All control relinks (yquake2, quake3e, supertuxkart) are byte-identical to build 17's shipped engines; every
+script's static checks passed. Combined Pi check: MIGRATION §6.5 `mig-all` (q2 ≈ 60, qs ≈ 46, stk ≈ 12).

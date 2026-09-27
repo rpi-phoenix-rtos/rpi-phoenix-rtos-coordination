@@ -222,6 +222,8 @@ Changes behind them (all in `tools/gpu-lane/sdl2-drm/`):
 * `patches-vkquake-perf/0006-…`, `0007-…` — kept out of `patches-vkquake/` so a default
   rebuild of `vkquake-drm` does not pick them up before hardware says so. **Promote both into
   `patches-vkquake/` if `perf-vkq-b` passes** (rename to the next free numbers, rebuild the default).
+  *Done after `perf-vkq-b`: they are `patches-vkquake/0006`, `0007` (same numbers, the next free
+  ones), `patches-vkquake-perf/` is gone, see "Adopted" at the end.*
 * `build-vkquake-drm.sh`: env `VKQDRM_EXTRA_PATCHES` (patch files applied after
   `patches-vkquake/`, part of the source stamp and `BUILD-INFO.txt`) and `VKQDRM_TARGET` (the
   launcher's exec path, `-DVKQDRM_TARGET`). Defaults unchanged.
@@ -231,7 +233,8 @@ Changes behind them (all in `tools/gpu-lane/sdl2-drm/`):
   calls / average µs / max µs of `vkAcquireNextImageKHR`, `vkQueueSubmit`, `vkWaitForFences`
   and `vkWaitForPresent2KHR` in the window (wrapped at the same two lookups as the present).
 
-Build commands:
+Build commands (historical: the `patches-vkquake-perf/` paths no longer exist; the default build
+now applies both):
 
 ```
 VKQDRM_OUT=tools/gpu-lane/sdl2-drm/build-out/vkquake-drm-perf-a VKQDRM_TARGET=/usr/bin/vkquake-drm-perf-a \
@@ -325,3 +328,16 @@ GPU-bound, and **compute is now the largest GPU row** (≈ 75–80 s of 360 s ag
 compute (`perf-vkq-c` `+r_gpulightmapupdate 0`, `-d` `+r_waterwarpcompute 0`), and read `oom` (binner overflow
 allocations: 3474/3849 over the run, not free). The old lane's like-for-like 22.9 fps is still 1.34× ahead.
 Adopt 0006+0007 into `patches-vkquake/` (gate passed: b ≥ a, same picture).
+
+## Adopted (2026-09-27, after build 17)
+
+`patches-vkquake-perf/0006-…` and `0007-…` are now **`tools/gpu-lane/sdl2-drm/patches-vkquake/0006-gl_rmain-r_oit-off-by-default-on-phoenix.patch`**
+and **`0007-gl_vidsdl-rgba8-color-buffer-on-v3d.patch`** (unchanged; 0006/0007 were already the next free
+numbers); `patches-vkquake-perf/` is gone, `VKQDRM_EXTRA_PATCHES` stays as the generic variant hook. The
+default `build-vkquake-drm.sh` build (patch set `46e27a38…`, 0001–0007; SDL from the default tree, which now
+also carries the SDL swap reorder `patches/0009` — irrelevant for vkQuake, which presents through the Vulkan
+WSI): `vkquake-drm.stripped` 13 368 776 B **`22755bb450b09e0f…`**, unstripped `c656f27c61e0230d…`, launcher
+`vkq-drm` **`e49a7444fc782d0f…`** (execs `/usr/bin/vkquake-drm`); Vulkan-SDL `libSDL2.a` `1de303a9…`; ICD
+`69c689ad…` and libdrm-phoenix m5b unchanged, libphoenix.a `2acb195e…` (as the perf variants). Checks: the
+script's proofs pass; gdb on the unstripped ELF `r_oit.string = "0"`; `Using R8G8B8A8 color buffer format
+(V3D: …)` present. Combined Pi check: MIGRATION §6.5 `mig-all-vkq` (predicted ≈ 17 fps).

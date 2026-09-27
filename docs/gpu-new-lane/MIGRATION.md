@@ -16,6 +16,12 @@ desktop has `Xorg-drm` (Pi-proven for Window Maker and a DRI3/Present GL client)
 `gamedrm` hooks, §6.4 `mig-qs` pre-registered), and the two libphoenix gaps vkquake-drm bridged —
 `struct ipv6_mreq` and `<execinfo.h>` — are implemented on sibling branches `feat/ipv6mreq-execinfo`
 (libphoenix + tests + a ports guard, §3), not yet merged.
+**Update 2026-09-27 (adoption, after build 17):** the two Pi-proven performance fixes are now in the
+**default** clone builds — the SDL KMSDRM swap reorder (`sdl2-drm/patches/0009`, [frame-pacing.md](frame-pacing.md):
+quake2-drm 30.00 → 60.00, quakespasm-drm 30.0 → 46.1 fps) and vkQuake's `r_oit 0` + RGBA8 colour buffer
+(`patches-vkquake/0006`, `0007`, [vkquake-perf.md](vkquake-perf.md): 10.4 → 17.1 fps). Every SDL clone was
+rebuilt/relinked into its default `build-out/` dir (§2, §6 staging table with the new shas); combined Pi
+check `mig-all` pre-registered (§6.5).
 
 Evidence tags as elsewhere: **[Pi]** measured on hardware, **[built]** cross build / link / static check,
 **[read]** read in source, **[inferred]** reasoning only.
@@ -57,6 +63,18 @@ it reads are unchanged afterwards (the default `libSDL2.a` `4abf34e0…`, `quake
 unchanged). `quakespasm-drm` has since been relinked with the frame counter (§6.4: `e6335955…`); the
 scripts snapshot their guarded inputs per run, so they compare against whatever is current.
 
+**Current default inputs (adoption rebuild, 2026-09-27 ~15:50, after build 17):** SDL patch set
+`d145b0e6…` = `patches/0001–0009` + overlay (0009 = the frame-pacing reorder), `libSDL2.a` **`7a1de5d1…`**
+(the Vulkan variant `1de303a9…`, set `cd1e07eb…`); Mesa-GL rebuilt with mesa-drm's committed 16-patch set
+`4a457a1e…` (was `278cdef4…`, 12 patches: 0013/0014 are X11-platform build fixes, 0015 a meson stub, 0016
+sets a low-memory placement flag only for scan-out resources allocated on the *render* device — kmsro
+clients allocate theirs through renderonly on card0, so it is not reached by these games [read
+`v3d_resource.c`]); vkQuake patch set `46e27a38…` = `patches-vkquake/0001–0007`; libphoenix.a
+`2acb195e…`. Every clone's own checks pass and all three control relinks are **byte-identical to build 17's
+shipped engines**. New proof in every script: `gamedrm/check-swap-order.sh` (objdump of
+`KMSDRM_GLES_SwapWindow`: the first `bl KMSDRM_WaitPageflip` must come after `bl KMSDRM_FBFromBO`;
+stock SDL waits first) — `submit-first` for all five ELFs.
+
 ```
 tools/gpu-lane/sdl2-drm/build-quake2-drm.sh    # ~1 min: control relink + clone relink + proofs + launcher
 tools/gpu-lane/sdl2-drm/build-quake3-drm.sh    # ~1 min
@@ -91,7 +109,9 @@ tools/gpu-lane/sdl2-drm/build-vkquake-drm.sh   # ~2 min cold (SDL-Vulkan variant
   by both the engine's objects and the new stack**. `pthread_getcpuclockid` (all `sdl_phoenix_glstubs`
   provided) is not needed by the new link.
 * **Outputs:** `yquake2-drm.stripped` 18 498 688 B (`33fb96f1…`; shipped 19 139 688 B), unstripped
-  `yquake2-drm` + `.map` for addr2line, `quake2-drm` (`b08ee6a4…`), `BUILD-INFO.txt`.
+  `yquake2-drm` + `.map` for addr2line, `quake2-drm` (`b08ee6a4…`), `BUILD-INFO.txt`. **Adoption rebuild:**
+  `yquake2-drm.stripped` 18 499 104 B **`b39f49cf6e2c4427…`** (with patches/0009), launcher unchanged
+  `b08ee6a4…`.
 
 ### 2.2 `quake3-drm` / `quake3e-drm`
 
@@ -107,7 +127,8 @@ tools/gpu-lane/sdl2-drm/build-vkquake-drm.sh   # ~2 min cold (SDL-Vulkan variant
   passes through libdrm-phoenix's `__wrap_mmap` (a pass-through for non-DRM descriptors) — a new caller of
   the wrapper, pre-registered in §6.2.
 * **Outputs:** `quake3e-drm.stripped` 18 570 288 B (`6d69a9db…`; shipped 19 209 920 B), `quake3-drm`
-  (`0f1045c2…`).
+  (`0f1045c2…`). **Adoption rebuild:** `quake3e-drm.stripped` 18 570 704 B **`5fab2b12058d84f1…`**,
+  launcher unchanged `0f1045c2…`.
 
 ### 2.3 `vkq-drm` / `vkquake-drm`
 
@@ -123,7 +144,9 @@ old strings (`/dev/fb0`, `phoenix-map.cfg`) and none of the new ones.
   0001 `cmdline` published on shareware too (so `+map start` works), 0002 `SV_LocalSound` NULL-client
   guard, 0003 slurp-and-close file reads (NFS + libphoenix's concurrent-stream limit), 0004 the #29
   texture-copy extent re-derivation (`__phoenix__`; a no-op when the extents are right — kept for the
-  first cycle, candidate for removal after one A/B). Plus one **new** patch, 0005: no timestamp query
+  first cycle, candidate for removal after one A/B). Since the `perf-vkq-b` adoption also **0006**
+  (`r_oit` defaults to 0 on Phoenix: no WBOIT render passes) and **0007** (RGBA8 scene colour buffer on
+  vendor 0x14E4 instead of A2B10G10R10, which V3D tiles at 16F) — [vkquake-perf.md](vkquake-perf.md). Plus one **new** patch, 0005: no timestamp query
   pool on Phoenix — vkQuake records `vkCmdResetQueryPool` + 2 × `vkCmdWriteTimestamp` every frame, v3dv
   runs both as CPU jobs through `DRM_IOCTL_V3D_SUBMIT_CPU` (the server advertises the CPU queue, which v3dv
   requires, but answers `SUBMIT_CPU` with `-ENOSYS` — gap **G5**), so the first frame would lose the
@@ -133,7 +156,7 @@ old strings (`/dev/fb0`, `phoenix-map.cfg`) and none of the new ones.
   the demo-loop arming, the alias alpha=1 hunks (the display plane is XRGB8888: alpha is ignored). SPIR-V:
   the port's vendored `glue/vkquake_shaders.c` (this commit's shaders; the alias-alpha shader hunk tests a
   ubo flag bit only the dropped `r_alias.c` hunk sets, so it is inert).
-* **SDL:** a second build of the sdl2-drm SDL tree (same patches 0001–0008 + overlay) with
+* **SDL:** a second build of the sdl2-drm SDL tree (same patches 0001–0009 + overlay) with
   `SDL_VULKAN=ON` and `patches-sdl-vulkan/0001` (+ PHOENIX in the `SDL_VULKAN` option's condition,
   `SDL_VIDEO_VULKAN` in the Phoenix video block, and the `SDL_vulkan_internal.h` "no dummy loadso" gate
   lifted for `__phoenix__`). SDL's **stock** `SDL_kmsdrmvulkan.c` then provides the instance extensions
@@ -183,7 +206,10 @@ old strings (`/dev/fb0`, `phoenix-map.cfg`) and none of the new ones.
   Driver`; old-lane strings (`/dev/fb0`, `pl_phoenix`, `PL_VkHostAllocator`, `vkvid:`, `phoenix-map.cfg`,
   `vktramp:`, `V3DV_PHOENIX`, `v3d-winsys:`) **0**; real `ioctl`/`mmap` only from the wrappers.
 * **Outputs:** `vkquake-drm.stripped` 13 365 608 B (`20e3d43f…`; shipped `vkquake` 13 123 824 B),
-  `vkq-drm` (`aaf70271…`), `vk-direct-calls.txt`, `gl-stub-names.txt`, `BUILD-INFO.txt`.
+  `vkq-drm` (`aaf70271…`), `vk-direct-calls.txt`, `gl-stub-names.txt`, `BUILD-INFO.txt`. **Adoption
+  rebuild** (0001–0007, SDL with 0009): `vkquake-drm.stripped` 13 368 776 B **`22755bb450b09e0f…`**,
+  `vkq-drm` **`e49a7444fc782d0f…`** (execs `/usr/bin/vkquake-drm`); gdb on the unstripped ELF:
+  `r_oit.string = "0"`; string `Using R8G8B8A8 color buffer format (V3D: …)` present.
 
 ## 3. Remaining blockers, by user
 
@@ -219,7 +245,7 @@ old strings (`/dev/fb0`, `phoenix-map.cfg`) and none of the new ones.
 2. **libdrm-phoenix** becomes a port (today `tools/gpu-lane/libdrm-phoenix`, `build-out-m5b`): `libdrm.a`
    + headers; every consumer links with `-Wl,--wrap=mmap -Wl,--wrap=ioctl`.
 3. **ports/sdl2** switches to KMSDRM: the sdl2-drm build (SDL 2.30.12 + `tools/gpu-lane/sdl2-drm/patches/
-   0001–0008` + overlay: Phoenix audio + HID), `SDL_VULKAN=ON` with `patches-sdl-vulkan/0001` (costs
+   0001–0009` + overlay: Phoenix audio + HID; 0009 = the frame-pacing swap reorder), `SDL_VULKAN=ON` with `patches-sdl-vulkan/0001` (costs
    nothing for GL users: the Vulkan code needs no link dependency). The `/dev/fb0` video backend
    (`SDL_phoenixvideo.c`, `PHOENIX_*`), `sdl2/glue/sdl_phoenix_glctx.c` and `sdl_phoenix_glstubs.c` are
    deleted.
@@ -228,8 +254,8 @@ old strings (`/dev/fb0`, `phoenix-map.cfg`) and none of the new ones.
    `build-stk-drm.sh` substitution, moved into each `p_build` (GLES shape for yquake2/STK, desktop-GL
    bridge shape for quakespasm/quake3). The `external/mesa/include` include path becomes the mesa-drm
    headers. Their engine patches stay.
-5. **ports/vkquake** is rewritten: upstream TU list, patches-vkquake 0001–0005 instead of the fb0 patch (0005
-   only until G5),
+5. **ports/vkquake** is rewritten: upstream TU list, patches-vkquake 0001–0007 instead of the fb0 patch (0005
+   only until G5; 0006/0007 the V3D performance defaults),
    SDL2 dependency (`depends="sdl2"`), the v3dv ICD + phxvk + generated trampolines + the loadso wraps;
    `glue/` shrinks to the SPIR-V (or regenerate it with the host glslang) — `pl_phoenix_*` and
    `vk_trampolines.c` are deleted.
@@ -289,7 +315,7 @@ old-lane strings (`v3d-winsys:`, `/dev/fb0` in GPU apps, `phxgl`, `V3DV_PHOENIX`
 fps of each app is recorded against the last old-lane gate (it is not a pass criterion, but a regression
 beyond the vsync quantisation — 60/n on the new lane — is a finding to explain before deleting).
 
-## 6. Pre-registered Pi cycles — the three new clones (+ `mig-qs`)
+## 6. Pre-registered Pi cycles — the three new clones (+ `mig-qs`, + `mig-all`)
 
 Common to all four: netboot image as the stk-drm cycle (core_freq=500, build ≥ 11); **single-owner rule**
 — no old-lane GPU app, X or `rpi4-v3d` in the same boot; `rpi4-v3d-async-m3p2` and `rpi4-kms-gate` are
@@ -304,19 +330,32 @@ finished (11:54)**, against libphoenix `e69b216a…` and the ports' fresh object
 again byte-identical. The outputs listed in §2 are those. After any later core/ports rebuild, re-run the
 three scripts (≈ 4 min together) before staging.
 
+*§6.1–§6.4 are the first cycles as pre-registered, with the **stock** SDL swap order and the upstream
+vkQuake defaults; their "28–33 fps" rows assumed one flip in flight costs a whole frame, which
+[frame-pacing.md](frame-pacing.md) refuted. The adopted defaults are checked by `mig-all` (§6.5).*
+
 **Stage (coordinator)** (`sudo install -m 755 <source> <path>`, then `cmp`; `<export>` = the live fsid=0
 export, `awk '!/^#/ && /fsid=0/{print $1; exit}' /etc/exports`), sources under
-`tools/gpu-lane/sdl2-drm/build-out/`:
+`tools/gpu-lane/sdl2-drm/build-out/`. sha256 (first 16) = the **adoption rebuild** (2026-09-27, after build
+17; SDL with `patches/0009`, vkQuake with 0006/0007); a staged file with any other sha is stale:
 
-| Source | Export path |
-|---|---|
-| `quake2-drm/yquake2-drm.stripped` | `<export>/usr/bin/yquake2-drm` |
-| `quake2-drm/quake2-drm` | `<export>/usr/bin/quake2-drm` |
-| `quake3-drm/quake3e-drm.stripped` | `<export>/usr/bin/quake3e-drm` |
-| `quake3-drm/quake3-drm` | `<export>/usr/bin/quake3-drm` |
-| `vkquake-drm/vkquake-drm.stripped` | `<export>/usr/bin/vkquake-drm` |
-| `vkquake-drm/vkq-drm` | `<export>/bin/vkq-drm` |
-| `quakespasm-drm.stripped` (§6.4; replaces the m3p4/poll-wake copy) | `<export>/usr/bin/quakespasm-drm` |
+| Source | sha256 | Export path |
+|---|---|---|
+| `quake2-drm/yquake2-drm.stripped` | `b39f49cf6e2c4427` | `<export>/usr/bin/yquake2-drm` |
+| `quake2-drm/quake2-drm` | `b08ee6a4c1088fb3` (unchanged) | `<export>/usr/bin/quake2-drm` |
+| `quake3-drm/quake3e-drm.stripped` | `5fab2b12058d84f1` | `<export>/usr/bin/quake3e-drm` |
+| `quake3-drm/quake3-drm` | `0f1045c2b200159f` (unchanged) | `<export>/usr/bin/quake3-drm` |
+| `vkquake-drm/vkquake-drm.stripped` | `22755bb450b09e0f` | `<export>/usr/bin/vkquake-drm` |
+| `vkquake-drm/vkq-drm` | `e49a7444fc782d0f` | `<export>/bin/vkq-drm` |
+| `quakespasm-drm.stripped` (§6.4) | `ca2d740b82e9be1e` | `<export>/usr/bin/quakespasm-drm` |
+| `stk-drm/supertuxkart-drm.stripped` | `71ac4f58a678dc20` | `<export>/usr/bin/supertuxkart-drm` |
+| `stk-drm/stk-drm` | `ea3a5667004c793b` | `<export>/bin/stk-drm` |
+
+Unstripped ELFs for addr2line (host only): `quakespasm-drm` `8f0c99658bb0e28f`, `quake2-drm/yquake2-drm`
+`b0804f9b754cc0b6`, `quake3-drm/quake3e-drm` `b9f41df24240deef`, `stk-drm/supertuxkart-drm`
+`ebf60a87830a60e2`, `vkquake-drm/vkquake-drm` `c656f27c61e0230d`. The stripped copies carry no symbols,
+so the pacing proof is run on these: `tools/gpu-lane/sdl2-drm/gamedrm/check-swap-order.sh <unstripped ELF>`
+must print `submit-first` (the builds run it and fail otherwise).
 
 Check afterwards: `grep -a -c '<app>: new GPU lane'` = 1 on each staged engine, 0 on the shipped
 `yquake2`/`quake3e`/`vkquake`; for quakespasm-drm also `grep -a -c 'quakespasm-drm flipstat'` = 1 on the
@@ -460,6 +499,86 @@ that line exists only under `+timedemo`, so the game runs to `--max-cmd-secs`, a
 FAIL is fixed in the clone's build or the stack before the gate (§5) is attempted. The gate itself runs
 only after all six apps have a PASSing single cycle and the servers start at boot.
 
+### 6.5 `mig-all` — the adopted defaults, one cycle per game
+
+**Question:** with the adopted defaults (SDL `patches/0009` in every SDL clone; vkQuake 0006 + 0007) and the
+default binaries of the §6 staging table, does each game still render as in its first cycle, at the fps the
+pace/perf A/B measured? This is the last per-game check before the §5 gate; it does not replace it.
+
+**Preconditions:** the staging table's shas `cmp`-verified on the export (a stale copy is the likeliest
+false result: `pace-*`/`perf-*` variants and the first-cycle binaries all sit next to these names); servers
+`rpi4-v3d-async-m3p2` + `rpi4-kms-gate` as before; the build-17 image or later. **`mig-all-q3` only on a
+loader with the P10 kernel fix** — `grep -ac 'refused a payload in device memory' <TFTP>/loader.disk` ≥ 1
+(build 17's `loader.disk` `f74bd59dd286c1c4` has it: 1 hit) — otherwise it repeats the mig-q3 fault storm and
+is void. Five separate cycles (labels `mig-all-{q2,qs,q3,vkq,stk}`), one at a time, each ≈ 8–9 min: run them
+detached or from the queue (§6 wall-clock note). Record `loader.disk`'s sha per cycle: the image differs from
+the first cycles' (build 14–15), so first-cycle-vs-mig-all is not a one-variable A/B; pace-/perf- vs
+mig-all is (same patches, only build 17 and the Mesa-GL set `278cdef4…` → `4a457a1e…` differ, §2).
+
+```
+./scripts/test-cycle-psh-interact.sh --label mig-all-q2 --wait-secs 220 --inter-cmd-secs 8 --idle-secs 60 \
+    --max-cmd-secs 300 --ready-line 'V3DA srv detached|KMS srv detached' --ready-extra-secs 20 \
+    --hdmi-dense-on 'quake2-drm: new GPU lane' -- \
+    "/bin/rpi4-v3d-async-m3p2 -r 1 -m serial -i" \
+    "/bin/rpi4-kms-gate -G" \
+    "/usr/bin/quake2-drm"
+
+./scripts/test-cycle-psh-interact.sh --label mig-all-qs --wait-secs 220 --inter-cmd-secs 8 --idle-secs 60 \
+    --max-cmd-secs 300 --ready-line 'V3DA srv detached|KMS srv detached' --ready-extra-secs 20 \
+    --hdmi-dense-on 'quakespasm-drm: new GPU lane' -- \
+    "/bin/rpi4-v3d-async-m3p2 -r 1 -m serial -i" \
+    "/bin/rpi4-kms-gate -G" \
+    "/usr/bin/quakespasm-drm"
+
+# requires a loader with 'refused a payload in device memory' (P10 kernel fix)
+./scripts/test-cycle-psh-interact.sh --label mig-all-q3 --wait-secs 220 --inter-cmd-secs 8 --idle-secs 60 \
+    --max-cmd-secs 300 --ready-line 'V3DA srv detached|KMS srv detached' --ready-extra-secs 20 \
+    --hdmi-dense-on 'quake3-drm: new GPU lane' -- \
+    "/bin/rpi4-v3d-async-m3p2 -r 1 -m serial -i" \
+    "/bin/rpi4-kms-gate -G" \
+    "/usr/bin/quake3-drm +map q3dm1"
+
+./scripts/test-cycle-psh-interact.sh --label mig-all-vkq --wait-secs 220 --inter-cmd-secs 8 --idle-secs 60 \
+    --max-cmd-secs 300 --ready-line 'V3DA srv detached|KMS srv detached' --ready-extra-secs 20 \
+    --hdmi-dense-on 'vkquake-drm: new GPU lane' -- \
+    "/bin/rpi4-v3d-async-m3p2 -r 1 -m serial -i" \
+    "/bin/rpi4-kms-gate -G" \
+    "/bin/vkq-drm"
+./scripts/check-torch-rois.py --label mig-all-vkq
+
+./scripts/test-cycle-psh-interact.sh --label mig-all-stk --wait-secs 220 --inter-cmd-secs 8 --idle-secs 60 \
+    --max-cmd-secs 440 --ready-line 'V3DA srv detached|KMS srv detached|profile: Number of frames' --ready-extra-secs 30 \
+    --hdmi-dense-on 'stk-drm: new GPU lane' -- \
+    "/bin/rpi4-v3d-async-m3p2 -r 1 -m serial -i" \
+    "/bin/rpi4-kms-gate -G" \
+    "/bin/stk-drm --track=hacienda --numkarts=4 --profile-laps=2"
+```
+
+(q2/qs/q3/vkq: the §6.1–§6.4 commands with the `mig-all-` labels; stk: the `stkdrm-1` command of
+[M3](M3-libdrm-phoenix.md) with §6's `--wait-secs`. Grade as in §6; STK by the M3 rule — mean of the
+per-window `stk-drm flipstat` fps over the gameplay windows, ≥ 10 windows.)
+
+| Cycle | Line / observation | Predicted | If instead… |
+|---|---|---|---|
+| all | banner `<app>: new GPU lane …` once, after the launcher's `exec /usr/bin/<engine>-drm` | yes | shipped or variant engine exec'd: staging (`cmp`) |
+| all GL | SDL errors `Wait for previous pageflip failed` / `Could not queue pageflip` / `eglSwapBuffers failed` / `Could not lock front buffer` | **0** | any: patch 0009's buffer accounting (EBUSY = two flips pending) — as frame-pacing §7.1 |
+| `mig-all-q2` | `quake2-drm flipstat` steady windows | **60.00** (every steady window ≥ 58; pace-q2 gave 60.00 in 8/8) | exactly 30.00 with `swap_us_avg` ≈ 24 500: the staged engine is not this build (run `check-swap-order.sh` on the unstripped twin, `cmp` the staging); 38–55: GPU slower at the higher rate — read `V3DA srv qstat` render ms/job |
+| `mig-all-q2` | `KMS srv flipstat` | `vbl1` ≥ 90 % of flips (pace: 2659/2692) | `vbl2` dominant: as the 30.00 row |
+| `mig-all-qs` | `quakespasm-drm flipstat` | **mean ≈ 46** (40–52), windows 36–53, never > 60.1 (pace-qs 46.05, 36.8–52.4) | ≈ 30: stale staging as above |
+| `mig-all-q3` | kernel: no `Data Abort (EL1)`; `msg: refused a payload in device memory (… from quake3e-drm …)` | 0 EL1 faults; the refusal line **may** appear (it is the fix acting on the uncached buffer mig-q3 sent) — record how often and what quake3e-drm then does (an `EFAULT`-type error on that write, not a crash) | an EL1 fault storm: the loader lacks the fix (check its sha/string first) |
+| `mig-all-q3` | `quake3-drm flipstat` | **unknown** (first run past the P10 point): a band ≤ 60.1 over q3dm1; old-lane quake3 30+ | 0 frames after the menu: `+map` ignored; > 60.1: not vsync-paced |
+| `mig-all-q3` | HDMI | q3dm1 lit + textured, HUD | as §6.2 |
+| `mig-all-vkq` | `Using R8G8B8A8 color buffer format (V3D: …)`, no `A2B10G10R10` line | yes | 0007 not in the staged binary |
+| `mig-all-vkq` | `vkquake-drm flipstat` | **≈ 17** (15–19; perf-vkq-b 17.06; the SDL reorder does not touch the Vulkan WSI path) | ≈ 10.4: the pre-0006 binary is staged; ≈ 15.5: 0007 missing |
+| `mig-all-vkq` | torch ROI check | PASS or INCONCLUSIVE for the viewpoint reason (mig-vkq, perf-vkq-b) | torches dark at the viewpoint: finding |
+| `mig-all-stk` | `stk-drm flipstat` (M3 rule) | **11.5–12.5** (stkdrm 11.89; the reorder is expected neutral to slightly positive: STK's ~10 jobs/frame are mostly submitted mid-frame by its FBO passes, frame-pacing §8) | > 13: the final present *was* on STK's critical path (a gain, record it); < 11: diff `V3DA srv qstat` against stkdrm-1 |
+| `mig-all-stk` | exit | `profile: Number of frames …`, prompt back | one EL0 fault **at exit** in `fflush`/`_atexit_finalize` = the known libphoenix `fclose(stdout)` UAF (M3; branch `fix/stdstream-fclose-uaf`) unless that branch is in the image — not a pacing regression |
+| all | `V3DA srv qstat` err/wedges/rej; faults | 0 / 0 / 0; 0 (stk: see exit row) | addr2line the unstripped twin (§6 table) first |
+| all GL | HDMI | as the game's first cycle, no torn frames | a torn frame: frame-pacing §5's invariants violated — stop |
+
+**Decides:** all five as predicted (q3: renders without the fault) → the new-lane game set is final for the
+§5 gate. A game at its old stock-order fps → staging, not the patch (pace/perf already proved the patches).
+
 ## 6r. Results — `mig-q2`, `mig-q3`, `mig-vkq` (queue37, 2026-09-27 12:53–13:14)
 
 | cycle | log | result | fps (new / old lane) | notes |
@@ -471,6 +590,13 @@ only after all six apps have a PASSing single cycle and the servers start at boo
 
 **Decides:** the SDL KMSDRM route works for both GL games that got a result, and so does SDL's Vulkan/`VK_KHR_display` route. The gate
 cannot pass yet: quake3-drm crashes the kernel (P10), and vkQuake is 7× slower than the old lane.
+
+**Follow-ups, both Pi-proven and adopted (2026-09-27):** `pace-q2` / `pace-qs` (queue44) — the SDL swap
+reorder takes quake2-drm 30.00 → **60.00** and quakespasm-drm 30.0 → **46.1** ([frame-pacing.md](frame-pacing.md));
+`perf-vkq-a` / `-b` (queue43) — `r_oit 0` + RGBA8 take vkquake-drm 10.4 → 15.5 → **17.1** ([vkquake-perf.md](vkquake-perf.md)).
+Both are now in the default builds (`sdl2-drm/patches/0009`, `patches-vkquake/0006–0007`); every SDL clone
+was rebuilt (§6 staging table) and `mig-all` (§6.5) is the combined check. q3 still waits on P10's
+kernel fix in the image (in build 17's loader).
 
 **vkQuake follow-up →** [vkquake-perf.md](vkquake-perf.md): like-for-like the regression is 2.2× (old-lane `flipstat` 22.9 fps median, not the 73 of `scr_showfps`); GPU 74 ms/frame (5 full-screen render jobs from WBOIT + the UI/post-process pass, 16F RGB10A2 tiles; compute 28 ms) serialised with ~22 ms of CPU. Variants `vkquake-drm-perf-a` / `-perf` staged, cycles `perf-vkq-a` / `-b` pre-registered there.
 
@@ -509,7 +635,9 @@ build (the clean-build release gate) and the §5 gate once more on that image.
 | `tools/gpu-lane/sdl2-drm/gamedrm/gamedrm_hooks.c` | banner + SDL DEBUG logging + `flipstat`/`swapstat` (BSD-3) |
 | `tools/gpu-lane/sdl2-drm/build-vkquake-drm.sh` | SDL-Vulkan variant + upstream vkQuake + link + proofs + launcher |
 | `tools/gpu-lane/sdl2-drm/patches-sdl-vulkan/0001-cmake-phoenix-kmsdrm-vulkan.patch` | `SDL_VULKAN` on Phoenix (applied only by build-vkquake-drm.sh) |
-| `tools/gpu-lane/sdl2-drm/patches-vkquake/0001–0005` | the port's four non-video engine fixes, split per file, + 0005 (no timestamp queries until G5) |
+| `tools/gpu-lane/sdl2-drm/patches-vkquake/0001–0007` | the port's four non-video engine fixes, split per file, + 0005 (no timestamp queries until G5) + 0006/0007 (`r_oit 0`, RGBA8 colour buffer on V3D; adopted from vkquake-perf.md) |
+| `tools/gpu-lane/sdl2-drm/patches/0009-kmsdrm-submit-frame-before-waiting-for-previous-flip.patch` | the frame-pacing reorder (adopted from `patches-pace/0001`, frame-pacing.md) |
+| `tools/gpu-lane/sdl2-drm/gamedrm/check-swap-order.sh` | objdump proof that an ELF links the 0009 order; run by build.sh, build-stk-drm.sh, relink-sdl-gl-game.sh, build-vkquake-drm.sh |
 | `tools/gpu-lane/sdl2-drm/vkqdrm/vkqdrm_hooks.c` | loadso answers (phxvk), present counter (BSD-3) |
 | `tools/gpu-lane/sdl2-drm/vkqdrm/gen-vk-trampolines.py` | the vk* link-symbol trampolines, generated per build |
 | `tools/gpu-lane/sdl2-drm/vkqdrm/vkqdrm_compat.h`, `vkqdrm/include/execinfo.h` | the two libphoenix-gap bridges; self-retiring against `feat/ipv6mreq-execinfo`, delete after its merge (§3) |
