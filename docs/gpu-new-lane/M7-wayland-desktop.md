@@ -11,7 +11,7 @@ desktop (`startx_gpu`) stays untouched until the migration retires it.
 |---|---|---|
 | compositor / WM | **labwc** (wlroots, stacking, Openbox-style) | small C codebase, monthly releases, and Raspberry Pi OS's default desktop since 2024, so it is proven on this SoC; configured by XML/INI files, with no settings daemon |
 | library | **wlroots** 0.18/0.19 (whichever labwc release pins) | the DRM/GBM/EGL/libinput/libseat backends are the same set M6 already ported for Weston |
-| terminal | **foot** | Wayland-native, small, only needs fontconfig/freetype/pixman/xkbcommon |
+| terminal (**required**, owner 2026-09-27) | **foot** | a modern terminal: Wayland-native, true colour, full Unicode with font fallback (fcft + harfbuzz), fast CPU rendering, scrollback, clipboard, URL detection; small (fontconfig/freetype/pixman/xkbcommon + fcft/tllist, MIT) |
 | launcher | **fuzzel** | Wayland-native, small, same dependencies as foot |
 | wallpaper | **swaybg** | tiny; cairo only |
 | panel (stage 2) | **sfwbar** (GTK3) or **yambar** (no GTK) | a panel is optional for "minimal"; yambar first if GTK3 is too much |
@@ -35,7 +35,7 @@ fix), shmsrv for wl_shm, Mesa GBM/EGL/GLES (static, `--wayland`), libdrm-phoenix
    1), `timerfd`/`signalfd` (compat layer).
 2. **labwc** on wlroots: static; builtin theme and config staged under `/etc/xdg/labwc/` (rc.xml, menu.xml,
    autostart that starts swaybg + foot).
-3. **foot**, **fuzzel**, **swaybg**: static clients; fonts from the X11 port's fontconfig setup (the NFS
+3. **foot** (required, with fcft/tllist; labwc's autostart opens one foot window), then **fuzzel**, **swaybg**: static clients; fonts from the X11 port's fontconfig setup (the NFS
    fontconfig trap is in memory).
 4. A launcher script `labwc-desktop.sh` in the same shape as `weston-m6a.sh`: it starts the servers, sets
    `XDG_RUNTIME_DIR`, starts labwc, holds, stops on SIGTERM.
