@@ -307,3 +307,21 @@ candidate for promotion — if it renders correctly and reaches ≥ 13 fps, 0006
 `patches-vkquake/`. The waitstat columns decide where the ~22 ms/frame GPU idle comes from
 (present path vs acquire vs the engine's fence), which is the next lever once the GPU frame is
 smaller; the 23 fps old-lane parity additionally needs the CSD row explained (c/d).
+
+## Result — `perf-vkq-a` / `perf-vkq-b` (queue43, 2026-09-27 15:00–15:15)
+
+| cycle | variant | fps median (n = 45 windows) | V3DA over the run (360 s window) | waits (avg) |
+|---|---|---|---|---|
+| mig-vkq (baseline) | upstream defaults | 10.4 | render 43.6 ms/frame, csd 28.3 ms/frame | present ≈ 76 ms |
+| **perf-vkq-a** | 0006 (`r_oit 0`) | **15.46** | render 52224 jobs / 67.2 s, **csd 20140 / 80.0 s**, busy 151 s, `oom=3474` | acquire 0.5–0.7 ms, submit 0.08 ms, fence 0.06 ms |
+| **perf-vkq-b** | 0006 + 0007 (RGBA8) | **17.06** | render 57849 / 64.7 s, csd 21077 / 75.6 s, busy 143 s, `oom=3849` | as a |
+
+Logs `artifacts/rpi4b-uart/*-perf-vkq-{a,b}.log`; HDMI `artifacts/hdmi/20260927-151424-perf-vkq-b-tick.png`: the same view
+as mig-vkq, lit, torches, "19 FPS" on screen; 0 exceptions both. ROI torch check INCONCLUSIVE again (viewpoint mae > 8
+on a frame that matches mig-vkq by eye, so the reference viewpoint, not the render, differs).
+
+**Reading:** both predictions held (a: 12–17 → 15.5; b: 13–19 → 17.1). The waits are now small, so the frame is
+GPU-bound, and **compute is now the largest GPU row** (≈ 75–80 s of 360 s against render's 65 s). Next: attribute the
+compute (`perf-vkq-c` `+r_gpulightmapupdate 0`, `-d` `+r_waterwarpcompute 0`), and read `oom` (binner overflow
+allocations: 3474/3849 over the run, not free). The old lane's like-for-like 22.9 fps is still 1.34× ahead.
+Adopt 0006+0007 into `patches-vkquake/` (gate passed: b ≥ a, same picture).
