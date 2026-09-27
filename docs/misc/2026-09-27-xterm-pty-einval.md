@@ -122,6 +122,11 @@ Why the kernel rather than libtty or libphoenix:
   one variable changed.
 - Other architectures: on every 32-bit target the cast does nothing. On 64-bit targets it drops
   only bits that no `_IOC()` encoding sets.
+- The fork's own drivers lose nothing either. A grep of the headers in devices, lwip, usb,
+  filesystems, posixsrv, `libphoenix/include` and `kernel/include` finds no ioctl request (or
+  `ioctl()` call site) with a value wider than 32 bits: no 9+-digit hex literal, and no `<< 32` or
+  wider shift, in any ioctl-related define. All fork requests use `_IO*()`. A hand-rolled 32-bit
+  literal would be unaffected anyway.
 
 Compile check: `posix/posix.c` from the worktree, compiled with the command recovered from
 `make -n -W posix/posix.c` in `.buildroot/phoenix-rtos-kernel` (the `syntax-check.sh` recipe,
@@ -156,9 +161,15 @@ the census line for xterm from OLD to new.
 
 ## Pre-registered Pi check
 
-Build the kernel from `fix/xterm-pty-einval` (`--scope core`, then verify that the new code is in
-`loader.disk`). Leave the NFS root **unchanged**, so the stale xterm stays. Run the showcase gate's
-X arm.
+Follow the `rpi4-core-change` skill loop. The branch is checked out in the job worktree, so detach
+the sibling instead:
+
+1. `git -C sources/phoenix-rtos-kernel checkout --detach f20e96a0`
+2. `./scripts/rebuild-rpi4b-fast.sh --scope core`
+3. Verify on the boot. The change adds no string, so `strings loader.disk | grep` cannot confirm
+   it. The `rpi4-sysinfo: build components` block must show `phoenix-rtos-kernel  f20e96a0…`.
+4. Leave the NFS root **unchanged**, so the stale xterm stays. Run the showcase gate's X arm.
+5. `git -C sources/phoenix-rtos-kernel checkout master`, or merge the branch if it passes.
 
 - **PASS:** 2 `xterm` windows on HDMI, 0 `fatal pty error` in the UART log, and no early
   `xlaunch: client[2] exited` / `client[5] exited`. In the failing boots these lines follow each
@@ -166,7 +177,7 @@ X arm.
 - **FAIL:** any `fatal pty error` line. If one appears, the request reached libtty by another path.
   Check `ioctl_unpackEx`'s request in posixsrv.
 - Optionally, run `test-libc-posixsrv -g pty` on the unfixed and the fixed kernel: expect 2
-  failures, then 0.
+  failures, then 0. This needs the tests sibling at `c9e6e47` for the build.
 
 ## Proposed KNOWN-ISSUES row
 
