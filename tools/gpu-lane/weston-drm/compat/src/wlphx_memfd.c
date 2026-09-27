@@ -25,20 +25,15 @@
 
 #include "../../shmsrv/shm_proto.h"
 
-int memfd_create(const char *name, unsigned int flags)
+/* One devctl to shmsrv: a fresh object id (never reused). Also the backing of the
+ * labwc-drm compat's shm_open() (tools/gpu-lane/labwc-drm/compat). */
+int wlphx_shm_create(unsigned int *id)
 {
 	oid_t oid;
 	msg_t msg;
 	shmsrv_create_req_t req = { .op = SHMSRV_OP_CREATE, .proto = SHMSRV_PROTO };
 	shmsrv_create_rsp_t rsp;
-	char path[32];
-	int fd;
 
-	(void)name;
-	if ((flags & ~(MFD_CLOEXEC | MFD_ALLOW_SEALING | MFD_NOEXEC_SEAL)) != 0u) {
-		errno = EINVAL; /* MFD_HUGETLB, MFD_EXEC: not supported */
-		return -1;
-	}
 	if (lookup(SHMSRV_NS, NULL, &oid) < 0) {
 		errno = ENOSYS;
 		return -1;
@@ -57,7 +52,24 @@ int memfd_create(const char *name, unsigned int flags)
 		errno = -rsp.err;
 		return -1;
 	}
-	(void)snprintf(path, sizeof(path), SHMSRV_NS "/%u", (unsigned)rsp.id);
-	fd = open(path, O_RDWR | (((flags & MFD_CLOEXEC) != 0u) ? O_CLOEXEC : 0));
-	return fd;
+	*id = (unsigned int)rsp.id;
+	return 0;
+}
+
+
+int memfd_create(const char *name, unsigned int flags)
+{
+	char path[32];
+	unsigned int id;
+
+	(void)name;
+	if ((flags & ~(MFD_CLOEXEC | MFD_ALLOW_SEALING | MFD_NOEXEC_SEAL)) != 0u) {
+		errno = EINVAL; /* MFD_HUGETLB, MFD_EXEC: not supported */
+		return -1;
+	}
+	if (wlphx_shm_create(&id) < 0) {
+		return -1;
+	}
+	(void)snprintf(path, sizeof(path), SHMSRV_NS "/%u", id);
+	return open(path, O_RDWR | (((flags & MFD_CLOEXEC) != 0u) ? O_CLOEXEC : 0));
 }

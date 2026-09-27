@@ -29,4 +29,13 @@ struct input_id {
 	uint16_t version;
 };
 
+/* bus types (input_id.bustype, libinput_device_get_id_bustype(); wlroots) */
+#define BUS_PCI       0x01
+#define BUS_USB       0x03
+#define BUS_BLUETOOTH 0x05
+#define BUS_VIRTUAL   0x06
+#define BUS_I8042     0x11
+#define BUS_HOST      0x19
+#define BUS_I2C       0x18
+
 #endif

@@ -323,6 +323,11 @@ is the contract; a signature mismatch is a compile error). Devices come from
   `POINTER_AXIS` 15°/detent) and wakes Weston through a socketpair (AF_UNIX: immediate).
 * Configuration answers "unavailable"; touch/tablet accessors exist for the linker only.
 * Weston's `require-input=false` / `--continue-without-input` makes zero devices a warning.
+* M7 (labwc-drm, 2026-09-27) extended the shim additively: a wheel detent now queues `POINTER_SCROLL_WHEEL`
+  after `POINTER_AXIS` (libinput ≥ 1.19 sends both; wlroots reads only the former, Weston only the latter, so
+  Weston's behaviour is unchanged), plus `get_scroll_value{,_v120}`, `get_id_bustype` and ≈70 "unavailable"
+  accessors/config defaults; `memfd_create()`'s shmsrv request is now `wlphx_shm_create()` (shared with labwc-drm's
+  `shm_open`). Frozen M6 binaries are not affected ([M7 doc](M7-wayland-desktop.md#stage-1-built-wlroots-020--labwc-020--foot-128-toolsgpu-lanelabwc-drm)).
 
 ### 7.2 libseat noop
 

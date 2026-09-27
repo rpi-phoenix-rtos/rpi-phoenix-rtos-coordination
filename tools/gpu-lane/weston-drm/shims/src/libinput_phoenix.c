@@ -276,6 +276,13 @@ static void mouse_report(struct libinput *li, struct libinput_device *d, const u
 			e->axis_v = -15.0 * wheel;
 			e->discrete_v = -wheel;
 		}
+		/* libinput >= 1.19 sends SCROLL_WHEEL in addition to the deprecated AXIS
+		 * event; wlroots reads only the former, Weston only the latter. */
+		e = event_new(li, d, LIBINPUT_EVENT_POINTER_SCROLL_WHEEL);
+		if (e != NULL) {
+			e->axis_v = -15.0 * wheel;
+			e->discrete_v = -wheel;
+		}
 	}
 }
 
@@ -630,7 +637,7 @@ struct libinput_event_keyboard *libinput_event_get_keyboard_event(struct libinpu
 
 struct libinput_event_pointer *libinput_event_get_pointer_event(struct libinput_event *event)
 {
-	return ((event->type >= LIBINPUT_EVENT_POINTER_MOTION) && (event->type <= LIBINPUT_EVENT_POINTER_AXIS)) ?
+	return ((event->type >= LIBINPUT_EVENT_POINTER_MOTION) && (event->type <= LIBINPUT_EVENT_POINTER_SCROLL_CONTINUOUS)) ?
 		(struct libinput_event_pointer *)event :
 		NULL;
 }
@@ -740,7 +747,8 @@ uint32_t libinput_event_pointer_get_seat_button_count(struct libinput_event_poin
 
 int libinput_event_pointer_has_axis(struct libinput_event_pointer *event, enum libinput_pointer_axis axis)
 {
-	return (event->base.type == LIBINPUT_EVENT_POINTER_AXIS) && (axis == LIBINPUT_POINTER_AXIS_SCROLL_VERTICAL);
+	return ((event->base.type == LIBINPUT_EVENT_POINTER_AXIS) || (event->base.type == LIBINPUT_EVENT_POINTER_SCROLL_WHEEL)) &&
+		(axis == LIBINPUT_POINTER_AXIS_SCROLL_VERTICAL);
 }
 
 
@@ -1224,5 +1232,341 @@ enum libinput_config_status libinput_device_config_rotation_set_angle(struct lib
 {
 	(void)device;
 	(void)degrees_cw;
+	return LIBINPUT_CONFIG_STATUS_UNSUPPORTED;
+}
+
+
+/*
+ * wlroots (labwc-drm, M7): the scroll-wheel API of libinput >= 1.19, the device
+ * identity, and accessors for event kinds this library never produces (gestures,
+ * switches, tablet pads, the newer tablet tool axes) -- they exist for the linker.
+ */
+double libinput_event_pointer_get_scroll_value(struct libinput_event_pointer *event, enum libinput_pointer_axis axis)
+{
+	return (axis == LIBINPUT_POINTER_AXIS_SCROLL_VERTICAL) ? event->base.axis_v : 0.0;
+}
+
+
+double libinput_event_pointer_get_scroll_value_v120(struct libinput_event_pointer *event, enum libinput_pointer_axis axis)
+{
+	return (axis == LIBINPUT_POINTER_AXIS_SCROLL_VERTICAL) ? 120.0 * (double)event->base.discrete_v : 0.0;
+}
+
+
+unsigned int libinput_device_get_id_bustype(struct libinput_device *device)
+{
+	(void)device;
+	return 0x03u; /* BUS_USB: usbkbd, usbmouse */
+}
+
+
+int libinput_device_get_size(struct libinput_device *device, double *width, double *height)
+{
+	(void)device;
+	(void)width;
+	(void)height;
+	return -1; /* no absolute devices */
+}
+
+
+struct libinput_event_gesture *libinput_event_get_gesture_event(struct libinput_event *event)
+{
+	(void)event;
+	return NULL;
+}
+
+
+struct libinput_event_switch *libinput_event_get_switch_event(struct libinput_event *event)
+{
+	(void)event;
+	return NULL;
+}
+
+
+struct libinput_event_tablet_pad *libinput_event_get_tablet_pad_event(struct libinput_event *event)
+{
+	(void)event;
+	return NULL;
+}
+
+
+#define LIPHX_NEVER(type, name, argtype) \
+	type name(argtype *arg) \
+	{ \
+		(void)arg; \
+		return (type)0; \
+	}
+LIPHX_NEVER(uint64_t, libinput_event_gesture_get_time_usec, struct libinput_event_gesture)
+LIPHX_NEVER(int, libinput_event_gesture_get_finger_count, struct libinput_event_gesture)
+LIPHX_NEVER(int, libinput_event_gesture_get_cancelled, struct libinput_event_gesture)
+LIPHX_NEVER(double, libinput_event_gesture_get_dx, struct libinput_event_gesture)
+LIPHX_NEVER(double, libinput_event_gesture_get_dy, struct libinput_event_gesture)
+LIPHX_NEVER(double, libinput_event_gesture_get_scale, struct libinput_event_gesture)
+LIPHX_NEVER(double, libinput_event_gesture_get_angle_delta, struct libinput_event_gesture)
+LIPHX_NEVER(uint64_t, libinput_event_switch_get_time_usec, struct libinput_event_switch)
+LIPHX_NEVER(enum libinput_switch, libinput_event_switch_get_switch, struct libinput_event_switch)
+LIPHX_NEVER(enum libinput_switch_state, libinput_event_switch_get_switch_state, struct libinput_event_switch)
+LIPHX_NEVER(uint64_t, libinput_event_tablet_pad_get_time_usec, struct libinput_event_tablet_pad)
+LIPHX_NEVER(uint32_t, libinput_event_tablet_pad_get_button_number, struct libinput_event_tablet_pad)
+LIPHX_NEVER(enum libinput_button_state, libinput_event_tablet_pad_get_button_state, struct libinput_event_tablet_pad)
+LIPHX_NEVER(unsigned int, libinput_event_tablet_pad_get_mode, struct libinput_event_tablet_pad)
+LIPHX_NEVER(struct libinput_tablet_pad_mode_group *, libinput_event_tablet_pad_get_mode_group, struct libinput_event_tablet_pad)
+LIPHX_NEVER(unsigned int, libinput_event_tablet_pad_get_ring_number, struct libinput_event_tablet_pad)
+LIPHX_NEVER(double, libinput_event_tablet_pad_get_ring_position, struct libinput_event_tablet_pad)
+LIPHX_NEVER(enum libinput_tablet_pad_ring_axis_source, libinput_event_tablet_pad_get_ring_source, struct libinput_event_tablet_pad)
+LIPHX_NEVER(unsigned int, libinput_event_tablet_pad_get_strip_number, struct libinput_event_tablet_pad)
+LIPHX_NEVER(double, libinput_event_tablet_pad_get_strip_position, struct libinput_event_tablet_pad)
+LIPHX_NEVER(enum libinput_tablet_pad_strip_axis_source, libinput_event_tablet_pad_get_strip_source, struct libinput_event_tablet_pad)
+LIPHX_NEVER(uint64_t, libinput_event_tablet_tool_get_time_usec, struct libinput_event_tablet_tool)
+LIPHX_NEVER(double, libinput_event_tablet_tool_get_dx, struct libinput_event_tablet_tool)
+LIPHX_NEVER(double, libinput_event_tablet_tool_get_dy, struct libinput_event_tablet_tool)
+LIPHX_NEVER(double, libinput_event_tablet_tool_get_rotation, struct libinput_event_tablet_tool)
+LIPHX_NEVER(double, libinput_event_tablet_tool_get_slider_position, struct libinput_event_tablet_tool)
+LIPHX_NEVER(double, libinput_event_tablet_tool_get_wheel_delta, struct libinput_event_tablet_tool)
+LIPHX_NEVER(int, libinput_event_tablet_tool_rotation_has_changed, struct libinput_event_tablet_tool)
+LIPHX_NEVER(int, libinput_event_tablet_tool_slider_has_changed, struct libinput_event_tablet_tool)
+LIPHX_NEVER(int, libinput_event_tablet_tool_wheel_has_changed, struct libinput_event_tablet_tool)
+LIPHX_NEVER(int, libinput_tablet_tool_has_rotation, struct libinput_tablet_tool)
+LIPHX_NEVER(int, libinput_tablet_tool_has_slider, struct libinput_tablet_tool)
+LIPHX_NEVER(int, libinput_tablet_tool_has_wheel, struct libinput_tablet_tool)
+LIPHX_NEVER(unsigned int, libinput_tablet_pad_mode_group_get_index, struct libinput_tablet_pad_mode_group)
+LIPHX_NEVER(unsigned int, libinput_tablet_pad_mode_group_get_num_modes, struct libinput_tablet_pad_mode_group)
+LIPHX_NEVER(int, libinput_device_tablet_pad_get_num_buttons, struct libinput_device)
+LIPHX_NEVER(int, libinput_device_tablet_pad_get_num_rings, struct libinput_device)
+LIPHX_NEVER(int, libinput_device_tablet_pad_get_num_strips, struct libinput_device)
+LIPHX_NEVER(int, libinput_device_tablet_pad_get_num_mode_groups, struct libinput_device)
+
+
+struct libinput_tablet_tool *libinput_tablet_tool_ref(struct libinput_tablet_tool *tool)
+{
+	return tool;
+}
+
+
+struct libinput_tablet_tool *libinput_tablet_tool_unref(struct libinput_tablet_tool *tool)
+{
+	(void)tool;
+	return NULL;
+}
+
+
+struct libinput_tablet_pad_mode_group *libinput_device_tablet_pad_get_mode_group(struct libinput_device *device,
+	unsigned int index)
+{
+	(void)device;
+	(void)index;
+	return NULL;
+}
+
+
+struct libinput_tablet_pad_mode_group *libinput_tablet_pad_mode_group_ref(struct libinput_tablet_pad_mode_group *group)
+{
+	return group;
+}
+
+
+struct libinput_tablet_pad_mode_group *libinput_tablet_pad_mode_group_unref(struct libinput_tablet_pad_mode_group *group)
+{
+	(void)group;
+	return NULL;
+}
+
+
+#define LIPHX_GROUP_HAS(name) \
+	int name(struct libinput_tablet_pad_mode_group *group, unsigned int n) \
+	{ \
+		(void)group; \
+		(void)n; \
+		return 0; \
+	}
+LIPHX_GROUP_HAS(libinput_tablet_pad_mode_group_has_button)
+LIPHX_GROUP_HAS(libinput_tablet_pad_mode_group_has_ring)
+LIPHX_GROUP_HAS(libinput_tablet_pad_mode_group_has_strip)
+
+
+/*
+ * labwc (M7) reads each device's configuration defaults and applies its
+ * rc.xml <libinput> settings. usbkbd/usbmouse have none of these features:
+ * defaults are "off", setters other than the default are unsupported.
+ */
+enum libinput_config_accel_profile libinput_device_config_accel_get_default_profile(struct libinput_device *device)
+{
+	(void)device;
+	return LIBINPUT_CONFIG_ACCEL_PROFILE_NONE;
+}
+
+
+double libinput_device_config_accel_get_default_speed(struct libinput_device *device)
+{
+	(void)device;
+	return 0.0;
+}
+
+
+uint32_t libinput_device_config_click_get_methods(struct libinput_device *device)
+{
+	(void)device;
+	return LIBINPUT_CONFIG_CLICK_METHOD_NONE;
+}
+
+
+enum libinput_config_click_method libinput_device_config_click_get_default_method(struct libinput_device *device)
+{
+	(void)device;
+	return LIBINPUT_CONFIG_CLICK_METHOD_NONE;
+}
+
+
+enum libinput_config_status libinput_device_config_click_set_method(struct libinput_device *device,
+	enum libinput_config_click_method method)
+{
+	(void)device;
+	return (method == LIBINPUT_CONFIG_CLICK_METHOD_NONE) ? LIBINPUT_CONFIG_STATUS_SUCCESS : LIBINPUT_CONFIG_STATUS_UNSUPPORTED;
+}
+
+
+enum libinput_config_dwt_state libinput_device_config_dwt_get_default_enabled(struct libinput_device *device)
+{
+	(void)device;
+	return LIBINPUT_CONFIG_DWT_DISABLED;
+}
+
+
+int libinput_device_config_left_handed_get_default(struct libinput_device *device)
+{
+	(void)device;
+	return 0;
+}
+
+
+enum libinput_config_middle_emulation_state libinput_device_config_middle_emulation_get_default_enabled(
+	struct libinput_device *device)
+{
+	(void)device;
+	return LIBINPUT_CONFIG_MIDDLE_EMULATION_DISABLED;
+}
+
+
+uint32_t libinput_device_config_scroll_get_default_button(struct libinput_device *device)
+{
+	(void)device;
+	return 0;
+}
+
+
+enum libinput_config_scroll_method libinput_device_config_scroll_get_default_method(struct libinput_device *device)
+{
+	(void)device;
+	return LIBINPUT_CONFIG_SCROLL_NO_SCROLL;
+}
+
+
+int libinput_device_config_scroll_get_natural_scroll_enabled(struct libinput_device *device)
+{
+	(void)device;
+	return 0;
+}
+
+
+int libinput_device_config_scroll_get_default_natural_scroll_enabled(struct libinput_device *device)
+{
+	(void)device;
+	return 0;
+}
+
+
+uint32_t libinput_device_config_send_events_get_modes(struct libinput_device *device)
+{
+	(void)device;
+	return LIBINPUT_CONFIG_SEND_EVENTS_ENABLED; /* 0: no other mode */
+}
+
+
+uint32_t libinput_device_config_send_events_get_default_mode(struct libinput_device *device)
+{
+	(void)device;
+	return LIBINPUT_CONFIG_SEND_EVENTS_ENABLED;
+}
+
+
+enum libinput_config_status libinput_device_config_send_events_set_mode(struct libinput_device *device, uint32_t mode)
+{
+	(void)device;
+	return (mode == LIBINPUT_CONFIG_SEND_EVENTS_ENABLED) ? LIBINPUT_CONFIG_STATUS_SUCCESS : LIBINPUT_CONFIG_STATUS_UNSUPPORTED;
+}
+
+
+enum libinput_config_tap_state libinput_device_config_tap_get_default_enabled(struct libinput_device *device)
+{
+	(void)device;
+	return LIBINPUT_CONFIG_TAP_DISABLED;
+}
+
+
+enum libinput_config_tap_button_map libinput_device_config_tap_get_default_button_map(struct libinput_device *device)
+{
+	(void)device;
+	return LIBINPUT_CONFIG_TAP_MAP_LRM;
+}
+
+
+enum libinput_config_status libinput_device_config_tap_set_button_map(struct libinput_device *device,
+	enum libinput_config_tap_button_map map)
+{
+	(void)device;
+	(void)map;
+	return LIBINPUT_CONFIG_STATUS_UNSUPPORTED;
+}
+
+
+enum libinput_config_drag_state libinput_device_config_tap_get_default_drag_enabled(struct libinput_device *device)
+{
+	(void)device;
+	return LIBINPUT_CONFIG_DRAG_DISABLED;
+}
+
+
+enum libinput_config_drag_lock_state libinput_device_config_tap_get_default_drag_lock_enabled(
+	struct libinput_device *device)
+{
+	(void)device;
+	return LIBINPUT_CONFIG_DRAG_LOCK_DISABLED;
+}
+
+
+struct libinput_device_group *libinput_device_get_device_group(struct libinput_device *device)
+{
+	(void)device;
+	return NULL; /* only tablets are grouped (labwc: pad <-> tablet) */
+}
+
+
+int libinput_tablet_tool_config_pressure_range_is_available(struct libinput_tablet_tool *tool)
+{
+	(void)tool;
+	return 0;
+}
+
+
+double libinput_tablet_tool_config_pressure_range_get_minimum(struct libinput_tablet_tool *tool)
+{
+	(void)tool;
+	return 0.0;
+}
+
+
+double libinput_tablet_tool_config_pressure_range_get_maximum(struct libinput_tablet_tool *tool)
+{
+	(void)tool;
+	return 1.0;
+}
+
+
+enum libinput_config_status libinput_tablet_tool_config_pressure_range_set(struct libinput_tablet_tool *tool,
+	double minimum, double maximum)
+{
+	(void)tool;
+	(void)minimum;
+	(void)maximum;
 	return LIBINPUT_CONFIG_STATUS_UNSUPPORTED;
 }

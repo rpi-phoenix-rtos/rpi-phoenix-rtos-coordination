@@ -33,6 +33,8 @@
 extern "C" {
 #endif
 int memfd_create(const char *name, unsigned int flags);
+/* a fresh shmsrv object id (open it as /shm/<id>); errno ENOSYS without a server */
+int wlphx_shm_create(unsigned int *id);
 int msync(void *addr, size_t len, int flags);
 #ifdef __cplusplus
 }

@@ -23,7 +23,7 @@ needs VTE, which is heavy).
 | **D-Bus session bus** | **built, host-proven, Pi cycle `m7f-dbus` pre-registered** (see [D-Bus session bus](#d-bus-session-bus-stage-3) below). xfconf (every XFCE setting) needs a bus. Phoenix AF_UNIX has `SCM_RIGHTS` but no `SO_PEERCRED`/`SCM_CREDENTIALS` (D-Bus's EXTERNAL auth). Stage 1: `dbus-daemon` with ANONYMOUS auth on `/tmp/dbus-session`. `SO_PEERCRED` is on kernel branch `feat/dbus-peercred` (not merged) |
 
 **Staged so that something is always demo-able:**
-1. labwc + foot + `mc` (the first Wayland desktop) — in progress;
+1. labwc + foot + `mc` (the first Wayland desktop) — **built and staged, `m7a-labwc`/`m7b-foot` pre-registered** ([stage 1](#stage-1-built-wlroots-020--labwc-020--foot-128-toolsgpu-lanelabwc-drm));
 2. GTK3 + gtk3-hello — in progress;
 3. D-Bus session bus (`dbus-daemon` + libdbus; GIO's GDBus on top);
 4. XFCE libraries, then xfce4-panel + Thunar + xfdesktop + xfce4-settings + xfce4-appfinder under labwc: **the showcase**.
@@ -179,6 +179,284 @@ Failure reading: a daemon that exits before its socket appears prints its last 4
 `anonymous≥1` it means the dispatch/transport side (e.g. `sendmsg`/`poll` wakeups). After SO_PEERCRED is merged and
 D-Bus rebuilt, the external arm must flip to `external≥6 external_no_credentials=0`, and line 8 must show the
 client pid.
+
+## Stage 1 built: wlroots 0.20 + labwc 0.20 + foot 1.28 (`tools/gpu-lane/labwc-drm/`)
+
+**Status 2026-09-27:** built static for aarch64-phoenix, host-tested where the compat layer is new, staged under
+new names, Pi cycles `m7a-labwc` and `m7b-foot` pre-registered below. No Pi run yet, no sibling repo touched.
+
+### Versions and licences
+
+| package | version | licence | from |
+|---|---|---|---|
+| **labwc** | **0.20.2** (2026-08-21, latest) | GPL-2.0-only (tools/ only) | GitHub tag tarball |
+| **wlroots** | **0.20.2** (labwc 0.20.2 pins `>=0.20.1 <0.21`) | MIT | gitlab release |
+| **foot** / fcft / tllist | **1.28.0** / 3.3.3 / 1.1.0 | MIT | codeberg tag tarballs |
+| wayland (M6 patch) | 1.24.0 (= host scanner) | MIT | as M6 |
+| wayland-protocols | **1.49** (wlroots needs ≥ 1.47) | MIT | gitlab release |
+| libxkbcommon | **1.13.2** (wlroots needs ≥ 1.8) | MIT | GitHub tag |
+| pixman | **0.46.4** (wlroots' pixman renderer needs ≥ 0.46; ports has 0.42.2) | MIT | cairographics.org |
+| libdisplay-info, seatd/libseat (M6 patches), libinput header | 0.2.0, 0.9.1, 1.26.2 | MIT | as M6 |
+| libxml2 | 2.15.4 (tree API only) | MIT | gnome |
+| fribidi | 1.0.16 | LGPL-2.1+ | GitHub release |
+| pango | **1.44.7** (see below) | LGPL-2.0+ | gnome |
+| cairo 1.16.0, harfbuzz 14.4.0, fontconfig 2.14.2, freetype, libpng16, **GLib 2.56.4** (+gobject), expat, zlib, libffi, libiconv | ports prefix | MPL/LGPL/MIT/FTL | private per-library views (`build-out/deps/`) |
+| Mesa GBM/EGL/GLES | `mesa-drm/build-out-wayland-low` (0012 + 0016), not rebuilt | MIT | M6 §18 |
+| libdrm-phoenix | `libdrm-phoenix/build-out-low/prefix` (proto 5: G4 + G6 + G7 + low placement), snapshotted | MIT | M6 §18 |
+
+All tarballs are sha256-pinned in `build.sh`. wlroots options: `-Dbackends=drm,libinput` (headless is always
+built) `-Drenderers=gles2` (pixman always) `-Dallocators=gbm` (dumb always) `-Dsession=enabled
+-Dxwayland=disabled -Dlibliftoff=disabled -Dcolor-management=disabled -Dexamples=false`; the setup log confirms
+`drm-backend libinput-backend gles2-renderer gbm-allocator session egl: YES`, `render/dmabuf_fallback.c`
+(not the Linux sync-file path), `HAVE_LINUX_SYNC_FILE 0`. labwc: `-Dxwayland=disabled -Dsvg=disabled
+-Dicon=disabled -Dnls=disabled -Dlabnag=disabled`. foot: `-Dterminfo=disabled -Ddefault-terminfo=xterm-256color
+-Dgrapheme-clustering=disabled -Dutmp-backend=none -Dthemes=false`; fcft `-Dsvg-backend=none
+-Drun-shaping=disabled -Dgrapheme-shaping=enabled`.
+
+**Text stack choice (labwc hard-requires pangocairo, libxml2, GLib).** No pango/fribidi/libxml2 in the ports tree;
+cairo, harfbuzz, fontconfig, freetype and GLib are (static). pango ≥ 1.44 needs GLib ≥ 2.59, the ports GLib is 2.56
+(the last autotools series). **pango 1.44.7 builds and links against 2.56 unchanged** once its meson requirement is
+lowered (patch 0001; `-Werror=implicit` is on, so no newer GLib call slipped through). 1.44 is also the first
+pango with `pango_context_set_round_glyph_positions()`, which labwc calls. Two small stand-ins, declared where
+the real ones would be, in the private views only: `hb_glib_script_{to,from}_script()` (the ports HarfBuzz has no
+`hb-glib`; two ISO 15924 round trips) and GLib 2.68's `g_string_replace()` (labwc). Once the GTK3 lane
+(`tools/gpu-lane/gtk3-wayland/`, GLib 2.88) stages its own GLib/pango, labwc can switch to them (one `--glib`
+prefix change) and drop both stand-ins.
+
+### What was patched and why
+
+| package | patch | why |
+|---|---|---|
+| wayland-protocols | 0001 `meson: validate strictly only with wayland-scanner >= 1.25` | 1.49's XML has the `frozen` interface attribute (1.25 DTD); the 1.24 scanner's `--strict` makes every enum header fail. The attribute does not change generated code (checked: it is the only DTD difference) |
+| wlroots | 0001 `meson: librt is optional` | no librt on Phoenix |
+| wlroots | 0002 `util/shm: tolerate fchmod() failure on Phoenix-RTOS` | `allocate_shm_file_pair()` (the keymap fd pair) `fchmod(rw, 0)`s the object; shmsrv objects have no mode (mtSetAttr → ENOSYS), so **every keymap would fail** and no client gets a keyboard. Host-proven with a negative control |
+| wlroots | 0003 `allocator: share the backend's DRM client on Phoenix-RTOS` | wlroots gives its allocator a **second DRM descriptor** (an empty lease, else a plain `open()`). On Phoenix each `open()` is a separate rpi4-kms client, and rpi4-kms refuses another client's `/kmsbuf` export (`kms_bo.c` `why=foreign_kmsbuf`), so **every buffer would fail ADDFB2 in both renderer arms**. `F_DUPFD_CLOEXEC` shares the backend's client (libdrm-phoenix and rpi4-kms key clients by open file: `mtOpen` → `oid.id`) |
+| labwc | 0001 `server: reap children with waitpid() where waitid() does not exist` | no `waitid()`/`WNOWAIT` in libphoenix; the peek only protects Xwayland's start-up |
+| labwc | 0002 `keyboard: fall back to a builtin XKB keymap` | no xkeyboard-config data: the rule names and the `us` fallback both fail and the keyboard group stays without a keymap. Weak `labwc_builtin_xkb_keymap` (evdev/pc105/us compiled on the build host by a native libxkbcommon 1.13.2), as Weston 0003. (libxkbcommon ≥ 1.8 creates contexts with lazy include paths, so Weston's 0007 is not needed) |
+| foot | 0001 `shm: no scrollable pool size without FALLOC_FL_PUNCH_HOLE` | foot sizes a scrollable pool to 512 MiB **before** it learns hole punching is unavailable; on a shmsrv memfd (contiguous) that first `ftruncate()` fails and foot never gets a buffer. `foot.ini` also sets `max-shm-pool-size-mb=0` |
+| fribidi | 0001 `meson: no -ansi on Phoenix-RTOS` | `-ansi` makes `inline` an identifier; libphoenix's `<stdio.h>` has `static inline` |
+| pango | 0001 `meson: accept GLib 2.56`, 0002 `meson: build the programs only natively`, 0003 `meson: redundant declarations are a warning, not an error` | above; pango-view & co. are not needed; the compat headers repeat two libc prototypes |
+
+**M6 sources extended (additive; frozen M6 binaries unaffected):** `weston-drm/compat` — `wlphx_shm_create()`
+split out of `memfd_create()` (shm_open reuses it); `weston-drm/shims/include/linux/input.h` — `BUS_*`;
+`weston-drm/shims/src/libinput_phoenix.c` — the wheel now also emits `LIBINPUT_EVENT_POINTER_SCROLL_WHEEL` (libinput
+≥ 1.19 sends both; **wlroots reads only SCROLL_WHEEL, Weston only AXIS**, so Weston is unchanged),
+`get_scroll_value{,_v120}`, `get_id_bustype` (BUS_USB), and ≈70 "unavailable" accessors/config defaults that
+wlroots' libinput backend and labwc's `<libinput>` configuration call (gestures, switches, tablet pads, tap/click/
+scroll/send-events defaults).
+
+**New compat (`labwc-drm/compat/`, first on the include path, SPDX BSD-3):** `shm_open`/`shm_unlink` (per-process
+name table over shmsrv objects; wlroots creates, opens a read-only twin and unlinks at once), `posix_openpt`
+(`/dev/ptmx`), `<uchar.h>` with **UTF-8** `mbrtoc32`/`c32rtomb` (libphoenix's multibyte layer is byte = code point;
+foot requires UTF-8 and does all its char32 conversions through these; foot is built with
+`-DLWPHX_UTF8_MB_CUR_MAX` so its `MB_CUR_MAX` buffers hold 4 bytes, and `-D__STDC_ISO_10646__`), C11 `<threads.h>`
+over pthreads (fcft, foot), unnamed `<semaphore.h>` (foot's render workers; posts always signal), `newlocale`/
+`uselocale` (C locale only; fcft), `wcsncat`/`wcscasecmp`/`wcsncasecmp`, `epoll_pwait` (mask swapped around
+`epoll_wait`, not atomic, like M6's ppoll), `pthread_setname_np` (no-op), `SIGRTMAX` = NSIG (foot sizes tables with
+it), `SO_DOMAIN`, `<sys/ioctl.h>` pulling `<termios.h>` (winsize), `<regex.h>` fix-up (size_t/off_t).
+
+**Link fix (no patch):** libstdc++.a (HarfBuzz is C++) carries a `hypotf` stub that collides with libm's; g++
+moves a plain `-lm` behind `-lstdc++`, so libm is linked **by path** before it.
+
+### Build, checks, artifacts
+
+```
+tools/gpu-lane/labwc-drm/build.sh --out tools/gpu-lane/labwc-drm/build-out-m7a   # ≈ 12 min from nothing
+tools/gpu-lane/labwc-drm/build.sh --relink                                        # programs only
+tools/gpu-lane/labwc-drm/hosttest/run.sh                                           # host tests, seconds
+```
+
+Programs are hand-linked (meson builds objects only, as weston-drm): labwc and tinywl with the Mesa closure
+(`egl-link.txt`, gallium whole-archive) and `--wrap=mmap/ioctl` (libdrm-phoenix) + `--wrap=close/write`
+(compat); foot needs no Mesa and no libdrm. The script's `== verify` fails the build on any miss:
+
+| check | `labwc` | `foot` | `tinywl` |
+|---|---|---|---|
+| `nm -u` / `PT_INTERP` | **0 / 0** | **0 / 0** | **0 / 0** |
+| text / data / bss | 21 534 434 / 527 804 / 339 624 | 3 970 020 / 21 236 / 30 388 | 15 895 742 / 520 656 / 320 684 |
+| stripped size | 22 069 992 | 3 996 560 | 16 422 664 |
+| sha256 stripped (first 16) | **`c8a78d3d7e047711`** | **`54d4232567932fc9`** | **`4dab8a085f2ba15b`** |
+| sha256 unstripped (addr2line) | `5676cf7300bea7f7` | `71fd65c89e5991ae` | `9963192b0b998726` |
+| link warnings beyond libphoenix notes | 0 | 0 | 0 |
+
+Symbols present in labwc: `wlr_drm_backend_create`, `wlr_libinput_backend_create`, `wlr_headless_backend_create`,
+`wlr_gles2_renderer_create_with_drm_fd`, `wlr_pixman_renderer_create`, `wlr_gbm_allocator_create`,
+`wlr_drm_dumb_allocator_create`, `wlr_session_create`, `libseat_open_seat`, `udev_enumerate_scan_devices`,
+`di_info_parse_edid`, `labwc_builtin_xkb_keymap`, `pango_cairo_show_layout`, `xmlReadMemory`, `g_string_replace`,
+`shm_open`, `epoll_wait`, `signalfd`, `timerfd_settime`, `eventfd`, `__wrap_mmap`, `__wrap_ioctl`,
+`drm_phoenix_ioctl`, `kmsro_drm_screen_create`, `gbmint_get_backend`; strings `libdrm-phoenix:`, `/dev/dri/card0`,
+`EGL_KHR_platform_gbm`, `V3D 4.2`, `LIBINPUT-PHX`, `/shm`, `using the builtin XKB keymap`, `Failed to duplicate the
+DRM descriptor` (0003), `fchmod() of a shared memory object failed` (0002), `spawned child %ld exited` (labwc 0001).
+foot: `fcft_from_name`, `memfd_create`, `epoll_pwait`, `posix_openpt`, `mbrtoc32`, `newlocale`, `thrd_create`,
+`sem_init`, strings `xterm-256color`, `/dev/ptmx`. **Old-lane strings in all three: 0.** Frozen copies (same sha):
+`/home/houp/.claude/jobs/c8f1289c/tmp/m7a-frozen/`.
+
+**Host tests** (`hosttest/run.sh`, ASan/UBSan, all **PASS**): `uchar` 22 checks (every scalar value U+0000–U+10FFFF
+round-trips; bytes equal glibc's C.UTF-8 `c32rtomb`; split sequences, overlongs, surrogates, > U+10FFFF);
+`shm` 25 checks with a file-backed shmsrv stand-in, **wlroots' own `util/shm.c`** compiled in
+(`allocate_shm_file`, `allocate_shm_file_pair`: the client's read-only twin sees the keymap and refuses a writable
+shared mapping) — run again with Phoenix's failing `fchmod()`: patched build PASS, unpatched build fails as on
+the Pi (**negative control** `shm-negative` PASS); `glib` 15 cases of our `g_string_replace` against the host
+GLib 2.88's own; `sync` 19 checks (2000 rounds of foot's 4-worker start/done semaphores, thread results, condvar,
+recursive mutex, wcs*); `epoll_pwait` 7 checks over the M6 epoll emulation in foot's signal pattern. The M6 host
+tests still pass with the extended compat.
+
+**Protocols for XFCE** (coordinator question): labwc creates all of them unconditionally (no build option) —
+`zwlr_layer_shell_v1` (xfce4-panel, xfdesktop via gtk-layer-shell), `zwlr_foreign_toplevel_manager_v1` and
+`ext_foreign_toplevel_list_v1` (libxfce4windowing: window buttons), `zxdg_output_manager_v1`, `xdg_activation_v1`,
+`zxdg_decoration_manager_v1` + KDE server-decoration, `zwlr_output_manager_v1`, data-control (wlr + ext),
+screencopy, ext-workspace, session-lock, idle-notify, virtual keyboard/pointer, input-method v2, fractional scale,
+cursor-shape, linux-drm-syncobj (only if the renderer has timelines: not here).
+
+### Runtime design notes (what the cycles test)
+
+- **Seat/devices:** `LIBSEAT_BACKEND=noop`; `WLR_DRM_DEVICES=/dev/dri/card0` (skips udev enumeration; the
+  script's `DRM_DEVICES=` knob restores it); `LIBINPUT_PHOENIX_DEVICES` as M6.
+- **pixman arm:** the dumb allocator on the dup'd card0 client (0003) → `MAP_DUMB` + `__wrap_mmap` token (M6's
+  pixman path) → the backend imports its own export (short-circuited to the original handle) → ADDFB2.
+- **gles2 arm:** EGL: no `EGL_EXT_device_drm` match for card0 (Mesa lists only render-node devices), so wlroots
+  falls back to `EGL_PLATFORM_GBM_KHR` on a **third** card0 open (card0 has no render node, as on Linux Pi 4) →
+  kmsro (the kmscube/Weston path). Buffers: GBM allocator on the dup'd client → kms dumb BOs imported into v3d;
+  the renderer imports them by dma-buf (`BO_IMPORT ns=kmsbuf`, G1). The GLES2 renderer needs
+  `EGL_EXT_image_dma_buf_import` and `GL_EXT_texture_format_BGRA8888` (both in Mesa V3D).
+- **Keymap to clients:** a shmsrv pair (0002); clients `mmap(MAP_PRIVATE, PROT_READ)` the read-only descriptor —
+  untested on the Pi so far (no M6 cycle had a keyboard client).
+- **Clients from labwc** (autostart, menu): `fork()` of the compositor + `setsid()` + `execvp()` (labwc's double
+  fork), autostart through `/bin/sh` = busybox ash (has `&`).
+- **foot:** TERM=xterm-256color (Phoenix's ncurses has it compiled in; no terminfo files exist), shell `/bin/bash`,
+  DejaVu Sans Mono 11 through `/etc/fonts/fonts.conf` (the truetype-only config, not the NFS-slow parent dir),
+  80×24 (~720×456 px: every wl_shm buffer is one contiguous shmsrv object, a power of two ≥ 1 MiB); window size
+  reaches the pty (libtty implements `TIOC[GS]WINSZ`). Known limits: `wcwidth()` = 1 for every printable
+  character (libphoenix), so CJK/emoji misalign; `fallocate` absent (no scrollback pool trick; slower scrolling).
+- **Logs:** labwc `-V` (info). wlroots lines are `hh:mm:ss.mmm [file.c:line] text`, possibly wrapped in ANSI colour
+  codes (stderr is the UART tty): grade with patterns that tolerate them.
+
+### Staging (done 2026-09-27; new names only, nothing of these existed before — checked)
+
+```
+F=/home/houp/.claude/jobs/c8f1289c/tmp/m7a-frozen
+EXPORT=/srv/phoenix-rpi4-nfs-gcc16
+sudo -n install -m 755 "$F/labwc"            "$EXPORT/bin/labwc"
+sudo -n install -m 755 "$F/foot"             "$EXPORT/bin/foot"
+sudo -n install -m 755 "$F/tinywl"           "$EXPORT/bin/tinywl"
+sudo -n install -m 755 "$F/labwc-desktop.sh" "$EXPORT/bin/labwc-desktop.sh"
+sudo -n install -m 755 "$F/m7b-colors.sh"    "$EXPORT/bin/m7b-colors.sh"
+sudo -n install -d -m 755 "$EXPORT/etc/xdg/labwc" "$EXPORT/etc/xdg/foot"
+for f in rc.xml menu.xml autostart environment; do sudo -n install -m 644 "$F/conf/$f" "$EXPORT/etc/xdg/labwc/$f"; done
+sudo -n install -m 644 "$F/conf/foot/foot.ini" "$EXPORT/etc/xdg/foot/foot.ini"
+# cmp each against $F: all equal (2026-09-27 17:2x)
+```
+
+| file | sha256 (first 16) |
+|---|---|
+| `/bin/labwc` / `/bin/foot` / `/bin/tinywl` | `c8a78d3d7e047711` / `54d4232567932fc9` / `4dab8a085f2ba15b` |
+| `/bin/labwc-desktop.sh` (`pi/`) | `da67b3202c41dbd1` |
+| `/bin/m7b-colors.sh` (`pi/`) | `cbc892b94cbe7de2` |
+| `/etc/xdg/labwc/{rc.xml,menu.xml,autostart,environment}` | `0bf18540…`, `c9ea858a…`, `d68df0df…`, `2a965f59…` |
+| `/etc/xdg/foot/foot.ini` | `fd91a434…` |
+| reused, unchanged: `/bin/shmsrv` (M6, `6a89f2610a5ad80d`, same wire protocol), `/bin/weston-simple-shm` (`726de04f92a35376`), `/bin/rpi4-kms-g7` (`51c9cbcc692e4e6b`), `/bin/rpi4-v3d-async-g6` (`dc88c71a94b883d8`), `/bin/mc`, `/bin/bash`, `/bin/sh` (busybox), `/bin/cp`, DejaVu fonts + `/etc/fonts/fonts.conf` | — |
+
+Menu (`menu.xml`, right click on the desktop): **Terminal** (`/bin/foot`), **Files** (`/bin/foot -e /bin/mc`),
+**File Manager (GUI)** (`/bin/thunar-wl`, placeholder until the GTK3/XFCE lane stages it), Reconfigure, Exit.
+Keys: labwc defaults + Super+Return (foot) + Super+E (mc). Autostart: one foot.
+
+Preconditions: netboot image ≥ build 11; no GPU app, no X, no old-lane `rpi4-v3d`; after the current Pi queue.
+
+### Cycle `m7a-labwc` (Bash `timeout: 600000`)
+
+**Question:** does labwc (wlroots' DRM backend through libdrm-phoenix and rpi4-kms) bring up HDMI with the pixman
+renderer and with the GLES2 renderer, show a cursor and a wl_shm client in a server-side-decorated window
+(pango-drawn title), and exit cleanly on SIGTERM?
+
+```
+./scripts/test-cycle-psh-interact.sh --label m7a-labwc --idle-secs 45 --max-cmd-secs 200 \
+    --hdmi-dense-on 'LABWC client start' -- \
+    "/bin/rpi4-v3d-async-g6 -r 1 -m serial -i" \
+    "/bin/rpi4-kms-g7 -G -p 96" \
+    "/bin/shmsrv -v" \
+    "/bin/bash /bin/labwc-desktop.sh pixman shm noinput" \
+    "/bin/shmsrv -s" \
+    "/bin/bash /bin/labwc-desktop.sh gles2 shm noinput" \
+    "/bin/shmsrv -s" \
+    "/bin/kmstest-poll stats" \
+    "/bin/v3dasync-ping stats"
+```
+
+**Arm 0 (fallback, run only if labwc dies before its socket in both arms):** the same with
+`"export LABWC=/bin/tinywl"` before the two script lines: tinywl is wlroots without pango/GLib/libxml2/labwc config.
+
+Grade:
+
+```
+grep -a -E 'LABWC |\[(backend|render|types|util)/|DRMPHX (conn|ioctl .*(ADDFB2|PRIME|CREATE_DUMB|ATOMIC))|^KMS |^SHMSRV |^V3DA srv (ready|import|export)|LIBINPUT-PHX|libseat|KMSTEST|V3DAPING|builtin XKB' \
+    artifacts/rpi4b-uart/rpi4b-uart-*-m7a-labwc.log
+./scripts/uart-summary.sh m7a-labwc
+```
+
+Allow ~1.3 % UART line corruption; EL0 dumps print twice; wlroots lines may carry ANSI colour escapes.
+
+| # | Line / observation | Predicted (per arm unless noted) | If instead… |
+|---|---|---|---|
+| 1 | `LABWC start renderer=pixman client=shm … conf=/tmp/labwc-conf files=rc.xml,menu.xml,environment … drm_devices=/dev/dri/card0 hw_cursors=0 atomic=1`, `LABWC labwc pid=…` | once per arm | `LABWC FAIL`/bash errors: staging |
+| 2 | `[backend/session/session.c…] Successfully loaded libseat session` (libseat's own lines are routed into wlroots' log) | early | `Unable to create seat` / `libseat: … could not open seat`: `LIBSEAT_BACKEND` not exported |
+| 3 | `[backend/drm/backend.c…] Initializing DRM backend for /dev/dri/card0 (…)`, `DRMPHX conn fd=… path=/dev/dri/card0 node=card0 …` | once | `drmGetVersion() failed`/`drmGetDeviceNameFromFd2() failed`: libdrm-phoenix identification — stop |
+| 4 | `Found 1 DRM CRTCs`, `Found N DRM planes`, no `DRM universal planes unsupported`/`DRM_CRTC_IN_VBLANK_EVENT unsupported`; atomic used (no `falling back to legacy`) | as Weston (M6 §9 rows) | an unsupported cap: rerun with `export ATOMIC=0` (WLR_DRM_NO_ATOMIC) |
+| 5 | `Scanning DRM connector … on /dev/dri/card0`, `Detected modes:` incl. `1920x1080@60`, EDID via libdisplay-info, `Modesetting with 1920x1080 @ 60.000 Hz` | one output HDMI-A-1 | `No CRTC possible`: possible_crtcs marshalling |
+| 6 | pixman arm: no EGL lines; `DRMPHX ioctl … CREATE_DUMB` on the **same client id** as the backend's `conn` line, ADDFB2 rc=0; gles2 arm: `[render/egl.c…] Using EGL 1.5`, `EGL vendor: Mesa Project`, `[render/gles2/renderer.c…] Creating GLES2 renderer`, `Using OpenGL ES 3.1 Mesa 26.2.0`, `GL renderer: V3D 4.2…` (the platform choice, `Using EGL_PLATFORM_GBM_KHR`, is a debug line: `export VERBOSE=2`), `V3DA srv import … ns=kmsbuf` | **patch 0003 at work: every ADDFB2 rc=0** | `KMS … import FAIL … why=foreign_kmsbuf` / `Failed to import DMA-BUF` / `ADDFB2 rc=-1 errno=22`: the allocator did not get the dup'd client (0003 not in the binary: `strings -a /bin/labwc \| grep 'duplicate the DRM'`) — **stop**; gles2 only: `Failed to initialize EGL context` → the arm is a GBM/EGL fault, pixman stays graded |
+| 7 | `LABWC socket=up name=wayland-0 wait_s=<1–30>` (heartbeats `LABWC waiting…` every 10 s before) | within ~30 s (fontconfig scan of `/usr/share/fonts/truetype` over NFS on first title) | `socket=missing … labwc=exited`: read labwc's last lines; `labwc=running` after 90 s: a hang — grade from the last `DRMPHX`/`KMS`/wlroots line |
+| 8 | `SHMSRV create id=N`, `SHMSRV truncate id=N size=250000 … cap=1048576` ×2 (simple-shm's buffers), plus labwc's own objects (cursor theme pools, title buffers: pixman arm only) | right after `client start` | no `create`: memfd_create did not reach shmsrv |
+| 9 | HDMI (dense snapshots from `client start`) | **black desktop** (labwc paints no background without swaybg), a **software cursor** (the built-in wlroots cursor image, `WLR_NO_HARDWARE_CURSORS=1`) at screen centre, **simple-shm's 250×250 animated pattern in a window with a labwc title bar** (`weston-simple-shm`, DejaVu Sans, close/max/iconify buttons) | console text still visible: the first commit never applied; black without cursor: the cursor plane/composition path; window without title text: pango/fontconfig (look for `Fontconfig error`) — the rest still graded |
+| 10 | `LABWC hold … labwc=running client=running` ×3 | heartbeats | client exited: its stderr line above |
+| 11 | `LABWC client exited rc=143`, `LABWC labwc exited rc=0 after_term_s=<1–3> socket=gone` | clean TERM exit through the emulated signalfd | `still up … sending KILL`: note, not fatal for display grading |
+| 12 | `SHMSRV stats rc=0 live=0 bytes=0` after each arm | all objects released | `live>0`: a descriptor kept |
+| 13 | `KMSTEST stats … apply_errors=0 … bos=0 exports=0`, `V3DAPING stats … bos_live=0 … verdict=PASS` | no leaks | `bos>0`: dumb BOs outlive labwc (the dup'd client's close) |
+| 14 | fault dumps | 0 kernel, 0 EL0 | EL0 in labwc: `aarch64-phoenix-addr2line -f -e tools/gpu-lane/labwc-drm/build-out-m7a/labwc <pc>` |
+
+**Decides:** pixman arm rows 3–9 PASS = wlroots' DRM backend, the compat event loop, the seat/udev shims, shmsrv
+and labwc's text stack work on Phoenix; gles2 adds the EGL/GBM renderer. Then `m7b-foot`.
+
+### Cycle `m7b-foot` (after m7a's pixman arm passed; Bash `timeout: 600000`)
+
+**Question:** does foot draw in labwc — a prompt, 24-bit colour, Unicode — and does mc run in it (the "Files" menu
+command)? Does keyboard input reach it once rpi4-kms frees the console keyboard?
+
+```
+./scripts/test-cycle-psh-interact.sh --label m7b-foot --idle-secs 45 --max-cmd-secs 200 \
+    --hdmi-dense-on 'LABWC client start|LABWC socket=up' -- \
+    "/bin/rpi4-v3d-async-g6 -r 1 -m serial -i" \
+    "/bin/rpi4-kms-g7 -G -p 96 -C" \
+    "/bin/shmsrv -v" \
+    "/bin/bash /bin/labwc-desktop.sh pixman colors input" \
+    "/bin/bash /bin/labwc-desktop.sh pixman mc input" \
+    "/bin/bash /bin/labwc-desktop.sh pixman autostart input" \
+    "/bin/shmsrv -s" \
+    "/bin/kmstest-poll stats"
+```
+
+Arms: **A** `colors` = foot running `m7b-colors.sh` (no keyboard needed); **B** `mc` = `foot -e /bin/mc /`, the
+command the menu's "Files" entry runs; **C** `autostart` = labwc's own autostart (`sh` → `/bin/foot`, an
+interactive bash): the fork/exec-from-the-compositor path. Keyboard and the menu click need a person at the bench
+(or the USB keyboard/mouse attached): graded when present, otherwise **n/a**. Grade as m7a plus
+`grep -a -E 'foot|fcft|LABWC ' …m7b-foot.log`.
+
+| # | Line / observation | Predicted | If instead… |
+|---|---|---|---|
+| 1 | `LABWC client start: /bin/foot --log-level=info  -e /bin/bash /bin/m7b-colors.sh` (A) | once | — |
+| 2 | foot's own log on the UART (stderr, `--log-level=info` from the script; the autostarted foot of arm C logs warnings only): `info: … locale: POSIX` and **no** `not a UTF-8 locale` (compat `mbrtoc32` decodes UTF-8, so `locale_is_utf8()` is true); `info: fcft: … DejaVu Sans Mono` | early | `not a UTF-8 locale, and failed to find a fallback`: the compat UTF-8 layer is not linked (`nm foot \| grep mbrtoc32`) |
+| 3 | `warning: … failed to seal SHM backing memory file` per buffer (not fatal: shmsrv has no seals); `SHMSRV truncate … size=<≈1.3 MB> … cap=2097152` for foot's 80×24 buffers | a few objects | `SHMSRV FAIL alloc … cap=…`/`refuse grow`: contiguous memory — note the size; `failed to set size of SHM backing memory file` with size 536870912: foot 0001 not in the binary |
+| 4 | no `failed to configure controlling terminal` / `failed to open pseudo terminal slave device` (posixsrv `/dev/ptmx` + libtty `TIOCSCTTY`); window resize → no `TIOCSWINSZ` error | clean pty start | a pty error: posixsrv not running or `/dev/pts` missing (M4/psh note in memory) |
+| 5 | keymap: no `failed to mmap keymap` / `failed to compile keymap` from foot; labwc (with `/dev/kbd0` opened) `using the builtin XKB keymap (rule names not compiled)` | the shmsrv read-only twin maps MAP_PRIVATE (untested before) | foot logs a keymap failure: the export window refuses `MAP_PRIVATE` of an `O_RDONLY` descriptor — keyboard dead, display still graded |
+| 6 | HDMI, A: a foot window (title "foot", SSD) with `foot on Phoenix-RTOS: TERM=xterm-256color`, **two smooth 64-cell colour ramps** (red→green, green→blue; banding = the 24-bit path lost), the Unicode line (Polish, Greek, Cyrillic, box drawing, arrows, ✓ ✗ €) rendered — glyphs absent from DejaVu Sans Mono would show as boxes, none expected — the 16 ANSI colours and bold/italic/underline/reverse | the terminal draws | black window: foot's buffers never committed (row 3); text but grey ramps: 256-colour fallback — `TERM`/foot SGR parsing |
+| 7 | HDMI, B: mc's blue two-panel screen listing `/` (bin, dev, etc, …), function-key bar at the bottom, line drawing intact | mc runs in foot (xterm-256color from ncurses' compiled-in fallbacks) | `Unknown terminal`: TERM not passed (foot.ini not read: `XDG_CONFIG_DIRS`) |
+| 8 | HDMI, C: the autostarted foot with a bash prompt; UART `run session script /etc/xdg/labwc/autostart` | labwc forks `sh` → foot | no window and `unable to fork()`/`spawned child … exited with 127`: fork of the compositor or busybox `sh` failed |
+| 9 | (person at the bench) typing into foot shows the characters; right click on the desktop → menu (Terminal / Files / File Manager (GUI) / Reconfigure / Exit) drawn with DejaVu Sans; **Files → mc opens in a new foot and lists `/`**; File Manager (GUI) → nothing yet (`spawned child … exited with 127`: `/bin/thunar-wl` not staged) | with `-C` the console keyboard is labwc's (`LIBINPUT-PHX dev=/dev/kbd0 … open=ok`) | `open=failed … retrying`: `-C` missing; menu without text: pango |
+| 10 | exits: `LABWC client exited rc=143`, `LABWC labwc exited rc=0 … socket=gone` per arm; `SHMSRV stats … live=0`; `KMSTEST stats … bos=0` | clean | as m7a rows 11–13 |
+| 11 | fault dumps | 0 kernel, 0 EL0 | EL0 in foot: `aarch64-phoenix-addr2line -f -e tools/gpu-lane/labwc-drm/build-out-m7a/foot <pc>` |
+
+### Next
+
+fuzzel (launcher) and swaybg (wallpaper) are the same recipe as foot (fcft/cairo already here): not built in this
+pass. Then `m7c-desktop` (wallpaper + launcher + mouse move/resize) and the XFCE stages on top.
 
 ## Pi milestones (pre-registered as each piece lands)
 
