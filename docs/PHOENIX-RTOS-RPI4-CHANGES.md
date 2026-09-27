@@ -257,6 +257,14 @@ Most of the lifetime and race work is in §3. What is specific to robustness her
   fork child could size its kernel-stack copy from the parent's context before the parent had saved it; the child
   now waits. A/B on the Pi: `spawn-storm -f` froze the whole system 3 of 3 runs (within 16–38 launches) before,
   0 of 3 runs (1500/1500 launches) after. The two changes are not yet separated. Same code upstream.
+- ★ **`getsockname()`/`getpeername()` work on AF_UNIX sockets** (`posix/usocket.c`, `9744388c`, `482f11be`). Both
+  returned 0 without writing the address, so dbus-daemon never recognised a UNIX socket and **no D-Bus connection on
+  Phoenix could pass file descriptors** (P12; GLib's second-instance forwarding died on it). A socket now keeps its
+  bound name in a small shared, reference-counted object; peer names are captured at `connect()`/`accept()`, so a socket
+  never reads its peer. Output follows Linux: family + path + NUL, unbound = family only, truncated copy with the full
+  length, `ENOTCONN` when not connected. `bind()` now honours `address_len` (≤ 108 bytes) and rejects an empty path.
+  Test `test-libc-unix-socket -g test_unix_sockname` (tests `dd4ac010`): 8/8 FAIL on the old kernel, 8/8 PASS (46/0);
+  showcase gate 6/6. Same code upstream.
 - ★ **`ioctl()` requests are canonicalised to 32 bits** (`posix/posix.c` `posix_ioctl()`, `f20e96a0`). POSIX types the
   request as `int`, so a caller may pass it sign-extended: an xterm linked before libphoenix `2b6b552` sent `TCSETS` as
   `0xffffffff805c7402`. libtty since devices `1657d7d` compares all 64 bits, so every such `tcsetattr()` failed with
