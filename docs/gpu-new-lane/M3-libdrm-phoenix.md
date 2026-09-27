@@ -1334,3 +1334,26 @@ done — the first unmodified SDL2 game on the DRM-shaped stack**; the fps says 
 (G12, G13 gating) costs anything against `quakespasm-v3da`. Next: the keyboard cycle (`-G -C`, type in
 the console), the old-lane quakespasm at core 500 for a same-clock three-way comparison, then the other
 SDL2 games as clones.
+
+## Result — `m3p3b-kmscube` (queue20, 2026-09-27 05:06–05:12): **PASS — a spinning cube on HDMI through the whole new stack**
+
+Mesa 26.2 GBM/EGL/GLES (static, patches 0001–0009) → libdrm-phoenix (`DRMPHX_TRACE`) → rpi4-kms
+(dumb BOs, firmware planes, flip events) + rpi4-v3d-async (zero-copy PRIME import, V3D jobs). 0 exceptions.
+
+- The trace shows the pre-registered path: `DRM_IOCTL_MODE_CREATE_DUMB … w=1024 h=2026` on card0 (the
+  fixed binary), then on the render node `DRM_IOCTL_PRIME_FD_TO_HANDLE rc=0 … fdpath=/kmsbuf/1` and
+  `V3DA srv import … pages=2026 contiguous=1 gpuva=0x02102000` — two scanout buffers per run, both
+  released at exit (`import released … live=0`). 8 imports across the runs.
+- `OpenGL ES 3.1 Mesa 26.2.0 … renderer: "V3D 4.2.14.0"`; EGL now lists `EGL_EXT_image_dma_buf_import`,
+  `…_modifiers` and `EGL_MESA_image_dma_buf_export` (absent in the failing run — the patch 0008 tell).
+- `-c 600`: **599 frames in 20.06 s = 29.85 fps**, steady (28.6 → 29.9 over the run); server
+  `err=0 wedges=0 rej=0`.
+- **HDMI** (graded on the snapshots taken during the run, 05:10:59–05:11:22, every one different): a
+  full-screen shaded rotating cube on grey (`artifacts/hdmi/20260927-051111-m3p3b-kmscube-tick.png`);
+  the console returns after exit (`planes_off=1`).
+
+**Why ~30 fps, not 60:** kmscube's legacy loop waits for each page-flip event with `select()` on the card
+fd, and on Phoenix a poll of a device-server fd is quantised to 20 ms (P9 / G12) — so it catches every
+other vblank. The GPU is idle most of the time (render 1.2 s busy over 20 s). This is the known kernel
+gap, now with a real client to prove the fix against: a `block_ms` path for device-server fds in
+`posix_poll` (E5 §(b)) should take kmscube to 60.
