@@ -63,6 +63,9 @@ typedef struct {
 	uint32_t imported;        /* 1 = BO_IMPORT'ed (PRIME) */
 	v3da_memref_t mem;        /* kind NONE = not known yet (ask BO_MMAP) */
 	v3da_fence_t last;        /* last job of this client that used it (seqno 0 = none) */
+	uint32_t imp_port;        /* imported only: the exporter's buffer namespace port ... */
+	uint32_t imp_cache;       /* ... the export's memory type (enum kms_mem_cache) ... */
+	uint64_t imp_id;          /* ... and the object id: a render-node re-export reopens it (G4a, M5) */
 } drmphx_v3d_bo_t;
 
 typedef struct {

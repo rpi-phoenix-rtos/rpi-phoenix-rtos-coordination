@@ -1036,7 +1036,17 @@ int drmphx_kms_ioctl(drmphx_conn_t *c, int fd, unsigned nr, void *arg)
 			memset(&cq, 0, sizeof(cq));
 			cq.cap = s->capability;
 			cq.value = s->value;
-			return kcall(c, KMS_OP_SET_CLIENT_CAP, &cq, sizeof(cq), NULL, NULL, 0u, NULL, 0u);
+			rc = kcall(c, KMS_OP_SET_CLIENT_CAP, &cq, sizeof(cq), NULL, NULL, 0u, NULL, 0u);
+			if ((rc == 0) && (s->capability == DRM_CLIENT_CAP_ATOMIC)) {
+				/* DRM (drm_setclientcap): ATOMIC sets universal_planes to the same value.
+				 * Atomic-only clients (Mesa's VK_KHR_display WSI) never set
+				 * UNIVERSAL_PLANES themselves, and rpi4-kms lists the primary plane only
+				 * with it (M5). (DRM also sets aspect_ratio_allowed; rpi4-kms stores that
+				 * cap but uses it nowhere, so it is not mirrored.) */
+				cq.cap = DRM_CLIENT_CAP_UNIVERSAL_PLANES;
+				rc = kcall(c, KMS_OP_SET_CLIENT_CAP, &cq, sizeof(cq), NULL, NULL, 0u, NULL, 0u);
+			}
+			return rc;
 		}
 		case NR(DRM_IOCTL_SET_MASTER):
 			return kcall(c, KMS_OP_SET_MASTER, NULL, 0u, NULL, NULL, 0u, NULL, 0u);

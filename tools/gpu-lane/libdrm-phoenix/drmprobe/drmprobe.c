@@ -258,6 +258,45 @@ static const char *prop_name_of(int fd, uint32_t prop, char *buf, size_t n)
 }
 
 
+/* M5: DRM's SET_CLIENT_CAP(ATOMIC) also turns on universal planes. Atomic-only
+ * clients -- Mesa's VK_KHR_display WSI sets ATOMIC and never UNIVERSAL_PLANES --
+ * rely on it to see the primary plane. A fresh card0 open, ATOMIC only. */
+static void t_atomic_universal(const char *card_path)
+{
+	drmModePlaneResPtr pr;
+	drmModeObjectPropertiesPtr props;
+	drmModePropertyPtr prop;
+	uint32_t i, j;
+	int fd, rc_a = -1, n = -1, primary = 0, ok;
+
+	fd = open(card_path, O_RDWR | O_CLOEXEC);
+	if (fd >= 0) {
+		rc_a = drmSetClientCap(fd, DRM_CLIENT_CAP_ATOMIC, 1);
+		pr = drmModeGetPlaneResources(fd);
+		if (pr != NULL) {
+			n = (int)pr->count_planes;
+			for (i = 0u; i < pr->count_planes; i++) {
+				props = drmModeObjectGetProperties(fd, pr->planes[i], DRM_MODE_OBJECT_PLANE);
+				for (j = 0u; (props != NULL) && (j < props->count_props); j++) {
+					prop = drmModeGetProperty(fd, props->props[j]);
+					if ((prop != NULL) && (strcmp(prop->name, "type") == 0) &&
+							(props->prop_values[j] == DRM_PLANE_TYPE_PRIMARY)) {
+						primary++;
+					}
+					drmModeFreeProperty(prop);
+				}
+				drmModeFreeObjectProperties(props);
+			}
+			drmModeFreePlaneResources(pr);
+		}
+		close(fd);
+	}
+	ok = (rc_a == 0) && (n >= 1) && (primary == 1);
+	printf(TAG "atomic_universal open=%d atomic=%d planes=%d primary=%d ok=%d\n", fd >= 0, rc_a, n, primary, ok);
+	verdict("atomic_universal", ok);
+}
+
+
 static int t_kms_enum(void)
 {
 	drmModeResPtr res;
@@ -1041,6 +1080,35 @@ static void t_prime(void)
 		printf(TAG "prime_reimport rc=%d handle=0x%x same=%d ok=%d\n", rc_again, h_again, h_again == h_render,
 			(rc_again == 0) && (h_again == h_render));
 		verdict("prime_reimport", (rc_again == 0) && (h_again == h_render));
+		{
+			/* M5 (G4a): the v3dv WSI round trip -- vkGetMemoryFdKHR exports the imported
+			 * BO from the render node, wsi_common_display imports that descriptor on card0
+			 * and must get the original dumb handle back, same pages. */
+			char rpath[64] = "-";
+			uint32_t h_back = 0, *rm;
+			int rfd = -1, rc_rx, e_rx, rc_back = -1, same_rx = 0;
+			rc_rx = drmPrimeHandleToFD(P.render, h_render, DRM_CLOEXEC | DRM_RDWR, &rfd);
+			e_rx = (rc_rx != 0) ? errno : 0;
+			if (rc_rx == 0) {
+				(void)sys_fdpath(rfd, rpath, sizeof(rpath));
+				rc_back = drmPrimeFDToHandle(P.card, rfd, &h_back);
+				rm = mmap(NULL, (size_t)P.buf[0].size, PROT_READ, MAP_SHARED, rfd, 0);
+				if (rm != MAP_FAILED) {
+					same_rx = (rm[1] == P.buf[0].px[1]) && (rm[P.buf[0].size / 8u] == P.buf[0].px[P.buf[0].size / 8u]);
+					(void)munmap(rm, (size_t)P.buf[0].size);
+				}
+				close(rfd);
+			}
+			printf(TAG "prime_reexport_render rc=%d errno=%d path=%s card_handle=%u/%u same_pages=%d ok=%d gap=%d\n",
+				rc_rx, e_rx, rpath, h_back, P.buf[0].handle, same_rx,
+				(rc_rx == 0) && (rc_back == 0) && (h_back == P.buf[0].handle) && same_rx, e_rx == ENOSYS);
+			if (e_rx == ENOSYS) {
+				P.gap++;   /* a libdrm-phoenix from before M5 */
+			}
+			else {
+				verdict("prime_reexport_render", (rc_rx == 0) && (rc_back == 0) && (h_back == P.buf[0].handle) && same_rx);
+			}
+		}
 		t_import_rt(h_render);
 		memset(&gc, 0, sizeof(gc));
 		gc.handle = h_render;
@@ -1108,6 +1176,7 @@ int main(int argc, char **argv)
 		P.gap++;
 	}
 	t_fstat();
+	t_atomic_universal(card_path);
 
 	if (t_kms_enum() == 0) {
 		printf(TAG "kms_flip start mode=%ux%u@%u\n", P.mode.hdisplay, P.mode.vdisplay, P.mode.vrefresh);

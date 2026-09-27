@@ -30,6 +30,14 @@
 #              symbols libGL would export; not built by default with glx=disabled).
 #              Use it with --out <another dir>: the default build-out/ stays GLES-only.
 #              Consumer: tools/gpu-lane/sdl2-drm (quakespasm-drm needs desktop GL).
+#   --vulkan   build the v3dv Vulkan driver INSTEAD of GL (-Dvulkan-drivers=broadcom,
+#              no gallium/EGL/GBM/GLES) into its OWN directory (default build-out-vulkan/,
+#              --out still wins). The ICD becomes a static archive (patch 0010):
+#              <out>/prefix/lib/libvulkan_broadcom.a exports vk_icdGetInstanceProcAddr,
+#              which a program calls in place of a Vulkan loader (there is no loader
+#              dlopen on Phoenix); <out>/prefix/include/vulkan = Mesa's Vulkan headers;
+#              <out>/vulkan-link.txt = the archives to link, in order. No kmscube.
+#              Consumer: tools/gpu-lane/vulkan-drm (vkcube on VK_KHR_display).
 # Stage (coordinator only):
 #   sudo cp tools/gpu-lane/mesa-drm/build-out/kmscube-stripped <live NFS export>/bin/kmscube
 #
@@ -43,21 +51,29 @@ relink=0
 jobs="$(nproc)"
 libdrm_src_prefix="${root}/tools/gpu-lane/libdrm-phoenix/build-out/prefix"
 opengl=false
+vulkan=false
+out_given=0
 while [ $# -gt 0 ]; do
 	case "$1" in
 		--clean) clean=1 ;;
 		--relink) relink=1 ;;
 		-j) shift; jobs="${1:?-j needs a number}" ;;
 		-j*) jobs="${1#-j}" ;;
-		--out) shift; out="${1:?--out needs a directory}" ;;
-		--out=*) out="${1#--out=}" ;;
+		--out) shift; out="${1:?--out needs a directory}"; out_given=1 ;;
+		--out=*) out="${1#--out=}"; out_given=1 ;;
 		--libdrm-prefix) shift; libdrm_src_prefix="${1:?--libdrm-prefix needs a directory}" ;;
 		--libdrm-prefix=*) libdrm_src_prefix="${1#--libdrm-prefix=}" ;;
 		--opengl) opengl=true ;;
+		--vulkan) vulkan=true ;;
 		*) echo "build.sh: unknown argument $1" >&2; exit 2 ;;
 	esac
 	shift
 done
+if [ "${vulkan}" = true ]; then
+	[ "${opengl}" = false ] || { echo "build.sh: --vulkan and --opengl are separate builds (use two --out dirs)" >&2; exit 2; }
+	[ "${relink}" = 0 ] || { echo "build.sh: --relink relinks kmscube, which a --vulkan build has not" >&2; exit 2; }
+	[ "${out_given}" = 1 ] || out="${here}/build-out-vulkan"
+fi
 case "${out}" in
 	/*) ;;
 	*) out="${PWD}/${out}" ;;
@@ -225,16 +241,33 @@ EOF
 
 	# --- Mesa configure + build -------------------------------------------------------------
 	echo "== Mesa meson setup + ninja (-j${jobs})"
+	if [ "${vulkan}" = true ]; then
+		# v3dv only. VK_KHR_display (wsi_common_display.c) is built whenever the system
+		# has KMS/DRM (patch 0001 puts phoenix there); no x11/wayland platform.
+		api_opts=(-Dgallium-drivers= -Dvulkan-drivers=broadcom -Dvulkan-layers= -Dvulkan-beta=false
+			-Degl=disabled -Dgbm=disabled -Dglx=disabled -Dopengl=false -Dgles1=disabled -Dgles2=disabled)
+	else
+		api_opts=(-Dgallium-drivers=v3d,vc4 -Dvulkan-drivers=
+			-Degl=enabled -Dgbm=enabled -Dglx=disabled -Dopengl=${opengl} -Dgles1=disabled -Dgles2=enabled)
+	fi
+	# A GL build dir must never be reconfigured as a Vulkan one or the other way round.
+	if [ -f "${MB}/build.ninja" ]; then
+		if [ "${vulkan}" = true ] && [ ! -f "${out}/mesa-vulkan.txt" ]; then
+			echo "build.sh: ${MB} is a GL build; --vulkan needs its own --out" >&2; exit 1
+		elif [ "${vulkan}" = false ] && [ -f "${out}/mesa-vulkan.txt" ]; then
+			echo "build.sh: ${MB} is a --vulkan build; use another --out for GL" >&2; exit 1
+		fi
+	fi
 	if [ ! -f "${MB}/build.ninja" ]; then
 		meson setup "${MB}" "${src}" --cross-file "${cross}" --prefix "${out}/prefix" \
 			--buildtype=debugoptimized -Db_ndebug=true --wrap-mode=nodownload \
-			-Dgallium-drivers=v3d,vc4 -Dvulkan-drivers= -Dplatforms= \
-			-Degl=enabled -Dgbm=enabled -Dglx=disabled -Dopengl=${opengl} -Dgles1=disabled -Dgles2=enabled \
+			"${api_opts[@]}" -Dplatforms= \
 			-Dllvm=disabled -Dspirv-tools=disabled -Dvideo-codecs= -Dgallium-va=disabled \
 			-Dshader-cache=disabled -Dxmlconfig=disabled -Dexpat=disabled -Dzstd=disabled \
 			-Dlibunwind=disabled -Dvalgrind=disabled -Dlmsensors=disabled -Dperfetto=false \
 			-Dbuild-tests=false -Dtools= \
 			> "${out}/mesa-setup.log" 2>&1 || { tail -40 "${out}/mesa-setup.log"; exit 1; }
+		[ "${vulkan}" = true ] && echo "vulkan=true" > "${out}/mesa-vulkan.txt"
 	fi
 	# A build dir configured the other way round would silently keep its old option. A dir
 	# from before this label existed gets it from its own meson summary first.
@@ -256,6 +289,33 @@ EOF
 	echo "  Mesa built: ${nwarn} compiler warning line(s) (${out}/mesa-ninja.log)"
 fi
 [ -f "${MB}/build.ninja" ] || { echo "build.sh: no Mesa build in ${MB} (run without --relink first)" >&2; exit 1; }
+
+if [ "${vulkan}" = true ]; then
+	# --- Vulkan: the static ICD + what a program links with it ------------------------------
+	echo "== v3dv static ICD"
+	icd="${out}/prefix/lib/libvulkan_broadcom.a"
+	[ -f "${icd}" ] || { echo "build.sh: ${icd} not installed (patch 0010 missing?)" >&2; exit 1; }
+	rm -rf "${out}/prefix/include/vulkan" "${out}/prefix/include/vk_video"
+	mkdir -p "${out}/prefix/include"
+	cp -a "${src}/include/vulkan" "${src}/include/vk_video" "${out}/prefix/include/"
+	# The installed archive bundles meson's internal static libraries (vulkan runtime,
+	# wsi, util, NIR, SPIR-V, broadcom compiler); list the rest in link order.
+	{
+		echo "${icd}"
+		echo "${LD_PREFIX}/lib/libdrm.a"
+		echo "${out}/compat/libmesadrm-compat.a"
+		echo "${B}/lib/libz.a"
+	} > "${out}/vulkan-link.txt"
+	isyms="$("${TC}-nm" -g --defined-only "${icd}" 2>/dev/null || true)"
+	for s in vk_icdGetInstanceProcAddr vk_icdNegotiateLoaderICDInterfaceVersion vk_icdGetPhysicalDeviceProcAddr \
+			v3dv_GetInstanceProcAddr wsi_CreateDisplayPlaneSurfaceKHR wsi_display_init_wsi vk_drm_syncobj_get_type; do
+		if grep -qE " [TW] ${s}\$" <<< "${isyms}"; then echo "  symbol ${s}: yes"; else echo "  symbol ${s}: NO"; fi
+	done
+	echo "  ${icd}: $(stat -c %s "${icd}") bytes; $(head -c 8 "${icd}" | tr -d '\n<>!' ) archive"
+	echo "  link list: ${out}/vulkan-link.txt"
+	echo "done"
+	exit 0
+fi
 
 # --- kmscube ----------------------------------------------------------------------------
 echo "== kmscube"
