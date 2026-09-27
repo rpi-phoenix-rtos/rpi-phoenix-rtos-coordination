@@ -83,6 +83,9 @@ export NO_AT_BRIDGE=1
 [ "${GDBUS_DEBUG:-0}" = 1 ] && export G_DBUS_DEBUG=authentication
 export LIBSEAT_BACKEND=noop
 export WLR_BACKENDS=drm,libinput
+# wlroots refuses to start the libinput backend with no devices (m7a-labwc: "libinput initialization
+# failed, no input devices"): allow zero devices for noinput runs and for a keyboard the console still holds.
+export WLR_LIBINPUT_NO_DEVICES=1
 export WLR_RENDERER=${RENDERER}
 export WLR_DRM_DEVICES=/dev/dri/card0
 export WLR_NO_HARDWARE_CURSORS=1

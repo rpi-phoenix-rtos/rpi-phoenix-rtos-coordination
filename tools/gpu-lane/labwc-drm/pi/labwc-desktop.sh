@@ -68,6 +68,9 @@ export XDG_RUNTIME_DIR=/tmp/xdg
 export XDG_CONFIG_DIRS=/etc/xdg
 export LIBSEAT_BACKEND=noop
 export WLR_BACKENDS=drm,libinput
+# wlroots refuses to start the libinput backend with no devices (m7a-labwc: "libinput initialization
+# failed, no input devices"): allow zero devices for noinput runs and for a keyboard the console still holds.
+export WLR_LIBINPUT_NO_DEVICES=1
 export WLR_RENDERER=${RENDERER}
 export WLR_DRM_DEVICES=${DRM_DEVICES-/dev/dri/card0}
 [ -z "${WLR_DRM_DEVICES}" ] && unset WLR_DRM_DEVICES
