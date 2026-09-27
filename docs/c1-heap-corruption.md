@@ -88,6 +88,19 @@ through the allocator, all in the startup window where the fire lands.
 
 ---
 
+### 📋 PRE-REGISTERED 2026-09-27 10:00, before any data — `c1b13`: does C1 still fire after tonight's merges?
+
+Build 13 carries: libc-gaps (real barriers — Mesa's `util_queue_finish` now actually waits; real
+`posix_memalign`), the upstream sync (`atexit` rewrite, `limits.h` types), the ctype and scanf fixes,
+kernel `pollNotify` + interruptible poll wait, core_freq=500 (adopted 09-27 00:45). Any of these could
+move the heap-creation schedule C1's rate depends on. **Method:** 4 all-cold trials (`c1cold-series.sh`
+form: cache cleared before each, `C1_HEAP_TRACE_ALL=1 stk …`, labels `c1b13C1..4`), graded with
+`scripts/c1-idle-table.sh c1b13 <driver-log>`. **Readings:** at the cold rate (4 of 6 in `c1cold`, ~35–65 %)
+P(0 of 4) is small (~2–18 %). ≥ 1 fire → C1 unchanged by the merges (report victim PAs against the fixed
+band `0x083dc000`–`0x084c2000`). **0 of 4 → "enriched towards not firing, n = 4" — never "fixed"**; the
+first suspect is then a changed race start (compare the `late`/`early` mode with `c1cold`), and the next
+step is a longer series, not a claim.
+
 ## 4. What is established
 
 | finding | evidence | strength |
