@@ -23,7 +23,8 @@ S="${root}/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot"
 TC="${root}/.toolchain/aarch64-phoenix/bin/aarch64-phoenix"
 KTREE="${POLLWAKE_KERNEL:-${root}/sources/phoenix-rtos-kernel}"
 
-if "${TC}-nm" "${S}/lib/libphoenix.a" 2>/dev/null | grep -qw 'T pollNotify'; then
+# grep -c, not -q: under pipefail an early-exiting grep -q SIGPIPEs nm and the test reads false.
+if "${TC}-nm" "${S}/lib/libphoenix.a" 2>/dev/null | grep -cw 'T pollNotify' >/dev/null; then
 	echo "pollnotify-obj: pollNotify from the sysroot libphoenix.a" >&2
 	exit 0
 fi
