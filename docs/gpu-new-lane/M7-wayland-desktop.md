@@ -1267,3 +1267,18 @@ title bar), and **fuzzel's launcher** over it listing Appearance, Application Fi
 Midnight Commander, Run Program… and Settings Manager (the XFCE .desktop entries are already staged). `labwc exited
 rc=0`, `SHMSRV stats live=0`, 0 exceptions / EL1 / `Stat failed`. swaybg's 1920×1080 buffer (8 MiB shmsrv) was
 allocated without trouble (the predicted contiguous-memory risk did not occur).
+
+## Result — `m7f-thunar` (chain61, build 18, 2026-09-27 20:44–20:46): ✅ PASS — XFCE's Thunar on Phoenix
+
+Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-204025-m7f-thunar.log`; HDMI **`artifacts/hdmi/20260927-204524-m7f-thunar-tick.png`**: "File System - Thunar" under labwc:
+menu bar, navigation toolbar, location bar `/`, the root-account warning banner, the Places/Devices sidebar, Adwaita
+(PNG) folder icons for `/`, and the status bar (`19 folders | 73 files: 15.4 GiB … | Free space: 10.5 GiB`).
+
+- `XFCE xfconfd activation rc=0 took_s=1`, `via=activation names=org.xfce.Xfconf` (D-Bus bus activation works);
+  `xfconf set_rc=0 get_rc=0 value=hello-2`, the staged Thunar default read back; channels
+  `thunar,xfce4-keyboard-shortcuts,xfce4-panel,xsettings`.
+- Thunar owns `org.xfce.FileManager` + `org.xfce.Thunar` for the whole hold; at stop: `labwc exited rc=0`,
+  `dbus exited rc=0`, settings saved (`thunar.xml`, `xfce-phx-probe.xml`). 0 exceptions / EL1 / `Stat failed`.
+- Expected warnings: no thumbnailer service (`org.freedesktop.thumbnails.Thumbnailer1`), no XKB data files (built-in
+  keymap). **Defect found:** the status bar prints `(%'lu bytes)` literally: libphoenix's printf does not implement
+  the POSIX `'` (thousands grouping) flag → libphoenix follow-up.
