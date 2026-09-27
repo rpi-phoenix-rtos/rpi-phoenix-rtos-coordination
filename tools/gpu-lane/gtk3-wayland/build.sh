@@ -520,6 +520,10 @@ for o in gtk3-hello gtk3-demo gtk3-widget-factory; do
 		grep -qE " [TtWw] ${s}\$" <<< "${syms}" || { echo "    ${o}: symbol ${s} missing"; bad=1; }
 	done
 done
+n="$(grep -c '/org/gtk/libgtk/theme/Adwaita' <<< "$(strings -a "${out}/gtk3-hello-stripped")" || true)"
+m="$(grep -cE ' [Tt] _gtk_register_resource$' <<< "$("${TC}-nm" "${out}/gtk3-hello")" || true)"
+echo "  gtk3-hello: GTK resource bundle (built-in Adwaita theme + icons): paths ${n}, _gtk_register_resource ${m}"
+[ "${n}" != 0 ] && [ "${m}" = 1 ] || bad=1
 n="$(grep -c 'Using the built-in XKB keymap' <<< "$(strings -a "${out}/gtk3-hello-stripped")" || true)"
 m="$(grep -c 'xkb_keymap {' <<< "$(strings -a "${out}/gtk3-hello-stripped")" || true)"
 echo "  gtk3-hello: built-in XKB keymap message ${n}, keymap text ${m} (GTK patch 0003)"

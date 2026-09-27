@@ -529,7 +529,9 @@ symbols** (`XOpenDisplay`, `XInternAtom`, `xcb_connect`, `gdk_x11_display_get_ty
 and present: `gdk_wayland_display_get_type`, `_gdk_wayland_display_open`, `memfd_create`, `__wrap_close`,
 `eglGetProcAddress` (the stand-in), `wl_display_connect`, `xkb_keymap_new_from_string`, `g_vfs_get_local`,
 `pango_cairo_font_map_get_default`, `gdk_pixbuf_new_from_file`; gtk3-hello also `gtk_layer_init_for_window`,
-the built-in keymap message and text. Link warnings beyond libphoenix's attribute notes: 0.
+the built-in keymap message and text, and GTK's resource bundle (`_gtk_register_resource`, the uncompressed gvdb path
+`/org/gtk/libgtk/theme/Adwaita`: the built-in theme and icons are in the binary). Link warnings beyond libphoenix's
+attribute notes: 0.
 
 | artifact (`build-out/`) | file / **stripped** | sha256 stripped (first 16) | staged as |
 |---|---|---|---|
@@ -631,7 +633,7 @@ Allow ~1.3 % UART line corruption; EL0 dumps print twice. GTK/GLib warnings go t
 | 2 | `WESTONDRM gtk env GDK_BACKEND=wayland GTK_THEME=Adwaita GSETTINGS_BACKEND=memory schemas=staged settings_ini=staged` | once per arm | `missing`: staging |
 | 3 | `GTK3HELLO start gtk=3.24.52 glib=2.88.3 GDK_BACKEND=wayland WAYLAND_DISPLAY=wayland-0 XDG_RUNTIME_DIR=/tmp/xdg` | within ~2 s of `client start` (a 16.9 MB exec over NFS) | nothing at all: exec failed (bash error line) or a crash before `main` (EL0 dump: `aarch64-phoenix-addr2line -f -e tools/gpu-lane/gtk3-wayland/build-out/gtk3-hello <pc>`) |
 | 4 | possibly `Gtk-WARNING **: Locale not supported by C library. Using the fallback 'C' locale.` (GTK's `setlocale(LC_ALL, "")`) | allowed | — |
-| 5 | **`Gdk-Message: …: Using the built-in XKB keymap (evdev/pc105/us): no XKB data files`**, and **no** `Failed to create XKB context` | **GTK patch 0003** (without it every GTK program aborts here) | `Failed to create XKB context` / `Failed to create XKB keymap`: a binary without 0003 (sha `8d49230d…`) — stop |
+| 5 | allowed first: libxkbcommon's own stderr, `xkbcommon: ERROR: failed to add default include path /usr/share/X11/xkb` (the exact m6c/m6e line; GDK creates 3 contexts, so up to 3×) and a rules-lookup error for `evdev` (the names compile that fails before the fallback); then **`Gdk-Message: …: Using the built-in XKB keymap (evdev/pc105/us): no XKB data files`**, and **no** `Failed to create XKB context` | **GTK patch 0003** (without it every GTK program aborts here) | `Failed to create XKB context` / `Failed to create XKB keymap`: a binary without 0003 (sha `8d49230d…`) — stop |
 | 6 | `GTK3HELLO init=ok t=<0.1–3> display=wayland-0 backend=wayland` | the GDK Wayland backend connects | `GTK3HELLO init=failed (no display)` + `Gdk-WARNING …cannot open display`/`Failed to connect to Wayland display`: socket/env — compare row 1; a `g_error`/abort with `xdg_wm_base`/`wl_shm` missing: a Weston global GTK requires |
 | 7 | `GTK3HELLO gio dir=/ rc=0 entries=<≈15–25>` | GIO's local `GFile` enumerates the NFS root | `rc=error msg=…`: the GIO local backend on Phoenix — note the message; display still graded |
 | 8 | `GTK3HELLO shown t=… rows=<same N>`; `SHMSRV create id=… ` + `SHMSRV truncate id=… size=8294400 … cap=16777216` (1–2 of them, the fullscreen buffers), smaller ones for the cursor theme are not expected (Weston draws the pointer) | GTK's `memfd_create` reaches shmsrv (patch 0001) | `creating shared memory file (using memfd_create) failed` (Gdk-CRITICAL): shmsrv not running / `ENOSYS`; `SHMSRV FAIL alloc … cap=16777216`: **no 16 MiB contiguous block** — then `Truncating shared memory file failed`, a black screen, and the finding is shmsrv's contiguous-only limit (E1) |
@@ -653,12 +655,18 @@ protocol_version=<4|5>`, a full-width bar anchored at the top) — the xfce4-pan
 
 ### What remains (M7 GTK/XFCE lane)
 
-1. `m7e-gtk3` on the Pi (above), then its labwc arm with `--layer`.
-2. An icon theme subset (Adwaita/hicolor PNGs — Adwaita ≥ 40 is SVG-only and needs librsvg (Rust); use a PNG
+1. **Prefix paths (first, before XFCE):** every package was configured with `--prefix <build-out>/prefix`, so
+   the binaries carry host paths (14 strings in gtk3-hello: GTK's sysconf/data/lib dirs, GIO's module dir, the
+   locale dir). Harmless for GTK 3 (all built in; `XDG_*` take over) but XFCE's libxfce4util/xfconf/garcon read
+   their compiled-in `/etc/xdg/xfce4`, `/usr/share/xfce4` with no override: reconfigure with `--prefix /usr
+   --sysconfdir /etc`, install with `DESTDIR`, and let `pkg-config-phoenix` rewrite the prefix
+   (`--define-prefix`/`PKG_CONFIG_SYSROOT_DIR`), as weston-drm does with `--prefix /usr`.
+2. `m7e-gtk3` on the Pi (above), then its labwc arm with `--layer`.
+3. An icon theme subset (Adwaita/hicolor PNGs — Adwaita ≥ 40 is SVG-only and needs librsvg (Rust); use a PNG
    release, e.g. adwaita-icon-theme 3.38, or GTK's built-ins) and shared-mime-info data (GIO content types for Thunar).
-3. The XFCE libraries on this prefix (libxfce4util, xfconf — needs the D-Bus stage — libxfce4ui, garcon, exo,
+4. The XFCE libraries on this prefix (libxfce4util, xfconf — needs the D-Bus stage — libxfce4ui, garcon, exo,
    libxfce4windowing), then Thunar, xfce4-panel, xfdesktop.
-4. GL in GTK (`GtkGLArea`, gtk3-demo's GL page): link the Mesa `--wayland` EGL closure instead of
+5. GL in GTK (`GtkGLArea`, gtk3-demo's GL page): link the Mesa `--wayland` EGL closure instead of
    `libgtkphx-noegl.a` (as weston-simple-egl does); not needed by XFCE.
 
 ## Pi milestones (pre-registered as each piece lands)
