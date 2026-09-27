@@ -77,9 +77,10 @@ relies on unaligned accesses — a Device mapping.
 `map_pageFault` (`vm/map.c`) never looks at the fault status code:
 
 1. kernel PC and a kernel-map `far`, so it dumps up front
-   (`process_dumpException`: once through `hal_consolePrint` and once through
-   `posix_write(2)`, the second copy followed by `in thread 8 …`, hence "each
-   dump twice");
+   (`process_dumpException`). The log shows each dump twice, the second copy
+   followed by `in thread 8 …`. Inferred, not checked: the second copy is that
+   function's `posix_write(2)`, which reaches the UART here because the faulting
+   process is the console server itself;
 2. `map` = the kernel map; `vm_mapForce(kmap, page, PROT_READ)` finds the entry
    of `msg_map`'s own kernel view, re-forces the same, present PTE and
    **succeeds**;
@@ -150,6 +151,11 @@ device memory is refused as a message payload:
   refuses it; the packed copies in the sender's context never touch it. Only
   user buffers are looked up, so the kernel's own small sends take no extra
   kernel-map lock (the up-front fault dump sends from the kernel stack).
+  New for the packed path: `msg_opack` takes the sender's map lock from the
+  receiver (as `msg_map` already does for unpacked payloads). A sender holding
+  its own map lock while sending a small user-space read buffer would now
+  deadlock. No such path was found: the vm paths that send while holding a map
+  lock (`object_fetch`) use kernel buffers.
 - The tail page's kernel view now takes the memory type of the mapping the tail
   is in (it used the first page's), and the kernel views get only the
   memory-type flags of the source mapping, no longer e.g. `MAP_FIXED`.
@@ -213,6 +219,12 @@ test-msg-devmem                    # fixed kernel only: 13 tests, 0 failures
 
 Build the kernel branch into a `--scope core` image and confirm it ships:
 `strings loader.disk | grep 'refused a payload in device memory'`. Then:
+
+0. **Full boot + the showcase gate** on that image. Page-aligned device
+   payloads that happened to work before (a zero-copy MMIO window) are now
+   refused on aarch64, so any `msg: refused a payload in device memory` line
+   during an ordinary boot or gate run means an in-tree driver or server relied
+   on that. PASS = no such line, gate unchanged.
 
 1. **`mig-q3-fix`**: the same cycle as `mig-q3` (quake3-drm, same staging).
    PASS = 0 `Exception #37: Data Abort (EL1)` lines, and quake3-drm gets past
