@@ -20,12 +20,12 @@ hardware was involved.
 | `libwchar-hosttest` | all 40 wchar functions | no defects; pinned down the P7 UTF-8 limitation |
 | `libnum-hosttest` | `strtol`/`strtoul`/`strtod`… + `%.17g` round-trip | `endptr` lost on overflow; subnormals flushed to zero |
 | `libfmt-hosttest` | the printf **formatter** + format→parse round-trip | ties rounded away from zero |
-| `libtime-hosttest` | `gmtime_r`/`timegm`/`strftime` + `timegm(gmtime_r(t))==t` | 8 signed year/epoch conversions via `%u` |
+| `libtime-hosttest` | `gmtime_r`/`timegm`/`strftime` + `timegm(gmtime_r(t))==t`; `tzdiff`: POSIX TZ strings (`tzset`/`localtime_r`/`mktime`/`%Z %z`) over 67 TZ values, every DST change 1970–2100 ±1 s; `make unity` runs the Pi's `time_tz` group natively | 8 signed year/epoch conversions via `%u`; `asctime` day not padded |
 | `libscanf-hosttest` | `sscanf` return value, values, `%n` | **OOB read of `buf[-1]`**, `%n` miscount, incomplete float items accepted |
 
 ## Why they work at all
 
-* **`objcopy --redefine-sym`** renames only the symbols the file *defines*, so its own calls to
+* **`objcopy --redefine-sym`** renames only the symbols the file *defines* — ⛔ data too (`nm | grep -E ' [TBDC] '`): renaming only `T` left libphoenix's `tzname`/`timezone`/`daylight` interposing on glibc's, so its own calls to
   `malloc`/`strtod`/`strlen` still bind to glibc. `--prefix-symbols` renames the undefined ones
   too and the link dies.
 * A **shim header** supplies the one or two things the target-only headers provide —

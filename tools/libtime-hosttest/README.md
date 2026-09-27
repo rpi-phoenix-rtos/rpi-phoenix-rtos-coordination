@@ -16,7 +16,50 @@ Two independent checks:
    rules, 32-bit boundaries, pre-Epoch), every day boundary from 1950 to 2100, and
    randomised samples spanning roughly 1600–2400.
 
-Everything runs under `TZ=UTC` so the result is deterministic.
+`tdiff` runs under `TZ=UTC` so the result is deterministic.
+
+## `tzdiff` — POSIX TZ strings (added 2026-09-28)
+
+`localtime_r`, `mktime` (all three `tm_isdst` values), `ctime_r`, `strftime` `%Z %z %c %s`,
+`tzname`/`timezone`/`daylight`, for 67 TZ strings: northern/southern DST, default US rules,
+`Jn` vs `n` rules, week-5 = last, negative and >24 h change times, negative DST (Dublin),
+quoted names, half/quarter-hour and seconds offsets, and the fallbacks (zone names, `:` values,
+malformed DST parts).
+
+* glibc runs with `TZDIR=/nonexistent-tzdir`, so it parses TZ as a POSIX string, as libphoenix must.
+* **Transitions come from glibc alone** — a scan for `tm_isdst` flips, then bisection to the
+  second — and each one is probed at −1/0/+1 s and at wall-clock times across the skipped and
+  the repeated hour. Plus the closed identity `mktime(localtime_r(t)) == t`.
+* For the fallback classes glibc parses differently, the reference is the fixed offset
+  libphoenix documents, built from glibc's TZ-independent `gmtime_r`/`timegm`.
+* **KNOWN** (counted, printed, not failures):
+  * `mktime(tm_isdst=-1)` in the repeated hour: glibc's answer depends on the offset its
+    *previous call* cached (priming with a summer vs a winter date flips it). libphoenix takes
+    the earlier instant; the harness requires glibc's to be one of the two valid ones.
+  * glibc answering with an instant that glibc's own `localtime_r` does not read back as the
+    requested wall time (1 case, the permanent-DST idiom `J1/0,J365/25` at a year boundary),
+    excused only when libphoenix's answer does read back correctly **by glibc**.
+  * Fallback zone names: glibc keeps the leading letters (`Europe`), and names `TZ=` `Universal`.
+* DST zones are compared from 1970: before that glibc computes the 1970 changes
+  (`compute_change()` starts from `t = 0` for `year <= 1970`).
+* `stubs.c` models the time zone mutex and aborts on recursive locking, i.e. on what would be a
+  self-deadlock on the target.
+
+```
+make run   LIBPH=<libphoenix tree>                              # tdiff + tzdiff
+make unity LIBPH=<libphoenix tree> TESTS=<phoenix-rtos-tests>   # the Pi's time_tz Unity group, natively
+```
+
+| tree | tzdiff | `make unity` (time_tz) |
+|---|---|---|
+| libphoenix `feat/posix-tz` | **12 932 381 comparisons, 0 diffs** (KNOWN: 1564 repeated-hour, 11 names, 1 glibc) | 12/12 pass |
+| libphoenix master (stub) | **8 116 943 diffs** | 12/12 fail |
+
+⚠ `scripts/run-libc-hosttests.sh` builds against `sources/libphoenix`, so `tzdiff` stays red there
+until `feat/posix-tz` is merged into libphoenix master — that is the test doing its job.
+
+It also found a pre-existing `asctime_r` defect: the day of the month was `%d`, not POSIX's
+`%3d` (`Sat Mar 6` for `Sat Mar  6`).
 
 ## What it found (2026-09-25)
 
