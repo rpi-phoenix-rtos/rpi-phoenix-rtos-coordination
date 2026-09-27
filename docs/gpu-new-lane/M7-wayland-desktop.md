@@ -1303,7 +1303,12 @@ D-Bus 1.16.2 session bus, the new GPU lane's display server.
 (XFCE 4.20 on labwc, the XFCE project's own Wayland setup) on HDMI. Next: xfdesktop quit, TZ, relink after build 19,
 the bench-only rows (menu clicks, window moves, typing), xfsettingsd.
 
-## Result — `m7a2-labwc` (chain61, build 18, 2026-09-27 21:00): ✅ PASS — labwc with the pixman AND the GPU (GLES2) renderer
+## Result — `m7a2-labwc` (chain61, build 18, 2026-09-27 21:00): ✅ pixman PASS; ↩ GLES2 **renderer** up but **never on screen** (corrected 23:59)
+
+↩ **Correction (after m7i, 2026-09-27 23:59):** this arm was graded on log lines only. The same log has four
+`KMS import FAIL client=1 ns=kmsbuf id=3..6 rc=-22 why=foreign_kmsbuf (not supported)`: labwc's GLES2 swapchain
+buffers were refused by rpi4-kms, so nothing it composited reached the plane. m7i's gles2 arm shows the same four
+lines and the HDMI stays on the text console. What stands: GLES2 on V3D 4.2 initialises inside labwc.
 
 Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-205659-m7a2-labwc.log`. With `WLR_LIBINPUT_NO_DEVICES=1` both noinput arms run the full hold: weston-simple-shm served, `labwc exited
 rc=0 after_term_s=1 socket=gone`, 0 exceptions / EL1. The gles2 arm: `[render/gles2/renderer.c:538] Creating GLES2
@@ -1543,3 +1548,28 @@ default `HOLD=0`; otherwise **n/a**, not FAIL):
    `feat/new-lane-wayland-ports`) whose patch files must stay identical: the two new patches (gtk3-wayland glib
    0003, xfdesktop 0002) and the dithered `-Ddefault-backdrop-filename` need copying there.
 4. If `m7i` arm B passes: default `RENDERER=gles2` in `/bin/xfce-session`.
+
+## Result — `m7i-xfce-demo` (chain65, build 20b, 2026-09-27 23:31): ✅ arm A (pixman) PASS — ✗ arm B (gles2) not on screen
+
+Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-233145-m7i-xfce-demo.log`; kernel `f20e96a0` (P11 fix), libphoenix `a41d8d5`.
+
+**Arm A (pixman), every prediction row met:**
+- `/bin/xfce-session` brought up all three servers (`XFCE-SESSION servers v3d-async=up kms=up shm=up`), XFCE came up.
+- The second Thunar went over the bus: `second instance dir=/usr rc=0`. The `usr - Thunar` window is on HDMI
+  (`artifacts/hdmi/20260927-233712-m7i-xfce-demo-tick.png`).
+- Log Out through the `loginctl` stand-in stopped everything with rc=0: thunar, panel, xfdesktop, labwc, dbus;
+  `XFCE-SESSION done rc=0`.
+- 0 `Failed to get system bus`, 0 exceptions.
+- **Local time on the panel clock**: `Sun 27 Sep 23:37`, matching the host.
+- Thunar's status bar: **`2 files: 431.3 KiB (441685 bytes)`**. The printf `'` fix is visible where it was found.
+- The root folder is clean after the export cleanup.
+
+**Arm B (gles2):**
+- The renderer came up: `Creating GLES2 renderer`, `GL renderer: V3D 4.2.14.0`, and the session ran and quit with rc=0.
+- **But HDMI shows the text console for the whole arm**: the four `KMS import FAIL … why=foreign_kmsbuf (not supported)`
+  lines, then labwc `view has no output, not centering`.
+- There is no `KMS console handover disable` in arm B. `libseat` also logs `Failed to open device '/dev/kbd0': Device
+  or resource busy` about once a second.
+- Next step: rpi4-kms must accept a `/kmsbuf` buffer that another client allocated (labwc's GBM swapchain), or
+  wlroots must allocate its scanout through the dumb-buffer path it already uses with pixman. **The demo default
+  stays pixman.**
