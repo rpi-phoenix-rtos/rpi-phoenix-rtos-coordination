@@ -680,3 +680,26 @@ d's extra compute was.
 default. f2 ≥ f + 1.5 fps with a correct picture → propose `r_gpulightmapupdate 0` as the Phoenix default (a 0009 in the
 same pattern; note that it also disables GPU culling). If both land, the remaining gap to the old lane's 22.9 is the
 ~20 ms/frame of GPU idle, not compute.
+
+## Result — `perf-vkq-f` / `perf-vkq-f2` (chain64, build 19, 2026-09-27 22:40 / 22:52)
+
+Median over the whole run (111 fps lines each), same spawn view as `-e` (HDMI frames `…-perf-vkq-f-tick.png`,
+`…-perf-vkq-f2-tick.png`, 23:01–23:03):
+
+| run | change vs `-e` | fps median (min–max) | CSD | verdict vs pre-registration |
+|---|---|---|---|---|
+| e (baseline) | — | 16.99 | 19.4 ms/frame | — |
+| **f** | patch 0008: raster water warp | **18.07** (11.2–18.1) | no 64×64 class ✓; lightmap class `0x0b85f004` n=5127 (was 1805) | ✓ fps in 18.3–22 band's low edge (+1.1 ≥ +1 rule) |
+| **f2** | f + `r_gpulightmapupdate 0` | **29.70** (13.9–29.85) | **0 jobs** ✓ | ✓✓ above the 21–25 prediction; **old lane 22.9 beaten by 6.8 fps** |
+
+- f2 sits at **exactly 30.00 fps** in the flipstat line, which is half of 60 Hz. That points to the swap waiting
+  for every second vblank, so its real capacity is probably higher. Measure it with pacing off before quoting it
+  as a ceiling.
+- Picture: f2 and f frames of the spawn view are the same scene, lit, torches present, 0 exceptions.
+  The spawn view shows no water surface, so the warp itself is not visible here.
+- In f, the lightmap shader ran 2.8× as often as in e: with the warp gone, more frames per second each dispatch
+  lightmap updates. That is why f gained only 1.1 fps, and it confirms the lightmap shader (single-threaded,
+  `thr4=0`) as the other big cost.
+- **Decision rules (pre-registered): both met.** Promote 0008 into `patches-vkquake/`, and make CPU lightmaps
+  (`r_gpulightmapupdate 0`) the Phoenix default in a new patch. Then run `mig-vkq` on the promoted binary, with
+  a water scene added to the grade.

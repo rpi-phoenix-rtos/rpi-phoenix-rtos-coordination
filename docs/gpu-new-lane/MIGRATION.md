@@ -288,6 +288,81 @@ old strings (`/dev/fb0`, `phoenix-map.cfg`) and none of the new ones.
     (research doc §migration: "kept only for boot splash/fbcon until M2, then reduced") — a separate,
     measured change after the migration gate.
 
+### 4.1 Ports (graphics) — the new lane stored in phoenix-rtos-ports [built]
+
+Owner request 2026-09-27: "make sure that all the ports (the recent ones) are correctly stored in
+phoenix-rtos-ports". The graphics half of the new lane (this section; the Wayland-desktop half —
+labwc, gtk3, dbus, xfce — is branch `feat/new-lane-wayland-ports`) is now a set of framework recipes on
+phoenix-rtos-ports branch **`feat/new-lane-graphics-ports`** (pushed to `publish`, **not merged**). They
+are **opt-in**: no project `ports.yaml` names them, so the default image is unchanged (items 1–6 above
+are what adopting them means). The old-lane ports (`sdl2`, the four game ports, `xorg_server`, …) are
+untouched and build exactly as before.
+
+| Package | Port | From `tools/gpu-lane/` | Licence | Notes |
+|---|---|---|---|---|
+| libdrm 2.4.134-16-gb97cbde + Phoenix backend | `libdrm_phoenix` 2.4.134 | `libdrm-phoenix` (+ `v3d-async/v3da_proto.h`, `kms/kms_proto.h`) | MIT AND BSD-3-Clause | patches 0001–0004; backend + wire headers vendored in `glue/phoenix/`; `drmprobe`; installs `share/phoenix-newlane/newlane.subr` (the lane's build helpers) |
+| Mesa 26.2.0 | `mesa_drm` 26.2.0 | `mesa-drm` (+ `vulkan-drm/phxvk`) | MIT | patches 0001–0016, `glue/compat`; always the GLES build, USE `opengl` / `wayland` / `x11` / `vulkan` add the tools' `mesa-gl` / `build-out-wayland` / `build-out-x11` / `build-out-vulkan` builds, each with its own prefix + `link-*.txt`; `vulkan/phxvk/` |
+| kmscube f60e50e | `kmscube_drm` 0.0.1 | `mesa-drm` (kmscube part) | MIT | |
+| SDL 2.30.12 KMSDRM | `sdl2_kmsdrm` 2.30.12 | `sdl2-drm` (build.sh steps 2–3) | Zlib | patches 0001–0009 (0009 = frame pacing), overlay (Phoenix HID + audio); USE `vulkan` = the SDL_VULKAN=ON variant (`patches/vulkan/0001`); installs `share/gamedrm/` (hooks, `check-swap-order.sh`, `relink-sdl-gl-game.subr`) |
+| quakespasm-drm | `quakespasm_drm` 0.97.0 | `sdl2-drm` (build.sh step 4) | GPL-2.0-or-later | compiled from source; the quakespasm port's patch + glue vendored |
+| yquake2-drm + quake2-drm | `yquake2_drm` 8.71 | `sdl2-drm/build-quake2-drm.sh` | GPL-2.0-or-later | RELINK of the `yquake2` port's objects (a `depends`), control relink byte-identity kept |
+| quake3e-drm + quake3-drm | `quake3_drm` 1.32 | `sdl2-drm/build-quake3-drm.sh` | GPL-2.0-or-later | relink of the `quake3` port's objects |
+| supertuxkart-drm + stk-drm | `supertuxkart_drm` 1.4 | `sdl2-drm/build-stk-drm.sh` | GPL-3.0-or-later | relink of the `supertuxkart` port's CMake build |
+| vkquake-drm + vkq-drm | `vkquake_drm` 1.34 | `sdl2-drm/build-vkquake-drm.sh` | GPL-2.0-or-later | upstream TU list, patches-vkquake 0001–0007, `glue/vkqdrm/`; SPIR-V read from the `vkquake` port's `glue/` |
+| vkcube-drm | `vkcube_drm` 1.4.350 | `vulkan-drm` | Apache-2.0 | Vulkan-Tools vulkan-sdk-1.4.350.0 + patch 0001 |
+| libwayland 1.24.0, wayland-protocols 1.45, wlphx-compat, shmsrv | `wayland` 1.24.0 | `weston-drm` | MIT AND BSD-3-Clause | shmsrv folded in (a port needs an upstream archive); installs `compat/include`, `mesa-compat/include`, `deps/libffi` |
+| Weston 14.0.2 (+ xkbcommon 1.7.0, display-info 0.2.0, seatd 0.9.1, libinput 1.26.2 header, shims) | `weston` 14.0.2 | `weston-drm` | MIT AND BSD-3-Clause AND BSD-2-Clause | patches weston 0001–0008, seatd 0001–0004 |
+| libxshmfence 1.3.2 Phoenix backend (G16) | `libxshmfence_phoenix` 1.3.2 | `x11-drm` | MIT | |
+| libepoxy 1.5.10 (static EGL) | `libepoxy` 1.5.10 | `xorg-drm` | MIT | a port of its own (the Wayland half's gtk3 builds its own copy: merge overlap) |
+| Xorg-drm (xorg-server 21.1.24, modesetting + glamor, phxhid) + libxcvt 0.1.2 + eglx11-demo | `xorg_server_drm` 21.1.24 | `xorg-drm`, `x11-drm` | MIT AND BSD-3-Clause | the `build-out-noshim` configuration; USE `x11demo` = eglx11-demo (pulls `mesa_drm[x11]`); `startx-drm`, `xorg-drm.conf` |
+
+**Conventions (all new-lane ports).** (a) A **private install prefix**: `conflicts="<name>!=<version>"`
+makes port_manager install into `versioned-ports/<name>-<version>/` instead of the shared prefix the old
+lane compiles and links from (a conflict with the old-lane counterpart, e.g. `sdl2`, would make the
+relink clones unresolvable). (b) **No framework CFLAGS**: they carry `-I<prefix>/include`, which holds the
+old lane's GL/X11 headers; `newlane.subr` gives every recipe the tools scripts' exact flag set, the E7
+`-pthread`-dropping wrappers, meson cross files and private dependency views. (c) **USE `rootfs`**: binaries
+always go to `<prefix>/bin` (+ unstripped `prog/`), into the image's rootfs only with USE `rootfs` — so
+`scripts/build-port.sh` of a new-lane port changes nothing the image picks up. (d) Every patch/glue file
+is a **copy** of the `tools/gpu-lane` file; `scripts/check-gpu-lane-ports-sync.sh [<ports dir>]` compares
+all of them (**160 files, 45 mappings: identical**). The `tools/gpu-lane/*/build.sh` headers point at their
+ports. Dependency mapping `mesa_drm[opengl]`, `sdl2_kmsdrm[vulkan]` etc. is resolved by port_manager (USE
+propagation); `--dry build` of all 15 ports with `rootfs` resolves (the dependency closure is correct,
+incl. `mesa_drm +opengl +vulkan +wayland +x11`).
+
+**libdrm-phoenix: decision.** A port now (upstream libdrm + our patches; the Phoenix backend and the two
+server wire headers vendored in `libdrm_phoenix/glue/phoenix/`). It is our code and speaks the servers'
+protocols, so it moves with the servers (item 7: `gpu/rpi4-v3d-async`, `video/rpi4-kms` → phoenix-rtos-devices):
+then the wire headers come from devices and the backend can move to phoenix-rtos-corelibs, leaving the
+port as plain upstream libdrm + patches. Until then the vendored copies are held identical by the sync check.
+
+**Verification** (scratch buildroot `scripts/make-scratch-buildroot.sh`, never the image's `.buildroot`;
+`RPI4B_BUILDROOT=<scratch> RPI4B_PORTS_DIR=<ports worktree> scripts/build-port.sh <port>`; outputs compared
+with `scripts/gpu-lane-compare.sh` against the tools builds): see §4.2 below for the verdicts.
+
+**Not converted:** the host tests (`*/hosttest`), the tools' variant/debug switches (`--relink`,
+`--extra-patches`, `--variant`, `VKQDRM_EXTRA_PATCHES`), `pi/xorg-drm-m4a.sh` (a one-off cycle script), the
+servers themselves (`kms`, `v3d-async` → devices, item 7) and the probes (`kmsprobe`, `exportprobe`, …).
+Known debt carried into the ports, all documented in the recipes: `xorg_server_drm` depends on the
+old-lane `xorg_server` port for `libmd.a` (SHA1); `yquake2_drm` / `quake3_drm` / `supertuxkart_drm` relink the
+old ports' objects (item 4: fold the substitution into those ports' `p_build` when the old lane goes);
+`vkquake_drm` reads the SPIR-V from the `vkquake` port's `glue/`.
+
+**Adopting a port in an image** (after the branch is merged): list it in the project `ports.yaml` with
+USE `rootfs`, e.g.
+
+```yaml
+  - name: yquake2_drm
+    use: [rootfs]
+```
+
+**Merge:** phoenix-rtos-ports `feat/new-lane-graphics-ports` into `master` (new directories only — a
+fast-forward-able branch off `35abace`), before `feat/new-lane-wayland-ports`: of the desktop half only
+`labwc_desktop` depends on this branch (`libdrm_phoenix`, `mesa_drm[wayland]`). Overlap to resolve at that
+merge: its `wayland_phoenix` covers what this branch's `wayland` port builds (libwayland + wlphx-compat), and
+its gtk3 builds its own libepoxy next to this branch's `libepoxy` port — one of each should remain. Then run
+`scripts/check-gpu-lane-ports-sync.sh` on the merged tree.
+
 ### Ports (Wayland desktop) — the Wayland-desktop half stored in phoenix-rtos-ports [built: dbus, wayland_phoenix]
 
 Owner request 2026-09-27 ("make sure that all the ports (the recent ones) are correctly stored in
@@ -815,6 +890,7 @@ build 18 (P10 + vm_mapFlags + fork fix). Every cycle: 0 exceptions, 0 EL1 dumps,
 | mig-all-qs | **44.45** (n=59, 22–57) | ~40 | `*-mig-all-qs.log` |
 | mig-all-q3 | **59.40** (n=59) | 30+ (P10 blocked it on the new lane until build 17) | `*-mig-all-q3.log` |
 | mig-all-vkq | 17.11 (n=45, 15.5–18.7) | **22.9** | `*-mig-all-vkq.log` |
+| perf-vkq-f2 (0008 raster warp + CPU lightmaps; not yet promoted) | **29.70** (n=111; flipstat 30.00 = half-vblank) | **22.9** | `*-perf-vkq-f2.log`, [vkquake-perf.md](vkquake-perf.md) |
 | mig-all-stk | **12.43** (n=65) | 8.3 (Pi OS: 11.7) | `*-mig-all-stk.log` |
 
 **Decides:** the migration gate's game half passes for 4 of 5 at or above the old lane. vkQuake is the one
