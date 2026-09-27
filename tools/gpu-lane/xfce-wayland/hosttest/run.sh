@@ -60,4 +60,9 @@ check activation '^XFCE done' 'the script ends'
 run explicit ACTIVATION=0
 check explicit '^XFCE xfconfd started pid=' 'negative control: no activation call, xfconfd started directly'
 check explicit '^XFCE xfconfd via=explicit names=org.xfce.Xfconf' 'negative control: via=explicit'
+# compat daemon() (compat/src/xfphx_misc.c), natively under ASan/UBSan
+cc -O1 -g -std=gnu11 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all \
+	-Ddaemon=xfphx_daemon -include fcntl.h -o "${out}/daemon_test" "${here}/hosttest/daemon_test.c" "${here}/compat/src/xfphx_misc.c"
+# (stdio redirected to a file: the noclose case must see something other than /dev/null)
+if "${out}/daemon_test" > "${out}/daemon.log" 2>&1 < /dev/zero; then echo "  PASS compat: daemon() (${out}/daemon.log: $(grep -c '^  PASS' "${out}/daemon.log") checks)"; else cat "${out}/daemon.log"; fail=1; fi
 [ "${fail}" = 0 ] && echo "ALL PASS" || { echo "FAILURES (logs in ${out})"; exit 1; }

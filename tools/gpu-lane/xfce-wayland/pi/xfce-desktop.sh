@@ -22,7 +22,8 @@
 #   4  labwc (-C /etc/xdg/labwc-xfce), wait for its socket
 #   5  the session's clients; hold with heartbeats that also list the org.xfce.* names
 #      on the bus (which XFCE programs registered)
-#   6  SIGTERM: Thunar, labwc (its autostart children lose the display), xfconfd, the bus;
+#   6  stop: SIGTERM to Thunar; `xfce4-panel --quit` and `xfdesktop --quit` (over the bus: the
+#      panel saves its layout); SIGTERM to labwc, xfconfd (if started here), the bus;
 #      then the programs' own logs (the autostarted ones write to /tmp/xfce-logs/)
 #
 # Preconditions (earlier psh commands of the same cycle):
@@ -293,6 +294,21 @@ if [ -n "${tpid}" ]; then
 	kill -TERM "${tpid}" 2>/dev/null
 	wait "${tpid}" 2>/dev/null
 	echo "XFCE thunar exited rc=$? t=${SECONDS}"
+fi
+# The panel and the desktop are labwc's autostart children (no pid here). GTK programs
+# abort when their display goes away, and an aborted panel saves nothing: ask them to
+# quit over the bus first (each --quit is one more short-lived instance of the program).
+if [ "${SESSION}" = xfce ] && [ -n "${sock}" ]; then
+	/bin/xfce4-panel --quit > "${LOGS}/panel-quit.log" 2>&1
+	rc_p=$?
+	/bin/xfdesktop --quit > "${LOGS}/xfdesktop-quit.log" 2>&1
+	rc_d=$?
+	i=0
+	while { has_name org.xfce.Panel || has_name org.xfce.xfdesktop; } && [ "${i}" -lt 15 ]; do
+		sleep 1
+		i=$((i + 1))
+	done
+	echo "XFCE quit panel_rc=${rc_p} xfdesktop_rc=${rc_d} wait_s=${i} names=$(bus_names) t=${SECONDS}"
 fi
 if alive "${lpid}"; then
 	kill -TERM "${lpid}" 2>/dev/null
