@@ -325,11 +325,18 @@ fi
 
 # A second Thunar: GApplication forwards its command line to the running instance over the
 # bus (org.gtk.Application.CommandLine) and exits; the running Thunar opens a new window.
+# (Only once the first one owns org.xfce.Thunar: started earlier, the second would become
+# the primary itself.)
 if [ -n "${sock}" ] && [ -n "${THUNAR_SECOND}" ]; then
-	sleep 10
+	i=0
+	while ! has_name org.xfce.Thunar && [ "${i}" -lt 60 ]; do
+		sleep 2
+		i=$((i + 2))
+	done
+	sleep 3
 	s0=${SECONDS}
 	bounded "${LOGS}/thunar-second.log" 30 "${THUNAR}" "${THUNAR_SECOND}"
-	echo "XFCE thunar second instance dir=${THUNAR_SECOND} rc=$? took_s=$((SECONDS - s0)) names=$(bus_names) t=${SECONDS}"
+	echo "XFCE thunar second instance dir=${THUNAR_SECOND} rc=$? took_s=$((SECONDS - s0)) waited_for_name_s=${i} names=$(bus_names) t=${SECONDS}"
 fi
 
 # Hold until HOLD seconds are over (then LOGOUT_CMD, or the logout file directly), the

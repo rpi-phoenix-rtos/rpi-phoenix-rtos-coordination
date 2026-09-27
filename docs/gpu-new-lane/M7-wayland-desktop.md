@@ -1460,7 +1460,7 @@ because / was full; `build-out-m7i/` holds `bin/`, `stage-demo/`, both MANIFESTs
 | staged file | sha256 (first 16) |
 |---|---|
 | `/bin/xfce-session` (`pi/xfce-session`) | `ca4a8ac1444ab1f0` |
-| `/bin/xfce-desktop-2.sh` (`pi/xfce-desktop.sh`) | `a753d2505eae4818` |
+| `/bin/xfce-desktop-2.sh` (`pi/xfce-desktop.sh`; re-staged 22:05: the second Thunar waits for the first one's bus name) | `8421b2c05ecf66c3` |
 | `/usr/lib/xfce-demo/bin/loginctl` (`pi/xfce-demo-loginctl`) | `7256bdfacad1f3d8` |
 | `/usr/lib/xfce-demo/bin/{thunar,xfce4-panel,xfdesktop,xfce4-settings-manager,xfce4-appearance-settings,xfce4-appfinder}` | the table above |
 | `/etc/xdg/labwc-xfce-demo/{rc.xml,menu.xml,autostart,environment}` | `6c8021559a78bfc5`, `e51d55eaaa344c3c`, `dcf3bb44f35c3289`, `0cf86d7cb34e9923` |
@@ -1486,14 +1486,16 @@ GLES2 renderer on V3D (proven for labwc-2 by m7a2-labwc)?
     "export HOLD=60" \
     "export VERBOSE=1" \
     "export THUNAR_SECOND=/usr" \
-    "/bin/xfce-session" \
+    "/bin/bash /bin/xfce-session" \
     "export RENDERER=gles2" \
-    "/bin/xfce-session" \
+    "/bin/bash /bin/xfce-session" \
     "/bin/shmsrv -s" \
     "/bin/kmstest-poll stats"
 ```
 
-Arm A = the first `/bin/xfce-session` (pixman), arm B = the second (gles2). Grade:
+Arm A = the first `xfce-session` (pixman), arm B = the second (gles2). The automated arms run it through
+`/bin/bash` as every earlier cycle did; the bare `/bin/xfce-session` (libphoenix `execve()` follows `#!`, not yet
+seen from psh on the UART) is bench item 1. Grade:
 `grep -a -E '^XFCE|^XFCE-SESSION|Thunar|thunar|xfdesktop|xfce4-panel|GLES2|OpenGL|renderer|Gtk-|GLib-|^SHMSRV |^KMSTEST ' …m7i-xfce-demo.log`,
 `./scripts/uart-summary.sh m7i-xfce-demo`. Allow ~1.3 % UART line corruption; EL0 dumps print twice.
 
@@ -1503,7 +1505,7 @@ Arm A = the first `/bin/xfce-session` (pixman), arm B = the second (gles2). Grad
 | 2 | `XFCE start session=xfce … labwc=/bin/labwc-2 thunar=/usr/lib/xfce-demo/bin/thunar missing=none`; `XFCE env PATH=/usr/lib/xfce-demo/bin:/bin:/usr/bin XDG_CONFIG_DIRS=/etc/xdg/xfce-demo:/etc/xdg XDG_DATA_DIRS=/usr/share/xfce-demo:/usr/share TZ=CET-1CEST,…` | staging complete | `missing=<paths>`: staging |
 | 3 | bus/xfconfd/round trip as m7h rows 1 (`via=activation`), `labwc start conf=/etc/xdg/labwc-xfce-demo files=rc.xml,menu.xml,autostart,environment`, `socket=up`; labwc: `run session script /etc/xdg/labwc-xfce-demo/autostart`, no `exited with 127`, **B: `Creating GLES2 renderer`, `GL renderer: V3D 4.2…`** | as m7h; B as m7a2 | B falls back to pixman or labwc exits: m7a2's GLES2 rows; the rest of B still graded |
 | 4 | `XFCE session up panel=registered`, `XFCE thunar start: /usr/lib/xfce-demo/bin/thunar /` | the panel within 60 s | `panel=missing`: `XFCE log xfce4-panel:` |
-| 5 | **`XFCE thunar second instance dir=/usr rc=0 took_s=<1–15>`** and `names=` still with one `org.xfce.Thunar` | **the GLib fix: the remote command line reaches the running Thunar** (a second window, `/usr`, appears on HDMI) | `rc=143` + `The connection is closed` in `XFCE log thunar-second:`: the binary lacks GLib 0003 (`strings -a /usr/lib/xfce-demo/bin/thunar` cannot show it: check the staged sha); `rc=124`: the primary did not answer |
+| 5 | **`XFCE thunar second instance dir=/usr rc=0 took_s=<1–15> waited_for_name_s=<0–30>`** (it starts only once the first Thunar owns `org.xfce.Thunar`) and `names=` still with one `org.xfce.Thunar` | **the GLib fix: the remote command line reaches the running Thunar** (a second window, `/usr`, appears on HDMI) | `rc=143` + `The connection is closed` in `XFCE log thunar-second:`: the binary lacks GLib 0003 (`strings -a /usr/lib/xfce-demo/bin/thunar` cannot show it: check the staged sha); `rc=124`: the primary did not answer |
 | 6 | `XFCE hold … names=org.xfce.Panel,org.xfce.FileManager,org.xfce.Thunar,org.xfce.xfdesktop,org.xfce.Xfconf` ×6 | as m7h | — |
 | 7 | **no** `xfdesktop-WARNING … Failed to get system bus` in `XFCE log xfdesktop:` | patch 0002 | the warning: the old xfdesktop ran (`XFDESKTOP`) |
 | 8 | HDMI (dense from `labwc socket=up`, arm A and B): the **dithered** wallpaper (smooth, no 11-px bands); the panel: menu button, **three launcher icons** (terminal, Thunar, app finder), window buttons (two Thunar windows: `/` and `/usr`), **the clock in CEST = UART time + 2 h** (e.g. log 19:05 UTC → `Sun 27 Sep  21:05`), a **Log Out** icon at the right end (sensitive = `loginctl` found on PATH); Thunar's status bar **`… (NNNN bytes)`** with digits, no `%'lu` | the demo desktop | clock = UTC: `TZ` not in the panel's environment (row 2); Log Out greyed: `loginctl` not found (PATH); `%'lu`: an old Thunar |
@@ -1516,7 +1518,8 @@ Arm A = the first `/bin/xfce-session` (pixman), arm B = the second (gles2). Grad
 **Bench-only checklist** (a person at the Pi with the USB keyboard + mouse; type **`/bin/xfce-session`** at psh,
 default `HOLD=0`; otherwise **n/a**, not FAIL):
 
-1. The desktop appears (wallpaper, panel, a Thunar window) within ~2 min of the command; the clock shows local time.
+1. Type **`/bin/xfce-session`** (bare: the shebang path; if psh reports an exec error, `/bin/bash /bin/xfce-session`
+   and note it). The desktop appears (wallpaper, panel, a Thunar window) within ~2 min; the clock shows local time.
 2. **Applications menu** (panel, left) → System → **Foot**: a terminal opens; **type** `ls /` + Enter — output appears.
 3. Tap **Super**: the application finder opens; type `thu`, Enter → Thunar (a new window of the running Thunar).
 4. **Super+E** → another Thunar window; double click `usr`; **drag** a Thunar window by its title bar; resize it
