@@ -340,3 +340,21 @@ every window ≥ 38, pace-qs mean ≥ 1.3 × ctl, 0 SDL errors, 0 faults, and cl
   slightly positive.
 * vkquake-drm goes through the Vulkan WSI (`VK_KHR_display`), not this function, so it is unaffected.
 * `GAMEDRM_EXIT_SECS` also lets the showcase gate run several SDL clones in one boot.
+
+## Result — `pace-q2` / `pace-qs` (queue44, 2026-09-27 15:17–15:35): ✅ PASS both
+
+Same boot per cycle, control then fix; `GAMEDRM_EXIT_SECS=60`. Logs `artifacts/rpi4b-uart/*-pace-{q2,qs}.log`;
+HDMI `artifacts/hdmi/20260927-152043-pace-q2-tick.png` (demo on screen, in-game counter **60.00fps**, no tearing).
+
+| cycle | arm | fps median (steady windows) | range | KMS flipstat |
+|---|---|---|---|---|
+| pace-q2 | ctl | **30.00** | 30.00 | flips 1368: vbl1 11, **vbl2 1337**, deferred 1367, `q2a_us_avg=14752` |
+| pace-q2 | **pace** | **60.00** (8 of 8 steady windows; one 52.0 ramp) | 52.0–60.00 | flips 2692: **vbl1 2659**, vbl2 24, deferred 2683, applied_gate 2682, `q2a_us_avg=7768` |
+| pace-qs | ctl | **30.00** | 25.8–39.5 | flips 1859: vbl1 358, vbl2 1500 |
+| pace-qs | **pace** | **46.05** (1.53×) | 36.8–52.4 | flips 2713: vbl1 2066, vbl2 646, deferred 2622 |
+
+0 exceptions in both cycles; the second game started fine after the first exited (no audio fallback needed).
+The model's predictions held: q2 ≥ 38 in every steady window (60), qs ≥ 1.3× (1.53×), control reproduces mig-q2.
+
+**Decides:** adopt `patches-pace/0001` into the default SDL patch set and relink every SDL clone (§7 gate met).
+Quake 2 on the new lane is now **60 fps vsynced vs 38.86 unsynced on the old lane**.
