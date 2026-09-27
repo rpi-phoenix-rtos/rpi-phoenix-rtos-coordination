@@ -459,6 +459,17 @@ that line exists only under `+timedemo`, so the game runs to `--max-cmd-secs`, a
 FAIL is fixed in the clone's build or the stack before the gate (§5) is attempted. The gate itself runs
 only after all six apps have a PASSing single cycle and the servers start at boot.
 
+## 6r. Results — `mig-q2`, `mig-q3`, `mig-vkq` (queue37, 2026-09-27 12:53–13:14)
+
+| cycle | log | result | fps (new / old lane) | notes |
+|---|---|---|---|---|
+| `mig-q2` | `rpi4b-uart-20260927-125308-mig-q2.log` | ✅ renders demo on HDMI (`…-130003-mig-q2-tick.png`), 0 exceptions, 0 `MESA` errors | **30.00** every window / 38.86 unsynced | `swapstat swap_us_avg≈24 500`: vsync-locked double buffering; the frame just misses one vblank, so every frame costs two. → [frame-pacing.md](frame-pacing.md) (agent) |
+| `mig-q3` | `rpi4b-uart-20260927-130015-mig-q3.log` | ✗ **kernel fault storm**: `Data Abort (EL1)` in `pl011-tty`, `hal_memcpy` ← `msg_map` (`proc/msg.c:134`), alignment fault on an uncached sender page, ~4200 dumps over 300 s, right after `6 bots parsed` / an ANSI escape | — / 30+ | new register row **P10**; kernel fix + which quake3-drm buffer is uncached: agent, [misc/2026-09-27-el1-msg-map-uncached-fault.md](../misc/2026-09-27-el1-msg-map-uncached-fault.md) |
+| `mig-vkq` | `rpi4b-uart-20260927-130722-mig-vkq.log` | ✅ renders the start map, lit, torches visible (`…-131422-mig-vkq-tick.png`); 0 exceptions; `phxvk: first present result=0` | **10.4** steady (45 windows) / 73 unsynced | ✗ a 7× regression. ROI torch check INCONCLUSIVE (no frame at the reference viewpoint, mae 13.4 > 8.0) |
+
+**Decides:** the SDL KMSDRM route works for both GL games that got a result, and so does SDL's Vulkan/`VK_KHR_display` route. The gate
+cannot pass yet: quake3-drm crashes the kernel (P10), and vkQuake is 7× slower than the old lane.
+
 ## 7. Deletion list — the old lane (after the gate passes)
 
 Delete only after §5 passes on the migrated image; one sibling commit per repo, then a coordination
