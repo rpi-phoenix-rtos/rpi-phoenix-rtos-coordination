@@ -1,7 +1,7 @@
 From cfae20258bcf17838a24fe7232eba1a8f9df8193 Mon Sep 17 00:00:00 2001
 From: Phoenix gpu-lane <noreply@anthropic.com>
 Date: Sun, 27 Sep 2026 04:47:16 +0200
-Subject: [PATCH 5/7] os-support: treat Phoenix-RTOS like the other POSIX
+Subject: [PATCH 5/8] os-support: treat Phoenix-RTOS like the other POSIX
  systems
 
 xf86_OSlib.h pulls in the POSIX headers (termios, sys/stat, sys/mman,

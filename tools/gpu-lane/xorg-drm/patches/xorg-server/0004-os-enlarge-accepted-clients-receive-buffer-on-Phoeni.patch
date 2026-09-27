@@ -1,7 +1,7 @@
 From a7ef69783974a3ce69ea7809b3dee700557405d1 Mon Sep 17 00:00:00 2001
 From: Phoenix gpu-lane <noreply@anthropic.com>
 Date: Sun, 27 Sep 2026 04:40:36 +0200
-Subject: [PATCH 4/7] os: enlarge accepted clients' receive buffer on
+Subject: [PATCH 4/8] os: enlarge accepted clients' receive buffer on
  Phoenix-RTOS
 
 Phoenix-RTOS AF_UNIX sockets default to a one-page receive ring, so large

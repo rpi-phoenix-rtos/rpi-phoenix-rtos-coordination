@@ -1,7 +1,7 @@
 From 47fc346b7688c66c6042d2ab4c1b4146e689be80 Mon Sep 17 00:00:00 2001
 From: Phoenix gpu-lane <noreply@anthropic.com>
 Date: Sun, 27 Sep 2026 04:47:16 +0200
-Subject: [PATCH 7/7] glamor: build glamor_glx.c only when epoxy has GLX
+Subject: [PATCH 7/8] glamor: build glamor_glx.c only when epoxy has GLX
 
 glamor_glx.c includes <epoxy/glx.h>, which an EGL-only libepoxy
 (-Dglx=no) does not install.  Its only entry point,

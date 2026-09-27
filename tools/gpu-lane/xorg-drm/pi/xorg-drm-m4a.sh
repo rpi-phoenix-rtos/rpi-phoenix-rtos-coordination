@@ -3,7 +3,7 @@
 # xorg-drm-m4a.sh -- run ON THE Pi at the psh prompt:  /bin/bash /bin/xorg-drm-m4a.sh
 #
 # First Pi cycle of the new-lane X server (docs/gpu-new-lane/M4-xorg-modesetting.md,
-# pre-registered cycle m4a-xorg-drm). psh has no '&' and no ';', so this script does the
+# pre-registered cycles m4a-xorg-drm, m4b-xorg-drm). psh has no '&' and no ';', so this script does the
 # job control: it starts Xorg-drm :1 in the background, waits for its socket, runs one
 # X client from the old lane's export (xclock, seconds hand = one repaint per second),
 # holds, then ends the client -- Xorg-drm runs with -terminate, so it exits when its last
@@ -46,17 +46,34 @@ DRMPHX_TRACE=${DRMPHX_TRACE:-1} "${XSRV}" :1 -config "${CONF}" -logfile /var/log
 xpid=$!
 echo "XORGDRM server pid=${xpid}"
 
+# Is a background job of this shell still running? (bash's own job table: no kill -0)
+alive() {
+	local p
+	for p in $(jobs -rp); do
+		[ "${p}" = "$1" ] && return 0
+	done
+	return 1
+}
+
 # The listening socket exists before the screens are initialised (dix creates it first);
-# a client that connects early simply waits for the first Dispatch.
+# a client that connects early simply waits for the first Dispatch. Stop waiting as soon
+# as the server has exited (m4a waited the full 90 s for a server that died at 3 s).
 i=0
-while [ ! -e /tmp/.X11-unix/X1 ] && [ "${i}" -lt 90 ]; do
+while [ ! -e /tmp/.X11-unix/X1 ] && [ "${i}" -lt 90 ] && alive "${xpid}"; do
 	sleep 1
 	i=$((i + 1))
 done
 if [ -e /tmp/.X11-unix/X1 ]; then
 	echo "XORGDRM socket=up wait_s=${i} t=${SECONDS}"
 else
-	echo "XORGDRM socket=missing wait_s=${i} t=${SECONDS}"
+	alive "${xpid}" && state=running || state=exited
+	echo "XORGDRM socket=missing wait_s=${i} server=${state} t=${SECONDS}"
+	if [ "${state}" = exited ]; then
+		wait "${xpid}" 2>/dev/null
+		echo "XORGDRM server exited rc=$? before its socket appeared; see (EE) above and /var/log/Xorg-drm.1.log"
+		echo "XORGDRM done"
+		exit 1
+	fi
 fi
 
 echo "XORGDRM client start: DISPLAY=:1 ${CLIENT}"

@@ -418,9 +418,14 @@ for s in Xphoenix '[fbdev]' fbdevKeyboardDriver fbdevMouseDriver 'FBCONSETMODE('
 	echo "  old-lane string '${s}': ${n}"
 	[ "${n}" = 0 ] || bad=1
 done
+# xorg-server patch 0008: without libpciaccess xf86PostProbe() must not abort a framebuffer-slot
+# (legacy Probe) screen -- the m4a failure; the FatalError string is then dead code and gone.
+n=$(grep -cF -- 'Cannot run in framebuffer mode' <<< "${strs}" || true)
+echo "  fb-slot abort string (must be 0, patch 0008): ${n}"
+[ "${n}" = 0 ] || bad=1
 if grep -qE ' [Tt] dlopen$' <<< "${syms}"; then
 	echo "  note: dlopen is linked (the loader's fallback for modules outside the builtin table; libepoxy never calls it)"
 fi
-[ "${bad}" = 0 ] || { echo "build.sh: old-lane strings present" >&2; exit 1; }
+[ "${bad}" = 0 ] || { echo "build.sh: verification failed (see above)" >&2; exit 1; }
 sha256sum "${out}/Xorg-drm" "${out}/Xorg-drm-stripped" | sed "s|${out}/||; s/^/  /"
 echo "done"

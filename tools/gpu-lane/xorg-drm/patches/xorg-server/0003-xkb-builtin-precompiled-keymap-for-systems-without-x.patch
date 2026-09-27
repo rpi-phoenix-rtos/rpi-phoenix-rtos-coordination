@@ -1,7 +1,7 @@
 From c6663fc42ce1df3dc9dbadc203c03eeea22073d9 Mon Sep 17 00:00:00 2001
 From: Phoenix gpu-lane <noreply@anthropic.com>
 Date: Sun, 27 Sep 2026 04:40:22 +0200
-Subject: [PATCH 3/7] xkb: builtin precompiled keymap for systems without
+Subject: [PATCH 3/8] xkb: builtin precompiled keymap for systems without
  xkbcomp
 
 Phoenix-RTOS has neither xkbcomp nor xkeyboard-config: RunXkbComp() cannot

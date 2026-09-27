@@ -1,7 +1,7 @@
 From 6bb480cc6bccfb7b5bbc0ad1957df4fffb1a83f9 Mon Sep 17 00:00:00 2001
 From: Phoenix gpu-lane <noreply@anthropic.com>
 Date: Sun, 27 Sep 2026 04:47:16 +0200
-Subject: [PATCH 6/7] modesetting: build without libpciaccess
+Subject: [PATCH 6/8] modesetting: build without libpciaccess
 
 driver.c does not compile with -Dpciaccess=false: it includes xf86Pci.h
 (which includes <pciaccess.h> unconditionally) and references the PCI match

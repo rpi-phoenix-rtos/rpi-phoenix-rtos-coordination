@@ -1,7 +1,7 @@
 From 736e5d35ede8eee1423beadbcdc7f911785c0892 Mon Sep 17 00:00:00 2001
 From: Phoenix gpu-lane <noreply@anthropic.com>
 Date: Sun, 27 Sep 2026 04:39:31 +0200
-Subject: [PATCH 2/7] loader: builtin-module table for servers without a
+Subject: [PATCH 2/8] loader: builtin-module table for servers without a
  dynamic linker
 
 With XORG_BUILTIN_MODULES the program that links the server together with
