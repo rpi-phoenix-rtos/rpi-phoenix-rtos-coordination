@@ -105,7 +105,7 @@ What changes versus the old lane's desktop: no `glReadPixels` + shadow + `write(
 | `patches/libepoxy/0001` | static-EGL dispatch (§3) |
 | `src/xorg_drm_builtin.c` | the builtin-module table (4 modules, 22 symbols) |
 | `src/phxhid.c`, `src/phxhid_evdev_map.h` | the input driver; the HID→evdev table is the old kdrive server's (FreeBSD `evdev_usb_scancodes[]`, BSD-2 notice kept) |
-| `compat/include/{ctype,signal,fcntl,dlfcn}.h`, `compat/xorg_drm_compat.c` | libphoenix-gap shim (§6) |
+| `compat/include/{signal,fcntl,dlfcn}.h`, `compat/xorg_drm_compat.c` | libphoenix-gap shim (§6). `ctype.h` removed 2026-09-27 (`bcc712c49`): libphoenix `156422a` fixed the macros at source, and `build.sh` now refuses a sysroot without that fix; Pi check `m4n-noshim` (`Xorg-drm-noshim` `fdf44b91a1bf3227`) |
 | `conf/xorg-drm.conf` | the server configuration (stage as `/etc/X11/xorg-drm.conf`) |
 | `pi/xorg-drm-m4a.sh` | the Pi-side cycle script: bash does the job control psh lacks (§10) |
 
