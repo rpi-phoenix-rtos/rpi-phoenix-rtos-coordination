@@ -1377,3 +1377,10 @@ gain is CPU∥GPU; U1 was an estimate from E2's time split, and 1.45 vs 1.43 is 
 Raspberry Pi OS on the same board (E2c: 11.74 / 11.63 fps, render queue 97 % busy) the new lane is at
 **parity**. Remaining M1 items: why the pipeline never overlaps (Mesa's in-syncs serialise bin after the
 previous render?), and an old-lane quakespasm run at core 500.
+
+### Same-clock quakespasm A/B (core 500) — closes the owed item
+
+Old lane `quakespasm +timedemo demo1` on build 10 (queue19c, 2026-09-27 05:23): **33.4 fps**, 0 exceptions.
+New lane `quakespasm-v3da` with the EINVAL-fixed server (queue13): **40.4 fps**. **+21 %** at the same
+core clock (different images — build 10 vs build 9, both core_freq=500; build 10 changed only libc and
+the old lane's barrier shim). P2-B's +26 % was 38.2 vs 30.4 at core 250 with ~5 % flattering drops.
