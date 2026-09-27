@@ -49,8 +49,12 @@ drm_public void *__wrap_mmap(void *addr, size_t length, int prot, int flags, int
 	}
 	if ((offset == 0) && (drmphx_prime_fd_lookup(fd, &m) == 0)) {
 		/* a dma-buf descriptor: the export's memory type is mandatory (E1) */
-		return __real_mmap(addr, length, prot,
+		void *p = __real_mmap(addr, length, prot,
 			(flags & MAP_FIXED) | ((m.cache == KMS_CACHE_UNCACHED) ? MAP_UNCACHED : 0), fd, 0);
+		if (drmphx_trace_enabled() != 0) {
+			drmphx_trace_mmap("dmabuf", fd, 0, length, p);
+		}
+		return p;
 	}
 	return __real_mmap(addr, length, prot, flags, fd, offset);
 }

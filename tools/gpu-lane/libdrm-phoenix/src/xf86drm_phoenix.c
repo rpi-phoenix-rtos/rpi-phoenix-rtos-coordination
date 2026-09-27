@@ -39,6 +39,7 @@
 #include "xf86drm.h"
 #include "xf86drm_phoenix.h"
 #include "drm_phoenix_priv.h"
+#include "v3d_drm.h"
 
 
 /* libphoenix: the canonical path a descriptor was opened under (no header). */
@@ -136,6 +137,297 @@ static const char *resolve_node(const char *canonical, const char *legacy)
 		return legacy;
 	}
 	return NULL;
+}
+
+
+/* ========================================================================= */
+/* Opt-in trace (DRMPHX_TRACE)                                                */
+/* ========================================================================= */
+
+#define TRACE_FIRST 16u    /* every call of one request number up to this count... */
+#define TRACE_EVERY 256u   /* ...then one call in this many (60 Hz flip/submit loops) */
+
+static int trace_state = -1;             /* -1 = environment not read yet */
+static uint32_t trace_count[2][256];     /* [render server?][request number] */
+
+
+int drmphx_trace_enabled(void)
+{
+	const char *s;
+
+	if (trace_state < 0) {
+		s = getenv("DRMPHX_TRACE");
+		trace_state = ((s != NULL) && (s[0] != '\0') && (strcmp(s, "0") != 0)) ? 1 : 0;
+	}
+	return trace_state;
+}
+
+
+static void trace_emit(const char *line, int len)
+{
+	ssize_t w;
+
+	if (len <= 0) {
+		return;
+	}
+	w = write(STDERR_FILENO, line, ((size_t)len < 511u) ? (size_t)len : 511u);   /* one write per line */
+	(void)w;
+}
+
+
+static const char *trace_node(const drmphx_conn_t *c)
+{
+	if (c == NULL) {
+		return "?";
+	}
+	if (c->srv == DRMPHX_SRV_KMS) {
+		return "card0";
+	}
+	return (c->node_type == DRM_NODE_PRIMARY) ? "card1" : "render";
+}
+
+
+#define TN(x) case DRMPHX_IOC_NR(DRM_IOCTL_##x): return "DRM_IOCTL_" #x
+#define TV(x) case DRM_COMMAND_BASE + DRM_V3D_##x: return "DRM_IOCTL_V3D_" #x
+
+static const char *trace_name(int srv, unsigned nr)
+{
+	switch (nr) {
+		TN(VERSION); TN(GET_UNIQUE); TN(GET_MAGIC); TN(SET_VERSION); TN(GET_CAP); TN(SET_CLIENT_CAP);
+		TN(SET_MASTER); TN(DROP_MASTER); TN(AUTH_MAGIC); TN(WAIT_VBLANK);
+		TN(GEM_CLOSE); TN(GEM_FLINK); TN(GEM_OPEN); TN(PRIME_HANDLE_TO_FD); TN(PRIME_FD_TO_HANDLE);
+		TN(MODE_GETRESOURCES); TN(MODE_GETCRTC); TN(MODE_SETCRTC); TN(MODE_CURSOR); TN(MODE_GETGAMMA);
+		TN(MODE_SETGAMMA); TN(MODE_GETENCODER); TN(MODE_GETCONNECTOR); TN(MODE_GETPROPERTY);
+		TN(MODE_SETPROPERTY); TN(MODE_GETPROPBLOB); TN(MODE_GETFB); TN(MODE_ADDFB); TN(MODE_RMFB);
+		TN(MODE_PAGE_FLIP); TN(MODE_DIRTYFB); TN(MODE_CREATE_DUMB); TN(MODE_MAP_DUMB); TN(MODE_DESTROY_DUMB);
+		TN(MODE_GETPLANERESOURCES); TN(MODE_GETPLANE); TN(MODE_SETPLANE); TN(MODE_ADDFB2);
+		TN(MODE_OBJ_GETPROPERTIES); TN(MODE_OBJ_SETPROPERTY); TN(MODE_CURSOR2); TN(MODE_ATOMIC);
+		TN(MODE_CREATEPROPBLOB); TN(MODE_DESTROYPROPBLOB); TN(MODE_GETFB2); TN(MODE_CLOSEFB);
+		TN(CRTC_GET_SEQUENCE); TN(CRTC_QUEUE_SEQUENCE);
+		TN(SYNCOBJ_CREATE); TN(SYNCOBJ_DESTROY); TN(SYNCOBJ_HANDLE_TO_FD); TN(SYNCOBJ_FD_TO_HANDLE);
+		TN(SYNCOBJ_WAIT); TN(SYNCOBJ_RESET); TN(SYNCOBJ_SIGNAL); TN(SYNCOBJ_TIMELINE_WAIT);
+		TN(SYNCOBJ_QUERY); TN(SYNCOBJ_TRANSFER); TN(SYNCOBJ_TIMELINE_SIGNAL); TN(SYNCOBJ_EVENTFD);
+		default: break;
+	}
+	if (srv == DRMPHX_SRV_V3D) {
+		switch (nr) {
+			TV(SUBMIT_CL); TV(WAIT_BO); TV(CREATE_BO); TV(MMAP_BO); TV(GET_PARAM); TV(GET_BO_OFFSET);
+			TV(SUBMIT_TFU); TV(SUBMIT_CSD); TV(PERFMON_CREATE); TV(PERFMON_DESTROY);
+			TV(PERFMON_GET_VALUES); TV(SUBMIT_CPU); TV(PERFMON_GET_COUNTER); TV(PERFMON_SET_GLOBAL);
+			default: break;
+		}
+	}
+	return NULL;
+}
+
+#undef TN
+#undef TV
+
+
+/* The key arguments of the requests on the GBM/EGL/KMS path, read after the call
+ * (inputs are unchanged, outputs filled on success). */
+static void trace_args(char *b, size_t n, int srv, unsigned nr, const void *arg)
+{
+	char path[DRMPHX_NODE_PATH_MAX];
+
+	b[0] = '\0';
+	if (arg == NULL) {
+		return;
+	}
+	switch (nr) {
+		case DRMPHX_IOC_NR(DRM_IOCTL_GET_CAP):
+		case DRMPHX_IOC_NR(DRM_IOCTL_SET_CLIENT_CAP): {
+			const struct drm_get_cap *g = arg;   /* same layout as drm_set_client_cap */
+			(void)snprintf(b, n, " cap=0x%llx value=0x%llx", (unsigned long long)g->capability,
+				(unsigned long long)g->value);
+			return;
+		}
+		case DRMPHX_IOC_NR(DRM_IOCTL_GEM_CLOSE):
+			(void)snprintf(b, n, " handle=%u", ((const struct drm_gem_close *)arg)->handle);
+			return;
+		case DRMPHX_IOC_NR(DRM_IOCTL_PRIME_HANDLE_TO_FD):
+		case DRMPHX_IOC_NR(DRM_IOCTL_PRIME_FD_TO_HANDLE): {
+			const struct drm_prime_handle *p = arg;
+			if ((p->fd < 0) || (sys_fdpath(p->fd, path, sizeof(path)) < 0)) {
+				(void)snprintf(path, sizeof(path), "-");
+			}
+			(void)snprintf(b, n, " handle=%u flags=0x%x fd=%d fdpath=%s", p->handle, p->flags, p->fd, path);
+			return;
+		}
+		case DRMPHX_IOC_NR(DRM_IOCTL_MODE_CREATE_DUMB): {
+			const struct drm_mode_create_dumb *d = arg;
+			(void)snprintf(b, n, " w=%u h=%u bpp=%u flags=0x%x handle=%u pitch=%u size=%llu", d->width, d->height,
+				d->bpp, d->flags, d->handle, d->pitch, (unsigned long long)d->size);
+			return;
+		}
+		case DRMPHX_IOC_NR(DRM_IOCTL_MODE_MAP_DUMB): {
+			const struct drm_mode_map_dumb *d = arg;
+			(void)snprintf(b, n, " handle=%u offset=0x%llx", d->handle, (unsigned long long)d->offset);
+			return;
+		}
+		case DRMPHX_IOC_NR(DRM_IOCTL_MODE_DESTROY_DUMB):
+			(void)snprintf(b, n, " handle=%u", ((const struct drm_mode_destroy_dumb *)arg)->handle);
+			return;
+		case DRMPHX_IOC_NR(DRM_IOCTL_MODE_ADDFB2): {
+			const struct drm_mode_fb_cmd2 *f = arg;
+			(void)snprintf(b, n, " %ux%u fmt=0x%08x flags=0x%x handle=%u pitch=%u offset=%u mod=0x%llx fb=%u",
+				f->width, f->height, f->pixel_format, f->flags, f->handles[0], f->pitches[0], f->offsets[0],
+				(unsigned long long)f->modifier[0], f->fb_id);
+			return;
+		}
+		case DRMPHX_IOC_NR(DRM_IOCTL_MODE_ADDFB): {
+			const struct drm_mode_fb_cmd *f = arg;
+			(void)snprintf(b, n, " %ux%u bpp=%u depth=%u handle=%u pitch=%u fb=%u", f->width, f->height, f->bpp,
+				f->depth, f->handle, f->pitch, f->fb_id);
+			return;
+		}
+		case DRMPHX_IOC_NR(DRM_IOCTL_MODE_RMFB):
+		case DRMPHX_IOC_NR(DRM_IOCTL_MODE_CLOSEFB):
+			(void)snprintf(b, n, " fb=%u", *(const unsigned int *)arg);
+			return;
+		case DRMPHX_IOC_NR(DRM_IOCTL_MODE_SETCRTC):
+		case DRMPHX_IOC_NR(DRM_IOCTL_MODE_GETCRTC): {
+			const struct drm_mode_crtc *cr = arg;
+			(void)snprintf(b, n, " crtc=0x%x fb=%u x=%u y=%u connectors=%u mode_valid=%u mode=%ux%u", cr->crtc_id,
+				cr->fb_id, cr->x, cr->y, cr->count_connectors, cr->mode_valid, cr->mode.hdisplay, cr->mode.vdisplay);
+			return;
+		}
+		case DRMPHX_IOC_NR(DRM_IOCTL_MODE_PAGE_FLIP): {
+			const struct drm_mode_crtc_page_flip *pf = arg;
+			(void)snprintf(b, n, " crtc=0x%x fb=%u flags=0x%x user_data=0x%llx", pf->crtc_id, pf->fb_id, pf->flags,
+				(unsigned long long)pf->user_data);
+			return;
+		}
+		case DRMPHX_IOC_NR(DRM_IOCTL_MODE_ATOMIC): {
+			const struct drm_mode_atomic *a = arg;
+			(void)snprintf(b, n, " flags=0x%x objs=%u", a->flags, a->count_objs);
+			return;
+		}
+		case DRMPHX_IOC_NR(DRM_IOCTL_MODE_GETRESOURCES): {
+			const struct drm_mode_card_res *r = arg;
+			(void)snprintf(b, n, " fbs=%u crtcs=%u connectors=%u encoders=%u", r->count_fbs, r->count_crtcs,
+				r->count_connectors, r->count_encoders);
+			return;
+		}
+		case DRMPHX_IOC_NR(DRM_IOCTL_MODE_GETCONNECTOR): {
+			const struct drm_mode_get_connector *gc = arg;
+			(void)snprintf(b, n, " id=0x%x connection=%u modes=%u encoder=0x%x", gc->connector_id, gc->connection,
+				gc->count_modes, gc->encoder_id);
+			return;
+		}
+		case DRMPHX_IOC_NR(DRM_IOCTL_WAIT_VBLANK): {
+			const union drm_wait_vblank *w = arg;
+			(void)snprintf(b, n, " type=0x%x seq=%u", (unsigned)w->request.type, w->reply.sequence);
+			return;
+		}
+		case DRMPHX_IOC_NR(DRM_IOCTL_SYNCOBJ_CREATE): {
+			const struct drm_syncobj_create *s = arg;
+			(void)snprintf(b, n, " flags=0x%x handle=%u", s->flags, s->handle);
+			return;
+		}
+		case DRMPHX_IOC_NR(DRM_IOCTL_SYNCOBJ_DESTROY):
+			(void)snprintf(b, n, " handle=%u", ((const struct drm_syncobj_destroy *)arg)->handle);
+			return;
+		case DRMPHX_IOC_NR(DRM_IOCTL_SYNCOBJ_HANDLE_TO_FD):
+		case DRMPHX_IOC_NR(DRM_IOCTL_SYNCOBJ_FD_TO_HANDLE): {
+			const struct drm_syncobj_handle *s = arg;
+			(void)snprintf(b, n, " handle=%u flags=0x%x fd=%d", s->handle, s->flags, s->fd);
+			return;
+		}
+		case DRMPHX_IOC_NR(DRM_IOCTL_SYNCOBJ_WAIT): {
+			const struct drm_syncobj_wait *s = arg;
+			(void)snprintf(b, n, " count=%u flags=0x%x timeout_ns=%lld first=%u", s->count_handles, s->flags,
+				(long long)s->timeout_nsec, s->first_signaled);
+			return;
+		}
+		default:
+			break;
+	}
+	if (srv != DRMPHX_SRV_V3D) {
+		return;
+	}
+	switch (nr) {
+		case DRM_COMMAND_BASE + DRM_V3D_CREATE_BO: {
+			const struct drm_v3d_create_bo *c = arg;
+			(void)snprintf(b, n, " size=%u flags=0x%x handle=%u offset=0x%x", c->size, c->flags, c->handle, c->offset);
+			return;
+		}
+		case DRM_COMMAND_BASE + DRM_V3D_MMAP_BO: {
+			const struct drm_v3d_mmap_bo *m = arg;
+			(void)snprintf(b, n, " handle=%u offset=0x%llx", m->handle, (unsigned long long)m->offset);
+			return;
+		}
+		case DRM_COMMAND_BASE + DRM_V3D_GET_BO_OFFSET: {
+			const struct drm_v3d_get_bo_offset *g = arg;
+			(void)snprintf(b, n, " handle=%u offset=0x%x", g->handle, g->offset);
+			return;
+		}
+		case DRM_COMMAND_BASE + DRM_V3D_GET_PARAM: {
+			const struct drm_v3d_get_param *g = arg;
+			(void)snprintf(b, n, " param=%u value=0x%llx", g->param, (unsigned long long)g->value);
+			return;
+		}
+		case DRM_COMMAND_BASE + DRM_V3D_WAIT_BO: {
+			const struct drm_v3d_wait_bo *w = arg;
+			(void)snprintf(b, n, " handle=%u timeout_ns=%llu", w->handle, (unsigned long long)w->timeout_ns);
+			return;
+		}
+		case DRM_COMMAND_BASE + DRM_V3D_SUBMIT_CL: {
+			const struct drm_v3d_submit_cl *s = arg;
+			(void)snprintf(b, n, " bcl=0x%x-0x%x rcl=0x%x-0x%x bos=%u flags=0x%x in_bcl=%u in_rcl=%u out=%u ext=%s",
+				s->bcl_start, s->bcl_end, s->rcl_start, s->rcl_end, s->bo_handle_count, s->flags, s->in_sync_bcl,
+				s->in_sync_rcl, s->out_sync, (s->extensions != 0u) ? "yes" : "no");
+			return;
+		}
+		case DRM_COMMAND_BASE + DRM_V3D_SUBMIT_TFU: {
+			const struct drm_v3d_submit_tfu *s = arg;
+			(void)snprintf(b, n, " bo0=%u flags=0x%x in=%u out=%u", s->bo_handles[0], s->flags, s->in_sync, s->out_sync);
+			return;
+		}
+		case DRM_COMMAND_BASE + DRM_V3D_SUBMIT_CSD: {
+			const struct drm_v3d_submit_csd *s = arg;
+			(void)snprintf(b, n, " bos=%u flags=0x%x in=%u out=%u", s->bo_handle_count, s->flags, s->in_sync, s->out_sync);
+			return;
+		}
+		default:
+			break;
+	}
+}
+
+
+static void trace_ioctl(const drmphx_conn_t *c, int srv, int fd, unsigned nr, const void *arg, int rc)
+{
+	char args[256], line[512], nbuf[24];
+	const char *name;
+	uint32_t k;
+	int len;
+
+	k = __atomic_add_fetch(&trace_count[(srv == DRMPHX_SRV_V3D) ? 1 : 0][nr & 0xffu], 1u, __ATOMIC_RELAXED);
+	if ((k > TRACE_FIRST) && ((k % TRACE_EVERY) != 0u)) {
+		return;
+	}
+	name = trace_name(srv, nr);
+	if (name == NULL) {
+		(void)snprintf(nbuf, sizeof(nbuf), "DRM_IOCTL_0x%02x", nr);
+		name = nbuf;
+	}
+	trace_args(args, sizeof(args), srv, nr, arg);
+	len = snprintf(line, sizeof(line), "DRMPHX ioctl node=%s fd=%d nr=0x%02x name=%s rc=%d errno=%d n=%u%s\n",
+		trace_node(c), fd, nr, name, (rc == 0) ? 0 : -1, (rc == 0) ? 0 : -rc, k, args);
+	trace_emit(line, len);
+}
+
+
+void drmphx_trace_mmap(const char *kind, int fd, off_t offset, size_t len, const void *res)
+{
+	char line[192];
+	int n, err = errno;
+
+	n = snprintf(line, sizeof(line), "DRMPHX mmap kind=%s fd=%d offset=0x%llx handle=%u len=%zu ptr=%p errno=%d\n", kind, fd,
+		(unsigned long long)offset, DRMPHX_TOKEN_OK(offset) ? DRMPHX_TOKEN_HANDLE(offset) : 0u, len,
+		(res == MAP_FAILED) ? NULL : res, (res == MAP_FAILED) ? err : 0);
+	trace_emit(line, n);
+	errno = err;   /* the caller of a failed mmap() reads it */
 }
 
 
@@ -289,6 +581,13 @@ static int drmphx_get(int fd, drmphx_conn_t **out)
 	(void)pthread_mutex_unlock(&G.lock);
 
 	rc = identify(fd, path, &n);   /* IPC: outside the global lock */
+	if (drmphx_trace_enabled() != 0) {
+		char line[192];
+		int len = snprintf(line, sizeof(line), "DRMPHX conn fd=%d path=%s node=%s port=%u client=%llu rc=%d\n", fd, path,
+			(rc == 0) ? trace_node(n) : "?", (rc == 0) ? (unsigned)n->oid.port : 0u,
+			(rc == 0) ? (unsigned long long)n->oid.id : 0ull, rc);
+		trace_emit(line, len);
+	}
 	if (rc != 0) {
 		return rc;
 	}
@@ -453,19 +752,29 @@ int drm_phoenix_ioctl(int fd, unsigned long request, void *arg)
 {
 	unsigned nr = DRMPHX_IOC_NR(request);
 	drmphx_conn_t *c;
-	int rc, tries;
+	int rc, tries, srv;
 
 	if (DRMPHX_IOC_TYPE(request) != DRM_IOCTL_BASE) {
+		if (drmphx_trace_enabled() != 0) {
+			trace_ioctl(NULL, DRMPHX_SRV_NONE, fd, nr, NULL, -ENOTTY);
+		}
 		return drmphx_fail(-ENOTTY);
 	}
 	for (tries = 0; tries < 2; tries++) {
 		rc = drmphx_get(fd, &c);
 		if (rc != 0) {
+			if (drmphx_trace_enabled() != 0) {
+				trace_ioctl(NULL, DRMPHX_SRV_NONE, fd, nr, NULL, rc);
+			}
 			return drmphx_fail(rc);
 		}
+		srv = c->srv;
 		rc = generic_ioctl(c, nr, arg);
 		if (rc == 1) {
 			rc = (c->srv == DRMPHX_SRV_KMS) ? drmphx_kms_ioctl(c, fd, nr, arg) : drmphx_v3d_ioctl(c, fd, nr, arg);
+		}
+		if (drmphx_trace_enabled() != 0) {
+			trace_ioctl(c, srv, fd, nr, arg, rc);
 		}
 		drmphx_put(c);
 		if (rc != -EBADF) {
@@ -752,7 +1061,7 @@ void *drmphx_map_memref(uint16_t kind, uint16_t cache, uint32_t port, uint64_t s
 /* mmap() for DRM descriptors: `offset` is the token MMAP_BO / MAP_DUMB answered.
  * A PRIME descriptor ("/kmsbuf/<id>") maps with the export's memory type. Any
  * other descriptor falls through to mmap() unchanged. */
-drm_public void *drmPhoenixMmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset)
+static void *phx_mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset)
 {
 	drmphx_conn_t *c;
 	kms_memref_t km;
@@ -792,6 +1101,17 @@ drm_public void *drmPhoenixMmap(void *addr, size_t length, int prot, int flags, 
 		return MAP_FAILED;
 	}
 	return drmphx_map_memref(vm.kind, vm.cache, vm.port, vm.size, vm.addr, length, prot, addr, fixed);
+}
+
+
+drm_public void *drmPhoenixMmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset)
+{
+	void *p = phx_mmap(addr, length, prot, flags, fd, offset);
+
+	if ((drmphx_trace_enabled() != 0) && (fd >= 0) && (DRMPHX_TOKEN_OK(offset) || (offset == 0))) {
+		drmphx_trace_mmap(DRMPHX_TOKEN_OK(offset) ? "token" : "fd0", fd, offset, length, p);
+	}
+	return p;
 }
 
 

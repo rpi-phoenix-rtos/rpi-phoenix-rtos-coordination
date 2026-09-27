@@ -158,6 +158,12 @@ int drmphx_syncfile_get(int fd, v3da_fence_t *f);
 void *drmphx_map_memref(uint16_t kind, uint16_t cache, uint32_t port, uint64_t size, uint64_t addr, size_t len,
 	int prot, void *hint, int fixed);
 
+/* Opt-in trace (environment DRMPHX_TRACE set and not "0"): one "DRMPHX ..." line
+ * on stderr per DRM ioctl (rate-limited per request number), per identified
+ * descriptor and per DRM buffer mapping. Off: one load and a branch per call. */
+int drmphx_trace_enabled(void);
+void drmphx_trace_mmap(const char *kind, int fd, off_t offset, size_t len, const void *res);
+
 
 /* ------------------------------------------------------------------------- */
 /* Per-server marshalling                                                     */

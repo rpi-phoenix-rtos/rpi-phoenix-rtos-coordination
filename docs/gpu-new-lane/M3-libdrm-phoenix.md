@@ -8,7 +8,11 @@ C), §4.4, §4.6 and §5 (M3). Builds on [E7](E7-drm-userspace-build.md) (the li
 [M1](M1-async-render-server.md) (`rpi4-v3d-async`, `v3da_proto.h`) and
 [M2](M2-kms-server.md) (`rpi4-kms`, `kms_proto.h`).
 
-**Status (2026-09-27):** part 2 closed server gaps G2/G1/G3/G10 and library G13 — see
+**Status (2026-09-27, latest):** the first kmscube run (`m3p3-kmscube`) crashed at `eglMakeCurrent`. The cause is a
+Mesa OS gate (`caps.dmabuf` never queried on Phoenix), fixed in Mesa patch 0008. See
+[M3 part 3 — first kmscube run: analysis](#m3-part-3--first-kmscube-run-analysis-2026-09-27); the next cycle,
+`m3p3b-kmscube`, is pre-registered there.
+**Earlier:** part 2 closed server gaps G2/G1/G3/G10 and library G13 — see
 [M3 part 2](#m3-part-2--server-gaps-closed-2026-09-27) (host-tested, Pi cycle pre-registered). Part 1: code complete, **builds** (static `libdrm.a` + `drmprobe` for aarch64-phoenix,
 the backend has 0 compiler warnings under libdrm's own warning set), **host-tested** (134 logic checks
 + the real `drmprobe` against fake servers, both PASS), **no Pi cycle yet** — the cycle is
@@ -720,6 +724,8 @@ lane's fork checkout is never touched), `mesa-build/`, `prefix/` (`ninja install
 | 0005 | `u_vbuf: NULL-check the translate object` (fork `f342ce50282`) | +12 | genuine fix (aarch64 has only `translate_generic`) |
 | 0006 | `u_vbuf: do not silently drop draws on the index-unrolling path` (fork `aa916f2f060`) | +42/−1 | genuine fix, `__phoenix__`-gated (Q3 world black) |
 | 0007 | `v3d: force EZ off on Phoenix 26.2` (fork `2728620c216`) | +15 | **droppable**: the old lane's proven wedge-avoidance config, kept for parity; E2b questions it (render-phase slowness). Delete the file to measure without it. |
+| 0008 | `gallium/u_screen: query DRM_CAP_PRIME on Phoenix-RTOS too` | +2/−1 | **added after the first Pi run** — the fix for the m3p3 crash ([analysis](#m3-part-3--first-kmscube-run-analysis-2026-09-27)) |
+| 0009 | `egl/drm: treat a GBM back buffer without a DRI image as an allocation failure` | +12 | defensive (upstream error path), same analysis |
 
 The cherry-picks carry `(cherry picked from commit …)`. Not taken from the fork: every old-lane hook
 (E7 §3.3), the RASTER-scanout pair (`4363822955b`/`34a448d6a29` — on the DRM path the scan-out
@@ -944,3 +950,212 @@ export, G4); 0 exceptions, 0 faults. Log `artifacts/rpi4b-uart/*-m3p2-drmprobe.l
   user data `0x4b4d5300 + i`).
 
 Next: `m3p3-kmscube` (queued, queue18) — Mesa GBM/EGL on this stack.
+
+## M3 part 3 — first kmscube run: analysis (2026-09-27)
+
+**Status:** root cause found by static analysis of the log and the binary. It is a **one-line Mesa OS gate**:
+nothing in libdrm-phoenix or either server was wrong on this path. Fixed (Mesa patch 0008), plus a
+defensive error-path patch (0009) and the opt-in `DRMPHX_TRACE` in libdrm-phoenix. Rebuilt and
+host-tested. **No Pi cycle yet**: pre-registered below. **No server changed.** Nothing committed or staged.
+
+### The failure (cycle `m3p3-kmscube`, `artifacts/rpi4b-uart/rpi4b-uart-20260927-042056-m3p3-kmscube.log`)
+
+All three kmscube runs got through `gbm_create_device` (`KMS srv fstat answered`, `V3DA srv fstat answered
+… port=render`), `eglInitialize` on the GBM platform and the kmsro screen (`Using display … EGL version
+1.5`, both extension lists). They then died with `Data Abort (EL0)` at `pc=0x9279c8`, `far=0`, before the
+`OpenGL ES 2.x information:` block, which kmscube prints after `eglMakeCurrent`. addr2line on the
+unstripped binary (now `build-out/kmscube-m3p3a`) plus the stack words:
+
+```
+0x9279c8 dri2_allocate_textures       frontends/dri/dri2.c:280   texture = images.back->texture
+0x927718 dri2_allocate_textures       dri2.c:207                 (return from dri_image_drawable_get_buffers)
+0x9276a4 dri_image_drawable_get_buffers dri2.c:157               (getBuffers = dri2_drm_image_get_buffers)
+0x923340 dri_st_framebuffer_validate  dri_drawable.c:79          (st validate at the first eglMakeCurrent)
+```
+
+The disassembly shows `ldr x0,[sp,#128]` (= `images.back`) then `ldr x28,[x0]` with `x0 = 0`. So
+**`images.back` itself was NULL**, not its texture (`texture` is at offset 0 of `struct dri_image`, hence `far=0`).
+There were no `V3DA srv import` lines, and `kmstest stats` afterwards showed `bos=0 exports=0 applied=0`.
+
+### The path, and where it went wrong
+
+`eglMakeCurrent` → st framebuffer validate → `dri2_drm_image_get_buffers` (`platform_drm.c:327`) →
+`get_back_bo` → the surface came from `gbm_surface_create_with_modifiers(&LINEAR, 1)` (kmscube
+`common.c:166`, flags = `GBM_BO_USE_SCANOUT` only) → `gbm_bo_create_with_modifiers2` →
+**`gbm_dri_bo_create` (`gbm_dri.c:902`): `if (usage & GBM_BO_USE_WRITE || !dri->has_dmabuf_export) return
+create_dumb(…)`**.
+
+`has_dmabuf_export` comes from `pscreen->caps.dmabuf & DRM_PRIME_CAP_EXPORT` (`gbm_dri.c:1246`).
+`caps.dmabuf` is filled in only by `u_init_pipe_screen_caps` (`gallium/auxiliary/util/u_screen.c:135`):
+
+```c
+#if defined(HAVE_LIBDRM) && (DETECT_OS_LINUX || DETECT_OS_BSD || DETECT_OS_MANAGARM)
+   if (pscreen->get_screen_fd) { … drmGetCap(fd, DRM_CAP_PRIME, &cap) … caps->dmabuf = cap; }
+#endif
+```
+
+Phoenix is `DETECT_OS_PHOENIX` (our patch 0001), so the query was compiled out and **every screen
+reported `caps.dmabuf = 0`**. v3d does not override it. The query would have worked: libdrm-phoenix
+answers `DRM_CAP_PRIME = IMPORT|EXPORT` on the render node (`drm_phoenix_v3d.c:1225`).
+
+What happened next:
+
+* `create_dumb()` → `DRM_IOCTL_MODE_CREATE_DUMB 1920×1080×32` on card0 **succeeded**. Then
+  `gbm_dri_bo_map_dumb` → `MAP_DUMB` token → `__wrap_mmap` → `/kmsbuf` mapping **succeeded** too (had it
+  failed, `create_dumb` would have returned NULL and `get_back_bo` would have failed cleanly). This is a
+  **positive first result for Mesa's GBM dumb path on our stack**. The `bos=0` afterwards is only the
+  cleanup when the client died. The render server was simply never asked for anything, so `imports=0`.
+* A dumb `gbm_bo` has `bo->image == NULL`. `dri2_drm_image_get_buffers` still returned success with
+  `image_mask = BACK`, `back = bo->image = NULL`, which is the NULL dereference above.
+
+**Independent evidence already in the log:** the display extension list has **no
+`EGL_EXT_image_dma_buf_import`, `…_modifiers` or `EGL_MESA_image_dma_buf_export`**. `dri2_setup_screen`
+(`egl_dri2.c:628-630`) gates these on the same `caps.dmabuf` bits. **Static evidence in the binary:**
+`objdump` of `u_init_pipe_screen_caps` in the m3p3a `kmscube` contains **0** calls to `drmGetCap`.
+
+**Mesa error handling (the second, upstream bug):** GBM's dumb fallback creates a buffer that the EGL GBM
+platform can never render into, and `dri2_drm_image_get_buffers` does not check for it. On Linux this is
+latent: only a driver without PRIME export reaches it. That is worth a tiny defensive patch that **reports
+the problem** instead of crashing (0009). It does not hide the root cause: 0008 is the fix.
+
+Every other link of the intended path (below) was checked against libdrm-phoenix and found wired, and
+most of it was proven on hardware by `m3p2-drmprobe`: render-node `PRIME_FD_TO_HANDLE` → `V3DA_OP_BO_IMPORT`
+(`drm_phoenix_v3d.c:1173`, G1, sends the known size), `lseek(SEEK_END)` (G3), `GET_BO_OFFSET` from the
+import table, `MMAP_BO` of an import → OID memref, `GEM_CLOSE` → quarantine, the card0 export with
+`DRM_CLOEXEC|DRM_RDWR` (opened `O_RDONLY|O_CLOEXEC` by design, E1), and kms `ADDFB2` validating only
+`offset + pitch×height ≤ size` (`kms_bo.c:443`), so a 1024-px dumb BO can back a 1920-wide fb.
+
+The intended path once `caps.dmabuf = 3`:
+`gbm_dri_bo_create` → `dri_create_image_with_modifiers(LINEAR, SCANOUT|SHARE)` →
+`v3d_resource_create_with_modifiers` (SCANOUT ⇒ linear, `v3d_resource.c:847`) → `screen->ro` ⇒
+`renderonly_scanout_for_resource` → `renderonly_create_kms_dumb_buffer_for_resource`:
+`CREATE_DUMB 1024 × 2026 × 32` on card0 → `PRIME_HANDLE_TO_FD` (`/kmsbuf/<h>`) →
+`v3d_bo_open_dmabuf`: render `PRIME_FD_TO_HANDLE` (BO_IMPORT) → `lseek` → `V3D_GET_BO_OFFSET` → `close(fd)` →
+`dri2_query_image(HANDLE)` = the kms handle through `renderonly_get_handle` → kmscube `ADDFB2
+1920×1080 XR24 pitch 7680 mod 0` (no `DRM_MODE_FB_MODIFIERS`: LINEAR = 0).
+
+### Fix
+
+| Where | Change |
+|---|---|
+| `tools/gpu-lane/mesa-drm/patches/mesa/0008-gallium-u_screen-query-DRM_CAP_PRIME-on-Phoenix-RTOS.patch` (+2/−1) | `DETECT_OS_PHOENIX` added to the `u_screen.c` `drmGetCap(DRM_CAP_PRIME)` gate. One gate, three consumers: gbm_dri `has_dmabuf_*`, `dri_screen` `dmabuf_import`/`has_dmabuf`, EGL `has_dmabuf_*` (+ the dma-buf EGL extensions). |
+| `…/0009-egl-drm-treat-a-GBM-back-buffer-without-a-DRI-image-as-failure.patch` (+12) | `get_back_bo`: a freshly created back BO with `image == NULL` → `libEGL warning: DRI2: GBM surface buffer has no DRI image (dumb-buffer fallback: the driver reports no dma-buf export)`, the BO is destroyed and `get_back_bo` fails, as for any other back-buffer allocation failure. Then getBuffers fails, `eglSwapBuffers` returns `EGL_BAD_ALLOC` and `gbm_surface_lock_front_buffer` returns NULL: a well-behaved client exits with an error. (Upstream kmscube does not check the locked BO: `drm-legacy.c:58-62` passes NULL to `drm_fb_get_from_bo`, which dereferences it, so kmscube would still fault, but in its own code and after the warning line has named the cause.) The check sits in `get_back_bo`, not `image_get_buffers`: there, swap would still hand out the dumb BO and the frontend would draw with no colour buffer. Defensive only: never taken when 0008 works. (A first variant in `image_get_buffers` was replaced before any cycle. Out dirs built with it, such as sdl2-drm's `mesa-gl`, are harmless with 0008 but should pick up the revision at their next full build.) |
+| `tools/gpu-lane/libdrm-phoenix/src/xf86drm_phoenix.c`, `drm_phoenix_priv.h`, `drm_phoenix_wrap.c` (additive) | **`DRMPHX_TRACE`** (below). |
+
+Mesa patch 0001's row above is unchanged. The OS gate is its own patch so each fix can be traced.
+
+### `DRMPHX_TRACE` (libdrm-phoenix, opt-in)
+
+Any value except empty or `0` turns it on. The environment is read once per process, at the first DRM call,
+so `export DRMPHX_TRACE=0` in psh turns it off for later processes. When off, the cost is one load and a
+branch per ioctl. Output goes to stderr, one `write()` per line:
+
+```
+DRMPHX conn  fd=<n> path=<fdpath> node=<card0|card1|render> port=<p> client=<id> rc=<rc>       (each new identification)
+DRMPHX ioctl node=<card0|card1|render|?> fd=<n> nr=0x.. name=DRM_IOCTL_<…> rc=<0|-1> errno=<e> n=<count> <key args>
+DRMPHX mmap  kind=<token|fd0|dmabuf> fd=<n> offset=0x.. handle=<h> len=<bytes> ptr=<p> errno=<e>
+```
+
+The trace is rate-limited per request number: the first 16 calls of each, then every 256th (`n=` counts
+all calls). Key arguments: `CREATE_DUMB w h bpp flags → handle pitch size`, `MAP_DUMB`/`DESTROY_DUMB`,
+`PRIME_* handle flags fd fdpath`, `GEM_CLOSE`, `GET_CAP`/`SET_CLIENT_CAP cap value`, `ADDFB2
+WxH fmt flags handle pitch offset mod → fb`, `ADDFB`, `RMFB`, `SETCRTC`/`GETCRTC`, `PAGE_FLIP crtc fb flags`,
+`ATOMIC`, `GETRESOURCES`, `GETCONNECTOR`, `WAIT_VBLANK`, `SYNCOBJ_*`, `V3D_CREATE_BO size flags → handle
+offset`, `MMAP_BO`, `GET_BO_OFFSET`, `GET_PARAM`, `WAIT_BO`, `SUBMIT_CL bcl rcl bos flags syncs`,
+`SUBMIT_TFU`/`CSD`. Names come from the `DRM_IOCTL_*` macros; the driver range decodes as V3D only on the
+v3d server. `drmPhoenixMmap` and `__wrap_mmap`'s dma-buf branch log the token/dma-buf maps and keep `errno`.
+
+### Builds (new outputs; the old binary kept)
+
+| Artifact | Path | sha256 (first 16) |
+|---|---|---|
+| libdrm-phoenix (`DRMPHX_TRACE`) | `tools/gpu-lane/libdrm-phoenix/build-out-m3p3/prefix/lib/libdrm.a` | `b23358170ceea578` |
+| drmprobe (same library, optional) | `tools/gpu-lane/libdrm-phoenix/build-out-m3p3/drmprobe` | `09d701d9a82958a1` |
+| **kmscube, fixed** (Mesa 0001–0009 + libdrm `build-out-m3p3`) | `tools/gpu-lane/mesa-drm/build-out/kmscube-m3p3b-stripped` (= `kmscube-stripped`); unstripped `kmscube-m3p3b` (= `kmscube`) | `17977dafbc863f74` / `b29ac0131891f665` |
+| kmscube, the failing m3p3a build (reference) | `tools/gpu-lane/mesa-drm/build-out/kmscube-m3p3a{,-stripped,.map}` | `7eadd92a74b24ff7` / `8569c7eb00c4b9bf` |
+
+Checks on the new binary: `objdump` of `u_init_pipe_screen_caps` now has **1** `bl drmGetCap` (it was 0);
+`strings` shows the 0009 warning and the three `DRMPHX` formats; `nm -u` = 0; old-lane strings 0; libdrm
+backend 0 warnings; Mesa 56 warning lines in this (partial, stamp-triggered) rebuild: 55 × upstream `u_math.h:892`
+`-Wsign-compare` in C++ TUs + 1 × `u_thread.c` `#warning` (no `pthread_setname_np`). Both are known; there are none in
+`u_screen.c` or `platform_drm.c`.
+
+**Host tests** (`DRMPHX_OUT=tools/gpu-lane/libdrm-phoenix/build-out-m3p3 tools/gpu-lane/libdrm-phoenix/hosttest/run.sh`):
+`HOSTTEST checks=134 fails=0 verdict=PASS`, `HOSTE2E legacy verdict=PASS`, `HOSTE2E dri verdict=PASS`.
+These are identical to part 2: the expected four fake-GPU pixel failures, `unaligned_ends=0`, and
+`imports=1 imports_closed=1 deferred_flips=1`. **Plus trace runs** under ASan/UBSan (`DRMPHX_TRACE=1 e2e
+legacy|dri`): 177/181 `DRMPHX` lines, 0 sanitizer reports, the same `DRMPROBE RESULT`. `DRMPHX_TRACE=0` → 0
+lines. Sample: `DRMPHX ioctl node=render fd=4 nr=0x2e name=DRM_IOCTL_PRIME_FD_TO_HANDLE rc=0 errno=0 n=1
+handle=57345 flags=0x0 fd=6 fdpath=/kmsbuf/1`. The Mesa side (0008/0009) has no host test: Mesa is not
+built for the host here. The objdump check above is the static proof.
+
+### Pre-registered next cycles
+
+**Servers: the staged `-m3p2` binaries, unchanged** (no server change in this pass).
+
+**Stage (coordinator)**, under new names so the failing binary is not silently replaced:
+
+| Source | Export path |
+|---|---|
+| `tools/gpu-lane/mesa-drm/build-out/kmscube-m3p3b-stripped` | `<export>/bin/kmscube-m3p3b` |
+| (already staged by m3p2) `rpi4-v3d-async-m3p2`, `rpi4-kms-m3p2`, `kmstest-m3p2` | — |
+
+(`<export>` = `awk '!/^#/ && /fsid=0/{print $1; exit}' /etc/exports`; `sudo install -m 755`, then `cmp`.)
+
+**Cycle A `m3p3b-kmscube`** (Bash `timeout: 600000`). psh-interact waits `--idle-secs` after
+every command, including each `export`, so the list is kept to 8 commands. Estimate: netboot 60–150 s +
+~300 s.
+
+```
+./scripts/test-cycle-psh-interact.sh --label m3p3b-kmscube --idle-secs 30 --max-cmd-secs 150 \
+    --hdmi-dense-on 'Using display' -- \
+    "/bin/rpi4-v3d-async-m3p2 -r 1 -m serial -i" \
+    "/bin/rpi4-kms-m3p2 -G" \
+    "export DRMPHX_TRACE=1" \
+    "export EGL_LOG_LEVEL=debug" \
+    "/bin/kmscube-m3p3b -D /dev/dri/card0 -N -c 30" \
+    "export DRMPHX_TRACE=0" \
+    "/bin/kmscube-m3p3b -D /dev/dri/card0 -N -c 600" \
+    "/bin/kmstest-m3p2 stats"
+```
+
+**Cycle B `m3p3b-kmscube2`** (only after A shows a cube): `-D /dev/kms` and `-M rgba` in fresh processes
+plus the leak checks. Same two server lines, then `"/bin/kmscube-m3p3b -D /dev/kms -N -c 300"`,
+`"/bin/kmscube-m3p3b -D /dev/dri/card0 -N -M rgba -c 300"`, `"/bin/kmstest-m3p2 stats"`, `"/bin/kmstest-m3p2
+quit"`, `"/bin/v3dasync-ping stats"`, `"/bin/v3dasync-ping quit"`. Its predictions are the m3p3 table's rows
+for runs 2–3 and for the stats lines.
+
+Grade A:
+
+```
+grep -a -E '^(DRMPHX|KMS|KMSTEST|V3DA|libEGL|MESA|Rendered|Using display|  (version|renderer|vendor|display extensions):|DRM_IOCTL|failed|Failed|os_same)' \
+    artifacts/rpi4b-uart/rpi4b-uart-*-m3p3b-kmscube.log
+./scripts/uart-summary.sh m3p3b-kmscube
+```
+
+(~1.3 % of UART lines are corrupted: re-read, don't count. EL0 dumps print twice. The trace makes run 1
+chatty: ~150–300 lines in the first second.)
+
+| Line / observation (traced run, `-c 30`) | Means |
+|---|---|
+| `display extensions:` **now contains `EGL_EXT_image_dma_buf_import` and `EGL_MESA_image_dma_buf_export`** | **0008 took**: `caps.dmabuf` ≠ 0. Absent → a stale binary staged (check sha `17977daf…`). |
+| `DRMPHX ioctl node=render … name=DRM_IOCTL_GET_CAP … cap=0x5 value=0x3` | the `u_screen.c` query itself (cap 5 = `DRM_CAP_PRIME`). |
+| `DRMPHX ioctl node=card0 … MODE_CREATE_DUMB … w=1024 h=2026 bpp=32 … pitch=4096 size=8298496` | the **kmsro scan-out path** (0008 working). `w=1920 h=1080` = GBM's dumb fallback = the old binary. `rc=-1 errno=12/28`: kms pool exhausted (re-run kms with `-p 48`). |
+| `… PRIME_HANDLE_TO_FD rc=0 … fd=<n> fdpath=/kmsbuf/<h>` then `node=render … PRIME_FD_TO_HANDLE rc=0 … handle=<r> fdpath=/kmsbuf/<h>` + `V3DA srv import handle=… ns=kmsbuf id=<h> pages=2026 … contiguous=1` + `KMS srv kmsbuf atSize …` (first time only) | **G1/G3 from Mesa**. `PRIME_FD_TO_HANDLE rc=-1`: the errno names it (2 lookup/open, 22 port/size, 14 va2pa). The `V3DA srv import FAIL` line gives the server side. |
+| `node=render … V3D_GET_BO_OFFSET rc=0 handle=<r> offset=0x…` (≠ 0) | `v3d_bo_open_handle` succeeded. `rc=-1` → `MESA: error: Failed to get BO offset`. |
+| 2–4 such CREATE_DUMB/import groups over the run (one per colour buffer as the swap chain fills) | normal. More than 4 → leak/re-allocation. |
+| `libEGL warning: DRI2: GBM surface buffer has no DRI image …` | 0009's report: the dumb fallback happened anyway, so `caps.dmabuf` is still 0 or the render node lacks EXPORT. The next line may be a kmscube fault in `drm_fb_get_from_bo` (kmscube passes the NULL locked BO on unchecked, `drm-legacy.c:62`). That is kmscube's own bug; the warning is the diagnosis. |
+| `OpenGL ES 2.x information:` `version: "OpenGL ES 3.1 Mesa 26.2.0"`, `renderer: "V3D 4.2…"` | `eglMakeCurrent` passed the old crash point. |
+| `node=render … V3D_SUBMIT_CL rc=0 … bos=<n> … out=<s>` | first frame submitted (after the shader compile). |
+| `node=card0 … MODE_ADDFB2 rc=0 1920x1080 fmt=0x34325258 flags=0x0 handle=<h> pitch=7680 offset=0 mod=0x0 fb=<f>` | the scan-out fb on the imported dumb BO. `rc=-1 errno=22`: pitch/size (should not happen, `kms_bo.c:443`). `errno=2`: the handle is not this client's. |
+| `… MODE_SETCRTC rc=0 crtc=0x40 fb=<f> … mode_valid=1 mode=1920x1080`, then `… MODE_PAGE_FLIP rc=0 … flags=0x1` (logged for n ≤ 16, then every 256th) | legacy loop running. `PAGE_FLIP errno=16`: flip while pending. |
+| `DRMPHX mmap kind=token …` lines | only for CPU maps (shader BOs, uniforms, texture uploads); `ptr=(nil)`/`0x0` with `errno≠0` = the token path failed (Mesa then says `mmap of bo … failed`). |
+| HDMI (dense after `Using display`): rotating smooth-shaded cube | **M3's GBM/EGL/KMS path works end to end**. A black screen with `Rendered` lines advancing → compare the `V3DA srv import pa0` with `KMS pool pa`. |
+| `Rendered 30 frames …` / untraced run `Rendered N frames in 2.0x sec (F fps)` … final 600 | fps as the m3p3 prediction (≈30 = G12 poll quantum, 55–60 = aligned). The traced run's fps is **not** comparable. |
+| `KMSTEST stats … bos=0 exports=0 apply_errors=0` | no kms leak after two processes. |
+| any EL0 fault | `aarch64-phoenix-addr2line -f -i -C -e tools/gpu-lane/mesa-drm/build-out/kmscube-m3p3b <pc>`. |
+
+**What A decides:** a cube with the kmsro lines = M3 part 3 PASS (then run B). A fault or error *after*
+the `CREATE_DUMB 1024×2026` line is the next link of the chain, named by the first `rc=-1` DRMPHX line.
+If `CREATE_DUMB 1024×2026` is missing, 0008 did not take.
+
