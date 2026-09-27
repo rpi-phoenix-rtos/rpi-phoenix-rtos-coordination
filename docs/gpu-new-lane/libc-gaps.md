@@ -277,7 +277,7 @@ gcc -std=gnu11 -O0 -g -pthread -Itools/malloc-harness/stubs -DHZ_MEMALIGN \
 ./mh --memalign 15 --seeds 8 --ops 100000 ; ./mh --memalign 30 --threads 4 --mt-ops 200000 --seeds 0
 ```
 
-## Merge + build 10 (2026-09-27 04:50) — pre-registered gate
+## Merge + build 10 (2026-09-27 04:30) — pre-registered gate
 
 Merged: libphoenix `8fb82ae` (merge of `gpu-lane/libc-gaps`), tests ff to `15818aa`. The same pass removed
 three local copies that would now be duplicate definitions in the static link:
