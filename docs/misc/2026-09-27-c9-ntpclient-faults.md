@@ -461,3 +461,20 @@ arm A is its only comparator. Reading:
 
 Status: **enriched, n = 3 runs, fork()-specific; mechanism unknown; two kernel candidates on a
 branch, neither shown causal.**
+
+### Result — arm A `c3tagF1..F3` + `c3tagV1` (queue45, build 17, 2026-09-27 15:35–15:58)
+
+| run | last line | launches before the stop | monitor | host ping (from +60 s) |
+|---|---|---|---|---|
+| c3tagF1 | `STORM c ex 17` | 16 | 1 `STORM m` line, **no tick, no HANG** | **0 replies** / 64 |
+| c3tagF2 | `STORM c ex 16` | 15 | same | 0 replies |
+| c3tagF3 | `STORM c ex 38` | 37 | same | 0 replies |
+| c3tagV1 (vfork control) | `spawn-storm: DONE 500 ok, 0 failed` | 500 | 2 ticks | **73 replies**, 0 lost |
+
+**Reading (rule a): a kernel-level freeze, entered at the fork child's `execv()`.** In all three fork runs the last
+tag is the child's `c ex` (printed right before `execv`), the parent is already in `waitpid` (`p wc`), the
+independent monitor process never prints again (not even its `HANG` line after 10 s), and the Pi stops answering
+ICMP (the lwip process is dead too), while the vfork control answers every ping. n = 3 of 3, vfork 0 of 1
+(plus 0 of 1500 in the untagged series). With tags the stop comes earlier (16–38 launches vs 17–191). This fits
+hypotheses 0/1 (a CPU wedged in the kernel; the exec-time map teardown of a table another CPU may still have in
+TTBR0). **Arm B** (kernel `c3/fork-hang`, build 18) is queued: `queue49` `c3fixF1..F3`, same command.
