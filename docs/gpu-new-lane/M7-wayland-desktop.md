@@ -1241,3 +1241,20 @@ Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-200617-m7e-gtk3.log`; HDMI `artifa
   static binary), one Adwaita asset pixbuf warning. 0 exceptions, 0 EL1.
 
 **Decides:** GTK3 (Wayland backend) works on the new lane: the toolkit the XFCE stage is built on.
+
+## Result — `m7b2-foot` (chain61, build 18, 2026-09-27 20:18–20:27): ✅ PASS — a Wayland terminal and file manager on Phoenix
+
+Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-201807-m7b2-foot.log`; HDMI `artifacts/hdmi/20260927-202331-m7b2-foot-tick.png` (arm A) and `…-202512-…` (arm B). Binaries
+`labwc-2` / `foot-2` (compat timerfd `read()` + keyboard `fstat` fixes).
+
+- labwc now **configures the USB keyboard** (`configuring input device Phoenix USB keyboard (kbd0)`), **0 `Stat failed`**
+  lines, 0 exceptions / EL1; every arm `labwc exited rc=0 after_term_s=1 socket=gone`.
+- **Arm A (colours):** foot in a labwc window (server-side title bar with menu / min / max / close) shows 24-bit colour
+  gradients, Unicode (Polish, Greek, Cyrillic, box drawing, arrows, ✓ ✗ € °), the 16-colour palette and
+  bold / italic / underline / reverse.
+- **Arm B (`foot -e mc /`, the menu's "Files" entry):** **GNU Midnight Commander 4.8.31** in foot: both panels list `/`,
+  menu bar and function-key bar drawn.
+- Still logged, harmless: foot `failed to seal SHM backing memory file` (non-fatal) and one `did not respond to
+  configure request in 100 ms` at start.
+
+**Decides:** M7 stage 1 works: a modern Wayland terminal (foot) and a file manager (mc) under labwc on the new lane.
