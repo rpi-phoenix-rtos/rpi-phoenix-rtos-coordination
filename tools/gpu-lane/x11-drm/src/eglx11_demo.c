@@ -10,15 +10,18 @@
  * idle fences in shmsrv memory), and prints the frame rate. The first frame's
  * centre pixel is read back from the back buffer before the first swap.
  *
- * Usage: eglx11-demo [-c frames] [-s seconds] [-i swap_interval] [-g WxH+X+Y] [-f]
+ * Usage: eglx11-demo [-c frames] [-s seconds] [-i swap_interval] [-g WxH+X+Y] [-t title] [-f]
  *   -g     window geometry (default 640x480+640+300: the size of the old lane's 14.2 fps
- *          GL-in-X measurement, research doc §2)
+ *          GL-in-X measurement, research doc §2); set as USPosition|USSize WM hints, so a
+ *          window manager honours it
+ *   -t     window title (default "eglx11-demo")
  *   -c/-s  stop after that many frames / seconds (default: run until SIGTERM/SIGINT)
  *   -i     eglSwapInterval (default 1 = vsync through Present; 0 = as fast as possible)
  *   -f     start even when shmsrv (/shm) is not running (xshmfence then falls back to a
  *          /tmp file, which is not coherent across processes on Phoenix-RTOS)
  * The same knobs come from the environment (psh cannot quote a command line with
- * spaces into bash's CLIENT=): XDEMO_FRAMES, XDEMO_SECS, XDEMO_INTERVAL, XDEMO_GEOM.
+ * spaces into bash's CLIENT=): XDEMO_FRAMES, XDEMO_SECS, XDEMO_INTERVAL, XDEMO_GEOM,
+ * XDEMO_TITLE.
  * Every line starts with "XDEMO " (grading).
  *
  * Copyright 2026 Phoenix Systems
@@ -124,6 +127,7 @@ int main(int argc, char **argv)
 	int secs_max = env_int("XDEMO_SECS", 0);
 	int interval = env_int("XDEMO_INTERVAL", 1);
 	const char *geom = getenv("XDEMO_GEOM") != NULL ? getenv("XDEMO_GEOM") : "640x480+640+300";
+	const char *title = getenv("XDEMO_TITLE") != NULL ? getenv("XDEMO_TITLE") : "eglx11-demo";
 	int force = 0, opt;
 	unsigned int w = 640, h = 480;
 	int x = 640, y = 300;
@@ -144,15 +148,17 @@ int main(int argc, char **argv)
 	unsigned long frames = 0, frames_last = 0;
 	int i;
 
-	while ((opt = getopt(argc, argv, "c:s:i:g:f")) != -1) {
+	while ((opt = getopt(argc, argv, "c:s:i:g:t:f")) != -1) {
 		switch (opt) {
 			case 'c': frames_max = atoi(optarg); break;
 			case 's': secs_max = atoi(optarg); break;
 			case 'i': interval = atoi(optarg); break;
 			case 'g': geom = optarg; break;
+			case 't': title = optarg; break;
 			case 'f': force = 1; break;
 			default:
-				fprintf(stderr, "usage: %s [-c frames] [-s secs] [-i interval] [-g WxH+X+Y] [-f]\n", argv[0]);
+				fprintf(stderr, "usage: %s [-c frames] [-s secs] [-i interval] [-g WxH+X+Y] [-t title] [-f]\n",
+					argv[0]);
 				return 2;
 		}
 	}
@@ -231,10 +237,27 @@ int main(int argc, char **argv)
 	swa.event_mask = StructureNotifyMask | ExposureMask;
 	win = XCreateWindow(xd, RootWindow(xd, vi->screen), x, y, w, h, 0, vi->depth, InputOutput, vi->visual,
 		CWBackPixel | CWBorderPixel | CWColormap | CWEventMask, &swa);
-	XStoreName(xd, win, "eglx11-demo");
+	XStoreName(xd, win, title);
+	{
+		/* The geometry is a user request (USPosition|USSize): a window manager places the
+		 * window there instead of auto-placing it (Window Maker ignores the bare
+		 * XCreateWindow position and PPosition). No effect without a window manager. */
+		XSizeHints *hints = XAllocSizeHints();
+
+		if (hints != NULL) {
+			hints->flags = USPosition | USSize | PPosition | PSize;
+			hints->x = x;
+			hints->y = y;
+			hints->width = (int)w;
+			hints->height = (int)h;
+			XSetWMNormalHints(xd, win, hints);
+			XFree(hints);
+		}
+	}
 	XMapWindow(xd, win);
 	XFlush(xd);
-	printf("XDEMO window id=0x%lx visual=0x%x depth=%d\n", (unsigned long)win, vid, vi->depth);
+	printf("XDEMO window id=0x%lx visual=0x%x depth=%d title=\"%s\" hints=USPosition|USSize\n", (unsigned long)win, vid,
+		vi->depth, title);
 
 	{
 		static const EGLint cattrs[] = { EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE };

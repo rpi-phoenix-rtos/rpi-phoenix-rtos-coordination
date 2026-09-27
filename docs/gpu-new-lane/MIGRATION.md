@@ -42,7 +42,7 @@ GL games (`depends="sdl2"`: quakespasm, quake3, yquake2, supertuxkart) [read].
 | **Quake III** | `/usr/bin/quake3` → `/usr/bin/quake3e` (opengl1, QVM JIT) | `quake3-drm` → `quake3e-drm` (**this pass**, §2.2) | 🟡 [built] | Pi cycle `mig-q3` (§6.2) |
 | **vkQuake** | `/usr/bin/vkquake`: SDL fully shimmed, no WSI — renders into a LINEAR VkImage mapped on `/dev/fb0` (`pl_phoenix_vk_vid.c`), old v3dv fork via `libv3dv-phoenix.a` | `vkq-drm` → `vkquake-drm` (**this pass**, §2.3): upstream vkQuake + SDL KMSDRM Vulkan (`VK_KHR_display`) + Mesa v3dv via phxvk | 🟡 [built] | Pi cycle `mig-vkq` (§6.3) incl. the #67 torch ROI check; FIFO-only present ⇒ ≤ 60 fps (old lane showed 73 on screen, no vsync) |
 | **SuperTuxKart** | `/bin/stk` → `/usr/bin/supertuxkart` | `stk-drm` → `supertuxkart-drm` | ✅ [Pi] 11.89 fps = Pi OS parity (old lane 8.3) | exit-time EL0 fault root-caused to libphoenix `fclose(stdout)` UAF — fix on branch `fix/stdstream-fclose-uaf` (M3 "stk-drm exit fault"), check `stkdrm-2` |
-| **X desktop** (`startx_gpu action`) | `/bin/startx_gpu` = `pl_phoenix_xlaunch`: starts `/sbin/rpi4-v3d` (old GPU daemon), `Xphoenix-glamor-daemon` (kdrive fbdev DDX + glamor shim, damage bands `glReadPixels`'d to `/dev/fb0`), then Window Maker + `gl-x11-window-daemon` + 2 × xterm (Life in CPython, top) + xbill + xclock | `Xorg-drm` / `Xorg-drm-m4p2` (xorg-server 21.1.24 hw/xfree86 + modesetting + glamor on GBM/EGL + DRI3/Present + `phxhid` input) | 🟡 [Pi] xclock (m4c), Window Maker desktop (m4d), DRI3/Present GL client **485 fps / 60.00 vsynced** (m4p2a) | (a) an **`action` launcher for Xorg-drm** (the xlaunch layout, one script: servers → shmsrv → Xorg-drm → wmaker + clients; `xorg-drm/pi/xorg-drm-m4a.sh` runs one client only); (b) the GL window: `gl-x11-window-daemon` is an old-lane harness (gallium internals + `XPutImage`) — replace it with `x11-drm`'s `eglx11-demo` (EGL on X11 via DRI3/Present, needs a `-geometry`-style placement option) or a Mesa-DRM `--x11` relink of a GLX/EGL demo; (c) `phxhid` input never exercised on the Pi (the gate needs none); (d) `-C` console handover untested. **Not needed:** page flips of client buffers (G7; Present falls back to a copy), G4, G6 |
+| **X desktop** (`startx_gpu action`) | `/bin/startx_gpu` = `pl_phoenix_xlaunch`: starts `/sbin/rpi4-v3d` (old GPU daemon), `Xphoenix-glamor-daemon` (kdrive fbdev DDX + glamor shim, damage bands `glReadPixels`'d to `/dev/fb0`), then Window Maker + `gl-x11-window-daemon` + 2 × xterm (Life in CPython, top) + xbill + xclock | `Xorg-drm` / `Xorg-drm-m4p2` (xorg-server 21.1.24 hw/xfree86 + modesetting + glamor on GBM/EGL + DRI3/Present + `phxhid` input) | 🟡 [Pi] xclock (m4c), Window Maker desktop (m4d), DRI3/Present GL client **485 fps / 60.00 vsynced** (m4p2a) | (a) ✅ [built] **`startx-drm action`** (`xorg-drm/pi/startx-drm`, §6.6): Xorg-drm-noshim :1 + wmaker + the xlaunch `action` clients, `HOLD` + clean teardown; (b) ✅ [built] the GL window is `eglx11-demo` (DRI3/Present) with USPosition/USSize WM hints + title knob (`x11-drm/build-out-x`, staged `/bin/eglx11-demo-x`), placed where the old GL window is on screen; (c) `phxhid` checked statically against the kdrive driver (§6.6, identical protocol), never exercised on the Pi; (d) `-C` console handover untested — both in `mig-x` / `mig-x-input` (§6.6). **Not needed:** page flips of client buffers (G7; Present falls back to a copy), G4, G6 |
 | X clients (wmaker, xterm, xclock, xbill, xcalc, dillo, …) | plain X11 clients of `Xphoenix` | the same binaries on `Xorg-drm` (m4c ran the old-lane `xclock`, m4d the old-lane `wmaker`) | ✅ [Pi] | none — no GPU code in them |
 | **HEVC player** `/bin/hevc-play` | rpivid decode → `write()` to `/dev/fb0` | — | ⬜ | port to a KMS dumb buffer + plane (`drmModeAddFB` + atomic/`SETCRTC`), or keep on fbdev emulation (§4). Zero-copy of decoder frames needs **G7** (implemented, pending Pi `m6h-g7`; kms import of a foreign buffer) |
 | `/sbin/rpi4-sysinfo` | lists `/dev/fb0` among the device nodes it reports | — | ⬜ | report `/dev/dri/card0`, `/dev/dri/renderD128`, `/dev/kms`, `/dev/v3d-async` instead (text change) |
@@ -218,7 +218,7 @@ old strings (`/dev/fb0`, `phoenix-map.cfg`) and none of the new ones.
 | Pi cycles of the three clones | q2, q3, vkq | pre-registered §6 | **yes** |
 | `flipstat` in quakespasm-drm | the gate's `frames` column | ✅ [built] 2026-09-27: `sdl2-drm/build.sh` links the shared `gamedrm/gamedrm_hooks.c` (`-DGAMEDRM_NAME='"quakespasm-drm"' -DGAMEDRM_API='"desktop GL"'`, replacing `qsdrm/qsdrm_banner.c`, whose banner and SDL log levels it reproduces byte for byte) and `-Wl,--wrap=SDL_GL_SwapWindow`; objdump `GL_EndRendering → b __wrap_SDL_GL_SwapWindow → bl SDL_GL_SwapWindow`, one direct call of the real swap (the wrapper's). Pi check: `mig-qs` (§6.4) | **yes** (else the gate fails mechanically) — done pending `mig-qs` |
 | libphoenix gaps `struct ipv6_mreq` + `<execinfo.h>` | vkquake-drm (bridged in `vkqdrm/`), and the yquake2/quake3/vkquake ports (own `ipv6_mreq` copies) | ✅ [built] on branches `feat/ipv6mreq-execinfo` (pushed to `publish`, **not merged**): libphoenix `17c4fae` (`ipv6_mreq` + `IPV6_ADD/DROP_MEMBERSHIP`; `IPV6_JOIN_GROUP`/`LEAVE_GROUP`/`V6ONLY` renumbered to lwip's 12/13/27 — lwip receives optname unchanged) + `62e76b8` (`backtrace()` = aarch64 frame-record walk, 0 frames elsewhere; `backtrace_symbols[_fd]` = `0x<hex>`, one block); phoenix-rtos-tests `a8f2d6b` (`test-libc-execinfo`, `misc/netinet_in.c`); phoenix-rtos-ports `35abace` (the three ports' copies skip themselves when `IPV6_ADD_MEMBERSHIP` is defined — without it the libphoenix merge breaks their builds: a second `struct ipv6_mreq` is an error under gnu11/gnu17). On rpi4b lwip is built without IPv6, so `IPPROTO_IPV6` options stay ENOPROTOOPT whatever the number | no (the bridges work). **Merge order:** ports `35abace` first (or together), then libphoenix, then tests. **After the libphoenix merge, delete:** `tools/gpu-lane/sdl2-drm/vkqdrm/include/execinfo.h` and the `ipv6_mreq` block of `vkqdrm/vkqdrm_compat.h` (+ its `-idirafter` in `build-vkquake-drm.sh`), and the three ports' copies (`yquake2`/`quake3` `glue/pl_phoenix_compat.h`, `vkquake/glue/vkq_phoenix_compat.h`) |
-| X `action` launcher on Xorg-drm + a GL window client | X desktop | not written | **yes** |
+| X `action` launcher on Xorg-drm + a GL window client | X desktop | ✅ [built] 2026-09-27: `tools/gpu-lane/xorg-drm/pi/startx-drm` (staged `/bin/startx-drm`) + `eglx11-demo` with WM placement hints (`/bin/eglx11-demo-x`); host dry-run with stub binaries PASS; **Pi cycle `mig-x` pre-registered (§6.6)** | **yes** — done pending `mig-x` |
 | Shader disk cache in Mesa-DRM | every GL/Vulkan app: cold shader compiles at every start (STK loads at < 1 fps for a while) | not built | no (startup time only); wanted before shipping |
 | libphoenix `fclose(stdout)` UAF fix | STK exit fault (old and new lane) | branch `fix/stdstream-fclose-uaf` | yes for a 0-fault gate (the fault is at exit, inside the capture) |
 | **G4** render-node export (`V3DA_OP_BO_EXPORT` + `/v3dbuf`) | UIF client buffers in X, Wayland dmabuf, v3dv external memory | implemented 2026-09-27 (`52f039791`), pending Pi `m6g-g4` ([M6 §15](M6-wayland.md)) | no (DRI3 with `dmabuf_capable` off works — m4p2a) |
@@ -302,7 +302,7 @@ boot (§4 item 7), the prelude disappears and the app list is the old one with r
 
 | key | old command | new-lane command | HDMI check (the same as today) |
 |---|---|---|---|
-| `x` | `startx_gpu action` | the Xorg-drm `action` launcher (to write, §3) | Window Maker + GL window animating + both xterms + xbill + xclock, the xlaunch layout |
+| `x` | `startx_gpu action` | `/bin/bash /bin/startx-drm action` (§6.6; until the servers start at boot: `/bin/bash /bin/startx-drm --servers action`) | Window Maker + GL window animating + both xterms + xbill + xclock, the xlaunch layout |
 | `qspasm` | `quakespasm` | `/usr/bin/quakespasm-drm` (flipstat relink done, §6.4) | the attract demo renders (lit, textured, HUD) |
 | `q3` | `/usr/bin/quake3 +map q3dm1` | `/usr/bin/quake3-drm +map q3dm1` | q3dm1 lit, textured (lightmaps), not the main menu |
 | `q2` | `/usr/bin/quake2` | `/usr/bin/quake2-drm` | demo1 in full textured 3D |
@@ -315,7 +315,7 @@ old-lane strings (`v3d-winsys:`, `/dev/fb0` in GPU apps, `phxgl`, `V3DV_PHOENIX`
 fps of each app is recorded against the last old-lane gate (it is not a pass criterion, but a regression
 beyond the vsync quantisation — 60/n on the new lane — is a finding to explain before deleting).
 
-## 6. Pre-registered Pi cycles — the three new clones (+ `mig-qs`, + `mig-all`)
+## 6. Pre-registered Pi cycles — the three new clones (+ `mig-qs`, + `mig-all`, + `mig-x`)
 
 Common to all four: netboot image as the stk-drm cycle (core_freq=500, build ≥ 11); **single-owner rule**
 — no old-lane GPU app, X or `rpi4-v3d` in the same boot; `rpi4-v3d-async-m3p2` and `rpi4-kms-gate` are
@@ -579,6 +579,130 @@ per-window `stk-drm flipstat` fps over the gameplay windows, ≥ 10 windows.)
 **Decides:** all five as predicted (q3: renders without the fault) → the new-lane game set is final for the
 §5 gate. A game at its old stock-order fps → staging, not the patch (pace/perf already proved the patches).
 
+### 6.6 `mig-x` — the X desktop (`startx-drm action`) on Xorg-drm (§3 blocker 3)
+
+**Question:** does the old gate's X scene — Window Maker + the GL window + xbill + xclock (+ the two
+xterms) — come up on the new lane (Xorg-drm-noshim, modesetting + glamor on V3D, DRI3/Present GL client,
+phxhid input, `rpi4-kms -C` console handover), hold 200 s with 0 faults, and tear down cleanly?
+
+**The launcher** `tools/gpu-lane/xorg-drm/pi/startx-drm` (bash; psh has no `&`/`;`/`|`) [built]:
+`/bin/bash /bin/startx-drm [--servers] [action|wmaker]`. Starts `/bin/Xorg-drm-noshim :1 -config
+/etc/X11/xorg-drm.conf -terminate -ac -nolisten tcp` (the committed `xorg-drm/conf/xorg-drm.conf`,
+`cmp`-identical to the staged one: modesetting on `/dev/dri/card0`, `AccelMethod glamor`,
+`DefaultDepth 24`, SW cursor, phxhid on `/dev/kbd0` + `/dev/mouse0`; the compiled-in font path is
+xlaunch's `-fp` = misc,75dpi), waits for `/tmp/.X11-unix/X1` (early exit if the server dies), then
+the clients of `pl_phoenix_xlaunch.c`'s `action` mode in its order, with its geometries and environment
+(`HOME=/root PATH=/bin XFILESEARCHPATH XLOCALEDIR`, `DISPLAY=:1`):
+
+| # | client | command | lands (1920×1080) |
+|---|---|---|---|
+| 0 | Window Maker | `/bin/wmaker` (then `WM_SETTLE`=3 s) | dock top-right, clip top-left |
+| 1 | GL window "Phoenix V3D GL" | `/bin/eglx11-demo-x`, `XDEMO_GEOM=640x480+300+180 XDEMO_INTERVAL=1 XDEMO_TITLE="Phoenix V3D GL" XDEMO_EGL_DEBUG=0` | (300,180): where the old `gl-x11-window-daemon` is in every old-lane gate frame (it ignores xlaunch's `-geometry 640x480+20+30` and hints 300,180 itself — `gl_x11_window.c:272`; b18 gate frame `20260927-182222-b18-gate-x-tick.png`) |
+| 2 | xterm + Life | `/bin/xterm -geometry 96x28+20+560 -e /bin/python3 /usr/share/demo/life.py --log /var/log/life.log` | row 2 left |
+| 3 | xclock | `/bin/xclock -geometry 190x190+1500+30` | top right |
+| 4 | xbill | `/bin/xbill -geometry 400x460+945+30` | ≈(945,0) (Window Maker auto-places it; Xt sets PPosition) |
+| 5 | xterm + top | `/bin/xterm -geometry 96x24+690+560 -e /bin/top` | row 2 middle |
+
+The `action` scene has **no xcalc** (xcalc is in xlaunch's `showcase`/`deskapps` modes); the launcher
+follows the source. Then a hold (`HOLD`, default 200 s; `0` = until the WM exits, the interactive
+mode) with an `XDRM hold` heartbeat every 10 s, and a teardown: SIGTERM each client in reverse order,
+the WM last (`XDRM client exited name=… rc=…`), `-terminate` ends the server (else TERM after 15 s),
+`XDRM server exited rc=… socket=gone`, `XDRM done rc=0 reason=hold-done`. `--servers` starts whichever
+new-lane server is not running (`/dev/v3d-async`, `/dev/kms`, `shmsrv -s`), so one psh command brings
+the desktop up — what the gate needs until §4 item 7. Host dry-run (stub server/clients, paths
+rewritten into a temp root): full `action` start → hold → teardown order → server TERM fallback, the
+`wmaker` mode's WM-exit path, and the early exit of a server that dies before its socket — all PASS.
+
+**The GL client change** (`x11-drm/src/eglx11_demo.c`): the window now carries `WM_NORMAL_HINTS`
+`USPosition|USSize|PPosition|PSize` from `-g`/`XDEMO_GEOM` — without them Window Maker auto-places it
+(m4p2a honoured the position only because no WM ran) — and a title knob (`-t`/`XDEMO_TITLE`, default
+`eglx11-demo`, so m4p2a's behaviour is unchanged). Built into a new dir, `x11-drm/build.sh --out
+tools/gpu-lane/x11-drm/build-out-x` (same Mesa `--x11` build `7373c40f…`, libdrm m5b, current
+libphoenix): `nm -u` 0 and every build.sh check as before; `XSetWMNormalHints` linked; old-lane strings 0.
+Its `libxshmfence.a` differs from `build-out/`'s `4049c5b0…` only in DWARF paths (`build-out-x/src/…`):
+objdump text/rodata/data of both members identical — the fence layout Xorg-drm-noshim links. `build-out/`
+untouched (`eglx11-demo-stripped` still `f7a5bb38…`).
+
+**Input, checked statically against the kdrive driver** (`ports/xorg_server/files/ddx/fbdev.c:574-913`
+vs `xorg-drm/src/phxhid.c`) [read]: same devices and open flags (`/dev/kbd0` `O_RDWR|O_NONBLOCK`,
+40 × 25 ms retries; `/dev/mouse0` `O_RDONLY|O_NONBLOCK`); same raw-mode request (one `0x01` byte →
+usbkbd 8-byte boot reports); same report diff (modifier bits, releases before presses) and the **same
+HID→evdev table** (`diff` of `hid_evdev_map.h` / `phxhid_evdev_map.h`: only the include guard);
+X keycode = evdev + 8 in both (xf86 `is_down` vs kdrive `is_up` polarity both correct); mouse HID bits
+L/R/M → X 1/3/2 in both; same 64-byte bounded drains on a main-thread timer (10 ms vs 16 ms);
+phxhid adds the wheel (buttons 4/5), kdrive dropped byte 3. **One behavioural difference:** kdrive
+freed `/dev/kbd0` itself (`FBCONSETMODE(FBCON_DISABLED)` at screen init); on the new lane
+`rpi4-kms -C` sends the same ioctl to `/dev/tty0` (`kms_fw.c:101`), but only once a plane shows an fb
+(`kms_main.c:522-538`). The ordering holds: modesetting's `CreateScreenResources` →
+`drmmode_set_desired_modes` runs before `InitInput` (`dix/main.c:248`); pl011-tty's bridge closes kbd0
+within `PL011_TTY_KBD_POLL_US` = 8 ms of `kbdReleased` (`pl011-tty.c:1152`), well inside phxhid's
+1 s retry window; usbkbd resets `rawMode` on close (`usbkbd.c:553`), so the console bridge reopens a
+cooked device after X exits. Without `-C` all five m4 logs show `PHXHID dev=/dev/kbd0 … open=Device or
+resource busy` and `dev=/dev/mouse0 … open=ok` — expected (M4 R5). **Nothing was missing; no code change.**
+
+**Stage** (done 2026-09-27; `EXPORT=/srv/phoenix-rpi4-nfs-gcc16`, new names only, `cmp` OK):
+
+| Source | sha256 (first 16) | Export path |
+|---|---|---|
+| `tools/gpu-lane/xorg-drm/pi/startx-drm` | `32f1d951b6202a9f` | `$EXPORT/bin/startx-drm` |
+| `tools/gpu-lane/x11-drm/build-out-x/eglx11-demo-stripped` | `324a2d14757404e1` | `$EXPORT/bin/eglx11-demo-x` (m4p2a's `/bin/eglx11-demo` `f7a5bb38…` stays) |
+| already staged: `Xorg-drm-noshim` `fdf44b91a1bf3227` (m4n), `/etc/X11/xorg-drm.conf` (= repo conf), `shmsrv` `6a89f2610a5ad80d`, `rpi4-v3d-async-low`, `rpi4-kms-g7`, bash, wmaker/xterm/xclock/xbill/python3/top, `life.py` | — | unchanged |
+
+addr2line (host): `tools/gpu-lane/x11-drm/build-out-x/eglx11-demo` (`ef718010197a7451`),
+`tools/gpu-lane/xorg-drm/build-out-noshim/Xorg-drm`.
+
+**Cycle** (one netboot cycle, ≈ 6–8 min: run detached or from the queue; single-owner rule — no old-lane
+GPU app, X or `rpi4-v3d` in the boot):
+
+```
+./scripts/test-cycle-psh-interact.sh --label mig-x --wait-secs 220 --inter-cmd-secs 8 --idle-secs 60 \
+    --max-cmd-secs 300 --ready-line 'V3DA srv detached|KMS srv detached|SHMSRV srv detached|XDRM done' \
+    --ready-extra-secs 20 --hdmi-dense-on 'XDRM desktop up' -- \
+    "/bin/rpi4-v3d-async-low -r 1 -m serial -i" \
+    "/bin/rpi4-kms-g7 -G -p 96 -C" \
+    "/bin/shmsrv" \
+    "/bin/bash /bin/startx-drm action" \
+    "/bin/shmsrv -s"
+```
+
+Grade: `./scripts/uart-summary.sh mig-x`; `grep -a -E '^(XDRM|XDEMO|PHXHID|KMS |V3DA |SHMSRV )|console
+handover|kbd bridge|glamor X|\((EE)\)|Exception #' <log>`. HDMI: only snapshots after `XDRM desktop up`.
+
+| Line / observation | Predicted | If instead… |
+|---|---|---|
+| `KMS srv ready … console_off=1 …`, the three `srv detached` lines | once each | `console_off=0`: `-C` lost (staging of `rpi4-kms-g7`) |
+| `XDRM precheck v3d-async=up kms=up shm=up`, `XDRM socket=up wait_s=<1–20>` | yes | `socket=missing … server=exited`: the m4c table (M4 §10) |
+| Xorg: `glamor X acceleration enabled on V3D 4.2.14.0`, `Initializing extension DRI3` / `Present`, `(**) modeset(0): Depth 24` | as m4n-noshim | — |
+| `KMS srv console handover disable rc=0` after Xorg's modeset, before the `PHXHID` lines | once | no line: no plane shown (black screen too) — or `-C` absent |
+| `PHXHID dev=/dev/kbd0 type=keyboard open=ok fd=… raw=1 tries=<0–40>`, `PHXHID dev=/dev/mouse0 type=mouse open=ok` | **both ok** (first `-C` run on hardware) | kbd0 `Device or resource busy`: the handover came after phxhid's 1 s retries (kms applies the first commit late) — a finding, the desktop still passes; `raw=0`: usbkbd refused the mode byte |
+| `XDRM client start name=…` × 6, `XDRM desktop up mode=action clients=6 live=<4–6>` | yes | `live` < 4: read the dead client's `XDRM client exited … (earlier)` rc at teardown |
+| both xterms: `xterm: fatal pty error errno=22 …` possible | **either outcome is not a lane finding**: the old lane's b18 gate hit exactly this (`rpi4b-uart-20260927-181626-b18-gate-x.log`: both xterms died, so its reference frame shows no xterm) | an xterm up with Life / top running = better than the old gate |
+| `XDEMO window … title="Phoenix V3D GL" hints=USPosition\|USSize`, `XDEMO gl renderer="V3D 4.2.14.0"`, `XDEMO first_swap ok` | yes | `done rc=3 reason=no-shmsrv`: shmsrv not up |
+| `XDEMO fps=` every 2 s | **≈ 60.00** (interval 1; m4p2a 60.00 with no WM; the other clients are idle 2D) | 40–55: Present copies competing with Window Maker / xbill redraws on the serial render queue — record `swap_avg_ms`; ≤ 30: finding |
+| `XDRM hold … live=…` every 10 s for 200 s | yes | the heartbeat stops: the launcher (bash) wedged — check the last `XDEMO fps` line time |
+| HDMI (after `desktop up`) | the b18 gate frame's scene on the new lane: Window Maker clip (top-left) + dock (top-right) + miniwindow icons, **"Phoenix V3D GL" 640×480 at ≈(300,180)** with the hexagon turning between snapshots (colours/angle differ), **xbill ≈(945,0)**, **xclock top-right (1500,30)**, the xterms at row 2 if they started, SW cursor; no console text over the desktop | GL window elsewhere: the WM hints did not take (staged the old `eglx11-demo`?); black window with fps advancing: M4 §P2.6's rows apply; console text bleeding through: `-C` handover missing |
+| `XDRM teardown reason=hold-done`, `XDRM client exited name=… rc=0` (xterms/wmaker/xbill/xclock 0 or 143, `gl` 0 = `XDEMO done … stop=signal`) | yes | `gl rc=142`: a swap stuck at teardown (`alarm(5)`), note it |
+| `XDRM server exited rc=0 socket=gone`, then `KMS srv console handover enable rc=0`, `pl011-tty: kbd bridge opened /dev/kbd0`, `XDRM done rc=0 reason=hold-done`, the psh prompt | yes (`-terminate` after the last client; no `still up … sending TERM`) | `still up`: a client (wmaker helper) kept a connection — the TERM path still ends it; a kernel wedge at exit: the known scheduler-printf deadlock class (memory: X desktop-exit wedge ~1 in 6, lane-independent) — record, re-run once |
+| `SHMSRV stats rc=0 live=0` | fence objects released | `live>0`: a descriptor leaked |
+| faults | 0 kernel, 0 EL0 (life.py/top may linger as orphans after their xterm dies — no ps/pkill; they are not faults) | addr2line `build-out-x/eglx11-demo` / `build-out-noshim/Xorg-drm` first |
+
+**Bench-only row `mig-x-input`** (needs a person at the Pi: a USB keyboard + mouse plugged in; same
+commands with `export HOLD=0` before the launcher, interactive): move the mouse → `PHXHID first mouse
+event dx=… dy=…`, the SW cursor moves across the HDMI snapshots; click an xterm (focus) and type
+`ls` Enter → `PHXHID first keyboard event keycode=…`, the characters appear in that xterm (evdev+8
+keymap: `a` = X 38); Window Maker's root menu on a right click (button 3); wheel in xterm scrolls; exit
+from Window Maker's menu → `XDRM teardown reason=wm-exited`, console text returns and psh takes USB
+keyboard input again (usbkbd back in cooked mode). Predicted: all of these; a keyboard that types nothing
+while `PHXHID … kbd0 … open=ok raw=1` and mouse works = focus/keymap finding, not the open path.
+
+**Decides:** a PASS closes §3 blocker 3 (the X half of the §5 gate has a new-lane command). The gate
+switch is the one line in §5's table — in `scripts/run-showcase-gate.sh` (a copy, per §5; never the
+original while a gate might run): `"x:startx_gpu action"` → `"x:/bin/bash /bin/startx-drm --servers
+action"` (drop `--servers` once the servers start at boot). The `x` row's grading stays as today: the
+`frames` column is exempt for `x` (`XDEMO fps=` lines carry no `flipstat … (total N)`), HDMI by eye,
+faults from `uart-summary.sh`; the launcher's own exit (`XDRM done rc=0`, prompt back) now lands inside
+`max_cmd_secs=300` (≈ 20 s start + 200 s hold + ≤ 25 s teardown).
+
 ## 6r. Results — `mig-q2`, `mig-q3`, `mig-vkq` (queue37, 2026-09-27 12:53–13:14)
 
 | cycle | log | result | fps (new / old lane) | notes |
@@ -663,4 +787,6 @@ build (the clean-build release gate) and the §5 gate once more on that image.
 | `tools/gpu-lane/sdl2-drm/vkqdrm/vkq-drm-launcher.c` | `/bin/vkq-drm` |
 | `tools/gpu-lane/sdl2-drm/build.sh` | quakespasm-drm: links `gamedrm_hooks.c` + `--wrap=SDL_GL_SwapWindow`, swap-path proofs, new `--skip-sdl` (§6.4) |
 | ~~`tools/gpu-lane/sdl2-drm/qsdrm/qsdrm_banner.c`~~ | deleted: `gamedrm_hooks.c` prints the same banner and sets the same SDL log levels |
+| `tools/gpu-lane/xorg-drm/pi/startx-drm` | the new-lane X desktop launcher (`action`/`wmaker`, `HOLD`, `--servers`), §6.6 |
+| `tools/gpu-lane/x11-drm/src/eglx11_demo.c` | USPosition/USSize WM hints from `-g`, `-t`/`XDEMO_TITLE`; built in `x11-drm/build-out-x` (§6.6) |
 | `docs/gpu-new-lane/MIGRATION.md` | this document |
