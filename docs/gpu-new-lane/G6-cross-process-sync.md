@@ -310,6 +310,18 @@ job, the dma-buf ioctls, the foreign flip gate). Rows 11–14 PASS = Weston's co
 scan-out of a GPU client are synchronised across processes; M6 §8's "tearing expected" row is
 closed. Then: `vkcube-drm-g6` (§9) and, for explicit sync, G6b.
 
+## Result — `g6-sync` (chain52 rerun, 2026-09-27 17:00): INCONCLUSIVE — the race was not provoked
+
+(A first run at 16:53 was voided: a stray queued cycle power-cycled the Pi mid-run.) Log
+`artifacts/rpi4b-uart/rpi4b-uart-20260927-165629-g6-sync.log`: `DRMPROBE RESULT pass=48 fail=0 gap=0 verdict=PASS`,
+weston-simple-egl `8.8, 45.0, 45.0, 45.2` fps, `weston exited rc=0`, 0 exceptions. **But** `dmabuf_sync_read …
+jobs=1024 chain_us=0 … pending_at_export=0 nfences=0 wait=0 … done_at_read=1` and `dmabuf_sync_flip … chain_us=0 …
+pending_at_commit=0`: the producer's 1024-job chain cost ~0 µs, so the consumer never met a pending fence, and 0
+`V3DA srv g6 implicit` lines appeared. By the pre-registered rule this does not decide G6. Next: a producer
+chain that is genuinely long on the GPU, and the probe grading an un-provoked race as INCONCLUSIVE (`g6-sync2`).
+What it does show: the proto-4 server, the new ioctls and the per-flip `last_fence` query run on hardware without
+regressions (48/0, 45 fps as m6h).
+
 ## 9. Risks only the Pi can show
 
 - **Server paths never run on hardware:** the CPU-queue join job (kick when ready, completion on
