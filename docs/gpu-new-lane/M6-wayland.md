@@ -615,3 +615,27 @@ size=8294400` ×2 per arm). The pattern differs between snapshots, so frames are
 
 **Decides:** arm A PASS for display = the DRM backend, compat event loop, libseat/udev/libinput shims and
 shmsrv wl_shm path work; arm B adds the GL renderer on V3D. Clean exit is still open. m6d (simple-egl) follows.
+
+## Result — `m6d-weston-egl` (queue34, 2026-09-27 11:37): ✗ client GPU buffers hit G4
+
+Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-113714-m6d-weston-egl.log`. Weston came up exactly as in m6c
+arm B (`GL renderer: V3D 4.2.14.0`, `Using GL renderer`, output on HDMI, `rpi4-kms-gate -G -p 96`).
+`weston-simple-egl` started (`Using config: r8g8b8a8`, `has EGL_EXT_buffer_age …`) and then:
+
+    MESA: error: Failed to export gem bo 8202 to dmabuf
+
+Handle 8202 (`0x200a`) is in the **render-node** range, so the client allocated its back buffer on
+renderD128 and the export went down the G4 path (`PRIME_HANDLE_TO_FD` on the render node). This is the
+prediction table's "0012 not active" row, **although `V3D_PHOENIX_SHARED_SCANOUT=1` was passed** (the
+script sets it on the client, and the string is in both binaries). Consequences: `KMS srv flipstat flips=1`
+(only Weston's first frame), V3DA `render=3` jobs, no `N frames in 5 seconds` line. The client's own
+`DRMPHX` trace is not on the UART, so which device it opened is inferred, not seen. The likely mechanism:
+Mesa's Wayland platform opens the **render node** of the device named by dmabuf feedback, so the screen
+has no renderonly (kmsro) instance, and 0012's card0 allocation has nothing to allocate through.
+
+Clean: `SHMSRV stats live=0`, `KMSTEST … bos=0 exports=0`, `V3DAPING bos_live=0 verdict=PASS`, 0 exceptions.
+Exit: the same SIGTERM failure as m6c.
+
+**Decides:** 0012 does not cover wayland-egl clients. The fix is **G4** itself (render-node BO export
+`V3DA_OP_BO_EXPORT` + `/v3dbuf`, import `ns=v3dbuf`), which M4 DRI3 and M5 external memory need too. It
+retires 0012 and the `-p 96` pool pressure.
