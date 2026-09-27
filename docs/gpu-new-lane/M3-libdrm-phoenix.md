@@ -639,3 +639,284 @@ fds), G7 (`KMS_OP_PRIME_IMPORT`), G8 (kms out-fence), G9 (a commit-pending flag 
 (`poll()` 20 ms quantum, kernel), G15 (`SYNC_IOC_*`, `DMA_BUF_IOCTL_*_SYNC_FILE`), cross-process
 implicit sync (`BO_LAST_FENCE`), and access control on `/kmsbuf` / client ids (R3). `F2`'s
 misleading `kms_proto.h` comment is fixed.
+
+## M3 part 3 — Mesa DRM build + kmscube (2026-09-27)
+
+**Status:** **builds and links.** Upstream Mesa 26.2.0 on the DRM path (gallium v3d + vc4/kmsro,
+GBM with the dri backend linked in, EGL platforms drm + surfaceless, GLES 2/3) cross-built
+**static** for aarch64-phoenix against libdrm-phoenix, and upstream kmscube linked against it:
+`kmscube` 16.0 MB text (87.8 MB with debug info, 16.5 MB stripped), **0 undefined symbols**, no
+old-lane string, no `dlopen` linked. **No Pi cycle yet** — pre-registered below. Nothing committed,
+nothing staged; no server, no libdrm-phoenix source, no old-lane file, no sibling repo touched.
+Code: [`tools/gpu-lane/mesa-drm/`](../../tools/gpu-lane/mesa-drm/).
+
+### Build
+
+```
+tools/gpu-lane/mesa-drm/build.sh                     # Mesa + kmscube (≈100 s of ninja at -j16 on this host)
+tools/gpu-lane/mesa-drm/build.sh --relink \
+    --libdrm-prefix tools/gpu-lane/libdrm-phoenix/build-out-m3p2/prefix   # kmscube only, ≈20 s
+tools/gpu-lane/mesa-drm/build.sh --clean
+```
+
+Writes only `tools/gpu-lane/mesa-drm/build-out/` (gitignored, ≈1.5 GB): `mesa-src/` (a `git clone -s`
+of `external/mesa` detached at **`mesa-26.2.0` = `9f0a761020b`** + `patches/mesa/*.patch`; the old
+lane's fork checkout is never touched), `mesa-build/`, `prefix/` (`ninja install`: headers +
+`libEGL.a`, `libgbm.a`, `lib/gbm/dri_gbm.a`, `libGLESv2.a`, `libgallium-26.2.0.a`),
+`libdrm-prefix/` (a **snapshot** of libdrm-phoenix's prefix, with its own `libdrm.pc`; provenance in
+`libdrm-snapshot.txt`), `zlib-prefix/` (see below), `compat/libmesadrm-compat.a`, `kmscube-src/`
+(upstream `f60e50e`, MIT), `kmscube` (unstripped, for `addr2line`), `kmscube-stripped` (stage this),
+`kmscube.map`, `mesa-drm-full.patch` (all Mesa patches as one diff), logs.
+
+* **Why not the fork E7 built from.** E7 compiled the fork HEAD (`mesa-26.2.0-22-g51c5ee977ba`), but
+  E7 §3.3 shows its `__phoenix__` old-lane hooks activate in a DRM build (fake v3dv fd, `MMAP_BO`
+  offset treated as a CPU VA, `v3d_phoenix_peek_next_scanout`). So the base is the fork's own base
+  tag, with the genuine driver fixes cherry-picked (E7 §3.3 option (a), §8 step 2) — same object
+  store, same compiler, same cross recipe.
+* **Options:** `-Dgallium-drivers=v3d,vc4 -Dvulkan-drivers= -Dplatforms= -Degl=enabled
+  -Dgbm=enabled -Dglx=disabled -Dopengl=false -Dgles1=disabled -Dgles2=enabled -Dllvm=disabled
+  -Dspirv-tools=disabled -Dvideo-codecs= -Dgallium-va=disabled -Dshader-cache=disabled
+  -Dxmlconfig=disabled -Dexpat=disabled -Dzstd=disabled -Dlibunwind=disabled -Dvalgrind=disabled
+  -Dlmsensors=disabled -Dperfetto=false -Dbuild-tests=false -Dtools=`, `debugoptimized` +
+  `b_ndebug=true`, `--wrap-mode=nodownload`, `default_library=static`. EGL summary: drivers
+  `builtin:egl_dri2`, platforms `surfaceless drm` (native platform `surfaceless`: kmscube uses
+  `eglGetPlatformDisplayEXT(EGL_PLATFORM_GBM_KHR)`, so that is not load-bearing; `26.2` has no `drm`
+  choice for `egl-native-platform`). Desktop GL (`opengl=false`) and Vulkan are left out for this
+  step — the games (desktop GL) and v3dv (M5) are one option each when their turn comes.
+* **Cross file** (generated): E7's `phx-gcc`/`phx-g++` (drop `-pthread`), the tree sysroot,
+  `compat/include` on `-I` (never `-include`: E7's probe-flip trap), and
+  `has_function_posix_memalign = false` in `[properties]` — meson's documented cross override. It
+  fixes E7's false YES (a gcc builtin) **without a Mesa patch**: `os_memory_aligned.h` then takes
+  its over-allocating fallback.
+* **zlib** is Mesa's one hard port dependency. The ports prefix ships `libz.a` + `zlib.h` but **no
+  `zlib.pc`**, and meson — finding nothing — **silently downloaded zlib 1.3.1 from wrapdb and built it
+  as a subproject** on the first attempt (caught in `mesa-setup.log`). Fixed: a private
+  `zlib-prefix/` with only `zlib.h`/`zconf.h` and a `zlib.pc` pointing at the ports' `libz.a`
+  (the ports `include/` also holds other ports' `GL/`, `X11/` headers — never on Mesa's include
+  path), plus `--wrap-mode=nodownload` so it can never happen again.
+* **kmscube** is compiled directly (its meson source list with GLES3/shadertoy, no libpng/GStreamer)
+  and linked in E7's `link-kmscube.sh` shape: C++ driver, `-static`, `--gc-sections`,
+  `-z max-page-size=0x1000`, **`-Wl,--wrap=mmap`**, `libgallium-26.2.0.a` **whole-archive**, then one
+  `--start-group` of `libEGL.a libgbm.a dri_gbm.a libGLESv2.a` + the small per-version archives +
+  `libdrm.a` + `libmesadrm-compat.a` + the ports' `libz.a`. meson turns internal static libraries into
+  *thin* archives and bundles their objects into each installed target's archive, so
+  `libgallium-26.2.0.a` (dri_target + the DRI frontend via `link_whole` + libmesa/NIR/GLSL/drivers/
+  winsyses/util) is the equivalent of E7's "target objects + `libdri` whole"; EGL/GBM's bundled copies
+  of loader/util objects are never pulled twice (their symbols are already defined).
+* **`--relink`** re-snapshots libdrm-phoenix and relinks kmscube only. kmscube **embeds** libdrm.a,
+  so every library-side libdrm-phoenix fix (G13, name handling, a proto bump) needs a relink. The
+  delivered binary is linked against **`libdrm-phoenix/build-out-m3p2`** (the part-2 library: G1
+  import, G2/G3 users, `/dev/dri` names incl. card1, G13 implicit sync), sha256
+  `3889af57eaf5bbb0…`; Mesa's objects are unaffected (the two prefixes' headers are identical).
+
+### Mesa patches (`tools/gpu-lane/mesa-drm/patches/mesa/`, `git format-patch` over `mesa-26.2.0`)
+
+| # | Patch | Lines | Seam / rationale |
+|---|---|---|---|
+| 0001 | `util, meson: recognise Phoenix-RTOS as a POSIX KMS/DRM system` | +13/−5 | E7's OS patch minus its blake3 hunk (that hunk *reverted* a fork change that does not exist on the tag). `'phoenix'` in `system_has_kms_drm` (else GBM refuses); `DETECT_OS_PHOENIX` + `DETECT_OS_POSIX` (else `os_time.c`/`os_misc.c` `#error`); `os_misc.c` `<unistd.h>` branch; `u_thread.[ch]`: Mesa's own mutex+condvar barrier (libphoenix has no `pthread_barrier_*`, as Apple/Haiku) and no `pthread_getcpuclockid` (as managarm). |
+| 0002 | `meson: build the EGL/GBM/GLES/gallium libraries as archives on Phoenix` | +11/−6 | No `dlopen` of DRI drivers — **static megadriver** (E7 §3.4: non-PIC libphoenix, no TLS relocations in `dl.c`, initial-exec TLS in glapi/EGL). The six `shared_library()` targets (libgallium, libEGL, libgbm, dri_gbm, libGLESv2, libGLESv1_CM) become `library()`, which follows `default_library` (unchanged for `shared`); `libname_suffix = 'a'` on Phoenix so libgallium's `name_suffix` yields an archive name. |
+| 0003 | `gbm: use the linked-in dri backend on Phoenix instead of dlopen()` | +29 | The one `dlopen` left on the GBM/EGL/KMS path: GBM's backend loader. It **links** (libphoenix has `dlopen`) and would fail only at runtime (`gbm_create_device` → NULL). With `GBM_BUILTIN_DRI_BACKEND` (meson, host `phoenix`) `_gbm_create_device()` calls the linked `gbmint_get_backend()` through a static descriptor with `lib == NULL`, which `_gbm_device_destroy()` already skips. Verified: `gbmint_get_backend` in the binary, `dlopen`/`loader_open_driver_lib` not linked. |
+| 0004 | `v3d: decline HW mipmap-gen for NPOT textures` (fork `e4be1163240`) | +16 | genuine driver fix (Q2 NPOT skins), unconditional |
+| 0005 | `u_vbuf: NULL-check the translate object` (fork `f342ce50282`) | +12 | genuine fix (aarch64 has only `translate_generic`) |
+| 0006 | `u_vbuf: do not silently drop draws on the index-unrolling path` (fork `aa916f2f060`) | +42/−1 | genuine fix, `__phoenix__`-gated (Q3 world black) |
+| 0007 | `v3d: force EZ off on Phoenix 26.2` (fork `2728620c216`) | +15 | **droppable**: the old lane's proven wedge-avoidance config, kept for parity; E2b questions it (render-phase slowness). Delete the file to measure without it. |
+
+The cherry-picks carry `(cherry picked from commit …)`. Not taken from the fork: every old-lane hook
+(E7 §3.3), the RASTER-scanout pair (`4363822955b`/`34a448d6a29` — on the DRM path the scan-out
+resource is `PIPE_BIND_SCANOUT` → linear by upstream's own rule, `v3d_resource.c:847`), the C1
+ralloc instruments, and the v3dv commits (Vulkan not built). **No Mesa `mmap` patch**: the program
+links with `-Wl,--wrap=mmap`; `objdump` shows `v3d_bo_map_unsynchronized`, `vc4_bo_map_unsynchronized`,
+`gbm_dri_bo_create`, the sw winsys maps (and libphoenix's own `malloc`/`fopen`/`pthread_create`
+mappings, which pass straight through) calling `__wrap_mmap`.
+
+### Compat shim (libphoenix gaps — `tools/gpu-lane/mesa-drm/compat/`)
+
+`#include_next` wrapper headers on `-I` (never in the shared sysroot) + `mesadrm_compat.c`, whose
+stand-ins are compiled **only while `libphoenix.a` lacks the symbol** (`build.sh` checks with `nm`),
+so the shim can never duplicate a real implementation. Delete each piece when libphoenix gains it:
+
+| Gap (today's tree sysroot) | Used by | Shim | Real fix |
+|---|---|---|---|
+| `<assert.h>` lacks C11 `static_assert` | Mesa C (hundreds of TUs) | `compat/include/assert.h` | branch `gpu-lane/libc-gaps` `8551094` |
+| `<inttypes.h>` lacks `SCNxPTR`/`SCNuPTR` | `nir_opt_varyings.c` (`-Werror=format`) | `compat/include/inttypes.h` | `c1c2af2` |
+| `<sys/file.h>` has `flock()` but no `LOCK_*` | `fossilize_db.c` | `compat/include/sys/file.h` | `1f5c7db` |
+| no `_SC_PHYS_PAGES` | `os_get_total_physical_memory` | `compat/include/unistd.h` defines **103** (the branch's value), `sysconf` answers −1 today → fail soft | `3162bd4` |
+| no `open_memstream` | `util/memstream.c` (NIR/SPIR-V debug text only; all callers handle NULL) | ENOSYS stub | `7cc5628` |
+| no `posix_memalign` (but a gcc builtin → probe false YES) | `os_memory_aligned.h` | cross-file `has_function_posix_memalign = false` | `c69d829` |
+| no `pthread_barrier_*`, no `pthread_getcpuclockid` | `u_thread` | Mesa patch 0001 (Mesa's own fallback, correct) | barriers `3da702b` (the Mesa fallback stays correct after it lands) |
+| no `getopt_long_only` | kmscube | → `getopt_long` (single-dash long options like `-count=10` not recognised; `-c 600` / `--count=600` fine) | **new gap**, not on the branch |
+| no GNU `sincos` | kmscube `cube-gears.c` | `sin`+`cos` (`compat/app-include/math.h`, applications only) | **new gap** |
+| `<sys/ioccom.h>` absent (Mesa's own `include/drm-uapi/drm.h` takes the BSD branch, as libdrm's) | every DRM uapi header in Mesa | alias → `<sys/ioctl.h>` (Phoenix = BSD `_IOC` layout). Verified: `vc4_drm_screen_create`'s raw `ioctl` uses `0xc0106447` (`_IOWR('d', 0x47, 16)`, Phoenix layout), so libphoenix copies the right 16 bytes | — (a Phoenix port of libdrm-uapi headers) |
+| `pthread_exit` not declared `noreturn`; no `pthread_setname_np` | `threads_posix.c:289` warning; `u_thread.c:118` `#warning` (threads unnamed) | none (cosmetic) | libphoenix header attribute / new function |
+
+Build warnings otherwise: 55 × upstream `-Wsign-compare` from `u_math.h:892` in C++ TUs, 2 ×
+`-Warray-bounds` in upstream `blake3.c` (gcc 16) — none in patched code; kmscube 0 warnings.
+
+### Verification (the delivered binary)
+
+| Check | Result |
+|---|---|
+| static link | OK (`kmscube-link.log` empty) |
+| `aarch64-phoenix-nm -u kmscube` | **0** symbols |
+| `size` | text 15 982 118, data 515 992, bss 298 012; file 87 813 320 B, stripped 16 504 008 B |
+| sha256 (first 16) | `kmscube` `7eadd92a74b24ff7`, `kmscube-stripped` `8569c7eb00c4b9bf` |
+| libdrm-phoenix present | symbols `drm_phoenix_ioctl`, `drmPhoenixMmap`, `__wrap_mmap`, 15 `*implicit*` (G13); strings `/dev/kms`, `/dev/dri/card0`, `/dev/v3d-async`, `/dev/dri/renderD128`, `/dev/dri/card1`, `/kmsbuf`, `libdrm-phoenix: rpi4-kms runs without -G: …` |
+| drivers present | `gbmint_get_backend`, `vc4_drm_screen_create`, `kmsro_drm_screen_create`, `v3d_drm_screen_create_renderonly`; strings `kmsro`, `v3d` (31), `vc4` (6), `V3D 4.2`, `EGL_KHR_platform_gbm` |
+| old lane absent | `v3d-winsys:` 0, `phoenix_v3d_ioctl` 0, `peek_next_scanout` 0, `v3d-srv` 0 (checked on the stripped binary; `build.sh` fails if any appears) |
+| `dlopen`, `loader_open_driver_lib` | not linked |
+
+### Runtime path and the risks only the Pi can show
+
+What `kmscube -D /dev/dri/card0 -N -c 600` does, in order, and where each step can fail:
+
+1. `open(O_RDWR)` + `drmModeGetResources`/connector/encoder/CRTC → kms (M3 part 1 marshalling).
+2. `gbm_create_device(fd)`: **`fstat` → `S_ISCHR`** (`gbm.c:133`, **G2**), then the built-in dri
+   backend (patch 0003) → `loader_get_driver_for_fd` → `drmGetVersion` = `vc4` →
+   `vc4_drm_screen_create` → raw `DRM_IOCTL_VC4_GET_PARAM` must **fail** (kms answers every non-HELLO
+   ioctl `-ENOTTY`) → `kmsro_drm_screen_create` → `drmGetDevices2` (libdrm-phoenix's static list) →
+   render node `open(O_RDWR)` → `drmGetVersion` = `v3d` → `v3d_drm_screen_create_renderonly` →
+   `V3D_GET_PARAM`s.
+3. `u_pipe_screen_lookup_or_create`: Phoenix has no `kcmp`/`F_DUPFD_QUERY`, so
+   `os_same_file_description` returns −1 → **one expected stderr line** `os_same_file_description
+   couldn't determine if two DRM fds reference the same file description…`, then it compares
+   `fstat` `(st_dev, st_ino, st_rdev)` — needs G2 answering consistently (dup'ed descriptors share the
+   oid → equal → same screen, as intended). `os_dupfd_cloexec` uses `F_DUPFD_CLOEXEC`, which the
+   kernel implements (`posix.c:2340`).
+4. EGL on GBM (`dri2_initialize_drm`): `get_fd_render_gpu_drm` → the render node again; prints the
+   EGL/GLES info block.
+5. First `eglSwapBuffers` allocates the scan-out buffers: `renderonly_create_kms_dumb_buffer_for_resource`
+   → `CREATE_DUMB` **1024 px × N rows** (one page per row, N = pages of the linear 1080p colour
+   buffer + 64 B TFU read-ahead ≈ 2026 → ~7.9 MiB each) in the **kms pool** → `PRIME_HANDLE_TO_FD`
+   (`/kmsbuf/<id>`) → render `PRIME_FD_TO_HANDLE` (**G1** `BO_IMPORT`) → `lseek(SEEK_END)` (**G3**) →
+   `GET_BO_OFFSET` → `MMAP_BO` token → `__wrap_mmap` → OID memref → `/kmsbuf` uncached map. The
+   platform keeps up to 4 colour buffers; kmscube's legacy loop needs 3 (displayed + pending +
+   rendering) = ~24 MiB of the default 32 MiB pool. **A 4th fits only barely** (4 × 8 298 496 B ≤
+   32 MiB with no fragmentation): a `DRM_IOCTL_MODE_CREATE_DUMB failed` / `Failed to create scanout
+   resource` line means pool exhaustion → re-run with `rpi4-kms-m3p2 -G -p 48` (48 MiB below 1 GiB is
+   untested, E3 proved 32).
+6. `drmModeAddFB2(1920×1080, XR24, handle = the dumb handle, pitch 7680)` — the dumb buffer's own
+   pitch is 4096 (1024 px); kms validates `offset + pitch × height ≤ size` (`kms_bo.c:443`), so it is
+   accepted. kmscube passes no modifier (`LINEAR` = 0 → no `DRM_MODE_FB_MODIFIERS`).
+7. `drmModeSetCrtc` (blocking, current mode only), then per frame: draw → `eglSwapBuffers`
+   (`SUBMIT_CL` on the render server writing kms pool pages below 1 GiB) →
+   `gbm_surface_lock_front_buffer` → `drmModePageFlip(EVENT)` → **G13** attaches the imported BO's
+   unsignalled last-use fence → `rpi4-kms -G` gates the flip on the render fence page → `select()` on
+   stdin + the card fd → `drmHandleEvent` (`read`).
+8. At `-c` frames: `Rendered N frames in S sec (F fps)` and exit (no GL/GBM teardown; process death
+   releases both servers' clients; kms restores the console on client death, M2).
+
+Only the Pi can show: whether (a) the dri screen comes up at all through the kmsro pairing (every step
+of 2 runs for the first time on hardware); (b) the fps: `select()` on the card fd rides the kernel's
+**20 ms poll cycle (G12)** — ~30 fps with a correct picture is G12, not a render problem; ≥ 55 fps
+means the event read happened to align; the V3D render phase at 1080p (E2b) and EZ-off (patch 0007)
+cap it further; (c) whether G13's fence actually gates (tearing / half-drawn cube = the attach did not
+happen or `-G` is missing — the library then prints its one `libdrm-phoenix: rpi4-kms runs without
+-G` line); (d) the GLSL/NIR/v3d compile time of the first frame (excluded from kmscube's fps, but it
+extends the silence before the first `Rendered` line); (e) any `mmap of bo … failed` (Mesa) = the
+token/`--wrap` path; (f) memory: Mesa's shader compiler + a static 16 MB text binary.
+
+### Dependencies on server gaps (status after M3 part 2)
+
+| Gap | Needed for | Part 2 status |
+|---|---|---|
+| **G2** `mtGetAttrAll` | `gbm_create_device` (`S_ISCHR`), screen dedupe (step 3) | implemented in `out-m3p2` servers, **not yet Pi-verified** (`m3p2-drmprobe`) |
+| **G1** `BO_IMPORT` | every scan-out colour buffer (step 5) — without it `Failed to get v3d handle for dmabuf` and no frame | implemented, not Pi-verified |
+| **G3** `atSize` | `lseek(SEEK_END)` in `v3d_bo_open_dmabuf` — without it `Couldn't get size of dmabuf fd` | implemented, not Pi-verified |
+| **G10** `/dev/dri` names | `-D /dev/dri/card0`, kmscube's default `drmGetDevices2` scan works either way (libdrm-phoenix falls back to `/dev/kms`) | implemented (`/dev/dri/card0`, `card1`, `renderD128`) |
+| **G13** implicit flip sync | tear-free legacy flips (`drmModePageFlip` carries no fence) | library side in `build-out-m3p2` (linked here); needs `rpi4-kms -G` |
+| G8 kms out-fence, G6 | `kmscube -A` (atomic + `EGL_ANDROID_native_fence_sync`) | open — **do not run `-A` yet** |
+| G12 poll quantum | fps (above) | open (kernel) |
+
+**Gate:** run this cycle only **after `m3p2-drmprobe` passes** (or in the same boot right after it —
+it needs the same staged servers). If G2/G1/G3 fail there, kmscube fails at steps 2/5 for the same
+reason and adds nothing.
+
+### Pre-registered Pi cycle `m3p3-kmscube` (one netboot cycle)
+
+**Question:** does an unmodified upstream GBM/EGL/GLES2 program — Mesa's kmsro pairing of the vc4
+display node with the v3d render node — render and page-flip on HDMI through libdrm-phoenix and the
+two new-lane servers, and at what frame rate?
+
+**Preconditions:** netboot image ≥ build 9 (as §7); no GPU app, X, SDL program or `rpi4-v3d` in the
+boot; the `m3p2` binaries staged (M3 part 2 table above) — this cycle uses the same server binaries;
+the old staged `/bin/kmstest` and `/bin/v3dasync-ping` stay (used for stats/quit only).
+
+**Build + stage (coordinator):**
+
+```
+tools/gpu-lane/mesa-drm/build.sh --relink \
+    --libdrm-prefix tools/gpu-lane/libdrm-phoenix/build-out-m3p2/prefix   # already done; re-run after any libdrm-phoenix change
+EXPORT=$(awk '!/^#/ && /fsid=0/{print $1; exit}' /etc/exports)
+```
+
+| Source | Export path |
+|---|---|
+| `tools/gpu-lane/mesa-drm/build-out/kmscube-stripped` | `$EXPORT/bin/kmscube` |
+| `tools/gpu-lane/v3d-async/out-m3p2/rpi4-v3d-async` | `$EXPORT/bin/rpi4-v3d-async-m3p2` (if not staged by m3p2) |
+| `tools/gpu-lane/kms/out-m3p2/rpi4-kms` | `$EXPORT/bin/rpi4-kms-m3p2` (if not staged by m3p2) |
+| `tools/gpu-lane/kms/out-m3p2/kmstest` | `$EXPORT/bin/kmstest-m3p2` (if not staged by m3p2) |
+
+(`sudo install -m 755 <source> <path>`; `cmp` afterwards. Keep the unstripped `build-out/kmscube` on
+the host for `addr2line`.)
+
+**One cycle** (Bash `timeout: 600000`):
+
+```
+./scripts/test-cycle-psh-interact.sh --label m3p3-kmscube --idle-secs 30 --max-cmd-secs 150 \
+    --hdmi-dense-on 'Using display' -- \
+    "/bin/rpi4-v3d-async-m3p2 -r 1 -m serial -i" \
+    "/bin/rpi4-kms-m3p2 -G" \
+    "/bin/kmscube -D /dev/dri/card0 -N -c 600" \
+    "/bin/kmscube -D /dev/kms -N -c 300" \
+    "/bin/kmscube -D /dev/dri/card0 -N -M rgba -c 300" \
+    "/bin/kmstest-m3p2 stats" \
+    "/bin/kmstest-m3p2 quit" \
+    "/bin/v3dasync-ping stats" \
+    "/bin/v3dasync-ping quit"
+```
+
+Order: the render server first (`rpi4-kms -G` opens the render fence page at start). Both servers
+detach (psh has no `&`). `-N`: kmscube's legacy loop `select()`s stdin too and would end at the first
+stray UART byte ("user interrupted!"). `-c`: frame count (upstream option). `--idle-secs 30`: the
+first frame compiles shaders (several seconds of silence possible before the first `Rendered` line;
+after that kmscube prints every 2 s). 600 frames ≈ 10–20 s at 30–60 fps; `--max-cmd-secs 150` covers
+a 4–5 fps worst case. The second run uses the legacy name and a fresh process (servers must have
+released the first process's clients, pool BOs and imports); the third adds texture upload and
+sampling (`-M rgba`: a 512×512 RGBA texture, TFU/TMU path). Wall clock ≈ netboot 60–150 s + 9 ×
+(30 s idle + run) ≈ 7–9 min — **if it exceeds the 10-min cap, split after the first kmscube** (drop
+runs 2–3 into a second cycle with the same two server lines first). Grade:
+
+```
+grep -a -E '^(KMS|KMSTEST|V3DA|V3DAPING|Rendered|Using display|  (version|renderer|vendor):|failed|Failed|MESA|DRI2|libdrm-phoenix|os_same_file)' \
+    artifacts/rpi4b-uart/rpi4b-uart-*-m3p3-kmscube.log
+./scripts/uart-summary.sh m3p3-kmscube
+```
+
+kmscube's lines are untagged upstream text; allow for ~1.3 % UART line corruption (re-read, don't
+count), EL0 dumps print twice.
+
+**Predictions (first kmscube run) and what each alternative means:**
+
+| Line / observation | Predicted | If instead… |
+|---|---|---|
+| `KMS srv ready …`, `V3DA srv …` ready lines + the part-2 `dri name=… registered=1` lines | as in `m3p2-drmprobe` | a server missing: stop, it is a staging/boot problem. |
+| `V3DA srv fstat answered …`, `KMS srv fstat answered …` (first answers) | once each during kmscube's start | no `fstat` line and `failed to initialize GBM`: **G2** not served (old binary staged). |
+| `os_same_file_description couldn't determine if two DRM fds …` (stderr) | **expected once** (no `kcmp` on Phoenix) | absent: fine too (only printed when a second screen lookup happens). |
+| `Using display 0x… with EGL version 1.5`, `EGL information:` `version: "1.5"`, `vendor: "Mesa Project"`, client extensions incl. `EGL_KHR_platform_gbm` | as listed | `failed to initialize GBM`: gbm_create_device NULL — read the preceding `MESA`/`kmsro`/`DRI2` lines: no render device (`drmGetDevices2`/open of renderD128), `vc4_drm_screen_create` took the "3D present" branch (the raw `VC4_GET_PARAM` did **not** fail — kms answered it), or the v3d screen failed on a `GET_PARAM`. `failed to initialize EGL` + `DRI2: failed to get compatible render device`: `get_fd_render_gpu_drm`. |
+| `OpenGL ES 2.x information:` `version: "OpenGL ES 3.1 Mesa 26.2.0"` (or `2.0`/`3.0`), `renderer: "V3D 4.2.…"` | a V3D 4.2 renderer string | `renderer: "llvmpipe"`/`softpipe`: impossible here (not built) — if any sw name appears, kmsro fell back to the `kms_swrast` path (`libswkmsdri`): the render node was not found. |
+| import lines: `V3DA srv import handle=… ns=kmsbuf … pages=2026 … contiguous=1` × 3 (maybe 4) around the first frame | **the kmsro scan-out buffers imported on the render node (G1)**; `KMS srv kmsbuf atSize id=… (first; G3)` once | `MESA: error: Failed to get v3d handle for dmabuf …`: G1; `Couldn't get size of dmabuf fd`: G3; `DRM_IOCTL_MODE_CREATE_DUMB failed` / `Failed to create scanout resource`: kms pool exhausted (→ `-p 48`, step 5); `mmap of bo … failed`: the token/`__wrap_mmap` path. |
+| HDMI (dense snapshots from `Using display`) | **a rotating smooth-shaded cube** (red/green/blue/… faces) on black, full screen 1920×1080, no console text over it | console still visible: `SETCRTC` did not reach the display (`KMS apply` lines); black screen with `Rendered` lines advancing: frames flip but the GPU wrote elsewhere (compare `V3DA srv import pa0` with `KMS pool pa`); a frozen cube: flips stopped (`failed to queue page flip`); torn / half-drawn cube: G13 did not gate (look for `libdrm-phoenix: rpi4-kms runs without -G`); garbage stripes: a tiled buffer was scanned out (impossible per `v3d_resource.c:847` — report it). |
+| `Rendered N frames in 2.0x sec (F fps)` every 2 s, then a final line after 600 frames, prompt returns | **F = 25–60**: ~30 = the G12 20 ms poll quantum on the flip-event `select()`; 55–60 = event-aligned. Record F and the `KMSTEST stats` flip counters | F < 20: the V3D render phase (E2b) or per-frame IPC — compare `V3DAPING stats` job times; no `Rendered` line within `--idle-secs`: first-frame compile hang or a wait that never completes (`V3DA` wedge lines). |
+| `failed to queue page flip: Device or resource busy` | absent | the flip was issued while one was pending: event delivered before completion (kms) or kmscube's wait loop broke out early. |
+| `select err: …` / `select timeout!` | absent | `-N` only stops kmscube from *acting* on stdin: `legacy_run` still `FD_SET(0)`s the psh tty in every `select()` — the first new-lane client to `select()` the console. `select err` = `select()` on fd 0 (or on the card fd's `atPollStatus`) failed, **not** a DRM failure; remedy = a 2-line kmscube patch (`patches/kmscube/`, skip `FD_SET(0)` when `nonblocking`; psh has no `<` redirection). A tty that reports permanently readable is harmless (the loop falls through to the blocking `drmHandleEvent` read). |
+| second run (`-D /dev/kms`, fresh process) | same lines, same fps; `import` lines for new buffers; `import released` lines for the first run's buffers **before** it (client death) | failure only on the second run: pool BOs or imports leaked by the first process (`KMSTEST stats bos`/`exports`). |
+| third run (`-M rgba`) | a textured cube (the RGBA test image on each face) | texture black/garbled with the smooth cube fine: TFU/TMU path (patch 0004 is POT-neutral; the 512×512 texture is POT). |
+| `KMSTEST stats … bos=0 exports=0 apply_errors=0`, `V3DAPING stats … parked=0 … pages_to_kernel=0`, both `quit rc=0` | no leaks after three kmscube processes | `bos>0`/`exports>0`: kms leak on client death; `pages_to_kernel>0`: an import went to the BO pool path (must not). |
+| fault dumps (`uart-summary.sh`) | 0 kernel, 0 EL0 | any EL0 fault in kmscube: `aarch64-phoenix-addr2line -f -e tools/gpu-lane/mesa-drm/build-out/kmscube <pc>` (unstripped, same link as the staged stripped copy). |
+
+**What the cycle decides:** a rotating cube on HDMI with `Rendered` lines = **M3's GBM/EGL/KMS path
+works end to end** (the first unmodified Linux DRM client on Phoenix); next are SDL2 KMSDRM, a desktop-GL
+Mesa (`-Dopengl=true`) for the game clones, and `kmscube -A` once G8 exists. A failure before
+`Using display` is an integration bug in steps 2–4 (fix in libdrm-phoenix or the servers, relink,
+re-run); a failure at the first frame is the import/scan-out chain (G1/G3/pool); a correct but slow or
+torn cube is performance (G12/E2b) or G13, not a blocker for the M3 verdict.
