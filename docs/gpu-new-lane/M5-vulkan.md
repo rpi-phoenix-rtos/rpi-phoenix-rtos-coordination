@@ -541,3 +541,13 @@ HDMI rule unchanged: only snapshots after the `(psh)% /bin/vkcube-drm-m5b --wsi 
 **What the cycle decides:** the cube on HDMI with `phxvk: exit presents=600` = M5's display half done
 (then the swapchain/present rows of §7 are graded for the first time). A new stop point is named by
 the first `rc=-1` `DRMPHX` line after the last successful one.
+
+### Result — m5b (queue28, 2026-09-27 07:35–07:41): **PASS — vkcube renders through v3dv + VK_KHR_display**
+
+Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-073537-m5b-vkcube.log`. `drmprobe-m5b`: `sync_merge … ok=1`,
+`RESULT pass=39 fail=0 gap=1`. vkcube: the sync-file merges answered in-process (`DRMPHX sync fd=… nr=3
+rc=0 merged_fd=…`), three swapchain images allocated on card0 and imported by the render server
+(`V3DA srv import … pages=2025` ×3), `phxvk: first present result=0`; untraced run **600 frames in 12.29 s =
+48.8 fps** (against rpi4-kms-m3p2, before the deferred-flip wake fix — rerun against rpi4-kms-gate is the
+next measurement). 0 exceptions. HDMI (`artifacts/hdmi/20260927-074033-m5b-vkcube-tick.png`): the textured
+LunarG cube, rotating. Same early-start caveat as m4c.

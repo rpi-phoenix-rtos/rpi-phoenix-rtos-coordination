@@ -460,3 +460,18 @@ Not reached: glamor/GBM/EGL, modeset, input, DRI3/Present. Re-registered as **`m
 ## Result — `m4c-xorg-drm`
 
 *(to be filled: log path, snapshot paths, the tagged lines, the rows that applied)*
+
+### Result — m4c (queue28, 2026-09-27 07:42–07:48): **PASS — first light: xclock on Xorg-drm with glamor on V3D**
+
+Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-074153-m4c-xorg-drm.log`. With the ctype shim, the config
+parsed `Depth 24, framebuffer bpp 32`; `glamor: Using OpenGL ES 3.1 context` → **`glamor X acceleration
+enabled on V3D 4.2.14.0`** → `glamor initialized`; EDID read from the monitor (HJW 2131, 60×34 cm);
+xclock (old-lane client binary, `DISPLAY=:1`) ran for the full 30 s hold; server exited `rc=0`
+("Server terminated successfully"), scanout BO import released, 0 exceptions. HDMI
+(`artifacts/hdmi/20260927-074503-m4c-xorg-drm-tick.png`): **a black root window with the xclock face** —
+exactly the pre-registered PASS picture. glamor renders into the kms scanout BO and presents with
+`MODE_DIRTYFB` (front-buffer path; `PageFlip on` did not engage — no flip ioctls in the trace).
+⚠ This cycle started early (a queue-guard bug, see the weekly log) while build 12 compiled; it ran on
+build 11's image and finished before build 12's image stage — the result is valid for these static binaries.
+The ctype shim is now redundant: libphoenix `156422a` (weekend sync) fixes the macros at the source.
+Next: Window Maker + input, DRI3/Present clients (G4/G6/G16), page flips.
