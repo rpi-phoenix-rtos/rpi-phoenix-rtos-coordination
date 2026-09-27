@@ -588,6 +588,30 @@ Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-101308-m6a-weston.log` (`grep -a`)
 As predicted: `artifacts/rpi4b-uart/rpi4b-uart-20260927-102141-m6b-weston-egl.log` — `failed to create XKB
 context` 2 s after start, `weston exited rc=1 before its socket appeared`, 0 exceptions (queue31, 10:21).
 
-## Result — `m6c-weston`
+## Result — `m6c-weston` (queue34, 2026-09-27 11:27): ★ arms A and B DISPLAY; exit on SIGTERM FAILS
 
-*(to be filled: log path, snapshot paths, the tagged lines, the rows that applied)*
+Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-112701-m6c-weston.log`; HDMI
+`artifacts/hdmi/20260927-113046-m6c-weston-tick.png` (arm A, pixman) and `…-113315-…` (arm B, GL).
+
+**Weston 14 composites a Wayland client on HDMI on Phoenix, with both renderers.** Patch 0007 cleared
+the XKB stop; the DRM backend brought up `HDMI-A-1` 1920×1080@60 through libdrm-phoenix and `rpi4-kms`.
+`weston-simple-shm`'s pattern is on screen, **full-screen** (kiosk-shell fullscreens it, so the
+prediction's "250×250 centred" row did not apply: its buffers are 1920×1080, `SHMSRV truncate
+size=8294400` ×2 per arm). The pattern differs between snapshots, so frames are delivered.
+
+| arm | renderer | evidence | flips / 30 s hold | exit |
+|---|---|---|---|---|
+| A | pixman (no Mesa) | two dumb BOs + `mmap` token, `shadow framebuffer`; `KMS srv flipstat flips=670 vbl1=442 vbl2=228 dropped_events=0` | 670 | ✗ `still up 15s after TERM: sending KILL` |
+| B | GL | `EGL version: 1.5`, `GL version: OpenGL ES 3.1 Mesa 26.2.0`, `GL renderer: V3D 4.2.14.0`, `Using GL renderer`; V3DA 800 bin/render jobs, `wedges=0 err=0`; `flips=805 deferred=783 applied_gate=783` (fence-gated flips) | 805 | ✗ same |
+
+- Input (arm B): `[libseat/backend/noop.c:57] Failed to open device: Device or resource busy` once a
+  second: the console holds `/dev/kbd0` without `rpi4-kms -C` (acceptable row, M4 R5).
+- Cleanup: `SHMSRV stats live=0 bytes=0` after each arm; `KMSTEST stats … apply_errors=0 dropped=0 bos=0
+  exports=0`; `V3DAPING stats bos_live=0 parked=0 verdict=PASS`. **0 exceptions**, 0 kernel faults.
+- ✗ **Exit:** both arms ignored SIGTERM for 15 s and were KILLed (`rc=137`, `socket=left`). The client died
+  on TERM (`rc=143`). The log cannot separate "the signal never reached the loop" from "the loop ended and
+  shutdown hung": nothing Weston prints distinguishes them, and the DRMPHX trace is sampled (n = powers of 2).
+  → a host test of the signalfd emulation plus a traced re-run (§14).
+
+**Decides:** arm A PASS for display = the DRM backend, compat event loop, libseat/udev/libinput shims and
+shmsrv wl_shm path work; arm B adds the GL renderer on V3D. Clean exit is still open. m6d (simple-egl) follows.
