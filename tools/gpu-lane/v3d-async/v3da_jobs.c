@@ -474,6 +474,7 @@ static int kick_csd(v3da_job_t *j)
 {
 	uint32_t spins, i;
 
+	j->csd_t0 = v3da_cnt();
 	__asm__ volatile("dsb sy" ::: "memory");
 	C0()[CTL_SLCACTL / 4u] = SLCACTL_INVAL_ALL;
 	tlb_step();
@@ -488,10 +489,12 @@ static int kick_csd(v3da_job_t *j)
 		return -EBUSY;
 	}
 	drain_for_kick(INT_CSDDONE, 0u);
+	__atomic_store_n(&srv.hw.csd_done_cnt, 0u, __ATOMIC_RELEASE);   /* after the drain: nothing stale */
 	for (i = 1u; i <= 6u; i++) {
 		C0()[(CSD_QUEUED_CFG0 + 4u * i) / 4u] = j->d.csd.cfg[i];
 	}
 	C0()[CSD_QUEUED_CFG0 / 4u] = j->d.csd.cfg[0];         /* CFG0 starts the dispatch */
+	j->csd_t1 = v3da_cnt();
 	return 0;
 }
 
@@ -1143,6 +1146,64 @@ static void wedge(const char *why, uint64_t now)
 }
 
 
+/* ========================================================================= */
+/* CSD profile (-C)                                                          */
+/* ========================================================================= */
+
+static uint64_t ticks_us(uint64_t t)
+{
+	return v3da_csdprof_us(t, srv.cntfrq);
+}
+
+
+/* One completed CSD job into its CFG5 class (v3da_csdprof.h). */
+static void csdprof_account(const v3da_job_t *j, uint64_t t_done, uint64_t t_ev, uint64_t t_end)
+{
+	const v3da_csdprof_times_t t = { j->csd_t0, j->csd_t1, t_done, t_ev, t_end };
+
+	v3da_csdprof_account(srv.csdprof_cls, j->d.csd.cfg, &t, srv.cntfrq);
+}
+
+
+/* Cumulative, one line per class that ran since the last window (a lost line costs
+ * only its own window; ~1.3 % UART corruption). Never per job: at UART speed a
+ * per-dispatch line costs ~6 ms, more than the job it would describe. */
+static void csdprof_print(void)
+{
+	uint32_t i;
+	v3da_csdprof_t *c;
+
+	for (i = 0u; i < V3DA_CSDPROF_CLASSES; i++) {
+		c = &srv.csdprof_cls[i];
+		if ((c->cfg5 == 0u) || (c->n == c->n_printed)) {
+			continue;
+		}
+		c->n_printed = c->n;
+		printf("V3DA srv csd cfg5=0x%08x n=%u wg=%ux%ux%u wgs=%llu/%u..%u wgsz=%u sgwgs=%u sgbat=%u thr4=%u seg1=%u "
+			"batches=%llu gpu_us=%llu max_us=%llu pro_us=%llu wake_us=%llu epi_us=%llu noirq=%u "
+			"h=%u/%u/%u/%u/%u/%u/%u/%u\n",
+			c->cfg5, c->n, c->wg[0], c->wg[1], c->wg[2], (unsigned long long)c->wgs, c->wgs_min, c->wgs_max,
+			c->cfg3 & 0xffu, (c->cfg3 >> 8) & 0xfu, ((c->cfg3 >> 12) & 0xffu) + 1u, c->cfg5 & 1u, (c->cfg5 >> 1) & 1u,
+			(unsigned long long)c->batches, (unsigned long long)ticks_us(c->gpu), (unsigned long long)ticks_us(c->gpu_max),
+			(unsigned long long)ticks_us(c->pro), (unsigned long long)ticks_us(c->wake),
+			(unsigned long long)ticks_us(c->epi), c->no_irq, c->hist[0], c->hist[1], c->hist[2], c->hist[3],
+			c->hist[4], c->hist[5], c->hist[6], c->hist[7]);
+	}
+}
+
+
+void v3da_csdprof_enable(void)
+{
+	srv.cntfrq = v3da_cntfrq();
+	if (srv.cntfrq == 0u) {
+		srv.cntfrq = 54000000u;   /* BCM2711's crystal */
+	}
+	srv.csdprof = 1;
+	printf("V3DA srv csdprof on cntfrq=%llu gpu_buckets_us=250/500/1000/2000/4000/8000/16000 "
+		"(per CFG5 class, cumulative, printed with qstat)\n", (unsigned long long)srv.cntfrq);
+}
+
+
 /* Status bits drained from the handler (IRQ mode) or read by the poll path. */
 void v3da_jobs_events(uint32_t core, uint32_t hub, uint64_t now)
 {
@@ -1183,8 +1244,13 @@ void v3da_jobs_events(uint32_t core, uint32_t hub, uint64_t now)
 	if ((core & INT_CSDDONE) != 0u) {
 		j = srv.q[V3DA_Q_CSD].active;
 		if (j != NULL) {
+			uint64_t t_done = __atomic_exchange_n(&srv.hw.csd_done_cnt, 0u, __ATOMIC_ACQ_REL);
+			uint64_t t_ev = v3da_cnt();
 			clean_caches();
 			__asm__ volatile("dsb sy" ::: "memory");
+			if (srv.csdprof != 0) {
+				csdprof_account(j, t_done, t_ev, v3da_cnt());
+			}
 			job_done(j, 0, now);
 		}
 	}
@@ -1429,6 +1495,9 @@ static void stat_print(uint64_t now)
 		b->st_errors + r->st_errors + t->st_errors + c->st_errors, srv.wedges, srv.scan.flips, srv.scan.pan_err,
 		srv.scan.px_changed, srv.scan.px_sampled, srv.submit_rejects, srv.cl_bcl_wrap, srv.cl_render_only,
 		(unsigned long long)(low_live / 1024u), (unsigned long long)(low_budget / 1024u), low_bos, low_fb);
+	if (srv.csdprof != 0) {
+		csdprof_print();
+	}
 }
 
 

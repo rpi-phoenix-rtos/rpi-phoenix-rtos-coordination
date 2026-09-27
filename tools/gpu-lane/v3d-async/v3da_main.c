@@ -10,7 +10,7 @@
  * has one page-table base register and no arbitration, and this server resets it.
  *
  * Usage: rpi4-v3d-async [-f] [-i] [-I irq] [-r threads] [-p poll_us] [-m serial|pipeline]
- *                       [-k knobs] [-c chunk_kib] [-w wedge_ms] [-s stat_ms] [-L lowmem_mib] [-v] [&]
+ *                       [-k knobs] [-c chunk_kib] [-w wedge_ms] [-s stat_ms] [-L lowmem_mib] [-C] [-v] [&]
  *   (detaches itself: psh has no job control, so `cmd &` would run in the
  *    foreground; a stray "&" argument is accepted and ignored)
  *   -f          stay in the foreground (no fork)
@@ -30,6 +30,9 @@
  *   -L MiB      low-memory budget of scan-out BOs (V3DA_BO_LOWMEM, proto 5): how much of
  *               the low 1 GiB their blocks may hold (buddy footprint, default 64;
  *               0 = never place them, the pre-proto-5 behaviour)
+ *   -C          CSD profile: per compute pipeline (CFG5) job count, workgroup/batch
+ *               shape and GPU / kick / wake / clean times, cumulative `V3DA srv csd`
+ *               lines with every qstat line (docs/gpu-new-lane/vkquake-perf.md)
  *
  * Serves: HELLO, GET_INFO, GET_PARAM, BO create/close/mmap/offset/wait (incl.
  * scanout BOs), BO_IMPORT (PRIME import of a /kmsbuf or /v3dbuf export), BO_EXPORT
@@ -761,7 +764,7 @@ static int bufns_register(void)
 static void usage(const char *prog)
 {
 	printf("usage: %s [-f] [-i] [-I irq] [-r threads] [-p poll_us] [-m serial|pipeline] [-k knobs] [-c chunk_kib] "
-		"[-w wedge_ms] [-s stat_ms] [-L lowmem_mib] [-v]\n", prog);
+		"[-w wedge_ms] [-s stat_ms] [-L lowmem_mib] [-C] [-v]\n", prog);
 }
 
 
@@ -780,7 +783,7 @@ int main(int argc, char **argv)
 	srv.stat_ms = 5000u;
 	srv.low_budget = (uint64_t)V3DA_LOWMEM_BUDGET_MIB << 20;
 
-	while ((c = getopt(argc, argv, "fiI:r:p:m:k:c:w:s:L:vh")) != -1) {
+	while ((c = getopt(argc, argv, "fiI:r:p:m:k:c:w:s:L:Cvh")) != -1) {
 		switch (c) {
 			case 'm':
 				if (strcmp(optarg, "pipeline") == 0) {
@@ -805,6 +808,7 @@ int main(int argc, char **argv)
 			case 'r': nthreads = atoi(optarg); break;
 			case 'p': srv.poll_us = (uint32_t)strtoul(optarg, NULL, 0); break;
 			case 'v': srv.verbose = 1; break;
+			case 'C': v3da_csdprof_enable(); break;
 			default: usage(argv[0]); return 1;
 		}
 	}

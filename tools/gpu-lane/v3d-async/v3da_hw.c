@@ -364,6 +364,16 @@ void v3da_hw_va_free(v3da_hw_t *hw, uint32_t gpuva, uint32_t pages)
 /* Interrupts                                                                 */
 /* ========================================================================= */
 
+/* CSD profile: the moment INT_CSDDONE was first seen. Whoever reads the bit clears
+ * it (W1C), so exactly one of handler, poll path and pre-kick drain stamps it. */
+static inline void csd_done_stamp(v3da_hw_t *hw, uint32_t core)
+{
+	if (((core & INT_CSDDONE) != 0u) && (__atomic_load_n(&hw->csd_done_cnt, __ATOMIC_RELAXED) == 0u)) {
+		__atomic_store_n(&hw->csd_done_cnt, v3da_cnt(), __ATOMIC_RELEASE);
+	}
+}
+
+
 /* Read, clear and record both status registers. Shared by the IRQ handler
  * (kernel context: MMIO + atomics only - no libc, no locks, no faults) and the
  * poll path. Returns the bits seen. */
@@ -377,6 +387,7 @@ static inline uint32_t hw_service(v3da_hw_t *hw, uint32_t *hub_out)
 		/* Raw status, QPU bits included: Linux parity (v3d_irq.c:107-110); an
 		 * unacknowledged QPU interrupt stalls fragment dispatch (E2 step 13). */
 		hw->core0[CTL_INT_CLR / 4u] = core;
+		csd_done_stamp(hw, core);
 	}
 	if (hub != 0u) {
 		if ((hub & HUB_INT_MMU_ANY) != 0u) {
@@ -456,6 +467,7 @@ void v3da_hw_drain(v3da_hw_t *hw)
 
 	if (core != 0u) {
 		hw->core0[CTL_INT_CLR / 4u] = core;
+		csd_done_stamp(hw, core);
 		(void)__atomic_fetch_or(&hw->ev_core, core, __ATOMIC_RELEASE);
 	}
 	if (hub != 0u) {
@@ -537,6 +549,7 @@ int v3da_hw_reset(v3da_hw_t *hw)
 	__atomic_store_n(&hw->ovf_missed, 0u, __ATOMIC_RELEASE);
 	__atomic_store_n(&hw->ev_core, 0u, __ATOMIC_RELEASE);
 	__atomic_store_n(&hw->ev_hub, 0u, __ATOMIC_RELEASE);
+	__atomic_store_n(&hw->csd_done_cnt, 0u, __ATOMIC_RELEASE);
 	hw->pt_gen++;
 	v3da_hw_mmu_flush(hw);
 	if (hw->irq_on != 0) {

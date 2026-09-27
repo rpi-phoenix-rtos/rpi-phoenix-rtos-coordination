@@ -153,7 +153,7 @@ what the old lane used.
 the indirect-draw culling (clear + draw, `r_brush.c:3512-3547`) and one `cs_tex_warp` dispatch of
 64×64 workgroups per visible warp texture (`r_waterwarpcompute 1`, `gl_warp.c:120-131`). The old lane
 ran the same engine code; its 2026-08-06 A/B put the lightmap compute at ~3 ms/frame. The new
-number is ~9× that, and neither the attachment argument nor the server's per-kick cost (≤ 0.1 ms,
+number is ~9× that *(not like-for-like: see "CSD per-job cost" at the end — the matching new-lane number is 5.2 ms/frame)*, and neither the attachment argument nor the server's per-kick cost (≤ 0.1 ms,
 §2) explains it. `r_lerplightstyles 1` makes lightstyles change every frame, so the lightmap work
 does not shrink as fps rises. Diagnostic cycles `perf-vkq-c` / `-d` (§6) split it by dispatch
 source; neither variant is a fix (`r_gpulightmapupdate 0` moves lighting to the CPU path).
@@ -354,9 +354,200 @@ Both on the perf-b binary (0006+0007), one cvar each; 45 windows each, 0 excepti
 
 **Reading:** each compute user carries about 8 000 of the 21 000 CSD jobs. Removing either one moves time from compute to
 render (more frames per second means more render jobs) and gains 1–2.7 fps. The rest (~13 000 jobs, 55–63 s) is
-common to both, so it is neither the lightmap update nor the water warp: most likely the per-frame compute of
+common to both *(corrected in "CSD per-job cost" §2: that is the count remaining after one removal; the common part is ≈ 0.8 jobs/frame, and `-c` also removes the indirect-draw compute)*, so it is neither the lightmap update nor the water warp: most likely the per-frame compute of
 vkQuake's other GPU paths (particles / indirect draw setup). The per-job cost is still the question: 4.5 ms
 average per CSD job against about 3 ms/frame of lightmap compute on the old lane. Next: time one CSD job's dispatch
 size and its QPU/TMU cost in the render server (a `csd` detail line), and compare with the old lane's compute
 dispatch for the same shader. Shipping `+r_gpulightmapupdate 0` by default is a cheap +16 % if the CPU path looks
 identical on HDMI (to check).
+
+## CSD per-job cost (2026-09-27 evening, host only)
+
+*Question: why does a V3D compute (CSD) job cost ~4.5 ms on the new lane when the old lane put the lightmap
+compute at ~3 ms/frame? Sources: the qstat/flipstat lines of `mig-vkq`, `perf-vkq-{a,b,c,d}`, `mig-all-vkq`
+(steady state = the last 40 qstat windows, 200 s, frames from the flipstat totals over the same span); the old
+lane's `b18-gate-vkq` (flipstat only: the old winsys prints no CSD timing unless built with `V3D_SP`, and no
+archived vkQuake log has a `subprof-x` line); source as cited. Tags as above.*
+
+### Short version
+
+* **There is no per-job CSD cost that the new lane adds.** The CSD path of `rpi4-v3d-async` is the old
+  winsys's `ioc_submit_csd` step for step, the CFG words are Mesa's, unchanged, and Mesa is the same release
+  on both lanes. Every suspect on the list (batches, wg_size, supergroups, QPU count, per-job L2/TLB
+  maintenance, serial mode, IRQ + wake latency) is either identical in the two lanes or bounded by the bin
+  jobs' 0.105 ms all-in cost (below). [read + measured]
+* **The "~9×" was not a like-for-like comparison.** It set the new lane's *whole* compute row (28.3 ms/frame,
+  every compute user, OIT still on) against the old lane's *lightmap-only* A/B delta (~3 ms/frame, a frame-time
+  difference on a synchronous lane, so GPU saved minus the CPU `R_BuildLightMap` added: the old GPU number is
+  ≥ 3 ms). The like-for-like pair is `perf-vkq-b` → `-c`: `r_gpulightmapupdate 0` removes **5.2 ms/frame** of
+  CSD on the new lane. So ~1.5–1.7×, not 9×, and within what a different vkQuake frame (five passes, not one)
+  can explain. [measured]
+* **Two errors in the `-c`/`-d` reading above**, corrected here: `r_gpulightmapupdate 0` also turns off the
+  **indirect-draw compute** (`indirect = r_indirect && indirect_ready && r_gpulightmapupdate && !scr_speeds`,
+  `gl_rmain.c:1536`), so `-c` removed lightmap **+ indirect**; and "~13 000 jobs common to both" is the
+  count *remaining* after one removal, not the common part. [read]
+* **The redone decomposition leaves a third compute class that neither suspect explains** — ≈ 0.8 jobs/frame
+  at ≈ 10 ms each, ~40 % of the compute row — and reading vkQuake's five dispatch sites does not name it. The
+  render server now carries the instrument that does (`-C`, a per-pipeline CSD profile); cycle `perf-vkq-e`
+  (below) is its first run. No fix is claimed: the fix follows the attribution.
+* **Side finding:** at `perf-vkq-b` the GPU is busy **36.9 of 57.9 ms** per frame (64 %). With acquire /
+  submit / fence waits at 0.7 / 0.08 / 0.06 ms the remaining ~21 ms/frame is neither GPU work nor a hooked
+  wait, so the "now GPU-bound" reading of the a/b result is too strong. That idle time is a lever of the same
+  size as the whole compute row. [measured]
+
+### 1. The kick and completion paths, side by side [read]
+
+| step | old lane (in-process, `v3d_phoenix_winsys.c:3744-3842` `ioc_submit_csd`) | new lane (`v3da_jobs.c` `kick_csd` :473, CSDDONE completion in `v3da_jobs_events`) |
+|---|---|---|
+| CPU stores → DRAM | `dsb sy` | `dsb sy` |
+| slice caches | `SLCACTL = INVAL_ALL` | same |
+| MMU | `mmu_flush_tlb` every job (MMUC flush + TLB clear, both waited) | `tlb_step` = the same, every job (knob `V3DA_KNOB_TLB_ON_CHANGE` off by default) |
+| L2T | wait-idle, `L2TFLS`, wait | `l2t_flush(1)`: the same |
+| busy unit | spin while `CSD_STATUS.HAVE_CURRENT` (8 M spins) | same (then wedge + reset instead of `reset_reinit_core`) |
+| kick | clear CSDDONE, CFG1..6, CFG0 | drain status (CSDDONE own bit dropped), CFG1..6, CFG0 |
+| CFG words | `s->cfg[]` from v3dv, unchanged | `d.cfg[]` = `s->cfg[]` from v3dv, unchanged (`drm_phoenix_v3d.c` `ioc_submit_csd`: `memcpy`) |
+| completion | spin on `CTL_INT_STS & CSDDONE` in the caller | IRQ (`INT_CSDDONE` in `CORE_IRQS`) → handler → cond → event thread (priority 2) |
+| after | wait-idle, `TMUWCF` + spin, `L2TFLS\|FLM_CLEAN`, wait, `dsb` | `clean_caches()` + `dsb`: the same sequence |
+| identity v3dv sizes from | hard-coded `IDENT1 = 0x81001422` | live registers: `core0=0x04443356/0x81001422/0x40078121` (log) — the same values |
+| hardware set-up | `apply_core_regs` | `apply_core_regs`, "verbatim" (`v3da_hw.c:251`): `MISCCFG` QRMAXCNT + OVRTMUOUT, `L2CACTL`, `AXICFG`, MMU |
+
+* **The CFG words (workgroup counts, wg_size, wgs_per_sg, batches, threading, shader address) are built by
+  the client**, in Mesa's `cmd_buffer_create_csd_job` (`v3dv_cmd_buffer.c:4295-4364`), which neither lane
+  patches: M5 §3.1's triage found none of the old fork's 9 commits over `mesa-26.2.0` in the compute path.
+  The same vkQuake commit (`1aa13a56`) issues the same dispatches. So the GPU runs the same job on both lanes.
+* **Server overhead is bounded by the bin row.** A bin job passes through the same prologue class (TLB flush,
+  two waited L2T flushes), the same IRQ → event-thread completion and the same bookkeeping; its whole
+  kick-to-completion time averages **0.105 ms** (`perf-vkq-b`: 3107 ms / 57 849). A CSD job's extra epilogue
+  is one L2T clean. Nothing here can add milliseconds per job; the 3.6–4.5 ms averages are GPU execution.
+* **Serial mode costs CSD nothing it did not cost on the old lane**, which was fully synchronous. Pipeline
+  mode would not overlap vkQuake's compute with its render passes either: every compute stage is fenced by a
+  pipeline barrier (`r_brush.c:3415/3494/3524/3553`, `gl_warp.c:204/242`), and v3dv turns those into job
+  serialisation. [inferred]
+* **Linux differs in one place:** its CSD job does not flush the MMU TLB (only `v3d_invalidate_caches`; the
+  TLB is flushed when page tables change). Both Phoenix lanes flush it per job. A TLB miss costs a page-table
+  read; the effect per job is a few hundred µs at most [inferred] and is common to both lanes, so it cannot be
+  the lane difference. The server already has the A/B for it (`-k 0x01`, `V3DA_KNOB_TLB_ON_CHANGE`); not
+  proposed before the profile shows `pro_us`/`gpu_us` sensitive to it.
+
+### 2. The compute row, decomposed again [measured]
+
+Steady state, per frame (last 40 qstat windows; frames from flipstat):
+
+| cycle | fps | CSD jobs/frame | CSD ms/frame | ms/job | render jobs, ms /frame | GPU busy / frame |
+|---|---|---|---|---|---|---|
+| mig-vkq (OIT on) | 10.55 | 6.23 | 27.97 | 4.49 | 16.8, 43.1 | 72.9 / 94.8 ms |
+| perf-vkq-a | 15.58 | 5.76 | 22.93 | 3.98 | 14.9, 19.2 | 43.2 / 64.2 |
+| **perf-vkq-b** | 17.27 | **5.44** | **19.46** | 3.58 | 14.9, 16.7 | **36.9 / 57.9** |
+| perf-vkq-c (`+r_gpulightmapupdate 0`) | 19.87 | 2.99 | 14.29 | 4.78 | 15.2, 16.8 | 31.9 / 50.3 |
+| perf-vkq-d (`+r_waterwarpcompute 0`) | 18.29 | 3.25 | 13.59 | 4.18 | 17.9, 18.6 | 33.1 / 54.7 |
+| mig-all-vkq (b's patches, default build) | 17.22 | 5.46 | 19.64 | 3.60 | 14.9, 16.7 | 37.1 / 58.1 |
+
+(Computed with a scratch parser over the logs' `V3DA srv qstat` and `vkquake-drm flipstat` lines; the
+per-window deltas agree with §2's method.)
+
+vkQuake's compute dispatch sites [read]: the lightmap update (`r_brush.c:3490`, w×h workgroups per dirty
+region), the indirect-draw clear and draw (`:3517`, `:3541`, one each per frame when `indirect`), the water
+warp (`gl_warp.c:130`, 64×64 workgroups per visible warp texture), the screen effects (`gl_vidsdl.c:3807`,
+240×135 workgroups — only when under water, `r_scale ≥ 2`, `vid_palettize`, a `v_blend` flash with
+`gl_polyblend`, or the menu: none at the spawn view, `gl_vidsdl.c:4070-4071`), and the ray-tracing BLAS
+skinning (`gl_mesh.c:1034`, off with `r_rtshadows 0`). v3dv adds compute only for events and query
+availability (`v3dv_event.c:510/540`, `v3dv_query.c:804`); vkQuake records neither (timestamps are off, patch
+0005). With L+I = lightmap + indirect (both gone in `-c`), W = warp (gone in `-d`), X = anything else:
+
+| class | jobs/frame | ms/frame | ms/job |
+|---|---|---|---|
+| L+I = b − c | 2.45 | 5.17 | 2.1 (average over I's ~2 small jobs and L) |
+| W = b − d | 2.19 | 5.87 | 2.7 |
+| **X = c + d − b** | **0.80** | **8.42** | **≈ 10.5** |
+
+The same fit per second instead of per frame (lightmap updates follow the 10 Hz lightstyle clock, the rest
+follows frames) gives W = 2.17/frame, lightmap ≈ 7.8 jobs/s, X ≈ 0.83/frame — X survives either model. What
+the numbers support: the warp jobs cost ~2.7 ms each (a 512×512 image, 16 384 batches: plausible GPU time at
+500 MHz, [inferred]); the lightmap + indirect pair costs about what the old lane's A/B saw, somewhat more; and
+the biggest single compute item is something the doc had not named. Candidates by reading, none confirmed:
+the screen-effects pass firing after all (a `v_blend` alpha at spawn, `key_dest`), a lightmap dispatch class
+whose count is not additive across the two runs, or a v3dv-internal job. The profile answers which.
+
+### 3. The instrument: `rpi4-v3d-async -C` (CSD profile)
+
+* **What:** every completed CSD job is added to a class keyed by its **CFG5** (shader code address |
+  THREADING | SINGLE_SEG | PROPAGATE_NANS = one compute pipeline). Per class: count, last CFG0-2 workgroup
+  counts, workgroups per job min..max and sum, CFG3 decode (`wgsz`, `sgwgs` = workgroups per supergroup,
+  `sgbat` = batches per supergroup), `thr4` (4-thread shader), `seg1`, batches, and four times in generic-timer
+  ticks: **`pro_us`** kick prologue (caches, TLB, CFG writes), **`gpu_us`** CFG0 write → first sight of
+  `INT_CSDDONE` (stamped in the IRQ handler, the poll path or a pre-kick drain, `csd_done_stamp`), **`wake_us`**
+  → the event thread takes it, **`epi_us`** the completion's TMU/L2T clean; `max_us`, `noirq` (no stamp), and a
+  gpu-time histogram `h=` over <250/<500/<1000/<2000/<4000/<8000/<16000/≥16000 µs.
+* **Output:** one cumulative line per class that ran, printed with each qstat line
+  (`V3DA srv csd cfg5=… n=… wg=AxBxC wgs=sum/min..max wgsz= sgwgs= sgbat= thr4= seg1= batches= gpu_us= max_us=
+  pro_us= wake_us= epi_us= noirq= h=…`), plus `V3DA srv csdprof on cntfrq=…` once at start. Never per job (the
+  archive's 21.4 ms "empty dispatch" was a per-dispatch printf at UART speed). Off without `-C`; the stamp in
+  the handler is an `isb; mrs cntvct_el0`, a load and a store, and the handler still makes no call (`objdump`: 126
+  instructions, no `bl`/`blr`).
+* **Code:** `tools/gpu-lane/v3d-async/v3da_csdprof.h` (new, pure functions: class lookup with a rest slot,
+  accounting, tick → µs), `v3da.h` (job stamps, the handler-shared `csd_done_cnt`, `v3da_cnt()`), `v3da_hw.c`
+  (`csd_done_stamp` in `hw_service` and `v3da_hw_drain`; cleared on reset), `v3da_jobs.c` (stamps in `kick_csd`,
+  accounting in the CSDDONE completion, `csdprof_print` from `stat_print`, `v3da_csdprof_enable`), `v3da_main.c`
+  (`-C`). Default behaviour without `-C` unchanged apart from the stamp.
+* **Host test:** `tools/gpu-lane/v3d-async/hosttest/csdprof_test.c`, run by `hosttest/run.sh` (native gcc,
+  ASan + UBSan): v3dv-packed CFG words for the warp (64×64×1, wg 64), lightmap (2×1 and 16×32, one class),
+  indirect (40×1) dispatches at 54 MHz; decode, per-class split, gpu/wake/pro/epi attribution, the no-IRQ and
+  stale-stamp fallbacks, histogram edges (249/250/15 999/16 000 µs), the rest slot after 32 pipelines, CFG5 0 /
+  0xffffffff. **`CSDHOST RESULT checks=23 fails=0 verdict=PASS`**; negative control (`-DCSDPROF_TEST_NEGCTL`,
+  CSDDONE stamped at the event thread) **fails the attribution checks, as it must**. The lowmem test is
+  unchanged (45/45, its negative control still fails).
+* **Build:** `tools/gpu-lane/v3d-async/build.sh --out out-csdprof` (`-Werror`, 0 warnings), from this commit's
+  tree = the current server (proto 5: G4 export, G6 implicit sync, lowmem scan-out) + the profile, against the
+  sysroot's `libphoenix.a` `2acb195e2e089a49`. `out-csdprof/rpi4-v3d-async` **`055e7805bfa82d06…`**
+  (1 229 680 B), `v3dasync-ping` `94df667c929bab43…`. Staged **`/bin/rpi4-v3d-async-csdprof`** on
+  `/srv/phoenix-rpi4-nfs-gcc16` (`sudo -n install -m 755`, `cmp` OK). Nothing existing replaced:
+  `/bin/rpi4-v3d-async-m3p2` (`ea131368…`), `/bin/vkq-drm-perf` (`ee0e3079…`) → `/usr/bin/vkquake-drm-perf`
+  (`5fbf7899…`), `/bin/rpi4-kms-gate` (`0e8c127f…`) are untouched.
+
+### 4. Pre-registered cycle `perf-vkq-e`
+
+The `perf-vkq-b` command with the profiling server; same vkQuake binary, same kms.
+
+```
+./scripts/test-cycle-psh-interact.sh --label perf-vkq-e --wait-secs 220 --inter-cmd-secs 8 --idle-secs 60 \
+    --max-cmd-secs 300 --ready-line 'V3DA srv detached|KMS srv detached' --ready-extra-secs 20 \
+    --hdmi-dense-on 'vkquake-drm: new GPU lane' -- \
+    "/bin/rpi4-v3d-async-csdprof -r 1 -m serial -i -C" \
+    "/bin/rpi4-kms-gate -G" \
+    "/bin/vkq-drm-perf"
+```
+
+**Confound vs `perf-vkq-b`:** the server base moves from `m3p2` (built 2026-09-27 00:50) to the current tree
+(G4/G6/lowmem since), in the same binary as the profile; the vkQuake side is identical. If fps or the qstat
+rows move by more than the tolerances below, rerun `perf-vkq-e` without `-C` (label `perf-vkq-e0`) before
+reading anything into it: that separates the base drift from the instrument.
+
+Grading as §6.2 (qstat deltas over the steady windows, frames from flipstat); the `csd` lines are cumulative,
+so per-frame class numbers = the delta of a class's `n` / `gpu_us` over the same span.
+
+| Line / quantity | `perf-vkq-b` | predicted `perf-vkq-e` | if instead… |
+|---|---|---|---|
+| `V3DA srv csdprof on cntfrq=54000000 …` | — | once, before `V3DA srv ready` | missing: `-C` not parsed / wrong binary (`cmp`) |
+| `flipstat` fps (median, steady) | 17.27 | **17.3 ± 1.0** | < 16.3: base drift or instrument cost → `perf-vkq-e0` |
+| CSD jobs / frame, ms / frame | 5.44, 19.46 | **5.4 ± 0.5, 19.5 ± 2** | outside: as above |
+| **CSD ms / job (qstat)** | 3.58 | **3.6 ± 0.4** | — |
+| Σ class `gpu_us` / qstat `csd` ms | — | **≥ 0.95** (`pro`, `wake` ≪ `gpu`) | `wake_us`/n ≥ 0.5 ms: completion latency *is* a cost (IRQ → event thread) — look at the event thread before anything else; `pro_us`/n ≥ 0.3 ms: the prologue (TLB/L2T) is, A/B `-k 0x01` (`V3DA_KNOB_TLB_ON_CHANGE`) |
+| `noirq` | — | **0** (IRQ mode stamps every CSDDONE) | > 1 %: the handler misses CSDDONE (poll/drain stamps them late) |
+| classes (distinct `cfg5`) | — | **4–5**: warp, lightmap, indirect clear, indirect draw, + X | 1 per dispatch (thousands of `cfg5`, rest slot fills): the key is not per pipeline |
+| warp class | — | `wg=64x64x1 wgsz=64`, ≈ 2.2 jobs/frame, **gpu ≈ 2.7 ms/job** (h in the 2000–4000 bucket) | ≫ 2.7: the warp shader itself is slow → read its `thr4` (1-thread shader = spills/TMU stalls) |
+| indirect clear / draw | — | ~1 job/frame each, `wgs ≤ 2` / ≈ numsurfaces/64, **< 0.5 ms/job** | ms-scale: the indirect pair is the unexplained cost |
+| lightmap class | — | `wgs` varying (min..max over regions), ≈ 8 jobs/s, **≈ 4–5 ms/frame** in total | — |
+| **X** | — | **one more class, ≈ 0.8 jobs/frame, ≈ 8 ms/frame**; if its `wg` is **240x135x1** it is the screen-effects pass | no fifth class: X was non-additivity between c and d (then the lightmap class carries it) |
+| `V3DA srv qstat` err / wedges / rej | 0 / 0 / 0 | 0 / 0 / 0 | any: FAIL |
+| exceptions | 0 | 0 | addr2line `out-csdprof/rpi4-v3d-async` |
+| HDMI | lit, torches, "19 FPS" | same | — |
+
+**What `perf-vkq-e` decides (next step, not yet taken):**
+* X = **screen effects** (240×135): find which gate fires at the spawn view (`v_blend[3]` / `key_dest`) and,
+  if nothing visible needs it, a vkQuake patch in the 0006/0007 pattern — up to ~8 ms/frame (≈ +2.5 fps).
+* X = a class with a **small workgroup count at ~10 ms**: a slow shader, not a big dispatch — `thr4`/`seg1` and
+  the shader's QPU count (`V3D_DEBUG=cs` on a host Mesa build of the same SPIR-V) next.
+* `wake_us` or `pro_us` material: a server fix (event-thread priority/wake path, or per-job TLB flush) with its
+  own A/B; otherwise the server is cleared for good.
+* In any case the ~21 ms/frame of GPU idle at 64 % busy (§ short version) is the next CPU-side question: the
+  hooks see no wait, so the time is in vkQuake's CPU frame or in an unhooked call.

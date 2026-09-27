@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
-# Host test of rpi4-v3d-async's scan-out placement policy (V3DA_BO_LOWMEM, proto 5,
-# v3da_lowmem.h): native gcc + ASan/UBSan, seconds, no Pi. The server's own use of
+# Host tests of rpi4-v3d-async: the scan-out placement policy (V3DA_BO_LOWMEM, proto 5,
+# v3da_lowmem.h) and the CSD profile (-C, v3da_csdprof.h): native gcc + ASan/UBSan,
+# seconds, no Pi. The server's own use of
 # it (mmap(MAP_CONTIGUOUS), va2pa, the pool, the budget accounting at quarantine)
 # needs the Phoenix kernel; the protocol half (libdrm-phoenix passing the flag,
 # proto-5 negotiation, card0 ADDFB2 of a placed buffer) is covered by the
@@ -35,4 +36,24 @@ else
 	echo "LOWHOST negative-control verdict=FAIL (the checks did not notice a missing policy)"
 	exit 1
 fi
+
+# The CSD profile (-C, v3da_csdprof.h): decode + attribution, and its negative
+# control (INT_CSDDONE stamped at the event thread: the wake time vanishes).
+gcc "${flags[@]}" -o "${out}/csdprof_test" "${here}/csdprof_test.c"
+set +e
+"${out}/csdprof_test"
+crc=$?
+set -e
+gcc "${flags[@]}" -DCSDPROF_TEST_NEGCTL -o "${out}/csdprof_test_negctl" "${here}/csdprof_test.c"
+set +e
+"${out}/csdprof_test_negctl" > "${out}/csdprof_negctl.log" 2>&1
+cnrc=$?
+set -e
+if [ "${cnrc}" -ne 0 ] && grep -q 'CSDHOST RESULT .* verdict=FAIL' "${out}/csdprof_negctl.log"; then
+	echo "CSDHOST negative-control verdict=PASS (a late CSDDONE stamp fails the attribution checks)"
+else
+	echo "CSDHOST negative-control verdict=FAIL (the checks did not notice a late stamp)"
+	exit 1
+fi
+[ "${crc}" -eq 0 ] || exit "${crc}"
 exit "${rc}"

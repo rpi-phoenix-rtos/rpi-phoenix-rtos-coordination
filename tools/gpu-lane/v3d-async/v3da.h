@@ -25,6 +25,7 @@
 
 #include "v3da_proto.h"
 #include "v3da_lowmem.h"   /* v3da_pool_block_t, the scan-out placement policy */
+#include "v3da_csdprof.h"  /* v3da_csdprof_t, the CSD profile (-C) */
 
 
 #define V3DA_MAX_CLIENTS  V3DA_FENCE_NSLOTS   /* one fence-page row each */
@@ -97,6 +98,9 @@ typedef struct {
 	volatile uint32_t ovf_stage_size;
 	volatile uint32_t ovf_consumed;
 	volatile uint32_t ovf_missed;
+	/* CSD profile (-C): CNTVCT at the first sight of INT_CSDDONE (handler, poll or
+	 * pre-kick drain), 0 = not seen since the last CSD kick. */
+	volatile uint64_t csd_done_cnt;
 } v3da_hw_t;
 
 
@@ -203,6 +207,7 @@ typedef struct v3da_job {
 	uint64_t wd_progress_us;      /* last time progress was seen */
 	uint32_t wd_ca, wd_ra;        /* CTnCA / CTnRA (CSD: CURRENT_CFG4) at the last check */
 	uint32_t qpu_acks;
+	uint64_t csd_t0, csd_t1;      /* CSD profile: CNTVCT at the kick's start and at the CFG0 write */
 
 	union {
 		v3da_cl_desc_t cl;
@@ -350,6 +355,10 @@ typedef struct {
 	uint32_t g6_implicit;         /* submits that got >= 1 cross-client implicit dependency */
 	uint32_t g6_implicit_deps;    /* implicit dependencies added in total */
 	uint32_t g6_dropped;          /* implicit dependencies dropped (the job's dependency list was full) */
+	/* CSD profile (-C): the `V3DA srv csd` lines */
+	int csdprof;
+	uint64_t cntfrq;              /* CNTFRQ_EL0, Hz */
+	v3da_csdprof_t csdprof_cls[V3DA_CSDPROF_CLASSES];
 
 	v3da_bo_t bos[V3DA_MAX_BOS];
 	uint32_t bo_gen[V3DA_MAX_BOS];   /* per-slot handle generation */
@@ -397,6 +406,25 @@ extern v3da_srv_t srv;
 /* time */
 uint64_t v3da_now_us(void);
 
+/* The ARM generic timer's virtual count: readable at EL0 (the kernel sets
+ * CNTKCTL_EL1.EL0VCTEN) and in the IRQ handler's kernel context alike, with no
+ * call and no lock - the CSD profile's one clock for both sides. */
+static inline uint64_t v3da_cnt(void)
+{
+	uint64_t v;
+
+	__asm__ volatile("isb; mrs %0, cntvct_el0" : "=r"(v) : : "memory");
+	return v;
+}
+
+static inline uint64_t v3da_cntfrq(void)
+{
+	uint64_t v;
+
+	__asm__ volatile("mrs %0, cntfrq_el0" : "=r"(v));
+	return v;
+}
+
 /* fence-page helpers (release / acquire u64) */
 static inline void v3da_store64(volatile uint64_t *p, uint64_t v)
 {
@@ -407,6 +435,9 @@ static inline uint64_t v3da_load64(const volatile uint64_t *p)
 {
 	return __atomic_load_n(p, __ATOMIC_ACQUIRE);
 }
+
+/* v3da_jobs.c: the CSD profile (-C) */
+void v3da_csdprof_enable(void);
 
 /* v3da_hw.c */
 int v3da_hw_init(v3da_hw_t *hw);
