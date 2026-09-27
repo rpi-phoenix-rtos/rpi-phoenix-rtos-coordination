@@ -123,6 +123,13 @@ PA, a 32-bit value, no instrument seeing the writer). **Method:** as `c1b13`: 4 
 writer (report victim PAs vs the band). **0 of 4 → "enriched towards not firing with 8cf9e488, n = 4" — never
 "fixed"**; the next step is a longer series (≥ 8) and an A/B against build 17 in the same session, not a claim.
 
+**RESULT 2026-09-27 18:15 — `c1b18`: 1 of 4 fired → the stale-TTBR0 path is NOT C1's only writer (n = 4).**
+`c1-idle-table.sh c1b18`: C1 `COLD LATE` **FIRED** (5 hits, victim `p4pa 0x0831e000`, 0.76 MiB below the band
+`0x083dc000`, within the archive's spread); C2–C4 `COLD LATE`, 0 fires; 0 kernel faults in all four. By the
+pre-registered rule (≥ 1 fire) the kernel change (`8cf9e488` + `33af3e81`) does not remove C1. The rate is lower
+than c1b13 (1/4 vs 4/4) but that is not significant at n = 4 (Fisher p ≈ 0.14): "lower, not established". Next, if
+anything: ≥ 8 more cold trials on build 18 before reading the rate at all.
+
 ## 4. What is established
 
 | finding | evidence | strength |
