@@ -467,6 +467,200 @@ interactive bash): the fork/exec-from-the-compositor path. Keyboard and the menu
 fuzzel (launcher) and swaybg (wallpaper) are the same recipe as foot (fcft/cairo already here): not built in this
 pass. Then `m7c-desktop` (wallpaper + launcher + mouse move/resize) and the XFCE stages on top.
 
+## GTK3 + PCManFM → stage 2 built: GTK 3.24 (Wayland only) + gtk-layer-shell (`tools/gpu-lane/gtk3-wayland/`)
+
+Built 2026-09-27; staged; cycle `m7e-gtk3` pre-registered below. PCManFM (libfm, menu-cache) was **dropped** after
+the XFCE decision (the file manager is now Thunar): nothing of it was built. The prefix is laid out for the XFCE
+libraries to build on it (static `.a` + installed `.pc` for every library, a reusable cross file and pkg-config
+wrapper). No Pi cycle has run any of it yet.
+
+### Versions and licences
+
+All release tarballs, sha256-pinned in `build.sh` (checked against upstream's published sums). LGPL/GPL sources
+live only in `build-out/src/` (fetched, gitignored), never in `sources/`.
+
+| package | version | licence | why this one |
+|---|---|---|---|
+| GTK | **3.24.52** | LGPL-2.1+ | latest 3.24; `-Dx11_backend=false -Dwayland_backend=true`, no broadway/win32/quartz, `-Dintrospection=false`, `-Dprint_backends=none` (patch 0002), no colord/cloudproviders/tracker, immodules built in (`all`), demos on |
+| GLib + GIO | **2.88.3** | LGPL-2.1+ | ports GLib is 2.56.4 **without GIO**; GTK needs ≥ 2.57.2 + GIO; 2.88 = the host's `glib-compile-*`/`gdbus-codegen` series. `-Dnls=disabled`, no xattr/libmount/selinux/libelf/sysprof/introspection; file monitor backend: none exists (no inotify/kqueue) → GIO's poll monitor for files, directory monitors report an error |
+| pcre2 | 10.47 | BSD-3 | GLib ≥ 2.74 needs PCRE2 (ports has PCRE1); 8-bit, no JIT |
+| pango | **1.54.0** | LGPL-2.0+ | the newest pango that accepts fontconfig 2.14 (ports); 1.56 needs fontconfig 2.15 + cairo 1.18 |
+| cairo | **1.18.4** | LGPL-2.1/MPL-1.1 | ports cairo 1.16 has **no PDF/PS surfaces** (GTK's print-operation code includes `cairo-pdf.h`/`cairo-ps.h` unconditionally) and no `cairo-gobject`; image/png/ft/fc/pdf/ps/svg + gobject, no xlib/xcb |
+| harfbuzz | 14.4.0 (= ports) | MIT | rebuilt with meson: the ports (CMake) objects reference `__gxx_personality_v0`, so every C program needs libstdc++, whose `hypotf` stub then collides with libphoenix libm; meson's build is `-fno-exceptions` and needs no C++ runtime; also gives hb-glib |
+| gdk-pixbuf | 2.42.12 | LGPL-2.1+ | PNG + JPEG loaders **built in** (`-Dbuiltin_loaders=png,jpeg`, no loader modules), `-Dgio_sniffing=false` (format by loader signature: no shared-mime-info on Phoenix) |
+| fribidi | 1.0.16 | LGPL-2.1+ | |
+| atk | 2.38.0 | LGPL-2.0+ | GTK 3 links ATK; no at-spi bridge (X11-only in GTK 3's meson) |
+| gtk-layer-shell | **0.10.1** | MIT | layer-shell for GTK 3 (xfce4-panel, xfdesktop); supports GTK up to 3.24.52 (its `gtk-priv` table), no libwayland interposition in the GTK 3 branch |
+| reused | — | — | libwayland 1.24 client/cursor/egl, wayland-protocols 1.45, libxkbcommon 1.7, the M6 compat archive (snapshot of `weston-drm/build-out-g6/prefix`); libepoxy 1.5.10 static-EGL (snapshot of `xorg-drm/build-out/deps-prefix`); fontconfig 2.14, freetype, pixman, libpng16, libjpeg, libffi, expat, zlib, libiconv (ports, private views) |
+
+### What was patched and why (`patches/<pkg>/`, `git format-patch` files; applied with `git am`)
+
+| patch | why |
+|---|---|
+| glib 0001 `g_unix_fd_query_path() reports NOSYS on Phoenix-RTOS` | `#error` otherwise (no `/proc/self/fd`, no `F_GETPATH`) |
+| glib 0002 `gio: build on Phoenix-RTOS networking and file headers` | `<netinet/in.h>` lacks the IPv4 multicast options, `struct ip_mreq`, `IN_MULTICAST`, `SOMAXCONN`, `IPV6_TCLASS` (lwIP's values in `gnetworking.h`); `ntohl` from `<arpa/inet.h>` in xdgmime; `O_NOFOLLOW` in the trash portal |
+| fribidi 0001 `meson: do not force -ansi` | libphoenix headers use C99 `static inline` |
+| gdk-pixbuf 0001 `built-in loaders carry their libraries to static links` | a static libgdk_pixbuf with built-in loaders linked neither libpng/libjpeg in its own programs nor in its `.pc` |
+| gtk 0001 `wayland: create shm pools with memfd_create()` | Phoenix has no `shm_open()` and no memfd syscall; `memfd_create()` is the M6 compat function (a shmsrv object) |
+| gtk 0002 `meson: allow print_backends=none` | the mandatory `file` backend needs cairo PDF/PS output modules; no printing stack here |
+| gtk 0003 `wayland: work without XKB data files` | **would abort every GTK program at `gdk_display_open`**: `xkb_context_new(0)` returns NULL when no XKB include directory exists (the m6a Weston failure), and GDK `g_error`s "Failed to create XKB context" in `gdk_wayland_display_init`. Retry with `XKB_CONTEXT_NO_DEFAULT_INCLUDES` (3 call sites); GDK's default keymap (before/without a `wl_keyboard`) falls back to the build host's evdev/pc105/us keymap (M6's `keymap-us.xkb`, a generated header) and logs `Using the built-in XKB keymap (evdev/pc105/us): no XKB data files` |
+
+Not patches (this directory's own code, BSD-3 / Phoenix header): `src/intl/` (`<libintl.h>` + identity gettext:
+GLib's meson requires an intl provider and `<glib/gi18n.h>` includes `<libintl.h>`), `src/resolv/` (`<resolv.h>`,
+`<arpa/nameser.h>` and stand-ins that make GIO's DNS **record** queries — SRV/MX/TXT — fail cleanly; host lookups
+are `getaddrinfo()`), `src/gtkphx_noegl.c` (the linked "EGL" for GTK programs without Mesa: epoxy resolves through
+`eglGetProcAddress`; this one answers only GDK's lazy GL probe so a `GtkGLArea` gets "No GL implementation is
+available" instead of an epoxy abort; plain widgets never touch EGL), `bin/phx-gcc` (drops `-pthread`, also inside
+meson's `@response` files), `src/gtk3-hello.c`. The mesa-drm `compat/include` is **not** used: libphoenix has had
+what it shims since build 10 and its duplicate `open_memstream` declaration breaks pango's `-Werror=redundant-decls`.
+
+Cross answers for GLib's run-time probes: libphoenix's printf family (GLib's gnulib replacement needs `frexpl`,
+which libphoenix lacks; its `vsnprintf` is C99; positional `%1$s` occur only in translations, none here).
+
+### Build, checks, artifacts
+
+```
+tools/gpu-lane/gtk3-wayland/build.sh            # everything, ≈ 12 min on this host (GLib ≈ 2, GTK ≈ 5)
+tools/gpu-lane/gtk3-wayland/build.sh --relink   # gtk3-hello + the demo copies only
+```
+
+`== verify` (fails the build on any miss), all three programs: **`nm -u` = 0, no `PT_INTERP`, 0 X11/broadway
+symbols** (`XOpenDisplay`, `XInternAtom`, `xcb_connect`, `gdk_x11_display_get_type`, `_gdk_broadway_display_open`),
+and present: `gdk_wayland_display_get_type`, `_gdk_wayland_display_open`, `memfd_create`, `__wrap_close`,
+`eglGetProcAddress` (the stand-in), `wl_display_connect`, `xkb_keymap_new_from_string`, `g_vfs_get_local`,
+`pango_cairo_font_map_get_default`, `gdk_pixbuf_new_from_file`; gtk3-hello also `gtk_layer_init_for_window`,
+the built-in keymap message and text. Link warnings beyond libphoenix's attribute notes: 0.
+
+| artifact (`build-out/`) | file / **stripped** | sha256 stripped (first 16) | staged as |
+|---|---|---|---|
+| `gtk3-hello` (ours, `--gc-sections`) | 107 508 576 / **16 879 256** | **`8d49230d71c91d8d`** | `/bin/gtk3-hello` |
+| `gtk3-demo` (GTK's, meson link) | 114 063 480 / **20 755 696** | `471391f7af09d035` | `/bin/gtk3-demo` |
+| `gtk3-widget-factory` (GTK's) | 111 647 544 / **19 221 352** | `0295cdf31ebf9303` | `/bin/gtk3-widget-factory` |
+| `data/glib-2.0/schemas/gschemas.compiled` (host `glib-compile-schemas --strict`: GTK's `org.gtk.Settings.*`, GLib's) | 5 schema files | `c01630db539f2b87` | `/usr/share/glib-2.0/schemas/gschemas.compiled` |
+| `pi/weston-gtk3.sh` | — | `cd579f9a19d19063` | `/bin/weston-gtk3.sh` |
+| `conf/settings.ini` (Adwaita, DejaVu Sans 11, no animations) | — | `96cac8c810456be8` | `/etc/xdg/gtk-3.0/settings.ini` |
+
+The binaries are reproducible: a second full run after the 2026-09-27 core build gave byte-identical files.
+`SHA256SUMS` and `snapshots.txt` (the reused archives' sums) are written next to them. Size: the static GTK stack
+is ≈ 16 MB per program (text), mostly GTK itself plus its built-in Adwaita CSS and icons.
+
+**For the XFCE follow-up:** `build-out/prefix` holds every library as `.a` with its `.pc` (glib-2.0, gio-2.0,
+gio-unix-2.0, gobject-2.0, gmodule-2.0, gthread-2.0, cairo(+gobject/ft/fc/png/pdf/ps/svg), pango, pangocairo,
+pangoft2, harfbuzz, fribidi, atk, gdk-pixbuf-2.0, gdk-3.0, gtk+-3.0, gtk+-wayland-3.0, gtk-layer-shell-0,
+libpcre2-8); `build-out/pkg-config-phoenix` (static, restricted to the prefix + views) and
+`build-out/phoenix-aarch64-wl.cross` (meson, with the compat layer) are reusable; autotools packages need
+`CC=bin/phx-gcc`, `PKG_CONFIG=build-out/pkg-config-phoenix`, `-I build-out/deps/sys/include` (libintl/iconv/resolv)
+and a phoenix-aware `config.sub`. GLib's `.pc` tool variables point at the host's 2.88 tools. D-Bus is **not** in
+this stage (GLib's GDBus is built; there is no bus to talk to — see "D-Bus session bus").
+
+### Runtime design notes (what m7e tests)
+
+- `GDK_BACKEND=wayland` (the only backend), `GTK_THEME=Adwaita` (GTK's built-in resource theme — no theme files
+  are staged), `GSETTINGS_BACKEND=memory` + `GSETTINGS_SCHEMA_DIR=/usr/share/glib-2.0/schemas` (no dconf; the schemas
+  are needed by the file chooser, which aborts on a missing schema), `NO_AT_BRIDGE=1`, fonts from
+  `/etc/fonts/fonts.conf` (the truetype-only config). Icons: GTK's built-in resource icons (incl. the CSD
+  `window-*-symbolic` PNGs); no Adwaita/hicolor icon theme is staged yet (Thunar will need one).
+- Buffers: one wl_shm pool per buffer (`memfd_create` → shmsrv, contiguous, capacity a power of two ≥ 1 MiB). Under
+  Weston's **kiosk shell every toplevel is fullscreen**: 1920×1080×4 = 8.3 MB → a **16 MiB contiguous** shmsrv object
+  per buffer (GTK keeps 1–2) — the largest wl_shm objects any cycle has asked for so far.
+- No `wl_keyboard` in the `noinput` arms: GDK uses its default keymap = the built-in one (patch 0003). With a
+  keyboard, the compositor's keymap arrives as a descriptor that GDK maps `PROT_READ, MAP_SHARED` (not foot's
+  `MAP_PRIVATE`).
+- GtkApplication programs (gtk3-demo, gtk3-widget-factory): no session bus → GLib's `g_application_register`
+  proceeds as a non-unique local application (`Cannot autolaunch D-Bus without X11 $DISPLAY` is handled
+  internally). gtk3-hello uses plain `gtk_init` and GIO's local `GFile` (lists `/` in its tree view).
+
+### Staging (done 2026-09-27; new names only — checked none existed)
+
+```
+G=tools/gpu-lane/gtk3-wayland; EXPORT=/srv/phoenix-rpi4-nfs-gcc16
+sudo -n install -m 755 $G/build-out/gtk3-hello-stripped          $EXPORT/bin/gtk3-hello
+sudo -n install -m 755 $G/build-out/gtk3-demo-stripped           $EXPORT/bin/gtk3-demo
+sudo -n install -m 755 $G/build-out/gtk3-widget-factory-stripped $EXPORT/bin/gtk3-widget-factory
+sudo -n install -m 755 $G/pi/weston-gtk3.sh                      $EXPORT/bin/weston-gtk3.sh
+sudo -n install -d -m 755 $EXPORT/usr/share/glib-2.0/schemas $EXPORT/etc/xdg/gtk-3.0
+sudo -n install -m 644 $G/build-out/data/glib-2.0/schemas/gschemas.compiled $EXPORT/usr/share/glib-2.0/schemas/
+sudo -n install -m 644 $G/conf/settings.ini                      $EXPORT/etc/xdg/gtk-3.0/settings.ini
+# cmp each: all equal (2026-09-27 17:28)
+```
+
+Reused, unchanged: `/bin/weston-g6` (m6e TERM fix), `/bin/rpi4-v3d-async-low`, `/bin/rpi4-kms-g7`, `/bin/shmsrv`
+(proto 1, same as the snapshot's compat), `/etc/xdg/weston/weston-drm.ini`, `/bin/bash`, DejaVu +
+`/etc/fonts/fonts.conf`. `weston-gtk3.sh` = `weston-m6a.sh` + client `gtk` (`GTK_APP`, default `/bin/gtk3-hello`;
+`GTK_ARGS`, default `--seconds 0`, `none` = no arguments), `WESTON` default `/bin/weston-g6`, `HOLD` default 40.
+
+### Cycle `m7e-gtk3` (under Weston; Bash `timeout: 600000`)
+
+**Question:** does a static GTK 3 program start on Phoenix, connect to Weston over Wayland, draw its Adwaita window
+into wl_shm buffers that reach HDMI, list a directory through GIO, handle its own button click, and die cleanly —
+and does GTK's full widget set (gtk3-widget-factory) render?
+
+```
+./scripts/test-cycle-psh-interact.sh --label m7e-gtk3 --idle-secs 45 --max-cmd-secs 150 \
+    --hdmi-dense-on 'WESTONDRM client start' -- \
+    "/bin/rpi4-v3d-async-low -r 1 -m serial -i" \
+    "/bin/rpi4-kms-g7 -G -p 96" \
+    "/bin/shmsrv -v" \
+    "/bin/bash /bin/weston-gtk3.sh pixman gtk noinput" \
+    "/bin/shmsrv -s" \
+    "export GTK_APP=/bin/gtk3-widget-factory" \
+    "export GTK_ARGS=none" \
+    "/bin/bash /bin/weston-gtk3.sh pixman gtk noinput" \
+    "/bin/shmsrv -s" \
+    "/bin/kmstest-poll stats" \
+    "/bin/v3dasync-ping stats"
+```
+
+Arm **A** = gtk3-hello, arm **B** = gtk3-widget-factory, both on the pixman renderer (GL composition adds nothing
+for wl_shm clients; `gl` is one argument away). Optional arm **C** (only with a USB keyboard attached, after A
+passed): `rpi4-kms-g7 -G -p 96 -C` and `weston-gtk3.sh pixman gtk input` — the compositor keymap reaching GDK.
+Wall clock ≈ boot 60–150 s + 2 × (~15 s start + 40 s hold + ≤ 17 s exit) + ~40 s ≈ 5 min. Grade:
+
+```
+grep -a -E '^(GTK3HELLO|WESTONDRM|SHMSRV|KMSTEST|V3DAPING) |Gtk-|Gdk-|GLib-|GLib-GIO-|Pango-|Fontconfig|cairo|\[[0-9:.]+\] ' \
+    artifacts/rpi4b-uart/rpi4b-uart-*-m7e-gtk3.log
+./scripts/uart-summary.sh m7e-gtk3
+```
+
+Allow ~1.3 % UART line corruption; EL0 dumps print twice. GTK/GLib warnings go to stderr as
+`(gtk3-hello:<pid>): Gtk-WARNING **: hh:mm:ss.mmm: …` (with `-Message`/`-CRITICAL` variants).
+
+| # | Line / observation | Predicted | If instead… |
+|---|---|---|---|
+| 1 | `WESTONDRM start renderer=pixman client=gtk weston=/bin/weston-g6 … gtk_app=/bin/gtk3-hello gtk_args=--seconds 0`, then Weston's usual start (M6 m6e rows: `Module 'drm-backend.so': linked into the program`, kiosk shell, `Output 'HDMI-A-1' enabled`), `WESTONDRM socket=up wait_s=<1–20>` | as m6e | Weston fails: not a GTK problem — the M6 rows decide |
+| 2 | `WESTONDRM gtk env GDK_BACKEND=wayland GTK_THEME=Adwaita GSETTINGS_BACKEND=memory schemas=staged settings_ini=staged` | once per arm | `missing`: staging |
+| 3 | `GTK3HELLO start gtk=3.24.52 glib=2.88.3 GDK_BACKEND=wayland WAYLAND_DISPLAY=wayland-0 XDG_RUNTIME_DIR=/tmp/xdg` | within ~2 s of `client start` (a 16.9 MB exec over NFS) | nothing at all: exec failed (bash error line) or a crash before `main` (EL0 dump: `aarch64-phoenix-addr2line -f -e tools/gpu-lane/gtk3-wayland/build-out/gtk3-hello <pc>`) |
+| 4 | possibly `Gtk-WARNING **: Locale not supported by C library. Using the fallback 'C' locale.` (GTK's `setlocale(LC_ALL, "")`) | allowed | — |
+| 5 | **`Gdk-Message: …: Using the built-in XKB keymap (evdev/pc105/us): no XKB data files`**, and **no** `Failed to create XKB context` | **GTK patch 0003** (without it every GTK program aborts here) | `Failed to create XKB context` / `Failed to create XKB keymap`: a binary without 0003 (sha `8d49230d…`) — stop |
+| 6 | `GTK3HELLO init=ok t=<0.1–3> display=wayland-0 backend=wayland` | the GDK Wayland backend connects | `GTK3HELLO init=failed (no display)` + `Gdk-WARNING …cannot open display`/`Failed to connect to Wayland display`: socket/env — compare row 1; a `g_error`/abort with `xdg_wm_base`/`wl_shm` missing: a Weston global GTK requires |
+| 7 | `GTK3HELLO gio dir=/ rc=0 entries=<≈15–25>` | GIO's local `GFile` enumerates the NFS root | `rc=error msg=…`: the GIO local backend on Phoenix — note the message; display still graded |
+| 8 | `GTK3HELLO shown t=… rows=<same N>`; `SHMSRV create id=… ` + `SHMSRV truncate id=… size=8294400 … cap=16777216` (1–2 of them, the fullscreen buffers), smaller ones for the cursor theme are not expected (Weston draws the pointer) | GTK's `memfd_create` reaches shmsrv (patch 0001) | `creating shared memory file (using memfd_create) failed` (Gdk-CRITICAL): shmsrv not running / `ENOSYS`; `SHMSRV FAIL alloc … cap=16777216`: **no 16 MiB contiguous block** — then `Truncating shared memory file failed`, a black screen, and the finding is shmsrv's contiguous-only limit (E1) |
+| 9 | `GTK3HELLO mapped t=… size=1920x1080 scale=1` (kiosk fullscreen; `640x480` first is allowed if the configure arrives after the map) and `GTK3HELLO first-draw t=<1–8>` | the first frame is drawn | no `mapped`: the xdg-shell configure/ack loop did not complete — look for Weston protocol errors (`error in client communication`) |
+| 10 | HDMI (dense snapshots from `client start`) arm A: **a light grey (#f6f5f4) full-screen Adwaita window**: bold large "Hello from GTK 3 on Phoenix-RTOS" at the top, a rounded "Click me" button under it, then a list with column headers **Name / Kind / Size** and the entries of `/` (bin, dev, etc, …) in DejaVu Sans; ~3 s later the label reads "Hello from GTK 3.24.52 on Phoenix-RTOS — clicked 1 time" | GTK draws on Phoenix | black screen with row 9 present: buffers never attached (row 8) or frame callbacks lost; text as boxes: fontconfig found no font (`Fontconfig error` lines) — widgets still graded; no rounded corners/gradients: GTK_THEME not honoured (Raleigh-like flat look) |
+| 11 | `GTK3HELLO clicked n=1 t=<3–6>` | GLib timers + the GTK signal path | missing: the main loop is stuck (no `hold` lines either → hang: note the last line) |
+| 12 | `GTK3HELLO hold t=… ticks=<N> draws=<M> clicks=1` every 5 s, ticks growing ≈ 60/s·5 while the frame clock runs (Wayland frame callbacks at the display rate; pixman composition may pace lower, ≥ 20/s) | frame clock paced by `wl_surface.frame` | ticks stuck at a small number: frame callbacks not delivered — note; `ticks` growing ≫ 60/s: the frame clock free-runs (GTK's 1 s fallback timer only would give ≈ 1/s) |
+| 13 | `WESTONDRM hold … weston=running client=running` ×4, then `WESTONDRM client exited rc=143` (SIGTERM kills a GTK program: no handler) | as m6e | `client=exited` early: the client's last stderr lines say why |
+| 14 | arm B: `WESTONDRM start … gtk_app=/bin/gtk3-widget-factory gtk_args=`, row 5's keymap line; **no** `Failed to register:` (no session bus is not fatal for GApplication); allowed: `GLib-GIO-WARNING`/`Gtk-WARNING` about the unix mount monitor (`/proc/self/mountinfo`, `/etc/mtab`) or a missing icon (`Could not load a pixbuf from icon theme` / `image-missing`) | the widget factory starts | `Failed to register: …` + client exited rc=1: GIO treats the bus failure as fatal — record; `Settings schema 'org.gtk.Settings.*' is not installed` abort: `GSETTINGS_SCHEMA_DIR` not reaching it (row 2) |
+| 15 | HDMI arm B: **the GTK 3 Widget Factory page 1**: header bar, entries, spin buttons, check/radio buttons, switches, sliders, progress bars, a notebook, a tree view, a calendar/colour row; icons in buttons either GTK's built-in symbolic ones or "missing image" squares (no icon theme staged — allowed) | the full Adwaita widget set renders | a crash in a particular widget: EL0 dump → `addr2line -e build-out/gtk3-widget-factory` |
+| 16 | `WESTONDRM weston exited rc=0 after_term_s=<1–3> socket=gone` per arm; `SHMSRV stats rc=0 live=0 bytes=0` after each arm | all GTK pools released when the client dies | `live>0`: a pool outlived the client (shmsrv close accounting) |
+| 17 | `KMSTEST stats … apply_errors=0 … bos=0 exports=0`, `V3DAPING stats … bos_live=0 … verdict=PASS` | no leaks (GTK does not touch the GPU: the no-EGL stand-in) | `bos>0`: Weston's dumb BOs (M6 rows) |
+| 18 | fault dumps | 0 kernel, 0 EL0 | EL0 in a GTK program: addr2line on the unstripped binary in `build-out/` (stripped ones are staged) |
+
+**Decides:** arm A rows 3, 5–12 PASS = GTK 3 (+ GLib/GIO/pango/cairo/gdk-pixbuf) works on Phoenix over Wayland:
+the base for Thunar/XFCE; arm B = the full widget set. Then the same two arms under labwc (`labwc-desktop.sh`
+gains a `gtk` client the same way) with `gtk3-hello --layer` (gtk-layer-shell: `GTK3HELLO layer=supported
+protocol_version=<4|5>`, a full-width bar anchored at the top) — the xfce4-panel path.
+
+### What remains (M7 GTK/XFCE lane)
+
+1. `m7e-gtk3` on the Pi (above), then its labwc arm with `--layer`.
+2. An icon theme subset (Adwaita/hicolor PNGs — Adwaita ≥ 40 is SVG-only and needs librsvg (Rust); use a PNG
+   release, e.g. adwaita-icon-theme 3.38, or GTK's built-ins) and shared-mime-info data (GIO content types for Thunar).
+3. The XFCE libraries on this prefix (libxfce4util, xfconf — needs the D-Bus stage — libxfce4ui, garcon, exo,
+   libxfce4windowing), then Thunar, xfce4-panel, xfdesktop.
+4. GL in GTK (`GtkGLArea`, gtk3-demo's GL page): link the Mesa `--wayland` EGL closure instead of
+   `libgtkphx-noegl.a` (as weston-simple-egl does); not needed by XFCE.
+
 ## Pi milestones (pre-registered as each piece lands)
 
 | cycle | shows |
@@ -474,7 +668,7 @@ pass. Then `m7c-desktop` (wallpaper + launcher + mouse move/resize) and the XFCE
 | `m7a-labwc` | labwc starts on HDMI (output enabled, cursor, root menu) with pixman then GLES2 |
 | `m7b-foot` | foot opens in labwc and draws text; keyboard input reaches it (`rpi4-kms -C` frees the console keyboard) |
 | `m7c-desktop` | wallpaper + foot + fuzzel launcher; window move/resize with the mouse; clean exit |
-| `m7e-gtk3` | a GTK3 demo window (gtk3-demo / a minimal GtkWindow) under Weston, then under labwc |
+| `m7e-gtk3` | a GTK3 window (gtk3-hello, then gtk3-widget-factory) under Weston, then under labwc — **pre-registered** in the GTK3 section |
 | `m7f-dbus` | `dbus-daemon --session` up; `dbus-send` ping round trip; GDBus client connects |
 | `m7h-xfce` | ★ labwc + xfce4-panel + xfdesktop + Thunar + foot: the showcase desktop; Thunar browses `/`, the panel's app menu launches foot |
 | `m7d-gl-client` | weston-simple-egl / kmscube-style GL client inside labwc (G4/G6/G7 in a real compositor) |

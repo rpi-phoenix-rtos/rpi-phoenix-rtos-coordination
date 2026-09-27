@@ -1,0 +1,22 @@
+#!/bin/sh
+# gtk3-wayland: the aarch64-phoenix gcc rejects -pthread (GLib's .pc files and meson's
+# threads dependency add it; Phoenix pthreads live in libphoenix, so dropping it is
+# exact). Like tools/gpu-lane/e7-drm-build/bin/phx-gcc, but also inside @response files
+# (meson writes one for long link lines, e.g. gtk3-demo's).
+here="$(dirname "$0")"
+tc="${here}/../../../../.toolchain/aarch64-phoenix/bin/aarch64-phoenix-$(basename "$0" | sed 's/^phx-//')"
+for a; do
+	shift
+	case "$a" in
+		-pthread) ;;
+		@*) f="${a#@}"
+			if [ -f "$f" ] && grep -q -- '-pthread' "$f"; then
+				sed 's/\(^\| \)-pthread\( \|$\)/\1\2/g' "$f" > "$f.nopthread"
+				set -- "$@" "@$f.nopthread"
+			else
+				set -- "$@" "$a"
+			fi ;;
+		*) set -- "$@" "$a" ;;
+	esac
+done
+exec "${tc}" "$@"
