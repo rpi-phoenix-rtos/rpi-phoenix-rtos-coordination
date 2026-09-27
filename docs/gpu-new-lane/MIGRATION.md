@@ -601,6 +601,24 @@ kernel fix in the image (in build 17's loader).
 
 **vkQuake follow-up →** [vkquake-perf.md](vkquake-perf.md): like-for-like the regression is 2.2× (old-lane `flipstat` 22.9 fps median, not the 73 of `scr_showfps`); GPU 74 ms/frame (5 full-screen render jobs from WBOIT + the UI/post-process pass, 16F RGB10A2 tiles; compute 28 ms) serialised with ~22 ms of CPU. Variants `vkquake-drm-perf-a` / `-perf` staged, cycles `perf-vkq-a` / `-b` pre-registered there.
 
+## 6s. Result — `mig-all` (chain52, build 18, 2026-09-27 18:55–19:33): 5 of 5 games run on the new lane
+
+Default binaries after the adoption (SDL `submit-first`, vkQuake 0006+0007), staged from `migall-frozen`; kernel
+build 18 (P10 + vm_mapFlags + fork fix). Every cycle: 0 exceptions, 0 EL1 dumps, 0 refused payloads.
+
+| cycle | fps median (steady windows) | old lane (like-for-like) | log |
+|---|---|---|---|
+| mig-all-q2 | **60.00** (n=57) | 38.86 | `*-mig-all-q2.log` |
+| mig-all-qs | **44.45** (n=59, 22–57) | ~40 | `*-mig-all-qs.log` |
+| mig-all-q3 | **59.40** (n=59) | 30+ (P10 blocked it on the new lane until build 17) | `*-mig-all-q3.log` |
+| mig-all-vkq | 17.11 (n=45, 15.5–18.7) | **22.9** | `*-mig-all-vkq.log` |
+| mig-all-stk | **12.43** (n=65) | 8.3 (Pi OS: 11.7) | `*-mig-all-stk.log` |
+
+**Decides:** the migration gate's game half passes for 4 of 5 at or above the old lane. vkQuake is the one
+regression left (compute path: [vkquake-perf.md](vkquake-perf.md)). Still open before retiring the old lane: the X
+desktop on Xorg-drm (§3 blocker 3: an `action` launcher, input), the HDMI checks per game in the gate format,
+and vkQuake. The Wayland desktop (M7) is an addition, not a gate item.
+
 ## 7. Deletion list — the old lane (after the gate passes)
 
 Delete only after §5 passes on the migrated image; one sibling commit per repo, then a coordination
