@@ -41,11 +41,11 @@ symbols are the ones recorded at the time, against identity-checked binaries.
 - `environ` is in the `.bss` tail of the **last file-backed page** of the RW `PT_LOAD`
   (`crt0-common.c:73`, `bss_start+0x40`). The kernel zeroes that tail at `process.c:724`, and crt0
   then writes `envp` into it.
-- The bytes at `environ`'s file offset depend on how `_edata` is aligned, which leaves two
-  candidates. In today's build, `_edata ≡ 0xc (mod 16)` places `environ` on `te.gnu.p`
-  (`xxd -s 0x38b60`). If `_edata ≡ 4`, it lands exactly on `roperty\0` (`xxd -s 0x38b68`). The
-  faulting run read the second candidate, byte for byte. A random stray write matching the file
-  exactly at the address that was read is not credible.
+- The bytes at `environ`'s file offset depend on how `_edata` is aligned (`mod 16` ∈ {0, 4, 8, c}),
+  which leaves at most four candidate 8-byte words. In today's build, `_edata ≡ 0xc` places
+  `environ` on `te.gnu.p` (`xxd -s 0x38b60`). With `_edata ≡ 4` it lands exactly on `roperty\0`
+  (`xxd -s 0x38b68`). The faulting run read one of those four candidates, byte for byte. A random
+  stray write matching the file exactly at the address that was read is not credible.
 - That page's `.data` also holds `caTrace.5` (`0x437b08` today), the value `malloc_caTraceOn`
   caches. Its file value is `-1`, which is why `getenv` ran at all on a heap creation other than the
   first. **One page, two anomalies:** the page ntpclient was reading was the pristine file page.
@@ -53,17 +53,31 @@ symbols are the ones recorded at the time, against identity-checked binaries.
 - The OVERLAPPING line fits the same picture. `malloc_common.live[]` (anonymous `.bss`, a different
   page) still records a heap at `0x2000`/`0x1000`, yet the kernel handed out `0x2000` again. The
   kernel's map no longer had it.
+  ⚠ **Which process printed it is inferred.** The line carries no process tag. Two emitters fit:
+  **(a)** the exec'd ntpclient, which is the reading above and indicts the exec path; **(b)** the
+  *pre-exec* fork child. That child is a COW copy of psh, so its inherited `live[]` legitimately
+  says `0x2000` is live, and its `access()` loop can allocate. If (b), the child's copied map
+  lacked the parent's heap, which indicts `vm_mapCopy` rather than exec teardown. Either way it is
+  pid 24's fork()+exec lifecycle.
 
-So in one process, within a few milliseconds, two things happened. A private `.data` page showed its
-backing object's content, and a live heap mapping disappeared from the map. C3 shows the anonymous
-counterpart (an anonymous `.bss` page reading zero), and 09-25 shows another heap mapping
-disappearing.
+So around pid 24's fork()+exec, two things happened within a few milliseconds. A private `.data`
+page showed its backing object's content, and a live heap mapping went missing from a map (§2 (a)
+or (b)). C3 shows the anonymous counterpart (an anonymous `.bss` page reading zero), and 09-25 shows
+another heap mapping disappearing.
 
 ## 3. Why only ntpclient: a selection effect worth stating
 
 - `psh_clockSync()` (`pshapp.c:1652`) starts ntpclient with **`fork()`**, then waits (`access()` +
-  `sleep`), then calls `execl`. Every other launch in the boot uses `vfork()`: `sysexec`,
-  `runfile`, and psh's own command path (`pshapp.c:1401`).
+  `sleep`), then calls `execl`. It is the only fork()+exec **on the psh boot path**; everything
+  else psh launches uses `vfork()` (`sysexec`, `runfile`, psh's own command path at
+  `pshapp.c:1401`). This is not a system-wide claim: bash and some X clients fork too.
+- Archive check of the selection: every `far=0x30` dump in `artifacts/rpi4b-uart/*.log`, sorted by
+  process name. There are 3 in ntpclient (09-07, 09-15), 6 in `/bin/test-libc-unix-socket`, all on
+  09-02, and 1 in `quake3e` (09-12, caught by its own handler). The unix-socket ones are
+  **fork()ed test children** from the week the EL1 user-copy COW bug was fixed
+  (`project_el1_usercopy_fault_prot_user`). That fits "fork children lose page contents", but they
+  are not attributed here and not counted. Apart from the synthetic `/bin/notanapplet` test, no
+  process other than ntpclient ever printed `unknown command` or `applet list is EMPTY`.
 - In the kernel, a `fork()`ed child reaches `process_execve()` with `spawn->parent == NULL`. That
   is the **only** path that runs `vm_mapDestroy(process->map)` and then, in `process_exec()`,
   `vm_mapCreate()` **on the same struct**. That map had also shared amaps copy-on-write with the
@@ -81,8 +95,12 @@ This explains the membership. It does not prove the mechanism.
    reading that covers every observation (09-27's two lines, C3's zeros, 09-25's vanished `0x5000`).
    It also matches the §3 selection. Places to read, not yet read: `vm_mapDestroy` and
    `amap_putanons` (a dangling `anon_t*` is already on record in
-   `done/2026-09-15-w38-fixes-detail.md`), plus anything that still holds the old `process->map`
-   across the destroy/create in place.
+   `done/2026-09-15-w38-fixes-detail.md`), anything that still holds the old `process->map` across
+   the destroy/create in place, and `vm_mapCopy` (for emitter (b) in §2).
+   ↩ This is not re-opening the W38 "clean negative on every kernel mapping path". That review
+   covered how an exec'd image is populated (eager `process_load`, fault serialisation, no
+   pageout). It did not cover the `spawn->parent == NULL` path, which destroys and re-creates the
+   same `process->map`, or `vm_mapCopy`. Those are exactly what the fork()+exec selection points at.
 2. **M2: a physical page freed while still mapped, then reused.** Every psh-image process has
    `live[0] = 0x2000/0x1000` at the same in-page offset, so a recycled `malloc_common` page would
    look exactly like 09-27's OVERLAPPING line. But M2 alone does not explain `mmap` handing out
@@ -121,13 +139,19 @@ settle it is a **rate**.
 NULL `stderr`, a file word = §2, anything else = new. Also grade `mmap returned a region OVERLAPPING
 a live heap`, `live[] entry is NOT MAPPED` / `lubase`, and `applet list is EMPTY`.
 
-**Storm (one cycle per arm, same image):**
+**Power.** If one fork()+exec launch fails as often as one ntpclient boot (~1/650), then 300
+launches give a ~37 % chance of seeing one event and 1500 give ~90 %. So each arm is **3 cycles of
+500 launches**. That split is needed anyway: the 10-minute Bash cap and the cycle's
+`--max-cmd-secs` both limit how long one cycle can run.
+
+**Storm (same image for both arms):**
 1. Build `spawnstorm` from `c9/spawnstorm-fork` and stage it as `/bin/spawn-storm-f` on the live
    export. Do not overwrite `/bin/spawn-storm`.
-2. Arm F: `./scripts/test-cycle-psh-interact.sh --label c9stormF --idle-secs 60 -- '/bin/spawn-storm-f -f 300 /bin/printenv PATH'`.
-   Arm V (control): the same command without `-f`, `--label c9stormV`. `printenv` is the psh binary
-   under an applet name; it reads `environ` and needs the applet list, so it exercises both
-   fingerprints.
+2. Arm F, three times (`c9stormF1`..`F3`):
+   `./scripts/test-cycle-psh-interact.sh --label c9stormF1 --idle-secs 60 --max-cmd-secs 420 -- '/bin/spawn-storm-f -f 500 /bin/printenv PATH'`
+   (Bash `timeout` 600000). Arm V (control) is the same without `-f`, `c9stormV1`..`V3`.
+   `printenv` is the psh binary under an applet name; it reads `environ` and needs the applet list,
+   so it exercises both fingerprints.
 3. For each arm, grade: the `spawn-storm: DONE <ok> ok, <failed> failed` line; every
    `spawn-storm: pid … BAD status` line; any `process "/bin/printenv"` dump; `unknown command` or
    `applet list is EMPTY`; any printed PATH value other than `/bin:/usr/bin:/sbin:/usr/sbin`; and
@@ -135,12 +159,16 @@ a live heap`, `live[] entry is NOT MAPPED` / `lubase`, and `applet list is EMPTY
 
 **Reading rules, fixed in advance:**
 - **F fires and V does not:** fork()+exec is the trigger. M1/M2 move to the exec-in-place path, and
-  the next step is a kernel read of `process_execve` → `vm_mapDestroy` → `vm_mapCreate`.
+  the next step is a kernel read of `process_execve` → `vm_mapDestroy` → `vm_mapCreate`, and of
+  `vm_mapCopy`. A failure before exec (a BAD status with no child output) points at the copy; a
+  failure after it points at the exec.
 - **Both arms fire:** the trigger is not fork-specific. ntpclient is then the victim only by
   timing. Re-rank with M3 up.
-- **Both clean at 300:** that bounds the per-launch rate below ~1 %. It says nothing about the
-  per-boot rate (~1 in 650) and is **not** a negative. The next step is F with `-p 4` next to a
-  live GPU app, which is the condition every field sighting had.
+- **Both clean at 1500:** that bounds the per-launch rate below ~0.2 % (95 %). It is **not** a
+  negative for ntpclient, because the storm differs from the field in two ways. The field child
+  lingers for seconds in its `access()`/`sleep` loop while `/bin` is not yet mounted, where the
+  storm child execs at once; and every field sighting had other load live. Next knobs, in order: a
+  child-side delay under `-f`, then `-p 4` next to a live GPU app.
 
 ## 7. Proposed register text
 
@@ -150,7 +178,8 @@ Merge C9 into C3. They are the same observation, and C9's "three shapes" do not 
 > wrote.** Seen as `stderr` and the applet list reading zero (`far=0x30`, 09-07, 09-15), a `.data`
 > pointer reading NULL (09-11), a heap mapping gone from the map (09-25; 09-27 `mmap` re-issued
 > live `0x2000`), and `environ` reading the ELF file's own bytes at that offset (`roperty\0`,
-> 09-27). ntpclient is the only process started by `fork()`+exec; everything else uses vfork. |
+> 09-27). ntpclient is the only `fork()`+exec on the psh boot path; everything psh launches uses
+> vfork. |
 > **Open, n = 5 in one process (~1 in 650 boots), not reproduced.** Leading reading: after a
 > fork()+exec, part of the new address space is torn down and re-faulted from backing store.
 > Enriched, not proven. A fork-mode storm (`spawn-storm -f`, tests `c9/spawnstorm-fork`) is ready
