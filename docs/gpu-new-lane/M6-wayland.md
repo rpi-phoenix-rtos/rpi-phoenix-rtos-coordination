@@ -127,7 +127,7 @@ sync-file `ioctl` interposer and G4a/G17), the mesa-drm compat headers; host `wa
 | `nm -u` | **0** | **0** | **0** | **0** |
 | size (text / data / bss) | 18 227 230 / 522 868 / 315 500 | 111 600 / 1 160 / 23 060 | 14 582 446 / 531 908 / 314 700 | 57 272 / 204 / 14 660 |
 | file / **stripped** | 94 522 088 / **18 755 568** | 1 097 464 / **121 048** | 86 788 776 / **15 119 840** | 765 832 / **124 176** |
-| sha256 (stripped, first 16) | `da1b568a56cf770b` | `726de04f92a35376` | `df2cd82fbebc8a88` | `c19a995265a8d6f6` |
+| sha256 (stripped, first 16) | `da1b568a56cf770b` | `726de04f92a35376` | `df2cd82fbebc8a88` | `6a89f2610a5ad80d` |
 | link warnings (beyond libphoenix's `sendmsg`/`recvmsg` attribute notes) | 0 | 0 | 0 | — |
 
 (Weston embeds the git id of its extracted build tree, so a re-extraction changes `weston`'s hash
