@@ -179,6 +179,15 @@ snapshot_gtk() {
 		rm -f "${out}"/*.built   # everything is rebuilt on a new GTK stack
 		echo "  snapshot of ${gtk_out} (stamp ${stamp})"
 	fi
+	# GLib's .pc tool variables are rewritten by pkg-config --define-prefix into this destdir
+	# (a variable that starts with the old prefix /usr moves with it): the tools there must
+	# be the HOST's (the target binaries crash under binfmt/qemu or do not run at all).
+	local t
+	for t in glib-compile-resources glib-compile-schemas glib-mkenums glib-genmarshal gdbus-codegen gobject-query; do
+		[ -e "${GS}/destdir/usr/bin/${t}" ] || [ -L "${GS}/destdir/usr/bin/${t}" ] || continue
+		command -v "${t}" > /dev/null || continue
+		ln -sfn "$(command -v "${t}")" "${GS}/destdir/usr/bin/${t}"
+	done
 	{ echo "gtk3-wayland --usr: ${gtk_out} (stamp ${stamp})"
 	  sha256sum "${GS}"/destdir/usr/lib/lib{gtk-3,gdk-3,glib-2.0,gio-2.0,gtk-layer-shell}.a "${GS}/deps/wayland/lib/libwlphx-compat.a" \
 		| sed "s|${GS}/||"; } > "${out}/snapshots.txt"
@@ -189,6 +198,11 @@ write_cross() {
 	for v in zlib libffi expat pixman-1 libpng16 libjpeg freetype2 fontconfig wayland epoxy; do
 		libdirs="${libdirs}:${GS}/deps/${v}/lib/pkgconfig"
 	done
+	# the HOST's wayland-scanner (xfce4-settings' configure asks pkg-config for it)
+	mkdir -p "${out}/hostpc"
+	printf '%s\n' "wayland_scanner=$(command -v wayland-scanner)" "Name: Wayland Scanner" \
+		"Description: the build host's wayland-scanner" "Version: ${WAYLAND_VERSION}" > "${out}/hostpc/wayland-scanner.pc"
+	libdirs="${libdirs}:${out}/hostpc"
 	cat > "${pkgc}" <<EOF
 #!/bin/sh
 # pkg-config over this build's DESTDIR, the GTK snapshot and its private ports views. Every
@@ -320,6 +334,26 @@ if [ "${n_stage}" -ge 3 ]; then
 		-Dbuiltin-plugins=true -Dhelper-path-prefix=/usr/lib
 fi
 
+# --- stage 4: xfdesktop -----------------------------------------------------------------------
+if [ "${n_stage}" -ge 4 ]; then
+	echo "== xfdesktop (Wayland: the backdrop on gtk-layer-shell; window icons, no file icons/thunarx/libnotify)"
+	meson_pkg --cross "${out}/phoenix-aarch64-wl.cross" xfdesktop -Dx11=disabled -Dwayland=enabled \
+		-Ddesktop-menu=enabled -Ddesktop-icons=true -Dfile-icons=false -Dthunarx=disabled -Dnotifications=disabled \
+		-Dtests=false -Dfile-manager-fallback=/bin/thunar-wl \
+		-Ddefault-backdrop-filename=backgrounds/phoenix/phoenix-gradient-1920x1080.png
+fi
+
+# --- stage 5: xfce4-settings, xfce4-appfinder -------------------------------------------------
+if [ "${n_stage}" -ge 5 ]; then
+	echo "== xfce4-settings (settings manager + the Wayland-capable dialogs; no X11/xrandr/xcursor/xklavier/libnotify/upower/colord)"
+	ac_pkg --gtk xfce4-settings --disable-x11 --enable-wayland --disable-xrandr --disable-xcursor \
+		--disable-xorg-libinput --disable-libxklavier --disable-libnotify --enable-gtk-layer-shell \
+		--disable-upower-glib --disable-colord --disable-sound-settings --with-helper-path-prefix=/usr/lib
+
+	echo "== xfce4-appfinder"
+	ac_pkg --gtk xfce4-appfinder
+fi
+
 # --- data: PNG icon themes, MIME database -----------------------------------------------------
 # (<out>/data/ mirrors the target: data/icons/<theme>, data/mime/mime.cache)
 if [ "${n_stage}" -ge 2 ]; then
@@ -356,7 +390,12 @@ fi
 PROGS=(
 	"xfconfd|lib/xfce4/xfconf/xfconfd|1|g_bus_own_name xfconf_backend_factory_get_backend g_dbus_connection_register_object"
 	"xfconf-query|bin/xfconf-query|1|xfconf_channel_get_property xfconf_init"
+	"gdbus|bin/gdbus|1|g_dbus_connection_new_for_address_sync _g_dbus_auth_mechanism_anon_get_type"
 	"xfce4-panel|bin/xfce4-panel|3|panel_builtin_plugins xfce_panel_builtin_applicationsmenu_init xfce_panel_builtin_clock_init xfce_panel_builtin_tasklist_init xfce_panel_builtin_windowmenu_init xfce_panel_builtin_launcher_init xfce_panel_builtin_separator_init xfce_panel_builtin_actions_init gtk_layer_init_for_window xfw_screen_get_default garcon_menu_new_for_path"
+	"xfdesktop|bin/xfdesktop|4|xfce_desktop_new gtk_layer_init_for_window xfw_screen_get_default gdk_wayland_display_get_type"
+	"xfce4-settings-manager|bin/xfce4-settings-manager|5|garcon_menu_new_for_path xfconf_channel_get gdk_wayland_display_get_type"
+	"xfce4-appearance-settings|bin/xfce4-appearance-settings|5|xfconf_channel_get gtk_icon_theme_get_default gdk_wayland_display_get_type"
+	"xfce4-appfinder|bin/xfce4-appfinder|5|garcon_menu_new_applications xfconf_channel_get gdk_wayland_display_get_type"
 	"thunar|bin/thunar|2|thunar_application_get gdk_wayland_display_get_type xfconf_channel_get exo_icon_view_new xfce_dialog_show_error thunarx_provider_factory_get_default g_file_monitor_directory"
 )
 echo "== programs"
@@ -366,6 +405,7 @@ for rec in "${PROGS[@]}"; do
 	IFS='|' read -r name path stage syms <<< "${rec}"
 	[ "${stage}" -le "${n_stage}" ] || continue
 	f="${P}/${path}"
+	[ "${name}" = gdbus ] && f="${GS}/destdir/usr/${path}"
 	[ -f "${f}" ] || { echo "  ${name}: MISSING (${f})"; bad=1; continue; }
 	cp -a "${f}" "${out}/bin/${name}"
 	"${TC}-strip" -o "${out}/bin/${name}-stripped" "${out}/bin/${name}"
@@ -426,6 +466,21 @@ if [ "${n_stage}" -ge 3 ]; then
 		st 644 "${f}" "usr/share/desktop-directories/$(basename "${f}")"
 	done
 fi
+if [ "${n_stage}" -ge 4 ]; then
+	st 755 "${out}/bin/xfdesktop-stripped" bin/xfdesktop
+fi
+if [ "${n_stage}" -ge 5 ]; then
+	for p in xfce4-settings-manager xfce4-appearance-settings xfce4-appfinder; do
+		st 755 "${out}/bin/${p}-stripped" "bin/${p}"
+	done
+	for f in xfce-settings-manager xfce-ui-settings xfce4-appfinder xfce4-run; do
+		st 644 "${P}/share/applications/${f}.desktop" "usr/share/applications/${f}.desktop"
+	done
+	st 644 "${X}/etc/xdg/menus/xfce-settings-manager.menu" etc/xdg/menus/xfce-settings-manager.menu
+	st 644 "${X}/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml" etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml
+fi
+# GIO's own gdbus (from the GTK snapshot) under a new name: m7f-dbus step 5 with GDBUS=/bin/gdbus-wl
+st 755 "${out}/bin/gdbus-stripped" bin/gdbus-wl
 ( cd "${ST}" && find . -type f -printf '%P\n' | sort | xargs sha256sum ) > "${out}/stage.MANIFEST"
 echo "  $(wc -l < "${out}/stage.MANIFEST") files ($(du -sh "${ST}" | cut -f1)); not icons:"
 grep -v ' usr/share/icons/' "${out}/stage.MANIFEST" | awk '{printf "    %s  %s\n", substr($1,1,16), $2}'

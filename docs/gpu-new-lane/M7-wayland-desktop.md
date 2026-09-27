@@ -771,10 +771,10 @@ protocol_version=<4|5>`, a full-width bar anchored at the top) — the xfce4-pan
 
 ## Stage 4: XFCE 4.20 on labwc (`tools/gpu-lane/xfce-wayland/`)
 
-Delivered in the order of the brief, one commit per step: the GTK prefix rebuild → the XFCE libraries →
-**Thunar + cycle `m7f-thunar`** (this part, built, host-tested, staged) → xfce4-panel → xfdesktop →
-xfce4-settings/xfce4-appfinder (the next parts, below as they land). No Pi cycle has run any of it yet; no sibling
-repo is touched. XFCE is GPL/LGPL: the tarballs are sha256-pinned in `build.sh`, the sources live only in
+**Status 2026-09-27: everything built, staged, cycles `m7f-thunar` and `m7h-xfce` pre-registered.** Delivered
+in the order of the brief, one commit per step: the GTK prefix rebuild → the XFCE libraries → Thunar + cycle
+`m7f-thunar` → xfce4-panel (part 2) → xfdesktop, xfce4-settings, xfce4-appfinder + cycle `m7h-xfce` (part 3). No Pi
+cycle has run any of it yet; no sibling repo is touched. XFCE is GPL/LGPL: the tarballs are sha256-pinned in `build.sh`, the sources live only in
 `build-out/src/` (gitignored); what is committed is the build script, our patches (`patches/<pkg>/`, `git
 format-patch`), the compat layer (SPDX BSD-3), configuration, the Pi script and the host test.
 
@@ -993,6 +993,103 @@ Staged (new paths; the hicolor theme's `index.theme`/`icon-theme.cache` were **u
 `ae5caafbfa4383c6`, `/etc/xdg/menus/xfce-applications.menu` `7371a09dcb7bccc0`, `/usr/share/desktop-directories/`.
 All 3 042 files of `stage.MANIFEST` verified on the export.
 
+### Part 3: xfdesktop 4.20.2, xfce4-settings 4.20.5, xfce4-appfinder 4.20.0 (built, staged)
+
+- **xfdesktop** (meson): `-Dx11=disabled -Dwayland=enabled` (the backdrop window on gtk-layer-shell's background
+  layer, one per monitor), `-Ddesktop-menu=enabled` (garcon: right click on the desktop = the applications menu),
+  desktop icons on but **file icons off** (they need libyaml + thunarx; the icon style then defaults to *window icons*,
+  i.e. minimised windows), no thunarx/libnotify; `-Ddefault-backdrop-filename=backgrounds/phoenix/phoenix-gradient-1920x1080.png`
+  (m7c's staged PNG: the compiled-in default is XFCE's SVG, which Phoenix cannot load). Patch **xfdesktop 0001
+  `windowlist: do not include gdkx.h`** (unused there; no `gdk/gdkx.h` without the X11 backend).
+- **xfce4-settings** (autotools): `--disable-x11 --enable-wayland --enable-gtk-layer-shell`, no xrandr/xcursor/
+  xorg-libinput/libxklavier/libnotify/upower/colord/sound settings. Configure asks pkg-config for the (host)
+  `wayland-scanner`: build.sh writes a `hostpc/wayland-scanner.pc`. It builds xfce4-settings-manager,
+  xfce4-appearance-settings, xfce4-display-settings (wlr-output-management), xfce4-mime-settings,
+  xfce4-settings-editor and xfsettingsd; **staged: the manager and the appearance dialog** (their `.desktop` files +
+  `xfce-settings-manager.menu`, `xsettings.xml` default). xfsettingsd is not started: on Wayland it has no XSETTINGS
+  to serve, so the appearance dialog writes the `xsettings` channel but running GTK programs do not restyle.
+- **xfce4-appfinder** (autotools): plain; `xfce4-appfinder.desktop` + `xfce4-run.desktop` (`--collapsed`, Alt+F2).
+- **Build trap fixed:** pkgconf `--define-prefix` also moves every `.pc` variable that starts with the old prefix,
+  so GLib's `glib_compile_resources=/usr/bin/…` (the host tool, set by gtk3-wayland's `fix_glib_pc`) became the
+  **target** binary in the snapshot, which then segfaulted under binfmt/qemu (xfce4-settings' resources). The
+  snapshot's `usr/bin/{glib-compile-resources,glib-compile-schemas,glib-mkenums,glib-genmarshal,gdbus-codegen,
+  gobject-query}` are now symlinks to the host's tools.
+- Also staged: **`/bin/gdbus-wl`** = GIO's own `gdbus` from the GTK snapshot (static, `nm -u` 0), for m7f-dbus
+  step 5 (`export GDBUS=/bin/gdbus-wl`; the m7f script's default `/bin/gdbus` stays absent, so m7f as registered
+  is unchanged).
+
+| program (staged as) | text / data / bss | stripped | sha256 stripped (first 16) | symbols checked |
+|---|---|---|---|---|
+| xfdesktop (`/bin/xfdesktop`) | 17 209 248 / 82 960 / 68 376 | 17 299 776 | **`124ce9a5e201c7a2`** | `xfce_desktop_new`, `gtk_layer_init_for_window`, `xfw_screen_get_default`, `gdk_wayland_display_get_type` |
+| xfce4-settings-manager (`/bin/`) | 16 983 976 / 80 936 / 67 128 | 17 070 360 | **`acbb4a6f5fab6614`** | `garcon_menu_new_for_path`, `xfconf_channel_get` |
+| xfce4-appearance-settings (`/bin/`) | 17 063 832 / 80 232 / 66 712 | 17 149 680 | **`3c6e3af48b1bc23a`** | `xfconf_channel_get`, `gtk_icon_theme_get_default` |
+| xfce4-appfinder (`/bin/`) | 17 003 000 / 81 192 / 67 160 | 17 089 640 | **`c34db94e1856c659`** | `garcon_menu_new_applications`, `xfconf_channel_get` |
+| gdbus (`/bin/gdbus-wl`) | 4 115 564 / 2 440 / 38 780 | 4 123 304 | `121453f45b97fb47` | `g_dbus_connection_new_for_address_sync`, `_g_dbus_auth_mechanism_anon_get_type` |
+
+All: `nm -u` 0, no `PT_INTERP`, 0 X11 symbols. **Staged 2026-09-27** (new paths only, plus the hicolor
+`index.theme`/`icon-theme.cache` updated again — `3db4d3982f4e1101`/`aee72feb7a9c20fe` — for the XFCE settings and
+xfdesktop icons); `stage.MANIFEST` = **3 168 files, all verified** on the export; frozen copy of the tree:
+`/home/houp/.claude/jobs/c8f1289c/tmp/m7h-frozen/`. Other staged files: `/etc/xdg/menus/xfce-settings-manager.menu`
+`dcf1bb4b6c63564b`, `/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml` `d6209f9b4f7e9bbe`,
+`/usr/share/applications/{xfce-settings-manager,xfce-ui-settings,xfce4-appfinder,xfce4-run}.desktop`
+`264e748b0c9159ce`, `4028a7505c942498`, `144d2f101aa311ab`, `05e29141ef057715`.
+
+### Cycle `m7h-xfce` (★ the showcase; after `m7f-thunar`; Bash `timeout: 600000`)
+
+**Question:** does XFCE come up as a desktop under labwc — xfconfd on the bus, the backdrop (xfdesktop) and the
+panel (xfce4-panel with its built-in plugins) on layer-shell surfaces, the window buttons fed by
+wlr-foreign-toplevel, and a Thunar window listing `/` — and does it all stop cleanly?
+
+```
+./scripts/test-cycle-psh-interact.sh --label m7h-xfce --idle-secs 45 --max-cmd-secs 420 \
+    --hdmi-dense-on 'XFCE labwc socket=up' -- \
+    "/bin/rpi4-v3d-async-low -r 1 -m serial -i" \
+    "/bin/rpi4-kms-g7 -G -p 96 -C" \
+    "/bin/shmsrv -v" \
+    "/bin/bash /bin/xfce-desktop.sh xfce input" \
+    "/bin/shmsrv -s" \
+    "/bin/kmstest-poll stats"
+```
+
+Wall clock ≈ boot 60–150 s + ~10 s bus/xfconf + ≤ 30 s labwc + ≤ 60 s until the panel registers (two 17 MB
+execs over NFS at once) + 60 s hold + ≤ 30 s stop. Grade as m7f-thunar plus
+`grep -a -E 'xfdesktop|xfce4-panel|panel|layer|run session script|spawned child' …m7h-xfce.log`. The panel's and
+xfdesktop's own stderr is in `/tmp/xfce-logs/` and printed by the script at the end (`XFCE log xfce4-panel: …`).
+Rows marked **bench** need a person with the USB mouse/keyboard (otherwise **n/a**).
+
+| # | Line / observation | Predicted | If instead… |
+|---|---|---|---|
+| 1 | `XFCE start session=xfce … missing=none`; rows 2–4 of m7f-thunar (bus, `xfconfd via=activation`, round trip, `channels=` now incl. `xfce4-panel,xsettings`) | as m7f | m7f's rows decide |
+| 2 | `XFCE labwc start conf=/etc/xdg/labwc-xfce files=rc.xml,menu.xml,autostart,environment`, `socket=up`; labwc: `run session script /etc/xdg/labwc-xfce/autostart`, no `spawned child … exited with 127` | busybox `sh` starts xfdesktop and xfce4-panel | `127`: a path in autostart / staging |
+| 3 | `XFCE waiting for the panel … names=org.xfce.Xfconf[,org.xfce.xfdesktop]` (≤ 12 lines), then `XFCE thunar start` | the panel registers `org.xfce.Panel` within 60 s | 60 s without it: Thunar still starts; read `XFCE log xfce4-panel:` at the end |
+| 4 | `XFCE hold … names=` containing **`org.xfce.Panel`, `org.xfce.xfdesktop`, `org.xfce.Thunar`, `org.xfce.Xfconf`** ×6 | every component on the bus (GDBus/ANONYMOUS from four programs) | a name missing: that program's log |
+| 5 | xfdesktop: `SHMSRV create` + `truncate … size=8294400 … cap=16777216` (the 1920×1080 backdrop; as m7c row 3) | once (per redraw at most 2) | `SHMSRV FAIL alloc … cap=16777216`: no 16 MiB contiguous block — the known E1 limit; the backdrop is black, the rest still graded |
+| 6 | panel log: **no** `Wayland detected without layer-shell support`, **no** `…without foreign-toplevel-management support`, **no** `Failed to load module` / `There was no module found` / `lacks a plugin register function` (patch 0001: all 8 plugins come from the built-in table), no migrate dialog (`configver=2`) | the panel on layer-shell with its built-in plugins | a module message: the builtin table missed a name (`strings -a /bin/xfce4-panel \| grep builtin:`); the layer-shell warning: labwc/gtk-layer-shell (m7e's `--layer` row) |
+| 7 | allowed in the logs: GTK's m7e rows 4–5 lines, `Using the built-in XKB keymap`, a garcon/`exo` warning about a missing `.directory` or icon, the thumbnailer/directory-monitor lines of m7f row 7 | — | a `g_error`/abort: record it; EL0 dump: addr2line on `build-out/bin/<prog>` |
+| 8 | HDMI (dense from `labwc socket=up`): **the ember gradient wallpaper** (xfdesktop, on the background layer), **a 30 px panel along the top**: at the left the applications-menu button (XFCE logo), a separator, a **foot** and a **Thunar** launcher icon, then window buttons, and at the right **the clock** (`Sat 27 Sep  hh:mm`, DejaVu Sans); a **Thunar window** (labwc title bar) showing `/` as Adwaita folder icons (m7f row 10), with **its button in the panel's tasklist**; the software cursor | the XFCE desktop | wallpaper black but panel present: row 5; no panel: row 6 / its log; the tasklist empty while Thunar is open: wlr-foreign-toplevel → libxfce4windowing (labwc offers it: stage 1 notes); the clock text boxes: fontconfig |
+| 9 | **bench:** the applications-menu button opens the menu (categories from garcon: System → Foot / File Manager / Midnight Commander, Settings → Settings Manager / Appearance, Accessories → Application Finder …); choosing Foot opens a terminal (fork/exec from the panel: `xfce_spawn`, compat `daemon()` for detached launches) | the panel's menu launches programs | a menu without entries: `/etc/xdg/menus/xfce-applications.menu` or `XDG_DATA_DIRS`; nothing happens: `spawned`/`exec` errors |
+| 10 | **bench:** clicking Thunar's button in the tasklist minimises/raises it; right click on the wallpaper → xfdesktop's menu; Alt+F2 → xfce4-appfinder (collapsed); Super+E → a second Thunar window (in the running instance: GApplication) | desktop interaction | the menu of labwc instead of xfdesktop's: xfdesktop did not take the click (layer-shell input region) — note |
+| 11 | **bench:** Settings Manager (from the menu or the labwc root menu) shows its grid with *Appearance* (the only staged dialog besides the manager); Appearance opens with Style/Icons/Fonts tabs listing Adwaita and DejaVu | xfce4-settings on Wayland | icons list empty: the theme scan of `/usr/share/icons` |
+| 12 | stop: `XFCE thunar exited rc=143`, `XFCE labwc exited rc=0 … socket=gone`, `XFCE after labwc names=org.xfce.Xfconf` (the panel and xfdesktop exit when the display goes), `XFCE dbus exited rc=0 … socket=gone`, `XFCE saved channels=` incl. `xfce4-panel.xml` (the panel saves its plugin ids) | clean shutdown | `after labwc names=` still listing Panel/xfdesktop: they did not notice the lost display (they die with the bus a moment later; note it) |
+| 13 | `SHMSRV stats rc=0 live=0 bytes=0`, `KMSTEST stats … bos=0` | all released | `live>0`: an orphaned autostart client |
+| 14 | fault dumps | 0 kernel, 0 EL0 | addr2line on `tools/gpu-lane/xfce-wayland/build-out/bin/<prog>` |
+
+**Decides:** rows 4, 6, 8 = the XFCE desktop runs on Phoenix-RTOS. A failing row 5 alone (no 16 MiB block) is a
+shmsrv/E1 result, not an XFCE one.
+
+### What remains (XFCE lane)
+
+1. The Pi cycles: `m7f-thunar`, then `m7h-xfce` (and `m7f-dbus` step 5 with `GDBUS=/bin/gdbus-wl`).
+2. Not built or not staged, by choice: xfsettingsd (X11 XSETTINGS; on Wayland the appearance settings reach new GTK
+   programs only through `settings.ini`), xfce4-display-settings / mime-settings / settings-editor (built, not
+   staged), xfdesktop-settings (the backdrop dialog), xfce4-session (X11 session manager; labwc is the session),
+   xfce4-terminal (VTE; foot is the terminal), Thunar plugins, tumbler thumbnails, gvfs (trash/network), file icons
+   on the desktop (libyaml + thunarx), the panel's migrate helper and wrapper (not needed with built-in plugins).
+3. With SO_PEERCRED merged, glib still needs a Phoenix `struct ucred` case before GDBus can use EXTERNAL (D-Bus
+   section above); until then every XFCE program authenticates ANONYMOUS.
+4. Size: each XFCE program is its own 17 MB static GTK binary (≈ 120 MB staged for 8 programs); the dynamic-linking
+   work (Phase B) would share one GTK copy.
+
 ## Pi milestones (pre-registered as each piece lands)
 
 | cycle | shows |
@@ -1003,7 +1100,7 @@ All 3 042 files of `stage.MANIFEST` verified on the export.
 | `m7e-gtk3` | a GTK3 window (gtk3-hello, then gtk3-widget-factory) under Weston, then under labwc — **pre-registered** in the GTK3 section |
 | `m7f-dbus` | `dbus-daemon --session` up; `dbus-send` ping round trip; GDBus client connects |
 | `m7f-thunar` | xfconfd on the bus by activation, Thunar under labwc lists `/` with Adwaita icons — **pre-registered** in stage 4 |
-| `m7h-xfce` | ★ labwc + xfce4-panel + xfdesktop + Thunar + foot: the showcase desktop; Thunar browses `/`, the panel's app menu launches foot |
+| `m7h-xfce` | ★ labwc + xfce4-panel + xfdesktop + Thunar + foot: the showcase desktop; Thunar browses `/`, the panel's app menu launches foot — **pre-registered** in stage 4 part 3 |
 | `m7d-gl-client` | weston-simple-egl / kmscube-style GL client inside labwc (G4/G6/G7 in a real compositor) |
 
 ## Scheduling
