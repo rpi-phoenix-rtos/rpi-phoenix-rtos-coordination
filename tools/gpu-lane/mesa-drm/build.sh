@@ -38,6 +38,13 @@
 #              dlopen on Phoenix); <out>/prefix/include/vulkan = Mesa's Vulkan headers;
 #              <out>/vulkan-link.txt = the archives to link, in order. No kmscube.
 #              Consumer: tools/gpu-lane/vulkan-drm (vkcube on VK_KHR_display).
+#   --wayland  ALSO build the EGL Wayland platform (-Dplatforms=wayland: wayland-egl
+#              clients, EGL_EXT_image_dma_buf_import for compositors), GLES only, into
+#              its OWN directory (default build-out-wayland/, --out still wins). Needs a
+#              target libwayland + wayland-protocols: --wayland-pkgconfig <dirs> is the
+#              PKG_CONFIG_LIBDIR list that finds them (default: the weston-drm build's).
+#              No kmscube; <out>/egl-link.txt = the archives to link, in order (link
+#              libwayland-client/-server after them). Consumer: tools/gpu-lane/weston-drm.
 # Stage (coordinator only):
 #   sudo cp tools/gpu-lane/mesa-drm/build-out/kmscube-stripped <live NFS export>/bin/kmscube
 #
@@ -52,6 +59,8 @@ jobs="$(nproc)"
 libdrm_src_prefix="${root}/tools/gpu-lane/libdrm-phoenix/build-out/prefix"
 opengl=false
 vulkan=false
+wayland=false
+wayland_pc=""
 out_given=0
 while [ $# -gt 0 ]; do
 	case "$1" in
@@ -65,6 +74,8 @@ while [ $# -gt 0 ]; do
 		--libdrm-prefix=*) libdrm_src_prefix="${1#--libdrm-prefix=}" ;;
 		--opengl) opengl=true ;;
 		--vulkan) vulkan=true ;;
+		--wayland) wayland=true ;;
+		--wayland-pkgconfig) shift; wayland_pc="${1:?--wayland-pkgconfig needs a path list}" ;;
 		*) echo "build.sh: unknown argument $1" >&2; exit 2 ;;
 	esac
 	shift
@@ -73,6 +84,15 @@ if [ "${vulkan}" = true ]; then
 	[ "${opengl}" = false ] || { echo "build.sh: --vulkan and --opengl are separate builds (use two --out dirs)" >&2; exit 2; }
 	[ "${relink}" = 0 ] || { echo "build.sh: --relink relinks kmscube, which a --vulkan build has not" >&2; exit 2; }
 	[ "${out_given}" = 1 ] || out="${here}/build-out-vulkan"
+fi
+if [ "${wayland}" = true ]; then
+	[ "${vulkan}" = false ] && [ "${opengl}" = false ] || { echo "build.sh: --wayland is a GLES build of its own (no --vulkan/--opengl)" >&2; exit 2; }
+	[ "${relink}" = 0 ] || { echo "build.sh: --relink relinks kmscube, which a --wayland build has not" >&2; exit 2; }
+	[ "${out_given}" = 1 ] || out="${here}/build-out-wayland"
+	if [ -z "${wayland_pc}" ]; then
+		wo="${root}/tools/gpu-lane/weston-drm/build-out"
+		wayland_pc="${wo}/prefix/lib/pkgconfig:${wo}/prefix/share/pkgconfig:${wo}/deps/libffi/lib/pkgconfig"
+	fi
 fi
 case "${out}" in
 	/*) ;;
@@ -197,8 +217,9 @@ if [ "${relink}" = 0 ]; then
 	pkgc="${out}/pkg-config-phoenix"
 	cat > "${pkgc}" <<EOF
 #!/bin/sh
-# pkg-config restricted to the libdrm-phoenix snapshot + the private zlib prefix.
-export PKG_CONFIG_LIBDIR=${LD_PREFIX}/lib/pkgconfig:${ZP}/lib/pkgconfig
+# pkg-config restricted to the libdrm-phoenix snapshot + the private zlib prefix
+# (+ the target libwayland for --wayland).
+export PKG_CONFIG_LIBDIR=${LD_PREFIX}/lib/pkgconfig:${ZP}/lib/pkgconfig${wayland_pc:+:${wayland_pc}}
 unset PKG_CONFIG_PATH
 exec /usr/bin/pkg-config --static "\$@"
 EOF
@@ -250,6 +271,8 @@ EOF
 		api_opts=(-Dgallium-drivers=v3d,vc4 -Dvulkan-drivers=
 			-Degl=enabled -Dgbm=enabled -Dglx=disabled -Dopengl=${opengl} -Dgles1=disabled -Dgles2=enabled)
 	fi
+	platforms=
+	[ "${wayland}" = true ] && platforms=wayland
 	# A GL build dir must never be reconfigured as a Vulkan one or the other way round.
 	if [ -f "${MB}/build.ninja" ]; then
 		if [ "${vulkan}" = true ] && [ ! -f "${out}/mesa-vulkan.txt" ]; then
@@ -261,13 +284,19 @@ EOF
 	if [ ! -f "${MB}/build.ninja" ]; then
 		meson setup "${MB}" "${src}" --cross-file "${cross}" --prefix "${out}/prefix" \
 			--buildtype=debugoptimized -Db_ndebug=true --wrap-mode=nodownload \
-			"${api_opts[@]}" -Dplatforms= \
+			"${api_opts[@]}" -Dplatforms="${platforms}" \
 			-Dllvm=disabled -Dspirv-tools=disabled -Dvideo-codecs= -Dgallium-va=disabled \
 			-Dshader-cache=disabled -Dxmlconfig=disabled -Dexpat=disabled -Dzstd=disabled \
 			-Dlibunwind=disabled -Dvalgrind=disabled -Dlmsensors=disabled -Dperfetto=false \
 			-Dbuild-tests=false -Dtools= \
 			> "${out}/mesa-setup.log" 2>&1 || { tail -40 "${out}/mesa-setup.log"; exit 1; }
 		[ "${vulkan}" = true ] && echo "vulkan=true" > "${out}/mesa-vulkan.txt"
+		[ "${wayland}" = true ] && echo "wayland=true" > "${out}/mesa-wayland.txt"
+	fi
+	if [ "${wayland}" = true ] && [ ! -f "${out}/mesa-wayland.txt" ]; then
+		echo "build.sh: ${MB} is not a --wayland build; use another --out" >&2; exit 1
+	elif [ "${wayland}" = false ] && [ -f "${out}/mesa-wayland.txt" ]; then
+		echo "build.sh: ${MB} is a --wayland build; use another --out" >&2; exit 1
 	fi
 	# A build dir configured the other way round would silently keep its old option. A dir
 	# from before this label existed gets it from its own meson summary first.
@@ -317,6 +346,40 @@ if [ "${vulkan}" = true ]; then
 	exit 0
 fi
 
+# The archives a program links for EGL/GBM/GLES, in order (the kmscube link below).
+A=(src/egl/libEGL.a src/gbm/libgbm.a src/gbm/backends/dri/dri_gbm.a src/mesa/glapi/es2api/libGLESv2.a
+	src/mesa/glapi/shared-glapi/libglapi.a src/gallium/drivers/v3d/libv3d.a
+	src/gallium/drivers/v3d/libv3d-v42.a src/gallium/drivers/v3d/libv3d-v71.a
+	src/broadcom/libbroadcom-v42.a src/broadcom/libbroadcom-v71.a src/broadcom/qpu/libbroadcom_qpu.a
+	src/broadcom/libv3d_neon.a src/broadcom/perfcntrs/libv3d-perfcntrs-v42.a
+	src/broadcom/perfcntrs/libv3d-perfcntrs-v71.a src/gallium/winsys/kmsro/drm/libkmsrowinsys.a
+	src/gallium/winsys/v3d/drm/libv3dwinsys.a src/gallium/winsys/vc4/drm/libvc4winsys.a
+	src/gallium/winsys/sw/kms-dri/libswkmsdri.a src/gallium/winsys/sw/dri/libswdri.a
+	src/util/libmesa_util.a src/util/libmesa_util_simd.a src/util/blake3/libblake3.a
+	src/c11/impl/libmesa_util_c11.a)
+
+if [ "${wayland}" = true ]; then
+	# --- Wayland: the link list for consumers (weston, wayland-egl clients) -----------------
+	echo "== EGL wayland platform: link list"
+	{
+		echo "--whole-archive $(ls "${MB}"/src/gallium/targets/dri/libgallium-*.a)"
+		for a in "${A[@]}" src/egl/wayland/wayland-drm/libwayland_drm.a; do
+			[ -f "${MB}/${a}" ] && echo "${MB}/${a}"
+		done
+		echo "${LD_PREFIX}/lib/libdrm.a"
+		echo "${out}/compat/libmesadrm-compat.a"
+		echo "${B}/lib/libz.a"
+	} > "${out}/egl-link.txt"
+	syms="$("${TC}-nm" -g --defined-only "${MB}"/src/egl/libEGL.a 2>/dev/null || true)"
+	for s in dri2_initialize_wayland dri2_initialize_drm; do
+		if grep -qE " [Tt] ${s}\$" <<< "${syms}"; then echo "  symbol ${s}: yes"; else echo "  symbol ${s}: NO"; fi
+	done
+	grep -q 'EGL_EXT_image_dma_buf_import' <(strings -a "${MB}"/src/egl/libEGL.a) && echo "  EGL_EXT_image_dma_buf_import: yes"
+	echo "  link list: ${out}/egl-link.txt"
+	echo "done"
+	exit 0
+fi
+
 # --- kmscube ----------------------------------------------------------------------------
 echo "== kmscube"
 ksrc="${out}/kmscube-src"
@@ -349,16 +412,6 @@ echo "  compiled ${#KSRCS[@]} files ($(grep -c 'warning:' "${out}/kmscube-cc.log
 # and the small per-version archives follow in one group.
 # -Wl,--wrap=mmap: Mesa's BO maps (v3d_bufmgr.c, vc4_bufmgr.c, gbm dumb maps) do
 # mmap(drm_fd, token); libdrm-phoenix's __wrap_mmap resolves the tokens (M3 §2.6).
-A=(src/egl/libEGL.a src/gbm/libgbm.a src/gbm/backends/dri/dri_gbm.a src/mesa/glapi/es2api/libGLESv2.a
-	src/mesa/glapi/shared-glapi/libglapi.a src/gallium/drivers/v3d/libv3d.a
-	src/gallium/drivers/v3d/libv3d-v42.a src/gallium/drivers/v3d/libv3d-v71.a
-	src/broadcom/libbroadcom-v42.a src/broadcom/libbroadcom-v71.a src/broadcom/qpu/libbroadcom_qpu.a
-	src/broadcom/libv3d_neon.a src/broadcom/perfcntrs/libv3d-perfcntrs-v42.a
-	src/broadcom/perfcntrs/libv3d-perfcntrs-v71.a src/gallium/winsys/kmsro/drm/libkmsrowinsys.a
-	src/gallium/winsys/v3d/drm/libv3dwinsys.a src/gallium/winsys/vc4/drm/libvc4winsys.a
-	src/gallium/winsys/sw/kms-dri/libswkmsdri.a src/gallium/winsys/sw/dri/libswdri.a
-	src/util/libmesa_util.a src/util/libmesa_util_simd.a src/util/blake3/libblake3.a
-	src/c11/impl/libmesa_util_c11.a)
 AA=()
 for a in "${A[@]}"; do
 	if [ -f "${MB}/${a}" ]; then AA+=("${MB}/${a}"); else echo "  (archive not built: ${a})"; fi
