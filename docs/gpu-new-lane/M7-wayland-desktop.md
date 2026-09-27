@@ -1258,3 +1258,12 @@ Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-201807-m7b2-foot.log`; HDMI `artif
   configure request in 100 ms` at start.
 
 **Decides:** M7 stage 1 works: a modern Wayland terminal (foot) and a file manager (mc) under labwc on the new lane.
+
+## Result — `m7c-desktop` (chain61, build 18, 2026-09-27 20:36–20:39): ✅ PASS — a Wayland desktop on HDMI
+
+Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-202908-m7c-desktop.log`; HDMI **`artifacts/hdmi/20260927-203751-m7c-desktop-tick.png`**: the CC0 gradient wallpaper (swaybg; the
+orange glow is orange, so R/B is correct), a foot window with an interactive `bash-5.2#` prompt (labwc
+title bar), and **fuzzel's launcher** over it listing Appearance, Application Finder, Bash, File Manager, Foot,
+Midnight Commander, Run Program… and Settings Manager (the XFCE .desktop entries are already staged). `labwc exited
+rc=0`, `SHMSRV stats live=0`, 0 exceptions / EL1 / `Stat failed`. swaybg's 1920×1080 buffer (8 MiB shmsrv) was
+allocated without trouble (the predicted contiguous-memory risk did not occur).
