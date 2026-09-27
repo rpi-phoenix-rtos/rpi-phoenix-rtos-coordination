@@ -255,6 +255,14 @@ python3 "$repo/scripts/psh-interact.py" \
 	--commands "${commands[@]}"
 rc=$?
 
+# The serial port is opened before the Pi powers on, and while it is off the USB-UART
+# driver re-serves its last buffer: a log can open with ~150 000 copies of the PREVIOUS
+# cycle's last line (2026-09-28: a stale `phxvk: run … fps=29.85` put a 44-fps run's
+# median at 29.8). capture-rpi4b-uart.sh collapses such runs; this path did not.
+if [ -s "$log_path" ] && [ -x "$repo/scripts/collapse-uart-log-floods.py" ]; then
+	"$repo/scripts/collapse-uart-log-floods.py" "$log_path" || true
+fi
+
 # Was the capture actually evidence? A log that stops at the echo of the last
 # command looks exactly like a program that printed nothing, and that misreading
 # cost three wrong conclusions on 2026-09-05 (QuakeSpasm "did not start", the

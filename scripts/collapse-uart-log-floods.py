@@ -18,8 +18,8 @@ libphoenix stdio defect, once for a vkQuake diagnostic flood). Collapsing the
 runs keeps every distinct line AND the repeat count, so nothing is lost and the
 artifact becomes self-labelling instead of misleading.
 
-Deliberately conservative: only runs of >= --min-run identical *consecutive*
-lines are collapsed, well above any legitimate repetition a test produces.
+Deliberately conservative: only floods covering > --min-run lines (a block of
+1..4 lines repeated back to back) are collapsed, well above any legitimate repetition a test produces.
 Bytes are handled as latin-1 so a log containing binary noise round-trips
 unchanged.
 """
@@ -30,34 +30,48 @@ import sys
 import tempfile
 
 MARKER = "[collapse-uart-log-floods: previous line repeated {n} more times]"
+MARKER_SET = "[collapse-uart-log-floods: {n} more lines drawn only from the {k} distinct line(s) above]"
+MAX_DISTINCT = 4
 
 
 def collapse(src, dst, min_run):
-    """Stream src -> dst, collapsing identical consecutive runs. Returns stats."""
+    """Copy src -> dst, collapsing floods. Returns (runs, dropped lines).
+
+    A flood is a stretch of more than min_run lines drawn from at most MAX_DISTINCT
+    distinct lines. One distinct line is the classic case (marker unchanged). More
+    appear too: the driver re-serves the buffer at shifting offsets, so the full
+    line is interleaved, irregularly, with spliced copies of itself (2026-09-28:
+    `phxvk: run … fps=29.82` / `phxvk: run … secs=22phxvk: run …`, ~86 000 lines
+    after a 64 000-line identical run). Each distinct line is kept once, in order
+    of first appearance, followed by one marker line."""
+    lines = src.readlines()
     runs = 0
     dropped = 0
-    prev = None
-    count = 0
-
-    def emit():
-        nonlocal runs, dropped
-        if prev is None:
-            return
-        dst.write(prev)
-        if count > min_run:
-            extra = count - 1
-            dst.write(MARKER.format(n=extra) + "\n")
+    i = 0
+    n = len(lines)
+    while i < n:
+        seen = []
+        j = i
+        while j < n and (lines[j] in seen or len(seen) < MAX_DISTINCT):
+            if lines[j] not in seen:
+                seen.append(lines[j])
+            j += 1
+        # Trim the stretch back so it ends on a line that repeats inside it; a
+        # distinct line picked up at the very end belongs to the following text.
+        while j > i and seen and lines[j - 1] == seen[-1] and lines[i:j - 1].count(seen[-1]) == 0:
+            seen.pop()
+            j -= 1
+        if j - i > min_run:
+            dst.writelines(seen)
+            extra = (j - i) - len(seen)
+            dst.write((MARKER.format(n=extra) if len(seen) == 1
+                       else MARKER_SET.format(n=extra, k=len(seen))) + "\n")
             runs += 1
             dropped += extra
-
-    for line in src:
-        if line == prev:
-            count += 1
-            continue
-        emit()
-        prev = line
-        count = 1
-    emit()
+            i = j
+        else:
+            dst.write(lines[i])
+            i += 1
     return runs, dropped
 
 
