@@ -625,3 +625,13 @@ by `kmstest-poll stats quit`. The flipstat line prints when quakespasm's client 
 **Gate for adopting `rpi4-kms-gate` as the M3 server:** run B ≥ 55 fps, the kmstest flip rate
 unchanged, 0 exceptions, and the cube renders cleanly on HDMI. The kernel follow-up (interruptible
 `pollwake_wait`) is separate, and needs its own worktree branch plus the §8 gate.
+
+## Merge gate — PASS (queue23, 2026-09-27 06:24–07:01); merged and pushed
+
+Stock `--scope core` build 11 (`loader.disk` has `pollwake`, sysroot `T pollNotify`), boot 0 faults,
+cycle 1 PASS (see the analysis above), and the six-app showcase gate `pollwake-gate`: X desktop,
+quakespasm, Quake III, Quake II, vkQuake (torches present, 15/15 reference frames), STK — every app
+`rc=0`, prompt, 0 faults, command echo, frames counted; HDMI looked at for all six (a late frame each:
+the glamor X desktop with its GL window, XBill and xclock; every game in-level and correct). Kernel
+`ee5939fc` and libphoenix `d40050c` pushed; manifest `2026-09-27-build11-poll-wake.md`. Cycle 2's
+kmscube result was not a poll problem (rpi4-kms deferred-flip wake, fixed separately, A/B in queue26).
