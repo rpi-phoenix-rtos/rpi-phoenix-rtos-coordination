@@ -43,9 +43,17 @@
 # gtk-update-icon-cache/gtk-encode-symbolic-svg are NOT needed (GTK's cross build
 # ships its pre-rendered icons).
 #
-# Usage: tools/gpu-lane/gtk3-wayland/build.sh [--clean] [--out <dir>] [-j N]
+# Usage: tools/gpu-lane/gtk3-wayland/build.sh [--clean] [--out <dir>] [-j N] [--usr]
 #            [--wayland-prefix <dir>] [--epoxy-prefix <dir>] [--relink]
 #   --relink   skip the libraries; relink gtk3-hello only
+#   --usr      configure every package for the TARGET's paths (--prefix /usr --sysconfdir /etc
+#              --localstatedir /var) and install with DESTDIR=<out>/destdir: the library set then
+#              lives in <out>/destdir/usr (instead of <out>/prefix) and the binaries carry
+#              /usr, /etc paths instead of build-host ones. pkg-config-phoenix runs with
+#              --define-prefix (each .pc's prefix = the directory it was found in). The XFCE
+#              libraries (tools/gpu-lane/xfce-wayland) build on such a prefix: libxfce4util,
+#              xfconf and garcon read their compiled-in /etc/xdg and /usr/share paths.
+#              Use it with a NEW --out (the default build-out/ is what m7e's binaries came from).
 #
 set -euo pipefail
 
@@ -55,6 +63,7 @@ out="${here}/build-out"
 jobs="$(nproc)"
 clean=0
 relink=0
+usr=0
 wl_src_prefix="${root}/tools/gpu-lane/weston-drm/build-out-g6/prefix"
 epoxy_src_prefix="${root}/tools/gpu-lane/xorg-drm/build-out/deps-prefix"
 egl_hdr_prefix="${root}/tools/gpu-lane/mesa-drm/build-out-wayland/prefix"
@@ -62,6 +71,7 @@ while [ $# -gt 0 ]; do
 	case "$1" in
 		--clean) clean=1 ;;
 		--relink) relink=1 ;;
+		--usr) usr=1 ;;
 		-j) shift; jobs="${1:?-j needs a number}" ;;
 		-j*) jobs="${1#-j}" ;;
 		--out) shift; out="${1:?--out needs a directory}" ;;
@@ -90,7 +100,20 @@ PHXCXX="${here}/bin/phx-g++"
 COMPAT_INC="${root}/tools/gpu-lane/weston-drm/compat/include"      # M6: epoll/timerfd/signalfd/memfd...
 # (mesa-drm's compat/include is NOT used: libphoenix has had what it shims since build 10,
 # and its duplicate declarations break -Werror=redundant-decls builds such as pango's.)
-P="${out}/prefix"
+if [ "${usr}" = 1 ]; then
+	DESTDIR_="${out}/destdir"
+	P="${DESTDIR_}/usr"          # where the installed files are, on the build host
+	PREFIX_ARGS=(--prefix /usr --sysconfdir /etc --localstatedir /var)
+	INSTALL_ENV=(env DESTDIR="${DESTDIR_}")
+	CMAKE_PREFIX=/usr
+	PKGC_DEFINE_PREFIX=" --define-prefix"
+else
+	P="${out}/prefix"
+	PREFIX_ARGS=(--prefix "${P}")
+	INSTALL_ENV=()
+	CMAKE_PREFIX="${P}"
+	PKGC_DEFINE_PREFIX=""
+fi
 D="${out}/deps"
 SYSD="${D}/sys"      # libintl stub + libiconv: on every compile/link of this build (meson's
                      # builtin intl/iconv dependencies look for them as system libraries)
@@ -209,7 +232,7 @@ write_cross() {
 # pkg-config restricted to this build's prefix, the private ports views and the snapshots.
 export PKG_CONFIG_LIBDIR=${P}/lib/pkgconfig:${P}/share/pkgconfig${libdirs}:${D}/wayland/share/pkgconfig
 unset PKG_CONFIG_PATH
-exec /usr/bin/pkg-config --static "\$@"
+exec /usr/bin/pkg-config --static${PKGC_DEFINE_PREFIX} "\$@"
 EOF
 	chmod +x "${pkgc}"
 	local flags="'--sysroot=${S}/', '-B${S}/lib/', '-mcpu=cortex-a72', '-mtune=cortex-a72', '-mstrict-align', '-mno-outline-atomics', '-ffunction-sections', '-fdata-sections', '-I${SYSD}/include'"
@@ -286,11 +309,11 @@ meson_pkg() {  # [--cross <file>] name builddir-name meson-args...
 		return 0
 	fi
 	rm -rf "${bd}"
-	meson setup "${bd}" "${out}/src/${name}" --cross-file "${cross}" --prefix "${P}" \
+	meson setup "${bd}" "${out}/src/${name}" --cross-file "${cross}" "${PREFIX_ARGS[@]}" \
 		--libdir lib --buildtype=debugoptimized -Db_staticpic=false -Db_ndebug=if-release --wrap-mode=nodownload "$@" \
 		> "${out}/${bname}-setup.log" 2>&1 || { tail -40 "${out}/${bname}-setup.log"; exit 1; }
 	ninja -C "${bd}" -j"${jobs}" > "${out}/${bname}-ninja.log" 2>&1 || { grep -E -A8 'error|FAILED' "${out}/${bname}-ninja.log" | head -80; exit 1; }
-	ninja -C "${bd}" install > "${out}/${bname}-install.log" 2>&1 || { tail -20 "${out}/${bname}-install.log"; exit 1; }
+	"${INSTALL_ENV[@]}" ninja -C "${bd}" install > "${out}/${bname}-install.log" 2>&1 || { tail -20 "${out}/${bname}-install.log"; exit 1; }
 	echo "  ${name}: built ($(grep -c 'warning:' "${out}/${bname}-ninja.log" || true) warning line(s))"
 	touch "${out}/${name}.built"
 }
@@ -399,13 +422,13 @@ if [ "${relink}" = 0 ]; then
 			-DCMAKE_SYSTEM_NAME=Generic -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
 			-DCMAKE_C_COMPILER="${TC}-gcc" -DCMAKE_AR="${TC}-gcc-ar" -DCMAKE_RANLIB="${TC}-gcc-ranlib" \
 			-DCMAKE_C_FLAGS="${TFLAGS[*]} -O2 -g" -DCMAKE_EXE_LINKER_FLAGS="--sysroot=${S}/ -B${S}/lib/" \
-			-DCMAKE_INSTALL_PREFIX="${P}" -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_BUILD_TYPE=Release \
+			-DCMAKE_INSTALL_PREFIX="${CMAKE_PREFIX}" -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_BUILD_TYPE=Release \
 			-DBUILD_SHARED_LIBS=OFF -DBUILD_STATIC_LIBS=ON -DPCRE2_BUILD_PCRE2_8=ON -DPCRE2_BUILD_PCRE2_16=OFF \
 			-DPCRE2_BUILD_PCRE2_32=OFF -DPCRE2_SUPPORT_JIT=OFF -DPCRE2_SUPPORT_UNICODE=ON -DPCRE2_BUILD_PCRE2GREP=OFF \
 			-DPCRE2_BUILD_TESTS=OFF -DPCRE2_SUPPORT_LIBBZ2=OFF -DPCRE2_SUPPORT_LIBZ=OFF -DPCRE2_SUPPORT_LIBEDIT=OFF \
 			-DPCRE2_SUPPORT_LIBREADLINE=OFF -DPCRE2_STATIC_PIC=OFF \
 			> "${out}/pcre2-setup.log" 2>&1 || { tail -30 "${out}/pcre2-setup.log"; exit 1; }
-		ninja -C "${out}/pcre2-build" -j"${jobs}" install > "${out}/pcre2-ninja.log" 2>&1 \
+		"${INSTALL_ENV[@]}" ninja -C "${out}/pcre2-build" -j"${jobs}" install > "${out}/pcre2-ninja.log" 2>&1 \
 			|| { grep -E -A6 'error|FAILED' "${out}/pcre2-ninja.log" | head -40; exit 1; }
 		[ -f "${P}/lib/pkgconfig/libpcre2-8.pc" ] || { echo "build.sh: pcre2 installed no libpcre2-8.pc" >&2; exit 1; }
 		touch "${out}/pcre2.built"
