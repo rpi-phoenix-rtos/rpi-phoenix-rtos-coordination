@@ -66,6 +66,7 @@ run: stdiff
 
 clean:
 	rm -f stdiff unity-test unity-runner.c *.o redef.txt redef-unity.txt
+	rm -rf out-stdclose
 
 # `make unity`: the phoenix-rtos-tests Unity groups stdio_memstream and
 # stdio_fmemopen, compiled against libphoenix's <stdio.h> with -D__phoenix__ (so
@@ -100,4 +101,31 @@ unity-test: unity-runner.c $(UNITY_PH:_raw.o=_uph.o) unity_t_uph.o list.o suppor
 unity: unity-test
 	./unity-test -v
 
-.PHONY: all run clean unity
+# `make stdclose`: a closed standard stream must stay safe to name (see
+# stdclose.c). file.c alone, built with AddressSanitizer into its own directory
+# so it never mixes with the objects above; ASan turns the use-after-free this
+# guards against into a hard failure instead of a silent read of freed memory.
+SC_OUT   ?= ./out-stdclose
+SC_FLAGS  = -std=gnu11 -O1 -g -fsanitize=address -fno-omit-frame-pointer
+
+$(SC_OUT)/file_raw.o: $(LIBPH)/stdio/file.c
+	mkdir -p $(SC_OUT)
+	$(CC) -c $(SC_FLAGS) $(PHFLAGS) -w -o $@ $<
+
+$(SC_OUT)/list.o: $(LIBPH)/sys/list.c
+	mkdir -p $(SC_OUT)
+	$(CC) -c $(SC_FLAGS) $(PHFLAGS) -w -o $@ $<
+
+$(SC_OUT)/redef.txt: $(SC_OUT)/file_raw.o
+	nm --defined-only -g $< | awk 'NF==3 {print $$3 " ph_" $$3}' | sort -u > $@
+
+$(SC_OUT)/file_ph.o: $(SC_OUT)/file_raw.o $(SC_OUT)/redef.txt
+	objcopy --redefine-syms=$(SC_OUT)/redef.txt $< $@
+
+$(SC_OUT)/stdclose: stdclose.c $(SC_OUT)/file_ph.o $(SC_OUT)/list.o support.c
+	$(CC) $(SC_FLAGS) -Wall -o $@ stdclose.c $(SC_OUT)/file_ph.o $(SC_OUT)/list.o support.c -lpthread
+
+stdclose: $(SC_OUT)/stdclose
+	$(SC_OUT)/stdclose
+
+.PHONY: all run clean unity stdclose

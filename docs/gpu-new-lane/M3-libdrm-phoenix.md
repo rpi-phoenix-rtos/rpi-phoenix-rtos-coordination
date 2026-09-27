@@ -1606,3 +1606,99 @@ in its list. n = 1. Old-lane STK on the same libphoenix (build 13 showcase gate)
 this is specific to the new clone's shutdown path (SDL KMSDRM / Mesa-DRM teardown, or a stream closed
 twice), not yet attributed. Next: re-run `stk-drm` with `C1_HEAP_TRACE_ALL`-style guards off and check
 whether it reproduces; inspect SDL/Mesa `fclose`/`fdopen` users on exit.
+
+## stk-drm exit fault — analysis (2026-09-27)
+
+**Cause: SuperTuxKart's own `fclose(stdout)` + libstdc++'s exit-time `cout.flush()` = a use-after-free
+in libphoenix, not a corrupt `FILE` in the exit list.** The note above ("libc flushing all streams at
+exit found a corrupt `FILE` in its list", "specific to the new clone's shutdown path") was wrong on
+both counts.
+
+Evidence (all static; artifact `rpi4b-uart-20260927-102841-stkdrm-1.log`, line 617, binary
+`tools/gpu-lane/sdl2-drm/build-out/stk-drm/supertuxkart-drm`):
+
+1. **The call chain is not `fflush(NULL)`.** `addr2line` on the return addresses in the stack dump:
+   `0x91b860` `fflush` (`file.c:1011`, the *single-stream* branch: `fflush` tests `cbz x0` first, and
+   this address follows `bl __fflush_one` on the non-NULL side) ← `0x1a467b4`
+   `__gnu_cxx::stdio_sync_filebuf<char>::sync()` ← `0x1a614e8` `basic_streambuf::pubsync()` ←
+   `0x1a5de8c` `ostream::flush()` ← `0x1a3a13c` `std::ios_base::Init::~Init()` ← `0x91cdbc`
+   `_atexit_finalize` (`atexit.c:243`, the line after a destructor call). This is `std::cout`'s flush
+   in libstdc++'s exit-time destructor. It flushes the `FILE *` that `stdout` held **at startup**,
+   cached in `buf_cout_sync`.
+2. **STK closes that stream itself.** `src/main.cpp:2635-2636`, at the end of `main()`:
+   `fclose(stderr); fclose(stdout);` (`#ifndef ANDROID`). libphoenix's `fclose()` → `file_release()` →
+   `free(stream)`: the standard streams were ordinary heap `FILE`s. Checked in the binaries, not only
+   the source: `main()` loads `stderr` then `stdout` and calls `fclose` on each, in the stk-drm ELF
+   (`0x41f7e8`/`0x41f7f4`) and in the old-lane `prog/supertuxkart` (`0x41f7c8`/`0x41f7d4`). So when `~Init()` runs, the cached
+   `stdout` points at freed memory, which the rest of the exit has recycled.
+3. **The registers fit a recycled block.** `x0 = x19 = 0x20d0` is the stream (user VA starts at 0 on
+   aarch64 and `_file_init()` makes the first allocations, so a low heap address is consistent with the
+   startup `stdout` — "consistent with", not proven). `file_rawSeek`: `ldr w3,[x0,#4]` read `flags` with
+   bit 5 (`F_OPS`, added by the `open_memstream`/`fmemopen` work, 7cc5628) set and `F_WRITING` clear;
+   `ldr x3,[x0,#72]` read the `ops` pointer **past the end** of the 72-byte `FILE` → `0xaa`;
+   `ldr x3,[x3,#16]` (`ops->seek`) → `far = 0xaa + 0x10 = 0xba`. `x1 = 8` is `bufpos - bufeof` of the
+   stale words.
+4. **Corroboration: the missing exit line.** `stkdrm_exit()` (registered at the first swap, so it runs
+   *before* `~Init()`) writes `stk-drm: exit after N swaps …` to fd 2. It is absent from the log because
+   `fclose(stderr)` had already closed fd 2.
+5. **The atexit rewrite is exonerated.** `exit()` is `__cxa_finalize(NULL); fflush(NULL); _exit()`
+   before and after the upstream merge (b1a37b4); `~Init()` has always been a `__cxa_atexit`
+   destructor. The final `fflush(NULL)` is innocent too: `fclose()` had already taken `stdout` off the
+   list.
+
+**Why the old lane "exits clean": luck of heap layout.** Same `main.cpp`, same libstdc++, same bug. With
+bit 5 clear in the stale `flags` word, `__fflush_one` does an `lseek`/`write` on a stale descriptor
+(`write` from the buffer `fclose` had already `munmap`ed) and then `stream->flags |= F_ERROR` — a
+**silent write into freed heap memory** on every STK exit. Before 7cc5628 bit 5 meant nothing, so it
+could never fault. Hypothesis only, not tested: this exit-time write is a candidate contributor to the
+allocator "heap guards fire silently" item. It runs at exit, so it cannot explain mid-game corruption.
+
+The suggested sweep of exit-time stdio users in SDL KMSDRM, Mesa-DRM, libdrm-phoenix and the hooks
+was not done. The chain above is fully resolved (libstdc++ `~Init()` → the cached startup `stdout` →
+freed by STK's own `fclose`), so nothing in the new stack is implicated.
+
+**Fix (libphoenix, branch `fix/stdstream-fclose-uaf`, bf35aaf — not merged):** `_file_init()`
+records the three stream objects it creates. `file_release()` (reached from `fclose()` and from a failed
+`freopen()`) **empties** one of those instead of freeing it, as glibc and musl do: buffer freed and
+NULL (so `fflush` is a no-op), `fd = -1` (I/O fails with EBADF), off the list (a second `fclose` fails
+with EBADF). The lock stays, because `fflush` takes it. A stream the program assigns to `stdout` itself
+(e.g. `stdin = fdopen(0, "r")` in `libc/stdio/file.c`) is freed as before. Known follow-up, out of
+scope: `freopen()` on an already-closed standard stream reopens it unbuffered and off the list.
+
+**Tests:**
+
+| check | before (master 156422a) | after (bf35aaf) |
+|---|---|---|
+| `tools/libstdio-hosttest` `make stdclose` (file.c + ASan: `fclose(stdout)` → `fflush`/`fileno`/write/2nd `fclose` through the saved pointer; failed `freopen(stdin)`; `fflush(NULL)`) | **heap-use-after-free** in `fflush` (`file.c:1010`), freed by `fclose` → `file_release` | **11/11 pass** |
+| `phoenix-rtos-tests` `stdlib_exit.closed_std_streams` (branch `fix/stdstream-fclose-uaf`, c4b23a8), run on the host against libphoenix's `file.c` | FAIL: child killed in the atexit flush (no sanitizer); ASan: heap-use-after-free | **PASS** (same with ASan) |
+| same test on glibc (the reference) | — | PASS |
+| `make run` differential (file/memstream/fmemopen) | digest `957daf050379ec27`, 0 diffs | **identical** digest, 0 diffs |
+| `make unity` (stdio_memstream + stdio_fmemopen) | — | 17/17 |
+| target flags `-Werror` syntax check: `stdio/file.c`, `libc/exit/exit.c`, `stkdrm_hooks.c` | — | clean |
+
+**tools (uncommitted):** `stkdrm/stkdrm_hooks.c` keeps a private close-on-exec copy of fd 2
+(`fcntl(2, F_DUPFD_CLOEXEC, 3)`) for everything `out()` prints, so the exit line survives STK's
+`fclose(stderr)`. `tools/libstdio-hosttest`: new `stdclose.c` + `make stdclose` target, README line.
+No STK source patch is needed. Skipping the two `fclose`s on Phoenix would hide the bug for STK only.
+
+**PRE-REGISTERED Pi check (`stkdrm-2`)**, after merging `fix/stdstream-fclose-uaf` into libphoenix
+master, building `--scope core`, and re-running `build-stk-drm.sh` with the modified hooks. Gate: the new
+`BUILD-INFO.txt` `libphoenix.a` hash ≠ `77c4dbf8…`, and `stkdrm_hooks.c` hash ≠ `8e40681f…`. One
+`stkdrm` cycle, same recipe as `stkdrm-1`:
+
+- (a) **0 `Exception #` lines** from race start through exit, and the `(psh)%` prompt returns;
+- (b) the line **`stk-drm: exit after <N> swaps in <M> ms since the first swap`** is present, printed
+  after the profile block. Its absence with (a) true would mean the hooks fix, not the libc fix, is
+  wrong;
+- (c) `test-libc-exit` on target: `stdlib_exit.closed_std_streams` **PASS**, with every other
+  `unistd_exit`/`unistd_Exit`/`stdlib_exit` case unchanged from its pre-change verdict.
+- Refutation: a fault at exit whose chain still runs through `~Init()` → `fflush` means the
+  standard-stream objects are still being freed somewhere (check the relink really took the new
+  `libphoenix.a`). A fault with a *different* chain is a second, independent defect.
+
+The old-lane `prog/supertuxkart` is statically linked and makes the same two `fclose` calls. It keeps
+writing freed heap at every exit until it is relinked (ports rebuild) against the fixed libphoenix. The
+check above covers only stk-drm.
+
+n = 1 exit per cycle, and the pre-fix fault depends on heap layout (the old lane never showed it), so
+one clean exit is weak evidence alone. The deterministic evidence is (c) and the host checks above.

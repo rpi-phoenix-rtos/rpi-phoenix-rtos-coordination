@@ -26,6 +26,7 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 
+#include <fcntl.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -44,6 +45,7 @@ static const char stkdrm_banner[] =
 	"-> rpi4-kms (card0) + rpi4-v3d-async (renderD128)\n";
 
 static struct {
+	int errfd;           /* private copy of fd 2, see stkdrm_start() */
 	int state;           /* 0 = before the first swap, 1 = counting, 2 = off */
 	unsigned window_ms;
 	uint64_t start_us;   /* process start (constructor) */
@@ -77,7 +79,7 @@ static void out(const char *fmt, ...)
 	n = vsnprintf(buf, sizeof(buf), fmt, ap);
 	va_end(ap);
 	if (n > 0) {
-		(void)write(2, buf, ((size_t)n < sizeof(buf)) ? (size_t)n : sizeof(buf) - 1u);
+		(void)write(S.errfd, buf, ((size_t)n < sizeof(buf)) ? (size_t)n : sizeof(buf) - 1u);
 	}
 }
 
@@ -94,6 +96,13 @@ static void stkdrm_exit(void)
 __attribute__((constructor)) static void stkdrm_start(void)
 {
 	(void)write(1, stkdrm_banner, sizeof(stkdrm_banner) - 1u);
+	/* STK's main() ends with fclose(stderr); fclose(stdout); -- descriptors 1 and 2
+	 * are gone before the atexit handlers run, which silenced stkdrm_exit()'s line.
+	 * Keep a private copy (above 2, close-on-exec) for everything out() prints. */
+	S.errfd = fcntl(2, F_DUPFD_CLOEXEC, 3);
+	if (S.errfd < 0) {
+		S.errfd = 2;
+	}
 	SDL_LogSetPriority(SDL_LOG_CATEGORY_VIDEO, SDL_LOG_PRIORITY_DEBUG);
 	SDL_LogSetPriority(SDL_LOG_CATEGORY_INPUT, SDL_LOG_PRIORITY_DEBUG);
 	S.start_us = now_us();

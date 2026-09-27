@@ -10,6 +10,10 @@ headers) and checks them in about a second.
     LIBPH=/path/to/tree make run    # e.g. a worktree
     LIBPH=... MEM=0 make run        # a tree without memstream.c (file scenario only)
     ./stdiff --trace | --canary | --seed N
+    LIBPH=... make stdclose         # a CLOSED stdin/stdout must stay safe to name
+                                    # (libstdc++ flushes the startup stdout at exit);
+                                    # file.c alone under AddressSanitizer, built in
+                                    # ./out-stdclose (SC_OUT=dir to move it)
     TESTS=/path/to/phoenix-rtos-tests make unity
                                     # the target Unity groups stdio_memstream +
                                     # stdio_fmemopen, built with -D__phoenix__ against
