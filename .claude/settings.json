@@ -85,6 +85,8 @@
       "Bash(./scripts/publication-audit.sh:*)",
       "Bash(./scripts/upstream-status.sh:*)",
       "Bash(./scripts/build-port.sh:*)",
+      "Bash(./scripts/make-scratch-buildroot.sh:*)",
+      "Bash(./scripts/check-wayland-ports-sync.sh:*)",
       "Bash(./scripts/force-port-rebuild.sh:*)",
       "Bash(./scripts/run-showcase-gate.sh:*)",
       "Bash(./scripts/flipstat-summary.sh:*)",

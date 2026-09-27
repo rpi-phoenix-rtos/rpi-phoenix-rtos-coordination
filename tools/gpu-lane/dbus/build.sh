@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
 #
+# FRAMEWORK PORT: sources/phoenix-rtos-ports dbus,
+# branch feat/new-lane-wayland-ports; opt-in, not in the default image (docs/gpu-new-lane/
+# MIGRATION.md section 4, "Ports (Wayland desktop)"). Every patch/glue file this script uses
+# is also a file of the port; scripts/check-wayland-ports-sync.sh keeps the copies identical --
+# a change here must be copied there. This script keeps working until the migration switch.
+#
 # dbus (new GPU lane, M7 stage 3): D-Bus 1.16 -- dbus-daemon, libdbus-1 (static), dbus-send,
 # dbus-monitor, dbus-run-session, dbus-uuidgen -- cross-built STATIC for aarch64-phoenix, with
 # the unix transport only (docs/gpu-new-lane/M7-wayland-desktop.md, "D-Bus session bus").

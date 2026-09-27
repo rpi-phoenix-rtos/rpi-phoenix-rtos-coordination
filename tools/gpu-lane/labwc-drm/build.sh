@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
 #
+# FRAMEWORK PORT: sources/phoenix-rtos-ports labwc_desktop (+ wayland_phoenix: the weston-drm
+# compat/shims/patches this script reuses),
+# branch feat/new-lane-wayland-ports; opt-in, not in the default image (docs/gpu-new-lane/
+# MIGRATION.md section 4, "Ports (Wayland desktop)"). Every patch/glue file this script uses
+# is also a file of the port; scripts/check-wayland-ports-sync.sh keeps the copies identical --
+# a change here must be copied there. This script keeps working until the migration switch.
+#
 # labwc-drm (new GPU lane, M7): a lightweight Wayland desktop cross-built STATIC for
 # aarch64-phoenix -- wlroots 0.20 (DRM + libinput + headless backends, GLES2 and
 # pixman renderers, libseat session), labwc 0.20 on it, the foot terminal, the fuzzel

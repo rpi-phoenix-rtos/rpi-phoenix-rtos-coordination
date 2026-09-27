@@ -288,6 +288,85 @@ old strings (`/dev/fb0`, `phoenix-map.cfg`) and none of the new ones.
     (research doc §migration: "kept only for boot splash/fbcon until M2, then reduced") — a separate,
     measured change after the migration gate.
 
+### Ports (Wayland desktop) — the Wayland-desktop half stored in phoenix-rtos-ports [built: dbus, wayland_phoenix]
+
+Owner request 2026-09-27 ("make sure that all the ports (the recent ones) are correctly stored in
+phoenix-rtos-ports"), second half: the Wayland desktop of the new lane — D-Bus, the Wayland base, GTK 3,
+XFCE, labwc — as framework recipes on phoenix-rtos-ports branch **`feat/new-lane-wayland-ports`** (pushed
+to `publish`, **not merged**; the graphics half is §4.1's `feat/new-lane-graphics-ports`). **Opt-in**: no
+project `ports.yaml` names them and no existing port directory is touched (`git diff master..` of the
+branch: 156 files **added** in five new directories, 0 modified or deleted), so neither `--with-ports` nor
+any other default build changes. Each recipe is a transcription of its tools script at its **committed**
+state: the same pinned tarballs + sha256, the same patch sets, meson/configure options, compiler flags,
+private views of the ports prefix, hand links and verification gates; every compat/shim source, launcher
+and config is a vendored copy under the port's `files/` (ours: BSD-3-Clause).
+
+| Package(s) | Port | From `tools/gpu-lane/` | Licence (SPDX, as in the recipe) | Notes |
+|---|---|---|---|---|
+| D-Bus 1.16.2 (dbus-daemon, libdbus-1, dbus-send/-monitor/-run-session/-uuidgen) | `dbus` 1.16.2 | `dbus` | AFL-2.1 OR GPL-2.0-or-later | patch 0001, `session-phoenix{,-external}.conf`, `dbus-m7f.sh`; runtime pair of `xfce_wayland` (xfconfd by bus activation), not a build dependency |
+| libwayland 1.24.0, wayland-protocols 1.45, libxkbcommon 1.7.0, wlphx-compat, libudev/libinput/libevdev shims, `<linux/input.h>` over FreeBSD's evdev codes, baked evdev/pc105/us keymap | `wayland_phoenix` 1.24.0 | `weston-drm` (non-Weston half) + `mesa-drm/compat/include`, `xorg-drm/src/phxhid_evdev_map.h` | MIT AND BSD-3-Clause AND BSD-2-Clause | also installs the glue sources + the M6 `wayland`/`seatd` patch sets (`share/wayland-phoenix/`) for `labwc_desktop`; the keymap is a committed file (no host xkeyboard-config) |
+| GTK 3.24.52 (Wayland only), GLib 2.88.3 + GIO, pcre2 10.47, fribidi 1.0.16, atk 2.38.0, gdk-pixbuf 2.42.12, harfbuzz 14.4.0 (meson), pango 1.54.0, cairo 1.18.4, gtk-layer-shell 0.10.1, libepoxy 1.5.10, gtk3-hello (+ gtk3-demo, gtk3-widget-factory) | `gtk3_wayland` 3.24.52 | `gtk3-wayland` (`--usr`) + `xorg-drm/patches/libepoxy`, `xorg-drm/compat/include` | LGPL-2.1-or-later AND LGPL-3.0-or-later AND (LGPL-2.1-only OR MPL-1.1) AND BSD-3-Clause WITH PCRE2-exception AND MIT AND Apache-2.0 AND BSD-3-Clause | always `/usr`-configured (DESTDIR install); libepoxy built in-port against vendored Khronos EGL/KHR headers (no Mesa dependency: GTK draws with cairo/wl_shm); `conflicts="glib2"` (a second GLib) |
+| XFCE 4.20: libxfce4util 4.20.1, xfconf 4.20.0, libxfce4ui 4.20.2, garcon 4.20.0, exo 4.20.0, libxfce4windowing 4.20.7, Thunar 4.20.10, xfce4-panel 4.20.8, xfdesktop 4.20.2, xfce4-settings 4.20.5, xfce4-appfinder 4.20.0, adwaita-icon-theme 3.38.0 (PNG), shared-mime-info 2.4 | `xfce_wayland` 4.20 | `xfce-wayland` | GPL-2.0-or-later AND LGPL-2.0-or-later AND LGPL-2.1-or-later AND (LGPL-3.0-only OR CC-BY-SA-3.0) AND BSD-3-Clause | patches thunar 0001–0002, xfce4-panel 0001, xfconf 0001, xfdesktop 0001; the GTK stack enters as a symlink-tree snapshot of `gtk3_wayland` (the tools script copies 1.6 GB); msgfmt stand-in, `pngify-icon-theme.py` |
+| labwc 0.20.2, wlroots 0.20.2, foot 1.28.0, fuzzel 1.15.0, swaybg 1.2.2, tinywl + libwayland 1.24.0, wayland-protocols 1.49, libxkbcommon 1.13.2, pixman 0.46.4, libdisplay-info 0.2.0, seatd 0.9.1, libxml2 2.15.4, fribidi 1.0.16, pango 1.44.7, tllist 1.1.0, fcft 3.3.3 | `labwc_desktop` 0.20.2 | `labwc-drm` | GPL-2.0-only AND MIT AND LGPL-2.1-or-later AND BSD-3-Clause AND CC0-1.0 | depends on `mesa_drm[wayland]` (`wayland/prefix`, `wayland/link-gles.txt`) and `libdrm_phoenix` of §4.1; patches foot, fribidi, fuzzel, labwc 0001–0002, pango 0001–0003, swaybg, wayland-protocols, wlroots 0001–0004; the wallpaper is generated (`make-wallpaper.py`, CC0); committed keymap; `conflicts="gtk3_wayland"` (it links the ports GLib 2.56) |
+
+**Conventions** — as §4.1: a private prefix (`conflicts=`; for gtk3/xfce/labwc a real one, the other
+GLib), no framework CFLAGS (the tools scripts' exact flag set, `-pthread`-dropping compiler wrappers,
+private dependency views), USE **`rootfs`**: everything is built into the port's own prefix, including a
+`stage/` tree (+ `stage.MANIFEST`) that mirrors the target rootfs with the M7 staging's **new names only**
+(`/bin/thunar-wl`, `/bin/gdbus-wl`, `/etc/xdg/labwc-xfce`, …); only `use: [rootfs]` copies it into
+`_fs/<target>/root`. Two additions: each recipe's work tree mirrors the tools script's `<out>` directory
+(`out/src/<pkg>`, `out/<pkg>-build`), so meson's relative source paths — the `__FILE__` strings in the
+binaries — are the same; and every extracted tree is its own git repository before `git apply`/`git am`
+(inside the buildroot's repository git would silently skip every path). Extra tarballs are looked up in
+the port directory (gitignored), then `${PHOENIX_DISTFILES:-~/.phoenix-distfiles}/newlane/`, then fetched,
+and always sha256-checked. `scripts/check-wayland-ports-sync.sh [<ports dir>]` compares every vendored
+copy with its tools source (42 mappings; on the branch: identical except the three uncommitted in-flight
+edits below).
+
+**Verification.**
+
+| Port | How | Result |
+|---|---|---|
+| `dbus` | `scripts/build-port.sh` in a scratch buildroot (`scripts/make-scratch-buildroot.sh`; `RPI4B_BUILDROOT=<scratch> RPI4B_PORTS_DIR=<worktree>`), dependency closure (`xorg_libs`, `zlib`, `xorg_fonts`) rebuilt from scratch there; tools `build.sh --out <tmp>` against the same sysroot | the 5 stripped programs **byte-identical** (`dbus-daemon` `0abfed003a78214d`, …); same `config.h` answers and gate |
+| `wayland_phoenix` | the same scratch build; archives compared member by member after `strip --strip-debug` with the tools-way compile of the same sources | identical, except `xcursor.c.o` and xkbcommon's `context.c.o`, which bake the build-host prefix path (icon/include search path) — as every tools out dir does. (weston-drm's `build-out-g6`, the snapshot gtk3's tools build used, predates today's compat/shim sources) |
+| `gtk3_wayland`, `xfce_wayland`, `labwc_desktop` | `bash -n`; shellcheck 0.11 (clean); `port_manager.py validate` (81 ports); `--dry build` resolution (`labwc_desktop` together with a snapshot of §4.1's `libdrm_phoenix`, `mesa_drm`, `wayland` definitions: resolves, `mesa_drm +wayland`); `p_prepare` of each in a throwaway directory | every tarball sha256 and every patch applies (commit counts = patch counts). **Not built through the framework**: the build host's disk (<2 GB free, gtk3's tools build-out alone is 4.9 GB) — the first real build is the check to run when there is space |
+
+**Overlap with §4.1 (dedup after both branches are merged).** `wayland_phoenix`'s libwayland 1.24 +
+wayland-protocols 1.45 + wlphx-compat half is §4.1's `wayland` port (same tarballs, same M6 patch, same
+compat sources and flags); its xkbcommon 1.7 + input shims + keymap half is inside §4.1's `weston`. The
+Wayland-desktop half does **not** depend on either, nor on §4.1's `libepoxy` (which needs `mesa_drm`): the
+branch resolves on its own. After the merge: keep one Wayland base — e.g. `wayland` + a small
+`wayland_input` (xkbcommon 1.7, shims, keymap) that `weston` and `gtk3_wayland` share — retarget
+`gtk3_wayland`/`labwc_desktop`, drop `wayland_phoenix`; and decide whether GTK should link §4.1's
+`libepoxy` (costs a Mesa build) or keep its Mesa-free copy.
+
+**Not converted (yet):** the host tests (`*/hosttest`), the tools switches (`--relink`, `--until`, dbus
+`--host`), and the **uncommitted in-flight work** in the tools directories at conversion time (the ports
+carry the last committed state): gtk3 `patches/glib/0003-gapplication-…`, xfce `patches/xfdesktop/0002-…`,
+the XFCE demo session (`build.sh`'s `stage-demo`, `pi/xfce-session`, `pi/xfce-demo-loginctl`,
+`conf/xfce-demo`, `conf/labwc-xfce-demo`, the dither wallpaper); `tools/gpu-lane/atril-wayland` (a later
+pass); `/etc/machine-id` (m7f staged one by hand; an image should generate it). `labwc_desktop` stages the
+current `pi/labwc-desktop.sh` once, as `/bin/labwc-desktop.sh` (m7a's older copy and m7c's
+`/bin/labwc-desktop-m7c.sh` name are not reproduced).
+
+**Adopting in an image** (after the merge): list the top-level ports with USE `rootfs` — the dependencies
+come along:
+
+```yaml
+  - name: labwc_desktop
+    use: [rootfs]
+  - name: xfce_wayland
+    use: [rootfs]
+  - name: dbus
+    use: [rootfs]
+```
+
+**Merge:** phoenix-rtos-ports `feat/new-lane-wayland-ports` (4 commits on `35abace`, five new directories
+`dbus wayland_phoenix gtk3_wayland xfce_wayland labwc_desktop`) and §4.1's `feat/new-lane-graphics-ports`
+into `master`, in either order — the directory sets are disjoint. `labwc_desktop` resolves only with both
+merged. Then `scripts/check-wayland-ports-sync.sh` and `scripts/check-gpu-lane-ports-sync.sh` on the merged
+tree.
+
 ## 5. The migration gate
 
 **The showcase gate, re-run on the new lane with the same drive commands, timings and HDMI checks**, on

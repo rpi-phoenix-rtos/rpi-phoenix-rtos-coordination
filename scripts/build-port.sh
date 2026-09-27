@@ -20,6 +20,15 @@
 #   scripts/build-port.sh libpng libjpeg          # clean build (default)
 #   scripts/build-port.sh --incremental ncurses   # skip the clean re-extract
 #
+# Environment:
+#   RPI4B_BUILDROOT   buildroot to build in (default <repo>/.buildroot). A scratch
+#                     buildroot keeps a verification build out of the image's prefix,
+#                     port-sources and .port_state -- see
+#                     scripts/make-scratch-buildroot.sh.
+#   RPI4B_PORTS_DIR   ports tree to read the recipes from (default
+#                     <repo>/sources/phoenix-rtos-ports), e.g. a git worktree of a
+#                     feature branch.
+#
 # Copyright 2026 Phoenix Systems
 # SPDX-License-Identifier: BSD-3-Clause
 
@@ -31,7 +40,7 @@ repo_root="$(cd "${script_dir}/.." && pwd)"
 buildroot="${RPI4B_BUILDROOT:-${repo_root}/.buildroot}"
 toolchain_path="${PHOENIX_AARCH64_TOOLCHAIN:-${repo_root}/.toolchain/aarch64-phoenix/bin}"
 target="${RPI4B_TARGET:-aarch64a72-generic-rpi4b}"
-ports_dir="${repo_root}/sources/phoenix-rtos-ports"
+ports_dir="${RPI4B_PORTS_DIR:-${repo_root}/sources/phoenix-rtos-ports}"
 venv_python="${repo_root}/.venv/bin/python3"
 
 clean=1

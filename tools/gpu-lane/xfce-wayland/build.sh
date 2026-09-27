@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
 #
+# FRAMEWORK PORT: sources/phoenix-rtos-ports xfce_wayland (on gtk3_wayland + wayland_phoenix),
+# branch feat/new-lane-wayland-ports; opt-in, not in the default image (docs/gpu-new-lane/
+# MIGRATION.md section 4, "Ports (Wayland desktop)"). Every patch/glue file this script uses
+# is also a file of the port; scripts/check-wayland-ports-sync.sh keeps the copies identical --
+# a change here must be copied there. This script keeps working until the migration switch.
+#
 # xfce-wayland (new GPU lane, M7 stage 4): XFCE 4.20 on labwc, cross-built STATIC for
 # aarch64-phoenix on top of the GTK 3 Wayland-only stack of tools/gpu-lane/gtk3-wayland
 # (built with --usr: every package configured for /usr and /etc, installed with DESTDIR).

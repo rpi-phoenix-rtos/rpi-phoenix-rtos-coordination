@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
 #
+# FRAMEWORK PORT: sources/phoenix-rtos-ports gtk3_wayland (always --usr; + wayland_phoenix: the
+# Wayland client stack this script snapshots from weston-drm),
+# branch feat/new-lane-wayland-ports; opt-in, not in the default image (docs/gpu-new-lane/
+# MIGRATION.md section 4, "Ports (Wayland desktop)"). Every patch/glue file this script uses
+# is also a file of the port; scripts/check-wayland-ports-sync.sh keeps the copies identical --
+# a change here must be copied there. This script keeps working until the migration switch.
+#
 # gtk3-wayland (new GPU lane, M7): GTK 3.24 with ONLY the Wayland GDK backend,
 # cross-built STATIC for aarch64-phoenix, with the libraries it needs that the ports
 # prefix lacks or has too old, plus gtk-layer-shell (for the XFCE panel/desktop) and
