@@ -35,8 +35,15 @@ Readings (fixed now):
 - colour bars: fit Cb/Cr of the 100 % bars against BT.601 and BT.709 matrices ⇒ which matrix the grabber uses. If
   it is 709 while it reports 601 (or ffmpeg assumes 601), the **snapshots' hue shift is a capture-side artefact**
   and the fix is in `hdmi_grab_one` (request 1920x1080, tell ffmpeg `-colorspace bt709 -color_range tv`).
-- grey ramp steps: 256 distinct steps visible in the Y channel ⇒ the Pi scans out 8 bits per channel end to end; far
-  fewer ⇒ precision is lost on the Pi side (plane/HVS/HDMI) — would be a real rendering defect.
+- grey ramp steps: every one of the **220** limited-range Y codes used, monotonic ⇒ the Pi scans out 8 bits per
+  channel end to end; **~64** ⇒ 6 bpc somewhere on the Pi side (plane/HVS/HDMI) — a real rendering defect.
+  (Corrected 21:45, before any data: this line first said "256 distinct steps", which a limited-range Y channel
+  cannot show.)
+
+Grader: `scripts/hdmi-calib-analyse.py <arm>-1080-yuyv.raw`. It reads the raw YUYV, so no ffmpeg colour
+conversion sits between the card and the numbers. Self-test on frames synthesised by ffmpeg from the calibration
+PNG: BT.709 frame → 709 chroma rms 0.4 vs 601 7.3; BT.601 frame → 601 0.4 vs 709 7.2; limited-range RGB read as
+full → `Y(0)=29 Y(255)=217`, classified "LIMITED-range link read as full".
 
 Fix plan independent of the result: stage the dithered wallpaper for the demo (swaybg + xfdesktop), capture at
 native 1920x1080 for documentation screenshots, and correct the capture colour matrix once measured.
