@@ -408,6 +408,22 @@ M6 §18). Rows 5–7 and 9 are replaced by:
 hardware, with the race measured. Any `inconclusive=1` = still not decided; a `bad_*>0` with the pending flag
 at 1 = G6 broken.
 
+## Result — `g6-sync2` (chain53, build 18, 2026-09-27 19:33): ✅ PASS — G6 decided
+
+Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-193315-g6-sync2.log`; `DRMPROBE RESULT pass=49 fail=0 gap=0 verdict=PASS`,
+`inconclusive=0`, weston-simple-egl 45 fps, 0 exceptions.
+
+- `dmabuf_sync_import … pending_after_import=1 nfences=1 … jobs=48 tail_us=101226 ok=1`
+- `dmabuf_sync_read producer=child jobs=48 size=1920x1080 submit_us=5845 tail_us=110413 … pending_at_export=1 nfences=1 …
+  early_stale=1 bad_words=0 done_at_read=1 ok=1`: the consumer in another process received the buffer while the
+  producer's ~110 ms chain was still running. A read without waiting would have been stale (`early_stale=1`), so
+  the race is real; after waiting on the exported sync file, 0 bad words.
+- `dmabuf_sync_flip … pending_at_commit=1 flipped=1 flip_us=122178 done_at_flip=1 bad_at_flip=0 ok=1`: rpi4-kms held
+  the foreign buffer's flip for 122 ms until the producer's fence, then scanned out the finished frame.
+
+**Decides:** implicit cross-process sync (G6) works on hardware: sync-file export/import on dma-buf fds, and
+fence-gated flips of another process's buffer. Explicit sync (G6b) stays open.
+
 ## 9. Risks only the Pi can show
 
 - **Server paths never run on hardware:** the CPU-queue join job (kick when ready, completion on
