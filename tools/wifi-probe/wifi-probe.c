@@ -1771,7 +1771,7 @@ static int g_join_psksup_status = -100;  /* WLC_E_PSK_SUP status (6 = 4-way keye
 static int g_join_link_up = 0;           /* last WLC_E_LINK flags&0x01 */
 static int g_join_evt_total = 0;
 static char g_join_ssid[33] = "PhoenixNet";
-static char g_join_psk[64] = "phoenixpi2026";
+static char g_join_psk[64] = ""; /* no default: pass `join <ssid> <psk>` (the lab PSK lives only in the export's /etc/wifi.conf) */
 
 static int g_join_dtx = 0;             /* jointx: TX a DHCP-discover after join */
 static int g_join_dtx_cnt = 0;         /* jointxcnt: non-glom TX + fw pktcnt localization */

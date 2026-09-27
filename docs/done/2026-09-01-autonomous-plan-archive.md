@@ -2078,7 +2078,7 @@ exchange, diff vs Phoenix's stuck TX-reaches-fw-not-air (memory project_wifi_fw_
 SDPCM seq/credit wall), focus on the credit/sequencing/flow-control handshake → a LOCALIZED DIVERGENCE with evidence (not "WiFi works"). **E7 mechanism confirmed (ready to execute):**
 Linux ref netboots NFS-root over WIRED eth (cmdline `root=/dev/nfs nfsroot=10.42.0.1:.../linux-netboot/rootfs,vers=3,tcp ip=dhcp`, console=serial0
 115200) + **autologin-root on ttyS0** (drivable over UART) — switch via RPI4B_NETBOOT_TFTPROOT=artifacts/linux-netboot/tftp (ALWAYS restore Phoenix
-default after). Host AP = radio-ap-up.sh → SSID `PhoenixNet` / WPA2 PSK `phoenixpi2026` on SEPARATE 10.43.0.0/24 (netboot 10.42 untouched). **Next-turn
+default after). Host AP = radio-ap-up.sh → SSID `PhoenixNet` / WPA2 PSK `<lab-PSK>` on SEPARATE 10.43.0.0/24 (netboot 10.42 untouched). **Next-turn
 capture plan:** (1) bring up host AP (radio-ap-up.sh); (2) drop a boot oneshot into the Linux rootfs (/etc/rc.local or a systemd unit) that: enables
 brcmfmac SDPCM debug tracing (`echo 0x... > /sys/module/brcmfmac/parameters/debug` or dyndbg on the msgbuf/sdpcm), `wpa_supplicant` join PhoenixNet,
 `dhclient`, `ping` the host (10.43.0.1) N times, then `dmesg` dump — all to the serial console; (3) boot the Linux ref (TFTP switch, card out) + capture
@@ -2114,7 +2114,7 @@ This pre-validates (or saves coding) the fix in one read-only cycle. sig-0 fwsig
 2026-08-21 (session ~109 — ★★ EXECUTED the advisor's read-only experiment: CREDIT/SEQ REFUTED on HW; saved coding the wrong fix).
 Instrumented wifi-probe.c READ-ONLY (diag_f2RecvFrame records fw-advertised SDPCM fc-mask buf[8] + window/max-seq buf[9] every RX
 frame; diag_wifiDataTx records its tx_seq; prints `wifi: SDPCM-CREDIT`). Built, deployed to netboot /bin, ran `wifi-probe jointx
-PhoenixNet phoenixpi2026` on HW (CONNECTED, WPA2 4-way keyed) with tcpdump on host AP wlp3s0 in parallel. RESULT: **tx_seq=21,
+PhoenixNet <lab-PSK>` on HW (CONNECTED, WPA2 4-way keyed) with tcpdump on host AP wlp3s0 in parallel. RESULT: **tx_seq=21,
 rx_win_last=62 (min21/max62), fc=0x00, rx_frames=27** + tcpdump **0 packets on air**. ⇒ tx_seq(21) is FAR inside the fw window (up to
 62), fc=0x00 (no flow-control stop) ⇒ **credit/seq REFUTED — the harvest+gate fix would have been wasted** (the read-only cycle
 correctly pre-empted it, exactly the advisor's third branch); AND 0 frames on air ⇒ genuine **TX-to-air fw-internal drop, NOT an
@@ -4363,7 +4363,7 @@ use the **passphrase path** (WSEC_PMK ioctl 268, flags=0x0001, ASCII PSK) — th
 diag_wifiScan: event_msgs (enable evts 0/5/6/7/11/12/16/46) → clmLoad → infra=1 → WLC_UP → wsec=4(AES) →
 wpa_auth=0x80(WPA2-PSK) → sup_wpa=1 → WSEC_PMK(268, passphrase) → WLC_SET_SSID(26, 36B broadcast join) → event loop
 watching WLC_E_SET_SSID(0)/status0 + WLC_E_PSK_SUP(46)/status6 = CONNECTED. Added `join [ssid psk]` command (default
-PhoenixNet/phoenixpi2026) + a JOIN report line. **Builds clean (0 undefined syms, static aarch64 ELF).** Fixed one
+PhoenixNet/<lab-PSK>) + a JOIN report line. **Builds clean (0 undefined syms, static aarch64 ELF).** Fixed one
 brace-scramble in the report block (caught by the compile gate). Host AP still UP as the test target.
 **NEXT (Pi test): stage the new wifi-probe binary into the netboot rootfs + run `wifi-probe join` via psh; read the
 JOIN report** — expect SET_SSID status=0 + PSK_SUP status=6 = CONNECTED (or diagnose from the rc/status fields:
@@ -4374,7 +4374,7 @@ wrong-PSK → PSK_SUP status≠6; no-AP → SET_SSID status≠0; low txpower →
 2026-08-12 (RADIO-AS-TRANSPORT #4 — Phase 1 DONE: host WPA2 AP up + netboot-safe + scripted). First big feature after
 the sync. Recon: mt7925e (wlp3s0) supports AP mode ✓; hostapd MISSING but NetworkManager does WPA2 AP natively.
 Built reproducible **scripts/radio-ap-up.sh** + **radio-ap-down.sh**: NM AP on wlp3s0, SSID **PhoenixNet**, WPA2-PSK
-**phoenixpi2026**, 2.4GHz **ch6**, subnet **10.43.0.1/24** (ipv4.method=shared → NM dnsmasq DHCP 10.43.0.10-254 +
+**<lab-PSK>**, 2.4GHz **ch6**, subnet **10.43.0.1/24** (ipv4.method=shared → NM dnsmasq DHCP 10.43.0.10-254 +
 NAT to uplink for free). **Verified UP**: `iw dev wlp3s0` type AP ssid PhoenixNet ch6; NM dnsmasq bound ONLY to
 wlp3s0 (--bind-interfaces --listen-address=10.43.0.1) so NO conflict with the netboot dnsmasq. **Netboot confirmed
 UNTOUCHED** (enx…@10.42.0.1 + its dnsmasq PID 489073 both still healthy — separate iface + subnet by design). AP

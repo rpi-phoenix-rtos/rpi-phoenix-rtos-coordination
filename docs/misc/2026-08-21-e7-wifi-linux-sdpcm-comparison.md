@@ -82,7 +82,7 @@ Per the advisor's "instrument read-only + tcpdump, don't blind-code" plan, I add
 instrumentation to `wifi-probe.c` (no gating): `diag_f2RecvFrame` now records the
 fw-advertised SDPCM flow-mask (`buf[8]`) and credit window / max-seq (`buf[9]`) on every RX
 frame, and `diag_wifiDataTx` records the `tx_seq` it writes. Ran `wifi-probe jointx
-PhoenixNet phoenixpi2026` on HW (join → CONNECTED, WPA2 4-way keyed) with `tcpdump` on the
+PhoenixNet <lab-PSK>` on HW (join → CONNECTED, WPA2 4-way keyed) with `tcpdump` on the
 host AP `wlp3s0` in parallel. Result:
 
 ```

@@ -155,7 +155,7 @@ rpi4-hci
 btctl scan
 rpi4-wifi &
 wifi status
-wifi connect PhoenixNet phoenixpi2026
+wifi connect PhoenixNet <lab-PSK>
 wifi status
 ping -c 5 10.43.0.1
 wifi stats

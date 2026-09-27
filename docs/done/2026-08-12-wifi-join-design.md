@@ -8,7 +8,7 @@ the firmware the passphrase, issue the join, watch events. **No host EAPOL /
 PBKDF2 needed** (use the passphrase path; firmware derives the PMK).
 
 Test AP (host, `scripts/radio-ap-up.sh`): SSID `PhoenixNet`, WPA2-PSK
-`phoenixpi2026`, 2.4GHz ch6, gw 10.43.0.1/24 (DHCP 10.43.0.10-254).
+`<lab-PSK>`, 2.4GHz ch6, gw 10.43.0.1/24 (DHCP 10.43.0.10-254).
 
 ## Transports (already in wifi-probe.c)
 - `diag_iovar(...,is_set,name,data,dlen,...)` → `WLC_SET_VAR`/`GET_VAR` (`"name\0"+data`). On the primary STA iface a "bsscfg iovar" == plain iovar (no prefix).
@@ -43,5 +43,5 @@ On CONNECTED: DHCP over the wifi netif (lwip) → IP on 10.43.0.x → ping 10.43
 - Add `diag_wifiJoin(sdhci, sdio_core)` mirroring `diag_wifiScan` (~1502): broader event_msgs mask; iovars wsec/wpa_auth/sup_wpa; WSEC_PMK + SET_SSID via diag_bcdcCmd; event loop for type 0 & 46.
 - Constants: `#define WLC_SET_SSID_CMD 26`, `#define WLC_SET_WSEC_PMK_CMD 268` (BRCMF_C_SET_INFRA + WLC_UP_CMD already exist).
 - `diag_format_sdio_fwrelease`: call diag_wifiJoin when `g_join_mode` (after bring-up, like scan).
-- `main`: parse `join` (+ optional argv SSID/PSK; default PhoenixNet/phoenixpi2026) → `g_join_mode=1`.
+- `main`: parse `join` (+ optional argv SSID/PSK; default PhoenixNet/<lab-PSK>) → `g_join_mode=1`.
 - Report line: join iovar rcs + SET_SSID rc + SET_SSID-event status + PSK_SUP status + CONNECTED verdict.

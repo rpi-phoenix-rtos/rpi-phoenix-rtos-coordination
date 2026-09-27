@@ -17,7 +17,9 @@ set -euo pipefail
 
 IFACE="${RADIO_AP_IFACE:-wlp3s0}"
 SSID="${RADIO_AP_SSID:-PhoenixNet}"
-PSK="${RADIO_AP_PSK:-phoenixpi2026}"
+# The PSK lives only in the NFS export's /etc/wifi.conf (never in the repo or the rootfs-overlay).
+PSK="${RADIO_AP_PSK:-$(sed -n 's/^psk=//p' "${RADIO_AP_CONF:-/srv/phoenix-rpi4-nfs-gcc16/etc/wifi.conf}" 2>/dev/null || true)}"
+[ -n "$PSK" ] || { echo "radio-ap: no PSK (set RADIO_AP_PSK or RADIO_AP_CONF=<wifi.conf>)" >&2; exit 1; }
 CHAN="${RADIO_AP_CHAN:-6}"
 CON="phoenix-ap"
 GW="10.43.0.1/24"
