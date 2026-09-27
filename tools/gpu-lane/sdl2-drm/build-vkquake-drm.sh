@@ -48,7 +48,12 @@
 # does NOT run sdl2-drm/build.sh, mesa-drm/build.sh or vulkan-drm/build.sh.
 #
 # Usage: tools/gpu-lane/sdl2-drm/build-vkquake-drm.sh [-j N] [--libdrm-prefix <dir>] [--clean]
-# Env:   VKQDRM_OUT
+# Env:   VKQDRM_OUT             output dir (default build-out/vkquake-drm)
+#        VKQDRM_EXTRA_PATCHES   space-separated vkQuake patch files applied after patches-vkquake/
+#                               (e.g. patches-vkquake-perf/*.patch for a variant; part of the
+#                               source stamp and BUILD-INFO)
+#        VKQDRM_TARGET          the engine path the launcher execs (default /usr/bin/vkquake-drm),
+#                               for staging a variant under its own name
 # Stage (coordinator only; the live export is the fsid=0 one):
 #   install -m 755 $OUT/vkquake-drm.stripped <export>/usr/bin/vkquake-drm
 #   install -m 755 $OUT/vkq-drm              <export>/bin/vkq-drm
@@ -65,6 +70,9 @@ out="$(realpath -m "${VKQDRM_OUT:-${here}/build-out/vkquake-drm}")"
 jobs="$(nproc)"
 clean=0
 libdrm_src="${root}/tools/gpu-lane/libdrm-phoenix/build-out-m5b/prefix"
+target="${VKQDRM_TARGET:-/usr/bin/vkquake-drm}"
+extra_patches=()
+for p in ${VKQDRM_EXTRA_PATCHES:-}; do extra_patches+=("$(realpath -m "${p}")"); done
 while [ $# -gt 0 ]; do
 	case "$1" in
 		--clean) clean=1 ;;
@@ -112,6 +120,11 @@ log() { printf '[vkquake-drm] %s\n' "$*"; }
 die() { printf '[vkquake-drm] ERROR: %s\n' "$*" >&2; exit 1; }
 sha() { if [ -e "$1" ]; then sha256sum "$1" | cut -d' ' -f1; else echo "absent"; fi; }
 
+case "${target}" in
+	/usr/bin/vkquake-drm*) ;;
+	*) die "VKQDRM_TARGET ${target}: expected /usr/bin/vkquake-drm[-<variant>]" ;;
+esac
+for p in "${extra_patches[@]}"; do [ -f "${p}" ] || die "VKQDRM_EXTRA_PATCHES: no ${p}"; done
 for p in "${VKQ_TARBALL}" "${VKQ_SHADERS_C}" "${S}/lib/libphoenix.a" "${TC}-gcc" "${TC}-nm" "${TC}-strip" "${TC}-size" \
 		"${TC}-readelf" "${TC}-objdump" "${PHXCXX}" "${B}/lib/libz.a" "${ICD}" "${VKINC}/vulkan/vulkan_core.h" "${COMPAT_A}" \
 		"${PHXVK}/phxvk_loader.c" "${PHXVK}/phxvk_loader.h" "${SDL_SRC0}/CMakeLists.txt" "${SD}/sdl-src.stamp" "${PKGC}" \
@@ -189,15 +202,16 @@ log "  SDL_config.h: KMSDRM (static) + SDL_VIDEO_VULKAN, EGL, Phoenix HID input 
 
 # --- 2. vkQuake source --------------------------------------------------------------------------
 Q="${out}/vkq-src"
-qstamp="$( (sha256sum "${VKQ_TARBALL}"; cat "${here}"/patches-vkquake/*.patch) | sha256sum | cut -c1-16)"
+qstamp="$( (sha256sum "${VKQ_TARBALL}"; cat "${here}"/patches-vkquake/*.patch; for p in "${extra_patches[@]}"; do basename "${p}"; cat "${p}"; done) \
+	| sha256sum | cut -c1-16)"
 if [ "$(cat "${out}/vkq-src.stamp" 2>/dev/null || true)" != "${qstamp}" ]; then
-	log "vkQuake source: ${VKQ_COMMIT:0:12} + $(ls "${here}"/patches-vkquake/*.patch | wc -l) patches (set ${qstamp})"
+	log "vkQuake source: ${VKQ_COMMIT:0:12} + $(ls "${here}"/patches-vkquake/*.patch | wc -l) patches + ${#extra_patches[@]} extra (set ${qstamp})"
 	rm -rf "${Q}" "${out}/vkq-tmp"
 	mkdir -p "${out}/vkq-tmp"
 	tar -C "${out}/vkq-tmp" -xzf "${VKQ_TARBALL}"
 	mv "${out}/vkq-tmp/vkQuake-${VKQ_COMMIT}" "${Q}"
 	rmdir "${out}/vkq-tmp"
-	for p in "${here}"/patches-vkquake/*.patch; do
+	for p in "${here}"/patches-vkquake/*.patch "${extra_patches[@]}"; do
 		patch -d "${Q}" -p1 -s --no-backup-if-mismatch < "${p}" || die "patch failed: $(basename "${p}")"
 	done
 	# the embedded base pak (gfx/maps/default.cfg), built with the HOST compiler exactly as the
@@ -377,19 +391,21 @@ if grep -qE ' [Tt] dlopen$' <<< "${syms}"; then log "  note: dlopen is linked (l
 
 # --- 9. launcher ----------------------------------------------------------------------------------
 "${TC}-gcc" -O2 -static -Wall -Wextra -Werror --sysroot="${S}/" -B"${S}/lib/" -iprefix "${S}/" \
-	-o "${out}/vkq-drm" "${here}/vkqdrm/vkq-drm-launcher.c" || die "launcher compile failed"
+	-DVKQDRM_TARGET="\"${target}\"" -o "${out}/vkq-drm" "${here}/vkqdrm/vkq-drm-launcher.c" || die "launcher compile failed"
 if "${TC}-readelf" -l "${out}/vkq-drm" 2>/dev/null | grep -q INTERP; then die "vkq-drm has a PT_INTERP segment"; fi
-grep -aqF "/usr/bin/vkquake-drm" "${out}/vkq-drm" || die "launcher ELF lacks its exec target"
+grep -aqF "${target}" "${out}/vkq-drm" || die "launcher ELF lacks its exec target ${target}"
 [ -z "$("${TC}-nm" -u "${out}/vkq-drm" || true)" ] || die "launcher has undefined symbols"
 
 # --- provenance -----------------------------------------------------------------------------------
 "${TC}-size" "${elf}" | sed 's/^/[vkquake-drm]   /'
 src_git="$(git -C "${root}" status --porcelain -- tools/gpu-lane/sdl2-drm/vkqdrm tools/gpu-lane/sdl2-drm/patches-vkquake \
-	tools/gpu-lane/sdl2-drm/patches-sdl-vulkan tools/gpu-lane/sdl2-drm/build-vkquake-drm.sh)"
+	tools/gpu-lane/sdl2-drm/patches-sdl-vulkan tools/gpu-lane/sdl2-drm/patches-vkquake-perf tools/gpu-lane/sdl2-drm/build-vkquake-drm.sh)"
 {
 	echo "built:               $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 	echo "sources git:         $( [ -n "${src_git}" ] && echo "DIRTY/untracked" || echo "clean at $(git -C "${root}" rev-parse HEAD)")"
 	echo "vkQuake:             ${VKQ_COMMIT} + patches-vkquake set ${qstamp} ($(cd "${here}/patches-vkquake" && ls *.patch | tr '\n' ' '))"
+	echo "extra patches:       ${#extra_patches[@]}$(for p in "${extra_patches[@]}"; do printf ' %s' "$(basename "${p}")"; done)"
+	echo "launcher target:     ${target}"
 	echo "shaders:             $(sha "${VKQ_SHADERS_C}" | cut -c1-16) ${VKQ_SHADERS_C}"
 	echo "SDL:                 sdl2-drm set $(cat "${SD}/sdl-src.stamp") + patches-sdl-vulkan -> set ${svstamp}"
 	echo "libSDL2.a (vk):      $(sha "${SDL_A}")"
@@ -412,4 +428,4 @@ done
 [ "${gbad}" = 0 ] || exit 1
 log "guarded shared files unchanged (${#guarded[@]} checked)"
 [ "${bad}" = 0 ] || die "verification failed (see above)"
-log "done: stage ${elf}.stripped as /usr/bin/vkquake-drm and ${out}/vkq-drm as /bin/vkq-drm"
+log "done: stage ${elf}.stripped as ${target} and ${out}/vkq-drm as /bin/vkq-drm${target#/usr/bin/vkquake-drm}"

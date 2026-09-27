@@ -470,6 +470,8 @@ only after all six apps have a PASSing single cycle and the servers start at boo
 **Decides:** the SDL KMSDRM route works for both GL games that got a result, and so does SDL's Vulkan/`VK_KHR_display` route. The gate
 cannot pass yet: quake3-drm crashes the kernel (P10), and vkQuake is 7× slower than the old lane.
 
+**vkQuake follow-up →** [vkquake-perf.md](vkquake-perf.md): like-for-like the regression is 2.2× (old-lane `flipstat` 22.9 fps median, not the 73 of `scr_showfps`); GPU 74 ms/frame (5 full-screen render jobs from WBOIT + the UI/post-process pass, 16F RGB10A2 tiles; compute 28 ms) serialised with ~22 ms of CPU. Variants `vkquake-drm-perf-a` / `-perf` staged, cycles `perf-vkq-a` / `-b` pre-registered there.
+
 ## 7. Deletion list — the old lane (after the gate passes)
 
 Delete only after §5 passes on the migrated image; one sibling commit per repo, then a coordination

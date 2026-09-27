@@ -25,6 +25,13 @@
  *    scripts/flipstat-summary.sh for fps; vkQuake itself prints no fps on the console (only the
  *    on-screen scr_showfps). V3D_FLIPSTAT=0 turns both off.
  *
+ * 4. Where the CPU waits. The four calls in which a frame can block on the GPU or the display
+ *    (vkAcquireNextImageKHR, vkQueueSubmit, vkWaitForFences, vkWaitForPresent2KHR) are wrapped
+ *    at the same two lookups and timed; with the lines of 3, once per window:
+ *      vkquake-drm waitstat fr=<N> acquire=<calls>/<us_avg>/<us_max> submit=... fence=... pwait=...
+ *    vkQuake runs its end-of-frame (acquire, submit, present) as a task, so these times are per
+ *    call, not a partition of the frame (docs/gpu-new-lane/vkquake-perf.md).
+ *
  * The vk* commands vkQuake calls as link symbols go through generated trampolines
  * (gen-vk-trampolines.py) that resolve with vkqdrm_GetInstanceProcAddr as well.
  *
@@ -157,6 +164,123 @@ void __wrap_SDL_UnloadObject(void *handle)
 }
 
 
+/* --- 4. wait timing (declared before 3, which prints it) ------------------------------------ */
+
+enum { W_ACQUIRE, W_SUBMIT, W_FENCE, W_PWAIT, W_N };
+
+static const char *const w_name[W_N] = { "vkAcquireNextImageKHR", "vkQueueSubmit", "vkWaitForFences", "vkWaitForPresent2KHR" };
+static const char *const w_tag[W_N] = { "acquire", "submit", "fence", "pwait" };
+
+static struct {
+	PFN_vkVoidFunction real;   /* the ICD's (through phxvk), one for every device */
+	unsigned long n;
+	uint64_t us, max;
+} W[W_N];
+
+
+static void w_add(int k, uint64_t t0)
+{
+	uint64_t d;
+
+	if (S.state != 1) {
+		return;
+	}
+	d = now_us() - t0;
+	(void)__atomic_add_fetch(&W[k].n, 1u, __ATOMIC_RELAXED);
+	(void)__atomic_add_fetch(&W[k].us, d, __ATOMIC_RELAXED);
+	if (d > W[k].max) {
+		W[k].max = d;   /* racy between threads: a maximum, not an exact one */
+	}
+}
+
+
+static VKAPI_ATTR VkResult VKAPI_CALL vkqdrm_AcquireNextImageKHR(VkDevice device, VkSwapchainKHR swapchain, uint64_t timeout,
+	VkSemaphore semaphore, VkFence fence, uint32_t *index)
+{
+	uint64_t t0 = now_us();
+	VkResult r = ((PFN_vkAcquireNextImageKHR)W[W_ACQUIRE].real)(device, swapchain, timeout, semaphore, fence, index);
+
+	w_add(W_ACQUIRE, t0);
+	return r;
+}
+
+
+static VKAPI_ATTR VkResult VKAPI_CALL vkqdrm_QueueSubmit(VkQueue queue, uint32_t count, const VkSubmitInfo *submits, VkFence fence)
+{
+	uint64_t t0 = now_us();
+	VkResult r = ((PFN_vkQueueSubmit)W[W_SUBMIT].real)(queue, count, submits, fence);
+
+	w_add(W_SUBMIT, t0);
+	return r;
+}
+
+
+static VKAPI_ATTR VkResult VKAPI_CALL vkqdrm_WaitForFences(VkDevice device, uint32_t count, const VkFence *fences, VkBool32 all,
+	uint64_t timeout)
+{
+	uint64_t t0 = now_us();
+	VkResult r = ((PFN_vkWaitForFences)W[W_FENCE].real)(device, count, fences, all, timeout);
+
+	w_add(W_FENCE, t0);
+	return r;
+}
+
+
+static VKAPI_ATTR VkResult VKAPI_CALL vkqdrm_WaitForPresent2KHR(VkDevice device, VkSwapchainKHR swapchain,
+	const VkPresentWait2InfoKHR *info)
+{
+	uint64_t t0 = now_us();
+	VkResult r = ((PFN_vkWaitForPresent2KHR)W[W_PWAIT].real)(device, swapchain, info);
+
+	w_add(W_PWAIT, t0);
+	return r;
+}
+
+
+static PFN_vkVoidFunction wrap_timed(const char *name, PFN_vkVoidFunction f)
+{
+	static const PFN_vkVoidFunction wrapper[W_N] = {
+		(PFN_vkVoidFunction)vkqdrm_AcquireNextImageKHR, (PFN_vkVoidFunction)vkqdrm_QueueSubmit,
+		(PFN_vkVoidFunction)vkqdrm_WaitForFences, (PFN_vkVoidFunction)vkqdrm_WaitForPresent2KHR,
+	};
+	int k;
+
+	for (k = 0; k < W_N; k++) {
+		if (strcmp(name, w_name[k]) == 0) {
+			if (f == NULL) {
+				return NULL;
+			}
+			W[k].real = f;
+			return wrapper[k];
+		}
+	}
+	return f;
+}
+
+
+static void waitstat_line(unsigned long frames)
+{
+	char buf[240];
+	size_t len;
+	int k, n;
+
+	n = snprintf(buf, sizeof(buf), "vkquake-drm waitstat fr=%lu", frames);
+	len = ((n > 0) && ((size_t)n < sizeof(buf))) ? (size_t)n : 0u;
+	for (k = 0; k < W_N; k++) {
+		unsigned long c = __atomic_exchange_n(&W[k].n, 0u, __ATOMIC_RELAXED);
+		uint64_t us = __atomic_exchange_n(&W[k].us, 0u, __ATOMIC_RELAXED);
+
+		n = snprintf(buf + len, sizeof(buf) - len, " %s=%lu/%lu/%lu", w_tag[k], c,
+			(c != 0u) ? (unsigned long)(us / c) : 0ul, (unsigned long)W[k].max);
+		W[k].max = 0u;
+		if ((n > 0) && ((size_t)n < sizeof(buf) - len)) {
+			len += (size_t)n;
+		}
+	}
+	out("%s (calls/us_avg/us_max)\n", buf);
+}
+
+
 /* --- 3. the present counter -------------------------------------------------------------- */
 
 static void vkqdrm_exit(void)
@@ -214,6 +338,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL vkqdrm_QueuePresentKHR(VkQueue queue, cons
 		out("vkquake-drm presentstat t=%lums fr=%lu present_us_avg=%lu present_us_max=%lu\n",
 			(unsigned long)((t1 - S.first_us) / 1000u), S.win_frames, (unsigned long)(S.win_us / S.win_frames),
 			(unsigned long)S.win_max);
+		waitstat_line(S.win_frames);
 		S.win_t0 = t1;
 		S.win_frames = 0u;
 		S.win_us = 0u;
@@ -247,7 +372,7 @@ static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkqdrm_GetDeviceProcAddr(VkDevic
 	if (strcmp(name, "vkQueuePresentKHR") == 0) {
 		return wrap_present(S.gdpa(device, name));
 	}
-	return S.gdpa(device, name);
+	return wrap_timed(name, S.gdpa(device, name));
 }
 
 
@@ -273,5 +398,5 @@ VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkqdrm_GetInstanceProcAddr(VkInstance i
 	if (strcmp(name, "vkQueuePresentKHR") == 0) {
 		return wrap_present(f);
 	}
-	return f;
+	return wrap_timed(name, f);
 }
