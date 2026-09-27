@@ -82,6 +82,19 @@ for lib in libphoenix.a libc.a libm.a; do
 	fi
 done
 
+# Aliases: libphoenix installs libpthread.a, libdl.a, ... as symlinks to libphoenix.a. A bare-toolchain
+# link (CPython's final link) resolves -ldl here, not in the sysroot, so a new alias must appear here too.
+for src in "${SYSROOT}"/lib/*.a; do
+	[ -L "${src}" ] && [ "$(readlink "${src}")" = "libphoenix.a" ] || continue
+	lib="$(basename "${src}")"
+	if [ -e "${BUNDLE}/lib/${lib}" ]; then
+		continue
+	fi
+	report "${lib}" "alias MISSING"
+	drift=1
+	[ "${check_only}" -eq 1 ] || ln -s libphoenix.a "${BUNDLE}/lib/${lib}"
+done
+
 # Headers: the sysroot's include tree is the generated one. Copy the whole tree so
 # a header DELETED upstream also disappears from the bundle -- a header that only
 # still exists in the bundle is the same hazard as a stale one.
