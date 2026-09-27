@@ -219,7 +219,7 @@ until the TX FIFO fills (`:1078-1084`). It then drops the lock (`:1100`) and dra
 batch** on the HDMI fbcon under its own `fbLock` (`:1109-1110`). It sleeps only when nothing is
 pending (`:1124-1128`). So:
 - **F2 and F3:** the UART received bytes that never reached the framebuffer. F2's 16 bytes are
-  one FIFO fill. `pl011_thr` stopped **between writing DR and finishing that batch's fbcon draw**.
+  one batch, bounded by the room left in the TX FIFO. `pl011_thr` stopped **between writing DR and finishing that batch's fbcon draw**.
   Either it was never scheduled again, or it blocked on `fbLock`. The fb mapping is uncached
   (`:536-544`), so a draw that did complete would show.
 - **F1:** the batch was drawn (HDMI matches the UART to the byte), but the rest of the line
@@ -400,15 +400,18 @@ too, in both arms. What only fork() adds is the in-place destroy at exec (hypoth
 1. Build `spawnstorm` from tests `c3/fork-hang` (`929f441`) and stage it as
    `/bin/spawn-storm-t` on the live fsid=0 export. Do not overwrite `spawn-storm` or
    `spawn-storm-f`. Check it before running: `strings -a <staged> | grep -c 'STORM HANG'` ≥ 1.
-2. On the host, for each cycle: `ping -D -i 1 10.42.0.12 > artifacts/host-side/<label>-ping.log`,
+2. On the host, for each cycle: `ping -D -i 1 <pi-ip> > artifacts/host-side/<label>-ping.log`,
    started before the cycle and stopped after it. lwip is a userspace server, so its replies say
-   whether userspace is still being scheduled.
+   whether userspace is still being scheduled. `<pi-ip>` is a DHCP lease (10.42.0.12 in F1). Take
+   it from the cycle's own `nfs-fs: takeover: interface bound, ip=` line.
 3. `c3tagF1`..`c3tagF3`:
    `./scripts/test-cycle-psh-interact.sh --label c3tagF1 --idle-secs 60 --max-cmd-secs 420 -- '/bin/spawn-storm-t -f 500 /bin/printenv PATH'`
    (Bash `timeout` 600000). Control `c3tagV1`: the same with `-t` in place of `-f` (vfork plus
    tags plus monitor, 500 launches), to show that the instrument does not hang by itself.
 4. Grade by the STORM tags. Count intact `STORM p wr <i> <pid> 0 ` lines as clean launches, and
-   keep a residue column for lines the UART or the byte interleaving mangled. For every stop,
+   keep a residue column for lines the UART or the byte interleaving mangled. Use `grep -a`:
+   `hal_consolePrint` sends `\033[0m` after each tag's newline, so that escape starts the
+   following line. This is expected, not corruption. For every stop,
    record the last `p`/`c` tag, the last `STORM m tick`, whether `STORM HANG` printed, and when
    the ping replies stopped.
 
@@ -440,8 +443,10 @@ too, in both arms. What only fork() adds is the in-place destroy at exec (hypoth
   the event. **It is not a fix.** Rerun with `-f -n` (monitor only), same labels plus `n`.
 
 **Arm B: the candidate kernel (only after arm A has run, and never in the same build as a tag
-change).** Kernel `c3/fork-hang` @ `33af3e81`, built with `--scope core`. Verify that the image
-has it before any cycle:
+change).** Kernel `c3/fork-hang` @ `33af3e81`. The rebuild builds from the tree checked out in
+`sources/phoenix-rtos-kernel`, so first check out or merge the branch there. Then run
+`--scope core`, not `auto`: with `auto` the stale-core hazard would turn arm B into arm A under a
+new label. Snapshot a manifest. Verify that the image has the change before any cycle:
 - `aarch64-phoenix-nm .buildroot/_build/aarch64a72-generic-rpi4b/prog/phoenix-aarch64a72-generic.elf | grep -c proc_schedulerBarrier` = 1.
 - `nm -S` shows `pmap_common` at `0x14000` bytes or more (it is `0x13000` in build 14).
 
