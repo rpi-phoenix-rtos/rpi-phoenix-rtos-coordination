@@ -1123,3 +1123,18 @@ peer pid/uid as unknown (`18446744073709551615`), so `BecomeMonitor` is refused 
 falls back to a match rule (it still saw the signal). `gdbus=absent`: the GIO client is exercised by m7f-thunar /
 m7h-xfce (xfconfd, bus activation). **Decides:** the XFCE stage can rely on the bus. EXTERNAL auth waits for
 `SO_PEERCRED` (kernel branch `feat/dbus-peercred`) plus a glib credentials patch.
+
+## Result — `m7a-labwc` / `m7b-foot` (chain55, build 18, 2026-09-27 19:50–20:06)
+
+**m7a-labwc ✗ (setup):** both arms stopped at `[backend/libinput/backend.c:111] libinput initialization failed, no
+input devices` → `unable to start the wlroots backend`, after the DRM backend had already mode-set HDMI-A-1 to
+1920x1080@60 (1 flip). The `noinput` arms need `WLR_LIBINPUT_NO_DEVICES=1`: fixed in both launchers (`62c15b58d`),
+rerun `m7a2-labwc` queued.
+
+**m7b-foot 🟡: labwc runs, foot does not map.** Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-195642-m7b-foot.log`.
+All three arms (colors, mc, autostart): `LABWC hold … labwc=running` for 30 s, `labwc exited rc=0 after_term_s=1
+socket=gone`, 0 exceptions. **HDMI (`…-200016-m7b-foot-tick.png`): labwc's black desktop with a software cursor**,
+so labwc renders on the new lane. foot's window never appears: foot `err: shm.c:468: failed to seal SHM backing
+memory file: Invalid argument`, labwc `[xdg.c:372] client (foot) did not respond to configure request in 100 ms`,
+`KMS srv flipstat flips=4` over 30 s, and wlroots' `[backend/session/session.c:352] Stat failed: Function not
+implemented` every second. Sent back to the labwc agent (foot map path + the session stat loop).
