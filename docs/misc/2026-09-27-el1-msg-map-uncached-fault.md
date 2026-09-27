@@ -372,8 +372,9 @@ clean). Not built into an image yet, not run on the Pi.
 
 Shipped-check (no new string): in the built kernel ELF,
 `aarch64-phoenix-objdump -d --disassemble=vm_mapFlags .buildroot/_build/aarch64a72-generic-rpi4b/prog/phoenix-aarch64a72-generic.elf`
-must show an `and x…, x1, #0xfffffffffffff000` before the `stp` that stores the
-probe. Build 17 stores `x1` unmodified (`stp x19, x0, [sp, #104]` with `x19 = x1`).
+must contain the immediate `#0xfffffffffffff000` (an `and`; the registers depend
+on the compiler). Build 17 has no such `and`: it stores the address unmodified
+(`stp x19, x0, [sp, #104]` with `x19 = x1`).
 
 `794bf591` stays. Real device payloads are still refused, and the §2 retry loop
 for unresolvable EL1 faults is still there. With `3da3fb38` they apply only to
