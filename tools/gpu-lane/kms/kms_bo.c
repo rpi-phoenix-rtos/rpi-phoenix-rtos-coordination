@@ -30,10 +30,12 @@
  */
 
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 #include <sys/file.h>
 #include <sys/mman.h>
@@ -42,6 +44,8 @@
 #include <sys/threads.h>
 
 #include "kms.h"
+#include "kms_scanout.h"
+#include "v3da_proto.h"   /* V3DA_BUF_NS: the render server's buffer namespace (G7 imports) */
 
 
 /* ========================================================================= */
@@ -155,6 +159,10 @@ static int pool_find(size_t size, size_t *off)
 
 static void memref_fill(const kms_bo_t *b, kms_memref_t *m)
 {
+	if (b->kind == KMS_BOK_IMPORT) {
+		*m = b->imp_mem;   /* the exporter's name: clients map it, never its physical address */
+		return;
+	}
 	memset(m, 0, sizeof(*m));
 	m->cache = KMS_CACHE_UNCACHED;
 	m->size = b->size;
@@ -369,6 +377,24 @@ void kms_bo_unref(uint32_t idx)
 		(void)munmap((void *)b->va, b->size);
 		srv.slot_used &= ~(1u << b->slot);
 	}
+	if (b->kind == KMS_BOK_IMPORT) {
+		/* No framebuffer shows it any more and its handle is closed: the exporter's
+		 * reference may go. close() is IPC to the exporter, so it happens in
+		 * kms_reap(), after srv.lock is dropped (the reap list has room for every BO). */
+		if (srv.nreap < KMS_MAX_BOS) {
+			kms_reap_t *r = &srv.reap[srv.nreap++];
+			r->fd = b->imp_fd;
+			r->va = (void *)b->va;
+			r->size = b->size;
+			r->handle = b->handle;
+			r->id = b->imp_mem.addr;
+		}
+		else {
+			(void)munmap((void *)b->va, b->size);
+			(void)close(b->imp_fd);
+		}
+		srv.imports_live--;
+	}
 	srv.st.bos_live--;
 	memset(b, 0, sizeof(*b));
 }
@@ -408,6 +434,260 @@ int kms_bo_checksum(uint32_t client, const kms_checksum_req_t *rq, kms_checksum_
 
 
 /* ========================================================================= */
+/* PRIME import of a foreign buffer (gap G7)                                  */
+/* ========================================================================= */
+
+/* Imports are rare (once per client buffer), so the success lines are capped only
+ * against a runaway client; every failure is logged. */
+#define KMS_IMPORT_LOG_MAX 64u
+static uint32_t import_notes, release_notes;
+
+
+/* Open the exporter's name, size it, map it with the export's memory type and
+ * resolve every page. No lock held: open(), lseek() and the page faults are IPC to
+ * the exporter. The descriptor stays open in *im (the exporter's reference). */
+int kms_import_map(const kms_prime_import_req_t *rq, kms_import_map_t *im)
+{
+	char path[48];
+	oid_t dev;
+	off_t end;
+	uint64_t size = rq->size, pa0 = 0u, pa;
+	uint32_t pages, i;
+	void *va;
+	int fd, e;
+
+	memset(im, 0, sizeof(*im));
+	im->fd = -1;
+	if ((rq->ns != KMS_IMPORT_NS_V3DBUF) || (rq->pad != 0u) || (rq->id == 0u)) {
+		return -EINVAL;
+	}
+	(void)snprintf(path, sizeof(path), "%s/%llu", V3DA_BUF_NS, (unsigned long long)rq->id);
+	if (lookup(path, NULL, &dev) < 0) {
+		return -ENOENT;   /* not (or no longer) exported */
+	}
+	if ((dev.port != rq->port) || ((uint64_t)dev.id != rq->id)) {
+		return -EINVAL;   /* the name is served by another port than the client resolved */
+	}
+	fd = open(path, O_RDONLY);   /* O_RDONLY: O_RDWR would stat() the name (E1 section 1) */
+	if (fd < 0) {
+		return (errno != 0) ? -errno : -EIO;
+	}
+	end = lseek(fd, 0, SEEK_END);   /* G3: the exporter answers atSize while the buffer is exported */
+	if ((end <= 0) || ((size != 0u) && (size > (uint64_t)end))) {
+		(void)close(fd);
+		return -EINVAL;
+	}
+	if (size == 0u) {
+		size = (uint64_t)end;
+	}
+	if (((size & (_PAGE_SIZE - 1u)) != 0u) || (size > KMS_IMPORT_MAX_SIZE)) {
+		(void)close(fd);
+		return -EINVAL;
+	}
+	va = mmap(NULL, (size_t)size, PROT_READ, MAP_SHARED | MAP_UNCACHED, fd, 0);
+	e = errno;
+	if (va == MAP_FAILED) {
+		(void)close(fd);
+		return (e != 0) ? -e : -EINVAL;
+	}
+	pages = (uint32_t)(size / _PAGE_SIZE);
+	im->contiguous = 1;
+	for (i = 0u; i < pages; i++) {
+		volatile const uint32_t *p = (volatile const uint32_t *)((uintptr_t)va + (size_t)i * _PAGE_SIZE);
+		(void)*p;   /* fault the page in: va2pa reports present pages only */
+		pa = (uint64_t)va2pa((void *)(uintptr_t)p);
+		if ((pa == (uint64_t)(addr_t)-1) || ((pa & (_PAGE_SIZE - 1u)) != 0u)) {
+			(void)munmap(va, (size_t)size);
+			(void)close(fd);
+			return -EFAULT;
+		}
+		if (i == 0u) {
+			pa0 = pa;
+		}
+		else if (pa != pa0 + (uint64_t)i * _PAGE_SIZE) {
+			im->contiguous = 0;
+		}
+	}
+	im->fd = fd;
+	im->va = va;
+	im->size = (size_t)size;
+	im->pa = pa0;
+	im->pages = pages;
+	return 0;
+}
+
+
+void kms_import_unmap(kms_import_map_t *im)
+{
+	if (im->va != NULL) {
+		(void)munmap(im->va, im->size);
+	}
+	if (im->fd >= 0) {
+		(void)close(im->fd);
+	}
+	memset(im, 0, sizeof(*im));
+	im->fd = -1;
+}
+
+
+static kms_bo_t *import_find(uint32_t client, uint32_t port, uint64_t id)
+{
+	uint32_t i;
+
+	for (i = 0u; i < KMS_MAX_BOS; i++) {
+		kms_bo_t *b = &srv.bos[i];
+		if (b->used && (b->kind == KMS_BOK_IMPORT) && b->handle_open && (b->owner == client) &&
+				(b->imp_mem.port == port) && (b->imp_mem.addr == id)) {
+			return b;
+		}
+	}
+	return NULL;
+}
+
+
+static void import_reply(const kms_bo_t *b, kms_dumb_resp_t *out)
+{
+	memset(out, 0, sizeof(*out));
+	out->handle = b->handle;
+	out->pitch = b->pitch;
+	out->size = b->size;
+	memref_fill(b, &out->mem);
+}
+
+
+/* Before mapping (locked): 0 = answered from what the server has (a re-import, or
+ * this client's own /kmsbuf export), 1 = the buffer must be mapped, < 0 = refused. */
+int kms_import_lookup(uint32_t client, const kms_prime_import_req_t *rq, kms_dumb_resp_t *out)
+{
+	kms_bo_t *b;
+
+	if (rq->ns == KMS_IMPORT_NS_KMSBUF) {
+		b = (rq->port == srv.buf_port) && (rq->id <= 0xffffffffu) ? kms_bo_get(client, (uint32_t)rq->id) : NULL;
+		if (b != NULL) {
+			return kms_bo_map(client, b->handle, out);   /* DRM: an own export -> the original handle */
+		}
+		KMS_LOG("import FAIL client=%u ns=kmsbuf id=%llu port=%u rc=-22 why=foreign_kmsbuf (not supported)", client,
+			(unsigned long long)rq->id, rq->port);
+		return -EINVAL;
+	}
+	if (rq->ns != KMS_IMPORT_NS_V3DBUF) {
+		return -EINVAL;
+	}
+	b = import_find(client, rq->port, rq->id);
+	if (b != NULL) {
+		import_reply(b, out);   /* DRM: the same buffer again -> the same handle, no extra reference */
+		return 0;
+	}
+	return 1;
+}
+
+
+/* After mapping (locked): install the import as a handle of `client`. Takes over
+ * *im: on success it belongs to the BO; otherwise it is queued for kms_reap (its
+ * close() must not run under srv.lock). */
+int kms_import_install(uint32_t client, const kms_prime_import_req_t *rq, kms_import_map_t *im, kms_dumb_resp_t *out)
+{
+	kms_bo_t *b = import_find(client, rq->port, rq->id);
+	uint32_t idx;
+	int rc = 0;
+
+	if (b != NULL) {
+		import_reply(b, out);   /* a racing import of the same buffer by this client won */
+	}
+	else if (im->contiguous == 0) {
+		rc = -EINVAL;
+		KMS_LOG("import FAIL client=%u ns=v3dbuf id=%llu pages=%u pa0=0x%llx rc=-22 why=noncontig", client,
+			(unsigned long long)rq->id, im->pages, (unsigned long long)im->pa);
+	}
+	else if ((b = bo_slot_free(&idx)) == NULL) {
+		rc = -ENOSPC;
+		KMS_LOG("import FAIL client=%u ns=v3dbuf id=%llu rc=-28 why=no_bo_slot", client, (unsigned long long)rq->id);
+	}
+	else {
+		memset(b, 0, sizeof(*b));
+		b->used = 1;
+		b->handle = srv.next_handle++;
+		b->owner = client;
+		b->handle_open = 1;
+		b->refs = 1u;
+		b->kind = KMS_BOK_IMPORT;
+		b->pa = im->pa;
+		b->va = im->va;
+		b->size = im->size;
+		b->imp_fd = im->fd;
+		b->imp_mem.kind = KMS_MEM_OID;
+		b->imp_mem.cache = KMS_CACHE_UNCACHED;
+		b->imp_mem.port = rq->port;
+		b->imp_mem.size = im->size;
+		b->imp_mem.addr = rq->id;
+		b->imp_why = kms_import_why(im->pa, im->size, im->contiguous);
+		srv.st.bos_live++;
+		srv.imports_live++;
+		import_reply(b, out);
+		if ((b->imp_why != NULL) || (import_notes++ < KMS_IMPORT_LOG_MAX)) {
+			KMS_LOG("import client=%u ns=v3dbuf id=%llu handle=%u pages=%u pa0=0x%llx contiguous=1 scanout=%d why=%s "
+				"live=%u", client, (unsigned long long)rq->id, b->handle, im->pages, (unsigned long long)im->pa,
+				(b->imp_why == NULL) ? 1 : 0, (b->imp_why != NULL) ? b->imp_why : "-", srv.imports_live);
+		}
+		memset(im, 0, sizeof(*im));
+		im->fd = -1;
+		return 0;
+	}
+	/* not installed: release the mapping and the descriptor outside the lock */
+	if ((srv.nreap < KMS_MAX_BOS) && (im->fd >= 0)) {
+		kms_reap_t *r = &srv.reap[srv.nreap++];
+		r->fd = im->fd;
+		r->va = im->va;
+		r->size = im->size;
+		r->handle = 0u;
+		r->id = rq->id;
+		memset(im, 0, sizeof(*im));
+		im->fd = -1;
+	}
+	return rc;
+}
+
+
+/* The first commit that put an import on a plane (locked): the direct scan-out proof. */
+void kms_import_shown(kms_bo_t *b, uint32_t fb_id)
+{
+	if (b->imp_shown == 0) {
+		b->imp_shown = 1;
+		KMS_LOG("scanout import fb=%u handle=%u id=%llu pa0=0x%llx size=%zu (first flip)", fb_id, b->handle,
+			(unsigned long long)b->imp_mem.addr, (unsigned long long)b->pa, b->size);
+	}
+}
+
+
+/* Close what released imports left behind (no lock held). Called by the dispatch
+ * thread after every request and by the vblank thread when a flip dropped the last
+ * reference, so the exporter's reference goes as soon as nothing shows the buffer. */
+void kms_reap(void)
+{
+	kms_reap_t list[KMS_MAX_BOS];
+	uint32_t n, i;
+
+	(void)mutexLock(srv.lock);
+	n = srv.nreap;
+	memcpy(list, srv.reap, n * sizeof(list[0]));
+	srv.nreap = 0u;
+	(void)mutexUnlock(srv.lock);
+	for (i = 0u; i < n; i++) {
+		if (list[i].va != NULL) {
+			(void)munmap(list[i].va, list[i].size);
+		}
+		if (list[i].fd >= 0) {
+			(void)close(list[i].fd);   /* the exporter's mtClose: its reference on the buffer goes */
+		}
+		if ((list[i].handle != 0u) && (release_notes++ < KMS_IMPORT_LOG_MAX)) {
+			KMS_LOG("import released handle=%u id=%llu (descriptor closed)", list[i].handle,
+				(unsigned long long)list[i].id);
+		}
+	}
+}
+
+
+/* ========================================================================= */
 /* Framebuffers                                                               */
 /* ========================================================================= */
 
@@ -439,6 +719,17 @@ int kms_fb_add(uint32_t client, const kms_addfb2_req_t *rq, uint32_t *fb_id)
 	if ((rq->format != KMS_FMT_XRGB8888) && (rq->format != KMS_FMT_ARGB8888) && (rq->format != KMS_FMT_XBGR8888) &&
 			(rq->format != KMS_FMT_ABGR8888)) {
 		return -EINVAL;
+	}
+	if (b->kind == KMS_BOK_IMPORT) {
+		/* G7: refused HERE, never at commit time (a late -ERANGE, or a plane that
+		 * fetches memory the firmware cannot reach, is the failure mode to avoid) */
+		const char *why = kms_import_fb_why(rq, b->size, b->imp_why);
+		if (why != NULL) {
+			KMS_LOG("fb FAIL client=%u handle=%u import_id=%llu %ux%u pitch=%u offset=%u modifier=0x%llx pa=0x%llx "
+				"size=%zu rc=-22 why=%s", client, b->handle, (unsigned long long)b->imp_mem.addr, rq->width, rq->height,
+				rq->pitch, rq->offset, (unsigned long long)rq->modifier, (unsigned long long)b->pa, b->size, why);
+			return -EINVAL;
+		}
 	}
 	if ((rq->modifier != KMS_MOD_LINEAR) || (rq->width == 0u) || (rq->height == 0u) || (rq->pitch < rq->width * 4u) ||
 			((uint64_t)rq->offset + (uint64_t)rq->pitch * rq->height > b->size)) {

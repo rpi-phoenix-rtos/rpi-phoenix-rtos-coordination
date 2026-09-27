@@ -535,6 +535,9 @@ void kms_vblank_thread(void *arg)
 		(void)mutexUnlock(srv.lock);
 
 		kms_answer(answers, nans);
+		if (__atomic_load_n(&srv.nreap, __ATOMIC_RELAXED) != 0u) {
+			kms_reap();   /* G7: a completed flip dropped an import's last reference (rare) */
+		}
 		if (quit) {
 			break;
 		}

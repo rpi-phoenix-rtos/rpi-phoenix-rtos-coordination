@@ -85,7 +85,9 @@ typedef struct {
 	uint32_t dropped;
 } kms_client_t;
 
-enum { KMS_BOK_POOL = 0, KMS_BOK_SLOT = 1 };
+/* POOL: a window of the scan-out pool; SLOT: a firmware-fb slot (pan backend);
+ * IMPORT: another server's exported buffer (PRIME_IMPORT, G7). */
+enum { KMS_BOK_POOL = 0, KMS_BOK_SLOT = 1, KMS_BOK_IMPORT = 2 };
 
 typedef struct {
 	int used;
@@ -102,7 +104,21 @@ typedef struct {
 	uint32_t w, h, bpp, pitch;
 	int exported;
 	int prime;                   /* PRIME_EXPORT'ed: any process may open its /kmsbuf name */
+	/* KMS_BOK_IMPORT only (G7) */
+	int imp_fd;                  /* the exporter's name, open: holds the exporter's reference */
+	kms_memref_t imp_mem;        /* the exporter's OID memref (MAP_DUMB / PRIME_EXPORT answer it) */
+	const char *imp_why;         /* NULL = scan-out capable; else why ADDFB2 refuses it */
+	int imp_shown;               /* the first commit showing it was logged */
 } kms_bo_t;
+
+/* An import's resources, released OUTSIDE srv.lock (close() is IPC to the exporter). */
+typedef struct {
+	int fd;
+	void *va;
+	size_t size;
+	uint32_t handle;
+	uint64_t id;
+} kms_reap_t;
 
 typedef struct {
 	int used;
@@ -280,6 +296,9 @@ typedef struct {
 	uint32_t next_handle, next_fb, next_blob;
 	kms_parked_t parked[KMS_MAX_PARKED];
 	kms_vblev_t vblev[KMS_MAX_VBL_EVENTS];
+	kms_reap_t reap[KMS_MAX_BOS];   /* released imports awaiting kms_reap() */
+	uint32_t nreap;
+	uint32_t imports_live;
 
 	/* vblank */
 	int vbl_src;                 /* enum kms_vblank_src in use */
@@ -330,6 +349,22 @@ kms_fb_t *kms_fb_lookup(uint32_t fb_id);
 void kms_fb_ref(kms_fb_t *fb);
 void kms_fb_unref(kms_fb_t *fb);
 void kms_bo_client_gone(uint32_t client);
+/* PRIME_IMPORT (G7): the unlocked mapping half, then the locked install. */
+typedef struct {
+	int fd;
+	void *va;
+	size_t size;
+	uint64_t pa;
+	uint32_t pages;
+	int contiguous;
+} kms_import_map_t;
+int kms_import_map(const kms_prime_import_req_t *rq, kms_import_map_t *im);   /* no lock held */
+void kms_import_unmap(kms_import_map_t *im);                                   /* no lock held */
+int kms_import_lookup(uint32_t client, const kms_prime_import_req_t *rq, kms_dumb_resp_t *out);   /* locked */
+int kms_import_install(uint32_t client, const kms_prime_import_req_t *rq, kms_import_map_t *im,
+	kms_dumb_resp_t *out);                                                     /* locked; takes over im */
+void kms_import_shown(kms_bo_t *b, uint32_t fb_id);                            /* locked: log the first scan-out */
+void kms_reap(void);                                                           /* no lock held */
 void kms_bufns_thread(void *arg);
 int kms_attr_all(msg_t *msg, uint32_t mode, uint64_t size, uint32_t port);   /* mtGetAttrAll reply (G2) */
 uint32_t kms_blob_create(uint32_t owner, const void *data, uint32_t len);

@@ -150,7 +150,8 @@ Normal-NC memory).
   name fails today, G3). Pan-backend slots (`KMS_MEM_PHYS`) cannot be exported (`memExport` refuses
   firmware memory) → `-ENOSYS`.
 * `card0` `FD_TO_HANDLE`: this client's own export → the original handle (DRM semantics); a foreign
-  buffer → `-ENOSYS` (`KMS_OP_PRIME_IMPORT`, G7).
+  buffer → `-ENOSYS` (`KMS_OP_PRIME_IMPORT`, G7). *Later:* G7 implemented — a `/v3dbuf` export imports
+  (kms proto 2), see [M6 §16](M6-wayland.md).
 * `renderD128` `FD_TO_HANDLE`: `sys_fdpath` → `{namespace port, id}` (+ size when this process exported
   it) → `V3DA_OP_BO_IMPORT` with the `v3da_bo_import_req_t` layout of `drm_phoenix_ext.h` → the
   server answers `-ENOSYS` today (**G1**). `HANDLE_TO_FD` → `-ENOSYS` locally (**G4**).
@@ -200,7 +201,7 @@ its device; `drmOpenMinor` (and so `drmOpen("vc4", NULL)`, `drmAvailable`) opens
 | `GEM_CLOSE` | ✅ (render `BO_CLOSE`, card0 `DESTROY_DUMB`) | v3d, v3dv, renderonly |
 | `GEM_FLINK`/`GEM_OPEN` | S (global names; PRIME is the sharing path) | v3d `resource_from_handle(SHARED)` only |
 | `PRIME_HANDLE_TO_FD` | ✅ card0 · S render (**G4**) | renderonly, v3d, v3dv |
-| `PRIME_FD_TO_HANDLE` | ✅ card0 self-import · S card0 foreign (G7) · ✅→S render (`BO_IMPORT` sent, server `-ENOSYS`, **G1**) | renderonly, v3d, v3dv, wsi |
+| `PRIME_FD_TO_HANDLE` | ✅ card0 self-import · ✅ card0 foreign `/v3dbuf` (G7, implemented, pending Pi `m6h-g7`) · ✅→S render (`BO_IMPORT` sent, server `-ENOSYS`, **G1**) | renderonly, v3d, v3dv, wsi |
 | `drmGetDevices2`/`drmGetDevice2`/`drmGetDeviceFromDevId`/`drmGetNodeTypeFrom{Fd,DevId}`/`drmGetDeviceNameFromFd[2]`/`drmGet{Primary,Render}DeviceNameFromFd`/`drmOpen*`/`drmAvailable` | L (§2.9) | loader, egl, v3dv, wsi |
 
 ### 3.2 Display node (card0 → rpi4-kms)
@@ -258,7 +259,7 @@ Ordered by what they block. "Spec" = where the request layout is written down.
 | **G4** implemented, pending Pi (`m6g-g4`, [M6 §15](M6-wayland.md)) | `V3DA_OP_BO_EXPORT` (22) + a `/v3dbuf` namespace (M1a BOs are one contiguous block each, so `memExport` works); import `ns=v3dbuf` shares the exported BO itself (same handle, GPU VA and last-use record) and holds a reference; every open `/v3dbuf/<id>` descriptor holds one too. Protocol 3; the server accepts HELLO 2..3, so proto-2 binaries are unaffected, and libdrm-phoenix falls back to 2 against an old server (export → `ENOSYS` as before). Host-tested: `hosttest/run.sh` (G4 tests pass against the fake G4 server and fail with `errno=38` against a fake proto-2 one). **G4a** — render-node export of an *imported* BO (reopen the exporter's name; the v3dv WSI's `vkGetMemoryFdKHR`) — closed in the library by [M5](M5-vulkan.md) §4.1 (with **G17**, `SET_CLIENT_CAP(ATOMIC)` ⇒ universal planes, §4.2) | DRI3 (M4), Wayland dmabuf (M6), v3dv external memory, `drmprobe prime_export_render` / `prime_import_render2` / `prime_export_xproc` | ~350 lines server + ~80 library (+ probe and fake) | `v3da_proto.h` (`V3DA_OP_BO_EXPORT`, `V3DA_BUF_NS`, `V3DA_PROTO_BASE`) |
 | G5 | `SUBMIT_CPU` (v3dv queries, indirect CSD) and perfmons | Vulkan queries (the server already advertises `SUPPORTS_CPU_QUEUE = 1`, research §3.7) | M1 part 3 | reserved opcodes |
 | G6 | cross-process syncobj / sync-file descriptors (`/v3dsync/<id>`, `atPollStatus`) | vkGetSemaphoreFd, DRI3/Present, Wayland explicit sync | M4/M6 | `drm_phoenix_ext.h` (55/56) |
-| G7 | `KMS_OP_PRIME_IMPORT` (scan out a buffer another server allocated, below 1 GiB) | compositors that allocate scan-out on the render node; HEVC frames | ~100 lines | `drm_phoenix_ext.h` (38, proto 2) |
+| **G7** implemented, pending Pi (`m6h-g7`, [M6 §16](M6-wayland.md)) | `KMS_OP_PRIME_IMPORT` (38, kms proto 2; the server accepts HELLO 1..2, libdrm-phoenix falls back to 1 → `ENOSYS` as before): rpi4-kms opens `/v3dbuf/<id>` itself, maps it (UNCACHED), checks contiguity, and **keeps the descriptor open** (the render BO's reference) until the handle is closed and no framebuffer can be on a plane; ADDFB2 refuses a buffer at/above 1 GiB (`why=above_1g`), non-LINEAR, pitch/offset not 64-aligned (`EINVAL`). Host-tested (fake server + negative controls; `kms/hosttest` rule checks). Another client's `/kmsbuf` export: `EINVAL` (follow-up). Cross-process flips carry no fence (`BO_LAST_FENCE`) | Weston direct scan-out, Xorg Present flips of client pixmaps, HEVC frames | ~470 lines server + a 70-line rules header, ~45 library (+ probe, fake) | `kms_proto.h` (`KMS_OP_PRIME_IMPORT`, `kms_prime_import_req_t`, `KMS_PROTO_BASE`) |
 | G8 | kms out-fence (`OUT_FENCE_PTR`: a sync file signalled at flip) | kmscube `-A`, EGL `ANDROID_native_fence_sync` presentation | needs G6's descriptor kind | — |
 | G9 | `GET_CRTC` exposes only the primary's pending fb; a "commit pending" flag would make blocking commits exact | blocking commits touching only overlays/cursor | 2 lines (+ a field in `kms_crtc_t`'s padding) | — |
 | G12 | `poll()` on the card fd rides the kernel's 20 ms cycle (E5 §5 items 1–2, a kernel change) | 60 Hz event loops that `poll()` (Xorg, Weston, SDL) | kernel | E5 |

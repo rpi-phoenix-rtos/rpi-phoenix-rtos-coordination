@@ -73,6 +73,11 @@ for mode in legacy dri; do
 	grep -q 'DRMPROBE prime_export_render rc=0 errno=0 path=/v3dbuf/[0-9]* size=65536 fstat_chr=1 mmap=1 bad_words=0 xwrite=1 reexport_same_name=1 self_import=0 .* ok=1' "${log}" || why="${why} g4-export"
 	grep -q 'DRMPROBE prime_import_render2 conn=1 rc=0 .* survives_creator_close=1 released=1 ok=1' "${log}" || why="${why} g4-import2"
 	grep -q 'HOSTE2E g4 .* exports_live=0 v3dbuf_imports=1 bos_live=0' "${log}" || why="${why} g4-counters"
+	# G7: a render BO on card0 (import, UIF/short-pitch refusals, ADDFB2, flip, all client
+	# references dropped while shown, name alive until flip-off + RMFB, then gone)
+	grep -q 'DRMPROBE prime_import_card0 export=0 errno=0 path=/v3dbuf/[0-9]* import=0 import_errno=0 reimport_same=1 .* uif_errno=22 short_pitch_errno=22 addfb=0 addfb_errno=0 shown=1 alive_while_shown=1 flipped_off=1 rmfb=0 gone_after_errno=2 ok=1' "${log}" || why="${why} g7-import"
+	grep -q 'DRMPROBE prime_import_card0_neg badfd_errno=9 notbuf_errno=22 small_import=0 small_import_errno=0 small_addfb_errno=22 released=1 ok=1' "${log}" || why="${why} g7-neg"
+	grep -q 'HOSTE2E g7 .* card0_imports=2 imports_live=0 imports_released=2' "${log}" || why="${why} g7-counters"
 	if [ "${mode}" = dri ]; then
 		grep -q 'DRMPROBE identity node=card1 version=v3d .* node_type=0 .* ok=1' "${log}" || why="${why} card1"
 		grep -q 'DRMPROBE fstat_nodes n=3 ' "${log}" || why="${why} fstat-n3"
@@ -92,11 +97,46 @@ log="${out}/e2e-g4-negative.log"
 FAKE_V3DA_PROTO=2 "${out}/e2e" dri > "${log}" 2>&1 || true
 grep -E 'DRMPROBE (RESULT|prime_export_render|prime_import_render2)|HOSTE2E g4|ERROR|runtime error' "${log}" || true
 why=""
-grep -q 'DRMPROBE RESULT .*failed=cl_clear,cl_clear_dep,import_clear,implicit_flip,prime_export_render,prime_import_render2, ' "${log}" || why="${why} failed-set"
+# (the G7 card0 tests need a /v3dbuf export, so they fail here too)
+grep -q 'DRMPROBE RESULT .*failed=cl_clear,cl_clear_dep,import_clear,implicit_flip,prime_export_render,prime_import_render2,prime_import_card0,prime_import_card0_neg, ' "${log}" || why="${why} failed-set"
 grep -q 'DRMPROBE prime_export_render rc=-1 errno=38 .* ok=0' "${log}" || why="${why} export-not-enosys"
 grep -qE 'ERROR: AddressSanitizer|runtime error' "${log}" && why="${why} sanitizer"
 if [ -z "${why}" ]; then
 	echo "HOSTE2E g4-negative verdict=PASS (the G4 tests fail against a proto-2 server, the rest as before)"
 else
 	echo "HOSTE2E g4-negative verdict=FAIL (${why# } - see ${log})"
+fi
+
+# G7 negative control: a fake display server from BEFORE G7 (HELLO exactly 1, no
+# PRIME_IMPORT). The library must fall back to proto 1 (every KMS test passes as
+# before) and exactly the two G7 tests must FAIL, with ENOSYS from the library.
+log="${out}/e2e-g7-negative.log"
+FAKE_KMS_PROTO=1 "${out}/e2e" dri > "${log}" 2>&1 || true
+grep -E 'DRMPROBE (RESULT|prime_import_card0)|HOSTE2E g7|ERROR|runtime error' "${log}" || true
+why=""
+grep -q 'DRMPROBE RESULT .*failed=cl_clear,cl_clear_dep,import_clear,implicit_flip,prime_import_card0,prime_import_card0_neg, ' "${log}" || why="${why} failed-set"
+grep -q 'DRMPROBE prime_import_card0 export=0 .* import=-1 import_errno=38 .* ok=0' "${log}" || why="${why} import-not-enosys"
+grep -q 'HOSTE2E g7 .* card0_imports=0 imports_live=0' "${log}" || why="${why} g7-counters"
+grep -qE 'ERROR: AddressSanitizer|runtime error' "${log}" && why="${why} sanitizer"
+if [ -z "${why}" ]; then
+	echo "HOSTE2E g7-negative verdict=PASS (the G7 tests fail against a proto-1 display server, the rest as before)"
+else
+	echo "HOSTE2E g7-negative verdict=FAIL (${why# } - see ${log})"
+fi
+
+# G7 above 1 GiB: every import lands where the firmware plane cannot fetch (the Pi
+# cannot be made to produce it on demand). ADDFB2 must answer EINVAL - the probe
+# grades that as gap=1, not a failure - and the import must still be released.
+log="${out}/e2e-g7-high.log"
+FAKE_KMS_IMPORT_HIGH=1 "${out}/e2e" dri > "${log}" 2>&1 || true
+grep -E 'DRMPROBE (RESULT|prime_import_card0)|HOSTE2E g7|ERROR|runtime error' "${log}" || true
+why=""
+grep -q 'DRMPROBE RESULT .*gap=1 failed=cl_clear,cl_clear_dep,import_clear,implicit_flip, ' "${log}" || why="${why} failed-set"
+grep -q 'DRMPROBE prime_import_card0 export=0 .* import=0 .* addfb=-22 addfb_errno=22 shown=0 .* gone_after_errno=2 gap=1 ' "${log}" || why="${why} not-refused"
+grep -q 'HOSTE2E g7 .* imports_live=0 imports_released=2' "${log}" || why="${why} g7-counters"
+grep -qE 'ERROR: AddressSanitizer|runtime error' "${log}" && why="${why} sanitizer"
+if [ -z "${why}" ]; then
+	echo "HOSTE2E g7-high verdict=PASS (an import above 1 GiB: ADDFB2 EINVAL, graded gap=1, released)"
+else
+	echo "HOSTE2E g7-high verdict=FAIL (${why# } - see ${log})"
 fi

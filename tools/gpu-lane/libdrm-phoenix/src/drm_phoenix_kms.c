@@ -63,10 +63,18 @@ static int kcall(drmphx_conn_t *c, uint32_t op, const void *u, size_t usize, kms
 int drmphx_kms_hello(drmphx_conn_t *c, int fd)
 {
 	kms_hello_t h;
+	int rc;
 
 	memset(&h, 0, sizeof(h));
 	h.proto = KMS_PROTO_VERSION;
-	if (ioctl(fd, KMS_IOC_HELLO, &h) < 0) {
+	rc = ioctl(fd, KMS_IOC_HELLO, &h);
+	if ((rc < 0) && (errno == EPROTO)) {
+		/* a proto-1 server (before G7) takes exactly 1: everything but PRIME_IMPORT works */
+		memset(&h, 0, sizeof(h));
+		h.proto = KMS_PROTO_BASE;
+		rc = ioctl(fd, KMS_IOC_HELLO, &h);
+	}
+	if (rc < 0) {
 		return (errno != 0) ? -errno : -EIO;
 	}
 	if (h.client_id == 0u) {
@@ -691,7 +699,10 @@ static int ioc_prime_export(drmphx_conn_t *c, struct drm_prime_handle *ph)
 	if (r.u.dumb.mem.kind != KMS_MEM_OID) {
 		return -ENOSYS;   /* pan-backend firmware-fb slots are MAP_PHYSMEM: memExport refuses them */
 	}
-	(void)snprintf(path, sizeof(path), "%s/%llu", KMS_BUF_NS, (unsigned long long)r.u.dumb.mem.addr);
+	/* A G7 import answers its exporter's name: re-exporting it reopens that (as G4a
+	 * does on the render node) - the same pages, zero-copy. */
+	(void)snprintf(path, sizeof(path), "%s/%llu", (r.u.dumb.mem.port == c->u.kms.buf_port) ? KMS_BUF_NS : V3DA_BUF_NS,
+		(unsigned long long)r.u.dumb.mem.addr);
 	bfd = open(path, O_RDONLY | (((ph->flags & DRM_CLOEXEC) != 0u) ? O_CLOEXEC : 0));
 	if (bfd < 0) {
 		return -errno;
@@ -703,10 +714,18 @@ static int ioc_prime_export(drmphx_conn_t *c, struct drm_prime_handle *ph)
 }
 
 
+/* PRIME_FD_TO_HANDLE on card0. One of this client's own /kmsbuf exports is the
+ * original handle (DRM). A foreign buffer - a render-node BO exported as
+ * "/v3dbuf/<id>" (G4) - is KMS_OP_PRIME_IMPORT (G7): the server opens and maps the
+ * name itself and holds it while any framebuffer of it may be on screen; the reply
+ * is a dumb-style handle whose memref is the exporter's name, so MAP_DUMB, ADDFB2,
+ * the G13 implicit flip fence (fb_export) and a re-export all work on it. */
 static int ioc_prime_import(drmphx_conn_t *c, struct drm_prime_handle *ph)
 {
+	kms_prime_import_req_t q;
 	kms_memref_t m;
 	kms_memref_t own;
+	kms_resp_t r;
 	int rc;
 
 	rc = drmphx_prime_fd_lookup(ph->fd, &m);
@@ -719,10 +738,22 @@ static int ioc_prime_import(drmphx_conn_t *c, struct drm_prime_handle *ph)
 		ph->handle = (uint32_t)m.addr;
 		return 0;
 	}
-#if KMS_PROTO_VERSION >= KMS_PROTO_PRIME_IMPORT
-#error "KMS_OP_PRIME_IMPORT landed in kms_proto.h: implement the request here and drop the _EXT definition"
-#endif
-	return -ENOSYS;   /* gap: KMS_OP_PRIME_IMPORT_EXT (drm_phoenix_ext.h) */
+	if (c->u.kms.hello.proto < KMS_PROTO_PRIME_IMPORT) {
+		return -ENOSYS;   /* a proto-1 rpi4-kms (before G7) imports nothing foreign */
+	}
+	memset(&q, 0, sizeof(q));
+	q.port = m.port;
+	q.cache = m.cache;
+	q.id = m.addr;
+	q.size = m.size;   /* 0 = unknown here (another process exported it): the server sizes it (G3) */
+	q.ns = (m.port == c->u.kms.buf_port) ? KMS_IMPORT_NS_KMSBUF : KMS_IMPORT_NS_V3DBUF;
+	rc = kcall(c, KMS_OP_PRIME_IMPORT, &q, sizeof(q), &r, NULL, 0u, NULL, 0u);
+	if (rc != 0) {
+		return rc;
+	}
+	dumb_store(c, &r.u.dumb);
+	ph->handle = r.u.dumb.handle;
+	return 0;
 }
 
 

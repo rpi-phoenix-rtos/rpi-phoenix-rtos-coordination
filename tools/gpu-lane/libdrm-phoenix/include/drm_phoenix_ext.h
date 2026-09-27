@@ -75,16 +75,15 @@ enum drmphx_ns {
 /* ------------------------------------------------------------------------- */
 
 /*
- * KMS_OP_PRIME_IMPORT (38, NEW, needs KMS proto >= 2): import a foreign buffer
- * (e.g. a v3d BO exported through /v3dbuf) as a dumb-BO handle so ADDFB2 can
- * scan it out. Request = v3da_bo_import_req_t (same layout, v3da_proto.h); reply
- * kms_dumb_resp_t. The server maps the buffer, checks contiguity and the
- * < 1 GiB scan-out limit (E6) and refuses what the HVS cannot fetch. Importing
- * one of this client's own /kmsbuf exports returns the original handle
- * (libdrm-phoenix already short-circuits that case locally).
+ * KMS_OP_PRIME_IMPORT (38): IMPLEMENTED for gap G7 (M6 section 16) - the opcode,
+ * kms_prime_import_req_t (the v3da_bo_import_req_t byte layout) and the semantics
+ * moved to kms_proto.h, which bumped the protocol to 2 (KMS_PROTO_PRIME_IMPORT).
+ * libdrm-phoenix HELLOs with 2, falls back to KMS_PROTO_BASE (1) on a proto-1
+ * server and answers a foreign card0 import with ENOSYS there, as before.
  */
-#define KMS_OP_PRIME_IMPORT_EXT 38u
-#define KMS_PROTO_PRIME_IMPORT  2u
+#ifndef KMS_HAVE_PRIME_IMPORT
+#error "kms_proto.h predates PRIME_IMPORT (G7): build against the current tools/gpu-lane/kms"
+#endif
 
 /*
  * Implicit sync for flips (research 4.5, M2 section 8): V3DA_OP_BO_LAST_FENCE

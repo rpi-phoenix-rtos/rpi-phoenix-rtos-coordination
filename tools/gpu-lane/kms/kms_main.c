@@ -563,6 +563,9 @@ int kms_try_apply(kms_crtc_state_t *c)
 		}
 		fb = kms_fb_lookup(c->pst[p].fb_id);
 		rc = srv.be->apply(c, p, &c->pst[p], fb, (fb != NULL) ? &srv.bos[fb->bo] : NULL, &lat);
+		if ((rc == 0) && (fb != NULL) && (srv.bos[fb->bo].kind == KMS_BOK_IMPORT)) {
+			kms_import_shown(&srv.bos[fb->bo], fb->id);   /* G7: a foreign buffer went to the firmware */
+		}
 		if (rc != 0) {
 			/* The commit was accepted: DRM has no error channel from here on. The event
 			 * still fires so no client waits forever; the first failures are logged. */
@@ -1509,6 +1512,60 @@ static int handle_raw(msg_t *msg, msg_rid_t rid, kms_parked_t *answer, uint32_t 
 }
 
 
+/* KMS_OP_PRIME_IMPORT (G7). Not in handle_raw: mapping the exporter's buffer is IPC
+ * to another server (open, lseek, page faults), so it runs without srv.lock - the
+ * vblank thread must never wait on another server. Lock, look up; unlock, map;
+ * lock, recheck the client and install. */
+static void op_prime_import(msg_t *msg)
+{
+	kms_req_t rq;
+	kms_resp_t *r = (kms_resp_t *)msg->o.raw;
+	kms_import_map_t im;
+	kms_client_t *cl;
+	uint32_t client = (uint32_t)msg->oid.id;
+	int rc, pid = -1;
+
+	memcpy(&rq, msg->i.raw, sizeof(rq));
+	memset(r, 0, sizeof(*r));
+	r->op = rq.op;
+	msg->o.err = EOK;
+
+	(void)mutexLock(srv.lock);
+	cl = client_get(msg->oid.id);
+	if (cl != NULL) {
+		pid = cl->pid;
+		rc = kms_import_lookup(client, &rq.u.prime_import, &r->u.dumb);
+	}
+	else {
+		rc = -EBADF;
+	}
+	(void)mutexUnlock(srv.lock);
+
+	if (rc == 1) {
+		rc = kms_import_map(&rq.u.prime_import, &im);
+		if (rc != 0) {
+			KMS_LOG("import FAIL client=%u ns=v3dbuf id=%llu port=%u size=%llu rc=%d why=map", client,
+				(unsigned long long)rq.u.prime_import.id, rq.u.prime_import.port,
+				(unsigned long long)rq.u.prime_import.size, rc);
+		}
+		else {
+			(void)mutexLock(srv.lock);
+			cl = client_get(msg->oid.id);
+			if ((cl != NULL) && (cl->pid == pid)) {
+				rc = kms_import_install(client, &rq.u.prime_import, &im, &r->u.dumb);
+				(void)mutexUnlock(srv.lock);
+			}
+			else {
+				(void)mutexUnlock(srv.lock);
+				kms_import_unmap(&im);   /* the client closed while we mapped */
+				rc = -EBADF;
+			}
+		}
+	}
+	r->err = rc;
+}
+
+
 /* An ioctl()-packed mtDevCtl: only HELLO. */
 static void handle_ioctl(msg_t *msg)
 {
@@ -1526,7 +1583,9 @@ static void handle_ioctl(msg_t *msg)
 	memcpy(&h, in, sizeof(h));
 	(void)mutexLock(srv.lock);
 	cl = client_get(id);
-	if ((cl == NULL) || (h.proto != KMS_PROTO_VERSION)) {
+	/* Every protocol since M2 Stage A: a proto-1 client (the staged Weston, kmstest,
+	 * drmprobe builds before G7) sends nothing a proto-2 server does not serve. */
+	if ((cl == NULL) || (h.proto < KMS_PROTO_BASE) || (h.proto > KMS_PROTO_VERSION)) {
 		(void)mutexUnlock(srv.lock);
 		ioctl_setResponse(msg, request, (cl == NULL) ? -EBADF : -EPROTO, NULL);
 		return;
@@ -1732,6 +1791,10 @@ static void dispatch_loop(void)
 					handle_ioctl(&msg);
 					break;
 				}
+				if (((const kms_req_t *)msg.i.raw)->op == KMS_OP_PRIME_IMPORT) {
+					op_prime_import(&msg);   /* takes srv.lock itself, around IPC it does unlocked */
+					break;
+				}
 				(void)mutexLock(srv.lock);
 				respond = handle_raw(&msg, rid, answers, &nans);
 				quitting = srv.quit;
@@ -1776,6 +1839,12 @@ static void dispatch_loop(void)
 				break;
 		}
 
+		/* G7: a request that dropped an import's last reference (DESTROY_DUMB, RMFB,
+		 * mtClose) releases the exporter's reference before it is answered, so the
+		 * client that asked sees the buffer gone. */
+		if (__atomic_load_n(&srv.nreap, __ATOMIC_RELAXED) != 0u) {
+			kms_reap();
+		}
 		kms_answer(answers, nans);
 		if (respond) {
 			(void)msgRespond(srv.port, &msg, rid);
@@ -2010,11 +2079,12 @@ int main(int argc, char **argv)
 	}
 
 	KMS_LOG("srv ready dev=/dev/%s buf=%s backend=%s planes=0x%02x vblank_src=%s mode=%ux%u refresh_mhz=%u xl=%d "
-		"pool=%d pool_mib=%u slots=%u fmt=%.4s bus=%s v3d=%d console_off=%d blank_fb=%d guard_us=%u gate_us=%u kick=%d proto=%u",
+		"pool=%d pool_mib=%u slots=%u fmt=%.4s bus=%s v3d=%d console_off=%d blank_fb=%d guard_us=%u gate_us=%u kick=%d proto=%u..%u import=v3dbuf",
 		KMS_DEV_NAME, KMS_BUF_NS, srv.be->name, srv.crtc[0].plane_mask, kms_vbl_name(srv.vbl_src),
 		srv.crtc[0].mode.hdisplay, srv.crtc[0].mode.vdisplay, srv.crtc[0].refresh_mhz, srv.xl, srv.pool_ok,
 		srv.pool_mib, srv.fb_slots, (const char *)&srv.fb_format, srv.bus_c0 ? "c0" : "raw", srv.v3d_fp != NULL,
-		srv.console_off, srv.blank_fb, srv.latch_guard_us, srv.gate_us, !srv.no_kick, KMS_PROTO_VERSION);
+		srv.console_off, srv.blank_fb, srv.latch_guard_us, srv.gate_us, !srv.no_kick, KMS_PROTO_BASE,
+		KMS_PROTO_VERSION);
 
 	if (readyfd >= 0) {
 		char r = 'R';

@@ -63,7 +63,13 @@
 #define KMS_DEV_NAME      "kms"        /* /dev/kms */
 #define KMS_DRI_NAME      "dri/card0"  /* M3 part 2 (G10): the DRM primary node, same port as /dev/kms */
 #define KMS_BUF_NS        "/kmsbuf"    /* buffer namespace (own port) */
-#define KMS_PROTO_VERSION 1u
+#define KMS_PROTO_VERSION 2u           /* 2: gap G7 (KMS_OP_PRIME_IMPORT) */
+/* The oldest protocol a client may HELLO with: 1 = M2 Stage A. The server accepts
+ * KMS_PROTO_BASE..KMS_PROTO_VERSION and replies with ITS version, which is how a
+ * client learns what it may send (a proto-1 server refuses any other HELLO with
+ * -EPROTO; a proto-2 client then retries with 1). */
+#define KMS_PROTO_BASE    1u
+#define KMS_PROTO_PRIME_IMPORT 2u      /* first version with KMS_OP_PRIME_IMPORT */
 #define KMS_MAGIC         0x31534d4bu  /* "KMS1" little-endian; bit 31 clear */
 #define KMS_DRIVER_NAME   "vc4"        /* DRM_IOCTL_VERSION name: Mesa kmsro pairs v3d with "vc4" */
 
@@ -292,6 +298,7 @@ enum kms_op {
 	KMS_OP_ADDFB2,             /* DRM_IOCTL_MODE_ADDFB2 (single plane, linear) */
 	KMS_OP_RMFB,               /* DRM_IOCTL_MODE_RMFB */
 	KMS_OP_PRIME_EXPORT,       /* DRM_IOCTL_PRIME_HANDLE_TO_FD: returns the memref; library open()s it */
+	KMS_OP_PRIME_IMPORT,       /* = 38, proto 2 (G7): DRM_IOCTL_PRIME_FD_TO_HANDLE of a foreign buffer */
 
 	KMS_OP_PAGE_FLIP = 48,     /* DRM_IOCTL_MODE_PAGE_FLIP (+ in-fence) */
 	KMS_OP_ATOMIC,             /* DRM_IOCTL_MODE_ATOMIC, flattened (i.data: kms_atomic_plane_t[]) */
@@ -477,6 +484,54 @@ typedef struct {
 	uint32_t pad;
 } kms_handle_req_t;
 
+/*
+ * PRIME_IMPORT (proto 2, gap G7): DRM_IOCTL_PRIME_FD_TO_HANDLE of a buffer another
+ * server exported, so that ADDFB2 can scan it out (direct scan-out of a client
+ * buffer, Present flips of client pixmaps). The client resolved the dma-buf
+ * descriptor to {namespace port, id} (the byte layout of v3da_bo_import_req_t).
+ *   ns = KMS_IMPORT_NS_V3DBUF ("/v3dbuf/<id>", an rpi4-v3d-async BO_EXPORT): the
+ *   server opens the name itself, checks that it resolves to `port`, sizes it with
+ *   lseek(SEEK_END), maps it with MAP_UNCACHED (the export's memory type) and
+ *   resolves every page. It KEEPS THE DESCRIPTOR OPEN for the handle's whole life:
+ *   an open /v3dbuf descriptor holds a reference on the render BO, so the block is
+ *   never quarantined, pooled and zeroed while a framebuffer of it can still be on
+ *   a plane. The descriptor is closed only when the handle is closed AND no
+ *   framebuffer references it (the C1 rule of every BO here: a flip releases the
+ *   outgoing framebuffer only once it has completed at a vblank).
+ *   ns = KMS_IMPORT_NS_KMSBUF: one of this server's own /kmsbuf exports. The
+ *   importer's OWN export returns the original handle (DRM; libdrm-phoenix
+ *   short-circuits it locally). Another client's export: -EINVAL (not needed by any
+ *   current path; a follow-up would alias the BO).
+ * Refused at import: -ENOENT (the name is not, or no longer, exported), -EINVAL
+ * (wrong port, bad size, pages not physically contiguous: the firmware plane
+ * fetches one linear range), -ENOSPC (no BO slot).
+ * An imported buffer that the firmware cannot fetch - any part at or above 1 GiB
+ * (E3/E6), the render server's MAP_CONTIGUOUS blocks have no placement guarantee -
+ * is imported, but ADDFB2 of it answers -EINVAL with a tagged "KMS fb FAIL ...
+ * why=above_1g" line: never a commit that fails late or scans garbage.
+ * ADDFB2 of an import also needs pitch and offset multiples of 64 bytes (what the
+ * pool's own BOs get) and the LINEAR modifier (the HVS path here scans no Broadcom
+ * UIF/SAND/T-tiled layout).
+ * Reply: kms_dumb_resp_t {handle, pitch 0, size, mem = the exporter's OID memref},
+ * so MAP_DUMB of the handle maps the exporter's name, and PRIME_EXPORT of it
+ * answers that name too (the re-export of an imported GEM object). Importing the
+ * same buffer again on the same client returns the same handle and takes no extra
+ * reference (DRM: one GEM_CLOSE / DESTROY_DUMB releases it).
+ */
+#define KMS_HAVE_PRIME_IMPORT 1
+#define KMS_IMPORT_NS_KMSBUF  1u   /* == V3DA_IMPORT_NS_KMSBUF */
+#define KMS_IMPORT_NS_V3DBUF  2u   /* == V3DA_IMPORT_NS_V3DBUF */
+#define KMS_IMPORT_MAX_SIZE   0x10000000u   /* 256 MiB, == V3DA_IMPORT_MAX_SIZE */
+
+typedef struct {
+	uint32_t port;          /* exporter's buffer-namespace port */
+	uint32_t cache;         /* enum kms_mem_cache of the export (both namespaces: UNCACHED) */
+	uint64_t id;            /* object id under that port */
+	uint64_t size;          /* bytes (page multiple, <= the export); 0 = the whole export */
+	uint32_t ns;            /* KMS_IMPORT_NS_* */
+	uint32_t pad;
+} kms_prime_import_req_t;
+
 typedef struct {
 	uint32_t width, height;
 	uint32_t format;        /* KMS_FMT_* */
@@ -601,6 +656,7 @@ typedef struct {
 		kms_blob_t blob;
 		kms_create_dumb_req_t create_dumb;
 		kms_handle_req_t handle;
+		kms_prime_import_req_t prime_import;
 		kms_addfb2_req_t addfb2;
 		kms_fb_resp_t fb;
 		kms_page_flip_req_t flip;
@@ -651,6 +707,8 @@ _Static_assert(sizeof(kms_resources_t) <= 56, "resources must fit o.raw");
 _Static_assert(sizeof(kms_page_flip_req_t) <= 48, "page flip must fit i.raw");
 _Static_assert(sizeof(kms_atomic_req_t) <= 48, "atomic header must fit i.raw");
 _Static_assert(sizeof(kms_atomic_plane_t) == 80, "atomic plane state layout");
+_Static_assert(sizeof(kms_prime_import_req_t) == 32, "PRIME_IMPORT request layout (== v3da_bo_import_req_t)");
+_Static_assert(KMS_OP_PRIME_IMPORT == 38, "KMS_OP_PRIME_IMPORT is 38 (drm_phoenix_ext.h history)");
 #endif
 
 

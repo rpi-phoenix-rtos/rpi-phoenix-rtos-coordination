@@ -5,6 +5,8 @@
  *
  * Usage: e2e [dri|legacy]   dri: the servers also registered /dev/dri names
  *        FAKE_V3DA_PROTO=2   the fake render server predates G4 (negative control)
+ *        FAKE_KMS_PROTO=1    the fake display server predates G7 (negative control)
+ *        FAKE_KMS_IMPORT_HIGH=1  card0 imports land above 1 GiB (ADDFB2 must refuse them)
  *
  * Copyright 2026 Phoenix Systems
  * Author: Witold Bołt
@@ -30,6 +32,8 @@ uint32_t fake_deferred_flips(void);
 void fake_m3p2(uint32_t *fstats, uint32_t *atsizes, uint32_t *imports, uint32_t *imports_closed);
 void fake_set_old_v3d(int on);
 void fake_g4(uint32_t *exports_live, uint32_t *v3dbuf_imports, uint32_t *bos_live);
+void fake_set_kms(int old_kms, int import_high);
+void fake_g7(uint32_t *imports, uint32_t *imports_live, uint32_t *imports_released);
 
 
 int main(int argc, char **argv)
@@ -38,11 +42,14 @@ int main(int argc, char **argv)
 	char *av[] = { a0, a1, a2, NULL };
 	v3da_cl_desc_t d;
 	uint32_t nbo, nin, nout, submits, fstats, atsizes, imports, imports_closed, exports, vimports, bos;
+	uint32_t kimports, kimports_live, kimports_released;
 	const char *old = getenv("FAKE_V3DA_PROTO");
+	const char *old_kms = getenv("FAKE_KMS_PROTO"), *high = getenv("FAKE_KMS_IMPORT_HIGH");
 	int dri = ((argc > 1) && (strcmp(argv[1], "dri") == 0)) ? 1 : 0, rc;
 
 	fake_set_dri(dri);
 	fake_set_old_v3d((old != NULL) && (strcmp(old, "2") == 0));
+	fake_set_kms((old_kms != NULL) && (strcmp(old_kms, "1") == 0), (high != NULL) && (strcmp(high, "1") == 0));
 	rc = drmprobe_main(3, av);
 	fake_last_cl(&d, &nbo, &nin, &nout, &submits);
 	printf("HOSTE2E mode=%s rc=%d submits=%u last_cl bcl=0x%x..0x%x rcl=0x%x..0x%x qma=0x%x qms=%u qts=0x%x nbo=%u nin=%u "
@@ -55,5 +62,9 @@ int main(int argc, char **argv)
 	fake_g4(&exports, &vimports, &bos);
 	printf("HOSTE2E g4 mode=%s server_proto=%s exports_live=%u v3dbuf_imports=%u bos_live=%u\n", dri ? "dri" : "legacy",
 		(old != NULL) ? old : "3", exports, vimports, bos);
+	fake_g7(&kimports, &kimports_live, &kimports_released);
+	printf("HOSTE2E g7 mode=%s kms_proto=%s import_high=%d card0_imports=%u imports_live=%u imports_released=%u\n",
+		dri ? "dri" : "legacy", (old_kms != NULL) ? old_kms : "2", (high != NULL) && (strcmp(high, "1") == 0), kimports,
+		kimports_live, kimports_released);
 	return 0;
 }

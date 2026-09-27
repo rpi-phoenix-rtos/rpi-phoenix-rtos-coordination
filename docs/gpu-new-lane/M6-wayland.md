@@ -9,7 +9,10 @@ nodes, the static Mesa GBM/EGL/GLES, the `--wrap=mmap/ioctl` rules), [M4](M4-xor
 (`memExport`, fd per buffer across AF_UNIX) and [poll-wake](poll-wake.md) (`pollNotify`,
 `rpi4-kms-gate`).
 
-**Status (2026-09-27, latest):** first Pi cycle **`m6a-weston` FAILED at compositor init** in both
+**Latest (2026-09-27, G7):** card0 import of a foreign buffer (`KMS_OP_PRIME_IMPORT`, direct scan-out of
+client buffers) implemented and host-tested, Pi cycle `m6h-g7` pre-registered — [§16](#16-g7--card0-import-of-a-foreign-buffer-kms_op_prime_import-and-cycle-m6h-g7). G4 (§15) is pending `m6g-g4`.
+
+**Status (2026-09-27, earlier):** first Pi cycle **`m6a-weston` FAILED at compositor init** in both
 arms — `failed to create XKB context` 2 s after start (libxkbcommon refuses a context when no include
 path exists, which is always the case on Phoenix). Fixed by weston patch **0007** (context without
 default includes; the baked keymap path unchanged), reproduced and verified on the host

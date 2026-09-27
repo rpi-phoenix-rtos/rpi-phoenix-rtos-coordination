@@ -1567,6 +1567,183 @@ static void t_prime_xproc(void)
 #endif
 
 
+/* ========================================================================= */
+/* G7: a render-node BO scanned out on card0                                  */
+/* ========================================================================= */
+
+static int name_open_errno(const char *path)
+{
+	int fd = open(path, O_RDONLY | O_CLOEXEC);
+
+	if (fd < 0) {
+		return errno;
+	}
+	close(fd);
+	return 0;
+}
+
+
+/* A render BO (linear 32 bpp, the mode's size, pitch 64-aligned) exported as
+ * /v3dbuf/<id>, imported on card0 (PRIME_FD_TO_HANDLE of a foreign buffer: G7),
+ * refused as UIF and with a short pitch, added as a LINEAR XRGB8888 framebuffer and
+ * flipped onto the primary plane. Then EVERY client reference goes while it is on
+ * screen (dma-buf fd, render handle, CPU mapping, card0 handle): the buffer's name
+ * must stay alive - rpi4-kms still holds it for the plane - until the plane has
+ * moved off it and the framebuffer is removed; then the name is gone. If the
+ * server finds the buffer above 1 GiB (the render server's blocks have no
+ * placement guarantee), ADDFB2 answers EINVAL (`KMS fb FAIL ... why=above_1g`):
+ * graded gap=1, not a failure. */
+static void t_prime_card0(void)
+{
+	char path[64] = "-";
+	uint32_t w = (P.mode.hdisplay != 0u) ? P.mode.hdisplay : 1920u, h = (P.mode.vdisplay != 0u) ? P.mode.vdisplay : 1080u;
+	uint32_t pitch = ((w * 4u) + 63u) & ~63u, kh = 0, kh2 = 0, fb = 0, fb_uif = 0, fb_pitch = 0, x, y;
+	uint32_t handles[4] = { 0 }, pitches[4] = { 0 }, offsets[4] = { 0 };
+	uint64_t mods[4] = { 0 };
+	rbo_t b;
+	int rc, rc_exp = -1, e = 0, fd = -1, rc_imp = -1, e_imp = 0, rc_imp2 = -1, rc_uif = 0, e_uif = 0, rc_pitch = 0, e_pitch = 0;
+	int rc_fb = -1, e_fb = 0, shown = 0, alive = -1, back = 0, rc_rm = -1, gone = -1, refused = 0, ok;
+
+	rc = rbo_new(&b, pitch * h);
+	if (rc == 0) {
+		/* 8 vertical colour bands, rows written once (uncached: ~10-60 ms) */
+		static const uint32_t band[8][3] = { { 255, 0, 0 }, { 255, 128, 0 }, { 255, 255, 0 }, { 0, 255, 0 },
+			{ 0, 255, 255 }, { 0, 0, 255 }, { 255, 0, 255 }, { 255, 255, 255 } };
+		for (y = 0; y < h; y++) {
+			for (x = 0; x < w; x++) {
+				const uint32_t *c = band[(x * 8u) / w];
+				b.cpu[y * (pitch / 4u) + x] = rgb(c[0], c[1], c[2]);
+			}
+		}
+		rc_exp = drmPrimeHandleToFD(P.render, b.handle, DRM_CLOEXEC | DRM_RDWR, &fd);
+		e = (rc_exp != 0) ? errno : 0;
+	}
+	else {
+		e = -rc;
+	}
+	if ((rc_exp == 0) && (fd >= 0)) {
+		(void)sys_fdpath(fd, path, sizeof(path));
+		rc_imp = drmPrimeFDToHandle(P.card, fd, &kh);
+		e_imp = (rc_imp != 0) ? errno : 0;
+	}
+	if (rc_imp == 0) {
+		rc_imp2 = drmPrimeFDToHandle(P.card, fd, &kh2);   /* DRM: the same buffer again = the same handle */
+		handles[0] = kh;
+		pitches[0] = pitch;
+		mods[0] = DRM_FORMAT_MOD_BROADCOM_UIF;
+		rc_uif = drmModeAddFB2WithModifiers(P.card, w, h, DRM_FORMAT_XRGB8888, handles, pitches, offsets, mods, &fb_uif,
+			DRM_MODE_FB_MODIFIERS);
+		e_uif = (rc_uif != 0) ? errno : 0;
+		mods[0] = DRM_FORMAT_MOD_LINEAR;
+		pitches[0] = pitch / 2u;
+		rc_pitch = drmModeAddFB2WithModifiers(P.card, w, h, DRM_FORMAT_XRGB8888, handles, pitches, offsets, mods,
+			&fb_pitch, DRM_MODE_FB_MODIFIERS);
+		e_pitch = (rc_pitch != 0) ? errno : 0;
+		pitches[0] = pitch;
+		rc_fb = drmModeAddFB2WithModifiers(P.card, w, h, DRM_FORMAT_XRGB8888, handles, pitches, offsets, mods, &fb,
+			DRM_MODE_FB_MODIFIERS);
+		e_fb = (rc_fb != 0) ? errno : 0;
+		refused = (rc_fb != 0) && (e_fb == EINVAL);
+	}
+	if ((rc_fb == 0) && (P.crtc != 0u) && (P.buf[0].fb != 0u)) {
+		P.flips_done = 0;
+		rc = drmModePageFlip(P.card, P.crtc, fb, DRM_MODE_PAGE_FLIP_EVENT, NULL);
+		shown = (rc == 0) && (wait_flips(1, 3000) == 0);
+		printf(TAG "prime_import_card0 shown=%d fb=%u handle=%u path=%s (HDMI: 8 vertical colour bands)\n", shown, fb, kh,
+			path);
+		if (shown) {
+			usleep(3000000);   /* long enough for a dense HDMI snapshot */
+		}
+		/* every client reference goes while the plane shows the buffer */
+		close(fd);
+		fd = -1;
+		rbo_free(&b);
+		gem_close(P.card, kh);
+		kh = 0;
+		alive = name_open_errno(path);   /* 0: the name still resolves (rpi4-kms holds it) */
+		if (shown) {
+			P.flips_done = 0;
+			rc = drmModePageFlip(P.card, P.crtc, P.buf[0].fb, DRM_MODE_PAGE_FLIP_EVENT, NULL);
+			back = (rc == 0) && (wait_flips(1, 3000) == 0);
+		}
+		rc_rm = drmModeRmFB(P.card, fb);
+		fb = 0;
+		gone = name_open_errno(path);    /* ENOENT: the last reference went with the framebuffer */
+	}
+	if (fd >= 0) {
+		close(fd);
+	}
+	if (fb != 0u) {
+		(void)drmModeRmFB(P.card, fb);
+	}
+	if (kh != 0u) {
+		gem_close(P.card, kh);
+	}
+	rbo_free(&b);
+	if (refused && (strcmp(path, "-") != 0)) {
+		gone = name_open_errno(path);
+	}
+	ok = (rc_imp == 0) && (rc_imp2 == 0) && (kh2 == handles[0]) && (rc_uif != 0) && (e_uif == EINVAL) && (rc_pitch != 0) &&
+		(e_pitch == EINVAL) && (rc_fb == 0) && shown && (alive == 0) && back && (rc_rm == 0) && (gone == ENOENT);
+	printf(TAG "prime_import_card0 export=%d errno=%d path=%s import=%d import_errno=%d reimport_same=%d handle=%u "
+		"uif_errno=%d short_pitch_errno=%d addfb=%d addfb_errno=%d shown=%d alive_while_shown=%d flipped_off=%d rmfb=%d "
+		"gone_after_errno=%d%s ok=%d\n", rc_exp, e, path, rc_imp, e_imp, (rc_imp2 == 0) && (kh2 == handles[0]), handles[0],
+		e_uif, e_pitch, rc_fb, e_fb, shown, alive == 0, back, rc_rm, gone,
+		refused ? " gap=1 (ADDFB2 refused: the buffer is not scan-out capable, see the KMS fb FAIL line)" : "", ok);
+	if (refused && (rc_imp == 0) && (e_uif == EINVAL) && (e_pitch == EINVAL) && (gone == ENOENT)) {
+		P.gap++;
+	}
+	else {
+		verdict("prime_import_card0", ok);
+	}
+}
+
+
+/* The refusals: descriptors that are not buffers, and a framebuffer larger than the
+ * imported buffer. */
+static void t_prime_card0_neg(void)
+{
+	char path[64] = "-";
+	uint32_t h = 0, kh = 0, fb = 0, handles[4] = { 0 }, pitches[4] = { 0 }, offsets[4] = { 0 };
+	uint64_t mods[4] = { 0 };
+	rbo_t b;
+	int rc, e_bad = 0, e_notbuf = 0, fd = -1, rc_imp = -1, e_imp = 0, rc_fb = 0, e_fb = 0, ok;
+
+	rc = drmPrimeFDToHandle(P.card, 1000, &h);   /* no such descriptor */
+	e_bad = (rc != 0) ? errno : 0;
+	rc = drmPrimeFDToHandle(P.card, P.render, &h);   /* a descriptor that is not a buffer */
+	e_notbuf = (rc != 0) ? errno : 0;
+	if (rbo_new(&b, XP_SIZE) == 0) {
+		if (drmPrimeHandleToFD(P.render, b.handle, DRM_CLOEXEC, &fd) == 0) {
+			(void)sys_fdpath(fd, path, sizeof(path));
+			rc_imp = drmPrimeFDToHandle(P.card, fd, &kh);
+			e_imp = (rc_imp != 0) ? errno : 0;
+		}
+		if (rc_imp == 0) {
+			handles[0] = kh;
+			pitches[0] = 7680u;
+			rc_fb = drmModeAddFB2WithModifiers(P.card, 1920u, 1080u, DRM_FORMAT_XRGB8888, handles, pitches, offsets, mods,
+				&fb, DRM_MODE_FB_MODIFIERS);   /* 64 KiB buffer, 8 MB framebuffer */
+			e_fb = (rc_fb != 0) ? errno : 0;
+			if (rc_fb == 0) {
+				(void)drmModeRmFB(P.card, fb);
+			}
+			gem_close(P.card, kh);
+		}
+		if (fd >= 0) {
+			close(fd);
+		}
+	}
+	rbo_free(&b);
+	ok = (e_bad == EBADF) && (e_notbuf == EINVAL) && (rc_imp == 0) && (rc_fb != 0) && (e_fb == EINVAL) &&
+		(name_open_errno(path) == ENOENT);
+	printf(TAG "prime_import_card0_neg badfd_errno=%d notbuf_errno=%d small_import=%d small_import_errno=%d "
+		"small_addfb_errno=%d released=%d ok=%d\n", e_bad, e_notbuf, rc_imp, e_imp, e_fb,
+		(strcmp(path, "-") != 0) && (name_open_errno(path) == ENOENT), ok);
+	verdict("prime_import_card0_neg", ok);
+}
+
+
 int main(int argc, char **argv)
 {
 	char card_path[64], render_path[64], card1_path[64];
@@ -1627,6 +1804,10 @@ int main(int argc, char **argv)
 		t_prime();
 	}
 	t_prime_render();
+	if (P.buf[0].handle != 0u) {
+		t_prime_card0();
+		t_prime_card0_neg();
+	}
 #ifndef DRMPROBE_NO_FORK
 	t_prime_xproc();
 #else

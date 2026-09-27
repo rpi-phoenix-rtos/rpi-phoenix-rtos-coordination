@@ -10,7 +10,10 @@
  * arena (PHYS = arena offset + base; OID = "/kmsbuf/<id>" and, G4, "/v3dbuf/<id>"
  * descriptors that map only with MAP_UNCACHED, as E1 enforces), DRM events by
  * read(). FAKE_V3DA_PROTO=2 in the environment makes the fake render server a
- * proto-2 one (before G4: HELLO exactly 2, no BO_EXPORT, no /v3dbuf). Jobs complete
+ * proto-2 one (before G4: HELLO exactly 2, no BO_EXPORT, no /v3dbuf);
+ * FAKE_KMS_PROTO=1 makes the fake display server a proto-1 one (before G7: HELLO
+ * exactly 1, no PRIME_IMPORT); FAKE_KMS_IMPORT_HIGH=1 places every imported buffer
+ * above 1 GiB (the case the Pi cannot be made to produce). Jobs complete
  * at submit and flips at commit; there is no GPU, so the CL clear's pixels stay
  * as they were (the harness expects exactly that).
  *
@@ -48,6 +51,7 @@
 #include <sys/msg.h>
 
 #include "kms_proto.h"
+#include "kms_scanout.h"
 #include "v3da_proto.h"
 
 
@@ -75,6 +79,8 @@ static struct {
 	uint32_t deferred_flips;   /* commits that arrived with an unsignalled render fence (G13) */
 	uint32_t fstats, atsizes;  /* mtGetAttrAll / atSize answered (G2 / G3) */
 	int old_v3d;               /* FAKE_V3DA_PROTO=2: a render server from before G4 */
+	int old_kms;               /* FAKE_KMS_PROTO=1: a display server from before G7 */
+	int import_high;           /* FAKE_KMS_IMPORT_HIGH=1: imports land above 1 GiB */
 } F;
 
 uint32_t fake_unaligned_ends(void);
@@ -152,8 +158,16 @@ static struct {
 		int used, exported, prime;
 		uint32_t handle, owner, w, h, pitch;
 		uint64_t size, off;
+		/* G7 imports (as kms_bo.c): the exporter's /v3dbuf name stays open - one
+		 * reference on the render BO - until the handle is closed and no framebuffer
+		 * uses the buffer */
+		int imported, handle_open;
+		int vbo;
+		uint64_t imp_id;
+		const char *why;
 	} bo[NBO];
 	uint32_t next_handle;
+	uint32_t imports, imports_live, imports_released;
 	struct {
 		int used;
 		uint32_t id, owner, bo, w, h, fmt;
@@ -242,7 +256,8 @@ static int bo_find(uint32_t client, uint32_t handle)
 	int i;
 
 	for (i = 0; i < NBO; i++) {
-		if (K.bo[i].used && (K.bo[i].handle == handle) && ((client == 0u) || (K.bo[i].owner == client))) {
+		if (K.bo[i].used && (K.bo[i].handle == handle) && ((client == 0u) || (K.bo[i].owner == client)) &&
+				(!K.bo[i].imported || (K.bo[i].handle_open && (client != 0u)))) {
 			return i;
 		}
 	}
@@ -253,6 +268,29 @@ static int bo_find(uint32_t client, uint32_t handle)
 /* v3d fence check (the -G fence page) */
 static int v3d_fence_done(const kms_fence_t *f);
 static void v3d_complete_all(void);
+/* G7: the reference rpi4-kms's open /v3dbuf descriptor holds on a render BO */
+static int vbo_kms_ref(uint64_t id, uint64_t *size, uint64_t *off);
+static void vbo_kms_unref(uint64_t id);
+
+
+/* An import whose handle is closed goes with its last framebuffer (kms_bo_unref). */
+static void kms_import_maybe_release(int b)
+{
+	int i;
+
+	if ((b < 0) || (b >= NBO) || !K.bo[b].used || !K.bo[b].imported || K.bo[b].handle_open) {
+		return;
+	}
+	for (i = 0; i < NFB; i++) {
+		if (K.fb[i].used && (K.fb[i].bo == (uint32_t)b)) {
+			return;
+		}
+	}
+	vbo_kms_unref(K.bo[b].imp_id);
+	K.imports_live--;
+	K.imports_released++;
+	memset(&K.bo[b], 0, sizeof(K.bo[b]));
+}
 
 static int kms_commit(uint32_t client, const kms_atomic_plane_t *st, uint32_t n, uint32_t flags, uint64_t user,
 	kms_flip_resp_t *out)
@@ -694,20 +732,83 @@ static void kms_handle(msg_t *m)
 			r->u.dumb.size = K.bo[b].size;
 			r->u.dumb.mem.kind = KMS_MEM_OID;
 			r->u.dumb.mem.cache = KMS_CACHE_UNCACHED;
-			r->u.dumb.mem.port = BUF_PORT;
+			r->u.dumb.mem.port = K.bo[b].imported ? VBUF_PORT : BUF_PORT;
 			r->u.dumb.mem.size = K.bo[b].size;
-			r->u.dumb.mem.addr = K.bo[b].handle;
+			r->u.dumb.mem.addr = K.bo[b].imported ? K.bo[b].imp_id : K.bo[b].handle;
 			rc = 0;
 			break;
 		case KMS_OP_DESTROY_DUMB:
 			b = bo_find(c, rq.u.handle.handle);
 			rc = (b < 0) ? -ENOENT : 0;
-			if (b >= 0) {
+			if ((b >= 0) && K.bo[b].imported) {
+				K.bo[b].handle_open = 0;
+				kms_import_maybe_release(b);
+			}
+			else if (b >= 0) {
 				K.bo[b].used = 0;
 			}
 			break;
+		case KMS_OP_PRIME_IMPORT: {
+			const kms_prime_import_req_t *q = &rq.u.prime_import;
+			uint64_t size = 0u, off = 0u;
+			if (F.old_kms) {
+				rc = -EINVAL;   /* a proto-1 server: unknown opcode */
+				break;
+			}
+			if ((q->ns == KMS_IMPORT_NS_KMSBUF) && (q->port == BUF_PORT) && ((b = bo_find(c, (uint32_t)q->id)) >= 0)) {
+				r->u.dumb.handle = K.bo[b].handle;   /* an own export: the original handle */
+				rc = 0;
+				break;
+			}
+			if ((q->ns != KMS_IMPORT_NS_V3DBUF) || (q->port != VBUF_PORT) || (q->pad != 0u)) {
+				rc = -EINVAL;
+				break;
+			}
+			for (i = 0; i < NBO; i++) {   /* the same buffer again: the same handle */
+				if (K.bo[i].used && K.bo[i].imported && K.bo[i].handle_open && (K.bo[i].owner == c) &&
+						(K.bo[i].imp_id == q->id)) {
+					break;
+				}
+			}
+			if (i == NBO) {
+				for (i = 0; (i < NBO) && K.bo[i].used; i++) {
+				}
+				if (i == NBO) {
+					rc = -ENOSPC;
+					break;
+				}
+				if (vbo_kms_ref(q->id, &size, &off) != 0) {
+					rc = -ENOENT;   /* not (or no longer) exported */
+					break;
+				}
+				memset(&K.bo[i], 0, sizeof(K.bo[i]));
+				K.bo[i].used = K.bo[i].imported = K.bo[i].handle_open = 1;
+				K.bo[i].owner = c;
+				K.bo[i].handle = K.next_handle++;
+				K.bo[i].size = size;
+				K.bo[i].off = off;
+				K.bo[i].imp_id = q->id;
+				K.bo[i].why = F.import_high ? "above_1g" : NULL;
+				K.imports++;
+				K.imports_live++;
+			}
+			r->u.dumb.handle = K.bo[i].handle;
+			r->u.dumb.pitch = 0u;
+			r->u.dumb.size = K.bo[i].size;
+			r->u.dumb.mem.kind = KMS_MEM_OID;
+			r->u.dumb.mem.cache = KMS_CACHE_UNCACHED;
+			r->u.dumb.mem.port = VBUF_PORT;
+			r->u.dumb.mem.size = K.bo[i].size;
+			r->u.dumb.mem.addr = K.bo[i].imp_id;
+			rc = 0;
+			break;
+		}
 		case KMS_OP_ADDFB2:
 			b = bo_find(c, rq.u.addfb2.handle);
+			if ((b >= 0) && K.bo[b].imported && (kms_import_fb_why(&rq.u.addfb2, K.bo[b].size, K.bo[b].why) != NULL)) {
+				rc = -EINVAL;   /* the real server's rule (kms_scanout.h), refused at ADDFB2 */
+				break;
+			}
 			if ((b < 0) || ((rq.u.addfb2.format != KMS_FMT_XRGB8888) && (rq.u.addfb2.format != KMS_FMT_ARGB8888)) ||
 					(rq.u.addfb2.pitch < rq.u.addfb2.width * 4u) || (rq.u.addfb2.modifier != KMS_MOD_LINEAR)) {
 				rc = (b < 0) ? -ENOENT : -EINVAL;
@@ -734,6 +835,7 @@ static void kms_handle(msg_t *m)
 			rc = ((f < 0) || (K.fb[f].owner != c)) ? -ENOENT : 0;
 			if (rc == 0) {
 				K.fb[f].used = 0;
+				kms_import_maybe_release((int)K.fb[f].bo);
 			}
 			break;
 		case KMS_OP_PAGE_FLIP: {
@@ -942,6 +1044,32 @@ static void vbo_unref(int b)
 		V.imports_closed += V.bo[b].imported ? 1u : 0u;
 		V.exports -= V.bo[b].exported ? 1u : 0u;
 		memset(&V.bo[b], 0, sizeof(V.bo[b]));
+	}
+}
+
+
+static int vbo_kms_ref(uint64_t id, uint64_t *size, uint64_t *off)
+{
+	int b = vbuf_find(id);
+
+	if (b < 0) {
+		return -ENOENT;
+	}
+	V.bo[b].fd_opens++;   /* rpi4-kms open()s the name and keeps the descriptor */
+	V.bo[b].refs++;
+	*size = V.bo[b].size;
+	*off = V.bo[b].off;
+	return 0;
+}
+
+
+static void vbo_kms_unref(uint64_t id)
+{
+	int b = (id <= 0xffffffffu) ? bo_by_handle((uint32_t)id) : -1;
+
+	if ((b >= 0) && (V.bo[b].fd_opens > 0u)) {
+		V.bo[b].fd_opens--;
+		vbo_unref(b);
 	}
 }
 
@@ -1633,12 +1761,12 @@ int __real_ioctl(int fd, unsigned long req, ...)
 	}
 	if ((req == KMS_IOC_HELLO) && (F.kind[fd] == K_KMS)) {
 		kms_hello_t *h = arg;
-		if (h->proto != KMS_PROTO_VERSION) {
-			errno = EPROTO;
+		if (F.old_kms ? (h->proto != KMS_PROTO_BASE) : ((h->proto < KMS_PROTO_BASE) || (h->proto > KMS_PROTO_VERSION))) {
+			errno = EPROTO;   /* a proto-1 server takes exactly 1; the G7 server BASE..VERSION */
 			return -1;
 		}
 		memset(h, 0, sizeof(*h));
-		h->proto = KMS_PROTO_VERSION;
+		h->proto = F.old_kms ? KMS_PROTO_BASE : KMS_PROTO_VERSION;
 		h->client_id = F.client[fd];
 		h->server_pid = 42;
 		h->backend = KMS_BACKEND_PLANE;
@@ -1781,6 +1909,13 @@ void fake_m3p2(uint32_t *fstats, uint32_t *atsizes, uint32_t *imports, uint32_t 
 }
 void fake_set_dri(int on) { F.dri = on; }
 void fake_set_old_v3d(int on) { F.old_v3d = on; }
+void fake_set_kms(int old_kms, int import_high) { F.old_kms = old_kms; F.import_high = import_high; }
+void fake_g7(uint32_t *imports, uint32_t *imports_live, uint32_t *imports_released)
+{
+	*imports = K.imports;
+	*imports_live = K.imports_live;
+	*imports_released = K.imports_released;
+}
 void fake_g4(uint32_t *exports_live, uint32_t *v3dbuf_imports, uint32_t *bos_live)
 {
 	uint32_t i, n = 0;

@@ -1318,6 +1318,9 @@ static int ioc_prime_export(drmphx_conn_t *c, struct drm_prime_handle *ph)
 		m.size = r.u.bo.mem.size;
 		m.addr = r.u.bo.mem.addr;
 		ns = V3DA_BUF_NS;
+		/* G13 for G7: a flip on card0 of this export (imported there by this process)
+		 * waits for this BO's renders, exactly like a flip of an imported dumb buffer. */
+		implicit_note(c, m.port, m.addr, ph->handle);
 	}
 	(void)snprintf(path, sizeof(path), "%s/%llu", ns, (unsigned long long)m.addr);
 	bfd = open(path, O_RDONLY | (((ph->flags & DRM_CLOEXEC) != 0u) ? O_CLOEXEC : 0));   /* O_RDONLY: E1 */

@@ -161,7 +161,7 @@ static int kconnect(void)
 		return -1;
 	}
 	memset(&k.h, 0, sizeof(k.h));
-	k.h.proto = KMS_PROTO_VERSION;
+	k.h.proto = KMS_PROTO_BASE;   /* uses nothing newer: works with every rpi4-kms since M2 Stage A */
 	if (ioctl(k.fd, KMS_IOC_HELLO, &k.h) < 0) {
 		kt("connect FAIL hello errno=%d", errno);
 		return -1;
