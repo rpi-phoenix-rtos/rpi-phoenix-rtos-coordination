@@ -130,6 +130,73 @@ pre-registered rule (≥ 1 fire) the kernel change (`8cf9e488` + `33af3e81`) doe
 than c1b13 (1/4 vs 4/4) but that is not significant at n = 4 (Fisher p ≈ 0.14): "lower, not established". Next, if
 anything: ≥ 8 more cold trials on build 18 before reading the rate at all.
 
+### 📋 PRE-REGISTERED 2026-09-28 00:55, before any data — `c1prov`: who held the victim page before malloc?
+
+§6's open row. **Instrument:** a kernel log of every allocation, free and user `MAP_PHYSMEM` mapping of each page in the
+band `0x08000000`–`0x08600000` (all victim PAs so far, both lanes), 8 events per page, with pid, ms tick, block size and
+kind (`anon` user anonymous, `cow`, `file` page cache, `contig` = `MAP_CONTIGUOUS` block, `msg` kernel message copy,
+`kanon` kernel-map anonymous, `kheap`/`ptable`/`pmap`/`kstack`/`kernel`, `phys`/`physuc`/`physdev` = a physical mapping;
+`pid=-1` = before the scheduler started). The C1 detector asks for the victim's page the moment it fires, through
+`meminfo()` with a magic (no new syscall; a stock kernel ignores it and the detector then prints `c1prov = NO ANSWER`).
+⚠ An anonymous heap is faulted in **one order-0 page at a time**, so a 13-page heap never takes a 13-page buddy block:
+§6's "competing for the same high-order pool" does not hold at the allocator, and a `contig` previous owner would be the
+page's own history, not pool competition.
+
+**Build:** kernel `c1/page-provenance` `cdc7201c` + libphoenix `c1/page-provenance` `36c43d7` (both on today's master,
+`0edb27d8` / `a41d8d5`), everything else master. `KERNEL_DIAG='-DC1_PAGE_PROVENANCE' LIBC_DIAG='-DC1_PAGE_PROVENANCE'
+./scripts/rebuild-rpi4b-fast.sh --scope core` (each knob deletes its object tree when it changes state). Gates, before any
+trial: `strings .buildroot/_boot/aarch64a72-generic-rpi4b/rpi4b-bootfs/loader.disk | grep -c 'C1PROV d='` ≥ 1 (kernel) and
+`strings .buildroot/_fs/aarch64a72-generic-rpi4b/root/usr/bin/supertuxkart | grep -c 'c1prov = NO ANSWER'` ≥ 1 (STK
+links its own libc copy — if 0, `scripts/force-port-rebuild.sh supertuxkart` and rebuild). Afterwards rebuild with both
+knobs unset and require both counts to be 0. The instrumented kernel is ~200 KiB larger in BSS, so the layout differs from
+every earlier build: read the victim PA against the band before reading anything else.
+
+**Method:** as `c1b13`: all-cold trials (cache cleared before each), `C1_HEAP_TRACE_ALL=1 stk --track=hacienda
+--numkarts=4 --profile-laps=2`, labels `c1provC1..N`, fires graded by `scripts/c1-idle-table.sh c1prov <driver-log>`.
+**N = 8**, stopping early after 2 fires that each carry a readable victim dump. At the cold rate (1/4 in c1b18, 4/4 in
+c1b13) P(0 fires in 8) ≈ 0.10 at 25 % and ≈ 0.004 at 50 %. 0 of 8 → "enriched towards not firing with the instrument, n = 8",
+never "suppressed"; the next step is more trials, not a reading.
+
+**Reading a dump:** `grep -a 'C1PROV '` (klog lines carry colour prefixes — do not anchor at `^`; kernel lines print once).
+Drop every line whose `ck=` is not the byte sum mod 0x10000 of the text from `C1PROV` up to ` ck=` (the UART flips ~1.3 %
+of lines). `d=<n>.<reason>` groups a dump: reason 1 = poison break (`p4pa`), 2 = corrupt header (`hpa`), 0 / 3 = controls.
+Each dump is a header (`ev=now`, the page's `total` events ever and `depth=8`) then its events oldest-first; `age` is ms
+before the dump. The **previous owner** is the last `ev=alloc` before the `ev=free` that precedes STK's own `ev=alloc` of
+the page.
+
+**Positive control, every trial, fired or not:** with `C1_HEAP_TRACE_ALL=1` the allocator dumps STK's first 2 in-band heaps
+(reason 0) and its first out-of-band heap (reason 3). Pass = a reason-0 dump whose newest event is `ev=alloc kind=anon`
+with `pid` = the header's `pid` (STK) and `age` < 1000, **and** a reason-3 line `ev=oob`. A trial whose controls fail, or
+that prints `NO ANSWER`, is void for this question. The reason-0 dumps are also the **baseline**: the previous owners of
+ordinary in-band heap pages (≤ 16 over the series) against which the victims' are compared.
+
+**Readings, fixed now** (for the victim page; each is "the victim's previous owner was …"):
+- **`contig`, freed shortly before malloc took the page** (the free's `age` minus STK's alloc's `age` in seconds, not
+  minutes). `who` = SuperTuxKart → a closed V3D BO, the recycled-contiguous-block picture, and the GPU (or firmware
+  acting for it) is the writer to chase. `who` = a driver (`lwip`, `usb`, `bcm2711-emmc`, `rpi4-audio`, …) → that
+  driver's DMA buffer, and PA-logging for that driver (§6's last row) is the next instrument. Evidence only if `contig`
+  is **rarer among the baseline** than among victims; `contig` in both = where the band's pages come from, not a cause.
+- **`anon` / `cow` / `file`** (an ordinary user page, freed with its process or mapping) → the writer is **not** a device
+  that still owns the page; it holds the PA from further back, or it is a virtual-address writer inside the current
+  owner. Read the rest of the ring for any `contig` or `phys` owner; if none, the stale-PA-from-a-recent-owner picture
+  is weakened for this victim.
+- **Kernel-internal** (`kheap`, `ptable`, `pmap`, `kstack`, `kanon`, `msg`) → a stale **kernel** pointer (the `c1pfn1`
+  `resource_t` victim is this shape); the next instrument is kernel-side (kmalloc zone / page-table frees).
+- **A `phys`/`physuc`/`physdev` event anywhere in the page's ring** → some process mapped this RAM page by physical
+  address; that `who` is the prime suspect whatever the owner chain says.
+- **No history before malloc**: STK's `ev=alloc` is the page's first event, or the free before it is `kind=none` (a
+  boot-time owner, never allocated since boot) or `pid=-1` → the writer holds a PA from **before the log started** —
+  boot-time, the firmware / `loader.disk` load (the band is where the firmware put that file), or a pre-kernel DMA.
+- **The newest event is not STK's `ev=alloc kind=anon`** (the header says `free=1`, or another pid allocated it last)
+  while STK still uses the page → the kernel handed out or freed a page that is still mapped: a VM bug, and it outranks
+  every reading above.
+- **Not readings:** `total` > 8 with only STK's own churn left in the ring (history lost — deepen `C1PROV_DEPTH`, re-run);
+  `ev=oob` on the victim (the band moved with the new layout — widen it with `-DC1PROV_BAND_LO/HI`, re-run);
+  `NO ANSWER` (build fault).
+
+⚠ AGENTS.md's probe-parity rule asks for a QEMU run of a new kernel probe; the recording path is exercised by every boot
+(it runs on each allocation), so a QEMU boot to `(psh)%` on this kernel is the minimum before the Pi series.
+
 ## 4. What is established
 
 | finding | evidence | strength |
@@ -209,7 +276,7 @@ a recycled contiguous block**, and a closed BO is merely the one previous owner 
 | Is the 0.86–5.83 MiB band special, or just where *late* heaps land? (`capa` only sees the first 64 heaps — startup, at 58–77 MiB.) | `hpalo` / `hpahi` / `hpalast` on the pace line | ✅ **answered** — special (`c1cold`, §4) |
 | When did the write happen, versus when was it seen? | `p4age` / `p4tick` — poison-write tick per page, reported at the break | ✅ **answered** — seen long after (`c1cold`, §4) |
 | Is the victim band anchored to the firmware-loaded `loader.disk` (at `0x08000000`), or fixed in absolute PA? Archive audit 2026-09-26 (18 victim PAs, 9 runs, each against **its own** build's image end from the build log): **12 inside the image, 5 within +122…+291 KiB past its end, 1 at +1.25 MiB, none below 0.86 MiB**. The earlier "inside the initramfs is refuted" compared victims with OTHER builds' sizes; no victim with a logged PA ever ran with an image under 4.60 MiB, so that refutation does not stand. The kernel reserves none of these pages (plo copies programs out; `pmap_getPage` reserves kernel, programs, DTB at `0x2eff1000`, `/reserved-memory`) — they are ordinary free pages whose only distinction is that the firmware wrote the file there. The archive cannot separate anchored from fixed: the image end moved only 40 KiB across these builds. Table: [done/c1-victim-pa-vs-image-end-2026-09-26.tsv](done/c1-victim-pa-vs-image-end-2026-09-26.tsv) | **pad `loader.disk` by +2 MiB** (`c1pad`) | ✅ **answered 2026-09-26 — FIXED in physical memory**: with the image end moved `0x084a5780` → `0x086a5780`, six new victim pages stayed in `0x083dc000`–`0x084c2000`. SD lane (`c1sd3`, 2026-09-26): **fires (1/4), victim at `0x0801c000`** — lane-specific location, not netboot-only; the bootloader TFTP/GENET lead is dropped |
-| Who owned the victim page before malloc, when it was not a V3D BO? | kernel-side log of every `MAP_CONTIGUOUS` allocation's physical range | not started — waits on the band answer |
+| Who owned the victim page before malloc, when it was not a V3D BO? | kernel-side per-page provenance log of the band (`-DC1_PAGE_PROVENANCE`: every alloc / free / physical mapping, with pid and kind) | 🔧 **built, not run** — branches `c1/page-provenance`; read pre-registered in §3 (`c1prov`) |
 | Does the late heap burst matter? `c1ccC3` alone had a second burst at t ≈ 290 s in which ~1 new heap in 3 landed on a just-closed BO page (2.4 % at startup). | re-observe with the knob | one event; may explain the archive's late fatal cluster |
 | Which DMA masters are live during a run? | PA-logging for genet, ADMA2/eMMC, HVS, rpivid | not started |
 
