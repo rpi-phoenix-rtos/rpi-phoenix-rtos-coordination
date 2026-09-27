@@ -298,3 +298,18 @@ threads; now it does. Build: `rebuild-rpi4b-fast.sh --scope core --with-tests --
    8.34), X desktop `startx_gpu` reaches Window Maker on HDMI; 0 `Exception #` lines, 0 wedges.
    A hang in `util_queue_finish` (a barrier that never releases) would show as an app that stops mid-run
    with the GPU idle — the one new failure mode this change can introduce.
+
+### Result — build 10 gate (queue19c, 2026-09-27 05:20–05:38): **PASS**, merged and pushed
+
+- Build: first attempt failed in the tests stage (`assert_static.c` redefined `NDEBUG`, which the target
+  build passes; fixed tests `32ec3ca`); retry `BUILD_RC` good, image exported, every port rebuilt and
+  installed (STK via its own relink). `libphoenix.a`: `T pthread_barrier_wait`, `T open_memstream`, `T scandir`.
+- Unity groups on the Pi: **9 of 10 OK**; `stdlib_inttypes` FAIL at line 77 — `sscanf("-0x10", "%li")`
+  stored 0. A real, pre-existing libphoenix `scanf` bug the new test was written to catch (its hex-prefix
+  test ignored a leading sign); fixed in libphoenix `5020478` together with bare-`0x` handling, host
+  harness 20 diffs → 0 vs glibc. Pi re-run of the group pending the next core build.
+- Old-lane showcase with real barriers: quakespasm **33.4 fps**, STK **8.59 fps** (70 windows), Window
+  Maker desktop on HDMI; 0 `Exception #` lines, no hang. Pushed: libphoenix, tests, devices, ports;
+  branches and worktrees deleted; manifest `2026-09-27-build10-libc-gaps.md`.
+- Follow-up: `tools/gpu-lane/mesa-drm/compat/` and `xorg-drm`'s compat dir can drop the shims these
+  commits made redundant (they compile only while the symbol is missing, so nothing breaks meanwhile).

@@ -80,3 +80,4 @@ lane**, then migrate every GPU user and delete the old lane.
   E2c Pi OS baseline → WiFi first-join wake test. Agents: M3 libdrm-phoenix (running), M1 EINVAL-draw
   analysis (server tags every submit reject), M1 `stk-v3da` clone build.
 - 2026-09-27 04:10: overnight queues done. **STK on the new lane = Pi OS parity** (12.1 vs 11.7 fps; old lane 8.3); E2c shows Pi OS is GPU-bound at the same render cost (E2b's 3× premise void); EINVAL fix confirmed; core_freq=500 adopted; H7 refuted; M2 display PASS / events FAIL (fix with M3p2).
+- 2026-09-27 05:45: **kmscube + quakespasm-drm render on HDMI through the whole new stack** (poll-capped ~30/24 fps; kernel poll-wake agent). Build 10 (libc-gaps merge) gate PASS and pushed; the new inttypes test found a real scanf bug (fixed `5020478`). Xorg-drm built; M4 first cycle `m4a` running.
