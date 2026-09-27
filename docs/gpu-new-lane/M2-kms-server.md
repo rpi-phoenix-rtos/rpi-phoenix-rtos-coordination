@@ -622,3 +622,21 @@ three `KMS srv read_dump` lines per server run with `packed=1 bytes=32` and `fir
 after each `KMS srv exit … restored=1`: **no** `Exception` dump (uart-summary: 0 EL0, 0 kernel).
 If events are still zero with `packed=1` in the server dump but correct `first16`: the respond path
 drops `o.raw` (kernel) — escalate; if `first16` is zero: the queue itself holds zeros (`ev_vblank`).
+
+### Cycle `m2-kms-b` (queue17, 2026-09-27 04:25, `out-m3p2` binaries) — **PASS**
+
+Same §13 command list as `m2-kms-a`, with the fixed rpi4-kms / kmstest. 0 exceptions (the exit crash
+is gone: `KMS srv exit flips_completed=602 … restored=1` with no dump after it).
+
+| test | result |
+|---|---|
+| info, pool | PASS |
+| flip, plane backend | **600/600 at 60.00 fps**, 0 missed/errors, 599 on-time; interval p1/p50/max **16665/16667/16670 µs**; commit→event p50 16.6 ms (one frame, as designed); event delivery p50 **28 µs**; apply p50 71 µs |
+| vblank | PASS |
+| flip, pan backend | 300/300 at 60.00 fps, same timing |
+| negative test (pool BO on pan) | `flip_rc=-22` PASS |
+
+The event fix is proved independently in `m3p2-drmprobe` (server/client `read_dump` words agree).
+**M2 Stage A core is done on hardware:** firmware planes, vsync-locked atomic flips with events,
+dumb-BO pool, vblank IRQ, test-only/EBUSY semantics, pan fallback. (fbdev emulation, if still wanted,
+is the remaining Stage A item.)
