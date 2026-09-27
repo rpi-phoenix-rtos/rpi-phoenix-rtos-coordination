@@ -1200,3 +1200,23 @@ handle, `<h>` = a render handle / `/v3dbuf` id, `<c>` = a kms client id.
 on-screen lifetime). Rows 9–11 PASS = Weston direct scan-out of a GPU client works; M4's Present flips
 of client pixmaps need only G7 + (for tear-free) cross-process implicit sync (`BO_LAST_FENCE`), which is
 the next gap.
+
+## Result — `m6h-g7` (queue41, 2026-09-27 14:44): ✅ PASS — direct scanout of client buffers, 45 fps
+
+Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-144453-m6h-g7.log` (pre-boot UART flood; boot normal); HDMI
+`artifacts/hdmi/20260927-145037-m6h-g7-tick.png` (the triangle, clean).
+
+- **drmprobe-g7: `DRMPROBE RESULT pass=44 fail=0 gap=0 … verdict=PASS`**: `prime_import_card0 … shown=1 …
+  alive_while_shown=1` (a render-node buffer imported on card0 and flipped onto the plane, 8 colour bands), UIF and
+  short-pitch ADDFB2 refused (`errno 22`), negatives `badfd=9 notbuf=22 small_addfb=22`.
+- Weston (`weston-g7`, `shared_scanout=0`): **`KMS scanout import fb=… (first flip)` ×4** = client buffers
+  scanned out directly, no GL composition. Two client buffers landed above 1 GiB and were refused cleanly
+  (`KMS fb FAIL … why=above_1g rc=-22`); Weston fell back to composition for those, as designed.
+- `weston-simple-egl`: `8.4` (the window with the imports), then **`45.2`, `45.0`, `45.0` fps** (m6g, GL
+  composition: 30.0). `KMS srv flipstat flips=907 vbl1=614 vbl2=293 deferred=285 applied_gate=285 dropped_events=0`.
+- Exit `weston exited rc=0 after_term_s=1`; `KMSTEST … apply_errors=0 dropped=0 bos=0 exports=0`;
+  `V3DAPING bos_live=0`; 0 exceptions.
+
+**Decides:** G7 works on hardware. Direct scanout lifts the GPU client from 30 to 45 fps. Placement above 1 GiB
+is a real, measured case (2 of ~6 client buffers), so render-server placement below 1 GiB for shareable BOs is
+worth doing. No tearing seen, though the cross-process fence (G6) is not in yet (agent).
