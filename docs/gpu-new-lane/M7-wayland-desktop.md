@@ -1724,10 +1724,15 @@ a person with the USB keyboard/mouse (otherwise **n/a**, not FAIL).
 | 12 | **HDMI, presentation:** a **black** full screen with **one page** centred and scaled to the height (page 1: the shapes large), no toolbar/menus | Atril's presentation mode (EvViewPresentation) | a white/grey window instead: presentation mode not entered (note) |
 | 13 | stop: `XFCE atril exited mode=presentation rc=143`, `XFCE quit panel_rc=0 …` (xfdesktop may be 143 as in m7h), `XFCE labwc exited rc=0 … socket=gone`, `XFCE dbus exited rc=0 … socket=gone`, `XFCE done` | clean shutdown | m7h row 12's alternatives |
 | 14 | `SHMSRV stats rc=0 live=0 bytes=0`, `KMSTEST stats … bos=0` | all released (three Atril processes came and went) | `live>0`: a pool outlived Atril |
-| 15 | fault dumps | 0 kernel, 0 EL0 | EL0 in atril: addr2line (row 3) |
+| 15 | fault dumps | 0 kernel, 0 EL0 | EL0 in atril: addr2line (row 3). Atril renders on GLib job threads (`g_thread_new`, stack size 0 → libphoenix's aarch64 default **256 KiB**, `PTHREAD_STACK_DEFAULT`), and Poppler's parser/`Gfx` recurse: a data abort in a non-main thread with `far` a few KB below that thread's stack = **stack size, not a Poppler bug** |
 | 16 | **bench** (window arm): **Page Down** / **Space** → page 2 (the colour field + checkerboard; the page box reads `2`), again → page 3 (the table); **Page Up** / **BackSpace** back; **Ctrl+Home** / **Ctrl+End** first/last page | Atril's navigation keys | nothing: keyboard focus (labwc-2 keyboard rows of m7b2) |
 | 17 | **bench:** **Ctrl++ / Ctrl+−** zoom; **F11** toggles full screen (as row 10) and back; **F5** starts the presentation (as row 12), **Right/Left** or **Page Down/Up** move pages there, **Esc** leaves it | fullscreen/presentation from inside a running window | — |
 | 18 | **bench:** the panel's Applications menu → **Office → Atril Document Viewer** starts `/bin/atril-wl` (an empty window; File → Open… shows GTK's file chooser, open `/usr/share/doc/phoenix/sample.pdf`); fuzzel (`Super+Space` in the demo session) lists "Atril Document Viewer" | the `.desktop` entry; patch 0005 without the script's environment | an abort on the schema: patch 0005 not in the binary (`strings -a /bin/atril-wl \| grep /usr/share/atril/schemas`) |
+
+**Coverage before the cycle:** the host test ran libdocument, the built-in backend table and Poppler's rendering
+(the thumbnailer path) — but **Atril's shell (`main()`, EggSMClient without a backend, the GtkImageMenuItem menus,
+patch 0005's `GSETTINGS_SCHEMA_DIR` append, the stock icons, EvView/presentation) was compiled, never executed**,
+and this is the lane's first C++ program with exceptions and `std::mutex` on the target. `m7j` is its first run.
 
 **Decides:** rows 3–7 = a PDF viewer runs on Phoenix-RTOS (Poppler + GTK 3 on Wayland); rows 9–12 = full-screen
 and presentation rendering; 13–15 = clean exit, no leaks.
