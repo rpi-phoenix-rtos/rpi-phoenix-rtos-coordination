@@ -12,6 +12,7 @@ desktop (`startx_gpu`) stays untouched until the migration retires it.
 | compositor / WM | **labwc** (wlroots, stacking, Openbox-style) | small C codebase, monthly releases, and Raspberry Pi OS's default desktop since 2024, so it is proven on this SoC; configured by XML/INI files, with no settings daemon |
 | library | **wlroots** 0.18/0.19 (whichever labwc release pins) | the DRM/GBM/EGL/libinput/libseat backends are the same set M6 already ported for Weston |
 | terminal (**required**, owner 2026-09-27) | **foot** | a modern terminal: Wayland-native, true colour, full Unicode with font fallback (fcft + harfbuzz), fast CPU rendering, scrollback, clipboard, URL detection; small (fontconfig/freetype/pixman/xkbcommon + fcft/tllist, MIT) |
+| file manager (**required**, owner 2026-09-27) | **PCManFM** (GTK3, native Wayland backend), with **Midnight Commander** (`mc`, already ported) in foot as the stage-1 file manager | PCManFM is what Raspberry Pi OS ships with labwc: light, maintained, single-process; GTK3 also enables the GTK panel (sfwbar). Thunar needs the XFCE libraries; Nautilus is far heavier |
 | launcher | **fuzzel** | Wayland-native, small, same dependencies as foot |
 | wallpaper | **swaybg** | tiny; cairo only |
 | panel (stage 2) | **sfwbar** (GTK3) or **yambar** (no GTK) | a panel is optional for "minimal"; yambar first if GTK3 is too much |
@@ -37,7 +38,8 @@ fix), shmsrv for wl_shm, Mesa GBM/EGL/GLES (static, `--wayland`), libdrm-phoenix
    autostart that starts swaybg + foot).
 3. **foot** (required, with fcft/tllist; labwc's autostart opens one foot window), then **fuzzel**, **swaybg**: static clients; fonts from the X11 port's fontconfig setup (the NFS
    fontconfig trap is in memory).
-4. A launcher script `labwc-desktop.sh` in the same shape as `weston-m6a.sh`: it starts the servers, sets
+4. **File manager**: `mc` in foot from the labwc root menu at once; then **GTK3 with only the Wayland GDK backend** (new: pango, fribidi, gdk-pixbuf, libepoxy, gtk3; already built: glib2, cairo, harfbuzz, fontconfig, freetype, pixman, libpng, libffi, expat), then **libfm + menu-cache + PCManFM**. GTK3 is tested under Weston (M6) first, so it does not wait for labwc.
+5. A launcher script `labwc-desktop.sh` in the same shape as `weston-m6a.sh`: it starts the servers, sets
    `XDG_RUNTIME_DIR`, starts labwc, holds, stops on SIGTERM.
 
 ## Pi milestones (pre-registered as each piece lands)
@@ -47,6 +49,8 @@ fix), shmsrv for wl_shm, Mesa GBM/EGL/GLES (static, `--wayland`), libdrm-phoenix
 | `m7a-labwc` | labwc starts on HDMI (output enabled, cursor, root menu) with pixman then GLES2 |
 | `m7b-foot` | foot opens in labwc and draws text; keyboard input reaches it (`rpi4-kms -C` frees the console keyboard) |
 | `m7c-desktop` | wallpaper + foot + fuzzel launcher; window move/resize with the mouse; clean exit |
+| `m7e-gtk3` | a GTK3 demo window (gtk3-demo / a minimal GtkWindow) under Weston, then under labwc |
+| `m7f-pcmanfm` | PCManFM browses `/` and `/usr/share` under labwc: icons, a folder open by double-click, a file copy |
 | `m7d-gl-client` | weston-simple-egl / kmscube-style GL client inside labwc (G4/G6/G7 in a real compositor) |
 
 ## Scheduling
