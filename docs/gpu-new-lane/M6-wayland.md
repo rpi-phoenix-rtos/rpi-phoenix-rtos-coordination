@@ -599,7 +599,10 @@ unblock, the poll in progress is interrupted, the loop retries, and no wake-up i
 Phoenix pick the target thread by the same rule here (any thread whose mask admits the signal, else
 process-pending). What it does **not** prove: Phoenix's own `poll()` interruption (R4: whether
 `_thread_interrupt` wakes a thread sleeping in `poll`, and whether it returns EINTR or restarts),
-and delivery at the unblock syscall on Phoenix. The Pi run answers those.
+and delivery at the unblock syscall on Phoenix. Nor does it cover one Phoenix window: a signal posted
+after the unblock returns but before the thread sleeps in `poll()` finds it running, not
+interruptible, and waits in `proc->sigpend` until `poll()` returns for another reason, unless the
+kernel checks for pending signals before it sleeps. The Pi run answers those.
 
 **Trace** (`WLPHX_TRACE=1`; `weston-m6a.sh` now passes it, default 1; off in the binary by
 default). All lines start with `WLPHX `:
