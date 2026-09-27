@@ -260,7 +260,7 @@ coincidence of offset and value is not.
 
 ## 9. Records
 
-- Weekly log, night of 2026-09-25/26: [inprogress/WEEK-2026-W39.md](inprogress/WEEK-2026-W39.md) §0
+- Weekly log, night of 2026-09-25/26: [inprogress/WEEK-2026-W39.md](done/WEEK-2026-W39.md) §0
 - Hunt night 2026-09-25: [misc/2026-09-25-c1-hunt-night.md](misc/2026-09-25-c1-hunt-night.md)
 - Everything before: [misc/2026-09-25-c1-dossier.md](misc/2026-09-25-c1-dossier.md)
 - Rollback point for the pacing instrument: [../manifests/2026-09-26-c1-pacing-instrument.md](../manifests/2026-09-26-c1-pacing-instrument.md)
