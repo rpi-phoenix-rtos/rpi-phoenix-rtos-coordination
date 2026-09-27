@@ -250,6 +250,18 @@ EL0 residual still open. Working notes:
 
 Most of the lifetime and race work is in §3. What is specific to robustness here:
 
+- ★ **fork()+exec no longer freezes the system** (`hal/aarch64/pmap.c` `8cf9e488`, `proc/{process,threads}.c` `33af3e81`).
+  On aarch64 a switch to the kernel pmap left the last user table in TTBR0, so an idle CPU kept a table that exec
+  or exit then freed, together with its ASID, which the allocator re-issues at once (a speculative walk can cache
+  translations from freed, reused pages). It now installs an all-invalid table with the never-allocated ASID. And a
+  fork child could size its kernel-stack copy from the parent's context before the parent had saved it; the child
+  now waits. A/B on the Pi: `spawn-storm -f` froze the whole system 3 of 3 runs (within 16–38 launches) before,
+  0 of 3 runs (1500/1500 launches) after. The two changes are not yet separated. Same code upstream.
+- **`vm_mapFlags()` returned the neighbouring mapping's flags** (`vm/map.c`, `3da3fb38`). It searched for the
+  page-sized range starting at an unaligned address, which also overlaps the next mapping; for a buffer just
+  below an MMIO mapping it answered `MAP_DEVICE`. That made `msg_map` copy an ordinary payload through a Device view
+  (the P10 fault storm) and, before `794bf591`, could copy a cacheable payload through a non-cacheable view. It now
+  looks up the page holding the address. Test `test-msg-devmem msg_devnext`, 17/0 on the Pi. Same code upstream.
 - ★ **A message payload in device memory is refused instead of looping the kernel** (`proc/msg.c`, `hal/aarch64/arch/pmap.h`,
   `794bf591`). `msg_map` copied a partial first/last page through a kernel view with the sender's memory type; for
   Device memory (a `MAP_DEVICE` mapping) the unaligned `hal_memcpy` takes an alignment fault that no mapping can
