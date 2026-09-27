@@ -1,7 +1,10 @@
 # EL1 alignment-fault storm in `msg_map` (cycle `mig-q3`, 2026-09-27)
 
-**Status:** kernel half fixed on a branch, not yet on the Pi. The sending
-process is **not yet named** (see §3), so the user-space half is still open.
+**Status:** root cause found and fixed in the kernel, not yet on the Pi (§8).
+The storm and the later refusals were a **kernel lookup bug**: `vm_mapFlags`
+gave an unaligned payload in ordinary memory the flags of the mapping *above*
+it. The payload was the render server's stdout buffer, which is ordinary RAM.
+§3's conclusion that the sender "wrote from inside an MMIO page" is wrong (§8.4).
 
 | | |
 |---|---|
@@ -9,6 +12,9 @@ process is **not yet named** (see §3), so the user-space half is still open.
 | Kernel fix | `phoenix-rtos-kernel` branch `fix/msg-map-uncached-align`, `794bf591` (on `publish`) |
 | Test | `phoenix-rtos-tests` branch `fix/msg-map-uncached-align`, `b52301c`: `test-msg-devmem` (**unsafe on old kernels**, §5) |
 | Kernel the log ran | `fb8b66ee` (the image's manifest lines, same as `mig-q2`) |
+| Root-cause fix | `phoenix-rtos-kernel` master `3da3fb38` (`vm_mapFlags`, §8), on `publish` |
+| Test for it | `phoenix-rtos-tests` master `295cc14`: group `msg_devnext` of `test-msg-devmem` |
+| Sender-naming log | `artifacts/rpi4b-uart/rpi4b-uart-20260927-163009-mig-q3-fix.log` (build 17, kernel `794bf591`) |
 
 ## 1. What the log shows
 
@@ -105,6 +111,10 @@ is "resolved" the same way and retried for ever, silently.
   loop at EL0.
 
 ## 3. The sender: a process with an MMIO mapping, not quake3e-drm
+
+> **Corrected by §8.** The sender is the render server, but page 0x4000 is its
+> stdout buffer, ordinary memory. Its GPU registers are mapped in the page
+> directly above it, and `vm_mapFlags` returned that mapping's flags.
 
 User VA 0x4049 is in the low mmap area: programs link at 0x400000 and
 `mmap(NULL, …)` takes the lowest free gap from 0x1000, so page 0x4000 is an
@@ -241,6 +251,192 @@ Build the kernel branch into a `--scope core` image and confirm it ships:
 
 ## 7. Proposed KNOWN-ISSUES row
 
+(Historical. The register row is P10, and it has been updated for §8.)
+
 Not added to the register (proposal only):
 
 > | C? | **A 59-byte `write()` from an MMIO page loops the kernel.** `msg_map` copied the partial page through a Device-type kernel view; the unaligned `ldp` alignment-faults, `map_pageFault` "resolves" it by re-forcing the same PTE, and pl011-tty's thread retried it for 300 s (`mig-q3`, ~4200 EL1 dumps, `attr`=0x39 ⇒ sender mapping `MAP_DEVICE\|MAP_UNCACHED` at VA 0x4049). The sender has an MMIO mapping, so it is a server or driver, not quake3e-drm. | **Kernel half fixed on a branch, not on the Pi yet** (kernel `fix/msg-map-uncached-align` `794bf591`: device payloads refused with `EINVAL` plus a line naming the sender; test `test-msg-devmem`, tests `b52301c`, unsafe on old kernels). Sender not named yet: pre-registered cycles `mig-q3-fix` + `msgdevmem`. The EL1 retry loop for unresolvable faults stays (no fixup table). [details](misc/2026-09-27-el1-msg-map-uncached-fault.md) |
+
+## 8. Sender named: the render server
+
+Cycle `mig-q3-fix` (build 17, kernel `794bf591`, same staging as `mig-q3`) named
+the sender and ended the storm (0 EL1 dumps, quake3-drm plays q3dm1). The
+kernel printed three lines, all at about 83 s, while quake3-drm was loading:
+
+```
+msg: refused a payload in device memory (99 bytes at 0000000000004021) from /bin/rpi4-v3d-async-m3p2 (PID 26)
+msg: refused a payload in device memory (130 bytes at 0000000000004002) from /bin/rpi4-v3d-async-m3p2 (PID 26)
+msg: refused a payload in device memory (161 bytes at 0000000000004021) from /bin/rpi4-v3d-async-m3p2 (PID 26)
+```
+
+The binary is `out-m3p2/rpi4-v3d-async` of `tools/gpu-lane/v3d-async`
+(sha256 `ea13136832989089434d2d77e571adc8d592f39fbc16bbca13d25e18bcb69b89`,
+built 2026-09-27 00:50, identical to `/srv/phoenix-rpi4-nfs-gcc16/bin/rpi4-v3d-async-m3p2`).
+**The server is not at fault and was not changed or rebuilt.** Page 0x4000 is
+its stdout buffer, which is ordinary memory. The kernel looked up the wrong mapping.
+
+### 8.1 The payloads are the rest of a stdout line after a short write
+
+- Every payload ends at the same place: 0x21 + 99 = 0x02 + 130 = 132, and in
+  `mig-q3` 0x49 + 59 = 132. 132 bytes is the length, newline included, of a
+  `V3DA srv import handle=… ns=kmsbuf … live=N` line (all four in the log are 132).
+  161 + 0x21 = 194 = 132 + 62, and 62 is the length of the line the server prints
+  right after an import, `V3DA srv import released handle=0x2002 id=2 pages=2026 live=2`.
+- The console shows what was sent before each refusal. Log line 359 has, among
+  quake3-drm's output: `V3DA srv import handle=0x2033 cli` (33 = 0x21 bytes),
+  then `V3` (2 = 0x02 bytes), then `V3DA srv import handle=0x2033 cli` again
+  (0x21). Those are the three refusals in order. The complete lines follow at
+  368–369: the `import handle=0x2033 … live=3` line and then the `released` line.
+  The kernel lines come earlier in the log (265–269) because the kernel writes
+  to the UART directly, while the server's text was still queued in pl011-tty
+  behind quake3-drm's console output.
+
+How libphoenix gets there:
+
+1. `_file_init` allocates the stdout buffer with `buffAlloc(BUFSIZ)`, i.e.
+   `mmap(NULL, 4096, MAP_ANONYMOUS)`: a page-aligned page of ordinary memory, here
+   at 0x4000. The server's `setvbuf(stdout, NULL, _IOLBF, 0)` keeps that buffer
+   (equal-size reuse).
+2. `printf` goes through `putchar`. At the newline, the line-buffered path calls
+   `write_buffer` → `full_write(stream, stream->buffer, 132)`: `write(1, 0x4000, 132)`.
+3. pl011-tty's output buffer is nearly full while quake3-drm prints its loading
+   log, so it accepts only part of the line (33 bytes, or 2, or 73 in `mig-q3`).
+   `full_write` continues at `ptr += err`: `write(1, 0x4021, 99)`. That payload
+   starts at an unaligned address.
+4. The kernel refused it (§8.2), `full_write` returned −1 and `write_buffer`
+   kept the whole line with `F_ERROR` set. The next `putchar` found the old
+   newline and flushed the line again from 0x4000. The prefix already sent was
+   sent a second time: that is the duplicated fragment. Once pl011-tty took a
+   whole flush in one write, the line went out and the next one was added
+   (hence 194 = both lines).
+
+Every write that started at 0x4000 went through the same device check in
+`msg_map` and was **not** refused. Same page, same mapping; only the unaligned
+starts were refused. If page 0x4000 were device memory, every server line would
+have been refused (`132 bytes at 0x4000`). None was.
+
+### 8.2 Why the kernel thought it was device memory: `vm_mapFlags`
+
+```c
+t.vaddr = vaddr;          /* the payload address, unaligned */
+t.size = SIZE_PAGE;
+e = lib_treeof(map_entry_t, linkage, lib_rbFind(&map->tree, &t.linkage));
+```
+
+`map_cmp` treats two entries as equal when they **overlap**, and `lib_rbFindEx`
+returns the first node it meets that compares equal. A probe at 0x4021 covers
+[0x4021, 0x5021). It overlaps the stdout-buffer entry (0x4000) **and** any entry
+that starts at 0x5000. Which of the two comes back depends on the shape of the
+tree. The server maps its MMIO with `map_dev` (`MAP_DEVICE | MAP_UNCACHED |
+MAP_PHYSMEM`) right after start-up: `v3d_power_on` maps and unmaps the PM and
+ASB pages, then `v3da_hw_init` maps the V3D register window. The first free VA
+then is the page right after the stdout buffer. The page above 0x4000 is
+therefore one of those MMIO mappings. Probably the V3D register window
+(`hw->hub`), though the log cannot tell which one, and it does not matter
+for the fix.
+
+The same lookup explains the original storm (§1). Before `794bf591`, `msg_map`
+built its kernel view of the head page with `vm_mapFlags(srcmap, data)` at
+`data` = 0x4049. It got the MMIO neighbour's `MAP_DEVICE | MAP_UNCACHED`, so it
+mapped a page of **RAM** as Device-nGnRnE and hit the alignment fault. `attr` 0x39
+in the dump was the neighbour's memory type, not the payload's. §3 read it as
+the payload's, which was wrong.
+
+`vm_mapFlags` has three callers, all in `proc/msg.c`: `msg_srcFlags` for the
+first and last page of `msg_map`, and `msg_payloadIsDevice` for the packed
+paths. The first-page and packed calls pass the raw, unaligned payload pointer.
+The last-page call passes `FLOOR(data + size)` and was always right. The other
+lookups in `vm/map.c` receive page addresses: the fault handler floors the
+address before `vm_mapForce` (`map.c:908`), `vm_objectExport` rejects unaligned
+ranges before `vm_mapObjectRange`, `vm_mprotect` rejects them too, and
+`vm_lockVerify` runs on the fault path.
+
+**Consequence, not checked here:** before `794bf591` the kernel views took *all*
+of the neighbour's flags. A cacheable payload whose upper neighbour is a
+`MAP_UNCACHED` mapping (GPU BOs, contiguous DMA buffers — common in the GPU
+lanes) got a **Normal non-cacheable** kernel view of a cacheable page. The head
+copy then reads RAM without the dirty cache lines, and the `read()` copy-back
+writes around the cache. That silently corrupts message payloads, and nothing
+faults. The reverse (an uncached payload under a cacheable neighbour) creates a
+cacheable alias of an NC page. This is a candidate mechanism for intermittent
+payload corruption. It is not a claim: nothing here shows it happened.
+
+### 8.3 The fix: `3da3fb38` (kernel master, on `publish`)
+
+`vm_mapFlags` now probes the page that holds `vaddr`:
+`t.vaddr = (void *)((ptr_t)vaddr & ~(SIZE_PAGE - 1U))`. Map entries are
+page-aligned, so a page-sized probe from the page start overlaps exactly the
+entry that holds `vaddr`. The same change fixes `msg_payloadIsDevice`. `vm/map.c`
+compiled with the kernel's real flags (`scripts/syntax-check.sh`, `-Werror`,
+clean). Not built into an image yet, not run on the Pi.
+
+Shipped-check (no new string): in the built kernel ELF,
+`aarch64-phoenix-objdump -d --disassemble=vm_mapFlags .buildroot/_build/aarch64a72-generic-rpi4b/prog/phoenix-aarch64a72-generic.elf`
+must show an `and x…, x1, #0xfffffffffffff000` before the `stp` that stores the
+probe. Build 17 stores `x1` unmodified (`stp x19, x0, [sp, #104]` with `x19 = x1`).
+
+`794bf591` stays. Real device payloads are still refused, and the §2 retry loop
+for unresolvable EL1 faults is still there. With `3da3fb38` they apply only to
+payloads that really are in device memory.
+
+**No user-space change.** None was needed and none was made. Copying log lines
+to the stack first, or remapping anything in the server, would only have hidden
+a kernel bug that hits **any** process with an MMIO mapping just above a page
+it sends from.
+
+### 8.4 Other new-lane servers
+
+The problem was never specific to the render server. Any process that has a
+`MAP_DEVICE` mapping directly above a page it sends from was exposed, whenever
+the payload started at an unaligned offset in that page. A short console write
+is the common way to get one.
+
+- **rpi4-kms** (`kms_vblank.c:408/411`, SMI and HVS registers) prints to stdout
+  the same way: exposed in exactly the same way, fixed by the same kernel change.
+  `kmsprobe` too.
+- **shmsrv** (`weston-drm/shmsrv`) and the labwc/x11 compat layers have no
+  `MAP_DEVICE` mapping: not exposed.
+- Every in-tree MMIO driver is exposed in principle. The build 17 showcase had 0
+  refusals. That only shows the conditions (an MMIO page right above the sending
+  page, and a short write from an unaligned address) did not happen there.
+
+### 8.5 The test: `295cc14` (tests master, on `publish`)
+
+New group **`msg_devnext`** in `test-msg-devmem`. It maps two ordinary pages and
+replaces the second one, `MAP_FIXED`, with a `MAP_DEVICE | MAP_UNCACHED |
+MAP_PHYSMEM` alias of a contiguous page. Then it does `write()` and `read()` in
+the first page at 0x21 (99 and 100 bytes: the head copy) and at 0x1 (20 bytes:
+the packed paths). The data must arrive intact. The read helpers now clear only
+the payload they check, so no test touches the device page from user space. On
+`794bf591` without `3da3fb38` these cases *may* fail with `EINVAL`, depending on
+the tree shape, so the test does not show whether the fix shipped. The objdump
+check above does. On a kernel older than `794bf591` they may loop a thread at
+EL1. Now 17 tests: 7 + 6 + 4. Compiled with the real flags (clean), not built.
+
+### 8.6 Pre-registered Pi cycle `v3da-devlog`
+
+Needs a `--scope core` image with kernel `3da3fb38` and tests `295cc14`. Confirm
+`vm_mapFlags` with the objdump check (§8.3) before the cycle. The server binary
+is the unchanged `rpi4-v3d-async-m3p2` (`ea131368…`), staged already.
+
+```
+./scripts/test-cycle-psh-interact.sh --label v3da-devlog --wait-secs 220 --inter-cmd-secs 8 --idle-secs 60 \
+    --max-cmd-secs 300 --ready-line 'V3DA srv detached|KMS srv detached' --ready-extra-secs 20 \
+    --hdmi-dense-on 'quake3-drm: new GPU lane' -- \
+    "/bin/test-msg-devmem" \
+    "/bin/rpi4-v3d-async-m3p2 -r 1 -m serial -i" \
+    "/bin/rpi4-kms-gate -G" \
+    "/usr/bin/quake3-drm +map q3dm1"
+```
+
+| Line / observation | PASS | If instead… |
+|---|---|---|
+| `test-msg-devmem` | `17 Tests 0 Failures`; up to 8 kernel `refused` lines naming **test-msg-devmem** (group `msg_devmem` only) | a `msg_devnext` failure with `EINVAL` = the image lacks `3da3fb38` (check the objdump) |
+| `msg: refused a payload in device memory … from /bin/rpi4-v3d-async-m3p2` | **0** (`grep -a -c 'refused a payload.*v3d-async'`) | any = the fix did not ship, or a second cause: record offset + size, compare with §8.1 |
+| `V3DA srv import handle=… live=N` lines | each complete (132 bytes), and **no** duplicated fragment such as `V3DA srv import handle=0x2033 cliV3` | a fragment without a refusal = a different short-write bug in libphoenix stdio |
+| `V3DA srv qstat` every 5 s, quake3-drm plays q3dm1 | as `mig-q3-fix` (59.8 fps vsync) | — |
+| `Data Abort (EL1)` | 0 | addr2line first |
+
+The trigger is a short console write during quake3-drm's loading output. It
+happened in both `mig-q3` and `mig-q3-fix`, but it is timing-dependent: a clean
+run is strong evidence only together with `msg_devnext` passing.
