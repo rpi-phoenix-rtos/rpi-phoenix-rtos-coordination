@@ -290,6 +290,9 @@ old strings (`/dev/fb0`, `phoenix-map.cfg`) and none of the new ones.
 
 ### 4.1 Ports (graphics) — the new lane stored in phoenix-rtos-ports [built]
 
+> ⚠ **Draft (2026-09-28 00:10):** written by the ports agent, which the API spend limit stopped before it committed.
+> The branch named below is **not pushed yet**; the recipes exist only in its worktree. Being finished now.
+
 Owner request 2026-09-27: "make sure that all the ports (the recent ones) are correctly stored in
 phoenix-rtos-ports". The graphics half of the new lane (this section; the Wayland-desktop half —
 labwc, gtk3, dbus, xfce — is branch `feat/new-lane-wayland-ports`) is now a set of framework recipes on
