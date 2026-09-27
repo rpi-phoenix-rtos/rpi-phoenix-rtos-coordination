@@ -86,8 +86,10 @@ typedef struct {
 } kms_client_t;
 
 /* POOL: a window of the scan-out pool; SLOT: a firmware-fb slot (pan backend);
- * IMPORT: another server's exported buffer (PRIME_IMPORT, G7). */
-enum { KMS_BOK_POOL = 0, KMS_BOK_SLOT = 1, KMS_BOK_IMPORT = 2 };
+ * IMPORT: another server's exported buffer (PRIME_IMPORT, G7); ALIAS: another
+ * client's PRIME-exported pool BO, imported as a handle of this client (it holds
+ * one reference on that BO, which keeps its pages and its /kmsbuf name alive). */
+enum { KMS_BOK_POOL = 0, KMS_BOK_SLOT = 1, KMS_BOK_IMPORT = 2, KMS_BOK_ALIAS = 3 };
 
 typedef struct {
 	int used;
@@ -104,9 +106,10 @@ typedef struct {
 	uint32_t w, h, bpp, pitch;
 	int exported;
 	int prime;                   /* PRIME_EXPORT'ed: any process may open its /kmsbuf name */
-	/* KMS_BOK_IMPORT only (G7) */
-	int imp_fd;                  /* the exporter's name, open: holds the exporter's reference */
+	/* KMS_BOK_IMPORT (G7) and KMS_BOK_ALIAS */
+	int imp_fd;                  /* IMPORT: the exporter's name, open: holds the exporter's reference */
 	kms_memref_t imp_mem;        /* the exporter's OID memref (MAP_DUMB / PRIME_EXPORT answer it) */
+	uint32_t alias_src;          /* ALIAS: index in srv.bos of the pool BO it references */
 	const char *imp_why;         /* NULL = scan-out capable; else why ADDFB2 refuses it */
 	int imp_shown;               /* the first commit showing it was logged */
 } kms_bo_t;
@@ -299,6 +302,7 @@ typedef struct {
 	kms_reap_t reap[KMS_MAX_BOS];   /* released imports awaiting kms_reap() */
 	uint32_t nreap;
 	uint32_t imports_live;
+	uint32_t aliases_live;
 
 	/* vblank */
 	int vbl_src;                 /* enum kms_vblank_src in use */

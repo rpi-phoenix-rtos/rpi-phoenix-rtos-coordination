@@ -159,7 +159,7 @@ static int pool_find(size_t size, size_t *off)
 
 static void memref_fill(const kms_bo_t *b, kms_memref_t *m)
 {
-	if (b->kind == KMS_BOK_IMPORT) {
+	if ((b->kind == KMS_BOK_IMPORT) || (b->kind == KMS_BOK_ALIAS)) {
 		*m = b->imp_mem;   /* the exporter's name: clients map it, never its physical address */
 		return;
 	}
@@ -348,10 +348,12 @@ int kms_bo_map(uint32_t client, uint32_t handle, kms_dumb_resp_t *out)
 }
 
 
-/* Drop one reference; free on the last. */
+/* Drop one reference; free on the last. An alias's last reference drops its
+ * reference on the pool BO it names (one level: an alias never names an alias). */
 void kms_bo_unref(uint32_t idx)
 {
 	kms_bo_t *b = &srv.bos[idx];
+	uint32_t src = KMS_MAX_BOS;
 	oid_t oid;
 
 	if (!b->used || (b->refs == 0u)) {
@@ -359,6 +361,10 @@ void kms_bo_unref(uint32_t idx)
 	}
 	if (--b->refs != 0u) {
 		return;
+	}
+	if (b->kind == KMS_BOK_ALIAS) {
+		src = b->alias_src;
+		srv.aliases_live--;
 	}
 	if (b->exported) {
 		/* Withdraw the name at once; mappings a client still holds keep the pages
@@ -397,6 +403,9 @@ void kms_bo_unref(uint32_t idx)
 	}
 	srv.st.bos_live--;
 	memset(b, 0, sizeof(*b));
+	if ((src < KMS_MAX_BOS) && (src != idx)) {
+		kms_bo_unref(src);
+	}
 }
 
 
@@ -555,20 +564,94 @@ static void import_reply(const kms_bo_t *b, kms_dumb_resp_t *out)
 }
 
 
-/* Before mapping (locked): 0 = answered from what the server has (a re-import, or
- * this client's own /kmsbuf export), 1 = the buffer must be mapped, < 0 = refused. */
+static kms_bo_t *bo_by_export(uint32_t id);
+
+
+/* PRIME import of another client's /kmsbuf export (locked, no IPC): the pool BO
+ * `id` becomes a handle of `client` - DRM's GEM import of a dma-buf that another
+ * file of the same device exported (Mesa's kmsro allocates scan-out buffers on
+ * whichever card0 descriptor its screen was created with; the compositor adds the
+ * framebuffer on its own). The alias holds one reference on the pool BO: its
+ * pages and its /kmsbuf name stay while the alias handle is open or a framebuffer
+ * of it may be on a plane, even after the exporter closed its handle or died. Only
+ * a PRIME-exported BO crosses clients (DRM: only an exported dma-buf does). */
+static int import_alias(uint32_t client, const kms_prime_import_req_t *rq, kms_dumb_resp_t *out)
+{
+	uint32_t id = (uint32_t)rq->id, i, idx;
+	kms_bo_t *src = bo_by_export(id), *b;
+
+	if ((src == NULL) || (src->kind != KMS_BOK_POOL)) {
+		KMS_LOG("import FAIL client=%u ns=kmsbuf id=%u rc=-2 why=not_exported", client, id);
+		return -ENOENT;
+	}
+	if (rq->size > src->size) {
+		KMS_LOG("import FAIL client=%u ns=kmsbuf id=%u size=%llu bo_size=%zu rc=-22 why=size", client, id,
+			(unsigned long long)rq->size, src->size);
+		return -EINVAL;
+	}
+	if (!src->prime) {
+		KMS_LOG("import FAIL client=%u ns=kmsbuf id=%u owner=%u rc=-13 why=not_prime", client, id, src->owner);
+		return -EACCES;
+	}
+	for (i = 0u; i < KMS_MAX_BOS; i++) {
+		b = &srv.bos[i];
+		if (b->used && (b->kind == KMS_BOK_ALIAS) && b->handle_open && (b->owner == client) &&
+				(b->alias_src == (uint32_t)(src - srv.bos))) {
+			import_reply(b, out);   /* DRM: the same buffer again -> the same handle, no extra reference */
+			return 0;
+		}
+	}
+	b = bo_slot_free(&idx);
+	if (b == NULL) {
+		KMS_LOG("import FAIL client=%u ns=kmsbuf id=%u rc=-28 why=no_bo_slot", client, id);
+		return -ENOSPC;
+	}
+	memset(b, 0, sizeof(*b));
+	b->used = 1;
+	b->handle = srv.next_handle++;
+	b->owner = client;
+	b->handle_open = 1;
+	b->refs = 1u;
+	b->kind = KMS_BOK_ALIAS;
+	b->pa = src->pa;
+	b->va = src->va;
+	b->size = src->size;
+	b->w = src->w;
+	b->h = src->h;
+	b->bpp = src->bpp;
+	b->pitch = src->pitch;
+	b->alias_src = (uint32_t)(src - srv.bos);
+	memref_fill(src, &b->imp_mem);   /* the source's /kmsbuf name: MAP_DUMB and a re-export answer it */
+	src->refs++;
+	srv.st.bos_live++;
+	srv.aliases_live++;
+	import_reply(b, out);
+	if (import_notes++ < KMS_IMPORT_LOG_MAX) {
+		KMS_LOG("import client=%u ns=kmsbuf id=%u handle=%u owner=%u pa0=0x%llx size=%zu alias=1 live=%u", client, id,
+			b->handle, src->owner, (unsigned long long)b->pa, b->size, srv.aliases_live);
+	}
+	return 0;
+}
+
+
+/* Before mapping (locked): 0 = answered from what the server has (a re-import,
+ * this client's own /kmsbuf export, or an alias of another client's), 1 = the
+ * buffer must be mapped, < 0 = refused. */
 int kms_import_lookup(uint32_t client, const kms_prime_import_req_t *rq, kms_dumb_resp_t *out)
 {
 	kms_bo_t *b;
 
 	if (rq->ns == KMS_IMPORT_NS_KMSBUF) {
-		b = (rq->port == srv.buf_port) && (rq->id <= 0xffffffffu) ? kms_bo_get(client, (uint32_t)rq->id) : NULL;
+		if ((rq->port != srv.buf_port) || (rq->id == 0u) || (rq->id > 0xffffffffu)) {
+			KMS_LOG("import FAIL client=%u ns=kmsbuf id=%llu port=%u rc=-22 why=port", client, (unsigned long long)rq->id,
+				rq->port);
+			return -EINVAL;
+		}
+		b = kms_bo_get(client, (uint32_t)rq->id);
 		if (b != NULL) {
 			return kms_bo_map(client, b->handle, out);   /* DRM: an own export -> the original handle */
 		}
-		KMS_LOG("import FAIL client=%u ns=kmsbuf id=%llu port=%u rc=-22 why=foreign_kmsbuf (not supported)", client,
-			(unsigned long long)rq->id, rq->port);
-		return -EINVAL;
+		return import_alias(client, rq, out);
 	}
 	if (rq->ns != KMS_IMPORT_NS_V3DBUF) {
 		return -EINVAL;
@@ -720,9 +803,10 @@ int kms_fb_add(uint32_t client, const kms_addfb2_req_t *rq, uint32_t *fb_id)
 			(rq->format != KMS_FMT_ABGR8888)) {
 		return -EINVAL;
 	}
-	if (b->kind == KMS_BOK_IMPORT) {
+	if ((b->kind == KMS_BOK_IMPORT) || (b->kind == KMS_BOK_ALIAS)) {
 		/* G7: refused HERE, never at commit time (a late -ERANGE, or a plane that
-		 * fetches memory the firmware cannot reach, is the failure mode to avoid) */
+		 * fetches memory the firmware cannot reach, is the failure mode to avoid).
+		 * An alias is a pool BO (imp_why NULL): only its layout is checked. */
 		const char *why = kms_import_fb_why(rq, b->size, b->imp_why);
 		if (why != NULL) {
 			KMS_LOG("fb FAIL client=%u handle=%u import_id=%llu %ux%u pitch=%u offset=%u modifier=0x%llx pa=0x%llx "

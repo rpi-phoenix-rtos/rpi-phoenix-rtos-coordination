@@ -1574,6 +1574,7 @@ Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-233145-m7i-xfce-demo.log`; kernel 
 - Next step: rpi4-kms must accept a `/kmsbuf` buffer that another client allocated (labwc's GBM swapchain), or
   wlroots must allocate its scanout through the dumb-buffer path it already uses with pixman. **The demo default
   stays pixman.**
+- ↳ Root-caused and fixed in the server (`rpi4-kms-g8`), cycle `m7k-gles2` pre-registered: **Stage 7** below.
 
 ## Stage 6: Atril, the PDF viewer (`tools/gpu-lane/atril-wayland/`) — built, host-tested, staged, `m7j-atril` pre-registered
 
@@ -1736,3 +1737,156 @@ and this is the lane's first C++ program with exceptions and `std::mutex` on the
 
 **Decides:** rows 3–7 = a PDF viewer runs on Phoenix-RTOS (Poppler + GTK 3 on Wayland); rows 9–12 = full-screen
 and presentation rendering; 13–15 = clean exit, no leaks.
+
+## Stage 7: GLES2 labwc on HDMI — `rpi4-kms-g8` imports another client's `/kmsbuf` export; `m7k-gles2` pre-registered
+
+### Root cause of m7i arm B / m7a2 `why=foreign_kmsbuf`
+
+One labwc process holds **two** KMS clients, and its scan-out buffers are allocated on the one that does not scan
+them out:
+
+1. **Client 1** is the wlroots DRM backend's `/dev/dri/card0` (WLR_DRM_DEVICES). It does the ADDFB2s and commits.
+2. **Client 2** is opened by the GLES2 renderer. `wlr_renderer_autocreate` hands the backend's card0 fd to
+   `wlr_egl_create_with_drm_fd`. The EGL device list has no match for the display-only device, so it falls back to
+   GBM. `open_render_node()` (`render/egl.c:536–556`) finds no render node on card0 (libdrm-phoenix reports the
+   Linux Pi 4 topology: vc4 = card0 without a render node, `xf86drm_phoenix.c:801–824`) and **opens
+   `/dev/dri/card0` again** (`:550`). `gbm_create_device()` runs on that second open (`:592`). Mesa's vc4 winsys
+   then goes to kmsro, which sets `ro->kms_fd` to this fd (`kmsro_drm_winsys.c:75`), opens renderD128 (V3DA client
+   2) and caches the v3d `pipe_screen` under that render fd (`v3d_drm_winsys.c:42–46` →
+   `u_pipe_screen_lookup_or_create`).
+3. The allocator (wlroots patch 0003: a `F_DUPFD` of client 1, `allocator.c:129–133`) creates its own GBM device.
+   Its kmsro opens renderD128 again. Phoenix has no `kcmp` and no `F_DUPFD_QUERY`, so Mesa's screen cache falls back
+   to `fstat()` (`u_screen.c:221–255`; this is the `os_same_file_description couldn't determine…` line in the
+   log). Every renderD128 descriptor has the same `st_rdev` (the server port), so the cache returns the
+   **renderer's** screen, whose `ro->kms_fd` is client 2. The `ro` passed in is ignored on a cache hit. So every
+   scan-out BO is created and exported on client 2: `renderonly_create_kms_dumb_buffer_for_resource`, CREATE_DUMB
+   `renderonly.c:80`, `drmPrimeHandleToFD` `:108`, a 1024-px-wide dumb of `align(size + TFU readahead)` rows =
+   **2026 pages** (the log's `pages=2026`, `size=8298496`). V3DA client 2 imports it for rendering (`V3DA srv import
+   … client=2 ns=kmsbuf id=3..6`).
+   Steps 2–3 are inferred from the sources and fit every log line. One thing is observed directly: the BOs were
+   not client 1's, because client 1's own export would have hit the own-handle path. The only other card0 client
+   that lived through the session is client 2, closed next to client 1 at labwc's exit.
+4. The DRM backend (client 1) imports the dma-buf. libdrm-phoenix sends `KMS_OP_PRIME_IMPORT ns=KMSBUF`
+   (`drm_phoenix_kms.c:727–757`: not its own export, so it goes to the server). rpi4-kms-g7 accepts a `/kmsbuf` import
+   **only as the importer's own handle** (`kms_bo.c:564–571` of `b5386948a`, the g7 source): `import FAIL
+   client=1 … why=foreign_kmsbuf (not supported)`. The swapchain test fails (`swapchain.c:109`), so `mode test
+   failed`, no output, and the HDMI stays on the console.
+
+**Why kmscube and the SDL KMSDRM games work:** they open card0 once. GBM, kmsro's `ro->kms_fd` and the scan-out
+are all on one client, so the PRIME import is the own-export short-circuit (`drm_phoenix_kms.c:735–739`).
+**Why patch 0003 did not help:** it gives the allocator client 1's fd, but the cached screen's `ro` still
+allocates on client 2. On Linux the same sharing would be harmless: a dma-buf imports into any DRM file of the
+device. The refusal was the non-Linux behaviour, and the `kms_proto.h` G7 comment already listed "alias the BO" as
+the follow-up.
+
+### Fix (rpi4-kms only; no libdrm, Mesa or labwc rebuild)
+
+`tools/gpu-lane/kms/kms_bo.c` `import_alias()` and `kms_import_lookup()`. A `/kmsbuf` PRIME import of **another
+client's PRIME-exported pool BO** becomes a new BO kind, `KMS_BOK_ALIAS` (`kms.h`). The alias is a handle of the
+importer on the same pages. It holds **one reference on the source BO**, and its memref is the source's name
+(`/kmsbuf/<src>`), so MAP_DUMB, a re-export and libdrm-phoenix's G13 implicit flip fence (`fb_export` → the
+renderer's own import of `/kmsbuf/<src>`) all work unchanged. Rules:
+
+- The same client importing the same buffer again gets the same handle and takes no extra reference (DRM).
+- The source (pages + `/kmsbuf` name + export) lives while its owner's handle, **or any alias**, or a framebuffer
+  of either may be on a plane. The owner may close its handle or die first; `memUnexport` happens once, at the
+  source's last reference.
+- An alias's last reference drops its reference on the source. The chain is one level: only exported pool BOs
+  are sources.
+- ADDFB2 of an alias applies the G7 layout rules (LINEAR, 64-byte pitch/offset, size). The pool is below 1 GiB by
+  construction. The first flip is logged like a G7 import.
+- Refused, each with a tagged line: a BO that was never PRIME-exported (`-EACCES why=not_prime`), an id that is not
+  exported (`-ENOENT why=not_exported`), a foreign port (`-EINVAL why=port`), a size larger than the BO
+  (`why=size`), no slot (`why=no_bo_slot`).
+- The ready line now ends `import=v3dbuf,kmsbuf`. Wire structs are unchanged. In `kms_proto.h` only the G7
+  comment changed. **Pending:** copy that comment to the ports copy `libdrm_phoenix/glue/phoenix/kms_proto.h`
+  (`feat/new-lane-graphics-ports`) so `scripts/check-gpu-lane-ports-sync.sh` stays clean. Comment only, no binary
+  change.
+
+**Host test** `tools/gpu-lane/kms/hosttest/run.sh` builds `bo_alias_test.c` against the real `kms_bo.c`. The Phoenix
+calls come from `hosttest/shim/`, and a checked sed replaces the one `dsb sy` with a host fence. **ALL PASS,
+60/60, ASan+UBSan clean.** The test runs the m7i sequence: client 2 creates + exports id 3, client 1 imports
+(new handle, memref `/kmsbuf/3`, source refs 2), re-imports (same handle), MAP_DUMB, ADDFB2 (UIF refused
+`why=modifier`, LINEAR ok), client 2 dies (source alive, still exported, no memUnexport, its pages not reused), then
+the refusals, RMFB + DESTROY (both freed, `/kmsbuf/3` withdrawn once, bos/exports/aliases live 0). A second buffer
+covers a framebuffer on a plane that outlives both handles and the importer's death. **Negative control:** the same
+test linked with the g7 `kms_bo.c` prints the Pi's exact line `import FAIL client=1 ns=kmsbuf id=3 port=26 rc=-22
+why=foreign_kmsbuf (not supported)` and fails. The G7 scan-out rule test still passes, and so does its own control.
+
+### Build and staging (2026-09-28 00:30; `df -h /`: 53 GB free)
+
+```
+tools/gpu-lane/kms/build.sh --poll-notify --out out-g8      # the g7 recipe (M6: rpi4-kms-gate + pollNotify); -Werror, 0 warnings
+strings -a tools/gpu-lane/kms/out-g8/rpi4-kms | grep -c 'import=v3dbuf,kmsbuf'   # 1   (g7: 0)
+strings -a tools/gpu-lane/kms/out-g8/rpi4-kms | grep -c foreign_kmsbuf          # 0   (g7: 1)
+[ -e $EXPORT/bin/rpi4-kms-g8 ] || sudo -n install -m 755 tools/gpu-lane/kms/out-g8/rpi4-kms $EXPORT/bin/rpi4-kms-g8
+cmp tools/gpu-lane/kms/out-g8/rpi4-kms $EXPORT/bin/rpi4-kms-g8                   # equal
+```
+
+| file | staged as | sha256 |
+|---|---|---|
+| `tools/gpu-lane/kms/out-g8/rpi4-kms` (1 037 216 B; linked against the current build-20b sysroot `libphoenix.a`) | `/bin/rpi4-kms-g8` (new path, checked absent) | `ecf52bd9b8c7111db972ec677ee96078fc9fc8f298e9966e366b72996e6b6712` |
+
+Nothing else was staged or changed. `/bin/rpi4-kms-g7` (`51c9cbcc692e4e6b`), `/bin/labwc-2` (`3632cb541660af71`),
+`/bin/xfce-session` (`ca4a8ac1444ab1f0`, it still starts g7 by default) and every library are as before. labwc-2's
+embedded libdrm-phoenix already sends the import the server now accepts.
+
+### Cycle `m7k-gles2` (≈ 10–11 min: from a chain script, as m7i)
+
+**Question:** with the server change alone, does labwc's GLES2 renderer (V3D) reach HDMI, and do the aliased
+buffers and their sources all go away at the end? Does pixman still work on g8?
+
+```
+./scripts/test-cycle-psh-interact.sh --label m7k-gles2 --idle-secs 60 --max-cmd-secs 420 \
+    --hdmi-dense-on 'XFCE labwc socket=up' -- \
+    "/bin/rpi4-v3d-async-low -r 1 -m serial -i" \
+    "/bin/rpi4-kms-g8 -G -p 96 -C" \
+    "/bin/shmsrv" \
+    "export HOLD=60" \
+    "export VERBOSE=1" \
+    "export THUNAR_SECOND=/usr" \
+    "export RENDERER=gles2" \
+    "/bin/bash /bin/xfce-session" \
+    "export RENDERER=pixman" \
+    "/bin/bash /bin/xfce-session" \
+    "/bin/shmsrv -s" \
+    "/bin/kmstest-poll stats"
+```
+
+The servers are started by hand (m7j style), so `xfce-session` finds all three up and starts none. That is the
+only way to get g8 without changing the staged launcher: psh does not strip quotes, so `export KMS_CMD="…"` cannot
+carry a command line. Arm A is the first `xfce-session` (**gles2**, the question); arm B is the second (pixman,
+the regression check on g8). The arms run in the reverse order of m7i, so the gles2 arm gets the fresh keyboard.
+Grade:
+`grep -a -E '^KMS |^V3DA srv import|^XFCE|^XFCE-SESSION|GLES2|GL renderer|swapchain|mode test|has no output|os_same_file|^SHMSRV |^KMSTEST ' …m7k-gles2.log`,
+`grep -a -c why=foreign_kmsbuf …m7k-gles2.log`, and `./scripts/uart-summary.sh m7k-gles2`. Allow ~1.3 % UART line
+corruption; EL0 dumps print twice.
+
+| # | Line / observation | Predicted (g8) | With the current binaries (g7, = m7i arm B) / if instead… |
+|---|---|---|---|
+| 1 | `KMS srv ready dev=/dev/kms … proto=1..2 import=v3dbuf,kmsbuf` | g8 is the server that ran | `import=v3dbuf`: g7 ran, so stop grading (the staging or the command line is wrong) |
+| 2 | `XFCE-SESSION start hold=60 renderer=gles2 … labwc=/bin/labwc-2`, `XFCE-SESSION servers v3d-async=up kms=up shm=up`, **no** `XFCE-SESSION server start:` | the hand-started servers are used | a `server start: /bin/rpi4-kms-g7 …` line: a server was not up (its own lines), and g7 may be the one that runs |
+| 3 | labwc: `Creating GLES2 renderer`, `GL renderer: V3D 4.2.14.0`; one `os_same_file_description couldn't determine…` (expected: it is the Mesa screen-cache fallback that puts the BOs on client 2) | as m7i arm B | no GLES2 lines: renderer creation failed, which is not this fix; read labwc's `[render/…]` errors |
+| 4 | **★ FAILS with g7: `grep -a -c why=foreign_kmsbuf` = 0** | 0 | **g7: 4** (`import FAIL client=1 ns=kmsbuf id=3..6 port=26 rc=-22 why=foreign_kmsbuf (not supported)`, as in m7i arm B and m7a2) |
+| 5 | **★ 2–4 × `KMS import client=1 ns=kmsbuf id=<N> handle=<M> owner=2 pa0=0x<pa> size=8298496 alias=1 live=<1..4>`** (owner ≠ client; the ids match the `V3DA srv import … client=2 ns=kmsbuf id=<N> … pages=2026 contiguous=1` just before each) | the swapchain's buffers are aliased into the backend's client | `why=not_prime`: the renderer did not PRIME-export (libdrm-phoenix `ioc_prime_export` not reached); `why=not_exported`: the id was already destroyed; any other `import FAIL`: record it |
+| 6 | **no** `V3DA srv import released … id=<N>` right after row 5 (m7i: each buffer released at once because the swapchain was torn down) | buffers live for the session | released at once: the swapchain still failed its test; check row 7 |
+| 7 | **no** `[types/output/swapchain.c:109] Swapchain for output 'HDMI-A-1' failed test`, **no** `mode test failed for output HDMI-A-1`, **no** `view has no output, not centering` | the output test commit passes | `swapchain … failed test` with no `import FAIL`: ADDFB2 or the atomic check refused it. Look for `KMS fb FAIL … why=<modifier/align/size>` (wlroots' modifier or pitch) |
+| 8 | **`KMS console handover disable rc=0`** in arm A; then `KMS scanout import fb=<F> handle=<M> id=<N> … (first flip)` (1–4 lines) | a plane shows the aliased buffers | absent: nothing reached a plane (row 7) |
+| 9 | **HDMI** (dense from `XFCE labwc socket=up`, arm A): **the m7i arm-A desktop composited by the V3D**: dithered wallpaper (smooth), the XFCE panel (menu, three launchers, window buttons, CEST clock, Log Out), Thunar `/` then a second window `/usr`; the pointer moves | **GLES2 labwc on HDMI** | text console for the whole arm: rows 1/4/5/7. Black screen + cursor: scan-out works but the V3D frames are empty (renderer/EGL, not this fix). Red and blue swapped: the swapchain format (ARGB/XRGB vs ABGR/XBGR) against the plane's IN_FORMATS. Tearing or half-drawn frames: the implicit fence (G13 on the alias's `/kmsbuf/<src>`) did not gate; see `deferred=` in row 10 |
+| 10 | `KMS srv flipstat client=1 flips=<≥ 10> … deferred=<D>` at arm A's labwc exit (`D` > 0 is normal: flips that waited for the V3D render fence under `-G`) | the desktop is flipped by the GPU path | `flips=0`: no commit got through |
+| 11 | arm A stop: `XFCE session end reason=logout held=60s`, `XFCE thunar exited rc=0 quit_rc=0`, `XFCE quit panel_rc=0 xfdesktop_rc=0`, `XFCE labwc exited rc=0 … socket=gone`, `XFCE-SESSION done rc=0`; the `V3DA srv import released … live=0` lines at labwc's exit; 0 exceptions | as m7i arm A | an EL0 dump in labwc: `aarch64-phoenix-addr2line -f -e tools/gpu-lane/labwc-drm/build-out-m7b2/labwc <pc>` |
+| 12 | arm B (pixman on g8) = m7i arm A's rows 1–10: desktop on HDMI, `KMS console handover disable rc=0`, clean Log Out, **no `alias=1` line** in arm B (pixman's dumb buffers are client 1's own: the unchanged own-export path) | g8 changes nothing for pixman | pixman broken on g8: a regression in the own-handle path. Not graded: `Failed to destroy DRM dumb buffer` ×2 (pre-existing, m7i arm A) and `libseat … '/dev/kbd0': Device or resource busy` in the second session (pre-existing, m7i arm B) |
+| 13 | **refcount proof:** `SHMSRV stats rc=0 live=0 bytes=0`, **`KMSTEST stats … bos=0 exports=0 pool_free_kib=98304`** | every alias and every source released (source + alias, whoever closed first) | `bos>0` / `exports>0` / `pool_free_kib<98304`: an alias or its source was not released. Alias releases are not logged; the leaked ids are among row 5's |
+| 14 | fault dumps | 0 kernel, 0 EL0 | an EL1 dump in rpi4-kms: `aarch64-phoenix-addr2line -f -e tools/gpu-lane/kms/out-g8/rpi4-kms <pc>` |
+
+**Decides:** rows 4, 5, 7–9 = GLES2 composition reaches the screen, and the generic PRIME path works (a dma-buf
+imports into another card0 client, as on Linux). Row 13 = the ownership story holds on the Pi. Row 12 = g8 can
+replace g7. If they pass, the follow-up is `/bin/xfce-session-2` (new name) with `KMS_CMD` = g8 and
+`RENDERER=gles2` as the demo default.
+
+**Follow-ups (not in this step):**
+1. Mesa's per-process screen cache puts every renderD128 open on Phoenix into one `pipe_screen`, because there is
+   no `kcmp`/`F_DUPFD_QUERY`. So all kmsro GBM devices in a process allocate through the first one's
+   `ro->kms_fd`. That is harmless once the server aliases. `os_same_file_description` could be answered properly
+   on Phoenix (a libphoenix/kernel "same open file" query) and not silently match on `st_rdev`.
+2. The ports copy of the `kms_proto.h` comment (above).

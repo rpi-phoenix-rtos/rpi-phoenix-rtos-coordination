@@ -563,7 +563,8 @@ int kms_try_apply(kms_crtc_state_t *c)
 		}
 		fb = kms_fb_lookup(c->pst[p].fb_id);
 		rc = srv.be->apply(c, p, &c->pst[p], fb, (fb != NULL) ? &srv.bos[fb->bo] : NULL, &lat);
-		if ((rc == 0) && (fb != NULL) && (srv.bos[fb->bo].kind == KMS_BOK_IMPORT)) {
+		if ((rc == 0) && (fb != NULL) &&
+				((srv.bos[fb->bo].kind == KMS_BOK_IMPORT) || (srv.bos[fb->bo].kind == KMS_BOK_ALIAS))) {
 			kms_import_shown(&srv.bos[fb->bo], fb->id);   /* G7: a foreign buffer went to the firmware */
 		}
 		if (rc != 0) {
@@ -2079,7 +2080,7 @@ int main(int argc, char **argv)
 	}
 
 	KMS_LOG("srv ready dev=/dev/%s buf=%s backend=%s planes=0x%02x vblank_src=%s mode=%ux%u refresh_mhz=%u xl=%d "
-		"pool=%d pool_mib=%u slots=%u fmt=%.4s bus=%s v3d=%d console_off=%d blank_fb=%d guard_us=%u gate_us=%u kick=%d proto=%u..%u import=v3dbuf",
+		"pool=%d pool_mib=%u slots=%u fmt=%.4s bus=%s v3d=%d console_off=%d blank_fb=%d guard_us=%u gate_us=%u kick=%d proto=%u..%u import=v3dbuf,kmsbuf",
 		KMS_DEV_NAME, KMS_BUF_NS, srv.be->name, srv.crtc[0].plane_mask, kms_vbl_name(srv.vbl_src),
 		srv.crtc[0].mode.hdisplay, srv.crtc[0].mode.vdisplay, srv.crtc[0].refresh_mhz, srv.xl, srv.pool_ok,
 		srv.pool_mib, srv.fb_slots, (const char *)&srv.fb_format, srv.bus_c0 ? "c0" : "raw", srv.v3d_fp != NULL,
