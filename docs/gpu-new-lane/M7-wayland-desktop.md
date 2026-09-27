@@ -1104,6 +1104,7 @@ shmsrv/E1 result, not an XFCE one.
 | `m7f-dbus` | `dbus-daemon --session` up; `dbus-send` ping round trip; GDBus client connects |
 | `m7f-thunar` | xfconfd on the bus by activation, Thunar under labwc lists `/` with Adwaita icons — **pre-registered** in stage 4 |
 | `m7h-xfce` | ★ labwc + xfce4-panel + xfdesktop + Thunar + foot: the showcase desktop; Thunar browses `/`, the panel's app menu launches foot — **pre-registered** in stage 4 part 3 |
+| `m7i-xfce-demo` | the demo session in one psh command (`/bin/xfce-session`): servers, XFCE, a second Thunar over the bus, local time, Log Out, clean quits; pixman then gles2 — **pre-registered** in stage 5 |
 | `m7d-gl-client` | weston-simple-egl / kmscube-style GL client inside labwc (G4/G6/G7 in a real compositor) |
 
 ## Scheduling
@@ -1309,3 +1310,233 @@ rc=0 after_term_s=1 socket=gone`, 0 exceptions / EL1. The gles2 arm: `[render/gl
 renderer`, `Using OpenGL ES 3.1 Mesa 26.2.0`, `GL vendor: Broadcom`, `GL renderer: V3D 4.2.14.0`: labwc composites on
 the V3D through the new lane (GBM/EGL → rpi4-v3d-async). The desktop cycles (m7b2/m7c/m7f/m7h) used pixman; a GLES2
 XFCE run is a one-word change (`WLR_RENDERER=gles2`).
+
+## Stage 5: the XFCE demo session (`/bin/xfce-session`, polish after m7h) — built, staged, `m7i-xfce-demo` pre-registered
+
+Five things m7h left for a public demo, and one command for a person at the bench. Nothing already staged was
+changed: every file of the demo is under a path of its own (checked absent, then installed and `sha256sum -c`).
+
+### 1. `xfdesktop --quit` did nothing — a GLib fd-passing assumption, root cause in the kernel
+
+m7h: `quit … xfdesktop_rc=143`, and `xfdesktop-quit.log` said **`The connection is closed`**, followed by
+GLib-GIO-CRITICALs about `AddMatch()` on a closed connection. The chain:
+
+1. **Phoenix kernel:** `usocket_getsockname()` / `usocket_getpeername()` (`posix/usocket.c`) return 0 **without
+   filling in the address**. dbus-daemon's `_dbus_socket_can_pass_unix_fd()` asks `getsockname()` for the family,
+   sees `sa_family == 0`, not `AF_UNIX`, and so never answers `NEGOTIATE_UNIX_FD` with `AGREE_UNIX_FD`: **no bus
+   connection on Phoenix has fd passing** (the kernel does implement `SCM_RIGHTS`: `posix/fdpass.c`).
+2. **GLib 2.88:** `g_application_impl_command_line()` (the remote instance of any `G_APPLICATION_HANDLES_COMMAND_LINE`
+   program forwarding its argv to the primary) **always** attaches fd 0 (stdin). GDBus refuses to write a message
+   with fds to a peer without the capability ("Tried sending a file descriptor but remote peer does not support
+   this capability"), treats it as a write error and closes the connection; the remote prints `The connection is
+   closed`, and GDBus's exit-on-close raises SIGTERM in it (rc 143). The primary never hears the command.
+3. So the same failure hits **every second instance of Thunar** (Super+E, the panel's launcher, the menu while
+   Thunar runs: `thunar-application.c` sets `G_APPLICATION_HANDLES_COMMAND_LINE`) and `thunar --quit`. The panel's
+   `--quit` worked because xfce4-panel uses its own D-Bus method (no fds).
+
+**Fix (GLib, `gtk3-wayland/patches/glib/0003-gapplication-send-stdin-only-over-a-connection-that-.patch`):**
+attach stdin only when `g_dbus_connection_get_capabilities()` has `G_DBUS_CAPABILITY_FLAGS_UNIX_FD_PASSING`; the
+primary already handles a `CommandLine` call without fds (its stdin stream is then NULL). Upstreamable as is (a
+TCP bus has the same problem). **Host test** `xfce-wayland/hosttest/gapp-cmdline.sh` (+ `gapp_cmdline_test.c`, a
+primary + a remote `--quit`) on the host's dbus-daemon: **negative control** — the host's stock GLib 2.88 over a
+TCP bus (no fd passing, as Phoenix) fails exactly as the Pi did (`The connection is closed`, remote killed by its
+own SIGTERM, the primary never gets the quit); the patched GLib over TCP: remote rc 0, `primary got remote quit=1
+stdin=none`, primary exits; the patched GLib over a UNIX bus: `stdin=passed` (fd passing still used where it
+exists). **ALL PASS.** The kernel fix (fill `sun_family` + the bound path in `usocket_getsockname`/`getpeername`)
+is a core change for a later build: then fd passing is negotiated and this patch is simply not exercised.
+
+### 2. The clock showed UTC — GLib parses TZ itself, libphoenix does not
+
+libphoenix has **no TZ support**: `tzset()` is a stub (`time/time.c`, `/* TODO - env parsing */`, always UTC) and
+`localtime_r()` ignores `timezone` (the libtime host harness runs everything under `TZ=UTC`). But the panel's clock
+and Thunar's dates use GLib's `GDateTime`/`GTimeZone`, and `g_time_zone_new_identifier()` parses a **POSIX TZ string
+itself** (`rules_from_identifier()`, tried before any zoneinfo file), so no tzdata is needed. Host check with GLib
+2.88 (`TZ='CET-1CEST,M3.5.0,M10.5.0/3'`, no `TZDIR`): the m7h screenshot's instant (UTC 18:53) → `20:53 CEST
+(+0200)`; January → `CET (+0100)`; the switch on the last Sunday of March/October at 02:00/03:00 local both right.
+`/bin/xfce-session` exports that string (the lab is Europe/Warsaw; `TZ` knob). **Still UTC:** anything that asks
+libc — `date`, bash's prompt `\t`, foot/mc times. Follow-up for libphoenix: parse POSIX TZ in `tzset()` and apply
+it in `localtime_r()`/`mktime()` (with libtime host-harness cases).
+
+### 3. Relink after build 19 (libphoenix `a41d8d5`: the printf `'` flag)
+
+Thunar formats the byte count with `g_strdup_printf("%'" G_GUINT64_FORMAT, …)` (`thunar-file.c:2326`); GLib is
+built with `USE_SYSTEM_PRINTF`, i.e. libphoenix's `vasprintf`. All XFCE programs were rebuilt against build 19's
+sysroot `libphoenix.a` (gate: build 19 `Exported SHA256`, no `rebuild-rpi4b-fast.sh` running, the archive newer
+than the fix). Only the C locale exists, whose `thousands_sep` is empty, so the status bar should now read
+`… files: 15.4 GiB (<digits> bytes)` — the plain number, as glibc prints in the C locale (m7i row 8). **labwc-2, foot-2 and fuzzel-2
+are not relinked:** no `%'` conversion in their sources.
+
+### 4. `Failed to get system bus` (xfdesktop) — silenced
+
+It is `set_accountsservice_user_bg()` mirroring the backdrop into AccountsService for a greeter; when
+AccountsService is merely absent xfdesktop already logs at debug level. Patch **xfdesktop 0002 `desktop: a missing
+system bus is not a warning`** logs the missing system bus the same way (no system bus is planned on Phoenix).
+
+### 5. The one-command session
+
+`/bin/xfce-session` (`pi/xfce-session`, bash, `#!/bin/bash` — libphoenix `execve()` runs shebang scripts):
+
+- starts whichever of the three new-lane servers is missing (startx-drm's checks: `/dev/v3d-async`, `/dev/kms`,
+  `shmsrv -s`), in order: `/bin/rpi4-v3d-async-low -r 1 -m serial -i`, `/bin/rpi4-kms-g7 -G -p 96 -C`,
+  `/bin/shmsrv` (`V3DA_CMD`/`KMS_CMD`/`SHMSRV_CMD`, `NO_SERVERS=1`);
+- runs `/bin/xfce-desktop-2.sh xfce input` (= `pi/xfce-desktop.sh` of this commit) with `LABWC=/bin/labwc-2`, the
+  XFCE programs from **`/usr/lib/xfce-demo/bin/`** (their real names: `thunar`, `xfce4-panel`, `xfdesktop`,
+  `xfce4-settings-manager`, `xfce4-appearance-settings`, `xfce4-appfinder`; first on `PATH`, so the stock
+  `.desktop` files' bare `Exec=` find them), labwc's **`/etc/xdg/labwc-xfce-demo`**, `XDG_CONFIG_DIRS=/etc/xdg/
+  xfce-demo:/etc/xdg`, `XDG_DATA_DIRS=/usr/share/xfce-demo:/usr/share`, settings under `/tmp/xfce-demo-home`
+  (apart from m7f/m7h's `/tmp/xfce-home`), `TZ` as above;
+- **`HOLD=0` (default): runs until Log Out**, then stops in order and returns to psh (the servers stay up).
+  Knobs: `HOLD` (N = log out by itself after N s through the same path), **`RENDERER` `pixman` (default) |
+  `gles2`**, `TZ`, `VERBOSE` (labwc: 0 default, 1 `-V`), `THUNAR_START`, `THUNAR_SECOND`.
+
+**Log Out:** without a session manager on the bus the panel's actions plugin offers Log Out only if `loginctl` is
+on `PATH`, and runs `loginctl terminate-session ''`. `/usr/lib/xfce-demo/bin/loginctl` (`pi/xfce-demo-loginctl`)
+is a stand-in that only does that: it creates `$XFCE_LOGOUT_FLAG` (`/tmp/xdg/xfce-logout`), which the session
+script polls (every 5 s); with no session script it sends SIGTERM to `$LABWC_PID` (= `labwc --exit`). The script's
+stop sequence: `thunar --quit`, `xfce4-panel --quit`, `xfdesktop --quit` (now all over the bus), SIGTERM to labwc,
+the bus. If labwc went first (its root menu's Exit), the `--quit`s are skipped (`XFCE quit skipped`). Remote
+calls are bounded (20–30 s, `rc=124` if killed): a remote instance waits for its reply with no timeout.
+
+**`xfce-desktop.sh` changes** (the m7f/m7h copy at `/bin/xfce-desktop.sh` is untouched): knobs `XFCE_BIN`,
+`PANEL`, `XFDESKTOP` (the `--quit`s no longer hard-code `/bin/`), `XFCE_DATA_DIRS`, `XFCE_HOME`, `THUNAR_START`,
+`THUNAR_SECOND`, `LOGOUT_CMD`; the hold loop ends on HOLD, logout request or labwc's exit (`XFCE session end
+reason=hold|logout|labwc-exited`); `XFCE env PATH=… TZ=…` line; Thunar stopped by `--quit` (it saved nothing on
+SIGTERM). Host checks: `hosttest/run.sh` ALL PASS unchanged; a dry run with stand-ins for labwc/Thunar/panel
+(HOLD=10 + the loginctl stand-in + `THUNAR_SECOND`: `session end reason=logout`, `thunar exited rc=0 quit_rc=0`,
+`quit panel_rc=0 xfdesktop_rc=0`, `labwc exited rc=0`, `dbus exited rc=0`; HOLD=0 with labwc killed:
+`reason=labwc-exited`, `quit skipped`).
+
+**Keys** (`conf/labwc-xfce-demo/rc.xml`, labwc's `<default />` kept): **Super** tapped alone (`onRelease`) →
+xfce4-appfinder; **Super+Return** → foot-2; **Super+E** → Thunar; **Super+D** / **Alt+F2** → appfinder (full /
+collapsed); **Super+Space** → fuzzel-2. Root menu (right click where xfdesktop does not take it): Run…, Terminal,
+Files, Settings, Midnight Commander (foot-2), Reconfigure, **Log Out**, Exit.
+
+**Panel** (`conf/xfce-demo/xfce4-panel.xml`, first in `XDG_CONFIG_DIRS`: xfconfd merges the system files in
+reverse order, so it overrides m7h's property by property): applications menu | launchers **foot-2**, **Thunar**,
+**Application Finder** | window buttons | spacer | clock (local time) | **Log Out** (actions plugin, only
+`+logout`, with its confirmation dialog). **`.desktop` shadows** in `/usr/share/xfce-demo/applications/`:
+`foot.desktop` (`Exec=/bin/foot-2`, icon `utilities-terminal`), `thunar.desktop` (the demo Thunar),
+`mc.desktop`/`bash.desktop` (`/bin/foot-2 -e …`, `Terminal=false`: `Terminal=true` means `exo-open --launch
+TerminalEmulator` in XFCE, which is not staged); `/etc/xdg/xfce-demo/fuzzel/fuzzel.ini`: `terminal=/bin/foot-2 -e`,
+icons on. The m7c `/usr/share/applications/foot.desktop` and `/etc/xdg/fuzzel/fuzzel.ini` (still `/bin/foot`) are
+unchanged; they are shadowed only inside the demo session.
+
+**Wallpaper:** xfdesktop's compiled-in default backdrop is now the **dithered**
+`backgrounds/phoenix/phoenix-gradient-dither-1920x1080.png` (`56beb330e638c0c9`, staged by the colour study,
+[hdmi-colour.md](hdmi-colour.md): runs of 1.4 px instead of 11). The PNG and its generator,
+`labwc-drm/conf/backgrounds/make-wallpaper-dither.py` (stdlib only: make-wallpaper.py's 8-bit gradient,
+49-px box filter per row in float, ±0.25 noise + half-error feedback, `random.seed(1)`; a few seconds), are
+committed next to `make-wallpaper.py`; the script's output is **pixel-identical** to the staged file.
+
+### Build and artifacts
+
+```
+tools/gpu-lane/gtk3-wayland/build.sh --usr --out tools/gpu-lane/gtk3-wayland/build-out-usr-2     # GLib 0003
+tools/gpu-lane/xfce-wayland/build.sh --gtk-out tools/gpu-lane/gtk3-wayland/build-out-usr-2 \
+    --out tools/gpu-lane/xfce-wayland/build-out-m7i                                              # + xfdesktop 0002
+tools/gpu-lane/xfce-wayland/hosttest/gapp-cmdline.sh tools/gpu-lane/gtk3-wayland/build-out-usr-2/src/glib
+```
+
+Build 19's sysroot `libphoenix.a` (`94a3e1e68567120e`, 21:27, after `a41d8d5`); the GTK stack of
+`build-out-usr-2` (glib 0003 applied). Checks on the unstripped binaries: `nm -u` 0, no `PT_INTERP`, 0 X11 symbols
+(build.sh); **GLib 0003 linked**: `g_application_impl_command_line` calls `g_dbus_connection_get_capabilities` in
+thunar, xfdesktop, xfce4-panel, xfce4-appfinder (1 call each; m7h's thunar: 0); **printf `'` fix linked**:
+libphoenix's `format_parse` in the new thunar compares with `0x27` (m7h's: no). (The XFCE tree was built on /tmp
+because / was full; `build-out-m7i/` holds `bin/`, `stage-demo/`, both MANIFESTs and `build.log`.)
+
+| program (`build-out-m7i/bin/`) | staged as | stripped | sha256 stripped (first 16) | unstripped |
+|---|---|---|---|---|
+| thunar | `/usr/lib/xfce-demo/bin/thunar` | 17 711 232 | **`113396c510607a95`** | `a5ba1c56a28750d8` |
+| xfce4-panel | `/usr/lib/xfce-demo/bin/xfce4-panel` | 17 967 976 | **`b5d72aef28fe7f9a`** | `92c639ef4cda3049` |
+| xfdesktop (+ 0002, dithered default backdrop) | `/usr/lib/xfce-demo/bin/xfdesktop` | 17 299 776 | **`2d68b9e10aec3410`** | `bbe4e34776c940d6` |
+| xfce4-settings-manager | `/usr/lib/xfce-demo/bin/xfce4-settings-manager` | 17 070 392 | **`69ff9d3c0bfeb990`** | `203d31266a25a087` |
+| xfce4-appearance-settings | `/usr/lib/xfce-demo/bin/xfce4-appearance-settings` | 17 149 680 | **`6f5c3b139a86ce51`** | `6029fbf572bee06f` |
+| xfce4-appfinder | `/usr/lib/xfce-demo/bin/xfce4-appfinder` | 17 089 672 | **`afeb2edddd05b97a`** | `d7550cf5caad8cfa` |
+
+**Staged 2026-09-27 21:55** (`stage-demo.MANIFEST`: 19 files, every path checked absent first, then `sudo -n install`
++ `sha256sum -c`: all verified). Nothing existing was touched: `/bin/thunar-wl`, `/bin/xfce4-panel`, `/bin/xfdesktop`,
+`/bin/labwc-2`, `/bin/xfce-desktop.sh` and every m7c/m7h config are as before.
+
+| staged file | sha256 (first 16) |
+|---|---|
+| `/bin/xfce-session` (`pi/xfce-session`) | `ca4a8ac1444ab1f0` |
+| `/bin/xfce-desktop-2.sh` (`pi/xfce-desktop.sh`) | `a753d2505eae4818` |
+| `/usr/lib/xfce-demo/bin/loginctl` (`pi/xfce-demo-loginctl`) | `7256bdfacad1f3d8` |
+| `/usr/lib/xfce-demo/bin/{thunar,xfce4-panel,xfdesktop,xfce4-settings-manager,xfce4-appearance-settings,xfce4-appfinder}` | the table above |
+| `/etc/xdg/labwc-xfce-demo/{rc.xml,menu.xml,autostart,environment}` | `6c8021559a78bfc5`, `e51d55eaaa344c3c`, `dcf3bb44f35c3289`, `0cf86d7cb34e9923` |
+| `/etc/xdg/xfce-demo/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml` | `3c71a4ae866a9ae0` |
+| `/etc/xdg/xfce-demo/fuzzel/fuzzel.ini` | `e0b65762ba4efebd` |
+| `/usr/share/xfce-demo/applications/{foot,thunar,mc,bash}.desktop` | `fd92cb94a7d3910e`, `bf6a28879e922022`, `94093c79f396eefe`, `414f2ce1a93542fb` |
+| used, staged earlier: `/bin/labwc-2`, `/bin/foot-2`, `/bin/fuzzel-2`, the servers, the m7h data (icons, MIME, menus, xfconfd + its `.service`, schemas), `/usr/share/backgrounds/phoenix/phoenix-gradient-dither-1920x1080.png` `56beb330e638c0c9` | — |
+
+Patches: gtk3-wayland `glib/0003-gapplication-send-stdin-only-over-a-connection-that-.patch` (`3d7c21d80134a3fe`),
+xfce-wayland `xfdesktop/0002-desktop-a-missing-system-bus-is-not-a-warning.patch` (`20407717c2503e25`). The
+stock-layout `stage/` of the same build is **not** staged.
+
+### Cycle `m7i-xfce-demo` (after build 19; from a chain script: ≈ 11 min, longer than one Bash call)
+
+**Question:** does the one-command demo session come up and go down on its own — servers started by the launcher,
+the XFCE desktop with the demo panel, a second Thunar instance forwarded over the bus, the clock in local time, Log
+Out through the panel's path, every component quitting cleanly — with labwc's pixman renderer, and then with its
+GLES2 renderer on V3D (proven for labwc-2 by m7a2-labwc)?
+
+```
+./scripts/test-cycle-psh-interact.sh --label m7i-xfce-demo --idle-secs 60 --max-cmd-secs 420 \
+    --hdmi-dense-on 'XFCE labwc socket=up' -- \
+    "export HOLD=60" \
+    "export VERBOSE=1" \
+    "export THUNAR_SECOND=/usr" \
+    "/bin/xfce-session" \
+    "export RENDERER=gles2" \
+    "/bin/xfce-session" \
+    "/bin/shmsrv -s" \
+    "/bin/kmstest-poll stats"
+```
+
+Arm A = the first `/bin/xfce-session` (pixman), arm B = the second (gles2). Grade:
+`grep -a -E '^XFCE|^XFCE-SESSION|Thunar|thunar|xfdesktop|xfce4-panel|GLES2|OpenGL|renderer|Gtk-|GLib-|^SHMSRV |^KMSTEST ' …m7i-xfce-demo.log`,
+`./scripts/uart-summary.sh m7i-xfce-demo`. Allow ~1.3 % UART line corruption; EL0 dumps print twice.
+
+| # | Line / observation | Predicted | If instead… |
+|---|---|---|---|
+| 1 | A: `XFCE-SESSION start hold=60 renderer=pixman tz=CET-1CEST,M3.5.0,M10.5.0/3 labwc=/bin/labwc-2 conf=/etc/xdg/labwc-xfce-demo`, three `XFCE-SESSION server start:` lines, `XFCE-SESSION servers v3d-async=up kms=up shm=up`. B: no `server start` (all up) | the launcher brings the servers up | `servers … missing` + `done rc=1`: that server's own lines |
+| 2 | `XFCE start session=xfce … labwc=/bin/labwc-2 thunar=/usr/lib/xfce-demo/bin/thunar missing=none`; `XFCE env PATH=/usr/lib/xfce-demo/bin:/bin:/usr/bin XDG_CONFIG_DIRS=/etc/xdg/xfce-demo:/etc/xdg XDG_DATA_DIRS=/usr/share/xfce-demo:/usr/share TZ=CET-1CEST,…` | staging complete | `missing=<paths>`: staging |
+| 3 | bus/xfconfd/round trip as m7h rows 1 (`via=activation`), `labwc start conf=/etc/xdg/labwc-xfce-demo files=rc.xml,menu.xml,autostart,environment`, `socket=up`; labwc: `run session script /etc/xdg/labwc-xfce-demo/autostart`, no `exited with 127`, **B: `Creating GLES2 renderer`, `GL renderer: V3D 4.2…`** | as m7h; B as m7a2 | B falls back to pixman or labwc exits: m7a2's GLES2 rows; the rest of B still graded |
+| 4 | `XFCE session up panel=registered`, `XFCE thunar start: /usr/lib/xfce-demo/bin/thunar /` | the panel within 60 s | `panel=missing`: `XFCE log xfce4-panel:` |
+| 5 | **`XFCE thunar second instance dir=/usr rc=0 took_s=<1–15>`** and `names=` still with one `org.xfce.Thunar` | **the GLib fix: the remote command line reaches the running Thunar** (a second window, `/usr`, appears on HDMI) | `rc=143` + `The connection is closed` in `XFCE log thunar-second:`: the binary lacks GLib 0003 (`strings -a /usr/lib/xfce-demo/bin/thunar` cannot show it: check the staged sha); `rc=124`: the primary did not answer |
+| 6 | `XFCE hold … names=org.xfce.Panel,org.xfce.FileManager,org.xfce.Thunar,org.xfce.xfdesktop,org.xfce.Xfconf` ×6 | as m7h | — |
+| 7 | **no** `xfdesktop-WARNING … Failed to get system bus` in `XFCE log xfdesktop:` | patch 0002 | the warning: the old xfdesktop ran (`XFDESKTOP`) |
+| 8 | HDMI (dense from `labwc socket=up`, arm A and B): the **dithered** wallpaper (smooth, no 11-px bands); the panel: menu button, **three launcher icons** (terminal, Thunar, app finder), window buttons (two Thunar windows: `/` and `/usr`), **the clock in CEST = UART time + 2 h** (e.g. log 19:05 UTC → `Sun 27 Sep  21:05`), a **Log Out** icon at the right end (sensitive = `loginctl` found on PATH); Thunar's status bar **`… (NNNN bytes)`** with digits, no `%'lu` | the demo desktop | clock = UTC: `TZ` not in the panel's environment (row 2); Log Out greyed: `loginctl` not found (PATH); `%'lu`: an old Thunar |
+| 9 | `XFCE hold over: /usr/lib/xfce-demo/bin/loginctl terminate-session rc=0`, **`XFCE session end reason=logout held=60s`** | HOLD ends through the Log Out button's own command | `reason=hold`: the flag was not created (`XFCE log logout-cmd:`) |
+| 10 | stop: **`XFCE thunar exited rc=0 quit_rc=0`**, **`XFCE quit panel_rc=0 xfdesktop_rc=0 wait_s=<0–5> names=org.xfce.Xfconf`**, `XFCE labwc exited rc=0 … socket=gone`, `XFCE dbus exited rc=0 … socket=gone`, `XFCE saved channels=` incl. `xfce4-panel.xml,thunar.xml`, `XFCE done`, **`XFCE-SESSION done rc=0`** | **every program quits cleanly over the bus** (m7h: xfdesktop rc=143, Thunar TERM) | `xfdesktop_rc=143` + `The connection is closed`: GLib 0003 missing from that binary; `rc=124`: the primary did not act on it |
+| 11 | arm B = rows 2–10 again with `renderer=gles2` | GPU composition works for the XFCE desktop | B only fails: note; the demo stays on pixman |
+| 12 | `SHMSRV stats rc=0 live=0 bytes=0`, `KMSTEST stats … bos=0` | all released after two sessions | `live>0`: a client of one of the sessions survived |
+| 13 | fault dumps | 0 kernel, 0 EL0 | addr2line on `tools/gpu-lane/xfce-wayland/build-out-m7i/bin/<prog>` |
+
+**Bench-only checklist** (a person at the Pi with the USB keyboard + mouse; type **`/bin/xfce-session`** at psh,
+default `HOLD=0`; otherwise **n/a**, not FAIL):
+
+1. The desktop appears (wallpaper, panel, a Thunar window) within ~2 min of the command; the clock shows local time.
+2. **Applications menu** (panel, left) → System → **Foot**: a terminal opens; **type** `ls /` + Enter — output appears.
+3. Tap **Super**: the application finder opens; type `thu`, Enter → Thunar (a new window of the running Thunar).
+4. **Super+E** → another Thunar window; double click `usr`; **drag** a Thunar window by its title bar; resize it
+   by an edge; click its button in the panel to minimise and again to raise.
+5. **Super+Return** → foot; **Alt+F4** closes it. Right click on the wallpaper → xfdesktop's menu.
+6. **Log Out** (panel, right end) → the confirmation dialog → *Log Out*: the desktop closes within ~15 s, the psh
+   prompt returns (`XFCE-SESSION done rc=0` on the UART).
+7. `/bin/xfce-session` again: the desktop comes back (the servers are still up); log out once more.
+
+**Decides:** rows 1–10 of arm A = the demo is one command and exits cleanly; row 11 = whether the demo defaults to
+`RENDERER=gles2`.
+
+### Follow-ups (not in this step)
+
+1. **Kernel:** `usocket_getsockname()` / `usocket_getpeername()` must fill in `sun_family` (+ the bound / peer
+   path). Then dbus-daemon negotiates fd passing and GLib 0003 is no longer exercised on Phoenix (keep it: it is
+   right for any bus without fds). A core change: build 20 at the earliest.
+2. **libphoenix:** POSIX `TZ` parsing in `tzset()`, used by `localtime_r()`/`mktime()` (+ libtime host-harness
+   cases), so libc programs agree with GLib's clock.
+3. **Ports copies:** `xfce-wayland/build.sh` now names the framework port `xfce_wayland` (branch
+   `feat/new-lane-wayland-ports`) whose patch files must stay identical: the two new patches (gtk3-wayland glib
+   0003, xfdesktop 0002) and the dithered `-Ddefault-backdrop-filename` need copying there.
+4. If `m7i` arm B passes: default `RENDERER=gles2` in `/bin/xfce-session`.

@@ -36,6 +36,9 @@
 #   <out>/gtk/         snapshot of the GTK stack (destdir/usr + deps)
 #   <out>/destdir/usr  everything built here
 #   <out>/bin/         the programs, unstripped (addr2line) and -stripped
+#   <out>/stage/       staging tree of the m7f/m7h layout (+ stage.MANIFEST)
+#   <out>/stage-demo/  staging tree of the one-command demo session /bin/xfce-session, all
+#                      under paths of its own (+ stage-demo.MANIFEST; m7i-xfce-demo)
 #
 # Writes only into <out> (default build-out/, gitignored). No Pi, no rebuild-rpi4b-fast.sh,
 # no /srv. XFCE is GPL/LGPL: its sources live only in <out>/src (fetched, sha256-pinned
@@ -346,7 +349,7 @@ if [ "${n_stage}" -ge 4 ]; then
 	meson_pkg --cross "${out}/phoenix-aarch64-wl.cross" xfdesktop -Dx11=disabled -Dwayland=enabled \
 		-Ddesktop-menu=enabled -Ddesktop-icons=true -Dfile-icons=false -Dthunarx=disabled -Dnotifications=disabled \
 		-Dtests=false -Dfile-manager-fallback=/bin/thunar-wl \
-		-Ddefault-backdrop-filename=backgrounds/phoenix/phoenix-gradient-1920x1080.png
+		-Ddefault-backdrop-filename=backgrounds/phoenix/phoenix-gradient-dither-1920x1080.png
 fi
 
 # --- stage 5: xfce4-settings, xfce4-appfinder -------------------------------------------------
@@ -490,4 +493,36 @@ st 755 "${out}/bin/gdbus-stripped" bin/gdbus-wl
 ( cd "${ST}" && find . -type f -printf '%P\n' | sort | xargs sha256sum ) > "${out}/stage.MANIFEST"
 echo "  $(wc -l < "${out}/stage.MANIFEST") files ($(du -sh "${ST}" | cut -f1)); not icons:"
 grep -v ' usr/share/icons/' "${out}/stage.MANIFEST" | awk '{printf "    %s  %s\n", substr($1,1,16), $2}'
+
+# --- the demo session's staging tree: every path its own ---------------------------------------
+# /bin/xfce-session (one psh command: the servers + the session until Log Out) runs
+# /bin/xfce-desktop-2.sh with the XFCE programs of /usr/lib/xfce-demo/bin, labwc's
+# /etc/xdg/labwc-xfce-demo, /etc/xdg/xfce-demo first in XDG_CONFIG_DIRS (panel layout,
+# fuzzel.ini) and /usr/share/xfce-demo first in XDG_DATA_DIRS (.desktop files running foot-2
+# and this Thunar). The data it shares with m7h (icons, MIME, menus, schemas) is in stage/.
+if [ "${n_stage}" -ge 5 ]; then
+	echo "== demo staging tree"
+	SD="${out}/stage-demo"
+	rm -rf "${SD}"
+	sd() {  # mode source target-path
+		install -D -m "$1" "$2" "${SD}/$3"
+	}
+	sd 755 "${here}/pi/xfce-session" bin/xfce-session
+	sd 755 "${here}/pi/xfce-desktop.sh" bin/xfce-desktop-2.sh
+	for p in thunar xfce4-panel xfdesktop xfce4-settings-manager xfce4-appearance-settings xfce4-appfinder; do
+		sd 755 "${out}/bin/${p}-stripped" "usr/lib/xfce-demo/bin/${p}"
+	done
+	sd 755 "${here}/pi/xfce-demo-loginctl" usr/lib/xfce-demo/bin/loginctl
+	for f in rc.xml menu.xml autostart environment; do
+		sd 644 "${here}/conf/labwc-xfce-demo/${f}" "etc/xdg/labwc-xfce-demo/${f}"
+	done
+	sd 644 "${here}/conf/xfce-demo/xfce4-panel.xml" etc/xdg/xfce-demo/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml
+	sd 644 "${here}/conf/xfce-demo/fuzzel.ini" etc/xdg/xfce-demo/fuzzel/fuzzel.ini
+	for f in "${here}"/conf/xfce-demo/applications/*.desktop; do
+		sd 644 "${f}" "usr/share/xfce-demo/applications/$(basename "${f}")"
+	done
+	( cd "${SD}" && find . -type f -printf '%P\n' | sort | xargs sha256sum ) > "${out}/stage-demo.MANIFEST"
+	echo "  $(wc -l < "${out}/stage-demo.MANIFEST") files ($(du -sh "${SD}" | cut -f1)):"
+	awk '{printf "    %s  %s\n", substr($1,1,16), $2}' "${out}/stage-demo.MANIFEST"
+fi
 echo "done (stage ${until_stage})"
