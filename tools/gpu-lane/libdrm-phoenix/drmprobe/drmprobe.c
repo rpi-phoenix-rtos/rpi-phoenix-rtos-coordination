@@ -14,7 +14,7 @@
  *
  * Usage: drmprobe [-n flips] [-k] [-g jobs]
  *   -k: keep the last frame on screen at exit
- *   -g: GPU jobs the G6 producer chains (default 256; the longer, the wider the race)
+ *   -g: full-screen clears the G6 producer chains (default 48; the longer, the wider the race)
  *
  * Copyright 2026 Phoenix Systems
  * Author: Witold Bołt
@@ -98,7 +98,7 @@ static struct {
 	uint64_t last_flip_us;
 	uint32_t last_flip_crtc;
 	uint32_t g6_jobs;         /* -g: jobs in the G6 producer's chain */
-} P = { .card = -1, .render = -1, .card1 = -1, .g6_jobs = 256u };
+} P = { .card = -1, .render = -1, .card1 = -1, .g6_jobs = 48u };
 
 
 static uint64_t now_us(void)
@@ -1909,15 +1909,20 @@ static int g6_wait(int sfd)
 }
 
 
-static uint32_t g6_count_not(const volatile uint32_t *p, uint32_t n, uint32_t want)
+/* Words != want among every step-th word (and the last one). */
+static uint32_t g6_count_not_step(const volatile uint32_t *p, uint32_t n, uint32_t want, uint32_t step)
 {
 	uint32_t i, bad = 0;
 
-	for (i = 0; i < n; i++) {
+	for (i = 0; i < n; i += step) {
 		bad += (p[i] != want);
+	}
+	if ((n != 0u) && (((n - 1u) % step) != 0u)) {
+		bad += (p[n - 1u] != want);
 	}
 	return bad;
 }
+
 
 
 /* The consumer (a compositor sampling a client buffer): the buffer arrived while
@@ -1942,7 +1947,7 @@ static void g6_consume(int dfd, const volatile uint32_t *fm, uint32_t words, uin
 	int sfd = -1;
 
 	g6_read_init(o);
-	o->early_bad = g6_count_not(fm, words, want);
+	o->early_bad = g6_count_not_step(fm, words, want, (words > 65536u) ? 61u : 1u);   /* fast: the race is on */
 	o->e_exp = g6_export(dfd, &sfd);
 	if (o->e_exp == 0) {
 		o->st_export = g6_status(sfd, &o->nfences);
@@ -1950,7 +1955,7 @@ static void g6_consume(int dfd, const volatile uint32_t *fm, uint32_t words, uin
 		o->st_after = g6_status(sfd, NULL);
 		close(sfd);
 	}
-	o->bad = g6_count_not(fm, words, want);   /* after the sync - or right away when there is none */
+	o->bad = g6_count_not_step(fm, words, want, (words > 65536u) ? 7u : 1u);   /* after the sync - or right away without */
 }
 
 
@@ -1980,21 +1985,39 @@ static void t_g6_probe(void)
 }
 
 
-/* A chain of k dependent 64x64 clears into one render target: k-1 in colour X, the
- * last in Y, each job waiting for the previous one (in_sync_bcl = out_sync), so the
- * target shows Y only when the whole chain is done. `extra` (optional) is named by
- * every job: its last-use fence becomes the chain's without the GPU writing it. */
-#define G6_W 64u
-#define G6_H 64u
+/* The producer's GPU work: a chain of k dependent FULL-SCREEN clears (the mode's
+ * size, raster RGBA8, stride = width * 4) straight into the buffer that is handed
+ * over - k-1 in colour X, the last in Y, each job waiting for the previous one
+ * (in_sync_bcl = out_sync) - so the buffer holds Y everywhere only when the whole
+ * chain is done, and the chain is long on the GPU itself (each clear stores the
+ * whole 8 MB frame), not only in submission IPC. g6-sync (2026-09-27) showed why:
+ * a chain of 64x64 clears finished faster than it could be submitted, and every
+ * "pending" check read 0. */
 #define G6_X 0xff4040c0u
 #define G6_Y 0xff20c060u
+#define G6_SENTINEL 0xdeadbeefu
 
 typedef struct {
 	int fd;
+	uint32_t w, h, words;
 	rbo_t rt, bcl[2], rcl[2], ta, ts;
 	struct drm_v3d_submit_cl s[2];
 	uint32_t sync;
+	uint64_t t_start, t_submitted;   /* around the submit loop */
 } g6_chain_t;
+
+static uint32_t g6_page(uint32_t n)
+{
+	return (n + 4095u) & ~4095u;
+}
+
+
+static void g6_dims(uint32_t *w, uint32_t *h)
+{
+	*w = (P.mode.hdisplay != 0u) ? P.mode.hdisplay : 1920u;
+	*h = (P.mode.vdisplay != 0u) ? P.mode.vdisplay : 1080u;
+}
+
 
 static int g6_chain_setup(int fd, g6_chain_t *ch)
 {
@@ -2004,14 +2027,21 @@ static int g6_chain_setup(int fd, g6_chain_t *ch)
 
 	memset(ch, 0, sizeof(*ch));
 	ch->fd = fd;
-	rc = v3da_clgen_clear_sizes(G6_W, G6_H, &bsz, &rsz, &tasz, &tssz);
-	if (rc == 0) rc = rbo_new_fd(fd, &ch->rt, G6_W * G6_H * 4u);
+	g6_dims(&ch->w, &ch->h);
+	ch->words = ch->w * ch->h;
+	if ((V3DA_CLGEN_CLEAR_RT_STRIDE(ch->w) & 63u) != 0u) {
+		return -EINVAL;   /* the scan-out pitch must be the clear's stride (1920 * 4 is 64-aligned) */
+	}
+	rc = v3da_clgen_clear_sizes(ch->w, ch->h, &bsz, &rsz, &tasz, &tssz);
+	/* the render target is the buffer that is scanned out: ask for the scan-out
+	 * placement, as Mesa does (proto 5 places it below 1 GiB; older servers never see the hint) */
+	if (rc == 0) rc = rbo_new_flags_fd(fd, &ch->rt, g6_page(V3DA_CLGEN_CLEAR_RT_SIZE(ch->w, ch->h)), PROBE_V3D_CREATE_BO_SCANOUT);
 	for (i = 0; (rc == 0) && (i < 2u); i++) {
-		rc = rbo_new_fd(fd, &ch->bcl[i], 4096u);
-		if (rc == 0) rc = rbo_new_fd(fd, &ch->rcl[i], 4096u);
+		rc = rbo_new_fd(fd, &ch->bcl[i], g6_page(bsz));
+		if (rc == 0) rc = rbo_new_fd(fd, &ch->rcl[i], g6_page(rsz));
 	}
 	if (rc == 0) rc = rbo_new_fd(fd, &ch->ta, tasz);
-	if (rc == 0) rc = rbo_new_fd(fd, &ch->ts, 4096u);
+	if (rc == 0) rc = rbo_new_fd(fd, &ch->ts, g6_page(tssz));
 	for (i = 0; (rc == 0) && (i < 2u); i++) {
 		gb.cpu = ch->bcl[i].cpu;
 		gb.gpuva = ch->bcl[i].offset;
@@ -2019,7 +2049,7 @@ static int g6_chain_setup(int fd, g6_chain_t *ch)
 		gr.cpu = ch->rcl[i].cpu;
 		gr.gpuva = ch->rcl[i].offset;
 		gr.size = ch->rcl[i].size;
-		rc = v3da_clgen_clear(G6_W, G6_H, ch->rt.offset, (i == 0u) ? G6_X : G6_Y, &gb, &gr, ch->ta.offset, ch->ta.size,
+		rc = v3da_clgen_clear(ch->w, ch->h, ch->rt.offset, (i == 0u) ? G6_X : G6_Y, &gb, &gr, ch->ta.offset, ch->ta.size,
 			ch->ts.offset, &ch->s[i]);
 	}
 	if (rc == 0) rc = drmSyncobjCreate(fd, DRM_SYNCOBJ_CREATE_SIGNALED, &ch->sync);
@@ -2027,14 +2057,15 @@ static int g6_chain_setup(int fd, g6_chain_t *ch)
 }
 
 
-static int g6_chain_submit(g6_chain_t *ch, uint32_t k, uint32_t extra)
+static int g6_chain_submit(g6_chain_t *ch, uint32_t k)
 {
 	struct drm_v3d_submit_cl s;
-	uint32_t handles[6], j, i;
+	uint32_t handles[5], j, i;
 
-	for (j = 0; j < G6_W * G6_H; j++) {
-		ch->rt.cpu[j] = 0xdeadbeefu;   /* "not rendered yet" */
+	for (j = 0; j < ch->words; j++) {
+		ch->rt.cpu[j] = G6_SENTINEL;   /* "not rendered yet" */
 	}
+	ch->t_start = now_us();
 	for (j = 0; j < k; j++) {
 		i = (j + 1u == k) ? 1u : 0u;
 		s = ch->s[i];
@@ -2043,16 +2074,25 @@ static int g6_chain_submit(g6_chain_t *ch, uint32_t k, uint32_t extra)
 		handles[2] = ch->rcl[i].handle;
 		handles[3] = ch->ta.handle;
 		handles[4] = ch->ts.handle;
-		handles[5] = extra;
 		s.bo_handles = (uintptr_t)handles;
-		s.bo_handle_count = (extra != 0u) ? 6u : 5u;
+		s.bo_handle_count = 5u;
 		s.in_sync_bcl = ch->sync;
 		s.out_sync = ch->sync;
 		if (drmIoctl(ch->fd, DRM_IOCTL_V3D_SUBMIT_CL, &s) != 0) {
 			return -errno;
 		}
 	}
+	ch->t_submitted = now_us();
 	return 0;
+}
+
+
+/* How long the GPU still worked after the last submit: a blocking wait on the
+ * chain's syncobj (the server answers it at the fence's completion IRQ). */
+static uint64_t g6_chain_tail_us(g6_chain_t *ch)
+{
+	(void)drmSyncobjWait(ch->fd, &ch->sync, 1, INT64_MAX, 0, NULL);
+	return now_us() - ch->t_submitted;
 }
 
 
@@ -2074,6 +2114,12 @@ static void g6_chain_free(g6_chain_t *ch)
 }
 
 
+/* A race the probe did not provoke proves nothing: the producer was already done
+ * when the consumer looked, so a no-op sync would pass too. Such a key fails as
+ * INCONCLUSIVE (re-run with a larger -g). */
+#define G6_INCONCLUSIVE " inconclusive=1 (the producer was done before the consumer looked: the race was not provoked; re-run with a larger -g)"
+
+
 /* IMPORT_SYNC_FILE: this process's own pending GPU work (a job chain) attached to a
  * shared buffer it did not render into; the buffer's exported fences must then
  * include it, and waiting for them must mean the chain is done. */
@@ -2081,14 +2127,15 @@ static void t_g6_import(void)
 {
 	g6_chain_t ch;
 	rbo_t sh;
-	int rc, fd = -1, sfd = -1, sfd2 = -1, e_imp = -1, e_exp = -1, st = -1, wrc = -1, own_done = 0, ok;
+	int rc, fd = -1, sfd = -1, sfd2 = -1, e_imp = -1, e_exp = -1, st = -1, wrc = -1, own_done = 0, ok, inconcl = 0;
 	unsigned nf = 0u;
+	uint64_t tail = 0;
 
 	memset(&sh, 0, sizeof(sh));
 	rc = g6_chain_setup(P.render, &ch);
 	if (rc == 0) rc = rbo_new(&sh, 4096u);
 	if (rc == 0) rc = drmPrimeHandleToFD(P.render, sh.handle, DRM_CLOEXEC | DRM_RDWR, &fd);
-	if (rc == 0) rc = g6_chain_submit(&ch, P.g6_jobs, 0u);
+	if (rc == 0) rc = g6_chain_submit(&ch, P.g6_jobs);
 	if (rc == 0) rc = drmSyncobjExportSyncFile(P.render, ch.sync, &sfd);
 	if (rc == 0) {
 		e_imp = g6_import(fd, sfd);
@@ -2096,6 +2143,7 @@ static void t_g6_import(void)
 		if (e_exp == 0) {
 			st = g6_status(sfd2, &nf);   /* 0 while the chain runs: the buffer now waits for it */
 			wrc = g6_wait(sfd2);
+			tail = now_us() - ch.t_submitted;
 			close(sfd2);
 		}
 		own_done = (drmSyncobjWait(P.render, &ch.sync, 1, 0, 0, NULL) == 0);   /* poll: no wait */
@@ -2104,18 +2152,18 @@ static void t_g6_import(void)
 	if (fd >= 0) close(fd);
 	rbo_free(&sh);
 	g6_chain_free(&ch);
-	ok = (rc == 0) && (e_imp == 0) && (e_exp == 0) && (wrc == 0) && own_done;
-#ifdef DRMPROBE_NO_FORK
-	ok = ok && (st == 0) && (nf >= 1u);   /* the fake GPU runs nothing until a wait: deterministic */
-#endif
+	ok = (rc == 0) && (e_imp == 0) && (e_exp == 0) && (wrc == 0) && own_done && (nf >= 1u || st != 0);
+	inconcl = ok && (st != 0);
+	ok = ok && (st == 0);
 	printf(TAG "dmabuf_sync_import setup=%d import_errno=%d reexport_errno=%d pending_after_import=%d nfences=%u wait=%d "
-		"chain_done=%d jobs=%u ok=%d\n", rc, e_imp, e_exp, st == 0, nf, wrc, own_done, P.g6_jobs, ok);
+		"chain_done=%d jobs=%u tail_us=%llu%s ok=%d\n", rc, e_imp, e_exp, st == 0, nf, wrc, own_done, P.g6_jobs,
+		(unsigned long long)tail, inconcl ? G6_INCONCLUSIVE : "", ok);
 	verdict("dmabuf_sync_import", ok);
 }
 
 
-/* A scan-out sized render BO with the probe's colour bands, exported and imported
- * on card0 as a LINEAR XRGB8888 framebuffer (the G7 path). */
+/* A scan-out sized render BO, exported and imported on card0 as a LINEAR XRGB8888
+ * framebuffer (the G7 path). */
 typedef struct {
 	rbo_t b;
 	int dfd;
@@ -2146,39 +2194,30 @@ static void g6_scan_geometry(g6_scan_t *sc)
 {
 	memset(sc, 0, sizeof(*sc));
 	sc->dfd = -1;
-	sc->w = (P.mode.hdisplay != 0u) ? P.mode.hdisplay : 1920u;
-	sc->h = (P.mode.vdisplay != 0u) ? P.mode.vdisplay : 1080u;
-	sc->pitch = ((sc->w * 4u) + 63u) & ~63u;
-}
-
-
-static void g6_bands(uint32_t *px, const g6_scan_t *sc)
-{
-	uint32_t x, y;
-
-	for (y = 0; y < sc->h; y++) {
-		for (x = 0; x < sc->w; x++) {
-			px[y * (sc->pitch / 4u) + x] = rgb((x * 8u) / sc->w * 32u, 255u - (y * 255u) / sc->h, 128u);
-		}
-	}
+	g6_dims(&sc->w, &sc->h);
+	sc->pitch = V3DA_CLGEN_CLEAR_RT_STRIDE(sc->w);   /* the producer's clear writes exactly this layout */
 }
 
 
 /* Flip the imported buffer with NO in-fence (as Weston flips a client buffer on a
- * plane): the flip must not complete before the buffer's producer is done. */
+ * plane): the flip must not complete before the buffer's producer is done. At the
+ * flip event the pixels are read back (sampled): they must be the producer's last
+ * colour, the frame the plane now shows. */
 typedef struct {
 	int st_commit, st_flip, flipped, back, rmfb;
 	uint64_t flip_us;
+	uint32_t bad_at_flip;
 } g6_flip_t;
 
 static void g6_flip_init(g6_flip_t *o)
 {
 	memset(o, 0, sizeof(*o));
 	o->st_commit = o->st_flip = o->rmfb = -1;
+	o->bad_at_flip = ~0u;
 }
 
 
-static void g6_flip(g6_scan_t *sc, g6_flip_t *o)
+static void g6_flip(g6_scan_t *sc, g6_flip_t *o, const volatile uint32_t *px, uint32_t words, uint32_t want)
 {
 	uint64_t t0;
 	int sfd = -1, rc;
@@ -2193,12 +2232,15 @@ static void g6_flip(g6_scan_t *sc, g6_flip_t *o)
 	rc = drmModePageFlip(P.card, P.crtc, sc->fb, DRM_MODE_PAGE_FLIP_EVENT, NULL);
 	o->flipped = (rc == 0) && (wait_flips(1, 5000) == 0);
 	o->flip_us = now_us() - t0;
+	if (o->flipped && (px != NULL)) {
+		o->bad_at_flip = g6_count_not_step(px, words, want, 61u);
+	}
 	if (g6_export(sc->dfd, &sfd) == 0) {
 		o->st_flip = g6_status(sfd, NULL);   /* 1: the producer was done when the buffer went on screen */
 		close(sfd);
 	}
 	if (o->flipped) {
-		usleep(1000000);   /* the bands on HDMI for a dense snapshot */
+		usleep(1000000);   /* the frame on HDMI for a dense snapshot */
 		P.flips_done = 0;
 		rc = drmModePageFlip(P.card, P.crtc, P.buf[0].fb, DRM_MODE_PAGE_FLIP_EVENT, NULL);
 		o->back = (rc == 0) && (wait_flips(1, 3000) == 0);
@@ -2217,6 +2259,9 @@ static void g6_flip(g6_scan_t *sc, g6_flip_t *o)
 void drmprobe_host_foreign_job(uint32_t handle, uint32_t colour);
 int drmprobe_host_foreign_done(void);
 
+#define G6_HOST_W 64u
+#define G6_HOST_H 64u
+
 static void t_g6_read_host(void)
 {
 	rbo_t rt;
@@ -2225,10 +2270,10 @@ static void t_g6_read_host(void)
 	int fd = -1, rc, done = 0, ok;
 
 	g6_read_init(&rd);
-	rc = rbo_new(&rt, G6_W * G6_H * 4u);
+	rc = rbo_new(&rt, G6_HOST_W * G6_HOST_H * 4u);
 	if (rc == 0) {
-		for (i = 0; i < G6_W * G6_H; i++) {
-			rt.cpu[i] = 0xdeadbeefu;
+		for (i = 0; i < G6_HOST_W * G6_HOST_H; i++) {
+			rt.cpu[i] = G6_SENTINEL;
 		}
 		rc = drmPrimeHandleToFD(P.render, rt.handle, DRM_CLOEXEC | DRM_RDWR, &fd);
 	}
@@ -2239,7 +2284,7 @@ static void t_g6_read_host(void)
 	}
 	if (rc == 0) {
 		drmprobe_host_foreign_job(rt.handle, G6_Y);
-		g6_consume(fd, fm, G6_W * G6_H, G6_Y, &rd);
+		g6_consume(fd, fm, G6_HOST_W * G6_HOST_H, G6_Y, &rd);
 		done = drmprobe_host_foreign_done();
 	}
 	if (fm != NULL) (void)munmap(fm, rt.size);
@@ -2247,9 +2292,9 @@ static void t_g6_read_host(void)
 	rbo_free(&rt);
 	ok = (rc == 0) && (rd.e_exp == 0) && (rd.wrc == 0) && (rd.st_after == 1) && (rd.bad == 0u) && done;
 	printf(TAG "dmabuf_sync_read producer=foreign export_errno=%d pending_at_export=%d nfences=%u wait=%d early_stale=%d "
-		"bad_words=%u done_at_read=%d ok=%d\n", rd.e_exp, rd.st_export == 0, rd.nfences, rd.wrc, rd.early_bad != 0u, rd.bad,
-		done, ok);
-	verdict("dmabuf_sync_read", ok);
+		"bad_words=%u done_at_read=%d%s ok=%d\n", rd.e_exp, rd.st_export == 0, rd.nfences, rd.wrc, rd.early_bad != 0u, rd.bad,
+		done, (ok && (rd.st_export != 0)) ? G6_INCONCLUSIVE : "", ok && (rd.st_export == 0));
+	verdict("dmabuf_sync_read", ok && (rd.st_export == 0));
 }
 
 
@@ -2258,13 +2303,14 @@ static void t_g6_flip_host(void)
 	g6_scan_t sc;
 	g6_flip_t fl;
 	int rc, done = 0, refused = 0, ok;
-	uint32_t bad = ~0u;
 
 	g6_flip_init(&fl);
 	g6_scan_geometry(&sc);
-	rc = rbo_new(&sc.b, sc.pitch * sc.h);
+	rc = rbo_new(&sc.b, g6_page(sc.pitch * sc.h));
 	if (rc == 0) {
-		g6_bands(sc.b.cpu, &sc);
+		for (uint32_t i = 0; i < sc.w * sc.h; i++) {
+			sc.b.cpu[i] = G6_SENTINEL;
+		}
 		rc = drmPrimeHandleToFD(P.render, sc.b.handle, DRM_CLOEXEC | DRM_RDWR, &sc.dfd);
 	}
 	if (rc == 0) {
@@ -2273,83 +2319,82 @@ static void t_g6_flip_host(void)
 	}
 	if (rc == 0) {
 		drmprobe_host_foreign_job(sc.b.handle, G6_Y);
-		g6_flip(&sc, &fl);
+		g6_flip(&sc, &fl, sc.b.cpu, sc.w * sc.h, G6_Y);
 		done = drmprobe_host_foreign_done();
-		bad = g6_count_not(sc.b.cpu, (sc.pitch / 4u) * sc.h, G6_Y);   /* the fake fills the whole BO */
 	}
 	else if (sc.kh != 0u) {
 		gem_close(P.card, sc.kh);
 	}
 	if (sc.dfd >= 0) close(sc.dfd);
 	rbo_free(&sc.b);
-	ok = (rc == 0) && fl.flipped && fl.back && (fl.rmfb == 0) && done && (bad == 0u);
+	ok = (rc == 0) && fl.flipped && fl.back && (fl.rmfb == 0) && done && (fl.bad_at_flip == 0u);
 	printf(TAG "dmabuf_sync_flip producer=foreign addfb=%d pending_at_commit=%d flipped=%d flip_us=%llu done_at_flip=%d "
-		"bad_words=%u flipped_back=%d%s ok=%d\n", rc, fl.st_commit == 0, fl.flipped, (unsigned long long)fl.flip_us, done,
-		bad, fl.back, refused ? " gap=1 (ADDFB2 refused: not scan-out capable)" : "", ok);
+		"bad_words=%u flipped_back=%d%s%s ok=%d\n", rc, fl.st_commit == 0, fl.flipped, (unsigned long long)fl.flip_us, done,
+		fl.bad_at_flip, fl.back, refused ? " gap=1 (ADDFB2 refused: not scan-out capable)" : "",
+		(ok && (fl.st_commit != 0)) ? G6_INCONCLUSIVE : "", ok && (fl.st_commit == 0));
 	if (refused) {
 		P.gap++;
 	}
 	else {
-		verdict("dmabuf_sync_flip", ok);
+		verdict("dmabuf_sync_flip", ok && (fl.st_commit == 0));
 	}
 }
 
 #else /* !DRMPROBE_NO_FORK */
 
-/* The producer process (a Wayland client): its own render node; a job chain into
- * a 64x64 target, sent as a dma-buf the moment it is submitted (cmd 11); after the
- * consumer's "read" (12), a second chain that names a scan-out buffer, sent the
- * same way (13); after the consumer's flip (14), its own timings (15). */
+/* The producer process (a Wayland client): its own render node, one scan-out sized
+ * buffer, exported once. Round 1: a job chain into it, the dma-buf sent the moment
+ * the chain is submitted (cmd 11). The consumer reads, imports the buffer on card0
+ * and says so (12). Round 2: a second chain, announced as submitted (13); the
+ * consumer flips the buffer and says so (14). Then the producer's own timings (15).
+ * Timings: sub = the submit loop, tail = last submit -> the chain's fence signalled
+ * (a blocking syncobj wait). tail is the race window the consumer had. */
 static void g6_child(int s)
 {
 	g6_chain_t ch;
-	g6_scan_t sc;
-	xp_msg_t m;
-	uint64_t t0;
-	int rfd, rc, fd_rt = -1;
+	xp_msg_t m, in;
+	uint64_t sub1 = 0, tail1 = 0, sub2 = 0, tail2 = 0;
+	int rfd, rc, dfd = -1;
 
-	memset(&m, 0, sizeof(m));
-	g6_scan_geometry(&sc);
+	memset(&ch, 0, sizeof(ch));
 	rfd = open(P.render_path, O_RDWR | O_CLOEXEC);
 	rc = (rfd >= 0) ? g6_chain_setup(rfd, &ch) : -errno;
-	if (rc == 0) rc = rbo_new_fd(rfd, &sc.b, sc.pitch * sc.h);
-	if (rc == 0) {
-		g6_bands(sc.b.cpu, &sc);
-		rc = drmPrimeHandleToFD(rfd, ch.rt.handle, DRM_CLOEXEC | DRM_RDWR, &fd_rt);
-	}
-	if (rc == 0) rc = drmPrimeHandleToFD(rfd, sc.b.handle, DRM_CLOEXEC | DRM_RDWR, &sc.dfd);
+	if (rc == 0) rc = drmPrimeHandleToFD(rfd, ch.rt.handle, DRM_CLOEXEC | DRM_RDWR, &dfd);
 
 	/* round 1: render, hand over at once */
-	t0 = now_us();
-	if (rc == 0) rc = g6_chain_submit(&ch, P.g6_jobs, 0u);
+	if (rc == 0) rc = g6_chain_submit(&ch, P.g6_jobs);
+	memset(&m, 0, sizeof(m));
 	m.cmd = 11;
 	m.rc = rc;
-	(void)xp_send(s, &m, (rc == 0) ? fd_rt : -1);
+	(void)xp_send(s, &m, (rc == 0) ? dfd : -1);
 	if (rc == 0) {
-		(void)drmSyncobjWait(rfd, &ch.sync, 1, INT64_MAX, 0, NULL);
-		m.aux[0] = now_us() - t0;
+		sub1 = ch.t_submitted - ch.t_start;
+		tail1 = g6_chain_tail_us(&ch);
 	}
-	if (xp_recv(s, &m, 12, NULL) == 0) {
-		/* round 2: the scan-out buffer, named by every job of a second chain */
-		m.aux[2] = now_us();
-		rc = (rc == 0) ? g6_chain_submit(&ch, P.g6_jobs, sc.b.handle) : rc;
+	if (xp_recv(s, &in, 12, NULL) == 0) {
+		/* round 2: render again, announce it */
+		if (rc == 0) rc = g6_chain_submit(&ch, P.g6_jobs);
+		memset(&m, 0, sizeof(m));
 		m.cmd = 13;
 		m.rc = rc;
-		(void)xp_send(s, &m, (rc == 0) ? sc.dfd : -1);
+		(void)xp_send(s, &m, -1);
 		if (rc == 0) {
-			(void)drmSyncobjWait(rfd, &ch.sync, 1, INT64_MAX, 0, NULL);
-			m.aux[1] = now_us() - m.aux[2];
+			sub2 = ch.t_submitted - ch.t_start;
+			tail2 = g6_chain_tail_us(&ch);
 		}
-		(void)xp_recv(s, &m, 14, NULL);
+		(void)xp_recv(s, &in, 14, NULL);
 	}
+	memset(&m, 0, sizeof(m));
 	m.cmd = 15;
 	m.rc = rc;
 	m.handle = P.g6_jobs;
+	m.aux[0] = sub1;
+	m.aux[1] = tail1;
+	m.aux[2] = sub2;
+	m.aux[3] = tail2;
 	(void)xp_send(s, &m, -1);
-	if (fd_rt >= 0) close(fd_rt);
-	if (sc.dfd >= 0) close(sc.dfd);
+	if (dfd >= 0) close(dfd);
 	if (rfd >= 0) {
-		rbo_free_fd(rfd, &sc.b);
 		g6_chain_free(&ch);
 		close(rfd);
 	}
@@ -2359,9 +2404,10 @@ static void g6_child(int s)
 /* Two processes, as a Wayland client and a compositor. Round 1 (a compositor
  * sampling a client buffer): the consumer maps the dma-buf the moment it arrives,
  * exports its implicit fences, waits, and must then read the producer's LAST colour.
- * Round 2 (direct scan-out): the consumer imports the producer's scan-out buffer on
- * card0 and flips it with no in-fence; libdrm-phoenix asks the render server for
- * the producer's fence and rpi4-kms -G holds the flip until it signals. */
+ * Round 2 (direct scan-out): the consumer, with the buffer already imported on card0
+ * and added as a framebuffer, flips it with no in-fence the moment the producer's
+ * second chain is submitted; libdrm-phoenix asks the render server for the
+ * producer's fence and rpi4-kms -G holds the flip until it signals. */
 static void t_g6_xproc(void)
 {
 	g6_read_t rd;
@@ -2370,12 +2416,14 @@ static void t_g6_xproc(void)
 	xp_msg_t q, r;
 	uint32_t *fm = NULL;
 	pid_t pid = -1;
-	int sv[2] = { -1, -1 }, fd = -1, got1 = -1, got2 = -1, got3 = -1, status = 0, rc_fb = -1, refused = 0, ok;
+	int sv[2] = { -1, -1 }, got1 = -1, got2 = -1, got3 = -1, status = 0, rc_fb = -1, refused = 0, ok, pend;
+	size_t len;
 
 	g6_read_init(&rd);
 	g6_flip_init(&fl);
 	memset(&r, 0, sizeof(r));
 	g6_scan_geometry(&sc);
+	len = g6_page(sc.pitch * sc.h);
 	if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0) {
 		fflush(stdout);
 		pid = fork();
@@ -2388,52 +2436,57 @@ static void t_g6_xproc(void)
 		sv[1] = -1;
 	}
 	if (pid > 0) {
-		got1 = xp_recv(sv[0], &r, 11, &fd);
-		if ((got1 == 0) && (r.rc == 0) && (fd >= 0)) {
-			fm = mmap(NULL, G6_W * G6_H * 4u, PROT_READ, MAP_SHARED, fd, 0);
+		got1 = xp_recv(sv[0], &r, 11, &sc.dfd);
+		if ((got1 == 0) && (r.rc == 0) && (sc.dfd >= 0)) {
+			fm = mmap(NULL, len, PROT_READ, MAP_SHARED, sc.dfd, 0);
 			fm = (fm == MAP_FAILED) ? NULL : fm;
 		}
 		if (fm != NULL) {
-			g6_consume(fd, fm, G6_W * G6_H, G6_Y, &rd);
-			(void)munmap(fm, G6_W * G6_H * 4u);
+			g6_consume(sc.dfd, fm, sc.w * sc.h, G6_Y, &rd);
+			rc_fb = g6_scan_fb(sc.dfd, &sc);   /* before round 2: the race window is the flip's alone */
+			refused = (rc_fb == -EINVAL);
+			if ((rc_fb != 0) && (sc.kh != 0u)) {
+				gem_close(P.card, sc.kh);
+				sc.kh = 0;
+			}
 		}
-		if (fd >= 0) close(fd);
 		memset(&q, 0, sizeof(q));
 		q.cmd = 12;
 		(void)xp_send(sv[0], &q, -1);
 
-		got2 = xp_recv(sv[0], &r, 13, &sc.dfd);
-		if ((got2 == 0) && (r.rc == 0) && (sc.dfd >= 0)) {
-			rc_fb = g6_scan_fb(sc.dfd, &sc);
-			refused = (rc_fb == -EINVAL);
-			if (rc_fb == 0) {
-				g6_flip(&sc, &fl);
-			}
-			else if (sc.kh != 0u) {
-				gem_close(P.card, sc.kh);
-			}
+		got2 = xp_recv(sv[0], &r, 13, NULL);
+		if ((got2 == 0) && (r.rc == 0) && (rc_fb == 0)) {
+			g6_flip(&sc, &fl, fm, sc.w * sc.h, G6_Y);
 		}
-		if (sc.dfd >= 0) close(sc.dfd);
 		q.cmd = 14;
 		(void)xp_send(sv[0], &q, -1);
 		got3 = xp_recv(sv[0], &r, 15, NULL);
 		(void)waitpid(pid, &status, 0);
 	}
-	ok = (got1 == 0) && (rd.e_exp == 0) && (rd.wrc == 0) && (rd.st_after == 1) && (rd.bad == 0u);
-	printf(TAG "dmabuf_sync_read producer=child jobs=%u chain_us=%llu export_errno=%d pending_at_export=%d nfences=%u "
-		"wait=%d early_stale=%d bad_words=%u done_at_read=%d ok=%d\n", P.g6_jobs, (unsigned long long)r.aux[0], rd.e_exp,
-		rd.st_export == 0, rd.nfences, rd.wrc, rd.early_bad != 0u, rd.bad, rd.st_after == 1, ok);
-	verdict("dmabuf_sync_read", ok);
-	ok = (got2 == 0) && (rc_fb == 0) && fl.flipped && (fl.st_flip == 1) && fl.back && (fl.rmfb == 0) && (got3 == 0);
-	printf(TAG "dmabuf_sync_flip producer=child jobs=%u chain_us=%llu addfb=%d pending_at_commit=%d flipped=%d flip_us=%llu "
-		"done_at_flip=%d flipped_back=%d report=%d%s ok=%d\n", P.g6_jobs, (unsigned long long)r.aux[1], rc_fb,
-		fl.st_commit == 0, fl.flipped, (unsigned long long)fl.flip_us, fl.st_flip == 1, fl.back, got3 == 0,
-		refused ? " gap=1 (ADDFB2 refused: not scan-out capable, see the KMS fb FAIL line)" : "", ok);
+	if (fm != NULL) (void)munmap(fm, len);
+	if (sc.dfd >= 0) close(sc.dfd);
+
+	ok = (got1 == 0) && (rd.e_exp == 0) && (rd.wrc == 0) && (rd.st_after == 1) && (rd.bad == 0u) && (got3 == 0);
+	pend = (rd.st_export == 0);
+	printf(TAG "dmabuf_sync_read producer=child jobs=%u size=%ux%u submit_us=%llu tail_us=%llu export_errno=%d "
+		"pending_at_export=%d nfences=%u wait=%d early_stale=%d bad_words=%u done_at_read=%d%s ok=%d\n", P.g6_jobs, sc.w, sc.h,
+		(unsigned long long)r.aux[0], (unsigned long long)r.aux[1], rd.e_exp, pend, rd.nfences, rd.wrc, rd.early_bad != 0u,
+		rd.bad, rd.st_after == 1, (ok && !pend) ? G6_INCONCLUSIVE : "", ok && pend);
+	verdict("dmabuf_sync_read", ok && pend);
+	ok = (got2 == 0) && (rc_fb == 0) && fl.flipped && (fl.st_flip == 1) && (fl.bad_at_flip == 0u) && fl.back &&
+		(fl.rmfb == 0) && (got3 == 0);
+	pend = (fl.st_commit == 0);
+	printf(TAG "dmabuf_sync_flip producer=child jobs=%u submit_us=%llu tail_us=%llu addfb=%d pending_at_commit=%d flipped=%d "
+		"flip_us=%llu done_at_flip=%d bad_at_flip=%u flipped_back=%d report=%d%s%s ok=%d\n", P.g6_jobs,
+		(unsigned long long)r.aux[2], (unsigned long long)r.aux[3], rc_fb, pend, fl.flipped, (unsigned long long)fl.flip_us,
+		fl.st_flip == 1, fl.bad_at_flip, fl.back, got3 == 0,
+		refused ? " gap=1 (ADDFB2 refused: not scan-out capable, see the KMS fb FAIL line)" : "",
+		(ok && !pend) ? G6_INCONCLUSIVE : "", ok && pend);
 	if (refused) {
 		P.gap++;
 	}
 	else {
-		verdict("dmabuf_sync_flip", ok);
+		verdict("dmabuf_sync_flip", ok && pend);
 	}
 	if (sv[0] >= 0) close(sv[0]);
 }

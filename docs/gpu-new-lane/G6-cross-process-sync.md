@@ -3,7 +3,9 @@
 Gap **G6** of the [new-lane plan](PLAN.md) ([M3](M3-libdrm-phoenix.md) §4 G6 row,
 [M4](M4-xorg-modesetting.md) DRI3/Present, [M5](M5-vulkan.md) G15/G4a, [M6](M6-wayland.md) §8, §15, §16).
 
-**Status (2026-09-27): implemented and host-tested, pending Pi cycle [`g6-sync`](#cycle-g6-sync-bash-timeout-600000).**
+**Status (2026-09-27): implemented and host-tested; `g6-sync` on the Pi was INCONCLUSIVE (the race was never
+provoked, [result](#result--g6-sync-chain52-rerun-2026-09-27-1700-inconclusive--the-race-was-not-provoked)); the probe
+is fixed and cycle [`g6-sync2`](#cycle-g6-sync2-bash-timeout-600000) is pre-registered.**
 Before G6, implicit sync worked only inside one process: a buffer rendered by one process and
 then sampled, scanned out or read by another had no fence the consumer could see. M6 §16 put it
 as "Weston's direct scan-out of a client buffer has no cross-process fence: tearing expected
@@ -321,6 +323,90 @@ pending_at_commit=0`: the producer's 1024-job chain cost ~0 µs, so the consumer
 chain that is genuinely long on the GPU, and the probe grading an un-provoked race as INCONCLUSIVE (`g6-sync2`).
 What it does show: the proto-4 server, the new ioctls and the per-flip `last_fence` query run on hardware without
 regressions (48/0, 45 fps as m6h).
+
+### Why `g6-sync` could not decide, and the fix (drmprobe `build-out-g6b`)
+
+- **`chain_us=0` was partly a measurement bug**: the producer child received the consumer's next message
+  into the same `xp_msg_t` that carried its timings, so the report always went out with `aux[] = 0`.
+- **The race itself was really not provoked**: the in-process `dmabuf_sync_import` (no messaging involved)
+  also read `pending_after_import=0` after 1024 jobs. A 64×64 clear finishes on V3D in less time than its
+  own submit IPC, so a chain of them never gets ahead of the CPU: by the last submit the GPU is idle.
+- **Fix, producer**: the chain is now `-g` (default **48**) dependent **full-screen clears (the mode's
+  1920×1080, raster RGBA8, stride 7680) straight into the handed-over buffer**. Each job stores the whole
+  8 MB frame, so the chain is long on the GPU, not in IPC. Colour X for the first `-g`−1 jobs and Y for the
+  last one. The same buffer is read in round 1 and flipped in round 2, and its content is checked at the flip
+  event (`bad_at_flip`, sampled every 61st word). It is created with the scan-out placement hint (proto 5
+  puts it below 1 GiB; older servers never see the hint).
+- **Fix, timing**: the producer reports `submit_us` (the submit loop) and `tail_us` = last submit → the
+  chain's fence signalled (a blocking syncobj wait, which the server answers at the completion IRQ). The fence
+  page carries no timestamps, so this is the closest server-side measure. `tail_us` is the race window the
+  consumer had; a trivial chain shows up as a `tail_us` of a few hundred µs.
+- **Fix, grading**: when a key's export succeeded but found nothing pending (`pending_after_import=0`,
+  `pending_at_export=0`, `pending_at_commit=0`), the key now **fails** with `inconclusive=1 (… the race was
+  not provoked; re-run with a larger -g)`. It never passes. Host control `g6-eager` (`FAKE_V3DA_EAGER=1`: a fake
+  GPU that finishes every job at submit, as the Pi did for the 64×64 chain) shows exactly that:
+
+      DRMPROBE dmabuf_sync_read producer=foreign export_errno=0 pending_at_export=0 … done_at_read=1 inconclusive=1 (…) ok=0
+      DRMPROBE dmabuf_sync_flip producer=foreign addfb=0 pending_at_commit=0 … done_at_flip=1 bad_words=0 … inconclusive=1 (…) ok=0
+      DRMPROBE RESULT pass=41 fail=7 … failed=…,dmabuf_sync_import,dmabuf_sync_read,dmabuf_sync_flip, …
+      HOSTE2E g6-eager verdict=PASS (an un-provoked race grades the G6 keys inconclusive = FAIL, never PASS)
+
+  Every other host run still passes (legacy, dri, g4/g7/g6-negative, g7-high, lowmem-high/negative).
+
+Artifact: `tools/gpu-lane/libdrm-phoenix/build-out-g6b/drmprobe` **`9c6cd3176c84080f`** (library snapshot
+`libdrm.a` `cf59685866601418`, from the current tree: G6 plus the proto-5 low-memory placement of M6 §18),
+frozen as `/home/houp/.claude/jobs/c8f1289c/tmp/g6-frozen2/drmprobe-g6b`. Nothing else changes: servers,
+Weston and client are the ones already staged.
+
+### Staging for `g6-sync2` (coordinator)
+
+```
+EXPORT=/srv/phoenix-rpi4-nfs-gcc16
+sudo -n install -m 755 /home/houp/.claude/jobs/c8f1289c/tmp/g6-frozen2/drmprobe-g6b "$EXPORT/bin/drmprobe-g6b"
+cmp /home/houp/.claude/jobs/c8f1289c/tmp/g6-frozen2/drmprobe-g6b "$EXPORT/bin/drmprobe-g6b"
+cmp /home/houp/.claude/jobs/c8f1289c/tmp/low-frozen/rpi4-v3d-async-low "$EXPORT/bin/rpi4-v3d-async-low"   # staged for m6i-low
+cmp /home/houp/.claude/jobs/c8f1289c/tmp/g6-frozen/weston-g6 "$EXPORT/bin/weston-g6"
+cmp /home/houp/.claude/jobs/c8f1289c/tmp/g6-frozen/weston-simple-egl-g6 "$EXPORT/bin/weston-simple-egl-g6"
+cmp /home/houp/.claude/jobs/c8f1289c/tmp/g6-frozen/weston-m6a-g6.sh "$EXPORT/bin/weston-m6a-g6.sh"
+```
+
+**Server: `rpi4-v3d-async-low`** (proto 5 = all of G6 + the M6 §18 low-memory placement; already staged).
+The new probe is built from the current tree and includes §18's `scanout_lowmem` key, which needs proto 5.
+The low server also makes the producer's hinted buffer land below 1 GiB, so the flip half cannot fall into
+the `above_1g` gap. (With `rpi4-v3d-async-g6` instead, expect `failed=scanout_lowmem` and, by placement luck,
+possibly `dmabuf_sync_flip … gap=1`; the G6 rows grade the same.)
+
+### Cycle `g6-sync2` (Bash `timeout: 600000`)
+
+```
+./scripts/test-cycle-psh-interact.sh --label g6-sync2 --idle-secs 45 --max-cmd-secs 150 \
+    --hdmi-dense-on 'DRMPROBE kms_flip start|WESTONDRM client start' -- \
+    "/bin/rpi4-v3d-async-low -r 1 -m serial -i" \
+    "/bin/rpi4-kms-g7 -G -p 96" \
+    "/bin/shmsrv -v" \
+    "/bin/drmprobe-g6b -n 30 -g 48" \
+    "export WESTON=/bin/weston-g6" \
+    "export EGL_CLIENT=/bin/weston-simple-egl-g6" \
+    "/bin/bash /bin/weston-m6a-g6.sh gl egl noinput" \
+    "/bin/shmsrv -s" \
+    "/bin/kmstest-poll stats" \
+    "/bin/v3dasync-ping stats"
+```
+
+Grade with the `g6-sync` grep (§8) on `*-g6-sync2.log`. Rows 1–3, 8 and 10–16 of the `g6-sync` table apply
+unchanged, except row 1, where the server prints `proto=2..5` (plus its `V3DA srv low …` lines, graded by
+M6 §18). Rows 5–7 and 9 are replaced by:
+
+| # | Line / observation | Predicted | If instead… |
+|---|---|---|---|
+| 5′ | `DRMPROBE dmabuf_sync_import setup=0 import_errno=0 reexport_errno=0 pending_after_import=1 nfences=1 wait=0 chain_done=1 jobs=48 tail_us=<t> ok=1`, t ≥ 30000; server `V3DA srv g6 attach client=<c> ns=2 … bos=1 … deps=1 …` | the join job on hardware, with a real pending fence | `inconclusive=1` / `tail_us` < 1000: even full-screen clears are faster than the submit loop — re-run with `-g 256` and report the per-job time (`tail_us / jobs`); `setup=-22` or `-12`: the 1920×1080 clear or its 8 MB target could not be set up (clgen sizes / placement) — read the `V3DA reject` line |
+| 6′ | `DRMPROBE dmabuf_sync_read producer=child jobs=48 size=1920x1080 submit_us=<s> tail_us=<t> export_errno=0 pending_at_export=1 nfences=1 wait=0 early_stale=1 bad_words=0 done_at_read=1 ok=1`, t ≥ 30000 and ≫ s; server `V3DA srv g6 last_fence client=<parent c> ns=2 … pending=1 newest=<child s>/1/<n> more=0` | **a second process reads the producer's finished frame (all 2 M pixels Y, sampled every 7th word) only after waiting on the dma-buf's fences** | `inconclusive=1`: not decided — larger `-g`; **`bad_words>0` with `wait=0`: the fence did not cover the producer's GPU work — blocker**; `bad_words>0` everywhere including after a long wait: the 1920×1080 clear writes another layout (clgen stride) — check `early_stale`, HDMI |
+| 7′ | `DRMPROBE dmabuf_sync_flip producer=child jobs=48 submit_us=<s2> tail_us=<t2> addfb=0 pending_at_commit=1 flipped=1 flip_us=<F> done_at_flip=1 bad_at_flip=0 flipped_back=1 report=1 ok=1`, F ≥ 17 ms and of the order of t2; `KMS scanout import … (first flip)`; drmprobe's `KMS srv flipstat … deferred ≥ 1`; HDMI (dense snapshots): a uniform teal-green frame (Y as XRGB) for ~1 s, **never blue (X) or the sentinel** | **a flip of another process's buffer is held until its GPU work is done, and the plane shows the finished frame** | `inconclusive=1`: not decided; `done_at_flip=0` or `bad_at_flip>0` with `pending_at_commit=1`: **the gate did not hold — blocker** (a `last_fence … pending=1` line for this id = the library asked: then rpi4-kms, `KMS srv ready … v3d=`); `addfb=-22` + `why=above_1g`: the hint was lost (§18 server not staged) — graded `gap=1`, not decided |
+| 9′ | `DRMPROBE RESULT pass=49 fail=0 gap=0 failed=- … verdict=PASS` (g6-sync's 48 + §18's `scanout_lowmem`) | as listed | any `failed=` key: its row; `failed=` with only G6 keys and `inconclusive=1`: not decided |
+
+**Decides:** rows 5′–7′ with `ok=1` (so `pending_*=1` by construction) and `tail_us` ≥ 30 ms = G6 closed on
+hardware, with the race measured. Any `inconclusive=1` = still not decided; a `bad_*>0` with the pending flag
+at 1 = G6 broken.
 
 ## 9. Risks only the Pi can show
 

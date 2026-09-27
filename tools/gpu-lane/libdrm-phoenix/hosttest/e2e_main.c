@@ -9,6 +9,7 @@
  *        FAKE_KMS_PROTO=1    the fake display server predates G7 (negative control)
  *        FAKE_KMS_IMPORT_HIGH=1  card0 imports land above 1 GiB (ADDFB2 must refuse them)
  *        FAKE_V3DA_HIGH=1    render BOs lie above 1 GiB unless placed (V3DA_BO_LOWMEM, proto 5)
+ *        FAKE_V3DA_EAGER=1   every job is done at submit (G6: the race is never provoked)
  *        FAKE_V3DA_PROTO=4   the fake render server predates proto 5 (ignores the placement flag)
  *
  * Copyright 2026 Phoenix Systems
@@ -39,6 +40,7 @@ void fake_g4(uint32_t *exports_live, uint32_t *v3dbuf_imports, uint32_t *bos_liv
 void fake_set_kms(int old_kms, int import_high);
 void fake_g7(uint32_t *imports, uint32_t *imports_live, uint32_t *imports_released);
 void fake_set_v3d_high(int on);
+void fake_set_eager(int on);
 uint32_t fake_lowmem_bos(void);
 
 
@@ -59,6 +61,7 @@ int main(int argc, char **argv)
 	fake_set_v3d_proto((old != NULL) ? (uint32_t)atoi(old) : V3DA_PROTO_VERSION);
 	fake_set_kms((old_kms != NULL) && (strcmp(old_kms, "1") == 0), (high != NULL) && (strcmp(high, "1") == 0));
 	fake_set_v3d_high((v3d_high != NULL) && (strcmp(v3d_high, "1") == 0));
+	fake_set_eager((getenv("FAKE_V3DA_EAGER") != NULL) && (strcmp(getenv("FAKE_V3DA_EAGER"), "1") == 0));
 	(void)snprintf(proto, sizeof(proto), "%s", (old != NULL) ? old : "5");
 	rc = drmprobe_main(3, av);
 	fake_last_cl(&d, &nbo, &nin, &nout, &submits);

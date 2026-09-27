@@ -81,7 +81,7 @@ for mode in legacy dri; do
 	# proto 5: a BO created with the scan-out placement hint is placed (the fake counts it) and
 	# card0 takes it; the plain one lands in the fake's low arena here, so it is taken too
 	grep -q 'DRMPROBE scanout_lowmem 1920x1080 pages=2026 bogus_flag_errno=22 create=0 low_addfb_errno=0 plain_create=0 plain_addfb_errno=0 ok=1' "${log}" || why="${why} lowmem"
-	grep -q 'HOSTE2E lowmem .* server_proto=5 v3d_high=0 lowmem_bos=1$' "${log}" || why="${why} lowmem-counters"
+	grep -q 'HOSTE2E lowmem .* server_proto=5 v3d_high=0 lowmem_bos=2$' "${log}" || why="${why} lowmem-counters"   # scanout_lowmem + the G6 producer chain's target
 	# G6: cross-process implicit sync. The producer is the fake's "foreign" job (a
 	# client this library does not know), pending until something waits: the consumer
 	# reads stale pixels without sync, exports the dma-buf's fences, waits, reads the
@@ -193,7 +193,7 @@ why=""
 grep -q 'DRMPROBE RESULT .*gap=2 failed=cl_clear,cl_clear_dep,import_clear,implicit_flip, ' "${log}" || why="${why} failed-set"
 grep -q 'DRMPROBE scanout_lowmem 1920x1080 pages=2026 bogus_flag_errno=22 create=0 low_addfb_errno=0 plain_create=0 plain_addfb_errno=22 ok=1' "${log}" || why="${why} not-placed"
 grep -q 'DRMPROBE prime_import_card0 .* addfb=-22 addfb_errno=22 .* gap=1 ' "${log}" || why="${why} plain-not-high"
-grep -q 'HOSTE2E lowmem .* server_proto=5 v3d_high=1 lowmem_bos=1$' "${log}" || why="${why} lowmem-counters"
+grep -q 'HOSTE2E lowmem .* server_proto=5 v3d_high=1 lowmem_bos=2$' "${log}" || why="${why} lowmem-counters"   # + the G6 chain's target
 grep -q 'HOSTE2E g4 .* exports_live=0 v3dbuf_imports=1 bos_live=0' "${log}" || why="${why} g4-counters"
 grep -qE 'ERROR: AddressSanitizer|runtime error' "${log}" && why="${why} sanitizer"
 if [ -z "${why}" ]; then
@@ -218,4 +218,23 @@ if [ -z "${why}" ]; then
 	echo "HOSTE2E lowmem-negative verdict=PASS (against a proto-4 server the hint is dropped: the buffer lands high and card0 refuses it)"
 else
 	echo "HOSTE2E lowmem-negative verdict=FAIL (${why# } - see ${log})"
+fi
+
+# G6 inconclusive control: a fake GPU that finishes every job at submit (FAKE_V3DA_EAGER=1),
+# as the Pi's did for the 64x64 chain of g6-sync. Nothing is pending when the consumer looks,
+# so a no-op sync would pass: the three race keys must FAIL as inconclusive, not pass.
+log="${out}/e2e-g6-eager.log"
+FAKE_V3DA_EAGER=1 "${out}/e2e" dri > "${log}" 2>&1 || true
+grep -E 'DRMPROBE (RESULT|dmabuf_sync)|ERROR|runtime error' "${log}" || true
+why=""
+grep -q 'DRMPROBE dmabuf_sync_probe export_errno=0 import_errno=0 idle_fences=0 ok=1' "${log}" || why="${why} probe"
+grep -q 'DRMPROBE dmabuf_sync_import .* pending_after_import=0 .* inconclusive=1 .* ok=0' "${log}" || why="${why} import-not-inconclusive"
+grep -q 'DRMPROBE dmabuf_sync_read producer=foreign export_errno=0 pending_at_export=0 .* bad_words=0 done_at_read=1 inconclusive=1 .* ok=0' "${log}" || why="${why} read-not-inconclusive"
+grep -q 'DRMPROBE dmabuf_sync_flip producer=foreign addfb=0 pending_at_commit=0 .* done_at_flip=1 bad_words=0 .* inconclusive=1 .* ok=0' "${log}" || why="${why} flip-not-inconclusive"
+grep -q 'DRMPROBE RESULT .*dmabuf_sync_import,dmabuf_sync_read,dmabuf_sync_flip, ' "${log}" || why="${why} failed-set"
+grep -qE 'ERROR: AddressSanitizer|runtime error' "${log}" && why="${why} sanitizer"
+if [ -z "${why}" ]; then
+	echo "HOSTE2E g6-eager verdict=PASS (an un-provoked race grades the G6 keys inconclusive = FAIL, never PASS)"
+else
+	echo "HOSTE2E g6-eager verdict=FAIL (${why# } - see ${log})"
 fi

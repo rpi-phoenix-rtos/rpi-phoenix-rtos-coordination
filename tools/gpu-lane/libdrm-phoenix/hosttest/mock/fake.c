@@ -92,6 +92,7 @@ static struct {
 	int old_kms;               /* FAKE_KMS_PROTO=1: a display server from before G7 */
 	int import_high;           /* FAKE_KMS_IMPORT_HIGH=1: imports land above 1 GiB */
 	int v3d_high;              /* FAKE_V3DA_HIGH=1: render BOs lie above 1 GiB unless placed (V3DA_BO_LOWMEM) */
+	int eager;                 /* FAKE_V3DA_EAGER=1: every job is done at submit (G6: an un-provoked race) */
 	uint32_t lowmem_bos;       /* BOs placed below 1 GiB for V3DA_BO_LOWMEM */
 } F;
 
@@ -1386,6 +1387,9 @@ static void v3d_handle(msg_t *m)
 				}
 			}
 			V.submits++;
+			if (F.eager) {
+				v3d_complete_all();   /* a GPU faster than the probe: nothing is ever pending */
+			}
 			rc = 0;
 			break;
 		}
@@ -2089,6 +2093,9 @@ void drmprobe_host_foreign_job(uint32_t handle, uint32_t colour)
 	V.bo[b].last[V3DA_Q_RENDER].queue = V3DA_Q_RENDER;
 	V.bo[b].last[V3DA_Q_RENDER].gen = (uint32_t)fence_page.slot[FOREIGN_SLOT].gen;
 	V.bo[b].last[V3DA_Q_RENDER].seqno = V.seqno;
+	if (F.eager) {
+		v3d_complete_all();
+	}
 }
 int drmprobe_host_foreign_done(void)
 {
@@ -2096,6 +2103,7 @@ int drmprobe_host_foreign_done(void)
 }
 void fake_set_kms(int old_kms, int import_high) { F.old_kms = old_kms; F.import_high = import_high; }
 void fake_set_v3d_high(int on) { F.v3d_high = on; }
+void fake_set_eager(int on) { F.eager = on; }
 uint32_t fake_lowmem_bos(void) { return F.lowmem_bos; }
 void fake_g7(uint32_t *imports, uint32_t *imports_live, uint32_t *imports_released)
 {
