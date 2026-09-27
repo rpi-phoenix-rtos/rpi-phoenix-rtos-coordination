@@ -1352,7 +1352,10 @@ Mesa 26.2 GBM/EGL/GLES (static, patches 0001–0009) → libdrm-phoenix (`DRMPHX
   full-screen shaded rotating cube on grey (`artifacts/hdmi/20260927-051111-m3p3b-kmscube-tick.png`);
   the console returns after exit (`planes_off=1`).
 
-**Why ~30 fps, not 60:** kmscube's legacy loop waits for each page-flip event with `select()` on the card
+**Why ~30 fps, not 60** ↩ *corrected 2026-09-27*: not the 20 ms poll quantum as first written here. rpi4-kms
+deferred every fence-carrying flip and never woke its vblank thread, so each flip took two vblanks;
+fixed in `efa4c1f9f` → **60.00 fps** (poll-wake.md, queue26). The original reading was:
+kmscube's legacy loop waits for each page-flip event with `select()` on the card
 fd, and on Phoenix a poll of a device-server fd is quantised to 20 ms (P9 / G12) — so it catches every
 other vblank. The GPU is idle most of the time (render 1.2 s busy over 20 s). This is the known kernel
 gap, now with a real client to prove the fix against: a `block_ms` path for device-server fds in

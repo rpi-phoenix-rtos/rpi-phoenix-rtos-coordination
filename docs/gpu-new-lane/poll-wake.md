@@ -635,3 +635,18 @@ quakespasm, Quake III, Quake II, vkQuake (torches present, 15/15 reference frame
 the glamor X desktop with its GL window, XBill and xclock; every game in-level and correct). Kernel
 `ee5939fc` and libphoenix `d40050c` pushed; manifest `2026-09-27-build11-poll-wake.md`. Cycle 2's
 kmscube result was not a poll problem (rpi4-kms deferred-flip wake, fixed separately, A/B in queue26).
+
+## Result — deferred-flip wake fix A/B (queue26, 2026-09-27 07:25–07:40): **PASS, as pre-registered**
+
+| run | server | fps | `KMS srv flipstat` |
+|---|---|---|---|
+| A | `rpi4-kms-gate -K` (fix off, notify on) | 30.00 | `vbl1=1 vbl2=600`, commit→arm avg 15.9 ms, `applied_vblank=600` |
+| B | `rpi4-kms-gate` (fix + notify) | **60.00** | `vbl1=600 vbl2=1`, commit→arm avg 2.15 ms, `applied_gate=600 kicks=600` |
+| kmstest 300 fence-free flips | same | 60.00, 300/300, 0 missed | `vbl1=302`, commit→arm 98 µs |
+| C | `rpi4-kms-gate-base` (fix, NO notify) | 59.10 | `vbl1=594 vbl2=7` |
+| quakespasm-drm | `rpi4-kms-gate` | 30.9 (969 frames, 0 exc) | — |
+
+0 exceptions everywhere. The counters prove the mechanism: without the wake every fence-deferred
+flip took exactly two vblanks; with it, one. `pollNotify` removes the last 1 % (C → B). Quakespasm
+lands in the predicted 29–33 band: its ~19.5 ms of GPU time per frame plus the vblank wait bound it,
+not the flip path. **kmscube at 60 Hz through Mesa GBM/EGL on the new stack.**
