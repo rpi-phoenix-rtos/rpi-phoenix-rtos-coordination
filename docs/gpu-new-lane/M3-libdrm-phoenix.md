@@ -1590,3 +1590,19 @@ OS uses (SDL KMSDRM → Mesa GBM/EGL → DRM KMS + V3D). The fps band then says 
 present path costs anything against the v3da clone and Pi OS. Next: 3 interleaved trials against
 `stk-v3da` for a graded A/B (the M1 protocol), then an input cycle (`rpi4-kms-gate -G -C`, drive the
 menu by keyboard).
+
+## Result — `stkdrm-1` (queue32, 2026-09-27 10:27–10:35): **11.89 fps = Raspberry Pi OS parity on the full standard stack**; one EL0 fault at exit
+
+`stk-drm` (SDL2 KMSDRM + Mesa GBM/EGL/GLES + libdrm-phoenix m5b → rpi4-kms-gate + rpi4-v3d-async):
+**53 gameplay windows, mean 11.89 fps** (`stk-drm flipstat`, fps > 3, first/last dropped) — against
+`stk-v3da` 12.12 (async server, in-process adapter) and Raspberry Pi OS 11.7 (E2c). The whole standard
+graphics stack costs nothing measurable over the direct adapter. Loading ran at < 1 fps for a while (no
+shader disk cache on the new-lane Mesa — every shader compiles cold).
+
+⚠ **One `Data Abort (EL0)` at game exit** (after the race and its flipstat windows): `pc` =
+`file_rawSeek` (`stdio/file.c:193`), `far=0xba`, called from `__fflush_one` ← `fflush` ←
+`_atexit_finalize` (`stdlib/atexit.c:243`) — libc flushing all streams at exit found a corrupt `FILE`
+in its list. n = 1. Old-lane STK on the same libphoenix (build 13 showcase gate) exited with 0 faults, so
+this is specific to the new clone's shutdown path (SDL KMSDRM / Mesa-DRM teardown, or a stream closed
+twice), not yet attributed. Next: re-run `stk-drm` with `C1_HEAP_TRACE_ALL`-style guards off and check
+whether it reproduces; inspect SDL/Mesa `fclose`/`fdopen` users on exit.
