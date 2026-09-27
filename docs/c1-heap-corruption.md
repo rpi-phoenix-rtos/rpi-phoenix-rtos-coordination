@@ -101,6 +101,15 @@ band `0x083dc000`–`0x084c2000`). **0 of 4 → "enriched towards not firing, n 
 first suspect is then a changed race start (compare the `late`/`early` mode with `c1cold`), and the next
 step is a longer series, not a claim.
 
+**RESULT 2026-09-27 11:30 — 4 of 4 fired → C1 is unchanged by the merges (n = 4).** `c1-idle-table.sh c1b13`:
+C1–C4 all `COLD LATE`, race starts 81.8–82.5 s, 1/4/4/4 signature hits, **0 kernel faults**. Victim PAs
+(`p4pa`): C1 `0x0819a000`, C2 `0x0845c000`, C3 `0x0845c000`, C4 `0x08460000` + `0x08482000`. Four of five
+are inside the band. C1's is **2.26 MiB below it**. That is still within the archive's spread (the 09-26 audit
+had `0x080db000`, `0x08112000` and `0x082e4000`), so it does not refute a fixed location, but the band
+`0x083dc000`–`0x084c2000` describes where most victims land, not all of them. The same PA hit twice
+(C2 and C3, `0x0845c000`) is a repeat, consistent with a fixed location. The rate (4 of 4, against 4 of 6 in
+`c1cold`) is no lower, so none of tonight's changes moved the schedule enough to suppress it.
+
 ## 4. What is established
 
 | finding | evidence | strength |
