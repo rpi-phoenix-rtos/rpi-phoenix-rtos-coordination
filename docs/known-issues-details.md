@@ -134,3 +134,25 @@ The hypothesis is **confirmed** if some boots show `clkcsr` without bit 0x80 at 
 off HT), and **refuted** if every entry already shows HT_AVAIL yet a join still fails — then the
 -1041 is something else (e.g. SDHCI state left by the previous transfer), and the resend count says
 whether the retry masked it.
+
+**2026-09-27 — result: first-join fix PASS; a second failure mode found and fixed.** `queue12`
+(`wake-1…6`) + `queue16` (`fwretry-1`, `wake-7…9`), branch `wifi/join-wake`, merged as devices
+`d73803e` + `9c4267e`.
+- ⚠ The pre-registered ping check was **void**: `10.43.0.1` is a host address the Pi also reaches over
+  Ethernet (1 ms replies with `address: none`). Graded instead on `address: 10.43.0.89 (wl2)` from
+  `wifi status`.
+- **Wake fix:** every boot whose firmware ran (9 of 10) entered the join at `clkcsr=0x48` (ALP, no HT);
+  the wake raised HT (`ht=1`) and the join succeeded first time with `em=0 resent=0` — **0 of 9**
+  first-join failures, against 4 of 7 before (G0, G1 and 2 of 5 earlier). Hypothesis confirmed in the
+  form "HT off at join start"; the pre-registered "some entries without 0x80" criterion was ill-posed
+  (all entries lack it — the old code *sometimes* got away with it).
+- **New failure mode** (`wake-1`, then again `wake-9`): the firmware *download* fails part-way
+  (`fw_load … worst rc_w=-5`, CR4 never released, `fw_alive=0`); every join then fails
+  (`clkcsr=0x00`, all commands `-1041`) and WiFi stays dead until reboot. Archive: 2 of ~112 loads
+  before. Fix `9c4267e`: `wifi_bringupRetry()` power-cycles and reloads up to 3 times. Proven twice:
+  `fwretry-1` (forced: `fwretrytest` → "firmware running after bring-up 2" → joined) and `wake-9`
+  (natural: `rc_w=-5` → retry → 643648 bytes, `fw_alive=1` → joined, `address: 10.43.0.89`).
+- ⚠ **Watch item:** both natural download failures came in the 11 boots since `core_freq=500` was
+  adopted (G1, wake-1…9, fwretry-1), against ~1 in 100 before. The SDHCI base clock still reads
+  250 MHz. Enriched, n = 2 — not a cause; the retry covers it either way. Count `fw_alive=0` in future
+  boots before drawing anything.
