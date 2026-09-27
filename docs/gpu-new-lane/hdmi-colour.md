@@ -47,3 +47,35 @@ full → `Y(0)=29 Y(255)=217`, classified "LIMITED-range link read as full".
 
 Fix plan independent of the result: stage the dithered wallpaper for the demo (swaybg + xfdesktop), capture at
 native 1920x1080 for documentation screenshots, and correct the capture colour matrix once measured.
+
+## Result — `hdmi-calib` A/B (chain63, 2026-09-27 22:28 / 22:37)
+
+Graded with `scripts/hdmi-calib-analyse.py` on the raw YUYV frames (`artifacts/hdmi/calib/`).
+
+| reading | pre-registered | measured | verdict |
+|---|---|---|---|
+| link range | ramp 0/255 → Y 16/235 = full range understood | **B: Y(0)=16.0, Y(255)=235.0** | ✓ the card receives full-scale 0–255 |
+| arm A vs arm B | differ if `hdmi_pixel_encoding=2` changes the link | ffmpeg's PNG of A and of B are **byte-identical** | no difference: the link was already right |
+| precision | all 220 limited-range Y codes, monotonic | **200 distinct Y means over 256 ramp steps** in the raw; the BT.709 decode of the ramp has **220 distinct levels** | ✓ **8 bits per channel end to end**; nothing near the 64 of a 6-bit path |
+| capture matrix | fit BT.601 vs BT.709 | chroma rms **BT.709 2.2**, BT.601 7.1 (bars) | the card encodes **BT.709** while it reports BT.601 |
+| ffmpeg default decode | — | mean \|Δ\| RGB vs the source (12.3, 6.1, 8.3); **with `in_color_matrix=bt709`: (6.9, 4.1, 5.7)** | the snapshots' hue shift is a **capture-side decode error** |
+
+Arm A's raw frame is not a picture (every bar Y≈14, the ramp half height): it was the first frame the card delivered
+after switching from its default 4K mode to 1080p. Arm A's PNG, grabbed seconds later, is byte-identical to arm B's.
+
+**Answer to the owner's question.**
+- **True colour: yes.** The plane is XB24 (8 bits per channel) and the grey ramp survives the whole path (plane → HVS
+  → HDMI → card) with every level the capture format can hold. No 6-bit truncation, no dithering loss on the Pi.
+- **The banding was in the wallpaper file**: an undithered 8-bit gradient, 176 colours over 1920 px (flat runs of
+  11 px). Any display shows that as bands. The dithered version (flat runs 1.4 px) is now the demo wallpaper
+  (`/bin/xfce-session`, xfdesktop default backdrop).
+- **The screenshots added two artefacts of their own**:
+  - they were 4K grabs, a 2× nearest-neighbour upscale inside the card;
+  - they were decoded with the wrong matrix (BT.601 for a BT.709 signal): less red, more green, lifted blacks.
+- **HDMI range setting: no change needed.** `hdmi_pixel_encoding=2` changes nothing the card can see; `config.txt` stays
+  as it is.
+
+**Fix (this commit).** `hdmi_grab_one` in `scripts/test-cycle-psh-interact.sh` and `scripts/test-cycle-netboot.sh` now asks for
+`yuyv422` at 1920x1080 and decodes with `scale=in_color_matrix=bt709:in_range=tv`, falling back to the card's default mode
+if the native one is refused. The remaining error (~5 per channel, std ~15–20) sits at bar edges: 4:2:2 chroma is half
+horizontal resolution, a limit of this card's YUYV mode.

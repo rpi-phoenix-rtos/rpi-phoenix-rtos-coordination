@@ -121,6 +121,15 @@ hdmi_label_base() {
 hdmi_grab_one() {
 	local out="$1"
 	[ -e "$hdmi_grabber" ] || return 1
+	# The Pi scans out 1920x1080; the card's own default mode may be 3840x2160 (a 2x
+	# nearest upscale), so ask for the native size. The card sends BT.709 limited-range
+	# YUYV while tagging it BT.601, and ffmpeg's default BT.601 decode shifts every hue
+	# (docs/gpu-new-lane/hdmi-colour.md) -- decode it as what it is. If the native mode
+	# is refused (the Pi is on another mode), fall back to the card's default.
+	timeout --foreground 5 ffmpeg -y -loglevel error -f v4l2 -input_format yuyv422 \
+		-video_size 1920x1080 -i "$hdmi_grabber" \
+		-vf 'scale=in_color_matrix=bt709:in_range=tv' \
+		-frames:v 1 "$out" </dev/null >/dev/null 2>&1 && return 0
 	timeout --foreground 5 ffmpeg -y -loglevel error -f v4l2 -i "$hdmi_grabber" \
 		-frames:v 1 "$out" </dev/null >/dev/null 2>&1 || return 1
 }
