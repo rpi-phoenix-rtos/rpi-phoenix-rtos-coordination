@@ -962,6 +962,25 @@ Allow for about 1.3 % UART line corruption (re-read the line, don't count it); E
 wayland-egl clients work on the new lane without 0012. Then 0012 and `-p 96` can be retired: mesa-drm
 patch 0012 has to be removed in a separate change, because it re-stamps every Mesa build (§12).
 
+## Result — `m6g-g4` (queue38, 2026-09-27 13:14): ✅ PASS — a Wayland GL client on HDMI
+
+Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-131451-m6g-g4.log`; HDMI `artifacts/hdmi/20260927-131928-m6g-g4-tick.png`
+(the rotating RGB triangle, fullscreen under kiosk-shell). The `WESTONDRM client start` line was lost to UART
+corruption, so dense snapshots never started; the frame is placed by Weston's own timestamps (client 11:19:15–45
+Pi time = 13:19 host).
+
+- Server: `V3DA srv bufns name=/v3dbuf … registered=1 (G4)`, `proto=2..3 bufns=1`.
+- **drmprobe-g4: `DRMPROBE RESULT pass=42 fail=0 gap=0 … verdict=PASS`** (export, self-import, second-connection
+  import, cross-process import, fd mmap).
+- Client: `PRIME_HANDLE_TO_FD node=render … rc=0 … fdpath=/v3dbuf/8202` (and 8209, …); Weston imports them
+  (`V3DA srv import … ns=v3dbuf … owner=4 self=0`); **no `Failed to export gem bo`** (m6d's stop).
+- `weston-simple-egl`: **`151 frames in 5 seconds: 30.2 fps`, `150 … 30.0 fps`**: vsync-paced at two vblanks per
+  frame, the same pacing as mig-q2 (→ [frame-pacing.md](frame-pacing.md)).
+- Exit: `weston exited rc=0`; every export withdrawn (`export withdrawn … live=0`); 0 exceptions.
+
+**Decides:** G4 works on hardware; Weston composites a GPU client through the GL renderer. 0012 is not needed
+(`SHARED_SCANOUT` unset). Next: G7 direct scanout (`m6h-g7`), and pacing.
+
 ## 16. G7 — card0 import of a foreign buffer (`KMS_OP_PRIME_IMPORT`), and cycle `m6h-g7`
 
 With G4 a client's GPU buffer is a `/v3dbuf/<id>` descriptor. To put that buffer on a firmware plane
