@@ -160,6 +160,10 @@ one frame instead of leaking a buffer.
 * At most one flip is pending (kms `EBUSY` rule), as before.
 * Every flip is still fence-gated in rpi4-kms. The patch changes *when* SDL submits, not the gate.
 * It needs three GBM buffers at most, and Mesa has four.
+* `KMSDRM_FBFromBO` (`drmModeAddFB` on a BO's first use) now runs while a flip may be pending. In
+  rpi4-kms, `KMS_OP_ADDFB2` → `kms_fb_add` (`kms_bo.c:~717–745`) has no pending-commit condition
+  (only ENOENT/EINVAL/ENOSPC). The one `-EBUSY` besides the commit rule is `KMS_OP_RMFB` of a buffer that
+  is in flight, and SDL never removes an FB mid-run. [read]
 
 `SDL_VIDEO_DOUBLE_BUFFER=1` keeps its extra wait right after the flip, which now reads "before queuing
 this flip" instead of "at the beginning". Nothing in the patch is Phoenix-specific. It is upstream-able
@@ -225,7 +229,8 @@ Checks:
   not the default.
 * ELF pairs (`yquake2-drm-ctl`/`-pace`, `quakespasm-drm` ctl/pace): the same `text`/`data`/`bss`. `nm -S`
   differs **only** in `KMSDRM_GLES_SwapWindow` (0x24c → 0x244) and `gamedrm_banner` (the name). Every
-  other symbol sits at the same address.
+  text/data/bss symbol is at the same address. In the quake2 pair, `.rodata` after the one-character-longer
+  banner moved by 16 B; in the quakespasm pair `nm` is identical.
 * Call order in `KMSDRM_GLES_SwapWindow` (objdump): ctl = `WaitPageflip`, blr, blr (eglSwapBuffers), blr
   (lock), `FBFromBO`. pace = blr (eglSwapBuffers), blr (lock), `FBFromBO`, **`WaitPageflip`**, blr
   (release).
@@ -293,7 +298,7 @@ Bash `timeout: 600000`.
 | `KMS srv flipstat client=…` (pace) | **`vbl1 ≥ 80 %`**, `deferred` ≥ 50 % of flips (job k often still running at commit), `applied_gate ≈ deferred`, `q2a_us_avg` 3 000–11 000, `late_target` ≤ 20 % | `deferred ≈ 0`: the fences signal before commit (fine, but check that `applied_gate` counts are sane). `vbl2` dominant with fps ≈ 30: as row 3 |
 | SDL errors `Wait for previous pageflip failed` / `Could not queue pageflip` / `eglSwapBuffers failed` / `Could not lock front buffer` | **0** | any: buffer accounting is wrong (EBUSY = two flips pending; EGL_BAD_ALLOC = no free GBM buffer) |
 | `exit after N swaps … (GAMEDRM_EXIT_SECS=60)` | once per game; the ctl N is about 1 800 + warm-up; the pace N is about 1.6–2 × ctl | missing: the hook did not arm (env not inherited through ram-stage-play), and the second game never ran |
-| the second game starts (banner, `first swap`) after the first one's `_exit` | yes, within about 15 s | it hangs before `first swap`: rpi4-kms did not release the CRTC after a client vanished without `SDL_Quit` [not yet exercised]. Re-run with the pace binary alone, and note it as a kms finding |
+| the second game starts (banner, `first swap`) after the first one's `_exit` | yes, within about 15 s | it hangs before `first swap`: either KNOWN-ISSUES C5 (SDL audio on `/dev/audio0` stalling after `SDL_OpenAudio`, which is more likely after an `_exit` that skipped the audio teardown), or rpi4-kms not releasing the CRTC after a client vanished [neither exercised yet]. Re-run with `"export SDL_AUDIODRIVER=dummy"` added before both games (a fair A/B either way). If it still hangs, run the pace binary alone and record a kms finding |
 | HDMI (dense snapshots of pace) | demo1 in textured 3D, full screen, no torn or partial frames, no console bleed | a torn frame: the invariants of §5 are violated. Stop and read before adopting |
 | faults / `V3DA qstat err/wedges/rej` | 0 / 0 | addr2line first (`build-out/quake2-drm-<v>/yquake2-drm-<v>` unstripped) |
 
