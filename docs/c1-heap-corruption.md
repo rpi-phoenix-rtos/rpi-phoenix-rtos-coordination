@@ -110,6 +110,19 @@ had `0x080db000`, `0x08112000` and `0x082e4000`), so it does not refute a fixed 
 (C2 and C3, `0x0845c000`) is a repeat, consistent with a fixed location. The rate (4 of 4, against 4 of 6 in
 `c1cold`) is no lower, so none of tonight's changes moved the schedule enough to suppress it.
 
+### 📋 PRE-REGISTERED 2026-09-27 15:55, before any data — `c1b18`: does C1 fire with the stale-TTBR0 fix?
+
+Build 18 = master + kernel `c3/fork-hang` (`8cf9e488`: a CPU switching to the kernel pmap now installs an
+all-invalid user table with the never-allocated ASID instead of keeping the last user table live; `33af3e81`: fork
+child waits for the parent's saved context). The mechanism `8cf9e488` removes: an idle CPU keeps a freed page table
+in TTBR0, can speculatively cache translations from freed-and-reused pages under an ASID that is re-issued at once.
+That is a way for a **user-mode store to land in someone else's physical page**, which is C1's shape (a fixed-band
+PA, a 32-bit value, no instrument seeing the writer). **Method:** as `c1b13`: 4 all-cold trials,
+`C1_HEAP_TRACE_ALL=1 stk …`, labels `c1b18C1..4`, graded with `scripts/c1-idle-table.sh c1b18 <driver-log>`.
+**Readings:** c1b13 fired 4 of 4 on build 13 (c1cold 4 of 6). ≥ 1 fire → the stale-TTBR0 path is not C1's only
+writer (report victim PAs vs the band). **0 of 4 → "enriched towards not firing with 8cf9e488, n = 4" — never
+"fixed"**; the next step is a longer series (≥ 8) and an A/B against build 17 in the same session, not a claim.
+
 ## 4. What is established
 
 | finding | evidence | strength |
