@@ -312,6 +312,37 @@ if [ "${n_stage}" -ge 2 ]; then
 		--disable-wallpaper-plugin --disable-introspection --with-helper-path-prefix=/usr/lib
 fi
 
+# --- data: PNG icon themes, MIME database -----------------------------------------------------
+# (<out>/data/ mirrors the target: data/icons/<theme>, data/mime/mime.cache)
+if [ "${n_stage}" -ge 2 ]; then
+	echo "== icons (PNG only: no SVG loader on Phoenix) + shared-mime-info"
+	stamp="$( { cat "${here}/tools/pngify-icon-theme.py"; sha256sum "${out}/dl/adwaita-icon-theme-3.38.0.tar.xz";
+		find "${P}/share/icons/hicolor" -type f -printf '%P %s\n' | sort; } | sha256sum | cut -c1-16)"
+	if [ "$(cat "${out}/data/icons.stamp" 2>/dev/null || true)" != "${stamp}" ]; then
+		mkdir -p "${out}/data/icons"
+		# Adwaita 3.38: full-colour PNGs as shipped (menu/toolbar/dialog/panel sizes), the
+		# symbolic SVGs encoded at 16 and 24 px
+		python3 "${here}/tools/pngify-icon-theme.py" --name Adwaita --inherits hicolor --sizes 16,24 \
+			--include-sizes 16x16,22x22,24x24,32x32,48x48 --jobs "${jobs}" \
+			"${out}/data/icons/Adwaita" "${out}/src/adwaita-icon-theme/Adwaita"
+		# hicolor: the XFCE programs' own icons (org.xfce.*); scalable ones rendered to PNG
+		python3 "${here}/tools/pngify-icon-theme.py" --name hicolor --inherits "" --sizes 16,24,32,48 \
+			--comment "Fallback icon theme (XFCE application icons, PNG only)" --jobs "${jobs}" \
+			"${out}/data/icons/hicolor" "${P}/share/icons/hicolor"
+		for t in Adwaita hicolor; do
+			gtk-update-icon-cache -f -q -t "${out}/data/icons/${t}"
+		done
+		echo "${stamp}" > "${out}/data/icons.stamp"
+	fi
+	# shared-mime-info 2.4: GIO's content types (xdgmime reads mime.cache alone when it is valid)
+	rm -rf "${out}/data/mime"
+	mkdir -p "${out}/data/mime/packages"
+	cp "${out}/src/shared-mime-info/data/freedesktop.org.xml.in" "${out}/data/mime/packages/freedesktop.org.xml"
+	update-mime-database -n "${out}/data/mime"
+	find "${out}/data/mime" -mindepth 1 -maxdepth 1 ! -name mime.cache -exec rm -rf {} +
+	echo "  mime.cache: $(stat -c %s "${out}/data/mime/mime.cache") bytes"
+fi
+
 # --- programs: collect, strip, verify ---------------------------------------------------------
 # name|installed path (under destdir/usr)|stage|symbols that must be linked in
 PROGS=(
@@ -347,4 +378,34 @@ done
 rm -f "${out}/bin/SHA256SUMS.tmp"
 sed 's/^/  /' "${out}/bin/SHA256SUMS"
 [ "${bad}" = 0 ] || { echo "build.sh: verification failed" >&2; exit 1; }
+
+# --- the staging tree: <out>/stage mirrors the NFS root (new names only) -----------------------
+# Stage with: for each file in stage/MANIFEST, `sudo -n install -D` to $EXPORT/<path> after
+# checking nothing of that name exists (docs/gpu-new-lane/M7-wayland-desktop.md, stage 4).
+echo "== staging tree"
+ST="${out}/stage"
+rm -rf "${ST}"
+st() {  # mode source target-path
+	install -D -m "$1" "$2" "${ST}/$3"
+}
+st 755 "${out}/bin/xfconfd-stripped" usr/lib/xfce4/xfconf/xfconfd
+st 755 "${out}/bin/xfconf-query-stripped" bin/xfconf-query
+st 644 "${P}/share/dbus-1/services/org.xfce.Xfconf.service" usr/share/dbus-1/services/org.xfce.Xfconf.service
+st 755 "${here}/pi/xfce-desktop.sh" bin/xfce-desktop.sh
+for f in rc.xml menu.xml autostart environment; do
+	st 644 "${here}/conf/labwc-xfce/${f}" "etc/xdg/labwc-xfce/${f}"
+done
+for f in "${here}"/conf/xfconf/*.xml "${X}"/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/*.xml; do
+	st 644 "${f}" "etc/xdg/xfce4/xfconf/xfce-perchannel-xml/$(basename "${f}")"
+done
+if [ "${n_stage}" -ge 2 ]; then
+	st 755 "${out}/bin/thunar-stripped" bin/thunar-wl
+	st 644 "${here}/conf/applications/thunar.desktop" usr/share/applications/thunar.desktop
+	st 644 "${out}/data/mime/mime.cache" usr/share/mime/mime.cache
+	mkdir -p "${ST}/usr/share/icons"
+	cp -a "${out}/data/icons/Adwaita" "${out}/data/icons/hicolor" "${ST}/usr/share/icons/"
+fi
+( cd "${ST}" && find . -type f -printf '%P\n' | sort | xargs sha256sum ) > "${out}/stage.MANIFEST"
+echo "  $(wc -l < "${out}/stage.MANIFEST") files ($(du -sh "${ST}" | cut -f1)); not icons:"
+grep -v ' usr/share/icons/' "${out}/stage.MANIFEST" | awk '{printf "    %s  %s\n", substr($1,1,16), $2}'
 echo "done (stage ${until_stage})"
