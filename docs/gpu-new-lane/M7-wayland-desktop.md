@@ -1282,3 +1282,22 @@ menu bar, navigation toolbar, location bar `/`, the root-account warning banner,
 - Expected warnings: no thumbnailer service (`org.freedesktop.thumbnails.Thumbnailer1`), no XKB data files (built-in
   keymap). **Defect found:** the status bar prints `(%'lu bytes)` literally: libphoenix's printf does not implement
   the POSIX `'` (thousands grouping) flag → libphoenix follow-up.
+
+## ★ Result — `m7h-xfce` (chain61, build 18, 2026-09-27 20:52–20:54): ✅ PASS — XFCE 4.20 on Wayland on Phoenix-RTOS
+
+Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-204830-m7h-xfce.log`; HDMI **`artifacts/hdmi/20260927-205346-m7h-xfce-tick.png`**: the **XFCE panel** across the top
+(Applications menu, launchers, the tasklist button "File System - Thunar", the clock "Sun 27 Sep 18:53"),
+**xfdesktop**'s wallpaper, and a **Thunar** window browsing `/` — all under labwc 0.20.2, GTK 3.24.52 on Wayland, the
+D-Bus 1.16.2 session bus, the new GPU lane's display server.
+
+- Bus: `xfconfd via=activation`, then for the whole hold `names=org.xfce.Panel,org.xfce.FileManager,org.xfce.Thunar,
+  org.xfce.xfdesktop,org.xfce.Xfconf` (five XFCE services on the bus).
+- Stop: `quit panel_rc=0`, xfdesktop ignored `--quit` and was terminated (`xfdesktop_rc=143`), `labwc exited rc=0
+  after_term_s=1 socket=gone`; 0 exceptions / EL1 / `Stat failed`.
+- Known cosmetic items: the clock shows UTC (no `TZ` staged); Thunar's `(%'lu bytes)` (libphoenix printf `'` flag:
+  fixed in `a41d8d5`, build 19; Thunar needs a relink to pick it up); xfdesktop warns it has no system bus
+  (only a session bus exists); `xkbcommon` include-path errors (built-in keymap used).
+
+**Decides:** the owner's Wayland-desktop goal is reached in its first form: a recognisable, maintained desktop
+(XFCE 4.20 on labwc, the XFCE project's own Wayland setup) on HDMI. Next: xfdesktop quit, TZ, relink after build 19,
+the bench-only rows (menu clicks, window moves, typing), xfsettingsd.
