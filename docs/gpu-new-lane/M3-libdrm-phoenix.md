@@ -1374,3 +1374,219 @@ As pre-registered: "25–36 with everything else clean points at the 20 ms poll 
 rendering" — SDL's KMSDRM waits for every page flip with `poll()` on the card fd (P9/G12); 24.4 is
 just under that band, and quakespasm-v3da (same game, same GPU server, no page-flip poll) does 40.4.
 The kernel readiness-wakeup work (agent, `docs/gpu-new-lane/poll-wake.md`) is the fix to measure next.
+
+## STK on the full DRM stack (stk-drm) — build (2026-09-27)
+
+**Status:** **builds, links, all static checks pass; no Pi cycle yet** (pre-registered below).
+`supertuxkart-drm` is SuperTuxKart 1.4, relinked from the port's own build tree, on the **full
+standard stack**: SDL 2.30.12's stock **KMSDRM** driver (`tools/gpu-lane/sdl2-drm`) + Mesa 26.2
+**GBM/EGL/GLES** + **libdrm-phoenix m5b** (the G15 `--wrap=ioctl` interposer), talking to `rpi4-kms`
+(card0) and `rpi4-v3d-async` (renderD128). The launcher is `stk-drm`. Nothing committed or staged. No
+old-lane file was touched (shipped `/usr/bin/supertuxkart` and `/bin/stk`, `ports/sdl2`,
+`tools/.gpu-libs`, the Mesa fork), and neither was any sibling repo. `sdl2-drm/build.sh` and
+`mesa-drm/build.sh` were **not** run: `libSDL2.a` and `quakespasm-drm` are byte-identical to before.
+Code: [`tools/gpu-lane/sdl2-drm/build-stk-drm.sh`](../../tools/gpu-lane/sdl2-drm/build-stk-drm.sh),
+[`tools/gpu-lane/sdl2-drm/stkdrm/stkdrm_hooks.c`](../../tools/gpu-lane/sdl2-drm/stkdrm/stkdrm_hooks.c)
+(both BSD-3; STK itself stays a GPL application built in its port tree, as for `stk-v3da`).
+
+### Build
+
+```
+tools/gpu-lane/sdl2-drm/build-stk-drm.sh              # control relink + drm relink + objdump proofs
+tools/gpu-lane/sdl2-drm/build-stk-drm.sh --no-control # skip the control relink
+tools/gpu-lane/sdl2-drm/build-stk-drm.sh --libdrm-prefix tools/gpu-lane/libdrm-phoenix/build-out-<x>/prefix
+```
+
+Needs the STK port built in `.buildroot`, a finished `sdl2-drm/build.sh` (`build-out/sdl-prefix` +
+`build-out/mesa-gl`) and `libdrm-phoenix/build-out-m5b`. It writes only
+`tools/gpu-lane/sdl2-drm/build-out/stk-drm/` (gitignored).
+
+| Step | What |
+|---|---|
+| Renderer | STK's port is configured `-DUSE_GLES2=ON`. Irrlicht's SDL device asks for an **ES 3.0** context (`SDL_GL_CONTEXT_PROFILE_ES`, 8/8/8 + depth 24, double-buffered, no multisample attribute), falling back to ES 2.0. It then loads **every** `gl*` through glad + `SDL_GL_GetProcAddress`, which is `eglGetProcAddress` → shared-glapi's stub table. So STK references **no** `gl*` symbol directly, and no desktop-GL entry points are needed. The Mesa used is **`sdl2-drm/build-out/mesa-gl`**, patch set `278cdef4539b4a27` (0001–0009, every GL-relevant one; 0010/0011 are Vulkan-only). That build has desktop GL **and** GLES2, and it is the Mesa `libSDL2.a` was configured against. The same Mesa + SDL passed on the Pi with quakespasm-drm. |
+| libdrm-phoenix | `build-out-m5b` (`libdrm.a` `a508e207…`) is snapshotted into `stk-drm/libdrm-prefix`. mesa-gl's objects were compiled against its m3p3 snapshot, whose headers the script checks are **byte-identical** to m5b's (`diff -r`), so linking the m5b archive is exact. The script fails if the archive has no `__wrap_ioctl`, which would mean a pre-m5b library. |
+| Link | `link.txt` from the STK port build tree (the port's stage 4) with: `-o` redirected; the ports-prefix `libSDL2.a` (old `/dev/fb0` video driver) replaced by the KMSDRM `libSDL2.a` (the script requires exactly one occurrence and fails if the final command still names any old-lane input); the old GL glue objects `sdl_phoenix_glctx.o`/`sdl_phoenix_glstubs.o` and `libGL-phoenix.a`/`libv3d-phoenix.a` **not linked**. Added: `stkdrm_hooks.o`, `-static -Wl,--wrap=mmap -Wl,--wrap=ioctl -Wl,--wrap=SDL_GL_SwapWindow -Wl,-Map`, and the kmscube/quakespasm-drm Mesa shape: `libgallium-26.2.0.a` whole-archive, then one group of `libSDL2.a` + libEGL/libgbm/dri_gbm/**libGLESv2**/libglapi/v3d/broadcom/winsys/util archives + `libdrm.a` + the compat shim + the port's zlib/ogg/vorbis/mbedtls. The 8 MiB main stack is unchanged. Link log empty. |
+| Control | build-stk-v3da.sh's relink, verbatim with the shipped inputs: **byte-identical to the shipped `prog/supertuxkart`** (`30c69197…`). So the engine objects in the clone are exactly the shipped ones. |
+| Launcher | `tools/supertuxkart-port/stk-launcher.c` with exactly **3 lines** rewritten: exec path `/usr/bin/supertuxkart-drm`, the `stk-drm: exec` error, and the `stk-drm: DATADIR=` banner. It keeps the same default args (`--screensize=1920x1080 --fullscreen --disable-texture-compression --disable-addon-karts --disable-addon-tracks`) and seeds the same `players.xml`/`config.xml` (`show_fps="true" scale_rtts_factor="0.75"`, enable_internet=2), so its workload is the one `stk`/`stk-v3da` render. |
+
+### The frame counter (`stkdrm_hooks.c`, linked into this clone only)
+
+KMSDRM prints nothing per frame, so the clone carries its own flipstat. Irrlicht's
+`COGLES2Driver::endScene` calls `SDL_GL_SwapWindow` once per rendered frame. The clone is linked with
+`-Wl,--wrap=SDL_GL_SwapWindow`, so that call goes through `__wrap_SDL_GL_SwapWindow`, which times the
+real call (KMSDRM: wait for the previous page flip + `eglSwapBuffers` + lock the front BO +
+`drmModePageFlip`). Every 5 s it prints:
+
+```
+stk-drm flipstat <N> frames in <T> ms = <X.XX> fps (total <M>)
+stk-drm swapstat t=<ms since first swap> fr=<N> swap_us_avg=<a> swap_us_max=<m>
+```
+
+The first line has the old winsys' `flipstat … (total …)` shape, so `scripts/flipstat-summary.sh`
+reads it unchanged. It counts the same thing as `v3d-winsys: flipstat` (one per presented frame).
+The second line separates present-path cost from render cost. `V3D_FLIPSTAT=0` / `V3D_FLIPSTAT_MS`
+work as on the old lane. The same file also prints:
+
+- a banner at start (`stk-drm: new GPU lane -- SDL 2.30.12 KMSDRM + Mesa 26.2 GBM/EGL (GLES) + libdrm-phoenix -> …`, `write(1)`);
+- a `stk-drm: first swap <ms> after start: window WxH drawable WxH swap_interval N flipstat on` line;
+- a `stk-drm: exit after N swaps …` line at `exit()`.
+
+It sets SDL's VIDEO/INPUT log categories to DEBUG, as quakespasm-drm does (a dozen KMSDRM init
+lines, nothing per frame).
+
+**Why a link-time wrap and not an SDL edit:** it is gated to this clone by construction.
+`libSDL2.a` and quakespasm-drm stay byte-identical, and it needs no `sdl2-drm/build.sh` run, which
+would also invoke the currently dirty `mesa-drm/build.sh`. objdump proves the wrap sits in the path:
+the only caller of `__wrap_SDL_GL_SwapWindow` is `irr::video::COGLES2Driver::endScene`, and the only
+caller of the real `SDL_GL_SwapWindow` is the wrapper.
+
+### SDL KMSDRM vs STK — what was checked (no SDL change needed)
+
+| Item | Finding |
+|---|---|
+| `SDL_GetWindowWMInfo` | Irrlicht **returns from its device constructor** if this fails (`CIrrDeviceSDL.cpp:132`). KMSDRM implements it (`KMSDRM_GetWindowWMInfo`, needs version ≥ 2.0.15; STK passes 2.30.12). STK's objects were compiled against the old port's `SDL_config.h`, which has no `SDL_VIDEO_DRIVER_KMSDRM`, so their `SDL_SysWMinfo` union lacks the `kmsdrm` member. The union is padded to `dummy[64]`, so the size is identical, and KMSDRM's 16-byte write fits. This is the only public struct whose layout depends on the config. Every other public API is the same SDL 2.30.12. |
+| `SDL_config.h` diff (old port vs KMSDRM build) | KMSDRM/EGL/GLES2 vs PHOENIX/OFFSCREEN video. No `SDL_JOYSTICK_VIRTUAL`: STK's `SDL_InitSubSystem(GAMECONTROLLER/HAPTIC/SENSOR)` failures are logged and non-fatal, and the dummy joystick/haptic/sensor drivers are present. No `SDL_USE_LIBICONV`: SDL's built-in iconv covers UTF-8/UCS. |
+| GLES context version | ES 3.0 requested → Mesa returns ES 3.1 (`versionCorrect(3,0)` passes), the same as the old lane (`OpenGL ES 3.1 Mesa 26.2.0`, same Mesa version ⇒ the same `graphical_restrictions.xml` rules). |
+| Mode | `--screensize=1920x1080 --fullscreen` → `SDL_WINDOW_FULLSCREEN` → the closest mode = the only one, 1920×1080. |
+| Swap interval | STK tries `SDL_GL_SetSwapInterval(-1)` (adaptive). KMSDRM rejects it, and STK falls back to its configured value. With `DRM_CAP_ASYNC_PAGE_FLIP`=0, intervals 0 and 1 behave identically: every swap first waits for the previous flip. At ~12 fps (≈83 ms frames) that flip normally completed long before (the `swapstat` line shows it). |
+| Multisample / alpha | STK sets no `SDL_GL_MULTISAMPLE*`. The surface is XRGB8888 (sdl2-drm patch 0008), so there is no console bleed-through. |
+| Input | `--profile-laps=2` drives all karts by AI; no input is needed. Phoenix HID opens `/dev/kbd0` lazily and bounded (it may fail while the console holds it; harmless). |
+| Y orientation | The old fork forced `Y_0_TOP` only for FBOs ≥ 1024×768 (the reason for 0.75 and not 0.5). On this lane the window-system framebuffer is a real EGL/GBM surface with upstream orientation logic. An upside-down 3D scene here would be a **finding**, not the known quirk. |
+| Shader cache | The new-lane Mesa has no shader disk cache: STK compiles every shader at load, and lazy variants early in the race may compile then too. Load will be slower than a warm `stk-v3da`; gameplay fps is unaffected apart from the first windows. The old lane's `Mesa shader disk cache KEPT/cleared` arm assertion does not apply to this clone. |
+
+### What STK exercises that quakespasm-drm / kmscube did not (read, not changed)
+
+1. **`glFenceSync` / `glClientWaitSync` every frame** (`src/graphics/draw_calls.cpp`,
+   `shader_based_renderer.cpp`; M1 §"What STK uses that quakespasm did not"). STK fences its
+   instance-data draws and polls the fence (timeout 0, then 1 ms steps) before re-uploading. Here that
+   path is Mesa's own `v3d_fence_finish` → `drmSyncobjCreate` + `drmSyncobjImportSyncFile` +
+   `drmSyncobjWait` + `drmSyncobjDestroy` through **libdrm-phoenix**. On hardware those ioctls have so
+   far been driven only by `drmprobe-m5b` and v3dv (vkcube). **No GL client on this stack has used
+   them yet**, and STK can issue them up to ~90 times a frame while it polls. Failure shape
+   (pre-registered): `stk-drm flipstat` stops advancing (or the first swap never comes) while
+   `V3DA srv qstat` shows the GPU idle. That is a wait that never returns. Next step: a
+   `DRMPHX_TRACE=1` re-run (`export DRMPHX_TRACE=1` as an extra psh line), not the first cycle.
+2. **Many CL submits per frame, chained BCLs, TFU mipmap generation**: server-side, on the same
+   `rpi4-v3d-async` (EINVAL fix included) that ran `stk-v3da` clean.
+3. **BO churn at load** (uncompressed textures): one `CREATE_BO` round trip plus a server memset each
+   (R17), the same as `stk-v3da`; slower load only.
+
+### Verification (the delivered binaries)
+
+| Check | Result |
+|---|---|
+| static | no `PT_INTERP`; `aarch64-phoenix-nm -u supertuxkart-drm` = **0** symbols; the launcher is also 0 |
+| sizes | `supertuxkart-drm.stripped` **38 167 456 B** (shipped `usr/bin/supertuxkart` 38 836 320 B; `supertuxkart-v3da.stripped` 38 820 768 B); unstripped 123 835 136 B (for addr2line; `supertuxkart-drm.map`); `size`: text 37 192 750, data 969 144, bss 1 014 720; `stk-drm` 898 448 B (shipped `bin/stk` 898 456 B) |
+| sha256 | `supertuxkart-drm.stripped` `d4642e25df7e94cd…`, `supertuxkart-drm` `567f12b542bc6579…`, `stk-drm` `0620ae41883190f6…` (`build-out/stk-drm/BUILD-INFO.txt`); inputs: libSDL2.a `4abf34e0…` (set `2f79883be1753ceb`), Mesa set `278cdef4539b4a27`, libdrm.a `a508e207…` (m5b), link.txt `a423262b…` |
+| new stack, symbols | `KMSDRM_CreateDevice`, `KMSDRM_GLES_SwapWindow`, `KMSDRM_GetWindowWMInfo`, `SDL_EGL_LoadLibrary`, `SDL_PHOENIX_HID_Poll`, `gbmint_get_backend`, `kmsro_drm_screen_create`, `v3d_drm_screen_create_renderonly`, `eglGetPlatformDisplayEXT`, `eglGetProcAddress`, `_mesa_glapi_get_proc_address`, `drm_phoenix_ioctl`, `drmPhoenixMmap`, `__wrap_mmap`, **`__wrap_ioctl`** (m5b), `__wrap_SDL_GL_SwapWindow` |
+| new stack, strings | `KMS/DRM Video Driver`, `/dev/dri/`, `libdrm-phoenix:`, `DRMPHX_TRACE`, `DRMPHX sync` (m5b), `EGL_KHR_platform_gbm`, `kmsro`, `/dev/kbd0`, `/dev/audio0`, `stk-drm: new GPU lane`, `stk-drm flipstat`, `stk-drm swapstat` |
+| old lane absent | symbols `PHOENIX_bootstrap`, `PHOENIX_PumpEvents`, `PHOENIX_GL_*`, `phxgl_*`, `phoenix_v3d_ioctl`, `winsys_init`, `boPool_take`, `mboxProp`, `v3da_connect`, `v3d_phoenix_flip`: none. Strings `v3d-winsys:`, `v3da-winsys:`, `phxgl`, `PHOENIX: GL_CreateContext`, `/dev/fb0`, `RPI4FB_GETMODE`, `phoenix_v3d_ioctl`, `peek_next_scanout`, `v3d-srv`, `v3d-pool:`: all 0. Inverse control: the shipped binary has none of the new strings and does have `v3d-winsys: RT scanout` |
+| call sites (objdump) | real `ioctl` called only from `__wrap_ioctl`, real `mmap` only from `__wrap_mmap` (3 sites); `COGLES2Driver::endScene` → `__wrap_SDL_GL_SwapWindow` → `SDL_GL_SwapWindow` (`call-sites.txt`) |
+| silent duplicates | no global symbol is defined both by STK's own link inputs (objects + bundled/ports archives) and by the new stack's archives, apart from the `DW.ref.__gxx_personality_v0` comdat |
+| guarded inputs | the shipped prog/bin/launcher, link.txt, glue objects, old libSDL2/libGL/libv3d, KMSDRM libSDL2.a, libgallium and m5b libdrm.a are unchanged by the run |
+
+### Gaps
+
+| Gap | Effect | Remedy |
+|---|---|---|
+| No shader disk cache in the new-lane Mesa | longer load (60–150 s predicted, vs ~60 s warm on the old lane); possible compile hitches in the first race windows | first/last windows are dropped anyway; a disk-cache backend for mesa-drm later |
+| Present path waits for the previous flip before `eglSwapBuffers` (stock KMSDRM) | at most one vblank of GPU bubble for the final pass when the render outlasts the flip; small at 83 ms frames | measured by `swapstat`; if it matters: `SDL_VIDEO_DOUBLE_BUFFER` semantics / a 3-deep flip queue (later) |
+| `GL_TIME_ELAPSED` / CPU-queue jobs | STK's GPU profiler only (off in these runs), as on the other lanes | — |
+| Hardware cursor | `drmModeSetCursor` is a library stub → SDL logs a DEBUG/error line when STK hides the cursor; soft cursor | cursor plane in libdrm-phoenix (§3.2) |
+| libdrm-phoenix and Mesa are embedded | a library fix needs a relink | `build-stk-drm.sh --libdrm-prefix …` |
+
+### Pre-registered Pi cycle `stkdrm-1` (one netboot cycle)
+
+**Question:** does an unmodified SuperTuxKart run on the full standard stack (SDL KMSDRM + Mesa
+GBM/EGL/GLES + libdrm-phoenix → rpi4-kms + rpi4-v3d-async), render the race correctly on HDMI, and at
+what fps compared with `stk-v3da` (12.12 fps, M1 STK A/B) and Raspberry Pi OS (11.7 fps, E2c; same
+track, karts, settings)?
+
+**Preconditions:** the same netboot image family as the M1 STK A/B (core_freq=500); no GPU app, X or
+`rpi4-v3d` in the boot. **Single-owner rule:** never in the same boot as `stk`, `stk-v3da`, any
+old-lane GPU app or X. `rpi4-v3d-async-m3p2` and `rpi4-kms-gate` (the deferred-flip wake fix;
+kmscube 60.00 fps, vkcube 60.15) are already staged from earlier cycles, as are the STK data and assets
+(`/usr/share/supertuxkart`, used by `stk`).
+
+**Stage (coordinator)** (`sudo install -m 755 <source> <path>`, then `cmp`; `<export>` = the live
+fsid=0 export, `awk '!/^#/ && /fsid=0/{print $1; exit}' /etc/exports`):
+
+| Source | Export path |
+|---|---|
+| `tools/gpu-lane/sdl2-drm/build-out/stk-drm/supertuxkart-drm.stripped` | `<export>/usr/bin/supertuxkart-drm` |
+| `tools/gpu-lane/sdl2-drm/build-out/stk-drm/stk-drm` | `<export>/bin/stk-drm` |
+| `tools/gpu-lane/v3d-async/out-m3p2/rpi4-v3d-async` | `<export>/bin/rpi4-v3d-async-m3p2` (if not already staged) |
+| `tools/gpu-lane/kms/out-gate/rpi4-kms` | `<export>/bin/rpi4-kms-gate` (if not already staged) |
+
+Check afterwards: `grep -a -c 'stk-drm: new GPU lane' <export>/usr/bin/supertuxkart-drm` = 1, and the
+same grep on `<export>/usr/bin/supertuxkart` = 0. Keep the unstripped `supertuxkart-drm` on the host.
+
+**One cycle.** ⚠ Wall clock: netboot 60–150 s + two server windows (~20 s each) + up to 440 s of game
++ 30 s is **more than the 600 s Bash-tool cap**. Run it detached (`setsid`, as the E2b/M1 STK queues
+did) or from the coordinator's queue script, never under a foreground Bash `timeout`. A cycle the
+harness kills is void.
+
+```
+./scripts/test-cycle-psh-interact.sh --label stkdrm-1 --inter-cmd-secs 8 --idle-secs 60 \
+    --max-cmd-secs 440 \
+    --ready-line 'V3DA srv detached|KMS srv detached|profile: Number of frames' --ready-extra-secs 30 \
+    --hdmi-dense-on 'stk-drm: new GPU lane' -- \
+    "/bin/rpi4-v3d-async-m3p2 -r 1 -m serial -i" \
+    "/bin/rpi4-kms-gate -G" \
+    "/bin/stk-drm --track=hacienda --numkarts=4 --profile-laps=2"
+```
+
+* `--idle-secs` is inert with a ready line (psh-interact ends a command at the ready line +
+  `--ready-extra-secs`, or at `--max-cmd-secs`).
+* In profile mode STK **exits** after the two laps and prints `profile: Number of frames …`. That
+  closes the game window 30 s later (STK's teardown frees its textures and BOs after that line). By then the client has closed, so `rpi4-kms-gate` has printed its
+  `KMS srv flipstat client=…` line and the clone its `stk-drm: exit after N swaps` line. If the race
+  does not finish in 440 s, psh-interact's `max-cmd-secs … WITHOUT matching` message is expected and
+  grading uses the windows present (≥ 10 required).
+* No environment is set: KMSDRM is the only real video driver in this SDL; `V3D_FLIPSTAT` defaults on.
+
+**Grade** (~1.3 % UART line corruption: re-read rather than count; EL0 dumps print twice):
+
+```
+grep -a -E '^(stk-drm|KMS |V3DA |DEBUG|ERROR|WARN|libdrm-phoenix|libEGL|MESA)|IrrDriver|GLDriver|profile:|Draw call returned' \
+    artifacts/rpi4b-uart/rpi4b-uart-*-stkdrm-1.log
+./scripts/flipstat-summary.sh --seq stkdrm-1
+./scripts/uart-summary.sh stkdrm-1
+```
+
+**Metric** (the M1 STK A/B rule, unchanged): the `stk-drm flipstat … = X fps` lines over **gameplay
+windows only**. Keep windows with fps > 3 in the contiguous race run, drop the first and last race
+window, and drop any window that contains a wedge / `TIMEOUT` / reject line. Trial fps = the **mean
+of the per-window fps**; ≥ 10 windows or the trial is void. Report the frame-weighted Σframes/Σms
+beside it (not graded) and the mean `swap_us_avg` of the same windows. STK's own `profile: … Average
+FPS` counts simulation frames, not rendered ones (the M1 run printed 70.2 at a real 12 fps). **Never
+grade by it.**
+
+**HDMI grading rule:** only snapshots **after** the `(psh)% /bin/stk-drm …` echo and the `stk-drm:
+new GPU lane` line (dense ticks from the banner). Earlier ticks show the console during the server
+commands.
+
+**Predictions** and what each alternative means:
+
+| Line / observation | Predicted | If instead… |
+|---|---|---|
+| `V3DA srv detached …`, `KMS srv detached …` | as in the qsdrm/kmscube cycles | a server missing: staging/boot, stop |
+| `stk-drm: DATADIR=/usr/share/supertuxkart …`, then `stk-drm: new GPU lane -- SDL 2.30.12 KMSDRM …` | once each | `stk: DATADIR=` / no banner: the wrong launcher/engine staged (`cmp`) |
+| KMSDRM `DEBUG: Opening device /dev/dri/card0`, `Opened DRM FD`, connector/encoder/CRTC `1 1 1`; `[IrrDriver Logger]: SDL Version 2.30.12` | at video init | `Unable to initialize SDL!` / `Could not initialize display!`: KMSDRM or EGL init failed; read the SDL `ERROR:` line and the `KMS`/`V3DA` lines, as the qsdrm table |
+| `Using renderer: OpenGL ES 3.1 Mesa 26.2.0`, `OpenGL renderer: V3D 4.2.14.0`, vendor `Broadcom` | the same strings as the old-lane log (different git suffix) | a lower ES version / `kms_swrast`: the render node was not paired (kmsro); `Could not initialize display!` right after `SDL_GL_CreateContext`: no ES3-capable EGLConfig |
+| `DEBUG: New DRM FB (n): 1920x1080 …` ×2–3 and `V3DA srv import … pages=2026 contiguous=1` per scan-out BO; possibly released and re-imported once on the fullscreen mode set (as quakespasm) | yes | `Failed to create scanout resource` / `CREATE_DUMB failed`: kms pool exhausted → re-run with `rpi4-kms-gate -G -p 48` |
+| `stk-drm: first swap … window 1920x1080 drawable 1920x1080 swap_interval 0\|1 flipstat on` | one line, 30–150 s after start | 800×600-type size: the mode set did not resize the window (picture in a corner) |
+| load until the race starts | 60–150 s after the first swap (cold shaders, NFS assets) | race not started within ~300 s: shader compile or asset load stall; read the last STK line |
+| **gameplay fps** (`stk-drm flipstat`) | **11–13 fps = parity** with `stk-v3da` 12.12 and Pi OS 11.7. Same GPU server, same engine objects (control relink byte-identical), same workload; the difference is Mesa's own DRM winsys + GBM/EGL present instead of the v3da adapter + in-app FBO blit. `swapstat swap_us_avg` ≪ 5 ms | **< 10.5 with a clean gate:** a present-path cost. Read `swap_us_avg`: ≫ 5 ms means KMSDRM's wait-for-previous-flip is eating frame time; compare with `KMS srv flipstat` `vbl1/vbl2/q2a_us_avg` (gated flips that take 2 vblanks = the deferred-flip bug again) and the server `qstat busy` (GPU idle ⇒ present-bound). **> 14:** not a win until explained. The log must show `stk-drm: DATADIR=` (the seeded 0.75 RTT factor); check `rej=0`, 0 `Draw call returned`, and HDMI (frames actually rendered, full 3D scene) |
+| `KMS srv flipstat client=… flips≈<total swaps> … deferred≈flips applied_gate≈deferred` | flips gated by the render fence (G13, `-G`), mostly `vbl1` | `deferred=0`: no fence attached to the imported BO (the flips are not render-gated; look for tearing) |
+| `V3DA srv qstat` | `err=0 wedges=0 rej=0` | any wedge/err/rej: FAIL whatever the fps (the M1 gate) |
+| `profile: Number of frames …` then `stk-drm: exit after N swaps …` | race finishes within 440 s at ~12 fps (M1: ~52 windows) | no `profile:` line and fps ≥ 10: the load took longer (count the windows); a fault: addr2line the PC first with the unstripped `build-out/stk-drm/supertuxkart-drm` |
+| **HDMI** after the echo | the lit hacienda race, 4 karts, HUD and STK's own FPS counter (`stk-v3da` showed 9/13/15 min/avg/max), upright 3D scene, no console text through the picture, no tearing | upside-down 3D: an orientation difference on this lane (a finding: the window FB is a real EGL surface now); console bleed: alpha scan-out (patch 0008 absent); black with flipstat advancing: rendering lands elsewhere (compare the import `pa0` with the KMS pool); frozen: flips stopped (`Could not queue pageflip` / `Wait for previous pageflip failed`) |
+| fault dumps (`uart-summary.sh`) | 0 kernel, 0 EL0 | EL0 fault in supertuxkart-drm: `aarch64-phoenix-addr2line -f -e tools/gpu-lane/sdl2-drm/build-out/stk-drm/supertuxkart-drm <pc>`. This is a different layout: never fold it into the C1 statistics, but record a C1 signature (`0x8000000x` high word), since no in-process winsys exists on this lane |
+
+**What the cycle decides:** a lit race on HDMI with ≥ 10 gameplay windows and a clean gate means
+**SuperTuxKart runs unmodified on the standard Linux-shaped graphics stack**, the stack Raspberry Pi
+OS uses (SDL KMSDRM → Mesa GBM/EGL → DRM KMS + V3D). The fps band then says whether the stock
+present path costs anything against the v3da clone and Pi OS. Next: 3 interleaved trials against
+`stk-v3da` for a graded A/B (the M1 protocol), then an input cycle (`rpi4-kms-gate -G -C`, drive the
+menu by keyboard).
