@@ -4,11 +4,19 @@
 /*
  * weston-drm compat: signalfd emulation (see sys/epoll.h). signalfd() installs a
  * handler for each signal of the mask that writes one struct signalfd_siginfo
- * (Linux layout, 128 bytes) into the descriptor's socket, then UNBLOCKS those
- * signals: callers block them first (libwayland's wl_event_loop_add_signal does),
- * and a blocked signal would never reach the handler. Closing the descriptor
- * restores the previous action and blocks the signals again. Only ssi_signo is
- * filled in.
+ * (Linux layout, 128 bytes) into the descriptor's socket. As on Linux the caller
+ * keeps the signals blocked (libwayland's wl_event_loop_add_signal blocks them
+ * right AFTER signalfd()); a blocked signal cannot reach a handler, so
+ * epoll_wait() unblocks the signals of the signal descriptors in its interest
+ * list for the duration of its poll() and restores the mask afterwards. The
+ * signals are therefore taken only by a thread waiting in epoll_wait() and never
+ * interrupt other code. Closing the descriptor restores the previous action and
+ * leaves the mask alone. Only ssi_signo is filled in.
+ *
+ * WLPHX_TRACE=1 (read at the first signalfd()) prints one tagged line per step
+ * on stderr: "WLPHX signalfd fd=<n> sig=<s>", "WLPHX sig=<s> caught" (from the
+ * handler, write(2) only), "WLPHX signalfd dispatched fd=<n>" (epoll_wait
+ * reports it) and "WLPHX epoll_wait eintr".
  */
 #ifndef WLPHX_SYS_SIGNALFD_H
 #define WLPHX_SYS_SIGNALFD_H

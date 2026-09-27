@@ -19,7 +19,8 @@
 #   /bin/shmsrv -v                 (memfd_create backing: wl_shm pools, keymaps)
 #
 # Environment knobs: WESTON (binary), CONF, HOLD (seconds with the client up), CLIENT_ARGS,
-# DRMPHX_TRACE (libdrm-phoenix trace in weston, default 1).
+# DRMPHX_TRACE (libdrm-phoenix trace in weston, default 1), WLPHX_TRACE (signal path and
+# shutdown steps in weston, "WLPHX ..." lines, default 1; M6 §14).
 #
 # Every line of ours starts with "WESTONDRM " (grading).
 #
@@ -58,8 +59,8 @@ case "${CLIENT}" in
 	*) echo "WESTONDRM FAIL unknown client ${CLIENT}"; exit 2 ;;
 esac
 
-echo "WESTONDRM start renderer=${RENDERER} client=${CLIENT} weston=${WESTON} conf=${CONF} hold=${HOLD} input=${LIBINPUT_PHOENIX_DEVICES:-none} trace=${DRMPHX_TRACE:-1}"
-DRMPHX_TRACE=${DRMPHX_TRACE:-1} "${WESTON}" --config="${CONF}" --backend=drm --renderer="${RENDERER}" \
+echo "WESTONDRM start renderer=${RENDERER} client=${CLIENT} weston=${WESTON} conf=${CONF} hold=${HOLD} input=${LIBINPUT_PHOENIX_DEVICES:-none} trace=${DRMPHX_TRACE:-1} wlphx_trace=${WLPHX_TRACE:-1}"
+DRMPHX_TRACE=${DRMPHX_TRACE:-1} WLPHX_TRACE=${WLPHX_TRACE:-1} "${WESTON}" --config="${CONF}" --backend=drm --renderer="${RENDERER}" \
 	--shell=kiosk --continue-without-input --idle-time=0 --socket="${WAYLAND_DISPLAY}" &
 wpid=$!
 echo "WESTONDRM weston pid=${wpid}"

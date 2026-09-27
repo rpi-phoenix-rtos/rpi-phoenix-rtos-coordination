@@ -11,7 +11,8 @@
  *   epoll    the interest list; the socket itself never becomes readable
  *   timer    a deadline; reported EPOLLIN by epoll_wait while expired
  *   signal   the peer end receives one signalfd_siginfo per caught signal, so
- *            the descriptor is readable exactly when a signal is pending
+ *            the descriptor is readable exactly when a signal is pending; the
+ *            signals are deliverable only inside epoll_wait (see there)
  *   event    eventfd: write() on it (__wrap_write) goes to the peer end, so the
  *            descriptor itself turns readable; read() is the plain socket read
  * epoll_wait() builds a pollfd array from the interest list (timers are not
@@ -29,6 +30,7 @@
 #include <pthread.h>
 #include <signal.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -84,10 +86,39 @@ static pthread_mutex_t wlphx_lock = PTHREAD_MUTEX_INITIALIZER;
 /* signal number -> write end of the signalfd that catches it (read by the handler) */
 static volatile int sig_wfd[NSIG];
 
+/* WLPHX_TRACE=1: tagged signal-path lines on stderr (set by the first signalfd()) */
+static volatile int wlphx_trace;
+
 int __real_close(int fd);
 int __wrap_close(int fd);
 ssize_t __real_write(int fd, const void *buf, size_t n);
 ssize_t __wrap_write(int fd, const void *buf, size_t n);
+
+
+/* One trace line (not for the signal handler, which formats its own). */
+static void trace(const char *fmt, int a, int b)
+{
+	char line[96];
+	int n;
+
+	n = snprintf(line, sizeof(line), fmt, a, b);
+	if (n > 0) {
+		(void)__real_write(2, line, ((size_t)n < sizeof(line)) ? (size_t)n : sizeof(line) - 1);
+	}
+}
+
+
+/* dst |= src (sigorset() is a GNU extension) */
+static void sigset_merge(sigset_t *dst, const sigset_t *src)
+{
+	int sig;
+
+	for (sig = 1; sig < NSIG; sig++) {
+		if (sigismember(src, sig) == 1) {
+			sigaddset(dst, sig);
+		}
+	}
+}
 
 
 static int slot_new(int kind, int flags_cloexec, int *out_fd)
@@ -358,8 +389,9 @@ int epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout)
 	struct wlphx_item *items = NULL;
 	struct pollfd *pfd = NULL;
 	int *pidx = NULL;
-	int n, i, np, count, wait_ms, left, r;
+	int n, i, np, count, wait_ms, left, r, e, nsig;
 	struct timespec start, now, el;
+	sigset_t sigs, saved;
 
 	if ((events == NULL) || (maxevents <= 0)) {
 		errno = EINVAL;
@@ -402,6 +434,8 @@ int epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout)
 		 * at once for an infinite timeout. */
 		wait_ms = timeout;
 		count = 0;
+		nsig = 0;
+		sigemptyset(&sigs);
 		pfd[0].fd = epfd;
 		pfd[0].events = POLLIN;
 		pfd[0].revents = 0;
@@ -409,12 +443,17 @@ int epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout)
 		np = 1;
 		for (i = 0; i < n; i++) {
 			struct wlphx_slot *t = slot_get(items[i].fd, WLPHX_TIMER);
+			struct wlphx_slot *sg = slot_get(items[i].fd, WLPHX_SIGNAL);
 			if (t != NULL) {
 				left = timer_ms_left(&t->u.tm);
 				if ((left >= 0) && ((wait_ms < 0) || (left < wait_ms))) {
 					wait_ms = left;
 				}
 				continue;
+			}
+			if (sg != NULL) {
+				sigset_merge(&sigs, &sg->u.sg.mask);
+				nsig++;
 			}
 			pfd[np].fd = items[i].fd;
 			pfd[np].events = to_poll(items[i].events);
@@ -424,20 +463,46 @@ int epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout)
 		}
 		pthread_mutex_unlock(&wlphx_lock);
 
+		/* The signals of our signal descriptors are blocked by the caller, as a real
+		 * signalfd wants (libwayland blocks them right after signalfd(), in every
+		 * thread it goes on to create too), so on their own they would stay pending
+		 * forever and never reach wlphx_sig_handler. Admit them while this thread
+		 * sleeps: one already pending is taken on the unblock itself, one sent during
+		 * poll() interrupts it, one sent after the re-block waits for the next call.
+		 * No wake-up is lost, and the handler never interrupts code outside
+		 * epoll_wait(). */
+		if (nsig > 0) {
+			(void)pthread_sigmask(SIG_UNBLOCK, &sigs, &saved);
+		}
 		r = poll(pfd, (nfds_t)np, wait_ms);
+		e = errno;
+		if (nsig > 0) {
+			(void)pthread_sigmask(SIG_SETMASK, &saved, NULL);
+		}
 		if (r < 0) {
+			if ((e == EINTR) && wlphx_trace) {
+				trace("WLPHX epoll_wait eintr fd=%d signal_fds=%d\n", epfd, nsig);
+			}
 			free(items);
 			free(pfd);
 			free(pidx);
-			return -1; /* EINTR included: libwayland retries */
+			errno = e;
+			return -1; /* EINTR included: libwayland retries, the socket is then readable */
 		}
 
 		for (i = 1; (i < np) && (count < maxevents); i++) {
-			uint32_t e = from_poll(pfd[i].revents, items[pidx[i]].events);
-			if (e != 0) {
-				events[count].events = e;
+			uint32_t ev = from_poll(pfd[i].revents, items[pidx[i]].events);
+			if (ev != 0) {
+				events[count].events = ev;
 				events[count].data = items[pidx[i]].data;
 				count++;
+				if (wlphx_trace && (nsig > 0)) {
+					pthread_mutex_lock(&wlphx_lock);
+					if (slot_get(pfd[i].fd, WLPHX_SIGNAL) != NULL) {
+						trace("WLPHX signalfd dispatched fd=%d revents=0x%x\n", pfd[i].fd, pfd[i].revents);
+					}
+					pthread_mutex_unlock(&wlphx_lock);
+				}
 			}
 		}
 		pthread_mutex_lock(&wlphx_lock);
@@ -584,6 +649,17 @@ static void wlphx_sig_handler(int sig)
 	if ((sig <= 0) || (sig >= NSIG)) {
 		return;
 	}
+	if (wlphx_trace) {
+		/* "WLPHX sig=<n> caught\n", formatted by hand: only write(2) is async-signal-safe */
+		char line[32] = "WLPHX sig=";
+		size_t k = 10;
+		if (sig >= 10) {
+			line[k++] = (char)('0' + sig / 10);
+		}
+		line[k++] = (char)('0' + sig % 10);
+		memcpy(&line[k], " caught\n", 8);
+		(void)__real_write(2, line, k + 8);
+	}
 	wfd = sig_wfd[sig];
 	if (wfd >= 0) {
 		memset(&si, 0, sizeof(si));
@@ -611,6 +687,8 @@ int signalfd(int fd, const sigset_t *mask, int flags)
 		return -1;
 	}
 	if (!init) {
+		const char *t = getenv("WLPHX_TRACE");
+		wlphx_trace = (t != NULL) && (t[0] != '\0') && (strcmp(t, "0") != 0);
 		for (sig = 0; sig < NSIG; sig++) {
 			sig_wfd[sig] = -1;
 		}
@@ -629,11 +707,15 @@ int signalfd(int fd, const sigset_t *mask, int flags)
 		if (sigismember(mask, sig) == 1) {
 			sig_wfd[sig] = s->peer;
 			(void)sigaction(sig, &sa, &s->u.sg.old[sig]);
+			if (wlphx_trace) {
+				trace("WLPHX signalfd fd=%d sig=%d\n", nfd, sig);
+			}
 		}
 	}
-	/* the caller blocked these signals so that they wait for signalfd; with a
-	 * handler instead of a kernel queue they have to be deliverable */
-	(void)sigprocmask(SIG_UNBLOCK, mask, NULL);
+	/* The signal mask is the caller's: it blocks these signals (before or after this
+	 * call -- libwayland does it after) and epoll_wait() admits them while it waits.
+	 * Unblocking them here would not stick: libwayland's SIG_BLOCK right after this
+	 * call undid it, and SIGTERM then stayed pending in every thread (M6 §14). */
 	return nfd;
 }
 
@@ -739,7 +821,6 @@ int __wrap_close(int fd)
 	}
 	if (s != NULL) {
 		if (s->kind == WLPHX_SIGNAL) {
-			(void)sigprocmask(SIG_BLOCK, &s->u.sg.mask, NULL);
 			for (sig = 1; sig < NSIG; sig++) {
 				if ((sigismember(&s->u.sg.mask, sig) == 1) && (sig_wfd[sig] == s->peer)) {
 					sig_wfd[sig] = -1;

@@ -190,6 +190,7 @@ compat (§5.1), as epoll-shim on FreeBSD.
 | 0005 | `meson: build without cairo, disabling only what uses it` | cairo/libpng/libutil were hard requirements even for DRM+GL+kiosk+simple clients; without them the cairo-shared library becomes a disabler (toytoolkit clients, screenshooter, desktop shell, nested-backend borders turn off) |
 | 0006 | `gl-renderer: include <endian.h> for its byte-order tests` | `BYTE_ORDER == BIG_ENDIAN` with both undefined reads 0 == 0 (glibc pulls the header in implicitly) |
 | 0007 | `input: create the XKB context even when no XKB include path exists` | **the m6a failure.** `xkb_context_new(XKB_CONTEXT_NO_FLAGS)` returns NULL when none of `$XDG_CONFIG_HOME/xkb`, `$HOME/.config/xkb`, `$HOME/.xkb`, the extra path or the root exists (`libxkbcommon src/context.c:306-313` [read]); Weston then exits in `weston_compositor_init_config` before any backend. Retry with `XKB_CONTEXT_NO_DEFAULT_INCLUDES` and log `XKB: no include path exists, keymaps can only come from strings`; rule-name compilation then fails cleanly and 0003's baked keymap is used. The only `xkb_context_new` caller in the four binaries (`simple-im`/toytoolkit are not built; libxkbcommon's tools are not built for the target) [read + `nm`]. |
+| 0008 | `frontend, compositor: WLPHX_TRACE shutdown-step trace` | diagnostic, off by default: with `WLPHX_TRACE=1`, one `WLPHX shutdown step=<name>` line on stderr per shutdown step (`shared/phoenix-trace.h`; §14). Drop once m6e grades a clean exit. |
 
 ### 4.4 mesa-drm: `--wayland` and patch 0012
 
@@ -224,7 +225,7 @@ identical data in separate archive members and never collide.
 |---|---|---|---|
 | **no epoll** | libwayland event loop | `epoll_create1/ctl/wait` over `poll()`: interest list per epoll descriptor (a socketpair end), level-triggered | `EPOLLET`/`ONESHOT`/`EXCLUSIVE` → `EINVAL` (libwayland uses none); nested epoll not supported |
 | **no timerfd** | libwayland timer heap (one per loop) | virtual timers: never polled, they bound the `poll()` timeout; EPOLLIN while expired and not re-armed | only observable via `epoll_wait` of the same process; `read()` of a timer → `EAGAIN` (libwayland re-arms, never reads [read: `event-loop.c:492-533`]) |
-| **no signalfd** | Weston's SIGTERM/SIGINT/SIGQUIT/SIGCHLD sources | a handler per signal writes a `signalfd_siginfo` (Linux layout) into a socketpair; the signals are **unblocked** (callers block them first) | only `ssi_signo` filled; close restores the old action and blocks again |
+| **no signalfd** | Weston's SIGTERM/SIGINT/SIGQUIT/SIGCHLD sources | a handler per signal writes a `signalfd_siginfo` (Linux layout) into a socketpair; the caller keeps the signals blocked (as a real signalfd wants) and **`epoll_wait` unblocks them around its `poll()`** (§14) | only `ssi_signo` filled; taken only by a thread waiting in `epoll_wait`; close restores the old action |
 | **no eventfd** | `wl_display_terminate` wake-up | socketpair; `write()` on it goes to the peer (`__wrap_write`) so the descriptor itself turns readable | one 8-byte record per write, not a summed counter |
 | no `ppoll` | `wl_display_poll` (client) | `poll()` with the mask applied around it | not atomic |
 | **no `memfd_create`** | Weston's/libwayland-cursor's anonymous files (wl_shm pools, keymaps, cursor themes) | over shmsrv (§6) | no seals |
@@ -239,7 +240,8 @@ shadow glibc's, with ASan/UBSan): **31/31 PASS** — socket EPOLLIN/EPOLLOUT, le
 expired timers staying readable until re-armed, disarm, an absolute deadline in the past firing at
 once, a timeout shorter than the timer, a timer-only interest list, `signalfd` after the caller
 blocked the signal (`raise` → readable → `ssi_signo`, 128-byte record), eventfd write → readable →
-read → drained, `EBADF` after close. It found one Phoenix-specific trap by reading the kernel
+read → drained, `EBADF` after close. **`sigterm_test`** (8 checks, §14) sets the sources up in
+libwayland's order and sends SIGTERM with every thread blocking it. It found one Phoenix-specific trap by reading the kernel
 alongside: Phoenix's `poll()` with **no** descriptors returns at once for an infinite timeout
 (`posix.c:3220-3225`), so `epoll_wait` always keeps the epoll descriptor itself (never readable) in
 the set — a timer-only list sleeps instead of spinning.
@@ -483,7 +485,7 @@ exceed the default 32 MiB pool (E3: 256 MiB contiguous below 1 GiB is available)
 | R1 | Weston's atomic TEST_ONLY storms (plane assignment every repaint) cost an IPC round trip each (~31 µs, E5) | frame time; `WESTON_DISABLE_ATOMIC=1` (legacy SETCRTC + PAGE_FLIP, drmprobe-proven) is the fallback knob |
 | R2 | rpi4-kms's event timestamps vs Weston's `CLOCK_MONOTONIC` (`clock 0` on Phoenix): a different base gives `computed repaint delay is insane` warnings | Weston log |
 | R3 | `EDID` blob empty/absent → libdisplay-info parse failure | a warning, make/model "unknown" |
-| R4 | signal delivery into a thread blocked in `poll()` (libphoenix) | the TERM exit row |
+| R4 | signal delivery into a thread blocked in `poll()` (libphoenix) | the TERM exit row; m6c failed it for another reason (§14) |
 | R5 | a cursor plane: with a mouse, Weston puts the cursor on rpi4-kms's cursor plane (a 64×64 GBM/dumb BO) — never exercised by a client before | arm B with a mouse; `WESTON_DISABLE_ATOMIC` does not change it; `--renderer=pixman` uses the same plane |
 | R6 | memory: 18.8 MB static weston + Mesa compiler state | first frame delay |
 | R7 | Weston's `%ld` format warnings (`time_t` is `long long`) — log text only | odd numbers in log lines |
@@ -551,6 +553,109 @@ socket code, libdrm-phoenix `drm_phoenix_logic.c` flattening, rpi4-kms property 
 | kiosk shell | layers, `weston_desktop_create`, output/seat listeners, screenshooter, bindings; `weston_config_parse` of `WESTON_CONFIG_FILE` | no system calls of note |
 | first frame | output enable (`mode=current`), primary plane + CRTC, then atomic commits: the first one disables every plane (primary + cursor `CRTC_ID=0 FB_ID=0`) and sets `MODE_ID` (a created blob), `ACTIVE=1`, connector `CRTC_ID`, `VRR_ENABLED=0` (zero-ok), `zpos`, `alpha`, `rotation`; `TEST_ONLY` proposals every repaint | every property is accepted by libdrm-phoenix's flattening (`drm_phoenix_logic.c:103-207`: zpos ≤ 7, alpha ≤ 0xffff, rotation, VRR 0, link-status/DPMS no-ops) [read]; repaint-loop start uses `drmWaitVBlank` relative 0 (F1 patch) with a page-flip fallback |
 
+## 14. Weston ignores SIGTERM: cause, fix, and cycle `m6e-weston-term`
+
+**Cause (found by reading, reproduced on the host).** libwayland 1.24's
+`wl_event_loop_add_signal()` calls `signalfd()` **first** and `sigprocmask(SIG_BLOCK)` **after**
+it (`src/event-loop.c:733-734` [read]). The compat `signalfd()` installed its handler and then
+*unblocked* the signals, on the assumption that the caller had already blocked them. libwayland's
+`SIG_BLOCK` on the next line undid that. After that SIGTERM, SIGUSR2 and SIGCHLD stayed blocked in
+Weston's main thread and in every thread created later (a Phoenix thread starts with its creator's
+mask: `syscalls_beginthreadex` → `proc_threadCreate(…, proc_current()->sigmask, …)` [read]). The
+kernel's `threads_sigpost` looks for a thread whose mask admits the signal, finds none, and leaves
+it process-pending (`proc/threads.c:1757-1789` [read]). So the handler never ran, the socketpair
+never became readable, and Weston's `on_term_signal` never logged `caught signal 15`. That line is
+missing from both m6c arms. The old host test blocked *before* `signalfd()` (`epoll_test.c:140`), so
+it tested the compat's assumption rather than libwayland's order.
+
+Hypotheses, ranked:
+
+| # | Hypothesis | Evidence | Status |
+|---|---|---|---|
+| H1 | the signal stays blocked in every thread (the ordering above) | code read on all three sides; no `caught signal 15` in m6c; `sigterm_test` FAILs 4/8 on the old compat | **definite bug, fixed** |
+| H2 | the handler runs but the wake-up is lost (EINTR/SA_RESTART in the emulated `epoll_wait`) | libwayland retries on `EINTR` (`wl_event_loop_dispatch`, `event-loop.c:1016-1033`), and the handler writes to the socketpair *before* poll returns, so a retried poll sees it readable [read + host] | unlikely; traced |
+| H3 | the signal goes to a thread that is not waiting (Mesa's or the libinput reader) | would still wake the loop: the handler writes the socketpair from any thread | not a hang cause |
+| H4 | the loop ended and shutdown hung (DRM destroy, a pending flip, libseat, the libinput thread join, Mesa exit handlers) | m6c shows no `caught signal 15`, so the loop never got as far as shutdown | not seen yet; traced (0008) |
+
+**Fix** (`compat/src/wlphx_epoll.c`, contract in `compat/include/sys/signalfd.h`). The caller owns
+the mask, as it does with a real signalfd. `signalfd()` no longer unblocks, and `close()` no longer
+re-blocks. `epoll_wait()` builds the union of the masks of the signal descriptors in its interest
+list, unblocks it with `pthread_sigmask` for the duration of `poll()` only, and then restores the
+previous mask. A signal that was already pending is delivered when the mask is lifted (Phoenix
+checks for signals on every syscall return, `threads_setupUserReturn`). One sent during `poll()`
+interrupts it. One sent after the mask is restored waits for the next call. So no wake-up is lost,
+and the handler can never interrupt code outside `epoll_wait()`, such as DRM ioctls or libseat.
+
+**Host test** `hosttest/sigterm_test.c` (in `run.sh`, ASan/UBSan). It builds two sources in
+libwayland's order, starts a thread that inherits the mask, then (1) sends SIGTERM before the
+wait, (2) sends it from another thread during `epoll_wait(-1)`, (3) sends SIGUSR2 to its own
+source, and checks that SIGTERM is still blocked outside the wait.
+Old compat: **`RESULT fails=4 verdict=FAIL`** (`n=0 after 1004 ms` for cases 1 and 2, then SIGUSR2
+`n=0`). Fixed: **8/8 PASS**, case 1 after 0 ms, case 2 after 101 ms (`WLPHX epoll_wait eintr`,
+then `dispatched`). `epoll_test` still passes 31/31.
+
+What the host test **proves**: the mask logic. On Linux (glibc) the pending signal is taken on
+unblock, the poll in progress is interrupted, the loop retries, and no wake-up is lost. Linux and
+Phoenix pick the target thread by the same rule here (any thread whose mask admits the signal, else
+process-pending). What it does **not** prove: Phoenix's own `poll()` interruption (R4: whether
+`_thread_interrupt` wakes a thread sleeping in `poll`, and whether it returns EINTR or restarts),
+and delivery at the unblock syscall on Phoenix. The Pi run answers those.
+
+**Trace** (`WLPHX_TRACE=1`; `weston-m6a.sh` now passes it, default 1; off in the binary by
+default). All lines start with `WLPHX `:
+
+| Tag | Where |
+|---|---|
+| `WLPHX signalfd fd=<n> sig=<s>` | compat `signalfd()`, at start-up (s = 15, 31, 20 on Phoenix) |
+| `WLPHX sig=<s> caught` | the handler, `write(2)` only |
+| `WLPHX epoll_wait eintr fd=<n> signal_fds=<k>` | `poll()` returned EINTR |
+| `WLPHX signalfd dispatched fd=<n> revents=0x1` | `epoll_wait` reports a signal descriptor |
+| `WLPHX shutdown step=<name>` | weston patch 0008, in this order: `loop-exit`, `compositor-destroy`, `backends-shutdown`, `compositor-shutdown`, `backends-destroy`, `backends-destroyed`, `compositor-destroyed`, `signals-remove`, `display-destroy`, `display-destroyed`, `main-return`, `exit-handlers-done` (an `atexit` handler registered first, so it runs after every later one, Mesa's included) |
+
+### Cycle `m6e-weston-term` (arms A and B; Bash `timeout: 600000`)
+
+**Staging:** re-stage **only** `/bin/weston` (`build-out/weston-stripped`, sha256 `bde137cc330e57c3…`)
+and `/bin/weston-m6a.sh` (`pi/weston-m6a.sh`, which now passes `WLPHX_TRACE`), both mode 755, on
+`/srv/phoenix-rpi4-nfs-gcc16`, and `cmp` them after install. The clients, `shmsrv` and the ini are
+unchanged in behaviour; the new relinks of the clients carry only the compat change, which they never
+use.
+
+**Question:** with the fixed signalfd emulation, does Weston exit cleanly on SIGTERM with both
+renderers? If it does not, which of H1, H2 or H4 is left?
+
+```
+./scripts/test-cycle-psh-interact.sh --label m6e-weston-term --idle-secs 45 --max-cmd-secs 150 \
+    --hdmi-dense-on 'WESTONDRM client start' -- \
+    "/bin/rpi4-v3d-async-m3p2 -r 1 -m serial -i" \
+    "/bin/rpi4-kms-gate -G" \
+    "/bin/shmsrv -v" \
+    "/bin/bash /bin/weston-m6a.sh pixman shm noinput" \
+    "/bin/shmsrv -s" \
+    "/bin/bash /bin/weston-m6a.sh gl shm input" \
+    "/bin/shmsrv -s" \
+    "/bin/kmstest-poll stats" \
+    "/bin/v3dasync-ping stats"
+```
+
+Grade: `grep -a -E '^(WLPHX|WESTONDRM|KMS srv client|SHMSRV stats|KMSTEST|V3DAPING) |caught signal' artifacts/rpi4b-uart/rpi4b-uart-*-m6e-weston-term.log`
+and `./scripts/uart-summary.sh m6e-weston-term`.
+
+**Predictions** (per arm; everything before `client exited` is as in m6c):
+
+| Lines after `WESTONDRM client exited rc=143` | Reading |
+|---|---|
+| **`WLPHX sig=15 caught` → `WLPHX signalfd dispatched fd=…` → `[…] caught signal 15` → the 12 `WLPHX shutdown step=` lines in order → `WESTONDRM weston exited rc=0 after_term_s=<0–2> socket=gone`** | **predicted: H1 fixed, clean exit.** `KMS srv client 1 closed` comes before `rc=0` |
+| start-up has no `WLPHX signalfd fd=… sig=15` line | stale binary (check the sha) or `WLPHX_TRACE` not passed (old script): stop |
+| `WLPHX signalfd` lines at start-up, but no `WLPHX sig=15 caught` within 15 s → KILL | delivery still blocked on Phoenix: the unblock inside `epoll_wait` did not take effect, or a thread in `poll()` is not interrupted and the process has no finite timeout (R4). Next: kernel `signalMask`/`threads_sigpost` in gdb |
+| `caught`, but no `dispatched` (possibly `WLPHX epoll_wait eintr` repeating) | H2: the socketpair write from the handler does not wake Phoenix's `poll()` |
+| `dispatched`, but no `caught signal 15` (possibly `signalfd read error`) | libwayland's read of the emulated record failed: the compat read path |
+| `caught signal 15` and steps that stop at `<X>` | H4, localised: `loop-exit` missing → `wl_display_terminate`'s eventfd wake-up; stops after `backends-shutdown` → `drm_shutdown` (arm B: libinput-phoenix reader thread); after `compositor-shutdown` → output destroy / pending flip; after `backends-destroy` → `drm_destroy` (`gbm_device_destroy`, libseat close); after `main-return` → an exit handler (Mesa's `util_queue` join; arm B); `exit-handlers-done` present but no exit → libc/kernel process teardown |
+| `WESTONDRM weston exited rc=0` in arm A but a hang in arm B | the hang is in the GL/input teardown (the step name says which) |
+| `SHMSRV stats live=0`, `KMSTEST … bos=0 exports=0`, `V3DAPING … parked=0`, 0 faults | as m6c |
+
+**Decides:** arm A clean = the emulated signalfd/eventfd/event loop is proven end to end, and patch
+0008 plus the `WLPHX_TRACE` lines can be dropped at the next cleanup.
+
 ## Result — `m6a-weston` (queue31, 2026-09-27 10:13): FAIL, fixed by weston patch 0007
 
 Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-101308-m6a-weston.log` (`grep -a`). Binary
@@ -609,9 +714,10 @@ size=8294400` ×2 per arm). The pattern differs between snapshots, so frames are
 - Cleanup: `SHMSRV stats live=0 bytes=0` after each arm; `KMSTEST stats … apply_errors=0 dropped=0 bos=0
   exports=0`; `V3DAPING stats bos_live=0 parked=0 verdict=PASS`. **0 exceptions**, 0 kernel faults.
 - ✗ **Exit:** both arms ignored SIGTERM for 15 s and were KILLed (`rc=137`, `socket=left`). The client died
-  on TERM (`rc=143`). The log cannot separate "the signal never reached the loop" from "the loop ended and
-  shutdown hung": nothing Weston prints distinguishes them, and the DRMPHX trace is sampled (n = powers of 2).
-  → a host test of the signalfd emulation plus a traced re-run (§14).
+  on TERM (`rc=143`). The DRMPHX trace is sampled (n = powers of 2), so it does not say whether frames
+  continued. *Added in §14:* Weston's `on_term_signal` logs `caught signal 15` first thing
+  (`frontend/main.c:831`), and that line is absent in both arms — the signal source never dispatched,
+  so the loop never ended; the cause is in the compat signalfd (§14).
 
 **Decides:** arm A PASS for display = the DRM backend, compat event loop, libseat/udev/libinput shims and
 shmsrv wl_shm path work; arm B adds the GL renderer on V3D. Clean exit is still open. m6d (simple-egl) follows.
