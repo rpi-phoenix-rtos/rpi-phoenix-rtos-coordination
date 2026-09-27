@@ -160,10 +160,23 @@ fi
 wait "${dpid}" 2>/dev/null
 echo "DBUSPHX daemon exited rc=$? after_term_s=${i} socket=$([ -e "${SOCK}" ] && echo left || echo gone) t=${SECONDS}"
 
-# 6: how the daemon authenticated its clients
-echo "DBUSPHX auth anonymous=$(count "${LOG}" 'authenticated client as anonymous') external=$(count "${LOG}" 'authenticated client based on socket credentials') external_no_credentials=$(count "${LOG}" "no credentials, mechanism EXTERNAL can't authenticate") log_lines=$(count "${LOG}" '')"
-n=0
+# 6: how the daemon authenticated its clients -- ONE pass over the verbose log (thousands of
+# lines on an NFS /tmp): the interesting lines are printed as they are found, and a progress
+# line every 1000 lines keeps the UART talking (psh-interact cuts a command after 20 s of silence)
+echo "DBUSPHX scanning the daemon log t=${SECONDS}"
+anon=0 ext=0 noc=0 lines=0 n=0
 while IFS= read -r line; do
-	case "${line}" in *"Credentials:"*|*"Failed to"*|*"Error"*|*"Unknown"*|*"rejected"*) n=$((n + 1)); [ "${n}" -le 12 ] && echo "DBUSPHX log: ${line}" ;; esac
+	lines=$((lines + 1))
+	[ $((lines % 1000)) -eq 0 ] && echo "DBUSPHX scanned ${lines} log lines t=${SECONDS}"
+	case "${line}" in
+		*"authenticated client as anonymous"*) anon=$((anon + 1)) ;;
+		*"authenticated client based on socket credentials"*) ext=$((ext + 1)) ;;
+		*"no credentials, mechanism EXTERNAL can't authenticate"*) noc=$((noc + 1)) ;;
+		*"Credentials:"*|*"Failed to"*|*"Error"*|*"Unknown"*|*"rejected"*)
+			n=$((n + 1))
+			[ "${n}" -le 12 ] && echo "DBUSPHX log: ${line}"
+			;;
+	esac
 done < "${LOG}"
+echo "DBUSPHX auth anonymous=${anon} external=${ext} external_no_credentials=${noc} log_lines=${lines} t=${SECONDS}"
 echo "DBUSPHX done"

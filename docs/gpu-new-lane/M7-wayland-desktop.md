@@ -96,7 +96,7 @@ cross build, all static: `dbus-daemon`, `dbus-send`, `dbus-monitor`, `dbus-run-s
   supported` branch: the daemon learns no peer uid/pid.
 - **Static checks**: all five programs `nm -u` = 0, no `PT_INTERP`, no `DT_NEEDED`. Stripped sha256 (first 16):
   dbus-daemon `0abfed003a78214d` (673 504 B), dbus-send `9bdc383d4c6a97c2`, dbus-monitor `be12fbefa7da2aeb`,
-  dbus-run-session `10b706d7ccd28a39`, dbus-uuidgen `0dc89c58de302ae1`; `dbus-m7f.sh` `710d1fdef205bb26`.
+  dbus-run-session `10b706d7ccd28a39`, dbus-uuidgen `0dc89c58de302ae1`; `dbus-m7f.sh` `87c866f618e5c9fe`.
 
 **Authentication (the decision).** `conf/session-phoenix.conf` (stage 1): `<listen>unix:path=/tmp/dbus-session</listen>`,
 `<auth>ANONYMOUS</auth>`, `<allow_anonymous/>`, one explicit `<servicedir>`, an allow-all default policy, no
@@ -124,7 +124,7 @@ once SO_PEERCRED ships. Clients find the bus only through `DBUS_SESSION_BUS_ADDR
   - C, stage-2 conf with credentials (= Phoenix after SO_PEERCRED): EXTERNAL succeeds.
   - D, negative control (EXTERNAL only, no credentials): refused. So A and B are not an artefact of a preload
     that did nothing.
-  The Pi script itself also ran on the host (host binaries, both arms): every step answered as predicted below.
+  The Pi script itself also ran on the host (host binaries, both arms, and once more without gdbus = 6/0/6): every step answered as predicted below. The kernel change also compiles to an object under the real -O2 -Werror flags.
   This proves the configuration, not Phoenix.
 - AF_UNIX facts checked for the port: libphoenix `sendmsg`/`recvmsg` gather and scatter multi-iovec messages
   (the kernel takes one iovec), so D-Bus's two-vector header+body writes are fine. `sysconf(_SC_OPEN_MAX)` = 1024
