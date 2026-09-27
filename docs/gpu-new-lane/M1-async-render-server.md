@@ -1341,3 +1341,39 @@ never exercised:
    `CREATE_BO` is a round trip with a server-side zeroing memset under `srv.lock` (R17) — loading
    may be slower than on the old lane; graded only if it breaks the 420 s budget (fewer than 10
    gameplay windows).
+
+## Result — EINVAL-draw check (queue13, 2026-09-27 01:31–01:38): **FIXED**, cause proved by the control
+
+| cycle | server | Mesa `Draw call returned` | tagged lines | fps (timedemo demo1) |
+|---|---|---|---|---|
+| `einval-ctl` | old (5-run server) | 1 | 8 × `v3da-winsys: reject submit_cl where=server rc=-22 … desc=A/B/…` with **B < A** in every one (e.g. `0x0644f000/0x05f90494`) | 42.5 |
+| `einval-fix-1` | fixed | **0** | 4 × `chained BCL ends below its start … accepted`; qstat `rej=0 bclwrap=87 ronly=0 err=0 wedges=0` | 40.4 |
+| `einval-fix-2` | fixed | **0** | same; `bclwrap=97`, `rej=0 err=0` | 40.4 |
+
+Every pre-registered prediction held. ~90 chained command lists per run were being dropped whole by the
+old server — which **flattered its fps by ~5 %** (42.5 vs 40.4 on the same clone and config). The valid
+new-lane quakespasm figure at core 500 is **40.4 fps**. (P2-B's 38.2 was measured at core 250 with the
+drops; an old-lane quakespasm timedemo at core 500 is still owed for a same-clock A/B.)
+
+## Result — STK A/B (queue14, 2026-09-27 01:37–02:45): **new lane +45 %, = Raspberry Pi OS**
+
+Old lane `stk` vs new lane `stk-v3da` (+ `rpi4-v3d-async` with the EINVAL fix), interleaved, core 500,
+graded by flipstat gameplay windows (fps > 3, first/last dropped):
+
+| arm | trials (mean fps, windows) | mean |
+|---|---|---|
+| old lane | 8.48 (66) / 8.39 (66) / 8.15 (66) | **8.34** |
+| new lane, serial + IRQ | 12.12 (52) / 12.04 (52) / 12.19 (53) | **12.12** (+45 %) |
+| new lane, pipeline + IRQ | 12.14 (52) / 12.14 (52) | 12.14 |
+
+Correctness gate: 0 wedges, `err=0`, `rej=0`, 0 adapter rejects, 0 Mesa EINVAL, 0 exceptions, in all
+8 runs. HDMI graded after the command echo: both lanes render the same lit race correctly; STK's own
+on-screen counter agrees (old `6/10/10`, new `9/13/15` min/avg/max). The new lane runs fewer windows
+because the same two laps finish sooner.
+
+Reading against E2's bounds: +45 % is inside U2 (×1.48, CPU∥GPU plus bin∥render) but a little above
+U1 (×1.43, CPU∥GPU only). The pipeline arm shows `overlap=0ms` — bin∥render never overlapped — so the
+gain is CPU∥GPU; U1 was an estimate from E2's time split, and 1.45 vs 1.43 is within its error. Against
+Raspberry Pi OS on the same board (E2c: 11.74 / 11.63 fps, render queue 97 % busy) the new lane is at
+**parity**. Remaining M1 items: why the pipeline never overlaps (Mesa's in-syncs serialise bin after the
+previous render?), and an old-lane quakespasm run at core 500.
