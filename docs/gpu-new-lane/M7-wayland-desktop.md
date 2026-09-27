@@ -959,6 +959,40 @@ Allow ~1.3 % UART line corruption; EL0 dumps print twice; wlroots lines may carr
 **Decides:** rows 2–4 = the XFCE settings system works on Phoenix (the base of every XFCE program); rows 6–10 =
 Thunar, i.e. the XFCE libraries (libxfce4util, xfconf, libxfce4ui, exo) on GTK 3 Wayland. Then `m7h-xfce`.
 
+### Part 2: xfce4-panel 4.20.8 (built, staged)
+
+meson, `-Dx11=disabled -Dwayland=enabled -Dgtk-layer-shell=enabled -Ddbusmenu=disabled -Dbuiltin-plugins=true`.
+Panel plugins are normally loadable modules (`/usr/lib/xfce4/panel/plugins/lib<name>.so`, `g_module_open`); a
+static Phoenix program has no loader for them, so **patch 0001 `panel: optionally link the internal plugins into
+xfce4-panel`** adds the meson option `builtin-plugins`: every plugin becomes a static library compiled with
+`-Dxfce_panel_module_init=xfce_panel_builtin_<module>_init` (they all export the same symbol otherwise), a generated
+`panel-builtin-plugins.c` maps each `X-XFCE-Module` name to its init function, and
+`panel_module_new_from_desktop_file()` consults the table before it looks for a module file (such plugins always
+run internally: no wrapper process). Built-in plugins skip their copy of the panel's GResource (the panel has it);
+the plugins' meson subdirectories are processed before `panel/`. The default (`false`) builds what it did.
+**All 11 plugins are linked in**: actions, applicationsmenu, clock, directorymenu, launcher, pager, separator,
+showdesktop, systray (StatusNotifier over D-Bus only: the XEmbed tray is X11), tasklist, windowmenu (the last two
+via libxfce4windowing's Wayland backend, wlr-foreign-toplevel).
+
+| program | text / data / bss | stripped | sha256 stripped (first 16) | symbols checked |
+|---|---|---|---|---|
+| xfce4-panel (`/bin/xfce4-panel`) | 17 879 528 / 82 912 / 69 456 | 17 967 976 | **`408469d488270c9e`** | `panel_builtin_plugins`, `xfce_panel_builtin_{applicationsmenu,clock,tasklist,windowmenu,launcher,separator,actions}_init`, `gtk_layer_init_for_window`, `xfw_screen_get_default`, `garcon_menu_new_for_path` |
+
+**Layout** (`conf/xfconf/xfce4-panel.xml` → `/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml`,
+`configver=2` = the panel's `XFCE4_PANEL_CONFIG_VERSION`, so the panel does **not** spawn its `migrate` helper on the
+first start — another 17 MB GTK program, not staged): one 30 px panel on the top edge: applications menu, launchers
+for foot (`/usr/share/applications/foot.desktop`, m7c's) and Thunar, window buttons (tasklist), a transparent
+expanding spacer, the clock (`%a %d %b  %H:%M`). Left out of the layout: pager (workspaces), systray, actions
+(`xfce4-session-logout` does not exist). The panel's own `default.xml`, garcon's `xfce-applications.menu` and the 16
+`desktop-directories` are staged for the applications menu.
+
+Staged (new paths; the hicolor theme's `index.theme`/`icon-theme.cache` were **updated** — `73fdaad42f2996a8` /
+`ac221a33f8357347` — to include the panel's `org.xfce.panel.*` icons; a superset, m7f-thunar is unaffected):
+`/bin/xfce4-panel` `408469d488270c9e`, `/usr/share/xfce4/panel/plugins/*.desktop` (11),
+`/etc/xdg/xfce4/panel/default.xml` `54dbf7527908ddce`, `/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml`
+`ae5caafbfa4383c6`, `/etc/xdg/menus/xfce-applications.menu` `7371a09dcb7bccc0`, `/usr/share/desktop-directories/`.
+All 3 042 files of `stage.MANIFEST` verified on the export.
+
 ## Pi milestones (pre-registered as each piece lands)
 
 | cycle | shows |
