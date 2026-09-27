@@ -1014,8 +1014,8 @@ static const char *ns_of_port(uint32_t port)
 	if ((port_of(KMS_BUF_NS, &p) == 0) && (p == port)) {
 		return KMS_BUF_NS;
 	}
-	if ((port_of(V3DA_BUF_NS_EXT, &p) == 0) && (p == port)) {
-		return V3DA_BUF_NS_EXT;
+	if ((port_of(V3DA_BUF_NS, &p) == 0) && (p == port)) {
+		return V3DA_BUF_NS;
 	}
 	return NULL;
 }
@@ -1157,8 +1157,8 @@ int drmphx_prime_fd_lookup(int fd, kms_memref_t *m)
 	if (strncmp(path, KMS_BUF_NS "/", sizeof(KMS_BUF_NS)) == 0) {
 		ns = KMS_BUF_NS;
 	}
-	else if (strncmp(path, V3DA_BUF_NS_EXT "/", sizeof(V3DA_BUF_NS_EXT)) == 0) {
-		ns = V3DA_BUF_NS_EXT;
+	else if (strncmp(path, V3DA_BUF_NS "/", sizeof(V3DA_BUF_NS)) == 0) {
+		ns = V3DA_BUF_NS;
 	}
 	if (ns == NULL) {
 		return -EINVAL;   /* not a buffer name we know */

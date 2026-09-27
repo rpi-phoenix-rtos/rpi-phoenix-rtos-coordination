@@ -143,7 +143,7 @@ static void t_fencepage(void)
 	uint64_t hb0, hb1;
 	int magic_ok;
 
-	magic_ok = (fp->hdr.magic == V3DA_FENCE_MAGIC) && (fp->hdr.version == V3DA_PROTO_VERSION) &&
+	magic_ok = (fp->hdr.magic == V3DA_FENCE_MAGIC) && (fp->hdr.version == V3DA_PROTO_BASE) &&
 		(fp->hdr.nslots == V3DA_FENCE_NSLOTS);
 	hb0 = __atomic_load_n(&fp->hdr.heartbeat, __ATOMIC_ACQUIRE);
 	usleep(250000);

@@ -348,7 +348,7 @@ fail, the baked keymap compiles, `KEY_A` → `a`, and it re-serialises (68 121 b
 |---|---|---|
 | wl_shm clients (weston-simple-shm, cursor themes, toolkits' CPU buffers) | **expected to work**: shmsrv + E1 windows + SCM_RIGHTS (E1-proven) | Pi cycle m6c |
 | Weston composition of dma-buf clients (linux-dmabuf → `EGL_EXT_image_dma_buf_import`) | a client buffer that is a `/kmsbuf` export imports on Weston's render connection: `BO_IMPORT ns=kmsbuf` (**G1 ✅**) | — |
-| Client GPU rendering (weston-simple-egl, any wayland-egl app) | Mesa allocates back buffers `PIPE_BIND_SHARED` on the **render node** → export = `PRIME_HANDLE_TO_FD` there = **G4** (`-ENOSYS`). With **0012** (`V3D_PHOENIX_SHARED_SCANOUT=1`) they come from the kms pool instead → `/kmsbuf` → works (G4a covers the re-export of an imported BO) | **G4** (`V3DA_OP_BO_EXPORT` + `/v3dbuf`, `BO_IMPORT ns=v3dbuf`) to drop 0012 and the pool pressure |
+| Client GPU rendering (weston-simple-egl, any wayland-egl app) | Mesa allocates back buffers `PIPE_BIND_SHARED` on the **render node** → export = `PRIME_HANDLE_TO_FD` there = **G4**: implemented (§15), pending Pi cycle `m6g-g4`. m6d showed 0012 (`V3D_PHOENIX_SHARED_SCANOUT=1`) never engages for a wayland-egl client; `weston-m6a.sh` no longer sets it (knob `SHARED_SCANOUT=1`) | Pi cycle `m6g-g4` |
 | Direct scanout of a client buffer (kiosk fullscreen, overlay planes) | Weston's `drmModeAddFB2` needs `PRIME_FD_TO_HANDLE` on card0 of a buffer another process allocated = **G7** (`-ENOSYS`) → Weston **falls back to GL composition** (expected, not a failure) | **G7** (`KMS_OP_PRIME_IMPORT`) |
 | Sync of client GPU work before Weston samples/flips it | Wayland relies on dma-buf implicit fences; none exist across processes here → a partially rendered client frame can be composited (tearing on the egl arm) | cross-process implicit sync (`BO_LAST_FENCE`, M3 G13) or explicit sync (below) |
 | `linux-explicit-synchronization` / `wp_linux_drm_syncobj` (client acquire/release fences) | sync files are process-local (a `dup` of the render fd) | **G6** (`/v3dsync`, cross-process sync files/syncobjs) |
@@ -496,7 +496,7 @@ exceed the default 32 MiB pool (E3: 256 MiB contiguous below 1 GiB is available)
 |---|---|---|
 | m6c/m6d cycles + fixes they find | 1–3 cycles, 0.5–2 days | the integration surface is kmscube's (GBM/EGL/KMS) + Xorg's (static modules) + new (event loop emulation, shmsrv, libseat/udev/libinput shims) |
 | Input on the Pi (`rpi4-kms -C` console handover, keys into a Wayland client) | 0.5–1 day | libinput-phoenix is written; untested; needs a keyboard-reading client (e.g. weston-terminal needs cairo — ports have cairo, so weston patch 0005's disabler turns back on once cairo is exposed) |
-| **G4** render-node export → drop 0012 | ~120 + ~40 lines server + library, 1–2 days (M3 §4 spec) | shared with M4 DRI3, M5 external memory |
+| **G4** render-node export → drop 0012 | **implemented** (§15), pending `m6g-g4` | shared with M4 DRI3, M5 external memory |
 | **G7** kms import of foreign buffers (direct scanout of fullscreen clients, overlays) | ~150 lines + library, 2–3 days | performance, not function (GL composition works) |
 | Cross-process implicit sync (`BO_LAST_FENCE`) or **G6** explicit sync (`wp_linux_drm_syncobj_v1` in Weston 14) | 2–5 days | tear-free GPU clients |
 | Desktop shell (cairo toytoolkit: `weston-desktop-shell`, `weston-terminal`) from the ports' cairo/pango/fontconfig | 1–2 days | view-based private dep views, as here |
@@ -748,3 +748,198 @@ Exit: the same SIGTERM failure as m6c.
 **Decides:** 0012 does not cover wayland-egl clients. The fix is **G4** itself (render-node BO export
 `V3DA_OP_BO_EXPORT` + `/v3dbuf`, import `ns=v3dbuf`), which M4 DRI3 and M5 external memory need too. It
 retires 0012 and the `-p 96` pool pressure.
+
+## 15. G4 — render-node PRIME export (`V3DA_OP_BO_EXPORT` + `/v3dbuf`), and cycle `m6g-g4`
+
+m6d stopped at `MESA: error: Failed to export gem bo 8202 to dmabuf`: a wayland-egl client allocates its
+back buffers on the render node, and `PRIME_HANDLE_TO_FD` there was gap G4. This section closes it in the
+render server and libdrm-phoenix. It is host-tested; the Pi cycle below is pre-registered.
+
+### 15.1 Design
+
+**Export** (`V3DA_OP_BO_EXPORT` = 22, request `v3da_bo_req_t {handle}`, reply `v3da_bo_resp_t`). An M1a BO is
+one `MAP_CONTIGUOUS | MAP_ANONYMOUS` block, so the server publishes the whole block with `memExport()` under
+`{buf_port, handle}` (E1). `buf_port` is a third port of the server, registered as **`/v3dbuf`** and
+served by one extra thread. It works exactly like rpi4-kms's `/kmsbuf` (E1 §1): `mtLookup "<id>"`, `atMode`
+and `atType`, `mtOpen`/`mtClose` replying 0, `mtGetAttrAll` (character device, size), and `atSize`
+**only while the BO is exported**, under `srv.lock`. The id is the BO handle, which is never reused
+while the server lives, so an id is never exported twice (the shadow-object residual of G3 cannot name
+another buffer). Exporting again answers the same id. Refused: a handle that is not the client's
+(`-ENOENT`), an imported, scanout or cacheable BO (`-EINVAL`; libdrm-phoenix creates uncached BOs only,
+and a dma-buf descriptor cannot carry a memory type), no namespace (`-ENODEV`).
+
+The dma-buf descriptor is `open("/v3dbuf/<id>", O_RDONLY)`, done by libdrm-phoenix after the reply. It is
+the same kind of descriptor as a `/kmsbuf` one, so the existing library paths work on it unchanged:
+`fstat`, `lseek(SEEK_END)` (Mesa's dma-buf size), `mmap` with `MAP_UNCACHED` (the `__wrap_mmap` dma-buf
+branch), `sys_fdpath` identification. It passes over `SCM_RIGHTS` with its path (`fdpass.c` packs the
+`open_file_t`).
+
+**Import `ns=v3dbuf`** (`BO_IMPORT`, formerly `-ENOSYS`). The server is the exporter, so it opens and maps
+nothing. Under `srv.lock` it checks `port == buf_port` and that `id` names a live, exported BO. The
+importer gets **that BO's handle**: one BO, one GPU VA, one last-use record, so `BO_WAIT` on the import
+sees every client's jobs. It also gets a reference (a bit in the BO's `sharers` mask). If the importer
+already holds the handle (its own export, or a second import), it gets the same handle and no extra
+reference (DRM). The library short-circuits that case locally, since the id is the handle. The reply's
+memref is the export's OID, so the importer's CPU mappings go through the E1 window.
+
+**Lifetime.** `refs` = the creator's handle + one per importing client + one per open descriptor of the
+name (`mtOpen`/`mtClose` are paired per `open_file_t`, `posix_fileDeref`). A Linux dma-buf holds its GEM
+object in the same way: the BO outlives every handle while a descriptor is open, including one in
+flight in a socket. At `refs == 0` the name is withdrawn: `exported = 0` then `memUnexport`, both
+locked (G3 ordering). The block then goes through the ordinary G1 quarantine: PTEs cleared, TLB, every
+queue past the release snapshot. Only after that does it return to the pool. Jobs of any sharer pin the
+BO (`inflight`) exactly like the creator's. Client death drops that client's creator and sharer
+references. A process that still maps the window after every handle and descriptor is gone sees the
+block reused by a later BO. That is the same trade the server already makes for stale `MAP_PHYSMEM`
+mappings: the late access lands in GPU memory, never in memory the kernel recycles.
+
+**Protocol 3, compatibility.** `V3DA_PROTO_VERSION` = 3, and a new `V3DA_PROTO_BASE` = 2. The server
+accepts HELLO 2..3 and replies with 3. The fence page keeps `version = 2`, because its layout is
+unchanged.
+
+| binary | against the G4 server | against a proto-2 server |
+|---|---|---|
+| proto-2 binaries already on the Pi: `rpi4-kms-gate -G` (fences), `v3dasync-ping` (checks fence-page `version == 2`), `drmprobe-m3p2/-m5/-m5b`, Mesa/Weston/kmscube/vkcube builds with the m5b libdrm | **unchanged** (HELLO 2 accepted; their render-node export stays the library-local `ENOSYS` gap) | unchanged |
+| G4 libdrm-phoenix (`build-out-g4`, in `drmprobe-g4` and the new `weston-simple-egl`) | HELLO 3, export works | HELLO 3 → `EPROTO` → retries with 2: everything else works, `PRIME_HANDLE_TO_FD` of an own BO → `ENOSYS` as before |
+| rebuilt `libv3da-client` (games, `v3dasync-ping`) and `rpi4-kms` | send `V3DA_PROTO_BASE` (they use nothing newer) | work |
+| the old lane (`gpu/rpi4-v3d`, `v3d-srv`) | untouched | — |
+
+**Not in G4:** importing a `/v3dbuf` descriptor on **card0** (rpi4-kms, for direct scan-out) is gap
+**G7** (`KMS_OP_PRIME_IMPORT`) and still answers `ENOSYS`. Mesa's renderonly import in Weston fails soft on
+it (`v3d_resource.c:1107` ignores the NULL scanout), and Weston composites with GL. Importing on
+renderD128 or card1 (the v3d primary node, the same server) works.
+
+Files: `tools/gpu-lane/v3d-async/{v3da_proto.h, v3da.h, v3da_bo.c, v3da_main.c, v3da_sched.c,
+libv3da-client.c, v3dasync-ping.c}`, `tools/gpu-lane/libdrm-phoenix/{src/drm_phoenix_v3d.c,
+src/xf86drm_phoenix.c, include/drm_phoenix_ext.h, drmprobe/drmprobe.c, hosttest/*}`,
+`tools/gpu-lane/kms/kms_main.c` (HELLO with `V3DA_PROTO_BASE`), `tools/gpu-lane/weston-drm/build.sh`
+(the programs now link the `--libdrm-prefix` snapshot instead of the one named in Mesa's
+`egl-link.txt`, so a libdrm change needs a relink, not a Mesa rebuild), `weston-drm/pi/weston-m6a.sh`
+(`SHARED_SCANOUT` knob, default 0; `DRMPHX_TRACE` now also on the egl client).
+
+### 15.2 Tests
+
+`drmprobe` (`build-out-g4`). The old placeholder `prime_export_render` (a `gapcheck` on `ENOSYS`) is now a
+real verdict, and two tests are new:
+
+| key | what it checks |
+|---|---|
+| `prime_export_render` | a 64 KiB render BO with a known pattern written through its BO mapping → `PRIME_HANDLE_TO_FD` → path `/v3dbuf/<id>`, `lseek(SEEK_END)` = 65536, `fstat` `S_ISCHR`, `mmap(fd)` reads the pattern (`bad_words=0`), a write through each mapping is seen in the other (`xwrite=1`), a second export gives the same name, `PRIME_FD_TO_HANDLE` on the same connection returns **the same handle** |
+| `prime_import_render2` | a second render connection of the same process (another server client) imports the descriptor, maps its handle and reads the pattern; after the creator's `close(fd)` + `GEM_CLOSE` the import still resolves in the server (`WAIT_BO`, `survives_creator_close=1`); one `GEM_CLOSE` on it releases the BO (`WAIT_BO` → `EINVAL`, `released=1`) |
+| `prime_export_xproc` | `fork` + `socketpair(AF_UNIX, SOCK_STREAM)` + `SCM_RIGHTS` (exportprobe's helpers). The parent exports, sends the descriptor, then drops **everything** (descriptor, handle, mapping), so only the descriptor in flight keeps the BO. The child opens its own render node, imports, checks path, size, the pattern through the descriptor and through its handle, writes through one and reads through the other, runs `WAIT_BO`, closes. The parent then checks that the BO is gone (`released=1`) |
+
+**Can they fail?** `hosttest/run.sh` has a **negative control**: the same probe against the fake render
+server with `FAKE_V3DA_PROTO=2`, which is a proto-2 server (HELLO exactly 2, opcode 22 unknown, no
+`/v3dbuf`). Output of that run:
+
+    DRMPROBE prime_export_render rc=-1 errno=38 path=- size=-1 fstat_chr=0 mmap=0 bad_words=0 xwrite=0 reexport_same_name=0 self_import=-1 handle=0x0/0x18001 ok=0
+    DRMPROBE prime_import_render2 skipped=1 (prime_export_render failed) ok=0
+    DRMPROBE RESULT pass=35 fail=6 gap=0 failed=cl_clear,cl_clear_dep,import_clear,implicit_flip,prime_export_render,prime_import_render2, secs=0 verdict=FAIL
+    HOSTE2E g4-negative verdict=PASS (the G4 tests fail against a proto-2 server, the rest as before)
+
+The library fell back to proto 2, and everything else passed as before. Against the fake G4 server,
+both modes (legacy names and `/dev/dri`) pass:
+`prime_export_render rc=0 … path=/v3dbuf/98305 size=65536 fstat_chr=1 mmap=1 bad_words=0 xwrite=1
+reexport_same_name=1 self_import=0 handle=0x18001/0x18001 ok=1`,
+`prime_import_render2 conn=1 rc=0 … survives_creator_close=1 released=1 ok=1`,
+`HOSTE2E g4 … exports_live=0 v3dbuf_imports=1 bos_live=0`, and `HOSTTEST … checks=134 fails=0`. As
+before, only the four fake-GPU pixel checks fail. The fake models the refcount rules of `v3da_bo.c`
+(creator, sharers, descriptors), so a lifetime bug in the library's use of them shows up there. The
+server's own code is only proven on the Pi. `prime_export_xproc` needs a real kernel (fork and
+`SCM_RIGHTS` of mock descriptors), so it is compiled out on the host (`-DDRMPROBE_NO_FORK`) and prints
+`skipped=1`.
+
+### 15.3 Artifacts (built 2026-09-27; sha256, first 16 hex)
+
+| file | sha256 | notes |
+|---|---|---|
+| `tools/gpu-lane/v3d-async/out-g4/rpi4-v3d-async` | `b1ee93800992223a` | server, proto 3; `strings … \| grep -c ns=v3dbuf` = 3 |
+| `tools/gpu-lane/v3d-async/out-g4/v3dasync-ping` | `89db1a2aaf2eedd9` | not staged (the staged proto-2 one is the compatibility check) |
+| `tools/gpu-lane/libdrm-phoenix/build-out-g4/drmprobe` | `19e826ed614c6563` | G4 tests incl. `prime_export_xproc` |
+| `tools/gpu-lane/libdrm-phoenix/build-out-g4/prefix/lib/libdrm.a` | `2b648f08c887224f` | the snapshot the programs below link (checked in `weston-simple-egl.map`) |
+| `tools/gpu-lane/weston-drm/build-out-g4/weston-simple-egl-stripped` | `c1dadf865814a9ae` | Mesa `build-out-wayland` (unchanged) + the G4 libdrm |
+| `tools/gpu-lane/weston-drm/build-out-g4/weston-stripped` | `1efe7d7525a7d42a` | built, **not staged**: Weston imports with its proto-2 library, which is itself a compatibility check |
+| `tools/gpu-lane/weston-drm/pi/weston-m6a.sh` | `c7107c8d21dd7e65` | `SHARED_SCANOUT` knob (default 0), client trace |
+
+`weston-drm/build-out-g4` was built with `--no-mesa --libdrm-prefix libdrm-phoenix/build-out-g4/prefix`
+from the weston-drm sources at `2b575ddaf` (m6e compat fix included) plus the `build.sh` link change.
+0 undefined symbols, 0 link warnings beyond the libphoenix attribute notes, no old-lane strings.
+
+### Staging (coordinator)
+
+```
+G=/home/houp/phoenix-rpi/tools/gpu-lane
+EXPORT=/srv/phoenix-rpi4-nfs-gcc16
+sudo -n install -m 755 "$G/v3d-async/out-g4/rpi4-v3d-async"                "$EXPORT/bin/rpi4-v3d-async-g4"
+sudo -n install -m 755 "$G/libdrm-phoenix/build-out-g4/drmprobe"            "$EXPORT/bin/drmprobe-g4"
+sudo -n install -m 755 "$G/weston-drm/build-out-g4/weston-simple-egl-stripped" "$EXPORT/bin/weston-simple-egl"
+sudo -n install -m 755 "$G/weston-drm/pi/weston-m6a.sh"                     "$EXPORT/bin/weston-m6a.sh"
+cmp "$G/v3d-async/out-g4/rpi4-v3d-async" "$EXPORT/bin/rpi4-v3d-async-g4"
+cmp "$G/libdrm-phoenix/build-out-g4/drmprobe" "$EXPORT/bin/drmprobe-g4"
+cmp "$G/weston-drm/build-out-g4/weston-simple-egl-stripped" "$EXPORT/bin/weston-simple-egl"
+cmp "$G/weston-drm/pi/weston-m6a.sh" "$EXPORT/bin/weston-m6a.sh"
+```
+
+Everything else is unchanged from m6d/m6e: `/bin/weston`, `/bin/shmsrv`, `/bin/rpi4-kms-gate`,
+`/bin/kmstest-poll`, `/bin/v3dasync-ping`, the ini. `/bin/weston` may be m6c's or m6e's binary; the G4
+path does not depend on which, because both import `ns=v3dbuf` with their proto-2 library. Note which
+one is staged (`sha256sum $EXPORT/bin/weston`) for the TERM row. The script change is backward
+compatible for m6e (shm clients are untouched). Preconditions as §9: netboot image ≥ build 11 (the E1
+kernel), no GPU app and no old-lane `rpi4-v3d` running.
+
+### Cycle `m6g-g4` (Bash `timeout: 600000`)
+
+**Question:** does a render-node BO export on hardware (fd, size, mapping, same-process self-import,
+second-client import, cross-process import over `SCM_RIGHTS`, release), and does weston-simple-egl then
+put its GPU-rendered frames on HDMI through Weston, with 0012 off?
+
+```
+./scripts/test-cycle-psh-interact.sh --label m6g-g4 --idle-secs 45 --max-cmd-secs 150 \
+    --hdmi-dense-on 'WESTONDRM client start' -- \
+    "/bin/rpi4-v3d-async-g4 -r 1 -m serial -i" \
+    "/bin/rpi4-kms-gate -G -p 96" \
+    "/bin/shmsrv -v" \
+    "/bin/drmprobe-g4 -n 30" \
+    "/bin/bash /bin/weston-m6a.sh gl egl noinput" \
+    "/bin/shmsrv -s" \
+    "/bin/kmstest-poll stats" \
+    "/bin/v3dasync-ping stats"
+```
+
+`-p 96` is kept, so that only G4 and the unset 0012 variable move against m6d. With G4 the client
+buffers no longer come from the kms pool, so `-p 96` can be dropped in a later cycle. Grade:
+
+```
+grep -a -E '^(DRMPROBE|V3DA srv (ready|bufns|export|import|v3dbuf)|KMS v3d|WESTONDRM|DRMPHX (conn|ioctl .*PRIME)|MESA|KMSTEST|V3DAPING|SHMSRV stats) |frames in|caught signal|Failed to|dmabuf|Couldn.t' \
+    artifacts/rpi4b-uart/rpi4b-uart-*-m6g-g4.log
+./scripts/uart-summary.sh m6g-g4
+```
+
+Allow for about 1.3 % UART line corruption (re-read the line, don't count it); EL0 dumps print twice.
+
+**Predictions** (tags as printed; `<c>` = a client id, `<h>` = a handle):
+
+| # | Line / observation | Predicted | If instead… |
+|---|---|---|---|
+| 1 | `V3DA srv bufns name=/v3dbuf port=<n> rc=0 registered=1 (G4)`, then `V3DA srv ready … proto=2..3 bufns=1` | once | `proto=2` / no `bufns` line: the m3p2 server was started (staging, `cmp`) — stop. `registered=0`: every export will fail `-ENODEV` |
+| 2 | `KMS v3d connect=1 fence_pa=… client=<c> …` | rpi4-kms-gate (proto 2) HELLOs the proto-3 server | `connect=0 why=hello errno=…`: HELLO range check broken — compatibility blocker |
+| 3 | drmprobe rows up to `prime_reexport_render … ok=1` as in m5b | unchanged | a regression outside G4: compare with m5b's log |
+| 4 | `DRMPROBE prime_export_render rc=0 errno=0 path=/v3dbuf/<h> size=65536 fstat_chr=1 mmap=1 bad_words=0 xwrite=1 reexport_same_name=1 self_import=0 handle=<h>/<h> ok=1`; server: `V3DA srv export handle=<h> client=<c> ns=v3dbuf id=<h> pages=16 …`, `V3DA srv v3dbuf open id=<h> …` / `close` pairs | **G4 export on hardware** | `rc=-1 errno=38`: the library fell back to proto 2 (old server; row 1). `errno=19`: no namespace. `V3DA srv export FAIL … rc=-22`: `memExport` refused the pooled block (E1 `vm_mapObjectRange`: not one contiguous-anonymous entry, or `MAP_NEEDSCOPY`) — blocker, read the kernel. `mmap=0`: the window was not found, or the memory type does not match (the export must be uncached). **`bad_words>0`: the mapping shows other pages (a shadow object) — stop.** `self_import`/handle mismatch: the library short-circuit |
+| 5 | `DRMPROBE prime_import_render2 conn=1 rc=0 errno=0 handle=<h> map=1 bad_words=0 survives_creator_close=1 released=1 ok=1`; server `V3DA srv import handle=<h> client=<c2> ns=v3dbuf … owner=<c> self=0 …`, then `V3DA srv export withdrawn handle=<h> live=0` | shared BO, reference rules | `survives…=0`: the creator's close freed a shared BO (refcount) — blocker; `released=0`: a leak |
+| 6 | `DRMPROBE prime_export_xproc child pid=… path=/v3dbuf/<h2> import=0 errno=0 handle=<h2>`, then `DRMPROBE prime_export_xproc export=0 errno=0 fork=1 report=1 import=0 import_errno=0 path_ok=1 size_ok=1 fd_map=1 fd_bad=0 handle_map=1 handle_bad=0 xwrite=1 wait_bo=1 released=1 ok=1`; server: import by a third client with `owner=0 self=0 … opens=1` (the parent had closed its handle), then `withdrawn … live=0` | **cross-process dma-buf** with only the descriptor in flight keeping the BO | `import_errno=2` (and a `V3DA srv import FAIL … ns=v3dbuf … rc=-2`): the descriptor in flight did not hold the BO (the `mtOpen` count) — lifetime bug; `path_ok=0`: `SCM_RIGHTS` lost the path; `report=0`: the child died — `uart-summary.sh` for an EL0 dump, `addr2line` on the unstripped `build-out-g4/drmprobe`; `released=0`: a `mtClose` was not delivered (an `open` line without its `close`) |
+| 7 | `DRMPROBE RESULT pass=42 fail=0 gap=0 failed=- … verdict=PASS` | m5b's 39 + the three G4 keys | any `failed=` key: its row |
+| 8 | Weston up as in m6c arm B: `Using GL renderer`, output `HDMI-A-1`; `WESTONDRM start … shared_scanout=0 …` | as m6c | `shared_scanout=1` or no field: the old script is staged (`cmp`) |
+| 9 | client trace: `DRMPHX conn … path=/dev/dri/renderD128 node=render …` (the render node, confirming m6d's inference), `DRMPHX ioctl node=render … name=DRM_IOCTL_PRIME_HANDLE_TO_FD rc=0 errno=0 … fdpath=/v3dbuf/<h>` | the client exports | `rc=-1 errno=38`: the m6d client binary is staged (sha `c1dadf86…`) |
+| 10 | per client back buffer (2–4): `V3DA srv export … pages≈2000–2200` (1920×1080 UIF), then `V3DA srv import … ns=v3dbuf … self=0` from Weston's render client | Weston imports each buffer once (EGL dma-buf import → `BO_IMPORT ns=v3dbuf`) | an import `FAIL rc=-2`: the name was withdrawn before Weston imported (lifetime); `Couldn't get size of dmabuf fd` (Mesa): `atSize` not answered |
+| 11 | **no** `MESA: error: Failed to export gem bo` | the m6d stop is gone | present: rows 9–10 say which half |
+| 12 | `N frames in 5 seconds: X fps`, X ≈ 20–30 | Weston's repaint rate (m6c: about 27 flips/s) bounds it | < 10: an IPC per frame or a copy (read `DRMPHX`/`V3DA` rates); none: frame callbacks never came (Weston did not attach the buffer) |
+| 13 | HDMI | **the rotating RGB triangle, full screen, GPU-rendered by the client** (dense snapshots) | black with the export/import lines present: Weston's EGL import or its sampling of the UIF buffer — Weston's log (`linux_dmabuf`, `EGL`). **Torn/partial triangles are an expected risk** (no cross-process implicit sync, §8), not a G4 failure — note it |
+| 14 | no direct scan-out of the client (`drmModeAddFB2` of a foreign buffer would need G7 on card0) | GL composition | — |
+| 15 | after the client exits and Weston closes: `V3DA srv export withdrawn … live=0` for each buffer | every export released | `live>0` left: a descriptor or import kept (Weston's `linux_dmabuf` buffer not destroyed) — leak |
+| 16 | TERM exit: `caught signal 15` + `weston exited rc=0` if `/bin/weston` is m6e's (`bde137cc…`); the m6c KILL behaviour with m6c's (`2699d5e8…`) | not graded for G4 | — |
+| 17 | `SHMSRV stats live=0`, `KMSTEST stats … apply_errors=0 … bos=0 exports=0`, `V3DAPING stats … bos_live=0 parked=0 … verdict=PASS` (the staged proto-2 `v3dasync-ping`) | no leaks; the old ping HELLOs the proto-3 server | `bos_live>0`: an exported BO outlived every reference (rows 5, 6, 15) |
+| 18 | fault dumps | 0 kernel, 0 EL0 | EL0 in the server: `aarch64-phoenix-addr2line -f -e tools/gpu-lane/v3d-async/out-g4/rpi4-v3d-async <pc>` |
+
+**Decides:** rows 4–7 PASS = G4 closed on hardware, including the DRM lifetime rules. Rows 9–13 PASS =
+wayland-egl clients work on the new lane without 0012. Then 0012 and `-p 96` can be retired: mesa-drm
+patch 0012 has to be removed in a separate change, because it re-stamps every Mesa build (§12).

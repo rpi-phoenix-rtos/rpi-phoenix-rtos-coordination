@@ -19,6 +19,8 @@
 #   /bin/shmsrv -v                 (memfd_create backing: wl_shm pools, keymaps)
 #
 # Environment knobs: WESTON (binary), CONF, HOLD (seconds with the client up), CLIENT_ARGS,
+# SHARED_SCANOUT (1 = run the egl client with mesa-drm 0012's V3D_PHOENIX_SHARED_SCANOUT=1;
+# default 0 since G4),
 # DRMPHX_TRACE (libdrm-phoenix trace in weston, default 1), WLPHX_TRACE (signal path and
 # shutdown steps in weston, "WLPHX ..." lines, default 1; M6 §14).
 #
@@ -36,6 +38,7 @@ INPUT=${3:-input}
 WESTON=${WESTON:-/bin/weston}
 CONF=${CONF:-/etc/xdg/weston/weston-drm.ini}
 HOLD=${HOLD:-30}
+SHARED_SCANOUT=${SHARED_SCANOUT:-0}
 
 export HOME=/root
 export PATH=/bin
@@ -59,7 +62,7 @@ case "${CLIENT}" in
 	*) echo "WESTONDRM FAIL unknown client ${CLIENT}"; exit 2 ;;
 esac
 
-echo "WESTONDRM start renderer=${RENDERER} client=${CLIENT} weston=${WESTON} conf=${CONF} hold=${HOLD} input=${LIBINPUT_PHOENIX_DEVICES:-none} trace=${DRMPHX_TRACE:-1} wlphx_trace=${WLPHX_TRACE:-1}"
+echo "WESTONDRM start renderer=${RENDERER} client=${CLIENT} weston=${WESTON} conf=${CONF} hold=${HOLD} shared_scanout=${SHARED_SCANOUT} input=${LIBINPUT_PHOENIX_DEVICES:-none} trace=${DRMPHX_TRACE:-1} wlphx_trace=${WLPHX_TRACE:-1}"
 DRMPHX_TRACE=${DRMPHX_TRACE:-1} WLPHX_TRACE=${WLPHX_TRACE:-1} "${WESTON}" --config="${CONF}" --backend=drm --renderer="${RENDERER}" \
 	--shell=kiosk --continue-without-input --idle-time=0 --socket="${WAYLAND_DISPLAY}" &
 wpid=$!
@@ -96,9 +99,12 @@ fi
 cpid=""
 if [ -n "${CMD}" ]; then
 	echo "WESTONDRM client start: ${CMD}"
-	if [ "${CLIENT}" = egl ]; then
-		# Client buffers from the display device until the render node can export (G4):
-		V3D_PHOENIX_SHARED_SCANOUT=1 ${CMD} &
+	if [ "${CLIENT}" = egl ] && [ "${SHARED_SCANOUT}" = 1 ]; then
+		# mesa-drm 0012: client buffers from the display device. Off by default since G4
+		# (the render node exports); m6d showed it never engaged for a wayland-egl client.
+		DRMPHX_TRACE=${DRMPHX_TRACE:-1} V3D_PHOENIX_SHARED_SCANOUT=1 ${CMD} &
+	elif [ "${CLIENT}" = egl ]; then
+		DRMPHX_TRACE=${DRMPHX_TRACE:-1} ${CMD} &   # the client's PRIME calls on the UART (m6d could not see them)
 	else
 		${CMD} &
 	fi

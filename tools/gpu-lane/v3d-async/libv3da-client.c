@@ -104,7 +104,7 @@ int v3da_connect(v3da_conn_t *c)
 		return -ENOENT;
 	}
 
-	c->hello.proto = V3DA_PROTO_VERSION;
+	c->hello.proto = V3DA_PROTO_BASE;   /* uses nothing newer: works with every server since M1 part 2 */
 	rc = ioctl(c->fd, V3DA_IOC_HELLO, &c->hello);
 	if (rc < 0) {
 		rc = -errno;

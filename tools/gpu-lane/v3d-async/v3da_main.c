@@ -29,11 +29,13 @@
  *   -s ms       periodic "V3DA srv qstat" line while GPU jobs run (default 5000, 0 = off)
  *
  * Serves: HELLO, GET_INFO, GET_PARAM, BO create/close/mmap/offset/wait (incl.
- * scanout BOs), BO_IMPORT (PRIME import of a /kmsbuf export), SUBMIT_CL/TFU/CSD +
+ * scanout BOs), BO_IMPORT (PRIME import of a /kmsbuf or /v3dbuf export), BO_EXPORT
+ * (PRIME export: memExport under the /v3dbuf namespace, G4), SUBMIT_CL/TFU/CSD +
  * the NOP test job, FENCE_WAIT, syncobjs (incl. import), SCANOUT_INFO/FLIP
  * (firmware pan), the debug ops, and fstat (mtGetAttrAll) on its nodes.
  * Nodes: /dev/v3d-async and /dev/dri/renderD128 (one port), /dev/dri/card1 (a
- * second port, same protocol and clients: distinct dev_t for the primary node).
+ * second port, same protocol and clients: distinct dev_t for the primary node),
+ * /v3dbuf (a third port: the exported BOs' names, one receiving thread).
  *
  * Copyright 2026 Phoenix Systems
  * Author: Witold Bołt
@@ -71,9 +73,11 @@ static struct {
 	uint8_t event_stack[16384] __attribute__((aligned(16)));
 	uint8_t dispatch_stack[V3DA_MAX_DISPATCH][16384] __attribute__((aligned(16)));
 	uint8_t card1_stack[16384] __attribute__((aligned(16)));
+	uint8_t bufns_stack[16384] __attribute__((aligned(16)));
 	unsigned pid_mismatch;
 	unsigned attr_notes;
 	int dri_render, dri_card;     /* /dev/dri names registered by this server (G10) */
+	int bufns;                    /* V3DA_BUF_NS registered by this server (G4) */
 } m;
 
 
@@ -142,7 +146,10 @@ static int client_hello(id_t id, int pid, v3da_hello_t *h)
 	if (c == NULL) {
 		return -EBADF;
 	}
-	if (h->proto != V3DA_PROTO_VERSION) {
+	/* Every protocol since M1 part 2 is accepted: proto 3 only ADDS (BO_EXPORT,
+	 * ns=v3dbuf), so a proto-2 binary (rpi4-kms -G, libv3da-client, the M1/M3 probes)
+	 * is served unchanged. The reply carries this server's version. */
+	if ((h->proto < V3DA_PROTO_BASE) || (h->proto > V3DA_PROTO_VERSION)) {
 		return -EPROTO;
 	}
 	if ((pid != c->pid) && (m.pid_mismatch++ == 0u)) {
@@ -276,6 +283,10 @@ static int handle_raw(msg_t *msg, msg_rid_t rid, v3da_wait_t **answer)
 
 		case V3DA_OP_BO_GET_OFFSET:
 			rc = v3da_bo_offset(req.u.bo.handle, &r->u.bo.gpuva);
+			break;
+
+		case V3DA_OP_BO_EXPORT:
+			rc = v3da_bo_export(c->id, req.u.bo.handle, &r->u.bo);
 			break;
 
 		case V3DA_OP_BO_WAIT:
@@ -452,12 +463,12 @@ static void handle_ioctl(msg_t *msg)
 }
 
 
-/* mtGetAttrAll (G2, M3 part 2): what fstat() on a DRM descriptor needs - Mesa's
- * gbm_create_device() and v3dv's device init refuse a descriptor whose fstat
- * fails or is not S_ISCHR. The kernel's posix_fstat takes st_rdev from the
- * descriptor's port itself (hence card1's own port, G10) and fails on the first
- * negative err among mTime..ioblock, so every field is answered. */
-static int attr_all(msg_t *msg, uint32_t port)
+/* mtGetAttrAll (G2, M3 part 2): what fstat() on a DRM descriptor (and on a
+ * /v3dbuf descriptor, G4) needs - Mesa's gbm_create_device() and v3dv's device init
+ * refuse a descriptor whose fstat fails or is not S_ISCHR. The kernel's posix_fstat
+ * takes st_rdev from the descriptor's port itself (hence card1's own port, G10) and
+ * fails on the first negative err among mTime..ioblock, so every field is answered. */
+int v3da_attr_all(msg_t *msg, uint32_t mode, uint64_t size, uint32_t port)
 {
 	struct _attrAll *a = msg->o.data;
 	long long now = (long long)time(NULL);
@@ -466,9 +477,11 @@ static int attr_all(msg_t *msg, uint32_t port)
 		return -EINVAL;
 	}
 	memset(a, 0, sizeof(*a));
-	a->mode.val = S_IFCHR | 0666;
+	a->mode.val = (long long)mode;
+	a->size.val = (long long)size;
+	a->blocks.val = (long long)((size + 511u) / 512u);
 	a->ioblock.val = (long long)_PAGE_SIZE;
-	a->type.val = otDev;
+	a->type.val = ((mode & S_IFMT) == S_IFDIR) ? otDir : otDev;
 	a->port.val = (long long)port;
 	a->pollStatus.err = -EINVAL;   /* not used by fstat */
 	a->eventMask.err = -EINVAL;
@@ -477,11 +490,19 @@ static int attr_all(msg_t *msg, uint32_t port)
 	a->aTime.val = now;
 	a->links.val = 1;
 	a->dev.val = (long long)port;
-	if (m.attr_notes++ == 0u) {
+	return 0;
+}
+
+
+static int attr_all(msg_t *msg, uint32_t port)
+{
+	int rc = v3da_attr_all(msg, S_IFCHR | 0666, 0u, port);
+
+	if ((rc == 0) && (m.attr_notes++ == 0u)) {
 		printf("V3DA srv fstat answered (mtGetAttrAll, G2) port=%s client=%u pid=%d\n",
 			(port == srv.port) ? "render" : "card1", (unsigned)msg->oid.id, msg->pid);
 	}
-	return 0;
+	return rc;
 }
 
 
@@ -611,6 +632,9 @@ static void dispatch_loop(void *arg)
 			if (m.dri_render != 0) {
 				(void)destroy_dev("/dev/" V3DA_DRI_RENDER_NAME);
 			}
+			if (m.bufns != 0) {
+				(void)portUnregister(V3DA_BUF_NS);   /* the kernel withdraws the exports with the port */
+			}
 			usleep(50000);   /* let in-flight responds of other threads finish */
 			exit(0);
 		}
@@ -662,6 +686,39 @@ static int dri_name(uint32_t port, const char *name)
 		rc = create_dev(&dev, name);
 	}
 	printf("V3DA srv dri name=%s port=%u rc=%d registered=%d (G10)\n", path, port, rc, (rc >= 0) ? 1 : 0);
+	return (rc >= 0) ? 1 : 0;
+}
+
+
+/* G4: the /v3dbuf namespace (exported BOs), a port of its own with one receiving
+ * thread. Best effort as the /dev/dri names: without it BO_EXPORT answers -ENODEV
+ * and everything else is unaffected. A name left by a dead server is reclaimed. */
+static int bufns_register(void)
+{
+	oid_t dev;
+	int rc;
+
+	if (portCreate(&srv.buf_port) != EOK) {
+		srv.buf_port = 0u;
+		printf("V3DA srv bufns portCreate failed; %s not registered (BO_EXPORT -ENODEV)\n", V3DA_BUF_NS);
+		return 0;
+	}
+	dev.port = srv.buf_port;
+	dev.id = 0;
+	rc = portRegister(srv.buf_port, V3DA_BUF_NS, &dev);
+	if ((rc < 0) && (name_alive(V3DA_BUF_NS) == 0)) {
+		(void)portUnregister(V3DA_BUF_NS);
+		rc = portRegister(srv.buf_port, V3DA_BUF_NS, &dev);
+	}
+	if ((rc >= 0) && (beginthread(v3da_bufns_thread, 3, m.bufns_stack, sizeof(m.bufns_stack), NULL) != 0)) {
+		(void)portUnregister(V3DA_BUF_NS);
+		rc = -ENOMEM;
+	}
+	if (rc < 0) {
+		portDestroy(srv.buf_port);
+		srv.buf_port = 0u;
+	}
+	printf("V3DA srv bufns name=%s port=%u rc=%d registered=%d (G4)\n", V3DA_BUF_NS, dev.port, rc, (rc >= 0) ? 1 : 0);
 	return (rc >= 0) ? 1 : 0;
 }
 
@@ -836,11 +893,13 @@ int main(int argc, char **argv)
 		printf("V3DA srv card1 portCreate failed; /dev/%s not registered\n", V3DA_DRI_CARD_NAME);
 	}
 
+	m.bufns = bufns_register();
+
 	printf("V3DA srv ready dev=/dev/%s irq=%s irqnum=%u threads=%d poll_us=%u fence_pa=0x%08lx slots=%u "
-		"mode=%s knobs=0x%02x ovf=%ux%uKiB wedge_ms=%u proto=%u\n",
+		"mode=%s knobs=0x%02x ovf=%ux%uKiB wedge_ms=%u proto=%u..%u bufns=%d\n",
 		V3DA_DEV_NAME, (srv.hw.irq_on != 0) ? "on" : "off", srv.hw.irq_num, nthreads, srv.poll_us,
 		(unsigned long)srv.fp_pa, V3DA_FENCE_NSLOTS, (srv.mode == V3DA_MODE_SERIAL) ? "serial" : "pipeline",
-		srv.knobs, srv.ovf.nchunks, srv.ovf.chunk_bytes / 1024u, srv.wedge_ms, V3DA_PROTO_VERSION);
+		srv.knobs, srv.ovf.nchunks, srv.ovf.chunk_bytes / 1024u, srv.wedge_ms, V3DA_PROTO_BASE, V3DA_PROTO_VERSION, m.bufns);
 
 	if (readyfd >= 0) {
 		char r = 'R';

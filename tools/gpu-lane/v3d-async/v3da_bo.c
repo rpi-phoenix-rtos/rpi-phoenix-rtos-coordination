@@ -19,12 +19,20 @@
  *   - SCANOUT BOs (the transitional present family): the GPU pages of the visible
  *     rows are the firmware framebuffer buffer's pages; the CPU view (memref) is
  *     the BO's own DRAM, exactly as the in-process winsys does it.
+ *   - PRIME export (G4): a BO's block is published with memExport() under
+ *     {srv.buf_port, handle} and served as V3DA_BUF_NS "/<handle>"; importing clients
+ *     share THE BO (its handle, GPU VA and last-use record) and each holds a
+ *     reference, as does every open descriptor of the name. Pool reuse of a block
+ *     whose export window some process still maps (after every handle and descriptor
+ *     is gone) is the same trade as a stale MAP_PHYSMEM mapping: the late access lands
+ *     in another GPU buffer, never in memory the kernel recycles.
  *   - Blocks go to a server-owned POOL, not back to the kernel: a stale device or
  *     stale client MAP_PHYSMEM write then lands in another GPU buffer, never in a
  *     malloc heap (the C1 class), and the last-munmap-of-a-contiguous-object kernel
  *     bug (E1 section 6) is not exercised.
  *
- * All functions run with srv.lock held.
+ * All functions run with srv.lock held, except v3da_bo_import (takes it itself) and
+ * the namespace thread v3da_bufns_thread.
  *
  * Copyright 2026 Phoenix Systems
  * Author: Witold Bołt
@@ -42,8 +50,10 @@
 #include <string.h>
 #include <unistd.h>
 
+#include <sys/file.h>
 #include <sys/mman.h>
 #include <sys/msg.h>
+#include <sys/stat.h>
 #include <sys/threads.h>
 
 #include "v3da.h"
@@ -249,12 +259,17 @@ int v3da_bo_create(uint32_t client, uint32_t size, uint32_t flags, v3da_bo_creat
 }
 
 
+static void export_withdraw(v3da_bo_t *b);
+
+
 /* Step 1 of the quarantine: unmap from the GPU, flush if nothing runs, record the
  * fence pass. The handle is invalid from here on. */
 static void quarantine_begin(v3da_bo_t *b)
 {
 	uint32_t i;
 	int q, busy = 0;
+
+	export_withdraw(b);   /* normally gone already: bo_unref withdraws at the last reference */
 
 	for (i = 0u; i < b->pages; i++) {
 		srv.hw.pt[(b->gpuva >> V3D_PAGE_SHIFT) + i] = 0u;
@@ -275,6 +290,48 @@ static void quarantine_begin(v3da_bo_t *b)
 		v3da_hw_mmu_flush(&srv.hw);   /* else: the next job prologue flushes (step 5) */
 	}
 	b->state = V3DA_BO_QUARANTINE;
+}
+
+
+static uint64_t client_bit(uint32_t client)
+{
+	return ((client >= 1u) && (client <= V3DA_MAX_CLIENTS)) ? (1ULL << (client - 1u)) : 0u;
+}
+
+
+/* The /v3dbuf name goes the moment nothing references the BO any more. G3 ordering
+ * (as kms_bo_unref): the flag the namespace thread answers atSize from is cleared
+ * BEFORE memUnexport, both under srv.lock, so once the kernel's object tree has lost
+ * the window no atSize for this id is answered positively (no shadow object, E1 3). */
+static void export_withdraw(v3da_bo_t *b)
+{
+	oid_t oid;
+
+	if (b->exported == 0) {
+		return;
+	}
+	b->exported = 0;
+	oid.port = srv.buf_port;
+	oid.id = b->handle;
+	(void)memUnexport(&oid);
+	srv.exports--;
+	printf("V3DA srv export withdrawn handle=0x%x live=%u\n", b->handle, srv.exports);
+}
+
+
+/* Drop one reference (a handle or a descriptor of the name). At the last one the
+ * name is withdrawn; the block is quarantined once no job references it either. */
+static void bo_unref(v3da_bo_t *b)
+{
+	if (b->refs > 0u) {
+		b->refs--;
+	}
+	if (b->refs == 0u) {
+		export_withdraw(b);
+		if (b->inflight == 0u) {
+			quarantine_begin(b);
+		}
+	}
 }
 
 
@@ -363,18 +420,22 @@ int v3da_bo_map_ovf_pool(uint32_t bytes, uint32_t *gpuva)
 int v3da_bo_close(uint32_t client, uint32_t handle)
 {
 	v3da_bo_t *b = v3da_bo_find(handle);
+	uint64_t bit = client_bit(client);
 
-	(void)client;
 	if (b == NULL) {
 		return 0;   /* already gone / never ours: 0, as the winsys and old daemon */
 	}
-	if (b->refs > 0u) {
-		b->refs--;
+	if ((b->sharers & bit) != 0u) {
+		b->sharers &= ~bit;   /* this client's import of another client's export */
 	}
-	if ((b->refs == 0u) && (b->inflight == 0u)) {
-		quarantine_begin(b);
-		v3da_bo_quarantine_poll();
+	else if (b->owner != 0u) {
+		b->owner = 0u;        /* the creator's handle (any client may close it: M1 semantics) */
 	}
+	else {
+		return 0;             /* only descriptors of its name hold it: nothing of this client's to drop */
+	}
+	bo_unref(b);
+	v3da_bo_quarantine_poll();
 	return 0;
 }
 
@@ -484,24 +545,27 @@ int v3da_bo_checksum(uint32_t handle, uint32_t off, uint32_t len, v3da_bo_checks
 }
 
 
-/* A client is gone: drop the creator reference of each BO it made. BOs still in
- * flight or imported by others survive until their last reference. */
+/* A client is gone: drop its references - the creator reference of each BO it made
+ * and each import it held. BOs still in flight, imported by others or open as a
+ * /v3dbuf descriptor survive until their last reference. */
 void v3da_bo_client_gone(uint32_t client)
 {
+	uint64_t bit = client_bit(client);
 	uint32_t i;
 	v3da_bo_t *b;
 
 	for (i = 0u; i < srv.nbos; i++) {
 		b = &srv.bos[i];
-		if ((b->state != V3DA_BO_LIVE) || (b->owner != client) || (b->refs == 0u)) {
+		if ((b->state != V3DA_BO_LIVE) || (b->refs == 0u)) {
 			continue;
 		}
-		b->owner = 0u;
-		if (b->refs > 0u) {
-			b->refs--;
+		if (b->owner == client) {
+			b->owner = 0u;
+			bo_unref(b);
 		}
-		if ((b->refs == 0u) && (b->inflight == 0u)) {
-			quarantine_begin(b);
+		if ((b->state == V3DA_BO_LIVE) && ((b->sharers & bit) != 0u)) {
+			b->sharers &= ~bit;
+			bo_unref(b);
 		}
 	}
 	v3da_bo_quarantine_poll();
@@ -635,6 +699,65 @@ static int import_map(const v3da_bo_import_req_t *rq, void **cpu_out, uintptr_t 
 }
 
 
+static void export_memref(const v3da_bo_t *b, v3da_memref_t *m)
+{
+	memset(m, 0, sizeof(*m));
+	m->kind = V3DA_MEM_OID;
+	m->cache = V3DA_CACHE_UNCACHED;   /* only uncached BOs are exported (v3da_bo_export) */
+	m->port = srv.buf_port;
+	m->size = (uint64_t)b->pages * _PAGE_SIZE;
+	m->addr = b->handle;
+}
+
+
+/* BO_IMPORT ns=v3dbuf: the importer shares the exported BO itself (one GPU VA, one
+ * last-use record for BO_WAIT) and holds a reference on it; importing one of its own
+ * exports, or importing again, returns the same handle with no extra reference
+ * (DRM). Entirely under srv.lock: nothing to open, the server is the exporter. */
+static int import_v3dbuf(uint32_t client, const v3da_bo_import_req_t *rq, v3da_bo_create_resp_t *out)
+{
+	uint64_t bit = client_bit(client);
+	v3da_bo_t *b = NULL;
+	int rc, self = 0;
+
+	(void)mutexLock(srv.lock);
+	if (srv.clients[client - 1u].used == 0) {
+		rc = -EBADF;
+	}
+	else if ((srv.buf_port == 0u) || (rq->port != srv.buf_port)) {
+		rc = -EINVAL;   /* not this server's namespace */
+	}
+	else if ((rq->id > 0xffffffffu) || ((b = v3da_bo_find((uint32_t)rq->id)) == NULL) || (b->exported == 0)) {
+		rc = -ENOENT;   /* not (or no longer) exported */
+	}
+	else if (((rq->size & (_PAGE_SIZE - 1u)) != 0u) || (rq->size > (uint64_t)b->pages * _PAGE_SIZE)) {
+		rc = -EINVAL;
+	}
+	else {
+		self = ((b->owner == client) || ((b->sharers & bit) != 0u)) ? 1 : 0;
+		if (self == 0) {
+			b->sharers |= bit;
+			b->refs++;
+		}
+		memset(out, 0, sizeof(*out));
+		out->handle = b->handle;
+		out->gpuva = b->gpuva;
+		out->size = b->pages * (uint32_t)_PAGE_SIZE;
+		out->scanout = 0u;
+		export_memref(b, &out->mem);
+		printf("V3DA srv import handle=0x%x client=%u ns=v3dbuf id=%llu pages=%u owner=%u self=%d refs=%u opens=%u\n",
+			b->handle, client, (unsigned long long)rq->id, b->pages, b->owner, self, b->refs, b->fd_opens);
+		rc = 0;
+	}
+	(void)mutexUnlock(srv.lock);
+	if (rc != 0) {
+		printf("V3DA srv import FAIL client=%u ns=v3dbuf id=%llu port=%u size=%llu rc=%d\n", client,
+			(unsigned long long)rq->id, rq->port, (unsigned long long)rq->size, rc);
+	}
+	return rc;
+}
+
+
 int v3da_bo_import(uint32_t client, const v3da_bo_import_req_t *rq, v3da_bo_create_resp_t *out)
 {
 	uint32_t pages = 0u, slot, gpuva, i;
@@ -644,11 +767,13 @@ int v3da_bo_import(uint32_t client, const v3da_bo_import_req_t *rq, v3da_bo_crea
 	int rc, contig = 0;
 	v3da_bo_t *b;
 
-	if (rq->ns == V3DA_IMPORT_NS_V3DBUF) {
-		return -ENOSYS;   /* G4: this server exports nothing yet */
+	if ((rq->pad != 0u) || (client < 1u) || (client > V3DA_MAX_CLIENTS)) {
+		return -EINVAL;
 	}
-	if ((rq->ns != V3DA_IMPORT_NS_KMSBUF) || (rq->cache > V3DA_CACHE_UNCACHED) || (rq->pad != 0u) ||
-			((client < 1u) || (client > V3DA_MAX_CLIENTS))) {
+	if (rq->ns == V3DA_IMPORT_NS_V3DBUF) {
+		return import_v3dbuf(client, rq, out);   /* one of this server's own exports (G4) */
+	}
+	if ((rq->ns != V3DA_IMPORT_NS_KMSBUF) || (rq->cache > V3DA_CACHE_UNCACHED)) {
 		return -EINVAL;
 	}
 
@@ -739,4 +864,191 @@ int v3da_bo_import(uint32_t client, const v3da_bo_import_req_t *rq, v3da_bo_crea
 		(void)munmap(cpu, (size_t)pages * _PAGE_SIZE);
 	}
 	return (rc == 1) ? 0 : rc;
+}
+
+
+/* ========================================================================= */
+/* PRIME export (gap G4) and the /v3dbuf namespace                            */
+/* ========================================================================= */
+
+int v3da_bo_export(uint32_t client, uint32_t handle, v3da_bo_resp_t *out)
+{
+	v3da_bo_t *b = v3da_bo_find(handle);
+	oid_t oid;
+	int rc;
+
+	if ((b == NULL) || ((b->owner != client) && ((b->sharers & client_bit(client)) == 0u))) {
+		return -ENOENT;   /* DRM: not a handle of this file */
+	}
+	/* An import's pages are another server's window (E1 refuses windows of windows:
+	 * the client reopens the exporter's name, G4a); a scanout BO's CPU block is not
+	 * what the GPU writes; a cacheable export would need its memory type carried to
+	 * every importer, which a dma-buf descriptor cannot (libdrm-phoenix creates
+	 * uncached BOs only). */
+	if ((b->imported != 0) || (b->scanout > 0) || ((b->flags & V3DA_BO_CACHEABLE) != 0u)) {
+		return -EINVAL;
+	}
+	if (srv.buf_port == 0u) {
+		return -ENODEV;
+	}
+	if (b->exported == 0) {
+		oid.port = srv.buf_port;
+		oid.id = b->handle;
+		rc = memExport(&oid, b->cpu, (size_t)b->pages * _PAGE_SIZE);
+		if (rc != 0) {
+			printf("V3DA srv export FAIL handle=0x%x client=%u pages=%u rc=%d\n", handle, client, b->pages, rc);
+			return (rc < 0) ? rc : -EIO;
+		}
+		b->exported = 1;
+		srv.exports++;
+		printf("V3DA srv export handle=0x%x client=%u ns=v3dbuf id=%u pages=%u pa=0x%08llx gpuva=0x%08x live=%u\n",
+			b->handle, client, b->handle, b->pages, (unsigned long long)b->pa, b->gpuva, srv.exports);
+	}
+	out->gpuva = b->gpuva;
+	out->size = b->pages * (uint32_t)_PAGE_SIZE;
+	export_memref(b, &out->mem);
+	return 0;
+}
+
+
+/* A published, referenced BO by its export id (locked). */
+static v3da_bo_t *bo_by_export(uint64_t id)
+{
+	v3da_bo_t *b = ((id != 0u) && (id <= 0xffffffffu)) ? bo_lookup((uint32_t)id) : NULL;
+
+	return ((b != NULL) && (b->exported != 0) && (b->refs > 0u)) ? b : NULL;
+}
+
+
+/* V3DA_BUF_NS on its own port (the main port's mtOpen hands out client ids, which
+ * would rewrite a buffer descriptor's oid). E1 section 1, as rpi4-kms's /kmsbuf:
+ * mtLookup "<id>", atMode, mtOpen/mtClose replying 0, atSize only while exported.
+ * Each open descriptor of an exported BO holds one reference on it (fd_opens). */
+void v3da_bufns_thread(void *arg)
+{
+	static uint32_t notes;
+	msg_t msg;
+	msg_rid_t rid;
+	char name[24], *end;
+	unsigned long long id;
+	size_t len;
+	v3da_bo_t *b;
+	int err;
+
+	(void)arg;
+	for (;;) {
+		err = msgRecv(srv.buf_port, &msg, &rid);
+		if (err < 0) {
+			if (err == -EINTR) {
+				continue;
+			}
+			break;   /* port gone (server exiting) */
+		}
+		switch (msg.type) {
+			case mtLookup:
+				len = (msg.i.data != NULL) ? strnlen(msg.i.data, msg.i.size) : 0u;
+				if ((len == 0u) || (len >= sizeof(name))) {
+					msg.o.err = -ENOENT;
+					break;
+				}
+				memcpy(name, msg.i.data, len);
+				name[len] = '\0';
+				id = strtoull(name, &end, 10);
+				(void)mutexLock(srv.lock);
+				b = ((*end == '\0') && (name[0] >= '1') && (name[0] <= '9')) ? bo_by_export(id) : NULL;
+				(void)mutexUnlock(srv.lock);
+				if (b == NULL) {
+					msg.o.err = -ENOENT;
+					break;
+				}
+				msg.o.lookup.fil.port = srv.buf_port;
+				msg.o.lookup.fil.id = (id_t)id;
+				msg.o.lookup.dev = msg.o.lookup.fil;
+				msg.o.err = (int)len;
+				break;
+
+			case mtGetAttr:
+				if (msg.i.attr.type == atMode) {
+					msg.o.attr.val = (msg.oid.id == 0u) ? (S_IFDIR | 0555) : (S_IFCHR | 0666);
+					msg.o.err = 0;
+				}
+				else if (msg.i.attr.type == atType) {
+					msg.o.attr.val = (msg.oid.id == 0u) ? otDir : otDev;
+					msg.o.err = 0;
+				}
+				else if ((msg.i.attr.type == atSize) && (msg.oid.id != 0u)) {
+					/* lseek(dmabuf, 0, SEEK_END) (G3), and what the kernel asks when mmap()
+					 * misses the object tree - answered ONLY while exported, under the
+					 * lock export_withdraw holds (no shadow object, E1 section 3) */
+					(void)mutexLock(srv.lock);
+					b = bo_by_export(msg.oid.id);
+					msg.o.attr.val = (b != NULL) ? (long long)b->pages * _PAGE_SIZE : 0;
+					msg.o.err = (b != NULL) ? 0 : -ENOENT;
+					(void)mutexUnlock(srv.lock);
+				}
+				else {
+					msg.o.err = -ENOENT;
+				}
+				break;
+
+			case mtGetAttrAll:
+				(void)mutexLock(srv.lock);
+				b = (msg.oid.id != 0u) ? bo_by_export(msg.oid.id) : NULL;
+				len = (b != NULL) ? (size_t)b->pages * _PAGE_SIZE : 0u;
+				(void)mutexUnlock(srv.lock);
+				if ((msg.oid.id != 0u) && (b == NULL)) {
+					msg.o.err = -ENOENT;
+				}
+				else {
+					msg.o.err = v3da_attr_all(&msg, (msg.oid.id == 0u) ? (S_IFDIR | 0555) : (S_IFCHR | 0666),
+						(uint64_t)len, srv.buf_port);
+				}
+				break;
+
+			case mtOpen:
+				/* 0, never an id: a positive reply would rewrite the descriptor's oid */
+				(void)mutexLock(srv.lock);
+				if (msg.oid.id == 0u) {
+					msg.o.err = 0;
+				}
+				else if ((b = bo_by_export(msg.oid.id)) == NULL) {
+					msg.o.err = -ENOENT;
+				}
+				else {
+					b->fd_opens++;
+					b->refs++;
+					msg.o.err = 0;
+					if ((srv.verbose != 0) || (notes < 16u)) {
+						notes++;
+						printf("V3DA srv v3dbuf open id=%u pid=%d opens=%u refs=%u\n", b->handle, msg.pid, b->fd_opens,
+							b->refs);
+					}
+				}
+				(void)mutexUnlock(srv.lock);
+				break;
+
+			case mtClose:
+				(void)mutexLock(srv.lock);
+				b = ((msg.oid.id != 0u) && (msg.oid.id <= 0xffffffffu)) ? bo_lookup((uint32_t)msg.oid.id) : NULL;
+				if ((b != NULL) && (b->fd_opens > 0u)) {
+					b->fd_opens--;
+					if ((srv.verbose != 0) || (notes < 16u)) {
+						notes++;
+						printf("V3DA srv v3dbuf close id=%u pid=%d opens=%u refs=%u\n", b->handle, msg.pid, b->fd_opens,
+							b->refs - 1u);
+					}
+					bo_unref(b);
+					v3da_bo_quarantine_poll();
+				}
+				(void)mutexUnlock(srv.lock);
+				msg.o.err = 0;
+				break;
+
+			default:
+				msg.o.err = -ENOSYS;
+				break;
+		}
+		(void)msgRespond(srv.buf_port, &msg, rid);
+	}
+	endthread();
 }

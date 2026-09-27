@@ -42,6 +42,10 @@
 #define V3DA_HANDLE_SLOT_BITS 13u
 #define V3DA_HANDLE_SLOT_MASK ((1u << V3DA_HANDLE_SLOT_BITS) - 1u)
 
+#if defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 201112L)
+_Static_assert(V3DA_MAX_CLIENTS <= 64u, "v3da_bo_t.sharers is a 64-bit client mask");
+#endif
+
 
 /* ------------------------------------------------------------------------- */
 /* Hardware (v3da_hw.c)                                                       */
@@ -120,6 +124,13 @@ typedef struct {
 	 * alive), released with munmap() after quarantine - never pooled. */
 	int imported;
 	v3da_memref_t imp_mem;        /* {OID, cache, port, size, id}: what BO_MMAP answers */
+	/* PRIME export (BO_EXPORT, G4). `refs` counts: the creator's handle (owner != 0),
+	 * one per importing client (a bit in `sharers`, bit = client id - 1) and one per
+	 * open descriptor of the /v3dbuf name (`fd_opens`). The name is withdrawn when
+	 * refs reaches 0; the block then waits out the quarantine as any BO's. */
+	int exported;                 /* published: memExport under {srv.buf_port, handle} */
+	uint32_t fd_opens;
+	uint64_t sharers;
 	/* quarantine */
 	uint64_t clear_pt_gen;        /* pt_gen after the PTE clear */
 	uint64_t pass[V3DA_Q_COUNT];  /* hw_submitted snapshot: wait for hw_completed >= pass */
@@ -297,6 +308,8 @@ typedef struct {
 	uint32_t port_card1;          /* /dev/dri/card1 (0 = not created); same protocol, shared clients */
 	uint32_t rx_port;             /* port of the request being handled (set under srv.lock) */
 	uint32_t imports;             /* live imported BOs (logged) */
+	uint32_t buf_port;            /* V3DA_BUF_NS (0 = not registered: BO_EXPORT -ENODEV) */
+	uint32_t exports;             /* BOs published under V3DA_BUF_NS right now (logged) */
 	handle_t lock;
 	handle_t cond;                /* event thread wakes on it (IRQ handler + dispatch) */
 	int quit;
@@ -417,6 +430,12 @@ v3da_bo_t *v3da_bo_find(uint32_t handle);
 /* BO_IMPORT. Called UNLOCKED (it opens and maps another server's buffer name, IPC
  * that must not stall the event thread); takes srv.lock itself for the table work. */
 int v3da_bo_import(uint32_t client, const v3da_bo_import_req_t *rq, v3da_bo_create_resp_t *out);
+/* BO_EXPORT (locked, G4) and the V3DA_BUF_NS namespace thread (takes srv.lock). */
+int v3da_bo_export(uint32_t client, uint32_t handle, v3da_bo_resp_t *out);
+void v3da_bufns_thread(void *arg);
+
+/* v3da_main.c: an mtGetAttrAll answer (fstat) for a node or a buffer name */
+int v3da_attr_all(msg_t *msg, uint32_t mode, uint64_t size, uint32_t port);
 
 /* v3da_sched.c */
 int v3da_sched_init(void);

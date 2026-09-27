@@ -44,24 +44,23 @@
 
 enum drmphx_ns {
 	DRMPHX_NS_KMSBUF = V3DA_IMPORT_NS_KMSBUF,   /* "/kmsbuf/<id>"  (rpi4-kms dumb buffers) */
-	DRMPHX_NS_V3DBUF = V3DA_IMPORT_NS_V3DBUF    /* "/v3dbuf/<id>"  (rpi4-v3d-async BOs, V3DA_OP_BO_EXPORT) */
+	DRMPHX_NS_V3DBUF = V3DA_IMPORT_NS_V3DBUF    /* "/v3dbuf/<id>"  (rpi4-v3d-async BOs, V3DA_OP_BO_EXPORT, proto 3) */
 };
 
 /*
- * V3DA_OP_BO_EXPORT (22, NEW, needs V3DA proto >= 3): PRIME export of a BO.
- * M1a BOs are one MAP_CONTIGUOUS block each, so memExport() of the whole block
- * under {v3dbuf port, handle} works as for kms pool buffers. Request: v3da_bo_req_t
- * {handle}; reply: v3da_bo_resp_t with mem.kind = V3DA_MEM_OID, mem.port = the
- * "/v3dbuf" namespace port, mem.addr = id. The namespace follows E1 section 1
- * (mtLookup/atMode/mtOpen 0/refuse atSize) exactly like rpi4-kms's /kmsbuf thread.
+ * V3DA_OP_BO_EXPORT (22): IMPLEMENTED for gap G4 (M6) - the opcode, V3DA_BUF_NS
+ * ("/v3dbuf") and the semantics moved to v3da_proto.h, which bumped the protocol
+ * to 3 (V3DA_PROTO_BO_EXPORT). libdrm-phoenix HELLOs with 3, falls back to 2 on a
+ * proto-2 server and answers PRIME_HANDLE_TO_FD of a non-imported BO with ENOSYS
+ * there, as before.
  */
-#define V3DA_OP_BO_EXPORT_EXT   22u
-#define V3DA_PROTO_BO_EXPORT    3u
-#define V3DA_BUF_NS_EXT         "/v3dbuf"
+#ifndef V3DA_HAVE_BO_EXPORT
+#error "v3da_proto.h predates BO_EXPORT (G4): build against the current tools/gpu-lane/v3d-async"
+#endif
 
 /*
  * Syncobj sharing across processes (DRM_IOCTL_SYNCOBJ_HANDLE_TO_FD without
- * EXPORT_SYNC_FILE, and real sync_file fds): NEW ops, needs V3DA proto >= 3.
+ * EXPORT_SYNC_FILE, and real sync_file fds): NEW ops, needs V3DA proto >= 4.
  * A "/v3dsync/<id>" namespace whose descriptors name a server syncobj (opaque
  * fd) or a frozen fence (sync file); poll() on it = atPollStatus against the
  * fence page. Not specified further here: the DRI3/Wayland milestones (M4/M6)

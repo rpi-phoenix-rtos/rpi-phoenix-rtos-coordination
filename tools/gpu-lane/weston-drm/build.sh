@@ -473,6 +473,14 @@ while IFS= read -r l; do
 	esac
 done < "${mesa_out}/egl-link.txt"
 [ -f "${gallium}" ] || { echo "build.sh: no gallium archive in ${mesa_out}/egl-link.txt" >&2; exit 1; }
+# egl-link.txt names the libdrm snapshot Mesa was configured with; link THIS build's snapshot
+# (--libdrm-prefix) instead. Mesa's archives do not contain libdrm and its headers' API is
+# stable, so a libdrm-phoenix change (e.g. G4) needs a relink here, not a Mesa rebuild.
+for i in "${!MESA_A[@]}"; do
+	case "${MESA_A[i]}" in
+		*/libdrm-prefix/lib/libdrm.a) MESA_A[i]="${LD_PREFIX}/lib/libdrm.a" ;;
+	esac
+done
 # Mesa's util/anon_file.c and Weston's shared/os-compatibility.c both export
 # os_create_anonymous_file() -- with different signatures (hidden from each other in
 # shared builds). Private copies of the Mesa archives that define or call it get Mesa's

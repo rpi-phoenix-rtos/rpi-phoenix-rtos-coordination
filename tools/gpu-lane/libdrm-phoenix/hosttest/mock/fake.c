@@ -7,8 +7,10 @@
  * tools/gpu-lane/kms/kms_main.c and v3d-async/v3da_main.c implement them) to run
  * the real drmprobe + the real libdrm-phoenix natively: per-open client ids at
  * open(), HELLO ioctls, raw requests by msgSend, memrefs backed by one host
- * arena (PHYS = arena offset + base; OID = "/kmsbuf/<id>" descriptors that map
- * only with MAP_UNCACHED, as E1 enforces), DRM events by read(). Jobs complete
+ * arena (PHYS = arena offset + base; OID = "/kmsbuf/<id>" and, G4, "/v3dbuf/<id>"
+ * descriptors that map only with MAP_UNCACHED, as E1 enforces), DRM events by
+ * read(). FAKE_V3DA_PROTO=2 in the environment makes the fake render server a
+ * proto-2 one (before G4: HELLO exactly 2, no BO_EXPORT, no /v3dbuf). Jobs complete
  * at submit and flips at commit; there is no GPU, so the CL clear's pixels stay
  * as they were (the harness expects exactly that).
  *
@@ -53,12 +55,13 @@
 #define BUF_PORT 12u
 #define V3D_PORT 13u
 #define V3D_CARD_PORT 14u   /* /dev/dri/card1 (M3 part 2, G10: its own port = its own dev_t) */
+#define VBUF_PORT 15u       /* /v3dbuf (G4) */
 #define PA_BASE  0x10000000ull
 #define FENCE_PA 0x0f000000ull
 #define ARENA_SZ (64u << 20)
 #define MAXFD    256
 
-enum { K_NONE = 0, K_KMS, K_V3D, K_BUF };
+enum { K_NONE = 0, K_KMS, K_V3D, K_BUF, K_VBUF };
 
 static struct {
 	int kind[MAXFD];
@@ -71,6 +74,7 @@ static struct {
 	uint32_t unaligned_ends, payload_msgs, msgs;
 	uint32_t deferred_flips;   /* commits that arrived with an unsignalled render fence (G13) */
 	uint32_t fstats, atsizes;  /* mtGetAttrAll / atSize answered (G2 / G3) */
+	int old_v3d;               /* FAKE_V3DA_PROTO=2: a render server from before G4 */
 } F;
 
 uint32_t fake_unaligned_ends(void);
@@ -109,6 +113,9 @@ static int path_kind(const char *p)
 	if (strncmp(p, "/kmsbuf/", 8) == 0) {
 		return K_BUF;
 	}
+	if ((strncmp(p, "/v3dbuf/", 8) == 0) && !F.old_v3d) {
+		return K_VBUF;
+	}
 	return K_NONE;
 }
 
@@ -119,6 +126,7 @@ static uint32_t path_port(const char *p)
 		case K_KMS: return KMS_PORT;
 		case K_V3D: return (F.dri && (strcmp(p, "/dev/dri/card1") == 0)) ? V3D_CARD_PORT : V3D_PORT;
 		case K_BUF: return BUF_PORT;
+		case K_VBUF: return VBUF_PORT;
 		default: return 0u;
 	}
 }
@@ -843,10 +851,13 @@ static struct {
 	} cl[NCLIENT + 1];
 	uint32_t next_client;
 	struct {
-		int used, imported;
+		int used, imported, exported;
 		uint32_t handle, owner, size;
 		uint64_t off, imp_id;
+		uint32_t refs, fd_opens;   /* G4: creator + sharers + open /v3dbuf descriptors, as v3da_bo.c */
+		uint64_t sharers;
 	} bo[256];
+	uint32_t exports, v3dbuf_imports;
 	uint32_t gen;
 	uint64_t seqno;
 	uint64_t pending[NCLIENT + 1][V3DA_Q_COUNT];   /* the fake GPU completes lazily: at the next wait */
@@ -913,6 +924,28 @@ static int bo_by_handle(uint32_t h)
 }
 
 
+/* A /v3dbuf-exported BO by id (the handle), or -1. */
+static int vbuf_find(uint64_t id)
+{
+	int b = (id <= 0xffffffffu) ? bo_by_handle((uint32_t)id) : -1;
+
+	return ((b >= 0) && V.bo[b].exported && (V.bo[b].refs > 0u)) ? b : -1;
+}
+
+
+static void vbo_unref(int b)
+{
+	if (V.bo[b].refs > 0u) {
+		V.bo[b].refs--;
+	}
+	if (V.bo[b].refs == 0u) {
+		V.imports_closed += V.bo[b].imported ? 1u : 0u;
+		V.exports -= V.bo[b].exported ? 1u : 0u;
+		memset(&V.bo[b], 0, sizeof(V.bo[b]));
+	}
+}
+
+
 static int sync_find(uint32_t c, uint32_t h)
 {
 	int i;
@@ -973,6 +1006,7 @@ static void v3d_handle(msg_t *m)
 					}
 					V.bo[i].used = 1;
 					V.bo[i].owner = c;
+					V.bo[i].refs = 1u;
 					V.bo[i].size = (rq.u.bo_create.size + 4095u) & ~4095u;
 					V.bo[i].off = off;
 					V.bo[i].handle = ((++V.gen) << 13) | (i + 1u);
@@ -1003,11 +1037,42 @@ static void v3d_handle(msg_t *m)
 			r->u.bo.gpuva = 0x100000u + (uint32_t)V.bo[b].off;
 			r->u.bo.size = V.bo[b].size;
 			mem_of(b, &r->u.bo.mem);
-			if (rq.op == V3DA_OP_BO_CLOSE) {
-				V.imports_closed += V.bo[b].imported ? 1u : 0u;
-				V.bo[b].used = 0;
-				V.bo[b].imported = 0;
+			if (rq.op == V3DA_OP_BO_CLOSE) {   /* as v3da_bo_close: this client's import, else the creator's handle */
+				uint64_t bit = 1ull << (c - 1u);
+				if ((V.bo[b].sharers & bit) != 0u) {
+					V.bo[b].sharers &= ~bit;
+					vbo_unref(b);
+				}
+				else if (V.bo[b].owner != 0u) {
+					V.bo[b].owner = 0u;
+					vbo_unref(b);
+				}
 			}
+			rc = 0;
+			break;
+		case V3DA_OP_BO_EXPORT:
+			if (F.old_v3d) {
+				rc = -EINVAL;   /* a proto-2 server: unknown opcode */
+				break;
+			}
+			b = bo_by_handle(rq.u.bo.handle);
+			if ((b < 0) || ((V.bo[b].owner != c) && ((V.bo[b].sharers & (1ull << (c - 1u))) == 0u))) {
+				rc = -ENOENT;
+				break;
+			}
+			if (V.bo[b].imported) {
+				rc = -EINVAL;
+				break;
+			}
+			V.exports += V.bo[b].exported ? 0u : 1u;
+			V.bo[b].exported = 1;
+			r->u.bo.gpuva = 0x100000u + (uint32_t)V.bo[b].off;
+			r->u.bo.size = V.bo[b].size;
+			r->u.bo.mem.kind = V3DA_MEM_OID;
+			r->u.bo.mem.cache = V3DA_CACHE_UNCACHED;
+			r->u.bo.mem.port = VBUF_PORT;
+			r->u.bo.mem.size = V.bo[b].size;
+			r->u.bo.mem.addr = V.bo[b].handle;
 			rc = 0;
 			break;
 		case V3DA_OP_BO_IMPORT: {
@@ -1016,8 +1081,31 @@ static void v3d_handle(msg_t *m)
 			const v3da_bo_import_req_t *q = &rq.u.bo_import;
 			uint64_t size;
 			int kb;
-			if (q->ns == V3DA_IMPORT_NS_V3DBUF) {
+			if ((q->ns == V3DA_IMPORT_NS_V3DBUF) && F.old_v3d) {
 				rc = -ENOSYS;
+				break;
+			}
+			if (q->ns == V3DA_IMPORT_NS_V3DBUF) {   /* as v3da_bo.c import_v3dbuf: share THE BO */
+				uint64_t bit = 1ull << (c - 1u);
+				b = (q->port == VBUF_PORT) ? vbuf_find(q->id) : -1;
+				if (b < 0) {
+					rc = (q->port == VBUF_PORT) ? -ENOENT : -EINVAL;
+					break;
+				}
+				if ((V.bo[b].owner != c) && ((V.bo[b].sharers & bit) == 0u)) {
+					V.bo[b].sharers |= bit;
+					V.bo[b].refs++;
+					V.v3dbuf_imports++;
+				}
+				r->u.bo_create.handle = V.bo[b].handle;
+				r->u.bo_create.gpuva = 0x100000u + (uint32_t)V.bo[b].off;
+				r->u.bo_create.size = V.bo[b].size;
+				r->u.bo_create.mem.kind = V3DA_MEM_OID;
+				r->u.bo_create.mem.cache = V3DA_CACHE_UNCACHED;
+				r->u.bo_create.mem.port = VBUF_PORT;
+				r->u.bo_create.mem.size = V.bo[b].size;
+				r->u.bo_create.mem.addr = V.bo[b].handle;
+				rc = 0;
 				break;
 			}
 			if ((q->ns != V3DA_IMPORT_NS_KMSBUF) || (q->port != BUF_PORT) || (q->pad != 0u)) {
@@ -1045,6 +1133,7 @@ static void v3d_handle(msg_t *m)
 					b = (int)i;
 					V.bo[b].used = V.bo[b].imported = 1;
 					V.bo[b].owner = c;
+					V.bo[b].refs = 1u;
 					V.bo[b].size = (uint32_t)size;
 					V.bo[b].off = K.bo[kb].off;   /* the kms arena pages: the same memory */
 					V.bo[b].imp_id = q->id;
@@ -1222,13 +1311,22 @@ static void fake_attr(uint32_t port, msg_t *m)
 	uint64_t size = 0;
 	int b = -1;
 
-	if (port == BUF_PORT) {
-		b = (m->oid.id != 0u) ? bo_find(0, (uint32_t)m->oid.id) : -1;
-		if ((m->oid.id != 0u) && ((b < 0) || !K.bo[b].exported)) {
+	if ((port == BUF_PORT) || (port == VBUF_PORT)) {
+		if (port == BUF_PORT) {
+			b = (m->oid.id != 0u) ? bo_find(0, (uint32_t)m->oid.id) : -1;
+			if ((b >= 0) && !K.bo[b].exported) {
+				b = -1;
+			}
+			size = (b >= 0) ? K.bo[b].size : 0u;
+		}
+		else {
+			b = (m->oid.id != 0u) ? vbuf_find(m->oid.id) : -1;
+			size = (b >= 0) ? V.bo[b].size : 0u;
+		}
+		if ((m->oid.id != 0u) && (b < 0)) {
 			m->o.err = -ENOENT;
 			return;
 		}
-		size = (b >= 0) ? K.bo[b].size : 0u;
 		if (m->type == mtGetAttr) {
 			if (m->i.attr.type != atSize) {
 				m->o.err = -ENOENT;
@@ -1297,7 +1395,7 @@ int mock_fstat(int fd, struct stat *st)
 	memset(&m, 0, sizeof(m));
 	m.type = mtGetAttrAll;
 	m.oid.port = F.port[fd];
-	m.oid.id = (F.kind[fd] == K_BUF) ? strtoull(F.path[fd] + 8, NULL, 10) : F.client[fd];
+	m.oid.id = ((F.kind[fd] == K_BUF) || (F.kind[fd] == K_VBUF)) ? strtoull(F.path[fd] + 8, NULL, 10) : F.client[fd];
 	m.o.data = &a;
 	m.o.size = sizeof(a);
 	fake_attr(F.port[fd], &m);
@@ -1331,16 +1429,16 @@ off_t mock_lseek(int fd, off_t off, int whence)
 {
 	msg_t m;
 
-	if ((fd >= 0) && (fd < MAXFD) && (F.kind[fd] == K_BUF)) {
+	if ((fd >= 0) && (fd < MAXFD) && ((F.kind[fd] == K_BUF) || (F.kind[fd] == K_VBUF))) {
 		if (whence != SEEK_END) {
 			return (whence == SEEK_SET) ? off : 0;
 		}
 		memset(&m, 0, sizeof(m));
 		m.type = mtGetAttr;
-		m.oid.port = BUF_PORT;
+		m.oid.port = F.port[fd];
 		m.oid.id = strtoull(F.path[fd] + 8, NULL, 10);
 		m.i.attr.type = atSize;
-		fake_attr(BUF_PORT, &m);
+		fake_attr(F.port[fd], &m);
 		if (m.o.err < 0) {
 			errno = -m.o.err;
 			return -1;
@@ -1364,6 +1462,16 @@ int lookup(const char *name, oid_t *file, oid_t *dev)
 	}
 	else if (strcmp(name, "/kmsbuf") == 0) {
 		o.port = BUF_PORT;
+	}
+	else if ((strcmp(name, "/v3dbuf") == 0) && !F.old_v3d) {
+		o.port = VBUF_PORT;
+	}
+	else if (k == K_VBUF) {
+		o.port = VBUF_PORT;
+		o.id = strtoull(name + 8, NULL, 10);
+		if (vbuf_find(o.id) < 0) {
+			return -ENOENT;
+		}
 	}
 	else if (k == K_BUF) {
 		o.port = BUF_PORT;
@@ -1420,7 +1528,7 @@ int mock_open(const char *path, int flags, ...)
 		}
 		return open(path, flags, mode);
 	}
-	if ((k == K_BUF) && (lookup(path, NULL, NULL) != 0)) {
+	if (((k == K_BUF) || (k == K_VBUF)) && (lookup(path, NULL, NULL) != 0)) {
 		errno = ENOENT;
 		return -1;
 	}
@@ -1442,6 +1550,11 @@ int mock_open(const char *path, int flags, ...)
 		V.cl[F.client[fd]].used = 1;
 		fence_page.slot[F.client[fd]].gen++;
 	}
+	else if (k == K_VBUF) {   /* mtOpen of an export: the descriptor holds a reference (G4) */
+		int b = vbuf_find(strtoull(path + 8, NULL, 10));
+		V.bo[b].fd_opens++;
+		V.bo[b].refs++;
+	}
 	return fd;
 }
 
@@ -1460,6 +1573,13 @@ int mock_close(int fd)
 		}
 		if (last && (F.kind[fd] == K_V3D)) {
 			V.cl[F.client[fd]].used = 0;
+		}
+		if (F.kind[fd] == K_VBUF) {   /* mtClose (each open() is its own open file here; dup is not used on these) */
+			int b = bo_by_handle((uint32_t)strtoull(F.path[fd] + 8, NULL, 10));
+			if ((b >= 0) && (V.bo[b].fd_opens > 0u)) {
+				V.bo[b].fd_opens--;
+				vbo_unref(b);
+			}
 		}
 		F.kind[fd] = K_NONE;
 		F.path[fd][0] = '\0';
@@ -1532,12 +1652,12 @@ int __real_ioctl(int fd, unsigned long req, ...)
 	}
 	if ((req == V3DA_IOC_HELLO) && (F.kind[fd] == K_V3D)) {
 		v3da_hello_t *h = arg;
-		if (h->proto != V3DA_PROTO_VERSION) {
-			errno = EPROTO;
+		if (F.old_v3d ? (h->proto != V3DA_PROTO_BASE) : ((h->proto < V3DA_PROTO_BASE) || (h->proto > V3DA_PROTO_VERSION))) {
+			errno = EPROTO;   /* a proto-2 server takes exactly 2; the G4 server BASE..VERSION */
 			return -1;
 		}
 		memset(h, 0, sizeof(*h));
-		h->proto = V3DA_PROTO_VERSION;
+		h->proto = F.old_v3d ? V3DA_PROTO_BASE : V3DA_PROTO_VERSION;
 		h->client_id = F.client[fd];
 		h->slot = F.client[fd];
 		h->slot_gen = (uint32_t)fence_page.slot[h->slot].gen;
@@ -1578,6 +1698,14 @@ void *__real_mmap(void *addr, size_t len, int prot, int flags, int fd, off_t off
 			return MAP_FAILED;
 		}
 		return F.arena + K.bo[b].off;
+	}
+	if ((fd >= 0) && (fd < MAXFD) && (F.kind[fd] == K_VBUF)) {
+		int b = vbuf_find(strtoull(F.path[fd] + 8, NULL, 10));
+		if ((b < 0) || ((flags & MAP_UNCACHED) == 0) || (len > V.bo[b].size) || (off != 0)) {
+			errno = EINVAL;
+			return MAP_FAILED;
+		}
+		return F.arena + V.bo[b].off;
 	}
 	if ((fd >= 0) && (fd < MAXFD) && (F.kind[fd] != K_NONE)) {
 		errno = EINVAL;   /* a node descriptor's object is not a buffer (atSize refused) */
@@ -1652,6 +1780,18 @@ void fake_m3p2(uint32_t *fstats, uint32_t *atsizes, uint32_t *imports, uint32_t 
 	*imports_closed = V.imports_closed;
 }
 void fake_set_dri(int on) { F.dri = on; }
+void fake_set_old_v3d(int on) { F.old_v3d = on; }
+void fake_g4(uint32_t *exports_live, uint32_t *v3dbuf_imports, uint32_t *bos_live)
+{
+	uint32_t i, n = 0;
+
+	for (i = 0; i < 256u; i++) {
+		n += V.bo[i].used ? 1u : 0u;
+	}
+	*exports_live = V.exports;
+	*v3dbuf_imports = V.v3dbuf_imports;
+	*bos_live = n;
+}
 
 void fake_last_cl(v3da_cl_desc_t *d, uint32_t *nbo, uint32_t *nin, uint32_t *nout, uint32_t *submits)
 {

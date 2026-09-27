@@ -79,7 +79,7 @@ int v3da_sched_init(void)
 	memset(p, 0, V3DA_FENCE_PAGE_SIZE);
 	srv.fp = p;
 	srv.fp->hdr.magic = V3DA_FENCE_MAGIC;
-	srv.fp->hdr.version = V3DA_PROTO_VERSION;
+	srv.fp->hdr.version = V3DA_PROTO_BASE;   /* the page layout of proto 2, unchanged since */
 	srv.fp->hdr.nslots = V3DA_FENCE_NSLOTS;
 	srv.fp->hdr.slot_size = V3DA_FENCE_SLOT_SIZE;
 	srv.fp->hdr.server_pid = (uint32_t)getpid();

@@ -378,7 +378,7 @@ static void v3d_connect(void)
 		return;
 	}
 	memset(&h, 0, sizeof(h));
-	h.proto = V3DA_PROTO_VERSION;
+	h.proto = V3DA_PROTO_BASE;   /* fences only: works with every render server since M1 part 2 */
 	if ((ioctl(fd, V3DA_IOC_HELLO, &h) < 0) || (h.fence_page.kind != V3DA_MEM_PHYS)) {
 		KMS_LOG("v3d connect=0 why=hello errno=%d", errno);
 		close(fd);

@@ -54,7 +54,14 @@
  * protocol; client ids are shared. */
 #define V3DA_DRI_RENDER_NAME "dri/renderD128"
 #define V3DA_DRI_CARD_NAME   "dri/card1"
-#define V3DA_PROTO_VERSION 2u   /* 2: M1 part 2 (submits, scanout/flip, modes) */
+#define V3DA_PROTO_VERSION 3u   /* 3: M6 gap G4 (BO_EXPORT, the /v3dbuf namespace, BO_IMPORT ns=v3dbuf) */
+/* The oldest protocol a client may HELLO with: 2 = M1 part 2 (submits, scanout/flip,
+ * modes). A client that uses nothing newer HELLOs with V3DA_PROTO_BASE and so works
+ * with every server since M1 part 2; the reply's proto is the SERVER's version, which
+ * is how a client learns what it may send (a proto-2 server refuses any other HELLO
+ * with -EPROTO: a proto-3 client then retries with 2). */
+#define V3DA_PROTO_BASE    2u
+#define V3DA_PROTO_BO_EXPORT 3u   /* first version with V3DA_OP_BO_EXPORT */
 #define V3DA_MAGIC         0x41443356u   /* "V3DA" little-endian; bit 31 clear */
 #define V3DA_FENCE_MAGIC   0x46443356u   /* "V3DF" */
 
@@ -128,7 +135,7 @@ typedef struct {
  * (single-copy atomic on AArch64); no seqlock is needed. */
 typedef struct {
 	uint32_t magic;       /* V3DA_FENCE_MAGIC */
-	uint32_t version;     /* V3DA_PROTO_VERSION */
+	uint32_t version;     /* V3DA_PROTO_BASE: the page layout has not changed since proto 2 */
 	uint32_t nslots;      /* V3DA_FENCE_NSLOTS */
 	uint32_t slot_size;   /* V3DA_FENCE_SLOT_SIZE */
 	uint32_t reset_gen;   /* bumped by every GPU reset */
@@ -169,6 +176,7 @@ enum v3da_op {
 	V3DA_OP_BO_GET_OFFSET,    /* DRM_IOCTL_V3D_GET_BO_OFFSET (old: V3D_RPC_GET_BO_OFFSET) */
 	V3DA_OP_BO_WAIT,          /* DRM_IOCTL_V3D_WAIT_BO     (old: client-local no-op) */
 	V3DA_OP_BO_IMPORT,        /* PRIME import (M3 part 2: v3da_bo_import_req_t; older servers -ENOSYS) */
+	V3DA_OP_BO_EXPORT,        /* PRIME export (proto 3, G4: v3da_bo_req_t -> v3da_bo_resp_t; proto 2 servers -EINVAL) */
 
 	V3DA_OP_SUBMIT_CL = 32,   /* DRM_IOCTL_V3D_SUBMIT_CL   (old: V3D_RPC_SUBMIT_CL, synchronous) */
 	V3DA_OP_SUBMIT_TFU,       /* DRM_IOCTL_V3D_SUBMIT_TFU */
@@ -210,7 +218,7 @@ enum v3da_op {
 
 /* HELLO travels as ioctl(fd, V3DA_IOC_HELLO, &hello): in = proto, out = the rest. */
 typedef struct {
-	uint32_t proto;         /* in: V3DA_PROTO_VERSION; out: server's */
+	uint32_t proto;         /* in: V3DA_PROTO_BASE..V3DA_PROTO_VERSION; out: the server's V3DA_PROTO_VERSION */
 	uint32_t client_id;     /* out: == the descriptor's oid.id */
 	uint32_t slot;          /* out: fence-page row */
 	uint32_t slot_gen;      /* out: low 32 bits of the slot generation */
@@ -274,21 +282,28 @@ typedef struct {
 /*
  * BO_IMPORT (M3 part 2; additive inside proto 2 - an older server answers the
  * reserved opcode with -ENOSYS, so no version bump is needed): PRIME import of a
- * buffer another server exported with memExport() (E1). The client resolved the
- * dma-buf descriptor to {namespace port, id}; the SERVER opens the buffer name
- * itself (V3DA_IMPORT_NS_KMSBUF: KMS "/kmsbuf/<id>"), checks that the name
- * resolves to `port`, sizes it with lseek(SEEK_END) when `size` is 0, maps it
- * with the export's memory type, resolves every page with va2pa and maps the
- * pages into the GPU page table. Reply: v3da_bo_create_resp_t, `mem` = the same
- * OID memref (BO_MMAP of the handle answers it too). Importing the same buffer
- * again on the same client returns the same handle and takes no extra reference
- * (DRM: one GEM_CLOSE releases it). The server's mapping keeps the pages alive
- * (E1 window reference) until the BO has left quarantine; BO_CLOSE or the
- * client's death releases it like any BO.
+ * buffer exported with memExport() (E1). The client resolved the dma-buf
+ * descriptor to {namespace port, id}.
+ *   ns = V3DA_IMPORT_NS_KMSBUF (KMS "/kmsbuf/<id>"): the SERVER opens the buffer
+ *   name itself, checks that the name resolves to `port`, sizes it with
+ *   lseek(SEEK_END) when `size` is 0, maps it with the export's memory type,
+ *   resolves every page with va2pa and maps the pages into the GPU page table.
+ *   The server's mapping keeps the pages alive (E1 window reference) until the BO
+ *   has left quarantine.
+ *   ns = V3DA_IMPORT_NS_V3DBUF (proto 3, "/v3dbuf/<id>", this server's own
+ *   BO_EXPORT): `port` must be the server's /v3dbuf port and `id` an exported BO;
+ *   the importer gets THAT BO's handle (one BO, one GPU VA, one last-use record,
+ *   so BO_WAIT sees every client's jobs) and holds a reference on it. `cache` is
+ *   ignored: the BO's own memory type applies. A proto-2 server answers -ENOSYS.
+ * Reply: v3da_bo_create_resp_t, `mem` = the export's OID memref (BO_MMAP of a
+ * kmsbuf import answers it too). Importing the same buffer again on the same
+ * client - or importing one of the client's own exports - returns the same handle
+ * and takes no extra reference (DRM: one GEM_CLOSE releases it). BO_CLOSE or the
+ * client's death releases the import like any BO.
  */
 #define V3DA_HAVE_BO_IMPORT    1
 #define V3DA_IMPORT_NS_KMSBUF  1u        /* "/kmsbuf/<id>"  (rpi4-kms dumb buffers) */
-#define V3DA_IMPORT_NS_V3DBUF  2u        /* "/v3dbuf/<id>"  (BO_EXPORT, not implemented: -ENOSYS) */
+#define V3DA_IMPORT_NS_V3DBUF  2u        /* "/v3dbuf/<id>"  (this server's BO_EXPORT, proto 3) */
 #define V3DA_IMPORT_KMSBUF_DIR "/kmsbuf" /* == KMS_BUF_NS (kms_proto.h) */
 #define V3DA_IMPORT_MAX_SIZE   0x10000000u   /* 256 MiB */
 
@@ -300,6 +315,27 @@ typedef struct {
 	uint32_t ns;        /* V3DA_IMPORT_NS_* */
 	uint32_t pad;
 } v3da_bo_import_req_t;
+
+/*
+ * BO_EXPORT (proto 3, gap G4): PRIME export of a BO. Request v3da_bo_req_t
+ * {handle}; reply v3da_bo_resp_t with mem = {V3DA_MEM_OID, UNCACHED, port = the
+ * V3DA_BUF_NS namespace port, size, addr = id}. The server publishes the BO's
+ * block with memExport() under {namespace port, id} (M1a BOs are one
+ * MAP_CONTIGUOUS block each) and serves V3DA_BUF_NS "/<id>" (E1 section 1:
+ * mtLookup, atMode, mtOpen replying 0, atSize only while exported), so the
+ * dma-buf descriptor is open("/v3dbuf/<id>", O_RDONLY): fstat, lseek(SEEK_END)
+ * and mmap(MAP_UNCACHED) work on it as on a /kmsbuf descriptor, in any process.
+ * id == the BO handle (never reused while the server lives); exporting again
+ * answers the same id. Every open descriptor of the name holds a reference on the
+ * BO, as a Linux dma-buf holds its GEM object: the BO outlives every handle while
+ * a descriptor is open. The name is withdrawn (memUnexport) when the last handle
+ * and descriptor are gone; the block then goes through the ordinary quarantine.
+ * Refused: -ENOENT (not this client's handle), -EINVAL (cacheable, scanout or
+ * imported BO - a kmsbuf import is re-exported by reopening the exporter's name,
+ * which libdrm-phoenix does itself, G4a), -ENODEV (no namespace registered).
+ */
+#define V3DA_HAVE_BO_EXPORT    1
+#define V3DA_BUF_NS            "/v3dbuf"
 
 typedef struct {
 	uint32_t delay_us;      /* the job "runs" this long on the CPU queue */

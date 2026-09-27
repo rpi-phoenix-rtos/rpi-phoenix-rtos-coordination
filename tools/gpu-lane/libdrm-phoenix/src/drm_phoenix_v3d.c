@@ -72,10 +72,19 @@ int drmphx_v3d_hello(drmphx_conn_t *c, int fd)
 {
 	v3da_hello_t h;
 	void *fp;
+	int rc;
 
 	memset(&h, 0, sizeof(h));
 	h.proto = V3DA_PROTO_VERSION;
-	if (ioctl(fd, V3DA_IOC_HELLO, &h) < 0) {
+	rc = ioctl(fd, V3DA_IOC_HELLO, &h);
+	if ((rc < 0) && (errno == EPROTO)) {
+		/* A proto-2 server (before G4) accepts exactly 2: speak it, without BO_EXPORT.
+		 * The reply's proto (the server's version) gates what this connection sends. */
+		memset(&h, 0, sizeof(h));
+		h.proto = V3DA_PROTO_BASE;
+		rc = ioctl(fd, V3DA_IOC_HELLO, &h);
+	}
+	if (rc < 0) {
 		return (errno != 0) ? -errno : -EIO;
 	}
 	if (h.client_id == 0u) {
@@ -1192,7 +1201,7 @@ static int ioc_prime_import(drmphx_conn_t *c, struct drm_prime_handle *ph)
 	kms_memref_t m;
 	uint32_t kms_port;
 	oid_t dev;
-	int rc;
+	int rc, have;
 
 	rc = drmphx_prime_fd_lookup(ph->fd, &m);
 	if (rc != 0) {
@@ -1205,6 +1214,17 @@ static int ioc_prime_import(drmphx_conn_t *c, struct drm_prime_handle *ph)
 	q.size = m.size;   /* 0 = unknown here (another process exported it): the server sizes it (G3) */
 	kms_port = (lookup(KMS_BUF_NS, NULL, &dev) == 0) ? dev.port : 0u;
 	q.ns = (m.port == kms_port) ? DRMPHX_NS_KMSBUF : DRMPHX_NS_V3DBUF;
+	if ((q.ns == DRMPHX_NS_V3DBUF) && (m.addr <= 0xffffffffu)) {
+		/* A /v3dbuf id is the server's BO handle: one this connection already holds (its
+		 * own export, or an earlier import) is returned as is - DRM, no extra reference. */
+		(void)pthread_mutex_lock(&c->lock);
+		have = (bo_get(c, (uint32_t)m.addr) != NULL) ? 1 : 0;
+		(void)pthread_mutex_unlock(&c->lock);
+		if (have != 0) {
+			ph->handle = (uint32_t)m.addr;
+			return 0;
+		}
+	}
 
 	memset(&rq, 0, sizeof(rq));
 	rq.magic = V3DA_MAGIC;
@@ -1214,11 +1234,16 @@ static int ioc_prime_import(drmphx_conn_t *c, struct drm_prime_handle *ph)
 	if (rc != 0) {
 		return rc;
 	}
-	bo_store(c, r.u.bo_create.handle, r.u.bo_create.gpuva, r.u.bo_create.size, &r.u.bo_create.mem, 1u);
+	(void)pthread_mutex_lock(&c->lock);
+	have = (bo_get(c, r.u.bo_create.handle) != NULL) ? 1 : 0;
+	(void)pthread_mutex_unlock(&c->lock);
+	if (have == 0) {   /* a handle this connection holds already keeps its record (fences, origin) */
+		bo_store(c, r.u.bo_create.handle, r.u.bo_create.gpuva, r.u.bo_create.size, &r.u.bo_create.mem, 1u);
+	}
 	(void)pthread_mutex_lock(&c->lock);
 	{
 		drmphx_v3d_bo_t *b = bo_get(c, r.u.bo_create.handle);
-		if (b != NULL) {   /* where it came from, for a re-export (G4a) */
+		if ((b != NULL) && (b->imported != 0u)) {   /* where it came from, for a re-export (G4a) */
 			b->imp_port = q.port;
 			b->imp_cache = q.cache;
 			b->imp_id = q.id;
@@ -1231,21 +1256,26 @@ static int ioc_prime_import(drmphx_conn_t *c, struct drm_prime_handle *ph)
 }
 
 
-/* PRIME export of an IMPORTED buffer (G4a, M5): the dma-buf descriptor is the
- * exporter's buffer name opened again -- the same pages, zero-copy, which is what
- * DRM gives for a re-export of an imported GEM object. This is the v3dv WSI path:
- * swapchain memory is a card0 dumb buffer imported here (device_alloc_for_wsi),
- * then vkGetMemoryFdKHR exports it from the render node and wsi_common_display
- * imports that descriptor back on card0, where it resolves to the original dumb
- * handle. BOs this server allocated still need V3DA_OP_BO_EXPORT (G4). */
+/* PRIME export. A BO this server allocated (G4): V3DA_OP_BO_EXPORT publishes it
+ * under the server's /v3dbuf namespace and the dma-buf descriptor is an open() of
+ * "/v3dbuf/<id>" - fstat, lseek(SEEK_END) and mmap work on it as on a /kmsbuf
+ * descriptor, and it passes to other processes over SCM_RIGHTS. An IMPORTED buffer
+ * (G4a, M5) is exported by opening the exporter's buffer name again -- the same
+ * pages, zero-copy, which is what DRM gives for a re-export of an imported GEM
+ * object. That is the v3dv WSI path: swapchain memory is a card0 dumb buffer imported
+ * here (device_alloc_for_wsi), then vkGetMemoryFdKHR exports it from the render node
+ * and wsi_common_display imports that descriptor back on card0, where it resolves to
+ * the original dumb handle. */
 static int ioc_prime_export(drmphx_conn_t *c, struct drm_prime_handle *ph)
 {
 	kms_memref_t m;
+	v3da_bo_req_t q;
+	v3da_resp_t r;
 	char path[48];
 	const char *ns;
 	uint32_t kms_port;
 	oid_t dev;
-	int found = 0, imported = 0, bfd;
+	int found = 0, imported = 0, bfd, rc;
 
 	memset(&m, 0, sizeof(m));
 	(void)pthread_mutex_lock(&c->lock);
@@ -1265,14 +1295,30 @@ static int ioc_prime_export(drmphx_conn_t *c, struct drm_prime_handle *ph)
 	if (found == 0) {
 		return -ENOENT;
 	}
-	if (imported == 0) {
-#if V3DA_PROTO_VERSION >= V3DA_PROTO_BO_EXPORT
-#error "V3DA_OP_BO_EXPORT landed in v3da_proto.h: implement it here and drop the _EXT definition"
-#endif
-		return -ENOSYS;   /* gap G4: V3DA_OP_BO_EXPORT_EXT + the /v3dbuf namespace */
+	if (imported != 0) {
+		kms_port = (lookup(KMS_BUF_NS, NULL, &dev) == 0) ? dev.port : 0u;
+		ns = (m.port == kms_port) ? KMS_BUF_NS : V3DA_BUF_NS;
 	}
-	kms_port = (lookup(KMS_BUF_NS, NULL, &dev) == 0) ? dev.port : 0u;
-	ns = (m.port == kms_port) ? KMS_BUF_NS : V3DA_BUF_NS_EXT;
+	else {
+		if (c->u.v3d.hello.proto < V3DA_PROTO_BO_EXPORT) {
+			return -ENOSYS;   /* a proto-2 render server (before G4) has no BO_EXPORT */
+		}
+		memset(&q, 0, sizeof(q));
+		q.handle = ph->handle;
+		rc = vcall(c, V3DA_OP_BO_EXPORT, &q, sizeof(q), &r);
+		if (rc != 0) {
+			return rc;
+		}
+		if (r.u.bo.mem.kind != V3DA_MEM_OID) {
+			return -EPROTO;
+		}
+		m.kind = KMS_MEM_OID;
+		m.cache = r.u.bo.mem.cache;
+		m.port = r.u.bo.mem.port;
+		m.size = r.u.bo.mem.size;
+		m.addr = r.u.bo.mem.addr;
+		ns = V3DA_BUF_NS;
+	}
 	(void)snprintf(path, sizeof(path), "%s/%llu", ns, (unsigned long long)m.addr);
 	bfd = open(path, O_RDONLY | (((ph->flags & DRM_CLOEXEC) != 0u) ? O_CLOEXEC : 0));   /* O_RDONLY: E1 */
 	if (bfd < 0) {
@@ -1315,7 +1361,7 @@ int drmphx_v3d_ioctl(drmphx_conn_t *c, int fd, unsigned nr, void *arg)
 		case NR(DRM_IOCTL_GEM_CLOSE):
 			return ioc_close_bo(c, ((const struct drm_gem_close *)arg)->handle);
 		case NR(DRM_IOCTL_PRIME_HANDLE_TO_FD):
-			return ioc_prime_export(c, arg);   /* imported BOs (G4a); own BOs: -ENOSYS (G4) */
+			return ioc_prime_export(c, arg);   /* own BOs: BO_EXPORT (G4); imported BOs: the exporter's name (G4a) */
 		case NR(DRM_IOCTL_PRIME_FD_TO_HANDLE):
 			return ioc_prime_import(c, arg);
 		case NR(DRM_IOCTL_GEM_FLINK):

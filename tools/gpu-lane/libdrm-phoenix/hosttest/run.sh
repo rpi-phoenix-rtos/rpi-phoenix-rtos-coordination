@@ -35,7 +35,7 @@ if [ ! -f "${src}/phoenix/xf86drm_phoenix.c" ] || [ ! -f "${gen}/generated_stati
 	exit 0
 fi
 gcc -std=gnu11 -O1 -g -Wall -Wno-unused-parameter -Wno-deprecated-declarations -fsanitize=address,undefined \
-	-fno-omit-frame-pointer -D__phoenix__ -Dmain=drmprobe_main \
+	-fno-omit-frame-pointer -D__phoenix__ -Dmain=drmprobe_main -DDRMPROBE_NO_FORK \
 	-include "${here}/mock/phx_mock.h" -include "${here}/mock/hostconfig.h" \
 	-I"${here}/mock" -I"${src}/phoenix" -I"${src}" -I"${src}/include/drm" -I"${gen}" -I"${here}/../include" \
 	-I"${root}/tools/gpu-lane/v3d-async" -I"${root}/tools/gpu-lane/kms" \
@@ -50,6 +50,10 @@ gcc -std=gnu11 -O1 -g -w -fsanitize=address,undefined -fno-omit-frame-pointer -D
 	"${src}/phoenix/xf86drm_phoenix.c" "${src}/phoenix/drm_phoenix_kms.c" "${src}/phoenix/drm_phoenix_v3d.c" \
 	"${src}/phoenix/drm_phoenix_logic.c" "${src}/phoenix/drm_phoenix_wrap.c" \
 	"${src}/phoenix/drm_phoenix_wrap_ioctl.c"
+# G4: prime_export_render / prime_import_render2 must pass against the fake G4 server,
+# every export the probe made must be withdrawn and every BO released at the end
+# (bos_live counts only the probe's leftovers: 0). The two-process case
+# (prime_export_xproc: fork + SCM_RIGHTS) needs a real kernel and is compiled out here.
 for mode in legacy dri; do
 	log="${out}/e2e-${mode}.log"
 	"${out}/e2e" "${mode}" > "${log}" 2>&1 || true
@@ -66,6 +70,9 @@ for mode in legacy dri; do
 	grep -q 'DRMPROBE sync_merge setup=0 merge=0 .* ok=1' "${log}" || why="${why} sync_merge"   # M5b (G15)
 	grep -q 'DRMPROBE implicit_flip submit=0 flip=0 events=1 ' "${log}" || why="${why} implicit_flip"
 	grep -qE 'HOSTE2E m3p2 .* imports=1 imports_closed=1 deferred_flips=[1-9]' "${log}" || why="${why} m3p2-counters"
+	grep -q 'DRMPROBE prime_export_render rc=0 errno=0 path=/v3dbuf/[0-9]* size=65536 fstat_chr=1 mmap=1 bad_words=0 xwrite=1 reexport_same_name=1 self_import=0 .* ok=1' "${log}" || why="${why} g4-export"
+	grep -q 'DRMPROBE prime_import_render2 conn=1 rc=0 .* survives_creator_close=1 released=1 ok=1' "${log}" || why="${why} g4-import2"
+	grep -q 'HOSTE2E g4 .* exports_live=0 v3dbuf_imports=1 bos_live=0' "${log}" || why="${why} g4-counters"
 	if [ "${mode}" = dri ]; then
 		grep -q 'DRMPROBE identity node=card1 version=v3d .* node_type=0 .* ok=1' "${log}" || why="${why} card1"
 		grep -q 'DRMPROBE fstat_nodes n=3 ' "${log}" || why="${why} fstat-n3"
@@ -76,3 +83,20 @@ for mode in legacy dri; do
 		echo "HOSTE2E ${mode} verdict=FAIL (${why# } - see ${log})"
 	fi
 done
+
+# Negative control: the same probe against a fake render server from BEFORE G4
+# (HELLO exactly 2, opcode 22 unknown, no /v3dbuf). The library must fall back to
+# proto 2 (everything else passes as before) and the G4 tests must FAIL, with ENOSYS
+# from the library - proof that they can fail.
+log="${out}/e2e-g4-negative.log"
+FAKE_V3DA_PROTO=2 "${out}/e2e" dri > "${log}" 2>&1 || true
+grep -E 'DRMPROBE (RESULT|prime_export_render|prime_import_render2)|HOSTE2E g4|ERROR|runtime error' "${log}" || true
+why=""
+grep -q 'DRMPROBE RESULT .*failed=cl_clear,cl_clear_dep,import_clear,implicit_flip,prime_export_render,prime_import_render2, ' "${log}" || why="${why} failed-set"
+grep -q 'DRMPROBE prime_export_render rc=-1 errno=38 .* ok=0' "${log}" || why="${why} export-not-enosys"
+grep -qE 'ERROR: AddressSanitizer|runtime error' "${log}" && why="${why} sanitizer"
+if [ -z "${why}" ]; then
+	echo "HOSTE2E g4-negative verdict=PASS (the G4 tests fail against a proto-2 server, the rest as before)"
+else
+	echo "HOSTE2E g4-negative verdict=FAIL (${why# } - see ${log})"
+fi

@@ -34,7 +34,9 @@
 
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 
 #include <xf86drm.h>
 #include <xf86drmMode.h>
@@ -71,6 +73,7 @@ static struct {
 	int pass, fail, gap;
 	char failed[512];
 	int card, render, card1;
+	char render_path[64];
 	uint32_t crtc, conn, primary;
 	drmModeModeInfo mode;
 	uint32_t fmt;
@@ -1098,9 +1101,8 @@ static void t_prime(void)
 {
 	char path[64] = "-";
 	uint32_t h_self = 0, h_render = 0;
-	int pfd = -1, rc_exp, rc_self = -1, rc_imp = -1, e_imp = 0, same = 0, rc_rexp, e_rexp = 0, pfd2 = -1;
+	int pfd = -1, rc_exp, rc_self = -1, rc_imp = -1, e_imp = 0, same = 0;
 	uint32_t *m;
-	struct drm_v3d_create_bo cb = { .size = 4096 };
 	struct drm_gem_close gc;
 
 	rc_exp = drmPrimeHandleToFD(P.card, P.buf[0].handle, DRM_CLOEXEC, &pfd);
@@ -1184,21 +1186,385 @@ static void t_prime(void)
 		(void)drmIoctl(P.render, DRM_IOCTL_GEM_CLOSE, &gc);   /* the one close releases it (the server logs "import released") */
 	}
 
-	/* render-node export (V3DA_OP_BO_EXPORT does not exist yet) */
-	rc_rexp = -1;
-	if (drmIoctl(P.render, DRM_IOCTL_V3D_CREATE_BO, &cb) == 0) {
-		rc_rexp = drmPrimeHandleToFD(P.render, cb.handle, DRM_CLOEXEC, &pfd2);
-		e_rexp = (rc_rexp != 0) ? errno : 0;
-		memset(&gc, 0, sizeof(gc));
-		gc.handle = cb.handle;
-		(void)drmIoctl(P.render, DRM_IOCTL_GEM_CLOSE, &gc);
+}
+
+
+/* ========================================================================= */
+/* 6. render-node PRIME export (G4: V3DA_OP_BO_EXPORT + /v3dbuf)              */
+/* ========================================================================= */
+
+#define XP_SIZE   65536u
+#define XP_WORDS  (XP_SIZE / 4u)
+#define XP_MARKER 0x4734a11du
+
+static uint32_t xp_word(uint32_t i)
+{
+	return 0x6b000000u ^ (i * 2654435761u);
+}
+
+
+static uint32_t xp_bad(const volatile uint32_t *p, uint32_t skip_a, uint32_t skip_b)
+{
+	uint32_t i, bad = 0;
+
+	for (i = 0; i < XP_WORDS; i++) {
+		if ((i != skip_a) && (i != skip_b) && (p[i] != xp_word(i))) {
+			bad++;
+		}
 	}
-	printf(TAG "prime_export_render rc=%d errno=%d gap=%d\n", rc_rexp, e_rexp, e_rexp == ENOSYS);
-	gapcheck("prime_export_render", e_rexp, ENOSYS);
-	if (pfd2 >= 0) {
-		close(pfd2);
+	return bad;
+}
+
+
+/* A handle's CPU view through a given render connection: MMAP_BO token + mmap. */
+static uint32_t *xp_map_handle(int fd, uint32_t handle)
+{
+	struct drm_v3d_mmap_bo mb;
+	void *p;
+
+	memset(&mb, 0, sizeof(mb));
+	mb.handle = handle;
+	if (drmIoctl(fd, DRM_IOCTL_V3D_MMAP_BO, &mb) != 0) {
+		return NULL;
+	}
+	p = mmap(NULL, XP_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, (off_t)mb.offset);
+	return (p == MAP_FAILED) ? NULL : p;
+}
+
+
+/* The server still knows `handle` on `fd`: WAIT_BO of a handle this connection
+ * imported asks the server (a released BO answers EINVAL). */
+static int xp_alive(int fd, uint32_t handle)
+{
+	struct drm_v3d_wait_bo wb;
+
+	memset(&wb, 0, sizeof(wb));
+	wb.handle = handle;
+	return (drmIoctl(fd, DRM_IOCTL_V3D_WAIT_BO, &wb) == 0) ? 1 : 0;
+}
+
+
+static void gem_close(int fd, uint32_t handle)
+{
+	struct drm_gem_close gc;
+
+	memset(&gc, 0, sizeof(gc));
+	gc.handle = handle;
+	(void)drmIoctl(fd, DRM_IOCTL_GEM_CLOSE, &gc);
+}
+
+
+/* Same process: export a render BO, check the descriptor is a /v3dbuf name that
+ * sizes, fstat()s and mmap()s onto the BO's pages (both directions), that a second
+ * export names the same buffer and that importing it back returns THE handle
+ * (DRM). Then a second render connection imports it: it shares the pages, keeps
+ * the BO alive after the creator's GEM_CLOSE, and one GEM_CLOSE releases it. */
+static void t_prime_render(void)
+{
+	char path[64] = "-", path2[64] = "-";
+	struct stat st;
+	rbo_t b;
+	uint32_t h_self = 0, h2 = 0, *m = NULL, *m2 = NULL, bad = 0, bad2 = 0;
+	off_t end = -1;
+	int rc, e = 0, fd = -1, fd2 = -1, rc_self = -1, chr = 0, same_name = 0, xw = 0, conn2 = -1, rc2 = -1, e2 = 0;
+	int survives = 0, released = 0, ok;
+
+	rc = rbo_new(&b, XP_SIZE);
+	if (rc == 0) {
+		uint32_t i;
+		for (i = 0; i < XP_WORDS; i++) {
+			b.cpu[i] = xp_word(i);
+		}
+		rc = drmPrimeHandleToFD(P.render, b.handle, DRM_CLOEXEC | DRM_RDWR, &fd);
+		e = (rc != 0) ? errno : 0;
+	}
+	if ((rc == 0) && (fd >= 0)) {
+		(void)sys_fdpath(fd, path, sizeof(path));
+		end = lseek(fd, 0, SEEK_END);
+		(void)lseek(fd, 0, SEEK_SET);
+		chr = (fstat(fd, &st) == 0) && S_ISCHR(st.st_mode);
+		m = mmap(NULL, XP_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+		if (m == MAP_FAILED) {
+			m = NULL;
+		}
+		if (m != NULL) {
+			bad = xp_bad(m, ~0u, ~0u);
+			m[7] = XP_MARKER;          /* dma-buf mapping -> BO mapping */
+			b.cpu[9] = ~XP_MARKER;     /* BO mapping -> dma-buf mapping */
+			xw = (b.cpu[7] == XP_MARKER) && (m[9] == ~XP_MARKER);
+			b.cpu[7] = xp_word(7);
+			b.cpu[9] = xp_word(9);
+		}
+		if (drmPrimeHandleToFD(P.render, b.handle, DRM_CLOEXEC, &fd2) == 0) {
+			(void)sys_fdpath(fd2, path2, sizeof(path2));
+			same_name = (strcmp(path, path2) == 0);
+			close(fd2);
+		}
+		rc_self = drmPrimeFDToHandle(P.render, fd, &h_self);
+	}
+	ok = (rc == 0) && (strncmp(path, "/v3dbuf/", 8) == 0) && (end == (off_t)XP_SIZE) && chr && (m != NULL) &&
+		(bad == 0u) && xw && same_name && (rc_self == 0) && (h_self == b.handle);
+	printf(TAG "prime_export_render rc=%d errno=%d path=%s size=%lld fstat_chr=%d mmap=%d bad_words=%u xwrite=%d "
+		"reexport_same_name=%d self_import=%d handle=0x%x/0x%x ok=%d\n", rc, e, path, (long long)end, chr, m != NULL, bad,
+		xw, same_name, rc_self, h_self, b.handle, ok);
+	verdict("prime_export_render", ok);
+
+	/* a second render connection of this process = another server client */
+	if (ok) {
+		conn2 = open(P.render_path, O_RDWR | O_CLOEXEC);
+		if (conn2 >= 0) {
+			rc2 = drmPrimeFDToHandle(conn2, fd, &h2);
+			e2 = (rc2 != 0) ? errno : 0;
+		}
+		if (rc2 == 0) {
+			m2 = xp_map_handle(conn2, h2);
+			bad2 = (m2 != NULL) ? xp_bad(m2, ~0u, ~0u) : XP_WORDS;
+			close(fd);   /* the descriptor's reference goes ... */
+			fd = -1;
+			gem_close(P.render, b.handle);   /* ... and the creator's: conn2's import alone holds it */
+			(void)munmap(b.cpu, b.size);
+			b.cpu = NULL;
+			b.handle = 0;
+			survives = xp_alive(conn2, h2) && (m2 != NULL) && (m2[1234] == xp_word(1234));
+			if (m2 != NULL) {
+				(void)munmap(m2, XP_SIZE);
+			}
+			gem_close(conn2, h2);            /* one close releases the import */
+			released = !xp_alive(conn2, h2);
+		}
+		ok = (rc2 == 0) && (m2 != NULL) && (bad2 == 0u) && survives && released;
+		printf(TAG "prime_import_render2 conn=%d rc=%d errno=%d handle=0x%x map=%d bad_words=%u survives_creator_close=%d "
+			"released=%d ok=%d\n", conn2 >= 0, rc2, e2, h2, m2 != NULL, bad2, survives, released, ok);
+		verdict("prime_import_render2", ok);
+		if (conn2 >= 0) {
+			close(conn2);
+		}
+	}
+	else {
+		printf(TAG "prime_import_render2 skipped=1 (prime_export_render failed) ok=0\n");
+		verdict("prime_import_render2", 0);
+	}
+	if (m != NULL) {
+		(void)munmap(m, XP_SIZE);
+	}
+	if (fd >= 0) {
+		close(fd);
+	}
+	rbo_free(&b);
+}
+
+
+#ifndef DRMPROBE_NO_FORK
+/* libphoenix tags sendmsg()/recvmsg() "not fully supported"; the single-iovec
+ * SCM_RIGHTS use here goes straight to the kernel's fdpass code (exportprobe). */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wattribute-warning"
+
+typedef struct {
+	uint32_t cmd;           /* 1 = descriptor attached, 2 = child report */
+	int32_t rc, err;
+	uint32_t handle;
+	int32_t size_ok, path_ok, fd_map, fd_bad, handle_map, handle_bad, xwrite, wait_bo;
+} xp_msg_t;
+
+
+static int xp_send(int s, const xp_msg_t *c, int fd)
+{
+	union {
+		struct cmsghdr h;
+		char buf[CMSG_SPACE(sizeof(int))];
+	} cm;
+	struct msghdr mh;
+	struct iovec iov;
+	struct cmsghdr *h;
+
+	memset(&mh, 0, sizeof(mh));
+	iov.iov_base = (void *)c;
+	iov.iov_len = sizeof(*c);
+	mh.msg_iov = &iov;
+	mh.msg_iovlen = 1;
+	if (fd >= 0) {
+		memset(&cm, 0, sizeof(cm));
+		mh.msg_control = cm.buf;
+		mh.msg_controllen = sizeof(cm.buf);
+		h = CMSG_FIRSTHDR(&mh);
+		h->cmsg_level = SOL_SOCKET;
+		h->cmsg_type = SCM_RIGHTS;
+		h->cmsg_len = CMSG_LEN(sizeof(int));
+		memcpy(CMSG_DATA(h), &fd, sizeof(int));
+	}
+	return (sendmsg(s, &mh, 0) == (ssize_t)sizeof(*c)) ? 0 : -1;
+}
+
+
+static int xp_recv(int s, xp_msg_t *c, uint32_t want, int *fd)
+{
+	union {
+		struct cmsghdr h;
+		char buf[CMSG_SPACE(sizeof(int))];
+	} cm;
+	struct msghdr mh;
+	struct iovec iov;
+	struct cmsghdr *h;
+	ssize_t n;
+
+	memset(&mh, 0, sizeof(mh));
+	memset(&cm, 0, sizeof(cm));
+	iov.iov_base = c;
+	iov.iov_len = sizeof(*c);
+	mh.msg_iov = &iov;
+	mh.msg_iovlen = 1;
+	mh.msg_control = cm.buf;
+	mh.msg_controllen = sizeof(cm.buf);
+	do {
+		n = recvmsg(s, &mh, 0);
+	} while ((n < 0) && (errno == EINTR));
+	if ((n != (ssize_t)sizeof(*c)) || (c->cmd != want)) {
+		return -1;
+	}
+	if (fd != NULL) {
+		*fd = -1;
+		h = CMSG_FIRSTHDR(&mh);
+		if ((h != NULL) && (h->cmsg_level == SOL_SOCKET) && (h->cmsg_type == SCM_RIGHTS)) {
+			memcpy(fd, CMSG_DATA(h), sizeof(int));
+		}
+	}
+	return 0;
+}
+
+#pragma GCC diagnostic pop
+
+
+/* The importer process: its OWN render connection (the inherited descriptors share
+ * the parent's open file, i.e. the parent's server client), the dma-buf descriptor
+ * from SCM_RIGHTS. By the time it imports, the exporter has closed its handle and its
+ * descriptor: only the descriptor in flight keeps the BO. */
+static void xp_child(int s)
+{
+	char path[64] = "-";
+	xp_msg_t r;
+	uint32_t *fm = NULL, *hm = NULL;
+	int fd = -1, rfd;
+
+	memset(&r, 0, sizeof(r));
+	r.cmd = 2;
+	r.rc = -1;
+	if (xp_recv(s, &r, 1, &fd) != 0) {
+		r.err = EPROTO;
+	}
+	r.cmd = 2;
+	rfd = open(P.render_path, O_RDWR | O_CLOEXEC);
+	if ((fd >= 0) && (rfd >= 0)) {
+		r.path_ok = (sys_fdpath(fd, path, sizeof(path)) > 0) && (strncmp(path, "/v3dbuf/", 8) == 0);
+		r.size_ok = (lseek(fd, 0, SEEK_END) == (off_t)XP_SIZE);
+		r.rc = drmPrimeFDToHandle(rfd, fd, &r.handle);
+		r.err = (r.rc != 0) ? errno : 0;
+		fm = mmap(NULL, XP_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+		fm = (fm == MAP_FAILED) ? NULL : fm;
+		r.fd_map = (fm != NULL);
+		r.fd_bad = (fm != NULL) ? (int32_t)xp_bad(fm, ~0u, ~0u) : -1;
+		if (r.rc == 0) {
+			hm = xp_map_handle(rfd, r.handle);
+			r.handle_map = (hm != NULL);
+			r.handle_bad = (hm != NULL) ? (int32_t)xp_bad(hm, ~0u, ~0u) : -1;
+			if ((fm != NULL) && (hm != NULL)) {
+				fm[3] = XP_MARKER;
+				r.xwrite = (hm[3] == XP_MARKER);
+			}
+			r.wait_bo = xp_alive(rfd, r.handle);
+		}
+		if (hm != NULL) {
+			(void)munmap(hm, XP_SIZE);
+		}
+		if (fm != NULL) {
+			(void)munmap(fm, XP_SIZE);
+		}
+		if (r.rc == 0) {
+			gem_close(rfd, r.handle);
+		}
+	}
+	if (fd >= 0) {
+		close(fd);
+	}
+	if (rfd >= 0) {
+		close(rfd);
+	}
+	printf(TAG "prime_export_xproc child pid=%d path=%s import=%d errno=%d handle=0x%x\n", (int)getpid(), path, r.rc,
+		r.err, r.handle);
+	fflush(stdout);
+	(void)xp_send(s, &r, -1);
+}
+
+
+/* Two processes, as a Wayland client and compositor: fork, export in the parent,
+ * pass the descriptor over an AF_UNIX socketpair (SCM_RIGHTS), drop every
+ * reference of the parent's, import + map + write in the child; afterwards the
+ * BO must be gone (no leak). */
+static void t_prime_xproc(void)
+{
+	xp_msg_t q, r;
+	rbo_t b;
+	uint32_t h = 0;
+	pid_t pid = -1;
+	int sv[2] = { -1, -1 }, rc, e = 0, fd = -1, got = -1, status = 0, released = 0, ok;
+
+	memset(&r, 0, sizeof(r));
+	rc = rbo_new(&b, XP_SIZE);
+	if (rc == 0) {
+		uint32_t i;
+		for (i = 0; i < XP_WORDS; i++) {
+			b.cpu[i] = xp_word(i);
+		}
+		rc = drmPrimeHandleToFD(P.render, b.handle, DRM_CLOEXEC, &fd);
+		e = (rc != 0) ? errno : 0;
+	}
+	if ((rc == 0) && (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0)) {
+		rc = -1;
+		e = errno;
+	}
+	if (rc == 0) {
+		fflush(stdout);
+		pid = fork();
+		if (pid == 0) {
+			close(sv[0]);
+			xp_child(sv[1]);
+			_exit(0);   /* no atexit/stdio teardown of the parent's libdrm state */
+		}
+		close(sv[1]);
+		sv[1] = -1;
+	}
+	if (pid > 0) {
+		memset(&q, 0, sizeof(q));
+		q.cmd = 1;
+		(void)xp_send(sv[0], &q, fd);
+		h = b.handle;
+		close(fd);   /* the exporter lets go of everything: descriptor, handle, mapping */
+		fd = -1;
+		rbo_free(&b);
+		got = xp_recv(sv[0], &r, 2, NULL);
+		(void)waitpid(pid, &status, 0);
+		released = !xp_alive(P.render, h);   /* a handle this connection closed: the server answers */
+	}
+	else {
+		rbo_free(&b);
+	}
+	ok = (pid > 0) && (got == 0) && (r.rc == 0) && r.path_ok && r.size_ok && r.fd_map && (r.fd_bad == 0) &&
+		r.handle_map && (r.handle_bad == 0) && r.xwrite && r.wait_bo && released;
+	printf(TAG "prime_export_xproc export=%d errno=%d fork=%d report=%d import=%d import_errno=%d path_ok=%d size_ok=%d "
+		"fd_map=%d fd_bad=%d handle_map=%d handle_bad=%d xwrite=%d wait_bo=%d released=%d ok=%d\n", rc, e, pid > 0, got == 0,
+		r.rc, r.err, r.path_ok, r.size_ok, r.fd_map, r.fd_bad, r.handle_map, r.handle_bad, r.xwrite, r.wait_bo, released, ok);
+	verdict("prime_export_xproc", ok);
+	if (fd >= 0) {
+		close(fd);
+	}
+	if (sv[0] >= 0) {
+		close(sv[0]);
+	}
+	if (sv[1] >= 0) {
+		close(sv[1]);
 	}
 }
+#endif
 
 
 int main(int argc, char **argv)
@@ -1227,6 +1593,7 @@ int main(int argc, char **argv)
 	}
 	P.card = t_open("card", card_path);
 	P.render = t_open("render", render_path);
+	(void)snprintf(P.render_path, sizeof(P.render_path), "%s", render_path);
 	if ((P.card < 0) || (P.render < 0)) {
 		printf(TAG "RESULT pass=%d fail=%d gap=%d failed=%s verdict=FAIL\n", P.pass, P.fail, P.gap, P.failed);
 		return 1;
@@ -1259,6 +1626,12 @@ int main(int argc, char **argv)
 	if (P.buf[0].handle != 0u) {
 		t_prime();
 	}
+	t_prime_render();
+#ifndef DRMPROBE_NO_FORK
+	t_prime_xproc();
+#else
+	printf(TAG "prime_export_xproc skipped=1 (DRMPROBE_NO_FORK: host harness)\n");
+#endif
 
 	if (!keep && (P.crtc != 0u)) {
 		(void)drmModeSetCrtc(P.card, P.crtc, 0, 0, 0, NULL, 0, NULL);   /* planes off: the console comes back */
