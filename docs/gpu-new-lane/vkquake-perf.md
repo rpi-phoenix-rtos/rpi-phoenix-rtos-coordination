@@ -627,7 +627,8 @@ lightmap compute. Which of the two is what `perf-vkq-f` settles.
 `tools/gpu-lane/sdl2-drm/patches-vkquake-perf/0008-gl_warp-raster-warp-by-default-on-phoenix.patch`: `r_waterwarpcompute`
 defaults to **0** under `__phoenix__` (the 0006 pattern; the only Vulkan device there is V3D). The cvar stays
 `CVAR_ARCHIVE`; `r_waterwarpcompute 1` still selects compute at run time (it is read every frame, `gl_warp.c:179-246`).
-Kept out of `patches-vkquake/` until a cycle passes, as 0006/0007 were.
+Kept out of `patches-vkquake/` until a cycle passes, as 0006/0007 were. *Done after `perf-vkq-f`: it is
+`patches-vkquake/0008` (same number), `patches-vkquake-perf/` is gone again, see "Promotion" at the end.*
 
 * **Build:** `VKQDRM_OUT=tools/gpu-lane/sdl2-drm/build-out/vkquake-drm-perf-f VKQDRM_TARGET=/usr/bin/vkquake-drm-perf-f
   VKQDRM_EXTRA_PATCHES=tools/gpu-lane/sdl2-drm/patches-vkquake-perf/0008-gl_warp-raster-warp-by-default-on-phoenix.patch
@@ -702,4 +703,227 @@ Median over the whole run (111 fps lines each), same spawn view as `-e` (HDMI fr
   `thr4=0`) as the other big cost.
 - **Decision rules (pre-registered): both met.** Promote 0008 into `patches-vkquake/`, and make CPU lightmaps
   (`r_gpulightmapupdate 0`) the Phoenix default in a new patch. Then run `mig-vkq` on the promoted binary, with
-  a water scene added to the grade.
+  a water scene added to the grade. *Done: patches `0008` + `0009`, binary staged as `/bin/vkq-drm-g`, cycle
+  `mig-vkq-g` pre-registered, the 30.00 explained: see "Promotion" below.*
+
+## Promotion (2026-09-28, host only: build + staging, no Pi cycle yet)
+
+### Patches
+
+`tools/gpu-lane/sdl2-drm/patches-vkquake/`, applied in order by the default `build-vkquake-drm.sh`:
+
+| patch | change | origin |
+|---|---|---|
+| **`0008-gl_warp-raster-warp-by-default-on-phoenix.patch`** | `r_waterwarpcompute` "0" under `__phoenix__` (CVAR_ARCHIVE, still switchable) | moved unchanged (`git mv`) from `patches-vkquake-perf/`, same number, as 0006/0007 were (commit `3c84ca17c`); `patches-vkquake-perf/` is gone again |
+| **`0009-gl_rmain-cpu-lightmaps-by-default-on-phoenix.patch`** | `r_gpulightmapupdate` "0" under `__phoenix__` (CVAR_NONE as upstream, read every frame, so `r_gpulightmapupdate 1` still selects the GPU path at run time) | new, the 0006/0008 pattern |
+
+0009's header gives the reason and the measurement: `update_lightmap` costs ~10.7 ms of GPU time per dispatch
+(perf-vkq-e 10.67 ms, perf-vkq-f 5127 dispatches at 10.62 ms), and `+r_gpulightmapupdate 0` measured **+11.6 fps**
+(f 18.07 → f2 29.70). **Wording correction:** the shader is not single-threaded. `thr4=0` means CSD CFG5's
+4-thread bit is clear. The `V3D_DEBUG=shaderdb` lines of `perf-vkq-f` list every compute variant with loops
+(432, 541 and 1341 instructions) at **2 threads, 0 spills**, and every 4-thread variant is one of the small
+shaders (warp, indirect, v3dv's event/query shaders). So `update_lightmap` runs on 2 QPU threads, not 4. The
+header also lists what upstream's CPU path turns off, because +11.6 fps is the net of all of it:
+* the indirect-draw culling compute (`gl_rmain.c:1545`);
+* vkQuake's frame tasks (`gl_screen.c:1503`, `use_tasks … && r_gpulightmapupdate.value`), so the CPU frame runs
+  on one thread;
+* lightstyle interpolation (`gl_rlight.c:67`): styles step at 10 Hz, as in classic Quake.
+
+Dry run on a fresh tarball extraction: 0001–0009 apply with `patch -p1` (no fuzz, no offsets). Patch-file
+sha256: 0008 `4ce0aafbd2013…`, 0009 `935a77cd86611…`; patch set stamp **`34a050962b1171a5`**.
+
+### Build
+
+```
+VKQDRM_OUT=tools/gpu-lane/sdl2-drm/build-out/vkquake-drm-g VKQDRM_TARGET=/usr/bin/vkquake-drm-g \
+  tools/gpu-lane/sdl2-drm/build-vkquake-drm.sh
+```
+
+* rc 0, 83 TUs, 0 warning lines, and the script's proofs pass (symbols, strings, call sites, old-lane
+  inverse control, swap-order gate). 12 guarded shared files are unchanged, and 50 GB were free on `/`.
+* Output files:
+  * `vkquake-drm.stripped` **`15354b95b42f7c6b5a1566c2a0879a52f9c53671e1cea02500520a6bf010bce7`** (13 368 776 B);
+  * unstripped `vkquake-drm` `2804c627e2be549ac9218884ded05ddd24b88557e1ff088ff8f08d714b7389ab` (use it for addr2line);
+  * launcher `vkq-drm` **`22345b634bf71bae869d529307dee5ac467ae10e051c7fab69209b378055ddc1`** (execs
+    `/usr/bin/vkquake-drm-g`).
+* Inputs, all as in perf-f:
+  * ICD `69c689ad4926672b` (Mesa patch set `60dd139d…`);
+  * libdrm-phoenix m5b `a508e207…`;
+  * libphoenix.a `94a3e1e6…`;
+  * SDL source set `cd1e07eb499835db`.
+* `libSDL2.a` hashes differently in every build of the same source set (`0c3c00e3…` here, `96ff7085…` in
+  perf-f), so compare the source set, not the archive hash.
+* BUILD-INFO says `sources git: DIRTY/untracked`. The cause is an uncommitted header edit by another agent in
+  `build-vkquake-drm.sh`, not these patches.
+* **Checks on the ELF** (`gdb-multiarch -batch`): `r_waterwarpcompute.string = "0"` (CVAR_ARCHIVE),
+  `r_gpulightmapupdate.string = "0"` (CVAR_NONE), `r_oit.string = "0"`. `strings` on the launcher shows
+  `/usr/bin/vkquake-drm-g` and `vkq-drm: exec /usr/bin/vkquake-drm-g … +map start`.
+* **The engine binary does not depend on `VKQDRM_TARGET`**, which only reaches the launcher's `-D`
+  (`build-vkquake-drm.sh:406`). So the swap after a Pi pass is to install these same
+  `vkquake-drm.stripped` bytes as `/usr/bin/vkquake-drm`. The existing `/bin/vkq-drm` (`e49a7444…`) already execs
+  that path. A default `build-vkquake-drm.sh` run (out dir `build-out/vkquake-drm`, not rebuilt here) now applies
+  0001–0009 too.
+* **Not updated, by choice:**
+  * `build-vkquake-drm.sh`'s header still lists 0001–0007. That file carries another agent's uncommitted
+    edit, so it is not part of this commit.
+  * `scripts/check-gpu-lane-ports-sync.sh` (untracked, another agent's work) maps `patches-vkquake/` to
+    `sources/phoenix-rtos-ports/vkquake_drm/patches`. That port directory does not exist in the checked-out
+    ports tree yet, so when it lands it needs `0008` and `0009` copied in.
+
+### Staged (`/srv/phoenix-rpi4-nfs-gcc16`, `sudo -n install -m 755`, both targets absent before, `cmp` OK)
+
+| path | sha256 |
+|---|---|
+| **`/usr/bin/vkquake-drm-g`** | `15354b95b42f7c6b…` |
+| **`/bin/vkq-drm-g`** | `22345b634bf71bae…` |
+| untouched: `/usr/bin/vkquake-drm` | `22755bb450b09e0f…` (0001–0007) |
+| untouched: `/bin/vkq-drm` | `e49a7444fc782d0f…` |
+| untouched: `/usr/bin/vkquake-drm-perf-f`, `/bin/vkq-drm-perf-f` | `2cca8690…`, `ae88fb5a…` |
+
+### Why f2 reads exactly 30.00 fps [read + measured]
+
+**FIFO with two swapchain images, and a GPU frame of 19.9 ms, so every frame lands on the second vblank.** There is
+no fps cap.
+
+1. **FIFO is the only present mode.** Mesa's display WSI offers only FIFO
+   (`wsi_display_surface_get_present_modes`, `wsi_common_display.c:1632`). vkQuake asks for IMMEDIATE/MAILBOX when
+   `vid_vsync` is 0, its default (`gl_vidsdl.c:112`, `:2889-2905`), finds neither, and logs `Using FIFO present mode`.
+2. **Two images.** `minImageCount = max(vid_vsync >= 2 ? 3 : 2, caps.minImageCount = 2)` (`gl_vidsdl.c:2928`,
+   `wsi_common_display.c:1314`). The log imports exactly `kmsbuf id=1` and `id=2`.
+3. **Acquire waits for a flip.** An image goes back to IDLE only when a *different* image's flip completes
+   (`wsi_display_idle_old_displaying`, `wsi_common_display.c:1932-1945`, called from the flip handler at
+   `:2066-2068`). With two images, `vkAcquireNextImageKHR` therefore returns at the vblank that shows the
+   previous frame.
+4. **The GPU starts only after acquire.** vkQuake submits the whole frame in one `vkQueueSubmit` after the
+   acquire, waiting on its semaphore (`gl_vidsdl.c:4033` acquire, `:4200` submit, `:4234` present). So the GPU
+   work of frame N cannot start before about the vblank where acquire returned.
+5. **The GPU frame is longer than a vblank.** f2's steady state (last 40 qstat windows, 200 s, 6022 frames):
+   * render 18.2 jobs and 18.95 ms per frame, bin 0.95 ms, CSD 0;
+   * **GPU busy 19.9 ms/frame** (60 % of 33.3 ms), more than 16.7 ms even before the KMS server's
+     `guard_us=2000` latch margin.
+   So every frame misses the first vblank and flips on the second, and the next acquire returns there. The
+   period is 33.3 ms, which is exactly 30.00 in every window.
+6. **The waits fit.** `waitstat acquire` averages **10.8 ms** (median of 40 windows) and `present` 5.6 ms. That
+   leaves 33.3 − 10.8 ≈ 22.5 ms per frame outside acquire, including present.
+7. **What it is not:**
+   * `host_maxfps` is 200 (`host.c:68`), which would pace at 5 ms, and no cfg on the export sets it,
+     `vid_vsync` or any cvar above (`id1/autoexec.cfg`, `id1/config.cfg` read).
+   * `vid_maxframelatency` / present-wait2 is inactive at `vid_vsync 0` (`gl_vidsdl.c:4023`; `pwait=0` in
+     every waitstat line).
+   * SDL `patches/0009` changes only the GL swap (`KMSDRM_GLES_SwapWindow`); vkQuake presents through the
+     Vulkan WSI. It is the same problem, though: two buffers, and rendering that can start only at a vblank.
+     0009's fix was likewise a third buffer.
+8. **Why f did not lock to 20.00.** f's GPU frame was 33.2 ms, and its lightmap jobs vary from 1 to 21 ms. Its
+   frames therefore mixed 3 and 4 vblank periods, averaging 18.1–18.3 fps.
+
+**Capacity.** The GPU alone would allow ≈ 1000 / 19.9 ≈ **50 fps**. The CPU part outside acquire is ≈ 22.5 ms and
+runs on a single thread under CPU lightmaps (no tasks), which allows ≈ **44 fps** if CPU and GPU fully overlap.
+A true uncapped rate cannot be measured on this WSI: there is no IMMEDIATE or MAILBOX mode. A third image is the
+closest proxy.
+
+### Pre-registered `mig-vkq-g` — the promoted binary, the spawn view
+
+The `perf-vkq-f` command, with the label and the launcher changed:
+
+```
+./scripts/test-cycle-psh-interact.sh --label mig-vkq-g --wait-secs 220 --inter-cmd-secs 8 --idle-secs 60 \
+    --max-cmd-secs 300 --ready-line 'V3DA srv detached|KMS srv detached' --ready-extra-secs 20 \
+    --hdmi-dense-on 'vkquake-drm: new GPU lane' -- \
+    "/bin/rpi4-v3d-async-csdprof -r 1 -m serial -i -C" \
+    "/bin/rpi4-kms-gate -G" \
+    "export V3D_DEBUG=shaderdb" \
+    "/bin/vkq-drm-g"
+./scripts/check-torch-rois.py --label mig-vkq-g
+```
+
+Anchored on f2. The only intended difference is that the CPU path is on from the first frame: f2 set it after
+`map start`, so its first frames used GPU lightmaps. Grade as §6.2: steady windows, qstat deltas, frames from
+flipstat.
+
+| Line / quantity | `perf-vkq-f2` | predicted `mig-vkq-g` | if instead… |
+|---|---|---|---|
+| `vkq-drm: exec /usr/bin/vkquake-drm-g -basedir … +r_rtshadows 0 +map start` | (perf-f + arg) | once, **no appended argument** | stale launcher / wrong staging (`cmp` against the shas above) |
+| `Using R8G8B8A8 color buffer format (V3D: …)`, `Using FIFO present mode`, `kmsbuf id=1,2` | yes | same | — |
+| `SHADER-DB-… MESA_SHADER_COMPUTE` lines | present (pipelines are built whatever the cvar) | same set, loop variants at 2 threads | — |
+| `V3DA srv csdprof on …` | once | once | — |
+| `V3DA srv csd cfg5=…` class lines / qstat `csd` | none / `0/0ms` | **none / `0/0ms`** | any class (e.g. the `thr4=0` one): the default did not take, so a cfg sets `r_gpulightmapupdate` or the binary is wrong |
+| render jobs, ms / frame; bin ms | 18.2, 18.95; 0.95 | **18.2 ± 1, 19 ± 2; ≈ 1** | render ≫ 21 ms: raster warp or CPU-lightmap uploads cost more from frame 1 (diff the job counts) |
+| GPU busy / frame | 19.9 ms | **20 ± 2 ms** | — |
+| `flipstat` fps (median, steady) | 30.00 (run 29.70) | **30.00** in every steady window (run median 29.5–29.9) | < 29 steady: a regression against f2, diff the qstat rows; ≠ 30.00 upward: the pacing analysis above is wrong |
+| `waitstat acquire` / `present` avg | 10.8 / 5.6 ms | **9–13 / 4–7 ms** | acquire ≈ 0: frames no longer wait for a flip, so the image count changed |
+| HDMI | spawn view lit, torches, teleporter + lava sliver, "30 FPS" | same; the teleporter (a warp texture) drawn and animated by the raster path | teleporter black or frozen: raster warp broken, so reject 0008 |
+| torch ROI check | — | PASS or inconclusive (viewpoint), as before | torches dark: a real finding |
+| qstat err / wedges / rej, exceptions | 0 | 0 | any: FAIL; addr2line `build-out/vkquake-drm-g/vkquake-drm` |
+
+**Decision:** if every row holds, swap `/usr/bin/vkquake-drm` to these bytes (see Build; `/bin/vkq-drm` stays).
+
+### Pre-registered `mig-vkq-g-water` — a water scene
+
+**Correction to a premise.** "vkQuake has no argv path for `+map`" is true of the **old** lane's `ports/vkquake`
+only: its glue gives it none, and the boot map comes from the hand-staged `id1/phoenix-map.cfg`. vkquake-drm is
+different in three ways:
+* it is upstream `main_sdl.c` with patch 0001 (`common-publish-cmdline-on-shareware`), so `+` commands work on
+  the shareware pak;
+* its launcher passes `+map start` itself (`vkq-drm-launcher.c:41`) and appends extra arguments after it;
+* f2's appended `+r_gpulightmapupdate 0` demonstrably took effect (0 CSD jobs).
+
+A second `+map` therefore loads a second map after `start`.
+
+**Which map.** A PVS scan of the shareware maps was run (scratch script; it is not a repo tool, and the numbers
+are its output). It finds the `info_player_start` leaf, decodes its PVS, and keeps the warp faces in front of the
+spawn view within a 16:9 90° FOV and 1500 units.
+* `start` has `*lava1` (9 faces) and `*teleport` (2) in view. The f2 HDMI frame confirms the teleporter at the
+  centre and a lava sliver bottom right, so raster warp is already on screen at the spawn view, only small.
+  `*water1` (7 faces) is in the PVS but not in the frame, so it is occluded.
+* **`e1m2`** has **12 `*04water1` faces at ≥ 574 units straight ahead** (spawn 1496 1664 296, yaw 270): the moat
+  in front of the castle.
+* Others: `e1m5` has `*04water2` + `*teleport`, and `e1m7` has `*lava1` (19 faces).
+
+PVS does not model occlusion, so the HDMI frame is the check.
+
+```
+./scripts/test-cycle-psh-interact.sh --label mig-vkq-g-water --wait-secs 220 --inter-cmd-secs 8 --idle-secs 60 \
+    --max-cmd-secs 300 --ready-line 'V3DA srv detached|KMS srv detached' --ready-extra-secs 20 \
+    --hdmi-dense-on 'vkquake-drm: new GPU lane' -- \
+    "/bin/rpi4-v3d-async-csdprof -r 1 -m serial -i -C" \
+    "/bin/rpi4-kms-gate -G" \
+    "/bin/vkq-drm-g +map e1m2"
+```
+
+Grade:
+* the log shows `Introduction`, then e1m2's level name (`Castle of the Damned`, its worldspawn `message`), and `entered the game`
+  after the second one; steady windows are counted from that second line;
+* the HDMI ticks after it show a textured, animated water surface (the water region differs between two ticks
+  while static walls do not), not black, flat or frozen;
+* no `V3DA srv csd cfg5=0x…` warp class (64×64×1) appears;
+* 0 exceptions and err/wedges/rej 0.
+
+fps is recorded but not graded (a different scene). `check-torch-rois.py` does not apply, since its references
+are for `start`.
+
+### Pre-registered `pace-vkq-g` — how fast f2's configuration could go (no code change)
+
+`vid_vsync` is one of `VID_Init`'s `read_vars`, and `CFG_ReadCvarOverrides` reads its `+` override from argv
+**before** the swapchain exists (`gl_vidsdl.c:4704`; `VID_Restart` returns while `!vid_initialized`, `:4811`).
+The later `stuffcmds` pass sets the same value, which is a no-op (`Cvar_SetQuick`, `cvar.c:477`). So
+`+vid_vsync 2` gives a **3-image FIFO swapchain from the start, with no `VID_Restart`**. The KMS pool has room:
+`slots=3 pool_mib=32`, and 3 × 8.3 MB fit. The command is `mig-vkq-g`'s with the launcher line
+`"/bin/vkq-drm-g +vid_vsync 2"` and `--label pace-vkq-g`. Run it after `mig-vkq-g` passes.
+
+| Line / quantity | `mig-vkq-g` (predicted) | predicted `pace-vkq-g` | if instead… |
+|---|---|---|---|
+| exec line | no argument | `… +map start +vid_vsync 2` | — |
+| `Using FIFO present mode` | yes | yes (the only mode) | — |
+| kmsbuf imports | `id=1,2` | **`id=1,2,3`** | two only: the override did not reach `VID_Init` |
+| `flipstat` fps (median, steady) | 30.00 | **38–50, not a constant 30.00** (CPU ≈ 22.5 ms suggests ~44; GPU caps at ~50) | exactly 30.00 again: the lock is downstream of the swapchain (`rpi4-kms -G` gate, or WSI `_wsi_display_queue_next`'s one flip in flight), so read the KMS server's flip stats; < 30: FAIL |
+| `waitstat acquire` avg | ~11 ms | **< 3 ms** | — |
+| `waitstat pwait` | 0 calls | **≈ 1 call/frame**, small avg: with `vid_vsync > 0`, `vid_maxframelatency 2` engages present-wait2, which the stack exposes (`VK_KHR_present_wait2` in the log) | pwait avg ≈ a vblank: the latency cap is the limiter, so rerun with `+vid_maxframelatency 0` (read every frame, no restart) |
+| GPU busy / frame; busy share | 20 ms; 60 % | 20 ± 2 ms; **75–100 %** | busy share unchanged: the CPU frame is the limit; the next lever is CPU-side (tasks are off under CPU lightmaps) |
+| HDMI, exceptions, err/wedges/rej | as mig-vkq-g | same, no tearing (FIFO) | — |
+| `id1/config.cfg` on the export after the run | unchanged | **unchanged**: `vid_vsync` is CVAR_ARCHIVE, but the cycle kills vkQuake without a clean quit | contains `vid_vsync "2"`: restore it before the next cycle |
+
+**What it decides:**
+* ≥ 38 fps: propose `vid_vsync 2` (a 3-image swapchain) as the Phoenix default in a vkQuake patch
+  (`gl_vidsdl.c`, the 0006 pattern), with its own cycle.
+* A result near 44 rather than 50 confirms that the single-threaded CPU frame is the next wall. The follow-up
+  would then be whether `r_tasks` can stay on with CPU lightmaps; upstream couples them at `gl_screen.c:1503`.
