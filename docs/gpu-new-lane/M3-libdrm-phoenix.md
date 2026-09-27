@@ -920,3 +920,27 @@ Mesa (`-Dopengl=true`) for the game clones, and `kmscube -A` once G8 exists. A f
 `Using display` is an integration bug in steps 2–4 (fix in libdrm-phoenix or the servers, relink,
 re-run); a failure at the first frame is the import/scan-out chain (G1/G3/pool); a correct but slow or
 torn cube is performance (G12/E2b) or G13, not a blocker for the M3 verdict.
+
+## Result — `m3p2-drmprobe` (queue17, 2026-09-27 04:20): **PASS, exactly as pre-registered**
+
+`DRMPROBE RESULT pass=36 fail=0 gap=1 failed=- verdict=PASS` on both probe runs (the gap is render-node
+export, G4); 0 exceptions, 0 faults. Log `artifacts/rpi4b-uart/*-m3p2-drmprobe.log`.
+
+- **G10** `V3DA srv dri name=/dev/dri/renderD128 … registered=1`, `/dev/dri/card1` (own port 23),
+  `KMS srv dri name=/dev/dri/card0 … alias of /dev/kms` — the directory-exists branch of `create_dev`
+  worked.
+- **G2** `fstat_nodes n=3 answered=3 chr_all=1 distinct=1 devid_ok=1 ok=1`.
+- **G3** `dmabuf_size end=8294400 want=8294400 ok=1`.
+- **G1 — the first zero-copy cross-server buffer:** `V3DA srv import … ns=kmsbuf id=1 pages=2025
+  pa0=0x06000000 contiguous=1 gpuva=0x02110000 cache=uncached` → a GPU clear job into it →
+  `import_clear … pixels_ok=1 px0=0xff2080ff` read back through the KMS mapping → `import released …
+  live=0`. A buffer owned by rpi4-kms, written by the V3D via rpi4-v3d-async, read by a client.
+- **G13** `implicit_flip … events=1 pixels_ok=1 flip_us=33191` — a fence-less flip of a GPU-written
+  buffer waited for the GPU and showed the right pixels.
+- **Compatibility:** the old staged proto-1 `kmstest info` and proto-2 `v3dasync-ping cl-smoke` ran
+  against the new servers unchanged; `kmstest-m3p2 -n 120 flip` **120/120 at 60.00 fps, 0 missed**.
+- **M2 event fix proved:** server `read_dump … bytes=32 first16=00000002 00000020 …` and client
+  `read_dump … raw=00000002 00000020 4b4d5300 …` agree (type 2 = flip complete, length 32, the flip's
+  user data `0x4b4d5300 + i`).
+
+Next: `m3p3-kmscube` (queued, queue18) — Mesa GBM/EGL on this stack.
