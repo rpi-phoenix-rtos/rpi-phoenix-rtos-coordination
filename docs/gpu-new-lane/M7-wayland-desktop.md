@@ -1105,6 +1105,7 @@ shmsrv/E1 result, not an XFCE one.
 | `m7f-thunar` | xfconfd on the bus by activation, Thunar under labwc lists `/` with Adwaita icons — **pre-registered** in stage 4 |
 | `m7h-xfce` | ★ labwc + xfce4-panel + xfdesktop + Thunar + foot: the showcase desktop; Thunar browses `/`, the panel's app menu launches foot — **pre-registered** in stage 4 part 3 |
 | `m7i-xfce-demo` | the demo session in one psh command (`/bin/xfce-session`): servers, XFCE, a second Thunar over the bus, local time, Log Out, clean quits; pixman then gles2 — **pre-registered** in stage 5 |
+| `m7j-atril` | Atril 1.28 (Poppler 26.09, PDF backend built in) under XFCE on labwc: `sample.pdf` windowed, then `--fullscreen`, then `--presentation` — **pre-registered** in "Stage 6: Atril" |
 | `m7d-gl-client` | weston-simple-egl / kmscube-style GL client inside labwc (G4/G6/G7 in a real compositor) |
 
 ## Scheduling
@@ -1573,3 +1574,160 @@ Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-233145-m7i-xfce-demo.log`; kernel 
 - Next step: rpi4-kms must accept a `/kmsbuf` buffer that another client allocated (labwc's GBM swapchain), or
   wlroots must allocate its scanout through the dumb-buffer path it already uses with pixman. **The demo default
   stays pixman.**
+
+## Stage 6: Atril, the PDF viewer (`tools/gpu-lane/atril-wayland/`) — built, host-tested, staged, `m7j-atril` pre-registered
+
+Owner request: an XFCE-compatible PDF viewer, windowed and full screen, on the Wayland desktop. **Atril** (MATE's
+GTK 3 document viewer, Xubuntu's default) with the **Poppler** backend, static, on the gtk3-wayland `--usr` stack
+(snapshotted into `build-out/gtk/`, as xfce-wayland does). Atril was practical: its only MATE library use is one
+widget, and its X11 use is session management and two user-time calls. No fallback to Zathura was needed.
+Poppler and Atril are GPL: the sources live only in `build-out/src/` (sha256-pinned tarballs); committed are
+build.sh, the patches, `poppler-options.sh`, the sample generator, the session script, the `.desktop` entry, the host
+test.
+
+### Versions, configuration
+
+| package | version | licence | build | on / off |
+|---|---|---|---|---|
+| Atril | **1.28.7** (latest 1.28.x, 2026-08-27; meson) | GPL-2.0+ | meson | **PDF backend only, built in** (patch 0004); off: ps/dvi/djvu/tiff/xps/comics/epub/pixbuf, caja extension, keyring (libsecret), D-Bus (`atrild` + `org.mate.atril.Daemon` activation), thumbnailer, previewer, introspection, help; `gtk_unix_print` found (GTK has it; no print backends) |
+| Poppler | **26.09.0** (2026-09-03) | GPL-2/3 | cmake, C++23 | core + **poppler-glib** (cairo output); libjpeg (DCT), **openjpeg** (JPX), **lcms2** (ICC), libpng, fontconfig; off: Qt5/6, cpp wrapper, utils, NSS/GPGME, curl, tiff, boost, harfbuzz (subsetting needs harfbuzz-subset), introspection, tests — one list, `poppler-options.sh`, shared with the host test |
+| openjpeg | 2.5.4 | BSD-2 | cmake | libopenjp2 only |
+| lcms2 | 2.19.1 | MIT | meson | no utils, no GPL plugins |
+| libxml2 | 2.15.4 (= labwc-drm's) | MIT | meson | Atril: XMP metadata, toolbar editor |
+
+CMake cross build: `phoenix-aarch64.cmake` (Generic, phx-gcc/g++) with `CMAKE_FIND_ROOT_PATH` = one symlinked `/usr`
+view of this DESTDIR + the GTK snapshot + the ports views, mode ONLY (CMake's own FindFreetype/Fontconfig/JPEG/PNG/ZLIB
+see only target files), programs from the host. First C++ program of this lane: **no `hypotf` collision** at the link
+(meson links with g++; nothing extra needed).
+
+### Patches (`patches/<pkg>/`, `git format-patch`, applied with `git am`)
+
+| patch | sha (first 16) | why |
+|---|---|---|
+| atril 0001 `build: X11, ICE/SM and mate-desktop are optional (Wayland-only builds)` | `b1053bfa4868f741` | meson required x11+ice+sm (EggSMClient XSMP) and mate-desktop unconditionally. New features `x11`, `mate_desktop` (auto); without x11 EggSMClient/EggDesktopFile come from the bundled `cut-n-paste/smclient` **without a backend** (the base client: no session saved), so the mate-submodules git subproject is not needed |
+| atril 0002 `Include gdkx.h and use the X11 GDK API only with the X11 backend` | `49ddc96980bf6c3c` | a Wayland-only GTK installs no `gdk/gdkx.h`; 5 includes + the X11 user-time / screen-number calls under `GDK_WINDOWING_X11` |
+| atril 0003 `shell: GtkImageMenuItem when built without libmate-desktop` | `2d7526b421b7af90` | MateImageMenuItem is the only libmate-desktop API used (3 menus); `ev-image-menu-item.h` maps to GTK 3's GtkImageMenuItem (its origin) |
+| atril 0004 `libdocument: optionally link the document backends into the programs` | `4619d48db20a4bb8` | backends are GModule plugins; a static Phoenix program cannot load one. `-Dbuiltin_backends=true`: each backend a static library with `register_atril_backend` renamed `ev_builtin_<Module>_register`; a table generated from the `.atril-backend` files (`backend/ev-builtin-backends.py`: Module, Resident, TypeDescription, MimeType) is linked into atril/previewer/thumbnailer; the backends manager adds it before scanning the (now optional) backends directory; `ev_module_new_builtin()` calls the register function instead of `g_module_open()`. libdocument refers to the table weakly. Only the pdf backend is converted (configure stops for others) |
+| atril 0005 `Optionally keep Atril's GSettings schema in its own directory` | `4039c82b283f55ac` | `g_settings_new("org.mate.Atril")` aborts on a missing schema, and the staged `/usr/share/glib-2.0/schemas/gschemas.compiled` is shared (GTK's). `-Dschemas_dir=/usr/share/atril/schemas`: the schema is installed there and atril **appends that directory to `GSETTINGS_SCHEMA_DIR`** at the top of `main()` — so it also works when launched from the panel menu or fuzzel with the session's `GSETTINGS_SCHEMA_DIR=/usr/share/glib-2.0/schemas` |
+| poppler 0001 `cmake: accept fontconfig 2.14` | `b06a1874d1fbd91f` | Poppler asks for ≥ 2.15 but uses only old API (FcFontSort, FcPatternGet*, FcLangSet*…); the ports fontconfig is 2.14.2 and a second fontconfig in one static program is not an option |
+
+### Build, checks, artifacts
+
+```
+tools/gpu-lane/atril-wayland/build.sh            # ≈ 8 min cold (Poppler ≈ 4); needs gtk3-wayland/build-out-usr
+tools/gpu-lane/atril-wayland/hosttest/run.sh     # native build ≈ 5 min once, then seconds
+```
+
+`== program` fails the build on any miss: **`nm -u` 0, no `PT_INTERP`, 0 X11/SM/mate-desktop symbols**
+(`XOpenDisplay`, `XInternAtom`, `xcb_connect`, `gdk_x11_display_get_type`, `gdk_x11_window_set_user_time`,
+`SmcOpenConnection`, `IceOpenConnection`, `mate_image_menu_item_new`); present: `ev_builtin_backends`,
+`ev_builtin_pdfdocument_register`, `ev_module_new_builtin`, `poppler_document_new_from_file`, `poppler_page_render`,
+`CairoOutputDev::startPage`, `opj_decode`, `cmsCreateTransform`, `xmlXPathNewContext`, `gdk_wayland_display_get_type`,
+`gtk_image_menu_item_new_with_label`, `ev_view_presentation_new`, `egg_sm_client_get`, `ev_resource_data` (the UI
+definitions and CSS are a GResource in the binary); strings `pdfdocument`, `application/pdf`, `PDF Documents`,
+`/usr/share/atril/schemas`, `org.mate.Atril`. Build-host path strings: 27 (libstdc++'s own `__FILE__`s from the
+toolchain build, the 4 of the GTK stack, GTK's inkscape comments). Rebuilt on build 20b's sysroot (00:00): the
+binary is **byte-identical** (reproducible).
+
+| artifact (`build-out/`) | size | sha256 (first 16) | staged as |
+|---|---|---|---|
+| `bin/atril-stripped` (text 21 334 686 / data 105 372 / bss 83 716; unstripped `bin/atril` `6f862497b5195ba6`) | 21 445 696 | **`aae0497d157cc744`** | `/bin/atril-wl` |
+| `data/schemas/gschemas.compiled` (`org.mate.Atril` + `.Default`, `--strict`) | 1 582 | `fa39e50577e8391e` | `/usr/share/atril/schemas/gschemas.compiled` |
+| `data/sample.pdf` (`tools/make-sample-pdf.py`, ours BSD-3; deterministic) | 178 085 | `c67ed461b430cc6d` | `/usr/share/doc/phoenix/sample.pdf` |
+| `conf/atril.desktop` (`Exec=/bin/atril-wl %U`, `Categories=GTK;Office;Viewer;` → the panel menu's Office, fuzzel; icon by absolute path) | — | `5c3a7bb469b10ce8` | `/usr/share/applications/atril.desktop` |
+| `pi/xfce-desktop-atril.sh` | — | `c92b788cde3aaf16` | `/bin/xfce-desktop-atril.sh` |
+| `hand-open.png` + 40 icon PNGs (Atril's action icons, its private search path; the 16/22/24/48 app icon) | — | `stage.MANIFEST` | `/usr/share/atril/…` |
+
+**The sample document** (3 A4 pages, DejaVu fonts embedded as subsets by cairo, so the Pi needs no font of its own):
+p. 1 title "Atril on Phoenix-RTOS", a paragraph in Sans/Serif/Mono, a **red rectangle, a green circle, a blue
+triangle** and an orange Bezier stroke, a key help line; p. 2 "An embedded image": a 256×256 RGB field (red grows
+to the right, green downwards) and an 8×8 checkerboard; p. 3 "A table": a 10×10 multiplication table on a shaded
+grid. Footer "Page N of 3 - Atril on Phoenix-RTOS sample document".
+
+**Host test** (`hosttest/run.sh`, **ALL PASS**): openjpeg, lcms2, libxml2 and Poppler built natively from the same
+tarballs and patches with the same `POPPLER_OPTS` (+ utils) — Poppler's summary identical to the Pi's (cairo, glib,
+libjpeg, libpng, openjpeg2, lcms2 yes; boost/tiff/nss/gpg/curl no). (1) pdfinfo: 3 pages, the title; pdftocairo: 3
+PNGs. (2) `render_test.c` through **poppler-glib as Atril's backend calls it**: open, 3 pages, title, page-1 text,
+and the colour at the six points `make-sample-pdf.py --points` lists — all within ±24 (rectangle `d02020`, circle
+`20a040`, triangle `2040c0`, image corners `090980`/`f9f980`, table cell `e8f0ff`). (3) **Atril itself** with the
+Pi's patches and options on the host's GTK: its `atril-thumbnailer` renders `sample.pdf` through the **built-in
+backend table** — no backends directory exists — to a 400×566 PNG whose red-rectangle pixel is `d02020`;
+negative control: a text file is refused. (The host has no `libgailutil-3`; Atril's meson asks for `gail-3.0` but
+uses none of it: an empty stand-in `.pc`.)
+
+### Staging (done 2026-09-28 00:00; new names only — all 46 paths checked absent, then `sudo -n install -D` + `sha256sum -c`: all verified)
+
+```
+X=tools/gpu-lane/atril-wayland/build-out; EXPORT=/srv/phoenix-rpi4-nfs-gcc16
+while read -r sum path; do [ -e "$EXPORT/$path" ] && echo "EXISTS $path"; done < $X/stage.MANIFEST   # none
+while read -r sum path; do m=644; [ -x "$X/stage/$path" ] && m=755
+  sudo -n install -D -m $m "$X/stage/$path" "$EXPORT/$path"; done < $X/stage.MANIFEST
+(cd $EXPORT && sha256sum -c --quiet $OLDPWD/$X/stage.MANIFEST)
+```
+
+Nothing existing was touched (the shared schemas, the hicolor theme and its cache, `/bin/xfce-desktop.sh`,
+`/bin/xfce-session`, every labwc/XFCE config). Reused: `/bin/labwc-2`, the m7h XFCE programs and data
+(`/bin/xfce4-panel`, `/bin/xfdesktop`, `/etc/xdg/labwc-xfce/`, xfconfd + `.service`, icons, MIME), the servers.
+
+### Session (`pi/xfce-desktop-atril.sh` = the m7h `xfce-desktop.sh` of `61e5423eb`/`62c15b58d` with Atril as the client)
+
+`/bin/bash /bin/xfce-desktop-atril.sh xfce input`: bus, xfconfd by activation, labwc **`/bin/labwc-2`** with
+`/etc/xdg/labwc-xfce` (the XFCE autostart: xfdesktop + xfce4-panel), then — once the panel is on the bus — Atril
+once per mode of `ATRIL_MODES` (default `window fullscreen presentation`), each `HOLD` s (default 40) with a
+heartbeat every 10 s, then SIGTERM: `atril-wl DOC`, `atril-wl --fullscreen DOC`, `atril-wl --presentation DOC`.
+Knobs `ATRIL`, `ATRIL_DOC` (default `/usr/share/doc/phoenix/sample.pdf`), `ATRIL_MODES`, `ATRIL_ARGS`, `HOLD`,
+`RENDERER` (pixman: GLES2 labwc does not reach HDMI yet, m7i arm B), `LABWC`. Session `atril` = labwc without the
+XFCE autostart. Stop as m7h (`xfce4-panel --quit`, `xfdesktop --quit`, labwc, bus). Atril's stderr reaches the UART
+(started by the script, not by labwc).
+
+Runtime design notes: `GSETTINGS_BACKEND=memory` (the session's) + the schema appended by patch 0005; GIO local
+files only (no gvfs: Atril's per-document metadata is off without it — no error); MIME by
+`/usr/share/mime/mime.cache` (content type `application/pdf` → the built-in backend); rendering on Atril's job
+threads (Poppler + cairo image surfaces), the page shown through GTK's wl_shm buffers (shmsrv).
+
+### Cycle `m7j-atril` (after build 20b; ≈ 8–9 min — from a chain script if it would exceed one 10-min Bash call)
+
+**Question:** does a static C++ document viewer run on Phoenix — Poppler rendering a PDF (embedded fonts, vector
+shapes, a raster image) in Atril's GTK 3 window under labwc in the XFCE session, then **full screen** and in
+**presentation mode** — and stop cleanly?
+
+```
+./scripts/test-cycle-psh-interact.sh --label m7j-atril --idle-secs 60 --max-cmd-secs 480 \
+    --hdmi-dense-on 'XFCE atril start' -- \
+    "/bin/rpi4-v3d-async-low -r 1 -m serial -i" \
+    "/bin/rpi4-kms-g7 -G -p 96 -C" \
+    "/bin/shmsrv -v" \
+    "/bin/bash /bin/xfce-desktop-atril.sh xfce input" \
+    "/bin/shmsrv -s" \
+    "/bin/kmstest-poll stats"
+```
+
+Wall clock ≈ boot 60–150 s + ~10 s bus + ≤ 30 s labwc + ≤ 60 s panel + 3 × (≤ 15 s start + 40 s + TERM) + ≤ 30 s
+stop. Grade:
+`grep -a -E '^XFCE |atril|Atril|[Pp]oppler|Gtk-|Gdk-|GLib-|GLib-GIO-|GLib-GObject-|Fontconfig|^SHMSRV |^KMSTEST ' …m7j-atril.log`,
+`./scripts/uart-summary.sh m7j-atril`. Allow ~1.3 % UART line corruption; EL0 dumps print twice. **bench** rows need
+a person with the USB keyboard/mouse (otherwise **n/a**, not FAIL).
+
+| # | Line / observation | Predicted | If instead… |
+|---|---|---|---|
+| 1 | `XFCE start session=xfce renderer=pixman … labwc=/bin/labwc-2 atril=/bin/atril-wl doc=/usr/share/doc/phoenix/sample.pdf modes=window,fullscreen,presentation missing=none` | once | `missing=<paths>`: staging |
+| 2 | bus, `xfconfd via=activation`, `xfconf set_rc=0 get_rc=0`, `labwc … socket=up`, the panel on the bus (`XFCE waiting for the panel … org.xfce.Panel`) | as m7h rows 1–4 | m7h's rows decide |
+| 3 | `XFCE atril start mode=window: /bin/atril-wl /usr/share/doc/phoenix/sample.pdf`, `XFCE atril pid=…`; allowed: GTK's m7e rows 4–5 lines (locale fallback, xkbcommon include path, `Using the built-in XKB keymap`), `Gtk-WARNING … Could not find signal handler` (none expected: Atril uses no GtkBuilder), icon lookups (`Could not load a pixbuf` / missing `view-page-*`, `zoom-fit-*`, `object-rotate-*`: Atril's own action icons are in `/usr/share/atril/icons/hicolor/*/actions`, which the staged hicolor `index.theme` does not list — cosmetic) | the 21.4 MB exec starts within ~5 s | nothing and `atril=exited` at the first heartbeat: exec/crash — EL0 dump: `aarch64-phoenix-addr2line -f -C -e tools/gpu-lane/atril-wayland/build-out/bin/atril <pc>`; **`Settings schema 'org.mate.Atril' is not installed`** + abort: patch 0005 / `/usr/share/atril/schemas/gschemas.compiled` |
+| 4 | **no** `Unable to open document` / `File type … is not supported` / `Error opening backend` / `Cannot load backend` | the built-in pdf backend (patch 0004) found by content type `application/pdf` | "not supported": the MIME cache (`/usr/share/mime/mime.cache`) or the table — record the exact text |
+| 5 | `XFCE hold mode=window … labwc=running atril=running names=…Panel…` ×4 | runs the whole hold | `atril=exited` early: its last stderr lines |
+| 6 | `SHMSRV create` + `truncate …` for the window's buffers (≈ 1–2 × window size, e.g. ≤ 8 MiB caps) | GTK's wl_shm pools | `SHMSRV FAIL alloc`: contiguous memory (E1) |
+| 7 | **HDMI, window** (dense from `XFCE atril start`): the XFCE panel and wallpaper; an **Atril window** (labwc title bar "Atril on Phoenix-RTOS - sample document" or `sample.pdf`) with its menu bar (File Edit View Go Bookmarks Help), a toolbar (page number `1` / `of 3`, zoom), **page 1 rendered**: the bold title "Atril on Phoenix-RTOS", three lines of text, the red rectangle / green circle / blue triangle and the orange curve, crisp text; possibly the thumbnail sidebar | **Poppler renders on Phoenix** | grey page area with a spinner forever: the render job thread (note the last Poppler/GLib line); text missing but shapes present: font loading (embedded TrueType through FreeType — `Syntax Error`/`Couldn't find a font` lines); the window missing: rows 3/6 |
+| 8 | `XFCE atril exited mode=window rc=143` (SIGTERM, no handler) | clean kill | `rc=134`/`139`: a crash at exit — EL0 dump |
+| 9 | `XFCE atril start mode=fullscreen: /bin/atril-wl --fullscreen …`, heartbeats `atril=running` | — | as rows 3–5 |
+| 10 | **HDMI, fullscreen:** **no labwc title bar, the panel covered**, page 1 filling the 1920×1080 output (Atril's fullscreen: the page centred, grey around, and Atril's small fullscreen toolbar at the top) | labwc honours `xdg_toplevel.set_fullscreen` for a GTK window | the window stays decorated/windowed: labwc ignored the request (record); the panel above the page: labwc's layer order for fullscreen views (note, not an Atril failure) |
+| 11 | `XFCE atril start mode=presentation: /bin/atril-wl --presentation …` | — | as rows 3–5 |
+| 12 | **HDMI, presentation:** a **black** full screen with **one page** centred and scaled to the height (page 1: the shapes large), no toolbar/menus | Atril's presentation mode (EvViewPresentation) | a white/grey window instead: presentation mode not entered (note) |
+| 13 | stop: `XFCE atril exited mode=presentation rc=143`, `XFCE quit panel_rc=0 …` (xfdesktop may be 143 as in m7h), `XFCE labwc exited rc=0 … socket=gone`, `XFCE dbus exited rc=0 … socket=gone`, `XFCE done` | clean shutdown | m7h row 12's alternatives |
+| 14 | `SHMSRV stats rc=0 live=0 bytes=0`, `KMSTEST stats … bos=0` | all released (three Atril processes came and went) | `live>0`: a pool outlived Atril |
+| 15 | fault dumps | 0 kernel, 0 EL0 | EL0 in atril: addr2line (row 3) |
+| 16 | **bench** (window arm): **Page Down** / **Space** → page 2 (the colour field + checkerboard; the page box reads `2`), again → page 3 (the table); **Page Up** / **BackSpace** back; **Ctrl+Home** / **Ctrl+End** first/last page | Atril's navigation keys | nothing: keyboard focus (labwc-2 keyboard rows of m7b2) |
+| 17 | **bench:** **Ctrl++ / Ctrl+−** zoom; **F11** toggles full screen (as row 10) and back; **F5** starts the presentation (as row 12), **Right/Left** or **Page Down/Up** move pages there, **Esc** leaves it | fullscreen/presentation from inside a running window | — |
+| 18 | **bench:** the panel's Applications menu → **Office → Atril Document Viewer** starts `/bin/atril-wl` (an empty window; File → Open… shows GTK's file chooser, open `/usr/share/doc/phoenix/sample.pdf`); fuzzel (`Super+Space` in the demo session) lists "Atril Document Viewer" | the `.desktop` entry; patch 0005 without the script's environment | an abort on the schema: patch 0005 not in the binary (`strings -a /bin/atril-wl \| grep /usr/share/atril/schemas`) |
+
+**Decides:** rows 3–7 = a PDF viewer runs on Phoenix-RTOS (Poppler + GTK 3 on Wayland); rows 9–12 = full-screen
+and presentation rendering; 13–15 = clean exit, no leaks.

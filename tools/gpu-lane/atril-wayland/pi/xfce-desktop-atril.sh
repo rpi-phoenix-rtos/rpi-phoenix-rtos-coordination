@@ -34,7 +34,8 @@
 # Environment knobs: ATRIL (default /bin/atril-wl), ATRIL_DOC (default
 # /usr/share/doc/phoenix/sample.pdf), ATRIL_MODES (default "window fullscreen presentation"),
 # ATRIL_ARGS (more arguments for every start, e.g. "--page-index=2"; default none), HOLD
-# (seconds per mode, default 40), RENDERER (pixman | gles2, default pixman), LABWC, CONF_DIR
+# (seconds per mode, default 40), RENDERER (pixman | gles2, default pixman; gles2 does not reach
+# HDMI yet, m7i arm B), LABWC (default /bin/labwc-2), CONF_DIR
 # (default /etc/xdg/labwc-xfce), XFCONFD (default /usr/lib/xfce4/xfconf/xfconfd), ACTIVATION
 # (0 = skip bus activation, start xfconfd directly), VERBOSE (labwc -V, default 1), G_DEBUG /
 # G_MESSAGES_DEBUG (passed through), GDBUS_DEBUG (1 = G_DBUS_DEBUG=authentication).
@@ -52,7 +53,7 @@ SESSION=${1:-xfce}
 INPUT=${2:-input}
 RENDERER=${RENDERER:-pixman}
 HOLD=${HOLD:-40}
-LABWC=${LABWC:-/bin/labwc}
+LABWC=${LABWC:-/bin/labwc-2}   # m7b2's labwc: the USB keyboard opens (wlroots 0004)
 CONF_DIR=${CONF_DIR:-/etc/xdg/labwc-xfce}
 ATRIL=${ATRIL:-/bin/atril-wl}
 ATRIL_DOC=${ATRIL_DOC:-/usr/share/doc/phoenix/sample.pdf}
