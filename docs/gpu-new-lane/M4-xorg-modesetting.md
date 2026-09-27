@@ -7,11 +7,14 @@ Milestone M4 of the [new-lane plan](PLAN.md), from the design in
 [M2](M2-kms-server.md) (`rpi4-kms`), [M1](M1-async-render-server.md) (`rpi4-v3d-async`) and
 [E5](E5-deferred-reply.md) (IPC and `poll()` costs).
 
-**Status (2026-09-27):** first Pi cycle `m4a-xorg-drm` **FAILED as a build defect**: the server
-exited in bus configuration (`Cannot run in framebuffer mode`, 0 exceptions) — an upstream test that
-is always fatal without libpciaccess; fixed by xorg-server patch 0008 (see [Result](#result--m4a-xorg-drm-queue22-2026-09-27-0537-fail-fixed-by-patch-0008)),
-rebuilt, cycle **`m4b-xorg-drm` re-registered** (§10). m4a did prove the builtin-module table and
-libdrm-phoenix inside Xorg (first two `GETRESOURCES`). `Xorg-drm` — the unmodified hw/xfree86 X
+**Status (2026-09-27):** two Pi cycles, two build defects, both fixed, cycle **`m4c-xorg-drm`
+re-registered** (§10). `m4a`: exit in bus configuration (`Cannot run in framebuffer mode`) — an
+upstream test that is always fatal without libpciaccess → xorg-server patch 0008. `m4b`: past bus
+configuration, then `Given depth (2) is not supported by the driver` — **libphoenix's `<ctype.h>`
+macros evaluate their argument more than once**, so Xorg's config scanner read `DefaultDepth 24` as
+2 → compat `ctype.h` (§6). See the Result sections at the end. Proven on hardware so far: bash job
+control, config parsing, the builtin-module table, libdrm-phoenix inside Xorg (resources, caps,
+dumb BO + ADDFB/RMFB), the fb-slot probe. `Xorg-drm` — the unmodified hw/xfree86 X
 server of xorg-server **21.1.24** (the old lane's version and tarball) with the **modesetting** DDX,
 **glamor** on GBM/EGL, **DRI2, DRI3, Present, Xv**, and a new xf86 input driver **`phxhid`** for
 `/dev/kbd0` + `/dev/mouse0` — is one static aarch64-phoenix program: **0 undefined symbols**, text
@@ -39,7 +42,7 @@ shows it; **[inferred]** = reasoning, not verified.
 | Threads | `-Dinput_thread=false`: everything on the main thread (phxhid's timer, DRM events, clients). |
 | DRI3 / Present | **Built and initialised.** DRI3 open works today; client buffers need G4 (and G16, new: process-shared fences for xshmfence); Present flips of client buffers need G7 + cross-process implicit sync; Present timing rides G12 (§8). |
 | GLX | Off (`-Dglx=false`; glamor_glx.c dropped by patch 0007). |
-| libphoenix gaps | Three constants in `compat/include/` (`SI_USER`, `O_NOFOLLOW`, `RTLD_DEFAULT`), one os-support header block (patch 0005), `timingsafe_memcmp`/`reallocarray` from the server's own `libxlibc` fallbacks; **no link-time stand-in needed** (§6). |
+| libphoenix gaps | libphoenix's multi-evaluating `<ctype.h>` macros dropped by `compat/include/ctype.h` (the m4b failure), three constants in `compat/include/` (`SI_USER`, `O_NOFOLLOW`, `RTLD_DEFAULT`), one os-support header block (patch 0005), `timingsafe_memcmp`/`reallocarray` from the server's own `libxlibc` fallbacks; **no link-time stand-in needed** (§6). |
 
 ## 1. Design: where Xorg-drm sits
 
@@ -97,7 +100,7 @@ What changes versus the old lane's desktop: no `glReadPixels` + shadow + `write(
 | `patches/libepoxy/0001` | static-EGL dispatch (§3) |
 | `src/xorg_drm_builtin.c` | the builtin-module table (4 modules, 22 symbols) |
 | `src/phxhid.c`, `src/phxhid_evdev_map.h` | the input driver; the HID→evdev table is the old kdrive server's (FreeBSD `evdev_usb_scancodes[]`, BSD-2 notice kept) |
-| `compat/include/{signal,fcntl,dlfcn}.h`, `compat/xorg_drm_compat.c` | libphoenix-gap shim (§6) |
+| `compat/include/{ctype,signal,fcntl,dlfcn}.h`, `compat/xorg_drm_compat.c` | libphoenix-gap shim (§6) |
 | `conf/xorg-drm.conf` | the server configuration (stage as `/etc/X11/xorg-drm.conf`) |
 | `pi/xorg-drm-m4a.sh` | the Pi-side cycle script: bash does the job control psh lacks (§10) |
 
@@ -187,6 +190,7 @@ grades both keyboard outcomes; a follow-up arm adds `-C`.
 
 | Gap (tree sysroot of 2026-09-27) | Used by | Shim | Effect |
 |---|---|---|---|
+| **`<ctype.h>` macros evaluate their argument more than once** (`#define __isdigit(c) (((c) >= '0' && (c) <= '9') ? 1 : 0)`, same for all 15 `is*`/`to*`; C17 7.1.4 requires single evaluation) | `hw/xfree86/parser/scan.c:373` `while (isdigit(c = configBuf[configPos++]) …)` advanced two characters per test: **`DefaultDepth 24` → 2** (the m4b failure; any number in xorg.conf is affected). The only such call site in the xorg-server tree [grep] | `compat/include/ctype.h`: `#include_next`, then `#undef` all 15 macros — libphoenix exports a real function for each, so calls become single-evaluation (gcc may still inline them as builtins, correctly). `build.sh` preprocesses a probe and fails if the shim is not in effect | **real fix belongs in libphoenix** (single-evaluation macros, e.g. `((unsigned)(c) - '0' < 10u)` or inline functions). Other victims outside this build: the ports' prebuilt **libXfont2** `fontxlfd.c:156` `isdigit((unsigned char)*p1--)` (double decrement while formatting scalable-font matrices, can step below the buffer) — linked into Xorg-drm *and* the old lane's X server; fixed only by a libphoenix fix + rebuild of the port. Mesa's GBM/EGL/v3d/util/GLSL sources have no side-effecting ctype arguments [grep] |
 | no `si_code` constants (`SI_USER`) | `os/osinit.c` `OsSigHandler` (wording of a log line) | `compat/include/signal.h` → 0 | none |
 | no `O_NOFOLLOW` | `os/utils.c` `LockServer` (refuse a symlinked lock file) | `compat/include/fcntl.h` → 0 | plain open of `/tmp/.X1-lock` |
 | no `RTLD_DEFAULT` | `hw/xfree86/loader/loader.c` `LoaderSymbol` fallback after the builtin tables | `compat/include/dlfcn.h` → NULL | the fallback cannot succeed in a static program anyway |
@@ -205,8 +209,9 @@ stand-in only while `libphoenix.a` lacks the symbol, list `XORG_DRM_COMPAT_FNS`)
 |---|---|
 | static link | OK; link log only libphoenix's `sendmsg`/`recvmsg` attribute warnings |
 | `aarch64-phoenix-nm -u Xorg-drm` | **0** symbols |
-| `size` | text ≈ 20.29 MB, data ≈ 546 KB, bss ≈ 541 KB; file 108 064 232 B, **stripped 20 844 512 B** (old lane: `Xphoenix` 6.1 MB fbdev-only, `Xphoenix-glamor-daemon` 28.1 MB; kmscube 16.5 MB) |
-| sha256 (first 16) | **`Xorg-drm` `d408e8bc83b25510`, `Xorg-drm-stripped` `b67d33783531e854`** (with patch 0008; m4a ran `9538077f3bdfc6db`; a `--relink` reproduces the same bytes) |
+| `size` | text ≈ 20.29 MB, data ≈ 546 KB, bss ≈ 541 KB; file 108 071 952 B, **stripped 20 844 704 B** (old lane: `Xphoenix` 6.1 MB fbdev-only, `Xphoenix-glamor-daemon` 28.1 MB; kmscube 16.5 MB) |
+| sha256 (first 16) | **`Xorg-drm` `002aca08c9a1f231`, `Xorg-drm-stripped` `4c13641af1e84ada`** (patch 0008 + ctype shim; m4a ran `9538077f3bdfc6db`, m4b ran `b67d33783531e854`; a `--relink` reproduces the same bytes) |
+| ctype shim in effect | the preprocessed `scan.c:373` keeps `isdigit(c = configBuf[configPos++])` as a call (no macro expansion); `build.sh` probe passes |
 | patch 0008 in the binary | `xf86PostProbe` disassembles to `ret`; `Cannot run in framebuffer mode` 0 occurrences (`build.sh` checks it) |
 | modules | `modesettingModuleData`, `glamoreglModuleData`, `shadowModuleData`, `phxhidModuleData`, `xf86BuiltinModules`, `LoaderBuiltinFind`; `glamor_egl_init`, `glamor_init`, `ms_present_screen_init`, `dri3_screen_init`, `present_screen_init` |
 | libdrm-phoenix / Mesa | `__wrap_mmap`, `drmPhoenixMmap`, `drm_phoenix_ioctl`, `gbmint_get_backend`, `kmsro_drm_screen_create`, `v3d_drm_screen_create_renderonly`, `epoxy_static_proc_address`, `xshmfence_map_shm`, `libxcvt_gen_mode_info`; strings `/dev/dri/card0`, `/dev/dri/renderD128`, `/kmsbuf`, `libdrm-phoenix:`, `DRMPHX_TRACE`, `kmsro`, `V3D 4.2`, `EGL_KHR_platform_gbm`, `EGL_MESA_platform_gbm` |
@@ -275,13 +280,12 @@ help Xorg, whose poll set always contains AF_UNIX sockets.
 | R6 | xclock/xterm are the old lane's static clients; they speak plain X11 (+RENDER/Xft) and need nothing from the new lane, but they were only ever run against the kdrive server | client errors on stderr (`Xlib:` / `Warning:` lines) |
 | R7 | Xorg's first-generation paths never ran on Phoenix: lock file, `/tmp/.X11-unix` creation, `-logfile` on NFS, `-terminate` | the `(EE)` line and the log file |
 
-## 10. Pre-registered Pi cycle `m4b-xorg-drm` (one netboot cycle; re-registered after m4a)
+## 10. Pre-registered Pi cycle `m4c-xorg-drm` (one netboot cycle; re-registered after m4a, m4b)
 
-m4a (queue22) used the same staging and commands with the label `m4a-xorg-drm` and failed at bus
-configuration — see [Result](#result--m4a-xorg-drm-queue22-2026-09-27-0537-fail-fixed-by-patch-0008).
-**m4b = m4a with the patch-0008 binary** (`Xorg-drm-stripped` sha256 `b67d33783531e854…`) and the
-updated `xorg-drm-m4a.sh` (stops waiting for the socket as soon as the server has exited; m4a waited
-the full 90 s). Staging paths and commands are unchanged; only the label and the two files differ.
+m4a (queue22) and m4b (queue24) used the same staging and commands and stopped at build defects
+(Result sections). **m4c = m4b with the ctype-fixed binary** (`Xorg-drm-stripped` sha256
+`4c13641af1e84ada…`); `xorg-drm-m4a.sh` and `xorg-drm.conf` are unchanged since m4b (re-stage only
+the binary). Staging paths and commands are unchanged; only the label differs.
 
 **Question:** does the unmodified X.Org modesetting DDX with glamor bring up an X screen on HDMI
 through libdrm-phoenix, Mesa-DRM and the two new-lane servers — GBM/EGL context on V3D, a GPU-rendered
@@ -315,7 +319,7 @@ unstripped `build-out/Xorg-drm` on the host for `addr2line`.)
 **One cycle** (Bash `timeout: 600000`):
 
 ```
-./scripts/test-cycle-psh-interact.sh --label m4b-xorg-drm --idle-secs 45 --max-cmd-secs 240 \
+./scripts/test-cycle-psh-interact.sh --label m4c-xorg-drm --idle-secs 45 --max-cmd-secs 240 \
     --hdmi-dense-on 'XORGDRM client start' -- \
     "/bin/rpi4-v3d-async-m3p2 -r 1 -m serial -i" \
     "/bin/rpi4-kms-m3p2 -G" \
@@ -338,8 +342,8 @@ client, and waits ≤ 15 s for `-terminate` to end the server. Wall clock ≈ ne
 
 ```
 grep -a -E '^(XORGDRM|PHXHID|KMS|V3DA|DRMPHX|KMSTEST|V3DAPING) |\((EE|WW|II)\)|glamor|modeset\(|XKB:|Fatal|Xlib|Warning' \
-    artifacts/rpi4b-uart/rpi4b-uart-*-m4b-xorg-drm.log
-./scripts/uart-summary.sh m4b-xorg-drm
+    artifacts/rpi4b-uart/rpi4b-uart-*-m4c-xorg-drm.log
+./scripts/uart-summary.sh m4c-xorg-drm
 cat $EXPORT/var/log/Xorg-drm.1.log        # the full X log (verbosity 3), after the cycle
 ```
 
@@ -353,7 +357,8 @@ Allow ~1.3 % UART line corruption (re-read, don't count); EL0 dumps print twice.
 | `XORGDRM start …`, `XORGDRM server pid=…` | once | `bash: … not found`: bash not staged / psh quoting. |
 | `X.Org X Server 1.21.1.24`, builder `Phoenix-RTOS new GPU lane (Xorg-drm)`; `Using config file: "/etc/X11/xorg-drm.conf"` | first lines of the server | `(EE) Unable to locate/open config file`: staging; a lock-file/`/tmp/.X11-unix` error: R7. |
 | `(II) Module "modesetting": linked into the server`, later `"glamoregl"`, `"phxhid"` (and no `Failed to load module`) | builtin table works (**proven by m4a** for modesetting and phxhid) | `couldn't open module modesetting`: table not consulted (patch 0002 missing) — stale build. |
-| `(WW) Falling back to old probe method for modesetting`, `(II) modeset(0): using /dev/dri/card0`, and **no** `Cannot run in framebuffer mode` | the legacy fb-slot probe now passes xf86PostProbe (patch 0008) | the fatal line again: the m4a binary was staged (check the sha256 `b67d3378…`). |
+| `(WW) Falling back to old probe method for modesetting`, `(II) modeset(0): using /dev/dri/card0`, and **no** `Cannot run in framebuffer mode` | the legacy fb-slot probe passes xf86PostProbe (patch 0008; **proven by m4b**) | the fatal line again: an m4a binary was staged. |
+| `DRM_IOCTL_GET_CAP … cap=0x3 value=0x18`, `CREATE_DUMB w=1 h=1 bpp=32`, `ADDFB … depth=24`, `RMFB`, `DESTROY_DUMB` (drmmode_get_default_bpp's probe), then `(**) modeset(0): Depth 24, (--) framebuffer bpp 32` and `(==) modeset(0): RGB weight 888` — **no** `Creating default Display subsection … 2/4` / `Given depth (2)` | as in m4b up to the ADDFB, then the configured depth 24 (ctype shim) | `Given depth (2)` again: the m4b binary was staged (check the sha256 `4c13641a…`). Any other depth error: read `(**) Depth` — the config value now reaches the server. |
 | `DRMPHX conn fd=… path=/dev/dri/card0 node=card0 …`; `(II) modeset(0): … /dev/dri/card0`; `Output HDMI-1 connected`, mode `1920x1080` | Probe/PreInit through libdrm-phoenix | `(EE) No devices detected` / `no screens found`: Probe's `check_outputs` failed — read the `DRMPHX ioctl … name=DRM_IOCTL_MODE_GETRESOURCES rc=` line. |
 | `KMS srv fstat answered …`, `V3DA srv fstat answered …` (if not already answered), `DRMPHX conn … node=render` | GBM/kmsro pairing (kmscube's step 2) | `couldn't get display device`: `gbm_create_device` NULL — as kmscube's failure table (M3p3). |
 | `glamor: Using OpenGL ES 3.1 context` (3.0/2.0 possible: glamor asks for ES 2, Mesa returns its highest compatible ES; the desktop-GL attempt fails silently first) and **`glamor X acceleration enabled on V3D 4.2`** | glamor up on the GPU | `EGL_KHR_surfaceless_context required` / `GL_… required` / `Failed to create GL or GLES2 contexts`: R1 — then the server falls back to ShadowFB (dumb buffer, CPU `shadow` module) and the cycle still grades the display half: expect `glamor initialization failed` + `ShadowFB: …` and a CPU-drawn screen. |
@@ -425,6 +430,33 @@ Not reached: PreInit (GBM/EGL/glamor), modeset, input, DRI3/Present. Fix: patch 
 (`b67d33783531e854`), script now stops waiting when the server has died; **`m4b-xorg-drm`
 re-registered** in §10 with the same staging and commands.
 
-## Result — `m4b-xorg-drm`
+## Result — `m4b-xorg-drm` (queue24, 2026-09-27 07:02): FAIL, fixed by the compat `ctype.h`
+
+Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-070215-m4b-xorg-drm.log` (`grep -a`), X log
+`/srv/phoenix-rpi4-nfs-gcc16/var/log/Xorg-drm.1.log`. Binary `b67d33783531e854` (patches 0001–0008).
+0 exceptions, 0 faults.
+
+- **Patch 0008 proven:** `(WW) Falling back to old probe method` → `modeset(0): using /dev/dri/card0`,
+  no `Cannot run in framebuffer mode`.
+- **libdrm-phoenix answered every PreInit call correctly** (the m4b hypotheses about the cap mapping
+  and `GETFB` are refuted by the trace): `GET_CAP cap=0x3 value=0x18` (`DRM_CAP_DUMB_PREFERRED_DEPTH`
+  = 24, the rpi4-kms value), then drmmode_get_default_bpp's probe `CREATE_DUMB 1x1 bpp=32 handle=1
+  pitch=64` → `ADDFB 1x1 bpp=32 depth=24 fb=4096` → `RMFB` → `DESTROY_DUMB`, all `rc=0` — so the
+  driver computed depth 24 / bpp 32 (`drmmode_display.c:4260-4295`; `GETFB` is never called).
+- Then `Creating default Display subsection in Screen section "screen0" for depth/fbbpp 2/4` →
+  `(EE) Given depth (2) is not supported by the driver` → `no screens found`.
+- **Cause:** `xf86SetDepthBpp()` (`xf86Helper.c`) takes the depth from the config Screen's
+  `DefaultDepth` before the driver's default; fbbpp 4 is its derivation for a depth ≤ 4. So the
+  parser stored 2. Its number scanner is `while (isdigit(c = configBuf[configPos++]) || …)`
+  (`parser/scan.c:373`), and libphoenix's `isdigit` is a macro that evaluates `c = buf[pos++]` twice:
+  for `24\n` the first test reads `4` then `\n` (10 ≤ '9' passes), storing `\n`, and the number
+  string becomes `"2\n…"` → `strtoul` = 2. A libphoenix defect (C17 7.1.4), shimmed in
+  `compat/include/ctype.h` (§6), full rebuild (the shim is on every compile line of xorg-server,
+  libepoxy, libxshmfence).
+- The script's early-exit detection worked (ended 2 s after the server died).
+
+Not reached: glamor/GBM/EGL, modeset, input, DRI3/Present. Re-registered as **`m4c-xorg-drm`** (§10).
+
+## Result — `m4c-xorg-drm`
 
 *(to be filled: log path, snapshot paths, the tagged lines, the rows that applied)*

@@ -123,6 +123,16 @@ done
 libphx_syms="$("${TC}-nm" -g --defined-only "${S}/lib/libphoenix.a" 2>/dev/null || true)"
 has_libc() { grep -qE " [TW] $1\$" <<< "${libphx_syms}"; }
 
+# libphoenix's ctype macros evaluate their argument more than once (C17 7.1.4 violation):
+# compat/include/ctype.h drops them. Make sure the shim is what the build sees (m4b: Xorg's
+# config scanner parsed "DefaultDepth 24" as 2 through isdigit(c = buf[pos++])).
+ctype_probe="$(printf '#include <ctype.h>\nint f(const char *p) { return isdigit(*p++); }\n' \
+	| "${TC}-gcc" "${TFLAGS[@]}" -I"${COMPAT_INC}" -E -x c - 2>/dev/null | tail -1)"
+case "${ctype_probe}" in
+	*"isdigit(*p++)"*) ;;
+	*) echo "build.sh: compat ctype shim not effective: ${ctype_probe}" >&2; exit 1 ;;
+esac
+
 mkdir -p "${out}/dl" "${out}/src"
 DP="${out}/deps-prefix"
 LDP="${out}/libdrm-prefix"
