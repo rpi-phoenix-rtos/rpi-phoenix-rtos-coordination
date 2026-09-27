@@ -9,14 +9,20 @@ nodes, the static Mesa GBM/EGL/GLES, the `--wrap=mmap/ioctl` rules), [M4](M4-xor
 (`memExport`, fd per buffer across AF_UNIX) and [poll-wake](poll-wake.md) (`pollNotify`,
 `rpi4-kms-gate`).
 
-**Status (2026-09-27): code complete, builds, statically verified; no Pi cycle yet.** The whole
+**Status (2026-09-27, latest):** first Pi cycle **`m6a-weston` FAILED at compositor init** in both
+arms — `failed to create XKB context` 2 s after start (libxkbcommon refuses a context when no include
+path exists, which is always the case on Phoenix). Fixed by weston patch **0007** (context without
+default includes; the baked keymap path unchanged), reproduced and verified on the host
+(`hosttest/xkb_test.c`), rebuilt; the rest of the start-up path was walked statically (§13).
+Cycles **re-registered as `m6c-weston` / `m6d-weston-egl`** (§9). See [Result — m6a](#result--m6a-weston-queue31-2026-09-27-1013-fail-fixed-by-weston-patch-0007).
+
+**Earlier:** code complete, builds, statically verified. The whole
 Wayland stack — libwayland 1.24.0 (server, client, egl, cursor), wayland-protocols 1.45,
 libxkbcommon 1.7.0, libdisplay-info 0.2.0, libseat 0.9.1 (noop backend) — and **Weston 14.0.2 with
 only the DRM backend, the GL (and pixman) renderer and the kiosk shell** cross-build static for
 aarch64-phoenix; `weston`, `weston-simple-shm`, `weston-simple-egl` (GLES on the new Mesa
 `--wayland` EGL platform) and a new `/shm` server `shmsrv` link with **0 undefined symbols**, carry
-the libdrm-phoenix and weston tags, and contain **no old-lane string**. Two Pi cycles are
-pre-registered in §9. Nothing committed, nothing staged, no server, old-lane file or sibling repo
+the libdrm-phoenix and weston tags, and contain **no old-lane string**. Nothing committed, nothing staged, no server, old-lane file or sibling repo
 touched. Code: [`tools/gpu-lane/weston-drm/`](../../tools/gpu-lane/weston-drm/); one opt-in patch
 added to [`tools/gpu-lane/mesa-drm/`](../../tools/gpu-lane/mesa-drm/) (§4.4, read §12).
 
@@ -92,10 +98,10 @@ Start-up path [read: `frontend/main.c`, `libweston/compositor.c`, `backend-drm/d
 | `shims/src/libevdev_phoenix.c` | 41 | `libevdev_event_code_from_name` for BTN_ names |
 | `shmsrv/shmsrv.c`, `shmsrv/shm_proto.h` | 578 | the `/shm` server + its protocol (§6) |
 | `src/weston_builtin.c` | 43 | builtin-module table + `#include "weston_keymap.h"` (generated) |
-| `patches/{wayland,seatd,weston}/` | | 1 + 4 + 6 `git format-patch` files (§4) |
+| `patches/{wayland,seatd,weston}/` | | 1 + 4 + 7 `git format-patch` files (§4) |
 | `conf/weston-drm.ini` | | stage as `/etc/xdg/weston/weston-drm.ini` |
 | `pi/weston-m6a.sh` | ≈140 | the Pi-side cycle script: bash does the job control psh lacks (§9) |
-| `hosttest/epoll_test.c`, `hosttest/run.sh` | | host test of the event-loop emulation (§5.1), no Pi, ~1 s |
+| `hosttest/{epoll_test,xkb_test}.c`, `hosttest/run.sh` | | host tests, no Pi, seconds: the event-loop emulation (§5.1, 31/31) and Weston's XKB start-up with no include path (§7.4, 8/8) |
 | `../mesa-drm/build.sh` (`--wayland`), `../mesa-drm/patches/mesa/0012-…` | | §4.4 |
 
 New files carry the Phoenix header (`%LICENSE%`) for the server/script/program sources and SPDX
@@ -125,9 +131,9 @@ sync-file `ioctl` interposer and G4a/G17), the mesa-drm compat headers; host `wa
 | Check | `weston` | `weston-simple-shm` | `weston-simple-egl` | `shmsrv` |
 |---|---|---|---|---|
 | `nm -u` | **0** | **0** | **0** | **0** |
-| size (text / data / bss) | 18 227 230 / 522 868 / 315 500 | 111 600 / 1 160 / 23 060 | 14 582 446 / 531 908 / 314 700 | 57 272 / 204 / 14 660 |
-| file / **stripped** | 94 522 088 / **18 755 568** | 1 097 464 / **121 048** | 86 788 776 / **15 119 840** | 765 832 / **124 176** |
-| sha256 (stripped, first 16) | `da1b568a56cf770b` | `726de04f92a35376` | `df2cd82fbebc8a88` | `6a89f2610a5ad80d` |
+| size (text / data / bss) | 18 227 358 / 522 868 / 315 500 | 111 600 / 1 160 / 23 060 | 14 582 446 / 531 908 / 314 700 | 57 272 / 204 / 14 660 |
+| file / **stripped** | 94 522 312 / **18 755 696** | 1 097 464 / **121 048** | 86 788 776 / **15 119 840** | 765 832 / **124 176** |
+| sha256 (stripped, first 16) | **`2699d5e8ea831cdc`** (patches 0001–0007; m6a ran `1bb4cdb067a551c4`, 0001–0006) | `726de04f92a35376` | `df2cd82fbebc8a88` | `6a89f2610a5ad80d` |
 | link warnings (beyond libphoenix's `sendmsg`/`recvmsg` attribute notes) | 0 | 0 | 0 | — |
 
 (Weston embeds the git id of its extracted build tree, so a re-extraction changes `weston`'s hash
@@ -183,6 +189,7 @@ compat (§5.1), as epoll-shim on FreeBSD.
 | 0004 | `meson: find dlopen() through the dl dependency` | `find_library('dl')` fails where libc has `dlopen` |
 | 0005 | `meson: build without cairo, disabling only what uses it` | cairo/libpng/libutil were hard requirements even for DRM+GL+kiosk+simple clients; without them the cairo-shared library becomes a disabler (toytoolkit clients, screenshooter, desktop shell, nested-backend borders turn off) |
 | 0006 | `gl-renderer: include <endian.h> for its byte-order tests` | `BYTE_ORDER == BIG_ENDIAN` with both undefined reads 0 == 0 (glibc pulls the header in implicitly) |
+| 0007 | `input: create the XKB context even when no XKB include path exists` | **the m6a failure.** `xkb_context_new(XKB_CONTEXT_NO_FLAGS)` returns NULL when none of `$XDG_CONFIG_HOME/xkb`, `$HOME/.config/xkb`, `$HOME/.xkb`, the extra path or the root exists (`libxkbcommon src/context.c:306-313` [read]); Weston then exits in `weston_compositor_init_config` before any backend. Retry with `XKB_CONTEXT_NO_DEFAULT_INCLUDES` and log `XKB: no include path exists, keymaps can only come from strings`; rule-name compilation then fails cleanly and 0003's baked keymap is used. The only `xkb_context_new` caller in the four binaries (`simple-im`/toytoolkit are not built; libxkbcommon's tools are not built for the target) [read + `nm`]. |
 
 ### 4.4 mesa-drm: `--wayland` and patch 0012
 
@@ -328,13 +335,16 @@ stack, shims, compat. `dlopen` stays linked (the fallback for a module outside t
 the host's xkeyboard-config, from a native build of the same libxkbcommon when the host has no
 `xkbcli`) → `weston_keymap.h` → `weston_builtin_xkb_keymap`. On the Pi `xkb_keymap_new_from_names`
 fails (no `/usr/share/X11/xkb`) and Weston logs `using the builtin XKB keymap` — only when a
-keyboard device exists (the keymap is built lazily). The keymap reaches clients as a memfd (shmsrv).
+keyboard device exists (the keymap is built lazily). The context itself is created without include
+paths (patch 0007; m6a showed the default creation fails). Host-verified (`hosttest/xkb_test.c`,
+8/8): the default context fails exactly as on the Pi, the no-includes context succeeds, rule names
+fail, the baked keymap compiles, `KEY_A` → `a`, and it re-serialises (68 121 bytes) for clients. The keymap reaches clients as a memfd (shmsrv).
 
 ## 8. Cross-process buffers and sync: what works, what waits
 
 | Feature | Today | Waits for |
 |---|---|---|
-| wl_shm clients (weston-simple-shm, cursor themes, toolkits' CPU buffers) | **expected to work**: shmsrv + E1 windows + SCM_RIGHTS (E1-proven) | Pi cycle m6a |
+| wl_shm clients (weston-simple-shm, cursor themes, toolkits' CPU buffers) | **expected to work**: shmsrv + E1 windows + SCM_RIGHTS (E1-proven) | Pi cycle m6c |
 | Weston composition of dma-buf clients (linux-dmabuf → `EGL_EXT_image_dma_buf_import`) | a client buffer that is a `/kmsbuf` export imports on Weston's render connection: `BO_IMPORT ns=kmsbuf` (**G1 ✅**) | — |
 | Client GPU rendering (weston-simple-egl, any wayland-egl app) | Mesa allocates back buffers `PIPE_BIND_SHARED` on the **render node** → export = `PRIME_HANDLE_TO_FD` there = **G4** (`-ENOSYS`). With **0012** (`V3D_PHOENIX_SHARED_SCANOUT=1`) they come from the kms pool instead → `/kmsbuf` → works (G4a covers the re-export of an imported BO) | **G4** (`V3DA_OP_BO_EXPORT` + `/v3dbuf`, `BO_IMPORT ns=v3dbuf`) to drop 0012 and the pool pressure |
 | Direct scanout of a client buffer (kiosk fullscreen, overlay planes) | Weston's `drmModeAddFB2` needs `PRIME_FD_TO_HANDLE` on card0 of a buffer another process allocated = **G7** (`-ENOSYS`) → Weston **falls back to GL composition** (expected, not a failure) | **G7** (`KMS_OP_PRIME_IMPORT`) |
@@ -368,14 +378,18 @@ sudo mkdir -p "$EXPORT/etc/xdg/weston"
 (`cmp` after `install`; keep the unstripped binaries for `addr2line`.) Preconditions: netboot image
 ≥ build 11 (pollNotify kernel); no GPU app, no X, no SDL program, no old-lane `rpi4-v3d` running.
 
-### Cycle `m6a-weston` (arms A and B; Bash `timeout: 600000`)
+### Cycle `m6c-weston` (arms A and B; Bash `timeout: 600000`) — re-registration of m6a
+
+Same staging and commands as m6a (which stopped at the XKB context, see its Result) with the
+0007 binary: re-stage **only `/bin/weston`** (`weston-stripped` sha256 `2699d5e8ea831cdc…`); the
+clients, `shmsrv`, the script and the ini are unchanged since m6a. New label only.
 
 **Question:** does Weston's DRM backend bring up an output on HDMI through libdrm-phoenix and
 `rpi4-kms`, with the pixman renderer (no Mesa at run time) and with the GL renderer (GBM/EGL on
 V3D), serve a wl_shm client whose pixels travel through shmsrv, and exit cleanly on SIGTERM?
 
 ```
-./scripts/test-cycle-psh-interact.sh --label m6a-weston --idle-secs 45 --max-cmd-secs 150 \
+./scripts/test-cycle-psh-interact.sh --label m6c-weston --idle-secs 45 --max-cmd-secs 150 \
     --hdmi-dense-on 'WESTONDRM client start' -- \
     "/bin/rpi4-v3d-async-m3p2 -r 1 -m serial -i" \
     "/bin/rpi4-kms-gate -G" \
@@ -393,8 +407,8 @@ Wall clock ≈ boot 60–150 s + 3 × ~10 s + 2 × (~10 s start + 30 s hold + �
 
 ```
 grep -a -E '^(WESTONDRM|SHMSRV|KMS|V3DA|DRMPHX|KMSTEST|V3DAPING|LIBINPUT-PHX) |\[[0-9:.]+\] |libseat|simple-(shm|egl)' \
-    artifacts/rpi4b-uart/rpi4b-uart-*-m6a-weston.log
-./scripts/uart-summary.sh m6a-weston
+    artifacts/rpi4b-uart/rpi4b-uart-*-m6c-weston.log
+./scripts/uart-summary.sh m6c-weston
 ```
 
 Allow ~1.3 % UART line corruption (re-read, don't count); EL0 dumps print twice. Weston's own log
@@ -406,9 +420,10 @@ lines start with `[hh:mm:ss.mmm]`.
 |---|---|---|
 | `SHMSRV srv ready ns=/shm port=… proto=1 …`, `SHMSRV srv detached pid=…` | once | `served already`: a stale server — note, continue |
 | `WESTONDRM start renderer=pixman client=shm … input=none`, `WESTONDRM weston pid=…` | once per arm | bash/staging |
-| `Command line: /bin/weston --config=…`, `Using config file '/etc/xdg/weston/weston-drm.ini'`, possibly `XDG_RUNTIME_DIR "/tmp/xdg" is not configured correctly` (mode warning only) | early | `XDG_RUNTIME_DIR is not set`: script env — stop |
+| `Command line: /bin/weston --config=…`, `Using config file '/etc/xdg/weston/weston-drm.ini'`, possibly `XDG_RUNTIME_DIR "/tmp/xdg" is not configured correctly` (mode warning only) | early (**proven by m6a**) | `XDG_RUNTIME_DIR is not set`: script env — stop |
+| **`XKB: no include path exists, keymaps can only come from strings`**, then `Output repaint window is 7 ms maximum.` — **no** `failed to create XKB context` | patch 0007 (the m6a stop) | `failed to create XKB context` again: the m6a binary was staged (sha) |
 | `Module 'drm-backend.so': linked into the program` (and later `gl-renderer.so` in arm B, `kiosk-shell.so` in both) | builtin table (patch 0001) | `Failed to load module`: table miss — stale binary (check sha) |
-| `Seat opened with backend 'noop'` (libseat's info lines go to Weston's log unprefixed) | once | `No backend matched`/`No backend was able to open a seat`: `LIBSEAT_BACKEND` not exported |
+| `initializing drm backend`, `Seat opened with backend 'noop'` (libseat's info lines go to Weston's log unprefixed), `libseat: session control granted` | once | `No backend matched`/`No backend was able to open a seat`/`libseat: could not open seat`: `LIBSEAT_BACKEND` not exported; `dispatch failed`: the noop socketpair |
 | `using /dev/dri/card0`, `DRM: supports atomic modesetting`, `DRM: supports GBM modifiers` (or `does not support`), `DRM: does not support Atomic async page flip` | init_kms_caps passes | `does not support DRM_CAP_TIMESTAMP_MONOTONIC` / `doesn't support universal planes`: libdrm-phoenix cap mapping — read the `DRMPHX ioctl … GET_CAP/SET_CLIENT_CAP` lines |
 | `DRMPHX conn fd=… path=/dev/dri/card0 node=card0 …` | libdrm-phoenix identified the libseat-opened fd (O_NONBLOCK) | `rc=-…` on HELLO: identification of a descriptor opened with O_NONBLOCK — library bug |
 | arm A: `warning: no input devices found, but none required as per configuration.`; arm B: `LIBINPUT-PHX dev=/dev/mouse0 kind=mouse open=ok fd=…` or `open=failed errno=… (retrying every 1000 ms)`, same for `/dev/kbd0` (**both outcomes acceptable**: without `rpi4-kms -C` the console holds the keyboard, M4 R5), then `LIBINPUT-PHX seat=seat0 devices=2 reader=1` | as listed | a crash in libinput-phoenix: `addr2line` |
@@ -430,10 +445,13 @@ libseat/udev/libinput shims and the shmsrv wl_shm path work; arm B adds the GL r
 before the socket in A but not B (or the other way) localises the renderer; in both = backend/OS
 layer.
 
-### Cycle `m6b-weston-egl` (arm C; after m6a arm B passed)
+### Cycle `m6d-weston-egl` (arm C; after m6c arm B passed) — re-registration of m6b
+
+m6b (queue, same commands) ran the 0001–0006 binary and is expected to stop at the same XKB line;
+its log goes into its Result section. m6d = m6b with the 0007 `weston`.
 
 ```
-./scripts/test-cycle-psh-interact.sh --label m6b-weston-egl --idle-secs 45 --max-cmd-secs 150 \
+./scripts/test-cycle-psh-interact.sh --label m6d-weston-egl --idle-secs 45 --max-cmd-secs 150 \
     --hdmi-dense-on 'WESTONDRM client start' -- \
     "/bin/rpi4-v3d-async-m3p2 -r 1 -m serial -i" \
     "/bin/rpi4-kms-gate -G -p 96" \
@@ -456,7 +474,7 @@ exceed the default 32 MiB pool (E3: 256 MiB contiguous below 1 GiB is available)
 | `N frames in 5 seconds: X fps` every 5 s | X ≈ 50–60 (GLES triangle, vsync-paced through Weston's repaint loop) | ≈ 30: the flip completes a vblank late (see poll-wake.md); < 10: composition copies (GL import) or IPC per frame — read `DRMPHX` rates |
 | HDMI | **the rotating RGB triangle, fullscreen** | black: Weston could not import the buffer (EGL dma-buf import) — `linux_dmabuf` errors in Weston's log; torn triangles: no cross-process implicit sync (§8) — expected risk, note |
 | Weston log | no direct scanout of the client (`drmModeAddFB2` of a foreign buffer → G7 → GL composition) | direct scanout succeeded: G7 was implemented meanwhile |
-| exit, stats, faults | as m6a | as m6a |
+| exit, stats, faults | as m6c | as m6c |
 
 ## 10. Risks only the Pi can show
 
@@ -474,7 +492,7 @@ exceed the default 32 MiB pool (E3: 256 MiB contiguous below 1 GiB is available)
 
 | Step | Size | Notes |
 |---|---|---|
-| m6a/m6b cycles + fixes they find | 1–3 cycles, 0.5–2 days | the integration surface is kmscube's (GBM/EGL/KMS) + Xorg's (static modules) + new (event loop emulation, shmsrv, libseat/udev/libinput shims) |
+| m6c/m6d cycles + fixes they find | 1–3 cycles, 0.5–2 days | the integration surface is kmscube's (GBM/EGL/KMS) + Xorg's (static modules) + new (event loop emulation, shmsrv, libseat/udev/libinput shims) |
 | Input on the Pi (`rpi4-kms -C` console handover, keys into a Wayland client) | 0.5–1 day | libinput-phoenix is written; untested; needs a keyboard-reading client (e.g. weston-terminal needs cairo — ports have cairo, so weston patch 0005's disabler turns back on once cairo is exposed) |
 | **G4** render-node export → drop 0012 | ~120 + ~40 lines server + library, 1–2 days (M3 §4 spec) | shared with M4 DRI3, M5 external memory |
 | **G7** kms import of foreign buffers (direct scanout of fullscreen clients, overlays) | ~150 lines + library, 2–3 days | performance, not function (GL composition works) |
@@ -505,6 +523,71 @@ The compositor itself is done up to its first cycle.
   `<linux/input.h>`.
 * PLAN.md's M6 row is left for the coordinator to update.
 
-## Result — `m6a-weston`
+## 13. Static walk of the start-up path after the XKB context (for m6c)
+
+m6a proved everything before `weston_compositor_init_config()` (log, display, the three emulated
+signal sources, the eventfd, config parsing). The rest of the path was read call by call against
+what Phoenix and the shims answer [read: `frontend/main.c` `wet_main`/`load_drm_backend`,
+`libweston/compositor.c`, `backend-drm/drm.c` `drm_backend_create`/`find_primary_gpu`/
+`drm_device_is_kms`, `kms.c` `init_kms_caps`/atomic apply, `launcher-libseat.c`, libseat
+`noop.c`, `libinput-seat.c`, `renderer-gl/*`, `kiosk-shell.c`, wayland `wayland-server.c`
+socket code, libdrm-phoenix `drm_phoenix_logic.c` flattening, rpi4-kms property table, kernel
+`usocket.c`/`posix.c`]. No further hard stop was found; the residual risks are listed per step.
+
+| Step | What runs | Why it should pass / residual risk |
+|---|---|---|
+| `init_config` rest | repeat rate/delay, `repaint-window` (default 7 ms), color management off, touch calibrator off | pure config |
+| seat | `weston_launcher_connect` → `libseat_open_seat` (`LIBSEAT_BACKEND=noop`) → `socketpair(AF_UNIX, SOCK_STREAM\|SOCK_CLOEXEC)` → `libseat_dispatch(0)` enables the seat (listener) + `poll(1 fd, 0)` | all proven primitives (socketpairs: m6a's signal sources used them) |
+| udev / GPU | `udev_new`, enumerate `drm`/`card[0-9]*` = card0, `stat("/dev/dri/card0")`, `libseat_open_device` = `open(O_RDWR\|O_NOCTTY\|O_CLOEXEC\|O_NONBLOCK)`, `fstat` (G2), `drmModeGetResources` (1/1/1) | first libdrm-phoenix client whose card fd is **O_NONBLOCK**: identification is by path (`sys_fdpath`), unaffected; events are read only after poll readiness |
+| `init_kms_caps` | `TIMESTAMP_MONOTONIC` = 1 (hard requirement; drmprobe `monotonic=1`), `CURSOR_WIDTH/HEIGHT` (errors → 64), `UNIVERSAL_PLANES` (hard; card0 ✅), `ATOMIC` + `CRTC_IN_VBLANK_EVENT` = 1 → atomic, `ADDFB2_MODIFIERS`, `WRITEBACK_CONNECTORS`/`ASPECT_RATIO`/`ASYNC_PAGE_FLIP` (errors ignored) | — |
+| renderer | pixman: `pixman_renderer_init`; GL: `gbm_create_device(card0)` (kmscube's kmsro path), `eglGetPlatformDisplay(GBM)`, EGL device query (`drmGetDevice2` identity ✅), hard requirements `EGL_KHR_surfaceless_context` and `GL_EXT_texture_format_BGRA8888` (Mesa ES: both), ES ≥ 3 so `GL_EXT_unpack_subimage` is not needed; the dma-buf allocator reuses the GBM device | GL's explicit-sync capability depends on `EGL_ANDROID_native_fence_sync` + `EGL_KHR_wait_sync`; if Mesa exposes them, Weston attaches `IN_FENCE_FD` from an EGL native fence — the in-process sync-file path (M5 `--wrap=ioctl`) in a real compositor for the first time |
+| CRTCs, planes | `GETPROPERTIES` per CRTC (MODE_ID, ACTIVE, OUT_FENCE_PTR, VRR_ENABLED), `GETPLANERESOURCES`, per plane `type`, `IN_FORMATS` blob (rpi4-kms builds the DRM `drm_format_modifier_blob` layout, LINEAR only), `zpos` 0–7, `alpha`, `rotation` | the IN_FORMATS blob is parsed by a client for the first time (`drmModeFormatModifierBlobIterNext`) — layout read and matches |
+| input | noinput: 0 devices → `warning: no input devices found, but none required`; input: libinput-phoenix opens through the launcher | as §7.1 |
+| heads | `GETCONNECTOR` HDMI-A-1, `EDID` (absent/empty → libdisplay-info warning), `non-desktop` 0, `GETENCODER` possible_crtcs | — |
+| event sources | `wl_event_loop_add_fd` **dups** each fd (card0, libseat socket, libinput socketpair, udev monitor, and the eventfd) and polls the dup | poll on a dup = the same open file (pollNotify registered per file); the eventfd's dup is the read end, so a `__wrap_write` to the original wakes it [host-tested write → read] |
+| APIs | output API, virtual output API, direct-display, explicit-sync protocol (if capable), content-protection (atomic) | registration only |
+| `backends_loaded` | presentation clock: the DRM backend offers `1 << CLOCK_MONOTONIC` = bit 0 on Phoenix; `CLOCK_MONOTONIC_RAW` (1) and the coarse ids (5/6, compat) are skipped, `CLOCK_MONOTONIC` (0) is chosen | — |
+| socket | `/tmp/xdg/wayland-0.lock` `open(O_CREAT)` + `flock` (fcntl record locks, kernel table), `lstat`, `socket(AF_UNIX, SOCK_STREAM\|SOCK_CLOEXEC)`, `bind` with `offsetof + strlen` (the kernel reads `sa_data` NUL-terminated from user memory; wayland's socket struct is zeroed), `listen(128)` | — |
+| kiosk shell | layers, `weston_desktop_create`, output/seat listeners, screenshooter, bindings; `weston_config_parse` of `WESTON_CONFIG_FILE` | no system calls of note |
+| first frame | output enable (`mode=current`), primary plane + CRTC, then atomic commits: the first one disables every plane (primary + cursor `CRTC_ID=0 FB_ID=0`) and sets `MODE_ID` (a created blob), `ACTIVE=1`, connector `CRTC_ID`, `VRR_ENABLED=0` (zero-ok), `zpos`, `alpha`, `rotation`; `TEST_ONLY` proposals every repaint | every property is accepted by libdrm-phoenix's flattening (`drm_phoenix_logic.c:103-207`: zpos ≤ 7, alpha ≤ 0xffff, rotation, VRR 0, link-status/DPMS no-ops) [read]; repaint-loop start uses `drmWaitVBlank` relative 0 (F1 patch) with a page-flip fallback |
+
+## Result — `m6a-weston` (queue31, 2026-09-27 10:13): FAIL, fixed by weston patch 0007
+
+Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-101308-m6a-weston.log` (`grep -a`). Binary
+`weston-stripped` `1bb4cdb067a551c4` (weston patches 0001–0006). 0 exceptions, 0 faults.
+
+- Servers: `V3DA srv ready … proto=2` (+ `/dev/dri/renderD128`, `/dev/dri/card1` registered),
+  `KMS srv ready … poll_notify=1 … pool_mib=32`, **`SHMSRV srv ready ns=/shm port=26 proto=1`**
+  and `SHMSRV srv detached` — shmsrv's namespace registration and detach work.
+- Arm A (`pixman shm noinput`) and arm B (`gl shm input`), identically: `WESTONDRM start …`,
+  `weston 14.0.2`, `Command line: …`, `OS: Phoenix-RTOS, 3.3.1 …`, `Flight recorder: enabled`,
+  `Using config file '/etc/xdg/weston/weston-drm.ini'`, then **`failed to create XKB context`**
+  about 20 ms later → `WESTONDRM socket=missing wait_s=2 weston=exited` → `weston exited rc=1
+  before its socket appeared`. The script's early exit detection worked.
+- Proven on hardware by getting this far: the static weston binary starts; `wl_display_create`
+  (the emulated **eventfd**), `wl_event_loop_add_signal` ×3 (SIGTERM, SIGUSR2, SIGCHLD: the
+  emulated **signalfd**, i.e. socketpairs + `sigaction` + unblocking), the epoll descriptor itself,
+  the log/flight-recorder setup and the config parser.
+- `SHMSRV stats rc=0 live=0 bytes=0 ids=0` after each arm (no client ran), `KMSTEST stats …
+  bos=0 exports=0 apply_errors=0`, `V3DAPING … bos_live=0 parked=0` — nothing leaked, nothing
+  past compositor init ran.
+- **Cause:** libxkbcommon's `xkb_context_new(XKB_CONTEXT_NO_FLAGS)` fails when none of its default
+  include paths exists (`src/context.c:306-313`: `failed to add default include path` → NULL);
+  the Pi has no `/usr/share/X11/xkb`, `$HOME/.xkb`, `$XDG_CONFIG_HOME/xkb` or extra path. Weston
+  creates the context in `weston_compositor_init_config` → `weston_compositor_set_xkb_rule_names`,
+  before any backend, so patch 0003's baked keymap (used later, when a keyboard appears) was never
+  reached. I had assumed the context creation tolerates missing paths — it does not.
+- **Fix:** weston patch 0007 (§4.3). Reproduced and verified on the host with the same libxkbcommon
+  source and the same environment situation (`hosttest/xkb_test.c`: default context NULL, no-includes
+  context OK, names fail, baked keymap compiles and maps `KEY_A` → `a`). The next steps of the path
+  were walked statically (§13). Re-registered as **`m6c-weston`** (§9; re-stage only `/bin/weston`,
+  `2699d5e8ea831cdc…`).
+
+## Result — `m6b-weston-egl`
+
+As predicted: `artifacts/rpi4b-uart/rpi4b-uart-20260927-102141-m6b-weston-egl.log` — `failed to create XKB
+context` 2 s after start, `weston exited rc=1 before its socket appeared`, 0 exceptions (queue31, 10:21).
+
+## Result — `m6c-weston`
 
 *(to be filled: log path, snapshot paths, the tagged lines, the rows that applied)*
