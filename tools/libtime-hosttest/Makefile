@@ -15,11 +15,11 @@ CFLAGS ?= -std=gnu11 -O1
 all: tdiff
 
 time_ph.o: $(LIBPH)/time/time.c shim.h
-	$(CC) -c $(CFLAGS) -w -include shim.h -I$(LIBPH) -o time_raw.o $<
+	$(CC) -c $(CFLAGS) -w -include shim.h -Ishim -I$(LIBPH) -o time_raw.o $<
 	nm time_raw.o | grep ' T ' | awk '{printf "--redefine-sym %s=ph_%s ", $$3, $$3}' > redef.txt
 	objcopy $$(cat redef.txt) time_raw.o $@
 
-tdiff: tdiff.c time_ph.o
+tdiff: tdiff.c time_ph.o stubs.c
 	$(CC) $(CFLAGS) -Wall -o $@ $^
 
 run: tdiff
