@@ -32,8 +32,9 @@
 #                tracks the sysroot headers too, so after a libphoenix install a plain run
 #                recompiles libSDL2.a -- which stk-drm, quake2/3-drm and vkquake-drm also link.
 #   --extra-patches  apply <dir>/*.patch after patches/ (part of the source stamp). For a variant
-#                built into its own --out, e.g. patches-pace (frame-pacing.md): the default set,
-#                and so the default build-out's libSDL2.a, stay as they are.
+#                built into its own --out, so the default set, and the default build-out's
+#                libSDL2.a, stay as they are (frame-pacing.md's A/B built patches/0009 this way
+#                before it was adopted).
 #   --name       the clone's name in its banner/flipstat/swapstat lines (default quakespasm-drm)
 # Stage (coordinator only):
 #   sudo install -m 755 <out>/quakespasm-drm.stripped <live NFS export>/usr/bin/quakespasm-drm
@@ -378,6 +379,10 @@ fi
 direct="$(grep -cE '\sbl?\s+[0-9a-f]+ <SDL_GL_SwapWindow>$' <<< "${qs_dis}" || true)"
 log "  direct calls of the real SDL_GL_SwapWindow: ${direct} (expected 1, from the wrapper)"
 [ "${direct}" = 1 ] || bad=1
+# The frame-pacing order of KMSDRM_GLES_SwapWindow (patches/0009, frame-pacing.md): the frame is
+# submitted before the wait for the previous flip. patches/ carries it, so every SDL built here does.
+if order="$("${here}/gamedrm/check-swap-order.sh" "${QS}")"; then log "  ${order}"
+else log "  ${order} -- patches/0009 is not in this libSDL2.a"; bad=1; fi
 "${TC}-size" "${QS}" | sed 's/^/  /'
 log "  ${QS}: $(stat -c %s "${QS}") bytes; stripped $(stat -c %s "${QS}.stripped") bytes"
 {

@@ -15,7 +15,7 @@ program interposes SDL_LoadObject/SDL_LoadFunction at link time
 (-Wl,--wrap=...) and hands SDL its vkGetInstanceProcAddr.
 
 Applied ONLY by build-vkquake-drm.sh, to its own copy of the sdl2-drm source,
-after patches/0001-0008 and the overlay: the default sdl2-drm libSDL2.a (and
+after patches/0001-0009 and the overlay: the default sdl2-drm libSDL2.a (and
 its SDL_VULKAN=OFF build) is unchanged.
 
 --- a/CMakeLists.txt

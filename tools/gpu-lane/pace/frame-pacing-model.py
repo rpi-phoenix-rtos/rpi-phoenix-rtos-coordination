@@ -9,7 +9,7 @@
 # Per frame k: the engine spends C ms on the CPU, then calls SDL_GL_SwapWindow, which
 #   stock: waits for flip k-1, then eglSwapBuffers (submits job k), then drmModePageFlip(k);
 #   pace:  eglSwapBuffers (submits job k), then waits for flip k-1, then drmModePageFlip(k)
-#          (patches-pace/0001).
+#          (sdl2-drm patches/0009, adopted from the A/B arm patches-pace/0001).
 # Job k needs G ms of GPU after the GPU is free and it is submitted.
 #
 # Prints fps, the mean time inside SDL_GL_SwapWindow (the gamedrm `swapstat swap_us_avg`), the

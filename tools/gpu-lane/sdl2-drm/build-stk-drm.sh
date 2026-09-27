@@ -293,6 +293,9 @@ else
 	log "  the SDL_GL_SwapWindow wrap is NOT in Irrlicht's swap path:"; sed 's/^/[stk-drm]     /' <<< "$calls"; bad=1
 fi
 log "  ioctl/mmap: only __wrap_ioctl / __wrap_mmap call the real ones ($out/call-sites.txt)"
+# the frame-pacing order of the default SDL (patches/0009, frame-pacing.md)
+if order="$("${here}/gamedrm/check-swap-order.sh" "$elf")"; then log "  ${order}"
+else log "  ${order} -- the linked libSDL2.a lacks patches/0009"; bad=1; fi
 
 # grep -a on the ELF itself (a `strings | grep -q` pipeline dies of SIGPIPE under pipefail)
 for s in 'KMS/DRM Video Driver' '/dev/dri/' 'libdrm-phoenix:' 'DRMPHX_TRACE' 'DRMPHX sync' '/dev/kbd0' '/dev/audio0' \

@@ -320,6 +320,12 @@ g_main() {
 		log "  the SDL_GL_SwapWindow wrap is NOT in the engine's swap path:"; sed "s/^/[${G_APP}]     /" <<< "$calls"; bad=1
 	fi
 	log "  ioctl/mmap: only __wrap_ioctl / __wrap_mmap call the real ones ($out/call-sites.txt)"
+	# The default SDL carries the frame-pacing order (patches/0009); a G_SDL_DIR variant (an A/B
+	# arm such as frame-pacing.md's ctl) may not, so there it is only reported.
+	local order
+	if order="$("${here}/gamedrm/check-swap-order.sh" "$elf")"; then log "  ${order}"
+	elif [ -n "${G_SDL_DIR:-}" ]; then log "  ${order} (G_SDL_DIR variant: reported only)"
+	else log "  ${order} -- the default libSDL2.a lacks patches/0009"; bad=1; fi
 
 	for s in 'KMS/DRM Video Driver' '/dev/dri/' 'libdrm-phoenix:' 'DRMPHX_TRACE' 'DRMPHX sync' '/dev/kbd0' '/dev/audio0' \
 			'EGL_KHR_platform_gbm' 'kmsro' "${G_APP}: new GPU lane" "${G_APP} flipstat" "${G_APP} swapstat"; do

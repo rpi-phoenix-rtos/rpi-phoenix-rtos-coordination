@@ -12,8 +12,9 @@
 # (pl_phoenix_vk_vid.c) and carries engine hunks that exist only for that shim. vkquake-drm is
 # UPSTREAM vkQuake built from the port's own tarball with upstream's TU list (meson.build: srcs +
 # the non-Windows block, incl. gl_vidsdl.c, in_sdl*.c, snd_sdl*.c, main_sdl.c, sys_sdl_unix.c),
-# the port's four engine fixes that do not concern video (patches-vkquake/0001-0004) and one new
-# patch, 0005 (no timestamp query pool until the render server serves SUBMIT_CPU, gap G5). So no
+# the port's four engine fixes that do not concern video (patches-vkquake/0001-0004), 0005 (no
+# timestamp query pool until the render server serves SUBMIT_CPU, gap G5) and the two V3D
+# performance defaults of vkquake-perf.md, 0006 (r_oit 0) and 0007 (RGBA8 colour buffer). So no
 # byte-identical control is possible; the inverse control is that the shipped binary carries
 # none of the new-lane strings and does carry the old ones.
 #
@@ -50,7 +51,8 @@
 # Usage: tools/gpu-lane/sdl2-drm/build-vkquake-drm.sh [-j N] [--libdrm-prefix <dir>] [--clean]
 # Env:   VKQDRM_OUT             output dir (default build-out/vkquake-drm)
 #        VKQDRM_EXTRA_PATCHES   space-separated vkQuake patch files applied after patches-vkquake/
-#                               (e.g. patches-vkquake-perf/*.patch for a variant; part of the
+#                               (for a variant, as vkquake-perf.md's 0006/0007 before they
+#                               were adopted into patches-vkquake/; part of the
 #                               source stamp and BUILD-INFO)
 #        VKQDRM_TARGET          the engine path the launcher execs (default /usr/bin/vkquake-drm),
 #                               for staging a variant under its own name
@@ -367,6 +369,11 @@ if grep -qE ' __wrap_SDL_LoadObject KMSDRM_Vulkan_LoadLibrary$' <<< "${calls}" \
 else
 	log "  KMSDRM_Vulkan_LoadLibrary does not reach the loadso wraps:"; sed 's/^/[vkquake-drm]     /' <<< "${calls}"; bad=1
 fi
+# The SDL source is sdl2-drm's default tree, so its GL swap carries the frame-pacing order
+# (patches/0009). vkQuake presents through the Vulkan WSI and never calls it: this checks the
+# SDL lineage, not a path the game runs.
+if order="$("${here}/gamedrm/check-swap-order.sh" "${elf}")"; then log "  ${order} (GL swap; linked, not used by vkQuake)"
+else log "  ${order} -- sdl2-drm's SDL tree lacks patches/0009"; bad=1; fi
 for s in 'KMS/DRM Video Driver' '/dev/dri/' 'libdrm-phoenix:' 'DRMPHX_TRACE' 'DRMPHX sync' '/dev/kbd0' '/dev/audio0' \
 		'VK_KHR_display' 'VK_KHR_swapchain' 'V3D %d.%d.%d.%d' 'phxvk: new GPU lane' 'vkquake-drm: new GPU lane' \
 		'vkquake-drm flipstat' 'vkquake-drm presentstat' 'Vulkan couldn'"'"'t find an appropriate plane' 'vkQuake'; do
@@ -399,7 +406,7 @@ grep -aqF "${target}" "${out}/vkq-drm" || die "launcher ELF lacks its exec targe
 # --- provenance -----------------------------------------------------------------------------------
 "${TC}-size" "${elf}" | sed 's/^/[vkquake-drm]   /'
 src_git="$(git -C "${root}" status --porcelain -- tools/gpu-lane/sdl2-drm/vkqdrm tools/gpu-lane/sdl2-drm/patches-vkquake \
-	tools/gpu-lane/sdl2-drm/patches-sdl-vulkan tools/gpu-lane/sdl2-drm/patches-vkquake-perf tools/gpu-lane/sdl2-drm/build-vkquake-drm.sh)"
+	tools/gpu-lane/sdl2-drm/patches-sdl-vulkan tools/gpu-lane/sdl2-drm/build-vkquake-drm.sh)"
 {
 	echo "built:               $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 	echo "sources git:         $( [ -n "${src_git}" ] && echo "DIRTY/untracked" || echo "clean at $(git -C "${root}" rev-parse HEAD)")"

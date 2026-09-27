@@ -28,8 +28,8 @@
 #   --variant <v>  link the libSDL2.a of an sdl2-drm `build.sh --out build-out-<v>` tree and name
 #           everything quake2-drm-<v>: out build-out/quake2-drm-<v>/, yquake2-drm-<v> + launcher
 #           quake2-drm-<v> (execs /usr/bin/yquake2-drm-<v>), banner/flipstat tag quake2-drm-<v>.
-#           frame-pacing.md: `pace` (build.sh --extra-patches patches-pace) and its control `ctl`
-#           (the default patch set, built at the same time into build-out-ctl).
+#           frame-pacing.md's A/B used `pace` (build.sh --extra-patches, the patch now adopted as
+#           patches/0009) and its control `ctl` (the default set of the time, build-out-ctl).
 # Env:   Q2DRM_PORT_SHADOW=<dir>  relink from a gamedrm/shadow-port-build.sh output instead of the
 #        port's .buildroot tree (see that script)
 # Env:   Q2DRM_OUT, TARGET (default aarch64a72-generic-rpi4b), RPI4B_BUILDROOT
