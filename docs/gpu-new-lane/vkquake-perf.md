@@ -891,8 +891,12 @@ PVS does not model occlusion, so the HDMI frame is the check.
 ```
 
 Grade:
-* the log shows `Introduction`, then e1m2's level name (`Castle of the Damned`, its worldspawn `message`), and `entered the game`
-  after the second one; steady windows are counted from that second line;
+* the log shows e1m2's level name (`Castle of the Damned`, its worldspawn `message`) and then `entered the game`;
+  steady windows are counted from that line. **`Introduction` will probably not print, and that is not a
+  failure.** Both `map` commands run in the same `Cbuf_Execute` pass. `Host_Map_f` spawns the server and
+  runs `connect local` synchronously (`host_cmd.c`), and the second `map` disconnects before the client has
+  parsed `start`'s serverinfo, which is where the level name is printed (`cl_parse.c:1027`). `start.bsp`
+  still loads, costing a few seconds over NFS;
 * the HDMI ticks after it show a textured, animated water surface (the water region differs between two ticks
   while static walls do not), not black, flat or frozen;
 * no `V3DA srv csd cfg5=0x…` warp class (64×64×1) appears;
@@ -906,15 +910,18 @@ are for `start`.
 `vid_vsync` is one of `VID_Init`'s `read_vars`, and `CFG_ReadCvarOverrides` reads its `+` override from argv
 **before** the swapchain exists (`gl_vidsdl.c:4704`; `VID_Restart` returns while `!vid_initialized`, `:4811`).
 The later `stuffcmds` pass sets the same value, which is a no-op (`Cvar_SetQuick`, `cvar.c:477`). So
-`+vid_vsync 2` gives a **3-image FIFO swapchain from the start, with no `VID_Restart`**. The KMS pool has room:
-`slots=3 pool_mib=32`, and 3 × 8.3 MB fit. The command is `mig-vkq-g`'s with the launcher line
+`+vid_vsync 2` gives a **3-image FIFO swapchain from the start, with no `VID_Restart`**. The WSI creates
+exactly `minImageCount` images (`wsi_common_display.c:3413`). With `backend=plane`, each scan-out buffer is
+carved from one contiguous pool (`kms_bo.c` `bo_from_pool`, `pool_mib=32` in the KMS ready line), and
+3 × 8 298 496 B = 24.9 MB fits in 32 MiB. The ready line's `slots=3` counts firmware-framebuffer pan slots
+(`kms_fw.c:310`), which this backend does not use. The command is `mig-vkq-g`'s with the launcher line
 `"/bin/vkq-drm-g +vid_vsync 2"` and `--label pace-vkq-g`. Run it after `mig-vkq-g` passes.
 
 | Line / quantity | `mig-vkq-g` (predicted) | predicted `pace-vkq-g` | if instead… |
 |---|---|---|---|
 | exec line | no argument | `… +map start +vid_vsync 2` | — |
 | `Using FIFO present mode` | yes | yes (the only mode) | — |
-| kmsbuf imports | `id=1,2` | **`id=1,2,3`** | two only: the override did not reach `VID_Init` |
+| kmsbuf imports | `id=1,2` | **`id=1,2,3`** | two only: the override did not reach `VID_Init`; swapchain creation fails / no `flipstat` lines: the KMS pool could not give a third buffer (fragmentation, another client's BOs), a KMS-side limit, not vkQuake |
 | `flipstat` fps (median, steady) | 30.00 | **38–50, not a constant 30.00** (CPU ≈ 22.5 ms suggests ~44; GPU caps at ~50) | exactly 30.00 again: the lock is downstream of the swapchain (`rpi4-kms -G` gate, or WSI `_wsi_display_queue_next`'s one flip in flight), so read the KMS server's flip stats; < 30: FAIL |
 | `waitstat acquire` avg | ~11 ms | **< 3 ms** | — |
 | `waitstat pwait` | 0 calls | **≈ 1 call/frame**, small avg: with `vid_vsync > 0`, `vid_maxframelatency 2` engages present-wait2, which the stack exposes (`VK_KHR_present_wait2` in the log) | pwait avg ≈ a vblank: the latency cap is the limiter, so rerun with `+vid_maxframelatency 0` (read every frame, no restart) |
