@@ -478,3 +478,19 @@ ICMP (the lwip process is dead too), while the vfork control answers every ping.
 (plus 0 of 1500 in the untagged series). With tags the stop comes earlier (16–38 launches vs 17–191). This fits
 hypotheses 0/1 (a CPU wedged in the kernel; the exec-time map teardown of a table another CPU may still have in
 TTBR0). **Arm B** (kernel `c3/fork-hang`, build 18) is queued: `queue49` `c3fixF1..F3`, same command.
+
+### Result — arm B `c3fixF1..F3` (build 18 = kernel `c3/fork-hang` merged, chain52, 2026-09-27 17:40–18:00)
+
+| run | result | slowest launch | monitor | host ping |
+|---|---|---|---|---|
+| c3fixF1 | `spawn-storm: DONE 500 ok, 0 failed` | 66 ms | 3 ticks, `m done` | 80 replies, 0 lost |
+| c3fixF2 | `DONE 500 ok, 0 failed` | 40 ms | 3 ticks | 77 / 0 |
+| c3fixF3 | `DONE 500 ok, 0 failed` | 37 ms | 3 ticks | 84 / 0 |
+
+Same command, same instrumented binary as arm A. **Arm A (build 17): 3 of 3 fork runs froze the system within 16–38
+launches (~71 launches, 3 freezes). Arm B (build 18): 0 of 3 runs, 0 freezes in 1500 launches.** Enriched towards
+"the `c3/fork-hang` kernel changes remove the fork+exec freeze", n = 3 runs per arm. It is an intervention A/B, but
+**both candidates changed at once** (`8cf9e488` all-invalid TTBR0 on the kernel-pmap switch; `33af3e81` fork-child
+context barrier), so which one matters is not separated. A one-commit-each A/B (build 18 minus one) would separate
+them. Next: whether the same change also affects C1 (pre-registered `c1b18`, running now) and whether ntpclient's
+C3 faults disappear from normal boots (grade every boot from now on).
