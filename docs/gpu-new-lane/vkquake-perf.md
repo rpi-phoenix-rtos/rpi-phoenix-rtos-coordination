@@ -551,3 +551,132 @@ so per-frame class numbers = the delta of a class's `n` / `gpu_us` over the same
   own A/B; otherwise the server is cleared for good.
 * In any case the ~21 ms/frame of GPU idle at 64 % busy (§ short version) is the next CPU-side question: the
   hooks see no wait, so the time is in vkQuake's CPU frame or in an unhooked call.
+
+## Result — `perf-vkq-e` (chain61, 2026-09-27 21:19, build 18 kernel): the compute row, by pipeline
+
+Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-211950-perf-vkq-e.log`; HDMI `artifacts/hdmi/20260927-212657-perf-vkq-e-tick.png`
+(the spawn view, lit, torches, lava lit on the right). Server `/bin/rpi4-v3d-async-csdprof -C` (`055e7805…`), vkQuake
+`/bin/vkq-drm-perf` (the perf-b binary). 0 exceptions, `err=0 wedges=0 rej=0`.
+
+### The four classes
+
+Steady state = the last 40 qstat windows (200 s, 3357 frames, 16.8 fps by flipstat totals); per class the delta of its
+cumulative `V3DA srv csd` line over the same span. Identification by workgroup shape against vkQuake's dispatch sites
+(§ "CSD per-job cost" §2) [measured + read]:
+
+| `cfg5` | shape (last / min..max wgs) | `thr4` | vkQuake pipeline | jobs/frame | GPU ms/job | **GPU ms/frame** | histogram |
+|---|---|---|---|---|---|---|---|
+| `0x0b570005` | 64×64×1, 4096 always | 1 | **`cs_tex_warp`** (`gl_warp.c:130`, one per visible warp texture) | **3.06** | **4.77** (max 4.78) | **14.61** (75 %) | all 11 509 in 4–8 ms |
+| `0x0b85f004` | 12×32×1, 384..2944 | **0** | **`update_lightmap`** (`r_brush.c:3490`, one per dirty lightmap region) | 0.47 (7.9/s) | **10.67** (max 21.5) | **5.04** (25 %) | 80 / 803 / 0 / 82 / 840 in 1–2 / 2–4 / 4–8 / 8–16 / ≥ 16 ms |
+| `0x0b864005` | 87×1×1 | 1 | `indirect_draw` (`r_brush.c:3541`, `(numsurfaces + 63) / 64`) | 1.02 | 0.15 | 0.16 | all < 250 µs |
+| `0x0b865005` | 2×1×1 | 1 | `indirect_clear` (`r_brush.c:3517`, 80 draws → 2 wgs) | 1.02 | 0.005 | 0.005 | all < 250 µs |
+| **all** | | | | **5.57** | 3.56 | **19.8** | Σ gpu 74.78 s = **0.995** of qstat's `csd=75147ms` |
+
+Per job, over all classes: prologue **3.2 µs**, wake (CSDDONE → event thread) **~10 µs**, epilogue (TMU/L2T clean)
+**8–75 µs** (75 µs for the warp's 1 MB of image stores). `noirq=0` everywhere.
+
+### Grading against §4's predictions
+
+| quantity | predicted | measured | verdict |
+|---|---|---|---|
+| `csdprof on cntfrq=54000000` once | yes | yes | ✓ |
+| fps (median, n = 45) | 17.3 ± 1.0 | **16.99** | ✓ (base drift m3p2 → current server: none visible) |
+| CSD jobs, ms / frame; ms / job | 5.4 ± 0.5, 19.5 ± 2; 3.6 ± 0.4 | 5.43, 19.39; 3.57 (win.py span) | ✓ |
+| Σ class gpu / qstat csd | ≥ 0.95 | 0.995 | ✓ — **the server adds nothing measurable per CSD job**: 3 + 10 + ≤ 75 µs against 4.8–10.7 ms |
+| `noirq` | 0 | 0 | ✓ |
+| classes | 4–5 | 4 | ✓ |
+| warp | 64×64×1, wgsz 64, ≈ 2.2/frame, ≈ 2.7 ms/job | 64×64×1, wgsz 64, **3.06/frame, 4.77 ms/job** | ✗ — the b − d estimate was wrong (below) |
+| indirect clear / draw | ~1/frame each, < 0.5 ms | 1.02 each, 0.005 / 0.15 ms | ✓ |
+| lightmap | ≈ 8 jobs/s, 4–5 ms/frame | 7.9 jobs/s, 5.04 ms/frame | ✓ |
+| X (a fifth class) | ≈ 0.8/frame, ≈ 8 ms/frame | **no fifth class** | the "no fifth class" branch: X was non-additivity. The warp class carries it, not the lightmap class the table guessed |
+| err / wedges / rej, exceptions | 0 | 0 | ✓ |
+
+**Why the decomposition missed.** `-c` (CPU lightmaps) is consistent with the profile: it left warp only, 2.99 jobs /
+14.29 ms per frame (profile: 3.06 / 14.61). `-d` (raster warp) is not: it should have left lightmap + indirect,
+≈ 2.5 jobs / 5.2 ms per frame, and it had **3.25 / 13.59**. At the profile's costs that remainder is the lightmap
+class running **≈ 1.2 jobs/frame instead of 0.47** in that run [inferred: (13.59 − 0.16) / 10.67 = 1.26, and 3.25 − 2.04
+= 1.21 jobs]. The lightmap update rate is set by which lightmap blocks were drawn (`lm->modified`) and which of their
+light styles changed (`r_brush.c:3647-3732`), so it depends on the run, not only on the frame count. So `perf-vkq-d`'s
++1 fps undersold the raster warp: it removed 14.6 ms/frame of warp compute and, by chance or by cause, gained ~8 ms of
+lightmap compute. Which of the two is what `perf-vkq-f` settles.
+
+### Answers to the coordinator's questions
+
+* **Why the 64×64 dispatch runs ~3×/frame:** it is one `cs_tex_warp` per warp texture flagged `update_warp` this frame
+  (`gl_warp.c:157-196`: every texture of the world model with a turbulent surface in the drawn texture chains), each a
+  full 512×512 redraw whatever its size on screen. At the spawn view that is three textures (lava is on screen at the
+  right; the others are in the drawn set). 4.77 ms each = **18 ns, ~9 GPU cycles per texel** for a shader that does two
+  `sin`, one texture sample and one `imageStore`: the dispatch is bound by TMU image writes (262 144 per texture, 1 MB),
+  not ALU [inferred]. The raster path draws the same image through the tile buffer: `perf-vkq-d` measured +3 render
+  jobs and **+1.9 ms/frame** of render for the three textures, i.e. ≈ 0.6 ms per texture against 4.8.
+* **The `thr4=0` shader is `update_lightmap`.** It culls lights into shared memory behind three `barrier()`s and loops over
+  light styles and lights per texel (`Shaders/update_lightmap.inc`, 365 lines); Mesa's v3d compiler falls back from 4
+  threads to 2 or 1 when register allocation fails, and the barriers force one workgroup per supergroup (`sgwgs=1`).
+  Making it 4-threaded is a shader rewrite (lower register pressure) or a compiler change, not a switch; the cheap levers
+  are the dispatch rate (a run-dependent 0.47–1.2 per frame) and the CPU path (`r_gpulightmapupdate 0`, `perf-vkq-c`:
+  +2.6 fps). `perf-vkq-f` also prints Mesa's shader statistics (`V3D_DEBUG=shaderdb`: instructions, threads, spills) so
+  the thread count and spills are measured, not guessed.
+* **Did the old lane run them?** Yes, both. The old glue wires `PCBX_UPDATE_WARP` and states that `R_UpdateWarpTextures`
+  dispatches `cs_tex_warp` into it each frame (`phoenix-rtos-ports/vkquake/glue/pl_phoenix_vk_vid.c:116-124`), forces
+  `r_gpulightmapupdate 1` (`glue/pl_phoenix_main.c:166`) and leaves `r_waterwarpcompute` at upstream's 1; its CSD path is
+  the one compared above. So the old lane paid the same ~20 ms/frame of compute; what it did not pay is the new lane's
+  ~21 ms/frame of GPU idle and the extra render passes (UI + post-process).
+
+### The fix: raster warp on V3D (vkQuake patch 0008)
+
+`tools/gpu-lane/sdl2-drm/patches-vkquake-perf/0008-gl_warp-raster-warp-by-default-on-phoenix.patch`: `r_waterwarpcompute`
+defaults to **0** under `__phoenix__` (the 0006 pattern; the only Vulkan device there is V3D). The cvar stays
+`CVAR_ARCHIVE`; `r_waterwarpcompute 1` still selects compute at run time (it is read every frame, `gl_warp.c:179-246`).
+Kept out of `patches-vkquake/` until a cycle passes, as 0006/0007 were.
+
+* **Build:** `VKQDRM_OUT=tools/gpu-lane/sdl2-drm/build-out/vkquake-drm-perf-f VKQDRM_TARGET=/usr/bin/vkquake-drm-perf-f
+  VKQDRM_EXTRA_PATCHES=tools/gpu-lane/sdl2-drm/patches-vkquake-perf/0008-gl_warp-raster-warp-by-default-on-phoenix.patch
+  tools/gpu-lane/sdl2-drm/build-vkquake-drm.sh` → rc 0, the script's proofs pass, 12 guarded shared files unchanged.
+  `vkquake-drm.stripped` **`2cca8690e32455e7…`** (13 368 776 B), unstripped `65a0a4154ebeb1f9…`, launcher `vkq-drm`
+  **`ae88fb5a3ea9b797…`** (execs `/usr/bin/vkquake-drm-perf-f`); patch set `c682d29b…` (0001–0007) + 0008; ICD
+  `69c689ad…`, libdrm-phoenix m5b `a508e207…` unchanged. gdb on the unstripped ELF: `r_waterwarpcompute.string = "0"`,
+  `r_oit.string = "0"`.
+* **Confound:** it links the sysroot's `libphoenix.a` **`94a3e1e6…`** (build 19's printf quote-flag fix, installed
+  21:27), where perf-b/-e's binary linked `2acb195e…`. A printf change is not expected to move GPU rows.
+* **Staged** (`sudo -n install -m 755`, `cmp` OK): `/usr/bin/vkquake-drm-perf-f`, `/bin/vkq-drm-perf-f`. Untouched:
+  `/usr/bin/vkquake-drm-perf` (`5fbf7899…`), `/bin/vkq-drm-perf` (`ee0e3079…`), `/bin/rpi4-v3d-async-csdprof`
+  (`055e7805…`).
+
+### Pre-registered `perf-vkq-f` (and `-f2`)
+
+```
+./scripts/test-cycle-psh-interact.sh --label perf-vkq-f --wait-secs 220 --inter-cmd-secs 8 --idle-secs 60 \
+    --max-cmd-secs 300 --ready-line 'V3DA srv detached|KMS srv detached' --ready-extra-secs 20 \
+    --hdmi-dense-on 'vkquake-drm: new GPU lane' -- \
+    "/bin/rpi4-v3d-async-csdprof -r 1 -m serial -i -C" \
+    "/bin/rpi4-kms-gate -G" \
+    "export V3D_DEBUG=shaderdb" \
+    "/bin/vkq-drm-perf-f"
+```
+
+`perf-vkq-f2` (only after f passes; no new binary): the same with `"/bin/vkq-drm-perf-f +r_gpulightmapupdate 0"`
+(CPU lightmaps, which also turns off the indirect-draw compute) — the candidate for old-lane parity.
+
+`V3D_DEBUG=shaderdb` only adds one Mesa line per compiled shader at pipeline creation (`mesa_logi("SHADER-DB-…")`,
+`vir.c:2688`, before the first frame); steady-state rows are unaffected. `f` is the configuration of `perf-vkq-d`
+(raster warp) with a compile-time default instead of a `+` command, so its fps is anchored on d; the profile says what
+d's extra compute was.
+
+| Line / quantity | `perf-vkq-e` | predicted `perf-vkq-f` | predicted `-f2` | if instead… |
+|---|---|---|---|---|
+| `vkq-drm: exec /usr/bin/vkquake-drm-perf-f …` | — | once | once, `+r_gpulightmapupdate 0` listed | stale launcher (`cmp`) |
+| `SHADER-DB-… MESA_SHADER_COMPUTE shader: … threads …` | — | one per compute variant; the one with loops and the most instructions (update_lightmap) at **1 or 2 threads** and/or spills | same | no SHADER-DB lines: env not passed (`export` / launcher `execv`) — note, not a failure |
+| warp class (64×64×1) | 3.06/frame, 14.6 ms/frame | **absent** (no `wg=64x64x1` line) | absent | present: the default did not take (config.cfg sets it?) |
+| render jobs, ms / frame | 14.9, 16.7 | **≈ 17.9, ≈ 18.6** (d: +3 jobs, +1.9 ms) | same ± 1 | — |
+| lightmap class jobs / frame, ms / frame | 0.47, 5.0 | **0.47–1.2, 5–13** | absent | > 1.3/frame: raster warp *causes* lightmap updates (find the `lm->modified` source) |
+| indirect classes | 2 × 1.02/frame | same | **absent** | — |
+| CSD ms / frame | 19.4 | **5–13** | **≈ 0** | ≥ 14: warp compute still on |
+| GPU busy ms / frame | 36.9 | **24–32** | **≈ 19–20** | — |
+| `flipstat` fps (median) | 16.99 | **18.3–22** (18.3 if d's lightmap rate recurs, ~22 if e's) | **21–25** | f < 17.5: no gain over e → the idle (~20 ms/frame) moved in; read waitstat |
+| HDMI | lit, torches, lava | same; **water/lava/teleport surfaces textured and animated** (raster warp), not black or frozen | same, lightmaps lit (CPU path) | warp surfaces black/static: the raster path is broken on v3dv — reject 0008 |
+| qstat err / wedges / rej, exceptions | 0 | 0 | 0 | any: FAIL |
+
+**Decision:** f ≥ e + 1 fps with correct liquids → promote 0008 into `patches-vkquake/` (next free number) and rebuild the
+default. f2 ≥ f + 1.5 fps with a correct picture → propose `r_gpulightmapupdate 0` as the Phoenix default (a 0009 in the
+same pattern; note that it also disables GPU culling). If both land, the remaining gap to the old lane's 22.9 is the
+~20 ms/frame of GPU idle, not compute.
