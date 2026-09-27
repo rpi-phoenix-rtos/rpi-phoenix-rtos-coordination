@@ -1657,7 +1657,7 @@ The suggested sweep of exit-time stdio users in SDL KMSDRM, Mesa-DRM, libdrm-pho
 was not done. The chain above is fully resolved (libstdc++ `~Init()` → the cached startup `stdout` →
 freed by STK's own `fclose`), so nothing in the new stack is implicated.
 
-**Fix (libphoenix, branch `fix/stdstream-fclose-uaf`, bf35aaf — not merged):** `_file_init()`
+**Fix (libphoenix `bf35aaf`, merged 2026-09-27 in build 14):** `_file_init()`
 records the three stream objects it creates. `file_release()` (reached from `fclose()` and from a failed
 `freopen()`) **empties** one of those instead of freeing it, as glibc and musl do: buffer freed and
 NULL (so `fflush` is a no-op), `fd = -1` (I/O fails with EBADF), off the list (a second `fclose` fails
@@ -1702,3 +1702,12 @@ check above covers only stk-drm.
 
 n = 1 exit per cycle, and the pre-fix fault depends on heap layout (the old lane never showed it), so
 one clean exit is weak evidence alone. The deterministic evidence is (c) and the host checks above.
+
+**RESULT `stkdrm-2` (build 14, queue35, 2026-09-27 11:57): PASS on all three.** Gate: `BUILD-INFO.txt`
+`libphoenix.a e69b216a…` (≠ `77c4dbf8…`), `stkdrm_hooks.c 97112c2e…` (≠ `8e40681f…`). Log
+`artifacts/rpi4b-uart/rpi4b-uart-20260927-115705-stkdrm-2.log`: (a) **0 `Exception #`**, prompt back;
+(b) `stk-drm: exit after 3259 swaps in 339302 ms since the first swap`; (c) `b14-exit`:
+`TEST(stdlib_exit, closed_std_streams) PASS`, `32 Tests 0 Failures 4 Ignored` (exit), `112 Tests 0
+Failures 1 Ignored` (stdio). Rate: **11.87 fps** mean over 51 windows (stkdrm-1: 11.89). Merged to libphoenix
+master `bf35aaf`, tests `c4b23a8`; the build-14 ports rebuild relinked the old-lane `supertuxkart` against it
+too (showcase gate 6/6, 0 faults). Manifest `manifests/2026-09-27-build14-stdstream-uaf.md`.
