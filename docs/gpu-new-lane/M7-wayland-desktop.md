@@ -1111,3 +1111,15 @@ shmsrv/E1 result, not an XFCE one.
 Code work (builds) starts now in parallel with subagents. Pi cycles are queued after the current Pi queue
 (queues 46–51: the P10 gates, vkq compute, g6-sync, m6i-low, build 18 with C3 arm B + c1b18, mig-all). Status is
 tracked in [PLAN.md](PLAN.md) (M7 row) and the weekly log.
+
+## Result — `m7f-dbus` (chain54, build 18, 2026-09-27 19:45): ✅ PASS — a D-Bus session bus on Phoenix
+
+Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-194346-m7f-dbus.log`. Both arms (`anon`: ANONYMOUS only; `external`: EXTERNAL first, ANONYMOUS fallback):
+`DBUSPHX socket=up wait_s=1`, `listnames rc=0`, `ping rc=0`, `busid rc=0`, `creds rc=0`, a signal routed
+`dbus-send` → `dbus-monitor` (`seen_member=1 seen_payload=1`), `daemon exited rc=0 after_term_s=1 socket=gone`.
+Auth: anon arm `anonymous=6 external=0`; external arm `anonymous=6 external=0 external_no_credentials=6`. EXTERNAL
+is rejected for want of peer credentials and every client falls back to ANONYMOUS, as predicted. The daemon logs
+peer pid/uid as unknown (`18446744073709551615`), so `BecomeMonitor` is refused ("unknown uid") and dbus-monitor
+falls back to a match rule (it still saw the signal). `gdbus=absent`: the GIO client is exercised by m7f-thunar /
+m7h-xfce (xfconfd, bus activation). **Decides:** the XFCE stage can rely on the bus. EXTERNAL auth waits for
+`SO_PEERCRED` (kernel branch `feat/dbus-peercred`) plus a glib credentials patch.
