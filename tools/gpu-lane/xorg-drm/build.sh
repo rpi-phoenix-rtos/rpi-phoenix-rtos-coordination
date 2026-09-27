@@ -32,6 +32,10 @@
 #                    A Mesa built with mesa-drm's --opengl makes glamor use desktop GL.
 #   --libdrm-prefix  the libdrm-phoenix prefix a private Mesa build links
 #                    (default tools/gpu-lane/libdrm-phoenix/build-out-m3p3/prefix)
+#   --xshmfence-prefix  link this libxshmfence (lib/libxshmfence.a + include/X11/xshmfence.h)
+#                    instead of building upstream's pthread backend: M4 part 2 passes
+#                    tools/gpu-lane/x11-drm/build-out/xshmfence-prefix (the Phoenix-RTOS backend,
+#                    G16) -- DRI3 clients must link the same archive (struct xshmfence layout)
 #
 set -euo pipefail
 
@@ -43,6 +47,7 @@ relink=0
 jobs="$(nproc)"
 mesa_out=""
 libdrm_src_prefix="${root}/tools/gpu-lane/libdrm-phoenix/build-out-m3p3/prefix"
+shmf_prefix=""
 while [ $# -gt 0 ]; do
 	case "$1" in
 		--clean) clean=1 ;;
@@ -55,6 +60,7 @@ while [ $# -gt 0 ]; do
 		--mesa-out=*) mesa_out="${1#--mesa-out=}" ;;
 		--libdrm-prefix) shift; libdrm_src_prefix="${1:?--libdrm-prefix needs a directory}" ;;
 		--libdrm-prefix=*) libdrm_src_prefix="${1#--libdrm-prefix=}" ;;
+		--xshmfence-prefix) shift; shmf_prefix="${1:?--xshmfence-prefix needs a directory}" ;;
 		*) echo "build.sh: unknown argument $1" >&2; exit 2 ;;
 	esac
 	shift
@@ -229,6 +235,25 @@ if [ "${relink}" = 0 ]; then
 			'Libs: -L${libdir} -lxcvt -lm' 'Cflags: -I${includedir}' > "${DP}/lib/pkgconfig/libxcvt.pc"
 	fi
 
+	# Which libxshmfence this out dir links; switching backends rebuilds (never a stale mix).
+	shmf_want="upstream-pthread"
+	if [ -n "${shmf_prefix}" ] && [ ! -f "${shmf_prefix}/lib/libxshmfence.a" ]; then
+		echo "build.sh: no lib/libxshmfence.a in --xshmfence-prefix ${shmf_prefix}" >&2; exit 1
+	fi
+	[ -n "${shmf_prefix}" ] && shmf_want="prefix:${shmf_prefix}:$(sha256sum "${shmf_prefix}/lib/libxshmfence.a" | cut -c1-16)"
+	if [ "$(cat "${DP}/xshmfence-backend.txt" 2>/dev/null || echo upstream-pthread)" != "${shmf_want}" ]; then
+		rm -f "${DP}/lib/libxshmfence.a"
+	fi
+	if [ -n "${shmf_prefix}" ] && [ ! -f "${DP}/lib/libxshmfence.a" ]; then
+		echo "== libxshmfence from ${shmf_prefix}"
+		mkdir -p "${DP}/lib/pkgconfig" "${DP}/include/X11"
+		cp "${shmf_prefix}/lib/libxshmfence.a" "${DP}/lib/"
+		cp "${shmf_prefix}/include/X11/xshmfence.h" "${DP}/include/X11/"
+		printf '%s\n' "prefix=${DP}" 'libdir=${prefix}/lib' 'includedir=${prefix}/include' '' \
+			'Name: xshmfence' "Description: X shared memory fences (from ${shmf_prefix})" "Version: ${SHMF_VER}" \
+			'Libs: -L${libdir} -lxshmfence' 'Cflags: -I${includedir}' > "${DP}/lib/pkgconfig/xshmfence.pc"
+		echo "${shmf_want}" > "${DP}/xshmfence-backend.txt"
+	fi
 	if [ ! -f "${DP}/lib/libxshmfence.a" ]; then
 		echo "== libxshmfence ${SHMF_VER} (MIT; pthread backend, SHMDIR=/tmp)"
 		rm -rf "${out}/src/libxshmfence-${SHMF_VER}"
@@ -247,6 +272,7 @@ if [ "${relink}" = 0 ]; then
 		  && make -j"${jobs}" > "${out}/xshmfence-make.log" 2>&1 \
 		  && make install > "${out}/xshmfence-install.log" 2>&1 ) \
 			|| { tail -30 "${out}"/xshmfence-*.log; exit 1; }
+		echo "upstream-pthread" > "${DP}/xshmfence-backend.txt"
 	fi
 
 	if [ ! -f "${DP}/lib/libepoxy.a" ]; then
@@ -410,9 +436,21 @@ for s in modesettingModuleData glamoreglModuleData shadowModuleData phxhidModule
 		LoaderBuiltinFind glamor_egl_init glamor_init ms_present_screen_init dri3_screen_init \
 		present_screen_init __wrap_mmap drmPhoenixMmap drm_phoenix_ioctl gbmint_get_backend \
 		kmsro_drm_screen_create v3d_drm_screen_create_renderonly epoxy_static_proc_address \
-		xshmfence_map_shm libxcvt_gen_mode_info; do
+		xshmfence_map_shm libxcvt_gen_mode_info ReadFdFromClient WriteFdToClient _XSERVTransRecvFd; do
 	if grep -qE " [TtDdRrBbWw] ${s}\$" <<< "${syms}"; then echo "  symbol ${s}: yes"; else echo "  symbol ${s}: NO"; fi
 done
+# DRI3 (open, PixmapFromBuffers, FenceFromFD) passes descriptors over the X socket: xtrans must
+# have been built with fd passing.
+grep -q '^#define XTRANS_SEND_FDS 1' "${XB}/include/dix-config.h" \
+	|| { echo "build.sh: xorg-server built without XTRANS_SEND_FDS (DRI3 fd passing)" >&2; exit 1; }
+echo "  XTRANS_SEND_FDS: 1"
+if [ -n "${shmf_prefix}" ]; then
+	# The Phoenix-RTOS xshmfence backend (G16), not upstream's pthread one: which archive members linked.
+	nphx=$(grep -c 'libxshmfence.a(xshmfence_phoenix.o)' "${out}/Xorg-drm.map" || true)
+	npth=$(grep -c 'libxshmfence.a(xshmfence_pthread.o)' "${out}/Xorg-drm.map" || true)
+	echo "  xshmfence members: phoenix=${nphx} pthread=${npth} (want >0 / 0)"
+	{ [ "${nphx}" -gt 0 ] && [ "${npth}" = 0 ]; } || { echo "build.sh: wrong xshmfence backend linked" >&2; exit 1; }
+fi
 strs="$(strings -a "${out}/Xorg-drm-stripped")"
 for s in 'modesetting' 'glamor' 'PHXHID dev=' 'linked into the server' 'builtin keymap' \
 		/dev/dri/card0 /dev/dri/renderD128 /kmsbuf 'libdrm-phoenix:' DRMPHX_TRACE kmsro 'V3D 4.2' \

@@ -45,6 +45,15 @@
 #              PKG_CONFIG_LIBDIR list that finds them (default: the weston-drm build's).
 #              No kmscube; <out>/egl-link.txt = the archives to link, in order (link
 #              libwayland-client/-server after them). Consumer: tools/gpu-lane/weston-drm.
+#   --x11      ALSO build the EGL X11 platform with DRI3/Present (-Dplatforms=x11, GLX off:
+#              EGL_PLATFORM_X11/XCB clients inside Xorg-drm), GLES only, into its OWN
+#              directory (default build-out-x11/, --out still wins). The X11/xcb libraries
+#              come from the ports prefix through a private prefix (<out>/x11-prefix: only
+#              X11/ and xcb/ headers -- the ports include/ also holds the old lane's GL/);
+#              xshmfence from --x11-xshmfence <prefix> (default: the M4 part-2 xorg-drm
+#              deps, see tools/gpu-lane/x11-drm). No kmscube; <out>/x11-link.txt = the
+#              archives to link, in order (Mesa, xcb, xshmfence, libdrm). Consumer:
+#              tools/gpu-lane/x11-drm (docs/gpu-new-lane/M4-xorg-modesetting.md, part 2).
 # Stage (coordinator only):
 #   sudo cp tools/gpu-lane/mesa-drm/build-out/kmscube-stripped <live NFS export>/bin/kmscube
 #
@@ -61,6 +70,8 @@ opengl=false
 vulkan=false
 wayland=false
 wayland_pc=""
+x11=false
+x11_shmf=""
 out_given=0
 while [ $# -gt 0 ]; do
 	case "$1" in
@@ -76,6 +87,8 @@ while [ $# -gt 0 ]; do
 		--vulkan) vulkan=true ;;
 		--wayland) wayland=true ;;
 		--wayland-pkgconfig) shift; wayland_pc="${1:?--wayland-pkgconfig needs a path list}" ;;
+		--x11) x11=true ;;
+		--x11-xshmfence) shift; x11_shmf="${1:?--x11-xshmfence needs a prefix}" ;;
 		*) echo "build.sh: unknown argument $1" >&2; exit 2 ;;
 	esac
 	shift
@@ -93,6 +106,21 @@ if [ "${wayland}" = true ]; then
 		wo="${root}/tools/gpu-lane/weston-drm/build-out"
 		wayland_pc="${wo}/prefix/lib/pkgconfig:${wo}/prefix/share/pkgconfig:${wo}/deps/libffi/lib/pkgconfig"
 	fi
+fi
+x11_pc=""
+if [ "${x11}" = true ]; then
+	[ "${vulkan}" = false ] && [ "${opengl}" = false ] && [ "${wayland}" = false ] \
+		|| { echo "build.sh: --x11 is a GLES build of its own (no --vulkan/--opengl/--wayland)" >&2; exit 2; }
+	[ "${relink}" = 0 ] || { echo "build.sh: --relink relinks kmscube, which an --x11 build has not" >&2; exit 2; }
+	[ "${out_given}" = 1 ] || out="${here}/build-out-x11"
+	if [ -z "${x11_shmf}" ]; then
+		# xshmfence's API is opaque (struct xshmfence is never dereferenced by Mesa), so any
+		# build configures Mesa; the program links the Phoenix-backend archive (x11-drm).
+		x11_shmf="${root}/tools/gpu-lane/x11-drm/build-out/xshmfence-prefix"
+		[ -f "${x11_shmf}/lib/pkgconfig/xshmfence.pc" ] || x11_shmf="${root}/tools/gpu-lane/xorg-drm/build-out/deps-prefix"
+	fi
+	case "${out}" in /*) ;; *) out="${PWD}/${out}" ;; esac
+	x11_pc="${out}/x11-prefix/lib/pkgconfig"
 fi
 case "${out}" in
 	/*) ;;
@@ -211,6 +239,29 @@ if [ "${relink}" = 0 ]; then
 	printf '%s\n' "Name: zlib" "Description: zlib from the Phoenix ports prefix" "Version: ${zver}" \
 		"Libs: -L${B}/lib -lz" "Cflags: -I${ZP}/include" > "${ZP}/lib/pkgconfig/zlib.pc"
 
+	# --- X11/xcb for --x11 (same reason as zlib: never the ports include/ itself) ----------
+	# A private prefix with only the X11/ and xcb/ header trees; the .pc files are the ports'
+	# own with includedir moved here (libdir stays the ports lib/: archives only).
+	if [ "${x11}" = true ]; then
+		XP="${out}/x11-prefix"
+		rm -rf "${XP}"
+		mkdir -p "${XP}/include" "${XP}/lib/pkgconfig"
+		cp -a "${B}/include/X11" "${B}/include/xcb" "${XP}/include/"
+		for pc in "${B}"/lib/pkgconfig/xcb*.pc "${B}"/lib/pkgconfig/x11*.pc "${B}"/lib/pkgconfig/xau.pc \
+				"${B}"/lib/pkgconfig/xdmcp.pc "${B}"/lib/pkgconfig/xext.pc "${B}"/lib/pkgconfig/xrandr.pc \
+				"${B}"/lib/pkgconfig/xrender.pc "${B}"/lib/pkgconfig/pthread-stubs.pc \
+				"${B}"/share/pkgconfig/*proto.pc; do
+			sed -e "s|^prefix=.*|prefix=${XP}|" -e "s|^libdir=.*|libdir=${B}/lib|" \
+				-e "s|^includedir=.*|includedir=${XP}/include|" "${pc}" > "${XP}/lib/pkgconfig/$(basename "${pc}")"
+		done
+		[ -f "${x11_shmf}/include/X11/xshmfence.h" ] && [ -f "${x11_shmf}/lib/libxshmfence.a" ] \
+			|| { echo "build.sh: no xshmfence in ${x11_shmf} (--x11-xshmfence)" >&2; exit 1; }
+		cp "${x11_shmf}/include/X11/xshmfence.h" "${XP}/include/X11/"
+		printf '%s\n' "Name: xshmfence" "Description: X shared memory fences (${x11_shmf})" "Version: 1.3.2" \
+			"Libs: ${x11_shmf}/lib/libxshmfence.a" "Cflags: -I${XP}/include" > "${XP}/lib/pkgconfig/xshmfence.pc"
+		echo "x11 prefix: ${XP} (xshmfence from ${x11_shmf})"
+	fi
+
 	# --- meson cross file -------------------------------------------------------------------
 	echo "== meson cross file"
 	cross="${out}/phoenix-aarch64.cross"
@@ -218,8 +269,8 @@ if [ "${relink}" = 0 ]; then
 	cat > "${pkgc}" <<EOF
 #!/bin/sh
 # pkg-config restricted to the libdrm-phoenix snapshot + the private zlib prefix
-# (+ the target libwayland for --wayland).
-export PKG_CONFIG_LIBDIR=${LD_PREFIX}/lib/pkgconfig:${ZP}/lib/pkgconfig${wayland_pc:+:${wayland_pc}}
+# (+ the target libwayland for --wayland, the private X11/xcb prefix for --x11).
+export PKG_CONFIG_LIBDIR=${LD_PREFIX}/lib/pkgconfig:${ZP}/lib/pkgconfig${wayland_pc:+:${wayland_pc}}${x11_pc:+:${x11_pc}}
 unset PKG_CONFIG_PATH
 exec /usr/bin/pkg-config --static "\$@"
 EOF
@@ -273,6 +324,9 @@ EOF
 	fi
 	platforms=
 	[ "${wayland}" = true ] && platforms=wayland
+	# --x11: EGL on X11 through DRI3/Present (loader_dri3); GLX stays off, and so does
+	# xlib-lease (a Vulkan extension that would pull libXrandr).
+	[ "${x11}" = true ] && { platforms=x11; api_opts+=(-Dxlib-lease=disabled); }
 	# A GL build dir must never be reconfigured as a Vulkan one or the other way round.
 	if [ -f "${MB}/build.ninja" ]; then
 		if [ "${vulkan}" = true ] && [ ! -f "${out}/mesa-vulkan.txt" ]; then
@@ -292,6 +346,12 @@ EOF
 			> "${out}/mesa-setup.log" 2>&1 || { tail -40 "${out}/mesa-setup.log"; exit 1; }
 		[ "${vulkan}" = true ] && echo "vulkan=true" > "${out}/mesa-vulkan.txt"
 		[ "${wayland}" = true ] && echo "wayland=true" > "${out}/mesa-wayland.txt"
+		[ "${x11}" = true ] && echo "x11=true" > "${out}/mesa-x11.txt"
+	fi
+	if [ "${x11}" = true ] && [ ! -f "${out}/mesa-x11.txt" ]; then
+		echo "build.sh: ${MB} is not an --x11 build; use another --out" >&2; exit 1
+	elif [ "${x11}" = false ] && [ -f "${out}/mesa-x11.txt" ]; then
+		echo "build.sh: ${MB} is an --x11 build; use another --out" >&2; exit 1
 	fi
 	if [ "${wayland}" = true ] && [ ! -f "${out}/mesa-wayland.txt" ]; then
 		echo "build.sh: ${MB} is not a --wayland build; use another --out" >&2; exit 1
@@ -376,6 +436,41 @@ if [ "${wayland}" = true ]; then
 	done
 	grep -q 'EGL_EXT_image_dma_buf_import' <(strings -a "${MB}"/src/egl/libEGL.a) && echo "  EGL_EXT_image_dma_buf_import: yes"
 	echo "  link list: ${out}/egl-link.txt"
+	echo "done"
+	exit 0
+fi
+
+if [ "${x11}" = true ]; then
+	# --- X11: the link list for EGL-on-X11 clients (tools/gpu-lane/x11-drm) -----------------
+	# libEGL.a bundles the platform_x11/_dri3 objects; loader_dri3_helper sits in the gallium
+	# target (DRI frontend), libloader_x11 in libEGL. The xcb/X11 archives follow Mesa; the
+	# program adds its own xshmfence archive (the Phoenix backend) in place of the one Mesa
+	# configured against when they differ.
+	echo "== EGL x11 platform: link list"
+	{
+		echo "--whole-archive $(ls "${MB}"/src/gallium/targets/dri/libgallium-*.a)"
+		for a in "${A[@]}" src/x11/libloader_x11.a; do
+			[ -f "${MB}/${a}" ] && echo "${MB}/${a}"
+		done
+		for l in X11-xcb X11 xcb-dri3 xcb-present xcb-sync xcb-xfixes xcb-randr xcb-shm xcb-render xcb-shape \
+				xcb-keysyms xcb Xau Xdmcp; do
+			[ -f "${B}/lib/lib${l}.a" ] && echo "${B}/lib/lib${l}.a"
+		done
+		echo "${x11_shmf}/lib/libxshmfence.a"
+		echo "${LD_PREFIX}/lib/libdrm.a"
+		echo "${out}/compat/libmesadrm-compat.a"
+		echo "${B}/lib/libz.a"
+	} > "${out}/x11-link.txt"
+	syms="$("${TC}-nm" -g --defined-only "${MB}"/src/egl/libEGL.a 2>/dev/null || true)"
+	for s in dri2_initialize_x11 dri3_x11_connect dri2_initialize_drm; do
+		if grep -qE " [Tt] ${s}\$" <<< "${syms}"; then echo "  symbol ${s}: yes"; else echo "  symbol ${s}: NO"; fi
+	done
+	gsyms="$("${TC}-nm" -g --defined-only "${MB}"/src/gallium/targets/dri/libgallium-*.a 2>/dev/null || true)"
+	for s in loader_dri3_swap_buffers_msc loader_dri3_drawable_init; do
+		if grep -qE " [Tt] ${s}\$" <<< "${gsyms}"; then echo "  symbol ${s}: yes"; else echo "  symbol ${s}: NO"; fi
+	done
+	grep -q 'EGL_EXT_platform_xcb' <(strings -a "${MB}"/src/egl/libEGL.a) && echo "  EGL_EXT_platform_xcb: yes"
+	echo "  link list: ${out}/x11-link.txt"
 	echo "done"
 	exit 0
 fi

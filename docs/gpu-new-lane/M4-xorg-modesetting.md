@@ -7,6 +7,11 @@ Milestone M4 of the [new-lane plan](PLAN.md), from the design in
 [M2](M2-kms-server.md) (`rpi4-kms`), [M1](M1-async-render-server.md) (`rpi4-v3d-async`) and
 [E5](E5-deferred-reply.md) (IPC and `poll()` costs).
 
+**Update (2026-09-27, part 2):** m4c = first light (xclock, glamor on V3D), m4d = Window Maker (Result
+sections at the end). **DRI3/Present GL clients** — Mesa EGL-X11 build, the Phoenix xshmfence backend
+(G16), `eglx11-demo`, `Xorg-drm-m4p2` — built and host-tested, cycle `m4p2a-eglx11` pre-registered:
+[M4 part 2](#m4-part-2--dri3present-gl-clients-2026-09-27).
+
 **Status (2026-09-27):** two Pi cycles, two build defects, both fixed, cycle **`m4c-xorg-drm`
 re-registered** (§10). `m4a`: exit in bus configuration (`Cannot run in framebuffer mode`) — an
 upstream test that is always fatal without libpciaccess → xorg-server patch 0008. `m4b`: past bus
@@ -233,12 +238,12 @@ stand-in only while `libphoenix.a` lacks the symbol, list `XORG_DRM_COMPAT_FNS`)
 | **DRI3 open** | works: glamor re-opens `drmGetDeviceNameFromFd2(card0)` = `/dev/dri/card0`, `drmGetMagic` (library-local) + `drmAuthMagic` (accepted) → the fd crosses the X socket by SCM_RIGHTS (E1) [read: `glamor_egl.c:841-876`] | — |
 | **DRI3 client buffers** (`PixmapFromBuffers`) | a buffer allocated **on card0** (a kms dumb BO: Mesa's scan-out-capable back buffers) imports: `gbm_bo_import` → render `BO_IMPORT` ns=kmsbuf (G1 ✅); the renderonly scan-out import (`renderonly_create_gpu_import_for_resource`: export from the render node + import on card0) fails soft → pixmap usable for compositing, not for flips [read: `v3d_resource.c:1007`, `renderonly.c:131-170`]. A buffer allocated **on the render node** cannot even be exported by the client | **G4** (`V3DA_OP_BO_EXPORT` + `/v3dbuf`, and `BO_IMPORT ns=v3dbuf`) |
 | DRI3 `BuffersFromPixmap` (server → client) | `glamor_make_pixmap_exportable` → GBM scan-out BO (kms dumb) → card0 PRIME export ✅ [inferred] | — |
-| **DRI3 fences** (`FenceFromFD`, Mesa's loader_dri3 idle tracking) | xshmfence's pthread backend fails at `pthread_condattr_setpshared(PROCESS_SHARED)`; cross-process coherence of MAP_SHARED `/tmp` files is also unproven | **G16 (new)**: process-shared memory + pshared mutex/cond in libphoenix, or an xshmfence backend over a server (e.g. the render server's fence page / syncobjs = G6) |
+| **DRI3 fences** (`FenceFromFD`, Mesa's loader_dri3 idle tracking) | xshmfence's pthread backend fails at `pthread_condattr_setpshared(PROCESS_SHARED)`; cross-process coherence of MAP_SHARED `/tmp` files is also unproven | **G16 (new)**: process-shared memory + pshared mutex/cond in libphoenix, or an xshmfence backend over a server (e.g. the render server's fence page / syncobjs = G6). ↪ **Part 2: closed with a polled-word backend in shmsrv memory (§P2.2), no libphoenix change** |
 | DRI3 explicit sync (syncobj fds) | not in 21.1's DRI3 1.2 | G6 (for 24.x DRI3 1.4 / Present explicit sync) |
 | **Present — window copies at vblank** | work; timing = G12 below | G12 |
 | **Present — flips of client buffers** | refused: a client pixmap must become a KMS fb on card0; for a buffer another process allocated that is `KMS_OP_PRIME_IMPORT` (G7), and the flip must wait for the client's GPU work (cross-process implicit sync, `BO_LAST_FENCE`, M3p2 G13 note) → falls back to a glamor copy | **G7** + `BO_LAST_FENCE` |
 | Page flips of Xorg's own buffers | in-process G13 covers them (imports recorded in this process) | — |
-| Mesa GLX/EGL-x11 clients | no client-side Mesa X11 platform is built (`-Dplatforms=`) | M4 work: Mesa `-Dplatforms=x11` (+ libxcb-dri3/present/xfixes/sync, all in the ports prefix) → then G4, G16 |
+| Mesa GLX/EGL-x11 clients | no client-side Mesa X11 platform is built (`-Dplatforms=`) | M4 work: Mesa `-Dplatforms=x11` (+ libxcb-dri3/present/xfixes/sync, all in the ports prefix) → then G4, G16. ↪ **Part 2: built (`mesa-drm --x11`); G4 turned out not to be on the DRI3 path (§P2.1)** |
 
 ### G12 in Xorg's main loop, quantified
 
@@ -483,3 +488,231 @@ Next: Window Maker + input, DRI3/Present clients (G4/G6/G16), page flips.
 (`artifacts/hdmi/20260927-085717-m4d-wmaker-tick.png`, stable over 26 snapshots) shows the Window Maker
 workspace clip, the dock with its icons and the software cursor on the default background. 0 exceptions.
 Not yet exercised: input (phxhid), windowed clients, DRI3/Present GL clients, page flips.
+
+## M4 part 2 — DRI3/Present GL clients (2026-09-27)
+
+**Goal:** the "windowed GL at render rate" half of the M4 gate — an unmodified Mesa EGL client in an X
+window on Xorg-drm, its frames rendered by V3D into DRI3 buffers and put on screen by Present, no CPU
+copy. **Status: built, host-tested, one Pi cycle pre-registered (§P2.6); nothing committed or staged;
+no server process (rpi4-kms, rpi4-v3d-async) and no libdrm-phoenix change was needed; no libphoenix
+branch.** Code: [`tools/gpu-lane/x11-drm/`](../../tools/gpu-lane/x11-drm/) (new),
+`tools/gpu-lane/mesa-drm/build.sh --x11` + Mesa patches 0013–0015,
+`tools/gpu-lane/xorg-drm/build.sh --xshmfence-prefix`.
+
+### P2.1 The chain, traced (what each step needs, and whether it exists)
+
+Read in Mesa 26.2 (`loader_dri3_helper.c`, `platform_x11_dri3.c`, `x11_dri3.c`, `v3d_resource.c`,
+`renderonly.c`) and xorg-server 21.1.24 (`glamor_egl.c`, `dri3/`, `present/`, `miext/sync/misyncshm.c`):
+
+| # | Step | Path on our stack | Status |
+|---|---|---|---|
+| 1 | `eglInitialize(EGL_PLATFORM_X11)` → `dri3_x11_connect` → `xcb_dri3_open` | glamor's `glamor_dri3_open_client` opens `drmGetDeviceNameFromFd2(card0)` = **`/dev/dri/card0`**, `drmGetMagic` + `drmAuthMagic` (library-local / accepted no-op), the fd crosses the X socket by SCM_RIGHTS (the kernel's `fdpass_pack` takes a file reference in flight; E1). Server: `XTRANS_SEND_FDS 1` in `dix-config.h`, `ReadFdFromClient`/`WriteFdToClient`/`_XSERVTransSendFd`/`_XSERVTransRecvFd` linked in Xorg-drm-m4p2; libxcb in the ports prefix is built with fd passing (`xcb_send_fd`, `recvmsg`) [built: nm] | ✅ today |
+| 2 | driver for that fd | `loader_get_user_preferred_fd` keeps it (no `DRI_PRIME`: display = render fd); `drmGetVersion` = `vc4` → `vc4_drm_screen_create` → `VC4_GET_PARAM` `-ENOTTY` → **kmsro** → renderonly v3d on `/dev/dri/renderD128` — exactly kmscube's GBM path. libdrm-phoenix identifies the received descriptor by `sys_fdpath` (kept on the open file, survives SCM_RIGHTS) + an idempotent `HELLO`; rpi4-kms logs once `request pid … != client pid …` (Stage A does not enforce the opener) [read: `kms_main.c:1231`] | ✅ today |
+| 3 | back buffer allocation (`dri3_alloc_render_buffer`) | `dmabuf_capable` is **off** in glamor unless the server runs `-debug dmabuf_capable` (`glamor_egl.c:1181`), so `GetSupportedModifiers` answers none, and Mesa calls `dri_create_image_with_modifiers(NULL, 0, SHARE\|SCANOUT\|BACKBUFFER)` → v3d `SCANOUT` → **renderonly**: `CREATE_DUMB` in the kms pool, card0 export `/kmsbuf/<h>`, render `BO_IMPORT` (G1) — linear. (Mesa patch 0012's opt-in is not needed: SCANOUT is set.) | ✅ today |
+| 4 | the buffer's fd for X (`__DRI_IMAGE_ATTRIB_FD`) | `v3d_bo_get_dmabuf` = render `PRIME_HANDLE_TO_FD` of an **imported** BO = **G4a** (library, M5 §4.1, proven on hardware by m5b). G4 proper (render-owned export) is **not** on this path | ✅ with libdrm-phoenix ≥ m5 (the client links m5b) |
+| 5 | `PixmapFromBuffers` (modifier LINEAR, DRI3 1.2) | server: `dmabuf_capable` off → `glamor_back_pixmap_from_fd` → `gbm_bo_import(GBM_BO_IMPORT_FD)` → render `BO_IMPORT` of the client's `/kmsbuf/<h>` (G1; the render server opens the name itself, any process's export) → EGLImage → texture. Then `renderonly_create_gpu_import_for_resource` tries render export + card0 import: with Xorg's m3p3 library the export fails locally (`-ENOSYS`, stderr `Failed to export gem bo … to dmabuf`); with a G4a library it would reach card0 `PRIME_FD_TO_HANDLE` of a foreign buffer = **G7** `-ENOSYS`. **Both fail soft** (`rsc->scanout = NULL`, no error path) [read: `v3d_resource.c:1007`, `renderonly.c`]: the pixmap works for compositing, not for scan-out | ✅ today (copy path) |
+| 6 | `FenceFromFD` (one xshmfence per buffer) | libxshmfence: the pthread backend cannot work across processes (below), and `xshmfence_alloc_shm` ignores the failing init | ❌ **G16** — the one real gap |
+| 7 | `PresentPixmap` | windowed → not flippable (not screen-sized) → `present_execute_copy`: glamor copy client pixmap → window (v3d samples the linear buffer through its shadow-tiled copy, as for the root pixmap), `screen->flush` (glFlush → SUBMIT_CL) **before** `present_pixmap_idle` triggers the idle fence + sends IdleNotify [read: `present_execute.c:82-90`]. With `rpi4-v3d-async -m serial` jobs run in global submission order across clients, so the client's render (submitted before its PresentPixmap) finishes before the server's copy reads it, and the server's copy before the client's next render into that buffer. (Pipeline mode would need cross-process implicit sync = `BO_LAST_FENCE`.) | ✅ today (serial mode) |
+| 8 | swap interval 1: vblank-timed copy | modesetting `ms_present_queue_vblank` → `CRTC_QUEUE_SEQUENCE` (libdrm-phoenix ✅, M3) → event read on card0 in Xorg's `poll()`. The pollwake kernel (build 11, merged) wakes mixed AF_UNIX + server-fd sets on a notify; rpi4-kms-gate notifies (kmscube 60.00 fps) — so the §8 G12 model (≈ 40–47 fps) should no longer apply | ✅ expected; first exercised here |
+| 9 | Present flips of client buffers, DRI3 explicit sync | full-screen windows only; need G7 + `BO_LAST_FENCE`; explicit sync needs xcb ≥ 1.17 (ports: 1.16) and DRI3 1.4 (server 21.1: 1.2) | not needed for a windowed client |
+
+**Minimal gap set for the first DRI3 GL client: G16 plus build glue.** Not G4 (step 3 keeps client
+buffers on the display device), not G7 (step 5 fails soft, step 9 not taken), not G6.
+
+### P2.2 G16 — xshmfence on Phoenix: design and the chosen answer
+
+An xshmfence is a word in memory shared by the X server (trigger, reset, query) and one client
+(await). The server never awaits [read: `misyncshm.c` uses only trigger/reset/query/map/alloc];
+Mesa's client awaits a buffer's idle fence in `dri3_find_back`/`dri3_get_buffer`, normally after the
+IdleNotify for that buffer has arrived — i.e. the fence is almost always triggered already.
+
+Two independent problems: (a) **the wait primitive** — no futex in the kernel; libphoenix mutexes and
+condition variables are per-process kernel handles, so `pthread_{mutex,cond}attr_setpshared(PROCESS_SHARED)`
+can never mean anything (it returns `EINVAL`, `pthread.c:1549`); (b) **the shared memory** — no
+`memfd_create`/`shm_open`, and a `/tmp` file is unsafe: the kernel keys a file's pages by the file id,
+which dummyfs reuses, so an unlinked fence file can alias a later one while an old mapping lives
+(shmsrv's analysis, `weston-drm/shmsrv/shmsrv.c` header).
+
+| Option | Verdict |
+|---|---|
+| libphoenix process-shared pthread mutex/cond | needs a kernel wait-on-address or a user-space emulation inside libphoenix (spin/sleep) under the POSIX API, for every program; still needs (b). Large, touches every pthread user — rejected |
+| kernel futex (wait on a physical address) | the real fix for (a), benefits pshared pthread too; kernel work + audit, owner-gated (ground rule 3) — later, if polling ever shows in a profile |
+| message-based fence (a fence server; await = blocking read) | exact wake-up, but one more server and an IPC per trigger/await on every frame — rejected for the first client |
+| **polled word in shmsrv memory (chosen)** | (a) trigger/reset = atomic store-release, query = load-acquire, await = spin 64 × `yield`, 16 × `sched_yield`, then `usleep` 50 µs doubling to 1 ms; correct because both mappings are the same cached physical page on one coherent SoC; cost = latency ≤ 1 ms only when a client really waits (rare, see above). (b) the fence object comes from **shmsrv** (`/shm`, the M6 lane's `memfd_create` backing: `memExport`ed MAP_CONTIGUOUS cached pages, ids never reused, pages live while any mapping does). **No libphoenix change** |
+
+Implementation: [`tools/gpu-lane/x11-drm/patches/libxshmfence/0001`](../../tools/gpu-lane/x11-drm/patches/libxshmfence/)
+(+ `xshmfence_phoenix.[ch]`, MIT like the library; `xshmfenceint.h` selects it with
+`HAVE_PHOENIX_FENCE`; `xshmfence_alloc_shm` asks shmsrv first — devctl CREATE, `open("/shm/<id>")` —
+and keeps upstream's `/tmp` file only as a fallback with a one-time stderr warning). `xshmfence_init` is
+a no-op: `ftruncate` zero-fills = untriggered, and a shmsrv descriptor has no `write`. Built without
+configure (two sources, `-DHAVE_PHOENIX_FENCE=1`), deterministic archive. **Both Xorg-drm and every
+DRI3 client must link this archive** (struct layout); `xorg-drm/build.sh` checks the link map
+(`xshmfence members: phoenix=21 pthread=0`). `__wrap_mmap` passes `/shm/<id>` descriptors through
+unchanged (not a buffer namespace it knows), so the fence page stays cached as exported.
+
+Lifetime, checked against shmsrv's protocol: client `alloc` + `ftruncate` (1 MiB object) + `mmap` →
+`FenceFromFD` (xcb closes the client's fd after sending; the in-flight fd holds a file reference,
+kernel `fdpass_pack`) → server `mmap` and **keeps** the descriptor for the fence's lifetime
+(`miSyncShmCreateFenceFromFd` stores it in `pPriv->fd` [read: `misyncshm.c:124-137`]) → the object
+stays live until the fence is destroyed (buffer freed, client gone), then the last close withdraws it
+(`destroy` line); the mappings keep the page until unmapped. Cost: shmsrv gives every object **≥ 1 MiB contiguous** (its minimum capacity, chosen for
+wl_shm pools) — ~2–4 MiB per window for 2–4 fences. Fine for first light; a small-object capacity
+(one page) is a shmsrv follow-up.
+
+**Host test** (`tools/gpu-lane/x11-drm/hosttest/run.sh`, native gcc + ASan/UBSan, the patched
+upstream sources, a Linux memfd passed over an AF_UNIX socketpair to forked processes): **8/8 PASS** —
+fresh = untriggered (`size=4`), local trigger/await/reset idempotence, cross-process trigger after
+20 ms seen by `await` in 23.2 ms, cross-process reset visible, **2000 ping-pong round trips in 5.0 ms
+(2.5 µs each)**, three waiter processes held while untriggered and all released within 1.8 ms of one
+trigger, the mapping outlives the descriptor.
+
+### P2.3 Builds (new outputs; nothing older replaced)
+
+| What | Command | Output | sha256 (first 16) |
+|---|---|---|---|
+| Mesa EGL X11 (DRI3/Present), GLES only, libdrm-phoenix **m5b** | `tools/gpu-lane/mesa-drm/build.sh --x11 --libdrm-prefix tools/gpu-lane/libdrm-phoenix/build-out-m5b/prefix --x11-xshmfence tools/gpu-lane/x11-drm/build-out/xshmfence-prefix` | `mesa-drm/build-out-x11/` (+ `x11-link.txt`; patch set `7373c40f97bb3f64` = 0001–0015) | — |
+| libxshmfence, Phoenix backend | `tools/gpu-lane/x11-drm/build.sh [--xshmfence-only]` | `x11-drm/build-out/xshmfence-prefix/lib/libxshmfence.a` | `4049c5b0435f7ad8` |
+| shmsrv (weston-drm's source, unchanged, compiled here) | same | `x11-drm/build-out/shmsrv-stripped` (124 KB) | `6a89f2610a5ad80d` |
+| **eglx11-demo** (static, `--wrap=mmap --wrap=ioctl`) | same | `x11-drm/build-out/eglx11-demo-stripped` (16.3 MB; unstripped `eglx11-demo` for addr2line) | `f7a5bb3825530032` / `7030cee17ed6392b` |
+| **Xorg-drm-m4p2** = m4c/m4d's Xorg-drm with only libxshmfence changed | `tools/gpu-lane/xorg-drm/build.sh --out tools/gpu-lane/xorg-drm/build-out-m4p2 --mesa-out tools/gpu-lane/xorg-drm/build-out/mesa --xshmfence-prefix tools/gpu-lane/x11-drm/build-out/xshmfence-prefix` | `xorg-drm/build-out-m4p2/Xorg-drm-stripped` (20.8 MB) | `8cefbd033f4a8796` / unstripped `b3b55047e34cf0d1` |
+
+**Mesa `--x11`** (`mesa-drm/build.sh`, additive next to `--wayland`, own dir `build-out-x11`, marker
+`mesa-x11.txt`): `-Dplatforms=x11 -Dglx=disabled -Dxlib-lease=disabled`, GLES only. The X11/xcb
+dependencies come through a **private prefix** (`<out>/x11-prefix`: only `X11/` and `xcb/` headers,
+the ports' `.pc` files with includedir moved — the ports `include/` also holds the old lane's `GL/`).
+Found: xcb 1.16, xcb-randr, xcb-keysyms, x11-xcb 1.8.7, xcb-dri3/present/shm/sync/xfixes 1.16 (so
+**no** DRI3 explicit sync — `HAVE_DRI3_EXPLICIT_SYNC` needs 1.17), xshmfence. Summary: EGL platforms
+`x11 surfaceless drm xcb`. Link list `x11-link.txt` (gallium whole-archive, EGL/GBM/GLES/v3d/…,
+X11-xcb, X11, xcb-dri3/present/sync/xfixes/randr/shm/render/shape/keysyms, xcb, Xau, Xdmcp,
+xshmfence, libdrm, compat, z).
+
+**Mesa patches** (`mesa-drm/patches/mesa/`, all three only reachable with the X11 platform; they
+change the patch-set stamp, so other mesa-drm build dirs re-apply and rebuild once, with no
+behavioural change):
+
+| # | Patch | Why |
+|---|---|---|
+| 0013 | `egl/x11: build without SysV shared memory (HAVE_SYS_SHM_H)` | `platform_x11.c` included `<sys/ipc.h>` unconditionally and called the xshm probe that `x11_display.c` already compiles only with `HAVE_SYS_SHM_H`; Phoenix has no SysV IPC. Only the swrast MIT-SHM path is affected (not built here) |
+| 0014 | `gbm/dri: add the xcb include paths when the X11 platform is built` | `gbm_dri.c` → `loader_dri_helper_screen.h` includes `<xcb/*.h>` under `HAVE_X11_PLATFORM`, but `dri_gbm` has no xcb dependency; upstream builds only because xcb sits in `/usr/include`. Header-only `partial_dependency` |
+| 0015 | `meson: no dril_dri shared stub on Phoenix-RTOS` | the X11 platform always builds `targets/dril` (the `<driver>_dri.so` AIGLX loads with `dlopen`) as a `shared_library`, which cannot link against non-PIC libphoenix; no dynamic loader exists to use it |
+
+The build also still carries the M6 lane's **untracked** patch 0012 (opt-in, env-gated, off by default).
+
+**eglx11-demo** (`x11-drm/src/eglx11_demo.c`): Xlib window 640×480+640+300 (the old lane's 14.2 fps
+GL-in-X measurement size), `eglGetPlatformDisplay(EGL_PLATFORM_X11_KHR)`, GLES2 context, a rotating
+colour-cycling hexagon fan over a moving background, `eglSwapInterval`, fps every 2 s with swap and
+frame maxima, the first frame's centre pixel read back before the first swap. Refuses to start without
+shmsrv (`XDEMO shmsrv=missing`, rc 3; `-f` overrides); sets `EGL_LOG_LEVEL=debug` for itself only
+(`XDEMO_EGL_DEBUG=0` silences); knobs from the environment because psh cannot quote a command line
+into bash's `CLIENT=` (`XDEMO_SECS`, `XDEMO_FRAMES`, `XDEMO_INTERVAL`, `XDEMO_GEOM`). SIGTERM ends it
+after the current frame; a stuck swap is ended by `alarm(5)`, so the script's `kill; wait` never hangs.
+
+Verification [built]: eglx11-demo `nm -u` = 0; `dri2_initialize_x11`, `dri3_x11_connect`,
+`x11_dri3_open`, `loader_dri3_swap_buffers_msc`, `xcb_dri3_open`, `xcb_dri3_pixmap_from_buffers`,
+`xcb_present_pixmap`, `xshmfence_phoenix_alloc_shm`, `kmsro_drm_screen_create`,
+`v3d_drm_screen_create_renderonly`, `__wrap_mmap`, `__wrap_ioctl`; strings `/dev/dri/card0`,
+`/dev/dri/renderD128`, `/kmsbuf`, `/shm`, `EGL_KHR_platform_x11`, `EGL_EXT_platform_xcb`; no
+old-lane strings; no pthread xshmfence member in the map. Xorg-drm-m4p2: `nm -u` = 0, every §7 check
+as before, `xshmfence members: phoenix=21 pthread=0`. Host tests: `x11-drm/hosttest/run.sh` 8/8 PASS;
+`DRMPHX_OUT=tools/gpu-lane/libdrm-phoenix/build-out-m5b tools/gpu-lane/libdrm-phoenix/hosttest/run.sh`
+= logic **134/0 PASS**, e2e legacy + dri **PASS** (only the four fake-GPU pixel checks fail, as
+designed; `prime_export_render` = the G4 gap) — the library the client links is unchanged.
+
+### P2.4 What closed, what remains
+
+| Gap | State after part 2 |
+|---|---|
+| **G16** DRI3 fences | ✅ closed for Phoenix (libxshmfence backend + shmsrv), host-tested; hardware = §P2.6 |
+| Mesa client platform | ✅ `--x11` build + 3 patches + demo client |
+| G4 render-node export | not needed for DRI3 while `dmabuf_capable` is off; needed for UIF (tiled) client buffers = no shadow-tiling of each frame in the server (`-debug dmabuf_capable` + modifiers), for Wayland dmabuf of render-allocated buffers, and v3dv external memory |
+| G7 kms import of a foreign buffer + `BO_LAST_FENCE` | needed for Present **flips** of full-screen client windows (today: copy fallback) and for pipeline-mode render servers (cross-process implicit sync) |
+| G6 cross-process syncobj / sync files | DRI3 1.4 explicit sync (xcb ≥ 1.17, a newer server), Vulkan xcb WSI (M5 second half) |
+| shmsrv | lives in `tools/gpu-lane/weston-drm/shmsrv/` (M6, untracked at the time of writing); x11-drm compiles the same source and includes `shm_proto.h` from there. **Recommend promoting it to a shared `tools/gpu-lane/shmsrv/`** and adding a one-page minimum capacity for small objects |
+| Present timing | first measured by §P2.6 (pollwake should give 60 Hz; the §8 G12 model predates build 11) |
+
+### P2.5 Risks only the Pi can show
+
+| # | Risk | Where it shows |
+|---|---|---|
+| Q1 | the SCM_RIGHTS-received card0 fd: libdrm-phoenix identification or rpi4-kms per-client state behaves differently for a descriptor opened by another process | client `DRMPHX conn … node=card0 … rc<0`, or `CREATE_DUMB rc=-1` in the client |
+| Q2 | shmsrv object lifetime vs the server's `mmap` (withdrawn before the server maps) | `xcb_dri3_fence_from_fd` error from the client's Mesa; `SHMSRV destroy id=N` while the demo still runs |
+| Q3 | Present vblank path in modesetting (`CRTC_QUEUE_SEQUENCE` events through Xorg's poll) never exercised | interval-1 arm stalls at the first swap while the interval-0 arm runs |
+| Q4 | glamor sampling a linear foreign buffer (shadow tiling each frame) costs more than expected | interval-0 fps low with high `swap_avg_ms` |
+| Q5 | kms pool: Xorg's front (7.9 MiB) + 2–4 client buffers (≈1.2 MiB each at 640×480) | `CREATE_DUMB … rc=-1 errno=12/28` → rpi4-kms `-p 48` |
+| Q6 | teardown: the client's kms dumb BOs die with its fd while Xorg's imports still map them (E1 keeps pages) | faults or `V3DA srv import released` errors after `XDEMO done` |
+
+### P2.6 Pre-registered Pi cycle `m4p2a-eglx11` (one netboot cycle, two arms)
+
+**Question:** does an unmodified Mesa EGL-X11 client render with V3D into DRI3 buffers inside Xorg-drm
+and appear in its window through Present — with vsync (interval 1) and at render rate (interval 0) —
+with the Phoenix xshmfence backend synchronising client and server?
+
+**Preconditions:** the m4d setup (netboot image ≥ build 11 with the pollwake kernel; `rpi4-v3d-async-m3p2`,
+`rpi4-kms-gate`, `kmstest-poll`, `v3dasync-ping`, `/bin/xorg-drm-m4a.sh`, `/etc/X11/xorg-drm.conf`, bash
+already on the export); no other GPU client.
+
+**Stage (coordinator; `EXPORT=/srv/phoenix-rpi4-nfs-gcc16`, `sudo install -m 755`, `cmp` afterwards):**
+
+| Source | Export path |
+|---|---|
+| `tools/gpu-lane/xorg-drm/build-out-m4p2/Xorg-drm-stripped` (`8cefbd03…`) | `$EXPORT/bin/Xorg-drm-m4p2` (the m4c/m4d `/bin/Xorg-drm` stays) |
+| `tools/gpu-lane/x11-drm/build-out/eglx11-demo-stripped` (`f7a5bb38…`) | `$EXPORT/bin/eglx11-demo` |
+| `tools/gpu-lane/x11-drm/build-out/shmsrv-stripped` (`6a89f261…`) | `$EXPORT/bin/shmsrv-m4p2` (does not replace the M6 lane's `/bin/shmsrv`; only one may run per cycle — both serve `/shm`) |
+
+**One cycle** (Bash `timeout: 600000`):
+
+```
+./scripts/test-cycle-psh-interact.sh --label m4p2a-eglx11 --idle-secs 45 --max-cmd-secs 300 \
+    --hdmi-dense-on 'XORGDRM client start' -- \
+    "/bin/rpi4-v3d-async-m3p2 -r 1 -m serial -i" "/bin/rpi4-kms-gate -G" "/bin/shmsrv-m4p2 -v" \
+    "export XSRV=/bin/Xorg-drm-m4p2" "export CLIENT=/bin/eglx11-demo" "export HOLD=60" \
+    "export XDEMO_SECS=45" "export XDEMO_INTERVAL=1" \
+    "/bin/bash /bin/xorg-drm-m4a.sh" \
+    "export XDEMO_INTERVAL=0" "export DRMPHX_TRACE=0" \
+    "/bin/bash /bin/xorg-drm-m4a.sh" \
+    "/bin/shmsrv-m4p2 -s" "/bin/kmstest-poll stats" "/bin/v3dasync-ping stats"
+```
+
+`-m serial` is required (§P2.1 step 7). Arm a keeps `DRMPHX_TRACE` at the script's default 1 (server
+and client, rate-limited); arm b turns it off for a clean rate. The demo ends itself after 45 s
+(`XDEMO done … stop=limit`), inside the script's 60 s hold; `-terminate` then ends the server. Wall
+clock ≈ netboot 60–150 s + 3 × ~5 s + 2 × ~90 s + 3 × ~5 s ≈ 5–6.5 min.
+
+Grade:
+
+```
+grep -a -E '^(XDEMO|XORGDRM|SHMSRV|KMS|V3DA|KMSTEST|V3DAPING) |DRMPHX .*(CREATE_DUMB|PRIME_|conn )|libEGL|DRI3|xcb_dri3|xshmfence|Failed to export|\((EE|WW)\)|glamor X|Fatal|Exception #' \
+    artifacts/rpi4b-uart/rpi4b-uart-*-m4p2a-eglx11.log
+./scripts/uart-summary.sh m4p2a-eglx11
+```
+
+**HDMI rule:** only snapshots taken after an arm's `XORGDRM client start` count (dense from there);
+earlier snapshots show the console or the bare root.
+
+**Predictions** (per arm, in order; ~1.3 % UART line corruption — re-read, don't count; EL0 dumps print twice):
+
+| Line / observation | Predicted | If instead… |
+|---|---|---|
+| `SHMSRV srv ready ns=/shm port=… proto=1 …`, `SHMSRV srv detached pid=…` | once | `srv FAIL /shm is served already`: another shmsrv runs — fine if it is the same protocol, note it |
+| m4c/m4d server rows: `glamor X acceleration enabled on V3D 4.2.14.0`, `Initializing extension DRI3` / `Present`, `XORGDRM socket=up wait_s=<1–20>` | as m4d | anything else: the m4c table (§10) applies — this binary differs from m4d's only in libxshmfence |
+| `XDEMO start … geom=640x480+640+300 interval=1 …`, `XDEMO shmsrv=up`, `XDEMO x11 display=:1 screen=0 depth=24 vendor="The X.Org Foundation" …` | once | `shmsrv=missing` + `done rc=3`: shmsrv not staged/started; `reason=XOpenDisplay`: the script's DISPLAY/socket |
+| client `DRMPHX conn … path=/dev/dri/card0 node=card0 … rc=0` (the DRI3-passed fd), one `KMS srv note: request pid <client> != client pid <Xorg>` (logged once), then `DRMPHX conn … node=render` (kmsro opens renderD128) | DRI3Open + kmsro, as kmscube | EGL debug `DRI3 error: Could not get DRI3 device` / `No driver found`: step 1–2 (Xorg `Failed to initialize DRI3`, the `conn` line's rc) — Q1 |
+| `XDEMO egl version=1.5 vendor="Mesa Project" driver=vc4 apis="OpenGL_ES"`, `XDEMO window id=0x… visual=0x… depth=24`, `XDEMO gl renderer="V3D 4.2.14.0" version="OpenGL ES 3.1 Mesa 26.2.0"` | the DRI3 path on kmsro (the dri driver of the card0 fd is vc4; rendering is v3d) | `eglInitialize err=0x3001`: read the `libEGL` debug lines; any `swrast`/`kopper` line: DRI3 was refused |
+| per back buffer (2–4; arm a traced): client `MODE_CREATE_DUMB rc=0` (≈1.2 MB) → `PRIME_HANDLE_TO_FD node=card0 rc=0 … fdpath=/kmsbuf/<h>` → `PRIME_FD_TO_HANDLE node=render rc=0` + `V3DA srv import … ns=kmsbuf id=<h>` → **`PRIME_HANDLE_TO_FD node=render rc=0 … fdpath=/kmsbuf/<h>`** (G4a); `SHMSRV create id=N pid=<client>`, `SHMSRV truncate id=N size=4 exported=4096 cap=1048576`; server: `PRIME_FD_TO_HANDLE node=render rc=0 … fdpath=/kmsbuf/<h>` + a second `V3DA srv import … id=<h>` (another client), `PRIME_HANDLE_TO_FD node=render rc=-1 errno=38` + stderr `Failed to export gem bo … to dmabuf` (m3p3 library, soft, §P2.1 step 5); no `SHMSRV destroy` yet: Xorg keeps each fence's descriptor for the fence's lifetime, so the `destroy id=N size=4 cap=1048576` lines come when the demo exits (all of an arm's ids) | steps 3–6 | client `CREATE_BO` on render instead of `CREATE_DUMB`: tiled/non-scanout allocation (modifiers offered: was `-debug dmabuf_capable` set?) — export then fails (G4); client `PRIME_HANDLE_TO_FD node=render rc=-1 errno=38`: a pre-M5 library (BUILD-INFO); Mesa `xcb_dri3_pixmap_from_buffer[s] failed`: the server import (its `PRIME_FD_TO_HANDLE` rc, `V3DA srv import FAIL`); `xcb_dri3_fence_from_fd failed`: the server's `mmap` of the `/shm` descriptor failed (Q2), or the server lacks the Phoenix backend (a pre-m4p2 Xorg-drm); a `SHMSRV destroy` **while the demo still runs** = a fence withdrawn early (Q2) |
+| `XDEMO first_frame centre_rgba≈153,153,153,255 glerr=0x0` (white centre × 0.6 at t≈0, ±3) | the client renders | `0,0,0,…` or the background colour: nothing drawn into the back buffer |
+| `XDEMO first_swap ok t_ms=<…>` within a few seconds | Present + idle fences work | no `first_swap`/`fps` lines in arm a but fine in arm b: Q3 (vblank event path); stuck in both: idle fence never seen triggered (xshmfence coherence) or IdleNotify missing — the client is killed by `alarm` 5 s after the script's TERM (`XORGDRM client exited rc=142`) |
+| arm a `XDEMO fps=` lines every 2 s: **55–60** (vsync; pollwake wakes Xorg's mixed poll set) | 60 Hz Present | **40–47**: Xorg still sees vblank events on a 20 ms quantum (G12 model §8: pollwake not reaching the card fd in Xorg's set); **≤ 30**: per-frame cost > 16.7 ms (server copy incl. shadow tiling, Q4) |
+| arm b `XDEMO fps=`: **> 60**, well above the old lane's 14.2 fps at this size | render rate through DRI3/Present (the M4 gate) | ≤ 60 with `swap_avg_ms` ≈ frame time: the per-frame X/Present round trip or the server copy dominates — report `swap_avg_ms`, `frame_max_ms` |
+| `XDEMO done rc=0 frames=… secs=45.0 fps=… stop=limit` per arm; `XORGDRM client exited rc=0`; `XORGDRM server exited rc=0 socket=gone` | clean exits | `stop=signal` + rc 143: the demo did not end itself (hung swap) |
+| HDMI after `XORGDRM client start`: black root, a 640×480 window at (640,300) with a rainbow hexagon (pale centre) turning over a dark blue/purple background — hexagon angle and colours differ between consecutive snapshots | frames reach the screen | window black while `fps` lines advance: the server copies something else (import of the wrong buffer / tiling: compare the client's `fdpath=/kmsbuf/<h>` with the server's import ids); garbage: a tiled buffer read as linear; torn/partial frames: cross-process ordering (was `-m serial` used?) |
+| `SHMSRV stats rc=0 live=0 bytes=0 ids=<2–8>`, `KMSTEST stats … apply_errors=0`, `V3DAPING stats … parked=0` | no leaks after both servers' clients left | `live>0`: a fence descriptor leaked; `bos>0`: kms leak on client death (Q6) |
+| faults (`uart-summary.sh`) | 0 kernel, 0 EL0 | EL0 in the demo: `aarch64-phoenix-addr2line -f -e tools/gpu-lane/x11-drm/build-out/eglx11-demo <pc>`; in Xorg: `…/xorg-drm/build-out-m4p2/Xorg-drm` |
+
+**What the cycle decides:** frames on HDMI with arm b above 60 fps = **GL in an X window at render
+rate on the new lane** (the M4 gate's second half; the old lane: 14.2 fps). Arm a at 60 = Present
+timing is right after pollwake. A failure names its step in §P2.1.
+
+**Follow-ups** (separate cycles): (c) the same client full-screen (`XDEMO_GEOM=1920x1080+0+0`) to
+grade the flip attempt and its copy fallback (G7); (d) under Window Maker (`CLIENT=/bin/wmaker`
+started first, the demo from a second script — needs a two-client script); (e) Xorg-drm with
+`-debug dmabuf_capable` once G4 exists (UIF client buffers, no shadow tiling).
