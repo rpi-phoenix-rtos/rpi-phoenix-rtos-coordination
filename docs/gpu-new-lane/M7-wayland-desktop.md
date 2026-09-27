@@ -1223,3 +1223,21 @@ lines after `shm.c`. A new `err:` there, or a busy loop, means the timerfd fix d
   foot/fuzzel those sessions start must come from `/bin/foot-2` / `/bin/fuzzel-2` (xfce-desktop.sh or its
   autostart), or wait for the in-place re-stage. GTK clients are not affected by the timerfd bug: GLib uses its own
   poll loop.
+
+## Result — `m7e-gtk3` (chain56, build 18, 2026-09-27 20:09–20:17): ✅ PASS — GTK 3.24.52 renders on Phoenix
+
+Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-200617-m7e-gtk3.log`; HDMI `artifacts/hdmi/20260927-201007-m7e-gtk3-tick.png` (arm A) and `…-201419-…` (arm B), both under Weston
+(pixman, kiosk fullscreen).
+
+- **Arm A gtk3-hello:** `GTK3HELLO start gtk=3.24.52 glib=2.88.3 … backend=wayland`, `Using the built-in XKB keymap`,
+  `gio dir=/ rc=0 entries=92`, `mapped … size=640x480`, `first-draw t=3.59`, `clicked n=1`; the main loop ticked through the
+  hold; `weston exited rc=0`. HDMI: "Hello from GTK 3.24.52 on Phoenix-RTOS — clicked 1 time", a button and a GtkTreeView
+  listing `/` through GIO (name/kind/size), Adwaita styling.
+- **Arm B gtk3-widget-factory:** the complete widget factory drawn correctly: entries, combo boxes, toggle/check/radio
+  buttons, spin button, font and colour buttons, switches, sliders and progress bars, a tree view with icons, a text
+  view, notebooks in all four tab positions.
+- Noise, not failure: repeated `Gdk-CRITICAL gdk_seat_get_keyboard: assertion 'GDK_IS_SEAT (seat)'` (the noinput arm
+  has no seat), 4× `Could not find signal handler 'gtk_widget_hide_on_delete'` (no GModule symbol lookup in a
+  static binary), one Adwaita asset pixbuf warning. 0 exceptions, 0 EL1.
+
+**Decides:** GTK3 (Wayland backend) works on the new lane: the toolkit the XFCE stage is built on.
