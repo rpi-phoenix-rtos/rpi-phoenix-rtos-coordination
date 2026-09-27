@@ -11,14 +11,14 @@ effect on hardware below is a prediction, and each has a pre-registered cycle at
 | # | Question | Answer | Branch |
 |---|---|---|---|
 | a1 | Does the SDIO bus run at 2× at `core_freq=500` because the driver assumes a 250 MHz base? | **No, refuted.** The driver has queried the base clock since `27db916`. The firmware reports 250 MHz in all 12 boots that logged it, 11 of them at core 500. | — |
-| a2 | What are the download failures, then? | All three natural failures end the same way: `rc_w=-5`, the latched BUF_WR_READY never came back within 100000 register reads, with no error bit set. That PIO loop has a lost-edge ordering hazard, and its budget is counted in bus reads, not in time. Neither mechanism is proven. Fix and discriminating instruments are on the branch. | `wifi/sdio-clock` `248a01f` |
+| a2 | What are the download failures, then? | All three natural failures end the same way: `rc_w=-5`, the latched BUF_WR_READY never came back within 100000 register reads, with no error bit set. That PIO loop has a lost-edge ordering hazard, and its budget is counted in bus reads, not in time. Neither mechanism is proven. Fix and discriminating instruments are on the branch. | `wifi/sdio-clock` `c2ff5a8` |
 | b | What bounds throughput? What is the lowest-risk lever? | The SDIO transfer is wire-bound per frame (25 MHz, 4-bit). About 70 % of each frame's time is spent off the wire, and the air (2.4 GHz, 1×1, 65 Mbit/s PHY) may itself be near the ceiling. Lowest-risk change: stop rewriting the backplane window before every transfer. Small expected gain. The PHY rate is now reported. | `wifi/throughput` `679ee59` |
 
 Branches (phoenix-rtos-devices, pushed to `publish`, not merged, both based on master `1924a42`):
 
 | branch | commits | worktree |
 |---|---|---|
-| `wifi/sdio-clock` | `9f90572` level-bit PIO wait + wall-clock bound + `SDIO-CLK`/`SDHCI-POLL`/`SDHCI-TIMEOUT`/`SDHCI-PIO` lines + `fwloadbench`; `248a01f` download timing + `legacypio` | `/home/houp/.claude/jobs/c8f1289c/tmp/wt-devices-wifi` |
+| `wifi/sdio-clock` | `9f90572` level-bit PIO wait + wall-clock bound + `SDIO-CLK`/`SDHCI-POLL`/`SDHCI-TIMEOUT`/`SDHCI-PIO` lines + `fwloadbench`; `248a01f` download timing + `legacypio`; `c2ff5a8` `legacypio fwloadbench` starts with legacy | `/home/houp/.claude/jobs/c8f1289c/tmp/wt-devices-wifi` |
 | `wifi/throughput` | `560d8a4` backplane-window cache + `WIFISTATS sbwin`; `679ee59` `WIFISTATS phy rate` in `wifi stats` | `/home/houp/.claude/jobs/c8f1289c/tmp/wt-devices-wifithr` |
 
 The two branches are independent. They touch different functions of `wifi/rpi4-wifi/rpi4-wifi.c`,
@@ -137,7 +137,7 @@ controller can lose back-to-back register writes. Our helpers write `BLOCK_SIZE_
 likely show as `-2`/`-3`/`-4` than as `-5`, so it ranks third. It is the next thing to try if
 M1/M2 are refuted.
 
-### The fix on `wifi/sdio-clock` (`9f90572`, `248a01f`)
+### The fix on `wifi/sdio-clock` (`9f90572`, `248a01f`, `c2ff5a8`)
 
 - **Block-mode read and write helpers (`diag_sdioCmd53Read`/`Write`)**: per block, W1C first, then
   wait on the PRESENT_STATE level bit (`SPACE_AVAILABLE` 0x400 / `DATA_AVAILABLE` 0x800), then move
@@ -149,7 +149,13 @@ M1/M2 are refuted.
   needed the extra time. The byte-mode helpers (the RX hot path) and `diag_sdhciCmd` (CMD52) are
   unchanged.
 - **The old loop is kept, selectable at run time** (`g_pio_legacy`), only for the A/B below.
-  `fwloadbench` alternates it; `rpi4-wifi legacypio &` runs the daemon with it. Remove it once graded.
+  `fwloadbench` alternates it, starting with level, or with legacy when `legacypio` is also given.
+  `rpi4-wifi legacypio &` runs the daemon with it. Remove it once graded.
+- **Scope, and a risk to know about:** `diag_f2Write` sends every frame over 512 B through
+  `diag_sdioCmd53Write`. So full-MTU **TX at run time** also uses the new loop, not only the firmware
+  download. On a wedged F2 write, level mode now holds the daemon's single message thread for up to
+  100 ms per wait before returning `-5`, and the lwip RX thread's `read()` queues behind it. The path
+  is rare, but a later "RX hiccup" right after a TX error should be read with this in mind.
 - **Tagged lines for grading:**
 
 ```
@@ -269,7 +275,10 @@ grep -aE 'SDIO-CLK|SDHCI-POLL|SDHCI-TIMEOUT|FWLOAD-BENCH|timed out AFTER|Excepti
 
 About 1–2 s per load is an estimate (power cycle 0.2 s, the fixed 300 + 50 + 240 ms of settle,
 plus the download). If `--max-cmd-secs 300` cuts the bench, lower N rather than raising the timer
-past 600 s. Per boot: 20 level + 20 legacy loads; over 3 boots, 60 + 60.
+past 600 s. Per boot: 20 level + 20 legacy loads; over 3 boots, 60 + 60. Load 1 is the only cold load (the
+image is paged in), and it goes to level unless `legacypio` is given. So run boot 2 as
+`"rpi4-wifi legacypio fwloadbench 40"`: the cold slot is then legacy in one boot and level in two.
+Grade load 1 separately from loads 2…40.
 
 | outcome | reading |
 |---|---|
@@ -296,12 +305,20 @@ default) and `rpi4-wifi legacypio &`, in the `wake-N` form:
     "rpi4-wifi legacypio &" "wifi status" "wifi status"        # even k
 ```
 
-Grade on the **first** load of each boot (`SDHCI-PIO` before any "did not start" line). The
+Grade on the **first** load of each boot (`SDHCI-PIO` before any "did not start" line).
+**The level-default boots must also carry bulk TX**, because this is the only cycle that exercises
+the new loop on the run-time TX path (full-MTU frames go through `diag_sdioCmd53Write`; cycle T runs
+on the other branch). On at least 3 level boots, append the cycle-T perf command and a `wifi stats`
+to the list. Require `tx_ok` ≥ 8 600, `tx_err=0`, `resyncs=0`, `WIFISTATS pio … timeouts=0`, and TX
+medians within the master range from cycle T's A arm. The
 prediction under the page-in story: legacy first loads keep failing at the core-500 rate (≈ 2/13);
 level first loads show 0, and on the would-be failures a `cmd53_ge2ms>0` with `slow_waits` small. At
 that rate, 20 boots per arm are needed for 0/20 against the legacy rate to mean anything
 (0.85²⁰ ≈ 0.04). Meanwhile `fw_alive=0` on the default build is the plain count to keep: **0 in the
 next 20 default boots** is the pass line.
+
+**Merge gate for `wifi/sdio-clock`:** cycle F shows no level failure, **and** the bulk-TX level
+boots of cycle N pass. Cycle F alone covers only the download path.
 
 ### Cycle T: throughput A/B (b), `master` vs `wifi/throughput`, 4 boots ABAB
 
