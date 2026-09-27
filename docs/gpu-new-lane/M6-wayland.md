@@ -1472,3 +1472,12 @@ v3dv hook (below).
   need the same hook.
 - **Rejects go back to the kernel.** This relies on the E1 §6 object-tree fix (kernel build ≥ 8, which
   every netboot image since build 11 carries), as kms's pool retry already does.
+
+## Result — `m6i-low` (chain52, 2026-09-27 17:07): ✅ PASS — every client buffer scanned out, 60 fps
+
+Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-170639-m6i-low.log`. `DRMPROBE RESULT pass=49 fail=0 gap=0 … verdict=PASS` (incl. `scanout_lowmem`). **3 `V3DA srv low BO`
+lines, 0 `FALLBACK`, 0 `why=above_1g`**, 6 `KMS scanout import … (first flip)`. weston-simple-egl **30.4 (the
+import window), then 59.8, 60.0, 60.2 fps**: m6h 45, m6g (composited) 30. `weston exited rc=0`, 0 exceptions.
+
+**Decides:** scanout placement below 1 GiB works on hardware. With G4 + G7 + low placement a Wayland GL client runs
+at the display rate with no composition copy. Mesa patch 0016 + render-server proto 5 are the new-lane default.
