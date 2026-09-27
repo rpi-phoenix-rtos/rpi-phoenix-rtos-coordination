@@ -317,6 +317,7 @@ int v3da_wait_park(v3da_client_t *c, int kind, msg_t *msg, msg_rid_t rid,
 	w->client = c->id;
 	w->msg = *msg;
 	w->rid = rid;
+	w->port = srv.rx_port;   /* answered on the port it arrived on (rids are per port) */
 	w->n = n;
 	w->all = all;
 	w->for_submit = for_submit;
@@ -416,7 +417,7 @@ void v3da_waits_answer(v3da_wait_t *list)
 
 	while (list != NULL) {
 		next = list->next;
-		(void)msgRespond(srv.port, &list->msg, list->rid);
+		(void)msgRespond((list->port != 0u) ? list->port : srv.port, &list->msg, list->rid);
 		free(list);
 		list = next;
 	}

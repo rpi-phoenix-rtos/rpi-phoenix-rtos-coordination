@@ -33,6 +33,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include <sys/file.h>
 #include <sys/mman.h>
@@ -108,10 +109,10 @@ void kms_pool_fini(void)
 
 	for (i = 0u; i < KMS_MAX_BOS; i++) {
 		if (srv.bos[i].used && srv.bos[i].exported) {
+			srv.bos[i].exported = 0;   /* before memUnexport: see kms_bo_unref (G3) */
 			oid.port = srv.buf_port;
 			oid.id = srv.bos[i].handle;
 			(void)memUnexport(&oid);
-			srv.bos[i].exported = 0;
 		}
 	}
 }
@@ -354,7 +355,11 @@ void kms_bo_unref(uint32_t idx)
 	if (b->exported) {
 		/* Withdraw the name at once; mappings a client still holds keep the pages
 		 * (the window holds a reference on the pool), so a late client write lands
-		 * in pool memory - never in memory the kernel recycles. */
+		 * in pool memory - never in memory the kernel recycles.
+		 * G3 ordering: the flag the /kmsbuf thread answers atSize from is cleared
+		 * BEFORE memUnexport, both under srv.lock, so once the kernel's object tree
+		 * has lost the window no atSize for this id can be answered positively. */
+		b->exported = 0;
 		oid.port = srv.buf_port;
 		oid.id = b->handle;
 		(void)memUnexport(&oid);
@@ -609,6 +614,39 @@ static int client_pid(uint32_t id)
  * only LOGS a mismatch (once) instead of refusing: the pid the kernel stamps on
  * a path-resolution message has not been observed on hardware yet. */
 static uint32_t bufns_pid_notes;
+static uint32_t bufns_size_notes;
+
+
+/* mtGetAttrAll (G2, M3 part 2): what fstat() needs. The kernel's posix_fstat
+ * takes st_rdev from the descriptor's port itself and fails on the FIRST negative
+ * err among mTime, aTime, cTime, links, mode, uid, gid, size, blocks, ioblock, so
+ * every field is answered. Returns the msg.o.err to reply with. */
+int kms_attr_all(msg_t *msg, uint32_t mode, uint64_t size, uint32_t port)
+{
+	struct _attrAll *a = msg->o.data;
+	long long now = (long long)time(NULL);
+
+	if ((a == NULL) || (msg->o.size < sizeof(*a))) {
+		return -EINVAL;
+	}
+	memset(a, 0, sizeof(*a));
+	a->mode.val = (long long)mode;
+	a->uid.val = 0;
+	a->gid.val = 0;
+	a->size.val = (long long)size;
+	a->blocks.val = (long long)((size + 511u) / 512u);
+	a->ioblock.val = (long long)_PAGE_SIZE;
+	a->type.val = ((mode & S_IFMT) == S_IFDIR) ? otDir : otDev;
+	a->port.val = (long long)port;
+	a->pollStatus.err = -EINVAL;   /* not used by fstat; poll has atPollStatus */
+	a->eventMask.err = -EINVAL;
+	a->cTime.val = now;
+	a->mTime.val = now;
+	a->aTime.val = now;
+	a->links.val = 1;
+	a->dev.val = (long long)port;
+	return 0;
+}
 
 void kms_bufns_thread(void *arg)
 {
@@ -657,11 +695,43 @@ void kms_bufns_thread(void *arg)
 					msg.o.attr.val = (msg.oid.id == 0u) ? otDir : otDev;
 					msg.o.err = 0;
 				}
+				else if ((msg.i.attr.type == atSize) && (msg.oid.id != 0u)) {
+					/* G3 (M3 part 2): lseek(dmabuf_fd, 0, SEEK_END) is how Mesa sizes a dma-buf.
+					 * Answered ONLY while the buffer is exported, under srv.lock; kms_bo_unref
+					 * clears `exported` before memUnexport under the same lock. The kernel asks
+					 * atSize (proc_size) when mmap() misses the object tree, i.e. after the
+					 * window was withdrawn - and then this answers -ENOENT, so no file-backed
+					 * shadow object can be created (E1 section 3). The one residual (a reply
+					 * given just before the unref, the kernel's re-lookup just after it) leaves a
+					 * shadow object under an id that is never exported again (handles are never
+					 * reused): that mmap() gets unbacked pages, no one else's memory. */
+					(void)mutexLock(srv.lock);
+					b = bo_by_export((uint32_t)msg.oid.id);
+					msg.o.attr.val = (b != NULL) ? (long long)b->size : 0;
+					msg.o.err = (b != NULL) ? 0 : -ENOENT;
+					if ((b != NULL) && (bufns_size_notes++ == 0u)) {
+						KMS_LOG("srv kmsbuf atSize id=%u size=%zu (first; G3)", (unsigned)msg.oid.id, b->size);
+					}
+					(void)mutexUnlock(srv.lock);
+				}
 				else {
-					/* In particular atSize: the kernel asks for it only when mmap() finds no
-					 * live export under the oid; refusing it makes such an mmap() fail instead
-					 * of creating a file-backed object that shadows the name (E1 section 3). */
+					/* Everything else refused (in particular atSize of the directory). */
 					msg.o.err = -ENOENT;
+				}
+				break;
+
+			case mtGetAttrAll:
+				/* fstat() of a buffer descriptor (and open(O_RDWR), which stat()s the name):
+				 * a character device; the size under the same rule as atSize. */
+				(void)mutexLock(srv.lock);
+				b = (msg.oid.id != 0u) ? bo_by_export((uint32_t)msg.oid.id) : NULL;
+				(void)mutexUnlock(srv.lock);
+				if ((msg.oid.id != 0u) && (b == NULL)) {
+					msg.o.err = -ENOENT;
+				}
+				else {
+					msg.o.err = kms_attr_all(&msg, (msg.oid.id == 0u) ? (S_IFDIR | 0555) : (S_IFCHR | 0666),
+						(b != NULL) ? (uint64_t)b->size : 0u, srv.buf_port);
 				}
 				break;
 

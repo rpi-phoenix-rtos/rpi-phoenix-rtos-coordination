@@ -32,30 +32,19 @@
 /* ------------------------------------------------------------------------- */
 
 /*
- * V3DA_OP_BO_IMPORT (21, reserved in proto 2 -> -ENOSYS): PRIME import.
- * The client resolved a dma-buf descriptor to the exporter's {port, id} (for a
- * kms dumb buffer: sys_fdpath() = "/kmsbuf/<id>", port = the /kmsbuf port) and
- * its size. The server opens the buffer name itself, mmap()s `size` bytes with
- * the export's memory type (the kernel refuses a size past the window and a
- * wrong type), resolves every page with va2pa, maps them into the GPU page table
- * and returns a normal handle (reply: v3da_bo_create_resp_t; mem = the same
- * OID memref). Scan-out buffers must stay below 1 GiB for the HVS (E6) - that is
- * rpi4-kms's allocation rule, not the importer's concern.
- * Lifetime: the server's mapping keeps the pages alive (E1 window refcount); the
- * handle is released by GEM_CLOSE like any BO (quarantine rules apply).
+ * V3DA_OP_BO_IMPORT (21): IMPLEMENTED in M3 part 2 - the request layout
+ * (v3da_bo_import_req_t) and its semantics moved to v3da_proto.h, additively
+ * inside proto 2 (a part-2 server answers the opcode -ENOSYS, so no version bump
+ * was needed and libdrm-phoenix sends it unconditionally). Only the namespace
+ * names stay here; their values are V3DA_IMPORT_NS_*.
  */
-typedef struct {
-	uint32_t port;      /* exporter's buffer-namespace port */
-	uint32_t cache;     /* enum v3da_mem_cache of the export (kms pool: UNCACHED) */
-	uint64_t id;        /* object id under that port */
-	uint64_t size;      /* bytes to map (page multiple, <= the export) */
-	uint32_t ns;        /* enum drmphx_ns: which namespace the id lives in */
-	uint32_t pad;
-} v3da_bo_import_req_t;
+#ifndef V3DA_HAVE_BO_IMPORT
+#error "v3da_proto.h predates BO_IMPORT (M3 part 2): build against the current tools/gpu-lane/v3d-async"
+#endif
 
 enum drmphx_ns {
-	DRMPHX_NS_KMSBUF = 1,   /* "/kmsbuf/<id>"  (rpi4-kms dumb buffers) */
-	DRMPHX_NS_V3DBUF = 2    /* "/v3dbuf/<id>"  (rpi4-v3d-async BOs, V3DA_OP_BO_EXPORT) */
+	DRMPHX_NS_KMSBUF = V3DA_IMPORT_NS_KMSBUF,   /* "/kmsbuf/<id>"  (rpi4-kms dumb buffers) */
+	DRMPHX_NS_V3DBUF = V3DA_IMPORT_NS_V3DBUF    /* "/v3dbuf/<id>"  (rpi4-v3d-async BOs, V3DA_OP_BO_EXPORT) */
 };
 
 /*
@@ -89,7 +78,7 @@ enum drmphx_ns {
 /*
  * KMS_OP_PRIME_IMPORT (38, NEW, needs KMS proto >= 2): import a foreign buffer
  * (e.g. a v3d BO exported through /v3dbuf) as a dumb-BO handle so ADDFB2 can
- * scan it out. Request = v3da_bo_import_req_t (same layout); reply
+ * scan it out. Request = v3da_bo_import_req_t (same layout, v3da_proto.h); reply
  * kms_dumb_resp_t. The server maps the buffer, checks contiguity and the
  * < 1 GiB scan-out limit (E6) and refuses what the HVS cannot fetch. Importing
  * one of this client's own /kmsbuf exports returns the original handle
@@ -101,7 +90,10 @@ enum drmphx_ns {
 /*
  * Implicit sync for flips (research 4.5, M2 section 8): V3DA_OP_BO_LAST_FENCE
  * (NEW, 23) - the last-writer fence of an imported BO - so rpi4-kms can gate a
- * PAGE_FLIP of a GPU-rendered buffer that carries no IN_FENCE_FD.
+ * PAGE_FLIP of a GPU-rendered buffer that carries no IN_FENCE_FD, for
+ * CROSS-PROCESS producers (Xorg, compositors). A single-process GBM app does not
+ * need it: libdrm-phoenix attaches the BO's mirrored last-use fence itself (G13,
+ * M3 part 2).
  */
 #define V3DA_OP_BO_LAST_FENCE_EXT 23u
 

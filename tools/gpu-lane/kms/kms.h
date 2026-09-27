@@ -310,6 +310,7 @@ void kms_fb_ref(kms_fb_t *fb);
 void kms_fb_unref(kms_fb_t *fb);
 void kms_bo_client_gone(uint32_t client);
 void kms_bufns_thread(void *arg);
+int kms_attr_all(msg_t *msg, uint32_t mode, uint64_t size, uint32_t port);   /* mtGetAttrAll reply (G2) */
 uint32_t kms_blob_create(uint32_t owner, const void *data, uint32_t len);
 kms_srvblob_t *kms_blob_get(uint32_t id);
 int kms_blob_destroy(uint32_t owner, uint32_t id);

@@ -47,6 +47,13 @@
 
 
 #define V3DA_DEV_NAME      "v3d-async"   /* old lane: "v3d-srv" (gpu/rpi4-v3d/v3d_rpc.h) */
+/* M3 part 2 (G10): the DRM node names, registered beside V3DA_DEV_NAME. The render
+ * node shares the main port with /dev/v3d-async (an alias: same dev_t); the primary
+ * node has a port of its own, because fstat() reports st_rdev = the descriptor's
+ * port and v3dv needs distinct primary/render dev_t. Both ports serve the whole
+ * protocol; client ids are shared. */
+#define V3DA_DRI_RENDER_NAME "dri/renderD128"
+#define V3DA_DRI_CARD_NAME   "dri/card1"
 #define V3DA_PROTO_VERSION 2u   /* 2: M1 part 2 (submits, scanout/flip, modes) */
 #define V3DA_MAGIC         0x41443356u   /* "V3DA" little-endian; bit 31 clear */
 #define V3DA_FENCE_MAGIC   0x46443356u   /* "V3DF" */
@@ -161,7 +168,7 @@ enum v3da_op {
 	V3DA_OP_BO_MMAP,          /* DRM_IOCTL_V3D_MMAP_BO     (old: V3D_RPC_MMAP_BO, bare pa) */
 	V3DA_OP_BO_GET_OFFSET,    /* DRM_IOCTL_V3D_GET_BO_OFFSET (old: V3D_RPC_GET_BO_OFFSET) */
 	V3DA_OP_BO_WAIT,          /* DRM_IOCTL_V3D_WAIT_BO     (old: client-local no-op) */
-	V3DA_OP_BO_IMPORT,        /* GEM_OPEN / PRIME import   (reserved) */
+	V3DA_OP_BO_IMPORT,        /* PRIME import (M3 part 2: v3da_bo_import_req_t; older servers -ENOSYS) */
 
 	V3DA_OP_SUBMIT_CL = 32,   /* DRM_IOCTL_V3D_SUBMIT_CL   (old: V3D_RPC_SUBMIT_CL, synchronous) */
 	V3DA_OP_SUBMIT_TFU,       /* DRM_IOCTL_V3D_SUBMIT_TFU */
@@ -263,6 +270,36 @@ typedef struct {
 	uint32_t size;
 	v3da_memref_t mem;      /* BO_MMAP */
 } v3da_bo_resp_t;
+
+/*
+ * BO_IMPORT (M3 part 2; additive inside proto 2 - an older server answers the
+ * reserved opcode with -ENOSYS, so no version bump is needed): PRIME import of a
+ * buffer another server exported with memExport() (E1). The client resolved the
+ * dma-buf descriptor to {namespace port, id}; the SERVER opens the buffer name
+ * itself (V3DA_IMPORT_NS_KMSBUF: KMS "/kmsbuf/<id>"), checks that the name
+ * resolves to `port`, sizes it with lseek(SEEK_END) when `size` is 0, maps it
+ * with the export's memory type, resolves every page with va2pa and maps the
+ * pages into the GPU page table. Reply: v3da_bo_create_resp_t, `mem` = the same
+ * OID memref (BO_MMAP of the handle answers it too). Importing the same buffer
+ * again on the same client returns the same handle and takes no extra reference
+ * (DRM: one GEM_CLOSE releases it). The server's mapping keeps the pages alive
+ * (E1 window reference) until the BO has left quarantine; BO_CLOSE or the
+ * client's death releases it like any BO.
+ */
+#define V3DA_HAVE_BO_IMPORT    1
+#define V3DA_IMPORT_NS_KMSBUF  1u        /* "/kmsbuf/<id>"  (rpi4-kms dumb buffers) */
+#define V3DA_IMPORT_NS_V3DBUF  2u        /* "/v3dbuf/<id>"  (BO_EXPORT, not implemented: -ENOSYS) */
+#define V3DA_IMPORT_KMSBUF_DIR "/kmsbuf" /* == KMS_BUF_NS (kms_proto.h) */
+#define V3DA_IMPORT_MAX_SIZE   0x10000000u   /* 256 MiB */
+
+typedef struct {
+	uint32_t port;      /* exporter's buffer-namespace port */
+	uint32_t cache;     /* enum v3da_mem_cache of the export (kms pool: UNCACHED) */
+	uint64_t id;        /* object id under that port */
+	uint64_t size;      /* bytes to map (page multiple, <= the export); 0 = the whole export */
+	uint32_t ns;        /* V3DA_IMPORT_NS_* */
+	uint32_t pad;
+} v3da_bo_import_req_t;
 
 typedef struct {
 	uint32_t delay_us;      /* the job "runs" this long on the CPU queue */
@@ -585,6 +622,7 @@ typedef struct {
 		v3da_flip_req_t flip;
 		v3da_mode_req_t mode;
 		v3da_qstats_req_t qstats;
+		v3da_bo_import_req_t bo_import;
 	} u;
 } v3da_req_t;
 
@@ -629,6 +667,7 @@ _Static_assert(V3DA_Q_COUNT <= 8, "fence header arrays hold 8 queues");
 _Static_assert(sizeof(v3da_qstats_q_t) <= 56, "qstats must fit o.raw");
 _Static_assert(sizeof(v3da_qstats_g_t) <= 56, "qstats must fit o.raw");
 _Static_assert(sizeof(v3da_submit_resp_t) <= 56, "submit reply must fit o.raw");
+_Static_assert(sizeof(v3da_bo_import_req_t) == 32, "BO_IMPORT request layout is ABI (drm_phoenix_ext.h history)");
 #endif
 
 

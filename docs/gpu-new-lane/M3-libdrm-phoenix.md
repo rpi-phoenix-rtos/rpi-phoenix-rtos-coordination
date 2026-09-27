@@ -8,7 +8,8 @@ C), §4.4, §4.6 and §5 (M3). Builds on [E7](E7-drm-userspace-build.md) (the li
 [M1](M1-async-render-server.md) (`rpi4-v3d-async`, `v3da_proto.h`) and
 [M2](M2-kms-server.md) (`rpi4-kms`, `kms_proto.h`).
 
-**Status (2026-09-27):** code complete, **builds** (static `libdrm.a` + `drmprobe` for aarch64-phoenix,
+**Status (2026-09-27):** part 2 closed server gaps G2/G1/G3/G10 and library G13 — see
+[M3 part 2](#m3-part-2--server-gaps-closed-2026-09-27) (host-tested, Pi cycle pre-registered). Part 1: code complete, **builds** (static `libdrm.a` + `drmprobe` for aarch64-phoenix,
 the backend has 0 compiler warnings under libdrm's own warning set), **host-tested** (134 logic checks
 + the real `drmprobe` against fake servers, both PASS), **no Pi cycle yet** — the cycle is
 pre-registered in §7. Nothing committed; no server, no old-lane file and no sibling repo touched.
@@ -245,11 +246,11 @@ Ordered by what they block. "Spec" = where the request layout is written down.
 
 | # | Gap | Blocks | Size | Spec |
 |---|---|---|---|---|
-| **G2** | **Neither server answers `mtGetAttrAll`**, so `fstat()` on a DRM descriptor fails (`posix_fstat` sends it to the device server for `ftRegular` files and returns its error, `kernel posix/posix.c:1737-1817` [read]). **Mesa's `gbm_create_device()` refuses a descriptor whose `fstat` fails or is not `S_ISCHR` (`gbm/main/gbm.c:133`) and v3dv's device init fails on `fstat(primary/render)` (`v3dv_device.c:1465-1477`)** [read] | GBM (kmscube), v3dv — **the next step** | ~20 lines per server: answer `mtGetAttrAll` with `mode = S_IFCHR | 0666`, all other fields `err = 0` (size 0) | this doc |
-| **G1** | `V3DA_OP_BO_IMPORT` (reserved → `-ENOSYS`): the render server opens `/kmsbuf/<id>`, maps it (UNCACHED), resolves the pages, maps them into the V3D MMU, returns a handle | Mesa kmsro/GBM scan-out (renderonly allocates on card0 and imports into v3d), v3dv WSI swapchains (`device_alloc_for_wsi`), `drmprobe prime_import_render` | ~150 lines server | `drm_phoenix_ext.h` `v3da_bo_import_req_t` |
-| **G3** | `/kmsbuf` refuses `atSize` (E1's shadow-object rule), so `lseek(dmabuf_fd, 0, SEEK_END)` fails; **Mesa reads a dma-buf's size exactly that way** (`v3d_bufmgr.c:454`, `v3dv_device.c:2313,2533`) [read] | Mesa's dma-buf import on top of G1 | ~10 lines: answer `atSize` only while the buffer is exported, and clear the "exported" flag **before** `memUnexport` under the server lock (then a tree miss can never meet a positive answer — the shadow-object race stays closed) | this doc |
-| **G13** | **implicit sync for flips of GPU-rendered buffers that carry no `IN_FENCE_FD`**. This is not only Xorg's problem: **kmscube's default (legacy) path is `eglSwapBuffers` → `drmModePageFlip` with no fence** — on Linux the flip waits on the buffer's dma-resv; here `rpi4-kms` would scan out a buffer the GPU is still rendering. **In-process fix, library only, once G1 exists:** record on render `PRIME_FD_TO_HANDLE` the mapping "kms export id → (render connection, render handle)"; on `PAGE_FLIP`/`ATOMIC` of a framebuffer whose dumb handle has such a record, attach that BO's mirrored last-use fence (already kept by the submit path) as the plane's `in_fence` (kms `-G` checks it on the fence page, no IPC). Cross-process producers (Xorg, compositors) need the server op `BO_LAST_FENCE` (M2 §8) | kmscube / SDL KMSDRM / single-process GBM apps (tearing, partial frames); Xorg flips (M4) | ~60 lines library (+ ~40 server for the cross-process op) | `drm_phoenix_ext.h` (23) |
-| G10 | `/dev/dri/{card0,card1,renderD128}` names; one port per node for distinct `dev_t` (today card1 and renderD128 share the v3d port, so `VK_EXT_physical_device_drm` reports equal primary/render ids) | programs that hard-code `/dev/dri/card0` (SDL2 KMSDRM scans `card%d`, kmscube's default); exact dev_t identity | `create_dev(&dev, "dri/card0")` etc. beside the old names (+ optional extra ports) | this doc |
+| **G2** ✅ closed — part 2 | **Neither server answered `mtGetAttrAll`**, so `fstat()` on a DRM descriptor fails (`posix_fstat` sends it to the device server for `ftRegular` files and returns its error, `kernel posix/posix.c:1737-1817` [read]). **Mesa's `gbm_create_device()` refuses a descriptor whose `fstat` fails or is not `S_ISCHR` (`gbm/main/gbm.c:133`) and v3dv's device init fails on `fstat(primary/render)` (`v3dv_device.c:1465-1477`)** [read] | GBM (kmscube), v3dv — **the next step** | ~20 lines per server: answer `mtGetAttrAll` with `mode = S_IFCHR | 0666`, all other fields `err = 0` (size 0) | this doc |
+| **G1** ✅ closed — part 2 | `V3DA_OP_BO_IMPORT` (was reserved → `-ENOSYS`): the render server opens `/kmsbuf/<id>`, maps it (UNCACHED), resolves the pages, maps them into the V3D MMU, returns a handle | Mesa kmsro/GBM scan-out (renderonly allocates on card0 and imports into v3d), v3dv WSI swapchains (`device_alloc_for_wsi`), `drmprobe prime_import_render` | ~150 lines server | `drm_phoenix_ext.h` `v3da_bo_import_req_t` |
+| **G3** ✅ closed — part 2 | `/kmsbuf` refused `atSize` (E1's shadow-object rule), so `lseek(dmabuf_fd, 0, SEEK_END)` fails; **Mesa reads a dma-buf's size exactly that way** (`v3d_bufmgr.c:454`, `v3dv_device.c:2313,2533`) [read] | Mesa's dma-buf import on top of G1 | ~10 lines: answer `atSize` only while the buffer is exported, and clear the "exported" flag **before** `memUnexport` under the server lock (then a tree miss can never meet a positive answer — the shadow-object race stays closed) | this doc |
+| **G13** ✅ closed (in-process) — part 2 | **implicit sync for flips of GPU-rendered buffers that carry no `IN_FENCE_FD`**. This is not only Xorg's problem: **kmscube's default (legacy) path is `eglSwapBuffers` → `drmModePageFlip` with no fence** — on Linux the flip waits on the buffer's dma-resv; here `rpi4-kms` would scan out a buffer the GPU is still rendering. **In-process fix, library only, once G1 exists:** record on render `PRIME_FD_TO_HANDLE` the mapping "kms export id → (render connection, render handle)"; on `PAGE_FLIP`/`ATOMIC` of a framebuffer whose dumb handle has such a record, attach that BO's mirrored last-use fence (already kept by the submit path) as the plane's `in_fence` (kms `-G` checks it on the fence page, no IPC). Cross-process producers (Xorg, compositors) need the server op `BO_LAST_FENCE` (M2 §8) | kmscube / SDL KMSDRM / single-process GBM apps (tearing, partial frames); Xorg flips (M4) | ~60 lines library (+ ~40 server for the cross-process op) | `drm_phoenix_ext.h` (23) |
+| G10 ✅ closed — part 2 | `/dev/dri/{card0,card1,renderD128}` names; one port per node for distinct `dev_t` (today card1 and renderD128 share the v3d port, so `VK_EXT_physical_device_drm` reports equal primary/render ids) | programs that hard-code `/dev/dri/card0` (SDL2 KMSDRM scans `card%d`, kmscube's default); exact dev_t identity | `create_dev(&dev, "dri/card0")` etc. beside the old names (+ optional extra ports) | this doc |
 | G4 | `V3DA_OP_BO_EXPORT` + a `/v3dbuf` namespace (M1a BOs are one contiguous block each, so `memExport` works) | DRI3 (M4), Wayland dmabuf (M6), v3dv external memory, `drmprobe prime_export_render` | ~120 lines | `drm_phoenix_ext.h` (opcode 22, needs proto 3) |
 | G5 | `SUBMIT_CPU` (v3dv queries, indirect CSD) and perfmons | Vulkan queries (the server already advertises `SUPPORTS_CPU_QUEUE = 1`, research §3.7) | M1 part 3 | reserved opcodes |
 | G6 | cross-process syncobj / sync-file descriptors (`/v3dsync/<id>`, `atPollStatus`) | vkGetSemaphoreFd, DRI3/Present, Wayland explicit sync | M4/M6 | `drm_phoenix_ext.h` (55/56) |
@@ -424,7 +425,7 @@ integration question between the servers, not a library one.
 
 ## 8. Next step: `mesa-drm` static build + kmscube
 
-1. **Server work first (blocking):** G2 (`mtGetAttrAll` in both servers), G1 (`BO_IMPORT`), G3
+1. ✅ **Done in part 2 (2026-09-27, Pi cycle pending):** ~~Server work first (blocking):~~ G2 (`mtGetAttrAll` in both servers), G1 (`BO_IMPORT`), G3
    (`/kmsbuf` `atSize` for live exports), G10 (`dri/` names) — all additive, together ≈ 300 lines.
    **Library work with it:** G13's in-process implicit sync (export id → render BO → last-use fence
    as the flip's `in_fence`), so kmscube's fence-less legacy flips never scan out a half-rendered
@@ -456,3 +457,185 @@ integration question between the servers, not a library one.
 ## Result
 
 *(to be filled after the §7 cycle: log path, snapshot paths, the tagged lines, the rows that applied)*
+
+## M3 part 2 — server gaps closed (2026-09-27)
+
+**Status:** code complete for G2, G1, G3, G10 (servers) and G13 (library); both servers and
+libdrm-phoenix **build** (`-Wall -Wextra -Werror`, 0 backend warnings under libdrm's set);
+**host-tested** (logic 134/134 + the real `drmprobe` against the extended fake servers, both modes
+PASS, with a negative control for G13); **no Pi cycle yet** — pre-registered below. No protocol
+version changed; nothing committed, nothing staged. Also in this pass: the two `m2-kms-a` defects
+(empty flip events, exit crash) — see the fix under M2's Result section.
+
+### What changed, per gap
+
+| Gap | Where | What |
+|---|---|---|
+| **G2** fstat | `v3da_main.c` `attr_all()`, `kms_main.c` + `kms_bo.c` `kms_attr_all()` | Both node servers answer `mtGetAttrAll` with a full `struct _attrAll` (`mode = S_IFCHR\|0666`, every `err = 0` among the ten fields `posix_fstat` checks, `links 1`, `ioblock 4096`). `st_rdev` is set by the kernel from the descriptor's port (`posix.c:1735`), never from `attrs.dev` — which is why G10 needs a port per node. `/kmsbuf` answers it too (`S_IFCHR`, size while exported), so `fstat()` of a dma-buf descriptor and `open(O_RDWR)` of a buffer name (libphoenix `stat()`s it) now work. First answer logs `V3DA srv fstat answered …` / `KMS srv fstat answered …`. |
+| **G1** BO_IMPORT | `v3da_proto.h` (request moved here from `drm_phoenix_ext.h`, union member `bo_import`), `v3da_bo.c` `v3da_bo_import()`, `v3da_main.c` `bo_import_request()` | Served **without `srv.lock`** (like `DBG_IRQ_SELFTEST`): `lookup("/kmsbuf/<id>")` must resolve to the request's `{port, id}`; `open(O_RDONLY)`; size = request size or, if 0, `lseek(SEEK_END)` (G3); `mmap(PROT_READ, MAP_UNCACHED iff the export is)`; each page touched then `va2pa` (present pages only; refuses a PA the 32-bit PTE cannot hold). Then locked: re-check the client is the same open (slot generation), dedupe, slot + GPU VA, one PTE per page, a normal generation-tagged handle, `refs = 1`. **Same client + same buffer → same handle, no extra reference** (DRM: one `GEM_CLOSE` releases it; Mesa's BO tables rely on it). `BO_MMAP` of an import answers the exporter's OID memref, never a PA. Release = the ordinary quarantine (PTEs cleared, TLB, every queue past the release point), then **`munmap`, never the BO pool** (`block_get` zeroes pooled blocks — it would wipe the exporter's buffer). Client death drops it like any owned BO. The mapping is the E1 window reference, so the pages outlive a kms-side destroy until the GPU is provably done. Lines: `V3DA srv import handle=… ns=kmsbuf id=… pages=… pa0=… contiguous=… gpuva=…`, `V3DA srv import released …`, `V3DA srv import FAIL … rc=`. `ns=V3DBUF` → `-ENOSYS` (G4). |
+| **G3** atSize | `kms_bo.c` `kms_bufns_thread`, `kms_bo_unref`, `kms_pool_fini` | `/kmsbuf` answers `atSize` for id ≠ 0 **only while `exported`**, under `srv.lock`; `exported` is cleared **before** `memUnexport`, under the same lock (unref and pool teardown). The kernel asks `atSize` (`proc_size`) from `vm_objectGet` only after a tree miss, i.e. after the window was withdrawn — then the answer is `-ENOENT` and no shadow object can be made. Residual (documented in the code): a positive reply given just before an unref whose `memUnexport` lands before the kernel's re-lookup inserts a file object under an id that is **never exported again** (kms handles are never reused) — that one `mmap` gets unbacked pages, nobody else's memory. First answer logs `KMS srv kmsbuf atSize id=… (first; G3)`. |
+| **G10** names | `v3da_proto.h` (`V3DA_DRI_*_NAME`), `v3da_main.c` `dri_name()`, `kms_proto.h` (`KMS_DRI_NAME`), `kms_main.c` `claim_names()`/`names_release()` | kms: `/dev/dri/card0` on the **same** port as `/dev/kms` (one node, one dev_t). v3d: `/dev/dri/renderD128` on the main port (alias of `/dev/v3d-async`), `/dev/dri/card1` on a **second port** with its own receiving thread — full protocol, shared client table. Rids are per port, so a parked wait now remembers its arrival port (`v3da_wait_t.port`, set from `srv.rx_port` under the lock) and is answered there. All dri names are best effort (the legacy name stays the single-owner guard; a stale dri name from a dead server is reclaimed, a live one left alone) and are removed on a clean quit. Library: `srv_of_devid()` maps card1's dev_t to the v3d primary node. Lines: `V3DA srv dri name=/dev/dri/… port=… registered=1`, `KMS srv dri name=/dev/dri/card0 … registered=1`. |
+| **G13** implicit flip sync | `drm_phoenix_v3d.c` (process-wide import table `IMP`, `drmphx_v3d_implicit_fence/_wait`), `drm_phoenix_kms.c` (`fb_note/fb_drop`, `implicit_attach`, `implicit_fallback`) | A render-node `PRIME_FD_TO_HANDLE` records `{ns port, id} → (render connection, handle)`; `ADDFB2` records `fb → dumb handle`. On `PAGE_FLIP` and on non-TEST_ONLY `ATOMIC`, a plane whose `IN_FENCE_FD` is unset and whose fb's dumb buffer was imported gets that BO's mirrored last-use fence — **only if it has not signalled** (so idle buffers flip exactly as before), no IPC. `rpi4-kms -G` then gates the flip on the render fence page. If kms answers `-ENODEV` (no `-G`), the library latches that per connection, prints one stderr line, waits on the CPU and retries without the fence. Entries die on `GEM_CLOSE` and with the connection (lock order `G.lock → IMP.lock → conn->lock`). Cross-process producers still need `BO_LAST_FENCE` (M4). |
+
+**A pre-existing library bug found by the new host test:** `sync_wait()`'s single-handle path turned
+`drmSyncobjWait(…, INT64_MAX)` (`glFinish`, drmprobe's `cl_clear`) into a **zero-timeout poll**
+(`FOREVER_NS` is negative and was clamped to 0), answering `-ETIME` whenever the job was still
+running. The old fake GPU completed jobs at submit, so it never showed; the M3 part-1 Pi cycle would
+have (a 64×64 clear usually finishes within the IPC round trip, so possibly intermittently). Fixed
+in `drm_phoenix_v3d.c`; the fake GPU now completes jobs lazily (at the next wait or fence-gated
+flip), which is what exposed it.
+
+### Compatibility
+
+* **No protocol version changed** (`V3DA_PROTO_VERSION` 2, `KMS_PROTO_VERSION` 1); both HELLO
+  structs untouched (their size is encoded in the ioctl number — growing one would turn every old
+  client's HELLO into `-ENOTTY`). Everything is additive: a reserved opcode now implemented, a new
+  union member of the same size, new message types answered, new names beside the old ones.
+* `quakespasm-v3da` / `stk-v3da` / `v3dasync-ping` (libv3da-client, proto 2 on `/dev/v3d-async`):
+  same port, same HELLO, same opcodes; the only dispatch changes are the unlocked `BO_IMPORT` branch
+  and answering on the arrival port (identical for the main port). `kmstest` (proto 1 on `/dev/kms`):
+  unchanged, and its flip events now arrive (the M2 fix is server-side, so the **old** staged kmstest
+  benefits too; the `read_dump` lines need the new one).
+* libdrm-phoenix still requires exact versions — unchanged versions keep that correct. It sends
+  `BO_IMPORT` unconditionally: a part-2 (pre-M3p2) server answers `-ENOSYS`, the part-1 gap
+  behaviour. drmprobe grades every new check as a **gap** (not a failure) when it meets servers
+  from before this pass: fstat all `ENOSYS`, `atSize` `ENOENT`, import `ENOSYS`, no `card1`.
+* `drm_phoenix_ext.h` now `#error`s against a `v3da_proto.h` without `V3DA_HAVE_BO_IMPORT`.
+* `hosttest/run.sh` takes `DRMPHX_OUT` (the build dir; default `build-out/`) and now expects the
+  part-2 keys, so it grades the current sources only. **Until `build-out/` is rebuilt, run it as
+  `DRMPHX_OUT=tools/gpu-lane/libdrm-phoenix/build-out-m3p2 …/run.sh`** — a bare run against the
+  part-1 tree fails by design (its `src/phoenix` copy predates the checks), not a regression.
+* Not exercised by the host test: G13's `-ENODEV` fallback (the fake kms always gates on fences,
+  so `implicit_fallback()` and the per-connection latch never ran); `BO_IMPORT` with `size = 0` (a
+  foreign process's export — drmprobe exports and imports in one process, so the library always
+  knows the size; the server's `lseek` cross-check still runs); `drmphx_v3d_implicit_wait()` holds
+  `IMP.lock` across bounded 2 s IPC slices, so a connection teardown can stall behind it (fallback
+  path only).
+
+### Builds (new output dirs only)
+
+| Binary | Path | sha256 (first 16) |
+|---|---|---|
+| rpi4-v3d-async | `tools/gpu-lane/v3d-async/out-m3p2/rpi4-v3d-async` | `ea13136832989089` |
+| v3dasync-ping | `tools/gpu-lane/v3d-async/out-m3p2/v3dasync-ping` | `b32d499cb12974b0` |
+| rpi4-kms | `tools/gpu-lane/kms/out-m3p2/rpi4-kms` | `689304f31e9f1161` |
+| kmstest | `tools/gpu-lane/kms/out-m3p2/kmstest` | `fe373d2562a89314` |
+| drmprobe (+ `prefix/lib/libdrm.a`) | `tools/gpu-lane/libdrm-phoenix/build-out-m3p2/drmprobe` | `8f03feeccd1e2918` |
+
+`strings -a` shows the new tagged lines in each server (`V3DA srv import …`, `V3DA srv import
+released …`, `V3DA srv fstat answered …`, `V3DA srv dri name=…`, `/dev/dri/card1`,
+`/dev/dri/renderD128`; `KMS srv read_dump …`, `srv fstat answered …`, `srv dri name=/dev/%s …`,
+`srv kmsbuf atSize …`, `/dev/dri/card0`; kmstest `read_dump n=…`), and `objdump` shows
+`kms_vblank_thread` and v3d `dispatch_thread` ending in `bl <endthread>`.
+
+### Host tests
+
+`DRMPHX_OUT=tools/gpu-lane/libdrm-phoenix/build-out-m3p2 tools/gpu-lane/libdrm-phoenix/hosttest/run.sh`:
+
+```
+HOSTTEST libdrm-phoenix checks=134 fails=0 verdict=PASS
+HOSTE2E m3p2 mode=legacy fstats=2 atsizes=1 imports=1 imports_closed=1 deferred_flips=1
+HOSTE2E legacy verdict=PASS (only the fake-GPU pixel checks failed, as expected)
+HOSTE2E m3p2 mode=dri fstats=3 atsizes=1 imports=1 imports_closed=1 deferred_flips=1
+HOSTE2E dri verdict=PASS (only the fake-GPU pixel checks failed, as expected)
+```
+
+The fakes model the new server behaviour (mtGetAttrAll on every port incl. card1's own, atSize on
+`/kmsbuf`, BO_IMPORT with dedupe and OID memrefs, a flip that arrives with an unsignalled fence is
+counted as `deferred_flips`), and the mocks model the kernel's `posix_fstat` (st_rdev = port, first
+negative err wins) and `lseek(SEEK_END)` = `atSize`. Expected failures are exactly the four pixel
+checks the fake GPU cannot draw (`cl_clear, cl_clear_dep, import_clear, implicit_flip`); run.sh
+additionally requires by name: `fstat_nodes … ok=1` (n=3 in dri mode), `dmabuf_size ok=1`,
+`prime_import_render rc=0 ok=1`, `prime_reimport ok=1`, `implicit_flip submit=0 flip=0 events=1`,
+`identity node=card1 … node_type=0 ok=1` (dri), and `imports=1 imports_closed=1 deferred_flips≥1`.
+**Negative control:** with `implicit_attach()` disabled in the build copy, both modes FAIL on
+`deferred_flips=0` — the counter is G13's, not an artefact.
+
+### Pre-registered Pi cycle `m3p2-drmprobe` (one netboot cycle)
+
+**Question:** on hardware, do (a) `fstat()` on all three DRM nodes answer S_ISCHR with a distinct
+dev_t per node, (b) `lseek(SEEK_END)` size a dma-buf, (c) a kms dumb buffer imported on the render
+node take a GPU clear that the CPU reads back through the kms mapping, released cleanly, (d) a
+fence-less flip of a just-rendered buffer complete with the pixels done — and do (e) the flip
+events now carry data and (f) the proto-2 / proto-1 clients still work against the new servers?
+
+**Preconditions:** netboot image ≥ build 9 (E1 export, port-death, vcmbox XL — as §7); no GPU app,
+X, SDL program or `rpi4-v3d` in the boot; the old staged `/bin/kmstest` and `/bin/v3dasync-ping`
+(proto 1 / proto 2 clients) left in place — they are the compatibility probes.
+
+**Stage (coordinator)** — new names, so nothing already staged changes:
+
+| Source | Export path |
+|---|---|
+| `tools/gpu-lane/v3d-async/out-m3p2/rpi4-v3d-async` | `<export>/bin/rpi4-v3d-async-m3p2` |
+| `tools/gpu-lane/kms/out-m3p2/rpi4-kms` | `<export>/bin/rpi4-kms-m3p2` |
+| `tools/gpu-lane/kms/out-m3p2/kmstest` | `<export>/bin/kmstest-m3p2` |
+| `tools/gpu-lane/libdrm-phoenix/build-out-m3p2/drmprobe` | `<export>/bin/drmprobe-m3p2` |
+| `tools/gpu-lane/v3d-async/out-m3p2/v3dasync-ping` (optional; the cycle uses the old one) | `<export>/bin/v3dasync-ping-m3p2` |
+
+(`<export>` = the live fsid=0 export: `awk '!/^#/ && /fsid=0/{print $1; exit}' /etc/exports`.)
+For a later swap to the canonical names: the m3p2 server is a drop-in for the part-2 one
+(compatibility above), built from the current tree incl. the EINVAL-draw fix `05141ff7d`.
+
+**One cycle** (Bash `timeout: 600000`; psh has no `&` — both servers detach themselves):
+
+```
+./scripts/test-cycle-psh-interact.sh --label m3p2-drmprobe --idle-secs 8 --max-cmd-secs 120 \
+    --hdmi-dense-on 'DRMPROBE kms_flip start' -- \
+    "/bin/rpi4-v3d-async-m3p2 -r 1" \
+    "/bin/rpi4-kms-m3p2 -G" \
+    "/bin/drmprobe-m3p2 -n 120" \
+    "/bin/drmprobe-m3p2 -n 30" \
+    "/bin/kmstest info" \
+    "/bin/kmstest-m3p2 -n 120 flip" \
+    "/bin/v3dasync-ping cl-smoke" \
+    "/bin/kmstest-m3p2 stats" \
+    "/bin/kmstest-m3p2 quit" \
+    "/bin/v3dasync-ping stats" \
+    "/bin/v3dasync-ping quit"
+```
+
+Order: the render server first (`rpi4-kms -G` opens `/dev/v3d-async` for the fence page at start).
+Wall clock ≈ netboot + 11 × (8 s idle + a few s) + 2 × ~6 s probe + ~3 s flips ≈ 5 min. Grade from
+tagged lines only (~1.3 % UART line corruption: re-read, don't count; EL0 dumps print twice):
+
+```
+grep -a -E '^(DRMPROBE|KMS|KMSTEST|V3DA|V3DAPING) ' artifacts/rpi4b-uart/rpi4b-uart-*-m3p2-drmprobe.log
+./scripts/uart-summary.sh m3p2-drmprobe
+```
+
+**Predictions** (§7's table still holds for every line it lists, except where noted):
+
+| Line | Predicted | If instead… |
+|---|---|---|
+| `V3DA srv dri name=/dev/dri/renderD128 port=<P> rc=0 registered=1`, `… /dev/dri/card1 port=<Q≠P> … registered=1`; `KMS srv dri name=/dev/dri/card0 rc=0 registered=1` | once each, before `ready`/after `detached` | `rc<0 registered=0`: devfs refused the `dri` directory (`create_dev` makes it) — the probe then shows legacy names and the card1 gap; read the rc. |
+| `V3DA srv dri name=/dev/dri/renderD128 … registered=1` but `/dev/dri/card1` and/or kms's `/dev/dri/card0` `rc<0 registered=0` | — | the second and later names under `dri/` take `create_dev`'s `-EEXIST → mtLookup → lookup.dev` branch for the directory, never exercised on this system before (dummyfs answers `o->dev`, which for a plain directory is its own oid [read], so it is predicted to work). Best effort, not a regression: the probe then shows mixed names; follow-up = create the directory once with `mkdir` in devfs. |
+| `DRMPROBE device i=0 … primary=/dev/dri/card0 render=-`, `device i=1 … primary=/dev/dri/card1 render=/dev/dri/renderD128` | the canonical names now resolve | legacy names: G10 names missing (line above). |
+| `open node=card1 path=/dev/dri/card1 rdwr=1 … ok=1`, `identity node=card1 version=v3d 1.0.0 … node_type=0 is_kms=0 … ok=1` | the v3d primary node answers on its own port | `open` fails: the card1 thread is not receiving (`V3DA srv card1 …` failure line); `identity` ok=0 with `version=-`: HELLO over the card1 port failed. |
+| `fstat node=card0 … rc=0 mode=020666 chr=1 rdev=<K> devid_type=0 devid_dev=0`, `node=card1 … rdev=<Q> devid_type=0`, `node=render … rdev=<P> devid_type=2`; `fstat_nodes n=3 answered=3 chr_all=1 distinct=1 devid_ok=1 ok=1`; `V3DA srv fstat answered …`, `KMS srv fstat answered …` | **G2+G10 on hardware**: K = kms port, P = main v3d port, Q = card1 port | `rc=-1 errno=38` on all: old servers staged (gap=1) — a staging error, not a result; `errno=22`: the reply's `o.data` too small (kernel `sizeof(struct _attrAll)` differs); `distinct=0`: card1 shares a port — G10 regressed; `devid_ok=0`: library `srv_of_devid`. |
+| `dmabuf_size end=8294400 errno=0 want=8294400 ok=1 gap=0` + `KMS srv kmsbuf atSize id=<h> size=8294400 (first; G3)` | **G3** | `end=-1 errno=2`: atSize refused (old kms or the flag cleared early). |
+| `prime_import_render rc=0 errno=0 handle=<r> ok=1 gap=0` + `V3DA srv import handle=… client=… ns=kmsbuf id=<h> pages=2025 pa0=<inside the KMS pool of this boot> contiguous=1 gpuva=… cache=uncached live=1` | **G1**: 2025 pages = 8294400 B, contiguous (the pool), `pa0` = the `KMS pool pa=` line + the BO offset, below `0x40000000` | `rc=-1 errno=2`: lookup/open of `/kmsbuf/<h>` from the render server failed (pid rule on `/kmsbuf`?); `errno=22`: port mismatch or `size`; `errno=14` (EFAULT): `va2pa` of an unfaulted page — the touch did not fault it in; `V3DA srv import FAIL … rc=` names it. |
+| `prime_reimport rc=0 handle=<same> same=1 ok=1` | DRM dedupe, no second `V3DA srv import` line | a second import line: dedupe broken (a leak per re-import). |
+| `import_clear handle=… gpuva=… rc=0 pixels_ok=1 px0=0xff2080ff wait_bo=0 ok=1` + HDMI: an azure band ≈2 rows high at the top of the teal frame (then lime after `implicit_flip`) | **the V3D writes a kms scan-out buffer**, CPU reads it back through the kms mapping | `px0=0xdeadbeef`: the job did not write these pages (PTEs wrong: compare `pa0` with kms's pool PA) or it wrote elsewhere; `rc=-62`: the wait path (check `cl_clear` first). |
+| `implicit_flip submit=0 flip=0 events=1 pixels_ok=1 px0=0xff80ff20 flip_us=8000–35000 ok=1` | the flip event arrives with the second clear complete | `pixels_ok=0` with `events=1`: the flip completed before the GPU (G13 did not attach and the clear was slower than a vblank — on hardware a 64×64 clear usually wins the race, so PASS proves "no regression", the host test proves the attach). `flip=-19`: kms without `-G` and the fallback failed. |
+| `V3DA srv import released handle=… id=<h> pages=2025 live=0` | once, right after `import_clear`/`implicit_flip` (GEM_CLOSE → quarantine → munmap) | missing: the import leaks (quarantine never passed, or refs held). |
+| `DRMPROBE RESULT pass=36 fail=0 gap=1 failed=- secs≈4–8 verdict=PASS` (gap = `prime_export_render`, G4) | first and second run | any `failed=` key: its row says what it means. |
+| `KMSTEST connect …`, `KMSTEST info … result fails=0 verdict=PASS` (the **old** staged kmstest) | proto-1 client unchanged | HELLO `-EPROTO`/`-ENOTTY`: the KMS HELLO changed — blocker. |
+| `KMSTEST flip … result flips=120/120 … errors=0 … verdict=PASS`, 0 `event_bad`, `KMSTEST read_dump n=1..3 bytes=32 raw=00000002 00000020 …` and `KMS srv read_dump n=1..3 path=parked packed=1 bytes=32 first16=00000002 00000020 …` with the same words | the M2 event fix | see the M2 fix subsection. |
+| `V3DAPING cl-smoke … wait_rc=0 fence_err=0 …` (the **old** staged ping = quakespasm-v3da's client library) | proto-2 client unchanged | HELLO fails: blocker for the staged clones. |
+| `KMSTEST stats … bos=0 exports=0`, `V3DAPING stats … parked=0 … pages_to_kernel=0`, `V3DAPING quit rc=0`, `KMSTEST quit rc=0` | no leaks after two probes (client death cleans up; the import released) | `bos>0`/`exports>0`: kms leak; `pages_to_kernel>0`: an import went to the BO pool path (must not). |
+| after `KMS srv exit … restored=1` and `V3DA srv exit …` | **no** Exception dump | a dump at pc `0x1e1e…`: a thread entry still returns. |
+| fault dumps (`uart-summary.sh`) | 0 kernel, 0 EL0 | any: `addr2line` the PC (binaries unstripped). |
+
+**What the cycle decides:** all PASS = the servers provide everything kmscube's GBM/EGL path needs
+from them (§8 step 1 done); the next step is the `mesa-drm` build + kmscube (§8 steps 2–3). A
+failure confined to `implicit_flip` pixels is a timing question, not a blocker (host test proves
+the attach); any `fstat`/`import`/`dmabuf_size` failure blocks Mesa and is fixed first.
+
+### Remaining gaps after part 2
+
+G4 (`BO_EXPORT` + `/v3dbuf`), G5 (`SUBMIT_CPU`, perfmons), G6 (cross-process syncobj/sync-file
+fds), G7 (`KMS_OP_PRIME_IMPORT`), G8 (kms out-fence), G9 (a commit-pending flag in `GET_CRTC`), G12
+(`poll()` 20 ms quantum, kernel), G15 (`SYNC_IOC_*`, `DMA_BUF_IOCTL_*_SYNC_FILE`), cross-process
+implicit sync (`BO_LAST_FENCE`), and access control on `/kmsbuf` / client ids (R3). `F2`'s
+misleading `kms_proto.h` comment is fixed.

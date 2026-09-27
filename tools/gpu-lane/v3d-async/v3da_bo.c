@@ -35,11 +35,16 @@
  */
 
 #include <errno.h>
+#include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include <sys/mman.h>
+#include <sys/msg.h>
+#include <sys/threads.h>
 
 #include "v3da.h"
 #include "v3da_regs.h"
@@ -400,7 +405,17 @@ void v3da_bo_quarantine_poll(void)
 		if (ok == 0) {
 			continue;
 		}
-		block_put(b->cpu, b->pa, b->pages, ((b->flags & V3DA_BO_CACHEABLE) != 0u) ? 1 : 0);
+		if (b->imported != 0) {
+			/* Another server's pages: drop our window reference, never pool them
+			 * (block_get zeroes pooled blocks - it would wipe the exporter's buffer). */
+			(void)munmap(b->cpu, (size_t)b->pages * _PAGE_SIZE);
+			srv.imports--;
+			printf("V3DA srv import released handle=0x%x id=%llu pages=%u live=%u\n", b->handle,
+				(unsigned long long)b->imp_mem.addr, b->pages, srv.imports);
+		}
+		else {
+			block_put(b->cpu, b->pa, b->pages, ((b->flags & V3DA_BO_CACHEABLE) != 0u) ? 1 : 0);
+		}
 		v3da_hw_va_free(&srv.hw, b->gpuva, b->pages);
 		memset(b, 0, sizeof(*b));
 		b->state = V3DA_BO_FREE;
@@ -418,6 +433,10 @@ int v3da_bo_mmap(uint32_t handle, v3da_bo_resp_t *out)
 	}
 	out->gpuva = b->gpuva;
 	out->size = b->pages * (uint32_t)_PAGE_SIZE;
+	if (b->imported != 0) {
+		out->mem = b->imp_mem;   /* the exporter's name: map /kmsbuf/<id>, never its physical address */
+		return 0;
+	}
 	out->mem.kind = V3DA_MEM_PHYS;
 	out->mem.cache = ((b->flags & V3DA_BO_CACHEABLE) != 0u) ? V3DA_CACHE_CACHED : V3DA_CACHE_UNCACHED;
 	out->mem.port = 0u;
@@ -504,4 +523,220 @@ void v3da_bo_counts(uint32_t *live, uint32_t *quar, uint32_t *pooled)
 		}
 	}
 	*pooled = srv.npool;
+}
+
+
+/* ========================================================================= */
+/* PRIME import (M3 part 2, gap G1)                                           */
+/* ========================================================================= */
+
+/* This client's live import of {port, id}, if any (DRM: a second import of the
+ * same dma-buf on one file returns the same handle, with no extra reference). */
+static v3da_bo_t *import_find(uint32_t client, uint32_t port, uint64_t id)
+{
+	uint32_t i;
+	v3da_bo_t *b;
+
+	for (i = 0u; i < srv.nbos; i++) {
+		b = &srv.bos[i];
+		if ((b->state == V3DA_BO_LIVE) && (b->imported != 0) && (b->refs > 0u) && (b->owner == client) &&
+				(b->imp_mem.port == port) && (b->imp_mem.addr == id)) {
+			return b;
+		}
+	}
+	return NULL;
+}
+
+
+static void import_reply(const v3da_bo_t *b, v3da_bo_create_resp_t *out)
+{
+	memset(out, 0, sizeof(*out));
+	out->handle = b->handle;
+	out->gpuva = b->gpuva;
+	out->size = b->pages * (uint32_t)_PAGE_SIZE;
+	out->scanout = 0u;
+	out->mem = b->imp_mem;
+}
+
+
+/* Open the buffer name, size it, map it with the export's memory type and resolve
+ * every page. Unlocked: open() and lseek() are IPC to the exporter. */
+static int import_map(const v3da_bo_import_req_t *rq, void **cpu_out, uintptr_t **pa_out, uint32_t *pages_out,
+	int *contig_out)
+{
+	char path[48];
+	oid_t dev;
+	off_t end;
+	uint64_t size = rq->size;
+	uint32_t pages, i;
+	uintptr_t *pa;
+	void *cpu;
+	int fd, flags, e;
+
+	(void)snprintf(path, sizeof(path), "%s/%llu", V3DA_IMPORT_KMSBUF_DIR, (unsigned long long)rq->id);
+	if (lookup(path, NULL, &dev) < 0) {
+		return -ENOENT;   /* not (or no longer) exported */
+	}
+	if ((dev.port != rq->port) || ((uint64_t)dev.id != rq->id)) {
+		return -EINVAL;   /* the name is served by another port than the client resolved */
+	}
+	fd = open(path, O_RDONLY);   /* O_RDONLY: O_RDWR would stat() the name (E1 section 1) */
+	if (fd < 0) {
+		return (errno != 0) ? -errno : -EIO;
+	}
+	end = lseek(fd, 0, SEEK_END);   /* G3: the exporter answers atSize while the buffer is exported */
+	if (size == 0u) {
+		if (end <= 0) {
+			(void)close(fd);
+			return -EINVAL;   /* size unknown: the exporter predates G3 and the client did not know it */
+		}
+		size = (uint64_t)end;
+	}
+	else if ((end > 0) && (size > (uint64_t)end)) {
+		(void)close(fd);
+		return -EINVAL;
+	}
+	if (((size & (_PAGE_SIZE - 1u)) != 0u) || (size > V3DA_IMPORT_MAX_SIZE)) {
+		(void)close(fd);
+		return -EINVAL;
+	}
+	flags = MAP_SHARED | ((rq->cache == V3DA_CACHE_UNCACHED) ? MAP_UNCACHED : 0);
+	cpu = mmap(NULL, (size_t)size, PROT_READ, flags, fd, 0);
+	e = errno;
+	(void)close(fd);   /* the mapping holds the export window (E1) */
+	if (cpu == MAP_FAILED) {
+		return (e != 0) ? -e : -EINVAL;
+	}
+	pages = (uint32_t)(size / _PAGE_SIZE);
+	pa = malloc((size_t)pages * sizeof(*pa));
+	if (pa == NULL) {
+		(void)munmap(cpu, (size_t)size);
+		return -ENOMEM;
+	}
+	*contig_out = 1;
+	for (i = 0u; i < pages; i++) {
+		volatile const uint32_t *p = (volatile const uint32_t *)((uintptr_t)cpu + (size_t)i * _PAGE_SIZE);
+		(void)*p;   /* fault the page in: va2pa reports present pages only */
+		pa[i] = (uintptr_t)va2pa((void *)(uintptr_t)p);
+		if ((pa[i] == (uintptr_t)(addr_t)-1) || ((pa[i] & (_PAGE_SIZE - 1u)) != 0u) ||
+				((uint64_t)pa[i] >= (1ULL << (32u + V3D_PAGE_SHIFT)))) {
+			free(pa);
+			(void)munmap(cpu, (size_t)size);
+			return -EFAULT;
+		}
+		if (pa[i] != pa[0] + (uintptr_t)i * _PAGE_SIZE) {
+			*contig_out = 0;
+		}
+	}
+	*cpu_out = cpu;
+	*pa_out = pa;
+	*pages_out = pages;
+	return 0;
+}
+
+
+int v3da_bo_import(uint32_t client, const v3da_bo_import_req_t *rq, v3da_bo_create_resp_t *out)
+{
+	uint32_t pages = 0u, slot, gpuva, i;
+	uint64_t gen;
+	uintptr_t *pa = NULL;
+	void *cpu = NULL;
+	int rc, contig = 0;
+	v3da_bo_t *b;
+
+	if (rq->ns == V3DA_IMPORT_NS_V3DBUF) {
+		return -ENOSYS;   /* G4: this server exports nothing yet */
+	}
+	if ((rq->ns != V3DA_IMPORT_NS_KMSBUF) || (rq->cache > V3DA_CACHE_UNCACHED) || (rq->pad != 0u) ||
+			((client < 1u) || (client > V3DA_MAX_CLIENTS))) {
+		return -EINVAL;
+	}
+
+	(void)mutexLock(srv.lock);
+	if (srv.clients[client - 1u].used == 0) {
+		(void)mutexUnlock(srv.lock);
+		return -EBADF;
+	}
+	gen = srv.slot_gen[client - 1u];
+	b = import_find(client, rq->port, rq->id);
+	if (b != NULL) {
+		import_reply(b, out);
+		(void)mutexUnlock(srv.lock);
+		return 0;
+	}
+	(void)mutexUnlock(srv.lock);
+
+	rc = import_map(rq, &cpu, &pa, &pages, &contig);
+	if (rc != 0) {
+		printf("V3DA srv import FAIL client=%u id=%llu port=%u size=%llu rc=%d\n", client, (unsigned long long)rq->id,
+			rq->port, (unsigned long long)rq->size, rc);
+		return rc;
+	}
+
+	(void)mutexLock(srv.lock);
+	if ((srv.clients[client - 1u].used == 0) || (srv.slot_gen[client - 1u] != gen)) {
+		rc = -EBADF;   /* the client closed while we mapped */
+	}
+	else if ((b = import_find(client, rq->port, rq->id)) != NULL) {
+		import_reply(b, out);   /* a racing import of the same buffer won */
+		rc = 1;
+	}
+	else {
+		for (slot = 0u; slot < srv.nbos; slot++) {
+			if (srv.bos[slot].state == V3DA_BO_FREE) {
+				break;
+			}
+		}
+		if ((slot == srv.nbos) && (srv.nbos >= V3DA_MAX_BOS)) {
+			rc = -ENOMEM;
+		}
+		else if ((gpuva = v3da_hw_va_alloc(&srv.hw, pages)) == 0u) {
+			rc = -ENOMEM;
+		}
+		else {
+			if (slot == srv.nbos) {
+				srv.nbos++;
+			}
+			for (i = 0u; i < pages; i++) {
+				srv.hw.pt[(gpuva >> V3D_PAGE_SHIFT) + i] = (uint32_t)(pa[i] >> V3D_PAGE_SHIFT) | PTE_W | PTE_V;
+			}
+			srv.hw.pt_gen++;   /* flushed by the next job prologue (E2 step 5), as bo_create */
+
+			b = &srv.bos[slot];
+			memset(b, 0, sizeof(*b));
+			b->state = V3DA_BO_LIVE;
+			srv.bo_gen[slot]++;
+			if ((srv.bo_gen[slot] & (0xffffffffu >> V3DA_HANDLE_SLOT_BITS)) == 0u) {
+				srv.bo_gen[slot] = 1u;
+			}
+			b->handle = (srv.bo_gen[slot] << V3DA_HANDLE_SLOT_BITS) | (slot + 1u);
+			b->owner = client;
+			b->refs = 1u;
+			b->flags = (rq->cache == V3DA_CACHE_CACHED) ? V3DA_BO_CACHEABLE : 0u;
+			b->cpu = cpu;
+			b->pa = pa[0];
+			b->gpuva = gpuva;
+			b->pages = pages;
+			b->imported = 1;
+			b->imp_mem.kind = V3DA_MEM_OID;
+			b->imp_mem.cache = (uint16_t)rq->cache;
+			b->imp_mem.port = rq->port;
+			b->imp_mem.size = (uint64_t)pages * _PAGE_SIZE;
+			b->imp_mem.addr = rq->id;
+			srv.imports++;
+			import_reply(b, out);
+			printf("V3DA srv import handle=0x%x client=%u ns=kmsbuf id=%llu pages=%u pa0=0x%08llx contiguous=%d "
+				"gpuva=0x%08x cache=%s live=%u\n", b->handle, client, (unsigned long long)rq->id, pages,
+				(unsigned long long)pa[0], contig, gpuva, (rq->cache == V3DA_CACHE_CACHED) ? "cached" : "uncached",
+				srv.imports);
+			rc = 0;
+		}
+	}
+	(void)mutexUnlock(srv.lock);
+
+	free(pa);
+	if (rc != 0) {
+		(void)munmap(cpu, (size_t)pages * _PAGE_SIZE);
+	}
+	return (rc == 1) ? 0 : rc;
 }

@@ -53,6 +53,7 @@ enum drmphx_srv {
 #define DRMPHX_V3D_MAX_SYNC   256u
 #define DRMPHX_V3D_NPARAM     32u
 #define DRMPHX_KMS_MAX_DUMB   256u
+#define DRMPHX_KMS_MAX_FB     64u      /* framebuffers mirrored per connection (G13: fb -> dumb handle) */
 #define DRMPHX_KMS_MAX_PLANES (KMS_MAX_CRTCS * KMS_PLANES_PER_CRTC)
 
 typedef struct {
@@ -76,6 +77,11 @@ typedef struct {
 	uint64_t size;
 	kms_memref_t mem;
 } drmphx_kms_dumb_t;
+
+typedef struct {
+	uint32_t fb_id;           /* 0 = free */
+	uint32_t handle;          /* the dumb handle ADDFB2 named */
+} drmphx_kms_fb_t;
 
 typedef struct drmphx_conn {
 	struct drmphx_conn *next;
@@ -107,6 +113,9 @@ typedef struct drmphx_conn {
 			drmphx_kms_dumb_t dumb[DRMPHX_KMS_MAX_DUMB];
 			uint8_t plane_valid[DRMPHX_KMS_MAX_PLANES];
 			kms_atomic_plane_t plane[DRMPHX_KMS_MAX_PLANES];   /* last committed state (mirror) */
+			drmphx_kms_fb_t fb[DRMPHX_KMS_MAX_FB];
+			int no_gate;          /* G13: the server refused an in-fence (-ENODEV: started without -G) */
+			uint32_t implicit;    /* G13: flips that carried an implicit (library-attached) fence */
 		} kms;
 	} u;
 } drmphx_conn_t;
@@ -163,5 +172,14 @@ int drmphx_v3d_hello(drmphx_conn_t *c, int fd);
 void drmphx_v3d_release(drmphx_conn_t *c);
 int drmphx_v3d_stale(const drmphx_conn_t *c);
 int drmphx_v3d_token_memref(drmphx_conn_t *c, uint32_t handle, v3da_memref_t *m);
+
+/* G13 (M3 part 2): implicit sync for flips of GPU-rendered buffers, in-process.
+ * A render-node PRIME import of an exported buffer {ns port, id} is recorded; the
+ * display side asks for that BO's last-use fence (mirrored from this process's own
+ * submits) before a flip that carries no IN_FENCE_FD. Returns 1 and *f when the
+ * fence has not signalled yet, 0 when there is nothing to wait for. */
+int drmphx_v3d_implicit_fence(uint32_t port, uint64_t id, v3da_fence_t *f);
+/* The CPU-wait fallback (rpi4-kms without -G): block until that fence passed. */
+int drmphx_v3d_implicit_wait(uint32_t port, uint64_t id);
 
 #endif /* _DRM_PHOENIX_PRIV_H_ */

@@ -43,6 +43,9 @@
 #define V3DA_SPIN_US       50u          /* fast-path spin before the first server wait */
 #define FOREVER_NS         (-1LL)
 
+static drmphx_v3d_bo_t *bo_get(drmphx_conn_t *c, uint32_t handle);
+static void implicit_forget(const drmphx_conn_t *c, uint32_t handle, int all);
+
 
 static int vcall(drmphx_conn_t *c, uint32_t op, const void *u, size_t usize, v3da_resp_t *r)
 {
@@ -91,6 +94,8 @@ int drmphx_v3d_hello(drmphx_conn_t *c, int fd)
 void drmphx_v3d_release(drmphx_conn_t *c)
 {
 	uint32_t i;
+
+	implicit_forget(c, 0u, 1);   /* G13: no import record may outlive its connection */
 
 	if (c->u.v3d.fp != NULL) {
 		(void)munmap((void *)c->u.v3d.fp, (size_t)c->u.v3d.hello.fence_page.size);
@@ -182,6 +187,122 @@ static int fence_wait(drmphx_conn_t *c, const v3da_fence_t *f, int64_t rel_ns)
 		c->u.v3d.ipc_waits++;
 		rc = vcall(c, V3DA_OP_FENCE_WAIT, &w, sizeof(w), NULL);
 	} while ((rc == -ETIMEDOUT) && ((forever != 0) || (drmphx_now_us() < deadline)));
+	return rc;
+}
+
+
+/* ========================================================================= */
+/* Implicit sync for flips (G13, M3 part 2)                                   */
+/* ========================================================================= */
+
+/* Process-wide: which render BO a buffer export {namespace port, id} was imported
+ * as. Entries die with their handle (GEM_CLOSE) or their connection, both under
+ * IMP.lock, so a lookup that holds IMP.lock always reads a live connection.
+ * Lock order: G.lock (connection teardown) -> IMP.lock -> conn->lock. */
+#define DRMPHX_MAX_IMPLICIT 64u
+
+static struct {
+	pthread_mutex_t lock;
+	struct {
+		drmphx_conn_t *conn;     /* NULL = free */
+		uint32_t port;
+		uint64_t id;
+		uint32_t handle;
+	} e[DRMPHX_MAX_IMPLICIT];
+} IMP = { .lock = PTHREAD_MUTEX_INITIALIZER };
+
+
+static void implicit_note(drmphx_conn_t *c, uint32_t port, uint64_t id, uint32_t handle)
+{
+	uint32_t i, k = DRMPHX_MAX_IMPLICIT;
+
+	(void)pthread_mutex_lock(&IMP.lock);
+	for (i = 0u; i < DRMPHX_MAX_IMPLICIT; i++) {
+		if ((IMP.e[i].conn == c) && (IMP.e[i].handle == handle)) {
+			k = i;   /* re-import of the same buffer: same handle (DRM) */
+			break;
+		}
+		if ((IMP.e[i].conn == NULL) && (k == DRMPHX_MAX_IMPLICIT)) {
+			k = i;
+		}
+	}
+	if (k < DRMPHX_MAX_IMPLICIT) {   /* table full: that buffer's flips go unsynchronised, as without G13 */
+		IMP.e[k].conn = c;
+		IMP.e[k].port = port;
+		IMP.e[k].id = id;
+		IMP.e[k].handle = handle;
+	}
+	(void)pthread_mutex_unlock(&IMP.lock);
+}
+
+
+static void implicit_forget(const drmphx_conn_t *c, uint32_t handle, int all)
+{
+	uint32_t i;
+
+	(void)pthread_mutex_lock(&IMP.lock);
+	for (i = 0u; i < DRMPHX_MAX_IMPLICIT; i++) {
+		if ((IMP.e[i].conn == c) && ((all != 0) || (IMP.e[i].handle == handle))) {
+			memset(&IMP.e[i], 0, sizeof(IMP.e[i]));
+		}
+	}
+	(void)pthread_mutex_unlock(&IMP.lock);
+}
+
+
+/* The newest unsignalled last-use fence over every import of {port, id} (called
+ * with IMP.lock held). 1 = *f is it, 0 = nothing pending. */
+static int implicit_pending(uint32_t port, uint64_t id, v3da_fence_t *f, drmphx_conn_t **conn)
+{
+	const drmphx_v3d_bo_t *b;
+	v3da_fence_t cand;
+	uint32_t i;
+	int found = 0;
+
+	for (i = 0u; i < DRMPHX_MAX_IMPLICIT; i++) {
+		drmphx_conn_t *c = IMP.e[i].conn;
+		if ((c == NULL) || (IMP.e[i].port != port) || (IMP.e[i].id != id)) {
+			continue;
+		}
+		(void)pthread_mutex_lock(&c->lock);
+		b = bo_get(c, IMP.e[i].handle);
+		cand = (b != NULL) ? b->last : (v3da_fence_t){ 0 };
+		(void)pthread_mutex_unlock(&c->lock);
+		if ((cand.seqno != 0u) && (fence_signaled(c, &cand) == 0)) {
+			*f = cand;   /* one render connection writes a scan-out buffer in practice: take the last found */
+			*conn = c;
+			found = 1;
+		}
+	}
+	return found;
+}
+
+
+int drmphx_v3d_implicit_fence(uint32_t port, uint64_t id, v3da_fence_t *f)
+{
+	drmphx_conn_t *c;
+	int found;
+
+	(void)pthread_mutex_lock(&IMP.lock);
+	found = implicit_pending(port, id, f, &c);
+	(void)pthread_mutex_unlock(&IMP.lock);
+	return found;
+}
+
+
+int drmphx_v3d_implicit_wait(uint32_t port, uint64_t id)
+{
+	v3da_fence_t f;
+	drmphx_conn_t *c;
+	int rc = 0;
+
+	/* Waits with IMP.lock held (the connection must outlive the wait); bounded
+	 * slices, and only on the rpi4-kms-without--G fallback path. */
+	(void)pthread_mutex_lock(&IMP.lock);
+	while ((rc == 0) && (implicit_pending(port, id, &f, &c) != 0)) {
+		rc = fence_wait(c, &f, FOREVER_NS);
+	}
+	(void)pthread_mutex_unlock(&IMP.lock);
 	return rc;
 }
 
@@ -444,6 +565,7 @@ static int ioc_close_bo(drmphx_conn_t *c, uint32_t handle)
 		memset(b, 0, sizeof(*b));
 	}
 	(void)pthread_mutex_unlock(&c->lock);
+	implicit_forget(c, handle, 0);
 	/* The server keeps the BO alive while a job still uses it, then quarantines it.
 	 * CPU mappings made through drmPhoenixMmap stay valid until munmap (as DRM). */
 	memset(&q, 0, sizeof(q));
@@ -793,8 +915,11 @@ static int sync_wait(drmphx_conn_t *c, const uint32_t *handles, uint32_t n, int6
 
 	/* One handle (glFinish, WAIT_BO-style use): wait its fence directly. */
 	if ((n == 1u) && (sync_state(c, handles[0], &st, &f) == 0) && (st == V3DA_SYNC_FENCE)) {
+		/* FOREVER_NS is negative: clamp only a finite deadline that has passed (M3 part 2
+		 * fix - the clamp used to turn drmSyncobjWait(INT64_MAX), i.e. glFinish, into a
+		 * zero-timeout poll that answered -ETIME whenever the job was still running). */
 		left = forever ? FOREVER_NS : (abs_ns - drmphx_now_ns());
-		rc = fence_wait(c, &f, (left < 0) ? 0 : left);
+		rc = fence_wait(c, &f, forever ? FOREVER_NS : ((left < 0) ? 0 : left));
 		if ((rc == 0) && (first_signaled != NULL)) {
 			*first_signaled = 0u;
 		}
@@ -1063,19 +1188,20 @@ static int ioc_prime_import(drmphx_conn_t *c, struct drm_prime_handle *ph)
 	q.port = m.port;
 	q.cache = m.cache;
 	q.id = m.addr;
-	q.size = m.size;   /* 0 = unknown here (a descriptor another process exported) */
+	q.size = m.size;   /* 0 = unknown here (another process exported it): the server sizes it (G3) */
 	kms_port = (lookup(KMS_BUF_NS, NULL, &dev) == 0) ? dev.port : 0u;
 	q.ns = (m.port == kms_port) ? DRMPHX_NS_KMSBUF : DRMPHX_NS_V3DBUF;
 
 	memset(&rq, 0, sizeof(rq));
 	rq.magic = V3DA_MAGIC;
-	rq.op = V3DA_OP_BO_IMPORT;   /* reserved in proto 2: the server answers -ENOSYS (gap) */
-	memcpy(&rq.u, &q, sizeof(q));
+	rq.op = V3DA_OP_BO_IMPORT;   /* M3 part 2 servers import; a part-2 server answers -ENOSYS (the old gap G1) */
+	rq.u.bo_import = q;
 	rc = drmphx_call(c, &rq, &r, NULL, 0u, 0u, NULL, 0u);
 	if (rc != 0) {
 		return rc;
 	}
 	bo_store(c, r.u.bo_create.handle, r.u.bo_create.gpuva, r.u.bo_create.size, &r.u.bo_create.mem, 1u);
+	implicit_note(c, q.port, q.id, r.u.bo_create.handle);   /* G13: flips of this buffer wait for its renders */
 	ph->handle = r.u.bo_create.handle;
 	return 0;
 }

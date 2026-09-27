@@ -545,7 +545,8 @@ static void draw_box(buf_t *b, uint32_t pos, uint32_t oldpos)
 
 static int read_event(kms_drm_event_vblank_t *ev, uint64_t *t_after)
 {
-	uint8_t buf[64];
+	static uint32_t ndump;
+	uint8_t buf[64] __attribute__((aligned(8)));
 	ssize_t n;
 	int tries;
 
@@ -555,6 +556,14 @@ static int read_event(kms_drm_event_vblank_t *ev, uint64_t *t_after)
 			continue;   /* bounded park (KMS_READ_MAX_MS) expired: loop */
 		}
 		*t_after = cnt_now();
+		if ((n >= 32) && (ndump < 3u)) {
+			/* The raw bytes of the first reads: pairs with the server's `srv read_dump`
+			 * lines to prove a flip event arrives intact (the m2-kms-a zeros defect). */
+			const uint32_t *w = (const uint32_t *)(const void *)buf;
+			ndump++;
+			kt("read_dump n=%u bytes=%d raw=%08x %08x %08x %08x %08x %08x %08x %08x", ndump, (int)n, w[0], w[1], w[2],
+				w[3], w[4], w[5], w[6], w[7]);
+		}
 		if (n < (ssize_t)sizeof(*ev)) {
 			return (n < 0) ? -errno : -EIO;
 		}

@@ -60,7 +60,8 @@
 #include <stdint.h>
 
 
-#define KMS_DEV_NAME      "kms"        /* /dev/kms; M3 adds /dev/dri/card0 */
+#define KMS_DEV_NAME      "kms"        /* /dev/kms */
+#define KMS_DRI_NAME      "dri/card0"  /* M3 part 2 (G10): the DRM primary node, same port as /dev/kms */
 #define KMS_BUF_NS        "/kmsbuf"    /* buffer namespace (own port) */
 #define KMS_PROTO_VERSION 1u
 #define KMS_MAGIC         0x31534d4bu  /* "KMS1" little-endian; bit 31 clear */
@@ -532,8 +533,11 @@ typedef struct {
 	uint32_t pad;
 } kms_atomic_req_t;
 
-#define KMS_VBL_RELATIVE 0x0u   /* _DRM_VBLANK_RELATIVE */
-#define KMS_VBL_ABSOLUTE 0x1u   /* _DRM_VBLANK_ABSOLUTE */
+/* NOT the DRM encoding (M3 F2): DRM has _DRM_VBLANK_ABSOLUTE = 0 and
+ * _DRM_VBLANK_RELATIVE = 1; this server tests bit 0 as ABSOLUTE. Never pass a DRM
+ * `type` through - convert (libdrm-phoenix always sends absolute targets). */
+#define KMS_VBL_RELATIVE 0x0u   /* bit 0 clear: sequence is relative to the current count */
+#define KMS_VBL_ABSOLUTE 0x1u   /* bit 0 set: sequence is an absolute 64-bit count */
 #define KMS_VBL_EVENT    0x4000000u   /* _DRM_VBLANK_EVENT: queue an event instead of blocking */
 
 typedef struct {

@@ -29,8 +29,11 @@
  *   -s ms       periodic "V3DA srv qstat" line while GPU jobs run (default 5000, 0 = off)
  *
  * Serves: HELLO, GET_INFO, GET_PARAM, BO create/close/mmap/offset/wait (incl.
- * scanout BOs), SUBMIT_CL/TFU/CSD + the NOP test job, FENCE_WAIT, syncobjs (incl.
- * import), SCANOUT_INFO/FLIP (firmware pan), and the debug ops.
+ * scanout BOs), BO_IMPORT (PRIME import of a /kmsbuf export), SUBMIT_CL/TFU/CSD +
+ * the NOP test job, FENCE_WAIT, syncobjs (incl. import), SCANOUT_INFO/FLIP
+ * (firmware pan), the debug ops, and fstat (mtGetAttrAll) on its nodes.
+ * Nodes: /dev/v3d-async and /dev/dri/renderD128 (one port), /dev/dri/card1 (a
+ * second port, same protocol and clients: distinct dev_t for the primary node).
  *
  * Copyright 2026 Phoenix Systems
  * Author: Witold Bołt
@@ -45,6 +48,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <posix/utils.h>
@@ -66,7 +70,10 @@ v3da_srv_t srv;
 static struct {
 	uint8_t event_stack[16384] __attribute__((aligned(16)));
 	uint8_t dispatch_stack[V3DA_MAX_DISPATCH][16384] __attribute__((aligned(16)));
+	uint8_t card1_stack[16384] __attribute__((aligned(16)));
 	unsigned pid_mismatch;
+	unsigned attr_notes;
+	int dri_render, dri_card;     /* /dev/dri names registered by this server (G10) */
 } m;
 
 
@@ -404,9 +411,8 @@ static int handle_raw(msg_t *msg, msg_rid_t rid, v3da_wait_t **answer)
 			rc = 0;
 			break;
 
-		/* later milestones */
+		/* later milestones (BO_IMPORT is served unlocked by dispatch_loop) */
 		case V3DA_OP_SUBMIT_CPU:
-		case V3DA_OP_BO_IMPORT:
 		case V3DA_OP_PERFMON_CREATE:
 		case V3DA_OP_PERFMON_DESTROY:
 		case V3DA_OP_PERFMON_GET_VALUES:
@@ -446,6 +452,58 @@ static void handle_ioctl(msg_t *msg)
 }
 
 
+/* mtGetAttrAll (G2, M3 part 2): what fstat() on a DRM descriptor needs - Mesa's
+ * gbm_create_device() and v3dv's device init refuse a descriptor whose fstat
+ * fails or is not S_ISCHR. The kernel's posix_fstat takes st_rdev from the
+ * descriptor's port itself (hence card1's own port, G10) and fails on the first
+ * negative err among mTime..ioblock, so every field is answered. */
+static int attr_all(msg_t *msg, uint32_t port)
+{
+	struct _attrAll *a = msg->o.data;
+	long long now = (long long)time(NULL);
+
+	if ((a == NULL) || (msg->o.size < sizeof(*a))) {
+		return -EINVAL;
+	}
+	memset(a, 0, sizeof(*a));
+	a->mode.val = S_IFCHR | 0666;
+	a->ioblock.val = (long long)_PAGE_SIZE;
+	a->type.val = otDev;
+	a->port.val = (long long)port;
+	a->pollStatus.err = -EINVAL;   /* not used by fstat */
+	a->eventMask.err = -EINVAL;
+	a->cTime.val = now;
+	a->mTime.val = now;
+	a->aTime.val = now;
+	a->links.val = 1;
+	a->dev.val = (long long)port;
+	if (m.attr_notes++ == 0u) {
+		printf("V3DA srv fstat answered (mtGetAttrAll, G2) port=%s client=%u pid=%d\n",
+			(port == srv.port) ? "render" : "card1", (unsigned)msg->oid.id, msg->pid);
+	}
+	return 0;
+}
+
+
+/* BO_IMPORT runs without srv.lock (v3da_bo_import opens and maps another
+ * server's buffer name); the client id comes from the message's oid. */
+static void bo_import_request(msg_t *msg)
+{
+	v3da_req_t req;
+	v3da_resp_t *r = (v3da_resp_t *)msg->o.raw;
+
+	memcpy(&req, msg->i.raw, sizeof(req));
+	memset(r, 0, sizeof(*r));
+	r->op = V3DA_OP_BO_IMPORT;
+	r->err = v3da_bo_import((uint32_t)msg->oid.id, &req.u.bo_import, &r->u.bo_create);
+	msg->o.err = EOK;
+}
+
+
+/* One loop per receiving thread; `arg` names the port (NULL = the main port):
+ * /dev/v3d-async + /dev/dri/renderD128 share srv.port, /dev/dri/card1 has
+ * srv.port_card1. Every request is answered on the port it arrived on (rids are
+ * per port); parked waits remember theirs (v3da_wait_t.port). */
 static void dispatch_loop(void *arg)
 {
 	msg_t msg;
@@ -454,11 +512,10 @@ static void dispatch_loop(void *arg)
 	v3da_irq_selftest_resp_t st;
 	v3da_resp_t *r;
 	int err, respond, id, quitting;
-
-	(void)arg;
+	const uint32_t port = (arg != NULL) ? *(const uint32_t *)arg : srv.port;
 
 	for (;;) {
-		err = msgRecv(srv.port, &msg, &rid);
+		err = msgRecv(port, &msg, &rid);
 		if (err < 0) {
 			if (err == -EINTR) {
 				continue;
@@ -502,7 +559,12 @@ static void dispatch_loop(void *arg)
 					msg.o.err = EOK;
 					break;
 				}
+				if (((const v3da_req_t *)msg.i.raw)->op == V3DA_OP_BO_IMPORT) {
+					bo_import_request(&msg);
+					break;
+				}
 				(void)mutexLock(srv.lock);
+				srv.rx_port = port;   /* v3da_wait_park records it (answered on the arrival port) */
 				respond = handle_raw(&msg, rid, &answer);
 				quitting = srv.quit;
 				(void)mutexUnlock(srv.lock);
@@ -520,6 +582,10 @@ static void dispatch_loop(void *arg)
 				}
 				break;
 
+			case mtGetAttrAll:
+				msg.o.err = attr_all(&msg, port);
+				break;
+
 			case mtRead:
 			case mtWrite:
 				msg.o.err = -EINVAL;
@@ -534,15 +600,69 @@ static void dispatch_loop(void *arg)
 		 * removed from srv.waits under the lock, so this is their only answer. */
 		v3da_waits_answer(answer);
 		if (respond != 0) {
-			(void)msgRespond(srv.port, &msg, rid);
+			(void)msgRespond(port, &msg, rid);
 		}
 		if (quitting != 0) {
 			printf("V3DA srv exit parked=%u inflight=%u\n",
 				((v3da_resp_t *)msg.o.raw)->u.quit.parked, ((v3da_resp_t *)msg.o.raw)->u.quit.inflight);
+			if (m.dri_card != 0) {
+				(void)destroy_dev("/dev/" V3DA_DRI_CARD_NAME);   /* names outlive their server (kms_main.c) */
+			}
+			if (m.dri_render != 0) {
+				(void)destroy_dev("/dev/" V3DA_DRI_RENDER_NAME);
+			}
 			usleep(50000);   /* let in-flight responds of other threads finish */
 			exit(0);
 		}
 	}
+}
+
+
+/* Entry of the extra receiving threads: a Phoenix thread entry must never
+ * return (its fresh stack has no caller - the m2-kms-a exit crash). */
+static void dispatch_thread(void *arg)
+{
+	dispatch_loop(arg);
+	endthread();
+}
+
+
+/* Does the server behind `path` still answer? (kms_main.c name_alive) */
+static int name_alive(const char *path)
+{
+	oid_t oid;
+	msg_t msg;
+
+	if (lookup(path, NULL, &oid) < 0) {
+		return 0;
+	}
+	memset(&msg, 0, sizeof(msg));
+	msg.type = mtGetAttr;
+	msg.oid = oid;
+	msg.i.attr.type = atMode;
+	return (msgSend(oid.port, &msg) == EOK) ? 1 : 0;
+}
+
+
+/* G10: a /dev/dri name, best effort. /dev/v3d-async (created first) is the
+ * single-owner guard, so a stale name left by a dead server is reclaimed and a
+ * live one (someone else's) is left alone; old clients never need these names. */
+static int dri_name(uint32_t port, const char *name)
+{
+	char path[48];
+	oid_t dev;
+	int rc;
+
+	(void)snprintf(path, sizeof(path), "/dev/%s", name);
+	dev.port = port;
+	dev.id = 0;
+	rc = create_dev(&dev, name);
+	if ((rc < 0) && (name_alive(path) == 0)) {
+		(void)destroy_dev(path);
+		rc = create_dev(&dev, name);
+	}
+	printf("V3DA srv dri name=%s port=%u rc=%d registered=%d (G10)\n", path, port, rc, (rc >= 0) ? 1 : 0);
+	return (rc >= 0) ? 1 : 0;
 }
 
 
@@ -689,10 +809,31 @@ int main(int argc, char **argv)
 		printf("V3DA srv event thread start failed\n");
 		return 5;
 	}
+	srv.rx_port = srv.port;
 	for (i = 1; i < nthreads; i++) {
-		if (beginthread(dispatch_loop, 3, m.dispatch_stack[i], sizeof(m.dispatch_stack[i]), NULL) != 0) {
+		if (beginthread(dispatch_thread, 3, m.dispatch_stack[i], sizeof(m.dispatch_stack[i]), NULL) != 0) {
 			printf("V3DA srv dispatch thread %d start failed\n", i);
 		}
+	}
+
+	/* G10 (M3 part 2): the DRM node names. renderD128 = an alias of /dev/v3d-async
+	 * (same port, same dev_t); card1 = the v3d device's primary node on a port of
+	 * its own (distinct dev_t: fstat's st_rdev is the port), served by one more
+	 * receiving thread. Best effort: a failure here never stops the server. */
+	m.dri_render = dri_name(srv.port, V3DA_DRI_RENDER_NAME);
+	if (portCreate(&srv.port_card1) == EOK) {
+		if (beginthread(dispatch_thread, 3, m.card1_stack, sizeof(m.card1_stack), &srv.port_card1) != 0) {
+			printf("V3DA srv card1 thread start failed; /dev/%s not registered\n", V3DA_DRI_CARD_NAME);
+			portDestroy(srv.port_card1);
+			srv.port_card1 = 0u;
+		}
+		else {
+			m.dri_card = dri_name(srv.port_card1, V3DA_DRI_CARD_NAME);
+		}
+	}
+	else {
+		srv.port_card1 = 0u;
+		printf("V3DA srv card1 portCreate failed; /dev/%s not registered\n", V3DA_DRI_CARD_NAME);
 	}
 
 	printf("V3DA srv ready dev=/dev/%s irq=%s irqnum=%u threads=%d poll_us=%u fence_pa=0x%08lx slots=%u "

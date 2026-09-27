@@ -587,3 +587,38 @@ deferred `msgRespond`. Static reading of `ev_push`/`ev_fill`/`park`/`serve_reads
 kmstest's `read_event` found nothing; the next build adds a tagged dump of the first served reads
 (size, dst, first words after `ev_fill`) and of the raw bytes the client receives. Both defects go to
 one fix pass after the M3 part-2 agent (which edits the same directory) finishes. M2 stays ▶.
+
+#### Fix (2026-09-27, M3 part-2 agent; builds `tools/gpu-lane/kms/out-m3p2/`, not yet on the Pi)
+
+**(1) Empty flip events — root cause found by reading the kernel, not the server.** A `read()` of at
+most 64 bytes is sent **packed**: `msg_opack()` (`kernel proc/msg.c:293-340`) points `o.data` at
+the message's own `o.raw` for `mtRead` when `o.size ≤ 64`, and `proc_respond()` copies only the
+responded message's `o.raw` back (`msg.c:638`, sender side `msg.c:471-474`). `kmstest` reads a
+64-byte buffer, so every one of its reads was packed. `park()` copied the `msg_t` (`p->msg = *msg`)
+but the copy's `o.data` still pointed into the **dispatch loop's stack `msg`**; `serve_reads()`
+filled that stale stack copy, and the responded `p->msg.o.raw` stayed zero — the right length
+(`o.err = 32`), zero bytes. Immediate reads (an event already queued) were correct; every flip
+event is parked, hence 0/600. `ipcprobe` never copies its received message (it `msgRecv`s straight
+into the heap request it later answers), which is why E5 saw real payloads. `drmHandleEvent()`
+reads 1 KiB (never packed), so libdrm clients were not affected — kmstest was.
+Fix (`kms_main.c`): `msg_rebase()` re-points a packed `o.data`/`i.data` at the copy's own `o.raw`,
+applied in `park()` and in `claim()` (which copies the parked entry again before the respond).
+Proof lines for the next run: `KMS srv read_dump n=1..3 path=parked|immediate o.size=64 o.data=…
+packed=1 bytes=32 first16=<type> 00000020 <user lo> <user hi>` (server, after the fill) and
+`KMSTEST read_dump n=1..3 bytes=32 raw=…` (client, the bytes received) — the two must agree.
+
+**(2) Exit crash.** `kms_vblank_thread()` `break`s out of its loop on quit and **returned**; a
+Phoenix thread's fresh stack has no caller, so the return jumped to the kernel's fill pattern
+(`0x1e1e…`). It now ends with `endthread()` (`objdump`: `kms_vblank_thread … bl <endthread>`). The
+`/kmsbuf` thread never leaves its loop. rpi4-v3d-async checked too: its event thread already ends
+with `endthread()`; the extra dispatch threads called `dispatch_loop()` directly (which returns if
+`msgRecv` fails) — they now start through `dispatch_thread()`, which ends with `endthread()`.
+
+**Pre-registered expectation for the next kmstest cycle** (the §13 command list, binaries from
+`out-m3p2/`): `KMSTEST flip result flips=600/600 … errors=0 … verdict=PASS` (plane) and
+`flips=300/300` (pan), i.e. flips counted ≈ n; **0** `event_bad` lines; `KMSTEST vblank … verdict=PASS`;
+three `KMS srv read_dump` lines per server run with `packed=1 bytes=32` and `first16` starting
+`00000002 00000020` (FLIP_COMPLETE, length 32), matching the three `KMSTEST read_dump` raw words;
+after each `KMS srv exit … restored=1`: **no** `Exception` dump (uart-summary: 0 EL0, 0 kernel).
+If events are still zero with `packed=1` in the server dump but correct `first16`: the respond path
+drops `o.raw` (kernel) — escalate; if `first16` is zero: the queue itself holds zeros (`ev_vblank`).

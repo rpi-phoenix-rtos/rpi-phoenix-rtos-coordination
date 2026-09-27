@@ -160,6 +160,114 @@ int drmphx_kms_token_memref(drmphx_conn_t *c, uint32_t handle, kms_memref_t *m)
 }
 
 
+/* G13: framebuffer -> the dumb handle it scans (ADDFB2 names exactly one). */
+static void fb_note(drmphx_conn_t *c, uint32_t fb_id, uint32_t handle)
+{
+	uint32_t i, k = DRMPHX_KMS_MAX_FB;
+
+	(void)pthread_mutex_lock(&c->lock);
+	for (i = 0u; i < DRMPHX_KMS_MAX_FB; i++) {
+		if (c->u.kms.fb[i].fb_id == fb_id) {
+			k = i;
+			break;
+		}
+		if ((c->u.kms.fb[i].fb_id == 0u) && (k == DRMPHX_KMS_MAX_FB)) {
+			k = i;
+		}
+	}
+	if (k < DRMPHX_KMS_MAX_FB) {
+		c->u.kms.fb[k].fb_id = fb_id;
+		c->u.kms.fb[k].handle = handle;
+	}
+	(void)pthread_mutex_unlock(&c->lock);
+}
+
+
+static void fb_drop(drmphx_conn_t *c, uint32_t fb_id)
+{
+	uint32_t i;
+
+	(void)pthread_mutex_lock(&c->lock);
+	for (i = 0u; i < DRMPHX_KMS_MAX_FB; i++) {
+		if (c->u.kms.fb[i].fb_id == fb_id) {
+			memset(&c->u.kms.fb[i], 0, sizeof(c->u.kms.fb[i]));
+		}
+	}
+	(void)pthread_mutex_unlock(&c->lock);
+}
+
+
+/* The buffer export {namespace port, id} a framebuffer scans, if it has one (a
+ * pool dumb BO: its memref is the /kmsbuf name). 0 or -ENOENT. */
+static int fb_export(drmphx_conn_t *c, uint32_t fb_id, uint32_t *port, uint64_t *id)
+{
+	const drmphx_kms_dumb_t *d = NULL;
+	uint32_t i;
+	int rc = -ENOENT;
+
+	(void)pthread_mutex_lock(&c->lock);
+	for (i = 0u; (fb_id != 0u) && (i < DRMPHX_KMS_MAX_FB); i++) {
+		if (c->u.kms.fb[i].fb_id == fb_id) {
+			d = dumb_find(c, c->u.kms.fb[i].handle);
+			break;
+		}
+	}
+	if ((d != NULL) && (d->mem.kind == KMS_MEM_OID)) {
+		*port = d->mem.port;
+		*id = d->mem.addr;
+		rc = 0;
+	}
+	(void)pthread_mutex_unlock(&c->lock);
+	return rc;
+}
+
+
+/* G13 (M3 part 2): a flip of a GPU-rendered buffer that carries no IN_FENCE_FD
+ * must not scan out a frame the GPU is still writing (Linux waits on the buffer's
+ * dma-resv; kmscube's legacy path flips with no fence). When this process imported
+ * the framebuffer's buffer on the render node, attach that BO's last-use fence -
+ * mirrored from its own submits, no IPC - and rpi4-kms -G gates the flip on the
+ * render fence page. Nothing is attached when the fence already passed, so an
+ * idle buffer flips exactly as before. Returns 1 when a fence was attached. */
+static int implicit_attach(drmphx_conn_t *c, uint32_t fb_id, kms_fence_t *in_fence)
+{
+	v3da_fence_t f;
+	uint32_t port;
+	uint64_t id;
+
+	if ((in_fence->seqno != 0u) || (fb_export(c, fb_id, &port, &id) != 0)) {
+		return 0;   /* an explicit fence wins; a buffer without an export has no importer */
+	}
+	if (c->u.kms.no_gate != 0) {
+		(void)drmphx_v3d_implicit_wait(port, id);   /* no -G: the CPU waits instead of the server */
+		return 0;
+	}
+	if (drmphx_v3d_implicit_fence(port, id, &f) == 0) {
+		return 0;
+	}
+	memcpy(in_fence, &f, sizeof(*in_fence));   /* identical layouts (kms_proto.h) */
+	return 1;
+}
+
+
+/* rpi4-kms started without -G refuses every in-fence with -ENODEV. For implicit
+ * fences only: remember it (once per connection), wait on the CPU, retry bare. */
+static void implicit_fallback(drmphx_conn_t *c, uint32_t fb_id, kms_fence_t *in_fence)
+{
+	uint32_t port;
+	uint64_t id;
+
+	if (c->u.kms.no_gate == 0) {
+		c->u.kms.no_gate = 1;
+		(void)fprintf(stderr, "libdrm-phoenix: rpi4-kms runs without -G: implicit flip sync falls back to CPU waits\n");
+	}
+	if (fb_export(c, fb_id, &port, &id) == 0) {
+		(void)drmphx_v3d_implicit_wait(port, id);
+	}
+	memset(in_fence, 0, sizeof(*in_fence));
+}
+
+
 static void mirror_invalidate(drmphx_conn_t *c)
 {
 	(void)pthread_mutex_lock(&c->lock);
@@ -284,6 +392,7 @@ static int atomic_commit(drmphx_conn_t *c, drmphx_atomic_t *a, uint32_t flags, u
 {
 	kms_atomic_req_t h;
 	kms_resp_t r;
+	uint32_t i, implicit;
 	int rc;
 
 	if (a->out_fence_ptr != 0u) {
@@ -292,6 +401,13 @@ static int atomic_commit(drmphx_conn_t *c, drmphx_atomic_t *a, uint32_t flags, u
 	rc = resolve_in_fences(a);
 	if (rc != 0) {
 		return rc;
+	}
+	implicit = 0u;
+	for (i = 0u; (a->active != 0u) && (i < a->nplanes); i++) {
+		if ((a->in_fence_fd[i] < 0) && (a->st[i].fb_id != 0u) && ((flags & KMS_ATOMIC_TEST_ONLY) == 0u) &&
+				(implicit_attach(c, a->st[i].fb_id, &a->st[i].in_fence) != 0)) {
+			implicit |= 1u << i;
+		}
 	}
 	if ((a->active != 0u) && (a->nplanes == 0u)) {
 		/* CRTC-only commit (e.g. MODE_ID/ACTIVE, or an event request): carry the
@@ -323,9 +439,22 @@ static int atomic_commit(drmphx_conn_t *c, drmphx_atomic_t *a, uint32_t flags, u
 		rq.op = KMS_OP_ATOMIC;
 		memcpy(&rq.u, &h, sizeof(h));
 		rc = drmphx_call(c, &rq, &r, a->st, n, (n + (size_t)_PAGE_SIZE - 1u) & ~((size_t)_PAGE_SIZE - 1u), NULL, 0u);
+		if ((rc == -ENODEV) && (implicit != 0u)) {
+			for (i = 0u; i < a->nplanes; i++) {
+				if ((implicit & (1u << i)) != 0u) {
+					implicit_fallback(c, a->st[i].fb_id, &a->st[i].in_fence);
+				}
+			}
+			implicit = 0u;
+			rc = drmphx_call(c, &rq, &r, a->st, n, (n + (size_t)_PAGE_SIZE - 1u) & ~((size_t)_PAGE_SIZE - 1u), NULL,
+				0u);
+		}
 	}
 	if (rc != 0) {
 		return rc;
+	}
+	if (implicit != 0u) {
+		c->u.kms.implicit++;
 	}
 	if ((flags & KMS_ATOMIC_TEST_ONLY) != 0u) {
 		return 0;
@@ -812,6 +941,7 @@ static int ioc_addfb2(drmphx_conn_t *c, struct drm_mode_fb_cmd2 *f)
 	rc = kcall(c, KMS_OP_ADDFB2, &q, sizeof(q), &r, NULL, 0u, NULL, 0u);
 	if (rc == 0) {
 		f->fb_id = r.u.fb.fb_id;
+		fb_note(c, f->fb_id, q.handle);
 	}
 	return rc;
 }
@@ -1033,6 +1163,9 @@ int drmphx_kms_ioctl(drmphx_conn_t *c, int fd, unsigned nr, void *arg)
 			q.fb_id = *(const unsigned int *)arg;   /* CLOSEFB's struct starts with fb_id */
 			rc = kcall(c, KMS_OP_RMFB, &q, sizeof(q), NULL, NULL, 0u, NULL, 0u);
 			mirror_invalidate(c);
+			if (rc == 0) {
+				fb_drop(c, q.fb_id);
+			}
 			return rc;
 		}
 		case NR(DRM_IOCTL_MODE_DIRTYFB):
@@ -1040,6 +1173,7 @@ int drmphx_kms_ioctl(drmphx_conn_t *c, int fd, unsigned nr, void *arg)
 		case NR(DRM_IOCTL_MODE_PAGE_FLIP): {
 			const struct drm_mode_crtc_page_flip_target *pf = arg;
 			kms_page_flip_req_t q;
+			int attached;
 			if ((pf->flags & ~(uint32_t)(DRM_MODE_PAGE_FLIP_EVENT | DRM_MODE_PAGE_FLIP_ASYNC)) != 0u) {
 				return -EINVAL;   /* DRM_CAP_PAGE_FLIP_TARGET = 0 */
 			}
@@ -1048,7 +1182,16 @@ int drmphx_kms_ioctl(drmphx_conn_t *c, int fd, unsigned nr, void *arg)
 			q.fb_id = pf->fb_id;
 			q.flags = pf->flags;
 			q.user_data = pf->user_data;
+			attached = implicit_attach(c, q.fb_id, &q.in_fence);   /* G13 */
 			rc = kcall(c, KMS_OP_PAGE_FLIP, &q, sizeof(q), &r, NULL, 0u, NULL, 0u);
+			if ((rc == -ENODEV) && (attached != 0)) {
+				implicit_fallback(c, q.fb_id, &q.in_fence);
+				attached = 0;
+				rc = kcall(c, KMS_OP_PAGE_FLIP, &q, sizeof(q), &r, NULL, 0u, NULL, 0u);
+			}
+			if ((rc == 0) && (attached != 0)) {
+				c->u.kms.implicit++;
+			}
 			mirror_invalidate(c);
 			return rc;
 		}

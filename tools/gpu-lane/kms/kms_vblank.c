@@ -531,4 +531,8 @@ void kms_vblank_thread(void *arg)
 			vb.last_vbl = kms_cnt();
 		}
 	}
+	/* A Phoenix thread entry must never return: its fresh stack has no caller, so a
+	 * return jumps to the kernel's fill pattern (the m2-kms-a exit crash: PC
+	 * alignment fault at pc=lr=0x1e1e1e1e1e1e1e1e right after "srv exit"). */
+	endthread();
 }

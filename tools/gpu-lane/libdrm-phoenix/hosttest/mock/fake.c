@@ -52,6 +52,7 @@
 #define KMS_PORT 11u
 #define BUF_PORT 12u
 #define V3D_PORT 13u
+#define V3D_CARD_PORT 14u   /* /dev/dri/card1 (M3 part 2, G10: its own port = its own dev_t) */
 #define PA_BASE  0x10000000ull
 #define FENCE_PA 0x0f000000ull
 #define ARENA_SZ (64u << 20)
@@ -63,10 +64,13 @@ static struct {
 	int kind[MAXFD];
 	char path[MAXFD][64];
 	uint32_t client[MAXFD];
+	uint32_t port[MAXFD];    /* the port the descriptor's oid names (fstat's st_rdev) */
 	uint8_t *arena;
 	size_t arena_used;
 	int dri;                 /* 1: the servers also registered /dev/dri names */
 	uint32_t unaligned_ends, payload_msgs, msgs;
+	uint32_t deferred_flips;   /* commits that arrived with an unsignalled render fence (G13) */
+	uint32_t fstats, atsizes;  /* mtGetAttrAll / atSize answered (G2 / G3) */
 } F;
 
 uint32_t fake_unaligned_ends(void);
@@ -106,6 +110,17 @@ static int path_kind(const char *p)
 		return K_BUF;
 	}
 	return K_NONE;
+}
+
+
+static uint32_t path_port(const char *p)
+{
+	switch (path_kind(p)) {
+		case K_KMS: return KMS_PORT;
+		case K_V3D: return (F.dri && (strcmp(p, "/dev/dri/card1") == 0)) ? V3D_CARD_PORT : V3D_PORT;
+		case K_BUF: return BUF_PORT;
+		default: return 0u;
+	}
 }
 
 
@@ -229,6 +244,7 @@ static int bo_find(uint32_t client, uint32_t handle)
 
 /* v3d fence check (the -G fence page) */
 static int v3d_fence_done(const kms_fence_t *f);
+static void v3d_complete_all(void);
 
 static int kms_commit(uint32_t client, const kms_atomic_plane_t *st, uint32_t n, uint32_t flags, uint64_t user,
 	kms_flip_resp_t *out)
@@ -256,7 +272,10 @@ static int kms_commit(uint32_t client, const kms_atomic_plane_t *st, uint32_t n,
 				return -EINVAL;   /* an empty rectangle: the real backend's check refuses it too */
 			}
 			if ((st[i].in_fence.seqno != 0u) && !v3d_fence_done(&st[i].in_fence)) {
-				return -EINVAL;   /* (the real server defers; the fake GPU never leaves one pending) */
+				/* The real server (-G) holds the commit until the render fence page shows
+				 * the fence; the fake GPU finishes its pending jobs "now" and counts it. */
+				v3d_complete_all();
+				F.deferred_flips++;
 			}
 		}
 	}
@@ -824,12 +843,14 @@ static struct {
 	} cl[NCLIENT + 1];
 	uint32_t next_client;
 	struct {
-		int used;
+		int used, imported;
 		uint32_t handle, owner, size;
-		uint64_t off;
+		uint64_t off, imp_id;
 	} bo[256];
 	uint32_t gen;
 	uint64_t seqno;
+	uint64_t pending[NCLIENT + 1][V3DA_Q_COUNT];   /* the fake GPU completes lazily: at the next wait */
+	uint32_t imports, imports_closed;
 	v3da_cl_desc_t last_cl;
 	uint32_t last_nbo, last_nin, last_nout, last_bos[8];
 	uint32_t submits;
@@ -842,6 +863,40 @@ void fake_last_cl(v3da_cl_desc_t *d, uint32_t *nbo, uint32_t *nin, uint32_t *nou
 static int v3d_fence_done(const kms_fence_t *f)
 {
 	return (fence_page.slot[f->slot].completed[f->queue] >= f->seqno) ? 1 : 0;
+}
+
+
+/* Jobs "run" when someone waits for them (a server wait, or a fence-gated flip):
+ * between submit and that point a fence is really pending, which is what the
+ * library's fast paths and G13's implicit flip fence have to cope with. */
+static void v3d_complete_all(void)
+{
+	uint32_t c, q;
+
+	for (c = 0; c <= NCLIENT; c++) {
+		for (q = 0; q < V3DA_Q_COUNT; q++) {
+			if (V.pending[c][q] > fence_page.slot[c].completed[q]) {
+				fence_page.slot[c].completed[q] = V.pending[c][q];
+			}
+		}
+	}
+}
+
+
+static void mem_of(int b, v3da_memref_t *mem)
+{
+	memset(mem, 0, sizeof(*mem));
+	mem->cache = V3DA_CACHE_UNCACHED;
+	mem->size = V.bo[b].size;
+	if (V.bo[b].imported) {
+		mem->kind = V3DA_MEM_OID;   /* BO_MMAP of an import answers the exporter's name */
+		mem->port = BUF_PORT;
+		mem->addr = V.bo[b].imp_id;
+	}
+	else {
+		mem->kind = V3DA_MEM_PHYS;
+		mem->addr = PA_BASE + V.bo[b].off;
+	}
 }
 
 
@@ -942,17 +997,72 @@ static void v3d_handle(msg_t *m)
 				rc = -ENOENT;
 				break;
 			}
-			if (rq.op == V3DA_OP_BO_CLOSE) {
-				V.bo[b].used = 0;
+			if (rq.op == V3DA_OP_BO_WAIT) {
+				v3d_complete_all();
 			}
 			r->u.bo.gpuva = 0x100000u + (uint32_t)V.bo[b].off;
 			r->u.bo.size = V.bo[b].size;
-			r->u.bo.mem.kind = V3DA_MEM_PHYS;
-			r->u.bo.mem.cache = V3DA_CACHE_UNCACHED;
-			r->u.bo.mem.size = V.bo[b].size;
-			r->u.bo.mem.addr = PA_BASE + V.bo[b].off;
+			mem_of(b, &r->u.bo.mem);
+			if (rq.op == V3DA_OP_BO_CLOSE) {
+				V.imports_closed += V.bo[b].imported ? 1u : 0u;
+				V.bo[b].used = 0;
+				V.bo[b].imported = 0;
+			}
 			rc = 0;
 			break;
+		case V3DA_OP_BO_IMPORT: {
+			/* as v3da_bo.c v3da_bo_import: resolve {port, id}, size 0 = the whole export
+			 * (lseek/atSize), same client + same buffer = same handle, no extra ref */
+			const v3da_bo_import_req_t *q = &rq.u.bo_import;
+			uint64_t size;
+			int kb;
+			if (q->ns == V3DA_IMPORT_NS_V3DBUF) {
+				rc = -ENOSYS;
+				break;
+			}
+			if ((q->ns != V3DA_IMPORT_NS_KMSBUF) || (q->port != BUF_PORT) || (q->pad != 0u)) {
+				rc = -EINVAL;
+				break;
+			}
+			kb = bo_find(0, (uint32_t)q->id);
+			if ((kb < 0) || !K.bo[kb].exported) {
+				rc = -ENOENT;
+				break;
+			}
+			size = (q->size != 0u) ? q->size : K.bo[kb].size;
+			if ((size > K.bo[kb].size) || ((size & 4095u) != 0u)) {
+				rc = -EINVAL;
+				break;
+			}
+			for (i = 0, b = -1; i < 256; i++) {
+				if (V.bo[i].used && V.bo[i].imported && (V.bo[i].owner == c) && (V.bo[i].imp_id == q->id)) {
+					b = (int)i;
+					break;
+				}
+			}
+			for (i = 0; (b < 0) && (i < 256); i++) {
+				if (!V.bo[i].used) {
+					b = (int)i;
+					V.bo[b].used = V.bo[b].imported = 1;
+					V.bo[b].owner = c;
+					V.bo[b].size = (uint32_t)size;
+					V.bo[b].off = K.bo[kb].off;   /* the kms arena pages: the same memory */
+					V.bo[b].imp_id = q->id;
+					V.bo[b].handle = ((++V.gen) << 13) | (i + 1u);
+					V.imports++;
+				}
+			}
+			if (b < 0) {
+				rc = -ENOMEM;
+				break;
+			}
+			r->u.bo_create.handle = V.bo[b].handle;
+			r->u.bo_create.gpuva = 0x100000u + (uint32_t)V.bo[b].off;
+			r->u.bo_create.size = V.bo[b].size;
+			mem_of(b, &r->u.bo_create.mem);
+			rc = 0;
+			break;
+		}
 		case V3DA_OP_SUBMIT_CL:
 		case V3DA_OP_SUBMIT_TFU:
 		case V3DA_OP_SUBMIT_CSD: {
@@ -989,8 +1099,8 @@ static void v3d_handle(msg_t *m)
 			if (rq.op == V3DA_OP_SUBMIT_CL) {
 				r->u.submit.last.queue = V3DA_Q_RENDER;
 			}
-			fence_page.slot[c].completed[r->u.submit.first.queue] = V.seqno;   /* the fake GPU is instant */
-			fence_page.slot[c].completed[r->u.submit.last.queue] = V.seqno;
+			V.pending[c][r->u.submit.first.queue] = V.seqno;   /* completes at the next wait (v3d_complete_all) */
+			V.pending[c][r->u.submit.last.queue] = V.seqno;
 			for (i = 0; i < rq.u.submit.nout; i++) {
 				s = sync_find(c, out[i].handle);
 				if (s >= 0) {
@@ -1003,6 +1113,7 @@ static void v3d_handle(msg_t *m)
 			break;
 		}
 		case V3DA_OP_FENCE_WAIT:
+			v3d_complete_all();
 			r->u.fence_wait.completed = fence_page.slot[rq.u.fence_wait.fence.slot].completed[rq.u.fence_wait.fence.queue];
 			r->u.fence_wait.echo = (uint32_t)rq.u.fence_wait.fence.seqno;
 			rc = (r->u.fence_wait.completed >= rq.u.fence_wait.fence.seqno) ? 0 : -ETIMEDOUT;
@@ -1053,6 +1164,7 @@ static void v3d_handle(msg_t *m)
 		}
 		case V3DA_OP_SYNCOBJ_WAIT: {
 			uint32_t nsig = 0, first = 0;
+			v3d_complete_all();
 			for (i = 0; (i < rq.u.syncobj.count) && (i < V3DA_SYNCOBJ_WAIT_MAX); i++) {
 				s = sync_find(c, rq.u.syncobj.handles[i]);
 				if (s < 0) {
@@ -1074,10 +1186,9 @@ static void v3d_handle(msg_t *m)
 			}
 			break;
 		}
-		case V3DA_OP_BO_IMPORT:
 		case V3DA_OP_SUBMIT_CPU:
 		case V3DA_OP_PERFMON_CREATE:
-			rc = -ENOSYS;   /* reserved in proto 2, as the real server */
+			rc = -ENOSYS;   /* reserved, as the real server */
 			break;
 		default:
 			rc = -EINVAL;
@@ -1103,19 +1214,140 @@ static void count_alignment(const void *p, size_t n)
 }
 
 
+/* mtGetAttrAll (G2) on the node ports and /kmsbuf, atSize (G3) on /kmsbuf - as
+ * kms_main.c/v3da_main.c/kms_bo.c answer them in M3 part 2. */
+static void fake_attr(uint32_t port, msg_t *m)
+{
+	struct _attrAll *a = m->o.data;
+	uint64_t size = 0;
+	int b = -1;
+
+	if (port == BUF_PORT) {
+		b = (m->oid.id != 0u) ? bo_find(0, (uint32_t)m->oid.id) : -1;
+		if ((m->oid.id != 0u) && ((b < 0) || !K.bo[b].exported)) {
+			m->o.err = -ENOENT;
+			return;
+		}
+		size = (b >= 0) ? K.bo[b].size : 0u;
+		if (m->type == mtGetAttr) {
+			if (m->i.attr.type != atSize) {
+				m->o.err = -ENOENT;
+				return;
+			}
+			m->o.attr.val = (long long)size;
+			m->o.err = 0;
+			F.atsizes++;
+			return;
+		}
+	}
+	else if (m->type != mtGetAttrAll) {
+		m->o.err = -EINVAL;   /* the node servers answer atMode only; nothing asks it here */
+		return;
+	}
+	if ((a == NULL) || (m->o.size < sizeof(*a))) {
+		m->o.err = -EINVAL;
+		return;
+	}
+	memset(a, 0, sizeof(*a));
+	a->mode.val = S_IFCHR | 0666;
+	a->size.val = (long long)size;
+	a->ioblock.val = 4096;
+	a->links.val = 1;
+	a->port.val = port;
+	a->pollStatus.err = -EINVAL;
+	a->eventMask.err = -EINVAL;
+	m->o.err = 0;
+	F.fstats++;
+}
+
+
 int msgSend(uint32_t port, msg_t *m)
 {
 	F.msgs++;
 	count_alignment(m->i.data, m->i.size);
 	count_alignment(m->o.data, m->o.size);
+	if ((m->type == mtGetAttr) || (m->type == mtGetAttrAll)) {
+		fake_attr(port, m);
+		return 0;
+	}
 	if (m->type != mtDevCtl) {
 		return -ENOSYS;
 	}
 	switch (port) {
 		case KMS_PORT: kms_handle(m); return 0;
-		case V3D_PORT: v3d_handle(m); return 0;
+		case V3D_PORT:
+		case V3D_CARD_PORT: v3d_handle(m); return 0;   /* both v3d ports serve the whole protocol */
 		default: return -EINVAL;
 	}
+}
+
+
+/* The kernel's posix_fstat (kernel-internal send: not counted as a payload):
+ * st_rdev = the descriptor's port, the rest from mtGetAttrAll, first negative
+ * err wins. */
+int mock_fstat(int fd, struct stat *st)
+{
+	struct _attrAll a;
+	msg_t m;
+	int err;
+
+	if ((fd < 0) || (fd >= MAXFD) || (F.kind[fd] == K_NONE)) {
+		return fstat(fd, st);
+	}
+	memset(&m, 0, sizeof(m));
+	m.type = mtGetAttrAll;
+	m.oid.port = F.port[fd];
+	m.oid.id = (F.kind[fd] == K_BUF) ? strtoull(F.path[fd] + 8, NULL, 10) : F.client[fd];
+	m.o.data = &a;
+	m.o.size = sizeof(a);
+	fake_attr(F.port[fd], &m);
+	err = m.o.err;
+	if (err == 0) {
+		const struct _attr *chk[] = { &a.mTime, &a.aTime, &a.cTime, &a.links, &a.mode, &a.uid, &a.gid, &a.size,
+			&a.blocks, &a.ioblock };
+		unsigned k;
+		for (k = 0; (k < sizeof(chk) / sizeof(chk[0])) && (err == 0); k++) {
+			err = chk[k]->err;
+		}
+	}
+	if (err < 0) {
+		errno = -err;
+		return -1;
+	}
+	memset(st, 0, sizeof(*st));
+	st->st_dev = 1;
+	st->st_ino = (ino_t)fd;
+	st->st_rdev = (dev_t)F.port[fd];
+	st->st_mode = (mode_t)a.mode.val;
+	st->st_nlink = (nlink_t)a.links.val;
+	st->st_size = (off_t)a.size.val;
+	st->st_blksize = (blksize_t)a.ioblock.val;
+	return 0;
+}
+
+
+/* The kernel's posix_lseek: SEEK_END = proc_size() = mtGetAttr(atSize). */
+off_t mock_lseek(int fd, off_t off, int whence)
+{
+	msg_t m;
+
+	if ((fd >= 0) && (fd < MAXFD) && (F.kind[fd] == K_BUF)) {
+		if (whence != SEEK_END) {
+			return (whence == SEEK_SET) ? off : 0;
+		}
+		memset(&m, 0, sizeof(m));
+		m.type = mtGetAttr;
+		m.oid.port = BUF_PORT;
+		m.oid.id = strtoull(F.path[fd] + 8, NULL, 10);
+		m.i.attr.type = atSize;
+		fake_attr(BUF_PORT, &m);
+		if (m.o.err < 0) {
+			errno = -m.o.err;
+			return -1;
+		}
+		return (off_t)m.o.attr.val + off;
+	}
+	return lseek(fd, off, whence);
 }
 
 
@@ -1128,7 +1360,7 @@ int lookup(const char *name, oid_t *file, oid_t *dev)
 		o.port = KMS_PORT;
 	}
 	else if (k == K_V3D) {
-		o.port = V3D_PORT;
+		o.port = path_port(name);
 	}
 	else if (strcmp(name, "/kmsbuf") == 0) {
 		o.port = BUF_PORT;
@@ -1199,6 +1431,7 @@ int mock_open(const char *path, int flags, ...)
 	F.kind[fd] = k;
 	snprintf(F.path[fd], sizeof(F.path[fd]), "%s", path);
 	F.client[fd] = 0;
+	F.port[fd] = path_port(path);
 	if (k == K_KMS) {   /* mtOpen: a new client */
 		kms_init();
 		F.client[fd] = ++K.next_client;
@@ -1231,6 +1464,7 @@ int mock_close(int fd)
 		F.kind[fd] = K_NONE;
 		F.path[fd][0] = '\0';
 		F.client[fd] = 0;
+		F.port[fd] = 0;
 	}
 	return close(fd);
 }
@@ -1244,6 +1478,7 @@ int mock_dup(int fd)
 		F.kind[n] = F.kind[fd];
 		memcpy(F.path[n], F.path[fd], sizeof(F.path[n]));   /* Phoenix: dup shares the open_file_t (and its path) */
 		F.client[n] = F.client[fd];
+		F.port[n] = F.port[fd];
 	}
 	return n;
 }
@@ -1393,6 +1628,14 @@ int mock_poll(struct pollfd *fds, nfds_t n, int timeout)
 uint32_t fake_unaligned_ends(void) { return F.unaligned_ends; }
 uint32_t fake_payload_msgs(void) { return F.payload_msgs; }
 uint32_t fake_msgs(void) { return F.msgs; }
+uint32_t fake_deferred_flips(void) { return F.deferred_flips; }
+void fake_m3p2(uint32_t *fstats, uint32_t *atsizes, uint32_t *imports, uint32_t *imports_closed)
+{
+	*fstats = F.fstats;
+	*atsizes = F.atsizes;
+	*imports = V.imports;
+	*imports_closed = V.imports_closed;
+}
 void fake_set_dri(int on) { F.dri = on; }
 
 void fake_last_cl(v3da_cl_desc_t *d, uint32_t *nbo, uint32_t *nin, uint32_t *nout, uint32_t *submits)

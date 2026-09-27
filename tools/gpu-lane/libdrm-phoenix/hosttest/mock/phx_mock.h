@@ -23,6 +23,7 @@
 #define _GNU_SOURCE
 #endif
 #include <sys/types.h>
+#include <sys/stat.h>
 #include <sys/mman.h>
 #include <sys/ioctl.h>
 #include <fcntl.h>
@@ -44,6 +45,8 @@ int mock_dup(int fd);
 ssize_t mock_read(int fd, void *buf, size_t n);
 int mock_poll(struct pollfd *fds, nfds_t n, int timeout);
 int sys_fdpath(int fd, char *buf, size_t size);
+int mock_fstat(int fd, struct stat *st);
+off_t mock_lseek(int fd, off_t off, int whence);
 
 #ifndef MOCK_IMPL
 #define mmap   __wrap_mmap
@@ -54,6 +57,8 @@ int sys_fdpath(int fd, char *buf, size_t size);
 #define dup    mock_dup
 #define read   mock_read
 #define poll   mock_poll
+#define fstat  mock_fstat
+#define lseek  mock_lseek
 #endif
 
 #endif

@@ -83,6 +83,8 @@ static struct {
 	uint8_t bufns_stack[8192] __attribute__((aligned(16)));
 	uint32_t in_formats_blob[KMS_PLANES_PER_CRTC];
 	uint32_t pid_notes;
+	uint32_t attr_notes;
+	int dri_name;                /* /dev/dri/card0 registered by this server */
 } m;
 
 
@@ -199,6 +201,43 @@ static int ev_fill(kms_client_t *c, void *dst, size_t size)
 }
 
 
+/* A read() of at most 64 bytes arrives PACKED: the kernel points o.data at the
+ * message's own o.raw (proc/msg.c msg_opack) and copies o.raw back at respond.
+ * So o.data points into whichever msg_t the server received into; a COPY of the
+ * message (a parked read) must be re-pointed at its own o.raw, or the fill lands
+ * in the dispatch loop's stale stack copy and the client gets o.raw's zeros (the
+ * m2-kms-a "event_bad type=0 len=0" defect). Same for i.data. */
+static void msg_rebase(msg_t *dst, const msg_t *src)
+{
+	if ((src->o.data != NULL) && ((const uint8_t *)src->o.data >= src->o.raw) &&
+			((const uint8_t *)src->o.data < src->o.raw + sizeof(src->o.raw))) {
+		dst->o.data = dst->o.raw + ((const uint8_t *)src->o.data - src->o.raw);
+	}
+	if ((src->i.data != NULL) && ((const uint8_t *)src->i.data >= src->i.raw) &&
+			((const uint8_t *)src->i.data < src->i.raw + sizeof(src->i.raw))) {
+		dst->i.data = dst->i.raw + ((const uint8_t *)src->i.data - src->i.raw);
+	}
+}
+
+
+/* The first reads served get one tagged line each: the proof, on the next Pi run,
+ * that the bytes the client receives are the event (rate-limited, lock held). */
+static void read_dump(const char *path, const msg_t *msg, int bytes)
+{
+	static uint32_t ndump;
+	const uint32_t *w = (const uint32_t *)msg->o.data;
+	int packed = ((msg->o.data != NULL) && ((const uint8_t *)msg->o.data >= msg->o.raw) &&
+		((const uint8_t *)msg->o.data < msg->o.raw + sizeof(msg->o.raw))) ? 1 : 0;
+
+	if ((ndump >= 3u) || (bytes < 16) || (w == NULL)) {
+		return;
+	}
+	ndump++;
+	KMS_LOG("srv read_dump n=%u path=%s o.size=%zu o.data=%p packed=%d bytes=%d first16=%08x %08x %08x %08x", ndump,
+		path, msg->o.size, msg->o.data, packed, bytes, w[0], w[1], w[2], w[3]);
+}
+
+
 static int park(int kind, uint32_t client, uint32_t crtc, uint64_t target, const msg_t *msg, msg_rid_t rid)
 {
 	uint32_t i;
@@ -213,6 +252,7 @@ static int park(int kind, uint32_t client, uint32_t crtc, uint64_t target, const
 			p->target_seq = target;
 			p->deadline_cnt = kms_cnt() + kms_us_cnt((uint64_t)KMS_READ_MAX_MS * 1000u);
 			p->msg = *msg;
+			msg_rebase(&p->msg, msg);   /* a packed read's o.data must point at THIS copy's o.raw */
 			p->rid = rid;
 			srv.nparked++;
 			if (srv.nparked > srv.st.reads_parked_max) {
@@ -228,7 +268,9 @@ static int park(int kind, uint32_t client, uint32_t crtc, uint64_t target, const
 /* Claim parked entry i: it leaves the table and goes to the answer list. */
 static void claim(uint32_t i, kms_parked_t *answer, uint32_t *n)
 {
-	answer[(*n)++] = srv.parked[i];
+	answer[*n] = srv.parked[i];
+	msg_rebase(&answer[*n].msg, &srv.parked[i].msg);   /* keep a packed o.data on the copy that is responded */
+	(*n)++;
 	srv.parked[i].used = 0;
 	srv.nparked--;
 }
@@ -262,6 +304,7 @@ static void serve_reads(kms_parked_t *answer, uint32_t *n)
 		c = client_get(p->client);
 		if ((c != NULL) && (c->evhead != c->evtail)) {
 			p->msg.o.err = ev_fill(c, p->msg.o.data, p->msg.o.size);
+			read_dump("parked", &p->msg, p->msg.o.err);
 			claim(i, answer, n);
 		}
 	}
@@ -1445,6 +1488,10 @@ static void handle_ioctl(msg_t *msg)
  * deregisters both, and start-up reclaims a name whose owner no longer answers. */
 static void names_release(void)
 {
+	if (m.dri_name) {
+		(void)destroy_dev("/dev/" KMS_DRI_NAME);
+		m.dri_name = 0;
+	}
 	(void)destroy_dev("/dev/" KMS_DEV_NAME);
 	(void)portUnregister(KMS_BUF_NS);
 }
@@ -1499,6 +1546,21 @@ static int claim_names(void)
 		(void)destroy_dev("/dev/" KMS_DEV_NAME);
 		return 2;
 	}
+
+	/* G10 (M3 part 2): the DRM primary node name, an alias of /dev/kms on the same
+	 * port (one node: one dev_t). Best effort - /dev/kms above is the single-owner
+	 * guard, so a live /dev/dri/card0 here is someone else's and is left alone, and
+	 * a stale one (dead server) is reclaimed. Old clients never need it. */
+	dev.port = srv.port;
+	dev.id = 0;
+	rc = create_dev(&dev, KMS_DRI_NAME);
+	if ((rc < 0) && !name_alive("/dev/" KMS_DRI_NAME)) {
+		(void)destroy_dev("/dev/" KMS_DRI_NAME);
+		rc = create_dev(&dev, KMS_DRI_NAME);
+	}
+	m.dri_name = (rc >= 0) ? 1 : 0;
+	KMS_LOG("srv dri name=/dev/%s rc=%d registered=%d (G10; alias of /dev/%s)", KMS_DRI_NAME, rc, m.dri_name,
+		KMS_DEV_NAME);
 	return 0;
 }
 
@@ -1571,6 +1633,7 @@ static void dispatch_loop(void)
 				}
 				else if (cl->evhead != cl->evtail) {
 					msg.o.err = ev_fill(cl, msg.o.data, msg.o.size);
+					read_dump("immediate", &msg, msg.o.err);
 				}
 				else if ((msg.i.io.mode & O_NONBLOCK) != 0u) {
 					msg.o.err = -EAGAIN;
@@ -1617,6 +1680,17 @@ static void dispatch_loop(void)
 				}
 				else {
 					msg.o.err = -EINVAL;
+				}
+				break;
+
+			case mtGetAttrAll:
+				/* G2 (M3 part 2): fstat() on a card descriptor. Mesa's gbm_create_device()
+				 * refuses a descriptor whose fstat fails or is not S_ISCHR. st_rdev is the
+				 * descriptor's port (kernel posix_fstat), so /dev/kms and /dev/dri/card0 -
+				 * one node, two names - share one dev_t. */
+				msg.o.err = kms_attr_all(&msg, S_IFCHR | 0666, 0u, srv.port);
+				if ((msg.o.err == 0) && (m.attr_notes++ == 0u)) {
+					KMS_LOG("srv fstat answered (mtGetAttrAll, G2) client=%u pid=%d", (unsigned)msg.oid.id, msg.pid);
 				}
 				break;
 

@@ -559,9 +559,10 @@ int drm_phoenix_get_device2(int fd, uint32_t flags, drmDevicePtr *device)
 }
 
 
-/* dev_t on Phoenix: stat() reports st_rdev = the device server's port. The v3d
- * primary and render nodes share one server, hence one dev_t (distinct dev_t per
- * node needs one port per node - server work, documented in M3). */
+/* dev_t on Phoenix: fstat()/stat() report st_rdev = the device server's port.
+ * Since M3 part 2 (G10) rpi4-v3d-async serves /dev/dri/card1 on a port of its own,
+ * so the v3d primary and render nodes have distinct dev_t; with only the legacy
+ * name (an older server) both resolve to /dev/v3d-async and the render match wins. */
 static int srv_of_devid(dev_t devid, int *type)
 {
 	uint32_t port;
@@ -571,6 +572,14 @@ static int srv_of_devid(dev_t devid, int *type)
 	if ((p != NULL) && (port_of(p, &port) == 0) && ((dev_t)port == devid)) {
 		*type = DRM_NODE_PRIMARY;
 		return DRMPHX_SRV_KMS;
+	}
+	if ((port_of(DRMPHX_PATH_CARD1, &port) == 0) && ((dev_t)port == devid)) {
+		uint32_t rport = 0u;
+		/* a card1 name on the render port (one port for both) is the render dev_t */
+		if ((port_of(DRMPHX_PATH_RENDER, &rport) != 0) || (rport != port)) {
+			*type = DRM_NODE_PRIMARY;
+			return DRMPHX_SRV_V3D;
+		}
 	}
 	p = resolve_node(DRMPHX_PATH_RENDER, DRMPHX_PATH_V3D_LEGACY);
 	if ((p != NULL) && (port_of(p, &port) == 0) && ((dev_t)port == devid)) {

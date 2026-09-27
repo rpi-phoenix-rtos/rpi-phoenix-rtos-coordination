@@ -25,7 +25,21 @@ typedef struct {
 
 typedef int msg_rid_t;
 
-enum { mtOpen = 0, mtClose, mtRead, mtWrite, mtTruncate, mtDevCtl };
+enum { mtOpen = 0, mtClose, mtRead, mtWrite, mtTruncate, mtDevCtl, mtCreate, mtDestroy, mtSetAttr, mtGetAttr,
+	mtGetAttrAll };
+
+enum { atMode = 0, atUid, atGid, atSize, atBlocks, atIOBlock, atType, atPort, atPollStatus, atEventMask, atCTime,
+	atMTime, atATime, atLinks, atDev };
+
+struct _attr {
+	long long val;
+	int err;
+};
+
+/* The kernel's layout (include/msg.h): what fstat() receives from mtGetAttrAll. */
+struct _attrAll {
+	struct _attr mode, uid, gid, size, blocks, ioblock, type, port, pollStatus, eventMask, cTime, mTime, aTime, links, dev;
+};
 
 typedef struct {
 	int type;
@@ -33,12 +47,23 @@ typedef struct {
 	int priority;
 	oid_t oid;
 	struct {
-		unsigned char raw[64];
+		union {
+			struct {
+				long long val;
+				int type;
+			} attr;
+			unsigned char raw[64];
+		};
 		size_t size;
 		const void *data;
 	} i;
 	struct {
-		unsigned char raw[64];
+		union {
+			struct {
+				long long val;
+			} attr;
+			unsigned char raw[64];
+		};
 		size_t size;
 		void *data;
 		int err;

@@ -115,6 +115,11 @@ typedef struct {
 	/* last use per queue (WAIT_BO / implicit sync) */
 	v3da_fence_t last[V3DA_Q_COUNT];
 	int scanout;                  /* 0, or 1 + the firmware-fb buffer backing its GPU pages */
+	/* PRIME import (BO_IMPORT): the pages belong to another server's export; `cpu`
+	 * is this server's mapping of it (the E1 window reference that keeps the pages
+	 * alive), released with munmap() after quarantine - never pooled. */
+	int imported;
+	v3da_memref_t imp_mem;        /* {OID, cache, port, size, id}: what BO_MMAP answers */
 	/* quarantine */
 	uint64_t clear_pt_gen;        /* pt_gen after the PTE clear */
 	uint64_t pass[V3DA_Q_COUNT];  /* hw_submitted snapshot: wait for hw_completed >= pass */
@@ -273,6 +278,7 @@ typedef struct v3da_wait {
 	uint32_t client;
 	msg_t msg;                    /* the received message; o.raw is filled on answer */
 	msg_rid_t rid;
+	uint32_t port;                /* the port it arrived on: rids are per port (M3 part 2, card1) */
 	uint64_t deadline_us;
 	v3da_fence_t fence[V3DA_SYNCOBJ_WAIT_MAX];
 	uint32_t sync_handle[V3DA_SYNCOBJ_WAIT_MAX];
@@ -287,7 +293,10 @@ typedef struct v3da_wait {
 /* ------------------------------------------------------------------------- */
 
 typedef struct {
-	uint32_t port;
+	uint32_t port;                /* /dev/v3d-async and /dev/dri/renderD128 */
+	uint32_t port_card1;          /* /dev/dri/card1 (0 = not created); same protocol, shared clients */
+	uint32_t rx_port;             /* port of the request being handled (set under srv.lock) */
+	uint32_t imports;             /* live imported BOs (logged) */
 	handle_t lock;
 	handle_t cond;                /* event thread wakes on it (IRQ handler + dispatch) */
 	int quit;
@@ -405,6 +414,9 @@ void v3da_bo_client_gone(uint32_t client);
 void v3da_bo_quarantine_poll(void);
 void v3da_bo_counts(uint32_t *live, uint32_t *quar, uint32_t *pooled);
 v3da_bo_t *v3da_bo_find(uint32_t handle);
+/* BO_IMPORT. Called UNLOCKED (it opens and maps another server's buffer name, IPC
+ * that must not stall the event thread); takes srv.lock itself for the table work. */
+int v3da_bo_import(uint32_t client, const v3da_bo_import_req_t *rq, v3da_bo_create_resp_t *out);
 
 /* v3da_sched.c */
 int v3da_sched_init(void);

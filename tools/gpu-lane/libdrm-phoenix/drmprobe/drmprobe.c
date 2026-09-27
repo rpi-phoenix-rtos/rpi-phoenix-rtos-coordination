@@ -33,6 +33,7 @@
 #include <unistd.h>
 
 #include <sys/mman.h>
+#include <sys/stat.h>
 
 #include <xf86drm.h>
 #include <xf86drmMode.h>
@@ -49,7 +50,7 @@ extern int sys_fdpath(int fd, char *buf, size_t size);
 static struct {
 	int pass, fail, gap;
 	char failed[512];
-	int card, render;
+	int card, render, card1;
 	uint32_t crtc, conn, primary;
 	drmModeModeInfo mode;
 	uint32_t fmt;
@@ -62,7 +63,7 @@ static struct {
 	uint64_t last_flip_seq;
 	uint64_t last_flip_us;
 	uint32_t last_flip_crtc;
-} P = { .card = -1, .render = -1 };
+} P = { .card = -1, .render = -1, .card1 = -1 };
 
 
 static uint64_t now_us(void)
@@ -115,12 +116,12 @@ static const char *node_or_dash(drmDevicePtr d, int t)
 }
 
 
-static void t_devices(char *card_path, char *render_path, size_t n)
+static void t_devices(char *card_path, char *render_path, char *card1_path, size_t n)
 {
 	drmDevicePtr devs[8];
 	int cnt, i, cnt0;
 
-	card_path[0] = render_path[0] = '\0';
+	card_path[0] = render_path[0] = card1_path[0] = '\0';
 	cnt0 = drmGetDevices2(0, NULL, 0);
 	cnt = drmGetDevices2(0, devs, 8);
 	printf(TAG "devices count_null=%d n=%d ok=%d\n", cnt0, cnt, (cnt == 2) && (cnt0 == 2));
@@ -135,6 +136,9 @@ static void t_devices(char *card_path, char *render_path, size_t n)
 			node_or_dash(d, DRM_NODE_PRIMARY), node_or_dash(d, DRM_NODE_RENDER));
 		if ((d->available_nodes & (1 << DRM_NODE_RENDER)) != 0) {
 			snprintf(render_path, n, "%s", d->nodes[DRM_NODE_RENDER]);
+			if ((d->available_nodes & (1 << DRM_NODE_PRIMARY)) != 0) {
+				snprintf(card1_path, n, "%s", d->nodes[DRM_NODE_PRIMARY]);   /* the v3d device's primary node */
+			}
 		}
 		else if ((d->available_nodes & (1 << DRM_NODE_PRIMARY)) != 0) {
 			snprintf(card_path, n, "%s", d->nodes[DRM_NODE_PRIMARY]);
@@ -183,6 +187,60 @@ static void t_identity(const char *what, int fd, const char *want_name, int want
 	free(n2);
 	free(rn);
 	free(pn);
+}
+
+
+/* G2 + G10 (M3 part 2): fstat() on every node - Mesa's gbm_create_device()
+ * needs S_ISCHR, v3dv compares the primary and render st_rdev - and the dev_t
+ * maps back to the right device and node type through libdrm. */
+static void t_fstat(void)
+{
+	const struct {
+		const char *what;
+		int fd;
+		int type;
+	} n[3] = { { "card0", P.card, DRM_NODE_PRIMARY }, { "card1", P.card1, DRM_NODE_PRIMARY },
+		{ "render", P.render, DRM_NODE_RENDER } };
+	struct stat st[3];
+	int rc[3] = { -1, -1, -1 }, i, nopen = 0, nok = 0, nsys = 0, chr_all = 1, types_ok = 1, distinct, ok;
+
+	memset(st, 0, sizeof(st));
+	for (i = 0; i < 3; i++) {
+		drmDevicePtr d = NULL;
+		int e, t = -1, drc = -1;
+		if (n[i].fd < 0) {
+			continue;
+		}
+		nopen++;
+		rc[i] = fstat(n[i].fd, &st[i]);
+		e = (rc[i] != 0) ? errno : 0;
+		if (rc[i] == 0) {
+			nok++;
+			chr_all &= S_ISCHR(st[i].st_mode) ? 1 : 0;
+			t = drmGetNodeTypeFromDevId(st[i].st_rdev);
+			drc = drmGetDeviceFromDevId(st[i].st_rdev, 0, &d);
+			types_ok &= ((t == n[i].type) && (drc == 0)) ? 1 : 0;
+		}
+		else {
+			nsys += (e == ENOSYS) ? 1 : 0;
+		}
+		printf(TAG "fstat node=%s fd=%d rc=%d errno=%d mode=0%o chr=%d rdev=%llu devid_type=%d devid_dev=%d\n", n[i].what,
+			n[i].fd, rc[i], e, (unsigned)st[i].st_mode, (rc[i] == 0) ? (S_ISCHR(st[i].st_mode) ? 1 : 0) : 0,
+			(unsigned long long)st[i].st_rdev, t, drc);
+		drmFreeDevice(&d);
+	}
+	/* card0 != render always; card1 (when its own name exists) differs from both */
+	distinct = (rc[0] == 0) && (rc[2] == 0) && (st[0].st_rdev != st[2].st_rdev) &&
+		((P.card1 < 0) || ((rc[1] == 0) && (st[1].st_rdev != st[2].st_rdev) && (st[1].st_rdev != st[0].st_rdev)));
+	ok = (nok == nopen) && chr_all && types_ok && distinct;
+	printf(TAG "fstat_nodes n=%d answered=%d chr_all=%d distinct=%d devid_ok=%d ok=%d gap=%d\n", nopen, nok, chr_all,
+		distinct, types_ok, ok, (nsys == nopen) ? 1 : 0);
+	if ((nsys == nopen) && (nopen > 0)) {
+		P.gap++;   /* every server answered -ENOSYS: servers from before M3 part 2 (G2) */
+	}
+	else {
+		verdict("fstat", ok);
+	}
 }
 
 
@@ -697,7 +755,7 @@ static void t_render_basics(void)
 /* The M1-proven clear (v3da_clgen.c): 64x64 RGBA8, zero draws. Returns the sync
  * handle of the job (or 0), leaves the RT mapped in *rt for a second check. */
 static int cl_clear(rbo_t *rt, rbo_t *bcl, rbo_t *rcl, rbo_t *ta, rbo_t *ts, uint32_t colour, uint32_t in_sync,
-	uint32_t *out_sync, int *pixels_ok)
+	uint32_t *out_sync, int *pixels_ok, int wait)
 {
 	struct drm_v3d_submit_cl s;
 	v3da_clgen_buf_t gb, gr;
@@ -728,6 +786,10 @@ static int cl_clear(rbo_t *rt, rbo_t *bcl, rbo_t *rcl, rbo_t *ta, rbo_t *ts, uin
 	s.out_sync = *out_sync;
 	if (drmIoctl(P.render, DRM_IOCTL_V3D_SUBMIT_CL, &s) != 0) {
 		return -errno;
+	}
+	if (!wait) {
+		*pixels_ok = 0;   /* the caller checks later (G13: after a flip that must have waited for it) */
+		return 0;
 	}
 	rc = drmSyncobjWait(P.render, out_sync, 1, INT64_MAX, 0, NULL);
 	if (rc != 0) {
@@ -763,7 +825,7 @@ static void t_render_clear(void)
 	if (rc == 0) rc = rbo_new(&ts, 4096u);
 	if (rc == 0) rc = drmSyncobjCreate(P.render, 0, &s1);
 	t0 = now_us();
-	if (rc == 0) rc = cl_clear(&rt, &bcl, &rcl, &ta, &ts, 0xff3366ccu, 0u, &s1, &px1);
+	if (rc == 0) rc = cl_clear(&rt, &bcl, &rcl, &ta, &ts, 0xff3366ccu, 0u, &s1, &px1, 1);
 	t1 = now_us();
 	memset(&wb, 0, sizeof(wb));
 	wb.handle = rt.handle;
@@ -776,7 +838,7 @@ static void t_render_clear(void)
 
 	/* a dependent second job (in_sync_bcl = the first job's syncobj) */
 	if (rc == 0) {
-		rc = cl_clear(&rt, &bcl, &rcl, &ta, &ts, 0xff00ff00u, s1, &s1, &px2);
+		rc = cl_clear(&rt, &bcl, &rcl, &ta, &ts, 0xff00ff00u, s1, &s1, &px2, 1);
 		printf(TAG "cl_clear_dep rc=%d pixels_ok=%d rt0=0x%08x ok=%d\n", rc, px2, rt.cpu[0], (rc == 0) && px2);
 		verdict("cl_clear_dep", (rc == 0) && px2);
 	}
@@ -846,6 +908,84 @@ static void t_render_clear(void)
 /* 5. PRIME                                                                   */
 /* ========================================================================= */
 
+/* G1 round trip (M3 part 2): a kms dumb buffer, PRIME-exported and imported on
+ * the render node, is the render target of a GPU clear; the CPU reads the result
+ * back through the kms mapping (the same pages, three mappings: kms server, v3d
+ * server, this process). Then G13: a second clear is submitted and NOT waited
+ * for, and the buffer is flipped with no IN_FENCE_FD - libdrm-phoenix attaches
+ * the BO's last-use fence, rpi4-kms -G holds the flip until the GPU is done, so
+ * the pixels are complete when the flip event arrives. */
+static void t_import_rt(uint32_t h_render)
+{
+	rbo_t rt, bcl, rcl, ta, ts;
+	struct drm_v3d_get_bo_offset go;
+	struct drm_v3d_wait_bo wb;
+	uint32_t bsz, rsz, tasz, tssz, s = 0, i, bad = 0;
+	int rc, px = 0, wrc = -1, rcs = -1, rcf = -1, ok;
+	uint64_t t0 = 0, t1 = 0;
+
+	memset(&rt, 0, sizeof(rt));
+	memset(&bcl, 0, sizeof(bcl));
+	memset(&rcl, 0, sizeof(rcl));
+	memset(&ta, 0, sizeof(ta));
+	memset(&ts, 0, sizeof(ts));
+	memset(&go, 0, sizeof(go));
+	(void)v3da_clgen_clear_sizes(64u, 64u, &bsz, &rsz, &tasz, &tssz);
+	go.handle = h_render;
+	rc = (drmIoctl(P.render, DRM_IOCTL_V3D_GET_BO_OFFSET, &go) == 0) ? 0 : -errno;
+	rt.handle = h_render;
+	rt.offset = go.offset;
+	rt.size = 64u * 64u * 4u;
+	rt.cpu = P.buf[0].px;   /* the kms dumb mapping: the CPU view of the imported pages */
+	if (rc == 0) rc = rbo_new(&bcl, 4096u);
+	if (rc == 0) rc = rbo_new(&rcl, 4096u);
+	if (rc == 0) rc = rbo_new(&ta, tasz);
+	if (rc == 0) rc = rbo_new(&ts, 4096u);
+	if (rc == 0) rc = drmSyncobjCreate(P.render, 0, &s);
+	if (rc == 0) rc = cl_clear(&rt, &bcl, &rcl, &ta, &ts, 0xff2080ffu, 0u, &s, &px, 1);
+	memset(&wb, 0, sizeof(wb));
+	wb.handle = h_render;
+	wb.timeout_ns = ~0ull;
+	if (rc == 0) {
+		wrc = drmIoctl(P.render, DRM_IOCTL_V3D_WAIT_BO, &wb);   /* an imported BO: the server's BO_WAIT */
+	}
+	ok = (rc == 0) && px && (wrc == 0);
+	printf(TAG "import_clear handle=0x%x gpuva=0x%x rc=%d pixels_ok=%d px0=0x%08x wait_bo=%d ok=%d\n", h_render, go.offset, rc,
+		px, (P.buf[0].px != NULL) ? P.buf[0].px[0] : 0u, wrc, ok);
+	verdict("import_clear", ok);
+
+	/* G13: show buf[1], render buf[0] without waiting, flip to buf[0] with no fence */
+	if ((rc == 0) && (P.buf[1].fb != 0u)) {
+		P.flips_done = 0;
+		if ((drmModePageFlip(P.card, P.crtc, P.buf[1].fb, DRM_MODE_PAGE_FLIP_EVENT, NULL) == 0) &&
+				(wait_flips(1, 3000) == 0)) {
+			rcs = cl_clear(&rt, &bcl, &rcl, &ta, &ts, 0xff80ff20u, 0u, &s, &px, 0);
+			t0 = now_us();
+			P.flips_done = 0;
+			rcf = (rcs == 0) ? drmModePageFlip(P.card, P.crtc, P.buf[0].fb, DRM_MODE_PAGE_FLIP_EVENT, NULL) : -1;
+			if (rcf == 0) {
+				rcf = wait_flips(1, 3000);
+			}
+			t1 = now_us();
+			for (i = 0; i < 64u * 64u; i++) {
+				bad += (P.buf[0].px[i] != 0xff80ff20u);   /* read BEFORE any explicit wait */
+			}
+		}
+		ok = (rcs == 0) && (rcf == 0) && (P.flips_done == 1) && (bad == 0u);
+		printf(TAG "implicit_flip submit=%d flip=%d events=%d pixels_ok=%d px0=0x%08x flip_us=%llu ok=%d\n", rcs, rcf,
+			P.flips_done, bad == 0u, P.buf[0].px[0], (unsigned long long)(t1 - t0), ok);
+		verdict("implicit_flip", ok);
+		(void)drmSyncobjWait(P.render, &s, 1, INT64_MAX, 0, NULL);   /* nothing in flight before the BOs go */
+	}
+	if (s != 0u) {
+		(void)drmSyncobjDestroy(P.render, s);
+	}
+	rbo_free(&bcl);
+	rbo_free(&rcl);
+	rbo_free(&ta);
+	rbo_free(&ts);
+}
+
 static void t_prime(void)
 {
 	char path[64] = "-";
@@ -857,6 +997,18 @@ static void t_prime(void)
 
 	rc_exp = drmPrimeHandleToFD(P.card, P.buf[0].handle, DRM_CLOEXEC, &pfd);
 	if (rc_exp == 0) {
+		/* G3: a dma-buf's size by lseek(SEEK_END), as Mesa reads it (v3d_bufmgr.c:454) */
+		off_t end = lseek(pfd, 0, SEEK_END);
+		int e_end = (end < 0) ? errno : 0, ok_end = (end == (off_t)P.buf[0].size);
+		(void)lseek(pfd, 0, SEEK_SET);
+		printf(TAG "dmabuf_size end=%lld errno=%d want=%llu ok=%d gap=%d\n", (long long)end, e_end,
+			(unsigned long long)P.buf[0].size, ok_end, (end < 0) && (e_end == ENOENT));
+		if ((end < 0) && (e_end == ENOENT)) {
+			P.gap++;   /* rpi4-kms from before M3 part 2 refuses atSize */
+		}
+		else {
+			verdict("dmabuf_size", ok_end);
+		}
 		(void)sys_fdpath(pfd, path, sizeof(path));
 		m = mmap(NULL, (size_t)P.buf[0].size, PROT_READ, MAP_SHARED, pfd, 0);
 		if (m != MAP_FAILED) {
@@ -872,10 +1024,27 @@ static void t_prime(void)
 	printf(TAG "prime_export rc=%d fd=%d path=%s mmap_same_pages=%d self_import=%d handle=%u/%u ok=%d\n", rc_exp, pfd,
 		path, same, rc_self, h_self, P.buf[0].handle, (rc_exp == 0) && same && (rc_self == 0) && (h_self == P.buf[0].handle));
 	verdict("prime_export", (rc_exp == 0) && same && (rc_self == 0) && (h_self == P.buf[0].handle));
-	printf(TAG "prime_import_render rc=%d errno=%d handle=0x%x gap=%d\n", rc_imp, e_imp, h_render, e_imp == ENOSYS);
-	gapcheck("prime_import_render", e_imp, ENOSYS);
+	printf(TAG "prime_import_render rc=%d errno=%d handle=0x%x ok=%d gap=%d\n", rc_imp, e_imp, h_render,
+		(rc_imp == 0) && (h_render != 0u), e_imp == ENOSYS);
+	gapcheck("prime_import_render", e_imp, ENOSYS);   /* ENOSYS: a render server from before M3 part 2 (G1) */
 	if (pfd >= 0) {
-		close(pfd);
+		close(pfd);   /* the import holds the pages through the render server's own mapping (E1) */
+	}
+	if ((rc_imp == 0) && (h_render != 0u)) {
+		uint32_t h_again = 0;
+		int rc_again = -1;
+		pfd = -1;
+		if (drmPrimeHandleToFD(P.card, P.buf[0].handle, DRM_CLOEXEC, &pfd) == 0) {
+			rc_again = drmPrimeFDToHandle(P.render, pfd, &h_again);   /* DRM: same buffer, same handle */
+			close(pfd);
+		}
+		printf(TAG "prime_reimport rc=%d handle=0x%x same=%d ok=%d\n", rc_again, h_again, h_again == h_render,
+			(rc_again == 0) && (h_again == h_render));
+		verdict("prime_reimport", (rc_again == 0) && (h_again == h_render));
+		t_import_rt(h_render);
+		memset(&gc, 0, sizeof(gc));
+		gc.handle = h_render;
+		(void)drmIoctl(P.render, DRM_IOCTL_GEM_CLOSE, &gc);   /* the one close releases it (the server logs "import released") */
 	}
 
 	/* render-node export (V3DA_OP_BO_EXPORT does not exist yet) */
@@ -897,7 +1066,7 @@ static void t_prime(void)
 
 int main(int argc, char **argv)
 {
-	char card_path[64], render_path[64];
+	char card_path[64], render_path[64], card1_path[64];
 	int c, nflips = 60, keep = 0, i;
 	uint64_t t_start = now_us();
 
@@ -913,7 +1082,7 @@ int main(int argc, char **argv)
 	}
 	printf(TAG "start pid=%d flips=%d libdrm=libdrm-phoenix\n", (int)getpid(), nflips);
 
-	t_devices(card_path, render_path, sizeof(card_path));
+	t_devices(card_path, render_path, card1_path, sizeof(card_path));
 	if ((card_path[0] == '\0') || (render_path[0] == '\0')) {
 		printf(TAG "RESULT pass=%d fail=%d gap=%d failed=%s verdict=FAIL (servers running?)\n", P.pass, P.fail + 1, P.gap,
 			P.failed);
@@ -927,6 +1096,18 @@ int main(int argc, char **argv)
 	}
 	t_identity("card", P.card, "vc4", DRM_NODE_PRIMARY, 1);
 	t_identity("render", P.render, "v3d", DRM_NODE_RENDER, 0);
+	if ((card1_path[0] != '\0') && (strcmp(card1_path, render_path) != 0)) {
+		P.card1 = t_open("card1", card1_path);   /* G10: the v3d primary node has a name (and port) of its own */
+		if (P.card1 >= 0) {
+			t_identity("card1", P.card1, "v3d", DRM_NODE_PRIMARY, 0);
+		}
+	}
+	else {
+		printf(TAG "card1 path=%s distinct=0 gap=1 (no /dev/dri/card1: servers from before M3 part 2, G10)\n",
+			(card1_path[0] != '\0') ? card1_path : "-");
+		P.gap++;
+	}
+	t_fstat();
 
 	if (t_kms_enum() == 0) {
 		printf(TAG "kms_flip start mode=%ux%u@%u\n", P.mode.hdisplay, P.mode.vdisplay, P.mode.vrefresh);
@@ -954,6 +1135,9 @@ int main(int argc, char **argv)
 		if (P.buf[i].handle != 0u) {
 			(void)drmModeDestroyDumbBuffer(P.card, P.buf[i].handle);
 		}
+	}
+	if (P.card1 >= 0) {
+		close(P.card1);
 	}
 	close(P.render);
 	close(P.card);
