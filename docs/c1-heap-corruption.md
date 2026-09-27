@@ -135,7 +135,7 @@ anything: ≥ 8 more cold trials on build 18 before reading the rate at all.
 §6's open row. **Instrument:** a kernel log of every allocation, free and user `MAP_PHYSMEM` mapping of each page in the
 band `0x08000000`–`0x08600000` (all victim PAs so far, both lanes), 8 events per page, with pid, ms tick, block size and
 kind (`anon` user anonymous, `cow`, `file` page cache, `contig` = `MAP_CONTIGUOUS` block, `msg` kernel message copy,
-`kanon` kernel-map anonymous, `kheap`/`ptable`/`pmap`/`kstack`/`kernel`, `phys`/`physuc`/`physdev` = a physical mapping;
+`kanon` kernel-map anonymous, `app` an untagged user-owner page (perf buffer, kernel tests), `kheap`/`ptable`/`pmap`/`kstack`/`kernel`, `phys`/`physuc`/`physdev` = a physical mapping;
 `pid=-1` = before the scheduler started). The C1 detector asks for the victim's page the moment it fires, through
 `meminfo()` with a magic (no new syscall; a stock kernel ignores it and the detector then prints `c1prov = NO ANSWER`).
 ⚠ An anonymous heap is faulted in **one order-0 page at a time**, so a 13-page heap never takes a 13-page buddy block:
@@ -148,8 +148,10 @@ page's own history, not pool competition.
 trial: `strings .buildroot/_boot/aarch64a72-generic-rpi4b/rpi4b-bootfs/loader.disk | grep -c 'C1PROV d='` ≥ 1 (kernel) and
 `strings .buildroot/_fs/aarch64a72-generic-rpi4b/root/usr/bin/supertuxkart | grep -c 'c1prov = NO ANSWER'` ≥ 1 (STK
 links its own libc copy — if 0, `scripts/force-port-rebuild.sh supertuxkart` and rebuild). Afterwards rebuild with both
-knobs unset and require both counts to be 0. The instrumented kernel is ~200 KiB larger in BSS, so the layout differs from
-every earlier build: read the victim PA against the band before reading anything else.
+knobs unset and require both counts to be 0. The instrumented kernel is ~200 KiB larger in BSS (image 352 → ~552 KiB, inside the 4 MiB bootstrap window; plo
+reserves `p_memsz`), so the layout differs from every earlier build: read the victim PA against the band before reading
+anything else. Other perturbations, enumerated now: one ring write per allocation/free under the existing lock, and the
+controls' ≤ 3 dumps × ≤ 9 polled-UART lines at heap creation (~0.3 s, the same class as the old `C1_HEAP_TRACE` cost).
 
 **Method:** as `c1b13`: all-cold trials (cache cleared before each), `C1_HEAP_TRACE_ALL=1 stk --track=hacienda
 --numkarts=4 --profile-laps=2`, labels `c1provC1..N`, fires graded by `scripts/c1-idle-table.sh c1prov <driver-log>`.
