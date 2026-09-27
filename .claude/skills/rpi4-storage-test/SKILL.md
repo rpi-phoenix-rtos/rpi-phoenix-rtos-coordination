@@ -127,11 +127,13 @@ Read the output precisely — the two directions mean different things:
 
 ## The known-clean reference
 
-- `/clean4k.img` on the NFS export — a 1 GiB **4 KiB-block** ext2 containing
-  `/phoenix/data.bin` (8 MiB) and its `SHA256SUMS`. `e2fsck`-clean by construction.
-- `/ref-data.bin` — a bare copy of that same 8 MiB file, so the Pi can `cmp`
+- `/data/test-artifacts/clean4k.img` on the NFS export — a 1 GiB **4 KiB-block** ext2 containing
+  `/phoenix/data.bin` (8 MiB) and its `SHA256SUMS`. `e2fsck`-clean by construction. Rebuild it on the host with
+  `mke2fs -t ext2 -b 4096 -d <stage>` over a 1 GiB `truncate`d file, `<stage>/phoenix/` holding `data.bin` = the
+  reference file below plus `sha256sum data.bin > SHA256SUMS` (recreated that way 2026-09-27).
+- `/data/test-artifacts/ref-data.bin` — a bare copy of that same 8 MiB file, so the Pi can `cmp`
   against it directly without mounting anything.
-- Restore from the Pi itself, no human: `/usr/bin/dd if=/clean4k.img of=/dev/umass1 bs=1M`
+- Restore from the Pi itself, no human: `/usr/bin/dd if=/data/test-artifacts/clean4k.img of=/dev/umass1 bs=1M`
   (~60 s at 18 MB/s).
 
 **Always start a correctness test from a restore.** A filesystem damaged by the
@@ -144,12 +146,12 @@ conclusion drawn from it ("the medium is untouched") was wrong.
 
 ## Grading integrity
 
-Use `cmp` against `/ref-data.bin`, and check it **after a remount** as well as
+Use `cmp` against `/data/test-artifacts/ref-data.bin`, and check it **after a remount** as well as
 before — the page/block cache will happily return correct data for a file whose
 on-disk mapping is broken:
 
 ```
-echo "TAG-intact: $(/usr/bin/cmp /ref-data.bin /mnt/umass1/phoenix/data.bin 2>&1 | tail -1)  (blank = identical)"
+echo "TAG-intact: $(/usr/bin/cmp /data/test-artifacts/ref-data.bin /mnt/umass1/phoenix/data.bin 2>&1 | tail -1)  (blank = identical)"
 ```
 
 `cmp` also names the **first differing byte**, which localises the fault:

@@ -71,7 +71,8 @@ netboot working to do the flash at all:
 ./scripts/check-netboot-blob.sh        # must print: rootfs: nfsroot
 ```
 
-The staged image appears on the Pi as `/sdimage.img` (the export is the Pi's `/`).
+The staged image appears on the Pi as `/sdimage.img` (the export is the Pi's `/`). Delete it from the export once
+the card boots — it sits in the root directory every screenshot of a file manager shows.
 
 ### 2. Verify the image before writing it
 
