@@ -349,7 +349,7 @@ fail, the baked keymap compiles, `KEY_A` → `a`, and it re-serialises (68 121 b
 | wl_shm clients (weston-simple-shm, cursor themes, toolkits' CPU buffers) | **expected to work**: shmsrv + E1 windows + SCM_RIGHTS (E1-proven) | Pi cycle m6c |
 | Weston composition of dma-buf clients (linux-dmabuf → `EGL_EXT_image_dma_buf_import`) | a client buffer that is a `/kmsbuf` export imports on Weston's render connection: `BO_IMPORT ns=kmsbuf` (**G1 ✅**) | — |
 | Client GPU rendering (weston-simple-egl, any wayland-egl app) | Mesa allocates back buffers `PIPE_BIND_SHARED` on the **render node** → export = `PRIME_HANDLE_TO_FD` there = **G4**: implemented (§15), pending Pi cycle `m6g-g4`. m6d showed 0012 (`V3D_PHOENIX_SHARED_SCANOUT=1`) never engages for a wayland-egl client; `weston-m6a.sh` no longer sets it (knob `SHARED_SCANOUT=1`) | Pi cycle `m6g-g4` |
-| Direct scanout of a client buffer (kiosk fullscreen, overlay planes) | Weston's `drmModeAddFB2` needs `PRIME_FD_TO_HANDLE` on card0 of a buffer another process allocated = **G7** (`-ENOSYS`) → Weston **falls back to GL composition** (expected, not a failure) | **G7** (`KMS_OP_PRIME_IMPORT`) |
+| Direct scanout of a client buffer (kiosk fullscreen, overlay planes) | Weston's `drmModeAddFB2` needs `PRIME_FD_TO_HANDLE` on card0 of a buffer another process allocated = **G7**: **implemented** (§16, `KMS_OP_PRIME_IMPORT`, LINEAR below 1 GiB; UIF → `EINVAL` → Weston adds the scanout tranche or keeps GL composition), pending Pi cycle `m6h-g7` | Pi cycle `m6h-g7`; tear-free needs cross-process implicit sync |
 | Sync of client GPU work before Weston samples/flips it | Wayland relies on dma-buf implicit fences; none exist across processes here → a partially rendered client frame can be composited (tearing on the egl arm) | cross-process implicit sync (`BO_LAST_FENCE`, M3 G13) or explicit sync (below) |
 | `linux-explicit-synchronization` / `wp_linux_drm_syncobj` (client acquire/release fences) | sync files are process-local (a `dup` of the render fd) | **G6** (`/v3dsync`, cross-process sync files/syncobjs) |
 | Weston's own flips of GL output | GBM scanout BOs are kms dumb buffers imported on the render node (kmscube path); `IN_FENCE_FD` from `EGL_ANDROID_native_fence_sync` resolves in-process (`rpi4-kms -G`) | — |
@@ -497,7 +497,7 @@ exceed the default 32 MiB pool (E3: 256 MiB contiguous below 1 GiB is available)
 | m6c/m6d cycles + fixes they find | 1–3 cycles, 0.5–2 days | the integration surface is kmscube's (GBM/EGL/KMS) + Xorg's (static modules) + new (event loop emulation, shmsrv, libseat/udev/libinput shims) |
 | Input on the Pi (`rpi4-kms -C` console handover, keys into a Wayland client) | 0.5–1 day | libinput-phoenix is written; untested; needs a keyboard-reading client (e.g. weston-terminal needs cairo — ports have cairo, so weston patch 0005's disabler turns back on once cairo is exposed) |
 | **G4** render-node export → drop 0012 | **implemented** (§15), pending `m6g-g4` | shared with M4 DRI3, M5 external memory |
-| **G7** kms import of foreign buffers (direct scanout of fullscreen clients, overlays) | ~150 lines + library, 2–3 days | performance, not function (GL composition works) |
+| **G7** kms import of foreign buffers (direct scanout of fullscreen clients, overlays) | **implemented** (§16), pending `m6h-g7` | performance, not function (GL composition works) |
 | Cross-process implicit sync (`BO_LAST_FENCE`) or **G6** explicit sync (`wp_linux_drm_syncobj_v1` in Weston 14) | 2–5 days | tear-free GPU clients |
 | Desktop shell (cairo toytoolkit: `weston-desktop-shell`, `weston-terminal`) from the ports' cairo/pango/fontconfig | 1–2 days | view-based private dep views, as here |
 | Xwayland (needs M4's X server pieces) | later | out of M6's first gate |
@@ -749,6 +749,21 @@ Exit: the same SIGTERM failure as m6c.
 `V3DA_OP_BO_EXPORT` + `/v3dbuf`, import `ns=v3dbuf`), which M4 DRI3 and M5 external memory need too. It
 retires 0012 and the `-p 96` pool pressure.
 
+## Result — `m6e-weston-term` (queue36, 2026-09-27 12:43): ✅ PASS — Weston exits cleanly on SIGTERM
+
+Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-124309-m6e-weston-term.log` (starts with the known pre-boot
+UART flood; boot normal). Staged `weston` `bde137cc330e57c3`, script with `WLPHX_TRACE`. Both arms (pixman +
+shm, GL + shm + input), in the predicted order:
+
+`WLPHX sig=15 caught` → `WLPHX signalfd dispatched fd=8 revents=0x1` → Weston's own `caught signal 15` →
+the 12 `WLPHX shutdown step=` lines in order (`loop-exit` … `exit-handlers-done`) →
+**`WESTONDRM weston exited rc=0 after_term_s=1 socket=gone`**. No `sending KILL`, 0 exceptions.
+Display unchanged from m6c (`flips=667` pixman, `801` GL with 782 fence-gated). Cleanup: `SHMSRV stats live=0`,
+`KMSTEST … apply_errors=0 dropped=0 bos=0 exports=0`, `V3DAPING bos_live=0 verdict=PASS`.
+
+**Decides:** the m6c exit failure was the compat signalfd ordering bug (fixed `2b575ddaf`); the Weston
+shutdown path itself has no hang. M6 exit row closed.
+
 ## 15. G4 — render-node PRIME export (`V3DA_OP_BO_EXPORT` + `/v3dbuf`), and cycle `m6g-g4`
 
 m6d stopped at `MESA: error: Failed to export gem bo 8202 to dmabuf`: a wayland-egl client allocates its
@@ -805,7 +820,7 @@ unchanged.
 | the old lane (`gpu/rpi4-v3d`, `v3d-srv`) | untouched | — |
 
 **Not in G4:** importing a `/v3dbuf` descriptor on **card0** (rpi4-kms, for direct scan-out) is gap
-**G7** (`KMS_OP_PRIME_IMPORT`) and still answers `ENOSYS`. Mesa's renderonly import in Weston fails soft on
+**G7** (`KMS_OP_PRIME_IMPORT`) and still answers `ENOSYS` (*later:* implemented, §16). Mesa's renderonly import in Weston fails soft on
 it (`v3d_resource.c:1107` ignores the NULL scanout), and Weston composites with GL. Importing on
 renderD128 or card1 (the v3d primary node, the same server) works.
 
@@ -943,3 +958,223 @@ Allow for about 1.3 % UART line corruption (re-read the line, don't count it); E
 **Decides:** rows 4–7 PASS = G4 closed on hardware, including the DRM lifetime rules. Rows 9–13 PASS =
 wayland-egl clients work on the new lane without 0012. Then 0012 and `-p 96` can be retired: mesa-drm
 patch 0012 has to be removed in a separate change, because it re-stamps every Mesa build (§12).
+
+## 16. G7 — card0 import of a foreign buffer (`KMS_OP_PRIME_IMPORT`), and cycle `m6h-g7`
+
+With G4 a client's GPU buffer is a `/v3dbuf/<id>` descriptor. To put that buffer on a firmware plane
+(Weston direct scan-out of a fullscreen client, Present flips of client pixmaps in Xorg, zero-copy HEVC
+later), the display server must turn the descriptor into a card0 handle: `DRM_IOCTL_PRIME_FD_TO_HANDLE`
+on card0 of a buffer another server allocated. That was gap **G7** (`-ENOSYS`, §15.1 "Not in G4"). This
+section closes it in `rpi4-kms` and libdrm-phoenix. Host-tested; the Pi cycle below is pre-registered.
+
+### 16.1 Design
+
+**Protocol 2** (`kms_proto.h`): `KMS_OP_PRIME_IMPORT` = 38 (right after `PRIME_EXPORT`), request
+`kms_prime_import_req_t` = the byte layout of `v3da_bo_import_req_t` ({port, cache, id, size, ns}),
+reply `kms_dumb_resp_t`. `KMS_PROTO_VERSION` = 2, new `KMS_PROTO_BASE` = 1: the server accepts HELLO
+1..2 and replies 2, so every proto-1 binary on the Pi (the staged `weston`, `kmstest-poll`, `drmprobe-*`,
+Mesa/SDL/Xorg builds) keeps working. libdrm-phoenix HELLOs 2 and retries with 1 on `EPROTO` (an old
+`rpi4-kms-gate`): then a foreign card0 import answers `ENOSYS` locally, exactly as before. `kmstest` now
+HELLOs with `KMS_PROTO_BASE` (it uses nothing newer). The `_EXT` definition left
+`drm_phoenix_ext.h`.
+
+**Import (`ns=v3dbuf`).** Mapping another server's buffer is IPC (lookup, `open`, `lseek`, page
+faults), so the op does not run in `handle_raw` under `srv.lock`: the dispatch loop peeks the opcode;
+`op_prime_import` looks up under the lock (a re-import by the same client returns the same handle with
+no extra reference, DRM; the client's own `/kmsbuf` export returns its original handle), maps with the
+lock dropped, then relocks, rechecks the client (same pid) and installs. The vblank thread never waits
+on another server. The mapping half copies `v3da_bo.c import_map`: `lookup("/v3dbuf/<id>")` must name
+the port the client resolved, `open(O_RDONLY)`, `lseek(SEEK_END)` (G3) sizes it, `mmap(MAP_SHARED |
+MAP_UNCACHED, PROT_READ)` (the export's memory type), every page is faulted in and resolved with
+`va2pa`. An import is a new BO kind `KMS_BOK_IMPORT`; it is **never zeroed** (the pool path's memset
+would wipe the client's frame). Its memref is the exporter's OID name, so `MAP_DUMB` of the handle maps
+`/v3dbuf/<id>` and `PRIME_EXPORT` of it reopens that name (the re-export of an imported GEM object, as
+G4a on the render node).
+
+**Lifetime (the one place G7 differs from G1).** The server **keeps the `/v3dbuf/<id>` descriptor open
+for the BO's whole life**. `rpi4-v3d-async` counts every open descriptor as a reference on the render BO
+(`fd_opens`), while a mapping alone does not stop `bo_unref → export_withdraw → quarantine →
+block_put`, and `block_get` zeroes reused blocks. So if the descriptor were closed after `mmap` (as the
+render server's own kmsbuf import does), a client that drops its handle and descriptor while its
+framebuffer is on screen would get its buffer repooled and zeroed under the HVS. With the descriptor
+held, the ordinary rpi4-kms rules do the rest: a framebuffer holds its BO; a plane holds the framebuffer
+until the flip that replaces it has completed at a vblank; RMFB of a shown framebuffer disables the
+plane; client death drops the handle. When the last reference goes (`kms_bo_unref`), the mapping and the
+descriptor are queued and released by `kms_reap()` **outside `srv.lock`** (`close()` is IPC to the
+exporter): by the dispatch thread before it answers the request that dropped the reference (so a client
+that RMFBs sees the name gone when the call returns), and by the vblank thread after it unlocks when a
+completed flip dropped it. Lines: `KMS import client=<c> ns=v3dbuf id=<h> handle=<k> pages=<n>
+pa0=0x… contiguous=1 scanout=<0|1> why=<-|above_1g> live=<n>`, `KMS scanout import fb=<f> handle=<k>
+id=<h> … (first flip)` (the first commit that handed an import to the firmware), `KMS import released
+handle=<k> id=<h> (descriptor closed)`; failures `KMS import FAIL … rc=… why=…` (every one logged,
+successes capped at 64 per server run).
+
+**Hardware limits** (`kms_scanout.h`, pure, host-tested):
+
+| Rule | Where | Why |
+|---|---|---|
+| pages physically contiguous | import: `-EINVAL`, `why=noncontig` | the plane fetches one linear physical range; card0 can do nothing else with the buffer. M1a BOs are one `MAP_CONTIGUOUS` block, so this should never fire [inferred] |
+| whole buffer below 1 GiB | import succeeds with `scanout=0 why=above_1g`; **ADDFB2 `-EINVAL`** + `KMS fb FAIL … why=above_1g pa=…` | the firmware scans nothing at or above 1 GiB (E3/E6). The render server's `block_get` does no placement: the kernel manages ~3.8 GiB, pools and BOs have so far landed at 0x06000000–0x3e000000 (every `KMS pool … tries=1 below_1g=1`), which is allocator luck, not a guarantee. Refused at ADDFB2, never at commit: no late `-ERANGE`, no plane fetching memory the firmware cannot reach |
+| modifier LINEAR | ADDFB2 `-EINVAL` (the library already refuses non-LINEAR `DRM_MODE_FB_MODIFIERS` requests locally; the server checks again) | the HVS path here scans no Broadcom UIF/SAND/T-tiled layout. A compositor then falls back to GL composition (Weston: `FAILURE_REASONS_ADD_FB_FAILED` → it adds the scanout tranche to the client's dma-buf feedback, `state-propose.c` `dmabuf_feedback_maybe_update` [read]) |
+| pitch and offset multiples of 64 B, `offset + pitch × height` within the buffer, pitch ≥ 4 × width, XRGB/ARGB8888 | ADDFB2 `-EINVAL`, `why=align` / `why=size` | what the pool's own BOs get (64-byte rows); the plane scans 32 bpp only |
+
+`ns=kmsbuf` of **another** client's dumb buffer is refused (`-EINVAL`, `why=foreign_kmsbuf`): no current
+path needs it (with G4 client buffers come from the render node); a follow-up would alias the BO.
+An implicit-modifier ADDFB2 (no `DRM_MODE_FB_MODIFIERS`) of an import is taken as LINEAR, as Linux vc4
+does for a buffer without tiling metadata; Mesa v3d allocates `PIPE_BIND_SHARED` buffers linear when no
+modifier is given (`v3d_resource.c:900`) [read], and Weston never promotes a `MOD_INVALID` dma-buf to a
+plane (`fb.c:397`) [read].
+
+**Implicit sync.** In-process (one program renders on the render node and flips on card0): the render
+export now records the BO in the G13 table, so a flip of the card0 import carries the BO's last-use
+fence, as a flip of an imported dumb buffer does. **Cross-process (Weston direct scan-out of a client
+buffer) has no fence**: the flip does not wait for the client's GPU job. Tearing or a partial frame on
+direct scan-out is an expected risk until `BO_LAST_FENCE` or G6 explicit sync (§8).
+
+**Who calls it.** Weston's GL renderer imports every client dma-buf through EGL; Mesa v3d with kmsro
+then also imports it on card0 (`renderonly_create_gpu_import_for_resource`, `v3d_resource.c:1107`)
+[read] — so with G7 each client buffer gets one card0 import **even without direct scan-out** (it
+failed soft with `ENOSYS` before). Weston's direct-scan-out attempt (`drm_fb_get_from_dmabuf`: GBM import
+with the client's modifier, `gbm_bo_get_handle_for_plane`, `drmModeAddFB2WithModifiers`, `fb.c:428-480`
+[read]) reuses that handle.
+
+Files: `tools/gpu-lane/kms/{kms_proto.h, kms.h, kms_bo.c, kms_main.c, kms_vblank.c, kmstest.c,
+kms_scanout.h (new), hosttest/ (new)}`, `tools/gpu-lane/libdrm-phoenix/{src/drm_phoenix_kms.c,
+src/drm_phoenix_v3d.c, include/drm_phoenix_ext.h, drmprobe/drmprobe.c, hosttest/run.sh,
+hosttest/e2e_main.c, hosttest/mock/fake.c}`. The render server is unchanged.
+
+### 16.2 Tests
+
+`drmprobe` (`build-out-g7`), two new keys:
+
+| key | what it checks |
+|---|---|
+| `prime_import_card0` | a render BO of the mode's size (1920×1080, 32 bpp, pitch 7680) filled with 8 vertical colour bands (red, orange, yellow, green, cyan, blue, magenta, white) → `PRIME_HANDLE_TO_FD` → card0 `PRIME_FD_TO_HANDLE` (a second import returns the same handle) → `ADDFB2WithModifiers(BROADCOM_UIF)` = `EINVAL`, a half pitch = `EINVAL`, LINEAR XRGB8888 = 0 → page flip + event (the bands on HDMI, held 3 s) → **every client reference dropped while shown** (dma-buf fd, render handle, CPU mapping, card0 handle) → the name `/v3dbuf/<id>` still opens (`alive_while_shown=1`: rpi4-kms holds it) → flip back to a dumb buffer + event → RMFB → the name is gone (`gone_after_errno=2`). An `EINVAL` on the LINEAR ADDFB2 (a buffer above 1 GiB) grades `gap=1`, not a failure |
+| `prime_import_card0_neg` | `FD_TO_HANDLE` of descriptor 1000 = `EBADF`, of the render node descriptor = `EINVAL`; a 64 KiB export imports, but a 1920×1080 ADDFB2 of it = `EINVAL`; the name is gone after the cleanup |
+
+**Host harness** (`libdrm-phoenix/hosttest/run.sh`, `DRMPHX_OUT=…/build-out-g7`): the fake display server
+now models G7 as `kms_bo.c` does (the import takes one `fd_opens` reference on the fake render BO,
+released when the handle is closed and no framebuffer uses it; ADDFB2 applies the real
+`kms_scanout.h` rules). Runs and verdicts:
+
+    HOSTTEST libdrm-phoenix checks=134 fails=0 verdict=PASS
+    DRMPROBE prime_import_card0 export=0 errno=0 path=/v3dbuf/106497 import=0 import_errno=0 reimport_same=1 handle=3 uif_errno=22 short_pitch_errno=22 addfb=0 addfb_errno=0 shown=1 alive_while_shown=1 flipped_off=1 rmfb=0 gone_after_errno=2 ok=1
+    DRMPROBE prime_import_card0_neg badfd_errno=9 notbuf_errno=22 small_import=0 small_import_errno=0 small_addfb_errno=22 released=1 ok=1
+    HOSTE2E g7 mode=dri kms_proto=2 import_high=0 card0_imports=2 imports_live=0 imports_released=2
+    HOSTE2E legacy verdict=PASS / HOSTE2E dri verdict=PASS (only the fake-GPU pixel checks failed, as expected)
+    HOSTE2E g4-negative verdict=PASS (the G4 tests fail against a proto-2 server, the rest as before)
+
+**Can they fail?** Three controls, all in `run.sh`:
+
+1. **Old server** (`FAKE_KMS_PROTO=1`: HELLO exactly 1, no op 38). The library falls back to proto 1,
+   every KMS test passes as before, and exactly the two G7 keys fail:
+
+       DRMPROBE prime_import_card0 export=0 … import=-1 import_errno=38 … ok=0
+       DRMPROBE prime_import_card0_neg … small_import=-1 small_import_errno=38 … ok=0
+       DRMPROBE RESULT pass=37 fail=6 gap=0 failed=cl_clear,cl_clear_dep,import_clear,implicit_flip,prime_import_card0,prime_import_card0_neg, …
+       HOSTE2E g7-negative verdict=PASS (the G7 tests fail against a proto-1 display server, the rest as before)
+
+2. **Above 1 GiB** (`FAKE_KMS_IMPORT_HIGH=1`, the case the Pi cannot produce on demand): ADDFB2 `EINVAL`,
+   graded `gap=1`, the import still released:
+
+       DRMPROBE prime_import_card0 … import=0 … addfb=-22 addfb_errno=22 shown=0 … gone_after_errno=2 gap=1 (ADDFB2 refused: …) ok=0
+       HOSTE2E g7-high verdict=PASS (an import above 1 GiB: ADDFB2 EINVAL, graded gap=1, released)
+
+3. **Lifetime mutation** (done once by hand, not kept): the fake released the import at its handle's
+   close even while a framebuffer used it → `alive_while_shown=0 … ok=0`, `HOSTE2E dri verdict=FAIL
+   (failed-set g7-import)`. The test sees a buffer that dies while shown.
+
+`tools/gpu-lane/kms/hosttest/run.sh` checks the scan-out rules themselves (17 checks: contiguity, the
+1 GiB boundary to the page, wrap, UIF, pitch/offset alignment, sizes), and the same checks built with
+`-DSCANOUT_TEST_NO_RULES` ("accept every import") fail 12 of 17 (`KMSHOST negative-control
+verdict=PASS`). The server's own import code (the `/v3dbuf` IPC, `va2pa`, the held descriptor, the reap
+from both threads) needs the Phoenix kernel and a second server: it is proven only on the Pi.
+
+### 16.3 Artifacts (built 2026-09-27; sha256, first 16 hex)
+
+| file | sha256 | notes |
+|---|---|---|
+| `tools/gpu-lane/kms/out-g7/rpi4-kms` | `51c9cbcc692e4e6b` | `build.sh --poll-notify --out out-g7` (the `rpi4-kms-gate` recipe: `pollNotify` linked); 0 warnings under `-Werror` |
+| `tools/gpu-lane/kms/out-g7/kmstest` | `39e278441676137f` | HELLOs `KMS_PROTO_BASE`; not needed by the cycle |
+| `tools/gpu-lane/libdrm-phoenix/build-out-g7/drmprobe` | `f47623e194c76b32` | `strings -a … \| grep -c prime_import_card0` = 5 |
+| `tools/gpu-lane/libdrm-phoenix/build-out-g7/prefix/lib/libdrm.a` | `03d30ade6d6335cc` | the snapshot weston-g7 links (`weston-drm/build-out-g7/libdrm-snapshot.txt`) |
+| `tools/gpu-lane/weston-drm/build-out-g7/weston-stripped` | `57fc4da3f774da5c` | `build.sh --no-mesa --libdrm-prefix libdrm-phoenix/build-out-g7/prefix --out build-out-g7`; Mesa `build-out-wayland` unchanged; warnings as the G4 build (0 link warnings beyond the libphoenix notes); unstripped `weston` `e85b52ab38be9179` for `addr2line` |
+
+`weston-drm/build-out-g7/weston-simple-egl-stripped` (`f8250a79a6c88ca5`) was rebuilt too but is not
+staged: the client uses only the render node, so m6g's G4 client is the right one.
+
+### Staging (coordinator)
+
+Needs §15's staging (`rpi4-v3d-async-g4`, the G4 `weston-simple-egl`, the G4 `weston-m6a.sh`) in place
+— stage it first if `m6g-g4` has not run. New names only; nothing staged before is replaced:
+
+```
+G=/home/houp/phoenix-rpi/tools/gpu-lane
+EXPORT=/srv/phoenix-rpi4-nfs-gcc16
+sudo -n install -m 755 "$G/kms/out-g7/rpi4-kms"                         "$EXPORT/bin/rpi4-kms-g7"
+sudo -n install -m 755 "$G/libdrm-phoenix/build-out-g7/drmprobe"         "$EXPORT/bin/drmprobe-g7"
+sudo -n install -m 755 "$G/weston-drm/build-out-g7/weston-stripped"      "$EXPORT/bin/weston-g7"
+cmp "$G/kms/out-g7/rpi4-kms" "$EXPORT/bin/rpi4-kms-g7"
+cmp "$G/libdrm-phoenix/build-out-g7/drmprobe" "$EXPORT/bin/drmprobe-g7"
+cmp "$G/weston-drm/build-out-g7/weston-stripped" "$EXPORT/bin/weston-g7"
+cmp "$G/weston-drm/pi/weston-m6a.sh" "$EXPORT/bin/weston-m6a.sh"      # the G4 script (WESTON= knob)
+```
+
+Preconditions as §9: netboot image ≥ build 11, no GPU app, no X, no old-lane `rpi4-v3d`.
+
+### Cycle `m6h-g7` (Bash `timeout: 600000`)
+
+**Question:** does rpi4-kms scan out a render-node BO imported on card0 — import, refusals, flip,
+survival while every client reference is gone, release after flip-off — and does Weston then put a
+fullscreen weston-simple-egl client on the primary plane directly (direct scan-out) instead of
+compositing it with GL?
+
+```
+./scripts/test-cycle-psh-interact.sh --label m6h-g7 --idle-secs 45 --max-cmd-secs 150 \
+    --hdmi-dense-on 'DRMPROBE kms_flip start|WESTONDRM client start' -- \
+    "/bin/rpi4-v3d-async-g4 -r 1 -m serial -i" \
+    "/bin/rpi4-kms-g7 -G -p 96" \
+    "/bin/shmsrv -v" \
+    "/bin/drmprobe-g7 -n 30" \
+    "export WESTON=/bin/weston-g7" \
+    "/bin/bash /bin/weston-m6a.sh gl egl noinput" \
+    "/bin/shmsrv -s" \
+    "/bin/kmstest-poll stats" \
+    "/bin/v3dasync-ping stats"
+```
+
+`-p 96` as m6g (only G7 moves against it). `weston-m6a.sh` honours `WESTON=`; psh has `export`. Grade:
+
+```
+grep -a -E '^(DRMPROBE|KMS (srv (ready|flipstat|client)|v3d|import|scanout|fb FAIL)|V3DA srv (ready|bufns|export|import|v3dbuf)|WESTONDRM|DRMPHX (conn|ioctl .*(PRIME|ADDFB2))|MESA|KMSTEST|V3DAPING|SHMSRV stats) |frames in|caught signal|Failed to|dmabuf' \
+    artifacts/rpi4b-uart/rpi4b-uart-*-m6h-g7.log
+./scripts/uart-summary.sh m6h-g7
+```
+
+Allow ~1.3 % UART line corruption (re-read, don't count); EL0 dumps print twice. `<k>` = a card0
+handle, `<h>` = a render handle / `/v3dbuf` id, `<c>` = a kms client id.
+
+**Predictions:**
+
+| # | Line / observation | Predicted | If instead… |
+|---|---|---|---|
+| 1 | `KMS srv ready … proto=1..2 import=v3dbuf`, `KMS v3d connect=1 …`; `V3DA srv bufns … registered=1 (G4)` | once each | `proto=1` / no `import=` field: the old server is staged (`cmp`) — stop |
+| 2 | drmprobe rows up to `prime_export_xproc … ok=1` as predicted for m6g (§15 rows 3–6) | unchanged | a regression outside G7: compare with m6g's log |
+| 3 | `DRMPROBE prime_import_card0 shown=1 fb=<f> handle=<k> path=/v3dbuf/<h> (HDMI: 8 vertical colour bands)`; before it `V3DA srv export handle=<h> … pages=2025 …`, `V3DA srv v3dbuf open id=<h> pid=<rpi4-kms pid> …`, **`KMS import client=<c> ns=v3dbuf id=<h> handle=<k> pages=2025 pa0=0x… contiguous=1 scanout=1 why=- live=1`**, a `KMS fb FAIL … pitch=3840 … why=size` (the half-pitch probe; the UIF probe is refused by the library, no server line), then **`KMS scanout import fb=<f> handle=<k> id=<h> pa0=0x… size=8294400 (first flip)`** | **G7 import and direct scan-out of a render BO on hardware**; `pa0` below `0x40000000` | `import=-1 import_errno=38`: the library fell back to proto 1 (row 1). `import_errno=2` + `KMS import FAIL … why=map rc=-2`: rpi4-kms could not open `/v3dbuf/<h>` (name/port). `why=map rc=-22`: `lseek`/`mmap` refused (E1 memory type). `why=noncontig`: the M1a one-block assumption is broken — blocker for direct scan-out of render BOs. `addfb_errno=22` + `KMS fb FAIL … why=above_1g pa=0x…`: the BO landed above 1 GiB — **graded gap=1**, note the PA (allocator placement is the follow-up) |
+| 4 | HDMI (dense snapshots after `kms_flip start`): **8 vertical bands red, orange, yellow, green, cyan, blue, magenta, white** for ~3 s, full screen | the render BO's pixels scanned by the firmware | bands shifted/sheared: pitch mapping; red↔blue swapped: pixel order (XRGB vs the firmware type); black: the plane shows other pages (import mapping) — stop; the teal/magenta dumb frame instead: the flip did not land |
+| 5 | `DRMPROBE prime_import_card0 export=0 errno=0 path=/v3dbuf/<h> import=0 import_errno=0 reimport_same=1 handle=<k> uif_errno=22 short_pitch_errno=22 addfb=0 addfb_errno=0 shown=1 alive_while_shown=1 flipped_off=1 rmfb=0 gone_after_errno=2 ok=1`; server order **after** row 3's `shown` line: `KMS import released handle=<k> id=<h> (descriptor closed)`, `V3DA srv v3dbuf close id=<h> pid=<rpi4-kms pid> opens=0 …` (the open/close lines are capped at 64 per render-server run, §15 row 10 — grade by the uncapped lines if it is missing), `V3DA srv export withdrawn handle=<h> live=0` | **the buffer outlives every client reference while shown, and goes at RMFB after flip-off** | `alive_while_shown=0` (and/or the bands turn black during the hold): the name died while scanned — lifetime bug, blocker. `gone_after_errno=0` / no `import released` line: rpi4-kms leaked the descriptor (reap not run) |
+| 6 | `DRMPROBE prime_import_card0_neg badfd_errno=9 notbuf_errno=22 small_import=0 small_import_errno=0 small_addfb_errno=22 released=1 ok=1`, with `KMS fb FAIL … 1920x1080 pitch=7680 … size=65536 rc=-22 why=size` | refusals | `badfd_errno` ≠ 9: Phoenix `sys_fdpath` answers another errno for an unused descriptor (library mapping, not G7) — note |
+| 7 | `DRMPROBE RESULT pass=44 fail=0 gap=0 failed=- … verdict=PASS` (m6g's 42 + the two G7 keys); `pass=43 … gap=1` with row 3's `above_1g` | as listed | any `failed=` key: its row |
+| 8 | `WESTONDRM start renderer=gl client=egl weston=/bin/weston-g7 …`; Weston up as in m6g (`Using GL renderer`, `HDMI-A-1`) | the export reached the script | `weston=/bin/weston`: psh's `export` did not reach bash — then the G4 Weston (proto 1) ran and rows 9–12 read as m6g (card0 import `errno=38`) |
+| 9 | Weston's trace: `DRMPHX ioctl node=card0 … name=DRM_IOCTL_PRIME_FD_TO_HANDLE rc=0 errno=0 n=1 handle=<k> … fdpath=/v3dbuf/<h>` (m6g: `rc=-1 errno=38`) and one `KMS import client=<weston's c> ns=v3dbuf id=<h> … scanout=1 …` per client buffer (2–4) | Mesa kmsro's card0 import of every client buffer Weston's EGL imports (§16.1 "Who calls it") | `KMS import FAIL`: as row 3 |
+| 10 | **direct scan-out**, one of two paths: (a) the client's buffers are LINEAR from the start: `DRMPHX ioctl node=card0 … name=DRM_IOCTL_MODE_ADDFB2 rc=0 … 1920x1080 … flags=0x2 … pitch=7680 … mod=0x0` and `KMS scanout import fb=<f> … (first flip)` within ~2 s of `client start`; (b) **more likely**: they are UIF first (m6g row 10's `pages≈2000–2200`): `DRM_IOCTL_MODE_ADDFB2 rc=-1 errno=22 … mod=0x700000000000006` (refused in the library, no server line), Weston keeps compositing and after ~2 s adds the scanout tranche to the client's dma-buf feedback (`dmabuf_feedback_maybe_update`, `ADD_FB_FAILED`); Mesa re-allocates with `__DRI_IMAGE_USE_SCANOUT` + LINEAR (`platform_wayland.c:1234`) [read]: new `V3DA srv export …` + `KMS import …` lines, then (a). Weston itself prints nothing about planes (its `drm-backend` debug scope is off) | the `KMS scanout import … (first flip)` line with `client=<weston's c>` is the direct scan-out proof | only UIF `ADDFB2 … errno=22` lines and no re-allocation within the 30 s hold: the client ignored the scanout tranche (Mesa's feedback path) — GL composition, G7 still proven by rows 3–5; `ADDFB2 rc=-1 errno=22` with `mod=0x0` + `KMS fb FAIL … why=align`: the linear stride is not 64-aligned — note the pitch |
+| 11 | `KMS srv flipstat client=<weston's c> flips=N … deferred=D …` at Weston's exit: **D ≪ N** (direct-scan-out flips carry no render fence; m6c arm B, all GL: `flips=805 deferred=783`) | Weston stopped compositing once the client was on the plane | D ≈ N: Weston composited all the time (row 10 did not happen) |
+| 12 | `N frames in 5 seconds: X fps`, X ≥ m6g's; HDMI: the rotating triangle full screen | frame callbacks keep coming on the plane path | **tearing / partial triangles are an expected risk**: a direct-scan-out flip does not wait for the client's GPU job (no cross-process implicit sync, §16.1) — note, not a G7 failure |
+| 13 | exit: `KMS import released …` for every import, `V3DA srv export withdrawn … live=0` for every client buffer, `caught signal 15` + `weston exited rc=0` (weston-g7 carries the m6e fix; not graded for G7) | no descriptor left | an `import` without its `released`: an RMFB/GEM_CLOSE path that skipped the reap — leak |
+| 14 | `SHMSRV stats live=0`, `KMSTEST stats … apply_errors=0 … bos=0 exports=0` (imports count in `bos`), `V3DAPING stats … bos_live=0 parked=0 … verdict=PASS` | no leaks; the proto-1 `kmstest-poll` HELLOs the proto-2 server | `bos>0`: an import outlived Weston; `bos_live>0`: a render BO still referenced (row 13) |
+| 15 | fault dumps | 0 kernel, 0 EL0 | EL0 in rpi4-kms: `aarch64-phoenix-addr2line -f -e tools/gpu-lane/kms/out-g7/rpi4-kms <pc>`; in Weston: the unstripped `weston-drm/build-out-g7/weston` |
+
+**Decides:** rows 3–7 PASS = G7 closed on hardware (import, the 1 GiB rule, refusals and the
+on-screen lifetime). Rows 9–11 PASS = Weston direct scan-out of a GPU client works; M4's Present flips
+of client pixmaps need only G7 + (for tear-free) cross-process implicit sync (`BO_LAST_FENCE`), which is
+the next gap.
