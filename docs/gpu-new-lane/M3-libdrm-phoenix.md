@@ -1357,3 +1357,17 @@ fd, and on Phoenix a poll of a device-server fd is quantised to 20 ms (P9 / G12)
 other vblank. The GPU is idle most of the time (render 1.2 s busy over 20 s). This is the known kernel
 gap, now with a real client to prove the fix against: a `block_ms` path for device-server fds in
 `posix_poll` (E5 §(b)) should take kmscube to 60.
+
+## Result — `m3p4-qsdrm` (queue21, 2026-09-27 05:12–05:15): **PASS — Quake on the full DRM stack, 24.4 fps (poll-bound)**
+
+`quakespasm-drm` (SDL 2.30.12 KMSDRM + Mesa 26.2 GBM/EGL desktop GL + libdrm-phoenix → rpi4-kms +
+rpi4-v3d-async): `969 frames 39.8 seconds 24.4 fps`, 0 exceptions. Banner line present; three scanout
+BOs imported (`V3DA srv import … pages=2026`), released and re-imported cleanly on the mode set.
+HDMI (snapshots during the timedemo, each different): demo1 renders correctly — lit textured level,
+models, particles, HUD, console messages, in-game counter "26 FPS"
+(`artifacts/hdmi/20260927-051442-m3p4-qsdrm-tick.png`).
+
+As pre-registered: "25–36 with everything else clean points at the 20 ms poll quantum rather than
+rendering" — SDL's KMSDRM waits for every page flip with `poll()` on the card fd (P9/G12); 24.4 is
+just under that band, and quakespasm-v3da (same game, same GPU server, no page-flip poll) does 40.4.
+The kernel readiness-wakeup work (agent, `docs/gpu-new-lane/poll-wake.md`) is the fix to measure next.
