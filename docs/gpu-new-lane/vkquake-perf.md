@@ -934,3 +934,20 @@ carved from one contiguous pool (`kms_bo.c` `bo_from_pool`, `pool_mib=32` in the
   (`gl_vidsdl.c`, the 0006 pattern), with its own cycle.
 * A result near 44 rather than 50 confirms that the single-threaded CPU frame is the next wall. The follow-up
   would then be whether `r_tasks` can stay on with CPU lightmaps; upstream couples them at `gl_screen.c:1503`.
+
+## Result — `mig-vkq-g`, `mig-vkq-g-water`, `pace-vkq-g` (chain68, build 21b, 2026-09-28 01:07–01:45)
+
+| run | swapchain | fps median (deduplicated) | CSD | picture | verdict |
+|---|---|---|---|---|---|
+| **mig-vkq-g** (`/bin/vkq-drm-g`, promoted 0008 + 0009) | `kmsbuf id=1,2` | **29.71** (n=111) | **0 classes** | spawn view as f2, lit, counter "30 FPS" | ✓ as predicted |
+| mig-vkq-g-water (`+map e1m2`) | id=1,2 | 29.64 (n=112) | 0 | `Castle of the Damned` loaded, `entered the game`; the spawn room shows **no water surface** | ✓ map; ⚠ the water check itself is **inconclusive** (no water on screen) |
+| **pace-vkq-g** (`+vid_vsync 2`) | **`kmsbuf id=1,2,3`** | **44.21** (n=113, max 44.48) | 0 | same scene, counter "41 / 47 FPS", no tearing | ✓ inside the pre-registered 38–50; `waitstat acquire` avg **~32 µs** (was ~10.8 ms) |
+
+- **The 30.00 fps was the two-image FIFO chain, as analysed**: a third image lifts vkQuake on the new lane to
+  **44 fps, 1.9× the old lane's 22.9**.
+- ⚠ **Measurement trap found here.** Two of these logs begin with 138 000–150 000 copies of the **previous** cycle's
+  last `phxvk: run … fps=` line. This is the host serial tool replaying a stale buffer before the boot banner (memory
+  "UART flood is a host capture artifact"), and it put the chain's first-pass median for pace-vkq-g at 29.82.
+  Medians above are over `uniq`'d lines. The chain scripts' median must dedupe from now on.
+- Next: make three images the new-lane default (launcher `+vid_vsync 2`, or `minImageCount` 3 in the WSI), then
+  swap `/usr/bin/vkquake-drm` to the promoted bytes and re-run the migration row.
