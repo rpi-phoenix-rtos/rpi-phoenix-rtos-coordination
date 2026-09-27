@@ -54,7 +54,8 @@
  * protocol; client ids are shared. */
 #define V3DA_DRI_RENDER_NAME "dri/renderD128"
 #define V3DA_DRI_CARD_NAME   "dri/card1"
-#define V3DA_PROTO_VERSION 4u   /* 3: M6 gap G4 (BO_EXPORT, /v3dbuf, BO_IMPORT ns=v3dbuf); 4: gap G6 (BO_LAST_FENCE, BO_ATTACH_FENCE) */
+#define V3DA_PROTO_VERSION 5u   /* 3: M6 gap G4 (BO_EXPORT, /v3dbuf, BO_IMPORT ns=v3dbuf); 4: gap G6 (BO_LAST_FENCE, BO_ATTACH_FENCE);
+                                 * 5: BO_CREATE honours V3DA_BO_LOWMEM (scan-out placement below 1 GiB) */
 /* The oldest protocol a client may HELLO with: 2 = M1 part 2 (submits, scanout/flip,
  * modes). A client that uses nothing newer HELLOs with V3DA_PROTO_BASE and so works
  * with every server since M1 part 2; the reply's proto is the SERVER's version, which
@@ -63,6 +64,7 @@
 #define V3DA_PROTO_BASE    2u
 #define V3DA_PROTO_BO_EXPORT 3u   /* first version with V3DA_OP_BO_EXPORT */
 #define V3DA_PROTO_BO_SYNC   4u   /* first version with V3DA_OP_BO_LAST_FENCE / V3DA_OP_BO_ATTACH_FENCE (G6) */
+#define V3DA_PROTO_BO_LOWMEM 5u   /* first version whose BO_CREATE places V3DA_BO_LOWMEM BOs below 1 GiB */
 #define V3DA_MAGIC         0x41443356u   /* "V3DA" little-endian; bit 31 clear */
 #define V3DA_FENCE_MAGIC   0x46443356u   /* "V3DF" */
 
@@ -257,6 +259,23 @@ typedef struct {
 
 #define V3DA_BO_CACHEABLE (1u << 0)   /* == DRM V3D_CREATE_BO_CACHEABLE-style: map cached */
 #define V3DA_BO_SCANOUT   (1u << 1)   /* == DRM V3D_CREATE_BO flag bit 1: GPU pages = firmware-fb buffer */
+/*
+ * V3DA_BO_LOWMEM (proto 5): the BO may be scanned out by the firmware display plane,
+ * which fetches nothing at or above V3DA_LOWMEM_LIMIT (1 GiB, E3/E6 `range hi`; the
+ * same limit as rpi4-kms's KMS_SCANOUT_LIMIT). The server places its block below the
+ * limit: a pooled low block of the size, else fresh MAP_CONTIGUOUS blocks until one
+ * lands low (the kernel's buddy allocator takes no address constraint), within a
+ * per-server budget of low memory (`-L`). If that fails the BO is still created,
+ * wherever its block landed - rpi4-kms then refuses it at ADDFB2 (`why=above_1g`) and
+ * a compositor composites it, as before proto 5. The reply's mem.addr is the block's
+ * physical address, so the caller can tell. Servers before proto 5 ignore the bit
+ * (v3da_bo_create never rejected unknown flags); libdrm-phoenix sends it only to a
+ * proto-5 server. Who sets it: Mesa v3d for PIPE_BIND_SCANOUT resources on Phoenix
+ * (mesa-drm patch 0016, through libdrm-phoenix's DRM_PHOENIX_V3D_CREATE_BO_SCANOUT).
+ */
+#define V3DA_BO_LOWMEM    (1u << 2)
+#define V3DA_HAVE_BO_LOWMEM 1
+#define V3DA_LOWMEM_LIMIT 0x40000000ull
 
 typedef struct {
 	uint32_t size;

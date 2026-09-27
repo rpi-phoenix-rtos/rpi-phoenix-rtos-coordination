@@ -731,9 +731,16 @@ typedef struct {
 } rbo_t;
 
 
-static int rbo_new_fd(int fd, rbo_t *b, uint32_t size)
+/* Phoenix-only DRM_IOCTL_V3D_CREATE_BO flag (libdrm-phoenix drm_phoenix_ext.h
+ * DRM_PHOENIX_V3D_CREATE_BO_SCANOUT; Mesa v3d sets it for PIPE_BIND_SCANOUT
+ * resources on Phoenix): the BO may be scanned out - the render server (proto 5)
+ * places it below 1 GiB. The probe uses only upstream headers, hence the copy. */
+#define PROBE_V3D_CREATE_BO_SCANOUT (1u << 31)
+
+
+static int rbo_new_flags_fd(int fd, rbo_t *b, uint32_t size, uint32_t flags)
 {
-	struct drm_v3d_create_bo cb = { .size = size };
+	struct drm_v3d_create_bo cb = { .size = size, .flags = flags };
 	struct drm_v3d_mmap_bo mb;
 	void *p;
 
@@ -755,6 +762,12 @@ static int rbo_new_fd(int fd, rbo_t *b, uint32_t size)
 	}
 	b->cpu = p;
 	return 0;
+}
+
+
+static int rbo_new_fd(int fd, rbo_t *b, uint32_t size)
+{
+	return rbo_new_flags_fd(fd, b, size, 0u);
 }
 
 
@@ -1770,6 +1783,77 @@ static void t_prime_card0_neg(void)
 
 
 /* ========================================================================= */
+/* Scan-out placement below 1 GiB (render server proto 5, V3DA_BO_LOWMEM)     */
+/* ========================================================================= */
+
+/* A render BO's card0 verdict: export, import on card0, LINEAR XRGB8888 ADDFB2 of
+ * w x h at `pitch`, then everything released again. 0 or the ADDFB2 errno; -1 when
+ * the buffer never reached ADDFB2. */
+static int lowmem_addfb(const rbo_t *b, uint32_t w, uint32_t h, uint32_t pitch)
+{
+	uint32_t kh = 0, fb = 0, handles[4] = { 0 }, pitches[4] = { 0 }, offsets[4] = { 0 };
+	uint64_t mods[4] = { 0 };
+	int fd = -1, e = -1;
+
+	if (drmPrimeHandleToFD(P.render, b->handle, DRM_CLOEXEC | DRM_RDWR, &fd) != 0) {
+		return -1;
+	}
+	if (drmPrimeFDToHandle(P.card, fd, &kh) == 0) {
+		handles[0] = kh;
+		pitches[0] = pitch;
+		mods[0] = DRM_FORMAT_MOD_LINEAR;
+		e = (drmModeAddFB2WithModifiers(P.card, w, h, DRM_FORMAT_XRGB8888, handles, pitches, offsets, mods, &fb,
+			DRM_MODE_FB_MODIFIERS) == 0) ? 0 : errno;
+		if (fb != 0u) {
+			(void)drmModeRmFB(P.card, fb);
+		}
+		gem_close(P.card, kh);
+	}
+	close(fd);
+	return e;
+}
+
+
+/* Proto 5: a render BO created with the scan-out placement hint (what Mesa v3d asks
+ * for a PIPE_BIND_SCANOUT resource on Phoenix, mesa-drm patch 0016) lies below
+ * 1 GiB, so card0 takes it as a LINEAR framebuffer whatever the kernel's allocator
+ * does with the render server's other blocks - m6h-g7's `why=above_1g` refusals of
+ * client buffers are what it removes. A plain BO of the same size is tried for
+ * comparison: its ADDFB2 depends on where its block landed (informational on the Pi;
+ * refused when the fake server puts unplaced BOs high). An unknown create flag is
+ * EINVAL, as on Linux. The size is the mode's frame plus Mesa's TFU read-ahead page:
+ * 2026 pages at 1920x1080, one 8 MiB buddy block, as a client's buffer. */
+static void t_scanout_lowmem(void)
+{
+	uint32_t w = (P.mode.hdisplay != 0u) ? P.mode.hdisplay : 1920u, h = (P.mode.vdisplay != 0u) ? P.mode.vdisplay : 1080u;
+	uint32_t pitch = ((w * 4u) + 63u) & ~63u, size = pitch * h + 4096u;
+	rbo_t low, plain, bogus;
+	int rc_low, rc_plain, rc_bogus, e_bogus, e_low = -1, e_plain = -1, ok;
+
+	rc_bogus = rbo_new_flags_fd(P.render, &bogus, 4096u, 1u << 30);
+	e_bogus = (rc_bogus != 0) ? -rc_bogus : 0;
+	rbo_free(&bogus);
+
+	rc_low = rbo_new_flags_fd(P.render, &low, size, PROBE_V3D_CREATE_BO_SCANOUT);
+	if (rc_low == 0) {
+		e_low = lowmem_addfb(&low, w, h, pitch);
+	}
+	rc_plain = rbo_new(&plain, size);
+	if (rc_plain == 0) {
+		e_plain = lowmem_addfb(&plain, w, h, pitch);
+	}
+	rbo_free(&low);
+	rbo_free(&plain);
+	ok = (e_bogus == EINVAL) && (rc_low == 0) && (e_low == 0);
+	printf(TAG "scanout_lowmem %ux%u pages=%u bogus_flag_errno=%d create=%d low_addfb_errno=%d plain_create=%d "
+		"plain_addfb_errno=%d%s ok=%d\n", w, h, (size + 4095u) / 4096u, e_bogus, rc_low, e_low, rc_plain, e_plain,
+		(e_low == EINVAL) ? " (the placed BO was refused: see the KMS fb FAIL line, why=above_1g)" : "",
+		ok);
+	verdict("scanout_lowmem", ok);
+}
+
+
+/* ========================================================================= */
 /* G6: cross-process implicit sync                                            */
 /* ========================================================================= */
 
@@ -2440,6 +2524,7 @@ int main(int argc, char **argv)
 	if (P.buf[0].handle != 0u) {
 		t_prime_card0();
 		t_prime_card0_neg();
+		t_scanout_lowmem();
 	}
 #ifndef DRMPROBE_NO_FORK
 	t_prime_xproc();

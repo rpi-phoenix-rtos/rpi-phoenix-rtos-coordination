@@ -73,10 +73,28 @@ enum drmphx_ns {
 #endif
 
 /*
+ * V3DA_BO_LOWMEM (BO_CREATE flag, proto 5, V3DA_PROTO_BO_LOWMEM): IMPLEMENTED - a
+ * BO the firmware plane may scan out is placed below 1 GiB (v3da_proto.h). On the
+ * DRM side it is a Phoenix-only DRM_IOCTL_V3D_CREATE_BO flag (Linux v3d defines no
+ * create flags and requires 0): Mesa v3d sets it for PIPE_BIND_SCANOUT resources on
+ * Phoenix (mesa-drm patch 0016, which carries the same value). libdrm-phoenix sends
+ * V3DA_BO_LOWMEM for it only when the server's HELLO says 5 or more, and drops it
+ * silently otherwise (the pre-proto-5 placement: anywhere). Any other flag bit is
+ * EINVAL, as on Linux. Never link Mesa objects built with patch 0016 against a
+ * libdrm.a from before this flag: that library answers the flag EINVAL (Mesa then
+ * retries without it, so the program works, but its scan-out BOs land anywhere).
+ */
+#define DRM_PHOENIX_V3D_CREATE_BO_SCANOUT (1u << 31)
+
+#ifndef V3DA_HAVE_BO_LOWMEM
+#error "v3da_proto.h predates BO_CREATE placement (V3DA_BO_LOWMEM): build against the current tools/gpu-lane/v3d-async"
+#endif
+
+/*
  * STILL OPEN (G6b): syncobj and sync-file DESCRIPTORS across processes
  * (DRM_IOCTL_SYNCOBJ_HANDLE_TO_FD without EXPORT_SYNC_FILE, and sync files passed
  * over SCM_RIGHTS: linux-explicit-synchronization, wp_linux_drm_syncobj, DRI3 1.4,
- * vkGetSemaphoreFdKHR to another process). NEW ops, V3DA proto >= 5: a
+ * vkGetSemaphoreFdKHR to another process). NEW ops, V3DA proto >= 6: a
  * "/v3dsync/<id>" namespace whose descriptors name a server syncobj (opaque fd) or
  * a frozen fence (sync file); poll() on it = atPollStatus against the fence page.
  * libdrm-phoenix emulates sync files in-process meanwhile (implicit sync, G6, needs

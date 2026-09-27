@@ -77,7 +77,11 @@ for mode in legacy dri; do
 	# references dropped while shown, name alive until flip-off + RMFB, then gone)
 	grep -q 'DRMPROBE prime_import_card0 export=0 errno=0 path=/v3dbuf/[0-9]* import=0 import_errno=0 reimport_same=1 .* uif_errno=22 short_pitch_errno=22 addfb=0 addfb_errno=0 shown=1 alive_while_shown=1 flipped_off=1 rmfb=0 gone_after_errno=2 ok=1' "${log}" || why="${why} g7-import"
 	grep -q 'DRMPROBE prime_import_card0_neg badfd_errno=9 notbuf_errno=22 small_import=0 small_import_errno=0 small_addfb_errno=22 released=1 ok=1' "${log}" || why="${why} g7-neg"
-	grep -q 'HOSTE2E g7 .* card0_imports=3 imports_live=0 imports_released=3' "${log}" || why="${why} g7-counters"   # G7 x2 + G6 flip
+	grep -q 'HOSTE2E g7 .* card0_imports=5 imports_live=0 imports_released=5' "${log}" || why="${why} g7-counters"   # G7 x2 + scanout_lowmem x2 + G6 flip
+	# proto 5: a BO created with the scan-out placement hint is placed (the fake counts it) and
+	# card0 takes it; the plain one lands in the fake's low arena here, so it is taken too
+	grep -q 'DRMPROBE scanout_lowmem 1920x1080 pages=2026 bogus_flag_errno=22 create=0 low_addfb_errno=0 plain_create=0 plain_addfb_errno=0 ok=1' "${log}" || why="${why} lowmem"
+	grep -q 'HOSTE2E lowmem .* server_proto=5 v3d_high=0 lowmem_bos=1$' "${log}" || why="${why} lowmem-counters"
 	# G6: cross-process implicit sync. The producer is the fake's "foreign" job (a
 	# client this library does not know), pending until something waits: the consumer
 	# reads stale pixels without sync, exports the dma-buf's fences, waits, reads the
@@ -110,7 +114,7 @@ FAKE_V3DA_PROTO=2 "${out}/e2e" dri > "${log}" 2>&1 || true
 grep -E 'DRMPROBE (RESULT|prime_export_render|prime_import_render2)|HOSTE2E g4|ERROR|runtime error' "${log}" || true
 why=""
 # (the G7 card0 tests need a /v3dbuf export, so they fail here too)
-grep -q 'DRMPROBE RESULT .*failed=cl_clear,cl_clear_dep,import_clear,implicit_flip,prime_export_render,prime_import_render2,prime_import_card0,prime_import_card0_neg,dmabuf_sync_probe,dmabuf_sync_import,dmabuf_sync_read,dmabuf_sync_flip, ' "${log}" || why="${why} failed-set"
+grep -q 'DRMPROBE RESULT .*failed=cl_clear,cl_clear_dep,import_clear,implicit_flip,prime_export_render,prime_import_render2,prime_import_card0,prime_import_card0_neg,scanout_lowmem,dmabuf_sync_probe,dmabuf_sync_import,dmabuf_sync_read,dmabuf_sync_flip, ' "${log}" || why="${why} failed-set"
 grep -q 'DRMPROBE prime_export_render rc=-1 errno=38 .* ok=0' "${log}" || why="${why} export-not-enosys"
 grep -qE 'ERROR: AddressSanitizer|runtime error' "${log}" && why="${why} sanitizer"
 if [ -z "${why}" ]; then
@@ -126,7 +130,7 @@ log="${out}/e2e-g7-negative.log"
 FAKE_KMS_PROTO=1 "${out}/e2e" dri > "${log}" 2>&1 || true
 grep -E 'DRMPROBE (RESULT|prime_import_card0)|HOSTE2E g7|ERROR|runtime error' "${log}" || true
 why=""
-grep -q 'DRMPROBE RESULT .*failed=cl_clear,cl_clear_dep,import_clear,implicit_flip,prime_import_card0,prime_import_card0_neg,dmabuf_sync_flip, ' "${log}" || why="${why} failed-set"   # the G6 flip needs a card0 import
+grep -q 'DRMPROBE RESULT .*failed=cl_clear,cl_clear_dep,import_clear,implicit_flip,prime_import_card0,prime_import_card0_neg,scanout_lowmem,dmabuf_sync_flip, ' "${log}" || why="${why} failed-set"   # the G6 flip and scanout_lowmem need a card0 import
 grep -q 'DRMPROBE prime_import_card0 export=0 .* import=-1 import_errno=38 .* ok=0' "${log}" || why="${why} import-not-enosys"
 grep -q 'HOSTE2E g7 .* card0_imports=0 imports_live=0' "${log}" || why="${why} g7-counters"
 grep -qE 'ERROR: AddressSanitizer|runtime error' "${log}" && why="${why} sanitizer"
@@ -143,9 +147,10 @@ log="${out}/e2e-g7-high.log"
 FAKE_KMS_IMPORT_HIGH=1 "${out}/e2e" dri > "${log}" 2>&1 || true
 grep -E 'DRMPROBE (RESULT|prime_import_card0)|HOSTE2E g7|ERROR|runtime error' "${log}" || true
 why=""
-grep -q 'DRMPROBE RESULT .*gap=2 failed=cl_clear,cl_clear_dep,import_clear,implicit_flip, ' "${log}" || why="${why} failed-set"   # G7 + G6 flip: gap=1 each
+# (scanout_lowmem fails here: this knob puts EVERY import above 1 GiB, placed or not)
+grep -q 'DRMPROBE RESULT .*gap=2 failed=cl_clear,cl_clear_dep,import_clear,implicit_flip,scanout_lowmem, ' "${log}" || why="${why} failed-set"   # G7 + G6 flip: gap=1 each
 grep -q 'DRMPROBE prime_import_card0 export=0 .* import=0 .* addfb=-22 addfb_errno=22 shown=0 .* gone_after_errno=2 gap=1 ' "${log}" || why="${why} not-refused"
-grep -q 'HOSTE2E g7 .* imports_live=0 imports_released=3' "${log}" || why="${why} g7-counters"
+grep -q 'HOSTE2E g7 .* imports_live=0 imports_released=5' "${log}" || why="${why} g7-counters"
 grep -qE 'ERROR: AddressSanitizer|runtime error' "${log}" && why="${why} sanitizer"
 if [ -z "${why}" ]; then
 	echo "HOSTE2E g7-high verdict=PASS (an import above 1 GiB: ADDFB2 EINVAL, graded gap=1, released)"
@@ -174,4 +179,43 @@ if [ -z "${why}" ]; then
 	echo "HOSTE2E g6-negative verdict=PASS (the G6 tests fail against a proto-3 server: stale read, ungated flip; the rest as before)"
 else
 	echo "HOSTE2E g6-negative verdict=FAIL (${why# } - see ${log})"
+fi
+
+# Scan-out placement (render server proto 5, V3DA_BO_LOWMEM): the fake render server
+# puts every BO above 1 GiB unless it places it (FAKE_V3DA_HIGH=1) - m6h-g7's case, where
+# 2 of ~6 client buffers landed at 0xf8000000 and card0 refused them (why=above_1g).
+# The BO created with the hint must still be taken by card0, the plain one refused;
+# the unplaced BOs of the G7 and G6 flip tests are refused as on the Pi (gap=1 each).
+log="${out}/e2e-lowmem-high.log"
+FAKE_V3DA_HIGH=1 "${out}/e2e" dri > "${log}" 2>&1 || true
+grep -E 'DRMPROBE (RESULT|scanout_lowmem)|HOSTE2E lowmem|ERROR|runtime error' "${log}" || true
+why=""
+grep -q 'DRMPROBE RESULT .*gap=2 failed=cl_clear,cl_clear_dep,import_clear,implicit_flip, ' "${log}" || why="${why} failed-set"
+grep -q 'DRMPROBE scanout_lowmem 1920x1080 pages=2026 bogus_flag_errno=22 create=0 low_addfb_errno=0 plain_create=0 plain_addfb_errno=22 ok=1' "${log}" || why="${why} not-placed"
+grep -q 'DRMPROBE prime_import_card0 .* addfb=-22 addfb_errno=22 .* gap=1 ' "${log}" || why="${why} plain-not-high"
+grep -q 'HOSTE2E lowmem .* server_proto=5 v3d_high=1 lowmem_bos=1$' "${log}" || why="${why} lowmem-counters"
+grep -q 'HOSTE2E g4 .* exports_live=0 v3dbuf_imports=1 bos_live=0' "${log}" || why="${why} g4-counters"
+grep -qE 'ERROR: AddressSanitizer|runtime error' "${log}" && why="${why} sanitizer"
+if [ -z "${why}" ]; then
+	echo "HOSTE2E lowmem-high verdict=PASS (render BOs above 1 GiB: the hinted one is placed and scanned out, the plain ones refused)"
+else
+	echo "HOSTE2E lowmem-high verdict=FAIL (${why# } - see ${log})"
+fi
+
+# Placement negative control: the same world against a proto-4 render server (G6,
+# before proto 5). The library HELLOs 5, falls back, and drops the hint: the hinted BO
+# lands high like any other and card0 refuses it - scanout_lowmem must FAIL.
+log="${out}/e2e-lowmem-negative.log"
+FAKE_V3DA_HIGH=1 FAKE_V3DA_PROTO=4 "${out}/e2e" dri > "${log}" 2>&1 || true
+grep -E 'DRMPROBE (RESULT|scanout_lowmem)|HOSTE2E lowmem|ERROR|runtime error' "${log}" || true
+why=""
+grep -q 'DRMPROBE RESULT .*gap=2 failed=cl_clear,cl_clear_dep,import_clear,implicit_flip,scanout_lowmem, ' "${log}" || why="${why} failed-set"
+grep -q 'DRMPROBE scanout_lowmem .* create=0 low_addfb_errno=22 .* plain_addfb_errno=22 .* ok=0' "${log}" || why="${why} placed-anyway"
+grep -q 'HOSTE2E lowmem .* server_proto=4 v3d_high=1 lowmem_bos=0$' "${log}" || why="${why} lowmem-counters"
+grep -q 'DRMPROBE dmabuf_sync_probe .* ok=1' "${log}" || why="${why} g6-regressed"
+grep -qE 'ERROR: AddressSanitizer|runtime error' "${log}" && why="${why} sanitizer"
+if [ -z "${why}" ]; then
+	echo "HOSTE2E lowmem-negative verdict=PASS (against a proto-4 server the hint is dropped: the buffer lands high and card0 refuses it)"
+else
+	echo "HOSTE2E lowmem-negative verdict=FAIL (${why# } - see ${log})"
 fi

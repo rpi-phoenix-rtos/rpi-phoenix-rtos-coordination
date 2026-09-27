@@ -26,6 +26,9 @@
  *     whose export window some process still maps (after every handle and descriptor
  *     is gone) is the same trade as a stale MAP_PHYSMEM mapping: the late access lands
  *     in another GPU buffer, never in memory the kernel recycles.
+ *   - Scan-out placement (proto 5): a V3DA_BO_LOWMEM BO's block lies below 1 GiB,
+ *     where the firmware display plane can fetch it (v3da_lowmem.h: pooled low
+ *     block, else fresh blocks until one lands low, within the -L budget).
  *   - Blocks go to a server-owned POOL, not back to the kernel: a stale device or
  *     stale client MAP_PHYSMEM write then lands in another GPU buffer, never in a
  *     malloc heap (the C1 class), and the last-munmap-of-a-contiguous-object kernel
@@ -83,35 +86,89 @@ v3da_bo_t *v3da_bo_find(uint32_t handle)
 }
 
 
-/* A block for `pages` pages: an exact-size pooled block of the same memory type,
- * else a fresh MAP_CONTIGUOUS mapping. Zeroed either way (Phoenix contiguous pages
- * are not zeroed; a garbage binner BO wedged CT1 - v3d_gpu.c:774-776). */
-static void *block_get(uint32_t pages, int cached, uintptr_t *pa)
+/* One fresh MAP_CONTIGUOUS block, not zeroed, with the physical addresses of its
+ * first and last page (both touched: va2pa reports present pages only). The
+ * v3da_lowmem_map allocator; block_get's ordinary path too. */
+static void *block_map(void *ctx, size_t bytes, int cached, uint64_t *pa_first, uint64_t *pa_last)
 {
-	uint32_t i;
+	int flags = MAP_CONTIGUOUS | MAP_ANONYMOUS | ((cached == 0) ? MAP_UNCACHED : 0);
+	volatile uint32_t *first, *last;
 	void *cpu;
-	int flags;
 
-	for (i = 0u; i < srv.npool; i++) {
-		if ((srv.pool[i].pages == pages) && (srv.pool[i].cached == (uint32_t)cached)) {
-			cpu = srv.pool[i].cpu;
-			*pa = srv.pool[i].pa;
-			srv.pool[i] = srv.pool[--srv.npool];
-			memset(cpu, 0, (size_t)pages * _PAGE_SIZE);
-			return cpu;
-		}
-	}
-
-	flags = MAP_CONTIGUOUS | MAP_ANONYMOUS;
-	if (cached == 0) {
-		flags |= MAP_UNCACHED;
-	}
-	cpu = mmap(NULL, (size_t)pages * _PAGE_SIZE, PROT_READ | PROT_WRITE, flags, -1, 0);
+	(void)ctx;
+	cpu = mmap(NULL, bytes, PROT_READ | PROT_WRITE, flags, -1, 0);
 	if (cpu == MAP_FAILED) {
 		return NULL;
 	}
-	memset(cpu, 0, (size_t)pages * _PAGE_SIZE);
+	first = (volatile uint32_t *)cpu;
+	last = (volatile uint32_t *)((char *)cpu + bytes - _PAGE_SIZE);
+	*first = 0u;
+	*last = 0u;
+	*pa_first = (uint64_t)va2pa((void *)(uintptr_t)first);
+	*pa_last = (uint64_t)va2pa((void *)(uintptr_t)last);
+	return cpu;
+}
+
+
+static void block_unmap(void *ctx, void *cpu, size_t bytes)
+{
+	(void)ctx;
+	(void)munmap(cpu, bytes);   /* a block no device and no client ever saw */
+}
+
+
+/* Where block_get found a block (the `V3DA srv low` lines). */
+typedef struct {
+	const char *src;              /* "pool" or "fresh" */
+	v3da_lowmem_result_t res;     /* fresh blocks tried for a LOWMEM BO */
+	int low;                      /* the block lies below V3DA_LOWMEM_LIMIT */
+} v3da_place_t;
+
+
+/* A block for `pages` pages: a pooled block of the same size and memory type
+ * (want_low: only one below 1 GiB; otherwise preferably one above it), else fresh
+ * MAP_CONTIGUOUS blocks - for want_low until one lands below 1 GiB (v3da_lowmem.h).
+ * Zeroed either way (Phoenix contiguous pages are not zeroed; a garbage binner BO
+ * wedged CT1 - v3d_gpu.c:774-776). */
+static void *block_get(uint32_t pages, int cached, int want_low, uintptr_t *pa, v3da_place_t *pl)
+{
+	static const v3da_lowmem_ops_t ops = { block_map, block_unmap, NULL };
+	size_t bytes = (size_t)pages * _PAGE_SIZE;
+	uint64_t first = 0u, last = 0u;
+	void *cpu;
+	int i;
+
+	memset(pl, 0, sizeof(*pl));
+	i = v3da_pool_pick(srv.pool, srv.npool, pages, (uint32_t)cached, want_low, (uint32_t)_PAGE_SIZE);
+	if (i >= 0) {
+		cpu = srv.pool[i].cpu;
+		*pa = srv.pool[i].pa;
+		srv.pool[i] = srv.pool[--srv.npool];
+		memset(cpu, 0, bytes);
+		pl->src = "pool";
+		pl->low = v3da_lowmem_is_low((uint64_t)*pa, (uint64_t)bytes);
+		return cpu;
+	}
+	pl->src = "fresh";
+	if (want_low != 0) {
+		cpu = v3da_lowmem_map(&ops, bytes, cached, V3DA_LOWMEM_TRIES, (uint32_t)_PAGE_SIZE, &first, &pl->res);
+		srv.low_tries += pl->res.tries;
+		srv.low_rejected += pl->res.rejected;
+		if (cpu != NULL) {
+			memset(cpu, 0, bytes);
+			*pa = (uintptr_t)first;
+			pl->low = pl->res.low;
+			return cpu;
+		}
+		/* nothing contiguous in the tries: the ordinary path below reports it */
+	}
+	cpu = block_map(NULL, bytes, cached, &first, &last);
+	if (cpu == NULL) {
+		return NULL;
+	}
+	memset(cpu, 0, bytes);
 	*pa = (uintptr_t)va2pa(cpu);
+	pl->low = v3da_lowmem_is_low((uint64_t)*pa, (uint64_t)bytes);
 	return cpu;
 }
 
@@ -153,11 +210,52 @@ static int scanout_pick(void)
 }
 
 
+/* The KiB figures of the `V3DA srv low` lines and the qstat line's low= field. */
+static unsigned long long kib(uint64_t bytes)
+{
+	return (unsigned long long)(bytes / 1024u);
+}
+
+
+/* A LOWMEM BO's placement, one line each (capped at 64 per server run; the
+ * counters in the qstat line are not). */
+static void low_note(const v3da_bo_t *b, uint32_t client, const v3da_place_t *pl, const char *why)
+{
+	if ((srv.verbose == 0) && (srv.low_notes >= 64u)) {
+		return;
+	}
+	srv.low_notes++;
+	if (why == NULL) {
+		printf("V3DA srv low BO handle=0x%x client=%u pages=%u pa=0x%08llx src=%s tries=%u rejected=%u low=%llu/%lluKiB "
+			"peak=%lluKiB bos=%u from_pool=%u\n", b->handle, client, b->pages, (unsigned long long)b->pa, pl->src,
+			pl->res.tries, pl->res.rejected, kib(srv.low_live), kib(srv.low_budget), kib(srv.low_peak), srv.low_bos,
+			srv.low_from_pool);
+	}
+	else {
+		printf("V3DA srv low FALLBACK handle=0x%x client=%u pages=%u pa=0x%08llx below_1g=%d why=%s tries=%u rejected=%u "
+			"low=%llu/%lluKiB fallbacks=%u\n", b->handle, client, b->pages, (unsigned long long)b->pa, pl->low, why,
+			pl->res.tries, pl->res.rejected, kib(srv.low_live), kib(srv.low_budget), srv.low_fallback);
+	}
+}
+
+
+void v3da_bo_low_counts(uint64_t *live, uint64_t *budget, uint32_t *bos, uint32_t *fallback)
+{
+	*live = srv.low_live;
+	*budget = srv.low_budget;
+	*bos = srv.low_bos;
+	*fallback = srv.low_fallback;
+}
+
+
 int v3da_bo_create(uint32_t client, uint32_t size, uint32_t flags, v3da_bo_create_resp_t *out)
 {
 	uint32_t pages, slot, gpuva, i, scan_pages = 0u, buf_pa = 0u;
 	int cached = ((flags & V3DA_BO_CACHEABLE) != 0u) ? 1 : 0;
-	int scan = -1;
+	int scan = -1, want_low = 0;
+	uint64_t foot = 0u;
+	const char *low_why = NULL;
+	v3da_place_t pl;
 	uintptr_t pa;
 	void *cpu;
 	v3da_bo_t *b;
@@ -189,8 +287,21 @@ int v3da_bo_create(uint32_t client, uint32_t size, uint32_t flags, v3da_bo_creat
 		srv.nbos++;
 	}
 
-	cpu = block_get(pages, cached, &pa);
+	if (((flags & V3DA_BO_LOWMEM) != 0u) && (scan < 0)) {
+		/* proto 5: the firmware plane may scan it out - below 1 GiB, within the budget */
+		foot = v3da_lowmem_footprint(pages, (uint32_t)_PAGE_SIZE);
+		want_low = v3da_lowmem_admit(srv.low_live, foot, srv.low_budget);
+		if (want_low == 0) {
+			low_why = "budget";
+		}
+	}
+	cpu = block_get(pages, cached, want_low, &pa, &pl);
 	if (cpu == NULL) {
+		if ((flags & V3DA_BO_LOWMEM) != 0u) {
+			srv.low_fallback++;
+			printf("V3DA srv low FALLBACK handle=- client=%u pages=%u why=nomem tries=%u rejected=%u low=%llu/%lluKiB\n",
+				client, pages, pl.res.tries, pl.res.rejected, kib(srv.low_live), kib(srv.low_budget));
+		}
 		return -ENOMEM;
 	}
 	gpuva = v3da_hw_va_alloc(&srv.hw, pages);
@@ -244,6 +355,24 @@ int v3da_bo_create(uint32_t client, uint32_t size, uint32_t flags, v3da_bo_creat
 		srv.scan.claimed[scan] = b->handle;
 		printf("V3DA srv scanout BO handle=0x%x buf%d pa=0x%08x gpuva=0x%08x %u/%u pages on the fb\n",
 			b->handle, scan, buf_pa, gpuva, scan_pages, pages);
+	}
+	if ((flags & V3DA_BO_LOWMEM) != 0u) {
+		if ((want_low != 0) && (pl.low != 0)) {
+			b->low = 1;
+			srv.low_live += foot;
+			if (srv.low_live > srv.low_peak) {
+				srv.low_peak = srv.low_live;
+			}
+			srv.low_bos++;
+			if (strcmp(pl.src, "pool") == 0) {
+				srv.low_from_pool++;
+			}
+			low_note(b, client, &pl, NULL);
+		}
+		else if (scan < 0) {
+			srv.low_fallback++;
+			low_note(b, client, &pl, (low_why != NULL) ? low_why : "tries");
+		}
 	}
 
 	out->handle = b->handle;
@@ -531,6 +660,9 @@ void v3da_bo_quarantine_poll(void)
 				(unsigned long long)b->imp_mem.addr, b->pages, srv.imports);
 		}
 		else {
+			if (b->low != 0) {
+				srv.low_live -= v3da_lowmem_footprint(b->pages, (uint32_t)_PAGE_SIZE);   /* the block may serve a normal BO now */
+			}
 			block_put(b->cpu, b->pa, b->pages, ((b->flags & V3DA_BO_CACHEABLE) != 0u) ? 1 : 0);
 		}
 		v3da_hw_va_free(&srv.hw, b->gpuva, b->pages);

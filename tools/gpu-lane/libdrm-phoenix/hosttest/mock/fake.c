@@ -14,7 +14,10 @@
  * one (G4, before G6: no BO_LAST_FENCE / BO_ATTACH_FENCE);
  * FAKE_KMS_PROTO=1 makes the fake display server a proto-1 one (before G7: HELLO
  * exactly 1, no PRIME_IMPORT); FAKE_KMS_IMPORT_HIGH=1 places every imported buffer
- * above 1 GiB (the case the Pi cannot be made to produce). Jobs complete
+ * above 1 GiB (the case the Pi cannot be made to produce); FAKE_V3DA_HIGH=1 makes the
+ * render server place every BO above 1 GiB unless it honours V3DA_BO_LOWMEM (proto
+ * 5: the scan-out placement hint), so card0 refuses exactly the unplaced ones - the
+ * m6h-g7 case (`KMS fb FAIL ... why=above_1g`) on demand. Jobs complete
  * at the next wait and flips at commit; there is no GPU, so the CL clear's pixels
  * stay as they were (the harness expects exactly that). G6: the render server
  * keeps each BO's last-use fences (BO_LAST_FENCE / BO_ATTACH_FENCE, as v3da_bo.c),
@@ -66,8 +69,9 @@
 #define V3D_CARD_PORT 14u   /* /dev/dri/card1 (M3 part 2, G10: its own port = its own dev_t) */
 #define VBUF_PORT 15u       /* /v3dbuf (G4) */
 #define PA_BASE  0x10000000ull
+#define PA_HIGH  0xc0000000ull   /* FAKE_V3DA_HIGH: where an unplaced render BO "lies" (the arena backs it) */
 #define FENCE_PA 0x0f000000ull
-#define ARENA_SZ (64u << 20)
+#define ARENA_SZ (128u << 20)
 #define MAXFD    256
 
 enum { K_NONE = 0, K_KMS, K_V3D, K_BUF, K_VBUF };
@@ -87,6 +91,8 @@ static struct {
 	uint32_t v3d_proto;        /* the fake render server's protocol: 2, 3 (before G6) or 4 */
 	int old_kms;               /* FAKE_KMS_PROTO=1: a display server from before G7 */
 	int import_high;           /* FAKE_KMS_IMPORT_HIGH=1: imports land above 1 GiB */
+	int v3d_high;              /* FAKE_V3DA_HIGH=1: render BOs lie above 1 GiB unless placed (V3DA_BO_LOWMEM) */
+	uint32_t lowmem_bos;       /* BOs placed below 1 GiB for V3DA_BO_LOWMEM */
 } F;
 
 uint32_t fake_unaligned_ends(void);
@@ -275,7 +281,7 @@ static int bo_find(uint32_t client, uint32_t handle)
 static int v3d_fence_done(const kms_fence_t *f);
 static void v3d_complete_all(void);
 /* G7: the reference rpi4-kms's open /v3dbuf descriptor holds on a render BO */
-static int vbo_kms_ref(uint64_t id, uint64_t *size, uint64_t *off);
+static int vbo_kms_ref(uint64_t id, uint64_t *size, uint64_t *off, uint64_t *pa);
 static void vbo_kms_unref(uint64_t id);
 
 
@@ -756,7 +762,7 @@ static void kms_handle(msg_t *m)
 			break;
 		case KMS_OP_PRIME_IMPORT: {
 			const kms_prime_import_req_t *q = &rq.u.prime_import;
-			uint64_t size = 0u, off = 0u;
+			uint64_t size = 0u, off = 0u, pa = 0u;
 			if (F.old_kms) {
 				rc = -EINVAL;   /* a proto-1 server: unknown opcode */
 				break;
@@ -783,7 +789,7 @@ static void kms_handle(msg_t *m)
 					rc = -ENOSPC;
 					break;
 				}
-				if (vbo_kms_ref(q->id, &size, &off) != 0) {
+				if (vbo_kms_ref(q->id, &size, &off, &pa) != 0) {
 					rc = -ENOENT;   /* not (or no longer) exported */
 					break;
 				}
@@ -794,7 +800,7 @@ static void kms_handle(msg_t *m)
 				K.bo[i].size = size;
 				K.bo[i].off = off;
 				K.bo[i].imp_id = q->id;
-				K.bo[i].why = F.import_high ? "above_1g" : NULL;
+				K.bo[i].why = F.import_high ? "above_1g" : kms_import_why(pa, size, 1);   /* the real server's rule */
 				K.imports++;
 				K.imports_live++;
 			}
@@ -962,6 +968,7 @@ static struct {
 		int used, imported, exported;
 		uint32_t handle, owner, size;
 		uint64_t off, imp_id;
+		int high;                  /* FAKE_V3DA_HIGH: its reported physical address is above 1 GiB */
 		uint32_t refs, fd_opens;   /* G4: creator + sharers + open /v3dbuf descriptors, as v3da_bo.c */
 		uint64_t sharers;
 		v3da_fence_t last[V3DA_Q_COUNT];   /* G6: last use per queue (every client's) */
@@ -1046,7 +1053,7 @@ static void mem_of(int b, v3da_memref_t *mem)
 	}
 	else {
 		mem->kind = V3DA_MEM_PHYS;
-		mem->addr = PA_BASE + V.bo[b].off;
+		mem->addr = (V.bo[b].high ? PA_HIGH : PA_BASE) + V.bo[b].off;
 	}
 }
 
@@ -1086,7 +1093,7 @@ static void vbo_unref(int b)
 }
 
 
-static int vbo_kms_ref(uint64_t id, uint64_t *size, uint64_t *off)
+static int vbo_kms_ref(uint64_t id, uint64_t *size, uint64_t *off, uint64_t *pa)
 {
 	int b = vbuf_find(id);
 
@@ -1097,6 +1104,7 @@ static int vbo_kms_ref(uint64_t id, uint64_t *size, uint64_t *off)
 	V.bo[b].refs++;
 	*size = V.bo[b].size;
 	*off = V.bo[b].off;
+	*pa = (V.bo[b].high ? PA_HIGH : PA_BASE) + V.bo[b].off;   /* what rpi4-kms's va2pa sees */
 	return 0;
 }
 
@@ -1170,11 +1178,16 @@ static void v3d_handle(msg_t *m)
 					if (off == ~0ull) {
 						break;
 					}
+					/* proto 5: a V3DA_BO_LOWMEM BO is placed below 1 GiB (v3da_bo.c); an
+					 * older server ignores the flag, as the real ones did */
+					int placed = ((rq.u.bo_create.flags & V3DA_BO_LOWMEM) != 0u) && (F.v3d_proto >= V3DA_PROTO_BO_LOWMEM);
 					V.bo[i].used = 1;
 					V.bo[i].owner = c;
 					V.bo[i].refs = 1u;
 					V.bo[i].size = (rq.u.bo_create.size + 4095u) & ~4095u;
 					V.bo[i].off = off;
+					V.bo[i].high = F.v3d_high && !placed;
+					F.lowmem_bos += (uint32_t)placed;
 					V.bo[i].handle = ((++V.gen) << 13) | (i + 1u);
 					r->u.bo_create.handle = V.bo[i].handle;
 					r->u.bo_create.gpuva = 0x100000u + (uint32_t)off;
@@ -1182,7 +1195,7 @@ static void v3d_handle(msg_t *m)
 					r->u.bo_create.mem.kind = V3DA_MEM_PHYS;
 					r->u.bo_create.mem.cache = V3DA_CACHE_UNCACHED;
 					r->u.bo_create.mem.size = V.bo[i].size;
-					r->u.bo_create.mem.addr = PA_BASE + off;
+					r->u.bo_create.mem.addr = (V.bo[i].high ? PA_HIGH : PA_BASE) + off;
 					rc = 0;
 					break;
 				}
@@ -1950,6 +1963,9 @@ void *__real_mmap(void *addr, size_t len, int prot, int flags, int fd, off_t off
 		if (((uint64_t)off >= PA_BASE) && ((uint64_t)off + len <= PA_BASE + ARENA_SZ) && (F.arena != NULL)) {
 			return F.arena + ((uint64_t)off - PA_BASE);
 		}
+		if (((uint64_t)off >= PA_HIGH) && ((uint64_t)off + len <= PA_HIGH + ARENA_SZ) && (F.arena != NULL)) {
+			return F.arena + ((uint64_t)off - PA_HIGH);   /* FAKE_V3DA_HIGH: the same arena, reported high */
+		}
 		errno = EINVAL;
 		return MAP_FAILED;
 	}
@@ -2079,6 +2095,8 @@ int drmprobe_host_foreign_done(void)
 	return (V.fx.seqno != 0u) && (fence_page.slot[FOREIGN_SLOT].completed[V3DA_Q_RENDER] >= V.fx.seqno);
 }
 void fake_set_kms(int old_kms, int import_high) { F.old_kms = old_kms; F.import_high = import_high; }
+void fake_set_v3d_high(int on) { F.v3d_high = on; }
+uint32_t fake_lowmem_bos(void) { return F.lowmem_bos; }
 void fake_g7(uint32_t *imports, uint32_t *imports_live, uint32_t *imports_released)
 {
 	*imports = K.imports;

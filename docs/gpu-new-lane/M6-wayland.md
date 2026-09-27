@@ -1235,3 +1235,235 @@ tests (drmprobe `dmabuf_sync_{probe,import,read,flip}`; host fail-then-pass agai
 artifacts, staging and the pre-registered cycle `g6-sync` (servers → `drmprobe-g6` →
 `weston-m6a-g6.sh gl egl noinput` with `weston-g6` + `weston-simple-egl-g6`) are in
 [G6-cross-process-sync.md](G6-cross-process-sync.md).
+
+## 18. Scanout placement below 1 GiB (render server proto 5), and cycle `m6i-low`
+
+(Numbered 18: §17 is the G6 pointer.) In m6h-g7 one of the client's linear buffers came from a block at
+`pa=0xf8000000` and card0 refused it (`KMS fb FAIL … pa=0xf8000000 … why=above_1g`). Weston composited that
+buffer with GL while the other linear buffers went straight to the plane. The firmware plane fetches
+nothing at or above 1 GiB, and the render server placed its blocks wherever the kernel put them. This
+section makes the buffers that may be scanned out come from below 1 GiB. It is host-tested; the Pi cycle
+below is pre-registered.
+
+### 18.1 Design
+
+**Why a hint from the client.** The other options fail on facts in the tree:
+
+| option | why not |
+|---|---|
+| kernel support for an address limit | there is none. `vm_objectContiguous` → `vm_pageAlloc` → `_page_alloc` (`vm/page.c`) is a buddy allocator that takes the first free block of the order, with no address argument. Adding one would change the kernel |
+| migrate at `BO_EXPORT` | the wayland-egl platform exports a buffer **after** its first frame: `create_wl_buffer` → `__DRI_IMAGE_ATTRIB_FD` runs in `dri2_wl_swap_buffers_with_damage` (`platform_wayland.c:1886`), after `dri2_flush_drawable_for_swapbuffers` submitted the render. Migrating would mean waiting for that job and copying 8 MB through an uncached mapping. It would also break the client's own mapping: memrefs are `V3DA_MEM_PHYS`, so the client maps the old physical pages directly |
+| server heuristic (big BOs low) | useless. In m6h the UIF first round (never scannable, the library refuses `mod=0x0700000000000006` at ADDFB2) and the linear second round are **both 2026 pages**. Games allocate many large textures too |
+
+Mesa knows which buffers can be scanned out. Weston's scan-out dma-buf feedback tranche makes it
+re-allocate with `__DRI_IMAGE_USE_SCANOUT` (`platform_wayland.c:1237`), which `dri2.c:984` turns into
+`PIPE_BIND_SCANOUT`. The hint is therefore keyed on `PIPE_BIND_SCANOUT` only, not on `SHARED` (the UIF
+round is `SHARED`).
+
+**The chain.**
+
+1. **mesa-drm patch 0016** (`v3d_resource.c`, `v3d_bufmgr.[ch]`). On Phoenix, `v3d_resource_bo_alloc` of a
+   `PIPE_BIND_SCANOUT` resource calls the new `v3d_bo_alloc_flags(…, V3D_PHOENIX_CREATE_BO_SCANOUT)`, which
+   puts `1u << 31` in `drm_v3d_create_bo.flags`. The renderonly path (a compositor with kmsro) never gets
+   here: it allocates on card0, in the kms pool. Such BOs bypass the BO cache, because a cached BO may lie
+   anywhere. If the library answers `EINVAL` (an older libdrm), Mesa retries without the flag, so the
+   placement is only a hint. Linux never sets the flag.
+2. **libdrm-phoenix** (`drm_phoenix_v3d.c ioc_create_bo`, `drm_phoenix_ext.h DRM_PHOENIX_V3D_CREATE_BO_SCANOUT`).
+   The DRM flag becomes the wire flag `V3DA_BO_LOWMEM` (bit 2), and only when the server's HELLO says 5 or
+   more; against an older server it is dropped. Any other flag is still `EINVAL`, as on Linux.
+3. **Protocol 5** (`v3da_proto.h`): `V3DA_PROTO_VERSION` = 5, `V3DA_PROTO_BO_LOWMEM` = 5, `V3DA_BO_LOWMEM`,
+   `V3DA_LOWMEM_LIMIT` = 1 GiB (= `KMS_SCANOUT_LIMIT`). The server accepts HELLO 2..5. Servers before 5
+   ignored unknown create flags, so even an unconditional flag would have been harmless. The G6b
+   descriptor ops reserved "proto ≥ 5" in `drm_phoenix_ext.h`; that is now ≥ 6.
+4. **Server placement** (`v3da_lowmem.h`, pure and host-tested; used by `v3da_bo.c block_get`). A
+   `LOWMEM` BO takes, in order:
+   - a **pooled** block of its size and memory type that lies below 1 GiB;
+   - otherwise up to **16 fresh** `MAP_CONTIGUOUS` blocks until one lands low. This is the retry that
+     `kms_pool_init` does for the kms pool. The rejects are **held** while trying, so each try gets a
+     different buddy block, and are then handed back to the kernel (safe since kernel build 8, E1 §6).
+     They are counted as `rejected`, **not** in `pages_to_kernel`, which the ping's verdict requires to
+     be 0. Only the first and last page of a reject are touched (for `va2pa`); only the kept block is
+     zeroed;
+   - if no low block turns up, the last contiguous one is kept. The BO is created anyway and card0 refuses
+     it as before, logged as a `FALLBACK`.
+
+   The budget is **`-L` MiB, default 64**: the low memory that live and quarantined `LOWMEM` BOs may hold,
+   counted as the buddy footprint. A 2026-page 1080p buffer is one **8 MiB** block, so the default is
+   eight buffers. Over budget, a BO takes the ordinary path (`why=budget`); `-L 0` = the pre-proto-5
+   behaviour. To keep low blocks for the next scan-out BO, an **ordinary** BO now takes a pooled block
+   **above** 1 GiB when the pool has both.
+
+**Lines** (tagged, `V3DA srv low …` capped at 64 per server run, counters uncapped):
+
+    V3DA srv ready … proto=2..5 bufns=1 lowmem_mib=64
+    V3DA srv low BO handle=0x… client=<c> pages=2026 pa=0x… src=pool|fresh tries=<t> rejected=<r> low=<N>/65536KiB peak=<P>KiB bos=<n> from_pool=<p>
+    V3DA srv low FALLBACK handle=0x… client=<c> pages=… pa=0x… below_1g=0|1 why=budget|tries tries=… rejected=… low=…/…KiB fallbacks=<f>
+    V3DA srv low FALLBACK handle=- client=<c> pages=… why=nomem …               (no memory at all: BO_CREATE -ENOMEM)
+    V3DA srv qstat … low=<N>/<M>KiB lowbos=<n> lowfb=<f>                       (the qstat counter)
+    V3DA srv low stats client=<c> live=<N>/<M>KiB peak=… bos=… from_pool=… fallbacks=… tries=… rejected=…   (at a client close, when changed)
+
+**Compatibility.**
+
+| binary | against the proto-5 server | against a proto-4 (G6) server |
+|---|---|---|
+| everything staged (proto 2: `rpi4-kms-g7 -G`, `v3dasync-ping`, games; proto 3/4: `drmprobe-g4/-g7/-g6`, `weston-g7/-g6`, the G4/G6 clients) | unchanged (HELLO accepted; they never set the flag, so placement is as before, except that ordinary BOs now prefer high pooled blocks) | — |
+| new library + Mesa 0016 (`drmprobe-low`, `weston-simple-egl-low`) | HELLO 5: scan-out BOs placed low | HELLO 5 → `EPROTO` → 2 (reply 4): the flag is dropped, placement anywhere (host control `lowmem-negative`) |
+| Mesa 0016 objects + a pre-proto-5 `libdrm.a` | — (never built: libdrm is static per binary, and weston-drm links the `--libdrm-prefix` snapshot) | the library answers `EINVAL`, Mesa retries without the flag |
+
+Files: `tools/gpu-lane/v3d-async/{v3da_proto.h, v3da_lowmem.h (new), v3da.h, v3da_bo.c, v3da_jobs.c,
+v3da_main.c, hosttest/ (new)}`, `tools/gpu-lane/libdrm-phoenix/{src/drm_phoenix_v3d.c,
+include/drm_phoenix_ext.h, drmprobe/drmprobe.c, hosttest/{run.sh, e2e_main.c, mock/fake.c}}`,
+`tools/gpu-lane/mesa-drm/patches/mesa/0016-v3d-Phoenix-RTOS-place-scanout-BOs-below-1-GiB.patch`.
+
+### 18.2 Tests
+
+**Server policy** (`tools/gpu-lane/v3d-async/hosttest/run.sh`, native + ASan/UBSan). A mock allocator hands
+out scripted blocks (low, high, torn, none). The checks: footprint (a 2026-page block is 8 MiB; the first
+run caught an expectation of 16 MiB: 2026 × 4 KiB < 8 MiB), the limit to the byte, the budget, pool
+choice (LOWMEM only low, ordinary prefers high), fresh blocks (kept block, `tries`, `rejected`, rejects
+**held while trying** (`held_max`), every non-kept block unmapped exactly once, torn blocks never kept,
+fallback after 16). Result `LOWHOST RESULT checks=43 fails=0 verdict=PASS`. **Negative control**:
+`-DLOWMEM_TEST_NO_POLICY` (take the first block, as before proto 5) fails 12 of 43 →
+`LOWHOST negative-control verdict=PASS`.
+
+**drmprobe `scanout_lowmem`** (`build-out-low`). A render BO of the mode's frame + one page (2026 pages at
+1080p, like a Mesa client buffer) created **with** the hint → export → card0 import → LINEAR ADDFB2 must
+succeed. A plain BO of the same size is tried for comparison; its verdict depends on where its block
+landed, so it is informational on the Pi. An unknown create flag must be `EINVAL`.
+
+**Host harness** (`DRMPHX_OUT=…/build-out-low libdrm-phoenix/hosttest/run.sh`). The fake render server now
+models placement. `FAKE_V3DA_HIGH=1` reports every BO it did not place above 1 GiB (the same arena,
+`PA_HIGH`), and the fake display server's import applies the real `kms_import_why` to that address. That
+is m6h's case, on demand. Results [host]:
+
+    HOSTTEST libdrm-phoenix checks=134 fails=0 verdict=PASS
+    HOSTE2E legacy / dri verdict=PASS            (scanout_lowmem … low_addfb_errno=0 plain_addfb_errno=0 ok=1, lowmem_bos=1)
+    DRMPROBE scanout_lowmem 1920x1080 pages=2026 bogus_flag_errno=22 create=0 low_addfb_errno=0 plain_create=0 plain_addfb_errno=22 ok=1
+    HOSTE2E lowmem-high verdict=PASS             (FAKE_V3DA_HIGH=1: the hinted BO placed and taken, the plain one and the
+                                                  G7/G6-flip BOs refused, gap=2)
+    DRMPROBE scanout_lowmem … low_addfb_errno=22 … plain_addfb_errno=22 (the placed BO was refused: …) ok=0
+    HOSTE2E lowmem-negative verdict=PASS         (FAKE_V3DA_HIGH=1 FAKE_V3DA_PROTO=4: the library falls back, drops the
+                                                  hint, the buffer lands high - scanout_lowmem FAILS; lowmem_bos=0)
+    HOSTE2E g4-negative / g7-negative / g7-high / g6-negative verdict=PASS   (expected sets updated: scanout_lowmem
+                                                  needs G4 + G7; card0 import counts 3 → 5)
+
+**Not host-testable:** Mesa 0016 (no host Mesa). Its proof is on the Pi: `V3DA srv low BO … client=<the egl
+client>` lines. The client's `DRMPHX` trace of `CREATE_BO … flags=0x80000000` is capped at the first 16
+calls per request number, so it will probably not show the second round. Also not host-testable: the
+server's `mmap`/`va2pa`/pool/quarantine accounting (needs the Phoenix kernel). `rpi4-kms` compiles
+against the new header (`kms/out-lowchk`, not staged).
+
+### 18.3 Artifacts (built 2026-09-27; sha256, first 16 hex)
+
+| file | sha256 | notes |
+|---|---|---|
+| `tools/gpu-lane/v3d-async/out-low/rpi4-v3d-async` | `1ed50acd43a64fd5` | server, proto 5 (G6 sources + placement); `-Werror`; `strings -a … \| grep -c 'V3DA srv low'` = 4 |
+| `tools/gpu-lane/v3d-async/out-low/v3dasync-ping` | `94df667c929bab43` | not staged |
+| `tools/gpu-lane/libdrm-phoenix/build-out-low/drmprobe` | `4521658f7b233ee3` | G6 probe + `scanout_lowmem` (`strings -a … \| grep -c scanout_lowmem` = 3) |
+| `tools/gpu-lane/libdrm-phoenix/build-out-low/prefix/lib/libdrm.a` | `cda443dc8dfd6bce` | the flag mapping; the snapshot Mesa and Weston link (9 pre-existing compiler warnings, as G6/G7) |
+| `tools/gpu-lane/mesa-drm/patches/mesa/0016-…patch` | `76a239da4dc30777` | applies after 0001–0015 (`git apply --check`) |
+| `tools/gpu-lane/mesa-drm/build-out-wayland-low/` (`libgallium-26.2.0.a`) | `fea4df158f17a3d8` | `mesa-drm/build.sh --wayland --out …/build-out-wayland-low --libdrm-prefix libdrm-phoenix/build-out-low/prefix`; patch set stamp `4a457a1efe6f3903`; no warning in the patched files (59 warning lines vs 56 in `build-out-wayland`: three extra in `threads_posix.c` / `blake3.c`, untouched code) |
+| `tools/gpu-lane/weston-drm/build-out-low/weston-simple-egl-stripped` | `feb43b9bfaad3a20` | `weston-drm/build.sh --no-mesa --mesa-out …/build-out-wayland-low --libdrm-prefix …/build-out-low/prefix --out …/build-out-low`; `nm` shows `v3d_bo_alloc_flags`; the map names only `build-out-wayland-low` archives; 0 link warnings beyond the libphoenix notes; unstripped `4b3247c298666c43` |
+| `tools/gpu-lane/weston-drm/build-out-low/weston-stripped` | `33cd2d1a8f4ffba9` | built, **not staged** (the compositor's scan-out buffers come from card0 through kmsro and never reach patch 0016; the cycle keeps `weston-g6`) |
+
+Frozen copies under the staged names: `/home/houp/.claude/jobs/c8f1289c/tmp/low-frozen/` (same sha).
+
+### Staging (coordinator)
+
+Needs G6 §8's staging in place (`weston-g6`, `weston-m6a-g6.sh` = `b5dc486c…`, unchanged) plus M6 §16's
+(`rpi4-kms-g7`, `shmsrv`, the ini). New names only:
+
+```
+F=/home/houp/.claude/jobs/c8f1289c/tmp/low-frozen
+EXPORT=/srv/phoenix-rpi4-nfs-gcc16
+sudo -n install -m 755 "$F/rpi4-v3d-async-low"    "$EXPORT/bin/rpi4-v3d-async-low"
+sudo -n install -m 755 "$F/drmprobe-low"          "$EXPORT/bin/drmprobe-low"
+sudo -n install -m 755 "$F/weston-simple-egl-low" "$EXPORT/bin/weston-simple-egl-low"
+cmp "$F/rpi4-v3d-async-low"    "$EXPORT/bin/rpi4-v3d-async-low"
+cmp "$F/drmprobe-low"          "$EXPORT/bin/drmprobe-low"
+cmp "$F/weston-simple-egl-low" "$EXPORT/bin/weston-simple-egl-low"
+cmp /home/houp/phoenix-rpi/tools/gpu-lane/weston-drm/build-out-g6/weston-stripped "$EXPORT/bin/weston-g6"
+cmp /home/houp/phoenix-rpi/tools/gpu-lane/weston-drm/pi/weston-m6a.sh "$EXPORT/bin/weston-m6a-g6.sh"
+```
+
+Preconditions as §9: netboot image ≥ build 11, no GPU app, no X, no old-lane `rpi4-v3d`. **Order: after
+`g6-sync` (queue48).** The new server carries all of G6. If `g6-sync` has not run, a G6 failure shows up
+here too; grade G6 rows by the G6 doc, and do not read them as placement faults.
+
+### Cycle `m6i-low` (Bash `timeout: 600000`)
+
+**Question:** does the render server put every buffer that may be scanned out below 1 GiB? Specifically,
+drmprobe's hinted BO, and each linear back buffer that weston-simple-egl re-allocates for Weston's
+scan-out tranche. Does Weston then scan out **every** such client buffer directly, with no `above_1g`
+refusal, at ≥ 45 fps in every steady window?
+
+```
+./scripts/test-cycle-psh-interact.sh --label m6i-low --idle-secs 45 --max-cmd-secs 150 \
+    --hdmi-dense-on 'DRMPROBE kms_flip start|WESTONDRM client start' -- \
+    "/bin/rpi4-v3d-async-low -r 1 -m serial -i" \
+    "/bin/rpi4-kms-g7 -G -p 96" \
+    "/bin/shmsrv -v" \
+    "/bin/drmprobe-low -n 30 -g 1024" \
+    "export WESTON=/bin/weston-g6" \
+    "export EGL_CLIENT=/bin/weston-simple-egl-low" \
+    "/bin/bash /bin/weston-m6a-g6.sh gl egl noinput" \
+    "/bin/shmsrv -s" \
+    "/bin/kmstest-poll stats" \
+    "/bin/v3dasync-ping stats"
+```
+
+Against `g6-sync`, only the server (+ placement), the probe (+ one key) and the client (Mesa 0016 +
+the proto-5 library) change. The m6h reference: `artifacts/rpi4b-uart/rpi4b-uart-20260927-144453-m6h-g7.log`
+(`KMS fb FAIL … pa=0xf8000000 … why=above_1g`, 45.2/45.0/45.0 fps). Grade:
+
+```
+grep -a -E '^(DRMPROBE|V3DA srv (ready|bufns|low|export|export withdrawn|g6 stats)|V3DA srv qstat|KMS (srv (ready|flipstat)|v3d|import|scanout|fb FAIL)|DRMPHX ioctl .*(ADDFB2|CREATE_BO .*flags=0x8)|WESTONDRM|MESA|KMSTEST|V3DAPING|SHMSRV stats) |frames in|caught signal|Failed to' \
+    artifacts/rpi4b-uart/rpi4b-uart-*-m6i-low.log
+./scripts/uart-summary.sh m6i-low
+```
+
+Allow ~1.3 % UART line corruption (re-read, don't count); EL0 dumps print twice. `<e>` = the egl client's
+render client id; `<h>` = a render handle / `/v3dbuf` id; "low PA" = below `0x40000000`.
+
+**Predictions:**
+
+| # | Line / observation | Predicted | If instead… |
+|---|---|---|---|
+| 1 | `V3DA srv ready … proto=2..5 bufns=1 lowmem_mib=64`, `V3DA srv bufns … registered=1 (G4)` | once | `proto=2..4` / no `lowmem_mib`: the G6 server was started (staging, `cmp`) — stop |
+| 2 | `KMS v3d connect=1 …` (proto-2 HELLO), `KMS srv ready … proto=1..2 import=v3dbuf` | as m6h | `connect=0 why=hello`: the HELLO range — compatibility blocker |
+| 3 | drmprobe rows as `g6-sync` predicts (m6h's 44 + the 4 G6 keys) | unchanged | a regression outside placement: compare with the g6-sync log |
+| 4 | `DRMPROBE scanout_lowmem 1920x1080 pages=2026 bogus_flag_errno=22 create=0 low_addfb_errno=0 plain_create=0 plain_addfb_errno=<0\|22> ok=1`; server `V3DA srv low BO handle=<h> client=<drmprobe's c> pages=2026 pa=<low PA> src=<pool\|fresh> tries=<0..16> rejected=<tries−1 or 0> low=8192/65536KiB …`; `KMS import … id=<h> … scanout=1 why=- …` | **the hint reaches the server and the block is low** | `low_addfb_errno=22` + `KMS fb FAIL … why=above_1g`: the BO was not placed — with a `V3DA srv low FALLBACK … why=tries`: 16 fresh blocks all high (low memory exhausted of 8 MiB blocks — note `tries`/`rejected`, then re-run with a smaller `-p` kms pool); with **no** `V3DA srv low` line: the flag did not arrive (library proto fallback: row 1) — blocker. `plain_addfb_errno=22`: the plain BO landed high by chance — informational only, **not** counted in row 9 |
+| 5 | `DRMPROBE RESULT pass=49 fail=0 … verdict=PASS` (g6-sync's 48 + `scanout_lowmem`); `gap=1..2` allowed if `prime_import_card0` / `dmabuf_sync_flip` (unhinted BOs) landed high | as listed | any `failed=` key: its row |
+| 6 | `WESTONDRM start renderer=gl client=egl weston=/bin/weston-g6 … egl_client=/bin/weston-simple-egl-low` | the exports reached the script | `egl_client=/bin/weston-simple-egl`: psh's `export` did not reach bash — the old client ran, rows 7–10 read as m6h |
+| 7 | client round 1 (UIF, `SHARED` only): `V3DA srv export … client=<e> … pages=2026` for handles with **no** `V3DA srv low` line; Weston's `DRM_IOCTL_MODE_ADDFB2 rc=-1 errno=22 … mod=0x700000000000006` | as m6h: the UIF round is not hinted (it can never be scanned out) | `V3DA srv low BO … client=<e>` for UIF handles: Mesa sets `PIPE_BIND_SCANOUT` on the UIF round — budget pressure, note |
+| 8 | client round 2 (linear, after the scan-out tranche): **per buffer (3–4)** `V3DA srv low BO handle=<h> client=<e> pages=2026 pa=<low PA> …`, then `V3DA srv export handle=<h> … pa=<same PA>`, `KMS import … id=<h> … scanout=1 why=-`, Weston's `ADDFB2 rc=0 … mod=0x0`, `KMS scanout import fb=<f> handle=<k> id=<h> pa0=<same PA> … (first flip)`; **0 `V3DA srv low FALLBACK`** | **every client buffer that may be scanned out is placed low and scanned out** | no `V3DA srv low` line for `client=<e>` and linear exports still at any PA: Mesa 0016 is not in the staged client (`sha256sum`, `strings`) or `__DRI_IMAGE_USE_SCANOUT` did not reach `v3d_resource_bo_alloc` — the design's assumption, blocker; `FALLBACK why=budget`: more than eight live hinted buffers (read `low=`), raise `-L`; `why=tries`: as row 4 |
+| 9 | **0 `KMS fb FAIL … why=above_1g`** for Weston's kms client (m6h: 1, `pa=0xf8000000`) | zero | one: read its `import_id` against row 8. Placed low but refused = a rule mismatch (`kms_scanout.h` vs `V3DA_LOWMEM_LIMIT`); not placed = row 8 |
+| 10 | `N frames in 5 seconds: X fps`: **X ≥ 45 in every steady window**, i.e. every window after the first two following `WESTONDRM client start` (m6h: 1.2, 8.4 = client start + UIF round + re-allocation, not graded; then 45.2, 45.0, 45.0) | direct scan-out all the time | a steady window at ~30: that buffer was composited (row 9) or G6's gate waited a frame (G6 doc row 14) — read `KMS srv flipstat … deferred=` |
+| 11 | `V3DA srv qstat … low=<N>/65536KiB lowbos=<n> lowfb=0` while Weston runs, N = 8192 × live hinted buffers (≤ 32768) | the counter | `lowfb>0`: rows 4/8 |
+| 12 | exit: `V3DA srv export withdrawn … live=0` for every client buffer; the last `V3DA srv low stats client=<c> live=0/65536KiB peak=<≤ 40960>KiB bos=<4..5> … fallbacks=0 …` (printed at a client close when changed, at the latest at `v3dasync-ping`'s) | every low block released back to the pool | `live>0` in the last line: a hinted BO outlived its references (compare the `withdrawn` lines) — an accounting leak, not a display fault |
+| 13 | `SHMSRV stats live=0`, `KMSTEST stats … apply_errors=0 … bos=0 exports=0`, `V3DAPING stats … bos_live=0 … to_kernel=0 … verdict=PASS` (proto-2 ping) | no leaks; rejects not counted in `to_kernel` | `to_kernel>0`: the pool-full path, not placement (rejects are counted apart) |
+| 14 | fault dumps | 0 kernel, 0 EL0 | EL0 in the server: `aarch64-phoenix-addr2line -f -e tools/gpu-lane/v3d-async/out-low/rpi4-v3d-async <pc>`; in the client: `weston-drm/build-out-low/weston-simple-egl` |
+
+**Decides:** rows 4, 8, 9 and 10 PASS = shareable scan-out buffers are placed below 1 GiB by the render
+server, and Weston's direct scan-out covers every client buffer. The placement path should then become
+the default for DRI3 in Xorg-drm (a Mesa x11 rebuild with 0016) and for v3dv WSI, which needs a separate
+v3dv hook (below).
+
+### 18.4 Risks
+
+- **Low memory is finite.** Each hinted 1080p buffer holds one 8 MiB buddy block below 1 GiB, next to the
+  kernel, the VideoCore carve-out and rpi4-kms's pool (`-p 96` = one 128 MiB block). The budget caps what
+  the server takes; beyond it, or when 16 tries find no low 8 MiB block, the BO is created anyway and
+  composited, as before this change (a logged `FALLBACK`, never a failed allocation).
+- **DRI3 sets `__DRI_IMAGE_USE_SCANOUT` on every back buffer** (`loader_dri3_helper.c:1506`). Once the
+  x11 Mesa build carries 0016, every GL window's buffers in Xorg-drm will ask for low memory. That is
+  right for Present flips, but it puts pressure on the budget; watch `lowfb` there before raising `-L`.
+- **Ordinary BOs now prefer high pooled blocks.** This changes which pooled block a same-size ordinary BO
+  gets (placement only). An unhinted buffer that used to reuse a low block by luck may now reuse a high
+  one. That affects `prime_import_card0` / `dmabuf_sync_flip` (graded `gap=1`, row 5) and nothing that
+  asks for scan-out correctly.
+- **v3dv (Vulkan WSI)** allocates through `v3dv_bo_alloc`, not the gallium path: patch 0016 does not cover
+  it. vkcube on `VK_KHR_display` uses kms dumb buffers (already low), so only a Wayland Vulkan client would
+  need the same hook.
+- **Rejects go back to the kernel.** This relies on the E1 §6 object-tree fix (kernel build ≥ 8, which
+  every netboot image since build 11 carries), as kms's pool retry already does.

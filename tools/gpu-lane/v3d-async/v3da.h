@@ -24,6 +24,7 @@
 #include <sys/types.h>
 
 #include "v3da_proto.h"
+#include "v3da_lowmem.h"   /* v3da_pool_block_t, the scan-out placement policy */
 
 
 #define V3DA_MAX_CLIENTS  V3DA_FENCE_NSLOTS   /* one fence-page row each */
@@ -120,6 +121,7 @@ typedef struct {
 	v3da_fence_t last[V3DA_Q_COUNT];
 	uint64_t last_gseq[V3DA_Q_COUNT];   /* the submission order of last[q] (BO_LAST_FENCE: newest first) */
 	int scanout;                  /* 0, or 1 + the firmware-fb buffer backing its GPU pages */
+	int low;                      /* V3DA_BO_LOWMEM placed below 1 GiB: its footprint counts in srv.low_live */
 	/* PRIME import (BO_IMPORT): the pages belong to another server's export; `cpu`
 	 * is this server's mapping of it (the E1 window reference that keeps the pages
 	 * alive), released with munmap() after quarantine - never pooled. */
@@ -137,12 +139,6 @@ typedef struct {
 	uint64_t pass[V3DA_Q_COUNT];  /* hw_submitted snapshot: wait for hw_completed >= pass */
 } v3da_bo_t;
 
-typedef struct {
-	void *cpu;
-	uintptr_t pa;
-	uint32_t pages;
-	uint32_t cached;
-} v3da_pool_block_t;
 
 
 /* ------------------------------------------------------------------------- */
@@ -360,6 +356,17 @@ typedef struct {
 	uint32_t nbos;                /* high-water mark of slots ever used */
 	v3da_pool_block_t pool[V3DA_MAX_POOL];
 	uint32_t npool;
+	/* Scan-out placement (V3DA_BO_LOWMEM, proto 5; v3da_lowmem.h): the qstat line's
+	 * `low=<live>/<budget>KiB` and the `V3DA srv low` lines */
+	uint64_t low_budget;          /* -L: bytes of low memory LOWMEM BOs may hold (buddy footprint) */
+	uint64_t low_live;            /* ... held now (live + quarantined LOWMEM BOs placed low) */
+	uint64_t low_peak;
+	uint32_t low_bos;             /* LOWMEM BOs placed below 1 GiB */
+	uint32_t low_from_pool;       /* ... of which from a pooled low block */
+	uint32_t low_fallback;        /* LOWMEM BOs NOT placed low (budget, no low block in the tries, no memory) */
+	uint32_t low_tries;           /* fresh blocks taken for LOWMEM BOs */
+	uint32_t low_rejected;        /* ... handed back to the kernel (not counted in pages_to_kernel) */
+	uint32_t low_notes;           /* `V3DA srv low` lines printed (capped) */
 
 	v3da_wait_t *waits;           /* parked requests (doubly linked) */
 	uint32_t nparked;
@@ -447,6 +454,7 @@ int v3da_bo_checksum(uint32_t handle, uint32_t off, uint32_t len, v3da_bo_checks
 void v3da_bo_client_gone(uint32_t client);
 void v3da_bo_quarantine_poll(void);
 void v3da_bo_counts(uint32_t *live, uint32_t *quar, uint32_t *pooled);
+void v3da_bo_low_counts(uint64_t *live, uint64_t *budget, uint32_t *bos, uint32_t *fallback);   /* qstat low= */
 v3da_bo_t *v3da_bo_find(uint32_t handle);
 /* BO_IMPORT. Called UNLOCKED (it opens and maps another server's buffer name, IPC
  * that must not stall the event thread); takes srv.lock itself for the table work. */

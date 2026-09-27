@@ -10,7 +10,7 @@
  * has one page-table base register and no arbitration, and this server resets it.
  *
  * Usage: rpi4-v3d-async [-f] [-i] [-I irq] [-r threads] [-p poll_us] [-m serial|pipeline]
- *                       [-k knobs] [-c chunk_kib] [-w wedge_ms] [-s stat_ms] [-v] [&]
+ *                       [-k knobs] [-c chunk_kib] [-w wedge_ms] [-s stat_ms] [-L lowmem_mib] [-v] [&]
  *   (detaches itself: psh has no job control, so `cmd &` would run in the
  *    foreground; a stray "&" argument is accepted and ignored)
  *   -f          stay in the foreground (no fork)
@@ -27,6 +27,9 @@
  *   -c KiB      binner-overflow chunk size (default 1024; pool 32 MiB)
  *   -w ms       watchdog: no control-list progress this long = wedge (default 500)
  *   -s ms       periodic "V3DA srv qstat" line while GPU jobs run (default 5000, 0 = off)
+ *   -L MiB      low-memory budget of scan-out BOs (V3DA_BO_LOWMEM, proto 5): how much of
+ *               the low 1 GiB their blocks may hold (buddy footprint, default 64;
+ *               0 = never place them, the pre-proto-5 behaviour)
  *
  * Serves: HELLO, GET_INFO, GET_PARAM, BO create/close/mmap/offset/wait (incl.
  * scanout BOs), BO_IMPORT (PRIME import of a /kmsbuf or /v3dbuf export), BO_EXPORT
@@ -123,7 +126,8 @@ static int client_open(int pid)
 static void client_close(id_t id, v3da_wait_t **answer)
 {
 	v3da_client_t *c = client_get(id);
-	static uint32_t g6_seen;
+	static uint32_t g6_seen, low_seen_bos, low_seen_fb;
+	static uint64_t low_seen_live;
 	uint32_t g6;
 
 	if (c == NULL) {
@@ -145,6 +149,17 @@ static void client_close(id_t id, v3da_wait_t **answer)
 			"dropped=%u\n", (unsigned)id, srv.g6_queries, srv.g6_pending, srv.g6_attach, srv.g6_attach_busy,
 			srv.g6_implicit, srv.g6_implicit_deps, srv.g6_dropped);
 	}
+	/* Scan-out placement (proto 5), whenever it changed since the last close: the
+	 * last line of a run shows what LOWMEM BOs still hold (0 once all are released) */
+	if ((srv.low_bos != low_seen_bos) || (srv.low_fallback != low_seen_fb) || (srv.low_live != low_seen_live)) {
+		low_seen_bos = srv.low_bos;
+		low_seen_fb = srv.low_fallback;
+		low_seen_live = srv.low_live;
+		printf("V3DA srv low stats client=%u live=%llu/%lluKiB peak=%lluKiB bos=%u from_pool=%u fallbacks=%u tries=%u "
+			"rejected=%u\n", (unsigned)id, (unsigned long long)(srv.low_live / 1024u),
+			(unsigned long long)(srv.low_budget / 1024u), (unsigned long long)(srv.low_peak / 1024u), srv.low_bos,
+			srv.low_from_pool, srv.low_fallback, srv.low_tries, srv.low_rejected);
+	}
 }
 
 
@@ -157,7 +172,8 @@ static int client_hello(id_t id, int pid, v3da_hello_t *h)
 		return -EBADF;
 	}
 	/* Every protocol since M1 part 2 is accepted: proto 3 only ADDS (BO_EXPORT,
-	 * ns=v3dbuf) and so does proto 4 (G6: BO_LAST_FENCE, BO_ATTACH_FENCE), so a
+	 * ns=v3dbuf), so does proto 4 (G6: BO_LAST_FENCE, BO_ATTACH_FENCE) and proto 5
+	 * (V3DA_BO_LOWMEM placement, a BO_CREATE flag older servers ignored), so a
 	 * proto-2 or proto-3 binary (rpi4-kms -G, libv3da-client, the M1/M3/G4 probes and
 	 * Mesa builds) is served unchanged. The reply carries this server's version. */
 	if ((h->proto < V3DA_PROTO_BASE) || (h->proto > V3DA_PROTO_VERSION)) {
@@ -745,7 +761,7 @@ static int bufns_register(void)
 static void usage(const char *prog)
 {
 	printf("usage: %s [-f] [-i] [-I irq] [-r threads] [-p poll_us] [-m serial|pipeline] [-k knobs] [-c chunk_kib] "
-		"[-w wedge_ms] [-s stat_ms] [-v]\n", prog);
+		"[-w wedge_ms] [-s stat_ms] [-L lowmem_mib] [-v]\n", prog);
 }
 
 
@@ -762,8 +778,9 @@ int main(int argc, char **argv)
 	srv.ovf_chunk_kib = 1024u;
 	srv.wedge_ms = 500u;
 	srv.stat_ms = 5000u;
+	srv.low_budget = (uint64_t)V3DA_LOWMEM_BUDGET_MIB << 20;
 
-	while ((c = getopt(argc, argv, "fiI:r:p:m:k:c:w:s:vh")) != -1) {
+	while ((c = getopt(argc, argv, "fiI:r:p:m:k:c:w:s:L:vh")) != -1) {
 		switch (c) {
 			case 'm':
 				if (strcmp(optarg, "pipeline") == 0) {
@@ -781,6 +798,7 @@ int main(int argc, char **argv)
 			case 'c': srv.ovf_chunk_kib = (uint32_t)strtoul(optarg, NULL, 0); break;
 			case 'w': srv.wedge_ms = (uint32_t)strtoul(optarg, NULL, 0); break;
 			case 's': srv.stat_ms = (uint32_t)strtoul(optarg, NULL, 0); break;
+			case 'L': srv.low_budget = (uint64_t)strtoul(optarg, NULL, 0) << 20; break;
 			case 'f': foreground = 1; break;
 			case 'i': irq_at_start = 1; break;
 			case 'I': srv.hw.irq_num = (unsigned)strtoul(optarg, NULL, 0); break;
@@ -915,10 +933,11 @@ int main(int argc, char **argv)
 	m.bufns = bufns_register();
 
 	printf("V3DA srv ready dev=/dev/%s irq=%s irqnum=%u threads=%d poll_us=%u fence_pa=0x%08lx slots=%u "
-		"mode=%s knobs=0x%02x ovf=%ux%uKiB wedge_ms=%u proto=%u..%u bufns=%d\n",
+		"mode=%s knobs=0x%02x ovf=%ux%uKiB wedge_ms=%u proto=%u..%u bufns=%d lowmem_mib=%llu\n",
 		V3DA_DEV_NAME, (srv.hw.irq_on != 0) ? "on" : "off", srv.hw.irq_num, nthreads, srv.poll_us,
 		(unsigned long)srv.fp_pa, V3DA_FENCE_NSLOTS, (srv.mode == V3DA_MODE_SERIAL) ? "serial" : "pipeline",
-		srv.knobs, srv.ovf.nchunks, srv.ovf.chunk_bytes / 1024u, srv.wedge_ms, V3DA_PROTO_BASE, V3DA_PROTO_VERSION, m.bufns);
+		srv.knobs, srv.ovf.nchunks, srv.ovf.chunk_bytes / 1024u, srv.wedge_ms, V3DA_PROTO_BASE, V3DA_PROTO_VERSION, m.bufns,
+		(unsigned long long)(srv.low_budget >> 20));
 
 	if (readyfd >= 0) {
 		char r = 'R';

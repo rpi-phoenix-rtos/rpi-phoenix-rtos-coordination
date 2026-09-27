@@ -735,11 +735,14 @@ static int ioc_create_bo(drmphx_conn_t *c, struct drm_v3d_create_bo *cb)
 	v3da_resp_t r;
 	int rc;
 
-	if (cb->flags != 0u) {
-		return -EINVAL;   /* Linux v3d: no create flags */
+	if ((cb->flags & ~DRM_PHOENIX_V3D_CREATE_BO_SCANOUT) != 0u) {
+		return -EINVAL;   /* Linux v3d: no create flags; Phoenix: the scan-out placement hint only */
 	}
 	memset(&q, 0, sizeof(q));
 	q.size = cb->size;
+	if (((cb->flags & DRM_PHOENIX_V3D_CREATE_BO_SCANOUT) != 0u) && (c->u.v3d.hello.proto >= V3DA_PROTO_BO_LOWMEM)) {
+		q.flags = V3DA_BO_LOWMEM;   /* a proto-5 server places it below 1 GiB; older ones: dropped, anywhere */
+	}
 	rc = vcall(c, V3DA_OP_BO_CREATE, &q, sizeof(q), &r);
 	if (rc != 0) {
 		return rc;
