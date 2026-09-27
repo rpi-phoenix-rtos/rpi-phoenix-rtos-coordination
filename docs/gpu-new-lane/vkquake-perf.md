@@ -79,13 +79,15 @@ t=0        GPU starts frame N (its submit waited on the acquire of the image fra
 t≈0..28    CSD: lightmap update, warp textures, indirect-draw culling      (~6 dispatches)
 t≈28..72   render: warp mips + staging copies (~12 small jobs), then the five 1080p jobs
 t≈74       GPU idle; frame N's fence passes; rpi4-kms applies the flip at the next vblank
-t≈74..96   the CPU's vkQueuePresentKHR(N) returns, the engine records N+1 (~20 ms)
-           and submits it; GPU idle all this time
+t≈74..96   vkQueuePresentKHR(N) returns; only then can frame N+1 be submitted
+           (~20 ms later); GPU idle all this time
 t≈96       GPU starts frame N+1
 ```
 
-The GPU is idle 22 ms per frame because the CPU records frame N+1 only after `vkQueuePresentKHR(N)`
-returns, and that call blocks until about the end of frame N's GPU work. **Where** in the present
+The GPU is idle 22 ms per frame because frame N+1 cannot be *submitted* until `vkQueuePresentKHR(N)`
+returns, and that call blocks until about the end of frame N's GPU work. (vkQuake runs the end of the
+frame — acquire, submit, present — as a task with `r_tasks 1`, so the main thread may already be
+recording N+1 during the block; what the counters support is the submit ordering, not a CPU partition.) **Where** in the present
 path it blocks is not settled by reading (candidates, all read: Mesa WSI's throttle
 `WaitForFences` on the image's previous present fence, `wsi_common.c:2462`; the semaphore
 payload copy `vk_drm_copy_sync_file_payloads` / `spin_wait_for_sync_file`,
@@ -206,7 +208,12 @@ pool (two `vkCmdWriteTimestamp` per frame). Pipelines are built once at start (`
 
 Both: same ICD (`69c689ad…`, Mesa patch set `60dd139d…`), same libdrm-phoenix m5b
 (`a508e207…`), same SDL; 83 TUs, 0 warnings, the script's symbol/string/call-site proofs pass,
-12 guarded shared files unchanged. Staged with `sudo -n install -m 755` on
+12 guarded shared files unchanged. **Confound vs the baseline:** both variants link the sysroot's
+current `libphoenix.a` `2acb195e…` (queue40 / build 15 had moved it), while the `mig-vkq` binary
+linked `e69b216a…`; a and b share the same libphoenix, so a-vs-b is one variable, but baseline-vs-a
+is two (a libc delta is not expected to move GPU-side qstat rows; CPU-side rows may). The perf cycles
+will also boot a newer kernel image than `mig-vkq` (build 14) — record the `loader.disk` sha per cycle.
+Staged with `sudo -n install -m 755` on
 `/srv/phoenix-rpi4-nfs-gcc16` and `cmp`-checked; `/usr/bin/vkquake-drm` (`20e3d43f…`) and
 `/bin/vkq-drm` (`aaf70271…`) — the queued `mig-vkq` binaries — are untouched.
 
