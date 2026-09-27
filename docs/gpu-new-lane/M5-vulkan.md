@@ -45,7 +45,7 @@ Evidence tags as in M3: **[read]** source, **[built]** the cross build, **[host]
 | Demo app | **Upstream vkcube** `vulkan-sdk-1.4.350.0` (headers 1.4.350 ≤ Mesa's 1.4.354), display WSI only (`-DVK_USE_PLATFORM_DISPLAY_KHR`, no xcb/xlib/wayland). vkcube already loads everything through `vkGetInstanceProcAddr`, so its patch is 14 lines (§3.2). SPIR-V shaders are the committed `.inc` files: no glslang. |
 | WSI allocation path | v3dv allocates every swapchain image **on the display device** (`device_alloc_for_wsi`: `CREATE_DUMB` on card0, PRIME to the render node) — the M3 **G1** import path, already PASS on the Pi. So **G7** (kms importing a render buffer) is **not** needed for `VK_KHR_display`. |
 | What was missing | `wsi_common_drm.c` then asks `vkGetMemoryFdKHR` for the image's dma-buf, and **v3dv exports from the render node** (`v3dv_GetMemoryFdKHR` → `drmPrimeHandleToFD(render_fd)`) — M3's **G4** (`-ENOSYS`). Closed for the case WSI needs, **imported** BOs, in the library: **G4a** (§4). Render-owned exports (G4 proper) stay open; WSI never makes one except a one-time feature probe that fails soft (§5). |
-| Present synchronisation | `DMA_BUF_IOCTL_EXPORT/IMPORT_SYNC_FILE` answer `ENOTTY` (G15), so WSI falls back to **driver implicit sync**; on our stack that is M3's **G13**: a flip of a framebuffer whose dumb buffer was imported gets the render BO's last-use fence as `IN_FENCE_FD`, gated by `rpi4-kms -G`. v3dv's queue runs Mesa's `THREADED_ON_DEMAND` submit mode, which stays `IMMEDIATE` unless a submit waits on an unsubmitted timeline point (vkcube never does): `vkQueueSubmit` then calls `v3dv_queue_driver_submit` synchronously, so the `SUBMIT_CL` (and the BO's last-use fence the library mirrors) exists before `vkQueuePresentKHR` commits the flip [read: `vk_queue.c:69-71, 1063-1077`]. |
+| Present synchronisation | `DMA_BUF_IOCTL_EXPORT/IMPORT_SYNC_FILE` answer `ENOTTY` (G15; *later:* answered by **G6**, [G6 doc](G6-cross-process-sync.md) §5 — for binaries relinked with that library), so WSI falls back to **driver implicit sync**; on our stack that is M3's **G13**: a flip of a framebuffer whose dumb buffer was imported gets the render BO's last-use fence as `IN_FENCE_FD`, gated by `rpi4-kms -G`. v3dv's queue runs Mesa's `THREADED_ON_DEMAND` submit mode, which stays `IMMEDIATE` unless a submit waits on an unsubmitted timeline point (vkcube never does): `vkQueueSubmit` then calls `v3dv_queue_driver_submit` synchronously, so the `SUBMIT_CL` (and the BO's last-use fence the library mirrors) exists before `vkQueuePresentKHR` commits the flip [read: `vk_queue.c:69-71, 1063-1077`]. |
 | Atomic-only client | The WSI sets `DRM_CLIENT_CAP_ATOMIC` only; DRM (`drm_setclientcap`) turns universal planes on with it, rpi4-kms did not (it lists the primary plane only with `UNIVERSAL_PLANES`). Fixed in the library: **G17** (§4.2). |
 | Server changes | **None.** |
 
@@ -222,19 +222,20 @@ the check sees exactly the hardware behaviour.
 | `CREATEPROPBLOB` (mode), `ATOMIC` with `TEST_ONLY` (swapchain creation), then `NONBLOCK \| PAGE_FLIP_EVENT \| ALLOW_MODESET` (first present: connector `CRTC_ID` + `MODE_ID` + `ACTIVE` + the plane), then `NONBLOCK \| PAGE_FLIP_EVENT` flips | ✅ flattened (host-tested with kmscube `-A`'s first commit, the same shape); **first time on hardware** — no earlier Pi run sent a modeset through `ATOMIC` |
 | Flip events with a 64-bit `user_data` (the image pointer) through `drmHandleEvent` on a `poll()`ing thread | ✅ (`kms_proto.h` carries 64 bits); `poll()` rides the 20 ms quantum → **~30 fps expected (G12)** |
 | `CRTC_GET_SEQUENCE` / `CRTC_QUEUE_SEQUENCE` (present timing, display events) | ✅ served (vkcube does not register display events) |
-| Implicit sync of a flip against the render job | ✅ **G13** in-process (needs `rpi4-kms -G`); `DMA_BUF_*_SYNC_FILE` → `ENOTTY` (G15) ⇒ WSI takes the driver-implicit path, as designed |
+| Implicit sync of a flip against the render job | ✅ **G13** in-process (needs `rpi4-kms -G`); `DMA_BUF_*_SYNC_FILE` → `ENOTTY` (G15) ⇒ WSI takes the driver-implicit path, as designed. *Later:* **G6** (implemented, pending Pi `g6-sync`, [G6 doc](G6-cross-process-sync.md)) answers both ioctls, so WSI's probe passes: a vkcube **relinked** with the G6 library switches to the `dma_buf_semaphore` path (IMPORT on present, EXPORT on acquire) — needs its own arm (`vkcube-drm-g6`) before any Vulkan binary is relinked; the staged m5b build is unaffected |
 | One-time WSI probe `wsi_drm_check_dma_buf_sync_file_import_export`: allocates a 4 KiB **render-owned** BO and asks `vkGetMemoryFdKHR` for it | ⚠ G4 proper → `-ENOSYS` → `FEATURE_NOT_PRESENT` (cached) — **soft**: one expected `PRIME_HANDLE_TO_FD node=render rc=-1 errno=38` trace line, maybe one Mesa warning line |
 | Syncobjs on the render fd (fences, semaphores, queue), `SYNCOBJ_WAIT` incl. `WAIT_FOR_SUBMIT` | ✅ |
 | `SUBMIT_CPU` (G5) | not used by vkcube (queries / indirect dispatch only) |
 | libphoenix: `pthread_condattr_setclock(CLOCK_MONOTONIC)`, `sysconf(_SC_PHYS_PAGES)` (v3dv's heap size — 0 would fail every allocation), `open_memstream` | ✅ present in the tree sysroot (build 10, libc-gaps); linked from libphoenix, not the shim [built] |
 
 **Not needed for this path:** G7 (kms import of a foreign buffer — v3dv allocates on the display
-device), G6 (opaque syncobj / cross-process sync-file fds), G8 (out-fence), G4 proper.
+device), G6b (opaque syncobj / cross-process sync-file fds; G6 — implicit sync — is implemented since), G8 (out-fence), G4 proper.
 
 **Still open for the rest of M5:** the **xcb** half (`VK_KHR_xcb_surface`) needs M4's Xorg with
 DRI3/Present, a Mesa build with `-Dplatforms=x11` (xcb/xshmfence ports), and on the server side G4
-(client buffers exported from the render node for DRI3), G6 (explicit-sync or sync-file fds across
-processes) and cross-process implicit sync (`BO_LAST_FENCE`); vkQuake via WSI needs exported
+(client buffers exported from the render node for DRI3), G6b (explicit-sync or sync-file fds across
+processes) and cross-process implicit sync (`BO_LAST_FENCE`: **G6**, implemented, pending Pi `g6-sync`,
+[G6 doc](G6-cross-process-sync.md)); vkQuake via WSI needs exported
 `vk*` trampolines on top of phxvk (§3.3) and SDL2's Vulkan KMSDRM path; timestamp/occlusion
 queries need G5.
 
@@ -451,7 +452,8 @@ queues** at import time (vkcube per frame: only the render queue is pending; the
 syncs are signalled). `poll()` on an emulated sync file is still G15 (nothing on this path polls one);
 a sync file duplicated by the program itself (`os_dupfd_cloexec`, v3dv's perfmon-query path only) is
 not in the table — its sync_file ioctls now fail fast with `-ENOTTY` instead of hanging. Cross-process
-sync files stay G6.
+sync-file descriptors stay open (G6b); the dma-buf `EXPORT/IMPORT_SYNC_FILE` ioctls are G6 (implemented,
+[G6 doc](G6-cross-process-sync.md)).
 
 ### 9.4 Host tests [host]
 

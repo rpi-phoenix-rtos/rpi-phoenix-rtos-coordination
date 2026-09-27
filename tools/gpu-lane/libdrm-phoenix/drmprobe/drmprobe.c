@@ -12,7 +12,9 @@
  * Needs: rpi4-v3d-async running, then rpi4-kms (started with -G for the in-fence
  * test). Neither server may share the hardware with an old-lane GPU app.
  *
- * Usage: drmprobe [-n flips] [-k] (-k: keep the last frame on screen at exit)
+ * Usage: drmprobe [-n flips] [-k] [-g jobs]
+ *   -k: keep the last frame on screen at exit
+ *   -g: GPU jobs the G6 producer chains (default 256; the longer, the wider the race)
  *
  * Copyright 2026 Phoenix Systems
  * Author: Witold Bołt
@@ -64,6 +66,15 @@ struct probe_sync_file_info {
 #define PROBE_SYNC_IOC_MERGE     _IOWR('>', 3, struct probe_sync_merge_data)
 #define PROBE_SYNC_IOC_FILE_INFO _IOWR('>', 4, struct probe_sync_file_info)
 
+/* linux/dma-buf.h, by layout (Linux 6.0: implicit fences of a dma-buf as sync files). */
+struct probe_dma_buf_sync_file {
+	uint32_t flags;
+	int32_t fd;
+};
+#define PROBE_DMA_BUF_SYNC_RW                (1u | 2u)
+#define PROBE_DMA_BUF_IOCTL_EXPORT_SYNC_FILE _IOWR('b', 2, struct probe_dma_buf_sync_file)
+#define PROBE_DMA_BUF_IOCTL_IMPORT_SYNC_FILE _IOW('b', 3, struct probe_dma_buf_sync_file)
+
 
 extern int sys_fdpath(int fd, char *buf, size_t size);
 
@@ -86,7 +97,8 @@ static struct {
 	uint64_t last_flip_seq;
 	uint64_t last_flip_us;
 	uint32_t last_flip_crtc;
-} P = { .card = -1, .render = -1, .card1 = -1 };
+	uint32_t g6_jobs;         /* -g: jobs in the G6 producer's chain */
+} P = { .card = -1, .render = -1, .card1 = -1, .g6_jobs = 256u };
 
 
 static uint64_t now_us(void)
@@ -719,14 +731,14 @@ typedef struct {
 } rbo_t;
 
 
-static int rbo_new(rbo_t *b, uint32_t size)
+static int rbo_new_fd(int fd, rbo_t *b, uint32_t size)
 {
 	struct drm_v3d_create_bo cb = { .size = size };
 	struct drm_v3d_mmap_bo mb;
 	void *p;
 
 	memset(b, 0, sizeof(*b));
-	if (drmIoctl(P.render, DRM_IOCTL_V3D_CREATE_BO, &cb) != 0) {
+	if (drmIoctl(fd, DRM_IOCTL_V3D_CREATE_BO, &cb) != 0) {
 		return -errno;
 	}
 	b->handle = cb.handle;
@@ -734,10 +746,10 @@ static int rbo_new(rbo_t *b, uint32_t size)
 	b->size = size;
 	memset(&mb, 0, sizeof(mb));
 	mb.handle = cb.handle;
-	if (drmIoctl(P.render, DRM_IOCTL_V3D_MMAP_BO, &mb) != 0) {
+	if (drmIoctl(fd, DRM_IOCTL_V3D_MMAP_BO, &mb) != 0) {
 		return -errno;
 	}
-	p = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, P.render, (off_t)mb.offset);
+	p = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, (off_t)mb.offset);
 	if (p == MAP_FAILED) {
 		return -errno;
 	}
@@ -746,7 +758,7 @@ static int rbo_new(rbo_t *b, uint32_t size)
 }
 
 
-static void rbo_free(rbo_t *b)
+static void rbo_free_fd(int fd, rbo_t *b)
 {
 	struct drm_gem_close gc = { .handle = b->handle };
 
@@ -754,9 +766,21 @@ static void rbo_free(rbo_t *b)
 		(void)munmap(b->cpu, b->size);
 	}
 	if (b->handle != 0u) {
-		(void)drmIoctl(P.render, DRM_IOCTL_GEM_CLOSE, &gc);
+		(void)drmIoctl(fd, DRM_IOCTL_GEM_CLOSE, &gc);
 	}
 	memset(b, 0, sizeof(*b));
+}
+
+
+static int rbo_new(rbo_t *b, uint32_t size)
+{
+	return rbo_new_fd(P.render, b, size);
+}
+
+
+static void rbo_free(rbo_t *b)
+{
+	rbo_free_fd(P.render, b);
 }
 
 
@@ -1361,10 +1385,11 @@ static void t_prime_render(void)
 #pragma GCC diagnostic ignored "-Wattribute-warning"
 
 typedef struct {
-	uint32_t cmd;           /* 1 = descriptor attached, 2 = child report */
+	uint32_t cmd;           /* 1 = descriptor attached, 2 = child report (G6: 11..15, see t_g6_xproc) */
 	int32_t rc, err;
 	uint32_t handle;
 	int32_t size_ok, path_ok, fd_map, fd_bad, handle_map, handle_bad, xwrite, wait_bo;
+	uint64_t aux[4];        /* G6: the producer's timings */
 } xp_msg_t;
 
 
@@ -1744,6 +1769,613 @@ static void t_prime_card0_neg(void)
 }
 
 
+/* ========================================================================= */
+/* G6: cross-process implicit sync                                            */
+/* ========================================================================= */
+
+/* A dma-buf's implicit fences as a sync file (0 or errno), as Mesa's WSI asks. */
+static int g6_export(int dfd, int *sfd)
+{
+	struct probe_dma_buf_sync_file s = { .flags = PROBE_DMA_BUF_SYNC_RW, .fd = -1 };
+
+	*sfd = -1;
+	if (drmIoctl(dfd, PROBE_DMA_BUF_IOCTL_EXPORT_SYNC_FILE, &s) != 0) {
+		return errno;
+	}
+	*sfd = s.fd;
+	return 0;
+}
+
+
+static int g6_import(int dfd, int sfd)
+{
+	struct probe_dma_buf_sync_file s = { .flags = PROBE_DMA_BUF_SYNC_RW, .fd = sfd };
+
+	return (drmIoctl(dfd, PROBE_DMA_BUF_IOCTL_IMPORT_SYNC_FILE, &s) != 0) ? errno : 0;
+}
+
+
+/* SYNC_IOC_FILE_INFO: 1 signalled, 0 active, -errno. No wait. */
+static int g6_status(int sfd, unsigned *nfences)
+{
+	struct probe_sync_file_info fi;
+
+	memset(&fi, 0, sizeof(fi));
+	if (ioctl(sfd, PROBE_SYNC_IOC_FILE_INFO, &fi) != 0) {
+		return -errno;
+	}
+	if (nfences != NULL) {
+		*nfences = fi.num_fences;
+	}
+	return fi.status;
+}
+
+
+/* Wait for a sync file as gallium's fence_finish does: import it into a syncobj. */
+static int g6_wait(int sfd)
+{
+	uint32_t s = 0;
+	int rc;
+
+	rc = drmSyncobjCreate(P.render, 0, &s);
+	if (rc == 0) rc = drmSyncobjImportSyncFile(P.render, s, sfd);
+	if (rc == 0) rc = drmSyncobjWait(P.render, &s, 1, INT64_MAX, 0, NULL);
+	if (s != 0u) (void)drmSyncobjDestroy(P.render, s);
+	return rc;
+}
+
+
+static uint32_t g6_count_not(const volatile uint32_t *p, uint32_t n, uint32_t want)
+{
+	uint32_t i, bad = 0;
+
+	for (i = 0; i < n; i++) {
+		bad += (p[i] != want);
+	}
+	return bad;
+}
+
+
+/* The consumer (a compositor sampling a client buffer): the buffer arrived while
+ * its producer's GPU work may still run. Read it at once (what a consumer without
+ * sync would see), then export the buffer's implicit fences, wait, read again. */
+typedef struct {
+	uint32_t early_bad, bad;
+	int e_exp, st_export, st_after, wrc;
+	unsigned nfences;
+} g6_read_t;
+
+static void g6_read_init(g6_read_t *o)
+{
+	memset(o, 0, sizeof(*o));
+	o->e_exp = o->st_export = o->st_after = o->wrc = -1;
+	o->early_bad = o->bad = ~0u;
+}
+
+
+static void g6_consume(int dfd, const volatile uint32_t *fm, uint32_t words, uint32_t want, g6_read_t *o)
+{
+	int sfd = -1;
+
+	g6_read_init(o);
+	o->early_bad = g6_count_not(fm, words, want);
+	o->e_exp = g6_export(dfd, &sfd);
+	if (o->e_exp == 0) {
+		o->st_export = g6_status(sfd, &o->nfences);
+		o->wrc = g6_wait(sfd);
+		o->st_after = g6_status(sfd, NULL);
+		close(sfd);
+	}
+	o->bad = g6_count_not(fm, words, want);   /* after the sync - or right away when there is none */
+}
+
+
+/* Mesa's WSI feature probe (wsi_drm_check_dma_buf_sync_file_import_export): a
+ * render-node allocation, its dma-buf, EXPORT_SYNC_FILE, then IMPORT_SYNC_FILE of
+ * that sync file. Before G6 both answered ENOTTY and WSI used driver implicit sync. */
+static void t_g6_probe(void)
+{
+	rbo_t b;
+	int fd = -1, sfd = -1, e_exp = -1, e_imp = -1, rc, ok;
+	unsigned nf = 99u;
+
+	rc = rbo_new(&b, 4096u);
+	if ((rc == 0) && (drmPrimeHandleToFD(P.render, b.handle, DRM_CLOEXEC | DRM_RDWR, &fd) == 0)) {
+		e_exp = g6_export(fd, &sfd);
+		if (e_exp == 0) {
+			(void)g6_status(sfd, &nf);
+			e_imp = g6_import(fd, sfd);
+			close(sfd);
+		}
+		close(fd);
+	}
+	rbo_free(&b);
+	ok = (e_exp == 0) && (e_imp == 0) && (nf == 0u);
+	printf(TAG "dmabuf_sync_probe export_errno=%d import_errno=%d idle_fences=%u ok=%d\n", e_exp, e_imp, nf, ok);
+	verdict("dmabuf_sync_probe", ok);
+}
+
+
+/* A chain of k dependent 64x64 clears into one render target: k-1 in colour X, the
+ * last in Y, each job waiting for the previous one (in_sync_bcl = out_sync), so the
+ * target shows Y only when the whole chain is done. `extra` (optional) is named by
+ * every job: its last-use fence becomes the chain's without the GPU writing it. */
+#define G6_W 64u
+#define G6_H 64u
+#define G6_X 0xff4040c0u
+#define G6_Y 0xff20c060u
+
+typedef struct {
+	int fd;
+	rbo_t rt, bcl[2], rcl[2], ta, ts;
+	struct drm_v3d_submit_cl s[2];
+	uint32_t sync;
+} g6_chain_t;
+
+static int g6_chain_setup(int fd, g6_chain_t *ch)
+{
+	uint32_t bsz, rsz, tasz, tssz, i;
+	v3da_clgen_buf_t gb, gr;
+	int rc;
+
+	memset(ch, 0, sizeof(*ch));
+	ch->fd = fd;
+	rc = v3da_clgen_clear_sizes(G6_W, G6_H, &bsz, &rsz, &tasz, &tssz);
+	if (rc == 0) rc = rbo_new_fd(fd, &ch->rt, G6_W * G6_H * 4u);
+	for (i = 0; (rc == 0) && (i < 2u); i++) {
+		rc = rbo_new_fd(fd, &ch->bcl[i], 4096u);
+		if (rc == 0) rc = rbo_new_fd(fd, &ch->rcl[i], 4096u);
+	}
+	if (rc == 0) rc = rbo_new_fd(fd, &ch->ta, tasz);
+	if (rc == 0) rc = rbo_new_fd(fd, &ch->ts, 4096u);
+	for (i = 0; (rc == 0) && (i < 2u); i++) {
+		gb.cpu = ch->bcl[i].cpu;
+		gb.gpuva = ch->bcl[i].offset;
+		gb.size = ch->bcl[i].size;
+		gr.cpu = ch->rcl[i].cpu;
+		gr.gpuva = ch->rcl[i].offset;
+		gr.size = ch->rcl[i].size;
+		rc = v3da_clgen_clear(G6_W, G6_H, ch->rt.offset, (i == 0u) ? G6_X : G6_Y, &gb, &gr, ch->ta.offset, ch->ta.size,
+			ch->ts.offset, &ch->s[i]);
+	}
+	if (rc == 0) rc = drmSyncobjCreate(fd, DRM_SYNCOBJ_CREATE_SIGNALED, &ch->sync);
+	return rc;
+}
+
+
+static int g6_chain_submit(g6_chain_t *ch, uint32_t k, uint32_t extra)
+{
+	struct drm_v3d_submit_cl s;
+	uint32_t handles[6], j, i;
+
+	for (j = 0; j < G6_W * G6_H; j++) {
+		ch->rt.cpu[j] = 0xdeadbeefu;   /* "not rendered yet" */
+	}
+	for (j = 0; j < k; j++) {
+		i = (j + 1u == k) ? 1u : 0u;
+		s = ch->s[i];
+		handles[0] = ch->rt.handle;
+		handles[1] = ch->bcl[i].handle;
+		handles[2] = ch->rcl[i].handle;
+		handles[3] = ch->ta.handle;
+		handles[4] = ch->ts.handle;
+		handles[5] = extra;
+		s.bo_handles = (uintptr_t)handles;
+		s.bo_handle_count = (extra != 0u) ? 6u : 5u;
+		s.in_sync_bcl = ch->sync;
+		s.out_sync = ch->sync;
+		if (drmIoctl(ch->fd, DRM_IOCTL_V3D_SUBMIT_CL, &s) != 0) {
+			return -errno;
+		}
+	}
+	return 0;
+}
+
+
+static void g6_chain_free(g6_chain_t *ch)
+{
+	uint32_t i;
+
+	if (ch->sync != 0u) {
+		(void)drmSyncobjDestroy(ch->fd, ch->sync);
+	}
+	rbo_free_fd(ch->fd, &ch->rt);
+	for (i = 0; i < 2u; i++) {
+		rbo_free_fd(ch->fd, &ch->bcl[i]);
+		rbo_free_fd(ch->fd, &ch->rcl[i]);
+	}
+	rbo_free_fd(ch->fd, &ch->ta);
+	rbo_free_fd(ch->fd, &ch->ts);
+	memset(ch, 0, sizeof(*ch));
+}
+
+
+/* IMPORT_SYNC_FILE: this process's own pending GPU work (a job chain) attached to a
+ * shared buffer it did not render into; the buffer's exported fences must then
+ * include it, and waiting for them must mean the chain is done. */
+static void t_g6_import(void)
+{
+	g6_chain_t ch;
+	rbo_t sh;
+	int rc, fd = -1, sfd = -1, sfd2 = -1, e_imp = -1, e_exp = -1, st = -1, wrc = -1, own_done = 0, ok;
+	unsigned nf = 0u;
+
+	memset(&sh, 0, sizeof(sh));
+	rc = g6_chain_setup(P.render, &ch);
+	if (rc == 0) rc = rbo_new(&sh, 4096u);
+	if (rc == 0) rc = drmPrimeHandleToFD(P.render, sh.handle, DRM_CLOEXEC | DRM_RDWR, &fd);
+	if (rc == 0) rc = g6_chain_submit(&ch, P.g6_jobs, 0u);
+	if (rc == 0) rc = drmSyncobjExportSyncFile(P.render, ch.sync, &sfd);
+	if (rc == 0) {
+		e_imp = g6_import(fd, sfd);
+		e_exp = g6_export(fd, &sfd2);
+		if (e_exp == 0) {
+			st = g6_status(sfd2, &nf);   /* 0 while the chain runs: the buffer now waits for it */
+			wrc = g6_wait(sfd2);
+			close(sfd2);
+		}
+		own_done = (drmSyncobjWait(P.render, &ch.sync, 1, 0, 0, NULL) == 0);   /* poll: no wait */
+	}
+	if (sfd >= 0) close(sfd);
+	if (fd >= 0) close(fd);
+	rbo_free(&sh);
+	g6_chain_free(&ch);
+	ok = (rc == 0) && (e_imp == 0) && (e_exp == 0) && (wrc == 0) && own_done;
+#ifdef DRMPROBE_NO_FORK
+	ok = ok && (st == 0) && (nf >= 1u);   /* the fake GPU runs nothing until a wait: deterministic */
+#endif
+	printf(TAG "dmabuf_sync_import setup=%d import_errno=%d reexport_errno=%d pending_after_import=%d nfences=%u wait=%d "
+		"chain_done=%d jobs=%u ok=%d\n", rc, e_imp, e_exp, st == 0, nf, wrc, own_done, P.g6_jobs, ok);
+	verdict("dmabuf_sync_import", ok);
+}
+
+
+/* A scan-out sized render BO with the probe's colour bands, exported and imported
+ * on card0 as a LINEAR XRGB8888 framebuffer (the G7 path). */
+typedef struct {
+	rbo_t b;
+	int dfd;
+	uint32_t kh, fb, w, h, pitch;
+	int e_fb;
+} g6_scan_t;
+
+static int g6_scan_fb(int dfd, g6_scan_t *sc)
+{
+	uint32_t handles[4] = { 0 }, pitches[4] = { 0 }, offsets[4] = { 0 };
+	uint64_t mods[4] = { DRM_FORMAT_MOD_LINEAR, 0, 0, 0 };
+
+	if (drmPrimeFDToHandle(P.card, dfd, &sc->kh) != 0) {
+		return -errno;
+	}
+	handles[0] = sc->kh;
+	pitches[0] = sc->pitch;
+	if (drmModeAddFB2WithModifiers(P.card, sc->w, sc->h, DRM_FORMAT_XRGB8888, handles, pitches, offsets, mods, &sc->fb,
+			DRM_MODE_FB_MODIFIERS) != 0) {
+		sc->e_fb = errno;
+		return -sc->e_fb;
+	}
+	return 0;
+}
+
+
+static void g6_scan_geometry(g6_scan_t *sc)
+{
+	memset(sc, 0, sizeof(*sc));
+	sc->dfd = -1;
+	sc->w = (P.mode.hdisplay != 0u) ? P.mode.hdisplay : 1920u;
+	sc->h = (P.mode.vdisplay != 0u) ? P.mode.vdisplay : 1080u;
+	sc->pitch = ((sc->w * 4u) + 63u) & ~63u;
+}
+
+
+static void g6_bands(uint32_t *px, const g6_scan_t *sc)
+{
+	uint32_t x, y;
+
+	for (y = 0; y < sc->h; y++) {
+		for (x = 0; x < sc->w; x++) {
+			px[y * (sc->pitch / 4u) + x] = rgb((x * 8u) / sc->w * 32u, 255u - (y * 255u) / sc->h, 128u);
+		}
+	}
+}
+
+
+/* Flip the imported buffer with NO in-fence (as Weston flips a client buffer on a
+ * plane): the flip must not complete before the buffer's producer is done. */
+typedef struct {
+	int st_commit, st_flip, flipped, back, rmfb;
+	uint64_t flip_us;
+} g6_flip_t;
+
+static void g6_flip_init(g6_flip_t *o)
+{
+	memset(o, 0, sizeof(*o));
+	o->st_commit = o->st_flip = o->rmfb = -1;
+}
+
+
+static void g6_flip(g6_scan_t *sc, g6_flip_t *o)
+{
+	uint64_t t0;
+	int sfd = -1, rc;
+
+	g6_flip_init(o);
+	if (g6_export(sc->dfd, &sfd) == 0) {
+		o->st_commit = g6_status(sfd, NULL);   /* 0: the producer still runs as the flip is asked for */
+		close(sfd);
+	}
+	P.flips_done = 0;
+	t0 = now_us();
+	rc = drmModePageFlip(P.card, P.crtc, sc->fb, DRM_MODE_PAGE_FLIP_EVENT, NULL);
+	o->flipped = (rc == 0) && (wait_flips(1, 5000) == 0);
+	o->flip_us = now_us() - t0;
+	if (g6_export(sc->dfd, &sfd) == 0) {
+		o->st_flip = g6_status(sfd, NULL);   /* 1: the producer was done when the buffer went on screen */
+		close(sfd);
+	}
+	if (o->flipped) {
+		usleep(1000000);   /* the bands on HDMI for a dense snapshot */
+		P.flips_done = 0;
+		rc = drmModePageFlip(P.card, P.crtc, P.buf[0].fb, DRM_MODE_PAGE_FLIP_EVENT, NULL);
+		o->back = (rc == 0) && (wait_flips(1, 3000) == 0);
+	}
+	o->rmfb = drmModeRmFB(P.card, sc->fb);
+	sc->fb = 0;
+	gem_close(P.card, sc->kh);
+	sc->kh = 0;
+}
+
+
+#ifdef DRMPROBE_NO_FORK
+/* Host harness: "another process" is the fake server's foreign job (mock/fake.c): a
+ * pending job of a client this library does not know, rendering into our export.
+ * This process's mirrors know nothing of it - exactly the cross-process case. */
+void drmprobe_host_foreign_job(uint32_t handle, uint32_t colour);
+int drmprobe_host_foreign_done(void);
+
+static void t_g6_read_host(void)
+{
+	rbo_t rt;
+	g6_read_t rd;
+	uint32_t *fm = NULL, i;
+	int fd = -1, rc, done = 0, ok;
+
+	g6_read_init(&rd);
+	rc = rbo_new(&rt, G6_W * G6_H * 4u);
+	if (rc == 0) {
+		for (i = 0; i < G6_W * G6_H; i++) {
+			rt.cpu[i] = 0xdeadbeefu;
+		}
+		rc = drmPrimeHandleToFD(P.render, rt.handle, DRM_CLOEXEC | DRM_RDWR, &fd);
+	}
+	if (rc == 0) {
+		fm = mmap(NULL, rt.size, PROT_READ, MAP_SHARED, fd, 0);
+		fm = (fm == MAP_FAILED) ? NULL : fm;
+		rc = (fm != NULL) ? 0 : -1;
+	}
+	if (rc == 0) {
+		drmprobe_host_foreign_job(rt.handle, G6_Y);
+		g6_consume(fd, fm, G6_W * G6_H, G6_Y, &rd);
+		done = drmprobe_host_foreign_done();
+	}
+	if (fm != NULL) (void)munmap(fm, rt.size);
+	if (fd >= 0) close(fd);
+	rbo_free(&rt);
+	ok = (rc == 0) && (rd.e_exp == 0) && (rd.wrc == 0) && (rd.st_after == 1) && (rd.bad == 0u) && done;
+	printf(TAG "dmabuf_sync_read producer=foreign export_errno=%d pending_at_export=%d nfences=%u wait=%d early_stale=%d "
+		"bad_words=%u done_at_read=%d ok=%d\n", rd.e_exp, rd.st_export == 0, rd.nfences, rd.wrc, rd.early_bad != 0u, rd.bad,
+		done, ok);
+	verdict("dmabuf_sync_read", ok);
+}
+
+
+static void t_g6_flip_host(void)
+{
+	g6_scan_t sc;
+	g6_flip_t fl;
+	int rc, done = 0, refused = 0, ok;
+	uint32_t bad = ~0u;
+
+	g6_flip_init(&fl);
+	g6_scan_geometry(&sc);
+	rc = rbo_new(&sc.b, sc.pitch * sc.h);
+	if (rc == 0) {
+		g6_bands(sc.b.cpu, &sc);
+		rc = drmPrimeHandleToFD(P.render, sc.b.handle, DRM_CLOEXEC | DRM_RDWR, &sc.dfd);
+	}
+	if (rc == 0) {
+		rc = g6_scan_fb(sc.dfd, &sc);
+		refused = (rc == -EINVAL);   /* above 1 GiB (FAKE_KMS_IMPORT_HIGH): not scan-out capable */
+	}
+	if (rc == 0) {
+		drmprobe_host_foreign_job(sc.b.handle, G6_Y);
+		g6_flip(&sc, &fl);
+		done = drmprobe_host_foreign_done();
+		bad = g6_count_not(sc.b.cpu, (sc.pitch / 4u) * sc.h, G6_Y);   /* the fake fills the whole BO */
+	}
+	else if (sc.kh != 0u) {
+		gem_close(P.card, sc.kh);
+	}
+	if (sc.dfd >= 0) close(sc.dfd);
+	rbo_free(&sc.b);
+	ok = (rc == 0) && fl.flipped && fl.back && (fl.rmfb == 0) && done && (bad == 0u);
+	printf(TAG "dmabuf_sync_flip producer=foreign addfb=%d pending_at_commit=%d flipped=%d flip_us=%llu done_at_flip=%d "
+		"bad_words=%u flipped_back=%d%s ok=%d\n", rc, fl.st_commit == 0, fl.flipped, (unsigned long long)fl.flip_us, done,
+		bad, fl.back, refused ? " gap=1 (ADDFB2 refused: not scan-out capable)" : "", ok);
+	if (refused) {
+		P.gap++;
+	}
+	else {
+		verdict("dmabuf_sync_flip", ok);
+	}
+}
+
+#else /* !DRMPROBE_NO_FORK */
+
+/* The producer process (a Wayland client): its own render node; a job chain into
+ * a 64x64 target, sent as a dma-buf the moment it is submitted (cmd 11); after the
+ * consumer's "read" (12), a second chain that names a scan-out buffer, sent the
+ * same way (13); after the consumer's flip (14), its own timings (15). */
+static void g6_child(int s)
+{
+	g6_chain_t ch;
+	g6_scan_t sc;
+	xp_msg_t m;
+	uint64_t t0;
+	int rfd, rc, fd_rt = -1;
+
+	memset(&m, 0, sizeof(m));
+	g6_scan_geometry(&sc);
+	rfd = open(P.render_path, O_RDWR | O_CLOEXEC);
+	rc = (rfd >= 0) ? g6_chain_setup(rfd, &ch) : -errno;
+	if (rc == 0) rc = rbo_new_fd(rfd, &sc.b, sc.pitch * sc.h);
+	if (rc == 0) {
+		g6_bands(sc.b.cpu, &sc);
+		rc = drmPrimeHandleToFD(rfd, ch.rt.handle, DRM_CLOEXEC | DRM_RDWR, &fd_rt);
+	}
+	if (rc == 0) rc = drmPrimeHandleToFD(rfd, sc.b.handle, DRM_CLOEXEC | DRM_RDWR, &sc.dfd);
+
+	/* round 1: render, hand over at once */
+	t0 = now_us();
+	if (rc == 0) rc = g6_chain_submit(&ch, P.g6_jobs, 0u);
+	m.cmd = 11;
+	m.rc = rc;
+	(void)xp_send(s, &m, (rc == 0) ? fd_rt : -1);
+	if (rc == 0) {
+		(void)drmSyncobjWait(rfd, &ch.sync, 1, INT64_MAX, 0, NULL);
+		m.aux[0] = now_us() - t0;
+	}
+	if (xp_recv(s, &m, 12, NULL) == 0) {
+		/* round 2: the scan-out buffer, named by every job of a second chain */
+		m.aux[2] = now_us();
+		rc = (rc == 0) ? g6_chain_submit(&ch, P.g6_jobs, sc.b.handle) : rc;
+		m.cmd = 13;
+		m.rc = rc;
+		(void)xp_send(s, &m, (rc == 0) ? sc.dfd : -1);
+		if (rc == 0) {
+			(void)drmSyncobjWait(rfd, &ch.sync, 1, INT64_MAX, 0, NULL);
+			m.aux[1] = now_us() - m.aux[2];
+		}
+		(void)xp_recv(s, &m, 14, NULL);
+	}
+	m.cmd = 15;
+	m.rc = rc;
+	m.handle = P.g6_jobs;
+	(void)xp_send(s, &m, -1);
+	if (fd_rt >= 0) close(fd_rt);
+	if (sc.dfd >= 0) close(sc.dfd);
+	if (rfd >= 0) {
+		rbo_free_fd(rfd, &sc.b);
+		g6_chain_free(&ch);
+		close(rfd);
+	}
+}
+
+
+/* Two processes, as a Wayland client and a compositor. Round 1 (a compositor
+ * sampling a client buffer): the consumer maps the dma-buf the moment it arrives,
+ * exports its implicit fences, waits, and must then read the producer's LAST colour.
+ * Round 2 (direct scan-out): the consumer imports the producer's scan-out buffer on
+ * card0 and flips it with no in-fence; libdrm-phoenix asks the render server for
+ * the producer's fence and rpi4-kms -G holds the flip until it signals. */
+static void t_g6_xproc(void)
+{
+	g6_read_t rd;
+	g6_scan_t sc;
+	g6_flip_t fl;
+	xp_msg_t q, r;
+	uint32_t *fm = NULL;
+	pid_t pid = -1;
+	int sv[2] = { -1, -1 }, fd = -1, got1 = -1, got2 = -1, got3 = -1, status = 0, rc_fb = -1, refused = 0, ok;
+
+	g6_read_init(&rd);
+	g6_flip_init(&fl);
+	memset(&r, 0, sizeof(r));
+	g6_scan_geometry(&sc);
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0) {
+		fflush(stdout);
+		pid = fork();
+		if (pid == 0) {
+			close(sv[0]);
+			g6_child(sv[1]);
+			_exit(0);
+		}
+		close(sv[1]);
+		sv[1] = -1;
+	}
+	if (pid > 0) {
+		got1 = xp_recv(sv[0], &r, 11, &fd);
+		if ((got1 == 0) && (r.rc == 0) && (fd >= 0)) {
+			fm = mmap(NULL, G6_W * G6_H * 4u, PROT_READ, MAP_SHARED, fd, 0);
+			fm = (fm == MAP_FAILED) ? NULL : fm;
+		}
+		if (fm != NULL) {
+			g6_consume(fd, fm, G6_W * G6_H, G6_Y, &rd);
+			(void)munmap(fm, G6_W * G6_H * 4u);
+		}
+		if (fd >= 0) close(fd);
+		memset(&q, 0, sizeof(q));
+		q.cmd = 12;
+		(void)xp_send(sv[0], &q, -1);
+
+		got2 = xp_recv(sv[0], &r, 13, &sc.dfd);
+		if ((got2 == 0) && (r.rc == 0) && (sc.dfd >= 0)) {
+			rc_fb = g6_scan_fb(sc.dfd, &sc);
+			refused = (rc_fb == -EINVAL);
+			if (rc_fb == 0) {
+				g6_flip(&sc, &fl);
+			}
+			else if (sc.kh != 0u) {
+				gem_close(P.card, sc.kh);
+			}
+		}
+		if (sc.dfd >= 0) close(sc.dfd);
+		q.cmd = 14;
+		(void)xp_send(sv[0], &q, -1);
+		got3 = xp_recv(sv[0], &r, 15, NULL);
+		(void)waitpid(pid, &status, 0);
+	}
+	ok = (got1 == 0) && (rd.e_exp == 0) && (rd.wrc == 0) && (rd.st_after == 1) && (rd.bad == 0u);
+	printf(TAG "dmabuf_sync_read producer=child jobs=%u chain_us=%llu export_errno=%d pending_at_export=%d nfences=%u "
+		"wait=%d early_stale=%d bad_words=%u done_at_read=%d ok=%d\n", P.g6_jobs, (unsigned long long)r.aux[0], rd.e_exp,
+		rd.st_export == 0, rd.nfences, rd.wrc, rd.early_bad != 0u, rd.bad, rd.st_after == 1, ok);
+	verdict("dmabuf_sync_read", ok);
+	ok = (got2 == 0) && (rc_fb == 0) && fl.flipped && (fl.st_flip == 1) && fl.back && (fl.rmfb == 0) && (got3 == 0);
+	printf(TAG "dmabuf_sync_flip producer=child jobs=%u chain_us=%llu addfb=%d pending_at_commit=%d flipped=%d flip_us=%llu "
+		"done_at_flip=%d flipped_back=%d report=%d%s ok=%d\n", P.g6_jobs, (unsigned long long)r.aux[1], rc_fb,
+		fl.st_commit == 0, fl.flipped, (unsigned long long)fl.flip_us, fl.st_flip == 1, fl.back, got3 == 0,
+		refused ? " gap=1 (ADDFB2 refused: not scan-out capable, see the KMS fb FAIL line)" : "", ok);
+	if (refused) {
+		P.gap++;
+	}
+	else {
+		verdict("dmabuf_sync_flip", ok);
+	}
+	if (sv[0] >= 0) close(sv[0]);
+}
+#endif /* DRMPROBE_NO_FORK */
+
+
+static void t_g6(void)
+{
+	t_g6_probe();
+	t_g6_import();
+#ifdef DRMPROBE_NO_FORK
+	t_g6_read_host();
+	if (P.buf[0].handle != 0u) {
+		t_g6_flip_host();
+	}
+#else
+	if (P.buf[0].handle != 0u) {
+		t_g6_xproc();
+	}
+	else {
+		printf(TAG "dmabuf_sync_read skipped=1 (no KMS: the cross-process test needs the flip half too)\n");
+	}
+#endif
+}
+
+
 int main(int argc, char **argv)
 {
 	char card_path[64], render_path[64], card1_path[64];
@@ -1751,12 +2383,13 @@ int main(int argc, char **argv)
 	uint64_t t_start = now_us();
 
 	setvbuf(stdout, NULL, _IOLBF, 0);
-	while ((c = getopt(argc, argv, "n:k")) != -1) {
+	while ((c = getopt(argc, argv, "n:kg:")) != -1) {
 		switch (c) {
 			case 'n': nflips = atoi(optarg); break;
 			case 'k': keep = 1; break;
+			case 'g': P.g6_jobs = (atoi(optarg) > 1) ? (uint32_t)atoi(optarg) : 2u; break;
 			default:
-				printf("usage: %s [-n flips] [-k]\n", argv[0]);
+				printf("usage: %s [-n flips] [-k] [-g jobs]\n", argv[0]);
 				return 2;
 		}
 	}
@@ -1813,6 +2446,7 @@ int main(int argc, char **argv)
 #else
 	printf(TAG "prime_export_xproc skipped=1 (DRMPROBE_NO_FORK: host harness)\n");
 #endif
+	t_g6();
 
 	if (!keep && (P.crtc != 0u)) {
 		(void)drmModeSetCrtc(P.card, P.crtc, 0, 0, 0, NULL, 0, NULL);   /* planes off: the console comes back */

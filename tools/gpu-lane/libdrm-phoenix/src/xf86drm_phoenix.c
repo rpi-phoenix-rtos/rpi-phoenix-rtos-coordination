@@ -483,7 +483,7 @@ static void conn_unref_locked(drmphx_conn_t *c)
 }
 
 
-static void drmphx_put(drmphx_conn_t *c)
+void drmphx_put(drmphx_conn_t *c)
 {
 	(void)pthread_mutex_lock(&G.lock);
 	c->users--;
@@ -755,6 +755,11 @@ int drm_phoenix_ioctl(int fd, unsigned long request, void *arg)
 	drmphx_conn_t *c;
 	int rc, tries, srv;
 
+	if (DRMPHX_IOC_TYPE(request) == (unsigned)DRMPHX_DMA_BUF_BASE) {
+		/* G6: a dma-buf request on a buffer descriptor (Mesa's WSI sends these via drmIoctl) */
+		rc = drmphx_dmabuf_ioctl(fd, nr, arg);
+		return (rc == 0) ? 0 : drmphx_fail(rc);
+	}
 	if (DRMPHX_IOC_TYPE(request) != DRM_IOCTL_BASE) {
 		if (drmphx_trace_enabled() != 0) {
 			trace_ioctl(NULL, DRMPHX_SRV_NONE, fd, nr, NULL, -ENOTTY);
@@ -1389,4 +1394,144 @@ int drmphx_syncfile_status(int fd, uint32_t *nfences)
 		return rc;
 	}
 	return (n == 0u) ? 1 : 0;   /* 1 = every fence signalled, 0 = active */
+}
+
+
+/* ========================================================================= */
+/* dma-buf implicit sync (gap G6)                                             */
+/* ========================================================================= */
+
+/* linux/dma-buf.h, by layout: struct dma_buf_export_sync_file and
+ * struct dma_buf_import_sync_file are both { __u32 flags; __s32 fd; }. */
+struct drmphx_dma_buf_sync_file {
+	uint32_t flags;
+	int32_t fd;
+};
+#define DRMPHX_DMA_BUF_SYNC_READ  (1u << 0)
+#define DRMPHX_DMA_BUF_SYNC_WRITE (2u << 0)
+#define DRMPHX_DMA_BUF_SYNC_RW    (DRMPHX_DMA_BUF_SYNC_READ | DRMPHX_DMA_BUF_SYNC_WRITE)
+
+
+int drmphx_any_v3d(drmphx_conn_t **out, int *dev_fd)
+{
+	int cand[8], ncand = 0, fd, i, rc;
+
+	/* Render nodes first: an old client may only know /dev/v3d-async, which is the
+	 * same server. Validated through drmphx_get: a descriptor closed and reused
+	 * since is re-identified (and skipped when it no longer is a render node). */
+	(void)pthread_mutex_lock(&G.lock);
+	for (i = 0; (i < 2) && (ncand < 8); i++) {
+		for (fd = 0; (fd < DRMPHX_MAX_FD) && (ncand < 8); fd++) {
+			const drmphx_conn_t *c = G.fd[fd].conn;
+			if ((c != NULL) && (c->srv == DRMPHX_SRV_V3D) && (c->dead == 0) &&
+					((c->node_type == DRM_NODE_RENDER) == (i == 0))) {
+				cand[ncand++] = fd;
+			}
+		}
+	}
+	(void)pthread_mutex_unlock(&G.lock);
+	for (i = 0; i < ncand; i++) {
+		rc = drmphx_get(cand[i], out);
+		if (rc != 0) {
+			continue;
+		}
+		if ((*out)->srv == DRMPHX_SRV_V3D) {
+			*dev_fd = cand[i];
+			return 0;
+		}
+		drmphx_put(*out);
+	}
+	*out = NULL;
+	return -ENODEV;
+}
+
+
+static void dmabuf_trace(int fd, unsigned nr, const char *path, uint32_t flags, int rc, uint32_t nfence, int sync_fd)
+{
+	char line[192];
+	int len;
+
+	if (drmphx_trace_enabled() == 0) {
+		return;
+	}
+	len = snprintf(line, sizeof(line), "DRMPHX dmabuf fd=%d path=%s name=%s flags=0x%x rc=%d errno=%d fences=%u sync_fd=%d\n",
+		fd, path, (nr == DRMPHX_DMA_BUF_EXPORT_NR) ? "DMA_BUF_IOCTL_EXPORT_SYNC_FILE" :
+		(nr == DRMPHX_DMA_BUF_IMPORT_NR) ? "DMA_BUF_IOCTL_IMPORT_SYNC_FILE" : "DMA_BUF_IOCTL_?", flags, (rc == 0) ? 0 : -1,
+		(rc == 0) ? 0 : -rc, nfence, sync_fd);
+	trace_emit(line, len);
+}
+
+
+/* DMA_BUF_IOCTL_EXPORT_SYNC_FILE: a sync file (the in-process emulation: a dup of a
+ * render descriptor + a fence set) holding the buffer's pending fences - every
+ * client's, from the render server. IMPORT_SYNC_FILE: every later user of the buffer
+ * also waits for the sync file's fences (BO_ATTACH_FENCE; when the server cannot
+ * take a fence, the CPU waits for it here, which is equivalent). Both treat every
+ * use as a write, as Linux v3d does (READ and WRITE export the same set). */
+int drmphx_dmabuf_ioctl(int fd, unsigned nr, void *arg)
+{
+	struct drmphx_dma_buf_sync_file *s = arg;
+	v3da_fence_t set[DRMPHX_SYNCFILE_FENCES], join;
+	char path[DRMPHX_NODE_PATH_MAX] = "-";
+	drmphx_conn_t *c = NULL;
+	kms_memref_t m;
+	uint32_t ns, n = 0u, i, flags = (s != NULL) ? s->flags : 0u;
+	int rc, dev = -1, nfd = -1;
+
+	if ((nr != DRMPHX_DMA_BUF_EXPORT_NR) && (nr != DRMPHX_DMA_BUF_IMPORT_NR)) {
+		rc = -ENOTTY;   /* DMA_BUF_IOCTL_SYNC / SET_NAME: not emulated (as before G6) */
+	}
+	else if (s == NULL) {
+		rc = -EFAULT;
+	}
+	else if (((flags & ~DRMPHX_DMA_BUF_SYNC_RW) != 0u) || ((flags & DRMPHX_DMA_BUF_SYNC_RW) == 0u)) {
+		rc = -EINVAL;
+	}
+	else if ((rc = drmphx_prime_fd_lookup(fd, &m)) != 0) {
+		rc = (rc == -EBADF) ? -EBADF : -ENOTTY;   /* not a dma-buf descriptor: as Linux */
+	}
+	else if (drmphx_any_v3d(&c, &dev) != 0) {
+		rc = -ENOTTY;   /* no render connection here: the feature is absent (Mesa falls back) */
+	}
+	else if (c->u.v3d.hello.proto < V3DA_PROTO_BO_SYNC) {
+		rc = -ENOTTY;   /* a render server before G6: exactly the answer before G6 */
+	}
+	(void)sys_fdpath(fd, path, sizeof(path));
+	ns = (strncmp(path, KMS_BUF_NS "/", sizeof(KMS_BUF_NS)) == 0) ? DRMPHX_NS_KMSBUF : DRMPHX_NS_V3DBUF;
+
+	if ((rc == 0) && (nr == DRMPHX_DMA_BUF_EXPORT_NR)) {
+		rc = drmphx_v3d_buffer_fences(c, ns, m.port, m.addr, set, DRMPHX_SYNCFILE_FENCES, &n);
+		if (rc == 0) {
+			nfd = dup(dev);   /* like every emulated sync file */
+			if (nfd < 0) {
+				rc = -errno;
+			}
+			else {
+				(void)fcntl(nfd, F_SETFD, FD_CLOEXEC);   /* Linux sync files are O_CLOEXEC */
+				s->fd = syncfile_add(nfd, set, n);
+			}
+		}
+	}
+	else if ((rc == 0) && (nr == DRMPHX_DMA_BUF_IMPORT_NR)) {
+		if (syncfile_set(s->fd, set, &n) != 0) {
+			rc = -EINVAL;   /* not a sync file of this process (cross-process sync-file descriptors are not in G6) */
+		}
+		for (i = 0u; (rc == 0) && (i < n); i++) {
+			if (drmphx_v3d_fence_signaled(c, &set[i]) != 0) {
+				continue;
+			}
+			rc = drmphx_v3d_buffer_attach(c, ns, m.port, m.addr, &set[i], &join);
+			if ((rc == -EBUSY) || (rc == -ENOENT)) {
+				rc = drmphx_v3d_fence_wait(c, &set[i]);   /* the server cannot hold it: wait here instead */
+			}
+			else if ((rc == 0) && (join.seqno != 0u)) {
+				drmphx_v3d_implicit_join(m.port, m.addr, &join);
+			}
+		}
+	}
+	if (c != NULL) {
+		drmphx_put(c);
+	}
+	dmabuf_trace(fd, nr, path, flags, rc, n, (rc == 0) && (nr == DRMPHX_DMA_BUF_EXPORT_NR) ? nfd : -1);
+	return rc;
 }

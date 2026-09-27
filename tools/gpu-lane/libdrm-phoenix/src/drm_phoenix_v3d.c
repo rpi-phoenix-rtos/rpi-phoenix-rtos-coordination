@@ -13,7 +13,9 @@
  *   - fast paths with no IPC: fences that already passed, read from the shared
  *     fence page; this client mirrors its own syncobjs' fences and every BO's
  *     last-use fence from its own submits;
- *   - sync files are emulated in-process (xf86drm_phoenix.c).
+ *   - sync files are emulated in-process (xf86drm_phoenix.c);
+ *   - G6: a shared BO's fences are every client's (the server's last-use record):
+ *     dma-buf sync-file ioctls and flips of foreign buffers ask the server for them.
  * Every parked server wait is bounded (V3DA_WAIT_MAX_MS): a parked Phoenix client
  * can be neither interrupted nor killed (E5), so longer waits loop here.
  *
@@ -78,8 +80,9 @@ int drmphx_v3d_hello(drmphx_conn_t *c, int fd)
 	h.proto = V3DA_PROTO_VERSION;
 	rc = ioctl(fd, V3DA_IOC_HELLO, &h);
 	if ((rc < 0) && (errno == EPROTO)) {
-		/* A proto-2 server (before G4) accepts exactly 2: speak it, without BO_EXPORT.
-		 * The reply's proto (the server's version) gates what this connection sends. */
+		/* A proto-2 server (before G4) accepts exactly 2, a proto-3 one (before G6) 2..3:
+		 * speak 2. The reply's proto (the server's version) gates what this connection
+		 * sends (BO_EXPORT from 3, BO_LAST_FENCE / BO_ATTACH_FENCE from 4). */
 		memset(&h, 0, sizeof(h));
 		h.proto = V3DA_PROTO_BASE;
 		rc = ioctl(fd, V3DA_IOC_HELLO, &h);
@@ -327,6 +330,177 @@ int drmphx_v3d_implicit_wait(uint32_t port, uint64_t id)
 	}
 	(void)pthread_mutex_unlock(&IMP.lock);
 	return rc;
+}
+
+
+/* ========================================================================= */
+/* Cross-process implicit sync (G6)                                           */
+/* ========================================================================= */
+
+static void sync_req(v3da_bo_sync_req_t *q, uint32_t ns, uint32_t port, uint64_t id)
+{
+	memset(q, 0, sizeof(*q));
+	q->ns = ns;
+	q->port = port;
+	q->id = id;
+}
+
+
+int drmphx_v3d_buffer_fences(drmphx_conn_t *c, uint32_t ns, uint32_t port, uint64_t id, v3da_fence_t *set,
+	uint32_t max, uint32_t *n)
+{
+	v3da_bo_sync_req_t q;
+	v3da_resp_t r;
+	uint32_t i, round;
+	int rc;
+
+	*n = 0u;
+	if (c->u.v3d.hello.proto < V3DA_PROTO_BO_SYNC) {
+		return -ENOSYS;   /* a render server before G6 */
+	}
+	for (round = 0u; round < 16u; round++) {
+		sync_req(&q, ns, port, id);
+		rc = vcall(c, V3DA_OP_BO_LAST_FENCE, &q, sizeof(q), &r);
+		if (rc == -ENOENT) {
+			return 0;   /* the name is gone: nothing of it can still be pending for us */
+		}
+		if (rc != 0) {
+			return rc;
+		}
+		if (((r.u.bo_fences.flags & V3DA_BO_FENCES_MORE) == 0u) || (round == 15u)) {
+			for (i = 0u; (i < r.u.bo_fences.count) && (i < V3DA_BO_FENCES_MAX) && (*n < max); i++) {
+				set[(*n)++] = r.u.bo_fences.f[i];
+			}
+			return 0;
+		}
+		/* More pending than one answer holds (four or more timelines on one buffer):
+		 * wait for the newest ones and ask again. */
+		for (i = 0u; (i < r.u.bo_fences.count) && (i < V3DA_BO_FENCES_MAX); i++) {
+			rc = fence_wait(c, &r.u.bo_fences.f[i], FOREVER_NS);
+			if (rc != 0) {
+				return rc;
+			}
+		}
+	}
+	return 0;
+}
+
+
+int drmphx_v3d_buffer_attach(drmphx_conn_t *c, uint32_t ns, uint32_t port, uint64_t id, const v3da_fence_t *f,
+	v3da_fence_t *join)
+{
+	v3da_bo_sync_req_t q;
+	v3da_resp_t r;
+	int rc;
+
+	memset(join, 0, sizeof(*join));
+	if (c->u.v3d.hello.proto < V3DA_PROTO_BO_SYNC) {
+		return -ENOSYS;
+	}
+	sync_req(&q, ns, port, id);
+	q.fence = *f;
+	rc = vcall(c, V3DA_OP_BO_ATTACH_FENCE, &q, sizeof(q), &r);
+	if (rc == 0) {
+		*join = r.u.fence.fence;
+	}
+	return rc;
+}
+
+
+void drmphx_v3d_implicit_join(uint32_t port, uint64_t id, const v3da_fence_t *join)
+{
+	drmphx_v3d_bo_t *b;
+	uint32_t i;
+
+	/* The join fence implies every fence the BO waited for before (the server made it
+	 * depend on them), so it may replace this process's mirrored last use. */
+	(void)pthread_mutex_lock(&IMP.lock);
+	for (i = 0u; i < DRMPHX_MAX_IMPLICIT; i++) {
+		drmphx_conn_t *c = IMP.e[i].conn;
+		if ((c == NULL) || (IMP.e[i].port != port) || (IMP.e[i].id != id)) {
+			continue;
+		}
+		(void)pthread_mutex_lock(&c->lock);
+		b = bo_get(c, IMP.e[i].handle);
+		if (b != NULL) {
+			b->last = *join;
+		}
+		(void)pthread_mutex_unlock(&c->lock);
+	}
+	(void)pthread_mutex_unlock(&IMP.lock);
+}
+
+
+/* G6 flip fence of a render BO scanned out through card0 (a G7 import): the newest
+ * pending fence; the rest are implied by it, because the server made the newest job
+ * wait for every OTHER client's pending use (implicit dependencies) - except this
+ * client's own work on another queue, which is waited for here (normally done).
+ * -ENOSYS: no render connection, or a server before G6. */
+static int buffer_flip_fence(uint32_t port, uint64_t id, v3da_fence_t *f)
+{
+	v3da_fence_t set[DRMPHX_SYNCFILE_FENCES];
+	drmphx_conn_t *c;
+	uint32_t n = 0u, i;
+	int dev, rc;
+
+	if (drmphx_any_v3d(&c, &dev) != 0) {
+		return -ENOSYS;
+	}
+	rc = drmphx_v3d_buffer_fences(c, DRMPHX_NS_V3DBUF, port, id, set, DRMPHX_SYNCFILE_FENCES, &n);
+	for (i = 1u; (rc == 0) && (i < n); i++) {
+		if ((set[i].slot == set[0].slot) && (set[i].queue != set[0].queue)) {
+			rc = fence_wait(c, &set[i], FOREVER_NS);
+		}
+	}
+	if ((rc == 0) && (n != 0u) && (fence_signaled(c, &set[0]) == 0)) {
+		*f = set[0];
+		rc = 1;
+	}
+	drmphx_put(c);
+	return rc;
+}
+
+
+int drmphx_v3d_flip_fence(uint32_t kms_buf_port, uint32_t port, uint64_t id, v3da_fence_t *f)
+{
+	int rc;
+
+	if (port != kms_buf_port) {
+		rc = buffer_flip_fence(port, id, f);
+		if (rc != -ENOSYS) {
+			return (rc < 0) ? 0 : rc;   /* a failed query flips ungated, as before G6 */
+		}
+	}
+	return drmphx_v3d_implicit_fence(port, id, f);   /* G13: this process's own renders */
+}
+
+
+int drmphx_v3d_flip_wait(uint32_t kms_buf_port, uint32_t port, uint64_t id)
+{
+	v3da_fence_t f;
+	drmphx_conn_t *c;
+	int dev, rc = 0, rounds;
+
+	if (port != kms_buf_port) {
+		for (rounds = 0; rounds < 16; rounds++) {
+			rc = buffer_flip_fence(port, id, &f);
+			if (rc != 1) {
+				break;
+			}
+			if (drmphx_any_v3d(&c, &dev) != 0) {
+				break;
+			}
+			rc = fence_wait(c, &f, FOREVER_NS);
+			drmphx_put(c);
+			if (rc != 0) {
+				return rc;
+			}
+		}
+		if (rc != -ENOSYS) {
+			return (rc < 0) ? rc : 0;
+		}
+	}
+	return drmphx_v3d_implicit_wait(port, id);
 }
 
 
@@ -635,8 +809,8 @@ static int ioc_wait_bo(drmphx_conn_t *c, const struct drm_v3d_wait_bo *w)
 	memset(&f, 0, sizeof(f));
 	(void)pthread_mutex_lock(&c->lock);
 	b = bo_get(c, w->handle);
-	if ((b != NULL) && (b->imported == 0u)) {
-		known = 1;
+	if ((b != NULL) && (b->imported == 0u) && (b->exported == 0u)) {
+		known = 1;   /* a private BO: only this client's submits use it */
 		f = b->last;
 	}
 	(void)pthread_mutex_unlock(&c->lock);
@@ -645,7 +819,7 @@ static int ioc_wait_bo(drmphx_conn_t *c, const struct drm_v3d_wait_bo *w)
 		rc = fence_wait(c, &f, rel);
 	}
 	else {
-		/* Not ours (or shared): the server knows every client's last use. */
+		/* Not ours, or shared (imported / exported, G6): the server knows every client's last use. */
 		do {
 			memset(&q, 0, sizeof(q));
 			q.handle = w->handle;
@@ -1321,6 +1495,14 @@ static int ioc_prime_export(drmphx_conn_t *c, struct drm_prime_handle *ph)
 		/* G13 for G7: a flip on card0 of this export (imported there by this process)
 		 * waits for this BO's renders, exactly like a flip of an imported dumb buffer. */
 		implicit_note(c, m.port, m.addr, ph->handle);
+		(void)pthread_mutex_lock(&c->lock);
+		{
+			drmphx_v3d_bo_t *b = bo_get(c, ph->handle);
+			if (b != NULL) {
+				b->exported = 1u;   /* G6: WAIT_BO now asks the server (other processes may use it) */
+			}
+		}
+		(void)pthread_mutex_unlock(&c->lock);
 	}
 	(void)snprintf(path, sizeof(path), "%s/%llu", ns, (unsigned long long)m.addr);
 	bfd = open(path, O_RDONLY | (((ph->flags & DRM_CLOEXEC) != 0u) ? O_CLOEXEC : 0));   /* O_RDONLY: E1 */

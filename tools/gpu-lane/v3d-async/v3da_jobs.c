@@ -887,12 +887,34 @@ int v3da_submit(v3da_client_t *c, int op, const v3da_submit_t *hdr, const void *
 		s = v3da_syncobj_get(c, in[i].handle);
 		add_dep(((in[i].flags & V3DA_SEM_RENDER) != 0u) ? last : first, s);
 	}
+	/* G6: other clients' pending use of a named BO (a shared /v3dbuf buffer, or one a
+	 * BO_ATTACH_FENCE joined) gates the whole submit - before mark_use overwrites it. */
+	if (hdr->nbo != 0u) {
+		uint32_t before = first->ndep, dropped;
+		dropped = v3da_bo_implicit_deps(c->slot, bos, hdr->nbo, first->dep, &first->ndep, V3DA_SUBMIT_MAX_SEMS);
+		if (first->ndep > before) {
+			srv.g6_implicit++;
+			srv.g6_implicit_deps += first->ndep - before;
+			if (srv.g6_implicit <= 4u) {
+				printf("V3DA srv g6 implicit client=%u queue=%d deps=%u newest=%u/%u/%llu n=%u\n", c->id, first->queue,
+					first->ndep - before, first->dep[first->ndep - 1u].slot, first->dep[first->ndep - 1u].queue,
+					(unsigned long long)first->dep[first->ndep - 1u].seqno, srv.g6_implicit);
+			}
+		}
+		if (dropped != 0u) {
+			srv.g6_dropped += dropped;
+			if (srv.g6_dropped <= 4u) {
+				printf("V3DA srv g6 implicit DROPPED client=%u deps=%u (dependency list full) total=%u\n", c->id, dropped,
+					srv.g6_dropped);
+			}
+		}
+	}
 
 	first->fence.seqno = ++c->next_seq[first->queue];
 	if (last != first) {
 		last->fence.seqno = ++c->next_seq[last->queue];
 	}
-	v3da_bo_mark_use(bos, hdr->nbo, &last->fence);
+	v3da_bo_mark_use(bos, hdr->nbo, &last->fence, last->gseq);
 	for (i = 0u; i < hdr->nout; i++) {
 		s = v3da_syncobj_get(c, outs[i].handle);
 		s->state = V3DA_SYNC_FENCE;
@@ -926,6 +948,69 @@ int v3da_submit_nop(v3da_client_t *c, uint32_t delay_us, v3da_fence_t *out)
 	j->delay_us = delay_us;
 	j->fence.seqno = ++c->next_seq[V3DA_Q_CPU];
 	*out = j->fence;
+
+	fifo_push(&srv.q[V3DA_Q_CPU], c->slot, j);
+	v3da_sched_run();
+	v3da_kick_event_thread();
+	return 0;
+}
+
+
+/* BO_ATTACH_FENCE (G6, DMA_BUF_IOCTL_IMPORT_SYNC_FILE): a zero-length CPU-queue job
+ * of the caller that waits for the attached fence AND the BO's pending last-use
+ * fences, recorded as the BO's last use. Its fence therefore implies both, and
+ * every later user (implicit dependencies, BO_WAIT, BO_LAST_FENCE, a flip gated on
+ * BO_LAST_FENCE) waits for the attached fence without any new per-BO state. */
+int v3da_bo_attach_fence(v3da_client_t *c, const v3da_bo_sync_req_t *rq, v3da_fence_t *out)
+{
+	v3da_bo_t *t[V3DA_MAX_CLIENTS];
+	v3da_fence_t dep[V3DA_SUBMIT_MAX_SEMS];
+	uint32_t handles[V3DA_MAX_CLIENTS], ndep = 0u, i;
+	int nt, q, full = 0;
+	v3da_job_t *j;
+
+	memset(out, 0, sizeof(*out));
+	if ((rq->fence.seqno != 0u) && (v3da_fence_valid(c, &rq->fence) == 0)) {
+		return -EINVAL;   /* a fence the server never handed out */
+	}
+	nt = v3da_bo_sync_targets(c->id, rq, t, V3DA_MAX_CLIENTS);
+	if (nt <= 0) {
+		return (nt == 0) ? -ENOENT : nt;
+	}
+	if ((rq->fence.seqno == 0u) || (v3da_fence_signaled(&rq->fence, NULL) != 0)) {
+		return 0;   /* nothing left to wait for: the BO's fences are unchanged */
+	}
+	full |= v3da_fence_set_add(dep, &ndep, V3DA_SUBMIT_MAX_SEMS, &rq->fence);
+	for (i = 0u; i < (uint32_t)nt; i++) {
+		for (q = 0; q < V3DA_Q_COUNT; q++) {
+			const v3da_fence_t *f = &t[i]->last[q];
+			if ((f->seqno != 0u) && (v3da_fence_signaled(f, NULL) == 0)) {
+				full |= v3da_fence_set_add(dep, &ndep, V3DA_SUBMIT_MAX_SEMS, f);
+			}
+		}
+		handles[i] = t[i]->handle;
+	}
+	if (full != 0) {
+		srv.g6_attach_busy++;
+		return -EBUSY;   /* the caller waits for the fence itself (equivalent) */
+	}
+	j = job_new(c, V3DA_Q_CPU, v3da_now_us());
+	if (j == NULL) {
+		return -ENOMEM;
+	}
+	j->delay_us = 0u;
+	j->join = 1;
+	memcpy(j->dep, dep, (size_t)ndep * sizeof(dep[0]));
+	j->ndep = ndep;
+	j->fence.seqno = ++c->next_seq[V3DA_Q_CPU];
+	v3da_bo_mark_use(handles, (uint32_t)nt, &j->fence, j->gseq);
+	*out = j->fence;
+	srv.g6_attach++;
+	if (srv.g6_attach <= 4u) {
+		printf("V3DA srv g6 attach client=%u ns=%u id=%llu handle=0x%x bos=%d fence=%u/%u/%llu deps=%u join=%llu n=%u\n",
+			c->id, rq->ns, (unsigned long long)rq->id, rq->handle, nt, rq->fence.slot, rq->fence.queue,
+			(unsigned long long)rq->fence.seqno, ndep, (unsigned long long)j->fence.seqno, srv.g6_attach);
+	}
 
 	fifo_push(&srv.q[V3DA_Q_CPU], c->slot, j);
 	v3da_sched_run();
@@ -1145,8 +1230,11 @@ void v3da_jobs_tick(uint64_t now)
 
 	j = srv.q[V3DA_Q_CPU].active;
 	if ((j != NULL) && (now >= j->done_at_us)) {
+		int join = j->join;   /* job_done frees j */
 		job_done(j, 0, now);
-		srv.nops_done++;
+		if (join == 0) {
+			srv.nops_done++;
+		}
 	}
 
 	for (q = 0; q < V3DA_Q_COUNT; q++) {

@@ -9,7 +9,12 @@ nodes, the static Mesa GBM/EGL/GLES, the `--wrap=mmap/ioctl` rules), [M4](M4-xor
 (`memExport`, fd per buffer across AF_UNIX) and [poll-wake](poll-wake.md) (`pollNotify`,
 `rpi4-kms-gate`).
 
-**Latest (2026-09-27, G7):** card0 import of a foreign buffer (`KMS_OP_PRIME_IMPORT`, direct scan-out of
+**Latest (2026-09-27, G6):** cross-process implicit sync implemented and host-tested (fail-then-pass),
+Pi cycle `g6-sync` pre-registered — [G6-cross-process-sync.md](G6-cross-process-sync.md) (§17 here is a pointer).
+Weston's composition of a client buffer waits for the client's render (render-server implicit
+dependencies) and a direct-scan-out flip waits for it too (`weston-g6`).
+
+**Earlier (2026-09-27, G7):** card0 import of a foreign buffer (`KMS_OP_PRIME_IMPORT`, direct scan-out of
 client buffers) implemented and host-tested, Pi cycle `m6h-g7` pre-registered — [§16](#16-g7--card0-import-of-a-foreign-buffer-kms_op_prime_import-and-cycle-m6h-g7). G4 (§15) is pending `m6g-g4`.
 
 **Status (2026-09-27, earlier):** first Pi cycle **`m6a-weston` FAILED at compositor init** in both
@@ -353,8 +358,8 @@ fail, the baked keymap compiles, `KEY_A` → `a`, and it re-serialises (68 121 b
 | Weston composition of dma-buf clients (linux-dmabuf → `EGL_EXT_image_dma_buf_import`) | a client buffer that is a `/kmsbuf` export imports on Weston's render connection: `BO_IMPORT ns=kmsbuf` (**G1 ✅**) | — |
 | Client GPU rendering (weston-simple-egl, any wayland-egl app) | Mesa allocates back buffers `PIPE_BIND_SHARED` on the **render node** → export = `PRIME_HANDLE_TO_FD` there = **G4**: implemented (§15), pending Pi cycle `m6g-g4`. m6d showed 0012 (`V3D_PHOENIX_SHARED_SCANOUT=1`) never engages for a wayland-egl client; `weston-m6a.sh` no longer sets it (knob `SHARED_SCANOUT=1`) | Pi cycle `m6g-g4` |
 | Direct scanout of a client buffer (kiosk fullscreen, overlay planes) | Weston's `drmModeAddFB2` needs `PRIME_FD_TO_HANDLE` on card0 of a buffer another process allocated = **G7**: **implemented** (§16, `KMS_OP_PRIME_IMPORT`, LINEAR below 1 GiB; UIF → `EINVAL` → Weston adds the scanout tranche or keeps GL composition), pending Pi cycle `m6h-g7` | Pi cycle `m6h-g7`; tear-free needs cross-process implicit sync |
-| Sync of client GPU work before Weston samples/flips it | Wayland relies on dma-buf implicit fences; none exist across processes here → a partially rendered client frame can be composited (tearing on the egl arm) | cross-process implicit sync (`BO_LAST_FENCE`, M3 G13) or explicit sync (below) |
-| `linux-explicit-synchronization` / `wp_linux_drm_syncobj` (client acquire/release fences) | sync files are process-local (a `dup` of the render fd) | **G6** (`/v3dsync`, cross-process sync files/syncobjs) |
+| Sync of client GPU work before Weston samples/flips it | Wayland relies on dma-buf implicit fences; none existed across processes → a partially rendered client frame could be composited or scanned out. **G6** (implemented, pending Pi `g6-sync`, [G6 doc](G6-cross-process-sync.md)): the render server makes Weston's composite job wait for the client's pending render of a shared BO, and `weston-g6`'s library gates a direct-scan-out flip on the client's fence (`BO_LAST_FENCE` → `IN_FENCE`, `rpi4-kms -G`) | Pi cycle `g6-sync` |
+| `linux-explicit-synchronization` / `wp_linux_drm_syncobj` (client acquire/release fences) | sync files are process-local (a `dup` of the render fd) | **G6b** (`/v3dsync`, cross-process sync-file / syncobj descriptors; G6 covers the implicit half) |
 | Weston's own flips of GL output | GBM scanout BOs are kms dumb buffers imported on the render node (kmscube path); `IN_FENCE_FD` from `EGL_ANDROID_native_fence_sync` resolves in-process (`rpi4-kms -G`) | — |
 | Pacing (`poll()`) | Weston's poll set = unix sockets + card0 (pollNotify in `rpi4-kms-gate`) + socketpairs + emulated timers → **no 20 ms quantum** | — (G12 mitigated) |
 | DRI3-style fence sharing (xshmfence, G16) | **not needed**: Wayland has no xshmfence | — |
@@ -501,7 +506,7 @@ exceed the default 32 MiB pool (E3: 256 MiB contiguous below 1 GiB is available)
 | Input on the Pi (`rpi4-kms -C` console handover, keys into a Wayland client) | 0.5–1 day | libinput-phoenix is written; untested; needs a keyboard-reading client (e.g. weston-terminal needs cairo — ports have cairo, so weston patch 0005's disabler turns back on once cairo is exposed) |
 | **G4** render-node export → drop 0012 | **implemented** (§15), pending `m6g-g4` | shared with M4 DRI3, M5 external memory |
 | **G7** kms import of foreign buffers (direct scanout of fullscreen clients, overlays) | **implemented** (§16), pending `m6h-g7` | performance, not function (GL composition works) |
-| Cross-process implicit sync (`BO_LAST_FENCE`) or **G6** explicit sync (`wp_linux_drm_syncobj_v1` in Weston 14) | 2–5 days | tear-free GPU clients |
+| Cross-process implicit sync (`BO_LAST_FENCE`) or explicit sync (`wp_linux_drm_syncobj_v1` in Weston 14) | implicit: **G6 done**, pending Pi `g6-sync` ([G6 doc](G6-cross-process-sync.md)); explicit: G6b, 2–5 days | tear-free GPU clients |
 | Desktop shell (cairo toytoolkit: `weston-desktop-shell`, `weston-terminal`) from the ports' cairo/pango/fontconfig | 1–2 days | view-based private dep views, as here |
 | Xwayland (needs M4's X server pieces) | later | out of M6's first gate |
 | Porting into the ports framework (`weston` port next to `xorg_server`), SDL2 Wayland video driver for the games | 2–3 days | the migration step |
@@ -1051,7 +1056,9 @@ plane (`fb.c:397`) [read].
 export now records the BO in the G13 table, so a flip of the card0 import carries the BO's last-use
 fence, as a flip of an imported dumb buffer does. **Cross-process (Weston direct scan-out of a client
 buffer) has no fence**: the flip does not wait for the client's GPU job. Tearing or a partial frame on
-direct scan-out is an expected risk until `BO_LAST_FENCE` or G6 explicit sync (§8).
+direct scan-out is an expected risk until `BO_LAST_FENCE` or G6 explicit sync (§8). *Later:* **G6** closes this ([G6 doc](G6-cross-process-sync.md)): with a G6 library, a flip of a
+card0 import of a render BO asks the render server for the BO's pending fences (`BO_LAST_FENCE`) and
+carries the newest as its in-fence.
 
 **Who calls it.** Weston's GL renderer imports every client dma-buf through EGL; Mesa v3d with kmsro
 then also imports it on card0 (`renderonly_create_gpu_import_for_resource`, `v3d_resource.c:1107`)
@@ -1220,3 +1227,11 @@ Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-144453-m6h-g7.log` (pre-boot UART 
 **Decides:** G7 works on hardware. Direct scanout lifts the GPU client from 30 to 45 fps. Placement above 1 GiB
 is a real, measured case (2 of ~6 client buffers), so render-server placement below 1 GiB for shareable BOs is
 worth doing. No tearing seen, though the cross-process fence (G6) is not in yet (agent).
+
+## 17. G6 — cross-process implicit sync, and cycle `g6-sync`
+
+Design, protocol (render server proto 4: `BO_LAST_FENCE`, `BO_ATTACH_FENCE`, implicit dependencies),
+tests (drmprobe `dmabuf_sync_{probe,import,read,flip}`; host fail-then-pass against a proto-3 fake),
+artifacts, staging and the pre-registered cycle `g6-sync` (servers → `drmprobe-g6` →
+`weston-m6a-g6.sh gl egl noinput` with `weston-g6` + `weston-simple-egl-g6`) are in
+[G6-cross-process-sync.md](G6-cross-process-sync.md).

@@ -66,6 +66,7 @@ typedef struct {
 	uint32_t imp_port;        /* imported only: the exporter's buffer namespace port ... */
 	uint32_t imp_cache;       /* ... the export's memory type (enum kms_mem_cache) ... */
 	uint64_t imp_id;          /* ... and the object id: a render-node re-export reopens it (G4a, M5) */
+	uint32_t exported;        /* 1 = this client's BO, PRIME-exported (G4): other processes may use it (G6) */
 } drmphx_v3d_bo_t;
 
 typedef struct {
@@ -204,5 +205,36 @@ int drmphx_v3d_fence_wait(drmphx_conn_t *c, const v3da_fence_t *f);
 int drmphx_v3d_implicit_fence(uint32_t port, uint64_t id, v3da_fence_t *f);
 /* The CPU-wait fallback (rpi4-kms without -G): block until that fence passed. */
 int drmphx_v3d_implicit_wait(uint32_t port, uint64_t id);
+
+/* G6: cross-process implicit sync (docs/gpu-new-lane/G6-cross-process-sync.md).
+ * A buffer is named {ns, port, id} (DRMPHX_NS_*); the render server keeps every
+ * client's last use of it (V3DA_OP_BO_LAST_FENCE / BO_ATTACH_FENCE, proto 4).
+ * any_v3d: a live render-server connection of this process and one descriptor of
+ * it (pair with drmphx_put); -ENODEV when there is none. */
+int drmphx_any_v3d(drmphx_conn_t **out, int *dev_fd);
+void drmphx_put(drmphx_conn_t *c);
+/* The buffer's pending fences, newest first (-ENOSYS: a server before G6). */
+int drmphx_v3d_buffer_fences(drmphx_conn_t *c, uint32_t ns, uint32_t port, uint64_t id, v3da_fence_t *set,
+	uint32_t max, uint32_t *n);
+/* Make later users of the buffer wait for f too; *join = the fence that now stands
+ * for the buffer's implicit fences (seqno 0: f had already signalled). */
+int drmphx_v3d_buffer_attach(drmphx_conn_t *c, uint32_t ns, uint32_t port, uint64_t id, const v3da_fence_t *f,
+	v3da_fence_t *join);
+/* Fold a join fence into this process's mirrors of {port, id} (G13 flips of it). */
+void drmphx_v3d_implicit_join(uint32_t port, uint64_t id, const v3da_fence_t *join);
+/* The fence a flip of the buffer {port, id} must wait for: a buffer that is not
+ * one of the display server's own dumb buffers (port != kms_buf_port: a G7 import
+ * of a render BO, whose producer may be another process) is asked of the render
+ * server (G6); otherwise, or against a server before G6, the G13 in-process mirror.
+ * 1 = *f is pending, 0 = nothing to wait for. flip_wait: the CPU-wait fallback. */
+int drmphx_v3d_flip_fence(uint32_t kms_buf_port, uint32_t port, uint64_t id, v3da_fence_t *f);
+int drmphx_v3d_flip_wait(uint32_t kms_buf_port, uint32_t port, uint64_t id);
+/* DMA_BUF_IOCTL_EXPORT_SYNC_FILE / IMPORT_SYNC_FILE on a buffer descriptor (drmIoctl
+ * and __wrap_ioctl route ioctl type 'b' here). 0 or -errno; -ENOTTY for the other
+ * dma-buf requests, a descriptor that is not a buffer, or no G6 render server. */
+#define DRMPHX_DMA_BUF_BASE     'b'
+#define DRMPHX_DMA_BUF_EXPORT_NR 2u   /* DMA_BUF_IOCTL_EXPORT_SYNC_FILE (Linux 6.0) */
+#define DRMPHX_DMA_BUF_IMPORT_NR 3u   /* DMA_BUF_IOCTL_IMPORT_SYNC_FILE */
+int drmphx_dmabuf_ioctl(int fd, unsigned nr, void *arg);
 
 #endif /* _DRM_PHOENIX_PRIV_H_ */

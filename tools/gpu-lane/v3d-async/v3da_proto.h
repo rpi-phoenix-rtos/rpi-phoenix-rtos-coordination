@@ -54,7 +54,7 @@
  * protocol; client ids are shared. */
 #define V3DA_DRI_RENDER_NAME "dri/renderD128"
 #define V3DA_DRI_CARD_NAME   "dri/card1"
-#define V3DA_PROTO_VERSION 3u   /* 3: M6 gap G4 (BO_EXPORT, the /v3dbuf namespace, BO_IMPORT ns=v3dbuf) */
+#define V3DA_PROTO_VERSION 4u   /* 3: M6 gap G4 (BO_EXPORT, /v3dbuf, BO_IMPORT ns=v3dbuf); 4: gap G6 (BO_LAST_FENCE, BO_ATTACH_FENCE) */
 /* The oldest protocol a client may HELLO with: 2 = M1 part 2 (submits, scanout/flip,
  * modes). A client that uses nothing newer HELLOs with V3DA_PROTO_BASE and so works
  * with every server since M1 part 2; the reply's proto is the SERVER's version, which
@@ -62,6 +62,7 @@
  * with -EPROTO: a proto-3 client then retries with 2). */
 #define V3DA_PROTO_BASE    2u
 #define V3DA_PROTO_BO_EXPORT 3u   /* first version with V3DA_OP_BO_EXPORT */
+#define V3DA_PROTO_BO_SYNC   4u   /* first version with V3DA_OP_BO_LAST_FENCE / V3DA_OP_BO_ATTACH_FENCE (G6) */
 #define V3DA_MAGIC         0x41443356u   /* "V3DA" little-endian; bit 31 clear */
 #define V3DA_FENCE_MAGIC   0x46443356u   /* "V3DF" */
 
@@ -177,6 +178,8 @@ enum v3da_op {
 	V3DA_OP_BO_WAIT,          /* DRM_IOCTL_V3D_WAIT_BO     (old: client-local no-op) */
 	V3DA_OP_BO_IMPORT,        /* PRIME import (M3 part 2: v3da_bo_import_req_t; older servers -ENOSYS) */
 	V3DA_OP_BO_EXPORT,        /* PRIME export (proto 3, G4: v3da_bo_req_t -> v3da_bo_resp_t; proto 2 servers -EINVAL) */
+	V3DA_OP_BO_LAST_FENCE,    /* a BO's pending last-use fences (proto 4, G6: v3da_bo_sync_req_t -> v3da_bo_fences_resp_t) */
+	V3DA_OP_BO_ATTACH_FENCE,  /* add a fence to a BO's implicit fences (proto 4, G6: v3da_bo_sync_req_t -> v3da_fence_resp_t) */
 
 	V3DA_OP_SUBMIT_CL = 32,   /* DRM_IOCTL_V3D_SUBMIT_CL   (old: V3D_RPC_SUBMIT_CL, synchronous) */
 	V3DA_OP_SUBMIT_TFU,       /* DRM_IOCTL_V3D_SUBMIT_TFU */
@@ -336,6 +339,53 @@ typedef struct {
  */
 #define V3DA_HAVE_BO_EXPORT    1
 #define V3DA_BUF_NS            "/v3dbuf"
+
+/*
+ * Cross-process implicit sync (proto 4, gap G6; docs/gpu-new-lane/G6-cross-process-sync.md).
+ * The server's per-BO last-use record (v3da_bo_t.last[], one fence per queue, set by
+ * every submit that names the BO) is the dma-buf reservation object of this stack:
+ * a /v3dbuf import shares the exporter's BO and so its record, and every submit of
+ * any client that names a shared BO first waits for the other clients' pending
+ * fences on it (implicit dependencies, in both scheduling modes).
+ *
+ * BO_LAST_FENCE: the BO's PENDING last-use fences, newest (by submission order)
+ * first. The BO is named by the caller's handle (ns = V3DA_BO_SYNC_HANDLE) or by
+ * its buffer name {ns, port, id} - any client may ask, as anyone holding the
+ * dma-buf descriptor could on Linux: ns = V3DA_IMPORT_NS_V3DBUF names an exported
+ * BO of this server, ns = V3DA_IMPORT_NS_KMSBUF every live import of that
+ * /kmsbuf name (one BO per importing client). count = 0: idle. flags
+ * V3DA_BO_FENCES_MORE: more were pending than f[] holds (wait for f[] and ask
+ * again). Serves DMA_BUF_IOCTL_EXPORT_SYNC_FILE and the flip gate of a foreign
+ * buffer (libdrm-phoenix attaches f[0] as the flip's in-fence, rpi4-kms -G gates it).
+ *
+ * BO_ATTACH_FENCE: make every later user of the BO wait for `fence` as well
+ * (DMA_BUF_IOCTL_IMPORT_SYNC_FILE). The server queues a zero-length job on the
+ * CPU queue of the calling client whose dependencies are `fence` and the BO's
+ * pending last-use fences, and records it as the BO's last use: its fence (the
+ * reply) implies everything the BO waited for before plus `fence`. fence.seqno 0
+ * or an already signalled fence: nothing to do (reply seqno 0). -EBUSY: more
+ * dependencies than a job holds (V3DA_SUBMIT_MAX_SEMS) - the caller then waits
+ * for `fence` itself, which is equivalent. -EINVAL: a fence never handed out.
+ */
+#define V3DA_HAVE_BO_SYNC      1
+#define V3DA_BO_SYNC_HANDLE    0u        /* ns: `handle` is one of the caller's BO handles */
+#define V3DA_BO_FENCES_MAX     3u
+#define V3DA_BO_FENCES_MORE    (1u << 0)
+
+typedef struct {
+	uint32_t ns;            /* V3DA_BO_SYNC_HANDLE, V3DA_IMPORT_NS_V3DBUF or V3DA_IMPORT_NS_KMSBUF */
+	uint32_t port;          /* by name: the buffer namespace port */
+	uint64_t id;            /* by name: the object id under it */
+	uint32_t handle;        /* by handle */
+	uint32_t flags;         /* reserved, 0 */
+	v3da_fence_t fence;     /* BO_ATTACH_FENCE only */
+} v3da_bo_sync_req_t;
+
+typedef struct {
+	uint32_t count;         /* pending fences in f[], newest first */
+	uint32_t flags;         /* V3DA_BO_FENCES_* */
+	v3da_fence_t f[V3DA_BO_FENCES_MAX];
+} v3da_bo_fences_resp_t;
 
 typedef struct {
 	uint32_t delay_us;      /* the job "runs" this long on the CPU queue */
@@ -659,6 +709,7 @@ typedef struct {
 		v3da_mode_req_t mode;
 		v3da_qstats_req_t qstats;
 		v3da_bo_import_req_t bo_import;
+		v3da_bo_sync_req_t bo_sync;
 	} u;
 } v3da_req_t;
 
@@ -685,6 +736,7 @@ typedef struct {
 		v3da_mode_resp_t mode;
 		v3da_qstats_q_t qstats_q;
 		v3da_qstats_g_t qstats_g;
+		v3da_bo_fences_resp_t bo_fences;
 	} u;
 } v3da_resp_t;
 
@@ -704,6 +756,9 @@ _Static_assert(sizeof(v3da_qstats_q_t) <= 56, "qstats must fit o.raw");
 _Static_assert(sizeof(v3da_qstats_g_t) <= 56, "qstats must fit o.raw");
 _Static_assert(sizeof(v3da_submit_resp_t) <= 56, "submit reply must fit o.raw");
 _Static_assert(sizeof(v3da_bo_import_req_t) == 32, "BO_IMPORT request layout is ABI (drm_phoenix_ext.h history)");
+_Static_assert(sizeof(v3da_bo_sync_req_t) == 40, "BO_LAST_FENCE / BO_ATTACH_FENCE request layout is ABI");
+_Static_assert(sizeof(v3da_bo_fences_resp_t) == 56, "BO_LAST_FENCE reply must fill o.raw exactly");
+_Static_assert(V3DA_OP_BO_LAST_FENCE == 23, "opcode 23 was reserved as V3DA_OP_BO_LAST_FENCE_EXT (drm_phoenix_ext.h)");
 #endif
 
 

@@ -116,8 +116,9 @@ typedef struct {
 	uintptr_t pa;
 	uint32_t gpuva;
 	uint32_t pages;
-	/* last use per queue (WAIT_BO / implicit sync) */
+	/* last use per queue (WAIT_BO / implicit sync; G6: the reservation object of a shared BO) */
 	v3da_fence_t last[V3DA_Q_COUNT];
+	uint64_t last_gseq[V3DA_Q_COUNT];   /* the submission order of last[q] (BO_LAST_FENCE: newest first) */
 	int scanout;                  /* 0, or 1 + the firmware-fb buffer backing its GPU pages */
 	/* PRIME import (BO_IMPORT): the pages belong to another server's export; `cpu`
 	 * is this server's mapping of it (the E1 window reference that keeps the pages
@@ -213,9 +214,10 @@ typedef struct v3da_job {
 		v3da_csd_desc_t csd;
 	} d;
 
-	/* NOP test job */
+	/* NOP test job; `join`: a G6 BO_ATTACH_FENCE job (zero length, not a NOP in the stats) */
 	uint32_t delay_us;
 	uint64_t done_at_us;
+	int join;
 } v3da_job_t;
 
 typedef struct {
@@ -344,6 +346,14 @@ typedef struct {
 	uint32_t submit_rejects;      /* SUBMIT_* refused (each names itself in a `V3DA reject` line) */
 	uint32_t cl_bcl_wrap;         /* SUBMIT_CL accepted with bcl_end < bcl_start (a chained BCL) */
 	uint32_t cl_render_only;      /* SUBMIT_CL with bcl_start == bcl_end: no bin job (DRM semantics) */
+	/* G6 cross-process implicit sync (the `V3DA srv g6` line at exit / DBG_STATS time) */
+	uint32_t g6_queries;          /* BO_LAST_FENCE answered */
+	uint32_t g6_pending;          /* ... with at least one pending fence */
+	uint32_t g6_attach;           /* BO_ATTACH_FENCE join jobs queued */
+	uint32_t g6_attach_busy;      /* ... refused -EBUSY (too many dependencies) */
+	uint32_t g6_implicit;         /* submits that got >= 1 cross-client implicit dependency */
+	uint32_t g6_implicit_deps;    /* implicit dependencies added in total */
+	uint32_t g6_dropped;          /* implicit dependencies dropped (the job's dependency list was full) */
 
 	v3da_bo_t bos[V3DA_MAX_BOS];
 	uint32_t bo_gen[V3DA_MAX_BOS];   /* per-slot handle generation */
@@ -416,7 +426,18 @@ int v3da_get_param(uint32_t param, uint64_t *value);
 /* v3da_bo.c */
 int v3da_bo_create(uint32_t client, uint32_t size, uint32_t flags, v3da_bo_create_resp_t *out);
 int v3da_bo_pin_for_job(const uint32_t *handles, uint32_t n);   /* validate + inflight++ (all or none) */
-void v3da_bo_mark_use(const uint32_t *handles, uint32_t n, const v3da_fence_t *f);
+void v3da_bo_mark_use(const uint32_t *handles, uint32_t n, const v3da_fence_t *f, uint64_t gseq);
+int v3da_fence_set_add(v3da_fence_t *dep, uint32_t *ndep, uint32_t max, const v3da_fence_t *f);   /* 1 = full */
+/* G6 (locked). Implicit dependencies of a submit by fence-page slot `slot`: every
+ * pending last-use fence of ANOTHER slot on the named BOs is added to dep[] (one per
+ * {slot, queue}, the newest). Returns how many had to be dropped (dep[] full). */
+uint32_t v3da_bo_implicit_deps(uint32_t slot, const uint32_t *handles, uint32_t n, v3da_fence_t *dep, uint32_t *ndep,
+	uint32_t max);
+/* G6 (locked): the BOs a v3da_bo_sync_req_t names (by the client's handle, a /v3dbuf
+ * export, or every import of a /kmsbuf name), up to max. Returns the count or -errno. */
+int v3da_bo_sync_targets(uint32_t client, const v3da_bo_sync_req_t *rq, v3da_bo_t **out, uint32_t max);
+/* G6 (locked): BO_LAST_FENCE */
+int v3da_bo_last_fence(uint32_t client, const v3da_bo_sync_req_t *rq, v3da_bo_fences_resp_t *out);
 void v3da_bo_unpin(const uint32_t *handles, uint32_t n);        /* inflight--, quarantine if unreferenced */
 int v3da_bo_map_ovf_pool(uint32_t bytes, uint32_t *gpuva);      /* init: the binner-overflow pool */
 int v3da_bo_close(uint32_t client, uint32_t handle);
@@ -448,6 +469,7 @@ int v3da_flip(v3da_client_t *c, const v3da_flip_req_t *rq, v3da_flip_resp_t *out
 int v3da_syncobj_import(v3da_client_t *c, uint32_t handle, const v3da_fence_t *f);
 void v3da_event_thread(void *arg);
 int v3da_submit_nop(v3da_client_t *c, uint32_t delay_us, v3da_fence_t *out);
+int v3da_bo_attach_fence(v3da_client_t *c, const v3da_bo_sync_req_t *rq, v3da_fence_t *out);   /* G6, v3da_jobs.c */
 int v3da_fence_signaled(const v3da_fence_t *f, int *error);
 int v3da_fence_valid(const v3da_client_t *c, const v3da_fence_t *f);
 /* Park msg as a wait. Returns 0 when parked (the server now owns the request:

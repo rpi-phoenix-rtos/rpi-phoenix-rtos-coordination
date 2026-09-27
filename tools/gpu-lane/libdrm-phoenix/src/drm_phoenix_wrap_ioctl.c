@@ -2,7 +2,8 @@
  * Phoenix-RTOS
  *
  * libdrm-phoenix - optional ioctl() interposer: the Linux sync_file ioctls on
- * the library's in-process sync files (M5, closes G15 for merge/info)
+ * the library's in-process sync files (M5, closes G15 for merge/info), and the
+ * dma-buf sync-file ioctls on buffer descriptors (G6)
  *
  * A DRM sync file exported by libdrm-phoenix (SYNCOBJ_HANDLE_TO_FD with
  * EXPORT_SYNC_FILE) is a dup() of the render node descriptor plus a fence set in
@@ -146,6 +147,18 @@ drm_public int __wrap_ioctl(int fd, unsigned long request, ...)
 	arg = va_arg(ap, void *);   /* every caller passes one pointer (or nothing: then unused) */
 	va_end(ap);
 
+	if ((((request >> 8) & 0xffu) == (unsigned long)DRMPHX_DMA_BUF_BASE) && (((request >> 16) & 0x1fffu) == 8u) &&
+			(((request & 0xffu) == DRMPHX_DMA_BUF_EXPORT_NR) || ((request & 0xffu) == DRMPHX_DMA_BUF_IMPORT_NR)) &&
+			(drmphx_prime_fd_lookup(fd, &(kms_memref_t){ 0 }) == 0)) {
+		/* G6: DMA_BUF_IOCTL_EXPORT/IMPORT_SYNC_FILE issued with raw ioctl() on a buffer
+		 * descriptor (drmIoctl callers reach the same code through drm_phoenix_ioctl) */
+		rc = drmphx_dmabuf_ioctl(fd, (unsigned)(request & 0xffu), arg);
+		if (rc != 0) {
+			errno = -rc;
+			return -1;
+		}
+		return 0;
+	}
 	if (is_sync_request(request) != 0) {
 		/* Phoenix has no kernel sync files: on any other descriptor the request would
 		 * go to that descriptor's server as an unknown ioctl (on the render node it

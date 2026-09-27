@@ -353,8 +353,11 @@ int v3da_bo_pin_for_job(const uint32_t *handles, uint32_t n)
 }
 
 
-/* Implicit sync: the BO's last user on this queue is `f` (WAIT_BO waits for all). */
-void v3da_bo_mark_use(const uint32_t *handles, uint32_t n, const v3da_fence_t *f)
+/* Implicit sync: the BO's last user on this queue is `f` (WAIT_BO waits for all).
+ * With the cross-client implicit dependencies of v3da_bo_implicit_deps, the job that
+ * overwrites last[q] waits for every other client's pending use first, so last[]
+ * still implies every earlier use of the BO. */
+void v3da_bo_mark_use(const uint32_t *handles, uint32_t n, const v3da_fence_t *f, uint64_t gseq)
 {
 	uint32_t i;
 	v3da_bo_t *b;
@@ -363,8 +366,61 @@ void v3da_bo_mark_use(const uint32_t *handles, uint32_t n, const v3da_fence_t *f
 		b = bo_lookup(handles[i]);
 		if ((b != NULL) && (f->queue < V3DA_Q_COUNT)) {
 			b->last[f->queue] = *f;
+			b->last_gseq[f->queue] = gseq;
 		}
 	}
+}
+
+
+/* Add f to a dependency set, one entry per {slot, queue, gen} (a later seqno of one
+ * slot's queue implies the earlier ones). 0 = added or merged, 1 = the set is full. */
+int v3da_fence_set_add(v3da_fence_t *dep, uint32_t *ndep, uint32_t max, const v3da_fence_t *f)
+{
+	uint32_t i;
+
+	for (i = 0u; i < *ndep; i++) {
+		if ((dep[i].slot == f->slot) && (dep[i].queue == f->queue) && (dep[i].gen == f->gen)) {
+			if (f->seqno > dep[i].seqno) {
+				dep[i].seqno = f->seqno;
+			}
+			return 0;
+		}
+	}
+	if (*ndep >= max) {
+		return 1;
+	}
+	dep[(*ndep)++] = *f;
+	return 0;
+}
+
+
+/* G6: a submit that names a BO another client still uses waits for that use - the
+ * dma-buf implicit sync Linux v3d gets from the BO's reservation object. The
+ * submitter's own earlier jobs are left alone (its FIFO per queue orders them, and
+ * Mesa orders its own queues with syncobjs), so a single-process program's
+ * scheduling is unchanged. Idle and never-shared BOs cost six loads each. */
+uint32_t v3da_bo_implicit_deps(uint32_t slot, const uint32_t *handles, uint32_t n, v3da_fence_t *dep, uint32_t *ndep,
+	uint32_t max)
+{
+	uint32_t i, dropped = 0u;
+	int q;
+	const v3da_bo_t *b;
+	const v3da_fence_t *f;
+
+	for (i = 0u; i < n; i++) {
+		b = bo_lookup(handles[i]);
+		if (b == NULL) {
+			continue;
+		}
+		for (q = 0; q < V3DA_Q_COUNT; q++) {
+			f = &b->last[q];
+			if ((f->seqno == 0u) || (f->slot == slot) || (v3da_fence_signaled(f, NULL) != 0)) {
+				continue;
+			}
+			dropped += (uint32_t)v3da_fence_set_add(dep, ndep, max, f);
+		}
+	}
+	return dropped;
 }
 
 
@@ -1051,4 +1107,128 @@ void v3da_bufns_thread(void *arg)
 		(void)msgRespond(srv.buf_port, &msg, rid);
 	}
 	endthread();
+}
+
+
+/* ========================================================================= */
+/* Cross-process implicit sync (gap G6)                                        */
+/* ========================================================================= */
+
+int v3da_bo_sync_targets(uint32_t client, const v3da_bo_sync_req_t *rq, v3da_bo_t **out, uint32_t max)
+{
+	uint32_t i, n = 0u;
+	v3da_bo_t *b;
+
+	if ((rq->flags != 0u) || (max == 0u)) {
+		return -EINVAL;
+	}
+	switch (rq->ns) {
+		case V3DA_BO_SYNC_HANDLE:
+			b = v3da_bo_find(rq->handle);
+			if ((b == NULL) || ((b->owner != client) && ((b->sharers & client_bit(client)) == 0u))) {
+				return -ENOENT;   /* not a handle of this client */
+			}
+			out[0] = b;
+			return 1;
+
+		case V3DA_IMPORT_NS_V3DBUF:
+			if ((srv.buf_port == 0u) || (rq->port != srv.buf_port)) {
+				return -EINVAL;   /* not this server's namespace */
+			}
+			b = bo_by_export(rq->id);
+			if (b == NULL) {
+				return -ENOENT;   /* not (or no longer) exported */
+			}
+			out[0] = b;
+			return 1;
+
+		case V3DA_IMPORT_NS_KMSBUF:
+			/* one BO per importing client (v3da_bo_import): the name's record is all of them */
+			for (i = 0u; (i < srv.nbos) && (n < max); i++) {
+				b = &srv.bos[i];
+				if ((b->state == V3DA_BO_LIVE) && (b->imported != 0) && (b->refs > 0u) && (b->imp_mem.port == rq->port) &&
+						(b->imp_mem.addr == rq->id)) {
+					out[n++] = b;
+				}
+			}
+			return (int)n;   /* 0: nobody renders to it here - idle */
+
+		default:
+			return -EINVAL;
+	}
+}
+
+
+/* BO_LAST_FENCE: the pending last-use fences, deduplicated per {slot, queue, gen},
+ * newest submission first. */
+int v3da_bo_last_fence(uint32_t client, const v3da_bo_sync_req_t *rq, v3da_bo_fences_resp_t *out)
+{
+	enum { NCAND = 24 };
+	v3da_bo_t *t[V3DA_MAX_CLIENTS];
+	v3da_fence_t cand[NCAND];
+	uint64_t cand_gseq[NCAND];
+	uint32_t ncand = 0u, i, k, best, more = 0u;
+	int nt, q, j;
+
+	memset(out, 0, sizeof(*out));
+	nt = v3da_bo_sync_targets(client, rq, t, V3DA_MAX_CLIENTS);
+	if (nt < 0) {
+		return nt;
+	}
+	for (j = 0; j < nt; j++) {
+		for (q = 0; q < V3DA_Q_COUNT; q++) {
+			const v3da_fence_t *f = &t[j]->last[q];
+			if ((f->seqno == 0u) || (v3da_fence_signaled(f, NULL) != 0)) {
+				continue;
+			}
+			for (k = 0u; k < ncand; k++) {
+				if ((cand[k].slot == f->slot) && (cand[k].queue == f->queue) && (cand[k].gen == f->gen)) {
+					break;
+				}
+			}
+			if (k < ncand) {
+				if (f->seqno > cand[k].seqno) {
+					cand[k] = *f;
+					cand_gseq[k] = t[j]->last_gseq[q];
+				}
+			}
+			else if (ncand < NCAND) {
+				cand[ncand] = *f;
+				cand_gseq[ncand] = t[j]->last_gseq[q];
+				ncand++;
+			}
+			else {
+				more = 1u;
+			}
+		}
+	}
+	for (i = 0u; (i < ncand) && (out->count < V3DA_BO_FENCES_MAX); i++) {
+		for (best = i, k = i + 1u; k < ncand; k++) {
+			if (cand_gseq[k] > cand_gseq[best]) {
+				best = k;
+			}
+		}
+		if (best != i) {
+			v3da_fence_t tf = cand[i];
+			uint64_t tg = cand_gseq[i];
+			cand[i] = cand[best];
+			cand_gseq[i] = cand_gseq[best];
+			cand[best] = tf;
+			cand_gseq[best] = tg;
+		}
+		out->f[out->count++] = cand[i];
+	}
+	if ((more != 0u) || (ncand > V3DA_BO_FENCES_MAX)) {
+		out->flags |= V3DA_BO_FENCES_MORE;
+	}
+	srv.g6_queries++;
+	if (out->count != 0u) {
+		srv.g6_pending++;
+		if (srv.g6_pending <= 16u) {
+			printf("V3DA srv g6 last_fence client=%u ns=%u id=%llu handle=0x%x pending=%u newest=%u/%u/%llu more=%u\n",
+				client, rq->ns, (unsigned long long)rq->id, rq->handle, out->count, out->f[0].slot, out->f[0].queue,
+				(unsigned long long)out->f[0].seqno, (out->flags & V3DA_BO_FENCES_MORE) != 0u);
+		}
+	}
+	return 0;
 }

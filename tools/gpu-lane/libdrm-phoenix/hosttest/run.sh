@@ -57,7 +57,7 @@ gcc -std=gnu11 -O1 -g -w -fsanitize=address,undefined -fno-omit-frame-pointer -D
 for mode in legacy dri; do
 	log="${out}/e2e-${mode}.log"
 	"${out}/e2e" "${mode}" > "${log}" 2>&1 || true
-	grep -E 'DRMPROBE (RESULT|device |open |identity|fstat|card1|dmabuf_size|atomic_universal|sync_merge|prime_|import_clear|implicit_flip)|HOSTE2E|ERROR|runtime error' "${log}" || true
+	grep -E 'DRMPROBE (RESULT|device |open |identity|fstat|card1|dmabuf_size|dmabuf_sync|atomic_universal|sync_merge|prime_|import_clear|implicit_flip)|HOSTE2E|ERROR|runtime error' "${log}" || true
 	why=""
 	grep -q 'DRMPROBE RESULT .*failed=cl_clear,cl_clear_dep,import_clear,implicit_flip, ' "${log}" || why="${why} failed-set"
 	grep -qE 'ERROR: AddressSanitizer|runtime error' "${log}" && why="${why} sanitizer"
@@ -77,7 +77,16 @@ for mode in legacy dri; do
 	# references dropped while shown, name alive until flip-off + RMFB, then gone)
 	grep -q 'DRMPROBE prime_import_card0 export=0 errno=0 path=/v3dbuf/[0-9]* import=0 import_errno=0 reimport_same=1 .* uif_errno=22 short_pitch_errno=22 addfb=0 addfb_errno=0 shown=1 alive_while_shown=1 flipped_off=1 rmfb=0 gone_after_errno=2 ok=1' "${log}" || why="${why} g7-import"
 	grep -q 'DRMPROBE prime_import_card0_neg badfd_errno=9 notbuf_errno=22 small_import=0 small_import_errno=0 small_addfb_errno=22 released=1 ok=1' "${log}" || why="${why} g7-neg"
-	grep -q 'HOSTE2E g7 .* card0_imports=2 imports_live=0 imports_released=2' "${log}" || why="${why} g7-counters"
+	grep -q 'HOSTE2E g7 .* card0_imports=3 imports_live=0 imports_released=3' "${log}" || why="${why} g7-counters"   # G7 x2 + G6 flip
+	# G6: cross-process implicit sync. The producer is the fake's "foreign" job (a
+	# client this library does not know), pending until something waits: the consumer
+	# reads stale pixels without sync, exports the dma-buf's fences, waits, reads the
+	# producer's colour; a flip of the buffer with no in-fence is held until it is done.
+	grep -q 'DRMPROBE dmabuf_sync_probe export_errno=0 import_errno=0 idle_fences=0 ok=1' "${log}" || why="${why} g6-probe"
+	grep -q 'DRMPROBE dmabuf_sync_import setup=0 import_errno=0 reexport_errno=0 pending_after_import=1 nfences=1 wait=0 chain_done=1 .* ok=1' "${log}" || why="${why} g6-import"
+	grep -q 'DRMPROBE dmabuf_sync_read producer=foreign export_errno=0 pending_at_export=1 nfences=1 wait=0 early_stale=1 bad_words=0 done_at_read=1 ok=1' "${log}" || why="${why} g6-read"
+	grep -q 'DRMPROBE dmabuf_sync_flip producer=foreign addfb=0 pending_at_commit=1 flipped=1 .* done_at_flip=1 bad_words=0 flipped_back=1 ok=1' "${log}" || why="${why} g6-flip"
+	grep -qE 'HOSTE2E g6 .* last_fence_queries=[1-9]' "${log}" || why="${why} g6-counters"
 	if [ "${mode}" = dri ]; then
 		grep -q 'DRMPROBE identity node=card1 version=v3d .* node_type=0 .* ok=1' "${log}" || why="${why} card1"
 		grep -q 'DRMPROBE fstat_nodes n=3 ' "${log}" || why="${why} fstat-n3"
@@ -98,7 +107,7 @@ FAKE_V3DA_PROTO=2 "${out}/e2e" dri > "${log}" 2>&1 || true
 grep -E 'DRMPROBE (RESULT|prime_export_render|prime_import_render2)|HOSTE2E g4|ERROR|runtime error' "${log}" || true
 why=""
 # (the G7 card0 tests need a /v3dbuf export, so they fail here too)
-grep -q 'DRMPROBE RESULT .*failed=cl_clear,cl_clear_dep,import_clear,implicit_flip,prime_export_render,prime_import_render2,prime_import_card0,prime_import_card0_neg, ' "${log}" || why="${why} failed-set"
+grep -q 'DRMPROBE RESULT .*failed=cl_clear,cl_clear_dep,import_clear,implicit_flip,prime_export_render,prime_import_render2,prime_import_card0,prime_import_card0_neg,dmabuf_sync_probe,dmabuf_sync_import,dmabuf_sync_read,dmabuf_sync_flip, ' "${log}" || why="${why} failed-set"
 grep -q 'DRMPROBE prime_export_render rc=-1 errno=38 .* ok=0' "${log}" || why="${why} export-not-enosys"
 grep -qE 'ERROR: AddressSanitizer|runtime error' "${log}" && why="${why} sanitizer"
 if [ -z "${why}" ]; then
@@ -114,7 +123,7 @@ log="${out}/e2e-g7-negative.log"
 FAKE_KMS_PROTO=1 "${out}/e2e" dri > "${log}" 2>&1 || true
 grep -E 'DRMPROBE (RESULT|prime_import_card0)|HOSTE2E g7|ERROR|runtime error' "${log}" || true
 why=""
-grep -q 'DRMPROBE RESULT .*failed=cl_clear,cl_clear_dep,import_clear,implicit_flip,prime_import_card0,prime_import_card0_neg, ' "${log}" || why="${why} failed-set"
+grep -q 'DRMPROBE RESULT .*failed=cl_clear,cl_clear_dep,import_clear,implicit_flip,prime_import_card0,prime_import_card0_neg,dmabuf_sync_flip, ' "${log}" || why="${why} failed-set"   # the G6 flip needs a card0 import
 grep -q 'DRMPROBE prime_import_card0 export=0 .* import=-1 import_errno=38 .* ok=0' "${log}" || why="${why} import-not-enosys"
 grep -q 'HOSTE2E g7 .* card0_imports=0 imports_live=0' "${log}" || why="${why} g7-counters"
 grep -qE 'ERROR: AddressSanitizer|runtime error' "${log}" && why="${why} sanitizer"
@@ -131,12 +140,35 @@ log="${out}/e2e-g7-high.log"
 FAKE_KMS_IMPORT_HIGH=1 "${out}/e2e" dri > "${log}" 2>&1 || true
 grep -E 'DRMPROBE (RESULT|prime_import_card0)|HOSTE2E g7|ERROR|runtime error' "${log}" || true
 why=""
-grep -q 'DRMPROBE RESULT .*gap=1 failed=cl_clear,cl_clear_dep,import_clear,implicit_flip, ' "${log}" || why="${why} failed-set"
+grep -q 'DRMPROBE RESULT .*gap=2 failed=cl_clear,cl_clear_dep,import_clear,implicit_flip, ' "${log}" || why="${why} failed-set"   # G7 + G6 flip: gap=1 each
 grep -q 'DRMPROBE prime_import_card0 export=0 .* import=0 .* addfb=-22 addfb_errno=22 shown=0 .* gone_after_errno=2 gap=1 ' "${log}" || why="${why} not-refused"
-grep -q 'HOSTE2E g7 .* imports_live=0 imports_released=2' "${log}" || why="${why} g7-counters"
+grep -q 'HOSTE2E g7 .* imports_live=0 imports_released=3' "${log}" || why="${why} g7-counters"
 grep -qE 'ERROR: AddressSanitizer|runtime error' "${log}" && why="${why} sanitizer"
 if [ -z "${why}" ]; then
 	echo "HOSTE2E g7-high verdict=PASS (an import above 1 GiB: ADDFB2 EINVAL, graded gap=1, released)"
 else
 	echo "HOSTE2E g7-high verdict=FAIL (${why# } - see ${log})"
+fi
+
+# G6 negative control: a fake render server from BEFORE G6 (proto 3: G4 export and
+# /v3dbuf, no BO_LAST_FENCE / BO_ATTACH_FENCE). The library HELLOs 4, falls back and
+# must answer the dma-buf ioctls ENOTTY (Mesa's WSI probe fails soft, as before G6);
+# then the consumer reads the foreign producer's buffer WITHOUT waiting - stale
+# pixels, the producer's job still pending - and the flip of it goes ungated (the
+# foreign job still pending at the flip event). Exactly the four G6 keys must fail.
+log="${out}/e2e-g6-negative.log"
+FAKE_V3DA_PROTO=3 "${out}/e2e" dri > "${log}" 2>&1 || true
+grep -E 'DRMPROBE (RESULT|dmabuf_sync)|HOSTE2E g[46]|ERROR|runtime error' "${log}" || true
+why=""
+grep -q 'DRMPROBE RESULT .*failed=cl_clear,cl_clear_dep,import_clear,implicit_flip,dmabuf_sync_probe,dmabuf_sync_import,dmabuf_sync_read,dmabuf_sync_flip, ' "${log}" || why="${why} failed-set"
+grep -q 'DRMPROBE dmabuf_sync_probe export_errno=25 ' "${log}" || why="${why} probe-not-enotty"
+grep -q 'DRMPROBE dmabuf_sync_read producer=foreign export_errno=25 .* bad_words=4096 done_at_read=0 ok=0' "${log}" || why="${why} read-not-stale"
+grep -q 'DRMPROBE dmabuf_sync_flip producer=foreign addfb=0 .* flipped=1 .* done_at_flip=0 .* ok=0' "${log}" || why="${why} flip-not-ungated"
+grep -q 'DRMPROBE prime_export_render rc=0 .* ok=1' "${log}" || why="${why} g4-regressed"
+grep -q 'HOSTE2E g6 .* server_proto=3 last_fence_queries=0' "${log}" || why="${why} g6-counters"
+grep -qE 'ERROR: AddressSanitizer|runtime error' "${log}" && why="${why} sanitizer"
+if [ -z "${why}" ]; then
+	echo "HOSTE2E g6-negative verdict=PASS (the G6 tests fail against a proto-3 server: stale read, ungated flip; the rest as before)"
+else
+	echo "HOSTE2E g6-negative verdict=FAIL (${why# } - see ${log})"
 fi

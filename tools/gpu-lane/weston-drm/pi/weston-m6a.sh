@@ -18,7 +18,9 @@
 #   /bin/rpi4-kms-gate -G
 #   /bin/shmsrv -v                 (memfd_create backing: wl_shm pools, keymaps)
 #
-# Environment knobs: WESTON (binary), CONF, HOLD (seconds with the client up), CLIENT_ARGS,
+# Environment knobs: WESTON (binary), EGL_CLIENT (the egl client binary, default
+# /bin/weston-simple-egl; G6 stages its client under a new name), CONF, HOLD (seconds with
+# the client up), CLIENT_ARGS,
 # SHARED_SCANOUT (1 = run the egl client with mesa-drm 0012's V3D_PHOENIX_SHARED_SCANOUT=1;
 # default 0 since G4),
 # DRMPHX_TRACE (libdrm-phoenix trace in weston, default 1), WLPHX_TRACE (signal path and
@@ -36,6 +38,7 @@ RENDERER=${1:-pixman}
 CLIENT=${2:-shm}
 INPUT=${3:-input}
 WESTON=${WESTON:-/bin/weston}
+EGL_CLIENT=${EGL_CLIENT:-/bin/weston-simple-egl}
 CONF=${CONF:-/etc/xdg/weston/weston-drm.ini}
 HOLD=${HOLD:-30}
 SHARED_SCANOUT=${SHARED_SCANOUT:-0}
@@ -57,12 +60,12 @@ rm -f "${XDG_RUNTIME_DIR}/${WAYLAND_DISPLAY}" "${XDG_RUNTIME_DIR}/${WAYLAND_DISP
 
 case "${CLIENT}" in
 	shm) CMD="/bin/weston-simple-shm ${CLIENT_ARGS}" ;;
-	egl) CMD="/bin/weston-simple-egl ${CLIENT_ARGS}" ;;
+	egl) CMD="${EGL_CLIENT} ${CLIENT_ARGS}" ;;
 	none) CMD="" ;;
 	*) echo "WESTONDRM FAIL unknown client ${CLIENT}"; exit 2 ;;
 esac
 
-echo "WESTONDRM start renderer=${RENDERER} client=${CLIENT} weston=${WESTON} conf=${CONF} hold=${HOLD} shared_scanout=${SHARED_SCANOUT} input=${LIBINPUT_PHOENIX_DEVICES:-none} trace=${DRMPHX_TRACE:-1} wlphx_trace=${WLPHX_TRACE:-1}"
+echo "WESTONDRM start renderer=${RENDERER} client=${CLIENT} weston=${WESTON} conf=${CONF} hold=${HOLD} shared_scanout=${SHARED_SCANOUT} input=${LIBINPUT_PHOENIX_DEVICES:-none} trace=${DRMPHX_TRACE:-1} wlphx_trace=${WLPHX_TRACE:-1} egl_client=${EGL_CLIENT}"
 DRMPHX_TRACE=${DRMPHX_TRACE:-1} WLPHX_TRACE=${WLPHX_TRACE:-1} "${WESTON}" --config="${CONF}" --backend=drm --renderer="${RENDERER}" \
 	--shell=kiosk --continue-without-input --idle-time=0 --socket="${WAYLAND_DISPLAY}" &
 wpid=$!

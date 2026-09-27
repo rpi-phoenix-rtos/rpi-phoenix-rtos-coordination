@@ -5,6 +5,7 @@
  *
  * Usage: e2e [dri|legacy]   dri: the servers also registered /dev/dri names
  *        FAKE_V3DA_PROTO=2   the fake render server predates G4 (negative control)
+ *        FAKE_V3DA_PROTO=3   the fake render server predates G6 (negative control)
  *        FAKE_KMS_PROTO=1    the fake display server predates G7 (negative control)
  *        FAKE_KMS_IMPORT_HIGH=1  card0 imports land above 1 GiB (ADDFB2 must refuse them)
  *
@@ -30,7 +31,8 @@ uint32_t fake_msgs(void);
 void fake_last_cl(v3da_cl_desc_t *d, uint32_t *nbo, uint32_t *nin, uint32_t *nout, uint32_t *submits);
 uint32_t fake_deferred_flips(void);
 void fake_m3p2(uint32_t *fstats, uint32_t *atsizes, uint32_t *imports, uint32_t *imports_closed);
-void fake_set_old_v3d(int on);
+void fake_set_v3d_proto(uint32_t proto);
+uint32_t fake_g6_queries(void);
 void fake_g4(uint32_t *exports_live, uint32_t *v3dbuf_imports, uint32_t *bos_live);
 void fake_set_kms(int old_kms, int import_high);
 void fake_g7(uint32_t *imports, uint32_t *imports_live, uint32_t *imports_released);
@@ -48,7 +50,7 @@ int main(int argc, char **argv)
 	int dri = ((argc > 1) && (strcmp(argv[1], "dri") == 0)) ? 1 : 0, rc;
 
 	fake_set_dri(dri);
-	fake_set_old_v3d((old != NULL) && (strcmp(old, "2") == 0));
+	fake_set_v3d_proto((old != NULL) ? (uint32_t)atoi(old) : V3DA_PROTO_VERSION);
 	fake_set_kms((old_kms != NULL) && (strcmp(old_kms, "1") == 0), (high != NULL) && (strcmp(high, "1") == 0));
 	rc = drmprobe_main(3, av);
 	fake_last_cl(&d, &nbo, &nin, &nout, &submits);
@@ -61,10 +63,12 @@ int main(int argc, char **argv)
 		dri ? "dri" : "legacy", fstats, atsizes, imports, imports_closed, fake_deferred_flips());
 	fake_g4(&exports, &vimports, &bos);
 	printf("HOSTE2E g4 mode=%s server_proto=%s exports_live=%u v3dbuf_imports=%u bos_live=%u\n", dri ? "dri" : "legacy",
-		(old != NULL) ? old : "3", exports, vimports, bos);
+		(old != NULL) ? old : "4", exports, vimports, bos);
 	fake_g7(&kimports, &kimports_live, &kimports_released);
 	printf("HOSTE2E g7 mode=%s kms_proto=%s import_high=%d card0_imports=%u imports_live=%u imports_released=%u\n",
 		dri ? "dri" : "legacy", (old_kms != NULL) ? old_kms : "2", (high != NULL) && (strcmp(high, "1") == 0), kimports,
 		kimports_live, kimports_released);
+	printf("HOSTE2E g6 mode=%s server_proto=%s last_fence_queries=%u deferred_flips=%u\n", dri ? "dri" : "legacy",
+		(old != NULL) ? old : "4", fake_g6_queries(), fake_deferred_flips());
 	return 0;
 }

@@ -59,12 +59,28 @@ enum drmphx_ns {
 #endif
 
 /*
- * Syncobj sharing across processes (DRM_IOCTL_SYNCOBJ_HANDLE_TO_FD without
- * EXPORT_SYNC_FILE, and real sync_file fds): NEW ops, needs V3DA proto >= 4.
- * A "/v3dsync/<id>" namespace whose descriptors name a server syncobj (opaque
- * fd) or a frozen fence (sync file); poll() on it = atPollStatus against the
- * fence page. Not specified further here: the DRI3/Wayland milestones (M4/M6)
- * drive it. libdrm-phoenix emulates sync files in-process meanwhile.
+ * V3DA_OP_BO_LAST_FENCE (23) and V3DA_OP_BO_ATTACH_FENCE (24): IMPLEMENTED for gap
+ * G6 (cross-process implicit sync) - the opcodes, v3da_bo_sync_req_t /
+ * v3da_bo_fences_resp_t and the semantics moved to v3da_proto.h, which bumped the
+ * protocol to 4 (V3DA_PROTO_BO_SYNC). They serve DMA_BUF_IOCTL_EXPORT/IMPORT_SYNC_FILE
+ * and the flip gate of a buffer another process renders (the cross-process
+ * producers the old V3DA_OP_BO_LAST_FENCE_EXT note here asked for). libdrm-phoenix
+ * uses them only when the server's HELLO says 4 or more; against an older server
+ * the dma-buf ioctls answer ENOTTY and foreign flips go ungated, as before.
+ */
+#ifndef V3DA_HAVE_BO_SYNC
+#error "v3da_proto.h predates BO_LAST_FENCE (G6): build against the current tools/gpu-lane/v3d-async"
+#endif
+
+/*
+ * STILL OPEN (G6b): syncobj and sync-file DESCRIPTORS across processes
+ * (DRM_IOCTL_SYNCOBJ_HANDLE_TO_FD without EXPORT_SYNC_FILE, and sync files passed
+ * over SCM_RIGHTS: linux-explicit-synchronization, wp_linux_drm_syncobj, DRI3 1.4,
+ * vkGetSemaphoreFdKHR to another process). NEW ops, V3DA proto >= 5: a
+ * "/v3dsync/<id>" namespace whose descriptors name a server syncobj (opaque fd) or
+ * a frozen fence (sync file); poll() on it = atPollStatus against the fence page.
+ * libdrm-phoenix emulates sync files in-process meanwhile (implicit sync, G6, needs
+ * none of this).
  */
 #define V3DA_OP_SYNCOBJ_EXPORT_EXT  55u
 #define V3DA_OP_SYNCOBJ_FDIMPORT_EXT 56u
@@ -85,14 +101,5 @@ enum drmphx_ns {
 #error "kms_proto.h predates PRIME_IMPORT (G7): build against the current tools/gpu-lane/kms"
 #endif
 
-/*
- * Implicit sync for flips (research 4.5, M2 section 8): V3DA_OP_BO_LAST_FENCE
- * (NEW, 23) - the last-writer fence of an imported BO - so rpi4-kms can gate a
- * PAGE_FLIP of a GPU-rendered buffer that carries no IN_FENCE_FD, for
- * CROSS-PROCESS producers (Xorg, compositors). A single-process GBM app does not
- * need it: libdrm-phoenix attaches the BO's mirrored last-use fence itself (G13,
- * M3 part 2).
- */
-#define V3DA_OP_BO_LAST_FENCE_EXT 23u
 
 #endif /* _DRM_PHOENIX_EXT_H_ */

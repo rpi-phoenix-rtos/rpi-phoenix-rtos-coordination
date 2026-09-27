@@ -123,6 +123,8 @@ static int client_open(int pid)
 static void client_close(id_t id, v3da_wait_t **answer)
 {
 	v3da_client_t *c = client_get(id);
+	static uint32_t g6_seen;
+	uint32_t g6;
 
 	if (c == NULL) {
 		return;
@@ -134,6 +136,14 @@ static void client_close(id_t id, v3da_wait_t **answer)
 	srv.nclients--;
 	if (srv.verbose != 0) {
 		printf("V3DA srv client %u closed\n", (unsigned)id);
+	}
+	/* G6 counters, whenever a client that used cross-process sync goes */
+	g6 = srv.g6_queries + srv.g6_attach + srv.g6_attach_busy + srv.g6_implicit + srv.g6_dropped;
+	if (g6 != g6_seen) {
+		g6_seen = g6;
+		printf("V3DA srv g6 stats client=%u queries=%u pending=%u attach=%u attach_busy=%u implicit=%u implicit_deps=%u "
+			"dropped=%u\n", (unsigned)id, srv.g6_queries, srv.g6_pending, srv.g6_attach, srv.g6_attach_busy,
+			srv.g6_implicit, srv.g6_implicit_deps, srv.g6_dropped);
 	}
 }
 
@@ -147,8 +157,9 @@ static int client_hello(id_t id, int pid, v3da_hello_t *h)
 		return -EBADF;
 	}
 	/* Every protocol since M1 part 2 is accepted: proto 3 only ADDS (BO_EXPORT,
-	 * ns=v3dbuf), so a proto-2 binary (rpi4-kms -G, libv3da-client, the M1/M3 probes)
-	 * is served unchanged. The reply carries this server's version. */
+	 * ns=v3dbuf) and so does proto 4 (G6: BO_LAST_FENCE, BO_ATTACH_FENCE), so a
+	 * proto-2 or proto-3 binary (rpi4-kms -G, libv3da-client, the M1/M3/G4 probes and
+	 * Mesa builds) is served unchanged. The reply carries this server's version. */
 	if ((h->proto < V3DA_PROTO_BASE) || (h->proto > V3DA_PROTO_VERSION)) {
 		return -EPROTO;
 	}
@@ -287,6 +298,14 @@ static int handle_raw(msg_t *msg, msg_rid_t rid, v3da_wait_t **answer)
 
 		case V3DA_OP_BO_EXPORT:
 			rc = v3da_bo_export(c->id, req.u.bo.handle, &r->u.bo);
+			break;
+
+		case V3DA_OP_BO_LAST_FENCE:   /* G6 */
+			rc = v3da_bo_last_fence(c->id, &req.u.bo_sync, &r->u.bo_fences);
+			break;
+
+		case V3DA_OP_BO_ATTACH_FENCE:   /* G6 */
+			rc = v3da_bo_attach_fence(c, &req.u.bo_sync, &r->u.fence.fence);
 			break;
 
 		case V3DA_OP_BO_WAIT:

@@ -10,12 +10,17 @@
  * arena (PHYS = arena offset + base; OID = "/kmsbuf/<id>" and, G4, "/v3dbuf/<id>"
  * descriptors that map only with MAP_UNCACHED, as E1 enforces), DRM events by
  * read(). FAKE_V3DA_PROTO=2 in the environment makes the fake render server a
- * proto-2 one (before G4: HELLO exactly 2, no BO_EXPORT, no /v3dbuf);
+ * proto-2 one (before G4: HELLO exactly 2, no BO_EXPORT, no /v3dbuf), =3 a proto-3
+ * one (G4, before G6: no BO_LAST_FENCE / BO_ATTACH_FENCE);
  * FAKE_KMS_PROTO=1 makes the fake display server a proto-1 one (before G7: HELLO
  * exactly 1, no PRIME_IMPORT); FAKE_KMS_IMPORT_HIGH=1 places every imported buffer
  * above 1 GiB (the case the Pi cannot be made to produce). Jobs complete
- * at submit and flips at commit; there is no GPU, so the CL clear's pixels stay
- * as they were (the harness expects exactly that).
+ * at the next wait and flips at commit; there is no GPU, so the CL clear's pixels
+ * stay as they were (the harness expects exactly that). G6: the render server
+ * keeps each BO's last-use fences (BO_LAST_FENCE / BO_ATTACH_FENCE, as v3da_bo.c),
+ * and drmprobe_host_foreign_job() is "another process" rendering into a BO: a
+ * pending job of a client the library does not know, which fills the BO with a
+ * colour when it completes.
  *
  * Also counts payload windows whose start/end is not page aligned (E5: each
  * unaligned end costs a shadow page and ~30 us on the Pi).
@@ -79,6 +84,7 @@ static struct {
 	uint32_t deferred_flips;   /* commits that arrived with an unsignalled render fence (G13) */
 	uint32_t fstats, atsizes;  /* mtGetAttrAll / atSize answered (G2 / G3) */
 	int old_v3d;               /* FAKE_V3DA_PROTO=2: a render server from before G4 */
+	uint32_t v3d_proto;        /* the fake render server's protocol: 2, 3 (before G6) or 4 */
 	int old_kms;               /* FAKE_KMS_PROTO=1: a display server from before G7 */
 	int import_high;           /* FAKE_KMS_IMPORT_HIGH=1: imports land above 1 GiB */
 } F;
@@ -958,7 +964,14 @@ static struct {
 		uint64_t off, imp_id;
 		uint32_t refs, fd_opens;   /* G4: creator + sharers + open /v3dbuf descriptors, as v3da_bo.c */
 		uint64_t sharers;
+		v3da_fence_t last[V3DA_Q_COUNT];   /* G6: last use per queue (every client's) */
+		v3da_fence_t att;                  /* G6: an attached fence (the real server's join job) */
 	} bo[256];
+	struct {
+		uint32_t handle, colour;   /* G6: the foreign job's BO and what it "renders" */
+		uint64_t seqno;
+		int applied;
+	} fx;
 	uint32_t exports, v3dbuf_imports;
 	uint32_t gen;
 	uint64_t seqno;
@@ -967,6 +980,7 @@ static struct {
 	v3da_cl_desc_t last_cl;
 	uint32_t last_nbo, last_nin, last_nout, last_bos[8];
 	uint32_t submits;
+	uint32_t g6_queries;
 } V;
 static v3da_fence_page_t fence_page __attribute__((aligned(4096)));
 
@@ -982,9 +996,14 @@ static int v3d_fence_done(const kms_fence_t *f)
 /* Jobs "run" when someone waits for them (a server wait, or a fence-gated flip):
  * between submit and that point a fence is really pending, which is what the
  * library's fast paths and G13's implicit flip fence have to cope with. */
+#define FOREIGN_SLOT (V3DA_FENCE_NSLOTS - 1u)   /* G6: "another process" (drmprobe_host_foreign_job) */
+
+static int bo_by_handle(uint32_t h);
+
 static void v3d_complete_all(void)
 {
 	uint32_t c, q;
+	int b;
 
 	for (c = 0; c <= NCLIENT; c++) {
 		for (q = 0; q < V3DA_Q_COUNT; q++) {
@@ -993,6 +1012,25 @@ static void v3d_complete_all(void)
 			}
 		}
 	}
+	if ((V.fx.seqno != 0u) && !V.fx.applied) {
+		/* the foreign job "runs": its pixels land, then its fence signals */
+		b = bo_by_handle(V.fx.handle);
+		if (b >= 0) {
+			uint32_t *px = (uint32_t *)(void *)(F.arena + V.bo[b].off), i;
+			for (i = 0; i < V.bo[b].size / 4u; i++) {
+				px[i] = V.fx.colour;
+			}
+		}
+		V.fx.applied = 1;
+		fence_page.slot[FOREIGN_SLOT].completed[V3DA_Q_RENDER] = V.fx.seqno;
+	}
+}
+
+
+static int fence_pending(const v3da_fence_t *f)
+{
+	return (f->seqno != 0u) && (f->slot < V3DA_FENCE_NSLOTS) && (f->queue < V3DA_Q_COUNT) &&
+		((uint32_t)fence_page.slot[f->slot].gen == f->gen) && (fence_page.slot[f->slot].completed[f->queue] < f->seqno);
 }
 
 
@@ -1318,6 +1356,15 @@ static void v3d_handle(msg_t *m)
 			}
 			V.pending[c][r->u.submit.first.queue] = V.seqno;   /* completes at the next wait (v3d_complete_all) */
 			V.pending[c][r->u.submit.last.queue] = V.seqno;
+			for (i = 0; i < rq.u.submit.nbo; i++) {   /* G6: every named BO's last use (v3da_bo_mark_use) */
+				uint32_t h;
+				memcpy(&h, p + rq.u.submit.desc_size + i * 4u, 4u);
+				b = bo_by_handle(h);
+				if (b >= 0) {
+					V.bo[b].last[r->u.submit.first.queue] = r->u.submit.first;
+					V.bo[b].last[r->u.submit.last.queue] = r->u.submit.last;
+				}
+			}
 			for (i = 0; i < rq.u.submit.nout; i++) {
 				s = sync_find(c, out[i].handle);
 				if (s >= 0) {
@@ -1401,6 +1448,93 @@ static void v3d_handle(msg_t *m)
 			else {
 				rc = -ETIMEDOUT;
 			}
+			break;
+		}
+		case V3DA_OP_BO_LAST_FENCE:
+		case V3DA_OP_BO_ATTACH_FENCE: {
+			/* G6, as v3da_bo.c v3da_bo_sync_targets / v3da_bo_last_fence / v3da_jobs.c attach */
+			const v3da_bo_sync_req_t *q = &rq.u.bo_sync;
+			int t[NCLIENT + 1], nt = 0, j;
+			uint32_t k, n = 0;
+			if (F.v3d_proto < V3DA_PROTO_BO_SYNC) {
+				rc = -EINVAL;   /* an older server: unknown opcode */
+				break;
+			}
+			if (q->flags != 0u) {
+				rc = -EINVAL;
+				break;
+			}
+			if (q->ns == V3DA_BO_SYNC_HANDLE) {
+				b = bo_by_handle(q->handle);
+				if ((b >= 0) && ((V.bo[b].owner == c) || ((V.bo[b].sharers & (1ull << (c - 1u))) != 0u))) {
+					t[nt++] = b;
+				}
+			}
+			else if (q->ns == V3DA_IMPORT_NS_V3DBUF) {
+				b = (q->port == VBUF_PORT) ? vbuf_find(q->id) : -1;
+				if (b >= 0) {
+					t[nt++] = b;
+				}
+			}
+			else if (q->ns == V3DA_IMPORT_NS_KMSBUF) {
+				for (i = 0; (i < 256) && (nt <= NCLIENT); i++) {
+					if (V.bo[i].used && V.bo[i].imported && (q->port == BUF_PORT) && (V.bo[i].imp_id == q->id)) {
+						t[nt++] = (int)i;
+					}
+				}
+			}
+			else {
+				rc = -EINVAL;
+				break;
+			}
+			if ((nt == 0) && ((q->ns != V3DA_IMPORT_NS_KMSBUF) || (rq.op == V3DA_OP_BO_ATTACH_FENCE))) {
+				rc = -ENOENT;
+				break;
+			}
+			if (rq.op == V3DA_OP_BO_ATTACH_FENCE) {
+				if (fence_pending(&q->fence)) {
+					for (j = 0; j < nt; j++) {
+						V.bo[t[j]].att = q->fence;
+					}
+					r->u.fence.fence = q->fence;
+				}
+				rc = 0;
+				break;
+			}
+			for (j = 0; j < nt; j++) {
+				for (i = 0; i <= V3DA_Q_COUNT; i++) {
+					const v3da_fence_t *f = (i < V3DA_Q_COUNT) ? &V.bo[t[j]].last[i] : &V.bo[t[j]].att;
+					if (!fence_pending(f)) {
+						continue;
+					}
+					for (k = 0; k < n; k++) {
+						if ((r->u.bo_fences.f[k].slot == f->slot) && (r->u.bo_fences.f[k].queue == f->queue)) {
+							break;
+						}
+					}
+					if (k < n) {
+						if (f->seqno > r->u.bo_fences.f[k].seqno) {
+							r->u.bo_fences.f[k] = *f;
+						}
+					}
+					else if (n < V3DA_BO_FENCES_MAX) {
+						r->u.bo_fences.f[n++] = *f;
+					}
+					else {
+						r->u.bo_fences.flags |= V3DA_BO_FENCES_MORE;
+					}
+				}
+			}
+			for (k = 1; k < n; k++) {   /* newest first (the fake's seqnos are global) */
+				v3da_fence_t x = r->u.bo_fences.f[k];
+				for (j = (int)k - 1; (j >= 0) && (r->u.bo_fences.f[j].seqno < x.seqno); j--) {
+					r->u.bo_fences.f[j + 1] = r->u.bo_fences.f[j];
+				}
+				r->u.bo_fences.f[j + 1] = x;
+			}
+			r->u.bo_fences.count = n;
+			V.g6_queries++;
+			rc = 0;
 			break;
 		}
 		case V3DA_OP_SUBMIT_CPU:
@@ -1780,12 +1914,12 @@ int __real_ioctl(int fd, unsigned long req, ...)
 	}
 	if ((req == V3DA_IOC_HELLO) && (F.kind[fd] == K_V3D)) {
 		v3da_hello_t *h = arg;
-		if (F.old_v3d ? (h->proto != V3DA_PROTO_BASE) : ((h->proto < V3DA_PROTO_BASE) || (h->proto > V3DA_PROTO_VERSION))) {
-			errno = EPROTO;   /* a proto-2 server takes exactly 2; the G4 server BASE..VERSION */
+		if ((h->proto < V3DA_PROTO_BASE) || (h->proto > F.v3d_proto)) {
+			errno = EPROTO;   /* a proto-2 server takes exactly 2; later ones BASE..their version */
 			return -1;
 		}
 		memset(h, 0, sizeof(*h));
-		h->proto = F.old_v3d ? V3DA_PROTO_BASE : V3DA_PROTO_VERSION;
+		h->proto = F.v3d_proto;
 		h->client_id = F.client[fd];
 		h->slot = F.client[fd];
 		h->slot_gen = (uint32_t)fence_page.slot[h->slot].gen;
@@ -1908,7 +2042,42 @@ void fake_m3p2(uint32_t *fstats, uint32_t *atsizes, uint32_t *imports, uint32_t 
 	*imports_closed = V.imports_closed;
 }
 void fake_set_dri(int on) { F.dri = on; }
-void fake_set_old_v3d(int on) { F.old_v3d = on; }
+void fake_set_v3d_proto(uint32_t proto)
+{
+	F.v3d_proto = ((proto >= V3DA_PROTO_BASE) && (proto <= V3DA_PROTO_VERSION)) ? proto : V3DA_PROTO_VERSION;
+	F.old_v3d = (F.v3d_proto < V3DA_PROTO_BO_EXPORT);
+}
+uint32_t fake_g6_queries(void) { return V.g6_queries; }
+
+/* G6: "another process" renders `colour` into the BO: a job of a client the library
+ * does not know (its own fence-page slot), pending until something waits (as every
+ * fake job), recorded as the BO's last use on the render queue. */
+void drmprobe_host_foreign_job(uint32_t handle, uint32_t colour);
+int drmprobe_host_foreign_done(void);
+void drmprobe_host_foreign_job(uint32_t handle, uint32_t colour)
+{
+	int b = bo_by_handle(handle);
+
+	if (b < 0) {
+		return;
+	}
+	if (fence_page.slot[FOREIGN_SLOT].gen == 0u) {
+		fence_page.slot[FOREIGN_SLOT].gen = 1u;
+	}
+	V.seqno++;
+	V.fx.handle = handle;
+	V.fx.colour = colour;
+	V.fx.seqno = V.seqno;
+	V.fx.applied = 0;
+	V.bo[b].last[V3DA_Q_RENDER].slot = (uint16_t)FOREIGN_SLOT;
+	V.bo[b].last[V3DA_Q_RENDER].queue = V3DA_Q_RENDER;
+	V.bo[b].last[V3DA_Q_RENDER].gen = (uint32_t)fence_page.slot[FOREIGN_SLOT].gen;
+	V.bo[b].last[V3DA_Q_RENDER].seqno = V.seqno;
+}
+int drmprobe_host_foreign_done(void)
+{
+	return (V.fx.seqno != 0u) && (fence_page.slot[FOREIGN_SLOT].completed[V3DA_Q_RENDER] >= V.fx.seqno);
+}
 void fake_set_kms(int old_kms, int import_high) { F.old_kms = old_kms; F.import_high = import_high; }
 void fake_g7(uint32_t *imports, uint32_t *imports_live, uint32_t *imports_released)
 {

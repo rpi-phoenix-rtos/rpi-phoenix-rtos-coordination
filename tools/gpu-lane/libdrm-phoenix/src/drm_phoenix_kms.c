@@ -246,11 +246,14 @@ static int implicit_attach(drmphx_conn_t *c, uint32_t fb_id, kms_fence_t *in_fen
 	if ((in_fence->seqno != 0u) || (fb_export(c, fb_id, &port, &id) != 0)) {
 		return 0;   /* an explicit fence wins; a buffer without an export has no importer */
 	}
+	/* G6: a render BO imported here from another process (G7, e.g. a Wayland client's
+	 * buffer on a plane) waits for every client's last use, which the render server
+	 * answers; the display server's own dumb buffers keep the G13 in-process mirror. */
 	if (c->u.kms.no_gate != 0) {
-		(void)drmphx_v3d_implicit_wait(port, id);   /* no -G: the CPU waits instead of the server */
+		(void)drmphx_v3d_flip_wait(c->u.kms.buf_port, port, id);   /* no -G: the CPU waits instead of the server */
 		return 0;
 	}
-	if (drmphx_v3d_implicit_fence(port, id, &f) == 0) {
+	if (drmphx_v3d_flip_fence(c->u.kms.buf_port, port, id, &f) == 0) {
 		return 0;
 	}
 	memcpy(in_fence, &f, sizeof(*in_fence));   /* identical layouts (kms_proto.h) */
@@ -270,7 +273,7 @@ static void implicit_fallback(drmphx_conn_t *c, uint32_t fb_id, kms_fence_t *in_
 		(void)fprintf(stderr, "libdrm-phoenix: rpi4-kms runs without -G: implicit flip sync falls back to CPU waits\n");
 	}
 	if (fb_export(c, fb_id, &port, &id) == 0) {
-		(void)drmphx_v3d_implicit_wait(port, id);
+		(void)drmphx_v3d_flip_wait(c->u.kms.buf_port, port, id);
 	}
 	memset(in_fence, 0, sizeof(*in_fence));
 }
