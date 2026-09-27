@@ -10,7 +10,12 @@
 # not in the sysroot); v3da_proto.h (render-server fence page) is read from
 # ../v3d-async. memExport/memUnexport come from the tree sysroot's libphoenix.
 #
-# Usage: tools/gpu-lane/kms/build.sh [--clean] [--out <dir>]
+# Usage: tools/gpu-lane/kms/build.sh [--clean] [--out <dir>] [--poll-notify]
+#   --poll-notify  build with -DKMS_POLL_NOTIFY: ev_push() calls the kernel's
+#                  pollNotify() so poll() on a card fd wakes at the event
+#                  (docs/gpu-new-lane/poll-wake.md). The stub comes from the
+#                  sysroot libphoenix.a or ../pollwake/pollnotify-obj.sh.
+#                  e.g. build.sh --poll-notify --out out-poll
 # Stage (coordinator only):
 #   sudo cp tools/gpu-lane/kms/out/{rpi4-kms,kmstest} <live fsid=0 export>/bin/
 #
@@ -20,9 +25,11 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "${here}/../../.." && pwd)"
 out="${KMS_OUT:-out}"
 clean=0
+pollnotify=0
 while [ $# -gt 0 ]; do
 	case "$1" in
 		--clean) clean=1 ;;
+		--poll-notify) pollnotify=1 ;;
 		--out) shift; out="${1:?--out needs a directory}" ;;
 		--out=*) out="${1#--out=}" ;;
 		*) echo "build.sh: unknown argument $1" >&2; exit 2 ;;
@@ -64,6 +71,12 @@ CFLAGS=(-O2 -g -std=gnu11 -Wall -Wextra -Werror -mno-outline-atomics
 	-mcpu=cortex-a72 -mtune=cortex-a72 -mstrict-align -ffunction-sections -fdata-sections
 	--sysroot="${S}/" -B"${S}/lib/"
 	-I"${here}" -I"${VCMBOX}" -I"${V3DA}")
+extra=()
+if [ "${pollnotify}" = 1 ]; then
+	CFLAGS+=(-DKMS_POLL_NOTIFY)
+	shim="$("${root}/tools/gpu-lane/pollwake/pollnotify-obj.sh" "${obj}")"
+	[ -z "${shim}" ] || extra+=("${shim}")
+fi
 
 compile() {   # compile <src> <obj>
 	echo "  CC  $(basename "$1")"
@@ -77,7 +90,7 @@ for f in kms_main kms_fw kms_backend kms_bo kms_vblank; do
 	srv_objs+=("${obj}/${f}.o")
 done
 compile "${VCMBOX}/libvcmbox.c" "${obj}/libvcmbox.o"
-"${CC}" "${CFLAGS[@]}" -Wl,--gc-sections -o "${out}/rpi4-kms" "${srv_objs[@]}" "${obj}/libvcmbox.o"
+"${CC}" "${CFLAGS[@]}" -Wl,--gc-sections -o "${out}/rpi4-kms" "${srv_objs[@]}" "${obj}/libvcmbox.o" "${extra[@]}"
 
 echo "== kmstest"
 compile "${here}/kmstest.c" "${obj}/kmstest.o"

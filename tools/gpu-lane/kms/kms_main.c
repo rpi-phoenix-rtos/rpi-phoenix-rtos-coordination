@@ -68,6 +68,13 @@
 #include "kms.h"
 #include "v3da_proto.h"
 
+#ifdef KMS_POLL_NOTIFY
+/* The kernel's poll() readiness wake-up (docs/gpu-new-lane/poll-wake.md). Declared
+ * here too, so this builds against a libphoenix whose <sys/msg.h> predates it;
+ * build.sh --poll-notify then links the syscall stub from tools/gpu-lane/pollwake. */
+extern int pollNotify(const oid_t *oid);
+#endif
+
 
 _Static_assert(sizeof(kms_fence_t) == sizeof(v3da_fence_t), "kms_fence_t mirrors v3da_fence_t");
 _Static_assert(sizeof(kms_memref_t) == sizeof(v3da_memref_t), "kms_memref_t mirrors v3da_memref_t");
@@ -85,6 +92,7 @@ static struct {
 	uint32_t pid_notes;
 	uint32_t attr_notes;
 	int dri_name;                /* /dev/dri/card0 registered by this server */
+	int poll_notify;             /* the kernel has pollNotify (KMS_POLL_NOTIFY builds only) */
 } m;
 
 
@@ -157,6 +165,16 @@ static void ev_push(uint32_t client, const void *ev)
 	memcpy(c->evq[c->evtail % KMS_EVQ_LEN], ev, 32u);
 	c->evtail++;
 	srv.st.events_queued++;
+#ifdef KMS_POLL_NOTIFY
+	/* The queue the atPollStatus answer reads is updated above; now wake any
+	 * poll()/select() on this client's descriptor (its oid.id is the client id). */
+	if (m.poll_notify) {
+		oid_t oid;
+		oid.port = srv.port;
+		oid.id = c->id;
+		(void)pollNotify(&oid);
+	}
+#endif
 }
 
 
@@ -1561,6 +1579,16 @@ static int claim_names(void)
 	m.dri_name = (rc >= 0) ? 1 : 0;
 	KMS_LOG("srv dri name=/dev/%s rc=%d registered=%d (G10; alias of /dev/%s)", KMS_DRI_NAME, rc, m.dri_name,
 		KMS_DEV_NAME);
+#ifdef KMS_POLL_NOTIFY
+	/* A kernel without pollNotify answers -EINVAL; with it, notifying our own oid
+	 * with no poller watching is a no-op returning 0. */
+	dev.port = srv.port;
+	dev.id = 0;
+	rc = pollNotify(&dev);
+	m.poll_notify = (rc == 0) ? 1 : 0;
+	KMS_LOG("srv poll_notify=%d rc=%d (1: poll() on a card fd wakes at the event, not on the kernel's 20 ms re-poll)",
+		m.poll_notify, rc);
+#endif
 	return 0;
 }
 
@@ -1669,8 +1697,10 @@ static void dispatch_loop(void)
 					msg.o.err = EOK;
 				}
 				else if (msg.i.attr.type == atPollStatus) {
-					/* No block_ms support: poll() on this fd is quantised to the kernel's
-					 * 20 ms POLL_INTERVAL (E5); clients block in read() instead. */
+					/* A snapshot; block_ms (bits 16+) is ignored. Built with KMS_POLL_NOTIFY
+					 * on a kernel that has pollNotify, ev_push() wakes a sleeping poll()
+					 * at once; otherwise poll() on this fd sees an event up to the
+					 * kernel's 20 ms POLL_INTERVAL late (E5). */
 					kms_client_t *cl;
 					(void)mutexLock(srv.lock);
 					cl = client_get(msg.oid.id);
