@@ -2,7 +2,8 @@
 #
 # labwc-drm (new GPU lane, M7): a lightweight Wayland desktop cross-built STATIC for
 # aarch64-phoenix -- wlroots 0.20 (DRM + libinput + headless backends, GLES2 and
-# pixman renderers, libseat session), labwc 0.20 on it, and the foot terminal.
+# pixman renderers, libseat session), labwc 0.20 on it, the foot terminal, the fuzzel
+# launcher and the swaybg wallpaper.
 #
 # Reuses the M6 Weston port (tools/gpu-lane/weston-drm/) by path, never by copy:
 # its compat layer (epoll/timerfd/signalfd/eventfd over poll, memfd_create over
@@ -18,7 +19,7 @@
 #                          headers each; the ports include dir also holds GL/, X11/
 #                          and xft headers -- never on a search path)
 #   <out>/libdrm-prefix/   a snapshot of libdrm-phoenix (--libdrm-prefix)
-#   <out>/labwc, labwc-stripped, foot, foot-stripped, tinywl, tinywl-stripped
+#   <out>/{labwc,foot,tinywl,fuzzel,swaybg} (unstripped, addr2line) and *-stripped (stage these)
 #
 # Writes only into <out> (default build-out/, gitignored). Reads the tree sysroot,
 # the ports prefix, the toolchain, the E7 compiler wrappers, a libdrm-phoenix
@@ -102,6 +103,8 @@ PKGS=(
 	"tllist|tllist-1.1.0.tar.gz|https://codeberg.org/dnkl/tllist/archive/1.1.0.tar.gz|0e7b7094a02550dd80b7243bcffc3671550b0f1d8ba625e4dff52517827d5d23"
 	"fcft|fcft-3.3.3.tar.gz|https://codeberg.org/dnkl/fcft/archive/3.3.3.tar.gz|b0c0f4a599f43723736c8565b8b84337c4195077f07f1bb8bb3252bb13a2306a"
 	"foot|foot-1.28.0.tar.gz|https://codeberg.org/dnkl/foot/archive/1.28.0.tar.gz|4296be402b5684d049534598e69db92b918f92beac9dab76b585207045f0b037"
+	"fuzzel|fuzzel-1.15.0.tar.gz|https://codeberg.org/dnkl/fuzzel/archive/1.15.0.tar.gz|95b6c022fc1f1c7ab586d47c1594417cc311bf41ea8f5f8b5641478da7b5cf3b"
+	"swaybg|swaybg-1.2.2.tar.gz|https://github.com/swaywm/swaybg/releases/download/v1.2.2/swaybg-1.2.2.tar.gz|a6652a0060a0bea3c3318d9d03b6dddac34f6aeca01b883eef9e58281f5202a1"
 )
 WAYLAND_VERSION=1.24.0
 # FreeBSD's BSD-2 copy of the evdev event codes (as weston-drm)
@@ -419,7 +422,7 @@ EOF
 		"${TC}-gcc" "${CFL[@]}" -c "${here}/compat/src/${f}.c" -o "${out}/compat-obj/${f}.o"
 	done
 	"${TC}-gcc-ar" rcs "${P}/lib/liblwphx-compat.a" "${out}/compat-obj/"lwphx_*.o
-	echo "  stand-ins: ${compat_defs[*]:-none}; lwphx: shm_open shm_unlink posix_openpt mbrtoc32 c32rtomb C11-threads newlocale/uselocale sem_* wcscasecmp/wcsncat epoll_pwait pthread_setname_np"
+	echo "  stand-ins: ${compat_defs[*]:-none}; lwphx: shm_open shm_unlink posix_openpt mbrtoc32 c32rtomb C11-threads newlocale/uselocale sem_* wcscasecmp/wcsncat epoll_pwait pthread_setname_np reallocarray dirfd"
 	cat > "${P}/lib/pkgconfig/wlphx-compat.pc" <<EOF
 prefix=${P}
 Name: wlphx-compat
@@ -573,6 +576,11 @@ if [ "${relink}" = 0 ]; then
 	# stdc-predef.h defines it; foot refuses to build without it).
 	EXTRA_C_ARGS="'-DLWPHX_UTF8_MB_CUR_MAX', '-D__STDC_ISO_10646__=201706L'" meson_objs foot foot-build foot -Ddocs=disabled -Dthemes=false -Dime=true -Dgrapheme-clustering=disabled \
 		-Dtests=false -Dterminfo=disabled -Ddefault-terminfo=xterm-256color -Dutmp-backend=none -Dwerror=false
+	echo "== fuzzel 1.15 (launcher: fcft + pixman, PNG icons, bundled nanosvg; no cairo)"
+	EXTRA_C_ARGS="'-DLWPHX_UTF8_MB_CUR_MAX', '-D__STDC_ISO_10646__=201706L'" meson_objs fuzzel fuzzel-build fuzzel \
+		-Denable-cairo=disabled -Dpng-backend=libpng -Dsvg-backend=nanosvg -Dwerror=false
+	echo "== swaybg 1.2 (wallpaper: cairo PNG loader, no gdk-pixbuf)"
+	meson_objs swaybg swaybg-build swaybg -Dgdk-pixbuf=disabled -Dman-pages=disabled -Dwerror=false
 fi
 
 # --- link ------------------------------------------------------------------------------------
@@ -650,10 +658,29 @@ link_prog base foot -Wl,--start-group "${FOOT_OBJS[@]}" "${P}/lib/libfcft.a" "${
 	"${D}/freetype2/lib/libfreetype.a" "${D}/expat/lib/libexpat.a" "${D}/libpng16/lib/libpng16.a" "${D}/zlib/lib/libz.a" \
 	"${D}/libffi/lib/libffi.a" "${COMPAT_LIBS[@]}" -Wl,--end-group "${S}/lib/libm.a"  # libm BEFORE libstdc++ (whose hypotf stub collides); g++ moves a plain -lm after it
 
+# fuzzel: the launcher (wl_shm client, layer-shell)
+mapfile -t FUZZEL_OBJS < <(ninja_objs "${out}/fuzzel-build" fuzzel)
+[ "${#FUZZEL_OBJS[@]}" -gt 10 ] || { echo "build.sh: fuzzel objects not found" >&2; exit 1; }
+FUZZEL_OBJS=("${FUZZEL_OBJS[@]/#/${out}/fuzzel-build/}")
+link_prog base fuzzel -Wl,--start-group "${FUZZEL_OBJS[@]}" "${P}/lib/libfcft.a" "${P}/lib/libwayland-client.a" \
+	"${P}/lib/libwayland-cursor.a" "${P}/lib/libxkbcommon.a" "${P}/lib/libpixman-1.a" "${D}/harfbuzz/lib/libharfbuzz.a" \
+	"${D}/fontconfig/lib/libfontconfig.a" "${D}/freetype2/lib/libfreetype.a" "${D}/expat/lib/libexpat.a" \
+	"${D}/libpng16/lib/libpng16.a" "${D}/zlib/lib/libz.a" "${D}/libffi/lib/libffi.a" "${COMPAT_LIBS[@]}" \
+	-Wl,--end-group "${S}/lib/libm.a"
+
+# swaybg: the wallpaper (cairo image surface from PNG, layer-shell background)
+mapfile -t SWAYBG_OBJS < <(ninja_objs "${out}/swaybg-build" swaybg)
+[ "${#SWAYBG_OBJS[@]}" -gt 3 ] || { echo "build.sh: swaybg objects not found" >&2; exit 1; }
+SWAYBG_OBJS=("${SWAYBG_OBJS[@]/#/${out}/swaybg-build/}")
+link_prog base swaybg -Wl,--start-group "${SWAYBG_OBJS[@]}" "${P}/lib/libwayland-client.a" "${D}/cairo/lib/libcairo.a" \
+	"${P}/lib/libpixman-1.a" "${D}/fontconfig/lib/libfontconfig.a" "${D}/freetype2/lib/libfreetype.a" \
+	"${D}/expat/lib/libexpat.a" "${D}/libpng16/lib/libpng16.a" "${D}/zlib/lib/libz.a" "${D}/libffi/lib/libffi.a" \
+	"${COMPAT_LIBS[@]}" -Wl,--end-group "${S}/lib/libm.a"
+
 # --- verification ----------------------------------------------------------------------------
 echo "== verify"
 bad=0
-for o in labwc foot tinywl; do
+for o in labwc foot tinywl fuzzel swaybg; do
 	und="$("${TC}-nm" -u "${out}/${o}" || true)"
 	n=$(grep -c . <<< "${und}" || true)
 	interp=$("${TC}-readelf" -l "${out}/${o}" | grep -c INTERP || true)
@@ -686,13 +713,16 @@ for s in 'using the builtin XKB keymap' 'libdrm-phoenix:' '/dev/dri/card0' 'EGL_
 	echo "  labwc strings '${s}': ${n}"
 	[ "${n}" != 0 ] || bad=1
 done
+check_syms fuzzel fcft_from_name2 wl_display_connect memfd_create epoll_wait timerfd_settime mbrtoc32 sem_init \
+	zwlr_layer_shell_v1_interface png_read_info __wrap_close
+check_syms swaybg wl_display_connect cairo_image_surface_create_from_png zwlr_layer_shell_v1_interface shm_open __wrap_close
 strs="$(strings -a "${out}/foot-stripped")"
 for s in 'xterm-256color' 'C.UTF-8' '/dev/ptmx' 'failed to seal SHM backing memory file'; do
 	n=$(grep -cF -- "${s}" <<< "${strs}" || true)
 	echo "  foot strings '${s}': ${n}"
 	[ "${n}" != 0 ] || bad=1
 done
-for b in labwc-stripped foot-stripped tinywl-stripped; do
+for b in labwc-stripped foot-stripped tinywl-stripped fuzzel-stripped swaybg-stripped; do
 	bs="$(strings -a "${out}/${b}")"
 	for s in 'v3d-winsys:' phoenix_v3d_ioctl peek_next_scanout v3d-srv /dev/v3d-srv Xphoenix '[fbdev]' glamor_phoenix phxgl; do
 		n=$(grep -cF -- "${s}" <<< "${bs}" || true)
@@ -700,6 +730,7 @@ for b in labwc-stripped foot-stripped tinywl-stripped; do
 	done
 done
 echo "  old-lane strings: $([ "${bad}" = 0 ] && echo none || echo 'see above')"
-sha256sum "${out}"/labwc-stripped "${out}"/foot-stripped "${out}"/tinywl-stripped "${out}"/labwc "${out}"/foot | sed "s|${out}/||; s/^/  /"
+sha256sum "${out}"/labwc-stripped "${out}"/foot-stripped "${out}"/tinywl-stripped "${out}"/fuzzel-stripped \
+	"${out}"/swaybg-stripped "${out}"/labwc "${out}"/foot "${out}"/fuzzel "${out}"/swaybg | sed "s|${out}/||; s/^/  /"
 [ "${bad}" = 0 ] || { echo "build.sh: verification failed" >&2; exit 1; }
 echo "done"

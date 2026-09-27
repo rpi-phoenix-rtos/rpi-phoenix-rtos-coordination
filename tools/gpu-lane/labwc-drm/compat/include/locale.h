@@ -11,6 +11,12 @@
 #ifndef LWPHX_LOCALE_H
 #define LWPHX_LOCALE_H
 
+/* libphoenix has no LC_MESSAGES (fuzzel sets it): an unknown category to its
+ * setlocale(), which answers NULL -- messages stay untranslated either way. */
+#ifndef LC_MESSAGES
+#define LC_MESSAGES 6
+#endif
+
 #ifndef LC_GLOBAL_LOCALE
 typedef struct lwphx_locale *locale_t;
 

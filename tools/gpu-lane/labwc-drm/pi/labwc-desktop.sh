@@ -2,15 +2,21 @@
 #
 # labwc-desktop.sh -- run ON THE Pi at the psh prompt:
 #     /bin/bash /bin/labwc-desktop.sh <renderer> <client> [input|noinput]
+# (staged for m7a/m7b as /bin/labwc-desktop.sh; this version adds the desktop and fuzzel
+# clients and is staged as /bin/labwc-desktop-m7c.sh -- the m7a/m7b commands behave the
+# same with it; m7c selects its configuration with CONF_DIR=/etc/xdg/labwc-m7c)
 #   renderer  pixman | gles2       (WLR_RENDERER: pixman = dumb buffers + CPU composition,
 #                                   no Mesa in the compositor; gles2 = GBM/EGL/GLES on V3D)
-#   client    shm | foot | colors | mc | autostart | none
+#   client    shm | foot | colors | mc | autostart | desktop | fuzzel | none
 #                                  shm:  weston-simple-shm (the M6 wl_shm client), started here
 #                                  foot: /bin/foot (an interactive bash), started here
 #                                  colors: foot running /bin/m7b-colors.sh (24-bit colour bar,
 #                                          Unicode line; needs no keyboard)
 #                                  mc:   foot running Midnight Commander in / (the "Files" menu entry)
-#                                  autostart: labwc's own /etc/xdg/labwc/autostart (one foot)
+#                                  autostart: labwc's own autostart (CONF_DIR/autostart)
+#                                  desktop: labwc's autostart (m7c: swaybg + foot) AND the
+#                                           fuzzel launcher started here
+#                                  fuzzel: the fuzzel launcher only
 #                                  none: the compositor only
 #   input     input (default: libinput-phoenix opens /dev/kbd0 + /dev/mouse0) | noinput
 #
@@ -26,7 +32,8 @@
 #   /bin/rpi4-kms-g7 -G -p 96        (add -C to hand the console keyboard to labwc)
 #   /bin/shmsrv -v                   (memfd_create/shm_open backing: wl_shm pools, keymaps)
 #
-# Environment knobs: LABWC (binary; /bin/tinywl = wlroots' tinywl instead), CONF_DIR (labwc -C, default /etc/xdg/labwc; for any
+# Environment knobs: LABWC (binary; /bin/tinywl = wlroots' tinywl instead), CONF_DIR (labwc -C, default
+# /etc/xdg/labwc = the m7a/m7b configuration, /etc/xdg/labwc-m7c = m7c's; for any
 # client other than autostart the script uses a copy without the autostart file), HOLD
 # (seconds with the client up), CLIENT_ARGS, VERBOSE (labwc -V = info, default 1; 2 = -d),
 # DRM_DEVICES (WLR_DRM_DEVICES, default /dev/dri/card0; empty = udev enumeration),
@@ -85,6 +92,7 @@ case "${CLIENT}" in
 	foot) CMD="/bin/foot --log-level=${FOOT_LOG} ${CLIENT_ARGS}" ;;
 	colors) CMD="/bin/foot --log-level=${FOOT_LOG} ${CLIENT_ARGS} -e /bin/bash /bin/m7b-colors.sh" ;;
 	mc) CMD="/bin/foot --log-level=${FOOT_LOG} ${CLIENT_ARGS} -e /bin/mc /" ;;
+	fuzzel|desktop) CMD="/bin/fuzzel --log-level=${FOOT_LOG} ${CLIENT_ARGS}" ;;
 	autostart|none) CMD="" ;;
 	*) echo "LABWC FAIL unknown client ${CLIENT}"; exit 2 ;;
 esac
@@ -93,10 +101,10 @@ mkdir -p "${XDG_RUNTIME_DIR}" 2>/dev/null || export XDG_RUNTIME_DIR=/tmp
 chmod 700 "${XDG_RUNTIME_DIR}" 2>/dev/null
 rm -f "${XDG_RUNTIME_DIR}"/wayland-* 2>/dev/null
 
-# Only the autostart client runs labwc's autostart file: the others use a copy of the
-# configuration without it, so exactly one client is up.
+# Only the autostart and desktop clients run labwc's autostart file: the others use a
+# copy of the configuration without it, so exactly one client is up.
 conf="${CONF_DIR}"
-if [ "${CLIENT}" != autostart ]; then
+if [ "${CLIENT}" != autostart ] && [ "${CLIENT}" != desktop ]; then
 	conf=/tmp/labwc-conf
 	rm -rf "${conf}"
 	mkdir -p "${conf}"

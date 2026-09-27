@@ -23,7 +23,7 @@ needs VTE, which is heavy).
 | **D-Bus session bus** | **built, host-proven, Pi cycle `m7f-dbus` pre-registered** (see [D-Bus session bus](#d-bus-session-bus-stage-3) below). xfconf (every XFCE setting) needs a bus. Phoenix AF_UNIX has `SCM_RIGHTS` but no `SO_PEERCRED`/`SCM_CREDENTIALS` (D-Bus's EXTERNAL auth). Stage 1: `dbus-daemon` with ANONYMOUS auth on `/tmp/dbus-session`. `SO_PEERCRED` is on kernel branch `feat/dbus-peercred` (not merged) |
 
 **Staged so that something is always demo-able:**
-1. labwc + foot + `mc` (the first Wayland desktop) — **built and staged, `m7a-labwc`/`m7b-foot` pre-registered** ([stage 1](#stage-1-built-wlroots-020--labwc-020--foot-128-toolsgpu-lanelabwc-drm));
+1. labwc + foot + `mc` (+ fuzzel, swaybg) (the first Wayland desktop) — **built and staged, `m7a-labwc`/`m7b-foot`/`m7c-desktop` pre-registered** ([stage 1](#stage-1-built-wlroots-020--labwc-020--foot-128-toolsgpu-lanelabwc-drm));
 2. GTK3 + gtk3-hello — in progress;
 3. D-Bus session bus (`dbus-daemon` + libdbus; GIO's GDBus on top);
 4. XFCE libraries, then xfce4-panel + Thunar + xfdesktop + xfce4-settings + xfce4-appfinder under labwc: **the showcase**.
@@ -359,7 +359,7 @@ sudo -n install -m 644 "$F/conf/foot/foot.ini" "$EXPORT/etc/xdg/foot/foot.ini"
 | file | sha256 (first 16) |
 |---|---|
 | `/bin/labwc` / `/bin/foot` / `/bin/tinywl` | `c8a78d3d7e047711` / `54d4232567932fc9` / `4dab8a085f2ba15b` |
-| `/bin/labwc-desktop.sh` (`pi/`) | `da67b3202c41dbd1` |
+| `/bin/labwc-desktop.sh` (`pi/` as of `18224fcfb`; the repo file has since gained m7c's clients and is staged as `/bin/labwc-desktop-m7c.sh`) | `da67b3202c41dbd1` |
 | `/bin/m7b-colors.sh` (`pi/`) | `cbc892b94cbe7de2` |
 | `/etc/xdg/labwc/{rc.xml,menu.xml,autostart,environment}` | `0bf18540…`, `c9ea858a…`, `d68df0df…`, `2a965f59…` |
 | `/etc/xdg/foot/foot.ini` | `fd91a434…` |
@@ -462,10 +462,110 @@ interactive bash): the fork/exec-from-the-compositor path. Keyboard and the menu
 | 10 | exits: `LABWC client exited rc=143`, `LABWC labwc exited rc=0 … socket=gone` per arm; `SHMSRV stats … live=0`; `KMSTEST stats … bos=0` | clean | as m7a rows 11–13 |
 | 11 | fault dumps | 0 kernel, 0 EL0 | EL0 in foot: `aarch64-phoenix-addr2line -f -e tools/gpu-lane/labwc-drm/build-out-m7a/foot <pc>` |
 
+### Stage 1b: fuzzel 1.15.0 + swaybg 1.2.2, cycle `m7c-desktop` (built and staged 2026-09-27)
+
+**Builds** (same `build.sh`, `--out build-out-m7c`, a clean run from nothing after the core build of that hour
+finished): **fuzzel 1.15.0** (codeberg, MIT; fcft + pixman + xkbcommon, PNG icons through libpng, the bundled
+nanosvg, `-Denable-cairo=disabled`, built with foot's `-DLWPHX_UTF8_MB_CUR_MAX -D__STDC_ISO_10646__`) and
+**swaybg 1.2.2** (GitHub release, MIT; cairo's PNG loader, `-Dgdk-pixbuf=disabled`). Both are wl_shm clients on
+wlr-layer-shell; no Mesa, no libdrm. Patches: fuzzel 0001 `meson: man pages only when scdoc is available`
+(doc/ required scdoc unconditionally), swaybg 0001 `meson: librt is optional`. New compat: `reallocarray`,
+`dirfd` (libphoenix's DIR holds a descriptor only after `fdopendir()`; otherwise `ENOTSUP`, which fuzzel treats as
+"skip this PATH directory"), `O_DIRECTORY` = 0 (libphoenix has none; `open()` of a directory works without it),
+`LC_MESSAGES` (an unknown category to libphoenix's `setlocale()`, answered NULL).
+
+| check | `fuzzel` | `swaybg` |
+|---|---|---|
+| `nm -u` / `PT_INTERP` / link warnings | 0 / 0 / 0 | 0 / 0 / 0 |
+| text / data / bss | 3 786 612 / 19 836 / 26 804 | 2 665 984 / 2 064 / 30 564 |
+| stripped / sha256 (first 16) | 3 811 752 / **`bc4e09ea56cb430a`** | 2 673 760 / **`4ff077961372b021`** |
+| unstripped (addr2line: `build-out-m7c/`) | `37ffb5fb132fd30c` | `76b6c5ff84301947` |
+| symbols | `fcft_from_name2`, `zwlr_layer_shell_v1_interface`, `png_read_info`, `memfd_create`, `epoll_wait`, `timerfd_settime`, `mbrtoc32`, `sem_init`, `__wrap_close` | `cairo_image_surface_create_from_png`, `zwlr_layer_shell_v1_interface`, `shm_open`, `__wrap_close` |
+
+Old-lane strings: 0. The m7c build's labwc/foot/tinywl are **not** staged (m7c runs the m7a `/bin/labwc` and
+`/bin/foot`); their hashes differ from m7a's only through the out directory pango embeds.
+
+**Wallpaper:** `conf/backgrounds/make-wallpaper.py` (stdlib only, deterministic, output CC0) draws a 1920×1080
+diagonal dark-blue→ember gradient with a soft orange glow lower right and faint rings: smooth at 24 bpp (banding =
+a colour-depth problem), and **an R/B swap turns the ember blue**. `phoenix-gradient-1920x1080.png`, 184 873 B,
+sha256 `713e715e3227ee1c`.
+
+**Configuration** (the m7a/m7b set in `/etc/xdg/labwc/` is unchanged): `/etc/xdg/labwc-m7c/` =
+`conf/labwc-m7c/`. rc.xml adds **Super+D and Alt+F2 → fuzzel** (Super+Return foot, Super+E mc as before);
+menu.xml adds **"Run…" → fuzzel** at the top; autostart runs `swaybg -i …/phoenix-gradient-1920x1080.png -m fill`
+then one foot. fuzzel reads `/etc/xdg/fuzzel/fuzzel.ini` (DejaVu Sans 14, `terminal=/bin/foot -e`, no icons, an
+ember accent) and lists `/usr/share/applications/{foot,mc,bash}.desktop` (mc and bash are `Terminal=true`: they
+open in foot). The launcher `pi/labwc-desktop.sh` gains two clients — `desktop` (labwc's autostart **and** fuzzel
+started by the script) and `fuzzel` — and is staged under a new name, `/bin/labwc-desktop-m7c.sh`; `/bin/labwc-desktop.sh`
+(`da67b3202c41dbd1`, the m7a/m7b registration) is untouched. The configuration is selected with
+`CONF_DIR=/etc/xdg/labwc-m7c` (default stays `/etc/xdg/labwc`).
+
+**Staging (done; nothing of these existed before — checked; every file `cmp`-equal to the frozen copy in
+`/home/houp/.claude/jobs/c8f1289c/tmp/m7c-frozen/`; the m7a set re-checked untouched):**
+
+```
+F=/home/houp/.claude/jobs/c8f1289c/tmp/m7c-frozen
+EXPORT=/srv/phoenix-rpi4-nfs-gcc16
+sudo -n install -m 755 "$F/fuzzel" "$EXPORT/bin/fuzzel"
+sudo -n install -m 755 "$F/swaybg" "$EXPORT/bin/swaybg"
+sudo -n install -m 755 "$F/labwc-desktop-m7c.sh" "$EXPORT/bin/labwc-desktop-m7c.sh"
+sudo -n install -d -m 755 "$EXPORT/etc/xdg/labwc-m7c" "$EXPORT/etc/xdg/fuzzel" "$EXPORT/usr/share/applications" \
+    "$EXPORT/usr/share/backgrounds/phoenix"
+for f in rc.xml menu.xml autostart environment; do sudo -n install -m 644 "$F/conf/labwc-m7c/$f" "$EXPORT/etc/xdg/labwc-m7c/$f"; done
+sudo -n install -m 644 "$F/conf/fuzzel/fuzzel.ini" "$EXPORT/etc/xdg/fuzzel/fuzzel.ini"
+for f in foot mc bash; do sudo -n install -m 644 "$F/conf/applications/$f.desktop" "$EXPORT/usr/share/applications/$f.desktop"; done
+sudo -n install -m 644 "$F/backgrounds/phoenix-gradient-1920x1080.png" "$EXPORT/usr/share/backgrounds/phoenix/"
+```
+
+| file | sha256 (first 16) |
+|---|---|
+| `/bin/fuzzel`, `/bin/swaybg` | `bc4e09ea56cb430a`, `4ff077961372b021` |
+| `/bin/labwc-desktop-m7c.sh` | `4c3a79989f55d84e` |
+| `/etc/xdg/labwc-m7c/{rc.xml,menu.xml,autostart,environment}` | `36233f3c953a2806`, `9ae23b7f81130938`, `fee08999626181bb`, `d8dc8ca5d06cdbde` |
+| `/etc/xdg/fuzzel/fuzzel.ini` | `f549b34fff03e153` |
+| `/usr/share/applications/{foot,mc,bash}.desktop` | `ec202513f6696763`, `930ccaa72c2c51ab`, `8cd7f375fa3f590e` |
+| `/usr/share/backgrounds/phoenix/phoenix-gradient-1920x1080.png` | `713e715e3227ee1c` |
+| reused: `/bin/labwc` `c8a78d3d7e047711`, `/bin/foot` `54d4232567932fc9`, the m7a servers, `/bin/shmsrv` | — |
+
+#### Cycle `m7c-desktop` (after `m7b-foot`; Bash `timeout: 600000`)
+
+**Question:** does the desktop come up as a desktop — wallpaper on the layer-shell background, the autostarted
+foot, and the fuzzel launcher on the overlay layer, all at once — and does it exit cleanly?
+
+```
+./scripts/test-cycle-psh-interact.sh --label m7c-desktop --idle-secs 45 --max-cmd-secs 200 \
+    --hdmi-dense-on 'LABWC socket=up' -- \
+    "/bin/rpi4-v3d-async-g6 -r 1 -m serial -i" \
+    "/bin/rpi4-kms-g7 -G -p 96 -C" \
+    "/bin/shmsrv -v" \
+    "export CONF_DIR=/etc/xdg/labwc-m7c" \
+    "export HOLD=60" \
+    "/bin/bash /bin/labwc-desktop-m7c.sh pixman desktop input" \
+    "/bin/shmsrv -s" \
+    "/bin/kmstest-poll stats"
+```
+
+(A GLES2 arm, `… gles2 desktop input`, is added once m7a's gles2 arm has passed.) Grade as m7a plus
+`grep -a -E 'LABWC |swaybg|fuzzel|foot|run session script|spawned child|SHMSRV (create|truncate|FAIL|stats)' …m7c-desktop.log`.
+Rows marked **bench** need a person with the USB keyboard/mouse (otherwise **n/a**, not FAIL).
+
+| # | Line / observation | Predicted | If instead… |
+|---|---|---|---|
+| 1 | `LABWC start … client=desktop … conf=/etc/xdg/labwc-m7c files=rc.xml,menu.xml,autostart,environment …` | the m7c configuration | `conf=/etc/xdg/labwc`: psh's `export` did not reach bash — m7b's run again |
+| 2 | `run session script /etc/xdg/labwc-m7c/autostart`; no `spawned child … exited with 127` | busybox `sh` starts swaybg and foot | `127`: a path in autostart |
+| 3 | swaybg: `SHMSRV create` + `truncate … size=8294400 … cap=16777216` (one 1920×1080 XRGB buffer; shmsrv rounds to 16 MiB **contiguous**) | once | `SHMSRV FAIL alloc … cap=16777216`: no 16 MiB contiguous block — the wallpaper is missing, the rest still graded; a solid-colour fallback (`swaybg -c`, single-pixel-buffer + viewporter, no big buffer) is the next registration |
+| 4 | `LABWC client start: /bin/fuzzel --log-level=info`, fuzzel's `info:` lines (fcft DejaVu Sans), no `failed to …` about `/usr/share/applications`; its buffer `SHMSRV truncate … cap=1048576` or `2097152` | fuzzel maps on the overlay layer with keyboard focus (layer-shell `keyboard-interactivity`) | `compositor does not support layer shell`: not labwc (staging); `no applications found`: `.desktop` staging/`XDG_DATA_DIRS` |
+| 5 | HDMI (dense from `socket=up`): **the ember gradient wallpaper fills the screen**, a foot window (bash prompt, SSD title "foot"), and **fuzzel's box centred on top** — prompt `Run: `, three entries Foot / Midnight Commander / Bash, the first highlighted in ember; software cursor | the three layers composite in the right order (background < windows < overlay) | black background: row 3; blue glow instead of ember: R/B swapped in the XRGB path (report it, do not grade the rest as broken); fuzzel absent while foot shows: row 4 |
+| 6 | `LABWC hold … labwc=running client=running` ×6 (`HOLD=60`) | fuzzel stays open | `client=exited` early: fuzzel's stderr above (e.g. keymap mmap: m7b row 5) |
+| 7 | **bench:** typing `mid` in fuzzel narrows to Midnight Commander, Enter opens mc in a new foot | the launcher launches (fork/exec from fuzzel, `terminal=/bin/foot -e`) | nothing: `spawned`/`execvp` errors on the UART |
+| 8 | **bench:** Super+D / Alt+F2 opens fuzzel again; right click on the wallpaper → root menu with **Run…** at the top | labwc keybinds and menu from the m7c rc.xml/menu.xml | the m7b menu (no Run…): the wrong conf dir |
+| 9 | **bench:** dragging foot's title bar moves the window; dragging an edge resizes it (foot redraws at the new size: new `SHMSRV truncate` lines) | interactive move/resize | the window jumps back: pointer button/motion events (libinput-phoenix) |
+| 10 | exit: `LABWC client exited rc=143`, `LABWC labwc exited rc=0 … socket=gone`; swaybg and foot lose the display and exit; `SHMSRV stats … live=0`; `KMSTEST stats … bos=0` | clean | `live>0`: an orphaned autostart client still holds an object (it should exit on display loss) |
+| 11 | fault dumps | 0 kernel, 0 EL0 | EL0 in fuzzel/swaybg: `aarch64-phoenix-addr2line -f -e tools/gpu-lane/labwc-drm/build-out-m7c/<prog> <pc>` |
+
 ### Next
 
-fuzzel (launcher) and swaybg (wallpaper) are the same recipe as foot (fcft/cairo already here): not built in this
-pass. Then `m7c-desktop` (wallpaper + launcher + mouse move/resize) and the XFCE stages on top.
+`m7c-desktop` above; then the XFCE stages on top (GTK3 lane, D-Bus, gtk-layer-shell).
 
 ## GTK3 + PCManFM → stage 2 built: GTK 3.24 (Wayland only) + gtk-layer-shell (`tools/gpu-lane/gtk3-wayland/`)
 
