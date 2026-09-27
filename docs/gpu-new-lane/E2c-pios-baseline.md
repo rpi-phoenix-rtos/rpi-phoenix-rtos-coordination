@@ -295,3 +295,39 @@ adapter, alias `brcm,bcm2711-hdmi-i2c`; `clk-bcm2711-dvp` is built in). v3d itse
 Fix: `e2c-bench.sh` now coldplugs (one `modprobe -a` over every device modalias, as udev does),
 names the GPU drivers, logs `E2C modules …`, and waits for the vc4-bound card specifically
 (`E2C drm wait_half_s=`). Re-run queued (`queue15`).
+
+## Run 2 (queue15, 2026-09-27 02:45–03:45) — RESULT: Pi OS is GPU-bound at the same render cost; the new lane matches it
+
+Coldplug fix worked (`E2C modules v3d i2c_brcmstb vc4 snd_soc_hdmi_codec cec`, `kms_card=/dev/dri/card0`).
+Results in `artifacts/linux-netboot/rootfs/var/log/e2c/run-003` (stock) and `run-004` (phxclk250).
+Settings parity checked: the same seeded `config.xml` produces the same "Unknown value … expected true
+or false" warnings on both OSes, both report `Overall scene complexity estimated at 181`, and STK's
+written-back config shows the effective values (dynamic lights on, glow/bloom/DoF/light shafts off,
+texture compression off, `scale_rtts_factor=0.75`, 1920×1080, anisotropic 4).
+
+| STK 1.4, hacienda, 4 karts | fps (V3D frames over the race) | HUD mean | render ms/frame | render busy | bin ms/frame |
+|---|---|---|---|---|---|
+| **Pi OS stock** (core 500, Mesa 26.2.2) | **11.74 / 11.63** | 12.25 / 12.07 | **82.6 / 83.1** | 97.0 / 96.6 % | 2.0 / 2.6 |
+| Pi OS `phxclk250` (core 250) | 9.93 / 9.99 | 10.45 / 10.55 | 97.4 / 96.9 | 96.7 / 96.8 % | 2.9 / 2.7 |
+| Phoenix **new lane** (core 500, M1 queue14) | **12.12 / 12.04 / 12.19** (flipstat) | — | — | — | — |
+| Phoenix old lane (core 500, queue14) | 8.48 / 8.39 / 8.15 | — | — | — | — |
+| Phoenix old lane (core 250, E2b) | 7.43 | — | 91 | — | — |
+
+Both OSes issue ~8.3 bin + 8.3 render jobs per frame.
+
+**Readings (pre-registered question: is Phoenix's 91 ms/frame render phase 3× too slow?)**
+1. **No.** On Linux the same frame costs **97 ms of render at core 250** and **83 ms at core 500**,
+   with the render queue ~97 % busy — Pi OS is GPU-bound on exactly the phase E2 measured. Phoenix's
+   91 ms at core 250 is *faster* than Linux's 97 ms. The "3× too slow" premise behind E2b is void;
+   V3D shader throughput is simply what this GPU delivers for STK at these settings.
+2. **The core clock matters on Linux too** (9.96 → 11.69 fps, +17 %), confirming the `core_freq=500`
+   adoption.
+3. **The whole old-lane gap was CPU/GPU serialisation, which M1 removes.** Old lane 8.34 fps = 71 % of
+   Pi OS; the async render server's `stk-v3da` 12.12 fps = **103 % of Pi OS** (flipstat vs V3D-frame
+   counts: comparable within a few %, both are frames presented per second over gameplay).
+   The owner's performance goal ("similar performance as Raspberry Pi OS") is **met for STK on the
+   new lane**.
+4. Quakespasm on Pi OS ran but its timedemo line was not captured (`timedemo NONE`; HUD mean 36.8 fps
+   in gameplay) — no quakespasm verdict. kmscube 600 frames rc=0; glmark2 offscreen score 38.
+   Follow-up: fix the quakespasm timedemo capture in `e2c-bench.sh` if a quakespasm comparison is
+   wanted (Phoenix new lane: 40.4 fps timedemo at core 500).
