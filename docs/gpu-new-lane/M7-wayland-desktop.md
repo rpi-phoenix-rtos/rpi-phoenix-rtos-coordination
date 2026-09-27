@@ -17,6 +17,15 @@ desktop (`startx_gpu`) stays untouched until the migration retires it.
 | wallpaper | **swaybg** | tiny; cairo only |
 | panel (stage 2) | **sfwbar** (GTK3) or **yambar** (no GTK) | a panel is optional for "minimal"; yambar first if GTK3 is too much |
 
+**Toolkit: GTK3 now, GTK4 next (owner question 2026-09-27).** The file manager decides the toolkit. PCManFM,
+Thunar, Nemo and Caja are all GTK3, as are the light GTK panels (sfwbar), and Raspberry Pi OS's labwc desktop
+is GTK3 for that reason. The GTK4 file manager is Nautilus, which pulls in libadwaita and expects
+tracker/localsearch and gvfs, so it is not "light". GTK4 is added as the **next M7 stage** (`m7g-gtk4`:
+gtk4-demo / a GTK4 window). It reuses the GTK3 dependencies (glib, pango, cairo, harfbuzz, fontconfig, libepoxy,
+the Wayland stack and compat layer), and its GL renderer (GLES ≥ 3.0; V3D provides 3.1) makes it a real
+new-lane GPU test. Pin a GTK4 release whose image loading still builds with gdk-pixbuf, not only glycin (Rust).
+If the owner prefers a GTK4-only desktop, the file manager becomes Nautilus, and that weight is accepted knowingly.
+
 Rejected: sway (tiling; unfamiliar for a demo), Hyprland (heavy C++, fast-moving ABI), Wayfire (heavier plugin
 stack), niri/cosmic (Rust toolchain for Phoenix is a separate project), Weston's desktop-shell (already here, but
 it is a reference compositor, not a desktop).
@@ -51,6 +60,7 @@ fix), shmsrv for wl_shm, Mesa GBM/EGL/GLES (static, `--wayland`), libdrm-phoenix
 | `m7c-desktop` | wallpaper + foot + fuzzel launcher; window move/resize with the mouse; clean exit |
 | `m7e-gtk3` | a GTK3 demo window (gtk3-demo / a minimal GtkWindow) under Weston, then under labwc |
 | `m7f-pcmanfm` | PCManFM browses `/` and `/usr/share` under labwc: icons, a folder open by double-click, a file copy |
+| `m7g-gtk4` | GTK4 (GL renderer on V3D) window / gtk4-demo under labwc |
 | `m7d-gl-client` | weston-simple-egl / kmscube-style GL client inside labwc (G4/G6/G7 in a real compositor) |
 
 ## Scheduling
