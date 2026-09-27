@@ -341,3 +341,22 @@ WSI): `vkquake-drm.stripped` 13 368 776 B **`22755bb450b09e0f…`**, unstripped 
 `69c689ad…` and libdrm-phoenix m5b unchanged, libphoenix.a `2acb195e…` (as the perf variants). Checks: the
 script's proofs pass; gdb on the unstripped ELF `r_oit.string = "0"`; `Using R8G8B8A8 color buffer format
 (V3D: …)` present. Combined Pi check: MIGRATION §6.5 `mig-all-vkq` (predicted ≈ 17 fps).
+
+## Result — `perf-vkq-c` / `perf-vkq-d` (queue47, 2026-09-27 16:35–16:55): the compute row, attributed
+
+Both on the perf-b binary (0006+0007), one cvar each; 45 windows each, 0 exceptions.
+
+| cycle | cvar | fps median | CSD jobs / ms (360 s window) | render jobs / ms |
+|---|---|---|---|---|
+| perf-vkq-b | — | 17.06 | 21077 / 75623 | 57849 / 64657 |
+| **perf-vkq-c** | `+r_gpulightmapupdate 0` (lightmaps on the CPU) | **19.78** | 13186 / 63067 | 67303 / 74407 |
+| **perf-vkq-d** | `+r_waterwarpcompute 0` (warp via raster passes) | **18.13** | 13253 / 55161 | 73319 / 76352 |
+
+**Reading:** each compute user carries about 8 000 of the 21 000 CSD jobs. Removing either one moves time from compute to
+render (more frames per second means more render jobs) and gains 1–2.7 fps. The rest (~13 000 jobs, 55–63 s) is
+common to both, so it is neither the lightmap update nor the water warp: most likely the per-frame compute of
+vkQuake's other GPU paths (particles / indirect draw setup). The per-job cost is still the question: 4.5 ms
+average per CSD job against about 3 ms/frame of lightmap compute on the old lane. Next: time one CSD job's dispatch
+size and its QPU/TMU cost in the render server (a `csd` detail line), and compare with the old lane's compute
+dispatch for the same shader. Shipping `+r_gpulightmapupdate 0` by default is a cheap +16 % if the CPU path looks
+identical on HDMI (to check).
