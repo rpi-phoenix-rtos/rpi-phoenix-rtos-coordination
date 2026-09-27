@@ -31,7 +31,7 @@
 #define MIB   (1024u * 1024u)
 #define P1080 2026u   /* a 1920x1080 XRGB buffer + Mesa's TFU read-ahead padding, as on the Pi */
 
-enum { B_LOW = 1, B_HIGH, B_TORN, B_NONE };
+enum { B_LOW = 1, B_HIGH, B_TORN, B_NONE, B_UNRESOLVED };
 
 static int checks, fails;
 
@@ -65,6 +65,9 @@ static void *mock_map(void *ctx, size_t bytes, int cached, uint64_t *first, uint
 	M.pa[i] = ((kind == B_HIGH) ? 0xf0000000ull : 0x20000000ull) + (uint64_t)i * 8u * MIB;
 	*first = M.pa[i];
 	*last = M.pa[i] + bytes - PG + ((kind == B_TORN) ? 0x100000ull : 0u);
+	if (kind == B_UNRESOLVED) {
+		*first = *last = ~0ull;   /* va2pa failed: (addr_t)-1 for both pages */
+	}
 	M.mapped[i] = 1;
 	M.live++;
 	if (M.live > M.live_max) {
@@ -138,7 +141,8 @@ static void expect(const char *what, long long got, long long want)
 
 
 /* Run the placement over a script; returns the index of the kept block or -1. */
-static int run(const char *name, const int *script, uint32_t n, uint32_t tries, v3da_lowmem_result_t *res, int *leak)
+static int run_pages(const char *name, const int *script, uint32_t n, uint32_t tries, uint32_t pages,
+	v3da_lowmem_result_t *res, int *leak)
 {
 	uint64_t pa = 0;
 	void *cpu;
@@ -148,7 +152,7 @@ static int run(const char *name, const int *script, uint32_t n, uint32_t tries, 
 	memset(&M, 0, sizeof(M));
 	memcpy(M.script, script, n * sizeof(*script));
 	M.nscript = n;
-	cpu = place(&ops, (size_t)P1080 * PG, 0, tries, PG, &pa, res);
+	cpu = place(&ops, (size_t)pages * PG, 0, tries, PG, &pa, res);
 	kept = (cpu != NULL) ? (int)((char *)cpu - M.cpu) : -1;
 	*leak = 0;
 	for (i = 0; i < M.next; i++) {
@@ -166,6 +170,12 @@ static int run(const char *name, const int *script, uint32_t n, uint32_t tries, 
 	printf("LOWHOST case %-18s tries=%u rejected=%u low=%d kept=%d held_max=%u\n", name, res->tries, res->rejected, res->low,
 		kept, M.live_max);
 	return kept;
+}
+
+
+static int run(const char *name, const int *script, uint32_t n, uint32_t tries, v3da_lowmem_result_t *res, int *leak)
+{
+	return run_pages(name, script, n, tries, P1080, res, leak);
 }
 
 
@@ -257,6 +267,13 @@ int main(void)
 		k = run("torn-then-none", s6, 2, V3DA_LOWMEM_TRIES, &r, &leak);
 		expect("torn-then-none: nothing usable", k, -1);
 		expect("torn-then-none: no leak", leak, 0);
+	}
+	{
+		/* one page: first == last, so only the explicit (addr_t)-1 check refuses it */
+		static const int s8[] = { B_UNRESOLVED, B_NONE };
+		k = run_pages("unresolved-1page", s8, 2, V3DA_LOWMEM_TRIES, 1, &r, &leak);
+		expect("unresolved-1page: a block va2pa cannot resolve is never kept", k, -1);
+		expect("unresolved-1page: no leak", leak, 0);
 	}
 	{
 		static const int s7[] = { B_NONE };

@@ -1322,9 +1322,10 @@ out scripted blocks (low, high, torn, none). The checks: footprint (a 2026-page 
 run caught an expectation of 16 MiB: 2026 × 4 KiB < 8 MiB), the limit to the byte, the budget, pool
 choice (LOWMEM only low, ordinary prefers high), fresh blocks (kept block, `tries`, `rejected`, rejects
 **held while trying** (`held_max`), every non-kept block unmapped exactly once, torn blocks never kept,
-fallback after 16). Result `LOWHOST RESULT checks=43 fails=0 verdict=PASS`. **Negative control**:
-`-DLOWMEM_TEST_NO_POLICY` (take the first block, as before proto 5) fails 12 of 43 →
-`LOWHOST negative-control verdict=PASS`.
+fallback after 16, a block `va2pa` could not resolve never kept). Result `LOWHOST RESULT checks=45 fails=0
+verdict=PASS`. **Negative control**: `-DLOWMEM_TEST_NO_POLICY` (take the first block, as before proto 5)
+fails 14 of 45 → `LOWHOST negative-control verdict=PASS`. The unresolved-`va2pa` check was also mutated by
+hand (the `first != UINT64_MAX` test removed): 2 checks fail.
 
 **drmprobe `scanout_lowmem`** (`build-out-low`). A render BO of the mode's frame + one page (2026 pages at
 1080p, like a Mesa client buffer) created **with** the hint → export → card0 import → LINEAR ADDFB2 must
@@ -1357,13 +1358,13 @@ against the new header (`kms/out-lowchk`, not staged).
 
 | file | sha256 | notes |
 |---|---|---|
-| `tools/gpu-lane/v3d-async/out-low/rpi4-v3d-async` | `1ed50acd43a64fd5` | server, proto 5 (G6 sources + placement); `-Werror`; `strings -a … \| grep -c 'V3DA srv low'` = 4 |
+| `tools/gpu-lane/v3d-async/out-low/rpi4-v3d-async` | `fe27bea1b44f4819` | server, proto 5 (G6 sources + placement); `-Werror`; `strings -a … \| grep -c 'V3DA srv low'` = 4 |
 | `tools/gpu-lane/v3d-async/out-low/v3dasync-ping` | `94df667c929bab43` | not staged |
 | `tools/gpu-lane/libdrm-phoenix/build-out-low/drmprobe` | `4521658f7b233ee3` | G6 probe + `scanout_lowmem` (`strings -a … \| grep -c scanout_lowmem` = 3) |
 | `tools/gpu-lane/libdrm-phoenix/build-out-low/prefix/lib/libdrm.a` | `cda443dc8dfd6bce` | the flag mapping; the snapshot Mesa and Weston link (9 pre-existing compiler warnings, as G6/G7) |
 | `tools/gpu-lane/mesa-drm/patches/mesa/0016-…patch` | `76a239da4dc30777` | applies after 0001–0015 (`git apply --check`) |
 | `tools/gpu-lane/mesa-drm/build-out-wayland-low/` (`libgallium-26.2.0.a`) | `fea4df158f17a3d8` | `mesa-drm/build.sh --wayland --out …/build-out-wayland-low --libdrm-prefix libdrm-phoenix/build-out-low/prefix`; patch set stamp `4a457a1efe6f3903`; no warning in the patched files (59 warning lines vs 56 in `build-out-wayland`: three extra in `threads_posix.c` / `blake3.c`, untouched code) |
-| `tools/gpu-lane/weston-drm/build-out-low/weston-simple-egl-stripped` | `feb43b9bfaad3a20` | `weston-drm/build.sh --no-mesa --mesa-out …/build-out-wayland-low --libdrm-prefix …/build-out-low/prefix --out …/build-out-low`; `nm` shows `v3d_bo_alloc_flags`; the map names only `build-out-wayland-low` archives; 0 link warnings beyond the libphoenix notes; unstripped `4b3247c298666c43` |
+| `tools/gpu-lane/weston-drm/build-out-low/weston-simple-egl-stripped` | `feb43b9bfaad3a20` | `weston-drm/build.sh --no-mesa --mesa-out …/build-out-wayland-low --libdrm-prefix …/build-out-low/prefix --out …/build-out-low`; `nm` shows `v3d_bo_alloc_flags`; the map names only `build-out-wayland-low` archives; 0 link warnings beyond the libphoenix notes; unstripped `4b3247c298666c43`. **The Phoenix branch is compiled in**: `strings -a weston-simple-egl \| grep -c V3D_PHOENIX_SHARED_SCANOUT` = 1 (0012's literal in the same `#if DETECT_OS_PHOENIX` file), and `objdump -d v3d_resource.c.o` shows `v3d_resource_bo_alloc` computing the flag as `ubfx x3, x3, #19, #1; lsl w3, w3, #31` (bind bit 19 = `PIPE_BIND_SCANOUT` → bit 31) before `bl v3d_bo_alloc_flags` |
 | `tools/gpu-lane/weston-drm/build-out-low/weston-stripped` | `33cd2d1a8f4ffba9` | built, **not staged** (the compositor's scan-out buffers come from card0 through kmsro and never reach patch 0016; the cycle keeps `weston-g6`) |
 
 Frozen copies under the staged names: `/home/houp/.claude/jobs/c8f1289c/tmp/low-frozen/` (same sha).
@@ -1462,6 +1463,10 @@ v3dv hook (below).
   gets (placement only). An unhinted buffer that used to reuse a low block by luck may now reuse a high
   one. That affects `prime_import_card0` / `dmabuf_sync_flip` (graded `gap=1`, row 5) and nothing that
   asks for scan-out correctly.
+- **Mesa's BO cache on the client side.** A hinted BO that is freed without ever being exported stays
+  `private` and goes into Mesa's BO cache, so a later ordinary `v3d_bo_alloc` of that size may get the
+  low block. This is harmless, but it holds low memory until the cache times the BO out (~2 s). Exported
+  buffers (every Wayland client buffer) are freed at once.
 - **v3dv (Vulkan WSI)** allocates through `v3dv_bo_alloc`, not the gallium path: patch 0016 does not cover
   it. vkcube on `VK_KHR_display` uses kms dumb buffers (already low), so only a Wayland Vulkan client would
   need the same hook.

@@ -163,7 +163,8 @@ static inline void *v3da_lowmem_map(const v3da_lowmem_ops_t *ops, size_t bytes, 
 		res->tries++;
 		held[n] = cpu;
 		held_pa[n] = first;
-		held_ok[n] = (last == first + (uint64_t)bytes - page_size) ? 1 : 0;   /* never hand a device a torn block */
+		/* never hand a device a torn block, nor one va2pa could not resolve ((addr_t)-1) */
+		held_ok[n] = ((first != UINT64_MAX) && (last == first + (uint64_t)bytes - page_size)) ? 1 : 0;
 		if (held_ok[n] != 0) {
 			keep = (int)n;   /* the last contiguous one: the fallback */
 			if (v3da_lowmem_is_low(first, (uint64_t)bytes) != 0) {
