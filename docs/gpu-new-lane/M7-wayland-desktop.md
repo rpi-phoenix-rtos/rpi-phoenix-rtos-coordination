@@ -1301,3 +1301,11 @@ D-Bus 1.16.2 session bus, the new GPU lane's display server.
 **Decides:** the owner's Wayland-desktop goal is reached in its first form: a recognisable, maintained desktop
 (XFCE 4.20 on labwc, the XFCE project's own Wayland setup) on HDMI. Next: xfdesktop quit, TZ, relink after build 19,
 the bench-only rows (menu clicks, window moves, typing), xfsettingsd.
+
+## Result — `m7a2-labwc` (chain61, build 18, 2026-09-27 21:00): ✅ PASS — labwc with the pixman AND the GPU (GLES2) renderer
+
+Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-205659-m7a2-labwc.log`. With `WLR_LIBINPUT_NO_DEVICES=1` both noinput arms run the full hold: weston-simple-shm served, `labwc exited
+rc=0 after_term_s=1 socket=gone`, 0 exceptions / EL1. The gles2 arm: `[render/gles2/renderer.c:538] Creating GLES2
+renderer`, `Using OpenGL ES 3.1 Mesa 26.2.0`, `GL vendor: Broadcom`, `GL renderer: V3D 4.2.14.0`: labwc composites on
+the V3D through the new lane (GBM/EGL → rpi4-v3d-async). The desktop cycles (m7b2/m7c/m7f/m7h) used pixman; a GLES2
+XFCE run is a one-word change (`WLR_RENDERER=gles2`).
