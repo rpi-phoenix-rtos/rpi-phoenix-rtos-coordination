@@ -551,3 +551,9 @@ rc=0 merged_fd=…`), three swapchain images allocated on card0 and imported by 
 48.8 fps** (against rpi4-kms-m3p2, before the deferred-flip wake fix — rerun against rpi4-kms-gate is the
 next measurement). 0 exceptions. HDMI (`artifacts/hdmi/20260927-074033-m5b-vkcube-tick.png`): the textured
 LunarG cube, rotating. Same early-start caveat as m4c.
+
+### Result — m5c (queue29, 2026-09-27 09:02): **vkcube at display rate — 60.15 fps**
+
+Same `vkcube-drm-m5b`, now against the deferred-flip-fixed `rpi4-kms-gate -G`: **600 presents in 9.97 s =
+60.15 fps**, `KMS srv flipstat … vbl1=599 vbl2=0` — every flip on its first vblank (48.8 fps before the
+fix). 0 exceptions.

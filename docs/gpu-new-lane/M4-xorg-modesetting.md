@@ -475,3 +475,11 @@ exactly the pre-registered PASS picture. glamor renders into the kms scanout BO 
 build 11's image and finished before build 12's image stage — the result is valid for these static binaries.
 The ctype shim is now redundant: libphoenix `156422a` (weekend sync) fixes the macros at the source.
 Next: Window Maker + input, DRI3/Present clients (G4/G6/G16), page flips.
+
+### Result — m4d (queue29, 2026-09-27 08:52): **Window Maker desktop on Xorg-drm**
+
+`export CLIENT=/bin/wmaker HOLD=150`, same script, `rpi4-kms-gate -G`. glamor enabled; the old lane's
+`wmaker` binary (unchanged) came up on `DISPLAY=:1` and held the screen for the whole window: HDMI
+(`artifacts/hdmi/20260927-085717-m4d-wmaker-tick.png`, stable over 26 snapshots) shows the Window Maker
+workspace clip, the dock with its icons and the software cursor on the default background. 0 exceptions.
+Not yet exercised: input (phxhid), windowed clients, DRI3/Present GL clients, page flips.
