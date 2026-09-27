@@ -29,6 +29,7 @@ struct tm *ph_gmtime_r(const time_t *, struct tm *);
 time_t ph_timegm(struct tm *);
 time_t ph_mktime(struct tm *);
 size_t ph_strftime(char *, size_t, const char *, const struct tm *);
+void ph__time_init(void) __attribute__((weak)); /* absent before the TZ support */
 
 static unsigned long total, diffs, rt_total, rt_fail;
 
@@ -120,6 +121,10 @@ int main(int argc, char **argv)
 	unsigned long long st = (argc > 2) ? strtoull(argv[2], NULL, 0) : 0x9E3779B97F4A7C15uLL;
 	long i;
 
+	if (ph__time_init != NULL) {
+		ph__time_init();
+	}
+
 	setenv("TZ", "UTC", 1);
 	tzset();
 
@@ -178,36 +183,4 @@ int main(int argc, char **argv)
 	printf("TIME-HOST roundtrip checked=%lu failed=%lu\n", rt_total, rt_fail);
 	printf("TIME-HOST total=%lu diffs=%lu\n", total, diffs);
 	return (diffs != 0 || rt_fail != 0) ? 1 : 0;
-}
-
-/*
- * Stubs for the three Phoenix syscalls time.c references. None of them is on a
- * path this harness exercises -- only time(), clock_gettime/settime() and
- * nanosleep() call them, and the calendar functions under test do not. They
- * exist so the object links; if one is ever reached the abort() makes that
- * loud rather than silently returning a plausible zero.
- */
-#include <stdlib.h>
-int gettime(time_t *raw, time_t *offs);
-int settime(time_t t);
-int nsleep(time_t *sec, long *nsec);
-
-int gettime(time_t *raw, time_t *offs)
-{
-	(void)raw;
-	(void)offs;
-	abort();
-}
-
-int settime(time_t t)
-{
-	(void)t;
-	abort();
-}
-
-int nsleep(time_t *sec, long *nsec)
-{
-	(void)sec;
-	(void)nsec;
-	abort();
 }
