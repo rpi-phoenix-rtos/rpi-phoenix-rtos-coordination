@@ -129,15 +129,15 @@ done
 libphx_syms="$("${TC}-nm" -g --defined-only "${S}/lib/libphoenix.a" 2>/dev/null || true)"
 has_libc() { grep -qE " [TW] $1\$" <<< "${libphx_syms}"; }
 
-# libphoenix's ctype macros evaluate their argument more than once (C17 7.1.4 violation):
-# compat/include/ctype.h drops them. Make sure the shim is what the build sees (m4b: Xorg's
-# config scanner parsed "DefaultDepth 24" as 2 through isdigit(c = buf[pos++])).
+# The X server's config scanner reads numbers with isdigit(c = buf[pos++]); libphoenix's ctype
+# macros used to evaluate their argument more than once, which parsed "DefaultDepth 24" as 2
+# (m4b). libphoenix 156422a fixed them at source; refuse a sysroot that predates the fix.
 ctype_probe="$(printf '#include <ctype.h>\nint f(const char *p) { return isdigit(*p++); }\n' \
-	| "${TC}-gcc" "${TFLAGS[@]}" -I"${COMPAT_INC}" -E -x c - 2>/dev/null | tail -1)"
-case "${ctype_probe}" in
-	*"isdigit(*p++)"*) ;;
-	*) echo "build.sh: compat ctype shim not effective: ${ctype_probe}" >&2; exit 1 ;;
-esac
+	| "${TC}-gcc" "${TFLAGS[@]}" -I"${COMPAT_INC}" -E -P -x c - 2>/dev/null | sed -n '/^int f(/,$p' | tr -s ' \n' ' ')"
+if [ "$(grep -o '\*p++' <<< "${ctype_probe}" | wc -l)" -ne 1 ]; then
+	echo "build.sh: sysroot <ctype.h> evaluates the argument more than once (need libphoenix >= 156422a): ${ctype_probe}" >&2
+	exit 1
+fi
 
 mkdir -p "${out}/dl" "${out}/src"
 DP="${out}/deps-prefix"
