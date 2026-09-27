@@ -1890,3 +1890,22 @@ replace g7. If they pass, the follow-up is `/bin/xfce-session-2` (new name) with
    `ro->kms_fd`. That is harmless once the server aliases. `os_same_file_description` could be answered properly
    on Phoenix (a libphoenix/kernel "same open file" query) and not silently match on `st_rdev`.
 2. The ports copy of the `kms_proto.h` comment (above).
+
+## Result — `m7j-atril` (chain67, build 21b, 2026-09-28 00:57): ✅ PASS — Atril PDF viewer windowed, full screen and presentation
+
+Log `artifacts/rpi4b-uart/rpi4b-uart-20260928-005759-m7j-atril.log`; 0 exceptions (the one `EL1` match is the
+`hal: entry EL1` boot banner).
+- The three arms ran 40 s each: window, `--fullscreen`, `--presentation`. Each ended at the hold with the script's
+  SIGTERM (rc=143, as designed); then panel, xfdesktop and labwc quit with rc=0.
+- **HDMI, window** (`20260928-010301-m7j-atril-tick.png`): the `sample.pdf — Atril on Phoenix-RTOS` window in the XFCE
+  session, page 1 with text, serif/mono lines and the red/green/blue shapes, the toolbar showing `1 (1 of 3)`.
+- **HDMI, full screen** (`…010344…`): page 1 at fit-width, no decorations, the fullscreen toolbar with
+  `Start Presentation` / `Leave Fullscreen`.
+- **HDMI, presentation** (`…010426…`): one page centred on black, the orange curve and footer
+  `Page 1 of 3` visible.
+- The only warnings: labwc `client (atril-wl) did not respond to configure request in 100 ms`, a few per mode
+  (first layout plus Poppler's first render). Cosmetic.
+- Follow-ups:
+  - `xfce-desktop-atril.sh` is a copy of the m7h script, so the panel clock shows UTC. Launching Atril from
+    `/bin/xfce-session` (menu entry or `atril-wl` in foot) gets local time.
+  - The toolbar icons need `*/actions` listed in the hicolor `index.theme`.
