@@ -257,6 +257,11 @@ Most of the lifetime and race work is in §3. What is specific to robustness her
   fork child could size its kernel-stack copy from the parent's context before the parent had saved it; the child
   now waits. A/B on the Pi: `spawn-storm -f` froze the whole system 3 of 3 runs (within 16–38 launches) before,
   0 of 3 runs (1500/1500 launches) after. The two changes are not yet separated. Same code upstream.
+- **`threadsinfo()` reports each thread's CPU again** (`proc/threads.c`, `17a47f39`). The per-thread last-CPU (`cpuId`, added
+  `a839db02` for SMP observability) was dropped when an upstream sync (merge `00dd500a`, upstream `9c5199f7`) replaced the
+  old thread-list function, so every thread read CPU 0 and psh `top` showed one `CPU0 [100%]` (P14; SMP itself was fine).
+  Test `test-sys-threadinfo` (tests `2230061`): 4 busy threads must be seen on more than one core — 3/3 FAIL before, 3/3
+  PASS after; `top` shows CPU0..CPU3.
 - **WiFi (`rpi4-wifi`, devices `07c61c6`): firmware loads no longer fail on a lost PIO edge, and ~5 % more throughput.**
   - *Firmware load* (`9f90572`, `248a01f`, `c2ff5a8`): the SDHCI PIO loop now waits on the **level** of the buffer-ready
     status bits, bounded in time, instead of the write-ready interrupt edge, which the controller sometimes never raised
