@@ -378,7 +378,7 @@ from its own flipstat, and a clean exit when its time budget ends. m8a is the co
   (`board_config.h:158`). A cycle of their own would cost a whole boot plus the exports (≈ 7 min)
   to save about 5 s of load.
 - **STK gets its own cycle.**
-  - Its load is long on every run: the Mesa-DRM lane has no shader disk cache (MIGRATION §4 table).
+  - Its load is long on every run: the Mesa-DRM lane has no shader disk cache (MIGRATION §3 table).
     mig-all-stk: first swap +9.2 s, then init at 0.1–0.8 fps until `main: You chose to start in track`
     about 52 s later.
   - Its teardown is about 30 s (m9b §6.2).
@@ -586,7 +586,7 @@ m8a rows 1, 2, 11, 12 and 13 apply unchanged (autostart line `M8 autostart games
 
 Not graded (as m8a): labwc's `did not respond to configure request` warnings, SDL `xdg_activation`
 notes, STK's `FontManager … NotoColorEmoji.ttf doesn't have color` and `kartDirt shader is missing`
-(both in every STK run on this lane).
+(both in all 5 STK runs of 2026-09-27/28: mig-all-stk, m9b-stk-*).
 
 **Decides:**
 
