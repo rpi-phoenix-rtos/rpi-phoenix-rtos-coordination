@@ -1,0 +1,24 @@
+#!/bin/bash
+#
+# xfce-session-2 -- /bin/xfce-session with the desktop composited on the GPU. Run ON THE Pi:
+#
+#     /bin/xfce-session-2
+#
+# The same session as /bin/xfce-session (see its header for keys and knobs), with two
+# different defaults:
+#   KMS_CMD    /bin/rpi4-kms-g8 -G -p 96 -C: accepts a /kmsbuf buffer that another client of the
+#              same process exported (labwc's GLES2 renderer allocates on a second card0 fd)
+#   RENDERER   gles2: labwc composites on the V3D (m7k-gles2, 2026-09-28)
+# Both can still be overridden with `export`. If a display server is already running (say, g7
+# from an earlier /bin/xfce-session), it is reused, and a gles2 labwc then gets no picture:
+# reboot, or stop it first.
+#
+# Copyright 2026 Phoenix Systems
+#
+# This file is part of Phoenix-RTOS.
+#
+# %LICENSE%
+
+export KMS_CMD=${KMS_CMD:-/bin/rpi4-kms-g8 -G -p 96 -C}
+export RENDERER=${RENDERER:-gles2}
+exec /bin/bash /bin/xfce-session "$@"

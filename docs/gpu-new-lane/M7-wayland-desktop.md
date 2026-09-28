@@ -1928,3 +1928,8 @@ Log `artifacts/rpi4b-uart/rpi4b-uart-20260928-014516-m7k-gles2.log`, servers `rp
   between the two arms.
 - **The M7 GLES2 gap is closed.** Next: `/bin/xfce-session-2`, which starts `rpi4-kms-g8` and defaults to
   `RENDERER=gles2`, keeping `/bin/xfce-session` (g7, pixman) unchanged.
+- **`/bin/xfce-session-2`** (staged 02:10, `tools/gpu-lane/xfce-wayland/pi/xfce-session-2`): a thin wrapper that sets
+  `KMS_CMD=/bin/rpi4-kms-g8 …` and `RENDERER=gles2` as defaults and execs `/bin/xfce-session`, which is unchanged.
+  Pre-registered `m7l-session2` (chain76), from a fresh boot: `export HOLD=60`, `/bin/bash /bin/xfce-session-2`.
+  Predict `XFCE-SESSION server start: /bin/rpi4-kms-g8`, `Creating GLES2 renderer`, `foreign_kmsbuf` 0, `alias=1` ≥ 1,
+  handover 1, `done rc=0`, 0 exceptions, and the XFCE desktop on HDMI.
