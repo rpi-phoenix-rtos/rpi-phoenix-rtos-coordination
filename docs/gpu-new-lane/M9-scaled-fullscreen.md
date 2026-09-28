@@ -350,3 +350,12 @@ probe, and a default-resolution game — at the native mode?
 - FRAMEBUFFER_BLANK is only used for modes with bars; `-B` still blanks at every mode.
 - A desktop compositor that later wants per-output scaling can use plain plane scaling today; an
   output-scale property (`scaling mode`) is not exposed (no client asks for it yet).
+- Known small gaps: the lower mode's `MODE_ID` blob is written at each mode change, so a later refresh
+  re-measure updates the native blob but not it (sizes are what clients compare); if clients hold all
+  16 blob slots, `MODE_ID` reads the native blob while the CRTC is scaled; the host test has no
+  "fence-deferred commit + mode change" row (SDL's SET_CRTC carries no fence, so it does not occur in
+  the M9 paths).
+- Side observations (2026-09-28): `/usr/bin/vkquake-drm` on the export is `53eb25309585a3d4` (re-staged
+  04:22), not MIGRATION §6's `22755bb450b09e0f` — check before grading any vkq cycle.
+  `scripts/check-gpu-lane-ports-sync.sh` is clean after g9 (kms/ has no ports copy besides
+  `kms_proto.h`, which is unchanged).
