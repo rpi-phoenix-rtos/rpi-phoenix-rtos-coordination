@@ -1049,3 +1049,15 @@ line (the UART flood trap in "Result — mig-vkq-g …"); counting them put pace
 (`53eb2530…`) are what gets installed as `/usr/bin/vkquake-drm`. The engine does not depend on `VKQDRM_TARGET`, so
 the existing `/bin/vkq-drm` (`e49a7444…`) already execs the right path. Then re-run the migration row. If it
 fails, revert 0010; `-g` plus `+vid_vsync 2` stays the measured fallback.
+
+## Result — `mig-vkq-h` (chain75, image 23a, 2026-09-28 04:15): ✅ PASS — three images by default, **44.38 fps**
+
+`/bin/vkq-drm-h` with no extra argument:
+- **44.38 fps median** (n=113, counted after the boot banner);
+- `kmsbuf id=1,2,3`, 0 CSD classes, 0 exceptions;
+- HDMI (`…041504…mig-vkq-h…`): the lit spawn view, counter "40 FPS".
+
+Every pre-registered row is inside 44 ± 3. **Promoted:** `/srv/…/usr/bin/vkquake-drm` is now these bytes
+(`53eb2530…`). The previous one is kept as `vkquake-drm.pre-h` (`22755bb4…`). `/bin/vkq-drm` execs that path, so
+the new lane's vkQuake (mig-all, the new-lane gate) is **44 fps, 1.9× the old lane's 22.9**. The old lane's
+`ports/vkquake` is untouched.

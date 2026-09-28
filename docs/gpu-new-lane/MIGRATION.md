@@ -914,6 +914,7 @@ build 18 (P10 + vm_mapFlags + fork fix). Every cycle: 0 exceptions, 0 EL1 dumps,
 | mig-all-vkq | 17.11 (n=45, 15.5–18.7) | **22.9** | `*-mig-all-vkq.log` |
 | perf-vkq-f2 (0008 raster warp + CPU lightmaps; not yet promoted) | **29.70** (n=111; flipstat 30.00 = half-vblank) | **22.9** | `*-perf-vkq-f2.log`, [vkquake-perf.md](vkquake-perf.md) |
 | pace-vkq-g (promoted `vkq-drm-g` + `+vid_vsync 2` = 3 images) | **44.21** (n=113, deduplicated) | **22.9** | `*-pace-vkq-g.log`, [vkquake-perf.md](vkquake-perf.md) |
+| **mig-vkq-h = the new-lane default** (`/usr/bin/vkquake-drm`, patches 0001–0010) | **44.38** (n=113) | **22.9** | `*-mig-vkq-h.log` |
 | mig-all-stk | **12.43** (n=65) | 8.3 (Pi OS: 11.7) | `*-mig-all-stk.log` |
 
 **Decides:** the migration gate's game half passes for 4 of 5 at or above the old lane. vkQuake is the one
