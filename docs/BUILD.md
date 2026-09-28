@@ -306,6 +306,15 @@ as many of the showcase apps as build cleanly.
   that changes the stage list and can drop the ports/rootfs population; delete
   the buildroot and re-run the plain command instead.
 
+- **The first build after a libphoenix change takes longer than usual.** Each
+  port records the hash of the static libraries it links (the sysroot's
+  `libphoenix.a` and the toolchain's `libgcc.a`/`libstdc++.a`/`libsupc++.a`).
+  When those change, the port is **relinked** from its existing objects, not
+  rebuilt, so a stale static binary cannot survive a C-library fix. Expect one
+  "Link inputs changed … relinking" line per port. An unchanged libc relinks
+  nothing. A port whose program cannot be recreated this way defines `p_relink`
+  in its `port.def.sh`.
+
 - **Missing Pi 4 DTB.** The rebuild script auto-prepares the DTB from the
   firmware blobs staged by the bootstrap. If you see a DTB warning that stops
   the build, confirm `.bootblobs/bcm2711-rpi-4-b.dtb` exists (re-run the
