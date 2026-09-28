@@ -62,6 +62,11 @@ an `auto` rebuild reuses stale objects.
 - **Build A:** tests `fix/threadinfo-cpuid` + kernel **master** (`f234ed3e`, without the fix).
 - **Build B:** tests `fix/threadinfo-cpuid` + kernel `fix/threadinfo-cpuid` (`17a47f39`).
 
+Both branches are still checked out in the authoring worktrees
+(`/home/houp/.claude/jobs/c8f1289c/tmp/wt-{kernel,tests}-cpuid`), so
+`git checkout fix/threadinfo-cpuid` in `sources/*` fails with "already checked out". Check out
+the SHAs (detached) instead, or `git worktree remove` those paths first.
+
 **Verify each build before booting it:**
 
 - `grep -c 'info->cpuId' .buildroot/phoenix-rtos-kernel/proc/threads.c` gives 0 for A and 1 for
@@ -100,7 +105,10 @@ second frame's percentages are a 1 s delta. `-H` adds the per-thread `CPU` colum
 
 - Look for the expected lines positively. The UART corrupts about 1.3 % of lines, so a key line
   that is unreadable counts as missing data, not as a fail. In that case, rerun the one command.
-- **Fix confirmed:** A shows 3/3 FAIL and one CPU; B shows 3/3 PASS and four CPUs.
+- **Fix confirmed:** A shows 3/3 FAIL; B shows 3/3 PASS and four CPUs. The test is the
+  discriminator for A. `top` reads `cpuId` from a malloc'd buffer that the stock kernel never
+  writes, so a stale nonzero value could make stock `top` show extra CPUs. One CPU in A is
+  expected, but it is not required.
 - **Test does not detect the bug:** A shows any PASS. The test must then be fixed before the
   kernel change is merged.
 - **Fix incomplete, or the test is flaky under this scheduler:** B shows any FAIL. Examine the
