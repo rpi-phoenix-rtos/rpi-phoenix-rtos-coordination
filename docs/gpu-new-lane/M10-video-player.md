@@ -13,7 +13,7 @@ scaling, our ffmpeg port for the codecs (CPU) and, ideally, the rpivid HEVC hard
 | `ffplay-wl` — ffplay in a window on the desktop | ✅ built + staged against M8's SDL (Wayland + KMSDRM drivers, `tools/gpu-lane/sdl2-wl/`); Pi cycle `m10a-ffplay` after M8's `m8a-quake-window` |
 | `/bin/video-play` launcher (picks Wayland or KMSDRM) | ✅ staged |
 | test clips (synthetic, 4 codecs) | ✅ staged in `/usr/share/m10/` |
-| GUI player with buttons + seek bar | 📋 recommended: a small GTK3 player of our own (§1e); not started in this pass |
+| **`gtk-video`** — our GTK 3 player: toolbar (open, play/pause, stop, seek bar, time, fullscreen) | ✅ first version built + staged (cairo path, no GL), host test PASS on broadway (§3.3); Pi cycle `m10c-gtk-video` pending |
 | rpivid HEVC in the player | 📋 designed (§4): an `hevc_rpivid` libavcodec decoder, NV12 output first |
 
 ## 1. Candidates
@@ -104,7 +104,8 @@ harfbuzz/freetype/fribidi/fontconfig from the GTK build; the `lua` port is **5.4
 * **Dependency tree:** GTK 3 Wayland ✅ (the Atril link) + FFmpeg libs ✅ (this build) + for the GL
   path Mesa's wayland EGL closure (as weston-simple-egl) + libepoxy ✅. **No dependency on M8.**
 * **Effort:** ~1000 lines of C, 1–2 agent days to a first Pi cycle; the cairo fallback first
-  (no GL risk), then GtkGLArea.
+  (no GL risk), then GtkGLArea. **Started 2026-09-28: the cairo version is written, builds and
+  passes its host test (§3.3)**; GtkGLArea is the next step if the cairo path is too slow at 1080p.
 * **Verdict:** **recommended.** It is the cheapest path to **real controls — buttons, a seek bar,
   time labels, a fullscreen button — in a window on the desktop** without porting a library stack
   (libass, Lua, GStreamer); everything under it is already Pi-proven (GTK 3 Wayland programs, the
@@ -143,7 +144,9 @@ harfbuzz/freetype/fribidi/fontconfig from the GTK build; the `lua` port is **5.4
 | `hosttest/run.sh` | host control: the same tarball + components + patch built natively against the host SDL2, every clip played headless (SDL dummy drivers), then a scripted pause/seek/fullscreen/quit run graded from the stat lines |
 | `gen-clips.sh` | the test clips from lavfi sources only (testsrc2, mandelbrot, sine) |
 | `pi/video-play` | the launcher (§3.2) |
-| `conf/labwc-xfce-m10/autostart` | the XFCE demo autostart + one delayed `video-play`, for the desktop cycles |
+| `conf/labwc-xfce-m10/autostart` | the XFCE demo autostart + one delayed player (`M10_PLAYER=ffplay` → `video-play`, `=gtk` → `gtk-video --autoexit`), for the desktop cycles |
+| `gtk-video/gtk-video.c`, `gtk-video/build.sh`, `gtk-video/hosttest.sh` | the GTK 3 player (§3.3), its Phoenix build (the gtk3-wayland `--usr` stack + this directory's ffmpeg libraries) and its headless host test |
+| `conf/applications/gtk-video.desktop` | "Video Player" in the app finder / Thunar's Open With (MimeType: mp4, mkv, webm, mov, avi, ts, ogg, mp3, wav, flac) |
 
 ### 3.1 Results
 
@@ -181,7 +184,9 @@ variant relinks **byte-identical** (`8116cfd0…`).
 | `/usr/share/m10/m10-h264-1080p30-aac.mp4` (30 s, 1920×1080 H.264 High + AAC, 24.7 MB) | `0c1a44e0d028b735fe3fdf4b0aa1045ff22bd2ced2e83e3cd94d0e90c10bcf08` |
 | `/usr/share/m10/m10-hevc-720p30-aac.mp4` (30 s, 1280×720 HEVC Main **in the rpivid subset** + AAC, 16.2 MB) | `2ff9bc143e3ac383fc7eb53150ad0533c4064349dfca733e0ebfdf9ae8be9727` |
 | `/usr/share/m10/m10-vp9-360p-opus.webm` (20 s, 640×360 VP9 + Opus 48k, 2.1 MB) | `f438af1067e7fbc559fce2a6c3fe595108ce53e5f2205240061f3ada1e504b7c` |
-| `/usr/share/m10/labwc-xfce-m10/{autostart,rc.xml,menu.xml,environment}` | autostart `4ef16ab6…`; the other three copied from `/etc/xdg/labwc-xfce-demo/` |
+| `/usr/share/m10/labwc-xfce-m10/{autostart,rc.xml,menu.xml,environment}` | autostart `ab87e093a57d023f684cd85609eaf5847e80f1a27ae7e973d27bb3387a107129`; the other three copied from `/etc/xdg/labwc-xfce-demo/` |
+| `/usr/bin/gtk-video` | `ec4894b5d42c343a71f9ff3657ce35da8faf9db094d2cde1d4e2f5752fbcf149` (21 874 488 bytes) |
+| `/usr/share/applications/gtk-video.desktop` (root-owned dir: `sudo install`) | `41785fa2b4371f110c817e6c4385aecb0dc7f3413fef24cb7d3990b846d32edf` |
 
 Existing HEVC streams from the rpivid
 work are also on the export: `/usr/share/demo/{showcase1080,reel-motion720,hd1080b}.265` (raw
@@ -198,6 +203,36 @@ Knobs: `VIDEO_MODE`, `FS`, `THREADS`, `LOOP`, `AUTOEXIT`, `STATLINE_MS` (default
 Rebuild: `tools/gpu-lane/video-player/build-ffplay.sh` (≈ 1 min incremental, ≈ 2 min clean);
 `gen-clips.sh`; `hosttest/run.sh`. Wayland: `build-ffplay.sh --sdl wl` (the ffmpeg libraries are
 shared; the fftools objects are recompiled on a variant switch).
+
+### 3.3 `gtk-video` — the GTK 3 player (first version)
+
+`tools/gpu-lane/video-player/gtk-video/gtk-video.c` (~1300 lines of C): a demux thread
+(libavformat, bounded packet queues, seek requests), a video thread (libavcodec, frame threads =
+FFmpeg's auto) that scales each picture with libswscale **to the video area's size, aspect kept**
+(BGRA, 2 swscale threads) and hands it to the GTK main loop, which paints it 1:1 with cairo; an
+audio thread (libavcodec → libswresample → 44.1 kHz S16 stereo → blocking `write()` on
+`/dev/audio0`). The master clock is a pausable wall clock, held at the target of a seek until the
+first picture after it is ready (frames before the target, decoded from the preceding keyframe,
+are skipped); pictures later than 100 ms are dropped (but one is shown at least every 0.5 s),
+audio earlier than 50 ms waits and later is dropped. UI: a toolbar with **Open** (file chooser),
+**Play/Pause**, **Stop** (back to 0, paused), a **seek bar** (GtkScale, updated every 250 ms, a
+drag seeks), the **time** (`m:ss / m:ss`) and **Fullscreen** (`gtk_window_fullscreen`; the
+toolbar hides; also F11/f, a double click, Escape to leave); keys as ffplay's (space, s, ←/→,
+↓/↑, q). `--fullscreen`, `--autoexit`; `GTK_VIDEO_STAT_MS` (a `GTK-VIDEO stat t= clock= shown=
+fps= dropped= decoded= vq= aq= paused= fs= win=WxH picture=WxH sound=` line), `GTK_VIDEO_AUTOKEYS`
+(`<s>:<action>`, actions pause stop fs left right up down quit), `GTK_VIDEO_AUDIO=0`,
+`GTK_VIDEO_THREADS`, `GTK_VIDEO_SWS_THREADS`.
+
+Build: `gtk-video/build.sh` after `build-ffplay.sh` (it links that build's ffmpeg libraries and
+the gtk3-wayland `build-out-usr` stack, the one Atril uses, the gtk3-hello way; `--wrap=
+pthread_create` with the same glue). `nm -u` 0, 0 link warnings, every `pthread_create` caller
+through the glue; the Adwaita icons it names are on the export. **Host test PASS**
+(`gtk-video/hosttest.sh`: host GTK 3.24 + the host-control ffmpeg, GDK's **broadway** backend,
+headless): 30.0 fps; pause holds the clock (3.06 ×3); → from 4 s lands at 14.8 (keyframe-aligned);
+stop → `clock=0.00 paused=1`; play resumes (0.77 s after 0.7 s); quit rc 0; all four clips play
+at 29.9–30 fps with their audio resampled (AAC 44.1k, Opus 48k). Fail-first: a mutant whose pause
+does nothing is caught (`paused=0`, clock moving). Not testable on broadway: fullscreen (no such
+window state there) and real audio pacing (the sound went to `/dev/null`).
 
 The ffmpeg **port** (`sources/phoenix-rtos-ports/ffmpeg`) is unchanged: it stays the decode-only
 library port. Folding the player configuration in (a `ffplay_drm` port, or `ffmpeg` with the extra
@@ -359,6 +394,40 @@ through its own `f` key and through `-fs`?
 | 8 | HDMI | arm 1: the XFCE panel + Thunar + the video window beside it, the frame counter advancing; at t≈25–35 the video full screen (panel hidden); arm 2 full screen | the window behind Thunar: stacking (fine); black window with stats advancing: EGL wayland buffers not presented |
 | 9 | `XFCE session end reason=logout held=150s`, `XFCE-SESSION done rc=0`, 0 faults | clean | addr2line on the unstripped `ffplay-wl` |
 
+### `m10c-gtk-video` — the GTK 3 player on the XFCE desktop (runnable now)
+
+**Question:** does `gtk-video` run as a GTK 3 Wayland client under `/bin/xfce-session-2` next to
+Thunar — picture, sound, toolbar — at the clip's rate, and do its controls (pause, seek, stop,
+play, fullscreen) work? No SDL, no Mesa in this binary, so it does not depend on M8.
+
+```
+./scripts/test-cycle-psh-interact.sh --label m10c-gtk-video --idle-secs 60 --max-cmd-secs 420 \
+    --hdmi-dense-on 'GTK-VIDEO open' -- \
+    "export HOLD=150" \
+    "export CONF_DIR=/usr/share/m10/labwc-xfce-m10" \
+    "export M10_PLAYER=gtk" \
+    "export M10_DELAY=45" \
+    "export GTK_VIDEO_AUTOKEYS=15:pause,19:pause,22:right,28:fs,38:fs,44:stop,48:pause,56:quit" \
+    "/bin/bash /bin/xfce-session-2" \
+    "export GTK_VIDEO_AUTOKEYS=5:fs,40:quit" \
+    "export M10_CLIP=/usr/share/m10/m10-h264-1080p30-aac.mp4" \
+    "/bin/bash /bin/xfce-session-2"
+```
+
+| # | Line / observation | Predicted | If instead… |
+|---|---|---|---|
+| 1 | the m7i session rows, `labwc … conf=/usr/share/m10/labwc-xfce-m10`, `session up panel=registered`, Thunar | as m7i | as m7i's table |
+| 2 | ~45 s later `GTK-VIDEO start file=/usr/share/m10/m10-h264-720p30-aac.mp4 … autoexit=1`, `GTK-VIDEO decoder h264 (h264) threads=4` (FFmpeg's auto on 4 cores), `decoder aac`, `GTK-VIDEO open … video=h264 1280x720 audio=aac sound=on` | the autostart launches it; `/dev/audio0` opens | `sound=off` + `audio device /dev/audio0: …`: the node (is another process holding it?); a GTK abort: `Gtk-WARNING`/`cannot open display` lines — the session env (compare with Thunar's) |
+| 3 | `GTK-VIDEO audio fltp 44100 Hz 2 ch -> S16 44100 Hz stereo`, `GTK-VIDEO scale 1280x720 yuv420p -> WxH (threads 2)` with W×H = the video area (≈ 1280×720 minus the toolbar, aspect kept) | yes | — |
+| 4 | `GTK-VIDEO stat … fps=` at 720p windowed: **20–30 fps**, `dropped` growing slowly if < 30 | CPU-bound: libswscale (NEON) ≈ 5–10 ms + cairo 1:1 paint + the wl_shm copy into labwc (GLES2 upload) per frame, on top of the 4-thread H.264 decode | < 15: the cairo/shm path is too slow → GtkGLArea (§1e) is the next step; record `dropped` vs `decoded` to split decode from display |
+| 5 | autokeys: `auto … action=pause` → stat lines `paused=1`, **constant `clock`**; at 19 `paused=0`; at 22 `GTK-VIDEO seek target=<clock+10>` and the next `clock` ≈ target (keyframe, +0–2 s) | the controls work | a seek line but the clock stays: the demuxer's seek on the NFS file (rc in the seek line) |
+| 6 | at 28 `GTK-VIDEO fullscreen=1`, stat `fs=1 win=1920x1080` (the toolbar hidden), a new `GTK-VIDEO scale … -> 1920x1080`; at 38 `fullscreen=0`, the window size back | labwc honours xdg-toplevel fullscreen | `fullscreen=` never printed: labwc did not configure the state (finding: compare with ffplay's in m10a) |
+| 7 | at 44 `GTK-VIDEO stop`, `seek target=0.00`, stat `clock=0.00 paused=1`; at 48 `play clock=0.00`, the clock advancing again | stop = back to 0 + paused | — |
+| 8 | at 56 `GTK-VIDEO done` (autokey quit) | clean exit | a hang: the threads' join (the audio thread blocked in `write()`) |
+| 9 | arm 2 (1080p, fullscreen at 5 s): fps | **10–20 fps** fullscreen (swscale to 1920×1080 + 8 MB per frame through cairo and wl_shm), audio continuous (audio is not blocked by the picture) | — |
+| 10 | HDMI | arm 1: the XFCE panel, Thunar and the player window with its toolbar (icons: open, play/pause, stop, the seek bar moving, `0:12 / 0:45`), the testsrc2 picture with the frame counter; t≈28–38 the picture full screen without the toolbar; after stop the first frame and `0:00` | a black area with stats advancing: the draw path (cairo surface) — compare with gtk3-demo's image demos |
+| 11 | `XFCE session end reason=logout`, `XFCE-SESSION done rc=0`, 0 faults | clean | addr2line on the unstripped `build-out/gtk-video/gtk-video` |
+
 ### `m10b-hevc-rpivid` — (placeholder, after §4 option 1 is built)
 
 Pre-register when `hevc_rpivid` exists: the same clip through `-vcodec hevc_rpivid` vs `-vcodec
@@ -372,3 +441,7 @@ corrupt frames counted separately.
   staged with the launcher and four synthetic clips; cycles `m10a0-ffplay-drm` and `m10a1-hevc-cpu`
   runnable now. M8's SDL (Wayland + KMSDRM) landed the same morning: `ffplay-wl` linked from its
   `link-inputs.txt` and staged; `m10a-ffplay` runs after `m8a-quake-window`.
+- 2026-09-28: **`gtk-video`**, the GTK 3 player (toolbar with open/play-pause/stop/seek bar/time/
+  fullscreen, `/dev/audio0` sound, cairo painting) written, built for Phoenix, host-tested on
+  broadway (controls + all clips PASS, a pause mutant caught), staged with a `.desktop` entry;
+  cycle `m10c-gtk-video` pre-registered.
