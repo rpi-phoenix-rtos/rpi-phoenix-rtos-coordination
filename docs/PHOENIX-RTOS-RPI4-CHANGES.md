@@ -257,6 +257,14 @@ Most of the lifetime and race work is in §3. What is specific to robustness her
   fork child could size its kernel-stack copy from the parent's context before the parent had saved it; the child
   now waits. A/B on the Pi: `spawn-storm -f` froze the whole system 3 of 3 runs (within 16–38 launches) before,
   0 of 3 runs (1500/1500 launches) after. The two changes are not yet separated. Same code upstream.
+- **WiFi (`rpi4-wifi`, devices `07c61c6`): firmware loads no longer fail on a lost PIO edge, and ~5 % more throughput.**
+  - *Firmware load* (`9f90572`, `248a01f`, `c2ff5a8`): the SDHCI PIO loop now waits on the **level** of the buffer-ready
+    status bits, bounded in time, instead of the write-ready interrupt edge, which the controller sometimes never raised
+    (`space=1 wr_rdy=0`). The stress bench gave level 60/60 firmware starts vs legacy 45/60, and every legacy timeout had
+    that signature; three bulk-TX boots were clean.
+  - *Throughput* (`wifi/throughput`): a cached SDIO backplane window skips the redundant window writes (≥ 99.99 %), and
+    `wifi stats` reports the PHY rate. TX 3.62 vs 3.45, RX 3.305 vs 3.23 MB/s (medians, n=6 per arm, 0 errors). The link
+    negotiates 72 Mbit/s, so further gains are against the air, not the bus.
 - ★ **lwip: the thread-collector stack no longer overflows onto the route table** (phoenix-rtos-lwip `port/threads.c`, `356ae98`).
   `thread_waittid_thr` ran on a 512-byte static stack; freeing an exited thread's stack goes through the allocator's
   red-black tree (`free → _malloc_chunkJoin → … → rb_transplant`, 512–528 bytes), so a saved return address landed on
