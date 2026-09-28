@@ -257,6 +257,26 @@ Most of the lifetime and race work is in §3. What is specific to robustness her
   fork child could size its kernel-stack copy from the parent's context before the parent had saved it; the child
   now waits. A/B on the Pi: `spawn-storm -f` froze the whole system 3 of 3 runs (within 16–38 launches) before,
   0 of 3 runs (1500/1500 launches) after. The two changes are not yet separated. Same code upstream.
+- **`threadsinfo()` reports each thread's CPU again** (`proc/threads.c`, `17a47f39`). The per-thread last-CPU (`cpuId`, added
+  `a839db02` for SMP observability) was dropped when an upstream sync (merge `00dd500a`, upstream `9c5199f7`) replaced the
+  old thread-list function, so every thread read CPU 0 and psh `top` showed one `CPU0 [100%]` (P14; SMP itself was fine).
+  Test `test-sys-threadinfo` (tests `2230061`): 4 busy threads must be seen on more than one core — 3/3 FAIL before, 3/3
+  PASS after; `top` shows CPU0..CPU3.
+- **WiFi (`rpi4-wifi`, devices `07c61c6`): firmware loads no longer fail on a lost PIO edge, and ~5 % more throughput.**
+  - *Firmware load* (`9f90572`, `248a01f`, `c2ff5a8`): the SDHCI PIO loop now waits on the **level** of the buffer-ready
+    status bits, bounded in time, instead of the write-ready interrupt edge, which the controller sometimes never raised
+    (`space=1 wr_rdy=0`). The stress bench gave level 60/60 firmware starts vs legacy 45/60, and every legacy timeout had
+    that signature; three bulk-TX boots were clean.
+  - *Throughput* (`wifi/throughput`): a cached SDIO backplane window skips the redundant window writes (≥ 99.99 %), and
+    `wifi stats` reports the PHY rate. TX 3.62 vs 3.45, RX 3.305 vs 3.23 MB/s (medians, n=6 per arm, 0 errors). The link
+    negotiates 72 Mbit/s, so further gains are against the air, not the bus.
+- ★ **lwip: the thread-collector stack no longer overflows onto the route table** (phoenix-rtos-lwip `port/threads.c`, `356ae98`).
+  `thread_waittid_thr` ran on a 512-byte static stack; freeing an exited thread's stack goes through the allocator's
+  red-black tree (`free → _malloc_chunkJoin → … → rb_transplant`, 512–528 bytes), so a saved return address landed on
+  `rt_table.entries` and `_route_find` walked code as a route list (P13: lwip — and the NFS root with it — died at boot).
+  Stock had 0 bytes of margin; the kernel's user-stack canary is compiled out under NDEBUG. The stack is now 4096 bytes
+  on aarch64 (others keep 512). Host check `tools/elf-stack-depth/check-lwip-thread-stacks.sh` walks every static-stack
+  thread's worst call path: exit 1 on the old binary, 0 now. Showcase gate 6/6.
 - **`SO_PEERCRED` for AF_UNIX sockets** (`posix/usocket.c`, `include/posix-socket.h`, `63b35c27`).
   - `getsockopt(SOL_SOCKET, SO_PEERCRED)` returns a `struct ucred` naming the peer process, captured as Linux does it:
     an accepted socket reports the process that called `connect()`, a connecting socket reports the listener, and

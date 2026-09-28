@@ -19,5 +19,10 @@
 
 int mutexLock(handle_t h);
 int mutexUnlock(handle_t h);
+int mutexCreate(handle_t *h);
+int condCreate(handle_t *h);
+int condSignal(handle_t h);
+int beginthread(void (*start)(void *), int priority, void *stack, unsigned int stacksz, void *arg);
+int setPriority(int priority);
 
 #endif

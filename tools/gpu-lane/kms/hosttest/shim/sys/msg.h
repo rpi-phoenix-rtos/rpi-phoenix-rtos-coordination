@@ -2,8 +2,8 @@
  * Phoenix-RTOS
  *
  * rpi4-kms host test - minimal stand-in for Phoenix <sys/msg.h>: the types and
- * calls kms_bo.c uses, with the kernel's field names (phoenix/msg.h). The calls
- * are served by hosttest/bo_alias_test.c.
+ * calls kms_bo.c and kms_main.c use, with the kernel's field names (phoenix/msg.h).
+ * The calls are served by hosttest/bo_alias_test.c and hosttest/mode_test.c.
  *
  * Copyright 2026 Phoenix Systems
  * Author: Witold Bołt
@@ -64,6 +64,11 @@ typedef struct {
 				long long val;
 				int type;
 			} attr;
+			struct {
+				long long offs;
+				size_t len;
+				unsigned mode;
+			} io;
 			unsigned char raw[64];
 		};
 		size_t size;
@@ -86,7 +91,15 @@ typedef struct {
 	} o;
 } msg_t;
 
+#ifndef EOK
+#define EOK 0
+#endif
+
+int msgSend(uint32_t port, msg_t *m);
 int msgRecv(uint32_t port, msg_t *m, msg_rid_t *rid);
+int portCreate(uint32_t *port);
+int portRegister(uint32_t port, const char *name, oid_t *oid);
+int portUnregister(const char *name);
 int msgRespond(uint32_t port, msg_t *m, msg_rid_t rid);
 int lookup(const char *name, oid_t *file, oid_t *dev);
 int memExport(oid_t *oid, void *va, size_t size);

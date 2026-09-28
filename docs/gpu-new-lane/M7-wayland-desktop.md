@@ -2097,3 +2097,15 @@ updated `files/conf/session-phoenix-external.conf`, and `files/pi/dbus-m7m.sh`, 
 `stage/bin`. `scripts/check-wayland-ports-sync.sh` maps `dbus-m7m.sh` (43 mappings). Against the branch worktree it
 reports **identical**. Against `sources/phoenix-rtos-ports` (master) it shows the two dbus files as drift until the
 branch is merged.
+
+## Result — `m7m-dbus-peercred` (chain86, build 26, 2026-09-28 09:22): ✅ PASS — D-Bus EXTERNAL auth via SO_PEERCRED
+
+Log `artifacts/rpi4b-uart/rpi4b-uart-20260928-092254-m7m-dbus-peercred.log`; daemon `/usr/bin/dbus-daemon-pc` (c8eedb14…).
+- **Client side:** `DBUSPHX auth anonymous=0 external=6 external_no_credentials=0` (m7f: 6/0/6), and
+  `client_mechanisms_tried=0` on listnames, ping, busid and creds, i.e. the first EXTERNAL attempt was accepted.
+- **Session side:** the daemon logs `Activating service name='org.xfce.Xfconf' requested by ':1.0' (uid=0 pid=70 comm="")`.
+  It printed `()` before, so the daemon now knows its peers through `SO_PEERCRED`.
+- **XFCE programs:** `DBUSPC creds name=org.xfce.{Panel,FileManager,Thunar,xfdesktop,Xfconf} rc=0 pid=<n> uid=absent`. The pid
+  is known, but GLib has no Phoenix credentials support, so these fall back to ANONYMOUS, as predicted.
+- `XFCE-SESSION done rc=0`, 0 exceptions.
+- Next: when the migration lands, the image's D-Bus is this build (`ports/dbus-peercred` merged to ports master).

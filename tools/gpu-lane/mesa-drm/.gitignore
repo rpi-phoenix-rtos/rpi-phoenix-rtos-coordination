@@ -3,3 +3,4 @@ build-out-vulkan/
 build-out-wayland/
 build-out-x11/
 build-out-wayland-low/
+build-out-wayland-gl/

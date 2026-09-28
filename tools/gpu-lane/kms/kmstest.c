@@ -15,6 +15,14 @@
  *           event latency; EBUSY + TEST_ONLY checks; -H holds the last frame
  *   vblank  60 blocking WAIT_VBLANKs + 10 QUEUE_SEQUENCE events
  *   stats   the server's counters
+ *   modes   (M9, rpi4-kms-g9) the connector's mode list; then for 1280x720, 1024x768
+ *           and 960x540: a mode-sized pool buffer with a test pattern (border,
+ *           corner squares, grid, a circle that is round only at the right aspect),
+ *           SetCrtc with that mode (-H seconds each, default 5), GET_CRTC must
+ *           report it; SetCrtc fb 0 + the native mode must bring native back; then
+ *           plane scaling at native: a 640x360 buffer on the full screen (atomic)
+ *   modes-leave  set 1280x720 and exit WITHOUT restoring (the close must)
+ *   crtc    GET_CRTC: the mode clients see and the primary's framebuffer
  *   quit    ask the server to restore the display and exit
  *   all     info pool flip vblank stats
  *   -p      flip: force pool BOs. With the pan backend a pool BO is not scannable:
@@ -913,6 +921,315 @@ static int cmd_vblank(void)
 }
 
 
+/* ========================================================================= */
+/* modes (M9: scaled display modes)                                           */
+/* ========================================================================= */
+
+/* A test card for a WxH mode: a border 8 px in (the whole screen must show it),
+ * corner squares TL red, TR green, BL blue, BR yellow (orientation), a grid of
+ * eighths, and a ring of radius h/3 around the centre - round on the screen only
+ * when the scaling keeps the aspect. The background tells the modes apart. */
+static void draw_card(volatile uint32_t *px, uint32_t pitch, uint32_t w, uint32_t h, uint32_t bg)
+{
+	uint32_t x, y, stride = pitch / 4u, sq = h / 8u;
+	int64_t cx = (int64_t)w / 2, cy = (int64_t)h / 2, r = (int64_t)h / 3, t = (int64_t)((h / 90u) + 2u);
+
+	for (y = 0u; y < h; y++) {
+		volatile uint32_t *row = px + (size_t)y * stride;
+		for (x = 0u; x < w; x++) {
+			int64_t dx = (int64_t)x - cx, dy = (int64_t)y - cy, d2 = dx * dx + dy * dy;
+			uint32_t c = bg;
+			if ((x < 8u) || (y < 8u) || (x >= w - 8u) || (y >= h - 8u)) {
+				c = pack(255, 255, 255);
+			}
+			else if ((x < sq) && (y < sq)) {
+				c = pack(255, 0, 0);
+			}
+			else if ((x >= w - sq) && (y < sq)) {
+				c = pack(0, 255, 0);
+			}
+			else if ((x < sq) && (y >= h - sq)) {
+				c = pack(0, 0, 255);
+			}
+			else if ((x >= w - sq) && (y >= h - sq)) {
+				c = pack(255, 255, 0);
+			}
+			else if ((d2 >= (r - t) * (r - t)) && (d2 <= (r + t) * (r + t))) {
+				c = pack(255, 255, 255);
+			}
+			else if (((x % (w / 8u)) == 0u) || ((y % (h / 8u)) == 0u)) {
+				c = pack(160, 160, 160);
+			}
+			row[x] = c;
+		}
+	}
+	__asm__ volatile("dsb sy" ::: "memory");
+}
+
+
+typedef struct {
+	kms_dumb_resp_t d;
+	volatile uint32_t *px;
+	uint32_t fb;
+} card_t;
+
+
+static int card_make(card_t *cd, uint32_t w, uint32_t h, uint32_t bg)
+{
+	kms_create_dumb_req_t rq = { .width = w, .height = h, .bpp = 32, .flags = KMS_DUMB_POOL };
+	kms_addfb2_req_t af;
+	kms_resp_t r;
+	int rc, err;
+
+	memset(cd, 0, sizeof(*cd));
+	rc = kreq(KMS_OP_CREATE_DUMB, &rq, sizeof(rq), NULL, 0, NULL, 0, &r);
+	if (rc != 0) {
+		return rc;
+	}
+	cd->d = r.u.dumb;
+	cd->px = kmap(&cd->d.mem, 0, &err);
+	if (cd->px == NULL) {
+		return (err != 0) ? err : -ENOMEM;
+	}
+	draw_card(cd->px, cd->d.pitch, w, h, bg);
+	memset(&af, 0, sizeof(af));
+	af.width = w;
+	af.height = h;
+	af.format = k.fmt;
+	af.handle = cd->d.handle;
+	af.pitch = cd->d.pitch;
+	af.modifier = KMS_MOD_LINEAR;
+	rc = kreq(KMS_OP_ADDFB2, &af, sizeof(af), NULL, 0, NULL, 0, &r);
+	cd->fb = (rc == 0) ? r.u.fb.fb_id : 0u;
+	return rc;
+}
+
+
+static void card_free(card_t *cd)
+{
+	kms_fb_resp_t fq;
+	kms_handle_req_t hq;
+	kms_resp_t r;
+
+	if (cd->px != NULL) {
+		(void)munmap((void *)cd->px, (size_t)cd->d.size);
+	}
+	if (cd->fb != 0u) {
+		memset(&fq, 0, sizeof(fq));
+		fq.fb_id = cd->fb;
+		(void)kreq(KMS_OP_RMFB, &fq, sizeof(fq), NULL, 0, NULL, 0, &r);
+	}
+	if (cd->d.handle != 0u) {
+		memset(&hq, 0, sizeof(hq));
+		hq.handle = cd->d.handle;
+		(void)kreq(KMS_OP_DESTROY_DUMB, &hq, sizeof(hq), NULL, 0, NULL, 0, &r);
+	}
+	memset(cd, 0, sizeof(*cd));
+}
+
+
+static int set_crtc_mode(uint32_t fb, uint32_t w, uint32_t h)
+{
+	kms_set_crtc_req_t q;
+	kms_resp_t r;
+
+	memset(&q, 0, sizeof(q));
+	q.crtc_id = k.crtc;
+	q.fb_id = fb;
+	q.conn_id = k.conn;
+	q.mode_hdisplay = w;
+	q.mode_vdisplay = h;
+	return kreq(KMS_OP_SET_CRTC, &q, sizeof(q), NULL, 0, NULL, 0, &r);
+}
+
+
+/* GET_CRTC: the mode clients see (w, h) and the primary's framebuffer. */
+static int get_crtc(uint32_t *w, uint32_t *h, uint32_t *fb)
+{
+	kms_obj_req_t q;
+	kms_modeinfo_t mi;
+	kms_resp_t r;
+	int rc;
+
+	memset(&q, 0, sizeof(q));
+	memset(&mi, 0, sizeof(mi));
+	q.id = k.crtc;
+	rc = kreq(KMS_OP_GET_CRTC, &q, sizeof(q), NULL, 0, &mi, sizeof(mi), &r);
+	*w = r.u.crtc.hdisplay;
+	*h = r.u.crtc.vdisplay;
+	*fb = r.u.crtc.fb_id;
+	if ((rc == 0) && ((mi.hdisplay != *w) || (mi.vdisplay != *h))) {
+		kt("crtc note: modeinfo %ux%u != crtc %ux%u", mi.hdisplay, mi.vdisplay, *w, *h);
+		rc = -EPROTO;
+	}
+	return rc;
+}
+
+
+static void hold_s(uint32_t s)
+{
+	uint32_t i;
+
+	for (i = 0u; i < s; i++) {
+		sleep(1);
+		if ((i % 2u) == 1u) {
+			kt("tick");
+		}
+	}
+}
+
+
+static uint32_t modes_native_w, modes_native_h;
+
+static int modes_list(void)
+{
+	kms_modeinfo_t modes[16];
+	kms_obj_req_t q;
+	kms_resp_t r;
+	uint32_t i, n;
+	int rc;
+
+	memset(&q, 0, sizeof(q));
+	memset(modes, 0, sizeof(modes));
+	q.id = k.conn;
+	q.max = 16u;
+	rc = kreq(KMS_OP_GET_CONNECTOR, &q, sizeof(q), NULL, 0, modes, sizeof(modes), &r);
+	n = (r.u.conn.nmodes < 16u) ? r.u.conn.nmodes : 16u;
+	kt("modes list rc=%d n=%u", rc, r.u.conn.nmodes);
+	for (i = 0u; (rc == 0) && (i < n); i++) {
+		const kms_modeinfo_t *m = &modes[i];
+		uint32_t hz = ((m->htotal != 0u) && (m->vtotal != 0u)) ?
+			(uint32_t)(((uint64_t)m->clock * 1000u) / ((uint64_t)m->htotal * m->vtotal)) : 0u;
+		kt("mode i=%u %ux%u vrefresh=%u clock_hz=%u type=0x%x%s", i, m->hdisplay, m->vdisplay, m->vrefresh, hz, m->type,
+			((m->type & KMS_MODE_TYPE_PREFERRED) != 0u) ? " preferred" : "");
+	}
+	modes_native_w = modes[0].hdisplay;
+	modes_native_h = modes[0].vdisplay;
+	return (rc == 0) ? (int)n : rc;
+}
+
+
+static int cmd_modes(uint32_t hold)
+{
+	static const struct { uint32_t w, h, r, g, b; } want[] = {
+		{ 1280u, 720u, 0u, 0u, 96u }, { 1024u, 768u, 0u, 72u, 0u }, { 960u, 540u, 96u, 0u, 0u },
+	};
+	card_t cd;
+	uint32_t i, w, h, fb, fails = 0u;
+	int n, rc;
+
+	k.fmt = KMS_FMT_XRGB8888;
+	n = modes_list();
+	if (n < 2) {
+		kt("modes FAIL the connector lists %d mode(s): not a scaled-mode server (g9)", n);
+		kt("modes result fails=1 verdict=FAIL");
+		return 1;
+	}
+	if (hold == 0u) {
+		hold = 5u;
+	}
+	for (i = 0u; i < sizeof(want) / sizeof(want[0]); i++) {
+		rc = card_make(&cd, want[i].w, want[i].h, pack(want[i].r, want[i].g, want[i].b));
+		if (rc != 0) {
+			kt("modes %ux%u FAIL buffer rc=%d", want[i].w, want[i].h, rc);
+			fails++;
+			card_free(&cd);
+			continue;
+		}
+		rc = set_crtc_mode(cd.fb, want[i].w, want[i].h);
+		usleep(100000);
+		(void)get_crtc(&w, &h, &fb);
+		kt("modes set %ux%u rc=%d crtc=%ux%u fb=%u ok=%d (HDMI: the %s card, full height%s, ring round)", want[i].w,
+			want[i].h, rc, w, h, fb, (rc == 0) && (w == want[i].w) && (h == want[i].h) && (fb == cd.fb),
+			(i == 0u) ? "blue" : ((i == 1u) ? "green" : "red"), (i == 1u) ? ", black bars left/right" : ", edge to edge");
+		fails += !((rc == 0) && (w == want[i].w) && (h == want[i].h) && (fb == cd.fb));
+		hold_s(hold);
+		if (i + 1u == sizeof(want) / sizeof(want[0])) {
+			/* SDL KMSDRM's exit: SetCrtc(the console = fb 0, the original mode) */
+			rc = set_crtc_mode(0u, modes_native_w, modes_native_h);
+			usleep(100000);
+			(void)get_crtc(&w, &h, &fb);
+			kt("modes restore rc=%d crtc=%ux%u fb=%u native=%d", rc, w, h, fb,
+				(rc == 0) && (w == modes_native_w) && (h == modes_native_h) && (fb == 0u));
+			fails += !((rc == 0) && (w == modes_native_w) && (h == modes_native_h) && (fb == 0u));
+		}
+		card_free(&cd);
+	}
+
+	/* plane scaling at native: a 640x360 card on the whole screen through one atomic plane */
+	rc = card_make(&cd, 640u, 360u, pack(64, 0, 64));
+	if (rc == 0) {
+		kms_atomic_req_t a;
+		kms_atomic_plane_t st;
+		kms_resp_t r;
+
+		memset(&a, 0, sizeof(a));
+		memset(&st, 0, sizeof(st));
+		st.plane_id = k.primary;
+		st.fb_id = cd.fb;
+		st.crtc_id = k.crtc;
+		st.crtc_w = modes_native_w;
+		st.crtc_h = modes_native_h;
+		st.src_w = 640u << 16;
+		st.src_h = 360u << 16;
+		st.alpha = 0xffffu;
+		st.rotation = 1u;
+		a.nplanes = 1u;
+		a.crtc_id = k.crtc;
+		a.active = 1u;
+		rc = kreq(KMS_OP_ATOMIC, &a, sizeof(a), &st, sizeof(st), NULL, 0, &r);
+		usleep(100000);
+		(void)get_crtc(&w, &h, &fb);
+		kt("modes planescale 640x360->%ux%u rc=%d crtc=%ux%u fb=%u ok=%d (HDMI: the purple card, 3x, ring round)",
+			modes_native_w, modes_native_h, rc, w, h, fb, (rc == 0) && (fb == cd.fb) && (w == modes_native_w));
+		fails += !((rc == 0) && (fb == cd.fb) && (w == modes_native_w));
+		hold_s(hold);
+		(void)set_crtc_mode(0u, modes_native_w, modes_native_h);
+	}
+	else {
+		kt("modes planescale FAIL buffer rc=%d", rc);
+		fails++;
+	}
+	card_free(&cd);
+	kt("modes result fails=%u verdict=%s", fails, (fails == 0u) ? "PASS" : "FAIL");
+	return (fails == 0u) ? 0 : 1;
+}
+
+
+/* Set a lower mode and leave: the server must take it back when this client closes. */
+static int cmd_modes_leave(void)
+{
+	card_t cd;
+	uint32_t w, h, fb;
+	int rc;
+
+	k.fmt = KMS_FMT_XRGB8888;
+	if (modes_list() < 2) {
+		kt("modes-leave FAIL one mode listed");
+		return 1;
+	}
+	rc = card_make(&cd, 1280u, 720u, pack(0, 0, 96));
+	if (rc == 0) {
+		rc = set_crtc_mode(cd.fb, 1280u, 720u);
+	}
+	usleep(100000);
+	(void)get_crtc(&w, &h, &fb);
+	kt("modes-leave set 1280x720 rc=%d crtc=%ux%u -- exiting without a restore", rc, w, h);
+	hold_s(2u);
+	return ((rc == 0) && (w == 1280u)) ? 0 : 1;   /* no card_free: close() is the test */
+}
+
+
+static int cmd_crtc(void)
+{
+	uint32_t w, h, fb;
+	int rc = get_crtc(&w, &h, &fb);
+
+	kt("crtc rc=%d mode=%ux%u fb=%u", rc, w, h, fb);
+	return (rc == 0) ? 0 : 1;
+}
+
+
 static int cmd_stats(void)
 {
 	kms_resp_t r;
@@ -944,7 +1261,7 @@ int main(int argc, char **argv)
 			case 'H': hold = (uint32_t)strtoul(optarg, NULL, 0); break;
 			case 'p': force_pool = 1; break;
 			default:
-				printf("usage: %s [-n flips] [-H hold_s] [-p] info|pool|flip|vblank|stats|quit|all ...\n", argv[0]);
+				printf("usage: %s [-n flips] [-H hold_s] [-p] info|pool|flip|vblank|stats|modes|modes-leave|crtc|quit|all ...\n", argv[0]);
 				return 1;
 		}
 	}
@@ -952,7 +1269,7 @@ int main(int argc, char **argv)
 		nflips = MAXF;
 	}
 	if (optind >= argc) {
-		printf("usage: %s [-n flips] [-H hold_s] [-p] info|pool|flip|vblank|stats|quit|all ...\n", argv[0]);
+		printf("usage: %s [-n flips] [-H hold_s] [-p] info|pool|flip|vblank|stats|modes|modes-leave|crtc|quit|all ...\n", argv[0]);
 		return 1;
 	}
 	if (kconnect() != 0) {
@@ -976,6 +1293,15 @@ int main(int argc, char **argv)
 		}
 		else if (strcmp(cmd, "stats") == 0) {
 			fails += (cmd_stats() != 0);
+		}
+		else if (strcmp(cmd, "modes") == 0) {
+			fails += cmd_modes(hold);
+		}
+		else if (strcmp(cmd, "modes-leave") == 0) {
+			fails += cmd_modes_leave();
+		}
+		else if (strcmp(cmd, "crtc") == 0) {
+			fails += cmd_crtc();
 		}
 		else if (strcmp(cmd, "all") == 0) {
 			fails += cmd_info();
