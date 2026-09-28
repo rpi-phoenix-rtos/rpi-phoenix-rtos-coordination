@@ -384,3 +384,10 @@ probe, and a default-resolution game — at the native mode?
 - **The plateau is confirmed.** 960×540 is only 1.08× the 720p figure, so below 720p the CPU (~40 ms/frame) is the limit. A GPU-linear model would give ~48 fps.
 - Every run is scaled (`KMS mode … scaled`) and restores to native afterwards (`KMSTEST crtc rc=0 mode=1920x1080`).
 - **The exit fault is not M9's.** It is P16, a use-after-free in SDL 2.30.12's `KMSDRM_DestroySurfaces` (EGL surface destroyed before its locked GBM buffers are released), identical pc/far in all three runs; see [misc doc](../misc/2026-09-28-stk-scaled-exit-fault.md). The fix is upstream SDL `9cc2f248f5`, backported as sdl2-drm patch 0010; re-check `m9b-stk-{720,1080}-t10` is queued.
+
+**`m9c-restore`: ✅ PASS.**
+- STK at 960×540: `KMS mode … 960x540 scaled`, then at its exit `KMS mode crtc=0 1920x1080 native … why=primary_off` and `KMSTEST crtc rc=0 mode=1920x1080 fb=0`.
+- `modes-leave` sets 1280×720 and closes; its close restores native, and `KMSTEST crtc … mode=1920x1080` confirms it.
+- **The next default game is native:** `quakespasm-drm: first swap … window 1920x1080 drawable 1920x1080`, with no scaled line.
+- The one fault is P16 again (STK's exit, pc `0x19d8630` = SDL KMSDRM teardown), not M9.
+- **M9 is done on hardware**: lower modes scale correctly, and every way out returns to native. Next: carry `rpi4-kms-g9` into the P1 devices branch (it holds g8), and give the default game launchers a resolution option (`game-res`).
