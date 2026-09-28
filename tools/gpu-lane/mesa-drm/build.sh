@@ -50,6 +50,10 @@
 #              PKG_CONFIG_LIBDIR list that finds them (default: the weston-drm build's).
 #              No kmscube; <out>/egl-link.txt = the archives to link, in order (link
 #              libwayland-client/-server after them). Consumer: tools/gpu-lane/weston-drm.
+#              With --opengl as well: desktop GL on the Wayland platform (GLES stays on),
+#              default dir build-out-wayland-gl/. egl-link.txt still lists libGLESv2.a; a
+#              desktop-GL program links src/mesa/glapi/glapi/libglapi_bridge.a in its
+#              place (their gl* clash). Consumer: tools/gpu-lane/sdl2-wl (windowed games).
 #   --x11      ALSO build the EGL X11 platform with DRI3/Present (-Dplatforms=x11, GLX off:
 #              EGL_PLATFORM_X11/XCB clients inside Xorg-drm), GLES only, into its OWN
 #              directory (default build-out-x11/, --out still wins). The X11/xcb libraries
@@ -104,9 +108,11 @@ if [ "${vulkan}" = true ]; then
 	[ "${out_given}" = 1 ] || out="${here}/build-out-vulkan"
 fi
 if [ "${wayland}" = true ]; then
-	[ "${vulkan}" = false ] && [ "${opengl}" = false ] || { echo "build.sh: --wayland is a GLES build of its own (no --vulkan/--opengl)" >&2; exit 2; }
+	[ "${vulkan}" = false ] || { echo "build.sh: --wayland is a GL build of its own (no --vulkan)" >&2; exit 2; }
 	[ "${relink}" = 0 ] || { echo "build.sh: --relink relinks kmscube, which a --wayland build has not" >&2; exit 2; }
-	[ "${out_given}" = 1 ] || out="${here}/build-out-wayland"
+	if [ "${out_given}" = 0 ]; then
+		if [ "${opengl}" = true ]; then out="${here}/build-out-wayland-gl"; else out="${here}/build-out-wayland"; fi
+	fi
 	if [ -z "${wayland_pc}" ]; then
 		wo="${root}/tools/gpu-lane/weston-drm/build-out"
 		wayland_pc="${wo}/prefix/lib/pkgconfig:${wo}/prefix/share/pkgconfig:${wo}/deps/libffi/lib/pkgconfig"
