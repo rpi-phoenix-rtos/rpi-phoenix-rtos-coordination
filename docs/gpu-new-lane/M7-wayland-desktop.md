@@ -1933,3 +1933,14 @@ Log `artifacts/rpi4b-uart/rpi4b-uart-20260928-014516-m7k-gles2.log`, servers `rp
   Pre-registered `m7l-session2` (chain76), from a fresh boot: `export HOLD=60`, `/bin/bash /bin/xfce-session-2`.
   Predict `XFCE-SESSION server start: /bin/rpi4-kms-g8`, `Creating GLES2 renderer`, `foreign_kmsbuf` 0, `alias=1` ≥ 1,
   handover 1, `done rc=0`, 0 exceptions, and the XFCE desktop on HDMI.
+
+## Result — `m7l-session2` (chain76, image 23a, 2026-09-28 04:22): ✅ PASS — `/bin/xfce-session-2` from a fresh boot
+
+- `XFCE-SESSION server start: /bin/rpi4-kms-g8` (the wrapper's default).
+- `renderer=gles2` in both start lines.
+- `foreign_kmsbuf` 0, `alias=1` imports 2, `console handover disable rc=0`, `XFCE-SESSION done rc=0`, 0 exceptions.
+- HDMI (`20260928-042510-m7l-session2-tick.png`): the XFCE panel (clock `Mon 28 Sep 04:25`), wallpaper, and Thunar on
+  `/` (`2 files: 431.3 KiB (441685 bytes)`), composited by the V3D.
+- `Creating GLES2 renderer` is absent only because this cycle ran without `VERBOSE=1`; that line is labwc
+  info-level output (m7k had VERBOSE=1).
+- **The GPU-composited XFCE demo is now one command.**
