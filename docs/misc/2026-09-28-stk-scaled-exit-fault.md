@@ -1,4 +1,4 @@
-# STK exit Data Abort in Mesa `release_buffer` (m9b-stk-720, m9b-stk-540)
+# STK exit Data Abort in Mesa `release_buffer` (m9b-stk-720, -540, -900)
 
 2026-09-28. SuperTuxKart (`/usr/bin/supertuxkart-drm`, stripped `71ac4f58a678dc20`) through
 `rpi4-kms-g9` in a scaled mode: gameplay fine, then an EL0 Data Abort at exit.
@@ -14,16 +14,16 @@ plays no part. The fix is SDL patch **0010**, a verbatim backport of upstream SD
 ## 1. The dump, decoded
 
 Logs: `artifacts/rpi4b-uart/rpi4b-uart-20260928-102005-m9b-stk-720.log`,
-`…-102855-m9b-stk-540.log` (lines 500–577 in both). As usual, the EL0 dump appears twice.
+`…-102855-m9b-stk-540.log` (lines 500–577 in both), `…-103737-m9b-stk-900.log` (562–589). As usual, the EL0 dump appears twice.
 
-| reg | 720 | 540 | meaning (from the disassembly below) |
+| reg | 720 | 540 / 900 | meaning (from the disassembly below) |
 |---|---|---|---|
 | pc | `0x19d8630` | same | `release_buffer+0x10`, `platform_drm.c:79`: `ldr x2, [x3, x2]` |
 | esr | `0x92000007` | same | DABT from EL0, **level-3 translation fault**, read: the page is unmapped |
 | far = x3 | `0x3eada20` | **same** | `&dri2_surf->color_buffers[0].bo` |
 | x4 | `0x3ead8d0` | **same** | `dri2_surf = gbm_surf->dri_private`, loaded fine from the live gbm surface |
 | x0, x2 | 0, 0 | same | loop index 0: the **first** read of the struct faults |
-| x1 | `0x3069a68` | `0x3f6cdd0` | the `bo` being released (`windata->bo`) |
+| x1 | `0x3069a68` | `0x3f6cdd0` / `0x370efb8` | the `bo` being released (`windata->bo`) |
 | lr | `0xf5f570` | same | `KMSDRM_DestroySurfaces`, `SDL_kmsdrmvideo.c:1133/1134` (return after `blr x2` at `0xf5f56c`) |
 
 ```
@@ -52,7 +52,7 @@ first of those.
 had just returned. So the EGL surface was destroyed immediately before the faulting read. The other
 words (`0x2b8…`, `0x2be…`, `0x3ea1050` = x6) are heap data pointers.
 
-The 540 run has **byte-identical** x3/x4/pc/lr. Phoenix has no ASLR, so the heap layout at exit is
+The 540 and 900 runs have **identical** far/x3/pc/esr (3 of 3 scaled runs; x4/lr checked on 540). Phoenix has no ASLR, so the heap layout at exit is
 deterministic. Only the bo pointer (x1) differs, because the buffers are sized by the mode.
 
 ## 2. Mechanism, with file:line references
@@ -174,7 +174,10 @@ staging step):
    afterwards.
 4. **Static proof before staging**: `aarch64-phoenix-objdump -d` of `KMSDRM_DestroySurfaces` in the
    new unstripped ELF must show the two `blr x2` (release) **before** `bl <SDL_EGL_DestroySurface>`.
-   The current ELF shows the reverse (+0xb0 < +0xcc).
+   The current ELF shows the reverse (+0xb0 < +0xcc). Also record the new `BUILD-INFO.txt`'s
+   `libphoenix.a` sha: the staged binary used `2acb195e2e08…`, and the tree sysroot is now
+   `83c07cf81b47e3f8` (2026-09-28). So the relink is **not single-variable**: it changes 0010 *and*
+   libphoenix, and the heap layout with them.
 5. Stage, checking each path is absent first: `supertuxkart-drm10.stripped` →
    `/usr/bin/supertuxkart-drm10`, `stk-drm10` → `/bin/stk-drm10`, then `cmp`.
 
@@ -197,7 +200,7 @@ native exit also does the stale read and was clean only by layout.
 | 1 | `stk-drm10: DATADIR=…`, then `stk-drm: new GPU lane` | the new binary runs | `stk: DATADIR` / `stk-drm: DATADIR`: an old launcher; void |
 | 2 | `KMS mode crtc=0 1280x720 scaled …` | as m9b-stk-720 | — |
 | 3 | `profile: Number of frames …`, then `stk-drm: exit after <N> swaps` | the exit completes (this line is printed at exit and is **absent** from both faulting runs) | — |
-| 4 | **`Exception #` count after the `profile:` line** | **0** | a dump with `process "/usr/bin/supertuxkart-drm10"`: addr2line against `build-out/stk-drm10/supertuxkart-drm10`. `pc` still in `release_buffer` means 0010 is not in the ELF (step 4 missed it); any other pc is a new bug further down the teardown |
+| 4 | **`Exception #` count after the `profile:` line** | **0** | a dump with `process "/usr/bin/supertuxkart-drm10"`: addr2line against `build-out/stk-drm10/supertuxkart-drm10`. `pc` still in `release_buffer` means 0010 is not in the ELF (step 4 missed it); any other pc is a later teardown bug **or** libphoenix drift (step 4 note); grade it only after checking both |
 | 5 | `KMS mode crtc=0 1920x1080 native … why=primary_off`, `KMS srv client <n> closed planes_off=0` | unchanged | — |
 | 6 | `KMSTEST crtc rc=0 mode=1920x1080 fb=0` | unchanged | — |
 | 7 | fps (`flipstat-summary.sh --seq`) | as m9b-stk-720 (22.3), ±1 | a change: 0010 only touches teardown, so this points to a different binary or bench state |
