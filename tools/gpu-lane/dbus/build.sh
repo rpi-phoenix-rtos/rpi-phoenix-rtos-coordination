@@ -22,11 +22,14 @@
 # Configuration: no systemd, launchd, X11 autolaunch, SELinux/AppArmor/libaudit, no epoll /
 # kqueue / inotify (the daemon's main loop is poll(); config reload on SIGHUP only), no tests,
 # no docs; traditional (fork/exec) bus activation stays on (XFCE starts xfconfd that way).
-# Phoenix has no SO_PEERCRED / SCM_CREDS / getpeereid, so dbus-sysdeps-unix.c compiles its
-# "no credentials mechanism" branch (a #warning): the daemon learns no peer uid and EXTERNAL
-# cannot succeed. conf/session-phoenix.conf therefore offers ANONYMOUS (lab only). Once the
-# kernel reports SO_PEERCRED, a rebuild against that sysroot compiles the Linux path (the
-# macro is tested with #ifdef, no configure probe) and EXTERNAL works unchanged.
+# Peer credentials: dbus-sysdeps-unix.c tests SO_PEERCRED with #ifdef (no configure probe).
+# Since kernel master f234ed3e, <sys/socket.h> (via <phoenix/posix-socket.h>) defines it and a
+# Linux-layout struct ucred {pid, uid, gid}, so the daemon reads the peer's pid and uid with
+# getsockopt(SOL_SOCKET, SO_PEERCRED) and EXTERNAL works (conf/session-phoenix-external.conf).
+# Built against an older sysroot, it compiles the "no credentials mechanism" branch (a
+# #warning) and only ANONYMOUS (conf/session-phoenix.conf, lab only) can succeed. Binaries
+# built with SO_PEERCRED still run on an older kernel: getsockopt() fails, and they fall back
+# to that behaviour.
 #
 # Writes only into <out> (default build-out/, gitignored). Reads the tree sysroot, the ports
 # prefix (expat), the toolchain and the E7 compiler wrappers. No Pi, no rebuild-rpi4b-fast.sh,
@@ -222,8 +225,8 @@ for s in 'ANONYMOUS' 'EXTERNAL' 'DBUS_COOKIE_SHA1' 'allow_anonymous' 'DBUS_VERBO
 	[ "${n}" != 0 ] || bad=1
 done
 # The credentials path compiled in: SO_PEERCRED appears as a verbose message only when the
-# sysroot defines it (stage 1: 0).
-echo "  dbus-daemon strings 'SO_PEERCRED' (1 = compiled against a SO_PEERCRED sysroot): $(grep -cF 'SO_PEERCRED' <<< "${strs}" || true)"
+# sysroot defines it (stage 1: 0; since kernel f234ed3e: 2).
+echo "  dbus-daemon strings 'SO_PEERCRED' (0 = the sysroot has no SO_PEERCRED): $(grep -cF 'SO_PEERCRED' <<< "${strs}" || true)"
 [ -f "${out}/destdir/usr/lib/libdbus-1.a" ] || { echo "  libdbus-1.a not installed"; bad=1; }
 echo "  libdbus-1.a: $(stat -c %s "${out}/destdir/usr/lib/libdbus-1.a" 2>/dev/null || echo missing) bytes"
 ( cd "${out}" && sha256sum "${PROGS[@]/%/-stripped}" ) | sed 's/^/  /'

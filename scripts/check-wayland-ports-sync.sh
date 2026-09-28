@@ -36,6 +36,7 @@ MAP=(
 	"${T}/dbus/patches/dbus|dbus/patches"
 	"${T}/dbus/conf|dbus/files/conf"
 	"${T}/dbus/pi/dbus-m7f.sh|dbus/files/pi/dbus-m7f.sh"
+	"${T}/dbus/pi/dbus-m7m.sh|dbus/files/pi/dbus-m7m.sh"
 	# wayland_phoenix (the M6 Wayland base of weston-drm, + mesa-drm's generic gap headers)
 	"${T}/weston-drm/patches/wayland|wayland_phoenix/patches/wayland"
 	"${T}/weston-drm/patches/seatd|wayland_phoenix/patches/seatd"

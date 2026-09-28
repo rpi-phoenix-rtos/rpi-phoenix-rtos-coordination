@@ -102,8 +102,8 @@ cross build, all static: `dbus-daemon`, `dbus-send`, `dbus-monitor`, `dbus-run-s
 `<auth>ANONYMOUS</auth>`, `<allow_anonymous/>`, one explicit `<servicedir>`, an allow-all default policy, no
 `<include>`s or standard dirs. **Lab only**: any process that can reach the socket gets onto the bus with no
 identity. That is acceptable on this single-user test system and must never become a default.
-`conf/session-phoenix-external.conf` (stage 2) offers EXTERNAL first and ANONYMOUS as the fallback; drop ANONYMOUS
-once SO_PEERCRED ships. Clients find the bus only through `DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/dbus-session`
+`conf/session-phoenix-external.conf` (stage 2) offers EXTERNAL first and ANONYMOUS as the fallback. (↩ 2026-09-28: keep ANONYMOUS
+even with SO_PEERCRED, because the GDBus clients still need it; see Stage 8.) Clients find the bus only through `DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/dbus-session`
 (no X11 autolaunch, no systemd user bus), so **the labwc/XFCE launcher must export it** before it starts anything.
 
 - libdbus clients start with EXTERNAL and, on `REJECTED ANONYMOUS`, retry ANONYMOUS.
@@ -1944,3 +1944,156 @@ Log `artifacts/rpi4b-uart/rpi4b-uart-20260928-014516-m7k-gles2.log`, servers `rp
 - `Creating GLES2 renderer` is absent only because this cycle ran without `VERBOSE=1`; that line is labwc
   info-level output (m7k had VERBOSE=1).
 - **The GPU-composited XFCE demo is now one command.**
+
+## Stage 8: D-Bus with peer credentials (`SO_PEERCRED`): EXTERNAL auth; `m7m-dbus-peercred` pre-registered
+
+Kernel master **f234ed3e** (build 22: `feat/dbus-peercred` merged, `peercred_*` tests 3/3 PASS on the Pi) defines
+`SO_PEERCRED` = `0x1022` and a Linux-layout `struct ucred {pid_t pid; uid_t uid; gid_t gid;}` in
+`include/posix-socket.h`. The sysroot has it as `usr/include/phoenix/posix-socket.h`, which `<sys/socket.h>` includes
+unconditionally. The stage-3 D-Bus was built before this merge. It was rebuilt on 2026-09-28 with
+`tools/gpu-lane/dbus/build.sh` against the stock master sysroot (`.buildroot/_build/aarch64a72-generic-rpi4b/sysroot`,
+07:23). meson was forced to reconfigure. Nothing in the recipe changed.
+
+**How D-Bus 1.16.2 detects peer credentials.** There is no configure or meson probe. `_dbus_read_credentials_socket()`
+(`dbus/dbus-sysdeps-unix.c`) tests `#ifdef SO_PEERCRED` and declares `struct ucred cr` (for `__OpenBSD__`, `struct
+sockpeercred`). It then calls `getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &cr, &len)`, checks that `len == sizeof cr`,
+and reads `cr.pid` and `cr.uid`. `cr.gid` is read only under `__linux__`, and D-Bus does not need it. meson probes
+only the other mechanisms: `HAVE_CMSGCRED`, `HAVE_UNPCBID`, `getpeereid` and `getpeerucred`. They stay `#undef`,
+and `config.h` is byte-identical to the stage-3 build. `SO_PEERPIDFD`, `SO_PEERSEC` and `SO_PEERGROUPS` are
+undefined on Phoenix, so those branches stay out. **No compat step was needed.** The Phoenix header already gives
+what the `#ifdef` path expects: the macro, the three field names, and a 12-byte struct.
+
+**Evidence that the path is compiled in:**
+- ninja log: the `#warning Socket credentials not supported on this Unix OS` pair is gone. There were 38 warning
+  lines, now 36: `-Wcast-align`, `-Wnull-dereference`, and libphoenix's `sendmsg`/`recvmsg` attribute warnings,
+  all pre-existing.
+- `strings dbus-daemon-stripped | grep -c SO_PEERCRED` = **2** (was 0). These are `Failed to getsockopt(SO_PEERCRED):
+  %s` and `…returned %d bytes, expected %d`.
+- The disassembly of `_dbus_read_credentials_socket` (unstripped `build-out/dbus-daemon`) contains
+  `mov w5,#0xc; mov w2,#0x1022; mov w1,#0xfff; mov w0,w19; str w5,[sp,#76]; bl getsockopt`, and then
+  `ldr w4,[sp,#76]; cmp w4,#0xc`. That is level `SOL_SOCKET` (0xfff), optname `SO_PEERCRED` (0x1022), and a length
+  of 12 = `sizeof(struct ucred)`. The stage-3 binary makes no `getsockopt` call in that function. `dbus-send` and
+  `dbus-monitor` (the same libdbus code) show the same `#0x1022` call.
+- Binaries built this way still run on an older kernel. There `getsockopt()` fails (the verbose log shows
+  `Failed to getsockopt(SO_PEERCRED)`), the credentials stay unset, and they behave exactly like stage 3.
+
+| file (build-out) | bytes | sha256 |
+|---|---|---|
+| `dbus-daemon-stripped` | 672 408 | `c8eedb141a3588ff3a1ea0bceb50c007aa9692913e1a5527caad371c0ab41c25` |
+| `dbus-send-stripped` | 288 304 | `d564d3499076859e126e1073138558927f0ccffa4e7a4e0f0bce58fe5bb10c93` |
+| `dbus-monitor-stripped` | 284 208 | `314c489ffe5997115d15286d51d83cb1a41df07f302c83d9ddcce6e4a8a3d19c` |
+| `dbus-run-session-stripped` | 71 104 | `e8ba5f83c5f4650934d8c771ea2c4ed44a5b56022d6f56110ea399452af0955a` (not staged) |
+| `dbus-uuidgen-stripped` | 87 528 | `e5f6f0ce543f5720e3084a3302926c753ce0c54c80d3ce2aa7cdc66baa2bb2f6` (not staged) |
+
+All five have `nm -u` 0, no `PT_INTERP` and no `DT_NEEDED`.
+
+**Auth config (the decision): `conf/session-phoenix-external.conf`, unchanged in content:** `<auth>EXTERNAL</auth>`,
+then `<auth>ANONYMOUS</auth>`, then `<allow_anonymous/>`. EXTERNAL is first, as on Linux, and ANONYMOUS stays as the
+fallback. The stage-3 note "drop ANONYMOUS once SO_PEERCRED ships" is withdrawn, because following it would break
+the desktop:
+- **libdbus clients** (`dbus-send`, `dbus-monitor`, and the session script's own `dbus-send` calls) send `AUTH
+  EXTERNAL <hex getuid()=0>`. With SO_PEERCRED the daemon's socket credentials say uid 0, which is a superset, so
+  the answer is `OK`. The connection gets a uid (and so can call `BecomeMonitor`).
+- **GDBus clients** (xfconfd, xfce4-panel, xfdesktop, Thunar: every GTK/XFCE program) try EXTERNAL first. glib has
+  no Phoenix case in `gcredentialsprivate.h`, so `g_credentials_get_unix_user()` returns `-1`, and GDBus sends that
+  as its identity (`gdbusauthmechanismexternal.c`). The daemon has real credentials (uid 0) that do not cover uid
+  `-1`, so it answers `REJECTED EXTERNAL ANONYMOUS` (`dbus-auth.c`: "desired user … is no good", or "could not get
+  credentials from uid string"). GDBus then picks ANONYMOUS (`gdbusauth.c`, `choose_mechanism`). The daemon still
+  records the SO_PEERCRED **pid** for those connections, because the ANONYMOUS handler copies `UNIX_PROCESS_ID`
+  from the socket credentials. What they lack is a uid.
+- ⚠ **Not host-tested:** the host test (`hosttest/run.sh`) stripped credentials only on the server side
+  (`nopeercred.so`), and its GDBus had real Linux credentials. "Server has credentials, GDBus client has none" is
+  first exercised by the XFCE arm below. The code path is the same REJECTED→ANONYMOUS retry that host-test B proved
+  from the other side.
+- ANONYMOUS can go only once glib gets a Phoenix credentials case (the Linux `struct ucred` path through
+  `SO_PEERCRED`). That work belongs with the GIO build, not this step. The conf's XML comment now says this. The
+  staged `/etc/dbus-1/session-phoenix-external.conf` (sha256 `3adab31d…`, from stage 3) differs from the repository
+  copy **only in that comment**; every element is identical, so it was not re-staged.
+- `conf/session-phoenix.conf` (ANONYMOUS only) stays the default of `/bin/xfce-session`. Nothing that is already
+  staged changes.
+
+**Staged 2026-09-28 08:08** on `/srv/phoenix-rpi4-nfs-gcc16`, under new names only. Each path was checked absent
+first, installed with `sudo -n install -m 755`, and `cmp`-verified against its source:
+
+| staged path | source | sha256 |
+|---|---|---|
+| `/usr/bin/dbus-daemon-pc` | `build-out/dbus-daemon-stripped` | `c8eedb141a3588ff3a1ea0bceb50c007aa9692913e1a5527caad371c0ab41c25` |
+| `/usr/bin/dbus-send-pc` | `build-out/dbus-send-stripped` | `d564d3499076859e126e1073138558927f0ccffa4e7a4e0f0bce58fe5bb10c93` |
+| `/usr/bin/dbus-monitor-pc` | `build-out/dbus-monitor-stripped` | `314c489ffe5997115d15286d51d83cb1a41df07f302c83d9ddcce6e4a8a3d19c` |
+| `/bin/dbus-m7m.sh` | `tools/gpu-lane/dbus/pi/dbus-m7m.sh` | `6ebde99c50ce6ac24308a6558af045dd55371426f4b1133aa49a70c2a2113d18` |
+
+Untouched: `/bin/dbus-daemon` (`0abfed00…`), `/bin/dbus-send` (`9bdc383d…`), `/bin/dbus-monitor`, the two
+`/etc/dbus-1/*.conf`, and `/bin/xfce-session{,-2}`. Nothing else in the XFCE session uses the new binaries unless
+it is told to.
+
+**How the session picks its bus.** `/bin/xfce-session-2` execs `/bin/xfce-session`, which runs
+`/bin/xfce-desktop-2.sh`. That script reads three environment knobs: **`DAEMON`** (default `/bin/dbus-daemon`),
+**`SEND`** (default `/bin/dbus-send`, used for the activation call and every `names=` heartbeat), and **`BUS_CONF`**
+(default `/etc/dbus-1/session-phoenix.conf`). There is no `DBUS_DAEMON` knob. `dbus-m7f.sh` reads the same
+`DAEMON`/`SEND` names, plus `MONITOR` and `CLIENT_VERBOSE`, so one set of psh `export`s serves both scripts.
+`xfce-desktop-2.sh` starts the daemon without `DBUS_VERBOSE` and prints only the first 40 lines of each log. That
+is why the session arm grades by two lines that need no verbose log (rows 9–10 below), and not by "authenticated
+client based on socket credentials". A verbose daemon under a whole desktop would write thousands of lines to the
+NFS `/tmp` and break parity with m7l.
+
+**`/bin/dbus-m7m.sh`** (new, `tools/gpu-lane/dbus/pi/`) is the session's `LOGOUT_CMD`. psh does not strip quotes, so
+this has to be one word and the script takes no arguments. When `HOLD` is over and the session is still up, it
+lists the `org.xfce.*` names and asks `GetConnectionCredentials` for each, printing one `DBUSPC creds name=… rc=…
+pid=<n|absent> uid=<n|absent>` line per name. It then runs the default logout, `$XFCE_BIN/loginctl
+terminate-session`. Its output reaches the UART through `XFCE log logout-cmd: …` (fewer than 40 lines). A host run
+against the host-built daemon parsed `pid=`/`uid=` from a real reply correctly.
+
+### Cycle `m7m-dbus-peercred` (≈ 6 min; from a fresh boot of a stock image containing kernel f234ed3e, i.e. build ≥ 22)
+
+**Question:** with credentials, do libdbus clients authenticate EXTERNAL on Phoenix? And does the m7l desktop come
+up unchanged on the new daemon with the EXTERNAL-first conf, with the GDBus programs falling back to ANONYMOUS?
+
+```
+./scripts/test-cycle-psh-interact.sh --label m7m-dbus-peercred --idle-secs 60 --max-cmd-secs 420 \
+    --hdmi-dense-on 'XFCE labwc socket=up' -- \
+    "export DAEMON=/usr/bin/dbus-daemon-pc" \
+    "export SEND=/usr/bin/dbus-send-pc" \
+    "export MONITOR=/usr/bin/dbus-monitor-pc" \
+    "export CLIENT_VERBOSE=1" \
+    "/bin/bash /bin/dbus-m7f.sh external" \
+    "export BUS_CONF=/etc/dbus-1/session-phoenix-external.conf" \
+    "export HOLD=60" \
+    "export LOGOUT_CMD=/bin/dbus-m7m.sh" \
+    "/bin/bash /bin/xfce-session-2" \
+    "/bin/kmstest-poll stats"
+```
+
+Arm 1 is the m7f external arm on the new binaries. It is the direct EXTERNAL proof: the daemon's verbose log
+(to a file) is scanned by the script. Arm 2 is m7l plus three knobs (`DAEMON`/`SEND` carry over from arm 1,
+`BUS_CONF`, and `LOGOUT_CMD`); `HOLD=60` is as in m7l. The Bash `timeout` must be the maximum (600000 ms), or run it
+from a chain script as m7l was.
+Grade: `grep -a -E '^DBUSPHX |^XFCE|^XFCE-SESSION|DBUSPC|Activating service|foreign_kmsbuf|alias=1|console handover' …m7m-dbus-peercred.log`
+and `./scripts/uart-summary.sh m7m-dbus-peercred`. Allow for ~1.3 % UART line corruption. EL0 dumps print twice.
+
+| # | Line / observation | Predicted | Stage 3 / m7l value, and the reading if it differs |
+|---|---|---|---|
+| 1 | `DBUSPHX start arm=external conf=/etc/dbus-1/session-phoenix-external.conf daemon=/usr/bin/dbus-daemon-pc` | the new daemon is the one that ran | `daemon=/bin/dbus-daemon`: the export did not take. Stop grading |
+| 2 | `DBUSPHX socket=up`, `listnames`/`ping`/`busid`/`creds rc=0`, `monitor seen_member=1 seen_payload=1`, `daemon exited rc=0 … socket=gone` | as m7f | a regression in the rebuilt daemon. Read the `DBUSPHX log:` lines |
+| 3 | **★ `DBUSPHX <label> client_mechanisms_tried=0`** for listnames/ping/busid/creds | 0: the first `AUTH EXTERNAL` got `OK` (libdbus logs "Trying mechanism" only after a REJECTED) | stage 3 / old kernel: **1** (EXTERNAL rejected, then ANONYMOUS) |
+| 4 | **★ `DBUSPHX auth anonymous=0 external=≥6 external_no_credentials=0`** | every libdbus client authenticated EXTERNAL | m7f: `anonymous=6 external=0 external_no_credentials=6`. `external_no_credentials≥1` together with a `DBUSPHX log: … Failed to getsockopt(SO_PEERCRED): …` line: the booted kernel predates f234ed3e (check the image) |
+| 5 | `DBUSPHX log: … Credentials:  pid <N>  uid 0` (N = a real small pid, one per client) | the daemon read SO_PEERCRED | m7f: pid/uid `18446744073709551615` (unset) |
+| 6 | no `BecomeMonitor` refusal (`unknown uid`) in the `DBUSPHX log:` lines | dbus-monitor became a real monitor | m7f: refused, then match-rule fallback |
+| 7 | arm 2 = **m7l's rows**: `XFCE-SESSION server start: /bin/rpi4-kms-g8`, `renderer=gles2`, `XFCE start … missing=none`, `XFCE dbus=up`, `xfconfd activation rc=0`, `via=activation`, `xfconf set_rc=0 get_rc=0`, `session up panel=registered`, `foreign_kmsbuf` 0, `alias=1` ≥ 1, `console handover disable rc=0`, `session end reason=logout held=60s`, `dbus exited rc=0 … socket=gone`, **`XFCE-SESSION done rc=0`** | the session comes up as in m7l | `dbus=missing`: `XFCE log dbus-daemon:` (a config or bind problem in the new daemon). `via=explicit`, or panel `missing`, with the bus up: a GDBus client failed to authenticate. The REJECTED→ANONYMOUS retry did not happen (the untested combination above). Re-run with `export GDBUS_DEBUG=1` to see `Trying mechanism 'EXTERNAL'` / `'ANONYMOUS'` |
+| 8 | HDMI (dense from `XFCE labwc socket=up`): the m7l scene. Panel with local clock, wallpaper, Thunar on `/`, composited by the V3D | = m7l | a black or console-only screen with rows 7 OK: not this change (compare m7l) |
+| 9 | **★ `XFCE log dbus-daemon: dbus-daemon[<d>]: [session uid=0 pid=<d>] Activating service name='org.xfce.Xfconf' requested by ':1.0' (uid=0 pid=<N> comm="…")`** (`comm` is probably empty: no `/proc/<pid>/cmdline`. Not graded) | `uid=0`: the requester (`dbus-send-pc`, libdbus) authenticated **EXTERNAL**. `pid=<N>`: SO_PEERCRED | **m7l: `()`**. `(pid=<N> comm=…)` with no `uid=`: SO_PEERCRED works, but EXTERNAL was rejected and the client fell back to ANONYMOUS. `()`: no credentials at all (wrong daemon, or an old kernel) |
+| 10 | `XFCE log logout-cmd: DBUSPC listnames rc=0 names=org.xfce.FileManager org.xfce.Panel org.xfce.Thunar org.xfce.Xfconf org.xfce.xfdesktop` (m7l's five, any order), then 5 × **`DBUSPC creds name=org.xfce.<X> rc=0 pid=<n> uid=absent`** (FileManager and Thunar have the same pid: one connection), `DBUSPC summary names=5 with_pid=5 with_uid=0`, `loginctl (xfce-demo): logout requested`, `DBUSPC logout rc=0` | the GDBus connections carry a SO_PEERCRED pid, and **no uid** (ANONYMOUS, as decided above) | `pid=absent`: SO_PEERCRED not read for that connection. `uid=0` on a GDBus name: glib authenticated EXTERNAL after all (a glib change, so re-read this section). `hold over: /bin/dbus-m7m.sh rc≠0` with no DBUSPC lines: the script was not staged or not executable |
+| 11 | `KMSTEST stats … bos=0 exports=0` | as m7l/m7k | not this change |
+| 12 | fault dumps | **0 kernel, 0 EL0** | an EL0 dump in dbus-daemon-pc: `aarch64-phoenix-addr2line -f -e tools/gpu-lane/dbus/build-out/dbus-daemon <pc>` (unstripped; keep that build-out until graded) |
+
+**Decides:** rows 3–5 and 9 show that EXTERNAL works on Phoenix for libdbus. Row 7 plus row 10 show that the
+EXTERNAL-first conf is safe for the desktop, because the GDBus programs fall back and nothing else changes. If they
+pass, `xfce-desktop-2.sh`'s defaults can move to the new daemon and conf. That means re-staging `/bin/dbus-daemon`
+etc. under their own names, which needs its own authorisation. The remaining gap for "EXTERNAL everywhere" is a glib
+Phoenix credentials case.
+
+**Ports.** The recipe is functionally unchanged. `phoenix-rtos-ports` branch **`ports/dbus-peercred` 086c35a**
+(on master 7061ef5, pushed to `publish` only) carries the same comment corrections in `dbus/port.def.sh`, the
+updated `files/conf/session-phoenix-external.conf`, and `files/pi/dbus-m7m.sh`, which gets its own `install` line in
+`stage/bin`. `scripts/check-wayland-ports-sync.sh` maps `dbus-m7m.sh` (43 mappings). Against the branch worktree it
+reports **identical**. Against `sources/phoenix-rtos-ports` (master) it shows the two dbus files as drift until the
+branch is merged.
