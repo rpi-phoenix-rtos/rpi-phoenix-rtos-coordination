@@ -408,3 +408,16 @@ Grading against the pre-registered table:
   rate, so levers 3–6 must be re-ranked against the air (goodput at 72 Mbit/s is typically ~5–6 MB/s), not the bus.
 - **Decision: merge `wifi/throughput`** into devices master, once no build is using the checkout. F1's
   "≈ 3 MB/s" becomes "TX 3.6 / RX 3.3 MB/s (n = 6 per arm)".
+
+## Result — cycle N bulk-TX boots (`wifinat-1/3/5`, chain77, 2026-09-28 04:28–04:51, `wifi/sdio-clock` level default)
+
+| boot | first load | frames | resyncs | `WIFISTATS pio` | TX / RX median (MB/s) |
+|---|---|---|---|---|---|
+| wifinat-1 | `SDHCI-PIO mode=level … timeouts=0` | tx_ok 13166, 0 err | 0 | level, slow_waits 0, timeouts 0 | 3.42 / 3.23 |
+| wifinat-3 | same | tx_ok 13164, 0 err | 0 | same | 3.46 / 3.22 |
+| wifinat-5 | same | tx_ok 13165, 0 err | 0 | same | 3.45 / 3.21 |
+
+Every pre-registered requirement is met: `tx_ok` ≥ 8 600, `tx_err=0`, `resyncs=0`, `WIFISTATS pio … timeouts=0`, and TX medians
+inside master's cycle-T range (3.37–3.47). **Merge gate for `wifi/sdio-clock` PASSED** (cycle F + these boots). The
+merge is queued last (`chain82`, after `wifi/throughput`; it aborts on a conflict). The rolling "0 `fw_alive=0` in
+the next 20 default boots" count carries on in every later WiFi boot.
