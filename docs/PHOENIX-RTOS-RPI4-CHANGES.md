@@ -257,6 +257,16 @@ Most of the lifetime and race work is in §3. What is specific to robustness her
   fork child could size its kernel-stack copy from the parent's context before the parent had saved it; the child
   now waits. A/B on the Pi: `spawn-storm -f` froze the whole system 3 of 3 runs (within 16–38 launches) before,
   0 of 3 runs (1500/1500 launches) after. The two changes are not yet separated. Same code upstream.
+- **`SO_PEERCRED` for AF_UNIX sockets** (`posix/usocket.c`, `include/posix-socket.h`, `63b35c27`).
+  - `getsockopt(SOL_SOCKET, SO_PEERCRED)` returns a `struct ucred` naming the peer process, captured as Linux does it:
+    an accepted socket reports the process that called `connect()`, a connecting socket reports the listener, and
+    both ends of a `socketpair()` report their creator.
+  - A socket without a peer fails with `ENOTCONN`.
+  - `uid`/`gid` are 0, the same as `getuid()`/`getgid()`, since Phoenix has no users.
+  - The option value is OpenBSD's (0x1022), outside lwIP's range; the struct uses the Linux layout.
+  - It is what D-Bus EXTERNAL authentication and libwayland's `wl_os_socket_peercred()` read.
+  - Test `test-libc-unix-socket` `peercred_*` (tests `73531f5`): 3/3 FAIL on the old kernel (`ENOPROTOOPT`), 3/3 PASS,
+    49/0 overall. Same code upstream.
 - ★ **`getsockname()`/`getpeername()` work on AF_UNIX sockets** (`posix/usocket.c`, `9744388c`, `482f11be`). Both
   returned 0 without writing the address, so dbus-daemon never recognised a UNIX socket and **no D-Bus connection on
   Phoenix could pass file descriptors** (P12; GLib's second-instance forwarding died on it). A socket now keeps its
