@@ -7,8 +7,8 @@
 # Two modes, picked by where it runs (VIDEO_MODE=auto, the default):
 #   wl   a Wayland desktop is up (a wayland-N socket in $XDG_RUNTIME_DIR, default /tmp/xdg:
 #        /bin/xfce-session-2 or labwc): /usr/bin/ffplay-wl in a window, SDL's Wayland video
-#        driver, the session's environment. ffplay-wl needs M8's SDL with the Wayland backend;
-#        until it is staged this mode refuses (ffplay-drm would take card0 from labwc).
+#        driver (M8's SDL build), the session's environment. Without ffplay-wl this mode
+#        refuses: ffplay-drm would take card0 from labwc.
 #   drm  no desktop (the psh prompt): /usr/bin/ffplay-drm full screen through SDL KMSDRM. The
 #        render server and rpi4-kms are started first when they are not running (as
 #        /bin/xfce-session does); they stay up afterwards.
@@ -91,6 +91,8 @@ case "${MODE}" in
 		fi
 		export WAYLAND_DISPLAY="${sock}"
 		export SDL_VIDEODRIVER=wayland
+		# the xdg-toplevel app_id (labwc window rules), as /bin/game-window.sh does
+		export SDL_VIDEO_WAYLAND_WMCLASS=${SDL_VIDEO_WAYLAND_WMCLASS:-ffplay}
 		# the session's settings (xfce-desktop.sh / labwc-xfce-demo/environment)
 		export XDG_SESSION_TYPE=wayland
 		export XKB_DEFAULT_LAYOUT=${XKB_DEFAULT_LAYOUT:-us}

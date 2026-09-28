@@ -9,10 +9,10 @@
 #   --sdl drm  (default) tools/gpu-lane/sdl2-drm/build-out: SDL's KMSDRM video driver on Mesa
 #              GBM/EGL (desktop-GL build) + libdrm-phoenix. Full screen only: run from psh, not
 #              under a Wayland compositor (it would fight labwc for card0). -> ffplay-drm
-#   --sdl wl   M8's SDL with the Wayland video driver (tools/gpu-lane/sdl2-wl, NOT BUILT YET):
-#              windowed on the XFCE/labwc desktop. -> ffplay-wl. The link line of that build
-#              (Mesa's EGL wayland platform + libwayland-client) is M8's; this script refuses
-#              until its build-out exists.
+#   --sdl wl   M8's SDL (tools/gpu-lane/sdl2-wl/build-out) with the Wayland AND the KMSDRM video
+#              drivers on Mesa's EGL wayland platform (desktop-GL build): a window on the
+#              XFCE/labwc desktop (SDL_VIDEODRIVER=wayland), or full screen from psh
+#              (SDL_VIDEODRIVER=KMSDRM). -> ffplay-wl. Linked from sdl2-wl's link-inputs.txt.
 #
 # Only LGPL components: no --enable-gpl, no --enable-nonfree (ffplay.c, cmdutils.c and
 # opt_common.c are LGPL-2.1-or-later). Audio goes through SDL's Phoenix driver (sdl2-drm
@@ -78,8 +78,7 @@ case "${variant}" in
 	drm) sdl_out="${root}/tools/gpu-lane/sdl2-drm/build-out" ;;
 	wl)
 		sdl_out="${root}/tools/gpu-lane/sdl2-wl/build-out"
-		[ -d "${sdl_out}" ] || die "--sdl wl: ${sdl_out} does not exist yet (M8 builds SDL with the Wayland backend there)"
-		die "--sdl wl: the link line for M8's SDL is not written yet -- add it from sdl2-wl's own link once it exists"
+		[ -f "${sdl_out}/link-inputs.txt" ] || die "--sdl wl: no ${sdl_out}/link-inputs.txt (run tools/gpu-lane/sdl2-wl/build.sh)"
 		;;
 	*) die "--sdl must be drm or wl" ;;
 esac
@@ -92,12 +91,9 @@ S="${B}/sysroot"
 TC="${root}/.toolchain/aarch64-phoenix/bin/aarch64-phoenix"
 PHXCXX="${root}/tools/gpu-lane/e7-drm-build/bin/phx-g++"
 SP="${sdl_out}/sdl-prefix"
-M="${sdl_out}/mesa-gl"
-MB="${M}/mesa-build"
 GLUE="${here}/ffplay_phoenix_glue.c"
 for p in "${FF_TARBALL}" "${S}/lib/libphoenix.a" "${TC}-gcc" "${TC}-nm" "${TC}-strip" "${TC}-readelf" "${PHXCXX}" \
-		"${B}/lib/libz.a" "${SP}/lib/libSDL2.a" "${SP}/include/SDL2/SDL_config.h" "${M}/libdrm-prefix/lib/libdrm.a" \
-		"${M}/compat/libmesadrm-compat.a" "${GLUE}"; do
+		"${B}/lib/libz.a" "${SP}/lib/libSDL2.a" "${SP}/include/SDL2/SDL_config.h" "${GLUE}"; do
 	[ -e "${p}" ] || die "missing ${p}"
 done
 [ "$(sha256sum "${FF_TARBALL}" | cut -d' ' -f1)" = "${FF_SHA256}" ] || die "${FF_TARBALL}: sha256 mismatch"
@@ -168,49 +164,75 @@ log "  config.h: pthreads, NEON, avfilter/swscale/swresample, h264/hevc/aac, mov
 # --- 3. libraries + the ffplay objects ------------------------------------------------------------
 log "ffmpeg libraries (-j${jobs})"
 make -C "${FS}" -j"${jobs}" > "${out}/ff-make.log" 2>&1 || { grep -E -B2 -A6 'error' "${out}/ff-make.log" | head -60; die "ffmpeg build failed"; }
-log "  $(grep -c 'warning:' "${out}/ff-make.log" || true) compiler warning line(s) (${out}/ff-make.log)"
+log "  $(grep -c "warning:" "${out}/ff-make.log" || true) compiler warning line(s) in this make run (${out}/ff-make.log)"
 # ffplay.c includes <SDL.h>: SDL's headers only for the fftools objects (ffmpeg's own Makefile
 # does the same through CFLAGS-ffplay). The pattern rule builds them although CONFIG_FFPLAY=no.
+# (the fftools objects are compiled against the chosen SDL's headers: rebuilt on a variant switch)
+if [ "$(cat "${out}/fftools.variant" 2>/dev/null || true)" != "${variant}" ]; then
+	rm -f "${FS}"/fftools/*.o
+	echo "${variant}" > "${out}/fftools.variant"
+fi
 make -C "${FS}" ECFLAGS="-I${SP}/include/SDL2" fftools/ffplay.o fftools/cmdutils.o fftools/opt_common.o \
 	> "${out}/ff-fftools.log" 2>&1 || { tail -40 "${out}/ff-fftools.log"; die "fftools compile failed"; }
 GLUE_O="${out}/ffplay_phoenix_glue.o"
 "${TC}-gcc" -O2 -g -std=gnu17 -Wall -Wextra -Werror "${TFLAGS[@]}" -c "${GLUE}" -o "${GLUE_O}" || die "glue compile failed"
 
 # --- 4. link ----------------------------------------------------------------------------------
-# The quakespasm-drm shape (sdl2-drm/build.sh step 4): C++ driver (Mesa's compiler is C++),
-# -static, --gc-sections, 4 KiB pages, --wrap=mmap for libdrm-phoenix's BO-token mmap, libgallium
-# whole-archive, libSDL2 + Mesa + libdrm + libz in one group. Plus --wrap=pthread_create (the
-# glue above: 8 MiB default thread stacks) and a 16 MiB main stack.
-A=(src/egl/libEGL.a src/gbm/libgbm.a src/gbm/backends/dri/dri_gbm.a
-	src/mesa/glapi/shared-glapi/libglapi.a src/gallium/drivers/v3d/libv3d.a
-	src/gallium/drivers/v3d/libv3d-v42.a src/gallium/drivers/v3d/libv3d-v71.a
-	src/broadcom/libbroadcom-v42.a src/broadcom/libbroadcom-v71.a src/broadcom/qpu/libbroadcom_qpu.a
-	src/broadcom/libv3d_neon.a src/broadcom/perfcntrs/libv3d-perfcntrs-v42.a
-	src/broadcom/perfcntrs/libv3d-perfcntrs-v71.a src/gallium/winsys/kmsro/drm/libkmsrowinsys.a
-	src/gallium/winsys/v3d/drm/libv3dwinsys.a src/gallium/winsys/vc4/drm/libvc4winsys.a
-	src/gallium/winsys/sw/kms-dri/libswkmsdri.a src/gallium/winsys/sw/dri/libswdri.a
-	src/util/libmesa_util.a src/util/libmesa_util_simd.a src/util/blake3/libblake3.a
-	src/c11/impl/libmesa_util_c11.a)
-AA=()
-for a in "${A[@]}"; do
-	if [ -f "${MB}/${a}" ]; then AA+=("${MB}/${a}"); else log "  (archive not built: ${a})"; fi
-done
-GL_BRIDGE="${MB}/src/mesa/glapi/glapi/libglapi_bridge.a"
-[ -f "${GL_BRIDGE}" ] || die "missing ${GL_BRIDGE}"
-GALLIUM_A="$(ls "${MB}"/src/gallium/targets/dri/libgallium-*.a)"
+# The quakespasm-drm / quakespasm-wl shape: C++ driver (Mesa's compiler is C++), -static,
+# --gc-sections, 4 KiB pages, libgallium whole-archive, SDL + Mesa (desktop-GL set: SDL's
+# renderer may pick its OpenGL or its GLES2 back end) + libdrm (+ the Wayland client stack) + libz
+# in one group, the SDL build's --wrap flags (libdrm-phoenix's mmap, and for Wayland its ioctl +
+# the compat layer's close/write). Plus --wrap=pthread_create (the glue: 8 MiB default thread
+# stacks) and a 16 MiB main stack.
+if [ "${variant}" = drm ]; then
+	M="${sdl_out}/mesa-gl"
+	MB="${M}/mesa-build"
+	A=(src/egl/libEGL.a src/gbm/libgbm.a src/gbm/backends/dri/dri_gbm.a
+		src/mesa/glapi/shared-glapi/libglapi.a src/gallium/drivers/v3d/libv3d.a
+		src/gallium/drivers/v3d/libv3d-v42.a src/gallium/drivers/v3d/libv3d-v71.a
+		src/broadcom/libbroadcom-v42.a src/broadcom/libbroadcom-v71.a src/broadcom/qpu/libbroadcom_qpu.a
+		src/broadcom/libv3d_neon.a src/broadcom/perfcntrs/libv3d-perfcntrs-v42.a
+		src/broadcom/perfcntrs/libv3d-perfcntrs-v71.a src/gallium/winsys/kmsro/drm/libkmsrowinsys.a
+		src/gallium/winsys/v3d/drm/libv3dwinsys.a src/gallium/winsys/vc4/drm/libvc4winsys.a
+		src/gallium/winsys/sw/kms-dri/libswkmsdri.a src/gallium/winsys/sw/dri/libswdri.a
+		src/util/libmesa_util.a src/util/libmesa_util_simd.a src/util/blake3/libblake3.a
+		src/c11/impl/libmesa_util_c11.a)
+	GROUP=()
+	for a in "${A[@]}"; do
+		if [ -f "${MB}/${a}" ]; then GROUP+=("${MB}/${a}"); else log "  (archive not built: ${a})"; fi
+	done
+	GROUP+=("${MB}/src/mesa/glapi/glapi/libglapi_bridge.a" "${M}/libdrm-prefix/lib/libdrm.a" \
+		"${M}/compat/libmesadrm-compat.a" "${B}/lib/libz.a")
+	GALLIUM_A="$(ls "${MB}"/src/gallium/targets/dri/libgallium-*.a)"
+	LFLAGS=(-Wl,--wrap=mmap)
+	MESA_INFO="$(cat "${M}/mesa-src.stamp") opengl=$(sed 's/opengl=//' "${M}/mesa-opengl.txt") (${M})"
+else
+	# sdl2-wl's relink contract (its build.sh writes it for the games' relink scripts): one item
+	# per line in link order -- gallium, sdl, mesa-gl..., mesa-es..., tail..., flag...
+	LI="${sdl_out}/link-inputs.txt"
+	GALLIUM_A="$(awk '$1 == "gallium" { print $2 }' "${LI}")"
+	[ "$(awk '$1 == "sdl" { print $2 }' "${LI}")" = "${SP}/lib/libSDL2.a" ] || die "${LI}: sdl is not ${SP}/lib/libSDL2.a"
+	mapfile -t GROUP < <(awk '$1 == "mesa-gl" || $1 == "tail" { print $2 }' "${LI}")
+	mapfile -t LFLAGS < <(awk '$1 == "flag" { print $2 }' "${LI}")
+	MESA_INFO="$(sed -n 's/^Mesa: *//p' "${sdl_out}/BUILD-INFO.txt")"
+fi
+[ -f "${GALLIUM_A}" ] || die "missing libgallium (${GALLIUM_A})"
+for a in "${GROUP[@]}"; do [ -f "${a}" ] || die "missing ${a}"; done
 FF_A=("${FS}/libavfilter/libavfilter.a" "${FS}/libavformat/libavformat.a" "${FS}/libavcodec/libavcodec.a"
 	"${FS}/libswresample/libswresample.a" "${FS}/libswscale/libswscale.a" "${FS}/libavutil/libavutil.a")
 for a in "${FF_A[@]}"; do [ -f "${a}" ] || die "missing ${a}"; done
 BIN="${out}/ffplay-${variant}"
 log "ffplay-${variant}: link"
-"${PHXCXX}" "${TFLAGS[@]}" -static -Wl,--gc-sections -Wl,-z,max-page-size=0x1000 -Wl,--wrap=mmap \
+"${PHXCXX}" "${TFLAGS[@]}" -static -Wl,--gc-sections -Wl,-z,max-page-size=0x1000 "${LFLAGS[@]}" \
 	-Wl,--wrap=pthread_create -Wl,-z,stack-size=16777216 -Wl,-Map,"${BIN}.map" -o "${BIN}" \
 	"${FS}/fftools/ffplay.o" "${FS}/fftools/cmdutils.o" "${FS}/fftools/opt_common.o" "${GLUE_O}" \
 	-Wl,--whole-archive "${GALLIUM_A}" -Wl,--no-whole-archive \
-	-Wl,--start-group "${FF_A[@]}" "${SP}/lib/libSDL2.a" "${GL_BRIDGE}" "${AA[@]}" "${M}/libdrm-prefix/lib/libdrm.a" \
-	"${M}/compat/libmesadrm-compat.a" "${B}/lib/libz.a" -Wl,--end-group -lm > "${out}/ffplay-link-${variant}.log" 2>&1 \
-	|| { head -60 "${out}/ffplay-link-${variant}.log"; die "ffplay link failed"; }
-[ -s "${out}/ffplay-link-${variant}.log" ] && sed 's/^/  link: /' "${out}/ffplay-link-${variant}.log" | head -20
+	-Wl,--start-group "${FF_A[@]}" "${SP}/lib/libSDL2.a" "${GROUP[@]}" -Wl,--end-group -lm \
+	> "${out}/ffplay-link-${variant}.log" 2>&1 || { head -60 "${out}/ffplay-link-${variant}.log"; die "ffplay link failed"; }
+# (libphoenix's "is not fully supported" attribute notes and its dlopen/getpw* stubs are expected)
+nlw="$(grep -v -E 'warning: .*(is not fully supported|dlopen|getpwnam|getpwuid|getgrnam|initgroups)' \
+	"${out}/ffplay-link-${variant}.log" | grep -c 'warning' || true)"
+log "  link warnings beyond libphoenix's notes: ${nlw} (${out}/ffplay-link-${variant}.log)"
 "${TC}-strip" -o "${BIN}.stripped" "${BIN}"
 
 # --- 5. verification --------------------------------------------------------------------------
@@ -221,14 +243,22 @@ und="$("${TC}-nm" -u "${BIN}" || true)"
 log "  undefined symbols (nm -u): $(grep -c . <<< "${und}" || true)"
 [ -n "${und}" ] && { sed 's/^/    /' <<< "${und}" | head -20; bad=1; }
 syms="$("${TC}-nm" "${BIN}")"
-for s in main video_thread audio_thread read_thread sdl_audio_callback __wrap_pthread_create __wrap_mmap \
-		KMSDRM_CreateDevice SDL_EGL_LoadLibrary SDL_PHOENIX_HID_Poll ff_hevc_decoder ff_h264_decoder ff_aac_decoder \
-		ff_mov_demuxer ff_matroska_demuxer ff_vf_scale ff_af_aresample swr_convert sws_scale v3d_drm_screen_create_renderonly; do
+want_syms=(main video_thread audio_thread read_thread sdl_audio_callback __wrap_pthread_create __wrap_mmap
+	KMSDRM_CreateDevice SDL_EGL_LoadLibrary ff_hevc_decoder ff_h264_decoder ff_aac_decoder
+	ff_mov_demuxer ff_matroska_demuxer ff_vf_scale ff_af_aresample swr_convert sws_scale v3d_drm_screen_create_renderonly)
+if [ "${variant}" = drm ]; then
+	want_syms+=(SDL_PHOENIX_HID_Poll)
+else
+	want_syms+=(Wayland_CreateDevice wl_display_connect wl_egl_window_create xkb_context_new __wrap_ioctl __wrap_close memfd_create)
+fi
+for s in "${want_syms[@]}"; do
 	if grep -qE " [TtWwDdRr] ${s}\$" <<< "${syms}"; then log "  symbol ${s}: yes"; else log "  symbol ${s}: NO"; bad=1; fi
 done
 strs="$(strings -a "${BIN}.stripped")"
-for s in 'KMS/DRM Video Driver' '/dev/dri/' 'libdrm-phoenix:' '/dev/kbd0' '/dev/audio0' 'EGL_KHR_platform_gbm' 'V3D 4.2' \
-		'FFPLAY_THREAD_STACK' 'Simple media player' 'ffplay-stat t=' 'FFPLAY_AUTOKEYS'; do
+want_strs=('KMS/DRM Video Driver' '/dev/dri/' 'libdrm-phoenix:' '/dev/audio0' 'EGL_KHR_platform_gbm' 'V3D 4.2'
+	'FFPLAY_THREAD_STACK' 'Simple media player' 'ffplay-stat t=' 'FFPLAY_AUTOKEYS')
+if [ "${variant}" = drm ]; then want_strs+=('/dev/kbd0'); else want_strs+=('WAYLAND_DISPLAY' 'xdg_wm_base' 'EGL_KHR_platform_wayland'); fi
+for s in "${want_strs[@]}"; do
 	n=$(grep -cF -- "${s}" <<< "${strs}" || true)
 	log "  strings '${s}': ${n}"
 	[ "${n}" != 0 ] || bad=1
@@ -242,9 +272,9 @@ done
 	echo "built:              $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 	echo "variant:            ${variant} (SDL from ${sdl_out})"
 	echo "ffmpeg:             ${FF_VERSION} port tarball ($(sha "${FF_TARBALL}")), configure set ${stamp}, LGPL"
-	echo "SDL:                $(sed -n 2p "${sdl_out}/BUILD-INFO.txt" | sed 's/^SDL: *//')"
+	echo "SDL:                $(sed -n 's/^SDL: *//p' "${sdl_out}/BUILD-INFO.txt")"
 	echo "libSDL2.a:          $(sha "${SP}/lib/libSDL2.a")"
-	echo "Mesa:               $(cat "${M}/mesa-src.stamp") opengl=$(cat "${M}/mesa-opengl.txt" | sed 's/opengl=//')"
+	echo "Mesa:               ${MESA_INFO}"
 	echo "glue:               $(sha "${GLUE}") (--wrap=pthread_create, 8 MiB default thread stack)"
 	echo "ffplay-${variant}:         $(sha256sum "${BIN}" | cut -d' ' -f1) $(stat -c %s "${BIN}") bytes"
 	echo "ffplay-${variant}.stripped: $(sha256sum "${BIN}.stripped" | cut -d' ' -f1) $(stat -c %s "${BIN}.stripped") bytes"

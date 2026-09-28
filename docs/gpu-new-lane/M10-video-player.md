@@ -10,7 +10,7 @@ scaling, our ffmpeg port for the codecs (CPU) and, ideally, the rpivid HEVC hard
 | Piece | State |
 |---|---|
 | `ffplay-drm` — ffplay on SDL KMSDRM (full screen, from psh) | ✅ built + staged, host control PASS; Pi cycle `m10a0-ffplay-drm` pending |
-| `ffplay-wl` — ffplay in a window on the desktop | ⏳ **blocked on M8** (SDL with the Wayland video driver, `tools/gpu-lane/sdl2-wl/`, not built yet) — a relink, not new work |
+| `ffplay-wl` — ffplay in a window on the desktop | ✅ built + staged against M8's SDL (Wayland + KMSDRM drivers, `tools/gpu-lane/sdl2-wl/`); Pi cycle `m10a-ffplay` after M8's `m8a-quake-window` |
 | `/bin/video-play` launcher (picks Wayland or KMSDRM) | ✅ staged |
 | test clips (synthetic, 4 codecs) | ✅ staged in `/usr/share/m10/` |
 | GUI player with buttons + seek bar | 📋 recommended: a small GTK3 player of our own (§1e); not started in this pass |
@@ -34,9 +34,10 @@ harfbuzz/freetype/fribidi/fontconfig from the GTK build; the `lua` port is **5.4
   libavcodec, libswresample, libswscale, libavutil → SDL2 (video: KMSDRM now, Wayland on M8;
   renderer: SDL's GL/GLES2 renderer, YUV textures converted in its shader; audio: SDL's Phoenix
   driver) → Mesa (GBM/EGL/GL) + libdrm-phoenix → libphoenix. No new library.
-* **Effort:** done here (≈ 1 h, §5). The Wayland build is a relink against M8's `libSDL2.a` +
-  Mesa's wayland EGL + libwayland-client/xkbcommon, once M8 has it.
-* **Verdict:** ship it as the fullscreen demo player now; the windowed desktop player later with M8.
+* **Effort:** done here (≈ 1 h, §3). The Wayland build is a relink against M8's `libSDL2.a` +
+  Mesa's wayland EGL + libwayland-client/xkbcommon (done, §3.1).
+* **Verdict:** ship it: full screen from psh (`ffplay-drm`) and in a window on the desktop
+  (`ffplay-wl`) — the demo player with keyboard controls.
 
 ### (b) mpv (+ its Lua OSC)
 
@@ -104,13 +105,13 @@ harfbuzz/freetype/fribidi/fontconfig from the GTK build; the `lua` port is **5.4
   path Mesa's wayland EGL closure (as weston-simple-egl) + libepoxy ✅. **No dependency on M8.**
 * **Effort:** ~1000 lines of C, 1–2 agent days to a first Pi cycle; the cairo fallback first
   (no GL risk), then GtkGLArea.
-* **Verdict:** **recommended.** It is the only path that gives buttons + a seek bar *in a window
-  on the desktop today* without waiting for M8 or porting a library stack; everything under it is
-  already Pi-proven (GTK 3 Wayland programs, the FFmpeg decoders, `/dev/audio0`), and it is the
-  natural host for the zero-copy HEVC path of §4 (GL texture from the rpivid buffer).
+* **Verdict:** **recommended.** It is the cheapest path to **real controls — buttons, a seek bar,
+  time labels, a fullscreen button — in a window on the desktop** without porting a library stack
+  (libass, Lua, GStreamer); everything under it is already Pi-proven (GTK 3 Wayland programs, the
+  FFmpeg decoders, `/dev/audio0`), and it is the natural host for the zero-copy HEVC path of §4
+  (GL texture from the rpivid buffer).
 
-**Recommendation:** (a) now for full screen (done); (a) windowed as soon as M8's SDL exists;
-**(e) as the GUI player**; (b) only if a richer player is wanted later (then (c) on top of it).
+**Recommendation:** (a) now, full screen and windowed (both built); **(e) as the GUI player**; (b) only if a richer player is wanted later (then (c) on top of it).
 
 ## 2. Audio
 
@@ -146,6 +147,17 @@ harfbuzz/freetype/fribidi/fontconfig from the GTK build; the `lua` port is **5.4
 
 ### 3.1 Results
 
+**`ffplay-wl`** (`build-ffplay.sh --sdl wl`, linked from `sdl2-wl/build-out/link-inputs.txt` — M8's
+relink contract: gallium, sdl, mesa-gl, tail, flag lines): **`ffplay-wl.stripped`
+`09a662206f6910b20e926c62381fce69d7ad9fab64358eff3ff79b090857ab4f`** (23 301 896 bytes); SDL
+`libSDL2.a` `543aef39ed9a498d` (set `afda850993ea66ad` = sdl2-drm 0001–0009 + overlay + sdl2-wl
+0101–0103: **Wayland and KMSDRM** drivers), Mesa `mesa-drm/build-out-wayland-gl` (opengl + wayland,
+libgallium `0bc87a0e9e839bed`), libwayland-client/egl/cursor + xkbcommon + the compat layer from
+labwc-drm; flags `--wrap=mmap,ioctl,close,write`. `nm -u` 0, 0 link warnings beyond libphoenix's
+notes, `Wayland_CreateDevice`/`wl_display_connect`/`wl_egl_window_create`/`xkb_context_new`
+present, every `pthread_create` caller routed through the glue. After this refactor the drm
+variant relinks **byte-identical** (`8116cfd0…`).
+
 * `ffplay-drm` (unstripped) and **`ffplay-drm.stripped` `8116cfd0b8770cb6d571bc33b033b4f13fb4127567f750d7936f2fdf5e1f79e9`**
   (22 830 456 bytes); ffmpeg configure set `504e01a6c405825c`; SDL `libSDL2.a` `7a1de5d1354967c2`
   (patch/overlay set `d145b0e6297ef6e4`, the stk-drm/quakespasm-drm one); Mesa `4a457a1efe6f3903` opengl=true.
@@ -163,28 +175,29 @@ harfbuzz/freetype/fribidi/fontconfig from the GTK build; the `lua` port is **5.4
 | Path | sha256 |
 |---|---|
 | `/usr/bin/ffplay-drm` | `8116cfd0b8770cb6d571bc33b033b4f13fb4127567f750d7936f2fdf5e1f79e9` |
-| `/bin/video-play` | `9e824c6fb219a182c2466f0841dffa2c108d1d90480afc68826de9d05c75a4ec` |
+| `/usr/bin/ffplay-wl` | `09a662206f6910b20e926c62381fce69d7ad9fab64358eff3ff79b090857ab4f` |
+| `/bin/video-play` | `c62894e63cc9b5e6196916a129d2cd7799f8b718471ba5bf4ac520d0d6b8e66a` |
 | `/usr/share/m10/m10-h264-720p30-aac.mp4` (45 s, 1280×720 H.264 Main + AAC 44.1k, 18.4 MB) | `68a9bd9451960432b7ebed38fabb16eb7cc7ce845d844c3cf5180efc782bb73e` |
 | `/usr/share/m10/m10-h264-1080p30-aac.mp4` (30 s, 1920×1080 H.264 High + AAC, 24.7 MB) | `0c1a44e0d028b735fe3fdf4b0aa1045ff22bd2ced2e83e3cd94d0e90c10bcf08` |
 | `/usr/share/m10/m10-hevc-720p30-aac.mp4` (30 s, 1280×720 HEVC Main **in the rpivid subset** + AAC, 16.2 MB) | `2ff9bc143e3ac383fc7eb53150ad0533c4064349dfca733e0ebfdf9ae8be9727` |
 | `/usr/share/m10/m10-vp9-360p-opus.webm` (20 s, 640×360 VP9 + Opus 48k, 2.1 MB) | `f438af1067e7fbc559fce2a6c3fe595108ce53e5f2205240061f3ada1e504b7c` |
 | `/usr/share/m10/labwc-xfce-m10/{autostart,rc.xml,menu.xml,environment}` | autostart `4ef16ab6…`; the other three copied from `/etc/xdg/labwc-xfce-demo/` |
 
-`/usr/bin/ffplay-wl` is **not** staged (does not exist yet). Existing HEVC streams from the rpivid
+Existing HEVC streams from the rpivid
 work are also on the export: `/usr/share/demo/{showcase1080,reel-motion720,hd1080b}.265` (raw
 Annex-B; ffplay reads them with the `hevc` demuxer, at 25 fps nominal).
 
 `/bin/video-play <file> [ffplay options]`: with a Wayland socket in `/tmp/xdg` it runs
-`ffplay-wl` with `SDL_VIDEODRIVER=wayland` (and refuses with `VIDEO-PLAY FAIL mode=wl … not staged`
-until M8 — `ffplay-drm` would take card0 from labwc); otherwise it starts the render server and
+`ffplay-wl` with `SDL_VIDEODRIVER=wayland` and `SDL_VIDEO_WAYLAND_WMCLASS=ffplay` (the app_id), as
+M8's `/bin/game-window.sh` does (without `ffplay-wl` it refuses: `ffplay-drm` would take card0 from
+labwc); otherwise it starts the render server and
 `rpi4-kms` if missing (xfce-session-2's commands, without `-C`) and runs `ffplay-drm -fs`.
 Knobs: `VIDEO_MODE`, `FS`, `THREADS`, `LOOP`, `AUTOEXIT`, `STATLINE_MS` (default 2000),
 `FFPLAY_AUTOKEYS`. Lines: `VIDEO-PLAY start … / VIDEO-PLAY done rc=`.
 
 Rebuild: `tools/gpu-lane/video-player/build-ffplay.sh` (≈ 1 min incremental, ≈ 2 min clean);
-`gen-clips.sh`; `hosttest/run.sh`. Relink for Wayland: `build-ffplay.sh --sdl wl` — refuses until
-`tools/gpu-lane/sdl2-wl/build-out` exists; its link line is then M8's (Mesa's `build-out-wayland-gl`
-EGL + libwayland-client/cursor/egl + xkbcommon instead of GBM-only).
+`gen-clips.sh`; `hosttest/run.sh`. Wayland: `build-ffplay.sh --sdl wl` (the ffmpeg libraries are
+shared; the fftools objects are recompiled on a variant switch).
 
 The ffmpeg **port** (`sources/phoenix-rtos-ports/ffmpeg`) is unchanged: it stays the decode-only
 library port. Folding the player configuration in (a `ffplay_drm` port, or `ffmpeg` with the extra
@@ -310,11 +323,11 @@ rpivid path must beat)?
 | HDMI | the mandelbrot zoom full screen; the showcase clip | — |
 | faults | 0 | addr2line |
 
-### `m10a-ffplay` — ffplay windowed on the XFCE desktop, then full screen (**gated on M8**)
+### `m10a-ffplay` — ffplay windowed on the XFCE desktop, then full screen (after `m8a-quake-window`)
 
-**Blocked until `/usr/bin/ffplay-wl` exists** (M8's SDL with the Wayland video driver, then
-`build-ffplay.sh --sdl wl`). Until then the launcher prints `VIDEO-PLAY FAIL mode=wl … not
-staged` and exits 3 — which is itself the prediction if this cycle is run early.
+Runnable (`ffplay-wl` is staged), but **sequence it after M8's `m8a-quake-window`**, which is the
+first Pi run of SDL's Wayland driver on this stack: a failure there must not be read as an ffplay
+fault.
 
 **Question:** does ffplay run as a Wayland client next to Thunar under `/bin/xfce-session-2`
 (labwc composited on V3D), windowed at the clip's size with scaling on resize, then full screen
@@ -336,8 +349,9 @@ through its own `f` key and through `-fs`?
 | # | Line / observation | Predicted | If instead… |
 |---|---|---|---|
 | 1 | the m7i session rows (servers, bus, `labwc … conf=/usr/share/m10/labwc-xfce-m10 files=rc.xml,menu.xml,autostart,environment`, `session up panel=registered`, Thunar) | the desktop comes up as in m7i | as m7i's table |
-| 2 | ~45 s later `VIDEO-PLAY start mode=wl player=/usr/bin/ffplay-wl … sock=wayland-0 video=wayland audio=phoenix fs=0` | the autostart launches it | `FAIL mode=wl … not staged`: M8 not delivered — the cycle is void, stop |
-| 3 | `ffplay-stat … win=1280x720 fs=0` | a 1280×720 xdg-toplevel **next to Thunar** (labwc places it; decorations by labwc) | `win=` other: SDL's size negotiation (record) |
+| 2 | ~45 s later `VIDEO-PLAY start mode=wl player=/usr/bin/ffplay-wl … sock=wayland-0 video=wayland audio=phoenix fs=0` | the autostart launches it | `FAIL mode=wl … not staged`: staging; `Could not initialize SDL - …`: the SDL Wayland init (compare with m8a's `quakespasm-wl` lines) |
+| 2b | `Input #0, mov,mp4…` + both streams, the stat lines advancing | the demuxer reads through the compat layer's `--wrap=close/write` (libavformat's `file` protocol uses plain fds; weston clients and quakespasm-wl link the same wraps) = pass-through | a demux error or short read **only in mode=wl** (the same clip plays in m10a0): the wrapper, not the demuxer |
+| 3 | `ffplay-stat … win=1280x720 fs=0` | ffplay creates its window `SDL_WINDOW_HIDDEN|RESIZABLE` at the stream size and shows it with the first frame: a 1280×720 xdg-toplevel **next to Thunar** (labwc places it and decorates it) | `win=` other: labwc's first configure chose the size (rc.xml window rules / placement), not an ffplay fault — record it; the picture still scales to the window, aspect kept |
 | 4 | fps 29–30 windowed; `drop_*` ≤ 2 % | the compositor path is not the bottleneck (m6i: a client scanned out at 60 fps; composited 30) | ~15 with `drop_late`: labwc's GLES2 composition rate (compare `labwc` damage/present lines); record against pixman (`export RENDERER=pixman`) |
 | 5 | autokeys: pause/unpause as in m10a0 row 6; `key=fs` at 25 → `fs=1 win=1920x1080` (xdg-toplevel fullscreen), at 35 → back to `fs=0 win=1280x720` | the fullscreen toggle through the compositor | `fs=1` but `win=1280x720`: labwc did not configure the fullscreen size (finding) |
 | 6 | arm 2 (`FS=1` → `-fs`): the first stat line already `fs=1 win=1920x1080` | fullscreen from the start | — |
@@ -356,4 +370,5 @@ corrupt frames counted separately.
 
 - 2026-09-28: evaluation (§1), audio (§2), HEVC design (§4). ffplay-drm built + host-tested +
   staged with the launcher and four synthetic clips; cycles `m10a0-ffplay-drm` and `m10a1-hevc-cpu`
-  runnable now, `m10a-ffplay` gated on M8's SDL Wayland build.
+  runnable now. M8's SDL (Wayland + KMSDRM) landed the same morning: `ffplay-wl` linked from its
+  `link-inputs.txt` and staged; `m10a-ffplay` runs after `m8a-quake-window`.
