@@ -1909,3 +1909,22 @@ Log `artifacts/rpi4b-uart/rpi4b-uart-20260928-005759-m7j-atril.log`; 0 exception
   - `xfce-desktop-atril.sh` is a copy of the m7h script, so the panel clock shows UTC. Launching Atril from
     `/bin/xfce-session` (menu entry or `atril-wl` in foot) gets local time.
   - The toolbar icons need `*/actions` listed in the hicolor `index.theme`.
+
+## Result — `m7k-gles2` (chain70, build 21b, 2026-09-28 01:45): ✅ PASS — XFCE on labwc **composited by the V3D (GLES2)** on HDMI
+
+Log `artifacts/rpi4b-uart/rpi4b-uart-20260928-014516-m7k-gles2.log`, servers `rpi4-v3d-async-low` + **`rpi4-kms-g8`**.
+- **Row 4, the one that failed on g7:** `why=foreign_kmsbuf` **0** (m7i and m7a2: 4 each).
+- **Row 5:** `alias=1` imports: 2.
+- **Row 7:** `view has no output`: 0.
+- **Row 8:** `console handover disable rc=0` in both arms.
+- `Creating GLES2 renderer` once, in arm A.
+- Both `XFCE-SESSION done rc=0`, 0 exceptions.
+- `KMSTEST stats … bos=0 exports=0`: the alias refcounts drain to zero, and the pool is fully freed.
+- **HDMI, arm A (gles2)** (`artifacts/hdmi/20260928-015445-m7k-gles2-tick.png`): the XFCE panel (local clock
+  `Mon 28 Sep 01:54`), the dithered wallpaper, and both Thunar windows (`/` and the second-instance `usr`), with the
+  status bar `2 files: 431.3 KiB (441685 bytes)`. The same scene as m7i arm A, but every pixel is composited by
+  the GPU.
+- **Arm B (pixman) on g8** (`…015846…`): identical to m7i arm A, so no regression. `015757` is black: the gap
+  between the two arms.
+- **The M7 GLES2 gap is closed.** Next: `/bin/xfce-session-2`, which starts `rpi4-kms-g8` and defaults to
+  `RENDERER=gles2`, keeping `/bin/xfce-session` (g7, pixman) unchanged.
