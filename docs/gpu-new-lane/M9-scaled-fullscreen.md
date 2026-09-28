@@ -375,12 +375,12 @@ probe, and a default-resolution game — at the native mode?
 
 | mode | predicted | measured | windows | exit |
 |---|---|---|---|---|
-| 1920×1080 | 11.9 | *(running)* | | |
+| 1920×1080 | 11.9 | **11.87** (control, native mode, no scaled line) | 54 | clean (`stk-drm: exit after …`; P16's stale read is still there, the page just didn't empty) |
 | 1600×900 | ~17 (15–18.5) | **16.61** | 37 | fault at exit |
 | 1280×720 | ~22 (19–25) | **22.26** | 33 | fault at exit |
 | 960×540 | ~24 (20–27) | **24.05** | 31 | fault at exit |
 
-- **The owner's answer: 1280×720 nearly doubles STK (1.87× the 1080p 11.9).**
+- **The owner's answer: 1280×720 nearly doubles STK (22.26 vs 11.87 = 1.88×); 1600×900 gives 1.40×.**
 - **The plateau is confirmed.** 960×540 is only 1.08× the 720p figure, so below 720p the CPU (~40 ms/frame) is the limit. A GPU-linear model would give ~48 fps.
 - Every run is scaled (`KMS mode … scaled`) and restores to native afterwards (`KMSTEST crtc rc=0 mode=1920x1080`).
 - **The exit fault is not M9's.** It is P16, a use-after-free in SDL 2.30.12's `KMSDRM_DestroySurfaces` (EGL surface destroyed before its locked GBM buffers are released), identical pc/far in all three runs; see [misc doc](../misc/2026-09-28-stk-scaled-exit-fault.md). The fix is upstream SDL `9cc2f248f5`, backported as sdl2-drm patch 0010; re-check `m9b-stk-{720,1080}-t10` is queued.
