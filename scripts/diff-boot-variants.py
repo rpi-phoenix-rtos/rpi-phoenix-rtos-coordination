@@ -11,7 +11,12 @@ This renders the real template with the real renderer's variables and prints,
 per variant, the program each `app` line launches -- then a table of who is
 missing what. Nothing is built; it only reads the template.
 
-  ./scripts/diff-boot-variants.py [--yaml <path>] [--verbose]
+  ./scripts/diff-boot-variants.py [--yaml <path>] [--verbose] [--order a,b,c]
+
+The environment is passed to the template, so knobs render as in a build, e.g.
+`RPI4B_GPU_LEGACY=1 ./scripts/diff-boot-variants.py`. Exits 1 if a program name is
+launched twice in one variant (plo registers one alias per name: a duplicate
+bricks that boot) or if --order names programs that start out of that order.
 
 Copyright 2026 Phoenix Systems
 SPDX-License-Identifier: BSD-3-Clause
@@ -68,6 +73,9 @@ def main():
     ap.add_argument("--verbose", action="store_true")
     ap.add_argument("--log-to-file", default="0",
                     help="RPI4_LOG_TO_FILE value to render with (default 0)")
+    ap.add_argument("--order", default="",
+                    help="comma-separated program names that must start in this order "
+                         "in every variant that launches them")
     args = ap.parse_args()
 
     doc = yaml.safe_load(open(args.yaml))
@@ -112,7 +120,22 @@ def main():
         print("which mountpoints exist) is a reason; 'nobody updated the other gate' is not.")
     else:
         print("No asymmetry: every program is launched in every variant.")
-    return 0
+
+    rc = 0
+    dups = [(v, n) for v in VARIANTS for n in sorted(set(names[v])) if names[v].count(n) > 1]
+    for v, n in dups:
+        print(f"DUPLICATE ALIAS: {n} is launched {names[v].count(n)}x in {v} (plo aborts the boot)")
+        rc = 1
+    want = [n for n in args.order.split(",") if n]
+    for v in VARIANTS:
+        seq = [n for n in names[v] if n in want]
+        expect = [n for n in want if n in names[v]]
+        if want and seq != expect:
+            print(f"ORDER: {v} starts {' -> '.join(seq)}, expected {' -> '.join(expect)}")
+            rc = 1
+        elif want:
+            print(f"order ok ({v}): {' -> '.join(seq)}")
+    return rc
 
 
 if __name__ == "__main__":

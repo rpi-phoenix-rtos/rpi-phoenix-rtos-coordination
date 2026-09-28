@@ -93,6 +93,15 @@ force=0
 # then run the ports stage with vkquake enabled.
 skip_vulkan=0
 skip_x11=0
+# GPU stack (GPU migration P1; rebuild-rpi4b-fast.sh passes it normalised to 0/1).
+# 0 = the default image: the new stack's programs come from the ports stage, so
+# phase stage builds none of the old stack's X pieces and removes the old stack's
+# binaries a previous legacy build left in the (persistent) staging tree. 1 = the
+# legacy image, as before. Phase gpu runs in both: see TD-25 in phase_gpu.
+case "$(printf '%s' "${RPI4B_GPU_LEGACY:-}" | tr '[:upper:]' '[:lower:]')" in
+	''|0|n|no|false) gpu_legacy=0 ;;
+	*) gpu_legacy=1 ;;
+esac
 
 usage() {
 	cat <<'EOF'
@@ -126,6 +135,9 @@ Options:
 Environment:
   RPI4B_BUILDROOT, RPI4B_TARGET, SHOWCASE_STAGE_DIR, MESA_V3D_BUILD,
   MESA_V3DV_BUILD, MESA_PYENV
+  RPI4B_GPU_LEGACY  1 = stage the legacy GPU stack's X pieces (xlaunch startx,
+                    Xphoenix-glamor-daemon, gl-x11-window-daemon); unset/0 = the
+                    default image: skip them and prune old-stack leftovers
 EOF
 }
 
@@ -300,6 +312,10 @@ ninja_mesa_soft() {
 
 phase_gpu() {
 	log "PHASE gpu — GPU/GL/Vulkan + Quake archives -> ${gpu_libs}"
+	# TODO(TD-25): the default image ships none of these archives, but it still needs
+	# them: yquake2_drm/quake3_drm/supertuxkart_drm relink the objects of the
+	# yquake2/quake3/supertuxkart ports, which link these archives and b_die without
+	# them. P3 folds the relink into the game ports and deletes this phase.
 	need_dir "$mesa_dir" "external/mesa — clone it (git clone the mesa fork into external/mesa)"
 	mkdir -p "$gpu_libs"
 
@@ -471,8 +487,41 @@ run_step_soft() {
 	fi
 }
 
+# The default image must not carry the legacy GPU stack, but the staging tree
+# _fs/<target>/root persists across builds (prepare-buildroot.sh protects it) and
+# the ports only ever ADD files, so a legacy build's binaries would survive into a
+# default image. Remove exactly the files only the legacy stack produces. The plain
+# command names it shares with the default stack (quakespasm, quake2, quake3,
+# vkquake, stk, startx, startx_gpu) are NOT listed: the ports stage has already
+# overwritten them with the new stack's programs (TD-26), and
+# scripts/check-gpu-stack-image.sh proves that for every one of them.
+# TODO(TD-24): goes with the legacy stack (P3).
+legacy_gpu_files=(
+	usr/bin/Xphoenix                 # xorg_server (kdrive fbdev DDX)
+	usr/bin/yquake2                  # yquake2  (in-process winsys, SDL fb0 backend)
+	usr/bin/quake3e                  # quake3
+	usr/bin/supertuxkart             # supertuxkart
+	bin/Xphoenix-glamor-daemon       # tools/x11-port glamor X server
+	bin/gl-x11-window-daemon         # tools/x11-port GL-in-X client
+	bin/pl_phoenix_xlaunch           # tools/x11-port xlaunch (the old startx/startx_gpu)
+	bin/fbprobe                      # /dev/fb0 probe (build-rootfs-helpers.sh, legacy only)
+	sbin/rpi4-v3d                    # old GPU daemon (devices, legacy only)
+	sbin/rpi4-fb                     # /dev/fb0 server (devices, legacy only; TD-27)
+)
+prune_legacy_gpu_stack() {
+	local f n=0
+	for f in "${legacy_gpu_files[@]}"; do
+		if [ -e "${stage_dir}/${f}" ] || [ -L "${stage_dir}/${f}" ]; then
+			rm -f "${stage_dir}/${f}"
+			log "pruned legacy GPU stack file ${f}"
+			n=$((n + 1))
+		fi
+	done
+	ok "legacy GPU stack pruned from ${stage_dir} (${n} file(s))"
+}
+
 phase_stage() {
-	log "PHASE stage — port libs + X11 + apps -> ${stage_dir}"
+	log "PHASE stage — port libs + X11 + apps -> ${stage_dir} (GPU stack: $([ "$gpu_legacy" = 1 ] && echo legacy || echo default))"
 	[ -d "${stage_dir}/bin" ] || die "staging tree ${stage_dir} has no bin/ — run this AFTER build.sh has populated the rootfs (fs/core stages)"
 
 	# Pre-create the data-file destinations the app scripts write into. Several
@@ -506,10 +555,13 @@ phase_stage() {
 	# deleting: nano/mc/dillo/python are framework ports; no X11 script references
 	# ncurses/glib2/libffi; build-pango.sh only mentions the glib prefix in a
 	# comment and is not invoked at all.
-	if [ "$skip_x11" = 0 ]; then
+	if [ "$skip_x11" = 0 ] && [ "$gpu_legacy" = 1 ]; then
 		# X11 lib stack stays: it provides zlib/png/jpeg + the X client libs to the
 		# small ad-hoc X apps (xedit/xcalc/...) out of /tmp/x11-phoenix.
+		# TODO(TD-24): its last consumers are the legacy X pieces below.
 		run_step "X11 lib stack" "${X11}/build-x11-phoenix.sh"
+	elif [ "$skip_x11" = 0 ]; then
+		log "X11 lib stack: not needed by the default GPU stack (its X server and clients are ports)"
 	else
 		warn "--skip-x11: skipping the X11 lib stack (the ad-hoc X apps will be skipped)"
 	fi
@@ -535,7 +587,8 @@ phase_stage() {
 	# steps are removed here too. Only the xlaunch/startx supervisor (a tiny in-repo
 	# C launcher, not an upstream tarball) stays ad-hoc. NOTE: framework Xphoenix
 	# lands at /usr/bin/Xphoenix (b_install) not /bin — launch with that path.
-	if [ "$skip_x11" = 0 ]; then
+	if [ "$skip_x11" = 0 ] && [ "$gpu_legacy" = 1 ]; then
+		# TODO(TD-24): the legacy GPU stack's X pieces (A/B image only).
 		run_step_soft "X11: xlaunch/startx"  "${X11}/build-xlaunch.sh"
 
 		# Concurrent-GPU (#13) daemon-client desktop apps: the glamor X server and the
@@ -570,6 +623,10 @@ phase_stage() {
 		fi
 		run_step_soft "X11: gl-x11-window-daemon (GPU window client)" "${X11}/build-gl-x11-window.sh" --daemon
 		if [ -f "${gpu_libs}/gl-x11-window-daemon" ]; then cp -v "${gpu_libs}/gl-x11-window-daemon" "${stage_dir}/bin/gl-x11-window-daemon"; else warn "gl-x11-window-daemon not built — skipped staging"; fi
+	fi
+
+	if [ "$gpu_legacy" = 0 ]; then
+		prune_legacy_gpu_stack
 	fi
 
 	if [ "${#soft_failures[@]}" -gt 0 ]; then
