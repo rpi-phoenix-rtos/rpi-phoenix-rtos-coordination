@@ -983,3 +983,17 @@ build (the clean-build release gate) and the §5 gate once more on that image.
 | `tools/gpu-lane/xorg-drm/pi/startx-drm` | the new-lane X desktop launcher (`action`/`wmaker`, `HOLD`, `--servers`), §6.6 |
 | `tools/gpu-lane/x11-drm/src/eglx11_demo.c` | USPosition/USSize WM hints from `-g`, `-t`/`XDEMO_TITLE`; built in `x11-drm/build-out-x` (§6.6) |
 | `docs/gpu-new-lane/MIGRATION.md` | this document |
+
+### 4.3 The new-lane ports are on phoenix-rtos-ports master (build 25, 2026-09-28 06:10)
+
+Both branches were merged into ports `master` (`0057f84`, pushed): `feat/new-lane-graphics-ports` (`78d3428`) and
+`feat/new-lane-wayland-ports` (`98e6f79`). Neither conflicted.
+- **Default image unchanged — verified by content.** The rootfs manifest (9 960 files and links, sha256 of each)
+  was taken before and after the build-25 merge. The diff, excluding `/etc/build-versions`, is 4 files: `bin/python3`,
+  `usr/bin/quake3e`, `usr/bin/quakespasm` and `usr/bin/vkquake`. No build-state line mentions any of them, and each
+  embeds its compile time (`quakespasm`: `Exe: 06:07:52 Sep 28 2026`). The showcase stage recompiles them on every
+  build: pre-existing non-reproducibility, not the merge. Follow-up: `SOURCE_DATE_EPOCH` for those four.
+- **Still to sync:** `check-gpu-lane-ports-sync.sh` and `check-wayland-ports-sync.sh` report drift.
+  - Graphics: vkquake patches 0008–0010 are not yet in `vkquake_drm/patches/`.
+  - Wayland: glib 0003, xfdesktop 0002 and the updated `xfce-desktop.sh` are not yet in the ports.
+  - These files changed in `tools/gpu-lane/` after the branches were cut. A ports commit copies them over.
