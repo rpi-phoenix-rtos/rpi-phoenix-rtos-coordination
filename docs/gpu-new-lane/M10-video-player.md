@@ -264,6 +264,14 @@ The ffmpeg **port** (`sources/phoenix-rtos-ports/ffmpeg`) is unchanged: it stays
 library port. Folding the player configuration in (a `ffplay_drm` port, or `ffmpeg` with the extra
 libraries) is a follow-up for the coordinator, on a ports branch.
 
+### 3.4 Pi results (2026-09-28)
+
+| Cycle | Verdict | What the log shows |
+|---|---|---|
+| `m10a-ffplay` (windowed, `ffplay-wl` under `/bin/xfce-session-2`) | **PASS, all 9 rows** | arm 1: `win=1280x720 fs=0` next to Thunar, **29.8–30.3 fps**, drop_late 10 of 1100 shown (0.9 %; the 21 drop_early are the first second); pause at 15 s holds `clock=14.49` over two stat lines (`paused=1`), unpause at 19 s; `key=fs` at 25 s → `fs=1 win=1920x1080` at 27.9–30.3 fps, at 35 s back to `fs=0 win=1280x720`; `key=quit` → `VIDEO-PLAY done rc=0 t=48`. Arm 2 (`-fs`): `fs=1 win=1920x1080` from the first stat line, 29.8–30.3 fps, quit → `done rc=0 t=34`. Both `XFCE-SESSION done rc=0`, 0 faults. HDMI: the decorated video window over Thunar with the panel listing both (`artifacts/hdmi/20260928-114715-m10a-ffplay-tick.png`, paused frame `…114726…` at clip time 14.500), full screen with the panel hidden at clip times 24.9 and 30.2 s (`…114737…`, `…114742…`), Thunar alone after quit |
+| `m10a0-ffplay-drm` (full screen from psh, KMSDRM) | **plays; FAIL on quit** | 720p H.264 + AAC at **29.3–30.5 fps** full screen (`win=1920x1080`, HVS scales), drop_late 3; pause 12→17 s holds the clock (11.58→11.56), `right` at 20 s seeks +10 s, `fs` toggles; **`key=quit` at 40 s never returns** (no `VIDEO-PLAY done`), so the 1080p and VP9 arms did not run. The same keypress quits cleanly on Wayland (above), so the hang is in SDL's KMSDRM teardown — the P16 path (SDL 0010). Fix + `-autoexit` in the launcher: in progress |
+| `m10a1-hevc-cpu` (HEVC 720p, libavcodec's CPU decoder, 4 threads) | **real time; EOF stall** | 892 frames shown at **29.9–30.0 fps**, drop_late 4; at the clip's end ffplay sits at `shown=892 fps=0.0` (ffplay's default is to stay open at EOF — the launcher now needs `-autoexit`, not a decoder fault) |
+
 ## 4. rpivid HEVC in the player — design
 
 Facts (tools/hevc-decode, README + `hevc-m2.c`): a user process maps the block's MMIO
@@ -472,3 +480,6 @@ corrupt frames counted separately.
   fullscreen, `/dev/audio0` sound, cairo painting) written, built for Phoenix, host-tested on
   broadway (controls + all clips PASS, a pause mutant caught), staged with a `.desktop` entry;
   cycle `m10c-gtk-video` pre-registered.
+- 2026-09-28: **Pi results (§3.4).** `m10a-ffplay` PASS: ffplay-wl plays windowed next to Thunar at 30 fps, and
+  pause, seek, fullscreen and quit all work through the compositor. `m10a0` plays full screen at 30 fps but hangs on
+  quit (KMSDRM teardown = P16). `m10a1`: HEVC 720p decodes in real time on the CPU. `m10c-gtk-video` running.
