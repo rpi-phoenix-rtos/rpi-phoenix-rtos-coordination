@@ -363,3 +363,28 @@ KNOWN-ISSUES F1 keeps "≈ 3 MB/s each way" until cycle T produces n ≥ 3 media
   `/etc/wifi.conf`. Any `wifi connect` line added later should read
   `wifi connect PhoenixNet <psk from /srv/phoenix-rpi4-nfs-gcc16/etc/wifi.conf>`. Nothing outside
   this file was edited.
+
+## Result — cycle F (`fwbench-1..3`, chain69, 2026-09-28 02:03–02:11, `wifi/sdio-clock` `c2ff5a8`)
+
+| boot | first (cold) load | level: firmware started | legacy: firmware started | legacy `SDHCI-TIMEOUT` lines |
+|---|---|---|---|---|
+| fwbench-1 | level | **20/20** | 14/20 | 48, all `space=1 data=0 wr_rdy=0` |
+| fwbench-2 | legacy (`legacypio`) | **20/20** | 15/20 | 40, all `space=1 … wr_rdy=0` |
+| fwbench-3 | level | **20/20** | 16/20 | 32, all `space=1 … wr_rdy=0` |
+| **total** | | **60/60** | **45/60 (15 failures)** | 120, `space=0`: **0** |
+
+Grading against the pre-registered table:
+- **"any legacy `SDHCI-TIMEOUT … space=1 wr_rdy=0` ⇒ M1 confirmed (lost edge)": M1 CONFIRMED.** Every legacy
+  timeout has buffer space present and write-ready never raised. No `space=0` timeout occurred, so M2 (card stall
+  longer than the spin) is not seen.
+- **"level 0/60 failures and legacy ≥ 3/60 ⇒ the fix works on warm loads": MET**, 0/60 vs 15/60 (Fisher p ≈ 3e-5).
+  Level loads also show `slow_waits=0` on every load.
+- `SDIO-CLK measured=250000496 Hz` vs base 250 000 000 (+0.0002 %), `sd=399361` / `25000000`, as required. The a1
+  clock hypothesis stays refuted.
+- `SDHCI-POLL`: 100 000 reads in 1202–1203 µs = **12 ns/read**. This is the first direct measurement of the M2
+  budget at core 500.
+- ⚠ One `mailbox tag 0x00038041 timed out AFTER the doorbell` (fwbench-1, load 18) out of ~360 direct-FIFO
+  transactions in the three benches. It is the bench's own unarbitrated WL_REG_ON power cycle, the path this doc
+  warned about. The page was leaked on purpose, so the firmware's late write lands safely; no fault.
+- **Merge gate for `wifi/sdio-clock`:** cycle F passes. What remains is cycle N's bulk-TX level boots, the
+  run-time TX path. That is queued as `chain77` (3 level boots with the cycle-T perf command).
