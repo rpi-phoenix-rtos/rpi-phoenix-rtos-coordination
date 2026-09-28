@@ -78,7 +78,10 @@ else
 		usr/bin/quake3-drm
 		bin/vkq-drm
 		bin/stk-drm
-		# the plain command names (TD-26: copies of the -drm programs)
+		bin/qs-drm
+		# the M9 lower-resolution launcher (build-rootfs-helpers.sh)
+		bin/game-res
+		# the plain command names (TD-26: copies of the -drm programs and launchers)
 		usr/bin/quakespasm
 		usr/bin/vkquake
 		usr/bin/quake2

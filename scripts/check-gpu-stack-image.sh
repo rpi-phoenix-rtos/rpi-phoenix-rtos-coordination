@@ -13,11 +13,12 @@
 #
 # Checks, in order (each prints OK / FAIL lines, the summary counts FAILs):
 #   1. loader.disk: the three servers are in the boot blob (their ready-line format
-#      strings), the rpi4-kms build is the one with the -G wait (TD: stale-core
-#      hazard — an `auto` rebuild after a committed devices change ships the old
-#      one), and the legacy boot pieces (rpi4-fb) are not.
-#   2. rootfs: the servers, the new-stack programs and the plain command names;
-#      each plain name is the new-stack program (cmp) or its wrapper.
+#      strings), the rpi4-kms build is the one with the -G wait and the M9 scaled
+#      modes (stale-core hazard — an `auto` rebuild after a committed devices change
+#      ships the old one), and the legacy boot pieces (rpi4-fb) are not.
+#   2. rootfs: the servers, the new-stack programs, the plain command names and
+#      /bin/game-res; each plain name is the new-stack program or launcher (cmp) or
+#      its wrapper.
 #   3. rootfs: no file only the legacy stack produces (the prune list of
 #      build-showcase-apps.sh; a stale one means the prune did not run).
 #   4. rootfs: the old stack's strings in any ELF under bin sbin usr/bin usr/sbin
@@ -61,7 +62,8 @@ else
 		"V3DA srv ready dev=|rpi4-v3d-async" \
 		"srv ready dev=/dev/%s buf=%s backend=|rpi4-kms" \
 		"srv ready ns=%s port=|shmsrv" \
-		"why=no_/dev/%s waited_ms=|rpi4-kms with the -G wait (not a stale core build)"; do
+		"why=no_/dev/%s waited_ms=|rpi4-kms with the -G wait (not a stale core build)" \
+		"modes=%u scaler=%s|rpi4-kms with the M9 scaled modes, g9 (not a stale core build)"; do
 		n=$(count "${spec%%|*}" "${loader}")
 		if [ "${n:-0}" -ge 1 ]; then ok "${spec#*|} in loader.disk"; else fail "${spec#*|} NOT in loader.disk ('${spec%%|*}')"; fi
 	done
@@ -71,16 +73,16 @@ fi
 
 echo "== 2. the GPU stack in the rootfs: ${root} =="
 for p in sbin/rpi4-v3d-async sbin/rpi4-kms bin/shmsrv \
-	usr/bin/quakespasm-drm usr/bin/yquake2-drm usr/bin/quake2-drm usr/bin/quake3e-drm \
+	usr/bin/quakespasm-drm bin/qs-drm usr/bin/yquake2-drm usr/bin/quake2-drm usr/bin/quake3e-drm \
 	usr/bin/quake3-drm usr/bin/vkquake-drm bin/vkq-drm usr/bin/supertuxkart-drm bin/stk-drm \
 	bin/Xorg-drm bin/Xorg-drm-noshim bin/startx-drm bin/eglx11-demo-x etc/X11/xorg-drm.conf \
 	bin/labwc bin/foot bin/labwc-desktop.sh bin/xfce-desktop.sh bin/thunar-wl bin/xfce4-panel \
 	bin/xfdesktop bin/dbus-daemon usr/lib/xfce-demo/xfce-session usr/lib/xfce-demo/bin/loginctl \
-	bin/kmscube bin/vkcube-drm bin/drmprobe; do
+	bin/kmscube bin/vkcube-drm bin/drmprobe bin/game-res; do
 	if [ -s "${root}/${p}" ]; then ok "${p}"; else fail "${p} missing"; fi
 done
-# The plain command names (TD-26): copies of the -drm programs, or wrappers.
-for pair in usr/bin/quakespasm:usr/bin/quakespasm-drm usr/bin/quake2:usr/bin/quake2-drm \
+# The plain command names (TD-26): copies of the -drm programs or launchers, or wrappers.
+for pair in usr/bin/quakespasm:bin/qs-drm usr/bin/quake2:usr/bin/quake2-drm \
 	usr/bin/quake3:usr/bin/quake3-drm usr/bin/vkquake:bin/vkq-drm bin/stk:bin/stk-drm; do
 	name="${pair%%:*}"; prog="${pair#*:}"
 	if [ -s "${root}/${name}" ] && cmp -s "${root}/${name}" "${root}/${prog}"; then

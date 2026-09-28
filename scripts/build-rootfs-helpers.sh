@@ -31,6 +31,11 @@
 #   /bin/stk             tools/supertuxkart-port/stk-launcher.c
 #                        set SUPERTUXKART_{DATADIR,ASSETS_DIR,SAVEDIR}, seed a
 #                        first-run profile, then exec supertuxkart at 1080p.
+#   /bin/game-res        tools/gpu-lane/m9-res/game-res.c   (default image only)
+#                        start a GPU-stack game in a lower fullscreen mode that
+#                        rpi4-kms scales to the screen: `game-res stk|qs|q2|q3|vkq
+#                        [WxH] [args...]` (docs/gpu-new-lane/M9-scaled-fullscreen.md).
+#                        It execs the ports' -drm programs.
 #   /usr/bin/pty-run     tools/pty-run/pty-run.c
 #                        getty-style /dev/ptmx forwarder, for programs that want
 #                        their own controlling terminal. Not a game helper, but the
@@ -65,6 +70,8 @@
 #                                      script runs AFTER the ports stage, so it
 #                                      would overwrite them with launchers that
 #                                      exec engines the image does not have.
+#                                      game-res is built only in the default image
+#                                      (the programs it execs exist only there).
 #
 # Copyright 2026 Phoenix Systems
 # SPDX-License-Identifier: BSD-3-Clause
@@ -183,6 +190,9 @@ if [ "${gpu_legacy}" = 1 ]; then
 		# TODO(TD-27): /dev/fb0 exists only in the legacy image.
 		"tools/fbprobe/fbprobe.c|bin/fbprobe"
 	)
+else
+	# M9: a lower fullscreen mode for each GPU-stack game (execs the ports' -drm programs).
+	helpers+=("tools/gpu-lane/m9-res/game-res.c|bin/game-res")
 fi
 
 # Data files copied verbatim (not compiled): "<source>|<install path>|<mode>".
