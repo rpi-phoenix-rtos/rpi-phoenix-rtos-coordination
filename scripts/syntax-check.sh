@@ -127,7 +127,12 @@ cmd=$(printf '%s\n' "$cmd" \
 # command line, so -Werror and the warning set are unchanged.
 printf 'syntax-check: %s/%s  (target %s)\n' "$repo" "$rel" "$target"
 [ -n "${SYNTAX_CHECK_CFLAGS:-}" ] && printf 'syntax-check: extra flags: %s\n' "$SYNTAX_CHECK_CFLAGS"
-if (cd "$bdir" && PATH="${tc}:$PATH" eval "$cmd -fsyntax-only -I${proj} ${SYNTAX_CHECK_CFLAGS:-}"); then
+# A full compile to /dev/null, not -fsyntax-only: GCC emits -Wformat-overflow, -Wstringop-*, -Warray-bounds and
+# -Wmaybe-uninitialized only from its optimisation passes, so -fsyntax-only passed code that the real build then
+# failed on (libphoenix time.c asctime_r, build 23b, 2026-09-28). The last -o wins; -MD/-MMD/-MF are dropped so no
+# dependency file is written either -- still no artifact.
+cmd=$(printf '%s' "$cmd" | sed -E 's/ -M(M)?D\b//g; s/ -MF [^ ]+//g; s/ -MT [^ ]+//g; s/ -MP\b//g')
+if (cd "$bdir" && PATH="${tc}:$PATH" eval "$cmd -c -o /dev/null -I${proj} ${SYNTAX_CHECK_CFLAGS:-}"); then
     printf 'syntax-check: CLEAN (compiles under the real flags, -Werror included)\n'
 else
     rc=$?
