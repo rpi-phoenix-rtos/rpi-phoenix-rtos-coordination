@@ -23,6 +23,12 @@ quake2-drm 30.00 → 60.00, quakespasm-drm 30.0 → 46.1 fps) and vkQuake's `r_o
 rebuilt/relinked into its default `build-out/` dir (§2, §6 staging table with the new shas); combined Pi
 check `mig-all` pre-registered (§6.5).
 
+**Update 2026-09-28 (P1 of the owner's migration, §3a):** the default image with the new stack only —
+servers moved to phoenix-rtos-devices and started at boot, the new-stack ports in `ports.yaml`, the
+plain command names on the new programs, the old stack behind `RPI4B_GPU_LEGACY=1` — implemented on
+branches `gpu/p1-default` (not merged, not built, no Pi cycle): **§7** (checklist, knob, pre-registered
+P1 gate). The deletion list is now §8.
+
 Evidence tags as elsewhere: **[Pi]** measured on hardware, **[built]** cross build / link / static check,
 **[read]** read in source, **[inferred]** reasoning only.
 
@@ -243,7 +249,7 @@ Phases, in order; each one is a separate, gated step:
 
 | phase | what | gate |
 |---|---|---|
-| **P1 default** | §4 items 1–8 on branches: the new-lane ports go into the default image (`use: [rootfs]`); the three servers start at boot (`user.plo.yaml`, after `rpi4-vcmbox`, before `psh`); the default launchers (`quakespasm`, `quake2`, `quake3`, `vkquake`, `stk`, `startx`, `xfce-session`) run the new-lane programs. **The old lane stays in the tree**, excluded from the default image by a build knob (an old-lane image stays buildable for A/B). | §5 gate on the new default image: 6/6 + the X and XFCE desktops, `grep` of old-lane strings in the rootfs = 0 |
+| **P1 default** | §4 items 1–8 on branches (**implemented: §7**): the new-lane ports go into the default image (`use: [rootfs]`); the three servers start at boot (`user.plo.yaml`, after `rpi4-vcmbox`, before `psh`); the default launchers (`quakespasm`, `quake2`, `quake3`, `vkquake`, `stk`, `startx`, `xfce-session`) run the new-lane programs. **The old lane stays in the tree**, excluded from the default image by a build knob (an old-lane image stays buildable for A/B). | §5 gate on the new default image: 6/6 + the X and XFCE desktops, `grep` of old-lane strings in the rootfs = 0 |
 | **P2 burn-in** | the regular showcase gate, mig-all, C1 series etc. run on the new default image for ≥ 1 day of normal work | no regression against the last old-lane gate |
 | **P3 remove** | delete the old lane: `rpi4-v3d` daemon, Mesa fork build scripts, old SDL fb0 backend, `Xphoenix`/kdrive glue, the old game glue (§4 items 3–6, 9); `/dev/fb0` users ported (hevc-play). Keep git history; one deletion commit per repo | stock build + full gate + libc suites; old-lane strings = 0 in the tree |
 | **P4 docs** | README, BUILD, CHANGES, KNOWN-ISSUES, skills, user docs: one GPU stack, no "old/new lane" wording; `docs/gpu-new-lane/` keeps the engineering history under a neutral name | a grep for "new lane"/"old lane"/"new GPU lane" in user-facing docs = 0 |
@@ -954,7 +960,237 @@ automated form; the bench-only `mig-x-input` row (typing, clicking) remains.
 addition. Left before retiring the old lane: vkQuake, the pty errno=22 (both lanes), the bench rows, and the gate
 script switch (`x:/bin/bash /bin/startx-drm --servers action`).
 
-## 7. Deletion list — the old lane (after the gate passes)
+## 7. P1 implementation — the new stack becomes the default image
+
+Owner directive 2026-09-28 (§3a), phase **P1**: the default image carries only the DRM-shaped stack,
+its three servers start at boot, the plain command names run it; the old stack is **excluded, not
+deleted** — one knob (`RPI4B_GPU_LEGACY=1`) still builds today's image for A/B. Implemented on
+branches **`gpu/p1-default`** (pushed to `publish`, **not merged**, nothing built into `.buildroot`,
+no Pi cycle). Evidence tags as above.
+
+### 7.0 Checklist
+
+| # | Item | Repo: files | State |
+|---|---|---|---|
+| 1 | Servers as core components (§4 item 7): `gpu/rpi4-v3d-async` (+ vendored `uapi/`), `video/rpi4-kms`, `misc/shmsrv` (installed to `/bin`: scripts run `shmsrv -s`) | devices: `gpu/rpi4-v3d-async/*`, `video/rpi4-kms/*`, `misc/shmsrv/*`, `_targets/Makefile.aarch64a72-generic` | ✅ [built] scratch buildroot, real devices make + project flags (`-Werror`), 0 warnings |
+| 2 | rpi4-kms `-G` waits (≤ 10 s, 50 ms steps) for `/dev/v3d-async`: at boot both spawn together, and the old one-shot `open()` left every flip ungated | devices: `video/rpi4-kms/kms_main.c` (`v3d_connect`) | ✅ [built]; ⬜ [Pi] (boot row 3 of §7.6) |
+| 3 | `rpi4-v3d` (old daemon) and `rpi4-fb` built only with the knob | devices: `_targets/Makefile.aarch64a72-generic` | ✅ [built] `make -p` of the component list for `''`/`0`/`1`/`yes` |
+| 4 | `rpi4-sysinfo` inventory: `kms`, `v3d-async` in, `fb0` out | devices: `misc/rpi4-sysinfo/rpi4-sysinfo.c` | ✅ [built] |
+| 5 | Boot entries after `rpi4-vcmbox` + `posixsrv`, before `psh`, both blocks: `rpi4-v3d-async;-f;-r;1;-m;serial;-i`, `rpi4-kms;-f;-G;-p;96;-C`, `shmsrv;-f`; `rpi4-fb` only with the knob | project: `_projects/aarch64a72-generic-rpi4b/user.plo.yaml` | ✅ [built] real `image_builder.py partition` render (nfsroot, sd) and `diff-boot-variants.py --order` (all 3 variants, both knob states) |
+| 6 | `ports.yaml`: 13 new-stack entries `use: [rootfs]` under `if: {{ not bool(env.RPI4B_GPU_LEGACY) }}`; the 6 old ones under `if: {{ bool(...) }}` + `use: [rootfs]` | project: `_projects/aarch64a72-generic-rpi4b/ports.yaml` | ✅ [built] `port_manager --dry build` of the rendered file, both states (§7.5) |
+| 7 | Old ports install only with USE `rootfs` (else the `*_drm` relinks' dependency pull would ship them) | ports: `{quakespasm,yquake2,quake3,vkquake,supertuxkart,xorg_server}/port.def.sh` | ✅ [built] `validate` 96 ports; `--dry` shows them as `D:` without `+rootfs` |
+| 8 | Plain names (TD-26): `/usr/bin/{quakespasm,quake2,quake3,vkquake}`, `/bin/stk` = copies of the `-drm` programs; `/bin/startx`, `/bin/startx_gpu` = wrappers of `startx-drm` with `HOLD=0` (the old xlaunch behaviour) | ports: `{quakespasm,yquake2,quake3,vkquake,supertuxkart,xorg_server}_drm/port.def.sh` | ✅ [read] `bash -n`; ⬜ first real framework build |
+| 9 | `/bin/xfce-session` in the image: the demo session (verbatim tools files) on the ports' program names, a generated wrapper (GLES2, `/sbin` servers), configs path-rewritten with a fail-if-left check | ports: `xfce_wayland/port.def.sh`, `xfce_wayland/files/{pi/xfce-session,pi/xfce-demo-loginctl,conf/labwc-xfce-demo/*,conf/xfce-demo/*}`; coord: `scripts/check-wayland-ports-sync.sh` (+4 mappings) | ✅ [built] staging snippet run in a temp tree (rewrites + check); sync check: the new mappings identical |
+| 10 | The knob in the image build: `--gpu-legacy` / `RPI4B_GPU_LEGACY`, normalised to 0/1, exported to every child, passed into `build.sh`'s env | coord: `scripts/rebuild-rpi4b-fast.sh` | ✅ [read] `bash -n` |
+| 11 | Showcase stage: the old X pieces (X11 lib stack, xlaunch, glamor daemon, gl-x11-window) only with the knob; the default run **prunes** legacy-only files from the persistent staging tree | coord: `scripts/build-showcase-apps.sh` (`legacy_gpu_files`, `prune_legacy_gpu_stack`) | ✅ [read] `bash -n` |
+| 12 | Old launchers (`quake2`, `quake3`, `stk`) + `fbprobe` only with the knob (the helpers run AFTER the ports and would overwrite the new names) | coord: `scripts/build-rootfs-helpers.sh` | ✅ [read] `bash -n` |
+| 13 | Image checks lane-aware (env, never inferred from the tree) | coord: `scripts/check-rootfs-complete.sh`, `scripts/verify-sd-image-contents.sh` | ✅ [built] check-rootfs-complete on today's rootfs: default → 16 missing + "tree holds the LEGACY stack", legacy → COMPLETE (as before) |
+| 14 | P1 image gate script | coord: `scripts/check-gpu-stack-image.sh` (new) | ✅ [built] inverse control: every check FAILs on today's (legacy) build |
+| 15 | New gate script, a copy of the showcase gate with the §5 table + `xfce` + a `boot` column | coord: `scripts/run-showcase-gate-drm.sh` (new; `run-showcase-gate.sh` untouched) | ✅ [read] `bash -n`, `--help`, entry parser unit-tested; grading strings matched against `mig-x` |
+| 16 | `build-port.sh --dry [--yaml]` (dependency resolution only; refuses the image buildroot) | coord: `scripts/build-port.sh` | ✅ [built] used for §7.5 |
+| 17 | `diff-boot-variants.py`: exit 1 on a duplicate alias; `--order a,b,c` | coord: `scripts/diff-boot-variants.py` | ✅ [built] |
+| 18 | TD register: TD-24 … TD-27 + markers | coord: `docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md` | ✅ |
+| 19 | Atril PDF viewer in the image | — (`tools/gpu-lane/atril-wayland` has no port) | ⬜ **not done** — needs an `atril_wayland` port (poppler + atril, the gtk3_wayland shape); decision for the owner: port before P2, or ship P1 without Atril |
+| 20 | `/dev/fb0` users (§4 item 9) | — | ⬜ decided, not done: TD-27 (port `hevc-play` to a KMS dumb buffer before P3; no fbdev emulation) |
+| 21 | `.claude/settings.json` allowlist for the two new scripts | coord | ⬜ left to the owner (a permission change) |
+| 22 | First real framework build of every new-stack port **in the image buildroot** | — | ⬜ the owner's build (§7.6). Never framework-built before: `xorg_server_drm` (only static checks, §4.1), `gtk3_wayland`, `xfce_wayland`, `labwc_desktop` (§4 Wayland half) — the first-fail candidates |
+
+### 7.1 The knob
+
+One variable, `RPI4B_GPU_LEGACY`, with the ports framework's own truth rule (`str_to_bool`: empty,
+`0`, `n`, `no`, `false` = off). `rebuild-rpi4b-fast.sh` normalises it to exactly `0`/`1` (flag
+`--gpu-legacy` = `1`), prints `GPU stack: default|LEGACY`, exports it and names it in `build.sh`'s
+`env` line, so every reader sees the same value:
+
+| Reader | Default (unset/0) | `RPI4B_GPU_LEGACY=1` |
+|---|---|---|
+| `ports.yaml` (jinja `bool(env.…)`) | 13 new-stack ports `use: [rootfs]`; the old six absent (four still pulled as build deps, installing nothing) | the old six `use: [rootfs]`; no new-stack port — **the same port set as today's file** (`--dry`, §7.5) |
+| `user.plo.yaml` (same rule in jinja) | `rpi4-v3d-async`, `rpi4-kms`, `shmsrv` at boot; no `rpi4-fb` | `rpi4-fb` at boot, no new server — **rendered scripts identical to today's** in all 3 variants × both `RPI4_LOG_TO_FILE` modes |
+| devices `Makefile.aarch64a72-generic` (`filter-out 0 n no false`) | builds the three servers | + `rpi4-v3d`, `rpi4-fb` (the new servers are built in both; only started in the default) |
+| `build-showcase-apps.sh` | gpu phase (TD-25) + launchers; no old X pieces; prune legacy files | as today |
+| `build-rootfs-helpers.sh` | no `quake2`/`quake3`/`stk`/`fbprobe` (the ports own the names) | as today |
+| `check-rootfs-complete.sh`, `verify-sd-image-contents.sh` | new-stack lists and markers (`<app>: new GPU lane` banners, `gl3_discardfb` absent from `yquake2-drm`) | today's lists |
+
+A legacy image differs from today's only by the three new servers in `/sbin` + `/bin/shmsrv` (built,
+never started) and `rpi4-sysinfo`'s node list. Switching lanes changes core (component list, plo
+script): **always `--scope core` (or full-clean) with `--with-ports --with-showcase`**.
+
+### 7.2 Servers: provenance and boot design
+
+* **Provenance.** `gpu/rpi4-v3d-async` = `tools/gpu-lane/v3d-async` at `0de6923ae` — the Pi-proven
+  `-low` build: its six objects, recompiled from those files with the tools flags, are **identical**
+  (`objcopy --strip-debug`, then `cmp`) to `out-low/obj/*.o`. The tools HEAD is that plus one commit,
+  `b11bbc4a7` (the opt-in `-C` CSD profiler, a diagnostic) — not taken. `video/rpi4-kms` = tools HEAD
+  (`f90f74b4a`) — the `g8` build: its five objects with `-DKMS_POLL_NOTIFY` identical to
+  `out-g8/obj/*.o` — plus one new commit (the `-G` wait, checklist 2). `misc/shmsrv` = tools
+  `weston-drm/shmsrv` (unchanged since `86d55e671`). **From now on devices is canonical** for the three
+  servers; the `tools/gpu-lane/{v3d-async,kms,weston-drm/shmsrv}` copies are frozen (P3 deletes them).
+  `libdrm_phoenix` vendors `v3da_proto.h` / `kms_proto.h`, identical today to the devices copies (both
+  equal the tools files); P3 makes the port read them from devices (install them as headers then).
+  The comments still speak of "new/old lane" and cite `docs/gpu-new-lane/*` — P4 wording.
+* **Built with the project flags** (`-std=gnu17 -O2 -mstrict-align -mno-outline-atomics -Werror …`,
+  gc-sections): stripped `rpi4-v3d-async` 116 KB, `rpi4-kms` 109 KB, `shmsrv` 63 KB; the nfsroot kernel
+  partition of `loader.disk` grows 2 759 280 → 2 988 656 B (limit 31 457 280).
+* **Order and options** (both boot blocks, verified by `diff-boot-variants.py --order
+  rpi4-vcmbox,posixsrv,rpi4-v3d-async,rpi4-kms,shmsrv,psh`): after `rpi4-vcmbox` (power/clock and
+  firmware display calls go through it) and `posixsrv`; `rpi4-v3d-async` before `rpi4-kms` (spawn order;
+  the `-G` wait covers the race); before `psh`. Options = the last proven desktop cycles (`mig-x`,
+  `m7l-session2`): `-r 1 -m serial -i` and `-G -p 96 -C`. `-f` (foreground): nothing waits for a detach
+  at boot, so no fork/pipe; the ready lines are `V3DA srv ready …`, `KMS srv ready …`,
+  `SHMSRV srv ready …` (not `… detached`). Kernel-spawned programs start **concurrently** with `psh`: the
+  ready lines may print after the first `(psh)%`.
+* **Names** (`/v3dbuf`, `/kmsbuf`, `/shm`) are kernel name-table entries (`proc_portRegister`), not
+  files of `/`, so they survive the NFS takeover of `/`; `/dev/*` nodes live in devfs as every driver's.
+* **plo alias rule:** the three names are new; each appears once per rendered variant (duplicate check
+  in `diff-boot-variants.py`, exit 1 on a duplicate).
+
+### 7.3 Default command names (TD-26)
+
+| Typed | Runs | Installed by |
+|---|---|---|
+| `/usr/bin/quakespasm` | quakespasm-drm (engine) | `quakespasm_drm` |
+| `/usr/bin/quake2` | quake2-drm → ram-stage → `/usr/bin/yquake2-drm` | `yquake2_drm` |
+| `/usr/bin/quake3` | quake3-drm → `/usr/bin/quake3e-drm` | `quake3_drm` |
+| `/usr/bin/vkquake` | vkq-drm → `/usr/bin/vkquake-drm … +map start` (patches 0001–0010 = the `-h` default) | `vkquake_drm` |
+| `/bin/stk` | stk-drm → `/usr/bin/supertuxkart-drm` | `supertuxkart_drm` |
+| `/bin/startx`, `/bin/startx_gpu` | `HOLD=${HOLD:-0} /bin/bash /bin/startx-drm "$@"` (Xorg-drm, xlaunch layouts; until Window Maker exits) | `xorg_server_drm[x11demo]` |
+| `/bin/xfce-session` | XFCE 4.20 on labwc, GLES2 composition, until Log Out (`/usr/lib/xfce-demo/xfce-session` + the ports' programs) | `xfce_wayland` |
+| `/bin/labwc-desktop.sh`, `/bin/foot` | labwc + foot | `labwc_desktop` (unchanged) |
+
+The `-drm` names stay (the §5/§6 cycles use them). `startx`/`xfce-session` are bash scripts: from psh
+the proven form is `/bin/bash /bin/startx …`; bare `startx` relies on libphoenix `execve()`'s `#!`
+support, never yet seen from psh on the UART — a bench row (§7.6 row 12).
+
+### 7.4 What the default build still compiles of the old stack (TD-25)
+
+`yquake2_drm`, `quake3_drm`, `supertuxkart_drm` relink the old ports' objects and `xorg_server_drm`
+takes `libmd.a` from `xorg_server`, so a default build still runs `--with-showcase`'s gpu phase (the
+Mesa fork → `tools/.gpu-libs`) and builds `sdl2`, `yquake2`, `quake3`, `supertuxkart`, `xorg_server`
+— installing none of them. P3 (§4 item 4) removes this. `quakespasm_drm` and `vkquake_drm` need no old
+port (`vkquake_drm` reads the SPIR-V from `vkquake/glue/` by path).
+
+### 7.5 Static validation done
+
+* **Ports resolution** (`scripts/build-port.sh --dry --yaml <project ports.yaml>` in a scratch buildroot,
+  ports tree = the branch): default = 75 ports resolved (13 user-listed new-stack ports; `mesa_drm
+  +opengl +vulkan +wayland +x11`; `yquake2 quake3 supertuxkart xorg_server sdl2` as `D:` without
+  `+rootfs`; `wayland` as `D:` without `+rootfs`, so its `/bin/shmsrv` is not installed — devices owns
+  it). Legacy = exactly today's resolved port set (58 ports; diff of the two summaries empty), the six
+  with `+rootfs`. `port_manager validate`: 96 ports.
+* **plo**: `image_builder.py partition` (the real renderer, `os.path.getsize` of every program) for
+  nfsroot and sd, both states, against a prog.stripped of the live build + the scratch-built servers;
+  netboot renders only fail on the absent `nfs-smoke` binary (not built for nfsroot images, as today).
+* **Sync checks**: `check-gpu-lane-ports-sync.sh` 163 files / 45 mappings identical;
+  `check-wayland-ports-sync.sh` identical for every mapping incl. the 4 new ones, except the
+  pre-existing `dbus` drift (the m7m SO_PEERCRED conf + `dbus-m7m.sh`, not in the port yet — another
+  pass's, not P1's).
+* `bash -n` of every changed script; `run-showcase-gate.sh` byte-unchanged.
+
+### 7.6 Pre-registered P1 gate
+
+**Preconditions.** All four branches merged (devices, ports, project → `master`; coord → `main`).
+`df -h /` first: the first default build framework-builds every new-stack port in the image buildroot
+for the first time (Mesa ×4 configurations, GTK 3 ~5 GB, XFCE, labwc) and rebuilds the six changed old
+ports and their dependents — hours, tens of GB.
+
+```
+# default image (the P1 image)
+./scripts/rebuild-rpi4b-fast.sh --scope core --with-ports --with-showcase
+./scripts/check-gpu-stack-image.sh                        # staged rootfs + TFTP loader.disk
+./scripts/make-pristine-nfs-export.sh                     # clean export (backup kept as *.PREV-cruft)
+./scripts/check-gpu-stack-image.sh --root "$(awk '$0 ~ /fsid=0/ && $1 ~ /^\// {print $1; exit}' /etc/exports /etc/exports.d/*.exports)"
+nohup ./scripts/run-showcase-gate-drm.sh --label p1-gate > p1-gate.log 2>&1 &
+
+# legacy image (A/B; afterwards rebuild the default the same way)
+./scripts/rebuild-rpi4b-fast.sh --scope core --with-ports --with-showcase --gpu-legacy
+RPI4B_GPU_LEGACY=1 ./scripts/check-rootfs-complete.sh .buildroot/_fs/aarch64a72-generic-rpi4b/root
+```
+
+⚠ The pristine export drops every hand-staged file, incl. the `-g7/-g8/-low` servers, `xfce-session-2`,
+`labwc-2`, `foot-2`, `atril-wl`: in-flight cycles that name them need the backup or a re-stage.
+
+**Image gate** (`check-gpu-stack-image.sh`, before any Pi cycle; all must PASS):
+
+| # | Check | Predicted | If instead |
+|---|---|---|---|
+| 1 | loader.disk holds `V3DA srv ready dev=`, `srv ready dev=/dev/%s buf=` (kms), `srv ready ns=` (shmsrv), `why=no_/dev/%s waited_ms=` (the new kms), and not `registered /dev/fb0` | all yes | the wait string missing = stale core objects (an `auto`-scope build after the merge): rebuild `--scope core` |
+| 2 | the servers, every `*-drm` program, Xorg-drm/startx-drm/eglx11-demo-x, labwc/foot, XFCE, kmscube/vkcube-drm/drmprobe in the rootfs; each plain name `cmp`-equal to its `-drm` program or the wrapper | all | a plain name that is not the new program: `build-rootfs-helpers.sh` ran with the old list (knob not exported) |
+| 3 | no `usr/bin/{Xphoenix,yquake2,quake3e,supertuxkart}`, `bin/{Xphoenix-glamor-daemon,gl-x11-window-daemon,pl_phoenix_xlaunch,fbprobe}`, `sbin/{rpi4-v3d,rpi4-fb}` | absent | present: the prune did not run (a build without `--with-showcase`) |
+| 4 | `grep -a -c` over every ELF in `bin sbin usr/bin usr/sbin usr/lib`: `v3d-winsys:`, `phxgl`, `V3DV_PHOENIX`, `/dev/v3d-srv`, `RPI4FB_GETMODE`, `/dev/fb0` | **0**; one NOTE: `bin/hevc-play` `/dev/fb0` (TD-27, hand-built, not an image product) | any other hit: name the file, it is an old-stack program the lists missed |
+
+**Boot check** (every gate cycle's log; the `boot` column of `run-showcase-gate-drm.sh`):
+
+| # | Line / observation | Predicted | If instead |
+|---|---|---|---|
+| 1 | `main: Starting syspage programs:` lists `rpi4-v3d-async;-f;…`, `rpi4-kms;-f;-G;-p;96;-C`, `shmsrv;-f`, no `rpi4-fb` | yes | the legacy script was rendered (knob leaked) |
+| 2 | `V3DA srv ready dev=/dev/v3d-async … lowmem_mib=64`, `KMS srv ready dev=/dev/kms … pool=1 pool_mib=96 … v3d=1 console_off=1`, `SHMSRV srv ready ns=/shm` — once each, **no** `srv FAIL` | yes; they may follow the first `(psh)%` (concurrent spawn) — not a failure | a `srv FAIL`: read it (vcmbox missing, pool allocation below 1 GiB, a name already taken) |
+| 3 | `KMS v3d connect=1 … waited_ms=<0–10000>` | connect=1, waited_ms small (0–500) | `connect=0 … waited_ms=10000`: the render server did not come up — boot row 2 |
+| 4 | `rpi4-sysinfo: devices: … kms+ v3d-async+ …` | `+` or `-` (sysinfo also races them) | — (diagnostic only) |
+| 5 | psh responsive: the gate's first command echoes and runs | yes | a hang before the prompt with the servers up: capture, compare with a legacy boot |
+| 6 | faults | 0 kernel, 0 EL0 | addr2line: `_build/aarch64a72-generic-rpi4b/prog/rpi4-{v3d-async,kms}` (unstripped) |
+
+**Showcase gate** (`run-showcase-gate-drm.sh`, one cycle per app, `wait 220 / idle 240 / max 300`
+(xfce 420) / `inter 8`). Pass = every row `rc=0 prompt=yes boot=ok faults=0`, `frames>0` (not `x`,
+`xfce`), torches PRESENT, and the HDMI look below by eye:
+
+| key | Commands (psh) | HDMI (by eye; snapshots after the app's banner) | Reference fps (not a pass criterion) |
+|---|---|---|---|
+| `x` | `export HOLD=200`, `/bin/bash /bin/startx action` | Window Maker clip + dock, "Phoenix V3D GL" 640×480 at ≈(300,180) turning, xbill ≈(945,0), xclock (1500,30), the xterms (Life, top); SW cursor; no console text; clean teardown, prompt back | `XDEMO fps=` ≈ 60 (mig-x 60.00) |
+| `qspasm` | `/usr/bin/quakespasm` | attract demo lit + textured, HUD | ≈ 44 (mig-all-qs 44.45) |
+| `q3` | `/usr/bin/quake3 +map q3dm1` | q3dm1 lit + textured (lightmaps), not the menu | ≈ 59 (mig-all-q3 59.40) |
+| `q2` | `/usr/bin/quake2` | demo1 in full textured 3D | 60.00 |
+| `vkq` | `/usr/bin/vkquake` | start map lit; `check-torch-rois.py --label p1-gate-vkq` PASS | ≈ 44 (mig-vkq-h 44.38) |
+| `stk` | `/bin/stk --track=hacienda --numkarts=4 --profile-laps=2` | lit hacienda race, 4 karts, HUD; `profile: Number of frames`, prompt back | ≈ 12.4 (mig-all-stk 12.43) |
+| `xfce` | `export HOLD=60`, `/bin/bash /bin/xfce-session` | panel (applications menu, launchers, clock, Log Out), xfdesktop wallpaper, a Thunar window; `XFCE-SESSION done rc=0` after the timed logout | — |
+
+Rows that may differ from the first cycles because P1 changed them (each is a finding, not noise):
+
+| # | What changed | Predicted | If instead |
+|---|---|---|---|
+| 7 | the games now run with `rpi4-kms -C` (console handover; their cycles used `-G` only) | `KMS srv console handover disable rc=0` while a game shows, `enable rc=0` + `pl011-tty: kbd bridge opened` after; SDL's HID opens `/dev/kbd0` (was EBUSY) | psh input dead after a game: the handover was not undone — record; the fallback is `-C` off (`user.plo.yaml`) |
+| 8 | the 96 MiB scan-out pool + 32 MiB overflow pool are taken at boot for every boot | games unaffected (they ran with both servers up) | an allocation failure in a large app (STK): note free memory from `mem` |
+| 9 | the V3D is powered at 500 MHz from boot | thermal as in the new-lane cycles | throttling bits in `/dev/throttled` during the gate |
+| 10 | servers in the foreground (`-f`, never exercised on the Pi) | as the detached child | a difference: re-run once with the `-f` dropped in `user.plo.yaml` |
+| 11 | `startx`'s `HOLD=0` wrapper | not exercised by the gate (it exports HOLD=200 first) | — |
+| 12 | bench only: bare `startx` and `xfce-session` at the psh prompt (shebang) | the desktop starts | `exec` error: psh's execv does not reach the `#!` path — keep `/bin/bash …` in the docs, fix libphoenix/psh |
+
+**Decides:** all image checks + all rows → P1 done, P2 (burn-in on the default image) starts. The fps
+column against §6s: a drop beyond one vsync step (60/n) is a finding to explain before P3.
+
+### 7.7 Risks
+
+1. **Boot order is spawn order only.** The kernel starts every syspage program at once; the `-G` wait
+   covers kms→v3d-async, libvcmbox's own 5 s retry covers vcmbox, `create_dev()` retries devfs. A new
+   server-to-server dependency needs its own wait.
+2. **plo aliases:** checked (each name once per variant); keep running `diff-boot-variants.py` after
+   every `user.plo.yaml` edit — it now fails on a duplicate.
+3. **Memory:** every boot now holds rpi4-kms's contiguous 96 MiB pool below 1 GiB, the render server's
+   32 MiB overflow pool + 1 MiB page table, and powers the V3D. `gpu_mem=128` is unchanged (§4 item 11:
+   shrink it after P1, measured, when the firmware fb only carries fbcon). The low 1 GiB also holds
+   `gpu_mem` and plo's triple-height fb; the pool allocation retries until it lands below 1 GiB and fails
+   the server (`KMS pool FAIL …`) otherwise.
+4. **`-C` for the games** (row 7) and **`-f`** (row 10) are the two untested boot choices.
+5. **C1 bench methodology** (memory: the cold Mesa shader cache summons C1) is keyed to the OLD Mesa's
+   disk cache (`sync-netboot-tree.sh` fingerprints `tools/.gpu-libs`); mesa_drm has no disk cache. C1
+   series on the default image are not comparable with the old ones.
+6. **First framework build of four ports** (checklist 22) in the image buildroot — a failure stops the
+   ports stage; `xorg_server_drm`'s first real build is still to happen.
+7. **Pristine export** removes the hand-staged variants other work still uses (§7.6 note).
+
+### 7.8 Left for P3/P4 (not in P1)
+
+P3: delete the old stack and the knob (§8; TD-24), fold the game relinks into the game ports (TD-25),
+`hevc-play` to KMS and `rpi4-fb` out (TD-27), `libdrm_phoenix` reading the wire headers from devices,
+delete `tools/gpu-lane/{v3d-async,kms,weston-drm/shmsrv}`, drop `rpi4-sysinfo`'s legacy entries.
+P4: program names (TD-26), the "new/old lane" wording in the server sources and user docs, the xfce demo
+paths. Separately: an `atril_wayland` port (checklist 19), `gpu_mem` measurement (§4 item 11), the
+`dbus` port sync (m7m).
+
+**Branches** (`gpu/p1-default`, pushed to `publish`): devices `8f9819f` (7 commits on `679ee59`), ports
+`a89784e` (3 on `7061ef5`), project `9321829` (2 on `8cb5b62`), coordination: the commit adding this
+section.
+
+## 8. Deletion list — the old lane (after the gate passes)
 
 Delete only after §5 passes on the migrated image; one sibling commit per repo, then a coordination
 manifest.
@@ -980,7 +1216,7 @@ manifest.
 scan of §1 = 0 for `v3d-winsys:`, `phxgl`, `V3DV_PHOENIX`, `RPI4FB_GETMODE`; a clean Docker `--no-cache`
 build (the clean-build release gate) and the §5 gate once more on that image.
 
-## 8. Files (this pass)
+## 9. Files (this pass)
 
 | Path | What |
 |---|---|
