@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 #
+# FRAMEWORK PORT: sources/phoenix-rtos-ports vkcube_drm (phxvk: mesa_drm USE vulkan),
+# opt-in, not in the default image (docs/gpu-new-lane/MIGRATION.md section 4, "Ports (graphics)").
+# Every patch/glue file this script uses is also a file of the port; the copies are kept
+# identical by scripts/check-gpu-lane-ports-sync.sh -- a change here must be copied there.
+#
 # vulkan-drm (new GPU lane, M5): Vulkan on the DRM-shaped stack.
 #
 #   Mesa 26.2 v3dv built as a STATIC ICD      (tools/gpu-lane/mesa-drm/build.sh --vulkan)

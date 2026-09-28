@@ -11,6 +11,8 @@
 # WaitPageflip call, SDL_VIDEO_DOUBLE_BUFFER's, after the flip).
 #
 # Usage: gamedrm/check-swap-order.sh <linked ELF>...   (unstripped: the stripped copies have no symbols)
+# Env:   GAMEDRM_OBJDUMP  the aarch64-phoenix objdump (default: <repo>/.toolchain/...; the ports
+#        copy of this script, sdl2_kmsdrm/gamedrm/, is run by the port recipes with it set)
 # Prints one `swap-order <elf>: submit-first|wait-first|...` line per ELF; exit 1 unless every
 # ELF is submit-first.
 #
@@ -21,7 +23,7 @@ set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 repo_root="$(cd "${here}/../../.." && pwd)"
-objdump="${repo_root}/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-objdump"
+objdump="${GAMEDRM_OBJDUMP:-${repo_root}/.toolchain/aarch64-phoenix/bin/aarch64-phoenix-objdump}"
 [ "$#" -ge 1 ] || { echo "usage: check-swap-order.sh <elf>..." >&2; exit 2; }
 [ -x "${objdump}" ] || { echo "check-swap-order: no ${objdump}" >&2; exit 2; }
 

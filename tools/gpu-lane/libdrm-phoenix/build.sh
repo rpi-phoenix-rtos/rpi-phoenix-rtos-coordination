@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 #
+# FRAMEWORK PORT: sources/phoenix-rtos-ports libdrm_phoenix,
+# opt-in, not in the default image (docs/gpu-new-lane/MIGRATION.md section 4, "Ports (graphics)").
+# Every patch/glue file this script uses is also a file of the port; the copies are kept
+# identical by scripts/check-gpu-lane-ports-sync.sh -- a change here must be copied there.
+#
 # libdrm-phoenix (new GPU lane, M3 part 1): upstream libdrm + the Phoenix backend,
 # cross-built static for aarch64-phoenix with meson (the E7 recipe), plus the
 # drmprobe test program.

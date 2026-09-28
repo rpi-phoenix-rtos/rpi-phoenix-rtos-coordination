@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 #
+# FRAMEWORK PORT: sources/phoenix-rtos-ports libxshmfence_phoenix + xorg_server_drm USE x11demo (eglx11-demo; shmsrv: wayland),
+# opt-in, not in the default image (docs/gpu-new-lane/MIGRATION.md section 4, "Ports (graphics)").
+# Every patch/glue file this script uses is also a file of the port; the copies are kept
+# identical by scripts/check-gpu-lane-ports-sync.sh -- a change here must be copied there.
+#
 # x11-drm (new GPU lane, M4 part 2): GL clients inside Xorg-drm through DRI3/Present
 # (docs/gpu-new-lane/M4-xorg-modesetting.md, "M4 part 2").
 #

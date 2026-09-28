@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 #
+# FRAMEWORK PORT: sources/phoenix-rtos-ports sdl2_kmsdrm (the SDL build) + quakespasm_drm (step 4),
+# opt-in, not in the default image (docs/gpu-new-lane/MIGRATION.md section 4, "Ports (graphics)").
+# Every patch/glue file this script uses is also a file of the port; the copies are kept
+# identical by scripts/check-gpu-lane-ports-sync.sh -- a change here must be copied there.
+#
 # sdl2-drm (new GPU lane, M3 part 4): SDL 2.30.12 -- the version ports/sdl2 ships -- built
 # STATIC with its stock KMSDRM video driver on Mesa's GBM + EGL (tools/gpu-lane/mesa-drm, built
 # with desktop GL) and libdrm-phoenix, plus `quakespasm-drm`: a CLONE of the quakespasm port

@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 #
+# FRAMEWORK PORT: sources/phoenix-rtos-ports yquake2_drm (body: sdl2_kmsdrm/gamedrm/relink-sdl-gl-game.subr),
+# opt-in, not in the default image (docs/gpu-new-lane/MIGRATION.md section 4, "Ports (graphics)").
+# Every patch/glue file this script uses is also a file of the port; the copies are kept
+# identical by scripts/check-gpu-lane-ports-sync.sh -- a change here must be copied there.
+#
 # Build `yquake2-drm` + its launcher `quake2-drm`: a CLONE of the yquake2 port (yQuake2 8.71pre,
 # single static ELF, ref_gl3 built as GLES3) on the FULL standard DRM stack -- SDL 2.30.12's
 # stock KMSDRM video driver (tools/gpu-lane/sdl2-drm), Mesa 26.2 GBM + EGL + GLES (the sdl2-drm

@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 #
+# FRAMEWORK PORT: sources/phoenix-rtos-ports vkquake_drm (+ sdl2_kmsdrm USE vulkan for step 1),
+# opt-in, not in the default image (docs/gpu-new-lane/MIGRATION.md section 4, "Ports (graphics)").
+# Every patch/glue file this script uses is also a file of the port; the copies are kept
+# identical by scripts/check-gpu-lane-ports-sync.sh -- a change here must be copied there.
+#
 # Build `vkquake-drm` + its launcher `vkq-drm`: vkQuake 1.34 (the vkquake port's pinned upstream
 # commit) on the FULL standard stack's Vulkan path -- SDL 2.30.12's stock KMSDRM video driver with
 # its stock Vulkan code (VK_KHR_display surface), Mesa 26.2 v3dv as a static ICD reached through

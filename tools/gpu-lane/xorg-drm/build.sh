@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 #
+# FRAMEWORK PORT: sources/phoenix-rtos-ports xorg_server_drm (+ libepoxy, + libxshmfence_phoenix),
+# opt-in, not in the default image (docs/gpu-new-lane/MIGRATION.md section 4, "Ports (graphics)").
+# Every patch/glue file this script uses is also a file of the port; the copies are kept
+# identical by scripts/check-gpu-lane-ports-sync.sh -- a change here must be copied there.
+#
 # xorg-drm (new GPU lane, M4 preparation): a statically linked X.Org server
 # `Xorg-drm` -- hw/xfree86 + the modesetting DDX + glamor on GBM/EGL + DRI2/DRI3/
 # Present -- cross-built for aarch64-phoenix against libdrm-phoenix and the

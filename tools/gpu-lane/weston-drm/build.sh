@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 #
+# FRAMEWORK PORT: sources/phoenix-rtos-ports wayland (libwayland, wayland-protocols, wlphx-compat, shmsrv) + weston,
+# opt-in, not in the default image (docs/gpu-new-lane/MIGRATION.md section 4, "Ports (graphics)").
+# Every patch/glue file this script uses is also a file of the port; the copies are kept
+# identical by scripts/check-gpu-lane-ports-sync.sh -- a change here must be copied there.
+#
 # weston-drm (new GPU lane, M6 preparation): Weston 14 with ONLY the DRM backend,
 # the GL renderer (Mesa GBM/EGL/GLES from mesa-drm) and the kiosk shell, cross-built
 # STATIC for aarch64-phoenix, plus its Wayland stack and two demo clients.

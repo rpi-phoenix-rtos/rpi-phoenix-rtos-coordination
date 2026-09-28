@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 #
+# FRAMEWORK PORT: sources/phoenix-rtos-ports quake3_drm (body: sdl2_kmsdrm/gamedrm/relink-sdl-gl-game.subr),
+# opt-in, not in the default image (docs/gpu-new-lane/MIGRATION.md section 4, "Ports (graphics)").
+# Every patch/glue file this script uses is also a file of the port; the copies are kept
+# identical by scripts/check-gpu-lane-ports-sync.sh -- a change here must be copied there.
+#
 # Build `quake3e-drm` + its launcher `quake3-drm`: a CLONE of the quake3 port (quake3e "Q3 1.32e",
 # single static ELF, opengl1 renderer, aarch64 QVM JIT) on the FULL standard DRM stack -- SDL
 # 2.30.12's stock KMSDRM video driver (tools/gpu-lane/sdl2-drm), Mesa 26.2 GBM + EGL + desktop GL

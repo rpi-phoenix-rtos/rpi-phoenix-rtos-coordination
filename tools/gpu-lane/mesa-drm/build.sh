@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 #
+# FRAMEWORK PORT: sources/phoenix-rtos-ports mesa_drm (+ kmscube_drm for the kmscube part; --vulkan also installs phxvk),
+# opt-in, not in the default image (docs/gpu-new-lane/MIGRATION.md section 4, "Ports (graphics)").
+# Every patch/glue file this script uses is also a file of the port; the copies are kept
+# identical by scripts/check-gpu-lane-ports-sync.sh -- a change here must be copied there.
+#
 # mesa-drm (new GPU lane, M3 part 3): upstream Mesa 26.2.0 on the DRM path
 # (gallium v3d + vc4/kmsro, GBM with the dri backend linked in, EGL drm +
 # surfaceless, GLES2/3), cross-built STATIC for aarch64-phoenix against
