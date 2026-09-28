@@ -1176,6 +1176,22 @@ column against §6s: a drop beyond one vsync step (60/n) is a finding to explain
 6. **First framework build of four ports** (checklist 22) in the image buildroot — a failure stops the
    ports stage; `xorg_server_drm`'s first real build is still to happen.
 7. **Pristine export** removes the hand-staged variants other work still uses (§7.6 note).
+8. **Nothing of P1 was executed end to end.** The ports edits (the old ports' `b_use rootfs`, the
+   plain-name installs, the xfce staging) are proven by `bash -n`, `validate`, `--dry` and a temp-tree
+   run of the staging snippet; the owner's first default build is their first real execution.
+9. **The default run skips the ad-hoc X11 lib stack** (`/tmp/x11-phoenix`): its last consumers were the
+   legacy X pieces. This host still has `/tmp/x11-phoenix` from earlier runs, so a hidden dependency of
+   `xorg_server` (kdrive, now only `xorg_server_drm`'s `libmd.a` source; §4.1 recorded its link failing
+   in a from-scratch buildroot) cannot show here — the Docker clean build (P2) can. Fallback if the
+   ports stage dies in `xorg_server`: re-run once with that step forced (`RPI4B_GPU_LEGACY=1` for the
+   showcase stage only is NOT a fallback: it would stage the legacy X pieces).
+10. **Rootfs growth:** `gtk3_wayland` also stages its demo programs (gtk3-demo, widget-factory),
+   `/usr/bin/quakespasm` is an 18 MB copy of the engine (the other plain names are ~1 MB launchers).
+   The ext2 packer sizes the volume from the tree.
+11. **Legacy image ≠ today's byte for byte:** it also carries the three new servers (built, never
+   started) and `rpi4-sysinfo` without `fb0`. For a legacy pristine export run
+   `RPI4B_GPU_LEGACY=1 ./scripts/make-pristine-nfs-export.sh` (not under `sudo`, which drops the
+   variable: its completeness check would grade the default lists).
 
 ### 7.8 Left for P3/P4 (not in P1)
 
