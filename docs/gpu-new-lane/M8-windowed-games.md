@@ -342,3 +342,18 @@ import, not the games.
   (C1 note: grade by the cycle's own lines). The main menu shows in a window.
 - `m8d` (after m8a–c): the showcase recording. One session: Quake on the right, Thunar and foot
   left, then Quake II through the root menu.
+
+## Result — `m8a-quake-window` (chain89, build 27b, 2026-09-28 11:10): ✅ PASS — a GPU-accelerated game in a window on the XFCE desktop
+
+Log `artifacts/rpi4b-uart/*-m8a-quake-window.log`; 0 exceptions.
+- **Control first:** `weston-simple-egl` inside labwc runs at **57–60 fps** (`285 frames in 5 seconds: 57.0`, `301 … 60.2`). This is the first GPU client ever under labwc. It ended by the script's SIGTERM, as designed.
+- **quakespasm-wl:**
+  - `GL_RENDERER: V3D 4.2.14.0`;
+  - `first swap … video_driver wayland window 1280x720 drawable 1280x720 windowed context GL 2.1`;
+  - its own flipstat: **45.5–66.9 fps** (228, 286, 250, 240, 335 frames per 5 s).
+- **HDMI** (`artifacts/hdmi/20260928-111546-m8a-quake-window-tick.png`):
+  - the XFCE panel's task list shows `File System - Thunar`, `foot` and `QuakeSpasm 0.97.0`;
+  - Thunar on `/` top left, a foot terminal below it;
+  - **QuakeSpasm in a decorated labwc window on the right, rendering the level in 3D**, its counter at **61 FPS**.
+- The session logged out cleanly (`XFCE-SESSION done rc=0`).
+- Next: `m8b` (quake2-wl, quake3-wl, stk-wl in a window), then fold `-wl` builds into the default image with the migration.
