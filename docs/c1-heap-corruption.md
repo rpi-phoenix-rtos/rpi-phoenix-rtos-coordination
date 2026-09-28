@@ -205,6 +205,52 @@ passed both gates (`C1PROV d=` ×3 in `loader.disk`, `c1prov = NO ANSWER` in STK
 too. So no Pi trial ran, and the queue restored master and a stock build. Re-queued as **`c1prov2`** (chain80,
 end of the queue): same method and readings; the QEMU gate is now "reaches `kernel entry`, no fault".
 
+**RESULT 2026-09-28 07:25 — `c1prov2`: C1 fired in 6 of 6 valid cold trials; the victims' page histories are MIXED
+(enriched, n = 7 readable victim pages).** Gates passed (kernel `C1PROV d=` ×3, STK hook ×1; QEMU reached `kernel entry`).
+`c1-idle-table.sh c1prov2`:
+- 6/6 valid trials FIRED: C1, C3, C4 and C5 on the poison path; C2 and C8 as high-bits crashes (C2 `far=0x800000010cccfb08`
+  in `Item::updateGraphics`).
+- **C6 and C7 VOID.** In both, `lwip` (PID 12) crashed at boot in `_route_find` (`port/route.c:181`) with identical
+  registers, so STK never started. This is a separate open question (below).
+
+Controls passed in every valid trial: a reason-0 dump of STK's own new heap page, and a reason-3 `ev=oob` line. Graded
+with `scripts/c1prov-grade.py`, which checks ck= AND field completeness (the byte-sum ck let `pid=`→`pi,8=` through) and
+marks a dump INCOMPLETE on a ring seq gap. Each victim page is counted once per trial.
+
+| victim page (trial) | ring | reading (pre-registered) |
+|---|---|---|
+| `0x8534000` (C5) | complete, 3 events | **`contig`**: STK's 256-page block `0x8500000` (a 1 MiB V3D BO), freed 6.3 s before STK's heap took the page; detector `p4bopa=1` agrees |
+| `0x84e5000` (C4) | complete, 7 | **`contig` in the ring**: STK's 32-page block `0x84e0000` (128 KiB), freed 7.0 s before the heap took the page, then STK anon churn |
+| `0x847a000`, `0x833c000` (C1) | complete, 5 / 7 | **no history before malloc**: STK's own anon alloc is the page's first event since boot, only STK anon after |
+| `0x839c000` (C3) | complete, 7 | previous owner **`msg`/lwip**, a kernel message copy (STK anon → lwip msg → STK anon) |
+| `0x845c000` (C4) | truncated | previous owner `msg`/lwip |
+| `0x8524000` (C4) | truncated | previous owner `kheap` (in STK's context); `msg`/lwip also in the ring |
+| 3 pages (C1, C4) | truncated, only STK churn left | **not readings** (history lost; deepen `C1PROV_DEPTH`) |
+| `0x8565000` (C4) | header line corrupted | void |
+
+**Baseline** (reason-0 new heap pages, 6 readable observations): every previous owner is STK anon. `0x808c000` (C3, C5)
+is also "no history before malloc". **None has a `contig` owner anywhere in the ring**; `msg`/nfs and `msg`/lwip appear
+in 3 truncated baseline rings.
+
+**Readings (enriched, n = 7 readable victims, not "the cause"):**
+- **Closed V3D BO pages: 2 of 7 victims vs 0 of 6 baseline** (Fisher p ≈ 0.46: suggestive only). This agrees with §4's
+  earlier 2 of 9. For these two pages, a device holding a stale address into a freed BO is still the leading picture.
+- **2 of 7 victims have no owner but STK's ordinary heap since boot.** For these, no recycled-page previous owner exists
+  at all: the stale-PA-from-a-recent-owner picture is weakened for them. What remains is a writer holding a PA from
+  **before the log started** (boot time, firmware, the `loader.disk` load; the band is where the firmware put that
+  file), or a virtual-address writer inside STK. The same class occurs in the baseline, so on its own it does not
+  discriminate.
+- **Kernel-internal previous owners (`msg`, `kheap`): 3 of 7 victims**, 0 of 6 as the immediate baseline previous owner.
+  But `msg` pages churn through the band in the baseline rings too, so this is weak.
+- No `phys` event on any page and no VM-BUG reading: no process mapped a victim page by PA, and the kernel never handed
+  out a page STK still held.
+- **No single previous-owner class explains every victim.** Either the writer is not a recycled-page owner at all (it
+  hits band pages whatever their history), or there are two mechanisms. Next reads:
+  1. `C1PROV_DEPTH` 32, so the 3 truncated rings become readable;
+  2. band pages that were NOT victims, sampled at the fire, to measure how often "closed-BO origin" occurs among all
+     live STK pages at that moment;
+  3. the lwip `_route_find` crash, which only appeared on this instrumented image (2 of 8 boots, none since 2026-08-10).
+
 ## 4. What is established
 
 | finding | evidence | strength |
