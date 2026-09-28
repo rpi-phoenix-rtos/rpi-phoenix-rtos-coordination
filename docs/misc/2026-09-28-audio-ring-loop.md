@@ -33,8 +33,9 @@ with this value (l.714), so it is also the level the jack idles at from boot.
 
 ## 2. The fix (option (a), without stopping the DMA)
 
-The fix is branch `fix/audio-ring-silence`. `cad6535` adds the ring bookkeeping header and
-`84ab300` changes the driver.
+The fix is branch `fix/audio-ring-silence`, head `cd9839a`. `cad6535` adds the ring
+bookkeeping header, `84ab300` changes the driver, and `cd9839a` makes close service the ring
+before it drops the opener count.
 
 - **Keep the engine running.** Option (b) was rejected. Re-arming is where this driver's ~7 %
   parked-channel stall lives (the comments at l.244-248 and l.667-681, and KNOWN-ISSUES
@@ -47,7 +48,8 @@ The fix is branch `fix/audio-ring-silence`. `cad6535` adds the ring bookkeeping 
   and overwrites the words the engine played with silence. The writer only writes into that
   already-silent free region. After the ring drains, the writer resumes 256 words ahead of the
   cursor, on the same word parity, which is the same channel. Those 256 lead words count as
-  pending.
+  pending. They are also ~2.9 ms of audible start latency on the first write after a drain. The
+  old driver had none there, but it resumed at a stale position, up to a whole lap (~186 ms) late.
 - **Laps.** The cursor index alone cannot tell a short move from a move plus whole laps, so the
   elapsed time is checked too. A cursor that has not moved at all is a parked engine, not a lap.
   This keeps the 10 s stall detector working.
@@ -117,7 +119,7 @@ Arm 1 plays 8 s and exits at the end of the clip. Arm 2 quits after 4 s with a f
 |---|---|---|---|
 | 1 | Boot, right after `rpi4-audio: self-test fed 8960 samples` | exactly one `underrun: silence-filled W words` with W in 8 000-11 500 (~90-130 ms), `dma=running`, `cs` bit 0 set, `nonsilent=0/16384`, `stream=closed`, `lapped=0`, `drains=1` | no line: the sweeper did not start (look for `sweeper thread failed`) or the image is stale (the `strings` check); `nonsilent` > 0: the invariant is broken, so this is a bug; `dma=stopped`: the engine died, so check `DMA_CS` |
 | 2 | Arm 1, while playing | no `underrun:` line, or a few with `stream=open` around start-up | `stream=open` lines all through playback: the SDL feeder really underruns (a finding about the feeder, not about this fix) |
-| 3 | Arm 1, exit (`VIDEO-PLAY done rc=0`) | `close: openers=0, W words … still to play`, then within ~0.2 s `underrun: … nonsilent=0/16384, dma=running, stream=closed` | no `close:` line: the fd close did not send `mtClose` (still harmless, because the sweeper does not depend on it), so there should still be an `underrun:` line; `openers=0` on every line, even while playing: `mtOpen` is not delivered, which only affects the label |
+| 3 | Arm 1, exit (`VIDEO-PLAY done rc=0`) | `close: openers=0, W words … still to play`, then within ~0.2 s `underrun: … nonsilent=0/16384, dma=running, stream=closed`. If the tail had already drained before the close, the order flips: `underrun: … stream=open` first, then `close: … 0 words` (also a pass) | no `close:` line: the fd close did not send `mtClose` (still harmless, because the sweeper does not depend on it), so there should still be an `underrun:` line; `openers=0` on every line, even while playing: `mtOpen` is not delivered, which only affects the label |
 | 4 | Arm 2, `key=quit` at 4 s | the same pair as in row 3, with `close: … still to play` near a full ring (≈ 16 000 words, ~180 ms) | a small W: SDL drained before closing (fine; record it) |
 | 5 | No `write STALLED`, no `self-test ABORTED`, no new `DMA NOT STREAMING` | the fix does not touch arming, apart from the silence pre-fill | any of these: compare with the pre-change rate before blaming the fix |
 
