@@ -199,6 +199,12 @@ ordinary in-band heap pages (≤ 16 over the series) against which the victims' 
 ⚠ AGENTS.md's probe-parity rule asks for a QEMU run of a new kernel probe; the recording path is exercised by every boot
 (it runs on each allocation), so a QEMU boot to `(psh)%` on this kernel is the minimum before the Pi series.
 
+**2026-09-28 04:00 — `c1prov` run VOID before any trial (a harness error, not a reading).** The instrumented build
+passed both gates (`C1PROV d=` ×3 in `loader.disk`, `c1prov = NO ANSWER` in STK). My QEMU pre-check then required
+≥ 20 UART lines, but QEMU never prints past `hal: smp release-2 → kernel entry`: stock images stop at 11–13 lines
+too. So no Pi trial ran, and the queue restored master and a stock build. Re-queued as **`c1prov2`** (chain80,
+end of the queue): same method and readings; the QEMU gate is now "reaches `kernel entry`, no fault".
+
 ## 4. What is established
 
 | finding | evidence | strength |
