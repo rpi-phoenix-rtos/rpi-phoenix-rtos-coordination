@@ -18,6 +18,7 @@
  * Environment: GTK_VIDEO_STAT_MS (default 2000; 0 = no stat lines), GTK_VIDEO_AUTOKEYS
  * ("<s>:<action>,..." with pause stop fs left right up down quit: unattended control tests),
  * GTK_VIDEO_AUDIO (0 = no sound), GTK_VIDEO_AUDIO_DEV (default /dev/audio0),
+ * GTK_VIDEO_AUDIO_FILL_MS (audio queued ahead in the device, default 120),
  * GTK_VIDEO_SWS_THREADS (libswscale threads, default 2), GTK_VIDEO_THREADS (decoder
  * threads, default 0 = FFmpeg's auto).
  *
@@ -50,8 +51,12 @@
 #define AUDIO_RATE     44100
 #define QUEUE_MAX_SIZE (16 * 1024 * 1024)
 #define QUEUE_MAX_PKTS 256
-#define LATE_DROP_S    0.10
-#define AUDIO_SYNC_S   0.05
+#define LATE_DROP_S    0.10   /* a picture later than this is dropped */
+#define AUDIO_FILL_S   0.12   /* audio kept queued in the device ring (underrun headroom);
+                                * GTK_VIDEO_AUDIO_FILL_MS overrides (the ring holds ~0.19 s) */
+#define AUDIO_CHUNK_S  0.01   /* silence is written in chunks of this */
+#define AUDIO_LATE_S   0.05   /* a sound frame heard later than this is dropped */
+#define AUDIO_EARLY_S  0.02   /* ... earlier than this waits (silence in front of it) */
 
 
 /* --- packet queue ---------------------------------------------------------------------- */
@@ -564,11 +569,48 @@ static gpointer video_thread(gpointer arg)
 }
 
 
+/*
+ * The audio feeder. /dev/audio0 (rpi4-audio) plays a free-running ~0.19 s DMA ring: write()
+ * blocks while the ring is full, and whatever the ring holds is played again if the writer
+ * falls behind or stops -- also after close(). So the ring is never left without fresh
+ * samples: silence is written while paused, held (start, seek) or starved, and 0.25 s of it
+ * before the device is closed. The fill (audio queued but not heard yet) is modelled as
+ * seconds written minus seconds elapsed since the first write (the ring drains at the
+ * playback rate), kept near AUDIO_FILL_S; a frame is due when it will be HEARD at its pts:
+ * at clock + fill.
+ */
+static gint64 afeed_t0;
+static double afeed_written;
+static double afeed_target = AUDIO_FILL_S;
+
+
+static double audio_fill(void)
+{
+	double f;
+
+	if (afeed_t0 == 0) {
+		return 0;
+	}
+	f = afeed_written - (g_get_monotonic_time() - afeed_t0) / 1000000.0;
+	if (f < 0) {
+		/* the ring ran dry (or the model drifted): start the model again */
+		afeed_t0 = 0;
+		afeed_written = 0;
+		f = 0;
+	}
+	return f;
+}
+
+
 static void audio_write(player_t *p, const uint8_t *buf, int len)
 {
 	ssize_t n;
 
-	while ((len > 0) && (p->afd >= 0) && !p->quit) {
+	if (afeed_t0 == 0) {
+		afeed_t0 = g_get_monotonic_time();
+	}
+	afeed_written += len / (4.0 * AUDIO_RATE);
+	while ((len > 0) && (p->afd >= 0)) {
 		n = write(p->afd, buf, len);
 		if (n < 0) {
 			if (errno == EINTR) {
@@ -585,6 +627,18 @@ static void audio_write(player_t *p, const uint8_t *buf, int len)
 }
 
 
+static void audio_silence(player_t *p, double secs)
+{
+	static const uint8_t zero[4 * (AUDIO_RATE / 100)];
+	int len = (int)(secs * AUDIO_RATE) * 4;
+
+	while ((len > 0) && (p->afd >= 0)) {
+		audio_write(p, zero, len < (int)sizeof(zero) ? len : (int)sizeof(zero));
+		len -= sizeof(zero);
+	}
+}
+
+
 static gpointer audio_thread(gpointer arg)
 {
 	player_t *p = arg;
@@ -592,98 +646,131 @@ static gpointer audio_thread(gpointer arg)
 	AVFrame *f = av_frame_alloc();
 	AVChannelLayout stereo = AV_CHANNEL_LAYOUT_STEREO;
 	uint8_t *out = NULL;
-	int out_size = 0, serial = -1, qserial, got, drained = 0, n, max;
-	double pts, dur, c, tb = av_q2d(p->ic->streams[p->aidx]->time_base);
+	int out_size = 0, out_len = 0, serial = -1, qserial, got, drained = 0, max, n, ret, have = 0, have_serial = 0;
+	double pts = 0, dur = 0, fill, heard, tb = av_q2d(p->ic->streams[p->aidx]->time_base);
+	const char *e = getenv("GTK_VIDEO_AUDIO_FILL_MS");
 
+	if ((e != NULL) && (atoi(e) >= 10)) {
+		afeed_target = atoi(e) / 1000.0;
+	}
 	while (!p->quit) {
-		got = pq_get(&p->aq, pkt, &qserial, 20000);
-		if (got < 0) {
-			break;
+		fill = audio_fill();
+		if ((p->afd >= 0) && (fill > afeed_target)) {
+			g_usleep((gulong)(fill - afeed_target > 0.01 ? 10000 : (fill - afeed_target) * 1000000 + 500));
+			continue;
 		}
-		if (qserial != serial) {
-			avcodec_flush_buffers(p->actx);
-			serial = qserial;
-			drained = 0;
+		if (have && (pq_serial(&p->aq) != have_serial)) {
+			have = 0;   /* decoded before a seek */
 		}
-		if (got == 0) {
-			if (!p->eof || drained) {
-				continue;
+		if (!have) {
+			ret = avcodec_receive_frame(p->actx, f);
+			if (ret == AVERROR(EAGAIN)) {
+				got = pq_get(&p->aq, pkt, &qserial, p->afd >= 0 ? 5000 : 20000);
+				if (got < 0) {
+					break;
+				}
+				if (qserial != serial) {
+					avcodec_flush_buffers(p->actx);
+					serial = qserial;
+					drained = 0;
+				}
+				if (got > 0) {
+					avcodec_send_packet(p->actx, pkt);
+					av_packet_unref(pkt);
+				}
+				else if (p->eof && !drained) {
+					avcodec_send_packet(p->actx, NULL);
+					drained = 1;
+				}
 			}
-			avcodec_send_packet(p->actx, NULL);
-			drained = 1;
-		}
-		else {
-			avcodec_send_packet(p->actx, pkt);
-			av_packet_unref(pkt);
-		}
-		while (!p->quit && (avcodec_receive_frame(p->actx, f) == 0)) {
-			if (f->pts == AV_NOPTS_VALUE) {
+			else if (ret == AVERROR_EOF) {
+				if (pq_serial(&p->aq) == serial) {
+					p->adone = 1;
+				}
+				got = pq_get(&p->aq, pkt, &qserial, p->afd >= 0 ? 5000 : 20000);   /* idle until a seek */
+				if (got < 0) {
+					break;
+				}
+				if (qserial != serial) {
+					avcodec_flush_buffers(p->actx);
+					serial = qserial;
+					drained = 0;
+					p->adone = 0;
+				}
+				if (got > 0) {
+					avcodec_send_packet(p->actx, pkt);
+					av_packet_unref(pkt);
+				}
+			}
+			else if ((ret == 0) && (f->pts != AV_NOPTS_VALUE) && (p->afd >= 0)) {
+				pts = f->pts * tb;
+				if (p->ic->start_time != AV_NOPTS_VALUE) {
+					pts -= p->ic->start_time / (double)AV_TIME_BASE;
+				}
+				dur = (double)f->nb_samples / f->sample_rate;
+				if (p->swr == NULL) {
+					if (f->ch_layout.order == AV_CHANNEL_ORDER_UNSPEC) {
+						av_channel_layout_default(&f->ch_layout, f->ch_layout.nb_channels);
+					}
+					if ((swr_alloc_set_opts2(&p->swr, &stereo, AV_SAMPLE_FMT_S16, AUDIO_RATE, &f->ch_layout, f->format,
+							f->sample_rate, 0, NULL) < 0) || (swr_init(p->swr) < 0)) {
+						printf("GTK-VIDEO FAIL audio resampler: sound off\n");
+						swr_free(&p->swr);
+						close(p->afd);
+						p->afd = -1;
+					}
+					else {
+						printf("GTK-VIDEO audio %s %d Hz %d ch -> S16 %d Hz stereo, fill target %.0f ms\n",
+							av_get_sample_fmt_name(f->format), f->sample_rate, f->ch_layout.nb_channels, AUDIO_RATE,
+							afeed_target * 1000);
+					}
+				}
+				if (p->swr != NULL) {
+					max = swr_get_out_samples(p->swr, f->nb_samples);
+					if (out_size < max * 4) {
+						av_free(out);
+						out_size = max * 4;
+						out = av_malloc(out_size);
+					}
+					n = swr_convert(p->swr, &out, max, (const uint8_t **)f->extended_data, f->nb_samples);
+					out_len = (n > 0) ? n * 4 : 0;
+					have = (out_len > 0);
+					have_serial = serial;
+				}
 				av_frame_unref(f);
-				continue;
 			}
-			pts = f->pts * tb;
-			if (p->ic->start_time != AV_NOPTS_VALUE) {
-				pts -= p->ic->start_time / (double)AV_TIME_BASE;
+			else if (ret == 0) {
+				av_frame_unref(f);   /* no pts, or no sound: consumed */
 			}
-			dur = (double)f->nb_samples / f->sample_rate;
-			if (p->vidx < 0) {
-				g_mutex_lock(&p->clk_m);
-				if (p->hold) {
-					p->clk_pts = pts;
-					p->clk_us = g_get_monotonic_time();
-					p->hold = 0;
-				}
-				g_mutex_unlock(&p->clk_m);
-			}
-			/* sync to the master clock: wait while paused/held or early, drop when late */
-			while (!p->quit && (pq_serial(&p->aq) == serial)) {
-				c = clock_now(p);
-				if (!clock_running(p) || (pts > c + AUDIO_SYNC_S)) {
-					g_usleep(10000);
-					continue;
-				}
-				break;
-			}
-			if (p->quit || (pq_serial(&p->aq) != serial) || (pts + dur < clock_now(p) - AUDIO_SYNC_S)) {
-				av_frame_unref(f);
-				continue;
-			}
-			if (p->swr == NULL) {
-				if (f->ch_layout.order == AV_CHANNEL_ORDER_UNSPEC) {
-					av_channel_layout_default(&f->ch_layout, f->ch_layout.nb_channels);
-				}
-				if ((swr_alloc_set_opts2(&p->swr, &stereo, AV_SAMPLE_FMT_S16, AUDIO_RATE, &f->ch_layout, f->format,
-						f->sample_rate, 0, NULL) < 0) || (swr_init(p->swr) < 0)) {
-					printf("GTK-VIDEO FAIL audio resampler: sound off\n");
-					swr_free(&p->swr);
-					close(p->afd);
-					p->afd = -1;
-				}
-				else {
-					printf("GTK-VIDEO audio %s %d Hz %d ch -> S16 %d Hz stereo on %d\n",
-						av_get_sample_fmt_name(f->format), f->sample_rate, f->ch_layout.nb_channels, AUDIO_RATE, p->afd);
-				}
-			}
-			if (p->afd >= 0) {
-				max = swr_get_out_samples(p->swr, f->nb_samples);
-				if (out_size < max * 4) {
-					av_free(out);
-					out_size = max * 4;
-					out = av_malloc(out_size);
-				}
-				n = swr_convert(p->swr, &out, max, (const uint8_t **)f->extended_data, f->nb_samples);
-				if (n > 0) {
-					audio_write(p, out, n * 4);
-				}
-			}
-			av_frame_unref(f);
-		}
-		if (drained && (pq_serial(&p->aq) == serial)) {
-			p->adone = 1;
 		}
 		if (p->afd < 0) {
-			/* no sound: keep draining the queue so the demuxer never stalls on it */
+			have = 0;
 			continue;
+		}
+		if (have && (p->vidx < 0)) {
+			/* no picture stream: the first sound releases the clock */
+			g_mutex_lock(&p->clk_m);
+			if (p->hold) {
+				p->clk_pts = pts;
+				p->clk_us = g_get_monotonic_time();
+				p->hold = 0;
+			}
+			g_mutex_unlock(&p->clk_m);
+		}
+		if (!have || !clock_running(p)) {
+			audio_silence(p, AUDIO_CHUNK_S);
+			continue;
+		}
+		heard = clock_now(p) + audio_fill();
+		if (pts + dur < heard - AUDIO_LATE_S) {
+			have = 0;   /* late: dropped */
+		}
+		else if (pts > heard + AUDIO_EARLY_S) {
+			audio_silence(p, pts - heard < AUDIO_CHUNK_S ? pts - heard : AUDIO_CHUNK_S);
+		}
+		else {
+			audio_write(p, out, out_len);
+			have = 0;
 		}
 	}
 	av_free(out);
@@ -748,8 +835,12 @@ static void player_close(player_t *p)
 	avformat_close_input(&p->ic);
 	swr_free(&p->swr);
 	if (p->afd >= 0) {
+		/* the ring replays what it holds after close: leave it full of silence */
+		audio_silence(p, 0.25);
 		close(p->afd);
 	}
+	afeed_t0 = 0;
+	afeed_written = 0;
 	av_free(p->front.buf);
 	av_free(p->back.buf);
 	g_free(p->path);

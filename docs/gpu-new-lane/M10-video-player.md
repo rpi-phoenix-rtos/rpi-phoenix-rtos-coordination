@@ -61,6 +61,10 @@ harfbuzz/freetype/fribidi/fontconfig from the GTK build; the `lua` port is **5.4
   the video window, and mpv is also libmpv for (c).
 * **Verdict:** the best *player*, but the most new code under us (libass, Lua, vo_gpu's shaders
   on V3D). Second choice for the GUI.
+* Re-verify: the version facts above (0.36.0 = libplacebo mandatory and the first `vo=dmabuf-wayland`;
+  0.35.1 builds against FFmpeg 6.1; libass mandatory in 0.35; Lua 5.1/5.2/LuaJIT only) are from
+  memory of mpv's release notes, not read from source — confirm in mpv's `meson.build`/`RELEASE_NOTES`
+  first.
 
 ### (c) Celluloid (GTK frontend for libmpv)
 
@@ -72,6 +76,8 @@ harfbuzz/freetype/fribidi/fontconfig from the GTK build; the `lua` port is **5.4
   Mesa wayland EGL closure instead, and **no GtkGLArea has run on this stack yet**.
 * **Effort:** (b) + 1–2 days (GtkGLArea bring-up, Celluloid's meson build, MPRIS over D-Bus).
 * **Verdict:** the nicest desktop result, the longest chain. Only after (b) works.
+* Re-verify: "0.24 is the last GTK 3 release" and its libmpv/GLib minimums — from memory; check
+  Celluloid's tags and `meson.build`.
 
 ### (d) Parole (XFCE's player, GStreamer)
 
@@ -86,6 +92,8 @@ harfbuzz/freetype/fribidi/fontconfig from the GTK build; the `lua` port is **5.4
 * **Effort:** 5–8 agent days (four GStreamer modules, static plugin registration, a Phoenix audio
   sink, dbus-glib, Parole's Wayland video path) — the GStreamer port alone is larger than all of (e).
 * **Verdict:** not worth it for a demo; revisit only if GStreamer is wanted for its own sake.
+* Re-verify: Parole's current dbus-glib dependency and its Wayland video-sink state — from memory;
+  check the latest Parole release's `configure.ac`/`meson.build` and `src/gst/`.
 
 ### (e) a small GTK3 player of our own (**recommended for the GUI**)
 
@@ -130,6 +138,16 @@ harfbuzz/freetype/fribidi/fontconfig from the GTK build; the `lua` port is **5.4
   app's spec. ffplay asks SDL for the file's rate/channels (e.g. 48 kHz Opus) and resamples to what
   SDL grants with libswresample, so the device format is never an issue.
 * A GTK player (e) writes `/dev/audio0` itself (no SDL needed), after libswresample.
+* **Finding (by reading `rpi4-audio.c`, not yet heard on the Pi): the device replays stale audio.**
+  With the DMA path, `/dev/audio0` is a **free-running ~0.19 s ring** (`RING_WORDS 16384`) that a
+  self-chained DMA plays forever; `write()` fills it ahead of the read cursor and blocks while it
+  is full. Nothing refills it with silence: `mtClose` does nothing, and a writer that falls behind
+  or stops leaves the DMA looping the last ~0.19 s it wrote. So **after ffplay (or any SDL
+  program) exits**, or when an SDL writer stalls, the jack keeps playing the last ~0.19 s in a
+  loop until the next writer (SDL's Phoenix driver closes without writing silence; SDL itself
+  keeps feeding silence while ffplay is paused, so pause is fine). Fix for the coordinator (a
+  driver change, not made here): refill the ring with mid-scale on close, and when the read
+  cursor passes the write index. `gtk-video` works around it (below).
 
 ## 3. What was built (2026-09-28)
 
@@ -185,7 +203,7 @@ variant relinks **byte-identical** (`8116cfd0…`).
 | `/usr/share/m10/m10-hevc-720p30-aac.mp4` (30 s, 1280×720 HEVC Main **in the rpivid subset** + AAC, 16.2 MB) | `2ff9bc143e3ac383fc7eb53150ad0533c4064349dfca733e0ebfdf9ae8be9727` |
 | `/usr/share/m10/m10-vp9-360p-opus.webm` (20 s, 640×360 VP9 + Opus 48k, 2.1 MB) | `f438af1067e7fbc559fce2a6c3fe595108ce53e5f2205240061f3ada1e504b7c` |
 | `/usr/share/m10/labwc-xfce-m10/{autostart,rc.xml,menu.xml,environment}` | autostart `ab87e093a57d023f684cd85609eaf5847e80f1a27ae7e973d27bb3387a107129`; the other three copied from `/etc/xdg/labwc-xfce-demo/` |
-| `/usr/bin/gtk-video` | `ec4894b5d42c343a71f9ff3657ce35da8faf9db094d2cde1d4e2f5752fbcf149` (21 874 488 bytes) |
+| `/usr/bin/gtk-video` | `ddde5b61329417d187049952e076c518d0aa2b6046ce84b8964f551d696777f0` (21 876 984 bytes) |
 | `/usr/share/applications/gtk-video.desktop` (root-owned dir: `sudo install`) | `41785fa2b4371f110c817e6c4385aecb0dc7f3413fef24cb7d3990b846d32edf` |
 
 Existing HEVC streams from the rpivid
@@ -210,11 +228,15 @@ shared; the fftools objects are recompiled on a variant switch).
 (libavformat, bounded packet queues, seek requests), a video thread (libavcodec, frame threads =
 FFmpeg's auto) that scales each picture with libswscale **to the video area's size, aspect kept**
 (BGRA, 2 swscale threads) and hands it to the GTK main loop, which paints it 1:1 with cairo; an
-audio thread (libavcodec → libswresample → 44.1 kHz S16 stereo → blocking `write()` on
-`/dev/audio0`). The master clock is a pausable wall clock, held at the target of a seek until the
-first picture after it is ready (frames before the target, decoded from the preceding keyframe,
-are skipped); pictures later than 100 ms are dropped (but one is shown at least every 0.5 s),
-audio earlier than 50 ms waits and later is dropped. UI: a toolbar with **Open** (file chooser),
+audio feeder thread (libavcodec → libswresample → 44.1 kHz S16 stereo → `/dev/audio0`). The master
+clock is a pausable wall clock, held at the target of a seek until the first picture after it is
+ready (frames before the target, decoded from the preceding keyframe, are skipped); pictures later
+than 100 ms are dropped (but one is shown at least every 0.5 s). The feeder models the device ring's
+fill (seconds written minus seconds elapsed since the first write) and keeps **~120 ms** queued
+(`GTK_VIDEO_AUDIO_FILL_MS`; the ring holds ~190 ms); a sound frame is due when it will be *heard*
+at its pts (clock + fill): later than 50 ms → dropped, earlier than 20 ms → silence in front of
+it. **Silence is written while paused, held or starved, and 0.25 s of it before close** — the
+ring is never left replaying stale audio (§2). UI: a toolbar with **Open** (file chooser),
 **Play/Pause**, **Stop** (back to 0, paused), a **seek bar** (GtkScale, updated every 250 ms, a
 drag seeks), the **time** (`m:ss / m:ss`) and **Fullscreen** (`gtk_window_fullscreen`; the
 toolbar hides; also F11/f, a double click, Escape to leave); keys as ffplay's (space, s, ←/→,
@@ -231,8 +253,12 @@ through the glue; the Adwaita icons it names are on the export. **Host test PASS
 headless): 30.0 fps; pause holds the clock (3.06 ×3); → from 4 s lands at 14.8 (keyframe-aligned);
 stop → `clock=0.00 paused=1`; play resumes (0.77 s after 0.7 s); quit rc 0; all four clips play
 at 29.9–30 fps with their audio resampled (AAC 44.1k, Opus 48k). Fail-first: a mutant whose pause
-does nothing is caught (`paused=0`, clock moving). Not testable on broadway: fullscreen (no such
-window state there) and real audio pacing (the sound went to `/dev/null`).
+does nothing is caught (`paused=0`, clock moving). **Audio feeder, host check** (the "device" a
+regular file, 100 ms RMS blocks): 8.47 s written over an 8.2 s run + the 0.25 s closing silence
+(paced to real time by the fill model), 0.2 s of silence while the clock was held at the start,
+the clip's 1 s beeps on a 1.0 s grid before and after the pause, **exactly 2.0 s of silence for
+the 2 s pause**, silence at the end. Not testable on broadway: fullscreen (no such window state
+there) and the real device's blocking/underrun behaviour.
 
 The ffmpeg **port** (`sources/phoenix-rtos-ports/ffmpeg`) is unchanged: it stays the decode-only
 library port. Folding the player configuration in (a `ffplay_drm` port, or `ffmpeg` with the extra
@@ -333,7 +359,8 @@ HDMI with sound, at the clip's 30 fps, and do the controls work (pause, seek, qu
 | 6 | autokeys (arm 1): `ffplay-auto t=12… key=pause`, stat lines with **`paused=1` and a constant `clock`**, `key=pause` at 17 → `paused=0`; `key=right` at 20 → `clock` +10 s (±2, keyframe); `key=fs` 30/34 → `fs=0` then `fs=1` (it started full screen); `key=quit` → `VIDEO-PLAY done rc=0` | the controls work through ffplay's event loop | a key logged but no state change: the SDL event path; windowed at `fs=0` under KMSDRM shows the same picture (KMSDRM has no windows) — finding, not a failure |
 | 7 | arm 2 (1080p H.264 High): fps and drops | **CPU-bound: 15–25 fps, `drop_late`/`drop_early` rising**; audio stays in sync (audio master) | 30 fps with 0 drops: better than expected (record) |
 | 8 | arm 3 (VP9 + Opus 48 kHz): `Audio: opus, 48000 Hz` → resampled; fps 30 at 360p | codec breadth + resampling | `aresample` errors: component set |
-| 9 | HDMI | the testsrc2 picture full screen, **aspect kept (1280×720 → 1920×1080 exactly)**, frame counter advancing between snapshots; 1080p arm same; VP9 360p scaled up | black with stats advancing: frames not presented (SDL renderer vs rpi4-kms); stretched or corner: scaling |
+| 9 | HDMI | the testsrc2 picture full screen, **aspect kept (1280×720 → 1920×1080 exactly)**, frame counter advancing between snapshots; 1080p arm same; VP9 360p scaled up | black with stats advancing: frames not presented — ffplay asks for an accelerated vsync'd renderer and SDL takes its **opengl** (desktop GL on EGL, the quakespasm-drm path) before **opengles2**: one-line A/B `export SDL_RENDER_DRIVER=opengles2`; stretched or corner: scaling |
+| 9b | sound after each `VIDEO-PLAY done` (attended) | **the last ~0.19 s of audio loops on the jack** until the next file starts (§2 finding: the ring is not silenced on close) | silence: the driver or SDL does refill (correct the §2 finding) |
 | 10 | faults | 0 kernel, 0 EL0 (`Exception #`), `KMS srv`/`V3DA srv` no errors | addr2line on the unstripped `build-out/ffplay-drm` first |
 
 ### `m10a1-hevc-cpu` — HEVC on the CPU decoder (runnable now)
@@ -424,7 +451,7 @@ play, fullscreen) work? No SDL, no Mesa in this binary, so it does not depend on
 | 6 | at 28 `GTK-VIDEO fullscreen=1`, stat `fs=1 win=1920x1080` (the toolbar hidden), a new `GTK-VIDEO scale … -> 1920x1080`; at 38 `fullscreen=0`, the window size back | labwc honours xdg-toplevel fullscreen | `fullscreen=` never printed: labwc did not configure the state (finding: compare with ffplay's in m10a) |
 | 7 | at 44 `GTK-VIDEO stop`, `seek target=0.00`, stat `clock=0.00 paused=1`; at 48 `play clock=0.00`, the clock advancing again | stop = back to 0 + paused | — |
 | 8 | at 56 `GTK-VIDEO done` (autokey quit) | clean exit | a hang: the threads' join (the audio thread blocked in `write()`) |
-| 9 | arm 2 (1080p, fullscreen at 5 s): fps | **10–20 fps** fullscreen (swscale to 1920×1080 + 8 MB per frame through cairo and wl_shm), audio continuous (audio is not blocked by the picture) | — |
+| 9 | arm 2 (1080p, fullscreen at 5 s): fps; sound (attended) | **10–20 fps** fullscreen (swscale to 1920×1080 + 8 MB per frame through cairo and wl_shm); **sound continuous**: the feeder keeps ~120 ms queued in the ring, so a scheduling gap shorter than that (4 decoder threads + 2 swscale threads on 4 cores) does not underrun; silence (no looping tone) during the pause and after exit | crackle/repeats while the picture thread is busy: gaps longer than the fill → A/B with `export GTK_VIDEO_AUDIO_FILL_MS=180` (just under the ring's 190 ms) and `GTK_VIDEO_THREADS=3`; a looping tone after exit: the closing silence did not reach the ring |
 | 10 | HDMI | arm 1: the XFCE panel, Thunar and the player window with its toolbar (icons: open, play/pause, stop, the seek bar moving, `0:12 / 0:45`), the testsrc2 picture with the frame counter; t≈28–38 the picture full screen without the toolbar; after stop the first frame and `0:00` | a black area with stats advancing: the draw path (cairo surface) — compare with gtk3-demo's image demos |
 | 11 | `XFCE session end reason=logout`, `XFCE-SESSION done rc=0`, 0 faults | clean | addr2line on the unstripped `build-out/gtk-video/gtk-video` |
 
