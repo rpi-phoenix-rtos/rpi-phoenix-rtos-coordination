@@ -232,6 +232,24 @@ old strings (`/dev/fb0`, `phoenix-map.cfg`) and none of the new ones.
 | Input | games: SDL KMSDRM + `SDL_PHOENIX_HID_Poll` (`/dev/kbd0`, `/dev/mouse0`); X: `phxhid` | built, not exercised on the Pi | no for the gate (no input); **yes** before the owner uses the desktop |
 | Weston | Wayland | m6c displays; exit open | **no** |
 
+## 3a. ★ OWNER DIRECTIVE 2026-09-28 — do the migration (scheduled at the end of the current queue)
+
+Owner: *"schedule … the full migration towards the new gpu lane — so 'old gpu' apps can be phased out: first
+excluded from the default image build, then eventually removed if everything is smooth. The new gpu lane should
+become the only gpu lane available, and the default. Clear all the user-facing docs not to say old/new gpu lanes,
+but describe the one and only, current, fully supported gpu infrastructure."*
+
+Phases, in order; each one is a separate, gated step:
+
+| phase | what | gate |
+|---|---|---|
+| **P1 default** | §4 items 1–8 on branches: the new-lane ports go into the default image (`use: [rootfs]`); the three servers start at boot (`user.plo.yaml`, after `rpi4-vcmbox`, before `psh`); the default launchers (`quakespasm`, `quake2`, `quake3`, `vkquake`, `stk`, `startx`, `xfce-session`) run the new-lane programs. **The old lane stays in the tree**, excluded from the default image by a build knob (an old-lane image stays buildable for A/B). | §5 gate on the new default image: 6/6 + the X and XFCE desktops, `grep` of old-lane strings in the rootfs = 0 |
+| **P2 burn-in** | the regular showcase gate, mig-all, C1 series etc. run on the new default image for ≥ 1 day of normal work | no regression against the last old-lane gate |
+| **P3 remove** | delete the old lane: `rpi4-v3d` daemon, Mesa fork build scripts, old SDL fb0 backend, `Xphoenix`/kdrive glue, the old game glue (§4 items 3–6, 9); `/dev/fb0` users ported (hevc-play). Keep git history; one deletion commit per repo | stock build + full gate + libc suites; old-lane strings = 0 in the tree |
+| **P4 docs** | README, BUILD, CHANGES, KNOWN-ISSUES, skills, user docs: one GPU stack, no "old/new lane" wording; `docs/gpu-new-lane/` keeps the engineering history under a neutral name | a grep for "new lane"/"old lane"/"new GPU lane" in user-facing docs = 0 |
+
+M8 (windowed GPU games on the desktop, [PLAN](PLAN.md)) runs in parallel with P1–P2 and lands on the new default.
+
 ## 4. What changes in the image build
 
 1. **Mesa:** one `mesa-drm` framework port (Mesa 26.2.0 + `tools/gpu-lane/mesa-drm/patches/mesa/0001–0012`)
