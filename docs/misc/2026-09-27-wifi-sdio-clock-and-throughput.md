@@ -388,3 +388,23 @@ Grading against the pre-registered table:
   warned about. The page was leaked on purpose, so the firmware's late write lands safely; no fault.
 - **Merge gate for `wifi/sdio-clock`:** cycle F passes. What remains is cycle N's bulk-TX level boots, the
   run-time TX path. That is queued as `chain77` (3 level boots with the cycle-T perf command).
+
+## Result — cycle T (`wifithr-A1/B1/A2/B2`, chain69, 2026-09-28 02:12–02:40, master vs `wifi/throughput` `679ee59`)
+
+| arm | TX runs (MB/s) | RX runs (MB/s) | frames | resyncs |
+|---|---|---|---|---|
+| A1 master | 3.38 3.47 3.47 | 3.23 3.20 3.23 | tx_ok 13165, 0 err | 0 |
+| B1 branch | 3.47 3.61 3.68 | 3.31 3.31 3.30 | tx_ok 13164, 0 err | 0 |
+| A2 master | 3.37 3.44 3.46 | 3.24 3.25 3.23 | tx_ok 13164, 0 err | 0 |
+| B2 branch | 3.50 3.63 3.64 | 3.28 3.21 3.31 | tx_ok 13165, 0 err | 0 |
+
+- Validity: peer 10.43.0.89 in every host log; `tx_ok` ≥ 8 600 in every arm. `phy rate=72.0 Mbit/s` recorded (B).
+- **Mechanism:** `sbwin skips / (writes + skips)` = 4 057 401 / 4 057 404 and 4 032 564 / 4 032 567, i.e. ≥ 0.9999 ✓.
+- **"B median (6 runs) > A max (6 runs), each direction" — MET in both directions.**
+  - TX: B median **3.62** > A max 3.47. The A median is 3.45, so **+5 %**.
+  - RX: B median **3.305** > A max 3.25. The A median is 3.23, so **+2 %**.
+- B's error, garbage and resync counts all equal A's (all 0), so no stale window reached a transfer.
+- `phy rate` ≤ 72 Mbit/s with A ≥ 3 MB/s: by the pre-registered row, the link is now within ~2.6× of the raw air
+  rate, so levers 3–6 must be re-ranked against the air (goodput at 72 Mbit/s is typically ~5–6 MB/s), not the bus.
+- **Decision: merge `wifi/throughput`** into devices master, once no build is using the checkout. F1's
+  "≈ 3 MB/s" becomes "TX 3.6 / RX 3.3 MB/s (n = 6 per arm)".
