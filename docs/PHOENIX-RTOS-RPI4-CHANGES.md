@@ -257,6 +257,13 @@ Most of the lifetime and race work is in §3. What is specific to robustness her
   fork child could size its kernel-stack copy from the parent's context before the parent had saved it; the child
   now waits. A/B on the Pi: `spawn-storm -f` froze the whole system 3 of 3 runs (within 16–38 launches) before,
   0 of 3 runs (1500/1500 launches) after. The two changes are not yet separated. Same code upstream.
+- ★ **lwip: the thread-collector stack no longer overflows onto the route table** (phoenix-rtos-lwip `port/threads.c`, `356ae98`).
+  `thread_waittid_thr` ran on a 512-byte static stack; freeing an exited thread's stack goes through the allocator's
+  red-black tree (`free → _malloc_chunkJoin → … → rb_transplant`, 512–528 bytes), so a saved return address landed on
+  `rt_table.entries` and `_route_find` walked code as a route list (P13: lwip — and the NFS root with it — died at boot).
+  Stock had 0 bytes of margin; the kernel's user-stack canary is compiled out under NDEBUG. The stack is now 4096 bytes
+  on aarch64 (others keep 512). Host check `tools/elf-stack-depth/check-lwip-thread-stacks.sh` walks every static-stack
+  thread's worst call path: exit 1 on the old binary, 0 now. Showcase gate 6/6.
 - **`SO_PEERCRED` for AF_UNIX sockets** (`posix/usocket.c`, `include/posix-socket.h`, `63b35c27`).
   - `getsockopt(SOL_SOCKET, SO_PEERCRED)` returns a `struct ucred` naming the peer process, captured as Linux does it:
     an accepted socket reports the process that called `connect()`, a connecting socket reports the listener, and
