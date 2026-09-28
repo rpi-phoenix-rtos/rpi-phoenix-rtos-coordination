@@ -359,3 +359,28 @@ probe, and a default-resolution game — at the native mode?
   04:22), not MIGRATION §6's `22755bb450b09e0f` — check before grading any vkq cycle.
   `scripts/check-gpu-lane-ports-sync.sh` is clean after g9 (kms/ has no ports copy besides
   `kms_proto.h`, which is unchanged).
+
+## Results (chain89, build 27b, 2026-09-28 10:15–11:00)
+
+**`m9a-modes`: ✅ PASS.**
+- `KMS srv ready … ` lists 8 modes (`KMSTEST modes list rc=0 n=8`), and every mode set produced a `KMS mode … scaled` line (`screen=1920x1080+0+0 bars=0`; 1024x768 → `screen=1440x1080+240+0 bars=1`).
+- `KMSTEST modes result fails=0 verdict=PASS`; `modes-leave` → `native … why=primary_off`; `KMSTEST crtc rc=0 mode=1920x1080 fb=0`; 0 exceptions.
+- **HDMI (the one unproven premise): the firmware scales.**
+  - 1024×768: the green card is centred with black bars left and right and the ring is round.
+  - 960×540: the red card fills the screen.
+  - 640×360 plane scaling: the purple card fills the screen.
+  - Afterwards the console is back at native (`…m9a-modes-tick.png`, 10:18–10:19).
+
+**`m9b-stk-*`: gameplay fps** (`stk-drm flipstat` windows with fps > 3, first and last dropped; mean):
+
+| mode | predicted | measured | windows | exit |
+|---|---|---|---|---|
+| 1920×1080 | 11.9 | *(running)* | | |
+| 1600×900 | ~17 (15–18.5) | **16.61** | 37 | fault at exit |
+| 1280×720 | ~22 (19–25) | **22.26** | 33 | fault at exit |
+| 960×540 | ~24 (20–27) | **24.05** | 31 | fault at exit |
+
+- **The owner's answer: 1280×720 nearly doubles STK (1.87× the 1080p 11.9).**
+- **The plateau is confirmed.** 960×540 is only 1.08× the 720p figure, so below 720p the CPU (~40 ms/frame) is the limit. A GPU-linear model would give ~48 fps.
+- Every run is scaled (`KMS mode … scaled`) and restores to native afterwards (`KMSTEST crtc rc=0 mode=1920x1080`).
+- **The exit fault is not M9's.** It is P16, a use-after-free in SDL 2.30.12's `KMSDRM_DestroySurfaces` (EGL surface destroyed before its locked GBM buffers are released), identical pc/far in all three runs; see [misc doc](../misc/2026-09-28-stk-scaled-exit-fault.md). The fix is upstream SDL `9cc2f248f5`, backported as sdl2-drm patch 0010; re-check `m9b-stk-{720,1080}-t10` is queued.
