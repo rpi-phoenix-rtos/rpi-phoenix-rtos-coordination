@@ -115,3 +115,13 @@ without `--skip-prepare`, because the buildroot's `phoenix-rtos-build` copy must
    hand, so its exact count can drift for unrelated reasons.
 5. A second `--scope core --with-ports` with no libphoenix change prints **no** `Link inputs
    changed` line.
+
+## Correction, 2026-09-29: four ports were unsafe under the default
+
+"A read of all 72 recipes found none where the default is unsafe" was wrong for the new-stack
+ports added the same day. `wayland_phoenix`, `gtk3_wayland`, `labwc_desktop` and `xfce_wayland`
+build each package under an `out/<name>.built` stamp. The default deleted their programs, the
+stamp then said "up to date", and nothing relinked. The first libphoenix change after they
+joined the default image (P1 build try 4, `dladdr`) made `gtk3_wayland` die copying the deleted
+`gtk3-demo`. All four now define `p_relink` to drop the stamps (ports `8d16491`). **Rule for a new
+recipe:** if the build skips work on a stamp, the port needs a `p_relink`.
