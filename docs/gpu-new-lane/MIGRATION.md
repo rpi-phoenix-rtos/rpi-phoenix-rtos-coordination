@@ -1287,12 +1287,12 @@ Try 5: `BUILD_RC=0`. **Image gate PASS** on the rootfs and on the pristine expor
 - `KMS v3d connect=1 … waited_ms=0`.
 - 0 faults.
 
-**Showcase gate** (`run-showcase-gate-drm.sh --label p1-gate`). Every cycle: rc 0, prompt yes, boot ok,
+**Showcase gate** (`run-showcase-gate-drm.sh --label p1-gate`) — **P1 GATE PASS (7/7)**. Every cycle: rc 0, prompt yes, boot ok,
 faults 0.
 
 | key | verdict | fps median (ref §6s) | note |
 |---|---|---|---|
-| x | ❌ → re-run | — | `Xorg-drm`: `Cannot open log file "/var/log/Xorg-drm.1.log"`: the pristine rootfs had no `/var/log` (only the RPI4_LOG_TO_FILE logger created it) → project `901a9d4` root-skel `/var/log` + `/var/tmp`; re-run `p1-gate-x2` |
+| x | ✅ re-run `p1-gate-x2` | **60.0** (60.00) | first run ❌ — `Xorg-drm`: `Cannot open log file "/var/log/Xorg-drm.1.log"`: the pristine rootfs had no `/var/log` (only the RPI4_LOG_TO_FILE logger created it) → project `901a9d4` root-skel `/var/log` + `/var/tmp`; re-run (`/var/log` on the export): XDEMO 59.5–60.0 over 8000+ frames, `XDRM done rc=0 reason=hold-done`, 0 faults |
 | qspasm | ✅ | 43.8 (44.45) | |
 | q3 | ✅ | 58.8 (59.40) | console handover 1× |
 | q2 | ✅ | 59.8 (60.00) | |
