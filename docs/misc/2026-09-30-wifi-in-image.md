@@ -11,7 +11,7 @@ prediction, checked by the pre-registered cycle at the end.
 
 | repo | commit | what |
 |---|---|---|
-| phoenix-rtos-devices | `72f3318` | `rpi4-wifi` reads its firmware from `/lib/firmware/brcm/`; built as a normal component with the `wifi` client; `-f` boot mode; single-instance guard; WL_REG_ON through `rpi4-vcmbox`; quiet bring-up; `wifi` input checks |
+| phoenix-rtos-devices | `1113cd6` | `rpi4-wifi` reads its firmware from `/lib/firmware/brcm/`; built as a normal component with the `wifi` client; `-f` boot mode; single-instance guard; WL_REG_ON through `rpi4-vcmbox`; quiet bring-up; `wifi` input checks |
 | phoenix-rtos-lwip | `c7e9d14` | `wifi43455`: no `/dev/wifidata` polling while not associated |
 | phoenix-rtos-project | `0552f86` | `user.plo.yaml` starts `rpi4-wifi -f` (nfsroot + sd); `/etc/wifi.conf.example`; `.gitignore` for the staged firmware |
 | coordination | this commit | `scripts/fetch-wifi-firmware.sh` + hook in `rebuild-rpi4b-fast.sh`; `stage-bcm43455-firmware.sh` uses the same pin; `check-rootfs-complete.sh`, `publication-audit.sh`, `sync-netboot-tree.sh`; this doc |
@@ -178,6 +178,9 @@ next to it. `check-rootfs-complete.sh` now fails a rootfs that has the firmware 
   `sources/`, and these changes live in worktrees.
 - Linked against the buildroot's `libphoenix.a` + `libvcmbox.a`: `nm -u` empty for both binaries.
 - `lwip drivers/wifi43455.c` compiled with its real command line: clean.
+- The new `wifi/rpi4-wifi/Makefile` dry-run through the framework (`make -n` in the devices
+  worktree, `TARGET=aarch64a72-generic-rpi4b`): `all` compiles both sources, links `rpi4-wifi` with
+  `libvcmbox.a`, strips both; `install` puts `/sbin/rpi4-wifi` and `/bin/wifi`.
 - NVRAM conversion: byte-identical to the Python generator and to the shipped array (above).
 - `diff-boot-variants.py` on the new `user.plo.yaml`: renders all three variants;
   `rpi4-wifi;-f` in sd and nfsroot; no duplicate alias.
@@ -255,7 +258,9 @@ leaving "PhoenixNet"` and `lwip: wifi43455: no credentials (boot cfg empty, no s
 none`, `daemon:  STATUS joined=0 …`, `address: none`. `top -n 1` while unassociated: lwip and rpi4-wifi
 near 0 % CPU (the new link-down sleep; before it, ~4 000 wakeups/s). After moving the file back: a
 new `joining` / `joined` / `dhcp_start` sequence and an address again within ~60 s. **Check the file
-is back** (`wifi status` shows `wanted:  "PhoenixNet"`) before ending the session.
+is back** (`wifi status` shows `wanted:  "PhoenixNet"`) before ending the session. If the cycle dies
+between the two moves, the export is left with `/etc/wifi.conf.off`: rename it back on the host
+(`sudo mv <export>/etc/wifi.conf.off <export>/etc/wifi.conf`) — nobody needs to know the PSK for that.
 
 **Cycle W3 — fresh image, owner-attended (persistence), optional:** an SD image (it has no
 `/etc/wifi.conf`) with the AP up. Boot log: W1.1–W1.5 and `lwip: wifi43455: no credentials …`.
@@ -276,6 +281,7 @@ most once a minute and does not poll.
 | `WiFi disabled: cannot read …` | the firmware did not reach the rootfs: check the `[wifi-fw]` line of the build and whether the stage list had `fs` |
 | W1.3 fails but a shell restart works | a boot-time interaction (vcmbox load, timing): compare `SDHCI-PIO` timing fields with the shell runs of 09-28 |
 | joined but no lease, or a lease only after a delay | the lwip link-down gating (c7e9d14): revert it alone and re-run W1 |
+| throughput somewhat below the cycle-T range, everything else as predicted | first suspect the compiler flags, not the design: the daemon is now built by the framework (`-std=gnu17 -O2 -mstrict-align -fomit-frame-pointer -ffunction-sections`), cycle T's by `build-standalone.sh` (`-O2 -std=gnu11`). Neither boot start nor the lwip change touches the joined data path |
 | a showcase-gate regression | kill `rpi4-wifi` in a re-run to attribute it |
 
 ## Follow-ups (not done here)

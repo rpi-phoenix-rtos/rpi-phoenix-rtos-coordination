@@ -7,7 +7,9 @@ artifacts/
 external/
 
 # Staged non-free firmware blobs (Cypress EULA, redistributable but
-# kept out of git — populate via scripts/stage-bcm43455-firmware.sh)
+# kept out of git): the pinned linux-firmware cache of
+# scripts/fetch-wifi-firmware.sh, and the flat copies of
+# scripts/stage-bcm43455-firmware.sh (tools/wifi-probe)
 .firmware/
 .bootblobs/
 .buildroot/
