@@ -131,11 +131,15 @@ fi
 # may contain root-owned files (e.g. the fontconfig cache from stage-desktop-fonts);
 # preserving owner/group needs root and makes rsync exit non-zero on chown/chgrp,
 # aborting the sync. Ownership is irrelevant for the served rootfs, so skip it.
+# /etc/wifi.conf holds the lab's WiFi credentials, which live ONLY on the export
+# (a built rootfs never has one, see check-rootfs-complete.sh); excluding it keeps
+# SYNC_DELETE=1 from deleting it.
 rsync -a --no-owner --no-group "${delete_args[@]+"${delete_args[@]}"}" \
 	--exclude=/dev \
 	--exclude=/proc \
 	--exclude=/tmp \
 	--exclude=/mnt \
+	--exclude=/etc/wifi.conf \
 	"$src/" "$export_dir/"
 
 # The base build produces no scalable TTF / fontconfig config / cache, so the X11

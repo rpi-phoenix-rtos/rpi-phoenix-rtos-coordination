@@ -127,6 +127,10 @@ REQUIRED=(
 	# symlink -- see ca_certificates/port.def.sh for which consumer reads which.
 	etc/ssl/certs/ca-certificates.crt
 	etc/ssl/cert.pem
+	# WiFi: the daemon (also started from loader.disk) and the user's client.
+	sbin/rpi4-wifi
+	bin/wifi
+	etc/wifi.conf.example
 )
 
 # Expected but not fatal: launchers and conveniences. Reported, never silent.
@@ -139,6 +143,12 @@ OPTIONAL=(
 	bin/bash
 	bin/nano
 	bin/mc
+	# The WiFi firmware (scripts/fetch-wifi-firmware.sh). Optional because an
+	# offline build with an empty download cache legitimately ships without it;
+	# its licence is checked below whenever it is present.
+	lib/firmware/brcm/brcmfmac43455-sdio.bin
+	lib/firmware/brcm/brcmfmac43455-sdio.clm_blob
+	lib/firmware/brcm/brcmfmac43455-sdio.raspberrypi,4-model-b.txt
 )
 
 missing_req=0
@@ -169,6 +179,24 @@ if [ -d "${root}/usr/share/supertuxkart/stk-assets/karts" ] &&
 	printf '  OK    usr/share/supertuxkart/stk-assets/karts (populated)\n'
 else
 	printf '  ABSENT usr/share/supertuxkart/stk-assets/karts   <-- REQUIRED\n'
+	missing_req=$((missing_req + 1))
+fi
+
+# Never ship the vendor firmware without its licence.
+if [ -e "${root}/lib/firmware/brcm/brcmfmac43455-sdio.bin" ]; then
+	for p in lib/firmware/LICENSES/LICENCE.cypress lib/firmware/LICENSES/GPL-2.0 lib/firmware/WHENCE; do
+		if [ -s "${root}/${p}" ]; then
+			printf '  OK    %s\n' "${p}"
+		else
+			printf '  ABSENT %s   <-- REQUIRED (WiFi firmware present)\n' "${p}"
+			missing_req=$((missing_req + 1))
+		fi
+	done
+fi
+# The lab's credentials live only on the NFS export; one in a built rootfs would
+# ship in every image made from it.
+if [ -e "${root}/etc/wifi.conf" ]; then
+	printf '  FOUND etc/wifi.conf   <-- must NOT be in a built rootfs (credentials)\n'
 	missing_req=$((missing_req + 1))
 fi
 

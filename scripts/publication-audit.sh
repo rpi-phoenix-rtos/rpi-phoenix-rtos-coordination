@@ -31,6 +31,7 @@ KNOWN_PAYLOADS=(
 	"*/rootfs-overlay/usr/share/quake2/*|scripts/stage-game-data.sh"
 	"*/rootfs-overlay/usr/share/quake3/*|scripts/stage-game-data.sh"
 	"*/rootfs-overlay/usr/share/supertuxkart/*|scripts/stage-game-data.sh"
+	"*/rootfs-overlay/lib/firmware/*|scripts/fetch-wifi-firmware.sh"
 	"*wifi-fw-43455.*|scripts/gen-wifi-fw-c.sh"
 	"*wifi-nvram-43455.*|scripts/gen-wifi-nvram-py.py"
 	"*clm-43455.h|tools/wifi-probe/gen-clm.py"
