@@ -11,7 +11,7 @@ framework and no Pi cycle ran: the checks were static (§5).
 
 | repo | branch | head |
 |---|---|---|
-| phoenix-rtos-ports | `feat/desktop-apps-ports` (merges `feat/desktop-apps-atril` and `feat/desktop-apps-video`) | `7e1c4c5` |
+| phoenix-rtos-ports | `feat/desktop-apps-ports` (merges `feat/desktop-apps-atril` and `feat/desktop-apps-video`) | `0e34b3e` |
 | phoenix-rtos-project | `feat/desktop-apps-ports` | `eed5d7f` |
 | coordination | `feat/desktop-apps-ports` | this document + the two sync-check scripts |
 
@@ -95,7 +95,7 @@ All the icon names were checked against the staged PNG Adwaita theme.
 
 1. **Rebuild cascade: the largest cost.** The `mesa_drm` recipe changed, so its digest changed,
    which **cleans every port that depends on it**: Mesa itself (now six meson builds), then
-   `sdl2_kmsdrm`, the five `*_drm` games, `kmscube_drm`, `vkcube_drm`, `xorg_server_drm` and
+   `sdl2_kmsdrm`, the five `*_drm` games, `kmscube_drm`, `vkcube_drm`, `libepoxy`, `xorg_server_drm` and
    `labwc_desktop`. GTK and XFCE are not affected. This takes hours and several GB. Check
    `df -h` first. The alternative, if that is unacceptable, is a standalone `sdl2_wayland` port
    with its own Mesa build: no cascade, but it duplicates about 150 lines of `mesa_drm`.
