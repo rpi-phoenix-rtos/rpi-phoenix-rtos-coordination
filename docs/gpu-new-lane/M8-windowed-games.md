@@ -646,3 +646,10 @@ binary (1) and not in the old one (0).
 | E2 | q3's normal quit (`----- Client Shutdown (Client quit) -----` or similar), `RE_Shutdown( 1 )`, **`quake3-wl: exit after <n> swaps`** (the atexit hook now runs, since `Com_Quit_f` → `Sys_Quit` → `exit`), **`M8 game=quake3 exited rc=0 (clean exit) ran_s=90–93`** | a clean exit | a hang after E1: the normal shutdown path also blocks → record its last line (then the problem is RE_Shutdown itself, not the signal context) |
 | E3 | `M8 quit: no game running`, `XFCE-SESSION done rc=0`, 0 kernel / 0 EL0 dumps | clean | — |
 | E4 | quake3-wl fps as m8b T5 (median 65–100) | unchanged by the fix | < 55: a regression from the relink (compare the sha / BUILD-INFO) |
+
+**Result `m8b2-quake3-exit` (chain95, 2026-09-29 21:25): ✅ PASS.** `M8 game=quake3 time up (90 s): SIGTERM` →
+`Termination requested, quitting from the main loop` → `RE_Shutdown( 3 )` → **`exited rc=0 (clean exit) ran_s=91`**;
+`M8 quit: no game running`, `XFCE-SESSION done rc=0`, 0 dumps. fps median **70.2** (n = 15, E4 band 65–100).
+E2's `quake3-wl: exit after` line is absent and that is correct: `Sys_Exit()` is `_exit()` under NDEBUG
+(`pl_phoenix_main.c:279`), so the atexit hook never runs. Fix merged: ports `master` (`fix/quake3-sigterm`
+`fea5ce2`). `quake3_drm` and the old `quake3` pick it up at their next port build (the P1 image).
