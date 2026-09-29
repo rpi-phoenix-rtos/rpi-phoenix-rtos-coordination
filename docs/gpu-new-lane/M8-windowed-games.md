@@ -619,3 +619,30 @@ list; `20260928-134920-m8b-stk-window-tick.png`: the SuperTuxKart main menu in a
 is quake3e's signal-handler shutdown, so the next step is a `quitnextframe`-style deferral (set a
 flag in the handler, quit from the main loop, as yquake2 does), not the Wayland path. Left: that
 fix, m8d (the showcase recording), an STK race in a window, and vkQuake (V3DV WSI, §5).
+
+## Pre-registered: `m8b2-quake3-exit` (2026-09-29) — quake3e quits on SIGTERM from its main loop
+
+**Change:** external/quake3e `Phoenix: quit on SIGTERM from the main loop` (fork, local) → ports
+`fix/quake3-sigterm` `fea5ce2` (regenerated patch + glue). The SIGTERM/SIGHUP/SIGQUIT handler now only
+sets a flag, and the glue's main loop calls `Com_Quit_f()` between frames. A second request or a
+fault still takes the in-handler path. **Built** with no image build: the shipped port tree was
+copied, `linux_signals.o` and `pl_phoenix_main.o` were recompiled with the recorded
+`Q3_BASE_CFLAGS`, and `build-quake3-wl.sh --no-control` relinked (`Q3WL_PORT_SHADOW`).
+**Staged** `/usr/bin/quake3e-wl` sha `a988e6f9…`; the old one is kept as
+`/usr/bin/quake3e-wl.pre-sig`. **Gate string:** `Termination requested` is in the new stripped
+binary (1) and not in the old one (0).
+
+```
+./scripts/test-cycle-psh-interact.sh --label m8b2-quake3-exit --idle-secs 60 --max-cmd-secs 330 \
+    --hdmi-dense-on 'M8 game=' -- \
+    "export HOLD=180" "export VERBOSE=1" "export CONF_DIR=/etc/xdg/labwc-xfce-m8" \
+    "export LOGOUT_CMD=/bin/game-window-quit.sh" "export M8_GAMES=quake3:90" \
+    "/bin/bash /bin/xfce-session-2" "/bin/shmsrv -s" "/bin/kmstest-poll stats"
+```
+
+| # | Line | Predicted | If instead… |
+|---|---|---|---|
+| E1 | `M8 game=quake3 time up (90 s): SIGTERM`, then **`Termination requested, quitting from the main loop`** within one frame | the flag path | `Received signal 15, exiting...`: the old binary (check the sha) |
+| E2 | q3's normal quit (`----- Client Shutdown (Client quit) -----` or similar), `RE_Shutdown( 1 )`, **`quake3-wl: exit after <n> swaps`** (the atexit hook now runs, since `Com_Quit_f` → `Sys_Quit` → `exit`), **`M8 game=quake3 exited rc=0 (clean exit) ran_s=90–93`** | a clean exit | a hang after E1: the normal shutdown path also blocks → record its last line (then the problem is RE_Shutdown itself, not the signal context) |
+| E3 | `M8 quit: no game running`, `XFCE-SESSION done rc=0`, 0 kernel / 0 EL0 dumps | clean | — |
+| E4 | quake3-wl fps as m8b T5 (median 65–100) | unchanged by the fix | < 55: a regression from the relink (compare the sha / BUILD-INFO) |
