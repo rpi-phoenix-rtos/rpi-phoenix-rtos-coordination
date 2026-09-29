@@ -14,13 +14,132 @@ The design follows two owner directions of 2026-09-30:
   installed file names a hand-staged program (`*-2`, `*-low`, `video-play2`, `foot-2`, …).
 
 Everything is on branches, pushed to `publish`, **not merged**. Nothing was built through the
-framework and no Pi cycle ran; the checks were static (§5).
+framework and no Pi cycle ran; the checks were static (§5). The image build uses the
+**integration branches** (§0), which merge this work with the P3 removal
+([P3-removal.md](P3-removal.md)) and WiFi in the image
+([2026-09-30-wifi-in-image.md](../misc/2026-09-30-wifi-in-image.md)).
+
+## 0. Integration: `integration/finalize`
+
+Each repo gets one branch from its current master/main (coordination: `main`). They are pushed to
+`publish` and not merged; the SHAs are in the coordination commit that adds this section.
+
+| Repo | Merged | Conflicts |
+|---|---|---|
+| devices | `gpu/p3-remove` (first GPU stack deleted), `wifi/in-image` (rpi4-wifi + `wifi` components) | none; `_targets/Makefile.aarch64a72-generic` auto-merged: no knob, no `rpi4-v3d`/`rpi4-fb`, `DEFAULT_COMPONENTS += rpi4-wifi wifi` |
+| lwip | `wifi/in-image` (fast-forward) | — |
+| ports | `gpu/p3-games-link` (includes `gpu/p3-remove`), then `feat/desktop-apps-ports` | `sdl2_kmsdrm/gamedrm/relink-sdl-gl-game.subr`, `yquake2_drm`, `supertuxkart_drm`: reconciled as the design below |
+| project | `gpu/p3-remove`, `wifi/in-image`, `feat/desktop-apps-ports` | `ports.yaml` (the games' comment block); the desktop apps' entries lose their `RPI4B_GPU_LEGACY` condition, which P3 removed |
+| coordination | `gpu/p3-remove`, `wifi/in-image`, `feat/desktop-apps-ports` | none (the scripts both P3 and WiFi changed auto-merged); then the image gates are extended with the new programs (§0.2) |
+
+### 0.1 The games: one design for P3 and the dual-mode programs
+
+* **The engine ports compile the engine and link nothing; the `*_drm` ports link it.** This is
+  P3's TD-25 decision. `yquake2` and `quake3` compile against `sdl2_kmsdrm`'s headers and publish
+  their link inputs in `port-sources/<port>/engine-link.sh` (`ENGINE_OBJS`,
+  `ENGINE_LINK_FLAGS`, `ENGINE_LINK_TAIL`). `supertuxkart` publishes its CMake tree and a
+  `link.txt` that names `sdl2_kmsdrm`'s `libSDL2.a`. `quakespasm_drm` compiles its engine itself
+  (its own tarball), as before.
+* **Each `*_drm` port links the engine ONCE, dual-mode.**
+  * The objects come from the engine port.
+  * The group is `sdl2_kmsdrm`'s `link-inputs.txt`: `libSDL2.a` with the KMSDRM and Wayland
+    drivers; Mesa's GL build with EGL on GBM and on Wayland (`mesa-gl`, or `mesa-es` for
+    quake2/STK); the Wayland client stack, libdrm, compat and zlib (`tail`); and its `flag`
+    lines (`--wrap=mmap/ioctl/close/write`).
+  * This happens in `relink-sdl-gl-game.subr` (yquake2_drm, quake3_drm), which is P3's
+    `engine-link.sh` reader plus the `link-inputs.txt` group, the Wayland proofs and
+    `game_desktop_entry`. `supertuxkart_drm` runs P3's `link.txt` plus the same group.
+    `quakespasm_drm` uses the same group.
+* There are no `-wl` programs and no control relink (P3 dropped it with the old stack). The names
+  are the P1/P3 ones: `/usr/bin/{quakespasm,yquake2,quake3e,supertuxkart}-drm`, the launchers,
+  and the plain names (TD-26).
+* **vkQuake** stays P3's `vkquake_drm` with SDL's vulkan variant, KMSDRM only.
+* **The tools scripts are superseded, not fixed.** P3 notes that
+  `tools/gpu-lane/sdl2-wl/{build.sh,build-*-wl.sh,gamewl/relink-sdl-gl-game-wl.sh}` and
+  `video-player/build-ffplay.sh` break at P3: they read the deleted ports and the old build.log
+  line. The ports now build what they built, so they are deletion candidates (P3 §7). Only their
+  patches, hooks and sources stay as sync-check masters.
+
+### 0.2 Image gates
+
+`check-rootfs-complete.sh` fails when any of these is missing:
+
+* every GL game engine and ffplay, `/bin/video-play`, `/usr/bin/gtk-video`, `/usr/bin/atril`
+  (+ its schema and `sample.pdf`);
+* `/bin/game-window{,-autostart,-quit}.sh` and the `labwc-xfce-games` / `labwc-xfce-video`
+  configs;
+* the four demo clips and the seven menu entries;
+* WiFi: `/sbin/rpi4-wifi`, `/bin/wifi`, `/etc/wifi.conf.example`, and the three BCM43455 firmware
+  files + `LICENCE.cypress`, `GPL-2.0`, `WHENCE`. These are **now required**: an offline build
+  without the firmware cache fails on purpose;
+* the Wayland desktop and the GPU smoke tests, which were optional before;
+* the `KMS/DRM Video Driver` and `SDL Wayland video driver` strings in each dual-mode engine and
+  ffplay.
+
+`check-gpu-stack-image.sh` adds a check "2b" covering:
+
+* the same files, and each menu entry's `Exec` program;
+* the three dual-mode strings (the two above plus `EGL_KHR_platform_wayland`);
+* `etc/wifi.conf` absent;
+* `rpi4-wifi` in `loader.disk`.
+
+Its must-be-absent list (check 3) is P3's plus the superseded and hand-staged names: the `-wl`
+game clones, `ffplay-{drm,wl}[2]`, `video-play2`, `atril-wl`, `xfce-desktop-atril.sh`,
+`{foot,labwc,fuzzel,xfce-session}-2`, `xfce-desktop-2.sh`, `rpi4-v3d-async-low`,
+`rpi4-kms-g{7,8,9}`, `weston-simple-egl-low`, `etc/xdg/labwc-xfce-m8`, `usr/share/m10`,
+`Xorg-drm-noshim` and `v3dmemprobe`.
+
+**Inverse control** (today's P1 rootfs + loader, read-only): `check-gpu-stack-image.sh` FAILs 45
+checks. They are exactly the new programs and files, the missing dual-mode strings, and the two
+stale P1 files `bin/Xorg-drm-noshim` and `bin/v3dmemprobe` in the persistent `_fs` tree.
+`check-rootfs-complete.sh` reports INCOMPLETE with 39. Every check on the P1 stack's own files
+still passes.
 
 | repo | branch | head |
 |---|---|---|
 | phoenix-rtos-ports | `feat/desktop-apps-ports` (includes the Atril and video work) | `6693114` |
 | phoenix-rtos-project | `feat/desktop-apps-ports` | `6b702ad` |
 | coordination | `feat/desktop-apps-ports` | this document + the two sync-check scripts |
+
+### 0.3 The build of the integration branches
+
+**Validated statically:**
+* `bash -n` on every changed recipe, subr and script, and `port_manager validate`: 94 ports.
+* `build-port.sh --dry --yaml` of the rendered `ports.yaml` (scratch buildroot) resolves
+  **75 ports**: master's 75 − `sdl2` − `xorg_server` + `atril_wayland` + `video_player`.
+* `diff-boot-variants.py --order rpi4-vcmbox,posixsrv,rpi4-v3d-async,rpi4-kms,shmsrv,psh`, for
+  sd/nfsroot/netboot × `RPI4_LOG_TO_FILE` 0/1: order OK and no duplicates.
+  `rpi4-wifi` is absent from netboot, as on `wifi/in-image` (its `/` is a RAM dummyfs).
+* Both sync checks are identical.
+* The changed C files (`rpi4-wifi.c`, `wifi.c`, `libvcmbox.c`, lwip `wifi43455.c`) compile to
+  `/dev/null` under the real flags (`-Werror`), with the command lines recovered by `make -n` from
+  a scratch copy (nothing written to `.buildroot`).
+
+**Pre-build cleanup** (P3 §8.3, plus the deleted ports' state files and the stale `_fs` files
+found by the inverse control):
+
+```
+B=.buildroot/_build/aarch64a72-generic-rpi4b
+F=.buildroot/_fs/aarch64a72-generic-rpi4b/root
+rm -rf $B/include/SDL2 $B/lib/libSDL2.a $B/lib/libSDL2main.a $B/lib/pkgconfig/sdl2.pc $B/lib/libmd.a $B/include/sha1.h \
+       $B/port-sources/{sdl2,quakespasm,vkquake,xorg_server}-* $B/.port_state/{sdl2,quakespasm,vkquake,xorg_server}-*.json
+rm -rf $F/bin/Xorg-drm-noshim $F/bin/v3dmemprobe $F/bin/fbprobe $F/bin/hevc-play $F/.mesa-shader-cache
+```
+
+**Build** (every sibling on `integration/finalize`, coordination repo on its `integration/finalize`):
+
+```
+./scripts/rebuild-rpi4b-fast.sh --scope core --with-ports --with-showcase   # "[wifi-fw] cache verified" + "staged"
+./scripts/check-rootfs-complete.sh .buildroot/_fs/aarch64a72-generic-rpi4b/root
+./scripts/check-gpu-stack-image.sh
+./scripts/make-pristine-nfs-export.sh && ./scripts/restore-export-data.sh
+```
+
+**Rebuilt by this build** (recipe digests): Mesa (all builds) and every dependent of it
+(`sdl2_kmsdrm`, the engine providers `yquake2`/`quake3`/`supertuxkart` — STK's first CMake
+reconfigure against the dual-driver SDL, P3 risk 1 —, the five `*_drm` games, `kmscube_drm`,
+`vkcube_drm`, `libepoxy`, `xorg_server_drm`, `labwc_desktop`). New: `video_player` and
+`atril_wayland`. GTK and XFCE are not rebuilt. It takes hours and several GB; check `df -h` first.
 
 ## 1. Design: one binary, the mode decided at run time
 
@@ -42,7 +161,7 @@ whether a compositor socket exists.
 |---|---|---|
 | `mesa_drm` | The **opengl build (`gl/`) gets the EGL wayland platform next to GBM** (`-Dplatforms=wayland`, `opengl? ( wayland )`). Its lists `link-gl.txt` and `link-gles.txt` gain `libwayland_drm.a`. There is no new USE flag. | Only SDL programs use `gl/`: `sdl2_kmsdrm`, the four GL games and `video_player`. The other builds are unchanged: `gles/` (kmscube), `wayland/` (labwc, weston), `x11/` (Xorg-drm) and `vulkan/`. So adding the platform to the one GL build changes no other consumer. |
 | `sdl2_kmsdrm` | The one `libSDL2.a` has **Wayland + KMSDRM**: `patches/wayland/0101–0103` are applied to the main source, after the vulkan copy. It writes **`link-inputs.txt`**, the full link group including the Wayland client stack. The vulkan variant (vkQuake) keeps `SDL_WAYLAND=OFF`. USE `rootfs` installs the game launcher and the games session. | This is the tools' `sdl2-wl/build.sh` (steps 1–3). vkQuake stays KMSDRM-only: a window on Wayland would need the V3DV Wayland WSI, which the static ICD does not have. |
-| `quakespasm_drm`, `yquake2_drm`, `quake3_drm`, `supertuxkart_drm` | The existing `-drm` engine is now linked with `link-inputs.txt`. The proofs gain Wayland symbols and strings. Each port also installs an XFCE menu entry. | The names stay the same (`/usr/bin/quakespasm-drm`, `quake2-drm`, `quake3-drm`, `/bin/stk-drm`), so the plain commands (`/usr/bin/quakespasm`, `quake2`, `quake3`, `/bin/stk`) and `/bin/game-res` keep working unchanged. |
+| `quakespasm_drm`, `yquake2_drm`, `quake3_drm`, `supertuxkart_drm` | The existing `-drm` engine is now linked with `link-inputs.txt`; after integration, from the engine port's objects (§0.1). The proofs gain Wayland symbols and strings. Each port also installs an XFCE menu entry. | The names stay the same (`/usr/bin/quakespasm-drm`, `quake2-drm`, `quake3-drm`, `/bin/stk-drm`), so the plain commands (`/usr/bin/quakespasm`, `quake2`, `quake3`, `/bin/stk`) and `/bin/game-res` keep working unchanged. |
 | `video_player` (new) | One `/usr/bin/ffplay` with both drivers; `/bin/video-play`; `gtk-video` (GTK/Wayland only). USE `rootfs gtk demo`. | It is anchored on the ffmpeg 6.1 tarball; the `ffmpeg` port is untouched. |
 | `atril_wayland` (new) | Atril + Poppler on the gtk3_wayland stack. Every package is behind a `.built` stamp, so the port has a **`p_relink`** that drops the stamps. The m7j test session is not shipped. | It follows the gtk3_wayland / xfce_wayland shape. |
 

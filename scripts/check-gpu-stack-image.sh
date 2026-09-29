@@ -18,10 +18,15 @@
 #      ships the old one), and rpi4-fb (/dev/fb0) is not.
 #   2. rootfs: the servers, the new-stack programs, the plain command names and
 #      /bin/game-res; each plain name is the new-stack program or launcher (cmp) or
-#      its wrapper.
-#   3. rootfs: none of the first stack's program files. Nothing builds them any more,
-#      so one present is a stale file of an old build in the persistent staging tree
-#      (or a hand-staged NFS export): delete it, or make a pristine export.
+#      its wrapper; the desktop applications (the games' window launcher + session, the
+#      video players, Atril, their XFCE menu entries, the demo clips) and WiFi (daemon,
+#      client, example configuration, vendor firmware + licences); every GL game engine
+#      and ffplay ONE program with SDL's KMSDRM AND Wayland drivers.
+#   3. rootfs: none of the first stack's program files, and none of the superseded
+#      desktop-app builds or hand-staged test names (the -wl game clones, ffplay-drm/-wl,
+#      video-play2, *-2 / *-low / -g<N> servers and sessions). Nothing builds them any
+#      more, so one present is a stale file of an old build in the persistent staging
+#      tree (or a hand-staged NFS export): delete it, or make a pristine export.
 #   4. rootfs: the old stack's strings in any ELF under bin sbin usr/bin usr/sbin
 #      usr/lib: `v3d-winsys:`, `phxgl`, `V3DV_PHOENIX`, `/dev/v3d-srv`,
 #      `RPI4FB_GETMODE` and `/dev/fb0` = 0. `grep -a -c`, never -q (a binary
@@ -68,6 +73,8 @@ else
 		n=$(count "${spec%%|*}" "${loader}")
 		if [ "${n:-0}" -ge 1 ]; then ok "${spec#*|} in loader.disk"; else fail "${spec#*|} NOT in loader.disk ('${spec%%|*}')"; fi
 	done
+	n=$(count "rpi4-wifi" "${loader}")
+	if [ "${n:-0}" -ge 1 ]; then ok "rpi4-wifi in loader.disk"; else fail "rpi4-wifi NOT in loader.disk"; fi
 	n=$(count "registered /dev/fb0" "${loader}")
 	if [ "${n:-0}" = 0 ]; then ok "rpi4-fb not in loader.disk"; else fail "rpi4-fb is in loader.disk (a stale boot script?)"; fi
 fi
@@ -109,12 +116,53 @@ for spec in usr/bin/quakespasm-drm:quakespasm-drm usr/bin/yquake2-drm:quake2-drm
 	if [ "$(count "${spec#*:}: new GPU lane" "${f}")" -ge 1 ]; then ok "${spec%%:*} banner"; else fail "${spec%%:*} has no '${spec#*:}: new GPU lane' banner"; fi
 done
 
-echo "== 3. no file of the first GPU stack =="
+echo "== 2b. the desktop applications and WiFi in the rootfs =="
+for p in bin/game-window.sh bin/game-window-autostart.sh bin/game-window-quit.sh \
+	etc/xdg/labwc-xfce-games/rc.xml etc/xdg/labwc-xfce-games/menu.xml etc/xdg/labwc-xfce-games/autostart \
+	etc/xdg/labwc-xfce-games/environment usr/bin/ffplay bin/video-play usr/bin/gtk-video \
+	etc/xdg/labwc-xfce-video/rc.xml etc/xdg/labwc-xfce-video/autostart \
+	usr/share/video-demo/h264-720p30-aac.mp4 usr/share/video-demo/h264-1080p30-aac.mp4 \
+	usr/share/video-demo/hevc-720p30-aac.mp4 usr/share/video-demo/vp9-360p-opus.webm \
+	usr/bin/atril usr/share/atril/schemas/gschemas.compiled usr/share/doc/phoenix/sample.pdf \
+	usr/share/applications/quakespasm.desktop usr/share/applications/quake2.desktop \
+	usr/share/applications/quake3.desktop usr/share/applications/stk.desktop \
+	usr/share/applications/gtk-video.desktop usr/share/applications/video-demo.desktop \
+	usr/share/applications/atril.desktop \
+	sbin/rpi4-wifi bin/wifi etc/wifi.conf.example \
+	lib/firmware/brcm/brcmfmac43455-sdio.bin lib/firmware/brcm/brcmfmac43455-sdio.clm_blob \
+	lib/firmware/brcm/brcmfmac43455-sdio.raspberrypi,4-model-b.txt \
+	lib/firmware/LICENSES/LICENCE.cypress lib/firmware/LICENSES/GPL-2.0 lib/firmware/WHENCE; do
+	if [ -s "${root}/${p}" ]; then ok "${p}"; else fail "${p} missing"; fi
+done
+if [ -e "${root}/etc/wifi.conf" ]; then fail "etc/wifi.conf present (credentials must not be in a built rootfs)"; else ok "etc/wifi.conf absent"; fi
+# One program per game / player: full screen on KMS from psh, a window on the desktop.
+for p in usr/bin/quakespasm-drm usr/bin/yquake2-drm usr/bin/quake3e-drm usr/bin/supertuxkart-drm usr/bin/ffplay; do
+	[ -s "${root}/${p}" ] || continue
+	for s in 'KMS/DRM Video Driver' 'SDL Wayland video driver' 'EGL_KHR_platform_wayland'; do
+		if [ "$(count "${s}" "${root}/${p}")" -ge 1 ]; then ok "${p}: '${s}'"; else fail "${p} lacks '${s}' (not the dual-mode build)"; fi
+	done
+done
+# Every menu entry's program is installed (Exec's first absolute path, after /bin/bash).
+for f in "${root}"/usr/share/applications/{quakespasm,quake2,quake3,stk,gtk-video,video-demo,atril}.desktop; do
+	[ -s "${f}" ] || continue
+	e="$(sed -n 's/^Exec=//p' "${f}" | head -1)"
+	e="${e#/bin/bash }"
+	e="${e%% *}"
+	if [ -s "${root}${e}" ]; then ok "${f#"${root}"/}: Exec ${e}"; else fail "${f#"${root}"/}: Exec ${e} not installed"; fi
+done
+
+echo "== 3. no file of the first GPU stack, of a superseded build or of a hand-staged test =="
 # The kdrive X server, the old engines, the glamor X daemon, the GL-in-X client, xlaunch,
 # the /dev/fb0 probe, the old GPU daemon and the /dev/fb0 server.
 for p in usr/bin/Xphoenix usr/bin/yquake2 usr/bin/quake3e usr/bin/supertuxkart \
 	bin/Xphoenix-glamor-daemon bin/gl-x11-window-daemon bin/pl_phoenix_xlaunch bin/fbprobe \
-	sbin/rpi4-v3d sbin/rpi4-fb; do
+	sbin/rpi4-v3d sbin/rpi4-fb \
+	usr/bin/quakespasm-wl usr/bin/yquake2-wl usr/bin/quake2-wl usr/bin/quake3e-wl usr/bin/quake3-wl \
+	usr/bin/supertuxkart-wl bin/stk-wl usr/bin/ffplay-drm usr/bin/ffplay-wl usr/bin/ffplay-drm2 \
+	usr/bin/ffplay-wl2 bin/video-play2 bin/atril-wl bin/xfce-desktop-atril.sh bin/foot-2 bin/labwc-2 \
+	bin/fuzzel-2 bin/xfce-session-2 bin/xfce-desktop-2.sh bin/rpi4-v3d-async-low bin/rpi4-kms-g7 \
+	bin/rpi4-kms-g8 bin/rpi4-kms-g9 bin/weston-simple-egl-low etc/xdg/labwc-xfce-m8 usr/share/m10 \
+	bin/Xorg-drm-noshim bin/v3dmemprobe; do
 	if [ -e "${root}/${p}" ] || [ -L "${root}/${p}" ]; then fail "${p} present (a stale file of the deleted first stack: remove it)"; else ok "${p} absent"; fi
 done
 

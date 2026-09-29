@@ -63,26 +63,59 @@ GPU_REQUIRED=(
 	usr/bin/quake3
 	bin/stk
 	bin/startx
-	bin/xfce-session
-)
-GPU_OPTIONAL=(
 	bin/startx_gpu
+	bin/xfce-session
 	bin/eglx11-demo-x
+	# the Wayland desktop (labwc_desktop, dbus, xfce_wayland) and the GPU smoke tests
 	bin/labwc
 	bin/foot
 	bin/labwc-desktop.sh
 	bin/xfce-desktop.sh
 	bin/thunar-wl
+	bin/xfce4-panel
+	bin/xfdesktop
 	bin/dbus-daemon
 	bin/kmscube
 	bin/vkcube-drm
 	bin/drmprobe
+)
+# The desktop applications (docs/gpu-new-lane/desktop-apps-ports.md): the games' window
+# launcher and session (sdl2_kmsdrm), the video players (video_player), the PDF viewer
+# (atril_wayland) and their XFCE menu entries.
+DESKTOP_REQUIRED=(
+	bin/game-window.sh
+	bin/game-window-autostart.sh
+	bin/game-window-quit.sh
+	etc/xdg/labwc-xfce-games/rc.xml
+	etc/xdg/labwc-xfce-games/menu.xml
+	etc/xdg/labwc-xfce-games/autostart
+	etc/xdg/labwc-xfce-games/environment
+	usr/bin/ffplay
+	bin/video-play
+	usr/bin/gtk-video
+	etc/xdg/labwc-xfce-video/rc.xml
+	etc/xdg/labwc-xfce-video/autostart
+	usr/share/video-demo/h264-720p30-aac.mp4
+	usr/share/video-demo/h264-1080p30-aac.mp4
+	usr/share/video-demo/hevc-720p30-aac.mp4
+	usr/share/video-demo/vp9-360p-opus.webm
+	usr/bin/atril
+	usr/share/atril/schemas/gschemas.compiled
+	usr/share/doc/phoenix/sample.pdf
+	usr/share/applications/quakespasm.desktop
+	usr/share/applications/quake2.desktop
+	usr/share/applications/quake3.desktop
+	usr/share/applications/stk.desktop
+	usr/share/applications/gtk-video.desktop
+	usr/share/applications/video-demo.desktop
+	usr/share/applications/atril.desktop
 )
 
 REQUIRED=(
 	bin/psh
 	bin/busybox
 	"${GPU_REQUIRED[@]}"
+	"${DESKTOP_REQUIRED[@]}"
 	usr/share/quake/id1/pak0.pak
 	# Shipped Quake settings live in autoexec.cfg, not config.cfg: quake.rc execs
 	# default.cfg -> config.cfg -> autoexec.cfg, so autoexec is read every start and
@@ -101,28 +134,30 @@ REQUIRED=(
 	# symlink -- see ca_certificates/port.def.sh for which consumer reads which.
 	etc/ssl/certs/ca-certificates.crt
 	etc/ssl/cert.pem
-	# WiFi: the daemon (also started from loader.disk) and the user's client.
+	# WiFi: the daemon (also started from loader.disk), the user's client, the example
+	# configuration and the vendor firmware (scripts/fetch-wifi-firmware.sh; an offline
+	# build with an empty download cache fails here on purpose: the image's WiFi would
+	# not come up) with its licence files.
 	sbin/rpi4-wifi
 	bin/wifi
 	etc/wifi.conf.example
+	lib/firmware/brcm/brcmfmac43455-sdio.bin
+	lib/firmware/brcm/brcmfmac43455-sdio.clm_blob
+	lib/firmware/brcm/brcmfmac43455-sdio.raspberrypi,4-model-b.txt
+	lib/firmware/LICENSES/LICENCE.cypress
+	lib/firmware/LICENSES/GPL-2.0
+	lib/firmware/WHENCE
 )
 
 # Expected but not fatal: launchers and conveniences. Reported, never silent.
 OPTIONAL=(
 	bin/xterm
 	bin/wmaker
-	"${GPU_OPTIONAL[@]}"
 	bin/ram-stage-play
 	bin/python3
 	bin/bash
 	bin/nano
 	bin/mc
-	# The WiFi firmware (scripts/fetch-wifi-firmware.sh). Optional because an
-	# offline build with an empty download cache legitimately ships without it;
-	# its licence is checked below whenever it is present.
-	lib/firmware/brcm/brcmfmac43455-sdio.bin
-	lib/firmware/brcm/brcmfmac43455-sdio.clm_blob
-	lib/firmware/brcm/brcmfmac43455-sdio.raspberrypi,4-model-b.txt
 )
 
 missing_req=0
@@ -156,17 +191,19 @@ else
 	missing_req=$((missing_req + 1))
 fi
 
-# Never ship the vendor firmware without its licence.
-if [ -e "${root}/lib/firmware/brcm/brcmfmac43455-sdio.bin" ]; then
-	for p in lib/firmware/LICENSES/LICENCE.cypress lib/firmware/LICENSES/GPL-2.0 lib/firmware/WHENCE; do
-		if [ -s "${root}/${p}" ]; then
-			printf '  OK    %s\n' "${p}"
+# The GL games and ffplay are ONE program each with SDL's KMSDRM AND Wayland drivers (full
+# screen from psh, a window on the desktop): an engine without both is a stale or wrong build.
+for p in usr/bin/quakespasm-drm usr/bin/yquake2-drm usr/bin/quake3e-drm usr/bin/supertuxkart-drm usr/bin/ffplay; do
+	[ -s "${root}/${p}" ] || continue
+	for s in 'KMS/DRM Video Driver' 'SDL Wayland video driver'; do
+		if [ "$(grep -a -c -F -- "${s}" "${root}/${p}" 2>/dev/null || true)" -ge 1 ]; then
+			printf '  OK    %s: %s\n' "${p}" "${s}"
 		else
-			printf '  ABSENT %s   <-- REQUIRED (WiFi firmware present)\n' "${p}"
+			printf '  NO    %s: %s   <-- REQUIRED (one dual-mode program)\n' "${p}" "${s}"
 			missing_req=$((missing_req + 1))
 		fi
 	done
-fi
+done
 # The lab's credentials live only on the NFS export; one in a built rootfs would
 # ship in every image made from it.
 if [ -e "${root}/etc/wifi.conf" ]; then
