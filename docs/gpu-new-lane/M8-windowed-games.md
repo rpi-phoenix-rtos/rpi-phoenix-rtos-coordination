@@ -13,7 +13,8 @@ check, **[read]** read in source, **[inferred]** reasoning only.
 (`quakespasm-wl`, `quake2-wl`/`yquake2-wl`, `quake3-wl`/`quake3e-wl`, `stk-wl`/`supertuxkart-wl`),
 plus the launcher `/bin/game-window.sh` and a labwc configuration `/etc/xdg/labwc-xfce-m8/` that lays
 the desktop out. All static checks pass [built]; the three control relinks are byte-identical to the
-shipped engines. **No Pi cycle yet**: `m8a-quake-window` is pre-registered (§6). vkQuake is deferred (§5).
+shipped engines. `m8a-quake-window` **passed** on the Pi (result at the end). `m8b-quake23-window` and
+`m8b-stk-window` **passed** 2026-09-28 (quake2 60 fps, quake3 90, the STK menu 90, all windowed beside Thunar and foot; quake3e hangs in its signal-handler shutdown — result at the end). vkQuake is deferred (§5).
 
 ---
 
@@ -335,6 +336,10 @@ import, not the games.
 
 ## 7. Next cycles (sketch; pre-register each in full before it runs)
 
+**Superseded for m8b/m8c** by the section *Pre-registered: `m8b-quake23-window` and `m8b-stk-window`*
+at the end of this file (budgets `quake2:90,quake3:120` HOLD 270, and `stk:200` HOLD 300). The
+bullets below are the original sketch.
+
 - `m8b-quake23-window`: `M8_GAMES=quake2:120,quake3`, `HOLD=300`. Quake II ram-stages
   `/usr/share/quake2`; Quake III `+map q3dm1`. Grade rows 4–10 per game. yquake2's context is
   `GLES 3.x`.
@@ -342,3 +347,275 @@ import, not the games.
   (C1 note: grade by the cycle's own lines). The main menu shows in a window.
 - `m8d` (after m8a–c): the showcase recording. One session: Quake on the right, Thunar and foot
   left, then Quake II through the root menu.
+
+## Result — `m8a-quake-window` (chain89, build 27b, 2026-09-28 11:10): ✅ PASS — a GPU-accelerated game in a window on the XFCE desktop
+
+Log `artifacts/rpi4b-uart/*-m8a-quake-window.log`; 0 exceptions.
+- **Control first:** `weston-simple-egl` inside labwc runs at **57–60 fps** (`285 frames in 5 seconds: 57.0`, `301 … 60.2`). This is the first GPU client ever under labwc. It ended by the script's SIGTERM, as designed.
+- **quakespasm-wl:**
+  - `GL_RENDERER: V3D 4.2.14.0`;
+  - `first swap … video_driver wayland window 1280x720 drawable 1280x720 windowed context GL 2.1`;
+  - its own flipstat: **45.5–66.9 fps** (228, 286, 250, 240, 335 frames per 5 s).
+- **HDMI** (`artifacts/hdmi/20260928-111546-m8a-quake-window-tick.png`):
+  - the XFCE panel's task list shows `File System - Thunar`, `foot` and `QuakeSpasm 0.97.0`;
+  - Thunar on `/` top left, a foot terminal below it;
+  - **QuakeSpasm in a decorated labwc window on the right, rendering the level in 3D**, its counter at **61 FPS**.
+- The session logged out cleanly (`XFCE-SESSION done rc=0`).
+- Next: `m8b` (quake2-wl, quake3-wl, stk-wl in a window), then fold `-wl` builds into the default image with the migration.
+
+## Pre-registered: `m8b-quake23-window` and `m8b-stk-window` (2026-09-28; host work only, no Pi cycle yet)
+
+**Question:** do the other three `-wl` clones behave like quakespasm-wl in m8a, each in a decorated
+1280×720 labwc window beside Thunar and foot? For each: SDL's Wayland driver, a V3D context, the fps
+from its own flipstat, and a clean exit when its time budget ends. m8a is the control (weston-simple-egl
+57–60 fps under labwc, same image and same session), so `simple-egl:15` is dropped.
+
+### Two cycles, not one or three [read + Pi timings]
+
+- **Quake II and III share a cycle.** Their `/tmp` staging is short: `ram-stage: … 47.64 MiB in
+  2.102 s` (mig-all-q2) and `45.77 MiB in 2.026 s` (mig-all-q3). The first swap comes 4.7 s and 1.5 s
+  after exec. Both trees fit in `/tmp` together: 93 MiB against dummyfs `DUMMYFS_SIZE_MAX` 256 MiB
+  (`board_config.h:158`). A cycle of their own would cost a whole boot plus the exports (≈ 7 min)
+  to save about 5 s of load.
+- **STK gets its own cycle.**
+  - Its load is long on every run: the Mesa-DRM lane has no shader disk cache (MIGRATION §3 table).
+    mig-all-stk: first swap +9.2 s, then init at 0.1–0.8 fps until `main: You chose to start in track`
+    about 52 s later.
+  - Its teardown is about 30 s (m9b §6.2).
+  - It needs a HOLD of its own, and it is the likeliest to fault.
+- **One list for all three would tie their results together.** `game-window.sh` `wait`s on the game
+  with no timeout; the watchdog only sends TERM. A game that hangs at exit blocks every later item until
+  logout. Quake III's exit has never run on Phoenix (every q3 cycle ended at power-off), and it runs
+  inside a signal handler (below). So quake3 goes **last** in its cycle, and STK does not follow it.
+- **Launch chain:** `quake2-wl` / `quake3-wl` (ELF launchers) → `ram-stage-play` → `yquake2-wl` /
+  `quake3e-wl`, all by `exec` (`ram-stage-play.c:230`). `stk-wl` → `supertuxkart-wl` by `exec`. The pid
+  that `game-window.sh` signals is therefore the engine.
+
+### Budgets, from m8a's timeline
+
+m8a's session timeline (seconds after `/bin/xfce-session-2` started):
+
+- the labwc socket is up at t≈8, and the autostart prints `M8 autostart` right after;
+- Thunar is up and the hold starts at t≈19 (`held=10s` at t=29);
+- the first game starts at t≈23 (`M8_DELAY` 15 s), about 4 s into the hold;
+- `game-window-autostart.sh` sleeps 2 s between items.
+
+| cycle | `M8_GAMES` | per game | list done | HOLD | slack | session ≈ | `--max-cmd-secs` |
+|---|---|---|---|---|---|---|---|
+| `m8b-quake23-window` | `quake2:90,quake3:120` | q2: start t≈23, SIGTERM ≈113, gone ≈116. q3: start ≈118, SIGTERM ≈238, gone ≈240 | t≈242 | **270** (hold over t≈289) | ≈ 47 s | 300 s | **420** |
+| `m8b-stk-window` | `stk:200` | start t≈23, first swap ≈33, menu from ≈90–120 [inferred: +52 s init measured standalone, ×1.5 for the desktop], SIGTERM ≈223, gone ≤ ≈255 | t≈257 | **300** (hold over t≈319) | ≈ 62 s | 330 s | **450** |
+
+- quake3 gets 120 s, not 90, because q3-drm at 1080p had two phases: ≈ 40 fps for the first ~65 s
+  (13 windows), then 60. A 90 s slot would be mostly phase 1.
+- The STK budget must pass the point where `main_loop` exists. STK's SIGTERM handler is
+  `main_abort()` → `main_loop->requestAbort()` (`main.cpp:2060/2154`), and `main_loop` is created
+  only **after** `initRest()` (`main.cpp:2259–2273`). A TERM during the load is lost (row S7).
+- The STK slack is ≥ 60 s so that the quit script's own 30 s grace (`game-window-quit.sh`) is never
+  what ends STK. Otherwise a budget mistake would read as rc=137.
+
+**Wall clock:** each `export` and each trailing command waits the full `--idle-secs 60`. m8a's log
+shows `capture-window ended after 60.8s` five times, and m8a took 11:07:36 → 11:19:18 ≈ **12 min**, not
+the "≈ 7 min" in §6. Estimate for m8b: ≈ 50 s boot + 5 × 66 s exports + the session + 2 × 66 s:
+**≈ 14 min for quake23 and ≈ 14.5 min for stk**. Both are over the 600 s Bash cap, so run them
+**detached** (chain script / `setsid`, as m8a and m9b). Do not add a `--ready-line` to cut the export
+waits: the option applies to every command, and with it silence is no longer an end condition, so each
+`export` would wait out `--max-cmd-secs`.
+
+### Commands (the m8a shape; only label, HOLD, `M8_GAMES` and `--max-cmd-secs` change)
+
+```
+./scripts/test-cycle-psh-interact.sh --label m8b-quake23-window --idle-secs 60 --max-cmd-secs 420 \
+    --hdmi-dense-on 'M8 game=' -- \
+    "export HOLD=270" \
+    "export VERBOSE=1" \
+    "export CONF_DIR=/etc/xdg/labwc-xfce-m8" \
+    "export LOGOUT_CMD=/bin/game-window-quit.sh" \
+    "export M8_GAMES=quake2:90,quake3:120" \
+    "/bin/bash /bin/xfce-session-2" \
+    "/bin/shmsrv -s" \
+    "/bin/kmstest-poll stats"
+
+./scripts/test-cycle-psh-interact.sh --label m8b-stk-window --idle-secs 60 --max-cmd-secs 450 \
+    --hdmi-dense-on 'M8 game=' -- \
+    "export HOLD=300" \
+    "export VERBOSE=1" \
+    "export CONF_DIR=/etc/xdg/labwc-xfce-m8" \
+    "export LOGOUT_CMD=/bin/game-window-quit.sh" \
+    "export M8_GAMES=stk:200" \
+    "/bin/bash /bin/xfce-session-2" \
+    "/bin/shmsrv -s" \
+    "/bin/kmstest-poll stats"
+```
+
+Run them one after the other (one UART). Order: quake23 first. It is the cheaper one, and a clean
+quake2 → quake3 hand-over in one session is itself a result.
+
+**STK is menu-only in this cycle.** `game-window.sh` passes STK nothing but
+`--windowed --screensize=1280x720`, and there is no way to add a race from psh:
+
+- `M8_GAMES` items are `<game>[:<secs>]`, and the autostart passes only `<game>`.
+- `GAME_ARGS` would be word-split, but psh `export` takes one `NAME=value` per word and does not strip
+  quotes (`psh/pshapp/env.c:84–101`), so a value with spaces cannot be exported.
+- A one-word `GAME_ARGS` replaces the defaults and so drops `--windowed`/`--screensize`.
+
+The m9b race figure (22.26 fps at 1280×720, fullscreen scaled) therefore has **no like-for-like row
+here**. A race in a window is a follow-up that needs a staged launcher item (for example a
+`stk-race` case in `game-window.sh`). It is not pre-registered.
+
+### Staging check (2026-09-28, `ls` + `sha256sum` on `/srv/phoenix-rpi4-nfs-gcc16`)
+
+- All 14 paths of §4 exist, and each sha256 **matches §4 exactly**:
+  - the binaries: `yquake2-wl` `f1f40130…`, `quake2-wl` `f618d335…`, `quake3e-wl` `9c9c68e7…`,
+    `quake3-wl` `86204741…`, `supertuxkart-wl` `9e7d92fc…`, `stk-wl` `b42afb82…`,
+    `quakespasm-wl` `021cb816…`;
+  - the three scripts: `5a7e54dc…`, `aad83680…`, `3cdbae19…`;
+  - the four labwc-xfce-m8 files: `699b57ea…`, `b55b8d44…`, `c24f0337…`, `a6f41927…`.
+- Dependencies not in §4, recorded so a later re-stage is visible:
+
+| path | sha256 | note |
+|---|---|---|
+| `/bin/ram-stage-play` | `978d6f899aa8e811792922d2bb01c27ebe766a9fafcbaba255df4b6a317114b0` | re-staged 2026-09-28 10:05, **after** §4's table; both Quake launchers exec it |
+| `/bin/xfce-session-2` | `41bbc44750850583300b9e691530dd9297c5368981db20a9726329f521ded580` | as in m8a |
+| `/bin/labwc-2` | `3632cb541660af7132941ef37f486ea78705222df7f431e6189b17f219f205e2` | as in m8a |
+| `/bin/foot-2` | `ec603ce5f8f4dc1c895c7fcb5f1d243151af038ae0d7b49c536c002fa72f0ed4` | as in m8a |
+
+- Data present: `/usr/share/quake2/baseq2/pak0.pak`, `/usr/share/quake3/demoq3/{pak0,pak1}.pk3` +
+  `autoexec.cfg`, and `/usr/share/supertuxkart/{data,stk-assets}` (46 + 149 MB).
+- q3's `autoexec.cfg` sets bots (`bot_minplayers 5`, `g_spSkill 3`), a third-person orbiting camera,
+  and `cg_drawFPS 1`: the same scene as mig-all-q3 (`quake3-drm +map q3dm1`).
+- Also present: `/bin/bash`, `/bin/shmsrv`, `/bin/kmstest-poll`, `/usr/lib/xfce-demo/bin/{thunar,loginctl}`.
+
+### Exit paths, and P16 [read]
+
+| game | on SIGTERM | UART at exit | rc |
+|---|---|---|---|
+| yquake2 | `registerHandler()` (`glue/pl_phoenix_main.c:46`, before `SDL_Init`, so SDL's parachute leaves it) → `terminate()` sets `quitnextframe` → next frame `Cbuf_AddText("quit")` → `Sys_Quit` → `exit(0)` (`glue/pl_phoenix_sys.c:132`) | `quake2-wl: exit after <n> swaps …` (the atexit hook runs) | 0 |
+| quake3e | `InitSig()` (again after `SDL_Init` in `sdl_glimp.c:604/699`) → `signal_handler`: prints `Received signal 15, exiting...`, runs `CL_Shutdown` + `SV_Shutdown` **inside the handler**, then `Sys_Exit(0)` = **`_exit(0)`** (NDEBUG: the staged ELF has no `code == 0` assert string) | **no `quake3-wl: exit after` line** (atexit is skipped), and that is **not** a failure | 0 |
+| STK | `main_abort` → `requestAbort` → the loop ends (`main_loop.cpp:571`) → `cleanSuperTuxKart()` → `fclose(stderr/stdout)` → exit | `stk-wl: exit after <n> swaps …` after ≈ 5–30 s | 0 |
+
+- **P16 does not apply on this path** [read]. `KMSDRM_DestroySurfaces` belongs to the KMSDRM device.
+  With `SDL_VIDEODRIVER=wayland` only `Wayland_CreateDevice` runs. Its teardown is
+  `Wayland_DestroyWindow`: `SDL_EGL_DestroySurface`, then `wl_egl_window_destroy`
+  (`SDL_waylandwindow.c:2236–2243`). Mesa's `dri2_wl_destroy_surface` clears the window's
+  `driver_private`, `resize_callback` and `destroy_window_callback` before it frees
+  (`platform_wayland.c:971–974`). There is no GBM surface and no locked-buffer release after the free.
+- **But sdl2-wl's `libSDL2.a` (`543aef39…`) has no patch 0010** (BUILD-INFO: set `afda8509…` =
+  0001–0009). If any first-swap line says `video_driver KMSDRM`, P16's exit fault is expected on top of
+  the plane takeover (m8a row 5's "if instead").
+- **Rebuild warning.** `sdl2-wl/build.sh` globs `sdl2-drm/patches/*.patch`, so its next run will pick
+  up 0010 by itself. That changes the stamp and overwrites `build-out/quakespasm-wl`, the addr2line
+  reference. Its BUILD-INFO line still hardcodes the text "0001-0009". Do not rebuild before both m8b
+  cycles are graded.
+- The **`fclose(stdout)` UAF** (STK's exit, M3) is fixed by libphoenix `bf35aaf` (2026-09-27, on
+  `master`). The sysroot `libphoenix.a` `83c07cf81b47e3f8` that the clones link comes from the
+  2026-09-28 07:36 image build, so the fix is predicted present [inferred]. m9b-stk-1080's clean exit
+  agrees.
+
+### Grade
+
+- `grep -a -E '^M8 |^XFCE|^XFCE-SESSION|ram-stage:|quake2-wl|quake3-wl|stk-wl|Yamagi|Refresh:|SDL video driver|SDL using driver|GL_RENDERER|GL_VERSION|IrrDriver: OpenGL|Using renderer|Received signal|DOUBLE SIGNAL|frames in .* fps|V3DA srv import|os_same_file|foreign_kmsbuf|alias=1|console handover|^SHMSRV |^KMSTEST ' <log>`
+- `./scripts/uart-summary.sh <label>`
+- `./scripts/flipstat-summary.sh --seq <label>`
+- Allow ~1.3 % UART line corruption; EL0 dumps print twice.
+
+**fps metric** (as m9b):
+
+- Use the `<name> flipstat … = X fps` windows of the steady phase, dropping the first steady window and
+  the last one (cut by the SIGTERM).
+- quake2: windows after the demo ramp (fps > 20).
+- quake3: all windows after the first.
+- STK: the contiguous run of windows with fps > 3 at the end, i.e. the menu.
+- Report the median and the range.
+
+**Why each fps prediction is what it is** [inferred]:
+
+- **Scaling by pixel count only works for an uncapped rate.** quakespasm went from 46 fps at 1080p
+  (vsync-bound in `-drm`) to 45–68 at 720p in a window (m8a).
+- **q2** asks for `swap_interval 1`. SDL's Wayland GLES swap then waits for the compositor's frame
+  callback, so labwc's 60 Hz output caps it, as weston-simple-egl in m8a (57–60). Here
+  `60.00` is the *expected* reading, not the pacing anomaly it was in m8a row 7. q2-drm was already
+  60.00 at 1080p (vsync), so 720p leaves only headroom.
+- **q3** uses `swap_interval 0`, so it is not paced. At 1080p it was capped at 60 by one flip in flight
+  in phase 2 and ran ≈ 40 in phase 1. At 44 % of the pixels, with labwc's 1080p composition also on the
+  V3D: phase 1 ≈ 50–75, phase 2 ≈ 65–100.
+- **STK**: the main menu has no 3D scene, no deferred RTTs and no physics, so neither the GPU term
+  (≈ 37 ms/frame at 720p RTTs) nor most of the ≈ 40 ms CPU term of the race applies. The throttle is
+  `max_fps` 120 (`user_config.hpp:659`), `swap-interval` 0. No lane has ever measured this, hence a
+  wide band.
+
+### Rows: `m8b-quake23-window`
+
+m8a rows 1, 2, 11, 12 and 13 apply unchanged (session, autostart line
+`M8 autostart games=quake2:90,quake3:120 delay=15s display=wayland-0`, stop, SHMSRV/KMSTEST, faults).
+Game rows:
+
+| # | Line / observation | Predicted | If instead… |
+|---|---|---|---|
+| Q1 | `M8 game=quake2 start bin=/usr/bin/quake2-wl app_id=quake2-wl window=1280x720 secs=90 display=wayland-0 driver=wayland args=+set vid_fullscreen 0 +set r_mode -1 +set r_customwidth 1280 +set r_customheight 720`; `ram-stage: … DONE creating RAM disk: 1 files, 47.64 MiB in <2–6> s`, `ram-stage: exec /usr/bin/yquake2-wl` | once | `FAIL … not staged` / `no Wayland socket`: staging or row 2 |
+| Q2 | `quake2-wl: windowed GPU game -- … EGL wayland (GLES) …`, `SDL video driver is "wayland".`, `Refresh: Yamagi Quake II OpenGL ES3 Refresher` | once each | `"KMSDRM"`: no socket/`wl_display_connect` failed; KMSDRM then takes the planes, and **P16 applies at exit** (no 0010 in sdl2-wl) |
+| Q3 | `GL_RENDERER: V3D 4.2.14.0`, `GL_VERSION: OpenGL ES 3.1 Mesa 26.2.0 …` | as mig-all-q2 | `llvmpipe`: m8a row 6 |
+| Q4 | **`quake2-wl: first swap … video_driver wayland window 1280x720 drawable 1280x720 windowed context GLES 3.0 swap_interval 1 flipstat on`** | the hook prints the **requested** attributes (`SDL_GL_GetAttribute` returns `gl_config`, `SDL_video.c:3984`); ref_gl3-ES asks for 3.0 ES (`gl3_sdl.c:249–251`) | `1920x1080` / `fullscreen`: the later `+set`s lost to the launcher's `vid_fullscreen 2` + 1920×1080 (yquake2 applies them in order) |
+| Q5 | **`quake2-wl flipstat …`: a ramp of ≈ 15–20 s at 0.2–3 fps (demo1 loading, as q2-drm's first 3 windows), then steady** | **steady 55–60, most windows 59–60.0** (frame-callback paced), ≈ 12 steady windows | exactly **30.00**: labwc repaints the client at half rate; **> 61**: the swap interval was not honoured (SDL did not wait for the frame callback); < 45: a composition or present stall (`swapstat swap_us_avg`, labwc's own frame time) |
+| Q6 | render server `V3DA srv import … ns=v3dbuf` for the new client (≥ 2), no `import FAIL`; 0 `os_same_file_description` from quake2-wl | as m8a row 8 | as m8a row 8 |
+| Q7 | **HDMI** (dense from `M8 game=quake2 start`): the m7l desktop, Thunar top left, foot below it, and at (636, 40) a labwc-decorated window **titled `Yamagi Quake II`** (`glimp_sdl2.c:102`) with demo1 playing, lit and textured; the panel's task list shows it beside `File System - Thunar` and `foot` | the showcase frame, q2 | centred or overlapping: the `quake2-wl` window rule did not match; black: compare Q5; half frames: G6 |
+| Q8 | **exit:** `M8 game=quake2 time up (90 s): SIGTERM`, then `quake2-wl: exit after <n> swaps in <ms> ms since the first swap`, **`M8 game=quake2 exited rc=0 (clean exit) ran_s=<90–93>`** | clean: `quitnextframe` → `quit` → `exit(0)` | `rc=143`: the TERM landed before `registerHandler()` (not possible at 90 s) or the handler was replaced; no `exited` line: a hang in `VID_Shutdown` / Wayland teardown, and quake3 never starts (the list waits): record it, and **void rows T1–T8**, not fail them |
+| T1 | `M8 game=quake3 start bin=/usr/bin/quake3-wl app_id=quake3-wl window=1280x720 secs=120 … args=+set r_fullscreen 0 +set r_mode -1 +set r_customWidth 1280 +set r_customHeight 720 +map q3dm1`; `ram-stage: … 4 files, 45.77 MiB in <2–6> s`; `ram-stage: exec /usr/bin/quake3e-wl` | about 2 s after Q8 | `staging FAILED … tmpfs full?`: `/tmp` (93 MiB of the 256 MiB cap should fit, together with the session's files) |
+| T2 | `quake3-wl: windowed GPU game -- … EGL wayland (desktop GL) …`, **`SDL using driver "wayland"`** | once each | `"KMSDRM"`: as Q2 |
+| T3 | `GL_RENDERER: V3D 4.2.14.0`, `GL_VERSION: 3.1 Mesa 26.2.0 …` | as mig-all-q3 | GLES / an ES version: the desktop-GL half not linked (sha, §4) |
+| T4 | **`quake3-wl: first swap … video_driver wayland window 1280x720 drawable 1280x720 windowed context GL 2.1 swap_interval 0 flipstat on`** | `GL 2.1` = SDL's default request, as quakespasm-wl in m8a (whose `GL_VERSION` was 3.1); `r_swapInterval` 0 | `fullscreen`/1920×1080: `r_fullscreen 0` / `r_mode -1` lost (the launcher adds no video args, so this would be the engine) |
+| T5 | **`quake3-wl flipstat …`**, ≈ 22 windows | **phase 1 ≈ 50–75, phase 2 ≈ 65–100; median ≥ 55** (not paced: SDL does not wait, and Mesa keeps up to 4 buffers) | ≤ 40 throughout: no gain from the smaller window. Compare `swapstat swap_us_avg` with m8a's 1.5 ms, and check `V3DA srv qstat` busy. Exactly 60.00: frame-callback pacing although `swap_interval 0` |
+| T6 | `V3DA srv import … ns=v3dbuf` for the third client; no `import FAIL` | as Q6 | — |
+| T7 | **HDMI**: the window **titled `Quake 3: Arena`** (`CLIENT_WINDOW_TITLE`) at (636, 40): q3dm1 in third person with the camera orbiting the player, bots, and the `cg_drawFPS` counter at top right; quake2's window gone from the task list | the showcase frame, q3 | the q2 window still listed: the q2 client's teardown left an xdg toplevel (labwc lines) |
+| T8 | **exit:** `M8 game=quake3 time up (120 s): SIGTERM`, `Received signal 15, exiting...`, q3's shutdown lines (`RE_Shutdown`), **no `quake3-wl: exit after` line**, **`M8 game=quake3 exited rc=0 (clean exit) ran_s=<120–123>`**, then `M8 autostart done` **before** `XFCE hold over` | `_exit(0)` from the handler | no `exited` line before the hold ends: the shutdown hung **inside the signal handler** (for example a lock that the interrupted frame held). The quit script's TERM then gives `DOUBLE SIGNAL FAULT: Received signal 15, exiting...` → `rc=1`, or a SIGKILL → `rc=137`. Record the last q3 line before the hang |
+| QZ | at logout: `XFCE log logout-cmd: M8 quit: no game running`, `M8 quit: logout requested rc=0`; `XFCE-SESSION done rc=0`; `SHMSRV stats rc=0 live=0 bytes=0`; `KMSTEST stats … bos=0 exports=0`; **0 kernel, 0 EL0 dumps** | both games already gone | `M8 quit: SIGTERM to quake3`: T8 hung; `live>0`: one of the two clients leaked its SDL cursor pool or keymap map (m8a row 12) |
+
+### Rows: `m8b-stk-window`
+
+m8a rows 1, 2, 11, 12 and 13 apply unchanged (autostart line `M8 autostart games=stk:200 delay=15s display=wayland-0`).
+
+| # | Line / observation | Predicted | If instead… |
+|---|---|---|---|
+| S1 | `M8 game=stk start bin=/bin/stk-wl app_id=stk-wl window=1280x720 secs=200 … args=--windowed --screensize=1280x720`; `stk-wl: DATADIR=/usr/share/supertuxkart ASSETS_DIR=/usr/share/supertuxkart/stk-assets SAVEDIR=/tmp/stk`; `stk-wl: exec /usr/bin/supertuxkart-wl` | once | `stk: DATADIR` / `stk-drm:`: the wrong launcher staged |
+| S2 | `stk-wl: windowed GPU game -- … EGL wayland (GLES) …`; `IrrDriver: OpenGL renderer: V3D 4.2.14.0`, `Using renderer: OpenGL ES 3.1 Mesa 26.2.0 …` | once | llvmpipe: m8a row 6 |
+| S3 | **`stk-wl: first swap … video_driver wayland window 1280x720 drawable 1280x720 windowed context GLES 3.0 swap_interval 0 flipstat on`**, about 10–15 s after start | Irrlicht asks for GLES 3.0 (`CIrrDeviceSDL.cpp:523–524`); STK's `swap-interval` defaults to 0 | `fullscreen` / 1920×1080: `--windowed` did not override the launcher's `--fullscreen` (`main.cpp:889/904`), or `--screensize` was rejected as a duplicate (`Invalid parameter`: the launcher's `user_overrides` did not drop its default); `KMSDRM`: as Q2, P16 at exit |
+| S4 | load: `ShaderFilesManager: Compiling shader: …` lines (cold, every run), `stk-wl flipstat` at 0.1–1 fps for ≈ 60–90 s | as mig-all-stk's 52 s of init, slower beside the desktop | `wedge`/`TIMEOUT` in `V3DA srv qstat`: record it and grade nothing after |
+| S5 | **menu fps:** a contiguous run of `stk-wl flipstat` windows > 3 fps after the load, ≈ 16–22 windows | **20–60, median ≈ 35** [inferred, never measured on any lane]. Informative outcome: **above the 22.26 fps race rate at 720p** (the menu has neither the GPU term nor most of the CPU term) | < 10: the 2D GUI path is expensive on this lane (a profile question, not an M8 failure); ≈ 120: the `max_fps` throttle is the bound; exactly 60.00: frame-callback pacing despite `swap_interval 0` |
+| S6 | **HDMI**: during the load, the window at (636, 40) with STK's loading screen (a black or partial frame in the first ≈ 80 s is the load, not a failure); then the **main menu** (logo, *Story Mode / Singleplayer / …* buttons, peach skin) in a window **titled `SuperTuxKart`** (`irr_driver.cpp:825`) beside Thunar and foot; no first-run dialogs (the launcher seeds `players.xml` + `config.xml`) | the showcase frame, STK | a register/tutorial/internet dialog: the seed files were not written to `/tmp/stk/config-0.10/`; the window centred: the `stk-wl` rule |
+| S7 | **exit:** `M8 game=stk time up (200 s): SIGTERM`, then within ≈ 30 s `stk-wl: exit after <n> swaps in <ms> ms since the first swap`, **`M8 game=stk exited rc=0 (clean exit) ran_s=<200–235>`**, `M8 autostart done` before `XFCE hold over` | `requestAbort` → loop ends → `cleanSuperTuxKart` → exit | STK still at < 1 fps when time runs up: the TERM came before `main_loop` existed and **was lost**. STK then runs until logout, and the quit script's TERM (clean) or its 30 s SIGKILL (`rc=137`) ends it; that is a budget miss, not an exit bug. An EL0 dump at exit: addr2line against `tools/gpu-lane/sdl2-wl/build-out/stk-wl/supertuxkart-wl`. A pc in `release_buffer`/`KMSDRM_*` is impossible on the Wayland path; `fclose`/`fflush` would mean the UAF fix is missing from the sysroot |
+| SZ | `M8 quit: no game running`; `XFCE-SESSION done rc=0`; `SHMSRV … live=0 bytes=0`; `KMSTEST … bos=0 exports=0`; `V3DA srv qstat … err=0 wedges=0 rej=0`; **0 kernel, 0 EL0 dumps** | clean | as QZ |
+
+Not graded (as m8a): labwc's `did not respond to configure request` warnings, SDL `xdg_activation`
+notes, STK's `FontManager … NotoColorEmoji.ttf doesn't have color` and `kartDirt shader is missing`
+(both in all 5 STK runs of 2026-09-27/28: mig-all-stk, m9b-stk-*).
+
+**Decides:**
+
+- Q4/Q5/Q7/Q8, T4/T5/T7/T8 and S3/S5/S6/S7 = the four M8 games each GPU-rendered in a decorated window
+  on the XFCE desktop, at a measured fps, with a clean quit. That leaves m8d (the showcase recording)
+  and the STK race-in-a-window follow-up.
+- A T8 hang alone = the next step is quake3e's shutdown-in-a-signal-handler (a `quitnextframe`-style
+  deferral, as yquake2 does), not the Wayland path.
+
+## Result — `m8b-quake23-window` + `m8b-stk-window` (chain93, 2026-09-28 13:24 / 13:39): ✅ PASS, one pre-registered exit hang
+
+**All three games render on the V3D in decorated labwc windows on the XFCE desktop, next to
+Thunar and foot.** HDMI (`artifacts/hdmi/20260928-133218-m8b-quake23-window-tick.png`: Quake II
+demo1 at 59.26 fps; `…133429…`: `Quake 3: Arena` q3dm1 at 63 fps, quake2 already gone from the task
+list; `20260928-134920-m8b-stk-window-tick.png`: the SuperTuxKart main menu in a window titled
+`SuperTuxKart`).
+
+| Row | Reading | vs prediction |
+|---|---|---|
+| Q4 / T4 / S3 | first swap: `video_driver wayland window 1280x720 drawable 1280x720 windowed`, contexts GLES 3.0 / GL 2.1 / GLES 3.0, swap_interval 1 / 0 / 0 | as predicted |
+| Q5 | quake2-wl **median 59.99 fps** (n = 7 steady windows) | 55–60 ✅ (fewer windows than the ≈ 12 expected: the demo ramp was longer) |
+| T5 | quake3-wl **median 89.94 fps** (n = 21) | 65–100 ✅ |
+| S5 | stk-wl menu **median 89.7 fps** (n = 25) | above the 20–60 band, below the 120 `max_fps` throttle: the menu is far cheaper than guessed |
+| Q8 | `quake2-wl: exit after 2060 swaps`, `exited rc=0 (clean exit) ran_s=90` | ✅ |
+| **T8** | `Received signal 15, exiting...`, `----- Client Shutdown (Signal caught (15)) -----`, **last line `RE_Shutdown( 3 )`**, then nothing until the quit script's SIGKILL: `exited rc=137 (killed by SIGKILL) ran_s=210` | ❌ **the pre-registered "if instead"**: quake3e's shutdown hangs **inside the signal handler**, in the renderer shutdown |
+| S7 | `stk-wl: exit after 11032 swaps in 183889 ms`, `exited rc=0 (clean exit) ran_s=201` | ✅ |
+| QZ / SZ | `XFCE-SESSION done rc=0` both; **0 kernel, 0 EL0 dumps** (`exc=0`) | ✅ |
+
+**Decides** (as registered): the Quake II, Quake 3 and STK windowed goals are met; the one defect
+is quake3e's signal-handler shutdown, so the next step is a `quitnextframe`-style deferral (set a
+flag in the handler, quit from the main loop, as yquake2 does), not the Wayland path. Left: that
+fix, m8d (the showcase recording), an STK race in a window, and vkQuake (V3DV WSI, §5).

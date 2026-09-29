@@ -30,6 +30,9 @@
 # Usage: tools/gpu-lane/sdl2-wl/build.sh [--out <dir>] [--clean] [-j N] [--skip-sdl]
 #                                        [--mesa-out <dir>] [--wl-prefix <dir>]
 #   --skip-sdl   reuse <out>/sdl-prefix as is (relink quakespasm-wl only)
+#   --extra-patches  apply <dir>/*.patch after the Wayland patches (part of the source stamp),
+#                for a variant built into its own --out, as sdl2-drm/build.sh's option: the
+#                default set and the default build-out stay as they are
 # Stage (coordinator only; new names only):
 #   install -m 755 <out>/quakespasm-wl.stripped <live NFS export>/usr/bin/quakespasm-wl
 #
@@ -45,6 +48,7 @@ out="${here}/build-out"
 jobs="$(nproc)"
 clean=0
 skip_sdl=0
+extra_patches=""
 M="${G}/mesa-drm/build-out-wayland-gl"
 WLB="${G}/labwc-drm/build-out"
 while [ $# -gt 0 ]; do
@@ -59,12 +63,18 @@ while [ $# -gt 0 ]; do
 		--mesa-out=*) M="${1#--mesa-out=}" ;;
 		--wl-prefix) shift; WLB="${1:?--wl-prefix needs a labwc-drm build-out}" ;;
 		--wl-prefix=*) WLB="${1#--wl-prefix=}" ;;
+		--extra-patches) shift; extra_patches="${1:?--extra-patches needs a directory}" ;;
+		--extra-patches=*) extra_patches="${1#--extra-patches=}" ;;
 		-h|--help) sed -n '2,36p' "${BASH_SOURCE[0]}"; exit 0 ;;
 		*) echo "build.sh: unknown argument $1" >&2; exit 2 ;;
 	esac
 	shift
 done
 case "${out}" in /*) ;; *) out="${PWD}/${out}" ;; esac
+if [ -n "${extra_patches}" ]; then
+	case "${extra_patches}" in /*) ;; *) extra_patches="${PWD}/${extra_patches}" ;; esac
+	ls "${extra_patches}"/*.patch > /dev/null 2>&1 || { echo "build.sh: no *.patch in ${extra_patches}" >&2; exit 2; }
+fi
 if [ "${clean}" = 1 ]; then
 	rm -rf "${out}"
 	echo "cleaned ${out}"
@@ -129,7 +139,8 @@ if [ "${skip_sdl}" = 1 ]; then
 else
 	src="${out}/sdl-src"
 	stamp="$( (sha256sum "${SDL_TARBALL}"; cat "${SDRM}"/patches/*.patch; find "${SDRM}/overlay" -type f | sort | xargs cat
-		cat "${here}"/patches/*.patch) | sha256sum | cut -c1-16)"
+		cat "${here}"/patches/*.patch
+		if [ -n "${extra_patches}" ]; then cat "${extra_patches}"/*.patch; fi) | sha256sum | cut -c1-16)"
 	if [ "$(cat "${out}/sdl-src.stamp" 2>/dev/null || true)" != "${stamp}" ]; then
 		log "SDL ${SDL_VERSION} source: tarball + sdl2-drm's $(ls "${SDRM}"/patches/*.patch | wc -l) patches + overlay + $(ls "${here}"/patches/*.patch | wc -l) Wayland patches (set ${stamp})"
 		rm -rf "${src}" "${SB}" "${SP}" "${out}/sdl-tmp"
@@ -141,9 +152,10 @@ else
 			patch -d "${src}" -p1 -s --no-backup-if-mismatch < "${p}" || die "patch failed: $(basename "${p}")"
 		done
 		cp -a "${SDRM}/overlay/." "${src}/"
-		for p in "${here}"/patches/*.patch; do
+		for p in "${here}"/patches/*.patch ${extra_patches:+"${extra_patches}"/*.patch}; do
 			patch -d "${src}" -p1 -s --no-backup-if-mismatch < "${p}" || die "patch failed: $(basename "${p}")"
 		done
+		[ -z "${extra_patches}" ] || log "  + $(ls "${extra_patches}"/*.patch | wc -l) extra patch(es) from ${extra_patches}"
 		echo "${stamp}" > "${out}/sdl-src.stamp"
 	fi
 
@@ -434,7 +446,7 @@ awk '$2 == "ioctl" && $3 != "__wrap_ioctl" { b = 1 } $2 == "mmap" && $3 != "__wr
 log "  ${QS}: $(stat -c %s "${QS}") bytes; stripped $(stat -c %s "${QS}.stripped") bytes"
 {
 	echo "built:              $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-	echo "SDL:                ${SDL_VERSION} ($(sha "${SDL_TARBALL}")), set ${stamp} = sdl2-drm patches 0001-0009 + overlay + sdl2-wl $(cd "${here}/patches" && ls | tr '\n' ' ')"
+	echo "SDL:                ${SDL_VERSION} ($(sha "${SDL_TARBALL}")), set ${stamp} = sdl2-drm patches $(cd "${SDRM}/patches" && ls | cut -c1-4 | tr '\n' ' ')+ overlay + sdl2-wl $(cd "${here}/patches" && ls | tr '\n' ' ')${extra_patches:++ extra $(cd "${extra_patches}" && ls | tr '\n' ' ')}"
 	echo "libSDL2.a:          $(sha "${SDL_A}") $(stat -c %s "${SDL_A}") bytes"
 	echo "Mesa:               ${M}: patch set $(cat "${M}/mesa-src.stamp"), opengl=true wayland=true, libgallium $(sha "${GALLIUM_A}")"
 	echo "libdrm-phoenix:     $(sed -n 3p "${M}/libdrm-snapshot.txt" | cut -c1-16) ($(sed -n 1p "${M}/libdrm-snapshot.txt"))"
