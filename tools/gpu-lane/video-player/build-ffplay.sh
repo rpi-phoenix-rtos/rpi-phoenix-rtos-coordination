@@ -30,6 +30,11 @@
 #
 # Usage: tools/gpu-lane/video-player/build-ffplay.sh [--sdl drm|wl] [--out <dir>] [-j N]
 #                                                    [--reconfigure] [--clean]
+#                                                    [--sdl-out <dir>] [--tag <suffix>]
+#   --sdl-out  link the SDL of this build-out instead of the variant's default one (an SDL built
+#              with --extra-patches into its own --out, e.g. build-out/sdl-drm with sdl-patches/)
+#   --tag      name the outputs ffplay-<variant><suffix> (ffplay-drm2 ...), so a relink never
+#              replaces the unstripped reference of a staged binary
 # Stage (coordinator only; a NEW path -- check it is absent first, then cmp after install):
 #   sudo install -m 755 <out>/ffplay-drm.stripped <live NFS export>/usr/bin/ffplay-drm
 #
@@ -48,6 +53,8 @@ jobs="$(nproc)"
 variant=drm
 reconf=0
 clean=0
+sdl_out_arg=""
+tag=""
 while [ $# -gt 0 ]; do
 	case "$1" in
 		--sdl) shift; variant="${1:?--sdl needs drm or wl}" ;;
@@ -57,8 +64,12 @@ while [ $# -gt 0 ]; do
 		-j) shift; jobs="${1:?-j needs a number}" ;;
 		-j*) jobs="${1#-j}" ;;
 		--reconfigure) reconf=1 ;;
+		--sdl-out) shift; sdl_out_arg="${1:?--sdl-out needs a directory}" ;;
+		--sdl-out=*) sdl_out_arg="${1#--sdl-out=}" ;;
+		--tag) shift; tag="${1:?--tag needs a suffix}" ;;
+		--tag=*) tag="${1#--tag=}" ;;
 		--clean) clean=1 ;;
-		-h|--help) sed -n '2,36p' "${BASH_SOURCE[0]}"; exit 0 ;;
+		-h|--help) sed -n '2,41p' "${BASH_SOURCE[0]}"; exit 0 ;;
 		*) echo "build-ffplay.sh: unknown argument $1" >&2; exit 2 ;;
 	esac
 	shift
@@ -76,12 +87,17 @@ sha() { sha256sum "$1" | cut -c1-16; }
 
 case "${variant}" in
 	drm) sdl_out="${root}/tools/gpu-lane/sdl2-drm/build-out" ;;
-	wl)
-		sdl_out="${root}/tools/gpu-lane/sdl2-wl/build-out"
-		[ -f "${sdl_out}/link-inputs.txt" ] || die "--sdl wl: no ${sdl_out}/link-inputs.txt (run tools/gpu-lane/sdl2-wl/build.sh)"
-		;;
+	wl) sdl_out="${root}/tools/gpu-lane/sdl2-wl/build-out" ;;
 	*) die "--sdl must be drm or wl" ;;
 esac
+if [ -n "${sdl_out_arg}" ]; then
+	case "${sdl_out_arg}" in /*) sdl_out="${sdl_out_arg}" ;; *) sdl_out="${PWD}/${sdl_out_arg}" ;; esac
+fi
+if [ "${variant}" = wl ] && [ ! -f "${sdl_out}/link-inputs.txt" ]; then
+	die "--sdl wl: no ${sdl_out}/link-inputs.txt (run tools/gpu-lane/sdl2-wl/build.sh)"
+fi
+case "${tag}" in */*|.*) die "--tag must be a plain suffix" ;; esac
+name="ffplay-${variant}${tag}"
 
 FF_VERSION=6.1
 FF_TARBALL="${root}/sources/phoenix-rtos-ports/ffmpeg/ffmpeg-${FF_VERSION}.tar.gz"
@@ -168,9 +184,9 @@ log "  $(grep -c "warning:" "${out}/ff-make.log" || true) compiler warning line(
 # ffplay.c includes <SDL.h>: SDL's headers only for the fftools objects (ffmpeg's own Makefile
 # does the same through CFLAGS-ffplay). The pattern rule builds them although CONFIG_FFPLAY=no.
 # (the fftools objects are compiled against the chosen SDL's headers: rebuilt on a variant switch)
-if [ "$(cat "${out}/fftools.variant" 2>/dev/null || true)" != "${variant}" ]; then
+if [ "$(cat "${out}/fftools.variant" 2>/dev/null || true)" != "${variant} ${sdl_out}" ]; then
 	rm -f "${FS}"/fftools/*.o
-	echo "${variant}" > "${out}/fftools.variant"
+	echo "${variant} ${sdl_out}" > "${out}/fftools.variant"
 fi
 make -C "${FS}" ECFLAGS="-I${SP}/include/SDL2" fftools/ffplay.o fftools/cmdutils.o fftools/opt_common.o \
 	> "${out}/ff-fftools.log" 2>&1 || { tail -40 "${out}/ff-fftools.log"; die "fftools compile failed"; }
@@ -221,18 +237,18 @@ for a in "${GROUP[@]}"; do [ -f "${a}" ] || die "missing ${a}"; done
 FF_A=("${FS}/libavfilter/libavfilter.a" "${FS}/libavformat/libavformat.a" "${FS}/libavcodec/libavcodec.a"
 	"${FS}/libswresample/libswresample.a" "${FS}/libswscale/libswscale.a" "${FS}/libavutil/libavutil.a")
 for a in "${FF_A[@]}"; do [ -f "${a}" ] || die "missing ${a}"; done
-BIN="${out}/ffplay-${variant}"
-log "ffplay-${variant}: link"
+BIN="${out}/${name}"
+log "${name}: link"
 "${PHXCXX}" "${TFLAGS[@]}" -static -Wl,--gc-sections -Wl,-z,max-page-size=0x1000 "${LFLAGS[@]}" \
 	-Wl,--wrap=pthread_create -Wl,-z,stack-size=16777216 -Wl,-Map,"${BIN}.map" -o "${BIN}" \
 	"${FS}/fftools/ffplay.o" "${FS}/fftools/cmdutils.o" "${FS}/fftools/opt_common.o" "${GLUE_O}" \
 	-Wl,--whole-archive "${GALLIUM_A}" -Wl,--no-whole-archive \
 	-Wl,--start-group "${FF_A[@]}" "${SP}/lib/libSDL2.a" "${GROUP[@]}" -Wl,--end-group -lm \
-	> "${out}/ffplay-link-${variant}.log" 2>&1 || { head -60 "${out}/ffplay-link-${variant}.log"; die "ffplay link failed"; }
+	> "${out}/ffplay-link-${variant}${tag}.log" 2>&1 || { head -60 "${out}/ffplay-link-${variant}${tag}.log"; die "ffplay link failed"; }
 # (libphoenix's "is not fully supported" attribute notes and its dlopen/getpw* stubs are expected)
 nlw="$(grep -v -E 'warning: .*(is not fully supported|dlopen|getpwnam|getpwuid|getgrnam|initgroups)' \
-	"${out}/ffplay-link-${variant}.log" | grep -c 'warning' || true)"
-log "  link warnings beyond libphoenix's notes: ${nlw} (${out}/ffplay-link-${variant}.log)"
+	"${out}/ffplay-link-${variant}${tag}.log" | grep -c 'warning' || true)"
+log "  link warnings beyond libphoenix's notes: ${nlw} (${out}/ffplay-link-${variant}${tag}.log)"
 "${TC}-strip" -o "${BIN}.stripped" "${BIN}"
 
 # --- 5. verification --------------------------------------------------------------------------
@@ -276,9 +292,10 @@ done
 	echo "libSDL2.a:          $(sha "${SP}/lib/libSDL2.a")"
 	echo "Mesa:               ${MESA_INFO}"
 	echo "glue:               $(sha "${GLUE}") (--wrap=pthread_create, 8 MiB default thread stack)"
-	echo "ffplay-${variant}:         $(sha256sum "${BIN}" | cut -d' ' -f1) $(stat -c %s "${BIN}") bytes"
-	echo "ffplay-${variant}.stripped: $(sha256sum "${BIN}.stripped" | cut -d' ' -f1) $(stat -c %s "${BIN}.stripped") bytes"
-} > "${out}/BUILD-INFO-${variant}.txt"
-sed 's/^/  /' "${out}/BUILD-INFO-${variant}.txt"
+	echo "libphoenix.a:       $(sha "${S}/lib/libphoenix.a")"
+	echo "${name}:         $(sha256sum "${BIN}" | cut -d' ' -f1) $(stat -c %s "${BIN}") bytes"
+	echo "${name}.stripped: $(sha256sum "${BIN}.stripped" | cut -d' ' -f1) $(stat -c %s "${BIN}.stripped") bytes"
+} > "${out}/BUILD-INFO-${variant}${tag}.txt"
+sed 's/^/  /' "${out}/BUILD-INFO-${variant}${tag}.txt"
 [ "${bad}" = 0 ] || die "verification failed (see above)"
-log "done: stage ${BIN}.stripped as /usr/bin/ffplay-${variant}"
+log "done: stage ${BIN}.stripped as /usr/bin/${name}"

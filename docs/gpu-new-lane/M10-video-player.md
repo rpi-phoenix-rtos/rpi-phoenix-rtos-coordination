@@ -270,6 +270,7 @@ libraries) is a follow-up for the coordinator, on a ports branch.
 |---|---|---|
 | `m10a-ffplay` (windowed, `ffplay-wl` under `/bin/xfce-session-2`) | **PASS, all 9 rows** | arm 1: `win=1280x720 fs=0` next to Thunar, **29.8–30.3 fps**, drop_late 10 of 1100 shown (0.9 %; the 21 drop_early are the first second); pause at 15 s holds `clock=14.49` over two stat lines (`paused=1`), unpause at 19 s; `key=fs` at 25 s → `fs=1 win=1920x1080` at 27.9–30.3 fps, at 35 s back to `fs=0 win=1280x720`; `key=quit` → `VIDEO-PLAY done rc=0 t=48`. Arm 2 (`-fs`): `fs=1 win=1920x1080` from the first stat line, 29.8–30.3 fps, quit → `done rc=0 t=34`. Both `XFCE-SESSION done rc=0`, 0 faults. HDMI: the decorated video window over Thunar with the panel listing both (`artifacts/hdmi/20260928-114715-m10a-ffplay-tick.png`, paused frame `…114726…` at clip time 14.500), full screen with the panel hidden at clip times 24.9 and 30.2 s (`…114737…`, `…114742…`), Thunar alone after quit |
 | `m10a0-ffplay-drm` (full screen from psh, KMSDRM) | **plays; FAIL on quit** | 720p H.264 + AAC at **29.3–30.5 fps** full screen (`win=1920x1080`, HVS scales), drop_late 3; pause 12→17 s holds the clock (11.58→11.56), `right` at 20 s seeks +10 s, `fs` toggles; **`key=quit` at 40 s never returns** (no `VIDEO-PLAY done`), so the 1080p and VP9 arms did not run. The same keypress quits cleanly on Wayland (above), so the hang is in SDL's KMSDRM teardown — the P16 path (SDL 0010). Fix + `-autoexit` in the launcher: in progress |
+| `m10c-gtk-video` (the GTK 3 player under `/bin/xfce-session-2`) | **PASS except row 7 (not reached); fullscreen slow** | picture + sound (`sound=on`, `fill target 120 ms`), `decoder h264 threads=5`; windowed 720p **26–30 fps, 0 dropped**; pause holds `clock=16.41` over two stat lines, play resumes; `right` → `seek target=29.42 rc=0`, next clock 29.85; `fs` → `fullscreen=1`, `scale … -> 1920x1080`, back with `fullscreen=0`; `GTK-VIDEO done`, both `XFCE-SESSION done rc=0`, 0 faults. **Row 7 (stop/play) never ran**: the +10 s seek moved the clip's end (45 s) before the 44 s `stop` key and `--autoexit` quit first — a script-timing miss, re-run with `stop` before the seek. **Fullscreen is CPU-bound**: 720p→1080p **14–17.5 fps** with `dropped` rising 26→147, 1080p→1080p **21.5 fps** (row 9 predicted 10–20). ffplay-wl does 1080p full screen at 30 fps on the GPU, so the next step for gtk-video is a GL present (GtkGLArea, §1e), not a faster swscale. Also: arm 2's `dropped=1` against `decoded` 30/s and `fps` 21.5 = the drop counter misses frames replaced before paint (fix the counter) |
 | `m10a1-hevc-cpu` (HEVC 720p, libavcodec's CPU decoder, 4 threads) | **real time; EOF stall** | 892 frames shown at **29.9–30.0 fps**, drop_late 4; at the clip's end ffplay sits at `shown=892 fps=0.0` (ffplay's default is to stay open at EOF — the launcher now needs `-autoexit`, not a decoder fault) |
 
 ## 4. rpivid HEVC in the player — design
@@ -463,6 +464,56 @@ play, fullscreen) work? No SDL, no Mesa in this binary, so it does not depend on
 | 10 | HDMI | arm 1: the XFCE panel, Thunar and the player window with its toolbar (icons: open, play/pause, stop, the seek bar moving, `0:12 / 0:45`), the testsrc2 picture with the frame counter; t≈28–38 the picture full screen without the toolbar; after stop the first frame and `0:00` | a black area with stats advancing: the draw path (cairo surface) — compare with gtk3-demo's image demos |
 | 11 | `XFCE session end reason=logout`, `XFCE-SESSION done rc=0`, 0 faults | clean | addr2line on the unstripped `build-out/gtk-video/gtk-video` |
 
+### Why ffplay-drm hung on quit, and ffplay-drm2 / ffplay-wl2 (2026-09-28, agent; checked 2026-09-29)
+
+Not P16. **libphoenix creates an attribute-less condition variable on `CLOCK_MONOTONIC`** — a
+deliberate local revert of upstream's POSIX default (`c283f2d`: the wall clock jumps 1970 → today
+during boot, and upstream's `CLOCK_REALTIME` default hung vkQuake and broke STK). SDL's pthread
+`SDL_CondWaitTimeout()` builds its deadline from `CLOCK_REALTIME`, so after the clock step every
+timed wait lies ~56 years ahead. The generic semaphores sit on the same call (`SDL_PTHREADS_SEM` is
+off here), so their timed waits are affected too. ffplay's read thread waits 10 ms at the end of
+the file, and at EOF no decoder signals it any more. So `-autoexit` never fires (m10a1's frozen
+`shown=892`), and a quit after the end joins that thread forever (m10a0). A quit mid-file returns,
+because the decoders still wake the reader. m10a's windowed quit came before the end of the file.
+
+- **Fix:** `tools/gpu-lane/video-player/sdl-patches/0011-pthread-cond-timeout-on-the-monotonic-clock-on-phoenix.patch`.
+  On `__phoenix__` it creates SDL's condvars with `pthread_condattr_setclock(CLOCK_MONOTONIC)` and
+  takes the deadline from the same clock; other platforms are unchanged. It is applied via
+  `--extra-patches` into separate SDL build-outs and is **not** in sdl2-drm's shared default set yet.
+  `build-ffplay.sh --sdl-out … --tag 2` links `ffplay-drm2` / `ffplay-wl2`, which `/bin/video-play2`
+  runs with `-autoexit` on by default. `/bin/video-play` and the first binaries are unchanged.
+- **Host proof** (`hosttest/condclock.sh`, re-run 2026-09-29): with `phx-condclock.c` forcing
+  libphoenix's clock default on the host's SDL, **both hangs reproduce** (`-autoexit` rc 124 with
+  14 frozen stat lines; quit after the end rc 124). A mid-file quit returns (rc 0). With 0011 both
+  return (rc 0), and stock glibc returns (rc 0).
+- **Gate string in the artifact:** `SDL_CreateCond` calls `pthread_condattr_init` +
+  `pthread_condattr_setclock` in `ffplay-drm2` / `ffplay-wl2` (objdump: 2 calls) and not in
+  `ffplay-drm` / `ffplay-wl` (0). Staged copies `cmp`-identical to `build-out/*.stripped`
+  (`ffplay-drm2.stripped` `4e02fef9…`).
+- **System-wide exposure** = KNOWN-ISSUES **P17**: every port that pairs a `CLOCK_REALTIME`
+  deadline with a default condvar (POSIX-correct code) waits until signalled.
+
+### `m10a0b-ffplay2` — the m10a0 + m10a1 arms again on `video-play2` (runnable now)
+
+```
+./scripts/test-cycle-psh-interact.sh --label m10a0b-ffplay2 --wait-secs 220 --inter-cmd-secs 8 --idle-secs 60 \
+    --max-cmd-secs 200 --hdmi-dense-on 'VIDEO-PLAY start' -- \
+    "export FFPLAY_AUTOKEYS=12:pause,17:pause,20:right,30:fs,34:fs,40:quit" \
+    "/bin/bash /bin/video-play2 /usr/share/m10/m10-h264-720p30-aac.mp4" \
+    "export FFPLAY_AUTOKEYS=" \
+    "export THREADS=4" \
+    "/bin/bash /bin/video-play2 /usr/share/m10/m10-h264-1080p30-aac.mp4" \
+    "/bin/bash /bin/video-play2 /usr/share/m10/m10-vp9-360p-opus.webm" \
+    "/bin/bash /bin/video-play2 /usr/share/m10/m10-hevc-720p30-aac.mp4"
+```
+
+| # | Line | Predicted | If instead… |
+|---|---|---|---|
+| 1 | arm 1: `key=quit` at 40 s (after the end of the file: the +10 s seek) → **`VIDEO-PLAY done rc=0`** within ~2 s | 0011 wakes the reader | no `done` line: a second wait path (record the last stat line; `SDL_SemWaitTimeout` users) |
+| 2 | arms 2–4 each end on their own at EOF (`-autoexit`) with `VIDEO-PLAY done rc=0` at ≈ the clip length + ≤ 3 s | yes | a frozen `shown=` with `fps=0.0`: 0011 not in the binary (check the start line's `player=`) |
+| 3 | fps: 720p H.264 29–30; **1080p H.264 15–30** (m10a0 row 7, never measured); VP9 360p 30; HEVC 720p 29–30 (m10a1) | as registered | — |
+| 4 | 0 kernel, 0 EL0 dumps after every quit/EOF (P16's 0010 is in this SDL) | clean | addr2line `build-out/ffplay-drm2` |
+
 ### `m10b-hevc-rpivid` — (placeholder, after §4 option 1 is built)
 
 Pre-register when `hevc_rpivid` exists: the same clip through `-vcodec hevc_rpivid` vs `-vcodec
@@ -483,3 +534,8 @@ corrupt frames counted separately.
 - 2026-09-28: **Pi results (§3.4).** `m10a-ffplay` PASS: ffplay-wl plays windowed next to Thunar at 30 fps, and
   pause, seek, fullscreen and quit all work through the compositor. `m10a0` plays full screen at 30 fps but hangs on
   quit (KMSDRM teardown = P16). `m10a1`: HEVC 720p decodes in real time on the CPU. `m10c-gtk-video` running.
+- 2026-09-29: `m10c-gtk-video` graded (§3.4): the GTK player works windowed at 30 fps with pause/seek/fullscreen/exit; stop/play
+  untested (timing), full screen CPU-bound at 14–22 fps → GL present next.
+- 2026-09-29: the KMSDRM quit hang and the EOF stall are one bug: SDL's timed condvar waits on a `CLOCK_REALTIME`
+  deadline against libphoenix's `CLOCK_MONOTONIC` default. SDL patch 0011 fixes it (host test discriminates;
+  gate string in the binaries); `ffplay-drm2`/`-wl2` + `/bin/video-play2` staged; cycle `m10a0b-ffplay2` registered.

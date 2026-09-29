@@ -14,7 +14,7 @@ check, **[read]** read in source, **[inferred]** reasoning only.
 plus the launcher `/bin/game-window.sh` and a labwc configuration `/etc/xdg/labwc-xfce-m8/` that lays
 the desktop out. All static checks pass [built]; the three control relinks are byte-identical to the
 shipped engines. `m8a-quake-window` **passed** on the Pi (result at the end). `m8b-quake23-window` and
-`m8b-stk-window` are pre-registered (last section). vkQuake is deferred (§5).
+`m8b-stk-window` **passed** 2026-09-28 (quake2 60 fps, quake3 90, the STK menu 90, all windowed beside Thunar and foot; quake3e hangs in its signal-handler shutdown — result at the end). vkQuake is deferred (§5).
 
 ---
 
@@ -595,3 +595,27 @@ notes, STK's `FontManager … NotoColorEmoji.ttf doesn't have color` and `kartDi
   and the STK race-in-a-window follow-up.
 - A T8 hang alone = the next step is quake3e's shutdown-in-a-signal-handler (a `quitnextframe`-style
   deferral, as yquake2 does), not the Wayland path.
+
+## Result — `m8b-quake23-window` + `m8b-stk-window` (chain93, 2026-09-28 13:24 / 13:39): ✅ PASS, one pre-registered exit hang
+
+**All three games render on the V3D in decorated labwc windows on the XFCE desktop, next to
+Thunar and foot.** HDMI (`artifacts/hdmi/20260928-133218-m8b-quake23-window-tick.png`: Quake II
+demo1 at 59.26 fps; `…133429…`: `Quake 3: Arena` q3dm1 at 63 fps, quake2 already gone from the task
+list; `20260928-134920-m8b-stk-window-tick.png`: the SuperTuxKart main menu in a window titled
+`SuperTuxKart`).
+
+| Row | Reading | vs prediction |
+|---|---|---|
+| Q4 / T4 / S3 | first swap: `video_driver wayland window 1280x720 drawable 1280x720 windowed`, contexts GLES 3.0 / GL 2.1 / GLES 3.0, swap_interval 1 / 0 / 0 | as predicted |
+| Q5 | quake2-wl **median 59.99 fps** (n = 7 steady windows) | 55–60 ✅ (fewer windows than the ≈ 12 expected: the demo ramp was longer) |
+| T5 | quake3-wl **median 89.94 fps** (n = 21) | 65–100 ✅ |
+| S5 | stk-wl menu **median 89.7 fps** (n = 25) | above the 20–60 band, below the 120 `max_fps` throttle: the menu is far cheaper than guessed |
+| Q8 | `quake2-wl: exit after 2060 swaps`, `exited rc=0 (clean exit) ran_s=90` | ✅ |
+| **T8** | `Received signal 15, exiting...`, `----- Client Shutdown (Signal caught (15)) -----`, **last line `RE_Shutdown( 3 )`**, then nothing until the quit script's SIGKILL: `exited rc=137 (killed by SIGKILL) ran_s=210` | ❌ **the pre-registered "if instead"**: quake3e's shutdown hangs **inside the signal handler**, in the renderer shutdown |
+| S7 | `stk-wl: exit after 11032 swaps in 183889 ms`, `exited rc=0 (clean exit) ran_s=201` | ✅ |
+| QZ / SZ | `XFCE-SESSION done rc=0` both; **0 kernel, 0 EL0 dumps** (`exc=0`) | ✅ |
+
+**Decides** (as registered): the Quake II, Quake 3 and STK windowed goals are met; the one defect
+is quake3e's signal-handler shutdown, so the next step is a `quitnextframe`-style deferral (set a
+flag in the handler, quit from the main loop, as yquake2 does), not the Wayland path. Left: that
+fix, m8d (the showcase recording), an STK race in a window, and vkQuake (V3DV WSI, §5).
