@@ -18,9 +18,11 @@
 #
 # Files a port has that are NOT copies (the recipes, libdrm_phoenix/glue/newlane.subr,
 # sdl2_kmsdrm/gamedrm/relink-sdl-gl-game.subr -- the ports adaptation of
-# tools/gpu-lane/sdl2-drm/gamedrm/relink-sdl-gl-game.sh -- and sdl2_kmsdrm/gamewl/
-# relink-sdl-gl-game-wl.subr, that of tools/gpu-lane/sdl2-wl/gamewl/relink-sdl-gl-game-wl.sh;
-# video_player/files/image/video-demo.desktop, the port's own) are not listed.
+# tools/gpu-lane/sdl2-drm/gamedrm/relink-sdl-gl-game.sh with the group of
+# tools/gpu-lane/sdl2-wl/gamewl/relink-sdl-gl-game-wl.sh; the image's own session files
+# derived from tools files with the image's program names: sdl2_kmsdrm/games/ (from sdl2-wl/pi
+# and conf/labwc-xfce-m8), video_player/files/image/ (from video-player/pi/video-play2 and
+# conf/labwc-xfce-m10)) are not listed.
 #
 # Copyright 2026 Phoenix Systems
 # SPDX-License-Identifier: BSD-3-Clause
@@ -51,11 +53,8 @@ MAP=(
 	"${T}/sdl2-drm/overlay|sdl2_kmsdrm/overlay"
 	"${T}/sdl2-drm/gamedrm/gamedrm_hooks.c|sdl2_kmsdrm/gamedrm/gamedrm_hooks.c"
 	"${T}/sdl2-drm/gamedrm/check-swap-order.sh|sdl2_kmsdrm/gamedrm/check-swap-order.sh"
-	# sdl2_kmsdrm USE wayland/rootfs: the windowed games (M8)
+	# sdl2_kmsdrm: its Wayland video driver (the games in a window, M8)
 	"${T}/sdl2-wl/patches/*|sdl2_kmsdrm/patches/wayland"
-	"${T}/sdl2-wl/gamewl/gamewl_hooks.c|sdl2_kmsdrm/gamewl/gamewl_hooks.c"
-	"${T}/sdl2-wl/pi|sdl2_kmsdrm/gamewl/pi"
-	"${T}/sdl2-wl/conf/labwc-xfce-m8|sdl2_kmsdrm/gamewl/labwc-xfce-m8"
 	# the game clones
 	"@quakespasm/patches|quakespasm_drm/patches"
 	"@quakespasm/glue|quakespasm_drm/glue"
@@ -93,10 +92,8 @@ MAP=(
 	"${T}/video-player/components.sh|video_player/files/components.sh"
 	"${T}/video-player/ffplay_phoenix_glue.c|video_player/files/ffplay_phoenix_glue.c"
 	"${T}/video-player/gen-clips.sh|video_player/files/gen-clips.sh"
-	"${T}/video-player/pi/video-play2|video_player/files/pi/video-play2"
 	"${T}/video-player/gtk-video/gtk-video.c|video_player/files/gtk-video/gtk-video.c"
 	"${T}/video-player/conf/applications|video_player/files/conf/applications"
-	"${T}/video-player/conf/labwc-xfce-m10|video_player/files/conf/labwc-xfce-m10"
 )
 
 bad=0 n=0
