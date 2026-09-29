@@ -1301,3 +1301,10 @@ faults 0.
 | xfce | ✅ | — | `session up panel=registered t=52`, `XFCE-SESSION done rc=0` |
 
 **libc** (`p1-libc-misc`): new `dladdr_self` 4/4 PASS, the misc suite 240 tests, 0 failures, 11 ignored.
+
+**Dual-mode feasibility (`p1-dual-qs`, 2026-09-30 00:43).** The owner's rule is one binary per game. M8's
+Wayland-capable `quakespasm-wl` (SDL KMSDRM + Wayland drivers, Mesa drm + wayland EGL) was installed under a
+temporary name and run from psh with the fixed `qs-drm` arguments (`-width 1920 -height 1080 -fullscreen`).
+With no compositor, SDL fell back to KMSDRM: `KMSDRM_VideoInit()`, `V3DA srv import … ns=kmsbuf`. fps median
+**44.47** (n = 59) against 43.8 for `quakespasm-drm` in the P1 gate, 0 faults. The temporary binary was removed.
+⇒ One dual-mode ELF per game costs nothing full screen. The desktop-apps ports build exactly that.
