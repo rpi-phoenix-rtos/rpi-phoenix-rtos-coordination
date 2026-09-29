@@ -1,5 +1,9 @@
 # Porting an RTOS to the Raspberry Pi 4, entirely by AI — a field report
 
+> A dated report (to 2026-08-05). The graphics it describes — the in-process GPU winsys, `/dev/fb0`,
+> the kdrive X server — was later replaced by a DRM-shaped stack with Wayland/XFCE and Xorg. For
+> the current system, see the [README](../README.md) and the [User Guide](USER-GUIDE.md).
+
 *Draft. Covers ~2026-03-19 → 2026-08-05 (~4.5 months); ~1400 coordination-repo commits.
 The whole Phoenix-RTOS Raspberry Pi 4 (BCM2711) bring-up was done by an AI agent driven
 only through chat — no human wrote code. A human operator steered by prompt, ran the
