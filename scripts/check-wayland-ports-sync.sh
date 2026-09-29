@@ -85,6 +85,13 @@ MAP=(
 	"${T}/labwc-drm/conf/backgrounds/make-wallpaper.py|labwc_desktop/files/conf/backgrounds/make-wallpaper.py"
 	"${T}/labwc-drm/pi/labwc-desktop.sh|labwc_desktop/files/pi/labwc-desktop.sh"
 	"${T}/labwc-drm/pi/m7b-colors.sh|labwc_desktop/files/pi/m7b-colors.sh"
+	# atril_wayland (M7 m7j)
+	"${T}/atril-wayland/patches|atril_wayland/patches"
+	"${T}/atril-wayland/poppler-options.sh|atril_wayland/files/poppler-options.sh"
+	"${T}/atril-wayland/conf/atril.desktop|atril_wayland/files/conf/atril.desktop"
+	"${T}/atril-wayland/pi/xfce-desktop-atril.sh|atril_wayland/files/pi/xfce-desktop-atril.sh"
+	"${T}/atril-wayland/tools/make-sample-pdf.py|atril_wayland/files/tools/make-sample-pdf.py"
+	"${T}/xfce-wayland/bin/msgfmt|atril_wayland/files/bin/msgfmt"
 )
 
 bad=0 n=0 files=0
