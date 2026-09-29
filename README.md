@@ -1,45 +1,51 @@
 # Phoenix-RTOS on the Raspberry Pi 4
 
-A from-scratch port of [Phoenix-RTOS](https://phoenix-rtos.com/) — a small
-microkernel, message-passing operating system — to the **Raspberry Pi 4
-Model B / BCM2711** (Cortex-A72, AArch64).
+This is a from-scratch port of [Phoenix-RTOS](https://phoenix-rtos.com/), a small microkernel
+operating system based on message passing, to the **Raspberry Pi 4 Model B / BCM2711**
+(Cortex-A72, AArch64).
 
-The port was taken from "does not boot" to a system that boots to an
-interactive shell, drives the real hardware, serves its root filesystem from
-an SD card or over NFS, and runs a graphical userland: an X11 desktop with
-Window Maker, a web browser, and **four id-Software engines rendering on the V3D
-GPU** — GLQuake, Quake II and Quake III through OpenGL/GLES, and vkQuake through
-Vulkan/V3DV. All four ship on the SD image, along with a **modern 3D game,
-SuperTuxKart 1.4**, which renders on the same GPU via OpenGL ES (an in-game race
-was verified on hardware in August 2026, close to frame-for-frame with the same
-game on a desktop AMD GPU; what is confirmed on the current clean image is in
-[Which games end up on the card?](#which-games-end-up-on-the-card)).
+The port started from a system that did not boot. It now:
 
-> This repository is the **coordination repo** — docs, build scripts, and
-> integration manifests. The Phoenix-RTOS source lives in sibling repositories
-> cloned under `sources/` (see [Repository layout](#repository-layout)).
+- boots to an interactive shell and drives the real hardware;
+- serves its root filesystem from an SD card or over NFS;
+- runs a full graphical userland on the V3D GPU, with a Linux-style graphics stack:
+  - a **render server**, a **KMS display server**, **libdrm**, and **Mesa 26.2** (GBM, EGL,
+    OpenGL ES 3.1, OpenGL and Vulkan);
+  - **SDL 2**, with full-screen KMSDRM and Wayland windows;
+  - **Xorg** with glamor acceleration;
+  - the **XFCE 4.20 desktop on the labwc Wayland compositor**.
 
-> ⚙️ **Toolchain — GCC 16.2.0 + binutils 2.47 (the default working setup).** The port
-> builds with an up-to-date **GCC 16.2.0** aarch64-phoenix cross-toolchain and the latest
-> **binutils 2.47** — a big jump from the previous GCC 14.2.0 / binutils 2.43. This is the
-> **default toolchain** (a fresh `bootstrap-linux-host.sh` builds it; the previous gcc-14
-> is kept as a rollback). The **entire system is gcc-16-built and HW-verified**: the kernel,
-> drivers, libc, lwip and NFS boot to a shell and serve the NFS root on real Pi 4 hardware,
-> and a full `--with-ports` image (coreutils, bash, jq, Python, busybox, curl, …) builds on
-> gcc-16 and boots + runs on the Pi with 0 faults. (The Docker `--no-cache` clean build from the
-> org Dockerfile is the authoritative release gate and has produced `BUILD_RC=0` from a blank OS.)
-> Details in the
-> [gcc-16 release plan](docs/done/gcc16-release-plan.md).
+Programs on the image:
 
-> 🚀 **First time here?** [**TUTORIAL.md**](TUTORIAL.md) is a single,
-> self-contained walkthrough: build the image, flash an SD card, boot the Pi,
-> and launch everything in the distribution — the five game engines, the X11
-> desktop with Window Maker, `dillo`, Python, Lua, and more.
-> *(Tested on a Raspberry Pi 4 Model B with 4 GB RAM.)*
+- The XFCE desktop: panel, Thunar file manager, foot terminal and application menu.
+- An X11 desktop with Window Maker.
+- Five 3D games, full screen or in a window on the desktop: Quake (QuakeSpasm), Quake II,
+  Quake III Arena, vkQuake (Vulkan) and SuperTuxKart 1.4.
+- A video player, including HEVC.
+- The Atril PDF viewer.
+- The Dillo web browser.
+- WiFi and Ethernet networking, and a Unix command line with bash, Python 3.14 and more.
+
+> This repository is the **coordination repo**: docs, build scripts and integration
+> manifests. The Phoenix-RTOS source lives in sibling repositories cloned under `sources/`
+> (see [Repository layout](#repository-layout)).
+
+> 📖 **Using the system? Read the [User Guide](docs/USER-GUIDE.md).** It covers booting, the
+> XFCE desktop, the games (full screen, windowed and scaled), video, PDF, X11, WiFi and
+> networking. It ends with a showcase: one recommended way to show the whole system.
 >
-> 🌐 **Want a network dev setup?** [**TUTORIAL-NETBOOT.md**](TUTORIAL-NETBOOT.md)
-> shows how to build from source and boot the Pi entirely over the network
-> (DHCP + TFTP + NFS root, no SD card) — the fast edit-rebuild-run loop.
+> 🚀 **First time here?** [**TUTORIAL.md**](TUTORIAL.md) walks you through building the image,
+> flashing an SD card and booting the Pi. *(Tested on a Raspberry Pi 4 Model B with 4 GB RAM.)*
+>
+> 🌐 **Want a network dev setup?** [**TUTORIAL-NETBOOT.md**](TUTORIAL-NETBOOT.md) shows how to
+> build from source and boot the Pi entirely over the network (DHCP + TFTP + NFS root, no SD
+> card). This gives a fast edit-rebuild-run loop.
+
+> ⚙️ **Toolchain: GCC 16.2.0 + binutils 2.47.** The port builds with an up-to-date
+> aarch64-phoenix cross-toolchain. `bootstrap-linux-host.sh` builds it, and the whole system
+> is built with it and verified on the hardware. The authoritative release gate is a Docker
+> `--no-cache` clean build from the org Dockerfile, which produces `BUILD_RC=0` from a blank
+> OS. Details are in the [gcc-16 release plan](docs/done/gcc16-release-plan.md).
 
 ## Quick start
 
@@ -49,12 +55,14 @@ On a fresh Ubuntu x86_64 machine, from an empty directory:
 git clone https://github.com/rpi-phoenix-rtos/rpi-phoenix-rtos-coordination.git ~/phoenix-rpi
 cd ~/phoenix-rpi
 ./scripts/bootstrap-linux-host.sh            # installs deps, clones sources, builds the toolchain
-./scripts/rebuild-rpi4b-fast.sh --variant sd # builds artifacts/rpi4b/rpi4b-sd-2part.img
+./scripts/rebuild-rpi4b-fast.sh --variant sd --with-showcase --with-ports
+                                             # builds artifacts/rpi4b/rpi4b-sd-2part.img
 ```
 
 Flash the resulting image to a microSD card and boot it on a Pi 4. The full
 walkthrough — prerequisites, timings, flashing, and first-boot expectations —
-is in **[docs/BUILD.md](docs/BUILD.md)**.
+is in **[docs/BUILD.md](docs/BUILD.md)**; what to do once it boots is in the
+**[User Guide](docs/USER-GUIDE.md)**.
 
 ## Build with Docker (reproducible, any host OS)
 
@@ -63,8 +71,8 @@ any machine with a Docker CLI (Linux/macOS/Windows) regardless of host OS or
 installed packages — the entire toolchain runs inside a container we fully control.
 Nothing is copied from the host: every source tree, Ubuntu package, font, and the
 freely-downloadable game data (Quake I shareware, the Quake II and Quake III
-demos, and the SuperTuxKart 1.4 assets) is fetched over the network at build time
-(each from a pinned URL) and baked into the image
+demos, and the SuperTuxKart 1.4 assets) and the WiFi firmware are fetched over the
+network at build time (each from a pinned URL) and baked into the image
 *you* build — this repo distributes only the build scripts, never a built image.
 
 ### Before you start
@@ -72,9 +80,9 @@ demos, and the SuperTuxKart 1.4 assets) is fetched over the network at build tim
 | | |
 |---|---|
 | **Docker** | a CLI with **BuildKit/buildx**. Docker Desktop bundles it; on a minimal Linux `docker.io` install run `sudo apt-get install docker-buildx`. |
-| **Disk** | ~35 GB free for the build (it clones Mesa, builds a GCC cross-toolchain, then the whole OS). |
-| **Time** | 40–90 min on a modern 8-core machine, most of it the toolchain. |
-| **Network** | the build clones from GitHub/freedesktop and downloads the game data. |
+| **Disk** | ~35 GB free for the build (it builds a GCC cross-toolchain, then the whole OS: Mesa, GTK, XFCE and the games). |
+| **Time** | several hours on a modern 8-core machine for the full image (Mesa, GTK and XFCE are the long poles); the base system alone takes well under an hour. <!-- TODO(coordinator): replace with the measured time of the first Docker --no-cache build of the merged tree. --> |
+| **Network** | the build clones from GitHub, downloads the port tarballs, the game data and the WiFi firmware. |
 
 > **macOS / colima:** give the VM enough room up front — the default is too small
 > and the build dies deep in the toolchain stage:
@@ -85,8 +93,15 @@ demos, and the SuperTuxKart 1.4 assets) is fetched over the network at build tim
 ### Copy-paste: build a bootable SD image
 
 Pick **one** of these. Each is a complete recipe: build, then export the image.
+Recipe 2 is the one to use.
 
-**1. Base system** — kernel, drivers, `psh`, networking. No games, fastest build.
+**1. Without the showcase stage.** This leaves out the small helper programs that the
+showcase stage adds (`ram-stage-play`, which the Quake II and Quake III launchers need, and
+`game-res`). Every program on the image is a framework port, and the SD build runs the
+whole ports stage either way, so this recipe is **not** a smaller or much faster build.
+<!-- TODO(coordinator): recipe 1 no longer gives a "base system" (ports.yaml has no showcase
+gating). Either gate the ports stage on --with-ports / --with-showcase again, or delete this
+recipe and the Dockerfile's BUILD_FLAGS="" note. -->
 
 ```bash
 mkdir -p out
@@ -97,11 +112,12 @@ docker run --rm -v "$PWD/out":/out phoenix-rpi
 # -> ./out/rpi4b-sd-2part.img
 ```
 
-**2. The showcase image (recommended)** — everything above **plus** the X11 desktop
-(`wmaker`, `xterm`, `xclock`, `xcalc`), the ported command-line apps (`bash`,
-`python3`, coreutils, …) and **all five game engines** (GLQuake, vkQuake,
-Quake II, Quake III, SuperTuxKart) running on the V3D GPU. This is the default if
-you pass no `BUILD_FLAGS` at all:
+**2. The showcase image (recommended)** — everything above **plus** the whole
+graphics stack (Mesa, SDL, Xorg, labwc), the **XFCE desktop on Wayland**, the X11
+desktop with Window Maker, **all five games** (Quake, Quake II, Quake III,
+vkQuake, SuperTuxKart), the video player, Atril, Dillo, WiFi and the ported
+command-line apps (`bash`, `python3`, coreutils, …). This is the default if you
+pass no `BUILD_FLAGS` at all:
 
 ```bash
 mkdir -p out
@@ -111,106 +127,71 @@ docker build -t phoenix-rpi \
 docker run --rm -v "$PWD/out":/out phoenix-rpi
 ```
 
-Recipe 2 already includes the V3DV Vulkan stack and vkQuake — the Vulkan path is
-built by default, and `--with-vkquake` is now a no-op kept only for compatibility.
-There is no third recipe and nothing to swap by hand.
+There is no third recipe and nothing to swap by hand: recipe 2 is the complete
+system, with every program in its one current version.
 
 Then flash `./out/rpi4b-sd-2part.img` exactly as in
 [docs/BUILD.md](docs/BUILD.md) (macOS/Linux `dd`, or Raspberry Pi Imager's
-"Use custom" option), put the card in the Pi, and power on.
+"Use custom" option), put the card in the Pi, power on, and continue with the
+[User Guide](docs/USER-GUIDE.md).
 
-### Which games end up on the card?
+### What ends up on the card?
 
-**All five engines.** Each is built by the ports framework (all five are registered
-`if: true` in the project's `ports.yaml`) and installed **into the rootfs**, so
-`--with-showcase` ships every one of them on the same card. Nothing is swapped by
-hand, and no game lives in the boot blob: `loader.disk` is **4.5 MB and contains
-zero game bytes** (it was ~22 MB back when GLQuake was bundled into it). Games are
-launched from the rootfs; large binaries exec fine from both the ext2 root and
-the NFS root.
+**Everything, in one version each.** Every program is built by the ports framework (the
+project's `ports.yaml`) and installed **into the root filesystem**. Nothing is swapped by
+hand, and nothing is bundled into the boot blob: `loader.disk` holds only the kernel, the
+drivers and the servers.
 
-That last point used to be documented the other way round ("the GLQuake binary is
-too large to run from the ext2/NFS loader"), so here it is as a check anyone can
-re-run against the image rather than a claim to take on trust:
+Each game and the video player is **one program** with both of SDL's video drivers. From the
+psh prompt it runs full screen on KMS. Inside the desktop it opens in a window.
 
-```
-IMG=artifacts/rpi4b/rpi4b-sd-2part.img
-OFF=$((135168 * 512))          # start of partition 2, from `fdisk -l $IMG`
-debugfs -R "stat /bin/python3" "$IMG?offset=$OFF"
-```
-
-Sizes actually present in the ext2 root of the verified image, every one of them
-exec-proven on the hardware:
-
-| Binary | Size |
-|---|---|
-| `bin/python3` | 57.1 MB |
-| `usr/bin/supertuxkart` | 38.5 MB |
-| `usr/bin/quake3e` | 19.2 MB |
-| `usr/bin/yquake2` | 19.1 MB |
-| `usr/bin/quakespasm` | 18.6 MB |
-| `usr/bin/vkquake` | 12.8 MB |
-
-The 57 MB `python3` is the ceiling we have evidence for, not a limit.
-
-| Engine | Binary on the card | How to run it |
+| Program | Command at the psh prompt | On the desktop |
 |---|---|---|
-| **GLQuake** (Quake I, OpenGL) | `/usr/bin/quakespasm` | `quakespasm` |
-| **vkQuake** (Quake I, Vulkan) | `/usr/bin/vkquake` | `vkquake` |
-| **Quake II** (yQuake2, gl3/GLES3) | `/usr/bin/yquake2` | `quake2` (launcher) |
-| **Quake III** (quake3e) | `/usr/bin/quake3e` | `quake3 +map q3dm1` (launcher) |
-| **SuperTuxKart 1.4** | `/usr/bin/supertuxkart` | `stk` (launcher) |
+| **Quake** (QuakeSpasm, OpenGL) | `quakespasm` | Games → Quake |
+| **Quake II** (yQuake2, OpenGL) | `quake2` | Games → Quake II |
+| **Quake III Arena** (quake3e, OpenGL) | `quake3 +map q3dm1` | Games → Quake III Arena |
+| **vkQuake** (Quake on Vulkan / V3DV) | `vkquake` | full screen only |
+| **SuperTuxKart 1.4** (OpenGL ES 3) | `stk` | Games → SuperTuxKart |
+| any game, in a lower mode scaled to the screen | `game-res stk 1280x720` | — |
+| **XFCE 4.20** desktop on labwc (Wayland) | `/bin/bash /bin/xfce-session` | — |
+| **X11** desktop (Xorg + glamor, Window Maker) | `/bin/bash /bin/startx` | — |
+| **Video** (ffplay) | `/bin/bash /bin/video-play <file>` | Multimedia → Video Demo, Video Player |
+| **PDF** (Atril) | — | Office → Atril |
+| **WiFi** | `wifi connect <ssid> <passphrase>` | — |
 
-What has been verified on the hardware from the clean image, each with an HDMI
-capture under `artifacts/hdmi/`:
+The [User Guide](docs/USER-GUIDE.md) explains each of them.
 
-- **GLQuake** — full-screen in-game (`20260903-032501-final-qs-tick.png`). It needs
-  the `id1/config.cfg` the image ships: QuakeSpasm's SDL2 path defaults to
-  800x600, which renders a small frame inside the 1080p scanout.
-- **Quake II** — full textured 3D through the `quake2` launcher
-  (`20260903-020858-relink-q2-tick.png`).
-- **Quake III** — full 3D gameplay **on the free demo data**
-  (`20260903-051855-q3-restore-tick.png`); see the note below.
-- **vkQuake** — renders the start map on Vulkan/V3DV
-  (`20260903-040557-vkq-rep2-tick.png`).
-- **GPU-accelerated X11 desktop** (`startx_gpu deskapps`) — Window Maker plus an
-  xterm with a live shell, `xclock` and `xcalc`
-  (`20260903-053119-final-xgpu-tick.png`).
-- **SuperTuxKart** — **races in-game** on the shipped image at **~8 fps measured at the page flip**
-  (the winsys `flipstat` counter; its own on-screen number is a *tick* rate and reads differently),
-  with `scale_rtts_factor=0.75` as the shipped default, up from ~5–6 fps at full resolution.
-  Not fill-rate bound: half the pixels render at the same rate
-  ([docs/misc/2026-09-16-stk-fps-not-fill-bound.md](docs/misc/2026-09-16-stk-fps-not-fill-bound.md)).
-  ⚠ *Corrected 2026-09-17:* this entry used to say "it still faults intermittently in its own code".
-  That was true when written and is no longer: **0 crashes in 131 STK engine starts** since the
-  2026-09-12 allocator-ownership fix, against **30 in the 242 runs before it**, same detector both
-  sides ([docs/misc/2026-09-17-stk-rate-and-allocator-guard-fires.md](docs/misc/2026-09-17-stk-rate-and-allocator-guard-fires.md)).
-  ⚠ One open defect remains around it: **C1**, a stray 4-byte write that corrupts a heap header in
-  SuperTuxKart. Usually it only leaks memory silently, but it has crashed the game and, once
-  (2026-09-26), halted the kernel. It is much more likely on a run that starts with a **cold shader
-  cache** — i.e. the first run after the GPU driver changes — so warm the app once before a demo
-  (see the demo notes below). Full record: [docs/c1-heap-corruption.md](docs/c1-heap-corruption.md).
-- **Hardware H.265 decode** — the BCM2711 `rpivid` block decodes a real 1080p
-  phone clip and plays it on `/dev/fb0` at **21.7 fps, 0 faults** (~90% of each
-  frame is the framebuffer blit; the decode itself is ~4.5 ms).
+Measured on the Pi at 1920×1080, at the page flip, in the image gate of 2026-09-29
+([MIGRATION §7r](docs/gpu-new-lane/MIGRATION.md)):
+
+| Program | fps |
+|---|---|
+| Quake II | 59.8 |
+| Quake III | 58.8 |
+| QuakeSpasm | 43.8 |
+| vkQuake | 42.2 |
+| SuperTuxKart | 12.8 (~22 at 1280×720 through `game-res`) |
+| the X11 desktop's GL window | 60.0 |
+
+<!-- TODO(coordinator): re-read these from the first showcase gate of the merged
+(dual-mode) image. -->
 
 **Quake III needs no retail content and no retail CD key.** Besides the free demo
-`pak0.pk3` it needs two more files, both staged by `scripts/stage-game-data.sh`
-from `assets/quake3-qvm/`: a `pak1.pk3` holding three QVMs we built from
-**ioquake3** (the demo's 1999 QVMs report UI API 3, while quake3e requires 6), and
-a `q3key` file whose **format alone** is checked. ✅ *Updated 2026-09-17 — the old caveat here
-("the QVM build recipe is not yet in this repo") is out of date:* `tools/quake3-vm/build-quake3-vms.sh`
-builds all three QVMs from ioquake3 at a pinned commit, and the output was verified byte-wise against
-the shipped pak (two identical, the third differing only in its embedded `__DATE__`). The pak is
-still *staged* at image-build time rather than rebuilt on every build, but it is reproducible from
-source — see [`assets/quake3-qvm/README.md`](assets/quake3-qvm/README.md).
+`pak0.pk3` it needs two more files, both staged by `scripts/stage-game-data.sh` from
+`assets/quake3-qvm/`:
 
-Game data for all five engines is staged into the rootfs overlay by
-`scripts/stage-game-data.sh` (the Docker build calls the same script), under
-`/usr/share/{quake,quake2,quake3,supertuxkart}`. The engine binaries are
-**byte-identical across the build tree, the NFS export and the SD ext2 image** —
-`scripts/compare-rootfs-binaries.sh` checks ten binaries and all ten match — so a
-game verified over netboot is the same artifact that runs from the card.
+- a `pak1.pk3` holding three QVMs we built from **ioquake3**. The demo's 1999 QVMs report UI
+  API 3, while quake3e requires 6.
+- a `q3key` file. Only its **format** is checked.
+
+`tools/quake3-vm/build-quake3-vms.sh` builds all three QVMs from ioquake3 at a pinned commit.
+The output was verified byte-wise against the shipped pak: two files are identical, and the
+third differs only in its embedded `__DATE__`. See
+[`assets/quake3-qvm/README.md`](assets/quake3-qvm/README.md).
+
+The game data for all five games is staged into the rootfs overlay by
+`scripts/stage-game-data.sh`, under `/usr/share/{quake,quake2,quake3,supertuxkart}`. The
+Docker build calls the same script.
 
 ### Other build knobs
 
@@ -259,7 +240,14 @@ work; `⛔` blocked on external dependencies; `⬜` not started.
 | Generic timer, GIC-400 interrupts | ✅ | Scheduler ticks; GENET/USB/SD IRQs live |
 | PL011 UART console | ✅ | Primary serial console + klog mirror |
 | HDMI framebuffer console (fbcon) | ✅ | klog + psh on HDMI, FreeBSD `teken` VT engine |
-| HDMI framebuffer device `/dev/fb0` | 🟡 | Byte read/write + a custom `RPI4FB_GETMODE` devctl work; the standard Linux `FBIOGET_VSCREENINFO`/`FSCREENINFO` ioctls and a true `mmap()` of the framebuffer are **not implemented**, and display ownership vs the fbcon console is not arbitrated — so a stock Linux fbdev app can't mmap the surface (the X server + GL/Quake use the byte-write + GETMODE path instead) |
+| HDMI display (`rpi4-kms`, `/dev/kms`) | ✅ | KMS display server on the firmware's display planes: atomic page flips at 60.00 fps with vblank events, dumb buffers, and scaled lower modes (1600×900 … 640×480 shown full screen by the display hardware). Console handover to and from the fbcon |
+| GPU (V3D 4.2) — render server (`rpi4-v3d-async`, `/dev/v3d-async`) | ✅ | Owns the GPU and runs every client's jobs asynchronously, with fences and sync objects. Clients share buffers with the display server without copies (kernel `memExport`) |
+| GPU — OpenGL / OpenGL ES 3.1 | ✅ | **Mesa 26.2** (gallium `v3d`) with GBM and EGL (drm, Wayland, X11 platforms) on a Phoenix libdrm backend. kmscube at 60 fps. SuperTuxKart at 11.9 fps at 1080p, which is Raspberry Pi OS parity on this board |
+| GPU — Vulkan (V3DV) | ✅ | Mesa's `v3dv` with `VK_KHR_display`: vkcube, and **vkQuake at ~44 fps** |
+| SDL 2.30 | ✅ | KMSDRM (full screen) + Wayland (windowed) video drivers in one library, Phoenix HID input and audio. Frame pacing fixed so Quake II runs at a vsynced 60 fps |
+| X11 (Xorg 21.1 + modesetting + glamor) | ✅ | GPU-accelerated X with DRI3/Present: a GL window at 60 fps (vsync). Window Maker, xterm, xclock, xbill. `startx` runs the showcase desktop |
+| Wayland desktop (labwc 0.20 + XFCE 4.20 + GTK 3.24) | ✅ | labwc composites on the GPU (GLES2). XFCE panel, desktop, Thunar, settings and application finder; the foot terminal; games and video in windows; the Atril PDF viewer. `xfce-session` starts it and Log Out returns to the shell |
+| Video playback | ✅ | ffplay (FFmpeg 6.1) full screen or windowed: H.264 and HEVC 720p at 30 fps, VP9, AAC/Opus/MP3 audio (CPU decode, 4 threads). The BCM2711 `rpivid` HEVC block has been driven bit-exact by a stand-alone experiment (`tools/hevc-decode/`); it is not wired into the player |
 | GENET gigabit Ethernet + lwIP | ✅ | IRQ-driven, ~0.9 ms ping RTT, autonomous DHCP |
 | USB host (PCIe → VL805 xHCI) | ✅ | Enumerates reliably from cold boot |
 | USB HID (keyboard + mouse) | ✅ | `/dev/kbd0`, `/dev/mouse0`; live keys reach psh and apps |
@@ -269,14 +257,9 @@ work; `⛔` blocked on external dependencies; `⬜` not started.
 | SoC thermal + throttle | ✅ | `/dev/thermal`, `/dev/throttled` via VideoCore mailbox |
 | Hardware RNG (RNG200) | ✅ | `/dev/hwrng`; also backs `/dev/urandom` |
 | GPIO observer | 🟡 | `/dev/gpio` read-only snapshot; outputs attended |
-| GPU (V3D 4.2) — OpenGL | ✅ | Ported Mesa `v3d` Gallium + GL → **GLQuake ~40 fps @ 1080p** |
-| GPU (V3D 4.2) — Vulkan (V3DV) | ✅ | Ported Mesa `v3dv` Vulkan driver on real V3D 4.2 — init, texture upload (no-WSI buffer→image copy), SPIR-V vertex/fragment/compute shaders and render passes all execute on the GPU (HW-validated); **vkQuake renders the start map** — re-verified on the clean SD image, `artifacts/hdmi/2026-09/20260903-040557-vkq-rep2-tick.png`. (An intermittent V3D binner wedge on long GPU runs — not Vulkan-specific — is tracked separately.) Fork: [rpi-phoenix-rtos/vkQuake](https://github.com/rpi-phoenix-rtos/vkQuake), branch `phoenix-rpi4-port` |
-| GPU concurrency (`v3d-server`) | ✅ | A userspace **`v3d-server` daemon** (`/dev/v3d-srv`, `/sbin/rpi4-v3d`) owns the single V3D and serializes GPU submits from multiple clients over a message port, so **an accelerated X desktop and a second GPU program can run at the same time**. HW-proven end-to-end: BO/compute/render/TFU submit bit-exact through the daemon, two concurrent compute clients serialized, and a glamor GPU-accelerated X desktop with a **live GPU-rendered window running concurrently** on one screen. Lifts the earlier single-GPU-process limit. Clients link `libv3d-client`; opt-in today (not the default boot). Details: [docs/misc/2026-08-22-concurrent-gpu-v3d-server-feasibility.md](docs/misc/2026-08-22-concurrent-gpu-v3d-server-feasibility.md) |
-| GPU new lane (DRM-shaped stack) | 🟡 | **In development, not on the default image; the shipped apps above still use the current stack.** An asynchronous render server runs a cloned **SuperTuxKart at 12.1 fps vs 8.3 on the current stack (+45 %)** — the same as Raspberry Pi OS on this board (11.7 fps, identical settings); through the full standard stack (SDL2 KMSDRM + Mesa GBM/EGL) it runs at 11.9 fps. With the SDL frame-pacing fix, **Quake 2 runs at a vsynced 60 fps on the new stack (38.9 unsynced on the current one)**. On top of it, the standard Linux graphics userspace now runs unmodified in design: **Mesa GBM/EGL (kmscube at 60 fps), SDL2 KMSDRM (Quake), Vulkan with VK_KHR_display (vkcube), and an Xorg modesetting server with glamor acceleration, where a GL window renders at 485 fps through DRI3/Present (≈14 fps on the current stack), and the Weston 14 Wayland compositor (pixman or GL renderer) with both CPU (shm) and GPU (EGL) Wayland clients, a GPU client scanned out directly at 60 fps**; **GTK 3 applications run natively on Wayland** (gtk3-widget-factory renders on HDMI), and a **labwc Wayland desktop** (wallpaper, the foot terminal, the fuzzel launcher, Midnight Commander) runs on HDMI — and on top of it **XFCE 4.20 on Wayland** — panel, desktop and the Thunar file manager on labwc (pixman or composited on the GPU with GLES2), started with one command (`/bin/xfce-session`: local-time clock, Log Out back to the shell), and the **Atril PDF viewer** (Poppler; windowed, full screen and presentation), and **3D games in a window on that desktop** (QuakeSpasm at ~45–67 fps next to Thunar and a terminal) — all on HDMI; **vkQuake runs at 44 fps on the new stack (22.9 on the current one)**, through a libdrm backend that talks to a firmware-plane display server and the render server. Plan and results: [docs/gpu-new-lane/PLAN.md](docs/gpu-new-lane/PLAN.md) |
-| Audio (PWM, 3.5 mm jack) | 🟡 | `/dev/audio0` streaming DMA; Quakespasm audio backend |
-| X11 / windowing (kdrive) | ✅ | Xphoenix **fbdev DDX** (CPU shadow-blit — the default, always-on path) + kbd/mouse; WindowMaker (the WM used by every `startx` mode; JWM and twm were built during bring-up but are not shipped), xterm/xcalc/xedit/xeyes/xclock. Migrated to real `phoenix-rtos-ports` (the X server, xterm, WindowMaker and dillo build as framework ports). A **glamor build** runs GPU-accelerated 2D X on the V3D GPU and is now the desktop of record (mirror artefacts, the dead damage path, the AF_UNIX one-page ring and two distinct desktop-exit crashes were all fixed 2026-09-08/09; HDMI updates went 2.3 → 25.6 per second and desktop exits are 20/20 clean) — `startx_gpu deskapps` on the clean SD image brings up Window Maker with an xterm running a live shell plus `xclock` and `xcalc` (`artifacts/hdmi/2026-09/20260903-053119-final-xgpu-tick.png`; known cosmetic issue: the root window paints black instead of mauve) — and, via the `v3d-server` daemon (row above), can now do so **concurrently with another GPU client** (accelerated desktop + a live GPU window at once), lifting the former single-GPU-process restriction. Modern modesetting/DRM remains a future goal |
+| Audio (PWM, 3.5 mm jack) | 🟡 | `/dev/audio0` streaming DMA; SDL audio driver (the games, ffplay) and gtk-video play through it; no audible sign-off on headphones yet |
 | posixsrv / psh userland | ✅ | pipes, ptys, `/dev/{null,zero,urandom,full}`, AF_UNIX |
-| WiFi (BCM43455 SDIO) | 🟡 | **Carries real IP traffic** (since 2026-09-02) **and joins networks from the shell** (2026-09-26): start the `rpi4-wifi` daemon, then `wifi connect <ssid> <psk>` joins a WPA2 AP and waits for a DHCP lease on the WiFi netif (`wl2`); `wifi disconnect` releases it; `wifi status` shows the state; `wifi scan` lists access points. Ordinary sockets reach that network — `ping` over WiFi 5/5 at 2–9 ms, confirmed by packet capture on the access point, including the lease release and a fresh lease on reconnect. If the access point disappears, the Pi notices and rejoins when it comes back. WiFi takes the default route only when Ethernet has no address. Remaining: it ships in no image yet (the firmware blobs are under a Cypress EULA, so the daemon builds standalone), a join occasionally needs one automatic retry (~10 s), and throughput is about 3 MB/s each way (3.3 out, 3.0 in, after the 2026-09-02 glom fix; SDIO-poll-bound) — **prefer wired Ethernet** (~20–30 MB/s) for general networking |
+| WiFi (BCM43455 SDIO) | 🟡 | **In the image** since 2026-09-30: the `rpi4-wifi` daemon starts at boot (SD and NFS-root images). `wifi connect <ssid> <psk>` joins a WPA2 network and waits for the DHCP lease; the network is saved in `/etc/wifi.conf` and rejoined after a reboot. `wifi status`, `wifi scan` and `wifi disconnect` also work. A lost association is rejoined. WiFi takes the default route only when Ethernet has no address. Throughput is ~3.6 MB/s TX / 3.3 MB/s RX, so **prefer wired Ethernet** (~20–30 MB/s) for bulk transfers. The BCM43455 firmware comes from linux-firmware, pinned and sha256-checked, and is installed with its licence files. Joining and DHCP are HW-verified from the shell; the first boot of the image that starts the daemon at boot is still to be checked <!-- TODO(coordinator): flip to ✅ after cycle W1 (docs/misc/2026-09-30-wifi-in-image.md) --> |
 | Bluetooth (BCM43455) | 🟡 | **Driver-level bring-up works** — `/dev/hci0` up, firmware patchram loads (323/323), a real BD_ADDR is read, and an HCI Inquiry completes. **No host Bluetooth stack** — no pairing, profiles, or audio yet |
 | USB mass-storage (USB 3 / SuperSpeed) | ✅ | **A USB 3 stick mounts and is read/written as a real filesystem.** Enumerates at SuperSpeed (`maxpkt=1024 burst=4`) through the xHCI driver; `/dev/umass0`, `/dev/umass1` per MBR partition, mounted via libext2. Measured with `/usr/bin/dd`'s own rate: raw read **59.1 MB/s**, raw write **18.2** (1 GiB; 39.9 for 256 MiB, the stick's SLC cache), ext2 read **47.1**. Metadata write amplification was **21.0x → 1.00x** (libcache now writes back only the dirty part of a cache line). ⓘ Getting here took **eleven libext2 defects** — all silent, all passing by return code, several data-losing (a hole read back the superblock; unmount deleted the files it had cached; on any block size above 1 KiB the allocator reserved bit N and handed out block N+1). `e2fsck -fn` on a full 1 GiB read-back of the device is now **completely clean** across create / write / delete / umount / remount, verified on **both** 4 KiB and 1 KiB block sizes. Hot-plug removal is implemented but the physical insert/remove cycle is not yet exercised |
 | I²C/SPI/PWM, camera (CSI-2) | ⬜ | Not started |
@@ -285,6 +268,7 @@ The authoritative, per-peripheral matrix (with evidence and remaining work) is
 [docs/pi4-hardware-support-matrix.md](docs/pi4-hardware-support-matrix.md).
 Open bugs and known limitations are in
 [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md).
+
 
 ## Userland: CLI tools and languages
 
@@ -308,215 +292,29 @@ Beyond the base system, a substantial ports ecosystem runs on the hardware
 > readline's input wait saw EOF — and is fixed. Pipes, loops, variables,
 > conditionals, and command substitution all work interactively (HW-verified).
 
-## Running the showcase apps
+## Running the showcase
 
-Boot the image and log in to the `(psh)%` prompt, with an **HDMI display** and a
-**USB keyboard** attached (plus a **USB mouse** for the X11 desktop). Then:
-
-> **If you are demoing this live, two things are worth knowing.**
->
-> **Start each GPU app once before the audience arrives.** On a freshly flashed
-> card the shader cache is empty, so the first run of each GPU app compiles its
-> shaders before it draws anything. vkQuake is the one that bites: **~67 s of
-> black screen** while it builds 67 shader modules, which reads exactly like a
-> hang. It announces itself on the console —
-> `v3d: shader cache COLD (./.mesa-shader-cache/v1)` — so if a GPU app is ever
-> unexpectedly slow, look for that line before assuming it has crashed.
-> ⚠ **But that line appears only ONCE per card, for the very first GL app you
-> ever run** — it is triggered by the cache *directory* being absent, not by
-> *your* app's shaders being uncached (`v3d_phoenix_stubs.c:128`). Measured: a
-> six-app gate on a freshly flashed card printed it **zero** times, because one
-> earlier QuakeSpasm run had already created the directory — while Quake II,
-> Quake III, vkQuake and SuperTuxKart each still compiled their own shaders for
-> the first time. **So warm every app you plan to show, individually. Warming one
-> does not warm the others, and the system will not tell you.**
-> ⚠ **A cold cache is also the one condition known to make the C1 heap corruption likely** — in
-> SuperTuxKart it fired in 4 of 5 cold-cache runs against 0 of 5 warm ones (2026-09-26). One more
-> reason to warm SuperTuxKart before showing it.
-> ✅ **Measured on the card (2026-09-17), not assumed:** the cache is written to
-> `/.mesa-shader-cache/v1` on the persistent ext2 root and **survives a power
-> cycle** — a second boot that ran no GPU app at all still listed 27 shader blobs.
-> So the cold start is paid **once per card, per app**; later runs and later boots
-> reuse it.
->
-> **If an app prints nothing and just sits there, relaunch it.** A cold start
-> occasionally fails to get going. The netboot cause of this was root-caused and
-> fixed in September 2026, so on the SD image it should not happen at all — and
-> the relaunch is free.
-> ⚠ **One exception, and which build you are on decides how much it matters.** If
-> the app is **Quake II** and its last line is `SDL audio driver is "phoenix"`,
-> you have hit `q2-sdl-openaudio-hang`: on some boots the PWM audio engine comes
-> up parked, and `open("/dev/audio0")` waits on it.
-> - **On a build from 2026-09-18 or later it no longer blocks at all.** The driver
->   now grades its DMA channel by *progress* rather than by a status bit, re-arms
->   the PWM if it is parked, and otherwise serves `/dev/audio0` as a paced null
->   sink — so the app starts and runs normally, silently. Nothing to do on stage.
-> - **On 2026-09-17 builds** the same stall is bounded to ~10 s and a relaunch works.
-> - **On anything older** — a relaunch will *not* help: the driver's boot self-test
->   blocks its own message loop for up to **~350 s**, so `/dev/audio0` stays
->   unopenable and the next launch hangs identically. **Reboot** (instant), or wait
->   ~6 minutes. ⓘ The bench's own SD card was still one of these until 2026-09-20;
->   it now carries a current build, so the containment above applies to it too.
->
-> The underlying stall is not fixed, only contained; it fires on roughly 1 boot in
-> 41-70 by two independent censuses (quote the wider figure when it matters). See
-> `q2-sdl-openaudio-hang` in [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md).
->
-> **Both Quakes now loop their demos indefinitely.** vkQuake used to play ONE
-> demo (~50 s) and drop to the console; fixed 2026-09-16. The cause was one line
-> in `Host_Startdemos_f`: a bring-up patch set `cls.demonum = -1`, which
-> permanently disarms Quake's demo loop, so when the port's `playdemo` ended
-> `Host_EndGame` disconnected instead of calling `CL_NextDemo`. It now leaves the
-> loop armed. HW-verified: `demo2 → demo1 → demo2 → demo3 → demo1`, four
-> self-driven transitions including the wrap. A vkQuake segment no longer needs
-> to be planned around ~60 seconds.
-> ⓘ This only applies when `id1/phoenix-demo.cfg` is staged. The shipped image has
-> none, so vkQuake boots `map start` — and `map` disarms the loop by itself.
-> ⛔ Do **not** read the `N demo(s) in loop` line as proof the loop is running —
-> `Host_Startdemos_f` prints it unconditionally, before the test that decides, and
-> it printed just as loudly while the loop was broken. The
-> `Playing demo from <name>` lines are the ones that mean something; grade by
-> **two or more, in order** (`scripts/test-vkq-demo-loop.sh`).
->
-> **The desktop is fine for a whole talk.** `startx_gpu action` ran 31.7 minutes
-> with 0 faults and was still animating at the end, so it can be left up.
-> ✅ Re-verified **on the SD card** (2026-09-17, ~33 min): 0 faults, and at the end
-> Conway's Life was still ticking (gen 31 722, 17.6 gen/s) with `xclock`, `xbill`
-> and `top` all live.
-> ⚠ One thing to expect: the spinning **GL window is bounded at 20 000 frames**,
-> not perpetual. It ran 24.7 fps at frame 30 down to 12.3 fps at 19 980 and then
-> exited normally — roughly **27–33 minutes** at those rates. Nothing else stops;
-> relaunch it if your talk runs longer.
-
-### GLQuake (Quake 1)
+Boot the image to the `(psh)%` prompt, with an **HDMI display**, a **USB keyboard** and a
+**USB mouse** attached. Then:
 
 ```
-quakespasm
+/bin/bash /bin/xfce-session       # the XFCE desktop on Wayland; Log Out returns to psh
+quake3 +map q3dm1                 # Quake III Arena, full screen (also: quakespasm, quake2, vkquake)
+game-res stk 1280x720 --track=hacienda --numkarts=4 --profile-laps=2
+                                  # SuperTuxKart, an AI race, 720p scaled to the screen (~22 fps)
+/bin/bash /bin/video-play /usr/share/video-demo/hevc-720p30-aac.mp4
+                                  # video, full screen (in a window when run on the desktop)
+/bin/bash /bin/startx             # X11: Xorg + glamor, Window Maker and the animated showcase desktop
+wifi connect <ssid> <passphrase>  # join a WPA2 network; it is rejoined after every reboot
 ```
 
-Renders the shareware episode in textured 3D on the V3D GPU (**37–42 fps measured at the page flip**
-— the winsys `flipstat` counter over 11 419 frames off the SD card. ⚠ *Corrected 2026-09-17:* this
-used to quote "48 FPS read off the on-screen counter"; a HUD number is not the frame rate this
-project measures, and it read high);
-verified full-screen in-game on the clean image
-(`artifacts/hdmi/2026-09/20260903-032501-final-qs-tick.png`). The shareware `pak0` is
-baked into the image at `/usr/share/quake/id1/`, together with a `config.cfg`
-that selects 1920x1080 — without it QuakeSpasm's SDL2 path defaults to 800x600
-and renders a small frame inside the 1080p scanout. Open the in-game console with
-`` ` `` and type `quit` to exit (or Esc → menu → Quit). GLQuake links the V3D
-driver in-process, so no separate GPU daemon is needed.
+On the desktop, the **Games** menu opens each GL game in a window, **Multimedia** has the
+video players, and **Office** has the Atril PDF viewer.
 
-### X11 desktop (Window Maker)
-
-The `startx` launcher starts the Xphoenix server plus a session in one command:
-
-```
-startx              # Window Maker desktop (the default session)
-startx term         # Window Maker + an xterm you can type in
-startx desktop      # Window Maker + xlogo (one managed window)
-startx deskapps     # Window Maker + xterm + xclock + xcalc + xlogo
-startx browse [url] # Window Maker + Dillo
-startx action       # Window Maker + a GPU window + xterm + xbill + xclock
-```
-
-Window Maker is the window manager in every mode — **twm is not shipped**, despite
-what older notes (including this one) used to say.
-
-For **GPU-accelerated** X (the glamor server on the V3D GPU — now the desktop of
-record, via the
-`rpi4-v3d` daemon), use **`startx_gpu`** with the exact same modes — it
-auto-starts the GPU daemon and renders the desktop on the GPU:
-
-```
-startx_gpu          # Window Maker, GPU-accelerated (glamor on V3D 4.2)
-startx_gpu term     # Window Maker + xterm, GPU-accelerated
-```
-
-Drive the desktop with the USB mouse + keyboard. Exit the window manager to tear
-down X and return to `(psh)%`. A session that ended uncleanly used to leave a
-stale `/tmp/.X0-lock` that blocked the next `startx`; the launcher now clears it
-itself, so an immediate relaunch just works.
-
-`startx_gpu deskapps` was verified on the clean image — Window Maker with an
-xterm running a live shell, plus `xclock` and `xcalc`
-(`artifacts/hdmi/2026-09/20260903-053119-final-xgpu-tick.png`). One known cosmetic issue:
-the root window paints black instead of mauve.
-
-### Midnight Commander and nano
-
-Both build again as of 2026-09-03 and are staged into the image. Each had been
-broken by a stale-artifact bug rather than a missing feature: `mc`'s build script
-copied its own obsolete `mntent.h` stub over the shared sysroot header (hiding
-the `hasmntopt` that libphoenix now implements), and `nano` 2.2.6 initializes a
-`bool` from `NULL`, which GCC 14+ rejects. Both are terminal UIs and need `TERM`
-set for correct rendering over the console (`TERM=vt100 mc`,
-`TERM=vt100 nano /etc/profile`). Neither has been exercised interactively on the
-hardware yet — they are built, linked and staged, not use-tested.
-
-### Quake II, Quake III, vkQuake
-
-All three ship on the image; run them from `psh`:
-
-```
-quake2                  # yQuake2, gl3/GLES3 renderer (launcher: RAM-stages assets)
-quake3 +map q3dm1       # quake3e (launcher: RAM-stages assets)
-vkquake                 # Quake I through Vulkan / V3DV
-```
-
-Verified on the clean image: **Quake II** renders full textured 3D
-(`artifacts/hdmi/2026-09/20260903-020858-relink-q2-tick.png`); **Quake III** renders full
-3D gameplay **on the free demo data**
-(`artifacts/hdmi/2026-09/20260903-051855-q3-restore-tick.png`) — it needs no retail
-content and no retail CD key, see the note in
-[Which games end up on the card?](#which-games-end-up-on-the-card); **vkQuake**
-renders the start map (`artifacts/hdmi/2026-09/20260903-040557-vkq-rep2-tick.png`). The
-Vulkan stack is built by default — `--with-vkquake` is a no-op kept for
-compatibility.
-
-### SuperTuxKart 1.4
-
-A **modern 3D kart racer** — not a 1990s engine — running on the V3D GPU via
-its SP renderer on **OpenGL ES 3.x**:
-
-```
-stk                                             # launch SuperTuxKart (menus, you drive)
-stk --track=hacienda --numkarts=4 --profile-laps=2   # AI race, no input needed
-stk -N --track=olivermath                       # skip the start screen, you drive
-```
-
-The middle line is the one to use for a demo: `--profile-laps` runs the race under
-AI control with nobody at the keyboard, and it is the exact command the six-app
-showcase gate runs, so it has fresh evidence behind it every time the gate does
-(0 faults, ~2000 frames, 99.9% of the screen painted). `-N` is
-`--no-start-screen` — it skips the menus but still expects you to drive.
-
-SuperTuxKart is built by the `supertuxkart` framework port and **ships on the
-image** (`/usr/bin/supertuxkart`, launched via `stk`); its two asset roots
-(`data/` plus `stk-assets/`, 194 MB together) are staged into the rootfs by
-`scripts/stage-game-data.sh`.
-
-On the shipped image STK **races in-game** over netboot/NFS at **~8.5 fps measured at the page
-flip** — the old ~5-minute asset-loading window is no longer a blocker. `scale_rtts_factor=0.75` is
-the shipped default: it renders the deferred pipeline at 0.75 scale and upscales, roughly +50% on
-the frame rate while leaving the 1080p HUD crisp.
-⚠ *Corrected 2026-09-17 — this paragraph carried three claims that later measurements overturned,
-and the SuperTuxKart bullet earlier in this file has the current versions:* the `FPS: 7/7/9`–`8/9/9`
-figures were read off **the game's own counter**, which is a physics-tick rate, not frames;
-"fill-rate/bandwidth bound" is the **inverse** of what was measured (720p renders at the same rate
-as 1080p — [docs/misc/2026-09-16-stk-fps-not-fill-bound.md](docs/misc/2026-09-16-stk-fps-not-fill-bound.md));
-and "it does still fault intermittently in its own code" is retracted — **0 crashes in 131 engine
-starts** since 2026-09-12, against 30 in the 242 before
-([docs/misc/2026-09-17-stk-rate-and-allocator-guard-fires.md](docs/misc/2026-09-17-stk-rate-and-allocator-guard-fires.md)).
-See [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md) for what is still open.
-
-Earlier, on the hand-staged export (2026-08-27), `stk` was HW-verified booting to
-a clean main menu and driving a **fully-lit in-game 3D race** — kart, opponents,
-textured track, lighting and HUD all on the GPU, 0 crashes — and its rendering
-was checked frame-for-frame against the same SuperTuxKart 1.4 on a desktop AMD
-GPU, matching closely (main-menu SSIM 0.991, in-race 0.873); see
-[docs/done/2026-08-27-stk-visual-parity.md](docs/done/2026-08-27-stk-visual-parity.md).
-The `-N` auto-race flags drive a race without any input, which is the simplest
-way to see it in motion.
+The [User Guide](docs/USER-GUIDE.md) describes all of this in detail, and its
+[showcase section](docs/USER-GUIDE.md#9-the-showcase--the-best-setup-in-one-sitting) gives
+the best order and settings for showing the whole system. The plan for re-recording the
+showcase video is [docs/SHOWCASE-VIDEO-PLAN.md](docs/SHOWCASE-VIDEO-PLAN.md).
 
 ## Repository layout
 
@@ -525,17 +323,17 @@ phoenix-rpi/                     this coordination repo — docs, scripts, manif
 ├── scripts/                     bootstrap, build, flash, and lab-rig helpers
 ├── manifests/                   pinned integration states for reproducible builds
 ├── docs/                        documentation (see links below)
-├── tools/                       out-of-tree work: the GPU/Mesa stack, game
-│                                launchers, probes, and superseded ad-hoc recipes
-│                                (the shipped game engines build as framework
-│                                ports under sources/phoenix-rtos-ports/)
+├── tools/                       small helper programs staged into the image
+│                                (ram-stage-play, game-res, …), probes and
+│                                experiments; every shipped application is a
+│                                framework port under sources/phoenix-rtos-ports/
 ├── sources/                     Phoenix-RTOS sibling repos (cloned by bootstrap)
 │   ├── phoenix-rtos-kernel/
 │   ├── phoenix-rtos-devices/
 │   ├── phoenix-rtos-lwip/
 │   ├── plo/                     the bootloader
 │   └── ...                      (16 repos total)
-└── external/                    build-required deps (mesa, quakespasm, vkquake)
+└── external/                    optional clones: the game forks and research sources
 ```
 
 The sibling repos under `sources/` are separate git repositories, not
@@ -544,6 +342,8 @@ pointing at the `rpi-phoenix-rtos/*` work fork — see [CONTRIBUTING.md](CONTRIB
 
 ## Documentation
 
+- **★ [docs/USER-GUIDE.md](docs/USER-GUIDE.md)** — **how to use the system**: booting,
+  the XFCE desktop, the games, video, PDF, X11, WiFi and networking, and the showcase.
 - **★ [docs/PHOENIX-RTOS-RPI4-CHANGES.md](docs/PHOENIX-RTOS-RPI4-CHANGES.md)** —
   **what this fork actually changed in Phoenix-RTOS.** The single clearest
   outline of the work: the defects this port found in *upstream's* own code, the
@@ -559,9 +359,11 @@ pointing at the `rpi-phoenix-rtos/*` work fork — see [CONTRIBUTING.md](CONTRIB
   build or flash.
 - **[docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md)** — open bugs, known
   limitations, and transitional shortcuts.
-- **[docs/gpu-new-lane/PLAN.md](docs/gpu-new-lane/PLAN.md)** — the GPU stack being built next to
-  the current one (render server, display server, libdrm, then Mesa GBM/EGL, Xorg and Wayland):
-  milestones, pre-registered experiments and their results.
+- **[docs/SHOWCASE-VIDEO-PLAN.md](docs/SHOWCASE-VIDEO-PLAN.md)** — the scene list and
+  capture commands for the showcase video.
+- **[docs/gpu-new-lane/PLAN.md](docs/gpu-new-lane/PLAN.md)** — the engineering history
+  of the GPU stack (render server, display server, libdrm, Mesa GBM/EGL, SDL, Xorg,
+  Wayland, XFCE): milestones, pre-registered experiments and their results.
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** — the fork/branch model and how to send
   changes upstream to Phoenix-RTOS.
 
@@ -576,12 +378,13 @@ agents, not required reading to build or use the port.
 
 Phoenix-RTOS and its components carry their own licenses (predominantly
 BSD/MIT-style). The ports carry the licenses of their upstream projects (Mesa,
-QuakeSpasm, yQuake2, quake3e, vkQuake, SuperTuxKart, X.org, etc.). In particular
-the four Quake framework ports under
-`sources/phoenix-rtos-ports/{quakespasm,yquake2,quake3,vkquake}/` — recipe, glue
-and patches — are **GPL-2.0-or-later** and the `supertuxkart` port is
-**GPL-3.0-or-later** (derivative of those GPL engines); they are optional,
-opt-in showcases kept separate from the BSD core. See
+SDL, QuakeSpasm, yQuake2, quake3e, vkQuake, SuperTuxKart, X.org, GTK, XFCE,
+Atril, FFmpeg, etc.). In particular the Quake framework ports
+(`sources/phoenix-rtos-ports/{quakespasm_drm,yquake2,yquake2_drm,quake3,quake3_drm,vkquake_drm}/`)
+— recipe, glue and patches — are **GPL-2.0-or-later**, and the SuperTuxKart ports are
+**GPL-3.0-or-later** (derivatives of those GPL engines); they are showcase ports kept
+separate from the BSD core. The WiFi firmware is not in this repository: the build fetches it
+from linux-firmware and installs it with its licence (`LICENCE.cypress`). See
 [LICENSING.md](LICENSING.md) for the full breakdown. The game data is **not
 included in this repo**: the build fetches the freely-redistributable Quake
 shareware/demo paks and the SuperTuxKart assets from pinned URLs into the image
