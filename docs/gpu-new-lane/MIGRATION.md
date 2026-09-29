@@ -1267,3 +1267,37 @@ Both branches were merged into ports `master` (`0057f84`, pushed): `feat/new-lan
   - Graphics: vkquake patches 0008–0010 are not yet in `vkquake_drm/patches/`.
   - Wayland: glib 0003, xfdesktop 0002 and the updated `xfce-desktop.sh` are not yet in the ports.
   - These files changed in `tools/gpu-lane/` after the branches were cut. A ports commit copies them over.
+
+## 7r. Result — P1 build + gate (2026-09-29/30, build try 5 + `p1-gate`)
+
+**Build.** Five tries. Each failure was fixed at its root and none worked around:
+1. xorg `backtrace.c` needs `dladdr` → libphoenix `da58f77` + tests `74e018b`.
+2. Stale partial xorg tree → ports `2c7d091`.
+3. xfce pngify had no `gi` in the framework venv → ports `affedde`.
+4. The stamp-guarded Wayland/GTK/XFCE ports lost their programs to the default relink → ports `8d16491` (a `p_relink` each).
+
+Try 5: `BUILD_RC=0`. **Image gate PASS** on the rootfs and on the pristine export. The only NOTE is
+`hevc-play` `/dev/fb0` (TD-27). Gate strings in the shipped binaries: SDL 0011 in `SDL_CreateCond`
+(quakespasm-drm, supertuxkart-drm), `Termination requested` (quake3e-drm), `dladdr` (Xorg-drm).
+
+**Boot (first boot of the P1 image).** Rows 1–3 PASS:
+- `Starting syspage programs` lists `rpi4-v3d-async;-f;-r;1;-m;serial;-i`, `rpi4-kms;-f;-G;-p;96;-C` and
+  `shmsrv;-f`, and no `rpi4-fb`.
+- `V3DA srv ready`, `KMS srv ready … planes=0x81 vblank_src=irq`, `SHMSRV srv ready`.
+- `KMS v3d connect=1 … waited_ms=0`.
+- 0 faults.
+
+**Showcase gate** (`run-showcase-gate-drm.sh --label p1-gate`). Every cycle: rc 0, prompt yes, boot ok,
+faults 0.
+
+| key | verdict | fps median (ref §6s) | note |
+|---|---|---|---|
+| x | ❌ → re-run | — | `Xorg-drm`: `Cannot open log file "/var/log/Xorg-drm.1.log"`: the pristine rootfs had no `/var/log` (only the RPI4_LOG_TO_FILE logger created it) → project `901a9d4` root-skel `/var/log` + `/var/tmp`; re-run `p1-gate-x2` |
+| qspasm | ✅ | 43.8 (44.45) | |
+| q3 | ✅ | 58.8 (59.40) | console handover 1× |
+| q2 | ✅ | 59.8 (60.00) | |
+| vkq | ✅ by eye | 42.2 (44.38) | torch ROI check **inconclusive**: viewpoint MAE 12.8 > 8 on every frame, at the SAME viewpoint as the reference and with both torches lit on HDMI; the difference is this build's full status bar + `37 FPS` counter vs the reference's compact HUD. The checker needs the HUD rows masked |
+| stk | ✅ by eye | 12.8 (12.43) | HDMI: lit hacienda, lap 2/2; still racing (13.8 fps) when the 240 s capture closed → no `profile:` line. Give stk a longer idle window |
+| xfce | ✅ | — | `session up panel=registered t=52`, `XFCE-SESSION done rc=0` |
+
+**libc** (`p1-libc-misc`): new `dladdr_self` 4/4 PASS, the misc suite 240 tests, 0 failures, 11 ignored.
