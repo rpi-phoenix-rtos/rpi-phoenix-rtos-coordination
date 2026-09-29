@@ -514,6 +514,14 @@ because the decoders still wake the reader. m10a's windowed quit came before the
 | 3 | fps: 720p H.264 29–30; **1080p H.264 15–30** (m10a0 row 7, never measured); VP9 360p 30; HEVC 720p 29–30 (m10a1) | as registered | — |
 | 4 | 0 kernel, 0 EL0 dumps after every quit/EOF (P16's 0010 is in this SDL) | clean | addr2line `build-out/ffplay-drm2` |
 
+**Result `m10a0b-ffplay2` (chain94, 2026-09-29 21:13): ✅ PASS, all 4 rows.** Every arm ends by itself at
+the end of the file (`-autoexit`): 720p H.264 `done rc=0 t=42` (the +10 s seek brought EOF to ≈ 40 s, so
+`-autoexit` fired before the 40 s quit key — the same EOF wake-up row 1 tests), 1080p H.264 `t=33`
+(30 s clip), VP9 360p `t=23`, HEVC 720p `t=33`; 0 EL0/kernel dumps. Steady fps (first window dropped):
+720p **29.4–30.3** (pause and fs windows excluded), **1080p H.264 29.9–30.5 with drop_late 0**
+(row 3 predicted 15–30), VP9 29.9–30.3, HEVC 720p 29.9–30.5. Pause holds the clock (11.68 → 11.66), `right`
+seeks +10 s. **The KMSDRM player is complete: controls, full screen scaled, clean exit, H.264/HEVC/VP9.**
+
 ### `m10b-hevc-rpivid` — (placeholder, after §4 option 1 is built)
 
 Pre-register when `hevc_rpivid` exists: the same clip through `-vcodec hevc_rpivid` vs `-vcodec
@@ -539,3 +547,4 @@ corrupt frames counted separately.
 - 2026-09-29: the KMSDRM quit hang and the EOF stall are one bug: SDL's timed condvar waits on a `CLOCK_REALTIME`
   deadline against libphoenix's `CLOCK_MONOTONIC` default. SDL patch 0011 fixes it (host test discriminates;
   gate string in the binaries); `ffplay-drm2`/`-wl2` + `/bin/video-play2` staged; cycle `m10a0b-ffplay2` registered.
+- 2026-09-29: `m10a0b-ffplay2` PASS — ffplay-drm2 plays 720p/1080p H.264, VP9, HEVC at 30 fps and returns at EOF; quit hang gone.
