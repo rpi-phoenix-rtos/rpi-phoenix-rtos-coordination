@@ -356,7 +356,7 @@ Log `artifacts/rpi4b-uart/*-m8a-quake-window.log`; 0 exceptions.
   - `GL_RENDERER: V3D 4.2.14.0`;
   - `first swap … video_driver wayland window 1280x720 drawable 1280x720 windowed context GL 2.1`;
   - its own flipstat: **45.5–66.9 fps** (228, 286, 250, 240, 335 frames per 5 s).
-- **HDMI** (`artifacts/hdmi/20260928-111546-m8a-quake-window-tick.png`):
+- **HDMI** (`artifacts/hdmi/2026-09/20260928-111546-m8a-quake-window-tick.png`):
   - the XFCE panel's task list shows `File System - Thunar`, `foot` and `QuakeSpasm 0.97.0`;
   - Thunar on `/` top left, a foot terminal below it;
   - **QuakeSpasm in a decorated labwc window on the right, rendering the level in 3D**, its counter at **61 FPS**.
@@ -599,7 +599,7 @@ notes, STK's `FontManager … NotoColorEmoji.ttf doesn't have color` and `kartDi
 ## Result — `m8b-quake23-window` + `m8b-stk-window` (chain93, 2026-09-28 13:24 / 13:39): ✅ PASS, one pre-registered exit hang
 
 **All three games render on the V3D in decorated labwc windows on the XFCE desktop, next to
-Thunar and foot.** HDMI (`artifacts/hdmi/20260928-133218-m8b-quake23-window-tick.png`: Quake II
+Thunar and foot.** HDMI (`artifacts/hdmi/2026-09/20260928-133218-m8b-quake23-window-tick.png`: Quake II
 demo1 at 59.26 fps; `…133429…`: `Quake 3: Arena` q3dm1 at 63 fps, quake2 already gone from the task
 list; `20260928-134920-m8b-stk-window-tick.png`: the SuperTuxKart main menu in a window titled
 `SuperTuxKart`).

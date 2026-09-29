@@ -350,7 +350,7 @@ every window ≥ 38, pace-qs mean ≥ 1.3 × ctl, 0 SDL errors, 0 faults, and cl
 ## Result — `pace-q2` / `pace-qs` (queue44, 2026-09-27 15:17–15:35): ✅ PASS both
 
 Same boot per cycle, control then fix; `GAMEDRM_EXIT_SECS=60`. Logs `artifacts/rpi4b-uart/*-pace-{q2,qs}.log`;
-HDMI `artifacts/hdmi/20260927-152043-pace-q2-tick.png` (demo on screen, in-game counter **60.00fps**, no tearing).
+HDMI `artifacts/hdmi/2026-09/20260927-152043-pace-q2-tick.png` (demo on screen, in-game counter **60.00fps**, no tearing).
 
 | cycle | arm | fps median (steady windows) | range | KMS flipstat |
 |---|---|---|---|---|

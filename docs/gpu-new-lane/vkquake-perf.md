@@ -319,7 +319,7 @@ smaller; the 23 fps old-lane parity additionally needs the CSD row explained (c/
 | **perf-vkq-a** | 0006 (`r_oit 0`) | **15.46** | render 52224 jobs / 67.2 s, **csd 20140 / 80.0 s**, busy 151 s, `oom=3474` | acquire 0.5–0.7 ms, submit 0.08 ms, fence 0.06 ms |
 | **perf-vkq-b** | 0006 + 0007 (RGBA8) | **17.06** | render 57849 / 64.7 s, csd 21077 / 75.6 s, busy 143 s, `oom=3849` | as a |
 
-Logs `artifacts/rpi4b-uart/*-perf-vkq-{a,b}.log`; HDMI `artifacts/hdmi/20260927-151424-perf-vkq-b-tick.png`: the same view
+Logs `artifacts/rpi4b-uart/*-perf-vkq-{a,b}.log`; HDMI `artifacts/hdmi/2026-09/20260927-151424-perf-vkq-b-tick.png`: the same view
 as mig-vkq, lit, torches, "19 FPS" on screen; 0 exceptions both. ROI torch check INCONCLUSIVE again (viewpoint mae > 8
 on a frame that matches mig-vkq by eye, so the reference viewpoint, not the render, differs).
 
@@ -554,7 +554,7 @@ so per-frame class numbers = the delta of a class's `n` / `gpu_us` over the same
 
 ## Result — `perf-vkq-e` (chain61, 2026-09-27 21:19, build 18 kernel): the compute row, by pipeline
 
-Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-211950-perf-vkq-e.log`; HDMI `artifacts/hdmi/20260927-212657-perf-vkq-e-tick.png`
+Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-211950-perf-vkq-e.log`; HDMI `artifacts/hdmi/2026-09/20260927-212657-perf-vkq-e-tick.png`
 (the spawn view, lit, torches, lava lit on the right). Server `/bin/rpi4-v3d-async-csdprof -C` (`055e7805…`), vkQuake
 `/bin/vkq-drm-perf` (the perf-b binary). 0 exceptions, `err=0 wedges=0 rej=0`.
 

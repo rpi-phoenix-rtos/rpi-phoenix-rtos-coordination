@@ -1122,7 +1122,7 @@ sufficient**, and lands nearer 50 ms/frame than 25.
 I had read the owner's bottom-left "mirrored clippy" two different ways in the
 same session — *content copied to the mirrored screen position* versus *content
 flipped in place* — and those are different bugs. The static HDMI frame
-`artifacts/hdmi/20260909-025215-xclean-tick.png` settles it without a Pi cycle.
+`artifacts/hdmi/2026-09/20260909-025215-xclean-tick.png` settles it without a Pi cycle.
 
 Scanning the left 70 px strip for non-background rows finds exactly two icon
 bands: **y 0–63** and **y 1018–1079**. Window Maker draws its Clip once, at

@@ -551,7 +551,7 @@ Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-073537-m5b-vkcube.log`. `drmprobe-
 rc=0 merged_fd=…`), three swapchain images allocated on card0 and imported by the render server
 (`V3DA srv import … pages=2025` ×3), `phxvk: first present result=0`; untraced run **600 frames in 12.29 s =
 48.8 fps** (against rpi4-kms-m3p2, before the deferred-flip wake fix — rerun against rpi4-kms-gate is the
-next measurement). 0 exceptions. HDMI (`artifacts/hdmi/20260927-074033-m5b-vkcube-tick.png`): the textured
+next measurement). 0 exceptions. HDMI (`artifacts/hdmi/2026-09/20260927-074033-m5b-vkcube-tick.png`): the textured
 LunarG cube, rotating. Same early-start caveat as m4c.
 
 ### Result — m5c (queue29, 2026-09-27 09:02): **vkcube at display rate — 60.15 fps**

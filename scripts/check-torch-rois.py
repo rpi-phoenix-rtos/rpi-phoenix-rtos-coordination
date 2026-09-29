@@ -31,10 +31,20 @@ SPDX-License-Identifier: BSD-3-Clause
 
 import argparse
 import glob
+
 import json
 import re
 import os
 import sys
+
+
+def hdmi_glob(top, name_pat):
+    """artifacts/hdmi/<name_pat> plus the month archive folders (YYYY-MM/,
+    scripts/archive-hdmi-snapshots.py), in capture order: every name starts with its timestamp."""
+    files = set(glob.glob(os.path.join(top, name_pat)))
+    files.update(glob.glob(os.path.join(top, "20[0-9][0-9]-[0-9][0-9]", name_pat)))
+    return sorted(files, key=os.path.basename)
+
 
 try:
     from PIL import Image, ImageChops
@@ -164,8 +174,7 @@ def rate_mode(args, spec, basis_w, required, ignored, thresh):
         ref_small = Image.open(args.reference).convert("L").resize((160, 90),
                                                                    Image.BILINEAR)
 
-    pat = os.path.join(REPO, "artifacts", "hdmi", "*-%s-T*-*.png" % args.rate)
-    allf = sorted(glob.glob(pat))
+    allf = hdmi_glob(os.path.join(REPO, "artifacts", "hdmi"), "*-%s-T*-*.png" % args.rate)
     if not allf:
         sys.exit("check-torch-rois: no frames for bench label %r "
                  "(expected artifacts/hdmi/*-%s-T<i>-*.png)" % (args.rate, args.rate))
@@ -249,8 +258,7 @@ def main():
 
     frames = list(args.frames)
     if args.label:
-        pat = os.path.join(REPO, "artifacts", "hdmi", "*-%s-*.png" % args.label)
-        labelled = sorted(glob.glob(pat))
+        labelled = hdmi_glob(os.path.join(REPO, "artifacts", "hdmi"), "*-%s-*.png" % args.label)
         # ⚠ Until 2026-09-17 this took EVERY frame ever captured under the label,
         # with no lower time bound. artifacts/hdmi/ is cumulative and the gate
         # reuses one label per app, so frames from an earlier passing run could

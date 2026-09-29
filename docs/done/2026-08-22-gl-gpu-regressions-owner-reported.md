@@ -22,7 +22,7 @@ quakespasm's (proven clean). Owner's original "Quake2 no visible image" report =
 
 Affects all GL-based games (quakespasm Q1, quake2, quake3 — all now on the SDL2 port).
 Was clean in the past (older GL grabs correct). vkQuake (own present path) is clean.
-- Evidence: artifacts/hdmi/20260822-183358-q2fix-tick.png (dense horizontal scanline garbage).
+- Evidence: artifacts/hdmi/2026-08/20260822-183358-q2fix-tick.png (dense horizontal scanline garbage).
 - Reframe: the RENDER is fine (frame-dump SSIM 0.993 reads the render FBO via phxgl_capture's
   glReadPixels) — the regression is in the **scanout→/dev/fb0 present** path, which the
   frame-dump bypasses. So SSIM masked it.
@@ -91,7 +91,7 @@ regression. (vkQuake renders post-semafix so it's testable; watch for the #51 fi
 
 vkQuake render otherwise clean (Vulkan), but the flaming torches flanking the "QUAKE" archway
 are gone; scene darker. This is the long-fought #67 torch/alpha bug resurfaced.
-- Evidence: artifacts/hdmi/20260822-143739-vkq-semafix-final.png (no torches at the archway).
+- Evidence: artifacts/hdmi/2026-08/20260822-143739-vkq-semafix-final.png (no torches at the archway).
 - The SLCACTL #67 ordering fix IS still present in the winsys (v3d_phoenix_winsys.c:939) — so
   that specific fix was NOT removed. #67 had MULTIPLE root causes historically (SLCACTL timing,
   VBO-crossing-4KB-page, single-buffer/vcmbox) with a history of false "fixed" claims — identify

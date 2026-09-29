@@ -948,7 +948,7 @@ and vkQuake. The Wayland desktop (M7) is an addition, not a gate item.
 
 ## 6t. Result — `mig-x` (chain61, build 18, 2026-09-27 21:07–21:12): ✅ the X desktop on the new lane
 
-Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-210731-mig-x.log`; HDMI `artifacts/hdmi/20260927-211335-mig-x-tick.png`: the old gate's `action` scene on Xorg-drm
+Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-210731-mig-x.log`; HDMI `artifacts/hdmi/2026-09/20260927-211335-mig-x-tick.png`: the old gate's `action` scene on Xorg-drm
 (modesetting + glamor): Window Maker (dock + clip), **"Phoenix V3D GL" (eglx11-demo over DRI3/Present) at 60.00 fps
 vsynced** (old lane windowed GL ≈ 14 fps), xbill, xclock. Input: `phxhid keyboard on /dev/kbd0`, `phxhid mouse on
 /dev/mouse0` (the `-C` console handover works). The two xterms died with `fatal pty error errno=22`, exactly as in

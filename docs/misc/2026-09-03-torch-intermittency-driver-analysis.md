@@ -213,8 +213,8 @@ and `vkq-lerp2b-T6` dropped **3**, and both render the torches — so what did *
 And `acc7` appears in ~24 of 26 runs, PRESENT and ABSENT alike.
 
 Measured answer: **nothing visible.** A 12×8 block diff of the two PRESENT final frames at the same
-viewpoint — `artifacts/hdmi/20260903-100725-vkq-lerp-rep-final.png` (**0** wedges) vs
-`artifacts/hdmi/20260903-115842-vkq-lerp2b-T6-final.png` (**3** wedges), both 3840×2160 — gives a
+viewpoint — `artifacts/hdmi/2026-09/20260903-100725-vkq-lerp-rep-final.png` (**0** wedges) vs
+`artifacts/hdmi/2026-09/20260903-115842-vkq-lerp2b-T6-final.png` (**3** wedges), both 3840×2160 — gives a
 mean-absolute-difference of **0.0** in 87 of 96 blocks. The only non-zero blocks are the whole top
 row (the console-notify text band, mad 10–12) and one block on the lavaball/particle trail (mad 3.1,
 moving content). The torch blocks themselves read mad 0.4. **No model, texture or surface is missing

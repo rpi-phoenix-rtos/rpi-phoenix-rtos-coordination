@@ -1228,7 +1228,7 @@ lines after `shm.c`. A new `err:` there, or a busy loop, means the timerfd fix d
 
 ## Result — `m7e-gtk3` (chain56, build 18, 2026-09-27 20:09–20:17): ✅ PASS — GTK 3.24.52 renders on Phoenix
 
-Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-200617-m7e-gtk3.log`; HDMI `artifacts/hdmi/20260927-201007-m7e-gtk3-tick.png` (arm A) and `…-201419-…` (arm B), both under Weston
+Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-200617-m7e-gtk3.log`; HDMI `artifacts/hdmi/2026-09/20260927-201007-m7e-gtk3-tick.png` (arm A) and `…-201419-…` (arm B), both under Weston
 (pixman, kiosk fullscreen).
 
 - **Arm A gtk3-hello:** `GTK3HELLO start gtk=3.24.52 glib=2.88.3 … backend=wayland`, `Using the built-in XKB keymap`,
@@ -1246,7 +1246,7 @@ Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-200617-m7e-gtk3.log`; HDMI `artifa
 
 ## Result — `m7b2-foot` (chain61, build 18, 2026-09-27 20:18–20:27): ✅ PASS — a Wayland terminal and file manager on Phoenix
 
-Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-201807-m7b2-foot.log`; HDMI `artifacts/hdmi/20260927-202331-m7b2-foot-tick.png` (arm A) and `…-202512-…` (arm B). Binaries
+Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-201807-m7b2-foot.log`; HDMI `artifacts/hdmi/2026-09/20260927-202331-m7b2-foot-tick.png` (arm A) and `…-202512-…` (arm B). Binaries
 `labwc-2` / `foot-2` (compat timerfd `read()` + keyboard `fstat` fixes).
 
 - labwc now **configures the USB keyboard** (`configuring input device Phoenix USB keyboard (kbd0)`), **0 `Stat failed`**
@@ -1263,7 +1263,7 @@ Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-201807-m7b2-foot.log`; HDMI `artif
 
 ## Result — `m7c-desktop` (chain61, build 18, 2026-09-27 20:36–20:39): ✅ PASS — a Wayland desktop on HDMI
 
-Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-202908-m7c-desktop.log`; HDMI **`artifacts/hdmi/20260927-203751-m7c-desktop-tick.png`**: the CC0 gradient wallpaper (swaybg; the
+Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-202908-m7c-desktop.log`; HDMI **`artifacts/hdmi/2026-09/20260927-203751-m7c-desktop-tick.png`**: the CC0 gradient wallpaper (swaybg; the
 orange glow is orange, so R/B is correct), a foot window with an interactive `bash-5.2#` prompt (labwc
 title bar), and **fuzzel's launcher** over it listing Appearance, Application Finder, Bash, File Manager, Foot,
 Midnight Commander, Run Program… and Settings Manager (the XFCE .desktop entries are already staged). `labwc exited
@@ -1272,7 +1272,7 @@ allocated without trouble (the predicted contiguous-memory risk did not occur).
 
 ## Result — `m7f-thunar` (chain61, build 18, 2026-09-27 20:44–20:46): ✅ PASS — XFCE's Thunar on Phoenix
 
-Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-204025-m7f-thunar.log`; HDMI **`artifacts/hdmi/20260927-204524-m7f-thunar-tick.png`**: "File System - Thunar" under labwc:
+Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-204025-m7f-thunar.log`; HDMI **`artifacts/hdmi/2026-09/20260927-204524-m7f-thunar-tick.png`**: "File System - Thunar" under labwc:
 menu bar, navigation toolbar, location bar `/`, the root-account warning banner, the Places/Devices sidebar, Adwaita
 (PNG) folder icons for `/`, and the status bar (`19 folders | 73 files: 15.4 GiB … | Free space: 10.5 GiB`).
 
@@ -1287,7 +1287,7 @@ menu bar, navigation toolbar, location bar `/`, the root-account warning banner,
 
 ## ★ Result — `m7h-xfce` (chain61, build 18, 2026-09-27 20:52–20:54): ✅ PASS — XFCE 4.20 on Wayland on Phoenix-RTOS
 
-Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-204830-m7h-xfce.log`; HDMI **`artifacts/hdmi/20260927-205346-m7h-xfce-tick.png`**: the **XFCE panel** across the top
+Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-204830-m7h-xfce.log`; HDMI **`artifacts/hdmi/2026-09/20260927-205346-m7h-xfce-tick.png`**: the **XFCE panel** across the top
 (Applications menu, launchers, the tasklist button "File System - Thunar", the clock "Sun 27 Sep 18:53"),
 **xfdesktop**'s wallpaper, and a **Thunar** window browsing `/` — all under labwc 0.20.2, GTK 3.24.52 on Wayland, the
 D-Bus 1.16.2 session bus, the new GPU lane's display server.
@@ -1557,7 +1557,7 @@ Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-233145-m7i-xfce-demo.log`; kernel 
 **Arm A (pixman), every prediction row met:**
 - `/bin/xfce-session` brought up all three servers (`XFCE-SESSION servers v3d-async=up kms=up shm=up`), XFCE came up.
 - The second Thunar went over the bus: `second instance dir=/usr rc=0`. The `usr - Thunar` window is on HDMI
-  (`artifacts/hdmi/20260927-233712-m7i-xfce-demo-tick.png`).
+  (`artifacts/hdmi/2026-09/20260927-233712-m7i-xfce-demo-tick.png`).
 - Log Out through the `loginctl` stand-in stopped everything with rc=0: thunar, panel, xfdesktop, labwc, dbus;
   `XFCE-SESSION done rc=0`.
 - 0 `Failed to get system bus`, 0 exceptions.
@@ -1920,7 +1920,7 @@ Log `artifacts/rpi4b-uart/rpi4b-uart-20260928-014516-m7k-gles2.log`, servers `rp
 - `Creating GLES2 renderer` once, in arm A.
 - Both `XFCE-SESSION done rc=0`, 0 exceptions.
 - `KMSTEST stats … bos=0 exports=0`: the alias refcounts drain to zero, and the pool is fully freed.
-- **HDMI, arm A (gles2)** (`artifacts/hdmi/20260928-015445-m7k-gles2-tick.png`): the XFCE panel (local clock
+- **HDMI, arm A (gles2)** (`artifacts/hdmi/2026-09/20260928-015445-m7k-gles2-tick.png`): the XFCE panel (local clock
   `Mon 28 Sep 01:54`), the dithered wallpaper, and both Thunar windows (`/` and the second-instance `usr`), with the
   status bar `2 files: 431.3 KiB (441685 bytes)`. The same scene as m7i arm A, but every pixel is composited by
   the GPU.

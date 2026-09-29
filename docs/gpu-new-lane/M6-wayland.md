@@ -712,7 +712,7 @@ context` 2 s after start, `weston exited rc=1 before its socket appeared`, 0 exc
 ## Result — `m6c-weston` (queue34, 2026-09-27 11:27): ★ arms A and B DISPLAY; exit on SIGTERM FAILS
 
 Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-112701-m6c-weston.log`; HDMI
-`artifacts/hdmi/20260927-113046-m6c-weston-tick.png` (arm A, pixman) and `…-113315-…` (arm B, GL).
+`artifacts/hdmi/2026-09/20260927-113046-m6c-weston-tick.png` (arm A, pixman) and `…-113315-…` (arm B, GL).
 
 **Weston 14 composites a Wayland client on HDMI on Phoenix, with both renderers.** Patch 0007 cleared
 the XKB stop; the DRM backend brought up `HDMI-A-1` 1920×1080@60 through libdrm-phoenix and `rpi4-kms`.
@@ -974,7 +974,7 @@ patch 0012 has to be removed in a separate change, because it re-stamps every Me
 
 ## Result — `m6g-g4` (queue38, 2026-09-27 13:14): ✅ PASS — a Wayland GL client on HDMI
 
-Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-131451-m6g-g4.log`; HDMI `artifacts/hdmi/20260927-131928-m6g-g4-tick.png`
+Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-131451-m6g-g4.log`; HDMI `artifacts/hdmi/2026-09/20260927-131928-m6g-g4-tick.png`
 (the rotating RGB triangle, fullscreen under kiosk-shell). The `WESTONDRM client start` line was lost to UART
 corruption, so dense snapshots never started; the frame is placed by Weston's own timestamps (client 11:19:15–45
 Pi time = 13:19 host).
@@ -1216,7 +1216,7 @@ the next gap.
 ## Result — `m6h-g7` (queue41, 2026-09-27 14:44): ✅ PASS — direct scanout of client buffers, 45 fps
 
 Log `artifacts/rpi4b-uart/rpi4b-uart-20260927-144453-m6h-g7.log` (pre-boot UART flood; boot normal); HDMI
-`artifacts/hdmi/20260927-145037-m6h-g7-tick.png` (the triangle, clean).
+`artifacts/hdmi/2026-09/20260927-145037-m6h-g7-tick.png` (the triangle, clean).
 
 - **drmprobe-g7: `DRMPROBE RESULT pass=44 fail=0 gap=0 … verdict=PASS`**: `prime_import_card0 … shown=1 …
   alive_while_shown=1` (a render-node buffer imported on card0 and flipped onto the plane, 8 colour bands), UIF and

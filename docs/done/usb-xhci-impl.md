@@ -31,7 +31,7 @@ xhci/pcie/usb working trees identified below.
   on real Pi 4 with USB host-driver constructor logging
   `usb: Initializing driver as host-side: usbkbd` to klog. Banner
   + first two klog lines now also render on HDMI (Stage 4 phase 1h
-  validated, screenshot `artifacts/hdmi/2026-05-06-stage4-phase1h-klog-on-hdmi.png`).
+  validated, screenshot `artifacts/hdmi/2026-05/2026-05-06-stage4-phase1h-klog-on-hdmi.png`).
 
 **Diagnostic instrumentation in tree, to be removed at phase 5**
 (see `Section 5`):

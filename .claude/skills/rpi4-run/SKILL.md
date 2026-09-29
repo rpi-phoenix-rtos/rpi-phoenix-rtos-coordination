@@ -112,6 +112,9 @@ off. Skip the netboot server for SD.
   For ~4 quick commands, `480000` (8 min) is safe.
 - UART log: `artifacts/rpi4b-uart/rpi4b-uart-<ts>-<label>.log`. HDMI snapshots (if
   `/dev/video4` present): `artifacts/hdmi/` (periodic `-tick.png` + a `-final.png`).
+  Older snapshots are archived by month: `artifacts/hdmi/YYYY-MM/` —
+  `scripts/archive-hdmi-snapshots.py` files away everything not dated today (safe to run any
+  time; the graders search both the in-tray and the month folders).
 
 ### Grading anything VISUAL: use a readiness marker, or the run may score as a failure
 

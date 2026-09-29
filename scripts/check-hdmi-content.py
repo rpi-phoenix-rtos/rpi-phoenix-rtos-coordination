@@ -15,7 +15,17 @@ to the demo attract loop), so grading the last frame alone is a lottery that
 reads as a regression when the scene simply happened to be dark.
 """
 import sys, os, glob, collections
+
 from PIL import Image
+
+
+def hdmi_glob(top, name_pat):
+    """artifacts/hdmi/<name_pat> plus the month archive folders (YYYY-MM/,
+    scripts/archive-hdmi-snapshots.py), in capture order: every name starts with its timestamp."""
+    files = set(glob.glob(os.path.join(top, name_pat)))
+    files.update(glob.glob(os.path.join(top, "20[0-9][0-9]-[0-9][0-9]", name_pat)))
+    return sorted(files, key=os.path.basename)
+
 
 # Group by LABEL *and* by RUN. Labels repeat every time a gate is re-run, and
 # keying on the label alone silently pools frames from different runs into one
@@ -34,7 +44,7 @@ def _secs(s):
     return calendar.timegm(datetime.datetime(*s).timetuple())
 
 bylabel = collections.defaultdict(list)
-for p in glob.glob('artifacts/hdmi/*-tick.png'):
+for p in hdmi_glob('artifacts/hdmi', '*-tick.png'):
     base = os.path.basename(p)
     parts = base.split('-')
     if len(parts) < 4:

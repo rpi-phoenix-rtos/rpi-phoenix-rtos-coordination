@@ -473,7 +473,7 @@ parsed `Depth 24, framebuffer bpp 32`; `glamor: Using OpenGL ES 3.1 context` →
 enabled on V3D 4.2.14.0`** → `glamor initialized`; EDID read from the monitor (HJW 2131, 60×34 cm);
 xclock (old-lane client binary, `DISPLAY=:1`) ran for the full 30 s hold; server exited `rc=0`
 ("Server terminated successfully"), scanout BO import released, 0 exceptions. HDMI
-(`artifacts/hdmi/20260927-074503-m4c-xorg-drm-tick.png`): **a black root window with the xclock face** —
+(`artifacts/hdmi/2026-09/20260927-074503-m4c-xorg-drm-tick.png`): **a black root window with the xclock face** —
 exactly the pre-registered PASS picture. glamor renders into the kms scanout BO and presents with
 `MODE_DIRTYFB` (front-buffer path; `PageFlip on` did not engage — no flip ioctls in the trace).
 ⚠ This cycle started early (a queue-guard bug, see the weekly log) while build 12 compiled; it ran on
@@ -485,7 +485,7 @@ Next: Window Maker + input, DRI3/Present clients (G4/G6/G16), page flips.
 
 `export CLIENT=/bin/wmaker HOLD=150`, same script, `rpi4-kms-gate -G`. glamor enabled; the old lane's
 `wmaker` binary (unchanged) came up on `DISPLAY=:1` and held the screen for the whole window: HDMI
-(`artifacts/hdmi/20260927-085717-m4d-wmaker-tick.png`, stable over 26 snapshots) shows the Window Maker
+(`artifacts/hdmi/2026-09/20260927-085717-m4d-wmaker-tick.png`, stable over 26 snapshots) shows the Window Maker
 workspace clip, the dock with its icons and the software cursor on the default background. 0 exceptions.
 Not yet exercised: input (phxhid), windowed clients, DRI3/Present GL clients, page flips.
 
@@ -727,7 +727,7 @@ started first, the demo from a second script — needs a two-client script); (e)
 - **Run 2, swap interval 0: 484.7 fps** over 45 s (21 811 frames, 2 s windows 483–488, swap_avg 1.70 ms,
   frame_max ≤ 4.6 ms) — **the M4 "windowed GL at render rate" gate**. The old lane's GL-in-X path
   (KNOWN-ISSUES G1: pixels GPU → CPU → socket → CPU → GPU every frame) measured ~14 fps at this size.
-- HDMI (`artifacts/hdmi/20260927-104552-m4p2a-eglx11-tick.png`): the rotating shaded hexagon in the
+- HDMI (`artifacts/hdmi/2026-09/20260927-104552-m4p2a-eglx11-tick.png`): the rotating shaded hexagon in the
   window on the black root.
 The Phoenix xshmfence backend (G16) worked on first contact; the pre-registered soft `Failed to export
 gem bo` / G7 path is the copy path Present used.

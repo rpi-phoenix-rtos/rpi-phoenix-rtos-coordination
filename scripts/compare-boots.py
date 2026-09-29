@@ -30,10 +30,20 @@ Usage:
 import argparse
 import datetime as _dt
 import glob
+
 import hashlib
 import os
 import re
 import sys
+
+
+def hdmi_glob(top, name_pat):
+    """artifacts/hdmi/<name_pat> plus the month archive folders (YYYY-MM/,
+    scripts/archive-hdmi-snapshots.py), in capture order: every name starts with its timestamp."""
+    files = set(glob.glob(os.path.join(top, name_pat)))
+    files.update(glob.glob(os.path.join(top, "20[0-9][0-9]-[0-9][0-9]", name_pat)))
+    return sorted(files, key=os.path.basename)
+
 
 TS_RE = re.compile(r'^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+)\]\s?(.*)$')
 ANSI_RE = re.compile(r'\x1b\[[0-9;]*[A-Za-z]')
@@ -154,12 +164,8 @@ def md5(path):
 
 
 def hdmi_for_label(hdmi_dir, label):
-    pats = [os.path.join(hdmi_dir, f"*-{label}-*.png"),
-            os.path.join(hdmi_dir, f"*-{label}.png")]
-    files = []
-    for p in pats:
-        files.extend(glob.glob(p))
-    return sorted(set(files))
+    files = hdmi_glob(hdmi_dir, f"*-{label}-*.png") + hdmi_glob(hdmi_dir, f"*-{label}.png")
+    return sorted(set(files), key=os.path.basename)
 
 
 def fmt(v):

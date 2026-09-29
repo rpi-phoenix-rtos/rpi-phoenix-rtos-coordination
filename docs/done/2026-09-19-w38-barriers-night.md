@@ -125,7 +125,7 @@ one fix that is live on the demo path (glamor blits continuously), and duration 
 cycle cannot cover. ★ **Graded by CONTENT, not by a clean log:** the 00:01 frame shows the V3D GL
 window still spinning its 3D scene, `python3` Game of Life at **gen 26762 / 17.5 gen/s**, `top` with
 30 live tasks (v3d, glamor daemon, wmaker, xterm, xclock, xbill, nfs, lwip) and `xclock` reading the
-correct wall time. 📸 `artifacts/hdmi/20260919-000105-xendure-tick.png` is the best single "whole
+correct wall time. 📸 `artifacts/hdmi/2026-09/20260919-000105-xendure-tick.png` is the best single "whole
 system working" still produced so far — worth considering for the reel.
 🔧 ⚠ **Two traps caught in the tooling, both mine.** (1) `stkguard` collided with a 2026-09-10 bench,
 so the first grep over `*stkguard-T*` returned **seven** logs for a four-trial-old run — two builds

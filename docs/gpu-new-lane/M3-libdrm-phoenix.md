@@ -1351,7 +1351,7 @@ Mesa 26.2 GBM/EGL/GLES (static, patches 0001–0009) → libdrm-phoenix (`DRMPHX
 - `-c 600`: **599 frames in 20.06 s = 29.85 fps**, steady (28.6 → 29.9 over the run); server
   `err=0 wedges=0 rej=0`.
 - **HDMI** (graded on the snapshots taken during the run, 05:10:59–05:11:22, every one different): a
-  full-screen shaded rotating cube on grey (`artifacts/hdmi/20260927-051111-m3p3b-kmscube-tick.png`);
+  full-screen shaded rotating cube on grey (`artifacts/hdmi/2026-09/20260927-051111-m3p3b-kmscube-tick.png`);
   the console returns after exit (`planes_off=1`).
 
 **Why ~30 fps, not 60** ↩ *corrected 2026-09-27*: not the 20 ms poll quantum as first written here. rpi4-kms
@@ -1370,7 +1370,7 @@ rpi4-v3d-async): `969 frames 39.8 seconds 24.4 fps`, 0 exceptions. Banner line p
 BOs imported (`V3DA srv import … pages=2026`), released and re-imported cleanly on the mode set.
 HDMI (snapshots during the timedemo, each different): demo1 renders correctly — lit textured level,
 models, particles, HUD, console messages, in-game counter "26 FPS"
-(`artifacts/hdmi/20260927-051442-m3p4-qsdrm-tick.png`).
+(`artifacts/hdmi/2026-09/20260927-051442-m3p4-qsdrm-tick.png`).
 
 As pre-registered: "25–36 with everything else clean points at the 20 ms poll quantum rather than
 rendering" — SDL's KMSDRM waits for every page flip with `poll()` on the card fd (P9/G12); 24.4 is

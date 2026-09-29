@@ -42,8 +42,18 @@ SPDX-License-Identifier: BSD-3-Clause
 """
 import argparse
 import glob
+
 import os
 import sys
+
+
+def hdmi_glob(top, name_pat):
+    """artifacts/hdmi/<name_pat> plus the month archive folders (YYYY-MM/,
+    scripts/archive-hdmi-snapshots.py), in capture order: every name starts with its timestamp."""
+    files = set(glob.glob(os.path.join(top, name_pat)))
+    files.update(glob.glob(os.path.join(top, "20[0-9][0-9]-[0-9][0-9]", name_pat)))
+    return sorted(files, key=os.path.basename)
+
 
 try:
     from PIL import Image
@@ -71,8 +81,7 @@ def main():
     tiles, missing = [], []
 
     for trial in range(1, args.trials + 1):
-        pat = os.path.join(args.hdmi_dir, f"*-{args.label}-T{trial}-*.png")
-        frames = sorted(glob.glob(pat), key=os.path.getsize)
+        frames = sorted(hdmi_glob(args.hdmi_dir, f"*-{args.label}-T{trial}-*.png"), key=os.path.getsize)
         if not frames:
             missing.append((trial, "no snapshots"))
             continue
