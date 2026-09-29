@@ -31,10 +31,17 @@ Each scene below gives:
 - The output is `artifacts/hdmi-video/<ts>-<label>.mp4`. The logs are
   `artifacts/hdmi-video/<label>.reclog` and `<label>.cyclog`, and the UART log is under the
   cycle label `rec-<label>`.
-- **Pacing.** By default, `idle-secs` is `secs + 30` and `max-cmd-secs` is `secs + 60`. That
-  suits a single long command. With several commands, set `REC_IDLE_SECS` (around 12) so later
-  commands are sent before the clip ends. Otherwise the script warns that they will run after
-  the recording.
+- **Pacing.** Each command ends after `idle-secs` of UART silence or after `max-cmd-secs`
+  (`scripts/psh-interact.py`), and the same two values apply to every command. By default they
+  are `secs + 30` and `secs + 60`, which suits a single long command.
+  - **An `export` prints nothing**, so it always waits the full `idle-secs`. Put all the
+    variables of a scene in **one** `export` command: psh's `export` takes several
+    `NAME=value` words (`psh/pshapp/env.c`).
+  - `xfce-session` and `startx` print a heartbeat every 10 s while `HOLD` runs, so
+    `REC_IDLE_SECS=60` is safe for them. This is the setting of the M8 windowed-game cycles that
+    passed. It is also short enough that the one `export` costs about 70 s.
+  - For a scene of several short commands (S2), use `REC_IDLE_SECS=10`.
+  - The script warns when `idle-secs` × the command count exceeds the recording.
 - **One Pi cycle at a time.** Each clip is one power cycle. Never run two recordings at once,
   and never start one while another cycle or bench holds the Pi.
 - **Bash `timeout`** for the call must be at least `(secs + 80) * 1000` ms. For a clip longer
@@ -84,7 +91,7 @@ The durations are the target length on the reel. The record time is the `<secs>`
 ### S2 — Shell and networking: Ethernet DHCP and WiFi (reel ~25 s)
 
 ```
-REC_IDLE_SECS=10 ./scripts/record-showcase-clip.sh shell-net 160 \
+REC_IDLE_SECS=10 ./scripts/record-showcase-clip.sh shell-net 200 \
     "uname -a" "ifconfig" "/bin/wifi status" "ping -c 3 10.43.0.1" "python3 -V"
 ```
 
@@ -102,12 +109,8 @@ REC_IDLE_SECS=10 ./scripts/record-showcase-clip.sh shell-net 160 \
 ### S3 — The XFCE desktop on Wayland with a windowed Quake III (reel ~40 s)
 
 ```
-REC_MAX_CMD_SECS=420 ./scripts/record-showcase-clip.sh xfce-q3 330 \
-    "export CONF_DIR=/etc/xdg/labwc-xfce-games" \
-    "export GAME_LIST=quake3:120" \
-    "export GAME_LIST_DELAY=20" \
-    "export HOLD=200" \
-    "export LOGOUT_CMD=/bin/game-window-quit.sh" \
+REC_IDLE_SECS=60 REC_MAX_CMD_SECS=330 ./scripts/record-showcase-clip.sh xfce-q3 430 \
+    "export CONF_DIR=/etc/xdg/labwc-xfce-games GAME_LIST=quake3:120 GAME_LIST_DELAY=20 HOLD=200 LOGOUT_CMD=/bin/game-window-quit.sh" \
     "/bin/bash /bin/xfce-session"
 ```
 
@@ -119,15 +122,14 @@ REC_MAX_CMD_SECS=420 ./scripts/record-showcase-clip.sh xfce-q3 330 \
   - `GAME-WINDOW game=quake3 start … driver=wayland` and its `flipstat` lines;
   - no `KMSDRM_*` lines;
   - `XFCE-SESSION done rc=0`.
-- Record `secs` = ~75 s boot + ~52 s session start + 20 s delay + 120 s game. Keep the
-  `export` count low: each costs `--inter-cmd-secs` 8 s. The five exports above add about 40 s
-  before the session command.
+- Record `secs` = ~75 s boot + ~70 s for the `export` + ~52 s session start + the 200 s `HOLD`
+  + teardown ≈ 430 s. The Bash `timeout` must be at least 510 000 ms.
 - **Not scriptable here:** opening the Applications menu on camera (Q1).
 - Label: `XFCE 4.20 on Wayland — …`.
 
 ### S4 — SuperTuxKart in a window (reel ~25 s)
 
-Same as S3 with `GAME_LIST=stk:150` and the label `xfce-stk`:
+Same as S3 with `GAME_LIST=stk:150` in the `export` and the label `xfce-stk`:
 
 - The SuperTuxKart main menu appears in a window, at ~90 fps.
 - **An AI race in a window** needs the race arguments: `GAME_ARGS="--windowed
@@ -149,11 +151,8 @@ Same as S3 with `GAME_LIST=stk:150` and the label `xfce-stk`:
 ### S6 — The video player, windowed then full screen (reel ~30 s)
 
 ```
-REC_MAX_CMD_SECS=360 ./scripts/record-showcase-clip.sh xfce-video 280 \
-    "export CONF_DIR=/etc/xdg/labwc-xfce-video" \
-    "export VIDEO_DELAY=30" \
-    "export FFPLAY_AUTOKEYS=12:fs,24:fs" \
-    "export HOLD=140" \
+REC_IDLE_SECS=60 REC_MAX_CMD_SECS=260 ./scripts/record-showcase-clip.sh xfce-video 370 \
+    "export CONF_DIR=/etc/xdg/labwc-xfce-video VIDEO_DELAY=30 FFPLAY_AUTOKEYS=12:fs,24:fs HOLD=140" \
     "/bin/bash /bin/xfce-session"
 ```
 
@@ -176,7 +175,7 @@ One clip per game. Every game starts at the psh prompt, with no desktop running:
 | Clip label | Command | Record secs | Shows |
 |---|---|---|---|
 | `fs-q3` | `quake3 +map q3dm1` | 240 | Quake III bot deathmatch, orbiting third-person camera, ~59 fps |
-| `fs-q2` | `quake2` | 200 | Quake II playing `demo1`, 60 fps |
+| `fs-q2` | `quake2` | 200 | Quake II on the first demo level (`+map demo1`), 60 fps. The launcher loads the level; it does not play a recorded demo, so the view may be static (Q8). |
 | `fs-qs` | `quakespasm` | 200 | QuakeSpasm attract-demo loop, ~44 fps |
 | `fs-vkq` | `vkquake` | 240 | vkQuake on Vulkan, the start map, ~43 fps. The camera is static unless a demo plays (Q5). |
 | `fs-stk` | `game-res stk 1280x720 --track=hacienda --numkarts=4 --profile-laps=2` | 330 | SuperTuxKart: a 4-kart AI race, 720p scaled to the screen, ~22 fps |
@@ -193,7 +192,7 @@ One clip per game. Every game starts at the psh prompt, with no desktop running:
 ### S8 — X11: Xorg + glamor with Window Maker (reel ~25 s)
 
 ```
-REC_IDLE_SECS=12 REC_MAX_CMD_SECS=330 ./scripts/record-showcase-clip.sh x11 320 \
+REC_IDLE_SECS=60 REC_MAX_CMD_SECS=300 ./scripts/record-showcase-clip.sh x11 420 \
     "export HOLD=200" "/bin/bash /bin/startx action"
 ```
 
@@ -238,3 +237,4 @@ games (Quake III, Quake II, QuakeSpasm, vkQuake, SuperTuxKart). That is about 5 
 | Q5 | S7 | vkQuake's launcher always adds `+map start`, which is a static view. Does `vkquake +playdemo demo1` (appended after `+map start`) play a demo on the current build? It has not been tried. If it does not, is a demo config staged in `id1/` acceptable? |
 | Q6 | S9 | `startx` lost the old launcher's `browse [url]` mode. Should `startx-drm` get a `browse` mode (Window Maker + Dillo on a URL) for this scene? Dillo has also not yet been run on the Xorg desktop. |
 | Q7 | all | Is the reel still recorded on the netboot NFS root, or on the SD image? On the SD image, WiFi joins only after a `wifi connect` typed by hand, because the image ships no `/etc/wifi.conf`. |
+| Q8 | S7 | The `quake2` launcher runs `+map demo1`, which loads the demo's first level (maps/demo1.bsp); the previous reel's Quake II clip played the recorded demo `q2demo1`. Is `quake2 +map q2demo1.dm2` (appended after the launcher's `+map demo1`) the right way to get motion? It has not been tried. |

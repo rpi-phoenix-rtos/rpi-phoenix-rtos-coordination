@@ -201,7 +201,7 @@ Run these at the `(psh)%` prompt, with no desktop running:
 | Game | Command | Measured on the Pi |
 |---|---|---|
 | **Quake** (QuakeSpasm, OpenGL) | `quakespasm` | ~44 fps at 1920×1080 |
-| **Quake II** (yQuake2, OpenGL) | `quake2` | 60 fps (vsync), plays `demo1` |
+| **Quake II** (yQuake2, OpenGL) | `quake2` | 60 fps (vsync), starts on the first level of the demo |
 | **Quake III Arena** (quake3e, OpenGL) | `quake3 +map q3dm1` | ~59 fps, a bot deathmatch with an orbiting camera |
 | **vkQuake** (Quake on Vulkan) | `vkquake` | ~42–44 fps, the start map |
 | **SuperTuxKart 1.4** (OpenGL ES 3) | `stk` | ~12 fps at 1920×1080 (~22 fps at 1280×720, see [§6.3](#63-lower-resolution-for-more-fps)) |
