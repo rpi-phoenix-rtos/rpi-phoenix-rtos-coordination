@@ -28,6 +28,9 @@ servers moved to phoenix-rtos-devices and started at boot, the new-stack ports i
 plain command names on the new programs, the old stack behind `RPI4B_GPU_LEGACY=1` — implemented on
 branches `gpu/p1-default` (not merged, not built, no Pi cycle): **§7** (checklist, knob, pre-registered
 P1 gate). The deletion list is now §8.
+**Update 2026-09-30 (P3 prepared):** the old stack deleted on branches `gpu/p3-remove` (devices, ports,
+project, coord; + ports `gpu/p3-games-link` for the three relinked games) — not merged, not built, no Pi
+cycle; the knob and TD-24/TD-25 are gone. What, why, checks, risks: [P3-removal.md](P3-removal.md).
 
 Evidence tags as elsewhere: **[Pi]** measured on hardware, **[built]** cross build / link / static check,
 **[read]** read in source, **[inferred]** reasoning only.
@@ -1210,6 +1213,10 @@ section.
 
 Delete only after §5 passes on the migrated image; one sibling commit per repo, then a coordination
 manifest.
+
+**Status 2026-09-30:** done on branches `gpu/p3-remove` except what [P3-removal.md](P3-removal.md) §4/§7
+keeps or lists (`video/rpi4-fb` for `hevc-play` (TD-27), the `tools/gpu-lane` scaffolding, plo's
+triple-height fb / `gpu_mem`; the docs rows are P4).
 
 | What | Where | Note |
 |---|---|---|

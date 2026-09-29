@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
 #
-# build-xorg-ports.sh — build the migrated X11 framework ports (xorg_libs,
-# xorg_fonts, xorg_server, xterm, windowmaker) for aarch64a72-rpi4b via the real
-# port_manager, standalone.
+# build-xorg-ports.sh — build the X11 client framework ports (xorg_libs,
+# xorg_fonts, xterm, windowmaker, xorg_apps, xbill) for aarch64a72-rpi4b via the
+# real port_manager, standalone. (The X server is xorg_server_drm, which pulls the
+# whole GPU stack: build it with scripts/build-port.sh.)
 #
-# These ports are registered in the rpi4b ports.yaml but gated `if: false` (no
-# in-tree consumer flips them on yet — the shipped X11 still comes from the
-# ad-hoc scripts/build-showcase-apps.sh + tools/x11-port path). This helper
-# reproduces the exact port-build environment build.sh sets up (same as
+# This helper reproduces the exact port-build environment build.sh sets up (same as
 # build-sdl2-port.sh, the sdl2 precedent) and drives port_manager on a one-off
 # ports.yaml listing the X11 stack, pointed at the canonical
 # sources/phoenix-rtos-ports tree where the ports + patches + overlays live.
@@ -17,7 +15,7 @@
 # framework X11 stack is self-contained: it pulls zlib from the framework zlib
 # port (see each port.def.sh `depends`), so it does NOT need the ad-hoc
 # /tmp/x11-phoenix prefix. port_manager resolves the dependency order via
-# resolvelib, so listing the five top-level ports is enough.
+# resolvelib, so listing the top-level ports is enough.
 #
 # By default it does a CLEAN build (re-extract / re-patch / re-configure) so
 # patch or overlay edits actually take; pass --incremental for fast iteration.
@@ -39,7 +37,7 @@ venv_python="${repo_root}/.venv/bin/python3"
 # The migrated X11 stack, dependency-ordered for readability (port_manager
 # resolves the real order itself). Override with XORG_PORTS="a b c" to build a
 # subset (e.g. just xorg_libs while iterating on Layer 1).
-: "${XORG_PORTS:=xorg_libs xorg_fonts xorg_server xterm windowmaker xorg_apps xbill}"
+: "${XORG_PORTS:=xorg_libs xorg_fonts xterm windowmaker xorg_apps xbill}"
 
 clean=1
 [ "${1:-}" = "--incremental" ] && clean=0
@@ -117,5 +115,5 @@ GIT_DESC="$(cd ./phoenix-rtos-build && git describe --tags --abbrev=0 --match 'v
 cd "${PREFIX_PROJECT}/phoenix-rtos-build/"
 PHOENIX_VER="${GIT_DESC}" "${venv_python}" ./port_manager.py build "${tmp_yaml}" "${ports_dir}"
 
-echo ">> done. Xphoenix -> ${PREFIX_PROG_STRIPPED}/Xphoenix (if xorg_server built)"
-ls -la "${PREFIX_PROG_STRIPPED}/Xphoenix" "${PREFIX_PROG_STRIPPED}/xterm" 2>/dev/null || true
+echo ">> done."
+ls -la "${PREFIX_PROG_STRIPPED}/xterm" "${PREFIX_PROG_STRIPPED}/wmaker" 2>/dev/null || true

@@ -414,68 +414,35 @@ authoritative current state.
 - **Trigger:** the next scheduled full clean rebuild for any other reason
   (do not schedule a full rebuild solely for this).
 
-## TD-24: the legacy GPU stack stays buildable behind `RPI4B_GPU_LEGACY=1`
-
-- **Status:** OPEN (GPU migration P1, 2026-09-28; branches `gpu/p1-default`). Resolved by
-  P3 ([MIGRATION §3a, §7, §8](gpu-new-lane/MIGRATION.md)).
-- **What:** the default image carries only the DRM-shaped GPU stack. So that an A/B image of
-  the previous stack stays one flag away (`rebuild-rpi4b-fast.sh --gpu-legacy`), every piece of
-  the old stack is kept and switched by one knob instead of deleted: the six old ports
-  (`quakespasm yquake2 quake3 vkquake supertuxkart xorg_server`, `iuse="rootfs"`), their
-  `ports.yaml` entries, `rpi4-v3d` + `rpi4-fb` in the devices component list, `rpi4-fb` in
-  `user.plo.yaml`, the xlaunch/glamor/gl-x11-window steps of `build-showcase-apps.sh`, the old
-  launchers and `fbprobe` in `build-rootfs-helpers.sh`, the lane branches of the image checks.
-- **Markers:** `TODO(TD-24)` in `phoenix-rtos-ports/{quakespasm,yquake2,quake3,vkquake,
-  supertuxkart,xorg_server}/port.def.sh`, `phoenix-rtos-project/_projects/aarch64a72-generic-rpi4b/
-  ports.yaml`, `phoenix-rtos-devices/_targets/Makefile.aarch64a72-generic`, and the coordination
-  scripts `rebuild-rpi4b-fast.sh`, `build-showcase-apps.sh`, `build-rootfs-helpers.sh`,
-  `check-rootfs-complete.sh`, `verify-sd-image-contents.sh`.
-- **Resolution:** P3 deletes the old stack (MIGRATION §8 deletion list), then the knob and
-  every marker above.
-
-## TD-25: the default build still compiles the old GPU archives and four old ports
-
-- **Status:** OPEN (P1). Resolved by P3 (MIGRATION §4 item 4).
-- **What:** `yquake2_drm`, `quake3_drm` and `supertuxkart_drm` RELINK the objects of the
-  `yquake2`/`quake3`/`supertuxkart` ports (byte-identical control relinks), and
-  `xorg_server_drm` takes `libmd.a` from `xorg_server`. Those ports link the old Mesa fork's
-  archives (`tools/.gpu-libs/lib{GL,v3d,v3dv}-phoenix.a`) and `b_die` without them, so a
-  default build still needs `--with-showcase`'s gpu phase. Nothing of it is installed
-  (the old ports install only with USE `rootfs`, TD-24).
-- **Markers:** `TODO(TD-25)` in `ports.yaml` and `build-showcase-apps.sh` (`phase_gpu`).
-- **Resolution:** fold the substitution into each game port's `p_build` (the relink subr's
-  link, from source), give `xorg_server_drm` its own SHA1 (or `libmd`), drop the gpu phase.
-
 ## TD-26: the plain command names are copies of the `*-drm` programs
 
 - **Status:** OPEN (P1). Resolved by P4 (one stack, one set of names).
-- **What:** the new-stack ports install their programs under their own names
+- **What:** the GPU-stack ports install their programs under their own names
   (`quakespasm-drm`, `quake2-drm`, `vkq-drm`, `stk-drm`, `startx-drm`, the demo session under
   `/usr/lib/xfce-demo`) and, with USE `rootfs`, ALSO under the names users and the gate type:
   `/usr/bin/{quakespasm,quake2,quake3,vkquake}`, `/bin/{stk,startx,startx_gpu,xfce-session}`
-  (copies; the startx and xfce-session ones are generated wrappers). `build-showcase-apps.sh`
-  prunes the legacy stack's files from the persistent staging tree, because the ports only add.
+  (copies; the startx and xfce-session ones are generated wrappers). (The prune of the first
+  stack's files from the staging tree went with that stack in P3; `check-gpu-stack-image.sh`
+  check 3 still asserts they are absent.)
 - **Markers:** `TODO(TD-26)` in `phoenix-rtos-ports/{quakespasm_drm,yquake2_drm,quake3_drm,
-  vkquake_drm,supertuxkart_drm,xorg_server_drm,xfce_wayland}/port.def.sh`, `ports.yaml`,
-  `build-showcase-apps.sh` (`legacy_gpu_files`).
-- **Resolution:** P4 renames the programs themselves (and the xfce demo paths), drops the
-  copies and the prune.
+  vkquake_drm,supertuxkart_drm,xorg_server_drm,xfce_wayland}/port.def.sh`, `ports.yaml`.
+- **Resolution:** P4 renames the programs themselves (and the xfce demo paths) and drops the
+  copies (rename list: `docs/gpu-new-lane/P3-removal.md` §5).
 
-## TD-27: no `/dev/fb0` in the default image; `hevc-play` and `fbprobe` still need it
+## TD-27: `video/rpi4-fb` stays in the tree, unbuilt, for `hevc-play`
 
-- **Status:** OPEN (P1). Resolved before/with P3 (MIGRATION §4 item 9).
-- **What:** `rpi4-fb` is built and started only with `RPI4B_GPU_LEGACY=1`. Its remaining users
-  outside the old GPU stack: `bin/hevc-play` (rpivid H.265 → `write()` to `/dev/fb0`; built by
-  hand from `tools/hevc-decode/build-hevc-play.sh`, not by the image build, so it is a stale
-  file in a staged rootfs) and `bin/fbprobe` (legacy-only helper now). `rpi4-sysinfo` no longer
-  lists `fb0`.
-- **Markers:** `TODO(TD-27)` in `phoenix-rtos-devices/_targets/Makefile.aarch64a72-generic`,
-  `user.plo.yaml`, `build-rootfs-helpers.sh`; the `allow_fb0` exception in
-  `scripts/check-gpu-stack-image.sh`.
+- **Status:** OPEN (P1; narrowed in P3). MIGRATION §4 item 9.
+- **What:** since P3 no image builds or starts `rpi4-fb` (`/dev/fb0`): it is not a devices
+  component and not in `user.plo.yaml`. Its source stays in `phoenix-rtos-devices/video/rpi4-fb`
+  for its one remaining user, `bin/hevc-play` (rpivid H.265 → `write()` to `/dev/fb0`; built by
+  hand from `tools/hevc-decode/build-hevc-play.sh`, not by the image build; a stale copy in a
+  staged rootfs cannot run without `/dev/fb0`). `fbprobe` was retired in P3.
+- **Markers:** `TODO(TD-27)` in `phoenix-rtos-devices/_targets/Makefile.aarch64a72-generic`; the
+  `allow_fb0` exception in `scripts/check-gpu-stack-image.sh`.
 - **Resolution (proposed, minimal):** port `hevc-play` to a KMS dumb buffer
   (`drmModeCreateDumb` + `drmModeAddFB` + an atomic commit through libdrm_phoenix; zero-copy of
-  decoder frames later via G7); retire `fbprobe`. No fbdev emulation in rpi4-kms. Then `rpi4-fb`
-  goes with P3.
+  decoder frames later via G7). No fbdev emulation in rpi4-kms. Then delete `video/rpi4-fb`,
+  the marker and this entry.
 
 ## TD-23: `RPI4AUDIO_ARMTRIALS` is a permanent diagnostic ABI in a published header
 
@@ -2265,10 +2232,8 @@ markers. Its debt idiom is `BRING-UP` prose instead.
 | TD-19 | LIKELY STILL APPLIES (TLBI hardening is generally correct) | ✅ doc reconciled 2026-09-17: **neither** the generic helpers nor `_pmap_writeTtl3` has an `isb` — the doc's `dsb; isb` claim is retracted. Code deliberately unchanged; adding the `isb` is an attended decision (see TD-19 entry) |
 | TD-13-mtxbypass | ✅ RESOLVED/REMOVED | row added 2026-09-17 (entry existed, checklist did not). Verified: `grep -c TD-13-mtxbypass syscalls.c` → 0, exactly as the entry predicts. |
 | TD-14-startup-settle | NOT TAKEN | row added 2026-09-17 (entry existed, checklist did not). No marker, no code — the option was considered and declined. |
-| TD-24 | OPEN (P1, 2026-09-28) | the legacy GPU stack buildable behind `RPI4B_GPU_LEGACY=1` (A/B); P3 deletes it and the knob |
-| TD-25 | OPEN (P1) | the default build still compiles the old Mesa archives + yquake2/quake3/supertuxkart/xorg_server as build inputs of the `*_drm` relinks; nothing installed; P3 folds the relink into the game ports |
-| TD-26 | OPEN (P1) | plain command names (`quakespasm`, `quake2`, `quake3`, `vkquake`, `stk`, `startx`, `xfce-session`) are copies/wrappers of the `*-drm` programs + a legacy-file prune; P4 renames |
-| TD-27 | OPEN (P1) | no `/dev/fb0` in the default image; `hevc-play` (hand-built) and `fbprobe` need the legacy image until hevc-play moves to a KMS dumb buffer |
+| TD-26 | OPEN (P1) | plain command names (`quakespasm`, `quake2`, `quake3`, `vkquake`, `stk`, `startx`, `xfce-session`) are copies/wrappers of the `*-drm` programs; P4 renames |
+| TD-27 | OPEN (P1, narrowed P3) | `video/rpi4-fb` kept in the tree, unbuilt, until `hevc-play` (hand-built) moves to a KMS dumb buffer |
 | TD-23 | OPEN (deliberate) | `RPI4AUDIO_ARMTRIALS` is a diagnostic ioctl + struct in a **published** header, i.e. a permanent ABI, for a facility that can block the driver's only message thread ~100 s. Kept because it is the only in-process sampler of the failing channel and the defect is open; delete it with `q2-sdl-openaudio-hang`, or gate it behind a build flag. ⚠ Blind to a stale control-block fetch — a re-arm re-reads the same CB. |
 | TD-22 | ✅ RESOLVED 2026-09-19 (HW-gated) | `vm/map.c:204` — `_map_find()`'s right-hand leaf return can hand back a non-`MAP_FIXED` **hint** sitting nearer the end of a gap than `size`, overlapping the next entry. Unreachable today (libphoenix's only hinted mmaps are `MAP_FIXED`; `malloc` passes NULL). The commented-out guard cannot simply be restored — it would also gate the descent, where `rmaxgap` is a subtree maximum. Leaf-only fix written out in the section; needs its own boot + six-app gate. |
 | TD-21 | ✅ RESOLVED 2026-09-04 (HW-verified) | row added 2026-09-17 — the register's newest and most detailed item had **no checklist row at all**, while the header calls the checklist authoritative. Syscall-table divergence closed; upstream order confirmed in `include/syscalls.h:39-41` (`mutexUnlock, mutexConsistent, mutexPrioCeiling`). ⛔ Do not re-raise as pending. |

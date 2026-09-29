@@ -74,68 +74,33 @@ else
 fi
 printf '  src: %s\n  dst: %s\n' "$src" "$export_dir"
 
-# The Mesa shader disk cache is written by the Pi at runtime and is keyed by nothing
-# the host can validate (the Phoenix Mesa build has no build-id — see
-# docs project_v3d_shader_disk_cache). A cache written by a previous engine build
-# renders GREEN SPECKLE over an otherwise valid frame, which reads as a GPU wedge and
-# has cost debugging cycles. rsync never touches it (root-owned, and not in the source
-# tree), so warn loudly and try to clear it; a failure here is informational only.
-#
-# Clearing it UNCONDITIONALLY (the behaviour until 2026-09-08) threw the cache away on
-# every cycle, so the first GL app after each boot recompiled every shader from source.
-# So clear it only when the GPU driver actually changed, keyed on a fingerprint of the
-# archives the blobs were produced by.
-#
-# ⚠ Do NOT repeat the old justification here ("SuperTuxKart: 55.5 s cold vs 20.0 s warm,
-# so ~35 s of pure recompilation per first race"). That attribution is WRONG and was
-# refuted by a controlled probe (docs/misc/2026-09-08-stk-time-to-race.md:84-102): across
-# one first-run-of-boot the cache went 200 entries -> 200 while 50 shaders "compiled" --
-# every one a HIT -- and the run still took 49.8 s. For STK the cache is worth only the
-# ~5.5 s it already saves; ~27 s of its first-run cost is something else (leading
-# hypothesis: contiguous-BO allocator warm-up). The app the cache really rescues is
-# vkQuake: 67 shader modules, ~67 s of black screen that reads as a hang.
-# That keeps the safety property (a driver rebuild still invalidates the cache) without
-# paying the recompile on every boot.
+# .mesa-shader-cache/ on the export is the shader disk cache of the first GPU stack's Mesa
+# (deleted in GPU migration P3). The GPU stack's Mesa (mesa_drm) keeps no disk cache
+# (docs/gpu-new-lane/MIGRATION.md §3, §7.7), so a leftover directory is dead data: remove it
+# (it is root-owned, written by the Pi; rsync never touches it). Informational on failure.
 shader_cache="$export_dir/.mesa-shader-cache"
-fingerprint_file="${buildroot}/.mesa-shader-cache.driver-id"
-gpu_libs="${repo}/tools/.gpu-libs"
-
-driver_fingerprint=""
-for _a in libv3d-phoenix.a libGL-phoenix.a libv3dv-phoenix.a; do
-	if [ -f "$gpu_libs/$_a" ]; then
-		driver_fingerprint="${driver_fingerprint}$(sha256sum "$gpu_libs/$_a" | cut -d' ' -f1)"
-	fi
-done
-
 if [ -d "$shader_cache" ]; then
-	fingerprint_have="$(cat "$fingerprint_file" 2>/dev/null || true)"
-	if [ -n "$driver_fingerprint" ] && [ "$driver_fingerprint" = "$fingerprint_have" ]; then
-		printf 'sync-netboot-tree.sh: Mesa shader disk cache KEPT — GPU driver unchanged (%s entries)\n' \
-			"$(ls "$shader_cache"/v* 2>/dev/null | wc -l | tr -d ' ')"
-	elif sudo -n rm -rf "$shader_cache" 2>/dev/null; then
-		printf 'sync-netboot-tree.sh: cleared Mesa shader disk cache — GPU driver changed (or first run)\n'
+	if sudo -n rm -rf "$shader_cache" 2>/dev/null; then
+		printf 'sync-netboot-tree.sh: removed the first GPU stack'"'"'s shader disk cache (%s)\n' "$shader_cache"
 	else
-		printf 'sync-netboot-tree.sh: WARNING stale Mesa shader disk cache present and NOT cleared:\n' >&2
-		printf '                      %s\n' "$shader_cache" >&2
-		printf '                      Run: sudo rm -rf %s\n' "$shader_cache" >&2
-		printf '                      Leaving it can render green speckle that looks like a GPU wedge.\n' >&2
+		printf 'sync-netboot-tree.sh: NOTE unused shader disk cache left on the export: sudo rm -rf %s\n' "$shader_cache" >&2
 	fi
 fi
+rm -f "${buildroot}/.mesa-shader-cache.driver-id" 2>/dev/null || true
 
-# Record the current driver fingerprint either way, so the next sync can tell whether the
-# cache the Pi is about to write belongs to this driver build.
-if [ -n "$driver_fingerprint" ]; then
-	printf '%s' "$driver_fingerprint" > "$fingerprint_file" 2>/dev/null || true
-fi
 # --no-owner --no-group: the sync runs as an unprivileged user and the NFS export
 # may contain root-owned files (e.g. the fontconfig cache from stage-desktop-fonts);
 # preserving owner/group needs root and makes rsync exit non-zero on chown/chgrp,
 # aborting the sync. Ownership is irrelevant for the served rootfs, so skip it.
+# /etc/wifi.conf holds the lab's WiFi credentials, which live ONLY on the export
+# (a built rootfs never has one, see check-rootfs-complete.sh); excluding it keeps
+# SYNC_DELETE=1 from deleting it.
 rsync -a --no-owner --no-group "${delete_args[@]+"${delete_args[@]}"}" \
 	--exclude=/dev \
 	--exclude=/proc \
 	--exclude=/tmp \
 	--exclude=/mnt \
+	--exclude=/etc/wifi.conf \
 	"$src/" "$export_dir/"
 
 # The base build produces no scalable TTF / fontconfig config / cache, so the X11

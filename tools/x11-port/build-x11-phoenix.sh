@@ -366,15 +366,8 @@ if [ "${1:-}" = "--with-apps" ]; then
 	build_xphxdemo
 fi
 
-# --- THE SERVER (2026-06-23): kdrive fbdev DDX -> Xphoenix ---
-# xorg-server 1.20.14 ships no Xfbdev (removed in 1.17), so the fbdev backend is fresh new code:
-# hw/kdrive/fbdev/fbdev.c (KdCardFuncs + DDX hooks + shadow-FB write()-blit to /dev/fb0). It links
-# against the already-built kdrive core archives + the X11 lib stack here. build-xfbdev.sh does the
-# compile+link (it expects the core archives under src/xorg-server-1.20.14/*/.libs/, produced by the
-# server ./configure + make documented in PROGRESS.md). Produces a static aarch64-phoenix Xphoenix ELF.
-if [ "${1:-}" = "--with-server" ]; then
-	"$HERE/build-xfbdev.sh"
-fi
+# (The kdrive fbdev X server that --with-server built here, Xphoenix, was deleted with the
+# first GPU stack in GPU migration P3; the X server is the xorg_server_drm port.)
 
 echo "=== installed X11 libs in $PREFIX/lib ==="
 ls "$PREFIX/lib/"*.a 2>/dev/null || echo "(none yet)"

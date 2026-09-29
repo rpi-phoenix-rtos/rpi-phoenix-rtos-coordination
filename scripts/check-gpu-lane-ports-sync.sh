@@ -18,7 +18,11 @@
 #
 # Files a port has that are NOT copies (the recipes, libdrm_phoenix/glue/newlane.subr,
 # sdl2_kmsdrm/gamedrm/relink-sdl-gl-game.subr -- the ports adaptation of
-# tools/gpu-lane/sdl2-drm/gamedrm/relink-sdl-gl-game.sh) are not listed.
+# tools/gpu-lane/sdl2-drm/gamedrm/relink-sdl-gl-game.sh with the group of
+# tools/gpu-lane/sdl2-wl/gamewl/relink-sdl-gl-game-wl.sh; the image's own session files
+# derived from tools files with the image's program names: sdl2_kmsdrm/games/ (from sdl2-wl/pi
+# and conf/labwc-xfce-m8), video_player/files/image/ (from video-player/pi/video-play2 and
+# conf/labwc-xfce-m10)) are not listed.
 #
 # Copyright 2026 Phoenix Systems
 # SPDX-License-Identifier: BSD-3-Clause
@@ -49,9 +53,9 @@ MAP=(
 	"${T}/sdl2-drm/overlay|sdl2_kmsdrm/overlay"
 	"${T}/sdl2-drm/gamedrm/gamedrm_hooks.c|sdl2_kmsdrm/gamedrm/gamedrm_hooks.c"
 	"${T}/sdl2-drm/gamedrm/check-swap-order.sh|sdl2_kmsdrm/gamedrm/check-swap-order.sh"
+	# sdl2_kmsdrm: its Wayland video driver (the games in a window, M8)
+	"${T}/sdl2-wl/patches/*|sdl2_kmsdrm/patches/wayland"
 	# the game clones
-	"@quakespasm/patches|quakespasm_drm/patches"
-	"@quakespasm/glue|quakespasm_drm/glue"
 	"tools/yquake2-port/quake2-launcher.c|yquake2_drm/glue/quake2-launcher.c"
 	"tools/quake3-port/quake3-launcher.c|quake3_drm/glue/quake3-launcher.c"
 	"tools/supertuxkart-port/stk-launcher.c|supertuxkart_drm/glue/stk-launcher.c"
@@ -81,6 +85,13 @@ MAP=(
 	"${T}/xorg-drm/conf/xorg-drm.conf|xorg_server_drm/glue/conf/xorg-drm.conf"
 	"${T}/xorg-drm/pi/startx-drm|xorg_server_drm/glue/pi/startx-drm"
 	"${T}/x11-drm/src/eglx11_demo.c|xorg_server_drm/glue/eglx11/eglx11_demo.c"
+	# video_player (M10)
+	"${T}/video-player/patches|video_player/patches"
+	"${T}/video-player/components.sh|video_player/files/components.sh"
+	"${T}/video-player/ffplay_phoenix_glue.c|video_player/files/ffplay_phoenix_glue.c"
+	"${T}/video-player/gen-clips.sh|video_player/files/gen-clips.sh"
+	"${T}/video-player/gtk-video/gtk-video.c|video_player/files/gtk-video/gtk-video.c"
+	"${T}/video-player/conf/applications|video_player/files/conf/applications"
 )
 
 bad=0 n=0

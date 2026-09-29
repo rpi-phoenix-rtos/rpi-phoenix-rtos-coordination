@@ -33,7 +33,9 @@ import numpy as np
 from PIL import Image
 
 REPO = Path(__file__).resolve().parent.parent
-LAUNCHER = REPO / "tools/x11-port/launcher/pl_phoenix_xlaunch.c"
+# The desktop launcher (/bin/startx-drm, the `action` layout), as shipped by the
+# xorg_server_drm port.
+LAUNCHER = REPO / "sources/phoenix-rtos-ports/xorg_server_drm/glue/pi/startx-drm"
 
 # Window Maker's titlebar. -geometry places the CLIENT area, so the frame sits
 # above the requested y; the ROIs below are the client rects, offset by this.
@@ -53,7 +55,7 @@ def launcher_geom(name):
     desktop, which is how the seam check ended up aimed at nothing.
     """
     src = LAUNCHER.read_text()
-    m = re.search(r"\*const\s+%s\[\d+\]\s*=\s*\{\s*\"-geometry\",\s*\"([0-9x+]+)\"" % re.escape(name), src)
+    m = re.search(r"^\s*launch\s+%s\s+\S+\s+-geometry\s+([0-9x+]+)" % re.escape(name), src, re.M)
     if not m:
         sys.exit("cannot find %s geometry in %s" % (name, LAUNCHER))
     g = re.match(r"(\d+)x(\d+)\+(\d+)\+(\d+)$", m.group(1))
@@ -203,11 +205,11 @@ def main():
     if "--fps" in sys.argv:
         fps = int(sys.argv[sys.argv.index("--fps") + 1])
 
-    lw, lh, lx, ly = launcher_geom("term_life")
+    lw, lh, lx, ly = launcher_geom("xterm-life")
     lpx, lpy = char_cell_px(lw, lh)
     gol_box = (lx, ly + WM_TITLEBAR, lpx, lpy)
 
-    bw, bh, bx, by = launcher_geom("bill_geom")
+    bw, bh, bx, by = launcher_geom("xbill")
     bill_box = (bx, by + WM_TITLEBAR, bw, bh)
 
     print("layout from %s:" % LAUNCHER.name)

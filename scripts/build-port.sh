@@ -22,12 +22,11 @@
 #   scripts/build-port.sh 'xorg_server_drm[x11demo]'  # with USE flags (ports.yaml `use:`)
 #
 # Dependency resolution only (nothing is built): --dry, e.g. of a whole project ports.yaml
-# rendered with the current environment (its `if: {{ bool(env.X) }}` knobs), in a SCRATCH
+# rendered with the current environment (any `if: {{ bool(env.X) }}` knobs), in a SCRATCH
 # buildroot -- port_manager records a dry run as installed in <buildroot>/_build/<target>/
 # .port_state, which in the image's buildroot would make the next real build skip ports:
 #
 #   RPI4B_BUILDROOT=<scratch> scripts/build-port.sh --dry --yaml <ports.yaml>
-#   RPI4B_BUILDROOT=<scratch> RPI4B_GPU_LEGACY=1 scripts/build-port.sh --dry --yaml <ports.yaml>
 #
 # Environment:
 #   RPI4B_BUILDROOT   buildroot to build in (default <repo>/.buildroot). A scratch

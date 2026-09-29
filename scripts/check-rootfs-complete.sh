@@ -18,12 +18,6 @@
 #
 #   ./scripts/check-rootfs-complete.sh <rootfs-dir>
 #
-# The GPU programs depend on the image's GPU stack (GPU migration P1): the default
-# image ships the render/display servers and the *_drm programs; RPI4B_GPU_LEGACY=1
-# (the A/B image, rebuild-rpi4b-fast.sh --gpu-legacy) the in-process-winsys games
-# and Xphoenix. The lane comes from that variable, NOT from the tree: deriving it
-# from the tree would let a staging failure pass as "the other lane".
-#
 # Exit 0 only when every required path is present and non-empty.
 #
 # Copyright 2026 Phoenix Systems
@@ -40,75 +34,88 @@ root="${1:-}"
 # Required = the image is broken or a headline feature is missing without it.
 # Game DATA belongs here as much as the binaries: an engine with no data is not
 # a shipped game, and that is precisely the failure this script was written for.
-case "$(printf '%s' "${RPI4B_GPU_LEGACY:-}" | tr '[:upper:]' '[:lower:]')" in
-	''|0|n|no|false) gpu_legacy=0 ;;
-	*) gpu_legacy=1 ;;
-esac
-if [ "${gpu_legacy}" = 1 ]; then
-	# TODO(TD-24): the legacy GPU stack (A/B image only).
-	GPU_REQUIRED=(
-		usr/bin/Xphoenix
-		usr/bin/quakespasm
-		usr/bin/vkquake
-		usr/bin/yquake2
-		usr/bin/quake3e
-		usr/bin/supertuxkart
-	)
-	GPU_OPTIONAL=(
-		bin/stk
-		usr/bin/quake2
-		usr/bin/quake3
-	)
-else
-	# The servers are started at boot from loader.disk; the rootfs copies are the
-	# ones psh (and xfce-session / startx-drm when a server is missing) can run.
-	GPU_REQUIRED=(
-		sbin/rpi4-v3d-async
-		sbin/rpi4-kms
-		bin/shmsrv
-		bin/Xorg-drm
-		bin/startx-drm
-		etc/X11/xorg-drm.conf
-		usr/bin/quakespasm-drm
-		usr/bin/vkquake-drm
-		usr/bin/yquake2-drm
-		usr/bin/quake3e-drm
-		usr/bin/supertuxkart-drm
-		usr/bin/quake2-drm
-		usr/bin/quake3-drm
-		bin/vkq-drm
-		bin/stk-drm
-		bin/qs-drm
-		# the M9 lower-resolution launcher (build-rootfs-helpers.sh)
-		bin/game-res
-		# the plain command names (TD-26: copies of the -drm programs and launchers)
-		usr/bin/quakespasm
-		usr/bin/vkquake
-		usr/bin/quake2
-		usr/bin/quake3
-		bin/stk
-		bin/startx
-		bin/xfce-session
-	)
-	GPU_OPTIONAL=(
-		bin/startx_gpu
-		bin/eglx11-demo-x
-		bin/labwc
-		bin/foot
-		bin/labwc-desktop.sh
-		bin/xfce-desktop.sh
-		bin/thunar-wl
-		bin/dbus-daemon
-		bin/kmscube
-		bin/vkcube-drm
-		bin/drmprobe
-	)
-fi
+# The GPU stack's programs. The servers are started at boot from loader.disk; the
+# rootfs copies are the ones psh (and xfce-session / startx-drm when a server is
+# missing) can run.
+GPU_REQUIRED=(
+	sbin/rpi4-v3d-async
+	sbin/rpi4-kms
+	bin/shmsrv
+	bin/Xorg-drm
+	bin/startx-drm
+	etc/X11/xorg-drm.conf
+	usr/bin/quakespasm-drm
+	usr/bin/vkquake-drm
+	usr/bin/yquake2-drm
+	usr/bin/quake3e-drm
+	usr/bin/supertuxkart-drm
+	usr/bin/quake2-drm
+	usr/bin/quake3-drm
+	bin/vkq-drm
+	bin/stk-drm
+	bin/qs-drm
+	# the M9 lower-resolution launcher (build-rootfs-helpers.sh)
+	bin/game-res
+	# the plain command names (TD-26: copies of the -drm programs and launchers)
+	usr/bin/quakespasm
+	usr/bin/vkquake
+	usr/bin/quake2
+	usr/bin/quake3
+	bin/stk
+	bin/startx
+	bin/startx_gpu
+	bin/xfce-session
+	bin/eglx11-demo-x
+	# the Wayland desktop (labwc_desktop, dbus, xfce_wayland) and the GPU smoke tests
+	bin/labwc
+	bin/foot
+	bin/labwc-desktop.sh
+	bin/xfce-desktop.sh
+	bin/thunar-wl
+	bin/xfce4-panel
+	bin/xfdesktop
+	bin/dbus-daemon
+	bin/kmscube
+	bin/vkcube-drm
+	bin/drmprobe
+)
+# The desktop applications (docs/gpu-new-lane/desktop-apps-ports.md): the games' window
+# launcher and session (sdl2_kmsdrm), the video players (video_player), the PDF viewer
+# (atril_wayland) and their XFCE menu entries.
+DESKTOP_REQUIRED=(
+	bin/game-window.sh
+	bin/game-window-autostart.sh
+	bin/game-window-quit.sh
+	etc/xdg/labwc-xfce-games/rc.xml
+	etc/xdg/labwc-xfce-games/menu.xml
+	etc/xdg/labwc-xfce-games/autostart
+	etc/xdg/labwc-xfce-games/environment
+	usr/bin/ffplay
+	bin/video-play
+	usr/bin/gtk-video
+	etc/xdg/labwc-xfce-video/rc.xml
+	etc/xdg/labwc-xfce-video/autostart
+	usr/share/video-demo/h264-720p30-aac.mp4
+	usr/share/video-demo/h264-1080p30-aac.mp4
+	usr/share/video-demo/hevc-720p30-aac.mp4
+	usr/share/video-demo/vp9-360p-opus.webm
+	usr/bin/atril
+	usr/share/atril/schemas/gschemas.compiled
+	usr/share/doc/phoenix/sample.pdf
+	usr/share/applications/quakespasm.desktop
+	usr/share/applications/quake2.desktop
+	usr/share/applications/quake3.desktop
+	usr/share/applications/stk.desktop
+	usr/share/applications/gtk-video.desktop
+	usr/share/applications/video-demo.desktop
+	usr/share/applications/atril.desktop
+)
 
 REQUIRED=(
 	bin/psh
 	bin/busybox
 	"${GPU_REQUIRED[@]}"
+	"${DESKTOP_REQUIRED[@]}"
 	usr/share/quake/id1/pak0.pak
 	# Shipped Quake settings live in autoexec.cfg, not config.cfg: quake.rc execs
 	# default.cfg -> config.cfg -> autoexec.cfg, so autoexec is read every start and
@@ -127,13 +134,25 @@ REQUIRED=(
 	# symlink -- see ca_certificates/port.def.sh for which consumer reads which.
 	etc/ssl/certs/ca-certificates.crt
 	etc/ssl/cert.pem
+	# WiFi: the daemon (also started from loader.disk), the user's client, the example
+	# configuration and the vendor firmware (scripts/fetch-wifi-firmware.sh; an offline
+	# build with an empty download cache fails here on purpose: the image's WiFi would
+	# not come up) with its licence files.
+	sbin/rpi4-wifi
+	bin/wifi
+	etc/wifi.conf.example
+	lib/firmware/brcm/brcmfmac43455-sdio.bin
+	lib/firmware/brcm/brcmfmac43455-sdio.clm_blob
+	lib/firmware/brcm/brcmfmac43455-sdio.raspberrypi,4-model-b.txt
+	lib/firmware/LICENSES/LICENCE.cypress
+	lib/firmware/LICENSES/GPL-2.0
+	lib/firmware/WHENCE
 )
 
 # Expected but not fatal: launchers and conveniences. Reported, never silent.
 OPTIONAL=(
 	bin/xterm
 	bin/wmaker
-	"${GPU_OPTIONAL[@]}"
 	bin/ram-stage-play
 	bin/python3
 	bin/bash
@@ -144,7 +163,7 @@ OPTIONAL=(
 missing_req=0
 missing_opt=0
 
-printf '== rootfs completeness: %s (GPU stack: %s) ==\n' "${root}" "$([ "${gpu_legacy}" = 1 ] && echo legacy || echo default)"
+printf '== rootfs completeness: %s ==\n' "${root}"
 for p in "${REQUIRED[@]}"; do
 	if [ -s "${root}/${p}" ]; then
 		printf '  OK    %s\n' "${p}"
@@ -172,15 +191,29 @@ else
 	missing_req=$((missing_req + 1))
 fi
 
+# The GL games and ffplay are ONE program each with SDL's KMSDRM AND Wayland drivers (full
+# screen from psh, a window on the desktop): an engine without both is a stale or wrong build.
+for p in usr/bin/quakespasm-drm usr/bin/yquake2-drm usr/bin/quake3e-drm usr/bin/supertuxkart-drm usr/bin/ffplay; do
+	[ -s "${root}/${p}" ] || continue
+	for s in 'KMS/DRM Video Driver' 'SDL Wayland video driver'; do
+		if [ "$(grep -a -c -F -- "${s}" "${root}/${p}" 2>/dev/null || true)" -ge 1 ]; then
+			printf '  OK    %s: %s\n' "${p}" "${s}"
+		else
+			printf '  NO    %s: %s   <-- REQUIRED (one dual-mode program)\n' "${p}" "${s}"
+			missing_req=$((missing_req + 1))
+		fi
+	done
+done
+# The lab's credentials live only on the NFS export; one in a built rootfs would
+# ship in every image made from it.
+if [ -e "${root}/etc/wifi.conf" ]; then
+	printf '  FOUND etc/wifi.conf   <-- must NOT be in a built rootfs (credentials)\n'
+	missing_req=$((missing_req + 1))
+fi
+
 printf '\n'
 if [ "${missing_req}" -gt 0 ]; then
 	printf 'INCOMPLETE: %d required path(s) missing, %d optional.\n' "${missing_req}" "${missing_opt}"
-	if [ "${gpu_legacy}" = 0 ] && [ -e "${root}/usr/bin/Xphoenix" ]; then
-		printf 'GPU stack: this tree holds the LEGACY stack (usr/bin/Xphoenix). Built with\n'
-		printf 'RPI4B_GPU_LEGACY=1? Then check it with the same variable.\n'
-	elif [ "${gpu_legacy}" = 1 ] && [ -e "${root}/bin/Xorg-drm" ] && [ ! -e "${root}/usr/bin/Xphoenix" ]; then
-		printf 'GPU stack: this tree holds the DEFAULT stack (bin/Xorg-drm); unset RPI4B_GPU_LEGACY.\n'
-	fi
 	printf 'Game data missing? Run: ./scripts/stage-game-data.sh all   (local builds do NOT\n'
 	printf 'run it -- only the Dockerfile does, so a stale rootfs-overlay persists silently.)\n'
 	exit 1
