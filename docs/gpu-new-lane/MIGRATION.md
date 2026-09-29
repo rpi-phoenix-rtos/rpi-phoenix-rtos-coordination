@@ -1296,7 +1296,7 @@ faults 0.
 | qspasm | ✅ | 43.8 (44.45) | |
 | q3 | ✅ | 58.8 (59.40) | console handover 1× |
 | q2 | ✅ | 59.8 (60.00) | |
-| vkq | ✅ by eye | 42.2 (44.38) | torch ROI check **inconclusive**: viewpoint MAE 12.8 > 8 on every frame, at the SAME viewpoint as the reference and with both torches lit on HDMI; the difference is this build's full status bar + `37 FPS` counter vs the reference's compact HUD. The checker needs the HUD rows masked |
+| vkq | ✅ | 42.2 (44.38) | torch ROI check re-graded after the checker fix (2026-09-30, brightness-normalised viewpoint test): **torches present, 15/15 frames at the viewpoint pass**. First read was **inconclusive**: viewpoint MAE 12.8 > 8 on every frame, at the SAME viewpoint as the reference and with both torches lit on HDMI; the difference is this build's full status bar + `37 FPS` counter vs the reference's compact HUD. The checker needs the HUD rows masked |
 | stk | ✅ by eye | 12.8 (12.43) | HDMI: lit hacienda, lap 2/2; still racing (13.8 fps) when the 240 s capture closed → no `profile:` line. Give stk a longer idle window |
 | xfce | ✅ | — | `session up panel=registered t=52`, `XFCE-SESSION done rc=0` |
 

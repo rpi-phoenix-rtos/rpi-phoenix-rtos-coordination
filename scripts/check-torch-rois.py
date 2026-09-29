@@ -92,27 +92,37 @@ def flame_pixels(img, box, basis_w):
     return n
 
 
+def _norm_thumb(im, size=(160, 90)):
+    """160x90 grey thumb without the bottom HUD band (status bar, FPS counter), each pixel as
+    standard deviations from the thumb's own mean: the brightness and contrast of the build
+    (lightmap gamma, overbright) drop out, the scene's structure stays."""
+    t = im.convert("L").resize(size, Image.BILINEAR).crop((0, 0, size[0], size[1] * 84 // 100))
+    v = list(t.tobytes())
+    mean = sum(v) / float(len(v))
+    sd = (sum((x - mean) ** 2 for x in v) / float(len(v))) ** 0.5 or 1.0
+    return [(x - mean) / sd for x in v]
+
+
 def viewpoint_mae(path, ref_small, size=(160, 90)):
-    """Mean absolute difference from the reference frame, on a 160x90 grey thumb.
+    """Mean absolute difference from the reference frame, in standard deviations, on
+    brightness-normalised thumbs (_norm_thumb).
 
     The ROIs are fixed boxes, so they are only meaningful for a frame taken from
     the reference viewpoint (map start, spawn, angle 90). Feed this an arbitrary
     gameplay grab and it would report "torches absent" about a wall that is not
     even in shot -- the mirror image of the false positive that started all this.
 
-    Measured separation is wide enough to be unambiguous: the reference against
-    itself is 0.0, vkQuake grabs sitting at spawn score ~3.5, and quakespasm
-    frames from Quake's DEMO ATTRACT MODE (which is what the engine shows when
-    left at the menu) score 14-17. Anything above the cutoff is reported
-    UNUSABLE, not FAIL.
+    Until 2026-09-30 this compared raw grey levels, so a build that renders the same
+    spot brighter (the P1 image's vkQuake: full status bar, FPS counter, lighter
+    lightmaps) scored 12.8 > 8 on EVERY frame and the check turned INCONCLUSIVE
+    although HDMI showed the spawn view with both torches lit. Normalised, the
+    separation is wide: spawn-view grabs 0.07-0.13 (mig-vkq-h, p1-gate-vkq), demo
+    attract mode / other maps 0.92-1.06 (p1-gate-qspasm, p1-gate-q2). Anything above
+    the cutoff (default 0.4) is reported UNUSABLE, not FAIL.
     """
-    im = Image.open(path).convert("L").resize(size, Image.BILINEAR)
-    diff = ImageChops.difference(im, ref_small)
-    hist = diff.histogram()
-    total = sum(hist)
-    if total == 0:
-        return 0.0
-    return sum(i * n for i, n in enumerate(hist)) / float(total)
+    a = _norm_thumb(Image.open(path), size)
+    b = ref_small
+    return sum(abs(x - y) for x, y in zip(a, b)) / float(len(a))
 
 
 def classify(frames, args, spec, basis_w, required, thresh, ref_small):
@@ -175,8 +185,7 @@ def rate_mode(args, spec, basis_w, required, ignored, thresh):
     """
     ref_small = None
     if not args.no_viewpoint_check:
-        ref_small = Image.open(args.reference).convert("L").resize((160, 90),
-                                                                   Image.BILINEAR)
+        ref_small = _norm_thumb(Image.open(args.reference))
 
     allf = hdmi_glob(os.path.join(REPO, "artifacts", "hdmi"), "*-%s-T*-*.png" % args.rate)
     if not allf:
@@ -241,8 +250,8 @@ def main():
     ap.add_argument("--reference", default=os.path.join(
         REPO, "docs", "misc", "torch-archaeology", "host-reference-start-map.png"),
         help="reference frame for the viewpoint check")
-    ap.add_argument("--viewpoint-mae", type=float, default=8.0,
-                    help="max mean-abs-difference from the reference viewpoint (default 8)")
+    ap.add_argument("--viewpoint-mae", type=float, default=0.4,
+                    help="max brightness-normalised mean-abs-difference from the reference viewpoint, in standard deviations (default 0.4)")
     ap.add_argument("--no-viewpoint-check", action="store_true",
                     help="score the ROIs regardless of viewpoint (diagnostics only)")
     ap.add_argument("--rate", metavar="LABEL",
@@ -288,8 +297,7 @@ def main():
     ref_small = None
     if not args.no_viewpoint_check:
         try:
-            ref_small = Image.open(args.reference).convert("L").resize((160, 90),
-                                                                       Image.BILINEAR)
+            ref_small = _norm_thumb(Image.open(args.reference))
         except Exception as exc:                                  # noqa: BLE001
             sys.exit("check-torch-rois: cannot open reference %s (%s)"
                      % (args.reference, exc))
