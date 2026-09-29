@@ -27,7 +27,7 @@ blocks are not ours:
 | excluded | insertions | what it is |
 |---|---|---|
 | `libphoenix/math/` + `libm/` | +28 472 | upstream's own vendored libmcs and math reorg, carried ahead of master |
-| `vkquake/glue/vkquake_shaders.c` | +30 506 | machine-generated SPIR-V bytecode as C arrays |
+| `vkquake_drm/glue/vkquake_shaders.c` (was `vkquake/glue/`) | +30 506 | machine-generated SPIR-V bytecode as C arrays |
 
 Hand-written surface is therefore roughly **90 000 insertions**. Fork-authored libphoenix alone
 is **93 files / +5 874**, not the 338 / +32 886 the raw stat suggests.
@@ -48,14 +48,14 @@ is **93 files / +5 874**, not the 338 / +32 886 the raw stat suggests.
 | phoenix-rtos-build | 35 | +957 |
 | corelibs / posixsrv | 3 / 2 | +231 / +47 |
 
-Those 14 are the *Phoenix* repositories, and they are not the whole build. The GPU stack
-additionally depends on **upstream Mesa at the immutable tag `mesa-26.2.0` plus a 981-line
-fork-authored patch** (`patches/mesa/phoenix-rpi4-v3d.patch`, in the coordination repo), fetched
-and applied by `scripts/bootstrap-linux-host.sh`. Deliberately *not* a fork — pinning a frozen
-tag means upstream drift cannot break it — but it is load-bearing, and two of its hunks are
-generic upstream Mesa defects rather than Phoenix plumbing (see the V3D material in the drivers
-section). Anyone reproducing the GPU results needs it and cannot get there from the 14 repos
-alone.
+Those 14 are the *Phoenix* repositories, and they are not the whole build. The graphics stack
+additionally depends on **upstream Mesa 26.2.0** (the release tarball) **plus 16 fork-authored
+patches** carried by the `mesa_drm` port in phoenix-rtos-ports. It is deliberately *not* a fork:
+pinning a released version means upstream drift cannot break it. The patches are load-bearing, and
+two of them are generic upstream Mesa defects rather than Phoenix plumbing (see the V3D material in
+the drivers section). The same holds for the other big upstream projects the image builds from
+pinned release tarballs with carried patches: SDL 2.30.12, the X.Org server 21.1.24, GTK 3.24,
+wlroots/labwc 0.20 and XFCE 4.20.
 
 ## ★ Start here: fixes to Phoenix that are not Pi-specific
 
@@ -655,12 +655,14 @@ All are userspace servers in the standard Phoenix idiom (`mmap(MAP_PHYSMEM)` + `
 | device | driver path | exposes | state |
 |---|---|---|---|
 | ★ VL805 xHCI USB 3.0 host controller + BCM2711 PCIe bridge | `devices/usb/xhci/` (`xhci.c`, `bcm2711-pcie.c`) | `libusbxhci` HCD behind the `usb` daemon | Working: full ring/slot/endpoint model, control and interrupt-IN transfers (no bulk/isochronous path in the driver), root-hub and behind-hub addressing, error recovery. Reliable enumeration after the two-step-BSR fix (§3). |
-| V3D 4.2 GPU (Mesa gallium + V3DV) | `devices/gpu/rpi4-v3d/` | in-process winsys (`mesa/v3d_phoenix_winsys.c`) or `/dev/v3d-srv` + `libv3d-client` | OpenGL, OpenGL ES 3.1 and Vulkan render on HDMI. No DRM, no kernel GPU driver, no Vulkan WSI. See note. |
+| V3D 4.2 GPU render server | `devices/gpu/rpi4-v3d-async/` | `/dev/v3d-async` (a DRM-shaped protocol: BOs, submits, fences, sync objects) | Started at boot. Owns the GPU and runs every client's bin/render/TFU jobs asynchronously; buffers are shared with the display server and the clients through the kernel's `memExport`. Mesa's `v3d` and `v3dv` reach it through libdrm (`libdrm_phoenix` port). See note. |
+| HDMI display server (KMS) | `devices/video/rpi4-kms/` | `/dev/kms` (KMS-shaped: planes, CRTC, atomic flips, vblank events, dumb buffers) | Started at boot. The firmware's display planes, 60.00 fps flips with vblank events, fence-gated flips from the render server, scaled lower modes, console handover. No fbdev emulation. |
+| Shared-memory server | `devices/misc/shmsrv/` | `/shm` (`shm_open`, `memfd_create` backing) | Started at boot; `wl_shm` pools, keymaps and the xshmfence pages of DRI3 clients. |
 | VideoCore property mailbox | `devices/misc/rpi4-vcmbox/` | `/dev/vcmbox` + `libvcmbox` | Complete and the mandatory path — see note. |
-| HDMI framebuffer | `devices/video/rpi4-fb/` | `/dev/fb0` (read/write + `RPI4FB_GETMODE`) | Byte read/write and geometry only. Deliberately **no** `FBIOGET_*` veneer and **no** `mmap(fd,0)` of the surface (needs new kernel VM work); no arbitration against the boot console. |
+| HDMI framebuffer (legacy) | `devices/video/rpi4-fb/` | `/dev/fb0` (read/write + `RPI4FB_GETMODE`) | Source kept, **not a component and not started** since the KMS server replaced it (TD-27: one stand-alone HEVC demo still writes `/dev/fb0`). |
 | ★ HDMI framebuffer console + PL011 UART tty | `devices/tty/pl011-tty/` (+ vendored `teken/`) | `/dev/tty0`, `/dev/console`, `FBCONSETMODE` | Full VT100/xterm console driven by FreeBSD `teken` (BSD-2). GNU nano and mc render correctly. |
 | BCM2711 EMMC2 SD card | `devices/storage/bcm2711-emmc/` | `/dev/mmcblk0`, ext2 root | Boots from SD. UHS-I DDR50, 128 KiB multi-block transfers, **ADMA2 scatter-gather for reads *and* writes** (§4). |
-| BCM43455 SDIO WiFi | `devices/wifi/rpi4-wifi/` (4 870 lines) + `lwip/drivers/wifi43455.c` | `/dev/wifi` (text scan/ctl, incl. `leave`/`status`), `/dev/wifidata` (raw frames), `wifi` CLI (`connect`/`disconnect`/`status`/`scan`), lwIP netif `wl2` | Firmware download, WPA2 join via the firmware supplicant, full-MTU data path. Ordinary sockets route over the netif (ping 5/5, AP-side capture); the netif joins, rejoins and leaves at run time by following `/etc/wifi.conf`, releasing its DHCP lease on leave. Throughput is poll-bound (§4). |
+| BCM43455 SDIO WiFi | `devices/wifi/rpi4-wifi/` (4 870 lines) + `lwip/drivers/wifi43455.c` | `/dev/wifi` (text scan/ctl, incl. `leave`/`status`), `/dev/wifidata` (raw frames), `wifi` CLI (`connect`/`disconnect`/`status`/`scan`), lwIP netif `wl2` | Started at boot (sd and nfsroot); reads its firmware from `/lib/firmware/brcm/` (linux-firmware, fetched and pinned at build time). Firmware download, WPA2 join via the firmware supplicant, full-MTU data path. Ordinary sockets route over the netif (ping 5/5, AP-side capture); the netif joins, rejoins and leaves at run time by following `/etc/wifi.conf`, releasing its DHCP lease on leave. Throughput is poll-bound (§4). |
 | BCM43455 Bluetooth | `devices/bt/rpi4-hci/` | `/dev/hci0` (raw H4 HCI), `btctl` | Controller reset, patch-RAM upload, `BD_ADDR`, HCI inquiry. Raw HCI byte stream only — no host stack (L2CAP/GAP) above it. |
 | PWM audio (3.5 mm jack) | `devices/audio/rpi4-audio/` | `/dev/audio0` (s16 PCM write) | Self-chained DMA ring, DREQ-paced, with playback-rate backpressure and PIO fallback. No `snd` backend; audible sign-off is attended. |
 | SoC thermal / throttle | `devices/sensors/rpi4-thermal/` | `/dev/thermal`, `/dev/throttled` | Complete for what the SoC allows: telemetry only, the VideoCore firmware owns the trip point. Then used to answer the obvious question about a passively cooled board rendering 3D: **6.3 min under QuakeSpasm, 35.0 °C → a 53–55 °C plateau (flat from t = 240 s), `throttle=0x0` on all 19 samples**, 0 faults — no under-voltage, no ARM capping, no sticky bits, ~5 °C of headroom to the first soft cap. Limits: 6.3 min not 30, one board, open-air bench. |
@@ -681,20 +683,25 @@ bring-up, the SDIO driver and V3D power-on all want it; two concurrent readers p
 other's response word. `rpi4-vcmbox` owns the FIFO and serialises every caller — a Phoenix server handles
 one message at a time, so serialisation is free — reusing a single early-allocated low-PA uncached bounce
 buffer so it stays VideoCore-addressable on 4/8 GB boards. This "one server owns the unarbitrated
-peripheral" pattern is reused verbatim by the V3D server, and is the generalisable idea here.
+peripheral" pattern is reused verbatim by the render and display servers, and is the generalisable idea here.
 
-**V3D, honestly.** Mesa's `v3d` gallium driver and `v3dv` (Vulkan) are cross-compiled against Phoenix and
-driven through a hand-written winsys that implements `DRM_IOCTL_V3D_*` directly on the hardware — BO =
-`mmap` + `va2pa`, GPU VA through the V3D MMU's flat page table, `SUBMIT_CL` = CT0/CT1 QBA/QEA plus
-`FLDONE`/`FRDONE` and an L2T flush. There is no DRM layer and no kernel GPU driver; submits are
-synchronous, so `drmSyncobj*` is stubbed. The Mesa archives are built by standalone Python scripts
-(`mesa/build-{v3d,gl,v3dv}-phoenix.py`) that re-emit the host Mesa build's `compile_commands.json` with
-the Phoenix toolchain — they are *not* wired into the framework Makefiles, which cannot run meson/ninja.
-`/dev/v3d-srv` (`rpi4-v3d.c` + `v3d_gpu.c`) is the multi-client answer: it takes sole ownership of the
-GPU's single MMU page-table base, submit registers and power domain, and clients route MMIO-touching
-ioctls to it. It is HW-proven and built as a first-class component, but it is **not auto-launched** —
-taking exclusive ownership conflicts with the in-process-winsys GPU apps that currently ship, so the
-shipping path today is one app at a time with the winsys linked in-process.
+**The GPU stack, honestly.** The shipped stack has the shape of Linux's DRM userspace, without a
+kernel GPU driver. `rpi4-v3d-async` is a userspace render server that owns the V3D's MMU page-table
+base, submit registers and power domain, and runs the jobs of every client asynchronously: a
+multi-queue submit, a fence page and sync objects, deferred replies instead of synchronous submits.
+`rpi4-kms` does the same for the display. Buffers cross between the servers and the clients without
+copies through `memExport` (kernel §6). libdrm with a Phoenix backend (`libdrm_phoenix`) presents both
+servers to unmodified Mesa 26.2 (GBM, EGL, GLES, GL, `v3dv`), SDL's KMSDRM and Wayland drivers, Xorg's
+modesetting driver with glamor, and labwc. Measured on this board: SuperTuxKart 11.9 fps at 1080p
+against 11.7 on Raspberry Pi OS with the same settings; Quake II 60 fps vsynced; a GL window in X at
+485 fps unsynced through DRI3/Present. The design and every pre-registered experiment are in
+`docs/gpu-new-lane/` in the coordination repo (engineering history).
+
+The render server grew out of the **first GPU driver**, `devices/gpu/rpi4-v3d/`, which shipped until
+September 2026 and was then removed. That driver linked Mesa with a hand-written in-process winsys that
+implemented `DRM_IOCTL_V3D_*` directly on the hardware (BO = `mmap` + `va2pa`, synchronous `SUBMIT_CL`),
+plus an opt-in `/dev/v3d-srv` daemon. The hardware findings below were made on it. They are properties
+of the V3D and of Mesa, so they carry over to the current stack.
 
 Three submit engines are implemented, not one. `DRM_V3D_SUBMIT_TFU` and `DRM_V3D_SUBMIT_CSD` each
 started as an unhandled ioctl falling through to `default: return 0`, so *every* Texture Formatting
@@ -731,10 +738,11 @@ The hardware findings inside these paths are the transferable part:
   death). Measured across two X lifecycles in one boot: second-session cost **15.7 MB -> 2.3 MB**
   and **+85 -> +8** map entries, with `reaped 80 BO(s) from exited client(s)` logged. Honest
   scope, from the same write-up: whether the leak grew linearly was never established.
-- **Mesa's on-disk shader cache was five no-op stubs**, so every GL app recompiled its shaders on
-  the V3D each boot; `v3d_phoenix_stubs.c` now implements it (BLAKE3 keys, one file per key,
+- **Mesa's on-disk shader cache was five no-op stubs** in the first driver, so every GL app recompiled
+  its shaders on the V3D each boot; `v3d_phoenix_stubs.c` implemented it (BLAKE3 keys, one file per key,
   atomic temp+`rename`, a version-segmented `/vN` directory). HW: a cold boot wrote 52 blobs, a
-  warm boot hit all 52 with no recompile. Its failure mode is worth carrying — see the caveats.
+  warm boot hit all 52 with no recompile. Its failure mode is worth carrying — see the caveats. (The current `mesa_drm` build runs with
+  Mesa's shader cache disabled.)
 
 Mesa itself is patched, and not only for Phoenix. Two of the 16 carried commits are ordinary
 upstream `u_vbuf` defects that would bite any gallium driver on a non-x86 host: a missing NULL
@@ -1179,7 +1187,7 @@ The single most valuable material for upstream is not the port count but §3: ne
 
 ### 1. Application ports
 
-36 new userland recipes, all in `phoenix-rtos-ports/<name>/port.def.sh`. Licence is called out only where it constrains a maintainer's reuse. They are not independent: the interesting ones sit at the top of real dependency chains that the framework now resolves (`supertuxkart` alone declares twelve `depends=`), which is itself part of what is being demonstrated — `port_manager` can build a non-trivial DAG, not just leaf packages.
+The new userland recipes are all in `phoenix-rtos-ports/<name>/port.def.sh`. Licence is called out only where it constrains a maintainer's reuse. They are not independent: the interesting ones sit at the top of real dependency chains that the framework now resolves (`supertuxkart` alone declares twelve `depends=`), which is itself part of what is being demonstrated — `port_manager` can build a non-trivial DAG, not just leaf packages.
 
 | port | version | notes |
 |---|---|---|
@@ -1188,15 +1196,16 @@ The single most valuable material for upstream is not the port count but §3: ne
 | **★ bash** | 5.2.21 | Fully interactive GNU shell (job control, readline). GPL-3.0-or-later |
 | **★ sqlite3** | 3.53.4 | In-memory + file VFS, `integrity_check=ok`; multi-process rollback-journal proven over real `fcntl` locks. WAL is single-process only (no `xShmMap`) |
 | **★ redis** | 7.2.4 | Serves 241 commands over lwIP TCP; RDB persistence works. `MALLOC=libc`, `ae_select` event loop |
-| **★ sdl2** | 2.30.12 | Real SDL 2.30.12 with two *new upstream-shaped backends* written for Phoenix: `src/video/phoenix` (one fullscreen `/dev/fb0` window, input drained from `/dev/kbd0` + `/dev/mouse0`) and `src/audio/phoenix` (pull model over `/dev/audio0`). Zlib licence; the GL-context glue is kept outside `libSDL2.a` to preserve that |
+| **★ sdl2_kmsdrm** | 2.30.12 | Real SDL 2.30.12 with its **stock KMSDRM and Wayland video drivers** on Mesa GBM/EGL, and two Phoenix backends written for it: `src/core/phoenix` (HID input from `/dev/kbd0` + `/dev/mouse0`, incl. `SDL_TEXTINPUT`) and `src/audio/phoenix` (pull model over `/dev/audio0`). Carried fixes of general interest: submit the frame before waiting for the previous flip (Quake II 30 → 60 fps), release the locked GBM buffers before destroying the EGL surface (upstream `9cc2f248f5`, an exit use-after-free), condition-variable timeouts on the monotonic clock. One `libSDL2.a` serves full screen and windowed. Zlib licence. (It replaced the first `sdl2` port, whose `/dev/fb0` video backend was removed with the first GPU stack) |
 | **★ libnfs** | 6.0.2 | Backs NFS-as-rootfs. Carries three real NFSv4 bug fixes (see §3). LGPL-2.1 |
 | xorg_libs | 2023.2 | 24 tarballs in one recipe (libX11 1.8.7, libxcb 1.16, libXt/Xaw/Xmu/Xpm/Xext/Xrandr/Xrender, xcb-util family, pixman 0.42.2, xtrans, xkbfile). Version anchored on xorgproto |
-| xorg_server | 21.1.24 | Xorg with a **new Phoenix DDX** in-tree at `xorg_server/files/ddx/` (`fbdev.c` 1020 lines, `ddxLoad.c` 631, built-in keymap, HID→evdev map). Both a software-fb and a glamor/GPU server are built. The GPU server additionally carries patches to upstream glamor. **The set shrank on 2026-09-09 and the reason is the interesting part:** it was an R↔B swap on `XPutImage`'d content (RGBA transfer format), a screen-pixmap upload Y-mirror plus its symmetric download flip, an extension of that flip to the `glamor_spans.c` transfer sites, and the `DestroyPixmap` hook-chain fix in §3. All three Y-flip compensators are now **retired**: they existed because Mesa forced `Y_0_TOP` for the 1920x1080 glamor screen pixmap under a heuristic that tests SIZE, not scanout-ness (`st_atom_framebuffer.c`, `fb->Width >= 1024 && fb->Height >= 768`), even though that pixmap is a plain GL texture presented by `glReadPixels` into a shadow — nothing about it is scanout-backed. Forcing `Y_0_TOP` put every glamor GL path into a flipped coordinate world held upright by hand-rolled flips, and any path that missed one emitted its box at `y' = H-1-y`. Opting this one context out (`phx_scanout_flip_gate`, mesa `d5852136ba0`; shim clears it before `st_create_context`) leaves the pixmap `Y_0_BOTTOM` — plain upstream behaviour — and deletes all three compensators, which is a net *removal* of code. So what remains is the R↔B swap, the `DestroyPixmap` chain fix, and one new non-glamor patch to `os/connection.c` that asks for a 256 kB receive ring (see the AF_UNIX row in the kernel performance table). Build-lineage caveat, stated because this section otherwise reads as though all X lives in the ports repo: `xorg_server/` has no `patches/` directory, so the glamor-accelerated server is built from the coordination repo's `tools/x11-port/build-xserver-core.sh` path instead |
+| xorg_server_drm | 21.1.24 | The X server of the image: stock Xorg with the **modesetting** driver and **glamor** on GLES 3.1 over libdrm, DRI3/Present with a Phoenix `xshmfence` backend (`libxshmfence_phoenix`), phxhid input. A GL window runs at 60.00 fps vsynced (485 unsynced). `startx` starts it with Window Maker |
+| xorg_server *(removed)* | 21.1.24 | The first stack's X server (kdrive, removed with it in 2026-09). Xorg with a **new Phoenix DDX** in-tree at `xorg_server/files/ddx/` (`fbdev.c` 1020 lines, `ddxLoad.c` 631, built-in keymap, HID→evdev map). Both a software-fb and a glamor/GPU server are built. The GPU server additionally carries patches to upstream glamor. **The set shrank on 2026-09-09 and the reason is the interesting part:** it was an R↔B swap on `XPutImage`'d content (RGBA transfer format), a screen-pixmap upload Y-mirror plus its symmetric download flip, an extension of that flip to the `glamor_spans.c` transfer sites, and the `DestroyPixmap` hook-chain fix in §3. All three Y-flip compensators are now **retired**: they existed because Mesa forced `Y_0_TOP` for the 1920x1080 glamor screen pixmap under a heuristic that tests SIZE, not scanout-ness (`st_atom_framebuffer.c`, `fb->Width >= 1024 && fb->Height >= 768`), even though that pixmap is a plain GL texture presented by `glReadPixels` into a shadow — nothing about it is scanout-backed. Forcing `Y_0_TOP` put every glamor GL path into a flipped coordinate world held upright by hand-rolled flips, and any path that missed one emitted its box at `y' = H-1-y`. Opting this one context out (`phx_scanout_flip_gate`, mesa `d5852136ba0`; shim clears it before `st_create_context`) leaves the pixmap `Y_0_BOTTOM` — plain upstream behaviour — and deletes all three compensators, which is a net *removal* of code. So what remains is the R↔B swap, the `DestroyPixmap` chain fix, and one new non-glamor patch to `os/connection.c` that asks for a 256 kB receive ring (see the AF_UNIX row in the kernel performance table). Build-lineage caveat, stated because this section otherwise reads as though all X lives in the ports repo: `xorg_server/` has no `patches/` directory, so the glamor-accelerated server is built from the coordination repo's `tools/x11-port/build-xserver-core.sh` path instead |
 | xorg_fonts | 2.13.2 | freetype 2.13.2 + fontconfig 2.14.2 + cairo 1.16 + expat + libXft/libXfont2/libfontenc + PCF fonts (`font-misc-misc`, `font-cursor-misc`, `font-adobe-75dpi`, `encodings`, `font-alias`). Two of those are mandatory rather than decorative: `font-cursor-misc` is a separate upstream package and the only source of the `cursor` font every `XCreateFontCursor` caller opens, and `font-alias` is what fixes Xt's `Cannot convert string "8x13" to type FontStruct`. **A generalisable trap for fontconfig on a network root:** point it at `/usr/share/fonts/truetype` only, never the parent — the X core bitmaps are served by the X server's own `-fp` and never resolve through Xft, so indexing them buys nothing, and it made WindowMaker's first Xft font load `FT_New_Face`-open all **412 core PCFs** over NFS. That took desktop startup to 5 min 40 s and was misread as "the window manager does not draw" for a night; root-caused with this fork's own `libdbg` (`dbg_arm_watchdog` + `addr2line`), which named the stack `WMCreateFont → XftInit → FcConfigBuildFonts → FcFileScanFontConfig → FT_New_Face → sys_open`. Coord `71ab64d9a`, ports `de63acf`: startup 5 min 40 s → ~1 min |
 | xorg_apps | 1.1.2 | xcalc, xclock, xlogo, xedit (Xaw/Xt clients) in one recipe, anchored on xcalc |
 | windowmaker | 0.95.9 | Window manager; the desktop actually used on HDMI. GPL-2.0-or-later |
 | xterm | 396 | Interactive terminal emulator over `/dev/ptmx` — see the pty gap in §3 |
-| dillo | 3.2.0 | Renders live HTTPS pages under Xphoenix (TLS via mbedTLS in-process). GPL-3.0-only |
+| dillo | 3.2.0 | Renders live HTTPS pages under X11 (TLS via mbedTLS in-process; verified on the first stack's X server). GPL-3.0-only |
 | mc | 4.8.31 | Midnight Commander, full-screen curses app. GPL-3.0-or-later |
 | nano | 9.2 | Editor; gnulib-based, hence two gnulib patches. GPL-3.0-or-later |
 | xbill | 2.1 | Small Xaw game — an X11 client-stack smoke test. GPL-2.0-or-later |
@@ -1206,7 +1215,16 @@ The single most valuable material for upstream is not the port count but §3: ne
 | glib2 | 2.56.4 | With `libintl`/`nameser`/`resolv` stub headers supplied by the recipe. LGPL-2.1-or-later |
 | fltk | 1.3.10 | Dillo's widget toolkit. LGPL-2.0-only |
 | harfbuzz | 14.4.0 | Text shaping (STK) |
-| **★ ffmpeg** | 6.1 | Registered `if: false`: no *image* component consumes the recipe, but the decode core is hardware-proven — MJPEG (plane-0 avg 127 vs host ffmpeg 127.03) and H.264 (avg 123, bit-exact) decode on the Pi, display on `/dev/fb0`, and play in an X window (`tools/ffmpeg-port/e4_x11_play.c`, 2 898 frames, 0 faults, concurrent with a GPU app). LGPL-2.1-or-later, built without `--enable-gpl`. Its own porting gap: heavy decoders overflow the default main-thread stack, so the decode body runs on an ≥8 MB pthread — the same `SIZE_USTACK` ceiling as coreutils, reached from a different direction |
+| **★ ffmpeg** | 6.1 | The decode-only library port. The decode core is hardware-proven — MJPEG (plane-0 avg 127 vs host ffmpeg 127.03) and H.264 (avg 123, bit-exact) decode on the Pi, displayed on the first stack's framebuffer and in an X window (2 898 frames, 0 faults). LGPL-2.1-or-later, built without `--enable-gpl`. Its own porting gap: heavy decoders overflow the default main-thread stack, so the decode body runs on an ≥8 MB pthread — the same `SIZE_USTACK` ceiling as coreutils, reached from a different direction |
+| **★ mesa_drm** | 26.2.0 | Mesa on the DRM path: gallium `v3d` (+ `vc4`/`kmsro`), GBM, EGL (drm, surfaceless, Wayland, X11), GLES 3.1, desktop GL and `v3dv`, all static. 16 carried patches (see the V3D note in the drivers section). MIT |
+| **★ libdrm_phoenix** | 2.4.134 | libdrm with a Phoenix backend: the DRM ioctls map to the render server (`/dev/v3d-async`) and the KMS server (`/dev/kms`) protocols, so Mesa, SDL, Xorg and wlroots use it unmodified. MIT |
+| wayland, wayland_phoenix | 1.24.0 | libwayland 1.24 + wayland-protocols 1.45 with a small library filling libphoenix gaps for Wayland clients and compositors; libxkbcommon 1.7 and the Phoenix compat headers. MIT AND BSD |
+| dbus | 1.16.2 | The session bus for XFCE (xfconfd activation). AFL-2.1 OR GPL-2.0-or-later |
+| gtk3_wayland | 3.24.52 | GTK 3, Wayland backend only, with GLib 2.88, Pango 1.54, cairo 1.18, gdk-pixbuf, ATK and gtk-layer-shell, static. LGPL |
+| labwc_desktop | 0.20.2 | wlroots 0.20 + labwc (compositing on GLES2 or pixman), foot 1.28, fuzzel 1.15, swaybg. GPL-2.0-only (labwc) AND MIT |
+| xfce_wayland | 4.20 | XFCE 4.20 on labwc: libxfce4util, xfconf, libxfce4ui, garcon, exo, libxfce4windowing, Thunar, the panel, xfdesktop, settings, appfinder; `/bin/xfce-session`. GPL-2.0-or-later / LGPL |
+| atril_wayland | 1.28.7 | Atril + Poppler with the PDF backend linked in (no GModule plugins on a static target). GPL-2.0-or-later |
+| video_player | 6.1 | ffplay (FFmpeg 6.1, LGPL build) with SDL KMSDRM + Wayland, the `video-play` launcher, gtk-video (a small GTK 3 player) and generated demo clips. LGPL-2.1-or-later AND BSD-3-Clause |
 | libjpeg-turbo | 3.0.4 | IJG AND BSD-3-Clause AND Zlib |
 | libpng | 1.6.40 | |
 | libogg | 1.3.5 | Ogg container; STK/game music |
@@ -1232,23 +1250,23 @@ Also: `openssl111`
 
 ### 2. Game ports
 
-Five 3D engines, all folded into a **single static ELF each** (Phoenix has no dynamic-executable loading, so upstream's `.so` game/renderer split cannot be used), all installing into the rootfs at `/usr/bin`. All are GPL-2.0-or-later except SuperTuxKart (GPL-3.0-or-later) — relevant to what a maintainer can look at.
+Five 3D engines, all folded into a **single static ELF each** (Phoenix has no dynamic-executable loading, so upstream's `.so` game/renderer split cannot be used), all installing into the rootfs (`/usr/bin`, launchers in `/usr/bin` and `/bin`). All are GPL-2.0-or-later except SuperTuxKart (GPL-3.0-or-later) — relevant to what a maintainer can look at.
 
 | engine | version (pin) | renderer path | state |
 |---|---|---|---|
-| **★ quakespasm** (GLQuake) | 0.97.0 (`f5fe178`) | desktop GL → Mesa/V3D → `/dev/fb0` | Flagship. Textured real levels at ~1080p/~40 fps on HDMI, audio wired. Cleanest HW evidence of the five. Also the only *networked* demonstration: the multiplayer client joins a real dedicated server, loads the map and runs in-game at 26 fps over Phoenix's own TCP/IP stack (the two enabling lwIP defects — the `getnameinfo` out-of-bounds write and `FIONBIO` — are in the drivers section, §3) |
-| **★ supertuxkart** | 1.4 | GLES3 (STK "SP" renderer) | Boot → fully-lit in-game 3D race, 0 crashes, host-comparison SSIM 0.991, **~8.5 fps at the page flip** (winsys `flipstat`; the 8/9/9 this row used to quote is the game's own tick counter) on the shipped image (`scale_rtts_factor=0.75`; it was 5.84 fps / ~171 ms per frame at full resolution). It ran at *exactly* 1 fps until a libstdc++ toolchain defect was root-caused — see §3. 11 patches, 12 port dependencies |
-| yquake2 (Quake II) | 8.71 (`a9e88f6`) | `ref_gl3` / GLES3 default, `ref_gl1` selectable | Renders full 3D. Client + integrated server + baseq2 game + one renderer in one ELF. Asset load is slow over NFS, mitigated by RAM-staging to `/tmp` — **per application, not in general**: measured 5.49× for quake3e (`CL_InitCGame` 63.77 s → 11.61 s) and 3.6× for quakespasm, but a net *loss* for SuperTuxKart, where 73 s of copying saved 2.7 s. RAM-staging is also the real justification for the `DUMMYFS_SIZE_MAX` 32 → 256 MiB bump reported in §4 |
-| quake3e (Quake III) | 1.32 (in-tree "Q3 1.32e", `f694bbb`) | desktop GL → Mesa/V3D | Runs; QVM bytecode modules need no `dlopen`, but its aarch64 JIT does need the code buffer `mmap`'d RWX up front, because `mprotect` cannot add `PROT_EXEC` later (see *Platform gaps*). Known open defect `V3D-binner-wedge` (a lightmap-black bug on the same map was root-caused and fixed — see the V3D tiling rule in the drivers section); status and evidence in [KNOWN-ISSUES.md](KNOWN-ISSUES.md) |
-| vkquake | 1.34 (`1aa13a5`) | **Vulkan** via the ported V3DV ICD (SPIR-V→NIR→QPU) | Runs — the only user-shader Vulkan consumer. No SDL dependency at all: SDL is *entirely* shimmed (`glue/sdl-shim/SDL.h` + `pl_phoenix_sdlcompat.c`). ⊕ **`#67` (torch sprites intermittently missing) was CLOSED 2026-09-15** — 6/6 by rate, twice, across two builds, then 8/8 on the SD card; status and the pass-rate protocol in [KNOWN-ISSUES.md](KNOWN-ISSUES.md) |
+| **★ quakespasm_drm** (Quake) | 0.97.0 (`f5fe178`) | desktop GL → Mesa → SDL KMSDRM (full screen) or Wayland (window) | Flagship. ~44 fps at 1080p (P1 image gate), 45–67 fps in a desktop window, audio wired. Also the only *networked* demonstration: the multiplayer client joins a real dedicated server, loads the map and runs in-game at 26 fps over Phoenix's own TCP/IP stack (the two enabling lwIP defects — the `getnameinfo` out-of-bounds write and `FIONBIO` — are in the drivers section, §3) |
+| **★ supertuxkart** + `supertuxkart_drm` | 1.4 | GLES3 (STK "SP" renderer) → SDL KMSDRM or Wayland | Fully-lit in-game 3D race, host-comparison SSIM 0.991. **~12 fps at 1080p = Raspberry Pi OS on this board**, 22.3 fps at 1280×720 scaled by the KMS server (it was ~8.5 fps on the first GPU stack). It ran at *exactly* 1 fps until a libstdc++ toolchain defect was root-caused — see §3. 11 patches, 12 port dependencies |
+| yquake2 + `yquake2_drm` (Quake II) | 8.71 (`a9e88f6`) | `ref_gl1` (the launcher's choice) / `ref_gl3`, SDL KMSDRM or Wayland | 60 fps vsynced, full screen and in a window. Client + integrated server + baseq2 game + one renderer in one ELF. Asset load is slow over NFS, mitigated by RAM-staging to `/tmp` — **per application, not in general**: measured 5.49× for quake3e (`CL_InitCGame` 63.77 s → 11.61 s) and 3.6× for quakespasm, but a net *loss* for SuperTuxKart, where 73 s of copying saved 2.7 s. RAM-staging is also the real justification for the `DUMMYFS_SIZE_MAX` 32 → 256 MiB bump reported in §4 |
+| quake3 + `quake3_drm` (quake3e, Quake III) | 1.32 (in-tree "Q3 1.32e", `f694bbb`) | desktop GL → Mesa, SDL KMSDRM or Wayland | ~59 fps at 1080p, ~90 in a window; QVM bytecode modules need no `dlopen`, but its aarch64 JIT does need the code buffer `mmap`'d RWX up front, because `mprotect` cannot add `PROT_EXEC` later (see *Platform gaps*). Known open defect `V3D-binner-wedge` (a lightmap-black bug on the same map was root-caused and fixed — see the V3D tiling rule in the drivers section); status and evidence in [KNOWN-ISSUES.md](KNOWN-ISSUES.md) |
+| vkquake_drm | 1.34 (`1aa13a5`) | **Vulkan** via `v3dv` (SPIR-V→NIR→QPU), `VK_KHR_display` through SDL's KMSDRM Vulkan path | ~44 fps at 1080p (22.9 on the first GPU stack) — the only user-shader Vulkan consumer. Full screen only: the static ICD has no Wayland WSI. ⊕ **`#67` (torch sprites intermittently missing) was CLOSED 2026-09-15** — 6/6 by rate, twice, across two builds, then 8/8 on the SD card; status and the pass-rate protocol in [KNOWN-ISSUES.md](KNOWN-ISSUES.md) |
 
-Per engine the recipe carries a `glue/pl_phoenix_*.c` Phoenix backend plus one generated single-ELF patch (`quakespasm` 857 lines, `vkquake` 557, `yquake2` 476, `quake3` 331). vkQuake additionally vendors pre-compiled shaders (`vkquake_shaders.c`, 30 506 lines) and Vulkan entry trampolines (`vk_trampolines.c`, 648 lines).
+Per engine the recipes carry one generated single-ELF patch and a small launcher (`quakespasm_drm`, `yquake2`, `quake3`; vkQuake carries 10 patches). The engine ports (`yquake2`, `quake3`, `supertuxkart`) compile the engine; the `*_drm` ports link it once, with SDL's KMSDRM **and** Wayland drivers and Mesa's EGL on GBM and on Wayland, so one program runs full screen from the shell and in a window on the desktop. vkQuake vendors pre-compiled shaders (`vkquake_drm/glue/vkquake_shaders.c`, 30 506 lines).
 
 Three structural notes a maintainer may care about more than the games themselves:
 
 - **The `.so` seam is the recurring problem, not the graphics.** yQuake2 has two dynamic-load seams (game DLL, renderer DLL) and quake3e has three module slots; each port had to be re-plumbed into one link unit. Any Phoenix port of a plugin-architecture application will hit this until `PT_INTERP`/auxv loading exists.
-- **Four of the five sit on the ported SDL2** (`depends="sdl2"`), so the SDL video/audio backends in `phoenix-rtos-ports/sdl2/overlay/src/{video,audio}/phoenix/` are the real reusable asset here: ~1 300 lines of driver that any future SDL application on Phoenix inherits for free. vkQuake is the exception and shims SDL away entirely. Anyone inheriting those backends should know what was missing: they called only `SDL_SendKeyboardKey` (scancodes) and never `SDL_SendKeyboardText`, so **no `SDL_TEXTINPUT` event was ever generated** — a whole input category, which is why Quake III's `~` console accepted only Enter. Fixed with a SHIFT-aware HID→char mapping (`c019e12`). The same investigation cleared the mouse path as source-correct; those failures were the `N_URBS=1` and xHCI issues covered elsewhere.
-- **★ Redirecting GL's default framebuffer 0 to a real FBO turns upstream GLES *hints* into destructive operations** — a reusable design warning for anyone implementing GL/GLES on a framebuffer-only target. What makes surfaceless V3D work at all is that `glBindFramebuffer(target, 0)` is redirected to a user FBO backed by the scanout buffer, and that silently changes the meaning of every GL call whose behaviour differs between the winsys framebuffer and a user FBO. It cost a 100 %-black screen with no GL error and the game running: yQuake2's GLES3 renderer calls `glInvalidateFramebuffer(GL_FRAMEBUFFER, 3, {COLOR_ATTACHMENT0, DEPTH_ATTACHMENT, STENCIL_ATTACHMENT})` pre-swap, which on a windowed driver is a no-op hint because those enums are invalid on FB 0 — but against our FBO they are *valid*, so Mesa reached `v3d_invalidate_resource`, the unflushed job lost its colour tile store, and the page flip presented a buffer the GPU never wrote. Fixed in the port glue rather than the game (`96c0f4b`), precisely because the trap waits for any GLES client; the same class is documented and still unwrapped for `glDrawBuffers`, `glClearBufferfv` and `glDiscardFramebufferEXT`.
+- **All five sit on SDL 2** (`sdl2_kmsdrm`), so its Phoenix input and audio backends in `phoenix-rtos-ports/sdl2_kmsdrm/overlay/src/{core,audio}/phoenix/` are the reusable asset here: with them and the stock KMSDRM/Wayland drivers, any SDL application on Phoenix gets full-screen and windowed video, input and sound. (The first `sdl2` port had its own `/dev/fb0` video backend and vkQuake shimmed SDL away; both are gone.) Anyone inheriting those backends should know what was missing: they called only `SDL_SendKeyboardKey` (scancodes) and never `SDL_SendKeyboardText`, so **no `SDL_TEXTINPUT` event was ever generated** — a whole input category, which is why Quake III's `~` console accepted only Enter. Fixed with a SHIFT-aware HID→char mapping (`c019e12`). The same investigation cleared the mouse path as source-correct; those failures were the `N_URBS=1` and xHCI issues covered elsewhere.
+- **★ Redirecting GL's default framebuffer 0 to a real FBO turns upstream GLES *hints* into destructive operations** (found on the first GPU stack, whose surfaceless Mesa did this; GBM/EGL windows on the current stack are real window-system framebuffers) — a reusable design warning for anyone implementing GL/GLES on a framebuffer-only target. What makes surfaceless V3D work at all is that `glBindFramebuffer(target, 0)` is redirected to a user FBO backed by the scanout buffer, and that silently changes the meaning of every GL call whose behaviour differs between the winsys framebuffer and a user FBO. It cost a 100 %-black screen with no GL error and the game running: yQuake2's GLES3 renderer calls `glInvalidateFramebuffer(GL_FRAMEBUFFER, 3, {COLOR_ATTACHMENT0, DEPTH_ATTACHMENT, STENCIL_ATTACHMENT})` pre-swap, which on a windowed driver is a no-op hint because those enums are invalid on FB 0 — but against our FBO they are *valid*, so Mesa reached `v3d_invalidate_resource`, the unflushed job lost its colour tile store, and the page flip presented a buffer the GPU never wrote. Fixed in the port glue rather than the game (`96c0f4b`), precisely because the trap waits for any GLES client; the same class is documented and still unwrapped for `glDrawBuffers`, `glClearBufferfv` and `glDiscardFramebufferEXT`.
 
 Two of the game-side defects are really findings about the platform, and both were misdiagnosed
 repeatedly first:
