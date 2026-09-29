@@ -1168,6 +1168,9 @@ another target has been booted on it.
 
 ### 7. V3D compute (CSD) — three changes an unrelated experiment surfaced
 
+*On the first GPU driver (`gpu/rpi4-v3d/`, removed in September 2026); the paths and commits below are
+its history. `tools/v3d-driver-port/` was removed with it.*
+
 The winsys had an implemented-but-never-called `DRM_V3D_SUBMIT_CSD` handler (coord `1067af16a`,
 "implement CSD — was a no-op stub"). The first code to actually dispatch compute on it was the
 machine-learning work in the coordination repo (see the last section), and it immediately found
@@ -1525,6 +1528,9 @@ rather than as bugs.
   eight hard-won gotchas: `tools/hevc-decode/README.md`.
 
 ### 2. Machine-learning inference, CPU and V3D GPU compute (`tools/cnn-mnist/`, `tools/v3d-driver-port/csd_*.c`)
+
+*Run on the first GPU driver, which was removed in September 2026 together with `tools/v3d-driver-port/`;
+the results stand as measurements of the V3D.*
 
 The question was whether the Pi 4's V3D GPU can accelerate small neural-network inference under
 Phoenix. Answering it required bringing up V3D **compute** (CSD) for the first time — the winsys
