@@ -249,8 +249,8 @@ Phoenix → a RAM root comes up → lwip/genet gets a lease → **NFS takes over
   `lwip: genet…: link up`, a DHCP `OFFER`, then `nfs-fs: mounted 10.42.0.1:/ via
   v4` and a psh prompt.
 
-Once at psh, everything from the [SD tutorial's app section](TUTORIAL.md#6-the-showcase--what-to-try-and-how-to-start-it)
-works the same way (`startx`, `quakespasm`, `python3`, …).
+Once at psh, everything in the [User Guide](docs/USER-GUIDE.md) works the same way
+(`/bin/bash /bin/xfce-session`, `quakespasm`, `wifi status`, `python3`, …).
 
 > There's also a fully automated one-shot cycle for iteration:
 > `./scripts/test-cycle-netboot.sh --label mytest` (power-cycles the Pi, captures
@@ -302,7 +302,7 @@ paths each engine expects (the engines also run without data — menu/engine onl
 
 | Engine | Command on the Pi | Data path under the export |
 |---|---|---|
-| GLQuake | `quakespasm` | `usr/share/quake/id1/pak0.pak` (+ `config.cfg`) |
+| Quake (QuakeSpasm) | `quakespasm` | `usr/share/quake/id1/pak0.pak` (+ `config.cfg`) |
 | vkQuake | `vkquake` | same `usr/share/quake/id1` |
 | Quake II | `quake2` | `usr/share/quake2/baseq2/pak0.pak` |
 | Quake III | `quake3 +map q3dm1` | `usr/share/quake3/demoq3/{pak0.pk3,pak1.pk3,q3key}` |
@@ -315,11 +315,7 @@ sudo cp pak0.pak /srv/phoenix-rpi4-nfs/usr/share/quake/id1/
 
 The `quake2` and `quake3` launchers RAM-stage their assets to `/tmp` first, so
 they load fast even over NFS. (`stk` does **not** — it reads its asset roots in
-place and only puts its writable save dir in `/tmp`.) Two caveats over **netboot
-NFS specifically**:
-`q3dm7` intermittently wedges the GPU binner on some boots (reset-recovered), and
-SuperTuxKart's 194 MB of assets do not finish loading inside a ~5 minute window —
-boot from the SD card, where the assets are local, to try STK in-game.
+place and only puts its writable save dir in `/tmp`.) SuperTuxKart therefore loads more slowly over NFS than from the SD card.
 
 ---
 
