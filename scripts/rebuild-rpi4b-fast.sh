@@ -34,6 +34,16 @@ Options:
       (meson/ninja/mako/libdrm-dev/glslang) — install via
       scripts/bootstrap-linux-host.sh. The games themselves come from the ports
       stage, which --with-showcase forces into the stage list.
+  --gpu-legacy
+      build the PREVIOUS GPU stack instead of the default one, for A/B only
+      (same as RPI4B_GPU_LEGACY=1 in the environment): the in-process-winsys
+      game ports, the kdrive Xphoenix server, rpi4-v3d, rpi4-fb and the old
+      launchers, and none of rpi4-v3d-async/rpi4-kms/shmsrv at boot or the
+      new-stack ports. The default image carries only the new stack
+      (docs/gpu-new-lane/MIGRATION.md §3a/§7). Switching between the two is a
+      core change (the devices component list and the plo script follow the
+      knob): build with `--scope core --with-ports --with-showcase` (or
+      full-clean), never an `auto` project-only rebuild.
   --with-tests
       build phoenix-rtos-tests for aarch64 (incl. the libc Unity suite) via the
       build.sh `test` stage and stage the binaries into the rootfs so they can be
@@ -111,6 +121,16 @@ ports_only=0
 # build.sh, before the ext2 image is packed.
 with_showcase=0
 with_vkquake=0
+# GPU stack selection (GPU migration P1): 0 = the default stack (rpi4-v3d-async +
+# rpi4-kms + shmsrv at boot, mesa_drm, SDL KMSDRM, Xorg modesetting, Wayland),
+# 1 = the previous stack for A/B. Read by ports.yaml (`if: {{ bool(env.X) }}`),
+# user.plo.yaml, the devices component list, build-showcase-apps.sh and the image
+# checks, so it is normalised to exactly 0/1 here and passed to every one of them.
+# TODO(TD-24): the knob and the legacy stack go with P3.
+case "$(printf '%s' "${RPI4B_GPU_LEGACY:-}" | tr '[:upper:]' '[:lower:]')" in
+	''|0|n|no|false) gpu_legacy=0 ;;
+	*) gpu_legacy=1 ;;
+esac
 # Build variant (selects the boot script in user.plo.yaml via the RPI4B_VARIANT
 # env var):
 #   nfsroot (default) - mount the NFS export as root over the network (#153 T3 /
@@ -152,6 +172,9 @@ while [ "$#" -gt 0 ]; do
 			;;
 		--with-showcase)
 			with_showcase=1
+			;;
+		--gpu-legacy)
+			gpu_legacy=1
 			;;
 		--with-vkquake)
 			# Retained for compatibility only: the V3DV/Vulkan stack is part of the
@@ -427,6 +450,14 @@ printf 'Buildroot: %s\n' "${buildroot}"
 printf 'Target:    %s\n' "${target}"
 printf 'Scope:     %s\n' "${scope}"
 printf 'Variant:   %s\n' "${variant}"
+if [ "${gpu_legacy}" = 1 ]; then
+	printf 'GPU stack: LEGACY (RPI4B_GPU_LEGACY=1: in-process winsys, Xphoenix, rpi4-fb; A/B only)\n'
+else
+	printf 'GPU stack: default (rpi4-v3d-async + rpi4-kms + shmsrv at boot; mesa_drm, SDL KMSDRM, Xorg-drm, Wayland)\n'
+fi
+# Every child of this script (build.sh -> port_manager / image_builder / make, the
+# showcase and helper scripts, the image checks) reads the same normalised value.
+export RPI4B_GPU_LEGACY="${gpu_legacy}"
 if [ "${log_to_file}" = 1 ]; then
 	printf 'Logging:   USER (klog -> /var/log/messages, console quiet; RPI4_LOG_TO_FILE=1)\n'
 else
@@ -792,7 +823,7 @@ run_phoenix_build() {
 	local stages="$*"
 	printf 'Build:     ./phoenix-rtos-build/build.sh %s\n' "${stages}"
 	run_build_shell \
-		"set -euo pipefail; export PATH='${repo_root}/.venv/bin':'${toolchain_path}':\$PATH; cd '${buildroot}'; env ${log_to_file_env}${libc_trace_env}${libc_diag_env}${fs_diag_env}${kernel_diag_env}${gpu_libs_env}${showcase_env}RPI4B_DTB_PATH='${dtb_path}' RPI4B_VARIANT='${variant}' TARGET='${target}' ./phoenix-rtos-build/build.sh ${stages}"
+		"set -euo pipefail; export PATH='${repo_root}/.venv/bin':'${toolchain_path}':\$PATH; cd '${buildroot}'; env ${log_to_file_env}${libc_trace_env}${libc_diag_env}${fs_diag_env}${kernel_diag_env}${gpu_libs_env}${showcase_env}RPI4B_GPU_LEGACY='${gpu_legacy}' RPI4B_DTB_PATH='${dtb_path}' RPI4B_VARIANT='${variant}' TARGET='${target}' ./phoenix-rtos-build/build.sh ${stages}"
 
 	verify_libc_trace_state
 
@@ -969,7 +1000,9 @@ if [ "${variant}" = "sd" ]; then
 	# sources means a disagreement still fails. Note this is NOT `${with_showcase}`
 	# -- a `--scope project --variant sd` re-cut has that flag at 0 while re-packing
 	# a fully staged showcase rootfs, which is exactly how the demo image is re-cut.
-	if [ -e "${buildroot}/_fs/aarch64a72-generic-rpi4b/root/usr/bin/Xphoenix" ]; then
+	# The X server of either GPU stack marks a showcase tree.
+	if [ -e "${buildroot}/_fs/aarch64a72-generic-rpi4b/root/usr/bin/Xphoenix" ] ||
+		[ -e "${buildroot}/_fs/aarch64a72-generic-rpi4b/root/bin/Xorg-drm" ]; then
 		contents_expect=showcase
 	else
 		contents_expect=base

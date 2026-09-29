@@ -18,6 +18,12 @@
 #
 #   ./scripts/check-rootfs-complete.sh <rootfs-dir>
 #
+# The GPU programs depend on the image's GPU stack (GPU migration P1): the default
+# image ships the render/display servers and the *_drm programs; RPI4B_GPU_LEGACY=1
+# (the A/B image, rebuild-rpi4b-fast.sh --gpu-legacy) the in-process-winsys games
+# and Xphoenix. The lane comes from that variable, NOT from the tree: deriving it
+# from the tree would let a staging failure pass as "the other lane".
+#
 # Exit 0 only when every required path is present and non-empty.
 #
 # Copyright 2026 Phoenix Systems
@@ -34,15 +40,75 @@ root="${1:-}"
 # Required = the image is broken or a headline feature is missing without it.
 # Game DATA belongs here as much as the binaries: an engine with no data is not
 # a shipped game, and that is precisely the failure this script was written for.
+case "$(printf '%s' "${RPI4B_GPU_LEGACY:-}" | tr '[:upper:]' '[:lower:]')" in
+	''|0|n|no|false) gpu_legacy=0 ;;
+	*) gpu_legacy=1 ;;
+esac
+if [ "${gpu_legacy}" = 1 ]; then
+	# TODO(TD-24): the legacy GPU stack (A/B image only).
+	GPU_REQUIRED=(
+		usr/bin/Xphoenix
+		usr/bin/quakespasm
+		usr/bin/vkquake
+		usr/bin/yquake2
+		usr/bin/quake3e
+		usr/bin/supertuxkart
+	)
+	GPU_OPTIONAL=(
+		bin/stk
+		usr/bin/quake2
+		usr/bin/quake3
+	)
+else
+	# The servers are started at boot from loader.disk; the rootfs copies are the
+	# ones psh (and xfce-session / startx-drm when a server is missing) can run.
+	GPU_REQUIRED=(
+		sbin/rpi4-v3d-async
+		sbin/rpi4-kms
+		bin/shmsrv
+		bin/Xorg-drm
+		bin/startx-drm
+		etc/X11/xorg-drm.conf
+		usr/bin/quakespasm-drm
+		usr/bin/vkquake-drm
+		usr/bin/yquake2-drm
+		usr/bin/quake3e-drm
+		usr/bin/supertuxkart-drm
+		usr/bin/quake2-drm
+		usr/bin/quake3-drm
+		bin/vkq-drm
+		bin/stk-drm
+		bin/qs-drm
+		# the M9 lower-resolution launcher (build-rootfs-helpers.sh)
+		bin/game-res
+		# the plain command names (TD-26: copies of the -drm programs and launchers)
+		usr/bin/quakespasm
+		usr/bin/vkquake
+		usr/bin/quake2
+		usr/bin/quake3
+		bin/stk
+		bin/startx
+		bin/xfce-session
+	)
+	GPU_OPTIONAL=(
+		bin/startx_gpu
+		bin/eglx11-demo-x
+		bin/labwc
+		bin/foot
+		bin/labwc-desktop.sh
+		bin/xfce-desktop.sh
+		bin/thunar-wl
+		bin/dbus-daemon
+		bin/kmscube
+		bin/vkcube-drm
+		bin/drmprobe
+	)
+fi
+
 REQUIRED=(
 	bin/psh
 	bin/busybox
-	usr/bin/Xphoenix
-	usr/bin/quakespasm
-	usr/bin/vkquake
-	usr/bin/yquake2
-	usr/bin/quake3e
-	usr/bin/supertuxkart
+	"${GPU_REQUIRED[@]}"
 	usr/share/quake/id1/pak0.pak
 	# Shipped Quake settings live in autoexec.cfg, not config.cfg: quake.rc execs
 	# default.cfg -> config.cfg -> autoexec.cfg, so autoexec is read every start and
@@ -67,10 +133,8 @@ REQUIRED=(
 OPTIONAL=(
 	bin/xterm
 	bin/wmaker
-	bin/stk
+	"${GPU_OPTIONAL[@]}"
 	bin/ram-stage-play
-	usr/bin/quake2
-	usr/bin/quake3
 	bin/python3
 	bin/bash
 	bin/nano
@@ -80,7 +144,7 @@ OPTIONAL=(
 missing_req=0
 missing_opt=0
 
-printf '== rootfs completeness: %s ==\n' "${root}"
+printf '== rootfs completeness: %s (GPU stack: %s) ==\n' "${root}" "$([ "${gpu_legacy}" = 1 ] && echo legacy || echo default)"
 for p in "${REQUIRED[@]}"; do
 	if [ -s "${root}/${p}" ]; then
 		printf '  OK    %s\n' "${p}"
@@ -111,6 +175,12 @@ fi
 printf '\n'
 if [ "${missing_req}" -gt 0 ]; then
 	printf 'INCOMPLETE: %d required path(s) missing, %d optional.\n' "${missing_req}" "${missing_opt}"
+	if [ "${gpu_legacy}" = 0 ] && [ -e "${root}/usr/bin/Xphoenix" ]; then
+		printf 'GPU stack: this tree holds the LEGACY stack (usr/bin/Xphoenix). Built with\n'
+		printf 'RPI4B_GPU_LEGACY=1? Then check it with the same variable.\n'
+	elif [ "${gpu_legacy}" = 1 ] && [ -e "${root}/bin/Xorg-drm" ] && [ ! -e "${root}/usr/bin/Xphoenix" ]; then
+		printf 'GPU stack: this tree holds the DEFAULT stack (bin/Xorg-drm); unset RPI4B_GPU_LEGACY.\n'
+	fi
 	printf 'Game data missing? Run: ./scripts/stage-game-data.sh all   (local builds do NOT\n'
 	printf 'run it -- only the Dockerfile does, so a stale rootfs-overlay persists silently.)\n'
 	exit 1

@@ -21,6 +21,14 @@
 #   scripts/build-port.sh --incremental ncurses   # skip the clean re-extract
 #   scripts/build-port.sh 'xorg_server_drm[x11demo]'  # with USE flags (ports.yaml `use:`)
 #
+# Dependency resolution only (nothing is built): --dry, e.g. of a whole project ports.yaml
+# rendered with the current environment (its `if: {{ bool(env.X) }}` knobs), in a SCRATCH
+# buildroot -- port_manager records a dry run as installed in <buildroot>/_build/<target>/
+# .port_state, which in the image's buildroot would make the next real build skip ports:
+#
+#   RPI4B_BUILDROOT=<scratch> scripts/build-port.sh --dry --yaml <ports.yaml>
+#   RPI4B_BUILDROOT=<scratch> RPI4B_GPU_LEGACY=1 scripts/build-port.sh --dry --yaml <ports.yaml>
+#
 # Environment:
 #   RPI4B_BUILDROOT   buildroot to build in (default <repo>/.buildroot). A scratch
 #                     buildroot keeps a verification build out of the image's prefix,
@@ -45,16 +53,33 @@ ports_dir="${RPI4B_PORTS_DIR:-${repo_root}/sources/phoenix-rtos-ports}"
 venv_python="${repo_root}/.venv/bin/python3"
 
 clean=1
-if [ "${1:-}" = "--incremental" ]; then
-	clean=0
-	shift
-fi
+dry=0
+yaml=""
+while [ "$#" -gt 0 ]; do
+	case "$1" in
+		--incremental) clean=0; shift ;;
+		--dry) dry=1; clean=0; shift ;;
+		--yaml) yaml="${2:?--yaml needs a ports.yaml path}"; shift 2 ;;
+		*) break ;;
+	esac
+done
 
-if [ "$#" -eq 0 ]; then
-	echo "usage: $0 [--incremental] <port-name> [<port-name>...]" >&2
+if [ "$#" -eq 0 ] && [ -z "${yaml}" ]; then
+	echo "usage: $0 [--incremental] [--dry] <port-name> [<port-name>...]" >&2
+	echo "       $0 --dry --yaml <ports.yaml>" >&2
 	exit 2
 fi
 ports=("$@")
+if [ -n "${yaml}" ]; then
+	[ -f "${yaml}" ] || { echo "$0: no such ports.yaml: ${yaml}" >&2; exit 2; }
+	yaml="$(realpath "${yaml}")"
+	[ "${#ports[@]}" -eq 0 ] || { echo "$0: --yaml takes no port names" >&2; exit 2; }
+	[ "${dry}" = 1 ] || { echo "$0: --yaml is for --dry resolution only (a real image build is build.sh's)" >&2; exit 2; }
+fi
+if [ "${dry}" = 1 ] && [ "$(realpath -m "${buildroot}")" = "$(realpath -m "${repo_root}/.buildroot")" ]; then
+	echo "$0: --dry refuses the image's buildroot (it would record every port as built): set RPI4B_BUILDROOT to a scratch tree (scripts/make-scratch-buildroot.sh)" >&2
+	exit 2
+fi
 
 export PATH="${toolchain_path}:${repo_root}/.venv/bin:${PATH}"
 
@@ -118,7 +143,9 @@ fi
 # --- One-off ports.yaml listing the requested ports (deps resolved by port_manager) ---
 tmp_yaml="$(mktemp /tmp/build-port.XXXXXX.yaml)"
 trap 'rm -f "${tmp_yaml}"' EXIT
-{
+if [ -n "${yaml}" ]; then
+	cp "${yaml}" "${tmp_yaml}"
+else {
 	echo 'ports:'
 	for p in "${ports[@]}"; do
 		# name[flag,flag] -> `use: [flag, flag]`
@@ -126,10 +153,13 @@ trap 'rm -f "${tmp_yaml}"' EXIT
 		case "${p}" in *\[*\]) echo "    use: [${p#*\[}" | sed 's/,/, /g' ;; esac
 	done
 } > "${tmp_yaml}"
+fi
 
-echo ">> building ports [${ports[*]}] (ports_dir=${ports_dir})"
+dry_arg=()
+[ "${dry}" = 1 ] && dry_arg=(--dry)
+echo ">> $([ "${dry}" = 1 ] && echo "dry-resolving" || echo building) ports [${ports[*]:-${yaml}}] (ports_dir=${ports_dir})"
 GIT_DESC="$(cd ./phoenix-rtos-build && git describe --tags --abbrev=0 --match 'v[[:digit:]].[[:digit:]]*.[[:digit:]]*' 2>/dev/null || echo 'v3.3.1-0-g')"
 cd "${PREFIX_PROJECT}/phoenix-rtos-build/"
-PHOENIX_VER="${GIT_DESC}" "${venv_python}" ./port_manager.py build "${tmp_yaml}" "${ports_dir}"
+PHOENIX_VER="${GIT_DESC}" "${venv_python}" ./port_manager.py "${dry_arg[@]}" build "${tmp_yaml}" "${ports_dir}"
 
 echo ">> done."

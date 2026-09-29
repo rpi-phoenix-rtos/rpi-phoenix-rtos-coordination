@@ -27,6 +27,13 @@ set -uo pipefail
 # to a SKIP. rebuild-rpi4b-fast.sh derives it from the staged _fs tree, which is an
 # independent source, so a disagreement between tree and image still FAILS here.
 expect=showcase
+# The GPU programs to expect follow the image's GPU stack (GPU migration P1):
+# RPI4B_GPU_LEGACY=1 = the legacy A/B image (in-process winsys, Xphoenix), else the
+# default stack (the servers + the *_drm programs). rebuild-rpi4b-fast.sh exports it.
+case "$(printf '%s' "${RPI4B_GPU_LEGACY:-}" | tr '[:upper:]' '[:lower:]')" in
+	''|0|n|no|false) gpu_legacy=0 ;;
+	*) gpu_legacy=1 ;;
+esac
 args=()
 while [ $# -gt 0 ]; do
 	case "$1" in
@@ -73,7 +80,7 @@ dump() { rm -f "$TMP/x"; debugfs -R "dump /$1 $TMP/x" "$E2" >/dev/null 2>&1; [ -
 # clean. grep -c drains the pipe, so the pipeline exits 0.
 marker_count() { strings "$TMP/x" | grep -c -- "$1" || true; }
 
-echo "== required paths (expect: ${expect}) =="
+echo "== required paths (expect: ${expect}, GPU stack: $([ "${gpu_legacy}" = 1 ] && echo legacy || echo default)) =="
 # bin/wmsetbg: wmaker EXECS it to paint the root window (src/misc.c:953). Without
 #   it the GPU desktop is a black screen with a live cursor, which was reported as
 #   "no wmaker running" on 2026-09-04 when in fact the session was healthy.
@@ -81,13 +88,23 @@ echo "== required paths (expect: ${expect}) =="
 #   tool that settles an RGB-vs-BGR argument by looking at the screen.
 required_paths=(bin/psh)
 if [ "${expect}" = showcase ]; then
-	required_paths+=(usr/bin/quakespasm usr/bin/yquake2 usr/bin/quake3e usr/bin/vkquake
-	                 usr/bin/supertuxkart bin/python3 bin/bash bin/nano bin/mc
-	                 usr/bin/Xphoenix usr/share/quake/id1/pak0.pak
+	required_paths+=(bin/python3 bin/bash bin/nano bin/mc
+	                 usr/share/quake/id1/pak0.pak
 	                 usr/share/quake2/baseq2/pak0.pak
 	                 usr/share/quake3/demoq3/pak0.pk3 usr/share/quake3/demoq3/pak1.pk3
 	                 usr/share/quake3/demoq3/q3key
-	                 bin/wmsetbg bin/fbprobe)
+	                 bin/wmsetbg)
+	if [ "${gpu_legacy}" = 1 ]; then
+		# TODO(TD-24): the legacy GPU stack.
+		required_paths+=(usr/bin/quakespasm usr/bin/yquake2 usr/bin/quake3e usr/bin/vkquake
+		                 usr/bin/supertuxkart usr/bin/Xphoenix bin/fbprobe)
+	else
+		required_paths+=(sbin/rpi4-v3d-async sbin/rpi4-kms bin/shmsrv bin/Xorg-drm
+		                 usr/bin/quakespasm-drm usr/bin/yquake2-drm usr/bin/quake3e-drm
+		                 usr/bin/vkquake-drm usr/bin/supertuxkart-drm bin/qs-drm bin/game-res
+		                 usr/bin/quakespasm usr/bin/quake2 usr/bin/quake3 usr/bin/vkquake
+		                 bin/stk bin/startx bin/xfce-session)
+	fi
 fi
 for p in "${required_paths[@]}"; do
 	if dump "$p"; then printf '  OK   %-40s %s\n' "$p" "$(stat -c%s "$TMP/x")"
@@ -122,11 +139,25 @@ if [ "${expect}" != showcase ]; then
 fi
 if [ "${expect}" = showcase ]; then
 echo "== positive markers (fixes that must be present) =="
+if [ "${gpu_legacy}" = 1 ]; then
 # The V3D submit mutex: its failure fprintf string is unique to the fixed driver.
 if dump usr/bin/vkquake && [ "$(marker_count 'submits UNSERIALIZED')" -gt 0 ]; then
 	echo "  OK   v3d submit mutex present in vkquake"
 else
 	echo "  MISS v3d submit mutex marker absent from vkquake"; rc=1
+fi
+else
+# Each engine of the default stack prints its own banner; an old-stack engine staged
+# under the -drm name (or a failed relink) has none.
+for eng_spec in usr/bin/quakespasm-drm:quakespasm-drm usr/bin/yquake2-drm:quake2-drm \
+		usr/bin/quake3e-drm:quake3-drm usr/bin/vkquake-drm:vkquake-drm \
+		usr/bin/supertuxkart-drm:stk-drm; do
+	if dump "${eng_spec%%:*}" && [ "$(marker_count "${eng_spec#*:}: new GPU lane")" -gt 0 ]; then
+		echo "  OK   ${eng_spec%%:*} is the new-stack engine (banner '${eng_spec#*:}: new GPU lane')"
+	else
+		echo "  MISS ${eng_spec%%:*}: no '${eng_spec#*:}: new GPU lane' banner"; rc=1
+	fi
+done
 fi
 
 # The shipped game CONFIGS, not just their presence. check-rootfs-complete.sh
@@ -154,14 +185,17 @@ done
 echo "== negative markers (reverted code that must be ABSENT) =="
 # gl3_discardfb: the pre-swap Z/S discard, reverted 2026-09-03 (fork d5413235).
 # The cvar NAME string only exists in the binary if the code does.
-if dump usr/bin/yquake2; then
+# The default stack's yquake2-drm is a relink of the same engine objects.
+q2_engine=usr/bin/yquake2
+[ "${gpu_legacy}" = 1 ] || q2_engine=usr/bin/yquake2-drm
+if dump "${q2_engine}"; then
 	if [ "$(marker_count gl3_discardfb)" -gt 0 ]; then
-		echo "  FAIL yquake2 still contains gl3_discardfb (the reverted GPU-wedging discard)"; rc=1
+		echo "  FAIL ${q2_engine} still contains gl3_discardfb (the reverted GPU-wedging discard)"; rc=1
 	else
-		echo "  OK   yquake2 free of gl3_discardfb"
+		echo "  OK   ${q2_engine} free of gl3_discardfb"
 	fi
 else
-	echo "  MISS yquake2 not in image"; rc=1
+	echo "  MISS ${q2_engine} not in image"; rc=1
 fi
 
 fi  # expect = showcase

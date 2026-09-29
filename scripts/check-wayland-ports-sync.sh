@@ -62,6 +62,11 @@ MAP=(
 	"${T}/xfce-wayland/conf/labwc-xfce|xfce_wayland/files/conf/labwc-xfce"
 	"${T}/xfce-wayland/conf/xfconf|xfce_wayland/files/conf/xfconf"
 	"${T}/xfce-wayland/pi/xfce-desktop.sh|xfce_wayland/files/pi/xfce-desktop.sh"
+	# the one-command session /bin/xfce-session (GPU migration P1)
+	"${T}/xfce-wayland/pi/xfce-session|xfce_wayland/files/pi/xfce-session"
+	"${T}/xfce-wayland/pi/xfce-demo-loginctl|xfce_wayland/files/pi/xfce-demo-loginctl"
+	"${T}/xfce-wayland/conf/labwc-xfce-demo|xfce_wayland/files/conf/labwc-xfce-demo"
+	"${T}/xfce-wayland/conf/xfce-demo|xfce_wayland/files/conf/xfce-demo"
 	"${T}/xfce-wayland/bin/msgfmt|xfce_wayland/files/bin/msgfmt"
 	"${T}/xfce-wayland/tools/pngify-icon-theme.py|xfce_wayland/files/tools/pngify-icon-theme.py"
 	# labwc_desktop

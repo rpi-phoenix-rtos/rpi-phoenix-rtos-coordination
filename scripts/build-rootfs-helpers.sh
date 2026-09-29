@@ -31,6 +31,11 @@
 #   /bin/stk             tools/supertuxkart-port/stk-launcher.c
 #                        set SUPERTUXKART_{DATADIR,ASSETS_DIR,SAVEDIR}, seed a
 #                        first-run profile, then exec supertuxkart at 1080p.
+#   /bin/game-res        tools/gpu-lane/m9-res/game-res.c   (default image only)
+#                        start a GPU-stack game in a lower fullscreen mode that
+#                        rpi4-kms scales to the screen: `game-res stk|qs|q2|q3|vkq
+#                        [WxH] [args...]` (docs/gpu-new-lane/M9-scaled-fullscreen.md).
+#                        It execs the ports' -drm programs.
 #   /usr/bin/pty-run     tools/pty-run/pty-run.c
 #                        getty-style /dev/ptmx forwarder, for programs that want
 #                        their own controlling terminal. Not a game helper, but the
@@ -58,6 +63,15 @@
 #   SHOWCASE_STAGE_DIR / --stage-dir   rootfs staging tree
 #                                      (default $RPI4B_BUILDROOT/_fs/<target>/root)
 #   RPI4B_BUILDROOT, RPI4B_TARGET, PHOENIX_AARCH64_TOOLCHAIN
+#   RPI4B_GPU_LEGACY                   1 = also the legacy GPU stack's launchers
+#                                      (quake2, quake3, stk) and fbprobe. Unset/0
+#                                      (the default image): skipped -- the *_drm
+#                                      ports install those names (TD-26), and this
+#                                      script runs AFTER the ports stage, so it
+#                                      would overwrite them with launchers that
+#                                      exec engines the image does not have.
+#                                      game-res is built only in the default image
+#                                      (the programs it execs exist only there).
 #
 # Copyright 2026 Phoenix Systems
 # SPDX-License-Identifier: BSD-3-Clause
@@ -105,19 +119,16 @@ die()  { printf '\033[0;31m[helpers] ERROR\033[0m %s\n' "$*" >&2; exit 1; }
 [ -f "$sysroot/lib/libphoenix.a" ] \
 	|| die "no built sysroot at $sysroot (expected lib/libphoenix.a). Run the core build first — refusing to fall back to the toolchain's hand-copied libphoenix bundle."
 
+case "$(printf '%s' "${RPI4B_GPU_LEGACY:-}" | tr '[:upper:]' '[:lower:]')" in
+	''|0|n|no|false) gpu_legacy=0 ;;
+	*) gpu_legacy=1 ;;
+esac
+
 # "<source>|<install path under the staging tree>"
 helpers=(
+	# ram-stage-play: both GPU stacks' quake2/quake3 launchers exec it.
 	"tools/ram-stage/ram-stage-play.c|bin/ram-stage-play"
-	"tools/yquake2-port/quake2-launcher.c|usr/bin/quake2"
-	"tools/quake3-port/quake3-launcher.c|usr/bin/quake3"
-	"tools/supertuxkart-port/stk-launcher.c|bin/stk"
 	"tools/pty-run/pty-run.c|usr/bin/pty-run"
-	# Diagnostic: writes known bytes to /dev/fb0 so the framebuffer's CHANNEL
-	# ORDER can be read off the screen instead of inferred. plo asks for
-	# SET_PIXEL_ORDER=1 (RGB) and the X DDX trusts that, while the V3D scanout
-	# winsys swaps R/B to look right and Window Maker's blue-grey root came out
-	# mauve -- three sources that cannot all be correct (2026-09-04).
-	"tools/fbprobe/fbprobe.c|bin/fbprobe"
 	# Diagnostic: cached vs uncached store cost for BO memory. STK spends ~83% of
 	# a ~1000 ms frame on CPU work outside the V3D driver, and the winsys maps
 	# every BO MAP_UNCACHED by default; this separates streaming bandwidth from
@@ -164,6 +175,25 @@ helpers=(
 	"tools/pwm-dma-probe/pwmdma.c|bin/pwmdma"
 	"tools/audio-armtrials/armtrials.c|bin/armtrials"
 )
+if [ "${gpu_legacy}" = 1 ]; then
+	# TODO(TD-24): the legacy GPU stack's launchers (exec /usr/bin/yquake2, quake3e,
+	# supertuxkart) and its /dev/fb0 probe.
+	helpers+=(
+		"tools/yquake2-port/quake2-launcher.c|usr/bin/quake2"
+		"tools/quake3-port/quake3-launcher.c|usr/bin/quake3"
+		"tools/supertuxkart-port/stk-launcher.c|bin/stk"
+		# Diagnostic: writes known bytes to /dev/fb0 so the framebuffer's CHANNEL
+		# ORDER can be read off the screen instead of inferred. plo asks for
+		# SET_PIXEL_ORDER=1 (RGB) and the X DDX trusts that, while the V3D scanout
+		# winsys swaps R/B to look right and Window Maker's blue-grey root came out
+		# mauve -- three sources that cannot all be correct (2026-09-04).
+		# TODO(TD-27): /dev/fb0 exists only in the legacy image.
+		"tools/fbprobe/fbprobe.c|bin/fbprobe"
+	)
+else
+	# M9: a lower fullscreen mode for each GPU-stack game (execs the ports' -drm programs).
+	helpers+=("tools/gpu-lane/m9-res/game-res.c|bin/game-res")
+fi
 
 # Data files copied verbatim (not compiled): "<source>|<install path>|<mode>".
 # Kept in this script because it already owns "small in-repo things that belong in
