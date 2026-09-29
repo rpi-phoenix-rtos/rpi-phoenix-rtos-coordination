@@ -10,48 +10,26 @@
 # they were being carried forward by hand from the previous NFS export. This script
 # is their build home.
 #
-# The ENGINES are framework ports (ports.yaml -> /usr/bin/{quakespasm,yquake2,
-# quake3e,vkquake,supertuxkart}). But psh cannot set environment variables and
-# cannot chain commands, while three of the engines need env vars and/or a long
-# fixed argv to find their data and match the 1920x1080-only /dev/fb0. That glue
-# lives in tiny static C launchers under tools/*, and until now each was built by
-# an ad-hoc one-off (or, for stk, a script that wrote straight into the live NFS
-# export). This is the single place that builds all of them:
+# The games are framework ports (the *_drm ports, ports.yaml), which also build and
+# install their own launchers (quake2, quake3, stk, qs-drm, vkq-drm). psh cannot set
+# environment variables and cannot chain commands, so the remaining glue lives in tiny
+# static C programs under tools/*. This is the single place that builds them:
 #
 #   /bin/ram-stage-play  tools/ram-stage/ram-stage-play.c
 #                        copy an asset tree into the /tmp RAM disk, then exec the
 #                        engine against the RAM copy (NFS reads are latency-bound;
-#                        ~20x per scattered read). Used by quake2 + quake3 below.
-#   /usr/bin/quake2      tools/yquake2-port/quake2-launcher.c
-#                        RAM-stage /usr/share/quake2, then yquake2 with the
-#                        fb-native custom video mode + demo1.
-#   /usr/bin/quake3      tools/quake3-port/quake3-launcher.c
-#                        RAM-stage /usr/share/quake3, then quake3e with
-#                        fs_basepath/fs_game pointed at the RAM copy.
-#   /bin/stk             tools/supertuxkart-port/stk-launcher.c
-#                        set SUPERTUXKART_{DATADIR,ASSETS_DIR,SAVEDIR}, seed a
-#                        first-run profile, then exec supertuxkart at 1080p.
-#   /bin/game-res        tools/gpu-lane/m9-res/game-res.c   (default image only)
-#                        start a GPU-stack game in a lower fullscreen mode that
-#                        rpi4-kms scales to the screen: `game-res stk|qs|q2|q3|vkq
-#                        [WxH] [args...]` (docs/gpu-new-lane/M9-scaled-fullscreen.md).
-#                        It execs the ports' -drm programs.
+#                        ~20x per scattered read). The quake2 and quake3 launchers exec it.
+#   /bin/game-res        tools/gpu-lane/m9-res/game-res.c
+#                        start a game in a lower fullscreen mode that rpi4-kms scales
+#                        to the screen: `game-res stk|qs|q2|q3|vkq [WxH] [args...]`
+#                        (docs/gpu-new-lane/M9-scaled-fullscreen.md). It execs the
+#                        ports' -drm programs.
 #   /usr/bin/pty-run     tools/pty-run/pty-run.c
 #                        getty-style /dev/ptmx forwarder, for programs that want
-#                        their own controlling terminal. Not a game helper, but the
-#                        same class of thing: a coord-repo tool the export used to
-#                        be hand-fed.
+#                        their own controlling terminal.
+#   + the diagnostics listed in helpers=() below.
 #
-# quakespasm and vkquake need no launcher and get none: their Phoenix glue
-# (ports/{quakespasm,vkquake}/glue/pl_phoenix_main.c, wait_for_gamedata()) probes
-# /ramtmp/quake, /tmp/quake, /usr/share/quake, /opt/quake and / for id1/pak0.pak
-# and takes an optional `-basedir <dir>` override, so `quakespasm` / `vkquake` with
-# no arguments already finds the staged data. The old /bin/quakespasm,
-# /bin/quakespasm-sdl and /bin/vkquake on the NFS export were not wrappers at all —
-# they were the ad-hoc tools/*-port ENGINE builds, now superseded by the ports'
-# /usr/bin/quakespasm and /usr/bin/vkquake.
-#
-# All four are static aarch64-phoenix ELFs built with the same .toolchain gcc as
+# All are static aarch64-phoenix ELFs built with the same toolchain and sysroot as
 # the engines, so they are ABI-consistent with them. Nothing here touches the NFS
 # export: the staging tree is the same _fs/<target>/root that the ext2 packer and
 # sync-netboot-tree.sh both consume, so one build reaches both variants.
@@ -63,15 +41,6 @@
 #   SHOWCASE_STAGE_DIR / --stage-dir   rootfs staging tree
 #                                      (default $RPI4B_BUILDROOT/_fs/<target>/root)
 #   RPI4B_BUILDROOT, RPI4B_TARGET, PHOENIX_AARCH64_TOOLCHAIN
-#   RPI4B_GPU_LEGACY                   1 = also the legacy GPU stack's launchers
-#                                      (quake2, quake3, stk) and fbprobe. Unset/0
-#                                      (the default image): skipped -- the *_drm
-#                                      ports install those names (TD-26), and this
-#                                      script runs AFTER the ports stage, so it
-#                                      would overwrite them with launchers that
-#                                      exec engines the image does not have.
-#                                      game-res is built only in the default image
-#                                      (the programs it execs exist only there).
 #
 # Copyright 2026 Phoenix Systems
 # SPDX-License-Identifier: BSD-3-Clause
@@ -105,7 +74,7 @@ stage_dir="${SHOWCASE_STAGE_DIR:-${buildroot}/_fs/${target}/root}"
 while [ "$#" -gt 0 ]; do
 	case "$1" in
 		--stage-dir) shift; stage_dir="${1:?--stage-dir needs a value}" ;;
-		-h|--help) sed -n '2,45p' "${BASH_SOURCE[0]}"; exit 0 ;;
+		-h|--help) sed -n '2,46p' "${BASH_SOURCE[0]}"; exit 0 ;;
 		*) printf 'error: unknown option: %s\n' "$1" >&2; exit 2 ;;
 	esac
 	shift
@@ -119,22 +88,11 @@ die()  { printf '\033[0;31m[helpers] ERROR\033[0m %s\n' "$*" >&2; exit 1; }
 [ -f "$sysroot/lib/libphoenix.a" ] \
 	|| die "no built sysroot at $sysroot (expected lib/libphoenix.a). Run the core build first — refusing to fall back to the toolchain's hand-copied libphoenix bundle."
 
-case "$(printf '%s' "${RPI4B_GPU_LEGACY:-}" | tr '[:upper:]' '[:lower:]')" in
-	''|0|n|no|false) gpu_legacy=0 ;;
-	*) gpu_legacy=1 ;;
-esac
-
 # "<source>|<install path under the staging tree>"
 helpers=(
-	# ram-stage-play: both GPU stacks' quake2/quake3 launchers exec it.
+	# ram-stage-play: the quake2/quake3 launchers exec it.
 	"tools/ram-stage/ram-stage-play.c|bin/ram-stage-play"
 	"tools/pty-run/pty-run.c|usr/bin/pty-run"
-	# Diagnostic: cached vs uncached store cost for BO memory. STK spends ~83% of
-	# a ~1000 ms frame on CPU work outside the V3D driver, and the winsys maps
-	# every BO MAP_UNCACHED by default; this separates streaming bandwidth from
-	# per-store latency, which is the distinction that decides the hypothesis
-	# (2026-09-08, docs/misc/2026-09-08-stk-frame-budget.md).
-	"tools/v3dmemprobe/v3dmemprobe.c|bin/v3dmemprobe"
 	# Diagnostic: run a program and sample SoC temperature + the VideoCore throttle
 	# bitmask while it runs. The stability evidence is a large sample of SHORT runs;
 	# a presentation may run a game for tens of minutes, and throttling would show
@@ -175,25 +133,8 @@ helpers=(
 	"tools/pwm-dma-probe/pwmdma.c|bin/pwmdma"
 	"tools/audio-armtrials/armtrials.c|bin/armtrials"
 )
-if [ "${gpu_legacy}" = 1 ]; then
-	# TODO(TD-24): the legacy GPU stack's launchers (exec /usr/bin/yquake2, quake3e,
-	# supertuxkart) and its /dev/fb0 probe.
-	helpers+=(
-		"tools/yquake2-port/quake2-launcher.c|usr/bin/quake2"
-		"tools/quake3-port/quake3-launcher.c|usr/bin/quake3"
-		"tools/supertuxkart-port/stk-launcher.c|bin/stk"
-		# Diagnostic: writes known bytes to /dev/fb0 so the framebuffer's CHANNEL
-		# ORDER can be read off the screen instead of inferred. plo asks for
-		# SET_PIXEL_ORDER=1 (RGB) and the X DDX trusts that, while the V3D scanout
-		# winsys swaps R/B to look right and Window Maker's blue-grey root came out
-		# mauve -- three sources that cannot all be correct (2026-09-04).
-		# TODO(TD-27): /dev/fb0 exists only in the legacy image.
-		"tools/fbprobe/fbprobe.c|bin/fbprobe"
-	)
-else
-	# M9: a lower fullscreen mode for each GPU-stack game (execs the ports' -drm programs).
-	helpers+=("tools/gpu-lane/m9-res/game-res.c|bin/game-res")
-fi
+# M9: a lower fullscreen mode for each game (execs the ports' -drm programs).
+helpers+=("tools/gpu-lane/m9-res/game-res.c|bin/game-res")
 
 # Data files copied verbatim (not compiled): "<source>|<install path>|<mode>".
 # Kept in this script because it already owns "small in-repo things that belong in

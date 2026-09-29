@@ -19,9 +19,8 @@
 #                 Docker build matches the known-good host environment. Change
 #                 deliberately; a different LTS may shift apt package names / meson /
 #                 gcc and break the toolchain build.
-#   REPO_BASE     git base for the org repos (coord + 16 siblings + quakespasm +
-#                 lwip forks). Default: public GitHub org rpi-phoenix-rtos. (mesa is
-#                 NOT a fork — upstream Mesa @ a tag + patches/mesa/, see bootstrap.)
+#   REPO_BASE     git base for the org repos (coord + 16 siblings + the game and
+#                 lwip forks). Default: public GitHub org rpi-phoenix-rtos.
 #   UPSTREAM_BASE fallback remote; also the org (self-contained set).
 #   PAK0_URL      URL of the Quake SHAREWARE data (freely redistributable). Default:
 #                 the official quake106.zip; the build extracts id1/pak0.pak from it
@@ -80,9 +79,8 @@ RUN apt-get update \
 RUN git clone "${REPO_BASE}/rpi-phoenix-rtos-coordination.git" /build/phoenix-rpi
 WORKDIR /build/phoenix-rpi
 
-# 2. Bootstrap: install all Ubuntu packages, clone the 16 sibling repos + quakespasm
-#    + the lwip library + the Pi firmware, fetch upstream Mesa @ the pinned tag and
-#    apply patches/mesa/, and build the cross toolchain.
+# 2. Bootstrap: install all Ubuntu packages, clone the 16 sibling repos + the game
+#    forks + the lwip library + the Pi firmware, and build the cross toolchain.
 #    FORK_BASE/UPSTREAM_BASE point the clones at REPO_BASE (GitHub, or a host server).
 RUN PROJECT_DIR=/build/phoenix-rpi \
     PHOENIX_FORK_BASE="${REPO_BASE}" \

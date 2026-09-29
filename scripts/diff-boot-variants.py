@@ -14,7 +14,7 @@ missing what. Nothing is built; it only reads the template.
   ./scripts/diff-boot-variants.py [--yaml <path>] [--verbose] [--order a,b,c]
 
 The environment is passed to the template, so knobs render as in a build, e.g.
-`RPI4B_GPU_LEGACY=1 ./scripts/diff-boot-variants.py`. Exits 1 if a program name is
+`RPI4_LOG_TO_FILE=1 ./scripts/diff-boot-variants.py`. Exits 1 if a program name is
 launched twice in one variant (plo registers one alias per name: a duplicate
 bricks that boot) or if --order names programs that start out of that order.
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# check-gpu-stack-image.sh — the P1 image gate of the GPU migration
-# (docs/gpu-new-lane/MIGRATION.md §7): does a built default image carry the GPU
-# stack, only that stack, and start its servers at boot?
+# check-gpu-stack-image.sh — the image gate of the GPU migration
+# (docs/gpu-new-lane/MIGRATION.md §7, P3-removal.md): does a built image carry the GPU
+# stack, nothing of the first (deleted) stack, and start its servers at boot?
 #
 #   ./scripts/check-gpu-stack-image.sh [--root <rootfs-dir>] [--loader <loader.disk>]
 #
@@ -15,12 +15,13 @@
 #   1. loader.disk: the three servers are in the boot blob (their ready-line format
 #      strings), the rpi4-kms build is the one with the -G wait and the M9 scaled
 #      modes (stale-core hazard — an `auto` rebuild after a committed devices change
-#      ships the old one), and the legacy boot pieces (rpi4-fb) are not.
+#      ships the old one), and rpi4-fb (/dev/fb0) is not.
 #   2. rootfs: the servers, the new-stack programs, the plain command names and
 #      /bin/game-res; each plain name is the new-stack program or launcher (cmp) or
 #      its wrapper.
-#   3. rootfs: no file only the legacy stack produces (the prune list of
-#      build-showcase-apps.sh; a stale one means the prune did not run).
+#   3. rootfs: none of the first stack's program files. Nothing builds them any more,
+#      so one present is a stale file of an old build in the persistent staging tree
+#      (or a hand-staged NFS export): delete it, or make a pristine export.
 #   4. rootfs: the old stack's strings in any ELF under bin sbin usr/bin usr/sbin
 #      usr/lib: `v3d-winsys:`, `phxgl`, `V3DV_PHOENIX`, `/dev/v3d-srv`,
 #      `RPI4FB_GETMODE` and `/dev/fb0` = 0. `grep -a -c`, never -q (a binary
@@ -68,14 +69,14 @@ else
 		if [ "${n:-0}" -ge 1 ]; then ok "${spec#*|} in loader.disk"; else fail "${spec#*|} NOT in loader.disk ('${spec%%|*}')"; fi
 	done
 	n=$(count "registered /dev/fb0" "${loader}")
-	if [ "${n:-0}" = 0 ]; then ok "rpi4-fb not in loader.disk"; else fail "rpi4-fb is in loader.disk (a legacy boot script?)"; fi
+	if [ "${n:-0}" = 0 ]; then ok "rpi4-fb not in loader.disk"; else fail "rpi4-fb is in loader.disk (a stale boot script?)"; fi
 fi
 
 echo "== 2. the GPU stack in the rootfs: ${root} =="
 for p in sbin/rpi4-v3d-async sbin/rpi4-kms bin/shmsrv \
 	usr/bin/quakespasm-drm bin/qs-drm usr/bin/yquake2-drm usr/bin/quake2-drm usr/bin/quake3e-drm \
 	usr/bin/quake3-drm usr/bin/vkquake-drm bin/vkq-drm usr/bin/supertuxkart-drm bin/stk-drm \
-	bin/Xorg-drm bin/Xorg-drm-noshim bin/startx-drm bin/eglx11-demo-x etc/X11/xorg-drm.conf \
+	bin/Xorg-drm bin/startx-drm bin/eglx11-demo-x etc/X11/xorg-drm.conf \
 	bin/labwc bin/foot bin/labwc-desktop.sh bin/xfce-desktop.sh bin/thunar-wl bin/xfce4-panel \
 	bin/xfdesktop bin/dbus-daemon usr/lib/xfce-demo/xfce-session usr/lib/xfce-demo/bin/loginctl \
 	bin/kmscube bin/vkcube-drm bin/drmprobe bin/game-res; do
@@ -88,7 +89,7 @@ for pair in usr/bin/quakespasm:bin/qs-drm usr/bin/quake2:usr/bin/quake2-drm \
 	if [ -s "${root}/${name}" ] && cmp -s "${root}/${name}" "${root}/${prog}"; then
 		ok "${name} = ${prog}"
 	else
-		fail "${name} is not ${prog} (missing, or another program: the legacy launcher?)"
+		fail "${name} is not ${prog} (missing, or another program: a stale launcher?)"
 	fi
 done
 for spec in "bin/startx|exec /bin/bash /bin/startx-drm" "bin/startx_gpu|exec /bin/bash /bin/startx-drm" \
@@ -108,19 +109,20 @@ for spec in usr/bin/quakespasm-drm:quakespasm-drm usr/bin/yquake2-drm:quake2-drm
 	if [ "$(count "${spec#*:}: new GPU lane" "${f}")" -ge 1 ]; then ok "${spec%%:*} banner"; else fail "${spec%%:*} has no '${spec#*:}: new GPU lane' banner"; fi
 done
 
-echo "== 3. no legacy-only file =="
-# = build-showcase-apps.sh legacy_gpu_files (keep the two lists together).
+echo "== 3. no file of the first GPU stack =="
+# The kdrive X server, the old engines, the glamor X daemon, the GL-in-X client, xlaunch,
+# the /dev/fb0 probe, the old GPU daemon and the /dev/fb0 server.
 for p in usr/bin/Xphoenix usr/bin/yquake2 usr/bin/quake3e usr/bin/supertuxkart \
 	bin/Xphoenix-glamor-daemon bin/gl-x11-window-daemon bin/pl_phoenix_xlaunch bin/fbprobe \
 	sbin/rpi4-v3d sbin/rpi4-fb; do
-	if [ -e "${root}/${p}" ] || [ -L "${root}/${p}" ]; then fail "${p} present (legacy stack; the stage-phase prune did not run?)"; else ok "${p} absent"; fi
+	if [ -e "${root}/${p}" ] || [ -L "${root}/${p}" ]; then fail "${p} present (a stale file of the deleted first stack: remove it)"; else ok "${p} absent"; fi
 done
 
 echo "== 4. old-stack strings in the rootfs ELFs =="
 # Known exceptions: reported as NOTE, not counted. Each has a TD and a plan.
 #   bin/hevc-play  (TD-27) rpivid decoder writing /dev/fb0; built by hand from
 #                  tools/hevc-decode, not by the image build: port it to a KMS dumb
-#                  buffer before P3.
+#                  buffer, then delete video/rpi4-fb.
 allow_fb0=(bin/hevc-play)
 elves=()
 while IFS= read -r -d '' f; do

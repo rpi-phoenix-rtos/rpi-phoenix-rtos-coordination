@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2026 Phoenix Systems. Author: Witold Bołt.
-# Build recipe for the vkQuake Phoenix port (GPL-2.0-or-later); see COPYING.
+# SPIR-V generator for the vkquake_drm port (GPL-2.0-or-later); see COPYING.
 """Generate the embedded-SPIR-V C arrays vkQuake's renderer references at link
 (world_vert_spv, alias_frag_spv, *_comp_spv, ...) for the aarch64-phoenix build.
 
@@ -36,8 +36,8 @@ Two modes, auto-selected:
           the link/scaffold green; re-run this generator with glslang on PATH to swap
           in real bytes with no other change.
 
-Output: one C file (default tools/vkquake-port/vkquake_shaders.c) defining all the
-*_spv / *_spv_size arrays. Add it to the build (build-vkquake-phoenix.py picks it up).
+Output: one C file (default: the vkquake_drm port's glue/vkquake_shaders.c, which that
+port compiles) defining all the *_spv / *_spv_size arrays.
 
 Usage: python3 gen-vkquake-shaders.py [out.c]
 """
@@ -45,7 +45,7 @@ import os, re, struct, subprocess, sys, shutil
 
 ROOT    = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 SHADERS = f"{ROOT}/external/vkquake/Shaders"
-OUT     = sys.argv[1] if len(sys.argv) > 1 else f"{ROOT}/tools/vkquake-port/vkquake_shaders.c"
+OUT     = sys.argv[1] if len(sys.argv) > 1 else f"{ROOT}/sources/phoenix-rtos-ports/vkquake_drm/glue/vkquake_shaders.c"
 
 # file-extension -> symbol-suffix (matches Shaders/compile.sh)
 EXT_SUFFIX = {".vert": "_vert", ".frag": "_frag", ".comp": "_comp"}
