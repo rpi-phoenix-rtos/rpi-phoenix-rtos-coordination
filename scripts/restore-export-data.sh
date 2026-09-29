@@ -10,7 +10,8 @@
 #   usr/share/m10         the M10 video test clips (tools/gpu-lane/video-player/gen-clips.sh)
 #
 # Each path is copied only when it is absent from the new export and present in the backup;
-# anything else is reported, not guessed. Files that turn out to be ELF are refused.
+# anything else is reported, not guessed. An ELF file is never restored: a path that is one is
+# refused, and one inside a restored directory is removed from the copy and named.
 #
 # Usage: scripts/restore-export-data.sh [--dry-run]
 #
@@ -38,8 +39,8 @@ for p in "${PATHS[@]}"; do
 		echo "keep    ${p}: already in the new export"
 		continue
 	fi
-	if sudo -n find "${BAK}/${p}" -type f -exec head -c 4 {} \; 2>/dev/null | grep -aq $'\x7fELF'; then
-		echo "REFUSE  ${p}: contains an ELF file (executables come from the build)" >&2
+	if [ -f "${BAK}/${p}" ] && sudo -n head -c 4 "${BAK}/${p}" | grep -aq $'\x7fELF'; then
+		echo "REFUSE  ${p}: an ELF file (executables come from the build)" >&2
 		rc=1
 		continue
 	fi
@@ -49,6 +50,15 @@ for p in "${PATHS[@]}"; do
 	fi
 	sudo -n mkdir -p "$(dirname "${EXP}/${p}")"
 	sudo -n cp -a "${BAK}/${p}" "${EXP}/${p}"
+	# a directory keeps its data; any executable inside is removed from the copy, and named
+	if [ -d "${EXP}/${p}" ]; then
+		while IFS= read -r -d '' f; do
+			if sudo -n head -c 4 "${f}" | grep -aq $'\x7fELF'; then
+				sudo -n rm -f "${f}"
+				echo "skip    ${f#"${EXP}/"}: ELF (executables come from the build)"
+			fi
+		done < <(sudo -n find "${EXP}/${p}" -type f -print0)
+	fi
 	echo "restore ${p}"
 done
 exit "${rc}"
