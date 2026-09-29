@@ -1,5 +1,9 @@
 # BCM43455 firmware blobs — provenance, licensing, staging
 
+> **SUPERSEDED 2026-09-30** by [`docs/misc/2026-09-30-wifi-in-image.md`](../misc/2026-09-30-wifi-in-image.md):
+> the image no longer compiles the blobs in; `rpi4-wifi` reads them from `/lib/firmware/brcm/`,
+> fetched from linux-firmware at a pinned commit by `scripts/fetch-wifi-firmware.sh`.
+>
 > **STATUS (2026-06-26): reference doc, still ACTIVE.** WiFi is parked at the #91 firmware-
 > execution gate; this provenance/licensing/staging reference is unchanged and still valid.
 

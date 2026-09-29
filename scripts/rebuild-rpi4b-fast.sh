@@ -441,10 +441,30 @@ if ! run_build_shell "[ -f '${dtb_path}' ]"; then
 	"${repo_root}/scripts/prepare-rpi4b-dtb.sh"
 fi
 
-# Regenerate the embedded WiFi firmware C array if missing or stale.
-# Emits a zero-length stub if .firmware/ isn't populated, so the lwip
-# build keeps working for non-WiFi developers.
-"${repo_root}/scripts/gen-wifi-fw-c.sh"
+# WiFi firmware (BCM43455; Cypress licence, never in git): fetched from
+# linux-firmware at a pinned commit, sha256-verified, cached in .firmware/ (so
+# later builds are offline) and staged into the rpi4b rootfs overlay as
+# /lib/firmware, where the rpi4-wifi daemon reads it at boot. No network and no
+# cache: a warning, and the image builds without WiFi. A checksum mismatch stops
+# the build. (This replaces gen-wifi-fw-c.sh here: the driver no longer compiles
+# the firmware in, and nothing else in the image build used the arrays.)
+if [ "${target}" = "aarch64a72-generic-rpi4b" ]; then
+	if ! "${repo_root}/scripts/fetch-wifi-firmware.sh"; then
+		die "WiFi firmware failed verification (see [wifi-fw] above); refusing to build an image with it"
+	fi
+	# The overlay reaches the rootfs only in the `fs` stage. A stage list without
+	# it (the `auto` fast path: project image) keeps whatever _fs/ already holds.
+	if [[ " ${build_args[*]} " != *" fs "* ]] &&
+	   [ -f "${repo_root}/sources/phoenix-rtos-project/_projects/${target}/rootfs-overlay/lib/firmware/brcm/brcmfmac43455-sdio.bin" ] &&
+	   ! run_build_shell "[ -f '${buildroot}/_fs/${target}/root/lib/firmware/brcm/brcmfmac43455-sdio.bin' ]"; then
+		printf 'warning: the WiFi firmware is staged in the overlay but not in %s/_fs/%s/root,
+' "${buildroot}" "${target}" >&2
+		printf '         and this stage list (%s) has no `fs` stage to copy it: this image has
+' "${build_args[*]}" >&2
+		printf '         no WiFi. Rebuild once with --scope project (or core) to apply the overlay.
+' >&2
+	fi
+fi
 
 # --scope full-clean: wipe the caches that live OUTSIDE the buildroot.
 #
