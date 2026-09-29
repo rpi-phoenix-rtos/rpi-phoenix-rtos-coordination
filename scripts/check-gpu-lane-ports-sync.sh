@@ -50,8 +50,6 @@ MAP=(
 	"${T}/sdl2-drm/gamedrm/gamedrm_hooks.c|sdl2_kmsdrm/gamedrm/gamedrm_hooks.c"
 	"${T}/sdl2-drm/gamedrm/check-swap-order.sh|sdl2_kmsdrm/gamedrm/check-swap-order.sh"
 	# the game clones
-	"@quakespasm/patches|quakespasm_drm/patches"
-	"@quakespasm/glue|quakespasm_drm/glue"
 	"tools/yquake2-port/quake2-launcher.c|yquake2_drm/glue/quake2-launcher.c"
 	"tools/quake3-port/quake3-launcher.c|quake3_drm/glue/quake3-launcher.c"
 	"tools/supertuxkart-port/stk-launcher.c|supertuxkart_drm/glue/stk-launcher.c"

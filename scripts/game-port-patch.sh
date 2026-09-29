@@ -34,9 +34,10 @@ PORTS="$ROOT/sources/phoenix-rtos-ports"
 EXT="$ROOT/external"
 
 # port dir | fork clone under external/ | patch file name
+# (vkquake_drm is not here: its patches are split per fix and kept in the port itself;
+# the fork's single patch fed the /dev/fb0 vkquake port deleted in GPU migration P3.)
 GAMES=(
-	"quakespasm|quakespasm|0001-quakespasm-phoenix-v3d-single-elf.patch"
-	"vkquake|vkquake|0001-vkquake-phoenix-v3dv-single-elf.patch"
+	"quakespasm_drm|quakespasm|0001-quakespasm-phoenix-v3d-single-elf.patch"
 	"yquake2|yquake2|0001-single-elf-static-link.patch"
 	"quake3|quake3e|0001-quake3e-phoenix-single-elf.patch"
 )

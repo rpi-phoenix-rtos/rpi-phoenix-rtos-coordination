@@ -27,23 +27,10 @@ Options:
       full-clean:
         run build.sh clean host core project image
   --with-showcase
-      build the showcase-app layer (GPU/GL/Vulkan stack, X11 server + apps,
-      dillo/mc/nano) via scripts/build-showcase-apps.sh. Runs the GPU archive
-      builds BEFORE build.sh — the five game ports link them — and stages the
-      X11/ports app binaries into the rootfs after. Adds host deps
-      (meson/ninja/mako/libdrm-dev/glslang) — install via
-      scripts/bootstrap-linux-host.sh. The games themselves come from the ports
-      stage, which --with-showcase forces into the stage list.
-  --gpu-legacy
-      build the PREVIOUS GPU stack instead of the default one, for A/B only
-      (same as RPI4B_GPU_LEGACY=1 in the environment): the in-process-winsys
-      game ports, the kdrive Xphoenix server, rpi4-v3d, rpi4-fb and the old
-      launchers, and none of rpi4-v3d-async/rpi4-kms/shmsrv at boot or the
-      new-stack ports. The default image carries only the new stack
-      (docs/gpu-new-lane/MIGRATION.md §3a/§7). Switching between the two is a
-      core change (the devices component list and the plo script follow the
-      knob): build with `--scope core --with-ports --with-showcase` (or
-      full-clean), never an `auto` project-only rebuild.
+      build the showcase image: forces the ports stage (the GPU stack, games,
+      X and Wayland desktops, apps are all ports) and, after build.sh, stages
+      the in-repo helper programs (scripts/build-showcase-apps.sh ->
+      build-rootfs-helpers.sh) into the rootfs.
   --with-tests
       build phoenix-rtos-tests for aarch64 (incl. the libc Unity suite) via the
       build.sh `test` stage and stage the binaries into the rootfs so they can be
@@ -114,23 +101,9 @@ do_qemu_sanity=0
 with_ports=0
 with_tests=0
 ports_only=0
-# --with-showcase: build the showcase-app layer (GPU/GL/Vulkan stack, X11 server
-# + apps, dillo/mc/nano) and put it in the image. Two-phase: the GPU archives are
-# built BEFORE build.sh (the five game ports in ports.yaml link them by absolute
-# path); the X11/ports app binaries are staged into _fs/<target>/root AFTER
-# build.sh, before the ext2 image is packed.
+# --with-showcase: build the showcase image (the ports stage + the helper programs,
+# staged into _fs/<target>/root AFTER build.sh, before the ext2 image is packed).
 with_showcase=0
-with_vkquake=0
-# GPU stack selection (GPU migration P1): 0 = the default stack (rpi4-v3d-async +
-# rpi4-kms + shmsrv at boot, mesa_drm, SDL KMSDRM, Xorg modesetting, Wayland),
-# 1 = the previous stack for A/B. Read by ports.yaml (`if: {{ bool(env.X) }}`),
-# user.plo.yaml, the devices component list, build-showcase-apps.sh and the image
-# checks, so it is normalised to exactly 0/1 here and passed to every one of them.
-# TODO(TD-24): the knob and the legacy stack go with P3.
-case "$(printf '%s' "${RPI4B_GPU_LEGACY:-}" | tr '[:upper:]' '[:lower:]')" in
-	''|0|n|no|false) gpu_legacy=0 ;;
-	*) gpu_legacy=1 ;;
-esac
 # Build variant (selects the boot script in user.plo.yaml via the RPI4B_VARIANT
 # env var):
 #   nfsroot (default) - mount the NFS export as root over the network (#153 T3 /
@@ -173,16 +146,9 @@ while [ "$#" -gt 0 ]; do
 		--with-showcase)
 			with_showcase=1
 			;;
-		--gpu-legacy)
-			gpu_legacy=1
-			;;
 		--with-vkquake)
-			# Retained for compatibility only: the V3DV/Vulkan stack is part of the
-			# default showcase since 2026-09-03 (the vkquake port is `if: true` and
-			# links libv3dv-phoenix.a, so it is not optional). This now just implies
-			# --with-showcase.
+			# Retained for compatibility only: vkQuake is part of the showcase.
 			with_showcase=1
-			with_vkquake=1
 			;;
 		--build-only)
 			do_build_artifacts=0
@@ -450,14 +416,6 @@ printf 'Buildroot: %s\n' "${buildroot}"
 printf 'Target:    %s\n' "${target}"
 printf 'Scope:     %s\n' "${scope}"
 printf 'Variant:   %s\n' "${variant}"
-if [ "${gpu_legacy}" = 1 ]; then
-	printf 'GPU stack: LEGACY (RPI4B_GPU_LEGACY=1: in-process winsys, Xphoenix, rpi4-fb; A/B only)\n'
-else
-	printf 'GPU stack: default (rpi4-v3d-async + rpi4-kms + shmsrv at boot; mesa_drm, SDL KMSDRM, Xorg-drm, Wayland)\n'
-fi
-# Every child of this script (build.sh -> port_manager / image_builder / make, the
-# showcase and helper scripts, the image checks) reads the same normalised value.
-export RPI4B_GPU_LEGACY="${gpu_legacy}"
 if [ "${log_to_file}" = 1 ]; then
 	printf 'Logging:   USER (klog -> /var/log/messages, console quiet; RPI4_LOG_TO_FILE=1)\n'
 else
@@ -505,32 +463,17 @@ if [ "${scope}" = "full-clean" ] && [ "${RPI4B_KEEP_HOST_CACHES:-0}" != 1 ]; the
 	# metaelf/syspagen/mkrofs copies here outlive a "clean" build forever.
 	rm -rf "${buildroot}/_boot/host-generic-pc"
 
-	# tools/.gpu-libs/*.a — the GPU archives the five game ports link by absolute
-	# path. Nothing in build.sh knows they exist; only build-showcase-apps.sh's
-	# mtime check gates them, and that check cannot see a libphoenix ABI change.
-	# The dir also accumulates archives/binaries no longer produced by any script
-	# (libquakespasm*.a, libvkquake.a, e4-x11-play, gl-x11-window as of
-	# 2026-09-03) which look current to a human reading `ls`.
-	rm -f "${repo_root}"/tools/.gpu-libs/*.a
-	rm -f "${repo_root}"/tools/.gpu-libs/gl-x11-window \
-	      "${repo_root}"/tools/.gpu-libs/gl-x11-window-daemon \
-	      "${repo_root}"/tools/.gpu-libs/e4-x11-play
-
 	# Host-side /tmp intermediates. NONE of these has a freshness check: every
 	# tools/ports and tools/x11-port script skips its build when the output is
 	# already present in its /tmp prefix, so a library built against last month's
 	# libphoenix is reused indefinitely. /tmp/wmaker-deps is the worst of them — it
 	# snapshots /tmp/x11-phoenix once and then refuses to refresh (cp -an).
-	rm -rf /tmp/mesa-v3d-build /tmp/mesa-v3dv-build /tmp/mesa-pyenv \
-	       /tmp/x11-phoenix /tmp/wmaker-deps \
+	rm -rf /tmp/x11-phoenix /tmp/wmaker-deps \
 	       /tmp/phoenix-iconv /tmp/phoenix-ffi /tmp/phoenix-ncurses \
 	       /tmp/phoenix-glib /tmp/phoenix-mc /tmp/fltk-phoenix /tmp/dillo-phoenix \
 	       /tmp/python-port-build \
 	       /tmp/qsobj /tmp/qsobj-det /tmp/qsobj-sdl /tmp/vkqobj \
 	       /tmp/sdl2test-obj /tmp/sdl2audio-obj /tmp/gl-smoke-build
-	rm -f  /tmp/v3dphx-aux.txt /tmp/libv3d-phoenix-daemon.a /tmp/libv3d-client.a \
-	       /tmp/libv3d-client.o /tmp/glamor_phoenix_ctx.o /tmp/epoxy_shim.o \
-	       /tmp/gl_x11_window.o
 
 	# The EXTRACTED port source trees (tools/{ports,x11-port}/src/<pkg>/) keep
 	# their .o files and their config.status, and every tools/ports script skips
@@ -557,7 +500,7 @@ if [ "${scope}" = "full-clean" ] && [ "${RPI4B_KEEP_HOST_CACHES:-0}" != 1 ]; the
 	# xorg-server core archives live under tools/{ports,x11-port}/src/, not /tmp.
 	# build-xserver-core.sh's core_built() checks those archives in the src tree, so
 	# with /tmp cleared but src/ kept it early-returns on last month's archives and
-	# Xphoenix links against them.
+	# the X server linked against them.
 	# Only the extracted DIRECTORIES go; the downloaded tarballs sitting next to
 	# them are kept, so this costs a re-extract, not a re-download (an x.org CDN
 	# outage killed a full clean build once already, session ~206).
@@ -567,9 +510,6 @@ if [ "${scope}" = "full-clean" ] && [ "${RPI4B_KEEP_HOST_CACHES:-0}" != 1 ]; the
 			[ -d "${tree}" ] && rm -rf "${tree}"
 		done
 	done
-
-	# Ad-hoc build dirs that live under tools/ rather than /tmp.
-	rm -rf "${repo_root}/tools/v3d-driver-port/.build-csd-daemon"
 
 	# The x.org distfile cache is KEPT (no re-download) but is unverified — no
 	# checksums anywhere in build-x11-phoenix.sh. A truncated tarball cached during
@@ -585,7 +525,7 @@ if [ "${scope}" = "full-clean" ] && [ "${RPI4B_KEEP_HOST_CACHES:-0}" != 1 ]; the
 		fi
 	fi
 
-	printf 'Full-clean: wiped _boot/host-generic-pc, tools/.gpu-libs, the /tmp build\n'
+	printf 'Full-clean: wiped _boot/host-generic-pc, the /tmp build\n'
 	printf '            prefixes, and the extracted trees under tools/{ports,x11-port}/src\n'
 	printf 'Full-clean: NOT wiped (deliberate): the ports tarball cache under\n'
 	printf '            sources/phoenix-rtos-ports/*/ — every tarball is size+sha256\n'
@@ -598,58 +538,6 @@ fi
 if [ "${do_prepare}" -eq 1 ]; then
 	run_build_shell "cd '${repo_root}' && ./scripts/prepare-buildroot.sh --copy-components '${buildroot}'"
 fi
-
-# --with-showcase, phase gpu: build the GPU/GL/Vulkan + Quake archives into
-# tools/.gpu-libs. What needs them is the PORTS stage (the five game ports link
-# tools/.gpu-libs/lib{GL,v3d,v3dv}-phoenix.a by absolute path and b_die without
-# them); nothing in core does. So this runs BETWEEN core and ports -- see
-# run_phoenix_build + the stage split below -- because the Mesa objects must compile
-# against the sysroot core produces, not against the hand-maintained toolchain
-# bundle (docs/misc/2026-09-04-toolchain-header-skew.md).
-run_gpu_phase() {
-	[ "${with_showcase}" = 1 ] || return 0
-	# --scope full-clean must force the GPU archives too. Without --force the gpu
-	# phase falls back to archive_fresh()'s mtime comparison against the Mesa/port
-	# SOURCES only — so on a full clean the archives look "fresh" and the five game
-	# ports link last week's libGL/libv3d/libv3dv into a freshly built rootfs. The
-	# wipe above already removed them; --force additionally re-runs `meson setup`
-	# (build-showcase-apps.sh:225-233 rm -rf's the /tmp mesa trees) so no generated
-	# Mesa source survives either.
-	gpu_force_arg=""
-	[ "${scope}" = "full-clean" ] && gpu_force_arg="--force"
-	printf 'Showcase:  building GPU archives (phase gpu) before build.sh%s\n' \
-		"$( [ -n "${gpu_force_arg}" ] && printf ' [--force: full-clean]' )"
-	"${repo_root}/scripts/build-showcase-apps.sh" --phase gpu ${gpu_force_arg}
-}
-
-# GPU_LIBS: the rpi4-quake/-vkquake Makefiles compute this by climbing 4 levels
-# from their own dir, which is correct for the sources/... tree but off-by-one
-# for a repo-root-level .buildroot (the VM/publication layout). Pass it
-# explicitly so the archives are always found when present. Harmless when the
-# archives are absent (the Makefiles still skip the component gracefully).
-gpu_libs_env="GPU_LIBS='${repo_root}/tools/.gpu-libs' "
-
-# --with-showcase: no game binary is bundled into loader.disk any more (2026-09-03).
-# RPI4B_WITH_SHOWCASE used to gate an `app ... rpi4-quake` line in user.plo.yaml; that
-# line is gone, so the variable is no longer exported. What IS load-bearing now is a
-# precondition check: the five game ports (ports.yaml if:true) link
-# tools/.gpu-libs/lib{GL,v3d,v3dv}-phoenix.a by absolute path and b_die without them,
-# so verify the gpu phase actually produced them and say so plainly here rather than
-# letting the ports stage fail deep inside port_manager.
-showcase_env=""
-check_gpu_archives() {
-	[ "${with_showcase}" = 1 ] || return 0
-	local missing_gpu=() gpu_archive
-	for gpu_archive in libGL-phoenix.a libv3d-phoenix.a libv3dv-phoenix.a; do
-		[ -f "${repo_root}/tools/.gpu-libs/${gpu_archive}" ] || missing_gpu+=("${gpu_archive}")
-	done
-	if [ "${#missing_gpu[@]}" -eq 0 ]; then
-		printf 'Showcase:  GPU archives present; the five game ports will build into the rootfs (/usr/bin)\n'
-	else
-		printf 'Showcase:  MISSING GPU archives after the gpu phase: %s\n' "${missing_gpu[*]}" >&2
-		printf '           The game ports link these by absolute path and will fail the ports stage.\n' >&2
-	fi
-}
 
 # Task #31: pass RPI4_LOG_TO_FILE into the build env ONLY when the board macro is
 # set, so the plo render (image_builder.py reads os.environ) gates the rpi4-klogd
@@ -823,7 +711,7 @@ run_phoenix_build() {
 	local stages="$*"
 	printf 'Build:     ./phoenix-rtos-build/build.sh %s\n' "${stages}"
 	run_build_shell \
-		"set -euo pipefail; export PATH='${repo_root}/.venv/bin':'${toolchain_path}':\$PATH; cd '${buildroot}'; env ${log_to_file_env}${libc_trace_env}${libc_diag_env}${fs_diag_env}${kernel_diag_env}${gpu_libs_env}${showcase_env}RPI4B_GPU_LEGACY='${gpu_legacy}' RPI4B_DTB_PATH='${dtb_path}' RPI4B_VARIANT='${variant}' TARGET='${target}' ./phoenix-rtos-build/build.sh ${stages}"
+		"set -euo pipefail; export PATH='${repo_root}/.venv/bin':'${toolchain_path}':\$PATH; cd '${buildroot}'; env ${log_to_file_env}${libc_trace_env}${libc_diag_env}${fs_diag_env}${kernel_diag_env}RPI4B_DTB_PATH='${dtb_path}' RPI4B_VARIANT='${variant}' TARGET='${target}' ./phoenix-rtos-build/build.sh ${stages}"
 
 	verify_libc_trace_state
 
@@ -848,42 +736,7 @@ run_phoenix_build() {
 	esac
 }
 
-# core -> gpu -> ports. The GPU archives must compile against the sysroot the
-# CORE stage produces (_build/<target>/sysroot); the ports stage is the only
-# consumer of the archives. When both stages are in this build's stage list,
-# split build.sh at `ports` and run the gpu phase in the gap. `fs` deliberately
-# stays in the FIRST invocation only: re-running it after core would re-apply
-# root-skel over core's output, which today's fs-before-core order never does.
-#
-# When the list has no `core` (a warm `project image` rebuild) or no `ports`,
-# there is nothing to sequence: the gpu phase runs first, as before, against
-# whatever sysroot the previous core build left behind.
-pre_stages=()
-post_stages=()
-if [ "${with_showcase}" = 1 ] &&
-	printf '%s\n' "${build_args[@]}" | grep -qx core &&
-	printf '%s\n' "${build_args[@]}" | grep -qx ports; then
-	for arg in "${build_args[@]}"; do
-		if [ "${#post_stages[@]}" -gt 0 ] || [ "${arg}" = "ports" ]; then
-			post_stages+=("${arg}")
-		else
-			pre_stages+=("${arg}")
-		fi
-	done
-fi
-
-if [ "${#post_stages[@]}" -gt 0 ]; then
-	printf 'Order:     core -> gpu -> ports (build.sh split: [%s] then [%s])\n' \
-		"${pre_stages[*]}" "${post_stages[*]}"
-	run_phoenix_build "${pre_stages[@]}"
-	run_gpu_phase
-	check_gpu_archives
-	run_phoenix_build "${post_stages[@]}"
-else
-	run_gpu_phase
-	check_gpu_archives
-	run_phoenix_build "${build_args[@]}"
-fi
+run_phoenix_build "${build_args[@]}"
 
 # Record WHICH COMMIT of every Phoenix repo produced these binaries, into the
 # staged rootfs, so rpi4-sysinfo can print it at boot (owner request 2026-09-05:
@@ -937,7 +790,7 @@ fi
 # ext2 root; the nfsroot/netboot variant serves it over NFS (recreated from
 # _fs/<target>/root). Staging for both is why this now lives outside the sd block.
 if [ "${with_showcase}" = 1 ]; then
-	printf 'Showcase:  staging X11/ports app binaries into rootfs (phase stage)\n'
+	printf 'Showcase:  staging the helper programs into the rootfs (phase stage)\n'
 	SHOWCASE_STAGE_DIR="${buildroot}/_fs/${target}/root" \
 		RPI4B_BUILDROOT="${buildroot}" \
 		"${repo_root}/scripts/build-showcase-apps.sh" --phase stage \
@@ -996,13 +849,12 @@ if [ "${variant}" = "sd" ]; then
 	#
 	# The showcase expectation comes from the STAGED TREE, deliberately not from the
 	# image: deriving it from the image would let a staging failure (tree has
-	# Xphoenix, image does not) silently downgrade itself to a SKIP. Two independent
+	# Xorg-drm, image does not) silently downgrade itself to a SKIP. Two independent
 	# sources means a disagreement still fails. Note this is NOT `${with_showcase}`
 	# -- a `--scope project --variant sd` re-cut has that flag at 0 while re-packing
 	# a fully staged showcase rootfs, which is exactly how the demo image is re-cut.
-	# The X server of either GPU stack marks a showcase tree.
-	if [ -e "${buildroot}/_fs/aarch64a72-generic-rpi4b/root/usr/bin/Xphoenix" ] ||
-		[ -e "${buildroot}/_fs/aarch64a72-generic-rpi4b/root/bin/Xorg-drm" ]; then
+	# The X server marks a showcase tree.
+	if [ -e "${buildroot}/_fs/aarch64a72-generic-rpi4b/root/bin/Xorg-drm" ]; then
 		contents_expect=showcase
 	else
 		contents_expect=base

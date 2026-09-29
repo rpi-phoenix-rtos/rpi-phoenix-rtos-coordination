@@ -160,8 +160,8 @@ for repo in $(repos); do
 done
 
 # --- E. external/ dependency clones -----------------------------------------
-# These are NOT siblings, but the build compiles them (mesa -> the V3D driver,
-# quakespasm -> GLQuake, ...), so the same question applies: would a fresh clone
+# These are NOT siblings, but the game ports' patches are generated from them
+# (quakespasm, yquake2, quake3e), so the same question applies: would a fresh clone
 # build the same thing? Two ways it would not:
 #   * local commits/edits that were never pushed to our fork
 #   * a bootstrap PIN that no longer matches what is checked out here, so local
@@ -177,10 +177,13 @@ for d in "$ROOT"/external/*/; do
 	pin_branch=""
 	pin=$(grep -oE "\"$name\|[^\"]*\"" "$BOOTSTRAP" 2>/dev/null | head -1 |
 		tr -d '"' | cut -d'|' -f3)
-	# mesa's "pin" is an upstream TAG plus patches/mesa/, so its HEAD is
-	# deliberately not the pin -- exempt it from the pin comparison.
+	# mesa: no longer consumed by any build -- the mesa_drm port fetches its own
+	# release tarball; the first GPU stack that built from external/mesa (+ the
+	# deleted patches/mesa/) is gone (GPU migration P3). A leftover clone is only a
+	# reference tree for the tools/gpu-lane scaffolding.
 	if [ "$name" = "mesa" ]; then
-		pin=""
+		note "not-build-consumed" "external/mesa (reference clone only; the mesa_drm port builds from its tarball)"
+		continue
 	fi
 	if [ -n "${pin:-}" ]; then
 		head_sha=$(git -C "$d" rev-parse HEAD 2>/dev/null)
@@ -238,15 +241,8 @@ for d in "$ROOT"/external/*/; do
 		fi
 	fi
 
-	# a dirty build-consumed tree builds here and nowhere else. mesa is exempt:
-	# its tree is derived by applying patches/mesa/ to an upstream tag.
-	if [ "$name" = "mesa" ]; then
-		if [ -d "$ROOT/patches/mesa" ]; then
-			note "by-design" "mesa tree is patch-derived (patches/mesa/ is committed)"
-		else
-			finding "mesa is patch-derived but patches/mesa/ is missing"
-		fi
-	else
+	# a dirty build-consumed tree builds here and nowhere else.
+	if true; then
 		while read -r f; do
 			[ -z "$f" ] && continue
 			finding "$name: modified tracked file affects the build: $f"

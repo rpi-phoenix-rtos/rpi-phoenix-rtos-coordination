@@ -5,16 +5,14 @@
 #
 # WHY THIS EXISTS
 #
-# Two kinds of binary in this project do NOT compile against
+# Some binaries in this project do NOT compile against
 # .buildroot/_build/<target>/sysroot:
 #
-#   * the GPU archives — sources/phoenix-rtos-devices/gpu/rpi4-v3d/mesa/
-#     build-{v3d,gl,v3dv}-phoenix.py invoke the toolchain gcc with no --sysroot;
 #   * the standalone driver/probe tools — rpi4-wifi, rpi4-hci, wifi-probe,
 #     bt-probe, built by their own scripts "with the toolchain's default
 #     libphoenix + CRT" (tools/wifi-probe/build.sh:7).
 #
-# Both therefore resolve libc out of .toolchain/aarch64-phoenix/aarch64-phoenix/
+# They therefore resolve libc out of .toolchain/aarch64-phoenix/aarch64-phoenix/
 # {lib,usr/include}, a HAND-maintained bundle. Hand maintenance is exactly why it
 # goes stale, and staleness here is silent:
 #

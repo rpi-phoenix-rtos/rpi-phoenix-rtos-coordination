@@ -64,14 +64,14 @@ full=0
 # Everything a user would actually run, plus the five engines. Add to this list
 # rather than trusting a spot check.
 PATHS=(
-	usr/bin/quakespasm
-	usr/bin/yquake2
-	usr/bin/quake3e
-	usr/bin/vkquake
-	usr/bin/supertuxkart
+	usr/bin/quakespasm-drm
+	usr/bin/yquake2-drm
+	usr/bin/quake3e-drm
+	usr/bin/vkquake-drm
+	usr/bin/supertuxkart-drm
 	bin/psh
 	bin/busybox
-	usr/bin/Xphoenix
+	bin/Xorg-drm
 	bin/python3
 	bin/bash
 	bin/nano

@@ -18,7 +18,7 @@
 #     themselves inside max_cmd_secs (the /bin/startx wrapper defaults to HOLD=0,
 #     "until Window Maker exits", like the old xlaunch).
 #
-# Boot image: the P1 default image (not --gpu-legacy) on netboot/nfsroot, the
+# Boot image: the default image on netboot/nfsroot, the
 # export synced from it, ideally a pristine one (scripts/make-pristine-nfs-export.sh):
 # the live export still holds hand-staged -g7/-g8/-low servers and old launchers
 # that would mask a missing port install. Check it first with

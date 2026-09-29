@@ -58,9 +58,7 @@ PHOENIX_FORK_BASE="${PHOENIX_FORK_BASE:-https://github.com/${GH_USER}}"
 # clone never depends on phoenix-rtos upstream still serving a given pin.
 PHOENIX_UPSTREAM_BASE="${PHOENIX_UPSTREAM_BASE:-https://github.com/rpi-phoenix-rtos}"
 # Base for the build-required external-dependency forks (quakespasm; and the lwIP
-# library submodule via init_vendored_submodules). quakespasm is pinned to an exact
-# commit preserved on our org fork. mesa is NOT a fork here — it is upstream Mesa at
-# an immutable tag + our patch (see EXTERNAL_DEPS / patches/mesa/). Override for a
+# library submodule via init_vendored_submodules). Override for a
 # local/clean-VM test, e.g. EXTERNAL_FORK_BASE=ssh://host/home/user/origins.
 EXTERNAL_FORK_BASE="${EXTERNAL_FORK_BASE:-https://github.com/${GH_USER}}"
 
@@ -100,29 +98,22 @@ UPSTREAM_ONLY_REPOS=(
 	phoenix-rtos-doc
 )
 
-# BUILD-REQUIRED external dependencies cloned into external/ and pinned. These
-# feed the V3D GPU / GL stack + the GLQuake showcase:
-#   - external/mesa       -> UPSTREAM Mesa at the immutable tag mesa-26.2.0 (final) +
-#                            our patch (patches/mesa/phoenix-rpi4-v3d.patch);
-#                            the V3D/Mesa port scripts build libGL/libv3d/libv3dv.
-#                            NOT a fork — reproducible from the frozen tag, so it
-#                            cannot be broken by upstream drift.
-#   - external/quakespasm -> our org fork, branch phoenix-rpi4-port;
-#                            tools/quakespasm-port builds libquakespasm.a
-#                            (the rpi4-quake showcase).
-#   - external/yquake2, external/quake3e -> our org forks, same branch. These
-#                            two are NOT built by build-showcase-apps.sh (their
-#                            tools/ build scripts were deleted on the migration
-#                            to framework ports). They are the SOURCE OF TRUTH
-#                            from which sources/phoenix-rtos-ports/{yquake2,
-#                            quake3}/patches/ is generated -- see
-#                            scripts/game-port-patch.sh. Clone them so that
-#                            generation and its drift check can run here.
-#   - external/vkquake    -> our org fork (branch phoenix-rpi4-port); tools/vkquake-port
-#                            builds libvkquake.a -> rpi4-vkquake (the Vulkan/V3DV Quake
-#                            showcase). Only cloned/built when `--with-vkquake` is passed
-#                            to build-showcase-apps.sh (it also needs the V3DV stack, so
-#                            it implies the Vulkan path); GLQuake does not require it.
+# External dependencies cloned into external/: our game forks (branch
+# phoenix-rpi4-port). None is compiled by the image build -- the game ports fetch
+# pristine upstream tarballs -- but they are the SOURCE OF TRUTH from which the ports'
+# engine patches are generated (scripts/game-port-patch.sh):
+#   - external/quakespasm -> ports/quakespasm_drm/patches/
+#   - external/yquake2, external/quake3e -> ports/{yquake2,quake3}/patches/
+#   - external/vkquake    -> no generated patch any more (vkquake_drm keeps its fixes
+#                            split in the port); still the Shaders/ source that
+#                            tools/vkquake-port/gen-vkquake-shaders.py compiles into
+#                            ports/vkquake_drm/glue/vkquake_shaders.c.
+# Clone them so that generation and its drift check can run here.
+#
+# Mesa is NOT cloned: the mesa_drm port builds upstream Mesa 26.2.0 from its release
+# tarball. (external/mesa + patches/mesa/ fed the first GPU stack, deleted in GPU
+# migration P3; the tools/gpu-lane/mesa-drm scaffolding still clones from an
+# external/mesa checkout if one is present.)
 #
 # NOT cloned here:
 #   - external/linux      research-only; the Pi 4 DTB is fetched ready-made from
@@ -139,21 +130,16 @@ UPSTREAM_ONLY_REPOS=(
 #                         port.def.sh fetches PRISTINE upstream stk-code at the
 #                         immutable release tag 1.4 (size + sha256 pinned) and
 #                         b_port_apply_patches applies our 10 tracked patches.
-#                         That is the same "pinned tag + hosted patches" contract
-#                         as external/mesa above, so a fork would buy nothing:
-#                         the whole Phoenix delta is 10 files / 171+ / 7- across
-#                         14 hunks — a fifth of the mesa patch we already carry
-#                         flat. Adding an EXTERNAL_DEPS entry here would clone a
+#                         That is the "pinned tag + hosted patches" contract, so a
+#                         fork would buy nothing: the Phoenix delta is a set of
+#                         small flat patches. Adding an EXTERNAL_DEPS entry here would clone a
 #                         copy of STK that nothing builds from and fork a second
 #                         patch set that drifts from the one the build consumes.
 #                         The ~1 GB art assets (stk-assets) stay a separate
 #                         runtime concern, per ports/supertuxkart/port.def.sh.
 #
-# Format: "<subdir>|<git-url>|<pinned-ref>[|<port-patch-relpath>]". mesa clones
-# PRISTINE UPSTREAM at the tag and apply_dep_patch applies our diff; quakespasm
-# comes from our org fork (its upstream pin is no longer fetchable). Bump refs
-# deliberately (mesa: rebased to the mesa-26.2.0 final tag 2026-08-13, 11 port
-# commits; 3 incidental non-v3d commits + upstream-backported ones dropped).
+# Format: "<subdir>|<git-url>|<pinned-ref>[|<port-patch-relpath>]" (the optional
+# patch is applied by apply_dep_patch onto a pristine upstream checkout).
 #
 # Our OWN forks track the `phoenix-rpi4-port` branch rather than a frozen sha.
 # A sha went stale: quakespasm sat 16 commits behind the tree we actually test,
@@ -161,9 +147,8 @@ UPSTREAM_ONLY_REPOS=(
 # -- exactly the "works locally, fails in a clean build" class. Tracking the
 # branch keeps that from recurring, and it is not upstream drift: the branch is
 # in our org and only moves when we push a tested tree to it. Third-party pins
-# (mesa, and PI_FW_REF below) stay exact, because those DO move under us.
+# (PI_FW_REF below) stay exact, because those DO move under us.
 EXTERNAL_DEPS=(
-	"mesa|https://gitlab.freedesktop.org/mesa/mesa.git|mesa-26.2.0|patches/mesa/phoenix-rpi4-v3d.patch"
 	"quakespasm|${EXTERNAL_FORK_BASE}/quakespasm.git|phoenix-rpi4-port"
 	"vkquake|${EXTERNAL_FORK_BASE}/vkquake.git|phoenix-rpi4-port"
 	"yquake2|${EXTERNAL_FORK_BASE}/yquake2.git|phoenix-rpi4-port"
@@ -236,9 +221,9 @@ APT_PACKAGES=(
 	ffmpeg v4l-utils
 	gh
 	# --- Showcase build deps (Tier 1.5: only needed for --with-showcase, i.e.
-	# --- the GPU/GL/Vulkan + Quake + X11 + dillo/mc layer via
-	# --- scripts/build-showcase-apps.sh). Harmless for a base-image-only build. ---
-	# Mesa host build (GPU/GL/Vulkan cross-compile reuses its compile_commands.json):
+	# --- the GPU stack, games, desktops and apps of the ports stage). Harmless
+	# --- for a base-image-only build. ---
+	# Mesa (the mesa_drm port: meson + ninja, Mesa's codegen needs mako):
 	ninja-build python3-mako
 	# libdrm dev headers: Mesa's broadcom vulkan TUs #include <xf86drm.h>/<drm.h>.
 	libdrm-dev
@@ -246,10 +231,11 @@ APT_PACKAGES=(
 	glslang-tools
 	# gperf: WindowMaker's bundled fontconfig runs gperf codegen at build time.
 	gperf
-	# NOTE: Ubuntu 24.04's apt `meson` (1.3.x) is too old for external/mesa
-	# (needs >= 1.4). build-showcase-apps.sh provisions a local meson>=1.4 in a uv
-	# venv (/tmp/mesa-pyenv) automatically, so meson is intentionally NOT in this
-	# apt list.
+	# NOTE: Mesa 26.2 needs meson >= 1.4, which Ubuntu 24.04's apt `meson` (1.3.x)
+	# is not, so meson is intentionally NOT in this apt list. The mesa_drm port runs
+	# the `meson` on PATH: provide a newer one on a 24.04 host (e.g. `uv tool install
+	# meson`). (The /tmp/mesa-pyenv that build-showcase-apps.sh used to provision fed
+	# only the first GPU stack's host Mesa build, deleted in GPU migration P3.)
 )
 
 install_packages() {
@@ -355,7 +341,7 @@ clone_layout() {
 # they live as tracked patches in the coord repo, so the reproducible source is
 # "pinned upstream ref + this patch". Idempotent: applies when it cleanly applies,
 # is a no-op when already applied, warns (does not fail) on drift. This is what
-# replaces the temporary host->VM rsync of an already-edited external/mesa.
+# replaces the temporary host->VM rsync of already-edited external trees.
 apply_dep_patch() {
 	local dest="$1" rel="$2" pf
 	[ -n "$rel" ] || return 0
@@ -591,7 +577,7 @@ print_next_steps() {
 
         $PROJECT_DIR             — coord repo
         $SOURCES_DIR/            — sibling Phoenix-RTOS repos
-        $EXTERNAL_DIR/           — build-required external deps (mesa, quakespasm, vkquake)
+        $EXTERNAL_DIR/           — the game forks (quakespasm, vkquake, yquake2, quake3e)
         $BOOTBLOBS_DIR/          — Raspberry Pi firmware blobs
         $VENV_DIR/               — Python venv (pyserial for psh-interact.py)
 
