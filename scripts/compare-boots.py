@@ -40,8 +40,12 @@ import sys
 def hdmi_glob(top, name_pat):
     """artifacts/hdmi/<name_pat> plus the month archive folders (YYYY-MM/,
     scripts/archive-hdmi-snapshots.py), in capture order: every name starts with its timestamp."""
+    pats = [name_pat]
+    if name_pat.endswith(".png"):  # archived months are WebP (scripts/compress-hdmi-archive.py)
+        pats.append(name_pat[:-4] + ".webp")
     files = set(glob.glob(os.path.join(top, name_pat)))
-    files.update(glob.glob(os.path.join(top, "20[0-9][0-9]-[0-9][0-9]", name_pat)))
+    for p in pats:
+        files.update(glob.glob(os.path.join(top, "20[0-9][0-9]-[0-9][0-9]", p)))
     return sorted(files, key=os.path.basename)
 
 
