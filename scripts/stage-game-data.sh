@@ -297,12 +297,13 @@ CFG
 	log "q1: staged autoexec.cfg (1920x1080 fullscreen + fps readout; always refreshed)"
 }
 
-# check_cfg_comments <file> -- fail if a "//" comment line contains a ';' (see
-# stage_q1_video_cfg for why). Quake III's own Cbuf_Execute does skip comments, but
-# its files are held to the same rule so the two stay interchangeable.
+# check_cfg_comments <file> -- fail if a "//" comment, whole-line or trailing,
+# contains a ';' (see stage_q1_video_cfg for why). Quake III's own Cbuf_Execute does
+# skip comments, but its files are held to the same rule so the two stay
+# interchangeable.
 check_cfg_comments() {
 	local bad
-	bad="$(grep -n '^[[:space:]]*//.*;' "$1" || true)"
+	bad="$(grep -n '//.*;' "$1" || true)"
 	[ -z "$bad" ] || die "';' inside a comment of $1 (Quake runs the rest as a command):"$'\n'"$bad"
 }
 
