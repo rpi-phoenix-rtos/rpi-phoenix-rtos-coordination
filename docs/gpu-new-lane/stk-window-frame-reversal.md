@@ -104,3 +104,38 @@ two swaps ago is exactly an **undrawn back buffer**. So the leading hypothesis i
 final pass to the default framebuffer sometimes does not land in the buffer that Mesa's Wayland
 platform then presents. Examples: a draw against a stale back-buffer validation, or a
 discard/invalidate hint that drops the pass. Code reading is under way.
+
+## 4. Diagnosis: labwc's own output flips are not fence-gated
+
+A code read (2026-09-30) ruled out the client side. STK's commit cannot overtake its render
+submission: the submit is a blocking `msgSend` with a reply, and the server records the buffer
+use before replying. G6 holds labwc's composite job until STK's write is done. Buffer
+release/reuse races would show *newer* frames, not older ones.
+
+What the logs show:
+- **Every labwc session:** `KMS srv flipstat client=1 … deferred=0 applied_gate=0`. That covers
+  `rec-xfce-stk` with 1379 flips, and W1/W2/W3.
+- **Every fullscreen game on the same servers is gated:** `rec-fs-stk` deferred 3650/3657,
+  `rec-fs-q3` 7479/7511.
+- **labwc's composite really is still pending when it commits:** `V3DA srv g6 implicit client=2`
+  waits on the game's job 2873 times. wlroots `glFlush()`es and commits at once.
+- **labwc's swapchain has two buffers.**
+
+So rpi4-kms scans out labwc's output buffer while it still holds the frame from two flips ago.
+The composite, queued behind STK's ~45 ms job, then lands in place on the visible buffer. That is
+exactly N, N+1, N, N+2. A light client (Quake) finishes before the vblank and never shows it.
+
+### W3 result (09:55, clip `20260930-075512-w3-labwc-sync.mp4`): confirmed
+
+`V3D_DEBUG=sync` for labwc and its session: Mesa waits for every job, so the composite is finished
+before the flip. `game-window.sh` unsets it for the game (log: `GAME-WINDOW W3
+V3D_DEBUG_inherited=sync (unset for the game)`).
+
+- Reversals: **0 of 1183 moving frames (0.0 %)**, against 21–26 % in W2/W1/the reel.
+- STK frame rate unchanged: 1368 swaps in 139 s, against 1316 in W2.
+- labwc's flips are still ungated (`deferred=0`); the wait just moved into Mesa.
+
+The fix belongs in the flip gate: labwc's flips must wait for its own composite fence, as the
+fullscreen flips already do. `V3D_DEBUG=sync` is a diagnostic, not the fix. It serialises every
+GL call in the compositor. A code change to find the failing link in `implicit_attach` /
+`drmphx_v3d_flip_fence` is under way on branch `g5-flip-gate` (ports + devices).
