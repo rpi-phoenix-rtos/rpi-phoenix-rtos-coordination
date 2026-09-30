@@ -75,6 +75,12 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends git ca-certificates sudo wget curl xz-utils unzip lhasa 7zip \
  && rm -rf /var/lib/apt/lists/*
 
+# Several port recipes turn their unpacked source into a git repository to `git apply`
+# their patches. The build runs as root, and tar restores the archive's owners, so git
+# rejects those trees as "dubious ownership" (the 2026-09-30 --no-cache build died on
+# wayland_phoenix). This container is a single-user throwaway build: trust every tree.
+RUN git config --global --add safe.directory '*'
+
 # 1. Clone the coordination repo (carries every build script, incl. bootstrap).
 RUN git clone "${REPO_BASE}/rpi-phoenix-rtos-coordination.git" /build/phoenix-rpi
 WORKDIR /build/phoenix-rpi
