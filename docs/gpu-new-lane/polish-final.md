@@ -238,7 +238,7 @@ package has a comment citing that check:
 |---|---|
 | meson ≥ 1.4 (Mesa 26.2) | apt `meson` when its candidate is new enough (26.04: 1.10.x); otherwise `uv tool install "meson>=1.4"` (24.04) |
 | Mesa's codegen | `python3-yaml`, `python3-packaging` |
-| wayland-scanner **exactly 1.24.0** | `libwayland-bin`. It comes from the host because the wayland port uses `-Dscanner=false`. 26.04 ships 1.24.0 |
+| wayland-scanner **exactly 1.24.0** | `libwayland-bin`. It comes from the host because `wayland_phoenix` builds libwayland with `-Dscanner=false`. 26.04 ships 1.24.0 |
 | GLib codegen, schemas, icon cache, MIME database | `libglib2.0-dev-bin`, `libglib2.0-bin`, `libgtk-3-bin`, `gtk-update-icon-cache`, `shared-mime-info`, `libxml2-utils` |
 | `pngify-icon-theme.py` | `python3-gi`, `gir1.2-gdkpixbuf-2.0`, `librsvg2-common`. The SVG pixbuf loader is only a Recommends, so it must be named |
 | `make-sample-pdf.py`, the desktop fonts | `python3-cairo`, `fonts-dejavu-core`, `fontconfig` |
