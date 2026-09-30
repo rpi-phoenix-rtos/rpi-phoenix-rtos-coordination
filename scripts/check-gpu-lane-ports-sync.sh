@@ -83,7 +83,7 @@ MAP=(
 	"${T}/xorg-drm/compat|xorg_server_drm/glue/compat"
 	"${T}/xorg-drm/src|xorg_server_drm/glue/src"
 	"${T}/xorg-drm/conf/xorg-drm.conf|xorg_server_drm/glue/conf/xorg-drm.conf"
-	"${T}/xorg-drm/pi/startx-drm|xorg_server_drm/glue/pi/startx-drm"
+	"${T}/xorg-drm/pi/startx|xorg_server_drm/glue/pi/startx"
 	"${T}/x11-drm/src/eglx11_demo.c|xorg_server_drm/glue/eglx11/eglx11_demo.c"
 	# video_player (M10)
 	"${T}/video-player/patches|video_player/patches"

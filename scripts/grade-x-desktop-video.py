@@ -33,9 +33,9 @@ import numpy as np
 from PIL import Image
 
 REPO = Path(__file__).resolve().parent.parent
-# The desktop launcher (/bin/startx-drm, the `action` layout), as shipped by the
+# The desktop launcher (/bin/startx, the `action` layout), as shipped by the
 # xorg_server_drm port.
-LAUNCHER = REPO / "sources/phoenix-rtos-ports/xorg_server_drm/glue/pi/startx-drm"
+LAUNCHER = REPO / "sources/phoenix-rtos-ports/xorg_server_drm/glue/pi/startx"
 
 # Window Maker's titlebar. -geometry places the CLIENT area, so the frame sits
 # above the requested y; the ROIs below are the client rects, offset by this.

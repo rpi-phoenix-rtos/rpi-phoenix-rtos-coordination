@@ -218,36 +218,112 @@ APT_PACKAGES=(
 	# --- harmless to install, not required for build & flash ---
 	dnsmasq iproute2
 	tio picocom
-	ffmpeg v4l-utils
+	v4l-utils
 	gh
-	# --- Showcase build deps (Tier 1.5: only needed for --with-showcase, i.e.
-	# --- the GPU stack, games, desktops and apps of the ports stage). Harmless
-	# --- for a base-image-only build. ---
-	# Mesa (the mesa_drm port: meson + ninja, Mesa's codegen needs mako):
-	ninja-build python3-mako
+	# --- Showcase build deps (Tier 1.5: only needed for --with-showcase /
+	# --- --with-ports, i.e. the GPU stack, games, desktops and apps of the ports
+	# --- stage). Harmless for a base-image-only build. ---
+	# Mesa (the mesa_drm port): meson + ninja; its codegen needs mako + yaml
+	# (mesa_drm/port.def.sh: `nl_host_python ... mako yaml`), and Mesa's mako probe
+	# imports packaging.version (its distutils fallback is gone since Python 3.12).
+	# meson: Mesa 26.2 needs >= 1.4 (mesa-26.2.0/meson.build: meson_version), vkQuake
+	# >= 1.3. 26.04's apt meson (1.10.x) qualifies; 24.04's (1.3.x) does NOT: on 24.04
+	# install_packages() skips apt meson and installs one with `uv tool install`.
+	ninja-build python3-mako python3-yaml python3-packaging
 	# libdrm dev headers: Mesa's broadcom vulkan TUs #include <xf86drm.h>/<drm.h>.
 	libdrm-dev
 	# glslangValidator: vkQuake real SPIR-V shaders (GLQuake/GL path does NOT need it).
 	glslang-tools
-	# gperf: WindowMaker's bundled fontconfig runs gperf codegen at build time.
+	# gperf: WindowMaker's bundled fontconfig runs gperf codegen at build time
+	# (xorg_fonts/port.def.sh: `command -v gperf`).
 	gperf
-	# NOTE: Mesa 26.2 needs meson >= 1.4, which Ubuntu 24.04's apt `meson` (1.3.x)
-	# is not, so meson is intentionally NOT in this apt list. The mesa_drm port runs
-	# the `meson` on PATH: provide a newer one on a 24.04 host (e.g. `uv tool install
-	# meson`). (The /tmp/mesa-pyenv that build-showcase-apps.sh used to provision fed
-	# only the first GPU stack's host Mesa build, deleted in GPU migration P3.)
+	# bdftopcf + mkfontdir: the X core fonts (xorg_fonts/port.def.sh: `command -v`).
+	xfonts-utils
+	# wayland-scanner, taken from the HOST (no port builds it: the wayland port uses
+	# -Dscanner=false) and pinned to EXACTLY 1.24.0 by wayland, wayland_phoenix,
+	# gtk3_wayland, xfce_wayland, labwc_desktop (`wayland-scanner --version` checks).
+	# 26.04 ships 1.24.0; 24.04 ships 1.22.x, which those checks reject.
+	libwayland-bin
+	# GLib host codegen for gtk3_wayland / xfce_wayland / atril_wayland (their
+	# `command -v` loops): glib-compile-resources, glib-mkenums, glib-genmarshal,
+	# gdbus-codegen (libglib2.0-dev-bin; on 26.04 it pulls them in from the split
+	# libgio-2.0-dev-bin) and glib-compile-schemas (libglib2.0-bin). The recipes
+	# want a 2.88-series host to match the target GLib (26.04 ships 2.88).
+	libglib2.0-dev-bin libglib2.0-bin
+	# xmllint: glib-compile-resources' xml-stripblanks preprocessing of the GTK/XFCE
+	# .ui resources (skipped with only a warning when xmllint is missing).
+	libxml2-utils
+	# xfce_wayland/port.def.sh `command -v` loop: gtk-encode-symbolic-svg (libgtk-3-bin,
+	# pulls gtk-update-icon-cache) and update-mime-database (shared-mime-info).
+	libgtk-3-bin gtk-update-icon-cache shared-mime-info
+	# xfce_wayland's pngify-icon-theme.py renders the SVG icons with PyGObject
+	# (`import gi; gi.require_version('GdkPixbuf', '2.0')`); GdkPixbuf and
+	# gtk-encode-symbolic-svg load SVG through librsvg's pixbuf loader, which is only
+	# a Recommends (not installed under --no-install-recommends).
+	python3-gi gir1.2-gdkpixbuf-2.0 librsvg2-common
+	# atril_wayland's make-sample-pdf.py draws the sample PDF with pycairo
+	# (`import cairo`) in DejaVu Sans/Serif/Mono (port.def.sh: "install python3-cairo").
+	# fonts-dejavu-core is also what scripts/stage-desktop-fonts.sh copies from
+	# /usr/share/fonts/truetype/dejavu, and fc-cache (fontconfig) builds its cache.
+	python3-cairo fonts-dejavu-core fontconfig
+	# labwc_desktop/port.def.sh: `[ -f /usr/share/hwdata/pnp.ids ]` (wlroots' PnP IDs).
+	hwdata
+	# video_player (USE demo) generates its demo clips with the host ffmpeg + ffprobe
+	# and checks for the libx264, libx265, libvpx-vp9, libopus and aac encoders
+	# (video_player/port.def.sh + files/gen-clips.sh); Ubuntu's ffmpeg has all five.
+	# Also the lab rig's HDMI capture tool.
+	ffmpeg
+	# Game data (scripts/stage-game-data.sh -> fetch-quake-data.sh): unzip (Q1 zip,
+	# STK apk), 7z (Q2 InstallShield exe), lha. 26.04's 7zip provides 7z/7za; on 24.04
+	# it ships only 7zz, so install_packages() adds p7zip-full there.
+	unzip lhasa 7zip
 )
+
+# The host meson must be >= this (Mesa 26.2's meson_version).
+MESON_MIN_VERSION=1.4
 
 install_packages() {
 	log "Installing system packages (sudo apt-get)..."
 	sudo apt-get update
-	sudo apt-get install -y --no-install-recommends "${APT_PACKAGES[@]}"
+	local pkgs=("${APT_PACKAGES[@]}") meson_apt
+	# apt meson only where it is new enough (26.04: yes; 24.04: 1.3.x, no).
+	meson_apt="$(apt-cache policy meson 2>/dev/null | awk '/Candidate:/ {print $2}')"
+	if [ -n "${meson_apt}" ] && [ "${meson_apt}" != "(none)" ] &&
+	   dpkg --compare-versions "${meson_apt}" ge "${MESON_MIN_VERSION}"; then
+		pkgs+=(meson)
+	fi
+	sudo apt-get install -y --no-install-recommends "${pkgs[@]}"
+	# fetch-quake-data.sh extracts the Q2 demo with `7z`/`7za`: 24.04's 7zip has only 7zz.
+	if ! command -v 7z >/dev/null 2>&1 && ! command -v 7za >/dev/null 2>&1; then
+		sudo apt-get install -y --no-install-recommends p7zip-full
+	fi
 	# uv is not in apt; install via the official installer script.
 	if ! command -v uv >/dev/null 2>&1; then
 		log "Installing uv (Python venv tool)..."
 		curl -LsSf https://astral.sh/uv/install.sh | sh
 		export PATH="$HOME/.local/bin:$PATH"
 	fi
+	# No new-enough apt meson (24.04): install one into ~/.local/bin, which must come
+	# BEFORE /usr/bin on PATH for the ports build.
+	if ! command -v meson >/dev/null 2>&1 ||
+	   ! dpkg --compare-versions "$(meson --version 2>/dev/null || echo 0)" ge "${MESON_MIN_VERSION}"; then
+		log "Installing meson >= ${MESON_MIN_VERSION} (uv tool; apt's is too old)..."
+		uv tool install "meson>=${MESON_MIN_VERSION}"
+		export PATH="$HOME/.local/bin:$PATH"
+	fi
+	check_showcase_host_versions
+}
+
+# The showcase ports pin some HOST tool versions that only 26.04's apt satisfies.
+# Warn (not fail): a base image builds without them.
+check_showcase_host_versions() {
+	local v
+	v="$( { wayland-scanner --version 2>&1 || true; } | awk '{print $2}')"
+	[ "${v}" = "1.24.0" ] ||
+		warn "host wayland-scanner is '${v}', the wayland/GTK/XFCE/labwc ports require exactly 1.24.0 (--with-ports will fail)"
+	v="$(/usr/bin/python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || true)"
+	[ "${v}" = "3.14" ] ||
+		warn "host /usr/bin/python3 is '${v}', the python port cross-builds CPython 3.14 with a 3.14 host python (--with-ports will fail)"
 }
 
 ##############################################################################

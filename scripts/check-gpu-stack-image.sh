@@ -16,15 +16,17 @@
 #      strings), the rpi4-kms build is the one with the -G wait and the M9 scaled
 #      modes (stale-core hazard — an `auto` rebuild after a committed devices change
 #      ships the old one), and rpi4-fb (/dev/fb0) is not.
-#   2. rootfs: the servers, the new-stack programs, the plain command names and
-#      /bin/game-res; each plain name is the new-stack program or launcher (cmp) or
-#      its wrapper; the desktop applications (the games' window launcher + session, the
+#   2. rootfs: the servers, the GPU-stack programs under their command names and
+#      /bin/game-res; startx and xfce-session are the session scripts themselves; the engines
+#      carry the GPU-stack banner; the desktop applications (the games' window launcher + session, the
 #      video players, Atril, their XFCE menu entries, the demo clips) and WiFi (daemon,
 #      client, example configuration, vendor firmware + licences); every GL game engine
 #      and ffplay ONE program with SDL's KMSDRM AND Wayland drivers.
 #   3. rootfs: none of the first stack's program files, and none of the superseded
 #      desktop-app builds or hand-staged test names (the -wl game clones, ffplay-drm/-wl,
-#      video-play2, *-2 / *-low / -g<N> servers and sessions). Nothing builds them any
+#      video-play2, *-2 / *-low / -g<N> servers and sessions), and none of the retired names
+#      (the *-drm launcher copies, startx-drm, startx_gpu, thunar-wl, gdbus-wl, vkcube-drm,
+#      the xfce-session wrapper's target). Nothing builds them any
 #      more, so one present is a stale file of an old build in the persistent staging
 #      tree (or a hand-staged NFS export): delete it, or make a pristine export.
 #   4. rootfs: the old stack's strings in any ELF under bin sbin usr/bin usr/sbin
@@ -81,31 +83,32 @@ fi
 
 echo "== 2. the GPU stack in the rootfs: ${root} =="
 for p in sbin/rpi4-v3d-async sbin/rpi4-kms bin/shmsrv \
-	usr/bin/quakespasm-drm bin/qs-drm usr/bin/yquake2-drm usr/bin/quake2-drm usr/bin/quake3e-drm \
-	usr/bin/quake3-drm usr/bin/vkquake-drm bin/vkq-drm usr/bin/supertuxkart-drm bin/stk-drm \
-	bin/Xorg-drm bin/startx-drm bin/eglx11-demo-x etc/X11/xorg-drm.conf \
-	bin/labwc bin/foot bin/labwc-desktop.sh bin/xfce-desktop.sh bin/thunar-wl bin/xfce4-panel \
-	bin/xfdesktop bin/dbus-daemon usr/lib/xfce-demo/xfce-session usr/lib/xfce-demo/bin/loginctl \
-	bin/kmscube bin/vkcube-drm bin/drmprobe bin/game-res; do
+	usr/bin/quakespasm-drm usr/bin/quakespasm usr/bin/yquake2-drm usr/bin/quake2 usr/bin/quake3e-drm \
+	usr/bin/quake3 usr/bin/vkquake-drm usr/bin/vkquake usr/bin/supertuxkart-drm bin/stk \
+	bin/Xorg-drm bin/startx bin/eglx11-demo-x etc/X11/xorg-drm.conf \
+	bin/labwc bin/foot bin/labwc-desktop.sh bin/xfce-session bin/xfce-desktop.sh bin/xfce-autostart.sh \
+	bin/thunar bin/gdbus bin/xfce4-panel bin/xfdesktop bin/dbus-daemon usr/lib/xfce-demo/bin/loginctl \
+	bin/kmscube bin/vkcube bin/drmprobe bin/game-res; do
 	if [ -s "${root}/${p}" ]; then ok "${p}"; else fail "${p} missing"; fi
 done
-# The plain command names (TD-26): copies of the -drm programs or launchers, or wrappers.
-for pair in usr/bin/quakespasm:bin/qs-drm usr/bin/quake2:usr/bin/quake2-drm \
-	usr/bin/quake3:usr/bin/quake3-drm usr/bin/vkquake:bin/vkq-drm bin/stk:bin/stk-drm; do
-	name="${pair%%:*}"; prog="${pair#*:}"
-	if [ -s "${root}/${name}" ] && cmp -s "${root}/${name}" "${root}/${prog}"; then
-		ok "${name} = ${prog}"
-	else
-		fail "${name} is not ${prog} (missing, or another program: a stale launcher?)"
-	fi
-done
-for spec in "bin/startx|exec /bin/bash /bin/startx-drm" "bin/startx_gpu|exec /bin/bash /bin/startx-drm" \
-	"bin/xfce-session|exec /bin/bash /usr/lib/xfce-demo/xfce-session"; do
+# The session scripts are installed under their command names (not wrappers of another name).
+for spec in "bin/startx|XDRM start mode=" "bin/xfce-session|XFCE-SESSION start"; do
 	name="${spec%%|*}"
 	if [ -s "${root}/${name}" ] && [ "$(count "${spec#*|}" "${root}/${name}")" -ge 1 ]; then
-		ok "${name} runs ${spec#*exec /bin/bash }"
+		ok "${name} is the session script"
 	else
-		fail "${name} is not the new-stack wrapper ('${spec#*|}')"
+		fail "${name} is not the session script ('${spec#*|}'): a stale wrapper?"
+	fi
+done
+# Each launcher runs its GPU-stack engine (an old-stack launcher of the same name would not).
+for pair in usr/bin/quakespasm:quakespasm-drm usr/bin/quake2:yquake2-drm usr/bin/quake3:quake3e-drm \
+	usr/bin/vkquake:vkquake-drm bin/stk:supertuxkart-drm; do
+	name="${pair%%:*}"
+	[ -s "${root}/${name}" ] || continue
+	if [ "$(count "/usr/bin/${pair#*:}" "${root}/${name}")" -ge 1 ]; then
+		ok "${name} runs /usr/bin/${pair#*:}"
+	else
+		fail "${name} does not run /usr/bin/${pair#*:} (a stale launcher?)"
 	fi
 done
 # Engine banners: an old engine staged under a -drm name would have none.
@@ -162,8 +165,10 @@ for p in usr/bin/Xphoenix usr/bin/yquake2 usr/bin/quake3e usr/bin/supertuxkart \
 	usr/bin/ffplay-wl2 bin/video-play2 bin/atril-wl bin/xfce-desktop-atril.sh bin/foot-2 bin/labwc-2 \
 	bin/fuzzel-2 bin/xfce-session-2 bin/xfce-desktop-2.sh bin/rpi4-v3d-async-low bin/rpi4-kms-g7 \
 	bin/rpi4-kms-g8 bin/rpi4-kms-g9 bin/weston-simple-egl-low etc/xdg/labwc-xfce-m8 usr/share/m10 \
-	bin/Xorg-drm-noshim bin/v3dmemprobe; do
-	if [ -e "${root}/${p}" ] || [ -L "${root}/${p}" ]; then fail "${p} present (a stale file of the deleted first stack: remove it)"; else ok "${p} absent"; fi
+	bin/Xorg-drm-noshim bin/v3dmemprobe \
+	bin/qs-drm usr/bin/quake2-drm usr/bin/quake3-drm bin/vkq-drm bin/stk-drm bin/startx-drm bin/startx_gpu \
+	bin/thunar-wl bin/gdbus-wl bin/vkcube-drm usr/lib/xfce-demo/xfce-session; do
+	if [ -e "${root}/${p}" ] || [ -L "${root}/${p}" ]; then fail "${p} present (a stale file of an old build: the first stack, a superseded build or a retired name; remove it)"; else ok "${p} absent"; fi
 done
 
 echo "== 4. old-stack strings in the rootfs ELFs =="

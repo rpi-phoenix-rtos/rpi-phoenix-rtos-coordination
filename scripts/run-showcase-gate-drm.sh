@@ -5,18 +5,18 @@
 # XFCE desktop, one Pi cycle per app, with the servers (rpi4-v3d-async, rpi4-kms,
 # shmsrv) started AT BOOT by the plo script -- no server prelude in the commands.
 #
-# A copy of run-showcase-gate.sh (never edit that one while a gate might run: see
-# its header), changed in four places only:
-#   * the app table: the plain command names the P1 image installs (copies of the
-#     *-drm programs, TD-26) and an `xfce` row; an entry may hold several psh
-#     commands separated by " ;; " (psh has no `;`) and its own max_cmd_secs;
+# Grown from the first stack's six-app gate (run-showcase-gate.sh, deleted with that
+# stack), with four additions:
+#   * the app table: the image's command names (the launchers of the *-drm engines) and
+#     an `xfce` row; an entry may hold several psh commands separated by " ;; " (psh has
+#     no `;`) and its own max_cmd_secs;
 #   * a `boot` column per cycle: the three servers' ready lines and rpi4-kms's
 #     render-server connection (`v3d connect=1`) must be in the log -- a cycle whose
 #     boot did not bring the stack up is not a result for its app;
 #   * `frames` is exempt for `x` and `xfce` (Xorg/labwc print no `flipstat … (total N)`);
 #   * the X and XFCE rows set HOLD first, so their launchers tear down by
-#     themselves inside max_cmd_secs (the /bin/startx wrapper defaults to HOLD=0,
-#     "until Window Maker exits", like the old xlaunch).
+#     themselves inside max_cmd_secs (/bin/startx and /bin/xfce-session default to
+#     HOLD=0, "until the user logs out").
 #
 # Boot image: the default image on netboot/nfsroot, the
 # export synced from it, ideally a pristine one (scripts/make-pristine-nfs-export.sh):
@@ -24,10 +24,8 @@
 # that would mask a missing port install. Check it first with
 # scripts/check-gpu-stack-image.sh --root <export>.
 #
-# The rest of this header is run-showcase-gate.sh's and applies unchanged.
-#
-# run-showcase-gate.sh — run the six-app showcase gate, one Pi cycle per app,
-# and print the result table.
+# The rest of this header is the first gate's and applies unchanged: run the
+# showcase gate, one Pi cycle per app, and print the result table.
 #
 # This is the gate the weekly log quotes as "6/6, 0 faults each". It existed only
 # as six hand-typed test-cycle-psh-interact.sh invocations, which meant the drive
@@ -56,7 +54,7 @@
 # foreground tool call should hold, so run IT in the background and watch the
 # summary file:
 #
-#     nohup ./scripts/run-showcase-gate.sh --label mygate > gate.log 2>&1 &
+#     nohup ./scripts/run-showcase-gate-drm.sh --label mygate > gate.log 2>&1 &
 #
 # ⚠ WHAT THIS SCRIPT CANNOT TELL YOU: whether the app actually RENDERED. A game
 # that reaches its main loop and draws nothing still exits 0 with a clean UART
@@ -104,11 +102,11 @@ cd "${repo_root}"
 # The default GPU stack's drive commands (MIGRATION §5 table, with the plain names
 # of the P1 image). "key:max_cmd_secs:cmd1 ;; cmd2 ..." -- an empty max_cmd_secs
 # is the script default. Absolute paths, for the reason in the header above.
-# x:    the old gate's `action` scene on Xorg-drm (Window Maker, the GL window, the
-#       two xterms, xbill, xclock); HOLD=200 = startx-drm's own default, so the
-#       launcher's clean teardown lands inside 300 s (MIGRATION §6.6).
+# x:    startx's `action` scene on Xorg-drm (Window Maker, the GL window, the
+#       two xterms, xbill, xclock); HOLD=200, so the launcher's clean teardown lands
+#       inside 300 s (MIGRATION §6.6).
 #       `/bin/bash` in front: bare shebang exec from psh is a bench item (§7).
-# vkq:  /usr/bin/vkquake = vkq-drm: the start map (+map start), the #67 torch
+# vkq:  /usr/bin/vkquake (the launcher): the start map (+map start), the #67 torch
 #       viewpoint, so the ROI check below applies unchanged.
 # xfce: XFCE 4.20 on labwc (GLES2 composition on the V3D), HOLD=60 then the
 #       panel's Log Out path, as m7i/m7l; 420 s as those cycles.
@@ -382,7 +380,7 @@ if [ "${ran_vkq}" = 1 ] && [ -x "${repo_root}/scripts/check-torch-rois.py" ]; th
 		printf 'torches: NOT CONFIRMED -- see the ROI output above.\n'
 		printf '  A single dark frame is not a failure (the flame animates); this needs\n'
 		printf '  >=2 frames with both ROIs lit. If it says 0 at-viewpoint frames, vkQuake\n'
-		printf '  did not reach the start map -- check the vkq-drm command line (+map start).\n'
+		printf '  did not reach the start map -- check the vkquake launcher command line (+map start).\n'
 	fi
 	echo
 fi

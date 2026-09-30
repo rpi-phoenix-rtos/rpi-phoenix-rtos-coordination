@@ -87,9 +87,9 @@ if [ "${expect}" = showcase ]; then
 	                 bin/wmsetbg)
 	required_paths+=(sbin/rpi4-v3d-async sbin/rpi4-kms bin/shmsrv bin/Xorg-drm
 	                 usr/bin/quakespasm-drm usr/bin/yquake2-drm usr/bin/quake3e-drm
-	                 usr/bin/vkquake-drm usr/bin/supertuxkart-drm bin/qs-drm bin/game-res
+	                 usr/bin/vkquake-drm usr/bin/supertuxkart-drm bin/game-res
 	                 usr/bin/quakespasm usr/bin/quake2 usr/bin/quake3 usr/bin/vkquake
-	                 bin/stk bin/startx bin/xfce-session)
+	                 bin/stk bin/startx bin/xfce-session bin/xfce-autostart.sh)
 fi
 for p in "${required_paths[@]}"; do
 	if dump "$p"; then printf '  OK   %-40s %s\n' "$p" "$(stat -c%s "$TMP/x")"
