@@ -210,27 +210,29 @@ always runs it.
 
 ### Extra host dependencies
 
-The ports stage needs more host tools than the base system. Most are in
-`bootstrap-linux-host.sh`'s apt list (the "Showcase build deps" block): `ninja-build
-python3-mako libdrm-dev glslang-tools gperf`. The recipes check for the others and
-stop with a clear message when one is missing:
+The ports stage needs more host tools than the base system.
+`scripts/bootstrap-linux-host.sh` installs all of them (its "Showcase build deps" block;
+each package carries a comment naming the recipe check it satisfies), and the Dockerfile runs
+the same script. The recipes check for them and stop with a clear message when one is
+missing:
 
-- **`meson` ≥ 1.4** for Mesa 26.2. It is newer than Ubuntu 24.04's apt `meson`,
-  so on 24.04 install one with `uv tool install meson`.
-- **`wayland-scanner` 1.24.0** exactly (the `wayland` and `xfce_wayland` ports).
-- `glib-compile-resources`, `gdbus-codegen`, `glib-mkenums`, `glib-genmarshal`, and
-  `python3` with GObject introspection and GdkPixbuf (`xfce_wayland`: the icon theme
-  is rendered on the host).
-- `python3` with **pycairo** and the **DejaVu** fonts (`atril_wayland` draws the
-  sample PDF).
-- **`ffmpeg` + `ffprobe`** with the libx264, libx265, libvpx-vp9, libopus and aac
-  encoders (`video_player` generates the demo clips at build time).
+- **`meson` ≥ 1.4** for Mesa 26.2: apt's `meson` where it is new enough (Ubuntu 26.04),
+  otherwise `uv tool install "meson>=1.4"` (Ubuntu 24.04, into `~/.local/bin`).
+- **`wayland-scanner` 1.24.0** exactly (`libwayland-bin`; the `wayland` and `xfce_wayland`
+  ports).
+- the GLib tools (`glib-compile-resources`, `gdbus-codegen`, `glib-mkenums`,
+  `glib-genmarshal`, `glib-compile-schemas`), `gtk-update-icon-cache`, `shared-mime-info`,
+  and `python3` with GObject introspection, GdkPixbuf and the SVG loader (`xfce_wayland`: the
+  icon theme is rendered on the host).
+- `python3` with **pycairo** and the **DejaVu** fonts (`atril_wayland` draws the sample PDF;
+  the desktop fonts).
+- **`ffmpeg`** with the libx264, libx265, libvpx-vp9, libopus and aac encoders
+  (`video_player` generates the demo clips at build time).
+- `unzip`, `lhasa` and `7z` for the game data.
 
-<!-- TODO(coordinator): the pycairo, python3-gi/GdkPixbuf, DejaVu, glib dev tools and
-wayland-scanner 1.24.0 requirements are not in bootstrap-linux-host.sh's APT_PACKAGES,
-which the Dockerfile also relies on. Either add them there (the Docker --no-cache gate
-will otherwise stop at the first desktop port), or confirm Ubuntu 26.04 already provides
-them through the listed packages. -->
+Ubuntu 24.04 cannot build the ports stage from apt alone: its wayland-scanner (1.22) and
+host Python (3.12; the python port needs 3.14) are too old, and bootstrap warns about both.
+Ubuntu 26.04, the Dockerfile's default, has everything.
 
 ### Game data and WiFi firmware
 
