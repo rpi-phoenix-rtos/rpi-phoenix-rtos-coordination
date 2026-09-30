@@ -12,7 +12,7 @@ Each scene below gives:
 - how long the scene runs and how long to record;
 - the capture command;
 - whether any part of it cannot be scripted. Only one part cannot: opening the menus on
-  camera ([§4](#4-what-is-not-scripted-and-what-has-not-run-on-the-pi)).
+  camera ([§4](#4-what-is-not-scripted)).
 
 ## 1. How capture works
 
@@ -83,7 +83,7 @@ knobs needs one.
   WiFi at all;
 - the NFS export restored with `scripts/restore-export-data.sh`, so the lab `/etc/wifi.conf` is
   present and WiFi joins at boot;
-- the host AP up (`scripts/radio-ap-up.sh`) for the WiFi scene;
+- the host AP up (`scripts/radio-ap-up.sh`) for every clip, so WiFi is joined as a user's would be;
 - the host NAT gateway (`scripts/pi-internet-nat.sh`) for the HTTPS scene;
 - a USB keyboard and mouse attached.
 
@@ -131,7 +131,7 @@ REC_IDLE_SECS=60 REC_MAX_CMD_SECS=330 ./scripts/record-showcase-clip.sh xfce-app
 - **On screen:** the wallpaper and the panel (the Applications menu button, the launchers, the
   task list, the clock, Log Out), Thunar on `/` and a foot terminal. Then, one after another:
   Atril on the sample PDF (30 s); Quake III Arena in a decorated 1280×720 window at (636,40),
-  q3dm1 with the bot deathmatch and the orbiting camera, ~70 fps (90 s); the H.264 720p clip in
+  q3dm1 with the bot deathmatch and the orbiting camera, 70–74 fps (90 s); the H.264 720p clip in
   a window, full screen at +12 s and back in the window at +24 s.
 - **Grading lines:**
   - `XFCE-AUTOSTART open atril`, `… closed`, `open quake3`, `open video`;
@@ -155,7 +155,7 @@ REC_IDLE_SECS=60 REC_MAX_CMD_SECS=330 ./scripts/record-showcase-clip.sh xfce-stk
 ```
 
 - **On screen:** the desktop, then about 20 s later SuperTuxKart in a window: four AI karts race
-  two laps on hacienda, and the game exits by itself.
+  two laps on hacienda at ~19 fps (18.6), and the game exits by itself.
 - **Grading lines:** `GAME-WINDOW game=stk-race start … driver=wayland`, its `flipstat` lines,
   `XFCE-SESSION done rc=0`.
 - Label: `SuperTuxKart — …`.
@@ -196,18 +196,24 @@ One clip per game. Every game starts at the psh prompt, with no desktop running:
 
 | Clip label | Command | Record secs | Shows |
 |---|---|---|---|
-| `fs-q3` | `quake3 +map q3dm1` | 240 | Quake III bot deathmatch, orbiting third-person camera, ~59 fps |
+| `fs-q3` | `quake3 +map q3dm1` | 240 | Quake III bot deathmatch, orbiting third-person camera, 60 fps |
 | `fs-q2` | `quake2 +demomap q2demo1.dm2` | 200 | Quake II playing the demo pak's recorded demo, 60 fps |
-| `fs-qs` | `quakespasm` | 200 | QuakeSpasm attract-demo loop, ~44 fps |
-| `fs-vkq` | `vkquake +playdemo demo1` | 240 | vkQuake on Vulkan playing a recorded demo, ≈ 39–42 fps |
+| `fs-qs` | `quakespasm` | 200 | QuakeSpasm attract-demo loop, 44 fps |
+| `fs-vkq` | `vkquake +playdemo demo1` | 480 | vkQuake on Vulkan playing a recorded demo, 42 fps, after ~3 min of pipeline compile |
 | `fs-stk` | `game-res stk 1280x720 race` | 330 | SuperTuxKart: a 4-kart AI race, 720p scaled to the screen, ~22 fps |
 
 ```
 ./scripts/record-showcase-clip.sh fs-q3 240 "quake3 +map q3dm1"
+REC_IDLE_SECS=240 REC_MAX_CMD_SECS=420 ./scripts/record-showcase-clip.sh fs-vkq 480 "vkquake +playdemo demo1"
 ```
 
+- **One clip per game.** The games never return to psh by themselves (Quake II's demo loops;
+  only `stk race` ends), so put `"export GAMEDRM_EXIT_SECS=<N>"` before the game command to
+  end it N seconds after its first frame.
+- **vkQuake** compiles its pipelines silently for ≈ 3 min before its first frame (KNOWN-ISSUES
+  G4). With a shorter idle window the cycle powers the Pi off mid-compile and the clip is black.
 - Grade each clip by its `<name> flipstat … fps` lines, not by the game's own counter.
-- SuperTuxKart needs the longest window: in the gate it was still racing when a 240 s capture
+- SuperTuxKart needs a long window too: in the gate it was still racing when a 240 s capture
   closed. `race` ends the game by itself after two laps.
 - Labels: `Quake III Arena — …`, and so on.
 
@@ -246,22 +252,21 @@ SuperTuxKart). That is about 5 minutes.
 ## 3. Before recording
 
 1. The image of the final tree must have passed its gate first: `scripts/run-showcase-gate.sh`
-   (the previous final image passed 7/7 with WiFi joined, WiFi W1 and the windowed games,
-   MIGRATION §7s). The recordings are not a test.
+   (the final image passed 7/7 with WiFi joined, MIGRATION §7t). The recordings are not a test.
 2. Warm-up is not needed: there is no shader disk cache. For the same reason, the first frame of
-   every game takes as long in every clip. Budget vkQuake's shader compile.
-3. Run GPU clips with the AP down (`scripts/radio-ap-down.sh`), except S2. A joined WiFi netif
-   polls: vkQuake measured 38.7 fps with WiFi joined against 42.2 before.
+   every game takes as long in every clip. Budget vkQuake's ≈ 3 min pipeline compile.
+3. Keep the AP up for every clip. Joined and idle, WiFi costs ~0.5 % CPU and vkQuake runs at
+   41.8 fps against 42.8 unjoined (MIGRATION §7t).
 
-## 4. What is not scripted, and what has not run on the Pi
+## 4. What is not scripted
 
 - **The menus (S5)** need a person at the mouse. No input-injection tool was added: the panel's
   `--plugin-event=applicationsmenu:popup` first takes a seat grab that is unlikely to succeed on
   Wayland.
-- **Not yet run on the Pi** (host-tested only, polish-final.md §6): `XFCE_AUTOSTART` (S3),
-  `GAME_LIST=none` and `stk-race` (S3, S4), `quake2 +demomap q2demo1.dm2` and
-  `vkquake +playdemo demo1` (S7), `startx browse` (S9). A rehearsal clip of each scene before
-  the real recording is cheap; grade it by the lines listed with the scene.
+- Every other scene ran on the Pi for the 2026-09-30 reel ([§5](#5-result--recorded-2026-09-30-on-the-final-image-manifest-build30);
+  S6's video part came from the S3 clip).
+  A rehearsal clip of a scene before a new recording is cheap; grade it by the lines listed
+  with the scene.
 
 ## 5. Result — recorded 2026-09-30 on the final image (manifest build30)
 
