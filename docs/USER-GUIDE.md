@@ -76,10 +76,8 @@ The prompt is **psh**, Phoenix's own shell. It is simpler than a Unix shell:
 - **Shell scripts run through bash:** `/bin/bash /bin/xfce-session`. This is the tested way to
   start the desktop, X11 and the video player. Every command in this guide uses it where it
   applies.
-  <!-- TODO(coordinator): starting a `#!` script directly from psh (`/bin/xfce-session`,
-  `startx`, `video-play`) depends on libphoenix execve's `#!` support, which has never been
-  checked from psh on the UART (MIGRATION §7.3). If a bench row confirms it, the guide can
-  drop the `/bin/bash` prefix. -->
+  Scripts that start with `#!` also run directly from psh (`/bin/xfce-session`), so the
+  `/bin/bash` prefix is optional.
 
 For a full interactive shell, run `bash`. GNU bash 5.2 supports pipes, loops and command
 substitution. `exit` returns to psh.
@@ -548,10 +546,29 @@ wifi disconnect                    leave the network and forget it
 | `/usr/sbin/lighttpd -f /etc/lighttpd.conf` | web server |
 | `redis-server --port 6379` | Redis 7.2 over TCP |
 
-<!-- TODO(coordinator): the SSH server needs host keys and a way to log in (root password or
-authorized_keys). This guide does not document that, because no HW run of the dropbear server
-on the current image was found. Verify `dropbear -R -F -E` and the login path, or drop the
-row. Same for the lighttpd docroot. -->
+**SSH server (Dropbear 2026.94).** It is not started at boot. Start it from psh:
+
+    /usr/sbin/dropbear -R
+
+`-R` creates the host keys the first time a client connects and keeps them in `/local/`, so the
+fingerprint survives reboots. The server offers ed25519 keys and the curve25519 and post-quantum
+(mlkem768, sntrup761) key exchanges, so a current OpenSSH client connects without warnings.
+
+- **Log in** as `root` with the password `1234`, the image's default:
+  `ssh root@<pi-address>`. Only expose the server on a network you trust.
+- **Key login (SD card image):** root's home is `/`. Every directory up to it must be owned by root
+  and not writable by group or others. Directories made on the Pi come out world-writable, so run
+  the `chmod` steps: `mkdir /.ssh`, `chmod 700 /.ssh`, put your public key in
+  `/.ssh/authorized_keys`, then `chmod 600 /.ssh/authorized_keys`. On a network boot with the NFS
+  root, `/` belongs to the PC user who owns the export, so key login is refused there; use the
+  password.
+- **Copying files:** the image has no SFTP server, so OpenSSH 9 and newer need `scp -O`
+  (`scp -O file root@<pi>:/tmp/`).
+- To see why a login is refused, run the server in the foreground instead: `/usr/sbin/dropbear -R -F -E`.
+
+**Web server (lighttpd).** `/usr/sbin/lighttpd -f /etc/lighttpd.conf` serves `/usr/www` on port 80
+(the image ships a small `index.html` there). HTTPS is off because the image has no certificate.
+To turn it on, install a certificate and uncomment the HTTPS block in `/etc/lighttpd.conf`.
 
 ### 8.4 Audio
 
