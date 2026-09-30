@@ -65,6 +65,7 @@
       "Bash(./scripts/qemu-boot-sdimage.sh:*)",
       "Bash(./scripts/record-hdmi.sh:*)",
       "Bash(./scripts/syntax-check.sh:*)",
+      "Bash(./scripts/wt-syntax-check.sh:*)",
       "Bash(./scripts/syntax-check-v3d.sh:*)",
       "Bash(./scripts/c1-fire-position.sh:*)",
       "Bash(./scripts/c1-pace-read.sh:*)",
