@@ -57,7 +57,7 @@ gcc -std=gnu11 -O1 -g -w -fsanitize=address,undefined -fno-omit-frame-pointer -D
 for mode in legacy dri; do
 	log="${out}/e2e-${mode}.log"
 	"${out}/e2e" "${mode}" > "${log}" 2>&1 || true
-	grep -E 'DRMPROBE (RESULT|device |open |identity|fstat|card1|dmabuf_size|dmabuf_sync|atomic_universal|sync_merge|prime_|import_clear|implicit_flip)|HOSTE2E|ERROR|runtime error' "${log}" || true
+	grep -E 'DRMPROBE (RESULT|device |open |identity|fstat|card1|dmabuf_size|dmabuf_sync|atomic_universal|sync_merge|prime_|import_clear|implicit_flip|compositor_flip)|HOSTE2E|ERROR|runtime error' "${log}" || true
 	why=""
 	grep -q 'DRMPROBE RESULT .*failed=cl_clear,cl_clear_dep,import_clear,implicit_flip, ' "${log}" || why="${why} failed-set"
 	grep -qE 'ERROR: AddressSanitizer|runtime error' "${log}" && why="${why} sanitizer"
@@ -69,7 +69,7 @@ for mode in legacy dri; do
 	grep -q 'DRMPROBE atomic_universal .* ok=1' "${log}" || why="${why} atomic_universal"   # M5
 	grep -q 'DRMPROBE sync_merge setup=0 merge=0 .* ok=1' "${log}" || why="${why} sync_merge"   # M5b (G15)
 	grep -q 'DRMPROBE implicit_flip submit=0 flip=0 events=1 ' "${log}" || why="${why} implicit_flip"
-	grep -qE 'HOSTE2E m3p2 .* imports=1 imports_closed=1 deferred_flips=[1-9]' "${log}" || why="${why} m3p2-counters"
+	grep -qE 'HOSTE2E m3p2 .* imports=2 imports_closed=2 deferred_flips=[1-9]' "${log}" || why="${why} m3p2-counters"   # G1 + G5's compositor buffer
 	grep -q 'DRMPROBE prime_export_render rc=0 errno=0 path=/v3dbuf/[0-9]* size=65536 fstat_chr=1 mmap=1 bad_words=0 xwrite=1 reexport_same_name=1 self_import=0 .* ok=1' "${log}" || why="${why} g4-export"
 	grep -q 'DRMPROBE prime_import_render2 conn=1 rc=0 .* survives_creator_close=1 released=1 ok=1' "${log}" || why="${why} g4-import2"
 	grep -q 'HOSTE2E g4 .* exports_live=0 v3dbuf_imports=1 bos_live=0' "${log}" || why="${why} g4-counters"
@@ -92,8 +92,15 @@ for mode in legacy dri; do
 	grep -q 'DRMPROBE dmabuf_sync_flip producer=foreign addfb=0 pending_at_commit=1 flipped=1 .* done_at_flip=1 bad_words=0 flipped_back=1 ok=1' "${log}" || why="${why} g6-flip"
 	grep -qE 'HOSTE2E g6 .* last_fence_queries=[1-9]' "${log}" || why="${why} g6-counters"
 	# deferred flips: G13's implicit_flip (1, as before G6) + the G6 foreign flip (1): the second
-	# one exists only because the library asked the server (g6-negative shows 1)
-	grep -q 'HOSTE2E g6 .* deferred_flips=2$' "${log}" || why="${why} g6-deferred"
+	# one exists only because the library asked the server (g6-negative shows 1) + G5's
+	# compositor flip (1)
+	grep -q 'HOSTE2E g6 .* deferred_flips=3$' "${log}" || why="${why} g6-deferred"
+	# G5: a wlroots compositor's own output - another card0 client's dumb buffer, composited
+	# on the render node, imported on the backend's card0 as an alias whose handle is closed
+	# right after ADDFB2 - flipped with no in-fence while the composite is pending: the
+	# flip must be held until the composite is done (it went ungated before G5)
+	grep -q 'DRMPROBE compositor_flip setup=0 .* handle_closed=1 .* pending_at_commit=1 flipped=1 .* done_at_flip=1 .* ok=1' "${log}" || why="${why} g5-compositor-flip"
+	grep -q 'HOSTE2E g5 .* kmsbuf_aliases=1 ' "${log}" || why="${why} g5-alias"
 	if [ "${mode}" = dri ]; then
 		grep -q 'DRMPROBE identity node=card1 version=v3d .* node_type=0 .* ok=1' "${log}" || why="${why} card1"
 		grep -q 'DRMPROBE fstat_nodes n=3 ' "${log}" || why="${why} fstat-n3"
@@ -130,7 +137,7 @@ log="${out}/e2e-g7-negative.log"
 FAKE_KMS_PROTO=1 "${out}/e2e" dri > "${log}" 2>&1 || true
 grep -E 'DRMPROBE (RESULT|prime_import_card0)|HOSTE2E g7|ERROR|runtime error' "${log}" || true
 why=""
-grep -q 'DRMPROBE RESULT .*failed=cl_clear,cl_clear_dep,import_clear,implicit_flip,prime_import_card0,prime_import_card0_neg,scanout_lowmem,dmabuf_sync_flip, ' "${log}" || why="${why} failed-set"   # the G6 flip and scanout_lowmem need a card0 import
+grep -q 'DRMPROBE RESULT .*failed=cl_clear,cl_clear_dep,import_clear,implicit_flip,prime_import_card0,prime_import_card0_neg,scanout_lowmem,dmabuf_sync_flip,compositor_flip, ' "${log}" || why="${why} failed-set"   # the G6 flip, scanout_lowmem and the G5 alias need a card0 import
 grep -q 'DRMPROBE prime_import_card0 export=0 .* import=-1 import_errno=38 .* ok=0' "${log}" || why="${why} import-not-enosys"
 grep -q 'HOSTE2E g7 .* card0_imports=0 imports_live=0' "${log}" || why="${why} g7-counters"
 grep -qE 'ERROR: AddressSanitizer|runtime error' "${log}" && why="${why} sanitizer"
@@ -173,7 +180,7 @@ grep -q 'DRMPROBE dmabuf_sync_probe export_errno=25 ' "${log}" || why="${why} pr
 grep -q 'DRMPROBE dmabuf_sync_read producer=foreign export_errno=25 .* bad_words=4096 done_at_read=0 ok=0' "${log}" || why="${why} read-not-stale"
 grep -q 'DRMPROBE dmabuf_sync_flip producer=foreign addfb=0 .* flipped=1 .* done_at_flip=0 .* ok=0' "${log}" || why="${why} flip-not-ungated"
 grep -q 'DRMPROBE prime_export_render rc=0 .* ok=1' "${log}" || why="${why} g4-regressed"
-grep -q 'HOSTE2E g6 .* server_proto=3 last_fence_queries=0 deferred_flips=1$' "${log}" || why="${why} g6-counters"   # only G13's
+grep -q 'HOSTE2E g6 .* server_proto=3 last_fence_queries=0 deferred_flips=2$' "${log}" || why="${why} g6-counters"   # only G13's (implicit_flip + G5's compositor_flip)
 grep -qE 'ERROR: AddressSanitizer|runtime error' "${log}" && why="${why} sanitizer"
 if [ -z "${why}" ]; then
 	echo "HOSTE2E g6-negative verdict=PASS (the G6 tests fail against a proto-3 server: stale read, ungated flip; the rest as before)"
@@ -231,7 +238,8 @@ grep -q 'DRMPROBE dmabuf_sync_probe export_errno=0 import_errno=0 idle_fences=0 
 grep -q 'DRMPROBE dmabuf_sync_import .* pending_after_import=0 .* inconclusive=1 .* ok=0' "${log}" || why="${why} import-not-inconclusive"
 grep -q 'DRMPROBE dmabuf_sync_read producer=foreign export_errno=0 pending_at_export=0 .* bad_words=0 done_at_read=1 inconclusive=1 .* ok=0' "${log}" || why="${why} read-not-inconclusive"
 grep -q 'DRMPROBE dmabuf_sync_flip producer=foreign addfb=0 pending_at_commit=0 .* done_at_flip=1 bad_words=0 .* inconclusive=1 .* ok=0' "${log}" || why="${why} flip-not-inconclusive"
-grep -q 'DRMPROBE RESULT .*dmabuf_sync_import,dmabuf_sync_read,dmabuf_sync_flip, ' "${log}" || why="${why} failed-set"
+grep -q 'DRMPROBE compositor_flip .* pending_at_commit=0 .* inconclusive=1 .* ok=0' "${log}" || why="${why} g5-not-inconclusive"
+grep -q 'DRMPROBE RESULT .*dmabuf_sync_import,dmabuf_sync_read,dmabuf_sync_flip,compositor_flip, ' "${log}" || why="${why} failed-set"
 grep -qE 'ERROR: AddressSanitizer|runtime error' "${log}" && why="${why} sanitizer"
 if [ -z "${why}" ]; then
 	echo "HOSTE2E g6-eager verdict=PASS (an un-provoked race grades the G6 keys inconclusive = FAIL, never PASS)"

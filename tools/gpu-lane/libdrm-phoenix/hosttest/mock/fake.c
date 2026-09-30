@@ -175,12 +175,13 @@ static struct {
 		 * reference on the render BO - until the handle is closed and no framebuffer
 		 * uses the buffer */
 		int imported, handle_open;
+		int alias;             /* an import of another client's /kmsbuf export (kms_bo.c import_alias) */
 		int vbo;
 		uint64_t imp_id;
 		const char *why;
 	} bo[NBO];
 	uint32_t next_handle;
-	uint32_t imports, imports_live, imports_released;
+	uint32_t imports, imports_live, imports_released, aliases;
 	struct {
 		int used;
 		uint32_t id, owner, bo, w, h, fmt;
@@ -299,9 +300,11 @@ static void kms_import_maybe_release(int b)
 			return;
 		}
 	}
-	vbo_kms_unref(K.bo[b].imp_id);
-	K.imports_live--;
-	K.imports_released++;
+	if (!K.bo[b].alias) {
+		vbo_kms_unref(K.bo[b].imp_id);
+		K.imports_live--;
+		K.imports_released++;
+	}
 	memset(&K.bo[b], 0, sizeof(K.bo[b]));
 }
 
@@ -745,7 +748,7 @@ static void kms_handle(msg_t *m)
 			r->u.dumb.size = K.bo[b].size;
 			r->u.dumb.mem.kind = KMS_MEM_OID;
 			r->u.dumb.mem.cache = KMS_CACHE_UNCACHED;
-			r->u.dumb.mem.port = K.bo[b].imported ? VBUF_PORT : BUF_PORT;
+			r->u.dumb.mem.port = (K.bo[b].imported && !K.bo[b].alias) ? VBUF_PORT : BUF_PORT;
 			r->u.dumb.mem.size = K.bo[b].size;
 			r->u.dumb.mem.addr = K.bo[b].imported ? K.bo[b].imp_id : K.bo[b].handle;
 			rc = 0;
@@ -770,6 +773,50 @@ static void kms_handle(msg_t *m)
 			}
 			if ((q->ns == KMS_IMPORT_NS_KMSBUF) && (q->port == BUF_PORT) && ((b = bo_find(c, (uint32_t)q->id)) >= 0)) {
 				r->u.dumb.handle = K.bo[b].handle;   /* an own export: the original handle */
+				rc = 0;
+				break;
+			}
+			if ((q->ns == KMS_IMPORT_NS_KMSBUF) && (q->port == BUF_PORT) && (q->pad == 0u)) {
+				/* another client's PRIME-exported pool BO: an alias, memref = the exporter's
+				 * name; again on the same client: the same handle (kms_bo.c import_alias) */
+				int s = bo_find(0, (uint32_t)q->id);
+				if ((s < 0) || !K.bo[s].prime) {
+					rc = (s < 0) ? -ENOENT : -EACCES;
+					break;
+				}
+				for (i = 0; i < NBO; i++) {
+					if (K.bo[i].used && K.bo[i].alias && K.bo[i].handle_open && (K.bo[i].owner == c) &&
+							(K.bo[i].imp_id == q->id)) {
+						break;
+					}
+				}
+				if (i == NBO) {
+					for (i = 0; (i < NBO) && K.bo[i].used; i++) {
+					}
+					if (i == NBO) {
+						rc = -ENOSPC;
+						break;
+					}
+					memset(&K.bo[i], 0, sizeof(K.bo[i]));
+					K.bo[i].used = K.bo[i].imported = K.bo[i].alias = K.bo[i].handle_open = 1;
+					K.bo[i].owner = c;
+					K.bo[i].handle = K.next_handle++;
+					K.bo[i].w = K.bo[s].w;
+					K.bo[i].h = K.bo[s].h;
+					K.bo[i].pitch = K.bo[s].pitch;
+					K.bo[i].size = K.bo[s].size;
+					K.bo[i].off = K.bo[s].off;
+					K.bo[i].imp_id = q->id;
+					K.aliases++;
+				}
+				r->u.dumb.handle = K.bo[i].handle;
+				r->u.dumb.pitch = K.bo[i].pitch;
+				r->u.dumb.size = K.bo[i].size;
+				r->u.dumb.mem.kind = KMS_MEM_OID;
+				r->u.dumb.mem.cache = KMS_CACHE_UNCACHED;
+				r->u.dumb.mem.port = BUF_PORT;
+				r->u.dumb.mem.size = K.bo[i].size;
+				r->u.dumb.mem.addr = K.bo[i].imp_id;
 				rc = 0;
 				break;
 			}
@@ -2054,6 +2101,7 @@ uint32_t fake_unaligned_ends(void) { return F.unaligned_ends; }
 uint32_t fake_payload_msgs(void) { return F.payload_msgs; }
 uint32_t fake_msgs(void) { return F.msgs; }
 uint32_t fake_deferred_flips(void) { return F.deferred_flips; }
+uint32_t fake_kms_aliases(void) { return K.aliases; }
 void fake_m3p2(uint32_t *fstats, uint32_t *atsizes, uint32_t *imports, uint32_t *imports_closed)
 {
 	*fstats = F.fstats;

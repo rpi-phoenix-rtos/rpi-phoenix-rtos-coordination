@@ -33,6 +33,7 @@ uint32_t fake_payload_msgs(void);
 uint32_t fake_msgs(void);
 void fake_last_cl(v3da_cl_desc_t *d, uint32_t *nbo, uint32_t *nin, uint32_t *nout, uint32_t *submits);
 uint32_t fake_deferred_flips(void);
+uint32_t fake_kms_aliases(void);
 void fake_m3p2(uint32_t *fstats, uint32_t *atsizes, uint32_t *imports, uint32_t *imports_closed);
 void fake_set_v3d_proto(uint32_t proto);
 uint32_t fake_g6_queries(void);
@@ -81,6 +82,8 @@ int main(int argc, char **argv)
 		kimports_live, kimports_released);
 	printf("HOSTE2E g6 mode=%s server_proto=%s last_fence_queries=%u deferred_flips=%u\n", dri ? "dri" : "legacy",
 		proto, fake_g6_queries(), fake_deferred_flips());
+	printf("HOSTE2E g5 mode=%s kmsbuf_aliases=%u deferred_flips=%u\n", dri ? "dri" : "legacy", fake_kms_aliases(),
+		fake_deferred_flips());
 	printf("HOSTE2E lowmem mode=%s server_proto=%s v3d_high=%d lowmem_bos=%u\n", dri ? "dri" : "legacy", proto,
 		(v3d_high != NULL) && (strcmp(v3d_high, "1") == 0), fake_lowmem_bos());
 	return 0;
