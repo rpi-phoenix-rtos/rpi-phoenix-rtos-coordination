@@ -262,3 +262,33 @@ SuperTuxKart). That is about 5 minutes.
   `GAME_LIST=none` and `stk-race` (S3, S4), `quake2 +demomap q2demo1.dm2` and
   `vkquake +playdemo demo1` (S7), `startx browse` (S9). A rehearsal clip of each scene before
   the real recording is cheap; grade it by the lines listed with the scene.
+
+## 5. Result — recorded 2026-09-30 on the final image (manifest build30)
+
+**Reel:** `artifacts/hdmi-video/20260930-055507-phoenix-rtos-rpi4-showcase.mp4`, 287 s, 13 segments, 145 MB
+(local, not in git). Built by `scripts/make-demo-reel.sh`, whose segment table names each source clip and offset.
+
+| # | Segment | Source clip (`artifacts/hdmi-video/`) |
+|---|---|---|
+| 1 | Boot | `20260930-042356-shell-net` 15–30 s |
+| 2 | Shell and networking (Ethernet + WiFi lease, `wifi status`, ping, Python) | `shell-net` 105–135 s |
+| 3 | Atril on the XFCE desktop | `20260930-042717-xfce-apps` 170–184 s |
+| 4 | Quake III Arena in a window (~74 fps) | `xfce-apps` 228–253 s |
+| 5 | Video player: window → full screen (30 fps) | `xfce-apps` 288–318 s |
+| 6 | SuperTuxKart in a window (~19 fps) | `20260930-043504-xfce-stk` 250–275 s |
+| 7 | X11: Xorg + glamor, Window Maker | `20260930-044818-x11` 180–206 s |
+| 8 | Dillo, a live HTTPS page | `20260930-045535-dillo` 180–193 s |
+| 9–13 | Full screen: Quake III, Quake II, QuakeSpasm, vkQuake, SuperTuxKart (720p scaled) | `fs-q3` 158, `fs-q2` 118, `fs-qs` 130, `fs-vkq3` 402, `fs-stk` 180 |
+
+**`verify-demo-reel.py`:** 12 of 13 segments pass. Every game segment moves; Atril, Dillo, Shell and
+Boot are legitimately still. One LOOKALIKE (0.87): the two windowed games share the XFCE layout, which
+covers two thirds of the frame. It is a false positive, checked on the caption frames
+(`artifacts/reel-captions/seg04.png` Quake III's arena, `seg06.png` the STK race).
+
+**Not in the reel:** S5 (the menus) needs someone at the mouse.
+
+**Lessons for the next recording:**
+- A looping demo (Quake II) never returns to psh: one clip per game, with `GAMEDRM_EXIT_SECS`.
+- vkQuake needs ≈ 3 min of silent pipeline compile before its first frame (KNOWN-ISSUES G4):
+  `REC_IDLE_SECS=240`, `REC_MAX_CMD_SECS=420`, 480 s of recording. With a short idle window the cycle
+  powers the Pi off mid-compile, and the clip is black.
