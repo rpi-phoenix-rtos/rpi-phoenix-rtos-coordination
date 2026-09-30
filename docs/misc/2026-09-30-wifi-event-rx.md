@@ -131,7 +131,7 @@ must print ≥ 1, where master prints 0. The same count for `'wifi43455: tx_lock
 in `/root`, with `python3 scripts/wifi-perf-host.py 7777 4194304 3` running on the host.
 
 **(1) vkQuake, AP up (joined).**
-`./scripts/run-showcase-gate-drm.sh --label erx-vkq --only vkq`, with the boot log showing
+`./scripts/run-showcase-gate.sh --label erx-vkq --only vkq`, with the boot log showing
 `joined "PhoenixNet"; link up`.
 Predicted: **vkq median ≥ 41.75 fps** (within 1 fps of the AP-down 42.75), torches present, 0 faults.
 To remove build-to-build noise, repeat on the same image with `./scripts/radio-ap-down.sh`

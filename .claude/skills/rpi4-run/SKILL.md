@@ -151,7 +151,7 @@ Games launch through their launchers, never the engine ELF: `/usr/bin/quakespasm
 the video mode, the data path and the map. Hand-rolling the engine command line
 (`/usr/bin/*-drm`) is how a run ends up at the wrong size or double-loading the map —
 both look exactly like render regressions. The proven gate commands are the entries
-of `scripts/run-showcase-gate-drm.sh`. Every game prints `<name> flipstat N frames in
+of `scripts/run-showcase-gate.sh`. Every game prints `<name> flipstat N frames in
 T ms = X fps (total M)` lines once it presents frames — the readiness marker to use.
 Desktop cycles: `/bin/bash /bin/xfce-session` (with `export HOLD=N` first) and
 `/bin/bash /bin/startx action` (`export HOLD=200`); both end on their own when HOLD

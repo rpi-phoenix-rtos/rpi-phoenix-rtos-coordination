@@ -245,7 +245,7 @@ SuperTuxKart). That is about 5 minutes.
 
 ## 3. Before recording
 
-1. The image of the final tree must have passed its gate first: `scripts/run-showcase-gate-drm.sh`
+1. The image of the final tree must have passed its gate first: `scripts/run-showcase-gate.sh`
    (the previous final image passed 7/7 with WiFi joined, WiFi W1 and the windowed games,
    MIGRATION §7s). The recordings are not a test.
 2. Warm-up is not needed: there is no shader disk cache. For the same reason, the first frame of

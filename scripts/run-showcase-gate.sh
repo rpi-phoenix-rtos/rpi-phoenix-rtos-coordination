@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# run-showcase-gate-drm.sh — the showcase gate on the DEFAULT GPU stack (GPU
+# run-showcase-gate.sh — the showcase gate on the DEFAULT GPU stack (GPU
 # migration P1, docs/gpu-new-lane/MIGRATION.md §5 + §7): the six apps plus the
 # XFCE desktop, one Pi cycle per app, with the servers (rpi4-v3d-async, rpi4-kms,
 # shmsrv) started AT BOOT by the plo script -- no server prelude in the commands.
@@ -54,7 +54,7 @@
 # foreground tool call should hold, so run IT in the background and watch the
 # summary file:
 #
-#     nohup ./scripts/run-showcase-gate-drm.sh --label mygate > gate.log 2>&1 &
+#     nohup ./scripts/run-showcase-gate.sh --label mygate > gate.log 2>&1 &
 #
 # ⚠ WHAT THIS SCRIPT CANNOT TELL YOU: whether the app actually RENDERED. A game
 # that reaches its main loop and draws nothing still exits 0 with a clean UART
@@ -211,7 +211,8 @@ echo
 # label deliberately is legitimate, the reader just has to know which frames are
 # whose.
 prior_logs=$(ls -1 "${repo_root}/artifacts/rpi4b-uart"/rpi4b-uart-*-"${label}"-*.log 2>/dev/null | wc -l)
-prior_frames=$(ls -1 "${repo_root}"/artifacts/hdmi/*"${label}"-*.png 2>/dev/null | wc -l)
+# earlier frames under this label: the in-tray and the month archive (YYYY-MM/, .png or .webp)
+prior_frames=$(ls -1 "${repo_root}"/artifacts/hdmi/*"${label}"-*.png "${repo_root}"/artifacts/hdmi/20[0-9][0-9]-[0-9][0-9]/*"${label}"-*.{png,webp} 2>/dev/null | wc -l)
 if [ "${prior_logs}" -gt 0 ] || [ "${prior_frames}" -gt 0 ]; then
 	printf '\n!! LABEL REUSED: %d existing log(s) and %d existing frame(s) already match "%s-*".\n' \
 		"${prior_logs}" "${prior_frames}" "${label}" >&2
