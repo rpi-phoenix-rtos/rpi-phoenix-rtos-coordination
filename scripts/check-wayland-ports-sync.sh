@@ -18,8 +18,8 @@
 #
 # Not copies, so not listed: the recipes; gtk3_wayland/files/egl-include (the Khronos EGL/KHR
 # headers as Mesa 26.2.0 installs them, taken from a mesa-drm build prefix); the committed
-# keymaps wayland_phoenix/files/keymap-us.xkb and labwc_desktop/files/keymap-us.xkb (build
-# outputs the tools scripts regenerate on the build host); wayland_phoenix/files/
+# keymap wayland_phoenix/files/keymap-us.xkb (a build output the labwc-drm tools script
+# regenerates on the build host); wayland_phoenix/files/
 # input-event-codes.h (FreeBSD's, sha256-pinned in the recipe).
 #
 # Copyright 2026 Phoenix Systems
@@ -43,6 +43,7 @@ MAP=(
 	"${T}/weston-drm/shmsrv/shm_proto.h|wayland_phoenix/files/shmsrv/shm_proto.h"
 	"${T}/mesa-drm/compat/include|wayland_phoenix/files/mesa-compat/include"
 	"${T}/xorg-drm/src/phxhid_evdev_map.h|wayland_phoenix/files/phxhid/phxhid_evdev_map.h"
+	"${T}/labwc-drm/patches/wayland-protocols|wayland_phoenix/patches/wayland-protocols"
 	# gtk3_wayland (+ xorg-drm's libepoxy patch and compat headers)
 	"${T}/gtk3-wayland/patches/fribidi|gtk3_wayland/patches/fribidi"
 	"${T}/gtk3-wayland/patches/gdk-pixbuf|gtk3_wayland/patches/gdk-pixbuf"
@@ -67,7 +68,14 @@ MAP=(
 	"${T}/xfce-wayland/bin/msgfmt|xfce_wayland/files/bin/msgfmt"
 	"${T}/xfce-wayland/tools/pngify-icon-theme.py|xfce_wayland/files/tools/pngify-icon-theme.py"
 	# labwc_desktop
-	"${T}/labwc-drm/patches|labwc_desktop/patches"
+	# (labwc-drm/patches/wayland-protocols: wayland_phoenix, above)
+	"${T}/labwc-drm/patches/foot|labwc_desktop/patches/foot"
+	"${T}/labwc-drm/patches/fribidi|labwc_desktop/patches/fribidi"
+	"${T}/labwc-drm/patches/fuzzel|labwc_desktop/patches/fuzzel"
+	"${T}/labwc-drm/patches/labwc|labwc_desktop/patches/labwc"
+	"${T}/labwc-drm/patches/pango|labwc_desktop/patches/pango"
+	"${T}/labwc-drm/patches/swaybg|labwc_desktop/patches/swaybg"
+	"${T}/labwc-drm/patches/wlroots|labwc_desktop/patches/wlroots"
 	"${T}/labwc-drm/compat|labwc_desktop/files/compat"
 	"${T}/labwc-drm/shims|labwc_desktop/files/shims"
 	"${T}/labwc-drm/src|labwc_desktop/files/src"
