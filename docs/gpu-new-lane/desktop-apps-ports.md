@@ -177,10 +177,11 @@ Other decisions:
   log prefix is `GAME-WINDOW` and their knobs are `GAME_LIST` / `GAME_LIST_DELAY`. At staging a
   check fails the build if an installed file still names a hand-staged program or path. Only the
   unchanged copies (patches, hooks, gtk-video.c, …) are sync-mapped to tools.
-* **Wayland client stack.** Everything comes from `wayland_phoenix`, the one libwayland of the
-  system. libwayland-client/-egl/-cursor, `wlphx-compat` and libffi come from its `libwayland/`
-  view, the same view Mesa's wayland platform is built on. libxkbcommon 1.7.0 and
-  `<linux/input.h>` come from its `prefix/` through private views.
+* **Wayland client stack.** Everything comes from `wayland_phoenix`, the one libwayland,
+  wayland-protocols and libxkbcommon of the system (labwc_desktop builds on it too).
+  libwayland-client/-egl/-cursor, `wlphx-compat` and libffi come from its `libwayland/` view, the
+  same view Mesa's wayland platform is built on. libxkbcommon 1.13.2 and `<linux/input.h>` come
+  from its `prefix/` through private views.
 * **The `os_create_anonymous_file` clash.** libwayland-cursor and Mesa both define this symbol.
   The build renames it in a private copy of `libwayland-cursor.a`; the tools renamed Mesa's copy.
   The two implementations do the same thing. `liblwphx-compat.a` is not in the link group: the
@@ -243,8 +244,9 @@ and is not done here.
    (the vulkan variant now also resolves egl.pc through the Wayland pkg-config view), the whole of
    `video_player`, and the whole of `atril_wayland` (CMake packages on a GTK symlink snapshot;
    the sample PDF needs host pycairo and the DejaVu fonts).
-4. **xkbcommon 1.7.0 vs 1.13.2.** The proven `-wl` binaries linked 1.13.2. Keyboard input in the
-   game windows is the row to watch.
+4. **xkbcommon 1.13.2.** The proven `-wl` binaries linked 1.13.2, and so does the port build now
+   (`wayland_phoenix` moved from 1.7.0 to 1.13.2 on 2026-09-30). Keyboard input in the game windows
+   is still the row to watch.
 5. **The libwayland-cursor rename** differs from the tools build. It was reasoned about, not
    measured.
 6. **The demo clips depend on the host.** The build needs host ffmpeg with the x264, x265,
