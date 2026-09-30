@@ -80,8 +80,8 @@ network at build time (each from a pinned URL) and baked into the image
 | | |
 |---|---|
 | **Docker** | a CLI with **BuildKit/buildx**. Docker Desktop bundles it; on a minimal Linux `docker.io` install run `sudo apt-get install docker-buildx`. |
-| **Disk** | ~35 GB free for the build (it builds a GCC cross-toolchain, then the whole OS: Mesa, GTK, XFCE and the games). |
-| **Time** | several hours on a modern 8-core machine for the full image (Mesa, GTK and XFCE are the long poles); the base system alone takes well under an hour. <!-- TODO(coordinator): replace with the measured time of the first Docker --no-cache build of the merged tree. --> |
+| **Disk** | **~90 GB free** during the Docker build (it peaked at 84 GB on 2026-09-30: a GCC cross-toolchain, then the whole OS with Mesa, GTK, XFCE and the games, inside the image layers). The script reclaims it when the build ends. |
+| **Time** | **1 h 42 min** for the full image on an 8-core / 16-thread AMD Ryzen 7 laptop with 32 GB RAM (measured 2026-09-30: `build-sd-in-docker.sh`, `--no-cache`, from an empty container, including the GCC cross-toolchain). |
 | **Network** | the build clones from GitHub, downloads the port tarballs, the game data and the WiFi firmware. |
 
 > **macOS / colima:** give the VM enough room up front — the default is too small
