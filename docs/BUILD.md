@@ -14,8 +14,9 @@ filesystem.
 
 - **Supported host:** Ubuntu x86_64 (24.04 or newer; 26.04 LTS validated). The
   build runs directly on the host — no VM.
-- **A Raspberry Pi 4 Model B** (any RAM tier; the port is validated on the
-  4 GB model) and a **microSD card** (4 GB or larger).
+- **A Raspberry Pi 4 Model B with 4 GB RAM** (the only board the port is
+  validated on; the 2 GB and 8 GB boards are mis-mapped, KNOWN-ISSUES P1) and a
+  **microSD card** (4 GB or larger).
 - **A network connection during the build.** The build is not fully offline:
   the toolchain build and several userspace ports (`phoenix-rtos-ports`,
   X.org tarballs) download their sources at build time.
@@ -100,9 +101,16 @@ idempotent: if it is already present the bootstrap skips it.
 
 ## Step 3 — Build the SD image
 
+This is **the release build**:
+
 ```bash
 ./scripts/rebuild-rpi4b-fast.sh --variant sd --with-showcase --with-ports
 ```
+
+Do not add `--with-tests` for a release image. The images that passed the Pi
+gates were built with the same flags **plus `--with-tests`**, which only adds the
+`phoenix-rtos-tests` programs (`/bin/test-*`, `/bin/test_*`) to the root
+filesystem; the release image leaves them out.
 
 This one command builds the complete bootable 2-partition SD image from a cold
 buildroot: it builds the core system, every userspace port (the graphics
@@ -124,6 +132,28 @@ at:
 ```
 artifacts/rpi4b/rpi4b-sd-2part.img
 ```
+
+### The same build in Docker (any host OS)
+
+The [`Dockerfile`](../Dockerfile) runs Steps 1–3 inside an Ubuntu 26.04 container:
+it clones the repos, runs `scripts/bootstrap-linux-host.sh` (the
+[host packages](#host-packages), the
+[extra host dependencies](#extra-host-dependencies) of the ports stage and the
+cross-toolchain), then the release command above (its default
+`BUILD_FLAGS` is `--with-showcase --with-ports`). The copy-paste recipe that
+builds from the published repos is in the
+[README](../README.md#build-with-docker-reproducible-any-host-os). To build your
+**local checkout** (the committed state of this repo and the sibling repos) the
+same way:
+
+```bash
+./scripts/build-sd-in-docker.sh    # -> ./docker-out/rpi4b-sd-2part.img (or pass an output directory)
+```
+
+It serves the repos to the container over a local git server and always
+builds with `--no-cache`. A `--no-cache` Docker build is **the release gate**:
+it proves that the image builds from a blank host with nothing but the
+committed sources.
 
 ## Step 4 — Flash the image to a microSD card
 
