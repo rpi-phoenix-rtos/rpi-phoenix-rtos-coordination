@@ -186,6 +186,35 @@ authoritative current state.
 ## TD-19: AArch64 runtime PTE/TLBI hardening
 
 - **Status:** VALIDATED, needs upstream review.
+- **✅ STATE OF THE CODE (reconciled 2026-09-30 — read this first; the dated
+  blocks below are history).** Kernel `7348dd99` (2026-09-19, on `master`)
+  landed the **targeted** fix that the 2026-09-19 analysis below recommends. The
+  sentences below saying the code is unchanged and must not be edited
+  unattended predate that commit. `hal/aarch64/pmap.c` now has an `isb`
+  (`hal_cpuInstrBarrier()`), each with a `TD-19.` comment, at four sites:
+  1. `_pmap_mapScratch` (`:205-221`) — after the raw `tlbi vaale1; dsb`. This
+     is the site that faulted: 2026-09-09, kernel `76e0adbc71d4`, EL1 L3
+     translation fault reading `scratch_tt[idx]` just after mapping it
+     (`docs/misc/2026-09-19-td19-scratch-mapping-fault.md`). The "⏭ build
+     `76e0adbc71d4` and re-symbolize" step below was done for that write-up.
+  2. `_pmap_writeTtl3` (`:572-588`) — after the descriptor store + `dsb`, for
+     **kernel** VAs only (`va >= VADDR_KERNEL`), mirroring Linux's
+     `pte_valid_not_user` → `emit_pte_barriers()`; user VAs get the `ERET`.
+  3. `_pmap_switch`, `ASID_SHARED` branch (`:488-493`) — after
+     `hal_tlbInvalASID()`; effectively unreachable (~65 534 live pmaps).
+  4. `_pmap_preinit` (`:1071-1078`) — after `hal_tlbInvalAll_IS()`, which
+     re-permissions the running kernel's own text; boot-time, single core.
+  **Still as before:** the five `hal_tlbInval*` helpers in `aarch64.h` end with
+  `dsb ish` and no `isb`, on purpose — the targeted `isb`s cover the sites
+  that matter, and the helpers alone would have covered neither site 1 (raw
+  `tlbi`) nor site 2 (no TLBI at all on an invalid→valid mapping). **Still
+  open:** `_pmap_mapScratch` changes a valid→valid output address with **no
+  break-before-make** (no DFSC `0x30`/`0x31` TLB-conflict abort in 243 archived
+  logs). The `pmap.c` line numbers quoted in the blocks below are from before
+  `7348dd99` and later edits; use the ones here. `7348dd99` has been on kernel
+  `master` since 2026-09-19 (first recorded in
+  `manifests/2026-09-19-w38-sdma-writes-fixed.md`); no gate specific to it is
+  recorded in this file.
 - **⚠️ RECONCILED 2026-09-17 — the DOC was wrong; the code is unchanged and the
   decision is still yours.** The question this entry posed ("does the doc
   overstate what landed, or does the `isb` live only on `_pmap_writeTtl3`?") is
@@ -297,12 +326,17 @@ authoritative current state.
   - Do not use this as evidence that zone or kernel-heap cacheability is solved;
     those remain separate boundaries.
 
-## TD-20: A72 DC ZVA disabled in hal_memset pending EL2 trap proof
+## TD-20: A72 DC ZVA disabled in hal_memset (EL2-trap theory refuted; hang unexplained)
 
 - **Status:** KNOWN LIMITATION (HW-gated). A sound, A72-scoped gate (zynqmp
-  keeps ZVA); a functional perf-only change, correctness-safe. Removal needs
-  HW proof of the EL2 DC-ZVA trap state and does not reproduce in QEMU, so it
-  is not unattended.
+  keeps ZVA); a functional perf-only change, correctness-safe. ↩ *Corrected
+  2026-09-30:* removal used to be "pending HW proof of the EL2 DC-ZVA trap
+  state"; that proof was done on 2026-09-25 and there is no trap (see
+  Resolution requirements). What removal needs now is an explanation of the
+  recorded `_log_init` hang plus the caller argument below; the hang does not
+  reproduce in QEMU, so it is not unattended. The `TODO(TD-20)` comment in
+  `_memset.S` was reworded to say this (kernel `b13e7b66`, branch
+  `td-hygiene`, comment-only).
 - **Where:** `sources/phoenix-rtos-kernel/hal/aarch64/_memset.S`
   (the `__TARGET_AARCH64A72` block that force-defines `MEMSET_WITHOUT_ZVA`).
 - **What:** On Cortex-A72 (Pi 4) the `dc zva` fast path in `hal_memset` is
@@ -2057,9 +2091,11 @@ Tracked separately from the numeric TD-NN series because they all sit in
 `sources/phoenix-rtos-lwip/drivers/bcm-genet.c` (and one neighbouring
 lwip-port concern).
 ⚠ **Not true any more:** this group used to claim "each marker has a
-`TODO(TD-Eth-…)` comment in source". Exactly **one** does — `TD-Eth-LinkIRQ` at
-`bcm-genet.c:25`. The others were removed when they resolved, which is the
-correct outcome; the sentence was not updated (checked 2026-09-17).
+`TODO(TD-Eth-…)` comment in source". **None** does now: the others were removed
+when they resolved, and the last one, `TD-Eth-LinkIRQ` at `bcm-genet.c:25`, was
+replaced on 2026-09-30 (lwip `45704af`, branch `td-hygiene`) by a plain comment
+stating the polling decision — the item is resolved by decision, so a `TODO`
+there was misleading.
 
 - **TD-Eth-DHCP** — ✅ RESOLVED 2026-05-28 (lwip `7f0b495`); autonomous DHCP
   works end to end.
@@ -2163,10 +2199,22 @@ Scope every search (`grep -rn TD- sources/`) or you will conclude the tree is cl
   pre-creating the xhci MMIO mapping because a late `mmap` "empirically reads
   0xdead".
 - **`TD-STK-SWPRINTF`** — 1 site,
-  `sources/phoenix-rtos-ports/supertuxkart/patches/0006-…patch:17`, "drop when
-  libphoenix gains swprintf/vswprintf". ⓘ **Condition still unmet**: libphoenix
-  has no `swprintf` implementation (checked 2026-09-17 — the only hits are MISRA
-  lint config). So this is live debt, not a stale note.
+  `sources/phoenix-rtos-ports/supertuxkart/patches/0006-…patch:17`. Still live
+  debt, but **not for the reason this bullet used to give.** ↩ *Corrected
+  2026-09-30:* it said libphoenix has no `swprintf`, and the marker said "drop
+  when libphoenix gains swprintf/vswprintf". libphoenix has a standard
+  `swprintf`/`vswprintf` since `07a0a29` (`stdio/swprintf.c`), and ports
+  `6257d19` already turned the shim into a `#define swprintf` redirect (a
+  `static` redefinition of the now-`extern` name is a C++ error). Dropping the
+  shim is still **not safe**: Irrlicht passes `wchar_t*` to `%s`, which C99 and
+  libphoenix read as a **multibyte** string (`%ls` is the wide one — see
+  `swprintf.c:69-71`), so the real `swprintf` would garble every wide string at
+  those call sites. **Closing condition now:** change Irrlicht's format strings
+  to `%ls`, then delete the patch. The patch header, the marker and `port.def.sh`
+  were reworded to say this (ports `079af7c`, branch `td-hygiene`); comment-only
+  in the patched source, but the patch hash changed, so the next STK build
+  re-extracts its work directory once (the first run stops with "patch changed
+  since it was applied", the re-run proceeds).
 - **`TODO(vkquake-port)`** — 6 sites across
   `sources/phoenix-rtos-ports/vkquake/glue/{pl_phoenix_main.c,pl_phoenix_vk_vid.c}`,
   plus a stubbed Vulkan entry point in `vk_trampolines.c:215`
@@ -2232,7 +2280,7 @@ markers. Its debt idiom is `BRING-UP` prose instead.
 | TD-16-cache-enable | RESOLVED 2026-05-17 (project `dde9bb5` armstub L2CTLR + 1319367 encoding fix; kernel `72242a05` single-shot M\|C\|I in `el1_entry`; helper scaffolding deleted in kernel `dccd0aee`) | `SCTLR_EL1.M\|C\|I` enabled inline in `el1_entry` |
 | TD-17 | ✅ RESOLVED 2026-05-29 | amap/ELF cacheable (MAP_NONE) in code; boots to psh; armstub fix dde9bb5 removed the corruption |
 | TD-18 | ✅ RESOLVED 2026-05-29 | zone backing cacheable (MAP_NONE, `zone.c:182` — the old `zone.c:45` citation pointed at `ZONE_POISON_BYTE`) in code; boots to psh; 2026-05-14 fails predate armstub fix |
-| TD-19 | LIKELY STILL APPLIES (TLBI hardening is generally correct) | ✅ doc reconciled 2026-09-17: **neither** the generic helpers nor `_pmap_writeTtl3` has an `isb` — the doc's `dsb; isb` claim is retracted. Code deliberately unchanged; adding the `isb` is an attended decision (see TD-19 entry) |
+| TD-19 | LIKELY STILL APPLIES (TLBI hardening is generally correct) — targeted fix LANDED | ✅ doc reconciled 2026-09-30 with kernel `7348dd99` (2026-09-19): `pmap.c` has a `TD-19`-commented `isb` at `_pmap_mapScratch` (`:221`, the site of the one observed fault), `_pmap_writeTtl3` for kernel VAs (`:587`), `_pmap_switch` `ASID_SHARED` (`:493`) and `_pmap_preinit` (`:1078`). The five `hal_tlbInval*` helpers deliberately still end with `dsb` only. Open: no break-before-make at `_pmap_mapScratch`'s valid→valid change. (The 2026-09-17 note "code deliberately unchanged" predates the commit.) |
 | TD-13-mtxbypass | ✅ RESOLVED/REMOVED | row added 2026-09-17 (entry existed, checklist did not). Verified: `grep -c TD-13-mtxbypass syscalls.c` → 0, exactly as the entry predicts. |
 | TD-14-startup-settle | NOT TAKEN | row added 2026-09-17 (entry existed, checklist did not). No marker, no code — the option was considered and declined. |
 | TD-26 | OPEN (P1, narrowed 2026-09-30) | the command names are resolved (launchers, `startx`, `xfce-session`, `vkcube` under their own names only); left: the XFCE session's demo path names (`/usr/lib/xfce-demo`, `/etc/xdg/*-demo`) and `xfce_wayland`'s config-rewrite sed |
@@ -2240,11 +2288,11 @@ markers. Its debt idiom is `BRING-UP` prose instead.
 | TD-23 | OPEN (deliberate) | `RPI4AUDIO_ARMTRIALS` is a diagnostic ioctl + struct in a **published** header, i.e. a permanent ABI, for a facility that can block the driver's only message thread ~100 s. Kept because it is the only in-process sampler of the failing channel and the defect is open; delete it with `q2-sdl-openaudio-hang`, or gate it behind a build flag. ⚠ Blind to a stale control-block fetch — a re-arm re-reads the same CB. |
 | TD-22 | ✅ RESOLVED 2026-09-19 (HW-gated) | `vm/map.c:204` — `_map_find()`'s right-hand leaf return can hand back a non-`MAP_FIXED` **hint** sitting nearer the end of a gap than `size`, overlapping the next entry. Unreachable today (libphoenix's only hinted mmaps are `MAP_FIXED`; `malloc` passes NULL). The commented-out guard cannot simply be restored — it would also gate the descent, where `rmaxgap` is a subtree maximum. Leaf-only fix written out in the section; needs its own boot + six-app gate. |
 | TD-21 | ✅ RESOLVED 2026-09-04 (HW-verified) | row added 2026-09-17 — the register's newest and most detailed item had **no checklist row at all**, while the header calls the checklist authoritative. Syscall-table divergence closed; upstream order confirmed in `include/syscalls.h:39-41` (`mutexUnlock, mutexConsistent, mutexPrioCeiling`). ⛔ Do not re-raise as pending. |
-| TD-20 | KNOWN LIMITATION (HW-gated) | A72 `dc zva` disabled in `hal_memset` pending EL2 DC-ZVA trap proof (HW-only); perf-only, correctness-safe, A72-scoped |
+| TD-20 | KNOWN LIMITATION (HW-gated) | A72 `dc zva` disabled in `hal_memset`; perf-only, correctness-safe, A72-scoped. The EL2-trap theory is refuted (`DCZID_EL0` DZP=0, 2026-09-25). Open: what caused the recorded no-exception hang in `_log_init`'s first memset (target: cacheable `.bss`), and whether any `hal_memset` caller can pass uncached memory (KNOWN-ISSUES P3) |
 | TD-Eth-DHCP | ✅ RESOLVED 2026-05-28 (lwip `7f0b495`) | autonomous DHCP verified end-to-end via test-cycle-netboot.sh --probe q + scripts/get-pi-ip.sh; probe captured `netif: en1 ip=10.42.0.12 gw=10.42.0.1 flags=0x1f UP LINK DHCP` (artifact 2026-05-28-...-dhcp-clean-probe.txt) |
 | TD-Eth-MAC | RESOLVED 2026-05-25 (lwip `79bd607`) | mailbox `GET_BOARD_MAC` plumbed in `genet_mboxGetMac()` |
 | TD-Eth-Promisc | RESOLVED 2026-05-25 (lwip `79bd607`) | PROMISC only on `mac_is_fallback` path |
-| TD-Eth-LinkIRQ | RESOLVED (accept poll) | PHY INT_B not GIC-routed + GENET internal LINK_UP left masked; Linux/U-Boot both poll; 1 Hz genet_linkPollThread is the portable answer (2026-08-21) |
+| TD-Eth-LinkIRQ | RESOLVED (accept poll) | PHY INT_B not GIC-routed + GENET internal LINK_UP left masked; Linux/U-Boot both poll; 1 Hz genet_linkPollThread is the portable answer (2026-08-21); the leftover `TODO(TD-Eth-LinkIRQ)` in `bcm-genet.c` became a plain comment 2026-09-30 (lwip `45704af`, `td-hygiene`) |
 | TD-Eth-Stats | RESOLVED 2026-05-25 (lwip `b261265`) | surfaced via lwip-port diag UDP responder (port 9999) + per-driver `stats` callback |
 | TD-Pi4-FalseSharingPenalty | RESOLVED 2026-05-25 (lwip `ea936d3`) | classic false sharing on a 64B cache line; per-slot `_Alignas(64)` padding restored plain `volatile ++` to ALU-speed. No kernel work needed. |
 | TD-Git-Branches | PARTLY DONE — **symptom is stale, cleanup is not** (re-checked 2026-09-17) | The described state is gone: **all 16 sibling repos are on `master`** (coord on `main`), not the mixed `codex/upstream-sync-20260516` / `agent/rpi4-program-reloc` / `agent/rpi4-genet` set this row used to list. What remains is only stale-branch housekeeping — the old branches still exist locally (kernel: `agent/rpi4-program-reloc`, `agent/afunix-upstream-report`; lwip: `agent/rpi4-genet`, `rebase-clean`, `rpi4-port-clean`, `wifi-wip`, `full-history-backup`; libphoenix: `codex/upstream-sync-20260516`). Nothing is lost and nothing blocks; delete them when convenient. Task #128. |
