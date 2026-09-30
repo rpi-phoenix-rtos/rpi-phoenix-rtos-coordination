@@ -91,7 +91,7 @@ segments=(
 	"20260930-042717-xfce-apps|170|14|Atril PDF viewer on the XFCE 4.20 desktop (Wayland) — GTK 3, next to Thunar and a terminal"
 	"20260930-042717-xfce-apps|228|25|Quake III Arena in a window — GPU-accelerated on Wayland, beside Thunar and foot, ~74 fps"
 	"20260930-042717-xfce-apps|288|30|Video player — H.264 720p in a window, then full screen, 30 fps"
-	"20260930-043504-xfce-stk|250|25|SuperTuxKart 1.4 in a window — a 4-kart race on the XFCE desktop, ~19 fps"
+	"20260930-092433-g5-verify|295|25|SuperTuxKart 1.4 in a window — a 4-kart race on the XFCE desktop, ~21 fps"
 	"20260930-044818-x11|180|26|X11 — Xorg + glamor, Window Maker: a 60 fps EGL window, Python Game of Life, top on 4 CPUs, xbill, xclock"
 	"20260930-045535-dillo|180|13|Dillo — a live web page over HTTPS"
 	"20260930-050107-fs-q3|158|18|Quake III Arena full screen — bot deathmatch on q3dm1, ~59 fps"

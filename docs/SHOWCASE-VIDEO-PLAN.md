@@ -297,3 +297,15 @@ covers two thirds of the frame. It is a false positive, checked on the caption f
 - vkQuake needs ≈ 75 s of silent pipeline compile before its first frame (KNOWN-ISSUES G4):
   `REC_IDLE_SECS=240`, `REC_MAX_CMD_SECS=420`, 480 s of recording. With a short idle window the cycle
   powers the Pi off mid-compile, and the clip is black.
+
+### 2026-09-30 16:xx — reel refreshed with the fixed windowed STK
+
+The windowed-STK segment of `20260930-055507-…` showed the G5 frame reversal: 25 % of its moving
+frames went back one frame. It is replaced by 295–320 s of `20260930-092433-g5-verify.mp4`, recorded
+on build 2 with the flip-gate fix in the same session layout. That window has 0 reversals in 498
+moving frames. The other 12 segments are unchanged.
+
+New reel: `artifacts/hdmi-video/20260930-155618-phoenix-rtos-rpi4-showcase.mp4` (287 s, 13 segments,
+144 MB; gitignored, **not published**). `verify-demo-reel.py`: 12/13 ok. The one LOOKALIKE flag
+(windowed Quake III against windowed STK, r = 0.87) is the same desktop layout around two different
+games, as before.
