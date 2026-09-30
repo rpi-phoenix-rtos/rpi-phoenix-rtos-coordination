@@ -1315,3 +1315,34 @@ temporary name and run from psh with the fixed `qs-drm` arguments (`-width 1920 
 With no compositor, SDL fell back to KMSDRM: `KMSDRM_VideoInit()`, `V3DA srv import … ns=kmsbuf`. fps median
 **44.47** (n = 59) against 43.8 for `quakespasm-drm` in the P1 gate, 0 faults. The temporary binary was removed.
 ⇒ One dual-mode ELF per game costs nothing full screen. The desktop-apps ports build exactly that.
+
+## 7s. Result — the final image (P3 + desktop apps + WiFi merged; build 2026-09-30 02:03, `fin-gate`)
+
+**Image.** `check-rootfs-complete.sh` COMPLETE, 83/83. Every game engine and `ffplay` carry BOTH SDL
+drivers ("KMS/DRM Video Driver" + "SDL Wayland video driver"); WiFi firmware and licences are staged.
+`check-gpu-stack-image.sh` PASS on the rootfs and on the pristine export (`/etc/wifi.conf` there = NOTE).
+Build fixes on the way: `libwlphx-compat.a` carried the `/shm` server's `main()` (ports `3b664c9`,
+`7962adc` + a no-`main` check).
+
+**Showcase gate, AP up (every boot joins WiFi).** 7/7 rc 0, boot ok, 0 faults:
+
+| key | fps median (P1 §7r) | note |
+|---|---|---|
+| x | 60.00 (60.0) | `XDRM done rc=0` |
+| qspasm | 43.46 (43.8) | |
+| q3 | 59.00 (58.8) | |
+| q2 | 59.80 (59.8) | |
+| vkq | **38.65** (42.2) | torches present (14/14 at the viewpoint). **−8 % vs P1**: the first gate with WiFi joined; the WiFi doc predicted the joined netif's 200 µs poll loop. vkQuake is the most CPU-bound game here (the others are vsync-bound) → A/B with the AP down before calling it |
+| stk | 13.02 (12.8) | |
+| xfce | — | `session up panel=registered t=18` (P1: t=52), `XFCE-SESSION done rc=0` |
+
+**WiFi W1 (`wifiimg-1`), all rows as predicted.**
+- Boot, no command typed: firmware `loaded /lib/firmware/brcm/…`, `WL_REG_ON`, `SDHCI-PIO mode=level
+  fw_bytes=643648`, `firmware running after bring-up 1`, `registered /dev/wifi`; then the auto-join
+  `joining "PhoenixNet"` → `joined; link up` → `dhcp_start: 0`. No bring-up dump.
+- `wifi status`: `wanted: "PhoenixNet" (/etc/wifi.conf)`, `STATUS joined=1 … losses=0`,
+  `address: 10.43.0.89 (wl2)`.
+- `ping -c 5 10.43.0.1`: 5/5 (206.7 ms first, then 1.7–5.5 ms).
+- `rpi4-wifi`: `already running (/dev/wifi is served)`.
+- `wifi connect a b`: `WPA2 passphrase must be 8-63 characters`.
+- 0 faults. Throughput was not run: the pristine export has no `wifi-perf.py`.
