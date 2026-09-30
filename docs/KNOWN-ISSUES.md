@@ -32,6 +32,7 @@ D3/D4/D6/D7/D8/D9 archived).
 | # | Issue | Last measured |
 |---|---|---|
 | G4 | **vkQuake takes ~75 s to its first frame, on every start.** The shipped Mesa (`mesa_drm`) is built with `-Dshader-cache=disabled`, so v3dv compiles every pipeline from SPIR-V at each start (first frame 74.4–75.7 s after start in 6 of 6 runs on 2026-09-30, by the app's own `first present` line; the earlier "~3 min" came from recording time and included boot). The GL games compile less and start in seconds. | **Open.** The old stack's cache was dropped with it (and its stale-blob speckle, G3). A disk cache keyed on the program's identity needs a key Phoenix can provide (no ELF build-id; libphoenix now has `dladdr`, so Mesa's `disk_cache_get_function_identifier` can find its own file). |
+| G6 | **Every GTK/XFCE program logs xkbcommon errors at start and falls back to a built-in US keymap.** The image ships only `/usr/share/X11/xkb/keymap/us.xkb`, no `rules/evdev`, and libxkbcommon's compiled-in search path is the **build host's** `…/.buildroot/_build/…/wayland_phoenix-1.24.0/prefix/etc/xkb` (a build path baked into shipped binaries). | Open, cosmetic (keyboard works, US layout only). Fix: build libxkbcommon with `-Dxkb-config-root=/usr/share/X11/xkb` and ship xkeyboard-config's data (or at least `rules/evdev` plus the US symbols), which also brings other layouts. |
 
 ## 3. Platform limitations
 
