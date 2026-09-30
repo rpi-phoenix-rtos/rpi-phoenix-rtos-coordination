@@ -85,12 +85,12 @@ echo "== docker build (host network → reaches the local servers; empty context
 # --network=host so RUN's git clone/wget reach 127.0.0.1:$PORT/$HTTPPORT.
 # Dockerfile piped on stdin => empty build context (nothing copied from host).
 # --no-cache by default: a reproducible build must re-clone + rebuild from scratch
-# (a cached layer would pin a stale clone/apt state). Set DOCKER_NO_CACHE="" for
+# (a cached layer would pin a stale clone/apt state). Set DOCKER_NO_CACHE= (empty) for
 # faster dev iteration (reuses cached toolchain etc.).
 # BUILD_FLAGS: forward the rebuild flags to the Dockerfile (default matches the
-# Dockerfile ARG). Set e.g. BUILD_FLAGS="--with-showcase --with-ports --with-vkquake"
-# to also build the Vulkan/vkQuake stack in the clean image build.
-$DOCKER build ${DOCKER_NO_CACHE:---no-cache} --network=host \
+# Dockerfile ARG; vkQuake is part of --with-showcase). Set e.g. BUILD_FLAGS="--with-showcase --with-ports --with-tests"
+# to also build the test programs in the clean image build.
+$DOCKER build ${DOCKER_NO_CACHE---no-cache} --network=host \
 	--build-arg REPO_BASE="git://127.0.0.1:$PORT" \
 	--build-arg UPSTREAM_BASE="git://127.0.0.1:$PORT" \
 	--build-arg PAK0_URL="$PAK0_URL" \
