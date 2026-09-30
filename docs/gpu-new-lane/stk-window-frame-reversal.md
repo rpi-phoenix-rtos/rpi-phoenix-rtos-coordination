@@ -70,3 +70,23 @@ then windowed STK as the positive control. Clip `w1-qs20-stk`; both graded with
   points at an unthrottled swap-interval-0 client, Mesa's EGL Wayland buffer reuse or release
   timing, or STK's heavy frame.
 - STK at 0 %: the defect did not reproduce on the release image; rerun before concluding.
+
+### W1 result (2026-09-30 09:25, release build 1, clip `20260930-072520-w1-qs20-stk.mp4`): the STK client side
+
+| segment | moving frames | reversals |
+|---|---|---|
+| Quakespasm windowed, capped at 20 fps (205–285 s) | 1461 | **1 (0.1 %)** |
+| SuperTuxKart windowed, same session (385–445 s) | 1403 | **343 (24.4 %)** |
+
+At STK's frame rate, the same compositor, KMS path and window size stay in order for Quakespasm.
+STK still reverses on the release image. So the defect is in how STK presents, not in
+labwc/wlroots/rpi4-kms at low frame rates.
+
+**W2 — STK with swap interval 1.** Same session with `GAME_LIST=stk-race:150`. `SUPERTUXKART_SAVEDIR=/root/stkw2`
+points STK at a hand-staged `config-0.10/config.xml` with `<GFX swap-interval="1" />`. The launcher
+does not overwrite an already-set SAVEDIR, and STK first tries adaptive vsync (-1), then 1. The
+`stk-drm: first swap … swap_interval N` line shows what took effect.
+- Reversals near 0: an unthrottled (interval 0) client on Mesa's EGL Wayland platform reuses or
+  presents a buffer the compositor still shows. The fix goes in the throttled path, or in the
+  interval-0 buffer handling.
+- Reversals unchanged: the cause is STK's own frame (its render targets or GPU cost), not throttling.
