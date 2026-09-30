@@ -720,7 +720,7 @@ check_syms fuzzel fcft_from_name2 wl_display_connect memfd_create epoll_wait tim
 	zwlr_layer_shell_v1_interface png_read_info __wrap_close
 check_syms swaybg wl_display_connect cairo_image_surface_create_from_png zwlr_layer_shell_v1_interface shm_open __wrap_close
 strs="$(strings -a "${out}/foot-stripped")"
-for s in 'xterm-256color' 'C.UTF-8' '/dev/ptmx' 'failed to seal SHM backing memory file'; do
+for s in 'xterm-256color' 'C.UTF-8' '/dev/ptmx' 'failed to create SHM backing memory file'; do
 	n=$(grep -cF -- "${s}" <<< "${strs}" || true)
 	echo "  foot strings '${s}': ${n}"
 	[ "${n}" != 0 ] || bad=1
