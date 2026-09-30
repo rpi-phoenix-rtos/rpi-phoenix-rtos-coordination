@@ -323,11 +323,19 @@ package has a comment citing that check:
         $R/usr/bin/{quake2-drm,quake3-drm} $R/usr/lib/xfce-demo/xfce-session
   ```
 
+  `integration/final2` also removes the M7 test pieces (§8). Delete those too:
+
+  ```
+  rm -f  $R/bin/{tinywl,labwc-desktop.sh,labwc-desktop-m7c.sh,m7b-colors.sh,dbus-m7f.sh,dbus-m7m.sh,weston-gtk3.sh} \
+         $R/etc/dbus-1/session-phoenix-external.conf $R/root/curses_smoke.py
+  rm -rf $R/etc/xdg/labwc-m7c
+  ```
+
   The same names are on the live NFS export until a pristine export replaces it.
 
 ## 8. Found, not done (for the coordinator / owner)
 
-* **The SD image probably has no DejaVu fonts.** The rootfs overlay has no `usr/share/fonts`, and
+* ✅ (fixed on main, `9bb075e6f`: the image build stages the fonts into the overlay) **The SD image probably had no DejaVu fonts.** The rootfs overlay has no `usr/share/fonts`, and
   `scripts/stage-desktop-fonts.sh` runs only from `sync-netboot-tree.sh`, yet every desktop
   configuration names DejaVu. Check `usr/share/fonts` in the SD image, and stage the fonts in the
   image build.
@@ -338,10 +346,13 @@ package has a comment citing that check:
 * `scripts/make-demo-reel.sh`'s header and `segments=()` describe the old clips, including
   `startx_gpu action`; the showcase plan replaces them.
 * `scripts/fetch-quake-data.sh:75` still suggests `p7zip-full`, which 26.04 does not have.
-  `BUILD.md` quotes the bootstrap package list verbatim and is now out of date.
-* Owner decision: `bin/labwc-desktop.sh` and `/etc/xdg/labwc-m7c` are the M7 milestones'
-  test launcher and configuration (a plain labwc desktop without XFCE). The gates require them
-  today. Its stale preconditions comment is fixed.
+  `BUILD.md` quotes the bootstrap package list verbatim and is now out of date (✅ rewritten on
+  `integration/final2`).
+* `bin/labwc-desktop.sh` and `/etc/xdg/labwc-m7c` were the M7 milestones' test launcher and
+  configuration. **Removed on `integration/final2`**, with tinywl, `m7b-colors.sh`,
+  `dbus-m7f.sh`/`dbus-m7m.sh` (and the EXTERNAL-auth bus configuration only they used),
+  `weston-gtk3.sh` and `/root/curses_smoke.py`; `check-gpu-stack-image.sh` check 3 asserts
+  their absence.
 * **Docs** (P4 branch): replace these references:
   * `startx-drm`, `startx_gpu`, `--servers` → `startx`;
   * `vkq-drm`, `stk-drm`, `qs-drm` → the plain names;
