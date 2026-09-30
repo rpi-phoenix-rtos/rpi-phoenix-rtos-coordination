@@ -90,3 +90,17 @@ does not overwrite an already-set SAVEDIR, and STK first tries adaptive vsync (-
   presents a buffer the compositor still shows. The fix goes in the throttled path, or in the
   interval-0 buffer handling.
 - Reversals unchanged: the cause is STK's own frame (its render targets or GPU cost), not throttling.
+
+### W2 result (09:35, clip `20260930-073527-w2-stk-swap1.mp4`): not throttling
+
+STK took the config: `stk-drm: first swap … swap_interval -1`, meaning adaptive vsync was accepted. Reversals:
+**213 of 1014 moving frames (21.0 %)**, against 24–26 % at interval 0. The swap count barely moved
+(1316 against 1340 in 139 s): at about 20 fps, vsync hardly throttles anyway. **Throttling does not
+cause it.**
+
+What is left: fullscreen STK renders the same 1280×720 frame through GBM and is clean. Windowed
+Quake is clean through the same Wayland EGL path. A presented buffer that holds the frame from
+two swaps ago is exactly an **undrawn back buffer**. So the leading hypothesis is that STK's
+final pass to the default framebuffer sometimes does not land in the buffer that Mesa's Wayland
+platform then presents. Examples: a draw against a stale back-buffer validation, or a
+discard/invalidate hint that drops the pass. Code reading is under way.
