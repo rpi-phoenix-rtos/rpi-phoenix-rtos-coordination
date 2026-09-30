@@ -173,3 +173,15 @@ scanned out.
 - `count-frame-reversals.py` on a new windowed-STK clip: about 0 % with **no** `V3D_DEBUG`.
 - Expected side effect: client=1 `q2a_us_avg` rises to tens of ms. That is the gate waiting for the
   composite, which queues behind STK's frame. It is not a slowdown.
+
+## 6. Verified on hardware (build 2, 2026-09-30 11:24, clip `20260930-092433-g5-verify.mp4`) — ✅ FIXED
+
+Windowed STK race on the default image, **no `V3D_DEBUG`**:
+
+- `count-frame-reversals.py` over the whole race (285–357 s): **0 of 1266 moving frames**. Before
+  the fix it was 21–26 % (reel, W1, W2).
+- labwc's flips are gated now: `KMS srv flipstat client=1 flips=1422 … deferred=1421
+  applied_gate=1411 applied_vblank=10`. Before the fix: `deferred=0 applied_gate=0` in every session.
+- As predicted, the flip now waits for the composite: `q2a_us_avg=26175`, against ~270 µs before.
+- STK's frame rate is unchanged: 1387 swaps in 139 s (1316–1368 before).
+- drmprobe `RESULT pass=50 fail=0 … verdict=PASS`, including the new `compositor_flip` key.
