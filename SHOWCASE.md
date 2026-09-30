@@ -25,8 +25,8 @@ To use it, see the [User Guide](docs/USER-GUIDE.md).
 ## Highlights
 
 - **Kernel & boot:** AArch64 bring-up on BCM2711 — MMU + caches enabled, exception/SError handling,
-  a self-hosted hardware-watchpoint debug facility, the plo→kernel handoff, SMP-aware (4 CPUs
-  enumerated, cpu0-scheduled), and a clean board layer (PL011 UART, generic timer, GICv2, DTB parse).
+  a self-hosted hardware-watchpoint debug facility, the plo→kernel handoff, SMP (all 4 cores
+  scheduled), and a clean board layer (PL011 UART, generic timer, GICv2, DTB parse).
 - **Networking:** BCM GENET gigabit Ethernet, IRQ-driven, ~0.9 ms ping RTT, lwIP stack; an NFS client
   with `/` served over NFS (`takeover` design), ~30 MB/s read; **WiFi** (BCM43455, WPA2 + DHCP) in the
   image, managed with the `wifi` command.

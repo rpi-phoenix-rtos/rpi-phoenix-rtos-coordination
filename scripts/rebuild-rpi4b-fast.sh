@@ -759,11 +759,12 @@ run_phoenix_build() {
 	# The CORE stage regenerates the sysroot, so this is the one moment where the
 	# toolchain's BUNDLED libc copy can be refreshed from a generated artifact
 	# instead of by hand. It matters because some things still compile with no
-	# --sysroot and therefore resolve libc out of that bundle: the openssl port
-	# (its Configure target in openssl111/30-phoenix.conf hardcodes cflags and
-	# never sees the framework's sysroot flags -- verified 2026-09-04: 0
-	# occurrences of "sysroot" in its build log) and the standalone radio/probe
-	# tools. A hand-maintained copy goes stale silently, and the measured
+	# --sysroot and therefore resolve libc out of that bundle: the standalone
+	# radio/probe tools (tools/wifi-probe, tools/bt-probe). (The openssl port was
+	# on this list until 2026-09-30; its 3.x Configure target receives the
+	# framework's sysroot flags.) The refresh runs AFTER the whole build, so after
+	# a libc ABI change (e.g. a syscall renumber) run a --scope core pass first,
+	# then the full-clean. A hand-maintained copy goes stale silently, and the measured
 	# consequence was five macro VALUES disagreeing with live libphoenix, two
 	# pairs swapped (docs/misc/2026-09-04-toolchain-header-skew.md).
 	#
