@@ -51,7 +51,10 @@ echo "=== recording '$label' for ${secs}s: $* ==="
 	> "$repo/artifacts/hdmi-video/$label.reclog" 2>&1 &
 rec=$!
 
-RPI4B_HDMI_INTERVAL=0 "$repo/scripts/test-cycle-psh-interact.sh" \
+# REC_CYCLE_OPTS: extra test-cycle options, e.g. "--skip-server-up" so an experiment's hand-staged
+# export files survive (netboot-server-up.sh re-syncs the export from the built rootfs).
+# shellcheck disable=SC2086
+RPI4B_HDMI_INTERVAL=0 "$repo/scripts/test-cycle-psh-interact.sh" ${REC_CYCLE_OPTS:-} \
 	--label "rec-$label" --wait-secs 220 --inter-cmd-secs 8 \
 	--idle-secs "$idle" --max-cmd-secs "$cmax" -- "$@" \
 	> "$repo/artifacts/hdmi-video/$label.cyclog" 2>&1 &
