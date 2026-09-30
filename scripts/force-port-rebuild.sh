@@ -27,7 +27,7 @@
 #   scripts/force-port-rebuild.sh openssl micropython redis python
 #   ./scripts/rebuild-rpi4b-fast.sh --ports-only
 #
-# Names may be given with or without a version ("openssl" or "openssl-1.1.1w").
+# Names may be given with or without a version ("openssl" or "openssl-3.5.9").
 # A bare name that matches several versions poisons every match, which is what you
 # want for a libc-contract change.
 #

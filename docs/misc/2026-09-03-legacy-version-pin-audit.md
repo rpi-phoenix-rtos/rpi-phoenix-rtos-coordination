@@ -1,5 +1,7 @@
 # Legacy version-pin audit: where did we pin an old release because of a Phoenix limitation, and is that limitation still real?
 
+> **Update 2026-09-30:** `openssl111` (1.1.1w) is gone. The image ships **OpenSSL 3.5.9 LTS** as the port `openssl` (ports `85c21b1`, build-system `066c6c3`), and every consumer is repointed: python, lighttpd, wpa_supplicant, sscep, openiked, azure_sdk. openvpn 2.4.7 does not build against 3.x. It is not in the Pi image and already failed on a libphoenix `event_t` clash; it needs 2.6.x. The openssl rows below describe the state before this change.
+
 **Date:** 2026-09-03 · **Status:** ANALYSIS ONLY. No `port.def.sh`, build script,
 patch or `ports.yaml` was modified; nothing was built; no Pi cycle was run.
 
