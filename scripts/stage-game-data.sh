@@ -247,13 +247,29 @@ stage_stk_assets() {
 # "vkQuake.cfg" (Quake/quakedef.h:33) and COM_FindFile prefers it, so one clean
 # exit of vkQuake plants a file that permanently shadows any config.cfg we ship.
 # autoexec.cfg is unaffected by that lookup.
+#
+# No ';' anywhere in a shipped .cfg, comments included: QuakeSpasm's Cbuf_Execute
+# splits the text into commands at every ';' outside quotes BEFORE the tokenizer
+# drops "//" comments, so the rest of such a comment line runs as a command. The
+# "800x600; the Pi 4 ..." comment this file used to carry printed
+# `Unknown command "the"` on every start (twice: once from config.cfg, once from
+# autoexec.cfg). check_cfg_comments enforces it.
 stage_q1_video_cfg() {
-	local dst="${overlay_root}/usr/share/quake/id1/autoexec.cfg"
+	local dir="${overlay_root}/usr/share/quake/id1"
+	local dst="${dir}/autoexec.cfg"
+
+	# A config.cfg that an older version of this script wrote (its header says so)
+	# is ours to remove: it duplicates autoexec.cfg's settings and carries the old
+	# ';' comment. A config.cfg the game wrote has no such header and stays.
+	if [ -f "${dir}/config.cfg" ] && grep -q '^// Shipped by scripts/stage-game-data.sh' "${dir}/config.cfg"; then
+		rm -f "${dir}/config.cfg"
+		log "q1: removed the config.cfg an older version of this script staged"
+	fi
 
 	# Ours to own, so always refresh it -- that is the point.
 	cat >"$dst" <<'CFG'
 // Shipped by scripts/stage-game-data.sh so the game is full-screen out of the
-// box. QuakeSpasm's default is 800x600; the Pi 4 scanout is 1920x1080, and a
+// box. QuakeSpasm's default is 800x600, the Pi 4 scanout is 1920x1080, and a
 // smaller mode leaves stale console pixels around the frame.
 //
 // vkQuake does not register the vid_* cvars (its Phoenix video shim replaces
@@ -277,7 +293,17 @@ vid_fullscreen "1"
 scr_showfps 1
 scr_conscale 4
 CFG
+	check_cfg_comments "$dst"
 	log "q1: staged autoexec.cfg (1920x1080 fullscreen + fps readout; always refreshed)"
+}
+
+# check_cfg_comments <file> -- fail if a "//" comment line contains a ';' (see
+# stage_q1_video_cfg for why). Quake III's own Cbuf_Execute does skip comments, but
+# its files are held to the same rule so the two stay interchangeable.
+check_cfg_comments() {
+	local bad
+	bad="$(grep -n '^[[:space:]]*//.*;' "$1" || true)"
+	[ -z "$bad" ] || die "';' inside a comment of $1 (Quake runs the rest as a command):"$'\n'"$bad"
 }
 
 # Quake III needs OUR ioquake3-built QVMs and a format-valid key, or it dies
@@ -337,6 +363,12 @@ stage_q3_showcase_cfg() {
 	cat >"$dst" <<'CFG'
 // Shipped by scripts/stage-game-data.sh -- see the comment on
 // stage_q3_showcase_cfg for why these are here and not on the command line.
+//
+// IPv4 only. The engine is built with IPv6 and defaults to 3 (IPv4 + IPv6), but
+// the Phoenix network stack has no IPv6: every start printed ten
+// "Opening IP6 socket: [::]:2796x" lines, each followed by a resolver error.
+// net_enabled is latched and read at NET_Init, which runs after this file.
+seta net_enabled "1"
 set cg_drawFPS 1
 set bot_enable 1
 set bot_minplayers 5
@@ -346,8 +378,9 @@ set cg_thirdPersonRange 120
 // Step the orbit ONCE PER RENDERED FRAME, not in coarse jumps.
 //
 // cg_cameraOrbit is degrees per step and cg_cameraOrbitDelay is the minimum ms
-// between steps (cg_view.c: `if (cg.time > cg.nextOrbitTime) { nextOrbitTime =
-// cg.time + delay; cg_thirdPersonAngle += cg_cameraOrbit; }`). With the previous
+// between steps (cg_view.c: once cg.time passes cg.nextOrbitTime, it sets
+// nextOrbitTime = cg.time + delay and adds cg_cameraOrbit to
+// cg_thirdPersonAngle). With the previous
 // 2 degrees / 60 ms the camera moved ~16 times a second while the engine rendered
 // at 43-46 fps, and since the camera is the only thing moving much in view, the
 // PICTURE only changed ~16 times a second. Measured on the capture: Quake III
@@ -366,7 +399,8 @@ set cg_thirdPersonRange 120
 set cg_cameraOrbit 1
 set cg_cameraOrbitDelay 1
 CFG
-	log "[q3] staged autoexec.cfg (fps readout, 5 bots, orbit camera)"
+	check_cfg_comments "$dst"
+	log "[q3] staged autoexec.cfg (IPv4 only, fps readout, 5 bots, orbit camera)"
 }
 
 log "overlay root: $overlay_root"
