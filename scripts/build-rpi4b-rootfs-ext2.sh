@@ -80,9 +80,12 @@ fi
 # the raw byte count is not enough. `du -sk` on the host already over-reports
 # (host 4 KiB blocks vs ext2 1 KiB), which errs in the safe direction; 1.5x on
 # top covers the inode table plus slack. Floor at 256 MiB for tiny/test roots.
+# RPI4B_ROOTFS_FREE_MIB (default 1024) is added on top as room for the user: without
+# it the card's "/" had ~256 MiB free (Thunar, 2026-09-30). Phoenix cannot grow the
+# filesystem itself, so the free space has to be in the image.
 if [ -z "$size_blocks" ]; then
 	staged_kib="$(du -sk "$stage" | awk '{print $1}')"
-	size_blocks=$((staged_kib * 3 / 2))
+	size_blocks=$((staged_kib * 3 / 2 + ${RPI4B_ROOTFS_FREE_MIB:-1024} * 1024))
 	if [ "$size_blocks" -lt 262144 ]; then
 		size_blocks=262144
 	fi
