@@ -43,7 +43,7 @@ To use it, see the [User Guide](docs/USER-GUIDE.md).
   They share buffers through a new kernel export primitive. On top run a Phoenix **libdrm** and
   **Mesa 26.2** (GBM, EGL, OpenGL ES 3.1, OpenGL, Vulkan/V3DV).
 - **Games:** QuakeSpasm (44 fps at 1080p), Quake II (60 fps), Quake III (60 fps), vkQuake on
-  Vulkan (42 fps, after ~3 minutes of pipeline compile at every start) and SuperTuxKart 1.4
+  Vulkan (42 fps, after ~75 s of pipeline compile at every start) and SuperTuxKart 1.4
   (12.6 fps at 1080p, Raspberry Pi OS parity; ~22 fps at 720p scaled to the screen). SDL 2 runs
   each game full screen on KMS or in a window on the desktop (in a 1280×720 window: QuakeSpasm
   56 fps, Quake III 70–74, SuperTuxKart 18.6).

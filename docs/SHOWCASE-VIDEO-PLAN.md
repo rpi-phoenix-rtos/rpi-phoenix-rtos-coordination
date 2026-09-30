@@ -199,7 +199,7 @@ One clip per game. Every game starts at the psh prompt, with no desktop running:
 | `fs-q3` | `quake3 +map q3dm1` | 240 | Quake III bot deathmatch, orbiting third-person camera, 60 fps |
 | `fs-q2` | `quake2 +demomap q2demo1.dm2` | 200 | Quake II playing the demo pak's recorded demo, 60 fps |
 | `fs-qs` | `quakespasm` | 200 | QuakeSpasm attract-demo loop, 44 fps |
-| `fs-vkq` | `vkquake +playdemo demo1` | 480 | vkQuake on Vulkan playing a recorded demo, 42 fps, after ~3 min of pipeline compile |
+| `fs-vkq` | `vkquake +playdemo demo1` | 480 | vkQuake on Vulkan playing a recorded demo, 42 fps, after ~75 s of pipeline compile |
 | `fs-stk` | `game-res stk 1280x720 race` | 330 | SuperTuxKart: a 4-kart AI race, 720p scaled to the screen, ~22 fps |
 
 ```
@@ -210,7 +210,7 @@ REC_IDLE_SECS=240 REC_MAX_CMD_SECS=420 ./scripts/record-showcase-clip.sh fs-vkq 
 - **One clip per game.** The games never return to psh by themselves (Quake II's demo loops;
   only `stk race` ends), so put `"export GAMEDRM_EXIT_SECS=<N>"` before the game command to
   end it N seconds after its first frame.
-- **vkQuake** compiles its pipelines silently for ≈ 3 min before its first frame (KNOWN-ISSUES
+- **vkQuake** compiles its pipelines silently for ≈ 75 s before its first frame (KNOWN-ISSUES
   G4). With a shorter idle window the cycle powers the Pi off mid-compile and the clip is black.
 - Grade each clip by its `<name> flipstat … fps` lines, not by the game's own counter.
 - SuperTuxKart needs a long window too: in the gate it was still racing when a 240 s capture
@@ -254,7 +254,7 @@ SuperTuxKart). That is about 5 minutes.
 1. The image of the final tree must have passed its gate first: `scripts/run-showcase-gate.sh`
    (the final image passed 7/7 with WiFi joined, MIGRATION §7t). The recordings are not a test.
 2. Warm-up is not needed: there is no shader disk cache. For the same reason, the first frame of
-   every game takes as long in every clip. Budget vkQuake's ≈ 3 min pipeline compile.
+   every game takes as long in every clip. Budget vkQuake's ≈ 75 s pipeline compile.
 3. Keep the AP up for every clip. Joined and idle, WiFi costs ~0.5 % CPU and vkQuake runs at
    41.8 fps against 42.8 unjoined (MIGRATION §7t).
 
@@ -294,6 +294,6 @@ covers two thirds of the frame. It is a false positive, checked on the caption f
 
 **Lessons for the next recording:**
 - A looping demo (Quake II) never returns to psh: one clip per game, with `GAMEDRM_EXIT_SECS`.
-- vkQuake needs ≈ 3 min of silent pipeline compile before its first frame (KNOWN-ISSUES G4):
+- vkQuake needs ≈ 75 s of silent pipeline compile before its first frame (KNOWN-ISSUES G4):
   `REC_IDLE_SECS=240`, `REC_MAX_CMD_SECS=420`, 480 s of recording. With a short idle window the cycle
   powers the Pi off mid-compile, and the clip is black.

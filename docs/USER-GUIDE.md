@@ -227,7 +227,7 @@ Run these at the `(psh)%` prompt, with no desktop running:
 | **Quake** (QuakeSpasm, OpenGL) | `quakespasm` | 44 fps at 1920×1080 |
 | **Quake II** (yQuake2, OpenGL) | `quake2` | 60 fps (vsync), starts on the first level of the demo |
 | **Quake III Arena** (quake3e, OpenGL) | `quake3 +map q3dm1` | 60 fps (vsync, 59.8), a bot deathmatch with an orbiting camera |
-| **vkQuake** (Quake on Vulkan) | `vkquake` | 42 fps (41.8), the start map. **The first frame takes about 3 minutes** (see below) |
+| **vkQuake** (Quake on Vulkan) | `vkquake` | 42 fps (41.8), the start map. **The first frame takes about 75 seconds** (see below) |
 | **SuperTuxKart 1.4** (OpenGL ES 3) | `stk` | 12.6 fps at 1920×1080 (~22 fps at 1280×720, see [§6.3](#63-lower-resolution-for-more-fps)) |
 
 The fps figures come from the final image's gate of 2026-09-30 (MIGRATION §7t), with WiFi
@@ -273,8 +273,8 @@ game runs until you quit it. `stk race` ends by itself after its two laps.
   The display returns to the psh console.
 - **Shaders are compiled at every start.** The image has no on-disk shader cache yet, so each
   game compiles its shaders before its first frame. The OpenGL games start in seconds.
-- **vkQuake shows a black screen for about 3 minutes at every start.** It compiles all of its
-  Vulkan pipelines first (170–200 s on the Pi). It has not hung: wait for the first frame.
+- **vkQuake shows a black screen for about 75 seconds at every start.** It compiles all of its
+  Vulkan pipelines first (74–76 s on the Pi, measured 2026-09-30). It has not hung: wait for the first frame.
   This is KNOWN-ISSUES G4.
 
 ### 6.2 In a window on the desktop
@@ -622,7 +622,7 @@ This is the recommended way to show the whole system, with the best settings for
    - `quake3 +map q3dm1` (60 fps)
    - `quake2 +demomap q2demo1.dm2` (60 fps, the recorded demo)
    - `quakespasm` (44 fps, the demo loop)
-   - `vkquake +playdemo demo1`: Vulkan (42 fps). **Its first frame takes about 3 minutes**
+   - `vkquake +playdemo demo1`: Vulkan (42 fps). **Its first frame takes about 75 seconds**
      (pipeline compile), so start it before you need it.
    - `game-res stk 1280x720 race`: SuperTuxKart scaled from 720p, ~22 fps, an AI race with no
      input needed. It ends by itself after two laps (or earlier, at `GAMEDRM_EXIT_SECS`).
@@ -637,7 +637,7 @@ This is the recommended way to show the whole system, with the best settings for
 **Tips:**
 
 - Start each game once before an audience arrives, so you know how long its first frame takes
-  (see [§6.1](#61-full-screen-from-psh)). vkQuake needs about 3 minutes every time.
+  (see [§6.1](#61-full-screen-from-psh)). vkQuake needs about 75 seconds every time.
 - If a program prints nothing for a minute, it is probably still loading. Check the serial
   console before you assume it hung.
 
@@ -657,7 +657,7 @@ This is the recommended way to show the whole system, with the best settings for
 | `wifi connect` fails | Check the passphrase (8–63 characters) and that the SSID has no space. `wifi status` shows the state. |
 | HTTPS certificate errors | The clock is wrong: run `ntpclient -s pool.ntp.org`. |
 | Keyboard or mouse do nothing | Plug them in before power-on. |
-| `vkquake` shows a black screen | It compiles its Vulkan pipelines for about 3 minutes before the first frame (KNOWN-ISSUES G4). Wait. |
+| `vkquake` shows a black screen | It compiles its Vulkan pipelines for about 75 seconds before the first frame (KNOWN-ISSUES G4). Wait. |
 | A game never returns to psh | The games and their demos run until you quit them. Quit through the game's console or menu, or `export GAMEDRM_EXIT_SECS=<N>` before starting it. |
 
 For everything else, see [KNOWN-ISSUES.md](KNOWN-ISSUES.md). How the stack was built and
