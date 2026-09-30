@@ -50,7 +50,7 @@ To use it, see the [User Guide](docs/USER-GUIDE.md).
 - **Graphics desktops:** **XFCE 4.20 on the labwc Wayland compositor** (GTK 3: panel, Thunar, foot,
   the Atril PDF viewer, a video player), and **Xorg** with modesetting + glamor, Window Maker and a
   60 fps GL window through DRI3/Present.
-- **Userland:** BusyBox + applets, Lua, MicroPython, OpenSSL, cURL (mbedTLS), Dropbear SSH, lighttpd,
+- **Userland:** BusyBox + applets, Lua, MicroPython, OpenSSL 3.5, cURL (mbedTLS), Dropbear SSH 2026.94, lighttpd,
   and more — cross-compiled and run from the NFS root.
 - **Robustness engineering:** e.g. a systemic **VideoCore-mailbox serialization** fix — the single
   hardware mailbox FIFO was being raced by five+ boot-time processes (thermal, Ethernet MAC read,

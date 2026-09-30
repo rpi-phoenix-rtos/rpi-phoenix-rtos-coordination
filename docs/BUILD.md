@@ -109,8 +109,9 @@ This is **the release build**:
 
 Do not add `--with-tests` for a release image. The images that passed the Pi
 gates were built with the same flags **plus `--with-tests`**, which only adds the
-`phoenix-rtos-tests` programs (`/bin/test-*`, `/bin/test_*`) to the root
-filesystem; the release image leaves them out.
+`phoenix-rtos-tests` programs (`/bin/test-*`, `/bin/test_*`), the demos and the
+GPU and hardware diagnostics to the root filesystem; the release image leaves
+them out (see [What the image contains](#what-the-image-contains)).
 
 This one command builds the complete bootable 2-partition SD image from a cold
 buildroot: it builds the core system, every userspace port (the graphics
@@ -217,9 +218,10 @@ all of them and installs them into the root filesystem. No program goes into
 |---|---|
 | Graphics stack | `libdrm_phoenix` (libdrm on the render and KMS servers), `mesa_drm` (Mesa 26.2: GBM, EGL, GLES, GL, Vulkan), `sdl2_kmsdrm` (SDL 2.30 with KMSDRM + Wayland), `libepoxy`; the smoke tests `kmscube_drm` / `vkcube_drm` and `drmprobe` are built only with `--with-tests` |
 | X11 | `xorg_server_drm` (Xorg 21.1, modesetting + glamor, `startx`), `xorg_libs`, `xorg_fonts`, `xorg_apps`, `xterm`, `windowmaker`, `xbill`, `dillo` |
-| Wayland desktop | `wayland_phoenix` (libwayland 1.24, wayland-protocols, libxkbcommon), `dbus`, `gtk3_wayland` (GTK 3.24), `labwc_desktop` (labwc, foot, fuzzel), `xfce_wayland` (XFCE 4.20, `xfce-session`) |
+| Wayland desktop | `wayland_phoenix` (libwayland 1.24.0, wayland-protocols 1.49, libxkbcommon 1.13.2: the one copy every Wayland port uses), `dbus`, `gtk3_wayland` (GTK 3.24), `labwc_desktop` (labwc, foot, fuzzel), `xfce_wayland` (XFCE 4.20, `xfce-session`) |
 | Games | `quakespasm_drm`, `yquake2` + `yquake2_drm`, `quake3` + `quake3_drm`, `vkquake_drm`, `supertuxkart` + `supertuxkart_drm` (the engine port compiles, the `*_drm` port links one program with both SDL video drivers) |
 | Applications | `video_player` (ffplay, `video-play`, gtk-video, demo clips), `atril_wayland` (Atril + Poppler), `python`, `bash`, `coreutils`, `busybox`, `curl`, `mc`, `nano`, `sqlite3`, `redis`, `lua`, … |
+| Network and security | `openssl` (OpenSSL 3.5.9 LTS), `dropbear` (Dropbear 2026.94 SSH), `lighttpd` (1.4.79), `wpa_supplicant`, `ca_certificates` (the CA store for TLS) |
 
 The three graphics servers (`rpi4-v3d-async`, `rpi4-kms`, `shmsrv`) and the WiFi
 daemon (`rpi4-wifi`) are core components of `phoenix-rtos-devices` and start at

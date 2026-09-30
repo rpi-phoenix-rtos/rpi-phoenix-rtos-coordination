@@ -207,7 +207,8 @@ demo/shareware mirror; set one to `""` to build that engine without bundled data
 `STK_ASSETS_URL` / `STK_ASSETS_SHA256` (the pinned SuperTuxKart 1.4 asset
 package), `BUILD_VARIANT`
 (`sd` / `nfsroot` / `netboot`), and `BUILD_FLAGS` (above; `--with-tests` adds the
-`/bin/test-*` suites).
+`/bin/test-*` suites, the demos and the GPU and hardware diagnostics, which the release image
+leaves out — see [docs/BUILD.md](docs/BUILD.md#what-the-image-contains)).
 
 ### If the build fails
 
@@ -284,7 +285,10 @@ Beyond the base system, a substantial ports ecosystem runs on the hardware
 |---|---|
 | GNU **coreutils 9.5** | the full tool set (~105 programs) builds + installs; core tools HW-verified bit-exact (`ls`, `cat`, `wc`, `sha256sum`, `seq`, `stat`, `stty`, …) |
 | GNU **bash 5.2** | runs; see caveat below |
-| **CPython 3.14** | static `python3` with `sqlite3`, `zlib`/`bz2`/`lzma` compression (full `tarfile`), `_ssl`/HTTPS, `hashlib` incl. `blake2`, `_decimal`, `ctypes`, `curses` (TUI via the ncurses port), and `.so` C-extension `dlopen` |
+| **CPython 3.14** | static `python3` with `sqlite3`, `zlib`/`bz2`/`lzma` compression (full `tarfile`), `_ssl`/HTTPS (TLS 1.3, CA-verified), `hashlib` incl. `blake2`, `_decimal`, `ctypes`, `curses` (TUI via the ncurses port), and `.so` C-extension `dlopen` |
+| **OpenSSL 3.5.9** (LTS) | the `openssl` command and the TLS library behind Python's `ssl`/`hashlib`, lighttpd and wpa_supplicant |
+| **Dropbear 2026.94** | SSH server and client (`dropbear`, `dbclient`, `scp`): ed25519 keys, curve25519 and post-quantum (mlkem768x25519, sntrup761x25519) key exchange; password login from a current OpenSSH client |
+| **lighttpd 1.4.79** | web server; serves `/usr/www` on port 80 as shipped (HTTPS once a certificate is installed) |
 | **Redis 7.2** | in-memory data store, served over lwIP TCP |
 | **SQLite 3** | full SQL, in-memory + on-disk file VFS |
 | **jq** | JSON processor, incl. the `test`/`match`/`sub`/`gsub`/`splits`/`scan` **regex builtins** (Oniguruma) |

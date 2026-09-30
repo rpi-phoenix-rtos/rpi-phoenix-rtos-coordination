@@ -476,7 +476,7 @@ The image also ships a Unix userland. For the full list, see the
 - `bash`, GNU coreutils and BusyBox
 - `python3` (CPython 3.14), `micropython`, `lua`
 - `sqlite3`, `jq`, `redis-server`
-- `curl`, `wget`
+- `curl`, `wget`, `openssl` (OpenSSL 3.5.9)
 - `nano`, `vi`, `mc`
 
 Terminal programs look right with `export TERM=vt100` at the console. The desktop's foot
