@@ -15,29 +15,31 @@ One row per peripheral/subsystem. For how to use each feature see the
 > - libdrm, Mesa 26.2 (GBM/EGL/GLES/GL/Vulkan), SDL 2.30 (KMSDRM + Wayland), Xorg 21.1
 >   (modesetting + glamor), labwc 0.20 and XFCE 4.20 on GTK 3.24.
 >
-> All three servers start at boot. The image gate of 2026-09-29 (MIGRATION §7r) passed 7/7 with
-> 0 faults (fps at the page flip, 1080p):
+> All three servers start at boot. The final image's gate of 2026-09-30 (MIGRATION §7s, WiFi
+> joined at boot) passed 7/7 with 0 faults (fps at the page flip, 1080p):
 >
 > | Program | fps |
 > |---|---|
 > | Quake II | 59.8 |
-> | Quake III | 58.8 |
-> | QuakeSpasm | 43.8 |
-> | vkQuake | 42.2 |
-> | SuperTuxKart | 12.8 |
+> | Quake III | 59.0 |
+> | QuakeSpasm | 43.5 |
+> | vkQuake | 38.7 with WiFi joined (≈ 39–42) |
+> | SuperTuxKart | 13.0 |
 > | the X desktop's GL window | 60.0 |
-> | the XFCE session | clean start and logout |
+> | the XFCE session | up in ~20 s, clean logout |
 >
 > SuperTuxKart runs at 22.3 fps at 1280×720 scaled by the display (M9).
 >
+> <!-- TODO(coordinator): vkQuake is 8 % below the previous gate (42.2) in the first gate with
+> WiFi joined; the A/B with the AP down is pending. Replace "≈ 39–42" with its result. -->
+>
 > **Dual-mode programs.** Each game and the video player is one program with both SDL video
-> drivers: full screen from psh, in a window on the desktop. Measured in a window on the XFCE
-> desktop (M8, M10): Quake II 60 fps, Quake III ~90, QuakeSpasm 45–67, the video player 30.
+> drivers: full screen from psh, in a window on the desktop. On the final image, in a window on
+> the XFCE desktop: QuakeSpasm 56 fps and Quake III 69.5; Quake II and SuperTuxKart also ran
+> their full time, and all four exited cleanly. The video player plays 720p at 30 fps.
 >
-> **WiFi** ships in the image (the daemon starts at boot, firmware from linux-firmware).
->
-> <!-- TODO(coordinator): the merged image (desktop apps as ports, P3 removal, WiFi in the image)
-> is being built; replace "2026-09-29 gate" with its first gate once it has run. -->
+> **WiFi** ships in the image: the daemon starts at boot, the firmware comes from
+> linux-firmware, and a saved network is joined at boot with no command typed (cycle W1).
 
 The graphics milestones and experiments are recorded in [docs/gpu-new-lane/](gpu-new-lane/PLAN.md)
 (engineering history). Earlier status summaries are in git history.
@@ -73,12 +75,12 @@ The graphics milestones and experiments are recorded in [docs/gpu-new-lane/](gpu
 | SoC thermal + throttle | ✅ done | `/dev/thermal`,`/dev/throttled` (2026-06-05) | firmware owns the trip (telemetry only) |
 | Hardware RNG (RNG200) | ✅ done | `/dev/hwrng` (2026-06-05); **now also backs `/dev/urandom`** (posixsrv reads `/dev/hwrng` for entropy, rand() fallback) — HW-verified 2026-06-17 | kernel `getrandom()`/pool wiring (libc-level) still PRNG |
 | Watchdog / reboot / poweroff | ⏸ attended | no software reboot today: `hal_cpuReboot` halts in place; the PM-watchdog `r`/`h` path (#43) lived only in the diag-udp responder, removed in lwip `05b8ba4` | productionize `_hal_systemReset` (kernel, boot-risk) |
-| WiFi (BCM43455 SDIO) | 🟡 in the image | **ships in the image since 2026-09-30**: `rpi4-wifi` (phoenix-rtos-devices `wifi/rpi4-wifi/`) starts at boot on the sd and nfsroot variants and loads the BCM43455 firmware from `/lib/firmware/brcm/` (linux-firmware `20260810`, sha256-pinned, licences alongside). `wifi connect <ssid> <psk>` / `disconnect` / `status` / `scan`; the `wl` lwip netif follows `/etc/wifi.conf` and rejoins after a reboot or a lost association; WPA2-PSK + DHCP; TX 3.6 / RX 3.3 MB/s (cycle T) | first boot check of the image with the boot-time daemon (cycle W1, `docs/misc/2026-09-30-wifi-in-image.md`); an SSID with a space and a 64-hex PSK; WPA3 and newer firmware need a host-side supplicant |
+| WiFi (BCM43455 SDIO) | ✅ in the image | **ships in the image since 2026-09-30**: `rpi4-wifi` (phoenix-rtos-devices `wifi/rpi4-wifi/`) starts at boot on the sd and nfsroot variants and loads the BCM43455 firmware from `/lib/firmware/brcm/` (linux-firmware `20260810`, sha256-pinned, licences alongside). `wifi connect <ssid> <psk>` / `disconnect` / `status` / `scan`; the `wl` lwip netif follows `/etc/wifi.conf` and rejoins after a reboot or a lost association; WPA2-PSK + DHCP; TX 3.6 / RX 3.3 MB/s (cycle T); on the final image a saved network is joined at boot with no command typed, lease + ping 5/5 (cycle W1, `docs/misc/2026-09-30-wifi-in-image.md`) | an SSID with a space and a 64-hex PSK; WPA3 and newer firmware need a host-side supplicant |
 | Bluetooth (BCM43455 UART HCI) | 🟡 partial | **driver-level bring-up** — `/dev/hci0` up over self-routed mini-UART, firmware patchram 323/323, real BD_ADDR read, HCI Inquiry completes (`tools/bt-probe`, `project_bluetooth_bringup`) | **no host Bluetooth stack** — no pairing, profiles, or audio yet |
 | GPIO / pinctrl | 🟡 partial | `/dev/gpio` read-only observer device (#150): snapshot + per-pin `RPI4GPIO_GETPIN` devctl, `gpio/rpi4-gpio/` | **outputs** (GPSET/GPCLR/fsel set) need a bench rig to validate (⏸) |
 | I²C / SPI / PWM | ⬜ not started | plans exist | need GPIO alt-fn + clock-manager |
 | GPU (V3D 4.2) — render server + OpenGL / GLES | ✅ done | **`rpi4-v3d-async`** (`gpu/rpi4-v3d-async/`, started at boot): owns the V3D, asynchronous multi-queue submit, fence page and sync objects, deferred replies; buffers shared with `rpi4-kms` and the clients through the kernel's `memExport`. **Mesa 26.2** gallium `v3d` (`mesa_drm` port, 16 patches) with GBM and EGL (drm, surfaceless, Wayland, X11) on **libdrm-phoenix**. kmscube 60.00 fps; SuperTuxKart 11.9 fps at 1080p = Raspberry Pi OS on this board (11.7); Quake II 60 fps vsynced after the SDL frame-pacing fix | no on-disk shader cache (`-Dshader-cache=disabled`: shaders compile at every start) |
-| GPU (V3D 4.2) — Vulkan (V3DV) | ✅ done | Mesa 26.2 `v3dv` as a static ICD with **`VK_KHR_display`** through SDL's KMSDRM Vulkan path: vkcube; **vkQuake ~44 fps at 1080p** (P1 gate 42.2), the start-map torches present | no Wayland WSI (vkQuake runs full screen only); ray queries unsupported by the hardware |
+| GPU (V3D 4.2) — Vulkan (V3DV) | ✅ done | Mesa 26.2 `v3dv` as a static ICD with **`VK_KHR_display`** through SDL's KMSDRM Vulkan path: vkcube; **vkQuake ≈ 39–42 fps at 1080p** (38.7 with WiFi joined), the start-map torches present | no Wayland WSI (vkQuake runs full screen only); ray queries unsupported by the hardware |
 | Video decode | ✅ CPU playback; 🔬 HW HEVC | **Player:** ffplay (FFmpeg 6.1, `video_player` port) with SDL KMSDRM + Wayland, CPU decode (4 threads): H.264 720p and 1080p, **HEVC 720p at 30 fps**, VP9, AAC/Opus/MP3/Vorbis/FLAC; full screen from psh (`video-play`) or in a window; gtk-video (GTK 3) on the desktop. **Hardware:** the BCM2711 `rpivid` HEVC block is driven bit-exact to 1080p by the stand-alone `tools/hevc-decode/` experiment (intra + inter, rolling DPB, SAND de-tile); H.264 has no MMIO decoder on the BCM2711 (VideoCore/VCHIQ only) | wire `rpivid` into the player (M10 §4); 1080p H.264 on the CPU drops frames; gtk-video full screen is CPU-bound (14–17 fps) |
 | Audio (PWM / I²S / HDMI) | 🟡 partial | PWM driver `/dev/audio0` (`audio/rpi4-audio/`): **continuous streaming DMA** (free-running self-chained ring, PWM1=DREQ 1) feeds the FIFO; `write()` fills the ring w/ usleep backpressure (driver sleeps, no spin); PIO fallback retained. **Quakespasm SNDDMA backend** (feeder thread) mixes over it — "Audio: 16 bit, stereo, 44100 Hz", demo renders, 0 faults/underruns (2026-06-17). **SDL2 audio driver** over `/dev/audio0` HW-validated (driver=phoenix, 44100/S16/2ch, tone played, 0 faults, 2026-08-05) | audible jack sign-off ⏸ (headphones); vkQuake reuses the backend; underrun→ring-loop artifact (steady state ok). **★ 2026-09-18: the intermittent "engine comes up parked" stall (~1 boot in 41-70) is CONTAINED, not fixed** — the driver grades the channel by progress, re-arms up to 3×, else serves the device as a paced null sink, so an app never blocks on it; ~14 000 in-process arm trials say the defect is per-BOOT, not per-arm (`docs/misc/2026-09-18-audio-dma-stall-captures.md`) |
 | DMA | ✅ done | **★ 2026-09-18: the Normal-NC → Device store-ordering race is MEASURED on this board, not argued** — `tools/pwm-dma-probe --cb-race`, 5 000 trials per arm: with a `dsb sy` before the MMIO kick **5 000/5 000 correct, 0 stale**; without it **146 stale fetches** (2.9 %), i.e. the engine followed control-block bytes the CPU had already overwritten. Five missing barriers were fixed port-wide as a result (audio, V3D TFU, xHCI event ring, SDHCI read, V3D mailbox — `docs/misc/2026-09-18-dma-barrier-audit.md`). ⚠ The control arm's null bounds the rate; it does not prove the ordering is architecturally guaranteed, and neither arm covers a first-ever fetch of freshly `mmap`'d memory. legacy BCM2711 DMA-channel driver **proven + in production for audio** (`rpi4-audio`: self-chained streaming CB, DREQ-paced, low-1GB C0 bus alias); **SD uses the eMMC SDHCI ADMA2 scatter-gather engine for BOTH directions** since 2026-09-20 (~38 MB/s DDR50 reads, multi-block CMD18; 12.7-12.9 MB/s end-to-end writes), falling back to SDMA if the descriptor list cannot be built — the DMA path is validated on HW | open items are both optional/deferred, not functional gaps: a **generalized reusable DMA-helper API** (audio drives DMA inline today — YAGNI until a 2nd consumer such as I²C/SPI/PWM needs it, at which point the helper is extracted against a real second use) ~~and **SD DMA *writes***~~ (**done 2026-09-20** — the "BCM2711 DMA-write quirk" was our own missing emmc2bus address translation; writes now run on ADMA2, tracked in the SD-card row) |
@@ -96,11 +98,11 @@ The graphics milestones and experiments are recorded in [docs/gpu-new-lane/](gpu
 | libdrm (`libdrm_phoenix`) | ✅ | libdrm 2.4.134 with a Phoenix backend over `/dev/v3d-async` and `/dev/kms` (`drmprobe` 36/36) |
 | **SDL 2.30.12** (`sdl2_kmsdrm`) | ✅ HW-validated | stock KMSDRM and Wayland video drivers in one library, Phoenix HID input and audio drivers; frame pacing (submit before waiting for the previous flip), GBM-buffer release fix (upstream `9cc2f248f5`), monotonic condvar timeouts |
 | Xorg + Window Maker (`xorg_server_drm`, `windowmaker`, `xorg_apps`, `xterm`, `xbill`) | ✅ HW-validated | modesetting + glamor, DRI3/Present; `startx` |
-| QuakeSpasm (Quake) | ✅ HW-validated | `quakespasm_drm` → **`quakespasm`** (`/usr/bin/quakespasm-drm`); desktop GL on Mesa; ~44 fps at 1080p full screen, 45–67 fps in a 1280×720 desktop window; demos, single player, direct-IP multiplayer |
-| vkQuake | ✅ HW-validated | `vkquake_drm` → **`vkquake`** (`/usr/bin/vkquake-drm`); Vulkan on v3dv with `VK_KHR_display`; ~44 fps at 1080p, the start map with its torches | full screen only |
+| QuakeSpasm (Quake) | ✅ HW-validated | `quakespasm_drm` → **`quakespasm`** (`/usr/bin/quakespasm-drm`); desktop GL on Mesa; ~44 fps at 1080p full screen, ~56 fps in a 1280×720 desktop window; demos, single player, direct-IP multiplayer |
+| vkQuake | ✅ HW-validated | `vkquake_drm` → **`vkquake`** (`/usr/bin/vkquake-drm`); Vulkan on v3dv with `VK_KHR_display`; ≈ 39–42 fps at 1080p, the start map with its torches | full screen only |
 | yQuake2 (Quake II) | ✅ HW-validated | `yquake2` (engine objects) + `yquake2_drm` (the program) → **`quake2`**, a RAM-staging launcher that plays `demo1`; 60 fps vsynced full screen and in a window |
-| Quake III (quake3e) | ✅ HW-validated | `quake3` + `quake3_drm` → **`quake3`** (RAM-staging launcher); desktop GL; ~59 fps at 1080p, ~90 fps in a window; **free demo data**: no retail content and no retail CD key (a `pak1.pk3` of QVMs built from ioquake3 + a format-valid `q3key`, staged by `scripts/stage-game-data.sh` from `assets/quake3-qvm/`, reproducible with `tools/quake3-vm/build-quake3-vms.sh`) | in-game mouse-look |
-| SuperTuxKart 1.4 | ✅ HW-validated | `supertuxkart` + `supertuxkart_drm` → **`stk`**; GLES 3; ~12 fps at 1080p (Raspberry Pi OS parity), **22.3 fps at 1280×720** through `game-res`, ~90 fps on its menu in a window; both asset roots (194 MB) staged by `scripts/stage-game-data.sh` | C1 heap corruption (`KNOWN-ISSUES.md`) |
+| Quake III (quake3e) | ✅ HW-validated | `quake3` + `quake3_drm` → **`quake3`** (RAM-staging launcher); desktop GL; ~59 fps at 1080p, ~70 fps in a window; **free demo data**: no retail content and no retail CD key (a `pak1.pk3` of QVMs built from ioquake3 + a format-valid `q3key`, staged by `scripts/stage-game-data.sh` from `assets/quake3-qvm/`, reproducible with `tools/quake3-vm/build-quake3-vms.sh`) | in-game mouse-look |
+| SuperTuxKart 1.4 | ✅ HW-validated | `supertuxkart` + `supertuxkart_drm` → **`stk`**; GLES 3; ~13 fps at 1080p (Raspberry Pi OS parity), **22.3 fps at 1280×720** through `game-res`, runs in a window; both asset roots (194 MB) staged by `scripts/stage-game-data.sh` | C1 heap corruption (`KNOWN-ISSUES.md`) |
 | FFmpeg 6.1 player (`video_player`) | ✅ HW-validated | ffplay (SDL KMSDRM + Wayland), `video-play`, gtk-video (GTK 3), four demo clips; LGPL build. The separate `ffmpeg` port is the decode-only library |
 | Dillo / mc / nano | ✅ built | Dillo 3.2 (FLTK, X11; HTTPS via mbedTLS) rendered live HTTPS pages on the Pi (2026-08-08) over a host NAT gateway with `ntpclient` setting the certificate clock; `mc` and `nano` build and ship | Dillo not yet run on the Xorg desktop; `mc`/`nano` not use-tested interactively |
 | Atril 1.28 (`atril_wayland`) | ✅ HW-validated | Atril + Poppler (PDF backend built in) on GTK 3 Wayland: windowed, `--fullscreen`, `--presentation` (M7 `m7j-atril`) |
@@ -138,7 +140,7 @@ The graphics milestones and experiments are recorded in [docs/gpu-new-lane/](gpu
 3. **Graphics** — the stack is complete for the desktop and the games; open items are
    performance (a shader disk cache, render-server pipelining) and the `rpivid` HEVC
    decoder in the video player.
-4. **WiFi** — in the image; remaining: a boot check of the image, SSIDs with spaces, WPA3.
+4. **WiFi** — in the image, joins at boot; remaining: SSIDs with spaces, WPA3.
 5. **Bluetooth** — driver-level bring-up done (`/dev/hci0`, HCI Inquiry); needs a host BT stack.
 6. **Reboot / watchdog** — no software reset yet (attended).
 7. Greenfield: DMA framework → audio/I²C/SPI/PWM; GPIO full driver.

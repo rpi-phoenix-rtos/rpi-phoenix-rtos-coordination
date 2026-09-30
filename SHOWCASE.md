@@ -43,8 +43,9 @@ To use it, see the [User Guide](docs/USER-GUIDE.md).
   They share buffers through a new kernel export primitive. On top run a Phoenix **libdrm** and
   **Mesa 26.2** (GBM, EGL, OpenGL ES 3.1, OpenGL, Vulkan/V3DV).
 - **Games:** QuakeSpasm (~44 fps at 1080p), Quake II (60 fps), Quake III (~59 fps), vkQuake on
-  Vulkan (~43 fps) and SuperTuxKart 1.4 (Raspberry Pi OS parity; ~22 fps at 720p scaled to the
-  screen). SDL 2 runs each game full screen on KMS or in a window on the desktop.
+  Vulkan (≈ 39–42 fps) and SuperTuxKart 1.4 (Raspberry Pi OS parity; ~22 fps at 720p scaled to the
+  screen). SDL 2 runs each game full screen on KMS or in a window on the desktop (QuakeSpasm
+  ~56 fps, Quake III ~70 in a 1280×720 window).
 - **Graphics desktops:** **XFCE 4.20 on the labwc Wayland compositor** (GTK 3: panel, Thunar, foot,
   the Atril PDF viewer, a video player), and **Xorg** with modesetting + glamor, Window Maker and a
   60 fps GL window through DRI3/Present.
@@ -66,7 +67,7 @@ it masqueraded as an allocator and then a NULL-dispatch bug before the real caus
 zero-dimension render-pass job dereferencing a NULL tile-state BO; and finally display ownership
 (fbcon-disable) so the GPU's scanout reaches the HDMI. Result: `vkQueueSubmit` → the render-pass
 clear visible on screen. (vkQuake has since been rebuilt on the current Vulkan stack, with
-`VK_KHR_display` presentation, and plays at ~43 fps.)
+`VK_KHR_display` presentation, and plays at ≈ 39–42 fps.)
 
 ## Build & run
 

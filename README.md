@@ -152,7 +152,7 @@ psh prompt it runs full screen on KMS. Inside the desktop it opens in a window.
 | **Quake III Arena** (quake3e, OpenGL) | `quake3 +map q3dm1` | Games → Quake III Arena |
 | **vkQuake** (Quake on Vulkan / V3DV) | `vkquake` | full screen only |
 | **SuperTuxKart 1.4** (OpenGL ES 3) | `stk` | Games → SuperTuxKart |
-| any game, in a lower mode scaled to the screen | `game-res stk 1280x720` | — |
+| any game, in a lower mode scaled to the screen | `game-res stk 1280x720 race` | — |
 | **XFCE 4.20** desktop on labwc (Wayland) | `/bin/bash /bin/xfce-session` | — |
 | **X11** desktop (Xorg + glamor, Window Maker) | `/bin/bash /bin/startx` | — |
 | **Video** (ffplay) | `/bin/bash /bin/video-play <file>` | Multimedia → Video Demo, Video Player |
@@ -161,20 +161,23 @@ psh prompt it runs full screen on KMS. Inside the desktop it opens in a window.
 
 The [User Guide](docs/USER-GUIDE.md) explains each of them.
 
-Measured on the Pi at 1920×1080, at the page flip, in the image gate of 2026-09-29
-([MIGRATION §7r](docs/gpu-new-lane/MIGRATION.md)):
+Measured on the Pi at 1920×1080, at the page flip, in the final image's gate of 2026-09-30
+with WiFi joined ([MIGRATION §7s](docs/gpu-new-lane/MIGRATION.md)):
 
 | Program | fps |
 |---|---|
 | Quake II | 59.8 |
-| Quake III | 58.8 |
-| QuakeSpasm | 43.8 |
-| vkQuake | 42.2 |
-| SuperTuxKart | 12.8 (~22 at 1280×720 through `game-res`) |
+| Quake III | 59.0 |
+| QuakeSpasm | 43.5 |
+| vkQuake | 38.7 (≈ 39–42) |
+| SuperTuxKart | 13.0 (~22 at 1280×720 through `game-res`) |
 | the X11 desktop's GL window | 60.0 |
 
-<!-- TODO(coordinator): re-read these from the first showcase gate of the merged
-(dual-mode) image. -->
+In a 1280×720 window on the XFCE desktop: QuakeSpasm 56 fps, Quake III 69.5. Video plays 720p
+at 30 fps, in a window and full screen.
+
+<!-- TODO(coordinator): vkQuake's 38.7 is the first gate with WiFi joined (−8 % against the
+previous gate's 42.2); replace "≈ 39–42" with the A/B result with the AP down. -->
 
 **Quake III needs no retail content and no retail CD key.** Besides the free demo
 `pak0.pk3` it needs two more files, both staged by `scripts/stage-game-data.sh` from
@@ -242,8 +245,8 @@ work; `⛔` blocked on external dependencies; `⬜` not started.
 | HDMI framebuffer console (fbcon) | ✅ | klog + psh on HDMI, FreeBSD `teken` VT engine |
 | HDMI display (`rpi4-kms`, `/dev/kms`) | ✅ | KMS display server on the firmware's display planes: atomic page flips at 60.00 fps with vblank events, dumb buffers, and scaled lower modes (1600×900 … 640×480 shown full screen by the display hardware). Console handover to and from the fbcon |
 | GPU (V3D 4.2) — render server (`rpi4-v3d-async`, `/dev/v3d-async`) | ✅ | Owns the GPU and runs every client's jobs asynchronously, with fences and sync objects. Clients share buffers with the display server without copies (kernel `memExport`) |
-| GPU — OpenGL / OpenGL ES 3.1 | ✅ | **Mesa 26.2** (gallium `v3d`) with GBM and EGL (drm, Wayland, X11 platforms) on a Phoenix libdrm backend. kmscube at 60 fps. SuperTuxKart at 11.9 fps at 1080p, which is Raspberry Pi OS parity on this board |
-| GPU — Vulkan (V3DV) | ✅ | Mesa's `v3dv` with `VK_KHR_display`: vkcube, and **vkQuake at ~44 fps** |
+| GPU — OpenGL / OpenGL ES 3.1 | ✅ | **Mesa 26.2** (gallium `v3d`) with GBM and EGL (drm, Wayland, X11 platforms) on a Phoenix libdrm backend. kmscube at 60 fps. SuperTuxKart at ~13 fps at 1080p, which is Raspberry Pi OS parity on this board |
+| GPU — Vulkan (V3DV) | ✅ | Mesa's `v3dv` with `VK_KHR_display`: vkcube, and **vkQuake at ≈ 39–42 fps** |
 | SDL 2.30 | ✅ | KMSDRM (full screen) + Wayland (windowed) video drivers in one library, Phoenix HID input and audio. Frame pacing fixed so Quake II runs at a vsynced 60 fps |
 | X11 (Xorg 21.1 + modesetting + glamor) | ✅ | GPU-accelerated X with DRI3/Present: a GL window at 60 fps (vsync). Window Maker, xterm, xclock, xbill. `startx` runs the showcase desktop |
 | Wayland desktop (labwc 0.20 + XFCE 4.20 + GTK 3.24) | ✅ | labwc composites on the GPU (GLES2). XFCE panel, desktop, Thunar, settings and application finder; the foot terminal; games and video in windows; the Atril PDF viewer. `xfce-session` starts it and Log Out returns to the shell |
@@ -259,7 +262,7 @@ work; `⛔` blocked on external dependencies; `⬜` not started.
 | GPIO observer | 🟡 | `/dev/gpio` read-only snapshot; outputs attended |
 | Audio (PWM, 3.5 mm jack) | 🟡 | `/dev/audio0` streaming DMA; SDL audio driver (the games, ffplay) and gtk-video play through it; no audible sign-off on headphones yet |
 | posixsrv / psh userland | ✅ | pipes, ptys, `/dev/{null,zero,urandom,full}`, AF_UNIX |
-| WiFi (BCM43455 SDIO) | 🟡 | **In the image** since 2026-09-30: the `rpi4-wifi` daemon starts at boot (SD and NFS-root images). `wifi connect <ssid> <psk>` joins a WPA2 network and waits for the DHCP lease; the network is saved in `/etc/wifi.conf` and rejoined after a reboot. `wifi status`, `wifi scan` and `wifi disconnect` also work. A lost association is rejoined. WiFi takes the default route only when Ethernet has no address. Throughput is ~3.6 MB/s TX / 3.3 MB/s RX, so **prefer wired Ethernet** (~20–30 MB/s) for bulk transfers. The BCM43455 firmware comes from linux-firmware, pinned and sha256-checked, and is installed with its licence files. Joining and DHCP are HW-verified from the shell; the first boot of the image that starts the daemon at boot is still to be checked <!-- TODO(coordinator): flip to ✅ after cycle W1 (docs/misc/2026-09-30-wifi-in-image.md) --> |
+| WiFi (BCM43455 SDIO) | ✅ | **In the image** since 2026-09-30: the `rpi4-wifi` daemon starts at boot (SD and NFS-root images). `wifi connect <ssid> <psk>` joins a WPA2 network and waits for the DHCP lease; the network is saved in `/etc/wifi.conf` and rejoined after a reboot. `wifi status`, `wifi scan` and `wifi disconnect` also work. A lost association is rejoined. WiFi takes the default route only when Ethernet has no address. Throughput is ~3.6 MB/s TX / 3.3 MB/s RX, so **prefer wired Ethernet** (~20–30 MB/s) for bulk transfers. The BCM43455 firmware comes from linux-firmware, pinned and sha256-checked, and is installed with its licence files. On the final image a saved network is joined at boot with no command typed: firmware, join, DHCP lease and ping all pass (cycle W1, [docs/misc/2026-09-30-wifi-in-image.md](docs/misc/2026-09-30-wifi-in-image.md)) |
 | Bluetooth (BCM43455) | 🟡 | **Driver-level bring-up works** — `/dev/hci0` up, firmware patchram loads (323/323), a real BD_ADDR is read, and an HCI Inquiry completes. **No host Bluetooth stack** — no pairing, profiles, or audio yet |
 | USB mass-storage (USB 3 / SuperSpeed) | ✅ | **A USB 3 stick mounts and is read/written as a real filesystem.** Enumerates at SuperSpeed (`maxpkt=1024 burst=4`) through the xHCI driver; `/dev/umass0`, `/dev/umass1` per MBR partition, mounted via libext2. Measured with `/usr/bin/dd`'s own rate: raw read **59.1 MB/s**, raw write **18.2** (1 GiB; 39.9 for 256 MiB, the stick's SLC cache), ext2 read **47.1**. Metadata write amplification was **21.0x → 1.00x** (libcache now writes back only the dirty part of a cache line). ⓘ Getting here took **eleven libext2 defects** — all silent, all passing by return code, several data-losing (a hole read back the superblock; unmount deleted the files it had cached; on any block size above 1 KiB the allocator reserved bit N and handed out block N+1). `e2fsck -fn` on a full 1 GiB read-back of the device is now **completely clean** across create / write / delete / umount / remount, verified on **both** 4 KiB and 1 KiB block sizes. Hot-plug removal is implemented but the physical insert/remove cycle is not yet exercised |
 | I²C/SPI/PWM, camera (CSI-2) | ⬜ | Not started |
@@ -300,8 +303,8 @@ Boot the image to the `(psh)%` prompt, with an **HDMI display**, a **USB keyboar
 ```
 /bin/bash /bin/xfce-session       # the XFCE desktop on Wayland; Log Out returns to psh
 quake3 +map q3dm1                 # Quake III Arena, full screen (also: quakespasm, quake2, vkquake)
-game-res stk 1280x720 --track=hacienda --numkarts=4 --profile-laps=2
-                                  # SuperTuxKart, an AI race, 720p scaled to the screen (~22 fps)
+game-res stk 1280x720 race        # SuperTuxKart, an AI race, 720p scaled to the screen (~22 fps)
+vkquake +playdemo demo1           # vkQuake on Vulkan playing a recorded demo
 /bin/bash /bin/video-play /usr/share/video-demo/hevc-720p30-aac.mp4
                                   # video, full screen (in a window when run on the desktop)
 /bin/bash /bin/startx             # X11: Xorg + glamor, Window Maker and the animated showcase desktop
