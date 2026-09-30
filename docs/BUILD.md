@@ -217,7 +217,7 @@ all of them and installs them into the root filesystem. No program goes into
 |---|---|
 | Graphics stack | `libdrm_phoenix` (libdrm on the render and KMS servers), `mesa_drm` (Mesa 26.2: GBM, EGL, GLES, GL, Vulkan), `sdl2_kmsdrm` (SDL 2.30 with KMSDRM + Wayland), `libepoxy`; the smoke tests `kmscube_drm` / `vkcube_drm` and `drmprobe` are built only with `--with-tests` |
 | X11 | `xorg_server_drm` (Xorg 21.1, modesetting + glamor, `startx`), `xorg_libs`, `xorg_fonts`, `xorg_apps`, `xterm`, `windowmaker`, `xbill`, `dillo` |
-| Wayland desktop | `wayland`, `wayland_phoenix`, `dbus`, `gtk3_wayland` (GTK 3.24), `labwc_desktop` (labwc, foot, fuzzel), `xfce_wayland` (XFCE 4.20, `xfce-session`) |
+| Wayland desktop | `wayland_phoenix` (libwayland 1.24, wayland-protocols, libxkbcommon), `dbus`, `gtk3_wayland` (GTK 3.24), `labwc_desktop` (labwc, foot, fuzzel), `xfce_wayland` (XFCE 4.20, `xfce-session`) |
 | Games | `quakespasm_drm`, `yquake2` + `yquake2_drm`, `quake3` + `quake3_drm`, `vkquake_drm`, `supertuxkart` + `supertuxkart_drm` (the engine port compiles, the `*_drm` port links one program with both SDL video drivers) |
 | Applications | `video_player` (ffplay, `video-play`, gtk-video, demo clips), `atril_wayland` (Atril + Poppler), `python`, `bash`, `coreutils`, `busybox`, `curl`, `mc`, `nano`, `sqlite3`, `redis`, `lua`, … |
 
@@ -254,8 +254,8 @@ missing:
 
 - **`meson` ≥ 1.4** for Mesa 26.2: apt's `meson` where it is new enough (Ubuntu 26.04),
   otherwise `uv tool install "meson>=1.4"` (Ubuntu 24.04, into `~/.local/bin`).
-- **`wayland-scanner` 1.24.0** exactly (`libwayland-bin`; the `wayland` and `xfce_wayland`
-  ports).
+- **`wayland-scanner` 1.24.0** exactly (`libwayland-bin`; `wayland_phoenix`, `gtk3_wayland`,
+  `labwc_desktop` and `xfce_wayland`).
 - the GLib tools (`glib-compile-resources`, `gdbus-codegen`, `glib-mkenums`,
   `glib-genmarshal`, `glib-compile-schemas`), `gtk-update-icon-cache`, `shared-mime-info`,
   and `python3` with GObject introspection, GdkPixbuf and the SVG loader (`xfce_wayland`: the

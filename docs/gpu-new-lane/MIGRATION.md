@@ -338,7 +338,7 @@ untouched and build exactly as before.
 | supertuxkart-drm + stk-drm | `supertuxkart_drm` 1.4 | `sdl2-drm/build-stk-drm.sh` | GPL-3.0-or-later | relink of the `supertuxkart` port's CMake build |
 | vkquake-drm + vkq-drm | `vkquake_drm` 1.34 | `sdl2-drm/build-vkquake-drm.sh` | GPL-2.0-or-later | upstream TU list, patches-vkquake 0001–0007, `glue/vkqdrm/`; SPIR-V read from the `vkquake` port's `glue/` |
 | vkcube-drm | `vkcube_drm` 1.4.350 | `vulkan-drm` | Apache-2.0 | Vulkan-Tools vulkan-sdk-1.4.350.0 + patch 0001 |
-| libwayland 1.24.0, wayland-protocols 1.45, wlphx-compat, shmsrv | `wayland` 1.24.0 | `weston-drm` | MIT AND BSD-3-Clause | shmsrv folded in (a port needs an upstream archive); installs `compat/include`, `mesa-compat/include`, `deps/libffi` |
+| libwayland 1.24.0, wayland-protocols 1.45, wlphx-compat, shmsrv | `wayland` 1.24.0 | `weston-drm` | MIT AND BSD-3-Clause | shmsrv folded in (a port needs an upstream archive); installs `compat/include`, `mesa-compat/include`, `deps/libffi`. **Removed 2026-09-30:** folded into `wayland_phoenix`, whose `libwayland/` view is the same layout |
 | Weston 14.0.2 (+ xkbcommon 1.7.0, display-info 0.2.0, seatd 0.9.1, libinput 1.26.2 header, shims) | `weston` 14.0.2 | `weston-drm` | MIT AND BSD-3-Clause AND BSD-2-Clause | patches weston 0001–0008, seatd 0001–0004 |
 | libxshmfence 1.3.2 Phoenix backend (G16) | `libxshmfence_phoenix` 1.3.2 | `x11-drm` | MIT | |
 | libepoxy 1.5.10 (static EGL) | `libepoxy` 1.5.10 | `xorg-drm` | MIT | a port of its own (the Wayland half's gtk3 builds its own copy: merge overlap) |

@@ -177,9 +177,10 @@ Other decisions:
   log prefix is `GAME-WINDOW` and their knobs are `GAME_LIST` / `GAME_LIST_DELAY`. At staging a
   check fails the build if an installed file still names a hand-staged program or path. Only the
   unchanged copies (patches, hooks, gtk-video.c, …) are sync-mapped to tools.
-* **Wayland client stack.** libwayland-client/-egl/-cursor, `wlphx-compat` and libffi come from
-  the `wayland` port, which is the one Mesa's wayland platform is built on. libxkbcommon 1.7.0 and
-  `<linux/input.h>` come from `wayland_phoenix` through private views.
+* **Wayland client stack.** Everything comes from `wayland_phoenix`, the one libwayland of the
+  system. libwayland-client/-egl/-cursor, `wlphx-compat` and libffi come from its `libwayland/`
+  view, the same view Mesa's wayland platform is built on. libxkbcommon 1.7.0 and
+  `<linux/input.h>` come from its `prefix/` through private views.
 * **The `os_create_anonymous_file` clash.** libwayland-cursor and Mesa both define this symbol.
   The build renames it in a private copy of `libwayland-cursor.a`; the tools renamed Mesa's copy.
   The two implementations do the same thing. `liblwphx-compat.a` is not in the link group: the
