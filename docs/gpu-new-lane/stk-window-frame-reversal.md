@@ -139,3 +139,37 @@ The fix belongs in the flip gate: labwc's flips must wait for its own composite 
 fullscreen flips already do. `V3D_DEBUG=sync` is a diagnostic, not the fix. It serialises every
 GL call in the compositor. A code change to find the failing link in `implicit_attach` /
 `drmphx_v3d_flip_fence` is under way on branch `g5-flip-gate` (ports + devices).
+
+## 5. Root cause and fix (ports `38cb9c0`, test `0615a05`)
+
+**The failing link was `fb_export` in libdrm-phoenix** (`libdrm_phoenix/glue/phoenix/drm_phoenix_kms.c`).
+The flip looked the framebuffer's buffer up through the GEM handle given at ADDFB2. wlroots
+closes that handle straight after ADDFB2 (`backend/drm/fb.c:195`, `close_all_bo_handles`). That
+is legal in DRM, where the framebuffer holds its own reference. But our `GEM_CLOSE` erased the
+handle-table entry, so at flip time `fb_export` returned `-ENOENT`, `implicit_attach` attached
+nothing, and every labwc flip went out with no fence. Hence `deferred=0 applied_gate=0`.
+Fullscreen games and Weston keep their GBM handle open, which is why they were gated.
+
+**Fix:** the framebuffer record now keeps the buffer's name, resolved at ADDFB2, and `fb_export`
+reads it from there. Both the framebuffer table and the render-side table now log once when full
+(a flip of an untracked buffer would go without sync). rpi4-kms already gates any in-fence and is
+unchanged.
+
+**Test:** drmprobe `compositor_flip` repeats labwc's buffer path. It creates a dumb buffer on a
+second card0 open, imports it on the render node, re-exports it, imports it on card0 as an alias,
+calls ADDFB2, then closes the handle. It submits a pending composite, then flips with no explicit
+fence. On the host, with the library change stashed: `done_at_flip=0 … ok=0`, `HOSTE2E dri
+verdict=FAIL (g5-compositor-flip)`. With the fix: `done_at_flip=1 … ok=1`, `verdict=PASS`, and
+every earlier control (g4/g6/g7 negatives, lowmem, g6-eager, `implicit_flip`) still passes.
+
+The "undrawn back buffer" hypothesis in §3 is **refuted**: the client side was never at fault.
+Quakespasm in W1 was clean because its ~14 ms composite finished before the ungated flip was
+scanned out.
+
+**To grade on the Pi (build 2):**
+- drmprobe: `DRMPROBE compositor_flip … pending_at_commit=1 flipped=1 done_at_flip=1 bad_at_flip=0 … ok=1`.
+- labwc with windowed STK running: `KMS srv flipstat client=1 … deferred=D applied_gate=G applied_vblank=V`
+  with D > 0 for most flips.
+- `count-frame-reversals.py` on a new windowed-STK clip: about 0 % with **no** `V3D_DEBUG`.
+- Expected side effect: client=1 `q2a_us_avg` rises to tens of ms. That is the gate waiting for the
+  composite, which queues behind STK's frame. It is not a slowdown.
