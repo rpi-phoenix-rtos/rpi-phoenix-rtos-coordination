@@ -126,7 +126,7 @@ Build: `./scripts/rebuild-rpi4b-fast.sh --scope core` with lwip on `wifi/event-r
 core change, so `auto` would ship a stale lwip. Then prove the blob contains it. The new code has one
 new string:
 `strings -a .buildroot/_boot/aarch64a72-generic-rpi4b/rpi4b-bootfs/loader.disk | grep -c 'lock/cond creation failed'`
-must print ≥ 1, where master prints 0. Sync the export as for any image. Host AP up:
+must print ≥ 1, where master prints 0. The same count for `'wifi43455: tx_lock mutexCreate failed'` (the old message) must print **0**. That proves the old lwip is gone, which is how the stale-core hazard actually shows up. Sync the export as for any image. Host AP up:
 `./scripts/radio-ap-up.sh`. The export needs `/etc/wifi.conf` (lab file) and, for (3), `wifi-perf.py`
 in `/root`, with `python3 scripts/wifi-perf-host.py 7777 4194304 3` running on the host.
 
@@ -143,9 +143,14 @@ To remove build-to-build noise, repeat on the same image with `./scripts/radio-a
     "wifi status" "wifi stats" "wifi stats" "top -n 1"
 ```
 Predicted: `wifi status` shows joined with an address. Between the two `wifi stats`, `WIFISTATS
-rx_misses` grows by **≤ 3 600** in the 30 s (≤ 120 probes/s; the old loop gives ~120 000–150 000).
-This is the discriminating number: it counts empty probes in the daemon directly. In `top -n 1`,
-`lwip` and `rpi4-wifi` are at **0–1 % CPU**.
+rx_misses` grows by **≤ 6 000** in the 30 s. That is ≤ 200 probes/s: 100/s steady plus headroom for
+LAN chatter, since each host ARP/mDNS/IGMP frame costs ~14 probes and the Pi's reply arms the
+100-probe TX hold. The old loop gives ~120 000–150 000, so the threshold is still 20× below master.
+This is the discriminating number, because it counts empty probes in the daemon directly. Record
+the `tx_calls` and `rx_hits` deltas from the same two lines, so that a near-miss can be attributed
+to traffic rather than to the poll. In `top -n 1`, the graded line is **`rpi4-wifi` at 0–1 % CPU**.
+`lwip` should be low too, but on netboot it also carries genet and the NFS root, so its figure is
+recorded, not graded.
 
 **(3) Latency and throughput.**
 ```
@@ -170,7 +175,7 @@ is 3/3.
 | outcome | reading |
 |---|---|
 | all four as predicted | the idle cost is gone; F1's "polling is the open part" closes; CARD_INTR stays a follow-up for latency, not CPU |
-| (2) rx_misses still ~4 000/s | the binary is stale (check the `strings` gate) or something transmits continuously and keeps the TX hold armed: compare `WIFISTATS tx_calls` across the window |
+| (2) rx_misses still ~4 000/s (anything > 200/s) | the binary is stale (check the `strings` gate) or something transmits continuously and keeps the TX hold armed: compare `WIFISTATS tx_calls` across the window |
 | (1) still ~38–39 fps with (2) passing | the cost was not the poll. Attribute it by killing `rpi4-wifi` in a re-run |
 | (3) RX throughput low, TX fine | the RX hold is too short for the host's segment spacing: raise `WIFI_RX_HOLD_RX` (8 → 32) and re-measure with n ≥ 3 |
 | (3) ping RTT +several ms | the TX kick is not waking the nap: look at `wifi_rxKick` / `rx_napping` |
