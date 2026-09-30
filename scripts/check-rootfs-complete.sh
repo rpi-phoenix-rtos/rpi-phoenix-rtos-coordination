@@ -35,48 +35,41 @@ root="${1:-}"
 # Game DATA belongs here as much as the binaries: an engine with no data is not
 # a shipped game, and that is precisely the failure this script was written for.
 # The GPU stack's programs. The servers are started at boot from loader.disk; the
-# rootfs copies are the ones psh (and xfce-session / startx-drm when a server is
-# missing) can run.
+# rootfs copies are the ones psh can run.
 GPU_REQUIRED=(
 	sbin/rpi4-v3d-async
 	sbin/rpi4-kms
 	bin/shmsrv
 	bin/Xorg-drm
-	bin/startx-drm
+	bin/startx
 	etc/X11/xorg-drm.conf
+	bin/eglx11-demo-x
+	# the engines and their launchers (the commands)
 	usr/bin/quakespasm-drm
 	usr/bin/vkquake-drm
 	usr/bin/yquake2-drm
 	usr/bin/quake3e-drm
 	usr/bin/supertuxkart-drm
-	usr/bin/quake2-drm
-	usr/bin/quake3-drm
-	bin/vkq-drm
-	bin/stk-drm
-	bin/qs-drm
-	# the M9 lower-resolution launcher (build-rootfs-helpers.sh)
-	bin/game-res
-	# the plain command names (TD-26: copies of the -drm programs and launchers)
 	usr/bin/quakespasm
 	usr/bin/vkquake
 	usr/bin/quake2
 	usr/bin/quake3
 	bin/stk
-	bin/startx
-	bin/startx_gpu
-	bin/xfce-session
-	bin/eglx11-demo-x
+	# the lower-resolution launcher (build-rootfs-helpers.sh)
+	bin/game-res
 	# the Wayland desktop (labwc_desktop, dbus, xfce_wayland) and the GPU smoke tests
+	bin/xfce-session
+	bin/xfce-desktop.sh
+	bin/xfce-autostart.sh
 	bin/labwc
 	bin/foot
 	bin/labwc-desktop.sh
-	bin/xfce-desktop.sh
-	bin/thunar-wl
+	bin/thunar
 	bin/xfce4-panel
 	bin/xfdesktop
 	bin/dbus-daemon
 	bin/kmscube
-	bin/vkcube-drm
+	bin/vkcube
 	bin/drmprobe
 )
 # The desktop applications (docs/gpu-new-lane/desktop-apps-ports.md): the games' window
