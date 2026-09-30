@@ -129,10 +129,10 @@ echo "== positive markers (fixes that must be present) =="
 for eng_spec in usr/bin/quakespasm-drm:quakespasm-drm usr/bin/yquake2-drm:quake2-drm \
 		usr/bin/quake3e-drm:quake3-drm usr/bin/vkquake-drm:vkquake-drm \
 		usr/bin/supertuxkart-drm:stk-drm; do
-	if dump "${eng_spec%%:*}" && [ "$(marker_count "${eng_spec#*:}: new GPU lane")" -gt 0 ]; then
-		echo "  OK   ${eng_spec%%:*} is the GPU-stack engine (banner '${eng_spec#*:}: new GPU lane')"
+	if dump "${eng_spec%%:*}" && [ "$(marker_count "${eng_spec#*:}: Phoenix-RTOS GPU stack")" -gt 0 ]; then
+		echo "  OK   ${eng_spec%%:*} is the GPU-stack engine (banner '${eng_spec#*:}: Phoenix-RTOS GPU stack')"
 	else
-		echo "  MISS ${eng_spec%%:*}: no '${eng_spec#*:}: new GPU lane' banner"; rc=1
+		echo "  MISS ${eng_spec%%:*}: no '${eng_spec#*:}: Phoenix-RTOS GPU stack' banner"; rc=1
 	fi
 done
 

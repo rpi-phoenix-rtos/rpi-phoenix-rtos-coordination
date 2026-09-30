@@ -116,7 +116,7 @@ for spec in usr/bin/quakespasm-drm:quakespasm-drm usr/bin/yquake2-drm:quake2-drm
 	usr/bin/quake3e-drm:quake3-drm usr/bin/vkquake-drm:vkquake-drm usr/bin/supertuxkart-drm:stk-drm; do
 	f="${root}/${spec%%:*}"
 	[ -s "${f}" ] || continue
-	if [ "$(count "${spec#*:}: new GPU lane" "${f}")" -ge 1 ]; then ok "${spec%%:*} banner"; else fail "${spec%%:*} has no '${spec#*:}: new GPU lane' banner"; fi
+	if [ "$(count "${spec#*:}: Phoenix-RTOS GPU stack" "${f}")" -ge 1 ]; then ok "${spec%%:*} banner"; else fail "${spec%%:*} has no '${spec#*:}: Phoenix-RTOS GPU stack' banner"; fi
 done
 
 echo "== 2b. the desktop applications and WiFi in the rootfs =="
