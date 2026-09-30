@@ -34,7 +34,11 @@ Options:
   --with-tests
       build phoenix-rtos-tests for aarch64 (incl. the libc Unity suite) via the
       build.sh `test` stage and stage the binaries into the rootfs so they can be
-      run on the Pi (e.g. `test-libc-string`, `test-libc-stdlib`).
+      run on the Pi (e.g. `test-libc-string`, `test-libc-stdlib`). Also exports
+      RPI4B_WITH_TESTS=1, which adds the test and diagnostic programs a release
+      image does not ship: the _user demos (hello, hellocpp, ...), the GPU smoke
+      tests (ports.yaml: drmprobe, kmscube, vkcube) and, with --with-showcase,
+      the diagnostics of build-rootfs-helpers.sh (thermal-soak, mtstress, ...).
   --build-only
       skip bootfs/sdimg export and verification
   --ports-only
@@ -574,6 +578,12 @@ fi
 # set, so the plo render (image_builder.py reads os.environ) gates the rpi4-klogd
 # launch. In a DEBUG build the var stays unset and user.plo.yaml's
 # `env.RPI4_LOG_TO_FILE | default('0')` resolves to '0' -> not launched.
+# --with-tests -> RPI4B_WITH_TESTS=1: ports.yaml (jinja-rendered by port_manager) and
+# build-rootfs-helpers.sh add the test/diagnostic programs only then. Always passed
+# explicitly (0 otherwise), so a value left in the caller's environment cannot put them
+# into a release build.
+with_tests_env="RPI4B_WITH_TESTS='${with_tests}' "
+
 log_to_file_env=""
 if [ "${log_to_file}" = 1 ]; then
 	log_to_file_env="RPI4_LOG_TO_FILE='1' "
@@ -742,7 +752,7 @@ run_phoenix_build() {
 	local stages="$*"
 	printf 'Build:     ./phoenix-rtos-build/build.sh %s\n' "${stages}"
 	run_build_shell \
-		"set -euo pipefail; export PATH='${repo_root}/.venv/bin':'${toolchain_path}':\$PATH; cd '${buildroot}'; env ${log_to_file_env}${libc_trace_env}${libc_diag_env}${fs_diag_env}${kernel_diag_env}RPI4B_DTB_PATH='${dtb_path}' RPI4B_VARIANT='${variant}' TARGET='${target}' ./phoenix-rtos-build/build.sh ${stages}"
+		"set -euo pipefail; export PATH='${repo_root}/.venv/bin':'${toolchain_path}':\$PATH; cd '${buildroot}'; env ${with_tests_env}${log_to_file_env}${libc_trace_env}${libc_diag_env}${fs_diag_env}${kernel_diag_env}RPI4B_DTB_PATH='${dtb_path}' RPI4B_VARIANT='${variant}' TARGET='${target}' ./phoenix-rtos-build/build.sh ${stages}"
 
 	verify_libc_trace_state
 
@@ -823,7 +833,7 @@ fi
 if [ "${with_showcase}" = 1 ]; then
 	printf 'Showcase:  staging the helper programs into the rootfs (phase stage)\n'
 	SHOWCASE_STAGE_DIR="${buildroot}/_fs/${target}/root" \
-		RPI4B_BUILDROOT="${buildroot}" \
+		RPI4B_BUILDROOT="${buildroot}" RPI4B_WITH_TESTS="${with_tests}" \
 		"${repo_root}/scripts/build-showcase-apps.sh" --phase stage \
 		--stage-dir "${buildroot}/_fs/${target}/root"
 fi

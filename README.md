@@ -247,8 +247,8 @@ work; `⛔` blocked on external dependencies; `⬜` not started.
 | HDMI framebuffer console (fbcon) | ✅ | klog + psh on HDMI, FreeBSD `teken` VT engine |
 | HDMI display (`rpi4-kms`, `/dev/kms`) | ✅ | KMS display server on the firmware's display planes: atomic page flips at 60.00 fps with vblank events, dumb buffers, and scaled lower modes (1600×900 … 640×480 shown full screen by the display hardware). Console handover to and from the fbcon |
 | GPU (V3D 4.2) — render server (`rpi4-v3d-async`, `/dev/v3d-async`) | ✅ | Owns the GPU and runs every client's jobs asynchronously, with fences and sync objects. Clients share buffers with the display server without copies (kernel `memExport`) |
-| GPU — OpenGL / OpenGL ES 3.1 | ✅ | **Mesa 26.2** (gallium `v3d`) with GBM and EGL (drm, Wayland, X11 platforms) on a Phoenix libdrm backend. kmscube at 60 fps. SuperTuxKart at 12.6 fps at 1080p, which is Raspberry Pi OS parity on this board |
-| GPU — Vulkan (V3DV) | ✅ | Mesa's `v3dv` with `VK_KHR_display`: vkcube, and **vkQuake at 42 fps** (~3 min pipeline compile before the first frame) |
+| GPU — OpenGL / OpenGL ES 3.1 | ✅ | **Mesa 26.2** (gallium `v3d`) with GBM and EGL (drm, Wayland, X11 platforms) on a Phoenix libdrm backend. SuperTuxKart at 12.6 fps at 1080p, which is Raspberry Pi OS parity on this board |
+| GPU — Vulkan (V3DV) | ✅ | Mesa's `v3dv` with `VK_KHR_display`: **vkQuake at 42 fps** (~3 min pipeline compile before the first frame) |
 | SDL 2.30 | ✅ | KMSDRM (full screen) + Wayland (windowed) video drivers in one library, Phoenix HID input and audio. Frame pacing fixed so Quake II runs at a vsynced 60 fps |
 | X11 (Xorg 21.1 + modesetting + glamor) | ✅ | GPU-accelerated X with DRI3/Present: a GL window at 60 fps (vsync). Window Maker, xterm, xclock, xbill. `startx` runs the showcase desktop |
 | Wayland desktop (labwc 0.20 + XFCE 4.20 + GTK 3.24) | ✅ | labwc composites on the GPU (GLES2). XFCE panel, desktop, Thunar, settings and application finder; the foot terminal; games and video in windows; the Atril PDF viewer. `xfce-session` starts it and Log Out returns to the shell |

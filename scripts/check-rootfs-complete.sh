@@ -57,7 +57,8 @@ GPU_REQUIRED=(
 	bin/stk
 	# the lower-resolution launcher (build-rootfs-helpers.sh)
 	bin/game-res
-	# the Wayland desktop (labwc_desktop, dbus, xfce_wayland) and the GPU smoke tests
+	# the Wayland desktop (labwc_desktop, dbus, xfce_wayland). The GPU smoke tests
+	# (kmscube, vkcube, drmprobe) ship only in a --with-tests build.
 	bin/xfce-session
 	bin/xfce-desktop.sh
 	bin/xfce-autostart.sh
@@ -67,9 +68,6 @@ GPU_REQUIRED=(
 	bin/xfce4-panel
 	bin/xfdesktop
 	bin/dbus-daemon
-	bin/kmscube
-	bin/vkcube
-	bin/drmprobe
 )
 # The desktop applications (docs/gpu-new-lane/desktop-apps-ports.md): the games' window
 # launcher and session (sdl2_kmsdrm), the video players (video_player), the PDF viewer

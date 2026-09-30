@@ -90,7 +90,7 @@ for p in sbin/rpi4-v3d-async sbin/rpi4-kms bin/shmsrv \
 	bin/Xorg-drm bin/startx bin/eglx11-demo-x etc/X11/xorg-drm.conf \
 	bin/labwc bin/foot bin/xfce-session bin/xfce-desktop.sh bin/xfce-autostart.sh \
 	bin/thunar bin/gdbus bin/xfce4-panel bin/xfdesktop bin/dbus-daemon usr/lib/xfce-demo/bin/loginctl \
-	bin/kmscube bin/vkcube bin/drmprobe bin/game-res; do
+	bin/game-res; do
 	if [ -s "${root}/${p}" ]; then ok "${p}"; else fail "${p} missing"; fi
 done
 # The session scripts are installed under their command names (not wrappers of another name).

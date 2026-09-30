@@ -215,7 +215,7 @@ all of them and installs them into the root filesystem. No program goes into
 
 | Area | Ports |
 |---|---|
-| Graphics stack | `libdrm_phoenix` (libdrm on the render and KMS servers), `mesa_drm` (Mesa 26.2: GBM, EGL, GLES, GL, Vulkan), `sdl2_kmsdrm` (SDL 2.30 with KMSDRM + Wayland), `libepoxy`, `kmscube_drm` / `vkcube_drm` (smoke tests) |
+| Graphics stack | `libdrm_phoenix` (libdrm on the render and KMS servers), `mesa_drm` (Mesa 26.2: GBM, EGL, GLES, GL, Vulkan), `sdl2_kmsdrm` (SDL 2.30 with KMSDRM + Wayland), `libepoxy`; the smoke tests `kmscube_drm` / `vkcube_drm` and `drmprobe` are built only with `--with-tests` |
 | X11 | `xorg_server_drm` (Xorg 21.1, modesetting + glamor, `startx`), `xorg_libs`, `xorg_fonts`, `xorg_apps`, `xterm`, `windowmaker`, `xbill`, `dillo` |
 | Wayland desktop | `wayland`, `wayland_phoenix`, `dbus`, `gtk3_wayland` (GTK 3.24), `labwc_desktop` (labwc, foot, fuzzel), `xfce_wayland` (XFCE 4.20, `xfce-session`) |
 | Games | `quakespasm_drm`, `yquake2` + `yquake2_drm`, `quake3` + `quake3_drm`, `vkquake_drm`, `supertuxkart` + `supertuxkart_drm` (the engine port compiles, the `*_drm` port links one program with both SDL video drivers) |
@@ -233,7 +233,13 @@ port produces into the rootfs tree (`_fs/<target>/root`):
   before the engine starts;
 - `game-res`: starts a game in a lower full-screen mode;
 - `pty-run`;
-- a few diagnostics.
+- with `--with-tests` only, a few diagnostics (`thermal-soak`, `mtstress`, `pwmwrite`,
+  `pwmdma`, `armtrials`).
+
+`--with-tests` is the one switch for test programs: it adds the `test` stage
+(phoenix-rtos-tests and the `_user` demos `hello`, `hellocpp`, ...) and sets
+`RPI4B_WITH_TESTS=1`, which `ports.yaml` and `build-rootfs-helpers.sh` read. The release
+build does not pass it, so the image carries no test or diagnostic program.
 
 `--with-ports` inserts the `ports` stage into the non-SD builds too. The SD build
 always runs it.

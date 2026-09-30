@@ -27,7 +27,9 @@
 #   /usr/bin/pty-run     tools/pty-run/pty-run.c
 #                        getty-style /dev/ptmx forwarder, for programs that want
 #                        their own controlling terminal.
-#   + the diagnostics listed in helpers=() below.
+#   + in a test build only (RPI4B_WITH_TESTS=1, set by rebuild-rpi4b-fast.sh
+#     --with-tests), the diagnostics listed in diagnostics=() below. A release
+#     image ships none of them.
 #
 # All are static aarch64-phoenix ELFs built with the same toolchain and sysroot as
 # the engines, so they are ABI-consistent with them. Nothing here touches the NFS
@@ -40,6 +42,7 @@
 # Env:
 #   SHOWCASE_STAGE_DIR / --stage-dir   rootfs staging tree
 #                                      (default $RPI4B_BUILDROOT/_fs/<target>/root)
+#   RPI4B_WITH_TESTS=1                 also build the diagnostics (a test build)
 #   RPI4B_BUILDROOT, RPI4B_TARGET, PHOENIX_AARCH64_TOOLCHAIN
 #
 # Copyright 2026 Phoenix Systems
@@ -74,7 +77,7 @@ stage_dir="${SHOWCASE_STAGE_DIR:-${buildroot}/_fs/${target}/root}"
 while [ "$#" -gt 0 ]; do
 	case "$1" in
 		--stage-dir) shift; stage_dir="${1:?--stage-dir needs a value}" ;;
-		-h|--help) sed -n '2,46p' "${BASH_SOURCE[0]}"; exit 0 ;;
+		-h|--help) sed -n '2,49p' "${BASH_SOURCE[0]}"; exit 0 ;;
 		*) printf 'error: unknown option: %s\n' "$1" >&2; exit 2 ;;
 	esac
 	shift
@@ -93,6 +96,13 @@ helpers=(
 	# ram-stage-play: the quake2/quake3 launchers exec it.
 	"tools/ram-stage/ram-stage-play.c|bin/ram-stage-play"
 	"tools/pty-run/pty-run.c|usr/bin/pty-run"
+)
+# M9: a lower fullscreen mode for each game (execs the ports' -drm programs).
+helpers+=("tools/gpu-lane/m9-res/game-res.c|bin/game-res")
+
+# Diagnostics: test builds only (none of them is run by a gate; they are kept for
+# the hunts they were written for).
+diagnostics=(
 	# Diagnostic: run a program and sample SoC temperature + the VideoCore throttle
 	# bitmask while it runs. The stability evidence is a large sample of SHORT runs;
 	# a presentation may run a game for tens of minutes, and throttling would show
@@ -131,10 +141,13 @@ helpers=(
 	# a fetch of not-yet-landed bytes is caught in the act. `--barrier` is the control
 	# arm. PWM0 / channel 6 only -- it does not touch rpi4-audio.
 	"tools/pwm-dma-probe/pwmdma.c|bin/pwmdma"
+	# The RPI4AUDIO_ARMTRIALS client (TD-23 in
+	# docs/TEMPORARY-FIXES-AND-FUTURE-CLEANUP.md).
 	"tools/audio-armtrials/armtrials.c|bin/armtrials"
 )
-# M9: a lower fullscreen mode for each game (execs the ports' -drm programs).
-helpers+=("tools/gpu-lane/m9-res/game-res.c|bin/game-res")
+case "${RPI4B_WITH_TESTS:-0}" in
+	1|y|yes|true) helpers+=("${diagnostics[@]}") ;;
+esac
 
 # Data files copied verbatim (not compiled): "<source>|<install path>|<mode>".
 # Kept in this script because it already owns "small in-repo things that belong in
