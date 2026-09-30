@@ -134,7 +134,16 @@ for p in bin/game-window.sh bin/game-window-autostart.sh bin/game-window-quit.sh
 	lib/firmware/LICENSES/LICENCE.cypress lib/firmware/LICENSES/GPL-2.0 lib/firmware/WHENCE; do
 	if [ -s "${root}/${p}" ]; then ok "${p}"; else fail "${p} missing"; fi
 done
-if [ -e "${root}/etc/wifi.conf" ]; then fail "etc/wifi.conf present (credentials must not be in a built rootfs)"; else ok "etc/wifi.conf absent"; fi
+# The live NFS export legitimately holds the lab's /etc/wifi.conf (it lives nowhere else, never in git
+# or the overlay); a BUILT rootfs must not.
+live_export=$(awk '$0 ~ /fsid=0/ && $1 ~ /^\// {print $1; exit}' /etc/exports /etc/exports.d/*.exports 2>/dev/null)
+if [ ! -e "${root}/etc/wifi.conf" ]; then
+	ok "etc/wifi.conf absent"
+elif [ -n "${live_export}" ] && [ "$(realpath -m "${root}")" = "$(realpath -m "${live_export}")" ]; then
+	note "etc/wifi.conf present on the live export (the lab's credentials; not part of the image)"
+else
+	fail "etc/wifi.conf present (credentials must not be in a built rootfs)"
+fi
 # One program per game / player: full screen on KMS from psh, a window on the desktop.
 for p in usr/bin/quakespasm-drm usr/bin/yquake2-drm usr/bin/quake3e-drm usr/bin/supertuxkart-drm usr/bin/ffplay; do
 	[ -s "${root}/${p}" ] || continue

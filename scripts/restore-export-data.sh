@@ -7,7 +7,6 @@
 #   etc/wifi.conf         the lab WiFi credentials; they live ONLY on the export, never in the
 #                         rootfs overlay or in git
 #   data/test-artifacts   the storage-test reference images (rpi4-storage-test skill)
-#   usr/share/m10         the M10 video test clips (tools/gpu-lane/video-player/gen-clips.sh)
 #
 # Each path is copied only when it is absent from the new export and present in the backup;
 # anything else is reported, not guessed. An ELF file is never restored: a path that is one is
@@ -28,7 +27,7 @@ EXP=$(awk '$0 ~ /fsid=0/ && $1 ~ /^\// {print $1; exit}' /etc/exports /etc/expor
 BAK="${EXP%/}.PREV-cruft"
 [ -d "${BAK}" ] || { echo "FATAL: no backup ${BAK} (run make-pristine-nfs-export.sh first)" >&2; exit 1; }
 
-PATHS=(etc/wifi.conf data/test-artifacts usr/share/m10)
+PATHS=(etc/wifi.conf data/test-artifacts)
 rc=0
 for p in "${PATHS[@]}"; do
 	if [ ! -e "${BAK}/${p}" ]; then
