@@ -11,8 +11,8 @@ Each scene below gives:
 - the exact psh commands, which are the recipes' own commands;
 - how long the scene runs and how long to record;
 - the capture command;
-- whether any part of it cannot be scripted. Those parts are listed as questions for the
-  coordinator in [§4](#4-questions-for-the-coordinator).
+- whether any part of it cannot be scripted. Only one part cannot: opening the menus on
+  camera ([§4](#4-what-is-not-scripted-and-what-has-not-run-on-the-pi)).
 
 ## 1. How capture works
 
@@ -50,9 +50,18 @@ Each scene below gives:
 **Commands while a desktop runs.** psh runs one foreground command at a time.
 `/bin/bash /bin/xfce-session` and `/bin/bash /bin/startx` hold the prompt until the session
 ends, so any later command in the same clip runs after the desktop has closed. **Everything
-that happens inside a desktop must be set up with `export` before the session starts**, using
-the knobs below. That is also why each desktop scene sets `HOLD`: the session then ends by
-itself, the same way as the Log Out button.
+that happens inside a desktop is set up with `export` before the session starts**:
+
+- `XFCE_AUTOSTART` opens programs on the XFCE desktop in order, each for a set time
+  ([User Guide §5](USER-GUIDE.md#open-programs-by-themselves)). Its UART lines start with
+  `XFCE-AUTOSTART ` (`open`, `closed`, `stop`, `done`).
+- `GAME_LIST` (the games session) runs games in windows; `GAME_LIST=none` runs none, so
+  `XFCE_AUTOSTART` alone decides what opens.
+- `FFPLAY_AUTOKEYS` presses ffplay's keys at set times.
+- `HOLD` ends each session by itself, the same way as the Log Out button.
+
+psh's `export` cannot give a value with spaces (it passes quotes through), and none of these
+knobs needs one.
 
 **Assemble the reel** with `scripts/make-demo-reel.sh`:
 
@@ -69,7 +78,9 @@ itself, the same way as the Log Out button.
 
 **The lab setup for all clips:**
 
-- the netboot NFS-root image of the merged tree;
+- the netboot NFS-root image (`--variant nfsroot`) of the final tree. On the SD image WiFi
+  joins only after one `wifi connect` typed at psh, and the `netboot` variant does not start
+  WiFi at all;
 - the NFS export restored with `scripts/restore-export-data.sh`, so the lab `/etc/wifi.conf` is
   present and WiFi joins at boot;
 - the host AP up (`scripts/radio-ap-up.sh`) for the WiFi scene;
@@ -106,66 +117,77 @@ REC_IDLE_SECS=10 ./scripts/record-showcase-clip.sh shell-net 200 \
   ends, and never run `wifi disconnect` on the lab export.
 - Label: `Shell — …` (static).
 
-### S3 — The XFCE desktop on Wayland with a windowed Quake III (reel ~40 s)
+### S3 — The XFCE desktop on Wayland: Atril, a windowed Quake III, a video (reel ~50 s)
+
+One session with the games configuration, which places the game and the players at the right
+of Thunar and foot:
 
 ```
-REC_IDLE_SECS=60 REC_MAX_CMD_SECS=330 ./scripts/record-showcase-clip.sh xfce-q3 430 \
-    "export CONF_DIR=/etc/xdg/labwc-xfce-games GAME_LIST=quake3:120 GAME_LIST_DELAY=20 HOLD=200 LOGOUT_CMD=/bin/game-window-quit.sh" \
+REC_IDLE_SECS=60 REC_MAX_CMD_SECS=330 ./scripts/record-showcase-clip.sh xfce-apps 420 \
+    "export CONF_DIR=/etc/xdg/labwc-xfce-games GAME_LIST=none XFCE_AUTOSTART=atril:30,quake3:90,video=/usr/share/video-demo/h264-720p30-aac.mp4 FFPLAY_AUTOKEYS=12:fs,24:fs HOLD=240" \
     "/bin/bash /bin/xfce-session"
 ```
 
 - **On screen:** the wallpaper and the panel (the Applications menu button, the launchers, the
-  task list, the clock, Log Out), Thunar on `/`, and a foot terminal. About 20 s later, Quake
-  III Arena appears in a decorated 1280×720 window at (636,40) next to them: q3dm1, the bot
-  deathmatch with the orbiting camera, ~90 fps.
+  task list, the clock, Log Out), Thunar on `/` and a foot terminal. Then, one after another:
+  Atril on the sample PDF (30 s); Quake III Arena in a decorated 1280×720 window at (636,40),
+  q3dm1 with the bot deathmatch and the orbiting camera, ~70 fps (90 s); the H.264 720p clip in
+  a window, full screen at +12 s and back in the window at +24 s.
 - **Grading lines:**
-  - `GAME-WINDOW game=quake3 start … driver=wayland` and its `flipstat` lines;
-  - no `KMSDRM_*` lines;
+  - `XFCE-AUTOSTART open atril`, `… closed`, `open quake3`, `open video`;
+  - `GAME-WINDOW game=quake3 start … driver=wayland` and its `flipstat` lines, no `KMSDRM_*`
+    lines;
+  - `VIDEO-PLAY start mode=wl … autokeys=12:fs,24:fs` and the `ffplay-stat` lines (`fs=0` →
+    `fs=1 win=1920x1080` → `fs=0`);
   - `XFCE-SESSION done rc=0`.
-- Record `secs` = ~75 s boot + ~70 s for the `export` + ~52 s session start + the 200 s `HOLD`
-  + teardown ≈ 430 s. The Bash `timeout` must be at least 510 000 ms.
-- **Not scriptable here:** opening the Applications menu on camera (Q1).
-- Label: `XFCE 4.20 on Wayland — …`.
+- Record `secs` = ~75 s boot + ~70 s for the `export` + ~20 s session start + the 240 s `HOLD`
+  + teardown ≈ 420 s. The Bash `timeout` must be at least 500 000 ms.
+- Label: `XFCE 4.20 on Wayland — …`. Cut Atril's part as its own segment (`Atril — …`) if it
+  pages too little for `verify-demo-reel.py`'s motion check; `atril-pres` (a presentation)
+  moves more.
 
-### S4 — SuperTuxKart in a window (reel ~25 s)
+### S4 — SuperTuxKart racing in a window (reel ~25 s)
 
-Same as S3 with `GAME_LIST=stk:150` in the `export` and the label `xfce-stk`:
+```
+REC_IDLE_SECS=60 REC_MAX_CMD_SECS=330 ./scripts/record-showcase-clip.sh xfce-stk 430 \
+    "export CONF_DIR=/etc/xdg/labwc-xfce-games GAME_LIST=stk-race:150 GAME_LIST_DELAY=20 HOLD=200 LOGOUT_CMD=/bin/game-window-quit.sh" \
+    "/bin/bash /bin/xfce-session"
+```
 
-- The SuperTuxKart main menu appears in a window, at ~90 fps.
-- **An AI race in a window** needs the race arguments: `GAME_ARGS="--windowed
-  --screensize=1280x720 --track=hacienda --numkarts=4 --profile-laps=2"`. `GAME_ARGS`
-  replaces the per-game defaults, one word per argument.
-- psh passes the quotes through, so that `export` will not work as written (Q2). If it cannot
-  be done, show the menu, which animates by itself.
+- **On screen:** the desktop, then about 20 s later SuperTuxKart in a window: four AI karts race
+  two laps on hacienda, and the game exits by itself.
+- **Grading lines:** `GAME-WINDOW game=stk-race start … driver=wayland`, its `flipstat` lines,
+  `XFCE-SESSION done rc=0`.
+- Label: `SuperTuxKart — …`.
 
-### S5 — The PDF reader (reel ~15 s)
+### S5 — The menus (reel ~15 s, by hand)
 
-- **Not scriptable with the image as built (Q3).** No session knob starts Atril, and Office →
-  Atril needs a mouse on the menu.
-- By hand, in any desktop session: **Office → Atril Document Viewer**, or run
-  `atril /usr/share/doc/phoenix/sample.pdf` in foot. Then show the full-screen and presentation
-  modes (`atril --fullscreen …`, `atril --presentation …`).
-- Label: `Atril — …`. A still page fails `verify-demo-reel.py`'s motion check unless
-  `Atril` is added to its `STATIC_OK` list, or the scene pages through the document.
+Opening the Applications menu and its submenus (Games, Multimedia, Office) needs a person at the
+Pi's mouse: nothing on the image injects pointer input into a Wayland session.
+
+- Record one short clip with the owner at the keyboard and mouse:
+  `REC_IDLE_SECS=60 ./scripts/record-showcase-clip.sh xfce-menu 300 "export HOLD=120" "/bin/bash /bin/xfce-session"`.
+- Open **Applications → Games**, **Multimedia** and **Office**, and right-click the wallpaper.
+- Label: `XFCE 4.20 on Wayland — the menus`.
 
 ### S6 — The video player, windowed then full screen (reel ~30 s)
 
 ```
-REC_IDLE_SECS=60 REC_MAX_CMD_SECS=260 ./scripts/record-showcase-clip.sh xfce-video 370 \
+REC_IDLE_SECS=60 REC_MAX_CMD_SECS=260 ./scripts/record-showcase-clip.sh xfce-video 340 \
     "export CONF_DIR=/etc/xdg/labwc-xfce-video VIDEO_DELAY=30 FFPLAY_AUTOKEYS=12:fs,24:fs HOLD=140" \
     "/bin/bash /bin/xfce-session"
 ```
 
 - **On screen:** the desktop, then after 30 s the H.264 720p demo clip plays in a window next
-  to Thunar. At +12 s ffplay goes full screen and at +24 s it returns to the window. The clip
-  ends by itself (`-autoexit`).
+  to Thunar, at 30 fps. At +12 s ffplay goes full screen and at +24 s it returns to the window.
+  The clip ends by itself (`-autoexit`).
 - `VIDEO_CLIP=/usr/share/video-demo/hevc-720p30-aac.mp4` shows HEVC instead.
 - `VIDEO_PLAYER=gtk` shows gtk-video, but its full screen is CPU-bound, so keep ffplay for this
   scene.
-- **Grading lines:** `VIDEO-PLAY start mode=wl … autokeys=12:fs,24:fs`, the `ffplay-stat`
-  lines (`fs=0` → `fs=1 win=1920x1080` → `fs=0`), and `VIDEO-PLAY done rc=0`.
-- **Check:** that `FFPLAY_AUTOKEYS` reaches ffplay through labwc's autostart. The games
-  session passes its knobs the same way (Q4).
+- **Grading lines:** `VIDEO-PLAY start mode=wl … autokeys=12:fs,24:fs` (it prints the value it
+  received, so the log shows that `FFPLAY_AUTOKEYS` reached it), the `ffplay-stat` lines
+  (`fs=0` → `fs=1 win=1920x1080` → `fs=0`), and `VIDEO-PLAY done rc=0`.
+- Skip this scene if S3 already shows the video well enough.
 - Label: `Video — …`.
 
 ### S7 — Full-screen games at their best settings (reel ~20 s each)
@@ -175,18 +197,18 @@ One clip per game. Every game starts at the psh prompt, with no desktop running:
 | Clip label | Command | Record secs | Shows |
 |---|---|---|---|
 | `fs-q3` | `quake3 +map q3dm1` | 240 | Quake III bot deathmatch, orbiting third-person camera, ~59 fps |
-| `fs-q2` | `quake2` | 200 | Quake II on the first demo level (`+map demo1`), 60 fps. The launcher loads the level; it does not play a recorded demo, so the view may be static (Q8). |
+| `fs-q2` | `quake2 +demomap q2demo1.dm2` | 200 | Quake II playing the demo pak's recorded demo, 60 fps |
 | `fs-qs` | `quakespasm` | 200 | QuakeSpasm attract-demo loop, ~44 fps |
-| `fs-vkq` | `vkquake` | 240 | vkQuake on Vulkan, the start map, ~43 fps. The camera is static unless a demo plays (Q5). |
-| `fs-stk` | `game-res stk 1280x720 --track=hacienda --numkarts=4 --profile-laps=2` | 330 | SuperTuxKart: a 4-kart AI race, 720p scaled to the screen, ~22 fps |
+| `fs-vkq` | `vkquake +playdemo demo1` | 240 | vkQuake on Vulkan playing a recorded demo, ≈ 39–42 fps |
+| `fs-stk` | `game-res stk 1280x720 race` | 330 | SuperTuxKart: a 4-kart AI race, 720p scaled to the screen, ~22 fps |
 
 ```
 ./scripts/record-showcase-clip.sh fs-q3 240 "quake3 +map q3dm1"
 ```
 
 - Grade each clip by its `<name> flipstat … fps` lines, not by the game's own counter.
-- SuperTuxKart needs the longest window: in the P1 gate it was still racing when a 240 s
-  capture closed.
+- SuperTuxKart needs the longest window: in the gate it was still racing when a 240 s capture
+  closed. `race` ends the game by itself after two laps.
 - Labels: `Quake III Arena — …`, and so on.
 
 ### S8 — X11: Xorg + glamor with Window Maker (reel ~25 s)
@@ -205,36 +227,38 @@ REC_IDLE_SECS=60 REC_MAX_CMD_SECS=300 ./scripts/record-showcase-clip.sh x11 420 
 
 ### S9 — Dillo loading a live HTTPS page (reel ~13 s)
 
-- **Not scriptable with the image as built (Q6).** `startx` has only the `action` and `wmaker`
-  modes, and Dillo would have to be typed into an xterm.
-- By hand: `ntpclient -s pool.ntp.org` at psh first, then `/bin/bash /bin/startx wmaker` →
-  right-click → XTerm → `dillo https://example.com`. This needs the NAT gateway.
+```
+REC_IDLE_SECS=30 REC_MAX_CMD_SECS=240 ./scripts/record-showcase-clip.sh dillo 330 \
+    "ntpclient -s pool.ntp.org" "export HOLD=120" "/bin/bash /bin/startx browse https://example.com"
+```
+
+- **On screen:** Window Maker with Dillo (1780×980 at (40,40)) loading the page over HTTPS.
+- Needs the NAT gateway (`scripts/pi-internet-nat.sh`); the clock must be set for the
+  certificate check, hence `ntpclient` first.
+- **Grading lines:** `XDRM start mode=browse`, `XDRM done rc=0 reason=hold-done`.
 - Label: `Dillo — …` (static).
 
-**Reel order:** S1 boot → S2 shell and networking → S3 XFCE with Quake III → S4 SuperTuxKart
-windowed → S5 Atril → S6 video windowed then full screen → S9 Dillo → S8 X11 → S7 full-screen
-games (Quake III, Quake II, QuakeSpasm, vkQuake, SuperTuxKart). That is about 5 minutes.
+**Reel order:** S1 boot → S2 shell and networking → S3 XFCE with Atril, Quake III and a video →
+S5 the menus → S4 SuperTuxKart windowed → S6 video windowed then full screen (optional) → S9
+Dillo → S8 X11 → S7 full-screen games (Quake III, Quake II, QuakeSpasm, vkQuake,
+SuperTuxKart). That is about 5 minutes.
 
 ## 3. Before recording
 
-1. The first showcase gate of the merged image must have passed:
-   `scripts/run-showcase-gate-drm.sh`, plus the pre-registered checks of
-   [desktop-apps-ports.md §4](gpu-new-lane/desktop-apps-ports.md) (a)–(c) and WiFi cycle W1. The
-   recordings are not a test.
+1. The image of the final tree must have passed its gate first: `scripts/run-showcase-gate-drm.sh`
+   (the previous final image passed 7/7 with WiFi joined, WiFi W1 and the windowed games,
+   MIGRATION §7s). The recordings are not a test.
 2. Warm-up is not needed: there is no shader disk cache. For the same reason, the first frame of
    every game takes as long in every clip. Budget vkQuake's shader compile.
 3. Run GPU clips with the AP down (`scripts/radio-ap-down.sh`), except S2. A joined WiFi netif
-   polls, and the bench conditions of the fps numbers were measured without it.
+   polls: vkQuake measured 38.7 fps with WiFi joined against 42.2 before.
 
-## 4. Questions for the coordinator
+## 4. What is not scripted, and what has not run on the Pi
 
-| # | Scene | Question |
-|---|---|---|
-| Q1 | S3, S4, S5 | **Scripted input inside XFCE.** Nothing in the tree drives the pointer or keyboard of a Wayland session (no `wtype`/`ydotool`-style tool, and no libinput injection). So opening the Applications menu, the Games / Multimedia / Office submenus and a desktop right-click cannot be recorded unattended. Either the owner performs them at the Pi's keyboard and mouse during a recording, or a small input-injection tool is needed. Which? |
-| Q2 | S4 | `GAME_ARGS` with spaces cannot be set from psh, which passes quotes literally. Should the games session get a `stk-race` game name (or a `GAME_ARGS_<game>` file) so an AI race can run in a window? |
-| Q3 | S5 | No session knob opens Atril. Should the image get an `ATRIL_FILE=<pdf>` knob in the session autostart (like `VIDEO_CLIP`), or should this scene be recorded by hand? |
-| Q4 | S6 | Is `FFPLAY_AUTOKEYS` passed from psh through `xfce-session` and labwc's autostart to ffplay? The games session relies on the same inheritance for `GAME_LIST`, but the video autostart has not been run with it. |
-| Q5 | S7 | vkQuake's launcher always adds `+map start`, which is a static view. Does `vkquake +playdemo demo1` (appended after `+map start`) play a demo on the current build? It has not been tried. If it does not, is a demo config staged in `id1/` acceptable? |
-| Q6 | S9 | `startx` lost the old launcher's `browse [url]` mode. Should `startx-drm` get a `browse` mode (Window Maker + Dillo on a URL) for this scene? Dillo has also not yet been run on the Xorg desktop. |
-| Q7 | all | Is the reel still recorded on the netboot NFS root, or on the SD image? On the SD image, WiFi joins only after a `wifi connect` typed by hand, because the image ships no `/etc/wifi.conf`. |
-| Q8 | S7 | The `quake2` launcher runs `+map demo1`, which loads the demo's first level (maps/demo1.bsp); the previous reel's Quake II clip played the recorded demo `q2demo1`. Is `quake2 +map q2demo1.dm2` (appended after the launcher's `+map demo1`) the right way to get motion? It has not been tried. |
+- **The menus (S5)** need a person at the mouse. No input-injection tool was added: the panel's
+  `--plugin-event=applicationsmenu:popup` first takes a seat grab that is unlikely to succeed on
+  Wayland.
+- **Not yet run on the Pi** (host-tested only, polish-final.md §6): `XFCE_AUTOSTART` (S3),
+  `GAME_LIST=none` and `stk-race` (S3, S4), `quake2 +demomap q2demo1.dm2` and
+  `vkquake +playdemo demo1` (S7), `startx browse` (S9). A rehearsal clip of each scene before
+  the real recording is cheap; grade it by the lines listed with the scene.
