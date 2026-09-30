@@ -481,6 +481,20 @@ authoritative current state.
   decoder frames later via G7). No fbdev emulation in rpi4-kms. Then delete `video/rpi4-fb`,
   the marker and this entry.
 
+
+## TD-28: the stack-protector guard is seeded from a time/counter/pid mix
+
+- **Status:** OPEN (libphoenix `cfab972`, branch `stack-protector`, 2026-09-30).
+- **What:** the kernel gives a new process no randomness (no AT_RANDOM, no random syscall), and
+  `/dev/urandom` is a driver message that cannot be used before `main` (the first servers start before
+  the RNG driver, and a pre-main message is what caused the old start-up hang). So
+  `_stack_chk_init()` mixes `cntvct_el0`, `gettime()`, `getpid()` and start-up addresses (splitmix64),
+  with the low byte forced to 0. That stops a fixed exploit string, not an attacker who can time the
+  process start.
+- **Markers:** `TODO(TD-28)` in `libphoenix/misc/stack_chk.c`.
+- **Resolution:** the kernel passes a random word next to argc/argv on the initial stack, or adds a
+  `getrandom` syscall backed by the hardware RNG. `_stack_chk_init` uses that; then remove the marker
+  and this entry.
 ## TD-23: `RPI4AUDIO_ARMTRIALS` is a permanent diagnostic ABI in a published header
 
 - **Status:** OPEN, deliberate. Raised by the 2026-09-18 pre-flight review of its
