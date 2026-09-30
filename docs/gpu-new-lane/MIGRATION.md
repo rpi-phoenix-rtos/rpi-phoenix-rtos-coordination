@@ -1346,3 +1346,28 @@ Build fixes on the way: `libwlphx-compat.a` carried the `/shm` server's `main()`
 - `rpi4-wifi`: `already running (/dev/wifi is served)`.
 - `wifi connect a b`: `WPA2 passphrase must be 8-63 characters`.
 - 0 faults. Throughput was not run: the pristine export has no `wifi-perf.py`.
+
+## 7t. Result — the final image v2 (manifest build30; polish + test-era cleanup + WiFi idle RX back-off; `fin2-gate`, AP up)
+
+**Image:** rootfs COMPLETE 76/76, stack gate PASS on the rootfs and on the pristine export. XKB
+keymap, DejaVu fonts and `fonts.conf` are in the rootfs itself. `startx_gpu`, `tinywl`, `qs-drm` and
+the M7 test pieces are absent. Banners read `Phoenix-RTOS GPU stack`.
+
+**Showcase gate:** 7/7 rc 0, boot ok, 0 faults; WiFi joined on every boot.
+
+| key | fps median | vs §7s (joined, before the RX back-off) |
+|---|---|---|
+| x | 60.00 | 60.00; `XDRM done rc=0 reason=hold-done` |
+| qspasm | 43.99 | 43.46 |
+| q3 | 59.80 | 59.00 |
+| q2 | 59.80 | 59.80 |
+| vkq | **41.79** | **38.65** → the back-off recovered the WiFi cost; the AP-down control was 42.75; torches present |
+| stk | 12.63 | 13.02 |
+| xfce | — | `session up panel=registered t=12`, `XFCE-SESSION done rc=0` |
+
+**WiFi idle (`fin2-wifi-idle`, joined, no traffic):**
+- `rx_misses` 4495 → 11573 across the `top` interval (~60 s): **≈ 120 empty chip probes/s**. The limit
+  was ≤ 200/s; the old loop made ~4000–5000/s.
+- `top`: **`rpi4-wifi` 0.5 %, `lwip` 0.5 %**; idle 370.7 % of 400 %.
+- ping 214.7 / 5.2 / 10.2 ms. The 10 ms is the first probe after an idle stretch, the back-off's documented cost.
+- `pio mode=level … timeouts=0`.
