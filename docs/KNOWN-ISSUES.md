@@ -35,6 +35,7 @@ D3/D4/D6/D7/D8/D9 archived).
 | # | Issue | Last measured |
 |---|---|---|
 | G2 | **xterm resize artefacts while dragging** on the GPU X desktop (owner-reported). | **Unreproduced.** No new evidence since 2026-09-14; resize *correctness* is verified once settled. The missing measurement is a deliberate drag test with the mouse released. |
+| G4 | **vkQuake takes ~3 minutes to its first frame, on every start.** The shipped Mesa (`mesa_drm`) is built with `-Dshader-cache=disabled`, so v3dv compiles every pipeline from SPIR-V at each start ("Creating pipelines" → first frame ≈ 170–200 s on the Pi, 2026-09-30 showcase recording). The GL games compile less and start in seconds. | **Open.** The old stack's cache was dropped with it (and its stale-blob speckle, G3). A disk cache keyed on the program's identity needs a key Phoenix can provide (no ELF build-id; libphoenix now has `dladdr`, so Mesa's `disk_cache_get_function_identifier` can find its own file). |
 
 ## 3. Platform limitations
 
