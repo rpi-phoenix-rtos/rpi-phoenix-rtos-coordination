@@ -63,13 +63,9 @@ MAP=(
 	"${T}/sdl2-drm/patches-vkquake|vkquake_drm/patches"
 	"${T}/sdl2-drm/vkqdrm|vkquake_drm/glue/vkqdrm"
 	"${T}/vulkan-drm/patches/vkcube|vkcube_drm/patches"
-	# wayland
-	"${T}/weston-drm/patches/wayland|wayland/patches/wayland"
-	"${T}/weston-drm/compat|wayland/glue/compat"
-	"${T}/mesa-drm/compat/include|wayland/glue/mesa-compat/include"
-	# shmsrv's wire header: the server is phoenix-rtos-devices misc/shmsrv, the ports carry
-	# copies of its shm_proto.h (wlphx_memfd.c, libxshmfence_phoenix, labwc_desktop)
-	"sources/phoenix-rtos-devices/misc/shmsrv/shm_proto.h|wayland/glue/shmsrv/shm_proto.h"
+	# shmsrv's wire header: the server is phoenix-rtos-devices misc/shmsrv, wayland_phoenix
+	# carries a copy of its shm_proto.h (wlphx_memfd.c, libxshmfence_phoenix, labwc_desktop).
+	# wayland_phoenix's other copies (patches, compat, mesa-compat): check-wayland-ports-sync.sh
 	"sources/phoenix-rtos-devices/misc/shmsrv/shm_proto.h|wayland_phoenix/files/shmsrv/shm_proto.h"
 	# X11
 	"${T}/x11-drm/patches/libxshmfence/*|libxshmfence_phoenix/patches"
