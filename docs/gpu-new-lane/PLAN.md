@@ -1,5 +1,7 @@
 # The new GPU lane — plan and status
 
+> **Log levels, 2026-09-30 (devices `4750a2d`):** `rpi4-v3d-async` and `rpi4-kms` no longer print per-buffer lines (`V3DA srv import/export/open/close/withdrawn`, `KMS import/released`, `fstat answered`, pid notes) unless started with `-v`, and `V3DA srv qstat` only with `-s <ms>` (e.g. `-s 5000`; `v3dasync-ping qstats` reads the same counters on demand). `KMS srv read_dump` is gone. Still printed by default: `srv ready`, `KMS v3d connect=1`, `flipstat`, `g6` stats and every failure. Grading recipes in M1–M9, G6 and `vkquake-perf.md` that count the silenced lines need the flag in the server's plo arguments.
+
 > **Engineering history.** This directory is the engineering record of how the Pi 4's GPU stack
 > was built and measured, and its wording ("new lane", "old lane") is that of the time. The stack it
 > describes is now the only one on the image. For how to use it, see the

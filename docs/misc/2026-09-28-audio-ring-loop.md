@@ -140,3 +140,5 @@ If an A/B without a listener is ever needed, a userspace peek tool could do it. 
 `source_ad` to the ring, and count the words that are not 306. This is the same pattern as
 `tools/pwm-dma-probe`. The tool is not built. On the old driver, after arm 1, it would predict
 thousands of non-306 words, and 0 on the new driver.
+
+> **2026-09-30:** the `underrun: silence-filled … stream=closed` line quoted above as proof of the ring fix is no longer printed while no stream is open (devices `f35c820`). The GETSTATE counters still show the drain.
