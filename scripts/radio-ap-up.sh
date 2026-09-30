@@ -43,5 +43,5 @@ iw dev "$IFACE" info 2>/dev/null | grep -E 'Interface|type|channel|ssid|txpower'
 ip -o -4 addr show "$IFACE" || true
 echo "=== AP dnsmasq (NM shared) ==="
 ps -eo pid,args 2>/dev/null | grep -E "dnsmasq.*$IFACE|NetworkManager.*dnsmasq" | grep -v grep | head || true
-echo "radio-ap: UP — SSID='$SSID' WPA2 ch$CHAN on $IFACE @ ${GW%/*}, PSK=$PSK"
+echo "radio-ap: UP — SSID='$SSID' WPA2 ch$CHAN on $IFACE @ ${GW%/*}, PSK=<hidden> (from ${RADIO_AP_CONF:-the export /etc/wifi.conf})"
 echo "radio-ap: netboot NIC untouched (verify: ip addr show enx* still 10.42.0.1)"
