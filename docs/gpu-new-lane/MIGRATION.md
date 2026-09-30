@@ -1332,7 +1332,7 @@ Build fixes on the way: `libwlphx-compat.a` carried the `/shm` server's `main()`
 | qspasm | 43.46 (43.8) | |
 | q3 | 59.00 (58.8) | |
 | q2 | 59.80 (59.8) | |
-| vkq | **38.65** (42.2) | torches present (14/14 at the viewpoint). **−8 % vs P1**: the first gate with WiFi joined; the WiFi doc predicted the joined netif's 200 µs poll loop. vkQuake is the most CPU-bound game here (the others are vsync-bound) → A/B with the AP down before calling it |
+| vkq | **38.65** (42.2) | torches present (14/14). **A/B `fin-vkq-apdown` (AP down, not joined): 42.75**, torches present, 0 faults ⇒ the joined WiFi netif costs vkQuake ≈ 10 % (its 200 µs poll loop; the vsync-bound games do not show it) → F1 follow-up: event-driven RX |
 | stk | 13.02 (12.8) | |
 | xfce | — | `session up panel=registered t=18` (P1: t=52), `XFCE-SESSION done rc=0` |
 
