@@ -23,8 +23,9 @@ docs.
 | coordination | `polish/final` | `b9c4a58eb` gates, tools, bootstrap; `9e6287ed8` banner token; this file (on main `409857325`) |
 
 **Merge them in pairs:** ports `d7e6e90` goes with coord `b9c4a58eb`, and ports `c5384ab` goes with
-coord `9e6287ed8`. The second pair is optional (§7). Each pair on its own keeps the sync checks and
-the gates consistent.
+coord `9e6287ed8`. Both are required by the wording rule. The second pair is separate only so its
+rebuild cost can be scheduled (§7). Each pair on its own keeps the sync checks and the gates
+consistent.
 
 ## 1. What a user sees
 
@@ -248,6 +249,9 @@ package has a comment citing that check:
 
 * The Dockerfile is unchanged. Bootstrap installs the list, and 26.04's apt satisfies every pin
   (`apt-get -s install` resolves all names on this host).
+* On a 24.04 host, the uv-installed meson lands in `~/.local/bin`. Bootstrap exports that on its
+  own `PATH`, but a Dockerfile `RUN` step after it would not have it; 26.04 (the Dockerfile's
+  default) uses apt's meson and is unaffected.
 * A 24.04 host cannot build `--with-ports` from apt: wayland-scanner is 1.22, the host python is
   3.12 (the python port needs a 3.14 host python), and GLib is 2.80. Bootstrap warns about the
   first two.
@@ -297,6 +301,8 @@ package has a comment citing that check:
   * port_manager cleans each of them and their dependents. Through `sdl2_kmsdrm` that includes
     the engine providers `yquake2`, `quake3` and `supertuxkart`, so STK's full compile runs again,
     plus SDL itself.
+  * `video_player` compiles FFmpeg itself (it has no `ffmpeg` dependency), so FFmpeg is
+    recompiled too.
   * Mesa, GTK, Poppler and Weston are **not** rebuilt.
   * `game-res` is rebuilt by `build-rootfs-helpers.sh` (coord).
 * **Pair 2** (ports `c5384ab` + coord `9e6287ed8`, wording) adds `mesa_drm`, `libdrm_phoenix`,
@@ -304,8 +310,8 @@ package has a comment citing that check:
   `weston`, `kmscube_drm` and `libepoxy`.
   * Their closure is effectively the whole GPU and desktop ports stage: Mesa, GLib/GTK, Poppler
     and Atril, and XFCE again.
-  * This is the whole cost of the neutral banner. It can be merged later, or left out; pair 1 is
-    consistent without it.
+  * This is the whole cost of the neutral banner. The pair can be merged after pair 1's build, and
+    pair 1 is consistent without it.
 * **Core:** no core repo changed, so `--scope auto` with the ports is enough. Build with
   `--with-ports --with-showcase` as the integration build did.
 * **Before the build**, delete the retired names from the persistent staging tree. Nothing removes
