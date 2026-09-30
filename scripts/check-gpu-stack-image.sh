@@ -26,7 +26,9 @@
 #      desktop-app builds or hand-staged test names (the -wl game clones, ffplay-drm/-wl,
 #      video-play2, *-2 / *-low / -g<N> servers and sessions), and none of the retired names
 #      (the *-drm launcher copies, startx-drm, startx_gpu, thunar-wl, gdbus-wl, vkcube-drm,
-#      the xfce-session wrapper's target). Nothing builds them any
+#      the xfce-session wrapper's target), and none of the milestone test pieces (tinywl,
+#      labwc-desktop.sh and its m7 configuration and colour script, the dbus-m7* cycle scripts
+#      and their EXTERNAL-auth configuration, weston-gtk3.sh, /root/curses_smoke.py). Nothing builds them any
 #      more, so one present is a stale file of an old build in the persistent staging
 #      tree (or a hand-staged NFS export): delete it, or make a pristine export.
 #   4. rootfs: the old stack's strings in any ELF under bin sbin usr/bin usr/sbin
@@ -86,7 +88,7 @@ for p in sbin/rpi4-v3d-async sbin/rpi4-kms bin/shmsrv \
 	usr/bin/quakespasm-drm usr/bin/quakespasm usr/bin/yquake2-drm usr/bin/quake2 usr/bin/quake3e-drm \
 	usr/bin/quake3 usr/bin/vkquake-drm usr/bin/vkquake usr/bin/supertuxkart-drm bin/stk \
 	bin/Xorg-drm bin/startx bin/eglx11-demo-x etc/X11/xorg-drm.conf \
-	bin/labwc bin/foot bin/labwc-desktop.sh bin/xfce-session bin/xfce-desktop.sh bin/xfce-autostart.sh \
+	bin/labwc bin/foot bin/xfce-session bin/xfce-desktop.sh bin/xfce-autostart.sh \
 	bin/thunar bin/gdbus bin/xfce4-panel bin/xfdesktop bin/dbus-daemon usr/lib/xfce-demo/bin/loginctl \
 	bin/kmscube bin/vkcube bin/drmprobe bin/game-res; do
 	if [ -s "${root}/${p}" ]; then ok "${p}"; else fail "${p} missing"; fi
@@ -176,7 +178,10 @@ for p in usr/bin/Xphoenix usr/bin/yquake2 usr/bin/quake3e usr/bin/supertuxkart \
 	bin/rpi4-kms-g8 bin/rpi4-kms-g9 bin/weston-simple-egl-low etc/xdg/labwc-xfce-m8 usr/share/m10 \
 	bin/Xorg-drm-noshim bin/v3dmemprobe \
 	bin/qs-drm usr/bin/quake2-drm usr/bin/quake3-drm bin/vkq-drm bin/stk-drm bin/startx-drm bin/startx_gpu \
-	bin/thunar-wl bin/gdbus-wl bin/vkcube-drm usr/lib/xfce-demo/xfce-session; do
+	bin/thunar-wl bin/gdbus-wl bin/vkcube-drm usr/lib/xfce-demo/xfce-session \
+	bin/tinywl bin/labwc-desktop.sh bin/labwc-desktop-m7c.sh bin/m7b-colors.sh etc/xdg/labwc-m7c \
+	bin/dbus-m7f.sh bin/dbus-m7m.sh etc/dbus-1/session-phoenix-external.conf bin/weston-gtk3.sh \
+	root/curses_smoke.py; do
 	if [ -e "${root}/${p}" ] || [ -L "${root}/${p}" ]; then fail "${p} present (a stale file of an old build: the first stack, a superseded build or a retired name; remove it)"; else ok "${p} absent"; fi
 done
 

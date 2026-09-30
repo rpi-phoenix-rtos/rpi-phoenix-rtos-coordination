@@ -26,7 +26,7 @@
 #                          headers each; the ports include dir also holds GL/, X11/
 #                          and xft headers -- never on a search path)
 #   <out>/libdrm-prefix/   a snapshot of libdrm-phoenix (--libdrm-prefix)
-#   <out>/{labwc,foot,tinywl,fuzzel,swaybg} (unstripped, addr2line) and *-stripped (stage these)
+#   <out>/{labwc,foot,fuzzel,swaybg} (unstripped, addr2line) and *-stripped (stage these)
 #
 # Writes only into <out> (default build-out/, gitignored). Reads the tree sysroot,
 # the ports prefix, the toolchain, the E7 compiler wrappers, a libdrm-phoenix
@@ -635,14 +635,6 @@ link_prog() {  # base|drm output link-arguments...
 	echo "  ${o}: $(stat -c %s "${out}/${o}") bytes, stripped $(stat -c %s "${out}/${o}-stripped")"
 }
 
-# tinywl (wlroots' own minimal compositor, MIT): the link probe of wlroots alone, and a
-# fallback compositor for the first Pi cycle
-wayland-scanner server-header "${P}/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml" "${OBJ}/xdg-shell-protocol.h"
-"${TC}-gcc" -O2 -g -std=c11 -D_POSIX_C_SOURCE=200809L "${TFLAGS[@]}" "${WLR_CFLAGS[@]}" -I"${OBJ}" \
-	-c "${out}/src/wlroots/tinywl/tinywl.c" -o "${OBJ}/tinywl.o"
-link_prog drm tinywl "${OBJ}/tinywl.o" -Wl,--whole-archive "${gallium}" -Wl,--no-whole-archive \
-	-Wl,--start-group "${WLR_LIBS[@]}" "${MESA_A[@]}" -Wl,--end-group -lm
-
 # The text stack (labwc: pango/cairo/libxml2/GLib; foot: fcft)
 TEXT_LIBS=("${P}/lib/libpangocairo-1.0.a" "${P}/lib/libpangoft2-1.0.a" "${P}/lib/libpango-1.0.a"
 	"${P}/lib/libfribidi.a" "${D}/cairo/lib/libcairo.a" "${D}/harfbuzz/lib/libhbglib-phoenix.a"
@@ -690,7 +682,7 @@ link_prog base swaybg -Wl,--start-group "${SWAYBG_OBJS[@]}" "${P}/lib/libwayland
 # --- verification ----------------------------------------------------------------------------
 echo "== verify"
 bad=0
-for o in labwc foot tinywl fuzzel swaybg; do
+for o in labwc foot fuzzel swaybg; do
 	und="$("${TC}-nm" -u "${out}/${o}" || true)"
 	n=$(grep -c . <<< "${und}" || true)
 	interp=$("${TC}-readelf" -l "${out}/${o}" | grep -c INTERP || true)
@@ -733,7 +725,7 @@ for s in 'xterm-256color' 'C.UTF-8' '/dev/ptmx' 'failed to seal SHM backing memo
 	echo "  foot strings '${s}': ${n}"
 	[ "${n}" != 0 ] || bad=1
 done
-for b in labwc-stripped foot-stripped tinywl-stripped fuzzel-stripped swaybg-stripped; do
+for b in labwc-stripped foot-stripped fuzzel-stripped swaybg-stripped; do
 	bs="$(strings -a "${out}/${b}")"
 	for s in 'v3d-winsys:' phoenix_v3d_ioctl peek_next_scanout v3d-srv /dev/v3d-srv Xphoenix '[fbdev]' glamor_phoenix phxgl; do
 		n=$(grep -cF -- "${s}" <<< "${bs}" || true)
@@ -741,7 +733,7 @@ for b in labwc-stripped foot-stripped tinywl-stripped fuzzel-stripped swaybg-str
 	done
 done
 echo "  old-lane strings: $([ "${bad}" = 0 ] && echo none || echo 'see above')"
-sha256sum "${out}"/labwc-stripped "${out}"/foot-stripped "${out}"/tinywl-stripped "${out}"/fuzzel-stripped \
+sha256sum "${out}"/labwc-stripped "${out}"/foot-stripped "${out}"/fuzzel-stripped \
 	"${out}"/swaybg-stripped "${out}"/labwc "${out}"/foot "${out}"/fuzzel "${out}"/swaybg | sed "s|${out}/||; s/^/  /"
 [ "${bad}" = 0 ] || { echo "build.sh: verification failed" >&2; exit 1; }
 echo "done"

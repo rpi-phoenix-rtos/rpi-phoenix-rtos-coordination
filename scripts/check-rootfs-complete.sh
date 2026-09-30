@@ -63,7 +63,6 @@ GPU_REQUIRED=(
 	bin/xfce-autostart.sh
 	bin/labwc
 	bin/foot
-	bin/labwc-desktop.sh
 	bin/thunar
 	bin/xfce4-panel
 	bin/xfdesktop
