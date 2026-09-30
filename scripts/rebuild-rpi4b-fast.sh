@@ -466,6 +466,17 @@ if [ "${target}" = "aarch64a72-generic-rpi4b" ]; then
 	fi
 fi
 
+# Desktop fonts (DejaVu TTF + /etc/fonts/fonts.conf + the fontconfig cache) into the
+# rpi4b rootfs overlay, so EVERY image carries them -- the SD card image included. Until
+# 2026-09-30 only sync-netboot-tree.sh staged them, into the NFS export, so a card image
+# had no scalable font at all (Xft/GTK text on X and XFCE). The host's fonts-dejavu is
+# the source (bootstrap installs it); no binaries in git.
+if [ "${target}" = "aarch64a72-generic-rpi4b" ]; then
+	overlay="${repo_root}/sources/phoenix-rtos-project/_projects/${target}/rootfs-overlay"
+	RPI4B_NFS_EXPORT="${overlay}" "${repo_root}/scripts/stage-desktop-fonts.sh" \
+		|| die "desktop fonts could not be staged into ${overlay} (see above)"
+fi
+
 # --scope full-clean: wipe the caches that live OUTSIDE the buildroot.
 #
 # `build.sh clean` (phoenix-rtos-build/build.sh:186-189) removes exactly four
