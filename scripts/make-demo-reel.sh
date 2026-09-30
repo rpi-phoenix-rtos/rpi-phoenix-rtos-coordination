@@ -86,17 +86,19 @@ out="${1:-$vid_dir/$(date -u +%Y%m%d-%H%M%S)-phoenix-rtos-rpi4-showcase.mp4}"
 # why it went unnoticed.) The figures below are frame-weighted means over the
 # gameplay windows: vkQuake 2140 frames / 50.1 s = 42.7, STK 2248 / 282.9 = 7.95.
 segments=(
-	"20260915-161533-shell|48|17|Boot — kernel -> drivers -> lwIP -> NFS root -> psh, on real hardware"
-	"20260915-185349-shell3|179|23|Shell — uname, Lua 5.4.7 / jq 1.7.1 / SQLite 3.53.4, and the ported /usr/bin userland"
-	"20260915-175343-life2|75|22|Python 3.14 + ncurses — Conway's Game of Life, 239x66 on the HDMI console"
-	"20260915-160020-x|139|26|X11 desktop — Window Maker on glamor GPU-accelerated X: live OpenGL window, Python 3.14 + ncurses Game of Life, top, xbill and xclock"
-	"20260915-174539-browse|84|13|Dillo web browser — page fetched over TCP/IP from the dev host, rendered under glamor X"
-	"20260915-160828-video|85|24|Hardware H.265 decode — BCM2711 rpivid decoding a 1080p phone recording, full-screen at 21.7 fps"
-	"20260915-152409-qs|116|22|QuakeSpasm — OpenGL on Mesa v3d, id1 demo1 playback, ~37 fps on screen"
-	"20260915-164244-q2demo|97|22|Quake II — yQuake2 on OpenGL ES, q2demo1 playback, ~35 fps on screen"
-	"20260915-193527-vkq-flip|112|22|vkQuake — Vulkan via V3DV, id1 demo2 playback, page-flipped present, 43 fps average at the page flip"
-	"20260915-172704-q3orbit|122|24|Quake III Arena — 5-bot deathmatch on q3dm1, orbiting third-person camera, 36 fps on screen"
-	"20260915-155315-stk|161|24|SuperTuxKart 1.4 — OpenGL ES 3.1, 4-kart AI race, 7-8 fps at the page flip"
+	"20260930-042356-shell-net|15|15|Boot — Raspberry Pi 4 netboot: Phoenix-RTOS kernel, drivers, the GPU servers, NFS root"
+	"20260930-042356-shell-net|105|30|Shell and networking — Ethernet and WiFi (joined at boot from /etc/wifi.conf), ping, Python 3.14"
+	"20260930-042717-xfce-apps|170|14|Atril PDF viewer on the XFCE 4.20 desktop (Wayland) — GTK 3, next to Thunar and a terminal"
+	"20260930-042717-xfce-apps|228|25|Quake III Arena in a window — GPU-accelerated on Wayland, beside Thunar and foot, ~74 fps"
+	"20260930-042717-xfce-apps|288|30|Video player — H.264 720p in a window, then full screen, 30 fps"
+	"20260930-043504-xfce-stk|250|25|SuperTuxKart 1.4 in a window — a 4-kart race on the XFCE desktop, ~19 fps"
+	"20260930-044818-x11|180|26|X11 — Xorg + glamor, Window Maker: a 60 fps EGL window, Python Game of Life, top on 4 CPUs, xbill, xclock"
+	"20260930-045535-dillo|180|13|Dillo — a live web page over HTTPS"
+	"20260930-050107-fs-q3|158|18|Quake III Arena full screen — bot deathmatch on q3dm1, ~59 fps"
+	"20260930-050547-fs-q2|118|22|Quake II full screen — demo playback, 60 fps"
+	"20260930-051028-fs-qs|130|22|QuakeSpasm full screen — the id1 demo, ~44 fps"
+	"20260930-053629-fs-vkq3|402|22|vkQuake full screen — Vulkan on V3DV, demo1 playback, ~42-55 fps"
+	"20260930-051949-fs-stk|180|25|SuperTuxKart full screen — AI race rendered at 1280x720, scaled to 1080p by the display"
 )
 
 command -v ffmpeg >/dev/null 2>&1 || { echo "make-demo-reel: ffmpeg not found" >&2; exit 1; }

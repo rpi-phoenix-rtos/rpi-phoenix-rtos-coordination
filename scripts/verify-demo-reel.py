@@ -21,7 +21,7 @@ import argparse, os, subprocess, sys
 import numpy as np
 
 # Segments whose content is legitimately still; everything else must move.
-STATIC_OK = ("Shell", "Dillo", "Boot")
+STATIC_OK = ("Shell", "Dillo", "Boot", "Atril")  # a document on screen, like a web page
 
 def frames(path, w=480, h=270, fps=2):
     b = subprocess.run(["ffmpeg", "-loglevel", "error", "-i", path,
