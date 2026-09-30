@@ -172,7 +172,8 @@ the Atril PDF viewer. For the best order to show all of it, see the
 - **Only the 4 GB Pi 4B is validated.** Do not use a 2 GB or 8 GB board.
 - **Bluetooth is driver-level only**: no host stack, so no pairing, profiles or audio.
 - **WiFi** is ~3.5 MB/s each way. Use Ethernet for large transfers.
-- **vkQuake runs full screen only** (no desktop window).
+- **vkQuake runs full screen only** (no desktop window), and it shows a black screen for
+  about 3 minutes at every start while it compiles its Vulkan pipelines. It has not hung.
 - I²C/SPI/general-purpose PWM, camera and DSI are not implemented.
 
 The full, precise list lives in [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md).

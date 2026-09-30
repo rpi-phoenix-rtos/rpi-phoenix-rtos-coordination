@@ -70,7 +70,7 @@ The prompt is **psh**, Phoenix's own shell. It is simpler than a Unix shell:
   command per line.
 - **Quotes are passed through literally.** `echo 'a b'` prints `'a b'`.
 - **`export NAME=value`** sets an environment variable for the programs you start later. Many
-  launchers below read such variables.
+  launchers below read such variables. One `export` can set several: `export A=1 B=2`.
 - `PATH` is `/bin:/usr/bin:/sbin:/usr/sbin`, so programs can be run by name (`quakespasm`,
   `wifi`, `python3`).
 - **Shell scripts run through bash:** `/bin/bash /bin/xfce-session`. This is the tested way to
@@ -206,9 +206,6 @@ The value is a comma-separated list of `<item>[=<arg>][:<seconds>]`, with no spa
 | `sleep:<seconds>` | a pause |
 | `/<path>[=<arg>]` | any program, with at most one argument |
 
-<!-- TODO(coordinator): XFCE_AUTOSTART was tested on the host only (polish-final.md §6); no Pi
-run yet. -->
-
 ---
 
 ## 6. Games
@@ -229,17 +226,16 @@ Run these at the `(psh)%` prompt, with no desktop running:
 
 | Game | Command | Measured on the Pi |
 |---|---|---|
-| **Quake** (QuakeSpasm, OpenGL) | `quakespasm` | ~44 fps at 1920×1080 (43.5) |
+| **Quake** (QuakeSpasm, OpenGL) | `quakespasm` | 44 fps at 1920×1080 |
 | **Quake II** (yQuake2, OpenGL) | `quake2` | 60 fps (vsync), starts on the first level of the demo |
-| **Quake III Arena** (quake3e, OpenGL) | `quake3 +map q3dm1` | ~59 fps, a bot deathmatch with an orbiting camera |
-| **vkQuake** (Quake on Vulkan) | `vkquake` | ≈ 39–42 fps, the start map |
-| **SuperTuxKart 1.4** (OpenGL ES 3) | `stk` | ~13 fps at 1920×1080 (~22 fps at 1280×720, see [§6.3](#63-lower-resolution-for-more-fps)) |
+| **Quake III Arena** (quake3e, OpenGL) | `quake3 +map q3dm1` | 60 fps (vsync, 59.8), a bot deathmatch with an orbiting camera |
+| **vkQuake** (Quake on Vulkan) | `vkquake` | 42 fps (41.8), the start map. **The first frame takes about 3 minutes** (see below) |
+| **SuperTuxKart 1.4** (OpenGL ES 3) | `stk` | 12.6 fps at 1920×1080 (~22 fps at 1280×720, see [§6.3](#63-lower-resolution-for-more-fps)) |
 
-The fps figures come from the final image's gate of 2026-09-30 (MIGRATION §7s), with WiFi
-joined. They are measured at the page flip, not read from the game's own counter.
-
-<!-- TODO(coordinator): vkQuake measured 38.7 in that gate, 8 % below the previous gate (42.2):
-the first gate with WiFi joined. Replace "≈ 39–42" with the A/B result with the AP down. -->
+The fps figures come from the final image's gate of 2026-09-30 (MIGRATION §7t), with WiFi
+joined. They are measured at the page flip, not read from the game's own counter. A joined
+WiFi network costs the games very little: vkQuake, the most sensitive, ran at 41.8 fps joined
+and 42.8 fps with no network joined.
 
 **Recorded demos** play by themselves, with no input:
 
@@ -252,8 +248,19 @@ the first gate with WiFi joined. Replace "≈ 39–42" with the A/B result with 
 
 QuakeSpasm plays the demos in a loop by itself when it starts.
 
-<!-- TODO(coordinator): `quake2 +demomap`, `vkquake +playdemo/+timedemo` and `stk race` were
-checked on the host only (polish-final.md §6); no Pi run yet. -->
+**The games do not return to psh by themselves.** Quake II's `+demomap` plays its demo in a
+loop, QuakeSpasm plays its attract loop, and vkQuake stays in the game when its demo ends. Quit
+by hand (below), or set **`GAMEDRM_EXIT_SECS`** first:
+
+```
+export GAMEDRM_EXIT_SECS=90
+quake2 +demomap q2demo1.dm2
+```
+
+The game then ends by itself about 90 seconds after its first frame (the time before the first
+frame, such as vkQuake's pipeline compile, does not count) and psh comes back. It works with
+every game above, and stays set for the games you start later from the same prompt. Unset, a
+game runs until you quit it. `stk race` ends by itself after its two laps.
 
 - **Quake II and Quake III** first copy their data into a RAM disk (`/tmp`), then start. The
   first start takes a few seconds longer.
@@ -266,11 +273,11 @@ checked on the host only (polish-final.md §6); no Pi run yet. -->
   - SuperTuxKart: Esc → Quit.
 
   The display returns to the psh console.
-- **Shaders are compiled at every start.** The image has no on-disk shader cache, so each game
-  compiles its shaders on the GPU before its first frame. vkQuake takes the longest: expect
-  some seconds of black screen before the menu.
-  <!-- TODO(coordinator): measure vkquake-drm's `first present N ms after start` on the merged
-  image and put the number here. mesa_drm is configured -Dshader-cache=disabled. -->
+- **Shaders are compiled at every start.** The image has no on-disk shader cache yet, so each
+  game compiles its shaders before its first frame. The OpenGL games start in seconds.
+- **vkQuake shows a black screen for about 3 minutes at every start.** It compiles all of its
+  Vulkan pipelines first (170–200 s on the Pi). It has not hung: wait for the first frame.
+  This is KNOWN-ISSUES G4.
 
 ### 6.2 In a window on the desktop
 
@@ -289,9 +296,10 @@ window runs at a time. For another size, run `export GAME_W=1600` and `export GA
 
 Measured in a 1280×720 window on the XFCE desktop of the final image (2026-09-30):
 
-- QuakeSpasm: ~56 fps
-- Quake III: ~70 fps (69.5)
-- Quake II and SuperTuxKart run their full time too. All four exit cleanly.
+- QuakeSpasm: 56 fps
+- Quake III: 70–74 fps
+- SuperTuxKart (`stk-race`): 18.6 fps
+- Quake II runs its full time too. All four exit cleanly.
 
 **vkQuake runs full screen only.** It has no desktop entry: a Vulkan window on Wayland needs
 Vulkan's Wayland surface support, which this build does not have.
@@ -322,8 +330,8 @@ game-res stk 1280x720 race
   the game, for example `game-res vkq 1280x720 +playdemo demo1`.
 - **Modes:** 1920×1080, 1600×900, 1440×1080, 1280×720, 1024×768, 960×540, 800×600 and
   640×480. A 4:3 mode is shown centred with black bars.
-- **When to use it:** SuperTuxKart is limited by the GPU. At **1280×720 it runs at ~22 fps**,
-  against ~13 at 1080p (M9: 22.3 vs 11.9). Below 720p the CPU becomes the limit (960×540:
+- **When to use it:** SuperTuxKart is limited by the GPU. At **1280×720 it runs at ~22 fps**
+  (22.3), against 12.6 at 1080p. Below 720p the CPU becomes the limit (960×540:
   ~24 fps). The Quakes already run at or near 60 fps at 1080p.
 - `export GAME_RES=1280x720` sets a default size for later `game-res` commands.
 
@@ -462,9 +470,6 @@ too.
   with `ntpclient -s pool.ntp.org`. psh also runs `ntpclient` once when it starts.
 - Browsing the internet needs a default gateway and DNS from DHCP (see [§8.1](#81-ethernet)).
 
-<!-- TODO(coordinator): `startx browse` (Dillo on Xorg with modesetting + glamor) has not been
-run on the Pi yet. Dillo's last HW run was under the X server this stack replaced. -->
-
 ### 7.5 Command-line programs
 
 The image also ships a Unix userland. For the full list, see the
@@ -524,6 +529,9 @@ wifi disconnect                    leave the network and forget it
 - **Routing:** Ethernet keeps the default route while it has an address. WiFi takes over when
   Ethernet has none (for example, no cable).
 - **Speed:** ~3.6 MB/s out and ~3.3 MB/s in. Ethernet is faster (~20–30 MB/s).
+- **Idle cost:** a joined, idle network costs almost nothing: `rpi4-wifi` and `lwip` use about
+  0.5 % CPU each, and vkQuake runs within about 2 % of its frame rate with no network joined.
+  There is no need to leave WiFi off for the games.
 - **Firmware and licence:** WiFi needs the Broadcom/Cypress BCM43455 firmware. The build
   downloads it from linux-firmware (tag `20260810`, sha256-pinned) and installs it under
   `/lib/firmware/brcm/`, next to its licences (`/lib/firmware/LICENSES/LICENCE.cypress`,
@@ -580,8 +588,8 @@ This is the recommended way to show the whole system, with the best settings for
 3. **The XFCE desktop.** Run `/bin/bash /bin/xfce-session`. On the desktop:
    1. Show the panel and the Applications menu. Thunar is already open.
    2. Super+Return opens foot.
-   3. **Games → Quake III Arena** runs in a window next to Thunar and foot (~70 fps). Close it,
-      then open **Games → SuperTuxKart** the same way.
+   3. **Games → Quake III Arena** runs in a window next to Thunar and foot (70–74 fps). Close
+      it, then open **Games → SuperTuxKart** the same way (~19 fps).
    4. **Office → Atril** opens the sample PDF.
    5. **Multimedia → Video Demo** plays a clip in a window. Press **f** for full screen, then
       **f** again to go back to the window.
@@ -589,14 +597,18 @@ This is the recommended way to show the whole system, with the best settings for
 
    For an unattended run of the same scene, set it up before the session instead:
    `export CONF_DIR=/etc/xdg/labwc-xfce-games GAME_LIST=none XFCE_AUTOSTART=atril:30,quake3:90,video HOLD=240`,
-   then `/bin/bash /bin/xfce-session`.
-4. **Full-screen games.** Run each at the psh prompt, at its best setting:
-   - `quake3 +map q3dm1` (~59 fps)
+   then `/bin/bash /bin/xfce-session`. For SuperTuxKart racing in a window by itself, use
+   `export CONF_DIR=/etc/xdg/labwc-xfce-games GAME_LIST=stk-race:150 HOLD=200` instead.
+4. **Full-screen games.** Run each at the psh prompt, at its best setting. The Quakes do not
+   return to psh by themselves, so run `export GAMEDRM_EXIT_SECS=90` first to have each one end
+   about 90 s after its first frame, or quit by hand ([§6.1](#61-full-screen-from-psh)):
+   - `quake3 +map q3dm1` (60 fps)
    - `quake2 +demomap q2demo1.dm2` (60 fps, the recorded demo)
-   - `quakespasm` (~44 fps, the demo loop)
-   - `vkquake +playdemo demo1`: Vulkan (≈ 39–42 fps)
+   - `quakespasm` (44 fps, the demo loop)
+   - `vkquake +playdemo demo1`: Vulkan (42 fps). **Its first frame takes about 3 minutes**
+     (pipeline compile), so start it before you need it.
    - `game-res stk 1280x720 race`: SuperTuxKart scaled from 720p, ~22 fps, an AI race with no
-     input needed
+     input needed. It ends by itself after two laps (or earlier, at `GAMEDRM_EXIT_SECS`).
 5. **Video full screen.** Run
    `/bin/bash /bin/video-play /usr/share/video-demo/hevc-720p30-aac.mp4`: HEVC decoded on the
    CPU, in real time.
@@ -608,7 +620,7 @@ This is the recommended way to show the whole system, with the best settings for
 **Tips:**
 
 - Start each game once before an audience arrives, so you know how long its first frame takes
-  (see [§6.1](#61-full-screen-from-psh)).
+  (see [§6.1](#61-full-screen-from-psh)). vkQuake needs about 3 minutes every time.
 - If a program prints nothing for a minute, it is probably still loading. Check the serial
   console before you assume it hung.
 
@@ -628,6 +640,8 @@ This is the recommended way to show the whole system, with the best settings for
 | `wifi connect` fails | Check the passphrase (8–63 characters) and that the SSID has no space. `wifi status` shows the state. |
 | HTTPS certificate errors | The clock is wrong: run `ntpclient -s pool.ntp.org`. |
 | Keyboard or mouse do nothing | Plug them in before power-on. |
+| `vkquake` shows a black screen | It compiles its Vulkan pipelines for about 3 minutes before the first frame (KNOWN-ISSUES G4). Wait. |
+| A game never returns to psh | The games and their demos run until you quit them. Quit through the game's console or menu, or `export GAMEDRM_EXIT_SECS=<N>` before starting it. |
 
 For everything else, see [KNOWN-ISSUES.md](KNOWN-ISSUES.md). How the stack was built and
 measured is recorded in [docs/gpu-new-lane/](gpu-new-lane/PLAN.md) (engineering history).
