@@ -123,12 +123,9 @@ two modes:
 /bin/bash /bin/xfce-session
 ```
 
-After about 50 seconds the XFCE 4.20 desktop appears: the wallpaper, the panel at the top and
+About 20 seconds later the XFCE 4.20 desktop appears: the wallpaper, the panel at the top and
 a Thunar window. The session runs until you log out. Then it stops cleanly and returns to
-`(psh)%`. The graphics servers stay up, so a second `xfce-session` starts faster.
-
-<!-- TODO(coordinator): the ~50 s start time is from the gate's `session up panel=registered
-t=52` (MIGRATION §7r, P1 image). Re-read it on the merged image. -->
+`(psh)%`. The graphics servers stay up for the next session.
 
 ### What is on it
 
@@ -179,6 +176,38 @@ Set these with `export NAME=value` before starting the session:
 | `TZ` | `CET-1CEST,M3.5.0,M10.5.0/3` | the time zone of the panel clock and file dates (POSIX TZ string) |
 | `THUNAR_START` | `1` | `0` = no Thunar window at start |
 | `CONF_DIR` | the default desktop | `/etc/xdg/labwc-xfce-games`: the games session ([§6.2](#62-in-a-window-on-the-desktop)). `/etc/xdg/labwc-xfce-video`: the video session ([§7.1](#71-video)). |
+| `XFCE_AUTOSTART` | none | programs to open by themselves once the panel is up (see below) |
+
+### Open programs by themselves
+
+`XFCE_AUTOSTART` opens programs on the desktop in order, with no keyboard or mouse. It is meant
+for demos and recordings:
+
+```
+export XFCE_AUTOSTART=atril:30,quake3:90,video HOLD=240
+/bin/bash /bin/xfce-session
+```
+
+The value is a comma-separated list of `<item>[=<arg>][:<seconds>]`, with no spaces:
+
+- An item with `:<seconds>` runs that long and is closed; then the next item starts.
+- An item without `:<seconds>` stays open, and the next item starts 3 seconds later
+  (`XFCE_AUTOSTART_GAP`). The first item starts 5 seconds after the panel
+  (`XFCE_AUTOSTART_DELAY`).
+- When the session ends (Log Out or `HOLD`), everything still open is closed first.
+
+| Item | Opens |
+|---|---|
+| `atril[=<pdf>]`, `atril-fs`, `atril-pres` | Atril on the sample PDF (or `<pdf>`): in a window, full screen, or as a presentation |
+| `video[=<clip>]` | the video player in a window (default: the H.264 720p demo clip) |
+| `gtk-video[=<clip>]` | the GTK video player |
+| `quakespasm`, `quake2`, `quake2-demo`, `quake3`, `stk`, `stk-race` | a game in a window ([§6.2](#62-in-a-window-on-the-desktop)) |
+| `foot`, `mc`, `thunar[=<dir>]`, `appfinder` | a terminal, Midnight Commander, a Thunar window, the application finder |
+| `sleep:<seconds>` | a pause |
+| `/<path>[=<arg>]` | any program, with at most one argument |
+
+<!-- TODO(coordinator): XFCE_AUTOSTART was tested on the host only (polish-final.md §6); no Pi
+run yet. -->
 
 ---
 
@@ -200,24 +229,36 @@ Run these at the `(psh)%` prompt, with no desktop running:
 
 | Game | Command | Measured on the Pi |
 |---|---|---|
-| **Quake** (QuakeSpasm, OpenGL) | `quakespasm` | ~44 fps at 1920×1080 |
+| **Quake** (QuakeSpasm, OpenGL) | `quakespasm` | ~44 fps at 1920×1080 (43.5) |
 | **Quake II** (yQuake2, OpenGL) | `quake2` | 60 fps (vsync), starts on the first level of the demo |
 | **Quake III Arena** (quake3e, OpenGL) | `quake3 +map q3dm1` | ~59 fps, a bot deathmatch with an orbiting camera |
-| **vkQuake** (Quake on Vulkan) | `vkquake` | ~42–44 fps, the start map |
-| **SuperTuxKart 1.4** (OpenGL ES 3) | `stk` | ~12 fps at 1920×1080 (~22 fps at 1280×720, see [§6.3](#63-lower-resolution-for-more-fps)) |
+| **vkQuake** (Quake on Vulkan) | `vkquake` | ≈ 39–42 fps, the start map |
+| **SuperTuxKart 1.4** (OpenGL ES 3) | `stk` | ~13 fps at 1920×1080 (~22 fps at 1280×720, see [§6.3](#63-lower-resolution-for-more-fps)) |
 
-The fps figures come from the image gate of 2026-09-29 (MIGRATION §7r). They are measured at
-the page flip, not read from the game's own counter.
+The fps figures come from the final image's gate of 2026-09-30 (MIGRATION §7s), with WiFi
+joined. They are measured at the page flip, not read from the game's own counter.
 
-<!-- TODO(coordinator): these medians are from the P1 image. The merged image links every GL
-game dual-mode (KMSDRM + Wayland). Re-read them from its first showcase gate
-(`run-showcase-gate-drm.sh`), and update the table if they moved. -->
+<!-- TODO(coordinator): vkQuake measured 38.7 in that gate, 8 % below the previous gate (42.2):
+the first gate with WiFi joined. Replace "≈ 39–42" with the A/B result with the AP down. -->
+
+**Recorded demos** play by themselves, with no input:
+
+| Command | Plays |
+|---|---|
+| `quake2 +demomap q2demo1.dm2` | Quake II's recorded demo from the demo pak |
+| `vkquake +playdemo demo1` | a recorded Quake demo on vkQuake (`demo1`–`demo3`) |
+| `vkquake +timedemo demo1` | the same demo as fast as possible: a benchmark |
+| `stk race` | SuperTuxKart: four AI karts race two laps on hacienda, then the game exits |
+
+QuakeSpasm plays the demos in a loop by itself when it starts.
+
+<!-- TODO(coordinator): `quake2 +demomap`, `vkquake +playdemo/+timedemo` and `stk race` were
+checked on the host only (polish-final.md §6); no Pi run yet. -->
 
 - **Quake II and Quake III** first copy their data into a RAM disk (`/tmp`), then start. The
   first start takes a few seconds longer.
-- **SuperTuxKart:** `stk` opens the main menu and you drive. For a race with no input, run
-  `stk --track=hacienda --numkarts=4 --profile-laps=2` (four AI karts, two laps). To skip the
-  start screen and drive yourself, run `stk -N --track=olivermath`.
+- **SuperTuxKart:** `stk` opens the main menu and you drive. `stk race` runs a race with no
+  input. To skip the start screen and drive yourself, run `stk -N --track=olivermath`.
 - **Quitting:**
   - Quake, vkQuake, Quake II: press `` ` `` to open the console and type `quit`, or use Esc →
     Quit.
@@ -241,16 +282,16 @@ foot terminal:
 /bin/bash /bin/game-window.sh quake3
 ```
 
-The game names are `quakespasm`, `quake2`, `quake3` and `stk`. Only one game window runs at a
-time. For another size, run `export GAME_W=1600` and `export GAME_H=900` first (in foot:
-`GAME_W=1600 GAME_H=900 /bin/bash /bin/game-window.sh stk`).
+The game names are `quakespasm`, `quake2`, `quake3` and `stk`, plus two presets that play by
+themselves: `quake2-demo` (Quake II's recorded demo) and `stk-race` (an AI race). Only one game
+window runs at a time. For another size, run `export GAME_W=1600` and `export GAME_H=900` first
+(in foot: `GAME_W=1600 GAME_H=900 /bin/bash /bin/game-window.sh stk`).
 
-Measured in a window on the XFCE desktop (M8, 2026-09-28):
+Measured in a 1280×720 window on the XFCE desktop of the final image (2026-09-30):
 
-- Quake II: 60 fps
-- Quake III: ~90 fps
-- QuakeSpasm: 45–67 fps
-- SuperTuxKart: ~90 fps on its menu
+- QuakeSpasm: ~56 fps
+- Quake III: ~70 fps (69.5)
+- Quake II and SuperTuxKart run their full time too. All four exit cleanly.
 
 **vkQuake runs full screen only.** It has no desktop entry: a Vulkan window on Wayland needs
 Vulkan's Wayland surface support, which this build does not have.
@@ -259,13 +300,13 @@ Vulkan's Wayland surface support, which this build does not have.
 useful for an unattended demo:
 
 ```
-export CONF_DIR=/etc/xdg/labwc-xfce-games
-export GAME_LIST=quake3:60,stk:90
+export CONF_DIR=/etc/xdg/labwc-xfce-games GAME_LIST=quake3:60,stk-race:150
 /bin/bash /bin/xfce-session
 ```
 
-Each item of `GAME_LIST` is `<game>:<seconds>`. The default is `quakespasm`, which runs until
-the session ends. The first game starts `GAME_LIST_DELAY` seconds (default 15) after the
+Each item of `GAME_LIST` is `<game>:<seconds>`, with the game names above. The default is
+`quakespasm`, which runs until the session ends; `GAME_LIST=none` starts no game (use it with
+`XFCE_AUTOSTART`). The first game starts `GAME_LIST_DELAY` seconds (default 15) after the
 desktop. The session also opens a foot terminal.
 
 ### 6.3 Lower resolution for more fps
@@ -274,15 +315,15 @@ desktop. The session also opens a foot terminal.
 to the full screen:
 
 ```
-game-res stk 1280x720 --track=hacienda --numkarts=4 --profile-laps=2
+game-res stk 1280x720 race
 ```
 
 - **Game names:** `stk`, `qs` (Quake), `q2`, `q3` and `vkq`. Any arguments after the size go to
-  the game.
+  the game, for example `game-res vkq 1280x720 +playdemo demo1`.
 - **Modes:** 1920×1080, 1600×900, 1440×1080, 1280×720, 1024×768, 960×540, 800×600 and
   640×480. A 4:3 mode is shown centred with black bars.
 - **When to use it:** SuperTuxKart is limited by the GPU. At **1280×720 it runs at ~22 fps**,
-  against ~12 at 1080p (M9: 22.3 vs 11.9). Below 720p the CPU becomes the limit (960×540:
+  against ~13 at 1080p (M9: 22.3 vs 11.9). Below 720p the CPU becomes the limit (960×540:
   ~24 fps). The Quakes already run at or near 60 fps at 1080p.
 - `export GAME_RES=1280x720` sets a default size for later `game-res` commands.
 
@@ -360,7 +401,8 @@ export VIDEO_CLIP=/usr/share/video-demo/hevc-720p30-aac.mp4
 ```
 
 `VIDEO_DELAY` sets the delay in seconds (default 45). `VIDEO_PLAYER=gtk` uses gtk-video
-instead of ffplay.
+instead of ffplay. In any session, `XFCE_AUTOSTART=video=<clip>` opens a clip too
+([§5](#open-programs-by-themselves)).
 
 ### 7.2 PDF — Atril
 
@@ -394,7 +436,8 @@ This starts the **showcase desktop**, which runs by itself with no input:
 - an xterm running `top`
 
 To start Window Maker alone, run `/bin/bash /bin/startx wmaker`. Right-click the desktop for
-Window Maker's applications menu.
+Window Maker's applications menu. `/bin/bash /bin/startx browse [url]` starts Window Maker with
+the Dillo web browser ([§7.4](#74-web-browsing--dillo)).
 
 **Leaving X:** exit Window Maker from its root menu (right-click → Exit). X shuts down and psh
 comes back. For an unattended demo, `export HOLD=200` first: the desktop then closes by itself
@@ -405,20 +448,22 @@ windowmaker port stages /etc/WindowMaker/WMRootMenu) opens an xterm under Xorg. 
 
 ### 7.4 Web browsing — Dillo
 
-Dillo is a small graphical browser for X11. It supports HTTPS with CA-verified TLS 1.2. In an
-X session, open an xterm and run:
+Dillo is a small graphical browser for X11. It supports HTTPS with CA-verified TLS 1.2. Start
+it on a page with:
 
 ```
-dillo https://example.com
+/bin/bash /bin/startx browse https://example.com
 ```
+
+Without a URL, Dillo opens its own start page. In any X session, `dillo <url>` in an xterm works
+too.
 
 - HTTPS needs a correct clock. The Pi has no battery-backed clock, so set it first from psh
   with `ntpclient -s pool.ntp.org`. psh also runs `ntpclient` once when it starts.
 - Browsing the internet needs a default gateway and DNS from DHCP (see [§8.1](#81-ethernet)).
 
-<!-- TODO(coordinator): Dillo on the X desktop has not been run on the Xorg (modesetting +
-glamor) server. Its last HW run was under the X server this stack replaced. startx has no
-`browse` mode, so Dillo needs an xterm from the root menu (§7.3 TODO). -->
+<!-- TODO(coordinator): `startx browse` (Dillo on Xorg with modesetting + glamor) has not been
+run on the Pi yet. Dillo's last HW run was under the X server this stack replaced. -->
 
 ### 7.5 Command-line programs
 
@@ -535,26 +580,30 @@ This is the recommended way to show the whole system, with the best settings for
 3. **The XFCE desktop.** Run `/bin/bash /bin/xfce-session`. On the desktop:
    1. Show the panel and the Applications menu. Thunar is already open.
    2. Super+Return opens foot.
-   3. **Games → Quake III Arena** runs in a window next to Thunar and foot. Close it, then open
-      **Games → SuperTuxKart** the same way.
+   3. **Games → Quake III Arena** runs in a window next to Thunar and foot (~70 fps). Close it,
+      then open **Games → SuperTuxKart** the same way.
    4. **Office → Atril** opens the sample PDF.
    5. **Multimedia → Video Demo** plays a clip in a window. Press **f** for full screen, then
       **f** again to go back to the window.
    6. **Log Out.**
+
+   For an unattended run of the same scene, set it up before the session instead:
+   `export CONF_DIR=/etc/xdg/labwc-xfce-games GAME_LIST=none XFCE_AUTOSTART=atril:30,quake3:90,video HOLD=240`,
+   then `/bin/bash /bin/xfce-session`.
 4. **Full-screen games.** Run each at the psh prompt, at its best setting:
    - `quake3 +map q3dm1` (~59 fps)
-   - `quake2` (60 fps)
-   - `quakespasm` (~44 fps)
-   - `vkquake`: Vulkan (~43 fps)
-   - `game-res stk 1280x720 --track=hacienda --numkarts=4 --profile-laps=2`: SuperTuxKart
-     scaled from 720p, ~22 fps, an AI race with no input needed
+   - `quake2 +demomap q2demo1.dm2` (60 fps, the recorded demo)
+   - `quakespasm` (~44 fps, the demo loop)
+   - `vkquake +playdemo demo1`: Vulkan (≈ 39–42 fps)
+   - `game-res stk 1280x720 race`: SuperTuxKart scaled from 720p, ~22 fps, an AI race with no
+     input needed
 5. **Video full screen.** Run
    `/bin/bash /bin/video-play /usr/share/video-demo/hevc-720p30-aac.mp4`: HEVC decoded on the
    CPU, in real time.
 6. **X11.** Run `/bin/bash /bin/startx`: Xorg with glamor, Window Maker, the GL window, Life,
    xclock and xbill, all animating by themselves. Exit through Window Maker's menu.
-7. **The web** (optional). In `startx wmaker`, open an xterm, run
-   `ntpclient -s pool.ntp.org` from psh first, then `dillo https://example.com`.
+7. **The web** (optional). Run `ntpclient -s pool.ntp.org`, then
+   `/bin/bash /bin/startx browse https://example.com`.
 
 **Tips:**
 
@@ -571,7 +620,7 @@ This is the recommended way to show the whole system, with the best settings for
 |---|---|
 | Nothing on the screen | Use the micro-HDMI port nearest the USB-C jack and wait 60 s. Check the serial console. |
 | The Pi does not boot from the card | The EEPROM boot order may be set to network first ([BUILD.md](BUILD.md#step-5--boot-the-pi)). |
-| `xfce-session` prints `a server is missing` | A graphics server did not start at boot. Look for `V3DA srv ready`, `KMS srv ready` and `SHMSRV srv ready` in the boot log. |
+| `xfce-session` or `startx` prints `a GPU server is missing` | A graphics server did not start at boot. Look for `V3DA srv ready`, `KMS srv ready` and `SHMSRV srv ready` in the boot log. |
 | `game-window.sh` says `no Wayland socket` | Start the desktop first, or run the game from psh for full screen. |
 | `game-window.sh` says `another game is running` | Close the running game window first. Only one windowed game runs at a time. |
 | No network | Check the cable and that the LAN has a DHCP server, then run `ifconfig`. |
