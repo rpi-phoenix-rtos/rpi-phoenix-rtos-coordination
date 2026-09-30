@@ -11,7 +11,7 @@
 # is their build home.
 #
 # The games are framework ports (the *_drm ports, ports.yaml), which also build and
-# install their own launchers (quake2, quake3, stk, qs-drm, vkq-drm). psh cannot set
+# install their own launchers (quakespasm, quake2, quake3, vkquake, stk). psh cannot set
 # environment variables and cannot chain commands, so the remaining glue lives in tiny
 # static C programs under tools/*. This is the single place that builds them:
 #

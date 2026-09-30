@@ -1,5 +1,10 @@
 # The new GPU lane — plan and status
 
+> **Engineering history.** This directory is the engineering record of how the Pi 4's GPU stack
+> was built and measured, and its wording ("new lane", "old lane") is that of the time. The stack it
+> describes is now the only one on the image. For how to use it, see the
+> [User Guide](../USER-GUIDE.md).
+
 Design: [`docs/research/2026-09-26-gpu-drm-architecture.md`](../research/2026-09-26-gpu-drm-architecture.md).
 Owner directive (2026-09-26): build it autonomously and in parallel, **without breaking the old GPU
 lane**, then migrate every GPU user and delete the old lane.

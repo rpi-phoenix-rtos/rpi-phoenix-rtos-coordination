@@ -414,20 +414,23 @@ authoritative current state.
 - **Trigger:** the next scheduled full clean rebuild for any other reason
   (do not schedule a full rebuild solely for this).
 
-## TD-26: the plain command names are copies of the `*-drm` programs
+## TD-26: the XFCE session's files keep the demo's path names
 
-- **Status:** OPEN (P1). Resolved by P4 (one stack, one set of names).
-- **What:** the GPU-stack ports install their programs under their own names
-  (`quakespasm-drm`, `quake2-drm`, `vkq-drm`, `stk-drm`, `startx-drm`, the demo session under
-  `/usr/lib/xfce-demo`) and, with USE `rootfs`, ALSO under the names users and the gate type:
-  `/usr/bin/{quakespasm,quake2,quake3,vkquake}`, `/bin/{stk,startx,startx_gpu,xfce-session}`
-  (copies; the startx and xfce-session ones are generated wrappers). (The prune of the first
-  stack's files from the staging tree went with that stack in P3; `check-gpu-stack-image.sh`
-  check 3 still asserts they are absent.)
-- **Markers:** `TODO(TD-26)` in `phoenix-rtos-ports/{quakespasm_drm,yquake2_drm,quake3_drm,
-  vkquake_drm,supertuxkart_drm,xorg_server_drm,xfce_wayland}/port.def.sh`, `ports.yaml`.
-- **Resolution:** P4 renames the programs themselves (and the xfce demo paths) and drops the
-  copies (rename list: `docs/gpu-new-lane/P3-removal.md` §5).
+- **Status:** OPEN (P1; narrowed 2026-09-30, `polish/final`). The command-name half is resolved:
+  the launchers, `startx`, `xfce-session` and `vkcube` are installed under their command names
+  only (no `*-drm` copies, no generated wrappers; `docs/gpu-new-lane/polish-final.md`). The
+  engines keep their `*-drm` names on purpose: they are started by the launchers, and the plain
+  engine names are the deleted first stack's (`check-gpu-stack-image.sh` check 3).
+- **What:** the XFCE session's own files still live under the M7 demo's names:
+  `/usr/lib/xfce-demo/bin/loginctl`, `/etc/xdg/labwc-xfce-demo`, `/etc/xdg/xfce-demo`,
+  `/usr/share/xfce-demo/applications`, and `xfce_wayland` stages its demo configs through a sed
+  that rewrites the tools' program names (`/bin/foot-2`, `/usr/lib/xfce-demo/bin/thunar`, …) to
+  the image's.
+- **Markers:** `TODO(TD-26)` in `phoenix-rtos-ports/xfce_wayland/port.def.sh`.
+- **Resolution:** name the session's directories for the image (e.g. `/etc/xdg/labwc-xfce`,
+  `/usr/lib/xfce-session`), make the port's config files carry the image's names and drop the
+  sed; update `xfce-session`'s defaults, `game-window-quit.sh` (loginctl path), the games and
+  video sessions' `CONF_DIR` docs and `check-gpu-stack-image.sh`.
 
 ## TD-27: `video/rpi4-fb` stays in the tree, unbuilt, for `hevc-play`
 
@@ -2232,7 +2235,7 @@ markers. Its debt idiom is `BRING-UP` prose instead.
 | TD-19 | LIKELY STILL APPLIES (TLBI hardening is generally correct) | ✅ doc reconciled 2026-09-17: **neither** the generic helpers nor `_pmap_writeTtl3` has an `isb` — the doc's `dsb; isb` claim is retracted. Code deliberately unchanged; adding the `isb` is an attended decision (see TD-19 entry) |
 | TD-13-mtxbypass | ✅ RESOLVED/REMOVED | row added 2026-09-17 (entry existed, checklist did not). Verified: `grep -c TD-13-mtxbypass syscalls.c` → 0, exactly as the entry predicts. |
 | TD-14-startup-settle | NOT TAKEN | row added 2026-09-17 (entry existed, checklist did not). No marker, no code — the option was considered and declined. |
-| TD-26 | OPEN (P1) | plain command names (`quakespasm`, `quake2`, `quake3`, `vkquake`, `stk`, `startx`, `xfce-session`) are copies/wrappers of the `*-drm` programs; P4 renames |
+| TD-26 | OPEN (P1, narrowed 2026-09-30) | the command names are resolved (launchers, `startx`, `xfce-session`, `vkcube` under their own names only); left: the XFCE session's demo path names (`/usr/lib/xfce-demo`, `/etc/xdg/*-demo`) and `xfce_wayland`'s config-rewrite sed |
 | TD-27 | OPEN (P1, narrowed P3) | `video/rpi4-fb` kept in the tree, unbuilt, until `hevc-play` (hand-built) moves to a KMS dumb buffer |
 | TD-23 | OPEN (deliberate) | `RPI4AUDIO_ARMTRIALS` is a diagnostic ioctl + struct in a **published** header, i.e. a permanent ABI, for a facility that can block the driver's only message thread ~100 s. Kept because it is the only in-process sampler of the failing channel and the defect is open; delete it with `q2-sdl-openaudio-hang`, or gate it behind a build flag. ⚠ Blind to a stale control-block fetch — a re-arm re-reads the same CB. |
 | TD-22 | ✅ RESOLVED 2026-09-19 (HW-gated) | `vm/map.c:204` — `_map_find()`'s right-hand leaf return can hand back a non-`MAP_FIXED` **hint** sitting nearer the end of a gap than `size`, overlapping the next entry. Unreachable today (libphoenix's only hinted mmaps are `MAP_FIXED`; `malloc` passes NULL). The commented-out guard cannot simply be restored — it would also gate the descent, where `rmaxgap` is a subtree maximum. Leaf-only fix written out in the section; needs its own boot + six-app gate. |

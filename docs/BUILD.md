@@ -19,8 +19,9 @@ filesystem.
 - **A network connection during the build.** The build is not fully offline:
   the toolchain build and several userspace ports (`phoenix-rtos-ports`,
   X.org tarballs) download their sources at build time.
-- **Disk space:** the bootstrap clones several GB of sources (Mesa alone is
-  ~1 GB) and the toolchain + buildroot need a few GB more. Budget ~15 GB free.
+- **Disk space:** the bootstrap clones the sources and builds the toolchain;
+  the full image (Mesa, GTK, XFCE, the games and their data) needs tens of GB
+  in the buildroot. Budget ~35 GB free.
 - **`sudo` access** — the bootstrap installs apt packages and the `uv` Python
   tool.
 
@@ -75,10 +76,10 @@ This is idempotent — safe to re-run if anything fails partway. It:
    points at the org (`github.com/rpi-phoenix-rtos/<repo>`) so the published set
    is self-contained; override `PHOENIX_UPSTREAM_BASE=https://github.com/phoenix-rtos`
    to wire `origin` at the phoenix-rtos upstream instead.
-3. Clones the external deps into `external/`: **Mesa** (pinned; a build
-   requirement for the GPU/GL/Vulkan archives) and the four game-engine forks
-   (tracked by branch, development conveniences — the game ports build from
-   their own pinned upstream tarballs, not from these clones).
+3. Clones the four game-engine forks into `external/` (tracked by branch,
+   development conveniences — the game ports build from their own pinned
+   upstream tarballs, not from these clones). Mesa is not cloned: the
+   `mesa_drm` port builds the Mesa 26.2.0 release tarball.
 4. Stages the Raspberry Pi firmware blobs (`start4.elf`, `fixup4.dat`, the
    `bcm2711-rpi-4-b.dtb` device tree, and overlays) from `raspberrypi/firmware`
    into `.bootblobs/`. The DTB is fetched ready-made — it is never compiled.
@@ -100,13 +101,17 @@ idempotent: if it is already present the bootstrap skips it.
 ## Step 3 — Build the SD image
 
 ```bash
-./scripts/rebuild-rpi4b-fast.sh --variant sd
+./scripts/rebuild-rpi4b-fast.sh --variant sd --with-showcase --with-ports
 ```
 
 This one command builds the complete bootable 2-partition SD image from a cold
-buildroot: it builds the core system, the userspace ports, and the project
-image, populates the ext2 root filesystem, then assembles, exports, and
-verifies the card image.
+buildroot: it builds the core system, every userspace port (the graphics
+stack, the desktops, the games and the apps — see
+[What the image contains](#what-the-image-contains)), and the project image,
+stages the helper programs, populates the ext2 root filesystem, then
+assembles, exports, and verifies the card image. Always pass
+`--with-showcase`: without it the helper programs the game launchers need
+(`ram-stage-play`, `game-res`) are not staged.
 
 > Do **not** add a `--scope` flag to this command. The full SD stage list
 > (which builds the ports and populates the ext2 root) is selected only under
@@ -170,47 +175,68 @@ the microSD card, and write.
    adapter on GPIO 14/15 (115200 8N1), the same boot log and prompt appear
    there. Plug in a USB keyboard to type at the prompt.
 
-## Showcase apps (X11, Quake, browsers)
+## What the image contains
 
-The base SD image boots to a shell and drives the hardware, but it does **not**
-include the graphical showcase applications (the X11 desktop with Window Maker
-and xterm, the Dillo web browser, and the five game engines on the V3D GPU).
-Those are enabled by `--with-showcase`, which does two things:
+Every program on the image is a **framework port**: a recipe in
+`sources/phoenix-rtos-ports/<port>/port.def.sh`, listed in the project's
+`_projects/aarch64a72-generic-rpi4b/ports.yaml`. The build's `ports` stage builds
+all of them and installs them into the root filesystem. No program goes into
+`loader.disk`. Each program has one port and one version:
 
-- runs the opt-in orchestrator `scripts/build-showcase-apps.sh` to build the
-  ported Mesa GPU/GL/Vulkan driver archives (against `external/mesa`) plus the
-  X11 lib stack + apps and the extra userland ports (against the vendored
-  tarballs in `tools/ports/src/`), and
-- lets the project's ports stage build the five **game framework ports**
-  (`quakespasm`, `yquake2`, `quake3`, `vkquake`, `supertuxkart` — all
-  `if: true` in the project's `ports.yaml`), which install their engines
-  **into the rootfs** at `/usr/bin/`. No game goes into `loader.disk`.
+| Area | Ports |
+|---|---|
+| Graphics stack | `libdrm_phoenix` (libdrm on the render and KMS servers), `mesa_drm` (Mesa 26.2: GBM, EGL, GLES, GL, Vulkan), `sdl2_kmsdrm` (SDL 2.30 with KMSDRM + Wayland), `libepoxy`, `kmscube_drm` / `vkcube_drm` (smoke tests) |
+| X11 | `xorg_server_drm` (Xorg 21.1, modesetting + glamor, `startx`), `xorg_libs`, `xorg_fonts`, `xorg_apps`, `xterm`, `windowmaker`, `xbill`, `dillo` |
+| Wayland desktop | `wayland`, `wayland_phoenix`, `dbus`, `gtk3_wayland` (GTK 3.24), `labwc_desktop` (labwc, foot, fuzzel), `xfce_wayland` (XFCE 4.20, `xfce-session`) |
+| Games | `quakespasm_drm`, `yquake2` + `yquake2_drm`, `quake3` + `quake3_drm`, `vkquake_drm`, `supertuxkart` + `supertuxkart_drm` (the engine port compiles, the `*_drm` port links one program with both SDL video drivers) |
+| Applications | `video_player` (ffplay, `video-play`, gtk-video, demo clips), `atril_wayland` (Atril + Poppler), `python`, `bash`, `coreutils`, `busybox`, `curl`, `mc`, `nano`, `sqlite3`, `redis`, `lua`, … |
 
-A companion `--with-ports` flag adds the **CLI tools and languages ecosystem** to
-the image — all HW-verified: GNU **coreutils 9.5** (full tool set, ~105 programs build + install), GNU **bash 5.2**,
-**CPython 3.14** (with `sqlite3`, `zlib`, `_ssl`/HTTPS, `_decimal`, `ctypes`, and
-`.so` C-extension `dlopen`), **Redis 7.2**, **SQLite 3**, **jq**, **Lua 5.4.7**,
-BusyBox, and **curl** (mbedTLS). For the fullest image, combine both:
-`--with-showcase --with-ports`.
+The three graphics servers (`rpi4-v3d-async`, `rpi4-kms`, `shmsrv`) and the WiFi
+daemon (`rpi4-wifi`) are core components of `phoenix-rtos-devices` and start at
+boot (`user.plo.yaml`).
+
+`--with-showcase` adds one step after the ports: `scripts/build-showcase-apps.sh`
+runs `scripts/build-rootfs-helpers.sh`. It builds the small static helpers that no
+port produces into the rootfs tree (`_fs/<target>/root`):
+
+- `ram-stage-play`: copies the Quake II and Quake III data into the `/tmp` RAM disk
+  before the engine starts;
+- `game-res`: starts a game in a lower full-screen mode;
+- `pty-run`;
+- a few diagnostics.
+
+`--with-ports` inserts the `ports` stage into the non-SD builds too. The SD build
+always runs it.
 
 ### Extra host dependencies
 
-The showcase build needs a few packages beyond the base set. They are already
-in `bootstrap-linux-host.sh`'s apt list (the "Showcase build deps" block):
-`ninja-build python3-mako libdrm-dev glslang-tools gperf`. It also needs
-`meson >= 1.4`, which is newer than Ubuntu 24.04's apt `meson` (1.3.x) — so the
-orchestrator provisions a local `meson`/`ninja`/`mako` in a `uv` venv at
-`/tmp/mesa-pyenv` automatically; nothing to install by hand.
+The ports stage needs more host tools than the base system.
+`scripts/bootstrap-linux-host.sh` installs all of them (its "Showcase build deps" block;
+each package carries a comment naming the recipe check it satisfies), and the Dockerfile runs
+the same script. The recipes check for them and stop with a clear message when one is
+missing:
 
-`external/mesa` must be cloned — the bootstrap does this. The game engines no
-longer build from `external/` clones: each game port fetches its own pinned
-upstream commit-archive (URL + size + sha256 recorded in its `port.def.sh`), so
-the `external/quakespasm` / `external/vkquake` / `external/quake3e` /
-`external/yquake2` clones are development conveniences, not build inputs.
+- **`meson` ≥ 1.4** for Mesa 26.2: apt's `meson` where it is new enough (Ubuntu 26.04),
+  otherwise `uv tool install "meson>=1.4"` (Ubuntu 24.04, into `~/.local/bin`).
+- **`wayland-scanner` 1.24.0** exactly (`libwayland-bin`; the `wayland` and `xfce_wayland`
+  ports).
+- the GLib tools (`glib-compile-resources`, `gdbus-codegen`, `glib-mkenums`,
+  `glib-genmarshal`, `glib-compile-schemas`), `gtk-update-icon-cache`, `shared-mime-info`,
+  and `python3` with GObject introspection, GdkPixbuf and the SVG loader (`xfce_wayland`: the
+  icon theme is rendered on the host).
+- `python3` with **pycairo** and the **DejaVu** fonts (`atril_wayland` draws the sample PDF;
+  the desktop fonts).
+- **`ffmpeg`** with the libx264, libx265, libvpx-vp9, libopus and aac encoders
+  (`video_player` generates the demo clips at build time).
+- `unzip`, `lhasa` and `7z` for the game data.
 
-### Game data
+Ubuntu 24.04 cannot build the ports stage from apt alone: its wayland-scanner (1.22) and
+host Python (3.12; the python port needs 3.14) are too old, and bootstrap warns about both.
+Ubuntu 26.04, the Dockerfile's default, has everything.
 
-The engines are only the binaries; their data is staged separately by
+### Game data and WiFi firmware
+
+The engines are only the binaries. Their data is staged separately by
 **`scripts/stage-game-data.sh`**, which populates the project's
 `rootfs-overlay` — the one staging path that reaches both the SD ext2 packer and
 the netboot NFS export:
@@ -226,68 +252,19 @@ from a pinned URL) and both SuperTuxKart 1.4 asset roots (`data/` +
 `README.md`; **no retail content and no retail CD key are involved.** The Docker
 build calls the same script with the same pins.
 
-**`scripts/build-rootfs-helpers.sh`** builds the small static helpers the engines
-need at runtime (`ram-stage-play`, the `quake2` / `quake3` / `stk` launchers,
-`pty-run`) into the rootfs staging tree. It is wired into
-`build-showcase-apps.sh --phase stage` as a hard-fail step.
+The **WiFi firmware** (BCM43455, from linux-firmware tag `20260810`, sha256-pinned)
+is fetched by `scripts/fetch-wifi-firmware.sh`, which the rebuild script calls. It
+is cached in `.firmware/`, so later builds work offline. It is staged under
+`rootfs-overlay/lib/firmware/` together with its licence files, and is never
+committed to git. Look for `[wifi-fw] cache verified` and `staged` in the build
+output.
 
-Because the engines (~108 MB) plus their data (~306 MB) now live in the rootfs,
-the `--with-showcase` ext2 root is **1.5 GiB** (it was 768 MiB before the games
-moved out of `loader.disk`). Partition geometry is computed from the actual image
-size, so only partition 2 grows.
+### Building a single port
 
-### One-command showcase SD image
-
-Pass `--with-showcase` to the same SD build from Step 3:
-
-```bash
-./scripts/rebuild-rpi4b-fast.sh --variant sd --with-showcase
-```
-
-This runs the orchestrator in two phases around the normal build:
-
-1. **Before `build.sh`** it builds the GPU/GL/Vulkan static archives into
-   `tools/.gpu-libs/` (`libv3d-phoenix.a`, `libGL-phoenix.a`, and — unless
-   `--skip-vulkan` — `libv3dv-phoenix.a`). The five **game ports** link these
-   during the project's ports stage and install their engines into the rootfs;
-   nothing links them into `loader.disk`. (The rebuild script passes
-   `GPU_LIBS=<repo>/tools/.gpu-libs` explicitly so the archives are always
-   found.)
-2. **After the image is built, before the ext2 root is packed** it builds the
-   port libraries (libiconv, libffi, ncurses, glib2, fltk), the X11 lib stack,
-   and every app (xterm, xedit, xcalc, xclock, xlogo, xbill, Window Maker, the
-   Xphoenix server, `dillo`) plus the rootfs helpers
-   (`scripts/build-rootfs-helpers.sh`), and stages their binaries + data files
-   into the ext2 rootfs tree (`_fs/<target>/root`). `mc` and `nano` are in this
-   list but **currently fail to build**; they are recorded as soft failures at
-   the end of the run.
-
-### Running the orchestrator standalone
-
-You can also run it directly (e.g. to iterate on just the GPU libs):
-
-```bash
-./scripts/build-showcase-apps.sh --phase gpu     # GPU/GL/Vulkan archives only
-./scripts/build-showcase-apps.sh --phase stage   # X11/ports + rootfs helpers
-./scripts/build-showcase-apps.sh                  # both (phase "all")
-```
-
-Useful flags: `--force` (rebuild archives even if fresh), `--skip-vulkan` (build
-`libGL`/`libv3d` but not `libv3dv-phoenix.a` — **this now makes the ports stage
-fail**, because the `vkquake` port is `if: true` and links that archive; Vulkan
-is on by default, and `--with-vkquake` is a no-op kept for compatibility),
-`--skip-x11` (skip the X11 lib stack + X apps + dillo), `--stage-dir DIR` (stage into an arbitrary
-rootfs tree, e.g. an NFS export). It is idempotent (skips up-to-date archives)
-and fail-loud (each step is gated on its expected output existing). The X11
-apps and userland ports are treated as best-effort: a single app failing is
-recorded and reported at the end rather than aborting the whole run, so you get
-as many of the showcase apps as build cleanly.
-
-> **Shaders.** GLQuake is the `quakespasm` port (`/usr/bin/quakespasm`); it is
-> pure GL and needs no shader compiler. The `vkquake` port needs no shader
-> compiler either: its SPIR-V shader blobs are committed in the port's glue
-> (`vkquake_shaders.c`), so `glslang` is not a build-time dependency of the
-> engine.
+`scripts/build-port.sh <port>` builds one port and its dependencies on their own,
+through the real `port_manager`, to check a recipe. `--incremental` skips the clean
+re-extract, and `--dry` resolves the dependencies without building. The image itself
+is always built by `rebuild-rpi4b-fast.sh`.
 
 ## Troubleshooting
 

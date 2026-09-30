@@ -10,9 +10,9 @@
 # periodic snapshots CANNOT both hold it. Run a cycle with snapshots disabled:
 #
 #     RPI4B_HDMI_INTERVAL=0 ./scripts/test-cycle-psh-interact.sh --label demo \
-#         --wait-secs 150 --idle-secs 240 --max-cmd-secs 300 -- "startx_gpu deskapps"
+#         --wait-secs 150 --idle-secs 240 --max-cmd-secs 300 -- "export HOLD=200" "/bin/bash /bin/startx action"
 #
-#   and start this script in parallel (it powers nothing itself — it only reads
+#   and start this script in parallel (scripts/record-showcase-clip.sh does both) (it powers nothing itself — it only reads
 #   the grabber, so it is safe to run next to a cycle and does not touch the UART
 #   or the Pi lock).
 #

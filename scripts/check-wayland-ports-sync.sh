@@ -35,8 +35,6 @@ MAP=(
 	# dbus
 	"${T}/dbus/patches/dbus|dbus/patches"
 	"${T}/dbus/conf|dbus/files/conf"
-	"${T}/dbus/pi/dbus-m7f.sh|dbus/files/pi/dbus-m7f.sh"
-	"${T}/dbus/pi/dbus-m7m.sh|dbus/files/pi/dbus-m7m.sh"
 	# wayland_phoenix (the M6 Wayland base of weston-drm, + mesa-drm's generic gap headers)
 	"${T}/weston-drm/patches/wayland|wayland_phoenix/patches/wayland"
 	"${T}/weston-drm/patches/seatd|wayland_phoenix/patches/seatd"
@@ -54,7 +52,6 @@ MAP=(
 	"${T}/xorg-drm/compat/include|gtk3_wayland/files/epoxy-compat/include"
 	"${T}/gtk3-wayland/src|gtk3_wayland/files/src"
 	"${T}/gtk3-wayland/conf/settings.ini|gtk3_wayland/files/conf/settings.ini"
-	"${T}/gtk3-wayland/pi/weston-gtk3.sh|gtk3_wayland/files/pi/weston-gtk3.sh"
 	# xfce_wayland
 	"${T}/xfce-wayland/patches|xfce_wayland/patches"
 	"${T}/xfce-wayland/compat|xfce_wayland/files/compat"
@@ -77,14 +74,11 @@ MAP=(
 	"${T}/labwc-drm/conf/applications|labwc_desktop/files/conf/applications"
 	"${T}/labwc-drm/conf/foot|labwc_desktop/files/conf/foot"
 	"${T}/labwc-drm/conf/fuzzel|labwc_desktop/files/conf/fuzzel"
-	"${T}/labwc-drm/conf/labwc-m7c|labwc_desktop/files/conf/labwc-m7c"
 	"${T}/labwc-drm/conf/rc.xml|labwc_desktop/files/conf/rc.xml"
 	"${T}/labwc-drm/conf/menu.xml|labwc_desktop/files/conf/menu.xml"
 	"${T}/labwc-drm/conf/autostart|labwc_desktop/files/conf/autostart"
 	"${T}/labwc-drm/conf/environment|labwc_desktop/files/conf/environment"
 	"${T}/labwc-drm/conf/backgrounds/make-wallpaper.py|labwc_desktop/files/conf/backgrounds/make-wallpaper.py"
-	"${T}/labwc-drm/pi/labwc-desktop.sh|labwc_desktop/files/pi/labwc-desktop.sh"
-	"${T}/labwc-drm/pi/m7b-colors.sh|labwc_desktop/files/pi/m7b-colors.sh"
 	# atril_wayland (M7 m7j)
 	"${T}/atril-wayland/patches|atril_wayland/patches"
 	"${T}/atril-wayland/poppler-options.sh|atril_wayland/files/poppler-options.sh"

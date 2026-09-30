@@ -126,8 +126,8 @@ was testing. Two knobs fix that (added 2026-09-04):
 
 ```
 ./scripts/test-cycle-psh-interact.sh --label vkq --idle-secs 175 --max-cmd-secs 200 \
-  --ready-line 'present 30' --ready-extra-secs 90 --hdmi-dense-on 'present 30' \
-  -- "vkquake +map start"
+  --ready-line 'vkquake-drm flipstat' --ready-extra-secs 90 --hdmi-dense-on 'vkquake-drm flipstat' \
+  -- "/usr/bin/vkquake"
 ```
 
 - `--ready-line ERE` — until it matches, `--max-cmd-secs` is only the deadline for
@@ -142,14 +142,20 @@ was testing. Two knobs fix that (added 2026-09-04):
 
 ```
 ./scripts/test-cycle-bench.sh 4 vkq --idle-secs 175 --max-cmd-secs 200 \
-  --ready-line 'present 30' --ready-extra-secs 90 -- "vkquake +map start"
+  --ready-line 'vkquake-drm flipstat' --ready-extra-secs 90 -- "/usr/bin/vkquake"
 ```
 
-Games launch through their own `/usr/bin/<game>` helper where one exists
-(`quake2`, `quake3`, `stk`); it sets the video mode and map. Hand-rolling the
-engine command line is how a run ends up at 640x480 (blank) or double-loading the
-map — both look exactly like render regressions. `quakespasm` and `vkquake` need
-no launcher.
+Games launch through their launchers, never the engine ELF: `/usr/bin/quakespasm`,
+`/usr/bin/quake2`, `/usr/bin/quake3 +map q3dm1`, `/usr/bin/vkquake` (it already adds
+`+map start`), `/bin/stk`; `game-res <game> WxH` for a scaled mode. The launchers set
+the video mode, the data path and the map. Hand-rolling the engine command line
+(`/usr/bin/*-drm`) is how a run ends up at the wrong size or double-loading the map —
+both look exactly like render regressions. The proven gate commands are the entries
+of `scripts/run-showcase-gate-drm.sh`. Every game prints `<name> flipstat N frames in
+T ms = X fps (total M)` lines once it presents frames — the readiness marker to use.
+Desktop cycles: `/bin/bash /bin/xfce-session` (with `export HOLD=N` first) and
+`/bin/bash /bin/startx action` (`export HOLD=200`); both end on their own when HOLD
+is over.
 
 Example (this is how the libc suite is run):
 ```
@@ -189,7 +195,7 @@ root has mounted.
 ## D — Build a fresh image + flash the SD card
 
 Build the variant you need (add `--with-tests` to include `/bin/test-libc-*`,
-`--with-ports` for busybox etc., `--with-showcase` for GPU/X apps):
+`--with-ports` for busybox etc., `--with-showcase` for the launchers' helper programs — every GPU program is a port):
 
 ```
 ./scripts/rebuild-rpi4b-fast.sh --variant sd --with-tests     # -> artifacts/rpi4b/rpi4b-sd-2part.img
@@ -338,7 +344,7 @@ recorder only reads the grabber, so it neither touches the UART nor takes the Pi
 
 ```
 RPI4B_HDMI_INTERVAL=0 ./scripts/test-cycle-psh-interact.sh --label demo \
-    --wait-secs 150 --idle-secs 240 --max-cmd-secs 300 -- "startx_gpu deskapps"
+    --wait-secs 150 --idle-secs 240 --max-cmd-secs 300 -- "export HOLD=200" "/bin/bash /bin/startx action"
 # in parallel:
 ./scripts/record-hdmi.sh --label demo --secs 240
 ```
