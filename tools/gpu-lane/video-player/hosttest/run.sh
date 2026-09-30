@@ -36,7 +36,7 @@ done
 log() { printf '[ffplay-host] %s\n' "$*"; }
 die() { printf '[ffplay-host] ERROR: %s\n' "$*" >&2; exit 1; }
 
-TARBALL="${root}/sources/phoenix-rtos-ports/ffmpeg/ffmpeg-6.1.tar.gz"
+TARBALL="${root}/sources/phoenix-rtos-ports/video_player/ffmpeg-6.1.tar.gz"
 # shellcheck source=../components.sh
 . "${vp}/components.sh"
 stamp="$( (sha256sum "${TARBALL}"; cat "${vp}/components.sh" "${vp}"/patches/*.patch; echo x86asm-off) | sha256sum | cut -c1-16)"

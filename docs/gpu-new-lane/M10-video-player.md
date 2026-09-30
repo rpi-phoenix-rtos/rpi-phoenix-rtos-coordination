@@ -260,9 +260,9 @@ the clip's 1 s beeps on a 1.0 s grid before and after the pause, **exactly 2.0 s
 the 2 s pause**, silence at the end. Not testable on broadway: fullscreen (no such window state
 there) and the real device's blocking/underrun behaviour.
 
-The ffmpeg **port** (`sources/phoenix-rtos-ports/ffmpeg`) is unchanged: it stays the decode-only
-library port. Folding the player configuration in (a `ffplay_drm` port, or `ffmpeg` with the extra
-libraries) is a follow-up for the coordinator, on a ports branch.
+The ffmpeg **port** (`sources/phoenix-rtos-ports/ffmpeg`) was unchanged at the time: it stayed the
+decode-only library port. (Removed 2026-09-30: it was never enabled and had no consumer; the
+`video_player` port is the one FFmpeg build, and its tarball is the one these tools read.)
 
 ### 3.4 Pi results (2026-09-28)
 

@@ -24,7 +24,7 @@
 #   <out>/ffplay-<v>      static, unstripped (addr2line); <out>/ffplay-<v>.stripped = stage this
 #   <out>/ffplay-<v>.map, <out>/BUILD-INFO-<v>.txt, logs
 #
-# Reads (never writes): sources/phoenix-rtos-ports/ffmpeg (tarball), the SDL build-out named
+# Reads (never writes): sources/phoenix-rtos-ports/video_player (tarball), the SDL build-out named
 # by --sdl (sdl-prefix + mesa-gl), the tree sysroot, the toolchain, the tree's libz.a, E7's
 # phx-g++. No Pi, no rebuild-rpi4b-fast.sh, no /srv.
 #
@@ -100,8 +100,8 @@ case "${tag}" in */*|.*) die "--tag must be a plain suffix" ;; esac
 name="ffplay-${variant}${tag}"
 
 FF_VERSION=6.1
-FF_TARBALL="${root}/sources/phoenix-rtos-ports/ffmpeg/ffmpeg-${FF_VERSION}.tar.gz"
-FF_SHA256=938dd778baa04d353163ca5cb06c909c918850055f549205b29b1224e45a5316   # = the port's sha256
+FF_TARBALL="${root}/sources/phoenix-rtos-ports/video_player/ffmpeg-${FF_VERSION}.tar.gz"
+FF_SHA256=938dd778baa04d353163ca5cb06c909c918850055f549205b29b1224e45a5316   # = the video_player port's sha256
 B="${root}/.buildroot/_build/aarch64a72-generic-rpi4b"
 S="${B}/sysroot"
 TC="${root}/.toolchain/aarch64-phoenix/bin/aarch64-phoenix"

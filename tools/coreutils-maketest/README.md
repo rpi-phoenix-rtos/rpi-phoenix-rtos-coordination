@@ -23,8 +23,11 @@ full regardless of UART truncation:
 
 Stage: copy `tests/` + `init.cfg` from the coreutils-9.5 tarball to
 `/srv/<nfs-export>/root/ct/cu/`, and `run.sh` to `/srv/<nfs-export>/root/ct/`.
-Harness deps confirmed present on the image: `diff cmp getlimits sed grep awk`
-(perl + gawk are absent → skip `.pl` tests).
+Harness deps confirmed present on the image: `diff cmp sed grep awk` (perl + gawk are
+absent → skip `.pl` tests). `getlimits` is a coreutils test helper and is NOT installed
+(since 2026-09-30): stage it next to `run.sh` from the port build, e.g.
+`.buildroot/_build/aarch64a72-generic-rpi4b/port-sources/coreutils-9.5/coreutils-9.5/src/getlimits`,
+and put that directory on `PATH` in `run.sh`.
 
 ## Result: the harness WORKS on Phoenix, and it exposed one dominant bug
 
