@@ -109,6 +109,11 @@ These are defects in shared Phoenix code that would bite any target.
   enumeration retry re-drove a slot the hardware still held halted (one transient Split Transaction
   Error → Context State Error on both retries), costing roughly one boot in three its keyboard and
   mouse. Now Disable Slot is issued when the default control endpoint (DCI 1) is torn down.
+  ↩ **Correction 2026-10-01:** that Disable Slot path never ran. The control pipe never carries the
+  private data the teardown checks for, so the retry still re-drove the stuck slot, and ~1.7 % of boots
+  still lost USB input (C9; the 2026-09-07 "6/6" was chance at that rate). devices `10de890` re-addresses a
+  failed device on a fresh slot (Disable Slot, Enable Slot, rebind), as Linux's `xhci_setup_device` does, and
+  `fd7901d` drops the dead block. Pending its Pi check.
 - ★ `xhci.c` `4576e72` — PORTSC RW1C over-clear: the four `C_*` change-bit clears wrote back the *other*
   change bits still set, so a sibling port event that raced the write was silently cleared and lost.
   Same commit: the shared per-controller `inputCtx` scratch buffer was reallocated on every
