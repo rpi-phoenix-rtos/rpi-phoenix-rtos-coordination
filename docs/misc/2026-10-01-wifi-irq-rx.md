@@ -86,6 +86,30 @@ Boot from the card with WiFi joined. Run the `rpi4-storage-test` write/verify lo
 
 The 09-30 recipe (4), unchanged.
 
+## Storm guard (kernel, ships with this)
+
+These ship together with F1 in build 14:
+- kernel branch `irq-unclaimed-guard`: `56267884` makes `userintr_dispatch` report a declining user handler as -1, and `b3040484` adds the guard in `hal/aarch64/interrupts_gicv2.c`;
+- tests branch `irq-unclaimed-test`, `8176308`: the `irq-unclaimed` program.
+
+**What the guard does.** It counts deliveries of an SPI that no handler claimed and that left the line still pending. After 100 000 in a row it masks the SPI and prints one line on the UART only: `interrupts: IRQ %u unclaimed %u times in a row, masked`. Any claim resets the count, as does a delivery that leaves the line low. Registering a handler resets it too and re-enables the line. The threshold matches Linux's `spurious.c` 99 900 / 100 000, but here the run must be unbroken, which is stricter.
+
+**Trade-off.** Masking line 158 also silences the SD card until `rpi4-wifi` registers again. On SD boot, a dead daemon therefore becomes a root-filesystem stall instead of a hard hang.
+
+**Deterministic test (`irq-unclaimed`, SPI 223, unwired).** The handler re-pends itself via GICD_ISPENDR, which emulates a held level line.
+
+PASS needs these lines, in order:
+- `A declined+released: fired=200000 enabled=1`
+- `B claimed+held: fired=200000 enabled=1`
+- exactly one `interrupts: IRQ 223 unclaimed 100000 times in a row, masked`
+- `C declined+held: fired=100000 enabled=0 pending=1`
+- `D re-register: fired=2 fired2=2 enabled=1`
+- `IRQ-UNCLAIMED: PASS`
+
+On a master kernel the expected result is `C … fired=300000 enabled=1` and `IRQ-UNCLAIMED: FAIL C`. That is what shows the test can fail.
+
+**No false positives.** `interrupts: IRQ` must appear 0 times across every gate boot.
+
 ## Result
 
-(pending — after the C9 build)
+(pending — build 14, after C9's build 13)
