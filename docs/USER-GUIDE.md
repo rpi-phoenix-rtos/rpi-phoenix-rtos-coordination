@@ -273,7 +273,7 @@ game runs until you quit it. `stk race` ends by itself after its two laps.
   The display returns to the psh console.
 - **Shaders are compiled at every start.** The image has no on-disk shader cache yet, so each
   game compiles its shaders before its first frame. The OpenGL games start in seconds.
-- **vkQuake shows a black screen for about 75 seconds the first time it starts** (about 3 s on later starts, from the shader cache in `/.cache/mesa_shader_cache`). It compiles all of its
+- **vkQuake shows a black screen for about 75 seconds the first time it starts** (about 3 s on later starts, from the shader cache in `/.cache/mesa_shader_cache`). The `vkquake` launcher says so on the console and pauses 5 s before the screen goes black, on the first start only. It compiles all of its
   Vulkan pipelines first (74–77 s on the Pi). It has not hung: wait for the first frame. Deleting
   `/.cache/mesa_shader_cache` makes the next start compile again.
 
