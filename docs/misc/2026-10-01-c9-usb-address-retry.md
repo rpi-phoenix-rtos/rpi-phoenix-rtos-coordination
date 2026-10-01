@@ -55,4 +55,11 @@ At 1.7 %, ruling out the old rate needs about 175 clean boots at 5 % significanc
 
 ## Result
 
-(pending)
+**Step 1 (forced) PASS, 5/5 boots, 2026-10-01 11:39–11:52.** Test build with devices `0ba0c17` (`c9-fault-inject`); bench `c9fault-T1..T5`. Every boot printed `C9-FAULT injected`, then `xhci: Address Device failed on slot 1 (port 1, speed=3), retrying on slot 1`, then both `interrupt-IN pipe ready` lines, the keyboard bridge and the mouse. No boot printed `completion code 19` or `Enumeration failed despite`. Enable Slot handed back the same id (1), which the xHCI spec allows.
+
+Only the recovery path is proven. The trigger that occurs in the wild (a full-speed link after the first reset) is not reproduced; step 2 below covers that.
+
+**Step 2 (natural):** the merged build 13 onwards.
+
+- Ongoing tally: boots without input, and natural `retrying on slot` firings.
+- Old rate: 1.7 %.
