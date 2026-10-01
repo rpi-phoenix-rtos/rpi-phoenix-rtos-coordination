@@ -16,11 +16,14 @@
 # It compares the WORKING TREE of the coordination repo: an uncommitted patch in a tools
 # directory shows up as drift, which is what it is until the port gets the same file.
 #
-# Not copies, so not listed: the recipes; gtk3_wayland/files/egl-include (the Khronos EGL/KHR
-# headers as Mesa 26.2.0 installs them, taken from a mesa-drm build prefix); the committed
-# keymap wayland_phoenix/files/keymap-us.xkb (a build output the labwc-drm tools script
-# regenerates on the build host); wayland_phoenix/files/
-# input-event-codes.h (FreeBSD's, sha256-pinned in the recipe).
+# Not copies, so not listed: the recipes; the XFCE session's own files, which carry the image's
+# paths and program names where the tools files have the M7 demo's (xfce_wayland/files/pi/
+# xfce-session and xfce-session-loginctl, files/conf/labwc-xfce and files/conf/xfce-session,
+# derived from tools/gpu-lane/xfce-wayland/pi and conf/labwc-xfce-demo, conf/xfce-demo);
+# gtk3_wayland/files/egl-include (the Khronos EGL/KHR headers as Mesa 26.2.0 installs them,
+# taken from a mesa-drm build prefix); the committed keymap wayland_phoenix/files/keymap-us.xkb
+# (a build output the labwc-drm tools script regenerates on the build host);
+# wayland_phoenix/files/input-event-codes.h (FreeBSD's, sha256-pinned in the recipe).
 #
 # Copyright 2026 Phoenix Systems
 # SPDX-License-Identifier: BSD-3-Clause
@@ -57,14 +60,8 @@ MAP=(
 	"${T}/xfce-wayland/patches|xfce_wayland/patches"
 	"${T}/xfce-wayland/compat|xfce_wayland/files/compat"
 	"${T}/xfce-wayland/conf/applications|xfce_wayland/files/conf/applications"
-	"${T}/xfce-wayland/conf/labwc-xfce|xfce_wayland/files/conf/labwc-xfce"
 	"${T}/xfce-wayland/conf/xfconf|xfce_wayland/files/conf/xfconf"
 	"${T}/xfce-wayland/pi/xfce-desktop.sh|xfce_wayland/files/pi/xfce-desktop.sh"
-	# the one-command session /bin/xfce-session (GPU migration P1)
-	"${T}/xfce-wayland/pi/xfce-session|xfce_wayland/files/pi/xfce-session"
-	"${T}/xfce-wayland/pi/xfce-demo-loginctl|xfce_wayland/files/pi/xfce-demo-loginctl"
-	"${T}/xfce-wayland/conf/labwc-xfce-demo|xfce_wayland/files/conf/labwc-xfce-demo"
-	"${T}/xfce-wayland/conf/xfce-demo|xfce_wayland/files/conf/xfce-demo"
 	"${T}/xfce-wayland/bin/msgfmt|xfce_wayland/files/bin/msgfmt"
 	"${T}/xfce-wayland/tools/pngify-icon-theme.py|xfce_wayland/files/tools/pngify-icon-theme.py"
 	# labwc_desktop
