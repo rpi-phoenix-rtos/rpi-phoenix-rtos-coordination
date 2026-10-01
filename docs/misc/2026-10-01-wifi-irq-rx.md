@@ -112,6 +112,8 @@ On a master kernel the expected result is `C … fired=300000 enabled=1` and `IR
 
 ## Result
 
+**F1 interrupt RX: PASS (netboot A/B + SD-boot regression). Shipped: devices `9299299`, lwip `a7f63a4`, kernel `b3040484`.**
+
 ### Build 15, netboot, 2026-10-01 (`g15-wifi`, `g15-irqtest`)
 
 **Build proof:** `RX interrupt on IRQ` 1, `RX mode: ` 2, `times in a row, masked` 1, `/bin/irq-unclaimed` present.
@@ -140,7 +142,31 @@ The poll figures sit at the 09-30 baseline. Interrupt RX is **+12 % TX and +14 %
 - D `fired=2 fired2=2 enabled=1`
 - `IRQ-UNCLAIMED: PASS`
 
-**Still to do:**
-- the SD-boot regression gate (4): SD write/verify plus e2fsck under `wifi-perf`;
-- the link-loss check (5);
-- the showcase gate for build 15, with 0 `interrupts: IRQ` lines across all its boots.
+**Showcase, build 15: 7/7 PASS.** 0 `interrupts: IRQ` lines across all 8 boots, and every boot was in `RX mode: irq`.
+
+### SD-boot regression gate (4), 2026-10-01: PASS
+
+**Setup.**
+- An SD image of the same tree as build 15: 2 656 759 808 bytes, `qemu-boot-sdimage` PASS.
+- `/etc/wifi.conf` was injected into the export's staging copy only; the `artifacts/` image sha was unchanged.
+- Self-flashed from netboot: `2533+1 records out`, the full byte count, at 10.1 MB/s.
+- The card booted with `bcm2711-emmc;-r;/dev/mmcblk0p2:ext2`, and `rpi4-sysinfo` showed devices `9299299`, kernel `b3040484`, lwip `a7f63a4`.
+
+**Run 1 (`sdgate16`).**
+- `RX mode: irq`, joined, got a lease.
+- `wifi-perf` ran its 3 runs **while** `dd` wrote 16 MiB to the card: `WIFIPERF-MEDIAN tx=3.91 rx=3.70 MB/s`.
+- 0 SD `cmd timeout`/`cmd error`/`intr_status=` lines, and 0 `interrupts: IRQ` lines.
+- The test script's source file came from `/dev/urandom`. The hardware RNG runs at ~70 KB/s, so it ate the capture window, and the copy checks and the second `wifi stats` never ran. Lesson: never source bulk test data from `/dev/urandom` on this board.
+
+**Run 2 (`sdgate16b`, same card).**
+- `declined` went from **17 to 2521** across a 16 MiB `dd` copy on the card (3.72 s, 4.5 MB/s). The WiFi handler saw every SD interrupt on line 158 and declined it, so the shared path is proven to have run.
+- `cmp` reported the files identical.
+- `ack_errs=0`, and 0 SD errors.
+
+**Oracle.** The card was read back over netboot (`2466+1 records out`) and checked with `e2fsck -fn`. The only finding was `Block bitmap differences: -(2169061--2169064)`: 4 blocks used but owned by no file, identical after both runs.
+- They belong to the copy run 1 had in flight when the harness cut power. That is a known outcome of power-cutting an unjournalled ext2.
+- The pristine p2 of the same build is clean, and run 2 added nothing.
+
+The 4 leaked blocks are still on the card; the next flash clears them.
+
+**Not run:** the link-loss check (5). The loss path is untouched by this change.
