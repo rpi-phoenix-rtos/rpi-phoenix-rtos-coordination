@@ -24,10 +24,10 @@ Background and gap analysis: [web-browser-options study](../research/2026-10-01-
    - Hand-staged onto the NFS export for Pi gates.
    - Wrapped as a `phoenix-rtos-ports` port (`webkit_wpe`, …) only when its stage passes.
    - The *dependencies* (ICU, libsoup3, …) are ordinary ports from the start, since they are small.
-4. **Malloc / P24.** P24, the user-space mutex fast path, **stays an owner decision and is not taken here.**
+4. **Malloc / P24.** **Owner approved P24 on 2026-10-01**: the user-space mutex fast path is being implemented as its own track (session task #99).
    - The browser links a per-thread-cache allocator, **mimalloc**, into its own binary.
    - WTF's own locks are already user-space (ParkingLot).
-   - Stage 1 measures malloc cost in the browser workload; that number is what would justify asking for P24.
+   - Stage 1 measures malloc cost in the browser workload with and without P24.
 5. **GPU.**
    - Stage-2 fallback: software rendering (Skia CPU + wl_shm).
    - Target: **EGL / dma-buf** via Mesa's EGL-wayland platform (works since M8). Skia Ganesh on GLES 3.1 gives accelerated compositing.
@@ -72,11 +72,11 @@ Background and gap analysis: [web-browser-options study](../research/2026-10-01-
 
 1. **Porting WebKit's platform layer** to a new OS (no `OS(PHOENIX)`). The FreeBSD paths help. This is where the variance in stages B4–B6 comes from.
 2. **Signals/ucontext for JSC's GC.** B2 fixes it; `JSC_useConcurrentGC=false` is the workaround.
-3. **Malloc cost under a 30-thread browser.** mimalloc first; B3 measures it.
+3. **Malloc cost under a 30-thread browser.** P24 (approved) plus mimalloc; B3 measures it.
 4. **shmsrv's 1 MiB contiguous floor and the 1024-fd ceiling** against WebKit's many small shared objects (B6).
 5. **Upstream drift.** Pin 2.54.x.
 6. **Host build time and RAM.** The build host has 29 GiB of RAM and 16 threads, which is enough for a ~100 MB static link.
 
 ## Log
 
-- 2026-10-01: plan written; tracks A1, A2, B, B4, C started.
+- 2026-10-01: plan written; tracks A1, A2, B, B4, C started. Owner: P24 approved (track started), new syscalls may be appended, RWX for the JIT allowed, P21 later.
