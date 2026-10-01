@@ -279,21 +279,24 @@ Open bugs and known limitations are in
 ## Userland: CLI tools and languages
 
 Beyond the base system, a substantial ports ecosystem runs on the hardware
-(built into the image with `--with-ports`; all HW-verified):
+(built into the image with `--with-ports`; all HW-verified). The ports are
+compiled optimised (`-O2`); until 2026-09-30 most autotools ports were silently
+built at `-O0`, and fixing that halved `xz` compression time:
 
 | Component | Notes |
 |---|---|
 | GNU **coreutils 9.5** | the full tool set (~105 programs) builds + installs; core tools HW-verified bit-exact (`ls`, `cat`, `wc`, `sha256sum`, `seq`, `stat`, `stty`, …) |
 | GNU **bash 5.2** | runs; see caveat below |
-| **CPython 3.14** | static `python3` with `sqlite3`, `zlib`/`bz2`/`lzma` compression (full `tarfile`), `_ssl`/HTTPS (TLS 1.3, CA-verified), `hashlib` incl. `blake2`, `_decimal`, `ctypes`, `curses` (TUI via the ncurses port), and `.so` C-extension `dlopen` |
-| **OpenSSL 3.5.9** (LTS) | the `openssl` command and the TLS library behind Python's `ssl`/`hashlib`, lighttpd and wpa_supplicant |
+| **CPython 3.14** | static `python3` with `sqlite3`, `zlib`/`bz2`/`lzma` compression (full `tarfile`), `_ssl`/HTTPS (TLS 1.3, CA-verified), `hashlib` incl. `blake2`, `_decimal`, `ctypes`, `curses` (TUI via the ncurses port), and `.so` C-extension `dlopen`. Built in since 2026-09-30 but not yet exercised on the Pi: XML (`pyexpat`, `xml.etree`), C `asyncio`, `termios`, `cProfile`, `syslog`, and computed gotos in the eval loop |
+| **OpenSSL 3.5.9** (LTS) | the `openssl` command and the TLS library behind Python's `ssl`/`hashlib`, lighttpd and wpa_supplicant; built `-O2` with the 64-bit NIST-curve code |
 | **Dropbear 2026.94** | SSH server and client (`dropbear`, `dbclient`, `scp`): ed25519 keys, curve25519 and post-quantum (mlkem768x25519, sntrup761x25519) key exchange; password login from a current OpenSSH client |
 | **lighttpd 1.4.79** | web server; serves `/usr/www` on port 80 as shipped (HTTPS once a certificate is installed) |
-| **Redis 7.2** | in-memory data store, served over lwIP TCP |
-| **SQLite 3** | full SQL, in-memory + on-disk file VFS |
+| **Redis 7.2.16** | in-memory data store, served over lwIP TCP (7.2.16 carries the CVE-2025-49844 fix) |
+| **SQLite 3** | full SQL incl. the math functions, in-memory + on-disk file VFS |
 | **jq** | JSON processor, incl. the `test`/`match`/`sub`/`gsub`/`splits`/`scan` **regex builtins** (Oniguruma) |
 | **Lua 5.4.7** | interpreter + `luac` compiler |
-| **BusyBox**, **curl** (mbedTLS) | shell utilities (incl. `awk`, `vi`, `tar` with seamless gz/bz2/xz, `xzcat`/`unxz`) + HTTP/HTTPS client (with gzip/deflate decoding) |
+| GNU **grep 3.11**, **sed 4.10**, **tar 1.35**, **gzip 1.15**, **xz 5.4.7** | the only copies of these tools in the image |
+| **BusyBox**, **curl** (mbedTLS) | shell utilities (incl. `awk`, `vi`, `find`, `diff`, `bzip2`) + HTTP(S), FTP(S) and FILE client (with gzip/deflate decoding; the other protocols are not built) |
 
 > **bash:** GNU bash 5.2 now runs as a **full interactive shell** at the console.
 > The earlier "self-exits on EOF at the prompt" bug was a libphoenix `select()`

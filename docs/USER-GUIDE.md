@@ -375,9 +375,14 @@ A double click toggles full screen. Resizing the window scales the video.
 
 **Supported formats:**
 
-- Video: H.264, HEVC (H.265), VP8, VP9, MPEG-4 Part 2, MJPEG, raw video.
-- Audio: AAC, MP3, Opus, Vorbis, FLAC, PCM.
-- Containers: MP4/MOV, Matroska/WebM, MPEG-TS, AVI, Ogg, WAV, and raw H.264/HEVC streams.
+- Video: H.264, HEVC (H.265), VP8, VP9, MPEG-1, MPEG-2, MPEG-4 Part 2, MJPEG, raw video.
+- Audio: AAC, MP3, Opus, Vorbis, FLAC, ALAC, AC-3, E-AC-3, DTS, PCM.
+- Containers: MP4/MOV, Matroska/WebM (including compressed tracks), MPEG-TS, MPEG-PS
+  (`.mpg`, `.vob`), AVI, FLV, IVF, Ogg, WAV, and raw H.264/HEVC streams.
+- Deinterlacing: `ffplay -vf yadif <file>` (or `-vf bwdif`).
+
+The MPEG-1/2, AC-3/E-AC-3/DTS/ALAC, MPEG-PS/FLV/IVF and deinterlacing support was added on
+2026-09-30 and has not been played on the Pi yet; the demo clips above have.
 
 The player decodes on the CPU, with 4 threads.
 
@@ -473,11 +478,23 @@ too.
 The image also ships a Unix userland. For the full list, see the
 [README](../README.md#userland-cli-tools-and-languages):
 
-- `bash`, GNU coreutils and BusyBox
+- `bash`, GNU coreutils, GNU `grep`, `sed`, `tar`, `gzip` and `xz`, and BusyBox
 - `python3` (CPython 3.14), `micropython`, `lua`
 - `sqlite3`, `jq`, `redis-server`
 - `curl`, `wget`, `openssl` (OpenSSL 3.5.9)
 - `nano`, `vi`, `mc`
+
+Notes:
+
+- `grep`, `sed`, `tar`, `gzip`/`gunzip`/`zcat` and `xz`/`unxz`/`xzcat` are the GNU programs.
+  BusyBox no longer has its own copies of them; it still provides `awk`, `vi`, `find`, `diff`,
+  `bzip2` and a few others.
+- `curl` speaks HTTP, HTTPS, FTP, FTPS and FILE. The other protocols are not built.
+- `python3` started with no arguments opens Python's interactive REPL. Since `termios` is built
+  in (2026-09-30) this should be the new PyREPL; that has not yet been checked at the Pi
+  console. `export PYTHON_BASIC_REPL=1` selects the plain REPL.
+- The Pi's hostname is `phoenix-rpi4` (from `/etc/hostname`). `localhost`, the hostname and the
+  names in `/etc/hosts` resolve without a DNS server.
 
 Terminal programs look right with `export TERM=vt100` at the console. The desktop's foot
 terminal sets its own `TERM`.
@@ -544,7 +561,7 @@ wifi disconnect                    leave the network and forget it
 | `dbclient user@host` | SSH client (Dropbear). `scp` copies files over SSH. |
 | `/usr/sbin/dropbear` | SSH server |
 | `/usr/sbin/lighttpd -f /etc/lighttpd.conf` | web server |
-| `redis-server --port 6379` | Redis 7.2 over TCP |
+| `redis-server --port 6379` | Redis 7.2.16 over TCP |
 
 **SSH server (Dropbear 2026.94).** It is not started at boot. Start it from psh:
 
@@ -600,8 +617,8 @@ This is the recommended way to show the whole system, with the best settings for
 **Run, in this order:**
 
 1. **Boot.** Show the kernel log on HDMI until `(psh)%` appears.
-2. **The shell.** Run `uname -a`, `ifconfig` and `wifi status`: the Ethernet lease, and WiFi
-   joined with its address.
+2. **The shell.** Run `uname -a` (the Pi is `phoenix-rpi4`), `ifconfig` and `wifi status`: the
+   Ethernet lease, and WiFi joined with its address.
 3. **The XFCE desktop.** Run `/bin/bash /bin/xfce-session`. On the desktop:
    1. Show the panel and the Applications menu. Thunar is already open.
    2. Super+Return opens foot.

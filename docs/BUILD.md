@@ -218,7 +218,7 @@ all of them and installs them into the root filesystem. No program goes into
 |---|---|
 | Graphics stack | `libdrm_phoenix` (libdrm on the render and KMS servers), `mesa_drm` (Mesa 26.2: GBM, EGL, GLES, GL, Vulkan), `sdl2_kmsdrm` (SDL 2.30 with KMSDRM + Wayland), `libepoxy`; the smoke tests `kmscube_drm` / `vkcube_drm` and `drmprobe` are built only with `--with-tests` |
 | X11 | `xorg_server_drm` (Xorg 21.1, modesetting + glamor, `startx`), `xorg_libs`, `xorg_fonts`, `xorg_apps`, `xterm`, `windowmaker`, `xbill`, `dillo` |
-| Wayland desktop | `wayland_phoenix` (libwayland 1.24.0, wayland-protocols 1.49, libxkbcommon 1.13.2: the one copy every Wayland port uses), `dbus`, `gtk3_wayland` (GTK 3.24), `labwc_desktop` (labwc, foot, fuzzel), `xfce_wayland` (XFCE 4.20, `xfce-session`) |
+| Wayland desktop | `wayland_phoenix` (libwayland 1.24.0, wayland-protocols 1.49, libxkbcommon 1.13.2: the one copy every Wayland port uses), `xkeyboard_config` (the XKB keyboard data), `dbus`, `gtk3_wayland` (GTK 3.24), `labwc_desktop` (labwc, foot, fuzzel), `xfce_wayland` (XFCE 4.20, `xfce-session`) |
 | Games | `quakespasm_drm`, `yquake2` + `yquake2_drm`, `quake3` + `quake3_drm`, `vkquake_drm`, `supertuxkart` + `supertuxkart_drm` (the engine port compiles, the `*_drm` port links one program with both SDL video drivers) |
 | Applications | `video_player` (ffplay, `video-play`, gtk-video, demo clips), `atril_wayland` (Atril + Poppler), `python`, `bash`, `coreutils`, `busybox`, `curl`, `mc`, `nano`, `sqlite3`, `redis`, `lua`, … |
 | Network and security | `openssl` (OpenSSL 3.5.9 LTS), `dropbear` (Dropbear 2026.94 SSH), `lighttpd` (1.4.79), `wpa_supplicant`, `ca_certificates` (the CA store for TLS) |
@@ -303,6 +303,12 @@ output.
 through the real `port_manager`, to check a recipe. `--incremental` skips the clean
 re-extract, and `--dry` resolves the dependencies without building. The image itself
 is always built by `rebuild-rpi4b-fast.sh`.
+
+**Compiler flags in a recipe.** The `CFLAGS`/`CXXFLAGS` a port receives include the
+framework's optimisation level (`OLVL`, `-O2` for this board) since phoenix-rtos-build
+`71b723d`; before that, every autotools port was silently built at `-O0`. A recipe that
+replaces `CFLAGS` with a literal string loses it, together with `-mcpu`/`-mtune`, so it must
+add `-O2 -mcpu=cortex-a72 -mtune=cortex-a72` itself, as the X11 and font recipes do.
 
 ## Troubleshooting
 

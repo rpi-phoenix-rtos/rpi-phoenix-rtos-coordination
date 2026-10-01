@@ -87,6 +87,7 @@ exercised it hard, and each is described with its root cause in the section that
 | 21 | **libcache wrote back lines whose contents had not changed** | `phoenix-rtos-corelibs/libcache` `a46399c` | An in-place ext2 overwrite costs 3 device writes and **2 of them store bytes already on the medium** — the superblock (nothing allocated, so no count moved) and the inode block (`time()` has 1-second resolution, so a same-second rewrite of equal length is byte-identical). `cache_write()` now compares against the cached line first and neither dirties it nor runs the write policy on a match; guarded by `contentsKnown`, because a full-line miss deliberately skips the fetch. **12.6x** on partial-line rewrites measured on hardware with the warm-cache confound controlled, and 3.33 ms per avoided device write against an independently measured 3.1 ms per command. Pure endurance and latency win for every flash-backed target, no correctness question — a write that stores identical bytes is unobservable. |
 | 22 | **`ext2_statfs()` returned a live heap pointer as `f_fsid`** | `phoenix-rtos-filesystems/ext2` `47634da` | `st->f_fsid = (unsigned long)fs;` — the address of libext2's own `ext2_t` allocation, under a `TODO: filesystem ID should be generated at mount time`. Wrong in both directions: it leaks a pointer out of the filesystem server to every caller of `statvfs()`, and it changes on each mount of the same filesystem, so it identified the *mount attempt* rather than the thing mounted. Now folded from the on-disk superblock UUID — stable across mounts, unique per filesystem, and nothing needs generating at mount time. `f_flag` deliberately left at 0: libext2 holds no mount-options state, so reporting `ST_RDONLY` from there would be inventing an answer. ★ Not Pi-specific; affects every target that mounts ext2. |
 | 23 | 🐞 **`umass` can `free()` the filesystem context while another thread is inside it** | `phoenix-rtos-devices/storage/umass/umass.c` (**reported, fix on a branch — needs a stick to gate**) | `umass_poolthr()` runs on **two** threads (`UMASS_N_POOL_THREADS = 2`) popping one shared `rqueue`. On `mtUmount` it calls `req->part->fs->unmount(...)` → `libext2_unmount()` → `ext2_objs_destroy` → `free(fs)`, **with nothing waiting for in-flight requests**. The FIFO orders *dequeue*, not *completion*, so the other pool thread can still be inside `fs->handler(...)` = `libext2_handler()` — holding `fs->lock` — when the context is freed under it; it then uses freed memory and unlocks a destroyed mutex. ★ **The same tree already contains the correct pattern**: `libstorage`'s `storage_umountfs()` calls `requestctx_stop()`, which sets `state_stop` and `while (ctx->nreqs) condWait(...)`, with `nreqs` bracketing the handler call itself — so the emmc/`libstorage` path is safe by design and only `umass` is exposed. Fix is to give umass the same drain. This also settles a lock-order inversion inside libext2 (`objs->lock → obj->lock` at teardown vs `dir->lock → objs->lock` in lookup/unlink) as reachable *only* on the umass path, for the same missing-drain reason. |
+| 24 | **A signal makes an existing file look missing** | libphoenix `unistd/file.c`, `sys/stat.c` `b33e8ec` | The kernel aborts a `msgSend()`/`lookup()` with `-EINTR` when a signal arrives while the message is still queued at a busy filesystem server. `access()` turned that into `ENOENT`, and `resolve_path()` and `stat()` returned `EINTR`, although POSIX gives these calls no `EINTR` and `SA_RESTART` callers do not expect one. Seen as WindowMaker "cannot find" `swback.png` in 3 of 8 desktop starts: a SIGCHLD from its own `sh -c "wmsetbg … &"` landed during the image search. A host model of the real code, with one signal on each of the 11 IPCs one `access()` makes, failed at 6 of 11 positions before and none after. Same code upstream (`access()` calls `lookup()` once). |
 
 ## Platform gaps that every future port will hit
 
@@ -242,6 +243,7 @@ This is the section upstream should read. All of these are defects in shared Pho
 | ★ Phantom `-ENOMEM` from backing store | `vm/object.c` (`0620f2e9`) | `vm_objectPage` swallowed a real fetch error (`got = 0`, `*page = NULL`, return EOK) and `_map_force` then returned a generic `-ENOMEM`, so a transient read failure surfaced at exec as out-of-memory — which sent a multi-session investigation chasing allocation failures that were all measurably silent. Now propagates the real error. |
 | ★ `/dev/urandom` never advanced its destination | posixsrv `special.c` (`ef6e39b`) | The fill loop `memcpy`'d into `r->msg.o.data` every iteration without advancing `dst`, so any read larger than 64 bytes left the tail uninitialised. (Same commit sources entropy from `/dev/hwrng` when present — see §7; it still falls back to `rand()`, so this is not "urandom is now secure".) |
 | `tmpfile()` after a root swap | posixsrv `tmpfile.c` (`8a44ce8`) | `tmpfile_init()` creates `/var/tmp` once at startup; if `/` is mounted or swapped later (netboot NFS takeover here, but the defect is general) every backing-file open hits ENOENT and `tmpfile()` returns NULL forever. Recreate the directory on ENOENT and retry once. |
+| `mprotect()` rejected a length that is not a page multiple | `vm/map.c` (`fc21dab0`) | POSIX requires `addr` to be page-aligned but not `len`: the call covers every page `[addr, addr + len)` touches. `vm_mprotect()` failed any other `len` with `EINVAL`, so Quake III's JIT logged `mprotect(RX) failed` and ran from its RWX mapping. Now `len` is rounded up to pages (`ENOMEM` if rounding would wrap), an unaligned `addr` is still `EINVAL`, and `len == 0` succeeds as a no-op, as on Linux and the BSDs. This does not change the W^X rule under *Platform gaps*: `mprotect` still cannot add a permission the mapping did not have. Test `mem/test_mprotect` (tests `fbfc47e`), 6/0 on the Pi. Same code upstream. |
 | Sign-compare in memory enumeration | plo `hal/aarch64/generic/hal.c` (`98418d1`) | `hal_memoryGetNextEntry` compared a signed index against an unsigned count. |
 
 Honest status of the corruption hunt these came out of: several of the commits state plainly that
@@ -388,9 +390,9 @@ needed it ahead of `master`; `f6b49ad` is likewise upstream (julianuziemblo). Th
 surface is **93 files, +5874/-813** across 108 commits, and its math additions live in `libm/phoenix/`
 (`c99extra.c`, `erf.c`, `gammaextra.c`, `longdouble.c`, `compatibility.c`). `phoenix-rtos-corelibs` gains
 one new library and one documented constant; `phoenix-rtos-tests` gains ~3.9k lines that both cover the
-new interfaces and, in three cases, fix tests that were quietly testing nothing. No `###` Performance
-section appears below: none of these commits carries a measured number, and the throughput work in this
-port lives elsewhere.
+new interfaces and, in three cases, fix tests that were quietly testing nothing. The one measured
+performance change, the single-threaded `malloc` fast path, has its own short section; the other
+throughput work in this port lives elsewhere.
 
 ### ★ General bug fixes
 
@@ -451,6 +453,11 @@ most cases the failure was *silent or misattributed* — the fault surfaced far 
   `EBADF`; `statvfs("file/")` returned success instead of `ENOTDIR`.
 * `4c94672` — `sysconf(_SC_OPEN_MAX)` returned 512 against the kernel's real `MAX_FD_COUNT` of 1024, so
   anything sizing fd arrays from it was capped at half the limit.
+* ★ `b33e8ec` — path queries interrupted by a signal: `access()`, `stat()` and every component lookup of
+  `resolve_path()` now resend a message the kernel aborted with `-EINTR` before any server took it (see
+  shortlist row 24). A resend is never a duplicate: an aborted message was unlinked from the port's queue
+  unseen, and one a server has taken is waited for uninterruptibly. Reads, writes and waits on pipes and
+  terminals keep their `EINTR`. Test `libc/sa_restart` (tests `ae146ef`), 1/0 on the Pi.
 
 **Signals, startup, concurrency**
 
@@ -474,6 +481,11 @@ most cases the failure was *silent or misattributed* — the fault surfaced far 
   preprocessor. xterm's `#ifndef OPOST / #define OPOST 0` therefore fired, output post-processing was
   compiled off, and newlines lost their CR (the classic "staircase"). Added self-referential
   `#define OPOST OPOST` macros, mirroring the rationale already used for the baud rates in that header.
+* `40e3a55` — `gai_strerror()` answered `Unknown error N` for every code. The rule that generates its
+  table from `<netdb.h>` matched only `#define E… <digits>`, and every `EAI_*` code is negative
+  (`#define EAI_NONAME -2`), so the table was empty. The rule now accepts a sign, and a new
+  `string/gaierr.desc` carries glibc's text for all 11 codes; the errno tables are byte-identical.
+  Test `libc/string` gai_strerror cases (tests `de21235`), 11/0 on the Pi. Same rule upstream.
 * `26317c2` `<assert.h>` re-includable per the C standard; `3a74c04` `<sys/wait.h>` builds under `-ansi`;
   `eee04d8` libmcs-compat helpers (`__signbitd` etc.) made **weak** so a port carrying its own libm
   (MicroPython) no longer hits a multiple-definition link error.
@@ -499,6 +511,26 @@ declaration with no definition — i.e. they were previously *link errors or sil
   them unchanged); `IN6_IS_ADDR_MC_*` parenthesise their argument and compare only the scope nibble (RFC 4291).
   `libdl.a` is installed as an alias of libphoenix.a, as glibc and musl ship one — CPython appends `-ldl` once
   `backtrace()` exists. Tests `test-libc-execinfo` 4/0, `misc netinet_in_ipv6_mreq` 3/0 on the Pi.
+- **A hostname, and local name resolution without a name server** (`bb362a8`, new `net/hosts.c`).
+  `gethostbyname(gethostname())`, which QuakeSpasm and Quake III use to find their own address, failed
+  twice over: nothing ever calls `sethostname()`, so the kernel hostname was empty, and `getaddrinfo()`
+  sent every name to lwIP, whose resolver knows only `localhost` and dotted quads. `gethostname()` now
+  falls back to the first word of `/etc/hostname` (and stores it, so `uname()` agrees), else
+  `localhost`. `getaddrinfo()` answers `/etc/hosts` (IPv4 lines, aliases), `localhost` and
+  `*.localhost` (RFC 6761) and the own hostname (127.0.1.1) itself, before asking lwIP; the empty
+  name is `EAI_NONAME`, as in glibc and musl. Numeric addresses and non-IPv4 families still go straight
+  to lwIP without a file read, because the filesystem server that owns `/` resolves its own server's
+  address. The image ships `/etc/hosts` and `/etc/hostname` (project `795a7cc`; the Pi names itself
+  `phoenix-rpi4`). Test `libc/netdb` (tests `45e6c2d`), 14/0 on the Pi; `uname -n` prints
+  `phoenix-rpi4`.
+- **Stack-protector runtime** (`cfab972`): `__stack_chk_guard` and `__stack_chk_fail()`, which GCC
+  references for `-fstack-protector*` on every Phoenix target, so a protected object no longer fails to
+  link. The guard is seeded once at the top of `_startc()` and survives `fork()`;
+  `__stack_chk_fail()` prints `*** stack smashing detected ***: <prog> terminated` with one `write()`
+  and aborts. **No component is built with the protector yet**, and the seed is weak: the kernel
+  passes no entropy to a new process, so it mixes the counter, the boot time, the pid and the startup
+  addresses (TD-28: take random bytes from the kernel). Test `libc/stack-protector` (tests `38216d2`),
+  4/0 on the Pi.
 
 | area | what landed | what it unblocked |
 | --- | --- | --- |
@@ -556,6 +588,21 @@ declaration with no definition — i.e. they were previously *link errors or sil
   any LP64 target, so `F_GETLK`/`F_SETLK`/`F_SETLKW` handed the kernel a broken pointer. Read as
   `unsigned long` (musl's pattern); `struct flock` and `F_{RD,WR,UN}LCK` now come from the shared
   `<phoenix/posix-fcntl.h>` instead of duplicate local definitions.
+
+### Performance
+
+* ★ `a74a01f`, `fcb13f1` **`malloc()` skips the heap lock while the process is single-threaded.** Every
+  `malloc()`, `free()` and `realloc()` took and released a mutex, and on Phoenix each mutex operation is
+  a syscall: ~4.5 µs per lock/unlock pair, more than the allocation itself. `beginthreadex()` (the one
+  symbol every thread-creation path ends in: `pthread_create()`, `alarm()`'s helper, `beginthread()`
+  and the servers that call it directly) is now a C function that sets `__libc_multithreaded` before
+  issuing the syscall, and the allocator takes its lock only when that flag is set, as glibc does with
+  `SINGLE_THREAD_P`. The flag only goes 0 → 1 and is set before the second thread exists, so a thread
+  that reads 0 is alone. Syscall numbers and the kernel are unchanged. On the Pi: **654 ns per
+  `malloc(64)`+`free()` pair single-threaded against 9.1 µs multithreaded** (`libc/bench-malloc`), and a
+  200 000-iteration bash loop **75.9 → 7.1 s**; `libc/malloc-mt` 4/0, `libc/pthread` 41/0 (tests
+  `6aee78c`, `c33fd40`). Multithreaded programs still pay the full cost: a user-space fast path for
+  every mutex (a syscall only on contention) is not done.
 
 ### aarch64 / Pi-specific
 
@@ -616,6 +663,11 @@ races; `libc/math` (`c99extra`, `erf`, `gammaextra`, `round`, `exp` — which ca
 `rusage_times`, `unistd_sysconf`, `stubs_fixed`, the `*at` family, `fchdir` success *and*
 never-false-succeed); `libc/string` wide-char/wctype and `strerror` text; `printf/snprintf_sizing`
 (the exact `vsnprintf(NULL, 0)` contract `839b24b` depends on); `libc/time` `strptime` and `timeval`.
+Added 2026-09-30/10-01 with the fixes above: `libc/netdb` (hostname and local resolution),
+`libc/sa_restart` (path queries while SIGCHLD arrives), `libc/stack-protector` (an overflow in
+protected code aborts with the message; reaps the child before reading it), `libc/malloc-mt` and
+`libc/bench-malloc`, `mem/mprotect` unaligned lengths, `libc/socket` `AF_INET6` (a real IPv6 socket or
+`EAFNOSUPPORT`), `gai_strerror` for every `EAI_*` code, and `psh/mkdir -p`.
 
 **Harness work**: `b63c495`/`99d28b7`/`7c913a3` encode `posix_open`'s new race contract (every open
 either succeeds or returns `EBADF`, and the sum is non-zero so the test cannot pass vacuously) instead of
@@ -673,8 +725,8 @@ All are userspace servers in the standard Phoenix idiom (`mmap(MAP_PHYSMEM)` + `
 | device | driver path | exposes | state |
 |---|---|---|---|
 | ★ VL805 xHCI USB 3.0 host controller + BCM2711 PCIe bridge | `devices/usb/xhci/` (`xhci.c`, `bcm2711-pcie.c`) | `libusbxhci` HCD behind the `usb` daemon | Working: full ring/slot/endpoint model, control and interrupt-IN transfers (no bulk/isochronous path in the driver), root-hub and behind-hub addressing, error recovery. Reliable enumeration after the two-step-BSR fix (§3). |
-| V3D 4.2 GPU render server | `devices/gpu/rpi4-v3d-async/` | `/dev/v3d-async` (a DRM-shaped protocol: BOs, submits, fences, sync objects) | Started at boot. Owns the GPU and runs every client's bin/render/TFU jobs asynchronously; buffers are shared with the display server and the clients through the kernel's `memExport`. Mesa's `v3d` and `v3dv` reach it through libdrm (`libdrm_phoenix` port). See note. |
-| HDMI display server (KMS) | `devices/video/rpi4-kms/` | `/dev/kms` (KMS-shaped: planes, CRTC, atomic flips, vblank events, dumb buffers) | Started at boot. The firmware's display planes, 60.00 fps flips with vblank events, fence-gated flips from the render server, scaled lower modes, console handover. No fbdev emulation. |
+| V3D 4.2 GPU render server | `devices/gpu/rpi4-v3d-async/` | `/dev/v3d-async` (a DRM-shaped protocol: BOs, submits, fences, sync objects) | Started at boot. Owns the GPU and runs every client's bin/render/TFU jobs asynchronously; buffers are shared with the display server and the clients through the kernel's `memExport`. Mesa's `v3d` and `v3dv` reach it through libdrm (`libdrm_phoenix` port). Per-buffer trace lines print only with `-v`, the periodic queue statistics only with `-s <ms>` (devices `4750a2d`; `v3dasync-ping qstats` reads them on demand). See note. |
+| HDMI display server (KMS) | `devices/video/rpi4-kms/` | `/dev/kms` (KMS-shaped: planes, CRTC, atomic flips, vblank events, dumb buffers) | Started at boot. The firmware's display planes, 60.00 fps flips with vblank events, fence-gated flips from the render server, scaled lower modes, console handover. No fbdev emulation. Per-buffer import/release lines only with `-v` (`4750a2d`). |
 | Shared-memory server | `devices/misc/shmsrv/` | `/shm` (`shm_open`, `memfd_create` backing) | Started at boot; `wl_shm` pools, keymaps and the xshmfence pages of DRI3 clients. |
 | VideoCore property mailbox | `devices/misc/rpi4-vcmbox/` | `/dev/vcmbox` + `libvcmbox` | Complete and the mandatory path — see note. |
 | HDMI framebuffer (legacy) | `devices/video/rpi4-fb/` | `/dev/fb0` (read/write + `RPI4FB_GETMODE`) | Source kept, **not a component and not started** since the KMS server replaced it (TD-27: one stand-alone HEVC demo still writes `/dev/fb0`). |
@@ -682,7 +734,7 @@ All are userspace servers in the standard Phoenix idiom (`mmap(MAP_PHYSMEM)` + `
 | BCM2711 EMMC2 SD card | `devices/storage/bcm2711-emmc/` | `/dev/mmcblk0`, ext2 root | Boots from SD. UHS-I DDR50, 128 KiB multi-block transfers, **ADMA2 scatter-gather for reads *and* writes** (§4). |
 | BCM43455 SDIO WiFi | `devices/wifi/rpi4-wifi/` (4 870 lines) + `lwip/drivers/wifi43455.c` | `/dev/wifi` (text scan/ctl, incl. `leave`/`status`), `/dev/wifidata` (raw frames), `wifi` CLI (`connect`/`disconnect`/`status`/`scan`), lwIP netif `wl2` | Started at boot (sd and nfsroot); reads its firmware from `/lib/firmware/brcm/` (linux-firmware, fetched and pinned at build time). Firmware download, WPA2 join via the firmware supplicant, full-MTU data path. Ordinary sockets route over the netif (ping 5/5, AP-side capture); the netif joins, rejoins and leaves at run time by following `/etc/wifi.conf`, releasing its DHCP lease on leave. Throughput is poll-bound (§4). |
 | BCM43455 Bluetooth | `devices/bt/rpi4-hci/` | `/dev/hci0` (raw H4 HCI), `btctl` | Controller reset, patch-RAM upload, `BD_ADDR`, HCI inquiry. Raw HCI byte stream only — no host stack (L2CAP/GAP) above it. |
-| PWM audio (3.5 mm jack) | `devices/audio/rpi4-audio/` | `/dev/audio0` (s16 PCM write) | Self-chained DMA ring, DREQ-paced, with playback-rate backpressure and PIO fallback. No `snd` backend; audible sign-off is attended. |
+| PWM audio (3.5 mm jack) | `devices/audio/rpi4-audio/` | `/dev/audio0` (s16 PCM write) | Self-chained DMA ring, DREQ-paced, with playback-rate backpressure and PIO fallback. A ring drain is logged only while the device is open, i.e. a real underrun (`f35c820`). No `snd` backend; audible sign-off is attended. |
 | SoC thermal / throttle | `devices/sensors/rpi4-thermal/` | `/dev/thermal`, `/dev/throttled` | Complete for what the SoC allows: telemetry only, the VideoCore firmware owns the trip point. Then used to answer the obvious question about a passively cooled board rendering 3D: **6.3 min under QuakeSpasm, 35.0 °C → a 53–55 °C plateau (flat from t = 240 s), `throttle=0x0` on all 19 samples**, 0 faults — no under-voltage, no ARM capping, no sticky bits, ~5 °C of headroom to the first soft cap. Limits: 6.3 min not 30, one board, open-air bench. |
 | Hardware RNG (iproc RNG200) | `devices/misc/rpi4-hwrng/` | `/dev/hwrng` | Complete; backs `/dev/urandom` and `getentropy`. |
 | GPIO | `devices/gpio/rpi4-gpio/` | `/dev/gpio` (snapshot), `RPI4GPIO_GETPIN` | **Read-only by design.** Driving outputs needs a bench rig and is deferred. |
@@ -794,6 +846,12 @@ Mesa with a measured cost and benefit.
   attaches directly to the kernel log port `{0,0}` instead of going through a `/dev/kmsg` devfs node
   (nothing registers one on this board).
 - `filesystems/dummyfs/srv.c`: srv-init stabilisation and cleanups; `dummyfs` is the pre-takeover RAM `/`.
+  A `-m <mountpoint>` server now waits for its mount point, polling every 100 ms for up to 5 s
+  (`c99da26`). On SD boot `dummyfs -m /tmp` starts in parallel with the SD server, which registers `/`
+  only once the card is up, so it failed at once (`dummyfs mount failed` in 46 of 46 SD boots) and `/tmp`
+  stayed on the card. Netboot and NFS-root boots, where the RAM root is already up, resolve on the first
+  try and do not wait. ⚠ Not yet confirmed on an SD boot that `/tmp` is RAM again: the fix was gated on
+  netboot only. Same code upstream.
 - ★ `filesystems/ext2/`: fs-global operation serialisation — see §3.
 - ★ `lwip/port/`, `lwip/include/arch/`: `sys_mbox_trypost_coalesce`, `dmammap_cached`, the netif-driver
   list exposed for out-of-tree netifs, `/dev/ipstats`, socket-layer fixes (§3), and lwIP checksum
@@ -995,6 +1053,16 @@ Pi 4 drivers whose *mechanism* generalises even where the register does not.
   before `lwip_ioctl` could set it (so the socket stayed blocking), `getnameinfo` could write past the
   caller's buffer when only the host *or* only the service was requested, and `getifaddrs` did not
   report all interfaces.
+- ★ `lwip/port/sockets.c` `d080252` + `83a56d5` — **`socket(AF_INET6)` returned an IPv4 socket** in a
+  build without IPv6 (the default, and this board's). `lwip_socket()` ignores the domain, so the call
+  succeeded and the caller's first `sockaddr_in6` operation failed with `EIO` (vkQuake:
+  `UDP6_OpenSocket: Input/output error`); programs that probe IPv6 by `socket()` alone concluded it
+  worked. It is now `EAFNOSUPPORT`, the value quake3e, xtrans, lighttpd and redis test to fall back to
+  `AF_INET`. The first fix did nothing, and why is worth knowing: `lwip/sockets.h` defines `AF_INET6` as
+  `AF_UNSPEC` (0) when IPv6 is off, so the check compared the requested domain (the system's 10) with 0
+  and never matched. The host test ran against glibc's `AF_INET6` and could not see it; the Pi run of
+  `test-libc-inet-socket` did, and `83a56d5` compares with the system constant. 8/0 on the Pi (tests
+  `354c97b`). Same code upstream.
 - The ~20-commit V3D "corrupt control list" arc (`6502f67`, `1e0d1c2`, `6c1e321` and the diagnostics
   around them) converged on two lifetime bugs in the winsys' own BO table rather than anything in the
   GPU: BO handles and closed BOs' CPU addresses were being recycled, so a stale handle resolved to a
@@ -1215,21 +1283,21 @@ The new userland recipes are all in `phoenix-rtos-ports/<name>/port.def.sh`. Lic
 
 | port | version | notes |
 |---|---|---|
-| **★ python** | 3.14.4 | Static `python3` + extension modules, `.so` `dlopen`, zlib/ssl/hashlib (OpenSSL 3.5.9: TLS 1.3, CA-verified HTTPS to example.com and python.org on the Pi), curses. The heaviest single proof that libphoenix is a usable POSIX libc. 302-line recipe, PSF-2.0 |
+| **★ python** | 3.14.4 | Static `python3` + extension modules, `.so` `dlopen`, zlib/ssl/hashlib (OpenSSL 3.5.9: TLS 1.3, CA-verified HTTPS to example.com and python.org on the Pi), curses. Since 2026-09-30 also `pyexpat`, `_elementtree`, `_asyncio`, `termios`, `_lsprof` and `syslog` (ports `2570fc3`: configure found all six, but a static interpreter builds only `Setup.local` modules, so `xml.etree`, `plistlib`, C asyncio, `tty`/`getpass` and cProfile were missing; the recipe now checks every `PyInit_*`), and computed gotos in the eval loop (`04895d0`: configure's run test answers no in a cross build; not measured on the Pi). With `termios` the interactive REPL should be PyREPL (`PYTHON_BASIC_REPL=1` for the old one). The heaviest single proof that libphoenix is a usable POSIX libc. 302-line recipe, PSF-2.0 |
 | **★ coreutils** | 9.5 | All 104 GNU tools, output verified bit-exact against the host. Also runs the gnulib `tests/*.sh` suite under the ported bash. GPL-3.0-or-later |
 | **★ bash** | 5.2.21 | Fully interactive GNU shell (job control, readline). GPL-3.0-or-later |
-| **★ sqlite3** | 3.53.4 | In-memory + file VFS, `integrity_check=ok`; multi-process rollback-journal proven over real `fcntl` locks. WAL is single-process only (no `xShmMap`) |
-| **★ redis** | 7.2.4 | Serves 241 commands over lwIP TCP; RDB persistence works. `MALLOC=libc`, `ae_select` event loop. Its crash-report backtraces use libphoenix's `dladdr()` since the port's own stub was dropped (`63a9cf5`) |
+| **★ sqlite3** | 3.53.4 | In-memory + file VFS, `integrity_check=ok`; multi-process rollback-journal proven over real `fcntl` locks. WAL is single-process only (no `xShmMap`). The amalgamation guesses `HAVE_*` only for Linux and macOS, so the VFS did `lseek()`+`read()` per page; it now uses `pread`/`pwrite` and `localtime_r`, and has the SQL math functions (ports `9b1975a`) |
+| **★ redis** | 7.2.16 | 7.2.4 → 7.2.16 on 2026-09-30 (ports `78e4f6f`) for CVE-2025-49844 (a Lua use-after-free reachable by any client allowed `EVAL`, CVSS 10) and the other 7.2.x security fixes; it stays on 7.2, the last BSD-3-Clause series. Serves 241 commands over lwIP TCP; RDB persistence works. `MALLOC=libc`, `ae_select` event loop. Its crash-report backtraces use libphoenix's `dladdr()` since the port's own stub was dropped (`63a9cf5`) |
 | **★ sdl2_kmsdrm** | 2.30.12 | Real SDL 2.30.12 with its **stock KMSDRM and Wayland video drivers** on Mesa GBM/EGL, and two Phoenix backends written for it: `src/core/phoenix` (HID input from `/dev/kbd0` + `/dev/mouse0`, incl. `SDL_TEXTINPUT`) and `src/audio/phoenix` (pull model over `/dev/audio0`). Carried fixes of general interest: submit the frame before waiting for the previous flip (Quake II 30 → 60 fps), release the locked GBM buffers before destroying the EGL surface (upstream `9cc2f248f5`, an exit use-after-free), condition-variable timeouts on the monotonic clock. One `libSDL2.a` serves full screen and windowed. Zlib licence. (It replaced the first `sdl2` port, whose `/dev/fb0` video backend was removed with the first GPU stack) |
 | **★ libnfs** | 6.0.2 | Backs NFS-as-rootfs. Carries three real NFSv4 bug fixes (see §3). LGPL-2.1 |
 | xorg_libs | 2023.2 | 24 tarballs in one recipe (libX11 1.8.7, libxcb 1.16, libXt/Xaw/Xmu/Xpm/Xext/Xrandr/Xrender, xcb-util family, pixman 0.42.2, xtrans, xkbfile). Version anchored on xorgproto |
-| xorg_server_drm | 21.1.24 | The X server of the image: stock Xorg with the **modesetting** driver and **glamor** on GLES 3.1 over libdrm, DRI3/Present with a Phoenix `xshmfence` backend (`libxshmfence_phoenix`), phxhid input. A GL window runs at 60.00 fps vsynced (485 unsynced). `startx` starts it with Window Maker |
+| xorg_server_drm | 21.1.24 | The X server of the image: stock Xorg with the **modesetting** driver and **glamor** on GLES 3.1 over libdrm, DRI3/Present with a Phoenix `xshmfence` backend (`libxshmfence_phoenix`), phxhid input. A GL window runs at 60.00 fps vsynced (485 unsynced). `startx` starts it with Window Maker. **Until 2026-09-30 X had no keyboard:** `/dev/kbd0` has one opener, the console releases it only when the KMS server sees X's first plane, and phxhid gave up after 1 s of retries. It now leaves a busy device pending and retries it from its timer, every 100 ms for 30 s and then every second (ports `722d90b`) |
 | xorg_server *(removed)* | 21.1.24 | The first stack's X server (kdrive, removed with it in 2026-09). Xorg with a **new Phoenix DDX** in-tree at `xorg_server/files/ddx/` (`fbdev.c` 1020 lines, `ddxLoad.c` 631, built-in keymap, HID→evdev map). Both a software-fb and a glamor/GPU server are built. The GPU server additionally carries patches to upstream glamor. **The set shrank on 2026-09-09 and the reason is the interesting part:** it was an R↔B swap on `XPutImage`'d content (RGBA transfer format), a screen-pixmap upload Y-mirror plus its symmetric download flip, an extension of that flip to the `glamor_spans.c` transfer sites, and the `DestroyPixmap` hook-chain fix in §3. All three Y-flip compensators are now **retired**: they existed because Mesa forced `Y_0_TOP` for the 1920x1080 glamor screen pixmap under a heuristic that tests SIZE, not scanout-ness (`st_atom_framebuffer.c`, `fb->Width >= 1024 && fb->Height >= 768`), even though that pixmap is a plain GL texture presented by `glReadPixels` into a shadow — nothing about it is scanout-backed. Forcing `Y_0_TOP` put every glamor GL path into a flipped coordinate world held upright by hand-rolled flips, and any path that missed one emitted its box at `y' = H-1-y`. Opting this one context out (`phx_scanout_flip_gate`, mesa `d5852136ba0`; shim clears it before `st_create_context`) leaves the pixmap `Y_0_BOTTOM` — plain upstream behaviour — and deletes all three compensators, which is a net *removal* of code. So what remains is the R↔B swap, the `DestroyPixmap` chain fix, and one new non-glamor patch to `os/connection.c` that asks for a 256 kB receive ring (see the AF_UNIX row in the kernel performance table). Build-lineage caveat, stated because this section otherwise reads as though all X lives in the ports repo: `xorg_server/` has no `patches/` directory, so the glamor-accelerated server is built from the coordination repo's `tools/x11-port/build-xserver-core.sh` path instead |
 | xorg_fonts | 2.13.2 | freetype 2.13.2 + fontconfig 2.14.2 + cairo 1.16 + expat + libXft/libXfont2/libfontenc + PCF fonts (`font-misc-misc`, `font-cursor-misc`, `font-adobe-75dpi`, `encodings`, `font-alias`). Two of those are mandatory rather than decorative: `font-cursor-misc` is a separate upstream package and the only source of the `cursor` font every `XCreateFontCursor` caller opens, and `font-alias` is what fixes Xt's `Cannot convert string "8x13" to type FontStruct`. **A generalisable trap for fontconfig on a network root:** point it at `/usr/share/fonts/truetype` only, never the parent — the X core bitmaps are served by the X server's own `-fp` and never resolve through Xft, so indexing them buys nothing, and it made WindowMaker's first Xft font load `FT_New_Face`-open all **412 core PCFs** over NFS. That took desktop startup to 5 min 40 s and was misread as "the window manager does not draw" for a night; root-caused with this fork's own `libdbg` (`dbg_arm_watchdog` + `addr2line`), which named the stack `WMCreateFont → XftInit → FcConfigBuildFonts → FcFileScanFontConfig → FT_New_Face → sys_open`. Coord `71ab64d9a`, ports `de63acf`: startup 5 min 40 s → ~1 min |
 | xorg_apps | 1.1.2 | xcalc, xclock, xlogo, xedit (Xaw/Xt clients) in one recipe, anchored on xcalc |
 | windowmaker | 0.95.9 | Window manager; the desktop actually used on HDMI. GPL-2.0-or-later |
 | xterm | 396 | Interactive terminal emulator over `/dev/ptmx` — see the pty gap in §3 |
-| dillo | 3.2.0 | Renders live HTTPS pages under X11 (TLS via mbedTLS in-process; verified on the first stack's X server). GPL-3.0-only |
+| dillo | 3.2.0 | Renders live HTTPS pages under X11 (TLS via mbedTLS in-process; verified on the first stack's X server). Configured with the target paths (`/etc/dillo`, `/bin`, `/usr/lib/dillo`) instead of the build tree, and ships `/etc/dillo` with fonts the image has (ports `301cc69`). GPL-3.0-only |
 | mc | 4.8.31 | Midnight Commander, full-screen curses app. GPL-3.0-or-later |
 | nano | 9.2 | Editor; gnulib-based, hence two gnulib patches. GPL-3.0-or-later |
 | xbill | 2.1 | Small Xaw game — an X11 client-stack smoke test. GPL-2.0-or-later |
@@ -1242,14 +1310,15 @@ The new userland recipes are all in `phoenix-rtos-ports/<name>/port.def.sh`. Lic
 | **★ ffmpeg** *(removed)* | 6.1 | The decode-only library port, removed on 2026-09-30 because nothing linked it any more: `video_player` builds its own FFmpeg 6.1 from the same release tarball. The decode core is hardware-proven — MJPEG (plane-0 avg 127 vs host ffmpeg 127.03) and H.264 (avg 123, bit-exact) decode on the Pi, displayed on the first stack's framebuffer and in an X window (2 898 frames, 0 faults). LGPL-2.1-or-later, built without `--enable-gpl`. Its own porting gap: heavy decoders overflow the default main-thread stack, so the decode body runs on an ≥8 MB pthread — the same `SIZE_USTACK` ceiling as coreutils, reached from a different direction |
 | **★ mesa_drm** | 26.2.0 | Mesa on the DRM path: gallium `v3d` (+ `vc4`/`kmsro`), GBM, EGL (drm, surfaceless, Wayland, X11), GLES 3.1, desktop GL and `v3dv`, all static. 16 carried patches (see the V3D note in the drivers section). MIT |
 | **★ libdrm_phoenix** | 2.4.134 | libdrm with a Phoenix backend: the DRM ioctls map to the render server (`/dev/v3d-async`) and the KMS server (`/dev/kms`) protocols, so Mesa, SDL, Xorg and wlroots use it unmodified. MIT. **Flip fence fix (G5, `38cb9c0`):** the implicit flip fence looked a framebuffer's buffer up through the GEM handle `ADDFB2` named, and wlroots (labwc) closes that handle right after `ADDFB2`, as DRM allows (a framebuffer holds its buffer). So every compositor flip went out with no fence, and the display server could scan out a buffer whose composite was still queued behind a client's GPU job: windowed SuperTuxKart showed an older frame between two newer ones in 21–26 % of moving frames. The buffer name is now kept from `ADDFB2`; `drmprobe compositor_flip` (`0615a05`) reproduces labwc's buffer path. On the Pi: 0 reversals in 1266 moving frames, 1421 of 1422 labwc flips gated ([write-up](gpu-new-lane/stk-window-frame-reversal.md)) |
-| wayland_phoenix | 1.24.0 | The one libwayland of the system: libwayland 1.24.0, wayland-protocols 1.49 and libxkbcommon 1.13.2, with a small library filling libphoenix gaps for Wayland clients and compositors and the Phoenix compat headers. Every consumer — `mesa_drm`, `sdl2_kmsdrm`, `gtk3_wayland`, `xfce_wayland`, `labwc_desktop`, `atril_wayland`, `video_player`, `libxshmfence_phoenix` — takes them from here; since 2026-09-30 the separate `wayland` port is gone and `labwc_desktop` no longer builds its own copy. MIT AND BSD |
+| wayland_phoenix | 1.24.0 | The one libwayland of the system: libwayland 1.24.0, wayland-protocols 1.49 and libxkbcommon 1.13.2, with a small library filling libphoenix gaps for Wayland clients and compositors and the Phoenix compat headers. Every consumer — `mesa_drm`, `sdl2_kmsdrm`, `gtk3_wayland`, `xfce_wayland`, `labwc_desktop`, `atril_wayland`, `video_player`, `libxshmfence_phoenix` — takes them from here; since 2026-09-30 the separate `wayland` port is gone and `labwc_desktop` no longer builds its own copy. libxkbcommon and libwayland-cursor compile in only target paths (`/usr/share/X11/xkb`, `/etc/xkb`, `/usr/share/icons`; ports `4fb7f65`, `377f219`), checked by a strip-and-grep of the archives — before, every GTK, XFCE and labwc program carried a `.buildroot` path. MIT AND BSD |
+| xkeyboard_config | 2.48 | The XKB keyboard data at `/usr/share/X11/xkb` (rules, keycodes, types, compat, symbols; 255 files, 2.2 MiB), data only (ports `9bf4a23`). Without it every GTK/XFCE program logged `XKB-338`/`XKB-822` errors and fell back to a built-in US keymap. Nothing `depends=` on it, so `ports.yaml` lists it (project `695d2dd`). MIT |
 | dbus | 1.16.2 | The session bus for XFCE (xfconfd activation). AFL-2.1 OR GPL-2.0-or-later |
-| gtk3_wayland | 3.24.52 | GTK 3, Wayland backend only, with GLib 2.88, Pango 1.54, cairo 1.18, gdk-pixbuf, ATK and gtk-layer-shell, static. LGPL |
+| gtk3_wayland | 3.24.52 | GTK 3, Wayland backend only, with GLib 2.88, Pango 1.54, cairo 1.18, gdk-pixbuf (PNG, JPEG and, since ports `bfbc796`, GIF loaders), ATK and gtk-layer-shell, static. LGPL |
 | labwc_desktop | 0.20.2 | wlroots 0.20 + labwc (compositing on GLES2 or pixman), foot 1.28, fuzzel 1.15, swaybg; libwayland and libxkbcommon come from `wayland_phoenix`. GPL-2.0-only (labwc) AND MIT |
 | xfce_wayland | 4.20 | XFCE 4.20 on labwc: libxfce4util, xfconf, libxfce4ui, garcon, exo, libxfce4windowing, Thunar, the panel, xfdesktop, settings, appfinder; `/bin/xfce-session`. GPL-2.0-or-later / LGPL |
 | atril_wayland | 1.28.7 | Atril + Poppler with the PDF backend linked in (no GModule plugins on a static target). GPL-2.0-or-later |
-| video_player | 6.1 | ffplay (FFmpeg 6.1, LGPL build) with SDL KMSDRM + Wayland, the `video-play` launcher, gtk-video (a small GTK 3 player) and generated demo clips. LGPL-2.1-or-later AND BSD-3-Clause |
-| libjpeg-turbo | 3.0.4 | IJG AND BSD-3-Clause AND Zlib |
+| video_player | 6.1 | ffplay (FFmpeg 6.1, LGPL build) with SDL KMSDRM + Wayland, the `video-play` launcher, gtk-video (a small GTK 3 player) and generated demo clips. Since ports `151ec00` FFmpeg also has zlib (`--disable-autodetect` had turned it off, so Matroska with compressed tracks and MOV with a compressed header did not open), MPEG-1/2 video, AC-3/E-AC-3/DTS/ALAC audio, the MPEG-PS, FLV and IVF demuxers and the `yadif`/`bwdif` deinterlacers; the `CONFIG_GPL 0` gate still holds. LGPL-2.1-or-later AND BSD-3-Clause |
+| libjpeg-turbo | 3.0.4 | Built with its Neon SIMD kernels since ports `5abad15` (54 `jsimd_*_neon` functions; GCC ≥ 12 builds them from intrinsics, so the old "needs the asm path" reason was stale). Every JPEG consumer gets them: gdk-pixbuf, dillo, fltk, WindowMaker, SuperTuxKart. IJG AND BSD-3-Clause AND Zlib |
 | libpng | 1.6.40 | |
 | libogg | 1.3.5 | Ogg container; STK/game music |
 | libvorbis | 1.3.7 | Vorbis decode — where the pthread-stack bug in §3 was found |
@@ -1278,7 +1347,11 @@ was then replaced by one `openssl` port at **3.5.9** (`85c21b1`, `ports.mk` in p
 compiled into libcrypto), async (needs `getcontext`), afalg and devcrypto are disabled. Consumers
 repointed: python (`ssl`/`hashlib`), lighttpd, wpa_supplicant, sscep, openiked and azure_sdk (the
 last not compile-tested). Verified on the Pi: `openssl version` reports 3.5.9, Python negotiates TLS 1.3, and
-CA-verified HTTPS reaches example.com and python.org. **Known limitation for other targets:**
+CA-verified HTTPS reaches example.com and python.org. Since ports `d0a1b1d` the aarch64 target is
+compiled `-O2` instead of the `-Os` carried over from the small targets (X25519, the ML-KEM half of the
+default X25519MLKEM768 key share, P-384 and P-521 are plain C) and enables `ec_nistp_64_gcc_128`, the
+constant-time 64-bit P-224/P-384/P-521 code the distributions build; P-256 stays on the assembler. Not
+yet measured with `openssl speed` on the Pi. **Known limitation for other targets:**
 openvpn 2.4.7 does not build against OpenSSL 3.x (its compatibility shim collides with 3.x
 macros; 2.4.12 was checked too) and needs a move to 2.6.x; it is not in the Pi image.
 **`dropbear` 2018.76 → 2026.94** (`73a3441`): ed25519 host and user keys and the curve25519,
@@ -1288,7 +1361,24 @@ define no target sets, for a login daemon in none of the Phoenix repos; password
 stock `getpwnam()`/`crypt()` path) and the autoconf patch (the bundled `config.sub` knows
 `*-phoenix`). The `select()` blocking workaround stays. The post-auth privilege drop and Unix-socket
 forwarding are off, because libphoenix has no `setresuid()`/`setresgid()`. Verified: password login
-as root from OpenSSH 10.2. Also: `zlib` 1.2.11 → **1.3.1**; `mbedtls` 2.28.0 → **2.28.10**; `wpa_supplicant` 2.9 → **2.11**; `lua` **5.3.6 → 5.4.7** (whole patch set migrated and rebased, incl. the healthcheck/priority patches); `curl` gains `--with-zlib` and `--with-ca-bundle=` (a cross build silently left `CURL_CA_BUNDLE` undefined, so *every* HTTPS transfer had no trust store); `lighttpd` gains a webdav mmap guard plus a fix to its static-plugin-table generation (the old `grep mod_` also matched **commented-out** modules, compiling 13 plugins where the config enables 9), and since 2026-09-30 the image's lighttpd starts as shipped — a missing comma in `lighttpd.conf`'s module list, the absent `/usr/www` document root (now with an index page) and `/var/run` (project `d84b1c2`), and an HTTPS listener that pointed at certificates the image does not ship, now commented out until one is installed (`69a1df9`); verified serving the page to the host; `busybox` config enables awk, xz decompress and seamless tar.
+as root from OpenSSH 10.2. Also: `zlib` 1.2.11 → **1.3.1**; `mbedtls` 2.28.0 → **2.28.10**; `wpa_supplicant` 2.9 → **2.11**; `lua` **5.3.6 → 5.4.7** (whole patch set migrated and rebased, incl. the healthcheck/priority patches); `curl` gains `--with-zlib` and `--with-ca-bundle=` (a cross build silently left `CURL_CA_BUNDLE` undefined, so *every* HTTPS transfer had no trust store), and since ports `9d59e34` builds only the HTTP(S), FTP(S) and FILE protocols — dict, gopher, telnet, tftp, smb, rtsp, ldap, imap, pop3 and smtp, where much of 7.64.1's CVE list lives, are off. That is attack-surface reduction; the 2019 version itself is still the debt (curl 8.x on OpenSSL 3.5 is a separate step); `micropython`'s `tls` module is built on the mbedTLS 3.6 MicroPython bundles instead of abandoned axTLS, which the recipe had selected by enabling both (ports `9b7bd79`); `lighttpd` gains a webdav mmap guard plus a fix to its static-plugin-table generation (the old `grep mod_` also matched **commented-out** modules, compiling 13 plugins where the config enables 9), and since 2026-09-30 the image's lighttpd starts as shipped — a missing comma in `lighttpd.conf`'s module list, the absent `/usr/www` document root (now with an index page) and `/var/run` (project `d84b1c2`), and an HTTPS listener that pointed at certificates the image does not ship, now commented out until one is installed (`69a1df9`); verified serving the page to the host; `busybox` config enables awk, and since project `854cbc0` no longer builds its own grep, sed, tar, gzip/gunzip/zcat and unxz/xzcat: the GNU ports are the only copies. Before, the busybox 1.27.2 applets in `/bin` came first on `PATH` and shadowed the GNU tools in `/usr/bin` (including the gunzip with CVE-2021-28831). bzip2 and the coreutils twins (`cat`, `cp`, `dd`, `ls`, …) stay, the latter because coreutils `dd` cannot yet read a block device on Phoenix (`fstat` is not implemented for it).
+
+**Log noise, 2026-09-30.** A scan of 16 UART logs (~5 600 distinct lines, classified per program;
+[catalogue](misc/2026-09-30-log-noise-catalogue.md)) found five real defects behind the noise, each
+described in its own section: X had no keyboard (the `xorg_server_drm` row), SD `/tmp` was not RAM
+(dummyfs, drivers §2), `gai_strerror()` had an empty table and `mprotect()` rejected unaligned lengths
+(libphoenix and kernel §3), and lwIP handed out IPv4 sockets for `AF_INET6` (drivers §3). The rest were
+messages for conditions that are normal here, now quiet or at debug level: SDL skips its Wayland probe
+when no Wayland variable is set, no longer forces debug logging, and gives the Phoenix HID mouse a
+native relative mode (`e037ec9`; `SDL_LOGGING=video=debug` brings the lines back); SuperTuxKart keeps
+the default of an absent setting silently, keeps its data and cache under `/tmp/stk` (`f222f21`) and
+skips a PNG colour-emoji font that the PNG-less FreeType cannot load (`8dca12e`); foot does not try to
+seal its SHM memfd, which Phoenix cannot (`ef8541a`), and a shell's SIGHUP death is debug (`6c3ab5d`);
+the XFCE session stops `xfconfd` before the bus and the autostarted foot before labwc (`a444fc3`); the
+panel's missing file-monitor backend and Thunar's missing thumbnailer are debug (`8376dab`); Mesa skips
+the `os_same_file_description` warning, since Phoenix has no `kcmp` (`52263d5`). The GPU and audio
+servers' changes are in the drivers table (§1). After build 6 every tracked noise class was 0 in the
+gate logs.
 
 ### 2. Game ports
 
@@ -1436,6 +1526,7 @@ Further gaps, same evidence standard:
   The variant also decides what gets *built*: `nfs` and `nfs-smoke` link the libnfs **port**, which the ports stage builds *after* core, so neither can be a core default component (that would demand a not-yet-built port during a cold-sysroot build). They are built in `b_build_project` per variant instead (`aa177cd`) — a dependency-ordering constraint any project mixing ports into the boot set will meet.
 - **`lwip/lwipopts.h`** (119 lines) with a documented gigabit tuning series: `LWIP_TCPIP_CORE_LOCKING_INPUT=1` (~1.8× RX, `d2c4a6f`), `LWIP_CHKSUM_ALGORITHM=3` moved into the lwIP `arch/cc.h` to avoid clashing with a stock build (`b49fb77`), `TCP_WND` 32→44×MSS (`0993e81`), `LWIP_INGRESS_CREDIT` (`07ba705`) — NFS read 26.3 → 29.9 MB/s. A second netif token `wifi43455` is registered (`0281848`).
 - **Two further projects ride the same target definitions:** `_projects/aarch64a53-generic-rpi4b/` (an A53-flavoured Pi 4 project — same SoC, generic-A53 core settings, its own `config.txt`; commit `22376b7` corrects its GIC-400 base addresses) and `_projects/aarch64a53-generic-qemu/` with `sources/phoenix-rtos-project/scripts/aarch64a53-generic-qemu.sh` (that path is inside the **project sibling repo**, not the coordination repo's `scripts/`, where every other `scripts/…` reference in these docs lives). **Be precise about what that QEMU lane is: it is plo-only — the kernel never starts.** plo needs a firmware DTB in `x0` and QEMU supplies none, so it faults in early hal init, and `-dtb` does not help; the ceiling is recorded in `docs/misc/2026-09-08-qemu-boot-ceiling.md` so nobody re-attempts it. The lane is still useful, but as a *structural* boot check on cut SD images (`scripts/qemu-boot-sdimage.sh`), not as a place to develop kernel changes. Useful precedent: the generic `_targets/aarch64aXX/generic` split means a third aarch64 board should need only a `_projects/` directory.
+- **2026-09-30 integration changes:** the image names itself — `/etc/hostname` (`phoenix-rpi4` on this board, `phoenix` in the generic skeleton) and a loopback-only `/etc/hosts` (project `795a7cc`), read by libphoenix's new hostname fallback; `user.plo.yaml` runs `mkdir -p /dev /mnt` (project `f3d7670`), which needed `-p` in psh's `mkdir` (utils `99535a2`: the applet had no option parsing, so `mkdir -p /dev` created a directory named `-p` and printed `File exists` at every boot); `ports.yaml` ships `xkeyboard_config` (`695d2dd`); and `busybox_config` drops the applets the GNU ports replace (`854cbc0`, see §1). The game-data stager writes no `;` in Quake `.cfg` comments (each one ran as a command: `Unknown command "the"`) and starts Quake III IPv4-only (coordination `c11905491`, `cbf8d0e4d`).
 - Also: a 1120-line `busybox_config`, a rootfs overlay (`etc/rc.psh`, `etc/ntp.conf` for boot-time clock sync, a curses smoke test), firmware staging + DTB staging helpers (`rpi4b_stageDtb`, `rpi4b_stageFirmware`, with an optional `fdtput` memory patch for the QEMU lane), and `ports.yaml` (266 lines) — the per-project port selection list, whose comments record the deliberate `if: false` → `if: true` promotion order (sdl2 → X11 stack → dillo/nano/mc → python → games).
 
 ### 5. Build system improvements
@@ -1472,6 +1563,7 @@ Everything here is board-independent and reusable. The common theme is *silent s
   - *Dependency and recipe edits.* A dependency's **version** change, and editing a recipe at all, now rebuild the dependents.
 - **★ `ports.mk` second source of truth documented.** `PORTS_SUPPORTED_VERSIONS`/`PORTS_DEFAULT_VERSIONS` expand into `-I`/`-L` flags for every make-built component, so a version there that no longer matches the recipe points the whole system at a `versioned-ports/openssl-<old>/` directory the ports stage never creates. Bumped to 1.1.1w with a comment naming the hazard, and to 3.5.9 together with the new `openssl` port (`066c6c3`).
 - **★ Pin the language standard.** `Makefile.common`: `CFLAGS += -std=gnu17`, `CXXFLAGS += -std=gnu++17`, placed before the `EXPORT_*FLAGS` capture so ports inherit it. gcc ≥ 15 defaults to C23, where an implicit function declaration is a hard error — which breaks every gnulib-based port. No-op on gcc-14.
+- **★ Ports were built at `-O0`.** The same capture order had a second, silent consequence: `EXPORT_CFLAGS`/`EXPORT_CXXFLAGS` are captured before `$(OLVL)` is appended, and autoconf adds no `-O2` of its own when `CFLAGS` is already set, so every autotools port — libnfs (the NFS-root server), mbedTLS, bash, freetype, fontconfig, libX11/xcb, pixman's C paths — was compiled unoptimised. phoenix-rtos-build `71b723d` appends `$(OLVL)` to the exported flags. A second hole in the ports repo: recipes that replace `CFLAGS` with a literal string (`xorg_fonts`, `xorg_libs`, `xterm`, `xorg_apps`, `windowmaker`) lost both the optimisation level and `-mcpu`/`-mtune`; they now set `-O2 -mcpu=cortex-a72 -mtune=cortex-a72` (ports `7879360`). Measured on the Pi: `xz -1` on 64 MiB **122.5 → 61.5 s (2.0×)**; NFS read unchanged (28.4 → 28.6 MB/s, bound by the network and the server); `sha256sum` unchanged. The build produced working binaries either way, which is why nothing pointed at it; it was found by reading the flags while auditing the ports' disabled features ([audit](misc/2026-09-30-port-feature-audit.md)).
 - **★ `PhxVersion` learns upstream letter patch-releases** (`575632a`, `port_manager/version.py`). openssl ships `1.1.1`, `1.1.1a` … `1.1.1w`. PEP 440 knows only `a`/`b`/`c`/`rc` and reads them as **pre**-releases, so `PhxVersion("1.1.1w")` raised `InvalidVersion` and aborted `discover_ports()` outright, while the letters that *did* parse sorted backwards (`1.1.1a < 1.1.1`, the opposite of upstream's meaning). A trailing letter is now translated to a PEP 440 post-release (`a → .post1` … `w → .post23`), giving `1.1.1 < 1.1.1a < 1.1.1w < 1.1.2` for all 26 letters, while `__str__` still returns the original string so namevers and install directories read `1.1.1w`. Covered by doctests and `port_manager_test.py`. (OpenSSL 3.x has no letter releases, so no port in the image uses this any more; the parsing stays.)
 - **★ After a syscall or ABI change, refresh the toolchain's bundled libc before a full-clean build.** A few programs compile with no `--sysroot` and take libc from the toolchain's own bundle (`.toolchain/aarch64-phoenix/aarch64-phoenix/{lib,usr/include}`), such as the standalone radio/probe tools built by their own scripts. `rebuild-rpi4b-fast.sh` refreshes that bundle from the sysroot (`scripts/sync-toolchain-from-sysroot.sh`) only **after** a build that ran the `core` stage, so a full-clean build straight after a syscall change compiles those against the old libc. Run a core pass first, or the sync script by hand, then the full-clean. The 2026-09-30 upstream sync (three syscalls inserted mid-list) was built that way.
 - **Port downloads retry transient HTTP errors** (`b945e2e`, `port_manager`). `wget` retries network errors but not HTTP errors, so one 5xx from an overloaded upstream skipped the remaining tries and fell through to the mirror, which does not carry every file — a clean build died on `xorgproto-2023.2` that way. HTTP 429/500/502/503/504 and refused connections are now retried after 10 s, and the per-try timeout is 30 s (was 5 s).
