@@ -748,34 +748,56 @@ verify_libc_trace_state() {
 	fi
 }
 
-run_phoenix_build() {
+run_build_stages() {
 	local stages="$*"
 	printf 'Build:     ./phoenix-rtos-build/build.sh %s\n' "${stages}"
 	run_build_shell \
 		"set -euo pipefail; export PATH='${repo_root}/.venv/bin':'${toolchain_path}':\$PATH; cd '${buildroot}'; env ${with_tests_env}${log_to_file_env}${libc_trace_env}${libc_diag_env}${fs_diag_env}${kernel_diag_env}RPI4B_DTB_PATH='${dtb_path}' RPI4B_VARIANT='${variant}' TARGET='${target}' ./phoenix-rtos-build/build.sh ${stages}"
+}
 
-	verify_libc_trace_state
+# The CORE stage regenerates the sysroot, so this is the one moment where the
+# toolchain's BUNDLED libc copy can be refreshed from a generated artifact
+# instead of by hand. It matters because some things still compile with no
+# --sysroot and therefore resolve libc out of that bundle: the standalone
+# radio/probe tools (tools/wifi-probe, tools/bt-probe) and the ports whose own
+# build systems replace the framework's flags (python3, redis: the 2026-10-01
+# build 9 shipped both with the PREVIOUS libphoenix -- the fork fix in every other
+# binary, not in the one it was written for -- because the sync then ran after
+# the whole build). A hand-maintained copy goes stale silently, and the measured
+# consequence was five macro VALUES disagreeing with live libphoenix, two pairs
+# swapped (docs/misc/2026-09-04-toolchain-header-skew.md).
+#
+# Not fatal on failure: a stale bundle is a hazard, not a broken build, and
+# the check is also available standalone (--check reports drift only).
+sync_toolchain_bundle() {
+	"${repo_root}/scripts/sync-toolchain-from-sysroot.sh" ||
+		printf 'WARNING: toolchain bundle sync failed; bare-toolchain builds may see a stale libc\n' >&2
+}
 
-	# The CORE stage regenerates the sysroot, so this is the one moment where the
-	# toolchain's BUNDLED libc copy can be refreshed from a generated artifact
-	# instead of by hand. It matters because some things still compile with no
-	# --sysroot and therefore resolve libc out of that bundle: the standalone
-	# radio/probe tools (tools/wifi-probe, tools/bt-probe). (The openssl port was
-	# on this list until 2026-09-30; its 3.x Configure target receives the
-	# framework's sysroot flags.) The refresh runs AFTER the whole build, so after
-	# a libc ABI change (e.g. a syscall renumber) run a --scope core pass first,
-	# then the full-clean. A hand-maintained copy goes stale silently, and the measured
-	# consequence was five macro VALUES disagreeing with live libphoenix, two
-	# pairs swapped (docs/misc/2026-09-04-toolchain-header-skew.md).
-	#
-	# Not fatal on failure: a stale bundle is a hazard, not a broken build, and
-	# the check is also available standalone (--check reports drift only).
-	case " ${stages} " in
+# build.sh runs its stages in a fixed order, so a stage list containing `core`
+# is split in two: everything up to and including `core`, the bundle sync, then
+# the rest (ports, test, project, image) -- which then link the libc just built.
+run_phoenix_build() {
+	local first=() rest=() arg
+	for arg in "$@"; do
+		case "${arg}" in
+		clean | host | fs | core) first+=("${arg}") ;;
+		*) rest+=("${arg}") ;;
+		esac
+	done
+
+	case " ${first[*]} " in
 	*" core "*)
-		"${repo_root}/scripts/sync-toolchain-from-sysroot.sh" ||
-			printf 'WARNING: toolchain bundle sync failed; bare-toolchain builds may see a stale libc\n' >&2
+		run_build_stages "${first[@]}"
+		sync_toolchain_bundle
+		[ "${#rest[@]}" -eq 0 ] || run_build_stages "${rest[@]}"
+		;;
+	*)
+		run_build_stages "$@"
 		;;
 	esac
+
+	verify_libc_trace_state
 }
 
 run_phoenix_build "${build_args[@]}"
