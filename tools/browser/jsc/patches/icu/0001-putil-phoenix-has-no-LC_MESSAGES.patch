@@ -1,0 +1,17 @@
+diff --git a/source/common/putil.cpp b/source/common/putil.cpp
+index ea15fdf..f4b146f 100644
+--- a/source/common/putil.cpp
++++ b/source/common/putil.cpp
+@@ -75,6 +75,12 @@
+ #include <locale.h>
+ #include <float.h>
+ 
++#if !defined(LC_MESSAGES) && defined(__phoenix__)
++/* Phoenix-RTOS: libphoenix's <locale.h> has no LC_MESSAGES (TODO(browser-B1)). ICU asks it
++ * only for the default locale ID, which LC_CTYPE answers the same way there. */
++#define LC_MESSAGES LC_CTYPE
++#endif
++
+ #ifndef U_COMMON_IMPLEMENTATION
+ #error U_COMMON_IMPLEMENTATION not set - must be set for all ICU source files in common/ - see https://unicode-org.github.io/icu/userguide/icu/howtouseicu.html
+ #endif

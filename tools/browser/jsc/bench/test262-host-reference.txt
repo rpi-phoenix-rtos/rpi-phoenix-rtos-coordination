@@ -1,0 +1,34 @@
+FAIL test/built-ins/Function/prototype/arguments/prop-desc.js [sloppy]: Test262Error: Function.prototype.arguments property getter/setter are the same function Expected SameValue(«function arguments() {
+    [native code]
+}», «function arguments() {
+    [native code]
+}») to be true
+FAIL test/built-ins/Function/prototype/arguments/prop-desc.js [strict]: Test262Error: Function.prototype.arguments property getter/setter are the same function Expected SameValue(«function arguments() {
+    [native code]
+}», «function arguments() {
+    [native code]
+}») to be true
+FAIL test/built-ins/Function/prototype/caller-arguments/accessor-properties.js [sloppy]: Test262Error: Function.prototype.arguments and Function.prototype.caller accessor functions should match (%ThrowTypeError%) Expected SameValue(«function caller() {
+    [native code]
+}», «function arguments() {
+    [native code]
+}») to be true
+FAIL test/built-ins/Function/prototype/caller-arguments/accessor-properties.js [strict]: Test262Error: Function.prototype.arguments and Function.prototype.caller accessor functions should match (%ThrowTypeError%) Expected SameValue(«function caller() {
+    [native code]
+}», «function arguments() {
+    [native code]
+}») to be true
+FAIL test/built-ins/Proxy/apply/null-handler-realm.js [sloppy]: Test262Error: Expected a TypeError but got a different error constructor with the same name
+FAIL test/built-ins/Proxy/apply/null-handler-realm.js [strict]: Test262Error: Expected a TypeError but got a different error constructor with the same name
+FAIL test/language/eval-code/direct/arrow-fn-body-cntns-arguments-func-decl-arrow-func-declare-arguments-assign.js [sloppy]: Test262Error: globalThis.arguments unchanged Expected SameValue(«"param"», «») to be true
+FAIL test/language/eval-code/direct/func-decl-a-preceding-parameter-is-named-arguments-declare-arguments-and-assign.js [sloppy]: Test262Error: No global 'arguments' binding Expected SameValue(«true», «false») to be true
+FAIL test/language/eval-code/direct/func-expr-a-following-parameter-is-named-arguments-declare-arguments-and-assign.js [sloppy]: Test262Error: No global 'arguments' binding Expected SameValue(«true», «false») to be true
+FAIL test/language/eval-code/direct/func-expr-no-pre-existing-arguments-bindings-are-present-declare-arguments-and-assign.js [sloppy]: Test262Error: No global 'arguments' binding Expected SameValue(«true», «false») to be true
+FAIL test/language/eval-code/direct/gen-func-decl-fn-body-cntns-arguments-var-bind-declare-arguments-and-assign.js [sloppy]: Test262Error: No global 'arguments' binding Expected SameValue(«true», «false») to be true
+FAIL test/language/eval-code/direct/gen-func-expr-named-fn-body-cntns-arguments-lex-bind-declare-arguments-and-assign.js [sloppy]: Test262Error: No global 'arguments' binding Expected SameValue(«true», «false») to be true
+FAIL test/language/eval-code/direct/gen-func-expr-nameless-fn-body-cntns-arguments-func-decl-declare-arguments-and-assign.js [sloppy]: Test262Error: No global 'arguments' binding Expected SameValue(«true», «false») to be true
+FAIL test/language/eval-code/direct/gen-meth-a-preceding-parameter-is-named-arguments-declare-arguments-and-assign.js [sloppy]: Test262Error: No global 'arguments' binding Expected SameValue(«true», «false») to be true
+FAIL test/language/eval-code/direct/meth-fn-body-cntns-arguments-lex-bind-declare-arguments.js [sloppy]: Test262Error: No global 'arguments' binding Expected SameValue(«true», «false») to be true
+FAIL test/language/expressions/call/tco-non-eval-with.js [sloppy]: RangeError: Maximum call stack size exceeded.
+FAIL test/language/statements/for-in/identifier-let-allowed-as-lefthandside-expression-not-strict.js [sloppy]: SyntaxError: Cannot use the keyword 'in' as a lexical variable name.
+TEST262 rev=7a096c205fd4 runs=7808 pass=7791 fail=17 skipped-files=779 seconds=11.4
