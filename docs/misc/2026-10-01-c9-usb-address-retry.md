@@ -63,3 +63,9 @@ Only the recovery path is proven. The trigger that occurs in the wild (a full-sp
 
 - Ongoing tally: boots without input, and natural `retrying on slot` firings.
 - Old rate: 1.7 %.
+
+| up to | boots with the fix | without USB input | natural `retrying on slot` | `completion code 36` |
+|---|---|---|---|---|
+| 2026-10-01 19:35 (gates 13–17, SD gates, C10, bench `c9nat` ×20) | 63 | 0 | 0 | 0 |
+
+63 clean boots do not yet rule out the old rate: at 1.7 %, 0.983^63 ≈ 34 %. The trigger itself has not occurred, so the natural recovery path has still not been exercised.
