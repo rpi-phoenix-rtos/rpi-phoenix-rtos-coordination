@@ -74,19 +74,10 @@ else
 fi
 printf '  src: %s\n  dst: %s\n' "$src" "$export_dir"
 
-# .mesa-shader-cache/ on the export is the shader disk cache of the first GPU stack's Mesa
-# (deleted in GPU migration P3). The GPU stack's Mesa (mesa_drm) keeps no disk cache
-# (docs/gpu-new-lane/MIGRATION.md §3, §7.7), so a leftover directory is dead data: remove it
-# (it is root-owned, written by the Pi; rsync never touches it). Informational on failure.
-shader_cache="$export_dir/.mesa-shader-cache"
-if [ -d "$shader_cache" ]; then
-	if sudo -n rm -rf "$shader_cache" 2>/dev/null; then
-		printf 'sync-netboot-tree.sh: removed the first GPU stack'"'"'s shader disk cache (%s)\n' "$shader_cache"
-	else
-		printf 'sync-netboot-tree.sh: NOTE unused shader disk cache left on the export: sudo rm -rf %s\n' "$shader_cache" >&2
-	fi
-fi
-rm -f "${buildroot}/.mesa-shader-cache.driver-id" 2>/dev/null || true
+# Mesa's shader disk cache lives on the export at /.cache/mesa_shader_cache (written by the Pi,
+# root-owned; rsync never touches it). It needs no wiping here: its entries are keyed on a digest
+# of the Mesa build (docs/gpu-new-lane/G4-shader-cache.md), so a rebuilt driver simply misses and
+# recompiles. Superseded entries are not evicted; delete the directory to reclaim the space.
 
 # --no-owner --no-group: the sync runs as an unprivileged user and the NFS export
 # may contain root-owned files (e.g. the fontconfig cache from stage-desktop-fonts);
