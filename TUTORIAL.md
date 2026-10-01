@@ -18,7 +18,7 @@ languages and more.
 **Hardware**
 - Raspberry Pi 4 Model B, **4 GB** (see note above).
 - A microSD card, **4 GB or larger**.
-  The image (`rpi4b-sd-2part.img`) is 1.6 GB (1 570 404 352 bytes, 2026-09-30 build).
+  The image (`rpi4b-sd-2part.img`) is 2.7 GB (2 656 759 808 bytes, 2026-10-01 build). That includes ~1 GiB of free space on the root filesystem for your own files.
 - USB-C power supply for the Pi.
 - A display on **micro-HDMI** (use the HDMI port **nearest the USB-C** jack) + a
   micro-HDMI→HDMI cable.
