@@ -49,7 +49,7 @@ is **93 files / +5 874**, not the 338 / +32 886 the raw stat suggests.
 | corelibs / posixsrv | 3 / 2 | +231 / +47 |
 
 Those 14 are the *Phoenix* repositories, and they are not the whole build. The graphics stack
-additionally depends on **upstream Mesa 26.2.0** (the release tarball) **plus 16 fork-authored
+additionally depends on **upstream Mesa 26.2.0** (the release tarball) **plus 18 fork-authored
 patches** carried by the `mesa_drm` port in phoenix-rtos-ports. It is deliberately *not* a fork:
 pinning a released version means upstream drift cannot break it. The patches are load-bearing, and
 two of them are generic upstream Mesa defects rather than Phoenix plumbing (see the V3D material in
@@ -820,7 +820,11 @@ The hardware findings inside these paths are the transferable part:
   its shaders on the V3D each boot; `v3d_phoenix_stubs.c` implemented it (BLAKE3 keys, one file per key,
   atomic temp+`rename`, a version-segmented `/vN` directory). HW: a cold boot wrote 52 blobs, a
   warm boot hit all 52 with no recompile. Its failure mode is worth carrying — see the caveats. (The current `mesa_drm` build runs with
-  Mesa's shader cache disabled.)
+  Mesa's shader cache disabled.) Since 2026-10-01 (ports `69344b2`, patch 0018) it uses Mesa's own
+  multi-file disk cache in `$HOME/.cache/mesa_shader_cache`. The index is kept in process memory, because a write
+  through `MAP_SHARED` never reaches the file on Phoenix (KNOWN-ISSUES P21). The driver identity is a digest of the
+  sources, sysroot headers and compiler, so every Mesa rebuild invalidates the cache, which is the G3 hazard closed.
+  vkQuake reaches its first frame in 77 s on a cold start and 2.8 s on a warm one ([G4](gpu-new-lane/G4-shader-cache.md)).
 
 Mesa itself is patched, and not only for Phoenix. Two of the 16 carried commits are ordinary
 upstream `u_vbuf` defects that would bite any gallium driver on a non-x86 host: a missing NULL
@@ -1322,7 +1326,7 @@ The new userland recipes are all in `phoenix-rtos-ports/<name>/port.def.sh`. Lic
 | fltk | 1.3.10 | Dillo's widget toolkit. LGPL-2.0-only |
 | harfbuzz | 14.4.0 | Text shaping (STK) |
 | **★ ffmpeg** *(removed)* | 6.1 | The decode-only library port, removed on 2026-09-30 because nothing linked it any more: `video_player` builds its own FFmpeg 6.1 from the same release tarball. The decode core is hardware-proven — MJPEG (plane-0 avg 127 vs host ffmpeg 127.03) and H.264 (avg 123, bit-exact) decode on the Pi, displayed on the first stack's framebuffer and in an X window (2 898 frames, 0 faults). LGPL-2.1-or-later, built without `--enable-gpl`. Its own porting gap: heavy decoders overflow the default main-thread stack, so the decode body runs on an ≥8 MB pthread — the same `SIZE_USTACK` ceiling as coreutils, reached from a different direction |
-| **★ mesa_drm** | 26.2.0 | Mesa on the DRM path: gallium `v3d` (+ `vc4`/`kmsro`), GBM, EGL (drm, surfaceless, Wayland, X11), GLES 3.1, desktop GL and `v3dv`, all static. 16 carried patches (see the V3D note in the drivers section). MIT |
+| **★ mesa_drm** | 26.2.0 | Mesa on the DRM path: gallium `v3d` (+ `vc4`/`kmsro`), GBM, EGL (drm, surfaceless, Wayland, X11), GLES 3.1, desktop GL and `v3dv`, all static. 18 carried patches (see the V3D note in the drivers section). MIT |
 | **★ libdrm_phoenix** | 2.4.134 | libdrm with a Phoenix backend: the DRM ioctls map to the render server (`/dev/v3d-async`) and the KMS server (`/dev/kms`) protocols, so Mesa, SDL, Xorg and wlroots use it unmodified. MIT. **Flip fence fix (G5, `38cb9c0`):** the implicit flip fence looked a framebuffer's buffer up through the GEM handle `ADDFB2` named, and wlroots (labwc) closes that handle right after `ADDFB2`, as DRM allows (a framebuffer holds its buffer). So every compositor flip went out with no fence, and the display server could scan out a buffer whose composite was still queued behind a client's GPU job: windowed SuperTuxKart showed an older frame between two newer ones in 21–26 % of moving frames. The buffer name is now kept from `ADDFB2`; `drmprobe compositor_flip` (`0615a05`) reproduces labwc's buffer path. On the Pi: 0 reversals in 1266 moving frames, 1421 of 1422 labwc flips gated ([write-up](gpu-new-lane/stk-window-frame-reversal.md)) |
 | wayland_phoenix | 1.24.0 | The one libwayland of the system: libwayland 1.24.0, wayland-protocols 1.49 and libxkbcommon 1.13.2, with a small library filling libphoenix gaps for Wayland clients and compositors and the Phoenix compat headers. Every consumer — `mesa_drm`, `sdl2_kmsdrm`, `gtk3_wayland`, `xfce_wayland`, `labwc_desktop`, `atril_wayland`, `video_player`, `libxshmfence_phoenix` — takes them from here; since 2026-09-30 the separate `wayland` port is gone and `labwc_desktop` no longer builds its own copy. libxkbcommon and libwayland-cursor compile in only target paths (`/usr/share/X11/xkb`, `/etc/xkb`, `/usr/share/icons`; ports `4fb7f65`, `377f219`), checked by a strip-and-grep of the archives — before, every GTK, XFCE and labwc program carried a `.buildroot` path. MIT AND BSD |
 | xkeyboard_config | 2.48 | The XKB keyboard data at `/usr/share/X11/xkb` (rules, keycodes, types, compat, symbols; 255 files, 2.2 MiB), data only (ports `9bf4a23`). Without it every GTK/XFCE program logged `XKB-338`/`XKB-822` errors and fell back to a built-in US keymap. Nothing `depends=` on it, so `ports.yaml` lists it (project `695d2dd`). MIT |

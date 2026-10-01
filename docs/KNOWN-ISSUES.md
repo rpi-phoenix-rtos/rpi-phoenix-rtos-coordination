@@ -32,7 +32,6 @@ D3/D4/D6/D7/D8/D9 archived).
 
 | # | Issue | Last measured |
 |---|---|---|
-| G4 | **vkQuake takes ~75 s to its first frame, on every start.** The shipped Mesa (`mesa_drm`) is built with `-Dshader-cache=disabled`, so v3dv compiles every pipeline from SPIR-V at each start (first frame 74.4–75.7 s after start in 6 of 6 runs on 2026-09-30, by the app's own `first present` line; the earlier "~3 min" came from recording time and included boot). The GL games compile less and start in seconds. | **Open.** The old stack's cache was dropped with it (and its stale-blob speckle, G3). A disk cache keyed on the program's identity needs a key Phoenix can provide (no ELF build-id; libphoenix now has `dladdr`, so Mesa's `disk_cache_get_function_identifier` can find its own file). |
 
 ## 3. Platform limitations
 

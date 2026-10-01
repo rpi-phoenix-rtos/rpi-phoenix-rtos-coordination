@@ -169,7 +169,7 @@ with WiFi joined ([MIGRATION §7t](docs/gpu-new-lane/MIGRATION.md)):
 | Quake II | 59.8 |
 | Quake III | 59.8 |
 | QuakeSpasm | 44.0 |
-| vkQuake | 41.8 (42.8 with no WiFi network joined); ~75 s to the first frame, see below |
+| vkQuake | 41.8 (42.8 with no WiFi network joined); ~75 s to the first frame on the first start, ~3 s after that, see below |
 | SuperTuxKart | 12.6 (~22 at 1280×720 through `game-res`) |
 | the X11 desktop's GL window | 60.0 |
 
@@ -177,9 +177,8 @@ In a 1280×720 window on the XFCE desktop: QuakeSpasm 56 fps, Quake III 70–74,
 18.6. Video plays 720p at 30 fps, in a window and full screen. The XFCE desktop is up 12–20 s
 after `xfce-session` starts.
 
-**vkQuake compiles its Vulkan pipelines for about 75 seconds before its first frame**, at every
-start (no shader cache yet, [KNOWN-ISSUES](docs/KNOWN-ISSUES.md) G4). The black screen until
-then is not a hang.
+**vkQuake compiles its Vulkan pipelines for about 75 seconds before its first frame** the first time it runs on an image; the compiled shaders are cached in `/.cache/mesa_shader_cache`, and every later start reaches its first frame in about 3 seconds (77 s → 2.8 s, measured
+2026-10-01). The black screen during that first compile is not a hang.
 
 **Quake III needs no retail content and no retail CD key.** Besides the free demo
 `pak0.pk3` it needs two more files, both staged by `scripts/stage-game-data.sh` from
@@ -249,7 +248,7 @@ work; `⛔` blocked on external dependencies; `⬜` not started.
 | HDMI display (`rpi4-kms`, `/dev/kms`) | ✅ | KMS display server on the firmware's display planes: atomic page flips at 60.00 fps with vblank events, dumb buffers, and scaled lower modes (1600×900 … 640×480 shown full screen by the display hardware). Console handover to and from the fbcon |
 | GPU (V3D 4.2) — render server (`rpi4-v3d-async`, `/dev/v3d-async`) | ✅ | Owns the GPU and runs every client's jobs asynchronously, with fences and sync objects. Clients share buffers with the display server without copies (kernel `memExport`) |
 | GPU — OpenGL / OpenGL ES 3.1 | ✅ | **Mesa 26.2** (gallium `v3d`) with GBM and EGL (drm, Wayland, X11 platforms) on a Phoenix libdrm backend. SuperTuxKart at 12.6 fps at 1080p, which is Raspberry Pi OS parity on this board |
-| GPU — Vulkan (V3DV) | ✅ | Mesa's `v3dv` with `VK_KHR_display`: **vkQuake at 42 fps** (~75 s pipeline compile before the first frame) |
+| GPU — Vulkan (V3DV) | ✅ | Mesa's `v3dv` with `VK_KHR_display`: **vkQuake at 42 fps** (~75 s pipeline compile before the first frame on the first start, ~3 s once the shader cache is warm) |
 | SDL 2.30 | ✅ | KMSDRM (full screen) + Wayland (windowed) video drivers in one library, Phoenix HID input and audio. Frame pacing fixed so Quake II runs at a vsynced 60 fps |
 | X11 (Xorg 21.1 + modesetting + glamor) | ✅ | GPU-accelerated X with DRI3/Present: a GL window at 60 fps (vsync). Window Maker, xterm, xclock, xbill. `startx` runs the showcase desktop |
 | Wayland desktop (labwc 0.20 + XFCE 4.20 + GTK 3.24) | ✅ | labwc composites on the GPU (GLES2). XFCE panel, desktop, Thunar, settings and application finder; the foot terminal; games and video in windows; the Atril PDF viewer. `xfce-session` starts it and Log Out returns to the shell |
@@ -313,7 +312,7 @@ Boot the image to the `(psh)%` prompt, with an **HDMI display**, a **USB keyboar
 /bin/bash /bin/xfce-session       # the XFCE desktop on Wayland; Log Out returns to psh
 quake3 +map q3dm1                 # Quake III Arena, full screen (also: quakespasm, quake2, vkquake)
 game-res stk 1280x720 race        # SuperTuxKart, an AI race, 720p scaled to the screen (~22 fps)
-vkquake +playdemo demo1           # vkQuake on Vulkan playing a recorded demo (~75 s to the first frame)
+vkquake +playdemo demo1           # vkQuake on Vulkan playing a recorded demo (~75 s to the first frame once, then ~3 s)
 /bin/bash /bin/video-play /usr/share/video-demo/hevc-720p30-aac.mp4
                                   # video, full screen (in a window when run on the desktop)
 /bin/bash /bin/startx             # X11: Xorg + glamor, Window Maker and the animated showcase desktop

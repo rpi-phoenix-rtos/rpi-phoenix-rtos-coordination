@@ -173,7 +173,8 @@ the Atril PDF viewer. For the best order to show all of it, see the
 - **Bluetooth is driver-level only**: no host stack, so no pairing, profiles or audio.
 - **WiFi** is ~3.5 MB/s each way. Use Ethernet for large transfers.
 - **vkQuake runs full screen only** (no desktop window), and it shows a black screen for
-  about 75 seconds at every start while it compiles its Vulkan pipelines. It has not hung.
+  about 75 seconds the first time while it compiles its Vulkan pipelines. It has not hung. Later starts take about
+  3 seconds: the compiled shaders are kept in `/.cache/mesa_shader_cache`.
 - I²C/SPI/general-purpose PWM, camera and DSI are not implemented.
 
 The full, precise list lives in [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md).
