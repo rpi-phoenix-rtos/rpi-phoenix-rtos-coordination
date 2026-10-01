@@ -290,7 +290,14 @@ stage_webkit() {
 	need PHX_COMPAT_MSYNC eval '! has_sym msync'
 	[ -f "${I}/semaphore.h" ] || cp "${COMPAT}/include/semaphore.h" "${ci}/"
 	[ -f "${I}/uchar.h" ] || cp "${COMPAT}/include/uchar.h" "${ci}/"
-	if grep -q '#error' "${I}/fenv.h" 2> /dev/null || [ ! -f "${I}/fenv.h" ]; then cp "${COMPAT}/include/fenv.h" "${ci}/"; fi
+	# <fenv.h> must work from C++ (WTF's SIMDe), not only from C: the toolchain's libstdc++ was
+	# configured while libphoenix had no <fenv.h> (_GLIBCXX_HAVE_FENV_H unset), so its <fenv.h>
+	# wrapper includes nothing even once libphoenix has a real one. Keep the shim until a C++
+	# compile sees FE_TONEAREST and fesetround (a toolchain rebuild against the b20 sysroot).
+	if ! printf '#include <cfenv>\nint phx_fenv_probe(void) { return std::fesetround(FE_TONEAREST); }\n' |
+			"${TC}-g++" ${TFLAGS} -x c++ -fsyntax-only - 2> /dev/null; then
+		cp "${COMPAT}/include/fenv.h" "${ci}/"
+	fi
 	grep -q 'define LC_MESSAGES' "${I}/locale.h" || cp "${COMPAT}/include/locale.h" "${ci}/"
 	grep -qE 'define UINT8_MAX +\(0xffU\)' "${I}/stdint.h" && cp "${COMPAT}/include/stdint.h" "${ci}/"
 	cp "${COMPAT}/include/sys/mman.h" "${ci}/sys/"   # self-guarding: MAP_FILE, msync, madvise
