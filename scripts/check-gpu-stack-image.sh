@@ -17,7 +17,9 @@
 #      modes (stale-core hazard — an `auto` rebuild after a committed devices change
 #      ships the old one), and rpi4-fb (/dev/fb0) is not.
 #   2. rootfs: the servers, the GPU-stack programs under their command names and
-#      /bin/game-res; startx and xfce-session are the session scripts themselves; the engines
+#      /bin/game-res, the XFCE session's own files (/etc/xdg/labwc-xfce, /etc/xdg/xfce-session,
+#      /usr/share/xfce-session, /usr/lib/xfce-session/bin/loginctl, which every session's Log
+#      Out runs); startx and xfce-session are the session scripts themselves; the engines
 #      carry the GPU-stack banner; the desktop applications (the games' window launcher + session, the
 #      video players, Atril, their XFCE menu entries, the demo clips) and WiFi (daemon,
 #      client, example configuration, vendor firmware + licences); every GL game engine
@@ -26,9 +28,11 @@
 #      desktop-app builds or hand-staged test names (the -wl game clones, ffplay-drm/-wl,
 #      video-play2, *-2 / *-low / -g<N> servers and sessions), and none of the retired names
 #      (the *-drm launcher copies, startx-drm, startx_gpu, thunar-wl, gdbus-wl, vkcube-drm,
-#      the xfce-session wrapper's target), and none of the milestone test pieces (tinywl,
-#      labwc-desktop.sh and its m7 configuration and colour script, the dbus-m7* cycle scripts
-#      and their EXTERNAL-auth configuration, weston-gtk3.sh, /root/curses_smoke.py). Nothing builds them any
+#      the xfce-session wrapper's target, the XFCE session's M7-demo directories
+#      /usr/lib/xfce-demo, /etc/xdg/labwc-xfce-demo, /etc/xdg/xfce-demo, /usr/share/xfce-demo),
+#      and none of the milestone test pieces (tinywl, labwc-desktop.sh and its m7
+#      configuration and colour script, the dbus-m7* cycle scripts and their EXTERNAL-auth
+#      configuration, weston-gtk3.sh, /root/curses_smoke.py). Nothing builds them any
 #      more, so one present is a stale file of an old build in the persistent staging
 #      tree (or a hand-staged NFS export): delete it, or make a pristine export.
 #   4. rootfs: the old stack's strings in any ELF under bin sbin usr/bin usr/sbin
@@ -52,7 +56,7 @@ while [ "$#" -gt 0 ]; do
 	case "$1" in
 		--root) root="${2:?--root needs a directory}"; shift 2 ;;
 		--loader) loader="${2:?--loader needs a file}"; shift 2 ;;
-		-h|--help) sed -n '2,30p' "${BASH_SOURCE[0]}"; exit 0 ;;
+		-h|--help) sed -n '2,42p' "${BASH_SOURCE[0]}"; exit 0 ;;
 		*) echo "check-gpu-stack-image: unknown argument $1" >&2; exit 2 ;;
 	esac
 done
@@ -89,7 +93,11 @@ for p in sbin/rpi4-v3d-async sbin/rpi4-kms bin/shmsrv \
 	usr/bin/quake3 usr/bin/vkquake-drm usr/bin/vkquake usr/bin/supertuxkart-drm bin/stk \
 	bin/Xorg-drm bin/startx bin/eglx11-demo-x etc/X11/xorg-drm.conf \
 	bin/labwc bin/foot bin/xfce-session bin/xfce-desktop.sh bin/xfce-autostart.sh \
-	bin/thunar bin/gdbus bin/xfce4-panel bin/xfdesktop bin/dbus-daemon usr/lib/xfce-demo/bin/loginctl \
+	bin/thunar bin/gdbus bin/xfce4-panel bin/xfdesktop bin/dbus-daemon usr/lib/xfce-session/bin/loginctl \
+	etc/xdg/labwc-xfce/rc.xml etc/xdg/labwc-xfce/menu.xml etc/xdg/labwc-xfce/autostart \
+	etc/xdg/labwc-xfce/environment etc/xdg/xfce-session/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml \
+	etc/xdg/xfce-session/fuzzel/fuzzel.ini usr/share/xfce-session/applications/foot.desktop \
+	usr/share/xfce-session/applications/thunar.desktop \
 	bin/game-res; do
 	if [ -s "${root}/${p}" ]; then ok "${p}"; else fail "${p} missing"; fi
 done
@@ -100,6 +108,16 @@ for spec in "bin/startx|XDRM start mode=" "bin/xfce-session|XFCE-SESSION start";
 		ok "${name} is the session script"
 	else
 		fail "${name} is not the session script ('${spec#*|}'): a stale wrapper?"
+	fi
+done
+# Every session's Log Out runs the XFCE session's own loginctl.
+for p in etc/xdg/labwc-xfce/menu.xml etc/xdg/labwc-xfce-games/menu.xml etc/xdg/labwc-xfce-video/menu.xml \
+	bin/game-window-quit.sh; do
+	[ -s "${root}/${p}" ] || continue
+	if [ "$(count /usr/lib/xfce-session/bin/loginctl "${root}/${p}")" -ge 1 ]; then
+		ok "${p}: Log Out runs /usr/lib/xfce-session/bin/loginctl"
+	else
+		fail "${p}: Log Out does not run /usr/lib/xfce-session/bin/loginctl (a stale session file?)"
 	fi
 done
 # Each launcher runs its GPU-stack engine (an old-stack launcher of the same name would not).
@@ -178,7 +196,8 @@ for p in usr/bin/Xphoenix usr/bin/yquake2 usr/bin/quake3e usr/bin/supertuxkart \
 	bin/rpi4-kms-g8 bin/rpi4-kms-g9 bin/weston-simple-egl-low etc/xdg/labwc-xfce-m8 usr/share/m10 \
 	bin/Xorg-drm-noshim bin/v3dmemprobe \
 	bin/qs-drm usr/bin/quake2-drm usr/bin/quake3-drm bin/vkq-drm bin/stk-drm bin/startx-drm bin/startx_gpu \
-	bin/thunar-wl bin/gdbus-wl bin/vkcube-drm usr/lib/xfce-demo/xfce-session \
+	bin/thunar-wl bin/gdbus-wl bin/vkcube-drm usr/lib/xfce-demo etc/xdg/labwc-xfce-demo etc/xdg/xfce-demo \
+	usr/share/xfce-demo \
 	bin/tinywl bin/labwc-desktop.sh bin/labwc-desktop-m7c.sh bin/m7b-colors.sh etc/xdg/labwc-m7c \
 	bin/dbus-m7f.sh bin/dbus-m7m.sh etc/dbus-1/session-phoenix-external.conf bin/weston-gtk3.sh \
 	root/curses_smoke.py; do
