@@ -189,7 +189,9 @@ fi
 # word in the MIDDLE of the phrase. Matching the tail `stopping coalesce` instead.
 # Verified archive-wide: these patterns hit exactly the 3 known-positive logs
 # (stk-flipdiag, stkguard1, stkship) out of 4679, and nothing else.
-fault_re="Exception|Data Abort|panic|\bfault\b|ESR=|ELR=|FAR=|EC=|vm: page|corrupt process|LIB_ASSERT|assertion|double free\(\)|Double free detected|handed out twice|corrupt chunk header|stopping coalesce|not a plausible chunk"
+# "SIGSEGV caught by pid": since kernel 7e9a01fb a fault the process has a handler for prints
+# that one line instead of the register dump (Xorg, STK and the Quakes install crash handlers).
+fault_re="Exception|Data Abort|SIGSEGV caught by pid|panic|\bfault\b|ESR=|ELR=|FAR=|EC=|vm: page|corrupt process|LIB_ASSERT|assertion|double free\(\)|Double free detected|handed out twice|corrupt chunk header|stopping coalesce|not a plausible chunk"
 echo
 echo "=== FAULTS ==="
 fault_count=$(grep -cE "$fault_re" "$target")
