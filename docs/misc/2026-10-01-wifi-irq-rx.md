@@ -170,3 +170,34 @@ The poll figures sit at the 09-30 baseline. Interrupt RX is **+12 % TX and +14 %
 The 4 leaked blocks are still on the card; the next flash clears them.
 
 **Not run:** the link-loss check (5). The loss path is untouched by this change.
+
+## Next: bus speed (branch `f1-wifi-speed`, devices `4d9dfb5`, `f865a35`, `70d3153`), pre-registered 2026-10-01
+
+**Finding.** The card has been in SDIO high-speed mode since bring-up (`diag_sdioGoHighSpeed`), but the clock stayed at 25 MHz. Linux runs this chip at 250 MHz / 6 = **41.67 MHz**. It asks for 50 MHz, which the divider cannot reach, and it does not set HISPD (`bcm2835-mmc.c:1063-1097`, `sdhci-iproc.c:256`). It also writes the maximum data timeout, 0xE.
+
+**Rejected: DMA instead of PIO.** The PIO loop is ~80 % wire-bound (`dl_ms=67` against 51.5 ms of wire time; `cmd53_max_us=429` against 328 µs), so DMA would free CPU, not add throughput.
+
+**Block size.** brcmfmac uses a 512 B data block for the 43455, not 64. That is now opt-in.
+
+**Changes.**
+- `4d9dfb5`: 41.67 MHz by default, after a pattern write/read-back at the old clock and a re-read at the new one. Any failure prints `SDIO-HS fallback: <why>`, resets, and stays at 25 MHz. Daemon arguments: `sdclk=<kHz>`, `hispd=1`.
+- `f865a35`: `wifi sdclk <kHz>` switches at run time, from the thread that owns the bus, after a read-only check. Per-transfer bus timing appears in `wifi stats` (`WIFISTATS sdio`, `bustime`).
+- `70d3153`: `f2blk=512` / `wifi f2blk <n>` selects the block size; the default stays 64.
+
+**Check.**
+- *Build gate:* `SDIO-HS on: sd=` in `loader.disk`, and `sdclk` in `/bin/wifi`.
+- *Boot log:* `SDIO-CLK target=50000 kHz … div=3 sd=41666666 Hz`, `SDIO-HS on: … check=pass`, and `dl_ms` 38–52 (today 67). No `SDIO-HS fallback`, then join and lease.
+- *Same-boot A/B:* three arms, 3 runs each, host `wifi-perf-host.py 7777 4194304 9`, in this order:
+  1. HS (41.67 MHz);
+  2. `wifi sdclk 25000`;
+  3. `wifi sdclk 50000` plus `wifi f2blk 512`.
+
+**Predicted `WIFIPERF-MEDIAN`.**
+
+| arm | TX MB/s | RX MB/s |
+|---|---|---|
+| 25 MHz | ≈ 4.00 | ≈ 3.79 |
+| 41.67 MHz | 4.2–4.8 | 3.9–4.5 |
+| 41.67 MHz + 512 B | 4.4–5.1 | (as 41.67 MHz) |
+
+**Pass:** the 41.67 MHz median beats the 25 MHz maximum in each direction. In the 512 B arm, glom-bad, garbage and resync counters must not grow.
