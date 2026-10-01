@@ -14,7 +14,7 @@
 | libphoenix | master | c0f7e86 (clean) | https://github.com/phoenix-rtos/libphoenix.git |
 | phoenix-rtos-build | master | 71b723d (clean) | https://github.com/phoenix-rtos/phoenix-rtos-build.git |
 | phoenix-rtos-corelibs | master | a46399c (clean) | https://github.com/phoenix-rtos/phoenix-rtos-corelibs.git |
-| phoenix-rtos-devices | (detached) | 0ba0c17 (clean) | https://github.com/phoenix-rtos/phoenix-rtos-devices.git |
+| phoenix-rtos-devices | master | 938c32a (clean) | https://github.com/phoenix-rtos/phoenix-rtos-devices.git |
 | phoenix-rtos-doc | master | ec44abd (clean) | https://github.com/phoenix-rtos/phoenix-rtos-doc.git |
 | phoenix-rtos-filesystems | master | 5c807d1 (clean) | https://github.com/phoenix-rtos/phoenix-rtos-filesystems.git |
 | phoenix-rtos-hostutils | master | 49a1fd9 (clean) | https://github.com/phoenix-rtos/phoenix-rtos-hostutils.git |
@@ -37,7 +37,7 @@ _build	37e62056e5e5adacc39f560441e5af7d58f708be	main
 libphoenix	c0f7e863f49d30fdf0aaa6f83cadddc255072818	master
 phoenix-rtos-build	71b723d5f669f44c3f2b334656c2ccf90bac07df	master
 phoenix-rtos-corelibs	a46399c2c42ac7beb4f947351dd4f259117be2b2	master
-phoenix-rtos-devices	0ba0c17c630a0873cab695b6fe19cae71ecee7f7	(detached)
+phoenix-rtos-devices	938c32a69faa97586fa652fc5ed6c1084f20f4ed	master
 phoenix-rtos-doc	ec44abd576e17c4c0a5293db0336c1d9bc365bbf	master
 phoenix-rtos-filesystems	5c807d15fa2d5ac9d7bcb12c9855819df0d59768	master
 phoenix-rtos-hostutils	49a1fd996e5745a19cc7ec0b22179bd1e90906cf	master
