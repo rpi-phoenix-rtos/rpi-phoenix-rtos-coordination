@@ -112,4 +112,35 @@ On a master kernel the expected result is `C … fired=300000 enabled=1` and `IR
 
 ## Result
 
-(pending — build 14, after C9's build 13)
+### Build 15, netboot, 2026-10-01 (`g15-wifi`, `g15-irqtest`)
+
+**Build proof:** `RX interrupt on IRQ` 1, `RX mode: ` 2, `times in a row, masked` 1, `/bin/irq-unclaimed` present.
+
+**Interrupt RX, (2) PASS.**
+- Printed `RX interrupt on IRQ 158 (SDIO card interrupt, hostintmask=0x40); controller enables at boot: status=0x37ff003f signal=0x00000000`. The boot `signal=` is 0, so there is no hazard left by the firmware.
+- Then `RX mode: irq (/dev/wifiirq)`, the join, and `STATUS joined=1`. No `RX mode: poll (` appeared before the deliberate switch.
+- `WIFISTATS rxirq` showed `waits=21969 wakes=109 level=86 timeouts=21774`, and `isr claimed=109 declined=0 acks=194 acks_noframe=0 ack_errs=0 drained=2275`.
+
+**Same-boot A/B, (3).**
+
+| Mode | `WIFIPERF-MEDIAN` TX | RX |
+|---|---|---|
+| irq | **4.00 MB/s** (3.81–4.02) | **3.79 MB/s** (3.53–3.81) |
+| poll, after `wifi rxpoll` | 3.56 MB/s (3.48–3.64) | 3.33 MB/s (3.19–3.36) |
+
+The poll figures sit at the 09-30 baseline. Interrupt RX is **+12 % TX and +14 % RX**, with no overlap between the ranges. The prediction was "at or above the baseline", so this is PASS.
+
+`wifi rxpoll` printed `RX mode: poll (the daemon switched the interrupt off; irq wakes=195 timeouts=28792 empty=77 missed=0)`.
+
+**Storm guard (`irq-unclaimed`) PASS**, exactly the pre-registered sequence:
+- A `fired=200000 enabled=1`
+- B `fired=200000 enabled=1`
+- one `interrupts: IRQ 223 unclaimed 100000 times in a row, masked`
+- C `fired=100000 enabled=0 pending=1`
+- D `fired=2 fired2=2 enabled=1`
+- `IRQ-UNCLAIMED: PASS`
+
+**Still to do:**
+- the SD-boot regression gate (4): SD write/verify plus e2fsck under `wifi-perf`;
+- the link-loss check (5);
+- the showcase gate for build 15, with 0 `interrupts: IRQ` lines across all its boots.
