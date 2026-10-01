@@ -450,8 +450,12 @@ authoritative current state.
 
 ## TD-26: the XFCE session's files keep the demo's path names
 
-- **Status:** ✅ RESOLVED in code 2026-10-01 on branch `d10-session-paths` (phoenix-rtos-ports
-  `cb2204d` + `54ef596`, coord `173c28fe7`), **pending the image build gate** below; not merged.
+- **Status:** ✅ RESOLVED 2026-10-01 (phoenix-rtos-ports `cb2204d` + `54ef596`, coord `173c28fe7`,
+  merged; build 10). On the Pi, the gate 10 XFCE session ran with `conf=/etc/xdg/labwc-xfce`,
+  `XDG_CONFIG_DIRS=/etc/xdg/xfce-session:/etc/xdg` and Log Out through
+  `/usr/lib/xfce-session/bin/loginctl`, and the showcase passed 7/7. On the pristine export,
+  `check-gpu-stack-image.sh` PASSes once the four stale demo directories that earlier builds left
+  in the staging tree are deleted.
   The marker is gone. Old → new: `/etc/xdg/labwc-xfce-demo` → `/etc/xdg/labwc-xfce` (the session's
   configuration replaces the plain m7h one there, already `xfce-desktop.sh`'s default `CONF_DIR`),
   `/etc/xdg/xfce-demo` → `/etc/xdg/xfce-session`, `/usr/share/xfce-demo` → `/usr/share/xfce-session`,
@@ -2308,7 +2312,7 @@ markers. Its debt idiom is `BRING-UP` prose instead.
 | TD-19 | LIKELY STILL APPLIES (TLBI hardening is generally correct) — targeted fix LANDED | ✅ doc reconciled 2026-09-30 with kernel `7348dd99` (2026-09-19): `pmap.c` has a `TD-19`-commented `isb` at `_pmap_mapScratch` (`:221`, the site of the one observed fault), `_pmap_writeTtl3` for kernel VAs (`:587`), `_pmap_switch` `ASID_SHARED` (`:493`) and `_pmap_preinit` (`:1078`). The five `hal_tlbInval*` helpers deliberately still end with `dsb` only. Open: no break-before-make at `_pmap_mapScratch`'s valid→valid change. (The 2026-09-17 note "code deliberately unchanged" predates the commit.) |
 | TD-13-mtxbypass | ✅ RESOLVED/REMOVED | row added 2026-09-17 (entry existed, checklist did not). Verified: `grep -c TD-13-mtxbypass syscalls.c` → 0, exactly as the entry predicts. |
 | TD-14-startup-settle | NOT TAKEN | row added 2026-09-17 (entry existed, checklist did not). No marker, no code — the option was considered and declined. |
-| TD-26 | ✅ RESOLVED in code 2026-10-01, pending build gate (branch `d10-session-paths`: ports `cb2204d` + `54ef596`, coord `173c28fe7`; not merged) | the XFCE session's files are named for the image (`/etc/xdg/labwc-xfce`, `/etc/xdg/xfce-session`, `/usr/share/xfce-session`, `/usr/lib/xfce-session/bin/loginctl`), the port's configs carry the image's program names, the sed and the marker are gone. Gate: `check-gpu-stack-image.sh` checks 2 + 3 on a fresh build; `grep -rI xfce-demo` over the rootfs = nothing. Earlier: the command names (launchers, `startx`, `xfce-session`, `vkcube`) |
+| TD-26 | ✅ RESOLVED 2026-10-01, gated on the Pi in build 10 (ports `cb2204d` + `54ef596`, coord `173c28fe7`) | the XFCE session's files are named for the image (`/etc/xdg/labwc-xfce`, `/etc/xdg/xfce-session`, `/usr/share/xfce-session`, `/usr/lib/xfce-session/bin/loginctl`), the port's configs carry the image's program names, the sed and the marker are gone. Gate: `check-gpu-stack-image.sh` checks 2 + 3 on a fresh build; `grep -rI xfce-demo` over the rootfs = nothing. Earlier: the command names (launchers, `startx`, `xfce-session`, `vkcube`) |
 | TD-27 | OPEN (P1, narrowed P3) | `video/rpi4-fb` kept in the tree, unbuilt, until `hevc-play` (hand-built) moves to a KMS dumb buffer |
 | TD-23 | OPEN (deliberate) | `RPI4AUDIO_ARMTRIALS` is a diagnostic ioctl + struct in a **published** header, i.e. a permanent ABI, for a facility that can block the driver's only message thread ~100 s. Kept because it is the only in-process sampler of the failing channel and the defect is open; delete it with `q2-sdl-openaudio-hang`, or gate it behind a build flag. ⚠ Blind to a stale control-block fetch — a re-arm re-reads the same CB. |
 | TD-22 | ✅ RESOLVED 2026-09-19 (HW-gated) | `vm/map.c:204` — `_map_find()`'s right-hand leaf return can hand back a non-`MAP_FIXED` **hint** sitting nearer the end of a gap than `size`, overlapping the next entry. Unreachable today (libphoenix's only hinted mmaps are `MAP_FIXED`; `malloc` passes NULL). The commented-out guard cannot simply be restored — it would also gate the descent, where `rmaxgap` is a subtree maximum. Leaf-only fix written out in the section; needs its own boot + six-app gate. |
