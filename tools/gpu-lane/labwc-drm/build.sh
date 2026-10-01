@@ -425,11 +425,11 @@ EOF
 	done
 	rm -f "${P}/lib/libwlphx-compat.a" "${P}/lib/liblwphx-compat.a"
 	"${TC}-gcc-ar" rcs "${P}/lib/libwlphx-compat.a" "${out}/compat-obj/"wlphx_*.o
-	for f in lwphx_shm lwphx_pty lwphx_uchar lwphx_threads lwphx_locale lwphx_sem lwphx_wchar lwphx_epoll_pwait lwphx_misc lwphx_read; do
+	for f in lwphx_shm lwphx_pty lwphx_uchar lwphx_threads lwphx_wchar lwphx_epoll_pwait lwphx_misc lwphx_read; do
 		"${TC}-gcc" "${CFL[@]}" -c "${here}/compat/src/${f}.c" -o "${out}/compat-obj/${f}.o"
 	done
 	"${TC}-gcc-ar" rcs "${P}/lib/liblwphx-compat.a" "${out}/compat-obj/"lwphx_*.o
-	echo "  stand-ins: ${compat_defs[*]:-none}; lwphx: shm_open shm_unlink posix_openpt mbrtoc32 c32rtomb C11-threads newlocale/uselocale sem_* wcscasecmp/wcsncat epoll_pwait pthread_setname_np reallocarray dirfd"
+	echo "  stand-ins: ${compat_defs[*]:-none}; lwphx: shm_open shm_unlink posix_openpt mbrtoc32 c32rtomb (UTF-8) C11-threads wcscasecmp/wcsncat epoll_pwait reallocarray dirfd"
 	cat > "${P}/lib/pkgconfig/wlphx-compat.pc" <<EOF
 prefix=${P}
 Name: wlphx-compat
