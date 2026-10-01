@@ -295,7 +295,7 @@ built at `-O0`, and fixing that halved `xz` compression time:
 | **SQLite 3** | full SQL incl. the math functions, in-memory + on-disk file VFS |
 | **jq** | JSON processor, incl. the `test`/`match`/`sub`/`gsub`/`splits`/`scan` **regex builtins** (Oniguruma) |
 | **Lua 5.4.7** | interpreter + `luac` compiler |
-| GNU **grep 3.11**, **sed 4.10**, **tar 1.35**, **gzip 1.15**, **xz 5.4.7** | the only copies of these tools in the image |
+| GNU **grep 3.11**, **sed 4.10**, **tar 1.35**, **gzip 1.15**, **xz 5.4.7** | the only copies of these tools in an image built since 2026-09-30 (BusyBox no longer builds its own) |
 | **BusyBox**, **curl** (mbedTLS) | shell utilities (incl. `awk`, `vi`, `find`, `diff`, `bzip2`) + HTTP(S), FTP(S) and FILE client (with gzip/deflate decoding; the other protocols are not built) |
 
 > **bash:** GNU bash 5.2 now runs as a **full interactive shell** at the console.
