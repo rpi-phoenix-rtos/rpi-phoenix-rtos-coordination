@@ -4,7 +4,9 @@
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
-E="$root/sources/phoenix-rtos-filesystems/ext2"
+# LIBEXT2_SRC: test an ext2/ directory other than the sibling checkout
+# (e.g. a filesystems worktree on a feature branch).
+E="${LIBEXT2_SRC:-$root/sources/phoenix-rtos-filesystems/ext2}"
 blocksz="${1:-1024}"; seeds="${2:-5}"; ops="${3:-400}"
 gcc -O1 -g -fsanitize=address,undefined -DEOK=0 -I "$here/shim" -I "$E" \
     "$here/stress.c" "$E"/sb.c "$E"/gdt.c "$E"/inode.c "$E"/block.c "$E"/dir.c \

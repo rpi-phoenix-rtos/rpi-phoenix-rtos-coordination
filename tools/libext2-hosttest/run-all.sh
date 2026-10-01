@@ -10,7 +10,9 @@
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
-E="$root/sources/phoenix-rtos-filesystems/ext2"
+# LIBEXT2_SRC: test an ext2/ directory other than the sibling checkout
+# (e.g. a filesystems worktree on a feature branch).
+E="${LIBEXT2_SRC:-$root/sources/phoenix-rtos-filesystems/ext2}"
 seeds="${1:-10}"
 fails=0
 
@@ -27,7 +29,7 @@ mkimg() {  # mkimg <path> <mb> <blocksz>
 	mke2fs -q -t ext2 -b "$3" -I 128 -N 4096 -F "$1" >/dev/null 2>&1
 }
 
-for p in harness stress dirstress linkstress uaf devnode bigdir attrtest noumount busy; do build "$p"; done
+for p in harness stress dirstress linkstress uaf devnode bigdir attrtest dirtime noumount busy; do build "$p"; done
 
 # The concurrency harness needs REAL mutexes and pthreads. Everything else runs
 # on the no-op lock path, which keeps those runs simple; this one must not.
@@ -41,7 +43,7 @@ gcc -O1 -g -fsanitize=address,undefined -DEOK=0 -DSHIM_REAL_MUTEX \
 echo "=== single-shot ==="
 for b in 1024 4096; do
 	printf "  %-10s %s: " harness "$b"; "$here/run.sh" "$b" 2>&1 | grep -o "OVERALL: .*" || fails=1
-	for p in linkstress devnode attrtest; do
+	for p in linkstress devnode attrtest dirtime; do
 		img=/tmp/ra-$p-$b.img; mkimg "$img" 48 "$b"
 		ASAN_OPTIONS=detect_leaks=0 "$here/$p" "$img" >/dev/null 2>&1; rc=$?
 		e2fsck -fn "$img" >/dev/null 2>&1; frc=$?

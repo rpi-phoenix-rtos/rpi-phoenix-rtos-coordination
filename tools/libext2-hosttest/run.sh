@@ -5,7 +5,9 @@
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
-E="$root/sources/phoenix-rtos-filesystems/ext2"
+# LIBEXT2_SRC: test an ext2/ directory other than the sibling checkout
+# (e.g. a filesystems worktree on a feature branch).
+E="${LIBEXT2_SRC:-$root/sources/phoenix-rtos-filesystems/ext2}"
 blocksz="${1:-1024}"
 img="$here/ext2-${blocksz}.img"
 
