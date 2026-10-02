@@ -77,5 +77,6 @@ the source the owner supplied:
 ```
 
 That stages it to both the buildroot rootfs and the live NFS export. It plays with
-`hevc-play /usr/share/demo/IMG_8331-phoenix.265` (HW-measured 1080p, 1058 frames,
-21.7 fps, 0 faults -- and note ~90% of each frame is the framebuffer blit, not the decode).
+`video-play /usr/share/demo/IMG_8331-phoenix.265` (FFmpeg's `hevc_rpivid`). (Measured with
+the retired `/dev/fb0` hevc-play: 1080p, 1058 frames, 21.7 fps, 0 faults, ~90% of each frame
+in the framebuffer blit, not the decode.)

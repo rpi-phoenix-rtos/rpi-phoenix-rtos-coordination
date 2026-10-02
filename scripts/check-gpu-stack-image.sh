@@ -38,8 +38,8 @@
 #   4. rootfs: the old stack's strings in any ELF under bin sbin usr/bin usr/sbin
 #      usr/lib: `v3d-winsys:`, `phxgl`, `V3DV_PHOENIX`, `/dev/v3d-srv`,
 #      `RPI4FB_GETMODE` and `/dev/fb0` = 0. `grep -a -c`, never -q (a binary
-#      match with -q and pipefail reads as absent). Known exceptions are listed
-#      below and reported, never silently skipped.
+#      match with -q and pipefail reads as absent). No exceptions (the last one,
+#      the hand-built hevc-play's /dev/fb0, went with TD-27 on 2026-10-02).
 #
 # Copyright 2026 Phoenix Systems
 # SPDX-License-Identifier: BSD-3-Clause
@@ -185,7 +185,7 @@ done
 
 echo "== 3. no file of the first GPU stack, of a superseded build or of a hand-staged test =="
 # The kdrive X server, the old engines, the glamor X daemon, the GL-in-X client, xlaunch,
-# the /dev/fb0 probe, the old GPU daemon and the /dev/fb0 server.
+# the /dev/fb0 probe, the old GPU daemon, the /dev/fb0 server and its HEVC player.
 for p in usr/bin/Xphoenix usr/bin/yquake2 usr/bin/quake3e usr/bin/supertuxkart \
 	bin/Xphoenix-glamor-daemon bin/gl-x11-window-daemon bin/pl_phoenix_xlaunch bin/fbprobe \
 	sbin/rpi4-v3d sbin/rpi4-fb \
@@ -194,7 +194,7 @@ for p in usr/bin/Xphoenix usr/bin/yquake2 usr/bin/quake3e usr/bin/supertuxkart \
 	usr/bin/ffplay-wl2 bin/video-play2 bin/atril-wl bin/xfce-desktop-atril.sh bin/foot-2 bin/labwc-2 \
 	bin/fuzzel-2 bin/xfce-session-2 bin/xfce-desktop-2.sh bin/rpi4-v3d-async-low bin/rpi4-kms-g7 \
 	bin/rpi4-kms-g8 bin/rpi4-kms-g9 bin/weston-simple-egl-low etc/xdg/labwc-xfce-m8 usr/share/m10 \
-	bin/Xorg-drm-noshim bin/v3dmemprobe \
+	bin/Xorg-drm-noshim bin/v3dmemprobe bin/hevc-play \
 	bin/qs-drm usr/bin/quake2-drm usr/bin/quake3-drm bin/vkq-drm bin/stk-drm bin/startx-drm bin/startx_gpu \
 	bin/thunar-wl bin/gdbus-wl bin/vkcube-drm usr/lib/xfce-demo etc/xdg/labwc-xfce-demo etc/xdg/xfce-demo \
 	usr/share/xfce-demo \
@@ -205,11 +205,8 @@ for p in usr/bin/Xphoenix usr/bin/yquake2 usr/bin/quake3e usr/bin/supertuxkart \
 done
 
 echo "== 4. old-stack strings in the rootfs ELFs =="
-# Known exceptions: reported as NOTE, not counted. Each has a TD and a plan.
-#   bin/hevc-play  (TD-27) rpivid decoder writing /dev/fb0; built by hand from
-#                  tools/hevc-decode, not by the image build: port it to a KMS dumb
-#                  buffer, then delete video/rpi4-fb.
-allow_fb0=(bin/hevc-play)
+# No exceptions: the last /dev/fb0 user (the hand-built bin/hevc-play) and the device
+# itself (video/rpi4-fb) were removed on 2026-10-02 (TD-27); check 3 flags a stale copy.
 elves=()
 while IFS= read -r -d '' f; do
 	# ELF magic only; scripts and data are not programs.
@@ -225,10 +222,6 @@ for s in 'v3d-winsys:' 'phxgl' 'V3DV_PHOENIX' '/dev/v3d-srv' 'RPI4FB_GETMODE' '/
 		n=$(count "${s}" "${f}")
 		[ "${n:-0}" -gt 0 ] || continue
 		rel="${f#"${root}"/}"
-		if [ "${s}" = '/dev/fb0' ] && printf '%s\n' "${allow_fb0[@]}" | grep -qxF "${rel}"; then
-			note "'${s}' x${n} in ${rel} (known exception, TD-27)"
-			continue
-		fi
 		fail "'${s}' x${n} in ${rel}"
 		hits=$((hits + 1))
 	done

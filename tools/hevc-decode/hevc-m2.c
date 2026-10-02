@@ -30,7 +30,6 @@
 #include <time.h>
 #include <sys/mman.h>
 #include <fcntl.h>
-#include <sys/ioctl.h>
 #include <sys/interrupt.h>
 #include <sys/threads.h>
 
@@ -93,8 +92,8 @@ static int hevc_isr(unsigned int n, void *arg)
  * only `dmb ish` (inner-shareable), which does NOT order those NC writes against a
  * system-domain device before the doorbell store launches the fetch. `dsb sy`
  * waits for all prior accesses to complete to the endpoint. Without it, a heavy
- * Normal-NC store burst just before a frame (e.g. fb_blit's ~500K framebuffer
- * stores during video playback) leaves the decode inputs still in the store/
+ * Normal-NC store burst just before a frame (e.g. the ~500K framebuffer stores of
+ * the display blit this tool once had) leaves the decode inputs still in the store/
  * write-combine buffers when the block starts reading -> stale input -> an
  * intermittent wrong frame that then poisons the ping-pong reference chain. */
 static inline void hevc_dma_fence(void) { __asm__ volatile("dsb sy" ::: "memory"); }
@@ -420,240 +419,16 @@ static int wait_active(volatile uint8_t *intc, uint32_t bit, int timeout_ms)
 	return rc;
 }
 
-/* rpi4-fb GETMODE ABI (video/rpi4-fb/rpi4-fb.h). */
-typedef struct { uint16_t width, height, bpp, pitch; uint64_t smemlen, framebuffer; } fbmode_t;
-#define FB_GETMODE _IOR('g', 1, fbmode_t)
-
-static inline uint8_t clip8(int v) { return v < 0 ? 0 : (v > 255 ? 255 : (uint8_t)v); }
-
-/* Fetch one sample from a SAND/COL128 plane. 8-bit: 1 byte/sample in 128-byte
- * columns. 10-bit (NV12_10_COL128): 3 samples packed LSB-first per 32-bit LE
- * word → 96 samples per 128-byte column. `sx` is the sample index along the row,
+/* Fetch one sample from a 10-bit SAND/COL128 plane (NV12_10_COL128): 3 samples
+ * packed LSB-first per 32-bit LE word → 96 samples per 128-byte column. (8-bit:
+ * 1 byte/sample, pixel(x,y) = buf[(x/128)*stride + y*128 + x%128], inline below.) `sx` is the sample index along the row,
  * `row` the row within the plane, `stride` the plane's SAND column stride. */
-static inline uint32_t sand8(const uint8_t *b, uint32_t stride, uint32_t sx, uint32_t row)
-{
-	return b[(sx / 128u) * stride + row * 128u + (sx % 128u)];
-}
 static inline uint32_t sand10(const uint8_t *b, uint32_t stride, uint32_t sx, uint32_t row)
 {
 	uint32_t col = sx / 96u, s = sx % 96u, word = s / 3u, lane = s % 3u;
 	const uint8_t *wp = b + (size_t)col * stride + (size_t)row * 128u + word * 4u;
 	uint32_t u = wp[0] | ((uint32_t)wp[1] << 8) | ((uint32_t)wp[2] << 16) | ((uint32_t)wp[3] << 24);
 	return (u >> (lane * 10u)) & 0x3FFu;
-}
-
-/* Best-effort: unpack the SAND/COL128 decode, convert NV12->RGBA (BT.601 limited
- * range), and blit the frame centered onto /dev/fb0 (R8G8B8A8, the proven scanout
- * format). No-op if fb0 is unavailable — the headless pixel check already ran. */
-/* Optional destination window (PLAY_TOOL --window WxH+X+Y). g_win_w == 0 keeps the
- * historical behaviour: full-size, centered, no scaling. When set, the frame is
- * scaled with nearest-neighbour into that rectangle and everything outside it is
- * left untouched -- so HW video plays as a window OVER whatever already owns the
- * framebuffer (the fbcon terminal), instead of covering the screen. The owner's
- * reason: a full-screen capture "looks strange as you can not tell if this was a
- * playback in the system or a segment of external video glued together".
- * Nearest-neighbour on purpose -- this runs on the CPU per frame, and the point is
- * to prove the decode is ours, not to resample well. */
-static uint32_t g_win_w = 0, g_win_h = 0, g_win_x = 0, g_win_y = 0;
-static int g_win_center_x = 0, g_win_center_y = 0;   /* resolved once fb geometry is known */
-static uint32_t g_win_border = 2;   /* px; drawn once per frame so the window reads as one */
-
-/* Blit one decoded frame (SAND/COL128 -> NV12 -> RGBA, BT.601) into a mapped
- * R8G8B8A8 framebuffer: centered at native size, or scaled into the --window
- * rectangle when one was given. */
-/* Linear row cache for the SAND->linear step.
- *
- * The blit used to read every luma and chroma sample straight out of the decode
- * output with sand8(), i.e. three UNCACHED byte reads per output pixel, and store
- * the result as four UNCACHED byte writes. Measured on hardware at 1280x720 that
- * came to 193 ms of a 236 ms frame -- 82% of the wall clock, against ~3 ms for the
- * hardware decode itself. Playback was never decode-bound; it was bound by the
- * CPU touching uncached DRAM ~6.5M times a frame.
- *
- * SAND/COL128 helps here: for a FIXED row, each group of 128 samples is
- * contiguous (column base + row*128), so a whole source row is a handful of
- * 128-byte memcpys strided by the column stride. Copying those into a cached
- * buffer turns the per-sample uncached reads into burst reads, and the inner loop
- * then reads normal cached memory. The store side becomes one 32-bit write per
- * pixel instead of four byte writes.
- *
- * 10-bit (Main10) keeps the original per-sample path: it is not what the demo
- * uses, and NV12_10_COL128 packs three samples per 32-bit word, so it wants its
- * own unpacker rather than a shared one. */
-static uint8_t *g_row_lum, *g_row_chr;
-static uint32_t g_row_cap;
-static uint32_t g_row_lum_y = 0xffffffffu, g_row_chr_y = 0xffffffffu;
-
-static int row_cache_ensure(uint32_t W)
-{
-	if (g_row_cap >= W && g_row_lum != NULL && g_row_chr != NULL) {
-		return 0;
-	}
-	free(g_row_lum);
-	free(g_row_chr);
-	/* +128 so a trailing partial column can be copied whole without a bounds
-	 * test in the inner copy loop. */
-	g_row_lum = malloc(W + 128u);
-	g_row_chr = malloc(W + 128u);
-	g_row_cap = (g_row_lum != NULL && g_row_chr != NULL) ? W : 0u;
-	g_row_lum_y = g_row_chr_y = 0xffffffffu;
-	return (g_row_cap != 0u) ? 0 : -1;
-}
-
-
-/* Gather one SAND row into a linear cached buffer: ceil(W/128) contiguous
- * 128-byte chunks, one per column, strided by `stride`. */
-static void sand_row8(uint8_t *dst, const uint8_t *b, uint32_t stride,
-                      uint32_t row, uint32_t W)
-{
-	uint32_t x = 0;
-
-	while (x < W) {
-		memcpy(dst + x, b + (size_t)(x / 128u) * stride + (size_t)row * 128u, 128u);
-		x += 128u;
-	}
-}
-
-
-/* Blit one decoded frame (SAND/COL128 -> NV12 -> RGBA, BT.601) into a mapped
- * R8G8B8A8 framebuffer: centered at native size, or scaled into the --window
- * rectangle when one was given. */
-static void fb_blit(uint8_t *fb, uint32_t pitch, uint32_t fbw, uint32_t fbh,
-		    const uint8_t *yb, const uint8_t *cbb, uint32_t W, uint32_t H,
-		    uint32_t luma_stride, uint32_t chroma_stride)
-{
-	uint32_t x0, y0, dw, dh, sx_step = 1u << 16, sy_step = 1u << 16;
-	int fast = (g_bd_minus8 == 0) && (row_cache_ensure(W) == 0);
-
-	if (g_win_w != 0u && g_win_h != 0u) {
-		dw = g_win_w; dh = g_win_h;
-		x0 = g_win_center_x ? ((fbw > dw) ? (fbw - dw) / 2u : 0u) : g_win_x;
-		y0 = g_win_center_y ? ((fbh > dh) ? (fbh - dh) / 2u : 0u) : g_win_y;
-		/* Clamp to the framebuffer rather than refusing: a caller-supplied
-		 * geometry that runs off the edge should still show what fits. */
-		if (x0 >= fbw || y0 >= fbh) return;
-		if (x0 + dw > fbw) dw = fbw - x0;
-		if (y0 + dh > fbh) dh = fbh - y0;
-		/* Fixed-point 16.16 source step, so a 1080p source into a 960x540 window
-		 * costs one multiply-shift per pixel and no division. */
-		sx_step = (W << 16) / dw;
-		sy_step = (H << 16) / dh;
-	}
-	else {
-		/* Native size, centered, 1:1 (the steps stay 1.0). */
-		dw = (W < fbw) ? W : fbw;
-		dh = (H < fbh) ? H : fbh;
-		x0 = (fbw > W) ? (fbw - W) / 2u : 0u;
-		y0 = (fbh > H) ? (fbh - H) / 2u : 0u;
-	}
-
-	/* A new frame invalidates the cached rows even at the same row index. */
-	g_row_lum_y = g_row_chr_y = 0xffffffffu;
-
-	for (uint32_t dy = 0; dy < dh; dy++) {
-		uint32_t y = (sy_step == (1u << 16)) ? dy : ((dy * sy_step) >> 16);
-		uint32_t cy;
-		uint8_t *dstrow;
-
-		if (y >= H) y = H - 1u;
-		cy = y / 2u;
-		dstrow = fb + (uint64_t)(y0 + dy) * pitch + (uint64_t)x0 * 4u;
-
-		if (fast) {
-			if (g_row_lum_y != y) {
-				sand_row8(g_row_lum, yb, luma_stride, y, W);
-				g_row_lum_y = y;
-			}
-			if (g_row_chr_y != cy) {
-				sand_row8(g_row_chr, cbb, chroma_stride, cy, W);
-				g_row_chr_y = cy;
-			}
-		}
-
-		for (uint32_t dx = 0; dx < dw; dx++) {
-			uint32_t x = (sx_step == (1u << 16)) ? dx : ((dx * sx_step) >> 16);
-			uint32_t cxb;
-			int Y, U, V, C, D, E;
-
-			if (x >= W) x = W - 1u;
-			cxb = x & ~1u;   /* NV12: Cb at the even column, Cr next to it */
-
-			if (fast) {
-				Y = g_row_lum[x];
-				U = g_row_chr[cxb];
-				V = g_row_chr[cxb + 1u];
-			}
-			else if (g_bd_minus8) {   /* 10-bit packed -> downshift 10->8 */
-				Y = (int)(sand10(yb, luma_stride, x, y) >> 2);
-				U = (int)(sand10(cbb, chroma_stride, cxb, cy) >> 2);
-				V = (int)(sand10(cbb, chroma_stride, cxb + 1u, cy) >> 2);
-			}
-			else {
-				Y = (int)sand8(yb, luma_stride, x, y);
-				U = (int)sand8(cbb, chroma_stride, cxb, cy);
-				V = (int)sand8(cbb, chroma_stride, cxb + 1u, cy);
-			}
-
-			C = Y - 16; D = U - 128; E = V - 128;
-			/* One 32-bit store (R,G,B,A little-endian) instead of four byte
-			 * stores: the framebuffer is uncached, so each byte write was its
-			 * own bus transaction. dstrow is 4-byte aligned (pitch and x0*4
-			 * both are). */
-			*(uint32_t *)(dstrow + (uint64_t)dx * 4u) =
-				  (uint32_t)clip8((298 * C + 409 * E + 128) >> 8)
-				| ((uint32_t)clip8((298 * C - 100 * D - 208 * E + 128) >> 8) << 8)
-				| ((uint32_t)clip8((298 * C + 516 * D + 128) >> 8) << 16)
-				| 0xff000000u;
-		}
-	}
-
-	if (g_win_w != 0u && g_win_h != 0u) {
-		/* Border: a white frame just outside the video, clipped to the fb. Without
-		 * it a dark scene has no visible edge and the "window" reading is lost. */
-		for (uint32_t b = 1; b <= g_win_border; b++) {
-			uint32_t bx0 = (x0 >= b) ? x0 - b : 0;
-			uint32_t by0 = (y0 >= b) ? y0 - b : 0;
-			uint32_t bx1 = (x0 + dw + b - 1u < fbw) ? x0 + dw + b - 1u : fbw - 1u;
-			uint32_t by1 = (y0 + dh + b - 1u < fbh) ? y0 + dh + b - 1u : fbh - 1u;
-			for (uint32_t x = bx0; x <= bx1; x++) {
-				*(uint32_t *)(fb + (uint64_t)by0 * pitch + (uint64_t)x * 4u) = 0xffffffffu;
-				*(uint32_t *)(fb + (uint64_t)by1 * pitch + (uint64_t)x * 4u) = 0xffffffffu;
-			}
-			for (uint32_t y = by0; y <= by1; y++) {
-				*(uint32_t *)(fb + (uint64_t)y * pitch + (uint64_t)bx0 * 4u) = 0xffffffffu;
-				*(uint32_t *)(fb + (uint64_t)y * pitch + (uint64_t)bx1 * 4u) = 0xffffffffu;
-			}
-		}
-	}
-}
-
-/* Map /dev/fb0 (R8G8B8A8). Returns the mapping (and fills *m) or NULL. */
-static uint8_t *fb_open(fbmode_t *m, int *fd_out)
-{
-	int fd = open("/dev/fb0", O_RDWR);
-	if (fd < 0) { printf("hevc-m2: /dev/fb0 unavailable — skipping HDMI display\n"); return NULL; }
-	memset(m, 0, sizeof(*m));
-	if (ioctl(fd, FB_GETMODE, m) != 0 || m->framebuffer == 0 || m->bpp != 32) {
-		printf("hevc-m2: fb0 GETMODE failed — skipping display\n"); close(fd); return NULL;
-	}
-	uint8_t *fb = mmap(NULL, m->smemlen, PROT_READ | PROT_WRITE,
-		MAP_PHYSMEM | MAP_UNCACHED | MAP_ANONYMOUS, -1, (off_t)m->framebuffer);
-	if (fb == MAP_FAILED) { printf("hevc-m2: fb mmap failed\n"); close(fd); return NULL; }
-	*fd_out = fd;
-	return fb;
-}
-
-/* One-shot display of a single decoded frame (single-frame path; unused in clip mode). */
-static void __attribute__((unused)) hevc_show(const uint8_t *yb, const uint8_t *cbb,
-		      uint32_t W, uint32_t H, uint32_t luma_stride, uint32_t chroma_stride)
-{
-	fbmode_t m; int fd;
-	uint8_t *fb = fb_open(&m, &fd);
-	if (!fb) return;
-	fb_blit(fb, m.pitch, m.width, m.height, yb, cbb, W, H, luma_stride, chroma_stride);
-	printf("hevc-m2: displayed %ux%u decoded frame on fb0 (%ux%u)\n", W, H, m.width, m.height);
-	munmap(fb, m.smemlen);
-	close(fd);
 }
 
 /* Decode one all-intra frame (independent IDR I-slice) into luma/chroma using the
@@ -667,8 +442,8 @@ static int decode_one(volatile uint8_t *hevc, volatile uint8_t *intc,
 		      uint32_t pu_stride, uint32_t coeff_stride, uint32_t luma_stride,
 		      uint32_t chroma_stride, int verbose)
 {
-	/* Drain any prior Normal-NC store burst (notably fb_blit's ~500K framebuffer
-	 * writes during playback) to the endpoint BEFORE writing this frame's inputs,
+	/* Drain any prior Normal-NC store burst (a framebuffer blit, say) to the
+	 * endpoint BEFORE writing this frame's inputs,
 	 * so a backed-up store/write-combine buffer can't interleave with the bitstream
 	 * memcpy / command-buffer build below. */
 	hevc_dma_fence();
@@ -923,21 +698,19 @@ int main(void)
 	uint32_t ok __attribute__((unused)) = 0, decoded __attribute__((unused)) = 0;
 #ifdef IPPP_STRESS
 	/* Statistical validation of the phase-1->phase-2 drain fix: loop the golden
-	 * verify many times with NO fb/sleep (amplifies the race) and tally full-pass
+	 * verify many times with NO sleep (amplifies the race) and tally full-pass
 	 * iterations + per-frame failures. A correct fix -> 0 failures over hundreds
 	 * of iterations (pristine baseline ~65% full-pass). */
 	#ifndef STRESS_ITERS
 	#define STRESS_ITERS 300
 	#endif
-	uint8_t *fb __attribute__((unused)) = NULL;
 	const int passes = STRESS_ITERS;
 	uint32_t full_pass = 0, frame_fail[IPPP_NFRAMES] = {0};
 #else
-	fbmode_t fbm; int fbfd = -1; uint8_t *fb = fb_open(&fbm, &fbfd);   /* display inter video */
 #ifdef IPPP_HAVE_GOLDEN
 	const int passes = 1;                    /* verify once */
 #else
-	const int passes = 20;                   /* replay so a periodic HDMI snapshot lands mid-play */
+	const int passes = 20;                   /* no golden: a decode soak, paced like playback */
 #endif
 #endif
 	for (int loop = 0; loop < passes; loop++) {
@@ -966,14 +739,12 @@ int main(void)
 		}
 		decoded++;
 #ifndef IPPP_STRESS
-		if (fb) fb_blit(fb, fbm.pitch, fbm.width, fbm.height, cl->cpu, cc->cpu,
-				FRAME_WIDTH, FRAME_HEIGHT, luma_stride, chroma_stride);
 #ifndef NO_FRAME_SLEEP
 		{ struct timespec ts = { 0, 40000000 }; nanosleep(&ts, NULL); }   /* ~25 fps */
 #endif
 #elif defined(STRESS_SLEEP)
-		/* Isolate the inter-frame idle: replicate the display loop's gap WITHOUT
-		 * fb0, to test whether idle duration alone (e.g. HEVC clock gating between
+		/* Isolate the inter-frame idle: replicate a player's inter-frame gap, to
+		 * test whether idle duration alone (e.g. HEVC clock gating between
 		 * frames) is the trigger. -DSTRESS_SLEEP_MS=N sweeps the gap. */
 		#ifndef STRESS_SLEEP_MS
 		#define STRESS_SLEEP_MS 40
@@ -1006,26 +777,23 @@ int main(void)
 	printf("\n");
 	return full_pass == (uint32_t)passes ? 0 : 7;
 #else
-	if (fb) { munmap(fb, fbm.smemlen); close(fbfd); }
 #ifdef IPPP_HAVE_GOLDEN
 	printf("hevc-m2: IPPP-TEST %u/%d frames bit-exact %s\n", ok, IPPP_NFRAMES,
 		ok == IPPP_NFRAMES ? "— rolling-DPB inter sequence WORKS" : "");
 	return ok == IPPP_NFRAMES ? 0 : 7;
 #else
-	printf("hevc-m2: IPPP-PLAY decoded+displayed %u frames (%d-frame inter clip%s)\n",
-		decoded, IPPP_NFRAMES, fb ? " on HDMI" : " headless");
+	printf("hevc-m2: IPPP-PLAY decoded %u frames (%d-frame inter clip, %d passes)\n",
+		decoded, IPPP_NFRAMES, passes);
 	return decoded ? 0 : 7;
 #endif
 #endif
 	}
 #elif defined(CLIP_NFRAMES)
-	/* All-intra video playback: decode + display each frame in sequence. Two passes so
-	 * the periodic HDMI snapshot is very likely to land on a mid-clip frame (= motion). */
-	fbmode_t fbm; int fbfd = -1; uint8_t *fb = fb_open(&fbm, &fbfd);
-	printf("hevc-m2: playing %d-frame all-intra %ux%u clip%s\n", CLIP_NFRAMES,
-		FRAME_WIDTH, FRAME_HEIGHT, fb ? " on HDMI" : " (headless — no fb0)");
+	/* All-intra video: decode each frame in sequence at ~25 fps, as a player would. */
+	printf("hevc-m2: decoding %d-frame all-intra %ux%u clip\n", CLIP_NFRAMES,
+		FRAME_WIDTH, FRAME_HEIGHT);
 	uint32_t shown = 0;
-	const int passes = 6;                    /* replay so a periodic HDMI snapshot lands mid-clip */
+	const int passes = 6;                    /* a decode soak */
 	for (int loop = 0; loop < passes; loop++) {
 		for (int f = 0; f < CLIP_NFRAMES; f++) {
 			int rc = decode_one(hevc, intc, &cmd, &bs, &pu, &coeff, &luma, &chroma,
@@ -1033,17 +801,14 @@ int main(void)
 				0, 0, NULL, NULL, 0,   /* I-slice: I const, 0 msgs, all-current refs, POC 0 */
 				pu_stride, coeff_stride, luma_stride, chroma_stride, 0);
 			if (rc != 0) { printf("hevc-m2: frame %d decode failed rc=%d\n", f, rc); continue; }
-			if (fb) fb_blit(fb, fbm.pitch, fbm.width, fbm.height, luma.cpu, chroma.cpu,
-					FRAME_WIDTH, FRAME_HEIGHT, luma_stride, chroma_stride);
 			shown++;
 			{ struct timespec ts = { 0, 40000000 }; nanosleep(&ts, NULL); }  /* ~25 fps */
 		}
 	}
-	if (fb) { munmap(fb, fbm.smemlen); close(fbfd); }
-	printf("hevc-m2: clip done — decoded+displayed %u/%u frames\n", shown, (unsigned)(passes * CLIP_NFRAMES));
+	printf("hevc-m2: clip done — decoded %u/%u frames\n", shown, (unsigned)(passes * CLIP_NFRAMES));
 	return shown ? 0 : 7;
 #else
-	/* Single frame: decode (verbose), verify bit-exact vs golden, display. */
+	/* Single frame: decode (verbose), verify bit-exact vs golden. */
 	printf("hevc-m2: buffers cmd_pa=0x%08llx bs_pa=0x%08llx\n",
 		(unsigned long long)cmd.pa, (unsigned long long)bs.pa);
 	int drc = decode_one(hevc, intc, &cmd, &bs, &pu, &coeff, &luma, &chroma,
@@ -1080,9 +845,6 @@ int main(void)
 	printf("hevc-m2: luma   %u/%u match golden  (min %u max %u)\n", y_ok, y_tot, y_min, y_max);
 	printf("hevc-m2: chroma %u/%u match golden  (min %u max %u)\n", c_ok, c_tot, c_min, c_max);
 
-	/* Best-effort HDMI display of the decoded frame (visible end-to-end proof). */
-	hevc_show(yb, cb, FRAME_WIDTH, FRAME_HEIGHT, luma_stride, chroma_stride);
-
 	int exact = (y_bad == 0 && c_bad == 0);
 	printf("hevc-m2: M4 %s\n", exact ?
 		"EXACT MATCH — HW decode == ffmpeg SW decode (bit-exact)" :
@@ -1092,17 +854,8 @@ int main(void)
 }
 #else  /* PLAY_TOOL: runtime .265 file player (M3) */
 
-/* Phase timing for the player: how much of a frame's wall clock is the CPU
- * detile+colour-convert blit, as opposed to the hardware decode?
- *
- * Worth measuring rather than assuming, because BOTH sides of that blit are
- * uncached: the decode output buffers are mmap'd MAP_UNCACHED|MAP_CONTIGUOUS and
- * /dev/fb0 is MAP_PHYSMEM|MAP_UNCACHED, so the inner loop does three uncached
- * byte reads (Y, U, V through sand8) and four uncached byte stores per output
- * pixel. At 1280x720 that is ~2.8M uncached reads and ~3.7M uncached writes per
- * frame. The owner reports playback as slow (~4.7 fps presented), and this says
- * whether the blit or the decode is the reason. */
-static uint64_t g_blit_ns, g_blit_frames, g_play_t0;
+/* Wall-clock start of the decode, for the progress lines. */
+static uint64_t g_play_t0;
 
 static uint64_t now_ns(void)
 {
@@ -1112,14 +865,10 @@ static uint64_t now_ns(void)
 }
 
 
-/* Pace presentation at no more than PACE_NS per frame, sleeping only for the
- * time actually left.
- *
- * This replaces an unconditional nanosleep(40 ms) per presented frame. That was
- * 40 ms of a measured 236 ms frame -- 17% of the wall clock spent sleeping while
- * already running at a sixth of the target rate. Pacing is still wanted so a
- * cheap clip does not race, but it should cost nothing when the frame was late,
- * which is the normal case here. */
+/* Pace output at no more than PACE_NS per frame (25 fps, a player's rate),
+ * sleeping only for the time actually left, so the decode sees the inter-frame
+ * idle a player gives it (README gotcha 8). Costs nothing when the frame was
+ * late. The rpivid host test (video_player port) turns it off. */
 #define PACE_NS 40000000ull
 
 static void pace_frame(void)
@@ -1143,14 +892,14 @@ static void pace_frame(void)
 }
 
 
-/* Progress every PROGRESS_EVERY presented frames.
+/* Progress every PROGRESS_EVERY output frames.
  *
  * Not decoration: hevc-play printed nothing between its start banner and its
  * final line, so on a 297-frame clip the test harness's idle timer (no UART
- * output for N seconds => assume finished) powered the Pi off mid-playback and
+ * output for N seconds => assume finished) powered the Pi off mid-run and
  * the run produced no completion line at all. A periodic line keeps the console
  * alive for exactly as long as the decoder is working, and gives the log a frame
- * count to check against the clip. Cheap: one printf per 25 presented frames. */
+ * count to check against the clip. Cheap: one printf per 25 frames. */
 #define PROGRESS_EVERY 25u
 
 static void hevc_play_progress(uint32_t shown, uint32_t total)
@@ -1158,14 +907,9 @@ static void hevc_play_progress(uint32_t shown, uint32_t total)
 	if (shown != 0u && (shown % PROGRESS_EVERY) == 0u) {
 		uint64_t wall = (g_play_t0 != 0u) ? (now_ns() - g_play_t0) : 0u;
 		double per = (shown != 0u) ? (double)wall / shown / 1e6 : 0.0;
-		double blit = (g_blit_frames != 0u)
-		            ? (double)g_blit_ns / g_blit_frames / 1e6 : 0.0;
 
-		printf("hevc-play: presented %u/%u frames  %.1f ms/frame "
-		       "(blit %.1f ms = %.0f%%)  %.2f fps\n",
-		       shown, total, per, blit,
-		       (per > 0.0) ? (blit / per * 100.0) : 0.0,
-		       (per > 0.0) ? (1000.0 / per) : 0.0);
+		printf("hevc-play: output %u/%u frames  %.1f ms/frame  %.2f fps\n",
+		       shown, total, per, (per > 0.0) ? (1000.0 / per) : 0.0);
 	}
 }
 
@@ -1317,12 +1061,11 @@ static int resolve_reflist(const uint32_t *ref_poc, uint32_t nb, const dpb_ent_t
 	return 0;
 }
 
-/* Present one decoded frame: if a golden (ffmpeg NV12, display order) is given,
- * verify this frame's luma against golden[poc] and return the bad-pixel count;
- * then blit to fb (if present). poc = the frame's display index. */
-static uint32_t present_frame(uint8_t *fb, const fbmode_t *fbm, dma_buf_t *el, dma_buf_t *ec,
-			      uint32_t luma_stride, uint32_t chroma_stride,
-			      const uint8_t *golden, uint32_t golden_nframes, uint32_t poc)
+/* Verify one decoded frame against golden[poc] (ffmpeg NV12 or yuv420p10le,
+ * display order) and return the bad-pixel count. poc = the frame's display index. */
+static uint32_t verify_frame(dma_buf_t *el, dma_buf_t *ec,
+			     uint32_t luma_stride, uint32_t chroma_stride,
+			     const uint8_t *golden, uint32_t golden_nframes, uint32_t poc)
 {
 	uint32_t bad = 0;
 	if (golden && poc < golden_nframes && g_bd_minus8 == 0) {
@@ -1348,8 +1091,8 @@ static uint32_t present_frame(uint8_t *fb, const fbmode_t *fbm, dma_buf_t *el, d
 				if (v != gv) bad++;
 			}
 		/* chroma: golden Cb then Cr planes ((w/2)x(h/2) each, 16-bit); decoder plane
-		 * is NV12-interleaved (Cb at even sample index, Cr at odd) — the same fetch
-		 * the display path uses, so this validates 10-bit colour too. */
+		 * is NV12-interleaved (Cb at even sample index, Cr at odd), so this validates
+		 * 10-bit colour too. */
 		uint32_t cw = g_frame_w / 2u, ch = g_frame_h / 2u;
 		const uint8_t *gcb = g + (size_t)g_frame_w * g_frame_h * 2u;
 		const uint8_t *gcr = gcb + (size_t)cw * ch * 2u;
@@ -1363,49 +1106,18 @@ static uint32_t present_frame(uint8_t *fb, const fbmode_t *fbm, dma_buf_t *el, d
 				if (cr != gr) bad++;
 			}
 	}
-	if (fb) fb_blit(fb, fbm->pitch, fbm->width, fbm->height, el->cpu, ec->cpu,
-			g_frame_w, g_frame_h, luma_stride, chroma_stride);
 	return bad;
-}
-
-/* Parse "WxH+X+Y" (X/Y optional -> centered). Returns 0 on success. */
-static int parse_window_geom(const char *g)
-{
-	uint32_t w = 0, h = 0; int x = -1, y = -1;
-	if (sscanf(g, "%ux%u+%d+%d", &w, &h, &x, &y) < 2) {
-		if (sscanf(g, "%ux%u", &w, &h) != 2) return -1;
-	}
-	if (w == 0u || h == 0u) return -1;
-	g_win_w = w; g_win_h = h;
-	/* -1 means "centre it"; done here rather than in fb_blit so the geometry is
-	 * printed once, resolved, instead of recomputed per frame. */
-	g_win_x = (x >= 0) ? (uint32_t)x : 0u;
-	g_win_y = (y >= 0) ? (uint32_t)y : 0u;
-	g_win_center_x = (x < 0); g_win_center_y = (y < 0);
-	return 0;
 }
 
 int main(int argc, char **argv)
 {
 	setvbuf(stdout, NULL, _IONBF, 0);
 
-	/* Options first, then up to two positionals (stream, optional golden). Kept
-	 * hand-rolled: psh does not strip quotes and this tool ships without getopt
-	 * long-option use elsewhere. */
+	/* Two positionals: the stream and an optional golden. */
 	const char *pos[2] = { NULL, NULL };
 	int npos = 0;
 	for (int i = 1; i < argc; i++) {
-		if (strcmp(argv[i], "--window") == 0 && i + 1 < argc) {
-			if (parse_window_geom(argv[++i]) != 0) {
-				printf("hevc-play: bad --window geometry '%s' (want WxH+X+Y)\n", argv[i]);
-				return 2;
-			}
-		} else if (strncmp(argv[i], "--window=", 9) == 0) {
-			if (parse_window_geom(argv[i] + 9) != 0) {
-				printf("hevc-play: bad --window geometry '%s' (want WxH+X+Y)\n", argv[i] + 9);
-				return 2;
-			}
-		} else if (npos < 2) {
+		if (npos < 2) {
 			pos[npos++] = argv[i];
 		} else {
 			printf("hevc-play: unexpected argument '%s'\n", argv[i]);
@@ -1413,10 +1125,9 @@ int main(int argc, char **argv)
 		}
 	}
 	if (npos < 1) {
-		printf("usage: hevc-play [--window WxH+X+Y] <file.265|.mp4> [golden.nv12]\n");
-		printf("       --window plays into that rectangle over the existing screen\n");
-		printf("                (the fbcon terminal stays visible around it);\n");
-		printf("                omit it for the historical full-size centered blit.\n");
+		printf("usage: hevc-play <file.265|.mp4> [golden.nv12]\n");
+		printf("       decodes on the rpivid block; with a golden, verifies every frame\n");
+		printf("       (to watch a video, use video-play: FFmpeg's hevc_rpivid decoder)\n");
 		return 2;
 	}
 
@@ -1513,7 +1224,7 @@ int main(int argc, char **argv)
 	dma_buf_t cmd = {0}, bs = {0}, pu = {0}, coeff = {0};
 	/* General POC-indexed DPB pool, sized to sps_max_dec_pic_buffering + headroom.
 	 * Any reference picture (I/P + reference-B) occupies a slot until dropped from
-	 * a slice's RPS; a non-reference B occupies one only until displayed. */
+	 * a slice's RPS; a non-reference B occupies one only until output. */
 	uint32_t pool_n = (sps.max_dec_pic_buffering ? sps.max_dec_pic_buffering : 4u) + 2u;
 	if (pool_n < 4u) pool_n = 4u;
 	if (pool_n > 16u) pool_n = 16u;
@@ -1536,16 +1247,12 @@ int main(int argc, char **argv)
 	printf("hevc-play: buffers bs=%zu pu=%u coeff=%u luma_stride=%u cols=%u pool=%u reorder=%u tmvp=%d colmv=%u\n",
 		bs_size, pu_size, coeff_size, luma_stride, cols, pool_n, sps.max_num_reorder, tmvp, tmvp ? colmv_picsize : 0);
 
-	/* Verify mode (golden given) runs HEADLESS — no fb_blit — so the known
-	 * display-path store-burst residual (README gotcha 8) can't confound the
-	 * pure decode bit-exact check. Normal playback (no golden) displays. */
-	fbmode_t fbm; int fbfd = -1; uint8_t *fb = golden ? NULL : fb_open(&fbm, &fbfd);
-
 	/* POC-indexed DPB decode (b-pyramid capable). Per slice: mark+remove (keep the
-	 * pictures in THIS slice's full RPS + any pending display), allocate a free
+	 * pictures in THIS slice's full RPS + any pending output), allocate a free
 	 * pool slot for the output, resolve RefPicListL0/L1 POCs → REF slots, decode,
 	 * insert. Verify mode checks golden[poc] immediately (order-independent);
-	 * playback presents in display/POC order via a bounded reorder. */
+	 * without a golden, frames are output in display/POC order via a bounded
+	 * reorder, as a player would (the pool reuse then matches a player's). */
 	const int passes = (nslices >= 8) ? 2 : 8;
 	uint32_t shown = 0, total_bad = 0, verified = 0;
 	g_play_t0 = now_ns();
@@ -1568,7 +1275,7 @@ int main(int argc, char **argv)
 			}
 
 			/* MARK + REMOVE: keep DPB entries whose POC is in this slice's RPS, or
-			 * that are still pending display; free the rest (IDR: rps_n=0 → reset). */
+			 * that are still pending output; free the rest (IDR: rps_n=0 → reset). */
 			for (uint32_t i = 0; i < pool_n; i++) if (dpb[i].used && !dpb[i].pending) {
 				int keep = 0;
 				for (uint32_t k = 0; k < s.rps_n; k++) if (dpb[i].poc == s.rps_poc[k]) { keep = 1; break; }
@@ -1622,20 +1329,16 @@ int main(int argc, char **argv)
 			(void)is_ref_nal;   /* ref-ness is enforced by RPS marking, not the NAL type */
 
 			if (golden) {   /* verify immediately — order-independent (compare golden[poc]) */
-				total_bad += present_frame(NULL, &fbm, ol, oc, luma_stride, chroma_stride, golden, golden_nframes, s.poc);
+				total_bad += verify_frame(ol, oc, luma_stride, chroma_stride, golden, golden_nframes, s.poc);
 				verified++;
 				dpb[ob].pending = 0;
-			} else {        /* playback: bounded POC-order display reorder */
+			} else {        /* no golden: bounded POC-order output reorder */
 				uint32_t npend = 0;
 				for (uint32_t i = 0; i < pool_n; i++) if (dpb[i].pending) npend++;
 				while (npend > reorder_max) {
 					int mi = -1; uint32_t mp = 0;
 					for (uint32_t i = 0; i < pool_n; i++)
 						if (dpb[i].pending && (mi < 0 || dpb[i].poc < mp)) { mi = (int)i; mp = dpb[i].poc; }
-					{ uint64_t _t0 = now_ns();
-					if (fb) fb_blit(fb, fbm.pitch, fbm.width, fbm.height, pool_l[mi].cpu, pool_c[mi].cpu,
-							g_frame_w, g_frame_h, luma_stride, chroma_stride);
-					g_blit_ns += now_ns() - _t0; g_blit_frames++; }
 					pace_frame(); shown++; dpb[mi].pending = 0; npend--;
 				hevc_play_progress(shown, nslices);
 				}
@@ -1648,20 +1351,14 @@ int main(int argc, char **argv)
 				for (uint32_t i = 0; i < pool_n; i++)
 					if (dpb[i].pending && (mi < 0 || dpb[i].poc < mp)) { mi = (int)i; mp = dpb[i].poc; }
 				if (mi < 0) break;
-				{ uint64_t _t0 = now_ns();
-				if (fb) fb_blit(fb, fbm.pitch, fbm.width, fbm.height, pool_l[mi].cpu, pool_c[mi].cpu,
-						g_frame_w, g_frame_h, luma_stride, chroma_stride);
-				g_blit_ns += now_ns() - _t0; g_blit_frames++; }
 				pace_frame(); shown++; dpb[mi].pending = 0;
 				hevc_play_progress(shown, nslices);
 			}
 		}
 	}
-	if (fb) { munmap(fb, fbm.smemlen); close(fbfd); }
 	free(file);
 	if (golden) free((void *)golden);
-	printf("hevc-play: decoded+displayed %u frame-instances (%u unique frames)%s\n",
-		shown, nslices, fb ? " on HDMI" : " headless");
+	printf("hevc-play: decoded+output %u frame-instances (%u unique frames)\n", shown, nslices);
 	if (golden)
 		printf("hevc-play: VERIFY %s — %u frame-instances checked, %u bad px total\n",
 			total_bad ? "MISMATCH" : "BIT-EXACT", verified, total_bad);

@@ -16,8 +16,8 @@
 #   - Rotation. Phones record landscape sensor data plus a rotation matrix.
 #     ffmpeg applies it on decode by default (-autorotate), so the output is
 #     upright and the decoder never sees a display matrix it does not parse.
-#   - Frame rate. 30/60 fps is fine; a 240 fps slow-mo clip is decimated, since
-#     hevc-play presents as fast as it decodes and has no clock.
+#   - Frame rate. 30/60 fps is fine; a 240 fps slow-mo clip is decimated (--fps,
+#     default 30) rather than handed to the block at 8x the real-time load.
 #   - Chroma/bit depth. Forced to yuv420p (Main) -- the decoder is 4:2:0 only.
 #
 # NOT handled: HDR. A Dolby Vision / HLG clip is tone-mapped only approximately
@@ -33,8 +33,9 @@
 #     --10bit        encode Main10 instead of 8-bit Main (both are verified)
 #     --no-stage     do not copy into the netboot root
 #
-# Output: an Annex-B elementary stream. hevc-play reads .265 directly and also
-# demuxes .mp4/.mov, but the elementary stream keeps one fewer thing in the way.
+# Output: an Annex-B elementary stream. video-play (ffplay, FFmpeg's hevc_rpivid
+# decoder) and hevc-rpivid-check read it directly, as does this directory's
+# reference decoder hevc-play.
 
 set -euo pipefail
 
@@ -88,8 +89,9 @@ ffprobe -v error -select_streams v:0 \
 #   no-open-gop   every GOP starts at an IDR, so playback can begin anywhere
 #   log-level     keep the encoder quiet; we care about the bitstream
 #
-# PLAYBACK clips are encoded IPPP (bframes=0, ref=1) because hevc-play has an
-# open DPB defect on richer reference structures. On a 750-frame clip with x265's
+# PLAYBACK clips are encoded IPPP (bframes=0, ref=1) because hevc-play (this
+# directory's reference decoder, which keeps its own DPB; the shipped hevc_rpivid
+# uses FFmpeg's) has an open DPB defect on richer reference structures. On a 750-frame clip with x265's
 # defaults it stopped after 10 frames with "collocated POC 0 not in DPB"; with
 # temporal-MVP disabled it stopped after 11 with "a reference POC not in DPB" --
 # a DIFFERENT message one frame later, which localises the fault to RPS/DPB
@@ -97,7 +99,7 @@ ffprobe -v error -select_streams v:0 \
 # the project has already proven end-to-end ("single + multi-frame IPPP rolling
 # DPB"), so it is the reliable shape for a demo clip.
 #
-# This is a PLAYER workaround, NOT a codec-subset restriction: hevc-m2 decodes
+# This is a hevc-play workaround, NOT a codec-subset restriction: hevc-m2 decodes
 # B slices, b-pyramid, multi-reference and TMVP bit-exact against ffmpeg, and all
 # of those stay in the verified subset. Do NOT "simplify" the committed
 # conformance vectors the same way -- they are what proves the subset.
@@ -147,8 +149,8 @@ if [ "$stage" = 1 ]; then
 	done
 	cat <<EOF
 
-Play it on the Pi:
-  hevc-play /usr/share/demo/$name                      # full screen
-  hevc-play --window 960x540+480+270 /usr/share/demo/$name   # window over the terminal
+Play it on the Pi (FFmpeg's hevc_rpivid decoder):
+  video-play /usr/share/demo/$name             # full screen from psh, a window under Wayland
+  hevc-rpivid-check /usr/share/demo/$name      # hardware vs CPU decode, every frame compared
 EOF
 fi

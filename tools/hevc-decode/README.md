@@ -4,6 +4,21 @@ A from-scratch HEVC decoder driving the Pi 4's **rpivid / hevc_dec** hardware bl
 directly over MMIO + the VideoCore mailbox — **no VCHIQ, no V4L2, no firmware decode
 blob**. Ported register-by-register from the Linux `hevc_d_h265.c` driver.
 
+> **To play or check a video, use the shipped decoder, not this directory.** Since build
+> 20/21 hardware H.265 decode ships in FFmpeg as the `hevc_rpivid` decoder (ports
+> `video_player`, `files/rpivid/`), whose command buffer is this tool's `hevc-m2.c`:
+>
+> - watch: `video-play <file>` (ffplay: full screen on KMS from psh, a window under Wayland);
+>   `ffplay -vcodec hevc` forces the CPU decoder, `FFMPEG_RPIVID=0` turns the block off;
+> - verify: `hevc-rpivid-check [-crc] [-md5] <file>` (hardware against CPU decode, every
+>   frame compared, timed).
+>
+> What stays here is the from-scratch reference: the register-level decode engine, the
+> committed test vectors, and `hevc-play`, a headless decoder/verifier that the port's host
+> test (`video_player/files/rpivid/hosttest/run.sh`) builds as its oracle. Nothing here
+> displays any more: the `/dev/fb0` output and its `build-hevc-play.sh` were removed on
+> 2026-10-02 together with the `/dev/fb0` device (KNOWN-ISSUES D11, TD-27).
+
 ## What works (all HW-verified, bit-exact vs ffmpeg unless noted)
 
 | Capability | Status |
@@ -12,19 +27,18 @@ blob**. Ported register-by-register from the Linux `hevc_d_h265.c` driver.
 | DMA allocators + GIC SPI-98/irq-130 IRQ path | ✅ M1 (`hevc-m1.c`) |
 | **Intra (I) single-frame** decode | ✅ bit-exact 64×64 → 640×480; runs 1920×1080 full-screen |
 | Multi-CTB, multi-COL128-column-block, partial CTBs | ✅ (128×128, 320×240, 640×480, 1080p) |
-| **All-intra video** playback (per-frame QP, on HDMI) | ✅ 48-frame 320×240 clip, 288/288 |
+| **All-intra video** decode (per-frame QP) | ✅ 48-frame 320×240 clip, 288/288 |
 | **Inter (P) single-frame** — motion compensation | ✅ bit-exact (weighted + non-weighted) |
 | **Multi-frame inter (IPPP, rolling DPB)** | ✅ bit-exact 128×128 (8/8) + 640×480 (4/4); runs 1080p |
-| **Inter-coded video → HDMI playback** | ✅ 32-frame 320×240 IPPP |
+| **Inter-coded video**, decoded at a player's pace | ✅ 32-frame 320×240 IPPP |
 | **Bidirectional (B) inter** — 2 ref lists (past L0 + future L1) | ✅ bit-exact, ANY count of consecutive non-reference B (bframes 1/2/3+, b-adapt ok) |
 | **B-pyramid (hierarchical reference-B)** — general POC-indexed DPB | ✅ bit-exact (reference-B pics, 2-ref lists, RPS ref-lists, DPB eviction — x265 default) |
 | **Real HD default-x265 content** (720p 240 CTBs, 1080p 510 CTBs) | ✅ bit-exact — b-pyramid + multi-ref + tmvp + WPP combined at HD (testdata/hd720.265, hd1080b.265) |
-| **10-bit (Main10)** decode + **HDMI display** | ✅ bit-exact luma+chroma, NV12_10_COL128 packed output; renders on /dev/fb0 (10→8 downshift). all-intra Rext profile still out-of-subset |
-| **Runtime `.265` file player (M3)** | ✅ `hevc-play <file.265>` — parse + decode + display I/P/B, no rebuild |
-| **`.mp4`/`.mov` container demux (M3)** | ✅ `hevc-play <file.mp4>` — in-tool ISOBMFF→Annex-B (no ffmpeg); video track read by sample tables so **audio tracks are skipped** (normal a/v files play); >1 video track / fragmented rejected loudly |
+| **10-bit (Main10)** decode | ✅ bit-exact luma+chroma, NV12_10_COL128 packed output. all-intra Rext profile still out-of-subset |
+| **Runtime `.265` file decoder (M3)** | ✅ `hevc-play <file.265>` — parse + decode I/P/B, no rebuild |
+| **`.mp4`/`.mov` container demux (M3)** | ✅ `hevc-play <file.mp4>` — in-tool ISOBMFF→Annex-B (no ffmpeg); video track read by sample tables so **audio tracks are skipped** (normal a/v files decode); >1 video track / fragmented rejected loudly |
 | **`hevc-play` bit-exact conformance verify** | ✅ `hevc-play <f.265> <golden.nv12>` → VERIFY BIT-EXACT (ibp, mandelbrot, bframes=2/3, b-pyramid all 0 bad px) |
-| Decode → SAND/COL128 unpack → NV12→RGB → /dev/fb0 → HDMI | ✅ |
-| Intermittent decode corruption under memory-fabric contention | ⚠️ OPEN (SoC-level) — non-deterministic, worse under heavy DMA (complex clips / on-HDMI); simple clips clean; decoder-side software causes ruled out (see gotcha 8) |
+| Intermittent decode corruption under memory-fabric contention | ⚠️ OPEN (SoC-level) — non-deterministic, worse under heavy DMA (complex clips; on-HDMI playback, when this tool displayed); simple clips clean; decoder-side software causes ruled out (see gotcha 8) |
 | **Multi-ref (ref>1)** | ✅ bit-exact (free via the general DPB + resolve_reflist) |
 | **Temporal-MVP (tmvp)** — collocated-MV path | ✅ bit-exact (per-DPB-slot colMV, x265 default-on; 64/128/320 verified) |
 | **SAO (Sample Adaptive Offset)** — in-loop filter | ✅ bit-exact (RPI_SLICE bit14/15; HW CABAC-decodes per-CTB sao(); x265 default-on) |
@@ -39,7 +53,7 @@ blob**. Ported register-by-register from the Linux `hevc_d_h265.c` driver.
 - `hevc-m2.c` — the decode engine + all test modes (selected by the `-DFRAME_HEADER=...`
   header, which sets compile-time geometry + slice params). Modes: single-frame verify,
   `CLIP_NFRAMES` (all-intra video), `IP_TEST` (single I+P), `IPPP_TEST` (rolling-DPB
-  sequence, golden or `nogolden` playback).
+  sequence, golden or `nogolden` soak), and `-DPLAY_TOOL` (`hevc-play`, below).
 - `hevc_regs.h` — the decode-path register map (cited to the Linux driver).
 - `build-hevc-m2.sh` — builds the default single-frame binary (static, links libvcmbox).
 - Frame headers (generated): `idr64_frame.h`, `detail{64,128,320}_frame.h`, `show640_frame.h`
@@ -83,13 +97,14 @@ $GCC -O2 -static -Wall -Wextra -std=gnu11 -I$VCM -Itools/hevc-decode \
    x%128]) before any pixel compare / display.
 8. **Residual intermittent decode corruption under memory-fabric contention (OPEN, SoC-level).**
    A small number of wrong output pixels appear non-deterministically in a fraction of decodes.
-   It is **worse under heavier memory traffic** — a concurrent `fb_blit` during on-HDMI
-   playback, and (independently) high-complexity clips that do more PU/coeff/reference DMA —
+   It is **worse under heavier memory traffic** — a concurrent framebuffer blit during on-HDMI
+   playback (this tool's display path until 2026-10-02), and (independently) high-complexity
+   clips that do more PU/coeff/reference DMA —
    and it is **content- and process-independent** (the same clip is bit-exact one run and
    corrupt the next; even an IDR I-frame occasionally corrupts). Simple/low-traffic clips are
    effectively always clean (e.g. an `ultrafast`-preset clip verified 15/15 back-to-back).
-   NOTE: an earlier belief that this was "fb_blit-only, bit-exact headless" was **corrected** —
-   it manifests headless too; it is amplified, not caused, by `fb_blit`.
+   NOTE: an earlier belief that this was "blit-only, bit-exact headless" was **corrected** —
+   it manifests headless too; it is amplified, not caused, by the blit.
 
    The decoder-side software causes have been **exhaustively ruled out**:
    - **Barriers are architecturally complete** — `dsb sy` before each doorbell (gotcha 1),
@@ -107,15 +122,21 @@ $GCC -O2 -static -Wall -Wextra -std=gnu11 -I$VCM -Itools/hevc-decode \
 
    ⇒ the residual is a genuine SoC memory-fabric interaction under decode DMA load, not a
    decoder-side software omission. The decisive next step is a Linux-on-the-same-Pi4 `hevc_d`
-   side-by-side on the same clips. Impact: core decode + the `hevc-play` file player work for
-   simple/low-traffic content; complex clips and on-HDMI playback show occasional glitched
-   pixels. Repro with the `IPPP_STRESS` harness (`-DIPPP_STRESS`, `-DSTRESS_SLEEP[_MS]`,
-   `-DNO_FRAME_SLEEP`) or any high-complexity clip via `hevc-play <clip> <golden>`.
+   side-by-side on the same clips. Impact (as measured with this tool): core decode works for
+   simple/low-traffic content; complex clips and on-HDMI playback showed occasional glitched
+   pixels. The shipped decoder (`hevc_rpivid`) is checked frame by frame with
+   `hevc-rpivid-check`. Repro here with the `IPPP_STRESS` harness (`-DIPPP_STRESS`,
+   `-DSTRESS_SLEEP[_MS]`, `-DNO_FRAME_SLEEP`) or any high-complexity clip via
+   `hevc-play <clip> <golden>`.
 
-## M3: runtime `.265` file player (done)
+## M3: runtime `.265` file decoder (done)
 
-`hevc-play <file.265>` decodes + displays any I/P H.265 file in the x265 subset above with
-no rebuild. It parses geometry from the SPS (`hevc_parse.*`) into runtime globals
+`hevc-play <file.265> [golden]` decodes any I/P/B H.265 file in the x265 subset above with
+no rebuild. With a golden (ffmpeg NV12, or `yuv420p10le` for 10-bit, display order) it
+verifies every frame and prints `VERIFY BIT-EXACT` or `VERIFY MISMATCH`; without one it
+decodes the clip in display order at a player's pace (≤25 fps, `pace_frame()`), the mode
+the port's host test drives. It displays nothing: it was a `/dev/fb0` player until
+2026-10-02, superseded by `hevc_rpivid` + `video-play`. It parses geometry from the SPS (`hevc_parse.*`) into runtime globals
 (`g_frame_w/h`, `g_ctb_w/h`) — the fixed subset constants stay compile-time
 (`play_subset.h`, e.g. `CONFIG2`, CTB log2, bit-depth) since the register values bake them
 in. Per-frame params (type/POC/qp/data_byte_offset/bfnum) come from `hevc_parse_slice()`.
@@ -124,9 +145,17 @@ high-bitrate frame can't silently overflow it. Build + run:
 
 ```sh
 $GCC -O2 -static -Wall -Wextra -std=gnu11 -I$VCM -Itools/hevc-decode -DPLAY_TOOL \
-    -o /tmp/hevc-play tools/hevc-decode/hevc-m2.c tools/hevc-decode/hevc_parse.c $VCM/libvcmbox.c
-# stage hevc-play to /bin and a .265 next to it, then: hevc-play /root/clip.265
+    -o /tmp/hevc-play tools/hevc-decode/hevc-m2.c tools/hevc-decode/hevc_parse.c \
+    tools/hevc-decode/hevc_mp4.c $VCM/libvcmbox.c
+# stage hevc-play to /bin, a .265 and its golden next to it, then:
+#   hevc-play /root/clip.265 /root/clip.nv12
 ```
+
+⚠ The port's host test (`video_player/files/rpivid/hosttest/run.sh --coord <this repo>`)
+compiles `hevc-m2.c -DPLAY_TOOL` for the host as its reference and sed-patches a few lines
+(`rd`/`wr`, `const int passes = …`, `pace_frame`, the `dsb sy`). It stops with "hevc-m2.c
+changed shape" if one of them changes; run it after any edit here (2026-10-02: 39 SAME,
+the reference's register logs byte-identical before and after the display path's removal).
 
 `hevc-play` also accepts an `.mp4`/`.mov` container directly (`hevc_mp4.{h,c}`): if
 the file opens with an `ftyp` box it is demuxed to an in-memory Annex-B stream (no
@@ -151,9 +180,7 @@ register values are unchanged; the column *count* grows ×4/3). CABAC prob table
 PU/coeff/colMV strides are bit-depth-invariant. The `--verify` golden for 10-bit is
 `yuv420p10le` (16-bit LE, right-aligned 0..1023 — what the HW emits), not `p010le`
 (which is `<<6`); the verify checks both luma and chroma planes. HW-proven bit-exact
-on a 256×256 Main10 clip (intra + inter P/B), and it **displays on HDMI** (the SAND
-unpack — shared `sand10()` — downshifts 10→8 before the NV12→RGB blit; verified
-on-screen). Regenerate with `testdata/gen-10bit.sh`. (All-intra 10-bit x265 selects the
+on a 256×256 Main10 clip (intra + inter P/B). Regenerate with `testdata/gen-10bit.sh`. (All-intra 10-bit x265 selects the
 Range-Extensions "Rext" profile with extra tools outside this subset — still rejected/
 mismatched; Main10 inter GOPs, which carry IDR I-frames, cover 10-bit intra.)
 
@@ -164,6 +191,7 @@ The parser computes LumaWeight/ChromaWeight/ChromaOffset (§7.4.7.3, defaults fo
 unflagged refs); no cmd_slice/CONFIG2/slice_const change. `-DHEVC_NO_WEIGHT` builds
 the non-weighted-descriptor negative control (`hevc-play-noweight`).
 
-Out of scope / next: resolutions/params beyond the x265 subset (tiles, nonzero
-deblock offsets, amp, EPB-in-header for large frames), and wiring the decoder into
-the ffmpeg port so arbitrary `.265` files feed through libavcodec.
+Out of scope here: resolutions/params beyond the x265 subset (tiles, nonzero deblock
+offsets, amp, EPB-in-header for large frames). Wiring the decoder into FFmpeg is done:
+`hevc_rpivid` (ports `video_player`) is an hwaccel of FFmpeg's own HEVC decoder and falls
+back to the CPU decoder per stream, picture or hardware failure.
