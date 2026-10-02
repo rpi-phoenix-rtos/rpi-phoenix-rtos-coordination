@@ -234,6 +234,8 @@ Open gaps, known before the first Pi run:
 - **Sizes:** each process maps the 64 MiB JSC Structure heap only when it creates a VM (the
   WebProcess). mimalloc arenas are 32 MiB steps (track C). Expect ~150-300 MB RSS for the
   WebProcess.
+- `hb_icu_get_unicode_funcs` is **not** in the binary, and that is expected: HarfBuzz uses its
+  built-in UCD functions, and WebCore takes only `hb_icu_script_to_script` (linked) from hb-icu.
 - **Not linked in:** WebCrypto (off, but its OpenSSL key code is compiled), WebGL, media,
   WebDriver, the inspector server.
 
@@ -276,13 +278,16 @@ psh rules apply:
 
 | # | Command at `(psh)%` | Expected |
 |---|---|---|
-| 1 | `export WPE_PHOENIX_SHM_LOG=1` | — |
-| 2 | `/usr/bin/wpe-browser --headless --snapshot=/tmp/b4.png --timeout=600 /usr/share/wpe-browser/b4.html` | in order: `WPEB … start pid=… mode=headless uri=file:///usr/share/wpe-browser/b4.html exe=/usr/bin/wpe-browser`, `WPEB … display WPEDisplayHeadless`, `WPEB … role=network pid=…` and `WPEB … role=web pid=…` (either order: the children print them), `PHXSHM …` lines, `WPEB … load committed`, `WPEB … title B4 WPE Phoenix 2...`, `WPEB … load finished`, `WPEB … snapshot file=/tmp/b4.png width=1024 height=768 crc32=XXXXXXXX`, `WPEB … exit status=0`; back to the prompt |
+| 1 | `export WPE_PHOENIX_SHM_LOG=1 PHX_TRACE_ABORT=1` | — |
+| 2 | `/usr/bin/wpe-browser --headless --cpu-rendering --snapshot=/tmp/b4.png --timeout=600 /usr/share/wpe-browser/b4.html` | in order: `WPEB … start pid=… mode=headless uri=file:///usr/share/wpe-browser/b4.html exe=/usr/bin/wpe-browser`, `WPEB … display WPEDisplayHeadless`, `WPEB … view WPEViewHeadless 1024x768`, `WPEB … role=network pid=…` and `WPEB … role=web pid=…` (either order: the children print them), `PHXSHM …` lines, `WPEB … load committed`, `WPEB … title B4 WPE Phoenix <sum>`, `WPEB … load finished`, `WPEB … snapshot file=/tmp/b4.png width=1024 height=768 crc32=XXXXXXXX`, `WPEB … exit status=0`; back to the prompt |
 | 3 | the same command again | the **same** `crc32=` (deterministic rendering) |
-| 4 | `/usr/bin/wpe-browser --headless --cpu-rendering --snapshot=/tmp/b4cpu.png --timeout=600 /usr/share/wpe-browser/b4.html` | `exit status=0`; crc may differ from #2 (GPU vs CPU raster) |
+| 4 | `/usr/bin/wpe-browser --headless --snapshot=/tmp/b4gpu.png --timeout=600 /usr/share/wpe-browser/b4.html` (Skia GPU raster, Ganesh on V3D) | `exit status=0`; its crc may differ from #2. A failure here with #2 passing is a B7 finding, not a B4 failure |
+
+Decision 5 is "Skia CPU raster first", so the primary check (#2, #3) is `--cpu-rendering`.
+Compositing still goes through GLES in both cases.
 
 **PASS (B4):**
-- #2 and #3 exit 0 with equal CRCs;
+- #2 and #3 (CPU raster) exit 0 with equal CRCs;
 - zero `Exception #` / fault dumps in the UART log;
 - `/tmp/b4.png`, copied off the NFS root, shows the page correctly by eye: heading, three
   coloured boxes and a gradient, a table, the canvas square/circle/text, and `JavaScript: sum=…
@@ -301,6 +306,7 @@ Record:
 | `Could not create EGL display` then an abort in the web process | the surfaceless EGL path failed: no render node, `rpi4-v3d-async` down |
 | `Failed to create shared memory` | shmsrv not running |
 | `web-process-terminated reason=crashed` | `addr2line -e <out>/wpe-browser <pc>` on the fault dump's pc first |
+| a silent abort of a process | `PHX-ABORT` lines (`PHX_TRACE_ABORT=1`, track C's compat): `addr2line -f -e <out>/wpe-browser <pc> <lr> <frames…>` |
 
 ### B5: a window on labwc (3 processes, wl_shm), local page then Wikipedia
 
@@ -309,8 +315,9 @@ autostart list; `XFCE_AUTOSTART` takes `/<path>=<one argument>` items):
 
 | # | Command at `(psh)%` | Expected |
 |---|---|---|
-| 1 | `export WPE_PHOENIX_SHM_LOG=1 XFCE_AUTOSTART=/usr/bin/wpe-browser=/usr/share/wpe-browser/b4.html:120,/usr/bin/wpe-browser=https://en.wikipedia.org/wiki/Phoenix-RTOS HOLD=420` | — |
-| 2 | `/bin/bash /bin/xfce-session` | `XFCE-SESSION servers v3d-async=up kms=up shm=up`. Then for each item: `WPEB … mode=window`, `WPEB … display WPEDisplayWayland`, `WPEB … view WPEViewWayland 1024x768`, `role=network`, `role=web`, `PHXSHM wlpool …` lines, `load committed/finished`, `title …`. The Wikipedia item also needs `load committed uri=https://en.wikipedia.org/…` with no `load-failed-tls`. HDMI shows the page in a labwc window |
+| 1 | `export WPE_PHOENIX_SHM_LOG=1 PHX_TRACE_ABORT=1 WEBKIT_SKIA_ENABLE_CPU_RENDERING=1 HOLD=480` | — |
+| 2 | `export XFCE_AUTOSTART=/usr/bin/wpe-browser=/usr/share/wpe-browser/b4.html:120,/usr/bin/wpe-browser=https://en.wikipedia.org/wiki/Phoenix-RTOS:300` | — (every item **must** end in `:<seconds>`: xfce-autostart.sh takes the seconds after the LAST colon, so a URL item without them would be cut at `https`) |
+| 3 | `/bin/bash /bin/xfce-session` | `XFCE-SESSION servers v3d-async=up kms=up shm=up`. Then for each item: `XFCE-AUTOSTART open /usr/bin/wpe-browser secs=…`, `WPEB … mode=window`, `WPEB … display WPEDisplayWayland`, `WPEB … view WPEViewWayland 1024x768`, `role=network`, `role=web`, `PHXSHM wlpool …` lines, `load committed/finished`, `title …`. The Wikipedia item also needs `load committed uri=https://en.wikipedia.org/…` with no `load-failed-tls`. HDMI shows the page in a labwc window |
 
 **PASS (B5):**
 - both pages reach `load finished`;
