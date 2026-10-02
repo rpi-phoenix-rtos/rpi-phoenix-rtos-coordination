@@ -128,6 +128,14 @@ epoxy resolves every EGL and GLES entry point through the statically linked `egl
   - unset: the UI shell.
 
   WebKit's argv (`<path> <identifier> <socket-fd>`) is passed through unchanged.
+- **No orphans.** A child role starts a parent watchdog thread first: once `getppid()` changes
+  (the UI process is gone and the child has been adopted by init), it waits 1.5 s for WebKit's
+  own exit (the children exit when their IPC connection to the UI closes) and then `_exit(0)`s,
+  printing `WPEB … role=<r> pid=<p> orphaned (UI pid <u> gone 1500 ms ago), exiting`. The
+  orderly path prints `WPEB … role=<r> pid=<p> main returned <status>` instead. This is the
+  Phoenix stand-in for Linux's `PR_SET_PDEATHSIG`; WebKit's own backstops are 10 s watchdogs, and
+  the WebProcess's ends in `g_error()`, which on Phoenix raises SIGTRAP rather than calling
+  `abort()` (GLib finds no `/proc/self/status` and assumes a debugger).
 - **How children find the binary (patch 0007).**
   - `Shared/glib/ProcessExecutablePathGLib.cpp` normally looks for `WPEWebProcess` /
     `WPENetworkProcess` in `WEBKIT_EXEC_PATH` (developer builds only) and then in `PKGLIBEXECDIR`
@@ -169,7 +177,7 @@ epoxy resolves every EGL and GLES entry point through the statically linked `egl
 | 0007-wpe-phoenix-processes-shm | multi-call process lookup + role variable (above); `memfd_create()` over shmsrv (`libwlphx-compat.a`) for `WebCore::SharedMemory` and WPEPlatform's `wl_shm` pools; the `WPE_PHOENIX_SHM_LOG=1` log |
 | 0008-wtf-wpe-phoenix | WTF's WPE source list on Phoenix: no `linux/` (procfs, eventfd, RealtimeKit); `phoenix/MemoryFootprintPhoenix.cpp` (track C) for `memoryFootprint()`; `MemoryPressureHandlerUnix.cpp` with `OS(PHOENIX)` (`processMemoryUsage()` = the meminfo footprint, hold-off timer) |
 | 0009-xdgmime-phoenix-static | WebKit's bundled xdgmime and GLib's copy in GIO both define `_caches` and `_xdg_binary_or_text_fallback` in one static link: renamed by `-D`; `ntohl()` from `<arpa/inet.h>` on Phoenix |
-| 0010-wpe-build-fixes | upstream bugs with our options: `JSHTMLMediaElementCustom.cpp` needs `#if ENABLE(VIDEO)`; `AcceleratedBackingStore.cpp` needs `DRM_FORMAT_XRGB8888` without libdrm; OpenSSL 3's `EVP_PKEY_get0_RSA()` returns `const RSA*` (WebCore's OpenSSL code targets 1.1); no `MSG_CTRUNC` in libphoenix (its kernel never truncates control data) |
+| 0010-wpe-build-fixes | upstream bugs with our options: `JSHTMLMediaElementCustom.cpp` needs `#if ENABLE(VIDEO)`; `AcceleratedBackingStore.cpp` needs `DRM_FORMAT_XRGB8888` without libdrm; OpenSSL 3's `EVP_PKEY_get0_RSA()` returns `const RSA*` (WebCore's OpenSSL code targets 1.1); no `MSG_CTRUNC` in libphoenix (the kernel does not report truncated control data; with `wpe-ipc-fd-per-frame` it closes the descriptors that do not fit, as Linux does, and GLib's 256-byte control buffer holds 60) |
 
 Compat (`build.sh` stage `compat`, on top of track C's probes):
 - **libstdc++ hides `<fenv.h>`** from C++, because the toolchain was built without
@@ -303,6 +311,8 @@ Record:
 | Symptom | Meaning |
 |---|---|
 | no `role=` line | the child exec failed: GLib spawn, or `WPE_PHOENIX_EXECUTABLE` |
+| `web-process-terminated reason=crashed` while the WebProcess is still alive, typically after two `PHXSHM alloc` lines in a row | the UI dropped the IPC connection because a message came without its descriptor: a kernel without branch `wpe-ipc-fd-per-frame` hands every queued SCM_RIGHTS descriptor to the first message read. `wpe-ipc-probe 1 2` shows it |
+| `orphaned … exiting` lines | WebKit's own exit did not finish within 1.5 s of the UI's exit; `pi/b4o.sh` (with `wpe-ipc-probe` T5-T8) narrows down which thread held it |
 | `Could not create EGL display` then an abort in the web process | the surfaceless EGL path failed: no render node, `rpi4-v3d-async` down |
 | `Failed to create shared memory` | shmsrv not running |
 | `web-process-terminated reason=crashed` | `addr2line -e <out>/wpe-browser <pc>` on the fault dump's pc first |

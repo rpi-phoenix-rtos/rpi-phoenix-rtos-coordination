@@ -28,7 +28,9 @@
 
 #include <errno.h>
 #include <limits.h>
+#include <pthread.h>
 #include <signal.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -100,6 +102,43 @@ static void recordExecutablePath(const char* argv0)
     free(copy);
 }
 
+/*
+ * A child never outlives the UI process. WebKit's children exit when they see their IPC
+ * connection to the UI close, and back that up with 10 s watchdogs (the WebProcess's ends in
+ * g_error(), which on Phoenix raises SIGTRAP rather than calling abort(), as GLib finds no
+ * /proc/self/status). This is the Phoenix counterpart of Linux's PR_SET_PDEATHSIG: once the UI
+ * is gone (the child has been reparented) the child gets a short grace period for WebKit's own
+ * orderly exit, then _exit()s - so the next browser run never meets the previous run's children.
+ */
+static constexpr unsigned orphanPollMs = 100;
+static constexpr unsigned orphanGraceMs = 1500;
+
+static char childRole[16];
+
+static void* parentWatchdog(void* arg)
+{
+    const pid_t parent = static_cast<pid_t>(reinterpret_cast<intptr_t>(arg));
+    while (getppid() == parent)
+        usleep(orphanPollMs * 1000);
+    usleep(orphanGraceMs * 1000);
+    LOG("role=%s pid=%d orphaned (UI pid %d gone %u ms ago), exiting", childRole, static_cast<int>(getpid()),
+        static_cast<int>(parent), orphanGraceMs);
+    _exit(0);
+    return nullptr;
+}
+
+static void startParentWatchdog()
+{
+    pthread_attr_t attr;
+    pthread_t thread;
+    pthread_attr_init(&attr);
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+    pthread_attr_setstacksize(&attr, 64 * 1024);
+    if (pthread_create(&thread, &attr, parentWatchdog, reinterpret_cast<void*>(static_cast<intptr_t>(getppid()))))
+        LOG("role=%s pid=%d: no parent watchdog (pthread_create failed)", childRole, static_cast<int>(getpid()));
+    pthread_attr_destroy(&attr);
+}
+
 /* --- UI role: options ----------------------------------------------------------------------- */
 
 static gboolean optHeadless;
@@ -153,7 +192,7 @@ static bool writePNG(const char* path, WebKitImage* image, guint32* crcOut)
     int width = webkit_image_get_width(image);
     int height = webkit_image_get_height(image);
     guint stride = webkit_image_get_stride(image);
-    GBytes* bytes = webkit_image_as_bytes(image);
+    GBytes* bytes = webkit_image_as_bytes(image); /* (transfer none): the image keeps it */
     gsize size;
     const guint8* pixels = static_cast<const guint8*>(g_bytes_get_data(bytes, &size));
 
@@ -195,7 +234,6 @@ static bool writePNG(const char* path, WebKitImage* image, guint32* crcOut)
     png_destroy_write_struct(&png, &info);
     g_free(row);
     fclose(file);
-    g_bytes_unref(bytes);
     *crcOut = crc;
     return ok;
 }
@@ -475,16 +513,19 @@ int main(int argc, char** argv)
 
     const char* role = getenv("WPE_PHOENIX_PROCESS_ROLE");
     if (role && *role) {
-        char roleCopy[16];
-        snprintf(roleCopy, sizeof(roleCopy), "%s", role);
+        snprintf(childRole, sizeof(childRole), "%s", role);
         unsetenv("WPE_PHOENIX_PROCESS_ROLE"); /* not for this process's own children */
-        LOG("role=%s pid=%d argc=%d", roleCopy, static_cast<int>(getpid()), argc);
-        if (!strcmp(roleCopy, "web"))
-            return WebKit::WebProcessMain(argc, argv);
-        if (!strcmp(roleCopy, "network"))
-            return WebKit::NetworkProcessMain(argc, argv);
-        LOG("unknown role %s", roleCopy);
-        return 1;
+        LOG("role=%s pid=%d ppid=%d argc=%d", childRole, static_cast<int>(getpid()), static_cast<int>(getppid()), argc);
+        if (strcmp(childRole, "web") && strcmp(childRole, "network")) {
+            LOG("unknown role %s", childRole);
+            return 1;
+        }
+        startParentWatchdog();
+        int status = !strcmp(childRole, "web") ? WebKit::WebProcessMain(argc, argv) : WebKit::NetworkProcessMain(argc, argv);
+        /* how long WebKit's own exit takes after the UI connection closed is the B4 orphan
+         * question: this line and the watchdog's say which path ended the process */
+        LOG("role=%s pid=%d main returned %d", childRole, static_cast<int>(getpid()), status);
+        return status;
     }
     return uiMain(argc, argv);
 }
