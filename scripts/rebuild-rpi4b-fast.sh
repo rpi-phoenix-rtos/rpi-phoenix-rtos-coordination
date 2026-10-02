@@ -184,6 +184,17 @@ while [ "$#" -gt 0 ]; do
 	shift
 done
 
+# Never run alongside another heavy host build (WebKit, Mesa): two at once took the host out of
+# memory on 2026-10-02 and systemd-oomd killed the whole terminal scope. scripts/heavy-build.sh
+# holds the same lock; under it (HEAVY_BUILD_LOCKED=1) we already own it.
+if [ -z "${HEAVY_BUILD_LOCKED:-}" ]; then
+	exec 9>"${HEAVY_BUILD_LOCK:-/tmp/phoenix-heavy-build.lock}"
+	if ! flock -n 9; then
+		printf 'rebuild-rpi4b-fast: waiting for another heavy build to finish (scripts/heavy-build.sh lock)\n' >&2
+		flock 9
+	fi
+fi
+
 project_repos=(
 	phoenix-rtos-project
 	plo

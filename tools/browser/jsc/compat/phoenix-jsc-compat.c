@@ -12,7 +12,7 @@
  * build.sh probes the sysroot's libphoenix and compiles only the ones it lacks
  * (-DPHX_COMPAT_<NAME>=1), so the same tree builds before and after they land there.
  *
- * And one link-time hook, not a gap: _malloc_init() (below).
+ * And link-time hooks, not gaps: _malloc_init() and the _malloc_fork*() trio (below).
  *
  * SPDX-License-Identifier: BSD-3-Clause
  */
@@ -37,6 +37,24 @@
  * Weak, because helper programs of the build (LLIntSettingsExtractor) link this object without
  * mimalloc: there libphoenix's malloc_dl.o is pulled for malloc() and its _malloc_init() wins. */
 __attribute__((weak)) void _malloc_init(void)
+{
+}
+
+
+/* Same reason, since libphoenix 19e9713 (P24): fork() (unistd/sys.c) takes and releases
+ * libphoenix's heap lock around the copy through these three, which also live in
+ * malloc_dl.o. With mimalloc as the allocator there is no libphoenix heap to protect. */
+__attribute__((weak)) void _malloc_forkPrepare(void)
+{
+}
+
+
+__attribute__((weak)) void _malloc_forkParent(void)
+{
+}
+
+
+__attribute__((weak)) void _malloc_forkChild(void)
 {
 }
 
