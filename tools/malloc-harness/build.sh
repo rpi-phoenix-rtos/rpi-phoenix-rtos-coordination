@@ -5,7 +5,9 @@ set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
 lp="$here/../../sources/libphoenix"
-out="$here/malloc-harness"
+obj="${MH_OUT:-$here}"
+out="$obj/malloc-harness"
+mkdir -p "$obj"
 san=""
 
 for a in "$@"; do
@@ -35,10 +37,11 @@ if [ -n "${MH_CFLAGS:-}" ]; then
 fi
 
 set -x
-gcc "${cflags[@]}" $san -c -o "$here/rb.o"      "$lp/sys/rb.c"
-gcc "${cflags[@]}" $san -c -o "$here/list.o"    "$lp/sys/list.c"
-gcc "${cflags[@]}" $san -c -o "$here/harness.o" "$here/harness.c"
-gcc $san -pthread -o "$out" "$here/harness.o" "$here/rb.o" "$here/list.o"
+gcc "${cflags[@]}" $san -c -o "$obj/rb.o"      "$lp/sys/rb.c"
+gcc "${cflags[@]}" $san -c -o "$obj/list.o"    "$lp/sys/list.c"
+gcc "${cflags[@]}" $san -c -o "$obj/ulock.o"   "$lp/sys/ulock.c"
+gcc "${cflags[@]}" $san -c -o "$obj/harness.o" "$here/harness.c"
+gcc $san -pthread -o "$out" "$obj/harness.o" "$obj/rb.o" "$obj/list.o" "$obj/ulock.o"
 set +x
 
 echo "built $out"

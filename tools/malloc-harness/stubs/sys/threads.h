@@ -59,4 +59,34 @@ static inline int mutexUnlock(handle_t h)
 	return pthread_mutex_unlock(&hz_mutexes[h - 1]);
 }
 
+/* The heap lock is now sys/ulock-internal.h (a futex word), compiled from the
+ * real sys/ulock.c. These are the pieces of <sys/threads.h> it needs, on the
+ * Linux futex. */
+#include <errno.h>
+#include <time.h>
+#include <unistd.h>
+#include <sys/syscall.h>
+#include <linux/futex.h>
+
+#ifndef EOK
+#define EOK 0
+#endif
+
+#define PH_CLOCK_RELATIVE 0
+
+static inline int futexWait(volatile unsigned int *addr, unsigned int value, time_t timeout, int clock)
+{
+	(void)timeout;
+	(void)clock;
+	if (syscall(SYS_futex, addr, FUTEX_WAIT_PRIVATE, value, NULL, NULL, 0) != 0) {
+		return -errno;
+	}
+	return EOK;
+}
+
+static inline int futexWake(volatile unsigned int *addr, unsigned int n)
+{
+	return (int)syscall(SYS_futex, addr, FUTEX_WAKE_PRIVATE, n, NULL, NULL, 0);
+}
+
 #endif

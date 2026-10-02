@@ -100,13 +100,10 @@ static int hz_munmap(void *addr, size_t len);
  * this runs above it. Must match the definition there exactly. */
 void malloc_c1Pacing(unsigned long *heaps, unsigned long *bytes);
 
-static unsigned long hz_paceBaseHeaps;
-static unsigned long hz_paceBaseBytes;
+static unsigned long hz_paceBaseHeaps __attribute__((unused));
+static unsigned long hz_paceBaseBytes __attribute__((unused));
 
-static void hz_paceRebase(void)
-{
-	malloc_c1Pacing(&hz_paceBaseHeaps, &hz_paceBaseBytes);
-}
+static void hz_paceRebase(void);
 
 /* Violation reporting -------------------------------------------------- */
 
@@ -130,6 +127,7 @@ enum {
 	HZ_V_CANARY,               /* --fragile: not a bug, exercises the shrinker */
 	HZ_V_LIVE_RING,            /* live[] names a page that is not mapped */
 	HZ_V_PACING,               /* malloc_c1Pacing() disagrees with the harness's own mmap tally */
+	HZ_V_RETAIN,               /* the kept-heap list names a heap that is not an idle, mapped heap */
 };
 
 static const char *const hz_vname[] = {
@@ -152,6 +150,7 @@ static const char *const hz_vname[] = {
 	"harness canary (--fragile): heap chunk count exceeded",
 	"live[] ring names a heap that is not currently mapped",
 	"malloc_c1Pacing() disagrees with the harness's own mmap tally",
+	"kept-heap list (malloc_heapRetain) is inconsistent",
 };
 
 static int hz_violation;
@@ -173,6 +172,10 @@ static int hz_quiet;
 /* ------------------------------------------------------------------ */
 /* Rename the allocator's public surface, then pull in the real source. */
 
+/* sys/threads-internal.h: the allocator takes its lock only once this is set.
+ * main() sets it, so every run -- the MT stress above all -- is really locked. */
+int __libc_multithreaded;
+
 #define mmap               hz_mmap
 #define munmap             hz_munmap
 #define malloc             phx_malloc
@@ -183,6 +186,8 @@ static int hz_quiet;
 #define malloc_usable_size phx_malloc_usable_size
 #define _malloc_init       phx_malloc_init
 #define malloc_test        phx_malloc_test
+#define mallocInfo         phx_mallocInfo
+#define malloc_trim        phx_malloc_trim
 
 /* MH_MALLOC_DL_SRC lets the harness check an allocator that is not (yet) in
  * sources/ -- e.g. a worktree branch:
@@ -193,6 +198,7 @@ static int hz_quiet;
 #include MH_MALLOC_DL_SRC
 
 
+#ifdef C1_SCAN_EVERY /* the C1 instrument: only in allocators that still carry it */
 /* ------------------------------------------------------------------ */
 /* Fake v3d BO-attribution table, so the WIRING can be tested on the host.
  *
@@ -220,6 +226,27 @@ int v3d_c1_lookup_pa(unsigned long pa, unsigned int *npages, unsigned int *ord,
 	if (total != NULL) *total = 300u;
 	return 1;
 }
+
+#endif /* C1_SCAN_EVERY */
+/* An allocator that keeps freed heaps (MALLOC_RETAIN_MAX) unmaps them only on
+ * eviction or malloc_trim(). Tests that need "free() unmaps the heap" call this. */
+static void hz_forceUnmap(void)
+{
+#ifdef MALLOC_RETAIN_MAX
+	(void)phx_malloc_trim(0);
+#endif
+}
+
+
+/* The allocator's pacing counters went with the rest of the C1 instrument; the
+ * cross-check against them runs only where they still exist. */
+static void hz_paceRebase(void)
+{
+#ifdef C1_SCAN_EVERY
+	malloc_c1Pacing(&hz_paceBaseHeaps, &hz_paceBaseBytes);
+#endif
+}
+
 
 /* ------------------------------------------------------------------ */
 /* Region table implementation (after the include; it calls no allocator). */
@@ -698,6 +725,7 @@ static void hz_checkAll(void)
 	}
 	hz_cov.checks++;
 
+#ifdef C1_SCAN_EVERY
 	/* The pacing counters must agree with the harness's OWN mmap tally.
 	 *
 	 * malloc_c1Pacing() reports how many heaps the allocator has created and how
@@ -799,6 +827,73 @@ static void hz_checkAll(void)
 			return;
 		}
 	}
+
+#endif /* C1_SCAN_EVERY */
+#ifdef MALLOC_RETAIN_MAX
+	/* Kept heaps: each one mapped (by the harness's own region table), entirely
+	 * free as ONE chunk, listed once, and the totals within the limits. A kept
+	 * heap that holds a block would be unmapped under its owner on eviction. */
+	{
+		size_t sum = 0u;
+		unsigned int r, q;
+
+		if (malloc_common.nretained > MALLOC_RETAIN_MAX) {
+			HZ_FAIL(HZ_V_RETAIN, "nretained %u > MALLOC_RETAIN_MAX %u", malloc_common.nretained, MALLOC_RETAIN_MAX);
+			return;
+		}
+		for (r = 0; r < malloc_common.nretained; r++) {
+			heap_t *rh = malloc_common.retained[r];
+			int ri = hz_regionFindBase((uintptr_t)rh);
+
+			if ((ri < 0) || (hz_regions[ri].mapped == 0)) {
+				HZ_FAIL(HZ_V_RETAIN, "retained[%u] = %p is not a mapped heap", r, (void *)rh);
+				return;
+			}
+			if ((rh->freesz != rh->size - sizeof(heap_t)) ||
+					(malloc_chunkSize((chunk_t *)rh->space) != rh->size - sizeof(heap_t)) ||
+					((((chunk_t *)rh->space)->size & CHUNK_CUSED) != 0u)) {
+				HZ_FAIL(HZ_V_RETAIN, "retained[%u] = %p is not entirely free (freesz %#zx of %#zx)",
+						r, (void *)rh, rh->freesz, rh->size);
+				return;
+			}
+			for (q = 0; q < r; q++) {
+				if (malloc_common.retained[q] == rh) {
+					HZ_FAIL(HZ_V_RETAIN, "heap %p is listed twice (%u and %u)", (void *)rh, q, r);
+					return;
+				}
+			}
+			sum += rh->size;
+		}
+		if ((sum != malloc_common.retainedsz) || (sum > MALLOC_RETAIN_BYTES)) {
+			HZ_FAIL(HZ_V_RETAIN, "retainedsz %#zx, listed heaps sum to %#zx (limit %#zx)",
+					malloc_common.retainedsz, sum, (size_t)MALLOC_RETAIN_BYTES);
+			return;
+		}
+
+		/* ...and the converse: an entirely free heap that is still mapped must be
+		 * on the list, or nothing will ever release it (a leak per eviction). */
+		for (k = 0; k < hz_nregions; k++) {
+			heap_t *ih = (heap_t *)hz_regions[k].base;
+
+			/* Idle: one free chunk spanning the heap (two free chunks are the
+			 * coalescing checks' business, below) */
+			if ((hz_regions[k].mapped == 0) || (ih->freesz != ih->size - sizeof(heap_t)) ||
+					(malloc_chunkSize((chunk_t *)ih->space) != ih->size - sizeof(heap_t)) ||
+					((((chunk_t *)ih->space)->size & CHUNK_CUSED) != 0u)) {
+				continue;
+			}
+			for (r = 0; r < malloc_common.nretained; r++) {
+				if (malloc_common.retained[r] == ih) {
+					break;
+				}
+			}
+			if (r == malloc_common.nretained) {
+				HZ_FAIL(HZ_V_RETAIN, "heap %p is entirely free and mapped but not on the kept list", (void *)ih);
+				return;
+			}
+		}
+	}
+#endif
 
 	/* Invariant 2, direct form: nothing reachable from a bin may live in an
 	 * unmapped heap.  hz_collectBins() range-checks before every deref, so a
@@ -1702,6 +1797,7 @@ static int hz_selftest(void)
 	fake->size |= CHUNK_PUSED;
 	_malloc_chunkAdd(fake); /* orphan-to-be: in a bin, inside this heap */
 	phx_free(p);            /* heap now "fully free" -> munmap */
+	hz_forceUnmap();
 	bad += hz_expect(HZ_V_PTR_INTO_DYING_HEAP, "orphan at munmap");
 
 	/* (2) INV2: the same orphan seen after the unmap, by the bin sweep. */
@@ -1717,10 +1813,12 @@ static int hz_selftest(void)
 	fake->size |= CHUNK_PUSED;
 	_malloc_chunkAdd(fake);
 	phx_free(p);
+	hz_forceUnmap();
 	hz_checkUnmap = 1;
 	hz_checkAll();
 	bad += hz_expect(HZ_V_BIN_IN_DEAD_HEAP, "orphan after munmap");
 
+#ifdef C1_SCAN_EVERY
 	/* (2f) The BO-attribution call site actually EXECUTES, and is handed the
 	 * page-aligned physical address.
 	 *
@@ -1809,6 +1907,25 @@ static int hz_selftest(void)
 		bad += hz_expect(HZ_V_LIVE_RING, "live[] size without base");
 		malloc_common.liveSize[255] = 0u;
 	}
+
+#endif /* C1_SCAN_EVERY */
+#ifdef MALLOC_RETAIN_MAX
+	/* (2g) The kept-heap check fires: list a heap that holds a live block, which
+	 * is what forgetting malloc_heapUnretain() in _malloc_allocFrom() produces --
+	 * and eviction would then unmap that block under its owner. */
+	hz_reset();
+	hz_violation = HZ_OK;
+	hz_vdetail[0] = '\0';
+	p = phx_malloc(64);
+	c = (chunk_t *)((uintptr_t)p - CHUNK_OVERHEAD);
+	malloc_common.retained[malloc_common.nretained++] = c->heap;
+	malloc_common.retainedsz += c->heap->size;
+	hz_checkAll();
+	bad += hz_expect(HZ_V_RETAIN, "kept heap holds a block");
+	malloc_common.nretained--;
+	malloc_common.retainedsz -= c->heap->size;
+	phx_free(p);
+#endif
 
 	/* (3) INV1: a fully-free heap holding two chunks. */
 	hz_reset();
@@ -2205,6 +2322,7 @@ static int hz_whySelftest(void)
 	bad += hz_whyExpect(malloc_chunkValidWhy(c, h), 8, "chunk runs past heap end");
 	c->size = savedChunkSize;
 
+#ifdef C1_SCAN_EVERY
 	/* malloc_liveOverlap(): the check that says mmap handed back a region sitting on
 	 * a live heap. A randomized stress run can only ever show it NOT firing, which is
 	 * exactly the "grader that cannot fail" shape, so prove it reports.
@@ -2257,6 +2375,7 @@ static int hz_whySelftest(void)
 		}
 	}
 
+#endif /* C1_SCAN_EVERY */
 	/* and the block must still be intact -- every case above restored its field. */
 	bad += hz_whyExpect(malloc_chunkValidWhy(c, h), 0, "block restored");
 	phx_free(p);
@@ -2273,6 +2392,7 @@ static int hz_whySelftest(void)
  * overflow", which is the question the crash actually poses. */
 
 
+#ifdef C1_SCAN_EVERY
 /* Can the widened page poison actually FAIL?
  *
  * The instrument used to poison one word per 4 KiB page, at +4, so it could only
@@ -2356,6 +2476,7 @@ static int hz_p4Probes(void)
 	return bad;
 }
 
+#endif /* C1_SCAN_EVERY */
 static void hz_experiment(const char *what)
 {
 	void *a, *b, *c;
@@ -2445,6 +2566,7 @@ static void hz_experiment(const char *what)
 		hz_checkUnmap = 0;
 		_malloc_chunkAdd(fake);
 		phx_free(big); /* heap "fully free" -> munmap; `fake` is orphaned */
+		hz_forceUnmap();
 		hz_checkUnmap = 1;
 		printf("  orphan %p left in sbin, its heap %p is now unmapped\n",
 				(void *)fake, (void *)h);
@@ -2602,6 +2724,8 @@ int main(int argc, char **argv)
 		nops = HZ_MAX_OPS;
 	}
 
+	__libc_multithreaded = 1;
+
 	if (rawSegv == 0) {
 		memset(&sa, 0, sizeof(sa));
 		sa.sa_sigaction = hz_segv;
@@ -2677,7 +2801,9 @@ int main(int argc, char **argv)
 	if (doExp != 0) {
 		printf("\n--- edge cases ---\n");
 		hz_edgeCases();
+#ifdef C1_SCAN_EVERY
 		(void)hz_p4Probes();
+#endif
 		printf("\n--- fault injection (is the STK signature an allocator bug or a caller overflow?) ---\n");
 		hz_experiment("footer");
 		hz_experiment("nextheader");
