@@ -128,7 +128,8 @@ a Thunar window. The session runs until you log out. Then it stops cleanly and r
 ### What is on it
 
 - **The panel**, from left to right: the **Applications menu**, launchers for the **terminal
-  (foot)**, the **file manager (Thunar)** and the **application finder**, the **task list** (one
+  (foot)**, the **file manager (Thunar)**, the **web browser** and the **application finder**,
+  the **task list** (one
   button per window), the **clock** (local time) and the **Log Out** button.
 - **Thunar**, the file manager. It opens on `/` when the session starts.
 - **foot**, the terminal. It runs bash, with the same programs as psh.
@@ -138,6 +139,7 @@ a Thunar window. The session runs until you log out. Then it stops cleanly and r
   |---|---|
   | **Games** | Quake, Quake II, Quake III Arena, SuperTuxKart. Each opens in a 1280×720 window (see [§6.2](#62-in-a-window-on-the-desktop)). |
   | **Multimedia** | Video Player (gtk-video), Video Demo (plays a demo clip in a window) |
+  | **Internet** | Web Browser (WPE WebKit, [§7.4](#74-web-browsing)) |
   | **Office** | Atril Document Viewer |
   | **System / Accessories** | Foot, Bash, Midnight Commander, File Manager, Settings Manager, Appearance, Application Finder, Run Program |
 
@@ -448,7 +450,7 @@ This starts the **showcase desktop**, which runs by itself with no input:
 
 To start Window Maker alone, run `/bin/bash /bin/startx wmaker`. Right-click the desktop for
 Window Maker's applications menu. `/bin/bash /bin/startx browse [url]` starts Window Maker with
-the Dillo web browser ([§7.4](#74-web-browsing--dillo)).
+the Dillo web browser ([§7.4](#74-web-browsing)).
 
 **Leaving X:** exit Window Maker from its root menu (right-click → Exit). X shuts down and psh
 comes back. For an unattended demo, `export HOLD=200` first: the desktop then closes by itself
@@ -457,7 +459,49 @@ after 200 seconds.
 <!-- TODO(coordinator): check on the merged image that Window Maker's stock root menu (the
 windowmaker port stages /etc/WindowMaker/WMRootMenu) opens an xterm under Xorg. -->
 
-### 7.4 Web browsing — Dillo
+### 7.4 Web browsing
+
+#### The web browser (WPE WebKit)
+
+The desktop's browser is **WebKit** (WPE WebKit 2.54, the engine of Safari and GNOME Web). It
+renders today's sites: Wikipedia, GitHub, DuckDuckGo, Stack Overflow (including its Cloudflare
+check) and news sites, over HTTPS with HTTP/2. In the XFCE session, open it from the panel's
+browser button or **Applications → Internet → Web Browser**, or from the terminal:
+
+```
+/bin/bash /bin/browser                        # the start page
+/bin/bash /bin/browser en.wikipedia.org       # an address (https:// is added)
+/bin/bash /bin/browser phoenix rtos           # plain words: a DuckDuckGo search
+```
+
+The **toolbar** at the top of the window has back, forward, reload (stop while a page loads),
+home and the address field, with a progress line under it while a page loads. Click the address
+to edit it.
+
+| Key | Action |
+|---|---|
+| Ctrl+L, Alt+D or F6 | edit the address (Enter goes, Escape cancels) |
+| Alt+Left / Alt+Right | back / forward |
+| F5 or Ctrl+R | reload (Ctrl+Shift+R: without the cache) |
+| Escape | stop loading |
+| Alt+Home | the start page |
+| F11 | full screen |
+| Ctrl+Q | quit |
+
+- Cookies (no third-party ones), local storage and the disk cache are kept under
+  `/root/.local/share/wpe-browser` and `/root/.cache/wpe-browser`, so logins and cached pages
+  survive a reboot.
+- Each site runs in its own web process, as on a desktop. A page whose process hangs is reloaded
+  in a new one after 30 s.
+- `BROWSER_SIZE=1600x900` sets the window size. `WPE_BROWSER_TOOLBAR=auto` hides the toolbar until
+  Ctrl+L or the pointer at the top edge.
+- Not there yet: tabs, downloads, video in pages, WebGL, and the JavaScript JIT (pages run on
+  JavaScriptCore's interpreter). These are browser milestones B7–B10 in
+  [docs/browser/PLAN.md](browser/PLAN.md).
+- A "Certificate refused" page that says the clock is not set means the boot-time clock sync
+  failed: run `ntpclient -w 30`, then reload.
+
+#### Dillo (X11)
 
 Dillo is a small graphical browser for X11. It supports HTTPS with CA-verified TLS 1.2. Start
 it on a page with:

@@ -23,7 +23,7 @@ Programs on the image:
   Quake III Arena, vkQuake (Vulkan) and SuperTuxKart 1.4.
 - A video player, including HEVC.
 - The Atril PDF viewer.
-- The Dillo web browser.
+- A WebKit web browser (WPE WebKit 2.54) on the desktop, and Dillo on X11.
 - WiFi and Ethernet networking, and a Unix command line with bash, Python 3.14 and more.
 
 > This repository is the **coordination repo**: docs, build scripts and integration
