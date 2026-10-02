@@ -5,7 +5,7 @@ static aarch64-phoenix ELF: the `jsc` shell. B3 is the go/no-go gate for the Web
 ([docs/browser/PLAN.md](../../../docs/browser/PLAN.md)). Developed outside the ports framework
 (PLAN decision 3): `build.sh` + patches here, all output in a scratch directory.
 
-Status 2026-10-01: **builds; not yet run on the Pi.** The x86-64 Linux build of the same patched
+Status 2026-10-02: **B3 GO on the Pi** (see "Pi result" at the end). The x86-64 Linux build of the same patched
 tree with the same options (`--host-jsc`) runs everything below; its numbers are the reference.
 
 ## Build
@@ -203,3 +203,41 @@ Triage aids: `<out>/jsc` is unstripped (`addr2line -e <out>/jsc <pc>`; LLInt opc
 symbol names); `JSC_useConcurrentGC=false` is already the default; `JSC_structureHeapSizeInKB=`
 and `WTF_numberOfProcessorCores=1` (one GC marker thread) are the two knobs to try first if
 memory or threading misbehaves.
+
+
+## Pi result (2026-10-02, build 20 netboot, log `rpi4b-uart-20261002-*-b3-jsc2.log`): **GO**
+
+The first Pi run aborted in `JSC::initialize()` on every VM start (SIGABRT, no output). The cause was the
+32 MiB Structure heap, which is smaller than one mimalloc arena chunk (see "Platform layer"). With the
+64 MiB heap, all five conditions hold in one boot:
+
+| Gate | Result |
+|---|---|
+| G1 | `jsc hello.js` prints `2`, rc 0 |
+| G2 | 0 exception dumps / `PHX-ABORT` lines in the whole boot; every step rc 0 |
+| G3 | all 9 `micro.js` checksums equal the host's |
+| G4 | `TEST262 runs=7808 pass=7791 fail=17 seconds=187.8`; the 17 `FAIL` lines are identical to `bench/test262-host-reference.txt` |
+| G5 | SunSpider: all 26 tests complete |
+
+Recorded for the decision:
+
+| Measure | Pi 4 (A72, LLInt) | Host | Ratio |
+|---|---|---|---|
+| SunSpider ms per pass (3 passes) | 4857, 4757, 3575 (mean 4397) | 283–431 | ~12× |
+| `micro.js` geomean / total | 345.9 / 4594 ms | 29.2 / 476 ms | ~12× |
+| test262 subset wall time | 187.8 s | 11–20 s | ~12× |
+| `MALLOC fastMalloc ns/pair` (2 KiB, mimalloc) | 533.8 | 35 | — |
+| footprint (anonymous pages) | ≈ 286 MB (the line read 8 874 676 222: two "no anon map" entries counted as 4 GiB each, fixed in patch 0003 after this run) | — | — |
+
+`mallocrate` (ns per malloc+free pair, 16 / 64 / 256 / 2048 B):
+
+| | single-threaded process | 4 threads |
+|---|---|---|
+| libphoenix (P24 in) | 699 / 1140 / 2294 / 23171 | 5728 / 5286 / 6483 / 105148 |
+| mimalloc | 24 / 26 / 26 / 274 | 40 / 35 / 45 / 1988 |
+
+Reading:
+- The interpreter is ~12× the host on every measure. That makes B9 (JIT) the main speed lever, but it is not a B4 blocker.
+- The system allocator is still 30–150× slower than mimalloc, and up to 100 µs per 2 KiB pair under 4 threads. Everything in the browser processes that still calls libphoenix `malloc` (GLib, libsoup3, Mesa) pays that. See KNOWN-ISSUES P26 and the allocator follow-up.
+- fastMalloc inside `jsc` measured 534 ns per 2 KiB pair, against 274 ns for the same mimalloc in `mallocrate`. Not chased yet.
+
