@@ -210,7 +210,9 @@ epoxy resolves every EGL and GLES entry point through the statically linked `egl
 ```
 wpe-browser [--headless] [--snapshot=FILE.png] [--size=WxH] [--timeout=S] [--exit-after-load]
             [--ignore-tls-errors] [--cpu-rendering] [--web-extensions=DIR]
-            [--ephemeral] [--data-dir=DIR] [--cache-dir=DIR] [--no-chrome] [--search=PREFIX]
+            [--ephemeral] [--data-dir=DIR] [--cache-dir=DIR] [--toolbar=always|auto|never]
+            [--no-chrome] [--search=PREFIX]
+            [--process-cache=N] [--prewarm] [--no-process-swap] [--hang-recovery=S] [--stall-secs=S]
             [--cycle=LIST] [--cycle-secs=S] [--rss-secs=S] [--auto=STEPS]
             [URL|FILE|WORDS]
 ```
@@ -235,8 +237,18 @@ A WPEPlatform view in a `GMainLoop`, one window, one view. Design decisions:
     every key event in the view's `event` handler (which runs before WebKit's) and edits a
     line buffer of its own: the page never sees those keystrokes, so a site's keyboard shortcuts
     cannot fire while typing an address;
-  - the toolbar shows with Ctrl+L (or a click on its address) and when the pointer touches the
-    top edge of the page, and hides again; the 3 px progress line shows while a page loads.
+  - **the toolbar is always shown** (`--toolbar=always`, the default since the owner's request of
+    2026-10-02; `WPE_BROWSER_TOOLBAR`), pinned at the top, the 3 px progress line along its lower
+    edge while a page loads. It cannot be a strip beside the page (one WPE view per toplevel), so
+    the page makes room: a user style sheet (`WEBKIT_USER_STYLE_LEVEL_USER`, `!important`, so it
+    wins over the page's own rules) sets `html { margin-top: 34px; scroll-padding-top: 34px }`.
+    Limits: an element the page fixes at `top: 0` (a sticky site header) stays under the bar, and
+    documents the chrome script does not reach (SVG, XML, WebKit's error pages) have neither bar
+    nor offset;
+  - `--toolbar=auto`: the B6 behaviour, an overlay over the page that shows with Ctrl+L (or a
+    click on its address) and when the pointer touches the top edge, and hides again;
+    `--toolbar=never` (or `--no-chrome`): none. Headless is always `never` (B4's checksum);
+  - the start prints `chrome mode=always|auto|never`.
   - Trade-off: the host element is in the page's DOM (a page walking `<html>`'s children sees
     one more `<div>`); not in SVG/XML documents' rendering (no overlay there, the keys still
     work).
@@ -270,6 +282,32 @@ A WPEPlatform view in a `GMainLoop`, one window, one view. Design decisions:
 - **Start page:** with no argument in window mode, `/usr/share/wpe-browser/start.html` (a search
   form, links to the B6 sites, the keys); `about:blank` headless.
 - **Settings:** WebGL, media, Web Audio and the page cache off; JS console messages to stdout.
+- **The process model** (since the B6 soak; WebKit patch 0015 gives the launcher the knobs WPE's
+  API lacks; each option also from the environment):
+  - a web process per site, swapped on cross-site navigation: WebKit's model, kept.
+    `--no-process-swap` (`WPE_BROWSER_PROCESS_SWAP=0`) puts every site in one web process: less
+    memory, no isolation between sites, and one wedged or crashed process takes every later site
+    with it. For A/B runs;
+  - `--process-cache=N` (`WPE_BROWSER_PROCESS_CACHE`), **default 2** (WebKit: four per GB of RAM,
+    ~15 on the Pi): the web processes of recently left sites, each kept 5 min, saving a return the
+    ~1.5 s of a process launch (soak: `load started` 1.4 s after the request in a new process,
+    0.3 s in a cached one). Two cover going back and forth; each more is an idle WebProcess;
+  - `--prewarm` (`WPE_BROWSER_PREWARM=1`), **default off**: a spare web process launched ahead.
+    The first soak left four prewarmed processes that never got a page;
+  - `--hang-recovery=S` (`WPE_BROWSER_HANG_SECS`), **default 30**, 0 off: a navigation the
+    launcher issued that has not committed after S s while WebKit reports the page's web
+    process unresponsive gets that process terminated (`webkit_web_view_terminate_web_process`)
+    and is issued once more, to a new process. WebKit itself only marks a wedged process
+    unresponsive; without this the view waits forever (the first soak);
+  - `--stall-secs=S` (`WPE_BROWSER_STALL_SECS`), **default 10**, 0 off: every child reports a main
+    thread that has not run its event loop for S s, with each thread's state, CPU time and
+    registers (below).
+
+  Not a knob: `webkit_web_context_set_cache_model()` sizes the WebProcess cache only when the
+  process pool is created, before an application can call it (`WebProcessPool::setCacheModel`
+  does not update it), so `DOCUMENT_BROWSER` would not turn the cache off. WebKit's `RELEASE_LOG`
+  (`WEBKIT_DEBUG=ProcessSwapping,Process,Loading`) is compiled out of a Release build; the port's
+  USE flag `release_log` compiles it in, at the cost of rebuilding nearly all of WebKit.
 - **Test knobs** (also from the environment, because an `XFCE_AUTOSTART` item takes one
   argument):
   - `--cycle=LIST` (`WPE_BROWSER_CYCLE`): every `--cycle-secs` (`WPE_BROWSER_CYCLE_SECS`,
@@ -296,16 +334,48 @@ Every line the launcher prints starts with `WPEB t=<ms> ` (ms since that process
 | `start pid= webkit=2.54.0 mode=window\|headless uri= exe=` | UI start (`uri` = the first page) |
 | `display <type>`, `view <type> <W>x<H>` | display connected, view created |
 | `session ephemeral` / `session persistent data= cache= cookies= cookie-policy=no-third-party cache-model=web-browser` / `session-error …` | the network session |
-| `chrome on world=wpe-browser search= home=` | window mode, the overlay installed |
+| `chrome mode=always\|auto\|never`, `chrome on world=wpe-browser search= home=` | the toolbar mode (headless: `never`); window mode, the overlay installed |
 | `role=web\|network pid= ppid= argc=` | a child started |
 | `load started\|redirected\|committed\|finished uri=`, `progress <0..1>`, `title <t>` | page loads |
-| `load-failed uri= error=`, `load-failed-tls uri= flags=`, `web-process-terminated reason=`, `timeout after <s> s` | failures |
+| `load-failed uri= error= page-id=`, `load-failed-tls uri= flags=`, `web-process-terminated reason=crashed\|memory-limit\|api page-id= uri=`, `timeout after <s> s` | failures |
+| `process-model process-swap=0\|1 prewarm=0\|1 process-cache=<n> hang-recovery=<s> stall-secs=<s>`; from WebKit (patch 0015, not `WPEB t=`): `WPEB-WEBKIT process-model process-swap= prewarm=on\|off\|auto process-cache=<capacity>` | UI start: the process model asked for, and what WebKit made of it |
+| `policy navigation wait_ms= ours=0\|1 redirect= page-id= uri=` | the page's current web process asked whether to follow a pending navigation (up to three per navigation, until it starts): that process is alive |
+| `policy response status= mime= page-id= uri=` | the main resource's response |
+| `page-swap page-id=<new> from=<old> pending_ms= uri=` | WebKit moved the view to another web process (process swap) |
+| `web-process responsive=0\|1 page-id= loading= pending_ms= uri=` | WebKit's verdict on the page's web process changed (0: 3 s without an answer) |
+| `navigation-wait kind= waited_ms= asked= started= responsive=1 page-id= uri=` | a pending navigation reached `--hang-recovery` s with a responsive process (slow, not hung; noted once) |
+| `hang-recovery terminate-web-process kind= waited_ms= asked= started= page-id= uri=`, `hang-recovery load uri=`, `hang-recovery gave-up …` | the recovery from a wedged web process |
+| `role=web\|network pid= stall n= main_ms= report= ipc_in= ipc_revents=`, `… stall-thread tid= [main\|watchdog] state= cpu_ms= delta_ms= wait_ms= prio=`, `… stall-sample tid= [main] pc= lr= fp= sp=` (or `none`), `… stall-stack tid= ret=…`, `… stall-end n= main_ms=` | a child's main loop stalled `--stall-secs` (below) |
+| `sysmem used_kb= free_kb=` | with `mem role=ui`: the kernel's page allocator, the RAM really in use |
 | `chrome action=<a> source=key\|ui\|auto\|cycle …` | every chrome action: `focus-url`, `cancel`, `go input=<typed> uri=<resolved>`, `back ok=0\|1`, `forward ok=0\|1`, `reload uri=`, `reload-nocache uri=`, `stop loading=0\|1`, `home uri=`, `fullscreen`, `unfullscreen`, `quit` (`source=key`: a key from the seat; `ui`: an overlay button; `auto`: an `--auto` step; `cycle`/`pointer`: a cancel by the cycle or a click) |
 | `new-window uri= opened=same-view via=policy\|create` | a new-window request, loaded in the view |
-| `cycle pages=<n> secs=<s> from=<file\|list>`, `cycle n=<k> uri=` | `--cycle` |
+| `cycle pages=<n> secs=<s> from=<file\|list>`, `cycle n=<k> loading= responsive= page-id= pending_ms= uri=` | `--cycle` (`pending_ms` ≥ 0: the previous navigation never committed) |
 | `auto key=<keys>`, `auto type=<text>`, `auto bad-…` | `--auto` steps |
-| `mem role=ui\|web\|network pid= footprint_kb=` | `--rss-secs` |
+| `mem role=ui\|web\|network pid= footprint_kb=` | `--rss-secs`. ⚠ Overcounts, by up to several times: the kernel's `meminfo()` gives each map entry the anonymous pages of its whole amap, and entries split from one mapping share it (`vm/map.c`, `vm_mapinfo`, the `anonsz` loop over `e->amap->size` instead of the entry's own range `[aoffs, aoffs + size)`). WebKit's memory pressure handler reads the same number (patch 0008), so a large page's process sits in its "strict" policy (≥ 1.5 GB) and releases memory every 30 s |
 | `snapshot file= width= height= crc32=`, `exit status=` | the end |
+
+**The stall report** (every child's watchdog thread). The main loop of each web and network
+process beats once a second (a GLib timeout on the default main context, the one WebKit's main
+`RunLoop` runs). When the last beat is older than `--stall-secs`, the child prints, at once and
+every 60 s while the stall lasts:
+- `stall … main_ms=<M> ipc_in=0|1`: `ipc_in=1`, the UI connection's socket holds unread input,
+  i.e. the UI's messages wait for a main thread that does not take them; `ipc_in=0` while the UI
+  says `responsive=0` points at the connection instead (the UI's sends not arriving);
+- `stall-thread` per thread of the process (the kernel's `threadsinfo()`): `delta_ms` is its CPU
+  time since the previous report, so a spinning main thread has `delta_ms` near 60000 and a
+  blocked one 0;
+- in the reports at 60, 120 and 180 s (not the first: a long task on a slow page must not get
+  its system calls interrupted), `stall-sample` per thread: the registers where `SIGUSR2`
+  (unused by WebKit; JSC suspends threads with `SIGUSR1`) interrupted it, from the `SA_SIGINFO`
+  context; `none` = no answer within 500 ms (the signal blocked, e.g. in a thread JSC holds
+  suspended). `ipc-stall` samples at once (30 s of unread input already);
+- `stall-stack` for the main thread: the return addresses on its stack (words inside the
+  program's code that follow a `BL`/`BLR`; WebKit is built without frame pointers). Symbolise
+  `pc`, `lr` and those with `aarch64-phoenix-addr2line -f -C -e <port install>/bin/wpe-browser`;
+- `stall-end … main_ms=`: the loop ran again (a long task, not a hang).
+
+The signal interrupts a blocking system call with `EINTR` in the sampled thread, so the samples
+are taken only in a stall that already lasted a minute.
 
 `/bin/browser` (the port's `files/share/browser`, run as `/bin/bash /bin/browser [URL|FILE|WORDS]`:
 Phoenix execs no `#!` scripts) is the desktop launcher: `--size=1280x960 --cpu-rendering`
@@ -371,7 +441,7 @@ list, at the cost of keeping those functions in the program.
 
 ## Patches
 
-The port's `patches/webkit/` holds all eleven, applied in order (the image build: the framework's
+The port's `patches/webkit/` holds all of them (0001-0011, 0015; 0012-0014 are the `jit` branch's), applied in order (the image build: the framework's
 `b_port_apply_patches`; a scratch build without `WEBKIT_SRC`: `build-wpe.sh`, one commit each in
 `<out>/src/webkit`). `0001`-`0005` are track C's, byte-identical to `../jsc/patches/webkit/` (the
 jsc shell keeps its copies; `build.sh` warns when they drift):
@@ -383,6 +453,7 @@ jsc shell keeps its copies; `build.sh` warns when they drift):
 | 0008-wtf-wpe-phoenix | WTF's WPE source list on Phoenix: no `linux/` (procfs, eventfd, RealtimeKit); `phoenix/MemoryFootprintPhoenix.cpp` (track C) for `memoryFootprint()`; `MemoryPressureHandlerUnix.cpp` with `OS(PHOENIX)` (`processMemoryUsage()` = the meminfo footprint, hold-off timer) |
 | 0009-xdgmime-phoenix-static | WebKit's bundled xdgmime and GLib's copy in GIO both define `_caches` and `_xdg_binary_or_text_fallback` in one static link: renamed by `-D`; `ntohl()` from `<arpa/inet.h>` on Phoenix |
 | 0010-wpe-build-fixes | upstream bugs with our options: `JSHTMLMediaElementCustom.cpp` needs `#if ENABLE(VIDEO)`; `AcceleratedBackingStore.cpp` needs `DRM_FORMAT_XRGB8888` without libdrm; OpenSSL 3's `EVP_PKEY_get0_RSA()` returns `const RSA*` (WebCore's OpenSSL code targets 1.1); no `MSG_CTRUNC` in libphoenix (the kernel does not report truncated control data; with `wpe-ipc-fd-per-frame` it closes the descriptors that do not fit, as Linux does, and GLib's 256-byte control buffer holds 60) |
+| 0015-wpe-phoenix-process-model | B6 soak: WPE hardcodes process swap on navigation and has no API for prewarming or the WebProcess cache's size. On Phoenix `WebKitWebContext.cpp` reads `WPE_PHOENIX_PROCESS_SWAP=0` and `WPE_PHOENIX_PREWARM=0\|1` into the pool configuration and prints `WPEB-WEBKIT process-model …`; `WebProcessCache::platformInitialize()` (empty off Cocoa) reads `WPE_PHOENIX_PROCESS_CACHE=N` into the cache's capacity override. The launcher sets all three (the process model above). Two files: `WebKitWebContext.cpp` (its own object) and `WebProcessCache.cpp` (one unified source) |
 | 0011-wtf-maptofile-phoenix-write | B6: `FileSystem::mapToFile()` creates a file, maps it `MAP_SHARED` and copies the data into the mapping; the network cache stores every body larger than a page that way (`NetworkCacheBlobStorage`, `Blobs/`), the service worker script storage too. Phoenix has no shared file mappings (`MAP_SHARED` = `MAP_PRIVATE` = 0, no page is written back), so the file kept the zeros of its `ftruncate()`. On Phoenix the bytes go to the file with `write()` and the caller gets an anonymous read-only copy |
 
 Compat (`build-wpe.sh` stage `compat`; the port's `files/compat/` = track C's set plus
@@ -516,7 +587,7 @@ psh rules apply:
 | # | Command at `(psh)%` | Expected |
 |---|---|---|
 | 1 | `export WPE_PHOENIX_SHM_LOG=1 PHX_TRACE_ABORT=1` | — |
-| 2 | `/usr/bin/wpe-browser --headless --cpu-rendering --snapshot=/tmp/b4.png --timeout=600 /usr/share/wpe-browser/b4.html` | in order: `WPEB … start pid=… mode=headless uri=file:///usr/share/wpe-browser/b4.html exe=/usr/bin/wpe-browser`, `WPEB … display WPEDisplayHeadless`, `WPEB … session ephemeral` (since B6), `WPEB … view WPEViewHeadless 1024x768`, `WPEB … role=network pid=…` and `WPEB … role=web pid=…` (either order: the children print them), `PHXSHM …` lines, `WPEB … load committed`, `WPEB … title B4 WPE Phoenix <sum>`, `WPEB … load finished`, `WPEB … snapshot file=/tmp/b4.png width=1024 height=768 crc32=XXXXXXXX`, `WPEB … exit status=0`; back to the prompt |
+| 2 | `/usr/bin/wpe-browser --headless --cpu-rendering --snapshot=/tmp/b4.png --timeout=600 /usr/share/wpe-browser/b4.html` | in order: `WPEB … start pid=… mode=headless uri=file:///usr/share/wpe-browser/b4.html exe=/usr/bin/wpe-browser`, `WPEB … display WPEDisplayHeadless`, `WPEB … session ephemeral` (since B6), `WPEB … chrome mode=never` (since the soak build), `WPEB … view WPEViewHeadless 1024x768`, `WPEB … role=network pid=…` and `WPEB … role=web pid=…` (either order: the children print them), `PHXSHM …` lines, `WPEB … load committed`, `WPEB … title B4 WPE Phoenix <sum>`, `WPEB … load finished`, `WPEB … snapshot file=/tmp/b4.png width=1024 height=768 crc32=XXXXXXXX`, `WPEB … exit status=0`; back to the prompt |
 | 3 | the same command again | the **same** `crc32=` (deterministic rendering) |
 | 4 | `/usr/bin/wpe-browser --headless --snapshot=/tmp/b4gpu.png --timeout=600 /usr/share/wpe-browser/b4.html` (Skia GPU raster, Ganesh on V3D) | `exit status=0`; its crc may differ from #2. A failure here with #2 passing is a B7 finding, not a B4 failure |
 
@@ -558,7 +629,7 @@ Same staging; one run of B4 #2 with the loader trace and the probe extension:
 | # | Command at `(psh)%` | Expected |
 |---|---|---|
 | 1 | `export LD_DEBUG=1 PHX_TRACE_ABORT=1` | — |
-| 2 | `/usr/bin/wpe-browser --headless --cpu-rendering --web-extensions=/usr/lib/wpe-browser/pi-extensions --snapshot=/tmp/b4x.png --timeout=600 /usr/share/wpe-browser/b4.html` | `WPEB … web-extensions dir=/usr/lib/wpe-browser/pi-extensions` (UI); after `WPEB … role=web pid=P`, from the WebProcess: `dl: host <argv[0]> exports .dynsym, 7 symbols` (match on `exports .dynsym, 7 symbols`), `dl: loaded /usr/lib/wpe-webkit-2.0/injected-bundle/libWPEInjectedBundle.so base=0x… symbols=5 relocs=3 init=0`, `dl: loaded /usr/lib/wpe-browser/pi-extensions/phx-probe-extension.so base=0x… symbols=6 relocs=4 init=0`, `WPEB-EXT init extension=yes user-data=wpe-browser`, then `WPEB-EXT page-created id=<n>`; then B4's `load finished`, `snapshot … crc32=` and `exit status=0` |
+| 2 | `/usr/bin/wpe-browser --headless --cpu-rendering --web-extensions=/usr/lib/wpe-browser/pi-extensions --snapshot=/tmp/b4x.png --timeout=600 /usr/share/wpe-browser/b4.html` | `WPEB … web-extensions dir=/usr/lib/wpe-browser/pi-extensions` (UI); after `WPEB … role=web pid=P`, from the WebProcess: `dl: host <argv[0]> exports .dynsym, 9 symbols` (match on `exports .dynsym, 9 symbols`; 7 before the soak build added `getpid` and `webkit_web_page_get_uri`), `dl: loaded /usr/lib/wpe-webkit-2.0/injected-bundle/libWPEInjectedBundle.so base=0x… symbols=5 relocs=3 init=0`, `dl: loaded /usr/lib/wpe-browser/pi-extensions/phx-probe-extension.so base=0x… symbols=8 relocs=6 init=0` (6 and 4 before), `WPEB-EXT init extension=yes user-data=wpe-browser`, then `WPEB-EXT page-created id=<n> pid=P` and `WPEB-EXT document-loaded id=<n> pid=P uri=file:///usr/share/wpe-browser/b4.html`; then B4's `load finished`, `snapshot … crc32=` and `exit status=0` |
 
 **PASS:**
 - the four WebProcess lines appear, in that order;
@@ -629,7 +700,7 @@ Six autostart items, one window after another; `WPE_BROWSER_RSS_SECS=60` and
 
 | # | Item (seconds) | Expected |
 |---|---|---|
-| 1 | `/bin/bash=/bin/browser` (90) | `WPEB … start … mode=window uri=file:///usr/share/wpe-browser/start.html exe=/usr/bin/wpe-browser`; `WPEB … session persistent data=/root/.local/share/wpe-browser cache=/root/.cache/wpe-browser cookies=/root/.local/share/wpe-browser/cookies.sqlite cookie-policy=no-third-party cache-model=web-browser`; `WPEB … chrome on world=wpe-browser …`; `WPEB … view WPEViewWayland 1280x960`; `load finished uri=file:///usr/share/wpe-browser/start.html`; `title Phoenix-RTOS Web Browser` |
+| 1 | `/bin/bash=/bin/browser` (90) | `WPEB … start … mode=window uri=file:///usr/share/wpe-browser/start.html exe=/usr/bin/wpe-browser`; `WPEB … session persistent data=/root/.local/share/wpe-browser cache=/root/.cache/wpe-browser cookies=/root/.local/share/wpe-browser/cookies.sqlite cookie-policy=no-third-party cache-model=web-browser`; `WPEB … chrome mode=always`; `WPEB … chrome on world=wpe-browser …`; `WPEB … view WPEViewWayland 1280x960`; every HDMI tick shows the toolbar at the top with the page below it; `load finished uri=file:///usr/share/wpe-browser/start.html`; `title Phoenix-RTOS Web Browser` |
 | 2 | Wikipedia (200) | `load finished uri=https://en.wikipedia.org/wiki/Phoenix-RTOS`, `title Phoenix-RTOS - Wikipedia` |
 | 3 | GitHub (240) | `load finished uri=https://github.com/phoenix-rtos/phoenix-rtos-kernel`, a title with `phoenix-rtos-kernel` |
 | 4 | `phoenix-rtos` (150): plain words | `start … uri=https://html.duckduckgo.com/html/?q=phoenix-rtos`, `load finished uri=https://html.duckduckgo.com/html/?q=phoenix-rtos`, a title with `phoenix-rtos` |
@@ -700,14 +771,48 @@ clearing, one run (`run=3`, `T3`) on what the disk kept.
 #### (c) The 30-minute soak (`b6.sh soak`, ~32 min, `HOLD` 1920 s)
 
 One browser for 30 minutes (`B6_SOAK_SECS`), the next page of `/usr/share/wpe-browser/b6-sites.txt`
-(the five B6 sites) every 60 s (`--cycle`), every process's footprint and shmsrv's stats every
-5 minutes:
+(the five B6 sites) every 60 s (`--cycle`); every process's footprint, the system's free RAM and
+shmsrv's stats every 5 minutes; the probe extension (`--web-extensions`) prints which web process
+loaded each document. `B6_SOAK_ARGS` adds browser options (the process model, for A/B runs) and
+`B6_WEBKIT_DEBUG` sets `WEBKIT_DEBUG` (useful only in a `release_log` build).
+
+**The first run (build 27, `rpi4b-uart-20261002-171227-b6-soak.log`) stopped at cycle 18, not 22.**
+- Cycles 1-17 loaded (last `load finished`: GitHub, t=976.7 s). Cycle 18 got `progress 0.10`
+  (the UI's own pending-request state) and nothing else, cycles 19-30 not even that: no `load
+  started`, no new web process, no cached process taken.
+- The view was in pid 174 (GitHub) from cycle 17. A navigation goes first to the page's current
+  web process (`WebPageProxy::loadRequest` sends `LoadRequest` to it, and it asks for the policy
+  decision before anything swaps), so a 174 that no longer ran its main loop stopped every later
+  navigation. 174 is also the only child that did not exit when the UI closed the connection: its
+  orphan watchdog `_exit`ed it. Its last visible work: GitHub's preload console warnings around
+  t≈993 s.
+- The `main returned 0` of 239, 371 and 107 are no failures: each came ~300 s after the process
+  was last swapped away (239: DDG, cached ~783.7 s, gone ~1084 s; 371: BBC, ~903.7 → ~1204 s; 107:
+  Wikipedia, ~964.5 → ~1264 s): `WebProcessCache::cachedProcessLifetime`, 5 min off Cocoa.
+  Process suspension is not it (`platformSuspendProcess()` is `notImplemented()` on GLib), nor
+  backpressure into an idle process (cached processes got no messages; they died on schedule).
+- WebKit marked nothing (it only flags the process unresponsive) and the launcher did not
+  listen, so the browser waited 13 minutes.
+- pids 201, 245, 344, 438 kept a constant baseline footprint and never got a page: prewarmed
+  spares, spawned after the loads of cycles 2-5 and never used.
+
+What is in the soak build since: the process model above (cache 2, no prewarming), the hang
+recovery, the stall report, the navigation lines, `sysmem`.
 
 ```
+B6 soak args=none webkit_debug=none
 B6 soak shm t=0 SHMSRV stats rc=0 live=<L0> bytes=<B0> ids=<I0>
+WPEB … process-model process-swap=1 prewarm=0 process-cache=2 hang-recovery=30 stall-secs=10
+WPEB-WEBKIT process-model process-swap=1 prewarm=off process-cache=2
+WPEB … chrome mode=always
 WPEB … cycle pages=5 secs=60 from=/usr/share/wpe-browser/b6-sites.txt
-WPEB … cycle n=<k> uri=<site>                      (every 60 s, then that page's load lines)
-WPEB … mem role=ui|web|network pid=… footprint_kb=…  (every 300 s, one per process)
+WPEB … cycle n=<k> loading=0 responsive=1 page-id=<id> pending_ms=-1 uri=<site>   (every 60 s)
+WPEB … policy navigation wait_ms=<ms> ours=1 redirect=0 page-id=<id> uri=<site>
+WPEB … page-swap page-id=<new> from=<id> pending_ms=<ms> uri=…     (a cross-site cycle)
+WPEB … load started / committed / finished uri=<site>
+WPEB-EXT document-loaded id=<new> pid=<web pid> uri=<site>
+WPEB … mem role=ui|web|network pid=… footprint_kb=…  (every 300 s, one per live process)
+WPEB … sysmem used_kb=<U> free_kb=<F>                  (every 300 s)
 B6 soak shm t=… SHMSRV stats rc=0 live=… bytes=… ids=…   (every 300 s)
 B6 soak browser alive after 18xx s
 B6 soak browser rc=0
@@ -715,15 +820,45 @@ B6 soak done
 ```
 
 **PASS (c):**
-- at least 29 `cycle n=` lines, the browser alive at the end, `rc=0`;
-- zero `web-process-terminated`, zero faults;
-- no unbounded growth: per role, the last `footprint_kb` at most 1.5x the largest of the first
-  10 minutes; shmsrv's `bytes` not rising sample after sample, `live` back near `L0`
-  (`L0 + 10`) at the samples.
+- the two `process-model` lines as above (the `WPEB-WEBKIT` one proves patch 0015 is in the
+  binary);
+- at least 29 `cycle n=` lines, the browser alive at the end, `rc=0`; **a `load committed` for
+  every cycle** (or, for a cycle that had to recover, `hang-recovery terminate-web-process` then
+  its `load committed`), and `pending_ms=-1` on at least 27 `cycle` lines;
+- **at most 4 web processes** alive in any 5-minute `mem` round (the page's, 2 cached, 1
+  provisional), none with an unchanging baseline footprint from start to end (no idle prewarmed
+  spares); `free_kb` not falling round after round. (The first run had one more kind: 303, Stack
+  Overflow's process, outlived its 5-minute cache lifetime by 10 minutes, probably as the host of
+  the site's service worker: WebKit does not cache a process that runs one. Such a process is a
+  finding to name, not a failure);
+- zero faults; zero `web-process-terminated reason=crashed|memory-limit`;
+- shmsrv's `bytes` not rising sample after sample, `live` back near `L0` (`L0 + 10`) at the
+  samples.
 
-A page that needs more than 60 s on the LLInt simply gets cut by the next cycle: count it
-(`load finished` per site), it is a speed finding, not a soak failure. **Record** the footprint
-and shm series (the input of the shm decision above).
+`footprint_kb` is no growth measure (it overcounts, see the line table); `sysmem free_kb` is. A
+page that needs more than 60 s on the LLInt simply gets cut by the next cycle: count it (`load
+finished` per site), it is a speed finding, not a soak failure.
+
+**If the wedge comes back** (a cycle with no `policy navigation`, `web-process responsive=0`
+3 s later, the recovery at 30 s): a web process prints `stall` (its main loop) or `ipc-stall` (its
+connection) lines before that. Which pid: the `stall` lines carry it, and the `WPEB-EXT
+document-loaded id=<page-id> pid=` line of the page-id in the `cycle` line joins the two. Then:
+
+| Lines | Means | Next |
+|---|---|---|
+| `stall … ipc_in=1`, main `stall-thread … state=ready delta_ms≈60000`, the main `stall-sample` pc moving between reports | the main thread is busy (a JS/LLInt loop, layout, a GC that does not end) | `addr2line` the main samples and `stall-stack`; the page's JS, or JSC |
+| `stall … ipc_in=1`, main `state=sleep delta_ms=0`, the same pc every time | the main thread is blocked | the main `stall-stack` names the wait (a lock, a condition, a sync IPC reply, an EGL/GPU fence); the other threads' samples and `delta_ms` show who should wake it (a GC helper, the compositor thread) |
+| main `stall-sample … none` | the main thread did not take SIGUSR2 in 500 ms: blocked with signals masked, or held suspended by JSC (its SIGUSR1 handler masks the rest) | the other threads: a collector thread in `MachineThreads`/`Thread::suspend` |
+| no `stall`, an `ipc-stall readable_ms=… main_beat_ms=<small>` | the main loop runs but the connection's input is not read: the connection's receiving thread, or a `poll()` wakeup lost on the AF_UNIX socket | that thread's `stall-thread`/`stall-sample` line (sleeping in `poll` with input pending = the kernel; elsewhere = WebKit) |
+| neither, `responsive=0` | the process reads and runs, but the UI's message does not arrive: the UI's send side | a `release_log` build with `B6_WEBKIT_DEBUG=IPC,Process,ProcessSwapping,Loading` |
+| `hang-recovery terminate-web-process` then `load committed` | the recovery worked | the soak passes; the stall lines are the bug report |
+| `hang-recovery gave-up` | the new process wedged as well | the same lines for the new pid |
+
+A/B, one Pi cycle each, if the wedge needs narrowing: `export B6_SOAK_ARGS="--no-process-swap"`
+(one web process: does the wedge follow the swaps?), `--process-cache=0`, `--hang-recovery=0`
+(the original behaviour, for a clean stall record). **Record** per run: the first stalled cycle,
+the `stall` lines, the process count per `mem` round, `free_kb` per round, `load finished` per
+site.
 
 #### (d) Chrome and keys, scripted (`b6.sh keys`, ~7 min, `HOLD` 420 s)
 
