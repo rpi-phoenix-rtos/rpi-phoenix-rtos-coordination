@@ -30,8 +30,12 @@ tools/browser/wpe/build.sh --out <scratch>/out --dl <cache> -j8
 - `--out` must be outside the repository (about 15 GB).
 - Outputs:
   - `<out>/wpe-browser`: unstripped, for `addr2line`;
-  - `<out>/wpe-browser-stripped`: the file to stage.
-- Stages: `deps`, `compat`, `extract`, `configure`, `build`, `all` (the default).
+  - `<out>/wpe-browser-stripped`: the file to stage;
+  - `<out>/libWPEInjectedBundle.so`: the WebProcess's injected bundle, see
+    [Loaded objects](#loaded-objects-the-injected-bundle-and-web-process-extensions);
+  - `<out>/phx-probe-extension.so`: the web process extension of the Pi check.
+- Stages: `deps`, `compat`, `extract`, `configure`, `build`, `plugins` (the two shared objects,
+  against an existing build), `all` (the default).
 - `--mesa-variant gles|wayland` (default `gles`) picks the mesa_drm build that is linked, see
   [GPU](#gpu-egl-is-not-optional).
 - The script reads the tree (sysroot, toolchain, installed ports) and writes only into `<out>`
@@ -149,7 +153,8 @@ epoxy resolves every EGL and GLES entry point through the statically linked `egl
 
   ```
   wpe-browser [--headless] [--snapshot=FILE.png] [--size=WxH] [--timeout=S]
-              [--exit-after-load] [--ignore-tls-errors] [--cpu-rendering] [URL|FILE]
+              [--exit-after-load] [--ignore-tls-errors] [--cpu-rendering]
+              [--web-extensions=DIR] [URL|FILE]
   ```
 
   - Keys: Ctrl+Q quit, Ctrl+R or F5 reload, Alt+Left / Alt+Right back / forward, Alt+Home the
@@ -165,6 +170,61 @@ epoxy resolves every EGL and GLES entry point through the statically linked `egl
   - `--snapshot`: after the first `load finished`, `webkit_web_view_get_snapshot(VISIBLE)` returns a
     `WebKitImage` (BGRA, premultiplied). The launcher writes it as an RGBA PNG through libpng and
     prints the CRC-32 of the unpremultiplied RGBA rows.
+
+## Loaded objects: the injected bundle and web process extensions
+
+Every WebProcess loads WebKit's **injected bundle**, `libWPEInjectedBundle.so`, from
+`/usr/lib/wpe-webkit-2.0/injected-bundle/` (`PKGLIBDIR`; `WEBKIT_INJECTED_BUNDLE_PATH` overrides
+the directory). `InjectedBundle::initialize()` (`WebProcess/InjectedBundle/glib/InjectedBundleGlib.cpp`)
+opens it with `g_module_open()`, which is libphoenix's `dlopen()`, and calls its one entry point,
+`WKBundleInitialize`. The bundle is a single source, `WebKitInjectedBundleMain.cpp`, and the
+entry point only forwards to the program: `WebProcessExtensionManager::singleton().initialize()`.
+That call does the work:
+- it creates the process's `WebKitWebProcessExtension` and installs it as the bundle client, so
+  that every page gets its `WebKitWebPage` (the web process side of the GLib API: user messages
+  between page and view, `send-request`, the form manager, context-menu and console signals);
+- it loads the **web process extensions**, every `.so` in the directory the UI process set with
+  `webkit_web_context_set_web_process_extensions_directory()` (launcher `--web-extensions=DIR`),
+  and calls their `webkit_web_process_extension_initialize[_with_user_data]`.
+
+Without the bundle the WebProcess still renders pages, but none of that exists: it prints
+`Error loading the injected bundle (…)`, `webkit_web_view_send_message_to_page()` replies
+"unhandled", and no extension is ever loaded.
+
+What makes it load on Phoenix:
+- **The bundle is a real shared object.** CMake made the `WPEInjectedBundle` MODULE library
+  static (Phoenix has no shared libraries in CMake's terms, as for libWPEWebKit), and `ninja
+  WPEBrowser` never built it. `build.sh` now also builds that static library and links its one
+  object `-shared -fPIC -nostartfiles -nostdlib -Wl,--hash-style=sysv` (stage `plugins`):
+  - `-nostartfiles`: the toolchain's startfiles are a program's (crt0, with `_start`);
+  - `-nostdlib`: libc, GLib and WebKit stay undefined and bind to the program's copies (a second
+    libc in the object would mean a second heap);
+  - a SysV hash table: libphoenix's `dlopen()` takes the symbol count from `DT_HASH`.
+- **wpe-browser has an export table** (`launcher/wpe-browser.exports`, linked by
+  `launcher/CMakeLists.txt`). The program is static and stripped, so there was nothing to bind the
+  bundle's undefined symbols to. With `-Wl,--no-dynamic-linker -Wl,--dynamic-list=<list>` ld
+  gives the static program a `.dynsym` holding exactly the listed symbols:
+  - libphoenix's `dlopen()` resolves against it (libphoenix branch `dl-host-exports`; before it,
+    only an unstripped program's `.symtab` was read);
+  - it is part of the loaded image and survives strip;
+  - ld keeps every listed symbol under `--gc-sections`. `WebProcessExtensionManager::initialize`
+    was collected before: only the bundle calls it.
+
+  Both flags are needed: without `--no-dynamic-linker`, ld creates no dynamic sections for a
+  program that links no shared library, and `--dynamic-list` alone does nothing.
+  `--require-defined` for every listed symbol makes a WebKit rename a link error. The list
+  holds 7 symbols: the bundle's 3 imports (`abort` and the two `WebProcessExtensionManager`
+  methods) and the probe extension's 4. The stripped program grows by 34 KB, and its 2 PT_LOAD
+  segments do not change (a PT_DYNAMIC is added; the kernel loader ignores it).
+- `build.sh` checks each object: no `PT_TLS` (there is no dynamic TLS), `DT_HASH` present, no
+  `DT_NEEDED`, the entry point defined, and every import exported by `wpe-browser`.
+  The bundle needs nothing more from the loader. It has no TLS, no static constructors or
+  destructors (so no `__dso_handle`/`__cxa_atexit`), and only 3 `JUMP_SLOT` relocations. WebKit
+  is built `-fno-exceptions`, so no unwinding crosses the boundary.
+
+A web process extension for Phoenix is built the same way and may use only what the export list
+holds. Adding the public extension API (`webkit_web_*`, `jsc_*`, GLib) means adding it to the
+list, at the cost of keeping those functions in the program.
 
 ## Patches
 
@@ -268,6 +328,9 @@ PHXSHM wlpool-resize pid=<pid> fd=<fd> size=<bytes>
 
 Stage on the netboot NFS root:
 - `<out>/wpe-browser-stripped` as `/usr/bin/wpe-browser` (mode 755);
+- `<out>/libWPEInjectedBundle.so` as `/usr/lib/wpe-webkit-2.0/injected-bundle/libWPEInjectedBundle.so`;
+- `<out>/phx-probe-extension.so` as `/usr/lib/wpe-browser/pi-extensions/phx-probe-extension.so`
+  (the only file in that directory);
 - `pi/b4.html` as `/usr/share/wpe-browser/b4.html`.
 
 The root already has what the browser needs at run time:
@@ -317,6 +380,36 @@ Record:
 | `Failed to create shared memory` | shmsrv not running |
 | `web-process-terminated reason=crashed` | `addr2line -e <out>/wpe-browser <pc>` on the fault dump's pc first |
 | a silent abort of a process | `PHX-ABORT` lines (`PHX_TRACE_ABORT=1`, track C's compat): `addr2line -f -e <out>/wpe-browser <pc> <lr> <frames…>` |
+
+### Injected bundle: the WebProcess loads it and runs its init
+
+Same staging; one run of B4 #2 with the loader trace and the probe extension:
+
+| # | Command at `(psh)%` | Expected |
+|---|---|---|
+| 1 | `export LD_DEBUG=1 PHX_TRACE_ABORT=1` | — |
+| 2 | `/usr/bin/wpe-browser --headless --cpu-rendering --web-extensions=/usr/lib/wpe-browser/pi-extensions --snapshot=/tmp/b4x.png --timeout=600 /usr/share/wpe-browser/b4.html` | `WPEB … web-extensions dir=/usr/lib/wpe-browser/pi-extensions` (UI); after `WPEB … role=web pid=P`, from the WebProcess: `dl: host /usr/bin/wpe-browser exports .dynsym, 7 symbols`, `dl: loaded /usr/lib/wpe-webkit-2.0/injected-bundle/libWPEInjectedBundle.so base=0x… symbols=5 relocs=3 init=0`, `dl: loaded /usr/lib/wpe-browser/pi-extensions/phx-probe-extension.so base=0x… symbols=6 relocs=4 init=0`, `WPEB-EXT init extension=yes user-data=wpe-browser`, then `WPEB-EXT page-created id=<n>`; then B4's `load finished`, `snapshot … crc32=` and `exit status=0` |
+
+**PASS:**
+- the four WebProcess lines appear, in that order;
+- **no** `Error loading the injected bundle` and **no** `Error loading WKBundleInitialize symbol`
+  warning in any process;
+- `exit status=0`, and the `crc32=` equals B4 #2's (the bundle changes no rendering);
+- zero faults.
+
+The extension's `init` line can only come from the bundle's `WKBundleInitialize`: it runs
+`WebProcessExtensionManager::initialize()`, which loads the extension. So the line proves the
+dlopen(), the export table and the init. `page-created` proves the `WebKitWebPage` wrapper the
+bundle client creates for the page.
+
+**Triage:**
+
+| Symptom | Meaning |
+|---|---|
+| `dl: host … exports .symtab (file)` or `exports nothing` | the staged `wpe-browser` has no export table: linked without `launcher/wpe-browser.exports`, or by a libphoenix without `dl-host-exports` (`build.sh` refuses both) |
+| `Error loading the injected bundle (…): dlopen: cannot open: …` | the bundle is not staged at that path |
+| `… dlopen: unresolved symbol: <name>` | `<name>` is missing from `launcher/wpe-browser.exports` |
+| the bundle line but no `WPEB-EXT init` | the extension directory is wrong or holds no `.so`; a failed `dlopen()` of the extension prints `Error loading module '<path>': <dlerror>` |
 
 ### B5: a window on labwc (3 processes, wl_shm), local page then Wikipedia
 

@@ -22,9 +22,12 @@
 #   <out>/compat/             the libphoenix compat shims still needed (jsc/compat)
 #   <out>/webkit-build/       the CMake/Ninja tree
 #   <out>/wpe-browser         unstripped (addr2line); <out>/wpe-browser-stripped (stage this)
+#   <out>/libWPEInjectedBundle.so   the WebProcess's injected bundle, dlopen()ed (stage this)
+#   <out>/phx-probe-extension.so    the web process extension of the Pi check (pi/)
 #
 # Usage: tools/browser/wpe/build.sh --out <dir> [--dl <dir>] [-j N]
-#            [--stage deps|compat|extract|configure|build|all] [--mesa-variant gles|wayland] [--clean]
+#            [--stage deps|compat|extract|configure|build|plugins|all] [--mesa-variant gles|wayland] [--clean]
+#   --stage plugins  links the injected bundle and the probe extension against an existing build
 #   --mesa-variant  which mesa_drm build is linked (default gles: EGL on GBM + surfaceless,
 #                   which is what the WebProcess uses with SHM buffers; wayland adds the
 #                   EGL Wayland platform the UI process would use for dma-buf, B7)
@@ -467,11 +470,11 @@ stage_build() {
 	[ -n "${RUBY}" ] || stage_jsc_tools
 	[ -f "${out}/configure.stamp" ] || stage_configure
 	local wb="${out}/webkit-build" t0=${SECONDS}
-	log "WebKit: build wpe-browser (-j${jobs})"
+	log "WebKit: build wpe-browser and the injected bundle (-j${jobs})"
 	# through scripts/heavy-build.sh: one heavy build on the host at a time (flock), -j capped by
 	# MemAvailable (2 GB per WebKit job) and the whole build in a MemoryMax scope
 	PATH="$(dirname "${RUBY}"):${PATH}" "${root}/scripts/heavy-build.sh" -j "${jobs}" -- \
-		ninja -C "${wb}" -j '{JOBS}' WPEBrowser > "${out}/webkit-build.log" 2>&1 \
+		ninja -C "${wb}" -j '{JOBS}' WPEBrowser WPEInjectedBundle > "${out}/webkit-build.log" 2>&1 \
 		|| { grep -E 'error:|FAILED:' "${out}/webkit-build.log" | head -30 >&2; echo "build.sh: WebKit build failed, see ${out}/webkit-build.log" >&2; exit 1; }
 	log "WebKit: built in $((SECONDS - t0)) s"
 	cp "${wb}/bin/wpe-browser" "${out}/wpe-browser"
@@ -495,7 +498,48 @@ stage_build() {
 	# mimalloc IS malloc (the override), as in track C
 	[ "$(grep -E ' T (malloc|mi_malloc)$' <<< "${syms}" | awk '{print $1}' | sort -u | wc -l)" = 1 ] \
 		|| { echo "build.sh: malloc is not mimalloc's" >&2; exit 1; }
+	# the export table is useless to a dlopen() that does not read it: libphoenix's dl.c learnt to
+	# in branch dl-host-exports (before that it read only the program file's .symtab, which the
+	# stripped program has not got); its LD_DEBUG message is the marker
+	strings "${out}/wpe-browser" | grep -qF 'dl: host %s exports %s' \
+		|| { echo "build.sh: the sysroot's libphoenix dlopen() does not use the program's export table (needs dl-host-exports)" >&2; exit 1; }
+	"${TC}-readelf" --dyn-syms -W "${out}/wpe-browser-stripped" | grep -qF '_ZN6WebKit26WebProcessExtensionManager10initializeEPNS_14InjectedBundleEPN3API6ObjectE' \
+		|| { echo "build.sh: wpe-browser exports no WebProcessExtensionManager::initialize (launcher/wpe-browser.exports)" >&2; exit 1; }
 	log "wpe-browser: symbol checks passed"
+	stage_plugins
+}
+
+# --- the shared objects wpe-browser dlopen()s ----------------------------------------------------
+# libphoenix's dlopen() loads -fPIC ET_DYN objects into the static program and binds their
+# undefined symbols to the program's export table (launcher/wpe-browser.exports, linked in by
+# launcher/CMakeLists.txt). Each object is linked -nostartfiles (the toolchain's startfiles are a
+# program's: crt0 with _start) and -nostdlib (no second libc: libc, GLib and WebKit are the
+# program's), with a SysV hash table (dlopen() needs DT_HASH).
+PLUGIN_LDFLAGS="-shared -nostartfiles -nostdlib -Wl,--hash-style=sysv -Wl,--gc-sections -Wl,-z,max-page-size=0x1000 -Wl,-z,noexecstack"
+plugin_check() {  # plugin_check <object> <entry point>: what dlopen() needs, and the imports covered
+	local so="$1" entry="$2" exports undef s
+	"${TC}-readelf" -lW "${so}" | grep -q ' TLS ' && { echo "build.sh: ${so}: thread-local storage (dlopen() has no dynamic TLS)" >&2; exit 1; }
+	"${TC}-readelf" -dW "${so}" | grep -q '(HASH)' || { echo "build.sh: ${so}: no DT_HASH" >&2; exit 1; }
+	"${TC}-readelf" -dW "${so}" | grep -q '(NEEDED)' && { echo "build.sh: ${so}: DT_NEEDED (dlopen() loads no dependencies)" >&2; exit 1; }
+	"${TC}-readelf" --dyn-syms -W "${so}" | awk -v e="${entry}" '$7 != "UND" && $8 == e { f = 1 } END { exit !f }' \
+		|| { echo "build.sh: ${so}: does not define ${entry}" >&2; exit 1; }
+	exports="$("${TC}-readelf" --dyn-syms -W "${out}/wpe-browser-stripped" | awk '$7 != "UND" { print $8 }')"
+	undef="$("${TC}-readelf" --dyn-syms -W "${so}" | awk '$7 == "UND" && $8 != "" { print $8 }')"
+	for s in ${undef}; do
+		grep -qxF "${s}" <<< "${exports}" || { echo "build.sh: ${so} imports ${s}, which wpe-browser does not export (launcher/wpe-browser.exports)" >&2; exit 1; }
+	done
+	log "$(basename "${so}"): $(stat -c %s "${so}") bytes, imports $(wc -w <<< "${undef}") symbols, all exported by wpe-browser"
+}
+stage_plugins() {
+	local wb="${out}/webkit-build"
+	# WebKit's WPEInjectedBundle is a MODULE library, which CMake made static (Phoenix has no
+	# shared libraries in CMake's terms, patch 0006): its one object becomes the real module here
+	"${TC}-g++" ${TFLAGS} ${PLUGIN_LDFLAGS} -Wl,-soname,libWPEInjectedBundle.so \
+		-Wl,--whole-archive "${wb}/lib/libWPEInjectedBundle.a" -Wl,--no-whole-archive -o "${out}/libWPEInjectedBundle.so"
+	plugin_check "${out}/libWPEInjectedBundle.so" WKBundleInitialize
+	"${TC}-gcc" -O2 ${TFLAGS} -Wall -Wextra -Werror -fPIC ${PLUGIN_LDFLAGS} -Wl,-soname,phx-probe-extension.so \
+		"${here}/pi/phx-probe-extension.c" -o "${out}/phx-probe-extension.so"
+	plugin_check "${out}/phx-probe-extension.so" webkit_web_process_extension_initialize_with_user_data
 }
 
 stage_all() {
@@ -513,6 +557,7 @@ case "${stage}" in
 	extract) stage_jsc_tools; stage_extract ;;
 	configure) stage_configure ;;
 	build) stage_build ;;
+	plugins) stage_plugins ;;
 	all) stage_all ;;
 	*) echo "build.sh: unknown stage ${stage}" >&2; exit 2 ;;
 esac

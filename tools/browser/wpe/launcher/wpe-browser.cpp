@@ -16,6 +16,8 @@
  *     --exit-after-load     exit once the first load has finished (window mode)
  *     --ignore-tls-errors   accept invalid certificates
  *     --cpu-rendering       paint with Skia's CPU raster (WEBKIT_SKIA_ENABLE_CPU_RENDERING=1)
+ *     --web-extensions=DIR  the WebProcess loads the web process extensions (*.so) in DIR,
+ *                           with the user data string "wpe-browser"
  *   Keys (window): Ctrl+Q quit, Ctrl+R / F5 reload, Alt+Left / Alt+Right back / forward,
  *   Alt+Home the start page, F11 fullscreen.
  * Every line this program prints starts with "WPEB " (UART-friendly, one event per line).
@@ -148,6 +150,7 @@ static int optTimeout;
 static gboolean optExitAfterLoad;
 static gboolean optIgnoreTLSErrors;
 static gboolean optCPURendering;
+static char* optWebExtensions;
 static char** optURIs;
 
 static const GOptionEntry optionEntries[] = {
@@ -158,6 +161,7 @@ static const GOptionEntry optionEntries[] = {
     { "exit-after-load", 0, 0, G_OPTION_ARG_NONE, &optExitAfterLoad, "Exit when the first load has finished", nullptr },
     { "ignore-tls-errors", 0, 0, G_OPTION_ARG_NONE, &optIgnoreTLSErrors, "Accept invalid TLS certificates", nullptr },
     { "cpu-rendering", 0, 0, G_OPTION_ARG_NONE, &optCPURendering, "Skia CPU raster in the WebProcess", nullptr },
+    { "web-extensions", 0, 0, G_OPTION_ARG_FILENAME, &optWebExtensions, "Web process extensions directory", "DIR" },
     { G_OPTION_REMAINING, 0, 0, G_OPTION_ARG_STRING_ARRAY, &optURIs, nullptr, "[URL|FILE]" },
     { }
 };
@@ -449,6 +453,15 @@ static int uiMain(int argc, char** argv)
     }
     LOG("display %s", G_OBJECT_TYPE_NAME(display));
     g_signal_connect(display, "disconnected", G_CALLBACK(displayDisconnected), nullptr);
+
+    /* The WebProcess's injected bundle (libWPEInjectedBundle.so, dlopen()ed) loads these; set
+     * before the first web process starts. */
+    if (optWebExtensions) {
+        WebKitWebContext* webContext = webkit_web_context_get_default();
+        webkit_web_context_set_web_process_extensions_directory(webContext, optWebExtensions);
+        webkit_web_context_set_web_process_extensions_initialization_user_data(webContext, g_variant_new_string("wpe-browser"));
+        LOG("web-extensions dir=%s", optWebExtensions);
+    }
 
     WebKitNetworkSession* session = webkit_network_session_new_ephemeral();
     if (optIgnoreTLSErrors)

@@ -44,3 +44,23 @@ WEBKIT_EXECUTABLE_DECLARE(WPEBrowser)
 WEBKIT_EXECUTABLE(WPEBrowser)
 
 install(TARGETS WPEBrowser DESTINATION "${EXEC_INSTALL_DIR}")
+
+# The export table: the symbols the shared objects wpe-browser loads may bind to (libphoenix's
+# dlopen(); the injected bundle and web process extensions). Both linker options are needed:
+# without --no-dynamic-linker ld creates no dynamic sections for a program that links no shared
+# library, and --dynamic-list alone then does nothing. --require-defined makes a listed symbol
+# that the link does not define an error instead of a dlopen() failure on the target.
+set(WPEBrowser_EXPORTS "${CMAKE_CURRENT_SOURCE_DIR}/wpe-browser.exports")
+file(STRINGS "${WPEBrowser_EXPORTS}" _wpe_browser_export_lines REGEX "^[ \t]*[A-Za-z_][A-Za-z0-9_]*[ \t]*;")
+set(_wpe_browser_export_options)
+foreach (_line IN LISTS _wpe_browser_export_lines)
+    string(REGEX REPLACE "^[ \t]*([A-Za-z_][A-Za-z0-9_]*).*" "\\1" _symbol "${_line}")
+    list(APPEND _wpe_browser_export_options "LINKER:--require-defined=${_symbol}")
+endforeach ()
+target_link_options(WPEBrowser PRIVATE
+    "LINKER:--no-dynamic-linker"
+    "LINKER:--dynamic-list=${WPEBrowser_EXPORTS}"
+    ${_wpe_browser_export_options}
+)
+set_property(TARGET WPEBrowser APPEND PROPERTY LINK_DEPENDS "${WPEBrowser_EXPORTS}")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${WPEBrowser_EXPORTS}")
