@@ -346,6 +346,7 @@ Every line the launcher prints starts with `WPEB t=<ms> ` (ms since that process
 | `navigation-wait kind= waited_ms= asked= started= responsive=1 page-id= uri=` | a pending navigation reached `--hang-recovery` s with a responsive process (slow, not hung; noted once) |
 | `hang-recovery terminate-web-process kind= waited_ms= asked= started= page-id= uri=`, `hang-recovery load uri=`, `hang-recovery gave-up …` | the recovery from a wedged web process |
 | `role=web\|network pid= stall n= main_ms= report= ipc_in= ipc_revents=`, `… stall-thread tid= [main\|watchdog] state= cpu_ms= delta_ms= wait_ms= prio=`, `… stall-sample tid= [main] pc= lr= fp= sp=` (or `none`), `… stall-stack tid= ret=…`, `… stall-end n= main_ms=` | a child's main loop stalled `--stall-secs` (below) |
+| `role=ui\|web\|network … start-stall phase=display\|session-new\|network-launch\|cookie-settings\|web-context\|web-view\|first-load\|main-loop\|process-main phase_ms=`, then the same `stall-thread`/`stall-sample` lines (samples from 60 s), `stall-child pid= tid= state=`, `start-stall-end` | a process's start-up, before its main loop runs, stuck in one step longer than `--stall-secs` (since build 31; the UI too) |
 | `sysmem used_kb= free_kb=` | with `mem role=ui`: the kernel's page allocator, the RAM really in use |
 | `chrome action=<a> source=key\|ui\|auto\|cycle …` | every chrome action: `focus-url`, `cancel`, `go input=<typed> uri=<resolved>`, `back ok=0\|1`, `forward ok=0\|1`, `reload uri=`, `reload-nocache uri=`, `stop loading=0\|1`, `home uri=`, `fullscreen`, `unfullscreen`, `quit` (`source=key`: a key from the seat; `ui`: an overlay button; `auto`: an `--auto` step; `cycle`/`pointer`: a cancel by the cycle or a click) |
 | `new-window uri= opened=same-view via=policy\|create` | a new-window request, loaded in the view |
@@ -859,6 +860,15 @@ A/B, one Pi cycle each, if the wedge needs narrowing: `export B6_SOAK_ARGS="--no
 (the original behaviour, for a clean stall record). **Record** per run: the first stalled cycle,
 the `stall` lines, the process count per `mem` round, `free_kb` per round, `load finished` per
 site.
+
+#### (c2) Start-up, repeated (`b6.sh start`, ~2 min)
+
+`B6_START_RUNS` (default 4) runs of the soak's start-up (persistent session, `--web-extensions`,
+the start page, `--exit-after-load`); a run still alive after `B6_START_SECS` (60) is killed and
+printed `HUNG`. Pass: `B6 start result pass=N/N`. Use 8 or more runs to judge a rare hang.
+Build 30's binary, 2026-10-02 (`b6-start-old`): 7/8 — run 4's WebProcess went unresponsive
+before answering the first navigation (no `stall` report: its watchdog had not started) and the
+hang recovery ended the run (`rc=3`); the UI-side order of the soak hang never reproduced.
 
 #### (d) Chrome and keys, scripted (`b6.sh keys`, ~7 min, `HOLD` 420 s)
 
