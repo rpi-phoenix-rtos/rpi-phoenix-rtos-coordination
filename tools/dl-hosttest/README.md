@@ -6,7 +6,7 @@ run takes about a second.
 
 ```
 make -C tools/dl-hosttest check          # the dl.c in sources/libphoenix passes every test
-make -C tools/dl-hosttest check-old      # dl.c at OLD_REF (default master) must FAIL them
+make -C tools/dl-hosttest check-old      # dl.c at OLD_REF must FAIL them
 make -C tools/dl-hosttest check-bundle BUNDLE=<out>/libWPEInjectedBundle.so \
     [EXTENSION=<out>/phx-probe-extension.so]
 ```
@@ -35,8 +35,8 @@ Only the operating system underneath changes:
   linked first, so libphoenix's stdio, malloc and system calls are never pulled in.
 
 `check-old` builds the same tests against `git show $(OLD_REF):dl/dl.c` and passes only if they
-fail. That proves the tests catch the old loader. Against master, the stripped program fails 10
-of 11 tests. Linked unstripped (`out/dltest-old.unstripped`), it still fails 4 of them:
+fail. That proves the tests catch the old loader. `OLD_REF` defaults to `56049ae`, the last dl.c
+before the export table. Against it, the stripped program fails 10 of 11 tests. Linked unstripped (`out/dltest-old.unstripped`), it still fails 4 of them:
 `unlisted_not_found`, `weak_undefined_is_null`, `no_dt_hash_refused` and `tls_refused`.
 
 `check-bundle` loads WPE's injected bundle the way the WebProcess does: `dlopen()`, then

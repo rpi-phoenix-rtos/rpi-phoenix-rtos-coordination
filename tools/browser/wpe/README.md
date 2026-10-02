@@ -388,7 +388,7 @@ Same staging; one run of B4 #2 with the loader trace and the probe extension:
 | # | Command at `(psh)%` | Expected |
 |---|---|---|
 | 1 | `export LD_DEBUG=1 PHX_TRACE_ABORT=1` | — |
-| 2 | `/usr/bin/wpe-browser --headless --cpu-rendering --web-extensions=/usr/lib/wpe-browser/pi-extensions --snapshot=/tmp/b4x.png --timeout=600 /usr/share/wpe-browser/b4.html` | `WPEB … web-extensions dir=/usr/lib/wpe-browser/pi-extensions` (UI); after `WPEB … role=web pid=P`, from the WebProcess: `dl: host /usr/bin/wpe-browser exports .dynsym, 7 symbols`, `dl: loaded /usr/lib/wpe-webkit-2.0/injected-bundle/libWPEInjectedBundle.so base=0x… symbols=5 relocs=3 init=0`, `dl: loaded /usr/lib/wpe-browser/pi-extensions/phx-probe-extension.so base=0x… symbols=6 relocs=4 init=0`, `WPEB-EXT init extension=yes user-data=wpe-browser`, then `WPEB-EXT page-created id=<n>`; then B4's `load finished`, `snapshot … crc32=` and `exit status=0` |
+| 2 | `/usr/bin/wpe-browser --headless --cpu-rendering --web-extensions=/usr/lib/wpe-browser/pi-extensions --snapshot=/tmp/b4x.png --timeout=600 /usr/share/wpe-browser/b4.html` | `WPEB … web-extensions dir=/usr/lib/wpe-browser/pi-extensions` (UI); after `WPEB … role=web pid=P`, from the WebProcess: `dl: host <argv[0]> exports .dynsym, 7 symbols` (match on `exports .dynsym, 7 symbols`), `dl: loaded /usr/lib/wpe-webkit-2.0/injected-bundle/libWPEInjectedBundle.so base=0x… symbols=5 relocs=3 init=0`, `dl: loaded /usr/lib/wpe-browser/pi-extensions/phx-probe-extension.so base=0x… symbols=6 relocs=4 init=0`, `WPEB-EXT init extension=yes user-data=wpe-browser`, then `WPEB-EXT page-created id=<n>`; then B4's `load finished`, `snapshot … crc32=` and `exit status=0` |
 
 **PASS:**
 - the four WebProcess lines appear, in that order;
@@ -406,10 +406,12 @@ bundle client creates for the page.
 
 | Symptom | Meaning |
 |---|---|
+| B4 #2 regresses with the bundle (a crash, a hang, another `crc32=`) | the bundle is new code in every WebProcess (`WebKitWebPage` and its loader clients). `export WEBKIT_INJECTED_BUNDLE_PATH=/nonexistent` restores the bundle-less WebProcess without restaging: the A/B |
 | `dl: host … exports .symtab (file)` or `exports nothing` | the staged `wpe-browser` has no export table: linked without `launcher/wpe-browser.exports`, or by a libphoenix without `dl-host-exports` (`build.sh` refuses both) |
 | `Error loading the injected bundle (…): dlopen: cannot open: …` | the bundle is not staged at that path |
 | `… dlopen: unresolved symbol: <name>` | `<name>` is missing from `launcher/wpe-browser.exports` |
 | the bundle line but no `WPEB-EXT init` | the extension directory is wrong or holds no `.so`; a failed `dlopen()` of the extension prints `Error loading module '<path>': <dlerror>` |
+| `dl: loaded …phx-probe-extension.so` but no `WPEB-EXT` line | the extension ran, but its output did not arrive: it prints with `g_printerr()` (GLib's print handler, charset conversion), not `fprintf(stderr)` like the launcher. Suspect that before the loader |
 
 ### B5: a window on labwc (3 processes, wl_shm), local page then Wikipedia
 

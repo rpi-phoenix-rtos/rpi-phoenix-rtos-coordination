@@ -2,7 +2,7 @@
 # host, under qemu-aarch64 (user mode). See README.md.
 #
 #   make check                  new dl.c must pass every test
-#   make check-old OLD_REF=...  dl.c at OLD_REF must FAIL (the tests catch the old code)
+#   make check-old [OLD_REF=...] dl.c at OLD_REF must FAIL (the tests catch the old code)
 #   make check-bundle BUNDLE=<libWPEInjectedBundle.so> [EXTENSION=<phx-probe-extension.so>]
 #                               load WPE's injected bundle and call WKBundleInitialize (which
 #                               then loads the extension)
@@ -16,7 +16,8 @@ SYSROOT    ?= $(ROOT)/.buildroot/_build/aarch64a72-generic-rpi4b/sysroot
 LIBPHOENIX ?= $(ROOT)/sources/libphoenix
 TESTS      ?= $(ROOT)/sources/phoenix-rtos-tests
 QEMU       ?= $(firstword $(wildcard /opt/qemu-11/bin/qemu-aarch64) qemu-aarch64)
-OLD_REF    ?= master
+# the last dl.c before the export table (libphoenix master when branch dl-host-exports started)
+OLD_REF    ?= 56049ae
 OUT        ?= out
 
 CC    := $(CROSS)gcc
