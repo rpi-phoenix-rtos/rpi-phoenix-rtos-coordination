@@ -366,6 +366,8 @@ Most of the lifetime and race work is in §3. What is specific to robustness her
 | `memExport` / `memUnexport` (dma-buf equivalent) | `vm/object.c`, `proc/ports.c`, `include/syscalls.h`, `syscalls.c` (`b6f2123c`); libphoenix `sys/mman.h` (`718b162`) | A server can publish any page-aligned sub-range of its own `MAP_CONTIGUOUS` anonymous memory under an oid on a port it owns; a client that opens that oid (plain POSIX `open`, resolved by the server) and `mmap()`s the fd maps the **same physical pages**, refcounted, and must use the memory type the export was made with. The pages outlive `memUnexport` for as long as a client still maps them, and the fd crosses AF_UNIX like any other. This is the sharing primitive of the GPU stack (buffers passed between the render server, the display server and the apps without copies). Additive: two syscalls appended, no existing caller changes. Pi probe `tools/gpu-lane/exportprobe/` PASS twice ([E1](gpu-new-lane/E1-vm-object-export.md)). |
 | `platformctl(pctl_cpucount)` | `include/arch/aarch64/generic/generic.h`, `generic.c` (`78a42efb`) | Backs `sysconf(_SC_NPROCESSORS_ONLN/CONF)`; `nproc` and `os.cpu_count()` were wrong on a 4-core board. Additive: the appended union member is smaller than the existing one, so the packed ABI size is unchanged. |
 | `/dev/urandom` entropy source | posixsrv `special.c` (`ef6e39b`) | Was `rand()` seeded from `srand(time(NULL))` — guessable bytes for any crypto/uuid/session use. Reads `/dev/hwrng` when present (fd opened lazily and cached, because posixsrv starts before the RNG driver registers), falling back to `rand()` otherwise. |
+| ★★ `SA_SIGINFO` with `siginfo_t` + `ucontext_t`, `sigaltstack` | `hal/aarch64` (`2ddd94f1`), `proc` (`95ca76fd`), `include` (`d96d9801`); libphoenix `signal/` (`b9461c3`, `9f26164`) | Handlers installed with `SA_SIGINFO` received no context, so a runtime could not read or change the interrupted registers: JavaScriptCore's GC (it suspends mutators and reads their registers), JITs and crash reporters need it. The aarch64 `ucontext_t` now has the Linux layout (`uc_mcontext.regs[31]`, `sp`, `pc`, `pstate`, `fault_address`), which ports read without changes. Writes to `uc_mcontext` and `uc_sigmask` take effect on return, through the appended `sigreturnContext` syscall; `sigaltstack()` and `SA_ONSTACK` come through the appended `sys_sigaltstack`. libc signal suite 50/0 on the Pi (build 20). It also made the jsc port's abort tracer possible (`PHX_TRACE_ABORT=1`, `tools/browser/jsc/compat`). |
+| ★★ `futexWait` / `futexWake` | `proc/` (`6a3bdf73`), `include/syscalls.h`; libphoenix `sys/ulock` (`0703721`) | Sleep on a word of user memory and wake N waiters, the primitive a user-space lock needs so that the uncontended path makes no syscall at all. Two syscalls, appended after the last upstream one (owner rule: never renumber). Used by libphoenix's mutexes, condition variables and heap lock (P24, see the libphoenix section). |
 
 ### 7. Diagnostics / debuggability
 
@@ -554,6 +556,7 @@ declaration with no definition — i.e. they were previously *link errors or sil
 | stdio / scanf | POSIX `%m` allocation modifier for `%ms`/`%m[`/`%mc` (`a2731ac`); BSD `setlinebuf` | |
 | C11/POSIX gaps for the GPU stack | merge `8fb82ae` (2026-09-27): C11 `static_assert` in `<assert.h>`; the full C99 `<inttypes.h>` (`SCN*PTR`, `SCN*MAX`, `PRI*FAST*`, `imaxabs`/`imaxdiv`, `wcsto*max`); a real `flock()` on fcntl record locks (was a stub returning 0) with `LOCK_*` in `<sys/file.h>`; `sysconf(_SC_PHYS_PAGES/_SC_AVPHYS_PAGES)` from the kernel's page counters; `posix_memalign`/`aligned_alloc`/`memalign`; `pthread_setcanceltype`; `open_memstream`/`fmemopen`; `scandir`/`alphasort`; POSIX barriers. Each with a Unity group. | Mesa, libdrm, xorg-server and libepoxy built with fewer shims. Removing the first GPU stack's own shims fixed two quiet bugs: its no-op `pthread_barrier_wait` meant Mesa's `util_queue_finish` never waited for its threads, and its `posix_memalign` ignored alignments above 16 bytes |
 | misc / net | `gethostbyname`/`gethostbyaddr` over the working `getaddrinfo` (`9128c5d`); `getservbyname`/`getservbyport` with a 26-entry IANA table, `reallocf`, `umask` (`55034eb`); `getpwuid_r`/`getpwnam_r`, group iteration stubs; `sysconf(_SC_NPROCESSORS_ONLN/CONF)`, `_SC_CLK_TCK`, `_SC_LINE_MAX`, `_POSIX_VERSION`; `timerclear`/`timeradd`/`timersub` macros and a real `timerisset`; `wctomb`, `makedev`/`major`/`minor`; `getprogname`/`setprogname` | curl, dropbear, BSD-flavoured software |
+| WebKit's platform needs (browser B1, merge `19e9713`) | `pthread_getattr_np()` reporting the real stack of any thread (`09d3d7a`, `6b33d87`); `madvise()`/`posix_madvise()` that refuse what cannot be done instead of pretending (`e84cd13`); `<fenv.h>` over FPCR/FPSR, and new threads inherit the creator's floating-point environment (`973a6e5`, `a4c1da3`); `posix_spawn()`/`posix_spawnp()` with attribute and file-action objects (`2096a8e`); `pipe2()` (`c72f4ae`); `tm_gmtoff`/`tm_zone` (`cac4132`); locale objects and the `*_l()` functions (`f3dd947`); `pthread_setname_np`/`getname_np` (`4161768`); unnamed POSIX semaphores (`4c8e5d0`); the BSD/Linux `struct rusage` members (`30328f8`); `<uchar.h>` (`0614de0`). Each with a Unity group. | WTF/JavaScriptCore (stack bounds for the GC, rounding mode, thread names), GLib, libsoup3, WPE's process launcher |
 
 ### Stability / robustness
 
@@ -610,7 +613,16 @@ declaration with no definition — i.e. they were previously *link errors or sil
   `malloc(64)`+`free()` pair single-threaded against 9.1 µs multithreaded** (`libc/bench-malloc`), and a
   200 000-iteration bash loop **75.9 → 7.1 s**; `libc/malloc-mt` 4/0, `libc/pthread` 41/0 (tests
   `6aee78c`, `c33fd40`). Multithreaded programs still pay the full cost: a user-space fast path for
-  every mutex (a syscall only on contention) is not done.
+  every mutex (a syscall only on contention) was the next step, below.
+* ★★ `0703721`, `9ae7174`, `7bdbdbf` (P24, owner-approved 2026-10-01) **mutexes, condition variables and
+  the heap lock are user-space locks.** The uncontended lock/unlock is an atomic compare-and-swap on a word
+  in user memory, and only a contended lock sleeps, through the new `futexWait`/`futexWake` syscalls.
+  The default protocol is `PTHREAD_PRIO_NONE`, as on Linux. A signal that interrupts `pthread_cond_wait()`
+  is a spurious wakeup, as POSIX allows. On the Pi (build 20): **lock+unlock 4168 → 64 ns, multithreaded
+  `malloc`+`free` 9.1 µs → 665 ns**, vkQuake cold start 79.5 → 50.4 s, QuakeSpasm 43.1 → 45.9 fps;
+  `test-libc-mutex` 22/0 and the whole libc suite 0 failures. The allocator itself is now the bigger cost:
+  699 ns per 16-byte pair single-threaded, 5.7 µs with 4 threads contending, against mimalloc's 24/40 ns
+  (`mallocrate`, 2026-10-02). That is KNOWN-ISSUES P26 and its follow-up.
 
 ### aarch64 / Pi-specific
 
@@ -1664,11 +1676,16 @@ rather than as bugs.
   that it was `fb_blit`-only and bit-exact headless was **explicitly corrected** — it
   manifests headless too.
 - **Subset, not a codec** (see the out-of-subset list above).
-- **Not wired into anything.** There is no libavcodec integration and no `/dev/` node for the
-  rpivid block: this is a standalone tool, not a Phoenix video subsystem. Do not read that as a
-  statement about the `ffmpeg` port — that port's *software* MJPEG/H.264 decode is separately
-  hardware-proven on `/dev/fb0` and in an X window (see its row in the application-ports table).
-  The two results are independent and should not be conflated.
+- **In the shipped players since build 20 (2026-10-01).** The block now sits behind FFmpeg as the
+  `hevc_rpivid` decoder (ports `video_player`, merge `2b742d6`; design
+  [M10-hevc-hwaccel](gpu-new-lane/M10-hevc-hwaccel.md)): FFmpeg's own HEVC parser, DPB and output
+  order, the block for each picture, and a NEON de-tile into FFmpeg's frames. ffplay and gtk-video
+  pick it with no code change. A stream or picture outside the verified tool set falls back to the
+  CPU decoder, and `FFMPEG_RPIVID=0` forces the CPU. On the Pi (build 20) it was bit-exact against
+  the CPU decoder on 900/900 frames at 720p and 600/600 at 1080p (`hevc-rpivid-check`, SEI picture
+  hashes 600/600). The first speed comparison (1080p 13.9 vs 25.5 fps for the CPU) measured the
+  check tool's own hashing and allocation, not the decoder. The fixed tool is in build 21. There is
+  still no `/dev/` node: user space drives the block, as in the standalone tool.
 - **H.264 is walled, deliberately.** There is no directly-addressable H.264 register block on
   BCM2711; H.264 decode lives on the VideoCore firmware behind VCHIQ + MMAL. Scoped and
   banked, not attempted.
