@@ -757,7 +757,6 @@ All are userspace servers in the standard Phoenix idiom (`mmap(MAP_PHYSMEM)` + `
 | HDMI display server (KMS) | `devices/video/rpi4-kms/` | `/dev/kms` (KMS-shaped: planes, CRTC, atomic flips, vblank events, dumb buffers) | Started at boot. The firmware's display planes, 60.00 fps flips with vblank events, fence-gated flips from the render server, scaled lower modes, console handover. No fbdev emulation. Per-buffer import/release lines only with `-v` (`4750a2d`). |
 | Shared-memory server | `devices/misc/shmsrv/` | `/shm` (`shm_open`, `memfd_create` backing) | Started at boot; `wl_shm` pools, keymaps and the xshmfence pages of DRI3 clients. |
 | VideoCore property mailbox | `devices/misc/rpi4-vcmbox/` | `/dev/vcmbox` + `libvcmbox` | Complete and the mandatory path — see note. |
-| HDMI framebuffer (legacy) | `devices/video/rpi4-fb/` | `/dev/fb0` (read/write + `RPI4FB_GETMODE`) | Source kept, **not a component and not started** since the KMS server replaced it (TD-27: one stand-alone HEVC demo still writes `/dev/fb0`). |
 | ★ HDMI framebuffer console + PL011 UART tty | `devices/tty/pl011-tty/` (+ vendored `teken/`) | `/dev/tty0`, `/dev/console`, `FBCONSETMODE` | Full VT100/xterm console driven by FreeBSD `teken` (BSD-2). GNU nano and mc render correctly. |
 | BCM2711 EMMC2 SD card | `devices/storage/bcm2711-emmc/` | `/dev/mmcblk0`, ext2 root | Boots from SD. UHS-I DDR50, 128 KiB multi-block transfers, **ADMA2 scatter-gather for reads *and* writes** (§4). |
 | BCM43455 SDIO WiFi | `devices/wifi/rpi4-wifi/` (4 870 lines) + `lwip/drivers/wifi43455.c` | `/dev/wifi` (text scan/ctl, incl. `leave`/`status`), `/dev/wifidata` (raw frames), `wifi` CLI (`connect`/`disconnect`/`status`/`scan`), lwIP netif `wl2` | Started at boot (sd and nfsroot); reads its firmware from `/lib/firmware/brcm/` (linux-firmware, fetched and pinned at build time). Firmware download, WPA2 join via the firmware supplicant, full-MTU data path. Ordinary sockets route over the netif (ping 5/5, AP-side capture); the netif joins, rejoins and leaves at run time by following `/etc/wifi.conf`, releasing its DHCP lease on leave. Throughput is poll-bound (§4). |
@@ -1189,7 +1188,8 @@ leading remaining hypothesis is the kernel's contiguous physical allocator.
   degrading to the RAM root rather than bricking the boot (`eed921c`).
 - A round of leak and bounds fixes from a dedicated review pass: `hub->portEnumFails` on teardown and on
   the `hub_conf` error path, `usbkbd`/`usbmouse` insertion error paths, `rpi4-audio` partial-mmap leak
-  and DMA 1 GB-straddle guard, `rpi4-fb` rejecting (not truncating) a write past the surface end.
+  and DMA 1 GB-straddle guard, `rpi4-fb` (the `/dev/fb0` device, removed 2026-10-02) rejecting (not
+  truncating) a write past the surface end.
 
 ### 6. Networking (lwIP) and filesystems (NFS)
 
@@ -1640,10 +1640,11 @@ Decode is two hardware phases: phase 1 executes a **DMA command buffer** of
 `u64 addr|(data<<32)` entries after a `CFBASE` doorbell (cross-checked by `CFSTATUS == CFNUM`);
 phase 2 is direct APB, kicked by `NUMROWS`, with completion signalled on the ARGON
 `ACTIVE1`/`ACTIVE2` bits. The result is roughly **2 900 hand-written lines** — `hevc-m2.c`
-(1 388), a from-scratch Annex-B/SPS/PPS/slice parser `hevc_parse.c` (599), an ISOBMFF demuxer
+(1 367), a from-scratch Annex-B/SPS/PPS/slice parser `hevc_parse.c` (599), an ISOBMFF demuxer
 `hevc_mp4.c` (276), the cited register map `hevc_regs.h` (119), plus the M0/M1 bring-up probes
 — that decode real H.265 **bit-exact against ffmpeg's software decoder**, unpack Broadcom's
-SAND/COL128 tiled output to linear, and display on `/dev/fb0`.
+SAND/COL128 tiled output to linear. (Until 2026-10-02 the tool also displayed on `/dev/fb0`;
+the shipped player path is FFmpeg's `hevc_rpivid`, under **Limits** below.)
 
 Coverage is a subset, not "H.265 support": every coding tool **x265 enables by default** is
 covered bit-exact — I/P/B slices, arbitrary non-reference-B counts, hierarchical b-pyramid over
@@ -1658,8 +1659,8 @@ rather than as bugs.
 | ★ H.265 hardware decode with no VCHIQ, no V4L2, no firmware blob | `tools/hevc-decode/hevc-m2.c`, `hevc_regs.h` (coord `34bbecb75` → `bf02fd8c7`) | The rpivid block driven directly: mailbox clock (`RPI_FIRMWARE_HEVC_CLK_ID` 11) set to the firmware-reported maximum, version-register `0x202` gate, phase-1 DMA command buffer + phase-2 APB, CABAC `prob_init` per `init_type = 2 − slice_type`, SPS/PPS/slice/QP/CONFIG2 register packing, plain-physical `>>6` addressing (the scb bus has no `dma-ranges`). First hardware video decode on Phoenix. |
 | Bring-up probes: reachability, DMA, IRQ | `tools/hevc-probe/hevc-probe.c` (M0), `tools/hevc-decode/hevc-m1.c` (M1) | M0 proves the block is reachable without VCHIQ (clock, `VERSION == 0x202`, ARGON INTC). M1 proves the two facilities a DMA master needs **already exist in Phoenix**: `mmap(MAP_UNCACHED\|MAP_CONTIGUOUS\|MAP_ANONYMOUS)` + `va2pa()` yields contiguous sub-4 GB uncached buffers, and `interrupt(130, …)` registers the GIC SPI-98 handler with zero spurious IRQs. |
 | ★ Bit-exact conformance harness against ffmpeg | `hevc-play <file> <golden.nv12>`; `testdata/*.265` + `gen-*.sh` (coord `98352206c`) | Every capability claim is a byte-compare of the hardware's output against an ffmpeg software decode of the same bitstream: 37 committed test vectors (`.265` plus four `.mp4`) from scripted x265 encodes. Negative controls are committed too — `-DHEVC_NO_WEIGHT` builds a deliberately non-weighted decoder that mismatches by 491 284 pixels, proving the weighted-prediction path is actually exercised. |
-| Runtime `.265` player + in-tool MP4/MOV demux | `hevc_parse.c`, `hevc_mp4.c` (coord `7a2fb69ea`, `c90e95dcc`, `ca466493b`) | `hevc-play` parses geometry from the SPS and per-frame params from each slice header, so arbitrary in-subset files decode with no rebuild. An `.mp4`/`.mov` is demuxed to Annex-B in-tool (no libavformat): the video track's samples are located through `stsc` → `stco`/`co64` with sizes from `stsz`, so a normal interleaved audio+video file plays and the audio chunks are simply never visited. Deliberately narrow — exactly one HEVC video track, non-fragmented; `moof`, no-video and multi-video files are **rejected loudly** rather than mis-handled. |
-| 10-bit (Main10) decode and display | coord `b302065cf`, `bf02fd8c7` | Four register deltas keyed off the SPS bit depth (CONFIG2 low 10 bits `0x088`→`0x3AA`, `RPI_SPS0` +`0x220000`, `RPI_QP` += `QpBdOffsetY`), and an `NV12_10_COL128` output layout packing 3 samples LSB-first per 32-bit little-endian word (96 samples per 128-byte SAND column). Bit-exact on luma **and** chroma, and renders on HDMI after a 10→8 downshift. |
+| Runtime `.265` decoder + in-tool MP4/MOV demux | `hevc_parse.c`, `hevc_mp4.c` (coord `7a2fb69ea`, `c90e95dcc`, `ca466493b`) | `hevc-play` parses geometry from the SPS and per-frame params from each slice header, so arbitrary in-subset files decode with no rebuild. An `.mp4`/`.mov` is demuxed to Annex-B in-tool (no libavformat): the video track's samples are located through `stsc` → `stco`/`co64` with sizes from `stsz`, so a normal interleaved audio+video file decodes and the audio chunks are simply never visited. Deliberately narrow — exactly one HEVC video track, non-fragmented; `moof`, no-video and multi-video files are **rejected loudly** rather than mis-handled. |
+| 10-bit (Main10) decode | coord `b302065cf`, `bf02fd8c7` | Four register deltas keyed off the SPS bit depth (CONFIG2 low 10 bits `0x088`→`0x3AA`, `RPI_SPS0` +`0x220000`, `RPI_QP` += `QpBdOffsetY`), and an `NV12_10_COL128` output layout packing 3 samples LSB-first per 32-bit little-endian word (96 samples per 128-byte SAND column). Bit-exact on luma **and** chroma. |
 | ★ Non-coherent DMA ordering: `dsb sy`, not `dmb ish` | `hevc_dma_fence()` (coord `5f9945956`, `f3767112d`) | The doorbell needs a **full system** barrier. `__sync_synchronize()` emits inner-shareable `dmb ish`, which does not order Normal-NC writes against a DMA master outside the CPU inner domain — the block then reads a stale command buffer. The mirror-image case is the *completion read*: `f3767112d` adds a `dsb sy` after acking ARGON `ACTIVE` and before the CPU reads the output, because a plain relaxed volatile read can be hoisted ahead of the DMA whereas Linux's `readl` carries an implicit `__iormb`. **A general lesson for any Phoenix userspace DMA driver on a non-coherent SoC, not an rpivid quirk.** |
 | IRQ-driven completion | coord `1fd69c736` | Decode blocks in `condWait` on the SPI-98 handler instead of hot-polling `ARG_IC_ICTRL` every 10 µs, matching Linux. Dual-checked (ISR flag plus a 2 ms direct-poll fallback) so it is correct whether or not the IRQ fires, and falls back to polling if unregistered. The IRQ genuinely fires — ~2 ISR calls per frame, one per phase. |
 
@@ -1668,7 +1669,8 @@ rather than as bugs.
 - **One open, non-software defect.** A small number of output pixels are wrong
   non-deterministically in a fraction of decodes — the same clip is bit-exact on one run and
   corrupt on the next, occasionally even an IDR I-frame. It is worse under heavier memory
-  traffic (a concurrent `fb_blit` during on-HDMI playback, and independently on
+  traffic (a concurrent framebuffer blit during on-HDMI playback, the tool's display path until
+  2026-10-02, and independently on
   high-complexity clips that do more PU/coeff/reference DMA); simple low-traffic clips are
   effectively always clean (an `ultrafast` clip verified 15/15 back-to-back). Every
   decoder-side software cause has been ruled out and each refutation is recorded: the barriers
@@ -1681,7 +1683,7 @@ rather than as bugs.
   check, and this port already sets the clock to the firmware maximum with low-PA DMA buffers.
   The recorded conclusion is a genuine SoC memory-fabric interaction under decode DMA load,
   and the decisive next step named is a Linux-on-the-same-Pi-4 side-by-side. An earlier belief
-  that it was `fb_blit`-only and bit-exact headless was **explicitly corrected** — it
+  that it was blit-only and bit-exact headless was **explicitly corrected** — it
   manifests headless too.
 - **Subset, not a codec** (see the out-of-subset list above).
 - **In the shipped players since build 20 (2026-10-01).** The block now sits behind FFmpeg as the
@@ -1693,12 +1695,18 @@ rather than as bugs.
   the CPU decoder on 900/900 frames at 720p and 600/600 at 1080p (`hevc-rpivid-check`, SEI picture
   hashes 600/600). The first speed comparison (1080p 13.9 vs 25.5 fps for the CPU) measured the
   check tool's own hashing and allocation, not the decoder. The fixed tool is in build 21. There is
-  still no `/dev/` node: user space drives the block, as in the standalone tool.
+  still no `/dev/` node: user space drives the block, as in the standalone tool. Watch with
+  `video-play`, check with `hevc-rpivid-check`. Build 21, 1080p (M10-hevc-hwaccel): **52.8 fps
+  at 60 % of one core** on the block against 47.1 fps at 337 % for the 4-thread CPU decoder.
+  The standalone tool lost its `/dev/fb0` output on 2026-10-02 (TD-27): `tools/hevc-decode` is
+  now the reference implementation, the conformance harness and the oracle of the port's host
+  test, and displays nothing.
 - **H.264 is walled, deliberately.** There is no directly-addressable H.264 register block on
   BCM2711; H.264 decode lives on the VideoCore firmware behind VCHIQ + MMAL. Scoped and
   banked, not attempted.
-- **Decode rate, measured 2026-09-09.** A real 1080p H.265 phone clip (1058 frames) plays on
-  `/dev/fb0` at **21.7 fps, 0 faults**. The decoder is not the limit: ~41.5 ms of each 46 ms frame
+- **Decode rate of the standalone tool, measured 2026-09-09.** A real 1080p H.265 phone clip
+  (1058 frames) played on `/dev/fb0` (the tool's display path until 2026-10-02) at **21.7 fps,
+  0 faults**. The decoder is not the limit: ~41.5 ms of each 46 ms frame
   is the **framebuffer blit** and ~4.5 ms is the decode, so this is a framebuffer-bandwidth number
   and full-screen 1080p is its worst case. (Earlier revisions of this document stated that no rate
   figure existed for any clip.)

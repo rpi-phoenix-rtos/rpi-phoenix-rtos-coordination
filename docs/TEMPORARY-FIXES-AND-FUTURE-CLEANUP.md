@@ -483,18 +483,31 @@ authoritative current state.
 
 ## TD-27: `video/rpi4-fb` stays in the tree, unbuilt, for `hevc-play`
 
-- **Status:** OPEN (P1; narrowed in P3). MIGRATION §4 item 9.
+- **Status:** ✅ RESOLVED 2026-10-02 (devices `59a254c`, branch `retire-rpi4-fb`; coord
+  `0564a0565`). KNOWN-ISSUES D11 closed. MIGRATION §4 item 9.
 - **What:** since P3 no image builds or starts `rpi4-fb` (`/dev/fb0`): it is not a devices
   component and not in `user.plo.yaml`. Its source stays in `phoenix-rtos-devices/video/rpi4-fb`
   for its one remaining user, `bin/hevc-play` (rpivid H.265 → `write()` to `/dev/fb0`; built by
   hand from `tools/hevc-decode/build-hevc-play.sh`, not by the image build; a stale copy in a
   staged rootfs cannot run without `/dev/fb0`). `fbprobe` was retired in P3.
-- **Markers:** `TODO(TD-27)` in `phoenix-rtos-devices/_targets/Makefile.aarch64a72-generic`; the
-  `allow_fb0` exception in `scripts/check-gpu-stack-image.sh`.
-- **Resolution (proposed, minimal):** port `hevc-play` to a KMS dumb buffer
-  (`drmModeCreateDumb` + `drmModeAddFB` + an atomic commit through libdrm_phoenix; zero-copy of
-  decoder frames later via G7). No fbdev emulation in rpi4-kms. Then delete `video/rpi4-fb`,
-  the marker and this entry.
+- **Markers:** none. The `TODO(TD-27)` in `phoenix-rtos-devices/_targets/Makefile.aarch64a72-generic`
+  went with `video/rpi4-fb` (devices `59a254c`); the `allow_fb0` exception in
+  `scripts/check-gpu-stack-image.sh` went with `build-hevc-play.sh` (coord `0564a0565`).
+- **Resolution:** not the proposed port to a KMS dumb buffer. Since build 20/21 hardware H.265
+  decode ships in FFmpeg as the `hevc_rpivid` decoder (ports `video_player`), bit-exact, shown by
+  `video-play`/ffplay on KMS and Wayland and verified frame by frame by `hevc-rpivid-check`, so
+  `hevc-play` no longer needed a display at all. Its `/dev/fb0` output (`fb_open`, `fb_blit`,
+  `--window`, the copied `RPI4FB_GETMODE` ABI) was deleted and `video/rpi4-fb` with it. `hevc-play`
+  stays as a headless decoder/verifier because the `video_player` host test
+  (`files/rpivid/hosttest/run.sh`) builds `hevc-m2.c -DPLAY_TOOL` as its reference; its register
+  logs are byte-identical before and after on all 40 clips. Nothing else used `/dev/fb0`: fbcon
+  (pl011-tty) and rpi4-kms take the firmware framebuffer from `platformctl(pctl_graphmode)`
+  directly, and the remaining `/dev/fb0` and `RPI4FB_GETMODE` strings in ports are
+  `nl_forbid_old_lane` guards that fail a build linking the old lane. **Gate** (no Pi cycle: no
+  image built or started it): `make -n -k all install` for the devices tree prints the same
+  commands before and after; `check-gpu-stack-image.sh` PASSes on the live export (`/dev/fb0` and
+  `RPI4FB_GETMODE` in 0 of 400 ELFs; check 3 now fails a stale `bin/hevc-play`). Comment-only
+  updates on the same branch name: plo `ab963c1`, project `9407271`, ports `02aead9`.
 
 
 ## TD-28: the stack-protector guard is seeded from a time/counter/pid mix
@@ -2313,7 +2326,7 @@ markers. Its debt idiom is `BRING-UP` prose instead.
 | TD-13-mtxbypass | ✅ RESOLVED/REMOVED | row added 2026-09-17 (entry existed, checklist did not). Verified: `grep -c TD-13-mtxbypass syscalls.c` → 0, exactly as the entry predicts. |
 | TD-14-startup-settle | NOT TAKEN | row added 2026-09-17 (entry existed, checklist did not). No marker, no code — the option was considered and declined. |
 | TD-26 | ✅ RESOLVED 2026-10-01, gated on the Pi in build 10 (ports `cb2204d` + `54ef596`, coord `173c28fe7`) | the XFCE session's files are named for the image (`/etc/xdg/labwc-xfce`, `/etc/xdg/xfce-session`, `/usr/share/xfce-session`, `/usr/lib/xfce-session/bin/loginctl`), the port's configs carry the image's program names, the sed and the marker are gone. Gate: `check-gpu-stack-image.sh` checks 2 + 3 on a fresh build; `grep -rI xfce-demo` over the rootfs = nothing. Earlier: the command names (launchers, `startx`, `xfce-session`, `vkcube`) |
-| TD-27 | OPEN (P1, narrowed P3) | `video/rpi4-fb` kept in the tree, unbuilt, until `hevc-play` (hand-built) moves to a KMS dumb buffer |
+| TD-27 | ✅ RESOLVED 2026-10-02 (devices `59a254c`, branch `retire-rpi4-fb`; coord `0564a0565`) | `video/rpi4-fb` deleted; `hevc-play` lost its `/dev/fb0` output instead of moving to KMS, because `hevc_rpivid` (ports `video_player`) + `video-play` replaced it as the player. KNOWN-ISSUES D11 closed; the marker and the `allow_fb0` exception are gone |
 | TD-23 | OPEN (deliberate) | `RPI4AUDIO_ARMTRIALS` is a diagnostic ioctl + struct in a **published** header, i.e. a permanent ABI, for a facility that can block the driver's only message thread ~100 s. Kept because it is the only in-process sampler of the failing channel and the defect is open; delete it with `q2-sdl-openaudio-hang`, or gate it behind a build flag. ⚠ Blind to a stale control-block fetch — a re-arm re-reads the same CB. |
 | TD-22 | ✅ RESOLVED 2026-09-19 (HW-gated) | `vm/map.c:204` — `_map_find()`'s right-hand leaf return can hand back a non-`MAP_FIXED` **hint** sitting nearer the end of a gap than `size`, overlapping the next entry. Unreachable today (libphoenix's only hinted mmaps are `MAP_FIXED`; `malloc` passes NULL). The commented-out guard cannot simply be restored — it would also gate the descent, where `rmaxgap` is a subtree maximum. Leaf-only fix written out in the section; needs its own boot + six-app gate. |
 | TD-21 | ✅ RESOLVED 2026-09-04 (HW-verified) | row added 2026-09-17 — the register's newest and most detailed item had **no checklist row at all**, while the header calls the checklist authoritative. Syscall-table divergence closed; upstream order confirmed in `include/syscalls.h:39-41` (`mutexUnlock, mutexConsistent, mutexPrioCeiling`). ⛔ Do not re-raise as pending. |
