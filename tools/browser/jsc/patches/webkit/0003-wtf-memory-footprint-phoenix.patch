@@ -73,7 +73,7 @@ new file mode 100644
 index 00000000..b04e9a39
 --- /dev/null
 +++ b/Source/WTF/wtf/phoenix/MemoryFootprintPhoenix.cpp
-@@ -0,0 +1,73 @@
+@@ -0,0 +1,76 @@
 +/*
 + * Copyright (C) 2026 Phoenix-RTOS Raspberry Pi port contributors.
 + *
@@ -133,10 +133,13 @@ index 00000000..b04e9a39
 +        }
 +        if (info.entry.mapsz <= capacity) {
 +            size_t total = 0;
-+            for (int i = 0; i < info.entry.mapsz; ++i)
++            for (int i = 0; i < info.entry.mapsz; ++i) {
 +WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-+                total += map[i].anonsz;
++                // The kernel marks an entry with no anonymous pages as ~0U (vm/map.c), not 0.
++                if (map[i].anonsz != static_cast<size_t>(~0U) && map[i].anonsz != SIZE_MAX)
++                    total += map[i].anonsz;
 +WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
++            }
 +            free(map);
 +            return total;
 +        }
