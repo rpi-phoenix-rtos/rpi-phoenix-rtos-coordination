@@ -1,0 +1,263 @@
+# WPE WebKit on Phoenix-RTOS (browser track D, milestones B4 and B5)
+
+**WPE WebKit 2.54.0** (`PORT=WPE`, the WPEPlatform API with its Wayland and headless backends) is
+cross-built for aarch64-phoenix as **one static multi-call ELF, `wpe-browser`**. The UI process,
+the WebProcess and the NetworkProcess are the same program ([PLAN](../../../docs/browser/PLAN.md)
+decision 2). Like track C (`../jsc`), it is developed outside the ports framework (decision 3):
+`build.sh`, the patches and the launcher live here, and all output goes to a scratch directory.
+
+This builds on track C and does not fork it:
+- the same pinned tarball, and the host ruby built by `../jsc/build.sh --stage fetch|ruby`;
+- track C's five `OS(PHOENIX)` patches (`../jsc/patches/webkit/0001-0005`), applied first;
+- the same mimalloc configuration and the same libphoenix compat shims (`../jsc/compat`);
+- the same CMake platform file and toolchain template (`../jsc/cmake`).
+
+This directory adds patches `0006`+ and the launcher.
+
+Status: see [Results](#results).
+
+## Build
+
+```
+tools/browser/wpe/build.sh --out <scratch>/out --dl <cache> -j12
+```
+
+- Use `-j4` while an image build is running.
+- `--out` must be outside the repository (about 15 GB).
+- Outputs:
+  - `<out>/wpe-browser`: unstripped, for `addr2line`;
+  - `<out>/wpe-browser-stripped`: the file to stage.
+- Stages: `deps`, `compat`, `extract`, `configure`, `build`, `all` (the default).
+- `--mesa-variant gles|wayland` (default `gles`) picks the mesa_drm build that is linked, see
+  [GPU](#gpu-egl-is-not-optional).
+- The script reads the tree (sysroot, toolchain, installed ports) and writes only into `<out>`
+  and `<dl>`.
+
+The script needs these ports built in the tree: `gtk3_wayland` (GLib 2.88 and its views),
+`webkit_deps`, `icu`, `harfbuzz_icu`, `openssl`, `libepoxy`, `mesa_drm` and `wayland_phoenix`.
+
+`deps` copies exactly what WPE links into one prefix, `<out>/deps`. That prefix holds:
+- the libraries;
+- one `.pc` file per library;
+- a `pkg-config` wrapper (`--static --define-prefix`, nothing else on its path).
+
+Why copies:
+- The tree's flat `_build/<target>/include` holds every port's headers, including the old ports
+  GLib 2.56. That directory must never reach WebKit's compile lines.
+- Copies keep a running WebKit build stable while the tree is rebuilt.
+- The view is assembled next to `deps` and synced into it by content (`rsync -c`). Refreshing it
+  after an image build therefore rebuilds nothing unless a header really changed.
+
+For development, two environment variables take a dependency from a scratch ports build:
+`PHX_WEBKIT_DEPS=<webkit_deps install>` and `PHX_ICU_PREFIX=<prefix with icu + harfbuzz_icu>`.
+`WEBKIT_SRC=<tree>` builds an already-patched tree.
+
+| Pinned input | Version |
+|---|---|
+| WebKit | `wpewebkit-2.54.0.tar.xz`, sha256 `efa9bcc3…eb452` (as track C) |
+| GLib/GIO | 2.88.3 (gtk3_wayland's private build) |
+| libsoup / glib-networking | 3.6.6 / 2.90.0, OpenSSL backend (webkit_deps) |
+| ICU / HarfBuzz | 78.3 (filtered data) / 14.4.0 with hb-icu |
+| Wayland / wayland-protocols / xkbcommon | 1.24.0 / 1.49 / 1.13.2 (wayland_phoenix) |
+| libepoxy | 1.5.10, static-EGL dispatch (port `libepoxy`) |
+| Mesa | 26.2.0 `mesa_drm` (`gles` variant: EGL on GBM + surfaceless, GLES 3.1, v3d) |
+| OpenSSL | 3.5.9 |
+| others | libxml2 2.15.4, libxslt 1.1.45, libwebp 1.6.0, woff2 1.0.2, brotli 1.2.0, sqlite 3.53.4, freetype 26.1.20 (pkg-config version), fontconfig 2.14.2, libpng 1.6.40, libjpeg |
+
+## Configuration (and why)
+
+| Option | Value | Why |
+|---|---|---|
+| JavaScriptCore | asm LLInt, `ENABLE_JIT/DFG/FTL/WEBASSEMBLY=OFF`, `USE_MIMALLOC=ON` | exactly track C (B3) |
+| WPEPlatform | `WAYLAND=ON`, `HEADLESS=ON`, `DRM=OFF`, `ENABLE_WPE_LEGACY_API=OFF` | a labwc window (B5) and a headless display for snapshots (B4); no libwpe/wpebackend-fdo; DRM needs libinput/udev/GBM |
+| `USE_GBM`, `USE_LIBDRM`, `ENABLE_GPU_PROCESS` | OFF | no GPU process; the WebProcess renders through EGL **surfaceless** (see GPU) |
+| media | `ENABLE_VIDEO/WEB_AUDIO/WEB_RTC/MEDIA_SOURCE/MEDIA_STREAM/MEDIA_RECORDER/MEDIA_SESSION/WEB_CODECS/ENCRYPTED_MEDIA=OFF`, `USE_GSTREAMER=OFF` | B8 later |
+| `ENABLE_WEBGL`, `ENABLE_WEBXR`, `USE_VULKAN` | OFF | B7 |
+| `ENABLE_XSLT` | ON | libxslt from webkit_deps works (B0 `soup-smoke` XSLTCHK) |
+| `ENABLE_WEB_CRYPTO` | OFF | possible later with OpenSSL (patch 0006 already wires WebCore's OpenSSL backend for it; Ed25519/X25519 are libgcrypt-only upstream) |
+| crypto library | **OpenSSL instead of libgcrypt + libtasn1** (patch 0006) | WPE hard-requires both (`find_package(... REQUIRED)`, `ENABLE_WEB_CRYPTO=OFF` does not remove them): PAL's SHA digests (WebSocket handshake, SRI, CSP hashes) are the only users then. WebKit already has `CryptoDigestOpenSSL.cpp` (PlayStation port), and OpenSSL is linked anyway (glib-networking) |
+| `USE_AVIF/JPEGXL/LCMS/LIBHYPHEN`, `ENABLE_SPELLCHECK`, `ENABLE_GAMEPAD`, `ENABLE_SPEECH_SYNTHESIS`, `USE_ATK` | OFF | dependencies we do not ship |
+| `USE_ATSPI` | ON (hard-wired by OptionsWPE) | GDBus only, no extra library; with no accessibility bus address it does nothing. Turning it off would be a patch across WebKit |
+| `USE_LIBBACKTRACE`, `USE_SYSPROF_CAPTURE`, `ENABLE_JOURNALD_LOG` | OFF | — |
+| `ENABLE_BUBBLEWRAP_SANDBOX` | OFF (also the default for a non-Linux `CMAKE_SYSTEM_NAME`) | no sandbox |
+| `USE_SYSTEM_UNIFDEF` | OFF | the host has none; WebKit builds its bundled copy |
+| `ENABLE_WEBDRIVER`, `ENABLE_DOCUMENTATION`, `ENABLE_INTROSPECTION`, `ENABLE_MINIBROWSER`, tests | OFF | — |
+| `ENABLE_PDFJS` | ON | resources only (pdf.js runs in JSC) |
+| `WebKit_LIBRARY_TYPE` | STATIC on Phoenix (patch 0006) | `TARGET_SUPPORTS_SHARED_LIBS` is false, and CMake would silently turn `SHARED` into `STATIC` while WebKit's sub-target object lists only go to a shared link |
+| link | `-Wl,--gc-sections`, 8 MiB main stack, 4 KiB pages; Mesa's archives (gallium whole-archive), glib-networking's `libgioopenssl.a`, `libwlphx-compat.a` with `--wrap=close,write`, and `--wrap=mmap,ioctl` for libdrm-phoenix | static closure of what `pkg-config` does not express |
+
+### GPU: EGL is not optional
+
+In WPE 2.54 the WebProcess aborts without an EGL display:
+`WebProcess::initializePlatformDisplayIfNeeded()` ends in `CRASH()` after trying GBM, then
+surfaceless. Even "software" output composites with GL:
+- `WEBKIT_SKIA_ENABLE_CPU_RENDERING=1` (launcher `--cpu-rendering`) moves only Skia's painting to
+  the CPU;
+- TextureMapper still composites the layers in GLES;
+- `AcceleratedSurface::RenderTargetSHMImage` then `glReadPixels()`es each frame into a
+  `ShareableBitmap`, which goes to the UI process as SHM.
+
+So Mesa is linked into the binary. The `gles` variant of mesa_drm (EGL on GBM + surfaceless,
+v3d/vc4 gallium, no softpipe) needs the `rpi4-v3d-async` render server (`/dev/dri/renderD128`) at
+run time.
+
+The UI process never needs EGL in this configuration:
+- WPEPlatform's Wayland display tries EGL on the `wl_display` only for dma-buf.
+- With the `gles` variant that fails, so the WebProcess is told to use SHM buffers, which is
+  decision 5's software path.
+- `--mesa-variant wayland` links the EGL Wayland platform and so enables the dma-buf path. That
+  is B7 work.
+
+epoxy resolves every EGL and GLES entry point through the statically linked `eglGetProcAddress()`
+(the `libepoxy` port's `EPOXY_STATIC_EGL` patch).
+
+## The multi-call program (`launcher/`)
+
+`launcher/wpe-browser.cpp` (added to the WebKit build by patch 0006 through
+`-DPHOENIX_BROWSER_DIR`):
+
+- **Role dispatch.** `main()` first records its own absolute path in `WPE_PHOENIX_EXECUTABLE`
+  (`realpath(argv[0])`, or a `PATH` search for a bare name). It registers glib-networking's static
+  TLS backend (`g_io_openssl_load(NULL)`) in every role, then checks `WPE_PHOENIX_PROCESS_ROLE`:
+  - `web`: `WebKit::WebProcessMain(argc, argv)`;
+  - `network`: `WebKit::NetworkProcessMain(argc, argv)`;
+  - unset: the UI shell.
+
+  WebKit's argv (`<path> <identifier> <socket-fd>`) is passed through unchanged.
+- **How children find the binary (patch 0007).**
+  - `Shared/glib/ProcessExecutablePathGLib.cpp` normally looks for `WPEWebProcess` /
+    `WPENetworkProcess` in `WEBKIT_EXEC_PATH` (developer builds only) and then in `PKGLIBEXECDIR`
+    (`<libexecdir>/wpe-webkit-2.0`).
+  - On Phoenix it returns `WPE_PHOENIX_EXECUTABLE`, or the compile-time
+    `WPE_PHOENIX_DEFAULT_EXECUTABLE` (`/usr/bin/wpe-browser`).
+  - `UIProcess/Launcher/glib/ProcessLauncherGLib.cpp` sets `WPE_PHOENIX_PROCESS_ROLE=web|network`
+    on the `GSubprocessLauncher`. The GLib spawn path is otherwise unchanged (fork+exec, or
+    posix_spawn where GLib was built with it).
+- **The UI shell.** It is a WPEPlatform view in a `GMainLoop`:
+
+  ```
+  wpe-browser [--headless] [--snapshot=FILE.png] [--size=WxH] [--timeout=S]
+              [--exit-after-load] [--ignore-tls-errors] [--cpu-rendering] [URL|FILE]
+  ```
+
+  - Keys: Ctrl+Q quit, Ctrl+R or F5 reload, Alt+Left / Alt+Right back / forward, Alt+Home the
+    start page, F11 fullscreen.
+  - Network session: ephemeral (no disk cache or cookie jar yet; B6).
+  - Settings: WebGL, media and Web Audio off; JS console messages to stdout.
+  - Every line the launcher prints starts with `WPEB t=<ms> `:
+    - `start`, `display`, `view`, `role=web|network`;
+    - `load started|committed|finished uri=`, `progress`, `title`;
+    - `load-failed`, `load-failed-tls`, `web-process-terminated reason=`, `timeout`;
+    - `snapshot file= width= height= crc32=`, `exit status=`.
+  - Exit status: 0 OK, 1 error, 2 timeout, 3 web process died.
+  - `--snapshot`: after the first `load finished`, `webkit_web_view_get_snapshot(VISIBLE)` returns a
+    `WebKitImage` (BGRA, premultiplied). The launcher writes it as an RGBA PNG through libpng and
+    prints the CRC-32 of the unpremultiplied RGBA rows.
+
+## Patches
+
+`patches/webkit/` is applied after `../jsc/patches/webkit/` by `build.sh`, one commit each in
+`<out>/src/webkit`:
+
+| Patch | What |
+|---|---|
+| 0006-wpe-phoenix-cmake | Phoenix: OpenSSL instead of libgcrypt/libtasn1 (`USE_OPENSSL`, PAL `CryptoDigestOpenSSL.cpp`, WebCore's OpenSSL WebCrypto sources when `ENABLE_WEB_CRYPTO`); `WebKit_LIBRARY_TYPE STATIC`; the `PHOENIX_BROWSER_DIR` hook in the top-level CMakeLists |
+| 0007-wpe-phoenix-processes-shm | multi-call process lookup + role variable (above); `memfd_create()` over shmsrv (`libwlphx-compat.a`) for `WebCore::SharedMemory` and WPEPlatform's `wl_shm` pools; the `WPE_PHOENIX_SHM_LOG=1` allocation log |
+| 0008-wtf-wpe-phoenix | WTF's WPE source list on Phoenix: no `linux/` (procfs, eventfd, RealtimeKit), `phoenix/MemoryFootprintPhoenix.cpp` (track C) for `memoryFootprint()`, and `MemoryPressureHandlerUnix.cpp` with `OS(PHOENIX)` (`processMemoryUsage()` = the meminfo footprint); xdgmime: `ntohl()` is in `<arpa/inet.h>` on Phoenix |
+| 0009-webcore-video-off-build | upstream build fix: `JSHTMLMediaElementCustom.cpp` is compiled with `ENABLE_VIDEO=OFF` and needs `#if ENABLE(VIDEO)` |
+
+Compat (`build.sh` stage `compat`, on top of track C's probes):
+- **libstdc++ hides `<fenv.h>`** from C++, because the toolchain was built without
+  `_GLIBCXX_HAVE_FENV_H`. With b20's real libphoenix `<fenv.h>`, the compat `fenv.h` is a
+  one-line include of the C header by path. WTF's SIMDe needs `fegetround`/`fesetround`.
+- `msync` comes from `libwlphx-compat.a`, not from the jsc compat object.
+- `UINT8_MAX`/`UINT16_MAX` keep track C's `stdint.h` until branch `stdint-int-limits` lands.
+
+## Shared memory profile (B6 input)
+
+`WPE_PHOENIX_SHM_LOG=1` makes every process print one line per `WebCore::SharedMemory`
+allocation or mapping, and per `wl_shm` pool creation or resize:
+
+```
+PHXSHM alloc pid=<pid> fd=<fd> size=<bytes> n=<count> total=<bytes>
+PHXSHM map pid=<pid> fd=<fd> size=<bytes> n=<count> total=<bytes>
+PHXSHM wlpool pid=<pid> fd=<fd> size=<bytes>
+PHXSHM wlpool-resize pid=<pid> fd=<fd> size=<bytes>
+```
+
+- Each line is one shmsrv object: contiguous, at least 1 MiB, and one descriptor.
+- `wlpool-resize` is an `ftruncate()` growth. shmsrv objects are fixed once allocated, so a
+  failure there shows as a missing cursor or buffer.
+- No host run was possible: this is a Phoenix-only build. The Pi check below collects the profile.
+
+## Pi check (pre-registered, B4 then B5)
+
+Stage on the netboot NFS root:
+- `<out>/wpe-browser-stripped` as `/usr/bin/wpe-browser` (mode 755);
+- `pi/b4.html` as `/usr/share/wpe-browser/b4.html`.
+
+The root already has what the browser needs at run time:
+- `/etc/fonts/fonts.conf` with DejaVu Sans, Sans Mono and Serif in `/usr/share/fonts/truetype/dejavu`;
+- `/etc/ssl/cert.pem`;
+- `shmsrv` and `labwc` in `/bin`;
+- `rpi4-v3d-async` and `rpi4-kms` start at boot.
+
+psh rules apply:
+- psh does **not** strip quotes and has no `;`, `|` or `&`, so every command below is one line
+  without quotes;
+- psh has `export`;
+- every launcher option uses the `--opt=value` form.
+
+### B4: headless render to a buffer (3 processes, no compositor)
+
+| # | Command at `(psh)%` | Expected |
+|---|---|---|
+| 1 | `export WPE_PHOENIX_SHM_LOG=1` | — |
+| 2 | `/usr/bin/wpe-browser --headless --snapshot=/tmp/b4.png --timeout=600 /usr/share/wpe-browser/b4.html` | in order: `WPEB … start pid=… mode=headless uri=file:///usr/share/wpe-browser/b4.html exe=/usr/bin/wpe-browser`, `WPEB … display WPEDisplayHeadless`, `WPEB … role=network pid=…`, `WPEB … role=web pid=…`, `PHXSHM …` lines, `WPEB … load committed`, `WPEB … title B4 WPE Phoenix 2...`, `WPEB … load finished`, `WPEB … snapshot file=/tmp/b4.png width=1024 height=768 crc32=XXXXXXXX`, `WPEB … exit status=0`; back to the prompt |
+| 3 | the same command again | the **same** `crc32=` (deterministic rendering) |
+| 4 | `/usr/bin/wpe-browser --headless --cpu-rendering --snapshot=/tmp/b4cpu.png --timeout=600 /usr/share/wpe-browser/b4.html` | `exit status=0`; crc may differ from #2 (GPU vs CPU raster) |
+
+**PASS (B4):**
+- #2 and #3 exit 0 with equal CRCs;
+- zero `Exception #` / fault dumps in the UART log;
+- `/tmp/b4.png`, copied off the NFS root, shows the page correctly by eye: heading, three
+  coloured boxes and a gradient, a table, the canvas square/circle/text, and `JavaScript: sum=…
+  PHOENIX-RTOS-WPE-WEBKIT {"a":[1,2,3]}`.
+
+Record:
+- the time from `start` to `load finished`;
+- every `PHXSHM` line (the shm profile);
+- `ps` RSS of the three processes, if a second psh is available.
+
+**Triage:**
+
+| Symptom | Meaning |
+|---|---|
+| no `role=` line | the child exec failed: GLib spawn, or `WPE_PHOENIX_EXECUTABLE` |
+| `Could not create EGL display` then an abort in the web process | the surfaceless EGL path failed: no render node, `rpi4-v3d-async` down |
+| `Failed to create shared memory` | shmsrv not running |
+| `web-process-terminated reason=crashed` | `addr2line -e <out>/wpe-browser <pc>` on the fault dump's pc first |
+
+### B5: a window on labwc (3 processes, wl_shm), local page then Wikipedia
+
+The window runs inside the XFCE session (`/bin/xfce-session` starts labwc, the panel and the
+autostart list; `XFCE_AUTOSTART` takes `/<path>=<one argument>` items):
+
+| # | Command at `(psh)%` | Expected |
+|---|---|---|
+| 1 | `export WPE_PHOENIX_SHM_LOG=1 XFCE_AUTOSTART=/usr/bin/wpe-browser=/usr/share/wpe-browser/b4.html:120,/usr/bin/wpe-browser=https://en.wikipedia.org/wiki/Phoenix-RTOS HOLD=420` | — |
+| 2 | `/bin/bash /bin/xfce-session` | `XFCE-SESSION servers v3d-async=up kms=up shm=up`. Then for each item: `WPEB … mode=window`, `WPEB … display WPEDisplayWayland`, `WPEB … view WPEViewWayland 1024x768`, `role=network`, `role=web`, `PHXSHM wlpool …` lines, `load committed/finished`, `title …`. The Wikipedia item also needs `load committed uri=https://en.wikipedia.org/…` with no `load-failed-tls`. HDMI shows the page in a labwc window |
+
+**PASS (B5):**
+- both pages reach `load finished`;
+- the HDMI frame shows them rendered, by eye (HDMI ticks in `artifacts/hdmi/`);
+- zero faults;
+- the session ends normally (`XFCE-SESSION done rc=0`).
+
+Scrolling and the keys (Ctrl+R, Alt+Left) are checked by hand at the Pi, or in a later cycle with
+USB input.
+
+**Record:**
+- RSS per process;
+- the `PHXSHM` profile, with object count per frame;
+- time to first `load finished` for each page.
