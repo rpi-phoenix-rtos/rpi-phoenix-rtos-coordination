@@ -81,6 +81,9 @@ static void phx_putHex(const char *tag, unsigned long v)
 }
 
 
+static unsigned long phx_peekAddr;
+
+
 static void phx_abortTrace(int sig, siginfo_t *info, void *ctx)
 {
 	const ucontext_t *uc = ctx;
@@ -90,6 +93,16 @@ static void phx_abortTrace(int sig, siginfo_t *info, void *ctx)
 	(void)info;
 	phx_putHex("PHX-ABORT pc=", uc->uc_mcontext.pc);
 	phx_putHex("PHX-ABORT lr=", uc->uc_mcontext.regs[30]);
+	phx_putHex("PHX-ABORT x0=", uc->uc_mcontext.regs[0]);
+	phx_putHex("PHX-ABORT x1=", uc->uc_mcontext.regs[1]);
+	phx_putHex("PHX-ABORT x2=", uc->uc_mcontext.regs[2]);
+	if (phx_peekAddr != 0UL) {
+		/* PHX_TRACE_PEEK=<hex address>: eight words there, e.g. a lock's handle */
+		const unsigned long *w = (const unsigned long *)phx_peekAddr;
+		for (depth = 0; depth < 8; depth++) {
+			phx_putHex("PHX-ABORT peek=", w[depth]);
+		}
+	}
 	/* Stop at the first frame pointer that is not a user (39-bit) stack address. */
 	for (depth = 0; depth < 24 && fp != NULL && ((unsigned long)fp & 0xf) == 0 && ((unsigned long)fp >> 39) == 0; depth++) {
 		phx_putHex("PHX-ABORT ret=", fp[1]);
@@ -110,6 +123,10 @@ __attribute__((constructor)) static void phx_abortTraceInit(void)
 
 	if (on == NULL || on[0] != '1') {
 		return;
+	}
+	on = getenv("PHX_TRACE_PEEK");
+	if (on != NULL) {
+		phx_peekAddr = strtoul(on, NULL, 16);
 	}
 	memset(&sa, 0, sizeof(sa));
 	sa.sa_sigaction = phx_abortTrace;
