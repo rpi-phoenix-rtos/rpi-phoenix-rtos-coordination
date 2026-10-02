@@ -331,7 +331,12 @@ stage_webkit() {
 	cp "${COMPAT}/include/sys/mman.h" "${ci}/sys/"   # self-guarding: MAP_FILE, msync, madvise
 	log "  compat headers: $(cd "${ci}" && find . -name '*.h' | sort | tr '\n' ' ')"
 	"${TC}-gcc" -O2 ${TFLAGS} -Wall -Wextra -Werror ${cdefs} -isystem "${ci}" -c "${COMPAT}/phoenix-jsc-compat.c" \
-		-o "${out}/compat/phoenix-jsc-compat.o"
+		-o "${out}/compat/phoenix-jsc-compat-shims.o"
+	# + the PHX_MAPDUMP footprint dump (jsc only; the WPE build compiles phoenix-jsc-compat.c alone)
+	"${TC}-gcc" -O2 ${TFLAGS} -Wall -Wextra -Werror -isystem "${ci}" -c "${COMPAT}/phoenix-jsc-mapdump.c" \
+		-o "${out}/compat/phoenix-jsc-mapdump.o"
+	"${TC}-ld" -r -o "${out}/compat/phoenix-jsc-compat.o" "${out}/compat/phoenix-jsc-compat-shims.o" \
+		"${out}/compat/phoenix-jsc-mapdump.o"
 
 	wflags="${TFLAGS} -isystem ${ci}"
 	sed -e "s|@HERE@|${here}|g" -e "s|@TC@|${TC}|g" -e "s|@SYSROOT@|${S}|g" -e "s|@TFLAGS@|${wflags}|g" \
@@ -357,6 +362,12 @@ stage_webkit() {
 			> "${out}/webkit${sfx}-configure.log" 2>&1 \
 			|| { echo "build.sh: WebKit configure failed, see ${out}/webkit${sfx}-configure.log" >&2; exit 1; }
 		cp "${tcf}" "${wb}.toolchain"
+	fi
+	# The compat object is on the link line (CMAKE_CXX_STANDARD_LIBRARIES) but not a ninja
+	# dependency: relink when it changed.
+	if ! cmp -s "${out}/compat/phoenix-jsc-compat.o" "${wb}.compat.o" 2> /dev/null; then
+		rm -f "${wb}/bin/jsc"
+		cp "${out}/compat/phoenix-jsc-compat.o" "${wb}.compat.o"
 	fi
 	log "WebKit: build jsc (-j${jobs})"
 	local t0=${SECONDS}

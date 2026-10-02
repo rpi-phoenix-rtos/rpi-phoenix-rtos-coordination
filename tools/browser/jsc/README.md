@@ -8,7 +8,9 @@ static aarch64-phoenix ELF: the `jsc` shell. B3 is the go/no-go gate for the Web
 Status 2026-10-02: **B3 GO on the Pi** (see "Pi result" below). The x86-64 Linux build of the same patched
 tree with the same options (`--host-jsc`) runs everything below; its numbers are the reference.
 **B9 (the JIT)**: `--jit` builds Baseline + DFG + FTL for Phoenix and the host; host results and the
-pre-registered Pi check are in "JIT (browser B9)" at the end. Pi result pending.
+pre-registered Pi check are in "JIT (browser B9)" at the end. **B9 PASS on the Pi** (build 26): SunSpider
+4479 → 1295 ms/pass (3.46×), micro.js geomean 347 → 75 ms (4.6×), test262 7791/17 in all three runs, 0
+faults; but the JIT process's footprint is 795 MB against 285 MB (section "JIT footprint", open).
 
 ## Build
 
@@ -357,3 +359,69 @@ Risks:
   dump instead of a `SIGTRAP`; only matters for crash reporting.
 - The WPE build does not have any of this until it applies `patches/webkit-jit/` and the `--jit` CMake
   options (and rebuilds); this check is the gate for doing so.
+
+
+### Pi result (2026-10-02, build 26, log `rpi4b-uart-20261002-140239-b4crc-b9.log`): **PASS**
+
+| Step | Result |
+|---|---|
+| 2, 9 | `JITCHECK useJIT=1 ... dfg=1 ftl=1`, `JITTIER` checksums = host, `dfg-compiles=1`, `result=PASS` (also with `--forceEagerCompilation=true`) |
+| 3 / 4 | micro checksums = host; geomean 347.3 → **75.4 ms (4.6×)**; `FOOTPRINT` 284,860,416 → **795,484,160** |
+| 5 / 6 | SunSpider 4479.2 → **1295.3 ms/pass (3.46×)** |
+| 7, 7b, 10 | `TEST262 ... pass=7791 fail=17` (164.6 / 164.3 / 165.3 s; LLInt B3: 187.8 s), FAIL list = host |
+| 8 | micro checksums = host, `FOOTPRINT` 788,541,440 (`concurrentJIT=0`: forceEager turns it off) |
+| J1 | 0 exception dumps, 0 `MemoryExhaustion` |
+
+### JIT footprint (open: +510 MB)
+
+The JIT run's footprint is 2.79× the LLInt run of the same binary in the same boot (795 vs 285 MB), and
+the eager-compilation run is the same (788 MB). That run has concurrent JIT off and compiles far more,
+so the extra is a fixed cost of running with the JIT, not compiled-code volume or compiler-thread
+concurrency.
+
+Ruled out so far:
+- **The executable pool:** it is 32 MiB in the binary (`initializeJITPageReservation` loads
+  `0x1ffffff`, i.e. 32 MiB − 1), not ARM64's 512 MiB.
+- **Gigacage:** off with `USE_MIMALLOC` (`BPlatform.h`).
+- **The sequestered JIT heaps:** `USE(PROTECTED_JIT)` is Apple-only.
+- **PROT_NONE reservations:** the host has none besides the pool's two guard pages.
+- **JIT and GC thread stacks:** 3 extra threads (1 MiB each on Phoenix).
+- **WebAssembly:** `useWasm=false`.
+
+Host emulation of Phoenix's eager mapping (`bench/host-populate.c`: every accessible anonymous mapping
+`MAP_POPULATE`d, 32 MiB mimalloc arena reserve, never purge, 4 cores, 4 GB, 1 MiB stacks, 32 MiB pool):
+LLInt 153 MB, JIT 300 MB (**1.96×**); mimalloc's arenas go from 130 to 258 MB, so on the host the JIT
+costs ≈ 2 more 64 MiB arenas plus small change. About 380 MB on the Pi is therefore Phoenix-specific
+and does not reproduce on the host. One Pi run with the map dump below names it.
+
+**`PHX_MAPDUMP`** (`compat/phoenix-jsc-mapdump.c`, linked into `jsc`/`jsc-jit` only): with
+`PHX_MAPDUMP=1` in the environment, jsc prints at exit one `PHX-MAP vaddr=... size-kb= anon-kb= prot=
+orig= obj=` line per map entry of at least 1 MiB, then `PHX-MAP small ...` and
+`PHX-MAP total entries= anon-kb= exec-kb= stack-sized=`. `PHX_MAPDUMP=2` adds mimalloc's arena list
+(`mi_debug_show_arenas`: each arena's size and slice use). Lines go to stderr.
+
+**Pi footprint check (pre-registered).** Stage the relinked `<out>/jsc-jit-stripped` (it has the map
+dump) as `/usr/bin/jsc-jit`. One boot, in order:
+
+| # | Command at `(psh)%` | Expected |
+|---|---|---|
+| F0 | `export PHX_MAPDUMP=2` | — |
+| F1 | `/usr/bin/jsc-jit --useJIT=false --footprint /usr/share/jsc-bench/micro.js` | checksums, `FOOTPRINT`, `PHX-MAP` lines, mimalloc arenas |
+| F2 | `/usr/bin/jsc-jit --footprint /usr/share/jsc-bench/micro.js` | same, with the JIT |
+| F3 | `export PHX_MAPDUMP=1` | — |
+| F4 | `/usr/bin/jsc-jit --useFTLJIT=false --footprint /usr/share/jsc-bench/micro.js` | Baseline + DFG |
+| F5 | `/usr/bin/jsc-jit --useDFGJIT=false --footprint /usr/share/jsc-bench/micro.js` | Baseline only |
+| F6 | `/usr/bin/jsc-jit --useBaselineJIT=false --footprint /usr/share/jsc-bench/micro.js` | JIT infrastructure (thunks, regexp JIT, VM traps) without JS tiers |
+| F7 | `/usr/bin/jsc-jit --useConcurrentGC=false --footprint /usr/share/jsc-bench/micro.js` | without the collector thread's work |
+
+Read: `PHX-MAP total anon-kb` ≈ `FOOTPRINT`/1024 (else the accounting itself is the bug). The entries
+present in F2 and absent in F1 are the +510 MB.
+- `prot=rw-` entries of 32/64/128 MiB are mimalloc arenas, and the arena list says how full they are.
+- `exec-kb` is the pool.
+- `stack-sized` counts thread stacks.
+
+F4–F7 say which tier or service brings it.
+
+**Gate for the fix (target, fails today):** F2 `FOOTPRINT` ≤ 2 × F1's (host emulation: 1.96×), with
+micro.js checksums unchanged and SunSpider still ≥ 3× the LLInt. Until then a JIT WebProcess costs
+≈ +510 MB on the Pi, so the `webkit_wpe` port's `jit` USE flag stays off by default.
