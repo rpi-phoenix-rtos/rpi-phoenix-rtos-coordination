@@ -14,14 +14,18 @@
 #   <out>/src/webkit/         the WebKit tarball, extracted + patches/webkit/*.patch applied
 #   <out>/webkit-build/       the CMake/Ninja tree
 #   <out>/jsc                 the shell, unstripped (addr2line); <out>/jsc-stripped (stage this)
+#   with --jit (browser B9): <out>/src/webkit-jit (+ patches/webkit-jit/*.patch), <out>/webkit-build-jit,
+#                             <out>/jsc-jit, <out>/jsc-jit-stripped (and <out>/jsc-host-jit)
 #   <out>/mallocrate[-mimalloc] malloc-rate micro-benchmark, libphoenix vs mimalloc (bench/)
 #
 # Host tools: cmake >= 3.20, ninja, perl, python3, gperf, gcc/g++ (for the host ICU and ruby).
 # Ruby is built from a pinned tarball when the host has none (WebKit needs it, Ubuntu here has none).
 #
 # Usage: tools/browser/jsc/build.sh --out <dir> [--dl <dir>] [-j N] [--clean]
-#            [--stage fetch|ruby|icu|webkit|host-jsc|all] [--host-jsc] [--icu-prefix <dir>]
+#            [--stage fetch|ruby|icu|webkit|host-jsc|all] [--host-jsc] [--icu-prefix <dir>] [--jit]
 #   --host-jsc    also build an x86-64 Linux jsc with the same JSC options (reference numbers)
+#   --jit         Baseline JIT + DFG + FTL (and the YARR JIT) instead of the LLInt-only B3 build:
+#                 applies patches/webkit-jit/ on top and builds into separate *-jit trees/outputs
 #   --icu-prefix  link an existing Phoenix ICU 78.3 install (<dir>/include, <dir>/lib/libicu*.a:
 #                 track A1's `icu` port, whose data is filtered to 11 MB) instead of building the
 #                 private one (full 33 MB data) in <out>/icu. Never point it at the tree's
@@ -38,6 +42,7 @@ clean=0
 stage=all
 host_jsc=0
 icu_prefix=""
+jit=0
 while [ $# -gt 0 ]; do
 	case "$1" in
 		--out) shift; out="${1:?--out needs a directory}" ;;
@@ -50,6 +55,7 @@ while [ $# -gt 0 ]; do
 		--stage) shift; stage="${1:?}" ;;
 		--stage=*) stage="${1#--stage=}" ;;
 		--host-jsc) host_jsc=1 ;;
+		--jit) jit=1 ;;
 		--icu-prefix) shift; icu_prefix="${1:?--icu-prefix needs a directory}" ;;
 		--icu-prefix=*) icu_prefix="${1#--icu-prefix=}" ;;
 		*) echo "build.sh: unknown argument $1" >&2; exit 2 ;;
@@ -64,8 +70,9 @@ case "${out}/" in "${root}/"*) echo "build.sh: --out must be outside the reposit
 ICU="${icu_prefix:-${out}/icu}"
 
 if [ "${clean}" = 1 ]; then
-	rm -rf "${out:?}/src" "${out}/webkit-build" "${out}/webkit-host-build" "${out}/icu" "${out}/icu-host" \
-		"${out}/icu-build" "${out}/icu-host-build" "${out}"/*.stamp
+	rm -rf "${out:?}/src" "${out}/webkit-build" "${out}/webkit-host-build" "${out}/webkit-build-jit" \
+		"${out}/webkit-host-build-jit" "${out}/icu" "${out}/icu-host" "${out}/icu-build" "${out}/icu-host-build" \
+		"${out}"/*.stamp
 	echo "cleaned ${out} (kept ${dl} and ${out}/host)"
 	exit 0
 fi
@@ -115,11 +122,14 @@ fetch() {
 	fi
 	echo "${sum}  ${dl}/${file}" | sha256sum -c --quiet - || { echo "build.sh: ${file}: sha256 mismatch" >&2; exit 1; }
 }
-extract_patched() {  # name patchdir -> ${out}/src/<name> (its own git repo, one commit per patch)
-	local name="$1" pd="$2" file sum dir stamp p
-	file="$(pkg_field "${name}" 1)"; sum="$(pkg_field "${name}" 3)"
+# extract_patched <dir name> <package> <patchdir>... -> ${out}/src/<dir name>: its own git repo,
+# one commit per patch, the patch directories applied in the order given
+extract_patched() {
+	local name="$1" pkg="$2" file sum dir stamp p pd
+	shift 2
+	file="$(pkg_field "${pkg}" 1)"; sum="$(pkg_field "${pkg}" 3)"
 	dir="${out}/src/${name}"
-	stamp="$( { echo "${sum}"; cat "${pd}"/*.patch 2>/dev/null || true; } | sha256sum | cut -c1-16)"
+	stamp="$( { echo "${sum}"; for pd in "$@"; do cat "${pd}"/*.patch 2>/dev/null || true; done; } | sha256sum | cut -c1-16)"
 	if [ "$(cat "${dir}.stamp" 2>/dev/null || true)" = "${stamp}" ]; then
 		return
 	fi
@@ -133,12 +143,14 @@ extract_patched() {  # name patchdir -> ${out}/src/<name> (its own git repo, one
 	git -C "${dir}" init -q
 	git -C "${dir}" add -A
 	git -C "${dir}" -c user.name=build -c user.email=build@invalid commit -q -m "${file}"
-	for p in "${pd}"/*.patch; do
-		[ -e "${p}" ] || continue
-		log "apply ${name}/$(basename "${p}")"
-		git -C "${dir}" apply --whitespace=nowarn "${p}"
-		git -C "${dir}" add -A
-		git -C "${dir}" -c user.name=build -c user.email=build@invalid commit -q -m "$(basename "${p}")"
+	for pd in "$@"; do
+		for p in "${pd}"/*.patch; do
+			[ -e "${p}" ] || continue
+			log "apply $(basename "${pd}")/$(basename "${p}")"
+			git -C "${dir}" apply --whitespace=nowarn "${p}"
+			git -C "${dir}" add -A
+			git -C "${dir}" -c user.name=build -c user.email=build@invalid commit -q -m "$(basename "${pd}")/$(basename "${p}")"
+		done
 	done
 	echo "${stamp}" > "${dir}.stamp"
 	rm -f "${out}/${name}"*.stamp
@@ -191,7 +203,7 @@ COMPAT="${here}/compat"
 # --- ICU (A1 picks the same 78.3; this private copy goes away when the ICU port lands) ----------
 stage_icu() {
 	fetch icu
-	extract_patched icu "${here}/patches/icu"
+	extract_patched icu icu "${here}/patches/icu"
 	local isrc="${out}/src/icu/source"
 	if [ ! -f "${out}/icu-host.stamp" ]; then
 		log "ICU: host build"
@@ -232,16 +244,24 @@ stage_icu() {
 #   USE_MIMALLOC=ON (WebKit's vendored mimalloc) instead of libpas (needs madvise + PROT_NONE
 #   reserve-then-commit) and instead of USE_SYSTEM_MALLOC (libphoenix malloc, a mutex syscall
 #   per call when threaded); on Phoenix the same mimalloc also overrides malloc/new.
+#   --jit (B9): the Baseline JIT, DFG and FTL (B3/Air, no LLVM) and the YARR JIT; the executable
+#   pool is one RWX mapping made at JSC initialization (README "JIT"). WebAssembly is compiled in
+#   because WebKit 2.54's B3 and FTL do not build without it, but stays off at run time on Phoenix
+#   (patches/webkit-jit, Options.cpp; --useWasm=true turns it on).
+if [ "${jit}" = 1 ]; then
+	JIT_CMAKE_OPTS=(-DENABLE_JIT=ON -DENABLE_DFG_JIT=ON -DENABLE_FTL_JIT=ON -DENABLE_WEBASSEMBLY=ON)
+	sfx=-jit
+else
+	JIT_CMAKE_OPTS=(-DENABLE_JIT=OFF -DENABLE_DFG_JIT=OFF -DENABLE_FTL_JIT=OFF -DENABLE_WEBASSEMBLY=OFF)
+	sfx=""
+fi
 JSC_CMAKE_OPTS=(
 	-DPORT=JSCOnly
 	-DENABLE_STATIC_JSC=ON
 	-DUSE_SYSTEM_MALLOC=OFF
 	-DUSE_MIMALLOC=ON
-	-DENABLE_JIT=OFF
-	-DENABLE_DFG_JIT=OFF
-	-DENABLE_FTL_JIT=OFF
+	"${JIT_CMAKE_OPTS[@]}"
 	-DENABLE_C_LOOP=OFF
-	-DENABLE_WEBASSEMBLY=OFF
 	-DENABLE_SAMPLING_PROFILER=OFF
 	-DENABLE_REMOTE_INSPECTOR=OFF
 	-DENABLE_API_TESTS=OFF
@@ -254,14 +274,22 @@ webkit_src_dir() {
 	if [ -n "${WEBKIT_SRC:-}" ]; then   # development: an already-patched tree
 		echo "${WEBKIT_SRC}"
 	else
-		echo "${out}/src/webkit"
+		echo "${out}/src/webkit${sfx}"
+	fi
+}
+webkit_extract() {
+	[ -z "${WEBKIT_SRC:-}" ] || return 0
+	if [ "${jit}" = 1 ]; then
+		extract_patched webkit-jit webkit "${here}/patches/webkit" "${here}/patches/webkit-jit"
+	else
+		extract_patched webkit webkit "${here}/patches/webkit"
 	fi
 }
 stage_webkit() {
 	stage_ruby
 	fetch webkit
-	[ -n "${WEBKIT_SRC:-}" ] || extract_patched webkit "${here}/patches/webkit"
-	local wsrc wb="${out}/webkit-build" tcf="${out}/phoenix-aarch64.cmake" wflags
+	webkit_extract
+	local wsrc wb="${out}/webkit-build${sfx}" tcf="${out}/phoenix-aarch64.cmake" wflags
 	wsrc="$(webkit_src_dir)"
 	if [ -z "${icu_prefix}" ]; then
 		[ -f "${ICU}/lib/libicuuc.a" ] || stage_icu
@@ -326,18 +354,18 @@ stage_webkit() {
 			-DICU_ROOT="${ICU}" \
 			-DCMAKE_CXX_STANDARD_LIBRARIES="${out}/compat/phoenix-jsc-compat.o ${ICU}/lib/libicudata.a" \
 			-DCMAKE_EXE_LINKER_FLAGS="-Wl,-z,max-page-size=0x1000 -Wl,-z,stack-size=8388608" \
-			> "${out}/webkit-configure.log" 2>&1 \
-			|| { echo "build.sh: WebKit configure failed, see ${out}/webkit-configure.log" >&2; exit 1; }
+			> "${out}/webkit${sfx}-configure.log" 2>&1 \
+			|| { echo "build.sh: WebKit configure failed, see ${out}/webkit${sfx}-configure.log" >&2; exit 1; }
 		cp "${tcf}" "${wb}.toolchain"
 	fi
 	log "WebKit: build jsc (-j${jobs})"
 	local t0=${SECONDS}
-	PATH="$(dirname "${RUBY}"):${PATH}" ninja -C "${wb}" -j"${jobs}" jsc > "${out}/webkit-build.log" 2>&1 \
-		|| { echo "build.sh: WebKit build failed, see ${out}/webkit-build.log" >&2; exit 1; }
+	PATH="$(dirname "${RUBY}"):${PATH}" ninja -C "${wb}" -j"${jobs}" jsc > "${out}/webkit${sfx}-build.log" 2>&1 \
+		|| { echo "build.sh: WebKit build failed, see ${out}/webkit${sfx}-build.log" >&2; exit 1; }
 	log "WebKit: built in $((SECONDS - t0)) s"
-	cp "${wb}/bin/jsc" "${out}/jsc"
-	"${TC}-strip" -o "${out}/jsc-stripped" "${out}/jsc"
-	log "jsc: $(stat -c %s "${out}/jsc-stripped") bytes stripped ($(stat -c %s "${out}/jsc") unstripped)"
+	cp "${wb}/bin/jsc" "${out}/jsc${sfx}"
+	"${TC}-strip" -o "${out}/jsc${sfx}-stripped" "${out}/jsc${sfx}"
+	log "jsc${sfx}: $(stat -c %s "${out}/jsc${sfx}-stripped") bytes stripped ($(stat -c %s "${out}/jsc${sfx}") unstripped)"
 
 	# The malloc-rate micro-benchmark, against libphoenix's malloc and against the very mimalloc
 	# object linked into jsc (with the same override and _malloc_init hook).
@@ -348,7 +376,7 @@ stage_webkit() {
 		"${here}/bench/mallocrate.c" "${mimalloc_obj}" "${out}/compat/phoenix-jsc-compat.o" -o "${out}/mallocrate-mimalloc"
 	# Neither binary may carry libphoenix's allocator next to mimalloc (malloc_dl.o's state).
 	local b
-	for b in jsc mallocrate-mimalloc; do
+	for b in "jsc${sfx}" mallocrate-mimalloc; do
 		if "${TC}-nm" "${out}/${b}" | grep -q ' malloc_common$'; then
 			echo "build.sh: ${b} links libphoenix's malloc (stdlib/malloc_dl.o) besides mimalloc" >&2
 			exit 1
@@ -362,21 +390,21 @@ stage_webkit() {
 stage_host_jsc() {
 	stage_ruby
 	fetch webkit
-	[ -n "${WEBKIT_SRC:-}" ] || extract_patched webkit "${here}/patches/webkit"
-	local wsrc hb="${out}/webkit-host-build"
+	webkit_extract
+	local wsrc hb="${out}/webkit-host-build${sfx}"
 	wsrc="$(webkit_src_dir)"
 	if [ ! -f "${hb}/build.ninja" ]; then
 		log "host jsc: configure"
 		mkdir -p "${hb}"
 		PATH="$(dirname "${RUBY}"):${PATH}" CC=gcc CXX=g++ cmake -G Ninja -S "${wsrc}" -B "${hb}" \
-			"${JSC_CMAKE_OPTS[@]}" > "${out}/webkit-host-configure.log" 2>&1 \
-			|| { echo "build.sh: host jsc configure failed, see ${out}/webkit-host-configure.log" >&2; exit 1; }
+			"${JSC_CMAKE_OPTS[@]}" > "${out}/webkit-host${sfx}-configure.log" 2>&1 \
+			|| { echo "build.sh: host jsc configure failed, see ${out}/webkit-host${sfx}-configure.log" >&2; exit 1; }
 	fi
 	log "host jsc: build (-j${jobs})"
-	PATH="$(dirname "${RUBY}"):${PATH}" ninja -C "${hb}" -j"${jobs}" jsc > "${out}/webkit-host-build.log" 2>&1 \
-		|| { echo "build.sh: host jsc build failed, see ${out}/webkit-host-build.log" >&2; exit 1; }
-	cp "${hb}/bin/jsc" "${out}/jsc-host"
-	log "host jsc: ${out}/jsc-host"
+	PATH="$(dirname "${RUBY}"):${PATH}" ninja -C "${hb}" -j"${jobs}" jsc > "${out}/webkit-host${sfx}-build.log" 2>&1 \
+		|| { echo "build.sh: host jsc build failed, see ${out}/webkit-host${sfx}-build.log" >&2; exit 1; }
+	cp "${hb}/bin/jsc" "${out}/jsc-host${sfx}"
+	log "host jsc: ${out}/jsc-host${sfx}"
 }
 
 stage_all() {

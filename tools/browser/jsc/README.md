@@ -5,20 +5,24 @@ static aarch64-phoenix ELF: the `jsc` shell. B3 is the go/no-go gate for the Web
 ([docs/browser/PLAN.md](../../../docs/browser/PLAN.md)). Developed outside the ports framework
 (PLAN decision 3): `build.sh` + patches here, all output in a scratch directory.
 
-Status 2026-10-02: **B3 GO on the Pi** (see "Pi result" at the end). The x86-64 Linux build of the same patched
+Status 2026-10-02: **B3 GO on the Pi** (see "Pi result" below). The x86-64 Linux build of the same patched
 tree with the same options (`--host-jsc`) runs everything below; its numbers are the reference.
+**B9 (the JIT)**: `--jit` builds Baseline + DFG + FTL for Phoenix and the host; host results and the
+pre-registered Pi check are in "JIT (browser B9)" at the end. Pi result pending.
 
 ## Build
 
 ```
 tools/browser/jsc/build.sh --out <scratch>/out --dl <cache> -j12 \
-    [--icu-prefix <ICU 78.3 install>] [--host-jsc]
+    [--icu-prefix <ICU 78.3 install>] [--host-jsc] [--jit]
 tools/browser/jsc/bench/fetch-bench.sh <scratch>/jsc-bench --dl <cache> --build-out <scratch>/out
 ```
 
 `--out` must be outside the repository (~3 GB). Outputs: `<out>/jsc` (unstripped, for addr2line),
 `<out>/jsc-stripped` (stage this), `<out>/mallocrate`, `<out>/mallocrate-mimalloc`, and with
-`--host-jsc` `<out>/jsc-host`. Reads the tree sysroot and toolchain only; never writes into
+`--host-jsc` `<out>/jsc-host`. With `--jit` (B9) the same names carry a `-jit` suffix (`<out>/jsc-jit`,
+`<out>/jsc-jit-stripped`, `<out>/jsc-host-jit`; trees `src/webkit-jit`, `webkit-build-jit`), so both builds
+can share one `--out`. Reads the tree sysroot and toolchain only; never writes into
 `.buildroot`, `sources/` or the repo.
 
 | Pinned input | Version | sha256 |
@@ -80,6 +84,15 @@ against `protOrig`, `vm/map.c:1153`). There is no "virtual reserve". So:
 | 0004-jsc-phoenix | 64 MiB Structure heap; concurrent GC off by default; LLInt `globaladdr` ELF GOT form + opcode debug labels as Linux (`offlineasm/arm64.rb`, `LowLevelInterpreter.cpp`); no `mincore` / `dl_iterate_phdr` paths; `ARM64Assembler::cacheFlush` case |
 | 0005-mimalloc-phoenix | mimalloc unix prim on Phoenix (no virtual reserve/overcommit/madvise, RW mappings, 39-bit VA, weak random seed, short `struct rusage`); WebKit's mimalloc wrapper: override malloc on Phoenix, no `-march=armv8.1-a`, 32 MiB arenas |
 
+`patches/webkit-jit/` (B9, applied after `patches/webkit/` only by `build.sh --jit`; a separate series so
+that the WPE build, which applies `patches/webkit/*`, is unchanged until it takes the JIT on purpose):
+
+| Patch | What |
+|---|---|
+| 0001-wtf-jsc-machine-context-phoenix | `HAVE(MACHINE_CONTEXT)` on `OS(PHOENIX) && CPU(ARM64)`; `PlatformRegisters` = the Linux-layout `mcontext_t` from `<sys/ucontext.h>` (drops 0002's "no ucontext" case); `OS(PHOENIX)` on the six Linux branches of `MachineContext.h`; concurrent GC back to the upstream default (drops 0004's override) |
+| 0002-jsc-jit-phoenix | DFG on by default for ARM64 Phoenix (as Linux/FreeBSD); **32 MiB** executable pool instead of ARM64's 512 MiB (resident on Phoenix); `ARM64Assembler::cacheFlush` takes the Linux path (`__builtin___clear_cache`, replacing 0004's case and its stale UCI comment); `useWasm` defaults to false on Phoenix |
+| 0003-jsc-inline-cache-compiler-jump-types | upstream bug, not Phoenix-specific: `InlineCacheCompiler.h` names `CCallHelpers::Jump` with `CCallHelpers` only forward-declared; `LLIntOffsetsExtractor.cpp` with the JIT on (GCC 16) fails. Declared through `MacroAssembler::Jump`, the same type |
+
 `patches/icu/0001` (private ICU only): `LC_MESSAGES` fallback in `putil.cpp` (A1's port carries its
 own equivalent, `02-phoenix-lc-messages.patch`).
 
@@ -108,18 +121,9 @@ still has `UINT8_MAX (0xffU)`), and the `_malloc_init` hook.
 | `<stdint.h>` `UINT8_MAX`/`UINT16_MAX` | **B1 (libphoenix bug)** | libphoenix defines them `0xffU`/`0xffffU` (unsigned int); C11 7.20.2 requires int. Signed comparisons against them silently become unsigned (`int16_t t = -5; t > UINT8_MAX` is true): WTF's SIMDe saturation code and JSC's `PropertyTable::canFitInCompact()` have exactly that shape; GCC 16 flagged 397 such comparisons here before the fix. Fix it in libphoenix; every port is exposed |
 | `_malloc_init()` (weak, empty) | not a gap | keeps libphoenix's `malloc_dl.o` (and its duplicate `malloc`) out of the link; `build.sh` fails if `malloc_common` shows up in `jsc` |
 
-For **B4 (SA_SIGINFO/ucontext)**: when `ucontext_t` lands with Linux's aarch64 `uc_mcontext`
-layout (`fault_address`, `regs[31]`, `sp`, `pc`, `pstate`), add `OS(PHOENIX)` to
-`HAVE(MACHINE_CONTEXT)` (`PlatformHave.h`), to the `OS(LINUX)` branches of
-`Source/JavaScriptCore/runtime/MachineContext.h`, and drop the `OS(PHOENIX)` case in
-`PlatformRegisters.h`; `Thread::suspend()` then reads real registers, and concurrent GC can be
-tested with `JSC_useConcurrentGC=true` before flipping the default. `Thread::suspend` already uses
-`pthread_kill(SIGUSR1)` + `sigsuspend`, which libphoenix has; the handler is installed with
-`SA_SIGINFO` today (the kernel accepts the flag and calls it with the signal number only).
-
-For **B9 (JIT)**: besides the RWX `ExecutableAllocator` region (PLAN decision 7), the kernel runs EL0
-with `SCTLR_EL1.UCI=0` (`hal/aarch64/_init.S` baseline), so the `DC CVAU`/`IC IVAU` that
-`__builtin___clear_cache` emits would trap; JIT code needs `UCI=1` or a cache-maintenance call.
+The B2 `ucontext_t` (build 20) and the JIT are consumed by `patches/webkit-jit/` (section "JIT
+(browser B9)"). The non-JIT build above still has 0002's stack-pointer-only `PlatformRegisters` and
+concurrent GC off.
 
 Link hazard from A1 (libstdc++.a's own `hypotf` vs libphoenix libm): not hit by this link.
 
@@ -241,3 +245,112 @@ Reading:
 - The system allocator is still 30–150× slower than mimalloc, and up to 100 µs per 2 KiB pair under 4 threads. Everything in the browser processes that still calls libphoenix `malloc` (GLib, libsoup3, Mesa) pays that. See KNOWN-ISSUES P26 and the allocator follow-up.
 - fastMalloc inside `jsc` measured 534 ns per 2 KiB pair, against 274 ns for the same mimalloc in `mallocrate`. Not chased yet.
 
+
+
+## JIT (browser B9)
+
+`build.sh --jit` builds the Baseline JIT, the DFG, the FTL (B3/Air, no LLVM) and the YARR regexp
+JIT, with the same allocator, ICU and flags as B3, and applies `patches/webkit-jit/` on top of
+`patches/webkit/`. One binary covers both sides of the comparison: `--useJIT=false` turns every JIT
+off at run time (LLInt only, polling traps, no regexp JIT), which is the B3 configuration.
+
+How each OS dependency is met:
+
+| Need | On Phoenix |
+|---|---|
+| executable memory | WTF's `OSAllocatorPOSIX` already reserves the pool `PROT_READ\|PROT_WRITE\|PROT_EXEC`, `MAP_PRIVATE\|MAP_ANON`, in one `mmap` at JSC initialization on non-Linux systems; the two guard pages are `MAP_FIXED PROT_NONE` remaps (kernel `_vm_mmap` unmaps and maps). No `SEPARATED_WX_HEAP`, no `mprotect` (Phoenix's cannot add `PROT_EXEC`, kernel `vm/map.c` `map_checkProt`). `commit`/`decommit` are no-ops (no `MADV_*` on this OS in WTF), so freed JIT memory stays resident and is reused by the pool's own allocator |
+| pool size | **32 MiB** (patch 0002), resident from JSC initialization; ARM64's default is 512 MiB. 25 % of it is held back by JSC; when it fills, JSC stops compiling (it does not fail). Host check: SunSpider and the test262 subset pass and run as fast with a 2 MiB pool. `--jitMemoryReservationSize=<bytes>` overrides. With one region the jump islands collapse to nothing |
+| instruction cache | `__builtin___clear_cache` → libgcc `__aarch64_sync_cache_range`: `mrs ctr_el0`, `dc cvau` per line, `dsb ish`, `ic ivau` per line, `dsb ish`, `isb` (disassembled from `jsc-jit`). Legal at EL0: the kernel sets `SCTLR_EL1.UCI` (bit 26) and `UCT` (bit 15) on every core (`hal/aarch64/_init.S`, the M\|C\|I write in `el1_entry`, before secondaries park; `HCR_EL2` traps nothing but RW). The README's earlier "UCI=0" note read only the pre-MMU baseline value. lwip's genet driver already does `dc civac` at EL0 on every frame, and Quake III's JIT uses the same builtin. `IC IVAU` is broadcast to the inner shareable domain, so code written on a compiler thread is visible on the mutator's core; JSC issues `isb` (`crossModifyingCodeFence`) where it needs one. No kernel change |
+| registers of a suspended thread | `HAVE(MACHINE_CONTEXT)` + the Linux `MachineContext.h` branches (patch 0001): `uc_mcontext.regs[]/sp/pc` (B2 layout). `Thread::suspend()` = `pthread_kill(SIGUSR1)` (thread-directed `sys_tkill`) → handler `sem_post` (libphoenix: one lock-free `write()`, async-signal-safe) → `sigsuspend` (atomic mask+sleep under the scheduler lock) → second `SIGUSR1` resumes. Both halves are covered by `phoenix-rtos-tests` `test-libc-signal`: `siginfo.pthread_kill_target_context` (a sleeping thread) and `siginfo.pthread_kill_running_thread` (new: a thread spinning in user space, as JIT code does; it must stand still while parked and run on after) |
+| concurrent GC | on (upstream default; patch 0001 drops B3's override). See risks: `SA_RESTART` |
+| VM traps | `SIGNAL_BASED_VM_TRAPS` (on with DFG + machine context): only for asynchronous termination/watchdog/debugger requests, none of which the benchmarks make. The halt is a `dc zva` to address 0 → caught `SIGSEGV` with ucontext (kernel prints one `vm: SIGSEGV caught by pid ...` line per fault, no register dump). `--usePollingTraps=true` is the fallback |
+| WebAssembly | compiled in (WebKit 2.54's B3 and FTL do not build without it: B3 `Wasm*Value`, FTL `compileCallWasm`), **off** at run time on Phoenix (patch 0002): wasm memories reserve address space to commit later. `--useWasm=true` for experiments only |
+| CPU features | no `AT_HWCAP` on Phoenix: `collectCPUFeatures()` falls back to the compile-time `-mcpu=cortex-a72` answer (no LSE, JSCVT, FP16, FRINT, SHA3), which is right for the A72. `x18` stays reserved (the non-Linux register set) |
+| thread stacks | 1 MiB for every WTF thread including the JIT compiler threads (Darwin's are 512 KiB) |
+
+Sizes: `jsc-jit` stripped 47,105,464 B / 55,093,488 B unstripped (B3 `jsc`: 28.9 MB; the JIT, B3/Air and
+the dormant WebAssembly tiers add ~18 MB of text). Clean cross build from the patch files 674 s at `-j8` (sources identical to the development tree the host numbers below come from). Build warnings:
+175, all GCC 16's upstream `-Wsfinae-incomplete`.
+
+### Host reference (x86-64 `jsc-host-jit`, same tree and options)
+
+Run with `JSC_structureHeapSizeInKB=65536 ... --forceRAMSize=4000000000`: with the 64 MiB Structure heap
+the host needs a Pi-like RAM size too, otherwise its heap-growth policy (29 GiB of RAM) lets the
+Structure heap fill and test262 aborts with `MemoryExhaustion` — the LLInt-only `jsc-host` of B3 does the
+same. That is a margin to watch on the Pi as well (risks).
+
+| Run | `--useJIT=false` (LLInt) | JIT (default options) | ratio |
+|---|---|---|---|
+| SunSpider ms/pass (mean of 3) | 291.3 | 67.3 (66.1 with `--useConcurrentGC=false`) | 4.3× |
+| `micro.js` geomean / total ms | 22.3 / 380.5 | 5.4 / 75.5 | 4.1× |
+| test262 subset | 7791/17, 7.9 s | 7791/17, 4.9 s | — |
+
+`micro.js` checksums are the B3 values in every mode. test262's 17 `FAIL` lines equal
+`bench/test262-host-reference.txt` in all five modes run: default, `--useJIT=false`,
+`--useConcurrentGC=false`, `--forceEagerCompilation=true` (14.1 s), `--collectContinuously=true`
+(10.4 s). `jit-check.js` (new, below): `JITTIER loop=546383 poly=153593 regexp=224975` in every mode;
+with the JIT `dfg-compiles=1 poly-dfg-compiles=3` (the OSR exits recompile `poly` twice), with
+`--useJIT=false` both read 1000000 (the shell's "pretend compiled").
+
+### Pi check (pre-registered, B9 gate)
+
+Stage `<out>/jsc-jit-stripped` as `/usr/bin/jsc-jit` (next to B3's `/usr/bin/jsc`, which stays) and
+`bench/jit-check.js` into the B3 bundle, `/usr/share/jsc-bench/jit-check.js` (the rest of the bundle is
+unchanged). One boot, in this order; psh rules as for B3 (no quotes; options are `--name=value`
+arguments, so no environment is needed). Expected user-space time ≈ 10–15 min; split across boots
+only between whole steps.
+
+| # | Command at `(psh)%` | Expected | Measures |
+|---|---|---|---|
+| 1 | `/usr/bin/jsc-jit /usr/share/jsc-bench/hello.js` | `2` | starts: the 32 MiB RWX pool is mapped |
+| 2 | `/usr/bin/jsc-jit /usr/share/jsc-bench/jit-check.js` | `JITCHECK useJIT=1 baseline=1 dfg=1 ftl=1 regexp=1 concurrentJIT=1 concurrentGC=1 pollingTraps=0 pool=0`, `JITTIER loop=546383 dfg-compiles=<1..999999> poly=153593 poly-dfg-compiles=<n> regexp=224975`, `JITCHECK result=PASS` | the JIT is really on and reaches the DFG; OSR exits |
+| 3 | `/usr/bin/jsc-jit --useJIT=false --footprint /usr/share/jsc-bench/micro.js` | the 9 B3 checksums, `MICRO ...`, `FOOTPRINT ...` | LLInt baseline, this boot |
+| 4 | `/usr/bin/jsc-jit --footprint /usr/share/jsc-bench/micro.js` | the same 9 checksums, `MICRO ...` | JIT speed, footprint with the pool |
+| 5 | `/usr/bin/jsc-jit --useJIT=false /usr/share/jsc-bench/sunspider-run.js -- /usr/share/jsc-bench/sunspider 3` | 26 test lines, `SUNSPIDER runs=3 total-ms=...` | LLInt baseline |
+| 6 | `/usr/bin/jsc-jit /usr/share/jsc-bench/sunspider-run.js -- /usr/share/jsc-bench/sunspider 3` | 26 test lines, `SUNSPIDER runs=3 total-ms=...` | JIT speed |
+| 7 | `/usr/bin/jsc-jit /usr/share/jsc-bench/test262-run.js -- /usr/share/jsc-bench/test262-subset.json /usr/share/jsc-bench/t262-jit-fail.txt` | `TEST262 rev=7a096c205fd4 runs=7808 pass=7791 fail=17 ...` | conformance with all tiers + concurrent JIT + concurrent GC |
+| 8 (stress) | `/usr/bin/jsc-jit --forceEagerCompilation=true /usr/share/jsc-bench/micro.js` | the 9 checksums | every function tiers up after ~10–20 calls: Baseline → DFG → FTL, OSR entry/exit |
+| 9 (stress) | `/usr/bin/jsc-jit --forceEagerCompilation=true /usr/share/jsc-bench/jit-check.js` | step 2's checksums, `result=PASS` | same, on the OSR-exit kernel |
+| 10 (stress) | `/usr/bin/jsc-jit --collectContinuously=true /usr/share/jsc-bench/test262-run.js -- /usr/share/jsc-bench/test262-subset.json /usr/share/jsc-bench/t262-cgc-fail.txt` | `TEST262 ... pass=7791 fail=17` | the collector thread runs back to back, suspending and resuming the mutator (signals + ucontext) while JIT code runs |
+| 11 (if the image has `phoenix-rtos-tests` branch `b9-jit-tests` with `--with-tests`) | `/bin/test-libc-jit` then `/bin/test-libc-signal` | `5 Tests 0 Failures 0 Ignored` with the line `without a flush N of 1000 rewrites ran the old instruction` (N > 0 on the A72); signal: 0 failures | EL0 cache maintenance; suspend of a spinning thread |
+
+**PASS** needs all of:
+- J1: steps 1–10 each return to the prompt; **zero** `Exception #` dumps, `PHX-ABORT` lines, `vm: SIGSEGV caught` lines and `ASSERTION FAILED`/`MemoryExhaustion` lines in the boot; no step silent for 5 min.
+- J2: step 2 prints the `JITCHECK useJIT=1 ... dfg=1 ftl=1` line and `JITCHECK result=PASS`; the three `JITTIER` checksums equal the host's (steps 2 and 9).
+- J3: all 9 `micro.js` checksums equal the B3/host values in steps 3, 4 and 8.
+- J4: test262 `pass >= 7713` in steps 7 and 10, and their `FAIL` lines equal `bench/test262-host-reference.txt` (any extra one is triaged in the B9 doc).
+- J5 (the speed gate, PLAN B9 "≥ 3× B3", SunSpider and `micro.js` as the JetStream-lite proxy): step 6's `total-ms` ≤ step 5's / 3, and step 4's `geomean-ms` ≤ step 3's / 3. For orientation, B3's 4.4 s per SunSpider pass would mean ≤ 1.47 s.
+- J6: step 11, when run: 0 failures, and N > 0 (otherwise the flush checks prove nothing on this board).
+
+Recorded, no threshold: SunSpider and micro ratios, test262 seconds (B3: 187.8 s), `FOOTPRINT` of steps 3/4
+(B3 ≈ 286 MB; expect ≈ +32 MiB pool + JIT data + compiler-thread stacks), step 10's seconds.
+
+NO-GO, and the first thing to try: a hang or `vm: SIGSEGV caught` in JIT code → rerun the step with
+`--usePollingTraps=true`; a hang or wrong result in steps 7/10 only → `--useConcurrentGC=false`
+(then it is the suspend path: check step 11); a crash in compiled code → `--useFTLJIT=false`, then
+`--useDFGJIT=false` to find the tier; `MemoryExhaustion` → rerun with `--structureHeapSizeInKB=131072`
+(the option behind `JSC_structureHeapSizeInKB`; checked on the host).
+`addr2line -e <out>/jsc-jit <pc>` for any pc outside the pool; a pc inside the pool (the JIT region is
+logged with `--verboseExecutablePoolAllocation=true`) is generated code.
+
+Risks:
+- **`SA_RESTART` is not implemented** by the kernel (`<phoenix/signal.h>`: FIXME). A suspend signal that
+  lands in a system call other than a futex/condvar wait (which treat `EINTR` as a spurious wake) can
+  return `EINTR` where Linux would restart. libphoenix already retries `EINTR` in its read/write/lookup
+  helpers. In `jsc` the collector suspends the mutator while it is parked at a safepoint, so this is not
+  expected here; in the browser, a WebProcess main thread idle in `poll()` (GLib retries) is the case to
+  watch. If concurrent GC misbehaves, `--useConcurrentGC=false` restores the B3 behaviour.
+- **FP/SIMD registers are not in the `mcontext_t`** (Linux's `__reserved` area is not provided), so the
+  conservative scan of a suspended thread sees x0–x30/sp/pc but not d8–d15. A pointer that GCC spilled
+  to a SIMD register of a suspended thread would be missed; rare for C++, impossible for JSValues in JIT
+  code (Air keeps them in GPRs). Fix if it ever shows: deliver the FP state in the ucontext (kernel).
+- **Signal latency**: a thread running JIT code takes the suspend signal at its next preemption (the
+  scheduler tick), not at once: GC pause time grows by up to one tick per suspended thread.
+- **RWX code memory** (owner-approved): no W^X; a memory-corruption bug can write code.
+- **Resident pool**: 32 MiB per JIT-enabled process from start-up, used or not.
+- **Structure heap margin**: 64 MiB passes test262 on the Pi (B3) and on the host only with a Pi-like
+  RAM size; JIT tiers keep more structures alive. Watch J1's `MemoryExhaustion`.
+- **EL0 `brk`** (JIT `abortWithReason`, B3 `Oops`) is killed by the kernel with a `BRK (AA64)` exception
+  dump instead of a `SIGTRAP`; only matters for crash reporting.
+- The WPE build does not have any of this until it applies `patches/webkit-jit/` and the `--jit` CMake
+  options (and rebuilds); this check is the gate for doing so.

@@ -4,7 +4,8 @@
 # binary, e.g. on the NFS root). Third-party JS (SunSpider, test262) is downloaded at pinned
 # revisions and sha256-verified, never committed. See ../README.md, section "Pi check".
 #
-#   <dest>/micro.js, sunspider-run.js, test262-run.js   (this directory), hello.js (print(1+1))
+#   <dest>/micro.js, sunspider-run.js, test262-run.js,  (this directory), hello.js (print(1+1))
+#          jit-check.js (B9)
 #   <dest>/sunspider/LIST + 26 tests                    SunSpider 1.0.2, WebKit tag webkitgtk-2.54.0
 #   <dest>/test262-subset.json                          test262 7a096c20 (the revision WebKit 2.54
 #                                                       imports), every 10th test, test262-bundle.py
@@ -89,7 +90,7 @@ fi
 echo "${TEST262_REV}" > "${t262}/.test262-revision"
 python3 "${here}/test262-bundle.py" "${t262}" "${dest}/test262-subset.json" --stride "${stride}"
 
-cp "${here}/micro.js" "${here}/sunspider-run.js" "${here}/test262-run.js" "${dest}/"
+cp "${here}/micro.js" "${here}/sunspider-run.js" "${here}/test262-run.js" "${here}/jit-check.js" "${dest}/"
 # Step 1's fallback when an argument with parentheses does not survive the shell.
 echo 'print(1+1)' > "${dest}/hello.js"
 if [ -n "${bout}" ]; then
