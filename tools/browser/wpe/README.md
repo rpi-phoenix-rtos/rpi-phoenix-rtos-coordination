@@ -14,15 +14,19 @@ This builds on track C and does not fork it:
 
 This directory adds patches `0006`+ and the launcher.
 
-Status: see [Results](#results).
+Status 2026-10-02: **builds and links** (`wpe-browser`: 121.5 MB stripped, 270 MB unstripped;
+not yet run on the Pi). See [Results](#results).
 
 ## Build
 
 ```
-tools/browser/wpe/build.sh --out <scratch>/out --dl <cache> -j12
+tools/browser/wpe/build.sh --out <scratch>/out --dl <cache> -j8
 ```
 
-- Use `-j4` while an image build is running.
+- The compile and link run through `scripts/heavy-build.sh`: one heavy build on the host at a
+  time (it waits for a running image or WebKit build), `-j` capped at
+  `min(8, MemAvailable / 2 GB)`, and the build runs in a `MemoryMax=22G` scope. Two WebKit builds
+  side by side took the host to 26 GB and systemd-oomd down with them. Never more than `-j8`.
 - `--out` must be outside the repository (about 15 GB).
 - Outputs:
   - `<out>/wpe-browser`: unstripped, for `addr2line`;
@@ -161,17 +165,77 @@ epoxy resolves every EGL and GLES entry point through the statically linked `egl
 
 | Patch | What |
 |---|---|
-| 0006-wpe-phoenix-cmake | Phoenix: OpenSSL instead of libgcrypt/libtasn1 (`USE_OPENSSL`, PAL `CryptoDigestOpenSSL.cpp`, WebCore's OpenSSL WebCrypto sources when `ENABLE_WEB_CRYPTO`); `WebKit_LIBRARY_TYPE STATIC`; the `PHOENIX_BROWSER_DIR` hook in the top-level CMakeLists |
-| 0007-wpe-phoenix-processes-shm | multi-call process lookup + role variable (above); `memfd_create()` over shmsrv (`libwlphx-compat.a`) for `WebCore::SharedMemory` and WPEPlatform's `wl_shm` pools; the `WPE_PHOENIX_SHM_LOG=1` allocation log |
-| 0008-wtf-wpe-phoenix | WTF's WPE source list on Phoenix: no `linux/` (procfs, eventfd, RealtimeKit), `phoenix/MemoryFootprintPhoenix.cpp` (track C) for `memoryFootprint()`, and `MemoryPressureHandlerUnix.cpp` with `OS(PHOENIX)` (`processMemoryUsage()` = the meminfo footprint); xdgmime: `ntohl()` is in `<arpa/inet.h>` on Phoenix |
-| 0009-webcore-video-off-build | upstream build fix: `JSHTMLMediaElementCustom.cpp` is compiled with `ENABLE_VIDEO=OFF` and needs `#if ENABLE(VIDEO)` |
+| 0006-wpe-phoenix-cmake | Phoenix: OpenSSL instead of libgcrypt/libtasn1 (`USE_OPENSSL`, PAL `CryptoDigestOpenSSL.cpp`, WebCore `platform/OpenSSL.cmake`; the key classes are referenced by SerializedScriptValue even with WebCrypto off); `WebKit_LIBRARY_TYPE STATIC`; with a static libWebKit the executables link its frameworks themselves and libWebKit does not `LINK_DEPENDS` on the helper executables (cycle); the `PHOENIX_BROWSER_DIR` hook; `WPE_PHOENIX_DEFAULT_EXECUTABLE` |
+| 0007-wpe-phoenix-processes-shm | multi-call process lookup + role variable (above); `memfd_create()` over shmsrv (`libwlphx-compat.a`) for `WebCore::SharedMemory` and WPEPlatform's `wl_shm` pools; the `WPE_PHOENIX_SHM_LOG=1` log |
+| 0008-wtf-wpe-phoenix | WTF's WPE source list on Phoenix: no `linux/` (procfs, eventfd, RealtimeKit); `phoenix/MemoryFootprintPhoenix.cpp` (track C) for `memoryFootprint()`; `MemoryPressureHandlerUnix.cpp` with `OS(PHOENIX)` (`processMemoryUsage()` = the meminfo footprint, hold-off timer) |
+| 0009-xdgmime-phoenix-static | WebKit's bundled xdgmime and GLib's copy in GIO both define `_caches` and `_xdg_binary_or_text_fallback` in one static link: renamed by `-D`; `ntohl()` from `<arpa/inet.h>` on Phoenix |
+| 0010-wpe-build-fixes | upstream bugs with our options: `JSHTMLMediaElementCustom.cpp` needs `#if ENABLE(VIDEO)`; `AcceleratedBackingStore.cpp` needs `DRM_FORMAT_XRGB8888` without libdrm; OpenSSL 3's `EVP_PKEY_get0_RSA()` returns `const RSA*` (WebCore's OpenSSL code targets 1.1); no `MSG_CTRUNC` in libphoenix (its kernel never truncates control data) |
 
 Compat (`build.sh` stage `compat`, on top of track C's probes):
 - **libstdc++ hides `<fenv.h>`** from C++, because the toolchain was built without
-  `_GLIBCXX_HAVE_FENV_H`. With b20's real libphoenix `<fenv.h>`, the compat `fenv.h` is a
-  one-line include of the C header by path. WTF's SIMDe needs `fegetround`/`fesetround`.
+  `_GLIBCXX_HAVE_FENV_H`. With b20's real libphoenix `<fenv.h>` (and its `fesetround` &
+  co. in `libphoenix.a`), the compat `fenv.h` here is a one-line include of the C header by path.
+  WTF's SIMDe needs `fegetround`/`fesetround`.
+- `compat/phoenix-wpe-compat.c`: a weak `nextafterf()`. libphoenix libm has `nextafter()` but not
+  the float variant, and WebCore layout/rendering needs it. **libphoenix gap (B1).**
 - `msync` comes from `libwlphx-compat.a`, not from the jsc compat object.
-- `UINT8_MAX`/`UINT16_MAX` keep track C's `stdint.h` until branch `stdint-int-limits` lands.
+- `UINT8_MAX`/`UINT16_MAX` keep track C's `stdint.h` until branch `stdint-int-limits` lands. The
+  probe drops it by itself afterwards.
+- Track C's compat object is linked as in `jsc`: the `_malloc_init` and `_malloc_fork*` hooks keep
+  libphoenix's malloc out of the mimalloc link; `PHX_TRACE_ABORT=1` prints the pc/lr chain on
+  SIGABRT.
+- The **link** appends the whole static closure at the end of every C++ link
+  (`CMAKE_CXX_STANDARD_LIBRARIES`):
+  - Mesa's gallium, whole-archive;
+  - one `--start-group` holding every dependency archive, Mesa's other archives and
+    `libgioopenssl.a`;
+  - `libwlphx-compat.a` with its wraps;
+  - `libicudata.a`;
+  - libphoenix's `libm.a`, **before** g++'s implicit `-lstdc++`, because `libstdc++.a`'s own
+    `hypotf` collides with it.
+
+  The order matters: CMake's find modules name only each package's main archive and put a
+  target's own libraries *before* WebCore's link interface.
+- **unifdef runs on the build machine.** WebKit's bundled copy would be cross-compiled.
+  `generate-api-header.py` then silently installs the public API headers *unprocessed*, which
+  breaks every `WebKitEnumTypes`/`webkit_web_view_get_type` user. So `build.sh` compiles a host
+  `unifdef` and passes `USE_SYSTEM_UNIFDEF=ON`.
+
+## Results
+
+Build host: 16 threads, 29 GiB; every heavy step through `scripts/heavy-build.sh` at `-j8`.
+
+| | Value |
+|---|---|
+| WebKit steps (configure + `ninja WPEBrowser`) | 8488 (WTF, JSC, bmalloc/mimalloc, Skia, WebCore, PAL, WebKit, WPEPlatform, the launcher). The clean time was not measured in one piece: the build ran in stages while other builds held the host (a `-j8` WebKit build needs ~16 GB) |
+| `wpe-browser` stripped / unstripped | **121,480,352 B** / 269,711,088 B; `text` 118.2 MB, `data` 3.3 MB, `bss` 0.6 MB |
+| ELF | static, 2 PT_LOAD (4 KiB aligned), PT_GNU_STACK 8 MiB, 0x100-byte TLS segment, no PT_INTERP |
+| allocator | `malloc` == `mi_malloc` (the mimalloc override); no `malloc_common` (libphoenix's `malloc_dl.o`) in the link |
+| link contents (checked by `build.sh`) | `WebKit::WebProcessMain`, `WebKit::NetworkProcessMain`, `g_io_openssl_load`, `g_tls_backend_get_default`, `memfd_create` (shmsrv), Mesa's `eglGetProcAddress` + `dri2_initialize_surfaceless`, `epoxy_static_proc_address`, `wpe_display_wayland_new`, `wpe_display_headless_new`, ICU (`ubrk_open_78`), hb-icu, OpenSSL `SHA256_Init`, libsoup, `nextafterf` |
+| configure: public options ON | `ENABLE_PDFJS ENABLE_WPE_PLATFORM ENABLE_WPE_PLATFORM_HEADLESS ENABLE_WPE_PLATFORM_WAYLAND ENABLE_XSLT USE_SKIA_OPENTYPE_SVG USE_WOFF2` |
+| build warnings | GCC 16's `-Wsfinae-incomplete` in upstream WTF/WebCore/WebKit headers (as track C); OpenSSL 3 deprecation warnings in PAL/WebCore's OpenSSL code |
+
+Open gaps, known before the first Pi run:
+- **No run anywhere yet.** The program is Phoenix-only: it links Mesa's v3d driver and
+  libphoenix, and there is no host build of the same tree. So the shm profile, the RSS and the
+  first-page time are Pi measurements (below).
+- **GL is required in the WebProcess** (see GPU). If surfaceless EGL on `/dev/dri/renderD128`
+  fails on the Pi, the WebProcess aborts before any page loads, and B4 then needs a Phoenix
+  answer: either a working render node, or a softpipe/llvmpipe Mesa variant. WPE 2.54 has no
+  GL-free compositing path.
+- **libphoenix gaps** found by this link (local shims here):
+  - `nextafterf` (B1);
+  - `MSG_CTRUNC` (cosmetic);
+  - libstdc++'s hidden `<fenv.h>` (toolchain);
+  - no POSIX shm, so `memfd_create` comes from the wayland_phoenix compat over shmsrv (B6).
+- **Spawn:** the children are started by GLib's `GSubprocess` (fork+exec or posix_spawn as GLib
+  was configured) with fd inheritance (`take_fd`) of the IPC socket. That path has not run on
+  Phoenix with a 120 MB static ELF yet.
+- **Sizes:** each process maps the 64 MiB JSC Structure heap only when it creates a VM (the
+  WebProcess). mimalloc arenas are 32 MiB steps (track C). Expect ~150-300 MB RSS for the
+  WebProcess.
+- **Not linked in:** WebCrypto (off, but its OpenSSL key code is compiled), WebGL, media,
+  WebDriver, the inspector server.
 
 ## Shared memory profile (B6 input)
 
@@ -213,7 +277,7 @@ psh rules apply:
 | # | Command at `(psh)%` | Expected |
 |---|---|---|
 | 1 | `export WPE_PHOENIX_SHM_LOG=1` | — |
-| 2 | `/usr/bin/wpe-browser --headless --snapshot=/tmp/b4.png --timeout=600 /usr/share/wpe-browser/b4.html` | in order: `WPEB … start pid=… mode=headless uri=file:///usr/share/wpe-browser/b4.html exe=/usr/bin/wpe-browser`, `WPEB … display WPEDisplayHeadless`, `WPEB … role=network pid=…`, `WPEB … role=web pid=…`, `PHXSHM …` lines, `WPEB … load committed`, `WPEB … title B4 WPE Phoenix 2...`, `WPEB … load finished`, `WPEB … snapshot file=/tmp/b4.png width=1024 height=768 crc32=XXXXXXXX`, `WPEB … exit status=0`; back to the prompt |
+| 2 | `/usr/bin/wpe-browser --headless --snapshot=/tmp/b4.png --timeout=600 /usr/share/wpe-browser/b4.html` | in order: `WPEB … start pid=… mode=headless uri=file:///usr/share/wpe-browser/b4.html exe=/usr/bin/wpe-browser`, `WPEB … display WPEDisplayHeadless`, `WPEB … role=network pid=…` and `WPEB … role=web pid=…` (either order: the children print them), `PHXSHM …` lines, `WPEB … load committed`, `WPEB … title B4 WPE Phoenix 2...`, `WPEB … load finished`, `WPEB … snapshot file=/tmp/b4.png width=1024 height=768 crc32=XXXXXXXX`, `WPEB … exit status=0`; back to the prompt |
 | 3 | the same command again | the **same** `crc32=` (deterministic rendering) |
 | 4 | `/usr/bin/wpe-browser --headless --cpu-rendering --snapshot=/tmp/b4cpu.png --timeout=600 /usr/share/wpe-browser/b4.html` | `exit status=0`; crc may differ from #2 (GPU vs CPU raster) |
 

@@ -1,13 +1,15 @@
 Subject: WebKit: Phoenix multi-call processes; SharedMemory and wl_shm pools over shmsrv; shm log
 
 One static program is the UI, web and network process: findWebKitProcess() returns
-WPE_PHOENIX_EXECUTABLE (set by the program's main) or WPE_PHOENIX_DEFAULT_EXECUTABLE, and the
-launcher passes the child's role in WPE_PHOENIX_PROCESS_ROLE. WebCore::SharedMemory and
-WPEPlatform's wl_shm pools allocate with memfd_create() from the wayland_phoenix compat library
-(shmsrv objects). WPE_PHOENIX_SHM_LOG=1 prints every allocation, mapping and pool (re)size.
+WPE_PHOENIX_EXECUTABLE (recorded by the program's main) or WPE_PHOENIX_DEFAULT_EXECUTABLE, and
+ProcessLauncherGLib passes the child's role in WPE_PHOENIX_PROCESS_ROLE (WebKit's argv is
+unchanged). WebCore::SharedMemory and WPEPlatform's wl_shm pools allocate with memfd_create()
+from the wayland_phoenix compat library (shmsrv objects: contiguous, >= 1 MiB, one descriptor
+each). WPE_PHOENIX_SHM_LOG=1 prints every allocation, mapping and pool (re)size (PHXSHM lines),
+the input for the browser plan's B6 shm decision.
 
 diff --git a/Source/WebCore/platform/unix/SharedMemoryUnix.cpp b/Source/WebCore/platform/unix/SharedMemoryUnix.cpp
-index c534f8fe7e32b62d5c1b9584aaaa109e836086ff..cfdcc47bf8756a0505f439d8a15d131727be4dae 100644
+index c534f8fe..cfdcc47b 100644
 --- a/Source/WebCore/platform/unix/SharedMemoryUnix.cpp
 +++ b/Source/WebCore/platform/unix/SharedMemoryUnix.cpp
 @@ -50,8 +50,43 @@
@@ -98,23 +100,8 @@ index c534f8fe7e32b62d5c1b9584aaaa109e836086ff..cfdcc47bf8756a0505f439d8a15d1317
      RefPtr<SharedMemory> instance = adoptRef(new SharedMemory());
      instance->m_data = data;
      instance->m_size = handle.size();
-diff --git a/Source/WebKit/PlatformWPE.cmake b/Source/WebKit/PlatformWPE.cmake
-index ab16147a62180541ebd399dcf69bffca8fd5fe0a..889a9f58c58dcf8563536b92184f30c8a8d081ca 100644
---- a/Source/WebKit/PlatformWPE.cmake
-+++ b/Source/WebKit/PlatformWPE.cmake
-@@ -52,6 +52,10 @@ endif ()
- add_definitions(-DLIBDIR="${LIB_INSTALL_DIR}")
- add_definitions(-DPKGLIBDIR="${LIB_INSTALL_DIR}/wpe-webkit-${WPE_API_VERSION}")
- add_definitions(-DPKGLIBEXECDIR="${LIBEXEC_INSTALL_DIR}")
-+if (CMAKE_SYSTEM_NAME MATCHES "Phoenix")
-+    set(WPE_PHOENIX_DEFAULT_EXECUTABLE "${CMAKE_INSTALL_FULL_BINDIR}/wpe-browser" CACHE STRING "The multi-call browser program, when WPE_PHOENIX_EXECUTABLE is unset")
-+    add_definitions(-DWPE_PHOENIX_DEFAULT_EXECUTABLE="${WPE_PHOENIX_DEFAULT_EXECUTABLE}")
-+endif ()
- add_definitions(-DDATADIR="${CMAKE_INSTALL_FULL_DATADIR}")
- add_definitions(-DLOCALEDIR="${CMAKE_INSTALL_FULL_LOCALEDIR}")
- 
 diff --git a/Source/WebKit/Shared/glib/ProcessExecutablePathGLib.cpp b/Source/WebKit/Shared/glib/ProcessExecutablePathGLib.cpp
-index 64bcde96dfe76998f6ed6297be892c6548123049..a33a0ac96eaccdaf43e315e1f016c5d5e3f5d26d 100644
+index 64bcde96..a33a0ac9 100644
 --- a/Source/WebKit/Shared/glib/ProcessExecutablePathGLib.cpp
 +++ b/Source/WebKit/Shared/glib/ProcessExecutablePathGLib.cpp
 @@ -42,6 +42,19 @@ static String getExecutablePath()
@@ -146,7 +133,7 @@ index 64bcde96dfe76998f6ed6297be892c6548123049..a33a0ac96eaccdaf43e315e1f016c5d5
  String executablePathOfWebProcess()
  {
 diff --git a/Source/WebKit/UIProcess/Launcher/glib/ProcessLauncherGLib.cpp b/Source/WebKit/UIProcess/Launcher/glib/ProcessLauncherGLib.cpp
-index 63a1abdff4b0f59863259b89ecb5a1a8061b5641..31ed7c95e7d8d9f6232bb6bfea16f350343a8bc3 100644
+index 63a1abdf..31ed7c95 100644
 --- a/Source/WebKit/UIProcess/Launcher/glib/ProcessLauncherGLib.cpp
 +++ b/Source/WebKit/UIProcess/Launcher/glib/ProcessLauncherGLib.cpp
 @@ -231,6 +231,13 @@ void ProcessLauncher::launchProcess()
@@ -164,7 +151,7 @@ index 63a1abdff4b0f59863259b89ecb5a1a8061b5641..31ed7c95e7d8d9f6232bb6bfea16f350
      UnixFileDescriptor sysprofFd;
  
 diff --git a/Source/WebKit/WPEPlatform/wpe/wayland/WPEWaylandSHMPool.cpp b/Source/WebKit/WPEPlatform/wpe/wayland/WPEWaylandSHMPool.cpp
-index ea3de8b8735b3f90977bc40a06d30be925a50350..769298bd894f8ab72a459bd9dae56bb2cfd01113 100644
+index ea3de8b8..769298bd 100644
 --- a/Source/WebKit/WPEPlatform/wpe/wayland/WPEWaylandSHMPool.cpp
 +++ b/Source/WebKit/WPEPlatform/wpe/wayland/WPEWaylandSHMPool.cpp
 @@ -40,6 +40,28 @@

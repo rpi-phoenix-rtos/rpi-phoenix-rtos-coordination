@@ -39,7 +39,7 @@ root="$(cd "${here}/../../.." && pwd)"
 jsc="${root}/tools/browser/jsc"
 out=""
 dl=""
-jobs=4
+jobs=8
 clean=0
 stage=all
 mesa_variant=gles
@@ -60,6 +60,7 @@ while [ $# -gt 0 ]; do
 	esac
 	shift
 done
+[ "${jobs}" -le 8 ] || { echo "build.sh: -j ${jobs}: at most 8 WebKit jobs on this host (scripts/heavy-build.sh)" >&2; jobs=8; }
 [ -n "${out}" ] || { echo "build.sh: --out <dir> is required (the build is ~15 GB; keep it out of the repo)" >&2; exit 2; }
 case "${out}" in /*) ;; *) out="${PWD}/${out}" ;; esac
 [ -n "${dl}" ] || dl="${out}/dl"
@@ -184,6 +185,7 @@ stage_compat() {
 	log "  compat headers: $(cd "${ci}" && find . -name '*.h' | sort | tr '\n' ' ')"
 	"${TC}-gcc" -O2 ${TFLAGS} -Wall -Wextra -Werror ${cdefs} -isystem "${ci}" -c "${C}/phoenix-jsc-compat.c" \
 		-o "${cn}/phoenix-jsc-compat.o"
+	"${TC}-gcc" -O2 ${TFLAGS} -Wall -Wextra -Werror -c "${here}/compat/phoenix-wpe-compat.c" -o "${cn}/phoenix-wpe-compat.o"
 	mkdir -p "${out}/compat"
 	rsync -rc --delete "${cn}/" "${out}/compat/"
 	rm -rf "${cn}"
@@ -300,11 +302,15 @@ EOF
 	chmod +x "${VN}/pkg-config"
 
 	# the static link closure the multi-call program adds to WebKit's own interface
-	# (launcher/CMakeLists.txt PHOENIX_BROWSER_EXTRA_LIBS)
-	# (Mesa's archives are copied too: link-gles.txt names them in the port's build tree)
+	# (appended to every C++ link: CMAKE_CXX_STANDARD_LIBRARIES in stage_configure)
+	# (Mesa's archives are copied too: link-gles.txt names them in the port's build tree).
+	# Everything but Mesa's gallium (whole-archive) goes into ONE --start-group: CMake's find
+	# modules name only each package's main archive, so the static closure (libsoup -> nghttp2,
+	# psl, brotli; GIO -> libintl, libiconv, libresolv; epoxy -> Mesa's EGL; fontconfig ->
+	# freetype; ...) is resolved by the group, not by pkg-config's order.
 	mkdir -p "${VN}/mesa"
+	local a group=()
 	{
-		local a
 		while IFS= read -r a; do
 			case "${a}" in
 				--whole-archive\ *)
@@ -315,10 +321,14 @@ EOF
 				*)
 					[ -f "${a}" ] || { echo "build.sh: ${a} (from link-gles.txt) missing" >&2; exit 1; }
 					cp -L "${a}" "${VN}/mesa/"
-					echo "${V}/mesa/$(basename "${a}")" ;;
+					group+=("${V}/mesa/$(basename "${a}")") ;;
 			esac
 		done < "${MESA}/${mesa_variant}/link-gles.txt"
+		echo "-Wl,--start-group"
+		printf '%s\n' "${group[@]}"
+		(cd "${VN}/lib" && find . -maxdepth 1 -name '*.a' | sort | sed "s|^\./|${V}/lib/|")
 		echo "${V}/lib/gio/modules/libgioopenssl.a"
+		echo "-Wl,--end-group"
 	} > "${VN}/link-extra.txt"
 	mkdir -p "${V}"
 	rsync -rc --delete "${VN}/" "${V}/"
@@ -405,7 +415,7 @@ WPE_CMAKE_OPTS=(
 stage_configure() {
 	[ -n "${RUBY}" ] || stage_jsc_tools
 	[ -x "${V}/pkg-config" ] || stage_deps
-	[ -f "${out}/compat/phoenix-jsc-compat.o" ] || stage_compat
+	[ -f "${out}/compat/phoenix-wpe-compat.o" ] || stage_compat
 	stage_extract
 	local wsrc wb="${out}/webkit-build" tcf="${out}/phoenix-aarch64.cmake" wflags extra
 	wsrc="$(webkit_src_dir)"
@@ -418,10 +428,16 @@ stage_configure() {
 	sed -e "s|@HERE@|${jsc}|g" -e "s|@TC@|${TC}|g" -e "s|@SYSROOT@|${S}|g" -e "s|@TFLAGS@|${wflags}|g" \
 		-e "s|@ICU@|${V}|g" "${jsc}/cmake/phoenix-aarch64.cmake.in" > "${tcf}"
 	echo "set(PKG_CONFIG_EXECUTABLE \"${V}/pkg-config\" CACHE FILEPATH \"\")" >> "${tcf}"
+	# -L<deps>/lib: FindWayland hands bare library names (WAYLAND_LIBRARIES) to the link.
 	# Mesa's archives (whole-archive gallium first), glib-networking's module, the wayland_phoenix
 	# compat library with the --wrap options it and libdrm-phoenix are built for, and the
-	# libphoenix shims; libicudata again at the very end (static link order, as track C).
-	extra="$(tr '\n' ';' < "${V}/link-extra.txt")-Wl,-u,__wrap_close;-Wl,-u,__wrap_write;${V}/lib/libwlphx-compat.a;-Wl,--wrap=close;-Wl,--wrap=write;-Wl,--wrap=mmap;-Wl,--wrap=ioctl"
+	# libphoenix shims; libicudata again at the very end (static link order, as track C), and
+	# libphoenix's libm BEFORE g++'s implicit -lstdc++: the toolchain's libstdc++.a has its own
+	# hypotf (math_stubs_float.o), which otherwise collides with libm's (harfbuzz_icu, labwc).
+	# All of it goes at the END of every C++ link (CMAKE_CXX_STANDARD_LIBRARIES): CMake places a
+	# target's own libraries BEFORE the link interface of WebCore & co., so a group given as
+	# target libraries would be scanned before the archives that need it (libwebp -> sharpyuv).
+	extra="$(tr '\n' ' ' < "${V}/link-extra.txt")-Wl,-u,__wrap_close -Wl,-u,__wrap_write ${V}/lib/libwlphx-compat.a -Wl,--wrap=close -Wl,--wrap=write -Wl,--wrap=mmap -Wl,--wrap=ioctl"
 	if [ -f "${wb}/build.ninja" ] && ! cmp -s "${tcf}" "${wb}.toolchain"; then
 		log "WebKit: toolchain changed, rebuilding from scratch"
 		rm -rf "${wb}"
@@ -436,9 +452,8 @@ stage_configure() {
 		-DCMAKE_INSTALL_PREFIX=/usr \
 		-DPHOENIX_BROWSER_DIR="${here}/launcher" \
 		-DUSE_SYSTEM_UNIFDEF=ON -DUNIFDEF_EXECUTABLE="${out}/host-tools/unifdef" \
-		-DPHOENIX_BROWSER_EXTRA_LIBS="${extra}" \
-		-DCMAKE_CXX_STANDARD_LIBRARIES="${out}/compat/phoenix-jsc-compat.o ${V}/lib/libicudata.a" \
-		-DCMAKE_EXE_LINKER_FLAGS="-Wl,-z,max-page-size=0x1000 -Wl,-z,stack-size=8388608 -Wl,--gc-sections" \
+		-DCMAKE_CXX_STANDARD_LIBRARIES="${out}/compat/phoenix-jsc-compat.o ${out}/compat/phoenix-wpe-compat.o ${extra} ${V}/lib/libicudata.a ${S}/lib/libm.a" \
+		-DCMAKE_EXE_LINKER_FLAGS="-L${V}/lib -Wl,-z,max-page-size=0x1000 -Wl,-z,stack-size=8388608 -Wl,--gc-sections" \
 		> "${out}/webkit-configure.log" 2>&1 \
 		|| { grep -E 'CMake (Error|Warning)' -A6 "${out}/webkit-configure.log" | head -60 >&2; echo "build.sh: WebKit configure failed, see ${out}/webkit-configure.log" >&2; exit 1; }
 	cp "${tcf}" "${wb}.toolchain"
@@ -453,7 +468,10 @@ stage_build() {
 	[ -f "${out}/configure.stamp" ] || stage_configure
 	local wb="${out}/webkit-build" t0=${SECONDS}
 	log "WebKit: build wpe-browser (-j${jobs})"
-	PATH="$(dirname "${RUBY}"):${PATH}" ninja -C "${wb}" -j"${jobs}" WPEBrowser > "${out}/webkit-build.log" 2>&1 \
+	# through scripts/heavy-build.sh: one heavy build on the host at a time (flock), -j capped by
+	# MemAvailable (2 GB per WebKit job) and the whole build in a MemoryMax scope
+	PATH="$(dirname "${RUBY}"):${PATH}" "${root}/scripts/heavy-build.sh" -j "${jobs}" -- \
+		ninja -C "${wb}" -j '{JOBS}' WPEBrowser > "${out}/webkit-build.log" 2>&1 \
 		|| { grep -E 'error:|FAILED:' "${out}/webkit-build.log" | head -30 >&2; echo "build.sh: WebKit build failed, see ${out}/webkit-build.log" >&2; exit 1; }
 	log "WebKit: built in $((SECONDS - t0)) s"
 	cp "${wb}/bin/wpe-browser" "${out}/wpe-browser"
@@ -466,10 +484,17 @@ stage_build() {
 		echo "build.sh: wpe-browser links libphoenix's malloc (stdlib/malloc_dl.o) besides mimalloc" >&2
 		exit 1
 	fi
-	for s in mi_malloc g_io_openssl_load memfd_create eglGetProcAddress epoxy_static_proc_address \
-			wpe_display_wayland_new wpe_display_headless_new soup_session_new ubrk_open_78 hb_icu_get_unicode_funcs; do
+	# the roles, the static TLS backend, shm, Mesa's EGL (surfaceless) behind epoxy, WPEPlatform,
+	# ICU, HarfBuzz-ICU, OpenSSL (PAL digests), libsoup, the local compat
+	for s in _ZN6WebKit14WebProcessMainEiPPc _ZN6WebKit18NetworkProcessMainEiPPc g_io_openssl_load \
+			g_tls_backend_get_default memfd_create eglGetProcAddress dri2_initialize_surfaceless \
+			epoxy_static_proc_address wpe_display_wayland_new wpe_display_headless_new ubrk_open_78 \
+			hb_icu_script_to_script SHA256_Init soup_session_get_feature nextafterf mi_malloc; do
 		grep -qE " [TtWD] ${s}\$" <<< "${syms}" || { echo "build.sh: wpe-browser has no ${s}" >&2; exit 1; }
 	done
+	# mimalloc IS malloc (the override), as in track C
+	[ "$(grep -E ' T (malloc|mi_malloc)$' <<< "${syms}" | awk '{print $1}' | sort -u | wc -l)" = 1 ] \
+		|| { echo "build.sh: malloc is not mimalloc's" >&2; exit 1; }
 	log "wpe-browser: symbol checks passed"
 }
 

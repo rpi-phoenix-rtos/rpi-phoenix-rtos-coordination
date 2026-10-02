@@ -1,14 +1,18 @@
 Subject: WPE: Phoenix build configuration: OpenSSL digests, static libWPEWebKit, multi-call program hook
 
-WPE hard-requires libgcrypt and libtasn1 even with ENABLE_WEB_CRYPTO=OFF; then PAL's SHA
-digests are their only users. On Phoenix use OpenSSL (already linked for glib-networking):
-USE_OPENSSL instead of USE_GCRYPT, PAL's CryptoDigestOpenSSL.cpp, and WebCore's OpenSSL WebCrypto
-sources when ENABLE_WEB_CRYPTO is on. libWPEWebKit is STATIC (no shared libraries; CMake would turn
-SHARED into STATIC on its own, but WebKit's sub-target objects only reach a shared link).
-PHOENIX_BROWSER_DIR adds the out-of-tree multi-call program (tools/browser/wpe/launcher).
+WPE hard-requires libgcrypt and libtasn1 even with ENABLE_WEB_CRYPTO=OFF (PAL's SHA digests
+and WebCore's key classes, referenced by SerializedScriptValue, are their users then). On Phoenix
+use OpenSSL, already linked for glib-networking: USE_OPENSSL instead of USE_GCRYPT, PAL's
+CryptoDigestOpenSSL.cpp and WebCore's OpenSSL crypto sources (platform/OpenSSL.cmake).
+libWPEWebKit is STATIC (no shared libraries on Phoenix; CMake would turn SHARED into STATIC on its
+own, but WebKit's sub-target objects only reach a shared link). A static libWebKit does not carry
+the frameworks it is made of, so its executables link them (WebProcess/NetworkProcess_FRAMEWORKS)
+and it must not depend on the auxiliary executables (a cycle). PHOENIX_BROWSER_DIR adds the
+out-of-tree multi-call program (tools/browser/wpe/launcher); WPE_PHOENIX_DEFAULT_EXECUTABLE is
+its install path.
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 981edf67988dda94c6456615a3fb982b0f8cc8c8..2c1ca510c4c6364ad06a9ad57bea126618e776d1 100644
+index 981edf67..2c1ca510 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -74,6 +74,12 @@ endif ()
@@ -25,7 +29,7 @@ index 981edf67988dda94c6456615a3fb982b0f8cc8c8..2c1ca510c4c6364ad06a9ad57bea1266
  # Add tools
  # -----------------------------------------------------------------------------
 diff --git a/Source/WebCore/PAL/pal/PlatformWPE.cmake b/Source/WebCore/PAL/pal/PlatformWPE.cmake
-index 3d2bf0ab170e103531c561476d5870aa4ec1283b..4a6e6a9038737eeacd78955c67db57e10fcd1693 100644
+index 3d2bf0ab..4a6e6a90 100644
 --- a/Source/WebCore/PAL/pal/PlatformWPE.cmake
 +++ b/Source/WebCore/PAL/pal/PlatformWPE.cmake
 @@ -1,18 +1,8 @@
@@ -71,16 +75,16 @@ index 3d2bf0ab170e103531c561476d5870aa4ec1283b..4a6e6a9038737eeacd78955c67db57e1
 +
  list(APPEND PAL_LIBRARIES GLib::GLib)
 diff --git a/Source/WebCore/PlatformWPE.cmake b/Source/WebCore/PlatformWPE.cmake
-index e464275ffb722e9615c25fd77fc29163a310d252..cad629767ed1106b2c77d2d30f70375f597900fb 100644
+index e464275f..96587249 100644
 --- a/Source/WebCore/PlatformWPE.cmake
 +++ b/Source/WebCore/PlatformWPE.cmake
 @@ -1,5 +1,13 @@
  include(platform/Adwaita.cmake)
 -include(platform/GCrypt.cmake)
 +if (USE_OPENSSL)
-+    if (ENABLE_WEB_CRYPTO)
-+        include(platform/OpenSSL.cmake)
-+    endif ()
++    # as GCrypt.cmake below: the key classes are referenced (SerializedScriptValue) even with
++    # ENABLE_WEB_CRYPTO=OFF
++    include(platform/OpenSSL.cmake)
 +    list(APPEND WebCore_PRIVATE_LIBRARIES OpenSSL::Crypto)
 +else ()
 +    include(platform/GCrypt.cmake)
@@ -100,8 +104,72 @@ index e464275ffb722e9615c25fd77fc29163a310d252..cad629767ed1106b2c77d2d30f70375f
  list(APPEND WebCore_LIBRARIES
      GLib::Module
      ${UPOWERGLIB_LIBRARIES}
+diff --git a/Source/WebKit/CMakeLists.txt b/Source/WebKit/CMakeLists.txt
+index 85b2d74e..5c1d63de 100644
+--- a/Source/WebKit/CMakeLists.txt
++++ b/Source/WebKit/CMakeLists.txt
+@@ -785,6 +785,13 @@ endif ()
+ set(WebProcess_LIBRARIES WebKit)
+ set(NetworkProcess_LIBRARIES WebKit)
+ set(GPUProcess_LIBRARIES WebKit)
++if (WebKit_LIBRARY_TYPE STREQUAL "STATIC")
++    # A static libWebKit does not carry the OBJECT/STATIC frameworks it is made of (only a
++    # shared one links them in), so its executables link them themselves.
++    set(WebProcess_FRAMEWORKS ${WebKit_FRAMEWORKS} WebKit)
++    set(NetworkProcess_FRAMEWORKS ${WebKit_FRAMEWORKS} WebKit)
++    set(GPUProcess_FRAMEWORKS ${WebKit_FRAMEWORKS} WebKit)
++endif ()
+ 
+ # For platforms that want to use system-provided OpenGL (ES) / EGL headers,
+ # these include directories, libraries or definitions need to be
+@@ -835,17 +842,25 @@ if (NOT USE_HEADER_MAPS AND NOT USE_FRAMEWORK_BUNDLES)
+     )
+     set(WebKit_INTERFACE_DEPENDENCIES "")
+ endif ()
+-set(WebKit_INTERFACE_LINK_DEPENDS
+-    $<TARGET_FILE:NetworkProcess>
+-    $<TARGET_FILE:WebProcess>
+-)
++if (NOT WebKit_LIBRARY_TYPE STREQUAL "STATIC")
++    set(WebKit_INTERFACE_LINK_DEPENDS
++        $<TARGET_FILE:NetworkProcess>
++        $<TARGET_FILE:WebProcess>
++    )
++else ()
++    # Static (Phoenix-RTOS): the auxiliary processes link libWebKit themselves (a cycle), and a
++    # multi-call program does not need them built at all.
++    set(WebKit_INTERFACE_LINK_DEPENDS "")
++endif ()
+ 
+ WEBKIT_EXECUTABLE_DECLARE(WebProcess)
+ WEBKIT_EXECUTABLE_DECLARE(NetworkProcess)
+ 
+ if (ENABLE_GPU_PROCESS)
+     WEBKIT_EXECUTABLE_DECLARE(GPUProcess)
+-    list(APPEND WebKit_INTERFACE_LINK_DEPENDS $<TARGET_FILE:GPUProcess>)
++    if (NOT WebKit_LIBRARY_TYPE STREQUAL "STATIC")
++        list(APPEND WebKit_INTERFACE_LINK_DEPENDS $<TARGET_FILE:GPUProcess>)
++    endif ()
+ endif ()
+ 
+ set(WebKit_GENERATED_SERIALIZERS_SUFFIX cpp)
+diff --git a/Source/WebKit/PlatformWPE.cmake b/Source/WebKit/PlatformWPE.cmake
+index ab16147a..889a9f58 100644
+--- a/Source/WebKit/PlatformWPE.cmake
++++ b/Source/WebKit/PlatformWPE.cmake
+@@ -52,6 +52,10 @@ endif ()
+ add_definitions(-DLIBDIR="${LIB_INSTALL_DIR}")
+ add_definitions(-DPKGLIBDIR="${LIB_INSTALL_DIR}/wpe-webkit-${WPE_API_VERSION}")
+ add_definitions(-DPKGLIBEXECDIR="${LIBEXEC_INSTALL_DIR}")
++if (CMAKE_SYSTEM_NAME MATCHES "Phoenix")
++    set(WPE_PHOENIX_DEFAULT_EXECUTABLE "${CMAKE_INSTALL_FULL_BINDIR}/wpe-browser" CACHE STRING "The multi-call browser program, when WPE_PHOENIX_EXECUTABLE is unset")
++    add_definitions(-DWPE_PHOENIX_DEFAULT_EXECUTABLE="${WPE_PHOENIX_DEFAULT_EXECUTABLE}")
++endif ()
+ add_definitions(-DDATADIR="${CMAKE_INSTALL_FULL_DATADIR}")
+ add_definitions(-DLOCALEDIR="${CMAKE_INSTALL_FULL_LOCALEDIR}")
+ 
 diff --git a/Source/cmake/OptionsWPE.cmake b/Source/cmake/OptionsWPE.cmake
-index b6960d7383404996f4b214fd15ee7f4a0c54455f..2444f8dc0e06b8bdcd7030237ee936e530f29e38 100644
+index b6960d73..2444f8dc 100644
 --- a/Source/cmake/OptionsWPE.cmake
 +++ b/Source/cmake/OptionsWPE.cmake
 @@ -14,9 +14,15 @@ find_package(HarfBuzz 2.7.4 REQUIRED COMPONENTS ICU)

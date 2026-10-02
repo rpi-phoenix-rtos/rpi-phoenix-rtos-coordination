@@ -2,10 +2,11 @@
 # NetworkProcess in one ELF). Added to the WebKit build by patch 0006 through
 # -DPHOENIX_BROWSER_DIR=<this directory>; modelled on Tools/MiniBrowser/wpe/CMakeLists.txt.
 #
-# PHOENIX_BROWSER_EXTRA_LIBS (set by tools/browser/wpe/build.sh): what a static program needs
-# beyond WebKit's own link interface -- Mesa's EGL/GLES archives (epoxy resolves through
-# eglGetProcAddress), glib-networking's OpenSSL module, the wayland_phoenix compat library
-# (memfd_create over shmsrv) and the --wrap options those libraries are built for.
+# What a static program needs beyond WebKit's own link interface -- Mesa's EGL/GLES archives
+# (epoxy resolves through eglGetProcAddress), glib-networking's OpenSSL module, the
+# wayland_phoenix compat library (memfd_create over shmsrv), the static closure of every
+# dependency and the --wrap options -- is appended to every C++ link by tools/browser/wpe/build.sh
+# (CMAKE_CXX_STANDARD_LIBRARIES), so that it comes after all of WebCore's libraries.
 
 set(WPEBrowser_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/wpe-browser.cpp
@@ -21,11 +22,20 @@ set(WPEBrowser_PRIVATE_INCLUDE_DIRECTORIES
     ${WEBKIT_DIR}/WPEPlatform
 )
 
+# libWPEWebKit is static on Phoenix (patch 0006): the program links the frameworks it is made
+# of (bmalloc, WTF, JavaScriptCore, WebCore: OBJECT libraries; PAL) itself, as WebKit's own
+# WPEWebProcess/WPENetworkProcess do there.
+set(WPEBrowser_FRAMEWORKS
+    bmalloc
+    WTF
+    JavaScriptCore
+    PAL
+    WebCore
+    WebKit
+)
+
 set(WPEBrowser_PRIVATE_LIBRARIES
-    ${JavaScriptCore_LIBRARY_NAME}
-    WebKit::WebKit
     PNG::PNG
-    ${PHOENIX_BROWSER_EXTRA_LIBS}
 )
 
 set(WPEBrowser_OUTPUT_NAME wpe-browser)
