@@ -263,6 +263,28 @@ def main():
                 print(f"\n*** clock step not seen in {clock_wait_s}s — PROCEEDING ANYWAY; this cycle "
                       "may straddle a clock step (see docs/misc/2026-09-19-ntp-clock-step-breaks-app-startup.md)")
 
+            # The boot-time sync can fail while the network is up (2026-10-02, b29-persist: genet
+            # bound, 90 s of no NTP reply). Every TLS command of the cycle then fails on "not yet
+            # valid" certificates, which reads as a browser or TLS regression. One more try by hand.
+            if CLOCK_FAILED in buffered and CLOCK_MARKER not in buffered:
+                print("\n*** clock NOT set — retrying once with `ntpclient -w 60`")
+                ser.write(b"/bin/ntpclient -w 60\n")
+                ck_deadline = time.time() + 90
+                while time.time() < ck_deadline and CLOCK_MARKER not in buffered[-4096:]:
+                    data = ser.read(256)
+                    if data:
+                        sys.stdout.buffer.write(data)
+                        sys.stdout.flush()
+                        log.write(data)
+                        log.flush()
+                        buffered.extend(data)
+                        if buffered.count(CLOCK_FAILED) > 1:
+                            break
+                if CLOCK_MARKER in buffered:
+                    print("\n*** wall clock stepped on the retry — safe to launch timing-sensitive apps")
+                else:
+                    print("\n*** CLOCK STILL NOT SET — TLS results of this cycle are INVALID")
+
         # phase 2: send commands
         for cmd in args.commands:
             time.sleep(args.inter_cmd_secs)
