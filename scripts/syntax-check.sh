@@ -29,6 +29,12 @@ rel="${2:?usage: syntax-check.sh <sibling-repo> <path/in/repo.c> [target]}"
 target="${3:-aarch64a72-generic-rpi4b}"
 
 src="${repo_root}/sources/${repo}/${rel}"
+# SYNTAX_CHECK_SRC=<path>: check that file instead of the sources/ copy -- a worktree's version
+# of the same file (agents and branches work in git worktrees; sources/ stays on clean master).
+# Its sibling headers are staged from the worktree directory the same way.
+if [ -n "${SYNTAX_CHECK_SRC:-}" ]; then
+    src="$(cd "$(dirname "${SYNTAX_CHECK_SRC}")" && pwd)/$(basename "${SYNTAX_CHECK_SRC}")"
+fi
 bdir="${repo_root}/.buildroot/${repo}"
 obj="${repo_root}/.buildroot/_build/${target}/${repo}/${rel%.c}.o"
 proj="${repo_root}/.buildroot/_projects/${target}"
