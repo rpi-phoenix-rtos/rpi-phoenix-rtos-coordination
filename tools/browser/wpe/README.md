@@ -12,7 +12,7 @@ the build reads lives there:
 | Port path | What |
 |---|---|
 | `port.def.sh` | the recipe: dependencies, the patches, the staging (USE `rootfs`, `checks`) |
-| `patches/webkit/0001-0010` | track C's five `OS(PHOENIX)` patches (WTF, JSC, mimalloc; the same files as `../jsc/patches/webkit/`) and WPE's five, see [Patches](#patches) |
+| `patches/webkit/0001-0011` | track C's five `OS(PHOENIX)` patches (WTF, JSC, mimalloc; the same files as `../jsc/patches/webkit/`) and WPE's six, see [Patches](#patches) |
 | `files/build-wpe.sh` | **the** build: the port runs it, and so does `build.sh` here for scratch builds |
 | `files/launcher/` | the program (`wpe-browser.cpp`, its CMake file, the export list) |
 | `files/compat/`, `files/cmake/` | track C's libphoenix compat shims (+ `phoenix-wpe-compat.c`), the CMake platform module and toolchain template |
@@ -23,8 +23,9 @@ This directory keeps `build.sh` (the scratch-build wrapper), this README (config
 the pre-registered Pi checks) and `pi/` (development probes: `wpe-ipc-probe.c`, `b4o.sh`).
 
 Status 2026-10-02: **B4 PASS** and **B5 PASS** on the Pi (see PLAN). **B6** (a usable browser) is
-built (the new launcher relinked with the B5 scratch tree's WebKit objects and the current
-sysroot) and its checks are pre-registered [below](#b6-a-usable-browser).
+built (the new launcher and WTF's `FileSystem.cpp` with patch 0011 compiled alone, relinked
+with the B5 scratch tree's other WebKit objects and the current sysroot) and its checks are
+pre-registered [below](#b6-a-usable-browser).
 
 ## Build
 
@@ -79,7 +80,11 @@ WPE_PORT_DIR=<ports worktree>/webkit_wpe tools/browser/wpe/build.sh --out <scrat
 - **A launcher change**: `--stage build` recompiles `wpe-browser.cpp` and relinks (~1 min).
   The existing scratch tree (`br-d`, configured from `tools/browser/wpe/launcher` before the move)
   re-runs CMake once for the new `PHOENIX_BROWSER_DIR` and should then rebuild only the launcher:
-  check with `ninja -C <out>/webkit-build -n WPEBrowser | tail -1` first.
+  check with `ninja -C <out>/webkit-build -n WPEBrowser | tail -1` first. Its source tree has
+  patches 0001-0010 as commits but not 0011 (the B6 binary got 0011 as one object compiled by
+  hand): `git -C <tree> apply <port>/patches/webkit/0011-wtf-maptofile-phoenix-write.patch` and
+  commit it before rebuilding there. Note that sysroot headers newer than its objects
+  (`stdint.h`, `dlfcn.h`, `malloc.h` since build 21) make ninja recompile most of WebKit (~2 h).
 - `--mesa-variant gles|wayland` (default `gles`) picks the mesa_drm build that is linked, see
   [GPU](#gpu-egl-is-not-optional).
 - Outputs:
@@ -244,7 +249,8 @@ A WPEPlatform view in a `GMainLoop`, one window, one view. Design decisions:
 - **Keys** (window mode): Ctrl+L / Alt+D / F6 the address (Enter go, Escape cancel; Ctrl+A select
   all, Ctrl+U clear, Left/Right/Home/End, Backspace/Delete); Alt+Left / Alt+Right back / forward;
   Ctrl+R / F5 reload, Ctrl+Shift+R / Shift+F5 reload without the cache; Escape stop (while
-  loading; otherwise the page gets it); Alt+Home the start page; F11 fullscreen; Ctrl+Q quit.
+  loading; otherwise the page gets it); Alt+Home the start page (headless: the first page); F11
+  fullscreen; Ctrl+Q quit.
   A click into the page ends address editing.
 - **The title** of the window follows the page title (`wpe-browser` while there is none).
 - **New-window requests** (`target=_blank`, `window.open()`) load in the one view:
@@ -365,7 +371,7 @@ list, at the cost of keeping those functions in the program.
 
 ## Patches
 
-The port's `patches/webkit/` holds all ten, applied in order (the image build: the framework's
+The port's `patches/webkit/` holds all eleven, applied in order (the image build: the framework's
 `b_port_apply_patches`; a scratch build without `WEBKIT_SRC`: `build-wpe.sh`, one commit each in
 `<out>/src/webkit`). `0001`-`0005` are track C's, byte-identical to `../jsc/patches/webkit/` (the
 jsc shell keeps its copies; `build.sh` warns when they drift):
@@ -377,6 +383,7 @@ jsc shell keeps its copies; `build.sh` warns when they drift):
 | 0008-wtf-wpe-phoenix | WTF's WPE source list on Phoenix: no `linux/` (procfs, eventfd, RealtimeKit); `phoenix/MemoryFootprintPhoenix.cpp` (track C) for `memoryFootprint()`; `MemoryPressureHandlerUnix.cpp` with `OS(PHOENIX)` (`processMemoryUsage()` = the meminfo footprint, hold-off timer) |
 | 0009-xdgmime-phoenix-static | WebKit's bundled xdgmime and GLib's copy in GIO both define `_caches` and `_xdg_binary_or_text_fallback` in one static link: renamed by `-D`; `ntohl()` from `<arpa/inet.h>` on Phoenix |
 | 0010-wpe-build-fixes | upstream bugs with our options: `JSHTMLMediaElementCustom.cpp` needs `#if ENABLE(VIDEO)`; `AcceleratedBackingStore.cpp` needs `DRM_FORMAT_XRGB8888` without libdrm; OpenSSL 3's `EVP_PKEY_get0_RSA()` returns `const RSA*` (WebCore's OpenSSL code targets 1.1); no `MSG_CTRUNC` in libphoenix (the kernel does not report truncated control data; with `wpe-ipc-fd-per-frame` it closes the descriptors that do not fit, as Linux does, and GLib's 256-byte control buffer holds 60) |
+| 0011-wtf-maptofile-phoenix-write | B6: `FileSystem::mapToFile()` creates a file, maps it `MAP_SHARED` and copies the data into the mapping; the network cache stores every body larger than a page that way (`NetworkCacheBlobStorage`, `Blobs/`), the service worker script storage too. Phoenix has no shared file mappings (`MAP_SHARED` = `MAP_PRIVATE` = 0, no page is written back), so the file kept the zeros of its `ftruncate()`. On Phoenix the bytes go to the file with `write()` and the caller gets an anonymous read-only copy |
 
 Compat (`build-wpe.sh` stage `compat`; the port's `files/compat/` = track C's set plus
 `phoenix-wpe-compat.c`):
@@ -416,7 +423,7 @@ Build host: 16 threads, 29 GiB; every heavy step through `scripts/heavy-build.sh
 | | Value |
 |---|---|
 | WebKit steps (configure + `ninja WPEBrowser`) | 8488 (WTF, JSC, bmalloc/mimalloc, Skia, WebCore, PAL, WebKit, WPEPlatform, the launcher). The clean time was not measured in one piece: the build ran in stages while other builds held the host (a `-j8` WebKit build needs ~16 GB) |
-| `wpe-browser` stripped / unstripped | B5: **121,480,352 B** / 269,711,088 B; `text` 118.2 MB, `data` 3.3 MB, `bss` 0.6 MB. B6 (the chrome, persistent session, test knobs): **121,572,736 B** / 269,851,520 B (+92 KB) |
+| `wpe-browser` stripped / unstripped | B5: **121,480,352 B** / 269,711,088 B; `text` 118.2 MB, `data` 3.3 MB, `bss` 0.6 MB. B6 (the chrome, persistent session, test knobs, patch 0011): **121,572,736 B** / 269,851,528 B (+92 KB) |
 | ELF | static, 2 PT_LOAD (4 KiB aligned), PT_GNU_STACK 8 MiB, 0x100-byte TLS segment, no PT_INTERP |
 | allocator | `malloc` == `mi_malloc` (the mimalloc override); no `malloc_common` (libphoenix's `malloc_dl.o`) in the link |
 | link contents (checked by `build-wpe.sh`) | `WebKit::WebProcessMain`, `WebKit::NetworkProcessMain`, `g_io_openssl_load`, `g_tls_backend_get_default`, `memfd_create` (shmsrv), Mesa's `eglGetProcAddress` + `dri2_initialize_surfaceless`, `epoxy_static_proc_address`, `wpe_display_wayland_new`, `wpe_display_headless_new`, ICU (`ubrk_open_78`), hb-icu, OpenSSL `SHA256_Init`, libsoup, `nextafterf`; since B6 also `webkit_user_script_new_for_world`, `webkit_cookie_manager_set_persistent_storage`, `WTF::memoryFootprint` |
@@ -603,7 +610,8 @@ Scrolling and the keys were left for B6 (below).
 ### B6: a usable browser
 
 Stage the B6 build first (see the top of this section). Every check is **one psh command**,
-`/bin/bash /usr/share/wpe-browser/b6.sh <mode>`: the script exports its knobs, runs
+`/bin/bash /usr/share/wpe-browser/b6.sh <mode>` (`sites`, `persist`, `persist-warm`, `soak`, `keys`,
+`keys-hid`): the script exports its knobs, runs
 `/bin/xfce-session` with the check as the session's autostart and ends the session itself (each
 mode has its own `HOLD`; `export B6_HOLD=<s>` overrides it, a `HOLD` exported earlier is not used).
 The session ends with `XFCE-SESSION done rc=0` and the script with `B6 <mode> end rc=0`. Lines of
@@ -642,35 +650,52 @@ DuckDuckGo "anomaly" page) is the site's answer to an unknown browser, not a bro
 record it and grade that item by its frame. **Record:** `start` → `load finished` per page, the
 peak `footprint_kb` per role per page, the `PHXSHM` count per page.
 
-#### (b) Persistence: cookies and the disk cache (`b6.sh persist`, ~6 min, `HOLD` 360 s)
+#### (b) Persistence: cookies and the disk cache (`b6.sh persist`, ~6 min, `HOLD` 360 s; then `b6.sh persist-warm` after a reboot)
 
-It removes both directories, then loads Wikipedia twice (two runs of `/usr/bin/wpe-browser`, 100 s
-each, closed by SIGTERM), listing the files after each run (`sqlite3` reads libsoup's
-`moz_cookies` table):
+`persist` removes both directories, then loads Wikipedia twice (two runs of `/usr/bin/wpe-browser`,
+100 s each, closed by SIGTERM), listing the files after each run. `sqlite3` reads libsoup's
+`moz_cookies` table; `blobs` counts the cache's bodies larger than a page
+(`WebKitCache/Version N/Blobs/`) and `blobs_nonzero` how many of (at most) 20 of them hold any
+non-zero byte, read back with `read()`, i.e. what is on the disk:
 
 ```
 B6 persist clear /root/.local/share/wpe-browser /root/.cache/wpe-browser
-B6 persist files run=0 cookies_bytes=missing cookie_rows=- cache_files=0 cache_kb= data=
+B6 persist files run=0 cookies_bytes=missing cookie_rows=- cache_files=0 cache_kb= blobs=0 blobs_nonzero=0/0 data=
 B6 persist run=1 start url=https://en.wikipedia.org/wiki/Phoenix-RTOS t=…
 WPEB t=… session persistent data=/root/.local/share/wpe-browser cache=/root/.cache/wpe-browser …
 WPEB t=<T1> load finished uri=https://en.wikipedia.org/wiki/Phoenix-RTOS
 B6 persist run=1 end rc=0 t=…
-B6 persist files run=1 cookies_bytes=<B> cookie_rows=<R> cache_files=<N1> cache_kb=<K1> data=cookies.sqlite,…
+B6 persist files run=1 cookies_bytes=<B> cookie_rows=<R> cache_files=<N1> cache_kb=<K1> blobs=<L1> blobs_nonzero=<Z>/<C> data=cookies.sqlite,…
 B6 persist run=2 start …
 WPEB t=<T2> load finished uri=https://en.wikipedia.org/wiki/Phoenix-RTOS
 B6 persist files run=2 … cache_files=<N2> …
 B6 persist done
 ```
 
-**PASS (b):** `R >= 1` (Wikipedia sets persistent first-party cookies); `N1 >= 10` and
-`K1 >= 100`; **`T2 < T1`** (the second run takes Wikipedia's `load.php` styles and scripts and
-its images from the disk cache; the HTML itself revalidates); `N2 >= N1`; no `session-error`;
-zero faults. **Record** T1, T2, N1, K1.
+Then reboot (the kernel's page cache of the files is gone) and run `b6.sh persist-warm`: no
+clearing, one run (`run=3`, `T3`) on what the disk kept.
 
-**Triage:** `cookies_bytes` > 0 but `cookie_rows=0`: the jar works but stored no persistent
-cookie (try another site). `cache_files=0`: the NetworkProcess wrote no cache (look for
-`WebKitCache/Version …` under the cache directory). `database is locked` / `disk I/O error`:
-SQLite's locking on the NFS root (`fcntl` record locks).
+**PASS (b):**
+- `R >= 1` (Wikipedia sets persistent first-party cookies);
+- `N1 >= 10`, `K1 >= 100`, `L1 >= 5` (Wikipedia's styles, scripts and images are blobs) and
+  **`Z = C`** (every checked blob has its bytes on the disk: patch 0011);
+- **`T2 < T1`** and, after the reboot, **`T3 < T1`** (the run takes `load.php` styles and scripts
+  and the images from the disk cache; the HTML itself revalidates); `N2 >= N1`;
+- no `session-error`; zero faults.
+
+**Record** T1, T2, T3, N1, K1, L1.
+
+**Discriminators:**
+- `Z < C` (blobs of zeros): the bytes went through a file mapping, which Phoenix never writes
+  back: a binary without patch 0011 (the B5 one, or a port build without it). `T2 < T1` can then
+  still hold within one boot (the second process maps the same kernel page cache), and `T3 ≈ T1`
+  after the reboot gives it away; WebKit checks each blob's SHA-1, so it is a cache miss, never
+  a wrong page.
+- `cookies_bytes` > 0 but `cookie_rows=0`: the jar works but stored no persistent cookie (try
+  another site).
+- `cache_files=0`: the NetworkProcess wrote no cache at all (look for `WebKitCache/Version …`).
+- `database is locked` / `disk I/O error`: SQLite's locking on the NFS root (`fcntl` record
+  locks).
 
 #### (c) The 30-minute soak (`b6.sh soak`, ~32 min, `HOLD` 1920 s)
 
@@ -700,7 +725,7 @@ A page that needs more than 60 s on the LLInt simply gets cut by the next cycle:
 (`load finished` per site), it is a speed finding, not a soak failure. **Record** the footprint
 and shm series (the input of the shm decision above).
 
-#### (d) Chrome and keys, scripted (`b6.sh keys`, ~6 min, `HOLD` 400 s)
+#### (d) Chrome and keys, scripted (`b6.sh keys`, ~7 min, `HOLD` 420 s)
 
 Synthetic key events (`WPE_BROWSER_AUTO`, sent through `wpe_view_event()`, the seat's path) from
 the start page:
@@ -714,14 +739,15 @@ the start page:
 | 170 | `alt+Left` | `chrome action=back source=auto ok=1`, `load finished uri=https://en.wikipedia.org/wiki/Phoenix-RTOS` |
 | 220 | `alt+Right` | `chrome action=forward source=auto ok=1`, `load finished uri=https://html.duckduckgo.com/html/?q=phoenix%20rtos%20microkernel` |
 | 270-271 | `F5`, `Escape` | `chrome action=reload source=auto uri=https://html.duckduckgo.com/…`, `chrome action=stop source=auto loading=1` |
-| 290-292 | `ctrl+l`, `Escape` | `chrome action=focus-url source=auto`, `chrome action=cancel source=auto` |
-| 300 | `alt+Home` | `chrome action=home source=auto uri=file:///usr/share/wpe-browser/start.html`, its `load finished` |
-| 330 | `ctrl+q` | `chrome action=quit source=auto`, `exit status=0`, `B6 keys browser rc=0` |
+| 290-322 | `ctrl+l`, `Escape` 32 s later (the toolbar stays up: at least one HDMI tick sees it) | `chrome action=focus-url source=auto`, `chrome action=cancel source=auto` |
+| 330 | `alt+Home` | `chrome action=home source=auto uri=file:///usr/share/wpe-browser/start.html`, its `load finished` |
+| 360 | `ctrl+q` | `chrome action=quit source=auto`, `exit status=0`, `B6 keys browser rc=0` |
 
 **PASS (d):** every `chrome action=` line of the table, in order, `ok=1` for back and forward; the
-`new-window` line and `b4.html` loaded in the same view; the HDMI ticks around 22-24, 52-56 and
-112-116 s show the toolbar with the typed address, and a thin blue progress line while a page
-loads; zero faults. `stop … loading=0` means the reload had already finished (timing), not a
+`new-window` line and `b4.html` loaded in the same view; an HDMI tick between 290 and 322 s
+(ticks come every 25 s) shows the toolbar with the address selected, and ticks during loads show
+the thin blue progress line; zero faults. (The typing windows at 20-24, 50-56 and 110-116 s are
+too short for the ticks: a frame of them is a bonus.) `stop … loading=0` means the reload had already finished (timing), not a
 failure: note it. A missing `new-window` line with `B6-NEWWIN link NOT focused` is the page's
 focus, not the new-window path (check it by hand).
 
