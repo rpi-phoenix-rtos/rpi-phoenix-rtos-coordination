@@ -309,6 +309,7 @@ only between whole steps.
 | 5 | `/usr/bin/jsc-jit --useJIT=false /usr/share/jsc-bench/sunspider-run.js -- /usr/share/jsc-bench/sunspider 3` | 26 test lines, `SUNSPIDER runs=3 total-ms=...` | LLInt baseline |
 | 6 | `/usr/bin/jsc-jit /usr/share/jsc-bench/sunspider-run.js -- /usr/share/jsc-bench/sunspider 3` | 26 test lines, `SUNSPIDER runs=3 total-ms=...` | JIT speed |
 | 7 | `/usr/bin/jsc-jit /usr/share/jsc-bench/test262-run.js -- /usr/share/jsc-bench/test262-subset.json /usr/share/jsc-bench/t262-jit-fail.txt` | `TEST262 rev=7a096c205fd4 runs=7808 pass=7791 fail=17 ...` | conformance with all tiers + concurrent JIT + concurrent GC |
+| 7b (control) | `/usr/bin/jsc-jit --useConcurrentGC=false /usr/share/jsc-bench/test262-run.js -- /usr/share/jsc-bench/test262-subset.json /usr/share/jsc-bench/t262-nocgc-fail.txt` | `TEST262 ... pass=7791 fail=17` | the same JIT without the concurrent collector: if 7 or 10 fails and 7b passes, the fault is in the suspend/resume path (signals, `SA_RESTART`), not the JIT |
 | 8 (stress) | `/usr/bin/jsc-jit --forceEagerCompilation=true /usr/share/jsc-bench/micro.js` | the 9 checksums | every function tiers up after ~10–20 calls: Baseline → DFG → FTL, OSR entry/exit |
 | 9 (stress) | `/usr/bin/jsc-jit --forceEagerCompilation=true /usr/share/jsc-bench/jit-check.js` | step 2's checksums, `result=PASS` | same, on the OSR-exit kernel |
 | 10 (stress) | `/usr/bin/jsc-jit --collectContinuously=true /usr/share/jsc-bench/test262-run.js -- /usr/share/jsc-bench/test262-subset.json /usr/share/jsc-bench/t262-cgc-fail.txt` | `TEST262 ... pass=7791 fail=17` | the collector thread runs back to back, suspending and resuming the mutator (signals + ucontext) while JIT code runs |
@@ -318,12 +319,14 @@ only between whole steps.
 - J1: steps 1–10 each return to the prompt; **zero** `Exception #` dumps, `PHX-ABORT` lines, `vm: SIGSEGV caught` lines and `ASSERTION FAILED`/`MemoryExhaustion` lines in the boot; no step silent for 5 min.
 - J2: step 2 prints the `JITCHECK useJIT=1 ... dfg=1 ftl=1` line and `JITCHECK result=PASS`; the three `JITTIER` checksums equal the host's (steps 2 and 9).
 - J3: all 9 `micro.js` checksums equal the B3/host values in steps 3, 4 and 8.
-- J4: test262 `pass >= 7713` in steps 7 and 10, and their `FAIL` lines equal `bench/test262-host-reference.txt` (any extra one is triaged in the B9 doc).
+- J4: test262 `pass >= 7713` in steps 7, 7b and 10, and their `FAIL` lines equal `bench/test262-host-reference.txt` (any extra one is triaged in the B9 doc).
 - J5 (the speed gate, PLAN B9 "≥ 3× B3", SunSpider and `micro.js` as the JetStream-lite proxy): step 6's `total-ms` ≤ step 5's / 3, and step 4's `geomean-ms` ≤ step 3's / 3. For orientation, B3's 4.4 s per SunSpider pass would mean ≤ 1.47 s.
 - J6: step 11, when run: 0 failures, and N > 0 (otherwise the flush checks prove nothing on this board).
 
-Recorded, no threshold: SunSpider and micro ratios, test262 seconds (B3: 187.8 s), `FOOTPRINT` of steps 3/4
-(B3 ≈ 286 MB; expect ≈ +32 MiB pool + JIT data + compiler-thread stacks), step 10's seconds.
+Recorded, no threshold: SunSpider and micro ratios, test262 seconds (B3: 187.8 s), `FOOTPRINT` of steps 3/4,
+step 10's seconds. `--useJIT=false` does not unmap the pool (it is mapped at JSC initialization before
+options can disable the JIT), so step 3 already includes the 32 MiB: compare step 3 with B3's ≈ 286 MB for
+the pool's cost, and step 4 with step 3 for JIT code data and compiler-thread stacks.
 
 NO-GO, and the first thing to try: a hang or `vm: SIGSEGV caught` in JIT code → rerun the step with
 `--usePollingTraps=true`; a hang or wrong result in steps 7/10 only → `--useConcurrentGC=false`
