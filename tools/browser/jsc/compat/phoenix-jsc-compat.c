@@ -22,6 +22,7 @@
 #if PHX_COMPAT_SEM
 #include <semaphore.h>
 #endif
+#include <signal.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -56,6 +57,65 @@ __attribute__((weak)) void _malloc_forkParent(void)
 
 __attribute__((weak)) void _malloc_forkChild(void)
 {
+}
+
+
+/* Triage aid: with PHX_TRACE_ABORT=1 in the environment, a SIGABRT (abort(), a failed
+ * RELEASE_ASSERT on this target) prints the interrupted pc/lr and the frame-pointer chain to
+ * stderr before the default action, e.g. `PHX-ABORT pc=0x... lr=0x...` then `PHX-ABORT fp#N
+ * ret=0x...`. Resolve with `addr2line -e <out>/jsc`. Silent and inert otherwise. */
+static void phx_putHex(const char *tag, unsigned long v)
+{
+	char buf[48];
+	size_t n = strlen(tag);
+	int i;
+
+	memcpy(buf, tag, n);
+	buf[n++] = '0';
+	buf[n++] = 'x';
+	for (i = 60; i >= 0; i -= 4) {
+		buf[n++] = "0123456789abcdef"[(v >> i) & 0xf];
+	}
+	buf[n++] = '\n';
+	(void)write(2, buf, n);
+}
+
+
+static void phx_abortTrace(int sig, siginfo_t *info, void *ctx)
+{
+	const ucontext_t *uc = ctx;
+	const unsigned long *fp = (const unsigned long *)uc->uc_mcontext.regs[29];
+	int depth;
+
+	(void)info;
+	phx_putHex("PHX-ABORT pc=", uc->uc_mcontext.pc);
+	phx_putHex("PHX-ABORT lr=", uc->uc_mcontext.regs[30]);
+	/* Stop at the first frame pointer that is not a user (39-bit) stack address. */
+	for (depth = 0; depth < 24 && fp != NULL && ((unsigned long)fp & 0xf) == 0 && ((unsigned long)fp >> 39) == 0; depth++) {
+		phx_putHex("PHX-ABORT ret=", fp[1]);
+		if ((const unsigned long *)fp[0] <= fp) {
+			break;
+		}
+		fp = (const unsigned long *)fp[0];
+	}
+	signal(sig, SIG_DFL);
+	raise(sig);
+}
+
+
+__attribute__((constructor)) static void phx_abortTraceInit(void)
+{
+	struct sigaction sa;
+	const char *on = getenv("PHX_TRACE_ABORT");
+
+	if (on == NULL || on[0] != '1') {
+		return;
+	}
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_sigaction = phx_abortTrace;
+	sa.sa_flags = SA_SIGINFO;
+	sigemptyset(&sa.sa_mask);
+	(void)sigaction(SIGABRT, &sa, NULL);
 }
 
 

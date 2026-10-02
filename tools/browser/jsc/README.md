@@ -57,8 +57,12 @@ populated at once (`process->lazy` is 0, kernel `vm/map.c` `_vm_mmap` → `_map_
 against `protOrig`, `vm/map.c:1153`). There is no "virtual reserve". So:
 - WTF's `OSAllocatorPOSIX` already reserves read-write on non-Linux systems (no `PROT_NONE`
   reserve-then-commit); nothing to change, but every "uncommitted" reservation is resident.
-- The Structure heap reservation is 4 GiB upstream; Phoenix gets **32 MiB** (~250k Structures;
-  `JSC_structureHeapSizeInKB` overrides). Its aligned reservation maps twice that for a moment.
+- The Structure heap reservation is 4 GiB upstream; Phoenix gets **64 MiB**
+  (`JSC_structureHeapSizeInKB` overrides). Its aligned reservation maps twice that for a moment.
+  64 MiB is the floor: mimalloc's arena uses whole 32 MiB chunks, and 32 MiB minus the first
+  block leaves none, so 32 MiB aborts in `JSC::initialize()` (found on the Pi 2026-10-02;
+  reproduced on the host with `JSC_structureHeapSizeInKB=32768`). Run the `--host-jsc` reference
+  with `JSC_structureHeapSizeInKB=65536` so that it exercises the Phoenix heap size.
 - mimalloc is told there is no virtual reserve and no overcommit; it maps everything read-write;
   commit/decommit/reset are no-ops (no `madvise`), and arenas grow in **32 MiB** steps instead of
   1 GiB. Freed memory goes back to the kernel only when a whole arena could be unmapped (never, in
@@ -73,7 +77,7 @@ against `protOrig`, `vm/map.c:1153`). There is no "virtual reserve". So:
 | 0001-wtf-os-phoenix | `OS(PHOENIX)` from `__phoenix__`, part of `OS(UNIX)`; CMake `CMAKE_SYSTEM_NAME=Phoenix`; ELF symbol syntax (`InlineASM.h`); `sysconf` core count; `HAVE(BACKTRACE)` (libphoenix `<execinfo.h>`), `HAVE(INT128_T)`; no `HAVE(STACK_BOUNDS_FOR_NEW_THREAD)` |
 | 0002-wtf-threads-phoenix | `StackBounds` via `pthread_getattr_np()` of the calling thread; 1 MiB default thread stacks; `pthread_key_t` is a pointer (invalid key = `nullptr`); no `<sys/ucontext.h>` (`PlatformRegisters` = stack pointer) |
 | 0003-wtf-memory-footprint-phoenix | `WTF::memoryFootprint()` = anonymous pages of the process's map entries (`meminfo()`); used by FastMalloc statistics and the shell's `MemoryFootprint()` / `--footprint` |
-| 0004-jsc-phoenix | 32 MiB Structure heap; concurrent GC off by default; LLInt `globaladdr` ELF GOT form + opcode debug labels as Linux (`offlineasm/arm64.rb`, `LowLevelInterpreter.cpp`); no `mincore` / `dl_iterate_phdr` paths; `ARM64Assembler::cacheFlush` case |
+| 0004-jsc-phoenix | 64 MiB Structure heap; concurrent GC off by default; LLInt `globaladdr` ELF GOT form + opcode debug labels as Linux (`offlineasm/arm64.rb`, `LowLevelInterpreter.cpp`); no `mincore` / `dl_iterate_phdr` paths; `ARM64Assembler::cacheFlush` case |
 | 0005-mimalloc-phoenix | mimalloc unix prim on Phoenix (no virtual reserve/overcommit/madvise, RW mappings, 39-bit VA, weak random seed, short `struct rusage`); WebKit's mimalloc wrapper: override malloc on Phoenix, no `-march=armv8.1-a`, 32 MiB arenas |
 
 `patches/icu/0001` (private ICU only): `LC_MESSAGES` fallback in `putil.cpp` (A1's port carries its
@@ -184,7 +188,7 @@ user-space; split across cycles if needed, keeping the order).
 **Recorded for the decision, no pass threshold** (the owner's go/no-go on speed and on P24):
 SunSpider ms per pass (the host's ~300–430 ms is a different machine; an A72 interpreter is expected
 around 5–8× slower, so ≈ 2–3 s; > 10 s per pass is the "too slow to be usable for B5" flag), the
-`micro.js` geomean, `FOOTPRINT current/peak` (expected 80–200 MB: the 32 MiB Structure heap, 32 MiB
+`micro.js` geomean, `FOOTPRINT current/peak` (expected 80–200 MB: the 64 MiB Structure heap, 32 MiB
 mimalloc arenas, an 8 MiB main stack and 1 MiB per WTF thread are all resident from the start on
 Phoenix; > 400 MB is a flag), `MALLOC fastMalloc ns/pair` (mimalloc; expect tens of ns), and the
 `mallocrate` pairs: libphoenix `phase=single-threaded-process` and `phase=4-threads` against

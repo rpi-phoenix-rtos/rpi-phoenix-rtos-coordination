@@ -48,11 +48,11 @@ index 1494c4a2..ac0de46d 100644
  #if PLATFORM(PLAYSTATION) || OS(QNX)
          baseSize = 128 * MB;
 +#elif OS(PHOENIX)
-+        // Phoenix maps anonymous memory eagerly (vm/map.c _vm_mmap: every page of an MMU
-+        // process's mmap is populated at once), so this "reservation" is resident from the start,
-+        // and the aligned reservation briefly maps twice its size. 32 MiB holds ~250k Structures;
-+        // JSC_structureHeapSizeInKB overrides it.
-+        baseSize = 32 * MB;
++        // Phoenix maps anonymous memory eagerly (vm/map.c _vm_mmap), so this "reservation" is
++        // resident from the start and the aligned reservation briefly maps twice its size. Keep it
++        // small, but at least 64 MiB: mimalloc's arena (mi_manage_os_memory_ex) only uses whole
++        // 32 MiB chunks, and 32 MiB minus the first block leaves none (RELEASE_ASSERT at startup).
++        baseSize = 64 * MB;
  #elif (PLATFORM(IOS_FAMILY) && !CPU(ARM64E)) || PLATFORM(WATCHOS) || PLATFORM(APPLETV)
          baseSize = 512 * MB;
  #elif PLATFORM(IOS_FAMILY)
