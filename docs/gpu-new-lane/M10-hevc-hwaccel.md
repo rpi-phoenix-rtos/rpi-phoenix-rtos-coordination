@@ -45,6 +45,35 @@ The code is on ports branch `hevc-hwdec` (`84a8059`, `01d6cc7`, `9621a14`), merg
 4. **CPU %.** `top` while playing, hardware against `-vcodec hevc`.
 5. **Level-2 promotion.** Each feature clip that `-crc` reports BIT-EXACT under `FFMPEG_RPIVID=2` can move into level 1.
 
-## Result
+## Result (2026-10-02, builds 20–21)
 
-(pending, build 20)
+**Correctness:** bit-exact against the CPU decoder.
+
+| Clip | Frames | Verdict | Fallbacks |
+|---|---|---|---|
+| 720p | 900/900 | BIT-EXACT | 0 |
+| 1080p (`-crc`) | 600/600 | BIT-EXACT; SEI picture hashes 600/600 | 0 |
+
+**Decode cost:** measured with `hevc-rpivid-check`, build 21. Build 20's first comparison measured the check tool's own MD5 and allocation, not the decoder (fixed in `hevc-hwdec-perf`).
+
+| Decoder | Time per 1080p frame | fps | CPU |
+|---|---|---|---|
+| hardware (`-hw`) | 18.9 ms | 52.8 | 60% of one core |
+| CPU, 4 threads (`-cpu`) | 21.3 ms | 47.1 | 337% |
+
+The hardware path is faster and needs about 6× less CPU. Of its 15 ms per picture, 4.5 ms is the block and 10.5 ms the uncached de-tile.
+
+**Players:** `video-play`, KMSDRM full screen, run `m10-hevc-ab`.
+
+| Decoder | Playback | Dropped frames |
+|---|---|---|
+| hardware | 30 fps | only in the first 2 s (720p: 17 early; 1080p: 26 early) |
+| CPU (`-vcodec hevc`) | 30 fps | only in the first 2 s (10–19 early) |
+
+- Both play the 720p and 1080p clips in real time and drop nothing after startup.
+- The hardware path prints `rpivid: hardware HEVC decode … completion by interrupt` and `rpivid-stat` lines; the CPU path prints neither.
+- At 30 fps the player cannot tell the two apart by frame rate. The gain is CPU: about 2.8 cores freed during 1080p playback.
+
+**Robustness:** the block's known intermittent decode error appeared once in five 600-picture runs (POC 95, `CFSTATUS 71 CFNUM 264`). The stream then continued on the CPU with no visible break (`hw_fallback=1`), as designed.
+
+**Not yet run:** gtk-video's `GTK-VIDEO decoder hevc_rpivid` line (it needs the XFCE session) and level-2 promotion.
