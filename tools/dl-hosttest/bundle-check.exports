@@ -1,0 +1,10 @@
+/* bundle-check exports what wpe-browser exports (tools/browser/wpe/launcher/wpe-browser.exports) */
+{
+	abort;
+	_ZN6WebKit26WebProcessExtensionManager9singletonEv;
+	_ZN6WebKit26WebProcessExtensionManager10initializeEPNS_14InjectedBundleEPN3API6ObjectE;
+	g_printerr;
+	g_signal_connect_data;
+	g_variant_get_string;
+	webkit_web_page_get_id;
+};
