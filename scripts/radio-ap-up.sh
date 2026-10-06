@@ -26,7 +26,9 @@ GW="10.43.0.1/24"
 
 echo "radio-ap: (re)creating AP connection '$CON' on $IFACE (SSID=$SSID ch$CHAN WPA2, gw=${GW%/*})"
 nmcli connection delete "$CON" >/dev/null 2>&1 || true
-nmcli connection add type wifi ifname "$IFACE" con-name "$CON" autoconnect no ssid "$SSID"
+# autoconnect: the Pi's WiFi join (and every gate boot) expects PhoenixNet; it must survive a
+# host reboot (2026-10-06: it did not, and every boot logged a failed join)
+nmcli connection add type wifi ifname "$IFACE" con-name "$CON" autoconnect yes ssid "$SSID"
 nmcli connection modify "$CON" \
 	802-11-wireless.mode ap \
 	802-11-wireless.band bg \
