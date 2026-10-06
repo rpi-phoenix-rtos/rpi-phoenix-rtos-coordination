@@ -63,9 +63,18 @@ done
 # "../pc-ata/mbr.h", so a constant added there read as undeclared here while the
 # real build compiled it fine -- a false FAILURE, the mirror image of the false
 # CLEAN this script was fixed for on 2026-09-20.
+#
+# The kernel includes most headers by a path from its ROOT ("perf/trace-events.h" in
+# proc/threads.c), so a path not found beside the file is tried from the repo root too
+# (2026-10-07: a new inline in perf/trace-events.h read as an implicit declaration).
+_srcroot="${repo_root}/sources/${repo}"
 while IFS= read -r _inc; do
     _from="$(dirname "$src")/${_inc}"
     _to="$(dirname "${bdir}/${rel}")/${_inc}"
+    if [ ! -f "$_from" ] && [ -f "${_srcroot}/${_inc}" ]; then
+        _from="${_srcroot}/${_inc}"
+        _to="${bdir}/${_inc}"
+    fi
     [ -f "$_from" ] || continue
     mkdir -p "$(dirname "$_to")"
     cp "$_from" "$_to"
