@@ -1,0 +1,32 @@
+Phoenix-RTOS browser benchmark suite -- licences of the staged test assets (2026-10-06)
+
+These are TEST ASSETS on the Pi's NFS root (/usr/share/browser-bench), fetched by
+tools/browser/bench/stage.sh into external/browser-bench (git-ignored). They are not part of any
+Phoenix-RTOS repository and are not shipped in an image. Each keeps its own licence files.
+
+speedometer-3.1   WebKit/Speedometer @1386415b (branch release/3.1)
+                  BSD-2-Clause (LICENSE: Apple, Google, Mozilla, Microsoft). The bundled demo apps
+                  carry their own licences, MIT for TodoMVC (resources/todomvc/license.md) and the
+                  frameworks' own (React, Vue, Angular, Backbone, jQuery, Preact, Svelte, Lit,
+                  Next/Nuxt, CodeMirror, TipTap, Chart.js, Observable Plot...).
+jetstream-2.2     WebKit/JetStream @332d8ee1 (branch JetStream2.2)
+                  No top-level licence file. Driver and Apple-written benchmarks: BSD-2-Clause
+                  (file headers: JetStreamDriver.js, RexBench, WSL, code-load, worker). Components
+                  keep their own: Octane and LuaJSFight (V8 authors, BSD-3-Clause), ARES-6 Babylon
+                  (MIT, see its AUTHORS), SunSpider (MPL/GPL/LGPL tri-licence headers per file,
+                  BSD for Apple's), SeaMonster (MIT), cdjs (Purdue University, BSD-style),
+                  web-tooling-benchmark (BSD-3-Clause, V8 authors; LICENSE), wasm/ (per-benchmark
+                  headers; not run on Phoenix: WebAssembly is off).
+motionmark-1.3.2  WebKit/MotionMark @0e740d50 (tag release/MotionMark1.3.2)
+                  BSD-2-Clause (LICENSE, Apple). resources/debug-runner/d3.min.js: BSD-3-Clause (d3).
+css3test          LeaVerou/css3test @bc9731cf (2025-08-21)
+                  MIT (LICENSE, Lea Verou). Modified for offline use: the Google Analytics and
+                  Carbon Ads <script> tags removed from index.html and a remote background image
+                  (dabblet.com) from style.css (stage.sh marks both files).
+acid3             acid3.acidtests.org, the 17 files the test uses, downloaded 2026-10-06
+                  (sha256 in tools/browser/bench/acid3.sha256). No licence statement was found in
+                  the files or on the site (Ian Hickson, The Web Standards Project, 2008). Kept on
+                  the local export only and not redistributed; source URL and date recorded.
+
+The suite's own files (phx/*, tools/serve.py, bench.sh, index.html; sources in the coordination
+repo, tools/browser/bench/): BSD-3-Clause.

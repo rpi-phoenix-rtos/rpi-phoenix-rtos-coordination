@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<!--
+  css3test.html -- runs The CSS3 Test (Lea Verou's css3test, MIT; ../css3test/index.html, its
+  analytics and ad scripts removed for offline use) in a same-origin frame and reports it through
+  bench-common.js (Phoenix-RTOS browser benchmark suite). NOT part of css3test.
+
+  css3test checks which CSS features (properties, values, selectors, at-rules, media queries,
+  interfaces) the engine RECOGNISES -- CSS.supports() and friends -- not whether they render
+  correctly. It runs synchronously in the page's load event.
+
+  Lines: env, result score=<percent> passed=<n> total=<n> features=<n> specs=<n> time_ms=<ms>,
+  spec <id> <percent> (console only), json specs k/n [[id, title, percent], ...],
+  BENCH-DONE css3test score=<percent> passed=<n> total=<n> status=ok|timeout.
+  ?filter= passes css3test's own filter (default: all specifications except CSS 2.2).
+
+  SPDX-License-Identifier: BSD-3-Clause
+-->
+<html><head><meta charset="utf-8"><title>css3test runner</title>
+<script src="bench-common.js"></script>
+<style>body { margin: 0; } iframe { width: 1200px; height: 760px; border: 0; }</style>
+</head><body>
+<iframe id="css3test"></iframe>
+<script>
+(function () {
+    'use strict';
+    const B = 'css3test';
+    const P = window.PhxBench;
+    const filter = P.params.get('filter') || '';
+    const frame = document.getElementById('css3test');
+    const t0 = performance.now();
+    P.hookErrors(B);
+    P.env(B, { filter: filter || 'default' });
+
+    function poll() {
+        const d = frame.contentDocument;
+        const time = d && d.getElementById('timeTaken');
+        const finished = time && time.textContent.trim();
+        if (!finished && performance.now() - t0 < 300000) {
+            setTimeout(poll, 500);
+            return;
+        }
+        const text = (id) => (d && d.getElementById(id) ? d.getElementById(id).textContent.trim() : '');
+        const specs = [];
+        if (d) {
+            for (const section of d.querySelectorAll('#all > section')) {
+                const h1 = section.querySelector('h1');
+                const score = h1 && h1.querySelector('.score');
+                const title = h1 ? h1.textContent.replace(score ? score.textContent : '', '').trim() : '';
+                specs.push([section.id, title.slice(0, 60), score ? score.textContent.trim() : '?']);
+            }
+        }
+        for (const s of specs)
+            P.line(B, 'spec', s[0] + ' ' + s[2], { title: false });
+        const status = finished ? 'ok' : 'timeout';
+        const score = text('score') || 'NaN';
+        P.line(B, 'result', 'score=' + score + ' passed=' + text('passedTests') + ' total=' + text('totalTests') +
+            ' features=' + text('total') + ' specs=' + specs.length + ' time_ms=' + parseInt(text('timeTaken'), 10) +
+            ' status=' + status);
+        P.json(B, 'specs', specs);
+        P.done(B, { score, passed: text('passedTests'), total: text('totalTests'), status },
+            { bench: B, run: P.run, filter, score, passed: text('passedTests'), total: text('totalTests'),
+                features: text('total'), time: text('timeTaken'), specs, userAgent: navigator.userAgent });
+    }
+    frame.addEventListener('load', () => setTimeout(poll, 200));
+    frame.src = '../css3test/index.html?filter=' + encodeURIComponent(filter);
+})();
+</script>
+</body></html>

@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<!--
+  acid3.html -- runs the unmodified Acid3 test (../acid3/index.html) in a same-origin frame and
+  reports it through bench-common.js (Phoenix-RTOS browser benchmark suite). NOT part of Acid3.
+
+  Acid3 needs its own server behaviour (support-a.png answers 404, support-b.png and empty.css are
+  served as text/html, xhtml.1-3 as text/xml): the suite's serve.py applies acid3/.phx-headers.json.
+  The frame is 800x800 so Acid3's layout is the size of its reference rendering.
+
+  Lines: env, test <NN> <ms> as Acid3 runs them (every 10th, and the last), fail <NN> <message>,
+  slow count=<n> (tests that passed but took >33 ms or retried: Acid3's "less than perfect"),
+  result score=<n>/100 errors=<n> slow=<n> elapsed_s=<s>, json log k/n,
+  BENCH-DONE acid3 score=<n> errors=<n> status=ok|timeout.
+  ?phx-timeout=S (default 300) ends a run that never finishes as status=timeout.
+
+  SPDX-License-Identifier: BSD-3-Clause
+-->
+<html><head><meta charset="utf-8"><title>Acid3 runner</title>
+<script src="bench-common.js"></script>
+<style>body { margin: 0; } iframe { width: 800px; height: 800px; border: 0; }</style>
+</head><body>
+<iframe id="acid3" src="../acid3/index.html"></iframe>
+<script>
+(function () {
+    'use strict';
+    const B = 'acid3';
+    const P = window.PhxBench;
+    const timeoutMs = (parseInt(P.params.get('phx-timeout') || '300', 10) || 300) * 1000;
+    const frame = document.getElementById('acid3');
+    const t0 = performance.now();
+    let reported = -1;
+    P.hookErrors(B);
+    P.env(B);
+
+    function poll() {
+        let w;
+        try {
+            w = frame.contentWindow;
+            void w.document;
+        } catch (e) {
+            P.line(B, 'error', 'frame not same-origin: ' + e);
+            P.done(B, { score: 'NaN', status: 'error' }, { bench: B, run: P.run, error: String(e) });
+            return;
+        }
+        const total = w.tests ? w.tests.length : 0;
+        if (total && w.index > reported) {
+            for (let i = reported + 1; i <= Math.min(w.index, total) - 1; i++) {
+                if (i % 10 === 0 || i === total - 1)
+                    P.line(B, 'test', String(i).padStart(2, '0') + ' score=' + w.score + ' t=' + P.secs());
+            }
+            reported = Math.min(w.index, total) - 1;
+        }
+        const finished = total && w.index >= total && /Total elapsed time/.test(w.log || '');
+        if (!finished && performance.now() - t0 < timeoutMs) {
+            setTimeout(poll, 250);
+            return;
+        }
+        const log = String(w.log || '');
+        const lines = log.split('\n').filter((l) => l);
+        const fails = lines.filter((l) => / failed: /.test(l));
+        const slow = lines.filter((l) => /less than perfect|less than 30fps/.test(l));
+        for (const l of fails)
+            P.line(B, 'fail', l.replace(/^Test (\d+) failed: /, '$1 '));
+        P.line(B, 'slow', 'count=' + slow.length);
+        const elapsed = (log.match(/Total elapsed time: ([\d.]+)s/) || [])[1] || 'NaN';
+        const status = finished ? 'ok' : 'timeout';
+        P.line(B, 'result', 'score=' + w.score + '/' + total + ' errors=' + w.errors + ' failed=' + fails.length +
+            ' slow=' + slow.length + ' elapsed_s=' + elapsed + ' status=' + status + (finished ? '' : ' stuck_at=' + w.index));
+        P.json(B, 'log', lines);
+        P.done(B, { score: w.score, errors: w.errors, failed: fails.length, slow: slow.length, status },
+            { bench: B, run: P.run, score: w.score, total, errors: w.errors, elapsed_s: elapsed, status, log: lines,
+                userAgent: navigator.userAgent });
+    }
+    frame.addEventListener('load', () => setTimeout(poll, 100));
+})();
+</script>
+</body></html>

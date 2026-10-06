@@ -1,0 +1,20 @@
+{
+  "_comment": "Acid3 (acid3.acidtests.org) server behaviour, as measured 2026-10-06; applied by serve.py. Files not listed get their extension's type.",
+  "index.html": {"type": "text/html; charset=utf-8"},
+  "empty.html": {"type": "text/html; charset=utf-8"},
+  "empty.xml": {"type": "application/xml;charset=utf-8"},
+  "empty.css": {"type": "text/html; charset=utf-8"},
+  "empty.png": {"type": "image/png"},
+  "empty.txt": {"type": "text/plain; charset=utf-8"},
+  "support-a.png": {"status": 404, "type": "image/png"},
+  "support-b.png": {"type": "text/html; charset=utf-8"},
+  "support-c.png": {"type": "image/png"},
+  "svg.xml": {"type": "image/svg+xml"},
+  "font.svg": {"type": "image/svg+xml"},
+  "font.ttf": {"type": "application/x-truetype-font"},
+  "xhtml.1": {"type": "text/xml"},
+  "xhtml.2": {"type": "text/xml"},
+  "xhtml.3": {"type": "text/xml"},
+  "reference.html": {"type": "text/html; charset=utf-8"},
+  "reference.png": {"type": "image/png"}
+}
