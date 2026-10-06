@@ -16,6 +16,8 @@
 #     motionmark    MotionMark 1.3.2, official (30 s per test, target frame rate measured)
 #     motionmark-quick  10 s per test (not a valid score; the graphics paths, quickly)
 #     compat        acid3 + css3test
+#     suite=NAME    one Speedometer suite (e.g. suite=Perf-Dashboard), 1 iteration
+#     test=NAME     one JetStream benchmark (e.g. test=splay)
 #     all           compat, speedometer, jetstream, motionmark
 #   arms (comma list; each run of the mode runs once per arm, in order; default jit)
 #     jit | nojit   the JIT on (default) or JSC_useJIT=false (LLInt only)
@@ -112,6 +114,8 @@ runs_of() {
 		motionmark-quick) echo "motionmark:motionmark-quick" ;;
 		compat) echo "acid3:acid3 css3test:css3test" ;;
 		all) echo "acid3:acid3 css3test:css3test speedometer:speedometer jetstream:jetstream motionmark:motionmark" ;;
+		suite=?*) echo "speedometer:$1" ;;
+		test=?*) echo "jetstream:$1" ;;
 		*) return 1 ;;
 	esac
 }
@@ -126,6 +130,7 @@ url_of() {
 			echo "${BASE}/speedometer-3.1/bench.html?${q}&run=$2" ;;
 		suite=*) echo "${BASE}/speedometer-3.1/bench.html?startAutomatically&iterationCount=${ITER:-1}&suite=${1#suite=}&run=$2" ;;
 		jetstream) echo "${BASE}/jetstream-2.2/bench.html?report=true&run=$2" ;;
+		test=*) echo "${BASE}/jetstream-2.2/bench.html?report=true&test=${1#test=}&run=$2" ;;
 		jetstream-ab) q=; for t in ${AB}; do q="${q}&test=${t}"; done
 			echo "${BASE}/jetstream-2.2/bench.html?report=true${q}&run=$2" ;;
 		motionmark) echo "${BASE}/motionmark-1.3.2/MotionMark/bench.html?run=$2" ;;
@@ -144,6 +149,7 @@ limit_of() {
 		speedometer1) s=$(( 300 + ${ITER:-1} * 420 )) ;;
 		suite=*) s=$(( 120 + ${ITER:-1} * 120 )) ;;
 		jetstream) s=5400 ;;
+		test=*) s=600 ;;
 		jetstream-ab) s=1500 ;;
 		motionmark) s=900 ;;
 		motionmark-quick) s=600 ;;

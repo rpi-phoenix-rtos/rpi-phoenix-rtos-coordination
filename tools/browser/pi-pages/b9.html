@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>B9 JavaScript</title></head>
+<body>
+<h1>B9: JavaScript in the browser</h1>
+<p id="out">running</p>
+<script>
+// A fixed workload, run before the load event, so --exit-after-load waits for it.
+// Each part prints "B9-JS part=<name> ms=<t> check=<value>"; the check values must be
+// the same with and without the JIT.
+function fib(n) { return n < 2 ? n : fib(n - 1) + fib(n - 2); }
+function parts() {
+    return [
+        ["fib", () => fib(27)],
+        ["sort", () => { let a = []; let x = 12345; for (let i = 0; i < 200000; i++) { x = (x * 1103515245 + 12345) & 0x7fffffff; a.push(x); } a.sort((p, q) => p - q); return a[100000]; }],
+        ["string", () => { let s = ""; for (let i = 0; i < 100000; i++) s += String.fromCharCode(97 + i % 26); let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h; }],
+        ["regexp", () => { let t = "phoenix-rtos raspberry pi 4 webkit ".repeat(4000); return (t.match(/[a-z]+-[a-z]+|\d+/g) || []).length; }],
+        ["object", () => { let m = new Map(); for (let i = 0; i < 100000; i++) m.set("k" + i, { v: i, w: i * 2 }); let s = 0; for (const [k, o] of m) s += o.w - o.v; return s; }],
+        ["float", () => { let s = 0; for (let i = 1; i < 2000000; i++) s += Math.sin(i) / i; return s.toFixed(9); }],
+    ];
+}
+let total = 0, lines = [], checks = [];
+for (const [name, fn] of parts()) {
+    const t0 = performance.now();
+    const check = fn();
+    const ms = performance.now() - t0;
+    total += ms;
+    console.log("B9-JS part=" + name + " ms=" + ms.toFixed(1) + " check=" + check);
+    lines.push(name + "=" + ms.toFixed(1));
+    checks.push(String(check));
+}
+console.log("B9-JS total ms=" + total.toFixed(1));
+// the launcher logs the title ("WPEB ... title ..."): the result where console output does not reach
+document.title = "B9-JS total=" + total.toFixed(1) + " " + lines.join(" ") + " checks=" + checks.join(",");
+document.getElementById("out").textContent = lines.join(", ") + " -- total " + total.toFixed(1) + " ms";
+</script>
+</body></html>
