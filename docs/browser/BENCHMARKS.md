@@ -288,37 +288,99 @@ pool exhaustion, GC, the 4 kB AF_UNIX buffer on IPC...). They are not targets.
 8. Thermal: 4 cores at 100 % for 30+ minutes may throttle the Pi 4 (`throttled` ≠ 0, or
    `temp_mC` > 80 000). A full run with throttling is marked as such, not compared.
 
-## Results (to be filled in from Pi runs)
+## Results (Pi runs)
 
 ### Runs
 
 | Date | Build | Mode / arm | Result | Duration | Score | temp before/after, throttled | Log |
 |---|---|---|---|---|---|---|---|
-| | | | | | | | |
+| 10-07 | 38 | smoke / jit: speedometer1 | DONE | 284 s | **0.377** | 49.1/59.4 °C, 0 | `rpi4b-uart-20261007-003040-bench-smoke.log` |
+| 10-07 | 38 | smoke / jit: jetstream-ab | DONE, 16/16 ran, 0 failed | 255 s | `js_score` **32.3** | 58.4/63.7 °C, 0 | same |
+| 10-07 | 38 | smoke / jit: acid3 | DONE | 24 s | **96/100** | 64.2 °C, 0 | same |
+| 10-07 | 38 | smoke / jit: css3test | DONE | 35 s | **69 %** (4181/6419) | 61.8 °C, 0 | same |
+
+The whole smoke run took 13.7 min (estimate 8–9). No hang, no crash, no fault, no throttling.
 
 ### Stability: hangs, crashes, errors
 
 | Run | Bench | What | Where (last progress line / failed_at / test) | Launcher stall report? | Follow-up |
 |---|---|---|---|---|---|
-| | | | | | |
+| smoke 10-07 | speedometer1 | **84.5 s in one step** (host 0.13 s: 661×; every other step ≤ 36×) | Perf-Dashboard/SelectingRange, Sync part (84 534 ms) | not checked | profile the step with `prof record` (build 39) |
+| smoke 10-07 | all | one `GLib-CRITICAL g_bytes_get_data: assertion 'bytes != NULL' failed` in the WebProcess | during the run (UART line 708) | — | find the caller |
+| smoke 10-07 | speedometer1 / css3test | 116 of 244 and 140 of 160 progress lines not seen | console lines lost (UART flood; the POSTed JSON is complete) | — | harness: rely on the POST |
 
 ### Speedometer 3.1: per suite (mean ms per iteration) and slowest steps
 
 | Suite | Pi JIT | Pi LLInt | Host WPE | Pi / host |
 |---|---|---|---|---|
-| (20 rows, from `suite-result`) | | | | |
+| Perf-Dashboard | 86133 | | 249 | **346×** |
+| React-Stockcharts-SVG | 4843 | | 179 | 27× |
+| Editor-TipTap | 3967 | | 284 | 14× |
+| NewsSite-Next | 3618 | | 145 | 25× |
+| TodoMVC-jQuery | 3551 | | 207 | 17× |
+| TodoMVC-Angular-Complex-DOM | 3009 | | 92 | 33× |
+| Charts-observable-plot | 2803 | | 119 | 24× |
+| Charts-chartjs | 2750 | | 807 | 3× |
+| NewsSite-Nuxt | 2656 | | 130 | 20× |
+| TodoMVC-React-Redux | 2398 | | 109 | 22× |
+| TodoMVC-React-Complex-DOM | 2275 | | 86 | 26× |
+| TodoMVC-Backbone | 1945 | | 76 | 26× |
+| TodoMVC-WebComponents | 1919 | | 36 | 53× |
+| TodoMVC-Vue | 1805 | | 52 | 35× |
+| TodoMVC-JavaScript-ES5 | 1710 | | 114 | 15× |
+| TodoMVC-Lit-Complex-DOM | 1706 | | 90 | 19× |
+| Editor-CodeMirror | 1462 | | 52 | 28× |
+| TodoMVC-JavaScript-ES6-Webpack-Complex-DOM | 1260 | | 70 | 18× |
+| TodoMVC-Preact-Complex-DOM | 1139 | | 34 | 34× |
+| TodoMVC-Svelte-Complex-DOM | 1018 | | 27 | 38× |
+
+Pi build 38, smoke, 1 iteration; host = the 1-iteration WPE run. All 20 suites completed.
 
 Slowest steps (from `timing` / `json metrics`; `parse-bench-log.py` lists them):
 
 | Step | Pi sync ms | Pi async ms | Host ms | Note |
 |---|---|---|---|---|
-| | | | | |
+| Perf-Dashboard/SelectingRange | 84534 | 126 | 128 | **661×: a stall, not slow code** |
+| Editor-TipTap/Long | 2314 | 128 | 164 | 15× |
+| TodoMVC-Angular-Complex-DOM/Adding100Items | 1869 | 211 | 57 | 36× |
+| React-Stockcharts-SVG/ZoomTheChart | 1871 | 45 | 88 | 22× |
+| TodoMVC-jQuery/CompletingAllItems | 1584 | 107 | 107 | 16× |
+| React-Stockcharts-SVG/Render | 1526 | 160 | 52 | 32× |
+| Editor-TipTap/Highlight | 1488 | 37 | 120 | 13× |
+| Charts-chartjs/Draw scatter | 1343 | 24 | 391 | 3× (the host run is slow here) |
+
+Without Perf-Dashboard the geomean of the other 19 suites is ~25× the host: twice the 12× the
+B9 page predicted. Speedometer is DOM/layout/paint-bound, so the extra factor is outside the JS JIT
+(see the JetStream split below).
 
 ### JetStream 2.2: per benchmark
 
 | Benchmark | Pi JIT score | Pi LLInt score | wall s (Pi) | Host WPE score | Note |
 |---|---|---|---|---|---|
-| | | | | | |
+| crypto | 180.3 | | 1.5 | 1667 | 9× |
+| regex-dna-SP | 149.7 | | 3.2 | 1483 | 10× |
+| navier-stokes | 134.0 | | 2.1 | 910 | 7× |
+| richards | 90.4 | | 2.8 | 979 | 11× |
+| UniPoker | 54.2 | | 6.5 | 882 | 16× |
+| delta-blue | 52.1 | | 5.3 | 1016 | 20× |
+| Basic | 36.1 | | 9.1 | 791 | 22× |
+| 3d-cube-SP | 30.4 | | 15.2 | 570 | 19× |
+| raytrace | 29.4 | | 11.8 | 842 | 29× |
+| base64-SP | 24.1 | | 24.9 | 771 | 32× |
+| hash-map | 22.5 | | 18.9 | 651 | 29× |
+| splay | 18.8 | | 26.9 | 503 | 27× |
+| Babylon | 15.3 | | 21.1 | 712 | 46× |
+| string-unpack-code-SP | 12.3 | | 36.4 | 682 | 56× |
+| json-parse-inspector | 11.3 | | 12.4 | 391 | 35× |
+| acorn-wtb | 2.1 | | 25.6 | 63 | 29× |
+
+**The split is the finding.** Compute-bound benchmarks that allocate little (crypto, regex-dna,
+navier-stokes, richards) run at **7–11×** the host: the CPU ratio the B9 page predicted, so the JIT
+tiers work. The allocation- and GC-heavy ones (splay, hash-map, string-unpack, Babylon, acorn,
+json-parse, base64) run at **27–56×**. The extra 3–5× is in allocation, GC or the memory system
+(page faults on fresh heap, `mmap`/`munmap`/`madvise` cost, the GC's threads), not in generated
+code. Next: profile `splay` and `string-unpack-code-SP` with `prof record` (build 39).
+Overall `js_score` 32.3 vs host 629.6 on these 16 (19×); the pre-registered estimate was 35–65. (Host per-benchmark scores are from the 17-benchmark host run, the only one with a per-benchmark report.)
 
 Overall: `js_score` (JS only; 59 benchmarks full / 16 ab), `first` / `worst` / `average` geomeans.
 
@@ -343,10 +405,10 @@ Overall: `js_score` (JS only; 59 benchmarks full / 16 ab), `first` / `worst` / `
 
 | Test | Pi | Host WPE 26.6 | Host Chromium | Failures on the Pi only |
 |---|---|---|---|---|
-| Acid3 | /100 | 96 | 96 | |
-| css3test | % | 71 % | 72 % | |
-| JetStream benchmarks that ran | /59 | 64/64 | 64/64 | |
-| Speedometer suites that completed | /20 | 20/20 | 20/20 | |
+| Acid3 | 96/100 (fails 22, 23, 25, 35) | 96 | 96 | none: the same 4 as the host |
+| css3test | 69 % (4181/6419) | 71 % | 72 % | 168 checks; WebKit 2.54 vs 26.6, per-spec diff not yet done |
+| JetStream benchmarks that ran | 16/16 (ab subset) | 64/64 | 64/64 | full run not yet done |
+| Speedometer suites that completed | 20/20 | 20/20 | 20/20 | |
 
 ### MotionMark 1.3.2 (window mode only)
 
