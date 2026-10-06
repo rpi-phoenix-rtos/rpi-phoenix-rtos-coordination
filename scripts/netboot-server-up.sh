@@ -49,4 +49,12 @@ export RPI4B_NETBOOT_STATE_DIR="${RPI4B_NETBOOT_STATE_DIR:-$repo/artifacts/netbo
 # auto-configures gateway+DNS and can reach the internet. See project_pi4_internet_e2.
 "$repo/scripts/pi-internet-nat.sh" || printf 'netboot-server-up.sh: WARN pi-internet-nat failed (Pi internet unavailable; netboot OK)\n'
 
+# The Pi joins the host's WiFi AP (PhoenixNet, scripts/radio-ap-up.sh) on every boot. After a host
+# reboot it was found down (2026-10-06), and every boot then logged a failed join. Non-fatal.
+if command -v nmcli > /dev/null 2>&1 && nmcli -t -f NAME connection show 2> /dev/null | grep -qx phoenix-ap; then
+	nmcli -t -f NAME connection show --active 2> /dev/null | grep -qx phoenix-ap ||
+		nmcli connection up phoenix-ap > /dev/null 2>&1 ||
+		printf 'netboot-server-up.sh: WARN the PhoenixNet AP (phoenix-ap) is down and did not start (Pi WiFi join will fail)\n'
+fi
+
 exec "$repo/scripts/netboot-server.sh" up
