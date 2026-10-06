@@ -98,7 +98,7 @@ On other HALs `PERF_TRACE_FLAG_SAMPLE` returns `-ENOSYS`, and the wait/wakeup/ms
 
 - **`prof`** (`phoenix-rtos-utils/prof`, branch `prof-tool`; a default component on
   aarch64a72-generic):
-  - `prof record [-t secs] [-o dir] [-p pid] [-f period_us] [-d depth] [-s bytes] [-w bytes] [-r] [-L dirs]`
+  - `prof record [-t secs] [-o dir] [-p pid] [-f period_us] [-b min_wait_us] [-d depth] [-s bytes] [-w bytes] [-M MB] [-r] [-L dirs]`
     writes the same channel files as psh `perf` (so `convert.sh` works on them) and `prof.info`. That
     file holds the process list at the start and the end, the file mappings of every process
     (meminfo `OBJECT_OID` entries), and `file <port> <id> <path>` lines found by `stat()` in `-L` dirs,
@@ -185,7 +185,7 @@ directory to the host.
 #!/bin/bash
 /usr/share/wpe-browser/b7.sh webgl &
 sleep 90                                  # page loaded, frames running, gaps occurring
-prof record -t 30 -o /root/prof-webgl -s 1024 -w 512
+prof record -t 30 -o /root/prof-webgl -s 1024
 wait
 ```
 psh: `/bin/bash /root/prof-webgl.sh`. Host:
@@ -290,6 +290,45 @@ The on-Pi `prof report /root/prof-bench` gives the same tables without symbols, 
   - any runtime behaviour (no Pi or QEMU run). The first runs are in §6.
 
 ---
+
+## 5b. Build 38 on the Pi (2026-10-07) and the fixes
+
+**Result.** `test-prof-sampling` passed 2/0, but the kernel printed `event discard detected`.
+`prof record -t 5 -o /root/prof-idle` never returned: `channel_event0` reached 942 MB in about a
+minute, every other channel stayed at 0 bytes, and `prof.info` stopped at 4096 bytes (one stdio
+buffer).
+
+**Causes.**
+1. **The recorder traced itself.** Each drained 64 KB chunk was written straight to the NFS root.
+   That write is messages to the file server, lwip and genet, mostly on CPU 0, and with 512 B
+   wait stacks their events outgrew the chunk.
+2. **The drain loop could not end.** Its `do { read } while (full read)` never left CPU 0's event
+   channel. It therefore never checked the deadline, and never read channels 2-7, whose files
+   stayed empty.
+   - meta0 had less than 4 KB, still in its stdio buffer. The thread list went to the meta channel
+     of whichever CPU prof's `perf_start` ran on.
+   - This is not a channel-indexing bug: the index is `cpuChan + cpu*2`, and the files are named the
+     same way.
+3. **Volume.** The test left the trace unread for ~0.35 s, and a 4 MB channel still overflowed:
+   more than 10 MB/s on one CPU on an idle board. Which events filled it was **not measured**. A
+   wait record is ~200 B even without a stack (upstream's `thread_enqueued` is 7 B), so per-block
+   wait records are the likeliest cause.
+
+**Fixes** (new commits on the branches):
+
+| repo | commit | change |
+|---|---|---|
+| kernel | `cfb6c12c` | `perf_trace_cfg_t.waitMinUs` (appended; a shorter cfg means 0, the old behaviour): a wait is captured into a per-thread slot when it begins, and written only when it ends, if it lasted `waitMinUs` (flag 2, new `blocked` field). Wakeups of shorter waits are dropped too. At `perf_stop`, waits still going on are written as open (flag 4). `event discard detected (N events ...)`, and waits that found no slot are reported. |
+| utils | `fbf400c` | `prof record` keeps the trace **in memory** (`-M MB`, default 256) and writes it after `perf_stop`. Drain passes are bounded (32 reads per channel). The deadline is authoritative. Defaults: `-f 2000 -b 1000 -s 512 -w 512`. `self <pid>` goes into prof.info, and the reports leave the recorder out. `prof report` opens with the **event mix** (bytes per event type). |
+| tests | `98df3b3` | records in deferred mode (as prof does), with a reader thread every 20 ms; asserts the client's wait is deferred and `blocked ≥ 250 ms`. |
+| coord | `scripts/prof-report.py` | new wait layout, deferred/open waits, `self` exclusion, event mix. |
+
+**Host checks.**
+- **record** against a fake kernel whose every channel always holds a full buffer:
+  - `-t 2` stops after 2.1 s, with all 8 channels read;
+  - `-M 64` stops at 64 MB.
+- **report** (C under ASan/UBSan, and the Python script) against synthetic traces with deferred,
+  open and existing waits.
 
 ## 6. Next steps (in order)
 
