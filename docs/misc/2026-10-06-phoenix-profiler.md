@@ -330,6 +330,51 @@ buffer).
 - **report** (C under ASan/UBSan, and the Python script) against synthetic traces with deferred,
   open and existing waits.
 
+## 5c. Build 39 (2026-10-07): an idle profile still took 78 MB in 5 s
+
+**What happened.** `prof record -t 5 -M 128` on an idle Pi held 78 MB, 54 MB of it on CPU 0. The
+kernel reported 34954 lost events. Writing the 54 MB `channel_event0` in a single write() timed out
+the NFS server, which crashed (a separate fix is in progress). The report never ran, so the event
+mix was never seen.
+
+**Likely cause (from the code; the mix was not measured).** Most of upstream's events fire at the
+rate of the operation they describe:
+
+| class | events | cost |
+|---|---|---|
+| scheduling | sched_enter + preempted/scheduling + sched_exit | ~26 B per switch |
+| scheduling | enqueued + waking | 14 B per block |
+| syscall | syscall_enter + syscall_exit | 16 B per syscall |
+| lock | set_enter/exit/acquired + clear | 44 B per kernel lock/unlock, plus lock_name per lock and epoch |
+| interrupt | interrupt_enter + interrupt_exit | 12 B per interrupt (all but the timer's) |
+
+CPU 0 takes every device interrupt and runs most of the drivers and servers behind them. The
+profiler's own events are small at idle: samples are ~143 B per sample per idle CPU (~0.3 MB/s for
+four CPUs), and only waits ≥ 1 ms are recorded.
+
+**Fixes** (kernel `2970e569`, utils `33b9736`, tests `eb73591`):
+
+- **Kernel event classes.** `perf_trace_cfg_t.events` selects classes (`PERF_TRACE_EV_*`).
+  - `0` means all of them, as before. That is also what a caller without a cfg gets, so psh
+    `perf` and libtrace see no change.
+  - The check is `trace_isEnabled(id)`, used in place of `trace_isRunning()` in the event macros.
+- **thread_wait carries its syscall** (the immediate of the SVC before its user pc), so syscall
+  events are not needed. In deferred mode, waits that began before the trace also go through the
+  slots, so every deferred wait is complete by itself (thread_waking is not needed).
+- **trace_stats** (meta channel, written last) records the events and waits that were lost.
+- **`prof record`:**
+  - records `PERF_TRACE_EV_PROFILE` by default; `-e sched,syscall,lock,irq|all` adds classes, and
+    `-b 0` adds sched;
+  - prints the event mix (type × count, bytes, bytes per CPU, losses) **from memory before writing
+    anything**;
+  - writes the files in checked 1 MB write() calls, and a failed file does not stop the others.
+- **Test.** `idle_volume` records 2 s of an idle system with prof's defaults. It fails above 2 MB,
+  or if trace_stats reports any loss, and logs bytes per event type when it fails.
+
+**Risk.** If idle daemons sleep in short periodic loops (≥ 1 ms each), the 512 B stack in every
+wait record dominates: 100 waits/s from 10 threads ≈ 0.8 MB/s. In that case the printed mix shows
+`thread_wait` on top, and the remedy is `-w 256` or `-b 10000` (or a larger default).
+
 ## 6. Next steps (in order)
 
 1. **Build.** Merge the four branches into a test build with `--scope core`. Run the unity test

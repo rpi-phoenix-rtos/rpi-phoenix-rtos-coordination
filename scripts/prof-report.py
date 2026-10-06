@@ -40,7 +40,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EV_FIXED = {
     0x20: 1, 0x21: 1, 0x22: 2, 0x23: 2, 0x24: 2, 0x25: 2, 0x26: 133, 0x27: 4, 0x28: 3, 0x29: 3,
     0x2a: 1, 0x2b: 1, 0x2c: 20, 0x2d: 6, 0x2e: 6, 0x2f: 6, 0x30: 6, 0x31: 3, 0x32: 2, 0x33: 133,
-    0x42: 5, 0x43: 14, 0x44: 12, 0x45: 10,
+    0x42: 5, 0x43: 14, 0x44: 12, 0x45: 10, 0x46: 8,
 }
 EV_SAMPLE, EV_WAIT, EV_WAKEUP, EV_SEND, EV_RECV, EV_RESPOND = 0x40, 0x41, 0x42, 0x43, 0x44, 0x45
 EV_CREATE, EV_EXEC, EV_SC_ENTER, EV_SC_EXIT, EV_WAKING = 0x26, 0x33, 0x28, 0x29, 0x25
@@ -85,7 +85,7 @@ def ev_size(b, o):
     if eid == EV_SAMPLE:
         return 0 if avail < 12 else urec_end(b, p, 12 + b[p + 11] * 8, avail)
     if eid == EV_WAIT:
-        return 0 if avail < 48 else urec_end(b, p, 48 + b[p + 47] * 8, avail)
+        return 0 if avail < 50 else urec_end(b, p, 50 + b[p + 49] * 8, avail)
     sz = EV_FIXED.get(eid, 0)
     return sz if avail >= sz else 0
 
@@ -372,6 +372,7 @@ class Analysis:
             t = self.thread(tid)
             t.pid, t.name = pid, basename_of(name)
         self.end_ts = evs[-1][0] if evs else 0
+        self.stats = None
 
     def thread(self, tid):
         t = self.threads.get(tid)
@@ -423,6 +424,8 @@ class Analysis:
                 tid, port, mid, spid = struct.unpack_from("<HIIH", p, 0)
                 if mid in self.msgs:
                     self.msgs[mid]["server"] = tid
+            elif eid == 0x46:
+                self.stats = struct.unpack_from("<II", p, 0)
             elif eid == EV_RESPOND:
                 tid, port, mid = struct.unpack_from("<HII", p, 0)
                 if mid in self.msgs:
@@ -476,11 +479,11 @@ class Analysis:
         self.samples.append((ts, tid, mode, ks, us))
 
     def on_wait(self, ts, p, syms):
-        tid, flags, queue, timeout, blocked = struct.unpack_from("<HBIII", p, 0)
-        args = struct.unpack_from("<4Q", p, 15)
-        nk = p[47]
-        kframes = list(struct.unpack_from("<%dQ" % nk, p, 48))
-        pc, lr, sp, fp, frames, stack = parse_urec(p, 48 + nk * 8)
+        tid, flags, queue, timeout, blocked, sc_field = struct.unpack_from("<HBIIIH", p, 0)
+        args = struct.unpack_from("<4Q", p, 17)
+        nk = p[49]
+        kframes = list(struct.unpack_from("<%dQ" % nk, p, 50))
+        pc, lr, sp, fp, frames, stack = parse_urec(p, 50 + nk * 8)
         t = self.thread(tid)
         if t.wait is not None:
             self.end_wait(t, ts, True)
@@ -488,16 +491,18 @@ class Analysis:
         us = self.user_stack(t.pid, t.name, pc, lr, frames, stack, syms, leaf_pc=False) if pc else []
         for e, a, r in ks + us:
             syms.request(e, a, r)
-        sc = None if flags & 1 else t.syscall
+        # the wait names its syscall (from its SVC); syscall_enter events (-e syscall) are the fallback
+        sc = sc_field if sc_field != 0xFFFF else (None if flags & 1 else t.syscall)
         # bit 1: written when it ended (waitMinUs), blocked us after it began; bit 2: still waiting at the stop
         start = ts - blocked if flags & 2 else ts
         t.wait = {"tid": tid, "ts": start, "existing": bool(flags & 1), "queue": queue, "timeout": timeout,
                   "args": args, "syscall": sc, "msg": t.msg if self.scname(sc) == "msgSend" else None,
                   "ks": ks, "us": us}
-        if not flags & 2:
+        if flags & 2:
+            # complete: its thread_wakeup came just before it
+            self.end_wait(t, ts, bool(flags & 4))
+        else:
             t.wake = None
-        if flags & 4:
-            self.end_wait(t, ts, True)
 
     def end_wait(self, t, ts, still):
         w = t.wait
@@ -675,7 +680,8 @@ def main():
              0x28: "syscall_enter", 0x29: "syscall_exit", 0x2a: "sched_enter", 0x2b: "sched_exit", 0x2c: "lock_name",
              0x2d: "lock_set_enter", 0x2e: "lock_set_acquired", 0x2f: "lock_set_exit", 0x30: "lock_clear",
              0x31: "thread_priority", 0x32: "process_kill", 0x33: "process_exec", 0x40: "thread_sample",
-             0x41: "thread_wait", 0x42: "thread_wakeup", 0x43: "msg_send", 0x44: "msg_recv", 0x45: "msg_respond"}
+             0x41: "thread_wait", 0x42: "thread_wakeup", 0x43: "msg_send", 0x44: "msg_recv", 0x45: "msg_respond",
+             0x46: "trace_stats"}
     mix = collections.defaultdict(lambda: [0, 0])
     for e in evs:
         mix[e[3]][0] += 1
@@ -684,6 +690,12 @@ def main():
     print("\nEvent mix (%.1f MB, %.2f MB/s)" % (tot / 1048576.0, tot / 1048576.0 / max(dur, 1e-6)))
     for eid, (n, b) in sorted(mix.items(), key=lambda kv: -kv[1][1]):
         print("  %-18s %10d events %8.2f MB %5.1f%%" % (names.get(eid, "0x%02x" % eid), n, b / 1048576.0, 100.0 * b / tot))
+
+    if an.stats is None:
+        print("Lost: not known (no trace_stats event: an older kernel, or the trace was not stopped)")
+    else:
+        print("Lost: %d events (a full channel), %d waits (no free wait slot)%s" % (
+            an.stats[0], an.stats[1], "" if any(an.stats) else ": the trace is complete"))
 
     # CPU per process; idle = kernel-thread samples in the idle loop
     total = len(an.samples) or 1
