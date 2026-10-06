@@ -34,13 +34,20 @@ if [ ! -f "${src}/phoenix/xf86drm_phoenix.c" ] || [ ! -f "${gen}/generated_stati
 	echo "HOSTE2E skipped: run tools/gpu-lane/libdrm-phoenix/build.sh --lib-only first"
 	exit 0
 fi
+# The fcntl/dup interposers (patch 0005): a library that has them gets every dup/dup2/fcntl
+# of the harness routed through them, as the Pi link's -Wl,--wrap=fcntl,--wrap=dup,--wrap=dup2.
+wrapfd=() wrapfd_src=()
+if [ -f "${src}/phoenix/drm_phoenix_wrap_fcntl.c" ]; then
+	wrapfd=(-DMOCK_WRAP_FD)
+	wrapfd_src=("${src}/phoenix/drm_phoenix_wrap_fcntl.c" "${src}/phoenix/drm_phoenix_wrap_dup.c")
+fi
 gcc -std=gnu11 -O1 -g -Wall -Wno-unused-parameter -Wno-deprecated-declarations -fsanitize=address,undefined \
-	-fno-omit-frame-pointer -D__phoenix__ -Dmain=drmprobe_main -DDRMPROBE_NO_FORK \
+	-fno-omit-frame-pointer -D__phoenix__ -Dmain=drmprobe_main -DDRMPROBE_NO_FORK "${wrapfd[@]}" \
 	-include "${here}/mock/phx_mock.h" -include "${here}/mock/hostconfig.h" \
 	-I"${here}/mock" -I"${src}/phoenix" -I"${src}" -I"${src}/include/drm" -I"${gen}" -I"${here}/../include" \
 	-I"${root}/tools/gpu-lane/v3d-async" -I"${root}/tools/gpu-lane/kms" \
 	-c "${here}/../drmprobe/drmprobe.c" -o "${out}/drmprobe.o"
-gcc -std=gnu11 -O1 -g -w -fsanitize=address,undefined -fno-omit-frame-pointer -D__phoenix__ \
+gcc -std=gnu11 -O1 -g -w -fsanitize=address,undefined -fno-omit-frame-pointer -D__phoenix__ "${wrapfd[@]}" \
 	-include "${here}/mock/phx_mock.h" -include "${here}/mock/hostconfig.h" \
 	-I"${here}/mock" -I"${src}/phoenix" -I"${src}" -I"${src}/include/drm" -I"${gen}" -I"${here}/../include" \
 	-I"${root}/tools/gpu-lane/v3d-async" -I"${root}/tools/gpu-lane/kms" \
@@ -49,7 +56,7 @@ gcc -std=gnu11 -O1 -g -w -fsanitize=address,undefined -fno-omit-frame-pointer -D
 	"${src}/xf86drm.c" "${src}/xf86drmMode.c" "${src}/xf86drmHash.c" "${src}/xf86drmRandom.c" "${src}/xf86drmSL.c" \
 	"${src}/phoenix/xf86drm_phoenix.c" "${src}/phoenix/drm_phoenix_kms.c" "${src}/phoenix/drm_phoenix_v3d.c" \
 	"${src}/phoenix/drm_phoenix_logic.c" "${src}/phoenix/drm_phoenix_wrap.c" \
-	"${src}/phoenix/drm_phoenix_wrap_ioctl.c"
+	"${src}/phoenix/drm_phoenix_wrap_ioctl.c" "${wrapfd_src[@]}"
 # G4: prime_export_render / prime_import_render2 must pass against the fake G4 server,
 # every export the probe made must be withdrawn and every BO released at the end
 # (bos_live counts only the probe's leftovers: 0). The two-process case
@@ -57,7 +64,7 @@ gcc -std=gnu11 -O1 -g -w -fsanitize=address,undefined -fno-omit-frame-pointer -D
 for mode in legacy dri; do
 	log="${out}/e2e-${mode}.log"
 	"${out}/e2e" "${mode}" > "${log}" 2>&1 || true
-	grep -E 'DRMPROBE (RESULT|device |open |identity|fstat|card1|dmabuf_size|dmabuf_sync|atomic_universal|sync_merge|prime_|import_clear|implicit_flip|compositor_flip)|HOSTE2E|ERROR|runtime error' "${log}" || true
+	grep -E 'DRMPROBE (RESULT|device |open |identity|fstat|card1|dmabuf_size|dmabuf_sync|atomic_universal|sync_merge|sync_dup|prime_|import_clear|implicit_flip|compositor_flip)|HOSTE2E|ERROR|runtime error' "${log}" || true
 	why=""
 	grep -q 'DRMPROBE RESULT .*failed=cl_clear,cl_clear_dep,import_clear,implicit_flip, ' "${log}" || why="${why} failed-set"
 	grep -qE 'ERROR: AddressSanitizer|runtime error' "${log}" && why="${why} sanitizer"
@@ -68,6 +75,9 @@ for mode in legacy dri; do
 	grep -q 'DRMPROBE prime_reexport_render rc=0 .* ok=1' "${log}" || why="${why} reexport"   # M5 (G4a)
 	grep -q 'DRMPROBE atomic_universal .* ok=1' "${log}" || why="${why} atomic_universal"   # M5
 	grep -q 'DRMPROBE sync_merge setup=0 merge=0 .* ok=1' "${log}" || why="${why} sync_merge"   # M5b (G15)
+	# a sync file duplicated by the program (Mesa's EGL native fences: F_DUPFD_CLOEXEC) imports;
+	# a stale entry on a reused number is gone (patch 0005)
+	grep -q 'DRMPROBE sync_dup setup=0 .* import=0 errno=0 wait=0 import_dup2=0 wait_dup2=0 stale_info=-1 stale_errno=25 ok=1' "${log}" || why="${why} sync_dup"
 	grep -q 'DRMPROBE implicit_flip submit=0 flip=0 events=1 ' "${log}" || why="${why} implicit_flip"
 	grep -qE 'HOSTE2E m3p2 .* imports=2 imports_closed=2 deferred_flips=[1-9]' "${log}" || why="${why} m3p2-counters"   # G1 + G5's compositor buffer
 	grep -q 'DRMPROBE prime_export_render rc=0 errno=0 path=/v3dbuf/[0-9]* size=65536 fstat_chr=1 mmap=1 bad_words=0 xwrite=1 reexport_same_name=1 self_import=0 .* ok=1' "${log}" || why="${why} g4-export"

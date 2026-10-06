@@ -46,6 +46,8 @@
 #undef open
 #undef close
 #undef dup
+#undef dup2
+#undef fcntl
 #undef read
 #undef poll
 
@@ -1925,6 +1927,52 @@ int mock_dup(int fd)
 		memcpy(F.path[n], F.path[fd], sizeof(F.path[n]));   /* Phoenix: dup shares the open_file_t (and its path) */
 		F.client[n] = F.client[fd];
 		F.port[n] = F.port[fd];
+	}
+	return n;
+}
+
+
+static void fd_copy(int fd, int n)
+{
+	if ((n >= 0) && (n < MAXFD) && (fd >= 0) && (fd < MAXFD) && (n != fd)) {
+		F.kind[n] = F.kind[fd];
+		memcpy(F.path[n], F.path[fd], sizeof(F.path[n]));   /* Phoenix: a duplicate shares the open_file_t (and its path) */
+		F.client[n] = F.client[fd];
+		F.port[n] = F.port[fd];
+	}
+}
+
+
+/* The real calls behind libdrm-phoenix's __wrap_dup/__wrap_dup2/__wrap_fcntl (the
+ * harness routes dup/dup2/fcntl there when built with MOCK_WRAP_FD, as the Pi link
+ * does with --wrap): the host call plus the fake's per-descriptor state. */
+int __real_dup(int fd)
+{
+	return mock_dup(fd);
+}
+
+
+int __real_dup2(int fd, int fd2)
+{
+	int n = dup2(fd, fd2);
+
+	fd_copy(fd, n);
+	return n;
+}
+
+
+int __real_fcntl(int fd, int cmd, ...)
+{
+	va_list ap;
+	unsigned long arg;
+	int n;
+
+	va_start(ap, cmd);
+	arg = va_arg(ap, unsigned long);
+	va_end(ap);
+	n = fcntl(fd, cmd, arg);
+	if ((cmd == F_DUPFD) || (cmd == F_DUPFD_CLOEXEC)) {
+		fd_copy(fd, n);
 	}
 	return n;
 }

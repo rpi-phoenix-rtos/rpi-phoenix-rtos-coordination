@@ -14,7 +14,8 @@
 #                              src/phoenix/ (external/libdrm itself is never touched)
 #   <out>/build/               the meson build directory
 #   <out>/prefix/lib/libdrm.a  the static library (+ prefix/include/{xf86drm*.h,libdrm/})
-#   <out>/drmprobe             the probe (static, linked with -Wl,--wrap=mmap -Wl,--wrap=ioctl)
+#   <out>/drmprobe             the probe (static, linked with -Wl,--wrap=mmap -Wl,--wrap=ioctl
+#                              -Wl,--wrap=fcntl -Wl,--wrap=dup -Wl,--wrap=dup2)
 #   <out>/libdrm-phoenix-full.patch  everything above as one diff against $BASE
 #
 # Writes only into <out> (default: build-out/, gitignored). Reads the tree sysroot
@@ -156,7 +157,7 @@ mkdir -p "${out}/obj"
 "${TC}-gcc" "${CFLAGS[@]}" -c "${here}/drmprobe/drmprobe.c" -o "${out}/obj/drmprobe.o"
 "${TC}-gcc" "${CFLAGS[@]}" -c "${V3DA}/v3da_clgen.c" -o "${out}/obj/v3da_clgen.o"
 "${TC}-gcc" --sysroot="${S}/" -B"${S}/lib/" -static -Wl,--gc-sections -Wl,-z,max-page-size=0x1000 \
-	-Wl,--wrap=mmap -Wl,--wrap=ioctl -o "${out}/drmprobe" "${out}/obj/drmprobe.o" "${out}/obj/v3da_clgen.o" \
+	-Wl,--wrap=mmap -Wl,--wrap=ioctl -Wl,--wrap=fcntl -Wl,--wrap=dup -Wl,--wrap=dup2 -o "${out}/drmprobe" "${out}/obj/drmprobe.o" "${out}/obj/v3da_clgen.o" \
 	"${out}/prefix/lib/libdrm.a"
 echo "  ${out}/drmprobe: $(stat -c %s "${out}/drmprobe") bytes"
 "${TC}-nm" "${out}/drmprobe" | grep -E ' T (__wrap_mmap|drmPhoenixMmap|drm_phoenix_ioctl)$' | sed 's/^/  /'

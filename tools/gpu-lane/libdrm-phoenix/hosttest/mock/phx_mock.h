@@ -44,6 +44,12 @@ int __real_ioctl(int fd, unsigned long req, ...);
 int mock_open(const char *path, int flags, ...);
 int mock_close(int fd);
 int mock_dup(int fd);
+int __wrap_fcntl(int fd, int cmd, ...);
+int __real_fcntl(int fd, int cmd, ...);
+int __wrap_dup(int fd);
+int __real_dup(int fd);
+int __wrap_dup2(int fd, int fd2);
+int __real_dup2(int fd, int fd2);
 ssize_t mock_read(int fd, void *buf, size_t n);
 int mock_poll(struct pollfd *fds, nfds_t n, int timeout);
 int sys_fdpath(int fd, char *buf, size_t size);
@@ -56,7 +62,14 @@ off_t mock_lseek(int fd, off_t off, int whence);
 #define ioctl  mock_ioctl
 #define open   mock_open
 #define close  mock_close
+#ifdef MOCK_WRAP_FD
+/* the library has the fcntl/dup interposers: route as -Wl,--wrap=fcntl,--wrap=dup,--wrap=dup2 */
+#define fcntl  __wrap_fcntl
+#define dup    __wrap_dup
+#define dup2   __wrap_dup2
+#else
 #define dup    mock_dup
+#endif
 #define read   mock_read
 #define poll   mock_poll
 #define fstat  mock_fstat
