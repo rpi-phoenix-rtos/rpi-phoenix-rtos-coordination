@@ -350,6 +350,19 @@ while read -r _; do count=$((count + 1)); done < "${DIR}/sites.run"
 [ "${PROFILE_MODE}" = home ] || rm -rf "${DIR}/profile"
 hold=$((count * (LIMIT + DWELL + 60) + 300))
 echo "SURVEY-SH begin run=${NONCE} sites=${count} limit=${LIMIT} snap=${SNAP} dwell=${DWELL} size=${SIZE} dmabuf=${DMABUF} gpu=${GPU} stall=${STALL} rss=${RSS} profile=${PROFILE_MODE} env=${EXTRA_ENV[*]:-none} out=${DIR} temp_mC=$(thermal) args=${ARGS_TEXT// /,}"
+# analyse() on a known log first: an awk (busybox) or regex (libphoenix) difference would
+# otherwise turn every SURVEY line of a long run into one without a result
+printf '%s\n' 'WPEB t=100 load started uri=x' 'WPEB t=300 policy response status=200 mime=text/html page-id=1 uri=x' \
+	'WPEB t=400 load committed uri=x' 'x.js:1:2: CONSOLE JS ERROR e' 'CONSOLE SECURITY ERROR c' 'CONSOLE NETWORK INFO i' \
+	'WPEB t=0 role=web pid=7 ppid=6 argc=3' 'WPEB t=0 mem role=web pid=7 footprint_kb=5000' \
+	'WPEB t=0 role=web pid=7 frame-stall n=1 report=0 frame-watch kind=tiles' "WPEB t=500 title T $(printf '\001')A" \
+	'WPEB t=1100 load finished uri=x' > "${DIR}/selftest.log"
+check=$(analyse "${DIR}/selftest.log" none 0)
+want='result=OK load_ms=1000 commit_ms=300 start_ms=100 http=200 console_errors=2 js_errors=1 console_msgs=3 webprocess_rss_kb=5000 sysmem_used_kb=- webprocs=1 stalls=1 '
+case "${check}" in
+	"${want}"*" TITLE=T A") echo "SURVEY-SH selftest ok" ;;
+	*) echo "SURVEY-SH selftest FAIL got=[${check}] want=[${want}... TITLE=T A]"; exit 2 ;;
+esac
 # TLS needs the clock (no RTC: ntpclient at boot); the network through the host's NAT
 year=$(date +%Y)
 echo "SURVEY-SH net date=$(date -u +%Y-%m-%dT%H:%M:%SZ) clock=$([ "${year}" -ge 2024 ] && echo set || echo UNSET) https=$(curl -s -m 20 -o /dev/null -w '%{http_code}' https://en.wikipedia.org/ 2>/dev/null) http=$(curl -s -m 20 -o /dev/null -w '%{http_code}' http://info.cern.ch/ 2>/dev/null)"

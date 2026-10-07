@@ -145,6 +145,21 @@ None needs a login. A consent wall, paywall or bot check still counts as a valid
    the last one in the log, and the per-site logs are read from
    `/srv/phoenix-rpi4-nfs-gcc16/root/survey/<run>/`. Paste the output under Results.
 
+**Check on the first run** (not covered by the host dry run, which used a fake browser):
+- `SURVEY-SH selftest ok` right after `SURVEY-SH begin`. survey.sh runs its log analysis on a
+  known log first, because the Pi's awk is busybox 1.27.2 on libphoenix's regex. On `FAIL` it
+  stops before the session starts.
+- Site 1's `WPEB … snapshot file=` line: snapshots in window mode with `--dmabuf` are new. On
+  `snapshot-error`, use `dmabuf=0`.
+- The `SURVEY` lines have `result=`. `webprocess_rss_kb=-` is normal for pages that finish
+  before the first 3 s sample (`start`, `example`).
+- A UI fault is classified `CRASH ui-rc-N` only if bash on Phoenix reports a status outside 0–3
+  for it. That is unverified, but the parser's fault column shows the kernel's `Exception #`
+  either way.
+- `survey.sh` is hand-staged next to the port-installed `b6.sh`. After an image build or sync,
+  check that it is still on the export, or re-run `stage.sh`. Installing it from
+  `webkit_wpe/files/checks/` like `b6.sh` is a possible follow-up.
+
 **Expected duration:**
 - **About 25–40 min** for the 32 sites:
   - XFCE session start ~1–2 min;
