@@ -203,7 +203,7 @@ run_one() {
 	envs=("${EXTRA_ENV[@]}")
 	case "${arm}" in *nojit*) envs+=(JSC_useJIT=false) ;; esac
 	case "${arm}" in *cpu*) extra+=(--cpu-rendering) ;; esac
-	case "${arm}" in *shm* | *headless*) ;; *) extra+=(--dmabuf) ;; esac
+	case "${arm}" in *shm*) extra+=(--shm) ;; *headless*) ;; *) extra+=(--dmabuf) ;; esac
 	case "${arm}" in *headless*) extra+=(--headless) ;; esac
 	extra+=(--size=1280x800 --toolbar=never --ephemeral --stall-secs="${STALL}" --hang-recovery=0)
 	temp0=$(thermal)

@@ -228,7 +228,7 @@ run_one() {
 	extra=(--size="${SIZE}" "${PROFILE_ARGS[@]}" --stall-secs="${STALL}" --hang-recovery=0 --rss-secs="${RSS}"
 		--timeout="${LIMIT}")
 	[ "${GPU}" = 1 ] || extra+=(--cpu-rendering)
-	[ "${DMABUF}" = 1 ] && extra+=(--dmabuf)
+	[ "${DMABUF}" = 1 ] && extra+=(--dmabuf) || extra+=(--shm)
 	if [ "${DWELL}" -gt 0 ]; then
 		:   # no exit option: the harness ends the browser DWELL s after the load
 	elif [ "${SNAP}" = 1 ]; then
