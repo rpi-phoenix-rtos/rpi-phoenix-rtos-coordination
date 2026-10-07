@@ -19,6 +19,7 @@ lives in the git-ignored media root `artifacts/media/` (override: `MEDIA_ROOT=` 
 | `run-host-pages.sh` | the pages in Playwright's headless Chromium, Firefox and WebKit (WPE MiniBrowser) |
 | `pi/b8-stream.sh` | the Pi gate runner (XFCE session, one `wpe-browser` per arm, `B8S` lines) |
 | `hls.js.sha256`, `LICENSES.txt` | the hls.js pin (1.7.3, Apache-2.0) and the licences |
+| `hosttest/check-fmp4.py`, `hosttest/fmp4-harness.cpp` | host harness 2 (§9.4): WebCore's fMP4 parser (patch `webkit-mse/0032`) against FFmpeg's mov demuxer, under ASan + UBSan |
 
 ## Host: make, check, serve
 
@@ -101,8 +102,23 @@ with Bash `timeout` 600000. Presets (or a comma list of arm names):
 | `stage1c` | probe, hlsjs-hevc, hlsjs-h264, mse-off | 10.2: 1, 8, 9 |
 
 `key=value` after the arms: `base=http://…:port`, `hold=<s>`, `args=--cpu-rendering` (extra browser
-words, comma-separated), `mseoff=<words that turn MSE off>` (default `--mse=off`, the launcher flag
-the design plans). `main10-forced` sets `WPE_PHOENIX_HLS_VARIANT=0` (the Main10 variant's index).
+words, comma-separated), `mseoff=<words that turn MSE off>` (default `--mse=off`: wpe-browser's
+`--mse=on|managed|off`, in a USE `mse` build). `main10-forced` sets `WPE_PHOENIX_HLS_VARIANT=0` (the Main10 variant's index).
+
+**Stage 1 (USE `mse`, patch `webkit-mse/0032`).** Build proof: `strings /usr/bin/wpe-browser` shows
+`mse append bytes=` and `media mse=`; the browser logs `WPEB … media mse=on managed=0` at start. The
+MSE player's lines are `WPEB-MEDIA mono=… id=<1001…> …` (MSE players count from 1001), per §10.2 row:
+
+| Row | Lines (player: `WPEB-MEDIA`; page: `B8MSE`/`B8HLSJS`) |
+|---|---|
+| 1 | page `istypesupported` (hvc1/hev1/Main10 yes, `avc1.64001f` yes, `avc1.640028` **no**, av01/vp09/dvh1/webm/ts no, `hlsjs-probe` yes) and `capabilities type=media-source …` from the `mse-*`/`hlsjs-*` arms; player `canplaytype type=… platform=media-source answer=… engine=mse reason=<h264-level|codec|container|…>` |
+| 2 | `mse addsourcebuffer type=video/mp4;codecs="hvc1…" supported=1`, `mse init tracks=1 video=hevc 1920x1080 audio=none generation=1`, `mse append bytes=… samples=60`, `mse decoder video=hevc_rpivid config=hvc1.1.6.L120.90`, `stat … fps=29–31 hw=1 … mse_kb=…` |
+| 3 | `mse seek target=40.000`, `seek done pts=40.000`, `mse first-frame pts=40.0…` |
+| 4 | `mse init … generation=2` with `mse size 1280x720 -> 1920x1080`, `mse decoder reopen hvc1.1.6.L93.90 -> hvc1.1.6.L120.90`; after `mse changetype … supported=1`: `mse decoder video=h264` |
+| 6 | `mse ready-state 4 -> 2` (or 1), `mse stall start/end`, then `mse ready-state … -> 4`; `stat … av_ms=` within ±80 |
+| 7 | `mse end-of-stream`, `mse track-ended`, `mse end clock=…` |
+| 9 | the `mse-off` arm: `media mse=off`, page `branch=native`, stage-0 `hls choose` lines |
+
 
 **Grading.** The UART log:
 `grep -a -E '^(B8S |WPEB-MEDIA |B8HLS|B8MSE|WPEB )|Exception #' <log>`; every arm ends with
@@ -146,6 +162,36 @@ exactly every 6 s.
 Page bugs these runs found and fixed: every SourceBuffer must exist before the first init segment
 is appended (Chromium and WebKit refuse a later `addSourceBuffer`); a codec change without
 `changeType()` is an error by the spec; the waiting before the first frame is start-up, not a stall.
+
+## Host harness 2: the fMP4 parser (stage 1)
+
+`hosttest/check-fmp4.py` builds `fmp4-harness.cpp` with the parser source of the ports repo's
+`webkit_wpe/patches/webkit-mse/0032-*.patch` (or `--parser-dir <patched WebKit tree>/Source/WebCore/platform/graphics/ffmpeg`)
+under ASan + UBSan and checks every fMP4 stream of the media root (`mse/*`, the fMP4 ladders'
+variants) plus small streams it makes with the host ffmpeg (audio+video muxed in one fragment,
+implicit data offsets, negative composition offsets, FLAC, AC-3, E-AC-3, MP3):
+
+```bash
+tools/browser/media/hosttest/check-fmp4.py            # full (~1 h); --quick: oracle + 100 random runs (~3 min)
+```
+
+| Check | What must hold |
+|---|---|
+| oracle | the parser's samples (pts, dts, duration, size, key flag, payload MD5) and track configurations (extradata MD5, size) == `ffprobe -show_packets -show_data_hash md5`, with the edit list applied and with `-ignore_editlist 1` |
+| splits | the init segment + 3 media segments fed as two appends at **every** split point (inside an mdat payload above 400 kB: its first/last 256 bytes and every 4099th byte) == the one-append samples |
+| random | 10 000 runs (large streams 1 000) of random append sizes == the one-append samples |
+| reset | `reset()` in every box of a media segment, then the next segments: complete segments only |
+| switch | a second `moov` on the same parser: hevc-720 → hevc-1080, h264-720 → hevc-1080, aac → opus |
+| mutate | 10 000 runs with random bytes changed (the sanitizers are the check) |
+
+Two differences from ffprobe are FFmpeg's, and the harness accepts exactly those: with negative
+composition offsets (trun version 1) the mov demuxer adds −min(offset) to every pts (the parser
+keeps pts = dts + offset, as ISO/IEC 14496-12 and Chromium); for AC-3/E-AC-3 the last packet's
+duration comes from FFmpeg's codec parser (a whole frame) where the container's is shorter. The
+edit list: FFmpeg applies `[empty edits] + one media edit` as a shift of delay − media_time; the
+HLS-muxer ladders have exactly that (a 66 ms video / 45 ms audio delay), the DASH-muxer sets a
+single edit. The parser applies it the same way, so a stream has the same timing through MSE as
+through the progressive/HLS player.
 
 ## Pi results
 

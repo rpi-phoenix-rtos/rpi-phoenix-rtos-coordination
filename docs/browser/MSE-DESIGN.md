@@ -753,6 +753,31 @@ fresh `wpe-browser --autoplay=allow --size=1000x620 <url>` killed after its time
 
 ## 14. Log
 
+- 2026-10-07: **stage 1 implemented** (ports branch `webkit-mse`: `patches/webkit-mse/0032`,
+  USE `mse`, `wpe-browser --mse=on|managed|off`; coordination branch `webkit-mse`: host harness 2
+  `tools/browser/media/hosttest/check-fmp4.py`). Where it departs from §7:
+  - **Seam:** `FFmpegPlaybackEngine` is new code (0030's queue/clock/present/audio logic, fed by
+    demuxed frames with a per-frame `FFmpegCodecConfig`), used by the MSE player only; 0030/0031
+    are unchanged. Refactoring the progressive/HLS player onto it needs the stage-0 Pi check
+    (§7.4) and is the next step after both gates; until then ~250 lines (the `/dev/audio0` writer,
+    the picture conversion) exist twice.
+  - **Parsing on the dispatcher**, synchronously in `appendInternal` (the mock backend's shape),
+    no parser WorkQueue: the parser walks boxes and decodes nothing.
+  - **Payload:** each sample is copied into its own padded `AVPacket` (FFmpeg's decoders read past
+    the end; a slice of the append buffer has no padding after the mdat's last sample). Eviction
+    then frees per sample, not per append; copies of a sample (non-displaying, trimmed) share it.
+  - **Edit lists** as FFmpeg's mov demuxer applies them (`[empty edits] + one media edit` →
+    shift delay − media_time), so a stream has the same timing through MSE as through 0030/0031;
+    the HLS muxer's ladders carry a 66 ms/45 ms empty edit. Negative composition offsets keep
+    pts = dts + offset (FFmpeg shifts them; the harness accepts exactly that difference).
+  - **Type answers:** as §7.5, plus an HEVC level cap at 4.1 (§1.1's "4K = no";
+    `WPE_PHOENIX_MSE_HEVC_4K=1` lifts it) and an empty type answering "maybe" (the engine choice
+    for a `blob:` MediaSource load, as GStreamer's MSE engine does).
+  - **Non-displaying frames** go to the decoder with `AV_PKT_FLAG_DISCARD` (libavcodec returns no
+    picture or sound for them; frame-threaded H.264 and the rpivid hwaccel included).
+  - **Clock:** held below HaveFutureData (`readyStateFromMediaSourceChanged`; HTMLMediaElement keeps
+    a stalled element "potentially playing" and does not pause the engine), at start/seek until
+    the first picture, and when the video queue runs dry.
 - 2026-10-07: rebased on 0030 master (`9c0b6dc`: preload/idle read-ahead/2 MiB stacks); memory
   rules for HLS (§6.9a) and MSE (§7.8), memory gate rows.
 - 2026-10-07: first draft (YouTube-oriented MSE); restructured the same day on the owner's
