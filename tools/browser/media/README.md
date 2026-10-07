@@ -159,9 +159,9 @@ is appended (Chromium and WebKit refuse a later `addSourceBuffer`); a codec chan
 | h264-only | `page=ok` to `ended`, startup 2106 ms, 0 stalls | 1280x720: the 720p cap held |
 
 Row 3 (host log): each arm fetched only `master.m3u8`, its chosen variant and the audio group.
-Open: the compositor painted ~19 of the 30 presented frames/s (`painted=` in the stat line), and the
-SAND->planar conversion took 11.5 ms per 1080p picture (rpivid-stat `sand=`); the latter is cut in
-build 55 (cached picture buffers).
+The compositor painted only ~19 of the 30 presented frames/s there (`painted=` in the stat line): the
+gate's `wpe-browser` ran the shared-memory frame path. **Build 56** (`wpe-browser` defaults to
+dma-bufs): hevc-fmp4 `page=ok`, 30.0 fps presented, **1765 of 1796 painted (98 %)**, startup 1538 ms.
 
 ## Notes for the stage-0/1 implementer
 
