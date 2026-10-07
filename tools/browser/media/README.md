@@ -112,12 +112,18 @@ MSE player's lines are `WPEB-MEDIA mono=… id=<1001…> …` (MSE players count
 | Row | Lines (player: `WPEB-MEDIA`; page: `B8MSE`/`B8HLSJS`) |
 |---|---|
 | 1 | page `istypesupported` (hvc1/hev1/Main10 yes, `avc1.64001f` yes, `avc1.640028` **no**, av01/vp09/dvh1/webm/ts no, `hlsjs-probe` yes) and `capabilities type=media-source …` from the `mse-*`/`hlsjs-*` arms; player `canplaytype type=… platform=media-source answer=… engine=mse reason=<h264-level|codec|container|…>` |
-| 2 | `mse addsourcebuffer type=video/mp4;codecs="hvc1…" supported=1`, `mse init tracks=1 video=hevc 1920x1080 audio=none generation=1`, `mse append bytes=… samples=60`, `mse decoder video=hevc_rpivid config=hvc1.1.6.L120.90`, `stat … fps=29–31 hw=1 … mse_kb=…` |
+| 2 | `mse addsourcebuffer type=video/mp4;codecs="hvc1…" supported=1`, `mse init tracks=1 video=hevc 1920x1080 audio=none generation=1`, `mse append bytes=… samples=60`, `mse decoder video=hevc_rpivid codec=hevc config=hvc1.1.6.L120.90`, `stat … fps=29–31 hw=1 … mse_kb=…` |
 | 3 | `mse seek target=40.000`, `seek done pts=40.000`, `mse first-frame pts=40.0…` |
 | 4 | `mse init … generation=2` with `mse size 1280x720 -> 1920x1080`, `mse decoder reopen hvc1.1.6.L93.90 -> hvc1.1.6.L120.90`; after `mse changetype … supported=1`: `mse decoder video=h264` |
 | 6 | `mse ready-state 4 -> 2` (or 1), `mse stall start/end`, then `mse ready-state … -> 4`; `stat … av_ms=` within ±80 |
+| 5 | `mse append … buffered_kb=` flat once the cap is reached; page `evict-check pass=1`, `quota` lines handled |
 | 7 | `mse end-of-stream`, `mse track-ended`, `mse end clock=…` |
 | 9 | the `mse-off` arm: `media mse=off`, page `branch=native`, stage-0 `hls choose` lines |
+
+A SourceBuffer of a player that has not played yet holds at most 8 MB (video; audio 2 MB), 40 / 8 MB
+after the first `play()` (MSE-DESIGN §7.8). `mse-eos` and `mse-evict` append all 60 s before
+playing, so `b8-stream.sh` runs them with `WPE_PHOENIX_MSE_IDLE_MAX_MB=40`; with the default they
+would end in `QuotaExceededError` (what a real page sees: hls.js then shortens its buffer).
 
 
 **Grading.** The UART log:

@@ -106,9 +106,11 @@ spec() {  # spec <arm>: sets PAGE, SECS, ENVS, ARGS
 		mse-basic) PAGE="b8-mse.html?mode=basic" SECS=85 ;;
 		mse-seek) PAGE="b8-mse.html?mode=seek" SECS=60 ;;
 		mse-switch) PAGE="b8-mse.html?mode=switch" SECS=85 ;;
-		mse-evict) PAGE="b8-mse.html?mode=evict&loops=3" SECS=170 ;;
+		# (eos and evict append all 60 s before play(): above the engine's 8 MB cap for a
+		# player that has not played yet, so they get the played cap)
+		mse-evict) PAGE="b8-mse.html?mode=evict&loops=3" SECS=170 ENVS=(WPE_PHOENIX_MSE_IDLE_MAX_MB=40) ;;
 		mse-underrun) PAGE="b8-mse.html?mode=underrun&stop=30" SECS=60 ;;
-		mse-eos) PAGE="b8-mse.html?mode=eos" SECS=90 ;;
+		mse-eos) PAGE="b8-mse.html?mode=eos" SECS=90 ENVS=(WPE_PHOENIX_MSE_IDLE_MAX_MB=40) ;;
 		mse-offset) PAGE="b8-mse.html?mode=offset" SECS=55 ;;
 		hlsjs-hevc) PAGE="b8-hlsjs.html?src=$(ladder hevc-fmp4)&stop=30" SECS=60 ;;
 		hlsjs-h264) PAGE="b8-hlsjs.html?src=$(ladder h264-only)&stop=30" SECS=60 ;;
