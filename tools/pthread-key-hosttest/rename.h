@@ -41,5 +41,5 @@ void *ph_pthread_getspecific(ph_pthread_key_t key);
 #undef PTHREAD_CANCELED
 #define PTHREAD_CANCELED ((void *)2)
 
-/* The test's main() becomes tsd_main(); main.c sets the library up first */
-#define main tsd_main
+/* The test's main() becomes test_main(); main.c sets the library up first */
+#define main test_main
