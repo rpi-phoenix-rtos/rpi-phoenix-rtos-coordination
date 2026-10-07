@@ -178,7 +178,7 @@ def report(nonce, r, logs_dir):
                    f"max {loads[-1] / 1000:.1f} s")
     rss = [int(s["webprocess_rss_kb"]) for s in sites if s["webprocess_rss_kb"].isdigit()]
     if rss:
-        out.append(f"- Web process footprint (peak per site, WTF memoryFootprint, overcounts): median {sorted(rss)[len(rss) // 2] / 1024:.0f} MB, "
+        out.append(f"- Web process footprint (peak per site, WTF memoryFootprint): median {sorted(rss)[len(rss) // 2] / 1024:.0f} MB, "
                    f"max {max(rss) / 1024:.0f} MB")
     total_faults = 0
     rows = []

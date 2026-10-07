@@ -190,6 +190,60 @@ whatever was on screen at each 25 s tick.
 
 ## Results
 
+**Build 52, 2026-10-07** (player memory fix; GPU raster + dma-buf): **32/32 OK**
+
+### Run `s10071223x13238`
+
+- Settings: `sites=32 limit=120 snap=1 dwell=0 size=1280x960 dmabuf=1 gpu=1 stall=60 rss=3 profile=fresh env=none temp_mC=52546`
+- Network check: `date=2026-10-07T12:23:07Z clock=set https=301 http=200`
+- Per-site logs and snapshots: `/srv/phoenix-rpi4-nfs-gcc16/root/survey/s10071223x13238` (on the Pi: `/root/survey/s10071223x13238/`)
+- Result: **32/32 OK** (32 OK, 0 TIMEOUT, 0 CRASH, 0 HANG, 0 ERROR)
+- Load time of the OK sites (`load started` → `load finished`): median 7.1 s, max 37.0 s
+- Web process footprint (peak per site, WTF memoryFootprint): median 81 MB, max 436 MB
+- Kernel fault dumps during the survey: 0
+
+| # | site | result | load s | commit s | HTTP | JS err | console err | web MB | stalls | faults | snap | title |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | start | **OK** | 0.5 | 0.1 | 0 | 0 | 0 | – | 0 |  | png | Phoenix-RTOS Web Browser |
+| 2 | example | **OK** | 1.5 | 0.6 | 200 | 0 | 0 | – | 0 |  | png | Example Domain |
+| 3 | cern | **OK** | 0.4 | 0.1 | 200 | 0 | 0 | – | 0 |  | png | – |
+| 4 | hackernews | **OK** | 1.8 | 1.0 | 200 | 0 | 0 | 57 | 0 |  | png | Hacker News |
+| 5 | lobsters | **OK** | 7.1 | 0.8 | 200 | 0 | 2 | 54 | 0 |  | png | Lobsters |
+| 6 | kernelorg | **OK** | 3.7 | 0.4 | 200 | 0 | 0 | 63 | 0 |  | png | The Linux Kernel Archives |
+| 7 | w3c | **OK** | 4.3 | 0.6 | 200 | 0 | 0 | 70 | 0 |  | png | W3C |
+| 8 | pythondocs | **OK** | 6.3 | 0.5 | 200 | 0 | 0 | 43 | 0 |  | png | The Python standard library — Python 3.14.8 documentation |
+| 9 | cnnlite | **OK** | 2.1 | 0.8 | 200 | 0 | 0 | 47 | 0 |  | png | Breaking News, Latest News and Videos \| CNN |
+| 10 | ddghtml | **OK** | 1.8 | 0.9 | 200 | 0 | 1 | 41 | 0 |  | png | raspberry pi at DuckDuckGo |
+| 11 | wikipedia | **OK** | 14.2 | 1.0 | 200 | 0 | 0 | 157 | 0 |  | png | Raspberry Pi - Wikipedia |
+| 12 | archwiki | **OK** | 2.8 | 1.3 | 200 | 0 | 0 | 41 | 0 |  | png | Code of Conduct \| Arch Linux Terms |
+| 13 | mdn | **OK** | 13.1 | 0.7 | 200 | 0 | 1 | 81 | 0 |  | png | JavaScript \| MDN |
+| 14 | github | **OK** | 9.4 | 1.5 | 200 | 0 | 1 | 144 | 0 |  | png | GitHub - phoenix-rtos/phoenix-rtos-kernel: Phoenix-RTOS mic… |
+| 15 | stackoverflow | **OK** | 2.6 | 1.5 | 403 | 0 | 0 | 39 | 0 |  | png | Just a moment... |
+| 16 | oldreddit | **OK** | 15.9 | 2.1 | 200 | 2 | 18 | 202 | 0 |  | png | Welcome to Reddit |
+| 17 | csstricks | **OK** | 37.0 | 1.1 | 200 | 0 | 21 | 264 | 0 |  | png | A Complete Guide to CSS Flexbox \| CSS-Tricks |
+| 18 | caniuse | **OK** | 13.9 | 1.8 | 200 | 0 | 0 | 115 | 0 |  | png | CSS Grid Layout (level 1) \| Can I use... Support tables fo… |
+| 19 | bbc | **OK** | 16.6 | 1.0 | 200 | 1 | 2 | 182 | 0 |  | png | BBC News - Breaking news, video and the latest top stories … |
+| 20 | guardian | **OK** | 5.0 | 1.0 | 200 | 0 | 1 | 81 | 0 |  | png | Latest news, sport and opinion from the Guardian |
+| 21 | nytimes | **OK** | 25.6 | 2.2 | 200 | 0 | 0 | 173 | 0 |  | png | The New York Times - Breaking News, US News, World News and… |
+| 22 | reuters | **OK** | 25.9 | 0.6 | 200 | 0 | 1 | 233 | 0 |  | png | Reuters \| Breaking International News & Views |
+| 23 | ddg | **OK** | 20.2 | 1.0 | 200 | 0 | 3 | 242 | 0 |  | png | raspberry pi at DuckDuckGo |
+| 24 | bing | **OK** | 4.0 | 2.0 | 200 | 0 | 0 | 81 | 0 |  | png | raspberry pi - Search |
+| 25 | google | **OK** | 2.2 | 1.1 | 200 | 0 | 0 | 63 | 0 |  | png | – |
+| 26 | amazon | **OK** | 23.5 | 1.8 | 200 | 0 | 0 | 228 | 0 |  | png | Amazon.com: Raspberry Pi 4 Model B 2019 Quad Core 64 Bit Wi… |
+| 27 | ebay | **OK** | 2.7 | 1.1 | 403 | 0 | 0 | 41 | 0 |  | png | Error Page \| eBay |
+| 28 | imdb | **OK** | 1.6 | 0.6 | 202 | 0 | 0 | 54 | 0 |  | png | – |
+| 29 | weather | **OK** | 10.9 | 2.6 | 200 | 0 | 0 | 97 | 0 |  | png | Yr - Warsaw - Long term forecast |
+| 30 | apple | **OK** | 16.6 | 0.6 | 200 | 0 | 0 | 139 | 0 |  | png | Apple |
+| 31 | osm | **OK** | 11.3 | 1.5 | 200 | 0 | 1 | 146 | 0 |  | png | OpenStreetMap |
+| 32 | youtube | **OK** | 17.8 | 2.1 | 200 | 0 | 0 | 436 | 0 |  | png | YouTube |
+
+**Problems** (not OK, HTTP ≥ 400, stall reports or kernel faults):
+
+- **15 stackoverflow** (https://stackoverflow.com/questions/tagged/rtos): OK, reason `-`, end `none`, rc 0, HTTP 403, wall 7 s, stalls 0, unresponsive 0
+- **27 ebay** (https://www.ebay.com/): OK, reason `-`, end `none`, rc 0, HTTP 403, wall 11 s, stalls 0, unresponsive 1
+
+
+
 **Build 50, 2026-10-07** (GPU raster + dma-buf, `survey.sh gpu=1`):
 
 ### Run `s10071013x1943`
