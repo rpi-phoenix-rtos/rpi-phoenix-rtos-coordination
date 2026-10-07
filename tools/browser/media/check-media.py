@@ -459,14 +459,14 @@ def requests(log, only_run):
                 phase = "played"
                 continue
             m = req.match(line)
-            if not m or m.group(3).startswith(("/phx-", "/pages/", "/vendor/")):
+            if not m or m.group(3).startswith(("/phx-", "/pages/", "/vendor/", "/favicon")):
                 continue
             path = urllib.parse.urlsplit(m.group(3)).path
             kind = ("playlist" if path.endswith(".m3u8") else "key" if path.endswith(".key") else
                     "init" if re.search(r"init[^/]*\.mp4$", path) else "manifest" if path.endswith(".json") else "segment")
             # the Referer's run id when the request had one; else the last page start seen
             r = m.group(7) or run
-            ph = phase if r == run else "-"
+            ph = phase if r == run else "start"  # its start beacon has not arrived yet
             d = per.setdefault((r, ph), collections.OrderedDict()).setdefault(os.path.dirname(path), collections.Counter())
             d[kind] += 1
             d["bytes"] += int(m.group(6))

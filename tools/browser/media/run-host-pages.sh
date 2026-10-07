@@ -17,7 +17,9 @@
 # check: the case's expectation (a regex over the log), when it has one for that browser.
 # Known host limits (not page bugs; 2026-10-07, Playwright 1.63): Chromium has no HEVC at all (hls.js
 # drops the HEVC levels, hvc1 SourceBuffers are refused) but plays native HLS in <video> (its own
-# variant choice); Firefox and WebKit play HEVC (system FFmpeg / GStreamer) but not native HLS.
+# variant choice); Firefox and WebKit play HEVC (system FFmpeg / GStreamer) but not native HLS; WebKit
+# has no SourceBuffer.changeType(). Run one browser at a time: under load WebKit's hls.js start on TS
+# segments (after bufferSeekOverHole) stalled once.
 #
 # SPDX-License-Identifier: BSD-3-Clause
 

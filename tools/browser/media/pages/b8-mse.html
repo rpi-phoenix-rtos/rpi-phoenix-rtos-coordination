@@ -146,7 +146,8 @@
         }
     }
 
-    const vrep = p.get("rep") === "none" ? null : reps[p.get("rep") || "hevc-1080"];
+    const switchReps = (p.get("switch") || "hevc-720,hevc-1080,h264-720").split(",");
+    const vrep = p.get("rep") === "none" ? null : reps[p.get("rep") || (mode === "switch" ? switchReps[0] : "hevc-1080")];
     const arep = p.get("audio") === "none" ? null : reps[p.get("audio") || "aac"];
     if (p.get("rep") && p.get("rep") !== "none" && !vrep) { R("no-rep", { rep: p.get("rep") }); finish("error"); return; }
     const ms = new MSClass();
@@ -217,7 +218,7 @@
                 R("seek-check", { ok: ok ? 1 : 0, current: v.currentTime.toFixed(2), pass: ok && Math.abs(v.currentTime - to) < 2 ? 1 : 0 }))]));
             eos();
         } else if (mode === "switch") {
-            const names = (p.get("switch") || "hevc-720,hevc-1080,h264-720").split(",");
+            const names = switchReps;
             const vt = tracks.find((t) => t.kind === "video");
             if (!vt || names.some((n) => !reps[n])) throw new Error("switch needs a video track and reps " + names);
             endedThen("ok");
@@ -230,13 +231,15 @@
             await vt.init(reps[names[1]]);
             await vt.run(10, 20);
             const type = reps[names[2]].mime;
-            if (vt.sb.changeType && reps[names[2]].codec.slice(0, 4) !== reps[names[1]].codec.slice(0, 4)) {
-                vt.sb.changeType(type);
-                R("switch", { what: "changeType", from: vt.rep.id, to: names[2], type, at_s: 40 });
+            const codecChange = reps[names[2]].codec.slice(0, 4) !== reps[names[1]].codec.slice(0, 4);
+            if (codecChange && !vt.sb.changeType) {
+                /* a codec change needs changeType(); without it the spec makes the append an error */
+                R("switch", { what: "changeType-missing", from: vt.rep.id, to: names[2], stay: names[1], at_s: 40 });
             } else {
-                R("switch", { what: "init", from: vt.rep.id, to: names[2], changeType: vt.sb.changeType ? 1 : 0, at_s: 40 });
+                if (codecChange) vt.sb.changeType(type);
+                R("switch", { what: codecChange ? "changeType" : "init", from: vt.rep.id, to: names[2], type, at_s: 40 });
+                await vt.init(reps[names[2]]);
             }
-            await vt.init(reps[names[2]]);
             await vt.run(20, Infinity);
             await audioRun;
             eos();
