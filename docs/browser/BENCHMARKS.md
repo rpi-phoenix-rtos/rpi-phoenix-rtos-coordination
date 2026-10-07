@@ -94,7 +94,7 @@ the page started:
 | JetStream | `test-start i/N <name>` | `test i/N <name> score= first= worst= avg= wall_s=` | `test-error i/N <name> <stack>`, `test-timeout` (no result in `phx-test-timeout`, default 900 s). The stock driver stops at the first failure; the hook logs it and **goes on**, and the score is then `partial` (geomean of what finished) |
 | MotionMark | `test-start MotionMark/<test>` | `test <test> score= low= high=` | `page-error` |
 | Acid3 | `test NN score=` every 10 tests | Acid3's own "took N ms" (`slow count=`) | `fail NN <Acid3's message>` for each failed test |
-| css3test | — (synchronous, about 1 s) | `spec <id> <percent>` (console) | — |
+| css3test | — (synchronous, about 1 s) | `spec <id> <percent>` (console); per-feature `failures` in the POSTed JSON (`css3test-diff.py`) | — |
 
 Every page reports `env wasm= workers= sab= webgl= webgpu= audio= cores= view= dpr= ua=`.
 **WebAssembly is off at run time on Phoenix** (patch 0013: `useWasm=false`, so there is no
@@ -438,7 +438,7 @@ Overall: `js_score` (JS only; 59 benchmarks full / 16 ab), `first` / `worst` / `
 | Test | Pi | Host WPE 26.6 | Host Chromium | Failures on the Pi only |
 |---|---|---|---|---|
 | Acid3 | 96/100 (fails 22, 23, 25, 35) | 96 | 96 | none: the same 4 as the host |
-| css3test | 69 % (4181/6419) | 71 % | 72 % | 168 checks; WebKit 2.54 vs 26.6, per-spec diff not yet done |
+| css3test | 69 % (4181/6419) | 71 % | 72 % | 168 checks, attributed in [CSS3TEST-GAPS.md](CSS3TEST-GAPS.md): 147 are 3 features 2.54 ships off (now on in the launcher), the rest WebKit-version differences |
 | JetStream benchmarks that ran | 16/16 (ab subset) | 64/64 | 64/64 | full run not yet done |
 | Speedometer suites that completed | 20/20 | 20/20 | 20/20 | |
 
