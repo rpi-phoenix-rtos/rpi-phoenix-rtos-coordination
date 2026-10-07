@@ -320,6 +320,8 @@ Speedometer suites — the plain CPU ratio the B9 page predicted.
 
 | 10-07 | 45 | smoke / jit | DONE ×4 | 55 + 87 + 8 + 12 s | Speedometer **1.165**, JetStream-ab **76.4**, Acid3 96, css3test 69 % | 54.5–63.3 °C, 0 | `rpi4b-uart-*-b45-smoke.log` |
 
+| 10-07 | 49 | smoke (GPU raster + dma-buf default, quiet) | DONE ×4 | 45 + 87 + 7 + 13 s | **Speedometer 1.281, JetStream-ab 79.7**, Acid3 96, **css3test 70 %** (4324/6419: corner-shape, object-view-box, ident() enabled) | 57–63 °C, 0 | `rpi4b-uart-*-b49-gate.log` |
+
 **Raster × transport A/B on build 47** (`b47-arms`, Speedometer 1 iteration `quiet=1`, MotionMark 10 s tests):
 
 | arm | Speedometer | MotionMark-quick |
