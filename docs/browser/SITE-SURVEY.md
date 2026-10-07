@@ -190,5 +190,62 @@ whatever was on screen at each 25 s tick.
 
 ## Results
 
+**Build 50, 2026-10-07** (GPU raster + dma-buf, `survey.sh gpu=1`):
+
+### Run `s10071013x1943`
+
+- Settings: `sites=32 limit=120 snap=1 dwell=0 size=1280x960 dmabuf=1 gpu=1 stall=60 rss=3 profile=fresh env=none temp_mC=52546`
+- Network check: `date=2026-10-07T10:13:34Z clock=set https=301 http=200`
+- Per-site logs and snapshots: `/srv/phoenix-rpi4-nfs-gcc16/root/survey/s10071013x1943` (on the Pi: `/root/survey/s10071013x1943/`)
+- Result: **31/32 OK** (31 OK, 1 TIMEOUT, 0 CRASH, 0 HANG, 0 ERROR)
+- Load time of the OK sites (`load started` → `load finished`): median 5.7 s, max 38.1 s
+- Web process footprint (peak per site, WTF memoryFootprint, overcounts): median 81 MB, max 1177 MB
+- Kernel fault dumps during the survey: 0
+
+| # | site | result | load s | commit s | HTTP | JS err | console err | web MB | stalls | faults | snap | title |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | start | **OK** | 0.4 | 0.1 | 0 | 0 | 0 | – | 0 |  | png | Phoenix-RTOS Web Browser |
+| 2 | example | **OK** | 1.5 | 0.7 | 200 | 0 | 0 | – | 0 |  | png | Example Domain |
+| 3 | cern | **OK** | 0.7 | 0.6 | 200 | 0 | 0 | – | 0 |  | png | – |
+| 4 | hackernews | **OK** | 1.8 | 1.1 | 200 | 0 | 0 | 56 | 0 |  | png | Hacker News |
+| 5 | lobsters | **OK** | 6.0 | 0.8 | 200 | 0 | 2 | 58 | 0 |  | png | Lobsters |
+| 6 | kernelorg | **OK** | 3.4 | 0.7 | 200 | 0 | 0 | 42 | 0 |  | png | The Linux Kernel Archives |
+| 7 | w3c | **OK** | 4.8 | 0.9 | 200 | 0 | 0 | 76 | 0 |  | png | W3C |
+| 8 | pythondocs | **OK** | 5.7 | 0.7 | 200 | 0 | 0 | 49 | 0 |  | png | The Python standard library — Python 3.14.8 documentation |
+| 9 | cnnlite | **OK** | 2.1 | 0.8 | 200 | 0 | 0 | 47 | 0 |  | png | Breaking News, Latest News and Videos \| CNN |
+| 10 | ddghtml | **OK** | 2.7 | 1.8 | 200 | 0 | 1 | 39 | 0 |  | png | raspberry pi at DuckDuckGo |
+| 11 | wikipedia | **OK** | 12.3 | 0.9 | 200 | 0 | 0 | 158 | 0 |  | png | Raspberry Pi - Wikipedia |
+| 12 | archwiki | **OK** | 2.9 | 1.8 | 200 | 0 | 0 | 40 | 0 |  | png | Code of Conduct \| Arch Linux Terms |
+| 13 | mdn | **OK** | 13.7 | 0.8 | 200 | 0 | 1 | 81 | 0 |  | png | JavaScript \| MDN |
+| 14 | github | **OK** | 9.9 | 1.5 | 200 | 0 | 1 | 130 | 0 |  | png | GitHub - phoenix-rtos/phoenix-rtos-kernel: Phoenix-RTOS mic… |
+| 15 | stackoverflow | **OK** | 2.4 | 1.3 | 403 | 0 | 0 | 39 | 0 |  | png | Just a moment... |
+| 16 | oldreddit | **OK** | 14.3 | 2.4 | 200 | 1 | 11 | 172 | 0 |  | png | Welcome to Reddit |
+| 17 | csstricks | **OK** | 35.1 | 1.1 | 200 | 0 | 21 | 268 | 0 |  | png | A Complete Guide to CSS Flexbox \| CSS-Tricks |
+| 18 | caniuse | **OK** | 15.2 | 2.1 | 200 | 0 | 0 | 129 | 0 |  | png | CSS Grid Layout (level 1) \| Can I use... Support tables fo… |
+| 19 | bbc | **OK** | 20.3 | 0.9 | 200 | 0 | 1 | 202 | 0 |  | png | BBC News - Breaking news, video and the latest top stories … |
+| 20 | guardian | **OK** | 5.5 | 1.5 | 200 | 0 | 1 | 80 | 0 |  | png | Latest news, sport and opinion from the Guardian |
+| 21 | nytimes | **TIMEOUT** | – | 2.1 | 200 | 0 | 2 | 1177 | 0 |  | - | The New York Times - Breaking News, US News, World News and… |
+| 22 | reuters | **OK** | 27.1 | 1.2 | 200 | 0 | 1 | 230 | 0 |  | png | Reuters \| Breaking International News & Views |
+| 23 | ddg | **OK** | 24.8 | 1.1 | 200 | 0 | 3 | 232 | 0 |  | png | raspberry pi at DuckDuckGo |
+| 24 | bing | **OK** | 5.3 | 2.8 | 200 | 0 | 0 | 60 | 0 |  | png | raspberry pi - Search |
+| 25 | google | **OK** | 2.5 | 1.4 | 200 | 0 | 0 | 39 | 0 |  | png | – |
+| 26 | amazon | **OK** | 38.1 | 2.3 | 200 | 0 | 2 | 318 | 0 |  | png | Amazon.com: Raspberry Pi 4 Model B 2019 Quad Core 64 Bit Wi… |
+| 27 | ebay | **OK** | 2.9 | 1.0 | 403 | 0 | 0 | 110 | 0 |  | png | Error Page \| eBay |
+| 28 | imdb | **OK** | 1.6 | 0.7 | 202 | 0 | 0 | 41 | 0 |  | png | – |
+| 29 | weather | **OK** | 11.1 | 2.2 | 200 | 0 | 0 | 75 | 0 |  | png | Yr - Warsaw - Long term forecast |
+| 30 | apple | **OK** | 22.3 | 1.2 | 200 | 0 | 0 | 145 | 0 |  | png | Apple |
+| 31 | osm | **OK** | 12.8 | 2.1 | 200 | 0 | 1 | 148 | 0 |  | png | OpenStreetMap |
+| 32 | youtube | **OK** | 20.8 | 3.2 | 200 | 3 | 3 | 426 | 0 |  | png | YouTube |
+
+**Problems** (not OK, HTTP ≥ 400, stall reports or kernel faults):
+
+- **15 stackoverflow** (https://stackoverflow.com/questions/tagged/rtos): OK, reason `-`, end `none`, rc 0, HTTP 403, wall 9 s, stalls 0, unresponsive 0
+- **21 nytimes** (https://www.nytimes.com/): TIMEOUT, reason `launcher-timeout`, end `none`, rc 2, HTTP 200, wall 124 s, stalls 0, unresponsive 1
+  - console ×1: `CONSOLE ERROR Unhandled Promise Rejection (unhandledrejection): Error: Could not get player context. Is this rendering inside a betamax component?`
+  - console ×1: `CONSOLE ERROR  ERROR  [Statsig] A networking error occurred during GET request to https://static01.nytimes.com/statsig/config/$client-BasfMtnVqHD0fEI7mV1O7Vkyk…`
+- **27 ebay** (https://www.ebay.com/): OK, reason `-`, end `none`, rc 0, HTTP 403, wall 12 s, stalls 0, unresponsive 1
+
+
+
 _No run yet._ Paste `parse-survey.py`'s output here, one `### Run` section per build. Note the
 build number and the manifest above each one.
