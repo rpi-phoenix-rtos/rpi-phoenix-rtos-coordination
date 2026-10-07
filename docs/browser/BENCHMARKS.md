@@ -320,6 +320,8 @@ Speedometer suites — the plain CPU ratio the B9 page predicted.
 
 | 10-07 | 45 | smoke / jit | DONE ×4 | 55 + 87 + 8 + 12 s | Speedometer **1.165**, JetStream-ab **76.4**, Acid3 96, css3test 69 % | 54.5–63.3 °C, 0 | `rpi4b-uart-*-b45-smoke.log` |
 
+**Profiles on build 47** (`b47-prof2`, `prof record` under the run): *hash-map* (still 21× the host) runs in JIT-generated code (top PCs outside the static text), with the WebProcess in the kernel only 1.1 % of all CPU — no OS cost left there. *Speedometer* (1.090 under the profiler): the main thread is spread over ordinary user code (`malloc` 2.5 % top) with the system 55 % idle (single-thread-bound); the visible remaining costs are the compositor thread's CPU copies of tiled GPU memory (`v3d_load_utile`/`v3d_store_utile`/`memcpy`, ~10 % of a CPU), the UART console printing the bench's own progress lines (`pl011-tty` 9 % of a CPU — use `quiet=1` for scoring), and posixsrv pipe traffic (6.5 % of all CPU; kernel-native pipes would remove it). lwIP spends ~30 % of one thread in software checksums (`lwip_standard_chksum`) during NFS traffic — GENET checksum offload is a candidate.
+
 ✅ (build 45) the two Stanford crypto tests now pass (scores 106 / 104): libphoenix's libm is FreeBSD msun.
 
 ⚠ **Correctness** (build 43): `stanford-crypto-sha256` ("Bad result") and `stanford-crypto-pbkdf2` ("Bad output")
