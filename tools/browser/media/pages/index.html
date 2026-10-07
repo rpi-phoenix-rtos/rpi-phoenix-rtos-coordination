@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<!--
+  index.html: a menu of the streaming-video test pages for attended runs (the gate arms open the
+  pages directly). SPDX-License-Identifier: BSD-3-Clause
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<title>B8 streaming video tests</title>
+<style>
+  body { font: 16px sans-serif; margin: 16px; background: #202020; color: #e0e0e0; }
+  a { color: #8cf; } td { padding: 2px 10px; } h2 { margin-top: 20px; }
+</style>
+</head>
+<body>
+<h1>Streaming video tests</h1>
+<p>Native HLS (<code>b8-hls.html</code>), hls.js (<code>b8-hlsjs.html</code>), a hand-written MSE player
+(<code>b8-mse.html</code>) and the idle-player memory page. Ladders: <a href="../ladders/">/ladders/</a>,
+MSE sets: <a href="../mse/">/mse/</a>.</p>
+<table id="t"></table>
+<script>
+"use strict";
+const ladders = ["hevc-fmp4", "hevc-ts", "hevc-main10", "h264-only", "byterange", "aes", "audio-only"];
+const rows = [];
+for (const l of ladders) {
+    const m = "/ladders/" + l + "/master.m3u8";
+    rows.push([l, [["native", "b8-hls.html?src=" + encodeURIComponent(m)], ["hls.js", "b8-hlsjs.html?src=" + encodeURIComponent(m)]]]);
+}
+for (const l of ["hevc-fmp4", "h264-only", "hevc-ts"]) {
+    const m = "/live/" + l + "/master.m3u8";
+    rows.push(["live " + l, [["native", "b8-hls.html?src=" + encodeURIComponent(m)], ["native disc=10", "b8-hls.html?src=" + encodeURIComponent(m + "?disc=10")],
+        ["hls.js", "b8-hlsjs.html?src=" + encodeURIComponent(m)]]]);
+}
+for (const mode of ["basic", "seek", "switch", "evict", "offset", "underrun", "eos"])
+    rows.push(["MSE " + mode, [["hevc-1080", "b8-mse.html?mode=" + mode], ["h264-720", "b8-mse.html?mode=" + mode + "&rep=h264-720"]]]);
+rows.push(["memory", [["7 players", "b8-hls-memory.html"]]]);
+const t = document.getElementById("t");
+for (const [name, links] of rows) {
+    const tr = t.insertRow();
+    tr.insertCell().textContent = name;
+    for (const [label, href] of links) {
+        const a = document.createElement("a");
+        a.href = href;
+        a.textContent = label;
+        tr.insertCell().appendChild(a);
+    }
+}
+</script>
+</body>
+</html>

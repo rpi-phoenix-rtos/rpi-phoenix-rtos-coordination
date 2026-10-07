@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<!--
+  b8-mse.html: a hand-written Media Source Extensions player, no library (docs/browser/MSE-DESIGN.md
+  §9.3, stage 1). It reads /mse/manifest.json (gen-ladders.sh: per representation its MIME type with
+  codecs, init.mp4 and 2 s fMP4 segments), fetches init + segments, appendBuffer()s them with
+  updateend chaining (each track appends ahead of currentTime by at most ?ahead= s) and logs
+  "B8MSE " lines: the isTypeSupported and decodingInfo('media-source') matrices first, then
+  addsourcebuffer, every append (bytes, ms, buffered after updateend), the <video> events as
+  b8-hls.html, and per mode its checks. The last line is "B8MSE-DONE result=...".
+
+  Query: mode=basic|seek|switch|evict|offset|underrun|eos (default basic)
+         rep=<video representation> (default hevc-1080; none = audio only)  audio=aac|opus|none
+         loops=N (basic, evict: the content N times, timestampOffset += its duration)
+         to=<s> (seek target, default 40)  gap=<s> (underrun: no appends for gap s after 'waiting', default 5)
+         switch=<rep>,<rep>,<rep> (default hevc-720,hevc-1080,h264-720: a new init segment of the same
+           codec at 20 s, then changeType() to the third at 40 s)
+         ahead=<s> (default 20)  mms=1 (ManagedMediaSource)  base=<URL of the mse directory> (default /mse/)
+         run=  stop=  limit=  muted=1  probe=0 (skip the matrices)
+  Modes: basic   play to the end, endOfStream() -> ended
+         seek    5 segments, play, at 4 s seek to ?to= (unbuffered): the page appends from there -> seeked
+         switch  quality switch (new init, same SourceBuffer) then codec switch (changeType)
+         evict   append everything paused, remove(0, 40), check buffered starts at 40, play from 40;
+                 with loops>1 keep appending while playing (the engine's own eviction / QuotaExceededError)
+         offset  timestampOffset=100: segments 0-4 land at 100-110; then mode='sequence': segments
+                 10-14 land right after (110-120), not at their own times
+         underrun stop appending at 10 s: 'waiting' (readyState <= 2), ?gap= s later resume -> 'playing'
+         eos     append everything, endOfStream(), play: 'ended' at the duration
+
+  SPDX-License-Identifier: BSD-3-Clause
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<title>B8 MSE</title>
+<style>
+  body { font: 15px sans-serif; margin: 12px; background: #202020; color: #e0e0e0; }
+  video { width: 960px; height: 540px; background: black; display: block; }
+  #state { font-family: monospace; margin-top: 6px; white-space: pre-wrap; }
+</style>
+<script src="media-common.js"></script>
+</head>
+<body>
+<video id="v" controls playsinline></video>
+<div id="state">-</div>
+<script>
+"use strict";
+(async function () {
+    const M = window.PhxMedia;
+    M.setTag("B8MSE");
+    const p = M.params, R = M.report, ranges = M.ranges;
+    const v = document.getElementById("v");
+    const mode = p.get("mode") || "basic";
+    const base = p.get("base") || "/mse/";
+    const ahead = Number(p.get("ahead") || 20);
+    const loops = Math.max(1, Number(p.get("loops") || 1));
+    v.muted = p.get("muted") === "1";
+    R("start", { mode, ua: navigator.userAgent });
+    const MSAny = M.mseInfo();
+    if (p.get("probe") !== "0") {
+        M.isTypeSupportedMatrix(MSAny);
+        await M.decodingInfoMatrix(["media-source"]);
+    }
+    const st = M.watchVideo(v);
+    let finished = false;
+    const finish = (result, extra) => {
+        if (finished) return;
+        finished = true;
+        st.stop();
+        M.done(result, Object.assign(st.summary(), extra || {}));
+    };
+    M.actions(v, st, finish);
+    const MSClass = p.get("mms") === "1" ? window.ManagedMediaSource : (window.MediaSource || window.ManagedMediaSource);
+    if (!MSClass) { R("no-mse", {}); finish("error", { reason: "no MediaSource" }); return; }
+    let man;
+    try {
+        man = await (await fetch(base + "manifest.json")).json();
+    } catch (e) { R("manifest-error", { message: e.message }); finish("error"); return; }
+    const reps = Object.fromEntries(man.representations.map((r) => [r.id, r]));
+    const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
+
+    class Track {
+        constructor(kind, rep) { this.kind = kind; this.rep = rep; this.sb = null; this.stopped = false; this.offset = 0; }
+        updateEnd() {
+            return new Promise((resolve, reject) => {
+                const ok = () => { off(); resolve(); };
+                const bad = () => { off(); reject(new Error("SourceBuffer error event")); };
+                const off = () => { this.sb.removeEventListener("updateend", ok); this.sb.removeEventListener("error", bad); };
+                this.sb.addEventListener("updateend", ok);
+                this.sb.addEventListener("error", bad);
+            });
+        }
+        async fetch(url) {
+            const r = await fetch(url);
+            if (!r.ok) throw new Error("HTTP " + r.status + " " + url);
+            return r.arrayBuffer();
+        }
+        async append(buf, what) {
+            const t = performance.now();
+            for (let attempt = 0; ; attempt++) {
+                try {
+                    const done = this.updateEnd();
+                    this.sb.appendBuffer(buf);
+                    await done;
+                    break;
+                } catch (e) {
+                    if (e.name === "QuotaExceededError" && attempt < 3) {
+                        const behind = Math.max(0, v.currentTime - 10);
+                        R("quota", { sb: this.kind, what, buffered: ranges(this.sb.buffered), remove_to: behind.toFixed(1) });
+                        if (behind <= (this.sb.buffered.length ? this.sb.buffered.start(0) : 0)) { await sleep(1000); continue; }
+                        const done = this.updateEnd();
+                        this.sb.remove(0, behind);
+                        await done;
+                        continue;
+                    }
+                    throw e;
+                }
+            }
+            R("append", { sb: this.kind, what, bytes: buf.byteLength, ms: Math.round(performance.now() - t),
+                buffered: ranges(this.sb.buffered) });
+        }
+        async init(rep) {
+            this.rep = rep;
+            await this.append(await this.fetch(base + rep.id + "/" + rep.init), rep.id + "/init");
+        }
+        /* segments [from, to) of the current rep, at most `ahead` s past currentTime */
+        async run(from, to, opts) {
+            opts = opts || {};
+            const segs = this.rep.segments;
+            for (let i = from; i < Math.min(to, segs.length) && !this.stopped; i++) {
+                const at = this.offset + segs[i].start;
+                while (!opts.noThrottle && !this.stopped && at - v.currentTime > ahead) await sleep(250);
+                if (this.stopped) break;
+                const buf = await this.fetch(base + this.rep.id + "/" + segs[i].uri);
+                if (this.stopped) break;
+                await this.append(buf, this.rep.id + "/" + i);
+                if (opts.after) opts.after(i);
+            }
+        }
+        /* how many segments start before t (a segment boundary of this rep) */
+        upto(t) { return this.rep.segments.filter((s) => s.start < t - 0.001).length; }
+        index(t) {
+            const segs = this.rep.segments;
+            let i = 0;
+            while (i + 1 < segs.length && segs[i + 1].start <= t) i++;
+            return i;
+        }
+    }
+
+    const vrep = p.get("rep") === "none" ? null : reps[p.get("rep") || "hevc-1080"];
+    const arep = p.get("audio") === "none" ? null : reps[p.get("audio") || "aac"];
+    if (p.get("rep") && p.get("rep") !== "none" && !vrep) { R("no-rep", { rep: p.get("rep") }); finish("error"); return; }
+    const ms = new MSClass();
+    if (window.ManagedMediaSource && ms instanceof window.ManagedMediaSource) v.disableRemotePlayback = true;
+    ms.addEventListener("sourceended", () => R("sourceended", { duration: ms.duration }));
+    ms.addEventListener("sourceclose", () => R("sourceclose", {}));
+    const opened = new Promise((res) => ms.addEventListener("sourceopen", res, { once: true }));
+    v.src = URL.createObjectURL(ms);
+    await opened;
+    R("sourceopen", { class: MSClass.name || "?", readyState: ms.readyState });
+    const content = (vrep || arep).duration;
+    const tracks = [];
+    try {
+        ms.duration = content * (mode === "offset" ? 3 : loops);
+        for (const [kind, rep] of [["video", vrep], ["audio", arep]]) {
+            if (!rep) continue;
+            const t = new Track(kind, rep);
+            t.sb = ms.addSourceBuffer(rep.mime);
+            t.sb.addEventListener("error", () => R("sb-error", { sb: kind }));
+            t.sb.addEventListener("abort", () => R("sb-abort", { sb: kind }));
+            R("addsourcebuffer", { sb: kind, type: rep.mime, mode: t.sb.mode });
+            tracks.push(t);
+        }
+        /* every SourceBuffer exists before the first init segment: after it the set is fixed */
+        for (const t of tracks) await t.init(t.rep);
+    } catch (e) {
+        R("setup-error", { name: e.name, message: e.message });
+        finish("error");
+        return;
+    }
+    const play = () => v.play().then(() => R("play-resolved", {}), (e) => R("play-rejected", { name: e.name }));
+    const all = (fn) => Promise.all(tracks.map(fn));
+    const eos = () => { if (ms.readyState === "open") { ms.endOfStream(); R("endofstream", { duration: ms.duration.toFixed(3), buffered: ranges(v.buffered) }); } };
+    const endedThen = (result, check) => v.addEventListener("ended", () => {
+        if (check) check();
+        setTimeout(() => finish(result), 1000);
+    }, { once: true });
+    const waitFor = (target, event, timeoutMs) => new Promise((res) => {
+        const t = setTimeout(() => res(false), timeoutMs);
+        target.addEventListener(event, () => { clearTimeout(t); res(true); }, { once: true });
+    });
+
+    try {
+        if (mode === "basic" || mode === "eos") {
+            endedThen("ok", () => R("ended-check", { current: v.currentTime.toFixed(3), duration: ms.duration.toFixed(3),
+                pass: Math.abs(v.currentTime - ms.duration) < 0.5 ? 1 : 0 }));
+            if (mode === "basic") play();
+            for (let k = 0; k < loops; k++) {
+                for (const t of tracks) { t.offset = k * content; t.sb.timestampOffset = t.offset; }
+                await all((t) => t.run(0, Infinity, { noThrottle: mode === "eos" }));
+            }
+            eos();
+            if (mode === "eos") play();
+        } else if (mode === "seek") {
+            const to = Number(p.get("to") || 40);
+            endedThen("ok");
+            await all((t) => t.run(0, 5));
+            play();
+            await waitFor(v, "playing", 20000);
+            while (v.currentTime < 4) await sleep(100);
+            for (const t of tracks) t.stopped = true;
+            R("seek-request", { from: v.currentTime.toFixed(2), to });
+            const seeked = waitFor(v, "seeked", 30000);
+            v.currentTime = to;
+            await sleep(300);
+            for (const t of tracks) t.stopped = false;
+            await Promise.all(tracks.map((t) => t.run(t.index(to), Infinity)).concat([seeked.then((ok) =>
+                R("seek-check", { ok: ok ? 1 : 0, current: v.currentTime.toFixed(2), pass: ok && Math.abs(v.currentTime - to) < 2 ? 1 : 0 }))]));
+            eos();
+        } else if (mode === "switch") {
+            const names = (p.get("switch") || "hevc-720,hevc-1080,h264-720").split(",");
+            const vt = tracks.find((t) => t.kind === "video");
+            if (!vt || names.some((n) => !reps[n])) throw new Error("switch needs a video track and reps " + names);
+            endedThen("ok");
+            const at = tracks.find((t) => t.kind === "audio");
+            const audioRun = at ? at.run(0, Infinity) : Promise.resolve();
+            if (vt.rep.id !== names[0]) await vt.init(reps[names[0]]);
+            play();
+            await vt.run(0, 10);
+            R("switch", { what: "quality", from: vt.rep.id, to: names[1], at_s: 20 });
+            await vt.init(reps[names[1]]);
+            await vt.run(10, 20);
+            const type = reps[names[2]].mime;
+            if (vt.sb.changeType && reps[names[2]].codec.slice(0, 4) !== reps[names[1]].codec.slice(0, 4)) {
+                vt.sb.changeType(type);
+                R("switch", { what: "changeType", from: vt.rep.id, to: names[2], type, at_s: 40 });
+            } else {
+                R("switch", { what: "init", from: vt.rep.id, to: names[2], changeType: vt.sb.changeType ? 1 : 0, at_s: 40 });
+            }
+            await vt.init(reps[names[2]]);
+            await vt.run(20, Infinity);
+            await audioRun;
+            eos();
+        } else if (mode === "evict") {
+            await all((t) => t.run(0, Infinity, { noThrottle: true }));
+            R("evict-before", Object.fromEntries(tracks.map((t) => [t.kind, ranges(t.sb.buffered)])));
+            for (const t of tracks) { const d = t.updateEnd(); t.sb.remove(0, 40); await d; }
+            const vb = tracks[0].sb.buffered;
+            R("evict-check", Object.assign(Object.fromEntries(tracks.map((t) => [t.kind, ranges(t.sb.buffered)])),
+                { pass: vb.length && Math.abs(vb.start(0) - 40) < 0.5 ? 1 : 0 }));
+            endedThen("ok");
+            v.currentTime = 40;
+            play();
+            for (let k = 1; k < loops; k++) {
+                for (const t of tracks) { t.offset = k * content; t.sb.timestampOffset = t.offset; }
+                await all((t) => t.run(0, Infinity, { after: () => R("evict-progress", { sb: t.kind,
+                    buffered: ranges(t.sb.buffered), current: v.currentTime.toFixed(1) }) }));
+            }
+            eos();
+        } else if (mode === "offset") {
+            for (const t of tracks) { t.offset = 100; t.sb.timestampOffset = 100; }
+            await all((t) => t.run(0, t.upto(10), { noThrottle: true }));
+            const v0 = tracks[0].sb.buffered;
+            R("offset-check", { what: "timestampOffset=100 segments 0-4", buffered: ranges(v0),
+                pass: v0.length && Math.abs(v0.start(0) - 100) < 0.2 && Math.abs(v0.end(v0.length - 1) - 110) < 0.3 ? 1 : 0 });
+            for (const t of tracks) { t.sb.mode = "sequence"; t.offset = 110 - 20; }
+            await all((t) => t.run(t.upto(20), t.upto(30), { noThrottle: true }));
+            const v1 = tracks[0].sb.buffered;
+            R("offset-check", { what: "sequence mode, segments 10-14 after 110", buffered: ranges(v1),
+                timestampOffset: tracks[0].sb.timestampOffset.toFixed(3),
+                pass: v1.length === 1 && Math.abs(v1.end(0) - 120) < 0.3 ? 1 : 0 });
+            endedThen("ok");
+            v.currentTime = 100;
+            play();
+            eos();
+        } else if (mode === "underrun") {
+            const gap = Number(p.get("gap") || 5);
+            endedThen("ok");
+            await all((t) => t.run(0, t.upto(10)));
+            play();
+            const waited = await waitFor(v, "waiting", 30000);
+            R("underrun-check", { waiting: waited ? 1 : 0, ready: v.readyState, current: v.currentTime.toFixed(2),
+                pass: waited && v.readyState <= 2 ? 1 : 0 });
+            await sleep(gap * 1000);
+            R("underrun-resume", { after_s: gap, current: v.currentTime.toFixed(2) });
+            await all((t) => t.run(t.upto(10), Infinity));
+            eos();
+        } else {
+            throw new Error("unknown mode " + mode);
+        }
+    } catch (e) {
+        R("mode-error", { mode, name: e.name, message: (e.message || "").slice(0, 200) });
+        finish("error");
+    }
+})();
+</script>
+</body>
+</html>
