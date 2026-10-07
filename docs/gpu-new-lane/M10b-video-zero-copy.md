@@ -236,7 +236,7 @@ The block takes independent `OUTYBASE`/`OUTCBASE` and `OUTYSTRIDE`/`OUTCSTRIDE`,
 - Fix: call the gate before `hevc_frame_start`. Everything it reads (`s->ps.pps`, `s->pkt.nals`, `s->sh`) is parsed by then, and this also removes the "no fresh frame data" check.
 - The alternative is to swap a refused picture's frame for a planar `get_buffer2` frame, the same mechanism as the fallback DPB rewrite below.
 
-**Cropping.** `apply_cropping` on an `AV_PIX_FMT_FLAG_HWACCEL` frame adjusts only `width`/`height` and leaves the data alone. So the consumer sizes the image from `frame->width`/`height`, and any non-zero `crop_top`/`crop_left` becomes a texture-coordinate offset. At 1080p only `crop_bottom = 8` is used, which the size already covers.
+**Cropping.** `av_frame_apply_cropping` on an `AV_PIX_FMT_FLAG_HWACCEL` frame subtracts `crop_right`/`crop_bottom` from `width`/`height` and leaves the data alone (`ffmpeg-6.1/libavutil/frame.c:1017-1023`). So the consumer sizes the image from `frame->width`/`height`, and any non-zero `crop_top`/`crop_left` becomes a texture-coordinate offset. At 1080p only `crop_bottom = 8` is used, which the size already covers.
 
 **Lifetime falls out of reference counting.**
 - The DPB (`HEVCFrame`) and every consumer copy (`av_frame_ref`, `av_frame_clone` in WebKit's layer buffer, `0030`:233) hold `buf[0]`.
