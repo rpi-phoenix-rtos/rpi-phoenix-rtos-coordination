@@ -188,6 +188,7 @@ srv.hw.pt[(gpuva >> V3D_PAGE_SHIFT) + i] = (uint32_t)(ppa >> V3D_PAGE_SHIFT) | P
 - A handle the connection already holds is returned with no IPC (`:1400-1409`).
 - A `/kmsbuf` name is mapped by the server, which then resolves each page with `va2pa` (`v3da_bo.c:832-886`).
 - **There is no third namespace, no userptr and no import by physical address.**
+- `shmsrv` (`/shm/<id>`, `tools/gpu-lane/weston-drm/shmsrv/shm_proto.h:20-40`) is cached `MAP_CONTIGUOUS` memory exported with `memExport` for `wl_shm`. It is not a dma-buf: libdrm does not recognise `/shm/`, and it is cached. It plays no part here.
 
 **Lifetime.** A BO's references are its creator handle, sharer imports and open `/v3dbuf` descriptors (`v3da_bo.c:455-466`). At zero references the export is withdrawn and the BO is quarantined until every queue has passed its last use (`:396-422`, `:632-677`). An importer therefore keeps the pages alive until the GPU is done with them.
 
@@ -228,6 +229,14 @@ The block takes independent `OUTYBASE`/`OUTCBASE` and `OUTYSTRIDE`/`OUTCSTRIDE`,
 - With `drm_prime`, the hwaccel gets an `FFHWAccel.alloc_frame`. FFmpeg 6.1 calls it instead of `get_buffer2` for hwaccel frames (`ffmpeg-6.1/libavcodec/decode.c:1664-1668`, `hwaccel_internal.h:43`). No `hw_frames_ctx` and no `--enable-libdrm` are needed (`CONFIG_LIBDRM 0` today).
 - `alloc_frame` takes a BO from the pool (moving today's `pool_get` from `ff_rpivid_hevc_picture_ok`, `RV/rpivid_hevc.c:786`). It sets `frame->format = AV_PIX_FMT_DRM_PRIME`, `frame->data[0]` = an `AVDRMFrameDescriptor` (1 object: the `/v3dbuf` fd and size; 1 layer `DRM_FORMAT_NV12`; 2 planes `{offset 0, pitch 128}` and `{H16×128, 128}`; `format_modifier = SAND128_COL_HEIGHT(C)`), and `frame->buf[0]` = an `AVBufferRef` whose free returns the BO to the pool.
 - `libavutil/hwcontext_drm.h` is header-only for this use.
+
+**The per-picture gate must move ahead of the frame allocation.** Today the gate runs too late for this mode:
+- The gate `ff_rpivid_hevc_picture_ok` runs in `decode_nal_unit` **after** `hevc_frame_start` has allocated `s->ref` (patch `files/rpivid/patches/1001`, hevcdec.c hunk at ~3100; `picture_ok` dereferences `s->ref->hwaccel_picture_private`, `RV/rpivid_hevc.c:735`, `:782-785`).
+- With `alloc_frame`, a picture the gate refuses would already be a `DRM_PRIME` frame when the CPU decoder starts writing into it.
+- Fix: call the gate before `hevc_frame_start`. Everything it reads (`s->ps.pps`, `s->pkt.nals`, `s->sh`) is parsed by then, and this also removes the "no fresh frame data" check.
+- The alternative is to swap a refused picture's frame for a planar `get_buffer2` frame, the same mechanism as the fallback DPB rewrite below.
+
+**Cropping.** `apply_cropping` on an `AV_PIX_FMT_FLAG_HWACCEL` frame adjusts only `width`/`height` and leaves the data alone. So the consumer sizes the image from `frame->width`/`height`, and any non-zero `crop_top`/`crop_left` becomes a texture-coordinate offset. At 1080p only `crop_bottom = 8` is used, which the size already covers.
 
 **Lifetime falls out of reference counting.**
 - The DPB (`HEVCFrame`) and every consumer copy (`av_frame_ref`, `av_frame_clone` in WebKit's layer buffer, `0030`:233) hold `buf[0]`.
@@ -376,7 +385,7 @@ Players are lower priority than the browser: 1080p30 already plays in real time 
 | # | Step | Gate | Agent-days |
 |---|---|---|---|
 | 1 | **Standalone Pi probe, before any WebKit work** (`tools/gpu-lane/sand-import/`): `CREATE_BO` + `MMAP_BO` + PA; fill the BO with one real picture decoded by the block through the `RV` code in the new single-buffer layout, or a synthetic SAND pattern; `drmPrimeHandleToFD`; EGL surfaceless import NV12 + `SAND128_COL_HEIGHT(C)`; draw the external texture into an FBO; read back; compare with `rpivid_sand8_to_planar` + a reference YUV→RGB. Time the blit with `glFinish` around 100 draws. Also: the import of the bare modifier (expected to misbehave, §2.3) and a LINEAR import (path A's cost). | pixel match (± rounding of the colour matrix); SAND blit ≤ 2 ms at 1080p; contiguity check passes for 10 BOs | 1 (+1 Pi cycle) |
-| 2 | **Decoder:** single-buffer layout in `rpivid_geom`/`pool_get` (planar mode first: must stay bit-exact), then the V3D-BO pool + contiguity guard + `WAIT_BO`, `rpivid_out=drm_prime` with `alloc_frame`, readback helper, DPB rewrite on fallback. Host side: hosttest mock + a fake libdrm shim for `CREATE_BO`/`WAIT_BO`/PRIME, ASan, 1 and 4 threads, `--loop` bit-exact through the readback. | hosttest 39/39 + loop bit-exact; Pi `hevc-rpivid-check` level 1 bit-exact in both modes | 2 (+1 Pi cycle) |
+| 2 | **Decoder:** single-buffer layout in `rpivid_geom`/`pool_get` (planar mode first: must stay bit-exact); the picture gate moved before `hevc_frame_start` (§4.1); then the V3D-BO pool + contiguity guard + `WAIT_BO`, `rpivid_out=drm_prime` with `alloc_frame`, readback helper, DPB rewrite on fallback. Host side: hosttest mock + a fake libdrm shim for `CREATE_BO`/`WAIT_BO`/PRIME, ASan, 1 and 4 threads, `--loop` bit-exact through the readback. | hosttest 39/39 + loop bit-exact; Pi `hevc-rpivid-check` level 1 bit-exact in both modes | 2 (+1 Pi cycle) |
 | 3 | **WebKit 0032** on top of the post-MSE 0030/0031: DRM_PRIME layer buffer, EGLImage cache, external-OES draw, colour hints, readback for `skiaImage()`, kill-switch. | builds; `b8.sh hevc` 1080p30 painted ≥ 95 %, HDMI colours right | 1.5 (+ 1–2 WebKit relinks) |
 | 4 | **60 fps gate:** the 1080p60 arm + `b8-stream.sh hevc-fmp4`, `prof`; A/B with the kill-switch. | painted ≥ 95 % at 60; `sand≈0`; no `v3d_store_utile` from compositing; CPU freed ≈ 1 core | 1 (+2 Pi cycles) |
 | 5 | **Players:** ffplay GL video output (B) for `video-play`; then `rpi4-kms` NV12/SAND overlay + ffplay KMS plane output (C). | `ffplay-stat` fps/drops at 1080p60, `top` | 1.5 + 3 |
