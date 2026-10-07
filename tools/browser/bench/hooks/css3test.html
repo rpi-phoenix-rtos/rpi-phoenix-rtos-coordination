@@ -10,7 +10,8 @@
 
   Lines: env, result score=<percent> passed=<n> total=<n> features=<n> specs=<n> time_ms=<ms>,
   spec <id> <percent> (console only), json specs k/n [[id, title, percent], ...],
-  BENCH-DONE css3test score=<percent> passed=<n> total=<n> status=ok|timeout.
+  the POSTed final JSON also holds "failures" (every feature not fully passed, with its failed
+  tests; tools/browser/bench/css3test-diff.py compares two runs), BENCH-DONE css3test score=<percent> passed=<n> total=<n> status=ok|timeout.
   ?filter= passes css3test's own filter (default: all specifications except CSS 2.2).
 
   SPDX-License-Identifier: BSD-3-Clause
@@ -49,6 +50,40 @@
                 specs.push([section.id, title.slice(0, 60), score ? score.textContent.trim() : '?']);
             }
         }
+        /* Every feature that did not fully pass, for diffing two engines feature by feature
+         * (tools/browser/bench/css3test-diff.py): [spec, group, feature, percent, tests, [failed]].
+         * A test counts as failed unless css3test classed it "pass"; a values test that passed in
+         * only some of its properties carries its "Failed in: ..." note. POST only (the final JSON):
+         * too bulky for the console and title channels. */
+        const failures = [];
+        let featureCount = 0;
+        if (d) {
+            for (const section of d.querySelectorAll('#all > section')) {
+                for (const group of section.querySelectorAll(':scope > section.tests')) {
+                    const groupH1 = group.querySelector(':scope > h1');
+                    const groupName = groupH1 ? groupH1.textContent.trim() : '?';
+                    for (const details of group.querySelectorAll(':scope > details')) {
+                        featureCount++;
+                        const summary = details.querySelector('summary');
+                        const name = summary && summary.firstChild ? summary.firstChild.textContent.trim() : '?';
+                        const progress = summary ? parseFloat(summary.style.getPropertyValue('--progress')) : NaN;
+                        if (progress === 100)
+                            continue;
+                        const tests = details.querySelectorAll('ul > li');
+                        const failed = [];
+                        for (const li of tests) {
+                            if (li.className === 'pass')
+                                continue;
+                            const test = li.firstChild ? li.firstChild.textContent : '';
+                            const note = li.querySelector('small');
+                            failed.push(note && note.textContent ? test + ' [' + note.textContent + ']' : test);
+                        }
+                        failures.push([section.id, groupName, name, isNaN(progress) ? null : Math.round(progress * 10) / 10,
+                            tests.length, failed]);
+                    }
+                }
+            }
+        }
         for (const s of specs)
             P.line(B, 'spec', s[0] + ' ' + s[2], { title: false });
         const status = finished ? 'ok' : 'timeout';
@@ -59,7 +94,8 @@
         P.json(B, 'specs', specs);
         P.done(B, { score, passed: text('passedTests'), total: text('totalTests'), status },
             { bench: B, run: P.run, filter, score, passed: text('passedTests'), total: text('totalTests'),
-                features: text('total'), time: text('timeTaken'), specs, userAgent: navigator.userAgent });
+                features: text('total'), time: text('timeTaken'), specs, featuresSeen: featureCount, failures,
+                userAgent: navigator.userAgent });
     }
     frame.addEventListener('load', () => setTimeout(poll, 200));
     frame.src = '../css3test/index.html?filter=' + encodeURIComponent(filter);
