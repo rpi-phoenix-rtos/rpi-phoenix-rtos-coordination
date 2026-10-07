@@ -19,7 +19,7 @@
 #     only=a,b,...  only these names;  from=N / to=N  only sites N..M of the list (1-based)
 #     size=WxH      the window (default 1280x960, /bin/browser's)
 #     dmabuf=1|0    frames to labwc as dma-bufs (default 1, /bin/browser's) or shared memory
-#     gpu=0|1       Skia CPU raster (default 0, /bin/browser's) or GPU raster on the V3D
+#     gpu=1|0       GPU raster on the V3D (default 1, /bin/browser's) or Skia CPU raster
 #     stall=S       wpe-browser --stall-secs (default 60; the browser's 10 floods on heavy pages)
 #     rss=S         wpe-browser --rss-secs: every process's memory footprint every S s (default 3)
 #     profile=fresh|home  fresh (default): cookies + HTTP cache in <dir>/profile, empty at the
@@ -72,7 +72,7 @@ if [ -n "${SURVEY_INNER:-}" ]; then
 fi
 ARGS_TEXT="$*"
 LIMIT=120 SNAP=1 DWELL=0 SITES=/usr/share/wpe-browser/survey-sites.txt ONLY= FROM=1 TO=999
-SIZE=1280x960 DMABUF=1 GPU=0 STALL=60 RSS=3 PROFILE_MODE=fresh HOLD_OPT=
+SIZE=1280x960 DMABUF=1 GPU=1 STALL=60 RSS=3 PROFILE_MODE=fresh HOLD_OPT=
 EXTRA_ENV=()
 for kv in "$@"; do
 	case "${kv}" in
