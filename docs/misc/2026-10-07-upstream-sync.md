@@ -51,7 +51,7 @@ the session — build 48 — and the branches were rebuilt on the new masters).
 | phoenix-rtos-tests | bc2ee7b | 124e546 | **de899f4** | de899f4 merge |
 | phoenix-rtos-build | 71b723d | c4985cc | **a8e8679** | (10-06 merge + fix) |
 | phoenix-rtos-devices | 961544f | ed99dc9 | **440bcec** | (10-06 merge) |
-| phoenix-rtos-ports | 00800e3 | d31880a | **d4b0c94** | d4b0c94 merge |
+| phoenix-rtos-ports | b8e11fa | d31880a | **943368e** | 943368e merge |
 | phoenix-rtos-utils | 64ff3b6 | f226e3e | **4bfadfb** | 4bfadfb merge |
 | phoenix-rtos-project | bd59b34 | 3a0d6c7 | **3cca596** | (10-06 merge) |
 
@@ -227,7 +227,7 @@ Masters did not move since 10-06; the branches are fast-forwarded to the 10-06
 heads. corelibs 35/35, devices 37/37, lwip 110/110, usb 12/12, utils 56/56 files
 compile against the merged headers (lwip/usb from `sources/`, no incoming).
 
-### phoenix-rtos-ports — 1 incoming, @ d4b0c94; phoenix-rtos-utils — 1, @ 4bfadfb
+### phoenix-rtos-ports — 1 incoming, @ 943368e; phoenix-rtos-utils — 1, @ 4bfadfb
 Clean merges (lsb_vsx/MicroPython `__signbit`; stm32u3 target).
 
 ## Coordination-repo changes on this branch
