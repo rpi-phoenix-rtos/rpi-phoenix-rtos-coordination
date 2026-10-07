@@ -15,7 +15,7 @@
 #   probe       1  type answers only           mse-basic    2  hevc-1080 + AAC to the end
 #   hevc-fmp4   2,3 the main case (HEVC 1080p) mse-seek     3  seek to 40 s, unbuffered
 #   hevc-ts     4  TS segments                 mse-switch   4  720p -> 1080p init, changeType -> H.264
-#   h264-only   5  the 720p cap                mse-evict    5  remove(0,40) + 120 s of appends
+#   h264-only   5  the 720p cap                mse-evict    5  remove(0,40), then 60 s more (cap)
 #   main10      6  policy picks H.264 720p     mse-underrun 6  appends stop: waiting -> playing
 #   main10-forced 6 WPE_PHOENIX_HLS_VARIANT=0  mse-eos      7  endOfStream -> ended
 #   seek        7  hevc-fmp4, seek to 40 at 5  mse-offset      timestampOffset + sequence mode
@@ -106,11 +106,10 @@ spec() {  # spec <arm>: sets PAGE, SECS, ENVS, ARGS
 		mse-basic) PAGE="b8-mse.html?mode=basic" SECS=85 ;;
 		mse-seek) PAGE="b8-mse.html?mode=seek" SECS=60 ;;
 		mse-switch) PAGE="b8-mse.html?mode=switch" SECS=85 ;;
-		# (eos and evict append all 60 s before play(): above the engine's 8 MB cap for a
-		# player that has not played yet, so they get the played cap)
-		mse-evict) PAGE="b8-mse.html?mode=evict&loops=3" SECS=170 ENVS=(WPE_PHOENIX_MSE_IDLE_MAX_MB=40) ;;
+		# (evict: 120 s of content, played from 40 s, startup and 34 MB of appends first)
+		mse-evict) PAGE="b8-mse.html?mode=evict&loops=2" SECS=140 ;;
 		mse-underrun) PAGE="b8-mse.html?mode=underrun&stop=30" SECS=60 ;;
-		mse-eos) PAGE="b8-mse.html?mode=eos" SECS=90 ENVS=(WPE_PHOENIX_MSE_IDLE_MAX_MB=40) ;;
+		mse-eos) PAGE="b8-mse.html?mode=eos" SECS=90 ;;
 		mse-offset) PAGE="b8-mse.html?mode=offset" SECS=55 ;;
 		hlsjs-hevc) PAGE="b8-hlsjs.html?src=$(ladder hevc-fmp4)&stop=30" SECS=60 ;;
 		hlsjs-h264) PAGE="b8-hlsjs.html?src=$(ladder h264-only)&stop=30" SECS=60 ;;

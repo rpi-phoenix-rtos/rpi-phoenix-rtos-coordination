@@ -521,11 +521,24 @@ apart: a default build keeps the same tree and no rebuild.
 With MSE the bytes live in WebCore's `TrackBuffer`s (compressed samples), the page's own JS
 buffers (hls.js keeps fetched fragments) and our engine queues; the rules keep a page with several
 players (hover previews, muted autoplay teasers) bounded:
-- **SourceBuffer caps:** `platformMaximumBufferSize()` 40 MB per video SourceBuffer, 8 MB audio
-  (`WPE_PHOENIX_MSE_MAX_MB`) for a player that has played; **8 MB / 2 MB for one that has not**
-  (the same played/idle split as 0030's read-ahead; WebCore re-reads the size through
-  `setMaximumBufferSize` → eviction on the next append). Compressed data only: 720p H.264 ≈
-  0.3–0.5 MB/s, 1080p HEVC ≈ 0.6–1 MB/s → ~40–80 s of video at the full cap.
+- **SourceBuffer caps:** `platformMaximumBufferSize()` 40 MiB per video SourceBuffer, 8 MiB audio
+  (`WPE_PHOENIX_MSE_MAX_MB`) for a player that has played. **Before the first play** players
+  still buffer ahead (hls.js `maxBufferLength` 30 s, dash.js ~12–30 s, Shaka 10 s): 30 s of
+  1080p HEVC at 4.5–8 Mb/s is 17–30 MiB, of 720p H.264 at 3–5 Mb/s 11–19 MiB. So the video
+  SourceBuffers of all never-played players of the process share a pool
+  (`WPE_PHOENIX_MSE_IDLE_POOL_MB`, 48 MiB): each one's limit is `clamp(pool − the others' bytes,
+  4 MiB, 40 MiB)`, recomputed after every append, at a player's first play and when a
+  SourceBuffer goes; audio-only ones get 2 MiB (30 s at 530 kb/s). One idle player buffers like a
+  playing one, two share 48 MiB, every further one gets 4 MiB (two 1080p segments): N idle
+  players hold at most 48 + 4 × (N − 2) MiB (seven: 68 MiB; the first stage-1 build's fixed
+  8 MiB gave 56 MiB, but cut hls.js's default buffer to 14 s and evicted a never-played player's
+  start, build 59 `mse-offset`). Compressed data only.
+- **Eviction keeps where playback goes next** (WebCore `SourceBufferPrivate::evictFrames`, hunk in
+  0032): WebKit kept only `currentTime + 30 s` when currentTime is not buffered, so a player that
+  had appended 100–114 s while still at 0 lost all of it. Now the first buffered segment after
+  currentTime (the start position, or a pending seek's target) is never evicted; an append that
+  does not fit beside it fails with `QuotaExceededError`, which hls.js answers by shortening its
+  buffer.
 - **No copies of payload:** a `MediaSampleFFmpeg`'s AVPacket references the append's
   `SharedBuffer` (one `av_buffer_create` per append). Consequence: an append's buffer is freed only
   when every sample from it is evicted — segment granularity, acceptable; but if an append's
@@ -675,7 +688,7 @@ fresh `wpe-browser --autoplay=allow --size=1000x620 <url>` killed after its time
 | 8 | `b8-hlsjs.html` on `hevc-fmp4`: branch `hls.js`, `MANIFEST_PARSED` lists HEVC levels, the level playing is HEVC (`hw=1`); on `h264-only`: 1080p absent from the levels, 720p playing | hls.js steered |
 | 9 | `--mse=off` arm on the same page: branch `native`, stage-0 behaviour | both paths live |
 | 10 | real-world recorded as 10.1 #11 (PeerTube now via hls.js; Vimeo/Dailymotion players) | recorded |
-| 11 | memory: a page with 4 MSE players each appended 30 s, none played: `mse_kb` ≤ 4 × 10 MB, no decoder lines; then 5 min of playback on one: footprint < +150 MB vs start, `mse_kb` flat once the 40 MB cap is reached | bounded |
+| 11 | memory: a page with 4 MSE players each appended 30 s (hevc-1080, ~17 MiB), none played: the players' `mse_kb` sum ≤ 48 + 4 × 2 = 56 MiB (§7.8 pool), the later players' `mse buffer-limit kb=4096`, no decoder lines; then 5 min of playback on one: footprint < +150 MB vs start, `mse_kb` flat once the 40 MiB cap is reached | bounded |
 | 12 | 0 `Exception #` | clean |
 
 ## 11. Risks
