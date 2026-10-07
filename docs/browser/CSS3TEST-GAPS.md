@@ -56,7 +56,11 @@ and it also turns on encrypted media, WebDriver BiDi, web extensions and WebXR: 
 - **Ports** `webkit_wpe/files/launcher/wpe-browser.cpp` (branch `webkit-css-features`):
   `enableCSSFeatures()` calls `webkit_settings_set_feature_enabled()` for
   `CSSCornerShapeEnabled`, `CSSObjectViewBoxEnabled` and `CSSIdentFunctionEnabled`, found by
-  identifier in `webkit_settings_get_all_features()`, and logs
+  identifier in `webkit_settings_get_all_features()`. The API's identifier is the preference key
+  without its `Enabled` suffix (`CSSCornerShape`, …; `toIdentifier()` in `WebKitFeature.cpp`):
+  build 48 looked the full keys up, found none and logged them all absent (fixed in ports
+  `webkit-css-features-2`). `WPE_BROWSER_LIST_FEATURES=1` logs every feature once,
+  `features list <identifier> status= default= enabled=`. The launcher logs
   `WPEB ... features enabled=<ids> absent=<ids>`; an identifier a later WebKit drops is logged as
   absent instead of failing silently. `--stock-features` (or `WPE_BROWSER_STOCK_FEATURES=1`)
   keeps WebKit's defaults, for an A/B on the same binary when a page renders oddly.
@@ -94,11 +98,12 @@ descriptors and the Paint API, less `margin-trim`: 21 checks, all (a) or deliber
 
 1. Build: the webkit_wpe port only. The change is in the launcher, no CMake option or WebKit
    patch moved, so `build-wpe.sh` reuses the configured tree: ninja recompiles `wpe-browser.cpp`
-   and relinks `wpe-browser`. Check `strings wpe-browser | grep CSSCornerShapeEnabled`.
+   and relinks `wpe-browser`. (A `strings` check proves nothing here: WebKit's own feature table
+   holds every identifier; the start-up log line below is the check.)
 2. Stage the new hook: `tools/browser/bench/stage.sh` copies `hooks/*` to the NFS root's
    `browser-bench/phx/`; without it the Pi's JSON has no `failures`.
 3. Run css3test once (bench.sh `compat` or `smoke`). The UART shows
-   `features enabled=CSSCornerShapeEnabled,CSSObjectViewBoxEnabled,CSSIdentFunctionEnabled absent=-`.
+   `features enabled=CSSCornerShape,CSSObjectViewBox,CSSIdentFunction absent=-`.
 4. `tools/browser/bench/css3test-diff.py <build-47 Pi JSON> <new Pi JSON>` (per spec: the
    build-47 JSON has no per-feature list): expect css-borders-4 0 → 44 %, css-images-5 0 → 100 %,
    css-values-5 28 → 30 %, and nothing else. Then diff the new Pi JSON against
