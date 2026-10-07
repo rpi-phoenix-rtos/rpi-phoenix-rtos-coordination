@@ -122,10 +122,17 @@ ffmpeg -i master.mov -vf scale=1920:1080,format=yuv420p -r 30 \
 - **Our browser needs nothing new:** JW's html5 provider checks only `canPlayType('video/mp4')`,
   with no MSE and no HLS for single-file video items [V by the research pass,
   `details-av.min.js`].
-- Open risks:
-  - archive.org's details page in our WPE (a large Lit/JS app) has not been tried. The `/embed/`
-    page is lighter.
+- Pi rehearsal (build 56, 2026-10-07, `demo-sites` cycle, a CC BY-SA item whose original is a
+  `.MOV`, so only its 480p H.264 derivative is offered): both the **details page** (load 15.4 s)
+  and the **`/embed/` page** (12.9 s) load cleanly in a 1280x960 window, and the player opens the
+  file through WebKit's loader. **JW Player does not autoplay** (even with `--autoplay=allow`):
+  the demo needs one click on play, and one on "1080p HD" for an `.mp4` original.
   - Choosing a quality needs a pointer click.
+
+**Pi rehearsal of a PeerTube watch page** (build 56, 2026-10-07): `https://peertube.gravitywell.xyz/w/7tXP3FCq7b6oLDH7QnzVYM`
+(third-party, test only) loads in 7.2 s, **autoplays** in the site's own player (web-video mode),
+and the `hvc1` 1080x1920 59.94 fps upload decodes on the rpivid block: 60 fps presented, ~39 fps
+painted, 43 dropped of 3603, played to its end. The PeerTube path needs no click at all.
 
 **2b. Alternative host: PeerTube with transcoding off.** Use it if we want the site's own player to
 pick HEVC with no quality switch, or our own branding.
