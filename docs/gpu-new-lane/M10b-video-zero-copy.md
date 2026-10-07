@@ -423,7 +423,7 @@ OUT=<dir> tools/gpu-lane/sand-import/build.sh
 | Line | What it reports |
 |---|---|
 | `geom` | the layout |
-| `decode` | which BO matched the decoded frame, contiguity, PA range, CPU de-tile time from the uncached BO |
+| `decode` | which BO matched the decoded frame, contiguity, `pa_check` (each page's marker written through the BO mapping must read back through a `MAP_PHYSMEM` mapping of the PA the block is given; a BO that fails is never handed to the block), PA range, CPU de-tile time from the uncached BO |
 | `egl` / `modifiers` | the extension and modifier lists Mesa reports |
 | `yuv plane=Y` / `plane=CbCr` | R8 and GR88 SAND imports, read back and compared **exactly** with the CPU de-tile |
 | `nv12 variant=…` | the NV12 import with the parameterised modifier and pitch = width (the design), with pitch = 128, and with the bare modifier and pitch = C; each compared with CPU BT.709 and BT.601 narrow-range references |
@@ -436,6 +436,8 @@ OUT=<dir> tools/gpu-lane/sand-import/build.sh
 - both plane imports are bit-exact;
 - the NV12 import is within 4 of the BT.709 reference;
 - the SAND import draw ran.
+
+Only the measured decoder's pool goes into BOs: the wrap is switched on after `avformat_find_stream_info`. A `decode result=FAIL` (for example `pa_check=FAIL`) runs the GPU arms on the synthetic pattern. That is still a valid Mesa result, but not a block-into-BO result.
 
 **Go/no-go** (§7 step 1):
 - PASS and `sand_blit_est_ms` ≤ 2 → path B;

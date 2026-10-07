@@ -44,6 +44,7 @@
  */
 
 #include <errno.h>
+#include <pthread.h>
 #include <stdarg.h>
 #include <fcntl.h>
 #include <stdint.h>
@@ -94,9 +95,10 @@ static struct {
 	int geom_set;
 	uint32_t w, h, h16, colh;      /* colh = C, in lines */
 	size_t luma_size, chroma_marker;
-	int last;                      /* the BO of the last luma allocation */
 	uint64_t pa_min, pa_max;
-} P = { .rfd = -1, .last = -1 };
+	int npa_fail;                  /* BOs refused: no or wrong physical address */
+	pthread_mutex_t lock;
+} P = { .rfd = -1, .lock = PTHREAD_MUTEX_INITIALIZER };
 
 
 static double now_ms(void)
@@ -105,6 +107,33 @@ static double now_ms(void)
 
 	clock_gettime(CLOCK_MONOTONIC, &ts);
 	return (double)ts.tv_sec * 1e3 + (double)ts.tv_nsec / 1e6;
+}
+
+
+static int pa_check(const bo_t *b)
+{
+	volatile uint32_t *via_bo, *via_pa;
+	void *q;
+	size_t i, pages = b->size / 4096u;
+	int bad = 0;
+
+	for (i = 0; i < pages; i++) {
+		via_bo = (volatile uint32_t *)(void *)(b->cpu + i * 4096u);
+		*via_bo = 0x5a1d0000u ^ (uint32_t)i ^ (b->handle << 20);
+	}
+	__asm__ volatile("dsb sy" ::: "memory");
+	q = mmap(NULL, b->size, PROT_READ, MAP_PHYSMEM | MAP_ANONYMOUS | MAP_UNCACHED, -1, (off_t)b->pa);
+	if (q == MAP_FAILED) {
+		printf("ZC1 pa_check map-failed errno=%d\n", errno);
+		return -1;
+	}
+	for (i = 0; i < pages; i++) {
+		via_pa = (volatile uint32_t *)(void *)((uint8_t *)q + i * 4096u);
+		bad += (*via_pa != (0x5a1d0000u ^ (uint32_t)i ^ (b->handle << 20))) ? 1 : 0;
+		*(volatile uint32_t *)(void *)(b->cpu + i * 4096u) = 0u;
+	}
+	munmap(q, b->size);
+	return (bad == 0) ? 0 : -1;
 }
 
 
@@ -151,6 +180,21 @@ static int bo_new(size_t size)
 			b->contiguous = 0;
 			break;
 		}
+	}
+	/* The block DMAs to b->pa: prove that address independently of va2pa before any use.
+	 * A marker per page through the BO mapping must read back through a MAP_PHYSMEM mapping
+	 * of the PA (the flags rpivid_hw.c's map_phys uses, without MAP_DEVICE). */
+	if ((b->pa == 0u) || (b->pa == (uint64_t)(addr_t)-1) || !b->contiguous || (pa_check(b) != 0)) {
+		printf("ZC1 bo refused handle=%u pa=0x%llx contiguous=%d\n", b->handle, (unsigned long long)b->pa, b->contiguous);
+		P.npa_fail++;
+		munmap(p, size);
+		{
+			struct drm_gem_close gc = { .handle = cb.handle };
+
+			(void)drmIoctl(P.rfd, DRM_IOCTL_GEM_CLOSE, &gc);
+		}
+		memset(b, 0, sizeof(*b));
+		return -EFAULT;
 	}
 	P.nbo++;
 	P.ncontig += b->contiguous;
@@ -206,32 +250,51 @@ void __wrap_rpivid_geom(rpivid_geom_t *g, uint32_t width, uint32_t height, unsig
 
 int __wrap_rpivid_dma_alloc_cached(rpivid_dma_t *d, size_t size)
 {
-	int k;
+	int k, rc = 0;
 
+	pthread_mutex_lock(&P.lock);
 	if (P.zc && P.geom_set && (size == P.luma_size)) {
 		k = bo_new(size);
 		if (k < 0) {
 			P.nfail++;
 			memset(d, 0, sizeof(*d));
-			return -ENOMEM;
+			rc = -ENOMEM;
 		}
-		P.last = k;
-		d->cpu = P.bo[k].cpu;
-		d->pa = P.bo[k].pa;
-		d->size = P.bo[k].size;
-		return 0;
+		else {
+			d->cpu = P.bo[k].cpu;
+			d->pa = P.bo[k].pa;
+			d->size = P.bo[k].size;
+		}
 	}
-	if (P.zc && P.geom_set && (size == P.chroma_marker) && (P.last >= 0)) {
-		const bo_t *b = &P.bo[P.last];
-		size_t off = (size_t)P.h16 * 128u;
+	else if (P.zc && P.geom_set && (size == P.chroma_marker)) {
+		/* the chroma of RPIVIDBuf {y, c, mv} (rpivid_hevc.c): its luma is d - 1, a BO base;
+		 * never a real 4 KiB allocation, which the block would overrun */
+		const rpivid_dma_t *yd = d - 1;
 
-		d->cpu = b->cpu + off;
-		d->pa = b->pa + off;
-		d->size = b->size - off;
-		P.last = -1;
-		return 0;
+		rc = -ENOMEM;
+		for (k = 0; k < MAX_BOS; k++) {
+			const bo_t *b = &P.bo[k];
+			size_t off = (size_t)P.h16 * 128u;
+
+			if (b->used && ((uint8_t *)yd->cpu == b->cpu) && (yd->pa == b->pa)) {
+				d->cpu = b->cpu + off;
+				d->pa = b->pa + off;
+				d->size = b->size - off;
+				rc = 0;
+				break;
+			}
+		}
+		if (rc != 0) {
+			memset(d, 0, sizeof(*d));
+			P.nfail++;
+		}
 	}
-	return __real_rpivid_dma_alloc_cached(d, size);
+	else {
+		pthread_mutex_unlock(&P.lock);
+		return __real_rpivid_dma_alloc_cached(d, size);
+	}
+	pthread_mutex_unlock(&P.lock);
+	return rc;
 }
 
 
@@ -393,6 +456,10 @@ static int decode(const char *path, int n, AVFrame *out, int *got_index)
 		goto out;
 	}
 	ctx->thread_count = 1;
+	/* only this decoder's pool goes into BOs: not find_stream_info's probe decoders */
+	pthread_mutex_lock(&P.lock);
+	P.zc = 1;
+	pthread_mutex_unlock(&P.lock);
 	if (avcodec_open2(ctx, codec, NULL) < 0) {
 		printf("ZC1 decode error=avcodec_open2\n");
 		goto out;
@@ -740,7 +807,6 @@ int main(int argc, char **argv)
 
 	/* 1-2: a picture in a BO, and its CPU de-tile */
 	if (!synthetic) {
-		P.zc = 1;
 		if ((decode(file, n, frame, &got) == 0) && (frame->format == AV_PIX_FMT_YUV420P) && P.geom_set) {
 			if (planar_alloc(&ref, P.w, P.h) < 0 || planar_alloc(&tmp, P.w, P.h) < 0) {
 				return 1;
@@ -760,14 +826,15 @@ int main(int argc, char **argv)
 					break;
 				}
 			}
-			printf("ZC1 decode result=%s picture=%d format=%s %dx%d bos=%d contiguous=%d alloc_fail=%d match_bo=%d pa=0x%llx..0x%llx detile_cpu_uncached_ms=%.2f\n",
+			printf("ZC1 decode result=%s picture=%d format=%s %dx%d bos=%d contiguous=%d alloc_fail=%d pa_check=%s match_bo=%d pa=0x%llx..0x%llx detile_cpu_uncached_ms=%.2f\n",
 				(src >= 0) ? "PASS" : "FAIL", got, av_get_pix_fmt_name(frame->format), frame->width, frame->height, P.nbo, P.ncontig,
-				P.nfail, src, (unsigned long long)P.pa_min, (unsigned long long)P.pa_max, t_detile);
+				P.nfail, (P.npa_fail == 0) ? "PASS" : "FAIL", src, (unsigned long long)P.pa_min, (unsigned long long)P.pa_max, t_detile);
 			fails += (src < 0) || (P.ncontig != P.nbo);
 		}
 		else {
-			printf("ZC1 decode result=FAIL format=%s geom=%d bos=%d (falling back to -synthetic)\n",
-				(frame->format >= 0) ? av_get_pix_fmt_name(frame->format) : "none", P.geom_set, P.nbo);
+			printf("ZC1 decode result=FAIL format=%s geom=%d bos=%d alloc_fail=%d pa_check=%s (falling back to -synthetic)\n",
+				(frame->format >= 0) ? av_get_pix_fmt_name(frame->format) : "none", P.geom_set, P.nbo, P.nfail,
+				(P.npa_fail == 0) ? "PASS" : "FAIL");
 			fails++;
 		}
 		P.zc = 0;
@@ -793,7 +860,7 @@ int main(int argc, char **argv)
 		t_detile = now_ms() - t0;
 		k = (memcmp(tmp.y, ref.y, (size_t)P.w * P.h) == 0) && (memcmp(tmp.u, ref.u, (size_t)(P.w / 2u) * (P.h / 2u)) == 0) &&
 			(memcmp(tmp.v, ref.v, (size_t)(P.w / 2u) * (P.h / 2u)) == 0);
-		printf("ZC1 synthetic tile_detile=%s contiguous=%d pa=0x%llx detile_cpu_uncached_ms=%.2f\n", k ? "PASS" : "FAIL",
+		printf("ZC1 synthetic tile_detile=%s contiguous=%d pa_check=PASS pa=0x%llx detile_cpu_uncached_ms=%.2f\n", k ? "PASS" : "FAIL",
 			P.bo[src].contiguous, (unsigned long long)P.bo[src].pa, t_detile);
 		fails += !k;
 	}
