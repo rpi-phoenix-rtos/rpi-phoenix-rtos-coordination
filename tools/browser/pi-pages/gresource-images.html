@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>GResource images</title>
+<style>
+body { font: 16px sans-serif; margin: 16px; }
+.row { display: flex; gap: 32px; align-items: flex-start; margin: 16px 0; }
+img { border: 1px dashed #888; }
+</style>
+</head>
+<body>
+<h1>WebKit built-in images</h1>
+<!--
+Reproduces "GLib-CRITICAL **: g_bytes_get_data: assertion 'bytes != NULL' failed" (once per web
+process: Stack Overflow, acid3). WebKit draws these two from its GResource bundle
+/org/webkitwpe/resources (Source/WebCore/platform/graphics/glib/ImageAdapterGLib.cpp):
+  - a broken <img>   -> CachedImage::brokenImage()        -> "missingImage" (at layout)
+  - a <textarea>     -> RenderTheme::paintPlatformResizer -> "textAreaResizeCorner" (at paint)
+Each is loaded once per web process (a static), so a FRESH web process is needed: open this page
+first, or from another site (a process swap). A wpe-browser that does not link the bundles
+(webkit_wpe launcher/CMakeLists.txt) logs the critical once for each and draws neither image; a
+fixed one logs nothing and shows the broken-image icon at the left and the resize grip at the
+bottom right of the text area.
+  wpe-browser --headless --snapshot=/tmp/gres.png file:///usr/share/browser-bench/gresource-images.html
+-->
+<div class="row">
+  <img id="broken" src="gresource-images-no-such-file.png" alt="broken" width="64" height="64">
+  <textarea id="ta" rows="4" cols="30">resize corner at the bottom right</textarea>
+</div>
+<p id="out">loading</p>
+<script>
+const img = document.getElementById("broken");
+let imgError = 0;
+img.addEventListener("error", () => { imgError = 1; });
+window.addEventListener("load", () => {
+    // two frames: the text area has been painted (the resize corner) by then
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+        const ta = document.getElementById("ta");
+        const line = "GRES img-error=" + imgError + " img-complete=" + (img.complete ? 1 : 0) +
+            " natural=" + img.naturalWidth + "x" + img.naturalHeight +
+            " textarea-resize=" + getComputedStyle(ta).resize;
+        console.log(line);
+        document.title = line;
+        document.getElementById("out").textContent = line;
+    }));
+});
+</script>
+</body></html>
