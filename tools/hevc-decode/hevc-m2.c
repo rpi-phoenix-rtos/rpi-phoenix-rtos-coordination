@@ -252,7 +252,7 @@ static uint32_t build_command_buffer(addr_t bs_pa, uint32_t dbo, uint32_t bfnum,
 	emit_prob(slice_qp, init_type);
 
 	/* 4) program_slicecmds (h265.c:697): SLICECMDS = num_msgs + (sliceid 0 <<8), then
-	 * the message array at 0x4000+4*i. I-slice: num_msgs=0. P/B: cmd_slice + ref descs. */
+	 * the message array at 0x4000+4*i. I-slice: 3 (play tool). P/B: cmd_slice + ref descs. */
 	p1(RPI_SLICECMDS, num_msgs);
 	for (uint32_t i = 0; i < num_msgs; i++)
 		p1(RPI_SLICEMSGBASE + 4u * i, msgs[i]);
@@ -959,11 +959,17 @@ static int play_frame(volatile uint8_t *hevc, volatile uint8_t *intc,
 #else
 	uint32_t sao_bits = (s->slice_sao_luma ? (1u << 14) : 0u) | (s->slice_sao_chroma ? (1u << 15) : 0u);
 #endif
-	if (s->slice_type == 2)   /* I: no refs; pass an explicit I slice_const so SAO bits land */
+	/* I: no refs; pass an explicit I slice_const so SAO bits land, and the driver's three
+	 * slice messages (I slice with collocated_from_l0 as the driver infers it, deblocking on across slices, no QP offsets): with none the
+	 * block keeps the previous picture's deblocking state (ports hevc_rpivid, Pi build 54) */
+	if (s->slice_type == 2) {
+		static const uint16_t imsgs[3] = { 0x4001, 0x0200, 0x0000 };
+
 		return decode_one(hevc, intc, cmd, bs, pu, coeff, ol, oc,
 			nal->data, s->data_byte_offset, s->bfnum, s->slice_qp,
-			((uint32_t)FRAME_SLICE_TYPE << 12) | sao_bits, 0, NULL, NULL, s->poc,
+			((uint32_t)FRAME_SLICE_TYPE << 12) | sao_bits, 3, imsgs, NULL, s->poc,
 			pu_stride, coeff_stride, luma_stride, chroma_stride, 0);
+	}
 
 	int is_b = (s->slice_type == 0);
 	uint32_t nb0 = s->nb_refs_l0, nb1 = is_b ? s->nb_refs_l1 : 0, mmc = s->max_num_merge_cand;

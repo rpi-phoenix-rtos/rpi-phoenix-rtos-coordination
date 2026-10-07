@@ -102,7 +102,7 @@ export FFMPEG_RPIVID_TOOLS=-amp,-slices    (+name turns one on; "none" = the pro
 | `tu_depth_intra` | on | transform tree depth > 0 in intra CUs (the PeerTube stream) | 126 |
 | `tu_depth_inter` | on | the same in inter CUs | 130 |
 | `cu_qp_delta` | on | CU QP delta off, or at a depth other than 1 (the PeerTube stream: 0) | 151 |
-| `ctb32` / `ctb16` | on | 32×32 / 16×16 CTBs (x265 ultrafast; NVENC, QSV) | 11 / 8 |
+| `ctb32` / `ctb16` | on / **off** (since rpivid-fixes-2) | 32×32 / 16×16 CTBs (x265 ultrafast; NVENC, QSV) | 11 / 8 |
 | `blocks` | on | min CB ≥ 16, or TB sizes other than 4..32 | 23 |
 | `amp` | on | asymmetric motion partitions | 131 |
 | `no_sign_hiding` | on | sign data hiding off (AMD VCN, x265 ultrafast) | 20 |
@@ -162,4 +162,41 @@ hevc-rpivid-check -l 2 /usr/share/video-demo/rpivid-check
 - **`video_player`** (decoder + `hevc-rpivid-check`): rebuild it, then make sure the NFS root gets the new `/usr/bin/hevc-rpivid-check`. The old binary cannot read a directory or `.md5` references; it prints its usage and exits 2.
 - **`webkit_wpe`:** relink it. It links `video_player`'s private `ffmpeg/` static libraries, and the PeerTube fallback was seen in the browser.
 - The WebKit patch's comment on `FFMPEG_RPIVID` still says "verified tool set". It was left alone, because changing it would rebuild WebKit for a comment.
+
+### Pi result, build 54, and the fix (rpivid-fixes-2)
+
+**Result.** `hevc-rpivid-check -l 2`: 163 pass, 10 fail, 4 CPU (the `PICSIZE_*` streams).
+- `real-peertube-1080.mp4` passed: 3634 frames, 0 mismatches.
+
+**Cause of 9 of the 10 failures: stale slice-message state.**
+- The block keeps the deblocking and QP-offset state of the last slice messages it received.
+- An I picture whose messages were all defaults sent none (`hevc-play`'s proven form). It was therefore filtered with the previous picture's state.
+- Every one of the 9 failures started at an I picture decoded right after a picture with deblocking off or offset, from the same stream or the previous stream in the run:
+  - `x265-nosignhide` after `x265-nodeblock`;
+  - `RPLM_A` after `RAP_B`;
+  - `TMVP_A` after `TILES_B`;
+  - `IPRED_A` after `ipcm_E`, then `IPRED_B` and `IPRED_C` (all-intra, so nothing resets the state);
+  - `ipcm_C` and `ipcm_D` after `ipcm_B`;
+  - `RAP_B` at picture 25: its IDR with deblocking on, after 25 pictures with deblocking off.
+- The failing conformance streams have the same SPS/PPS as passing ones (`SAO_A`, `TSKIP_A`), so neither transform skip nor sign hiding is implicated.
+- **Fix:** every slice sends its messages, as the driver does. `hevc-play` was changed the same way.
+- This also affected the proven tool set: in the browser, the decoder process lives on from one video to the next.
+
+**The one unexplained failure: `ctb16`.** `x265-ctu16` failed from its CRA (frames 55–90). `ctb16` is out of the default set until a re-check passes.
+
+**Re-check** (failures after the stream or picture that provoked them, plus controls; the MANIFEST points into the full set):
+
+```
+hevc-rpivid-check -l 2 -crc /usr/share/video-demo/rpivid-check-rerun
+```
+
+**SAND → planar cost (browser, PeerTube 1080×1920 at 59.94 fps): 7.95 ms per picture on the CPU**, against 2.35 ms on the block.
+- The SAND buffers are mapped uncached (`MAP_UNCACHED`). The de-tile reads 3.1 MB at about 400 MB/s, which is the uncached-read limit of one A72.
+- **1. Cached mapping (recommended next):**
+  - Map the output pool cacheable and `dc civac` it once after allocation (the kernel zero-fill leaves dirty lines).
+  - Then `dc civac` each picture's range after phase 2, before the de-tile reads it. EL0 may do this: `SCTLR_EL1.UCI` is set, and lwip's genet RX does the same.
+  - The CPU never writes SAND buffers, so its lines are always clean, and the block's reference reads stay correct.
+  - Estimate: ≈0.5–1 ms of `civac` plus ≈1.5 ms of cached NEON copy, about **2–2.5 ms per 1080p picture**.
+- **2. Threads:** split the columns over 2–3 threads. Uncached reads scale with cores until DRAM saturates: about 3–4 ms on its own, or about 1.2–1.5 ms together with option 1. Total with the block: about 4–5 ms per picture, inside the 16.7 ms of 60 fps.
+- **3. Zero copy:** give the GPU the SAND buffer as a dma-buf with `DRM_FORMAT_MOD_BROADCOM_SAND128`. Mesa's v3d already imports it and de-tiles with a blit shader (`v3d_blit.c` `sand8_blit`). This costs no CPU, but needs our winsys / EGL dma-buf import with modifiers and a WebKit video sink that passes dma-bufs. The HVS can also scan SAND128 out directly as a plane (full-screen players). It is the larger project.
 
