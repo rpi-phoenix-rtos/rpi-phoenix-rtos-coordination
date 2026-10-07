@@ -118,12 +118,17 @@ MSE player's lines are `WPEB-MEDIA mono=… id=<1001…> …` (MSE players count
 | 6 | `mse ready-state 4 -> 2` (or 1), `mse stall start/end`, then `mse ready-state … -> 4`; `stat … av_ms=` within ±80 |
 | 5 | `mse append … buffered_kb=` flat once the cap is reached; page `evict-check pass=1`, `quota` lines handled |
 | 7 | `mse end-of-stream`, `mse track-ended`, `mse end clock=…` |
-| 9 | the `mse-off` arm: `media mse=off`, page `branch=native`, stage-0 `hls choose` lines |
+| 9 | the `mse-off` arm: `media mse=off`, **`media mse-check mse=off MediaSource=absent ManagedMediaSource=absent result=ok`** (every load of every arm logs its `mse-check`; `result=MISMATCH` fails the arm), page `mse MediaSource=false`, `branch=native`, stage-0 `hls choose` lines |
+| 5/7/offset | `mse buffer-limit kb=… played=0|1` when a SourceBuffer's limit changes; no `evict`-shaped loss of the start: `mse-offset`'s `offset-check` passes twice and `seeked` at 100 |
 
-A SourceBuffer of a player that has not played yet holds at most 8 MB (video; audio 2 MB), 40 / 8 MB
-after the first `play()` (MSE-DESIGN §7.8). `mse-eos` and `mse-evict` append all 60 s before
-playing, so `b8-stream.sh` runs them with `WPE_PHOENIX_MSE_IDLE_MAX_MB=40`; with the default they
-would end in `QuotaExceededError` (what a real page sees: hls.js then shortens its buffer).
+SourceBuffer limits (MSE-DESIGN §7.8): 40 MiB video / 8 MiB audio once the player has played;
+before that, the video SourceBuffers of all players that have not played share a 48 MiB pool
+(each: pool − the others' bytes, at least 4 MiB, at most 40 MiB) and audio gets 2 MiB. Every
+stage-1 arm runs on the defaults (one player: 60 s of hevc-1080 is 32.4 MiB). Eviction never
+removes the buffered segment where playback goes next (WebCore hunk in 0032): an append that
+does not fit beside it fails with `QuotaExceededError` (hls.js then shortens its buffer).
+`mse-evict` is `loops=2` (120 s of content, the second 60 s appended while playing past the cap),
+so `stage1b` holds 420 s.
 
 
 **Grading.** The UART log:
