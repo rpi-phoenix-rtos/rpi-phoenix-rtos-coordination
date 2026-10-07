@@ -1,6 +1,9 @@
 # M10 zero copy: hardware-decoded HEVC to the GPU without the CPU
 
-**Status (2026-10-07):** design and feasibility study only. No code was changed, and no Pi cycle was run for it.
+**Status (2026-10-07):**
+- **Checkpoint 1 PASSED on the Pi** (build 58, §7.2). The coordinator decided on path B even though the SAND blit takes 3.9 ms, over the 2 ms bar: it is GPU time, and it saves ~11 ms of CPU per picture.
+- **Step 2, the decoder side, is written** (§7.3): ports branch `rpivid-drm-prime`. It is host-tested, cross-compiled, and not yet run on the Pi.
+- **Not started:** WebKit (`0032`, after MSE) and the players.
 
 Related documents:
 - [M10-hevc-hwaccel.md](M10-hevc-hwaccel.md) covers the `hevc_rpivid` decoder itself. Its §"SAND → planar cost", option 3, is this document.
@@ -230,11 +233,12 @@ The block takes independent `OUTYBASE`/`OUTCBASE` and `OUTYSTRIDE`/`OUTCSTRIDE`,
 - `alloc_frame` takes a BO from the pool (moving today's `pool_get` from `ff_rpivid_hevc_picture_ok`, `RV/rpivid_hevc.c:786`). It sets `frame->format = AV_PIX_FMT_DRM_PRIME`, `frame->data[0]` = an `AVDRMFrameDescriptor` (1 object: the `/v3dbuf` fd and size; 1 layer `DRM_FORMAT_NV12`; 2 planes `{offset 0, pitch width}` and `{H16×128, pitch width}`; `format_modifier = SAND128_COL_HEIGHT(C)`), and `frame->buf[0]` = an `AVBufferRef` whose free returns the BO to the pool.
 - `libavutil/hwcontext_drm.h` is header-only for this use.
 
-**The per-picture gate must move ahead of the frame allocation.** Today the gate runs too late for this mode:
+**The per-picture gate and the frame allocation.** The gate runs after the frame is allocated, which matters in this mode:
 - The gate `ff_rpivid_hevc_picture_ok` runs in `decode_nal_unit` **after** `hevc_frame_start` has allocated `s->ref` (patch `files/rpivid/patches/1001`, hevcdec.c hunk at ~3100; `picture_ok` dereferences `s->ref->hwaccel_picture_private`, `RV/rpivid_hevc.c:735`, `:782-785`).
 - With `alloc_frame`, a picture the gate refuses would already be a `DRM_PRIME` frame when the CPU decoder starts writing into it.
-- Fix: call the gate before `hevc_frame_start`. Everything it reads (`s->ps.pps`, `s->pkt.nals`, `s->sh`) is parsed by then, and this also removes the "no fresh frame data" check.
-- The alternative is to swap a refused picture's frame for a planar `get_buffer2` frame, the same mechanism as the fallback DPB rewrite below.
+- Design option 1: call the gate before `hevc_frame_start`. Everything it reads (`s->ps.pps`, `s->pkt.nals`, `s->sh`) is parsed by then.
+- Design option 2: swap a refused picture's frame for a planar `get_buffer2` frame, the same mechanism as the fallback DPB rewrite below.
+- **As built (§7.3), option 2.** The fallback hand-over (`ff_rpivid_hevc_drm_to_cpu`) rewrites *every* picture the decoder holds. That includes the current one, which is in the DPB as `s->ref`, and the staged `s->output_frame`, which follows it. So the refused picture is a planar frame before the CPU decodes into it, and the gate stays where it is. This is sufficient because `hevc_decode_frame` hands `s->output_frame` to the caller only after the picture is decoded (`hevcdec.c`, `av_frame_move_ref(rframe, s->output_frame)` at the end).
 
 **Cropping.** `av_frame_apply_cropping` on an `AV_PIX_FMT_FLAG_HWACCEL` frame subtracts `crop_right`/`crop_bottom` from `width`/`height` and leaves the data alone (`ffmpeg-6.1/libavutil/frame.c:1017-1023`). So the consumer sizes the image from `frame->width`/`height`, and any non-zero `crop_top`/`crop_left` becomes a texture-coordinate offset. At 1080p only `crop_bottom = 8` is used, which the size already covers.
 
@@ -384,8 +388,8 @@ Players are lower priority than the browser: 1080p30 already plays in real time 
 
 | # | Step | Gate | Agent-days |
 |---|---|---|---|
-| 1 | **Standalone Pi probe, before any WebKit work** (`tools/gpu-lane/sand-import/`): `CREATE_BO` + `MMAP_BO` + PA; fill the BO with one real picture decoded by the block through the `RV` code in the new single-buffer layout, or a synthetic SAND pattern; `drmPrimeHandleToFD`; EGL surfaceless import NV12 + `SAND128_COL_HEIGHT(C)`; draw the external texture into an FBO; read back; compare with `rpivid_sand8_to_planar` + a reference YUV→RGB. Time the blit with `glFinish` around 100 draws. Also: the import of the bare modifier (expected to misbehave, §2.3) and a LINEAR import (path A's cost). | pixel match (± rounding of the colour matrix); SAND blit ≤ 2 ms at 1080p; contiguity check passes for 10 BOs | 1 (+1 Pi cycle) |
-| 2 | **Decoder:** single-buffer layout in `rpivid_geom`/`pool_get` (planar mode first: must stay bit-exact); the picture gate moved before `hevc_frame_start` (§4.1); then the V3D-BO pool + contiguity guard + `WAIT_BO`, `rpivid_out=drm_prime` with `alloc_frame`, readback helper, DPB rewrite on fallback. Host side: hosttest mock + a fake libdrm shim for `CREATE_BO`/`WAIT_BO`/PRIME, ASan, 1 and 4 threads, `--loop` bit-exact through the readback. | hosttest 39/39 + loop bit-exact; Pi `hevc-rpivid-check` level 1 bit-exact in both modes | 2 (+1 Pi cycle) |
+| 1 ✅ PASS (§7.2) | **Standalone Pi probe, before any WebKit work** (`tools/gpu-lane/sand-import/`): `CREATE_BO` + `MMAP_BO` + PA; fill the BO with one real picture decoded by the block through the `RV` code in the new single-buffer layout, or a synthetic SAND pattern; `drmPrimeHandleToFD`; EGL surfaceless import NV12 + `SAND128_COL_HEIGHT(C)`; draw the external texture into an FBO; read back; compare with `rpivid_sand8_to_planar` + a reference YUV→RGB. Time the blit with `glFinish` around 100 draws. Also: the import of the bare modifier (expected to misbehave, §2.3) and a LINEAR import (path A's cost). | pixel match (± rounding of the colour matrix); SAND blit ≤ 2 ms at 1080p; contiguity check passes for 10 BOs | 1 (+1 Pi cycle) |
+| 2 ✅ (host; §7.3) | **Decoder:** single-buffer layout in `rpivid_geom`/`pool_get` (planar mode first: must stay bit-exact); the picture gate moved before `hevc_frame_start` (§4.1; as built, the fallback hands the current picture over instead); then the V3D-BO pool + contiguity guard + `WAIT_BO`, `rpivid_out=drm_prime` with `alloc_frame`, readback helper, DPB rewrite on fallback. Host side: hosttest mock (as built: the decoder's own buffers stand in for BOs, no libdrm shim), ASan, 1 and 4 threads, `--loop` bit-exact through the readback. | hosttest 39/39 + loop bit-exact; Pi `hevc-rpivid-check` level 1 bit-exact in both modes | 2 (+1 Pi cycle) |
 | 3 | **WebKit 0032** on top of the post-MSE 0030/0031: DRM_PRIME layer buffer, EGLImage cache, external-OES draw, colour hints, readback for `skiaImage()`, kill-switch. | builds; `b8.sh hevc` 1080p30 painted ≥ 95 %, HDMI colours right | 1.5 (+ 1–2 WebKit relinks) |
 | 4 | **60 fps gate:** the 1080p60 arm + `b8-stream.sh hevc-fmp4`, `prof`; A/B with the kill-switch. | painted ≥ 95 % at 60; `sand≈0`; no `v3d_store_utile` from compositing; CPU freed ≈ 1 core | 1 (+2 Pi cycles) |
 | 5 | **Players:** ffplay GL video output (B) for `video-play`; then `rpi4-kms` NV12/SAND overlay + ffplay KMS plane output (C). | `ffplay-stat` fps/drops at 1080p60, `top` | 1.5 + 3 |
@@ -442,6 +446,105 @@ Only the measured decoder's pool goes into BOs: the wrap is switched on after `a
 **Go/no-go** (§7 step 1):
 - PASS and `sand_blit_est_ms` ≤ 2 → path B;
 - an exact-plane FAIL that the variants do not fix → path A.
+
+### 7.2 Checkpoint 1 result (build 58, `artifacts/rpi4b-uart/rpi4b-uart-20261007-200402-zc1.log`)
+
+`ZC1 result=PASS`, both with the decoder and with `-synthetic`.
+
+**Decode into BOs.**
+- `hevc_rpivid` decoded into 5 render-server BOs: `contiguous=5`, `pa_check=PASS`, PA `0x27000000..0x2aafd000`.
+- Geometry: `cols=15 colh=1632 chroma_off=139264 stride=208896`.
+- The decoded frame matched a BO. So the block writes the single-buffer NV12_COL128 layout, and the hwaccel's own de-tile reads it.
+
+**Mesa import.**
+- Y (R8) and CbCr (GR88) SAND128 imports: `max_diff=0`, i.e. `v3d_sand8_blit` is bit-exact on our geometry.
+- NV12 import, all three variants (column-height parameter with pitch = width or pitch = 128; bare modifier with pitch = C): `max_diff_709=1`, `over4=0`.
+- So the BT.709 hint is honoured, and the uapi's pitch = width convention works.
+
+**Time per 1080p picture:**
+
+| Measurement | ms |
+|---|---|
+| SAND import draw (sand8 blit of both planes + draw) | 8.68 |
+| RGBA draw of the same size | 4.76 |
+| ⇒ SAND blit (difference) | **3.92** |
+| 3-plane upload + draw (today's browser path) | 8.84 |
+| LINEAR YUV420 import draw (path A) | 8.06 |
+| CPU write of a planar picture into an uncached BO | 3.57 |
+| CPU de-tile from an uncached BO (synthetic run: 16.51) | 8.60 |
+
+**Decision (coordinator): path B.** The blit is 3.9 ms, over the 2 ms bar of §7.1, but it is GPU time and it removes ~11 ms of CPU per picture (6.3 ms SAND + ~5 ms upload).
+
+The upload row (8.84 ms) is the CPU-side cost B removes. The SAND import draw costs about the same wall time, but on the GPU. If the GPU becomes the bottleneck at 60 fps:
+- blit once per picture into RGBA (§4.2);
+- or move the conversion to the TFU's SAND input (§2.3).
+
+### 7.3 Step 2 landed: the decoder side (ports branch `rpivid-drm-prime`, `2295fd5`)
+
+**What it is** (`video_player/files/rpivid/`):
+
+- **`src/rpivid_drm.h`** (new, installed as `libavcodec/rpivid_drm.h`) is the consumer interface:
+  - the option `rpivid_out=planar|drm_prime` (env `FFMPEG_RPIVID_OUT`);
+  - the frame format (one object, one NV12 layer, pitch = coded width, `SAND128_COL_HEIGHT(C)`);
+  - `rpivid_drm_set_buffer_ops()`, where the picture buffers come from;
+  - `rpivid_drm_frame_to_planar()`, the CPU readback with the conformance window applied.
+- **`src/rpivid_cmd.[ch]`:** `rpivid_geom_col128()`, the single-buffer layout. `rpivid_geom()` is unchanged.
+- **`src/rpivid_hevc.c`:**
+  - A second hwaccel, `hevc_rpivid_drm` (`AV_PIX_FMT_DRM_PRIME`), with `alloc_frame`: the frame **is** a pool buffer, wrapped in an `AVBufferRef`. A buffer goes back to the pool when the last reference (DPB, consumer, `RPIVIDFrame`) is dropped. On reuse, `wait_idle()` (`DRM_IOCTL_V3D_WAIT_BO`) runs before the block writes it.
+  - `end_frame` skips the de-tile; `rpivid-stat` gets ` zc=1`.
+  - It is taken only for 8-bit streams without frame threading; otherwise the frames are system-memory frames, as before.
+  - `ff_rpivid_hevc_drm_to_cpu()` runs on a fallback. Every picture the decoder holds (DPB, the current picture, the staged output) becomes a system-memory frame with the block's pixels, so the CPU decoder can continue. `avctx->pix_fmt` returns to the software format, and consumers see `YUV420P` frames from then on.
+  - `FFMPEG_RPIVID_REFUSE_AT=n` makes the block refuse a picture, to test the fallback.
+- **`patches/1001`:**
+  - `get_format()` answers `AV_PIX_FMT_DRM_PRIME` when the drm hwaccel attached.
+  - `rpivid_fallback()` hands the pictures over and is now error-checked.
+  - The SEI picture hash is not checked on DRM frames.
+  - New options `rpivid_out`; `rpivid_drm.h` is installed.
+- **`drm/rpivid_bo_drm.[ch]`** (new): the buffer operations on the V3D render server.
+  - Allocation: `CREATE_BO`, `MMAP_BO` + `mmap`, the PA by `va2pa` (refused unless contiguous), and `drmPrimeHandleToFD` → `/v3dbuf/<h>`.
+  - Reuse waits with `WAIT_BO`.
+  - The port installs it as `ffmpeg/lib/librpivid_bo_drm.a` + `ffmpeg/include/rpivid_bo_drm.h` for webkit_wpe. A program linking it adds libdrm-phoenix's `libdrm.a` and its five `--wrap` flags.
+- **`check/hevc-rpivid-check.c`:**
+  - `-zc` decodes with `rpivid_out=drm_prime` on GPU buffers (the Pi build links `rpivid_bo_drm.o` + libdrm) and hashes each DRM frame through the readback.
+  - `-hold n` (default 4) keeps the last n frames referenced, as a compositor does, and re-hashes each when it is released. A buffer reused while held shows as `held_bad=` (counted as mismatches).
+  - New line: `RPIVID-CHECK zc frames= drm_prime= buffers=gpu|own held_checked= held_bad=`.
+- **`hosttest/run.sh --loop`:** per 8-bit clip, `-zc` with 1 and 4 (slice) threads must be BIT-EXACT with `held_bad=0`. A forced fallback (`FFMPEG_RPIVID_REFUSE_AT=3`) with `-zc` must give exactly the frames of the planar output.
+
+**Host evidence** (x86, ASan, the register-level mock):
+- The default run gives `same=39 diff=0 cpu=1`, identical to the baseline before the change. Planar programming is unchanged.
+- `--loop` on 7 host-encoded clips from the `rpivid-check` set (`x265-amp`, `-medium`, `-slices4`, `-1080p-tu-amp`, `-10bit-tu`, `-ultrafast`, `-ctu32`). For every 8-bit clip:
+  - `-zc` with 1 and with 4 (slice) threads is **BIT-EXACT**: `drm_prime=120 held_checked=120 held_bad=0`;
+  - the forced fallback (`FFMPEG_RPIVID_REFUSE_AT=3`) gives **the same 120 frames as planar output**.
+  - The 10-bit clip stays planar (BIT-EXACT as before). The planar loop arms are unchanged and BIT-EXACT.
+- On the host the buffers are `buffers=own` (the decoder's own memory). The GPU-buffer path in `rpivid_bo_drm.c` (`CREATE_BO`, the `va2pa` contiguity check, the `/v3dbuf` export, `WAIT_BO` on reuse) runs **only on the Pi** (checks 2 and 5 below).
+
+**A finding about the CPU fallback, in both modes.** Continuing a stream on the CPU after the block refused or failed a picture is **not bit-exact** until the next IRAP: on the mock, 28 of 120 frames differ from a whole-stream CPU decode.
+- The likely cause: the CPU decoder reads the motion vectors of block-decoded reference pictures for TMVP (`tab_mvf`), and the hwaccel never fills them.
+- Planar and zero-copy output give the same frames. This is not new: the Pi's `fallback=1` runs only ever counted frames, never checked them.
+- Possible fixes:
+  - drop to the next IRAP on a fallback;
+  - re-decode the GOP on the CPU from its IRAP (the packets would have to be kept);
+  - or accept it (the block's intermittent error is ~1 in 3000 pictures).
+
+**For the WebKit patch 0032.**
+- `drm_prime` is refused under frame threading. WebKit opens the decoder with `thread_count` 0 (auto, i.e. frame threads), and then logs `rpivid: drm_prime output needs no frame threading` and gets planar frames. 0032 must set `thread_type = FF_THREAD_SLICE` (or `thread_count = 1`) together with `rpivid_out=drm_prime`.
+- It calls `rpivid_bo_drm_install()` once and links `ffmpeg/lib/librpivid_bo_drm.a`. WebKit already has libdrm-phoenix and its five `--wrap` flags.
+- It must handle `DRM_PRIME` and `YUV420P` frames per frame (a fallback switches mid-stream).
+
+**Not done: ffplay/`video-play` GL output.** It is not cheap. ffplay draws through `SDL_Renderer`, and SAND/NV12 images are external-only, so they cannot be attached to SDL's `GL_TEXTURE_2D` textures. It needs its own GL video output (an SDL GL context, a `samplerExternalOES` quad, the EGLImage cache), about 1.5 days, or the KMS plane path (§4.4). ffplay keeps `planar`; nothing changes for it, or for gtk-video and WebKit, until they ask for `drm_prime`.
+
+**Pi checks** (after building `video_player`; the new `/usr/bin/hevc-rpivid-check` on the NFS root):
+
+| # | psh command | Pass |
+|---|---|---|
+| 1 | `hevc-rpivid-check -q -l 2 /usr/share/video-demo/rpivid-check` | planar unchanged: the same pass/fail list as the last full run |
+| 2 | `hevc-rpivid-check -zc /usr/share/video-demo/rpivid-check/x265-1080p-tu-amp.mp4` | `zc … drm_prime=120 buffers=gpu held_checked=120 held_bad=0`, `result=PASS`; `rpivid: drm_prime output: NV12 SAND128 column height 1632 … GPU buffers (dma-buf)` |
+| 3 | `hevc-rpivid-check -zc -q -l 2 /usr/share/video-demo/rpivid-check` | every stream that passes in #1 passes here. The 10-bit ones log `drm_prime output is 8-bit only` and pass with `drm_prime=0`. |
+| 4 | `export FFMPEG_RPIVID_REFUSE_AT=30` then `hevc-rpivid-check -hw -md5 -zc <clip>` and the same without `-zc` | the two `MD5` lists are identical; `continuing on the CPU decoder`; no crash. Then `export FFMPEG_RPIVID_REFUSE_AT=` to clear it. |
+| 5 | `hevc-rpivid-check -zc -hold 8 /usr/share/video-demo/rpivid-check/x265-1080p-tu-amp.mp4` | `held_bad=0 buffers=gpu`; the `rpivid: … N buffers` line at the end ≈ the DPB + 8. This holds frames longer than the DPB alone, so recycled buffers go through `WAIT_BO` while a consumer still holds others: the one path the host cannot reach. |
+
+- `-zc` reads every picture back from uncached memory (~8.6 ms at 1080p), so its fps is not the zero-copy speed.
+- The speed is the WebKit gate (step 4).
 
 ## 8. Top risks
 
