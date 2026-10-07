@@ -82,6 +82,23 @@ done <<EOF
 $(grep -oE '#include[[:space:]]*"[^"]*/[^"]*"' "$src" 2>/dev/null | sed -e 's/.*"\(.*\)"/\1/')
 EOF
 
+# The kernel's HAL headers come in as <arch/X>, resolved to hal/<arch>/arch/X: stage
+# those too, or a declaration a change adds there reads as an implicit declaration
+# (2026-10-07: hal_cpuIrqUnmaskedBefore in hal/aarch64/arch/cpu.h).
+if [ "$repo" = phoenix-rtos-kernel ]; then
+    _hal="hal/${target%%-*}"
+    case "$_hal" in hal/aarch64*) _hal=hal/aarch64 ;; esac
+    while IFS= read -r _inc; do
+        [ -n "$_inc" ] || continue
+        _from="${_srcroot}/${_hal}/${_inc}"
+        [ -f "$_from" ] || continue
+        mkdir -p "$(dirname "${bdir}/${_hal}/${_inc}")"
+        cp "$_from" "${bdir}/${_hal}/${_inc}"
+    done <<EOF
+$(grep -ohE '#include[[:space:]]*<arch/[^>]*>' "$src" "$(dirname "$src")"/*.h 2>/dev/null | sed -e 's/.*<\(.*\)>/\1/' | sort -u)
+EOF
+fi
+
 # Ask make what it WOULD run for that object, and take the compiler line FOR THIS
 # FILE.
 #
