@@ -3,8 +3,8 @@
 Browser milestone B10 ([PLAN](PLAN.md)): an owner-usable desktop browser on the XFCE session
 (labwc, Wayland) with tabs and downloads, plus its documentation.
 
-Status 2026-10-08: **design (this note) and phase-2 port + shell on branches; built on the
-host as far as §8 says; no Pi cycle yet.**
+Status 2026-10-08: **design (this note) and phase-2 port + shell on branches; `webkit-browser`
+compiles and links on the host (§8); no Pi cycle yet.**
 - Coordination repo: branch `b10-webkitgtk` (this note).
 - phoenix-rtos-ports: branch `b10-webkitgtk` (port `webkit_gtk`), based on master `b1334a8`
   (master moved past `e4d9a3c` while this was written; the branch takes 0033/0034 as merged).
@@ -85,7 +85,7 @@ Changed lines per patch, shared vs excluded:
 | 0020 frame watch, 0022 wait trace | 533 | 28 | optional (web-process half applies; UI half was WPE's) |
 | 0030 FFmpeg player | 2 482 | 12 | **yes**: `USE_FFMPEG` option in OptionsGTK + `FFmpeg.cmake` include |
 | 0031–0034 HLS, MSE, zero-copy | 7 165 | 0 | — |
-| **total** | **10 923** | **254** | ~120 lines in `webkit_gtk/patches/webkit-gtk/` |
+| **total** | **10 923** | **254** | ~120 lines in `webkit_gtk/patches/webkit-gtk/` (plus 0102–0104, §8) |
 
 So the GTK port carries **no copy** of a shared patch: `webkit_gtk/patches/{webkit,webkit-video,webkit-mse}/`
 are symlinks to `webkit_wpe`'s files (the ports framework hashes a recipe directory by file
@@ -190,11 +190,11 @@ whose tabs/downloads/find/zoom are MiniBrowser's `BrowserWindow`/`BrowserTab`/
 | | WPE (measured, build 60) | GTK (estimate) |
 |---|---|---|
 | Compile steps | 2 801 objects (unified sources) | ~2 900 (+ `UIProcess/gtk`, `WebKitGTK` API, MiniBrowser) |
-| Cold compile, -j8 | 49 min (build 59, mostly ccache misses); "~2 h" without ccache | the same: **ccache gives ~nothing across ports** (PORT changes `cmakeconfig.h`, which every object includes) |
+| Cold compile, -j8 | 49 min (build 59, mostly ccache misses); "~2 h" without ccache | **measured: 62 min without ccache** (§8); ccache gives ~nothing across ports (PORT changes `cmakeconfig.h`, which every object includes) |
 | Incremental (one shared patch) | ~2 min + relink | the same, **paid twice** per image build while both ports ship |
-| Build directory | 4.2 GB (`webkit-build`) | +~4.5 GB; ccache must hold both (`ccache -M 40G`, today 20G) |
-| Program | `wpe-browser` 158 MB stripped / 338 MB unstripped | `webkit-browser` ~165 MB stripped (+GTK/pango/cairo closure ~8 MB) |
-| Image / NFS root | — | **+~165 MB** while both ports ship |
+| Build directory | 4.2 GB (`webkit-build`) | measured 4.2 GB; ccache must hold both (`ccache -M 40G`, today 20G) |
+| Program | `wpe-browser` 158 MB stripped / 338 MB unstripped | **measured: `webkit-browser` 168 MB stripped / 386 MB unstripped** |
+| Image / NFS root | — | **+168 MB** while both ports ship |
 | Pi RAM | one browser at a time | unchanged: text is paged in per program; the page cache (P30) keeps whichever ran last |
 
 Two WebKits in one image are a transition state: once B10's gate passes, the owner can choose
@@ -209,7 +209,10 @@ webkit_gtk/
   patches/webkit/*.patch      -> ../../webkit_wpe/patches/webkit/*  (symlinks, shared)
   patches/webkit-video/*      -> webkit_wpe's 0030 0031 0033
   patches/webkit-mse/*        -> webkit_wpe's 0032 0034
-  patches/webkit-gtk/0101-gtk-phoenix-cmake.patch        OptionsGTK + PlatformGTK (WTF, PAL, WebCore, WebKit)
+  patches/webkit-gtk/0101-gtk-phoenix-cmake.patch        OptionsGTK + PlatformGTK (WTF, PAL, WebCore, WebKit), no translations
+  patches/webkit-gtk/0102-minibrowser-build-hooks.patch  MiniBrowser: start URL + location-entry rule set by the build
+  patches/webkit-gtk/0103-gtk-glib-api-build-fixes.patch two 2.54.0 GTK 3 build bugs
+  patches/webkit-gtk/0104-gtk-dmabuf-buffer-without-gbm.patch  DMABufBuffer::createEGLImage() without GBM
   patches/webkit-gtk-video/0130-gtk-phoenix-ffmpeg.patch USE_FFMPEG for PORT=GTK
   files/build-gtk.sh          build-wpe.sh's stages for PORT=GTK (deps view + GTK closure, compat,
                               extract with the exclusions, configure, build, checks, plugins)
@@ -222,9 +225,41 @@ not rebuild WPE because of B10). `build-gtk.sh` duplicates the generic half of `
 (dependency view, compat objects, toolchain file); folding both into one script is a
 follow-up once the GTK gate passes.
 
-## 8. What was built on the host
+## 8. What was built on the host (2026-10-08)
 
-See the branch's commit messages and §10 (filled in as phase 2 ran).
+Scratch build of ports branch `b10-webkitgtk` (`9826d62`) with the image's USE line (jit, webgl,
+video, mse), against build 60's dependency ports, `PHX_CCACHE=0`, under `scripts/heavy-build.sh`
+in three bounded steps (`build-gtk.sh --targets`):
+
+| Step | Time (-j8) |
+|---|---|
+| configure (no lock) | ~1 min; 2 802 objects, options as §3.2 (`USE_ATK`, `USE_ATSPI`, `USE_OPENSSL`, `USE_FFMPEG`, JIT, WebGL, MSE on) |
+| JavaScriptCore (+ WTF, bmalloc) | 12 min |
+| WebCore | 31 min |
+| WebKit, the program, the injected bundle | 19 min (+ relinks) |
+
+**Result: `webkit-browser` links: 168 101 496 bytes stripped, 386 MB unstripped**, every check of
+`build-gtk.sh` passes (roles, Mesa surfaceless + wayland EGL behind epoxy, GDK Wayland +
+`gdk_window_create_gl_context`, MiniBrowser's window, mimalloc as malloc, the FFmpeg player with
+HLS/MSE and the rpivid decoder, the GResource bundles, no `libgtkphx-noegl`), and
+`libwebkit2gtkinjectedbundle.so` (3 224 bytes) imports 3 symbols, all exported. Build directory
+4.2 GB.
+
+What the GTK side needed beyond §2's analogues (all GTK-only patches, none touches a shared one):
+
+- `webkit-gtk/0101` also skips the translations (`Source/PlatformGTK.cmake`: gettext is not on the
+  build host, and Phoenix has no message catalogs);
+- `webkit-gtk/0103`: two upstream GTK 3 build bugs in 2.54.0 (`WebKitDownload.cpp` uses
+  `CStringView` without its include; `webkit://gpu`'s non-accelerated branch calls a `USE(LIBDRM)`-only
+  function);
+- `webkit-gtk/0104`: `DMABufBuffer.cpp` was compiled only with GBM, but the GTK UI process calls
+  `DMABufBuffer::createEGLImage()` for every dma-buf frame — the path §3.1 depends on;
+- `build-gtk.sh`: `libwayland-cursor`'s `os_create_anonymous_file()` renamed (it clashes with Mesa's
+  `util/anon_file.c` in the whole-archive libgallium; GTK links wayland-cursor), as `sdl2_kmsdrm`
+  does.
+
+Not run on the host: the program itself (no Phoenix userspace there). Everything in §3.1 is a
+Pi question.
 
 ## 9. The Pi gate (pre-registered)
 
@@ -254,3 +289,23 @@ line), `webkit-browser` started from the XFCE menu entry or `webkit-browser URL`
 5. **Shared patches drift**: a WPE-only fix added to a shared patch file can break the GTK
    build; `build-gtk.sh` applies with the exclusions and fails on a missing symlink, but a
    compile break in GTK-only code will only show in a GTK build.
+6. **Desktop data GTK expects at run time**: the toolbar's symbolic icons (an icon theme with
+   `go-previous-symbolic` & co.; missing ones show as broken-image icons) and the GSettings
+   schema `org.gtk.Settings.FileChooser` for the upload/save dialogs (gtk3_wayland's
+   `gschemas.compiled`; GLib aborts in `g_settings_new()` without it). Both are what the XFCE
+   programs use already; G4's `<select>` and an upload check them.
+7. **GApplication on the session bus**: `G_APPLICATION_NON_UNIQUE`, so a missing bus costs nothing;
+   a second instance opens a second window rather than a tab.
+
+## 11. For the integrator
+
+- Merge ports `b10-webkitgtk` (adds `webkit_gtk/` only; `webkit_wpe` untouched) and project
+  `b10-webkitgtk` (one `ports.yaml` entry: `webkit_gtk` with `use: [rootfs, jit, video, webgl, mse]`).
+  The first image build after it compiles WebKit a second time (~1 h at -j8, +4.2 GB build
+  directory); the port depends on `mesa_drm[wayland]`, already built for labwc.
+- Check the stage: `strings .../versioned-ports/webkit_gtk-2.54.0/stage/usr/bin/webkit-browser |
+  grep -c 'WKGB t='` (and the port's own stage verification in the build log).
+- Pi: in the XFCE session, **Applications → Internet → WebKit Browser**, or
+  `/usr/bin/webkit-browser https://en.wikipedia.org/wiki/Raspberry_Pi` from foot; grade §9 G0–G7.
+  The first line to look for is G0's: the absence of `Disabled hardware acceleration because GTK
+  failed to initialize GL`, then `WPEB-WEBKIT swap-chain … type=texture-dmabuf`.
