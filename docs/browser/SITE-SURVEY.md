@@ -76,7 +76,7 @@ which holds the browser's full output (also tee'd to the UART).
 | `console_errors` | lines matching `CONSOLE [SOURCE] [TYPE] ERROR` | every console error: JS, network, security (CSP), `console.error` (JSC `ConsoleClient::printConsoleMessage`) |
 | `js_errors` | `CONSOLE JS ERROR` | uncaught exceptions and script errors |
 | `console_msgs` | every `CONSOLE` line | including INFO/LOG/WARN |
-| `webprocess_rss_kb` | the largest `mem role=web ... footprint_kb=` | the web process's peak footprint, from WTF `memoryFootprint()`: the anonymous pages of its map entries. ⚠ This overcounts, by up to several times (the kernel's `meminfo()` amap issue, see the wpe README). Phoenix has no `/proc`, and `ps` shows only VMEM. Compare between sites and builds, not with Linux. |
+| `webprocess_rss_kb` | the largest `mem role=web ... footprint_kb=` | the web process's peak footprint, from WTF `memoryFootprint()`: the anonymous pages of its map entries (accurate since kernel build 30; it once overcounted). Phoenix has no `/proc`, and `ps` shows only VMEM. Compare between sites and builds, not with Linux. |
 | `sysmem_used_kb` | the largest `sysmem used_kb=` | the kernel's page allocator: RAM really in use, system-wide |
 | `webprocs` | `role=web pid=` lines | web processes started (more than 1: a process swap, e.g. a cross-site redirect) |
 | `stalls` | the first report of each `stall`, `start-stall`, `frame-stall`, `present-stall` and `ipc-stall` | a main loop, a start-up phase or the frame pipeline stuck for 60 s |

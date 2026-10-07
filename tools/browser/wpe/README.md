@@ -352,7 +352,7 @@ Every line the launcher prints starts with `WPEB t=<ms> ` (ms since that process
 | `new-window uri= opened=same-view via=policy\|create` | a new-window request, loaded in the view |
 | `cycle pages=<n> secs=<s> from=<file\|list>`, `cycle n=<k> loading= responsive= page-id= pending_ms= uri=` | `--cycle` (`pending_ms` ≥ 0: the previous navigation never committed) |
 | `auto key=<keys>`, `auto type=<text>`, `auto bad-…` | `--auto` steps |
-| `mem role=ui\|web\|network pid= footprint_kb=` | `--rss-secs`. ⚠ Overcounts, by up to several times: the kernel's `meminfo()` gives each map entry the anonymous pages of its whole amap, and entries split from one mapping share it (`vm/map.c`, `vm_mapinfo`, the `anonsz` loop over `e->amap->size` instead of the entry's own range `[aoffs, aoffs + size)`). WebKit's memory pressure handler reads the same number (patch 0008), so a large page's process sits in its "strict" policy (≥ 1.5 GB) and releases memory every 30 s |
+| `mem role=ui\|web\|network pid= footprint_kb=` | `--rss-secs`. Since kernel `e802ac0e`/`d2284b32` (build 30) each map entry counts only its own range of the amap, so the figure is the process's real anonymous footprint (checked 2026-10-07: system used memory grew by the same amount on nytimes.com). WebKit's memory pressure handler reads the same number (patch 0008) |
 | `snapshot file= width= height= crc32=`, `exit status=` | the end |
 
 **The stall report** (every child's watchdog thread). The main loop of each web and network
