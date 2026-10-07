@@ -386,3 +386,246 @@ int shim_usleep(unsigned int us)
 {
 	return usleep(us);
 }
+
+
+/*
+ * Clocks and futexes, for condition variables and mutexes (sys/ulock.c).
+ *
+ * Phoenix keeps one clock: gettime() reports the monotonic time (here the
+ * host's CLOCK_MONOTONIC) and an offset the wall clock adds to it, which
+ * settime() changes. The shim keeps that offset itself, so a test can step
+ * the wall clock -- as the board does when it first sets its time -- without
+ * touching the host's. Phoenix's clock ids differ from Linux's; the suites
+ * that use these see Phoenix's (rename-cond.h).
+ *
+ * futexWait() follows the kernel's (proc/futex.c, proc_clockTimeoutToAbsTime()):
+ * a CLOCK_REALTIME deadline is translated to a monotonic one when the call is
+ * made, a passed deadline is -ETIME at once, and the word is compared under
+ * the same lock futexWake() takes. With SHIM_SPURIOUS set in the environment,
+ * a sleeper also returns EOK, as from a wake-up meant for someone else, every
+ * SHIM_SPURIOUS_US: the paths that run again after such a wake-up are rare on
+ * the board, and this exercises them all the time.
+ */
+
+#define SHIM_PH_CLOCK_MONOTONIC     0 /* time.h clockid_t values */
+#define SHIM_PH_CLOCK_MONOTONIC_RAW 1
+#define SHIM_PH_CLOCK_REALTIME      2
+
+#define SHIM_PH_TIMEOUT_RELATIVE  0 /* kernel timeout clocks (PH_CLOCK_*) */
+#define SHIM_PH_TIMEOUT_REALTIME  1
+#define SHIM_PH_TIMEOUT_MONOTONIC 2
+
+#define SHIM_SPURIOUS_US 20000LL
+
+static long long shim_utcOffs;
+
+
+static long long shim_rawUs(void)
+{
+	struct timespec ts;
+
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return ((long long)ts.tv_sec * 1000000LL) + (ts.tv_nsec / 1000);
+}
+
+
+static void shim_clockInit(void)
+{
+	struct timespec ts;
+
+	/* Starts as the host's wall clock */
+	clock_gettime(CLOCK_REALTIME, &ts);
+	__atomic_store_n(&shim_utcOffs, ((long long)ts.tv_sec * 1000000LL) + (ts.tv_nsec / 1000) - shim_rawUs(), __ATOMIC_RELAXED);
+}
+
+
+static pthread_once_t shim_clockOnce = PTHREAD_ONCE_INIT;
+
+
+int shim_gettime(long long *raw, long long *offs)
+{
+	(void)pthread_once(&shim_clockOnce, shim_clockInit);
+	if (raw != NULL) {
+		*raw = shim_rawUs();
+	}
+	if (offs != NULL) {
+		*offs = __atomic_load_n(&shim_utcOffs, __ATOMIC_RELAXED);
+	}
+	return 0;
+}
+
+
+/* clock_gettime() and clock_settime() as the test sees them (Phoenix clock ids) */
+int shim_clockGettime(int clock, struct timespec *ts)
+{
+	long long raw, offs;
+
+	(void)shim_gettime(&raw, &offs);
+	switch (clock) {
+		case SHIM_PH_CLOCK_REALTIME:
+			raw += offs;
+			break;
+		case SHIM_PH_CLOCK_MONOTONIC:
+		case SHIM_PH_CLOCK_MONOTONIC_RAW:
+			break;
+		default:
+			errno = EINVAL;
+			return -1;
+	}
+	ts->tv_sec = raw / 1000000LL;
+	ts->tv_nsec = (raw % 1000000LL) * 1000;
+	return 0;
+}
+
+
+int shim_clockSettime(int clock, const struct timespec *ts)
+{
+	long long raw;
+
+	if ((clock != SHIM_PH_CLOCK_REALTIME) || (ts->tv_sec < 0) || (ts->tv_nsec < 0) || (ts->tv_nsec >= 1000000000L)) {
+		errno = EINVAL;
+		return -1;
+	}
+	(void)shim_gettime(&raw, NULL);
+	__atomic_store_n(&shim_utcOffs, ((long long)ts->tv_sec * 1000000LL) + (ts->tv_nsec / 1000) - raw, __ATOMIC_RELAXED);
+	return 0;
+}
+
+
+struct shim_futexWaiter {
+	volatile unsigned int *addr;
+	int woken;
+	struct shim_futexWaiter *next;
+};
+
+static pthread_mutex_t shim_futexLock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t shim_futexCond;
+static struct shim_futexWaiter *shim_futexWaiters;
+static int shim_spurious;
+static pthread_once_t shim_futexOnce = PTHREAD_ONCE_INIT;
+
+
+static void shim_futexInit(void)
+{
+	pthread_condattr_t attr;
+	const char *spurious;
+
+	pthread_condattr_init(&attr);
+	pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
+	pthread_cond_init(&shim_futexCond, &attr);
+	pthread_condattr_destroy(&attr);
+	spurious = getenv("SHIM_SPURIOUS");
+	shim_spurious = (spurious != NULL) && (spurious[0] != '\0') && (spurious[0] != '0');
+}
+
+
+int shim_futexWait(volatile unsigned int *addr, unsigned int val, long long timeout, int clock)
+{
+	struct shim_futexWaiter w, **pw;
+	long long now, offs, deadline = 0, until;
+	struct timespec ts;
+	sigset_t ks, old;
+	int err = 0;
+
+	(void)pthread_once(&shim_futexOnce, shim_futexInit);
+	(void)shim_gettime(&now, &offs);
+
+	if (timeout < 0) {
+		return -EINVAL;
+	}
+	if (timeout != 0) {
+		switch (clock) {
+			case SHIM_PH_TIMEOUT_REALTIME:
+				if (now + offs > timeout) {
+					return -ETIME;
+				}
+				deadline = timeout - offs;
+				break;
+			case SHIM_PH_TIMEOUT_MONOTONIC:
+				if (now > timeout) {
+					return -ETIME;
+				}
+				deadline = timeout;
+				break;
+			case SHIM_PH_TIMEOUT_RELATIVE:
+				deadline = now + timeout;
+				break;
+			default:
+				return -EINVAL;
+		}
+	}
+
+	/* A kill waits until the sleep ends: jumping out of the host's condition
+	 * variable wait would leave this waiter on the list */
+	sigemptyset(&ks);
+	sigaddset(&ks, SHIM_SIGKILL);
+	(void)pthread_sigmask(SIG_BLOCK, &ks, &old);
+
+	pthread_mutex_lock(&shim_futexLock);
+	if (__atomic_load_n(addr, __ATOMIC_ACQUIRE) != val) {
+		pthread_mutex_unlock(&shim_futexLock);
+		(void)pthread_sigmask(SIG_SETMASK, &old, NULL);
+		return -EAGAIN;
+	}
+	w.addr = addr;
+	w.woken = 0;
+	w.next = shim_futexWaiters;
+	shim_futexWaiters = &w;
+
+	for (;;) {
+		if (w.woken != 0) {
+			break;
+		}
+		now = shim_rawUs();
+		if ((deadline != 0) && (now >= deadline)) {
+			err = -ETIME;
+			break;
+		}
+		until = deadline;
+		if (shim_spurious != 0) {
+			if ((until == 0) || (now + SHIM_SPURIOUS_US < until)) {
+				until = now + SHIM_SPURIOUS_US;
+			}
+		}
+		if (until == 0) {
+			pthread_cond_wait(&shim_futexCond, &shim_futexLock);
+		}
+		else {
+			ts.tv_sec = until / 1000000LL;
+			ts.tv_nsec = (until % 1000000LL) * 1000;
+			if ((pthread_cond_timedwait(&shim_futexCond, &shim_futexLock, &ts) == ETIMEDOUT) &&
+					(until != deadline) && (w.woken == 0)) {
+				break; /* a wake-up for someone else: EOK, the word unchanged */
+			}
+		}
+	}
+
+	for (pw = &shim_futexWaiters; *pw != &w; pw = &(*pw)->next) {
+	}
+	*pw = w.next;
+	pthread_mutex_unlock(&shim_futexLock);
+	(void)pthread_sigmask(SIG_SETMASK, &old, NULL);
+
+	return (w.woken != 0) ? 0 : err;
+}
+
+
+int shim_futexWake(volatile unsigned int *addr, unsigned int count)
+{
+	struct shim_futexWaiter *w;
+	int n = 0;
+
+	(void)pthread_once(&shim_futexOnce, shim_futexInit);
+	pthread_mutex_lock(&shim_futexLock);
+	for (w = shim_futexWaiters; (w != NULL) && ((unsigned int)n < count); w = w->next) {
+		if ((w->addr == addr) && (w->woken == 0)) {
+			w->woken = 1;
+			n++;
+		}
+	}
+	if (n != 0) {
+		pthread_cond_broadcast(&shim_futexCond);
+	}
+	pthread_mutex_unlock(&shim_futexLock);
+	return n;
+}
