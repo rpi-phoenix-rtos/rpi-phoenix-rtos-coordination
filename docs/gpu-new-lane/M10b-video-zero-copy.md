@@ -2,8 +2,10 @@
 
 **Status (2026-10-07):**
 - **Checkpoint 1 PASSED on the Pi** (build 58, §7.2). The coordinator decided on path B even though the SAND blit takes 3.9 ms, over the 2 ms bar: it is GPU time, and it saves ~11 ms of CPU per picture.
-- **Step 2, the decoder side, is written** (§7.3): ports branch `rpivid-drm-prime`. It is host-tested, cross-compiled, and not yet run on the Pi.
-- **Not started:** WebKit (`0032`, after MSE) and the players.
+- **Step 2, the decoder side, is merged** (§7.3, ports `e4d9a3c`). It is host-tested and cross-compiled, and not yet run on the Pi.
+- **P31 is closed** (§7.3): after leaving the block, the decoder drops pictures until the next IRAP.
+- **Step 3, the WebKit side, is written** (§7.4, ports branch `webkit-zero-copy`: patches `webkit-video/0033` and `webkit-mse/0034`). It compiles and links (scratch build, §7.4); it has not run on the Pi.
+- **Not started:** the players.
 
 Related documents:
 - [M10-hevc-hwaccel.md](M10-hevc-hwaccel.md) covers the `hevc_rpivid` decoder itself. Its §"SAND → planar cost", option 3, is this document.
@@ -518,13 +520,14 @@ The upload row (8.84 ms) is the CPU-side cost B removes. The SAND import draw co
   - The 10-bit clip stays planar (BIT-EXACT as before). The planar loop arms are unchanged and BIT-EXACT.
 - On the host the buffers are `buffers=own` (the decoder's own memory). The GPU-buffer path in `rpivid_bo_drm.c` (`CREATE_BO`, the `va2pa` contiguity check, the `/v3dbuf` export, `WAIT_BO` on reuse) runs **only on the Pi** (checks 2 and 5 below).
 
-**A finding about the CPU fallback, in both modes.** Continuing a stream on the CPU after the block refused or failed a picture is **not bit-exact** until the next IRAP: on the mock, 28 of 120 frames differ from a whole-stream CPU decode.
+**The CPU fallback (P31, closed).** Continuing a stream on the CPU right after the block refused or failed a picture was **not bit-exact** until the next IRAP: on the mock, 28 of 120 frames differed from a whole-stream CPU decode, in both outputs.
 - The likely cause: the CPU decoder reads the motion vectors of block-decoded reference pictures for TMVP (`tab_mvf`), and the hwaccel never fills them.
-- Planar and zero-copy output give the same frames. This is not new: the Pi's `fallback=1` runs only ever counted frames, never checked them.
-- Possible fixes:
-  - drop to the next IRAP on a fallback;
-  - re-decode the GOP on the CPU from its IRAP (the packets would have to be kept);
-  - or accept it (the block's intermittent error is ~1 in 3000 pictures).
+- This was not new: the Pi's `fallback=1` runs only ever counted frames, never checked them.
+- **Decision (coordinator) and fix** (ports branch `webkit-zero-copy`, `video_player` commit):
+  - On a refusal or block failure the decoder drops the current picture (unless it is an IRAP the CPU can decode whole) and every picture up to the next IRAP. The RASL pictures of a CRA are dropped too (`max_ra`). The player keeps showing its last picture.
+  - It logs `rpivid: continuing on the CPU decoder (…): pictures dropped until the next random access point` and then `rpivid: decoding again from POC n (a random access point)`.
+  - `hevc-rpivid-check -bypts` compares the passes by pts and counts `matched=` / `wrong=` / `dropped=`.
+  - Host: `--loop` arms `LOOP-DROP` force a refusal (`FFMPEG_RPIVID_REFUSE_AT=3`) and a block failure (`MOCK_FAIL_AT=5`) in both outputs. Result: `wrong=0 unmatched=0` with 26–57 pictures dropped per 120 (to the next IDR).
 
 **For the WebKit patch 0032.**
 - `drm_prime` is refused under frame threading. WebKit opens the decoder with `thread_count` 0 (auto, i.e. frame threads), and then logs `rpivid: drm_prime output needs no frame threading` and gets planar frames. 0032 must set `thread_type = FF_THREAD_SLICE` (or `thread_count = 1`) together with `rpivid_out=drm_prime`.
@@ -546,6 +549,48 @@ The upload row (8.84 ms) is the CPU-side cost B removes. The SAND import draw co
 - `-zc` reads every picture back from uncached memory (~8.6 ms at 1080p), so its fps is not the zero-copy speed.
 - The speed is the WebKit gate (step 4).
 
+### 7.4 Step 3: the WebKit side (ports branch `webkit-zero-copy`)
+
+**Patches.**
+- `webkit_wpe/patches/webkit-video/0033-wpe-phoenix-ffmpeg-zero-copy.patch` (USE video, after 0030/0031) changes `CoordinatedPlatformLayerBufferFFmpeg.{h,cpp}` and `MediaPlayerPrivateFFmpeg.{h,cpp}`.
+- `webkit-mse/0034-wpe-phoenix-ffmpeg-media-source-zero-copy.patch` (USE mse, after 0032) changes `FFmpegPlaybackEngine.{h,cpp}` and `MediaPlayerPrivateFFmpegMSE.cpp`.
+- Both are BSD-2-Clause like 0030. They are split because 0032 exists only with USE mse; 0032 touches none of 0033's files, so the order 0030, 0031, 0033, 0032, 0034 applies cleanly (checked with `patch --dry-run` on the 0031 tree).
+- `files/build-wpe.sh` copies `librpivid_bo_drm.a` and `rpivid_bo_drm.h` from the FFmpeg prefix into the dependency view. Its archives all join the link group, and libdrm and the five `--wrap` flags are already there.
+
+**Decoder.**
+- `CoordinatedPlatformLayerBufferFFmpeg::requestZeroCopy()` runs before `avcodec_open2` of a video decoder, in both players.
+- Only for `hevc_rpivid`, unless `WPE_PHOENIX_MEDIA_ZERO_COPY=0`. Once per process it checks `EGL_EXT_image_dma_buf_import_modifiers` and calls `rpivid_bo_drm_install()`, logging `WPEB-MEDIA zero-copy available|unavailable: <why>`.
+- It sets `rpivid_out=drm_prime` and `thread_type = FF_THREAD_SLICE`.
+- The EGL check is safe on the player thread: the WebProcess sets its shared `PlatformDisplay` eagerly, at process initialisation (`WebProcessGLib.cpp`, `setSharedDisplay`), before any page or player exists.
+- A `DRM_PRIME` frame of another layout than hevc_rpivid's NV12 is refused when the layer buffer is created (logged once).
+- The `decoder …` line adds `zero_copy=0|1`.
+
+**Compositor.**
+- A `DRM_PRIME` frame is drawn with `TextureMapper::drawTextureExternalOES` from a per-compositing-thread cache of EGLImage + `GL_TEXTURE_EXTERNAL_OES` texture, one per decoder buffer.
+- The cache key is the dma-buf's `st_dev`/`st_ino`, i.e. the render server's BO handle, which is never reused. One `fstat` per newly painted picture; a frame repainted reuses its layer buffer's result.
+- The EGL attributes carry the frame's colour space and range as hints. Entries idle for 3 s are dropped, at most 48.
+- The layer buffer holds the `AVFrame` reference until the compositor drops it, and the decoder's `WAIT_BO` covers GPU reads still in flight.
+- Ordinary frames (CPU fallback, 10-bit, H.264, other codecs) take the upload path as before, frame by frame. An import failure (logged once) and Skia painting (canvas `drawImage`, snapshots) use the CPU readback `rpivid_drm_frame_to_planar` (~8.6 ms at 1080p, uncached).
+
+**Stat lines** (both players) add `zc=1|0` (the last picture presented was a GPU buffer) and `zc_painted=N`. `upload_ms` stays the compositor's CPU time per painted picture: for zero copy, the cache lookup (or the one-time import) plus the draw call.
+
+**Compile.**
+- The scratch WebKit build reused the MSE agent's incremental tree (`tools/browser/wpe/build.sh --src-copy`, under `scripts/heavy-build.sh`). It used the ports `webkit-zero-copy` `files/build-wpe.sh`, and a private FFmpeg prefix with `libavcodec` cross-built from the branch's `video_player` sources plus `rpivid_drm.h`, `librpivid_bo_drm.a` and `rpivid_bo_drm.h`.
+- Ninja ran 227/227 steps (128 C++ compiles: every unit that includes the FFmpeg headers) with no warning in the four changed files. `wpe-browser` is 133,890,800 bytes stripped, and the build's symbol checks passed.
+- `nm`: `rpivid_bo_drm_install`, `rpivid_drm_frame_to_planar`, `rpivid_drm_set_buffer_ops`, `drmPrimeHandleToFD`, `__wrap_mmap` and `ff_hevc_rpivid_decoder` are present.
+- `strings`: `WPEB-MEDIA zero-copy` ×5, the new stat format ×2, and the decoder's `drm_prime output` / `pictures dropped …` lines. So the zero-copy path is compiled, not the fallback.
+- The patch series 0030, 0031, 0033, 0032, 0034 applies in the port's order and reproduces the tree.
+
+**Pi gate plan.** Build `video_player` (≥ ports `b0b0fcc`) **before** `webkit_wpe`: build-wpe.sh takes `librpivid_bo_drm.a` from the FFmpeg prefix at its deps stage. A stale video_player install only warns (`has no librpivid_bo_drm.a: <video> without zero copy`) and yields a browser without zero copy. Check that `strings` of the staged wpe-browser contains `WPEB-MEDIA zero-copy`.
+
+| # | Run | Grade |
+|---|---|---|
+| 1 | `b8.sh hevc` (the 1080p30 clip), twice: as is, and after `export WPE_PHOENIX_MEDIA_ZERO_COPY=0` | ZC on: `WPEB-MEDIA zero-copy available`, `decoder video=hevc_rpivid … zero_copy=1`, `rpivid: drm_prime output: … GPU buffers (dma-buf)`, stat `zc=1`, `zc_painted` ≈ `painted`, `upload_ms` ≪ the OFF arm's, `rpivid-stat … sand=0.00 … zc=1`; painted ≥ 95 % of presented; HDMI colours right. ZC off: `zc=0`, today's numbers. |
+| 2 | the same arm on the PeerTube 1080p60 file: `export B8_HEVC_CLIP=/usr/share/video-demo/rpivid-check/real-peertube-1080.mp4`. **OFF first** (`WPE_PHOENIX_MEDIA_ZERO_COPY=0`), then ON, **the same build**, each with `prof` | Record OFF's painted/presented per second: build 56–57 painted ~35 of 60, before the row-order fix. ON must beat OFF by about the ~11 ms of CPU per picture removed, aiming at painted ≥ 57/s. `scripts/prof-report.py`: no `rpivid_sand8_to_planar`, no `v3d_store_utile` on the compositing thread; the WebProcess CPU ~1 core lower. |
+| 3 | `b8-stream.sh hevc-fmp4` (native HLS → the progressive player), ZC on and off | `B8S arm=hevc-fmp4 … hw=1`, `zc=1`, dropped ≤ 2 %, painted ≥ 95 % |
+| 4 | the MSE gate arms (MSE-DESIGN.md §10.2) with an HEVC stream, ZC on | MSE stat line `zc=1`, the same pass criteria as without ZC |
+| 5 | (robustness) the 1080p60 arm with `export FFMPEG_RPIVID_REFUSE_AT=300` | after picture 300: `pictures dropped until the next random access point`, then `decoding again from POC`; `zc=0` from then on (CPU frames); no crash, no green/garbage frame on HDMI |
+
 ## 8. Top risks
 
 1. **`v3d_sand8_blit` on our geometry and clock.** It has not been run on Phoenix. Its correctness on this layout and its GPU time are the largest unknowns. Checkpoint 1 resolves both before any WebKit rebuild.
@@ -553,4 +598,10 @@ The upload row (8.84 ms) is the CPU-side cost B removes. The SAND import draw co
 3. **Mid-stream CPU fallback in zero-copy mode.** The DPB must be re-materialised as planar frames (one hitch of ~60 ms), and consumers must handle a per-frame format change. It is host-testable with the mock's fault injection.
 4. **Uncached SAND buffers.** Every CPU read (fallback, snapshot, check tool) is about 1.5× slower than today's cached path. This is fine as long as those reads stay rare. Do not add a CPU consumer on the hot path.
 5. **Process and IPC limits.** The decoder becomes one more render-server client in the WebProcess: a fence-page slot (60 total), BO slots and the `max_bos` budget. With path C, the low-memory budget must also cover the pool. Check `GET_INFO` `max_bos` against browsers with several players.
+7. **WebKit side (step 3).**
+   - The SAND blit is redone on every composite of a picture (imported BOs are never "private" in Mesa). That is 3.9 ms of GPU at 1080p, and also while a paused video sits under an animating page. If the GPU saturates at 60 fps, use the mitigation in §4.2.
+   - Shadow memory: up to one tiled shadow (~3.1 MB) per decoder buffer in the cache.
+   - After a fallback, slice threads make the CPU decoder slower than frame threads would (only relevant until the stream ends: the block is not retried).
+   - `fstat` IPC per new picture.
+   - First use on the Pi of `thread_local` in this code (WTF uses it).
 6. **Sequencing with MSE.** Patch 0032 modifies files that 0030 adds and that the MSE work is changing now. Rebase it after MSE lands (W41:153). Its diff should touch only the layer buffer and decoder-open code.
