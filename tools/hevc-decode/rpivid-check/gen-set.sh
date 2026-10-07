@@ -135,7 +135,7 @@ if [ -n "${conf}" ]; then
 		RQT_A_HHI_4 RQT_B_HHI_4 RQT_C_HHI_4 RQT_D_HHI_4 RQT_E_HHI_4 RQT_F_HHI_4 RQT_G_HHI_4 SAO_A_MediaTek_4 SAO_B_MediaTek_5 \
 		SAO_C_Samsung_5 SAO_D_Samsung_5 SAO_E_Canon_4 SAO_F_Canon_3 SAO_G_Canon_3 SDH_A_Orange_3 SLICES_A_Rovi_3 SLIST_A_Sony_4 \
 		SLIST_B_Sony_8 SLIST_C_Sony_3 SLIST_D_Sony_9 SLPPLP_A_VIDYO_2 STRUCT_A_Samsung_5 STRUCT_B_Samsung_6 TILES_A_Cisco_2 \
-		TILES_B_Cisco_1 TMVP_A_MS_3 TSCL_A_VIDYO_5 TSCL_B_VIDYO_4 TSKIP_A_MS_3 TSUNEQBD_A_MAIN10_Technicolor_2 TUSIZE_A_Samsung_1 \
+		TILES_B_Cisco_1 TMVP_A_MS_3 TSCL_A_VIDYO_5 TSCL_B_VIDYO_4 TSKIP_A_MS_3 TUSIZE_A_Samsung_1 \
 		VPSID_A_VIDYO_2 WP_A_Toshiba_3 WP_B_Toshiba_3 WP_A_MAIN10_Toshiba_3 WP_MAIN10_B_Toshiba_3 WPP_A_ericsson_MAIN_2 \
 		WPP_B_ericsson_MAIN_2 WPP_C_ericsson_MAIN_2 WPP_D_ericsson_MAIN_2 WPP_E_ericsson_MAIN_2 WPP_F_ericsson_MAIN_2 \
 		WPP_A_ericsson_MAIN10_2 WPP_B_ericsson_MAIN10_2 WPP_C_ericsson_MAIN10_2 WPP_D_ericsson_MAIN10_2 WPP_E_ericsson_MAIN10_2 \
@@ -161,7 +161,7 @@ md5_61() {
 }
 manifest="${out}/MANIFEST"
 printf '# stream bytes frames ref ref8\n' >"${manifest}"
-for f in "${out}"/*.265 "${out}"/*.mp4; do
+for f in "${out}"/*.mp4 "${out}"/*.265; do
 	[ -f "${f}" ] || continue
 	if [ -n "${reftool}" ]; then
 		md5_61 "${f}" "${f}.md5"

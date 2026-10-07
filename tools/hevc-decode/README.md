@@ -13,6 +13,11 @@ blob**. Ported register-by-register from the Linux `hevc_d_h265.c` driver.
 > - verify: `hevc-rpivid-check [-crc] [-md5] <file>` (hardware against CPU decode, every
 >   frame compared, timed).
 >
+> - coding-tool coverage: `rpivid-check/gen-set.sh` builds the stream set (x265 / VA-API /
+>   Vulkan encodes, one tool each; the HEVC v1 conformance streams; a real upload) with
+>   per-frame md5 references, for `hevc-rpivid-check -l 2 <dir>` on the Pi
+>   (`docs/gpu-new-lane/M10-hevc-hwaccel.md`, "Tool gates").
+>
 > What stays here is the from-scratch reference: the register-level decode engine, the
 > committed test vectors, and `hevc-play`, a headless decoder/verifier that the port's host
 > test (`video_player/files/rpivid/hosttest/run.sh`) builds as its oracle. Nothing here
