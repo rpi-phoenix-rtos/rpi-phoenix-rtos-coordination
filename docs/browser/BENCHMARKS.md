@@ -439,12 +439,17 @@ Overall: `js_score` (JS only; 59 benchmarks full / 16 ab), `first` / `worst` / `
 
 ### Raster and frame transport
 
-| Arm | Speedometer1 score | MotionMark score @fps | Notes |
+| Arm | Speedometer1 score | MotionMark score @fps | Video 1080p30 HEVC HLS painted (build) |
 |---|---|---|---|
-| jit-cpu-shm | | | |
-| jit-gpu-shm | | | |
-| jit-gpu-dmabuf | | | |
-| jit-cpu-dmabuf | | | |
+| jit-cpu-shm | 1.168 | 4.96 @30 | — |
+| jit-gpu-shm | 1.225 | — | 62 % (55: 1114 of 1797 presented) |
+| jit-gpu-dmabuf | **1.256** | **40.87 @45** | **98 %** (56: 1765 of 1796) |
+| jit-cpu-dmabuf | 1.238 | — | — |
+
+Speedometer and MotionMark: build 47 (`b47-arms`, above). Video: the stage0a `hevc-fmp4` arm of
+`tools/browser/media/pi/b8-stream.sh`; shared memory reads every frame back (`v3d_load_utile`,
+Skia `load_8888`), the UI process copies it and labwc tiles it into a texture again, which held the
+compositor at ~19 painted frames/s. `wpe-browser` defaults to GPU raster + dma-bufs since build 56.
 
 ### Compatibility
 
