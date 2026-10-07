@@ -21,8 +21,11 @@
 #     all           compat, speedometer, jetstream, motionmark
 #   arms (comma list; each run of the mode runs once per arm, in order; default jit)
 #     jit | nojit   the JIT on (default) or JSC_useJIT=false (LLInt only)
-#     cpu | gpu     Skia CPU raster (--cpu-rendering, default) or GPU raster (Ganesh on the V3D)
-#     shm | dmabuf  frames to labwc through shared memory (default) or as dma-bufs (--dmabuf)
+#     cpu | gpu     Skia CPU raster (--cpu-rendering) or GPU raster (Ganesh on the V3D, default)
+#     shm | dmabuf  frames to labwc through shared memory or as dma-bufs (--dmabuf, default)
+#                   The defaults are /bin/browser's since 2026-10-07 (build 47 A/B: GPU+dma-buf
+#                   Speedometer 1.256 / MotionMark-quick 40.9 vs CPU+shm 1.168 / 5.0); results
+#                   before then with the bare arm "jit" were CPU raster + shared memory.
 #     headless      WPEPlatform's headless display, no session (no console lines: titles only;
 #                   MotionMark is not valid headless)
 #     combined with "-": e.g. jit,nojit  or  jit-cpu-shm,jit-gpu-dmabuf
@@ -199,8 +202,8 @@ run_one() {
 	pidf=/tmp/bench-${id}.pid
 	envs=("${EXTRA_ENV[@]}")
 	case "${arm}" in *nojit*) envs+=(JSC_useJIT=false) ;; esac
-	case "${arm}" in *gpu*) ;; *) extra+=(--cpu-rendering) ;; esac
-	case "${arm}" in *dmabuf*) extra+=(--dmabuf) ;; esac
+	case "${arm}" in *cpu*) extra+=(--cpu-rendering) ;; esac
+	case "${arm}" in *shm* | *headless*) ;; *) extra+=(--dmabuf) ;; esac
 	case "${arm}" in *headless*) extra+=(--headless) ;; esac
 	extra+=(--size=1280x800 --toolbar=never --ephemeral --stall-secs="${STALL}" --hang-recovery=0)
 	temp0=$(thermal)
