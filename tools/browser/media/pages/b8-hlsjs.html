@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<!--
+  b8-hlsjs.html: the canonical hls.js integration (docs/browser/MSE-DESIGN.md §9.3):
+      if (Hls.isSupported()) hls.js over MSE; else if (canPlayType(HLS)) native; else none
+  Stage 0 (no MSE) must take the "native" branch -- what hls.js-based sites do on our browser;
+  stage 1 the "hls.js" branch, with our isTypeSupported/decodingInfo answers deciding which
+  levels survive hls.js's codec filter. hls.js itself is NOT in the repository: stage.sh fetches
+  the pinned release (tools/browser/media/hls.js.sha256) to vendor/hls.js/ in the media root.
+  Lines start with "B8HLSJS "; the last is "B8HLSJS-DONE result=...".
+
+  Query: src=<master URL> (default /ladders/hevc-fmp4/master.m3u8)  run=  stop=  limit=  seek=  pause=
+         muted=1  force=hlsjs|native (skip the check)  mms=0 (hls.js: preferManagedMediaSource off)
+         worker=0 (hls.js: no transmux worker)  debug=1 (hls.js's own log to the console)
+  Logs: Hls.version, Hls.isSupported(), MediaSource/ManagedMediaSource presence, the
+  isTypeSupported and decodingInfo ('media-source') matrices, branch=hls.js|native|none, then for
+  hls.js: every level of the manifest (manifest-level: as parsed) and the ones kept after its
+  codec filter (level:), buffer-codecs (what it gave addSourceBuffer), level switches, fragment
+  loads (first 12, then every 10th), errors; and the <video> events as b8-hls.html.
+
+  SPDX-License-Identifier: BSD-3-Clause
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<title>B8 hls.js</title>
+<style>
+  body { font: 15px sans-serif; margin: 12px; background: #202020; color: #e0e0e0; }
+  video { width: 960px; height: 540px; background: black; display: block; }
+  #state { font-family: monospace; margin-top: 6px; white-space: pre-wrap; }
+</style>
+<script src="media-common.js"></script>
+<script src="../vendor/hls.js/hls.min.js"></script>
+</head>
+<body>
+<video id="v" controls playsinline></video>
+<div id="state">-</div>
+<script>
+"use strict";
+(async function () {
+    const M = window.PhxMedia;
+    M.setTag("B8HLSJS");
+    const p = M.params;
+    const src = p.get("src") || "/ladders/hevc-fmp4/master.m3u8";
+    const v = document.getElementById("v");
+    v.muted = p.get("muted") === "1";
+    const Hls = window.Hls;
+    M.report("start", { src, ua: navigator.userAgent, hlsjs: Hls ? Hls.version : "missing" });
+    const MS = M.mseInfo();
+    const supported = Hls ? Hls.isSupported() : false;
+    const nativeAnswer = v.canPlayType("application/vnd.apple.mpegurl");
+    M.report("check", { "Hls.isSupported": supported, "canPlayType_hls": nativeAnswer || "no",
+        "Hls.isMSESupported": Hls && Hls.isMSESupported ? Hls.isMSESupported() : "-" });
+    M.isTypeSupportedMatrix(MS);
+    await M.decodingInfoMatrix(["media-source"]);
+    const st = M.watchVideo(v);
+    let finished = false, hls = null;
+    const finish = (result) => {
+        if (finished) return;
+        finished = true;
+        st.stop();
+        const extra = st.summary();
+        if (hls) { extra.level = hls.currentLevel; extra.levels = hls.levels.length; }
+        M.done(result, extra);
+        if (hls) hls.destroy();
+    };
+    v.addEventListener("ended", () => setTimeout(() => finish("ok"), 1000));
+    M.actions(v, st, finish);
+
+    const force = p.get("force");
+    const branch = force || (supported ? "hlsjs" : (nativeAnswer ? "native" : "none"));
+    M.report("branch", { branch: branch === "hlsjs" ? "hls.js" : branch, forced: force ? 1 : 0 });
+    const play = () => v.play().then(() => M.report("play-resolved", {}),
+        (e) => M.report("play-rejected", { name: e.name, message: e.message }));
+    if (branch === "native") {
+        v.addEventListener("error", () => setTimeout(() => finish("error"), 1000));
+        v.src = src;
+        play();
+        return;
+    }
+    if (branch !== "hlsjs" || !Hls) {
+        M.report("no-player", { reason: Hls ? "neither MSE nor native HLS" : "hls.js not loaded" });
+        finish("error");
+        return;
+    }
+    const E = Hls.Events;
+    hls = new Hls({ debug: p.get("debug") === "1", enableWorker: p.get("worker") !== "0",
+        preferManagedMediaSource: p.get("mms") !== "0" });
+    const lvl = (l, i) => ({ i, size: (l.width || 0) + "x" + (l.height || 0), bitrate: l.bitrate,
+        codecs: [l.videoCodec, l.audioCodec].filter(Boolean).join(",") || (l.attrs && l.attrs.CODECS) || "-",
+        fps: l.frameRate || (l.attrs && l.attrs["FRAME-RATE"]) || "-" });
+    hls.on(E.MEDIA_ATTACHED, () => M.report("media-attached", { mms: window.ManagedMediaSource && hls.config.preferManagedMediaSource ? 1 : 0 }));
+    hls.on(E.MANIFEST_LOADED, (e, d) => {
+        M.report("manifest-loaded", { levels: d.levels.length, audio: (d.audioTracks || []).length });
+        d.levels.forEach((l, i) => M.report("manifest-level", lvl(l, i)));
+    });
+    hls.on(E.MANIFEST_PARSED, (e, d) => {
+        M.report("manifest-parsed", { levels: d.levels.length, first: d.firstLevel });
+        d.levels.forEach((l, i) => M.report("level", lvl(l, i)));
+        play();
+    });
+    hls.on(E.BUFFER_CODECS, (e, d) => {
+        for (const [k, t] of Object.entries(d))
+            if (t && t.container) M.report("buffer-codecs", { track: k, type: t.container + ";codecs=" + (t.codec || t.levelCodec || "?") });
+    });
+    hls.on(E.LEVEL_SWITCHING, (e, d) => M.report("level-switching", { level: d.level }));
+    hls.on(E.LEVEL_SWITCHED, (e, d) => {
+        const l = hls.levels[d.level];
+        M.report("level-switched", l ? lvl(l, d.level) : { i: d.level });
+    });
+    hls.on(E.LEVEL_LOADED, (e, d) => {
+        if (d.details) M.report("level-loaded", { level: d.level, live: d.details.live ? 1 : 0,
+            segments: d.details.fragments.length, target: d.details.targetduration });
+    });
+    let frags = 0;
+    hls.on(E.FRAG_LOADED, (e, d) => {
+        frags++;
+        if (frags <= 12 || frags % 10 === 0) {
+            const s = d.frag.stats || d.stats || {};
+            const ms = s.loading ? Math.round(s.loading.end - s.loading.start) : "-";
+            M.report("frag-loaded", { n: frags, type: d.frag.type, level: d.frag.level, sn: d.frag.sn,
+                bytes: s.total || s.loaded || "-", ms });
+        }
+    });
+    let mediaRecoveries = 0;
+    hls.on(E.ERROR, (e, d) => {
+        M.report("hls-error", { type: d.type, details: d.details, fatal: d.fatal ? 1 : 0,
+            reason: (d.reason || (d.error && d.error.message) || "-").slice(0, 160) });
+        if (!d.fatal) return;
+        if (d.type === Hls.ErrorTypes.MEDIA_ERROR && mediaRecoveries++ < 1) {
+            M.report("recover", { what: "media" });
+            hls.recoverMediaError();
+        } else {
+            finish("error");
+        }
+    });
+    hls.attachMedia(v);
+    hls.loadSource(new URL(src, location.href).href);
+})();
+</script>
+</body>
+</html>

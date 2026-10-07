@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<!--
+  b8-hls-memory.html: the idle-player memory arm (docs/browser/MSE-DESIGN.md §10.1 row 12).
+  ?n= <video preload=metadata controls> elements (default 7) on one HLS master (?src=, default
+  /ladders/hevc-fmp4/master.m3u8), none played for ?idle= s (default 60); then play() on the first
+  only, for ?play= s (default 30). The engine's own lines (WPEB-MEDIA players=, hls_streams=,
+  decoder/rpivid) and the host's request log (serve-media.py: no segment fetched before play()) are
+  the measurement; this page logs each element's readyState/networkState/size every 10 s and its
+  events. Lines start with "B8HLSMEM "; the last is "B8HLSMEM-DONE result=...".
+  Query also: run=  muted=1  preload=none|metadata|auto (default metadata)
+
+  SPDX-License-Identifier: BSD-3-Clause
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<title>B8 HLS memory</title>
+<style>
+  body { font: 13px sans-serif; margin: 8px; background: #202020; color: #e0e0e0; }
+  video { width: 300px; height: 169px; background: black; margin: 2px; }
+  #state { font-family: monospace; margin-top: 6px; white-space: pre-wrap; }
+</style>
+<script src="media-common.js"></script>
+</head>
+<body>
+<div id="grid"></div>
+<div id="state">-</div>
+<script>
+"use strict";
+(function () {
+    const M = window.PhxMedia;
+    M.setTag("B8HLSMEM");
+    const p = M.params;
+    const src = p.get("src") || "/ladders/hevc-fmp4/master.m3u8";
+    const n = Number(p.get("n") || 7), idle = Number(p.get("idle") || 60), playFor = Number(p.get("play") || 30);
+    M.report("start", { src, n, idle, play: playFor, preload: p.get("preload") || "metadata" });
+    const videos = [];
+    for (let i = 0; i < n; i++) {
+        const v = document.createElement("video");
+        v.controls = true;
+        v.preload = p.get("preload") || "metadata";
+        v.muted = p.get("muted") === "1";
+        v.poster = "";
+        for (const e of ["loadstart", "loadedmetadata", "loadeddata", "canplay", "playing", "waiting", "error", "suspend"])
+            v.addEventListener(e, () => M.report(e, { v: i, ready: v.readyState, net: v.networkState,
+                size: v.videoWidth + "x" + v.videoHeight, code: v.error ? v.error.code : "-" }));
+        v.src = src;
+        document.getElementById("grid").appendChild(v);
+        videos.push(v);
+    }
+    const snapshot = (phase) => M.report("snapshot", { phase, states: videos.map((v) => v.readyState + "/" + v.networkState).join(","),
+        buffered: videos.map((v) => M.ranges(v.buffered)).join(";") });
+    let played = false;
+    const timer = setInterval(() => snapshot(played ? "playing" : "idle"), 10000);
+    setTimeout(() => {
+        played = true;
+        snapshot("before-play");
+        M.report("play-request", { v: 0 });
+        videos[0].play().then(() => M.report("play-resolved", { v: 0 }), (e) => M.report("play-rejected", { v: 0, name: e.name }));
+    }, idle * 1000);
+    setTimeout(() => {
+        clearInterval(timer);
+        const q = videos[0].getVideoPlaybackQuality ? videos[0].getVideoPlaybackQuality() : null;
+        M.done("ok", { n, current0: videos[0].currentTime.toFixed(2), total0: q ? q.totalVideoFrames : "-",
+            dropped0: q ? q.droppedVideoFrames : "-", states: videos.map((v) => v.readyState).join(",") });
+    }, (idle + playFor) * 1000);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<!--
+  b8-hls.html: native HLS in a <video> element (docs/browser/MSE-DESIGN.md §9.3, stage 0).
+  The element plays the master playlist in ?src= itself (no script player): this is the path
+  hls.js/video.js sites fall back to when there is no MSE, and the one where the browser chooses
+  the variant. Lines start with "B8HLS " (console, title, and the host log via /phx-log); the last
+  is "B8HLS-DONE result=...".
+
+  Query: src=<master or media playlist URL> (default /ladders/hevc-fmp4/master.m3u8; live:
+         /live/hevc-fmp4/master.m3u8[?disc=10] -- URL-encode a query inside src)
+         run=<id>  stop=<s of wall time after the first 'playing'>  limit=<s, whole page, default 300>
+         seek=<to>[@<at>] (default at 5 s)  pause=<a>-<b> (pause at clip time a for b-a s of wall time)
+         muted=1  preload=none|metadata|auto (default auto)  autoplay=0  probe=0 (skip the type matrices)
+  Logs: the canPlayType answers for the 4 HLS MIME types and a codec matrix, MediaSource presence,
+  the decodingInfo matrix (type 'file'), then the element's events (loadedmetadata: size, duration
+  -- Infinity for live -- and seekable; resize: the size the chosen variant has; playing/waiting
+  with stall time; seeks; ended; error code + message) and every 5 s: currentTime, buffered,
+  seekable (live), getVideoPlaybackQuality, frame rate by requestVideoFrameCallback.
+  The picture names its own variant ("HEVC 1080p", "H.264 720p" burned in by gen-ladders.sh).
+
+  SPDX-License-Identifier: BSD-3-Clause
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<title>B8 HLS</title>
+<style>
+  body { font: 15px sans-serif; margin: 12px; background: #202020; color: #e0e0e0; }
+  video { width: 960px; height: 540px; background: black; display: block; }
+  #state { font-family: monospace; margin-top: 6px; white-space: pre-wrap; }
+</style>
+<script src="media-common.js"></script>
+</head>
+<body>
+<video id="v" controls playsinline></video>
+<div id="state">-</div>
+<script>
+"use strict";
+(async function () {
+    const M = window.PhxMedia;
+    M.setTag("B8HLS");
+    const p = M.params;
+    const src = p.get("src") || "/ladders/hevc-fmp4/master.m3u8";
+    const v = document.getElementById("v");
+    M.report("start", { src, ua: navigator.userAgent });
+    v.preload = p.get("preload") || "auto";
+    v.muted = p.get("muted") === "1";
+    if (p.get("probe") !== "0") {
+        M.canPlayMatrix(v);
+        M.mseInfo();
+        await M.decodingInfoMatrix(["file"]);
+    }
+    const st = M.watchVideo(v);
+    let finished = false;
+    const finish = (result) => {
+        if (finished) return;
+        finished = true;
+        st.stop();
+        M.done(result, st.summary());
+    };
+    v.addEventListener("ended", () => setTimeout(() => finish("ok"), 1000));
+    v.addEventListener("error", () => setTimeout(() => finish("error"), 1000));
+    M.actions(v, st, finish);
+    v.src = src;
+    if (p.get("autoplay") !== "0") {
+        v.play().then(() => M.report("play-resolved", {}),
+            (e) => M.report("play-rejected", { name: e.name, message: e.message }));
+    }
+})();
+</script>
+</body>
+</html>
