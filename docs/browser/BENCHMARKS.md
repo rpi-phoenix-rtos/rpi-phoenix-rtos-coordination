@@ -315,6 +315,12 @@ kernel, 90 % of it in the global mutex of `pthread_getspecific` (JSC `Thread::cu
 Pi/host ratio is now **6–13× on 15 of 16 JetStream tests** (hash-map 21×) and 5–12× on the
 Speedometer suites — the plain CPU ratio the B9 page predicted.
 
+| 10-07 | 43 | jetstream (full, no wasm) / jit | DONE, 57/59 ran, **2 wrong results** | 566 s | `js_score` **32.95** (host 246.2: 7.5×) | 53.0/65.7 °C, 0 | `rpi4b-uart-20261007-050905-b43-jsfull.log` |
+| 10-07 | 43 | motionmark-quick / jit | DONE (10 s tests: not a valid score) | 193 s | 2.50 @ 30 fps | 0 | same |
+
+⚠ **Correctness**: `stanford-crypto-sha256` ("Bad result") and `stanford-crypto-pbkdf2` ("Bad output")
+compute wrong values on the Pi (both pass on the host). Being bisected by JIT tier.
+
 Build 38's smoke took 13.7 min (estimate 8–9). No hang, no crash, no fault, no throttling in either.
 **Build 41 (posixsrv pipes wake `poll()` through `pollNotify`): Perf-Dashboard 86.1 s → 2.6 s
 (SelectingRange 84.7 s → 1.1 s), Speedometer 0.377 → 0.432; the other 19 suites within ±10 %.**
