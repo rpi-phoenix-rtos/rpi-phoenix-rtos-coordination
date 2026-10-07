@@ -318,7 +318,11 @@ Speedometer suites — the plain CPU ratio the B9 page predicted.
 | 10-07 | 43 | jetstream (full, no wasm) / jit | DONE, 57/59 ran, **2 wrong results** | 566 s | `js_score` **32.95** (host 246.2: 7.5×) | 53.0/65.7 °C, 0 | `rpi4b-uart-20261007-050905-b43-jsfull.log` |
 | 10-07 | 43 | motionmark-quick / jit | DONE (10 s tests: not a valid score) | 193 s | 2.50 @ 30 fps | 0 | same |
 
-⚠ **Correctness**: `stanford-crypto-sha256` ("Bad result") and `stanford-crypto-pbkdf2` ("Bad output")
+| 10-07 | 45 | smoke / jit | DONE ×4 | 55 + 87 + 8 + 12 s | Speedometer **1.165**, JetStream-ab **76.4**, Acid3 96, css3test 69 % | 54.5–63.3 °C, 0 | `rpi4b-uart-*-b45-smoke.log` |
+
+✅ (build 45) the two Stanford crypto tests now pass (scores 106 / 104): libphoenix's libm is FreeBSD msun.
+
+⚠ **Correctness** (build 43): `stanford-crypto-sha256` ("Bad result") and `stanford-crypto-pbkdf2` ("Bad output")
 compute wrong values on the Pi (both pass on the host). Being bisected by JIT tier.
 
 Build 38's smoke took 13.7 min (estimate 8–9). No hang, no crash, no fault, no throttling in either.
