@@ -58,3 +58,124 @@ built).
    converts between the two clocks.
 3. **Per-program patches**, like SDL 0011: the plain `sdl2` port (copy 0011), and Python's
    parking lot (`pthread_condattr_setclock(CLOCK_MONOTONIC)` plus `PyTime_MonotonicRaw`).
+
+## 2026-10-07: the fix, and the audit extended
+
+**Fix** (libphoenix `cond-realtime-default` 2ff5fe2, not merged): the default clock is
+`CLOCK_REALTIME` again, as POSIX and upstream `4ab9ad9`. A `CLOCK_REALTIME` wait, whether from the
+default, `setclock(CLOCK_REALTIME)` or `pthread_cond_clockwait(CLOCK_REALTIME)`, is converted to
+the monotonic clock. The offset is read with one `gettime()` at the call, and again at every
+stale wake-up; the wait keeps the earlier of the two deadlines. Within one call:
+
+- **A deadline already passed** returns `ETIMEDOUT` at once, with the mutex held. That includes
+  a deadline computed before the boot-time step and used after it.
+- **A backward step** never makes the wait longer than the time left to the deadline when the
+  call began. The kernel already converts `REALTIME` deadlines at call time. The gap was that
+  `pthread_cond_waitInternal` re-calls `futexWait` after every stale wake-up, and the kernel
+  then converted again with the new offset, so the wait grew.
+- **A forward step past the deadline** ends the wait at its next wake-up. Without one, the wait
+  ends at the deadline as converted at the start; nothing is woken by `clock_settime()`.
+
+This covers `c283f2d`'s stated reason, a deadline "meaningless across the jump". What it cannot
+cover is a caller that passes a `CLOCK_MONOTONIC` deadline to a condvar whose clock it never set.
+That now times out at once and spins, so the audit below looked for such callers. As a side fix,
+deadlines too large to count in microseconds (C++'s `time_point::max()`) now saturate instead of
+overflowing into the past.
+
+The cause of the w38 symptoms `c283f2d` cited is not the default clock. SuperTuxKart's
+`system_error "Invalid argument"` was the `phMutexLock` syscall-arity break
+([doc](2026-09-16-upstream-mutex-abi-break.md)). The old vkQuake glue used native `condWait`,
+which the pthread default never reaches. Both measurements were taken on a build with stale-ABI
+binaries.
+
+**Tests:** phoenix-rtos-tests `cond-realtime-default` e8678d5 adds
+`libc/pthread/pthread_cond_clock.c`.
+
+- Group `pthread_cond_clock` (12 cases) covers the default, static-initialised, attr-without-clock,
+  `REALTIME` and `MONOTONIC` condvars, `clockwait` across clocks, `EINVAL`, past and 1970
+  deadlines, a signal before the deadline, and far-future deadlines.
+- Group `pthread_cond_clockstep` (3 cases) steps the clock ±10 s with `clock_settime`, so it runs
+  only with `PH_TEST_CLOCKSTEP` set.
+- Each timed wait runs in a watched thread. A hang is released after 3 s and reported as FAIL.
+
+Host harness `tools/pthread-key-hosttest`, suite `cond`:
+
+- It models `futexWait`/`futexWake` as the kernel does, and Phoenix's clock (monotonic plus a
+  steppable offset).
+- It runs the suite twice; the second run makes every sleeping futex wake spuriously every 20 ms.
+- master fails 9 of 15 cases: every `REALTIME`-on-default case hangs.
+- Upstream's plain default, without the conversion, fails 2: the far-future overflow, and the
+  backward step once wake-ups are spurious.
+- The fix passes 15 of 15 in both runs, also under TSan and ASan.
+
+### Audit: who relied on the monotonic default
+
+| Caller | Where | Deadline / condvar | Verdict |
+|---|---|---|---|
+| libstdc++ C++20 atomic timed waits (`counting_semaphore::try_acquire_for`, `__atomic_wait_address_until`) | gcc-16.2.0 `src/c++20/atomic.cc:605-616` | `steady_clock` epoch / `PTHREAD_COND_INITIALIZER` | **Relies on it — latent.** No caller in the image (wlroots/Mesa "binary_semaphore" hits are Vulkan). After the fix it busy-waits to the deadline: the result stays correct, CPU is wasted. Remedy: rebuild the toolchain. libstdc++'s configure check (`GLIBCXX_CHECK_PTHREAD_COND_CLOCKWAIT`, compile-only when cross-building) finds libphoenix's `pthread_cond_clockwait` and defines `_GLIBCXX_USE_PTHREAD_COND_CLOCKWAIT`. |
+| libstdc++ `condition_variable(_any)`, `future::wait_for` | `condition_variable:76-172`, `atomic_futex.h:296` | `system_clock` / default | Broken before; **fixed by the change** |
+| ANGLE `EGLReusableSync` (WebKit) | `EGLReusableSync.cpp:68` | via libstdc++ | Fixed by the change |
+| Python 3.14 parking lot | `parking_lot.c:74,201-206` | `PyTime_TimeRaw` / NULL | Fixed by the change (C14) |
+| Mesa v3dv perf queries | `v3dv_query.c:491-503` | `TIME_UTC` / `cnd_init` | Fixed by the change |
+| OpenSSL thread pool | `crypto/thread/arch/thread_posix.c:161,192-199` | `gettimeofday` / NULL | Fixed by the change |
+| libevent | `evthread_pthread.c:146-150` | `gettimeofday` / default | Fixed; the core never calls it |
+| tests: cond timedwait, cond EINTR, pty watchdog | `libc/pthread/pthread_cond_test_functions.c:41`, `pthread_cond_eintr.c:74`, `libc/posixsrv/pty_timed.c:54-68` | `REALTIME` / default | Fixed. The pty watchdog could never fire before. |
+| WebKit compat `sem_timedwait` | `webkit_wpe/files/compat/phoenix-jsc-compat.c:264-313` | `REALTIME` / NULL | Dead code (`PHX_COMPAT_SEM=0`) |
+| libphoenix mutex/rwlock timed locks | `pthread.c:1721-1765`, `2902`, `3101-3145` | explicit clock | Safe |
+| libphoenix `sem_timedwait`/`sem_clockwait` | `pthread/sem.c:147-220` | pipe + `poll` with a relative time | Safe (no condvar) |
+| libphoenix `pthread_once`, barriers, `semaphoreDown`, `alarm` | `pthread.c`, `barrier.c`, `sys/semaphore.c`, `unistd/alarm.c` | untimed, or native cond with a monotonic attribute | Safe |
+| posixsrv, lwip port | `posixsrv.c:446-483`, `port/sys_sync.h:29-43` | `setclock(MONOTONIC)` + monotonic | Safe |
+| SDL patch 0011, WebKit patch 0021 | ports | `setclock` / `clockwait(MONOTONIC)` | Safe (confirmed) |
+| Python locks and GIL, glib/GTK, dbus, Mesa EGL / `u_cnd_monotonic` / `u_queue` / wsi / `vk_sync_timeline` | port sources | `setclock(MONOTONIC)` | Safe |
+| Native `condWait` users (devices, utils jitter benchmark) | — | relative, or created `PH_CLOCK_MONOTONIC` | Unaffected by the pthread default |
+
+**Searched:**
+
+- All of `sources/libphoenix`.
+- The devices, filesystems, posixsrv, lwip, utils, usb, corelibs, tests, hostutils and kernel
+  repositories.
+- The ports' patches, glue, `files/` and `compat/`, including the tree before the old GPU stack
+  was removed (`43212b6^`).
+- Coord `tools/**`.
+- All of `.buildroot/.../port-sources/*` for `pthread_cond_timedwait`.
+- The toolchain's headers and `libstdc++.a`.
+
+Not searched: `external/mesa`, the same tag as the shipped Mesa.
+
+**Census corrections:**
+
+- Rows 1 (plain `sdl2`) and 5 (quakespasm tool) are gone from the tree.
+- The vkquake absolute-vs-relative `condWait` bug left with the deleted glue.
+- The libpas scavenger is not built (WebKit uses mimalloc).
+- libphoenix now has `sem_timedwait`.
+- Python takes the condvar fallback because `_POSIX_SEMAPHORES` is undefined. It is not because
+  `HAVE_SEM_TIMEDWAIT` is undefined: `pyconfig.h` has both `HAVE_SEM_TIMEDWAIT` and
+  `HAVE_SEM_CLOCKWAIT`.
+
+### `_POSIX_SEMAPHORES`: not yet
+
+Defining it would move CPython (the only port it changes; bash's hit is an unbuilt example) onto
+`sem_t`, in two places:
+
+- The parking lot calls `sem_init`/`sem_destroy` **on every contended wait**.
+- `thread_pthread.h` makes every `PyThread` lock a semaphore (`USE_SEMAPHORES`). That includes
+  each buffered file's lock.
+
+libphoenix's `sem_t` is a pipe through posixsrv. Each lock would therefore cost 2 fds and a
+posixsrv round trip, a failed `sem_init` is `Py_FatalError`, and the pipe is shared across
+`fork()`.
+
+`sem_timedwait` has its own defect: two timed waiters and one post leave the loser blocked in
+`read()` past its deadline.
+
+The claim also needs `sem_open`/`sem_close`/`sem_unlink`, which master lacks (the upstream-sync
+branch adds them). POSIX's `sem_init` page has no `ENOSYS` for `pshared`, so that is a documented
+shortfall, not a sanctioned one.
+
+The P17 fix makes the macro unnecessary for C14. Define it only after all of these:
+
+1. Unnamed semaphores are rebuilt on the futex.
+2. The upstream sync is merged.
+3. `misc/posix_options.c` is updated.
+4. `libc/semaphore` gains tests for `clockwait`, two timed waiters and `fork`.
+5. CPython is force-rebuilt.
