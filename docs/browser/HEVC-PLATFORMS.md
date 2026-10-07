@@ -132,7 +132,10 @@ ffmpeg -i master.mov -vf scale=1920:1080,format=yuv420p -r 30 \
 **Pi rehearsal of a PeerTube watch page** (build 56, 2026-10-07): `https://peertube.gravitywell.xyz/w/7tXP3FCq7b6oLDH7QnzVYM`
 (third-party, test only) loads in 7.2 s, **autoplays** in the site's own player (web-video mode),
 and the `hvc1` 1080x1920 59.94 fps upload decodes on the rpivid block: 60 fps presented, ~39 fps
-painted, 43 dropped of 3603, played to its end. The PeerTube path needs no click at all.
+painted, 43 dropped of 3603, played to its end — with `--autoplay=allow`. **With `/bin/browser`'s
+defaults** (WebKit's policy: autoplay only without sound, as Chrome and Safari) the same page
+(`demo-browser` cycle, XFCE session) shows the first picture, decoded on the block, and waits:
+the demo is **one click on play** (or `WPE_BROWSER_AUTOPLAY=allow` before `browser`).
 
 **2b. Alternative host: PeerTube with transcoding off.** Use it if we want the site's own player to
 pick HEVC with no quality switch, or our own branding.
