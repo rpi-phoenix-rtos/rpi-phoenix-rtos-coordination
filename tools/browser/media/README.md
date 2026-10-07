@@ -199,6 +199,15 @@ HLS-muxer ladders have exactly that (a 66 ms video / 45 ms audio delay), the DAS
 single edit. The parser applies it the same way, so a stream has the same timing through MSE as
 through the progressive/HLS player.
 
+**Results (2026-10-07, ffprobe 8.0.1, parser of ports `219dc64`): 150/150 PASS** over 28 streams
+(the 6 MSE sets, 15 fMP4 ladder variants, 7 made-here): 56 oracle comparisons (94 172 samples,
+every track's extradata), 1 128 855 split points (14 streams at every byte, 14 sparse), 154 000
+random-append runs, 28 reset series, 3 init switches, 70 000 mutations; plus 3.6 M mutations of
+the small streams (20 seeds). The first full run's mutations found a parser defect: a `trun`
+whose samples take their sizes from the defaults had an unbounded sample count (an
+out-of-memory from a page's `appendBuffer`), fixed in `219dc64` (a run must fit in the largest
+mdat taken, ≤ 2^20 samples per media segment).
+
 ## Pi results
 
 **stage0a, build 54 (2026-10-07, `wpe-browser` defaults: GPU raster + dma-buf, 1000x620 window).**
