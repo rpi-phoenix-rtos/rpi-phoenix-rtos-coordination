@@ -1,0 +1,51 @@
+# The site survey's list (survey.sh): one site per line, "<name> <address>", '#' comments.
+# The name is a short tag (letters, digits, '-'); the address goes to wpe-browser as typed in its
+# address bar. Ordered from simple to heavy, so the first minutes prove the harness itself.
+# Expected trouble is noted per line; a consent wall, a bot check or a paywall is still a valid
+# load (the survey records what the browser did, the HTTP status says what the site answered).
+#
+# --- simple, mostly static ----------------------------------------------------------------------
+start        /usr/share/wpe-browser/start.html
+example      https://example.com/
+cern         http://info.cern.ch/hypertext/WWW/TheProject.html
+hackernews   https://news.ycombinator.com/
+lobsters     https://lobste.rs/
+kernelorg    https://www.kernel.org/
+w3c          https://www.w3.org/
+pythondocs   https://docs.python.org/3/library/index.html
+cnnlite      https://lite.cnn.com/
+ddghtml      https://html.duckduckgo.com/html/?q=raspberry+pi
+# --- documents, wikis, developer sites ----------------------------------------------------------
+wikipedia    https://en.wikipedia.org/wiki/Raspberry_Pi
+# Anubis proof-of-work page in front of the wiki: a JS challenge, then a redirect
+archwiki     https://wiki.archlinux.org/title/Raspberry_Pi
+mdn          https://developer.mozilla.org/en-US/docs/Web/JavaScript
+github       https://github.com/phoenix-rtos/phoenix-rtos-kernel
+stackoverflow https://stackoverflow.com/questions/tagged/rtos
+# may answer 403 "blocked" to an unknown browser
+oldreddit    https://old.reddit.com/r/raspberry_pi/
+csstricks    https://css-tricks.com/snippets/css/a-guide-to-flexbox/
+caniuse      https://caniuse.com/css-grid
+# --- news (consent banners, ads, many scripts) --------------------------------------------------
+bbc          https://www.bbc.com/news
+guardian     https://www.theguardian.com/international
+# paywall / consent wall expected
+nytimes      https://www.nytimes.com/
+# bot protection (401/403) expected
+reuters      https://www.reuters.com/
+# --- search, shopping, media --------------------------------------------------------------------
+ddg          https://duckduckgo.com/?q=raspberry+pi
+bing         https://www.bing.com/search?q=raspberry+pi
+# EU consent wall (consent.google.com) expected
+google       https://www.google.com/search?q=raspberry+pi
+# a captcha page is possible
+amazon       https://www.amazon.com/dp/B07TC2BK1X
+ebay         https://www.ebay.com/
+imdb         https://www.imdb.com/title/tt0062622/
+weather      https://www.yr.no/en/forecast/daily-table/2-756135/Poland/Masovia/Warsaw/Warsaw
+# --- heavy: maps, animation, video --------------------------------------------------------------
+apple        https://www.apple.com/
+# map tiles + canvas (Leaflet / MapLibre GL: WebGL off by default)
+osm          https://www.openstreetmap.org/#map=13/52.2297/21.0122
+# heavy SPA; no MSE in this build, so no playback expected
+youtube      https://www.youtube.com/
