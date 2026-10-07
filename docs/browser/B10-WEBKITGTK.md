@@ -18,8 +18,9 @@ image build 60 (`.buildroot/_build/aarch64a72-generic-rpi4b/webkit_wpe-build`).
 
 **(a) WebKitGTK 2.54 (PORT=GTK, GTK 3, Wayland only) as a second port, `webkit_gtk`, with
 WebKit's own MiniBrowser/gtk (BSD-2-Clause) as the tabbed shell.** Effort: **7–10 agent-days**
-to a passing Pi gate, of which ~3 are build work done on the host (phase 2) and 4–7 are Pi
-bring-up whose variance is one question: does GDK 3 get an EGL context from our Mesa (§3.1).
+to a passing Pi gate: ~3 of build work, **done on the host** (phase 2, §8: it compiles and links),
+and 4–7 of Pi bring-up whose variance is one question: does GDK 3 get an EGL context from our
+Mesa (§3.1).
 
 Why (a) and not (b):
 1. **The shared code is 97.7 % of our WebKit patches.** 10 923 of 11 177 changed lines apply
@@ -219,6 +220,12 @@ webkit_gtk/
   files/launcher/             webkit-browser.c (+ MiniBrowser sources from the tree), CMakeLists.txt, exports
   files/share/                webkit-browser.desktop (XFCE menu: Internet), start page
 ```
+
+The symlinks are relative (`../../../webkit_wpe/...`) and survive the buildroot copy:
+`prepare-buildroot.sh` copies each sibling with `rsync -a`, which keeps links, into the same
+layout. A shared patch changed after a work directory was patched makes `build-gtk.sh` stop with
+"extract the tarball again" (the framework's own rule for a changed patch); a clean of the port
+does that.
 
 `webkit_wpe` is **not touched** (no recipe change, so the integrator's next image build does
 not rebuild WPE because of B10). `build-gtk.sh` duplicates the generic half of `build-wpe.sh`
