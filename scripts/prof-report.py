@@ -46,6 +46,8 @@ EV_SAMPLE, EV_WAIT, EV_WAKEUP, EV_SEND, EV_RECV, EV_RESPOND = 0x40, 0x41, 0x42, 
 EV_CREATE, EV_EXEC, EV_SC_ENTER, EV_SC_EXIT, EV_WAKING = 0x26, 0x33, 0x28, 0x29, 0x25
 EV_IRQ_ENTER, EV_IRQ_EXIT = 0x20, 0x21
 CAUSES = ["wakeup", "timeout", "signal/exit", "lock handover", "other"]
+EXCEPTIONS = {0x24: "page fault (data abort)", 0x20: "page fault (instruction abort)", 0x00: "undefined instruction",
+              0x07: "FP/SIMD access", 0x22: "PC alignment", 0x26: "SP alignment", 0x2c: "FP exception", 0x3c: "BRK"}
 KERNEL_BASE = 0xFFFF000000000000
 
 # kernel functions on every wait path: the reason is the first frame that is none of these
@@ -83,7 +85,7 @@ def ev_size(b, o):
     p = o + 5
     avail = len(b) - p
     if eid == EV_SAMPLE:
-        return 0 if avail < 12 else urec_end(b, p, 12 + b[p + 11] * 8, avail)
+        return 0 if avail < 32 else urec_end(b, p, 32 + b[p + 31] * 8, avail)
     if eid == EV_WAIT:
         return 0 if avail < 50 else urec_end(b, p, 50 + b[p + 49] * 8, avail)
     sz = EV_FIXED.get(eid, 0)
@@ -353,6 +355,7 @@ class Thread:
         self.wait = None
         self.wake = None  # (waker, cause) seen before thread_waking
         self.irq = {}
+        self.last_stacks = None
 
 
 def basename_of(procname):
@@ -460,23 +463,34 @@ class Analysis:
                     out.append((we, wa, True))
         return out[:1 + self.args.depth]
 
-    def kernel_stack(self, kpc, kframes, syms):
+    def kernel_stack(self, kpc, kframes, syms, klr=0):
         out = [(syms.kernel, kpc, False)] if kpc else []
+        # klr: the caller of a leaf (hal_spinlockClear), which the frame chain does not include
+        if klr >= KERNEL_BASE and (not kframes or kframes[0] != klr):
+            out.append((syms.kernel, klr, True))
         return out + [(syms.kernel, f, True) for f in kframes if f >= KERNEL_BASE]
 
     def on_sample(self, ts, p, syms):
-        tid, mode, kpc, nk = struct.unpack_from("<HBQB", p, 0)
-        kframes = list(struct.unpack_from("<%dQ" % nk, p, 12))
-        pc, lr, sp, fp, frames, stack = parse_urec(p, 12 + nk * 8)
+        tid, mode, kflags, kpc, klr, sc, ec, kfar, nk = struct.unpack_from("<HBBQQHBQB", p, 0)
+        kframes = list(struct.unpack_from("<%dQ" % nk, p, 32))
+        pc, lr, sp, fp, frames, stack = parse_urec(p, 32 + nk * 8)
         t = self.thread(tid)
         if mode > 2:
             return
         t.samples[mode] += 1
-        ks = self.kernel_stack(kpc, kframes, syms) if mode != 0 else []
+        ks = self.kernel_stack(kpc, kframes, syms, klr) if mode != 0 else []
         us = self.user_stack(t.pid, t.name, pc, lr, frames, stack, syms, leaf_pc=(mode == 0)) if pc else []
         for e, a, r in ks + us:
             syms.request(e, a, r)
-        self.samples.append((ts, tid, mode, ks, us))
+        if mode != 1:
+            entry = None
+        elif sc != 0xFFFF:
+            entry = self.scname(sc) or "syscall %d" % sc
+        elif ec != 0xFF:
+            entry = EXCEPTIONS.get(ec, "exception 0x%02x" % ec)
+        else:
+            entry = "?"
+        self.samples.append((ts, tid, mode, ks, us, entry, bool(kflags & 1)))
 
     def on_wait(self, ts, p, syms):
         tid, flags, queue, timeout, blocked, sc_field = struct.unpack_from("<HBIIIH", p, 0)
@@ -487,8 +501,13 @@ class Analysis:
         t = self.thread(tid)
         if t.wait is not None:
             self.end_wait(t, ts, True)
-        ks = self.kernel_stack(0, kframes, syms)
-        us = self.user_stack(t.pid, t.name, pc, lr, frames, stack, syms, leaf_pc=False) if pc else []
+        if flags & 8 and t.last_stacks is not None:
+            # a repeat: frames and stack left out, as the thread's previous recorded wait
+            ks, us = t.last_stacks
+        else:
+            ks = self.kernel_stack(0, kframes, syms)
+            us = self.user_stack(t.pid, t.name, pc, lr, frames, stack, syms, leaf_pc=False) if pc else []
+            t.last_stacks = (ks, us)
         for e, a, r in ks + us:
             syms.request(e, a, r)
         # the wait names its syscall (from its SVC); syscall_enter events (-e syscall) are the fallback
@@ -700,7 +719,7 @@ def main():
     # CPU per process; idle = kernel-thread samples in the idle loop
     total = len(an.samples) or 1
     procs = collections.defaultdict(lambda: [0, 0, 0, "?"])
-    for ts, tid, mode, ks, us in an.samples:
+    for ts, tid, mode, ks, us, entry, skid in an.samples:
         t = an.threads[tid]
         key = t.pid
         if mode == 2:
@@ -716,17 +735,37 @@ def main():
 
     # hottest functions per thread (self time)
     per = collections.defaultdict(collections.Counter)
-    for ts, tid, mode, ks, us in an.samples:
+    for ts, tid, mode, ks, us, entry, skid in an.samples:
         if mode == 2 or not selected(tid):
             continue
-        leaf = ks[0] if mode == 1 and ks else (us[0] if us else None)
-        if leaf is not None:
-            per[tid][("[k] " if mode == 1 else "") + syms.name(*leaf)] += 1
+        if mode == 1 and ks:
+            # past a skid (the interrupt held off until a spinlock was released), the caller did the work
+            leaf = ks[1] if skid and len(ks) > 1 else ks[0]
+            per[tid]["[k] " + syms.name(*leaf) + (" (skid)" if skid else "")] += 1
+        elif us:
+            per[tid][syms.name(*us[0])] += 1
     print("\nHottest functions (self samples) of the busiest threads")
     for tid, c in sorted(per.items(), key=lambda kv: -sum(kv[1].values()))[:args.top]:
         n = sum(c.values())
         print("  %-30s %6d samples = %.1f%% of a CPU" % (fmt_thread(an, tid), n, 100.0 * n / max(1, dur * 1e6 / period)))
         for fn, k in c.most_common(6):
+            print("      %5.1f%%  %s" % (100.0 * k / n, fn))
+
+    # why threads are in the kernel, and where that time goes
+    kent = collections.defaultdict(collections.Counter)
+    kcall = collections.defaultdict(collections.Counter)
+    for ts, tid, mode, ks, us, entry, skid in an.samples:
+        if mode != 1 or not selected(tid):
+            continue
+        kent[tid][entry] += 1
+        work = ks[1:] if skid and len(ks) > 1 else ks
+        kcall[tid][" <- ".join(syms.name(*f) for f in work[:3]) or "?"] += 1
+    print("\nKernel time by entry (per thread; a skid sample is charged to the code before the unmask)")
+    for tid, c in sorted(kent.items(), key=lambda kv: -sum(kv[1].values()))[:args.top]:
+        n = sum(c.values())
+        print("  %-30s %6d kernel samples = %.1f%% of a CPU" % (fmt_thread(an, tid), n, 100.0 * n / max(1, dur * 1e6 / period)))
+        print("      entry: " + ", ".join("%s %.0f%%" % (e, 100.0 * k / n) for e, k in c.most_common(8)))
+        for fn, k in kcall[tid].most_common(5):
             print("      %5.1f%%  %s" % (100.0 * k / n, fn))
 
     # longest waits
@@ -782,7 +821,7 @@ def main():
 
     if args.folded:
         c = collections.Counter()
-        for ts, tid, mode, ks, us in an.samples:
+        for ts, tid, mode, ks, us, entry, skid in an.samples:
             t = an.threads[tid]
             if mode == 2:
                 c[";".join(["[kernel]", "tid-%d" % tid] + ["[k] " + syms.name(*f) for f in reversed(ks)])] += 1

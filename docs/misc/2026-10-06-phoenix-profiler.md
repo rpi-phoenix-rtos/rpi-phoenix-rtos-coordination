@@ -375,6 +375,49 @@ four CPUs), and only waits ≥ 1 ms are recorded.
 wait record dominates: 100 waits/s from 10 threads ≈ 0.8 MB/s. In that case the printed mix shows
 `thread_wait` on top, and the remedy is `-w 256` or `-b 10000` (or a larger default).
 
+## 5d. Build 40 (2026-10-07): kernel time was "at hal_spinlockClear"
+
+**What happened.** The JetStream `splay` trace showed ~70% of the WebProcess main thread's samples
+in the kernel, 57% of them at `hal_spinlockClear`, and every other thread looked the same. This is
+skid. The timer interrupt can only be taken where the kernel unmasks interrupts, which is mostly
+the end of a spinlock section, so the sampled pc is where the work ended, not where it was done.
+The idle 5 s trace was 5.7 MB, and in splay 75% of the bytes were wait records.
+
+**Fixes** (kernel `04fa2876`, utils `f22bfee`, tests `dae4a70`):
+
+- **thread_sample now carries more for a sample taken in the kernel:**
+  - `klr` (the caller of a leaf such as hal_spinlockClear, which the frame chain skips);
+  - a **skid** flag, set when the instruction before kpc is `msr daif`/`msr daifclr`
+    (verified against the encodings in the built kernel ELF);
+  - the **entry reason**: the syscall number (the SVC before the user pc), or for an exception
+    its ESR.EC and fault address, read from the `exc_context_t` that `_exceptions_dispatch`
+    pushes below the user context.
+- **Reports.**
+  - `prof report` shows, per thread, kernel time by entry (syscall names from the kernel's
+    `SYSCALLS` table; page fault, ...) and "kernel time at", with a skid sample charged to its
+    caller.
+  - `prof-report.py` adds a "Kernel time by entry" section with symbolized callers, two frames
+    deep, and inserts klr into the kernel frames of the folded stacks.
+- **Wait volume.**
+  - `waitStackMinUs` (prof `-B`, default 10 ms): only waits at least that long carry a user
+    stack. Every wait of 1 ms or more is still timed.
+  - A wait in the same place as its thread's previous recorded wait (same syscall, user pc/lr,
+    caller, first two kernel callers) is written without frames or stack (flag bit 3, ~90 B). The
+    reports take the frames from that previous wait.
+- **idle_volume budget stays at 2 MB for 2 s.** Estimate: ~0.5 MB of waits plus ~0.7 MB of
+  samples.
+
+**New test:** `kernel_entry_attributed` loops mmap, a page fault and munmap. ≥90% of the thread's
+kernel samples must name their entry, and ≥50% must be mmap/munmap/data abort.
+
+**Checks.** The image build was running, so all compiles were private (toolchain + worktree only,
+nothing read from `.buildroot`):
+- kernel: 11 files with `-Werror`;
+- prof sources and the test with `-Werror`;
+- report and Python script against synthetic traces with kernel-mode samples.
+
+The real-flags `syntax-check.sh` pass is still to run once the build is done.
+
 ## 6. Next steps (in order)
 
 1. **Build.** Merge the four branches into a test build with `--scope core`. Run the unity test
