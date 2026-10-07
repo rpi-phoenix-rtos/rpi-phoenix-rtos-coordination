@@ -74,14 +74,19 @@ and it also turns on encrypted media, WebDriver BiDi, web extensions and WebXR: 
 The three features are paint/parse features reached only by pages that use them; a page that does
 not mention `corner-shape`, `object-view-box` or `ident()` runs exactly the code it ran before.
 Upstream turned all three on by default after 2.54. What can go wrong is a page written for
-Chrome (which ships `corner-shape` since 139) now taking its `@supports (corner-shape: …)` branch
+Chrome (which ships `corner-shape`) now taking its `@supports (corner-shape: …)` branch
 and hitting a 2.54-era rendering bug in `BorderShape`/`CornerShapeUtilities`; that is a visual
 defect, and `--stock-features` reverts it without a rebuild.
 
 ## Expected result
 
 Model with the three features on: **70 %** headline (feature mean 70.11 %, was 68.6 %), about
-**4328/6419** checks (+147: 139 corner-shape, 4 object-view-box, 4 `ident()`). The host's 71 %
+**4328/6419** checks (+147: 139 corner-shape, 4 object-view-box, 4 `ident()`). The model takes
+the host's results for the three features; the 2.54 grammars accept every value css3test tries
+(`<corner-shape-value>` = `round | scoop | bevel | notch | square | squircle |
+superellipse(<number> | infinity | -infinity)`; `object-view-box: none | <basic-shape-rect>`;
+`ident()` takes idents, strings and integers), so the one uncertain check is
+`ident("cool-" sibling-index())`. The headline has 0.1 point of margin above 70 %. The host's 71 %
 (70.70 %) stays ahead by `inherit()`, the `white-space` shorthand, `matches`, the metric override
 descriptors and the Paint API, less `margin-trim`: 21 checks, all (a) or deliberately not enabled.
 
