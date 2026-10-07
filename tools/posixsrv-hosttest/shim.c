@@ -565,3 +565,9 @@ int tmpfile_init(void)
 {
 	return 0;
 }
+
+
+int semaphore_init(void)
+{
+	return 0;
+}

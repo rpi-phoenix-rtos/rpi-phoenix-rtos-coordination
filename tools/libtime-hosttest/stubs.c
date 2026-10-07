@@ -44,7 +44,7 @@ int mutexUnlock(handle_t h)
 #include <time.h>
 int gettime(time_t *raw, time_t *offs);
 int settime(time_t t);
-int nsleep(time_t *sec, long *nsec);
+int nsleep(time_t *sec, long *nsec, int clockid, int flags);
 
 int gettime(time_t *raw, time_t *offs)
 {
@@ -59,9 +59,28 @@ int settime(time_t t)
 	abort();
 }
 
-int nsleep(time_t *sec, long *nsec)
+int nsleep(time_t *sec, long *nsec, int clockid, int flags)
 {
 	(void)sec;
 	(void)nsec;
+	(void)clockid;
+	(void)flags;
+	abort();
+}
+
+#include "shim/sys/proc.h"
+
+int sys_cpuTime(pid_t pid, int tid, time_t *cpuTime, cpuTimes_t *cpuTimes)
+{
+	(void)pid;
+	(void)tid;
+	(void)cpuTime;
+	(void)cpuTimes;
+	abort();
+}
+
+int pidExists(pid_t pid)
+{
+	(void)pid;
 	abort();
 }

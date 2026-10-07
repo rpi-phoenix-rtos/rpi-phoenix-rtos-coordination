@@ -17,3 +17,8 @@ static inline int SET_ERRNO(int x)
 
 int gettime(time_t *raw, time_t *offs);
 int settime(time_t t);
+
+/* <phoenix/time.h> clock ids nsleep() takes */
+#define PH_CLOCK_RELATIVE  0
+#define PH_CLOCK_REALTIME  1
+#define PH_CLOCK_MONOTONIC 2
