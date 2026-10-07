@@ -1,6 +1,3 @@
-# Pre-existing, outside the key code: pthread_join() unlocks pthread_list_lock
-# a second time -- _pthread_release() already did, in _pthread_ctx_put(). See
-# libphoenix f9ad788 (a fix that removed the trailing unlock hung the pthread
-# tests on the Pi and was reverted). Suppressed so that the race reports of the
-# key code stay readable; this matches only mutex-misuse reports.
-mutex:pthread_join
+# ThreadSanitizer suppressions for known reports outside the code under test.
+# None at present. (pthread_join's second unlock of pthread_list_lock was
+# suppressed here until libphoenix fixed it -- see KNOWN-ISSUES C13.)
