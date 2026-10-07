@@ -97,7 +97,7 @@ So the change is in the gates, not the programming.
 export FFMPEG_RPIVID_TOOLS=-amp,-slices    (+name turns one on; "none" = the proven set; "all")
 ```
 
-| Tool | Default | Means | Streams using it (set below) |
+| Tool | Default | Means | Streams enabling it (set below) |
 |---|---|---|---|
 | `tu_depth_intra` | on | transform tree depth > 0 in intra CUs (the PeerTube stream) | 126 |
 | `tu_depth_inter` | on | the same in inter CUs | 130 |
@@ -121,6 +121,7 @@ export FFMPEG_RPIVID_TOOLS=-amp,-slices    (+name turns one on; "none" = the pro
 | `tiles` | off | tiles | 15 |
 | `dependent_slices` | off | a picture with a dependent slice segment | 18 |
 
+- The last column counts streams whose SPS/PPS (or slices) turn the tool on. HM-encoded conformance streams enable transform skip, AMP and `cabac_init` almost everywhere. CUs that really use a tool are certain only in the targeted x265 encodes and the named conformance streams (`TSKIP_A`, `AMP_*`, `SLIST_*`, `TILES_*`, `ipcm_*`, `LTRPSPS_A`, `DSLICE_*`, …).
 - **Off** means level 2 only: these are rare in real uploads.
 - A stream inside the limits whose tools are all enabled goes to the block.
 - A PPS or picture needing a disabled tool sends the rest of the stream to the CPU (a whole picture, never half of one).
@@ -153,7 +154,7 @@ hevc-rpivid-check -l 2 /usr/share/video-demo/rpivid-check
 - A FAIL names the tools in its `tools=`. A tool that fails across streams, while streams without it pass, goes off: in `tools[]` (rebuild), or at once with `FFMPEG_RPIVID_TOOLS=-<tool>`.
 - Add `-crc` for an independent oracle. The conformance streams and every x265 encode carry MD5 picture-hash SEI, which gives `sei_bad=` with no reference at all. It slows the run.
 - **Expected CPU results:** the 4 `PICSIZE_*` streams (over 4096 a side).
-- **Wedge:** a block timeout makes every later stream report `cpu_why=the block stopped responding earlier in this process`. Resume with `-from <next stream name>`.
+- **Wedge:** a block timeout makes every later stream report `cpu_why=the block stopped responding earlier in this process`. Resume with `-from <next stream name>`: the run starts at that `MANIFEST` entry.
 - The block's known intermittent error (see above) shows as `fallback=1` part way through a stream. Rerun that stream alone: `hevc-rpivid-check -l 2 /usr/share/video-demo/rpivid-check/<stream>`.
 - Level 1 (no `-l`) shows what the browser and players do by default.
 
