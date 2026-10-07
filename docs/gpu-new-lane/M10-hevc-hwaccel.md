@@ -23,10 +23,11 @@ The code is on ports branch `hevc-hwdec` (`84a8059`, `01d6cc7`, `9621a14`), merg
 **Fallback.**
 - A stream the block cannot take never leaves the CPU, and the log says `rpivid: CPU decode: <reason>`.
 - A picture the block cannot take, or a hardware error, moves the rest of the stream to the CPU.
-- `FFMPEG_RPIVID=0` forces the CPU, and `2` enables the unverified tool set.
+- `FFMPEG_RPIVID=0` forces the CPU, and `2` enables every tool (see "Tool gates" below).
+- `FFMPEG_RPIVID_TOOLS=-amp,+tiles` turns single coding tools off or on.
 - In ffplay, `-vcodec hevc` selects the plain CPU decoder.
 
-**What the block decodes at level 1 (the default).** The tool set proven bit-exact on the Pi: 8/10-bit 4:2:0, CTB 64, one slice segment, no tiles, WPP, SAO, TMVP, B-pyramid, multi-ref, weighted prediction. Anything else falls back to the CPU.
+**What the block decodes at level 1 (the default).** The tool set proven bit-exact on the Pi: 8/10-bit 4:2:0, CTB 64, one slice segment, no tiles, WPP, SAO, TMVP, B-pyramid, multi-ref, weighted prediction. Since 2026-10-07 also the default-on tools of "Tool gates" below (pending their Pi check). Anything else falls back to the CPU.
 
 **Licence.** The new sources are BSD-3. The FFmpeg patch is LGPL, as are the files it touches. There is still no `--enable-gpl`.
 
@@ -43,7 +44,7 @@ The code is on ports branch `hevc-hwdec` (`84a8059`, `01d6cc7`, `9621a14`), merg
    - Compare the `ffplay-stat` fps and drops. At 1080p, expect hardware ≥ CPU fps with fewer drops.
    - gtk-video prints `GTK-VIDEO decoder hevc_rpivid`.
 4. **CPU %.** `top` while playing, hardware against `-vcodec hevc`.
-5. **Level-2 promotion.** Each feature clip that `-crc` reports BIT-EXACT under `FFMPEG_RPIVID=2` can move into level 1.
+5. **Level-2 promotion.** Each feature clip that `-crc` reports BIT-EXACT under `FFMPEG_RPIVID=2` can move into level 1. Superseded 2026-10-07 by the per-tool gates and the `rpivid-check` stream set ("Tool gates" below).
 
 ## Result (2026-10-02, builds 20–21)
 
@@ -77,3 +78,88 @@ The hardware path is faster and needs about 6× less CPU. Of its 15 ms per pictu
 **Robustness:** the block's known intermittent decode error appeared once in five 600-picture runs (POC 95, `CFSTATUS 71 CFNUM 264`). The stream then continued on the CPU with no visible break (`hw_fallback=1`), as designed.
 
 **Not yet run:** gtk-video's `GTK-VIDEO decoder hevc_rpivid` line (it needs the XFCE session) and level-2 promotion.
+
+## Tool gates (2026-10-07)
+
+**Why.** A real PeerTube upload (HEVC Main, 1080×1920, 59.94 fps) played in the browser on the CPU at about 2 fps shown (build 51, `hevcweb2`): `rpivid: CPU decode: transform hierarchy depth 1/0 (verified: 0/0)`. Its next gate would have been `diff_cu_qp_delta_depth 0`. Level 1 took only x265's default tool set.
+
+**The hardware supports every Main / Main 10 tool.** The Raspberry Pi Linux `hevc_dec` driver (`drivers/media/platform/raspberrypi/hevc_dec/`, GPL) limits only: 4:2:0, 8 or 10 bit, 32..4096 a side, CTB ≤ 64, TB ≤ 32. It was **read for understanding only; no code was copied** (ports `files/rpivid/` stays BSD-3, our own). `rpivid_cmd.c` already programmed each tool as the driver does:
+- SPS0: the TU depths. SPS1: AMP, PCM, scaling lists, strong intra smoothing.
+- PPS: CU QP delta depth, transquant bypass, transform skip, sign hiding, chroma QP offsets, constrained intra.
+- The scaling factor array; CONFIG2 (merge level, PCM loop filter, constrained intra).
+- The slice messages (deblocking, long-term flags); the slice / tile / WPP entry-point sequence.
+
+So the change is in the gates, not the programming.
+
+**One gate per tool** (`rpivid_hevc.c` `tools[]`). A tool the Pi finds wrong turns off alone, by its default in `tools[]` or at run time:
+
+```
+export FFMPEG_RPIVID_TOOLS=-amp,-slices    (+name turns one on; "none" = the proven set; "all")
+```
+
+| Tool | Default | Means | Streams enabling it (set below) |
+|---|---|---|---|
+| `tu_depth_intra` | on | transform tree depth > 0 in intra CUs (the PeerTube stream) | 126 |
+| `tu_depth_inter` | on | the same in inter CUs | 130 |
+| `cu_qp_delta` | on | CU QP delta off, or at a depth other than 1 (the PeerTube stream: 0) | 151 |
+| `ctb32` / `ctb16` | on | 32×32 / 16×16 CTBs (x265 ultrafast; NVENC, QSV) | 11 / 8 |
+| `blocks` | on | min CB ≥ 16, or TB sizes other than 4..32 | 23 |
+| `amp` | on | asymmetric motion partitions | 131 |
+| `no_sign_hiding` | on | sign data hiding off (AMD VCN, x265 ultrafast) | 20 |
+| `transform_skip` | on | transform skip | 122 |
+| `no_strong_smoothing` | on | strong intra smoothing off | 18 |
+| `scaling_list` | on | default or coded scaling lists | 3 |
+| `deblocking` | on | deblocking off, offsets, per-slice control | 22 |
+| `chroma_qp_offset` | on | PPS / slice chroma QP offsets | 7 |
+| `cabac_init` | on | `cabac_init_flag` | 121 |
+| `merge_level` | on | parallel merge level ≠ 2 | 6 |
+| `slices` | on | several slice segments per picture (hardware encoders) | 36 |
+| `long_term` | off | long-term reference pictures | 7 |
+| `pcm` | off | PCM CUs | 14 |
+| `transquant_bypass` | off | lossless CUs | 5 |
+| `constrained_intra` | off | constrained intra prediction | 5 |
+| `tiles` | off | tiles | 15 |
+| `dependent_slices` | off | a picture with a dependent slice segment | 18 |
+
+- The last column counts streams whose SPS/PPS (or slices) turn the tool on. HM-encoded conformance streams enable transform skip, AMP and `cabac_init` almost everywhere. CUs that really use a tool are certain only in the targeted x265 encodes and the named conformance streams (`TSKIP_A`, `AMP_*`, `SLIST_*`, `TILES_*`, `ipcm_*`, `LTRPSPS_A`, `DSLICE_*`, …).
+- **Off** means level 2 only: these are rare in real uploads.
+- A stream inside the limits whose tools are all enabled goes to the block.
+- A PPS or picture needing a disabled tool sends the rest of the stream to the CPU (a whole picture, never half of one).
+- The decoder logs `rpivid: hardware HEVC decode …, tools: <list> (not in the default set: <list>)`, and `rpivid: tools in use: …` when a later PPS adds one.
+
+**One programming change.** In a picture of several slices, every slice now sends its own `slice_loop_filter_across_slices_enabled_flag` and its slice messages, as the driver does. One-slice pictures keep the proven form.
+
+**Host evidence (no Pi).** Hosttest uses the register-level mock under ASan:
+- `testdata`, on the proven set (`FFMPEG_RPIVID_TOOLS=none`): 39/39 programmed exactly like `hevc-play`, so the proven path is unchanged.
+- At level 2, all 173 streams inside the limits attach, with no command-buffer error and no ASan report. The 4 `PICSIZE` streams are over 4096 and stay on the CPU.
+- `--loop` (the mock writes the CPU decode into the SAND buffers) is bit-exact on all 32 encoded streams, with 1 and 4 threads. That covers output order, cropping, 10-bit, and multi-slice frames.
+- Whether the **block** decodes the new tools bit-exactly can only be seen on the Pi.
+
+**The stream set** is `tools/hevc-decode/rpivid-check/gen-set.sh`, 177 streams, 108 MB, staged at `/usr/share/video-demo/rpivid-check/` on the NFS root:
+- 32 host encodes, one tool each: libx265 (including 10-bit, 1080p, ultrafast, veryslow), AMD VCN via VA-API (including 4 slices) and via Vulkan video.
+- 144 HEVC v1 conformance streams (FFmpeg FATE's Main and Main 10 list).
+- The PeerTube upload, `real-peertube-1080.mp4`, 3634 frames.
+- Each stream has a `<stream>.md5`: per-frame md5s of the **FFmpeg 6.1** CPU decode, the Pi's own decoder. They match the host ffmpeg 8.0 `framemd5` except `CONFWIN_A`, `NUT_A` and `RPS_D`, where the two versions output different frames (`MANIFEST`: `ref8=DIFF`).
+- `MANIFEST` lists the streams in check order, real-world first.
+- End-to-end check of the staged copy on the host: `hevc-rpivid-check -hw -l 0 <dir>` (the CPU decoder in the hardware pass) gives 177/177 streams with `mismatches=0`.
+
+**Pi check.** After building `video_player` (below), one command:
+
+```
+hevc-rpivid-check -l 2 /usr/share/video-demo/rpivid-check
+```
+
+- One line per stream: `RPIVID-CHECK stream=<name> frames=<n> mismatches=<m> fallback=<0|1> fps=<x> result=PASS|FAIL|CPU|ERROR ref=md5 ref_frames= first_bad= sei_checked= sei_bad= tools=<list> nondefault=<list> [cpu_why=…]`.
+- Then `RPIVID-CHECK summary streams= pass= fail= cpu= error=`.
+- A FAIL names the tools in its `tools=`. A tool that fails across streams, while streams without it pass, goes off: in `tools[]` (rebuild), or at once with `FFMPEG_RPIVID_TOOLS=-<tool>`.
+- Add `-crc` for an independent oracle. The conformance streams and every x265 encode carry MD5 picture-hash SEI, which gives `sei_bad=` with no reference at all. It slows the run.
+- **Expected CPU results:** the 4 `PICSIZE_*` streams (over 4096 a side).
+- **Wedge:** a block timeout makes every later stream report `cpu_why=the block stopped responding earlier in this process`. Resume with `-from <next stream name>`: the run starts at that `MANIFEST` entry.
+- The block's known intermittent error (see above) shows as `fallback=1` part way through a stream. Rerun that stream alone: `hevc-rpivid-check -l 2 /usr/share/video-demo/rpivid-check/<stream>`.
+- Level 1 (no `-l`) shows what the browser and players do by default.
+
+**Builds.**
+- **`video_player`** (decoder + `hevc-rpivid-check`): rebuild it, then make sure the NFS root gets the new `/usr/bin/hevc-rpivid-check`. The old binary cannot read a directory or `.md5` references; it prints its usage and exits 2.
+- **`webkit_wpe`:** relink it. It links `video_player`'s private `ffmpeg/` static libraries, and the PeerTube fallback was seen in the browser.
+- The WebKit patch's comment on `FFMPEG_RPIVID` still says "verified tool set". It was left alone, because changing it would rebuild WebKit for a comment.
+
