@@ -34,13 +34,29 @@ COMMON_CFLAGS := -O2 -std=gnu17 -fno-strict-aliasing -ffunction-sections -fdata-
 # libphoenix libm/Makefile builds libm/phoenix/msun/ with these
 MSUN_CFLAGS ?= -ffp-contract=off
 
-MCS_INC := -I$(LIBPH)/libm/libmcs/libm/include -I$(LIBPH)/libm/libmcs/libm/common
-PHX_CFG := -include $(LIBPH)/libm/libmcs/libm/include/internal_config.h
+# libmcs sources (the mcs column). Since the 2026-10 upstream sync libm/libmcs is
+# a git submodule: `git -C sources/libphoenix submodule update --init libm/libmcs`,
+# or MCSROOT=<a tree that has it>.
+MCSROOT ?= $(LIBPH)/libm/libmcs
+MCS_INC := -I$(MCSROOT)/libm/include -I$(MCSROOT)/libm/common
+
+# The headers libm/phoenix compiles against: libm/include plus the
+# libm_feature_config.h the libphoenix build generates (2026-10 sync and later),
+# or, before that, the vendored libmcs tree's with its internal_config.h forced in.
+ifneq ($(wildcard $(LIBPH)/libm/include/math.h),)
+  PHX_FCFG := $(BUILD)/fcfg/libm_feature_config.h
+  PHX_INC := -I$(LIBPH)/libm/include -I$(BUILD)/fcfg
+  PHX_CFG :=
+else
+  PHX_FCFG :=
+  PHX_INC := $(MCS_INC)
+  PHX_CFG := -include $(LIBPH)/libm/libmcs/libm/include/internal_config.h
+endif
 PHX_SRCS := $(filter-out %/complex.c,$(wildcard $(LIBPH)/libm/phoenix/*.c)) $(wildcard $(LIBPH)/libm/phoenix/msun/*.c)
 PHX_HDRS := $(wildcard $(LIBPH)/libm/phoenix/*.h $(LIBPH)/libm/phoenix/msun/*.h)
-MCS_SRCS := $(filter-out %/fenv.c %/cmplx.c,$(wildcard $(LIBPH)/libm/libmcs/libm/common/*.c)) \
-	$(wildcard $(LIBPH)/libm/libmcs/libm/mathd/*.c) $(wildcard $(LIBPH)/libm/libmcs/libm/mathd/internal/*.c) \
-	$(wildcard $(LIBPH)/libm/libmcs/libm/mathf/*.c) $(wildcard $(LIBPH)/libm/libmcs/libm/mathf/internal/*.c)
+MCS_SRCS := $(filter-out %/fenv.c %/cmplx.c,$(wildcard $(MCSROOT)/libm/common/*.c)) \
+	$(wildcard $(MCSROOT)/libm/mathd/*.c) $(wildcard $(MCSROOT)/libm/mathd/internal/*.c) \
+	$(wildcard $(MCSROOT)/libm/mathf/*.c) $(wildcard $(MCSROOT)/libm/mathf/internal/*.c)
 
 # Symbols that must never be left UNDEFINED in a renamed libm object: if one
 # is, that libm silently called glibc's implementation and the numbers lie.
@@ -57,7 +73,7 @@ define build_phx
 	@for f in $(PHX_SRCS); do \
 		extra=; case $$f in */msun/*) extra="$(MSUN_CFLAGS)";; esac; \
 		o=$(4)/$$(echo $$f | sed 's|.*/libm/phoenix/||; s|/|_|g; s|\.c$$|.o|'); \
-		$(1) -c $(2) $$extra -I$(3) $(MCS_INC) $(PHX_CFG) -o $$o $$f || exit 1; done
+		$(1) -c $(2) $$extra -I$(3) $(PHX_INC) $(PHX_CFG) -o $$o $$f || exit 1; done
 endef
 
 # $(call build_mcs,CC,CFLAGS,OBJDIR)
@@ -70,16 +86,21 @@ endef
 
 all: $(BUILD)/x86/harness
 
+# As the libphoenix build generates it with its defaults (LIBM_WANT_COMPLEX=y, LIBM_USE_LIBMCS=n)
+$(BUILD)/fcfg/libm_feature_config.h: $(LIBPH)/libm/include/libm_feature_config.h.in
+	@mkdir -p $(@D)
+	sed -e 's|#undef LIBMCS_WANT_COMPLEX|#define LIBMCS_WANT_COMPLEX 1|' $< > $@
+
 # --- x86-64 / MPFR ---------------------------------------------------------
 X86_CC := gcc
 X86_CFLAGS := $(COMMON_CFLAGS) -mfma -ffp-contract=fast
 X86_TOOLS := ld nm objcopy
 
-$(BUILD)/x86/phx.o: $(PHX_SRCS) $(PHX_HDRS) inc/arch.h Makefile
+$(BUILD)/x86/phx.o: $(PHX_SRCS) $(PHX_HDRS) $(PHX_FCFG) inc/arch.h Makefile
 	$(call build_phx,$(X86_CC),$(X86_CFLAGS),inc,$(BUILD)/x86/phx)
 	./rename.sh phx $(BUILD)/x86/phx $@ $(X86_TOOLS) $(MATHSYMS)
 
-$(BUILD)/x86/phs.o: $(PHX_SRCS) $(PHX_HDRS) inc-sw/arch.h Makefile
+$(BUILD)/x86/phs.o: $(PHX_SRCS) $(PHX_HDRS) $(PHX_FCFG) inc-sw/arch.h Makefile
 	$(call build_phx,$(X86_CC),$(X86_CFLAGS),inc-sw,$(BUILD)/x86/phs)
 	./rename.sh phs $(BUILD)/x86/phs $@ $(X86_TOOLS) $(MATHSYMS)
 
