@@ -147,6 +147,22 @@ Page bugs these runs found and fixed: every SourceBuffer must exist before the f
 is appended (Chromium and WebKit refuse a later `addSourceBuffer`); a codec change without
 `changeType()` is an error by the spec; the waiting before the first frame is start-up, not a stall.
 
+## Pi results
+
+**stage0a, build 54 (2026-10-07, `wpe-browser` defaults: GPU raster + dma-buf, 1000x620 window).**
+
+| Arm | Result | Player |
+|---|---|---|
+| probe | type answers as designed (HLS MIME types `maybe`, HEVC 8-bit / Main10 codecs `probably`); ends `page=timeout` by design (no play) | fetched 1 segment of each rendition (idle read-ahead) |
+| hevc-fmp4 | `page=ok` played 60.0 s to `ended`, startup 1758 ms, 0 stalls | variant `hevc8` 1920x1080, `hw=1` (rpivid), 30.0 fps presented, 5 dropped |
+| hevc-ts | `page=ok` to `ended`, startup 1406 ms, 0 stalls | `hw=1`, TS segments |
+| h264-only | `page=ok` to `ended`, startup 2106 ms, 0 stalls | 1280x720: the 720p cap held |
+
+Row 3 (host log): each arm fetched only `master.m3u8`, its chosen variant and the audio group.
+Open: the compositor painted ~19 of the 30 presented frames/s (`painted=` in the stat line), and the
+SAND->planar conversion took 11.5 ms per 1080p picture (rpivid-stat `sand=`); the latter is cut in
+build 55 (cached picture buffers).
+
 ## Notes for the stage-0/1 implementer
 
 - **Open a filtered master, not the whole one.** Host ffmpeg 8.0.1's hls demuxer decodes every

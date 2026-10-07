@@ -42,7 +42,7 @@
 #   B8S arm=<a> page=<DONE result|none> <the page's summary fields>
 # Grade with: grep -a -E '^(B8S |WPEB-MEDIA |B8HLS|B8MSE|WPEB )|Exception #'. The host's
 # serve.log has every request of the arm (check-media.py requests <serve.log> --run <arm>).
-# WRITTEN 2026-10-07 FOR THE GATES; NOT YET RUN ON THE PI (stage 0 code does not exist yet).
+# First Pi run: stage0a on build 54 (2026-10-07): hevc-fmp4, hevc-ts and h264-only played to the end.
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
