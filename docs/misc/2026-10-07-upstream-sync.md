@@ -145,6 +145,24 @@ together.
 - `open(existing, O_RDWR|O_CREAT)` on a read-only FAT stick now fails (10-06
   residual, not fixed).
 
+## Invariants re-checked on the merged code (a compile cannot see them)
+
+- Every `nsleep()` caller passes a `PH_CLOCK_*` id (the merged kernel rejects
+  others): `time/time.c`, `unistd/sys.c`, `sys/select.c`. Tonight's pthread.c
+  rewrite does not call `nsleep()`; its cond/mutex/rwlock timeouts pass
+  `PH_CLOCK_RELATIVE/REALTIME/MONOTONIC` to the kernel as before.
+- The restored `<arch.h>` fast paths are live in the real compile: the
+  preprocessed `libm/phoenix/power.c` contains `fsqrt`, `exp.c` contains `frintp`
+  (the libm-hosttest uses its own `inc/arch.h`, so it does not prove this).
+- `<complex.h>`'s long double blocks are declarations and `CMPLXL` only; no
+  long double function is mapped onto a double one.
+- `libm/libmcs` gitlink: nothing in the build path fetches it.
+  `prepare-buildroot.sh` copies siblings, `bootstrap-linux-host.sh` initialises
+  only `lib-lwip`, `build.sh` only runs `git submodule status`. A clean clone
+  leaves it empty, which is fine (`LIBM_USE_LIBMCS=n`). Only a `--recursive`
+  clone of our libphoenix would reach `github.com/phoenix-rtos/libmcs` (branch
+  `phoenix`) — mirror it to the fork before anything does that.
+
 ## Per repo
 
 ### phoenix-rtos-kernel — 9 incoming, @ f95f545a
@@ -251,10 +269,14 @@ Branches are merges on top of master; rebuild them rather than stacking merges:
    `git merge --ff-only upstream-sync-2026-10-07` (each branch contains its
    master; if one refuses, its master moved — rebuild the branch, above).
 2. `scripts/heavy-build.sh -- ./scripts/rebuild-rpi4b-fast.sh --scope full-clean`;
-   prove the image is new:
-   `strings .buildroot/_boot/aarch64a72-generic-rpi4b/rpi4b-bootfs/loader.disk | grep -c sys_cpuTime`
-   (or another new symbol), and check `rq_timeoutAt`/`semaphore_init` are in
-   posixsrv.
+   prove the image is new (calibrated 2026-10-07 on build 47: syscall names are
+   NOT strings in `loader.disk`, `strings | grep schedSet` reads 0 on a good image):
+   - kernel: `.toolchain/aarch64-phoenix/bin/aarch64-phoenix-nm .buildroot/_build/aarch64a72-generic-rpi4b/prog/phoenix-aarch64a72-generic.elf | grep -E ' proc_cpuTime$'`
+     → 1 line (today `proc_schedSet` is found the same way);
+   - posixsrv in the image: `strings .buildroot/_boot/aarch64a72-generic-rpi4b/rpi4b-bootfs/loader.disk | grep -c 'semaphore init'`
+     → ≥ 1 (today `tmpfile init` reads 1);
+   - libphoenix: `aarch64-phoenix-nm` of the sysroot `libphoenix.a` shows
+     `sys_cpuTime` and `pthread_getcpuclockid`.
 3. `scripts/sync-toolchain-from-sysroot.sh` **before** rebuilding anything that
    links the toolchain bundle (rpi4-wifi, rpi4-hci, probes, the gpu-lane
    pollnotify shim objects).
