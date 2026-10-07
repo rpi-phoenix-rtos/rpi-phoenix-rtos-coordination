@@ -303,6 +303,18 @@ pool exhaustion, GC, the 4 kB AF_UNIX buffer on IPC...). They are not targets.
 | 10-07 | 41 | smoke / jit: jetstream-ab | DONE, 16/16 | 266 s | `js_score` 31.3 | 59.9/64.7 °C, 0 | same |
 | 10-07 | 41 | smoke / jit: acid3, css3test | DONE | 24 s, 35 s | 96, 69 % | 0 | same |
 
+| 10-07 | 43 | smoke / jit: speedometer1 | DONE | 51 s | **1.159** | 57.4/61.3 °C, 0 | `rpi4b-uart-20261007-045202-b43c.log` |
+| 10-07 | 43 | smoke / jit: jetstream-ab | DONE, 16/16 | 91 s | `js_score` **76.8** | 59.9/62.8 °C, 0 | same |
+| 10-07 | 43 | smoke / jit: acid3, css3test | DONE | 8 s, 13 s | 96, 69 % | 0 | same |
+
+**Build 43 (syscall-free `pthread_getspecific`/`pthread_self`, page cache across exit, futex locks in
+lwIP/posixsrv): Speedometer 0.432 → 1.159 (2.7×), JetStream-ab 31.3 → 76.8 (2.5×).** The
+allocation/GC-heavy JetStream tests gained most (string-unpack 7.1×, json-parse 4.4×, Babylon 3.6×,
+splay 3.2×): build 42's profile had the WebProcess main thread spending 60 % of a CPU in the
+kernel, 90 % of it in the global mutex of `pthread_getspecific` (JSC `Thread::current()`). The
+Pi/host ratio is now **6–13× on 15 of 16 JetStream tests** (hash-map 21×) and 5–12× on the
+Speedometer suites — the plain CPU ratio the B9 page predicted.
+
 Build 38's smoke took 13.7 min (estimate 8–9). No hang, no crash, no fault, no throttling in either.
 **Build 41 (posixsrv pipes wake `poll()` through `pollNotify`): Perf-Dashboard 86.1 s → 2.6 s
 (SelectingRange 84.7 s → 1.1 s), Speedometer 0.377 → 0.432; the other 19 suites within ±10 %.**
