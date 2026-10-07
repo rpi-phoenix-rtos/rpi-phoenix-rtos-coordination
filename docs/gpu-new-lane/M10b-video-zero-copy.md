@@ -114,7 +114,7 @@ default:
                 rsc->sand_col128_stride = fourcc_mod_broadcom_param(whandle->modifier);
 ```
 - **The column height is required.** It is either the modifier's parameter or, with the bare modifier, the plane pitch.
-- **Use the parameterised form, with pitch = 128.** The bare form reuses `whandle->stride` both as the column height and as the slice's byte stride (`v3d_setup_slices(screen, rsc, whandle->stride, true)`, `:1017`). That is only consistent by accident.
+- **Use the parameterised form, with pitch = width × cpp.** The uapi says so (`drm_fourcc.h`, Broadcom SAND comment: "set the stride to width*cpp"; "the column height … is the same for all of the planes, assuming that each column contains both Y and UV"). The bare form reuses `whandle->stride` both as the column height and as the slice's byte stride (`v3d_setup_slices(screen, rsc, whandle->stride, true)`, `:1017`). That is only consistent by accident.
 - The parameter is in **lines (rows of 128 bytes)**. The firmware plane API uses the same convention (`external/linux/drivers/gpu/drm/vc4/vc4_firmware_kms.c:648-651`: "the column pitch is passed across in lines").
 - **One parameter covers both planes.** So the shader expects luma and chroma to share one column stride: the Linux `NV12_COL128` single-buffer layout (§4.1).
 - Plane offsets are allowed because the resource is not tiled (`:1020-1037`).
@@ -227,7 +227,7 @@ The block takes independent `OUTYBASE`/`OUTCBASE` and `OUTYSTRIDE`/`OUTCSTRIDE`,
 **Frames.**
 - Add a decoder option `rpivid_out=planar|drm_prime` (default `planar`, so ffplay, gtk-video and `hevc-rpivid-check` are untouched).
 - With `drm_prime`, the hwaccel gets an `FFHWAccel.alloc_frame`. FFmpeg 6.1 calls it instead of `get_buffer2` for hwaccel frames (`ffmpeg-6.1/libavcodec/decode.c:1664-1668`, `hwaccel_internal.h:43`). No `hw_frames_ctx` and no `--enable-libdrm` are needed (`CONFIG_LIBDRM 0` today).
-- `alloc_frame` takes a BO from the pool (moving today's `pool_get` from `ff_rpivid_hevc_picture_ok`, `RV/rpivid_hevc.c:786`). It sets `frame->format = AV_PIX_FMT_DRM_PRIME`, `frame->data[0]` = an `AVDRMFrameDescriptor` (1 object: the `/v3dbuf` fd and size; 1 layer `DRM_FORMAT_NV12`; 2 planes `{offset 0, pitch 128}` and `{H16×128, 128}`; `format_modifier = SAND128_COL_HEIGHT(C)`), and `frame->buf[0]` = an `AVBufferRef` whose free returns the BO to the pool.
+- `alloc_frame` takes a BO from the pool (moving today's `pool_get` from `ff_rpivid_hevc_picture_ok`, `RV/rpivid_hevc.c:786`). It sets `frame->format = AV_PIX_FMT_DRM_PRIME`, `frame->data[0]` = an `AVDRMFrameDescriptor` (1 object: the `/v3dbuf` fd and size; 1 layer `DRM_FORMAT_NV12`; 2 planes `{offset 0, pitch width}` and `{H16×128, pitch width}`; `format_modifier = SAND128_COL_HEIGHT(C)`), and `frame->buf[0]` = an `AVBufferRef` whose free returns the BO to the pool.
 - `libavutil/hwcontext_drm.h` is header-only for this use.
 
 **The per-picture gate must move ahead of the frame allocation.** Today the gate runs too late for this mode:
@@ -262,7 +262,7 @@ The block takes independent `OUTYBASE`/`OUTCBASE` and `OUTYSTRIDE`/`OUTCSTRIDE`,
 - `CoordinatedPlatformLayerBufferFFmpeg::supportsPixelFormat` gains `AV_PIX_FMT_DRM_PRIME`. `MediaPlayerPrivateFFmpeg` opens `hevc_rpivid` with `rpivid_out=drm_prime` when the display has `EGL_EXT_image_dma_buf_import_modifiers` and `GL_OES_EGL_image_external`, with an env kill-switch `WPE_PHOENIX_MEDIA_ZEROCOPY=0`.
 - **Import.** For a `DRM_PRIME` frame, `paintToTextureMapper` (`0030`:298-330) builds the `EGLImage` directly with these attributes:
   - `EGL_LINUX_DMA_BUF_EXT`, `EGL_LINUX_DRM_FOURCC_EXT = NV12`;
-  - per plane: fd, offset, pitch 128, and the modifier lo/hi;
+  - per plane: fd, offset, pitch = width (bytes per row of a linear plane, as the uapi asks), and the modifier lo/hi;
   - `EGL_YUV_COLOR_SPACE_HINT_EXT` and `EGL_SAMPLE_RANGE_HINT_EXT` from `frame->colorspace` and `color_range` (today's `yuvToRgbMatrix` logic, `0030`:272-296, becomes attribute selection).
   - It binds the image to a `GL_TEXTURE_EXTERNAL_OES` texture and draws it with `TextureMapper::drawTextureExternalOES` (`WK/Source/WebCore/platform/graphics/texmap/TextureMapper.h:87`). Mesa's lowered sampler does the YUV→RGB.
   - WebKit's own `CoordinatedPlatformLayerBufferDMABuf` cannot be reused because it is compiled only with `USE_GBM` (`WK/Source/WebCore/platform/TextureMapper.cmake:112-119`, `CoordinatedPlatformLayerBufferDMABuf.cpp:29`). Its `importToTexture` (`:69-79`) is the model.
@@ -394,6 +394,52 @@ Players are lower priority than the browser: 1080p30 already plays in real time 
 **The decision point is after step 1.** If the SAND blit is wrong or slow and cannot be fixed in a day, steps 2–4 continue with path A (LINEAR, `drm_prime_linear`). Nothing in steps 2–4 depends on which modifier is used, apart from the de-tile running on the CPU.
 
 ---
+
+### 7.1 Checkpoint 1: how the probe is built and run
+
+The probe is `tools/gpu-lane/sand-import/` in the coordination repo. It lives there and not in a port because it is a throwaway measurement: it links two ports' build outputs (`mesa_drm` gles, `video_player`'s FFmpeg) plus `libdrm_phoenix`, and it ships in no image.
+
+**Build** (host, read-only use of `.buildroot`, writes only `OUT`):
+
+```
+OUT=<dir> tools/gpu-lane/sand-import/build.sh
+```
+
+**What it does without changing the port.** The decoder's picture pool is redirected into render-server BOs by link-time `--wrap` of three functions that `rpivid_hevc.o` calls in other objects: `rpivid_geom`, `rpivid_dma_alloc_cached` and `rpivid_dma_free`.
+- The geometry becomes the single-buffer layout of §4.1.
+- The luma allocation becomes a V3D BO, and the chroma "allocation" is the same BO at `H16 × 128`.
+- The hwaccel's own CPU de-tile then reads that BO with the new strides. So a correct decoded frame proves that the block wrote this layout.
+
+**Run** (the file must be 8-bit HEVC):
+
+```
+/bin/sand-import -n 5 -i 100 /usr/share/video-demo/rpivid-check/x265-1080p-tu-amp.mp4
+```
+
+`-synthetic` (or no file) tiles a test pattern on the CPU instead of decoding, which checks the Mesa side without the block.
+
+**Output lines** (all tagged `ZC1`):
+
+| Line | What it reports |
+|---|---|
+| `geom` | the layout |
+| `decode` | which BO matched the decoded frame, contiguity, PA range, CPU de-tile time from the uncached BO |
+| `egl` / `modifiers` | the extension and modifier lists Mesa reports |
+| `yuv plane=Y` / `plane=CbCr` | R8 and GR88 SAND imports, read back and compared **exactly** with the CPU de-tile |
+| `nv12 variant=…` | the NV12 import with the parameterised modifier and pitch = width (the design), with pitch = 128, and with the bare modifier and pitch = C; each compared with CPU BT.709 and BT.601 narrow-range references |
+| `time` | ms per SAND import draw (v3d_sand8_blit of both planes + draw), per RGBA draw of the same size, the difference (≈ the blit), today's 3-plane upload + draw, a LINEAR YUV420 import draw (path A), the CPU write of a planar picture into an uncached BO |
+| `result=PASS\|FAIL` | the verdict |
+
+**PASS means** all of the following:
+- the decoded frame matches a BO;
+- every BO is contiguous;
+- both plane imports are bit-exact;
+- the NV12 import is within 4 of the BT.709 reference;
+- the SAND import draw ran.
+
+**Go/no-go** (§7 step 1):
+- PASS and `sand_blit_est_ms` ≤ 2 → path B;
+- an exact-plane FAIL that the variants do not fix → path A.
 
 ## 8. Top risks
 
