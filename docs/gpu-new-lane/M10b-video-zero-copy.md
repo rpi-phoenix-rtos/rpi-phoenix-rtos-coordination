@@ -4,7 +4,8 @@
 - **Checkpoint 1 PASSED on the Pi** (build 58, §7.2). The coordinator decided on path B even though the SAND blit takes 3.9 ms, over the 2 ms bar: it is GPU time, and it saves ~11 ms of CPU per picture.
 - **Step 2, the decoder side, is merged** (§7.3, ports `e4d9a3c`). It is host-tested and cross-compiled, and not yet run on the Pi.
 - **P31 is closed** (§7.3): after leaving the block, the decoder drops pictures until the next IRAP.
-- **Step 3, the WebKit side, is written** (§7.4, ports branch `webkit-zero-copy`: patches `webkit-video/0033` and `webkit-mse/0034`). It compiles and links (scratch build, §7.4); it has not run on the Pi.
+- **Step 3, the WebKit side, ran on the Pi in build 60 (§7.5) and drew nothing zero-copy** (`zc_painted=0`). WPE composites with Skia, and 0033 had imported only on the TextureMapper path. It is fixed on ports branch `webkit-zero-copy` (§7.5), host-built but not run yet. Zero copy is opt-in (`WPE_PHOENIX_MEDIA_ZERO_COPY=1`).
+- **The block is taken again after a fallback** (bounded retries, §7.5): one refused picture no longer costs the rest of the video.
 - **Not started:** the players.
 
 Related documents:
@@ -590,6 +591,47 @@ The upload row (8.84 ms) is the CPU-side cost B removes. The SAND import draw co
 | 3 | `b8-stream.sh hevc-fmp4` (native HLS → the progressive player), ZC on and off | `B8S arm=hevc-fmp4 … hw=1`, `zc=1`, dropped ≤ 2 %, painted ≥ 95 % |
 | 4 | the MSE gate arms (MSE-DESIGN.md §10.2) with an HEVC stream, ZC on | MSE stat line `zc=1`, the same pass criteria as without ZC |
 | 5 | (robustness) the 1080p60 arm with `export FFMPEG_RPIVID_REFUSE_AT=300` | after picture 300: `pictures dropped until the next random access point`, then `decoding again from POC`; `zc=0` from then on (CPU frames); no crash, no green/garbage frame on HDMI |
+
+### 7.5 Build 60 on the Pi, and round 2
+
+**Build 60 gate** (coordinator; `artifacts/rpi4b-uart/rpi4b-uart-20261007-232326-zcgate.log`, `prof-zc0` and `prof-zc1`). PeerTube 1080×1920 60 fps, `b8.sh hevc`, GPU raster + dma-buf:
+
+| | painted/s | UI present | `upload_ms` |
+|---|---|---|---|
+| OFF | ~33 | 31–38 fps | 6.2 |
+| ON | ~28 | 28 fps | 17 |
+
+- **ON:** `zero-copy available (rc=0)`, `zero_copy=1`, `rpivid: drm_prime output: NV12 SAND128 column height 2880 … GPU buffers (dma-buf)`, `rpivid-stat … sand=0.01ms zc=1`, stat `zc=1` but **`zc_painted=0`**.
+- The compositing thread spent 66 % of a CPU in the CPU readback (`vld2q_u8`/`vld1q_u8_x4` = `rpivid_sand8_to_planar` from uncached memory) plus `v3d_store_utile`.
+- **Cause.** WPE's default composition is Skia: `SkiaCompositingLayer` draws a contents buffer through `skiaImage()` (`SkiaCompositingLayer.cpp:795`), not `paintToTextureMapper`. 0033 imported the buffer only in `paintToTextureMapper`, and its `skiaImage()` read every picture back.
+- The decoder half worked as designed: the block wrote the GPU buffers, `sand=0.01ms`.
+- **Refusal arm:** the drop to the IRAP worked, but the stream then stayed on the CPU decoder (~6 fps at 1080p60).
+
+**Round 2** (ports branch `webkit-zero-copy`):
+- **0033:**
+  - `skiaImage()` wraps the buffer's `GL_TEXTURE_EXTERNAL_OES` texture as an `SkImage` (`SkImages::BorrowTextureFrom`, WebKit's own `CoordinatedPlatformLayerBufferExternalOES` pattern). Skia's texture-binding state is reset after an import.
+  - Every draw touches the cache entry, so it cannot be dropped while shown.
+  - One `fstat` per picture: the layer buffer keeps its cache key.
+  - One line per process names the path each compositor takes: `WPEB-MEDIA zero-copy path=external-oes|readback compositor=skia|texturemapper (first picture WxH)`. Every reason a frame is not imported is logged once: no dma-buf, crop, `fstat`, EGL import (with fourcc/modifier/pitch/offset), GL texture, Skia wrap.
+- **video_player:**
+  - At the IRAP where decoding resumes, or at the next IRAP after an IRAP the CPU decoded, the block is attached again with the same output. This happens at most `FFMPEG_RPIVID_RETRIES` times per stream (default 3; 0 = never), and not under frame threads.
+  - A retake CRA's RASL pictures are dropped. Logged: `rpivid: back on the block from POC n (retry i of m)` or `the block stays off for this stream (…)`.
+  - `FFMPEG_RPIVID_REFUSE_AT` now refuses once per process.
+- **Host test** (`--loop`, 5 8-bit clips + 1 10-bit) runs refusal, block failure and refusal with retries 0, in both outputs:
+  - every arm `wrong=0 unmatched=0`;
+  - `retakes=1` (0 with retries 0), with the block decoding the rest of the stream after the retake (`89 pictures on the block` of 120);
+  - the default output still `same=39`.
+  - The mock takes `MOCK_GOLDEN_IDR` (the IDRs' display indices), since it does not see dropped pictures.
+- **Compile:**
+  - Scratch build in the MSE scratch tree's `out/`, from my own source tree (ports `1f1f818` patches + this round), under `heavy-build.sh`.
+  - Ninja ran 227/227 steps, with no warning or error in the changed files; the symbol checks passed. `wpe-browser` is 133,895,216 bytes stripped.
+  - The binary has the path and reason log strings, `back on the block from POC` and the new stat format.
+  - The patch series 0030, 0031, 0033, 0032, 0034 reproduces the tree.
+
+**Pi gate (round 2)**, with `WPE_PHOENIX_MEDIA_ZERO_COPY=1` for ON:
+- The log must show `zero-copy path=external-oes compositor=skia` and `zc_painted` ≈ `painted`. If it shows `path=readback`, the reason line before it names the cause.
+- Then the §7.4 table rows 1–4, OFF first.
+- Row 5 (`FFMPEG_RPIVID_REFUSE_AT=300`): `back on the block from POC n` at the next IDR, and the fps recovering to 60.
 
 ## 8. Top risks
 
