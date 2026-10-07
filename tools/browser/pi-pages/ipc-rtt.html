@@ -24,5 +24,9 @@ const line = "IPC-RTT n=" + n + " total_ms=" + total.toFixed(1) + " min=" + t[0]
 console.log(line);
 document.title = line;
 document.getElementById("out").textContent = line;
+// --exit-after-load ends the browser at the load event: give the title change time to reach
+// the UI process first (the page loads in ~0.6 s since build 43, and the title was lost)
+const until = performance.now() + 500;
+while (performance.now() < until) { }
 </script>
 </body></html>
