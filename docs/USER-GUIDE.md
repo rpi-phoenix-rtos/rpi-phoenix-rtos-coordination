@@ -139,7 +139,7 @@ a Thunar window. The session runs until you log out. Then it stops cleanly and r
   |---|---|
   | **Games** | Quake, Quake II, Quake III Arena, SuperTuxKart. Each opens in a 1280×720 window (see [§6.2](#62-in-a-window-on-the-desktop)). |
   | **Multimedia** | Video Player (gtk-video), Video Demo (plays a demo clip in a window) |
-  | **Internet** | Web Browser (WPE WebKit, [§7.4](#74-web-browsing)) |
+  | **Internet** | Web Browser (WPE WebKit), WebKit Browser (WebKitGTK with tabs and downloads, in an image with the `webkit_gtk` port; [§7.4](#74-web-browsing)) |
   | **Office** | Atril Document Viewer |
   | **System / Accessories** | Foot, Bash, Midnight Commander, File Manager, Settings Manager, Appearance, Application Finder, Run Program |
 
@@ -495,11 +495,49 @@ to edit it.
   in a new one after 30 s.
 - `BROWSER_SIZE=1600x900` sets the window size. `WPE_BROWSER_TOOLBAR=auto` hides the toolbar until
   Ctrl+L or the pointer at the top edge.
-- Not there yet: tabs, downloads, video in pages, WebGL, and the JavaScript JIT (pages run on
-  JavaScriptCore's interpreter). These are browser milestones B7–B10 in
-  [docs/browser/PLAN.md](browser/PLAN.md).
+- This browser has one page per window and no downloads; for tabs, downloads and the usual
+  desktop dialogs use the WebKit Browser below.
 - A "Certificate refused" page that says the clock is not set means the boot-time clock sync
   failed: run `ntpclient -w 30`, then reload.
+
+#### The WebKit Browser: tabs and downloads (WebKitGTK)
+
+An image built with the `webkit_gtk` port (browser milestone B10,
+[docs/browser/B10-WEBKITGTK.md](browser/B10-WEBKITGTK.md)) also has a desktop browser with tabs,
+a downloads bar and the usual dialogs (drop-down lists, right-click menus, file upload, password
+prompts, JavaScript alerts). It is the same WebKit 2.54 engine as the browser above, in a GTK 3
+window. Open **Applications → Internet → WebKit Browser**, or from the terminal:
+
+```
+/usr/bin/webkit-browser                                 # the start page
+/usr/bin/webkit-browser en.wikipedia.org github.com     # one tab per address
+/usr/bin/webkit-browser --private phoenix rtos          # a search, nothing kept on disk
+```
+
+| Key | Action |
+|---|---|
+| Ctrl+T / Ctrl+W | new tab / close the tab |
+| Ctrl+L, Alt+D or F6 | edit the address (plain words are a DuckDuckGo search) |
+| Alt+Left / Alt+Right | back / forward |
+| F5 or Ctrl+R | reload (Ctrl+Shift+R: without the cache) |
+| Escape | stop loading |
+| Alt+Home | the start page |
+| Ctrl+F, F3 | find in the page, next match |
+| Ctrl++ / Ctrl+- / Ctrl+0 | zoom in / out / reset |
+| F11 | full screen |
+| Ctrl+Q | quit |
+
+- **Downloads** go to `/root/Downloads` (a second file with the same name gets ` (2)`), with
+  their progress in the bar at the top of the window (`--download-dir=DIR` to change it).
+- Cookies (no third-party ones), local storage and the disk cache are kept under
+  `/root/.local/share/webkit-browser` and `/root/.cache/webkit-browser`; `--private` keeps
+  nothing.
+- Pages are drawn on the GPU when GTK gets an OpenGL ES context from Mesa (the default). If the
+  terminal shows `Disabled hardware acceleration because GTK failed to initialize GL`, the browser
+  still works, drawing on the CPU (slower, no WebGL); `--cpu-rendering` chooses that on purpose.
+- Video (`<video>`, HLS, Media Source Extensions with HEVC on the hardware decoder) and the
+  JavaScript JIT are the same as in the browser above.
+- It is a second copy of WebKit on the card (~165 MB); only the one you start uses memory.
 
 #### Dillo (X11)
 
