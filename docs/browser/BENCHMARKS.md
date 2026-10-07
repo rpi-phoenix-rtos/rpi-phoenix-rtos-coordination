@@ -299,13 +299,21 @@ pool exhaustion, GC, the 4 kB AF_UNIX buffer on IPC...). They are not targets.
 | 10-07 | 38 | smoke / jit: acid3 | DONE | 24 s | **96/100** | 64.2 °C, 0 | same |
 | 10-07 | 38 | smoke / jit: css3test | DONE | 35 s | **69 %** (4181/6419) | 61.8 °C, 0 | same |
 
-The whole smoke run took 13.7 min (estimate 8–9). No hang, no crash, no fault, no throttling.
+| 10-07 | 41 | smoke / jit: speedometer1 | DONE | 123 s | **0.432** | 56.0/60.3 °C, 0 | `rpi4b-uart-*-b41-gate.log` |
+| 10-07 | 41 | smoke / jit: jetstream-ab | DONE, 16/16 | 266 s | `js_score` 31.3 | 59.9/64.7 °C, 0 | same |
+| 10-07 | 41 | smoke / jit: acid3, css3test | DONE | 24 s, 35 s | 96, 69 % | 0 | same |
+
+Build 38's smoke took 13.7 min (estimate 8–9). No hang, no crash, no fault, no throttling in either.
+**Build 41 (posixsrv pipes wake `poll()` through `pollNotify`): Perf-Dashboard 86.1 s → 2.6 s
+(SelectingRange 84.7 s → 1.1 s), Speedometer 0.377 → 0.432; the other 19 suites within ±10 %.**
+The 84 s were ~4 200 `window.screenX` reads, each a synchronous IPC to the UI process that waited a
+20 ms pipe poll quantum (`ipc-rtt.html`: 23 ms → 3 ms per round trip).
 
 ### Stability: hangs, crashes, errors
 
 | Run | Bench | What | Where (last progress line / failed_at / test) | Launcher stall report? | Follow-up |
 |---|---|---|---|---|---|
-| smoke 10-07 | speedometer1 | **84.5 s in one step** (host 0.13 s: 661×; every other step ≤ 36×) | Perf-Dashboard/SelectingRange, Sync part (84 534 ms) | not checked | profile the step with `prof record` (build 39) |
+| smoke 10-07 | speedometer1 | **84.5 s in one step** (host 0.13 s: 661×; every other step ≤ 36×) | Perf-Dashboard/SelectingRange, Sync part (84 534 ms) | yes: main thread in `waitForSyncReply` ← `windowRect` ← `screenX` | ✅ fixed build 41 (posixsrv pipe `pollNotify`): 1.1 s |
 | smoke 10-07 | all | one `GLib-CRITICAL g_bytes_get_data: assertion 'bytes != NULL' failed` in the WebProcess | during the run (UART line 708) | — | find the caller |
 | smoke 10-07 | speedometer1 / css3test | 116 of 244 and 140 of 160 progress lines not seen | console lines lost (UART flood; the POSTed JSON is complete) | — | harness: rely on the POST |
 
