@@ -105,6 +105,14 @@ ffmpeg -i master.mov -vf scale=1920:1080,format=yuv420p -r 30 \
 - Before uploading: run the `trace_headers` check above, and play the file on the Pi from
   `file://` in B8's page with `hw=1`.
 
+**The demo file (prepared 2026-10-08, not published):** the showcase reel of 2026-09-30 encoded
+with the recipe above (no `-c:a`: the reel has no audio track) —
+`artifacts/media/demo/phoenix-rpi4-showcase-hevc-1080p30.mp4`, HEVC Main `hvc1`, 1920x1080 30 fps,
+287 s, 2.6 Mbit/s, 94 MB. On the Pi: `hevc-rpivid-check -l 1` against the host's per-frame md5s,
+**8610/8610 frames bit-exact** on the block with the default tool set (30.1 fps, decode 12.5 ms per
+frame of one core incl. SAND); in the browser from an HTTP server (`b8.sh hevc`, as a site would
+serve it) **30.0 fps presented, 97.5 % painted**, 7 frames dropped at start.
+
 **2a. Primary host: Internet Archive** (free account, `archive.org/upload`):
 - Upload the **`.mp4`** as the item's original, as mediatype "movies", with a CC licence. Upload
   `.mp4`, not `.mkv`: an MKV original is *not* offered to the player, only its H.264 derivative [V,
