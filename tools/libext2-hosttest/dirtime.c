@@ -222,6 +222,17 @@ int main(int argc, char **argv)
                         ext2_write(fs, sl, 0, "f", 1) == 1);
     ckDir("symlink stamps A", fs, A, t);
 
+    /* mknod/mkfifo: what libext2_create() does for otDev -- a create with a
+     * device oid and a special-file mode */
+    oid_t dv = { .port = 7, .id = 0x1234 };
+    id_t cdev, fifo;
+    t = tick();
+    ck("mknod /A/cdev", ext2_create(fs, A, "cdev", 4, &dv, S_IFCHR | 0600, &cdev) >= 0);
+    ckDir("mknod stamps A", fs, A, t);
+    t = tick();
+    ck("mkfifo /A/fifo", ext2_create(fs, A, "fifo", 4, &dv, S_IFIFO | 0600, &fifo) >= 0);
+    ckDir("mkfifo stamps A", fs, A, t);
+
     /* hard link */
     sA = mem(fs, A);
     t = tick();
@@ -273,6 +284,25 @@ int main(int argc, char **argv)
     t = tick();
     ck("unlink /A/sl", ext2_unlink(fs, A, "sl", 2) >= 0);
     ckDir("unlinking a symlink stamps A", fs, A, t);
+    t = tick();
+    ck("unlink /A/cdev", ext2_unlink(fs, A, "cdev", 4) >= 0);
+    ckDir("unlinking a device node stamps A", fs, A, t);
+    t = tick();
+    ck("unlink /A/fifo", ext2_unlink(fs, A, "fifo", 4) >= 0);
+    ckDir("unlinking a FIFO stamps A", fs, A, t);
+
+    /* rename onto an existing name, as libphoenix rename() does it when link()
+     * says EEXIST: unlink the target, link, unlink the old name */
+    id_t o1, o2;
+    ck("create /A/old, /A/tgt", ext2_create(fs, A, "old", 3, NULL, S_IFREG | 0644, &o1) >= 0 &&
+                                ext2_create(fs, A, "tgt", 3, NULL, S_IFREG | 0644, &o2) >= 0);
+    t = tick();
+    ck("rename /A/old over /A/tgt", ext2_unlink(fs, A, "tgt", 3) >= 0 && ext2_link(fs, A, "tgt", 3, o1) >= 0 &&
+                                    ext2_unlink(fs, A, "old", 3) >= 0);
+    ckDir("rename over an existing name stamps A", fs, A, t);
+    t = tick();
+    ck("unlink /A/tgt", ext2_unlink(fs, A, "tgt", 3) >= 0);
+    ckDir("...and so does removing it", fs, A, t);
 
     /* every directory-entry removal path */
     drain(fs, "D1", 0);
