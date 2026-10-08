@@ -1,11 +1,13 @@
 # M10 zero copy: hardware-decoded HEVC to the GPU without the CPU
 
-**Status (2026-10-07):**
+**Status (2026-10-08):**
 - **Checkpoint 1 PASSED on the Pi** (build 58, §7.2). The coordinator decided on path B even though the SAND blit takes 3.9 ms, over the 2 ms bar: it is GPU time, and it saves ~11 ms of CPU per picture.
 - **Step 2, the decoder side, is merged** (§7.3, ports `e4d9a3c`). It is host-tested and cross-compiled, and not yet run on the Pi.
 - **P31 is closed** (§7.3): after leaving the block, the decoder drops pictures until the next IRAP.
 - **Step 3, the WebKit side, ran on the Pi in build 60 (§7.5) and drew nothing zero-copy** (`zc_painted=0`). WPE composites with Skia, and 0033 had imported only on the TextureMapper path. It is fixed on ports branch `webkit-zero-copy` (§7.5), host-built but not run yet. Zero copy is opt-in (`WPE_PHOENIX_MEDIA_ZERO_COPY=1`).
 - **The block is taken again after a fallback** (bounded retries, §7.5): one refused picture no longer costs the rest of the video.
+- **Builds 62/63** (§7.6): zero copy works on the Pi (PeerTube 1080p60 painted 33 → 49/s, web process CPU 34 → 16 %). The MSE arm's `zc_painted=0` and the block timeouts trace to a lost-interrupt race in `rpivid_hw.c` (pre-existing), fixed on ports branch `webkit-zero-copy`.
+- **Round 4** (§7.7): the block reaches all of a Pi 4's RAM, so the high buffer addresses are not the cause (and the `0xf0400000` buffer is WebKit's swap chain, not a picture). A block that stops responding is now recorded for the boot (`/tmp/.rpivid.dead`), its clock goes off, and every later player decodes on the CPU at once, without touching it.
 - **Not started:** the players.
 
 Related documents:
@@ -632,6 +634,136 @@ The upload row (8.84 ms) is the CPU-side cost B removes. The SAND import draw co
 - The log must show `zero-copy path=external-oes compositor=skia` and `zc_painted` ≈ `painted`. If it shows `path=readback`, the reason line before it names the cause.
 - Then the §7.4 table rows 1–4, OFF first.
 - Row 5 (`FFMPEG_RPIVID_REFUSE_AT=300`): `back on the block from POC n` at the next IDR, and the fps recovering to 60.
+
+### 7.6 Build 62/63 on the Pi, and the block's lost completion (round 3)
+
+**Build 62** (coordinator), PeerTube 1080p60, zero copy OFF → ON:
+
+| | OFF | ON |
+|---|---|---|
+| painted/s | 33 | 49 |
+| `upload_ms` | 6.2 | 0.21 |
+| dropped | 18 | 0 |
+| web process CPU | 34 % | 16 % |
+
+- ON logged `path=external-oes compositor=skia`.
+- The refusal arm logged `back on the block (retry 1 of 3)`.
+- Zero copy was then made the default (ports `75686da`). After build 63 the coordinator made it opt-in again until §7.7 is checked on the Pi.
+
+**Build 63 gate** (`rpi4b-uart-20261008-010124-b63-gate.log`): the MSE arm had `zero_copy=1` but `zc_painted=0`. It is **not** a separate MSE paint path:
+- `FFmpegPlaybackEngine::presentFrame` hands its frames to the same `CoordinatedPlatformLayerBufferFFmpeg` and the same contents-buffer proxy, so they reach the same `skiaImage()`.
+- The MSE process never got a DRM frame. Its first picture timed out on the block (`the block failed picture POC 0: timeout (CFSTATUS 256 CFNUM 256 …)`, a phase-2 timeout), so the stream went to the CPU (`stat … hw=0 zc=0`).
+- The block was already wedged by the HLS arm before it, in another process. That arm ended with `the block failed picture POC 6: timeout` after 1388 pictures, and a block that stops responding stays stopped for every later process.
+
+**The cause of the wedge: a lost interrupt race in `rpivid_hw.c` (pre-existing, not zero copy).**
+- In that HLS arm, `rpivid-stat` phase 2 fell from 3.3 ms to **0.02 ms per picture** after ~400 pictures and stayed there until the timeout. A 1080p reconstruction cannot finish in 20 µs.
+- The same collapse appears in earlier runs without zero copy (`b56-gate`, `v60prof`: `p2 0.02` with `sand=6.8–12 ms`) and in `zcseq`.
+- The mechanism:
+  - The interrupt handler and the waiter (which also polls the interrupt controller) can both observe one completion.
+  - When the handler's `irq_active |= bit` lands after the waiter consumed the completion through its own read, a stale "phase 2 done" mark remains.
+  - The next picture's phase-2 wait then returns at once, before the block finished. Its output is read (planar) or shown (zero copy) while still being written, and the next picture's phase 1 starts on a busy block.
+  - From then on every wait is one completion behind (hence the constant 0.02 ms), until the block times out and stays wedged.
+- The phase-1 form of the same race explains the block's "known intermittent decode error": the wait returns early, `CFSTATUS < CFNUM` is read, and it is treated as a decode error (M10-hevc-hwaccel.md, `CFSTATUS 71 CFNUM 264`).
+
+**Fix** (ports branch `webkit-zero-copy`, `video_player`, `a8441e4`):
+- `rpivid_hw_decode` clears a completion of the phase that is already pending just before it starts that phase (`clear_stale`, counted).
+- `wait_active` clears the handler's mark when it consumed the completion itself.
+- `irq_active` is updated atomically on both sides.
+- `rpivid-stat` adds `stale=N`, the uninit line `N stale completions`. A slow block wait (> 100 ms) is logged as `rpivid: picture POC n took X ms on the block`, and a slow or failing `WAIT_BO` as `rpivid-bo: WAIT_BO handle h: … after X ms`, so a stall like build 63's second session names its cause.
+
+**Host evidence.**
+- The mock gains `MOCK_ISR_RACE=1`: a registered handler that runs inside the waiter's controller read whenever that read sees a completion, i.e. the race. The interrupt path had never been host-tested.
+- With the fix: BIT-EXACT, `completion by interrupt`, `0 stale completions` on every clip.
+- With the waiter's clear removed (the old waiter): `238 stale completions` in 120 pictures. They are all caught by the pre-start clear, so still BIT-EXACT.
+- Default run `same=39`; every `--loop` arm (zero copy, drop, retake) still passes.
+
+**Teardown questions** (coordinator):
+- A zero-copy player leaves nothing that blocks another process's import:
+  - Its picture buffers are released with the last frame reference (the decoder's pool, the compositor's layer buffer). The import cache's entries are dropped 3 s after their last draw, and in any case at process exit, when the render server releases a dead client's BOs.
+  - `WAIT_BO` is only ever called by the decoder on its own buffers, bounded to 5 × 2 s, and now logged when slow.
+  - The readback holds no buffer beyond its frame.
+- What does cross processes is the **wedged block**: the next process's first picture waits 1–2 s for it, then decodes on the CPU (`hw=0`). Round 4 (§7.7) stops later processes from touching it at all.
+- The stall with no log lines is examined in §7.7.
+
+**Pi check (round 3):**
+- Any long HEVC run (PeerTube 1080p60, the HLS ladder): `rpivid-stat … p2 ≈ 3 ms` throughout (never ~0.02), `stale=0` or small with no lasting effect, no `took … ms on the block`.
+- Then the build 63 sequence (HLS session + MSE session, then the demo): MSE `zc_painted` ≈ `painted` with `hw=1`.
+
+### 7.7 The block's DMA reach, and a block that stops responding (round 4)
+
+The coordinator's hypothesis was that the drm_prime picture buffers sit where the block cannot DMA. KMS lines in build 63 show v3dbuf BOs at `pa0=0xf0400000` (`why=above_1g`), while checkpoint 1's probe buffer was at 0x27000000.
+
+**The block reaches all of a Pi 4's RAM. The hypothesis is ruled out.**
+- In the Raspberry Pi device tree (`bcm2711-rpi-ds.dtsi`), `hevc_dec` is a child of `scb`. The `scb` `dma-ranges` map bus addresses 1:1 onto the first 16 GiB.
+- The Linux `hevc_dec` driver sets a 36-bit DMA mask. It writes addresses as `pa >> 6` into 32-bit registers, as `RPI_VC_ADDR` does, which covers 256 GiB.
+- A Pi 4's RAM ends at 8 GiB.
+- The build 63 logs agree. The HLS arm decoded 1388 pictures zero-copy before its timeout, and the reruns decoded 1800, 1800 and 1362 into buffers from the same allocator. An unreachable buffer would fail on the first picture every time.
+- The `pa0=0xf0400000 … why=above_1g` line is not a picture buffer. It is KMS importing WebKit's own 1000x620 AB24 swap-chain buffer (625 pages): the HVS cannot scan out above 1 GiB, so KMS composes it. A picture buffer is 765 pages (3133440 bytes at 1080p).
+- So the pool is **not** moved below 1 GiB (`DRM_PHOENIX_V3D_CREATE_BO_SCANOUT`). That memory is the KMS scanout budget, and the block does not need it.
+
+Two changes were still made:
+- Every picture buffer's placement is logged: `rpivid-bo: BO handle h: PA a-b (n bytes)`. A stall or corruption report can be matched against these lines.
+- A guard, `RPIVID_DMA_LIMIT` (16 GiB), is checked for the GPU buffers and for the decoder's own contiguous memory.
+  - At attach, the decoder takes the first drm_prime buffer at once. If it cannot get one, or the buffer is out of reach, the stream keeps system-memory frames and is still decoded by the block: `rpivid: drm_prime output: <why>: system-memory frames for this stream`.
+  - A later buffer that fails logs `rpivid: no buffer for another picture (n held): <why>`.
+
+**What the build 63 timeouts show.**
+- Both timeouts (HLS `POC 6`, MSE `POC 0`) report `CFSTATUS == CFNUM`. Those registers were read only after phase 1 completed, so **phase 2 hung** both times, and phase 1 still ran on the stuck block.
+- In the HLS process the hang followed ~800 pictures of `p2 0.02` (§7.6's race). The MSE process was given a block that process 1 had left in the middle of phase 2.
+- The MSE process also read the block's registers after its timeout. So register reads of a stuck block return; they do not hang the bus.
+- The demo process (the third) printed `drm_prime output` and then nothing until the capture ended: no 2 s `stat` line, and no `the block failed` line (that would follow 1–3 s of waiting). So it stopped **outside** the bounded block waits.
+  - Candidates are the render-server calls that allocate its picture buffers (no timeout on Phoenix) or, from the log alone, the whole system.
+  - One more fact points at the system: process 2 had restarted the stuck block with a new picture. If the stuck job then resumed, it wrote into picture buffers that were freed when process 1 exited, and the memory may already have been reused.
+  - The new `rpivid-bo:` line per buffer and the `rpivid: first picture on the block` line bracket where the next occurrence stops.
+
+**Containment: a block that stops responding is never touched again in this boot** (ports branch `webkit-zero-copy`, `c23645a`, `rpivid_hw.c`):
+- **On a phase timeout**, in the process that saw it:
+  - It reads CFSTATUS, CFNUM and STATUS for the log, so a phase-1 timeout now reports real values too.
+  - It records the state in `/tmp/.rpivid.dead`: `wedged pid=<pid> t=<ms since boot> phase N timed out (…)`. `/tmp` is the RAM file system made at each boot (`user.plo.yaml`). A marker whose time is later than the current boot time is a previous boot's, and is removed.
+  - It switches the HEVC clock off through the mailbox. A stuck block then cannot finish a transfer into memory freed later. Linux gates the same clock whenever the block is idle (runtime PM). Before that it clears any pending completion and detaches the interrupt handler, so nothing reads the block's controller without a clock.
+  - Gating the clock on a timeout is the one action new on the hardware in this round: the mock cannot prove it, and a timeout cannot be provoked on the Pi. The first real timeout tests it. Its log line ends in `(clock switched off)` or `(clock left on: the mailbox refused)`, and the system must stay alive after it.
+  - It does not free any buffer the block was given (command, PU and coefficient buffers, and pictures, including GPU buffers). They stay allocated until the process exits; this happens at most once per boot.
+  - The log line is `rpivid: the block failed picture POC p: timeout in phase N (…); the block is not used again until reboot (clock switched off)`.
+- **Every later open**, in any process, fails at once, before any mailbox call or register access: `rpivid: CPU decode: the block stopped responding earlier in this boot and is not used again (/tmp/.rpivid.dead: …)`. The video plays on the CPU (`hw=0`) with no wait.
+- **`FFMPEG_RPIVID_RESET=1`** allows one try per boot:
+  - It records `reset-tried` first, then switches the clock off and on. The first picture is the probe, bounded by the 1 s and 2 s phase waits.
+  - On success the marker is removed and the log says `first picture on the block: … (the block works again after the clock reset)`.
+  - On failure, or if the trying process dies, `reset-tried` stays and nobody tries again.
+  - **It is off by default.** Nothing shows that a clock off/on resets the block: the Linux driver has no reset, and the firmware has no HEVC power domain. Restarting a stuck block is also the one action that preceded the silent stop above.
+- **Waits:**
+  - All block waits are bounded: the lock is `F_SETLK` (never waits), phase 1 waits at most 1 s, phase 2 at most 2 s, and `WAIT_BO` at most 5 × 2 s.
+  - The mailbox server bounds its own spins (`rpi4-vcmbox` `MBOX_SPINS` and retries).
+  - Not boundable from user space: a `msgSend` to the mailbox server or the render server has no timeout on Phoenix, so a hung server hangs its caller.
+  - A register read of a hung block has no software bound either. The Pi showed such reads returning, and after the marker none are made.
+
+**Host evidence** (`hosttest/run.sh --loop`, on the first 8-bit clip, `x265-amp.mp4`). The mock gains these knobs:
+- `MOCK_WEDGE_AT=n`: from picture n, phase 1 completes and phase 2 never does, as on the Pi.
+- Logging of the mailbox clock-off and of any register access while the clock is off.
+- `MOCK_WEDGE_RESET` (a clock off/on revives the block).
+- `MOCK_PA_HIGH_SIZE` (memory of that size above 16 GiB).
+- `MOCK_DEAD_PATH` (the marker's file).
+
+| arm | what must hold | result |
+|---|---|---|
+| stop (`MOCK_WEDGE_AT=3`) | `timeout in phase 2 … (clock switched off)`, marker `wedged … phase 2 timed out`, `MOCK clock off`, no register access after it, retry at the IRAP refused in-process, every emitted frame right by pts | ok: 92 of 120 frames emitted, all right (wrong=0); 28 dropped up to the IRAP; marker `wedged … phase 2 timed out` |
+| next (a new process) | `CPU decode: the block stopped responding earlier in this boot`, no picture and no clock call reach the mock, BIT-EXACT | ok |
+| reset (`FFMPEG_RPIVID_RESET=1`) | clock off then on, `works again after the clock reset`, BIT-EXACT on the block, marker removed | ok: BIT-EXACT 120/120, marker removed |
+| resetfail (`RESET=1`, block still stuck) | frames right by pts, marker `reset-tried … after a clock reset` | ok: marker `reset-tried … after a clock reset` |
+| once (`RESET=1` again) | CPU at once, no picture and no clock call reach the mock | ok |
+| oldboot (marker time in the future) | ignored and removed, BIT-EXACT on the block | ok: BIT-EXACT 120/120 |
+| reach (`-zc`, the picture buffer above 16 GiB) | `drm_prime output: no contiguous memory the block reaches …: system-memory frames for this stream`, BIT-EXACT on the block, 0 DRM frames | ok: `no contiguous memory the block reaches for 1474560 bytes`, BIT-EXACT |
+
+All earlier arms still pass: default `same=39`, LOOP, LOOP-ISR, LOOP-ZC and LOOP-DROP.
+
+**Pi check (round 4):**
+- The build 63 sequence: HLS session, MSE session, then the demo.
+  - Expected: `rpivid-stat … stale=0` and `p2 ≈ 3 ms` throughout, no timeout, and MSE `zc_painted` ≈ `painted`.
+  - The `rpivid-bo: … PA` lines show where the pictures live.
+- If a timeout still happens:
+  - The failing process logs `timeout in phase N … (clock switched off)`.
+  - Every later player logs `CPU decode: the block stopped responding earlier in this boot` and plays at once on the CPU, with no stall.
+  - `cat /tmp/.rpivid.dead` shows the record.
+- Optional, after a timeout: one player with `FFMPEG_RPIVID_RESET=1` shows whether a clock off/on revives the block.
 
 ## 8. Top risks
 
