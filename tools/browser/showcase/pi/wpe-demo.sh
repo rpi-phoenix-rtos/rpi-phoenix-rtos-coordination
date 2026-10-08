@@ -26,7 +26,8 @@ export WPE_BROWSER_AUTOPLAY=allow
 export WPE_PHOENIX_MEDIA_STAT_MS=${WPE_PHOENIX_MEDIA_STAT_MS:-5000}
 export WPE_BROWSER_PRESENT_SECS=${WPE_BROWSER_PRESENT_SECS:-5}
 clip=${BSHOW_DEMO_URL:-${MEDIA}/demo/phoenix-rpi4-showcase-hevc-1080p30.mp4}
-url="file:///usr/share/wpe-browser/b8.html?src=${clip}"
+# the reel opens with ~30 s of boot console: jump to its games (Quake III at ~55 s) after 1 s
+url="file:///usr/share/wpe-browser/b8.html?src=${clip}&seek=1:${BSHOW_DEMO_FROM:-55}"
 
 bshow_start demo "url=${url}"
 exec /bin/bash /bin/browser "${url}"
