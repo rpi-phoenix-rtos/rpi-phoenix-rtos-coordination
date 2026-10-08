@@ -492,7 +492,7 @@ needed for MSE fMP4 is small:
 |---|---|
 | `video/mp4` + `hvc1.1.*`/`hev1.1.*` (Main 8-bit) | yes |
 | `video/mp4` + `hvc1.2.*`/`hev1.2.*` (Main10) | yes (decodes; CPU conversion), `decodingInfo` smooth=false |
-| `video/mp4` + `avc1.*`/`avc3.*` | yes — **level-capped**: level ≤ 3.1 (`avc1.xx001f`, 720p30) yes; level 3.2–4.2 yes only with `WPE_PHOENIX_MSE_H264_1080=1`, else **no** (removes 1080p H.264 from hls.js/Shaka candidate lists; many ladders tag 720p as level 3.1 and 1080p as 4.0/4.1/4.2). Extended parameters `width=`/`height=`/`framerate=` (if a page passes them, Cobalt-style) are honoured with the §6.4 caps |
+| `video/mp4` + `avc1.*`/`avc3.*` | yes — **level-capped**: level ≤ 3.2 (`avc1.xx001f`/`xx0020`, 720p; 3.2 since 2026-10-08: Vimeo labels its 720p24 rendition 3.2, and the 3.1 cap held it at 540p) yes; level 4.0–4.2 yes only with `WPE_PHOENIX_MSE_H264_1080=1`, else **no** (removes 1080p H.264 from hls.js/Shaka candidate lists; many ladders tag 720p as level 3.1 and 1080p as 4.0/4.1/4.2). Extended parameters `width=`/`height=`/`framerate=` (if a page passes them, Cobalt-style) are honoured with the §6.4 caps |
 | `audio/mp4` + `mp4a.40.2/5/29`, `opus`, `ac-3`, `ec-3`, `fLaC`, `mp3`/`mp4a.69/6B` | yes |
 | `video/mp4` + `av01`, `vp09`, `dvh1/dvhe`; any `encv` | no |
 | `video/webm`, `audio/webm` | **no** in stage 1; stage 2: `vp9`/`vp09.00.*` (≤ the measured cap) + `opus`/`vorbis` yes, `vp8` yes |

@@ -89,7 +89,7 @@
     const HLS_TYPES = ['application/vnd.apple.mpegurl', 'application/x-mpegurl', 'audio/mpegurl', 'audio/x-mpegurl'];
     const CODECS = [
         ['hevc8', 'hvc1.1.6.L120.90'], ['hev1', 'hev1.1.6.L120.90'], ['main10', 'hvc1.2.4.L120.90'],
-        ['h264-31', 'avc1.64001f'], ['h264-40', 'avc1.640028'], ['h264-base', 'avc1.42E01E'],
+        ['h264-31', 'avc1.64001f'], ['h264-32', 'avc1.640020'], ['h264-40', 'avc1.640028'], ['h264-base', 'avc1.42E01E'],
         ['aac', 'mp4a.40.2'], ['opus', 'opus'], ['ec3', 'ec-3'],
         ['av1', 'av01.0.05M.08'], ['vp9', 'vp09.00.10.08'], ['dv', 'dvh1.05.06'],
     ];
@@ -127,7 +127,8 @@
         if (!navigator.mediaCapabilities) { report('capabilities', { available: 0 }); return; }
         const probes = [
             ['hvc1.1.6.L120.90', 1920, 1080, 30], ['hvc1.1.6.L120.90', 1920, 1080, 60], ['hvc1.2.4.L120.90', 1920, 1080, 30],
-            ['avc1.64001f', 1280, 720, 30], ['avc1.640028', 1920, 1080, 30], ['vp09.00.10.08', 640, 360, 30],
+            ['avc1.64001f', 1280, 720, 30], ['avc1.640020', 1280, 720, 30], ['avc1.640020', 1280, 720, 60],
+            ['avc1.640028', 1920, 1080, 30], ['vp09.00.10.08', 640, 360, 30],
             ['av01.0.05M.08', 1920, 1080, 30],
         ];
         for (const kind of kinds) {

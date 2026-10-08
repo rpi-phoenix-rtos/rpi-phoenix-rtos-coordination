@@ -111,7 +111,7 @@ MSE player's lines are `WPEB-MEDIA mono=… id=<1001…> …` (MSE players count
 
 | Row | Lines (player: `WPEB-MEDIA`; page: `B8MSE`/`B8HLSJS`) |
 |---|---|
-| 1 | page `istypesupported` (hvc1/hev1/Main10 yes, `avc1.64001f` yes, `avc1.640028` **no**, av01/vp09/dvh1/webm/ts no, `hlsjs-probe` yes) and `capabilities type=media-source …` from the `mse-*`/`hlsjs-*` arms; player `canplaytype type=… platform=media-source answer=… engine=mse reason=<h264-level|codec|container|…>` |
+| 1 | page `istypesupported` (hvc1/hev1/Main10 yes, `avc1.64001f` yes, `avc1.640020` yes (since ports `mse-h264-l32`; 720p60 `decodingInfo` no), `avc1.640028` **no**, av01/vp09/dvh1/webm/ts no, `hlsjs-probe` yes) and `capabilities type=media-source …` from the `mse-*`/`hlsjs-*` arms; player `canplaytype type=… platform=media-source answer=… engine=mse reason=<h264-level|codec|container|…>` |
 | 2 | `mse addsourcebuffer type=video/mp4;codecs="hvc1…" supported=1`, `mse init tracks=1 video=hevc 1920x1080 audio=none generation=1`, `mse append bytes=… samples=60`, `mse decoder video=hevc_rpivid codec=hevc config=hvc1.1.6.L120.90`, `stat … fps=29–31 hw=1 … mse_kb=…` |
 | 3 | `mse seek target=40.000`, `seek done pts=40.000`, `mse first-frame pts=40.0…` |
 | 4 | `mse init … generation=2` with `mse size 1280x720 -> 1920x1080`, `mse decoder reopen hvc1.1.6.L93.90 -> hvc1.1.6.L120.90`; after `mse changetype … supported=1`: `mse decoder video=h264` |
