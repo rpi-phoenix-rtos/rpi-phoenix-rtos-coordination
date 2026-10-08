@@ -255,7 +255,8 @@ work; `⛔` blocked on external dependencies; `⬜` not started.
 | SDL 2.30 | ✅ | KMSDRM (full screen) + Wayland (windowed) video drivers in one library, Phoenix HID input and audio. Frame pacing fixed so Quake II runs at a vsynced 60 fps |
 | X11 (Xorg 21.1 + modesetting + glamor) | ✅ | GPU-accelerated X with DRI3/Present: a GL window at 60 fps (vsync). Window Maker, xterm, xclock, xbill. `startx` runs the showcase desktop |
 | Wayland desktop (labwc 0.20 + XFCE 4.20 + GTK 3.24) | ✅ | labwc composites on the GPU (GLES2). XFCE panel, desktop, Thunar, settings and application finder; the foot terminal; games and video in windows; the Atril PDF viewer. `xfce-session` starts it and Log Out returns to the shell |
-| Video playback | ✅ | ffplay (FFmpeg 6.1) full screen or windowed: H.264 and HEVC 720p at 30 fps, VP9, AAC/Opus/MP3 audio (CPU decode, 4 threads). The BCM2711 `rpivid` HEVC block has been driven bit-exact by a stand-alone experiment (`tools/hevc-decode/`); it is not wired into the player |
+| Video playback | ✅ | ffplay (FFmpeg 6.1) full screen or windowed: H.264 and HEVC 720p at 30 fps, VP9, AAC/Opus/MP3 audio (CPU decode, 4 threads). **HEVC on the BCM2711 `rpivid` hardware block** in ffplay and in both browsers (FFmpeg `hevc_rpivid`, bit-exact; 1080p at 52.8 fps for 60 % of one core, vs 47.1 fps for 337 % on the CPU). Streams the block cannot take fall back to the CPU by themselves |
+| Web browsers (WebKit 2.54) | ✅ | **WPE WebKit** (`browser`) and **WebKitGTK** with tabs and downloads (`webkit-browser`): JIT, GPU raster and compositing, WebGL; `<video>`, HLS and Media Source Extensions, HEVC on the hardware block shown without a CPU copy (1080p30 98.8 % of frames painted). Speedometer 1.28, JetStream-ab 79.6, Acid3 96; 32 popular sites load with no crash or hang (one slow site timed out in the GPU-raster run); 30-min soaks clean in both browsers; live Vimeo plays over MSE. See [docs/browser/PLAN.md](docs/browser/PLAN.md) |
 | GENET gigabit Ethernet + lwIP | ✅ | IRQ-driven, ~0.9 ms ping RTT, autonomous DHCP |
 | USB host (PCIe → VL805 xHCI) | ✅ | Enumerates reliably from cold boot |
 | USB HID (keyboard + mouse) | ✅ | `/dev/kbd0`, `/dev/mouse0`; live keys reach psh and apps |
@@ -375,6 +376,9 @@ pointing at the `rpi-phoenix-rtos/*` work fork — see [CONTRIBUTING.md](CONTRIB
   limitations, and transitional shortcuts.
 - **[docs/SHOWCASE-VIDEO-PLAN.md](docs/SHOWCASE-VIDEO-PLAN.md)** — the scene list and
   capture commands for the showcase video.
+- **[docs/browser/PLAN.md](docs/browser/PLAN.md)** — the web browser milestones B0–B10 (JavaScriptCore,
+  WPE WebKit, GPU, video, MSE, WebKitGTK) with their gates and results;
+  [SITE-SURVEY.md](docs/browser/SITE-SURVEY.md) is the per-site test of real websites.
 - **[docs/gpu-new-lane/PLAN.md](docs/gpu-new-lane/PLAN.md)** — the engineering history
   of the GPU stack (render server, display server, libdrm, Mesa GBM/EGL, SDL, Xorg,
   Wayland, XFCE): milestones, pre-registered experiments and their results.

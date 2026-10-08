@@ -372,7 +372,7 @@ A double click toggles full screen. Resizing the window scales the video.
 |---|---|---|
 | `h264-720p30-aac.mp4` | H.264 1280×720 30 fps + AAC, 45 s | 30 fps, in a window and full screen |
 | `h264-1080p30-aac.mp4` | H.264 1920×1080 30 fps + AAC, 30 s | may drop frames (the CPU decodes it) |
-| `hevc-720p30-aac.mp4` | HEVC (H.265) 1280×720 30 fps + AAC, 30 s | 30 fps, decoded on the CPU |
+| `hevc-720p30-aac.mp4` | HEVC (H.265) 1280×720 30 fps + AAC, 30 s | 30 fps, decoded on the Pi's HEVC hardware block (`rpivid`) |
 | `vp9-360p-opus.webm` | VP9 640×360 + Opus, 20 s | real time |
 
 **Supported formats:**
@@ -727,7 +727,7 @@ This is the recommended way to show the whole system, with the best settings for
      input needed. It ends by itself after two laps (or earlier, at `GAMEDRM_EXIT_SECS`).
 5. **Video full screen.** Run
    `/bin/bash /bin/video-play /usr/share/video-demo/hevc-720p30-aac.mp4`: HEVC decoded on the
-   CPU, in real time.
+   Pi's hardware block, in real time.
 6. **X11.** Run `/bin/bash /bin/startx`: Xorg with glamor, Window Maker, the GL window, Life,
    xclock and xbill, all animating by themselves. Exit through Window Maker's menu.
 7. **The web** (optional). Run `ntpclient -s pool.ntp.org`, then
