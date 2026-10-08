@@ -341,3 +341,21 @@ Pi gate, in this order:
 
 Then fast-forward/push each master, snapshot a manifest, and delete the
 `upstream-sync-2026-10-06` and `-10-07` branches/worktrees.
+
+## Adoption log
+
+- **2026-10-08 13:19 — toolchain rebuilt** from scratch (gcc 16.2.0 + patch 12, 12 min) against the
+  fast-forwarded masters; the old one is kept as `.toolchain.pre-sync-20261008`. Installed
+  `bits/c++config.h`, old → new (20 macros):
+  - **complex stays OFF:** `_GLIBCXX11_USE_C99_COMPLEX` and `_GLIBCXX98_USE_C99_COMPLEX` are still
+    undefined, so `std::complex` makes no `csqrt`/`cpow` calls. `_GLIBCXX_HAVE_COMPLEX_H` is now 1
+    because upstream's `<complex.h>` arrived with the sync.
+  - **`_GLIBCXX_USE_C99` 1 → undefined:** configure's aggregate C99 check now sees `<complex.h>`,
+    and its complex test fails. Its only consumer in libstdc++ is the `%S` leap-second bound in
+    `time_get` (`locale_facets_nonio.tcc:876`: 60 vs 61). No `.cc` in `libstdc++.a` uses it.
+    Accepted.
+  - **Now ON, because libphoenix has them:** `HAVE_FENV_H`, `USE_C99_FENV(_TR1)`, `HAVE_UCHAR_H`,
+    `USE_C11_UCHAR_CXX11`, `USE_C99_INTTYPES*` (4), `USE_NL_LANGINFO_L`, `HAVE_LC_MESSAGES`,
+    `USE_STRUCT_TM_TM_ZONE`, `HAVE_EXECINFO_H`.
+  - `_SC_NPROCESSORS_ONLN` is 27 in the new sysroot. The Pi gate's
+    `std::thread::hardware_concurrency() == 4` check proves libstdc++ took it.
