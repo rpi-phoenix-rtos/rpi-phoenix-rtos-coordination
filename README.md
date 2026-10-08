@@ -23,7 +23,10 @@ Programs on the image:
   Quake III Arena, vkQuake (Vulkan) and SuperTuxKart 1.4.
 - A video player, including HEVC.
 - The Atril PDF viewer.
-- A WebKit web browser (WPE WebKit 2.54) on the desktop, and Dillo on X11.
+- Two WebKit 2.54 web browsers on the desktop, GPU-accelerated: WPE WebKit (`browser`) and
+  WebKitGTK with tabs and downloads (`webkit-browser`); web video (MP4, HLS, Media Source
+  Extensions) with HEVC decoded on the Pi's hardware block and shown without a CPU copy.
+  Dillo on X11.
 - WiFi and Ethernet networking, and a Unix command line with bash, Python 3.14 and more.
 
 > This repository is the **coordination repo**: docs, build scripts and integration
