@@ -21,7 +21,7 @@
 #            (the items' "BSHOW item=… start epoch=" lines and the browsers' WPEB/WKGB t= lines).
 #
 # BROWSER_REEL_SEGMENTS=<file> replaces the table below with the lines of <file> (same format; a
-# smoke test against existing clips). BROWSER_REEL_LAG (default 1.0) is browser-reel-events.py's
+# smoke test against existing clips). BROWSER_REEL_LAG (default -10, measured 2026-10-08: the capture runs ~11 s behind the Pi's logged events; first paint of Wikipedia and of the GPU page) is browser-reel-events.py's
 # --lag. Check the result with
 #
 #   scripts/verify-demo-reel.py <reel.mp4> --segments scripts/make-browser-reel.sh \
@@ -43,7 +43,7 @@ if [ "${1:-}" = --list ]; then
 	shift
 fi
 out="${1:-$vid_dir/$(date -u +%Y%m%d-%H%M%S)-phoenix-rtos-rpi4-browser-showcase.mp4}"
-lag="${BROWSER_REEL_LAG:-1.0}"
+lag="${BROWSER_REEL_LAG:--10}"
 
 # The reel, in scene order (about 4 minutes). Clips by label until the recordings are final;
 # starts are anchors, so a re-recorded clip needs no new offsets. The anchors are explained in
@@ -57,7 +57,7 @@ lag="${BROWSER_REEL_LAG:-1.0}"
 #   demo   wpe-demo.sh: the same
 #   gtk    gtk-tabs.sh: tabs load from ~3 s, the download after load1, a tab switch every 12 s
 segments=(
-	"bshow-sites|20|12|Boot — Raspberry Pi 4 netboot: the Phoenix-RTOS kernel, drivers, GPU servers and the NFS root"
+	"bshow-sites|50|12|Boot — Raspberry Pi 4 netboot: the Phoenix-RTOS kernel, drivers, GPU servers and the NFS root"
 	"bshow-sites|@sites.start+4|40|WPE WebKit 2.54 — an address typed in real time, then Wikipedia over HTTPS, scrolled"
 	"bshow-sites|@sites.go2-3|12|WPE WebKit 2.54 — a DuckDuckGo search"
 	"bshow-sites|@sites.go3-7|48|WPE WebKit 2.54 — GitHub, the Phoenix-RTOS kernel; then back, back"
