@@ -156,6 +156,12 @@ builds with `--no-cache`. A `--no-cache` Docker build is **the release gate**:
 it proves that the image builds from a blank host with nothing but the
 committed sources.
 
+Plan for **about 160 GB free** while it runs: the build tree inside the
+container peaks near 146 GB with both WebKit ports. The build step copies the
+images to `/release` and deletes the tree in the same layer, so the finished
+image keeps only the disk images; delete the build cache afterwards with
+`docker builder prune -af`.
+
 ## Step 4 — Flash the image to a microSD card
 
 The image is a full disk image (partition table + both partitions), so it is
