@@ -130,7 +130,12 @@ a Thunar window. The session runs until you log out. Then it stops cleanly and r
 - **The panel**, from left to right: the **Applications menu**, launchers for the **terminal
   (foot)**, the **file manager (Thunar)**, the **web browser** and the **application finder**,
   the **task list** (one
-  button per window), the **clock** (local time) and the **Log Out** button.
+  button per window), the **memory monitor**, the **clock** (local time) and the **Log Out** button.
+- **The memory monitor** shows `Mem <used>/<total> GB` with a bar: green below 75 % used, yellow
+  to 90 %, red above. Hover it for the free memory and the 5 programs using the most. Phoenix has
+  no out-of-memory killer: when memory runs out, programs fail at once and the desktop can stop
+  responding (KNOWN-ISSUES C17). Close something when the bar turns red. The same figures go to
+  the serial console every 30 s as `MEMMON …` lines.
 - **Thunar**, the file manager. It opens on `/` when the session starts.
 - **foot**, the terminal. It runs bash, with the same programs as psh.
 - **The Applications menu**:
@@ -578,8 +583,11 @@ Notes:
 - The Pi's hostname is `phoenix-rpi4` (from `/etc/hostname`). `localhost`, the hostname and the
   names in `/etc/hosts` resolve without a DNS server.
 
-Terminal programs look right with `export TERM=vt100` at the console. The desktop's foot
-terminal sets its own `TERM`.
+The console's `TERM` is `linux`, and the desktop's foot terminal sets `xterm-256color`; both
+give colour in `mc`, `nano` and other terminal programs. The image has a terminfo database in
+`/usr/share/terminfo` with the common terminal types (`xterm`, `xterm-color`, `xterm-256color`,
+`foot`, `tmux`, `screen`, `vt100`, `vt220`, `putty`, …), so `export TERM=<name>` works for
+those.
 
 ---
 
