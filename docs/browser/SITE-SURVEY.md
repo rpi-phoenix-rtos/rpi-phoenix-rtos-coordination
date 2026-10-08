@@ -190,6 +190,111 @@ whatever was on screen at each 25 s tick.
 
 ## Results
 
+**Build 68, 2026-10-08** (zero-copy video, MSE, B10): **GPU raster 31/32 OK** (the one TIMEOUT is nytimes: committed and titled at 1.8 s, 0 stalls, never reached load-finished within 120 s; it took 25.6 s on build 52 and 36.9 s in the CPU run below) and **CPU raster 32/32 OK**. 0 kernel faults in either run.
+
+### Run `s10081029x11243`
+
+- Settings: `sites=32 limit=120 snap=1 dwell=0 size=1280x960 dmabuf=1 gpu=0 stall=60 rss=3 profile=fresh env=none temp_mC=53033`
+- Network check: `date=2026-10-08T10:29:30Z clock=set https=301 http=200`
+- Per-site logs and snapshots: `/srv/phoenix-rpi4-nfs-gcc16/root/survey/s10081029x11243` (on the Pi: `/root/survey/s10081029x11243/`)
+- Result: **31/32 OK** (31 OK, 1 TIMEOUT, 0 CRASH, 0 HANG, 0 ERROR)
+- Load time of the OK sites (`load started` → `load finished`): median 9.4 s, max 41.8 s
+- Web process footprint (peak per site, WTF memoryFootprint): median 108 MB, max 406 MB
+- Kernel fault dumps during the survey: 0
+
+| # | site | result | load s | commit s | HTTP | JS err | console err | web MB | stalls | faults | snap | title |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | start | **OK** | 0.4 | 0.1 | 0 | 0 | 0 | – | 0 |  | png | – |
+| 2 | example | **OK** | 1.5 | 0.7 | 200 | 0 | 0 | – | 0 |  | png | Example Domain |
+| 3 | cern | **OK** | 0.3 | 0.1 | 200 | 0 | 0 | – | 0 |  | png | – |
+| 4 | hackernews | **OK** | 1.8 | 1.0 | 200 | 0 | 0 | 68 | 0 |  | png | Hacker News |
+| 5 | lobsters | **OK** | 5.3 | 0.9 | 200 | 0 | 2 | 76 | 0 |  | png | Lobsters |
+| 6 | kernelorg | **OK** | 16.6 | 0.9 | 200 | 0 | 0 | 78 | 0 |  | png | The Linux Kernel Archives |
+| 7 | w3c | **OK** | 33.2 | 5.3 | 200 | 0 | 0 | 89 | 0 |  | png | W3C |
+| 8 | pythondocs | **OK** | 6.5 | 1.0 | 200 | 0 | 0 | 70 | 0 |  | png | The Python standard library — Python 3.14.8 documentation |
+| 9 | cnnlite | **OK** | 2.2 | 0.8 | 200 | 0 | 0 | 56 | 0 |  | png | Breaking News, Latest News and Videos \| CNN |
+| 10 | ddghtml | **OK** | 3.0 | 2.2 | 200 | 0 | 1 | 44 | 0 |  | png | raspberry pi at DuckDuckGo |
+| 11 | wikipedia | **OK** | 13.1 | 1.2 | 200 | 0 | 0 | 172 | 0 |  | png | Raspberry Pi - Wikipedia |
+| 12 | archwiki | **OK** | 12.1 | 3.7 | 200 | 0 | 0 | 71 | 0 |  | png | Code of Conduct \| Arch Linux Terms |
+| 13 | mdn | **OK** | 14.1 | 0.6 | 200 | 0 | 1 | 108 | 0 |  | png | JavaScript \| MDN |
+| 14 | github | **OK** | 9.4 | 1.3 | 200 | 0 | 1 | 153 | 0 |  | png | GitHub - phoenix-rtos/phoenix-rtos-kernel: Phoenix-RTOS mic… |
+| 15 | stackoverflow | **OK** | 2.3 | 1.2 | 403 | 0 | 0 | 42 | 0 |  | png | Just a moment... |
+| 16 | oldreddit | **OK** | 15.1 | 2.5 | 200 | 2 | 18 | 170 | 0 |  | png | Welcome to Reddit |
+| 17 | csstricks | **OK** | 41.8 | 1.4 | 200 | 20 | 36 | 367 | 0 |  | png | A Complete Guide to CSS Flexbox \| CSS-Tricks |
+| 18 | caniuse | **OK** | 13.1 | 1.7 | 200 | 0 | 0 | 138 | 0 |  | png | CSS Grid Layout (level 1) \| Can I use... Support tables fo… |
+| 19 | bbc | **OK** | 14.6 | 0.8 | 200 | 1 | 2 | 213 | 0 |  | png | BBC News - Breaking news, video and the latest top stories … |
+| 20 | guardian | **OK** | 4.5 | 1.1 | 200 | 0 | 1 | 112 | 0 |  | png | Latest news, sport and opinion from the Guardian |
+| 21 | nytimes | **TIMEOUT** | – | 1.8 | 200 | 0 | 0 | 257 | 0 |  | - | The New York Times - Breaking News, US News, World News and… |
+| 22 | reuters | **OK** | 25.3 | 1.1 | 200 | 0 | 1 | 259 | 0 |  | png | Reuters \| Breaking International News & Views |
+| 23 | ddg | **OK** | 20.2 | 1.2 | 200 | 0 | 3 | 293 | 0 |  | png | raspberry pi at DuckDuckGo |
+| 24 | bing | **OK** | 4.8 | 3.0 | 200 | 0 | 0 | 68 | 0 |  | png | raspberry pi - Search |
+| 25 | google | **OK** | 2.2 | 1.3 | 200 | 0 | 0 | 59 | 0 |  | png | – |
+| 26 | amazon | **OK** | 22.5 | 2.3 | 200 | 0 | 0 | 304 | 0 |  | png | Amazon.com: Raspberry Pi 4 Model B 2019 Quad Core 64 Bit Wi… |
+| 27 | ebay | **OK** | 2.9 | 1.4 | 403 | 0 | 0 | 43 | 0 |  | png | Error Page \| eBay |
+| 28 | imdb | **OK** | 1.9 | 1.0 | 202 | 1 | 1 | 42 | 0 |  | png | – |
+| 29 | weather | **OK** | 11.3 | 1.8 | 200 | 0 | 0 | 80 | 0 |  | png | Yr - Warsaw - Long term forecast |
+| 30 | apple | **OK** | 18.7 | 1.0 | 200 | 0 | 0 | 177 | 0 |  | png | Apple |
+| 31 | osm | **OK** | 9.4 | 1.5 | 200 | 0 | 1 | 140 | 0 |  | png | OpenStreetMap |
+| 32 | youtube | **OK** | 14.0 | 2.3 | 200 | 0 | 0 | 406 | 0 |  | png | YouTube |
+
+**Problems** (not OK, HTTP ≥ 400, stall reports or kernel faults):
+
+- **15 stackoverflow** (https://stackoverflow.com/questions/tagged/rtos): OK, reason `-`, end `none`, rc 0, HTTP 403, wall 7 s, stalls 0, unresponsive 0
+- **21 nytimes** (https://www.nytimes.com/): TIMEOUT, reason `launcher-timeout`, end `none`, rc 2, HTTP 200, wall 124 s, stalls 0, unresponsive 0
+- **27 ebay** (https://www.ebay.com/): OK, reason `-`, end `none`, rc 0, HTTP 403, wall 12 s, stalls 0, unresponsive 1
+
+CPU raster, same build (the export's `survey.sh` was a stale copy defaulting to `gpu=0`; restaged):
+
+### Run `s10081011x11890`
+
+- Settings: `sites=32 limit=120 snap=1 dwell=0 size=1280x960 dmabuf=1 gpu=0 stall=60 rss=3 profile=fresh env=none temp_mC=38421`
+- Network check: `date=2026-10-08T10:11:39Z clock=set https=301 http=200`
+- Per-site logs and snapshots: `/srv/phoenix-rpi4-nfs-gcc16/root/survey/s10081011x11890` (on the Pi: `/root/survey/s10081011x11890/`)
+- Result: **32/32 OK** (32 OK, 0 TIMEOUT, 0 CRASH, 0 HANG, 0 ERROR)
+- Load time of the OK sites (`load started` → `load finished`): median 6.9 s, max 36.9 s
+- Web process footprint (peak per site, WTF memoryFootprint): median 109 MB, max 500 MB
+- Kernel fault dumps during the survey: 0
+
+| # | site | result | load s | commit s | HTTP | JS err | console err | web MB | stalls | faults | snap | title |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | start | **OK** | 0.5 | 0.1 | 0 | 0 | 0 | – | 0 |  | png | Phoenix-RTOS Web Browser |
+| 2 | example | **OK** | 1.3 | 0.5 | 200 | 0 | 0 | – | 0 |  | png | Example Domain |
+| 3 | cern | **OK** | 0.2 | 0.1 | 200 | 0 | 0 | – | 0 |  | png | – |
+| 4 | hackernews | **OK** | 1.8 | 1.0 | 200 | 0 | 0 | 64 | 0 |  | png | Hacker News |
+| 5 | lobsters | **OK** | 5.4 | 0.9 | 200 | 0 | 2 | 65 | 0 |  | png | Lobsters |
+| 6 | kernelorg | **OK** | 3.6 | 0.6 | 200 | 0 | 0 | 29 | 0 |  | png | The Linux Kernel Archives |
+| 7 | w3c | **OK** | 6.9 | 0.9 | 200 | 0 | 0 | 56 | 0 |  | png | W3C |
+| 8 | pythondocs | **OK** | 5.4 | 0.7 | 200 | 0 | 0 | 64 | 0 |  | png | The Python standard library — Python 3.14.8 documentation |
+| 9 | cnnlite | **OK** | 2.0 | 0.8 | 200 | 0 | 0 | 67 | 0 |  | png | Breaking News, Latest News and Videos \| CNN |
+| 10 | ddghtml | **OK** | 2.1 | 1.2 | 200 | 0 | 1 | 47 | 0 |  | png | raspberry pi at DuckDuckGo |
+| 11 | wikipedia | **OK** | 13.3 | 1.3 | 200 | 0 | 0 | 201 | 0 |  | png | Raspberry Pi - Wikipedia |
+| 12 | archwiki | **OK** | 2.9 | 1.1 | 200 | 0 | 0 | 29 | 0 |  | png | Code of Conduct \| Arch Linux Terms |
+| 13 | mdn | **OK** | 11.9 | 0.8 | 200 | 0 | 1 | 86 | 0 |  | png | JavaScript \| MDN |
+| 14 | github | **OK** | 9.0 | 1.6 | 200 | 0 | 1 | 120 | 0 |  | png | GitHub - phoenix-rtos/phoenix-rtos-kernel: Phoenix-RTOS mic… |
+| 15 | stackoverflow | **OK** | 2.3 | 1.4 | 403 | 0 | 0 | 42 | 0 |  | png | Just a moment... |
+| 16 | oldreddit | **OK** | 13.3 | 2.4 | 200 | 2 | 18 | 230 | 0 |  | png | Welcome to Reddit |
+| 17 | csstricks | **OK** | 33.1 | 1.2 | 200 | 0 | 21 | 284 | 0 |  | png | A Complete Guide to CSS Flexbox \| CSS-Tricks |
+| 18 | caniuse | **OK** | 13.2 | 1.7 | 200 | 0 | 0 | 152 | 0 |  | png | CSS Grid Layout (level 1) \| Can I use... Support tables fo… |
+| 19 | bbc | **OK** | 14.6 | 0.8 | 200 | 1 | 2 | 213 | 0 |  | png | BBC News - Breaking news, video and the latest top stories … |
+| 20 | guardian | **OK** | 4.7 | 1.3 | 200 | 0 | 1 | 109 | 0 |  | png | Latest news, sport and opinion from the Guardian |
+| 21 | nytimes | **OK** | 36.9 | 2.2 | 200 | 0 | 0 | 247 | 0 |  | png | The New York Times - Breaking News, US News, World News and… |
+| 22 | reuters | **OK** | 20.6 | 0.8 | 200 | 0 | 1 | 246 | 0 |  | png | Reuters \| Breaking International News & Views |
+| 23 | ddg | **OK** | 17.2 | 0.8 | 200 | 0 | 3 | 271 | 0 |  | png | raspberry pi at DuckDuckGo |
+| 24 | bing | **OK** | 3.4 | 1.8 | 200 | 0 | 0 | 60 | 0 |  | png | raspberry pi - Search |
+| 25 | google | **OK** | 2.3 | 1.3 | 200 | 0 | 0 | 40 | 0 |  | png | – |
+| 26 | amazon | **OK** | 22.0 | 1.5 | 200 | 0 | 0 | 319 | 0 |  | png | Amazon.com: Raspberry Pi 4 Model B 2019 Quad Core 64 Bit Wi… |
+| 27 | ebay | **OK** | 2.7 | 1.1 | 403 | 0 | 0 | 68 | 0 |  | png | Error Page \| eBay |
+| 28 | imdb | **OK** | 1.8 | 0.8 | 202 | 1 | 1 | 41 | 0 |  | png | – |
+| 29 | weather | **OK** | 10.2 | 1.7 | 200 | 0 | 0 | 121 | 0 |  | png | Yr - Warsaw - Long term forecast |
+| 30 | apple | **OK** | 17.0 | 0.8 | 200 | 0 | 0 | 178 | 0 |  | png | Apple |
+| 31 | osm | **OK** | 9.1 | 1.5 | 200 | 0 | 1 | 137 | 0 |  | png | OpenStreetMap |
+| 32 | youtube | **OK** | 21.1 | 2.1 | 200 | 0 | 0 | 500 | 0 |  | png | YouTube |
+
+**Problems** (not OK, HTTP ≥ 400, stall reports or kernel faults):
+
+- **15 stackoverflow** (https://stackoverflow.com/questions/tagged/rtos): OK, reason `-`, end `none`, rc 0, HTTP 403, wall 7 s, stalls 0, unresponsive 0
+- **27 ebay** (https://www.ebay.com/): OK, reason `-`, end `none`, rc 0, HTTP 403, wall 9 s, stalls 0, unresponsive 1
+
 **Build 52, 2026-10-07** (player memory fix; GPU raster + dma-buf): **32/32 OK**
 
 ### Run `s10071223x13238`
